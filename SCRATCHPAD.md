@@ -512,3 +512,29 @@ OPERATIONAL findings (compute-gpu-jobs domain):
   source + `lake build lzmx` (first run fetches toolchain) + symlink
   binary into ~/.local/bin (on the non-interactive ssh PATH so bare
   `lzmx` resolves for `ssh HOST lzmx ...`).
+
+
+
+## §Preview added (the one theorem the gpu test earned) — 2026-06-01
+
+Reviewed each gpu-test case for "worth a theorem?" — mostly NO, and
+said so rather than manufacturing them:
+- forkpty→posix_openpt: C shim, the IMPURE surface by design. Not
+  Lean-provable; its contract is checked by ztest (OS-as-oracle tier).
+  Nothing to prove; nothing would have "caught" a link/toolchain bug —
+  the durable guard for that class is a CI build on a modern-glibc box,
+  not a proof.
+- ssh-agent wedge / IdentityAgent=none: operational, local env. Runbook.
+- rsync flatten: my tooling slip. Not a property of lzmx.
+YES, one: multi-host aggregation exercised a code path (async preview
+replies from N hosts into one pane, same NAME possibly on several) that
+NOTHING pinned. Added §Preview (Theorems/Tui.lean):
+  step_previewUpdated_reject/accept + step_preview_no_cross_host —
+  a previewUpdated (name,host) mutates the pane iff the selected row
+  matches BOTH fields. It's §Row's "identity is (name,host)" applied to
+  async previews. Break-verified: dropping the host check breaks all
+  three (no_cross_host becomes false — gpu3's scrollback would paint
+  gpu2's row). Concrete test in Tests/Tui.lean (same name on gpu2+gpu3).
+Now 14 § sections. The pre-existing stale-preview test only covered the
+name dimension; multi-host added the host dimension, which is exactly
+what the real two-box test walked through.

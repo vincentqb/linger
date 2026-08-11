@@ -19,6 +19,7 @@ record even while open.
 | §Isolate | many clients on one session vs per-client framing | `.bytes id` leaves every *other* client's record (and decoder) bit-identical | Theorems/Session.lean |
 | §Row | a list row's identity vs an unreliable `info` reply | a row's name is a function of the socket filename alone; display fields scrubbed | Theorems/Tui.lean |
 | §Claim | one session name vs many daemons racing for it | *given* the kernel grants ≤1 `flock` holder, ≤1 daemon ever unlinks or binds that name | Theorems/Claim.lean |
+| §Preview | many hosts' async preview replies vs one shared pane | a `previewUpdated (name,host)` paints iff the selected row matches both fields — no cross-host bleed | Theorems/Tui.lean |
 
 
 ## Reading a row

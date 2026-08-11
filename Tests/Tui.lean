@@ -56,6 +56,19 @@ example : ((keys st0 [.esc]).2 == [.quit]) = true := by native_decide
 example : ((step st0 (.previewUpdated "beta" .local ["x"])).1.previewFor
     == none) = true := by native_decide
 
+/-- Multi-host: the same name on two hosts, gpu2's row selected. A
+preview reply for gpu3's row is rejected; for gpu2's is accepted and
+tagged with the right host. (§Preview — no cross-host bleed.) -/
+example :
+    (let rows : List Row := [{ name := "work", host := .remote "gpu2" },
+                             { name := "work", host := .remote "gpu3" }]
+     let st := (step {} (.rowsUpdated rows)).1   -- sel = 0 → work@gpu2
+     let wrong := step st (.previewUpdated "work" (.remote "gpu3") ["gpu3 output"])
+     let right := step st (.previewUpdated "work" (.remote "gpu2") ["gpu2 output"])
+     wrong.1.preview == st.preview && wrong.1.previewFor == none
+       && right.1.preview == ["gpu2 output"]
+       && right.1.previewFor == some ("work", .remote "gpu2")) = true := by native_decide
+
 end Zmx.Core.Tui.Tests
 
 

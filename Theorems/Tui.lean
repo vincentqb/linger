@@ -136,4 +136,51 @@ theorem rowOfInfo_pid_scrubbed (n : String) (kvs : List (String × String)) (h :
     ∀ c ∈ (rowOfInfo n kvs h).pid.toList, c.toNat ≥ 0x20 ∧ c.toNat ≠ 0x7F :=
   Zmx.Core.Remote.scrub_no_ctl _
 
+/-! ## §Preview — a late preview reply lands only on the row it was
+fetched for, keyed by (name, host)
+
+Multi-host is what makes this load-bearing. With several hosts each
+answering `ssh HOST lzmx history NAME` asynchronously and out of order,
+and the *same* NAME possibly live on more than one host, a reply must
+paint only the row it belongs to. §Preview: a `previewUpdated (name,
+host)` mutates the pane iff the selected row matches on **both** fields
+— so gpu3's scrollback cannot land in gpu2's row, and a reply for a
+selection the user has since moved off is dropped. The §Row rule
+(identity is (name, host), never name alone) applied to async previews. -/
+
+/-- Safety: a reply whose (name, host) does not match the selected row
+changes neither the preview nor what it is `previewFor`. -/
+theorem step_previewUpdated_reject (st : State) (name : String) (host : Host)
+    (lines : List String)
+    (h : (st.selected.any (fun r => r.name == name && r.host == host)) = false) :
+    (step st (.previewUpdated name host lines)).1.preview = st.preview ∧
+    (step st (.previewUpdated name host lines)).1.previewFor = st.previewFor := by
+  unfold step
+  dsimp only
+  rw [if_neg (by rw [h]; exact Bool.false_ne_true)]
+  exact ⟨rfl, rfl⟩
+
+/-- Liveness: a reply that does match is applied, tagged with the exact
+(name, host) it came from. -/
+theorem step_previewUpdated_accept (st : State) (name : String) (host : Host)
+    (lines : List String)
+    (h : (st.selected.any (fun r => r.name == name && r.host == host)) = true) :
+    (step st (.previewUpdated name host lines)).1.preview = lines ∧
+    (step st (.previewUpdated name host lines)).1.previewFor = some (name, host) := by
+  unfold step
+  dsimp only
+  rw [if_pos h]
+  exact ⟨rfl, rfl⟩
+
+/-- The multi-host corollary, stated outright: when the same NAME is
+live on two hosts and one is selected, the other host's reply is
+ignored — no cross-host bleed. -/
+theorem step_preview_no_cross_host (st : State) (name : String) (h1 h2 : Host)
+    (lines : List String) (hne : h1 ≠ h2)
+    (hsel : st.selected = some { name := name, host := h1 }) :
+    (step st (.previewUpdated name h2 lines)).1.preview = st.preview := by
+  refine (step_previewUpdated_reject st name h2 lines ?_).1
+  rw [hsel]
+  simpa using hne
+
 end Zmx.Core.Tui
