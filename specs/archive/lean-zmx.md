@@ -1,6 +1,6 @@
 # lean-zmx — session persistence + TUI manager in pure-function Lean 4
 
-Status: active
+Status: done
 Updated: 2026-06-01
 
 Deliverable: `lzmx`, one binary. zmx-shape session layer (daemon per
@@ -160,3 +160,42 @@ Round cap: 3 review/revise rounds per step, then re-plan.
   the useful 90%).
 - checkpoint interval fixed 60s; no config file for the TUI look.
 - completions/print/write verbs: stretch, after Step 10.
+
+
+---
+
+## Completion record — 2026-06-01
+
+All ten steps landed; `tests/e2e.sh` (the Step 10 terminal Verify) is
+green from a clean build. Delivered beyond the original step list:
+`watch` (read-only attach), newest-attacher-owns-the-size, and the
+attached-client count in `info` — borrowed from abduco after the user
+added it to PLAN.md mid-build.
+
+Exit criteria, as met:
+
+| Step | Bar | Result |
+|---|---|---|
+| 1 Skeleton | `./lake build` exits 0 | green (glibc workaround in `./lake`) |
+| 2 Posix | pty spawn + poll roundtrip | `ztest` 12/12 |
+| 3 Wire | §Frame/§Chunk/§Bound, no sorry | proved schema-level, 10 golden tests |
+| 4 Vt | §Total/§Chunk/§Bound, snapshot tests | `Good` proved over step/feed, 24 tests |
+| 5 Session | §Detach/§Bound/§Name | proved + 16 scenario tests |
+| 6 Runtime | scripted pty harness, all verbs | `attach_test.py` 8/8 |
+| 7 Resume | §Restore + SIGKILL survival | proved + `resume_test.py` 7/7 |
+| 8 TUI | drive picker in a pty | `tui_test.py` 8/8, §Bound(tui) proved |
+| 9 Remote | §Remote + fake-ssh harness | proved + `remote_test.py` 8/8 |
+| 10 Verify | one script, clean build, no sorry/partial | `tests/e2e.sh` OK |
+
+Scope-conditioned gaps, recorded rather than hidden:
+* `Vt.step` preserving grid *dimensions* is by construction, not a
+  stated theorem (SCRATCHPAD step 4) — the runtime re-reads dims, so
+  nothing depends on it.
+* Size ownership does not re-fit when the owner detaches (§Detach
+  purity was preferred); the next resize from any client corrects it.
+* `run`/`send` deliver keystrokes, not exec'd argv — a shell types
+  them. `run` on a fresh session spawns the daemon first (upsert).
+* Deferred by design: copy-mode, popups, panes, config files.
+
+Follow-up work, if it is ever wanted, opens a new spec — this one is
+closed.

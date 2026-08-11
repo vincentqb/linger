@@ -1,8 +1,12 @@
 # lean-zmx
 
 Session attach/detach + session-manager TUI in pure-function Lean 4.
-`specs/lean-zmx.md` is the living plan (steps, exit criteria) — re-read
-it and `SCRATCHPAD.md` first after any context compaction.
+`README.md` is the user-facing overview; `specs/archive/lean-zmx.md` is
+the (closed) build plan with the completion record. Re-read
+`SCRATCHPAD.md` first after any context compaction — it holds the
+proof recipes and the measured environment facts.
+
+New work opens a new `specs/<slug>.md`; don't reopen the archived one.
 
 ## Build
 
@@ -25,6 +29,14 @@ it and `SCRATCHPAD.md` first after any context compaction.
   to see it catch (record the break in SCRATCHPAD.md).
 - Session names pass through `Zmx.Core.Name.sanitize` before touching
   any path. Never interpolate raw names into socket/checkpoint paths.
+- `./tests/e2e.sh` is the gate before any commit that touches the
+  runtime; it must stay green and warning-free.
+- Restructure code for provability rather than weakening a theorem:
+  name the stages (see `Vt.print*`, `Vt.step*`), clamp bounds locally,
+  and prefer order-robust proof scripts (`repeat' split` +
+  `all_goals first | …`) so a new branch doesn't break the proof.
+- Any poll loop must freeze its fd set before polling (a mid-round
+  accept desynced `revents` once and panicked the daemon).
 
 ## Scratchpad
 

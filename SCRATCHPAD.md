@@ -276,3 +276,29 @@ effect is checkpoint) outranks perfect mirror re-fit — documented.
 
 Step 9 (remote over ssh) next: Core/Remote parser + TUI wiring
 (hostLabel/Host.remote already in place), then Step 10 verify.
+
+
+## Steps 9 + 10 notes — 2026-06-01 (spec closed)
+
+Step 9: Core/Remote parses `list --porcelain` from other machines.
+Threat-model treated as hostile-by-default: §Name carries (proved) so
+a remote name can't build a path, and display fields are `scrub`bed of
+control bytes (proved) so a remote can't inject ANSI into our frame.
+Unreachable host → [] (BatchMode + ConnectTimeout 3), never blocks the
+picker. Attach = `ssh -t host lzmx attach name`, exec'd; nothing is
+tunnelled. Verified with a fake `ssh` on PATH (tests/remote_test.py,
+8/8) which is also how the argv is pinned.
+
+Step 10: tests/e2e.sh is the whole-deliverable gate — clean rebuild,
+warning-free, no sorry/partial/IO in the core, extern-only-in-Posix,
+one C file, then all four live suites. Green. README + THEOREMS "what
+these do not settle" written; spec moved to specs/archive with a
+completion record and the scope-conditioned gaps.
+
+Test-harness lesson: my sanitizer assertion was wrong, not the code —
+`sanitize "../../etc/passwd"` = `_._.._etc_passwd` (only a LEADING dot
+is rewritten; interior dots are legal and harmless with no `/` left).
+Check what the code actually returns before "fixing" it.
+
+State: PLAN.md delivered. Anything further (copy-mode, panes, config)
+opens a NEW spec — the archived one is closed.
