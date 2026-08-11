@@ -20,11 +20,19 @@ def socketDir : IO String := do
   if let some d ← IO.getEnv "XDG_RUNTIME_DIR" then return s!"{d}/lzmx"
   return s!"/tmp/lzmx-{← Zmx.Posix.getuid}"
 
+/-- Checkpoints and logs. The default is namespaced by hostname: a
+network-mounted `$HOME` is shared between machines, and two hosts each
+running a session called `work` would otherwise clobber one another's
+checkpoint — and resuming machine B's terminal on machine A is wrong
+anyway (different working tree, different process world). An explicit
+`LZMX_DIR` is taken verbatim: an override is an instruction, not an
+accident. -/
 def stateDir : IO String := do
   if let some d ← IO.getEnv "LZMX_DIR" then return d
-  if let some d ← IO.getEnv "XDG_STATE_HOME" then return s!"{d}/lzmx"
+  let host := sanitize (← Zmx.Posix.gethostname)
+  if let some d ← IO.getEnv "XDG_STATE_HOME" then return s!"{d}/lzmx/{host}"
   let home := (← IO.getEnv "HOME").getD "/tmp"
-  return s!"{home}/.local/state/lzmx"
+  return s!"{home}/.local/state/lzmx/{host}"
 
 def ensureDir (d : String) : IO Unit := do
   IO.FS.createDirAll d

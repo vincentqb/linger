@@ -18,6 +18,7 @@ record even while open.
 | §Bound(tui) | a picker over a changing list | selection stays inside the filtered matches; query capped | Theorems/Tui.lean |
 | §Isolate | many clients on one session vs per-client framing | `.bytes id` leaves every *other* client's record (and decoder) bit-identical | Theorems/Session.lean |
 | §Row | a list row's identity vs an unreliable `info` reply | a row's name is a function of the socket filename alone; display fields scrubbed | Theorems/Tui.lean |
+| §Claim | one session name vs many daemons racing for it | *given* the kernel grants ≤1 `flock` holder, ≤1 daemon ever unlinks or binds that name | Theorems/Claim.lean |
 
 
 ## Reading a row
@@ -84,11 +85,56 @@ there is no timeout in this codebase at all. The lock file is
 deliberately never unlinked: unlinking it would let a newcomer lock a
 fresh inode while the owner still held the old one.
 
-This is a kernel guarantee, not a theorem — a filesystem property
-rather than a property of the pure core. `tests/robust_test.py` pins
-it: stale socket plus eight concurrent starts yields exactly one daemon
-and one shell, and the name is re-claimable immediately after the owner
-exits.
+§Claim states the mutual exclusion this buys, and states it the only
+way an OS primitive admits: **conditionally**. `Exclusive` (at most one
+`flock` holder) is a hypothesis naming exactly what the kernel is
+trusted for; `Guarded` (only the holder unlinks or binds) is ours and is
+proved. So the theorem is "≤1 owner per name, given ≤1 lock holder",
+and the assumption is one reviewable line rather than an unstated hope.
+An advisory lock is still a theorem-grade guarantee over the population
+that cooperates — every process claiming a session name is an `lzmx`
+daemon — and §Claim says so precisely, including what it does not
+cover.
+
+This is a kernel guarantee plus a proof, not a proof alone.
+`tests/robust_test.py` pins the correspondence between §Claim's model
+and `serve`: stale socket plus eight concurrent starts yields exactly
+one daemon and one shell, and the name is re-claimable immediately
+after the owner exits.
+
+## Network filesystems: where the guarantees stop
+
+Three parts of the design assume local storage, in decreasing severity.
+
+**Socket directory (only reachable by setting `LZMX_DIR`).** Unix
+sockets are host-local rendezvous names; `bind` on NFS commonly fails
+outright, and on a *shared* directory the failure is worse than an
+error: sockets belonging to other hosts appear in `list`, no local
+listener answers them, and the stale-socket cleanup would delete
+another machine's live socket. The defaults avoid this —
+`$XDG_RUNTIME_DIR` (tmpfs) or `/tmp/lzmx-$UID`. Pointing `LZMX_DIR` at
+a network mount is unsupported.
+
+**The name lock.** `flock` is unreliable over NFS, so `Exclusive` — and
+therefore §Claim — does not hold there. Moot in practice, since the
+same shared-directory scenario is already broken by the point above.
+
+**State directory (checkpoints).** This one can arrive by accident: the
+default sits under `$HOME`, which is network-mounted on many setups.
+Writes are safe (`tmp` + `rename` is atomic, and §Restore's totality
+covers a torn or foreign file), but two hosts sharing `$HOME` and each
+running a session called `work` would clobber one another's checkpoint.
+The default state directory is therefore namespaced by hostname, which
+is also the correct semantics: replaying machine B's terminal on
+machine A would restore a screen describing a working tree and a
+process world that are not there. An explicit `LZMX_DIR` is taken
+verbatim — an override is an instruction, not an accident.
+
+Not affected: `readDir` staleness under attribute caching is cosmetic
+(a session may appear a beat late), and the daemon's log file has a
+single writer. Worth knowing rather than fixing: the `0700` mode on the
+socket directory is only as strong as the filesystem enforcing it,
+which on NFSv3 with `auth_sys` is not very.
 
 `list` cleaning up stale sockets is *not* part of that hazard: it
 unlinks only when `connect` itself fails, which the kernel answers from

@@ -380,3 +380,45 @@ Gotcha: `Row` needed `DecidableEq` derived for whole-record test
 comparisons. And my first two assertions in the new suite were wrong,
 not the code (lock files persist by design; `(busy)` is the new
 rendering) — check what the code returns before "fixing" it.
+
+
+## NFS audit + §Claim — 2026-06-01
+
+Q: "anything else unreliable over NFS?" Audited every fs call
+(readDir ×2, removeFile ×5, rename, read/writeBinFile, createDirAll,
+chmod, bind, flock, readlink). Three assume local storage:
+
+1. socket dir (only via LZMX_DIR): unix sockets are host-local; bind
+   often fails on NFS, and on a SHARED dir other hosts' sockets appear
+   in list, answer nothing locally, and our stale-cleanup would delete
+   a live remote socket. Defaults are tmpfs//tmp → unaffected.
+   LZMX_DIR on a network mount = unsupported (documented).
+2. flock: NFS-unreliable → §Claim's Exclusive fails there. Moot,
+   since (1) already breaks that setup.
+3. state dir: DEFAULT sits under $HOME, which is NFS on many corp
+   boxes — the one hazard that arrives by accident. Two hosts sharing
+   $HOME + a session named "work" → clobbered checkpoints.
+   FIXED: default state dir namespaced by hostname (also the right
+   semantics — replaying host B's screen on host A describes a working
+   tree that isn't there). Explicit LZMX_DIR stays verbatim, which is
+   what keeps the test suites' single-dir layout working.
+   Measured on this box: $HOME is ext4 and XDG_RUNTIME_DIR is tmpfs, so
+   there was no live exposure here.
+Unaffected: readDir staleness (cosmetic), single-writer log. Noted, not
+fixed: 0700 on the socket dir is only as strong as the fs enforcing it
+(NFSv3 auth_sys ≈ not at all).
+
+Q: "does advisory-ness give us a theorem?" Yes — a CONDITIONAL one, and
+that shape is the point. Theorems/Claim.lean models the claim sequence
+as a trace of (agent, action):
+  * Exclusive (hypothesis) = the kernel grants ≤1 flock holder — the
+    single line we trust, with its three side conditions spelled out
+    (hold for life, never unlink the lock file, local fs).
+  * Guarded (proved for our sequence) = only the holder unlinks/binds.
+  * at_most_one_owner / at_most_one_unlinker / owner_holds_lock follow.
+Break-verified: describing the pre-fix sequence (bind without lock)
+breaks all three. Honest caveat recorded in the file: it is a model of
+serve, not an extraction; correspondence is by inspection + pinned by
+robust_test.py. This is the general recipe for OS primitives in this
+codebase — axiomatize the contract as a hypothesis, prove the protocol
+against it, so what is trusted is one reviewable line.
