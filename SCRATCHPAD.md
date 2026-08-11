@@ -302,3 +302,39 @@ Check what the code actually returns before "fixing" it.
 
 State: PLAN.md delivered. Anything further (copy-mode, panes, config)
 opens a NEW spec — the archived one is closed.
+
+
+## Concurrency review — 2026-06-01 (answering "any theorems for concurrency?")
+
+Audit result: the honest answer was "not labelled as such" — so §Isolate
+was added and the gaps documented in THEOREMS.md § Concurrency.
+
+Measured, not assumed:
+- No data races possible at all: no threads / IO.Ref / Task anywhere
+  (grepped), all signal() calls are SIG_IGN|SIG_DFL, client polls
+  winsize instead of trapping SIGWINCH. Concurrency = interleaving only.
+- §Chunk (per-connection) + §Isolate (cross-client) + §Restore
+  (tmp+rename & total load) are the three that carry it.
+- NEW §Isolate: step (.bytes id) leaves every other client's record —
+  decoder included — bit-identical. Break-verified: making setClient
+  share one decoder across clients broke setClient_other AND
+  decOk_setClient. Reverted.
+
+Two suspicions investigated; one was wrong, which is worth recording:
+- WRONG: "a slow daemon gets its socket unlinked by a concurrent list."
+  It does not — the unlink is gated on connect() failing, and a unix
+  connect completes from the listener's backlog without the daemon
+  being scheduled. Probed with SIGSTOP + list: socket intact, session
+  reachable after CONT. (Real but cosmetic finding: a silent daemon
+  yields an empty-field row, so `list` prints a blank line. Unfixed,
+  noted.)
+- REAL: session-identity race in Daemon.serve (probe → unlink-stale →
+  bind). With a stale socket + two concurrent starts, daemon B can
+  unlink A's live socket; A survives holding an unreachable shell.
+  Six-way concurrent creation with no stale socket is clean (1 daemon,
+  losers die on EADDRINUSE before spawnPty) — measured. Fix shape:
+  mkdir-lock (atomic, no new C — IO.FS.createDir throws on EEXIST)
+  around probe→unlink→bind + staleness steal. NOT applied: it changes
+  startup semantics and needs a staleness-timeout decision from the
+  user; also the backlog-full case would make `list` hang rather than
+  report, which the same lock work should address.

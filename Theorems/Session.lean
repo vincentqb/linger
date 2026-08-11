@@ -318,3 +318,128 @@ theorem step_vt_good (s : State) (ev : Event) (h : Good s.vt) :
     · exact h
 
 end Zmx.Core.Session
+
+
+
+namespace Zmx.Core.Session
+/-! ## §Isolate — one client cannot reach another client's state
+
+The concurrency question, at the layer where it is answerable. The
+daemon is single-threaded: `poll` reports several ready fds, the
+runtime reads each into its own `.bytes` event, and `step` serializes
+them — so there are no data races by construction. What remains is
+*interleaving*, and the hazard is cross-talk: could bytes from client A
+corrupt client B's frame boundaries, or rewrite B's record?
+
+§Isolate says no: `.bytes id` touches only client `id`'s record. Every
+other client's decoder — mid-frame or not — is bit-identical
+afterwards, whatever bytes arrive and however they were chunked (§Chunk
+supplies the per-connection half: any split of A's stream yields the
+same messages in the same order).
+-/
+
+open Zmx.Core.Wire (Msg)
+
+theorem client?_id {s : State} {id : Nat} {c : Client}
+    (h : s.client? id = some c) : c.id = id := by
+  have hp := (List.find?_eq_some_iff_append.mp h).1
+  simpa using hp
+
+/-- Rewriting one element of a client list cannot change what a lookup
+for a *different* id finds. -/
+theorem find?_map_set (c : Client) (other : Nat) (hne : other ≠ c.id) :
+    ∀ (l : List Client),
+      (l.map (fun c' => if c'.id == c.id then c else c')).find? (·.id == other)
+        = l.find? (·.id == other)
+  | [] => rfl
+  | a :: l => by
+    have hc : (c.id == other) = false :=
+      beq_eq_false_iff_ne.mpr (fun hh => hne hh.symm)
+    rw [List.map_cons, List.find?_cons, List.find?_cons]
+    by_cases hid : (a.id == c.id) = true
+    · have ha : (a.id == other) = false := by
+        have : a.id = c.id := by simpa using hid
+        exact beq_eq_false_iff_ne.mpr (by rw [this]; exact fun hh => hne hh.symm)
+      simp only [hid, if_true, hc, ha]
+      exact find?_map_set c other hne l
+    · simp only [hid, Bool.false_eq_true, if_false]
+      cases (a.id == other)
+      · exact find?_map_set c other hne l
+      · rfl
+
+/-- Dropping one client cannot change what a lookup for a different id
+finds. -/
+theorem find?_filter_drop (id other : Nat) (hne : other ≠ id) :
+    ∀ (l : List Client),
+      (l.filter (·.id != id)).find? (·.id == other) = l.find? (·.id == other)
+  | [] => rfl
+  | a :: l => by
+    rw [List.filter_cons, List.find?_cons]
+    by_cases hid : (a.id != id) = true
+    · rw [if_pos hid, List.find?_cons]
+      cases (a.id == other)
+      · exact find?_filter_drop id other hne l
+      · rfl
+    · have ha : (a.id == other) = false := by
+        have : a.id = id := by simpa using hid
+        exact beq_eq_false_iff_ne.mpr (by rw [this]; exact fun hh => hne hh.symm)
+      rw [if_neg hid]
+      simp only [ha]
+      exact find?_filter_drop id other hne l
+
+theorem setClient_other {s : State} {c : Client} {other : Nat} (h : other ≠ c.id) :
+    (s.setClient c).client? other = s.client? other :=
+  find?_map_set c other h s.clients
+
+theorem dropClient_other {s : State} {id other : Nat} (h : other ≠ id) :
+    (s.dropClient id).client? other = s.client? other :=
+  find?_filter_drop id other h s.clients
+
+/-- One message from `c` leaves every other client's record alone. -/
+theorem onMsg_other (s : State) (c : Client) (m : Msg) {other : Nat}
+    (h : other ≠ c.id) :
+    (onMsg s c m).1.client? other = s.client? other := by
+  unfold onMsg
+  dsimp only
+  repeat' split
+  all_goals first
+    | rfl
+    | exact setClient_other h
+
+/-- …and so does a whole batch of them. -/
+theorem feedMsgs_other (id : Nat) (msgs : List Msg) (acc : State × List Effect)
+    {other : Nat} (h : other ≠ id) :
+    (feedMsgs id msgs acc).1.client? other = acc.1.client? other := by
+  induction msgs generalizing acc with
+  | nil => rfl
+  | cons m ms ih =>
+    unfold feedMsgs
+    rw [List.foldl_cons]
+    rcases hc : acc.1.client? id with - | c'
+    · dsimp only [hc]
+      exact ih acc
+    · dsimp only [hc]
+      have hstep := ih ((onMsg acc.1 c' m).1, acc.2 ++ (onMsg acc.1 c' m).2)
+      unfold feedMsgs at hstep
+      rw [hstep]
+      exact onMsg_other _ _ _ (by rw [client?_id hc]; exact h)
+
+/-- §Isolate: bytes from one client cannot alter another client's
+record — including its wire decoder, so a peer stuck mid-frame stays
+mid-frame and resumes correctly on its next chunk. Daemon-level
+concurrency safety is this, plus §Chunk (per-connection ordering),
+plus single-threadedness. -/
+theorem step_bytes_isolates (s : State) (id : Nat) (chunk : List UInt8)
+    {other : Nat} (h : other ≠ id) :
+    (step s (.bytes id chunk)).1.client? other = s.client? other := by
+  unfold step
+  dsimp only
+  split
+  · rfl
+  · rename_i c hfind
+    split
+    · exact dropClient_other h
+    · rw [feedMsgs_other id _ _ h]
+      exact setClient_other (by rw [client?_id hfind]; exact h)
+
+end Zmx.Core.Session

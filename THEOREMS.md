@@ -16,6 +16,7 @@ record even while open.
 | §Name | user-chosen names vs filesystem paths | sanitized names can't escape the socket dir (no `/`, `..`-prefix, NUL, empty) | Theorems/Name.lean |
 | §Remote | trusting `ssh host lzmx list` output vs local TUI safety | parser total, garbage-tolerant; §Name carries through; display fields scrubbed of control bytes | Theorems/Remote.lean |
 | §Bound(tui) | a picker over a changing list | selection stays inside the filtered matches; query capped | Theorems/Tui.lean |
+| §Isolate | many clients on one session vs per-client framing | `.bytes id` leaves every *other* client's record (and decoder) bit-identical | Theorems/Session.lean |
 
 
 ## Reading a row
@@ -30,6 +31,56 @@ Each row was **break-verified**: the code was deliberately broken once
 to watch the theorem catch it, and the break is recorded in
 `SCRATCHPAD.md`. A theorem that survives a wrong definition is worth
 nothing.
+
+## Concurrency: what the model rules out, and what the theorems cover
+
+There are **no data races to reason about**, by construction rather
+than by proof: the daemon is one process with one `poll` loop, there
+are no threads, no `IO.Ref`/`Task`/shared mutable state anywhere, and no
+signal handler that touches state (every `signal()` in `c/shim.c` is
+`SIG_IGN`/`SIG_DFL`; the client polls `winsizeGet` instead of taking
+`SIGWINCH`, which removes async-signal reentrancy as a category). So
+"concurrency" here means **interleaving of events from many clients**,
+plus **two processes meeting at a file**. Three theorems carry it:
+
+* **§Chunk** — the per-connection half. `poll` hands us whatever bytes
+  happen to have arrived, so chunk boundaries are nondeterministic;
+  `Decoder.feed_append` says any split of one client's stream yields
+  the same messages in the same order. Interleaving cannot desync a
+  frame.
+* **§Isolate** — the cross-client half. `.bytes id` provably leaves
+  every other client's record, including its decoder mid-frame,
+  bit-identical. One client cannot corrupt another's framing, and
+  §Bound's `decOk` holds for *all* clients simultaneously.
+* **§Restore** — the file half. Checkpoints are written tmp+`rename`
+  (atomic), and `load` is total on arbitrary bytes, so a reader racing
+  a writer sees either the old file or the new one and never dies on a
+  torn one.
+
+Two clients typing at once still interleave into the pty — inherent to
+a shared terminal, not a defect, and no theorem should claim otherwise.
+What *is* deliberately ordered: the pty size is owned by the newest
+attached real terminal (`Session.sizeOwner`), so concurrent resizes
+converge instead of fighting.
+
+### Not covered: session identity at the socket path
+
+`Daemon.serve` establishes ownership as probe → unlink-if-refused →
+`bind`, and that middle step is a window no theorem guards: if two
+daemons start while a *stale* socket exists, both can pass the probe,
+the first binds, and the second unlinks the first's live socket before
+binding its own. The loser then keeps a shell nobody can reach by name.
+Measured: six simultaneous creations of one name (no stale socket) give
+exactly one daemon and one shell — the losers die on `EADDRINUSE`
+before `spawnPty`, so the common case is clean. The stale-socket
+variant is narrow but real, and the fix is an atomic create (a `mkdir`
+lock around probe→unlink→bind, with a staleness steal), not a theorem:
+it is a filesystem property, not a property of the pure core.
+
+`list` cleaning up stale sockets is *not* part of that hazard: it
+unlinks only when `connect` itself fails, which the kernel answers from
+the socket's bind state, so a daemon that is merely slow (or SIGSTOPed)
+keeps its socket. Verified.
 
 ## What these theorems do not settle
 
