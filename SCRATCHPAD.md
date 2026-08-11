@@ -538,3 +538,33 @@ NOTHING pinned. Added §Preview (Theorems/Tui.lean):
 Now 14 § sections. The pre-existing stale-preview test only covered the
 name dimension; multi-host added the host dimension, which is exactly
 what the real two-box test walked through.
+
+
+
+## Shrank the shim via Lean core primitives — 2026-06-01
+
+Followed the "shrink the trust boundary" plan from the C-vs-Rust
+discussion. Probed 4.32 core (grepped the toolchain src, not guessed)
+and found exact equivalents for 3 of the 30 wrappers:
+  zmx_monotonic_ms → IO.monoMsNow
+  zmx_getpid       → IO.Process.getPID
+  zmx_chmod        → IO.Prim.setAccessRights (the lean_chmod extern)
+Reimplemented Posix.monotonicMs/getpid/chmod as one-line Lean defs over
+core; call sites unchanged (same names/sigs). Deleted the 3 C funcs.
+Shim 30→27 wrappers, 581→564 lines.
+
+Kept (no core equivalent, confirmed by grep): sockets+poll (core has
+neither), pty/termios, fork/exec/waitpid/kill/alive, flock, spawn
+detached, getuid, isatty, gethostname, getcwdOf(/proc), realtimeS
+(core has monoMsNow but NO wall clock), init/ignoreSighup (signals),
+raw fd read/write/close/setNonblock.
+
+All 3 replaced funcs are on live-covered paths (chmod=ensureDir,
+getpid=daemon meta→list, monotonicMs=checkpoint cadence→resume), so
+ztest + e2e (5 suites) exercise them. Green. No portability risk: the
+core prims are toolchain-provided, identical on my box and gpu2/3.
+
+Deliberately did NOT chase marginal ones (writeAll→stdout: also used on
+socket fds; spawnDetached→IO.Process.spawn: no setsid/daemonize). The
+remaining 27 are genuine syscalls Lean core doesn't expose — exactly
+the surface I argued Rust wouldn't improve either.

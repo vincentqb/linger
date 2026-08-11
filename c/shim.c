@@ -516,11 +516,9 @@ LEAN_EXPORT lean_obj_res zmx_waitpid_nohang(uint32_t pid, lean_obj_arg w) {
 /* -------------------------------------------------------------------- */
 /* misc                                                                  */
 
-/* zmx_getpid : IO UInt32 */
-LEAN_EXPORT lean_obj_res zmx_getpid(lean_obj_arg w) {
-    (void)w;
-    return lean_io_result_mk_ok(lean_box_uint32((uint32_t)getpid()));
-}
+/* getpid, chmod, and CLOCK_MONOTONIC ms are Lean-core primitives
+ * (IO.Process.getPID, IO.Prim.setAccessRights, IO.monoMsNow), so they
+ * are not wrapped here — see Zmx/Posix.lean. */
 
 /* zmx_getuid : IO UInt32 */
 LEAN_EXPORT lean_obj_res zmx_getuid(lean_obj_arg w) {
@@ -532,13 +530,6 @@ LEAN_EXPORT lean_obj_res zmx_getuid(lean_obj_arg w) {
 LEAN_EXPORT lean_obj_res zmx_isatty(uint32_t fd, lean_obj_arg w) {
     (void)w;
     return lean_io_result_mk_ok(lean_box(isatty((int)fd) == 1 ? 1 : 0));
-}
-
-/* zmx_chmod : @& String -> UInt32 -> IO Unit */
-LEAN_EXPORT lean_obj_res zmx_chmod(b_lean_obj_arg path, uint32_t mode, lean_obj_arg w) {
-    (void)w;
-    if (chmod(lean_string_cstr(path), (mode_t)mode) < 0) return io_err("chmod");
-    return io_ok_unit();
 }
 
 /* zmx_getcwd_of : UInt32 -> IO String
@@ -563,16 +554,8 @@ LEAN_EXPORT lean_obj_res zmx_gethostname(lean_obj_arg w) {
     return lean_io_result_mk_ok(lean_mk_string(buf));
 }
 
-/* zmx_monotonic_ms : IO UInt64  (CLOCK_MONOTONIC, for checkpoint cadence) */
-LEAN_EXPORT lean_obj_res zmx_monotonic_ms(lean_obj_arg w) {
-    (void)w;
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return lean_io_result_mk_ok(
-        lean_box_uint64((uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000));
-}
-
-/* zmx_realtime_s : IO UInt64  (unix epoch seconds, for labels/list) */
+/* zmx_realtime_s : IO UInt64  (unix epoch seconds; Lean core has no
+ * wall clock, so this one stays a shim call) */
 LEAN_EXPORT lean_obj_res zmx_realtime_s(lean_obj_arg w) {
     (void)w;
     struct timespec ts;

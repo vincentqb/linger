@@ -1,8 +1,10 @@
 /-! # Zmx.Posix — the only module that touches the OS
 
-Every binding maps 1:1 onto `c/shim.c`. Semantics are documented here
-(the Lean face); the C side is syscall + errno only. Object arguments
-are all borrowed (`@&`), so the shim never manages Lean refcounts.
+Most bindings map 1:1 onto `c/shim.c` (syscall + errno only; object
+arguments are borrowed `@&`, so the shim never manages refcounts). A
+few are thin wrappers over Lean core's own primitives rather than our
+shim — `getpid`, `chmod`, `monotonicMs` — kept here so call sites see
+one uniform `Zmx.Posix` surface; the shim is smaller for it.
 -/
 
 namespace Zmx.Posix
@@ -106,20 +108,28 @@ unlink the lock file. -/
 `≥ 0` exit status (128+sig if signalled), zombie reaped. -/
 @[extern "zmx_waitpid_nohang"] opaque waitpidNohang (pid : UInt32) : IO Int64
 
-@[extern "zmx_getpid"] opaque getpid : IO UInt32
 @[extern "zmx_getuid"] opaque getuid : IO UInt32
 @[extern "zmx_isatty"] opaque isatty (fd : UInt32) : IO Bool
-@[extern "zmx_chmod"] opaque chmod (path : @& String) (mode : UInt32) : IO Unit
+
+/-- POSIX `chmod`. Lean core already wraps `chmod(2)` (`lean_chmod`), so
+this is core, not our shim. -/
+def chmod (path : @& String) (mode : UInt32) : IO Unit :=
+  IO.Prim.setAccessRights path mode
+
+/-- Our own pid. Lean core wraps `getpid(2)` (`lean_io_process_get_pid`). -/
+def getpid : IO UInt32 := IO.Process.getPID
 
 /-- Where pid's cwd currently points (`/proc/<pid>/cwd`); "" if unreadable. -/
 @[extern "zmx_getcwd_of"] opaque getcwdOf (pid : UInt32) : IO String
 
 @[extern "zmx_gethostname"] opaque gethostname : IO String
 
-/-- CLOCK_MONOTONIC in ms — checkpoint cadence, poll deadlines. -/
-@[extern "zmx_monotonic_ms"] opaque monotonicMs : IO UInt64
+/-- CLOCK_MONOTONIC in ms — checkpoint cadence, poll deadlines. Lean
+core's `IO.monoMsNow` is exactly this clock, so no shim needed. -/
+def monotonicMs : IO UInt64 := do return UInt64.ofNat (← IO.monoMsNow)
 
-/-- Unix epoch seconds — `created` timestamps in listings. -/
+/-- Unix epoch seconds — `created` timestamps in listings. (Lean core
+has no wall clock, so this one stays a shim call.) -/
 @[extern "zmx_realtime_s"] opaque realtimeS : IO UInt64
 
 /-- Standard fds, named. -/
