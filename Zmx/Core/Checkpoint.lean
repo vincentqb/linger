@@ -149,10 +149,39 @@ def rCell : R Cell := fun l => do
   let (pen, l) ← rPen l
   some ({ base, marks, width, pen }, l)
 
-def wRow (r : Row) : List UInt8 := wList wCell r.toList
+/-! ## Run-length encoding
+
+A terminal row is mostly runs of identical cells — trailing blanks, or
+stretches of same-styled text — so storing it cell-by-cell is ~30×
+larger than it needs to be. `wRLE` collapses maximal equal runs to
+`(count, cell)` pairs. Exact fidelity (no re-render approximation), and
+the round-trip proof composes like any other combinator: see §Restore
+`rt_rle`, which rests on `expand_runs`. -/
+
+/-- Maximal runs of `DecidableEq`-equal elements, in order. -/
+def runs {α : Type} [DecidableEq α] : List α → List (Nat × α)
+  | [] => []
+  | a :: t =>
+    match runs t with
+    | (n, b) :: rest => if a = b then (n + 1, b) :: rest else (1, a) :: (n, b) :: rest
+    | [] => [(1, a)]
+
+/-- Inverse of `runs`: expand each `(count, elem)` back to a flat list. -/
+def expand {α : Type} : List (Nat × α) → List α
+  | [] => []
+  | (n, a) :: rest => List.replicate n a ++ expand rest
+
+def wRLE {α : Type} [DecidableEq α] (w : α → List UInt8) (l : List α) : List UInt8 :=
+  wList (wPair wNat w) (runs l)
+
+def rRLE {α : Type} (r : R α) : R (List α) := fun bytes => do
+  let (groups, rest) ← rList (rPair rNat r) bytes
+  some (expand groups, rest)
+
+def wRow (r : Row) : List UInt8 := wRLE wCell r.toList
 
 def rRow : R Row := fun l => do
-  let (cs, l) ← rList rCell l
+  let (cs, l) ← rRLE rCell l
   some (cs.toArray, l)
 
 def wCursor (c : Cursor) : List UInt8 :=

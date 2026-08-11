@@ -3,3 +3,4 @@ import Tests.Vt
 import Tests.Session
 import Tests.Tui
 import Tests.Remote
+import Tests.Checkpoint

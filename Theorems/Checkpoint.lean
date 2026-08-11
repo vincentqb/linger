@@ -117,10 +117,39 @@ theorem rt_cell : RT wCell rCell := by
   simp only [List.append_assoc, rt_char, rt_list rt_char, rt_nat, rt_pen,
     Option.bind_eq_bind, Option.bind_some]
 
+/-- Expanding the run-length groups of a list recovers the list. -/
+theorem expand_runs {α : Type} [DecidableEq α] (l : List α) : expand (runs l) = l := by
+  induction l with
+  | nil => rfl
+  | cons a t ih =>
+    rw [runs]
+    cases hrt : runs t with
+    | nil =>
+      rw [hrt] at ih
+      simp only [expand] at ih
+      -- ih : [] = t, so t is empty and the run is just [a]
+      simp only [← ih, expand, List.replicate, List.append_nil]
+    | cons hd tl =>
+      obtain ⟨n, b⟩ := hd
+      rw [hrt] at ih
+      simp only [expand] at ih
+      by_cases hab : a = b
+      · subst hab
+        simp only [reduceIte, expand, List.replicate_succ, List.cons_append, ih]
+      · simp only [hab, reduceIte, expand, List.replicate,
+          List.singleton_append, ih]
+
+theorem rt_rle {α : Type} [DecidableEq α] {w : α → List UInt8} {r : R α}
+    (h : RT w r) : RT (wRLE w) (rRLE r) := by
+  intro l rest
+  unfold wRLE rRLE
+  simp only [rt_list (rt_pair rt_nat h), Option.bind_eq_bind, Option.bind_some,
+    expand_runs]
+
 theorem rt_row : RT wRow rRow := by
   intro r rest
   unfold wRow rRow
-  simp only [rt_list rt_cell, Option.bind_eq_bind, Option.bind_some]
+  simp only [rt_rle rt_cell, Option.bind_eq_bind, Option.bind_some]
 
 theorem rt_cursor : RT wCursor rCursor := by
   intro c rest

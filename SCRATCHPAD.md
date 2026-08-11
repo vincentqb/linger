@@ -422,3 +422,35 @@ serve, not an extraction; correspondence is by inspection + pinned by
 robust_test.py. This is the general recipe for OS primitives in this
 codebase — axiomatize the contract as a hypothesis, prove the protocol
 against it, so what is trusted is one reviewable line.
+
+
+## Checkpoint cost + RLE — 2026-06-01
+
+Q: "do we have shutdown-resume, and doesn't it need periodic disk
+writes?" Yes (step 7) and yes. But MEASURED the cost first and it was
+bad: blank 80x24 = 22.7 KiB, +5000 lines = 4.7 MiB, wide 200x50 +5000
+= 11.7 MiB. Cause: every cell stored verbatim w/ full pen (~12 B),
+so a 25-char line paid for 80 cells — ~935/960 B was trailing blanks.
+
+Fix: run-length encode the cell stream (wRLE/rRLE + runs/expand in
+Core/Checkpoint). Exact fidelity, no dependency, and the §Restore
+proof composes — added rt_rle resting on expand_runs (unRle∘rle=id),
+rt_row now uses rt_rle rt_cell. Re-measured: 22.7K→1.7K (13x),
+11.7M→2.0M (5.8x); "wide" == "deep" now since extra cols are all
+one blank run. Remaining ~400 B/line is real text + per-cell pen.
+Break-verified: expand off-by-one broke expand_runs → load_save.
+
+Cadence (confirmed, was already right): dirty flag set on ptyOut,
+cleared on checkpoint; 60s tick + last-detach; idle sessions never
+re-write; clean exit drops the ckpt. Write is synchronous in the pump
+and atomic (tmp+rename) — a big write briefly stalls the poll loop,
+another reason the RLE shrink matters on slow/NFS state dirs.
+
+Tests: Tests/Checkpoint.lean (6) pins runs/expand, that a blank row
+is <20 B AND round-trips, and end-to-end feed→save→load screen match.
+resume_test.py still green (format changed, behavior identical).
+
+Possible future win if ever needed (NOT done, YAGNI): identical-row
+RLE for many blank rows, or gzip. Per-cell RLE already gets the 6-13x;
+row-level would add maybe 2x on mostly-blank screens for real proof
+cost. Left as a one-line note.

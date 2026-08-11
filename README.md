@@ -88,6 +88,9 @@ a dumb loop that turns fds into events and effects into syscalls.
   cannot alter the screen (its only permitted effect is a checkpoint).
 - **§Restore** — `load (save s) = some s`, and `load` is total on
   arbitrary bytes: a torn or foreign checkpoint is ignored, never fatal.
+  Cells are run-length encoded, so the persisted size tracks real
+  content, not grid area (a blank 80×24 screen is ~1.7 KiB, a full 10k
+  scrollback a few MiB) — see *Reboot resume* below.
 - **§Isolate** — many clients on one session: bytes from one cannot
   alter another's record or its half-decoded frame.
 - **§Frame** / **§Name** / **§Remote** / **§Row** — protocol round-trip
@@ -130,6 +133,31 @@ machines breaks session ownership — see THEOREMS.md § Network
 filesystems. The hostname in the state path is what stops a
 network-mounted `$HOME` from letting two machines clobber each other's
 checkpoints; an explicit `LZMX_DIR` is used verbatim instead.
+
+## Reboot resume
+
+Sessions come back after a reboot, like tmux-continuum. The daemon
+checkpoints the terminal — grid, scrollback, cursor, pen, modes, cwd
+and labels — to `<state>/<host>/<name>.ckpt`, and attaching to a name
+whose daemon is gone replays that screen into a fresh shell in the
+saved directory.
+
+When it writes: on the last client's detach, and at most once every
+60 s *while there is new output* (an idle session never re-writes). On
+a clean exit the checkpoint is dropped — resume is for crashes and
+reboots, not for finished work.
+
+What it costs: cells are run-length encoded, so size tracks content,
+not screen area — a blank 80×24 screen is ~1.7 KiB, ~400 bytes per line
+of real text, a few MiB for a full 10k-line scrollback (bounded by
+§Bound; nothing grows without limit). The write is atomic
+(`tmp`+`rename`) and `load` is total on any bytes, so a checkpoint
+racing a reader, or a torn/foreign file, is never fatal — the daemon
+just starts fresh.
+
+What resume restores is the screen, not the process tree: your
+scrollback and layout return, the programs that were running do not.
+That is the deliberate continuum-shape trade.
 
 ## ssh
 
