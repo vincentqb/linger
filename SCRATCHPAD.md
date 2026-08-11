@@ -141,3 +141,41 @@ Proof recipes added this step:
 Hand-off (step 5+): daemon feeds Vt via feedBytes; reattach sends
 Render.restore v; preview via Render.previewLines; runtime must clear
 v.bell after signaling activity; resize via Vt.resize (Good-preserving).
+
+
+## Step 5 notes — 2026-06-01
+
+Settled: Session = effects-as-data machine (step : State → Event →
+State × List Effect); decoding lives IN the machine (per-client
+Wire.Decoder), so §Bound covers it. maxClients 16, maxLabels 64,
+checkpoint cadence 60s via tick. Clean child exit DROPS the
+checkpoint (resume is for crashes/reboots, not completed work).
+
+Proved: §Detach (closed/detachAll leave vt+labels untouched with zero
+effects; zero-client ptyOut advances vt identically; attach preserves
+scrollback; input never touches vt), §Bound(session) (clients/labels/
+decoder caps preserved by step for any event), §Frame machine-half
+(unknown + wrong-direction msgs → (s, [])), step_vt_good (daemon's Vt
+stays Good under any event stream — composes Vt.Good with the machine).
+§Name: sanitize establishes Valid for ANY input (no /, no NUL, no
+leading dot, nonempty, ≤80) + no-escape corollary.
+
+Break-verified: gating ptyOut's vt.feed on attachment (the zmx
+anti-pattern) broke 3 theorems + 2 tests. Reverted.
+
+New recipes:
+- `first`-alternative lists: a bare `simp` that PARTIALLY succeeds
+  eats the goal and reports unsolved at the end — always `(simp;
+  done)` inside `first`.
+- foldl-with-lookup preservation: name the fold (feedMsgs) in the CODE
+  so theorems can target it; induction generalizing the accumulator.
+- `set` tactic is Mathlib-only; `generalize h : expr = x` is the core
+  replacement (after dsimp to zeta-reduce lets).
+- Msg-driving tests via real Wire.encode frames double as decoder-path
+  integration tests.
+
+Hand-off (step 6 runtime): effects contract — send/close/writePty/
+resizePty/killChild/checkpoint/dropCheckpoint/exit; runtime owns
+per-client outbufs (cap 4 MiB, disconnect on overflow — the §Bound
+half that lives outside the machine, document in AGENTS); wait replies
+arrive via childExited; runtime supplies Event.tick every poll round.
