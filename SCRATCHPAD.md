@@ -93,3 +93,51 @@ Hand-off: tags frozen in Tests/Wire.lean golden frames (input=0,
 output=1, resize=2, attach=3, detachAll=4, kill=5, info=6, infoReply=7,
 history=8, exited=9, wait=10, labelSet=11, labelUnset=12, labelClear=13,
 done=14, err=15). New tags append; never reuse.
+
+
+## Step 4 notes — 2026-06-01
+
+Settled: Vt = per-byte `step` + `feed = foldl step` (so §Chunk is
+List.foldl_append, definitional); restore-grade scope (no reply
+channel, no reflow-on-resize, OSC8/sixel skipped) — rationale in
+Vt.lean header. Render.restore replays main+alt when in alt screen.
+
+Proved (Theorems/Vt.lean): `Good` composite invariant — cursor + saved
++ alt-stashed cursors in bounds, top≤bot<rows, scrollback ≤ 10000, CSI
+params ≤ 16, OSC acc ≤ 2048, u8need ≤ 3 — preserved by step/feed for
+ANY byte stream (§Total+§Bound), plus feed_append + feed_singletons
+(§Chunk) and resize/init Goodness. ~45 lemmas.
+
+The theorems caught two real bugs while proving:
+1. subFlags array could outgrow its guard (only params was checked) —
+   fixed by construction: one Array (Nat × Bool).
+2. resize didn't clamp the SAVED cursor — DECRC after a shrink would
+   restore out of bounds. Fixed + the resize cursor-rides-down idea
+   simplified to plain clamp.
+Break-verified: uncapping Ring.push broke 3 theorems. Reverted.
+
+Downgraded (recorded honestly): dims-invariance of step is NOT a
+proved theorem — every op preserves cols/rows syntactically except RIS
+(re-derives via clampDim, identity under Good), but stating it needs
+per-op dims lemmas through ite/foldl compositions (~25 more lemmas).
+The runtime re-reads cols/rows after feed, so nothing depends on it.
+THEOREMS.md §Total row updated.
+
+Proof recipes added this step:
+- Restructure code for proofs: tuple-lets → named ites; big functions
+  → named stages (printWrap/printPut/...; stepGround/stepCsi/...);
+  computed bounds → local `min` clamps. Each turned a stuck proof
+  into a 5-liner.
+- Good-preservation via obtain 15 fields / rebuild ⟨tuple⟩ — record
+  updates are defeq so the same tuple often just works.
+- Case-order-robust dispatch: `repeat' split; all_goals first | exact
+  lemA | ...` instead of positional bullets (match arms with
+  multi-patterns expand unpredictably).
+- `rw [if_pos hc]/[if_neg hc]` after by_cases when `split` can't see
+  through a projection-of-ite; `set` is Mathlib-only (unavailable).
+- NEVER `git checkout <file>` to revert an experiment on UNCOMMITTED
+  work (was lucky: file was untracked). String-level revert instead.
+
+Hand-off (step 5+): daemon feeds Vt via feedBytes; reattach sends
+Render.restore v; preview via Render.previewLines; runtime must clear
+v.bell after signaling activity; resize via Vt.resize (Good-preserving).
