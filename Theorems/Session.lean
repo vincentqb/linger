@@ -66,15 +66,30 @@ theorem onMsg_detachAll_vt (s : State) (c : Client) :
     (onMsg s c .detachAll).1 = s := rfl
 
 /-- Attach only resizes: the scrollback — the session's history — is
-untouched by any attach/detach cycle. -/
+untouched by any attach/detach cycle (observer or not). -/
 theorem onMsg_attach_sb (s : State) (c : Client) (cols rows : UInt32) :
     (onMsg s c (.attach cols rows)).1.vt.sb = s.vt.sb := by
-  simp [onMsg, State.setClient, Vt.Vt.resize]
+  unfold onMsg
+  dsimp only
+  split
+  · simp [State.setClient, Vt.Vt.resize]
+  · simp [State.setClient]
 
-/-- Keystrokes go to the pty, not the emulator: echo is the shell's
-job, so the machine's screen cannot drift from the real one. -/
-theorem onMsg_input (s : State) (c : Client) (bs : List UInt8) :
-    onMsg s c (.input bs) = (s, [.writePty bs]) := rfl
+/-- Keystrokes from a full client go to the pty, not the emulator:
+echo is the shell's job, so the machine's screen cannot drift. -/
+theorem onMsg_input (s : State) (c : Client) (bs : List UInt8)
+    (h : ¬(c.attached && !c.sizer) = true) :
+    onMsg s c (.input bs) = (s, [.writePty bs]) := by
+  unfold onMsg
+  simp [h]
+
+/-- A read-only observer's keyboard goes nowhere (abduco's `-r`):
+neither state nor pty sees it. -/
+theorem onMsg_input_readonly (s : State) (c : Client) (bs : List UInt8)
+    (h : (c.attached && !c.sizer) = true) :
+    onMsg s c (.input bs) = (s, []) := by
+  unfold onMsg
+  simp [h]
 
 /-! ## §Bound(session) -/
 

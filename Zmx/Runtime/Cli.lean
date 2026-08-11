@@ -25,6 +25,7 @@ Commands:
   [r]un <name> <command...>      Run a command in a session without attaching
   [s]end <name> <text...>        Send raw input to session pty
   [d]etach <name>                Detach all clients from a session
+  watch <name>                   Attach read-only (view without touching)
   [l]ist|ls [--porcelain]        List sessions (live and resumable)
   [k]ill <name>                  Kill session and all attached clients
   [hi]story <name>               Print session scrollback as plain text
@@ -206,6 +207,17 @@ def main (hooks : Hooks) (tui : IO UInt32) (args : List String) : IO UInt32 := d
     Daemon.serve name cwd cmd (hooks.save name) (hooks.drop name) restore
     return 0
   | ["attach", name] | ["a", name] => cmdAttach hooks name []
+  | ["watch", name] =>
+    -- read-only mirror (abduco -r): output only, detach key works
+    match ← Client.connect name with
+    | none =>
+      IO.eprintln s!"lzmx: no session '{name}'"
+      return 1
+    | some fd =>
+      let _ ← Client.attach fd true
+      IO.eprintln s!"
+lzmx: stopped watching '{name}'"
+      return 0
   | "attach" :: name :: cmd | "a" :: name :: cmd => cmdAttach hooks name cmd
   | "run" :: name :: cmd | "r" :: name :: cmd =>
     if cmd.isEmpty then

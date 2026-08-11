@@ -31,6 +31,12 @@ structure Client where
   cols : UInt32 := 80
   rows : UInt32 := 24
   attached : Bool := false
+  /-- attached with a real size (read-only observers attach 0×0 and
+  never influence the pty size — abduco's `-r`). -/
+  sizer : Bool := false
+  /-- attach order; the highest attached sizer owns the size
+  (abduco's better-resize-handling rule). -/
+  seq : Nat := 0
   /-- `lzmx wait` parked here until the child exits. -/
   waiting : Bool := false
   decoder : Wire.Decoder := {}
@@ -46,6 +52,8 @@ structure State where
   /-- pty output since the last checkpoint? -/
   dirty : Bool := false
   lastCkptMs : UInt64 := 0
+  /-- monotone attach counter, for size ownership. -/
+  attachSeq : Nat := 0
   deriving Repr, Inhabited
 
 /-- What the runtime feeds in. All byte payloads are `List UInt8`; the
@@ -97,8 +105,23 @@ def State.dropClient (s : State) (id : Nat) : State :=
   { s with clients := s.clients.filter (·.id != id) }
 
 def infoText (s : State) : List UInt8 :=
-  let fields := s.metaKv ++ s.labels.map (fun (k, v) => (s!"label.{k}", v))
+  let fields := s.metaKv
+    ++ [("clients", toString (s.clients.filter (·.attached)).length)]
+    ++ s.labels.map (fun (k, v) => (s!"label.{k}", v))
   (String.join (fields.map (fun (k, v) => s!"{k}\t{v}\n"))).toUTF8.toList
+
+/-- Resize the pty only on behalf of the size owner: the most recently
+attached client with a real terminal (abduco's rule — a read-only
+observer or an older mirror must not fight the active user's size). -/
+def sizeOwner (s : State) : Option Client :=
+  (s.clients.filter (fun c => c.attached && c.sizer)).foldl
+    (fun best c => match best with
+      | none => some c
+      | some b => if c.seq ≥ b.seq then some c else some b)
+    none
+
+def resizeEffects (s : State) (c : Client) : List Effect :=
+  if (sizeOwner s).any (·.id == c.id) then [.resizePty c.cols c.rows] else []
 
 /-- Send a byte payload as ≤ 64 KiB `output` frames (Wire §Bound wf). -/
 def outputMsgs (id : Nat) (bytes : List UInt8) : List Effect :=
@@ -112,20 +135,31 @@ def broadcast (s : State) (bytes : List UInt8) : List Effect :=
 def onMsg (s : State) (c : Client) (m : Msg) : State × List Effect :=
   match m with
   | .attach cols rows =>
-    let c := { c with attached := true, cols, rows }
-    let s := (s.setClient c)
-    let s := { s with vt := s.vt.resize cols.toNat rows.toNat }
-    (s, .resizePty cols rows
-          :: outputMsgs c.id (Render.restore s.vt).toList
+    -- 0×0 marks a read-only observer (abduco `-r`): it mirrors output
+    -- but never owns the size and its input is dropped
+    let sizer := cols != 0 && rows != 0
+    let c := { c with attached := true, sizer, seq := s.attachSeq, cols, rows }
+    let s := { s.setClient c with attachSeq := s.attachSeq + 1 }
+    let s := if sizer then { s with vt := s.vt.resize cols.toNat rows.toNat } else s
+    (s, resizeEffects s c
+          ++ outputMsgs c.id (Render.restore s.vt).toList
           ++ (match s.exited with
               | some st => [.send c.id (.exited st)]
               | none => []))
-  | .input bytes => (s, [.writePty bytes])
+  | .input bytes =>
+    -- attached observers are read-only; control connections (not
+    -- attached, e.g. `lzmx send`) keep their input rights
+    if c.attached && !c.sizer then (s, [])
+    else (s, [.writePty bytes])
   | .resize cols rows =>
     let c := { c with cols, rows }
     let s := s.setClient c
-    let s := { s with vt := s.vt.resize cols.toNat rows.toNat }
-    (s, [.resizePty cols rows])
+    -- only the newest real-terminal attacher owns the pty size
+    if c.attached && c.sizer && (sizeOwner s).any (·.id == c.id) then
+      ({ s with vt := s.vt.resize cols.toNat rows.toNat },
+       [.resizePty cols rows])
+    else
+      (s, [])
   | .detachAll =>
     (s, (s.clients.filter (·.attached) |>.map (fun c' => Effect.close c'.id))
           ++ [.send c.id .done])

@@ -93,12 +93,17 @@ def splitDetach (bs : ByteArray) (enabled : Bool) : ByteArray × Bool :=
     | none => (bs, false)
     | some i => (ByteArray.mk (bs.toList.take i).toArray, true)
 
-/-- Interactive attach. Returns the child's exit status when the
-session ended, none when we detached. -/
-partial def attach (fd : UInt32) : IO (Option UInt32) := do
+/-- Interactive attach. `readOnly` attaches as a 0×0 observer: output
+mirrors, keyboard is not forwarded (abduco's `-r`), detach key still
+works. Returns the child's exit status when the session ended, none
+when we detached. -/
+partial def attach (fd : UInt32) (readOnly : Bool := false) : IO (Option UInt32) := do
   let detachEnabled := (← IO.getEnv "LZMX_NO_DETACH_KEY").isNone
   let (cols, rows) ← winsizeGet stdinFd
-  sendMsg fd (.attach cols rows)
+  if readOnly then
+    sendMsg fd (.attach 0 0)
+  else
+    sendMsg fd (.attach cols rows)
   let saved ← termRaw stdinFd
   let mut lastSize := (cols, rows)
   let mut dec : Decoder := {}
@@ -109,17 +114,17 @@ partial def attach (fd : UInt32) : IO (Option UInt32) := do
       let revs ← poll #[stdinFd, fd] #[POLLIN, POLLIN] 200
       -- terminal resized? (polled: no signal machinery)
       let size ← winsizeGet stdinFd
-      if size != lastSize then
+      if size != lastSize && !readOnly then
         lastSize := size
         sendMsg fd (.resize size.1 size.2)
-      -- stdin → daemon
+      -- stdin → daemon (read-only: only the detach key is honored)
       if revs[0]! &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
         match ← read stdinFd 65536 with
         | none => leaving := true
         | some bs =>
           if !bs.isEmpty then
             let (out, detach) := splitDetach bs detachEnabled
-            if !out.isEmpty then
+            if !out.isEmpty && !readOnly then
               sendMsg fd (.input out.toList)
             if detach then leaving := true
       -- daemon → stdout

@@ -124,3 +124,54 @@ example :
       = true := by native_decide
 
 end Zmx.Core.Session.Tests
+
+
+namespace Abduco
+/-! Borrowed-from-abduco semantics (PLAN.md reference): read-only
+observers and newest-attacher-owns-the-size. -/
+
+open Zmx.Core.Session
+open Zmx.Core.Wire (Msg encode)
+
+/-- An observer (attach 0×0) sees output but its keys go nowhere. -/
+example :
+    (let (_, effs) := Tests.run [.connected 1, .bytes 1 (encode (.attach 0 0)),
+                                 .bytes 1 (encode (.input [120])),
+                                 .ptyOut [104, 105]]
+     (!Tests.hasEffect effs (fun e => match e with | .writePty _ => true | _ => false))
+       && Tests.hasEffect effs (fun e => match e with
+            | .send 1 (.output _) => true | _ => false)) = true := by native_decide
+
+/-- The newest full attacher owns the size; an older client's resize
+is recorded but does not touch the pty. -/
+example :
+    (let (_, effs) := Tests.run [
+        .connected 1, .bytes 1 (encode (.attach 80 24)),
+        .connected 2, .bytes 2 (encode (.attach 100 30)),
+        .bytes 1 (encode (.resize 120 40))]
+     let resizes := effs.filterMap (fun e => match e with
+       | .resizePty c r => some (c, r) | _ => none)
+     resizes == [(80, 24), (100, 30)]) = true := by native_decide
+
+/-- An observer never owns the size, even as the newest attacher. -/
+example :
+    (let (_, effs) := Tests.run [
+        .connected 1, .bytes 1 (encode (.attach 80 24)),
+        .connected 2, .bytes 2 (encode (.attach 0 0)),
+        .bytes 2 (encode (.resize 5 5))]
+     let resizes := effs.filterMap (fun e => match e with
+       | .resizePty c r => some (c, r) | _ => none)
+     resizes == [(80, 24)]) = true := by native_decide
+
+/-- `info` reports the attached-client count (abduco's session list
+marker, as data). -/
+example :
+    (let (_, effs) := Tests.run [.connected 1, .bytes 1 (encode (.attach 80 24)),
+                                 .connected 2, .bytes 2 (encode .info)]
+     Tests.hasEffect effs (fun e => match e with
+       | .send 2 (.infoReply bs) =>
+         let txt := (String.fromUTF8? (ByteArray.mk bs.toArray)).getD ""
+         (txt.splitOn "clients\t1").length ≥ 2
+       | _ => false)) = true := by native_decide
+
+end Abduco
