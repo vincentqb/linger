@@ -197,9 +197,10 @@ def cmdVersion : IO UInt32 := do
   IO.println s!"state:   {← Paths.stateDir}"
   return 0
 
-def main (hooks : Hooks) (args : List String) : IO UInt32 := do
+def main (hooks : Hooks) (tui : IO UInt32) (args : List String) : IO UInt32 := do
   Zmx.Posix.init
   match args with
+  | [] => tui
   | "__daemon" :: name :: cwd :: cmd =>
     let restore := (← hooks.load name).map (fun (vt, _, labels) => (vt, labels))
     Daemon.serve name cwd cmd (hooks.save name) (hooks.drop name) restore
@@ -248,7 +249,7 @@ def main (hooks : Hooks) (args : List String) : IO UInt32 := do
     return rc
   | ["clear", name] | ["cl", name] => requireLive name .labelClear
   | ["version"] | ["v"] => cmdVersion
-  | ["help"] | ["h"] | [] =>
+  | ["help"] | ["h"] =>
     IO.println usage
     return 0
   | _ =>

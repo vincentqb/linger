@@ -212,3 +212,40 @@ shell's own cmdline — use pkill -x lzmx.
 Step-7 seam ready: Cli.Hooks {save, drop, load}; daemon calls
 save/drop on checkpoint effects; connectUpsert calls load for
 resume-cwd; __daemon passes restoreVt into serve.
+
+
+## Step 7 notes — 2026-06-01
+
+Settled: checkpoint = magic "LZMX"+v1, LEB128 Nats (UNCONDITIONAL
+roundtrip — no fits-in-u32 caveats anywhere), full Vt minus parser
+state (Vt.quiesce; a checkpoint loses at most one partial escape
+sequence), ring geometry verbatim. Atomic write (tmp+rename); corrupt/
+torn/foreign file → load = none → fresh start (§Restore totality is
+by construction: R α = List UInt8 → Option, structural recursion).
+Save points: 60s-while-dirty tick + last-attached-client detach.
+Clean child exit DROPS the checkpoint; SIGKILL keeps it.
+
+Proved: rt_* combinator ladder → load_save (exact modulo quiesce) +
+load_save_exact. §Detach restated: detach's only permitted effect is
+checkpoint. Fixed en route: marks-cap 8 in Vt.print (unbounded
+combining-mark growth — a §Bound hole found by checkpoint design
+review).
+
+Verified live (tests/resume_test.py, 7 checks): detach-checkpoint,
+SIGKILL survival, restore of screen+labels+cwd on reattach, clean-exit
+drop, corrupt-checkpoint tolerance.
+
+New recipes:
+- do-notation Option chains reduce with `simp only
+  [Option.bind_eq_bind, Option.bind_some]` + RT-lemmas as simp args —
+  but ONLY if RT is an `abbrev` (a `def` Prop wrapper makes hypotheses
+  opaque to simp).
+- UInt8 literal toNat needs `show (128:UInt8).toNat = 128 from rfl` in
+  simp sets (toNat_ofNat' covers ofNat-applications only).
+- set_option goes BEFORE the doc comment.
+- `clear` UInt-typed hypotheses before omega when they drag opaque
+  atoms in.
+- Test-harness lesson: `list` shows the SHELL pid; the daemon is
+  `pgrep -f '__daemon <name>'` + /proc environ filter for isolation.
+- My python -c inline edits fail silently on quote/escape collisions —
+  ALWAYS verify with grep after, or use str_replace on files.
