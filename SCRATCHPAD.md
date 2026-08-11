@@ -249,3 +249,30 @@ New recipes:
   `pgrep -f '__daemon <name>'` + /proc environ filter for isolation.
 - My python -c inline edits fail silently on quote/escape collisions —
   ALWAYS verify with grep after, or use str_replace on files.
+
+
+## Step 8 + abduco review notes — 2026-06-01
+
+Step 8 done: pure fzf-shaped picker (Core/Tui: step + render, one
+mode, Dracula/status-top per the user's configs) + terminal shell
+(Runtime/Tui). Attach EXECS the plain client — TUI never sits in the
+byte path. §Bound(tui) proved (sel clamped into matches, query ≤ 64).
+8/8 pty-driven checks (tests/tui_test.py) incl. type-to-create and
+C-x C-x confirm-kill.
+
+PLAN.md updated by user: added abduco reference ("but unmaintained").
+Reviewed abduco README; borrowed 3 cheap wins, all tested:
+1. `lzmx watch <name>` — read-only attach (observer attaches 0×0,
+   input dropped daemon-side too — theorem onMsg_input_readonly).
+2. Newest-real-attacher owns the pty size (Session.sizeOwner);
+   observers and older mirrors can't fight the active user's size.
+3. `clients` count in info (abduco's `*` marker, as data for list/TUI).
+Rejected: keep-corpse-for-exit-status (conflicts attach-is-upsert;
+our `wait` + exited-frames cover it), SIGUSR1 socket recreation
+(checkpoint+resume already covers daemon-loss better), configurable
+detach key beyond the env kill-switch (PLAN: no customization).
+Deliberate stale-size-on-owner-detach: §Detach purity (detach's only
+effect is checkpoint) outranks perfect mirror re-fit — documented.
+
+Step 9 (remote over ssh) next: Core/Remote parser + TUI wiring
+(hostLabel/Host.remote already in place), then Step 10 verify.

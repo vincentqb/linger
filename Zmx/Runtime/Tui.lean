@@ -1,5 +1,6 @@
 import Zmx.Posix
 import Zmx.Core.Tui
+import Zmx.Core.Remote
 import Zmx.Core.Checkpoint
 import Zmx.Core.Render
 import Zmx.Runtime.Paths
@@ -52,6 +53,39 @@ def decodeKeys (bs : List UInt8) : List Key :=
 
 def previewLines : Nat := 40
 
+/-- Configured remote hosts: `~/.config/lzmx/remotes` (one host per
+line, `#` comments) plus `$LZMX_REMOTES` (comma-separated). Hosts are
+ssh destinations, taken as-is — they're the user's own config, not
+remote data. -/
+def remoteHosts : IO (List String) := do
+  let fromEnv := match ← IO.getEnv "LZMX_REMOTES" with
+    | some s => (s.splitOn ",").map (·.trimAscii.toString)
+    | none => []
+  let home := (← IO.getEnv "HOME").getD "/tmp"
+  let path := s!"{home}/.config/lzmx/remotes"
+  let fromFile ←
+    if ← System.FilePath.pathExists path then do
+      let txt ← IO.FS.readFile path
+      pure ((txt.splitOn "\n").map (·.trimAscii.toString))
+    else pure []
+  return (fromEnv ++ fromFile).filter (fun h => !h.isEmpty && !h.startsWith "#")
+
+/-- Ask one host for its sessions. Failures (host down, no lzmx there,
+timeout) yield `[]` — a dead remote must never block the local picker.
+`BatchMode=yes` keeps ssh from prompting inside the TUI. -/
+def fetchRemote (host : String) : IO (List Row) := do
+  let out ← try
+      IO.Process.output {
+        cmd := "ssh",
+        args := #["-o", "BatchMode=yes", "-o", "ConnectTimeout=3", "--",
+                  host, "lzmx", "list", "--porcelain"] }
+    catch _ => pure { exitCode := 1, stdout := "", stderr := "" }
+  if out.exitCode != 0 then return []
+  return (Zmx.Core.Remote.parse out.stdout).map (fun r => {
+    name := r.name, host := .remote host,
+    state := if r.live then .live else .resumable,
+    cmd := r.cmd, labels := r.labels })
+
 /-- Rows: live daemons (info query each) + resumable checkpoints. -/
 def gatherRows : IO (List Row) := do
   let live ← Paths.listSocketNames
@@ -70,6 +104,9 @@ def gatherRows : IO (List Row) := do
   for name in ckpts do
     if !live.contains name then
       rows := rows ++ [{ name, state := .resumable }]
+  -- remote hosts last: a slow ssh must not reorder local rows
+  for host in ← remoteHosts do
+    rows := rows ++ (← fetchRemote host)
   return rows
 
 /-- Live preview: ask the daemon for history, keep the tail. -/
@@ -109,6 +146,19 @@ def fetchCkptPreview (name : String) : IO (List String) := do
   match Zmx.Core.Checkpoint.load bytes.toList with
   | some ck => return Zmx.Core.Render.previewLines ck.vt previewLines
   | none => return ["(corrupt checkpoint)"]
+
+/-- Remote preview: `ssh host lzmx history <name>`, tail kept. Failure
+is a message, never an exception. -/
+def fetchRemotePreview (host name : String) : IO (List String) := do
+  let out ← try
+      IO.Process.output {
+        cmd := "ssh",
+        args := #["-o", "BatchMode=yes", "-o", "ConnectTimeout=3", "--",
+                  host, "lzmx", "history", name] }
+    catch _ => pure { exitCode := 1, stdout := "", stderr := "" }
+  if out.exitCode != 0 then return [s!"({host}: unavailable)"]
+  let lines := out.stdout.splitOn "\n"
+  return lines.drop (lines.length - previewLines)
 
 structure Term where
   saved : ByteArray
@@ -160,7 +210,7 @@ partial def runEffects (t : Term) (st : State) (effs : List Effect) :
       let lines ← match host, rowState with
         | .local, some RowState.live => fetchLivePreview name
         | .local, _ => fetchCkptPreview name
-        | .remote _, _ => pure ["(remote preview via ssh — step 9)"]
+        | .remote h, _ => fetchRemotePreview h name
       let (st', effs') := step st (.previewUpdated name host lines)
       st := st'
       let (st'', more) ← runEffects t st effs'
