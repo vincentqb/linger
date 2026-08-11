@@ -38,3 +38,23 @@ ctrl-\ (disable via env NO_DETACH_KEY); multiple clients per session;
 socket per session in XDG_RUNTIME_DIR/zmx; ZMX_SESSION env inside;
 labels get/set/unset/clear; list --short/--where k=v; history --vt;
 wait; run -d; ssh workflow = `ssh -t host zmx attach name`.
+
+
+## Step 2 notes — 2026-06-01
+
+Settled: entire OS surface = c/shim.c (~25 wrappers) + Zmx/Posix.lean.
+Conventions: all Lean object args borrowed (@&); tuples returned as
+packed UInt64 (pid<<32|fd) to keep C dumb; read returns Option
+ByteArray (none=EOF, some #[]=EAGAIN); write returns Int64 (-1 = peer
+gone, a value not an exception, so daemons treat disconnects as data).
+
+New env finding: toolchain's llvm-ar ALSO glibc-blocked (like its
+clang); wrapper now sets LEAN_AR=/usr/bin/ar. Lake honors LEAN_AR.
+
+Lean gotchas hit: imports must precede module doc comments; `a |>.f ≥ n`
+parses as `a |>. (f ≥ n)` — parenthesize; String.trim deprecated in
+4.32 (returns Slice now) — avoided.
+
+Hand-off: daemon loops should poll-then-read (drain in ZTest.lean is
+the shape); accept fd must be setNonblock'd (poll/accept race); reap
+via waitpidNohang poll loop, -2 means not-our-child (use alive).

@@ -9,6 +9,8 @@
 # (Recipe proven in ~/lean-tmux/env/lean_env.sh.)
 export PATH="/home/linuxbrew/.linuxbrew/bin:$HOME/.elan/bin:$PATH"
 export LEAN_CC=clang
+# The toolchain's llvm-ar is also glibc-blocked; system binutils ar works.
+export LEAN_AR=/usr/bin/ar
 _TC="$HOME/.elan/toolchains/leanprover--lean4---v4.32.0"
 export LIBRARY_PATH="${_TC}/lib:${_TC}/lib/lean${LIBRARY_PATH:+:$LIBRARY_PATH}"
 exec lake "$@"

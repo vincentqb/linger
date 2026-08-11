@@ -14,6 +14,25 @@ point is that the state machines are ours to prove things about. -/
 @[default_target]
 lean_lib Zmx where
 
+/-- The C shim — the project's entire non-Lean surface (see AGENTS.md).
+Compiled with clang (the ./lake wrapper puts Homebrew clang on PATH;
+the toolchain's bundled one cannot run on this host's glibc 2.26). -/
+target shim.o pkg : System.FilePath := do
+  let oFile := pkg.buildDir / "c" / "shim.o"
+  let srcJob ← inputTextFile <| pkg.dir / "c" / "shim.c"
+  let weakArgs := #["-I", (← getLeanIncludeDir).toString]
+  buildO oFile srcJob weakArgs #["-fPIC", "-O2", "-Wall", "-Werror"] "clang" getLeanTrace
+
+extern_lib libzmxshim pkg := do
+  let shimO ← fetch <| pkg.target ``shim.o
+  buildStaticLib (pkg.staticLibDir / nameToStaticLib "zmxshim") #[shimO]
+
+/-- IO smoke tests for the Posix surface (spawns ptys; run, not just built):
+`./lake exe ztest`. forkpty lives in libutil on glibc < 2.34. -/
+lean_exe ztest where
+  root := `ZTest
+  moreLinkArgs := #["-lutil"]
+
 /-- Proofs. Separate from `Zmx` so the executable does not carry them;
 `THEOREMS.md` names the tension each section resolves. Root module
 imports every Theorems.X — a proof file not imported there is a bug. -/
