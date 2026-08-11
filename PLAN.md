@@ -13,6 +13,7 @@ Instructions:
 Reference:
 - https://github.com/tmux/tmux/ is the gold standard
 - https://github.com/neurosnap/zmx and https://github.com/mdsakalu/zmx-session-manager are nicely decoupled
+- https://github.com/martanne/abduco -- but unmaintained
 - https://github.com/zellij-org/zellij -- Love the interface but seems to crash under high cpu or memory load. Need theorems preventing this.
 - Experimental: ~/CodebaseQUENNV/2026/lean-dean and ~/CodebaseQUENNV/2026/pcae-lean for structural inspiration.
 - Experimental: ~/pytmux for a python port of tmux
