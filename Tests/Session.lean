@@ -48,12 +48,13 @@ example :
        && ((s1.vt.getRow 0).toList.take 5 == (s2.vt.getRow 0).toList.take 5)) = true := by
   native_decide
 
-/-- A client closing changes nothing but the roster. -/
+/-- A client closing changes nothing but the roster (a checkpoint
+effect is permitted — that's the reboot-resume save point). -/
 example :
     (let (sA, _) := run [.connected 1, .bytes 1 (encode (.attach 80 24)),
                          .ptyOut "x".toUTF8.toList]
      let (sB, effsB) := step sA (.closed 1)
-     sB.clients.isEmpty && effsB.isEmpty
+     sB.clients.isEmpty && effsB.all (· == .checkpoint)
        && (sB.vt.getRow 0 == sA.vt.getRow 0)) = true := by native_decide
 
 /-- kill: child killed, checkpoint dropped, daemon exits. -/

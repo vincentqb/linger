@@ -34,14 +34,19 @@ theorem onMsg_wrong_direction (s : State) (c : Client) (bs : List UInt8) :
 
 /-! ## §Detach -/
 
-/-- A client vanishing changes nothing but the client list — the
-screen, scrollback, labels are exactly as before, and nothing else
-happens. Detach is free. -/
+/-- A client vanishing changes nothing but the client list — screen,
+scrollback, labels exactly as before — and cannot signal anyone: the
+only effect detach may produce is a checkpoint (reboot-resume's save
+point when the last attached client leaves). -/
 theorem step_closed (s : State) (id : Nat) :
     (step s (.closed id)).1.vt = s.vt ∧
     (step s (.closed id)).1.labels = s.labels ∧
-    (step s (.closed id)).2 = [] := by
-  refine ⟨rfl, rfl, rfl⟩
+    (step s (.closed id)).2.all (· == .checkpoint) := by
+  unfold step
+  dsimp only
+  split
+  · exact ⟨rfl, rfl, by simp⟩
+  · exact ⟨rfl, rfl, by simp⟩
 
 /-- The session with zero clients still advances: pty output reaches
 the emulator exactly as it would with clients (broadcast just has no
@@ -224,10 +229,15 @@ theorem step_bounded (s : State) (ev : Event) (h : Bounded s) :
             rcases hsplit : c.decoder.feed chunk with ⟨d2, ms2⟩
             rw [hsplit] at this
             simpa [hsplit] using this
-  · -- closed
-    refine ⟨Nat.le_trans (dropClient_length_le s _) hcl, hlb, ?_⟩
-    intro c' hmem
-    exact hdec c' ((List.mem_filter.mp hmem).1)
+  · -- closed (may checkpoint; state shape identical either way)
+    dsimp only
+    split
+    · refine ⟨Nat.le_trans (dropClient_length_le s _) hcl, hlb, ?_⟩
+      intro c' hmem
+      exact hdec c' ((List.mem_filter.mp hmem).1)
+    · refine ⟨Nat.le_trans (dropClient_length_le s _) hcl, hlb, ?_⟩
+      intro c' hmem
+      exact hdec c' ((List.mem_filter.mp hmem).1)
   · -- ptyOut
     exact ⟨hcl, hlb, hdec⟩
   · -- childExited
@@ -282,7 +292,10 @@ theorem step_vt_good (s : State) (ev : Event) (h : Good s.vt) :
       · exact h
       · apply feedMsgs_vt_good
         simpa [State.setClient] using h
-  · exact h
+  · dsimp only
+    split
+    · exact h
+    · exact h
   · exact Zmx.Core.Vt.Good.feed _ h
   · exact h
   · split

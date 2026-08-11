@@ -179,3 +179,36 @@ resizePty/killChild/checkpoint/dropCheckpoint/exit; runtime owns
 per-client outbufs (cap 4 MiB, disconnect on overflow — the §Bound
 half that lives outside the machine, document in AGENTS); wait replies
 arrive via childExited; runtime supplies Event.tick every poll round.
+
+
+## Step 6 notes — 2026-06-01
+
+lzmx is a working program: attach(upsert)/run/send/detach/list
+(--porcelain)/kill/history/wait/get/set/unset/clear/version/help.
+Verified via tests/attach_test.py (pty-driven, 8 checks): detach key
+ctrl-\, restore-on-reattach, two-client mirroring, background
+advance, exit-status through `wait`.
+
+Runtime shape: Daemon.pollRound (fd→Event) + pump (Effect→syscall,
+follow-up events re-enter the machine so the roster stays true);
+per-conn outbufs capped 4 MiB (runtime §Bound half: slow client =
+disconnected, never growth). Client polls at 200ms and diffs
+winsizeGet for resize (no signal machinery at all).
+
+Bugs found live:
+- pollRound iterated rt.conns AFTER accepts appended to it → revs
+  index misalignment → daemon panic "index out of bounds". Fix:
+  snapshot `polled` before poll; conns joined mid-round wait for the
+  next round. LESSON: any poll loop must freeze its fd set.
+- one-shot verbs that expect no reply (send/kill) must not drainReplies
+  — added Client.sendOnly; detachAll now replies done.
+- python pty.fork() gives 0x0 winsize → clamps to 1x1 grid — set
+  TIOCSWINSZ in test harnesses (a real terminal always has a size).
+
+Gotchas: Int64.toNat is toNatClampNeg in 4.32; `(a, b : T)` tuple
+ascription must be ((a, b) : T); pkill -f 'lzmx' matches the CALLING
+shell's own cmdline — use pkill -x lzmx.
+
+Step-7 seam ready: Cli.Hooks {save, drop, load}; daemon calls
+save/drop on checkpoint effects; connectUpsert calls load for
+resume-cwd; __daemon passes restoreVt into serve.

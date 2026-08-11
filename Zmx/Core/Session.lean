@@ -191,7 +191,16 @@ def step (s : State) (ev : Event) : State × List Effect :=
         (s.dropClient id, [.close id])
       else
         feedMsgs id msgs (s.setClient { c with decoder := dec }, [])
-  | .closed id => (s.dropClient id, [])
+  | .closed id =>
+    -- checkpoint when the last attached client leaves (reboot-resume's
+    -- main save point; detach itself must stay side-effect-free
+    -- otherwise — §Detach allows only this)
+    let hadAttached := s.clients.any (fun c => c.id == id && c.attached)
+    let s' := s.dropClient id
+    if s.dirty && hadAttached && s'.clients.all (fun c => !c.attached) then
+      ({ s' with dirty := false }, [.checkpoint])
+    else
+      (s', [])
   | .ptyOut chunk =>
     ({ s with vt := s.vt.feed chunk, dirty := true }, broadcast s chunk)
   | .childExited status =>

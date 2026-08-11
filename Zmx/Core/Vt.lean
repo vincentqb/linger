@@ -372,11 +372,13 @@ def Vt.print (v : Vt) (ch : Char) : Vt :=
             then decLine ch else ch
   let w := charWidth ch
   if w == 0 then
-    -- combining mark: attach to the cell before the cursor
+    -- combining mark: attach to the cell before the cursor (capped:
+    -- adversarial mark-streams must not grow a cell — §Bound)
     let cx := if v.cursor.pending then v.cursor.x
               else if v.cursor.x == 0 then 0 else v.cursor.x - 1
     let cell := v.getCell cx v.cursor.y
-    v.putCell cx v.cursor.y { cell with marks := cell.marks ++ [ch] }
+    if cell.marks.length ≥ 8 then v
+    else v.putCell cx v.cursor.y { cell with marks := cell.marks ++ [ch] }
   else
     ((((v.printWrap).printWideWrap w).printShift w).printPut ch w).printAdvance w
 
@@ -798,6 +800,11 @@ def Vt.step (v : Vt) (b : UInt8) : Vt :=
 /-- Feed a chunk. §Chunk holds definitionally: `List.foldl_append`. -/
 def Vt.feed (v : Vt) (bytes : List UInt8) : Vt :=
   bytes.foldl Vt.step v
+
+/-- Forget partial parser state (what a checkpoint deliberately does
+not persist — see `Zmx.Core.Checkpoint`). -/
+def Vt.quiesce (v : Vt) : Vt :=
+  { v with pstate := .ground, u8need := 0, u8acc := 0 }
 
 /-- The runtime hands us `ByteArray`s; convert at the boundary. -/
 def Vt.feedBytes (v : Vt) (bytes : ByteArray) : Vt :=

@@ -202,10 +202,12 @@ partial def pollRound (rt : Rt) : IO (Rt × List Event) := do
           events := events ++ [.closed c.fd.toNat]
   return (rt, events)
 
-/-- Daemon main. Blocks until the session ends. -/
+/-- Daemon main. Blocks until the session ends. `restore` is a loaded
+checkpoint: prior screen + labels (cwd was already consumed by the
+spawner). -/
 partial def serve (name : String) (cwd : String) (argv : List String)
     (saveCkpt : State → IO Unit) (dropCkpt : IO Unit)
-    (restoreVt : Option Zmx.Core.Vt.Vt) : IO Unit := do
+    (restore : Option (Zmx.Core.Vt.Vt × List (String × String))) : IO Unit := do
   Zmx.Posix.init
   ignoreSighup
   let sockPath ← Paths.socketPath name
@@ -227,9 +229,10 @@ partial def serve (name : String) (cwd : String) (argv : List String)
     #[s!"LZMX_SESSION={name}"]
   setNonblock ptyFd
   let created ← realtimeS
-  let vt0 := restoreVt.getD (Zmx.Core.Vt.Vt.init 80 24)
+  let vt0 := (restore.map (·.1)).getD (Zmx.Core.Vt.Vt.init 80 24)
   let st : State := {
     vt := vt0
+    labels := (restore.map (·.2)).getD []
     metaKv := [
       ("name", name), ("pid", toString pid),
       ("created", toString created),

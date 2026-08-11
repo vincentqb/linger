@@ -420,6 +420,10 @@ theorem print {v : Vt} (ch : Char) (h : Good v) : Good (v.print ch) := by
   all_goals first
     | exact putCell _ _ _ h
     | exact printAdvance _ (printPut _ _ (printShift _ (printWideWrap _ (printWrap h))))
+    | (repeat' split
+       all_goals first
+         | exact h
+         | exact putCell _ _ _ h)
 
 theorem acceptChar {v : Vt} (n : Nat) (h : Good v) : Good (v.acceptChar n) := by
   unfold Vt.acceptChar

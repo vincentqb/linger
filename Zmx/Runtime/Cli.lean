@@ -200,13 +200,9 @@ def cmdVersion : IO UInt32 := do
 def main (hooks : Hooks) (args : List String) : IO UInt32 := do
   Zmx.Posix.init
   match args with
-  | ["__daemon", name, cwd] =>
-    Daemon.serve name cwd [] (hooks.save name) (hooks.drop name)
-      ((← hooks.load name).map (·.1))
-    return 0
   | "__daemon" :: name :: cwd :: cmd =>
-    Daemon.serve name cwd cmd (hooks.save name) (hooks.drop name)
-      ((← hooks.load name).map (·.1))
+    let restore := (← hooks.load name).map (fun (vt, _, labels) => (vt, labels))
+    Daemon.serve name cwd cmd (hooks.save name) (hooks.drop name) restore
     return 0
   | ["attach", name] | ["a", name] => cmdAttach hooks name []
   | "attach" :: name :: cmd | "a" :: name :: cmd => cmdAttach hooks name cmd
