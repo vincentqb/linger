@@ -454,3 +454,61 @@ Possible future win if ever needed (NOT done, YAGNI): identical-row
 RLE for many blank rows, or gzip. Per-cell RLE already gets the 6-13x;
 row-level would add maybe 2x on mostly-blank screens for real proof
 cost. Left as a one-line note.
+
+
+## Real second-machine test on gpu2/gpu3 — 2026-06-01
+
+Goal: validate the remote-over-ssh path against a REAL machine (only
+fake-ssh-shim tested before). Did it on gpu2 + gpu3 (AL2023, glibc
+2.34). All live checks green: TUI lists remote sessions over real
+`ssh HOST lzmx list --porcelain`, previews via `ssh HOST lzmx history`,
+attach execs `ssh -t HOST lzmx attach NAME` into the real remote shell,
+detach leaves it alive; and LZMX_REMOTES=gpu2,gpu3 aggregates BOTH real
+hosts into one local TUI (multi-host fan-out — never exercised by the
+fake test). New test: tests/remote_live_test.py (needs a reachable
+remote; NOT in e2e.sh, which stays hermetic).
+
+REAL PORTABILITY BUG FOUND + FIXED (the main outcome):
+- lzmx wouldn't build on gpu2. Chain of wrong theories, each killed by
+  looking rather than guessing:
+  1. "glibc 2.34 merged libutil into libc, drop -lutil" — WRONG. The
+     Lean toolchain links with `--sysroot` into its OWN bundled glibc
+     (lib/glibc), not the host's. The rsp proves it.
+  2. The bundled glibc has NO libutil and its libc.so lacks forkpty
+     (nm count 0). Lean expects the SYSTEM to supply forkpty. That works
+     on my box only because ./lake uses Homebrew clang, which also
+     searches /usr/lib64 (glibc 2.26 has libutil.so + forkpty). Under
+     the toolchain's own clang+sysroot on gpu2, forkpty is simply
+     unreachable — bundled libc lacks it, no bundled libutil, system
+     libs sysrooted away.
+  - FIX: rewrote zmx_spawn_pty from forkpty(3) (libutil) to the
+    posix_openpt/grantpt/unlockpt/ptsname/setsid/TIOCSCTTY sequence —
+    all plain libc, present in the bundled glibc. Removes the libutil
+    dependency ENTIRELY: no -lutil, no lakefile conditional, no wrapper
+    env var. Builds clean on glibc 2.26 (./lake) AND 2.34 (plain lake).
+    ldd on the gpu2 binary shows no libutil. Local ztest + full e2e
+    still green (the delicate pty/ctty path is covered by the
+    interactive suites).
+  - Dead ends I tried first and reverted: conditional -lutil via
+    get_config? (a top-level `def` can't see -K config), then via
+    run_io+env (worked mechanically but the whole approach is wrong on
+    modern glibc since forkpty isn't in libutil there anyway).
+
+OPERATIONAL findings (compute-gpu-jobs domain):
+- ssh-agent wedged MID-SESSION (was flaky from the start: `ssh-add -l`
+  → "agent refused operation"). Symptom: `ssh gpu2 true` hangs to
+  timeout while the box is fine. Fix: `-o IdentityAgent=none` (skill's
+  documented pitfall) or unset SSH_AUTH_SOCK. lzmx's own `ssh` children
+  need the agent env removed too, else fetchRemote hangs — the live
+  test pops SSH_AUTH_SOCK from the child env.
+- rsync `c/shim.c HOST:dir/` FLATTENS to dir/shim.c (not dir/c/shim.c).
+  Cost me a rebuild-on-stale round. Use explicit dest `dir/c/shim.c`
+  or `-R`. Lake then also cached the stale .o — had to rm the shim
+  artifacts to force recompile.
+- AL2023 build is actually CLEANER than my box: glibc 2.34 runs the
+  toolchain's bundled clang, so plain `lake build` works with none of
+  this box's Homebrew-clang / LEAN_AR workarounds.
+- Setup on a fresh box: elan install (--default-toolchain none) + rsync
+  source + `lake build lzmx` (first run fetches toolchain) + symlink
+  binary into ~/.local/bin (on the non-interactive ssh PATH so bare
+  `lzmx` resolves for `ssh HOST lzmx ...`).

@@ -14,7 +14,6 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
-#include <pty.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -188,9 +187,15 @@ LEAN_EXPORT lean_obj_res zmx_poll(b_lean_obj_arg fds, b_lean_obj_arg events,
 
 /* zmx_spawn_pty : UInt32 -> UInt32 -> @& String -> @& String
  *                 -> @& Array String -> @& Array String -> IO UInt64
- * forkpty + execvp. Returns pid<<32 | masterFd. cwd "" = inherit.
- * extraEnv entries are "K=V" strings applied with putenv semantics.
- * Child resets SIGPIPE to default before exec; _exit(127) on failure. */
+ * open a pty and fork+execvp a child on its slave. Returns
+ * pid<<32 | masterFd. cwd "" = inherit. extraEnv entries are "K=V".
+ * Child resets SIGPIPE/SIGHUP to default before exec; _exit(127) on fail.
+ *
+ * Uses the POSIX posix_openpt family rather than forkpty(3): forkpty
+ * lives in libutil, which the Lean toolchain does not bundle and which
+ * modern glibc (>= 2.34) folds into libc with no link stub — so
+ * -lutil is unportable. posix_openpt/grantpt/unlockpt/ptsname/setsid/
+ * TIOCSCTTY are all plain libc and do exactly what forkpty wraps. */
 LEAN_EXPORT lean_obj_res zmx_spawn_pty(uint32_t cols, uint32_t rows,
                                        b_lean_obj_arg cwd, b_lean_obj_arg prog,
                                        b_lean_obj_arg args, b_lean_obj_arg extra_env,
@@ -209,15 +214,41 @@ LEAN_EXPORT lean_obj_res zmx_spawn_pty(uint32_t cols, uint32_t rows,
     for (size_t i = 0; i < nargs; i++)
         argv[i + 1] = (char *)lean_string_cstr(lean_array_get_core(args, i));
 
-    int master = -1;
-    pid_t pid = forkpty(&master, NULL, NULL, &ws);
-    if (pid < 0) {
-        free(argv);
-        return io_err("forkpty");
+    /* master pty, set up before fork so the slave name is known to the child */
+    int master = posix_openpt(O_RDWR | O_NOCTTY);
+    if (master < 0) { free(argv); return io_err("posix_openpt"); }
+    if (grantpt(master) < 0 || unlockpt(master) < 0) {
+        int e = errno; close(master); free(argv); errno = e;
+        return io_err("grantpt/unlockpt");
     }
-    if (pid == 0) { /* child: slave pty is now stdin/stdout/stderr + ctty */
+    /* ptsname's static buffer must be read before fork (async-signal-safe
+     * territory after); copy it out. */
+    char slavePath[128];
+    const char *pn = ptsname(master);
+    if (!pn || strlen(pn) >= sizeof slavePath) {
+        close(master); free(argv);
+        return io_err("ptsname");
+    }
+    memcpy(slavePath, pn, strlen(pn) + 1);
+    fcntl(master, F_SETFD, FD_CLOEXEC);  /* child must not inherit the master */
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        int e = errno; close(master); free(argv); errno = e;
+        return io_err("fork");
+    }
+    if (pid == 0) { /* child: make the slave our controlling tty + stdio */
         signal(SIGPIPE, SIG_DFL);
         signal(SIGHUP, SIG_DFL);
+        setsid();                        /* new session; drop any old ctty */
+        int slave = open(slavePath, O_RDWR);
+        if (slave < 0) _exit(127);
+        ioctl(slave, TIOCSCTTY, 0);      /* slave becomes the controlling tty */
+        ioctl(slave, TIOCSWINSZ, &ws);   /* forkpty sets this on the master; either works */
+        dup2(slave, 0);
+        dup2(slave, 1);
+        dup2(slave, 2);
+        if (slave > 2) close(slave);
         for (size_t i = 0; i < lean_array_size(extra_env); i++) {
             /* putenv keeps the pointer; the string outlives us via exec or _exit */
             putenv(strdup(lean_string_cstr(lean_array_get_core(extra_env, i))));

@@ -28,10 +28,10 @@ extern_lib libzmxshim pkg := do
   buildStaticLib (pkg.staticLibDir / nameToStaticLib "zmxshim") #[shimO]
 
 /-- IO smoke tests for the Posix surface (spawns ptys; run, not just built):
-`./lake exe ztest`. forkpty lives in libutil on glibc < 2.34. -/
+`./lake exe ztest`. The shim uses only libc (`posix_openpt`, not the
+libutil `forkpty`), so no extra link args on any glibc. -/
 lean_exe ztest where
   root := `ZTest
-  moreLinkArgs := #["-lutil"]
 
 /-- Proofs. Separate from `Zmx` so the executable does not carry them;
 `THEOREMS.md` names the tension each section resolves. Root module
@@ -45,4 +45,3 @@ lean_lib Tests where
 @[default_target]
 lean_exe lzmx where
   root := `Main
-  moreLinkArgs := #["-lutil"]
