@@ -127,11 +127,12 @@ def onMsg (s : State) (c : Client) (m : Msg) : State × List Effect :=
     let s := { s with vt := s.vt.resize cols.toNat rows.toNat }
     (s, [.resizePty cols rows])
   | .detachAll =>
-    (s, s.clients.filter (·.attached) |>.map (fun c' => .close c'.id))
+    (s, (s.clients.filter (·.attached) |>.map (fun c' => Effect.close c'.id))
+          ++ [.send c.id .done])
   | .kill => (s, [.killChild, .dropCheckpoint, .exit])
   | .info => (s, [.send c.id (.infoReply (infoText s)), .send c.id .done])
   | .history =>
-    (s, outputMsgs c.id (Render.history s.vt true).toList ++ [.send c.id .done])
+    (s, outputMsgs c.id (Render.history s.vt false).toList ++ [.send c.id .done])
   | .wait =>
     match s.exited with
     | some st => (s, [.send c.id (.exited st)])

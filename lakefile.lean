@@ -41,3 +41,8 @@ lean_lib Theorems where
 /-- Unit tests: `example`s checked at elaboration time, so building this
 target is running them. Same import-from-root convention. -/
 lean_lib Tests where
+
+@[default_target]
+lean_exe lzmx where
+  root := `Main
+  moreLinkArgs := #["-lutil"]
