@@ -88,10 +88,12 @@ a dumb loop that turns fds into events and effects into syscalls.
   cannot alter the screen (its only permitted effect is a checkpoint).
 - **§Restore** — `load (save s) = some s`, and `load` is total on
   arbitrary bytes: a torn or foreign checkpoint is ignored, never fatal.
-- **§Frame** / **§Name** / **§Remote** — protocol round-trip with
-  forward-compatible unknown tags; sanitized names cannot escape the
-  socket directory; a remote listing cannot inject paths or escape
-  sequences.
+- **§Isolate** — many clients on one session: bytes from one cannot
+  alter another's record or its half-decoded frame.
+- **§Frame** / **§Name** / **§Remote** / **§Row** — protocol round-trip
+  with forward-compatible unknown tags; sanitized names cannot escape
+  the socket directory; neither a remote listing nor a local daemon'''s
+  own reply can inject paths, escape sequences, or a false identity.
 
 ## Build
 

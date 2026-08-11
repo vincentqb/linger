@@ -40,6 +40,14 @@ def ckptPath (name : String) : IO String := do
   ensureDir d
   return s!"{d}/{sanitize name}.ckpt"
 
+/-- Name-ownership lock (see `Zmx.Posix.flock`). Lives beside the
+socket: same directory lifetime, same 0700 permissions. Never
+unlinked — a lock file that gets unlinked stops being a lock. -/
+def lockPath (name : String) : IO String := do
+  let d ← socketDir
+  ensureDir d
+  return s!"{d}/{sanitize name}.lock"
+
 def logPath (name : String) : IO String := do
   let d := (← stateDir) ++ "/logs"
   ensureDir d

@@ -9,6 +9,7 @@
 #   5. reboot-resume e2e (SIGKILL + restore + corrupt tolerance)
 #   6. session-manager TUI e2e (drive the picker in a pty)
 #   7. remote-over-ssh e2e (fake ssh: list, preview, attach argv)
+#   8. adverse timing: busy-daemon listing (§Row) + name-ownership race
 set -e
 cd "$(dirname "$0")/.."
 
@@ -59,5 +60,9 @@ say "7. remote sessions over ssh"
 pkill -x lzmx 2>/dev/null || true; sleep 0.2
 python3 tests/remote_test.py | tail -1 | grep -q '^FAILURES: 0$' || fail "remote_test"
 
+say "8. adverse timing (busy daemon listing, name-ownership race)"
+pkill -x lzmx 2>/dev/null || true; sleep 0.2
+python3 tests/robust_test.py | tail -1 | grep -q '^FAILURES: 0$' || fail "robust_test"
+
 pkill -x lzmx 2>/dev/null || true
-printf '\nE2E OK — lzmx builds clean, core is pure, 4 live suites green.\n'
+printf '\nE2E OK — lzmx builds clean, core is pure, 5 live suites green.\n'

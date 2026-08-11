@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -357,6 +358,33 @@ LEAN_EXPORT lean_obj_res zmx_accept(uint32_t fd, lean_obj_arg w) {
         return io_err("accept");
     }
     return lean_io_result_mk_ok(lean_box_uint64((uint64_t)(int64_t)c));
+}
+
+/* zmx_flock : @& String -> IO Int64
+ * Exclusive, non-blocking lock on `path` (created 0600). Returns the
+ * held fd (>= 0) or -1 if someone else holds it.
+ *
+ * flock, not an O_EXCL/mkdir lock file: the kernel releases it when the
+ * holder dies or the fd closes, so a SIGKILLed or power-cut daemon
+ * leaves nothing stale behind and no staleness timeout has to be
+ * invented. The caller must keep the fd open for as long as it wants
+ * the lock, and must NOT unlink the lock file -- unlinking would let a
+ * second process create a fresh inode and lock that while we still hold
+ * the old one. */
+LEAN_EXPORT lean_obj_res zmx_flock(b_lean_obj_arg path, lean_obj_arg w) {
+    (void)w;
+    int fd = open(lean_string_cstr(path), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+    if (fd < 0) return io_err("open(lockfile)");
+    int r;
+    do { r = flock(fd, LOCK_EX | LOCK_NB); } while (r < 0 && errno == EINTR);
+    if (r < 0) {
+        int e = errno;
+        close(fd);
+        if (e == EWOULDBLOCK) return lean_io_result_mk_ok(lean_box_uint64((uint64_t)(int64_t)-1));
+        errno = e;
+        return io_err("flock");
+    }
+    return lean_io_result_mk_ok(lean_box_uint64((uint64_t)(int64_t)fd));
 }
 
 /* -------------------------------------------------------------------- */

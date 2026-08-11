@@ -1,4 +1,6 @@
 import Zmx.Core.Tui
+import Theorems.Name
+import Theorems.Remote
 /-! # §Bound(tui) — the picker cannot escape its own list
 
 Small but load-bearing: the selection index stays inside the filtered
@@ -85,5 +87,53 @@ theorem step_ok (st : State) (ev : Event) (h : Ok st) : Ok (step st ev).1 := by
         · exact ⟨hsel, hq⟩
     | .ctrlR => exact ⟨hsel, hq⟩
     | .other => exact ⟨hsel, hq⟩
+
+end Zmx.Core.Tui
+
+
+namespace Zmx.Core.Tui
+/-! ## §Row — a row's identity comes from the socket, not from the peer
+
+A session's row is built from two sources: its socket filename (which
+the local filesystem guarantees) and its `info` reply (which the daemon
+supplies, and may be late, truncated, or nonsense — a daemon busy with
+a burst of pty output can miss the reply window entirely).
+
+§Row: the name is a function of the filename **alone**. Consequences:
+a busy daemon still lists under its real name rather than as a blank
+row; a confused or hostile daemon cannot rename itself, blank itself,
+or claim another session's identity; and since this row set is also
+what `list --porcelain` prints for remote machines to parse, identity
+never becomes peer-supplied data downstream.
+-/
+
+open Zmx.Core.Name (Valid sanitize sanitize_valid)
+
+/-- The reply cannot influence the name: any two replies give the same
+identity for the same socket. -/
+theorem rowOfInfo_name_independent (n : String) (kvs kvs' : List (String × String))
+    (h h' : Host) : (rowOfInfo n kvs h).name = (rowOfInfo n kvs' h').name := rfl
+
+/-- The name is exactly the sanitized socket name. -/
+theorem rowOfInfo_name (n : String) (kvs : List (String × String)) (h : Host) :
+    (rowOfInfo n kvs h).name = sanitize n := rfl
+
+/-- So it is always §Name-valid: nonempty, bounded, no separators — in
+particular a silent daemon can never produce an empty row. -/
+theorem rowOfInfo_name_valid (n : String) (kvs : List (String × String)) (h : Host) :
+    Valid (rowOfInfo n kvs h).name := by
+  rw [rowOfInfo_name]
+  exact sanitize_valid n
+
+/-- Display fields taken from the reply are scrubbed of control bytes,
+so a reply cannot inject escape sequences into the rendered frame
+(the local mirror of §Remote's guarantee). -/
+theorem rowOfInfo_cmd_scrubbed (n : String) (kvs : List (String × String)) (h : Host) :
+    ∀ c ∈ (rowOfInfo n kvs h).cmd.toList, c.toNat ≥ 0x20 ∧ c.toNat ≠ 0x7F :=
+  Zmx.Core.Remote.scrub_no_ctl _
+
+theorem rowOfInfo_pid_scrubbed (n : String) (kvs : List (String × String)) (h : Host) :
+    ∀ c ∈ (rowOfInfo n kvs h).pid.toList, c.toNat ≥ 0x20 ∧ c.toNat ≠ 0x7F :=
+  Zmx.Core.Remote.scrub_no_ctl _
 
 end Zmx.Core.Tui

@@ -211,13 +211,26 @@ partial def serve (name : String) (cwd : String) (argv : List String)
   Zmx.Posix.init
   ignoreSighup
   let sockPath ← Paths.socketPath name
-  -- stale socket: nobody listening ⇒ remove and take over
+  -- Claim the *name* before touching the socket path. Without this the
+  -- sequence probe → unlink-stale → bind has a window: two daemons can
+  -- both pass the probe, and the second unlinks the first's live socket
+  -- before binding its own, orphaning a daemon that still holds a shell.
+  -- The lock is held for this process's whole life, so the kernel
+  -- releases it on exit/crash — no staleness timeout, and holding it is
+  -- itself the proof that this daemon owns the name.
+  let lockFd ← flock (← Paths.lockPath name)
+  if lockFd < 0 then
+    -- another daemon owns or is starting this name; the client that
+    -- spawned us polls for the socket and will find the winner's
+    throw (IO.userError s!"session '{name}' is already owned by another daemon")
+  -- Only the lock holder reaches this point, so the stale check and the
+  -- bind below cannot interleave with another daemon's.
   match ← unixConnect sockPath with
   | r =>
     if r ≥ 0 then
       close r.toUInt64.toUInt32
       throw (IO.userError s!"session '{name}' already running")
-    else if r == -111 then  -- ECONNREFUSED: stale
+    else if r == -111 then  -- ECONNREFUSED: stale socket, ours to replace
       try IO.FS.removeFile sockPath catch _ => pure ()
   let listenFd ← unixListen sockPath
   setNonblock listenFd
@@ -252,5 +265,9 @@ partial def serve (name : String) (cwd : String) (argv : List String)
     if ← alive rt.childPid then kill rt.childPid 9
   let _ ← waitpidNohang rt.childPid
   try IO.FS.removeFile sockPath catch _ => pure ()
+  -- the lock file stays; the kernel drops the lock as this process exits
+  -- (unlinking it would let a newcomer lock a fresh inode while ours
+  -- still held the old one)
+  let _ := lockFd
 
 end Zmx.Runtime.Daemon

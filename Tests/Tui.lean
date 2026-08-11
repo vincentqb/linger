@@ -57,3 +57,32 @@ example : ((step st0 (.previewUpdated "beta" .local ["x"])).1.previewFor
     == none) = true := by native_decide
 
 end Zmx.Core.Tui.Tests
+
+
+namespace Row
+/-! §Row: a row's identity comes from the socket filename, never from
+the daemon's reply. -/
+
+open Zmx.Core.Tui
+
+/-- A silent daemon (empty reply) still gets its real name. -/
+example : ((rowOfInfo "work" []).name == "work"
+    && (rowOfInfo "work" []).cmd == "") = true := by native_decide
+
+/-- Fields are carried when the reply has them. -/
+example : ((rowOfInfo "work" [("pid", "42"), ("cmd", "vim"), ("label.env", "dev")])
+    == { name := "work", state := .live, pid := "42", cmd := "vim",
+         labels := [("env", "dev")] }) = true := by native_decide
+
+/-- A reply claiming another identity cannot rename the row. -/
+example : ((rowOfInfo "mine" [("name", "yours")]).name == "mine") = true := by
+  native_decide
+
+/-- A path-ish socket name is sanitized like any other name. -/
+example : ((rowOfInfo "../etc" []).name == "_._etc") = true := by native_decide
+
+/-- Control bytes in the reply never reach the rendered row. -/
+example : ((rowOfInfo "x" [("cmd", "vi\x1b[31mm\x07")]).cmd == "vi[31mm") = true := by
+  native_decide
+
+end Row

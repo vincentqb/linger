@@ -338,3 +338,45 @@ Two suspicions investigated; one was wrong, which is worth recording:
   startup semantics and needs a staleness-timeout decision from the
   user; also the backlog-full case would make `list` hang rather than
   report, which the same lock work should address.
+
+
+## Robustness pass — 2026-06-01 (§Row + name-ownership lock)
+
+**§Row (new theorem).** `Core/Tui.rowOfInfo` now builds a list row from
+the socket filename + the info reply, and the *name is a function of
+the filename alone*. Fixes the blank-row bug (a daemon too busy to
+answer within the 2s window listed as an empty line) and closes an
+identity hole: a reply can no longer rename/blank a row, which matters
+because that row set is also the porcelain remotes parse. Display
+fields reuse `Remote.scrub`. Break-verified: taking the name from the
+reply broke 4 theorems. `list` also renders `(busy)` instead of `pid`
+with empty fields.
+
+**Name-ownership lock.** `Daemon.serve` takes `flock(<name>.lock)`
+before the probe→unlink→bind sequence and holds it for process life;
+losing the lock = exit (the spawning client polls and finds the winner).
+
+Why flock and not the mkdir lock I first proposed: `mkdir(2)` and
+`open(O_CREAT|O_EXCL)` ARE atomic create-if-absent, which is why
+they're classic locks (git's index.lock), but they have no automatic
+release — a SIGKILLed holder leaves a lock nobody can clear, which is
+exactly why such designs need a staleness timeout, and every timeout
+value is wrong (short → steals live locks; long → sessions unstartable
+after a reboot). flock is kernel-released on death/close, so the
+timeout question disappears. Never unlink a lock file: a newcomer would
+lock a fresh inode while the owner holds the old one.
+
+Rejected alternatives: abstract sockets (Linux-only, loses fs
+permissions), bind-tmp-then-`link()` (works, but needs a new syscall
+plus a retry loop for no gain over flock), readers taking the lock to
+test liveness (a `list` could momentarily block a starting daemon).
+
+New suite `tests/robust_test.py` (10 checks, wired into e2e as step 8):
+SIGSTOP'd daemon lists by name and keeps its socket; stale socket + 8
+concurrent starts → exactly 1 daemon, 1 shell, reachable; name
+re-claimable right after the owner exits (proves no stale lock).
+
+Gotcha: `Row` needed `DecidableEq` derived for whole-record test
+comparisons. And my first two assertions in the new suite were wrong,
+not the code (lock files persist by design; `(busy)` is the new
+rendering) — check what the code returns before "fixing" it.

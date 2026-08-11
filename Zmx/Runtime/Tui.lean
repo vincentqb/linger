@@ -94,12 +94,11 @@ def gatherRows : IO (List Row) := do
   for name in live do
     match ← Zmx.Runtime.Cli.queryInfo name with
     | some info =>
-      let get := fun k => ((info.find? (·.1 == k)).map (·.2)).getD ""
-      rows := rows ++ [{
-        name := get "name", state := .live, pid := get "pid", cmd := get "cmd",
-        labels := info.filterMap (fun (k, v) =>
-          if k.startsWith "label." then some ((k.drop 6).toString, v) else none) }]
+      -- the row is named from the socket, not from the reply (§Row): a
+      -- daemon too busy to answer still lists correctly
+      rows := rows ++ [rowOfInfo name info]
     | none =>
+      -- connect() itself failed: nothing is listening, the file is stale
       try IO.FS.removeFile (← Paths.socketPath name) catch _ => pure ()
   for name in ckpts do
     if !live.contains name then

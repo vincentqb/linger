@@ -80,6 +80,14 @@ ECONNREFUSED (stale socket, daemon dead) are expected outcomes. -/
 /-- Accept on a nonblocking listen fd. `-1` = nothing to accept. -/
 @[extern "zmx_accept"] opaque accept (fd : UInt32) : IO Int64
 
+/-- Exclusive non-blocking `flock` on a lock file; `≥ 0` is the held
+fd, `-1` means another process holds it. Chosen over an `O_EXCL`/
+`mkdir` lock because the kernel releases it when the holder dies — no
+staleness timeout to invent, nothing left behind by a SIGKILL or a
+power cut. Keep the fd open for the lifetime of the lock, and never
+unlink the lock file. -/
+@[extern "zmx_flock"] opaque flock (path : @& String) : IO Int64
+
 /-- Double-fork + setsid + execvp with stdio on `logPath` (append) or
 /dev/null. Returns after the intermediate child is reaped: no zombie. -/
 @[extern "zmx_spawn_detached"] opaque spawnDetached (prog : @& String)

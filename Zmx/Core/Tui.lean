@@ -1,4 +1,5 @@
 import Zmx.Core.Name
+import Zmx.Core.Remote
 /-! # Zmx.Core.Tui — the session manager, as data
 
 Bare `lzmx` opens this: an fzf-shaped picker over sessions (local and
@@ -39,7 +40,25 @@ structure Row where
   pid : String := ""
   cmd : String := ""
   labels : List (String × String) := []
-  deriving Repr, Inhabited
+  deriving Repr, DecidableEq, Inhabited
+
+/-- Build a list row from a session's *socket name* plus whatever its
+`info` reply happened to contain. The name comes from the filesystem,
+never from the reply: a daemon too busy to answer within the timeout
+(or one answering nonsense) still gets a correctly-named row, and no
+reply can rename or blank another session's row. See §Row. -/
+def rowOfInfo (sockName : String) (kvs : List (String × String)) (host : Host := .local)
+    : Row :=
+  let get := fun k => ((kvs.find? (·.1 == k)).map (·.2)).getD ""
+  { name := Name.sanitize sockName
+    host
+    state := .live          -- it answered the socket, so it exists
+    pid := Zmx.Core.Remote.scrub (get "pid")
+    cmd := Zmx.Core.Remote.scrub (get "cmd")
+    labels := kvs.filterMap (fun (k, v) =>
+      if k.startsWith "label." then
+        some (Zmx.Core.Remote.scrub (k.drop 6).toString, Zmx.Core.Remote.scrub v)
+      else none) }
 
 structure State where
   rows : List Row := []

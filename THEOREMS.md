@@ -17,6 +17,7 @@ record even while open.
 | §Remote | trusting `ssh host lzmx list` output vs local TUI safety | parser total, garbage-tolerant; §Name carries through; display fields scrubbed of control bytes | Theorems/Remote.lean |
 | §Bound(tui) | a picker over a changing list | selection stays inside the filtered matches; query capped | Theorems/Tui.lean |
 | §Isolate | many clients on one session vs per-client framing | `.bytes id` leaves every *other* client's record (and decoder) bit-identical | Theorems/Session.lean |
+| §Row | a list row's identity vs an unreliable `info` reply | a row's name is a function of the socket filename alone; display fields scrubbed | Theorems/Tui.lean |
 
 
 ## Reading a row
@@ -63,24 +64,37 @@ What *is* deliberately ordered: the pty size is owned by the newest
 attached real terminal (`Session.sizeOwner`), so concurrent resizes
 converge instead of fighting.
 
-### Not covered: session identity at the socket path
+### Session identity at the socket path: closed by the kernel, not by a proof
 
-`Daemon.serve` establishes ownership as probe → unlink-if-refused →
-`bind`, and that middle step is a window no theorem guards: if two
-daemons start while a *stale* socket exists, both can pass the probe,
-the first binds, and the second unlinks the first's live socket before
-binding its own. The loser then keeps a shell nobody can reach by name.
-Measured: six simultaneous creations of one name (no stale socket) give
-exactly one daemon and one shell — the losers die on `EADDRINUSE`
-before `spawnPty`, so the common case is clean. The stale-socket
-variant is narrow but real, and the fix is an atomic create (a `mkdir`
-lock around probe→unlink→bind, with a staleness steal), not a theorem:
-it is a filesystem property, not a property of the pure core.
+`Daemon.serve` used to claim a name as probe → unlink-if-refused →
+`bind`, and that middle step was a window: with a *stale* socket
+present, two starting daemons could both pass the probe, the first
+bind, and the second unlink the first's live socket before binding its
+own — leaving a daemon alive holding a shell nobody could reach by name.
+
+It now takes an exclusive `flock` on `<name>.lock` **before** the probe
+and holds it for the process's whole life, so only the owner may unlink
+or bind. `flock` rather than an `O_EXCL`/`mkdir` lock file on purpose:
+those are atomic to create but have *no automatic release*, so a
+SIGKILLed or power-cut holder leaves a lock nobody can clear, which is
+why such designs need a staleness timeout — and any timeout is wrong
+(too short steals a live lock, too long makes sessions unstartable
+after a reboot). The kernel drops an `flock` when the holder dies, so
+there is no timeout in this codebase at all. The lock file is
+deliberately never unlinked: unlinking it would let a newcomer lock a
+fresh inode while the owner still held the old one.
+
+This is a kernel guarantee, not a theorem — a filesystem property
+rather than a property of the pure core. `tests/robust_test.py` pins
+it: stale socket plus eight concurrent starts yields exactly one daemon
+and one shell, and the name is re-claimable immediately after the owner
+exits.
 
 `list` cleaning up stale sockets is *not* part of that hazard: it
 unlinks only when `connect` itself fails, which the kernel answers from
 the socket's bind state, so a daemon that is merely slow (or SIGSTOPed)
-keeps its socket. Verified.
+keeps its socket — and §Row keeps it correctly named in the listing.
+Verified.
 
 ## What these theorems do not settle
 

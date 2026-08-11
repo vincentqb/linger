@@ -127,9 +127,16 @@ def cmdList (porcelain : Bool) : IO UInt32 := do
   let mut rows : List (List (String × String)) := []
   for name in live do
     match ← queryInfo name with
-    | some info => rows := rows ++ [info ++ [("state", "live")]]
+    | some info =>
+      -- the name comes from the socket, not from the reply (§Row): a
+      -- daemon too busy to answer within the timeout still lists with
+      -- its real name instead of a blank row, and this is also the
+      -- porcelain remotes parse, so identity must not be peer-supplied
+      let fields := info.filter (·.1 != "name")
+      rows := rows ++ [[("name", Zmx.Core.Name.sanitize name)] ++ fields
+                        ++ [("state", "live")]]
     | none =>
-      -- stale socket: clean it up quietly
+      -- connect() itself failed: nothing is listening, the file is stale
       try IO.FS.removeFile (← Paths.socketPath name) catch _ => pure ()
   for name in ckpts do
     if !live.contains name then
@@ -152,7 +159,11 @@ def cmdList (porcelain : Bool) : IO UInt32 := do
           if k.startsWith "label." then some s!"{(k.drop 6).toString}={v}" else none)
         let labelStr := if labels.isEmpty then "" else "  [" ++ String.intercalate " " labels ++ "]"
         if state == "live" then
-          IO.println s!"{name}\tpid {pid}\t{cmd}{labelStr}"
+          if pid.isEmpty && cmd.isEmpty then
+            -- alive (it accepted the connection) but too busy to answer
+            IO.println s!"{name}\t(busy){labelStr}"
+          else
+            IO.println s!"{name}\tpid {pid}\t{cmd}{labelStr}"
         else
           IO.println s!"{name}\t(resumable)"
   return 0
