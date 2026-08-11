@@ -58,3 +58,38 @@ parses as `a |>. (f ≥ n)` — parenthesize; String.trim deprecated in
 Hand-off: daemon loops should poll-then-read (drain in ZTest.lean is
 the shape); accept fd must be setNonblock'd (poll/accept race); reap
 via waitpidNohang poll loop, -2 means not-our-child (use alive).
+
+
+## Step 3 notes — 2026-06-01
+
+Settled: wire codec on List UInt8 (runtime converts at the socket
+edge) — this bought real ∀-theorems where lean-tmux had native_decide
+fixtures. §Frame (decode∘encode = id, incl. stream form), §Chunk
+(feed (a++b) = feed a then feed b), §Bound (decoder buf ≤ 4+maxPayload
+for ANY input; sticky error on oversize claim; every delivered payload
+≤ maxPayload) all proved, no sorry, no native_decide in Theorems/.
+
+Break-verified: oversize branch returning `bytes` instead of `[]`
+broke 5 theorems (feed_append, takeFrames_append, errored_buf,
+buf_le, msgs_payload_le). Reverted.
+
+Proof recipes that worked (reuse in later steps):
+- WF-recursive defs: `rw [f.eq_def]; dsimp only` to unfold one layer;
+  `induction xs using f.induct` — name the `have len` binder too, then
+  `replace hlen : <real type> := hlen` to zeta-expand.
+- let-pattern `let (a,b,c) := e; …`: `rcases h : e with ⟨a,b,c⟩` then
+  `rw [h]` — never project h.1/h.2 (Prod eq isn't a structure).
+- UInt roundtrips: `apply UInt32.toNat_inj.mp; simp [UInt8.toNat_ofNat',
+  UInt32.toNat_ofNat']; omega`.
+- decidable-if chains over UInt8 tags: prove per-branch with by_cases;
+  in a POSITIVE branch simp [hK] alone collapses the whole chain.
+- `split` cannot reach ifs under a projection like (if..).payload —
+  by_cases instead.
+- decide fails on WF-recursion (kernel can't reduce takeFrames);
+  tests of runtime behavior use native_decide, golden encode tests
+  stay decide.
+
+Hand-off: tags frozen in Tests/Wire.lean golden frames (input=0,
+output=1, resize=2, attach=3, detachAll=4, kill=5, info=6, infoReply=7,
+history=8, exited=9, wait=10, labelSet=11, labelUnset=12, labelClear=13,
+done=14, err=15). New tags append; never reuse.
