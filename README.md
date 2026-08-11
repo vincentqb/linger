@@ -122,7 +122,14 @@ top). The environment knobs that exist are operational:
 | `LZMX_SESSION` | set *inside* a session; use it in your prompt |
 
 Sockets default to `$XDG_RUNTIME_DIR/lzmx` (else `/tmp/lzmx-$UID`),
-state to `$XDG_STATE_HOME/lzmx` (else `~/.local/state/lzmx`).
+state to `$XDG_STATE_HOME/lzmx/<host>` (else `~/.local/state/lzmx/<host>`).
+
+Both must be on local storage. Unix sockets are host-local rendezvous
+names and `flock` is unreliable over NFS, so a directory shared between
+machines breaks session ownership — see THEOREMS.md § Network
+filesystems. The hostname in the state path is what stops a
+network-mounted `$HOME` from letting two machines clobber each other's
+checkpoints; an explicit `LZMX_DIR` is used verbatim instead.
 
 ## ssh
 
