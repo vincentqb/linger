@@ -40,6 +40,15 @@ say "2. purity of the core (no sorry, no partial, no IO)"
 [ "$(git grep -l '@\[extern' -- 'Zmx/*' | tr -d ' ')" = "Zmx/Posix.lean" ] \
   || fail "extern declarations outside Zmx/Posix.lean"
 [ "$(ls c/ | tr -d ' \n')" = "shim.c" ] || fail "more than one C file"
+# shim-size ratchet: the C trust boundary must not grow silently. This
+# number only ever goes DOWN without discussion; raising it is a
+# deliberate, reviewable act — the checkpoint for "does this genuinely
+# need a syscall wrapper, or does Lean core already have it?" (see the
+# C-vs-Rust and shrink-the-shim notes in SCRATCHPAD.md).
+SHIM_CAP=27
+shim_n="$(grep -c LEAN_EXPORT c/shim.c)"
+[ "$shim_n" -le "$SHIM_CAP" ] \
+  || fail "shim grew to $shim_n wrappers (cap $SHIM_CAP); justify the new syscall and bump the cap"
 
 say "3. posix shim smoke tests"
 ./lake exe ztest | tail -1 | grep -q '^ALL PASS$' || fail "ztest"

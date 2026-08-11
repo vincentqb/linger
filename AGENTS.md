@@ -22,7 +22,12 @@ New work opens a new `specs/<slug>.md`; don't reopen the archived one.
 - `Zmx/Core/*` is pure: no `IO`, no `partial def`, no `sorry`. Effects
   are data (`List Effect`); the runtime executes them.
 - Only `Zmx/Posix.lean` and `c/shim.c` touch the OS. Keep the shim
-  logic-free (syscall + errno only).
+  logic-free (syscall + errno only). It carries a **wrapper-count
+  ratchet** (`SHIM_CAP` in `tests/e2e.sh`): it drops silently, but
+  raising it is a deliberate edit — the checkpoint for "does Lean core
+  already expose this?" before adding a syscall. A source-tree property
+  like this can't be a theorem; the grep gate is the right oracle
+  (`verifier-in-the-loop`).
 - Theorems resolve tensions: when two requirements collide, state the
   invariant in THEOREMS.md and prove it, then code to it.
 - A theorem or test that cannot fail is worthless: break the code once
