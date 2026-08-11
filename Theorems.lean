@@ -1,0 +1,2 @@
+-- Root of the proof library. Each Theorems/X.lean file carries the §
+-- sections named in THEOREMS.md; this file just aggregates them.

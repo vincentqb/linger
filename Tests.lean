@@ -1,0 +1,2 @@
+-- Root of the unit-test library: `example`s elaborate at build time,
+-- so `./lake build Tests` runs them.

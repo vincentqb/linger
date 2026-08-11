@@ -1,0 +1,14 @@
+#!/bin/sh
+# Wrapper: run `./lake ...` instead of `lake ...` on this box.
+#
+# Host is AL2 with glibc 2.26. The v4.32.0 toolchain's bundled clang needs
+# glibc >= 2.27 and dies with "GLIBC_2.29 not found", so C compilation goes
+# through Homebrew clang; linking then needs the toolchain's own lib dirs
+# on LIBRARY_PATH (-lgmp -luv -lc++abi). Lean elaboration is unaffected --
+# without this the build looks 90% green and dies in the C backend.
+# (Recipe proven in ~/lean-tmux/env/lean_env.sh.)
+export PATH="/home/linuxbrew/.linuxbrew/bin:$HOME/.elan/bin:$PATH"
+export LEAN_CC=clang
+_TC="$HOME/.elan/toolchains/leanprover--lean4---v4.32.0"
+export LIBRARY_PATH="${_TC}/lib:${_TC}/lib/lean${LIBRARY_PATH:+:$LIBRARY_PATH}"
+exec lake "$@"
