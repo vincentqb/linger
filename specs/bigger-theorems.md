@@ -127,21 +127,18 @@ Break-verified: emitting least-significant-digit-first breaks the
 theorem and 10 fixtures. This is the foundation for every numeric
 fidelity claim (cursor, region, mode numbers, colour components).
 
-Stage 3c-rest (open): **cursor fidelity** is next and needs one more
-invariance layer first — `cols`/`rows` (the gap the step-4 notes
-recorded as open). `moveTo` clamps against the replayed state's
-dimensions, so `w.cursor = v.cursor` needs `w.cols = v.cols`, which
-needs every op to preserve dims. That layer is ~25 equation lemmas of
-the shape already used twice (`pstate`, `u8need`); the one interesting
-case is `RIS`, which re-derives dims through `clampDim` and therefore
-preserves them *given* `Good v` (already noted in the step-4 record).
-Then: `CUP` params → `moveTo` → cursor, with `Good v` discharging the
-clamps. Documented gap found while scoping: under DECOM the cursor can
-sit outside the scroll region (`VPA` ignores origin mode), and a
-region-relative `CUP` cannot then reproduce it — so the cursor theorem
-will carry `origin = false` or an in-region hypothesis, and the
-alternative (absolute `CUP` before enabling DECOM) does not work
-because setting DECOM homes the cursor.
+Stage 3c-rest (open): **cursor fidelity**. The dims layer it was waiting
+on is now proved (`dims_feed`, Theorems/Vt.lean — `RIS` conditional on
+`Good`, as anticipated). What remains is the tail chain, all local to
+`cursorAnsi` since `CUP` sets the cursor outright: (1) the `;` step
+(`csiPush` with `haveCur` set pushes `min cur 65535` and resets `cur`),
+(2) `csiFinish` pushing the last parameter, (3) `CsiState.arg` over
+`Array.getD`/`push` giving back the two numbers, then (4) `moveTo` with
+`Good` discharging its clamps. Documented gap that will stay a
+hypothesis: under DECOM the cursor can sit outside the scroll region
+(`VPA` ignores origin mode) and a region-relative `CUP` cannot express
+that; emitting absolute first does not help, since setting DECOM homes
+the cursor.
 
 Stage 3d (open): grid fidelity — per-cell print round-trip induction
 (wide, marks, IRM off, wrap-pending at row ends), then §Replay itself.

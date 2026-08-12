@@ -11,7 +11,7 @@ record even while open.
 | §Chunk | TCP/pty chunking is arbitrary vs stateful parsers | decode/feed invariant under concatenation: `feed (a ++ b) = feed b ∘ feed a` | Theorems/Wire.lean, Theorems/Vt.lean |
 | §Stream | transport fragmentation vs one parsed conversation | any re-chunking of any well-formed encoded stream feeds back to exactly that stream — nothing retained, no error (`decode_encode_chunked`; §Frame and §Chunk are its special cases) | Theorems/Wire.lean |
 | §Bound | zellij crashes under cpu/mem load (unbounded actor queues) | every buffer has a structural cap preserved by `step`; nothing to fill | Theorems/Wire.lean, Theorems/Vt.lean, Theorems/Session.lean |
-| §Total | emulator fed adversarial bytes vs no crashes ever | `Vt.step`/`feed` total (no `partial`, grep-checked); `Good` invariant preserved for any byte: cursor + saved + alt-stashed cursors strictly in bounds, top ≤ bot < rows. (Dims-invariance of `step` is by-construction, not a stated theorem — see SCRATCHPAD step 4.) | Theorems/Vt.lean |
+| §Total | emulator fed adversarial bytes vs no crashes ever | `Vt.step`/`feed` total (no `partial`, grep-checked); `Good` invariant preserved for any byte: cursor + saved + alt-stashed cursors strictly in bounds, top ≤ bot < rows. Grid dimensions are preserved by every operation too (`dims_feed`; `RIS` re-clamps, which `Good` makes the identity) | Theorems/Vt.lean |
 | §Detach | sessions outlive clients (the zmx decoupling) | zero-client session still advances; detach/detach-all don't touch the screen (only permitted effect: a checkpoint) | Theorems/Session.lean |
 | §Restore | reboot-resume vs corrupt/stale state files | `load (save s) = some s` (parser state quiesced); `load` total on arbitrary bytes | Theorems/Checkpoint.lean |
 | §Name | user-chosen names vs filesystem paths | sanitized names can't escape the socket dir (no `/`, `..`-prefix, NUL, empty); `@` reserved for `name@host` | Theorems/Name.lean |
@@ -161,10 +161,11 @@ Verified.
   eventually fills the kernel socket buffer; the runtime caps its own
   per-client queue at 4 MiB and disconnects rather than grow. That cap
   lives in `Zmx/Runtime/Daemon.lean` and is not proved.
-* **Grid dimensions are invariant by construction, not by theorem.**
-  Every operation preserves `cols`/`rows` syntactically (RIS
-  re-derives them through `clampDim`), but the statement is not
-  proved; the runtime re-reads dimensions after every feed.
+* **Grid dimensions are invariant by theorem now** (`dims_feed`,
+  Theorems/Vt.lean): no byte stream changes `cols`/`rows`. `RIS`
+  re-derives them through `clampDim`, which is the identity exactly when
+  they are already in range — so that one case is conditional on `Good`.
+  The runtime still re-reads dimensions after every feed.
 * **§Restore says the codec round-trips, not that the shell's world
   is restored.** A resumed session gets its screen, scrollback, modes,
   labels and cwd back — not its process tree. That is the deliberate

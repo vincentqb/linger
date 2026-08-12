@@ -1145,3 +1145,273 @@ theorem uz_feed : ∀ (bs : List UInt8) (v : Vt), (∀ b ∈ bs, b < 0xC0) →
       (uz_step x (hb x (by simp)) h)
 
 end Zmx.Core.Vt
+
+
+namespace Zmx.Core.Vt
+/-! ## The grid keeps its dimensions
+
+The third invariance layer, and the one the step-4 notes recorded as
+open: "every operation preserves `cols`/`rows` syntactically except RIS
+(which re-derives them via `clampDim`, identity under `Good`), but
+stating it needs per-op lemmas". Here they are — the same staged,
+equation-form shape as the `pstate` and `u8need` layers, over the pair
+`dims v = (v.cols, v.rows)` so one lemma covers both fields.
+
+Needed because §Replay's cursor claim goes through `moveTo`, which clamps
+against the *replayed* state's dimensions: `w.cursor = v.cursor` is only
+meaningful once `w.cols = v.cols`.
+
+`RIS` is the one conditional case (hence `dims_step` takes `Good v`):
+`Vt.init` re-clamps, and `Good` is exactly what makes that the identity.
+-/
+
+/-- Grid dimensions as a pair, so one lemma per operation covers both. -/
+def dims (v : Vt) : Nat × Nat := (v.cols, v.rows)
+
+theorem dims_foldl {α : Type} (f : Vt → α → Vt) (hf : ∀ v a, dims (f v a) = dims v) :
+    ∀ (l : List α) (v : Vt), dims (l.foldl f v) = dims v
+  | [], _ => rfl
+  | a :: as, v => (dims_foldl f hf as (f v a)).trans (hf v a)
+
+theorem dims_clearPending (v : Vt) : dims v.clearPending = dims v := rfl
+theorem dims_carriageReturn (v : Vt) : dims v.carriageReturn = dims v := rfl
+theorem dims_moveTo (v : Vt) (x y : Nat) : dims (v.moveTo x y) = dims v := rfl
+theorem dims_moveRel (v : Vt) (dx dy : Int) : dims (v.moveRel dx dy) = dims v := rfl
+theorem dims_setCol (v : Vt) (x : Nat) : dims (v.setCol x) = dims v := rfl
+theorem dims_putCell (v : Vt) (x y : Nat) (c : Cell) : dims (v.putCell x y c) = dims v := rfl
+theorem dims_eraseRowSpan (v : Vt) (y a b : Nat) : dims (v.eraseRowSpan y a b) = dims v := rfl
+theorem dims_scrollDownIn (v : Vt) (t b : Nat) : dims (v.scrollDownIn t b) = dims v := rfl
+theorem dims_deleteChars (v : Vt) (n : Nat) : dims (v.deleteChars n) = dims v := rfl
+theorem dims_insertChars (v : Vt) (n : Nat) : dims (v.insertChars n) = dims v := rfl
+theorem dims_applySgr (v : Vt) (ps : List (Nat × Bool)) : dims (v.applySgr ps) = dims v := rfl
+theorem dims_backTab (v : Vt) : dims v.backTab = dims v := rfl
+
+theorem dims_scrollUpIn (v : Vt) (t b : Nat) (a : Bool) :
+    dims (v.scrollUpIn t b a) = dims v := by
+  unfold Vt.scrollUpIn; dsimp only; split <;> rfl
+
+theorem dims_scrollUp (v : Vt) : dims v.scrollUp = dims v := dims_scrollUpIn _ _ _ _
+theorem dims_scrollDown (v : Vt) : dims v.scrollDown = dims v := dims_scrollDownIn _ _ _
+
+theorem dims_lineFeed (v : Vt) : dims v.lineFeed = dims v := by
+  unfold Vt.lineFeed
+  dsimp only
+  repeat' split
+  all_goals first
+    | exact (dims_scrollUp _).trans (dims_clearPending v)
+    | exact dims_clearPending v
+
+theorem dims_reverseIndex (v : Vt) : dims v.reverseIndex = dims v := by
+  unfold Vt.reverseIndex
+  dsimp only
+  repeat' split
+  all_goals first
+    | exact (dims_scrollDown _).trans (dims_clearPending v)
+    | exact dims_clearPending v
+
+theorem dims_backspace (v : Vt) : dims v.backspace = dims v := by
+  unfold Vt.backspace; split <;> rfl
+
+theorem dims_tab (v : Vt) : dims v.tab = dims v := by
+  unfold Vt.tab; dsimp only; exact dims_clearPending v
+
+theorem dims_eraseChars (v : Vt) (n : Nat) : dims (v.eraseChars n) = dims v :=
+  dims_eraseRowSpan _ _ _ _
+
+theorem dims_eraseLine (v : Vt) (m : Nat) : dims (v.eraseLine m) = dims v := by
+  unfold Vt.eraseLine
+  repeat' split
+  all_goals exact dims_eraseRowSpan _ _ _ _
+
+theorem dims_eraseScreen (v : Vt) (m : Nat) : dims (v.eraseScreen m) = dims v := by
+  unfold Vt.eraseScreen
+  repeat' split
+  all_goals first
+    | exact (dims_foldl _ (fun w i => dims_eraseRowSpan w _ _ _) _ _).trans
+        (dims_eraseLine _ _)
+    | exact dims_foldl _ (fun w i => dims_eraseRowSpan w _ _ _) _ _
+
+theorem dims_insertLines (v : Vt) (n : Nat) : dims (v.insertLines n) = dims v := by
+  unfold Vt.insertLines
+  dsimp only
+  split
+  · rfl
+  · exact dims_foldl _ (fun w _ => dims_scrollDownIn w _ _) _ _
+
+theorem dims_deleteLines (v : Vt) (n : Nat) : dims (v.deleteLines n) = dims v := by
+  unfold Vt.deleteLines
+  dsimp only
+  split
+  · rfl
+  · exact dims_foldl _ (fun w _ => dims_scrollUpIn w _ _ _) _ _
+
+theorem dims_enterAlt (v : Vt) (s : Bool) : dims (v.enterAlt s) = dims v := by
+  unfold Vt.enterAlt; dsimp only; split <;> rfl
+
+theorem dims_leaveAlt (v : Vt) (s : Bool) : dims (v.leaveAlt s) = dims v := by
+  unfold Vt.leaveAlt; split <;> rfl
+
+theorem dims_setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool) :
+    dims (v.setMode priv n on) = dims v := by
+  unfold Vt.setMode
+  repeat' split
+  all_goals try simp only [dims_moveTo, dims_enterAlt, dims_leaveAlt]
+  all_goals rfl
+
+theorem dims_printWrap (v : Vt) : dims v.printWrap = dims v := by
+  unfold Vt.printWrap
+  split
+  · exact (dims_lineFeed _).trans (dims_carriageReturn v)
+  · exact dims_clearPending v
+
+theorem dims_printWideWrap (v : Vt) (w : Nat) : dims (v.printWideWrap w) = dims v := by
+  unfold Vt.printWideWrap
+  split
+  · exact (dims_lineFeed _).trans (dims_carriageReturn v)
+  · rfl
+
+theorem dims_printShift (v : Vt) (w : Nat) : dims (v.printShift w) = dims v := by
+  unfold Vt.printShift; dsimp only; split <;> rfl
+
+theorem dims_printPut (v : Vt) (ch : Char) (w : Nat) : dims (v.printPut ch w) = dims v := by
+  unfold Vt.printPut; dsimp only; split <;> rfl
+
+theorem dims_printAdvance (v : Vt) (w : Nat) : dims (v.printAdvance w) = dims v := by
+  unfold Vt.printAdvance; dsimp only; split <;> rfl
+
+theorem dims_print (v : Vt) (c : Char) : dims (v.print c) = dims v := by
+  unfold Vt.print
+  dsimp only
+  repeat' split
+  all_goals first
+    | rfl
+    | rw [dims_printAdvance, dims_printPut, dims_printShift, dims_printWideWrap,
+        dims_printWrap]
+
+theorem dims_acceptChar (v : Vt) (n : Nat) : dims (v.acceptChar n) = dims v := by
+  unfold Vt.acceptChar; split <;> exact dims_print _ _
+
+theorem dims_ctl (v : Vt) (b : UInt8) : dims (v.ctl b) = dims v := by
+  unfold Vt.ctl
+  repeat' split
+  all_goals first
+    | exact dims_backspace v
+    | exact dims_tab v
+    | exact dims_lineFeed v
+    | exact dims_carriageReturn v
+    | rfl
+
+theorem dims_csiDispatch (v : Vt) (s : CsiState) (final : UInt8) :
+    dims (v.csiDispatch s final) = dims v := by
+  unfold Vt.csiDispatch
+  dsimp only
+  repeat' split
+  all_goals try simp only [dims_insertChars, dims_moveRel, dims_carriageReturn,
+    dims_setCol, dims_moveTo, dims_eraseScreen, dims_eraseLine, dims_insertLines,
+    dims_deleteLines, dims_deleteChars, dims_eraseChars, dims_setMode, dims_applySgr]
+  all_goals first
+    | rfl
+    | exact dims_foldl _ (fun w _ => dims_tab w) _ _
+    | exact dims_foldl _ (fun w _ => dims_scrollUp w) _ _
+    | exact dims_foldl _ (fun w _ => dims_scrollDown w) _ _
+    | exact dims_foldl _ (fun w _ => dims_backTab w) _ _
+
+theorem dims_csiFinish (v : Vt) (s : CsiState) (final : UInt8) :
+    dims (v.csiFinish s final) = dims v := by
+  unfold Vt.csiFinish
+  dsimp only
+  split <;> exact dims_csiDispatch _ _ _
+
+theorem dims_stepCsi (v : Vt) (s : CsiState) (b : UInt8) :
+    dims (v.stepCsi s b) = dims v := by
+  unfold Vt.stepCsi
+  repeat' split
+  all_goals first
+    | rfl
+    | exact dims_csiFinish _ _ _
+    | exact dims_ctl _ _
+
+theorem dims_stepEscInter (v : Vt) (i b : UInt8) : dims (v.stepEscInter i b) = dims v := by
+  unfold Vt.stepEscInter
+  dsimp only
+  repeat' split
+  all_goals rfl
+
+theorem dims_oscFinish (v : Vt) (acc : Array UInt8) : dims (v.oscFinish acc) = dims v := by
+  unfold Vt.oscFinish
+  dsimp only
+  repeat' split
+  all_goals rfl
+
+theorem dims_stepOsc (v : Vt) (acc : Array UInt8) (e : Bool) (b : UInt8) :
+    dims (v.stepOsc acc e b) = dims v := by
+  unfold Vt.stepOsc
+  repeat' split
+  all_goals first
+    | rfl
+    | exact dims_oscFinish _ _
+
+theorem dims_stepStr (v : Vt) (e : Bool) (b : UInt8) : dims (v.stepStr e b) = dims v := by
+  unfold Vt.stepStr
+  repeat' split
+  all_goals rfl
+
+theorem dims_abortUtf8 (v : Vt) (b : UInt8) : dims (v.abortUtf8 b) = dims v := by
+  unfold Vt.abortUtf8; split <;> rfl
+
+/-- `RIS` rebuilds the state through `Vt.init`, which re-clamps the
+dimensions — the identity exactly when they are already in range, which
+is what `Good` says. This is the one place the dims layer needs a
+hypothesis. -/
+theorem dims_stepEsc {v : Vt} (b : UInt8) (h : Good v) :
+    dims (v.stepEsc b) = dims v := by
+  have hcp := h.colsPos
+  have hcl := h.colsLe
+  have hrp := h.rowsPos
+  have hrl := h.rowsLe
+  have hc : clampDim v.cols = v.cols := by unfold clampDim; omega
+  have hr : clampDim v.rows = v.rows := by unfold clampDim; omega
+  unfold Vt.stepEsc
+  dsimp only
+  repeat' split
+  all_goals first
+    | rfl
+    | exact dims_lineFeed v
+    | exact dims_reverseIndex v
+    | exact (dims_lineFeed _).trans (dims_carriageReturn v)
+    | (simp only [dims, Vt.init, hc, hr])
+
+theorem dims_stepGround (v : Vt) (b : UInt8) : dims (v.stepGround b) = dims v := by
+  unfold Vt.stepGround
+  repeat' split
+  all_goals try simp only [dims_ctl, dims_acceptChar]
+  all_goals rfl
+
+/-- One step keeps the dimensions, for any byte. -/
+theorem dims_step {v : Vt} (b : UInt8) (h : Good v) : dims (v.step b) = dims v := by
+  have hg : Good (v.abortUtf8 b) := by
+    unfold Vt.abortUtf8
+    split
+    · exact Good.set_u8 0 0 (by omega) h
+    · exact h
+  have hd : dims (v.abortUtf8 b) = dims v := dims_abortUtf8 v b
+  unfold Vt.step
+  dsimp only
+  split
+  all_goals try simp only [dims_stepGround, dims_stepEscInter, dims_stepCsi,
+    dims_stepOsc, dims_stepStr]
+  all_goals first
+    | exact hd
+    | exact (dims_stepEsc _ hg).trans hd
+
+/-- **The dims layer's payoff.** No byte stream changes the grid
+dimensions: what a client's emulator is told to paint, it paints at the
+size it already had. -/
+theorem dims_feed : ∀ (bs : List UInt8) {v : Vt}, Good v → dims (v.feed bs) = dims v
+  | [], _, _ => rfl
+  | x :: xs, v, h => by
+    have hstep : v.feed (x :: xs) = (v.step x).feed xs := by simp [Vt.feed]
+    rw [hstep]
+    exact (dims_feed xs (Good.step x h)).trans (dims_step x h)
+
+end Zmx.Core.Vt

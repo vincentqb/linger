@@ -1186,3 +1186,40 @@ cursor. So the cursor theorem will carry `origin = false` (or an
 in-region hypothesis) rather than pretend to cover it. The replayEq
 fixtures include a DECOM case with the cursor inside the region, which is
 the reachable-in-practice shape.
+
+
+
+## The dims layer — closing the step-4 gap — 2026-08-12
+
+Step 4 recorded honestly: "dims-invariance of step is NOT a proved
+theorem — every op preserves cols/rows syntactically except RIS (which
+re-derives via clampDim, identity under Good), but stating it needs
+per-op dims lemmas (~25 more lemmas)". §Replay's cursor claim finally
+needed it (moveTo clamps against the REPLAYED state's dimensions, so
+`w.cursor = v.cursor` is only meaningful once `w.cols = v.cols`), so it
+is now proved:
+
+  dims_feed : Good v → dims (v.feed bs) = dims v      -- dims v = (cols, rows)
+
+~28 equation lemmas, third instance of the layer recipe (after pstate
+and u8need). Stating it over the PAIR `dims v` rather than two separate
+cols/rows layers halved the work. The only conditional case is RIS, and
+`Good`'s `1 ≤ cols ≤ 1000` is exactly what makes `clampDim` the
+identity — the step-4 note predicted this correctly.
+
+Break-verified: making RIS rebuild at `Vt.init (v.cols+1) v.rows` breaks
+dims_stepEsc (and the older Good.stepEsc case). Reverted.
+THEOREMS.md §Total row and the "what these do not settle" list updated —
+that bullet had said "by construction, not by theorem" since step 4.
+
+Gotcha: after `unfold Vt.stepEsc; dsimp only` the goals appear in
+UNFOLDED pair form `(v.lineFeed.cols, v.lineFeed.rows) = …`, so
+`simp only [dims_lineFeed]` does not fire — use `exact dims_lineFeed v`
+(defeq) instead. Same class as the earlier "guided rewrite vs exact"
+note, in the opposite direction.
+
+Cursor fidelity remains scoped in the spec: the tail chain (`;` push →
+csiFinish → CsiState.arg over Array.getD/push → moveTo) is all that is
+left, and it is local to cursorAnsi because CUP sets the cursor
+outright. Deliberately did NOT leave a partial proof with a `sorry` —
+the purity gate forbids it and half-proofs rot.
