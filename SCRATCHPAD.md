@@ -1073,3 +1073,67 @@ Lean gotchas (new, worth reusing):
 - `repeat' split` + `all_goals first | …` beats positional bullets:
   `split` peels ONE level and picks the first splittable term (in
   `Vt.print` that's the charset if, not the width if).
+
+
+
+## §Replay 3b-rest — restore_quiesced, the parser half complete — 2026-08-12
+
+Finished everything scoped out of the previous pass. Now proved, for ANY
+Vt with NO hypotheses:
+
+  restore_quiesced : ((Vt.init c r).feed (restore v)).pstate = ground
+                     ∧ ((Vt.init c r).feed (restore v)).u8need = 0
+
+i.e. a reattaching client's parser is never left wedged mid-sequence and
+never holds a half-decoded character, so the application's next byte is
+read as itself and a checkpoint taken right after a restore is exact.
+
+Ladder (Theorems/Render.lean, ~600 lines total):
+  Ends.text (no-ESC runs) · ends_csi_seq (the workhorse) · ends_penSgr ·
+  ends_escSeq (ESC 7/=/H) · ends_escCharset (ESC ( 0 etc.) · ends_osc
+  (ESC ] 2 ; payload BEL) · ends_rowAnsi/ends_joinCRLF/ends_gridAnsi ·
+  ends_{screens,region,tabs,saved,charset,title,modes,cursor}Ansi ·
+  ends_restoreBody → ends_restore → restore_quiesced.
+
+Key insight that made the u8need half CHEAP (I had scoped it out as
+"~25 lemmas through csiDispatch, low value"): restore ENDS with the
+cursor's `CSI … H`. Its leading ESC clears any pending UTF-8 (abortUtf8
+fires for any byte < 0x80), and every byte after it is < 0xC0 so none can
+re-arm one. So `u8_zero_after_csi` needs nothing about the grid
+repaint's multi-byte encodings — the tail sequence re-establishes the
+property regardless of the prefix. (I still wrote the un_* layer, which
+is what makes "no later byte re-arms it" provable: ~30 equation-form
+lemmas incl. un_csiDispatch over its ~30-arm match.)
+
+Emitter stages named for provability (all behavior-identical, fixtures
+confirmed): penSgrBody/sgrAttr/sgrColor (so the SGR param chunk is
+syntactically separable), escSeq/escCharset (so `a ++ escB ++ [b]`
+doesn't associate as `(a ++ escB) ++ [b]` and split a sequence in two —
+this association trap cost 3 build cycles), screensAnsi/regionAnsi/
+tabsAnsi/savedAnsi/charsetAnsi/titleAnsi/cursorAnsi/restoreBody.
+
+Two break-verifies: (1) drop the CSI final byte → ends_csiNum type
+mismatch + 2 fixtures fail; (2) safeChar := id → safeChar_ge unprovable,
+cascading through ends_cellText → ends_rowAnsi → ends_gridAnsi →
+ends_restore. Both reverted.
+
+New recipes:
+- Equation-form lemmas (`(f v).field = v.field`) beat implication-form
+  (`v.field = 0 → (f v).field = 0`) because simp can use them as GUIDED
+  rewrites; `exact` against a mismatched branch whnf's the print chain
+  to death (max-recursion). Only stepEsc needed the "stays zero" form
+  (its RIS branch rebuilds through Vt.init).
+- `Array.foldl_toList` bridges Array folds to List folds; with a generic
+  `invariant_foldl` that made ends_rowAnsi/ends_gridAnsi short — no need
+  to restructure the emitter's folds.
+- Right-vs-left association of `++` bites constantly: `a ++ b ++ c` is
+  `(a ++ b) ++ c`, so compose proofs as `(ha.append hb).append hc`.
+- `Ends.ite` needs its condition given explicitly (`(c := …)`) when the
+  emitter's guard is a Bool coercion (`(x != 0) = true`, not `x ≠ 0`).
+- omega needs UInt8 literals pre-evaluated: keep a
+  `show ((0xNN : UInt8)).toNat = NN from rfl` list in the simp set.
+
+Remaining §Replay work (3c/3d, unchanged): the VALUE fidelity half —
+grid/cursor/pen/region/modes equality after replay. Needs a digit
+round-trip (parser accumulator vs `digits`) and a per-cell print
+induction. Still pinned by the 14 replayEq fixtures.

@@ -89,27 +89,32 @@ native_decide round-trip suite over vts exercising every feature
 title, tabs, charset, saved). The suite IS the fidelity oracle until
 the proofs land.
 
-Stage 3b (done, scoped): `Render` is byte-native (`List UInt8`, not
-`String` — a `String` literal does not reduce in the kernel, so the old
-emitter's output was unprovable *in principle*). Byte facts proved:
-`digits_range`, `utf8_no_ctl`/`utf8s_no_ctl` (via a `min` clamp and
-`safeChar`, so no `Vt` invariant is needed), plus a `pstate`-invariance
-layer in `Theorems/Vt.lean` (~18 lemmas: every print/cursor/erase/scroll
-op, `ctl`, `acceptChar`, `stepGround`). On top: the `Ends` combinator
-(`nil`/`append`/`ite`/`flatten`/`flatMap`/`text`) and **`ends_csi_seq`** —
-`CSI <params> <final>` provably returns the parser to ground — with
-`ends_csiNum`, `ends_csiNum2`, `ends_csiPriv` as instances. Break-verified
-by dropping a CSI final byte (breaks the theorem *and* the fixtures).
-Scope note: `Ends` covers `pstate` only; the companion `u8need = 0` needs
-per-op `u8need` lemmas through `csiDispatch` and buys much less (a
-trailing partial UTF-8 mis-renders one glyph; a stuck `.csi` swallows
-everything). `replayEq` checks it.
+Stage 3b (DONE — the parser half, complete). `Render` is byte-native
+(`List UInt8`, not `String` — a `String` literal does not reduce in the
+kernel, so the old emitter's output was unprovable *in principle*).
+Byte facts proved: `digits_range`, `utf8_no_ctl`/`utf8s_no_ctl` (via a
+`min` clamp and `safeChar`, so no `Vt` invariant is needed). Two
+invariance layers in `Theorems/Vt.lean`: `pstate` (~18 lemmas) and
+`u8need` (~30, equation-form so they work as guided rewrites). On top,
+the `Ends` combinator and one lemma per emitted construct:
+`ends_csi_seq` (the workhorse — CSI `<params> <final>` returns to
+ground), `ends_penSgr`, `ends_escSeq`, `ends_escCharset`, `ends_osc`,
+`ends_rowAnsi`/`ends_joinCRLF`/`ends_gridAnsi` (via a generic
+`invariant_foldl`), then every restore stage and finally:
 
-Stage 3b-rest (open, mechanical): `ends_penSgr` (needs `penSgr`'s
-parameter body as a named stage so the chunk is syntactically
-separable), the OSC-title construct (`ESC ] 2 ; text BEL` — needs
-`stepOsc`/`oscFinish` lemmas), the `ESC`-single constructs (`ESC 7`,
-`ESC =`, `ESC ( 0`), then `Ends (restore v)` as their composition.
+  **`restore_quiesced`** — a fresh emulator fed a whole restore stream
+  is in `.ground` with `u8need = 0`, for ANY `Vt`, no hypotheses.
+
+The `u8need` half needed no reasoning about the repaint's multi-byte
+encodings: `restore` *ends* with the cursor's `CSI … H`, whose leading
+ESC clears any pending sequence, and every later byte is < 0xC0 so none
+can re-arm one (`u8_zero_after_csi`). Break-verified twice: dropping a
+CSI final byte (breaks `ends_csiNum` + 2 fixtures) and removing the
+`safeChar` guard (makes `safeChar_ge` unprovable, cascading through the
+grid chain). Emitter stages named for provability along the way:
+`penSgrBody`, `sgrAttr`, `sgrColor`, `escSeq`, `escCharset`,
+`screensAnsi`, `regionAnsi`, `tabsAnsi`, `savedAnsi`, `charsetAnsi`,
+`titleAnsi`, `cursorAnsi`, `restoreBody`.
 
 Stage 3c (open): value fidelity — digit round-trip (CSI param
 accumulator vs `toString`; may need a bespoke digit emitter in Render

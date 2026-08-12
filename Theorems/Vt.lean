@@ -839,3 +839,309 @@ theorem ps_stepGround (v : Vt) (b : UInt8) (hb : b ≠ 0x1B) :
   all_goals rfl
 
 end Zmx.Core.Vt
+
+
+
+
+
+namespace Zmx.Core.Vt
+/-! ## No half-decoded character (`u8need`) survives an operation
+
+The companion of the `pstate` layer above. Same staged shape, same
+reason: §Replay needs to know that a restore stream leaves the emulator
+holding no partial UTF-8 sequence, so a checkpoint taken right after a
+reattach is exact and the next byte from the application is read as
+itself.
+
+Stated as *preservation* equations (`… .u8need = v.u8need`) rather than
+as implications, so they can be used as guided `simp` rewrites — an
+`exact` against the wrong branch whnf's the print chain to death.
+`stepEsc` is the one exception: its `RIS` branch rebuilds through
+`Vt.init`, where `u8need` is zero by construction, so that one is stated
+in "stays zero" form.
+-/
+
+/-- A fold of `u8need`-preserving steps preserves it. One lemma for every
+`List.range` fold in the erase/scroll/insert operations. -/
+theorem un_foldl {α : Type} (f : Vt → α → Vt)
+    (hf : ∀ v a, (f v a).u8need = v.u8need) :
+    ∀ (l : List α) (v : Vt), (l.foldl f v).u8need = v.u8need
+  | [], _ => rfl
+  | a :: as, v => (un_foldl f hf as (f v a)).trans (hf v a)
+
+theorem un_clearPending (v : Vt) : v.clearPending.u8need = v.u8need := rfl
+theorem un_carriageReturn (v : Vt) : v.carriageReturn.u8need = v.u8need := rfl
+theorem un_moveTo (v : Vt) (x y : Nat) : (v.moveTo x y).u8need = v.u8need := rfl
+theorem un_moveRel (v : Vt) (dx dy : Int) : (v.moveRel dx dy).u8need = v.u8need := rfl
+theorem un_setCol (v : Vt) (x : Nat) : (v.setCol x).u8need = v.u8need := rfl
+theorem un_putCell (v : Vt) (x y : Nat) (c : Cell) :
+    (v.putCell x y c).u8need = v.u8need := rfl
+theorem un_eraseRowSpan (v : Vt) (y a b : Nat) :
+    (v.eraseRowSpan y a b).u8need = v.u8need := rfl
+theorem un_scrollDownIn (v : Vt) (t b : Nat) :
+    (v.scrollDownIn t b).u8need = v.u8need := rfl
+theorem un_deleteChars (v : Vt) (n : Nat) : (v.deleteChars n).u8need = v.u8need := rfl
+theorem un_insertChars (v : Vt) (n : Nat) : (v.insertChars n).u8need = v.u8need := rfl
+theorem un_applySgr (v : Vt) (ps : List (Nat × Bool)) :
+    (v.applySgr ps).u8need = v.u8need := rfl
+theorem un_backTab (v : Vt) : v.backTab.u8need = v.u8need := rfl
+
+theorem un_scrollUpIn (v : Vt) (t b : Nat) (a : Bool) :
+    (v.scrollUpIn t b a).u8need = v.u8need := by
+  unfold Vt.scrollUpIn; dsimp only; split <;> rfl
+
+theorem un_scrollUp (v : Vt) : v.scrollUp.u8need = v.u8need := un_scrollUpIn _ _ _ _
+theorem un_scrollDown (v : Vt) : v.scrollDown.u8need = v.u8need := un_scrollDownIn _ _ _
+
+theorem un_lineFeed (v : Vt) : v.lineFeed.u8need = v.u8need := by
+  unfold Vt.lineFeed
+  dsimp only
+  repeat' split
+  all_goals first
+    | exact (un_scrollUp _).trans (un_clearPending v)
+    | exact un_clearPending v
+
+theorem un_reverseIndex (v : Vt) : v.reverseIndex.u8need = v.u8need := by
+  unfold Vt.reverseIndex
+  dsimp only
+  repeat' split
+  all_goals first
+    | exact (un_scrollDown _).trans (un_clearPending v)
+    | exact un_clearPending v
+
+theorem un_backspace (v : Vt) : v.backspace.u8need = v.u8need := by
+  unfold Vt.backspace; split <;> rfl
+
+theorem un_tab (v : Vt) : v.tab.u8need = v.u8need := by
+  unfold Vt.tab; dsimp only; exact un_clearPending v
+
+theorem un_eraseChars (v : Vt) (n : Nat) : (v.eraseChars n).u8need = v.u8need :=
+  un_eraseRowSpan _ _ _ _
+
+theorem un_eraseLine (v : Vt) (m : Nat) : (v.eraseLine m).u8need = v.u8need := by
+  unfold Vt.eraseLine
+  repeat' split
+  all_goals exact un_eraseRowSpan _ _ _ _
+
+theorem un_eraseScreen (v : Vt) (m : Nat) : (v.eraseScreen m).u8need = v.u8need := by
+  unfold Vt.eraseScreen
+  repeat' split
+  all_goals first
+    | exact (un_foldl _ (fun w i => un_eraseRowSpan w _ _ _) _ _).trans (un_eraseLine _ _)
+    | exact un_foldl _ (fun w i => un_eraseRowSpan w _ _ _) _ _
+
+theorem un_insertLines (v : Vt) (n : Nat) : (v.insertLines n).u8need = v.u8need := by
+  unfold Vt.insertLines
+  dsimp only
+  split
+  · rfl
+  · exact un_foldl _ (fun w _ => un_scrollDownIn w _ _) _ _
+
+theorem un_deleteLines (v : Vt) (n : Nat) : (v.deleteLines n).u8need = v.u8need := by
+  unfold Vt.deleteLines
+  dsimp only
+  split
+  · rfl
+  · exact un_foldl _ (fun w _ => un_scrollUpIn w _ _ _) _ _
+
+theorem un_enterAlt (v : Vt) (s : Bool) : (v.enterAlt s).u8need = v.u8need := by
+  unfold Vt.enterAlt; dsimp only; split <;> rfl
+
+theorem un_leaveAlt (v : Vt) (s : Bool) : (v.leaveAlt s).u8need = v.u8need := by
+  unfold Vt.leaveAlt; split <;> rfl
+
+theorem un_setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool) :
+    (v.setMode priv n on).u8need = v.u8need := by
+  unfold Vt.setMode
+  repeat' split
+  all_goals try simp only [un_moveTo, un_enterAlt, un_leaveAlt]
+  all_goals rfl
+
+theorem un_printWrap (v : Vt) : v.printWrap.u8need = v.u8need := by
+  unfold Vt.printWrap
+  split
+  · exact (un_lineFeed _).trans (un_carriageReturn v)
+  · exact un_clearPending v
+
+theorem un_printWideWrap (v : Vt) (w : Nat) : (v.printWideWrap w).u8need = v.u8need := by
+  unfold Vt.printWideWrap
+  split
+  · exact (un_lineFeed _).trans (un_carriageReturn v)
+  · rfl
+
+theorem un_printShift (v : Vt) (w : Nat) : (v.printShift w).u8need = v.u8need := by
+  unfold Vt.printShift; dsimp only; split <;> rfl
+
+theorem un_printPut (v : Vt) (ch : Char) (w : Nat) :
+    (v.printPut ch w).u8need = v.u8need := by
+  unfold Vt.printPut; dsimp only; split <;> rfl
+
+theorem un_printAdvance (v : Vt) (w : Nat) : (v.printAdvance w).u8need = v.u8need := by
+  unfold Vt.printAdvance; dsimp only; split <;> rfl
+
+theorem un_print (v : Vt) (c : Char) : (v.print c).u8need = v.u8need := by
+  unfold Vt.print
+  dsimp only
+  repeat' split
+  all_goals first
+    | rfl
+    | rw [un_printAdvance, un_printPut, un_printShift, un_printWideWrap, un_printWrap]
+
+theorem un_acceptChar (v : Vt) (n : Nat) : (v.acceptChar n).u8need = v.u8need := by
+  unfold Vt.acceptChar; split <;> exact un_print _ _
+
+theorem un_ctl (v : Vt) (b : UInt8) : (v.ctl b).u8need = v.u8need := by
+  unfold Vt.ctl
+  repeat' split
+  all_goals first
+    | exact un_backspace v
+    | exact un_tab v
+    | exact un_lineFeed v
+    | exact un_carriageReturn v
+    | rfl
+
+theorem un_csiDispatch (v : Vt) (s : CsiState) (final : UInt8) :
+    (v.csiDispatch s final).u8need = v.u8need := by
+  unfold Vt.csiDispatch
+  dsimp only
+  repeat' split
+  all_goals try simp only [un_insertChars, un_moveRel, un_carriageReturn, un_setCol,
+    un_moveTo, un_eraseScreen, un_eraseLine, un_insertLines, un_deleteLines,
+    un_deleteChars, un_eraseChars, un_setMode, un_applySgr]
+  all_goals first
+    | rfl
+    | exact un_foldl _ (fun w _ => un_tab w) _ _
+    | exact un_foldl _ (fun w _ => un_scrollUp w) _ _
+    | exact un_foldl _ (fun w _ => un_scrollDown w) _ _
+    | exact un_foldl _ (fun w _ => un_backTab w) _ _
+
+theorem un_csiFinish (v : Vt) (s : CsiState) (final : UInt8) :
+    (v.csiFinish s final).u8need = v.u8need := by
+  unfold Vt.csiFinish
+  dsimp only
+  split <;> exact un_csiDispatch _ _ _
+
+theorem un_stepCsi (v : Vt) (s : CsiState) (b : UInt8) :
+    (v.stepCsi s b).u8need = v.u8need := by
+  unfold Vt.stepCsi
+  repeat' split
+  all_goals first
+    | rfl
+    | exact un_csiFinish _ _ _
+    | exact un_ctl _ _
+
+theorem un_stepEscInter (v : Vt) (i b : UInt8) :
+    (v.stepEscInter i b).u8need = v.u8need := by
+  unfold Vt.stepEscInter
+  dsimp only
+  repeat' split
+  all_goals rfl
+
+theorem un_oscFinish (v : Vt) (acc : Array UInt8) :
+    (v.oscFinish acc).u8need = v.u8need := by
+  unfold Vt.oscFinish
+  dsimp only
+  repeat' split
+  all_goals rfl
+
+theorem un_stepOsc (v : Vt) (acc : Array UInt8) (e : Bool) (b : UInt8) :
+    (v.stepOsc acc e b).u8need = v.u8need := by
+  unfold Vt.stepOsc
+  repeat' split
+  all_goals first
+    | rfl
+    | exact un_oscFinish _ _
+
+theorem un_stepStr (v : Vt) (e : Bool) (b : UInt8) :
+    (v.stepStr e b).u8need = v.u8need := by
+  unfold Vt.stepStr
+  repeat' split
+  all_goals rfl
+
+/-- `stepEsc` in "stays zero" form: `RIS` rebuilds through `Vt.init`,
+which has no pending sequence by construction. -/
+theorem uz_stepEsc {v : Vt} (b : UInt8) (h : v.u8need = 0) :
+    (v.stepEsc b).u8need = 0 := by
+  unfold Vt.stepEsc
+  dsimp only
+  repeat' split
+  all_goals try simp only [un_lineFeed, un_carriageReturn, un_reverseIndex]
+  all_goals first
+    | exact h
+    | rfl
+
+/-- `stepGround` keeps `u8need` at zero for any byte that is not a
+multi-byte UTF-8 lead (≥ 0xC0): a lead byte is exactly what *starts* a
+pending sequence. -/
+theorem uz_stepGround {v : Vt} (b : UInt8) (hb : b < 0xC0) (h : v.u8need = 0) :
+    (v.stepGround b).u8need = 0 := by
+  unfold Vt.stepGround
+  repeat' split
+  all_goals try simp only [un_ctl, un_acceptChar]
+  all_goals first
+    | exact h
+    | rfl
+    | (simp [h])
+    | (exfalso
+       simp only [UInt8.lt_iff_toNat_lt, Bool.not_eq_true,
+         decide_eq_false_iff_not, decide_eq_true_eq, Nat.not_lt,
+         show ((0x20 : UInt8)).toNat = 32 from rfl,
+         show ((0x80 : UInt8)).toNat = 128 from rfl,
+         show ((0xC0 : UInt8)).toNat = 192 from rfl,
+         show ((0xE0 : UInt8)).toNat = 224 from rfl,
+         show ((0xF0 : UInt8)).toNat = 240 from rfl,
+         show ((0xF8 : UInt8)).toNat = 248 from rfl] at *
+       omega)
+
+/-- One step keeps `u8need` at zero, in any parser state, for any byte
+that is not a UTF-8 lead byte. -/
+theorem uz_step {v : Vt} (b : UInt8) (hb : b < 0xC0) (h : v.u8need = 0) :
+    (v.step b).u8need = 0 := by
+  have hab : (v.abortUtf8 b).u8need = 0 := by
+    unfold Vt.abortUtf8
+    split
+    · rfl
+    · exact h
+  unfold Vt.step
+  dsimp only
+  split
+  all_goals try simp only [un_stepEscInter, un_stepCsi, un_stepOsc, un_stepStr]
+  all_goals first
+    | exact hab
+    | exact uz_stepGround _ hb hab
+    | exact uz_stepEsc _ hab
+
+/-- Feeding ESC from ANY state (pending UTF-8 or not) leaves none: the
+abort fires, and no ESC branch of any parser state re-arms it. -/
+theorem uz_step_esc (v : Vt) : (v.step 0x1B).u8need = 0 := by
+  have hab : (v.abortUtf8 0x1B).u8need = 0 := by
+    rcases Nat.eq_zero_or_pos v.u8need with hz | hpos
+    · unfold Vt.abortUtf8
+      split
+      · rfl
+      · exact hz
+    · have hg : (v.u8need > 0 && ((0x1B : UInt8) < 0x80 || (0x1B : UInt8) ≥ 0xC0)) = true := by
+        simp only [Bool.and_eq_true, Bool.or_eq_true, decide_eq_true_eq]
+        exact ⟨hpos, Or.inl (by decide)⟩
+      unfold Vt.abortUtf8
+      rw [if_pos hg]
+  unfold Vt.step
+  dsimp only
+  split
+  all_goals try simp only [un_stepEscInter, un_stepCsi, un_stepOsc, un_stepStr]
+  all_goals first
+    | exact hab
+    | exact uz_stepGround _ (by decide) hab
+    | exact uz_stepEsc _ hab
+
+/-- A run of non-lead bytes keeps `u8need` at zero. -/
+theorem uz_feed : ∀ (bs : List UInt8) (v : Vt), (∀ b ∈ bs, b < 0xC0) →
+    v.u8need = 0 → (v.feed bs).u8need = 0
+  | [], _, _, h => h
+  | x :: xs, v, hb, h => by
+    have hstep : v.feed (x :: xs) = (v.step x).feed xs := by simp [Vt.feed]
+    rw [hstep]
+    exact uz_feed xs _ (fun b hm => hb b (by simp [hm]))
+      (uz_step x (hb x (by simp)) h)
+
+end Zmx.Core.Vt

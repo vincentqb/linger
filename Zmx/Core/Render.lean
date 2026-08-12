@@ -80,30 +80,47 @@ def csiNum2 (a b : Nat) (final : UInt8) : Bytes :=
 def csiPriv (n : Nat) (final : UInt8) : Bytes :=
   csiB ++ [0x3F] ++ digits n ++ [final]
 
+/-- A two-byte `ESC <final>` sequence (DECSC, HTS, app-keypad…). Named so
+its bytes stay one syntactic unit: `a ++ escB ++ [b]` would associate as
+`(a ++ escB) ++ [b]` and split the sequence in two. -/
+def escSeq (final : UInt8) : Bytes := escB ++ [final]
+
+/-- A charset designation, `ESC ( x` / `ESC ) x`. -/
+def escCharset (i x : UInt8) : Bytes := escB ++ [i, x]
+
 /-! ## Pen -/
+
+/-- One SGR attribute, as a sub-parameter. -/
+def sgrAttr (on : Bool) (code : Nat) : Bytes :=
+  if on then 0x3B :: digits code else []
+
+/-- One colour, as sub-parameters (16-colour, 256-colour and truecolour
+forms). -/
+def sgrColor (c : Color) (isFg : Bool) : Bytes :=
+  match c with
+  | .default => []
+  | .idx i =>
+    let n := i.toNat
+    if n < 8 then 0x3B :: digits ((if isFg then 30 else 40) + n)
+    else if n < 16 then 0x3B :: digits ((if isFg then 90 else 100) + n - 8)
+    else 0x3B :: digits (if isFg then 38 else 48)
+           ++ 0x3B :: digits 5 ++ 0x3B :: digits n
+  | .rgb r g b =>
+    0x3B :: digits (if isFg then 38 else 48) ++ 0x3B :: digits 2
+      ++ 0x3B :: digits r.toNat ++ 0x3B :: digits g.toNat ++ 0x3B :: digits b.toNat
+
+/-- The parameter string of a pen's SGR. A named stage so §Replay can
+say "this chunk is all parameter bytes" once (`Theorems/Render.lean`). -/
+def penSgrBody (p : Pen) : Bytes :=
+  digits 0
+    ++ sgrAttr p.bold 1 ++ sgrAttr p.dim 2 ++ sgrAttr p.italic 3
+    ++ sgrAttr p.underline 4 ++ sgrAttr p.blink 5 ++ sgrAttr p.reverse 7
+    ++ sgrAttr p.strike 9
+    ++ sgrColor p.fg true ++ sgrColor p.bg false
 
 /-- SGR for a pen, from a clean slate (always starts with reset — we
 diff by "pen changed at all", not by attribute; simpler and correct). -/
-def penSgr (p : Pen) : Bytes :=
-  let attr := fun (b : Bool) (code : Nat) => if b then 0x3B :: digits code else ([] : Bytes)
-  let color := fun (c : Color) (isFg : Bool) =>
-    match c with
-    | .default => ([] : Bytes)
-    | .idx i =>
-      let n := i.toNat
-      if n < 8 then 0x3B :: digits ((if isFg then 30 else 40) + n)
-      else if n < 16 then 0x3B :: digits ((if isFg then 90 else 100) + n - 8)
-      else 0x3B :: digits (if isFg then 38 else 48)
-             ++ 0x3B :: digits 5 ++ 0x3B :: digits n
-    | .rgb r g b =>
-      0x3B :: digits (if isFg then 38 else 48) ++ 0x3B :: digits 2
-        ++ 0x3B :: digits r.toNat ++ 0x3B :: digits g.toNat ++ 0x3B :: digits b.toNat
-  csiB ++ digits 0
-    ++ attr p.bold 1 ++ attr p.dim 2 ++ attr p.italic 3
-    ++ attr p.underline 4 ++ attr p.blink 5 ++ attr p.reverse 7
-    ++ attr p.strike 9
-    ++ color p.fg true ++ color p.bg false
-    ++ [0x6D]
+def penSgr (p : Pen) : Bytes := csiB ++ penSgrBody p ++ [0x6D]
 
 /-! ## Grid -/
 
@@ -154,7 +171,7 @@ def modesAnsi (v : Vt) : Bytes :=
   let set := fun (n : Nat) (on : Bool) => csiPriv n (if on then 0x68 else 0x6C)
   (if v.modes.wrap then [] else set 7 false)
     ++ (if v.modes.appCursor then set 1 true else [])
-    ++ (if v.modes.appKeypad then escB ++ [0x3D] else [])
+    ++ (if v.modes.appKeypad then escSeq 0x3D else [])
     ++ (if v.modes.cursorVisible then [] else set 25 false)
     ++ (if v.modes.bracketedPaste then set 2004 true else [])
     ++ (if v.modes.mouse != 0 then set v.modes.mouse true else [])
@@ -163,12 +180,61 @@ def modesAnsi (v : Vt) : Bytes :=
     ++ (if v.modes.origin then set 6 true else [])
     ++ (if v.modes.insert then csiNum 4 0x68 else [])
 
-/-! ## Restore -/
+/-! ## Restore
 
-/-- Everything a re-attaching client's terminal needs: reset, repaint
-(both screens if in alt), scroll region, tab stops, saved cursor,
-title, modes, charset, pen, cursor. Emission order is load-bearing —
-each comment names the §Replay constraint (specs/bigger-theorems.md):
+Named stages throughout, so §Replay can discharge one at a time and the
+top theorem is their composition (`Theorems/Render.lean`).
+-/
+
+/-- The two screens: in alt, paint main, park the stashed cursor/pen,
+switch, then paint alt (§Replay fix 7). -/
+def screensAnsi (v : Vt) : Bytes :=
+  match v.altGrid with
+  | none => gridAnsi v.grid
+  | some (mainGrid, mcur, mpen) =>
+    gridAnsi mainGrid
+      ++ penSgr mpen ++ csiNum2 (mcur.y + 1) (mcur.x + 1) 0x48
+      ++ csiPriv 1049 0x68 ++ gridAnsi v.grid
+
+/-- Scroll region, when it is not the whole screen. -/
+def regionAnsi (v : Vt) : Bytes :=
+  if v.top == 0 && v.bot == v.rows - 1 then []
+  else csiNum2 (v.top + 1) (v.bot + 1) 0x72
+
+/-- Custom tab ruler only (the default is what a reset terminal has). -/
+def tabsAnsi (v : Vt) : Bytes :=
+  if v.tabs == defaultTabs v.cols then []
+  else csiNum 3 0x67 ++ (((List.range v.cols).filter (fun i => v.tabs.getD i false)).flatMap
+    (fun i => csiNum (i + 1) 0x47 ++ escSeq 0x48))
+
+/-- Replay the DECSC slot (§Replay fix 3). -/
+def savedAnsi (v : Vt) : Bytes :=
+  penSgr v.saved.pen
+    ++ csiNum2 (v.saved.cur.y + 1) (v.saved.cur.x + 1) 0x48 ++ escSeq 0x37
+
+/-- Charset designations and the shift state (§Replay fix 2). -/
+def charsetAnsi (v : Vt) : Bytes :=
+  (if v.g0Line then escCharset 0x28 0x30 else escCharset 0x28 0x42)
+    ++ (if v.g1Line then escCharset 0x29 0x30 else escCharset 0x29 0x42)
+    ++ (if v.shiftOut then [0x0E] else [])
+
+/-- Window title as an OSC 2, BEL-terminated. The payload is scrubbed
+(`utf8s`), so it can contain neither ESC nor BEL and cannot terminate or
+extend its own sequence. -/
+def titleAnsi (v : Vt) : Bytes :=
+  if v.title.isEmpty then []
+  else escB ++ [0x5D, 0x32, 0x3B] ++ utf8s v.title.toList ++ [0x07]
+
+/-- Final cursor placement — region-relative under DECOM (§Replay fix 5).
+`restore` ends with this, which is also what makes the parser provably
+quiesced: it is ESC-initiated, and ESC clears any pending UTF-8. -/
+def cursorAnsi (v : Vt) : Bytes :=
+  if v.modes.origin then csiNum2 (v.cursor.y - v.top + 1) (v.cursor.x + 1) 0x48
+  else csiNum2 (v.cursor.y + 1) (v.cursor.x + 1) 0x48
+
+/-- Everything a re-attaching client's terminal needs except the final
+cursor placement. Emission order is load-bearing — each comment names
+the §Replay constraint (specs/bigger-theorems.md):
 
 1. repaint before modes (IRM would shift cells; charset would
    re-translate ASCII glyphs);
@@ -178,47 +244,21 @@ each comment names the §Replay constraint (specs/bigger-theorems.md):
 3. the saved-cursor replay comes *after* the alt switch (which
    clobbers `saved`) and *before* DECOM is set (its address is
    absolute) (fix 3);
-4. the final cursor address is region-relative iff DECOM is on
-   (fix 5). -/
-def restore (v : Vt) : Bytes :=
-  let paintCurrent := gridAnsi v.grid
-  let screens :=
-    match v.altGrid with
-    | none => paintCurrent
-    | some (mainGrid, mcur, mpen) =>
-      gridAnsi mainGrid
-        ++ penSgr mpen ++ csiNum2 (mcur.y + 1) (mcur.x + 1) 0x48
-        ++ csiPriv 1049 0x68 ++ paintCurrent
-  let region :=
-    if v.top == 0 && v.bot == v.rows - 1 then []
-    else csiNum2 (v.top + 1) (v.bot + 1) 0x72
-  -- custom tab ruler only (the default is what a reset terminal has)
-  let tabs :=
-    if v.tabs == defaultTabs v.cols then []
-    else csiNum 3 0x67 ++ (((List.range v.cols).filter (fun i => v.tabs.getD i false)).flatMap
-      (fun i => csiNum (i + 1) 0x47 ++ escB ++ [0x48]))
-  let saved := penSgr v.saved.pen
-    ++ csiNum2 (v.saved.cur.y + 1) (v.saved.cur.x + 1) 0x48 ++ escB ++ [0x37]
-  let charset :=
-    (if v.g0Line then escB ++ [0x28, 0x30] else escB ++ [0x28, 0x42])
-    ++ (if v.g1Line then escB ++ [0x29, 0x30] else escB ++ [0x29, 0x42])
-    ++ (if v.shiftOut then [0x0E] else [])
-  let cursor :=
-    if v.modes.origin then csiNum2 (v.cursor.y - v.top + 1) (v.cursor.x + 1) 0x48
-    else csiNum2 (v.cursor.y + 1) (v.cursor.x + 1) 0x48
-  let title :=
-    if v.title.isEmpty then []
-    else escB ++ [0x5D, 0x32, 0x3B] ++ utf8s v.title.toList ++ [0x07]
+4. the final cursor address is region-relative iff DECOM is on (fix 5,
+   in `cursorAnsi`). -/
+def restoreBody (v : Vt) : Bytes :=
   csiNum 0 0x6D ++ csiNum 2 0x4A          -- clean slate
-    ++ screens
-    ++ region
-    ++ tabs
-    ++ saved
-    ++ title
+    ++ screensAnsi v
+    ++ regionAnsi v
+    ++ tabsAnsi v
+    ++ savedAnsi v
+    ++ titleAnsi v
     ++ modesAnsi v
-    ++ charset
+    ++ charsetAnsi v
     ++ penSgr v.pen
-    ++ cursor
+
+/-- The reattach byte stream. -/
+def restore (v : Vt) : Bytes := restoreBody v ++ cursorAnsi v
 
 /-! ## History (text) -/
 

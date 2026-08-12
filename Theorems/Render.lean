@@ -432,15 +432,422 @@ theorem ends_csiPriv (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
   exact ends_csi_seq _ final
     (ParamBytes.cons (by decide) (by decide) (paramBytes_digits n)) h1 h2
 
-/-- Not yet proved: `Ends (penSgr p)`. It is one CSI sequence, so
-`ends_csi_seq` applies the moment `penSgr`'s parameter body is a named
-stage — as written it associates as `(csiB ++ digits 0) ++ …`, so the
-parameter chunk is not syntactically separable, and re-associating inside
-the proof is uglier than naming the stage in the emitter. Every `penSgr`
-byte *is* a parameter byte, and this is the piece that will discharge it.
-Tracked in specs/bigger-theorems.md (3b-rest), with the OSC-title and
-`ESC`-single constructs. -/
+/-- Not yet proved: the composition. See below. -/
 theorem paramBytes_sgr_subparam (n : Nat) : ParamBytes (0x3B :: digits n) :=
   paramBytes_semiDigits n
+
+/-! ### SGR pens -/
+
+theorem paramBytes_sgrAttr (on : Bool) (code : Nat) : ParamBytes (sgrAttr on code) := by
+  unfold sgrAttr
+  by_cases h : on <;> simp only [h, if_true]
+  · exact paramBytes_semiDigits _
+  · exact ParamBytes.nil
+
+theorem paramBytes_sgrColor (c : Color) (isFg : Bool) : ParamBytes (sgrColor c isFg) := by
+  unfold sgrColor
+  cases c with
+  | default => exact ParamBytes.nil
+  | idx i =>
+    dsimp only
+    repeat' split
+    all_goals first
+      | exact paramBytes_semiDigits _
+      | exact (((paramBytes_semiDigits _).append (paramBytes_semiDigits _)).append
+          (paramBytes_semiDigits _))
+  | rgb r g b =>
+    exact ((((((paramBytes_semiDigits _).append (paramBytes_semiDigits _)).append
+      (paramBytes_semiDigits _)).append (paramBytes_semiDigits _)).append
+      (paramBytes_semiDigits _)))
+
+theorem paramBytes_penSgrBody (p : Pen) : ParamBytes (penSgrBody p) := by
+  unfold penSgrBody
+  exact (((((((((paramBytes_digits 0).append (paramBytes_sgrAttr _ 1)).append
+    (paramBytes_sgrAttr _ 2)).append (paramBytes_sgrAttr _ 3)).append
+    (paramBytes_sgrAttr _ 4)).append (paramBytes_sgrAttr _ 5)).append
+    (paramBytes_sgrAttr _ 7)).append (paramBytes_sgrAttr _ 9)).append
+    (paramBytes_sgrColor _ true)).append (paramBytes_sgrColor _ false)
+
+/-- An SGR pen is one CSI sequence: `Ends`, for any pen (16-colour,
+256-colour, truecolour). -/
+theorem ends_penSgr (p : Pen) : Ends (penSgr p) :=
+  ends_csi_seq _ 0x6D (paramBytes_penSgrBody p) (by decide) (by decide)
+
+/-! ### `ESC`-single and charset sequences
+
+`stepEsc` assigns `.ground` for every final it honours; `ESC (`/`ESC )`
+go to `.escInter`, whose every branch is `.ground`. -/
+
+/-- An `ESC <final>` whose final is one of the single-byte sequences
+`restore` emits — `7` (DECSC), `=` (app keypad), `H` (HTS) — lands back
+in ground. -/
+theorem esc_single_step {v : Vt} (b : UInt8) (hg : v.pstate = .esc)
+    (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x48) : (v.step b).pstate = .ground := by
+  have hw : (v.abortUtf8 b).pstate = PState.esc := by
+    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
+  unfold Vt.step
+  dsimp only
+  rw [hw]
+  unfold Vt.stepEsc
+  rcases hb with h | h | h <;> subst h <;> rfl
+
+/-- `ESC (` / `ESC )` enter the charset-designation state. -/
+theorem esc_inter_step {v : Vt} (b : UInt8) (hg : v.pstate = .esc)
+    (hb : b = 0x28 ∨ b = 0x29) : (v.step b).pstate = .escInter b := by
+  have hw : (v.abortUtf8 b).pstate = PState.esc := by
+    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
+  unfold Vt.step
+  dsimp only
+  rw [hw]
+  unfold Vt.stepEsc
+  rcases hb with h | h <;> subst h <;> rfl
+
+/-- …and the byte after it always returns to ground. -/
+theorem esc_inter_finish {v : Vt} {i : UInt8} (b : UInt8) (hg : v.pstate = .escInter i) :
+    (v.step b).pstate = .ground := by
+  have hw : (v.abortUtf8 b).pstate = PState.escInter i := by
+    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
+  unfold Vt.step
+  dsimp only
+  rw [hw]
+  unfold Vt.stepEscInter
+  dsimp only
+  repeat' split
+  all_goals rfl
+
+/-- `ESC 7` (DECSC), `ESC =` and `ESC H` (HTS) are `Ends`. -/
+theorem ends_escSeq (b : UInt8) (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x48) :
+    Ends (escSeq b) := by
+  intro v hg
+  show (v.feed ([0x1B] ++ [b])).pstate = .ground
+  rw [show ([0x1B] ++ [b] : Bytes) = 0x1B :: [b] from rfl, feed_cons]
+  show ((v.step 0x1B).step b).pstate = .ground
+  exact esc_single_step b (esc_step hg) hb
+
+/-- `ESC ( x` / `ESC ) x` (charset designation) are `Ends`. -/
+theorem ends_escCharset (i x : UInt8) (hi : i = 0x28 ∨ i = 0x29) :
+    Ends (escCharset i x) := by
+  intro v hg
+  show (v.feed ([0x1B] ++ [i, x])).pstate = .ground
+  rw [show ([0x1B] ++ [i, x] : Bytes) = 0x1B :: i :: [x] from rfl, feed_cons, feed_cons]
+  show (((v.step 0x1B).step i).step x).pstate = .ground
+  exact esc_inter_finish x (esc_inter_step i (esc_step hg) hi)
+
+/-! ### OSC (the window title)
+
+`ESC ] 2 ; <payload> BEL`. The payload is `utf8s`-scrubbed, so it holds
+neither ESC nor BEL: it cannot terminate its own sequence early, and
+cannot start a nested one. -/
+
+/-- `ESC ]` opens an OSC accumulator. -/
+theorem osc_open_step {v : Vt} (hg : v.pstate = .esc) :
+    (v.step 0x5D).pstate = .osc #[] false := by
+  have hw : (v.abortUtf8 0x5D).pstate = PState.esc := by
+    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
+  unfold Vt.step
+  dsimp only
+  rw [hw]
+  rfl
+
+/-- A payload byte that is neither ESC nor BEL keeps accumulating. The
+`esc`-flag stays `false`, which matters: with the flag set, a `\` byte
+would close the sequence as an ST — so the flag has to be carried, not
+existentially quantified. -/
+theorem osc_accum_step {v : Vt} {acc : Array UInt8} (b : UInt8)
+    (hg : v.pstate = .osc acc false) (h1 : b ≠ 0x1B) (h2 : b ≠ 0x07) :
+    ∃ acc', (v.step b).pstate = .osc acc' false := by
+  have hw : (v.abortUtf8 b).pstate = PState.osc acc false := by
+    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
+  unfold Vt.step
+  dsimp only
+  rw [hw]
+  unfold Vt.stepOsc
+  dsimp only
+  -- ST needs the esc flag (false here); BEL and ESC are excluded; both
+  -- the cap branch and the accumulate branch stay `.osc … false`
+  rw [if_neg (by simp), if_neg (by simp [h2]), if_neg (by simp [h1])]
+  split
+  · exact ⟨_, rfl⟩
+  · exact ⟨_, rfl⟩
+
+theorem osc_accum_feed : ∀ (bs : Bytes) {v : Vt} {acc : Array UInt8},
+    v.pstate = .osc acc false → (∀ b ∈ bs, b ≠ 0x1B ∧ b ≠ 0x07) →
+    ∃ acc', (v.feed bs).pstate = .osc acc' false
+  | [], _, acc, hg, _ => ⟨acc, hg⟩
+  | x :: xs, v, acc, hg, h => by
+    obtain ⟨acc', hs⟩ := osc_accum_step x hg (h x (by simp)).1 (h x (by simp)).2
+    rw [feed_cons]
+    exact osc_accum_feed xs hs (fun b hb => h b (by simp [hb]))
+
+/-- BEL closes the OSC: `oscFinish` assigns `.ground` before it decides
+whether the payload was a title. -/
+theorem osc_bel_step {v : Vt} {acc : Array UInt8} {e : Bool}
+    (hg : v.pstate = .osc acc e) : (v.step 0x07).pstate = .ground := by
+  have hw : (v.abortUtf8 0x07).pstate = PState.osc acc e := by
+    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
+  unfold Vt.step
+  dsimp only
+  rw [hw]
+  unfold Vt.stepOsc
+  dsimp only
+  rw [if_neg (by simp), if_pos (by decide)]
+  unfold Vt.oscFinish
+  dsimp only
+  repeat' split
+  all_goals rfl
+
+/-- The scrubbed title payload carries neither ESC nor BEL. -/
+theorem utf8s_no_esc_bel (cs : List Char) : ∀ b ∈ utf8s cs, b ≠ 0x1B ∧ b ≠ 0x07 := by
+  intro b hb
+  obtain ⟨hge, -⟩ := utf8s_no_ctl cs b hb
+  refine ⟨fun he => ?_, fun he => ?_⟩
+  · rw [he] at hge; exact absurd hge (by decide)
+  · rw [he] at hge; exact absurd hge (by decide)
+
+/-- §Replay: an OSC 2 title sequence is `Ends`. -/
+theorem ends_osc (payload : List Char) :
+    Ends (escB ++ [0x5D, 0x32, 0x3B] ++ utf8s payload ++ [0x07]) := by
+  have hshape : (escB ++ [0x5D, 0x32, 0x3B] ++ utf8s payload ++ [0x07] : Bytes)
+      = 0x1B :: 0x5D :: 0x32 :: 0x3B :: (utf8s payload ++ [0x07]) := by
+    simp [escB]
+  intro v hg
+  rw [hshape, feed_cons, feed_cons, feed_cons, feed_cons]
+  have h1 := osc_open_step (esc_step hg)
+  obtain ⟨a2, h2⟩ := osc_accum_step 0x32 h1 (by decide) (by decide)
+  obtain ⟨a3, h3⟩ := osc_accum_step 0x3B h2 (by decide) (by decide)
+  have hsplit : ∀ (w : Vt), w.feed (utf8s payload ++ [0x07])
+      = (w.feed (utf8s payload)).feed [0x07] := by
+    intro w; simp [Vt.feed, List.foldl_append]
+  rw [hsplit]
+  obtain ⟨a4, h4⟩ := osc_accum_feed (utf8s payload) h3 (utf8s_no_esc_bel payload)
+  exact osc_bel_step h4
+
+/-! ### The grid repaint
+
+Cells contribute scrubbed text (`Ends.text`) and, when the pen changes,
+an SGR sequence (`ends_penSgr`). Both are `Ends`, so the fold that
+assembles a row preserves "everything so far is `Ends`" — the generic
+fold-invariant lemma below is what carries that, and it is reused for the
+grid's list of painted rows. -/
+
+theorem invariant_foldl {α β : Type} (P : β → Prop) (f : β → α → β)
+    (hf : ∀ acc a, P acc → P (f acc a)) :
+    ∀ (l : List α) (acc : β), P acc → P (l.foldl f acc)
+  | [], _, h => h
+  | a :: as, acc, h => invariant_foldl P f hf as (f acc a) (hf acc a h)
+
+theorem ends_utf8s (cs : List Char) : Ends (utf8s cs) :=
+  Ends.text (utf8s_no_esc cs)
+
+theorem ends_cellText (c : Cell) : Ends (cellText c) := by
+  unfold cellText
+  exact (Ends.text (fun b hb => by
+    obtain ⟨hge, -⟩ := utf8_no_ctl (safeChar c.base) (safeChar_ge c.base).1
+      (safeChar_ge c.base).2 b hb
+    intro he; rw [he] at hge; exact absurd hge (by decide))).append (ends_utf8s c.marks)
+
+theorem ends_rowAnsi (row : Row) (p : Pen) : Ends (rowAnsi row p).1 := by
+  unfold rowAnsi
+  rw [← Array.foldl_toList]
+  refine invariant_foldl (fun acc => Ends acc.1) _ ?_ row.toList ([], p) Ends.nil
+  intro acc c hacc
+  dsimp only
+  split
+  · exact hacc.append (ends_utf8s c.marks)
+  · dsimp only
+    split
+    · exact hacc.append (ends_cellText c)
+    · exact (hacc.append (ends_penSgr c.pen)).append (ends_cellText c)
+
+theorem ends_crlf : Ends [0x0D, 0x0A] := Ends.text (by decide)
+
+theorem ends_joinCRLF : ∀ (l : List Bytes), (∀ bs ∈ l, Ends bs) → Ends (joinCRLF l)
+  | [], _ => Ends.nil
+  | [b], h => by
+    unfold joinCRLF
+    exact h b (by simp)
+  | b :: c :: bs, h => by
+    unfold joinCRLF
+    refine ((h b (by simp)).append ends_crlf).append ?_
+    exact ends_joinCRLF (c :: bs) (fun x hx => h x (by simp [hx]))
+
+theorem ends_gridAnsi (grid : Array Row) : Ends (gridAnsi grid) := by
+  unfold gridAnsi
+  dsimp only
+  have hrows : ∀ bs ∈ (grid.foldl
+      (fun (acc : List Bytes × Pen) row =>
+        (acc.1 ++ [(rowAnsi row acc.2).1], (rowAnsi row acc.2).2))
+      (([], ({} : Pen)))).1, Ends bs := by
+    rw [← Array.foldl_toList]
+    refine invariant_foldl (fun acc => ∀ bs ∈ acc.1, Ends bs) _ ?_ grid.toList
+      (([], ({} : Pen))) (by intro bs hbs; simp at hbs)
+    intro acc row hacc bs hbs
+    dsimp only at hbs
+    rcases List.mem_append.mp hbs with h | h
+    · exact hacc bs h
+    · simp only [List.mem_singleton] at h
+      subst h
+      exact ends_rowAnsi row acc.2
+  -- `ESC [ H` is a CSI sequence with no parameters
+  have hhome : Ends (csiB ++ [0x48] : Bytes) := by
+    have : (csiB ++ [0x48] : Bytes) = csiB ++ [] ++ [0x48] := by simp
+    rw [this]
+    exact ends_csi_seq [] 0x48 ParamBytes.nil (by decide) (by decide)
+  exact hhome.append (ends_joinCRLF _ hrows)
+
+/-! ### The composition: a whole restore stream
+
+Every stage of `restore` is `Ends`, so the stream is. This is §Replay's
+parser half, for ANY `Vt` and with no hypotheses.
+-/
+
+theorem ends_screensAnsi (v : Vt) : Ends (screensAnsi v) := by
+  unfold screensAnsi
+  split
+  · exact ends_gridAnsi _
+  · exact ((((ends_gridAnsi _).append (ends_penSgr _)).append
+      (ends_csiNum2 _ _ 0x48 (by decide) (by decide))).append
+      (ends_csiPriv 1049 0x68 (by decide) (by decide))).append (ends_gridAnsi _)
+
+theorem ends_regionAnsi (v : Vt) : Ends (regionAnsi v) := by
+  unfold regionAnsi
+  exact Ends.ite Ends.nil (ends_csiNum2 _ _ 0x72 (by decide) (by decide))
+
+theorem ends_tabsAnsi (v : Vt) : Ends (tabsAnsi v) := by
+  unfold tabsAnsi
+  refine Ends.ite Ends.nil ?_
+  refine (ends_csiNum 3 0x67 (by decide) (by decide)).append ?_
+  refine Ends.flatMap (fun i => ?_)
+  exact (ends_csiNum (i + 1) 0x47 (by decide) (by decide)).append
+    (ends_escSeq 0x48 (by decide))
+
+theorem ends_savedAnsi (v : Vt) : Ends (savedAnsi v) := by
+  unfold savedAnsi
+  exact ((ends_penSgr _).append (ends_csiNum2 _ _ 0x48 (by decide) (by decide))).append
+    (ends_escSeq 0x37 (by decide))
+
+theorem ends_charsetAnsi (v : Vt) : Ends (charsetAnsi v) := by
+  unfold charsetAnsi
+  refine ((Ends.ite (ends_escCharset 0x28 0x30 (by decide))
+    (ends_escCharset 0x28 0x42 (by decide))).append
+    (Ends.ite (ends_escCharset 0x29 0x30 (by decide))
+      (ends_escCharset 0x29 0x42 (by decide)))).append ?_
+  exact Ends.ite (Ends.text (by decide)) Ends.nil
+
+theorem ends_titleAnsi (v : Vt) : Ends (titleAnsi v) := by
+  unfold titleAnsi
+  exact Ends.ite Ends.nil (ends_osc _)
+
+theorem ends_modesAnsi (v : Vt) : Ends (modesAnsi v) := by
+  unfold modesAnsi
+  dsimp only
+  have hset : ∀ (n : Nat) (on : Bool), Ends (csiPriv n (if on then 0x68 else 0x6C)) := by
+    intro n on
+    by_cases h : on <;> simp only [h, if_true]
+    · exact ends_csiPriv n 0x68 (by decide) (by decide)
+    · exact ends_csiPriv n 0x6C (by decide) (by decide)
+  have e1 : Ends (if v.modes.wrap then [] else csiPriv 7 (if false then 0x68 else 0x6C)) :=
+    Ends.ite Ends.nil (hset 7 false)
+  have e2 := Ends.ite (c := v.modes.appCursor = true) (hset 1 true) Ends.nil
+  have e3 := Ends.ite (c := v.modes.appKeypad = true) (ends_escSeq 0x3D (by decide)) Ends.nil
+  have e4 := Ends.ite (c := v.modes.cursorVisible = true) Ends.nil (hset 25 false)
+  have e5 := Ends.ite (c := v.modes.bracketedPaste = true) (hset 2004 true) Ends.nil
+  have e6 := Ends.ite (c := (v.modes.mouse != 0) = true) (hset v.modes.mouse true) Ends.nil
+  have e7 := Ends.ite (c := v.modes.mouseSgr = true) (hset 1006 true) Ends.nil
+  have e8 := Ends.ite (c := v.modes.focusEvents = true) (hset 1004 true) Ends.nil
+  have e9 := Ends.ite (c := v.modes.origin = true) (hset 6 true) Ends.nil
+  have e10 := Ends.ite (c := v.modes.insert = true)
+    (ends_csiNum 4 0x68 (by decide) (by decide)) Ends.nil
+  exact ((((((((e1.append e2).append e3).append e4).append e5).append e6).append
+    e7).append e8).append e9).append e10
+
+theorem ends_cursorAnsi (v : Vt) : Ends (cursorAnsi v) := by
+  unfold cursorAnsi
+  exact Ends.ite (ends_csiNum2 _ _ 0x48 (by decide) (by decide))
+    (ends_csiNum2 _ _ 0x48 (by decide) (by decide))
+
+theorem ends_restoreBody (v : Vt) : Ends (restoreBody v) := by
+  unfold restoreBody
+  exact ((((((((
+    (ends_csiNum 0 0x6D (by decide) (by decide)).append
+    (ends_csiNum 2 0x4A (by decide) (by decide))).append
+    (ends_screensAnsi v)).append
+    (ends_regionAnsi v)).append
+    (ends_tabsAnsi v)).append
+    (ends_savedAnsi v)).append
+    (ends_titleAnsi v)).append
+    (ends_modesAnsi v)).append
+    (ends_charsetAnsi v)).append
+    (ends_penSgr v.pen)
+
+/-- **§Replay (parser half).** Feeding a whole restore stream to a fresh
+terminal emulator leaves its parser in `ground`: no reattach can wedge a
+client mid-sequence, whatever the session's screen, pen, modes, title or
+charset state. Proved for every `Vt`, with no hypotheses. -/
+theorem ends_restore (v : Vt) : Ends (restore v) := by
+  unfold restore
+  exact (ends_restoreBody v).append (ends_cursorAnsi v)
+
+/-- The operational form: a fresh emulator fed `restore v` is ready for
+the application's next byte. -/
+theorem restore_leaves_ground (v : Vt) (cols rows : Nat) :
+    (((Vt.init cols rows).feed (restore v)).pstate = .ground) :=
+  ends_restore v (Vt.init cols rows) rfl
+
+/-! ### No half-decoded character either
+
+`restore` ends with the cursor's `CSI … H`. Its leading ESC clears any
+pending UTF-8 sequence whatever came before, and every byte after it is
+below 0xC0 — so none can re-arm one. That is why this needs no reasoning
+about the grid repaint's multi-byte encodings: the tail sequence
+re-establishes the property regardless of the prefix.
+-/
+
+theorem paramBytes_lt_C0 {bs : Bytes} (h : ParamBytes bs) : ∀ b ∈ bs, b < 0xC0 := by
+  intro b hb
+  obtain ⟨-, h2⟩ := h b hb
+  simp only [UInt8.le_iff_toNat_le, show ((0x3F : UInt8)).toNat = 63 from rfl] at h2
+  simp only [UInt8.lt_iff_toNat_lt, show ((0xC0 : UInt8)).toNat = 192 from rfl]
+  omega
+
+/-- Any complete CSI sequence leaves no pending UTF-8, from any state. -/
+theorem u8_zero_after_csi (params : Bytes) (final : UInt8) (hp : ParamBytes params)
+    (hf : final ≤ 0x7E) (v : Vt) :
+    ((v.feed (csiB ++ params ++ [final])).u8need = 0) := by
+  have hshape : (csiB ++ params ++ [final] : Bytes)
+      = 0x1B :: 0x5B :: (params ++ [final]) := by simp [csiB]
+  rw [hshape, feed_cons, feed_cons]
+  refine Zmx.Core.Vt.uz_feed _ _ ?_
+    (Zmx.Core.Vt.uz_step 0x5B (by decide) (Zmx.Core.Vt.uz_step_esc v))
+  intro b hb
+  rcases List.mem_append.mp hb with h | h
+  · exact paramBytes_lt_C0 hp b h
+  · simp only [List.mem_singleton] at h
+    subst h
+    simp only [UInt8.le_iff_toNat_le, show ((0x7E : UInt8)).toNat = 126 from rfl] at hf
+    simp only [UInt8.lt_iff_toNat_lt, show ((0xC0 : UInt8)).toNat = 192 from rfl]
+    omega
+
+/-- **§Replay (parser half, complete).** A fresh emulator fed a whole
+restore stream is *quiesced*: parser in `ground`, no half-decoded
+character. So a reattaching client is left ready for the application's
+next byte, and a checkpoint taken straight after a restore is exact. -/
+theorem restore_quiesced (v : Vt) (cols rows : Nat) :
+    (((Vt.init cols rows).feed (restore v)).pstate = .ground)
+      ∧ (((Vt.init cols rows).feed (restore v)).u8need = 0) := by
+  refine ⟨restore_leaves_ground v cols rows, ?_⟩
+  -- `restore = restoreBody ++ cursorAnsi`, and `cursorAnsi` is one CSI
+  unfold restore
+  rw [show ∀ (w : Vt), w.feed (restoreBody v ++ cursorAnsi v)
+        = (w.feed (restoreBody v)).feed (cursorAnsi v) from
+      fun w => by simp [Vt.feed, List.foldl_append]]
+  unfold cursorAnsi
+  split
+  all_goals
+    (unfold csiNum2
+     refine u8_zero_after_csi _ 0x48 ?_ (by decide) _
+     exact ((paramBytes_digits _).append
+       (ParamBytes.cons (by decide) (by decide) ParamBytes.nil)).append
+       (paramBytes_digits _))
 
 end Zmx.Core.Render
