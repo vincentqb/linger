@@ -1704,3 +1704,100 @@ theorem org_stepEsc {v : Vt} (b : UInt8) (h : v.modes.origin = false) :
     | rfl
 
 end Zmx.Core.Vt
+
+
+namespace Zmx.Core.Vt
+/-! ## Frames: the generalization of the four invariance layers
+
+`pstate`, `u8need`, `dims` and `origin` above are ~110 lemmas that are
+~28 written four times: "operation X does not write field F". The general
+statement is a **frame condition** — X's footprint, stated once, covering
+every field at once:
+
+```
+theorem frame_putCell : v.putCell x y c = { v with grid := (v.putCell x y c).grid }
+```
+
+Read: *`putCell` writes only `grid`*. Every field invariance is then a
+corollary by rewriting, including fields nobody has thought of yet — so a
+fifth layer costs nothing instead of another 28 lemmas.
+
+Why this beats the two ideas recorded in THEOREMS.md:
+
+* Better than *bundling* the four fields, which fixes only the fields we
+  happened to need.
+* Better than *splitting* `Vt` into `{screen, parser, meta}`, because the
+  read/write distinction is **per-operation**: `print` reads `cols`/`rows`
+  to clamp and reads `modes` for wrap/insert while writing neither, so a
+  partition that groups `dims` with the cells still lets `Screen → Screen`
+  resize the grid. The refactor that *would* capture it moves read-only
+  data into parameter position (`print : Dims → Modes → … `), which is far
+  larger and mostly subsumed by frames anyway.
+
+What frames do **not** buy, and this is the honest limit: a frame says
+what an operation leaves alone, never what the written fields *become*.
+Grid fidelity (§Replay stage 3d — the replayed cells equal the saved
+cells) needs the positive specification, which is real content, not
+bookkeeping. Frames retire the sprawl; they do not shorten the road to
+3d.
+
+Below: the pattern demonstrated on four operations of increasing shape,
+with the four existing layers re-derived from one of them to show the
+collapse is real. Converting the rest is mechanical and is the recorded
+next simplification (specs/bigger-theorems.md).
+-/
+
+/-- Pure record update: `rfl` suffices. -/
+theorem frame_putCell (v : Vt) (x y : Nat) (c : Cell) :
+    v.putCell x y c = { v with grid := (v.putCell x y c).grid } := rfl
+
+theorem frame_moveTo (v : Vt) (x y : Nat) :
+    v.moveTo x y = { v with cursor := (v.moveTo x y).cursor } := rfl
+
+theorem frame_eraseRowSpan (v : Vt) (y a b : Nat) :
+    v.eraseRowSpan y a b = { v with grid := (v.eraseRowSpan y a b).grid } := rfl
+
+/-- Branching operation: one `split`, both branches record updates.
+`scrollUpIn` may also push the evicted line to scrollback. -/
+theorem frame_scrollUpIn (v : Vt) (t b : Nat) (a : Bool) :
+    v.scrollUpIn t b a
+      = { v with grid := (v.scrollUpIn t b a).grid, sb := (v.scrollUpIn t b a).sb } := by
+  unfold Vt.scrollUpIn; dsimp only; split <;> rfl
+
+/-- Composite over stages: `lineFeed` moves the cursor and may scroll. -/
+theorem frame_lineFeed (v : Vt) :
+    v.lineFeed = { v with grid := v.lineFeed.grid, cursor := v.lineFeed.cursor,
+                          sb := v.lineFeed.sb } := by
+  unfold Vt.lineFeed Vt.scrollUp Vt.scrollUpIn Vt.clearPending
+  dsimp only
+  repeat' split
+  all_goals rfl
+
+/-! ### The collapse, demonstrated
+
+Each of these four is an instance of the layers above — and each is now a
+one-line consequence of a single frame, for *any* field rather than a
+chosen one. -/
+
+example (v : Vt) (t b : Nat) (a : Bool) : (v.scrollUpIn t b a).pstate = v.pstate := by
+  rw [frame_scrollUpIn]
+
+example (v : Vt) (t b : Nat) (a : Bool) : (v.scrollUpIn t b a).u8need = v.u8need := by
+  rw [frame_scrollUpIn]
+
+example (v : Vt) (t b : Nat) (a : Bool) : dims (v.scrollUpIn t b a) = dims v := by
+  rw [frame_scrollUpIn]; rfl
+
+example (v : Vt) (t b : Nat) (a : Bool) :
+    (v.scrollUpIn t b a).modes.origin = v.modes.origin := by
+  rw [frame_scrollUpIn]
+
+/-- …and a field no layer ever covered, free: the scroll region. -/
+example (v : Vt) (t b : Nat) (a : Bool) : (v.scrollUpIn t b a).top = v.top := by
+  rw [frame_scrollUpIn]
+
+/-- …and the saved-cursor slot, also free. -/
+example (v : Vt) : v.lineFeed.saved = v.saved := by
+  rw [frame_lineFeed]
+
+end Zmx.Core.Vt

@@ -70,36 +70,45 @@ exactly (state threading and effect order), and `run_wf` /
 §Isolate to the daemon's whole life — no trace of any length breaks
 the caps, the screen invariant, or client isolation.
 
-## Why there are ~370 lemmas behind 14 rungs, and the one change that would shrink it
+## Why there are ~370 lemmas behind 15 rungs, and the change that shrinks it
 
 Four of the invariance layers — `pstate`, `u8need`, `dims`, `origin`
 (`Theorems/Vt.lean`) — are the same ~28 lemmas written four times: for
 every emulator operation, "this field is unchanged". About 110 lemmas,
-one idea. They exist because Lean cannot quantify over "field projections
-this definition does not write"; that is a syntactic property of the
-code, invisible to the type system as `Vt` is currently shaped.
+one idea.
 
-Two ways to collapse them, recorded rather than done:
+The generalization, **demonstrated at the end of `Theorems/Vt.lean`**, is
+to state each operation's *frame* — its footprint — once:
 
-1. **Bundle the fields (cheap, ~4× reduction).** One record
-   `Untouched v w : Prop` conjoining the field equalities, proved once
-   per operation instead of once per operation per field. The grid
-   operations — where most of the 110 live — leave all four alone, so
-   ~28 bundled lemmas replace ~110, and each existing layer becomes a
-   projection. No change to `Zmx/Core`.
-2. **Make it structural (the real fix).** Split `Vt` into
-   `{ screen, parser, meta }` and give the printing/erase/scroll
-   operations the type `Screen → Screen`, lifted by one `onScreen`
-   combinator. Then "printing never touches the parser" is not 28
-   theorems, it is the *type* — and the next field that needs an
-   invariance layer costs nothing instead of another 28 lemmas. Cost: a
-   refactor of the core module every existing proof depends on.
+```lean
+theorem frame_putCell : v.putCell x y c = { v with grid := (v.putCell x y c).grid }
+```
 
-The honest reason (2) has not happened: the layers were each written to
-unblock a specific §Replay rung, and by the time the pattern was obvious
-three of them existed. That is the right trade for reaching a proof, and
-the wrong one to keep — noted here so the next person does not write a
-fifth copy by hand.
+Read: *`putCell` writes only `grid`*. Every field invariance is then one
+rewrite away, for **any** field — the file shows all four existing layers
+falling out of a single `frame_scrollUpIn`, plus `top` and `saved`, which
+no layer ever covered. ~28 frames replace ~110 single-field lemmas, and
+the marginal cost of a fifth field is zero. No change to `Zmx/Core`, no
+existing proof disturbed. Converting the remaining operations is
+mechanical.
+
+Two weaker ideas, recorded because they look attractive and are not:
+
+* *Bundling* the four fields into one conjunction is a 4× win but fixes
+  only the fields we happened to need; a frame is complete.
+* *Splitting* `Vt` into `{screen, parser, meta}` and typing the printing
+  operations `Screen → Screen` does not capture the invariance at all,
+  because the read/write distinction is **per-operation**: `print` reads
+  `cols`/`rows` to clamp and reads `modes` for wrap/insert while writing
+  neither, so any partition that groups `dims` with the cells still
+  permits a resize. The refactor that would capture it moves read-only
+  data into *parameter* position (`print : Dims → Modes → …`) — far
+  larger, and mostly subsumed by frames.
+
+The honest limit of all three: a frame says what an operation leaves
+alone, never what the written fields *become*. Grid fidelity (§Replay
+stage 3d) needs the positive specification, which is real content rather
+than bookkeeping. Frames retire the sprawl; they do not shorten that road.
 
 ## Concurrency: what the model rules out, and what the theorems cover
 

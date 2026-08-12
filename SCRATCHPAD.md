@@ -1355,3 +1355,52 @@ Honest reason (b) hasn't happened: each layer was written to unblock a
 specific §Replay rung, and by the time the pattern was obvious three
 existed. Right trade to reach a proof, wrong one to keep — recorded so
 nobody hand-writes a fifth copy.
+
+
+
+## Frames — the right generalization of the four layers — 2026-08-12
+
+User pushed twice: the ~110 lemmas have "very similar shape, that we can
+generalize", and the Vt-split fix is "right headed, but not enough?".
+Both correct, and the second one identified a real flaw in my proposal.
+
+WHY THE SPLIT IS NOT ENOUGH: the read/write distinction is PER-OPERATION,
+not global. `print` READS cols/rows (to clamp) and READS modes (wrap,
+insert) while writing neither. So `{screen, parser, meta}` with
+`print : Screen → Screen` still permits a resize — the dims invariance I
+proved 28 times is not recovered by that type. And `modes` is read-only
+for ~20 ops but writable for `setMode`; no global partition says that.
+The refactor that WOULD capture it moves read-only data into PARAMETER
+position (`print : Dims → Modes → Cells×Cursor → Cells×Cursor`), i.e.
+separating context from state — much bigger, and mostly subsumed by:
+
+THE ACTUAL GENERALIZATION: a FRAME condition per operation, stating its
+footprint once, covering every field.
+
+  frame_putCell : v.putCell x y c = { v with grid := (v.putCell x y c).grid }
+
+= "putCell writes only grid". Demonstrated in Theorems/Vt.lean on
+putCell/moveTo/eraseRowSpan/scrollUpIn/lineFeed, with all FOUR existing
+layers derived from one `frame_scrollUpIn` in a single `rw` each — plus
+`top` and `saved`, which no layer ever covered. So:
+  * ~28 frames replace ~110 single-field lemmas;
+  * a fifth field costs ZERO (vs another 28);
+  * complete, not "the four fields I needed" (that's why it beats
+    bundling);
+  * no Core refactor, no existing proof disturbed (that's why it beats
+    splitting).
+Proof shapes: `rfl` for plain record updates, `unfold; split <;> rfl` for
+branching ops, staged composite for print. Gotcha: after `rw [frame_X]` a
+goal about a `def`-wrapped projection (`dims`) needs an explicit `rfl` —
+rw's implicit one is reducible-transparency only.
+
+HONEST LIMIT, stated in THEOREMS.md and the spec: a frame says what an op
+leaves ALONE, never what the written fields BECOME. Grid fidelity
+(§Replay 3d) needs the positive spec, which is content, not bookkeeping.
+Frames retire the sprawl; they do not shorten that road. Conditional cases
+(RIS, setMode) stay conditional — frames localize them to one theorem per
+op instead of one per op per field.
+
+Conversion recorded as step 4 in specs/bigger-theorems.md: frames for the
+~28 ops → re-derive the layers' entry points keeping their names (so no
+downstream proof changes) → delete the ~110.
