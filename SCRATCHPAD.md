@@ -974,3 +974,21 @@ Migration notes (small fleet, hard cutover):
   literals (the preceding backslash-n keeps it a word char in fish's
   quoting of the pattern? — either way 4 literals needed manual
   str_replace). Grep-audit after any bulk rename.
+
+
+
+## Naming: CLOSED — 2026-08-12
+
+Final: binary `linger`, repo name unchanged. Post-rename rounds
+considered and declined: `leanger` (pun kills sayability; leANGER;
+spelling trap at the ssh seam), `lnger`/`lingr`/`lger` (vowel-drops:
+save ≤2 chars, lose wordness), `lien` (best lean-pun — homophone of
+lean, "a standing claim", maps to §Claim — but aurally collides with
+the `lean` prover binary in this very repo's company), `leanto`,
+`glean` (Glean-the-company), `pisa`. Lean lives in the tagline ("Lean
+sessions"), not the name. Typing cost is an abbr (`abbr lg linger`).
+Do not reopen without new information; the discussion cost more than
+§Stream.
+
+Cleanup deferred: drop the lzmx→linger compat symlinks on the three
+hosts once nothing has invoked `lzmx` for a while.
