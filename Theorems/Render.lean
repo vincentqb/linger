@@ -938,18 +938,18 @@ theorem digits_are_digits (n : Nat) : ∀ b ∈ digits n, 0x30 ≤ b ∧ b ≤ 0
 
 /-- §Replay 3c: the parameter the parser accumulates from `digits n` is
 `n` (clamped) — the emitter and the parser are inverse on numbers. The
-`inter`/`ignore` facts come along because `csi_digits_feed` returns a
-record *update*: a digit run touches nothing else. -/
+`inter`/`ignore`/`priv` facts come along because `csi_digits_feed` returns
+a record *update*: a digit run touches nothing else. -/
 theorem csi_digits_value (n : Nat) {v : Vt} {s : CsiState} (hg : v.pstate = .csi s)
     (hcur : s.cur = 0) :
     ∃ s', (v.feed (digits n)).pstate = .csi s' ∧ s'.cur = min n 65535
       ∧ s'.haveCur = true ∧ s'.params = s.params ∧ s'.inter = s.inter
-      ∧ s'.ignore = s.ignore ∧ s'.curSub = s.curSub := by
+      ∧ s'.ignore = s.ignore ∧ s'.curSub = s.curSub ∧ s'.priv = s.priv := by
   have hne : digits n ≠ [] := by
     rw [digits]
     split <;> simp
   refine ⟨_, csi_digits_feed (digits n) hg (digits_are_digits n) hne, ?_, rfl, rfl, rfl,
-    rfl, rfl⟩
+    rfl, rfl, rfl⟩
   show accDigits s.cur (digits n) = min n 65535
   rw [hcur]
   exact accDigits_digits n
@@ -1126,7 +1126,7 @@ theorem cup_places_cursor {v : Vt} (row col : Nat) (hg : v.pstate = .ground)
   -- pushes it, the column accumulates
   have he := esc_step hg
   have hb := csi_open_step he
-  obtain ⟨s1, hs1, hcur1, hhave1, hpar1, hint1, hign1, hsub1⟩ := csi_digits_value row hb rfl
+  obtain ⟨s1, hs1, hcur1, hhave1, hpar1, hint1, hign1, hsub1, hpv1⟩ := csi_digits_value row hb rfl
   have hs2 := csi_semi_step hs1
   have hpush : csiPush s1 false
       = { s1 with params := s1.params.push (min s1.cur 65535, s1.curSub),
@@ -1134,7 +1134,7 @@ theorem cup_places_cursor {v : Vt} (row col : Nat) (hg : v.pstate = .ground)
     unfold csiPush
     rw [if_pos (by simp [hhave1]), if_neg (by simp [hpar1])]
   rw [hpush] at hs2
-  obtain ⟨s3, hs3, hcur3, hhave3, hpar3, hint3, hign3, hsub3⟩ := csi_digits_value col hs2 rfl
+  obtain ⟨s3, hs3, hcur3, hhave3, hpar3, hint3, hign3, hsub3, hpv3⟩ := csi_digits_value col hs2 rfl
   -- the frame survives the prefix, so `v`'s bounds transport to it
   have hfr : Frame ((((v.step 0x1B).step 0x5B).feed (digits row)).step 0x3B |>.feed
       (digits col)) = Frame v :=
@@ -1208,5 +1208,42 @@ theorem org_step_of_csi {v : Vt} {s : CsiState} (b : UInt8) (hs : v.pstate = .cs
   dsimp only
   rw [hw, Zmx.Core.Vt.org_stepCsi _ _ _ hp]
   exact hab
+
+/-- `origin` off is preserved by any byte fed from `ground` or `esc`
+(neither state can complete a mode sequence). -/
+theorem org_step_of_ground {v : Vt} (b : UInt8) (hs : v.pstate = .ground)
+    (h : v.modes.origin = false) : (v.step b).modes.origin = false := by
+  have hw : (v.abortUtf8 b).pstate = PState.ground := by
+    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hs
+  have hab : (v.abortUtf8 b).modes.origin = false := by
+    rw [Zmx.Core.Vt.org_abortUtf8]; exact h
+  unfold Vt.step
+  dsimp only
+  rw [hw, Zmx.Core.Vt.org_stepGround]
+  exact hab
+
+theorem org_step_of_esc {v : Vt} (b : UInt8) (hs : v.pstate = .esc)
+    (h : v.modes.origin = false) : (v.step b).modes.origin = false := by
+  have hw : (v.abortUtf8 b).pstate = PState.esc := by
+    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hs
+  have hab : (v.abortUtf8 b).modes.origin = false := by
+    rw [Zmx.Core.Vt.org_abortUtf8]; exact h
+  unfold Vt.step
+  dsimp only
+  rw [hw]
+  exact Zmx.Core.Vt.org_stepEsc b hab
+
+/-- A `ground` run of non-ESC bytes keeps `origin` off: the grid text.
+Note the `pstate` premise — it is load-bearing, and it is why the
+composition wants `Ends` and this claim *bundled* (see the `Quiet` note
+in specs/bigger-theorems.md): fed in the middle of a CSI, an `h` byte
+could complete a mode sequence. -/
+theorem org_feed_ground : ∀ (bs : Bytes) (v : Vt), v.pstate = .ground →
+    (∀ b ∈ bs, b ≠ 0x1B) → v.modes.origin = false → (v.feed bs).modes.origin = false
+  | [], _, _, _, ho => ho
+  | x :: xs, v, hg, h, ho => by
+    rw [feed_cons]
+    exact org_feed_ground xs _ (ground_step x hg (h x (by simp)))
+      (fun b hb => h b (by simp [hb])) (org_step_of_ground x hg ho)
 
 end Zmx.Core.Render

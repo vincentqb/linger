@@ -1262,3 +1262,48 @@ origin=false. Only modesAnsi can emit `CSI ? 6 h` and it doesn't in that
 case, but proving it needs a `Preserves`-style layer over the stream
 (same shape as `Ends`, ~15 lemmas). That layer is the right next
 investment because pen, region and modes fidelity all need exactly it.
+
+
+
+## §Replay 3c rungs 1+2 — 2026-08-12
+
+**Rung 1 done.** `cup_places_cursor`: feeding the whole `CSI row ; col H`
+that cursorAnsi emits places the cursor at exactly (col-1, row-1). The
+lift from cup_step_cursor needed one fact — the prefix `ESC [ digits ;
+digits` leaves the fields CUP reads alone — carried by a `Frame` bundle
+(cols, rows, modes), one lemma per step kind (each is a single pstate
+record update). csi_digits_value now also returns inter/ignore/curSub/
+priv, all free because csi_digits_feed returns a record UPDATE.
+
+**Rung 2 layer done** (composition still open). ~30 `org_*` lemmas in
+Theorems/Vt.lean, fourth instance of the invariance-layer recipe. The
+structural fact that made it cheap: `modes` is written ONLY by setMode,
+which csiDispatch reaches only via the h/l finals. So there is exactly
+one conditional rung — `org_setMode`: only PRIVATE mode 6 writes origin
+— and org_csiDispatch/org_csiFinish/org_stepCsi carry it. Design fix
+found while writing: state org_csiFinish's hypothesis as `(s.priv ==
+0x3F) = false` rather than three per-record conditions; every record
+csiFinish builds keeps priv, so one hypothesis covers all three dispatch
+sites (`hnot _ rfl`).
+
+**Design error caught by a sorry, worth recording.** I first wrote
+`KeepsOriginOff bs := ∀ v, origin off → origin off after feed` with NO
+pstate premise. It is FALSE for a bare text run: fed in the middle of a
+CSI with priv=0x3F and cur=6, an `h` byte completes DECOM. The premise is
+load-bearing, so the right predicate BUNDLES the two claims:
+
+  Quiet bs := ∀ v, pstate = ground → origin = false →
+                (pstate = ground ∧ origin = false) after feed
+
+which composes over ++ exactly like Ends, and whose pstate half is
+already proved construct-by-construct by the ends_* family. I removed
+the sorry-bearing lemma rather than commit it (purity gate), kept the
+three org_step_of_{ground,esc,csi} lemmas and org_feed_ground (which DOES
+carry the pstate premise) — all green.
+
+Remaining for restore_cursor: Quiet's plumbing + one origin half per
+construct. Only csiPriv is interesting: its own bytes set priv = 0x3F, so
+it needs the state tracked to the final byte to show the pushed parameter
+is min n 65535 ≠ 6 — which is why csi_digits_value now returns priv.
+Then restore_cursor = cup_places_cursor at the mid-state, with dims_feed
+and Vt.init's clamp (identity under Good) supplying the bounds.

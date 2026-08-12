@@ -127,25 +127,42 @@ Break-verified: emitting least-significant-digit-first breaks the
 theorem and 10 fixtures. This is the foundation for every numeric
 fidelity claim (cursor, region, mode numbers, colour components).
 
-Stage 3c-rest (open, two rungs left). The dims layer it was waiting on
-is proved (`dims_feed`), and so is the CUP dispatch itself:
-**`cup_step_cursor`** — given a row parameter pushed and a column in the
-accumulator, the `H` byte moves the cursor to exactly (`col-1`,`row-1`),
-with `moveTo`'s clamps discharged by the bounds `Good` supplies.
-Break-verified by transposing `moveTo`'s arguments in `csiDispatch`.
-What remains:
+Stage 3c-rest (rungs done; composition open). Both rungs the cursor
+claim was waiting on are proved:
 
-1. *Full-sequence cursor* (`v.feed (csiNum2 …)` rather than the final
-   step): needs four one-line facts that the prefix `ESC [ digits ;
-   digits` preserves `cols`/`rows`/`modes` — each of those steps is a
-   single `pstate` record update, so they are cheap; `dims_step` already
-   covers the first two fields.
-2. *Restore-level cursor*: additionally needs **origin fidelity** — that
-   a session with `origin = false` replays with `origin = false`. Only
-   `modesAnsi` can emit `CSI ? 6 h`, and it does not in that case, but
-   stating it means a `Preserves`-style layer over the stream (the same
-   shape as `Ends`, ~15 lemmas). That layer would then serve pen, region
-   and modes fidelity too, so it is the right next investment.
+1. *Full-sequence cursor* — **`cup_places_cursor`**: feeding the whole
+   `CSI row ; col H` that `cursorAnsi` emits places the cursor at exactly
+   (`col-1`,`row-1`). The lift needed only that the prefix leaves the
+   fields CUP reads alone, carried by a `Frame` bundle (cols, rows,
+   modes) with one lemma per step kind.
+2. *Origin layer* — `org_*` in Theorems/Vt.lean (~30 lemmas), resting on
+   the structural fact that `modes` is written only by `setMode`;
+   `org_setMode` is the single conditional rung (only **private** mode 6
+   writes `origin`), lifted by `org_csiDispatch`/`org_csiFinish`/
+   `org_stepCsi`, plus `org_step_of_{ground,esc,csi}` and
+   `org_feed_ground` at the stream level.
+
+What remains is the *composition* over `restoreBody`, and the shape it
+wants is now clear. `KeepsOriginOff` on its own is the wrong abstraction:
+without a `pstate` premise it is false for a bare text run (fed in the
+middle of a CSI, an `h` byte could complete a mode set). The right
+predicate bundles the two claims —
+
+```lean
+def Quiet (bs : Bytes) : Prop :=
+  ∀ v, v.pstate = .ground → v.modes.origin = false →
+    ((v.feed bs).pstate = .ground ∧ (v.feed bs).modes.origin = false)
+```
+
+— which composes over `++` exactly like `Ends`, and whose `pstate` half
+is already discharged construct-by-construct by the `ends_*` family. The
+per-construct origin halves are then one chain each; the only interesting
+one is `csiPriv n`, whose *own* bytes set `priv = 0x3F`, so it needs the
+state tracked to the final byte to show the pushed parameter is
+`min n 65535 ≠ 6` (`csi_digits_value` now returns `priv` for exactly
+this). With `Quiet (restoreBody v)` in hand, `restore_cursor` is
+`cup_places_cursor` applied to the mid-state, with `dims_feed` and
+`Vt.init`'s clamp (identity under `Good`) supplying the bounds.
 
 Documented gap that stays a hypothesis: under DECOM the cursor can sit
 outside the scroll region (`VPA` ignores origin mode) and a
