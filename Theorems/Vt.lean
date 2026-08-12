@@ -634,7 +634,7 @@ theorem stepStr {v : Vt} (e : Bool) (b : UInt8) (h : Good v) : Good (v.stepStr e
 and every stashed cursor stay in bounds, and no buffer exceeds its cap.
 This is the anti-zellij theorem at the emulator layer. -/
 theorem step {v : Vt} (b : UInt8) (h : Good v) : Good (v.step b) := by
-  unfold Vt.step
+  unfold Vt.step Vt.abortUtf8
   dsimp only
   by_cases hc : (v.u8need > 0 && (b < 0x80 || b ≥ 0xC0)) = true
   · rw [if_pos hc]
@@ -712,3 +712,130 @@ theorem feed_singletons (v : Vt) (bytes : List UInt8) :
     rfl
 
 end Zmx.Core.Vt.Good
+
+
+
+namespace Zmx.Core.Vt
+/-! ## Parser-state invariance of the printing path
+
+Feeding a *printable* byte must not disturb the parser: only ESC (and
+the sequence states it opens) may change `pstate`. That is obvious by
+inspection of the code — no printing or cursor operation mentions
+`pstate` — but "obvious by inspection" is what these lemmas replace.
+
+They are the missing rung under §Replay stage 3b
+(`Theorems/Render.lean`): a restore stream's grid repaint is a long run
+of printable bytes, and the theorem that a restore leaves the parser
+quiesced needs each of them to be parser-neutral.
+
+Cheap because they are staged: every operation is a record update that
+leaves `pstate` untouched, so each proof is `rfl` under enough `split`s.
+(This also closes, for `pstate`, the same gap the step-4 notes recorded
+as open for `cols`/`rows` — the shape of proof is identical, ~15 small
+lemmas, and it turned out to be worth writing after all.)
+-/
+
+theorem ps_clearPending (v : Vt) : v.clearPending.pstate = v.pstate := rfl
+theorem ps_carriageReturn (v : Vt) : v.carriageReturn.pstate = v.pstate := rfl
+theorem ps_putCell (v : Vt) (x y : Nat) (c : Cell) :
+    (v.putCell x y c).pstate = v.pstate := rfl
+theorem ps_moveTo (v : Vt) (x y : Nat) : (v.moveTo x y).pstate = v.pstate := rfl
+theorem ps_moveRel (v : Vt) (dx dy : Int) : (v.moveRel dx dy).pstate = v.pstate := rfl
+theorem ps_setCol (v : Vt) (x : Nat) : (v.setCol x).pstate = v.pstate := rfl
+theorem ps_scrollDownIn (v : Vt) (t b : Nat) : (v.scrollDownIn t b).pstate = v.pstate := rfl
+theorem ps_eraseRowSpan (v : Vt) (y a b : Nat) :
+    (v.eraseRowSpan y a b).pstate = v.pstate := rfl
+
+theorem ps_scrollUpIn (v : Vt) (t b : Nat) (a : Bool) :
+    (v.scrollUpIn t b a).pstate = v.pstate := by
+  unfold Vt.scrollUpIn; dsimp only; split <;> rfl
+
+theorem ps_scrollUp (v : Vt) : v.scrollUp.pstate = v.pstate := ps_scrollUpIn _ _ _ _
+
+theorem ps_scrollDown (v : Vt) : v.scrollDown.pstate = v.pstate := ps_scrollDownIn _ _ _
+
+theorem ps_lineFeed (v : Vt) : v.lineFeed.pstate = v.pstate := by
+  unfold Vt.lineFeed
+  dsimp only
+  repeat' split
+  all_goals first
+    | exact (ps_scrollUp _).trans (ps_clearPending v)
+    | exact ps_clearPending v
+
+theorem ps_reverseIndex (v : Vt) : v.reverseIndex.pstate = v.pstate := by
+  unfold Vt.reverseIndex
+  dsimp only
+  repeat' split
+  all_goals first
+    | exact (ps_scrollDown _).trans (ps_clearPending v)
+    | exact ps_clearPending v
+
+theorem ps_backspace (v : Vt) : v.backspace.pstate = v.pstate := by
+  unfold Vt.backspace; split <;> rfl
+
+theorem ps_tab (v : Vt) : v.tab.pstate = v.pstate := by
+  unfold Vt.tab; dsimp only; exact ps_clearPending v
+
+theorem ps_printWrap (v : Vt) : v.printWrap.pstate = v.pstate := by
+  unfold Vt.printWrap
+  split
+  · exact (ps_lineFeed _).trans (ps_carriageReturn v)
+  · exact ps_clearPending v
+
+theorem ps_printWideWrap (v : Vt) (w : Nat) : (v.printWideWrap w).pstate = v.pstate := by
+  unfold Vt.printWideWrap
+  split
+  · exact (ps_lineFeed _).trans (ps_carriageReturn v)
+  · rfl
+
+theorem ps_printShift (v : Vt) (w : Nat) : (v.printShift w).pstate = v.pstate := by
+  unfold Vt.printShift; dsimp only; split <;> rfl
+
+theorem ps_printPut (v : Vt) (ch : Char) (w : Nat) :
+    (v.printPut ch w).pstate = v.pstate := by
+  unfold Vt.printPut; dsimp only; split <;> rfl
+
+theorem ps_printAdvance (v : Vt) (w : Nat) : (v.printAdvance w).pstate = v.pstate := by
+  unfold Vt.printAdvance; dsimp only; split <;> rfl
+
+/-- The composite: printing a glyph never touches the parser. -/
+theorem ps_print (v : Vt) (c : Char) : (v.print c).pstate = v.pstate := by
+  unfold Vt.print
+  dsimp only
+  repeat' split
+  all_goals first
+    | rfl
+    | rw [ps_printAdvance, ps_printPut, ps_printShift, ps_printWideWrap, ps_printWrap]
+
+theorem ps_acceptChar (v : Vt) (n : Nat) : (v.acceptChar n).pstate = v.pstate := by
+  unfold Vt.acceptChar; split <;> exact ps_print _ _
+
+/-- A C0 control byte executes without changing the parser state. -/
+theorem ps_ctl (v : Vt) (b : UInt8) : (v.ctl b).pstate = v.pstate := by
+  unfold Vt.ctl
+  repeat' split
+  all_goals first
+    | exact ps_backspace v
+    | exact ps_tab v
+    | exact ps_lineFeed v
+    | exact ps_carriageReturn v
+    | rfl
+
+theorem ps_abortUtf8 (v : Vt) (b : UInt8) : (v.abortUtf8 b).pstate = v.pstate := by
+  unfold Vt.abortUtf8; split <;> rfl
+
+/-- §Replay's rung: from `ground`, any byte other than ESC leaves the
+parser in `ground`. (`u8need` may change — a UTF-8 lead byte — which is
+why `Ends` tracks it separately.) -/
+theorem ps_stepGround (v : Vt) (b : UInt8) (hb : b ≠ 0x1B) :
+    (v.stepGround b).pstate = v.pstate := by
+  have hesc : (b == 0x1B) = false := beq_eq_false_iff_ne.mpr hb
+  unfold Vt.stepGround
+  simp only [hesc, Bool.false_eq_true, if_false]
+  repeat' split
+  -- rewriting with the stage lemmas is *guided* (matches only the right
+  -- shape); a blind `exact` on the wrong branch whnf's the print chain
+  all_goals try simp only [ps_ctl, ps_acceptChar]
+  all_goals rfl
+
+end Zmx.Core.Vt

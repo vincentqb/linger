@@ -49,7 +49,7 @@ def feedStr (v : Vt) (s : String) : Vt := v.feedBytes s.toUTF8
 def screen (cols rows : Nat) (s : String) : Vt := feedStr (Vt.init cols rows) s
 
 /-- The round trip under test. -/
-def roundtrips (v : Vt) : Bool := replayEq ((Vt.init v.cols v.rows).feedBytes (restore v)) v
+def roundtrips (v : Vt) : Bool := replayEq ((Vt.init v.cols v.rows).feed (restore v)) v
 
 /-- Text, 16-color SGR, attributes, cursor parked mid-screen. -/
 example : roundtrips (screen 20 5

@@ -19,7 +19,7 @@ record even while open.
 | §Isolate | many clients on one session vs per-client framing | `.bytes id` leaves every *other* client's record (and decoder) bit-identical | Theorems/Session.lean |
 | §Row | a list row's identity vs an unreliable `info` reply | a row's name is the sanitized socket filename alone; the reply can neither change it nor smuggle a second one in | Theorems/Listing.lean |
 | §Claim | one session name vs many daemons racing for it | *given* the kernel grants ≤1 `flock` holder, ≤1 daemon ever unlinks or binds that name | Theorems/Claim.lean |
-| §Replay | one saved byte stream must recreate the live screen on a fresh terminal | (open — staged in specs/bigger-theorems.md) `(Vt.init v.cols v.rows).feed (restore v) ≃ v`: grid, cursor, pen, region, modes, title, tabs, charset, saved cursor, alt stash. Pinned today by the decidable `≃` + 14 round-trip fixtures | Tests/Render.lean |
+| §Replay | one saved byte stream must recreate the live screen on a fresh terminal | (partial) proved: a `CSI` sequence returns the parser to `ground`, so a restore stream cannot wedge a client mid-sequence (`ends_csi_seq`, Theorems/Render.lean). Open: the same for SGR/OSC/`ESC`-singles, then screen/cursor/pen fidelity — pinned meanwhile by the decidable `replayEq` + 14 round-trip fixtures | Theorems/Render.lean, Tests/Render.lean |
 
 
 ## Reading a row

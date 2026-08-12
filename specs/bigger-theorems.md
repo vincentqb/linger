@@ -83,15 +83,33 @@ each with a Tests/Render.lean round-trip that fails before the fix:
    (also corrects `saved` clobbering: replay `saved` AFTER the screen
    switch).
 
-Stage 3a (this pass): fix the emitter, land the decidable comparator +
+Stage 3a (done): fix the emitter, land the decidable comparator +
 native_decide round-trip suite over vts exercising every feature
 (colors incl. 256/rgb, wide+marks, region+scroll, alt screen, modes,
 title, tabs, charset, saved). The suite IS the fidelity oracle until
 the proofs land.
 
-Stage 3b (open): parser-ground lemmas — feeding any `Render`-emitted
-component leaves `pstate` ground; compose to "restore ends quiesced".
-Needs no digit semantics.
+Stage 3b (done, scoped): `Render` is byte-native (`List UInt8`, not
+`String` — a `String` literal does not reduce in the kernel, so the old
+emitter's output was unprovable *in principle*). Byte facts proved:
+`digits_range`, `utf8_no_ctl`/`utf8s_no_ctl` (via a `min` clamp and
+`safeChar`, so no `Vt` invariant is needed), plus a `pstate`-invariance
+layer in `Theorems/Vt.lean` (~18 lemmas: every print/cursor/erase/scroll
+op, `ctl`, `acceptChar`, `stepGround`). On top: the `Ends` combinator
+(`nil`/`append`/`ite`/`flatten`/`flatMap`/`text`) and **`ends_csi_seq`** —
+`CSI <params> <final>` provably returns the parser to ground — with
+`ends_csiNum`, `ends_csiNum2`, `ends_csiPriv` as instances. Break-verified
+by dropping a CSI final byte (breaks the theorem *and* the fixtures).
+Scope note: `Ends` covers `pstate` only; the companion `u8need = 0` needs
+per-op `u8need` lemmas through `csiDispatch` and buys much less (a
+trailing partial UTF-8 mis-renders one glyph; a stuck `.csi` swallows
+everything). `replayEq` checks it.
+
+Stage 3b-rest (open, mechanical): `ends_penSgr` (needs `penSgr`'s
+parameter body as a named stage so the chunk is syntactically
+separable), the OSC-title construct (`ESC ] 2 ; text BEL` — needs
+`stepOsc`/`oscFinish` lemmas), the `ESC`-single constructs (`ESC 7`,
+`ESC =`, `ESC ( 0`), then `Ends (restore v)` as their composition.
 
 Stage 3c (open): value fidelity — digit round-trip (CSI param
 accumulator vs `toString`; may need a bespoke digit emitter in Render

@@ -142,7 +142,7 @@ def onMsg (s : State) (c : Client) (m : Msg) : State × List Effect :=
     let s := { s.setClient c with attachSeq := s.attachSeq + 1 }
     let s := if sizer then { s with vt := s.vt.resize cols.toNat rows.toNat } else s
     (s, resizeEffects s c
-          ++ outputMsgs c.id (Render.restore s.vt).toList
+          ++ outputMsgs c.id (Render.restore s.vt)
           ++ (match s.exited with
               | some st => [.send c.id (.exited st)]
               | none => []))
@@ -166,7 +166,7 @@ def onMsg (s : State) (c : Client) (m : Msg) : State × List Effect :=
   | .kill => (s, [.killChild, .dropCheckpoint, .exit])
   | .info => (s, [.send c.id (.infoReply (infoText s)), .send c.id .done])
   | .history =>
-    (s, outputMsgs c.id (Render.history s.vt false).toList ++ [.send c.id .done])
+    (s, outputMsgs c.id (Render.history s.vt false) ++ [.send c.id .done])
   | .wait =>
     match s.exited with
     | some st => (s, [.send c.id (.exited st)])

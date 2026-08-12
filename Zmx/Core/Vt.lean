@@ -783,12 +783,16 @@ def Vt.stepStr (v : Vt) (esc : Bool) (b : UInt8) : Vt :=
   else if b == 0x1B then { v with pstate := .str true }
   else { v with pstate := .str false }
 
+/-- A stray byte aborts a pending UTF-8 sequence. Named (not inlined in
+`step`) so proofs can rewrite `step`'s match scrutinee: it touches only
+`u8need`/`u8acc`, never `pstate` (`ps_abortUtf8`). -/
+def Vt.abortUtf8 (v : Vt) (b : UInt8) : Vt :=
+  if v.u8need > 0 && (b < 0x80 || b ≥ 0xC0) then { v with u8need := 0, u8acc := 0 }
+  else v
+
 /-- The single-byte step — §Total's subject. -/
 def Vt.step (v : Vt) (b : UInt8) : Vt :=
-  -- a stray byte aborts a pending UTF-8 sequence
-  let v := if v.u8need > 0 && (b < 0x80 || b ≥ 0xC0) then
-      { v with u8need := 0, u8acc := 0 }
-    else v
+  let v := v.abortUtf8 b
   match v.pstate with
   | .ground => v.stepGround b
   | .esc => v.stepEsc b

@@ -992,3 +992,84 @@ Do not reopen without new information; the discussion cost more than
 
 Cleanup deferred: drop the lzmx→linger compat symlinks on the three
 hosts once nothing has invoked `lzmx` for a while.
+
+
+
+## §Replay stage 3b — restore leaves the parser in ground — 2026-08-12
+
+**The blocking discovery: String-assembled output is unprovable in
+principle.** `"\x1b[".toUTF8.toList = [27, 91]` fails by BOTH `rfl` and
+`decide` (kernel gets stuck on the String primitive; probe recorded).
+So no theorem could ever see restore's bytes while Render built Strings.
+Rewrote Render byte-native (`Bytes := List UInt8`) with named stages:
+`escB`/`csiB`/`digits`/`utf8`/`utf8s`/`csiNum`/`csiNum2`/`csiPriv`/
+`penSgr`/`cellText`/`rowAnsi`/`joinCRLF`/`gridAnsi`/`modesAnsi`.
+`restore`/`history` now return Bytes (call sites in Session dropped
+their `.toList`). `rowText` stays String — there its output IS text.
+The 14 §Replay fixtures + all Vt fixtures caught nothing = refactor was
+behavior-identical. THAT is what the 3a oracle was for; it made a
+risky rewrite of the live restore path safe.
+
+Two hypothesis-free emit guards added (both needed for the proofs AND
+genuinely defensive): `safeChar` maps C0/DEL to U+FFFD before emitting
+(a cell CAN hold a control codepoint — an overlong UTF-8 sequence
+decodes to one — and emitting it raw would be re-parsed as a command,
+desyncing the replay); `utf8`'s codepoint is `min c.toNat 0x10FFFF`
+(the AGENTS.md local-clamp idiom: identity on every real Char, but it
+turns each emitted byte's range into an omega fact instead of a
+`Char.valid` derivation — `isValidChar` is root-namespace over UInt32
+comparisons and was fighting me).
+
+Proved, bottom-up:
+1. Byte facts: `digits_range` (every digit byte 0x30..0x39),
+   `ofNat_no_ctl`, `utf8_no_ctl`, `utf8s_no_ctl`, `*_no_esc`.
+2. NEW pstate layer in Theorems/Vt.lean (~18 lemmas): ps_clearPending/
+   carriageReturn/putCell/moveTo/moveRel/setCol/scrollUpIn/scrollDownIn/
+   eraseRowSpan/lineFeed/reverseIndex/backspace/tab/printWrap/
+   printWideWrap/printShift/printPut/printAdvance/print/acceptChar/ctl/
+   abortUtf8/stepGround. This is the same shape of work the step-4 notes
+   DOWNGRADED for cols/rows ("~25 lemmas") — turns out it's cheap when
+   staged, so the pstate version is now proved.
+3. `Ends bs := ∀ v, ground → (v.feed bs).pstate = ground`, closed under
+   append/ite/flatten/flatMap + `Ends.text` (no-ESC runs — covers the
+   whole grid repaint).
+4. **`ends_csi_seq`**: `CSI <params> <final>` → ground, for ANY param
+   string of 0x30..0x3F bytes. Instances: ends_csiNum, ends_csiNum2,
+   ends_csiPriv. This is the one that matters — cursor addressing, mode
+   set/reset, scroll region and the tab ruler are all instances.
+
+Break-verified: dropping the CSI final byte from `csiNum` breaks
+`ends_csiNum` (type mismatch) AND 2 fixtures. Reverted.
+
+CODE CHANGE for provability: `Vt.step`'s inline UTF-8-abort `if` became
+a named `Vt.abortUtf8` — `split` targets the pstate MATCH, so the
+scrutinee had to be rewritable (`ps_abortUtf8`) for the match to reduce.
+`Good.step`'s proof needed `unfold Vt.step Vt.abortUtf8` after that.
+
+Scoped out honestly (in spec + THEOREMS): `Ends` covers pstate only
+(u8need needs per-op lemmas through csiDispatch and buys far less — a
+trailing partial UTF-8 mis-renders ONE glyph, a stuck .csi swallows
+everything; replayEq pins it). ends_penSgr needs penSgr's param body as
+a named stage (as written it associates `(csiB ++ digits 0) ++ …` so the
+chunk isn't syntactically separable — the emitter restructure is
+cleaner than re-associating in the proof). OSC-title + ESC-singles +
+the top `Ends (restore v)` are 3b-rest.
+
+Lean gotchas (new, worth reusing):
+- `Fintype` is MATHLIB: `revert b; decide` over `∀ b : UInt8` fails to
+  synthesize. Byte-range guards must go through
+  `UInt8.le_iff_toNat_le` + literal `show (0x39 : UInt8).toNat = 57 from
+  rfl` + omega. Wrote `u8_bounds` once and reused it.
+- Dot-namespaced lemma names SHADOW same-named defs: `ParamBytes.digits`
+  made `digits n` inside that namespace resolve to the LEMMA (type
+  mismatch Prop vs List UInt8); `Ends.csiNum` made `unfold csiNum` see a
+  "local variable". Renamed to `paramBytes_digits` / `ends_csiNum`.
+- `exact` against a mismatched goal can whnf a huge term to death
+  (max-recursion on the print chain). Use the lemmas as guided
+  REWRITES (`simp only [ps_ctl, ps_acceptChar]`) instead.
+- `rcases h with h | h` on an Eq auto-substitutes and CLEARS h, so a
+  following explicit `subst h` errors "unknown identifier" — use
+  `try subst h`.
+- `repeat' split` + `all_goals first | …` beats positional bullets:
+  `split` peels ONE level and picks the first splittable term (in
+  `Vt.print` that's the charset if, not the width if).

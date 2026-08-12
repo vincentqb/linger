@@ -6,3 +6,4 @@ import Theorems.Checkpoint
 import Theorems.Remote
 import Theorems.Claim
 import Theorems.Listing
+import Theorems.Render

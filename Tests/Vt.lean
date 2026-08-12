@@ -125,14 +125,14 @@ example : (let v := screen 10 2 "\x1b[999;999;999\xFF\x80\x80\x1b]\x07\x1b[<>=?z
 /-- Restore render round-trip: feeding the restore bytes to a fresh Vt
 reproduces the visible grid (the reattach guarantee, in miniature). -/
 example : (let v := screen 12 3 "he\x1b[33mllo\r\n\x1b[44mworld\x1b[0m!"
-           let w := (Vt.init 12 3).feedBytes (restore v)
+           let w := (Vt.init 12 3).feed (restore v)
            (List.range 3).all (fun y => (v.getRow y) == (w.getRow y))
              && w.cursor.x == v.cursor.x && w.cursor.y == v.cursor.y) = true := by
   native_decide
 
 /-- History dump contains scrollback plus screen, oldest first. -/
 example : (let v := screen 5 2 "1\r\n2\r\n3\r\n4"
-           String.fromUTF8! (history v false) == "1\n2\n3\n4\n") = true := by
+           String.fromUTF8! ⟨(history v false).toArray⟩ == "1\n2\n3\n4\n") = true := by
   native_decide
 
 end Zmx.Core.Vt.Tests
