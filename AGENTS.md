@@ -25,6 +25,29 @@ closed build plans with their completion records
 New work opens a new `specs/<slug>.md` and gets named in item 1 above;
 archive the old one with a completion record rather than editing it.
 
+## Settled non-goals — don't build these
+
+Each was decided with a reason; re-opening one needs a new reason, not a
+fresh pair of eyes.
+
+- **Windows, tabs, splits.** "Feature-complete multiplexer" is read as
+  feature-complete *zmx*, not tmux: the OS window manager (or your
+  terminal's tabs) owns composition. Recorded in
+  `specs/archive/lean-zmx.md`.
+- **An interactive picker.** One was built and shipped (step 8, with a
+  passing pty test), then removed: a first-time user ran bare `linger`,
+  got a full-screen picker and typed at it as if it were a shell. Bare
+  `linger` now prints a listing and exits, and `tests/overview_test.py`
+  guards that. Pickers live in `recipes/` (six lines of fish + fzf).
+- **Storing images so they survive reattach.** Kitty/sixel/iTerm2
+  sequences already pass through byte for byte while attached; persisting
+  them would put unbounded program-controlled bytes into the periodic
+  checkpoint, which is precisely what §Bound exists to prevent. See
+  README "Graphics" and `tests/graphics_test.py`.
+- **Restoring the process tree.** Reboot-resume restores the screen,
+  scrollback, modes, labels and cwd — not the programs. The
+  tmux-continuum trade, taken deliberately.
+
 ## Build
 
 - Always `./lake build` (the wrapper, not bare `lake`): this host's

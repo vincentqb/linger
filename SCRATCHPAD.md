@@ -1699,3 +1699,72 @@ rationale/history references at the archive path. The stale "converting the
 rest is the recorded next simplification" note in Theorems/Vt.lean is now
 "the leaf conversion is done; what stays per-field is `print`,
 `csiDispatch` and the folds".
+
+
+
+## Epic audit against PLAN.md, and the graphics question — 2026-08-12
+
+Stepped back to ask which epics the project actually wants and whether
+they are done. Audited PLAN.md line by line rather than from memory.
+
+| PLAN.md asks for | state |
+|---|---|
+| feature-complete multiplexer | **done**, read as feature-complete *zmx*: attach/watch/run/send/wait/ls/history/kill/detach/get/set/unset/clear. Windows/tabs/splits rejected on purpose (`specs/archive/lean-zmx.md`) |
+| decouple session layer from TUI | **done, and then some** — the TUI was built, shipped, user-tested and *removed*; `ls` + `recipes/` replaced it |
+| non-Lean surface as small as possible | **done** — `Zmx/Posix.lean` + `c/shim.c`, with the `SHIM_CAP` wrapper-count ratchet |
+| runs in userspace | **done** |
+| reboot-resume like tmux-continuum | **done** — periodic checkpoint + restore on attach, §Restore proved |
+| see sessions on other machines over ssh | **done** — `ls -r`, `attach name@host`, §Remote proved, fake-ssh harness |
+| modern clean default, no customization | **done** — by *deleting* the TUI, this became "your terminal + six-line recipes" |
+| theorems preventing crashes under load (the zellij complaint) | **done** — anchor A2: `run_wf`, `run_bytes_isolates` over any trace |
+| high-quality theorems resolve tensions | **ongoing by nature** — 4 anchors over 15 rungs; A1's value half is specced in `specs/grid-fidelity.md` |
+
+So every epic in the requirements is closed. What was *never audited* was
+graphics, which is what prompted the question.
+
+### Do we support kitty images? Measured, not guessed
+
+Read the data path, then tested it. `Zmx/Core/Session.lean` on
+`.ptyBytes chunk` does two things: `vt.feed chunk` **and**
+`broadcast s chunk` — the raw chunk, verbatim, to every attached client,
+which `Runtime/Client.lean` writes straight to stdout. Meanwhile
+`stepEsc` sends `ESC P` (DCS/sixel), `ESC X`, `ESC ^` and `ESC _`
+(APC/kitty) to `PState.str`, and `stepStr` discards bytes until `ESC \`
+without accumulating.
+
+Consequences, all now covered by `tests/graphics_test.py` (7 checks):
+
+- kitty APC and sixel DCS **pass through byte for byte while attached** —
+  no `allow-passthrough` switch needed, unlike tmux;
+- the payload never reaches the text grid (verified against
+  `linger history`);
+- a payload cannot wedge the session or grow it — the `.str` state
+  accumulates nothing, so §Bound is trivial for a megabyte of base64;
+- **images are gone on reattach**: `restore` repaints from the cell grid,
+  which holds no image data. The text screen returns exactly.
+
+That last one is asserted *positively* in the test, so the README and the
+behaviour cannot drift apart.
+
+Decision recorded in AGENTS.md as a settled non-goal: do **not** store
+images for replay. It would put unbounded program-controlled bytes into
+the periodic checkpoint — the one thing §Bound exists to prevent — and
+would need kitty's whole placement model (ids, z-index, cropping, scroll
+behaviour) to be reimplemented. tmux and screen leave redraw to the
+application; so do we. `recipes/lzo.fish` already puts each session in its
+own kitty tab for people who want a picture to survive.
+
+### Test-writing trap worth keeping
+
+First version of check 4 ("payload does not reach the text grid") FAILED,
+and the test was wrong, not the code: `/bin/sh` **echoes the command
+line**, so a literal marker inside `printf '...'` appears in the grid as
+echoed input. Fix: octal-encode the marker (`\107\106\130…`) so only the
+real payload contains it. General rule for pty tests — anything typed at a
+shell arrives twice, once as echo and once as output; make the two
+distinguishable at the byte level before asserting on either.
+
+Break-verified the passthrough itself by stripping ESC from `broadcast`:
+the two passthrough checks fail while liveness and restore keep passing,
+so the test discriminates images specifically rather than "the session
+works".

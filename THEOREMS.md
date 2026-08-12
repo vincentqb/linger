@@ -276,3 +276,15 @@ Verified.
   is restored.** A resumed session gets its screen, scrollback, modes,
   labels and cwd back — not its process tree. That is the deliberate
   continuum-shape trade: the work resumes, the programs do not.
+* **Images are passed through, not modelled.** Kitty graphics, sixel and
+  iTerm2 sequences reach attached clients byte for byte, and the emulator
+  ignores their payloads — parked in the string state until the
+  terminator, accumulating nothing, so §Bound holds for a program
+  streaming megabytes of base64 exactly as it does for any other output.
+  Nothing is stored, so `restore` cannot replay them: the text screen
+  comes back, the picture does not. Storing them would put unbounded
+  program-controlled bytes into the periodic checkpoint, which is the one
+  thing §Bound exists to prevent — so this is a scope decision, not a
+  missing proof. Pinned by `tests/graphics_test.py`, which also guards
+  the passthrough itself: rendering from the grid instead of forwarding
+  raw chunks would break images with no other test noticing.

@@ -61,9 +61,38 @@ Transport is yours: `attach name@host` execs ssh, and mosh composes as
 protocol never crosses the network, so any carrier works. Details in
 `recipes/README.md`.
 
+## Graphics
+
+Images work while you are attached, and are gone when you reattach.
+
+Kitty graphics (`APC`), sixel (`DCS`) and iTerm2 inline images
+(`OSC 1337`) reach your terminal **byte for byte**: the daemon forwards
+every raw pty chunk to attached clients as it arrives. There is no
+switch to turn on — tmux needs `allow-passthrough`, linger does not.
+`tests/graphics_test.py` pins it.
+
+The emulator itself *ignores* the payload: an image sequence parks the
+parser in its string state until the terminator and accumulates nothing.
+So a program streaming megabytes of base64 cannot grow a session or reach
+a checkpoint, and cannot wedge the parser — that is the same bound that
+covers any other hostile output (§Bound, §Total in `THEOREMS.md`).
+
+The consequence is that `restore` has no image data to replay. It
+repaints from the cell grid, so on reattach the text comes back exactly
+and the picture does not. Redrawing is the application's job — the same
+place `tmux` and `screen` leave it.
+
+Storing images to replay them is a deliberate non-goal: it would put
+unbounded, program-controlled bytes into the periodic checkpoint, which
+is the one thing §Bound exists to prevent. If you want a picture to
+survive a detach, run the program in a kitty tab (`recipes/lzo.fish`
+makes one per session) rather than asking the multiplexer to remember it.
+
 ## Notes
 
 - Reboot-resume is automatic (periodic checkpoint + restore on attach).
+- Images (kitty graphics, sixel, iTerm2) work while attached and vanish
+  on reattach — see [Graphics](#graphics).
 - `attach` needs a terminal; bare `linger`/`ls`, `run`, `send` are scriptable.
 - An unreachable or mid-reboot host drops out of `ls -r` after a few
   seconds; `attach name@host` fails with ssh's own error. Once the host
