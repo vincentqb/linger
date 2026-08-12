@@ -1,168 +1,58 @@
 # lean-zmx
 
-Terminal session attach/detach plus a session-manager TUI, written as
-pure functions in Lean 4. One binary, `lzmx`; one C file; theorems
-where the design has tensions to resolve.
+Persistent terminal sessions — attach, detach, survive reboots — plus a
+session-manager TUI. Pure-function Lean 4, one binary: `lzmx`.
 
-```
-lzmx                 open the session manager (list · preview · attach · kill)
-lzmx attach work     attach, creating the session if needed
-lzmx watch work      attach read-only (mirror without touching)
-ctrl-\               detach (session keeps running)
-```
+## The model
 
-Sessions survive detach, ssh disconnects, and reboots: the daemon
-checkpoints the terminal state, and attaching to a session whose daemon
-is gone replays the old screen into a fresh shell in the same
-directory.
-
-## Why this shape
-
-Following [zmx](https://github.com/neurosnap/zmx): session persistence
-and window management are different jobs. Your window manager already
-does windows — so there are no panes, splits or layouts here, and
-nothing sits between your keyboard and the pty but a unix socket. The
-TUI is a *manager* (the [zmx-session-manager](https://github.com/mdsakalu/zmx-session-manager)
-role): it lists sessions, previews them, and `exec`s the plain client
-when you pick one, leaving the byte path entirely.
-
-Read-only observers and "the newest real terminal owns the size" are
-borrowed from [abduco](https://github.com/martanne/abduco).
-
-## Commands
-
-| | |
-|---|---|
-| `attach <name> [cmd...]` | attach; creates the session if absent (upsert) |
-| `watch <name>` | read-only attach: output mirrors, keys are dropped |
-| `run <name> <cmd...>` | send a command line to a session without attaching |
-| `send <name> <text...>` | send raw bytes to the session's pty |
-| `detach <name>` | detach every client from a session |
-| `list` / `list --porcelain` | live and resumable sessions (`--porcelain` is what remotes parse) |
-| `kill <name>` | terminate the session |
-| `history <name>` | print the session's scrollback as text |
-| `wait <name>...` | block until the session's program exits; exit code follows it |
-| `get` / `set` / `unset` / `clear` | session labels (`k=v`) |
-| `version` | version plus resolved socket/state directories |
-
-## Layout
-
-```
-Zmx/Core/      pure: no IO, no `partial`, no `sorry`
-  Wire         framed client↔daemon protocol + incremental decoder
-  Vt           restore-grade terminal emulator (grid, scrollback, modes)
-  Render       Vt snapshot → ANSI bytes (reattach restore, previews)
-  Session      the daemon as `step : State → Event → State × List Effect`
-  Checkpoint   reboot-resume codec
-  Name         session-name sanitizer
-  Tui          the picker: state machine + frame renderer
-  Remote       parser for another machine's `list --porcelain`
-Zmx/Posix.lean the only module that touches the OS
-c/shim.c       the only non-Lean file (syscall wrappers, no logic)
-Zmx/Runtime/   IO: daemon loop, client, TUI shell, CLI, resume hooks
-Theorems/      proofs; THEOREMS.md maps each § to the tension it settles
-Tests/         unit tests (elaboration-time `example`s)
-tests/         live suites (real ptys) + `e2e.sh`, the whole-deliverable gate
-```
-
-The effects-as-data split is what makes the proofs possible: every
-decision is a pure function returning `List Effect`, and the runtime is
-a dumb loop that turns fds into events and effects into syscalls.
-
-## Theorems
-
-`THEOREMS.md` is the ledger. The load-bearing ones:
-
-- **§Bound** — nothing grows with uptime. Every buffer has a
-  structural cap that `step` preserves for *any* input: wire decoder,
-  scrollback ring, CSI parameters, OSC accumulator, client list, label
-  table. This is the answer to zellij's crashes under load — there is
-  no unbounded queue to fill.
-- **§Total** — the emulator cannot crash. `Vt.step` is total (no
-  `partial def` in the core, checked by `e2e.sh`), and the cursor plus
-  every stashed cursor provably stays inside the grid whatever bytes
-  arrive.
-- **§Chunk** — re-chunking is invisible: feeding `a ++ b` equals
-  feeding `a` then `b`, for the wire decoder and the emulator both.
-- **§Detach** — a session with zero clients still advances; detaching
-  cannot alter the screen (its only permitted effect is a checkpoint).
-- **§Restore** — `load (save s) = some s`, and `load` is total on
-  arbitrary bytes: a torn or foreign checkpoint is ignored, never fatal.
-  Cells are run-length encoded, so the persisted size tracks real
-  content, not grid area (a blank 80×24 screen is ~1.7 KiB, a full 10k
-  scrollback a few MiB) — see *Reboot resume* below.
-- **§Isolate** — many clients on one session: bytes from one cannot
-  alter another's record or its half-decoded frame.
-- **§Frame** / **§Name** / **§Remote** / **§Row** — protocol round-trip
-  with forward-compatible unknown tags; sanitized names cannot escape
-  the socket directory; neither a remote listing nor a local daemon'''s
-  own reply can inject paths, escape sequences, or a false identity.
+`lzmx attach <name>` gives you a shell that keeps running after you
+detach or disconnect; reattach later with the screen intact. Bare
+`lzmx` is the **manager** — a picker over existing sessions, not a
+shell.
 
 ## Build
 
-```sh
-./lake build lzmx        # the program (use ./lake, not lake — see AGENTS.md)
-./lake build Theorems    # the proofs
-./lake build Tests       # unit tests (building is running them)
-./tests/e2e.sh           # everything, from a clean build
+```
+./lake build          # use plain `lake build` on glibc >= 2.34
+ln -sf "$PWD/.lake/build/bin/lzmx" ~/.local/bin/lzmx
 ```
 
-Lean 4.32.0 via elan, no external Lean dependencies. `./lake` is a
-wrapper that routes C compilation through Homebrew clang, which this
-host's glibc 2.26 needs.
+Lean 4.32.0 via elan; no external Lean dependencies.
 
-## Configuration
+## Use
 
-There isn't any, by design — one modern default (Dracula, status on
-top). The environment knobs that exist are operational:
+```
+lzmx attach work      # attach, creating "work" if absent
+Ctrl-\                # detach — session keeps running
+lzmx                  # manager: pick / create / kill / preview
+```
 
-| | |
+| command | |
 |---|---|
-| `LZMX_DIR` | override both socket and state directories |
-| `~/.config/lzmx/remotes` | persistent ssh hosts to list in the TUI, one per line (`#` comments) |
-| `lzmx -r h1,h2` | ad-hoc remote hosts for one run (overrides the file; duplicates error) |
-| `LZMX_NO_DETACH_KEY` | disable `ctrl-\` (for programs that need it) |
-| `LZMX_SESSION` | set *inside* a session; use it in your prompt |
+| `attach <name> [cmd]` | attach, creating if absent |
+| `watch <name>` | attach read-only |
+| `run <name> <cmd>` | run a command in a session, don't attach |
+| `send <name> <text>` | send raw input to its pty |
+| `list [--porcelain]` | live and resumable sessions |
+| `history <name>` | scrollback as text |
+| `wait <name>` | block until its program exits (exit code follows) |
+| `kill` / `detach <name>` | end / disconnect |
+| `get` `set` `unset` `clear <name>` | labels (`k=v`) |
+| `-r <h1,h2>` | open the manager showing these ssh hosts too |
 
-Sockets default to `$XDG_RUNTIME_DIR/lzmx` (else `/tmp/lzmx-$UID`),
-state to `$XDG_STATE_HOME/lzmx/<host>` (else `~/.local/state/lzmx/<host>`).
+## Notes
 
-Both must be on local storage. Unix sockets are host-local rendezvous
-names and `flock` is unreliable over NFS, so a directory shared between
-machines breaks session ownership — see THEOREMS.md § Network
-filesystems. The hostname in the state path is what stops a
-network-mounted `$HOME` from letting two machines clobber each other's
-checkpoints; an explicit `LZMX_DIR` is used verbatim instead.
+- Reboot-resume is automatic (periodic checkpoint + restore on attach).
+- `attach` and bare `lzmx` need a terminal; `run`/`send`/`list` are scriptable.
+- Detach key `Ctrl-\`; `LZMX_NO_DETACH_KEY=1` disables it.
+- Remotes: `-r host,host` for one run, `~/.config/lzmx/remotes` to persist
+  (duplicates are an error). Hosts need `lzmx` on their `$PATH`; attach is
+  `ssh -t host lzmx attach <name>`.
+- `LZMX_DIR=<dir>` isolates sockets + state on local storage.
 
-## Reboot resume
+## Design
 
-Sessions come back after a reboot, like tmux-continuum. The daemon
-checkpoints the terminal — grid, scrollback, cursor, pen, modes, cwd
-and labels — to `<state>/<host>/<name>.ckpt`, and attaching to a name
-whose daemon is gone replays that screen into a fresh shell in the
-saved directory.
-
-When it writes: on the last client's detach, and at most once every
-60 s *while there is new output* (an idle session never re-writes). On
-a clean exit the checkpoint is dropped — resume is for crashes and
-reboots, not for finished work.
-
-What it costs: cells are run-length encoded, so size tracks content,
-not screen area — a blank 80×24 screen is ~1.7 KiB, ~400 bytes per line
-of real text, a few MiB for a full 10k-line scrollback (bounded by
-§Bound; nothing grows without limit). The write is atomic
-(`tmp`+`rename`) and `load` is total on any bytes, so a checkpoint
-racing a reader, or a torn/foreign file, is never fatal — the daemon
-just starts fresh.
-
-What resume restores is the screen, not the process tree: your
-scrollback and layout return, the programs that were running do not.
-That is the deliberate continuum-shape trade.
-
-## ssh
-
-Remote sessions are ordinary ssh sessions — attaching runs `ssh -t
-<host> lzmx attach <name>`, so nothing is tunnelled and no daemon is
-shared. The TUI enumerates them with `ssh <host> lzmx list
---porcelain`; an unreachable host contributes nothing and never blocks
-the picker.
+`THEOREMS.md` — the invariants (bounded under load, no crash on any input,
+sessions outlive clients, checkpoint round-trips, one session can't leak
+into another). `tests/e2e.sh` — the whole-deliverable gate.
+`specs/archive/lean-zmx.md` — the build record.
