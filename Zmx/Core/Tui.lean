@@ -237,13 +237,9 @@ def render (st : State) : String :=
   let counts := s!"{live} live" ++ (if res > 0 then s!" · {res} resumable" else "")
   let msg := if st.message.isEmpty then counts else st.message
   let status := s!"{dGray}{dFg} lzmx {rst}{dBg}{dMuted} {fit (w - 7) msg}{rst}"
-  -- query line — placeholder guidance while empty, so the box doesn't
-  -- read like a shell prompt
-  let qbody := if st.query.isEmpty
-    then "type a name, then Enter, to start a session"
-    else st.query
-  let qcolor := if st.query.isEmpty then dMuted else dFg
-  let qline := s!"{dBg}{dCyan} ❯ {qcolor}{fit (w - 4) qbody}{rst}"
+  -- query line — just the prompt; the empty-state block below explains it,
+  -- so no placeholder sentence here (it would duplicate that guidance)
+  let qline := s!"{dBg}{dCyan} ❯ {dFg}{fit (w - 4) st.query}{rst}"
   -- body
   let blank := s!"{dBg}{fit w ""}{rst}"
   let body :=
