@@ -7,7 +7,7 @@ lines — no partiality to prove). The load-bearing theorems: every name
 in the result is `Valid` (§Name carries through, so remote data cannot
 build a path outside the socket dir or smuggle bytes into ssh argv),
 and display fields are scrubbed of control characters (nothing a
-remote returns can inject escape sequences into the TUI frame).
+remote returns can inject escape sequences into the local listing).
 -/
 
 namespace Zmx.Core.Remote
@@ -56,8 +56,8 @@ theorem parse_cmd_scrubbed (out : String) :
     exact scrub_no_ctl _
 
 /-- §Remote (dup guard): a validated host list is duplicate-free, so no
-host is ever queried twice and no duplicate row can reach the TUI. This
-is the enforcement the `-r` flag / remotes file rely on. -/
+host is ever queried twice and no duplicate row can reach the listing.
+This is the enforcement the `-r` flag / remotes file rely on. -/
 theorem checkHosts_ok_nodup {hosts l : List String} (h : checkHosts hosts = .ok l) :
     l.Nodup := by
   unfold checkHosts at h

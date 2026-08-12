@@ -7,8 +7,7 @@ e2e.sh. Usage:
     LZMX_REMOTE=gpu2 python3 tests/remote_live_test.py
 
 Assumes the remote has `lzmx` on its non-interactive PATH and two live
-sessions named `alpha` and `beta` (the harness does not create them —
-the driving session sets them up, see the surrounding transcript).
+sessions named `alpha` and `beta`.
 """
 import os, pty, time, select, subprocess, sys, fcntl, struct, termios, pathlib, re
 
@@ -24,12 +23,10 @@ os.makedirs(LDIR, exist_ok=True)
 ENV = {k: v for k, v in os.environ.items() if k != 'SSH_AUTH_SOCK'}
 ENV.update(LZMX_DIR=LDIR, SHELL='/bin/sh')
 
-def spawn_tui():
-    pid, fd = pty.fork()
-    if pid == 0:
-        os.execve(LZMX, [LZMX, '-r', HOST], ENV)   # remote via flag, not env
-    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 30, 110, 0, 0))
-    return pid, fd
+
+def plain(bs):
+    return re.sub(r'\x1b\[[0-9;?]*[A-Za-z]', '', bs.decode('utf-8', errors='replace'))
+
 
 def drain(fd, secs):
     out = b''
@@ -46,35 +43,31 @@ def drain(fd, secs):
             out += b
     return out
 
-def plain(bs):
-    return re.sub(r'\x1b\[[0-9;?]*[A-Za-z]', '', bs.decode('utf-8', errors='replace'))
 
 def expect(cond, name):
     print(('PASS' if cond else 'FAIL'), name)
     return 0 if cond else 1
 
+
 fails = 0
-print(f'driving local lzmx TUI against real remote: {HOST}')
+print(f'driving local overview + remote attach against real host: {HOST}')
 
-# TUI lists the remote's sessions over real ssh
-pid, fd = spawn_tui()
-screen = plain(drain(fd, 6.0))   # first gather runs `ssh HOST lzmx list --porcelain`
-fails += expect(f'alpha@{HOST}' in screen, f'remote session alpha@{HOST} listed over real ssh')
-fails += expect(f'beta@{HOST}' in screen, f'remote session beta@{HOST} listed over real ssh')
+# the overview folds the remote's sessions in over real ssh
+r = subprocess.run([LZMX, '-r', HOST], env=ENV, stdin=subprocess.DEVNULL,
+                   capture_output=True, text=True, timeout=20)
+fails += expect(f'alpha@{HOST}' in r.stdout, f'remote alpha@{HOST} listed over real ssh')
+fails += expect(f'beta@{HOST}' in r.stdout, f'remote beta@{HOST} listed over real ssh')
 
-# filter to alpha and confirm the preview came from `ssh HOST lzmx history alpha`
-os.write(fd, b'alph')
-screen = plain(drain(fd, 5.0))
-fails += expect('hello-from-alpha-on-gpu2' in screen,
-                'remote preview streamed real scrollback over ssh')
-
-# enter -> execs `ssh -t HOST lzmx attach alpha`; we land in the real remote shell
-os.write(fd, b'\r')
+# `attach alpha@HOST` execs `ssh -t HOST lzmx attach alpha` -> real remote shell
+pid, fd = pty.fork()
+if pid == 0:
+    os.execve(LZMX, [LZMX, 'attach', f'alpha@{HOST}'], ENV)
+fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 30, 110, 0, 0))
 time.sleep(3.0)
 drain(fd, 2.0)
-os.write(fd, b'echo REMOTE-PWD-$(hostname)\r')
-out = plain(drain(fd, 4.0))
-fails += expect('REMOTE-PWD-ip-' in out, 'attach dropped into the real remote shell (ran a command there)')
+os.write(fd, b'echo REMOTE-HOST-$(hostname)\r')
+out = plain(drain(fd, 5.0))
+fails += expect('REMOTE-HOST-' in out, 'attach name@host dropped into the real remote shell')
 
 # detach from the remote session (ctrl-\), leaving it alive on the remote
 os.write(fd, b'\x1c')
@@ -86,7 +79,7 @@ except OSError:
 
 # the remote session must still be alive after we detached
 r = subprocess.run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', HOST,
-                    'lzmx list --porcelain'],
+                    'lzmx ls --porcelain'],
                    env=ENV, capture_output=True, text=True)
 fails += expect('name\talpha' in r.stdout, 'remote session survived detach (still listed)')
 

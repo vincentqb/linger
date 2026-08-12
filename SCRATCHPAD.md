@@ -635,3 +635,127 @@ replaces the full-screen picker) — not a defect.
 Lasting lesson for the README quick-start I keep deferring: lead with
 "lzmx attach <name> gives you a shell; bare lzmx is the manager" — the
 model is the thing users miss.
+
+
+
+## Deleted the TUI → CLI overview — 2026-08-12
+
+User ran bare `lzmx`, hit "a strange vertical bar in the middle", typed
+`ls` (it flashed), `exit` → "session 'ls' ended". Same report twice.
+Root cause was the picker itself, not a bug: bare `lzmx` opened the
+full-screen fzf-shaped manager; on 0 sessions only the list/preview
+divider `│` drew (the "vertical bar"), typed chars went into the
+query=name box, Enter created a session named `ls` and exec'd attach
+(the "flash"). We'd already softened the empty state once (guidance
+block), but the real fix the user asked for is: no TUI at all. zmx
+itself has no TUI — it uses fzf. The poll/2s-refresh/re-ssh-every-cycle
+was the over-built, flashing part.
+
+DELETED: Zmx/Core/Tui.lean, Zmx/Runtime/Tui.lean, Theorems/Tui.lean,
+Tests/Tui.lean, tests/tui_test.py (−952 lines). Bare `lzmx` and
+`lzmx ls` now print a plain overview and EXIT (Cli.overview →
+cmdList). Net −889 lines.
+
+Verb changes (Cli.lean):
+- bare `lzmx` == `lzmx ls`: one-shot listing, pipeable, never blocks.
+- `attach` with no name defaults to `main` (`defaultName`) — "just give
+  me my session" without inventing one. `run`/`send` still require an
+  explicit name (first arg is ambiguous there).
+- `ls -r [hosts]` lists remotes too (flag arg else ~/.config/lzmx/
+  remotes); plain `ls` stays local (common case ssh-free).
+- NEW `attach name@host` → `exec ssh -t host lzmx attach name`. This is
+  the remote-attach that the picker's Enter-action used to do; now it
+  also lets the fzf recipe feed a listed row (`name@host`) straight to
+  `attach`. GOTCHA: `local` is a reserved token in Lean 4 — the match
+  binder had to be `sess`, not `local` (first build died on it).
+
+§Row re-homed (was Theorems/Tui.lean, which is gone). The property —
+a listed session's identity is its socket filename, never the `info`
+reply (matters because that row set is the porcelain a remote `-r`
+parses) — was enforced inline in cmdList. Extracted to pure
+Core.Listing.rowFields + proved in Theorems/Listing.lean:
+  rowFields_name (lookup "name" = sanitize socketName for ANY info) and
+  rowFields_reply_excluded (the reply's name is physically dropped, not
+  shadowed). cmdList now calls rowFields. Break-verified: making
+  rowFields take the name from the reply → rowFields_name unsolved.
+§Bound(tui) and §Preview DELETED from THEOREMS.md (picker-only; they
+died with the TUI). Now 12 § sections. THEOREMS.md concurrency section
+still cites §Row correctly (identity-is-socket-name).
+
+Dead code removed: Render.previewLines (picker preview feed, no
+consumer left). Render.history stays (`lzmx history`). Cosmetic "TUI"
+comments in Vt/Render/Remote/Tests/AGENTS reworded to "overview/
+listing".
+
+Tests:
+- NEW tests/overview_test.py (e2e step 6, replaces tui_test.py):
+  bare/`ls` print the list and EXIT (stdin=DEVNULL + timeout=15 → a
+  picker that blocked on stdin trips the timeout). Break-verified:
+  `IO.sleep 16000` in overview → all 5 assertions FAIL on timeout.
+- REWROTE tests/remote_test.py: fake ssh now keys off `ls` (listRemote
+  runs `lzmx ls --porcelain`, not `list`); overview folds in remote
+  rows via captured stdout (no pty); `attach remote-work@dev-a` in a
+  pty execs `ssh -t dev-a lzmx attach remote-work` (argv pinned).
+- REWROTE tests/remote_live_test.py (not in gate) to the CLI shape:
+  `-r HOST` listing + `attach alpha@HOST` into the real shell + survive
+  detach. Dropped the preview/filter checks (no preview in CLI). NOT
+  re-run on gpu2/3 this pass (needs remote redeploy + alpha/beta setup);
+  the fake-ssh test pins the same argv.
+- e2e.sh step 6 relabeled; still "5 live suites" (attach, resume,
+  overview, remote, robust). Full gate GREEN.
+
+Lasting note: the model users miss is "attach = a shell; bare lzmx =
+a listing." README now leads with exactly that + an OPTIONAL fish fzf
+function (`lzmx ls -r | fzf | ... | lzmx attach`) — lzmx never calls
+fzf itself.
+
+
+
+## Review pass on the TUI-deletion change — 2026-08-12
+
+Ran the semantic reviewer on the staged diff before committing (large
+change: subsystem deletion + a re-homed security theorem). It cleared
+the risky bits (no verb dropped, §Row non-vacuous, no dangling picker
+refs) and caught one real bug + one asymmetry in the NEW code:
+
+1. (Medium, real) `attach name@host` couldn't round-trip a `user@host`
+   remote. Rows are `{rname}@{host}`; a host like `deploy@prod` made the
+   row `rname@deploy@prod`, and `splitOn "@"` → 3 parts missed the
+   2-part remote arm → SILENT local attach on a bogus name. The fzf
+   recipe feeds rows verbatim, so this broke a common ssh config.
+   NOTE: the reviewer suggested split-on-LAST — that's WRONG here
+   (`rname@deploy@prod` last-split → sess=`rname@deploy`). The row is
+   name-then-host, so split on the FIRST `@`: sess before, host =
+   everything after (host may itself be `user@host`). Verified by
+   reasoning + the new test (`-t -- me@dev-a lzmx attach remote-work`).
+   Correct only if names can't contain `@` → see the sanitize change.
+2. (Low-Med) remote-attach `exec` omitted the `--` host separator that
+   `listRemote` uses; a `-`-leading host would be read as an ssh option
+   (e.g. -oProxyCommand). Added `ssh -t -- host ...`. Host is
+   operator/trusted so defense-in-depth, but the asymmetry was real.
+
+Fixes:
+- Reserved `@`: dropped it from Name.okChar (session names can no longer
+  contain `@`), so any `@` in an attach arg unambiguously means remote.
+  This makes the first-@ split correct even for remote-parsed names.
+  The §Name proofs were UNAFFECTED (they only `decide`/`simp` about
+  `/`, NUL, `_` — never `@`; shrinking okChar only strengthens Valid).
+  ADDED theorem sanitize_no_at (+okChar_no_at): no sanitized name
+  contains `@`. It's SELF-break-verifying — it only compiles because
+  okChar excludes `@`; re-adding `@` → okChar_no_at unsolved (confirmed,
+  reverted). THEOREMS.md §Name row notes the reservation.
+- cmdAttach: split on first `@`; empty sess or host → loud
+  `malformed remote target` error (was a silent odd local session);
+  `ssh -t -- host lzmx attach sess`.
+- README fzf recipe hardened: pull names from `--porcelain`
+  (`awk -F '\t' '$1=="name"{print $2}' | fzf`) so an empty list offers
+  nothing to pick — kills the "no sessions" line being selectable (the
+  same bug class this whole change removed).
+- Tests: attach_test +bare-`attach`→"main"; remote_test +user@host
+  round-trip (first-@) + trailing-@ loud error. Existing argv assertion
+  already tolerated the `--`. Full e2e green.
+
+Didn't commit the review doc under semantic-review/ (transient
+artifact, not a deliverable). Minor items left as-is by design: the
+isatty check stays BEFORE the @-parse (both local and remote attach
+need a tty), so malformed-@ is only reported interactively.

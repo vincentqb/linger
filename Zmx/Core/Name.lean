@@ -9,11 +9,13 @@ or arriving from a remote listing.
 
 namespace Zmx.Core.Name
 
-/-- Characters a name may contain: ASCII alphanumerics plus `-_.@+`.
-Everything else (slashes, NULs, spaces, controls, unicode) is mapped
-away by `sanitize`. -/
+/-- Characters a name may contain: ASCII alphanumerics plus `-_.+`.
+`@` is deliberately excluded — it is reserved as the `name@host`
+remote-attach delimiter, so a name never collides with that syntax.
+Everything else (slashes, NULs, spaces, controls, unicode, `@`) is
+mapped away by `sanitize`. -/
 def okChar (c : Char) : Bool :=
-  c.isAlphanum || c == '-' || c == '_' || c == '.' || c == '@' || c == '+'
+  c.isAlphanum || c == '-' || c == '_' || c == '.' || c == '+'
 
 def maxLen : Nat := 80
 

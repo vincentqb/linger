@@ -2,7 +2,7 @@
 
 The daemon feeds every pty byte here (a passive observer, zmx-style:
 clients get the raw bytes; this state exists so a *re*-attaching client
-can be shown what it missed, and so the TUI can preview sessions).
+can be shown what it missed, and so `lzmx history` can dump it).
 
 Design for the theorems (see THEOREMS.md):
 * §Total — everything is one byte-at-a-time `step : Vt → UInt8 → Vt`

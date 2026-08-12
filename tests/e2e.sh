@@ -7,8 +7,8 @@
 #   3. posix shim smoke tests (ztest)
 #   4. attach/detach/reattach/mirror/wait e2e (real ptys)
 #   5. reboot-resume e2e (SIGKILL + restore + corrupt tolerance)
-#   6. session-manager TUI e2e (drive the picker in a pty)
-#   7. remote-over-ssh e2e (fake ssh: list, preview, attach argv)
+#   6. overview e2e (bare `lzmx`/`ls` print a list and exit, not a picker)
+#   7. remote-over-ssh e2e (fake ssh: `-r` listing, attach name@host argv)
 #   8. adverse timing: busy-daemon listing (§Row) + name-ownership race
 set -e
 cd "$(dirname "$0")/.."
@@ -61,9 +61,9 @@ say "5. reboot resume"
 pkill -x lzmx 2>/dev/null || true; sleep 0.2
 python3 tests/resume_test.py | tail -1 | grep -q '^FAILURES: 0$' || fail "resume_test"
 
-say "6. session-manager TUI"
+say "6. overview listing (bare lzmx / ls)"
 pkill -x lzmx 2>/dev/null || true; sleep 0.2
-python3 tests/tui_test.py | tail -1 | grep -q '^FAILURES: 0$' || fail "tui_test"
+python3 tests/overview_test.py | tail -1 | grep -q '^FAILURES: 0$' || fail "overview_test"
 
 say "7. remote sessions over ssh"
 pkill -x lzmx 2>/dev/null || true; sleep 0.2

@@ -32,7 +32,7 @@ example : ((parse "name\t../../etc/passwd\n").map (·.name)
     == ["_._.._etc_passwd"]) = true := by native_decide
 
 /-- Control bytes in display fields are scrubbed (no ANSI injection
-into the TUI frame). -/
+into the listing). -/
 example : ((parse "name\tx\ncmd\tvi\x1b[31mm\x07\n").map (·.cmd)
     == ["vi[31mm"]) = true := by native_decide
 

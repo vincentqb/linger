@@ -1,44 +1,43 @@
 import Zmx.Runtime.Daemon
 import Zmx.Runtime.Client
+import Zmx.Core.Remote
+import Zmx.Core.Listing
 /-! # Zmx.Runtime.Cli — argv dispatch
 
-Verb surface mirrors zmx (attach is an upsert; one-shot verbs talk to
-a live daemon or say so). `__daemon` is the internal re-exec target of
-the detached spawn. Checkpoint hooks are no-ops here; `Zmx.Runtime.
-Resume` (spec step 7) replaces them via `hooksRef`.
+Verb surface mirrors zmx (attach is an upsert; one-shot verbs talk to a
+live daemon or say so). Bare `lzmx` — and `lzmx ls` — print a session
+overview and exit; there is no full-screen picker (pick with the `fzf`
+recipe in the README, or just `attach`). `__daemon` is the internal
+re-exec target of the detached spawn.
 -/
 
 namespace Zmx.Runtime.Cli
 
 open Zmx.Posix
 open Zmx.Core.Wire (Msg)
-open Zmx.Runtime.Paths in
 open Zmx.Runtime
 open Zmx.Core.Session (State)
 
 def version : String := "lzmx 0.1.0"
 
-def usage : String := "Usage: lzmx <command> [args...]
+/-- Session name used when `attach` is given none — "just give me my
+session" without having to invent a name. -/
+def defaultName : String := "main"
 
-Commands:
-  (no args)                      Open the session manager (TUI)
-  -r|--remote <h1,h2,...>        Open the TUI showing these remote hosts too
-                                 (overrides ~/.config/lzmx/remotes for this run)
-  [a]ttach <name> [command...]   Attach to session, creating if needed
-  [r]un <name> <command...>      Run a command in a session without attaching
-  [s]end <name> <text...>        Send raw input to session pty
-  [d]etach <name>                Detach all clients from a session
-  watch <name>                   Attach read-only (view without touching)
-  [l]ist|ls [--porcelain]        List sessions (live and resumable)
-  [k]ill <name>                  Kill session and all attached clients
-  [hi]story <name>               Print session scrollback as plain text
-  [w]ait <name>...               Wait for sessions' programs to exit
-  [g]et <name>                   Show session labels
-  set <name> k=v ...             Set session labels
-  [un]set <name> key ...         Remove session labels
-  [cl]ear <name>                 Clear all session labels
-  [v]ersion                      Show version and paths
-  [h]elp                         Show this help
+def usage : String := "Usage: lzmx [command] [args...]
+
+  (no args) | ls [-r [h,..]]  List sessions; -r also lists remote hosts
+                              (from --remote arg, else ~/.config/lzmx/remotes)
+  [a]ttach [name] [command]   Attach, creating if needed (name defaults to 'main')
+  watch <name>                Attach read-only (view without touching)
+  [r]un <name> <command...>   Run a command in a session without attaching
+  [s]end <name> <text...>     Send raw input to session pty
+  [d]etach <name>             Detach all clients from a session
+  [k]ill <name>               Kill session and all attached clients
+  [hi]story <name>            Print session scrollback as plain text
+  [w]ait <name>...            Wait for sessions' programs to exit
+  [g]et / set / [un]set / [cl]ear <name>   Session labels (k=v)
+  [v]ersion | [h]elp
 
 Inside a session, $LZMX_SESSION holds the session name.
 Detach key: ctrl-\\ (set LZMX_NO_DETACH_KEY to disable)."
@@ -80,14 +79,28 @@ def connectUpsert (hooks : Hooks) (name : String) (cmd : List String) : IO UInt3
 def cmdAttach (hooks : Hooks) (name : String) (cmd : List String) : IO UInt32 := do
   if !(← isatty stdinFd) then
     throw (IO.userError "attach needs a terminal (use `run`/`send` for scripting)")
-  let fd ← connectUpsert hooks name cmd
-  match ← Client.attach fd with
-  | some status =>
-    IO.eprintln s!"\r\nlzmx: session '{name}' ended (status {status})"
-    return status &&& 0xFF
-  | none =>
-    IO.eprintln s!"\r\nlzmx: detached from '{name}'"
-    return 0
+  -- `name@host` attaches to a remote session: become `ssh -t host lzmx
+  -- attach name`. Session names never contain `@` (Name.sanitize
+  -- reserves it — theorem sanitize_no_at), so any `@` here means remote.
+  -- The host is everything after the FIRST `@`, so it may itself be a
+  -- `user@host` ssh target. Lets the fzf recipe feed a listed row
+  -- (`name@host`) verbatim to `attach`, local or remote.
+  match name.splitOn "@" with
+  | sess :: rest@(_ :: _) =>
+    let host := String.intercalate "@" rest
+    if sess.isEmpty || host.isEmpty then
+      throw (IO.userError s!"malformed remote target '{name}' (expected name@host)")
+    exec "ssh" #["-t", "--", host, "lzmx", "attach", sess]  -- replaces us on success
+    return 1                                                 -- only reached if exec fails
+  | _ =>
+    let fd ← connectUpsert hooks name cmd
+    match ← Client.attach fd with
+    | some status =>
+      IO.eprintln s!"\r\nlzmx: session '{name}' ended (status {status})"
+      return status &&& 0xFF
+    | none =>
+      IO.eprintln s!"\r\nlzmx: detached from '{name}'"
+      return 0
 
 /-- Fetch a session's info key-values. -/
 partial def queryInfo (name : String) : IO (Option (List (String × String))) := do
@@ -124,52 +137,98 @@ partial def queryInfo (name : String) : IO (Option (List (String × String))) :=
 def kv (l : List (String × String)) (k : String) : String :=
   (l.find? (·.1 == k)).map (·.2) |>.getD ""
 
-def cmdList (porcelain : Bool) : IO UInt32 := do
+/-- Remote hosts for `-r`: explicit flag list, else `~/.config/lzmx/remotes`.
+Duplicates are a hard error (`Remote.checkHosts`). `none` means no `-r`
+(local only); `some []` means `-r` with no arg (read the file). -/
+def resolveRemotes (flag : Option (List String)) : IO (List String) := do
+  match flag with
+  | none => return []
+  | some given =>
+    let raw ← if given.isEmpty then do
+        let home := (← IO.getEnv "HOME").getD "/tmp"
+        let path := s!"{home}/.config/lzmx/remotes"
+        if ← System.FilePath.pathExists path then pure ((← IO.FS.readFile path).splitOn "\n")
+        else pure []
+      else pure given
+    let hosts := (raw.map (·.trimAscii.toString)).filter
+      (fun h => !h.isEmpty && !h.startsWith "#")
+    match Zmx.Core.Remote.checkHosts hosts with
+    | .ok l => return l
+    | .error e => throw (IO.userError e)
+
+/-- One remote's sessions over ssh; a failure (host down, no lzmx,
+timeout) yields `[]` so a dead remote never blocks the local overview. -/
+def listRemote (host : String) : IO (List (String × Bool × String)) := do
+  let out ← try
+      IO.Process.output {
+        cmd := "ssh",
+        args := #["-o", "BatchMode=yes", "-o", "ConnectTimeout=3", "--",
+                  host, "lzmx", "ls", "--porcelain"] }
+    catch _ => pure { exitCode := 1, stdout := "", stderr := "" }
+  if out.exitCode != 0 then return []
+  return (Zmx.Core.Remote.parse out.stdout).map (fun r => (r.name, r.live, r.cmd))
+
+def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
   let live ← Paths.listSocketNames
   let ckpts ← Paths.listCkptNames
   let mut rows : List (List (String × String)) := []
   for name in live do
     match ← queryInfo name with
     | some info =>
-      -- the name comes from the socket, not from the reply (§Row): a
-      -- daemon too busy to answer within the timeout still lists with
-      -- its real name instead of a blank row, and this is also the
-      -- porcelain remotes parse, so identity must not be peer-supplied
-      let fields := info.filter (·.1 != "name")
-      rows := rows ++ [[("name", Zmx.Core.Name.sanitize name)] ++ fields
-                        ++ [("state", "live")]]
+      -- the name comes from the socket, not from the reply (the §Row
+      -- rule, proved in Core.Listing.rowFields): a daemon too busy to
+      -- answer still lists with its real name, and a peer can't spoof
+      -- another session's identity
+      rows := rows ++ [Zmx.Core.Listing.rowFields name info ++ [("state", "live")]]
     | none =>
       -- connect() itself failed: nothing is listening, the file is stale
       try IO.FS.removeFile (← Paths.socketPath name) catch _ => pure ()
   for name in ckpts do
     if !live.contains name then
       rows := rows ++ [[("name", name), ("state", "resumable")]]
+  -- remotes last (per host), so a slow ssh can't reorder local rows
+  for host in remotes do
+    for (rname, rlive, rcmd) in ← listRemote host do
+      rows := rows ++ [[("name", s!"{rname}@{host}"), ("cmd", rcmd),
+                        ("state", if rlive then "live" else "resumable")]]
   if porcelain then
     for info in rows do
       for (k, v) in info do
         IO.println s!"{k}\t{v}"
       IO.println ""
+  else if rows.isEmpty then
+    IO.println "no sessions"
   else
-    if rows.isEmpty then
-      IO.println "no sessions"
-    else
-      for info in rows do
-        let name := kv info "name"
-        let state := kv info "state"
-        let pid := kv info "pid"
-        let cmd := kv info "cmd"
-        let labels := info.filterMap (fun (k, v) =>
-          if k.startsWith "label." then some s!"{(k.drop 6).toString}={v}" else none)
-        let labelStr := if labels.isEmpty then "" else "  [" ++ String.intercalate " " labels ++ "]"
-        if state == "live" then
-          if pid.isEmpty && cmd.isEmpty then
-            -- alive (it accepted the connection) but too busy to answer
-            IO.println s!"{name}\t(busy){labelStr}"
-          else
-            IO.println s!"{name}\tpid {pid}\t{cmd}{labelStr}"
-        else
-          IO.println s!"{name}\t(resumable)"
+    for info in rows do
+      let name := kv info "name"
+      let state := kv info "state"
+      let pid := kv info "pid"
+      let cmd := kv info "cmd"
+      let labels := info.filterMap (fun (k, v) =>
+        if k.startsWith "label." then some s!"{(k.drop 6).toString}={v}" else none)
+      let labelStr := if labels.isEmpty then "" else "  [" ++ String.intercalate " " labels ++ "]"
+      let detail :=
+        if state == "resumable" then "(resumable)"
+        else if pid.isEmpty && cmd.isEmpty then "(busy)"
+        else if pid.isEmpty then cmd
+        else s!"pid {pid}  {cmd}"
+      IO.println s!"{name}\t{detail}{labelStr}"
   return 0
+
+/-- Parse the `ls` argument set: an optional `--porcelain` and an
+optional `-r`/`--remote [hosts]`, in any order. `-r` followed by a
+`-`-prefixed token (or nothing) means "use the file"; `-r hosts` is an
+explicit comma list. Returns `none` on any unrecognized token. -/
+partial def parseLs : List String → Option (Bool × Option (List String))
+  | [] => some (false, none)
+  | "--porcelain" :: rest => (parseLs rest).map (fun (_, r) => (true, r))
+  | "-r" :: rest | "--remote" :: rest =>
+    match rest with
+    | h :: more =>
+      if h.startsWith "-" then (parseLs rest).map (fun (p, _) => (p, some []))
+      else (parseLs more).map (fun (p, _) => (p, some (h.splitOn ",")))
+    | [] => some (false, some [])
+  | _ => none
 
 def requireLive (name : String) (m : Msg) : IO UInt32 := do
   if ← Client.oneShot name m then return 0
@@ -212,17 +271,24 @@ def cmdVersion : IO UInt32 := do
   IO.println s!"state:   {← Paths.stateDir}"
   return 0
 
-def main (hooks : Hooks) (tui : Option (List String) → IO UInt32) (args : List String) : IO UInt32 := do
+/-- Bare `lzmx` and `lzmx ls [...]` share this overview path. -/
+def overview (args : List String) : IO UInt32 := do
+  match parseLs args with
+  | some (porcelain, remoteFlag) => cmdList porcelain (← resolveRemotes remoteFlag)
+  | none =>
+    IO.eprintln usage
+    return 2
+
+def main (hooks : Hooks) (args : List String) : IO UInt32 := do
   Zmx.Posix.init
   match args with
-  | [] => tui none
-  | ["-r", hosts] | ["--remote", hosts] =>
-    tui (some (hosts.splitOn ","))
   | "__daemon" :: name :: cwd :: cmd =>
     let restore := (← hooks.load name).map (fun (vt, _, labels) => (vt, labels))
     Daemon.serve name cwd cmd (hooks.save name) (hooks.drop name) restore
     return 0
+  | ["attach"] | ["a"] => cmdAttach hooks defaultName []
   | ["attach", name] | ["a", name] => cmdAttach hooks name []
+  | "attach" :: name :: cmd | "a" :: name :: cmd => cmdAttach hooks name cmd
   | ["watch", name] =>
     -- read-only mirror (abduco -r): output only, detach key works
     match ← Client.connect name with
@@ -231,10 +297,8 @@ def main (hooks : Hooks) (tui : Option (List String) → IO UInt32) (args : List
       return 1
     | some fd =>
       let _ ← Client.attach fd true
-      IO.eprintln s!"
-lzmx: stopped watching '{name}'"
+      IO.eprintln s!"\r\nlzmx: stopped watching '{name}'"
       return 0
-  | "attach" :: name :: cmd | "a" :: name :: cmd => cmdAttach hooks name cmd
   | "run" :: name :: cmd | "r" :: name :: cmd =>
     if cmd.isEmpty then
       IO.eprintln "usage: lzmx run <name> <command...>"
@@ -250,8 +314,6 @@ lzmx: stopped watching '{name}'"
     requireLiveSend name (.input (String.intercalate " " text).toUTF8.toList)
   | ["detach", name] | ["d", name] => requireLive name .detachAll
   | ["kill", name] | ["k", name] => requireLiveSend name .kill
-  | ["list"] | ["ls"] | ["l"] => cmdList false
-  | ["list", "--porcelain"] | ["ls", "--porcelain"] => cmdList true
   | ["history", name] | ["hi", name] => requireLive name .history
   | "wait" :: names | "w" :: names =>
     if names.isEmpty then
@@ -277,11 +339,11 @@ lzmx: stopped watching '{name}'"
     return rc
   | ["clear", name] | ["cl", name] => requireLive name .labelClear
   | ["version"] | ["v"] => cmdVersion
-  | ["help"] | ["h"] =>
+  | ["help"] | ["h"] | ["--help"] =>
     IO.println usage
     return 0
-  | _ =>
-    IO.eprintln usage
-    return 2
+  -- bare `lzmx`, `lzmx ls ...`, `lzmx -r ...` → the overview
+  | "ls" :: rest | "list" :: rest | "l" :: rest => overview rest
+  | other => overview other
 
 end Zmx.Runtime.Cli

@@ -1,14 +1,15 @@
 import Zmx.Core.Name
-/-! # Zmx.Core.Remote — parsing `lzmx list --porcelain` from other machines
+/-! # Zmx.Core.Remote — parsing `lzmx ls --porcelain` from other machines
 
-The TUI shows sessions from configured remote hosts by running
-`ssh <host> lzmx list --porcelain` and parsing stdout here.
+The overview (`lzmx -r <hosts>`) folds in sessions from configured
+remote hosts by running `ssh <host> lzmx ls --porcelain` and parsing
+stdout here.
 
 §Remote (THEOREMS.md): the parser is total (any bytes → some rows,
 never ⊥), garbage-tolerant (a malformed line or record is dropped, not
 fatal), and §Name carries through — every name in the result is
 sanitized, so a hostile remote cannot inject a path or control bytes
-into the local TUI or its ssh argv.
+into the local listing or the ssh argv.
 
 Format (one record per session, blank-line separated):
 ```
@@ -35,8 +36,8 @@ structure RemoteRow where
   deriving Repr, DecidableEq, Inhabited
 
 /-- Strip ANSI/control bytes from a display string (a remote could
-embed escape sequences in `cmd` or label values; the TUI prints these
-verbatim into its frame, so control characters must die here). -/
+embed escape sequences in `cmd` or label values; the overview prints
+these verbatim into the listing, so control characters must die here). -/
 def scrub (s : String) : String :=
   String.ofList (s.toList.filter (fun c => c.toNat ≥ 0x20 && c.toNat != 0x7F))
 
@@ -79,9 +80,9 @@ def firstDupHost : List String → Option String
 /-- Validate a remote-host list. A repeated host is a configuration
 mistake with no valid meaning — it would double-query and show
 duplicate rows — so reject it loudly rather than silently dedup. The
-TUI runs this *before* entering the alt-screen (where a warning would
-be invisible), so the only sensible failure is to refuse and name the
-offender. Pure; the IO caller turns `.error` into `IO.userError`. -/
+overview runs this *before* any connection is attempted, so a bad host
+list refuses immediately and names the offender. Pure; the IO caller
+turns `.error` into `IO.userError`. -/
 def checkHosts (hosts : List String) : Except String (List String) :=
   if hosts.Nodup then .ok hosts
   else .error s!"remote host '{(firstDupHost hosts).getD ""}' listed more than once"

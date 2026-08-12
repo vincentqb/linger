@@ -21,6 +21,11 @@ theorem okChar_no_nul (c : Char) (h : okChar c = true) : c ≠ '\x00' := by
   subst he
   simp [okChar] at h
 
+theorem okChar_no_at (c : Char) (h : okChar c = true) : c ≠ '@' := by
+  intro he
+  subst he
+  simp [okChar] at h
+
 /-- The mapped character is always in the alphabet. -/
 theorem mapChar_ok (c : Char) : okChar (if okChar c then c else '_') = true := by
   by_cases h : okChar c <;> simp [h] <;> decide
@@ -77,5 +82,17 @@ theorem sanitize_no_escape (s : String) :
   intro c hc
   obtain ⟨-, -, hok, -⟩ := sanitize_valid s
   exact ⟨okChar_no_slash c (hok c hc), okChar_no_nul c (hok c hc)⟩
+
+/-- `@` is reserved as the `name@host` remote-attach delimiter, so no
+sanitized session name ever contains it. This is what makes `attach
+name@host` unambiguous: any `@` in the argument means "remote", and the
+host is everything after the first one (it may itself be `user@host`).
+It also holds for remote-supplied names, which are sanitized on parse.
+(This theorem only closes because `okChar` excludes `@`; re-adding it
+breaks the proof.) -/
+theorem sanitize_no_at (s : String) : ∀ c ∈ (sanitize s).toList, c ≠ '@' := by
+  intro c hc
+  obtain ⟨-, -, hok, -⟩ := sanitize_valid s
+  exact okChar_no_at c (hok c hc)
 
 end Zmx.Core.Name

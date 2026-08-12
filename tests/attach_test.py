@@ -92,5 +92,17 @@ rc = subprocess.run([LZMX, 'wait', 'w2'], env=ENV).returncode
 took = time.time() - t0
 fails += expect(rc == 7 and took >= 0.2, f'wait blocks until exit and returns status (rc={rc}, took={took:.2f}s)')
 
+# 8. bare `attach` (no name) attaches the default session "main"
+pid_m, fd_m = pty.fork()
+if pid_m == 0:
+    os.execve(LZMX, [LZMX, 'attach'], ENV)   # no name -> defaultName "main"
+fcntl.ioctl(fd_m, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 0, 0))
+time.sleep(0.8)
+ls_m = subprocess.run([LZMX, 'list'], env=ENV, capture_output=True, text=True).stdout
+fails += expect('main' in ls_m, 'bare `attach` creates the default session "main"')
+os.write(fd_m, b'\x1c')   # detach
+time.sleep(0.4)
+subprocess.run([LZMX, 'kill', 'main'], env=ENV)
+
 print('FAILURES:', fails)
 sys.exit(1 if fails else 0)

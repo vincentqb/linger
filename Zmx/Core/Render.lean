@@ -2,9 +2,8 @@ import Zmx.Core.Vt
 /-! # Zmx.Core.Render — Vt state → ANSI bytes
 
 Pure functions from a `Vt` snapshot to the byte stream that reproduces
-it on a real terminal: `restore` (what a re-attaching client is sent),
-`history` (scrollback dump for `lzmx history`), and `previewLines`
-(plain rows for the TUI's preview pane).
+it on a real terminal: `restore` (what a re-attaching client is sent)
+and `history` (scrollback dump for `lzmx history`).
 
 Everything is `String`-assembled then UTF-8'd once at the end; the
 runtime writes the bytes verbatim. No IO, no state.
@@ -123,11 +122,5 @@ def history (v : Vt) (withAnsi : Bool) : ByteArray :=
     String.toUTF8 body
   else
     String.toUTF8 <| String.intercalate "\n" (rows.map rowText) ++ "\n"
-
-/-- Last `n` non-empty-suffix rows as plain text, for the TUI preview. -/
-def previewLines (v : Vt) (n : Nat) : List String :=
-  let all := (v.sb.toList ++ v.grid.toList).map rowText
-  let trimmed := (all.reverse.dropWhile (·.isEmpty)).reverse
-  trimmed.drop (trimmed.length - n)
 
 end Zmx.Core.Render

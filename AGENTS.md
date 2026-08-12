@@ -1,6 +1,6 @@
 # lean-zmx
 
-Session attach/detach + session-manager TUI in pure-function Lean 4.
+Session attach/detach + a CLI session overview in pure-function Lean 4.
 `README.md` is the user-facing overview; `specs/archive/lean-zmx.md` is
 the (closed) build plan with the completion record. Re-read
 `SCRATCHPAD.md` first after any context compaction — it holds the
