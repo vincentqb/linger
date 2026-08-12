@@ -1,6 +1,58 @@
 # bigger-theorems — composed statements over the existing ledger
 
-Status: in progress
+**Goal.** Consolidate the theorem ledger: state the composed claims that
+make the product's promises checkable in one place, and stop paying for
+the same lemma four times.
+
+**Definition of done.** Each step's statement is a green theorem in
+`Theorems/` (no `sorry`, no `native_decide`), break-verified with the
+break recorded in `SCRATCHPAD.md`, its row in `THEOREMS.md`, and
+`./tests/e2e.sh` green.
+
+**Status.**
+
+| | |
+|---|---|
+| Step 1 §Stream | ✓ done |
+| Step 2 trace lift | ✓ done |
+| Step 3 §Replay | parser half ✓ (`restore_quiesced`), digit round-trip ✓, cursor rungs ✓ (`cup_places_cursor`), origin layer ✓ — **value fidelity open** |
+| Step 4 frames | ✓ done for leaf operations; composites/folds measured as out of reach |
+| §Resume anchor | ✓ done (`Theorems/Resume.lean`) |
+
+**Next step →** step 3c-rest: the `Quiet` composition (bundle `Ends` with
+origin-off, compose over `restoreBody`) so `restore_cursor` lands at the
+whole-stream level. Only `csiPriv` is interesting there — its own bytes
+set `priv = 0x3F`, so the state must be tracked to the final byte to show
+the pushed parameter is `min n 65535 ≠ 6`. One emitter guard falls out of
+it: `modesAnsi` emits `csiPriv v.modes.mouse`, and nothing currently
+proves `mouse ≠ 6`, so guard the emit (the `safeChar` pattern) rather than
+adding a `Good` field.
+
+**Decided — do not relitigate.**
+
+* No single theorem spans the trust boundaries; the factored ledger *is*
+  the design. The anchor set in `THEOREMS.md` is the readable summary.
+* Cross-client commutativity is **false** (attach order decides
+  `sizeOwner`; input interleaves into one pty). §Isolate is the honest
+  maximum at the machine layer.
+* `Render` is byte-native: a `String` literal does not reduce in the
+  kernel, so a String-assembled emitter is unprovable in principle.
+* `safeChar` and `utf8`'s codepoint clamp are hypothesis-free emit
+  guards, not defensive noise — they are what make the proofs need no
+  `Vt` invariant.
+* Under DECOM the cursor can sit outside the scroll region (`VPA` ignores
+  origin mode); that stays a **hypothesis**, not an emitter fix — setting
+  DECOM homes the cursor, so emitting absolute first does not work.
+* Frames do not extend to compositions or folds (measured, not assumed).
+  The footprint-as-data effect system that would fix it is larger than
+  the sprawl it removes — rejected.
+
+**Open questions.**
+
+* Grid/pen value fidelity (step 3d) — needs the positive specification of
+  what written fields become; frames buy nothing toward it.
+* CI on a modern-glibc box: the durable guard for the portability class
+  that bit on gpu2. Repo-level, outside this spec.
 
 Outcome of the "is there a bigger theorem?" review (2026-08-12): no
 single theorem can span the trust boundaries (that factoring is the

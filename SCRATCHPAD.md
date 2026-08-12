@@ -1476,3 +1476,30 @@ that was never mechanical.
 Method note: the whole sequence here — claim, spike, downgrade, then do
 the part that survived — cost about four builds and produced a smaller,
 truer result than the confident version would have.
+
+
+
+## Session continuity wiring — 2026-08-12
+
+This session is long and has been compacted at least once, and the
+durable anchors had two real gaps:
+
+1. `AGENTS.md` — the file a post-compaction agent re-reads — named only
+   the ARCHIVED spec. Nothing pointed at `specs/bigger-theorems.md` as
+   the live plan, and the root `PLAN.md` is the original REQUIREMENTS,
+   which a resuming agent would mistake for current state. Fixed: a
+   "Where things stand — read this first after any compaction" block
+   naming the active spec, then SCRATCHPAD, then "re-ground against those
+   two, not against a compaction summary".
+2. `specs/bigger-theorems.md` had status buried in 200 lines of step
+   prose. Fixed: header block with Goal / Definition-of-done / a status
+   table / **Next step →** / Decided-do-not-relitigate / Open questions.
+
+Division of labour between the three files, now explicit: PLAN.md =
+requirements (frozen), spec = forward state (rewritten in place),
+SCRATCHPAD = append-only backward log (this file). Nothing else changes;
+the per-increment commit + gate-green discipline was already the
+checkpoint habit the skill asks for.
+
+Nothing is in flight: last increment (frames for leaf ops) is committed,
+pushed, gate green.

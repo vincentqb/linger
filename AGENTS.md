@@ -4,12 +4,24 @@ Session attach/detach + a CLI session overview in pure-function Lean 4.
 The binary is `linger` (renamed from `lzmx`; the repo keeps its
 historical name, and the checkpoint magic stays "LZMX" — a frozen
 format identifier, not branding).
-`README.md` is the user-facing overview; `specs/archive/lean-zmx.md` is
-the (closed) build plan with the completion record. Re-read
-`SCRATCHPAD.md` first after any context compaction — it holds the
-proof recipes and the measured environment facts.
+`README.md` is the user-facing overview. `PLAN.md` is the original
+requirements (goal-level, not current state); `specs/archive/lean-zmx.md`
+is the closed build plan with its completion record.
 
-New work opens a new `specs/<slug>.md`; don't reopen the archived one.
+## Where things stand — read this first after any compaction
+
+1. **`specs/bigger-theorems.md` is the ACTIVE plan** — goal,
+   definition-of-done, what's decided, what's next. Its header block is
+   the ten-second version. (Don't look for a living `PLAN.md`: the root
+   one is requirements, and the archived spec is closed.)
+2. **`SCRATCHPAD.md`** — append-only worklog: proof recipes, measured
+   environment facts, break-verify records, and the negative results.
+   Read before writing; append after; never delete prior entries.
+3. Re-ground against those two files, not against a compaction summary:
+   the summary is what dropped the nuance.
+
+New work opens a new `specs/<slug>.md` and gets named in item 1 above;
+don't reopen the archived one.
 
 ## Build
 
