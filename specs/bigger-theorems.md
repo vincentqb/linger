@@ -116,9 +116,32 @@ grid chain). Emitter stages named for provability along the way:
 `screensAnsi`, `regionAnsi`, `tabsAnsi`, `savedAnsi`, `charsetAnsi`,
 `titleAnsi`, `cursorAnsi`, `restoreBody`.
 
-Stage 3c (open): value fidelity — digit round-trip (CSI param
-accumulator vs `toString`; may need a bespoke digit emitter in Render
-for provability), then pen/cursor/region/modes equality theorems.
+Stage 3c (STARTED — numbers round-trip). `accDigits` models the CSI
+parameter accumulator exactly as `stepCsi` runs it, and
+**`accDigits_digits : accDigits 0 (digits n) = min n 65535`** proves the
+emitter and the parser are inverse on numbers, up to the parser's
+documented clamp. Lifted to the emulator by `csi_digit_step` /
+`csi_digits_feed` / `csi_digits_value` (feeding `digits n` from a CSI
+with `cur = 0` leaves `cur = min n 65535`, `haveCur`, params untouched).
+Break-verified: emitting least-significant-digit-first breaks the
+theorem and 10 fixtures. This is the foundation for every numeric
+fidelity claim (cursor, region, mode numbers, colour components).
+
+Stage 3c-rest (open): **cursor fidelity** is next and needs one more
+invariance layer first — `cols`/`rows` (the gap the step-4 notes
+recorded as open). `moveTo` clamps against the replayed state's
+dimensions, so `w.cursor = v.cursor` needs `w.cols = v.cols`, which
+needs every op to preserve dims. That layer is ~25 equation lemmas of
+the shape already used twice (`pstate`, `u8need`); the one interesting
+case is `RIS`, which re-derives dims through `clampDim` and therefore
+preserves them *given* `Good v` (already noted in the step-4 record).
+Then: `CUP` params → `moveTo` → cursor, with `Good v` discharging the
+clamps. Documented gap found while scoping: under DECOM the cursor can
+sit outside the scroll region (`VPA` ignores origin mode), and a
+region-relative `CUP` cannot then reproduce it — so the cursor theorem
+will carry `origin = false` or an in-region hypothesis, and the
+alternative (absolute `CUP` before enabling DECOM) does not work
+because setting DECOM homes the cursor.
 
 Stage 3d (open): grid fidelity — per-cell print round-trip induction
 (wide, marks, IRM off, wrap-pending at row ends), then §Replay itself.

@@ -1137,3 +1137,52 @@ Remaining §Replay work (3c/3d, unchanged): the VALUE fidelity half —
 grid/cursor/pen/region/modes equality after replay. Needs a digit
 round-trip (parser accumulator vs `digits`) and a per-cell print
 induction. Still pinned by the 14 replayEq fixtures.
+
+
+
+## §Replay 3c — the digit round trip — 2026-08-12
+
+Proved that the emitter and the parser are inverse on NUMBERS, which is
+the foundation under every value-fidelity claim (cursor, scroll region,
+mode numbers, colour components):
+
+  accDigits_digits : accDigits 0 (digits n) = min n 65535
+
+`accDigits` models the CSI parameter accumulator exactly as `stepCsi`
+runs it (`min (cur*10 + (b - '0')) 65535` per byte), so the 65535 is the
+parser's own documented clamp, not a weakening. Lifted to the emulator:
+`csi_digit_step` (one digit byte, all other CsiState fields kept),
+`csi_digits_feed` (a whole run), `csi_digits_value` (from `cur = 0`:
+`cur = min n 65535`, `haveCur = true`, `params` untouched).
+
+Break-verified: emitting least-significant-digit-first (a real bug class
+— `CSI 21H` for row 12) breaks `accDigits_digits` AND 10 round-trip
+fixtures. Reverted.
+
+Arithmetic note: the induction is over `digits.induct`, and the clamp
+case needs `n/10 ≥ 6554 → n ≥ 65535` handed to omega explicitly;
+`Nat.div_add_mod'` supplies `n/10*10 + n%10 = n`.
+Gotcha (again): after `rw [hw]` on a match scrutinee you need
+`dsimp only` before `unfold` can see inside the branch — omitting it was
+one failed cycle.
+
+## Scoped for next: cursor fidelity needs the dims layer
+
+Discovered while scoping: `w.cursor = v.cursor` after a replay needs
+`w.cols = v.cols` / `w.rows = v.rows`, because `moveTo` clamps against
+the replayed state's dimensions. So a THIRD invariance layer
+(`cols`/`rows`) comes first — the very gap the step-4 notes recorded as
+"by construction, not by theorem". Same equation-lemma shape as the
+`pstate` and `u8need` layers (~25 lemmas); the interesting case is `RIS`,
+which re-derives dims via `clampDim` and so preserves them *given*
+`Good v` (already anticipated in that step-4 note).
+
+Real infidelity found while scoping (documented, not fixed): under DECOM
+the cursor can sit OUTSIDE the scroll region, because `VPA` (CSI d)
+ignores origin mode. A region-relative CUP cannot reproduce such a
+position, and the obvious alternative — emit an absolute CUP before
+enabling DECOM — does not work either, since setting DECOM homes the
+cursor. So the cursor theorem will carry `origin = false` (or an
+in-region hypothesis) rather than pretend to cover it. The replayEq
+fixtures include a DECOM case with the cursor inside the region, which is
+the reachable-in-practice shape.

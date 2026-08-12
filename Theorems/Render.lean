@@ -850,4 +850,104 @@ theorem restore_quiesced (v : Vt) (cols rows : Nat) :
        (ParamBytes.cons (by decide) (by decide) ParamBytes.nil)).append
        (paramBytes_digits _))
 
+/-! ## §Replay stage 3c — the numbers survive the round trip
+
+Everything numeric in a restore stream (cursor positions, the scroll
+region, mode numbers, colour components) is emitted by `digits` and read
+back by the CSI parameter accumulator. This section proves those two are
+inverse, up to the parser's documented 65535 clamp — the foundation the
+value-fidelity theorems stand on.
+-/
+
+/-- The parser's parameter accumulator, as a fold: one digit byte at a
+time, clamped exactly where `stepCsi` clamps. -/
+def accDigits (cur : Nat) (bs : Bytes) : Nat :=
+  bs.foldl (fun c b => min (c * 10 + (b.toNat - 0x30)) 65535) cur
+
+theorem accDigits_append (cur : Nat) (a b : Bytes) :
+    accDigits cur (a ++ b) = accDigits (accDigits cur a) b := by
+  simp [accDigits, List.foldl_append]
+
+/-- A digit byte's numeric value is recovered by subtracting `'0'`. -/
+theorem digitByte_toNat (d : Nat) (hd : d < 10) :
+    (UInt8.ofNat (0x30 + d)).toNat - 0x30 = d := by
+  have h : (0x30 + d) < 256 := by omega
+  simp [UInt8.toNat_ofNat', Nat.mod_eq_of_lt h]
+
+/-- **The digit round trip.** Feeding `digits n` into a fresh accumulator
+yields `n`, clamped at 65535 exactly as the parser clamps. -/
+theorem accDigits_digits (n : Nat) : accDigits 0 (digits n) = min n 65535 := by
+  induction n using digits.induct with
+  | case1 n h =>
+    rw [digits]
+    simp only [if_pos h, accDigits, List.foldl_cons, List.foldl_nil]
+    rw [digitByte_toNat n h]
+    omega
+  | case2 n h ih =>
+    rw [digits]
+    simp only [if_neg h]
+    rw [accDigits_append, ih]
+    have hlt : n % 10 < 10 := Nat.mod_lt _ (by omega)
+    have hdiv : n / 10 * 10 + n % 10 = n := Nat.div_add_mod' n 10
+    simp only [accDigits, List.foldl_cons, List.foldl_nil]
+    rw [digitByte_toNat _ hlt]
+    -- both clamps agree: below the cap nothing clamps, above it both saturate
+    have hd10 : n / 10 ≥ 6554 → n ≥ 65535 := by omega
+    omega
+
+/-! ### …and the accumulator is what the parser actually runs -/
+
+/-- One digit byte steps the accumulator, keeping every other field. -/
+theorem csi_digit_step {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi s)
+    (h1 : 0x30 ≤ b) (h2 : b ≤ 0x39) :
+    (v.step b).pstate
+      = .csi { s with cur := min (s.cur * 10 + (b.toNat - 0x30)) 65535, haveCur := true } := by
+  have hw : (v.abortUtf8 b).pstate = PState.csi s := by
+    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
+  unfold Vt.step
+  dsimp only
+  rw [hw]
+  unfold Vt.stepCsi
+  dsimp only
+  have hd : (b ≥ 0x30 && b ≤ 0x39) = true := by
+    simp only [Bool.and_eq_true, decide_eq_true_eq]
+    exact ⟨h1, h2⟩
+  rw [if_pos hd]
+
+/-- A whole digit run drives the accumulator to `accDigits`. -/
+theorem csi_digits_feed : ∀ (bs : Bytes) {v : Vt} {s : CsiState}, v.pstate = .csi s →
+    (∀ b ∈ bs, 0x30 ≤ b ∧ b ≤ 0x39) → bs ≠ [] →
+    (v.feed bs).pstate = .csi { s with cur := accDigits s.cur bs, haveCur := true }
+  | [], _, _, _, _, hne => absurd rfl hne
+  | [x], v, s, hg, h, _ => by
+    rw [show ([x] : Bytes) = x :: [] from rfl, feed_cons]
+    have hx := csi_digit_step x hg (h x (by simp)).1 (h x (by simp)).2
+    show ((v.step x).feed []).pstate = _
+    simpa [Vt.feed, accDigits] using hx
+  | x :: y :: rest, v, s, hg, h, _ => by
+    rw [feed_cons]
+    have hx := csi_digit_step x hg (h x (by simp)).1 (h x (by simp)).2
+    have hrest := csi_digits_feed (y :: rest) hx
+      (fun b hb => h b (by simp [hb])) (by simp)
+    rw [hrest]
+    simp [accDigits]
+
+/-- Every byte `digits` emits is a digit byte. -/
+theorem digits_are_digits (n : Nat) : ∀ b ∈ digits n, 0x30 ≤ b ∧ b ≤ 0x39 :=
+  digits_range n
+
+/-- §Replay 3c: the parameter the parser accumulates from `digits n` is
+`n` (clamped) — the emitter and the parser are inverse on numbers. -/
+theorem csi_digits_value (n : Nat) {v : Vt} {s : CsiState} (hg : v.pstate = .csi s)
+    (hcur : s.cur = 0) :
+    ∃ s', (v.feed (digits n)).pstate = .csi s' ∧ s'.cur = min n 65535
+      ∧ s'.haveCur = true ∧ s'.params = s.params := by
+  have hne : digits n ≠ [] := by
+    rw [digits]
+    split <;> simp
+  refine ⟨_, csi_digits_feed (digits n) hg (digits_are_digits n) hne, ?_, rfl, rfl⟩
+  show accDigits s.cur (digits n) = min n 65535
+  rw [hcur]
+  exact accDigits_digits n
+
 end Zmx.Core.Render
