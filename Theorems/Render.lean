@@ -1158,4 +1158,55 @@ theorem cup_places_cursor {v : Vt} (row col : Nat) (hg : v.pstate = .ground)
     (by rw [hrows]; exact hry) (by rw [hcols]; exact hcx)
     (by rw [hmod]; exact ho)
 
+/-! ### Origin fidelity — DECOM stays off through a whole restore stream
+
+The rung the *restore-level* cursor claim needs: if the session had DECOM
+off, the replay must too, or the final `CUP` would be read
+region-relative. `Preserves` is the same plumbing as `Ends`, over a field
+read rather than the parser state; the Vt-level work is the `org_*` layer
+in `Theorems/Vt.lean`, whose one conditional rung says only *private*
+mode 6 writes `origin`.
+-/
+
+/-- `bs` leaves `origin` off (given it was off). -/
+def KeepsOriginOff (bs : Bytes) : Prop :=
+  ∀ v : Vt, v.modes.origin = false → (v.feed bs).modes.origin = false
+
+theorem KeepsOriginOff.nil : KeepsOriginOff [] := fun _ h => h
+
+theorem KeepsOriginOff.append {a b : Bytes} (ha : KeepsOriginOff a)
+    (hb : KeepsOriginOff b) : KeepsOriginOff (a ++ b) := by
+  intro v h
+  have : v.feed (a ++ b) = (v.feed a).feed b := by simp [Vt.feed, List.foldl_append]
+  rw [this]
+  exact hb _ (ha v h)
+
+theorem KeepsOriginOff.ite {c : Prop} [Decidable c] {a b : Bytes}
+    (ha : KeepsOriginOff a) (hb : KeepsOriginOff b) :
+    KeepsOriginOff (if c then a else b) := by
+  by_cases h : c <;> simp only [h, if_true] <;> assumption
+
+theorem KeepsOriginOff.flatMap {α : Type} {f : α → Bytes} {l : List α}
+    (h : ∀ a, KeepsOriginOff (f a)) : KeepsOriginOff (l.flatMap f) := by
+  induction l with
+  | nil => exact KeepsOriginOff.nil
+  | cons a as ih =>
+    rw [List.flatMap_cons]
+    exact (h a).append ih
+
+/-- One step keeps `origin` off unless it completes a private mode-6
+sequence. The CSI cases carry that condition; everything else is
+unconditional. -/
+theorem org_step_of_csi {v : Vt} {s : CsiState} (b : UInt8) (hs : v.pstate = .csi s)
+    (hp : (s.priv == 0x3F) = false) (h : v.modes.origin = false) :
+    (v.step b).modes.origin = false := by
+  have hw : (v.abortUtf8 b).pstate = PState.csi s := by
+    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hs
+  have hab : (v.abortUtf8 b).modes.origin = false := by
+    rw [Zmx.Core.Vt.org_abortUtf8]; exact h
+  unfold Vt.step
+  dsimp only
+  rw [hw, Zmx.Core.Vt.org_stepCsi _ _ _ hp]
+  exact hab
+
 end Zmx.Core.Render

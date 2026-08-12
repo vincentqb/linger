@@ -1415,3 +1415,292 @@ theorem dims_feed : ∀ (bs : List UInt8) {v : Vt}, Good v → dims (v.feed bs) 
     exact (dims_feed xs (Good.step x h)).trans (dims_step x h)
 
 end Zmx.Core.Vt
+
+
+namespace Zmx.Core.Vt
+/-! ## Origin mode survives everything that is not a mode set
+
+The rung §Replay's *restore-level* cursor claim stands on: a session with
+DECOM off must replay with DECOM off, or the final `CUP` would be read
+region-relative and land somewhere else.
+
+The structural fact that makes this cheap: `modes` is only ever written
+by `setMode`, which `csiDispatch` reaches only through the `h`/`l`
+finals. So one conditional lemma (`org_setMode`: only *private* mode 6
+touches `origin`) plus the usual arm sweep carries it. Fourth instance of
+the invariance-layer recipe, and the one that will also serve pen,
+region and mode fidelity.
+-/
+
+theorem org_foldl {α : Type} (f : Vt → α → Vt)
+    (hf : ∀ v a, (f v a).modes.origin = v.modes.origin) :
+    ∀ (l : List α) (v : Vt), (l.foldl f v).modes.origin = v.modes.origin
+  | [], _ => rfl
+  | a :: as, v => (org_foldl f hf as (f v a)).trans (hf v a)
+
+theorem org_clearPending (v : Vt) : v.clearPending.modes.origin = v.modes.origin := rfl
+theorem org_carriageReturn (v : Vt) :
+    v.carriageReturn.modes.origin = v.modes.origin := rfl
+theorem org_moveTo (v : Vt) (x y : Nat) : (v.moveTo x y).modes.origin = v.modes.origin := rfl
+theorem org_moveRel (v : Vt) (dx dy : Int) :
+    (v.moveRel dx dy).modes.origin = v.modes.origin := rfl
+theorem org_setCol (v : Vt) (x : Nat) : (v.setCol x).modes.origin = v.modes.origin := rfl
+theorem org_putCell (v : Vt) (x y : Nat) (c : Cell) :
+    (v.putCell x y c).modes.origin = v.modes.origin := rfl
+theorem org_eraseRowSpan (v : Vt) (y a b : Nat) :
+    (v.eraseRowSpan y a b).modes.origin = v.modes.origin := rfl
+theorem org_scrollDownIn (v : Vt) (t b : Nat) :
+    (v.scrollDownIn t b).modes.origin = v.modes.origin := rfl
+theorem org_deleteChars (v : Vt) (n : Nat) :
+    (v.deleteChars n).modes.origin = v.modes.origin := rfl
+theorem org_insertChars (v : Vt) (n : Nat) :
+    (v.insertChars n).modes.origin = v.modes.origin := rfl
+theorem org_applySgr (v : Vt) (ps : List (Nat × Bool)) :
+    (v.applySgr ps).modes.origin = v.modes.origin := rfl
+theorem org_backTab (v : Vt) : v.backTab.modes.origin = v.modes.origin := rfl
+
+theorem org_scrollUpIn (v : Vt) (t b : Nat) (a : Bool) :
+    (v.scrollUpIn t b a).modes.origin = v.modes.origin := by
+  unfold Vt.scrollUpIn; dsimp only; split <;> rfl
+
+theorem org_scrollUp (v : Vt) : v.scrollUp.modes.origin = v.modes.origin :=
+  org_scrollUpIn _ _ _ _
+theorem org_scrollDown (v : Vt) : v.scrollDown.modes.origin = v.modes.origin :=
+  org_scrollDownIn _ _ _
+
+theorem org_lineFeed (v : Vt) : v.lineFeed.modes.origin = v.modes.origin := by
+  unfold Vt.lineFeed
+  dsimp only
+  repeat' split
+  all_goals first
+    | exact (org_scrollUp _).trans (org_clearPending v)
+    | exact org_clearPending v
+
+theorem org_reverseIndex (v : Vt) : v.reverseIndex.modes.origin = v.modes.origin := by
+  unfold Vt.reverseIndex
+  dsimp only
+  repeat' split
+  all_goals first
+    | exact (org_scrollDown _).trans (org_clearPending v)
+    | exact org_clearPending v
+
+theorem org_backspace (v : Vt) : v.backspace.modes.origin = v.modes.origin := by
+  unfold Vt.backspace; split <;> rfl
+
+theorem org_tab (v : Vt) : v.tab.modes.origin = v.modes.origin := by
+  unfold Vt.tab; dsimp only; exact org_clearPending v
+
+theorem org_eraseChars (v : Vt) (n : Nat) :
+    (v.eraseChars n).modes.origin = v.modes.origin := org_eraseRowSpan _ _ _ _
+
+theorem org_eraseLine (v : Vt) (m : Nat) :
+    (v.eraseLine m).modes.origin = v.modes.origin := by
+  unfold Vt.eraseLine
+  repeat' split
+  all_goals exact org_eraseRowSpan _ _ _ _
+
+theorem org_eraseScreen (v : Vt) (m : Nat) :
+    (v.eraseScreen m).modes.origin = v.modes.origin := by
+  unfold Vt.eraseScreen
+  repeat' split
+  all_goals first
+    | exact (org_foldl _ (fun w i => org_eraseRowSpan w _ _ _) _ _).trans
+        (org_eraseLine _ _)
+    | exact org_foldl _ (fun w i => org_eraseRowSpan w _ _ _) _ _
+
+theorem org_insertLines (v : Vt) (n : Nat) :
+    (v.insertLines n).modes.origin = v.modes.origin := by
+  unfold Vt.insertLines
+  dsimp only
+  split
+  · rfl
+  · exact org_foldl _ (fun w _ => org_scrollDownIn w _ _) _ _
+
+theorem org_deleteLines (v : Vt) (n : Nat) :
+    (v.deleteLines n).modes.origin = v.modes.origin := by
+  unfold Vt.deleteLines
+  dsimp only
+  split
+  · rfl
+  · exact org_foldl _ (fun w _ => org_scrollUpIn w _ _ _) _ _
+
+theorem org_enterAlt (v : Vt) (s : Bool) :
+    (v.enterAlt s).modes.origin = v.modes.origin := by
+  unfold Vt.enterAlt; dsimp only; split <;> rfl
+
+theorem org_leaveAlt (v : Vt) (s : Bool) :
+    (v.leaveAlt s).modes.origin = v.modes.origin := by
+  unfold Vt.leaveAlt; split <;> rfl
+
+/-- **The conditional rung.** Only *private* mode 6 (DECOM) writes
+`origin`; every other mode number, private or not, leaves it alone. -/
+theorem org_setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool)
+    (h : ¬(priv = true ∧ n = 6)) :
+    (v.setMode priv n on).modes.origin = v.modes.origin := by
+  unfold Vt.setMode
+  split
+  · rename_i hp
+    -- private modes: only 6 touches origin, and that case is excluded
+    repeat' split
+    all_goals first
+      | rfl
+      | exact org_enterAlt _ _
+      | exact org_leaveAlt _ _
+      | (exfalso
+         apply h
+         refine ⟨hp, ?_⟩
+         first | rfl | assumption | omega)
+  · -- non-private: only IRM (4), which is a different flag
+    repeat' split
+    all_goals rfl
+
+/-- `csiDispatch` preserves `origin` unless the sequence *is* a DECOM
+set/reset — i.e. private, with first parameter 6. -/
+theorem org_csiDispatch (v : Vt) (s : CsiState) (final : UInt8)
+    (h : ¬((s.priv == 0x3F) = true ∧ s.arg 0 0 = 6)) :
+    (v.csiDispatch s final).modes.origin = v.modes.origin := by
+  unfold Vt.csiDispatch
+  dsimp only
+  repeat' split
+  all_goals try simp only [org_insertChars, org_moveRel, org_carriageReturn,
+    org_setCol, org_moveTo, org_eraseScreen, org_eraseLine, org_insertLines,
+    org_deleteLines, org_deleteChars, org_eraseChars, org_applySgr]
+  all_goals first
+    | rfl
+    | exact org_setMode _ _ _ _ (fun hc => h ⟨hc.1, hc.2⟩)
+    | exact org_foldl _ (fun w _ => org_tab w) _ _
+    | exact org_foldl _ (fun w _ => org_scrollUp w) _ _
+    | exact org_foldl _ (fun w _ => org_scrollDown w) _ _
+    | exact org_foldl _ (fun w _ => org_backTab w) _ _
+
+theorem org_csiFinish (v : Vt) (s : CsiState) (final : UInt8)
+    (hp : (s.priv == 0x3F) = false) :
+    (v.csiFinish s final).modes.origin = v.modes.origin := by
+  -- every record `csiFinish` builds keeps `priv`, so one hypothesis covers
+  -- all three dispatch sites
+  have hnot : ∀ (t : CsiState), t.priv = s.priv →
+      ¬((t.priv == 0x3F) = true ∧ t.arg 0 0 = 6) := by
+    intro t ht hc
+    rw [ht, hp] at hc
+    exact absurd hc.1 (by simp)
+  unfold Vt.csiFinish
+  dsimp only
+  split
+  · split
+    · exact org_csiDispatch _ _ _ (hnot _ rfl)
+    · exact org_csiDispatch _ _ _ (hnot _ rfl)
+  · exact org_csiDispatch _ _ _ (hnot _ rfl)
+
+theorem org_ctl (v : Vt) (b : UInt8) : (v.ctl b).modes.origin = v.modes.origin := by
+  unfold Vt.ctl
+  repeat' split
+  all_goals first
+    | exact org_backspace v
+    | exact org_tab v
+    | exact org_lineFeed v
+    | exact org_carriageReturn v
+    | rfl
+
+/-- Inside a CSI, `origin` survives unless the sequence is a private
+mode-6 set/reset — and a private-marker byte only *records* the marker. -/
+theorem org_stepCsi (v : Vt) (s : CsiState) (b : UInt8)
+    (hp : (s.priv == 0x3F) = false) :
+    (v.stepCsi s b).modes.origin = v.modes.origin := by
+  unfold Vt.stepCsi
+  repeat' split
+  all_goals first
+    | rfl
+    | exact org_csiFinish _ _ _ hp
+    | exact org_ctl _ _
+
+theorem org_printWrap (v : Vt) : v.printWrap.modes.origin = v.modes.origin := by
+  unfold Vt.printWrap
+  split
+  · exact (org_lineFeed _).trans (org_carriageReturn v)
+  · exact org_clearPending v
+
+theorem org_printWideWrap (v : Vt) (w : Nat) :
+    (v.printWideWrap w).modes.origin = v.modes.origin := by
+  unfold Vt.printWideWrap
+  split
+  · exact (org_lineFeed _).trans (org_carriageReturn v)
+  · rfl
+
+theorem org_printShift (v : Vt) (w : Nat) :
+    (v.printShift w).modes.origin = v.modes.origin := by
+  unfold Vt.printShift; dsimp only; split <;> rfl
+
+theorem org_printPut (v : Vt) (ch : Char) (w : Nat) :
+    (v.printPut ch w).modes.origin = v.modes.origin := by
+  unfold Vt.printPut; dsimp only; split <;> rfl
+
+theorem org_printAdvance (v : Vt) (w : Nat) :
+    (v.printAdvance w).modes.origin = v.modes.origin := by
+  unfold Vt.printAdvance; dsimp only; split <;> rfl
+
+theorem org_print (v : Vt) (c : Char) : (v.print c).modes.origin = v.modes.origin := by
+  unfold Vt.print
+  dsimp only
+  repeat' split
+  all_goals first
+    | rfl
+    | rw [org_printAdvance, org_printPut, org_printShift, org_printWideWrap,
+        org_printWrap]
+
+theorem org_acceptChar (v : Vt) (n : Nat) :
+    (v.acceptChar n).modes.origin = v.modes.origin := by
+  unfold Vt.acceptChar; split <;> exact org_print _ _
+
+theorem org_stepGround (v : Vt) (b : UInt8) :
+    (v.stepGround b).modes.origin = v.modes.origin := by
+  unfold Vt.stepGround
+  repeat' split
+  all_goals try simp only [org_ctl, org_acceptChar]
+  all_goals rfl
+
+theorem org_stepEscInter (v : Vt) (i b : UInt8) :
+    (v.stepEscInter i b).modes.origin = v.modes.origin := by
+  unfold Vt.stepEscInter
+  dsimp only
+  repeat' split
+  all_goals rfl
+
+theorem org_oscFinish (v : Vt) (acc : Array UInt8) :
+    (v.oscFinish acc).modes.origin = v.modes.origin := by
+  unfold Vt.oscFinish
+  dsimp only
+  repeat' split
+  all_goals rfl
+
+theorem org_stepOsc (v : Vt) (acc : Array UInt8) (e : Bool) (b : UInt8) :
+    (v.stepOsc acc e b).modes.origin = v.modes.origin := by
+  unfold Vt.stepOsc
+  repeat' split
+  all_goals first
+    | rfl
+    | exact org_oscFinish _ _
+
+theorem org_stepStr (v : Vt) (e : Bool) (b : UInt8) :
+    (v.stepStr e b).modes.origin = v.modes.origin := by
+  unfold Vt.stepStr
+  repeat' split
+  all_goals rfl
+
+theorem org_abortUtf8 (v : Vt) (b : UInt8) :
+    (v.abortUtf8 b).modes.origin = v.modes.origin := by
+  unfold Vt.abortUtf8; split <;> rfl
+
+/-- `stepEsc` preserves `origin` except at `RIS`, which resets it to the
+default — `false`, which is what a DECOM-off session wants anyway, so the
+statement is "stays false". -/
+theorem org_stepEsc {v : Vt} (b : UInt8) (h : v.modes.origin = false) :
+    (v.stepEsc b).modes.origin = false := by
+  unfold Vt.stepEsc
+  dsimp only
+  repeat' split
+  all_goals try simp only [org_lineFeed, org_carriageReturn, org_reverseIndex]
+  all_goals first
+    | exact h
+    | rfl
+
+end Zmx.Core.Vt
