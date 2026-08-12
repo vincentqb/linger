@@ -399,4 +399,97 @@ theorem takeFrames_msgs_payload_le (bytes : List UInt8) :
       · exact absurd rfl (hno a b c d e tail)
     simp [hx]
 
+/-! ## §Stream — chunking is invisible (§Frame ∘ §Chunk, composed)
+
+The operational statement a reader actually wants, in one theorem:
+however the transport fragments a well-formed encoded stream, the
+receiver decodes exactly that stream. `decode_encode` and
+`decode_encode_stream` are its one-message / one-chunk special cases.
+-/
+
+/-- A `takeFrames` leftover is quiescent: re-parsing it yields itself —
+no messages, no error. (By construction it is less than one complete
+frame.) -/
+theorem takeFrames_leftover_stable (bytes : List UInt8) :
+    takeFrames (takeFrames bytes).1 = ((takeFrames bytes).1, false, []) := by
+  induction bytes using takeFrames.induct with
+  | case1 t l0 l1 l2 l3 rest len hlen =>
+    replace hlen : (readU32 [l0, l1, l2, l3]).toNat > maxPayload := hlen
+    have hx : takeFrames (t :: l0 :: l1 :: l2 :: l3 :: rest) = ([], true, []) := by
+      rw [takeFrames.eq_def]; dsimp only; rw [if_pos hlen]
+    simp [hx]
+  | case2 t l0 l1 l2 l3 rest len hlen hshort =>
+    replace hlen : ¬ (readU32 [l0, l1, l2, l3]).toNat > maxPayload := hlen
+    replace hshort : rest.length < (readU32 [l0, l1, l2, l3]).toNat := hshort
+    have hx : takeFrames (t :: l0 :: l1 :: l2 :: l3 :: rest)
+        = (t :: l0 :: l1 :: l2 :: l3 :: rest, false, []) := by
+      rw [takeFrames.eq_def]; dsimp only; rw [if_neg hlen, if_pos hshort]
+    simp [hx]
+  | case3 t l0 l1 l2 l3 rest len hlen hshort buf err msgs heq ih =>
+    replace hlen : ¬ (readU32 [l0, l1, l2, l3]).toNat > maxPayload := hlen
+    replace hshort : ¬ rest.length < (readU32 [l0, l1, l2, l3]).toNat := hshort
+    have hx : takeFrames (t :: l0 :: l1 :: l2 :: l3 :: rest)
+        = (buf, err, decodeMsg t (rest.take (readU32 [l0, l1, l2, l3]).toNat) :: msgs) := by
+      rw [takeFrames.eq_def]; dsimp only
+      rw [if_neg hlen, if_neg hshort, heq]
+    rw [heq] at ih
+    simpa [hx] using ih
+  | case4 xs hno =>
+    have hx : takeFrames xs = (xs, false, []) := by
+      rw [takeFrames.eq_def]
+      rcases xs with _ | ⟨a, _ | ⟨b, _ | ⟨c, _ | ⟨d, _ | ⟨e, tail⟩⟩⟩⟩⟩
+      · rfl
+      · rfl
+      · rfl
+      · rfl
+      · rfl
+      · exact absurd rfl (hno a b c d e tail)
+    simp [hx]
+
+/-- Feeding chunks one at a time equals feeding their concatenation —
+for any decoder whose buffer is quiescent, which every decoder the feed
+path produces is (and a fresh one trivially is). -/
+theorem Decoder.feedAll_flatten (d : Decoder) (chunks : List (List UInt8))
+    (hq : takeFrames d.buf = (d.buf, false, [])) :
+    d.feedAll chunks = d.feed chunks.flatten := by
+  induction chunks generalizing d with
+  | nil =>
+    by_cases he : d.errored
+    · simp [Decoder.feedAll, Decoder.feed_errored d [] he]
+    · rcases d with ⟨buf, err⟩
+      simp only [Bool.not_eq_true] at he
+      subst he
+      simp [Decoder.feedAll, Decoder.feed, hq]
+  | cons c cs ih =>
+    -- the decoder after one feed is quiescent again
+    have hq' : takeFrames (d.feed c).1.buf = ((d.feed c).1.buf, false, []) := by
+      by_cases he : d.errored
+      · rw [Decoder.feed_errored d c he]
+        exact hq
+      · rcases hres : takeFrames (d.buf ++ c) with ⟨buf1, err1, msgs1⟩
+        have hb : (d.feed c).1.buf = buf1 := by
+          simp [Decoder.feed, he, hres]
+        rw [hb]
+        by_cases he1 : err1 = true
+        · have hb1 := takeFrames_errored_buf (d.buf ++ c) (by rw [hres]; simpa using he1)
+          rw [hres] at hb1
+          simp only at hb1
+          simp [hb1]
+        · have hst := takeFrames_leftover_stable (d.buf ++ c)
+          rw [hres] at hst
+          simpa using hst
+    show (((d.feed c).1.feedAll cs).1, (d.feed c).2 ++ ((d.feed c).1.feedAll cs).2)
+        = d.feed ((c :: cs).flatten)
+    rw [List.flatten_cons, Decoder.feed_append, ih _ hq']
+
+/-- §Stream: ANY well-formed message sequence, encoded and re-chunked
+ARBITRARILY (per byte, per frame, any TCP segmentation), feeds back to
+exactly that sequence — same messages, same order, nothing retained,
+no error. -/
+theorem decode_encode_chunked (ms : List Msg) (hms : ∀ m ∈ ms, m.wf)
+    (chunks : List (List UInt8)) (hc : chunks.flatten = ms.flatMap encode) :
+    Decoder.feedAll {} chunks = ({ buf := [], errored := false }, ms) := by
+  rw [Decoder.feedAll_flatten _ _ (by simp), hc]
+  simpa [decode] using decode_encode_stream ms hms
+
 end Zmx.Core.Wire

@@ -37,6 +37,22 @@ example :
      byteWise.2 == oneShot
        && byteWise.1.buf.isEmpty && !byteWise.1.errored) = true := by native_decide
 
+/-- Fixed-size chunker for the §Stream test (7 never divides a frame
+boundary in the stream below). -/
+private def chop7 (l : List UInt8) (fuel : Nat) : List (List UInt8) :=
+  match fuel with
+  | 0 => [l]
+  | fuel + 1 => if l.length ≤ 7 then [l] else l.take 7 :: chop7 (l.drop 7) fuel
+
+/-- `feedAll` (§Stream's subject) over a chunking that splits every
+frame across boundaries delivers exactly the one-shot decode: same
+messages, same order, clean final state. -/
+example :
+    (let bytes := encode (.attach 80 24) ++ encode (.input [1, 2, 3])
+                    ++ encode (.labelSet [107, 61, 118]) ++ encode .kill
+     let (d, ms) := Decoder.feedAll {} (chop7 bytes bytes.length)
+     ms == (decode bytes).2 && d.buf.isEmpty && !d.errored) = true := by native_decide
+
 /-- A frame claiming a payload larger than `maxPayload` poisons the
 decoder (which the runtime treats as connection-fatal) — it does not
 buffer. 0x00040001 = maxPayload + 1. -/

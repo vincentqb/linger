@@ -177,4 +177,15 @@ def Decoder.feed (d : Decoder) (chunk : List UInt8) : Decoder × List Msg :=
 def decode (bytes : List UInt8) : Decoder × List Msg :=
   Decoder.feed {} bytes
 
+/-- Feed many chunks in sequence, concatenating the decoded messages —
+the specification of the runtime's read loop (each poll round feeds one
+chunk). Structural recursion rather than a `foldl` so the §Stream
+induction steps through it directly. -/
+def Decoder.feedAll (d : Decoder) : List (List UInt8) → Decoder × List Msg
+  | [] => (d, [])
+  | c :: cs =>
+    let r := d.feed c
+    let rest := r.1.feedAll cs
+    (rest.1, r.2 ++ rest.2)
+
 end Zmx.Core.Wire
