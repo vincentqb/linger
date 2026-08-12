@@ -1,9 +1,35 @@
 # Theorems — the tension ledger
 
-Each section names a tension from PLAN.md and the invariant that
-resolves it. A theorem lands together with the code it constrains; a
-section is listed here before its first proof so the tension is on the
-record even while open.
+Read this file at whichever depth you need:
+
+* **The anchor set** (below) — four theorems that carry the product's
+  promises. If you only ever read four statements, read these.
+* **The rungs** (the § table) — fourteen tensions from PLAN.md and the
+  invariant that resolves each. These are what the anchors are built
+  from; a section is listed before its first proof so an open tension is
+  on the record.
+* The prose sections after that — what the theorems *don't* settle, where
+  the model stops, and the two places a guarantee rests on the kernel
+  rather than on a proof.
+
+## The anchor set
+
+| Anchor | Statement | Theorem |
+|---|---|---|
+| **A1. A session survives a crash** | a checkpoint round-trips exactly, and the byte stream rebuilt from it leaves a fresh terminal quiesced — parser in `ground`, no half-decoded character. Any state, no hypotheses | `Resume.resume_quiesced` (§Restore ∘ §Replay) |
+| **A2. The daemon cannot be broken by traffic** | no event trace of any length — adversarial clients, hostile pty bytes, any interleaving — breaks a buffer cap, the screen invariant, or one client's isolation from another | `Session.run_wf`, `Session.run_bytes_isolates` (§Bound ∘ §Total ∘ §Isolate) |
+| **A3. The transport is invisible** | any re-chunking of any well-formed encoded stream decodes to exactly that stream: same messages, same order, nothing retained, no error | `Wire.decode_encode_chunked` (§Stream = §Frame ∘ §Chunk) |
+| **A4. A session name has one owner** | given the kernel grants at most one `flock` holder, at most one daemon ever unlinks or binds a given name | `Claim.at_most_one_owner` (§Claim) |
+
+Each anchor is a *composition* of rungs, which is why the rung table is
+still worth having: A1 is §Restore plus §Replay, A2 lifts three §s from
+one event to a whole process lifetime, A3 subsumes §Frame and §Chunk as
+special cases. The one anchor still incomplete is A1's screen half — the
+replayed *cells* equalling the saved cells is carried by
+`Tests/Render.lean`'s 14 round-trip fixtures, not yet by proof, and
+`Theorems/Resume.lean` says so in the same file as the claim.
+
+## The rungs
 
 | § | Tension | Invariant | Where |
 |---|---------|-----------|-------|
@@ -19,7 +45,8 @@ record even while open.
 | §Isolate | many clients on one session vs per-client framing | `.bytes id` leaves every *other* client's record (and decoder) bit-identical | Theorems/Session.lean |
 | §Row | a list row's identity vs an unreliable `info` reply | a row's name is the sanitized socket filename alone; the reply can neither change it nor smuggle a second one in | Theorems/Listing.lean |
 | §Claim | one session name vs many daemons racing for it | *given* the kernel grants ≤1 `flock` holder, ≤1 daemon ever unlinks or binds that name | Theorems/Claim.lean |
-| §Replay | one saved byte stream must recreate the live screen on a fresh terminal | **parser half proved**: a fresh emulator fed a whole restore stream is quiesced — parser in `ground`, no half-decoded character (`restore_quiesced`), for any `Vt` and with no hypotheses. So a reattach can never wedge a client mid-sequence. Screen/cursor/pen *value* fidelity is open, pinned by the decidable `replayEq` + 14 round-trip fixtures | Theorems/Render.lean, Tests/Render.lean |
+| §Replay | one saved byte stream must recreate the live screen on a fresh terminal | **parser half proved**: a fresh emulator fed a whole restore stream is quiesced — parser in `ground`, no half-decoded character (`restore_quiesced`), for any `Vt` and with no hypotheses. So a reattach can never wedge a client mid-sequence. Cursor placement is proved for the emitted `CUP` sequence (`cup_places_cursor`); the remaining screen/pen *value* fidelity is open, pinned by the decidable `replayEq` + 14 round-trip fixtures | Theorems/Render.lean, Tests/Render.lean |
+| §Resume | the product's own promise: crash, reboot, reattach | §Restore ∘ §Replay composed — `load (save c)` succeeds and its replay leaves the terminal quiesced (anchor A1) | Theorems/Resume.lean |
 
 
 ## Reading a row
@@ -42,6 +69,37 @@ exactly (state threading and effect order), and `run_wf` /
 `run_bytes_isolates` (Theorems/Session.lean) lift §Bound + §Total and
 §Isolate to the daemon's whole life — no trace of any length breaks
 the caps, the screen invariant, or client isolation.
+
+## Why there are ~370 lemmas behind 14 rungs, and the one change that would shrink it
+
+Four of the invariance layers — `pstate`, `u8need`, `dims`, `origin`
+(`Theorems/Vt.lean`) — are the same ~28 lemmas written four times: for
+every emulator operation, "this field is unchanged". About 110 lemmas,
+one idea. They exist because Lean cannot quantify over "field projections
+this definition does not write"; that is a syntactic property of the
+code, invisible to the type system as `Vt` is currently shaped.
+
+Two ways to collapse them, recorded rather than done:
+
+1. **Bundle the fields (cheap, ~4× reduction).** One record
+   `Untouched v w : Prop` conjoining the field equalities, proved once
+   per operation instead of once per operation per field. The grid
+   operations — where most of the 110 live — leave all four alone, so
+   ~28 bundled lemmas replace ~110, and each existing layer becomes a
+   projection. No change to `Zmx/Core`.
+2. **Make it structural (the real fix).** Split `Vt` into
+   `{ screen, parser, meta }` and give the printing/erase/scroll
+   operations the type `Screen → Screen`, lifted by one `onScreen`
+   combinator. Then "printing never touches the parser" is not 28
+   theorems, it is the *type* — and the next field that needs an
+   invariance layer costs nothing instead of another 28 lemmas. Cost: a
+   refactor of the core module every existing proof depends on.
+
+The honest reason (2) has not happened: the layers were each written to
+unblock a specific §Replay rung, and by the time the pattern was obvious
+three of them existed. That is the right trade for reaching a proof, and
+the wrong one to keep — noted here so the next person does not write a
+fifth copy by hand.
 
 ## Concurrency: what the model rules out, and what the theorems cover
 

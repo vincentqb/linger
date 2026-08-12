@@ -1307,3 +1307,51 @@ it needs the state tracked to the final byte to show the pushed parameter
 is min n 65535 ≠ 6 — which is why csi_digits_value now returns priv.
 Then restore_cursor = cup_places_cursor at the mid-state, with dims_feed
 and Vt.init's clamp (identity under Good) supplying the bounds.
+
+
+
+## §Resume + the anchor set — consolidating ~370 lemmas — 2026-08-12
+
+Asked: "can we have a bigger theorem that simplifies the set, or a
+cleaner smaller set we can anchor on?" Two answers, both landed.
+
+**1. The bigger theorem exists and is a composition.** Theorems/Resume.lean:
+
+  resume_quiesced : ∃ c', load (save c) = some c'
+                     ∧ (init cols rows).feed (restore c'.vt) ends quiesced
+
+That is the product's own promise — crash, reboot, reattach — as ONE
+statement, composing §Restore (load_save) with §Replay
+(restore_quiesced). Landed first try; the rungs were already the right
+shape. `resume_exact` is the runtime's form (a quiescent checkpoint comes
+back byte-identical), and `resume_cursor_shape` states the cursor half at
+the top level so the finished claim's shape is on the record next to the
+part that is done. Deliberately keeps its own gap in the same file as the
+claim: a reader shouldn't have to hunt THEOREMS.md to learn what is not
+proved.
+
+**2. THEOREMS.md is now two-level.** An ANCHOR SET of four — A1 session
+survives a crash (§Restore∘§Replay), A2 daemon unbreakable by traffic
+(run_wf + run_bytes_isolates), A3 transport invisible
+(decode_encode_chunked), A4 one owner per name (§Claim) — over the
+14-rung table, which stays because each anchor is a composition OF rungs.
+"Read four statements if you only read four."
+
+**3. Named the actual sprawl, and the fix, without doing it.** Four
+invariance layers (pstate, u8need, dims, origin) are ~110 lemmas that are
+the same ~28 written four times: "op X doesn't write field F". Lean can't
+quantify over "fields this definition doesn't write" — that's syntactic,
+invisible to the type system as Vt is shaped. Two collapses recorded in
+THEOREMS.md:
+  (a) CHEAP: bundle the fields into one `Untouched v w` conjunction,
+      proved once per op instead of once per op per field → ~28 replaces
+      ~110, each layer becomes a projection. No Core change.
+  (b) REAL FIX: split Vt into {screen, parser, meta} and give
+      printing/erase/scroll the type Screen → Screen, lifted by one
+      `onScreen`. Then "printing never touches the parser" is the TYPE,
+      not 28 theorems, and the next field costs zero instead of 28.
+      Cost: refactor of the core module every proof depends on.
+Honest reason (b) hasn't happened: each layer was written to unblock a
+specific §Replay rung, and by the time the pattern was obvious three
+existed. Right trade to reach a proof, wrong one to keep — recorded so
+nobody hand-writes a fifth copy.
