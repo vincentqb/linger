@@ -9,6 +9,7 @@ record even while open.
 |---|---------|-----------|-------|
 | §Frame | evolvable protocol vs simple daemon | `decode (encode m) = ([m], ∅)`; unknown tag skips exactly its frame | Theorems/Wire.lean |
 | §Chunk | TCP/pty chunking is arbitrary vs stateful parsers | decode/feed invariant under concatenation: `feed (a ++ b) = feed b ∘ feed a` | Theorems/Wire.lean, Theorems/Vt.lean |
+| §Stream | transport fragmentation vs one parsed conversation | any re-chunking of any well-formed encoded stream feeds back to exactly that stream — nothing retained, no error (`decode_encode_chunked`; §Frame and §Chunk are its special cases) | Theorems/Wire.lean |
 | §Bound | zellij crashes under cpu/mem load (unbounded actor queues) | every buffer has a structural cap preserved by `step`; nothing to fill | Theorems/Wire.lean, Theorems/Vt.lean, Theorems/Session.lean |
 | §Total | emulator fed adversarial bytes vs no crashes ever | `Vt.step`/`feed` total (no `partial`, grep-checked); `Good` invariant preserved for any byte: cursor + saved + alt-stashed cursors strictly in bounds, top ≤ bot < rows. (Dims-invariance of `step` is by-construction, not a stated theorem — see SCRATCHPAD step 4.) | Theorems/Vt.lean |
 | §Detach | sessions outlive clients (the zmx decoupling) | zero-client session still advances; detach/detach-all don't touch the screen (only permitted effect: a checkpoint) | Theorems/Session.lean |
@@ -18,6 +19,7 @@ record even while open.
 | §Isolate | many clients on one session vs per-client framing | `.bytes id` leaves every *other* client's record (and decoder) bit-identical | Theorems/Session.lean |
 | §Row | a list row's identity vs an unreliable `info` reply | a row's name is the sanitized socket filename alone; the reply can neither change it nor smuggle a second one in | Theorems/Listing.lean |
 | §Claim | one session name vs many daemons racing for it | *given* the kernel grants ≤1 `flock` holder, ≤1 daemon ever unlinks or binds that name | Theorems/Claim.lean |
+| §Replay | one saved byte stream must recreate the live screen on a fresh terminal | (open — staged in specs/bigger-theorems.md) `(Vt.init v.cols v.rows).feed (restore v) ≃ v`: grid, cursor, pen, region, modes, title, tabs, charset, saved cursor, alt stash. Pinned today by the decidable `≃` + 14 round-trip fixtures | Tests/Render.lean |
 
 
 ## Reading a row
@@ -32,6 +34,14 @@ Each row was **break-verified**: the code was deliberately broken once
 to watch the theorem catch it, and the break is recorded in
 `SCRATCHPAD.md`. A theorem that survives a wrong definition is worth
 nothing.
+
+The machine-layer rows also hold over whole event *traces*, not just
+single steps: `run` (Zmx/Core/Session.lean) names the fold the
+runtime's poll loop performs, `run_eq_foldl` pins it to that fold
+exactly (state threading and effect order), and `run_wf` /
+`run_bytes_isolates` (Theorems/Session.lean) lift §Bound + §Total and
+§Isolate to the daemon's whole life — no trace of any length breaks
+the caps, the screen invariant, or client isolation.
 
 ## Concurrency: what the model rules out, and what the theorems cover
 
