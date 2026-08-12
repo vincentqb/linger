@@ -21,6 +21,9 @@ def version : String := "lzmx 0.1.0"
 def usage : String := "Usage: lzmx <command> [args...]
 
 Commands:
+  (no args)                      Open the session manager (TUI)
+  -r|--remote <h1,h2,...>        Open the TUI showing these remote hosts too
+                                 (overrides ~/.config/lzmx/remotes for this run)
   [a]ttach <name> [command...]   Attach to session, creating if needed
   [r]un <name> <command...>      Run a command in a session without attaching
   [s]end <name> <text...>        Send raw input to session pty
@@ -209,10 +212,12 @@ def cmdVersion : IO UInt32 := do
   IO.println s!"state:   {← Paths.stateDir}"
   return 0
 
-def main (hooks : Hooks) (tui : IO UInt32) (args : List String) : IO UInt32 := do
+def main (hooks : Hooks) (tui : Option (List String) → IO UInt32) (args : List String) : IO UInt32 := do
   Zmx.Posix.init
   match args with
-  | [] => tui
+  | [] => tui none
+  | ["-r", hosts] | ["--remote", hosts] =>
+    tui (some (hosts.splitOn ","))
   | "__daemon" :: name :: cwd :: cmd =>
     let restore := (← hooks.load name).map (fun (vt, _, labels) => (vt, labels))
     Daemon.serve name cwd cmd (hooks.save name) (hooks.drop name) restore

@@ -22,12 +22,12 @@ os.makedirs(LDIR, exist_ok=True)
 # that child, so run with the agent env removed (equivalent to
 # IdentityAgent=none). The host's key is taken from ~/.ssh/config.
 ENV = {k: v for k, v in os.environ.items() if k != 'SSH_AUTH_SOCK'}
-ENV.update(LZMX_DIR=LDIR, LZMX_REMOTES=HOST, SHELL='/bin/sh')
+ENV.update(LZMX_DIR=LDIR, SHELL='/bin/sh')
 
 def spawn_tui():
     pid, fd = pty.fork()
     if pid == 0:
-        os.execve(LZMX, [LZMX], ENV)
+        os.execve(LZMX, [LZMX, '-r', HOST], ENV)   # remote via flag, not env
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 30, 110, 0, 0))
     return pid, fd
 

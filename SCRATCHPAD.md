@@ -568,3 +568,40 @@ Deliberately did NOT chase marginal ones (writeAll→stdout: also used on
 socket fds; spawnDetached→IO.Process.spawn: no setsid/daemonize). The
 remaining 27 are genuine syscalls Lean core doesn't expose — exactly
 the surface I argued Rust wouldn't improve either.
+
+
+
+## LZMX_REMOTES env → -r/--remote flag + dup-errors — 2026-06-01
+
+User was right on both counts:
+1. Remotes is per-invocation input = a CLI option, not an env var
+   (env-for-per-invocation is the anti-pattern: invisible, inherited by
+   children). Replaced $LZMX_REMOTES with `lzmx -r|--remote h1,h2`.
+   Persistent set stays in ~/.config/lzmx/remotes. Flag OVERRIDES the
+   file (not union) — fixes the earlier env-vs-file precedence
+   inconsistency the user also caught; now uniform with LZMX_DIR.
+2. Duplicates are a hard error, not silent dedup/union. Especially
+   right for a TUI: a warning would be swallowed by the alt-screen, so
+   the check runs BEFORE enterTerm and refuses to start, naming the
+   host. Also moved the resolve+check ABOVE the isatty check so a bad
+   argv reports itself even when piped (argv validation precedes env
+   checks).
+
+Made the validation pure: Core.Remote.checkHosts : List String →
+Except String (List String) (Nodup → .ok, else .error naming the dup).
+Theorem checkHosts_ok_nodup: a validated list is duplicate-free, so the
+query loop provably never double-queries a host. (This is the
+enforcement the user asked about, at the pure layer — cf. the shim
+ratchet, which is the source-tree analog that can't be a theorem.)
+
+Plumbing: Tui.main takes Option (List String); resolveRemotes replaces
+remoteHosts; remotes threaded through gatherRows/runEffects/loop. Cli
+tui thunk became `Option (List String) → IO UInt32`. Dropped the env
+read entirely.
+
+Verified: gate green (5 suites); fake-remote test (now -r driven) incl.
+new "duplicate -r host errors loudly"; rebuilt gpu2+gpu3 and re-ran the
+live single-host + multi-host (-r gpu2,gpu3) tests over real ssh — all
+green. Nested-comment gotcha: `-r/--remote` in a doc comment contains
+`/-` which opens a nested block comment (Lean nests) → "unterminated
+comment"; reworded to `--remote` (`-r`).

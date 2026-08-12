@@ -53,22 +53,26 @@ def decodeKeys (bs : List UInt8) : List Key :=
 
 def previewLines : Nat := 40
 
-/-- Configured remote hosts: `~/.config/lzmx/remotes` (one host per
-line, `#` comments) plus `$LZMX_REMOTES` (comma-separated). Hosts are
-ssh destinations, taken as-is — they're the user's own config, not
-remote data. -/
-def remoteHosts : IO (List String) := do
-  let fromEnv := match ← IO.getEnv "LZMX_REMOTES" with
-    | some s => (s.splitOn ",").map (·.trimAscii.toString)
-    | none => []
-  let home := (← IO.getEnv "HOME").getD "/tmp"
-  let path := s!"{home}/.config/lzmx/remotes"
-  let fromFile ←
-    if ← System.FilePath.pathExists path then do
-      let txt ← IO.FS.readFile path
-      pure ((txt.splitOn "\n").map (·.trimAscii.toString))
-    else pure []
-  return (fromEnv ++ fromFile).filter (fun h => !h.isEmpty && !h.startsWith "#")
+/-- Resolve the remote-host list, once, at startup. `override` is the
+`--remote` (`-r`) flag; when present it *replaces* the file (same
+override-not-union rule as `LZMX_DIR`), otherwise the persistent set
+comes from `~/.config/lzmx/remotes` (one host per line, `#` comments).
+Duplicates are a hard error (`Remote.checkHosts`) — raised here, before
+the alt-screen, so the message is actually visible. -/
+def resolveRemotes (override : Option (List String)) : IO (List String) := do
+  let raw ← match override with
+    | some hs => pure hs
+    | none => do
+      let home := (← IO.getEnv "HOME").getD "/tmp"
+      let path := s!"{home}/.config/lzmx/remotes"
+      if ← System.FilePath.pathExists path then
+        pure ((← IO.FS.readFile path).splitOn "\n")
+      else pure []
+  let hosts := (raw.map (·.trimAscii.toString)).filter
+    (fun h => !h.isEmpty && !h.startsWith "#")
+  match Zmx.Core.Remote.checkHosts hosts with
+  | .ok l => return l
+  | .error e => throw (IO.userError e)
 
 /-- Ask one host for its sessions. Failures (host down, no lzmx there,
 timeout) yield `[]` — a dead remote must never block the local picker.
@@ -86,8 +90,9 @@ def fetchRemote (host : String) : IO (List Row) := do
     state := if r.live then .live else .resumable,
     cmd := r.cmd, labels := r.labels })
 
-/-- Rows: live daemons (info query each) + resumable checkpoints. -/
-def gatherRows : IO (List Row) := do
+/-- Rows: live daemons (info query each) + resumable checkpoints +
+the already-resolved remote hosts. -/
+def gatherRows (remotes : List String) : IO (List Row) := do
   let live ← Paths.listSocketNames
   let ckpts ← Paths.listCkptNames
   let mut rows : List Row := []
@@ -104,7 +109,7 @@ def gatherRows : IO (List Row) := do
     if !live.contains name then
       rows := rows ++ [{ name, state := .resumable }]
   -- remote hosts last: a slow ssh must not reorder local rows
-  for host in ← remoteHosts do
+  for host in remotes do
     rows := rows ++ (← fetchRemote host)
   return rows
 
@@ -180,7 +185,7 @@ def execAttach (t : Term) (name : String) (host : Host) : IO Unit := do
   | .local => exec self.toString #["attach", name]
   | .remote h => exec "ssh" #["-t", h, "lzmx", "attach", name]
 
-partial def runEffects (t : Term) (st : State) (effs : List Effect) :
+partial def runEffects (t : Term) (remotes : List String) (st : State) (effs : List Effect) :
     IO (State × Bool) := do
   let mut st := st
   let mut quit := false
@@ -198,10 +203,10 @@ partial def runEffects (t : Term) (st : State) (effs : List Effect) :
       | .remote h =>
         let _ ← IO.Process.output { cmd := "ssh", args := #[h, "lzmx", "kill", name] }
     | .refresh =>
-      let rows ← gatherRows
+      let rows ← gatherRows remotes
       let (st', effs') := step st (.rowsUpdated rows)
       st := st'
-      let (st'', more) ← runEffects t st effs'
+      let (st'', more) ← runEffects t remotes st effs'
       st := st''
       quit := quit || more
     | .fetchPreview name host =>
@@ -212,12 +217,12 @@ partial def runEffects (t : Term) (st : State) (effs : List Effect) :
         | .remote h, _ => fetchRemotePreview h name
       let (st', effs') := step st (.previewUpdated name host lines)
       st := st'
-      let (st'', more) ← runEffects t st effs'
+      let (st'', more) ← runEffects t remotes st effs'
       st := st''
       quit := quit || more
   return (st, quit)
 
-partial def loop (t : Term) (st : State) : IO Unit := do
+partial def loop (t : Term) (remotes : List String) (st : State) : IO Unit := do
   writeAll stdoutFd (render st).toUTF8
   let revs ← poll #[stdinFd] #[POLLIN] 2000
   -- resize check (same poll-diff trick as the attach client)
@@ -226,7 +231,7 @@ partial def loop (t : Term) (st : State) : IO Unit := do
   let mut quit := false
   if c.toNat != st.cols || r.toNat != st.rows_ then
     let (st', effs) := step st (.resized c.toNat r.toNat)
-    let (st'', q) ← runEffects t st' effs
+    let (st'', q) ← runEffects t remotes st' effs
     st := st''
     quit := quit || q
   if revs[0]! &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
@@ -235,30 +240,36 @@ partial def loop (t : Term) (st : State) : IO Unit := do
     | some bs =>
       for k in decodeKeys bs.toList do
         let (st', effs) := step st (.key k)
-        let (st'', q) ← runEffects t st' effs
+        let (st'', q) ← runEffects t remotes st' effs
         st := st''
         quit := quit || q
   else
     -- idle round: refresh rows (cheap; sessions come and go)
-    let (st', q) ← runEffects t st [.refresh]
+    let (st', q) ← runEffects t remotes st [.refresh]
     st := st'
     quit := quit || q
   if quit then
     leaveTerm t
   else
-    loop t st
+    loop t remotes st
 
-def main : IO UInt32 := do
+/-- `remoteOverride` is the `--remote` (`-r`) flag (replaces the file
+when present). Remotes are resolved + dup-checked here, *before* the alt
+screen, so a bad list errors visibly instead of into a cleared screen. -/
+def main (remoteOverride : Option (List String)) : IO UInt32 := do
+  -- resolve + dup-check the host list first: an argv/config error should
+  -- report itself even when piped, before the environment (tty) check
+  let remotes ← resolveRemotes remoteOverride
   if !(← isatty stdinFd) then
     throw (IO.userError "the session manager needs a terminal")
-  let rows ← gatherRows
+  let rows ← gatherRows remotes
   let (c, r) ← winsizeGet stdinFd
   let st0 : State := { cols := c.toNat, rows_ := r.toNat }
   let (st1, effs) := step st0 (.rowsUpdated rows)
   let t ← enterTerm
   try
-    let (st2, quit) ← runEffects t st1 effs
-    if !quit then loop t st2 else leaveTerm t
+    let (st2, quit) ← runEffects t remotes st1 effs
+    if !quit then loop t remotes st2 else leaveTerm t
   catch e =>
     leaveTerm t
     throw e

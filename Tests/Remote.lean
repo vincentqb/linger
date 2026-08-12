@@ -44,4 +44,13 @@ example : ((parse "name\tx\nclients\tmany\n").map (·.clients) == [0]) = true :=
 robustness at the line level). -/
 example : (parse "name\ta\n" == parse "name\ta") = true := by native_decide
 
+/-- checkHosts: a clean list passes; a duplicate is rejected (the `-r`
+flag / remotes-file guard). -/
+example : (match checkHosts ["gpu2", "gpu3"] with
+    | .ok l => l == ["gpu2", "gpu3"] | .error _ => false) = true := by native_decide
+example : (match checkHosts ["gpu2", "gpu3", "gpu2"] with
+    | .ok _ => false | .error _ => true) = true := by native_decide
+example : (match checkHosts ([] : List String) with
+    | .ok l => l.isEmpty | .error _ => false) = true := by native_decide
+
 end Zmx.Core.Remote.Tests

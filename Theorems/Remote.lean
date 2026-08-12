@@ -55,4 +55,17 @@ theorem parse_cmd_scrubbed (out : String) :
     subst hparse
     exact scrub_no_ctl _
 
+/-- §Remote (dup guard): a validated host list is duplicate-free, so no
+host is ever queried twice and no duplicate row can reach the TUI. This
+is the enforcement the `-r` flag / remotes file rely on. -/
+theorem checkHosts_ok_nodup {hosts l : List String} (h : checkHosts hosts = .ok l) :
+    l.Nodup := by
+  unfold checkHosts at h
+  split at h
+  · rename_i hnd
+    simp only [Except.ok.injEq] at h
+    subst h
+    exact hnd
+  · simp at h
+
 end Zmx.Core.Remote

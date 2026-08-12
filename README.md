@@ -119,8 +119,8 @@ top). The environment knobs that exist are operational:
 | | |
 |---|---|
 | `LZMX_DIR` | override both socket and state directories |
-| `LZMX_REMOTES` | comma-separated ssh hosts to list in the TUI |
-| `~/.config/lzmx/remotes` | same, one host per line (`#` comments) |
+| `~/.config/lzmx/remotes` | persistent ssh hosts to list in the TUI, one per line (`#` comments) |
+| `lzmx -r h1,h2` | ad-hoc remote hosts for one run (overrides the file; duplicates error) |
 | `LZMX_NO_DETACH_KEY` | disable `ctrl-\` (for programs that need it) |
 | `LZMX_SESSION` | set *inside* a session; use it in your prompt |
 

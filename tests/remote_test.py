@@ -40,13 +40,12 @@ with open(os.path.join(BIN, 'ssh'), 'w') as f:
 os.chmod(os.path.join(BIN, 'ssh'), 0o755)
 
 ENV = dict(os.environ, LZMX_DIR=LDIR, SHELL='/bin/sh',
-           PATH=BIN + os.pathsep + os.environ['PATH'],
-           LZMX_REMOTES='dev-a,dead')
+           PATH=BIN + os.pathsep + os.environ['PATH'])
 
 def spawn_tui():
     pid, fd = pty.fork()
     if pid == 0:
-        os.execve(LZMX, [LZMX], ENV)
+        os.execve(LZMX, [LZMX, '-r', 'dev-a,dead'], ENV)   # remotes via flag
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 100, 0, 0))
     return pid, fd
 
@@ -75,6 +74,13 @@ def expect(cond, name):
 fails = 0
 subprocess.run([LZMX, 'run', 'localsess', 'echo local-content'], env=ENV)
 time.sleep(1.0)
+
+# a duplicate host is a hard error, reported before anything else (no tty
+# needed — argv validation precedes the environment check)
+dup = subprocess.run([LZMX, '-r', 'dev-a,dev-a'], env=ENV,
+                     stdin=subprocess.DEVNULL, capture_output=True, text=True)
+fails += expect(dup.returncode != 0 and 'more than once' in dup.stderr
+                and 'dev-a' in dup.stderr, 'duplicate -r host errors loudly')
 
 pid, fd = spawn_tui()
 screen = plain(drain(fd, 3.0))

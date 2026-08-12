@@ -71,4 +71,19 @@ def records (lines : List String) : List (List String) :=
 def parse (out : String) : List RemoteRow :=
   (records (out.splitOn "\n")).filterMap parseRecord
 
+/-- First host that appears more than once (for the error message). -/
+def firstDupHost : List String → Option String
+  | [] => none
+  | h :: t => if t.contains h then some h else firstDupHost t
+
+/-- Validate a remote-host list. A repeated host is a configuration
+mistake with no valid meaning — it would double-query and show
+duplicate rows — so reject it loudly rather than silently dedup. The
+TUI runs this *before* entering the alt-screen (where a warning would
+be invisible), so the only sensible failure is to refuse and name the
+offender. Pure; the IO caller turns `.error` into `IO.userError`. -/
+def checkHosts (hosts : List String) : Except String (List String) :=
+  if hosts.Nodup then .ok hosts
+  else .error s!"remote host '{(firstDupHost hosts).getD ""}' listed more than once"
+
 end Zmx.Core.Remote
