@@ -70,7 +70,7 @@ exactly (state threading and effect order), and `run_wf` /
 §Isolate to the daemon's whole life — no trace of any length breaks
 the caps, the screen invariant, or client isolation.
 
-## Why there are ~370 lemmas behind 15 rungs, and the change that shrinks it
+## Why there are ~370 lemmas behind 15 rungs, and how much of it frames retire
 
 Four of the invariance layers — `pstate`, `u8need`, `dims`, `origin`
 (`Theorems/Vt.lean`) — are the same ~28 lemmas written four times: for
@@ -87,10 +87,30 @@ theorem frame_putCell : v.putCell x y c = { v with grid := (v.putCell x y c).gri
 Read: *`putCell` writes only `grid`*. Every field invariance is then one
 rewrite away, for **any** field — the file shows all four existing layers
 falling out of a single `frame_scrollUpIn`, plus `top` and `saved`, which
-no layer ever covered. ~28 frames replace ~110 single-field lemmas, and
-the marginal cost of a fifth field is zero. No change to `Zmx/Core`, no
-existing proof disturbed. Converting the remaining operations is
-mechanical.
+no layer ever covered. A fifth field would cost nothing.
+
+**How far it goes, measured rather than assumed.** A frame is provable by
+`rfl` exactly when the operation's result is a *syntactic record update*.
+That holds for the leaf operations — roughly twenty of them (`putCell`,
+`moveTo`, `setCol`, the `print*` stages, `enterAlt`/`leaveAlt`,
+`eraseRowSpan`, `scrollUpIn`, …) — and those account for the majority of
+the 110. It **fails** for two classes, and both failures were spiked
+before this claim was written:
+
+* *Compositions.* `frame_print` (the full stage chain) times out: the
+  monolithic unfold is too large for a per-branch `rfl`. Gluing staged
+  frames instead needs frame *composition*, which needs footprints as
+  first-class data (a field-set type, a `WritesWithin` predicate,
+  monotonicity) — a small effect system, larger than the sprawl it
+  removes.
+* *Folds.* `frame_csiDispatch` fails on arms like
+  `List.foldl (fun a _ => a.tab) v (range n)`: a fold's result is not a
+  record update, so the arm needs an induction (`frame_foldl`) and manual
+  gluing — about what the current per-field sweep costs.
+
+So frames retire perhaps 60% of the sprawl cheaply and leave the
+composite and fold-based operations roughly as they are. That is still a
+net win, and it is a smaller one than "28 replaces 110" would suggest.
 
 Two weaker ideas, recorded because they look attractive and are not:
 
@@ -105,10 +125,10 @@ Two weaker ideas, recorded because they look attractive and are not:
   data into *parameter* position (`print : Dims → Modes → …`) — far
   larger, and mostly subsumed by frames.
 
-The honest limit of all three: a frame says what an operation leaves
+The honest limit of all of them: a frame says what an operation leaves
 alone, never what the written fields *become*. Grid fidelity (§Replay
 stage 3d) needs the positive specification, which is real content rather
-than bookkeeping. Frames retire the sprawl; they do not shorten that road.
+than bookkeeping. Frames retire sprawl; they do not shorten that road.
 
 ## Concurrency: what the model rules out, and what the theorems cover
 

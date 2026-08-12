@@ -177,10 +177,10 @@ passes after; `./tests/e2e.sh` green (restore byte stream changes are
 behavior-compatible: resume/attach suites must stay green).
 
 
-## Step 4 — retire the invariance sprawl with frames (open, mechanical)
+## Step 4 — retire the invariance sprawl with frames (open, partial win)
 
 The four layers (`pstate`, `u8need`, `dims`, `origin`) are ~110 lemmas
-that are ~28 written four times. Replace each operation's four
+that are ~28 written four times. Replace each *leaf* operation's four
 single-field lemmas with ONE frame equation naming its footprint:
 
 ```lean
@@ -192,14 +192,26 @@ Demonstrated at the end of `Theorems/Vt.lean` on `putCell`, `moveTo`,
 layers — plus `top` and `saved`, which no layer covered — derived from a
 single frame in one line each.
 
-Order of work: (1) frames for the ~28 operations (proof shape is
-`rfl`, or `unfold; split <;> rfl`, or a staged composite for `print`);
-(2) re-derive the four layers' *entry points* (`ps_stepGround`,
-`uz_step`, `dims_step`, `org_stepCsi`, …) from frames, keeping their
-names so no downstream proof changes; (3) delete the ~110 single-field
-lemmas. Conditional cases (`RIS` rewriting everything, `setMode` writing
-one flag depending on `n`) stay conditional — frames localize them to one
-theorem per operation instead of one per operation per field.
+**Scope, measured by spiking the two hard cases (both recorded as
+negative results):** a frame proves by `rfl` exactly when the result is a
+syntactic record update. `frame_print` times out (the composed stage
+chain is too big for a per-branch `rfl`), and `frame_csiDispatch` fails on
+its `List.foldl` arms (a fold is not a record update). Gluing staged
+frames would need footprints as first-class data — a field-set type, a
+`WritesWithin` predicate, monotonicity lemmas — i.e. a small effect
+system, larger than the sprawl it removes. So convert the ~20 leaf
+operations (a real, cheap win covering most of the 110) and leave the
+composite and fold-based operations with per-field lemmas, which is also
+where the conditional cases (`RIS`, `setMode`) live anyway.
+
+Order of work: (1) frames for the leaf operations; (2) re-derive the four
+layers' *entry points* (`ps_stepGround`, `uz_step`, `dims_step`,
+`org_stepCsi`, …) from them, keeping their names so no downstream proof
+changes; (3) delete the single-field leaf lemmas.
+
+Do this immediately *before* the next field layer is needed — pen
+fidelity would want one — rather than as standalone cleanup: the sprawl
+costs readability today, but nothing else.
 
 Not addressed by frames, deliberately: the *positive* specification of
 what written fields become. That is stage 3d (grid fidelity) and it is

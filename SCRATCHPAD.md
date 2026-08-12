@@ -1404,3 +1404,40 @@ op instead of one per op per field.
 Conversion recorded as step 4 in specs/bigger-theorems.md: frames for the
 ~28 ops → re-derive the layers' entry points keeping their names (so no
 downstream proof changes) → delete the ~110.
+
+
+
+## Frames, measured: a partial win — NEGATIVE RESULT — 2026-08-12
+
+Asked "so that sounds like a net win?" — checked instead of agreeing, and
+the check DOWNGRADED my own claim. I had written "~28 frames replace ~110
+lemmas". That is too strong. Spiked the two operations that decide it:
+
+* `frame_print` (full stage chain): (deterministic) timeout at whnf. The
+  monolithic unfold is too large for a per-branch `rfl`.
+* `frame_csiDispatch` (~30-arm match): `rfl` fails on the fold arms —
+  `List.foldl (fun a _ => a.tab) v (range n)` is not a syntactic record
+  update, so those arms need an induction and manual gluing.
+
+Both spikes removed from the tree (they don't compile); the finding is now
+in THEOREMS.md and specs/bigger-theorems.md.
+
+THE PRINCIPLE: a frame proves by `rfl` exactly when the operation's result
+is a SYNTACTIC RECORD UPDATE. True for leaf ops (~20 of them, and most of
+the 110 lemmas), false for compositions and folds. Gluing staged frames
+would need footprints as first-class data — a field-set type, a
+`WritesWithin` predicate, monotonicity lemmas — i.e. a small effect
+system, which is LARGER than the sprawl it would remove. That is the real
+answer to "is the structural fix enough?": no, and the fully general fix
+costs more than the problem.
+
+Revised verdict: frames retire ~60% of the sprawl cheaply and leave the
+composite/fold ops as they are (which is also where the conditional cases
+RIS/setMode live). Still a net win, smaller than advertised. Recommended
+timing: do it immediately BEFORE the next field layer is needed (pen
+fidelity would want one), not as standalone cleanup — the sprawl costs
+readability today and nothing else.
+
+Method note worth keeping: the useful move here was spiking the hardest
+case before believing the generalization. Two builds, and it turned an
+overclaim into a calibrated one.
