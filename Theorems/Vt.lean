@@ -716,6 +716,233 @@ end Zmx.Core.Vt.Good
 
 
 namespace Zmx.Core.Vt
+/-! ## Frames: the generalization of the four invariance layers
+
+`pstate`, `u8need`, `dims` and `origin` above are ~110 lemmas that are
+~28 written four times: "operation X does not write field F". The general
+statement is a **frame condition** — X's footprint, stated once, covering
+every field at once:
+
+```
+theorem frame_putCell : v.putCell x y c = { v with grid := (v.putCell x y c).grid }
+```
+
+Read: *`putCell` writes only `grid`*. Every field invariance is then a
+corollary by rewriting, including fields nobody has thought of yet — so a
+fifth layer costs nothing instead of another 28 lemmas.
+
+Why this beats the two ideas recorded in THEOREMS.md:
+
+* Better than *bundling* the four fields, which fixes only the fields we
+  happened to need.
+* Better than *splitting* `Vt` into `{screen, parser, meta}`, because the
+  read/write distinction is **per-operation**: `print` reads `cols`/`rows`
+  to clamp and reads `modes` for wrap/insert while writing neither, so a
+  partition that groups `dims` with the cells still lets `Screen → Screen`
+  resize the grid. The refactor that *would* capture it moves read-only
+  data into parameter position (`print : Dims → Modes → … `), which is far
+  larger and mostly subsumed by frames anyway.
+
+What frames do **not** buy, and this is the honest limit: a frame says
+what an operation leaves alone, never what the written fields *become*.
+Grid fidelity (§Replay stage 3d — the replayed cells equal the saved
+cells) needs the positive specification, which is real content, not
+bookkeeping. Frames retire the sprawl; they do not shorten the road to
+3d.
+
+Below: the pattern demonstrated on four operations of increasing shape,
+with the four existing layers re-derived from one of them to show the
+collapse is real. Converting the rest is mechanical and is the recorded
+next simplification (specs/bigger-theorems.md).
+-/
+
+/-- Pure record update: `rfl` suffices. -/
+theorem frame_putCell (v : Vt) (x y : Nat) (c : Cell) :
+    v.putCell x y c = { v with grid := (v.putCell x y c).grid } := rfl
+
+theorem frame_moveTo (v : Vt) (x y : Nat) :
+    v.moveTo x y = { v with cursor := (v.moveTo x y).cursor } := rfl
+
+theorem frame_eraseRowSpan (v : Vt) (y a b : Nat) :
+    v.eraseRowSpan y a b = { v with grid := (v.eraseRowSpan y a b).grid } := rfl
+
+/-- Branching operation: one `split`, both branches record updates.
+`scrollUpIn` may also push the evicted line to scrollback. -/
+theorem frame_scrollUpIn (v : Vt) (t b : Nat) (a : Bool) :
+    v.scrollUpIn t b a
+      = { v with grid := (v.scrollUpIn t b a).grid, sb := (v.scrollUpIn t b a).sb } := by
+  unfold Vt.scrollUpIn; dsimp only; split <;> rfl
+
+/-- Composite over stages: `lineFeed` moves the cursor and may scroll. -/
+theorem frame_lineFeed (v : Vt) :
+    v.lineFeed = { v with grid := v.lineFeed.grid, cursor := v.lineFeed.cursor,
+                          sb := v.lineFeed.sb } := by
+  unfold Vt.lineFeed Vt.scrollUp Vt.scrollUpIn Vt.clearPending
+  dsimp only
+  repeat' split
+  all_goals rfl
+
+/-! ### The collapse, demonstrated
+
+Each of these four is an instance of the layers above — and each is now a
+one-line consequence of a single frame, for *any* field rather than a
+chosen one. -/
+
+example (v : Vt) (t b : Nat) (a : Bool) : (v.scrollUpIn t b a).pstate = v.pstate := by
+  rw [frame_scrollUpIn]
+
+example (v : Vt) (t b : Nat) (a : Bool) : (v.scrollUpIn t b a).u8need = v.u8need := by
+  rw [frame_scrollUpIn]
+
+example (v : Vt) (t b : Nat) (a : Bool) : (v.scrollUpIn t b a).cols = v.cols := by
+  rw [frame_scrollUpIn]
+
+example (v : Vt) (t b : Nat) (a : Bool) :
+    (v.scrollUpIn t b a).modes.origin = v.modes.origin := by
+  rw [frame_scrollUpIn]
+
+/-- …and a field no layer ever covered, free: the scroll region. -/
+example (v : Vt) (t b : Nat) (a : Bool) : (v.scrollUpIn t b a).top = v.top := by
+  rw [frame_scrollUpIn]
+
+/-- …and the saved-cursor slot, also free. -/
+example (v : Vt) : v.lineFeed.saved = v.saved := by
+  rw [frame_lineFeed]
+
+end Zmx.Core.Vt
+
+namespace Zmx.Core.Vt
+/-! ### The frame set for the leaf operations
+
+One frame per operation, replacing what was four single-field lemmas
+each. Every field invariance — including fields no layer covers — is one
+`rw` away, so a new field costs nothing here.
+
+Not covered, by measurement rather than omission: `print`,
+`csiDispatch`, and the fold-based operations (`eraseScreen`,
+`insertLines`, `deleteLines`). A frame proves by `rfl` only when the
+result is a *syntactic* record update; a composed chain times out and a
+`List.foldl` is not an update at all. Those keep their per-field lemmas
+(see THEOREMS.md).
+-/
+
+theorem frame_clearPending (v : Vt) :
+    v.clearPending = { v with cursor := v.clearPending.cursor } := rfl
+
+theorem frame_carriageReturn (v : Vt) :
+    v.carriageReturn = { v with cursor := v.carriageReturn.cursor } := rfl
+
+theorem frame_moveRel (v : Vt) (dx dy : Int) :
+    v.moveRel dx dy = { v with cursor := (v.moveRel dx dy).cursor } := rfl
+
+theorem frame_setCol (v : Vt) (x : Nat) :
+    v.setCol x = { v with cursor := (v.setCol x).cursor } := rfl
+
+theorem frame_scrollDownIn (v : Vt) (t b : Nat) :
+    v.scrollDownIn t b = { v with grid := (v.scrollDownIn t b).grid } := rfl
+
+theorem frame_deleteChars (v : Vt) (n : Nat) :
+    v.deleteChars n = { v with grid := (v.deleteChars n).grid } := rfl
+
+theorem frame_insertChars (v : Vt) (n : Nat) :
+    v.insertChars n = { v with grid := (v.insertChars n).grid } := rfl
+
+theorem frame_applySgr (v : Vt) (ps : List (Nat × Bool)) :
+    v.applySgr ps = { v with pen := (v.applySgr ps).pen } := rfl
+
+theorem frame_backTab (v : Vt) : v.backTab = { v with cursor := v.backTab.cursor } := rfl
+
+theorem frame_eraseChars (v : Vt) (n : Nat) :
+    v.eraseChars n = { v with grid := (v.eraseChars n).grid } := rfl
+
+theorem frame_backspace (v : Vt) :
+    v.backspace = { v with cursor := v.backspace.cursor } := by
+  unfold Vt.backspace; split <;> rfl
+
+theorem frame_tab (v : Vt) : v.tab = { v with cursor := v.tab.cursor } := by
+  unfold Vt.tab Vt.clearPending; dsimp only
+
+theorem frame_eraseLine (v : Vt) (m : Nat) :
+    v.eraseLine m = { v with grid := (v.eraseLine m).grid } := by
+  unfold Vt.eraseLine; repeat' split
+  all_goals rfl
+
+theorem frame_reverseIndex (v : Vt) :
+    v.reverseIndex = { v with grid := v.reverseIndex.grid,
+                              cursor := v.reverseIndex.cursor } := by
+  unfold Vt.reverseIndex Vt.scrollDown Vt.scrollDownIn Vt.clearPending
+  dsimp only
+  repeat' split
+  all_goals rfl
+
+theorem frame_printWrap (v : Vt) :
+    v.printWrap = { v with grid := v.printWrap.grid, cursor := v.printWrap.cursor,
+                           sb := v.printWrap.sb } := by
+  unfold Vt.printWrap Vt.carriageReturn Vt.lineFeed Vt.clearPending Vt.scrollUp
+    Vt.scrollUpIn
+  dsimp only
+  repeat' split
+  all_goals rfl
+
+theorem frame_printWideWrap (v : Vt) (w : Nat) :
+    v.printWideWrap w = { v with grid := (v.printWideWrap w).grid,
+                                 cursor := (v.printWideWrap w).cursor,
+                                 sb := (v.printWideWrap w).sb } := by
+  unfold Vt.printWideWrap Vt.carriageReturn Vt.lineFeed Vt.clearPending Vt.scrollUp
+    Vt.scrollUpIn
+  dsimp only
+  repeat' split
+  all_goals rfl
+
+theorem frame_printShift (v : Vt) (w : Nat) :
+    v.printShift w = { v with grid := (v.printShift w).grid } := by
+  unfold Vt.printShift; dsimp only; split <;> rfl
+
+theorem frame_printPut (v : Vt) (ch : Char) (w : Nat) :
+    v.printPut ch w = { v with grid := (v.printPut ch w).grid } := by
+  unfold Vt.printPut Vt.putCell; dsimp only; split <;> rfl
+
+theorem frame_printAdvance (v : Vt) (w : Nat) :
+    v.printAdvance w = { v with cursor := (v.printAdvance w).cursor } := by
+  unfold Vt.printAdvance; dsimp only; split <;> rfl
+
+theorem frame_enterAlt (v : Vt) (s : Bool) :
+    v.enterAlt s = { v with grid := (v.enterAlt s).grid,
+                            cursor := (v.enterAlt s).cursor,
+                            saved := (v.enterAlt s).saved,
+                            altGrid := (v.enterAlt s).altGrid,
+                            top := (v.enterAlt s).top, bot := (v.enterAlt s).bot } := by
+  unfold Vt.enterAlt; dsimp only; split <;> rfl
+
+theorem frame_leaveAlt (v : Vt) (s : Bool) :
+    v.leaveAlt s = { v with grid := (v.leaveAlt s).grid,
+                            cursor := (v.leaveAlt s).cursor,
+                            pen := (v.leaveAlt s).pen,
+                            altGrid := (v.leaveAlt s).altGrid,
+                            top := (v.leaveAlt s).top, bot := (v.leaveAlt s).bot } := by
+  unfold Vt.leaveAlt; split <;> rfl
+
+theorem frame_stepEscInter (v : Vt) (i b : UInt8) :
+    v.stepEscInter i b = { v with pstate := (v.stepEscInter i b).pstate,
+                                  g0Line := (v.stepEscInter i b).g0Line,
+                                  g1Line := (v.stepEscInter i b).g1Line } := by
+  unfold Vt.stepEscInter; dsimp only; repeat' split
+  all_goals rfl
+
+theorem frame_stepStr (v : Vt) (e : Bool) (b : UInt8) :
+    v.stepStr e b = { v with pstate := (v.stepStr e b).pstate } := by
+  unfold Vt.stepStr; repeat' split
+  all_goals rfl
+
+theorem frame_oscFinish (v : Vt) (acc : Array UInt8) :
+    v.oscFinish acc = { v with pstate := (v.oscFinish acc).pstate,
+                               title := (v.oscFinish acc).title } := by
+  unfold Vt.oscFinish; dsimp only; repeat' split
+  all_goals rfl
+
+end Zmx.Core.Vt
+
+namespace Zmx.Core.Vt
 /-! ## Parser-state invariance of the printing path
 
 Feeding a *printable* byte must not disturb the parser: only ESC (and
@@ -755,20 +982,10 @@ theorem ps_scrollUp (v : Vt) : v.scrollUp.pstate = v.pstate := ps_scrollUpIn _ _
 theorem ps_scrollDown (v : Vt) : v.scrollDown.pstate = v.pstate := ps_scrollDownIn _ _ _
 
 theorem ps_lineFeed (v : Vt) : v.lineFeed.pstate = v.pstate := by
-  unfold Vt.lineFeed
-  dsimp only
-  repeat' split
-  all_goals first
-    | exact (ps_scrollUp _).trans (ps_clearPending v)
-    | exact ps_clearPending v
+  rw [frame_lineFeed]
 
 theorem ps_reverseIndex (v : Vt) : v.reverseIndex.pstate = v.pstate := by
-  unfold Vt.reverseIndex
-  dsimp only
-  repeat' split
-  all_goals first
-    | exact (ps_scrollDown _).trans (ps_clearPending v)
-    | exact ps_clearPending v
+  rw [frame_reverseIndex]
 
 theorem ps_backspace (v : Vt) : v.backspace.pstate = v.pstate := by
   unfold Vt.backspace; split <;> rfl
@@ -777,16 +994,10 @@ theorem ps_tab (v : Vt) : v.tab.pstate = v.pstate := by
   unfold Vt.tab; dsimp only; exact ps_clearPending v
 
 theorem ps_printWrap (v : Vt) : v.printWrap.pstate = v.pstate := by
-  unfold Vt.printWrap
-  split
-  · exact (ps_lineFeed _).trans (ps_carriageReturn v)
-  · exact ps_clearPending v
+  rw [frame_printWrap]
 
 theorem ps_printWideWrap (v : Vt) (w : Nat) : (v.printWideWrap w).pstate = v.pstate := by
-  unfold Vt.printWideWrap
-  split
-  · exact (ps_lineFeed _).trans (ps_carriageReturn v)
-  · rfl
+  rw [frame_printWideWrap]
 
 theorem ps_printShift (v : Vt) (w : Nat) : (v.printShift w).pstate = v.pstate := by
   unfold Vt.printShift; dsimp only; split <;> rfl
@@ -894,20 +1105,10 @@ theorem un_scrollUp (v : Vt) : v.scrollUp.u8need = v.u8need := un_scrollUpIn _ _
 theorem un_scrollDown (v : Vt) : v.scrollDown.u8need = v.u8need := un_scrollDownIn _ _ _
 
 theorem un_lineFeed (v : Vt) : v.lineFeed.u8need = v.u8need := by
-  unfold Vt.lineFeed
-  dsimp only
-  repeat' split
-  all_goals first
-    | exact (un_scrollUp _).trans (un_clearPending v)
-    | exact un_clearPending v
+  rw [frame_lineFeed]
 
 theorem un_reverseIndex (v : Vt) : v.reverseIndex.u8need = v.u8need := by
-  unfold Vt.reverseIndex
-  dsimp only
-  repeat' split
-  all_goals first
-    | exact (un_scrollDown _).trans (un_clearPending v)
-    | exact un_clearPending v
+  rw [frame_reverseIndex]
 
 theorem un_backspace (v : Vt) : v.backspace.u8need = v.u8need := by
   unfold Vt.backspace; split <;> rfl
@@ -919,9 +1120,7 @@ theorem un_eraseChars (v : Vt) (n : Nat) : (v.eraseChars n).u8need = v.u8need :=
   un_eraseRowSpan _ _ _ _
 
 theorem un_eraseLine (v : Vt) (m : Nat) : (v.eraseLine m).u8need = v.u8need := by
-  unfold Vt.eraseLine
-  repeat' split
-  all_goals exact un_eraseRowSpan _ _ _ _
+  rw [frame_eraseLine]
 
 theorem un_eraseScreen (v : Vt) (m : Nat) : (v.eraseScreen m).u8need = v.u8need := by
   unfold Vt.eraseScreen
@@ -958,16 +1157,10 @@ theorem un_setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool) :
   all_goals rfl
 
 theorem un_printWrap (v : Vt) : v.printWrap.u8need = v.u8need := by
-  unfold Vt.printWrap
-  split
-  · exact (un_lineFeed _).trans (un_carriageReturn v)
-  · exact un_clearPending v
+  rw [frame_printWrap]
 
 theorem un_printWideWrap (v : Vt) (w : Nat) : (v.printWideWrap w).u8need = v.u8need := by
-  unfold Vt.printWideWrap
-  split
-  · exact (un_lineFeed _).trans (un_carriageReturn v)
-  · rfl
+  rw [frame_printWideWrap]
 
 theorem un_printShift (v : Vt) (w : Nat) : (v.printShift w).u8need = v.u8need := by
   unfold Vt.printShift; dsimp only; split <;> rfl
@@ -1032,17 +1225,11 @@ theorem un_stepCsi (v : Vt) (s : CsiState) (b : UInt8) :
 
 theorem un_stepEscInter (v : Vt) (i b : UInt8) :
     (v.stepEscInter i b).u8need = v.u8need := by
-  unfold Vt.stepEscInter
-  dsimp only
-  repeat' split
-  all_goals rfl
+  rw [frame_stepEscInter]
 
 theorem un_oscFinish (v : Vt) (acc : Array UInt8) :
     (v.oscFinish acc).u8need = v.u8need := by
-  unfold Vt.oscFinish
-  dsimp only
-  repeat' split
-  all_goals rfl
+  rw [frame_oscFinish]
 
 theorem un_stepOsc (v : Vt) (acc : Array UInt8) (e : Bool) (b : UInt8) :
     (v.stepOsc acc e b).u8need = v.u8need := by
@@ -1054,9 +1241,7 @@ theorem un_stepOsc (v : Vt) (acc : Array UInt8) (e : Bool) (b : UInt8) :
 
 theorem un_stepStr (v : Vt) (e : Bool) (b : UInt8) :
     (v.stepStr e b).u8need = v.u8need := by
-  unfold Vt.stepStr
-  repeat' split
-  all_goals rfl
+  rw [frame_stepStr]
 
 /-- `stepEsc` in "stays zero" form: `RIS` rebuilds through `Vt.init`,
 which has no pending sequence by construction. -/
@@ -1194,20 +1379,12 @@ theorem dims_scrollUp (v : Vt) : dims v.scrollUp = dims v := dims_scrollUpIn _ _
 theorem dims_scrollDown (v : Vt) : dims v.scrollDown = dims v := dims_scrollDownIn _ _ _
 
 theorem dims_lineFeed (v : Vt) : dims v.lineFeed = dims v := by
-  unfold Vt.lineFeed
-  dsimp only
-  repeat' split
-  all_goals first
-    | exact (dims_scrollUp _).trans (dims_clearPending v)
-    | exact dims_clearPending v
+  rw [frame_lineFeed]
+  rfl
 
 theorem dims_reverseIndex (v : Vt) : dims v.reverseIndex = dims v := by
-  unfold Vt.reverseIndex
-  dsimp only
-  repeat' split
-  all_goals first
-    | exact (dims_scrollDown _).trans (dims_clearPending v)
-    | exact dims_clearPending v
+  rw [frame_reverseIndex]
+  rfl
 
 theorem dims_backspace (v : Vt) : dims v.backspace = dims v := by
   unfold Vt.backspace; split <;> rfl
@@ -1219,9 +1396,8 @@ theorem dims_eraseChars (v : Vt) (n : Nat) : dims (v.eraseChars n) = dims v :=
   dims_eraseRowSpan _ _ _ _
 
 theorem dims_eraseLine (v : Vt) (m : Nat) : dims (v.eraseLine m) = dims v := by
-  unfold Vt.eraseLine
-  repeat' split
-  all_goals exact dims_eraseRowSpan _ _ _ _
+  rw [frame_eraseLine]
+  rfl
 
 theorem dims_eraseScreen (v : Vt) (m : Nat) : dims (v.eraseScreen m) = dims v := by
   unfold Vt.eraseScreen
@@ -1259,16 +1435,12 @@ theorem dims_setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool) :
   all_goals rfl
 
 theorem dims_printWrap (v : Vt) : dims v.printWrap = dims v := by
-  unfold Vt.printWrap
-  split
-  · exact (dims_lineFeed _).trans (dims_carriageReturn v)
-  · exact dims_clearPending v
+  rw [frame_printWrap]
+  rfl
 
 theorem dims_printWideWrap (v : Vt) (w : Nat) : dims (v.printWideWrap w) = dims v := by
-  unfold Vt.printWideWrap
-  split
-  · exact (dims_lineFeed _).trans (dims_carriageReturn v)
-  · rfl
+  rw [frame_printWideWrap]
+  rfl
 
 theorem dims_printShift (v : Vt) (w : Nat) : dims (v.printShift w) = dims v := by
   unfold Vt.printShift; dsimp only; split <;> rfl
@@ -1332,16 +1504,12 @@ theorem dims_stepCsi (v : Vt) (s : CsiState) (b : UInt8) :
     | exact dims_ctl _ _
 
 theorem dims_stepEscInter (v : Vt) (i b : UInt8) : dims (v.stepEscInter i b) = dims v := by
-  unfold Vt.stepEscInter
-  dsimp only
-  repeat' split
-  all_goals rfl
+  rw [frame_stepEscInter]
+  rfl
 
 theorem dims_oscFinish (v : Vt) (acc : Array UInt8) : dims (v.oscFinish acc) = dims v := by
-  unfold Vt.oscFinish
-  dsimp only
-  repeat' split
-  all_goals rfl
+  rw [frame_oscFinish]
+  rfl
 
 theorem dims_stepOsc (v : Vt) (acc : Array UInt8) (e : Bool) (b : UInt8) :
     dims (v.stepOsc acc e b) = dims v := by
@@ -1352,9 +1520,8 @@ theorem dims_stepOsc (v : Vt) (acc : Array UInt8) (e : Bool) (b : UInt8) :
     | exact dims_oscFinish _ _
 
 theorem dims_stepStr (v : Vt) (e : Bool) (b : UInt8) : dims (v.stepStr e b) = dims v := by
-  unfold Vt.stepStr
-  repeat' split
-  all_goals rfl
+  rw [frame_stepStr]
+  rfl
 
 theorem dims_abortUtf8 (v : Vt) (b : UInt8) : dims (v.abortUtf8 b) = dims v := by
   unfold Vt.abortUtf8; split <;> rfl
@@ -1469,20 +1636,10 @@ theorem org_scrollDown (v : Vt) : v.scrollDown.modes.origin = v.modes.origin :=
   org_scrollDownIn _ _ _
 
 theorem org_lineFeed (v : Vt) : v.lineFeed.modes.origin = v.modes.origin := by
-  unfold Vt.lineFeed
-  dsimp only
-  repeat' split
-  all_goals first
-    | exact (org_scrollUp _).trans (org_clearPending v)
-    | exact org_clearPending v
+  rw [frame_lineFeed]
 
 theorem org_reverseIndex (v : Vt) : v.reverseIndex.modes.origin = v.modes.origin := by
-  unfold Vt.reverseIndex
-  dsimp only
-  repeat' split
-  all_goals first
-    | exact (org_scrollDown _).trans (org_clearPending v)
-    | exact org_clearPending v
+  rw [frame_reverseIndex]
 
 theorem org_backspace (v : Vt) : v.backspace.modes.origin = v.modes.origin := by
   unfold Vt.backspace; split <;> rfl
@@ -1495,9 +1652,7 @@ theorem org_eraseChars (v : Vt) (n : Nat) :
 
 theorem org_eraseLine (v : Vt) (m : Nat) :
     (v.eraseLine m).modes.origin = v.modes.origin := by
-  unfold Vt.eraseLine
-  repeat' split
-  all_goals exact org_eraseRowSpan _ _ _ _
+  rw [frame_eraseLine]
 
 theorem org_eraseScreen (v : Vt) (m : Nat) :
     (v.eraseScreen m).modes.origin = v.modes.origin := by
@@ -1614,17 +1769,11 @@ theorem org_stepCsi (v : Vt) (s : CsiState) (b : UInt8)
     | exact org_ctl _ _
 
 theorem org_printWrap (v : Vt) : v.printWrap.modes.origin = v.modes.origin := by
-  unfold Vt.printWrap
-  split
-  · exact (org_lineFeed _).trans (org_carriageReturn v)
-  · exact org_clearPending v
+  rw [frame_printWrap]
 
 theorem org_printWideWrap (v : Vt) (w : Nat) :
     (v.printWideWrap w).modes.origin = v.modes.origin := by
-  unfold Vt.printWideWrap
-  split
-  · exact (org_lineFeed _).trans (org_carriageReturn v)
-  · rfl
+  rw [frame_printWideWrap]
 
 theorem org_printShift (v : Vt) (w : Nat) :
     (v.printShift w).modes.origin = v.modes.origin := by
@@ -1660,17 +1809,11 @@ theorem org_stepGround (v : Vt) (b : UInt8) :
 
 theorem org_stepEscInter (v : Vt) (i b : UInt8) :
     (v.stepEscInter i b).modes.origin = v.modes.origin := by
-  unfold Vt.stepEscInter
-  dsimp only
-  repeat' split
-  all_goals rfl
+  rw [frame_stepEscInter]
 
 theorem org_oscFinish (v : Vt) (acc : Array UInt8) :
     (v.oscFinish acc).modes.origin = v.modes.origin := by
-  unfold Vt.oscFinish
-  dsimp only
-  repeat' split
-  all_goals rfl
+  rw [frame_oscFinish]
 
 theorem org_stepOsc (v : Vt) (acc : Array UInt8) (e : Bool) (b : UInt8) :
     (v.stepOsc acc e b).modes.origin = v.modes.origin := by
@@ -1682,9 +1825,7 @@ theorem org_stepOsc (v : Vt) (acc : Array UInt8) (e : Bool) (b : UInt8) :
 
 theorem org_stepStr (v : Vt) (e : Bool) (b : UInt8) :
     (v.stepStr e b).modes.origin = v.modes.origin := by
-  unfold Vt.stepStr
-  repeat' split
-  all_goals rfl
+  rw [frame_stepStr]
 
 theorem org_abortUtf8 (v : Vt) (b : UInt8) :
     (v.abortUtf8 b).modes.origin = v.modes.origin := by
@@ -1706,98 +1847,5 @@ theorem org_stepEsc {v : Vt} (b : UInt8) (h : v.modes.origin = false) :
 end Zmx.Core.Vt
 
 
-namespace Zmx.Core.Vt
-/-! ## Frames: the generalization of the four invariance layers
 
-`pstate`, `u8need`, `dims` and `origin` above are ~110 lemmas that are
-~28 written four times: "operation X does not write field F". The general
-statement is a **frame condition** — X's footprint, stated once, covering
-every field at once:
 
-```
-theorem frame_putCell : v.putCell x y c = { v with grid := (v.putCell x y c).grid }
-```
-
-Read: *`putCell` writes only `grid`*. Every field invariance is then a
-corollary by rewriting, including fields nobody has thought of yet — so a
-fifth layer costs nothing instead of another 28 lemmas.
-
-Why this beats the two ideas recorded in THEOREMS.md:
-
-* Better than *bundling* the four fields, which fixes only the fields we
-  happened to need.
-* Better than *splitting* `Vt` into `{screen, parser, meta}`, because the
-  read/write distinction is **per-operation**: `print` reads `cols`/`rows`
-  to clamp and reads `modes` for wrap/insert while writing neither, so a
-  partition that groups `dims` with the cells still lets `Screen → Screen`
-  resize the grid. The refactor that *would* capture it moves read-only
-  data into parameter position (`print : Dims → Modes → … `), which is far
-  larger and mostly subsumed by frames anyway.
-
-What frames do **not** buy, and this is the honest limit: a frame says
-what an operation leaves alone, never what the written fields *become*.
-Grid fidelity (§Replay stage 3d — the replayed cells equal the saved
-cells) needs the positive specification, which is real content, not
-bookkeeping. Frames retire the sprawl; they do not shorten the road to
-3d.
-
-Below: the pattern demonstrated on four operations of increasing shape,
-with the four existing layers re-derived from one of them to show the
-collapse is real. Converting the rest is mechanical and is the recorded
-next simplification (specs/bigger-theorems.md).
--/
-
-/-- Pure record update: `rfl` suffices. -/
-theorem frame_putCell (v : Vt) (x y : Nat) (c : Cell) :
-    v.putCell x y c = { v with grid := (v.putCell x y c).grid } := rfl
-
-theorem frame_moveTo (v : Vt) (x y : Nat) :
-    v.moveTo x y = { v with cursor := (v.moveTo x y).cursor } := rfl
-
-theorem frame_eraseRowSpan (v : Vt) (y a b : Nat) :
-    v.eraseRowSpan y a b = { v with grid := (v.eraseRowSpan y a b).grid } := rfl
-
-/-- Branching operation: one `split`, both branches record updates.
-`scrollUpIn` may also push the evicted line to scrollback. -/
-theorem frame_scrollUpIn (v : Vt) (t b : Nat) (a : Bool) :
-    v.scrollUpIn t b a
-      = { v with grid := (v.scrollUpIn t b a).grid, sb := (v.scrollUpIn t b a).sb } := by
-  unfold Vt.scrollUpIn; dsimp only; split <;> rfl
-
-/-- Composite over stages: `lineFeed` moves the cursor and may scroll. -/
-theorem frame_lineFeed (v : Vt) :
-    v.lineFeed = { v with grid := v.lineFeed.grid, cursor := v.lineFeed.cursor,
-                          sb := v.lineFeed.sb } := by
-  unfold Vt.lineFeed Vt.scrollUp Vt.scrollUpIn Vt.clearPending
-  dsimp only
-  repeat' split
-  all_goals rfl
-
-/-! ### The collapse, demonstrated
-
-Each of these four is an instance of the layers above — and each is now a
-one-line consequence of a single frame, for *any* field rather than a
-chosen one. -/
-
-example (v : Vt) (t b : Nat) (a : Bool) : (v.scrollUpIn t b a).pstate = v.pstate := by
-  rw [frame_scrollUpIn]
-
-example (v : Vt) (t b : Nat) (a : Bool) : (v.scrollUpIn t b a).u8need = v.u8need := by
-  rw [frame_scrollUpIn]
-
-example (v : Vt) (t b : Nat) (a : Bool) : dims (v.scrollUpIn t b a) = dims v := by
-  rw [frame_scrollUpIn]; rfl
-
-example (v : Vt) (t b : Nat) (a : Bool) :
-    (v.scrollUpIn t b a).modes.origin = v.modes.origin := by
-  rw [frame_scrollUpIn]
-
-/-- …and a field no layer ever covered, free: the scroll region. -/
-example (v : Vt) (t b : Nat) (a : Bool) : (v.scrollUpIn t b a).top = v.top := by
-  rw [frame_scrollUpIn]
-
-/-- …and the saved-cursor slot, also free. -/
-example (v : Vt) : v.lineFeed.saved = v.saved := by
-  rw [frame_lineFeed]
-
-end Zmx.Core.Vt

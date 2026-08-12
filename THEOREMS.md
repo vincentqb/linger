@@ -77,25 +77,24 @@ Four of the invariance layers — `pstate`, `u8need`, `dims`, `origin`
 every emulator operation, "this field is unchanged". About 110 lemmas,
 one idea.
 
-The generalization, **demonstrated at the end of `Theorems/Vt.lean`**, is
-to state each operation's *frame* — its footprint — once:
+The generalization, **now in force for the leaf operations**, is to state
+each operation's *frame* — its footprint — once:
 
 ```lean
 theorem frame_putCell : v.putCell x y c = { v with grid := (v.putCell x y c).grid }
 ```
 
 Read: *`putCell` writes only `grid`*. Every field invariance is then one
-rewrite away, for **any** field — the file shows all four existing layers
-falling out of a single `frame_scrollUpIn`, plus `top` and `saved`, which
-no layer ever covered. A fifth field would cost nothing.
+rewrite away, for **any** field — including `top` and `saved`, which no
+layer ever covered. There are 30 frames, placed before the four layers so
+those can cite them, and 28 layer proofs are now a single `rw [frame_X]`
+(86 proof lines removed). A fifth field costs nothing for these
+operations.
 
 **How far it goes, measured rather than assumed.** A frame is provable by
 `rfl` exactly when the operation's result is a *syntactic record update*.
-That holds for the leaf operations — roughly twenty of them (`putCell`,
-`moveTo`, `setCol`, the `print*` stages, `enterAlt`/`leaveAlt`,
-`eraseRowSpan`, `scrollUpIn`, …) — and those account for the majority of
-the 110. It **fails** for two classes, and both failures were spiked
-before this claim was written:
+That holds for the leaf operations — the thirty that are converted — and
+it **fails** for two classes, both spiked before this claim was written:
 
 * *Compositions.* `frame_print` (the full stage chain) times out: the
   monolithic unfold is too large for a per-branch `rfl`. Gluing staged
@@ -105,12 +104,13 @@ before this claim was written:
   removes.
 * *Folds.* `frame_csiDispatch` fails on arms like
   `List.foldl (fun a _ => a.tab) v (range n)`: a fold's result is not a
-  record update, so the arm needs an induction (`frame_foldl`) and manual
-  gluing — about what the current per-field sweep costs.
+  record update, so the arm needs an induction and manual gluing — about
+  what the current per-field sweep costs.
 
-So frames retire perhaps 60% of the sprawl cheaply and leave the
-composite and fold-based operations roughly as they are. That is still a
-net win, and it is a smaller one than "28 replaces 110" would suggest.
+So `print`, `csiDispatch` and the fold-based operations (`eraseScreen`,
+`insertLines`, `deleteLines`) keep their per-field lemmas, which is also
+where the conditional cases (`RIS`, `setMode`) live. Frames retired the
+mechanical majority; the residue is the part that was never mechanical.
 
 Two weaker ideas, recorded because they look attractive and are not:
 

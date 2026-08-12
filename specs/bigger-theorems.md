@@ -177,41 +177,32 @@ passes after; `./tests/e2e.sh` green (restore byte stream changes are
 behavior-compatible: resume/attach suites must stay green).
 
 
-## Step 4 — retire the invariance sprawl with frames (open, partial win)
+## Step 4 — retire the invariance sprawl with frames (DONE for the leaves)
 
-The four layers (`pstate`, `u8need`, `dims`, `origin`) are ~110 lemmas
-that are ~28 written four times. Replace each *leaf* operation's four
-single-field lemmas with ONE frame equation naming its footprint:
+The four layers (`pstate`, `u8need`, `dims`, `origin`) were ~110 lemmas
+that are ~28 written four times. Each *leaf* operation now has ONE frame
+equation naming its footprint:
 
 ```lean
 theorem frame_putCell : v.putCell x y c = { v with grid := (v.putCell x y c).grid }
 ```
 
-Demonstrated at the end of `Theorems/Vt.lean` on `putCell`, `moveTo`,
-`eraseRowSpan`, `scrollUpIn` and `lineFeed`, with all four existing
-layers — plus `top` and `saved`, which no layer covered — derived from a
-single frame in one line each.
+**Landed**: 30 frames, placed *before* the four layers so they can be
+cited by them; 28 layer proofs collapsed to a single `rw [frame_X]` (86
+proof lines removed); every field invariance — including fields no layer
+covers, like `top` and `saved` — is now one rewrite away, so a fifth field
+costs nothing for these operations. Full gate green.
 
-**Scope, measured by spiking the two hard cases (both recorded as
-negative results):** a frame proves by `rfl` exactly when the result is a
-syntactic record update. `frame_print` times out (the composed stage
-chain is too big for a per-branch `rfl`), and `frame_csiDispatch` fails on
-its `List.foldl` arms (a fold is not a record update). Gluing staged
-frames would need footprints as first-class data — a field-set type, a
-`WritesWithin` predicate, monotonicity lemmas — i.e. a small effect
-system, larger than the sprawl it removes. So convert the ~20 leaf
-operations (a real, cheap win covering most of the 110) and leave the
-composite and fold-based operations with per-field lemmas, which is also
-where the conditional cases (`RIS`, `setMode`) live anyway.
-
-Order of work: (1) frames for the leaf operations; (2) re-derive the four
-layers' *entry points* (`ps_stepGround`, `uz_step`, `dims_step`,
-`org_stepCsi`, …) from them, keeping their names so no downstream proof
-changes; (3) delete the single-field leaf lemmas.
-
-Do this immediately *before* the next field layer is needed — pen
-fidelity would want one — rather than as standalone cleanup: the sprawl
-costs readability today, but nothing else.
+**Deliberately not converted, measured rather than assumed:** `print`,
+`csiDispatch`, and the fold-based operations (`eraseScreen`,
+`insertLines`, `deleteLines`). A frame proves by `rfl` only when the
+result is a *syntactic* record update: `frame_print` times out (the
+composed stage chain is too large for a per-branch `rfl`) and
+`frame_csiDispatch` fails on `List.foldl` arms. Gluing staged frames would
+need footprints as first-class data — a field-set type, a `WritesWithin`
+predicate, monotonicity lemmas — i.e. a small effect system, larger than
+the sprawl it removes. Those operations keep their per-field lemmas, which
+is also where the conditional cases (`RIS`, `setMode`) live.
 
 Not addressed by frames, deliberately: the *positive* specification of
 what written fields become. That is stage 3d (grid fidelity) and it is

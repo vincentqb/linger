@@ -1441,3 +1441,38 @@ readability today and nothing else.
 Method note worth keeping: the useful move here was spiking the hardest
 case before believing the generalization. Two builds, and it turned an
 overclaim into a calibrated one.
+
+
+
+## Frames landed for the leaves — 2026-08-12
+
+Asked "why wait?" about my own recommendation to defer the conversion.
+No good answer: the work was loaded in context, the cost is identical
+later, the benefit starts immediately, and doing a mechanical refactor
+while the gate is green is the SAFEST moment. That recommendation was
+reflexive conservatism, not prudence. Did it.
+
+Landed: 30 `frame_*` theorems for the leaf operations, and 28 of the four
+layers' proofs collapsed to a single `rw [frame_X]` — 86 proof lines
+removed, Theorems/Vt.lean 1935 → 1851 despite gaining 30 theorems. Full
+gate green, no sorry.
+
+Two mechanical gotchas worth keeping:
+- ORDER MATTERS: the frames had to be relocated ABOVE the four layers
+  (they were appended at the end), or the collapsed proofs cite
+  not-yet-defined names. Moved with a script; the demo block's `dims`
+  example then referenced a def that now comes later, so it was restated
+  over the raw `cols` field.
+- The `dims_*` conversions need `rw [frame_X]` followed by an explicit
+  `rfl`: `dims` is a plain `def`, and rw's implicit rfl is
+  reducible-transparency only.
+
+Left un-converted, on the measurement from the previous entry: `print`,
+`csiDispatch`, and the fold-based ops (`eraseScreen`, `insertLines`,
+`deleteLines`). Their per-field lemmas stay, which is also where the
+conditional cases (RIS, setMode) live — the residue is precisely the part
+that was never mechanical.
+
+Method note: the whole sequence here — claim, spike, downgrade, then do
+the part that survived — cost about four builds and produced a smaller,
+truer result than the confident version would have.
