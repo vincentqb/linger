@@ -16,7 +16,7 @@ Read this file at whichever depth you need:
 
 | Anchor | Statement | Theorem |
 |---|---|---|
-| **A1. A session survives a crash** | a checkpoint round-trips exactly, and the byte stream rebuilt from it leaves a fresh terminal quiesced — parser in `ground`, no half-decoded character. Any state, no hypotheses | `Resume.resume_quiesced` (§Restore ∘ §Replay) |
+| **A1. A session survives a crash** | a checkpoint round-trips exactly, and the byte stream rebuilt from it leaves a fresh terminal quiesced — parser in `ground`, no half-decoded character. Any state, no hypotheses. The **cursor** lands where the session had it (given the §Bound invariant and DECOM off) | `Resume.resume_quiesced` (§Restore ∘ §Replay), `Resume.resume_cursor` |
 | **A2. The daemon cannot be broken by traffic** | no event trace of any length — adversarial clients, hostile pty bytes, any interleaving — breaks a buffer cap, the screen invariant, or one client's isolation from another | `Session.run_wf`, `Session.run_bytes_isolates` (§Bound ∘ §Total ∘ §Isolate) |
 | **A3. The transport is invisible** | any re-chunking of any well-formed encoded stream decodes to exactly that stream: same messages, same order, nothing retained, no error | `Wire.decode_encode_chunked` (§Stream = §Frame ∘ §Chunk) |
 | **A4. A session name has one owner** | given the kernel grants at most one `flock` holder, at most one daemon ever unlinks or binds a given name | `Claim.at_most_one_owner` (§Claim) |
@@ -27,7 +27,9 @@ one event to a whole process lifetime, A3 subsumes §Frame and §Chunk as
 special cases. The one anchor still incomplete is A1's screen half — the
 replayed *cells* equalling the saved cells is carried by
 `Tests/Render.lean`'s 14 round-trip fixtures, not yet by proof, and
-`Theorems/Resume.lean` says so in the same file as the claim.
+`Theorems/Resume.lean` says so in the same file as the claim. A1's
+cursor half is now proved rather than tested (`resume_cursor`), which
+makes the untested residue exactly the grid values.
 
 ## The rungs
 
@@ -45,8 +47,8 @@ replayed *cells* equalling the saved cells is carried by
 | §Isolate | many clients on one session vs per-client framing | `.bytes id` leaves every *other* client's record (and decoder) bit-identical | Theorems/Session.lean |
 | §Row | a list row's identity vs an unreliable `info` reply | a row's name is the sanitized socket filename alone; the reply can neither change it nor smuggle a second one in | Theorems/Listing.lean |
 | §Claim | one session name vs many daemons racing for it | *given* the kernel grants ≤1 `flock` holder, ≤1 daemon ever unlinks or binds that name | Theorems/Claim.lean |
-| §Replay | one saved byte stream must recreate the live screen on a fresh terminal | **parser half proved**: a fresh emulator fed a whole restore stream is quiesced — parser in `ground`, no half-decoded character (`restore_quiesced`), for any `Vt` and with no hypotheses. So a reattach can never wedge a client mid-sequence. Cursor placement is proved for the emitted `CUP` sequence (`cup_places_cursor`); the remaining screen/pen *value* fidelity is open, pinned by the decidable `replayEq` + 14 round-trip fixtures | Theorems/Render.lean, Tests/Render.lean |
-| §Resume | the product's own promise: crash, reboot, reattach | §Restore ∘ §Replay composed — `load (save c)` succeeds and its replay leaves the terminal quiesced (anchor A1) | Theorems/Resume.lean |
+| §Replay | one saved byte stream must recreate the live screen on a fresh terminal | **parser half proved**: a fresh emulator fed a whole restore stream is quiesced — parser in `ground`, no half-decoded character (`restore_quiesced`), for any `Vt` and with no hypotheses. So a reattach can never wedge a client mid-sequence. **Cursor proved end to end** (`restore_cursor`): the replayed cursor equals the session's, given `Good` (§Bound) and DECOM off — resting on `Quiet`, which says a restore body leaves the parser ground *and* DECOM off, so the final `CUP` is read as an absolute address. The remaining screen/pen *value* fidelity is open, pinned by the decidable `replayEq` + 14 round-trip fixtures | Theorems/Render.lean, Tests/Render.lean |
+| §Resume | the product's own promise: crash, reboot, reattach | §Restore ∘ §Replay composed — `load (save c)` succeeds, its replay leaves the terminal quiesced (anchor A1), and the cursor lands where the session had it (`resume_cursor`) | Theorems/Resume.lean |
 
 
 ## Reading a row

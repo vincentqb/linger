@@ -356,10 +356,23 @@ theorem csi_final_step {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi
   · unfold Vt.csiFinish
     rfl
 
-/-- Bytes legal inside a CSI parameter string: digits, `:`/`;`, and the
-`<=>?` private markers — everything `Render` puts between `CSI` and the
-final byte. -/
-def ParamBytes (bs : Bytes) : Prop := ∀ b ∈ bs, 0x30 ≤ b ∧ b ≤ 0x3F
+/-- Bytes legal inside a CSI *parameter* string: digits and the `:`/`;`
+separators. The `<=>?` private markers are deliberately **excluded** — a
+marker is what decides whether a sequence can be DECOM, so it is
+structure, not a parameter (`ends_csi_priv_seq` and `Quiet` below both
+turn on that distinction). -/
+def ParamBytes (bs : Bytes) : Prop := ∀ b ∈ bs, 0x30 ≤ b ∧ b ≤ 0x3B
+
+/-- The parser's own bound is the looser one (it accepts markers mid-run),
+so the walk lemmas are fed through this. -/
+theorem paramBytes_le_3F {bs : Bytes} (h : ParamBytes bs) :
+    ∀ b ∈ bs, 0x30 ≤ b ∧ b ≤ 0x3F := by
+  intro b hb
+  obtain ⟨h1, h2⟩ := h b hb
+  refine ⟨h1, ?_⟩
+  simp only [UInt8.le_iff_toNat_le, show ((0x3B : UInt8)).toNat = 59 from rfl,
+    show ((0x3F : UInt8)).toNat = 63 from rfl] at h2 ⊢
+  omega
 
 theorem ParamBytes.nil : ParamBytes [] := by intro b hb; simp at hb
 
@@ -370,7 +383,7 @@ theorem ParamBytes.append {a b : Bytes} (ha : ParamBytes a) (hb : ParamBytes b) 
   · exact ha x h
   · exact hb x h
 
-theorem ParamBytes.cons {x : UInt8} {bs : Bytes} (h1 : 0x30 ≤ x) (h2 : x ≤ 0x3F)
+theorem ParamBytes.cons {x : UInt8} {bs : Bytes} (h1 : 0x30 ≤ x) (h2 : x ≤ 0x3B)
     (hb : ParamBytes bs) : ParamBytes (x :: bs) := by
   intro y hy
   rcases List.mem_cons.mp hy with h | h
@@ -382,7 +395,7 @@ theorem paramBytes_digits (n : Nat) : ParamBytes (digits n) := by
   obtain ⟨hd1, hd2⟩ := digits_range n b hb
   refine ⟨hd1, ?_⟩
   simp only [UInt8.le_iff_toNat_le, show ((0x39 : UInt8)).toNat = 57 from rfl,
-    show ((0x3F : UInt8)).toNat = 63 from rfl] at hd2 ⊢
+    show ((0x3B : UInt8)).toNat = 59 from rfl] at hd2 ⊢
   omega
 
 /-- `;<number>` — the shape every SGR sub-parameter takes. -/
@@ -405,9 +418,28 @@ theorem ends_csi_seq (params : Bytes) (final : UInt8) (hp : ParamBytes params)
       = (((v.step 0x1B).step 0x5B).feed params).feed [final] := by
     simp [Vt.feed, List.foldl_append]
   rw [hsplit]
-  obtain ⟨s', hs'⟩ := csi_param_feed params hb hp
+  obtain ⟨s', hs'⟩ := csi_param_feed params hb (paramBytes_le_3F hp)
   rw [show (((v.step 0x1B).step 0x5B).feed params).feed [final]
         = ((((v.step 0x1B).step 0x5B).feed params).step final) from rfl]
+  exact csi_final_step final hs' h1 h2
+
+/-- `CSI ? <params> <final>` — the private-mode shape, the one construct
+with a marker. Split out from `ends_csi_seq` because `ParamBytes` excludes
+the marker byte: here it is consumed as its own step, which is also what
+lets `Quiet` reason about *which* private mode a sequence sets. -/
+theorem ends_csi_priv_seq (params : Bytes) (final : UInt8) (hp : ParamBytes params)
+    (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E) :
+    Ends (csiB ++ (0x3F :: params) ++ [final]) := by
+  intro v hg
+  show (v.feed ([0x1B, 0x5B] ++ (0x3F :: params) ++ [final])).pstate = .ground
+  rw [show ([0x1B, 0x5B] ++ (0x3F :: params) ++ [final] : Bytes)
+        = 0x1B :: 0x5B :: 0x3F :: (params ++ [final]) from rfl]
+  rw [feed_cons, feed_cons, feed_cons]
+  obtain ⟨sm, hsm⟩ :=
+    csi_param_step 0x3F (csi_open_step (esc_step hg)) (by decide) (by decide)
+  rw [show ∀ (w : Vt), w.feed (params ++ [final]) = (w.feed params).feed [final] from
+    fun w => by simp [Vt.feed, List.foldl_append]]
+  obtain ⟨s', hs'⟩ := csi_param_feed params hsm (paramBytes_le_3F hp)
   exact csi_final_step final hs' h1 h2
 
 theorem ends_csiNum (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E) :
@@ -429,8 +461,7 @@ theorem ends_csiPriv (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
   have : csiPriv n final = csiB ++ (0x3F :: digits n) ++ [final] := by
     simp [csiPriv]
   rw [this]
-  exact ends_csi_seq _ final
-    (ParamBytes.cons (by decide) (by decide) (paramBytes_digits n)) h1 h2
+  exact ends_csi_priv_seq _ final (paramBytes_digits n) h1 h2
 
 /-- Not yet proved: the composition. See below. -/
 theorem paramBytes_sgr_subparam (n : Nat) : ParamBytes (0x3B :: digits n) :=
@@ -752,7 +783,8 @@ theorem ends_modesAnsi (v : Vt) : Ends (modesAnsi v) := by
   have e3 := Ends.ite (c := v.modes.appKeypad = true) (ends_escSeq 0x3D (by decide)) Ends.nil
   have e4 := Ends.ite (c := v.modes.cursorVisible = true) Ends.nil (hset 25 false)
   have e5 := Ends.ite (c := v.modes.bracketedPaste = true) (hset 2004 true) Ends.nil
-  have e6 := Ends.ite (c := (v.modes.mouse != 0) = true) (hset v.modes.mouse true) Ends.nil
+  have e6 := Ends.ite (c := (v.modes.mouse != 0 && v.modes.mouse != 6) = true)
+    (hset v.modes.mouse true) Ends.nil
   have e7 := Ends.ite (c := v.modes.mouseSgr = true) (hset 1006 true) Ends.nil
   have e8 := Ends.ite (c := v.modes.focusEvents = true) (hset 1004 true) Ends.nil
   have e9 := Ends.ite (c := v.modes.origin = true) (hset 6 true) Ends.nil
@@ -806,7 +838,7 @@ re-establishes the property regardless of the prefix.
 theorem paramBytes_lt_C0 {bs : Bytes} (h : ParamBytes bs) : ∀ b ∈ bs, b < 0xC0 := by
   intro b hb
   obtain ⟨-, h2⟩ := h b hb
-  simp only [UInt8.le_iff_toNat_le, show ((0x3F : UInt8)).toNat = 63 from rfl] at h2
+  simp only [UInt8.le_iff_toNat_le, show ((0x3B : UInt8)).toNat = 59 from rfl] at h2
   simp only [UInt8.lt_iff_toNat_lt, show ((0xC0 : UInt8)).toNat = 192 from rfl]
   omega
 
@@ -1158,92 +1190,490 @@ theorem cup_places_cursor {v : Vt} (row col : Nat) (hg : v.pstate = .ground)
     (by rw [hrows]; exact hry) (by rw [hcols]; exact hcx)
     (by rw [hmod]; exact ho)
 
-/-! ### Origin fidelity — DECOM stays off through a whole restore stream
+/-! ### §Replay: DECOM stays off through a whole restore stream
 
-The rung the *restore-level* cursor claim needs: if the session had DECOM
-off, the replay must too, or the final `CUP` would be read
-region-relative. `Preserves` is the same plumbing as `Ends`, over a field
-read rather than the parser state; the Vt-level work is the `org_*` layer
-in `Theorems/Vt.lean`, whose one conditional rung says only *private*
-mode 6 writes `origin`.
+The rung the restore-level cursor claim needs: a session with DECOM off
+must replay with DECOM off, or the final `CUP` would be read
+region-relative and land somewhere else entirely.
+
+"`origin` stays off" is **not** composable on its own, and the reason is
+worth recording, because it is what dictates the shape below. Fed in the
+middle of a CSI, a bare `h` byte completes `CSI ? 6 h` and turns DECOM
+*on* — so a predicate quantified over all emulator states is false even
+for a run of plain text. The composable statement bundles the parser
+state with the flag, which is exactly `Ends` and origin-off together:
 -/
 
-/-- `bs` leaves `origin` off (given it was off). -/
-def KeepsOriginOff (bs : Bytes) : Prop :=
-  ∀ v : Vt, v.modes.origin = false → (v.feed bs).modes.origin = false
+/-- From a ground parser with DECOM off, `bs` leaves both that way. -/
+def Quiet (bs : Bytes) : Prop :=
+  ∀ v : Vt, v.pstate = .ground → v.modes.origin = false →
+    ((v.feed bs).pstate = .ground ∧ (v.feed bs).modes.origin = false)
 
-theorem KeepsOriginOff.nil : KeepsOriginOff [] := fun _ h => h
+theorem Quiet.nil : Quiet [] := fun _ hg ho => ⟨hg, ho⟩
 
-theorem KeepsOriginOff.append {a b : Bytes} (ha : KeepsOriginOff a)
-    (hb : KeepsOriginOff b) : KeepsOriginOff (a ++ b) := by
-  intro v h
-  have : v.feed (a ++ b) = (v.feed a).feed b := by simp [Vt.feed, List.foldl_append]
-  rw [this]
-  exact hb _ (ha v h)
+/-- The composition law — the whole point of bundling. -/
+theorem Quiet.append {a b : Bytes} (ha : Quiet a) (hb : Quiet b) : Quiet (a ++ b) := by
+  intro v hg ho
+  rw [show v.feed (a ++ b) = (v.feed a).feed b from by simp [Vt.feed, List.foldl_append]]
+  obtain ⟨h1, h2⟩ := ha v hg ho
+  exact hb _ h1 h2
 
-theorem KeepsOriginOff.ite {c : Prop} [Decidable c] {a b : Bytes}
-    (ha : KeepsOriginOff a) (hb : KeepsOriginOff b) :
-    KeepsOriginOff (if c then a else b) := by
-  by_cases h : c <;> simp only [h, if_true] <;> assumption
+theorem Quiet.append3 {a b c : Bytes} (ha : Quiet a) (hb : Quiet b) (hc : Quiet c) :
+    Quiet (a ++ b ++ c) := (ha.append hb).append hc
 
-theorem KeepsOriginOff.flatMap {α : Type} {f : α → Bytes} {l : List α}
-    (h : ∀ a, KeepsOriginOff (f a)) : KeepsOriginOff (l.flatMap f) := by
+/-- Both branches, with the condition available: the mode replays need it
+(a guarded emit is what proves the mode number is not 6). -/
+theorem Quiet.ite {c : Prop} [Decidable c] {a b : Bytes}
+    (ha : c → Quiet a) (hb : ¬c → Quiet b) : Quiet (if c then a else b) := by
+  by_cases h : c
+  · rw [if_pos h]; exact ha h
+  · rw [if_neg h]; exact hb h
+
+theorem Quiet.flatten {l : List Bytes} (h : ∀ bs ∈ l, Quiet bs) : Quiet l.flatten := by
   induction l with
-  | nil => exact KeepsOriginOff.nil
+  | nil => exact Quiet.nil
+  | cons a as ih =>
+    rw [List.flatten_cons]
+    exact (h a (by simp)).append (ih (fun bs hbs => h bs (by simp [hbs])))
+
+theorem Quiet.flatMap {α : Type} {f : α → Bytes} {l : List α}
+    (h : ∀ a, Quiet (f a)) : Quiet (l.flatMap f) := by
+  induction l with
+  | nil => exact Quiet.nil
   | cons a as ih =>
     rw [List.flatMap_cons]
     exact (h a).append ih
 
-/-- One step keeps `origin` off unless it completes a private mode-6
-sequence. The CSI cases carry that condition; everything else is
-unconditional. -/
-theorem org_step_of_csi {v : Vt} {s : CsiState} (b : UInt8) (hs : v.pstate = .csi s)
-    (hp : (s.priv == 0x3F) = false) (h : v.modes.origin = false) :
-    (v.step b).modes.origin = false := by
+/-- Text (no ESC): the grid repaint, and the one shift-out byte. -/
+theorem quiet_ground_feed : ∀ (bs : Bytes) (v : Vt), v.pstate = .ground →
+    v.modes.origin = false → (∀ b ∈ bs, b ≠ 0x1B) →
+    ((v.feed bs).pstate = .ground ∧ (v.feed bs).modes.origin = false)
+  | [], _, hg, ho, _ => ⟨hg, ho⟩
+  | x :: xs, v, hg, ho, h => by
+    rw [feed_cons]
+    exact quiet_ground_feed xs _ (ground_step x hg (h x (by simp)))
+      (by rw [org_step_of_ground x hg]; exact ho) (fun b hb => h b (by simp [hb]))
+
+theorem Quiet.text {bs : Bytes} (h : ∀ b ∈ bs, b ≠ 0x1B) : Quiet bs :=
+  fun v hg ho => quiet_ground_feed bs v hg ho h
+
+/-! #### The CSI cases
+
+`org_stepCsi` in `Theorems/Vt.lean` needs the private marker to be absent,
+so the marker-free constructs are one lemma, and the private ones — which
+are exactly what a mode replay *is* — go through the pending-parameter
+escape hatch: a private sequence whose accumulated number is not 6 cannot
+be DECOM. -/
+
+/-- A parameter byte keeps the CSI open with the same private marker
+(`ParamBytes` excludes markers, which is what makes this true) and cannot
+touch `origin`, since no parameter byte dispatches. -/
+theorem csi_plain_step {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi s)
+    (h1 : 0x30 ≤ b) (h2 : b ≤ 0x3B) :
+    ∃ s', (v.step b).pstate = .csi s' ∧ s'.priv = s.priv := by
+  obtain ⟨hn1, hn2⟩ := u8_bounds h1 h2
+  simp only [show ((0x30 : UInt8)).toNat = 48 from rfl,
+    show ((0x3B : UInt8)).toNat = 59 from rfl] at hn1 hn2
   have hw : (v.abortUtf8 b).pstate = PState.csi s := by
-    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hs
-  have hab : (v.abortUtf8 b).modes.origin = false := by
-    rw [Zmx.Core.Vt.org_abortUtf8]; exact h
-  unfold Vt.step
-  dsimp only
-  rw [hw, Zmx.Core.Vt.org_stepCsi _ _ _ hp]
-  exact hab
-
-/-- `origin` off is preserved by any byte fed from `ground` or `esc`
-(neither state can complete a mode sequence). -/
-theorem org_step_of_ground {v : Vt} (b : UInt8) (hs : v.pstate = .ground)
-    (h : v.modes.origin = false) : (v.step b).modes.origin = false := by
-  have hw : (v.abortUtf8 b).pstate = PState.ground := by
-    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hs
-  have hab : (v.abortUtf8 b).modes.origin = false := by
-    rw [Zmx.Core.Vt.org_abortUtf8]; exact h
-  unfold Vt.step
-  dsimp only
-  rw [hw, Zmx.Core.Vt.org_stepGround]
-  exact hab
-
-theorem org_step_of_esc {v : Vt} (b : UInt8) (hs : v.pstate = .esc)
-    (h : v.modes.origin = false) : (v.step b).modes.origin = false := by
-  have hw : (v.abortUtf8 b).pstate = PState.esc := by
-    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hs
-  have hab : (v.abortUtf8 b).modes.origin = false := by
-    rw [Zmx.Core.Vt.org_abortUtf8]; exact h
+    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
   unfold Vt.step
   dsimp only
   rw [hw]
-  exact Zmx.Core.Vt.org_stepEsc b hab
+  unfold Vt.stepCsi
+  dsimp only
+  by_cases hd : (b ≥ 0x30 && b ≤ 0x39) = true
+  · rw [if_pos hd]; exact ⟨_, rfl, rfl⟩
+  by_cases hsemi : (b == 0x3B) = true
+  · rw [if_neg (by simp [hd]), if_pos hsemi]
+    exact ⟨_, rfl, Zmx.Core.Vt.priv_csiPush _ _⟩
+  by_cases hcolon : (b == 0x3A) = true
+  · rw [if_neg (by simp [hd]), if_neg (by simp [hsemi]), if_pos hcolon]
+    exact ⟨_, rfl, Zmx.Core.Vt.priv_csiPush _ _⟩
+  · -- 0x30…0x3B minus digits, `;` and `:` is empty
+    exfalso
+    have hb39 : ¬ (b.toNat ≤ 57) := by
+      intro hle
+      exact hd (by
+        simp only [Bool.and_eq_true, decide_eq_true_eq, UInt8.le_iff_toNat_le,
+          show ((0x30 : UInt8)).toNat = 48 from rfl,
+          show ((0x39 : UInt8)).toNat = 57 from rfl]
+        omega)
+    have hne3B : b.toNat ≠ 59 := by
+      intro he
+      exact hsemi (by
+        simp only [beq_iff_eq]
+        apply UInt8.toNat_inj.mp
+        simpa [show ((0x3B : UInt8)).toNat = 59 from rfl] using he)
+    have hne3A : b.toNat ≠ 58 := by
+      intro he
+      exact hcolon (by
+        simp only [beq_iff_eq]
+        apply UInt8.toNat_inj.mp
+        simpa [show ((0x3A : UInt8)).toNat = 58 from rfl] using he)
+    omega
 
-/-- A `ground` run of non-ESC bytes keeps `origin` off: the grid text.
-Note the `pstate` premise — it is load-bearing, and it is why the
-composition wants `Ends` and this claim *bundled* (see the `Quiet` note
-in specs/bigger-theorems.md): fed in the middle of a CSI, an `h` byte
-could complete a mode sequence. -/
-theorem org_feed_ground : ∀ (bs : Bytes) (v : Vt), v.pstate = .ground →
-    (∀ b ∈ bs, b ≠ 0x1B) → v.modes.origin = false → (v.feed bs).modes.origin = false
-  | [], _, _, _, ho => ho
-  | x :: xs, v, hg, h, ho => by
+/-- A whole parameter run: the marker is still absent at the end (so the
+final byte cannot dispatch a private mode), and `origin` is untouched. -/
+theorem csi_plain_feed : ∀ (bs : Bytes) {v : Vt} {s : CsiState}, v.pstate = .csi s →
+    (s.priv == 0x3F) = false → ParamBytes bs →
+    ∃ s', (v.feed bs).pstate = .csi s' ∧ (s'.priv == 0x3F) = false
+      ∧ (v.feed bs).modes.origin = v.modes.origin
+  | [], _, s, hg, hp, _ => ⟨s, hg, hp, rfl⟩
+  | x :: xs, v, s, hg, hp, h => by
+    obtain ⟨s1, hs1, hpv1⟩ := csi_plain_step x hg (h x (by simp)).1 (h x (by simp)).2
+    have hp1 : (s1.priv == 0x3F) = false := by rw [hpv1]; exact hp
+    have horg := org_step_of_csi x hg hp
     rw [feed_cons]
-    exact org_feed_ground xs _ (ground_step x hg (h x (by simp)))
-      (fun b hb => h b (by simp [hb])) (org_step_of_ground x hg ho)
+    obtain ⟨s2, hs2, hp2, ho2⟩ :=
+      csi_plain_feed xs hs1 hp1 (fun b hb => h b (by simp [hb]))
+    exact ⟨s2, hs2, hp2, ho2.trans horg⟩
+
+/-- **The `Quiet` CSI lemma.** A marker-free `CSI <params> <final>` cannot
+be DECOM whatever its final byte, because DECOM is a *private* mode and
+`ParamBytes` excludes the marker. Cursor addressing, SGR pens, the scroll
+region, the tab ruler and IRM are all instances. -/
+theorem quiet_csi_seq (params : Bytes) (final : UInt8) (hp : ParamBytes params)
+    (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E) : Quiet (csiB ++ params ++ [final]) := by
+  intro v hg ho
+  refine ⟨ends_csi_seq params final hp h1 h2 v hg, ?_⟩
+  rw [show (csiB ++ params ++ [final] : Bytes) = 0x1B :: 0x5B :: (params ++ [final]) from by
+    simp [csiB]]
+  rw [feed_cons, feed_cons]
+  have he := esc_step hg
+  have hb := csi_open_step he
+  have hob : ((v.step 0x1B).step 0x5B).modes.origin = false :=
+    org_step_of_esc 0x5B he (by rw [org_step_of_ground 0x1B hg]; exact ho)
+  rw [show ∀ (w : Vt), w.feed (params ++ [final]) = (w.feed params).feed [final] from
+    fun w => by simp [Vt.feed, List.foldl_append]]
+  obtain ⟨s', hs', hpv', hor'⟩ := csi_plain_feed params hb (by decide) hp
+  rw [show ∀ (w : Vt), w.feed [final] = w.step final from fun _ => rfl]
+  rw [org_step_of_csi final hs' hpv', hor']
+  exact hob
+
+theorem quiet_csiNum (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E) :
+    Quiet (csiNum n final) :=
+  quiet_csi_seq _ final (paramBytes_digits n) h1 h2
+
+theorem quiet_csiNum2 (a b : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
+    (h2 : final ≤ 0x7E) : Quiet (csiNum2 a b final) := by
+  rw [show csiNum2 a b final = csiB ++ (digits a ++ [0x3B] ++ digits b) ++ [final] from by
+    simp [csiNum2, List.append_assoc]]
+  exact quiet_csi_seq _ final
+    (((paramBytes_digits a).append
+      (ParamBytes.cons (by decide) (by decide) ParamBytes.nil)).append
+      (paramBytes_digits b)) h1 h2
+
+theorem quiet_penSgr (p : Pen) : Quiet (penSgr p) :=
+  quiet_csi_seq _ 0x6D (paramBytes_penSgrBody p) (by decide) (by decide)
+
+/-- The private marker records itself and nothing else. -/
+theorem csi_marker_step {v : Vt} {s : CsiState} (hg : v.pstate = .csi s)
+    (hp : (s.priv == 0x3F) = false) :
+    (v.step 0x3F).pstate = .csi { s with priv := 0x3F }
+      ∧ (v.step 0x3F).modes.origin = v.modes.origin := by
+  have hw : (v.abortUtf8 0x3F).pstate = PState.csi s := by
+    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
+  refine ⟨?_, org_step_of_csi 0x3F hg hp⟩
+  unfold Vt.step
+  dsimp only
+  rw [hw]
+  unfold Vt.stepCsi
+  dsimp only
+  rw [if_neg (by decide), if_neg (by decide), if_neg (by decide), if_pos (by decide)]
+
+/-- **A private mode replay is `Quiet` iff it is not DECOM.** The number
+is accumulated before the guard exists, so the digit run's innocence comes
+from the frame layer (`frame_csi_digits_feed`: a digit byte writes nothing
+but the accumulator), and the final byte is discharged by the
+pending-parameter hatch with `min n 65535 ≠ 6`. -/
+theorem quiet_csiPriv (n : Nat) (final : UInt8) (hn : n ≠ 6) (h1 : 0x40 ≤ final)
+    (h2 : final ≤ 0x7E) : Quiet (csiPriv n final) := by
+  intro v hg ho
+  refine ⟨ends_csiPriv n final h1 h2 v hg, ?_⟩
+  rw [show csiPriv n final = 0x1B :: 0x5B :: 0x3F :: (digits n ++ [final]) from by
+    simp [csiPriv, csiB]]
+  rw [feed_cons, feed_cons, feed_cons]
+  have he := esc_step hg
+  have hb := csi_open_step he
+  obtain ⟨hm, hmo⟩ := csi_marker_step hb (by decide)
+  have hom : (((v.step 0x1B).step 0x5B).step 0x3F).modes.origin = false := by
+    rw [hmo]
+    exact org_step_of_esc 0x5B he (by rw [org_step_of_ground 0x1B hg]; exact ho)
+  rw [show ∀ (w : Vt), w.feed (digits n ++ [final]) = (w.feed (digits n)).feed [final] from
+    fun w => by simp [Vt.feed, List.foldl_append]]
+  obtain ⟨s', hs', hcur', hhave', hpar', -⟩ := csi_digits_value n hm rfl
+  -- the digit run writes only the accumulator, so `origin` is carried by the frame
+  have hmodes : ((((v.step 0x1B).step 0x5B).step 0x3F).feed (digits n)).modes
+      = (((v.step 0x1B).step 0x5B).step 0x3F).modes :=
+    congrArg (·.2.2) (frame_csi_digits_feed (digits n) hm (digits_are_digits n))
+  rw [show ∀ (w : Vt), w.feed [final] = w.step final from fun _ => rfl]
+  rw [org_step_of_csi_pending final hs' (by rw [hpar']) hhave'
+    (by rw [hcur']; omega)]
+  rw [show ((((v.step 0x1B).step 0x5B).step 0x3F).feed (digits n)).modes.origin
+      = (((v.step 0x1B).step 0x5B).step 0x3F).modes.origin from congrArg (·.origin) hmodes]
+  exact hom
+
+/-! #### `ESC`-single, charset, and the OSC title -/
+
+theorem quiet_escSeq (b : UInt8) (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x48) :
+    Quiet (escSeq b) := by
+  intro v hg ho
+  refine ⟨ends_escSeq b hb v hg, ?_⟩
+  rw [show escSeq b = 0x1B :: [b] from by simp [escSeq, escB]]
+  rw [feed_cons, show ∀ (w : Vt), w.feed [b] = w.step b from fun _ => rfl]
+  exact org_step_of_esc b (esc_step hg) (by rw [org_step_of_ground 0x1B hg]; exact ho)
+
+theorem quiet_escCharset (i x : UInt8) (hi : i = 0x28 ∨ i = 0x29) :
+    Quiet (escCharset i x) := by
+  intro v hg ho
+  refine ⟨ends_escCharset i x hi v hg, ?_⟩
+  rw [show escCharset i x = 0x1B :: i :: [x] from by simp [escCharset, escB]]
+  rw [feed_cons, feed_cons, show ∀ (w : Vt), w.feed [x] = w.step x from fun _ => rfl]
+  rw [org_step_of_escInter x (esc_inter_step i (esc_step hg) hi)]
+  exact org_step_of_esc i (esc_step hg) (by rw [org_step_of_ground 0x1B hg]; exact ho)
+
+/-- An OSC payload byte cannot dispatch anything: the accumulator is not
+the mode machine. -/
+theorem org_feed_osc : ∀ (bs : Bytes) {v : Vt} {acc : Array UInt8},
+    v.pstate = .osc acc false → (∀ b ∈ bs, b ≠ 0x1B ∧ b ≠ 0x07) →
+    (v.feed bs).modes.origin = v.modes.origin
+  | [], _, _, _, _ => rfl
+  | x :: xs, v, acc, hg, h => by
+    obtain ⟨acc', hs⟩ := osc_accum_step x hg (h x (by simp)).1 (h x (by simp)).2
+    rw [feed_cons]
+    exact (org_feed_osc xs hs (fun b hb => h b (by simp [hb]))).trans
+      (org_step_of_osc x hg)
+
+theorem quiet_osc (payload : List Char) :
+    Quiet (escB ++ [0x5D, 0x32, 0x3B] ++ utf8s payload ++ [0x07]) := by
+  intro v hg ho
+  refine ⟨ends_osc payload v hg, ?_⟩
+  rw [show (escB ++ [0x5D, 0x32, 0x3B] ++ utf8s payload ++ [0x07] : Bytes)
+      = 0x1B :: 0x5D :: 0x32 :: 0x3B :: (utf8s payload ++ [0x07]) from by simp [escB]]
+  rw [feed_cons, feed_cons, feed_cons, feed_cons]
+  have he := esc_step hg
+  have h1 := osc_open_step he
+  obtain ⟨a2, h2⟩ := osc_accum_step 0x32 h1 (by decide) (by decide)
+  obtain ⟨a3, h3⟩ := osc_accum_step 0x3B h2 (by decide) (by decide)
+  have hoo : ((v.step 0x1B).step 0x5D).modes.origin = false :=
+    org_step_of_esc 0x5D he (by rw [org_step_of_ground 0x1B hg]; exact ho)
+  rw [show ∀ (w : Vt), w.feed (utf8s payload ++ [0x07])
+      = (w.feed (utf8s payload)).feed [0x07] from
+    fun w => by simp [Vt.feed, List.foldl_append]]
+  obtain ⟨a4, h4⟩ := osc_accum_feed (utf8s payload) h3 (utf8s_no_esc_bel payload)
+  rw [show ∀ (w : Vt), w.feed [(0x07 : UInt8)] = w.step 0x07 from fun _ => rfl]
+  rw [org_step_of_osc 0x07 h4, org_feed_osc (utf8s payload) h3 (utf8s_no_esc_bel payload),
+    org_step_of_osc 0x3B h2, org_step_of_osc 0x32 h1]
+  exact hoo
+
+/-! #### The grid repaint, and the stages of a restore stream -/
+
+theorem quiet_utf8s (cs : List Char) : Quiet (utf8s cs) :=
+  Quiet.text (utf8s_no_esc cs)
+
+theorem quiet_cellText (c : Cell) : Quiet (cellText c) := by
+  unfold cellText
+  exact (Quiet.text (fun b hb => by
+    obtain ⟨hge, -⟩ := utf8_no_ctl (safeChar c.base) (safeChar_ge c.base).1
+      (safeChar_ge c.base).2 b hb
+    intro he; rw [he] at hge; exact absurd hge (by decide))).append (quiet_utf8s c.marks)
+
+theorem quiet_rowAnsi (row : Row) (p : Pen) : Quiet (rowAnsi row p).1 := by
+  unfold rowAnsi
+  rw [← Array.foldl_toList]
+  refine invariant_foldl (fun acc => Quiet acc.1) _ ?_ row.toList ([], p) Quiet.nil
+  intro acc c hacc
+  dsimp only
+  split
+  · exact hacc.append (quiet_utf8s c.marks)
+  · dsimp only
+    split
+    · exact hacc.append (quiet_cellText c)
+    · exact (hacc.append (quiet_penSgr c.pen)).append (quiet_cellText c)
+
+theorem quiet_joinCRLF : ∀ (l : List Bytes), (∀ bs ∈ l, Quiet bs) → Quiet (joinCRLF l)
+  | [], _ => Quiet.nil
+  | [b], h => by
+    unfold joinCRLF
+    exact h b (by simp)
+  | b :: c :: bs, h => by
+    unfold joinCRLF
+    refine ((h b (by simp)).append (Quiet.text (by decide))).append ?_
+    exact quiet_joinCRLF (c :: bs) (fun x hx => h x (by simp [hx]))
+
+theorem quiet_gridAnsi (grid : Array Row) : Quiet (gridAnsi grid) := by
+  unfold gridAnsi
+  dsimp only
+  have hrows : ∀ bs ∈ (grid.foldl
+      (fun (acc : List Bytes × Pen) row =>
+        (acc.1 ++ [(rowAnsi row acc.2).1], (rowAnsi row acc.2).2))
+      (([], ({} : Pen)))).1, Quiet bs := by
+    rw [← Array.foldl_toList]
+    refine invariant_foldl (fun acc => ∀ bs ∈ acc.1, Quiet bs) _ ?_ grid.toList
+      (([], ({} : Pen))) (by intro bs hbs; simp at hbs)
+    intro acc row hacc bs hbs
+    dsimp only at hbs
+    rcases List.mem_append.mp hbs with h | h
+    · exact hacc bs h
+    · simp only [List.mem_singleton] at h
+      subst h
+      exact quiet_rowAnsi row acc.2
+  have hhome : Quiet (csiB ++ [0x48] : Bytes) := by
+    rw [show (csiB ++ [0x48] : Bytes) = csiB ++ [] ++ [0x48] from by simp]
+    exact quiet_csi_seq [] 0x48 ParamBytes.nil (by decide) (by decide)
+  exact hhome.append (quiet_joinCRLF _ hrows)
+
+theorem quiet_screensAnsi (v : Vt) : Quiet (screensAnsi v) := by
+  unfold screensAnsi
+  split
+  · exact quiet_gridAnsi _
+  · exact ((((quiet_gridAnsi _).append (quiet_penSgr _)).append
+      (quiet_csiNum2 _ _ 0x48 (by decide) (by decide))).append
+      (quiet_csiPriv 1049 0x68 (by decide) (by decide) (by decide))).append
+      (quiet_gridAnsi _)
+
+theorem quiet_regionAnsi (v : Vt) : Quiet (regionAnsi v) := by
+  unfold regionAnsi
+  exact Quiet.ite (fun _ => Quiet.nil)
+    (fun _ => quiet_csiNum2 _ _ 0x72 (by decide) (by decide))
+
+theorem quiet_tabsAnsi (v : Vt) : Quiet (tabsAnsi v) := by
+  unfold tabsAnsi
+  refine Quiet.ite (fun _ => Quiet.nil) (fun _ => ?_)
+  refine (quiet_csiNum 3 0x67 (by decide) (by decide)).append ?_
+  refine Quiet.flatMap (fun i => ?_)
+  exact (quiet_csiNum (i + 1) 0x47 (by decide) (by decide)).append
+    (quiet_escSeq 0x48 (by decide))
+
+theorem quiet_savedAnsi (v : Vt) : Quiet (savedAnsi v) := by
+  unfold savedAnsi
+  exact ((quiet_penSgr _).append (quiet_csiNum2 _ _ 0x48 (by decide) (by decide))).append
+    (quiet_escSeq 0x37 (by decide))
+
+theorem quiet_charsetAnsi (v : Vt) : Quiet (charsetAnsi v) := by
+  unfold charsetAnsi
+  refine ((Quiet.ite (fun _ => quiet_escCharset 0x28 0x30 (by decide))
+    (fun _ => quiet_escCharset 0x28 0x42 (by decide))).append
+    (Quiet.ite (fun _ => quiet_escCharset 0x29 0x30 (by decide))
+      (fun _ => quiet_escCharset 0x29 0x42 (by decide)))).append ?_
+  exact Quiet.ite (fun _ => Quiet.text (by decide)) (fun _ => Quiet.nil)
+
+theorem quiet_titleAnsi (v : Vt) : Quiet (titleAnsi v) := by
+  unfold titleAnsi
+  exact Quiet.ite (fun _ => Quiet.nil) (fun _ => quiet_osc _)
+
+/-- The mode replay is where the hypothesis lands. Every private mode the
+emitter names is a literal ≠ 6 except two: the mouse mode, which the
+emitter *guards* (mode 6 is not a mouse mode — see `modesAnsi`), and DECOM
+itself, which is emitted only when the session had it on. So a session
+with DECOM off replays with DECOM off. -/
+theorem quiet_modesAnsi (v : Vt) (ho : v.modes.origin = false) : Quiet (modesAnsi v) := by
+  unfold modesAnsi
+  dsimp only
+  have hset : ∀ (n : Nat) (on : Bool), n ≠ 6 →
+      Quiet (csiPriv n (if on then 0x68 else 0x6C)) := by
+    intro n on hn
+    by_cases h : on <;> simp only [h, if_true]
+    · exact quiet_csiPriv n 0x68 hn (by decide) (by decide)
+    · exact quiet_csiPriv n 0x6C hn (by decide) (by decide)
+  have e1 : Quiet (if v.modes.wrap then [] else csiPriv 7 (if false then 0x68 else 0x6C)) :=
+    Quiet.ite (fun _ => Quiet.nil) (fun _ => hset 7 false (by decide))
+  have e2 := Quiet.ite (c := v.modes.appCursor = true)
+    (fun _ => hset 1 true (by decide)) (fun _ => Quiet.nil)
+  have e3 := Quiet.ite (c := v.modes.appKeypad = true)
+    (fun _ => quiet_escSeq 0x3D (by decide)) (fun _ => Quiet.nil)
+  have e4 := Quiet.ite (c := v.modes.cursorVisible = true)
+    (fun _ => Quiet.nil) (fun _ => hset 25 false (by decide))
+  have e5 := Quiet.ite (c := v.modes.bracketedPaste = true)
+    (fun _ => hset 2004 true (by decide)) (fun _ => Quiet.nil)
+  -- the guarded emit: the condition itself supplies `mouse ≠ 6`
+  have e6 := Quiet.ite (c := (v.modes.mouse != 0 && v.modes.mouse != 6) = true)
+    (fun h => hset v.modes.mouse true (by
+      simp only [Bool.and_eq_true, bne_iff_ne, ne_eq] at h
+      exact h.2)) (fun _ => Quiet.nil)
+  have e7 := Quiet.ite (c := v.modes.mouseSgr = true)
+    (fun _ => hset 1006 true (by decide)) (fun _ => Quiet.nil)
+  have e8 := Quiet.ite (c := v.modes.focusEvents = true)
+    (fun _ => hset 1004 true (by decide)) (fun _ => Quiet.nil)
+  -- DECOM itself: the hypothesis is consumed exactly here, at the one emit
+  -- that would turn it on
+  have e9 : Quiet (if v.modes.origin = true then csiPriv 6 (if true = true then 0x68 else 0x6C)
+      else []) :=
+    Quiet.ite (fun h => absurd (ho.symm.trans h) (by simp)) (fun _ => Quiet.nil)
+  have e10 := Quiet.ite (c := v.modes.insert = true)
+    (fun _ => quiet_csiNum 4 0x68 (by decide) (by decide)) (fun _ => Quiet.nil)
+  exact ((((((((e1.append e2).append e3).append e4).append e5).append e6).append
+    e7).append e8).append e9).append e10
+
+/-- **§Replay: DECOM survives a restore.** Every stage of a restore body
+leaves the parser ground and DECOM off, given the session had DECOM off —
+which is what lets the final `CUP` be read as an absolute address. -/
+theorem quiet_restoreBody (v : Vt) (ho : v.modes.origin = false) :
+    Quiet (restoreBody v) := by
+  unfold restoreBody
+  exact ((((((((
+    (quiet_csiNum 0 0x6D (by decide) (by decide)).append
+    (quiet_csiNum 2 0x4A (by decide) (by decide))).append
+    (quiet_screensAnsi v)).append
+    (quiet_regionAnsi v)).append
+    (quiet_tabsAnsi v)).append
+    (quiet_savedAnsi v)).append
+    (quiet_titleAnsi v)).append
+    (quiet_modesAnsi v ho)).append
+    (quiet_charsetAnsi v)).append
+    (quiet_penSgr v.pen)
+
+/-! ### §Replay stage 3c — the cursor lands where the session had it
+
+The composition. `cup_places_cursor` says the final `CUP` delivers its two
+parameters to the cursor; `quiet_restoreBody` says the ~kilobyte of repaint
+in front of it leaves the parser ground with DECOM off, so those parameters
+are read as an absolute address; the `dims` layer says the repaint cannot
+have resized the emulator out from under the bounds. -/
+
+/-- A fresh emulator of the session's own size is `Good`, so `clampDim` is
+the identity on its dimensions. -/
+theorem init_dims (v : Vt) (h : Good v) :
+    (Vt.init v.cols v.rows).cols = v.cols ∧ (Vt.init v.cols v.rows).rows = v.rows := by
+  have hc := h.colsPos; have hcl := h.colsLe
+  have hr := h.rowsPos; have hrl := h.rowsLe
+  refine ⟨?_, ?_⟩ <;> simp only [Vt.init, clampDim] <;> omega
+
+/-- **§Replay (cursor).** Feeding a whole restore stream to a fresh
+emulator of the session's size leaves the cursor exactly where the session
+had it. `Good v` supplies the bounds (a real session always satisfies it —
+`good_init` plus §Bound's induction); `origin = false` is the documented
+gap, since under DECOM a region-relative address cannot reproduce a cursor
+parked outside the scroll region. -/
+theorem restore_cursor (v : Vt) (hgood : Good v) (ho : v.modes.origin = false) :
+    (((Vt.init v.cols v.rows).feed (restore v)).cursor.x = v.cursor.x)
+      ∧ (((Vt.init v.cols v.rows).feed (restore v)).cursor.y = v.cursor.y) := by
+  obtain ⟨hic, hir⟩ := init_dims v hgood
+  -- the stream splits at the final cursor address
+  rw [show restore v = restoreBody v ++ cursorAnsi v from rfl]
+  rw [show ∀ (w : Vt), w.feed (restoreBody v ++ cursorAnsi v)
+      = (w.feed (restoreBody v)).feed (cursorAnsi v) from
+    fun w => by simp [Vt.feed, List.foldl_append]]
+  rw [show cursorAnsi v = csiNum2 (v.cursor.y + 1) (v.cursor.x + 1) 0x48 from by
+    simp only [cursorAnsi, ho]; rfl]
+  -- the body leaves the parser ground with DECOM still off
+  obtain ⟨hpg, hpo⟩ := quiet_restoreBody v ho (Vt.init v.cols v.rows) rfl rfl
+  -- …and cannot have resized the emulator
+  have hd := dims_feed (restoreBody v) (good_init v.cols v.rows)
+  have hdc : ((Vt.init v.cols v.rows).feed (restoreBody v)).cols = v.cols := by
+    rw [show ((Vt.init v.cols v.rows).feed (restoreBody v)).cols
+        = (dims ((Vt.init v.cols v.rows).feed (restoreBody v))).1 from rfl, hd]
+    exact hic
+  have hdr : ((Vt.init v.cols v.rows).feed (restoreBody v)).rows = v.rows := by
+    rw [show ((Vt.init v.cols v.rows).feed (restoreBody v)).rows
+        = (dims ((Vt.init v.cols v.rows).feed (restoreBody v))).2 from rfl, hd]
+    exact hir
+  obtain ⟨hx, hy⟩ := cup_places_cursor (v.cursor.y + 1) (v.cursor.x + 1) hpg
+    (by omega) (by omega)
+    (by have := hgood.curY; have := hgood.rowsLe; omega)
+    (by have := hgood.curX; have := hgood.colsLe; omega)
+    (by rw [hdr]; simpa using hgood.curY)
+    (by rw [hdc]; simpa using hgood.curX) hpo
+  exact ⟨by simpa using hx, by simpa using hy⟩
 
 end Zmx.Core.Render

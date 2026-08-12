@@ -1844,6 +1844,113 @@ theorem org_stepEsc {v : Vt} (b : UInt8) (h : v.modes.origin = false) :
     | exact h
     | rfl
 
+/-! ### The private-CSI escape hatch
+
+`org_stepCsi` above needs the private marker to be *absent*, because a
+private sequence could be DECOM. That is too coarse for the one construct
+that has a marker: `csiPriv n final` emits `CSI ? <digits> <final>`, so
+every mode replay would be excluded. When the pending parameter is known,
+"is this DECOM?" can be decided instead of assumed away — and that is
+exactly the state `Render`'s private sequences reach: no pushed parameter,
+one pending accumulator, whose value is not 6.
+-/
+
+theorem priv_csiPush (s : CsiState) (sub : Bool) : (csiPush s sub).priv = s.priv := by
+  unfold csiPush
+  repeat' split
+  all_goals rfl
+
+/-- The pending parameter is what `csiFinish` pushes, so it is what
+`arg 0` reads back — and if it is not 6, no `h`/`l` final can be DECOM,
+marker or no marker. -/
+theorem org_csiFinish_pending (v : Vt) (s : CsiState) (final : UInt8)
+    (hparams : s.params = #[]) (hhave : s.haveCur = true) (hne : min s.cur 65535 ≠ 6) :
+    (v.csiFinish s final).modes.origin = v.modes.origin := by
+  have hsize : ¬ (s.params.size ≥ 16) := by rw [hparams]; simp
+  unfold Vt.csiFinish
+  dsimp only
+  rw [if_pos hhave, if_neg hsize]
+  refine org_csiDispatch _ _ _ ?_
+  rintro ⟨-, h6⟩
+  apply hne
+  rw [← h6]
+  unfold CsiState.arg
+  rw [hparams]
+  simp only [Array.push, Array.getD]
+  split <;> simp_all
+
+/-- `stepCsi` under the same knowledge: no branch can turn `origin` on. -/
+theorem org_stepCsi_pending (v : Vt) (s : CsiState) (b : UInt8)
+    (hparams : s.params = #[]) (hhave : s.haveCur = true) (hne : min s.cur 65535 ≠ 6) :
+    (v.stepCsi s b).modes.origin = v.modes.origin := by
+  unfold Vt.stepCsi
+  repeat' split
+  all_goals first
+    | rfl
+    | exact org_csiFinish_pending _ _ _ hparams hhave hne
+    | exact org_ctl _ _
+
+/-! ### The dispatcher: `origin` across one whole `Vt.step`
+
+The lemmas above are per parser state; a byte-stream proof composes
+`Vt.step` itself (`Theorems/Render.lean`). `abortUtf8` runs first inside
+`step` and touches only `u8need`/`u8acc`, so each case is its branch
+lemma followed by `org_abortUtf8`. -/
+
+theorem org_step_of_ground {v : Vt} (b : UInt8) (hg : v.pstate = .ground) :
+    (v.step b).modes.origin = v.modes.origin := by
+  have hw : (v.abortUtf8 b).pstate = PState.ground := by
+    rw [ps_abortUtf8]; exact hg
+  unfold Vt.step
+  dsimp only
+  rw [hw, org_stepGround, org_abortUtf8]
+
+/-- From `.esc` the claim has to be "stays false" rather than "unchanged":
+`RIS` resets `origin` to its default, which is `false`. -/
+theorem org_step_of_esc {v : Vt} (b : UInt8) (hg : v.pstate = .esc)
+    (h : v.modes.origin = false) : (v.step b).modes.origin = false := by
+  have hw : (v.abortUtf8 b).pstate = PState.esc := by
+    rw [ps_abortUtf8]; exact hg
+  unfold Vt.step
+  dsimp only
+  rw [hw]
+  exact org_stepEsc b (by rw [org_abortUtf8]; exact h)
+
+theorem org_step_of_escInter {v : Vt} {i : UInt8} (b : UInt8)
+    (hg : v.pstate = .escInter i) : (v.step b).modes.origin = v.modes.origin := by
+  have hw : (v.abortUtf8 b).pstate = PState.escInter i := by
+    rw [ps_abortUtf8]; exact hg
+  unfold Vt.step
+  dsimp only
+  rw [hw, org_stepEscInter, org_abortUtf8]
+
+theorem org_step_of_osc {v : Vt} {acc : Array UInt8} {e : Bool} (b : UInt8)
+    (hg : v.pstate = .osc acc e) : (v.step b).modes.origin = v.modes.origin := by
+  have hw : (v.abortUtf8 b).pstate = PState.osc acc e := by
+    rw [ps_abortUtf8]; exact hg
+  unfold Vt.step
+  dsimp only
+  rw [hw, org_stepOsc, org_abortUtf8]
+
+theorem org_step_of_csi {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi s)
+    (hp : (s.priv == 0x3F) = false) :
+    (v.step b).modes.origin = v.modes.origin := by
+  have hw : (v.abortUtf8 b).pstate = PState.csi s := by
+    rw [ps_abortUtf8]; exact hg
+  unfold Vt.step
+  dsimp only
+  rw [hw, org_stepCsi _ _ _ hp, org_abortUtf8]
+
+/-- The marker-tolerant companion of `org_step_of_csi`. -/
+theorem org_step_of_csi_pending {v : Vt} {s : CsiState} (b : UInt8)
+    (hg : v.pstate = .csi s) (hparams : s.params = #[]) (hhave : s.haveCur = true)
+    (hne : min s.cur 65535 ≠ 6) : (v.step b).modes.origin = v.modes.origin := by
+  have hw : (v.abortUtf8 b).pstate = PState.csi s := by
+    rw [ps_abortUtf8]; exact hg
+  unfold Vt.step
+  dsimp only
+  rw [hw, org_stepCsi_pending _ _ _ hparams hhave hne, org_abortUtf8]
+
 end Zmx.Core.Vt
 
 

@@ -18,12 +18,12 @@ The two halves:
 * **§Replay** (`Render.restore_quiesced`): the byte stream `restore`
   builds from that state leaves a fresh emulator quiesced.
 
-`resume_quiesced` is their composition, and `resume_screen_pending`
-records — as a theorem statement rather than as prose — exactly which
-part of the claim is still carried by tests instead of proof: that the
-replayed *cells* equal the saved cells. Keeping the gap in the same file
-as the claim is deliberate; a reader should not have to hunt THEOREMS.md
-to learn what is not yet proved.
+`resume_quiesced` is their composition, `resume_cursor` adds the cursor —
+the first *value* fidelity claim to reach the end-to-end statement — and
+what remains carried by tests rather than proof is the replayed **cells**
+equalling the saved cells (§Replay stage 3d). Keeping that gap named in
+the same file as the claim is deliberate; a reader should not have to hunt
+THEOREMS.md to learn what is not yet proved.
 -/
 
 namespace Zmx.Core
@@ -55,20 +55,20 @@ theorem resume_exact (c : Ckpt) (cols rows : Nat) (h : c.vt.pstate = .ground)
    (Render.restore_quiesced c.vt cols rows).1,
    (Render.restore_quiesced c.vt cols rows).2⟩
 
-/-- The cursor half, for the common case. `Render.cup_places_cursor` is
-the proved core; what it needs to reach a whole restore stream is the
-`Quiet` composition recorded in specs/bigger-theorems.md. Stated here so
-the shape of the finished claim is on the record next to the part that is
-done. -/
-theorem resume_cursor_shape (v : Vt.Vt) (row col : Nat)
-    (hg : (Vt.Vt.init v.cols v.rows).pstate = .ground)
-    (hrow : 1 ≤ row) (hcol : 1 ≤ col) (hr : row ≤ 65535) (hc : col ≤ 65535)
-    (hry : row - 1 < (Vt.Vt.init v.cols v.rows).rows)
-    (hcx : col - 1 < (Vt.Vt.init v.cols v.rows).cols)
-    (ho : (Vt.Vt.init v.cols v.rows).modes.origin = false) :
-    (((Vt.Vt.init v.cols v.rows).feed (Render.csiNum2 row col 0x48)).cursor.x = col - 1)
-      ∧ (((Vt.Vt.init v.cols v.rows).feed
-          (Render.csiNum2 row col 0x48)).cursor.y = row - 1) :=
-  Render.cup_places_cursor row col hg hrow hcol hr hc hry hcx ho
+/-- **§Resume (cursor).** The end-to-end cursor claim: a quiescent
+checkpoint comes back byte-identical, and replaying it into a fresh
+emulator of the session's size puts the cursor exactly where the session
+had it. `Vt.Good` is the §Bound invariant every live session satisfies;
+`origin = false` is the documented DECOM gap (`Render.restore_cursor`). -/
+theorem resume_cursor (c : Ckpt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0)
+    (ha : c.vt.u8acc = 0) (hgood : Vt.Good c.vt) (ho : c.vt.modes.origin = false) :
+    load (save c) = some c
+      ∧ (((Vt.Vt.init c.vt.cols c.vt.rows).feed
+          (Render.restore c.vt)).cursor.x = c.vt.cursor.x)
+      ∧ (((Vt.Vt.init c.vt.cols c.vt.rows).feed
+          (Render.restore c.vt)).cursor.y = c.vt.cursor.y) :=
+  ⟨Checkpoint.load_save_exact c h h8 ha,
+   (Render.restore_cursor c.vt hgood ho).1,
+   (Render.restore_cursor c.vt hgood ho).2⟩
 
 end Zmx.Core

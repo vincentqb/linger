@@ -15,18 +15,16 @@ break recorded in `SCRATCHPAD.md`, its row in `THEOREMS.md`, and
 |---|---|
 | Step 1 §Stream | ✓ done |
 | Step 2 trace lift | ✓ done |
-| Step 3 §Replay | parser half ✓ (`restore_quiesced`), digit round-trip ✓, cursor rungs ✓ (`cup_places_cursor`), origin layer ✓ — **value fidelity open** |
+| Step 3 §Replay | parser half ✓ (`restore_quiesced`), digit round-trip ✓, cursor rungs ✓, origin layer ✓, **cursor proved end to end ✓** (`restore_cursor` / `resume_cursor`) — grid value fidelity open |
 | Step 4 frames | ✓ done for leaf operations; composites/folds measured as out of reach |
 | §Resume anchor | ✓ done (`Theorems/Resume.lean`) |
 
-**Next step →** step 3c-rest: the `Quiet` composition (bundle `Ends` with
-origin-off, compose over `restoreBody`) so `restore_cursor` lands at the
-whole-stream level. Only `csiPriv` is interesting there — its own bytes
-set `priv = 0x3F`, so the state must be tracked to the final byte to show
-the pushed parameter is `min n 65535 ≠ 6`. One emitter guard falls out of
-it: `modesAnsi` emits `csiPriv v.modes.mouse`, and nothing currently
-proves `mouse ≠ 6`, so guard the emit (the `safeChar` pattern) rather than
-adding a `Good` field.
+**Next step →** step 3d, grid/pen value fidelity: the positive
+specification of what the written fields become, cell by cell (wide chars,
+combining marks, IRM off, wrap-pending at row ends). This is the last part
+of anchor A1 still carried by `Tests/Render.lean`'s fixtures rather than by
+proof. Frames buy nothing here — they say which fields an operation leaves
+alone, and this is about the fields it writes.
 
 **Decided — do not relitigate.**
 
@@ -46,15 +44,24 @@ adding a `Good` field.
 * Frames do not extend to compositions or folds (measured, not assumed).
   The footprint-as-data effect system that would fix it is larger than
   the sprawl it removes — rejected.
+* `ParamBytes` **excludes** the `<=>?` private markers (it is 0x30–0x3B,
+  not 0x30–0x3F). One predicate then serves both invariance layers: the
+  marker is what decides whether a sequence can be DECOM, so it is
+  structure, handled at the one construct that has it
+  (`ends_csi_priv_seq`), not a parameter byte. This is what avoided
+  duplicating the whole SGR parameter chain for `Quiet`.
+* The mouse-mode emit is **guarded** (`mouse != 6`) rather than backed by
+  a reachability invariant on `Vt`. `setMode` only ever stores
+  1000/1002/1003 there, so the guard is unreachable in practice — but a
+  `Good`-style field would have to be maintained by every constructor,
+  and one guarded emit is cheaper. Same trade as `safeChar`.
 
 **Open questions.**
 
 * Grid/pen value fidelity (step 3d) — needs the positive specification of
   what written fields become; frames buy nothing toward it.
 * CI on a modern-glibc box: the durable guard for the portability class
-  that bit on gpu2. Repo-level, outside this spec.
-
-Outcome of the "is there a bigger theorem?" review (2026-08-12): no
+  that bit on gpu2. Repo-level, outside this spec.Outcome of the "is there a bigger theorem?" review (2026-08-12): no
 single theorem can span the trust boundaries (that factoring is the
 design), but three composed statements are worth having. Cross-client
 commutativity was considered and rejected as FALSE (attach order
@@ -220,6 +227,80 @@ Documented gap that stays a hypothesis: under DECOM the cursor can sit
 outside the scroll region (`VPA` ignores origin mode) and a
 region-relative `CUP` cannot express that; emitting absolute first does
 not help, since setting DECOM homes the cursor.
+
+Stage 3c-rest (DONE — the cursor claim closed). `Quiet` is the bundled
+predicate the notes above predicted, and it went in as designed:
+
+```lean
+def Quiet (bs : Bytes) : Prop :=
+  ∀ v, v.pstate = .ground → v.modes.origin = false →
+    ((v.feed bs).pstate = .ground ∧ (v.feed bs).modes.origin = false)
+```
+
+closed under `++`/`ite`/`flatten`/`flatMap` exactly like `Ends`, with the
+`pstate` half of each construct discharged by the existing `ends_*` family
+and one origin argument added per construct. Two things fell out that the
+plan had only guessed at:
+
+* **`ParamBytes` was the wrong shape**, and fixing it removed the
+  duplication rather than adding to it. It admitted the `<=>?` private
+  markers (0x30–0x3F); tightened to 0x30–0x3B it means *plain parameter
+  byte*, which is what makes "a marker-free CSI cannot be DECOM" a
+  one-line consequence — and lets `Quiet` reuse `paramBytes_penSgrBody`
+  and the whole SGR chain verbatim instead of cloning it. The marker
+  became explicit structure at the one construct that has it
+  (`ends_csi_priv_seq`).
+* **The private-mode replay needed a second rung in the `org_*` layer.**
+  `org_stepCsi` assumes the marker is absent, which excludes every mode
+  replay. `org_csiFinish_pending` decides the question instead: with no
+  pushed parameter and a pending accumulator that is not 6, no `h`/`l`
+  final can be DECOM. The digit run that *builds* that accumulator is
+  covered by the frame layer (`frame_csi_digits_feed`) — the first place
+  frames paid for themselves in a proof they were not written for.
+
+`restore_cursor` then composes: `quiet_restoreBody` (parser ground, DECOM
+off after ~a kilobyte of repaint) + `cup_places_cursor` (the final CUP
+delivers its parameters) + `dims_feed` (the repaint cannot have resized
+the emulator) + `clampDim` as the identity under `Good`. Lifted to
+`Resume.resume_cursor`, which replaces the `resume_cursor_shape`
+placeholder: A1's cursor half is now proof, not fixtures.
+
+The emitter guard the plan called for landed as
+`if v.modes.mouse != 0 && v.modes.mouse != 6`.
+
+Break-verified three times, and the first two attempts are worth
+recording because they were *weak*:
+
+1. Deleting the guard outright → caught, but as a `Type mismatch` on the
+   `ite` shape. That only proves the proof mentions the guard.
+2. Appending `csiPriv 6 0x68` to `regionAnsi` → same shape-level catch.
+3. Changing `set 2004 true` to `set 6 true` in `modesAnsi` and updating
+   the proof to follow (as a maintainer would) → `decide proved that the
+   proposition 6 ≠ 6 is false`. *That* is the semantic catch: a restore
+   stream that turns DECOM on is rejected. Also changing the guard from
+   `!= 6` to `!= 7` gives `¬mouse = 7 but expected mouse ≠ 6` — the guard
+   is load-bearing for exactly DECOM and nothing else.
+
+Lesson for future break-verification: a break that changes a *term's
+shape* is not a test of the theorem, only of the proof script. Change a
+value, keep the shape, and update the proof the way a maintainer would.
+
+Also deleted: the `KeepsOriginOff` scaffolding at the end of
+Theorems/Render.lean (~85 lines), including three `org_step_of_*` lemmas
+that *shadowed* the more general ones now in Theorems/Vt.lean. Its own doc
+comment had already said the bundled predicate was what was wanted. No
+external users, so it was dead weight pointing the reader at a rejected
+abstraction.
+
+Deliberately NOT done: abstracting the ~13 stage lemmas over a
+`StreamPred` bundle so `Ends` and `Quiet` share one skeleton. Sketched it;
+the blocker is that `modesAnsi`'s DECOM branch is hypothesis-free for
+`Ends` and hypothesis-bearing for `Quiet`, so a shared stage lemma would
+have to carry `v.modes.origin = true → P (csiPriv 6 0x68)` and would
+weaken `restore_quiesced` from "no hypotheses" to "one vacuous
+hypothesis". Preserving a hypothesis-free flagship theorem is worth more
+than deduplicating thirteen 3-line proofs. Revisit only if a *third*
+layer wants the same skeleton.
 
 Stage 3d (open): grid fidelity — per-cell print round-trip induction
 (wide, marks, IRM off, wrap-pending at row ends), then §Replay itself.

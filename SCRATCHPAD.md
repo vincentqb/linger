@@ -1503,3 +1503,91 @@ checkpoint habit the skill asks for.
 
 Nothing is in flight: last increment (frames for leaf ops) is committed,
 pushed, gate green.
+
+
+
+## Step 3c-rest notes — `Quiet` and the cursor claim — 2026-08-12
+
+Landed `Quiet`, the bundled parser-state + DECOM predicate, and with it
+`restore_cursor` / `resume_cursor`. Full reasoning is in
+specs/bigger-theorems.md (stage 3c-rest); what belongs here is the
+mechanics.
+
+### Proof recipes that worked
+
+- **The `ite` combinator should take the condition.** `Quiet.ite` is
+  `(c → P a) → (¬c → P b) → P (if c then a else b)`, not
+  `P a → P b → …`. That single change is what lets a *guarded emit* prove
+  something: the mouse branch gets `h : (mouse != 0 && mouse != 6) = true`
+  and reads `mouse ≠ 6` straight out of it
+  (`simp only [Bool.and_eq_true, bne_iff_ne, ne_eq] at h; exact h.2`), and
+  the DECOM branch consumes the theorem's own hypothesis in place
+  (`fun h => absurd (ho.symm.trans h) (by simp)`) instead of rewriting the
+  goal. Prefer this shape for any new stream predicate.
+- **Projecting a frame.** `congrArg (·.2.2) (frame_csi_digits_feed …)`
+  pulls `modes` equality out of a `Frame` equality; `.1` is cols, `.2.1`
+  is rows. This is how the digit run inside a *private* CSI was proved
+  origin-preserving without a new `org_*` lemma — frames covering a proof
+  they were not written for.
+- **Splitting a feed** is always
+  `rw [show ∀ (w : Vt), w.feed (a ++ b) = (w.feed a).feed b from fun w => by
+  simp [Vt.feed, List.foldl_append]]`, and `w.feed [b] = w.step b` is
+  `rfl`. Stating them as `∀ w` and rewriting is far less brittle than
+  naming the intermediate term, which gets long fast.
+
+### New traps
+
+- **`absurd`/`False.elim` in a branch breaks implicit inference.**
+  `have e9 := Quiet.ite (c := …) (fun h => absurd …) (fun _ => Quiet.nil)`
+  fails with "don't know how to synthesize implicit argument `a`" — the
+  then-branch bytes are never mentioned. Annotate the `have` with the full
+  `Quiet (if … then … else …)` type, spelled the way Lean elaborates it
+  (`if c = true then …`, `if true = true then 0x68 else 0x6C`).
+- **`rw [show (P = True/False) from …]` on an `ite` condition** →
+  "motive is not type correct" (same family as the `CsiState.arg` trap).
+  Don't rewrite the condition; take it as an argument (above).
+- **`|>.field` inside a type ascription doesn't parse**:
+  `have h : x |>.modes = y := …` gives "unexpected token '='; expected
+  ':=' or '|'". Parenthesise: `(x).modes`.
+- **A tightened definition can *remove* work.** `ParamBytes` at 0x30–0x3F
+  admitted the private marker, which forced a second parameter predicate
+  for `Quiet` and with it a clone of the whole SGR chain
+  (`sgrAttr`/`sgrColor`/`penSgrBody`). Tightening it to 0x30–0x3B made one
+  predicate serve both layers; the only casualties were two call sites
+  that pass a marker, which now go through `ends_csi_priv_seq`. Look for
+  this shape before duplicating a predicate: the duplicate is often a
+  symptom of the original being too loose.
+
+### Break-verification: shape breaks are not tests
+
+Three breaks, two of them weak, recorded because the failure mode is
+easy to repeat:
+
+| break | result | verdict |
+|---|---|---|
+| delete the `mouse != 6` guard | `Type mismatch` on the `ite` shape | weak — only proves the proof mentions the guard |
+| append `csiPriv 6 0x68` to `regionAnsi` | `Type mismatch`, term shape changed | weak, same reason |
+| `set 2004 true` → `set 6 true` in `modesAnsi`, proof updated to follow | `decide proved that the proposition 6 ≠ 6 is false` | **real** — a restore stream that turns DECOM on is rejected |
+| guard `!= 6` → `!= 7` (shape preserved) | `¬mouse = 7 but expected mouse ≠ 6` | **real** — the guard is load-bearing for exactly DECOM |
+
+Rule: change a *value*, keep the term's shape, and update the proof the
+way a maintainer following the emitter would. A break that changes the
+shape tests the proof script, not the theorem.
+
+### Negative result: don't abstract the stage lemmas yet
+
+Sketched a `StreamPred` bundle (P, nil, append) so `Ends` and `Quiet`
+would share one set of ~13 restore-stage lemmas. Blocker: `modesAnsi`'s
+DECOM branch is hypothesis-free for `Ends` and hypothesis-bearing for
+`Quiet`, so the shared lemma needs
+`v.modes.origin = true → P (csiPriv 6 0x68)`, which turns
+`restore_quiesced` from "no hypotheses" into "one vacuous hypothesis".
+Not worth it to dedupe thirteen 3-line proofs. Revisit if a third layer
+wants the same skeleton.
+
+Also deleted `KeepsOriginOff` (~85 lines at the end of
+Theorems/Render.lean): dead, and three of its lemmas *shadowed* the more
+general `org_step_of_*` now in Theorems/Vt.lean. Its own comment already
+said the bundled predicate was what was wanted.
+
+Gate green, no sorry, `./lake build Zmx Theorems Tests linger` clean.

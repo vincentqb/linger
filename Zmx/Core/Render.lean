@@ -166,7 +166,14 @@ keeps working after reattach. DECOM and IRM are included (§Replay
 fix 4): origin mode changes how the final cursor address must be
 computed, and insert mode would corrupt the *next* app output if lost.
 Emitted after the repaint (insert mode during the repaint would shift
-cells) and before the final cursor (setting DECOM homes the cursor). -/
+cells) and before the final cursor (setting DECOM homes the cursor).
+
+The `mouse != 6` guard looks redundant — `setMode` only ever stores
+1000/1002/1003 in that field — but it is what makes §Replay's DECOM claim
+(`quiet_modesAnsi`) provable *from the emitter alone*: private mode 6 is
+DECOM, so replaying a `mouse` of 6 would silently turn origin mode on.
+The alternative was a reachability invariant on `Vt`; one guarded emit is
+cheaper than a field every constructor must maintain. -/
 def modesAnsi (v : Vt) : Bytes :=
   let set := fun (n : Nat) (on : Bool) => csiPriv n (if on then 0x68 else 0x6C)
   (if v.modes.wrap then [] else set 7 false)
@@ -174,7 +181,7 @@ def modesAnsi (v : Vt) : Bytes :=
     ++ (if v.modes.appKeypad then escSeq 0x3D else [])
     ++ (if v.modes.cursorVisible then [] else set 25 false)
     ++ (if v.modes.bracketedPaste then set 2004 true else [])
-    ++ (if v.modes.mouse != 0 then set v.modes.mouse true else [])
+    ++ (if v.modes.mouse != 0 && v.modes.mouse != 6 then set v.modes.mouse true else [])
     ++ (if v.modes.mouseSgr then set 1006 true else [])
     ++ (if v.modes.focusEvents then set 1004 true else [])
     ++ (if v.modes.origin then set 6 true else [])
