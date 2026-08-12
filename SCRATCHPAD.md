@@ -903,3 +903,30 @@ crosses a network (unix sockets only), remote = "run the same CLI over
 any exec-a-command transport + parse porcelain". The ssh-shaped parts
 are the `name@host` syntax and the PATH assumption. Verdict: thin, and
 thinner after this reversal.
+
+
+
+## recipes/ folder — 2026-08-12
+
+Recipes had accumulated in the README (fzf picker, kitty tabs,
+reconnect loop, ssh_config snippet) and it had crept from 59 to ~130
+lines. Extracted to `recipes/`, one file per recipe, README back to 83:
+lz.fish / lzo.fish / lza.fish / ssh_config + recipes/README.md (install
+= `cp` into ~/.config/fish/functions/ — fish autoloads one function per
+file, so the file layout IS the install format; all three checked with
+`fish -n`). Each file carries its own caveats as comments (lza's ssh
+exit-255 blind spot, lzo's allow_remote_control, ssh_config's
+override-precedence note), so copying a recipe copies its warnings.
+
+Transport transparency (user asked "can we transparently use ssh or
+mosh?"): answered in recipes/README.md. Interactive session layer is
+transport-agnostic by construction (unix socket on the host; nothing
+tunnelled) — ssh, mosh, anything that execs a remote command with a
+tty. Two deliberately ssh-shaped spots in the binary, both zero-cost to
+mosh users: `attach name@host` execs ssh (the universal default; a
+recipe swaps one line for mosh), and `ls -r` MUST use an
+exec-and-capture transport, which mosh is not (screen-sync protocol) —
+and mosh bootstraps over ssh anyway, so mosh users always have ssh
+reachability. If demand emerges for the name@host shorthand itself
+picking mosh, the principled extension is a GIT_SSH-style override —
+noted, not built (argv shapes differ; PLAN says no customization).

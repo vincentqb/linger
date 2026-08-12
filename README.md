@@ -42,99 +42,33 @@ lzmx attach           # attach the default session ("main")
 | `kill` / `detach <name>` | end / disconnect |
 | `get` `set` `unset` `clear <name>` | labels (`k=v`) |
 
-## Picking with fzf (optional)
+## Recipes
 
-`lzmx` never calls `fzf`. If you have `fzf` installed, a one-line shell
-function turns the overview into an interactive picker. In fish:
+`lzmx` never drives fzf, your terminal, or your transport; one-file
+recipes in [`recipes/`](recipes/) do the composing (fish functions —
+`cp` them into `~/.config/fish/functions/`):
 
-```fish
-function lz --description 'pick a session and attach'
-    set -l name (lzmx ls -r --porcelain | awk -F '\t' '$1=="name"{print $2}' | fzf)
-    and lzmx attach $name
-end
-```
+| | |
+|---|---|
+| `lz.fish` | fuzzy-pick a session (fzf) and attach, local or remote |
+| `lzo.fish` | every session on a host as kitty tabs, one shot |
+| `lza.fish` | attach that auto-reconnects while a link flaps |
+| `ssh_config` | dead links declared in ~15 s — no more `Enter ~ .` |
 
-It lists the session names — local ones, plus (with a
-`~/.config/lzmx/remotes` file) remote ones tagged `name@host` — lets you
-pick one, and hands it to `lzmx attach`, which attaches locally or
-`ssh`-es to the host as needed. Pulling names from `--porcelain` means
-an empty list offers nothing to pick (no stray "no sessions" row). Drop
-`-r` for a faster, local-only picker. To create a new session, just
-`lzmx attach <newname>`.
-
-## All tabs back in one shot (kitty, optional)
-
-One kitty tab per session on a host — live *and* resumable, so it
-recreates the whole workspace after a reboot of either machine (laptop
-rebooted: the daemons never died, tabs reattach; host rebooted: attach
-restores each session from its checkpoint). Needs
-`allow_remote_control yes` in kitty.conf. In fish:
-
-```fish
-function lzo --description 'open every session on HOST as a kitty tab'
-    set -l host $argv[1]
-    for name in (ssh -o BatchMode=yes -o ConnectTimeout=3 -- $host \
-                     lzmx ls --porcelain | awk -F '\t' '$1=="name"{print $2}')
-        kitten @ launch --type=tab --tab-title "$name@$host" -- \
-            ssh -t -- $host lzmx attach $name
-    end
-end
-```
-
-The same shape works in any terminal with an "open a tab running a
-command" API; `lzmx` itself never drives the terminal.
-
-## Flaky links (VPN drops, roaming)
-
-A dropped link cannot hurt a session — the remote side just detaches,
-and reattach restores the screen. lzmx sets no transport policy on
-`attach name@host` (your `~/.ssh/config` rules the connection), so pick
-your comfort level:
-
-```
-# ~/.ssh/config — declare a dead link in ~15 s instead of hanging
-# (no more Enter ~ .)
-Host *
-    ServerAliveInterval 5
-    ServerAliveCountMax 3
-```
-
-Aggressive values are safe with lzmx even where they would be annoying
-for plain ssh: losing the connection loses nothing.
-
-Auto-reconnect, autossh style (fish):
-
-```fish
-function lza --description 'attach, reconnecting while the link flaps'
-    while true
-        lzmx attach $argv[1]              # name@host
-        test $status -eq 255; or break    # 255 = ssh transport error
-        sleep 2
-    end
-end
-```
-
-ssh reserves exit 255 for its own failures, so this retries only on
-transport death. One documented blind spot: a remote shell exiting 255
-is indistinguishable (ssh's exit contract) and would respawn — that
-ambiguity is why reconnect policy lives in a recipe, not the binary.
-
-Or solve roaming outright: `mosh host -- lzmx attach work`. mosh keeps
-the connection alive across IP changes and sleep with no reconnect at
-all; lzmx adds detach and reboot-resume underneath. They compose
-because lzmx never cares what carries its bytes.
+Transport is yours: `attach name@host` execs ssh, and mosh composes as
+`mosh host -- lzmx attach name` (roaming, instant resume) — the wire
+protocol never crosses the network, so any carrier works. Details in
+`recipes/README.md`.
 
 ## Notes
 
 - Reboot-resume is automatic (periodic checkpoint + restore on attach).
 - `attach` needs a terminal; bare `lzmx`/`ls`, `run`, `send` are scriptable.
-- An unreachable or mid-reboot host simply drops out of `ls -r` (each
-  host is given a few seconds, then skipped); `attach name@host` fails
-  with ssh's own error. Once the host is back, its sessions list as
-  `resumable` and attach restores them.
-- A VPN/wifi drop mid-attach cannot hurt the session — it detaches and
-  reattach restores it. See "Flaky links" for the client-side comfort
-  options (ssh keepalives, reconnect loop, mosh).
+- An unreachable or mid-reboot host drops out of `ls -r` after a few
+  seconds; `attach name@host` fails with ssh's own error. Once the host
+  is back its sessions list as `resumable` and attach restores them.
+- A dropped link cannot hurt a session — it detaches; reattach restores
+  the screen (see `recipes/` for the client-side comfort).
 - Detach key `Ctrl-\`; `LZMX_NO_DETACH_KEY=1` disables it.
 - Remotes: `-r host,host` for one run, `~/.config/lzmx/remotes` to
   persist (duplicates are an error). Hosts need `lzmx` on their `$PATH`.

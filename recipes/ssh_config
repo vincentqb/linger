@@ -1,0 +1,13 @@
+# Paste into ~/.ssh/config (or scope to a Host block for your lzmx
+# hosts). Declares a dead link within ~15 s instead of hanging until a
+# manual `Enter ~ .`. Values this aggressive would be annoying for
+# plain ssh — with lzmx on the other end they are free: disconnection
+# just detaches the session, and reattach restores the screen.
+#
+# lzmx deliberately sets no such policy on the ssh it execs for
+# `attach name@host`: a command-line -o would silently override this
+# file, and the transport's patience is your call, not the session
+# manager's.
+Host *
+    ServerAliveInterval 5
+    ServerAliveCountMax 3
