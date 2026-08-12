@@ -930,3 +930,47 @@ and mosh bootstraps over ssh anyway, so mosh users always have ssh
 reachability. If demand emerges for the name@host shorthand itself
 picking mosh, the principled extension is a GIT_SSH-style override —
 noted, not built (argv shapes differ; PLAN says no customization).
+
+
+
+## Rename: lzmx → linger — 2026-08-12
+
+Naming rounds settled on `linger` (real word = the product's one idea:
+sessions linger after you leave; systemd's own term for user processes
+surviving logout — `loginctl enable-linger`; collision-checked clean in
+CLI space, while `lem` died to the Common Lisp editor + the rems-project
+spec language, and the -mux family was rejected for advertising
+multiplexing we deliberately don't do). Lean lives in the tagline
+("Lean sessions" — prover + doctrine), not the binary name.
+
+Renamed: lake exe target (`lake build linger`), all user-facing strings
+(usage/version/error prefixes), env vars LZMX_*→LINGER_* (DIR,
+NO_DETACH_KEY, SESSION, and test-only TEST_DIR/REMOTE — hard cutover,
+no compat reads), default dirs (/tmp/linger-$UID, $XDG_RUNTIME_DIR/
+linger, ~/.local/state/linger/<host>, ~/.config/linger/remotes), the
+self-invocation argv (`ssh host linger ls --porcelain`, remote attach
+exec), tests (incl. fake-ssh + argv regexes), README (title now
+"linger" + tagline), recipes (function/file names lz/lzo/lza KEPT —
+user-editable, zero churn), AGENTS.md title.
+
+Deliberately NOT renamed:
+- Checkpoint magic bytes "LZMX": frozen on-disk format identifier
+  (wire-tag analog); changing it would orphan every checkpoint.
+  Comment added at the def.
+- `Zmx` module namespace + repo dir/name: internal lineage,
+  implementation detail; rename is available as a later cosmetic pass.
+- SCRATCHPAD history + specs/archive: append-only records.
+
+Migration notes (small fleet, hard cutover):
+- Old-name dirs (/tmp/lzmx-*, ~/.local/state/lzmx/*) are invisible to
+  the new binary: live pre-rename sessions stay reachable only via the
+  old lzmx binary until they end; old checkpoints don't list. Fleet is
+  dev box + gpu2/3 with throwaway sessions — acceptable, told user.
+- Compat symlink lzmx→linger installed alongside the real one in
+  ~/.local/bin (covers anything still invoking the old name over ssh
+  during transition). `__daemon` re-exec uses IO.appPath, so it never
+  depended on the name.
+- sed gotcha: `\blzmx\b` misses `\r\nlzmx:` inside Lean string
+  literals (the preceding backslash-n keeps it a word char in fish's
+  quoting of the pattern? — either way 4 literals needed manual
+  str_replace). Grep-audit after any bulk rename.

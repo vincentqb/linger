@@ -1,14 +1,14 @@
-"""Remote-over-ssh e2e with a fake `ssh` on PATH. `lzmx -r <hosts>`
+"""Remote-over-ssh e2e with a fake `ssh` on PATH. `linger -r <hosts>`
 folds each host's sessions into the local overview (by running `ssh
-host lzmx ls --porcelain`), tolerates an unreachable host, and refuses a
-duplicate host. `lzmx attach name@host` execs `ssh -t host lzmx attach
+host linger ls --porcelain`), tolerates an unreachable host, and refuses a
+duplicate host. `linger attach name@host` execs `ssh -t host linger attach
 name`. Hostile remote output must not inject a path or escape bytes into
 the local listing."""
 import os, pty, time, select, subprocess, sys, fcntl, struct, termios, pathlib, re
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-LZMX = str(ROOT / '.lake/build/bin/lzmx')
-LDIR = os.environ.get('LZMX_TEST_DIR', '/tmp/lzmx-remote-' + str(os.getpid()))
+LINGER = str(ROOT / '.lake/build/bin/linger')
+LDIR = os.environ.get('LINGER_TEST_DIR', '/tmp/linger-remote-' + str(os.getpid()))
 BIN = os.path.join(LDIR, 'fakebin')
 os.makedirs(BIN, exist_ok=True)
 LOG = os.path.join(LDIR, 'ssh.log')
@@ -42,7 +42,7 @@ with open(os.path.join(BIN, 'ssh'), 'w') as f:
     f.write(FAKE_SSH)
 os.chmod(os.path.join(BIN, 'ssh'), 0o755)
 
-ENV = dict(os.environ, LZMX_DIR=LDIR, SHELL='/bin/sh',
+ENV = dict(os.environ, LINGER_DIR=LDIR, SHELL='/bin/sh',
            PATH=BIN + os.pathsep + os.environ['PATH'])
 
 
@@ -72,21 +72,21 @@ def expect(cond, name):
 
 
 fails = 0
-subprocess.run([LZMX, 'run', 'localsess', 'echo local-content'], env=ENV)
+subprocess.run([LINGER, 'run', 'localsess', 'echo local-content'], env=ENV)
 time.sleep(1.0)
 
 # a duplicate host is a hard error, reported before anything runs (no tty
 # needed — argv validation precedes the connection attempts)
-dup = subprocess.run([LZMX, '-r', 'dev-a,dev-a'], env=ENV,
+dup = subprocess.run([LINGER, '-r', 'dev-a,dev-a'], env=ENV,
                      stdin=subprocess.DEVNULL, capture_output=True, text=True)
 fails += expect(dup.returncode != 0 and 'more than once' in dup.stderr
                 and 'dev-a' in dup.stderr, 'duplicate -r host errors loudly')
 
 # the overview folds in the remote host's sessions (plain stdout, no tty)
-r = subprocess.run([LZMX, '-r', 'dev-a,dead'], env=ENV, stdin=subprocess.DEVNULL,
+r = subprocess.run([LINGER, '-r', 'dev-a,dead'], env=ENV, stdin=subprocess.DEVNULL,
                    capture_output=True, text=True, timeout=15)
 out = r.stdout
-fails += expect(r.returncode == 0, '`lzmx -r` exits cleanly')
+fails += expect(r.returncode == 0, '`linger -r` exits cleanly')
 fails += expect('localsess' in out, 'local session listed alongside remotes')
 fails += expect('remote-work@dev-a' in out, 'remote session listed with @host tag')
 fails += expect('_._.._etc_passwd' in out and '/etc/passwd' not in out,
@@ -95,15 +95,15 @@ fails += expect('\x1b' not in out,
                 'remote escape sequences are scrubbed from the listing')
 fails += expect('@dead' not in out, 'unreachable host contributes no rows')
 
-# `attach name@host` execs `ssh -t host lzmx attach name` (needs a tty)
+# `attach name@host` execs `ssh -t host linger attach name` (needs a tty)
 pid, fd = pty.fork()
 if pid == 0:
-    os.execve(LZMX, [LZMX, 'attach', 'remote-work@dev-a'], ENV)
+    os.execve(LINGER, [LINGER, 'attach', 'remote-work@dev-a'], ENV)
 fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 100, 0, 0))
 attached = plain(drain(fd, 2.0))
 log = open(LOG).read()
 fails += expect('FAKE-ATTACH-OK' in attached, 'attach name@host reaches the remote attach')
-fails += expect(re.search(r'-t (-o \S+ )*(--\s+)?dev-a lzmx attach remote-work', log) is not None,
+fails += expect(re.search(r'-t (-o \S+ )*(--\s+)?dev-a linger attach remote-work', log) is not None,
                 f'remote attach ssh argv correct ({[l for l in log.splitlines() if "attach" in l]})')
 try:
     os.kill(pid, 9)
@@ -115,11 +115,11 @@ except OSError:
 # and attaches `work` (session names never contain @ — sanitize reserves it)
 pid, fd = pty.fork()
 if pid == 0:
-    os.execve(LZMX, [LZMX, 'attach', 'remote-work@me@dev-a'], ENV)
+    os.execve(LINGER, [LINGER, 'attach', 'remote-work@me@dev-a'], ENV)
 fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 100, 0, 0))
 plain(drain(fd, 2.0))
 log = open(LOG).read()
-fails += expect(re.search(r'-t (-o \S+ )*-- me@dev-a lzmx attach remote-work', log) is not None,
+fails += expect(re.search(r'-t (-o \S+ )*-- me@dev-a linger attach remote-work', log) is not None,
                 f'user@host remote round-trips via first-@ split '
                 f'({[l for l in log.splitlines() if "me@dev-a" in l]})')
 try:
@@ -130,7 +130,7 @@ except OSError:
 # a malformed target (empty host) is a loud error, not a silent local session
 pid, fd = pty.fork()
 if pid == 0:
-    os.execve(LZMX, [LZMX, 'attach', 'work@'], ENV)
+    os.execve(LINGER, [LINGER, 'attach', 'work@'], ENV)
 fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 100, 0, 0))
 out = plain(drain(fd, 1.5))
 fails += expect('malformed' in out,
@@ -140,6 +140,6 @@ try:
 except OSError:
     pass
 
-subprocess.run([LZMX, 'kill', 'localsess'], env=ENV)
+subprocess.run([LINGER, 'kill', 'localsess'], env=ENV)
 print('FAILURES:', fails)
 sys.exit(1 if fails else 0)

@@ -3,15 +3,15 @@
 the old screen and labels and starts a fresh shell in the saved cwd."""
 import os, pty, time, select, subprocess, sys, signal, fcntl, struct, termios, pathlib
 
-LZMX = str(pathlib.Path(__file__).resolve().parent.parent / '.lake/build/bin/lzmx')
-LDIR = os.environ.get('LZMX_TEST_DIR', '/tmp/lzmx-resume-' + str(os.getpid()))
+LINGER = str(pathlib.Path(__file__).resolve().parent.parent / '.lake/build/bin/linger')
+LDIR = os.environ.get('LINGER_TEST_DIR', '/tmp/linger-resume-' + str(os.getpid()))
 os.makedirs(LDIR, exist_ok=True)
-ENV = dict(os.environ, LZMX_DIR=LDIR, SHELL='/bin/sh')
+ENV = dict(os.environ, LINGER_DIR=LDIR, SHELL='/bin/sh')
 
 def spawn_attach(name):
     pid, fd = pty.fork()
     if pid == 0:
-        os.execve(LZMX, [LZMX, 'attach', name], ENV)
+        os.execve(LINGER, [LINGER, 'attach', name], ENV)
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 0, 0))
     return pid, fd
 
@@ -41,7 +41,7 @@ pid, fd = spawn_attach('boot')
 time.sleep(0.8)
 os.write(fd, b'cd /tmp && echo survives-the-reboot-$((40+2))\r')
 drain(fd, 1.5)
-subprocess.run([LZMX, 'set', 'boot', 'k=v'], env=ENV)
+subprocess.run([LINGER, 'set', 'boot', 'k=v'], env=ENV)
 
 # detach (last attached client): the machine checkpoints here
 os.write(fd, b'\x1c')
@@ -57,7 +57,7 @@ dpid = None
 for c in cands:
     try:
         env = open(f'/proc/{c}/environ', 'rb').read().decode(errors='replace')
-        if f'LZMX_DIR={LDIR}' in env:
+        if f'LINGER_DIR={LDIR}' in env:
             dpid = int(c)
             break
     except OSError:
@@ -69,7 +69,7 @@ for f in os.listdir(LDIR):
     if f.endswith('.sock'):
         os.unlink(os.path.join(LDIR, f))
 
-ls = subprocess.run([LZMX, 'list'], env=ENV, capture_output=True, text=True).stdout
+ls = subprocess.run([LINGER, 'list'], env=ENV, capture_output=True, text=True).stdout
 fails += expect('resumable' in ls and 'boot' in ls, 'killed session listed as resumable')
 
 # attach again: fresh shell, restored screen, restored labels, saved cwd
@@ -80,7 +80,7 @@ fails += expect(b'survives-the-reboot-42' in out, 'reattach replays pre-reboot s
 os.write(fd2, b'pwd\r')
 out = drain(fd2, 1.5)
 fails += expect(b'/tmp' in out, 'fresh shell starts in the saved cwd')
-labels = subprocess.run([LZMX, 'get', 'boot'], env=ENV, capture_output=True, text=True).stdout
+labels = subprocess.run([LINGER, 'get', 'boot'], env=ENV, capture_output=True, text=True).stdout
 fails += expect('k=v' in labels, 'labels survive the reboot')
 
 # clean exit drops the checkpoint
@@ -91,12 +91,12 @@ fails += expect(ckpts == [], f'clean exit drops the checkpoint ({ckpts})')
 
 # corrupt checkpoint: daemon must start fresh, not crash
 with open(os.path.join(LDIR, 'corrupt.ckpt'), 'wb') as f:
-    f.write(b'LZMX\x01' + os.urandom(200))
-r = subprocess.run([LZMX, 'run', 'corrupt', 'echo fresh-start-ok'], env=ENV)
+    f.write(b'LINGER\x01' + os.urandom(200))
+r = subprocess.run([LINGER, 'run', 'corrupt', 'echo fresh-start-ok'], env=ENV)
 time.sleep(0.8)
-hist = subprocess.run([LZMX, 'history', 'corrupt'], env=ENV, capture_output=True, text=True).stdout
+hist = subprocess.run([LINGER, 'history', 'corrupt'], env=ENV, capture_output=True, text=True).stdout
 fails += expect('fresh-start-ok' in hist, 'corrupt checkpoint: daemon starts fresh, no crash')
-subprocess.run([LZMX, 'kill', 'corrupt'], env=ENV)
+subprocess.run([LINGER, 'kill', 'corrupt'], env=ENV)
 
 print('FAILURES:', fails)
 sys.exit(1 if fails else 0)

@@ -3,7 +3,7 @@ import Zmx.Core.Vt
 
 Pure functions from a `Vt` snapshot to the byte stream that reproduces
 it on a real terminal: `restore` (what a re-attaching client is sent)
-and `history` (scrollback dump for `lzmx history`).
+and `history` (scrollback dump for `linger history`).
 
 Everything is `String`-assembled then UTF-8'd once at the end; the
 runtime writes the bytes verbatim. No IO, no state.
@@ -148,7 +148,7 @@ def rowText (row : Row) : String :=
     (fun (acc : String) c => if c.width == 0 then acc else acc ++ cellText c) ""
   (s.dropEndWhile (· == ' ')).toString
 
-/-- Scrollback + screen as text, oldest first; for `lzmx history`. -/
+/-- Scrollback + screen as text, oldest first; for `linger history`. -/
 def history (v : Vt) (withAnsi : Bool) : ByteArray :=
   let rows := v.sb.toList ++ v.grid.toList
   if withAnsi then

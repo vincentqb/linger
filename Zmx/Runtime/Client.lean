@@ -9,7 +9,7 @@ to stdout, resize on terminal size change (checked each poll round —
 no signal handling needed), leave on `exited`/EOF. The daemon's
 restore blob arrives as ordinary output.
 
-Detach key: `ctrl-\` (0x1C), disabled by `LZMX_NO_DETACH_KEY`.
+Detach key: `ctrl-\` (0x1C), disabled by `LINGER_NO_DETACH_KEY`.
 -/
 
 namespace Zmx.Runtime.Client
@@ -59,7 +59,7 @@ partial def drainReplies (fd : UInt32) (untilDone : Bool) : IO (Option UInt32) :
           if untilDone then go := false
         | .err msg =>
           let msgTxt := String.fromUTF8? (ByteArray.mk msg.toArray) |>.getD "error"
-          IO.eprintln s!"lzmx: {msgTxt}"
+          IO.eprintln s!"linger: {msgTxt}"
           go := false
         | _ => pure ()
   return result
@@ -98,7 +98,7 @@ mirrors, keyboard is not forwarded (abduco's `-r`), detach key still
 works. Returns the child's exit status when the session ended, none
 when we detached. -/
 partial def attach (fd : UInt32) (readOnly : Bool := false) : IO (Option UInt32) := do
-  let detachEnabled := (← IO.getEnv "LZMX_NO_DETACH_KEY").isNone
+  let detachEnabled := (← IO.getEnv "LINGER_NO_DETACH_KEY").isNone
   let (cols, rows) ← winsizeGet stdinFd
   if readOnly then
     sendMsg fd (.attach 0 0)
@@ -132,7 +132,7 @@ partial def attach (fd : UInt32) (readOnly : Bool := false) : IO (Option UInt32)
         match ← read fd 65536 with
         | none =>
           leaving := true
-          IO.eprintln "\r\nlzmx: session closed"
+          IO.eprintln "\r\nlinger: session closed"
         | some bs =>
           if !bs.isEmpty then
             let (dec', msgs) := dec.feed bs.toList

@@ -43,5 +43,5 @@ target is running them. Same import-from-root convention. -/
 lean_lib Tests where
 
 @[default_target]
-lean_exe lzmx where
+lean_exe linger where
   root := `Main

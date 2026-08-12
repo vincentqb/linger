@@ -15,7 +15,7 @@ record even while open.
 | §Detach | sessions outlive clients (the zmx decoupling) | zero-client session still advances; detach/detach-all don't touch the screen (only permitted effect: a checkpoint) | Theorems/Session.lean |
 | §Restore | reboot-resume vs corrupt/stale state files | `load (save s) = some s` (parser state quiesced); `load` total on arbitrary bytes | Theorems/Checkpoint.lean |
 | §Name | user-chosen names vs filesystem paths | sanitized names can't escape the socket dir (no `/`, `..`-prefix, NUL, empty); `@` reserved for `name@host` | Theorems/Name.lean |
-| §Remote | trusting `ssh host lzmx ls` output vs local listing safety | parser total, garbage-tolerant; §Name carries through; display fields scrubbed of control bytes | Theorems/Remote.lean |
+| §Remote | trusting `ssh host linger ls` output vs local listing safety | parser total, garbage-tolerant; §Name carries through; display fields scrubbed of control bytes | Theorems/Remote.lean |
 | §Isolate | many clients on one session vs per-client framing | `.bytes id` leaves every *other* client's record (and decoder) bit-identical | Theorems/Session.lean |
 | §Row | a list row's identity vs an unreliable `info` reply | a row's name is the sanitized socket filename alone; the reply can neither change it nor smuggle a second one in | Theorems/Listing.lean |
 | §Claim | one session name vs many daemons racing for it | *given* the kernel grants ≤1 `flock` holder, ≤1 daemon ever unlinks or binds that name | Theorems/Claim.lean |
@@ -101,7 +101,7 @@ trusted for; `Guarded` (only the holder unlinks or binds) is ours and is
 proved. So the theorem is "≤1 owner per name, given ≤1 lock holder",
 and the assumption is one reviewable line rather than an unstated hope.
 An advisory lock is still a theorem-grade guarantee over the population
-that cooperates — every process claiming a session name is an `lzmx`
+that cooperates — every process claiming a session name is an `linger`
 daemon — and §Claim says so precisely, including what it does not
 cover.
 
@@ -115,13 +115,13 @@ after the owner exits.
 
 Three parts of the design assume local storage, in decreasing severity.
 
-**Socket directory (only reachable by setting `LZMX_DIR`).** Unix
+**Socket directory (only reachable by setting `LINGER_DIR`).** Unix
 sockets are host-local rendezvous names; `bind` on NFS commonly fails
 outright, and on a *shared* directory the failure is worse than an
 error: sockets belonging to other hosts appear in `list`, no local
 listener answers them, and the stale-socket cleanup would delete
 another machine's live socket. The defaults avoid this —
-`$XDG_RUNTIME_DIR` (tmpfs) or `/tmp/lzmx-$UID`. Pointing `LZMX_DIR` at
+`$XDG_RUNTIME_DIR` (tmpfs) or `/tmp/linger-$UID`. Pointing `LINGER_DIR` at
 a network mount is unsupported.
 
 **The name lock.** `flock` is unreliable over NFS, so `Exclusive` — and
@@ -136,7 +136,7 @@ running a session called `work` would clobber one another's checkpoint.
 The default state directory is therefore namespaced by hostname, which
 is also the correct semantics: replaying machine B's terminal on
 machine A would restore a screen describing a working tree and a
-process world that are not there. An explicit `LZMX_DIR` is taken
+process world that are not there. An explicit `LINGER_DIR` is taken
 verbatim — an override is an instruction, not an accident.
 
 Not affected: `readDir` staleness under attribute caching is cosmetic

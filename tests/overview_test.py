@@ -1,17 +1,17 @@
-"""Overview e2e: bare `lzmx` and `lzmx ls` print a session list and
+"""Overview e2e: bare `linger` and `linger ls` print a session list and
 EXIT — they are NOT an interactive full-screen picker.
 
-Regression guard: a first-time user once ran bare `lzmx`, got a
+Regression guard: a first-time user once ran bare `linger`, got a
 full-screen TUI (which drew a lone divider bar), typed `ls` at it, and
 that created a session literally named 'ls'. The overview must be a
 plain, pipeable, self-terminating listing that never blocks on stdin."""
 import os, subprocess, sys, time, pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-LZMX = str(ROOT / '.lake/build/bin/lzmx')
-LDIR = os.environ.get('LZMX_TEST_DIR', '/tmp/lzmx-overview-' + str(os.getpid()))
+LINGER = str(ROOT / '.lake/build/bin/linger')
+LDIR = os.environ.get('LINGER_TEST_DIR', '/tmp/linger-overview-' + str(os.getpid()))
 os.makedirs(LDIR, exist_ok=True)
-ENV = dict(os.environ, LZMX_DIR=LDIR, SHELL='/bin/sh')
+ENV = dict(os.environ, LINGER_DIR=LDIR, SHELL='/bin/sh')
 
 
 def overview(args):
@@ -19,7 +19,7 @@ def overview(args):
     interactive picker would block on the empty stdin and trip the
     timeout (returncode reported as None) — exactly the regression."""
     try:
-        r = subprocess.run([LZMX] + args, env=ENV, stdin=subprocess.DEVNULL,
+        r = subprocess.run([LINGER] + args, env=ENV, stdin=subprocess.DEVNULL,
                            capture_output=True, text=True, timeout=15)
         return r.returncode, r.stdout
     except subprocess.TimeoutExpired:
@@ -32,7 +32,7 @@ def expect(cond, name):
 
 
 def label(args):
-    return 'lzmx ' + ' '.join(args) if args else 'lzmx (bare)'
+    return 'linger ' + ' '.join(args) if args else 'linger (bare)'
 
 
 fails = 0
@@ -44,8 +44,8 @@ for args in ([], ['ls']):
                     f'{label(args)} prints overview and exits')
 
 # two live sessions: listed by name in both the bare and `ls` forms
-subprocess.run([LZMX, 'run', 'alpha', 'true'], env=ENV)
-subprocess.run([LZMX, 'run', 'beta', 'true'], env=ENV)
+subprocess.run([LINGER, 'run', 'alpha', 'true'], env=ENV)
+subprocess.run([LINGER, 'run', 'beta', 'true'], env=ENV)
 time.sleep(1.2)
 for args in ([], ['ls']):
     rc, out = overview(args)
@@ -57,6 +57,6 @@ fails += expect('name\talpha' in out and 'state\tlive' in out,
                 'porcelain carries name/state (the remote-parse contract)')
 
 for n in ('alpha', 'beta'):
-    subprocess.run([LZMX, 'kill', n], env=ENV)
+    subprocess.run([LINGER, 'kill', n], env=ENV)
 print('FAILURES:', fails)
 sys.exit(1 if fails else 0)

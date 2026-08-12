@@ -123,7 +123,7 @@ theorem ourClaim_no_early_mutation :
   breaks `Exclusive` and this theorem says nothing. Local storage is a
   precondition, documented at `Paths.socketDir`.
 * Nothing about non-cooperating processes. The lock is advisory: `rm`
-  can still delete a live socket. The guarantee is among `lzmx`
+  can still delete a live socket. The guarantee is among `linger`
   daemons, which is the whole population that claims names.
 -/
 

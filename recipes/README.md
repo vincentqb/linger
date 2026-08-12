@@ -1,6 +1,6 @@
 # Recipes
 
-`lzmx` never drives fzf, your terminal, or your transport. These
+`linger` never drives fzf, your terminal, or your transport. These
 one-file recipes do the composing. Fish functions install by copy —
 fish autoloads one function per file from this directory:
 
@@ -23,13 +23,13 @@ tunnelled, so any carrier that can run a remote command with a tty
 works interactively:
 
 ```
-ssh -t host lzmx attach work      # what `lzmx attach work@host` execs
-mosh host -- lzmx attach work     # roaming: survives IP changes/sleep
+ssh -t host linger attach work      # what `linger attach work@host` execs
+mosh host -- linger attach work     # roaming: survives IP changes/sleep
 ```
 
 mosh needs no reconnect recipe at all — it *is* the reconnect layer —
-and pairs with lzmx exactly: mosh keeps the link alive across networks,
-lzmx keeps the session alive across detaches and reboots. To route a
+and pairs with linger exactly: mosh keeps the link alive across networks,
+linger keeps the session alive across detaches and reboots. To route a
 recipe over mosh, swap its one ssh line (`lzo.fish` shows the variant).
 
 Two things are deliberately ssh-shaped in the binary and cost mosh

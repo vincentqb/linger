@@ -260,7 +260,7 @@ LEAN_EXPORT lean_obj_res zmx_spawn_pty(uint32_t cols, uint32_t rows,
             if (home) { if (chdir(home) != 0) { /* keep inherited cwd */ } }
         }
         execvp(lean_string_cstr(prog), argv);
-        dprintf(2, "lzmx: exec %s: %s\r\n", lean_string_cstr(prog), strerror(errno));
+        dprintf(2, "linger: exec %s: %s\r\n", lean_string_cstr(prog), strerror(errno));
         _exit(127);
     }
     free(argv);

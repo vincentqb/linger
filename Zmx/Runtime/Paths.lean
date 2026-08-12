@@ -3,9 +3,9 @@ import Zmx.Core.Name
 /-! # Zmx.Runtime.Paths — where sockets, checkpoints and logs live
 
 Same resolution order as zmx:
-* sockets: `$LZMX_DIR` > `$XDG_RUNTIME_DIR/lzmx` > `/tmp/lzmx-$UID`
-* state (checkpoints, logs): `$LZMX_DIR` > `$XDG_STATE_HOME/lzmx` >
-  `~/.local/state/lzmx`
+* sockets: `$LINGER_DIR` > `$XDG_RUNTIME_DIR/linger` > `/tmp/linger-$UID`
+* state (checkpoints, logs): `$LINGER_DIR` > `$XDG_STATE_HOME/linger` >
+  `~/.local/state/linger`
 
 Every name passes `Name.sanitize` before touching a path (AGENTS.md
 rule; §Name is the theorem that makes it sufficient).
@@ -16,23 +16,23 @@ namespace Zmx.Runtime.Paths
 open Zmx.Core.Name (sanitize)
 
 def socketDir : IO String := do
-  if let some d ← IO.getEnv "LZMX_DIR" then return d
-  if let some d ← IO.getEnv "XDG_RUNTIME_DIR" then return s!"{d}/lzmx"
-  return s!"/tmp/lzmx-{← Zmx.Posix.getuid}"
+  if let some d ← IO.getEnv "LINGER_DIR" then return d
+  if let some d ← IO.getEnv "XDG_RUNTIME_DIR" then return s!"{d}/linger"
+  return s!"/tmp/linger-{← Zmx.Posix.getuid}"
 
 /-- Checkpoints and logs. The default is namespaced by hostname: a
 network-mounted `$HOME` is shared between machines, and two hosts each
 running a session called `work` would otherwise clobber one another's
 checkpoint — and resuming machine B's terminal on machine A is wrong
 anyway (different working tree, different process world). An explicit
-`LZMX_DIR` is taken verbatim: an override is an instruction, not an
+`LINGER_DIR` is taken verbatim: an override is an instruction, not an
 accident. -/
 def stateDir : IO String := do
-  if let some d ← IO.getEnv "LZMX_DIR" then return d
+  if let some d ← IO.getEnv "LINGER_DIR" then return d
   let host := sanitize (← Zmx.Posix.gethostname)
-  if let some d ← IO.getEnv "XDG_STATE_HOME" then return s!"{d}/lzmx/{host}"
+  if let some d ← IO.getEnv "XDG_STATE_HOME" then return s!"{d}/linger/{host}"
   let home := (← IO.getEnv "HOME").getD "/tmp"
-  return s!"{home}/.local/state/lzmx/{host}"
+  return s!"{home}/.local/state/linger/{host}"
 
 def ensureDir (d : String) : IO Unit := do
   IO.FS.createDirAll d

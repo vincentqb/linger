@@ -1,20 +1,21 @@
-# lean-zmx
+# linger
 
-Persistent terminal sessions — attach, detach, survive reboots.
-Pure-function Lean 4, one binary: `lzmx`.
+Terminal sessions that stay — attach, detach, survive reboots. Lean
+sessions: one binary, pure functions, machine-checked invariants
+(Lean 4).
 
 ## The model
 
-`lzmx attach <name>` gives you a shell that keeps running after you
+`linger attach <name>` gives you a shell that keeps running after you
 detach or disconnect; reattach later with the screen intact. Bare
-`lzmx` (or `lzmx ls`) prints an overview of your sessions and exits — a
+`linger` (or `linger ls`) prints an overview of your sessions and exits — a
 listing, not a picker.
 
 ## Build
 
 ```
 ./lake build          # use plain `lake build` on glibc >= 2.34
-ln -sf "$PWD/.lake/build/bin/lzmx" ~/.local/bin/lzmx
+ln -sf "$PWD/.lake/build/bin/linger" ~/.local/bin/linger
 ```
 
 Lean 4.32.0 via elan; no external Lean dependencies.
@@ -22,10 +23,10 @@ Lean 4.32.0 via elan; no external Lean dependencies.
 ## Use
 
 ```
-lzmx attach work      # attach, creating "work" if absent
+linger attach work      # attach, creating "work" if absent
 Ctrl-\                # detach — session keeps running
-lzmx                  # overview: names, pids, labels; then exits
-lzmx attach           # attach the default session ("main")
+linger                  # overview: names, pids, labels; then exits
+linger attach           # attach the default session ("main")
 ```
 
 | command | |
@@ -44,7 +45,7 @@ lzmx attach           # attach the default session ("main")
 
 ## Recipes
 
-`lzmx` never drives fzf, your terminal, or your transport; one-file
+`linger` never drives fzf, your terminal, or your transport; one-file
 recipes in [`recipes/`](recipes/) do the composing (fish functions —
 `cp` them into `~/.config/fish/functions/`):
 
@@ -56,23 +57,23 @@ recipes in [`recipes/`](recipes/) do the composing (fish functions —
 | `ssh_config` | dead links declared in ~15 s — no more `Enter ~ .` |
 
 Transport is yours: `attach name@host` execs ssh, and mosh composes as
-`mosh host -- lzmx attach name` (roaming, instant resume) — the wire
+`mosh host -- linger attach name` (roaming, instant resume) — the wire
 protocol never crosses the network, so any carrier works. Details in
 `recipes/README.md`.
 
 ## Notes
 
 - Reboot-resume is automatic (periodic checkpoint + restore on attach).
-- `attach` needs a terminal; bare `lzmx`/`ls`, `run`, `send` are scriptable.
+- `attach` needs a terminal; bare `linger`/`ls`, `run`, `send` are scriptable.
 - An unreachable or mid-reboot host drops out of `ls -r` after a few
   seconds; `attach name@host` fails with ssh's own error. Once the host
   is back its sessions list as `resumable` and attach restores them.
 - A dropped link cannot hurt a session — it detaches; reattach restores
   the screen (see `recipes/` for the client-side comfort).
-- Detach key `Ctrl-\`; `LZMX_NO_DETACH_KEY=1` disables it.
-- Remotes: `-r host,host` for one run, `~/.config/lzmx/remotes` to
-  persist (duplicates are an error). Hosts need `lzmx` on their `$PATH`.
-- `LZMX_DIR=<dir>` isolates sockets + state on local storage.
+- Detach key `Ctrl-\`; `LINGER_NO_DETACH_KEY=1` disables it.
+- Remotes: `-r host,host` for one run, `~/.config/linger/remotes` to
+  persist (duplicates are an error). Hosts need `linger` on their `$PATH`.
+- `LINGER_DIR=<dir>` isolates sockets + state on local storage.
 
 ## Design
 

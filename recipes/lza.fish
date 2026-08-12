@@ -5,10 +5,10 @@
 # remote shell that itself exits 255 is indistinguishable from a
 # transport error and would respawn.
 # Using mosh? You don't need this — mosh IS the reconnect layer:
-#     mosh HOST -- lzmx attach NAME
+#     mosh HOST -- linger attach NAME
 function lza --description 'attach, reconnecting while the link flaps'
     while true
-        lzmx attach $argv[1]              # name@host
+        linger attach $argv[1]              # name@host
         test $status -eq 255; or break    # 255 = ssh transport error
         sleep 2
     end

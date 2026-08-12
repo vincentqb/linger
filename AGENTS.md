@@ -1,6 +1,9 @@
-# lean-zmx
+# lean-zmx → linger
 
 Session attach/detach + a CLI session overview in pure-function Lean 4.
+The binary is `linger` (renamed from `lzmx`; the repo keeps its
+historical name, and the checkpoint magic stays "LZMX" — a frozen
+format identifier, not branding).
 `README.md` is the user-facing overview; `specs/archive/lean-zmx.md` is
 the (closed) build plan with the completion record. Re-read
 `SCRATCHPAD.md` first after any context compaction — it holds the

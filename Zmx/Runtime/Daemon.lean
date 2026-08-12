@@ -239,7 +239,7 @@ partial def serve (name : String) (cwd : String) (argv : List String)
     | [] => ((shell, #[]) : String × Array String)
     | p :: rest => (p, rest.toArray)
   let (pid, ptyFd) ← spawnPty 80 24 cwd prog args
-    #[s!"LZMX_SESSION={name}"]
+    #[s!"LINGER_SESSION={name}"]
   setNonblock ptyFd
   let created ← realtimeS
   let vt0 := (restore.map (·.1)).getD (Zmx.Core.Vt.Vt.init 80 24)

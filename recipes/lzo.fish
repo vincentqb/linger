@@ -6,10 +6,10 @@
 function lzo --description 'open every session on HOST as a kitty tab'
     set -l host $argv[1]
     for name in (ssh -o BatchMode=yes -o ConnectTimeout=3 -- $host \
-                     lzmx ls --porcelain | awk -F '\t' '$1=="name"{print $2}')
+                     linger ls --porcelain | awk -F '\t' '$1=="name"{print $2}')
         # roaming variant: replace the ssh line with
-        #     mosh $host -- lzmx attach $name
+        #     mosh $host -- linger attach $name
         kitten @ launch --type=tab --tab-title "$name@$host" -- \
-            ssh -t -- $host lzmx attach $name
+            ssh -t -- $host linger attach $name
     end
 end

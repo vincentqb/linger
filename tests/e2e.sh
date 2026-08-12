@@ -7,7 +7,7 @@
 #   3. posix shim smoke tests (ztest)
 #   4. attach/detach/reattach/mirror/wait e2e (real ptys)
 #   5. reboot-resume e2e (SIGKILL + restore + corrupt tolerance)
-#   6. overview e2e (bare `lzmx`/`ls` print a list and exit, not a picker)
+#   6. overview e2e (bare `linger`/`ls` print a list and exit, not a picker)
 #   7. remote-over-ssh e2e (fake ssh: `-r` listing, attach name@host argv)
 #   8. adverse timing: busy-daemon listing (§Row) + name-ownership race
 set -e
@@ -17,18 +17,18 @@ say() { printf '\n=== %s ===\n' "$1"; }
 fail() { printf 'E2E FAIL: %s\n' "$1" >&2; exit 1; }
 
 # no stray daemons from a previous run may influence the checks
-pkill -x lzmx 2>/dev/null || true
+pkill -x linger 2>/dev/null || true
 sleep 0.2
 
 say "1. build (program + theorems + tests)"
 rm -rf .lake/build
-./lake build Zmx Theorems Tests lzmx ztest > /tmp/lzmx-build.log 2>&1 \
-  || { tail -30 /tmp/lzmx-build.log; fail "build"; }
-if grep -qE '^(warning|error)' /tmp/lzmx-build.log; then
-  grep -E '^(warning|error)' /tmp/lzmx-build.log
+./lake build Zmx Theorems Tests linger ztest > /tmp/linger-build.log 2>&1 \
+  || { tail -30 /tmp/linger-build.log; fail "build"; }
+if grep -qE '^(warning|error)' /tmp/linger-build.log; then
+  grep -E '^(warning|error)' /tmp/linger-build.log
   fail "build is not warning-clean"
 fi
-grep -c 'Build completed successfully' /tmp/lzmx-build.log > /dev/null \
+grep -c 'Build completed successfully' /tmp/linger-build.log > /dev/null \
   || fail "build did not report success"
 
 say "2. purity of the core (no sorry, no partial, no IO)"
@@ -54,24 +54,24 @@ say "3. posix shim smoke tests"
 ./lake exe ztest | tail -1 | grep -q '^ALL PASS$' || fail "ztest"
 
 say "4. attach / detach / reattach / mirror / wait"
-pkill -x lzmx 2>/dev/null || true; sleep 0.2
+pkill -x linger 2>/dev/null || true; sleep 0.2
 python3 tests/attach_test.py | tail -1 | grep -q '^FAILURES: 0$' || fail "attach_test"
 
 say "5. reboot resume"
-pkill -x lzmx 2>/dev/null || true; sleep 0.2
+pkill -x linger 2>/dev/null || true; sleep 0.2
 python3 tests/resume_test.py | tail -1 | grep -q '^FAILURES: 0$' || fail "resume_test"
 
-say "6. overview listing (bare lzmx / ls)"
-pkill -x lzmx 2>/dev/null || true; sleep 0.2
+say "6. overview listing (bare linger / ls)"
+pkill -x linger 2>/dev/null || true; sleep 0.2
 python3 tests/overview_test.py | tail -1 | grep -q '^FAILURES: 0$' || fail "overview_test"
 
 say "7. remote sessions over ssh"
-pkill -x lzmx 2>/dev/null || true; sleep 0.2
+pkill -x linger 2>/dev/null || true; sleep 0.2
 python3 tests/remote_test.py | tail -1 | grep -q '^FAILURES: 0$' || fail "remote_test"
 
 say "8. adverse timing (busy daemon listing, name-ownership race)"
-pkill -x lzmx 2>/dev/null || true; sleep 0.2
+pkill -x linger 2>/dev/null || true; sleep 0.2
 python3 tests/robust_test.py | tail -1 | grep -q '^FAILURES: 0$' || fail "robust_test"
 
-pkill -x lzmx 2>/dev/null || true
-printf '\nE2E OK — lzmx builds clean, core is pure, 5 live suites green.\n'
+pkill -x linger 2>/dev/null || true
+printf '\nE2E OK — linger builds clean, core is pure, 5 live suites green.\n'

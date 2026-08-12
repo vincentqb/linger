@@ -37,7 +37,7 @@ structure Client where
   /-- attach order; the highest attached sizer owns the size
   (abduco's better-resize-handling rule). -/
   seq : Nat := 0
-  /-- `lzmx wait` parked here until the child exits. -/
+  /-- `linger wait` parked here until the child exits. -/
   waiting : Bool := false
   decoder : Wire.Decoder := {}
   deriving Repr, Inhabited
@@ -148,7 +148,7 @@ def onMsg (s : State) (c : Client) (m : Msg) : State × List Effect :=
               | none => []))
   | .input bytes =>
     -- attached observers are read-only; control connections (not
-    -- attached, e.g. `lzmx send`) keep their input rights
+    -- attached, e.g. `linger send`) keep their input rights
     if c.attached && !c.sizer then (s, [])
     else (s, [.writePty bytes])
   | .resize cols rows =>

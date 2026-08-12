@@ -1,8 +1,8 @@
 import Zmx.Core.Name
-/-! # Zmx.Core.Remote — parsing `lzmx ls --porcelain` from other machines
+/-! # Zmx.Core.Remote — parsing `linger ls --porcelain` from other machines
 
-The overview (`lzmx -r <hosts>`) folds in sessions from configured
-remote hosts by running `ssh <host> lzmx ls --porcelain` and parsing
+The overview (`linger -r <hosts>`) folds in sessions from configured
+remote hosts by running `ssh <host> linger ls --porcelain` and parsing
 stdout here.
 
 §Remote (THEOREMS.md): the parser is total (any bytes → some rows,

@@ -287,6 +287,9 @@ structure Ckpt where
   labels : List (String × String)
   deriving Inhabited
 
+/-- On-disk magic. Deliberately still the four bytes "LZMX" after the
+linger rename: this is a frozen format identifier (like a wire tag),
+not branding — changing it would orphan every checkpoint on disk. -/
 def magic : List UInt8 := [0x4C, 0x5A, 0x4D, 0x58, 1]  -- "LZMX" v1
 
 def save (c : Ckpt) : List UInt8 :=

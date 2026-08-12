@@ -1,27 +1,27 @@
 """Live remote test against a REAL second machine over real ssh.
 
 Unlike tests/remote_test.py (fake ssh on PATH, hermetic, in the gate),
-this needs an actual reachable host running a real `lzmx`. Not part of
+this needs an actual reachable host running a real `linger`. Not part of
 e2e.sh. Usage:
 
-    LZMX_REMOTE=gpu2 python3 tests/remote_live_test.py
+    LINGER_REMOTE=gpu2 python3 tests/remote_live_test.py
 
-Assumes the remote has `lzmx` on its non-interactive PATH and two live
+Assumes the remote has `linger` on its non-interactive PATH and two live
 sessions named `alpha` and `beta`.
 """
 import os, pty, time, select, subprocess, sys, fcntl, struct, termios, pathlib, re
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-LZMX = str(ROOT / '.lake/build/bin/lzmx')
-HOST = os.environ.get('LZMX_REMOTE', 'gpu2')
-LDIR = os.environ.get('LZMX_TEST_DIR', '/tmp/lzmx-live-' + str(os.getpid()))
+LINGER = str(ROOT / '.lake/build/bin/linger')
+HOST = os.environ.get('LINGER_REMOTE', 'gpu2')
+LDIR = os.environ.get('LINGER_TEST_DIR', '/tmp/linger-live-' + str(os.getpid()))
 os.makedirs(LDIR, exist_ok=True)
 
-# lzmx shells out to `ssh <host> ...`; a wedged local ssh-agent would hang
+# linger shells out to `ssh <host> ...`; a wedged local ssh-agent would hang
 # that child, so run with the agent env removed (equivalent to
 # IdentityAgent=none). The host's key is taken from ~/.ssh/config.
 ENV = {k: v for k, v in os.environ.items() if k != 'SSH_AUTH_SOCK'}
-ENV.update(LZMX_DIR=LDIR, SHELL='/bin/sh')
+ENV.update(LINGER_DIR=LDIR, SHELL='/bin/sh')
 
 
 def plain(bs):
@@ -53,15 +53,15 @@ fails = 0
 print(f'driving local overview + remote attach against real host: {HOST}')
 
 # the overview folds the remote's sessions in over real ssh
-r = subprocess.run([LZMX, '-r', HOST], env=ENV, stdin=subprocess.DEVNULL,
+r = subprocess.run([LINGER, '-r', HOST], env=ENV, stdin=subprocess.DEVNULL,
                    capture_output=True, text=True, timeout=20)
 fails += expect(f'alpha@{HOST}' in r.stdout, f'remote alpha@{HOST} listed over real ssh')
 fails += expect(f'beta@{HOST}' in r.stdout, f'remote beta@{HOST} listed over real ssh')
 
-# `attach alpha@HOST` execs `ssh -t HOST lzmx attach alpha` -> real remote shell
+# `attach alpha@HOST` execs `ssh -t HOST linger attach alpha` -> real remote shell
 pid, fd = pty.fork()
 if pid == 0:
-    os.execve(LZMX, [LZMX, 'attach', f'alpha@{HOST}'], ENV)
+    os.execve(LINGER, [LINGER, 'attach', f'alpha@{HOST}'], ENV)
 fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 30, 110, 0, 0))
 time.sleep(3.0)
 drain(fd, 2.0)
@@ -79,7 +79,7 @@ except OSError:
 
 # the remote session must still be alive after we detached
 r = subprocess.run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', HOST,
-                    'lzmx ls --porcelain'],
+                    'linger ls --porcelain'],
                    env=ENV, capture_output=True, text=True)
 fails += expect('name\talpha' in r.stdout, 'remote session survived detach (still listed)')
 

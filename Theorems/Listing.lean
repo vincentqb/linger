@@ -2,7 +2,7 @@ import Zmx.Core.Listing
 /-! # §Row — a list row's identity is its socket filename, not the reply
 
 The tension: the `info` reply is data from another process (a local
-daemon, or — via porcelain — a remote host's `lzmx`), so it is not
+daemon, or — via porcelain — a remote host's `linger`), so it is not
 trusted to name itself. `rowFields` derives the row's `name` from the
 socket filename alone; these two theorems say the reply can neither
 change it (`rowFields_name`) nor smuggle a second one in
