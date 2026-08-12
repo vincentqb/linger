@@ -13,11 +13,11 @@ open Zmx.Core.Wire (Msg encode)
 
 def s0 : State := { vt := Vt.Vt.init 20 5, metaKv := [("name", "t")] }
 
-/-- Run a list of events, collecting effects. -/
+/-- Run a list of events, collecting effects — the Core `run` (so every
+scenario below concretely pins its state threading + effect order),
+with the test-friendly argument order. -/
 def run (evs : List Event) (s : State := s0) : State × List Effect :=
-  evs.foldl (fun (acc : State × List Effect) ev =>
-    let (s', effs) := step acc.1 ev
-    (s', acc.2 ++ effs)) (s, [])
+  Zmx.Core.Session.run s evs
 
 def hasEffect (effs : List Effect) (p : Effect → Bool) : Bool := effs.any p
 

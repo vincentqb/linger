@@ -248,4 +248,17 @@ def step (s : State) (ev : Event) : State × List Effect :=
       ({ s with dirty := false, lastCkptMs := now }, [.checkpoint])
     else (s, [])
 
+/-- A whole event trace folded through `step`, effects in arrival
+order — the specification of the runtime's poll loop (which feeds one
+event at a time). Structural recursion, and projection-shaped so
+`(run s (e :: es)).1 = (run (step s e).1 es).1` is definitional: the
+trace-level theorems (`run_wf`, `run_bytes_isolates`) step through it
+directly. -/
+def run (s : State) : List Event → State × List Effect
+  | [] => (s, [])
+  | ev :: evs =>
+    let r := step s ev
+    let rest := run r.1 evs
+    (rest.1, r.2 ++ rest.2)
+
 end Zmx.Core.Session

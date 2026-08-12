@@ -443,3 +443,82 @@ theorem step_bytes_isolates (s : State) (id : Nat) (chunk : List UInt8)
       exact setClient_other (by rw [client?_id hfind]; exact h)
 
 end Zmx.Core.Session
+
+
+
+namespace Zmx.Core.Session
+/-! ## Trace lift — the per-step theorems over the daemon's whole life
+
+`step`-level preservation says one event is safe; the daemon lives
+through millions. `run` names the fold the runtime performs, and these
+theorems close the gap: no event *trace* of any length can break the
+bounds, corrupt the screen invariant, or let one client's byte stream
+touch another's record. Mostly mechanical inductions — the value is the
+statement, so the ledger's strongest rows quantify over lifetimes, not
+single events.
+-/
+
+/-- `run` is exactly the effect-accumulating fold of `step` — state
+threading and effect order both. Pins the definition: any deviation
+(dropped effects, unthreaded state) breaks this. -/
+theorem run_eq_foldl (s : State) (evs : List Event) :
+    run s evs = evs.foldl
+      (fun (acc : State × List Effect) ev =>
+        ((step acc.1 ev).1, acc.2 ++ (step acc.1 ev).2))
+      (s, []) := by
+  suffices hgen : ∀ evs (s : State) (fx : List Effect),
+      (fx ++ (run s evs).2 = (evs.foldl
+        (fun (acc : State × List Effect) ev =>
+          ((step acc.1 ev).1, acc.2 ++ (step acc.1 ev).2)) (s, fx)).2)
+      ∧ (run s evs).1 = (evs.foldl
+        (fun (acc : State × List Effect) ev =>
+          ((step acc.1 ev).1, acc.2 ++ (step acc.1 ev).2)) (s, fx)).1 by
+    have h := hgen evs s []
+    rcases hr : run s evs with ⟨s', fx'⟩
+    rw [hr] at h
+    simp only [List.nil_append] at h
+    rw [Prod.ext_iff]
+    exact ⟨h.2, h.1.symm ▸ rfl⟩
+  intro evs
+  induction evs with
+  | nil => intro s fx; simp [run]
+  | cons ev evs ih =>
+    intro s fx
+    have h := ih (step s ev).1 (fx ++ (step s ev).2)
+    constructor
+    · show fx ++ ((step s ev).2 ++ (run (step s ev).1 evs).2) = _
+      rw [List.foldl_cons, ← List.append_assoc]
+      exact h.1
+    · show (run (step s ev).1 evs).1 = _
+      rw [List.foldl_cons]
+      exact h.2
+
+/-- The daemon's composite invariant: everything the per-step theorems
+preserve, as one predicate. -/
+def WF (s : State) : Prop := Bounded s ∧ Zmx.Core.Vt.Good s.vt
+
+theorem step_wf (s : State) (ev : Event) (h : WF s) : WF (step s ev).1 :=
+  ⟨step_bounded s ev h.1, step_vt_good s ev h.2⟩
+
+/-- §Bound + §Total over the daemon's whole life: no event trace of any
+length — adversarial clients, hostile pty bytes, any interleaving — can
+break the bounds or the screen invariant. -/
+theorem run_wf (s : State) (evs : List Event) (h : WF s) : WF (run s evs).1 := by
+  induction evs generalizing s with
+  | nil => exact h
+  | cons ev evs ih => exact ih (step s ev).1 (step_wf s ev h)
+
+/-- §Isolate over a whole trace: one client's entire byte stream,
+however chunked, leaves every other client's record — decoder included
+— bit-identical. -/
+theorem run_bytes_isolates (s : State) (id : Nat) (chunks : List (List UInt8))
+    {other : Nat} (h : other ≠ id) :
+    (run s (chunks.map (Event.bytes id))).1.client? other = s.client? other := by
+  induction chunks generalizing s with
+  | nil => rfl
+  | cons c cs ih =>
+    show (run (step s (.bytes id c)).1 (cs.map (Event.bytes id))).1.client? other = _
+    rw [ih (step s (.bytes id c)).1]
+    exact step_bytes_isolates s id c h
+
+end Zmx.Core.Session
