@@ -103,7 +103,7 @@ fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 100, 0, 0))
 attached = plain(drain(fd, 2.0))
 log = open(LOG).read()
 fails += expect('FAKE-ATTACH-OK' in attached, 'attach name@host reaches the remote attach')
-fails += expect(re.search(r'-t (--\s+)?dev-a lzmx attach remote-work', log) is not None,
+fails += expect(re.search(r'-t (-o \S+ )*(--\s+)?dev-a lzmx attach remote-work', log) is not None,
                 f'remote attach ssh argv correct ({[l for l in log.splitlines() if "attach" in l]})')
 try:
     os.kill(pid, 9)
@@ -119,7 +119,7 @@ if pid == 0:
 fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 100, 0, 0))
 plain(drain(fd, 2.0))
 log = open(LOG).read()
-fails += expect(re.search(r'-t -- me@dev-a lzmx attach remote-work', log) is not None,
+fails += expect(re.search(r'-t (-o \S+ )*-- me@dev-a lzmx attach remote-work', log) is not None,
                 f'user@host remote round-trips via first-@ split '
                 f'({[l for l in log.splitlines() if "me@dev-a" in l]})')
 try:

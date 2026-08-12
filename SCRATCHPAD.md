@@ -759,3 +759,106 @@ Didn't commit the review doc under semantic-review/ (transient
 artifact, not a deliverable). Minor items left as-is by design: the
 isatty check stays BEFORE the @-parse (both local and remote attach
 need a tty), so malformed-@ is only reported interactively.
+
+
+
+## Bigger theorems: §Stream, trace lift, §Replay opened — 2026-08-12
+
+User asked "is there a bigger theorem that would imply a bunch of ours?"
+Answer recorded in specs/bigger-theorems.md: across trust boundaries NO
+(that factoring is the design; a whole-system refinement is seL4-scale
+and its hypotheses would swallow the gain), and cross-client
+commutativity is FALSE (sizeOwner depends on attach order; pty input
+interleaves) — but three composed statements were worth having. All
+three landed; the third is opened + pinned, proofs staged.
+
+**Step 1 — §Stream (Theorems/Wire.lean).** The composed §Frame∘§Chunk:
+ANY well-formed msg sequence, encoded, re-chunked ARBITRARILY →
+feedAll returns exactly that sequence, clean decoder. New Core def
+`Decoder.feedAll` (spec of the runtime read loop; structural recursion,
+projection-shaped, so inductions step through it). Proof chain:
+`takeFrames_leftover_stable` (a leftover re-parses to itself — the
+missing quiescence fact) → `feedAll_flatten` (chunked = one-shot, for
+quiescent-buffer decoders; errored case rides feed_errored) →
+`decode_encode_chunked`. decode_encode/decode_encode_stream are now
+corollaries (one message / one chunk). Break-verified: feedAll dropping
+r.2 (earlier chunks' msgs) broke the theorem AND the new 7-byte-chunk
+test in Tests/Wire.lean.
+  Proof gotchas: `[].flatten` needs List.flatten_nil before append_nil
+fires; `{} : Decoder` field access reduces definitionally so plain
+`simp` closes the fresh-quiescence side goal; the `show` +
+`rw [List.flatten_cons, Decoder.feed_append, ih]` pattern closes cons.
+
+**Step 2 — trace lift (Theorems/Session.lean).** New Core def
+`run : State → List Event → State × List Effect` (the poll loop's fold,
+same projection shape). Theorems: `run_eq_foldl` (run IS the
+effect-accumulating foldl — pins state threading + effect order; proved
+via a ∀-fx accumulator generalization), `WF := Bounded ∧ Good`,
+`step_wf`, `run_wf` (no trace of any length breaks caps or screen
+invariant), `run_bytes_isolates` (a client's whole chunked stream
+leaves other records bit-identical). Tests/Session.run now DELEGATES to
+Core run, so all 16 scenario tests pin it concretely.
+  Break-verified: run not threading state (`run s evs` instead of
+`run r.1 evs`) broke run_eq_foldl (both `show` steps) + 6 scenario
+tests. Honest note (recorded in spec): run_wf alone cannot catch
+threading bugs — ANY composition of WF-preserving steps preserves WF —
+which is exactly why run_eq_foldl exists.
+
+**Step 3a — §Replay opened (Tests/Render.lean, spec step 3).** Target:
+`(Vt.init v.cols v.rows).feed (restore v) ≃ v`. Emitter/parser
+alignment review found SEVEN real infidelities in Render.restore; all
+pinned by fixtures that FAILED pre-fix (build log kept: the 7 failing
+native_decides), then fixed in Render:
+  1. marks on a wide char live on its width-0 continuation cell;
+     rowAnsi skipped width-0 entirely → marks lost. Fix: emit marks of
+     shadow cells (re-attach lands on the shadow again — incl. the
+     wrap-pending margin case, where print's `pending` branch targets
+     cursor.x itself).
+  2. charset (g0Line/g1Line/shiftOut) never replayed → ESC (0 / )0 / SO
+     after repaint (stored glyphs are pre-translated; box chars don't
+     re-translate since decLine only maps ASCII).
+  3. saved (DECSC) never replayed → park penSgr+CUP+ESC 7. Must be
+     AFTER the alt switch (enterAlt(true) clobbers saved) and BEFORE
+     DECOM (address is absolute).
+  4. modes.origin + modes.insert missing from modesAnsi (insert
+     non-private CSI 4h). Emitted after repaint (IRM would shift
+     repaint cells), before final CUP (DECOM homes).
+  5. final CUP must be region-relative under DECOM.
+  6. custom tab stops → CSI 3g + CHA+ESC H per stop, only when ≠
+     defaultTabs.
+  7. alt-screen stash: paint-then-switch stashed whatever cursor/pen
+     the main repaint ended with. Fix: park stash cursor/pen before
+     ?1049h.
+  The ≃ (`replayEq`) compares grid/cursor-pos/pen/region/modes/title/
+tabs/charset/saved/alt-stash + replay-ends-ground; EXCLUDES sb (restore
+repaints the screen, not history), bell, and every wrap-pending flag
+(unrepresentable via CUP; stash/saved pending carved out for the same
+reason). 14 fixtures incl. kitchen sink. Proof campaign staged in the
+spec: 3b parser-ground lemmas (no digit semantics needed), 3c value
+fidelity (needs a digit-roundtrip; likely a bespoke digit emitter in
+Render for provability), 3d grid induction (wide/marks/wrap; known
+edge: resize can strand a wide base in the last column — that
+well-formedness hypothesis belongs to 3d).
+  Live impact: restore byte stream changed → attach_test + resume_test
+re-run green (real terminals tolerate the additions; they're standard
+sequences).
+
+**Steering extras (same session):** listRemote gained
+ServerAliveInterval=2/CountMax=2 — ConnectTimeout only bounds the
+connect phase, so a HALF-UP host (accepts TCP mid-reboot, then wedges)
+could previously hang `ls -r` indefinitely; now bounded ~4-6s. The
+remote-attach exec gained ServerAliveInterval=5/CountMax=3: a VPN/wifi
+drop otherwise leaves that ssh hung until a manual `Enter ~ .`;
+aggressive detection is the right default HERE (unlike bare ssh)
+because dying is free — the session detaches and survives. The ghost
+half of that story is already covered: a dead client's outbuf hits the
+4 MiB cap and is disconnected (runtime §Bound half); an idle ghost is
+sshd's to reap (server-side ClientAlive*, outside lzmx). Fake ssh
+strips `-o` pairs generically; the two argv-pinning regexes in
+remote_test.py updated to tolerate them. README: kitty
+`lzo` recipe (one tab per remote session incl. resumable = whole
+workspace back after either machine reboots; kitten @ launch, remote
+control required) + Notes bullets on unreachable-host and link-drop
+behavior. THEOREMS.md: §Stream row, §Replay row (open, precedent:
+"listed before its first proof"), trace-lift paragraph under
+Reading-a-row.

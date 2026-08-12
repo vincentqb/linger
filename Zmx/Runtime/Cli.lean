@@ -90,8 +90,13 @@ def cmdAttach (hooks : Hooks) (name : String) (cmd : List String) : IO UInt32 :=
     let host := String.intercalate "@" rest
     if sess.isEmpty || host.isEmpty then
       throw (IO.userError s!"malformed remote target '{name}' (expected name@host)")
-    exec "ssh" #["-t", "--", host, "lzmx", "attach", sess]  -- replaces us on success
-    return 1                                                 -- only reached if exec fails
+    -- keepalives: a dropped VPN/wifi otherwise leaves this ssh hung
+    -- until a manual `~.`. Aggressive detection is the RIGHT default
+    -- here, unlike bare ssh, because dying is free: the session
+    -- detaches and survives; reattach restores it.
+    exec "ssh" #["-t", "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=3",
+                 "--", host, "lzmx", "attach", sess]  -- replaces us on success
+    return 1                                           -- only reached if exec fails
   | _ =>
     let fd ← connectUpsert hooks name cmd
     match ← Client.attach fd with
@@ -157,13 +162,17 @@ def resolveRemotes (flag : Option (List String)) : IO (List String) := do
     | .error e => throw (IO.userError e)
 
 /-- One remote's sessions over ssh; a failure (host down, no lzmx,
-timeout) yields `[]` so a dead remote never blocks the local overview. -/
+timeout) yields `[]` so a dead remote never blocks the local overview.
+ConnectTimeout bounds a host that is down; ServerAlive bounds one that
+is half-up (accepts the connection, then wedges mid-reboot) — either
+way the overview proceeds within a few seconds. -/
 def listRemote (host : String) : IO (List (String × Bool × String)) := do
   let out ← try
       IO.Process.output {
         cmd := "ssh",
-        args := #["-o", "BatchMode=yes", "-o", "ConnectTimeout=3", "--",
-                  host, "lzmx", "ls", "--porcelain"] }
+        args := #["-o", "BatchMode=yes", "-o", "ConnectTimeout=3",
+                  "-o", "ServerAliveInterval=2", "-o", "ServerAliveCountMax=2",
+                  "--", host, "lzmx", "ls", "--porcelain"] }
     catch _ => pure { exitCode := 1, stdout := "", stderr := "" }
   if out.exitCode != 0 then return []
   return (Zmx.Core.Remote.parse out.stdout).map (fun r => (r.name, r.live, r.cmd))
