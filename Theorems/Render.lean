@@ -950,4 +950,84 @@ theorem csi_digits_value (n : Nat) {v : Vt} {s : CsiState} (hg : v.pstate = .csi
   rw [hcur]
   exact accDigits_digits n
 
+/-! ### Cursor fidelity
+
+`CUP` sets the cursor outright, so the interesting content is entirely in
+the final byte of `cursorAnsi`: the two accumulated parameters must come
+back out as the cursor position. That is what this proves, stated about
+the state just before that byte (which `csi_digits_value` and
+`csi_semi_step` above are what produce).
+-/
+
+/-- `;` closes the current parameter and starts the next. -/
+theorem csi_semi_step {v : Vt} {s : CsiState} (hg : v.pstate = .csi s) :
+    (v.step 0x3B).pstate = .csi (csiPush s false) := by
+  have hw : (v.abortUtf8 0x3B).pstate = PState.csi s := by
+    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
+  unfold Vt.step
+  dsimp only
+  rw [hw]
+  unfold Vt.stepCsi
+  dsimp only
+  rw [if_neg (by decide), if_pos (by decide)]
+
+/-- `CsiState.arg` over a literal two-parameter list, computed. -/
+theorem arg_of_two (s : CsiState) (a b : Nat) (fa fb : Bool) (d : Nat) :
+    (CsiState.arg { s with params := #[(a, fa), (b, fb)] } 0 d = if a = 0 then d else a)
+      ∧ (CsiState.arg { s with params := #[(a, fa), (b, fb)] } 1 d
+          = if b = 0 then d else b) := by
+  unfold CsiState.arg
+  refine ⟨?_, ?_⟩
+  · cases a <;> simp
+  · cases b <;> simp
+
+/-- **CUP delivers the parameters to the cursor.** With a row parameter
+already pushed and a column parameter in the accumulator, the `H` byte
+moves the cursor to exactly (`col-1`, `row-1`). The bounds hypotheses are
+what make `moveTo`'s clamps identities (`Good` supplies them at every
+call site); `origin = false` is required because under DECOM the address
+is region-relative — see the note in specs/bigger-theorems.md. -/
+theorem cup_step_cursor {w : Vt} {s : CsiState} (row col : Nat)
+    (hs : w.pstate = .csi s) (hinter : s.inter = 0) (hignore : s.ignore = false)
+    (hhave : s.haveCur = true) (hcur : s.cur = min col 65535)
+    (hparams : s.params = #[(min row 65535, false)])
+    (hrow : 1 ≤ row) (hcol : 1 ≤ col) (hr : row ≤ 65535) (hc : col ≤ 65535)
+    (hry : row - 1 < w.rows) (hcx : col - 1 < w.cols) (ho : w.modes.origin = false) :
+    ((w.step 0x48).cursor.x = col - 1) ∧ ((w.step 0x48).cursor.y = row - 1) := by
+  have hw : (w.abortUtf8 0x48).pstate = PState.csi s := by
+    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hs
+  -- the aborted state agrees with `w` on everything the dispatch reads
+  have hac : (w.abortUtf8 0x48).cols = w.cols := by
+    unfold Vt.abortUtf8; split <;> rfl
+  have har : (w.abortUtf8 0x48).rows = w.rows := by
+    unfold Vt.abortUtf8; split <;> rfl
+  have ham : (w.abortUtf8 0x48).modes = w.modes := by
+    unfold Vt.abortUtf8; split <;> rfl
+  have hminr : min row 65535 = row := by omega
+  have hminc : min (min col 65535) 65535 = col := by omega
+  -- the parameter list `csiFinish` closes, as a literal
+  have hs4 : ({ s with params := s.params.push (min s.cur 65535, s.curSub) } : CsiState)
+      = { s with params := #[(row, false), (col, s.curSub)] } := by
+    rw [hparams, hcur, hminc, hminr]
+    rfl
+  obtain ⟨ha0, ha1⟩ := arg_of_two s row col false s.curSub 1
+  rw [if_neg (by omega : ¬ row = 0)] at ha0
+  rw [if_neg (by omega : ¬ col = 0)] at ha1
+  unfold Vt.step
+  dsimp only
+  rw [hw]
+  unfold Vt.stepCsi
+  dsimp only
+  rw [if_neg (by decide), if_neg (by decide), if_neg (by decide), if_neg (by decide),
+      if_neg (by decide), if_pos (by decide), if_neg (by simp [hinter])]
+  unfold Vt.csiFinish
+  dsimp only
+  rw [if_pos hhave, if_neg (by simp [hparams]), hs4]
+  unfold Vt.csiDispatch
+  dsimp only
+  rw [if_neg (by simp [hignore])]
+  unfold Vt.moveTo
+  simp only [ha0, ha1, ham, ho, hac, har, Bool.false_eq_true, if_false]
+  exact ⟨by omega, by omega⟩
+
 end Zmx.Core.Render

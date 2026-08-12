@@ -127,18 +127,30 @@ Break-verified: emitting least-significant-digit-first breaks the
 theorem and 10 fixtures. This is the foundation for every numeric
 fidelity claim (cursor, region, mode numbers, colour components).
 
-Stage 3c-rest (open): **cursor fidelity**. The dims layer it was waiting
-on is now proved (`dims_feed`, Theorems/Vt.lean — `RIS` conditional on
-`Good`, as anticipated). What remains is the tail chain, all local to
-`cursorAnsi` since `CUP` sets the cursor outright: (1) the `;` step
-(`csiPush` with `haveCur` set pushes `min cur 65535` and resets `cur`),
-(2) `csiFinish` pushing the last parameter, (3) `CsiState.arg` over
-`Array.getD`/`push` giving back the two numbers, then (4) `moveTo` with
-`Good` discharging its clamps. Documented gap that will stay a
-hypothesis: under DECOM the cursor can sit outside the scroll region
-(`VPA` ignores origin mode) and a region-relative `CUP` cannot express
-that; emitting absolute first does not help, since setting DECOM homes
-the cursor.
+Stage 3c-rest (open, two rungs left). The dims layer it was waiting on
+is proved (`dims_feed`), and so is the CUP dispatch itself:
+**`cup_step_cursor`** — given a row parameter pushed and a column in the
+accumulator, the `H` byte moves the cursor to exactly (`col-1`,`row-1`),
+with `moveTo`'s clamps discharged by the bounds `Good` supplies.
+Break-verified by transposing `moveTo`'s arguments in `csiDispatch`.
+What remains:
+
+1. *Full-sequence cursor* (`v.feed (csiNum2 …)` rather than the final
+   step): needs four one-line facts that the prefix `ESC [ digits ;
+   digits` preserves `cols`/`rows`/`modes` — each of those steps is a
+   single `pstate` record update, so they are cheap; `dims_step` already
+   covers the first two fields.
+2. *Restore-level cursor*: additionally needs **origin fidelity** — that
+   a session with `origin = false` replays with `origin = false`. Only
+   `modesAnsi` can emit `CSI ? 6 h`, and it does not in that case, but
+   stating it means a `Preserves`-style layer over the stream (the same
+   shape as `Ends`, ~15 lemmas). That layer would then serve pen, region
+   and modes fidelity too, so it is the right next investment.
+
+Documented gap that stays a hypothesis: under DECOM the cursor can sit
+outside the scroll region (`VPA` ignores origin mode) and a
+region-relative `CUP` cannot express that; emitting absolute first does
+not help, since setting DECOM homes the cursor.
 
 Stage 3d (open): grid fidelity — per-cell print round-trip induction
 (wide, marks, IRM off, wrap-pending at row ends), then §Replay itself.

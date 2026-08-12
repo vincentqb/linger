@@ -1223,3 +1223,42 @@ csiFinish → CsiState.arg over Array.getD/push → moveTo) is all that is
 left, and it is local to cursorAnsi because CUP sets the cursor
 outright. Deliberately did NOT leave a partial proof with a `sorry` —
 the purity gate forbids it and half-proofs rot.
+
+
+
+## §Replay 3c — CUP delivers its parameters to the cursor — 2026-08-12
+
+Proved `cup_step_cursor`: with a row parameter already pushed and a
+column in the accumulator, the `H` byte moves the cursor to exactly
+(col-1, row-1). Plus the two supporting rungs: `csi_semi_step` (`;`
+closes a parameter via csiPush) and `arg_of_two` (CsiState.arg over a
+literal two-parameter array). Break-verified by transposing moveTo's
+arguments in csiDispatch's CUP arm — the classic row/col bug — which
+breaks the theorem AND 8 Vt fixtures.
+
+Stated about the state just before the final byte rather than about the
+whole sequence, deliberately: that is where the content is (params →
+moveTo → cursor), and it keeps the lemma free of prefix bookkeeping.
+
+Proof-engineering notes (all new traps):
+- `rw [hp]` where `hp : s.params = …` FAILS with "motive is not type
+  correct" when the params occurrence is the scrutinee of `arg`'s
+  dependent match. Fix: don't rewrite into the match — state a lemma
+  over a LITERAL params array (`arg_of_two`) and normalize the record
+  first (`hs4 : {s with params := s.params.push …} = {s with params :=
+  #[…]}`), which is a non-dependent field rewrite and goes through.
+- `CsiState.arg`'s `match … with | 0 => d | n => n` is best converted to
+  `if a = 0 then d else a` by `cases a <;> simp` inside the helper, so
+  call sites never see the match.
+- The `csiFinish`/`csiDispatch` guard chain needs its `if_neg`s in
+  emission order with `by decide` for the concrete final byte (0x48) and
+  `by simp [h]` for the state-dependent ones (inter, ignore, haveCur).
+
+Two rungs remain for the restore-level cursor claim, recorded in the
+spec: (1) the prefix `ESC [ digits ; digits` preserves cols/rows/modes
+(four one-liners — each step is a single pstate record update), and
+(2) ORIGIN FIDELITY — a session with origin=false must replay with
+origin=false. Only modesAnsi can emit `CSI ? 6 h` and it doesn't in that
+case, but proving it needs a `Preserves`-style layer over the stream
+(same shape as `Ends`, ~15 lemmas). That layer is the right next
+investment because pen, region and modes fidelity all need exactly it.
