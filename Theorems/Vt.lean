@@ -1021,6 +1021,26 @@ theorem ps_print (v : Vt) (c : Char) : (v.print c).pstate = v.pstate := by
 theorem ps_acceptChar (v : Vt) (n : Nat) : (v.acceptChar n).pstate = v.pstate := by
   unfold Vt.acceptChar; split <;> exact ps_print _ _
 
+/-- Printing never touches the UTF-8 decoder's accumulator — it writes the
+grid, the cursor and (on scroll) the scrollback, which is exactly what the
+frames say. This is what lets a whole run of glyphs be fed without
+re-establishing the decoder's precondition between them, and it is proved by
+*peeling* the frames one stage at a time: as a single `rfl` over the composite
+it times out at `whnf` (see SCRATCHPAD). The `u8need` twin is `un_print`,
+further down with the rest of that layer. -/
+theorem ua_print (v : Vt) (c : Char) : (v.print c).u8acc = v.u8acc := by
+  unfold Vt.print
+  dsimp only
+  repeat' split
+  all_goals first
+    | rfl
+    | rw [frame_putCell]
+    | rw [frame_printAdvance, frame_printPut, frame_printShift, frame_printWideWrap,
+          frame_printWrap]
+
+theorem ua_acceptChar (v : Vt) (n : Nat) : (v.acceptChar n).u8acc = v.u8acc := by
+  unfold Vt.acceptChar; split <;> exact ua_print _ _
+
 /-- A C0 control byte executes without changing the parser state. -/
 theorem ps_ctl (v : Vt) (b : UInt8) : (v.ctl b).pstate = v.pstate := by
   unfold Vt.ctl
