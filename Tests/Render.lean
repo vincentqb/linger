@@ -90,6 +90,24 @@ reattach jumps to 0,0 with the wrong pen. -/
 example : roundtrips (screen 12 5 "\x1b[36m\x1b[3;7H\x1b7\x1b[0m\x1b[1;1Hz")
     = true := by native_decide
 
+/-- Spec fix 8 — the **parameter cap**. Seven attributes plus truecolour
+foreground *and* background, set by three separate SGRs the way a real
+application does. Replayed as one combined sequence that would be 18
+parameters, the parser sets `ignore` on the 17th and drops the lot: the
+pen came back entirely default, every attribute and both colours lost.
+Found by proving §Replay rather than by testing; `penSgr` now emits at
+most 8 parameters per sequence. -/
+example : roundtrips (screen 10 3
+    "\x1b[1;2;3;4;5;7;9m\x1b[38;2;10;20;30m\x1b[48;2;40;50;60mX")
+    = true := by native_decide
+
+/-- The same cap, one rung down: 256-colour fg and bg (3 parameters each)
+alongside every attribute — 14 combined, just under the cap, so this one
+passed even before the fix. Kept as the boundary case. -/
+example : roundtrips (screen 10 3
+    "\x1b[1;2;3;4;5;7;9m\x1b[38;5;123m\x1b[48;5;200mY")
+    = true := by native_decide
+
 /-- Spec fixes 4+5: DECOM origin mode (with a region) and IRM insert
 mode; the final cursor address is region-relative under DECOM. -/
 example : roundtrips (screen 10 6 "\x1b[2;4r\x1b[?6h\x1b[4h\x1b[2;2H")

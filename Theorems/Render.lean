@@ -467,42 +467,35 @@ theorem ends_csiPriv (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
 theorem paramBytes_sgr_subparam (n : Nat) : ParamBytes (0x3B :: digits n) :=
   paramBytes_semiDigits n
 
-/-! ### SGR pens -/
+/-! ### SGR pens
 
-theorem paramBytes_sgrAttr (on : Bool) (code : Nat) : ParamBytes (sgrAttr on code) := by
-  unfold sgrAttr
-  by_cases h : on <;> simp only [h, if_true]
-  · exact paramBytes_semiDigits _
-  · exact ParamBytes.nil
+A pen is up to three sequences (attributes, foreground, background) — see
+`penSgr`'s note on the parameter cap. Each is a plain CSI, so the `Ends`
+and `Quiet` facts are one `ends_csi_seq` each; what needs proving is that
+`joinSemi` emits only parameter bytes. -/
 
-theorem paramBytes_sgrColor (c : Color) (isFg : Bool) : ParamBytes (sgrColor c isFg) := by
-  unfold sgrColor
-  cases c with
-  | default => exact ParamBytes.nil
-  | idx i =>
-    dsimp only
-    repeat' split
-    all_goals first
-      | exact paramBytes_semiDigits _
-      | exact (((paramBytes_semiDigits _).append (paramBytes_semiDigits _)).append
-          (paramBytes_semiDigits _))
-  | rgb r g b =>
-    exact ((((((paramBytes_semiDigits _).append (paramBytes_semiDigits _)).append
-      (paramBytes_semiDigits _)).append (paramBytes_semiDigits _)).append
-      (paramBytes_semiDigits _)))
+theorem paramBytes_joinSemi : ∀ (ns : List Nat), ParamBytes (joinSemi ns)
+  | [] => ParamBytes.nil
+  | [n] => paramBytes_digits n
+  | n :: m :: ns => by
+    rw [show joinSemi (n :: m :: ns) = digits n ++ [0x3B] ++ joinSemi (m :: ns) from rfl]
+    exact ((paramBytes_digits n).append
+      (ParamBytes.cons (by decide) (by decide) ParamBytes.nil)).append
+      (paramBytes_joinSemi (m :: ns))
 
-theorem paramBytes_penSgrBody (p : Pen) : ParamBytes (penSgrBody p) := by
-  unfold penSgrBody
-  exact (((((((((paramBytes_digits 0).append (paramBytes_sgrAttr _ 1)).append
-    (paramBytes_sgrAttr _ 2)).append (paramBytes_sgrAttr _ 3)).append
-    (paramBytes_sgrAttr _ 4)).append (paramBytes_sgrAttr _ 5)).append
-    (paramBytes_sgrAttr _ 7)).append (paramBytes_sgrAttr _ 9)).append
-    (paramBytes_sgrColor _ true)).append (paramBytes_sgrColor _ false)
+theorem ends_sgrOf (codes : List Nat) : Ends (sgrOf codes) :=
+  ends_csi_seq _ 0x6D (paramBytes_joinSemi codes) (by decide) (by decide)
 
-/-- An SGR pen is one CSI sequence: `Ends`, for any pen (16-colour,
-256-colour, truecolour). -/
-theorem ends_penSgr (p : Pen) : Ends (penSgr p) :=
-  ends_csi_seq _ 0x6D (paramBytes_penSgrBody p) (by decide) (by decide)
+theorem ends_sgrColorSeq (c : Color) (isFg : Bool) : Ends (sgrColorSeq c isFg) := by
+  unfold sgrColorSeq
+  split
+  · exact Ends.nil
+  · exact ends_sgrOf _
+
+/-- An SGR pen is `Ends`, for any pen (16-colour, 256-colour, truecolour). -/
+theorem ends_penSgr (p : Pen) : Ends (penSgr p) := by
+  unfold penSgr
+  exact ((ends_sgrOf _).append (ends_sgrColorSeq _ _)).append (ends_sgrColorSeq _ _)
 
 /-! ### `ESC`-single and charset sequences
 
@@ -1363,8 +1356,18 @@ theorem quiet_csiNum2 (a b : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
       (ParamBytes.cons (by decide) (by decide) ParamBytes.nil)).append
       (paramBytes_digits b)) h1 h2
 
-theorem quiet_penSgr (p : Pen) : Quiet (penSgr p) :=
-  quiet_csi_seq _ 0x6D (paramBytes_penSgrBody p) (by decide) (by decide)
+theorem quiet_sgrOf (codes : List Nat) : Quiet (sgrOf codes) :=
+  quiet_csi_seq _ 0x6D (paramBytes_joinSemi codes) (by decide) (by decide)
+
+theorem quiet_sgrColorSeq (c : Color) (isFg : Bool) : Quiet (sgrColorSeq c isFg) := by
+  unfold sgrColorSeq
+  split
+  · exact Quiet.nil
+  · exact quiet_sgrOf _
+
+theorem quiet_penSgr (p : Pen) : Quiet (penSgr p) := by
+  unfold penSgr
+  exact ((quiet_sgrOf _).append (quiet_sgrColorSeq _ _)).append (quiet_sgrColorSeq _ _)
 
 /-- The private marker records itself and nothing else. -/
 theorem csi_marker_step {v : Vt} {s : CsiState} (hg : v.pstate = .csi s)

@@ -1591,3 +1591,81 @@ general `org_step_of_*` now in Theorems/Vt.lean. Its own comment already
 said the bundled predicate was what was wanted.
 
 Gate green, no sorry, `./lake build Zmx Theorems Tests linger` clean.
+
+
+
+## Step 3d notes — the byte layer, and a real bug the proof found — 2026-08-12
+
+### The decomposition that makes grid fidelity tractable
+
+Reduce the byte stream to *emulator operations* first, then argue fidelity
+with no bytes left in the argument. Landed:
+
+- `utf8_feed` — feeding the bytes `utf8` emits for a printable codepoint
+  **is** `Vt.print` of that codepoint. Four cases over encoding length,
+  sharing three lead-byte lemmas (`step_lead2/3/4`) and two continuation
+  lemmas (`step_cont_more`, `step_cont_last`), so `stepGround`'s eight-way
+  byte ladder is walked once per rung instead of once per case.
+- `utf8s_feed` — a glyph run is `List.foldl print`.
+- `cellText_feed` — a painted cell is its base glyph then its marks.
+- `crlf_feed` — the row separator is exactly `carriageReturn.lineFeed`.
+
+`utf8_feed` needs **no** DEL exclusion: 0x7F prints as a glyph, and only
+`safeChar` cares. Dropped that hypothesis when the build flagged it unused.
+
+### THE BUG: the SGR parameter cap swallowed whole pens
+
+Counting parameters while setting up the pen round trip: `penSgrBody`
+emitted `0` + up to 7 attributes + up to 5 fg + up to 5 bg = **18**
+parameters. The parser honours 16 and sets `ignore` on the 17th, dropping
+the entire sequence. Confirmed by evaluation before touching anything:
+
+```
+pen      = all 7 attrs, fg = rgb 10 20 30, bg = rgb 40 50 60
+params   = 18
+roundtrips = false
+replayed pen = ALL DEFAULT   -- every attribute and both colours lost
+```
+
+The state is reachable — an application sets attributes and colours in
+separate SGRs and nothing merges them — so this was a live reattach bug,
+not a theoretical one. Fourteen fixtures missed it because none combined
+*all* attributes with truecolour on *both* fg and bg.
+
+Fix: `penSgr` now emits up to three sequences (attributes, then fg, then
+bg), at most 8 parameters each, with no colour triplet able to straddle a
+boundary. `sgrColorSeq` returns `[]` for a default colour rather than
+`sgrOf []`, because `CSI m` with no parameters is a *reset* and would wipe
+the attributes the previous sequence just set. `sgrAttr`/`sgrColor`/
+`penSgrBody` are gone, replaced by `colorCodes`/`penAttrCodes` (parameter
+*numbers*) plus `joinSemi`/`sgrOf` (the byte assembly) — the separation
+that made the count visible in the first place.
+
+Two fixtures added: the 18-parameter pen (fails before the fix — that is
+the break-verification) and the 14-parameter 256-colour version as the
+boundary case that already passed.
+
+**This is the eighth §Replay infidelity, and the first found by proving
+rather than by testing.** The others came from reading the emitter against
+the parser; this one only showed up because setting up the pen round trip
+required counting parameters. Worth remembering when judging whether a
+proof effort "pays": the count was the payment.
+
+### Traps
+
+- **`rw` matches the OUTERMOST subterm.** A chain of continuation-byte
+  steps all match `?v.step (UInt8.ofNat (0x80 + ?m))`, so the first
+  `rw [step_cont_more]` fired on the *last* byte. Pin `(m := …)` (and
+  `(acc := …)`) explicitly on every step of a chain.
+- **`feedN` as `rfl` times out at `whnf`**; `by simp [Vt.feed]` is instant.
+  Same family as the `frame_print` timeout.
+- **`rw [hg]` rewrites the goal's right-hand side too.** A `pstate` rewrite
+  inside a proof whose RHS mentions the same state turns `{v with …}` into
+  a record that no longer matches. Put the rewrite in a bridge lemma whose
+  statement doesn't mention the field (`step_cont_bridge`).
+- **Frames DO reach `print`** — `frame_print` as one `rfl` still times out,
+  but *peeling* the stage frames inside a field projection works
+  (`ua_print` is four `rw`s). The earlier "out of reach" note was about the
+  composite equation, not about the technique.
+- `rw [joinSemi]` on a 3-arm match generates a side goal
+  (`m :: ns = [] → False`); `rw [show … from rfl]` avoids it.

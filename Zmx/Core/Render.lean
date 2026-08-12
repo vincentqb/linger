@@ -90,37 +90,63 @@ def escCharset (i x : UInt8) : Bytes := escB ++ [i, x]
 
 /-! ## Pen -/
 
-/-- One SGR attribute, as a sub-parameter. -/
-def sgrAttr (on : Bool) (code : Nat) : Bytes :=
-  if on then 0x3B :: digits code else []
-
-/-- One colour, as sub-parameters (16-colour, 256-colour and truecolour
-forms). -/
-def sgrColor (c : Color) (isFg : Bool) : Bytes :=
+/-- One colour as SGR parameter *numbers* (16-colour, 256-colour and
+truecolour forms). Numbers rather than bytes, so the same list can be
+emitted either as its own sequence or joined into a longer one. -/
+def colorCodes (c : Color) (isFg : Bool) : List Nat :=
   match c with
   | .default => []
   | .idx i =>
     let n := i.toNat
-    if n < 8 then 0x3B :: digits ((if isFg then 30 else 40) + n)
-    else if n < 16 then 0x3B :: digits ((if isFg then 90 else 100) + n - 8)
-    else 0x3B :: digits (if isFg then 38 else 48)
-           ++ 0x3B :: digits 5 ++ 0x3B :: digits n
-  | .rgb r g b =>
-    0x3B :: digits (if isFg then 38 else 48) ++ 0x3B :: digits 2
-      ++ 0x3B :: digits r.toNat ++ 0x3B :: digits g.toNat ++ 0x3B :: digits b.toNat
+    if n < 8 then [(if isFg then 30 else 40) + n]
+    else if n < 16 then [(if isFg then 90 else 100) + n - 8]
+    else [if isFg then 38 else 48, 5, n]
+  | .rgb r g b => [if isFg then 38 else 48, 2, r.toNat, g.toNat, b.toNat]
 
-/-- The parameter string of a pen's SGR. A named stage so §Replay can
-say "this chunk is all parameter bytes" once (`Theorems/Render.lean`). -/
-def penSgrBody (p : Pen) : Bytes :=
-  digits 0
-    ++ sgrAttr p.bold 1 ++ sgrAttr p.dim 2 ++ sgrAttr p.italic 3
-    ++ sgrAttr p.underline 4 ++ sgrAttr p.blink 5 ++ sgrAttr p.reverse 7
-    ++ sgrAttr p.strike 9
-    ++ sgrColor p.fg true ++ sgrColor p.bg false
+/-- The attribute half of a pen, as parameter numbers. Leads with `0`, so
+the sequence starts from a clean slate: we diff by "pen changed at all",
+not per attribute. -/
+def penAttrCodes (p : Pen) : List Nat :=
+  0 :: ((if p.bold then [1] else []) ++ (if p.dim then [2] else [])
+    ++ (if p.italic then [3] else []) ++ (if p.underline then [4] else [])
+    ++ (if p.blink then [5] else []) ++ (if p.reverse then [7] else [])
+    ++ (if p.strike then [9] else []))
 
-/-- SGR for a pen, from a clean slate (always starts with reset — we
-diff by "pen changed at all", not by attribute; simpler and correct). -/
-def penSgr (p : Pen) : Bytes := csiB ++ penSgrBody p ++ [0x6D]
+/-- `<n1>;<n2>;…` — parameters joined by `;`, with no leading separator (a
+leading `;` would mean an empty first parameter, which SGR reads as a
+*reset*). -/
+def joinSemi : List Nat → Bytes
+  | [] => []
+  | [n] => digits n
+  | n :: ns => digits n ++ [0x3B] ++ joinSemi ns
+
+/-- `CSI <codes> m`. -/
+def sgrOf (codes : List Nat) : Bytes := csiB ++ joinSemi codes ++ [0x6D]
+
+/-- A colour as its own SGR, or nothing when the colour is the default —
+`CSI m` with no parameters is a *reset*, which would wipe the attributes
+the previous sequence just set. -/
+def sgrColorSeq (c : Color) (isFg : Bool) : Bytes :=
+  match colorCodes c isFg with
+  | [] => []
+  | codes => sgrOf codes
+
+/-- SGR for a pen, as up to three sequences: attributes, then foreground,
+then background.
+
+**Why three and not one.** The parser honours at most 16 parameters and
+sets `ignore` on the 17th, dropping the whole sequence. A single combined
+SGR for a pen with all seven attributes and truecolour foreground *and*
+background carries 18 (`0` + 7 + 5 + 5), so such a pen replayed as one
+sequence comes back **entirely default** — every attribute and both
+colours lost. That pen is reachable: an application sets attributes and
+colours in separate SGRs, and nothing merges them.
+
+Split this way each sequence carries at most 8, and no colour triplet can
+straddle a boundary. Found by proving §Replay, not by testing (the
+`heavyPen` fixture in `Tests/Render.lean` now pins it). -/
+def penSgr (p : Pen) : Bytes :=
+  sgrOf (penAttrCodes p) ++ sgrColorSeq p.fg true ++ sgrColorSeq p.bg false
 
 /-! ## Grid -/
 
