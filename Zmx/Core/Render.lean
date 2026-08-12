@@ -5,7 +5,7 @@ Pure functions from a `Vt` snapshot to the byte stream that reproduces
 it on a real terminal: `restore` (what a re-attaching client is sent)
 and `history` (scrollback dump for `linger history`).
 
-**Bytes, not Strings** (§Replay, specs/bigger-theorems.md). This module
+**Bytes, not Strings** (§Replay, specs/archive/bigger-theorems.md). This module
 used to assemble `String`s and UTF-8 them at the end, which made the
 output unprovable: a `String` literal does not reduce in the kernel, so
 no theorem could see that `csi` is `[0x1B, 0x5B]` (`decide` gets stuck
@@ -267,7 +267,7 @@ def cursorAnsi (v : Vt) : Bytes :=
 
 /-- Everything a re-attaching client's terminal needs except the final
 cursor placement. Emission order is load-bearing — each comment names
-the §Replay constraint (specs/bigger-theorems.md):
+the §Replay constraint (specs/archive/bigger-theorems.md):
 
 1. repaint before modes (IRM would shift cells; charset would
    re-translate ASCII glyphs);

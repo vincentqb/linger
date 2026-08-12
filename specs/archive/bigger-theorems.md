@@ -1,5 +1,8 @@
 # bigger-theorems — composed statements over the existing ledger
 
+**Status: CLOSED 2026-08-12.** All four steps landed. The successor spec
+for the one thing left open is `specs/grid-fidelity.md`.
+
 **Goal.** Consolidate the theorem ledger: state the composed claims that
 make the product's promises checkable in one place, and stop paying for
 the same lemma four times.
@@ -7,24 +10,31 @@ the same lemma four times.
 **Definition of done.** Each step's statement is a green theorem in
 `Theorems/` (no `sorry`, no `native_decide`), break-verified with the
 break recorded in `SCRATCHPAD.md`, its row in `THEOREMS.md`, and
-`./tests/e2e.sh` green.
+`./tests/e2e.sh` green. — **met for all four steps.**
 
-**Status.**
+## Completion record
 
-| | |
+| Step | Landed |
 |---|---|
-| Step 1 §Stream | ✓ done |
-| Step 2 trace lift | ✓ done |
-| Step 3 §Replay | parser half ✓ (`restore_quiesced`), digit round-trip ✓, cursor rungs ✓, origin layer ✓, **cursor proved end to end ✓** (`restore_cursor` / `resume_cursor`) — grid value fidelity open |
-| Step 4 frames | ✓ done for leaf operations; composites/folds measured as out of reach |
-| §Resume anchor | ✓ done (`Theorems/Resume.lean`) |
+| 1 §Stream | `Wire.decode_encode_chunked` — any re-chunking of any well-formed encoded stream decodes to exactly that stream. §Frame and §Chunk became special cases |
+| 2 trace lift | `Session.run`, `run_eq_foldl`, `run_wf`, `run_bytes_isolates` — the per-step machine theorems over a whole daemon lifetime |
+| 3 §Replay | parser half complete (`restore_quiesced`, hypothesis-free); digit round trip (`accDigits_digits`); cursor end to end (`restore_cursor` → `Resume.resume_cursor`); `Quiet` (parser-ground ∧ DECOM-off, composable); byte layer reduced to `Vt.print` chains (`utf8_feed`, `utf8s_feed`, `cellText_feed`, `crlf_feed`); `penSgr_under_cap` |
+| 4 frames | 30 `frame_*` for the leaf operations, 28 layer proofs collapsed to one `rw`, 86 proof lines removed |
+| anchors | `THEOREMS.md` restructured as anchor set A1–A4 over 15 rungs |
 
-**Next step →** step 3d, grid/pen value fidelity: the positive
-specification of what the written fields become, cell by cell (wide chars,
-combining marks, IRM off, wrap-pending at row ends). This is the last part
-of anchor A1 still carried by `Tests/Render.lean`'s fixtures rather than by
-proof. Frames buy nothing here — they say which fields an operation leaves
-alone, and this is about the fields it writes.
+Nine real emitter bugs were fixed along the way — seven from reading the
+emitter against the parser during stage 3a, one (`§Replay` fix 5, the
+region-relative cursor) from stating the cursor claim, and one (the SGR
+parameter cap, which replayed a heavily-styled pen as **blank**) from
+counting parameters while setting up the pen round trip. That last one is
+the argument for proving rather than testing: sixteen fixtures had missed
+it.
+
+**What is NOT closed** — the *values*: that the replayed cells and pens
+equal the saved ones. That is anchor A1's last gap and it now has its own
+spec, `specs/grid-fidelity.md`, because it is a different kind of work
+(positive specification of what gets written, not consolidation of what
+does not).
 
 **Decided — do not relitigate.**
 

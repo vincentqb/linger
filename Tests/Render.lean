@@ -2,7 +2,7 @@ import Zmx.Core.Vt
 import Zmx.Core.Render
 /-! # §Replay round-trip tests — restore fidelity, executable form
 
-The target theorem (specs/bigger-theorems.md step 3):
+The target theorem (specs/grid-fidelity.md):
 
     (Vt.init v.cols v.rows).feed (Render.restore v) ≃ v
 

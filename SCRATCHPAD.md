@@ -1669,3 +1669,33 @@ proof effort "pays": the count was the payment.
   composite equation, not about the technique.
 - `rw [joinSemi]` on a 3-arm match generates a side goal
   (`m :: ns = [] → False`); `rw [show … from rfl]` avoids it.
+
+
+
+## bigger-theorems closed; grid-fidelity opened — 2026-08-12
+
+The consolidation spec is done and archived with a completion record
+(`specs/archive/bigger-theorems.md`). All four steps met the
+definition-of-done; nine emitter bugs were fixed along the way.
+
+What is *not* done is the **values** — replayed cells and pens equalling
+the saved ones — so that got its own spec, `specs/grid-fidelity.md`, rather
+than being left as an "open question" bullet on a closed plan. Different
+kind of work: consolidation is about what an operation does *not* touch,
+value fidelity is a positive specification of what it *writes*.
+
+`penSgr_under_cap` landed as the durable form of the parameter-cap lesson:
+attributes ≤ 8, each colour ≤ 5, against a cap of 16. Break-verified by
+adding an eighth attribute code to `penAttrCodes` — `omega` then cannot
+prove the bound, so a future attribute forces a conscious look at the cap
+instead of silently reintroducing an 18-parameter sequence. That is the
+right shape for this class of lesson: the failure is *silent* (an over-long
+SGR is dropped whole, not mis-applied), so a fixture alone would only ever
+catch the instances someone thought to write down.
+
+Housekeeping: `specs/bigger-theorems.md` was referenced from five source
+files. Forward-looking references now point at `specs/grid-fidelity.md`,
+rationale/history references at the archive path. The stale "converting the
+rest is the recorded next simplification" note in Theorems/Vt.lean is now
+"the leaf conversion is done; what stays per-field is `print`,
+`csiDispatch` and the folds".

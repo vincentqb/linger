@@ -752,8 +752,11 @@ bookkeeping. Frames retire the sprawl; they do not shorten the road to
 
 Below: the pattern demonstrated on four operations of increasing shape,
 with the four existing layers re-derived from one of them to show the
-collapse is real. Converting the rest is mechanical and is the recorded
-next simplification (specs/bigger-theorems.md).
+collapse is real. The conversion of the leaf operations is **done** (step 4
+of specs/archive/bigger-theorems.md): 30 frames, 28 collapsed layer
+proofs. What stays per-field is `print`, `csiDispatch` and the fold-based
+operations — precisely the part that was never mechanical, and where the
+conditional cases (`RIS`, `setMode`) live.
 -/
 
 /-- Pure record update: `rfl` suffices. -/

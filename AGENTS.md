@@ -5,15 +5,17 @@ The binary is `linger` (renamed from `lzmx`; the repo keeps its
 historical name, and the checkpoint magic stays "LZMX" — a frozen
 format identifier, not branding).
 `README.md` is the user-facing overview. `PLAN.md` is the original
-requirements (goal-level, not current state); `specs/archive/lean-zmx.md`
-is the closed build plan with its completion record.
+requirements (goal-level, not current state); `specs/archive/` holds the
+closed build plans with their completion records
+(`lean-zmx.md`, `bigger-theorems.md`).
 
 ## Where things stand — read this first after any compaction
 
-1. **`specs/bigger-theorems.md` is the ACTIVE plan** — goal,
-   definition-of-done, what's decided, what's next. Its header block is
-   the ten-second version. (Don't look for a living `PLAN.md`: the root
-   one is requirements, and the archived spec is closed.)
+1. **`specs/grid-fidelity.md` is the ACTIVE plan** — goal,
+   definition-of-done, what is already in hand, the steps, and the risks
+   that were measured rather than guessed. Its header block is the
+   ten-second version. (Don't look for a living `PLAN.md`: the root one is
+   requirements, and everything in `specs/archive/` is closed.)
 2. **`SCRATCHPAD.md`** — append-only worklog: proof recipes, measured
    environment facts, break-verify records, and the negative results.
    Read before writing; append after; never delete prior entries.
@@ -21,7 +23,7 @@ is the closed build plan with its completion record.
    the summary is what dropped the nuance.
 
 New work opens a new `specs/<slug>.md` and gets named in item 1 above;
-don't reopen the archived one.
+archive the old one with a completion record rather than editing it.
 
 ## Build
 

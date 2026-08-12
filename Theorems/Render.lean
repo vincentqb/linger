@@ -2,7 +2,8 @@ import Zmx.Core.Render
 import Theorems.Vt
 /-! # §Replay, stage 3b — a restore stream leaves the parser in ground
 
-The §Replay target (specs/bigger-theorems.md step 3) is
+The §Replay target (specs/grid-fidelity.md; the parser half was closed
+in specs/archive/bigger-theorems.md) is
 `(Vt.init v.cols v.rows).feed (restore v) ≃ v`. This file proves the
 *parser* half of that `≃`, for ANY `Vt` and with no hypotheses: after
 feeding a whole restore stream, the emulator is back in `.ground` with
@@ -144,7 +145,7 @@ trailing partial UTF-8 sequence can only mis-render the *next* glyph,
 whereas a stuck `.csi` state swallows everything. `restore` emits only
 complete encodings, and it is pinned by the `Tests/Render.lean` fixtures
 (`replayEq` checks `u8need == 0`); the theorem is listed as open in
-specs/bigger-theorems.md. -/
+specs/archive/bigger-theorems.md. -/
 def Ends (bs : Bytes) : Prop :=
   ∀ v : Vt, v.pstate = .ground → (v.feed bs).pstate = .ground
 
@@ -482,6 +483,50 @@ theorem paramBytes_joinSemi : ∀ (ns : List Nat), ParamBytes (joinSemi ns)
     exact ((paramBytes_digits n).append
       (ParamBytes.cons (by decide) (by decide) ParamBytes.nil)).append
       (paramBytes_joinSemi (m :: ns))
+
+/-! ### The parameter cap
+
+The parser honours 16 parameters and silently drops any sequence carrying
+more (`csiPush` sets `ignore`, `csiDispatch` returns early). A pen used to
+be emitted as one 18-parameter sequence and came back blank; these bounds
+are the invariant that replaced the bug, and what a future attribute or
+colour form has to keep true. -/
+
+private theorem ite_len (c : Prop) [Decidable c] (n : Nat) :
+    (if c then [n] else []).length ≤ 1 := by
+  by_cases h : c <;> simp [h]
+
+theorem penAttrCodes_length (p : Pen) : (penAttrCodes p).length ≤ 8 := by
+  unfold penAttrCodes
+  simp only [List.length_cons, List.length_append]
+  have h1 := ite_len (p.bold = true) 1
+  have h2 := ite_len (p.dim = true) 2
+  have h3 := ite_len (p.italic = true) 3
+  have h4 := ite_len (p.underline = true) 4
+  have h5 := ite_len (p.blink = true) 5
+  have h6 := ite_len (p.reverse = true) 7
+  have h7 := ite_len (p.strike = true) 9
+  omega
+
+theorem colorCodes_length (c : Color) (isFg : Bool) : (colorCodes c isFg).length ≤ 5 := by
+  unfold colorCodes
+  cases c <;> dsimp only
+  · simp
+  · repeat' split
+    all_goals simp
+  · simp
+
+/-- **Every SGR a restore emits stays under the parser's cap**, with room to
+spare: attributes ≤ 8, each colour ≤ 5, where the old single sequence
+reached 18. Stated as a theorem rather than trusted to the fixtures,
+because the failure is silent — an over-long SGR is not mis-applied, it is
+dropped whole. -/
+theorem penSgr_under_cap (p : Pen) :
+    (penAttrCodes p).length ≤ 16 ∧ (colorCodes p.fg true).length ≤ 16
+      ∧ (colorCodes p.bg false).length ≤ 16 :=
+  ⟨by have := penAttrCodes_length p; omega,
+   by have := colorCodes_length p.fg true; omega,
+   by have := colorCodes_length p.bg false; omega⟩
 
 theorem ends_sgrOf (codes : List Nat) : Ends (sgrOf codes) :=
   ends_csi_seq _ 0x6D (paramBytes_joinSemi codes) (by decide) (by decide)
@@ -1015,7 +1060,7 @@ already pushed and a column parameter in the accumulator, the `H` byte
 moves the cursor to exactly (`col-1`, `row-1`). The bounds hypotheses are
 what make `moveTo`'s clamps identities (`Good` supplies them at every
 call site); `origin = false` is required because under DECOM the address
-is region-relative — see the note in specs/bigger-theorems.md. -/
+is region-relative — see the note in specs/archive/bigger-theorems.md. -/
 theorem cup_step_cursor {w : Vt} {s : CsiState} (row col : Nat)
     (hs : w.pstate = .csi s) (hinter : s.inter = 0) (hignore : s.ignore = false)
     (hhave : s.haveCur = true) (hcur : s.cur = min col 65535)

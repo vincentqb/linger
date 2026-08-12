@@ -26,10 +26,27 @@ still worth having: A1 is §Restore plus §Replay, A2 lifts three §s from
 one event to a whole process lifetime, A3 subsumes §Frame and §Chunk as
 special cases. The one anchor still incomplete is A1's screen half — the
 replayed *cells* equalling the saved cells is carried by
-`Tests/Render.lean`'s 14 round-trip fixtures, not yet by proof, and
+`Tests/Render.lean`'s round-trip fixtures, not yet by proof, and
 `Theorems/Resume.lean` says so in the same file as the claim. A1's
-cursor half is now proved rather than tested (`resume_cursor`), which
-makes the untested residue exactly the grid values.
+cursor half is now proved rather than tested (`resume_cursor`), and so is
+the whole byte layer beneath the screen half (`utf8_feed` and friends
+reduce a repaint to a chain of `Vt.print`s), which leaves the untested
+residue as exactly the *values* — which cell and which pen, not which
+bytes.
+
+### What the proof effort caught that the tests did not
+
+Eight infidelities have been found in `Render.restore`. Seven came from
+reading the emitter against the parser. The eighth came from *proving*:
+setting up the pen round trip required counting the parameters an SGR
+carries, and a pen with all seven attributes plus truecolour foreground
+and background needed 18 — two over the parser's cap, which drops the
+whole sequence. Such a pen replayed **entirely default**: every attribute
+and both colours lost. The state is reachable (an application sets
+attributes and colours in separate SGRs), and sixteen fixtures had missed
+it. `penSgr` now emits at most 8 parameters per sequence, and
+`penSgr_under_cap` states the bound so the failure cannot come back
+silently.
 
 ## The rungs
 
@@ -47,7 +64,7 @@ makes the untested residue exactly the grid values.
 | §Isolate | many clients on one session vs per-client framing | `.bytes id` leaves every *other* client's record (and decoder) bit-identical | Theorems/Session.lean |
 | §Row | a list row's identity vs an unreliable `info` reply | a row's name is the sanitized socket filename alone; the reply can neither change it nor smuggle a second one in | Theorems/Listing.lean |
 | §Claim | one session name vs many daemons racing for it | *given* the kernel grants ≤1 `flock` holder, ≤1 daemon ever unlinks or binds that name | Theorems/Claim.lean |
-| §Replay | one saved byte stream must recreate the live screen on a fresh terminal | **parser half proved**: a fresh emulator fed a whole restore stream is quiesced — parser in `ground`, no half-decoded character (`restore_quiesced`), for any `Vt` and with no hypotheses. So a reattach can never wedge a client mid-sequence. **Cursor proved end to end** (`restore_cursor`): the replayed cursor equals the session's, given `Good` (§Bound) and DECOM off — resting on `Quiet`, which says a restore body leaves the parser ground *and* DECOM off, so the final `CUP` is read as an absolute address. The remaining screen/pen *value* fidelity is open, pinned by the decidable `replayEq` + 14 round-trip fixtures | Theorems/Render.lean, Tests/Render.lean |
+| §Replay | one saved byte stream must recreate the live screen on a fresh terminal | **parser half proved**: a fresh emulator fed a whole restore stream is quiesced — parser in `ground`, no half-decoded character (`restore_quiesced`), for any `Vt` and with no hypotheses. So a reattach can never wedge a client mid-sequence. **Cursor proved end to end** (`restore_cursor`): the replayed cursor equals the session's, given `Good` (§Bound) and DECOM off — resting on `Quiet`, which says a restore body leaves the parser ground *and* DECOM off, so the final `CUP` is read as an absolute address. **Byte layer proved**: feeding the bytes of a glyph *is* printing it (`utf8_feed`, `cellText_feed`, `crlf_feed`), so nothing below the emulator-operation level is left to trust. Every emitted SGR is under the parser's 16-parameter cap (`penSgr_under_cap`) — the invariant that replaced a real bug, see below. Remaining: the *values* — that the replayed cells and pens equal the saved ones — pinned by the decidable `replayEq` + 16 round-trip fixtures | Theorems/Render.lean, Tests/Render.lean |
 | §Resume | the product's own promise: crash, reboot, reattach | §Restore ∘ §Replay composed — `load (save c)` succeeds, its replay leaves the terminal quiesced (anchor A1), and the cursor lands where the session had it (`resume_cursor`) | Theorems/Resume.lean |
 
 
