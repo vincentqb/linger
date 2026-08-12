@@ -39,6 +39,19 @@ def expect(cond, name):
 
 fails = 0
 
+# empty state (no sessions yet): must guide, not show a bare divider —
+# this is what confused a first-time user who typed `ls` at it
+pid0, fd0 = spawn_tui()
+screen0 = plain(drain(fd0, 2.0))
+fails += expect('No sessions yet' in screen0 and 'lzmx attach' in screen0,
+                'empty TUI explains itself instead of showing a lone bar')
+os.write(fd0, b'\x1b')
+time.sleep(0.3)
+try:
+    os.close(fd0)
+except OSError:
+    pass
+
 # two sessions with recognizable content
 subprocess.run([LZMX, 'run', 'alpha', 'echo preview-alpha-content'], env=ENV)
 subprocess.run([LZMX, 'run', 'beta', 'echo preview-beta-content'], env=ENV)

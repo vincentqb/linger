@@ -605,3 +605,33 @@ live single-host + multi-host (-r gpu2,gpu3) tests over real ssh — all
 green. Nested-comment gotcha: `-r/--remote` in a doc comment contains
 `/-` which opens a nested block comment (Lean nests) → "unterminated
 comment"; reworded to `--remote` (`-r`).
+
+
+
+## Empty-TUI UX fix — 2026-06-01
+
+User ran bare `lzmx` (no sessions), saw "a strange vertical bar", typed
+`ls`, it flashed, then `exit` → "session 'ls' ended". NOT a bug — the
+software did exactly as told, but the UX led them in:
+- 0 sessions → both panes empty → only the list/preview divider `│`
+  rendered = the "vertical bar down the middle."
+- bare `lzmx` is the MANAGER (picker), not a shell; typed chars go into
+  the query box (which doubles as the new-session name). They treated
+  it as a shell prompt.
+- Enter on no-match created session "ls" + exec'd attach → the "flash"
+  was the picker→shell transition. `exit` ended it.
+
+Root cause = my design: empty state was a cryptic bar with no guidance,
+and the type=filter=name model wasn't conveyed. Fix (Core.Tui.render,
+pure): when st.rows.isEmpty, draw a guidance block ("No sessions yet.
+Type a name above and press Enter… or run lzmx attach <name>. Esc
+quits.") instead of the divider grid; query line shows a muted
+placeholder while empty so it doesn't read like a shell prompt; also a
+"(no match — Enter creates 'X')" hint when a query hides all rows.
+Regression check added to tui_test.py (empty TUI must say "No sessions
+yet" + "lzmx attach"). The "flash" itself is inherent (attach exec
+replaces the full-screen picker) — not a defect.
+
+Lasting lesson for the README quick-start I keep deferring: lead with
+"lzmx attach <name> gives you a shell; bare lzmx is the manager" — the
+model is the thing users miss.

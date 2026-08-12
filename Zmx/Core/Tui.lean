@@ -237,20 +237,45 @@ def render (st : State) : String :=
   let counts := s!"{live} live" ++ (if res > 0 then s!" · {res} resumable" else "")
   let msg := if st.message.isEmpty then counts else st.message
   let status := s!"{dGray}{dFg} lzmx {rst}{dBg}{dMuted} {fit (w - 7) msg}{rst}"
-  -- query line
-  let qline := s!"{dBg}{dCyan} ❯ {dFg}{fit (w - 4) st.query}{rst}"
-  -- list + preview rows
-  let scroll := if st.sel ≥ bodyH then st.sel - bodyH + 1 else 0
-  let body := (List.range bodyH).map (fun i =>
-    let idx := i + scroll
-    let listCell := match ms[idx]? with
-      | some r => rowLine listW (idx == st.sel) r
-      | none => s!"{dBg}{fit listW ""}{rst}"
-    let prevCell := match st.preview[i]? with
-      | some line => s!"{dBg}{dFg}{fit prevW line}{rst}"
-      | none => s!"{dBg}{fit prevW ""}{rst}"
-    s!"{listCell}{dBg}{dMuted}│{rst}{prevCell}")
-  let hints := s!"{dBg}{dMuted} {fit (w - 1) "enter attach · type to filter/name · C-x C-x kill · C-r refresh · esc quit"}{rst}"
+  -- query line — placeholder guidance while empty, so the box doesn't
+  -- read like a shell prompt
+  let qbody := if st.query.isEmpty
+    then "type a name, then Enter, to start a session"
+    else st.query
+  let qcolor := if st.query.isEmpty then dMuted else dFg
+  let qline := s!"{dBg}{dCyan} ❯ {qcolor}{fit (w - 4) qbody}{rst}"
+  -- body
+  let blank := s!"{dBg}{fit w ""}{rst}"
+  let body :=
+    if st.rows.isEmpty then
+      -- first run / nothing to manage: teach the model instead of
+      -- drawing a lone divider column (which reads as "broken")
+      let c := bodyH / 2
+      (List.range bodyH).map (fun i =>
+        if i == c then
+          s!"{dBg}{dFg}{fit w "   No sessions yet."}{rst}"
+        else if i == c + 1 then
+          s!"{dBg}{dMuted}{fit w "   Type a name above and press Enter to create one,"}{rst}"
+        else if i == c + 2 then
+          s!"{dBg}{dMuted}{fit w "   or run  lzmx attach <name>  from your shell.  (Esc quits)"}{rst}"
+        else blank)
+    else
+      -- list + preview, split by the divider
+      let scroll := if st.sel ≥ bodyH then st.sel - bodyH + 1 else 0
+      (List.range bodyH).map (fun i =>
+        let idx := i + scroll
+        let listCell := match ms[idx]? with
+          | some r => rowLine listW (idx == st.sel) r
+          | none =>
+            -- query hides everything: point at the create action
+            if i == 0 && ms.isEmpty && !st.query.isEmpty then
+              s!"{dBg}{dMuted}{fit listW s!" (no match — Enter creates ‘{st.query}’)"}{rst}"
+            else s!"{dBg}{fit listW ""}{rst}"
+        let prevCell := match st.preview[i]? with
+          | some line => s!"{dBg}{dFg}{fit prevW line}{rst}"
+          | none => s!"{dBg}{fit prevW ""}{rst}"
+        s!"{listCell}{dBg}{dMuted}│{rst}{prevCell}")
+  let hints := s!"{dBg}{dMuted} {fit (w - 1) "Enter attach/create · type to filter or name · C-x C-x kill · esc quit"}{rst}"
   "\x1b[H" ++ String.intercalate "\r\n" ([status, qline] ++ body ++ [hints])
 
 end Zmx.Core.Tui
