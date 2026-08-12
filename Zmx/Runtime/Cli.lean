@@ -90,13 +90,15 @@ def cmdAttach (hooks : Hooks) (name : String) (cmd : List String) : IO UInt32 :=
     let host := String.intercalate "@" rest
     if sess.isEmpty || host.isEmpty then
       throw (IO.userError s!"malformed remote target '{name}' (expected name@host)")
-    -- keepalives: a dropped VPN/wifi otherwise leaves this ssh hung
-    -- until a manual `~.`. Aggressive detection is the RIGHT default
-    -- here, unlike bare ssh, because dying is free: the session
-    -- detaches and survives; reattach restores it.
-    exec "ssh" #["-t", "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=3",
-                 "--", host, "lzmx", "attach", sess]  -- replaces us on success
-    return 1                                           -- only reached if exec fails
+    -- Deliberately NO transport policy here (keepalives, timeouts):
+    -- `-o` on the command line would silently override the user's
+    -- ~/.ssh/config, and how fast a link is declared dead is the
+    -- transport's call, not the session manager's. lzmx's contribution
+    -- to flaky links is making death cheap — the session detaches and
+    -- restores — which composes with ANY transport policy (ssh config,
+    -- an autossh-style loop, mosh). See README "Flaky links".
+    exec "ssh" #["-t", "--", host, "lzmx", "attach", sess]  -- replaces us on success
+    return 1                                                 -- only reached if exec fails
   | _ =>
     let fd ← connectUpsert hooks name cmd
     match ← Client.attach fd with

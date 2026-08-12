@@ -862,3 +862,44 @@ control required) + Notes bullets on unreachable-host and link-drop
 behavior. THEOREMS.md: §Stream row, §Replay row (open, precedent:
 "listed before its first proof"), trace-lift paragraph under
 Reading-a-row.
+
+
+
+## Reversal: no transport policy in the attach exec — 2026-08-12
+
+User pushed back on baking ServerAlive into `attach name@host`'s ssh
+argv ("ssh hanging sounds like an SSH problem, not an lzmx problem") —
+and the layering argument beats yesterday's convenience argument:
+command-line `-o` silently OVERRIDES the user's ~/.ssh/config (ssh
+takes the first obtained value; CLI wins), so lzmx was imposing
+interactive transport policy in a place the user can't undo. Reverted
+to plain `ssh -t -- host lzmx attach sess`; the comment now documents
+why NOT. README gained a "Flaky links" section: the ssh-config snippet
+(set once, fixes the `Enter ~ .` dance for ALL their ssh use), an
+autossh-style `lza` fish recipe, and the mosh composition
+(`mosh host -- lzmx attach work`).
+
+KEPT: keepalives on `ls -r`'s ssh (2×2). Different justification — that
+ssh is a non-interactive QUERY the tool itself initiates while building
+a listing; a listing must terminate. Policy on our own batch query is
+operational necessity; policy on the user's interactive session is
+overreach. The line to hold.
+
+Auto-reconnect (autossh-style) evaluated for the BINARY and rejected,
+with a concrete reason worth keeping: ssh's exit contract makes 255
+mean "transport error" OR "remote command exited 255" —
+indistinguishable. Combined with attach-is-upsert, a baked-in retry
+loop would silently respawn a FRESH session when a shell exits 255
+(clean exit drops the checkpoint, so the loop re-creates from nothing).
+Acceptable blind spot in a 6-line recipe the user can read; not
+acceptable hidden in the binary. (mosh solves the problem properly —
+own UDP protocol with sequence numbers — which is exactly why "compose
+with mosh" beats reimplementing it.)
+
+Coupling audit (the actual question "have we tied lzmx to ssh too
+much?"): TWO argv call sites total (listRemote's query; cmdAttach's
+exec). Nothing tunnelled, no ssh library, the wire protocol never
+crosses a network (unix sockets only), remote = "run the same CLI over
+any exec-a-command transport + parse porcelain". The ssh-shaped parts
+are the `name@host` syntax and the PATH assumption. Verdict: thin, and
+thinner after this reversal.

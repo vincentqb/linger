@@ -84,6 +84,46 @@ end
 The same shape works in any terminal with an "open a tab running a
 command" API; `lzmx` itself never drives the terminal.
 
+## Flaky links (VPN drops, roaming)
+
+A dropped link cannot hurt a session — the remote side just detaches,
+and reattach restores the screen. lzmx sets no transport policy on
+`attach name@host` (your `~/.ssh/config` rules the connection), so pick
+your comfort level:
+
+```
+# ~/.ssh/config — declare a dead link in ~15 s instead of hanging
+# (no more Enter ~ .)
+Host *
+    ServerAliveInterval 5
+    ServerAliveCountMax 3
+```
+
+Aggressive values are safe with lzmx even where they would be annoying
+for plain ssh: losing the connection loses nothing.
+
+Auto-reconnect, autossh style (fish):
+
+```fish
+function lza --description 'attach, reconnecting while the link flaps'
+    while true
+        lzmx attach $argv[1]              # name@host
+        test $status -eq 255; or break    # 255 = ssh transport error
+        sleep 2
+    end
+end
+```
+
+ssh reserves exit 255 for its own failures, so this retries only on
+transport death. One documented blind spot: a remote shell exiting 255
+is indistinguishable (ssh's exit contract) and would respawn — that
+ambiguity is why reconnect policy lives in a recipe, not the binary.
+
+Or solve roaming outright: `mosh host -- lzmx attach work`. mosh keeps
+the connection alive across IP changes and sleep with no reconnect at
+all; lzmx adds detach and reboot-resume underneath. They compose
+because lzmx never cares what carries its bytes.
+
 ## Notes
 
 - Reboot-resume is automatic (periodic checkpoint + restore on attach).
@@ -92,12 +132,9 @@ command" API; `lzmx` itself never drives the terminal.
   host is given a few seconds, then skipped); `attach name@host` fails
   with ssh's own error. Once the host is back, its sessions list as
   `resumable` and attach restores them.
-- A VPN/wifi drop mid-attach cannot hurt the session. Via
-  `attach name@host` the carrying ssh notices within ~15 s (keepalives)
-  and exits by itself — no `Enter ~ .` dance — leaving the session
-  detached; reattach when the link is back. (Running your own
-  `ssh host` + `lzmx attach`? Set `ServerAliveInterval 5` in
-  `~/.ssh/config` for the same self-heal.)
+- A VPN/wifi drop mid-attach cannot hurt the session — it detaches and
+  reattach restores it. See "Flaky links" for the client-side comfort
+  options (ssh keepalives, reconnect loop, mosh).
 - Detach key `Ctrl-\`; `LZMX_NO_DETACH_KEY=1` disables it.
 - Remotes: `-r host,host` for one run, `~/.config/lzmx/remotes` to
   persist (duplicates are an error). Hosts need `lzmx` on their `$PATH`.
