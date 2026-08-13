@@ -2492,3 +2492,60 @@ writes two cells when there is room for two.
 `repeat' split <;> rfl` does **not** parse as intended — the `<;>` binds
 inside the `repeat'`. Use two lines: `repeat' split` then `all_goals rfl`.
 That is why the house style spells it that way.
+
+
+## §Status: the seven states, and a theorem that they partition — 2026-08-12
+
+Settled the listing-status design and gave it a Core module plus proofs.
+The design rule that produced the set, stated once because it resolved four
+separate arguments: **two states share a glyph only when they call for the
+same action.** Merged under it -- bell into wants-you (both "go look"),
+waiting-at-prompt into wants-you (same observation without OSC 133, same
+response with it, which takes the one expensive feature off the critical
+path), never-looked into wants-you, and busy into unknown (both "we cannot
+tell you the truth about this row"). Kept distinct where the response
+differs: exited-ok vs exited-bad, idle vs wants-you.
+
+Final set, priority order: \`?\` unknown, \`!\` exited-bad, \`✓\` exited-ok,
+\`~\` resumable, \`⣿\` wants-you, \`⣷\` working, \`⣀\` idle. Plus a plain
+\`Nat\` client count in its own column, which is what the whole third
+"modifier axis" collapsed to.
+
+Two corrections I had to make along the way, both from the user pushing:
+\`x\` for a successful exit was carrying the wrong meaning (\`✓\` is right,
+\`!\` was already the failure glyph), and \`⣀\` idle vs \`…\` busy were
+near-identical low dots meaning opposite things -- which is what forced the
+busy/unknown merge.
+
+### The theorem
+
+A legend is a claim and can be wrong three ways: two different rows show the
+same glyph, a row matches no glyph, or a glyph is unreachable. \`Theorems/
+Status.lean\` rules out all three -- \`cover\`, \`disjoint\`,
+\`classify_sound\`/\`classify_unique\`, \`reachable\`.
+
+The load-bearing choice is that \`Is\` (the legend as predicates) is written
+**independently of \`classify\`'s cascade**. If \`Is\` were the guards with
+earlier branches negated, cover and disjointness would be tautologies and the
+theorems would say nothing. As written, \`classify_sound\` is a real claim
+about the cascade, and mis-ordering two guards breaks it -- which is the
+break-verification: swapping the \`fresh\` and \`unseen\` tests fails 6 proofs.
+
+\`icon_injective\` is the one I would not have thought to write without the
+history: an earlier draft reused \`!\` for both a bell and a failed exit, and
+this theorem rejects exactly that. Break-verified by pointing two states at
+\`?\` -- 3 proofs fail. It makes the design rule enforceable: a future merge
+has to delete a state, not quietly overload a symbol.
+
+\`name_clean\` states the porcelain invariant that came out of the JSON
+discussion: no field carries a tab or newline, which is what makes
+tab-separated rows unambiguous without an escaping pass. That is the theorem
+JSON would have discharged by construction -- worth having explicitly since
+we chose TSV.
+
+Not built: the runtime side. \`classify\` needs \`lastOutput\` and
+\`lastDetach\` in the daemon (one struct change, two assignments in the poll
+loop) and wiring into \`Listing\`. Five of the seven states are computable
+from data that already exists. Known limit to document when it lands:
+\`lastDetach\` is per-daemon, not per-viewer, so with two people on one
+session \`⣿\` means "unread by whoever looked last".

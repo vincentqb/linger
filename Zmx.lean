@@ -7,3 +7,4 @@ import Zmx.Core.Session
 import Zmx.Core.Checkpoint
 import Zmx.Core.Remote
 import Zmx.Core.Listing
+import Zmx.Core.Status
