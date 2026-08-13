@@ -1841,3 +1841,61 @@ the observer in the **foreground** process group; and make anything typed
 at a shell distinguishable from its own echo at the byte level (runtime
 arithmetic, or octal-encoded markers). A green pty test that reads stdout
 for a marker it also typed is not evidence.
+
+
+
+## grid-fidelity step 2, semantic half — 2026-08-12
+
+`pen_codes_recover`: `Vt.applySgr` inverts the pen encoding, from any
+starting pen. ~120 lines, and the risk assessment in the spec was **wrong
+in the useful direction** — I had flagged `applySgr`'s fuelled fold as "the
+largest single unknown" with a fallback plan. No fuel machinery was needed
+at all: every sequence is applied at exactly `length + 1`, which is what
+the fold consumes, so the concrete cases close directly. Left the mistaken
+risk note in the spec with the correction, rather than deleting it.
+
+### The two proof shapes that made it cheap
+
+- **Attributes: 128 concrete branches.** `obtain ⟨…⟩ := p` then `cases` on
+  each of the seven `Bool`s, then one `simp [penAttrCodes, applySgr.go]`.
+  Compiles in 4.7 s. Much cheaper than the seven step lemmas plus a
+  composition law I had planned — brute force over a *finite* dimension
+  beats structural elegance when the dimension is small and the leaves are
+  trivial. Spiked it first precisely because it was the cheapest possible
+  experiment on the biggest unknown.
+- **Colours: make the value concrete, and the guard chain evaporates.**
+  `applySgr`'s fold is a ~19-rung `if`-chain on the parameter number, so a
+  symbolic `30 + i.toNat` leaves simp stuck with a rung per SGR code. The
+  16-colour forms are only 8 codes each, so `rcases` into concrete values
+  and every guard decides by computation. Better still, `simp [← key]`
+  (where `key : UInt8.ofNat i.toNat = i`) rewrites `i` itself to a literal,
+  which makes `i.toNat` *compute* — so the range hypotheses `h8`/`h16`
+  became unused simp arguments, and the build's unused-argument warning is
+  what pointed that out.
+
+### Traps
+
+- **`split` on a catch-all `match` gives a destructured hypothesis, not an
+  equation.** `match colorCodes c isFg with | [] => q | ns => f ns` splits
+  into `[]` and `x :: xs`, so there is no `hns : … = ns` to rewrite with.
+  Fix: define proof-side mirrors with `if … = default then` rather than a
+  catch-all match, and prove the characterisation (`colorCodes_eq_nil`)
+  separately — which is a fact worth having anyway, since `sgrColorSeq`
+  uses emptiness as its "send nothing" test.
+- `UInt8.ofNat_toNat` takes its argument implicitly; `UInt8.ofNat_toNat i`
+  is a type error ("function expected").
+- `rw [iff_lemma]` on a `≠` goal does not fire (the goal is
+  `¬(… = …)`, and the rewrite looks inside a `Not`). Apply the `.mp`
+  directly: `fun h => hc ((colorCodes_eq_nil c isFg).mp h)`.
+
+Break-verified by changing the 16-colour foreground base from 30 to 31 in
+the emitter: `penAfter_colorCodes` fails on the fg case (the parser reads
+`.idx (i+1)`), while the bg case and the other three forms stay green — so
+the lemma pins each form separately rather than passing on a shared
+shortcut.
+
+Remaining for step 2: the parser half — that the CSI accumulator delivers
+these numbers. Recipe recorded in the spec: state the run lemma with the
+*pushed* array rather than with `dropLast`/`getLast`, since `csiFinish`
+performs exactly that push and the induction then follows `joinSemi`'s own
+three-arm recursion.

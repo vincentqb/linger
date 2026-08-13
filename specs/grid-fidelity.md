@@ -21,7 +21,8 @@ to reason about bytes. What remains is a statement about `print`.
 | Rung | Theorem |
 |---|---|
 | bytes → prints | `utf8_feed`, `utf8s_feed`, `cellText_feed`, `crlf_feed` |
-| bytes → pen set | *open* — see step 2 |
+| codes → pen | `pen_codes_recover` (step 2's semantic half, **done**) |
+| bytes → codes | *open* — step 2's parser half |
 | parser stays ground | `Ends`, `restore_quiesced` |
 | DECOM stays off | `Quiet`, `quiet_restoreBody` |
 | cursor lands right | `cup_places_cursor`, `restore_cursor` |
@@ -48,17 +49,25 @@ invariant, and proving it preserved by `step` is step 5. Do *not* weaken
 the theorem to dodge these: they are facts about the emulator, and the
 right move is to prove them.
 
-**Step 2 — the pen round trip** (`penSgr_feed`), independent of the grid
-and the larger half of the work:
+**Step 2 — the pen round trip** (`penSgr_feed`), independent of the grid.
+**The semantic half is done**: `pen_codes_recover` proves `Vt.applySgr`
+inverts the pen encoding, from any starting pen. What remains is the parser
+half.
 
-1. the parser accumulates `joinSemi codes` into
+1. *(open)* the parser accumulates `joinSemi codes` into
    `params = codes.map (min · 65535, false)` — an induction threading the
    params array, with the ≤ 16 bound from `penSgr_under_cap` discharging
-   the `ignore` branch;
-2. `Vt.applySgr` over `penAttrCodes p ++ colorCodes p.fg ++ colorCodes p.bg`
-   yields `p`. Note `applySgr` is a `let rec go` with fuel: prove
-   `fuel ≥ length + 1 → go = <pure fold>` first, or the fuel bookkeeping
-   will be threaded through every case.
+   the `ignore` branch. State the run lemma with the *pushed* array
+   (`(s'.params.push (min s'.cur 65535, s'.curSub)).toList = …`) rather than
+   with `dropLast`/`getLast`: `csiFinish` performs exactly that push, and
+   the induction then follows `joinSemi`'s own three-arm recursion.
+2. *(done)* `Vt.applySgr` recovers the pen. The fuel turned out not to need
+   a pure-fold detour: every sequence is called at `length + 1`, which is
+   exactly what the fold consumes, so the concrete cases close directly.
+   The attributes went as 128 branches over the seven `Bool`s (4.7 s) —
+   cheaper than seven step lemmas plus a composition law; the 16-colour
+   forms as 8 concrete codes each, which lets the fold's long `if`-chain
+   decide by computation instead of needing a disequality per rung.
 
 The emitter was restructured for exactly this: `colorCodes`/`penAttrCodes`
 produce parameter *numbers*, so half of this is about numbers, not bytes.
@@ -93,6 +102,10 @@ not write cells.
   grid claim can still land *conditioned* on the pen, by taking
   "the emulator's pen equals the cell's pen" as a hypothesis and closing it
   later; say so in the statement rather than quietly narrowing the claim.
+  — **Resolved.** The fold was not the problem: `pen_codes_recover` landed
+  in ~120 lines with no fuel machinery, because every sequence is called at
+  exactly `length + 1`. The risk was mis-estimated; the note stays as the
+  record of that.
 
 ## Open
 

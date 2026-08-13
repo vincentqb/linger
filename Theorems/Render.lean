@@ -2042,6 +2042,122 @@ theorem crlf_feed {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) :
   rw [if_neg (by decide), if_pos (by decide)]
   rfl
 
+/-! ### The pen round trip, semantic half — `applySgr` inverts the encoding
+
+`penSgr` emits parameter *numbers* (`penAttrCodes`, `colorCodes`) and the
+parser folds them back into a `Pen` with `Vt.applySgr`. This section proves
+that fold recovers exactly the pen that was encoded, from **any** starting
+pen — the attribute sequence leads with `0`, so it resets first.
+
+Two shapes of proof, both driven by the guards in `applySgr`'s fold:
+
+* the attributes are seven independent `Bool`s, so 128 concrete branches
+  settle it outright — cheaper than seven step lemmas plus a composition;
+* a colour lands in one of four forms, and the 16-colour ones are 8
+  concrete codes each, which lets the fold's long `if`-chain decide by
+  computation instead of needing a disequality per rung.
+
+What is *not* here: that the parser's CSI accumulator delivers these
+numbers in the first place (step 1 of specs/grid-fidelity.md). This half is
+about `Vt.applySgr` alone.
+-/
+
+private theorem u8_lt256 (x : UInt8) : x.toNat < 256 := x.toNat_lt_size
+
+/-- Parameters as the accumulator delivers them: no sub-parameter flags,
+since `joinSemi` separates with `;` and never `:`. -/
+def sgrParamsOf (ns : List Nat) : List (Nat × Bool) := ns.map (fun n => (n, false))
+
+/-- The pen after one emitted SGR, at the fuel `applySgr` supplies. -/
+def penAfter (q : Pen) (ns : List Nat) : Pen :=
+  Vt.applySgr.go q (sgrParamsOf ns) (ns.length + 1)
+
+/-- **The attribute sequence resets, then re-establishes `p`'s attributes.**
+Both colours come out default because the leading `0` resets them and no
+attribute code touches a colour. -/
+theorem penAfter_attrCodes (q : Pen) (p : Pen) :
+    penAfter q (penAttrCodes p)
+      = { bold := p.bold, dim := p.dim, italic := p.italic,
+          underline := p.underline, blink := p.blink, reverse := p.reverse,
+          strike := p.strike } := by
+  obtain ⟨fg, bg, b, d, i, u, bl, r, s⟩ := p
+  cases b <;> cases d <;> cases i <;> cases u <;> cases bl <;> cases r <;> cases s <;>
+    simp [penAfter, sgrParamsOf, penAttrCodes, Vt.applySgr.go]
+
+/-- **A colour sequence writes exactly that colour**, in all four emitted
+forms (16-colour, bright, 256-colour, truecolour). -/
+theorem penAfter_colorCodes (q : Pen) (c : Color) (isFg : Bool)
+    (hne : colorCodes c isFg ≠ []) :
+    penAfter q (colorCodes c isFg)
+      = (if isFg then { q with fg := c } else { q with bg := c }) := by
+  cases c with
+  | default => simp [colorCodes] at hne
+  | idx i =>
+    have key : UInt8.ofNat i.toNat = i := UInt8.ofNat_toNat
+    have hi := u8_lt256 i
+    by_cases h8 : i.toNat < 8
+    · rcases (show i.toNat = 0 ∨ i.toNat = 1 ∨ i.toNat = 2 ∨ i.toNat = 3 ∨ i.toNat = 4
+          ∨ i.toNat = 5 ∨ i.toNat = 6 ∨ i.toNat = 7 from by omega) with
+        h'|h'|h'|h'|h'|h'|h'|h' <;>
+        rw [h'] at key <;> cases isFg <;>
+        simp [penAfter, sgrParamsOf, colorCodes, Vt.applySgr.go, ← key]
+    by_cases h16 : i.toNat < 16
+    · rcases (show i.toNat = 8 ∨ i.toNat = 9 ∨ i.toNat = 10 ∨ i.toNat = 11
+          ∨ i.toNat = 12 ∨ i.toNat = 13 ∨ i.toNat = 14 ∨ i.toNat = 15 from by omega) with
+        h'|h'|h'|h'|h'|h'|h'|h' <;>
+        rw [h'] at key <;> cases isFg <;>
+        simp [penAfter, sgrParamsOf, colorCodes, Vt.applySgr.go, ← key]
+    · cases isFg <;>
+        simp [penAfter, sgrParamsOf, colorCodes, h8, h16, Vt.applySgr.go, color256,
+          show min i.toNat 255 = i.toNat from by omega, key]
+  | rgb r g b =>
+    have hr := u8_lt256 r; have hg := u8_lt256 g; have hb := u8_lt256 b
+    cases isFg <;>
+      simp [penAfter, sgrParamsOf, colorCodes, Vt.applySgr.go, UInt8.ofNat_toNat,
+        show min r.toNat 255 = r.toNat from by omega,
+        show min g.toNat 255 = g.toNat from by omega,
+        show min b.toNat 255 = b.toNat from by omega]
+
+/-- `colorCodes` is empty exactly for the default colour — which is why
+`sgrColorSeq` can use emptiness as its "send nothing" test. -/
+theorem colorCodes_eq_nil (c : Color) (isFg : Bool) :
+    colorCodes c isFg = [] ↔ c = .default := by
+  cases c with
+  | default => simp [colorCodes]
+  | idx i => unfold colorCodes; dsimp only; repeat' split <;> simp
+  | rgb r g b => simp [colorCodes]
+
+/-- The pen after a colour sequence *as the emitter decides whether to send
+one* — mirroring `sgrColorSeq`, which sends nothing for a default colour. -/
+def penAfterColor (q : Pen) (c : Color) (isFg : Bool) : Pen :=
+  if c = .default then q else penAfter q (colorCodes c isFg)
+
+theorem penAfterColor_eq (q : Pen) (c : Color) (isFg : Bool)
+    (hdef : (if isFg then q.fg else q.bg) = .default) :
+    penAfterColor q c isFg = (if isFg then { q with fg := c } else { q with bg := c }) := by
+  unfold penAfterColor
+  by_cases hc : c = .default
+  · -- nothing emitted, and the attribute reset already left it default
+    subst hc
+    rw [if_pos rfl]
+    cases isFg <;>
+      simp only [Bool.false_eq_true, if_false, if_true] at hdef ⊢ <;> rw [← hdef]
+  · rw [if_neg hc]
+    exact penAfter_colorCodes q c isFg
+      (fun h => hc ((colorCodes_eq_nil c isFg).mp h))
+
+/-- **The pen encoding is invertible.** Feeding the three sequences
+`penSgr` emits — attributes, then foreground, then background — to *any*
+starting pen recovers exactly `p`. The semantic half of the pen round trip:
+what remains is that the parser hands these numbers to `applySgr`, which is
+step 1 of specs/grid-fidelity.md. -/
+theorem pen_codes_recover (q : Pen) (p : Pen) :
+    penAfterColor (penAfterColor (penAfter q (penAttrCodes p)) p.fg true) p.bg false = p := by
+  rw [penAfter_attrCodes]
+  rw [penAfterColor_eq _ _ true rfl]
+  rw [penAfterColor_eq _ _ false rfl]
+  simp
+
 /-! ### §Replay stage 3c — the cursor lands where the session had it
 
 The composition. `cup_places_cursor` says the final `CUP` delivers its two
