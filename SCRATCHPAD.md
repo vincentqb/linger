@@ -2112,3 +2112,76 @@ The two shapes to design for before writing any of it:
    width-0 shadow are written by one `print`, so the induction must consume
    two array positions at once there. Stating it over positions rather than
    over a list of cells is what will keep that honest.
+
+
+
+## BLOCKER for step 4: marks on a wide cell replay onto its shadow — 2026-08-12
+
+Found while designing step 4's induction, *before* writing it. Measured:
+
+```
+markOnWide := screen 12 3 "漢\x1b[2G\u0301"
+  live:     cell 0 = 漢 width 2, marks ['́']   |  cell 1 (shadow) marks []
+  replayed: cell 0             marks []       |  cell 1 (shadow) marks ['́']
+  roundtrips = false
+```
+
+**Cause.** `cellText c = utf8 (safeChar c.base) ++ utf8s c.marks`. Printing a
+width-2 base advances the cursor by 2, so the marks that follow attach at
+`cursor.x - 1`, which is the *shadow*, not the base cell.
+
+**Reachable**: print a wide char (cursor lands at x+2), move the cursor back
+one column with `CSI 2 G`, print a combining mark — `print` attaches it at
+`cursor.x - 1 = x`, the wide cell itself. Nothing exotic; any editor moving
+the cursor into a CJK line can do it.
+
+### Why this blocks step 4 rather than being a side quest
+
+The row induction needs "feeding a cell's bytes reproduces that cell". For a
+wide cell with marks that is **false**. The tempting way out is a
+`Renderable` clause saying width-2 cells have no marks — but that clause is
+*false for reachable states*, so it would be weakening a theorem to hide a
+bug, which AGENTS.md explicitly forbids ("restructure code for provability
+rather than weakening a theorem"). The emitter has to be fixed first.
+
+### The fix, and the trap in it
+
+Step back one column before the marks, then forward again:
+
+```
+utf8 (safeChar c.base) ++ [0x08] ++ utf8s c.marks ++ csiNum 1 0x43   -- BS … CUF
+```
+
+**But not unconditionally**, and this is the part that needs care. When a
+wide char ends exactly at the right margin (`x + 2 = cols`), `printAdvance`
+clamps the cursor to `cols - 1 = x + 1` and sets wrap-pending. The mark
+branch then takes `cx = cursor.x` (because pending), which is `x + 1` — the
+shadow — and that is *already correct* for a shadow's marks but *wrong* for
+the base's. A blind backspace would move it to `x - 1`, i.e. corrupt the
+previous cell. So the emitted form depends on the column, which `rowAnsi`
+knows (it is folding over positions) but `cellText` does not.
+
+Two candidate shapes, neither verified:
+
+1. Give `cellText` the column and the width (`cellText (atMargin : Bool) c`),
+   and have `rowAnsi` pass it. Smallest change; makes `cellText`'s contract
+   positional, which the §Replay proofs then have to carry.
+2. Emit the base, then an absolute `CHA` (`CSI <x+1> G`) before the marks and
+   another after — no dependence on pending or on the margin, at the cost of
+   two sequences per marked wide cell. More obviously correct, and absolute
+   addressing is what the rest of `restore` already prefers (fix 5's cursor).
+
+I did not implement either: a half-verified change to the repaint path is
+exactly what breaks resume for everyone, and the margin case needs its own
+fixture before I would trust it. Recorded here so the next session starts
+with the finding rather than rediscovering it mid-induction.
+
+### Ledger note
+
+That is **ten** §Replay infidelities: seven from reading the emitter against
+the parser (stage 3a), one from stating the cursor claim (fix 5), one from
+counting SGR parameters (the 18-parameter pen), and now one from designing
+the grid induction. The last three all came from *proving*, and each was
+invisible to a fixture suite that was passing. The pattern is worth naming:
+every one surfaced at the moment someone had to state precisely what a
+function's output means, rather than check an example of it.

@@ -79,7 +79,17 @@ width-2 glyph writes its shadow cell too, and a mark lands on the cell
 row induction steps by *glyph group*, not by cell — a width-1 cell, or a
 width-2 cell plus its shadow. State that group step, with the pen fixed.
 
-**Step 4 — row, then grid.** `rowAnsi` threads a pen and emits `penSgr`
+**Step 4 — BLOCKED on an emitter bug.** Marks on a *wide* cell replay onto
+its shadow: \`cellText\` emits base-then-marks, but a 2-column base advances
+the cursor by 2, so the marks attach at \`cursor.x - 1\` = the shadow. Measured
+(\`roundtrips\` is \`false\`) and reachable — print a wide char, move back one
+column, print a mark. The row induction needs "a cell'''s bytes reproduce that
+cell", which is false here, and the tempting \`Renderable\` clause ("width-2
+cells have no marks") is false for reachable states, so it would hide the bug
+rather than state a fact. **Fix the emitter first**; the candidate shapes and
+the right-margin trap that makes a blind backspace wrong are in SCRATCHPAD.
+
+Once unblocked: **row, then grid.** `rowAnsi` threads a pen and emits `penSgr`
 only when it changes, so the row induction carries "the emulator's pen is
 the last cell's pen". `gridAnsi` is `CSI H` then rows joined by CRLF, with
 no trailing separator; at a row end the cursor sits at the last column with
