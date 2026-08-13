@@ -168,7 +168,7 @@ timeout) yields `[]` so a dead remote never blocks the local overview.
 ConnectTimeout bounds a host that is down; ServerAlive bounds one that
 is half-up (accepts the connection, then wedges mid-reboot) — either
 way the overview proceeds within a few seconds. -/
-def listRemote (host : String) : IO (List (String × Bool × String)) := do
+def listRemote (host : String) : IO (List (String × Bool × String × String)) := do
   let out ← try
       IO.Process.output {
         cmd := "ssh",
@@ -177,7 +177,8 @@ def listRemote (host : String) : IO (List (String × Bool × String)) := do
                   "--", host, "linger", "ls", "--porcelain"] }
     catch _ => pure { exitCode := 1, stdout := "", stderr := "" }
   if out.exitCode != 0 then return []
-  return (Zmx.Core.Remote.parse out.stdout).map (fun r => (r.name, r.live, r.cmd))
+  return (Zmx.Core.Remote.parse out.stdout).map
+    (fun r => (r.name, r.live, r.cmd, r.status))
 
 def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
   let live ← Paths.listSocketNames
@@ -207,13 +208,13 @@ def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
           (Zmx.Core.Listing.rowStatus .stale))]]
   -- remotes last (per host), so a slow ssh can't reorder local rows
   for host in remotes do
-    for (rname, rlive, rcmd) in ← listRemote host do
+    for (rname, rlive, rcmd, rstatus) in ← listRemote host do
       -- a remote row carries no activity fields (the peer's porcelain does
       -- not forward them), so it reports liveness only
       rows := rows ++ [[("name", s!"{rname}@{host}"), ("cmd", rcmd),
                         ("state", if rlive then "live" else "resumable"),
                         ("status", Zmx.Core.Status.name
-                          (Zmx.Core.Listing.rowStatus (.remote rlive)))]]
+                          (Zmx.Core.Listing.rowStatus (.remote rlive rstatus)))]]
   if porcelain then
     for info in rows do
       for (k, v) in info do

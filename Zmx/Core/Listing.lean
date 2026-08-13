@@ -34,7 +34,7 @@ row look healthier than it is, because `known` and `daemonUp` are not taken
 from the reply.
 -/
 
-open Zmx.Core.Status (Status Obs classify)
+open Zmx.Core.Status (Status Obs classify ofName)
 
 /-- One boolean from the reply, defaulting to `false` when absent or
 malformed — a reply cannot make a row *more* alive by omission. -/
@@ -69,7 +69,7 @@ inductive Row where
   /-- From a peer's porcelain over ssh. A peer forwards liveness but not
   activity, so `⣀` on a remote row means "alive, activity unknown"; forwarding
   the peer's own `status` field is the improvement that would fix it. -/
-  | remote (live : Bool)
+  | remote (live : Bool) (peerStatus : String)
   deriving Repr
 
 def rowStatus : Row → Status
@@ -85,6 +85,7 @@ def rowStatus : Row → Status
       unseen := flag info "unseen" }
   | .stale => .resumable
   | .broken => .unknown
-  | .remote live => if live then .idle else .resumable
+  | .remote live peerStatus =>
+    if live then ofName peerStatus else .resumable
 
 end Zmx.Core.Listing

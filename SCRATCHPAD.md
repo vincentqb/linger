@@ -2756,3 +2756,34 @@ a peer forwards liveness but not activity, so `⣀` there means "alive, activity
 unknown". The fix is to forward the peer's own `status` field — `ofName` exists
 for exactly that and `ofName_name` already proves the round trip — but it needs
 `listRemote` extended, so it is named rather than half-done.
+
+
+
+## Remote rows: `?`, and then better than `?` — 2026-08-12
+
+The user caught me breaking my own rule. I had a live remote row report
+`⣀ idle` on the strength of liveness alone — but `idle` asserts "nothing since
+it was last watched", which is a claim about activity we never read. The rule
+established two entries earlier is that **a glyph is the most specific *true*
+statement**, and by that rule the answer was `?`.
+
+Better than relabelling it: the peer's porcelain now *emits* `status`, so parse
+it. `RemoteRow.status` carries the peer's own name (scrubbed like any other
+display field), `Row.remote` takes it, and `Status.ofName` interprets it —
+total, mapping anything unrecognised, including an absent field from an older
+peer, to `unknown`. So the weak spot is gone rather than documented:
+
+- a peer that reports a status is taken at its word (`rowStatus_remote_reported`,
+  via `ofName_name` — it is the authority on its own session);
+- a peer that reports nothing readable is `unknown`
+  (`rowStatus_remote_unreadable`, `rowStatus_remote_absent`), never `idle`.
+
+`ofName`'s totality is doing real work here: it is what makes "a peer cannot
+claim a state we could not read" true by construction rather than by a check
+someone has to remember. I wrote it as a convenience for parsing our own
+porcelain back; it turned out to be the §Remote safety property.
+
+Also worth noting how the fix arrived: I had *labelled* the weak spot in a doc
+comment and moved on, which felt like diligence. It was not — the label was
+accurate and the behaviour was still wrong. A known-wrong behaviour with a
+comment explaining it is still known-wrong; the comment only makes it survivable.

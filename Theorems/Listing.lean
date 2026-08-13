@@ -1,3 +1,4 @@
+import Theorems.Status
 import Zmx.Core.Listing
 /-! # §Row — a list row's identity is its socket filename, not the reply
 
@@ -57,6 +58,23 @@ could not read. -/
 theorem answered_nil : answered [] = false := rfl
 
 theorem rowStatus_empty_reply : rowStatus (.live []) = Status.unknown := rfl
+
+/-- A peer cannot claim a state we could not read: an absent or unrecognised
+`status` reports `unknown`, not `idle`. This is what keeps a remote glyph an
+honest statement rather than an inference from liveness alone. -/
+theorem rowStatus_remote_unreadable (junk : String)
+    (h : Zmx.Core.Status.ofName junk = Status.unknown) :
+    rowStatus (.remote true junk) = Status.unknown := by
+  simp [rowStatus, h]
+
+theorem rowStatus_remote_absent : rowStatus (.remote true "") = Status.unknown := rfl
+
+/-- …and a peer that does report one is taken at its word, since it is the
+authority on its own session. Round-trips through the porcelain name by
+`ofName_name`. -/
+theorem rowStatus_remote_reported (st : Status) :
+    rowStatus (.remote true (Zmx.Core.Status.name st)) = st := by
+  simp [rowStatus, Zmx.Core.Status.ofName_name]
 
 /-- A missing or malformed flag reads as `false`, so an omission cannot make
 a row look busier or fresher than it is. -/

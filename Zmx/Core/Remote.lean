@@ -32,6 +32,11 @@ structure RemoteRow where
   live : Bool := true
   cmd : String := ""
   clients : Nat := 0
+  /-- The peer's own `status` name, verbatim from its porcelain. Interpreted
+  by `Status.ofName`, which is total and maps anything unrecognised — including
+  an absent field from an older peer — to `unknown`. So a remote row can never
+  claim a state we could not actually read. -/
+  status : String := ""
   labels : List (String × String) := []
   deriving Repr, DecidableEq, Inhabited
 
@@ -54,6 +59,11 @@ def parseRecord (lines : List String) : Option RemoteRow :=
       live := ((kvs.find? (·.1 == "state")).map (·.2)).getD "live" == "live"
       cmd := scrub (((kvs.find? (·.1 == "cmd")).map (·.2)).getD "")
       clients := (((kvs.find? (·.1 == "clients")).map (·.2)).getD "").toNat?.getD 0
+      -- the peer's own status name, scrubbed like any other display field.
+      -- `Status.ofName` is total and maps anything unrecognised -- including
+      -- an absent field from an older peer -- to `unknown`, so a remote row
+      -- can never look healthier than we can actually read it
+      status := scrub (((kvs.find? (·.1 == "status")).map (·.2)).getD "")
       labels := kvs.filterMap (fun (k, v) =>
         if k.startsWith "label." then some (scrub (k.drop 6).toString, scrub v)
         else none) }
