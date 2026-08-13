@@ -2235,3 +2235,80 @@ alternatives. Two things bit:
   exactly. Third time this session that `++` association cost a build; the
   reliable move is to read the *expected* type in the mismatch and bracket to
   match it, rather than reasoning about the emitter's source text.
+
+
+
+## Alt-screen bug hunt: 3 bugs, one fixed (fix 9) — 2026-08-12
+
+Delegated an empirical hunt over the alt-screen path (96 probes, 33 failures).
+The prediction held: the stages whose *value* claims were unstated are where
+the bugs were. Probes left in `/tmp/alt0{1..7}.lean`.
+
+### FIXED — fix 9: the stashed main pen leaked into the alt repaint
+
+Reproducer, one cell: `screen 1 1 "\x1b[7m\x1b[?1049h"` → `roundtrips false`.
+
+`screensAnsi` emits `penSgr mpen` immediately before `?1049h` so the switch
+stashes the right pen — correct, and the ordering claim in its doc comment is
+sound. But it leaves the *live* pen set to `mpen`, and the alt repaint that
+follows is `gridAnsi v.grid`, whose fold seeds "pen already in effect" with
+the **default**. `rowAnsi` emits an `SGR` only when a cell's pen differs from
+that, so a leading run of default-pen alt cells emitted nothing and inherited
+`mpen`. Corruption ran row-major from (0,0) until the first cell whose pen
+differed — that cell's `SGR` leads with `0`, which heals the rest.
+
+Severity: for a blank alt screen the *entire* screen replayed in the shell's
+pen. A `vim` reattach after `\x1b[41m` came back fully red.
+
+**Fix**: `gridAnsi` now leads with `CSI 0 m`. Establishing the assumption
+where it is made, rather than trusting each call site — `restoreBody`'s own
+leading reset becomes redundant but harmless, and the alt path stops being a
+special case. 33 of the 33 failures in this class are gone; three fixtures
+pin it, including the heal-at-first-non-default shape that made it invisible.
+
+**Why the suite missed it**: the pre-existing alt fixture puts `\x1b[33m`
+*before* the first alt glyph, so cell (0,0) is non-default and its `SGR`'s
+leading `0` masked the leak. Move the colour one glyph later and it fails.
+A fixture can pass for the wrong reason; this is the third time that has
+bitten in this project.
+
+### NOT FIXED — two grid shapes `rowAnsi` cannot express
+
+Both reachable via `ICH`/`DCH`, both *not* alt-specific — the alt path just
+exposes them in `stash.grid`, which nothing else exercises.
+
+- **Wide leading cell in the final column.** `screen 6 2 "ab漢cd\x1b[1;1H\x1b[3@"`
+  — `ICH` pushes a wide char's shadow off the row end. `rowAnsi` emits the
+  glyph at the last column; on replay `printWideWrap` sees `x+1 ≥ cols` with
+  wrap still on (`modesAnsi` sets `?7l` only later) and wraps to the next
+  row, then the joining CRLF scrolls at the bottom — the whole grid shifts.
+  *Candidate fix*: emit `CSI ?7l` before the repaint and let `modesAnsi`
+  restore the real wrap mode after. That also protects the last cell of every
+  row from spurious wrap, so it is worth doing on its own merits.
+- **Orphaned width-0 cell.** `screen 6 2 "漢ab\x1b[1;1H\x1b[1P"` — `DCH`
+  deletes a wide char's leading cell, leaving its shadow. `rowAnsi`'s
+  `width == 0` branch emits marks and no glyph, but the live cell occupies a
+  column, so everything right of it paints one column left. *Candidate fix*:
+  emit a space when a width-0 cell is not preceded by a width-2 cell; the
+  fold already carries the column, so it can carry the previous width too.
+
+### NOT FIXED — `cursorAnsi` Nat-truncates under DECOM
+
+`screen 10 6 "\x1b[2;5r\x1b[?6h\x1b[1d"` — with `cursor.y = 0 < top = 1` and
+DECOM on, `cursor.y - v.top + 1` is `0 - 1 + 1 = 1` in `Nat`, so it emits row
+1, which DECOM resolves back to `top`. Reachable because `VPA` (`CSI d`) sets
+`y` with no region clamp, unlike `moveTo`. This is the documented DECOM
+residual, but it produces a *silently wrong* address rather than being merely
+inexpressible, which is worse. At minimum the emitter should not pretend:
+either clamp explicitly and document, or refuse the region-relative form when
+`cursor.y < top`.
+
+### What the hunt confirmed about the emitter's own claim
+
+`screensAnsi`'s ordering claim is sound for what it claims: the subagent could
+not break `stash.cur`, `stash.pen`, `saved`, region, modes, tabs, charset,
+title or pen in the alt path across 63 passing probes. The invariant that
+broke was the **unstated** one — `gridAnsi` is only correct when the incoming
+live pen is default, and `screensAnsi` was the one call site that deliberately
+violated it. Worth generalising: the bugs are not in the claims people wrote
+down, they are in the assumptions nobody wrote down.

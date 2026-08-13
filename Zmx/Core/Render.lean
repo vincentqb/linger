@@ -193,15 +193,24 @@ def joinCRLF : List Bytes → Bytes
   | [b] => b
   | b :: bs => b ++ [0x0D, 0x0A] ++ joinCRLF bs
 
-/-- Paint a full grid: home, then each row. Safe under any terminal
-state since we repaint everything. -/
+/-- Paint a full grid: reset the pen, home, then each row.
+
+The leading `CSI 0 m` is load-bearing, not decoration. The fold below seeds
+its "pen already in effect" accumulator with the *default* pen, and
+`rowAnsi` emits an `SGR` only when a cell's pen differs from that — so a
+leading run of default-pen cells emits no `SGR` at all and inherits whatever
+pen the terminal happened to be carrying. `screensAnsi` is exactly such a
+caller: it sets the stashed main pen immediately before painting the alt
+grid, and without this reset the whole leading run of the alt screen came
+back in that pen (§Replay fix 9). Establishing the assumption here rather
+than trusting each call site is what makes `gridAnsi` self-contained. -/
 def gridAnsi (grid : Array Row) : Bytes :=
   let (rows, _) := grid.foldl
     (fun (acc : List Bytes × Pen) row =>
       let (line, pen') := rowAnsi row acc.2
       (acc.1 ++ [line], pen'))
     (([], ({} : Pen)))
-  csiB ++ [0x48] ++ joinCRLF rows
+  csiNum 0 0x6D ++ (csiB ++ [0x48] ++ joinCRLF rows)
 
 /-! ## Modes -/
 

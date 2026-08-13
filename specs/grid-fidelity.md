@@ -115,6 +115,31 @@ not write cells.
   exactly `length + 1`. The risk was mis-estimated; the note stays as the
   record of that.
 
+## Found by the alt-path bug hunt — two still open
+
+Delegated hunt, 96 probes, 33 failures (details and reproducers in
+SCRATCHPAD). One fixed as **fix 9** (\`gridAnsi\` now leads with \`CSI 0 m\`: the
+stashed main pen was leaking into the alt repaint, recolouring the whole
+leading run of the alt screen). Two remain, both reachable via ICH/DCH, both
+in \`rowAnsi\` rather than the alt path, and **both block step 4** for the same
+reason fix 8 did — the row induction needs "a cell'''s bytes reproduce that
+cell":
+
+1. **A wide leading cell in the final column** (ICH pushed its shadow off the
+   row end). \`rowAnsi\` emits the glyph at the last column; on replay
+   \`printWideWrap\` wraps it, and the joining CRLF then scrolls. Candidate fix:
+   emit \`CSI ?7l\` before the repaint, let \`modesAnsi\` restore the real wrap
+   mode after — worth doing anyway, since it also protects the last cell of
+   every row.
+2. **An orphaned width-0 cell** (DCH deleted the wide base, leaving the
+   shadow). The \`width == 0\` branch emits no glyph though the cell occupies a
+   column. Candidate fix: emit a space when a width-0 cell is not preceded by
+   a width-2 cell; the fold already carries the column and can carry the
+   previous width.
+
+Also open, not blocking: \`cursorAnsi\` Nat-truncates when \`cursor.y < top\`
+under DECOM and emits a silently wrong address.
+
 ## Open
 
 * Whether `Renderable` should live in `Zmx/Core/Vt.lean` next to `Good` or

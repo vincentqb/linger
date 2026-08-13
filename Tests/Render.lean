@@ -124,6 +124,28 @@ and needs no correction. A relative backspace would have landed a column too
 far left here, which is why the correction is an absolute `CHA`. -/
 example : roundtrips (screen 4 2 "ab\u6f22\u0301") = true := by native_decide
 
+/-- Spec fix 9 — the **stashed main pen leaked into the alt repaint**.
+`screensAnsi` sets the stashed pen just before `?1049h` so the switch stashes
+the right one; that left the terminal carrying it, and `gridAnsi`'s fold
+assumes the *default* pen is in effect, emitting no SGR for a leading run of
+default-pen cells. So a reattach repainted the whole leading run of the alt
+screen in the shell's colour — every cell of it, for a blank alt screen.
+Found by an alt-path bug hunt, not by the suite: the pre-existing alt fixture
+happens to put a non-default pen on alt cell (0,0), whose `SGR` leads with a
+reset and heals it. `gridAnsi` now establishes what it assumes. -/
+example : roundtrips (screen 1 1 "\x1b[7m\x1b[?1049h") = true := by native_decide
+
+/-- The same, with the leak visible across a row boundary and healing at the
+first non-default cell — the shape that made it hard to notice. -/
+example : roundtrips (screen 6 3 "\x1b[41mm\x1b[?1049h\x1b[0mA\x1b[32mB") = true := by
+  native_decide
+
+/-- A heavy pen at the switch over a blank alt screen: before the fix every
+cell replayed bold+dim+italic+underline+blink+reverse+strike in truecolour. -/
+example : roundtrips
+    (screen 8 3 "\x1b[1;2;3;4;5;7;9m\x1b[38;2;10;20;30m\x1b[48;2;40;50;60mm\x1b[?1049h")
+    = true := by native_decide
+
 /-- Spec fixes 4+5: DECOM origin mode (with a region) and IRM insert
 mode; the final cursor address is region-relative under DECOM. -/
 example : roundtrips (screen 10 6 "\x1b[2;4r\x1b[?6h\x1b[4h\x1b[2;2H")

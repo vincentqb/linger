@@ -773,7 +773,8 @@ theorem ends_gridAnsi (grid : Array Row) : Ends (gridAnsi grid) := by
     have : (csiB ++ [0x48] : Bytes) = csiB ++ [] ++ [0x48] := by simp
     rw [this]
     exact ends_csi_seq [] 0x48 ParamBytes.nil (by decide) (by decide)
-  exact hhome.append (ends_joinCRLF _ hrows)
+  exact (ends_csiNum 0 0x6D (by decide) (by decide)).append
+    (hhome.append (ends_joinCRLF _ hrows))
 
 /-! ### The composition: a whole restore stream
 
@@ -1590,7 +1591,8 @@ theorem quiet_gridAnsi (grid : Array Row) : Quiet (gridAnsi grid) := by
   have hhome : Quiet (csiB ++ [0x48] : Bytes) := by
     rw [show (csiB ++ [0x48] : Bytes) = csiB ++ [] ++ [0x48] from by simp]
     exact quiet_csi_seq [] 0x48 ParamBytes.nil (by decide) (by decide)
-  exact hhome.append (quiet_joinCRLF _ hrows)
+  exact (quiet_csiNum 0 0x6D (by decide) (by decide)).append
+    (hhome.append (quiet_joinCRLF _ hrows))
 
 theorem quiet_screensAnsi (v : Vt) : Quiet (screensAnsi v) := by
   unfold screensAnsi
