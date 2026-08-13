@@ -2454,3 +2454,41 @@ state), which cannot be grepped — that one needs the claims to exist first.
 Cheap enough to be worth it anyway: a name with no theorem at all is a
 surface nobody has had to think precisely about, and on this project's record
 that is where the bugs are.
+
+
+
+## Fix 11: the emulator stops producing unrenderable grids — 2026-08-12
+
+Decision taken: go with **"every reachable state is renderable"** as the
+theorem to aim at, which means the *emulator* must not reach shapes the
+painter cannot express. First instance landed.
+
+`Vt.printPut` now stores a **blank** when a wide glyph has no room for its
+shadow (`w == 2 && x + 1 ≥ cols`). Previously it wrote a width-2 cell in the
+final column and silently dropped the shadow — reachable whenever autowrap is
+off, since `printWideWrap` only pre-wraps when wrap is on. On replay that
+glyph wrapped to the next row and the joining CRLF scrolled the whole grid.
+Half a glyph is not displayable anyway, so a blank is what a terminal shows.
+
+**The fuzzer confirmed it**: `failingDeep 150` went `[3, 24, 139]` →
+`[24, 139]`, so the pinned list shrank exactly as the ratchet intends. Seeds
+24 and 139 remain (wide-glyph cases with charset and mark interactions, not
+yet narrowed).
+
+This is the shape the rest of `Renderable` should follow: rather than adding
+side conditions to `row_exact`, remove the states. Still to do on the same
+principle: `deleteChars`/`insertChars`/`eraseChars`/`resize` must blank a wide
+glyph they split, which is the orphaned-width-0-cell bug.
+
+### Cost of the change
+
+Six proofs needed the extra branch, all mechanically: `Good.printPut` and four
+`split <;> rfl` field-preservation proofs (`repeat' split` + `all_goals rfl`),
+plus `print_narrow`'s and `print_wide`'s `printPut` helpers. `print_wide`'s
+helper had to *gain the fit hypothesis* — it was stated `∀ w`, which is no
+longer true, and that is the change telling the truth: a wide glyph only
+writes two cells when there is room for two.
+
+`repeat' split <;> rfl` does **not** parse as intended — the `<;>` binds
+inside the `repeat'`. Use two lines: `repeat' split` then `all_goals rfl`.
+That is why the house style spells it that way.

@@ -88,18 +88,18 @@ example : failing 400 = [] := by native_decide
 /-- Longer cases, fewer of them: depth finds interactions that breadth does
 not (fix 9 needed a pen *and* an alt switch *and* a default-pen first cell).
 
-**Three seeds fail today**, pinned rather than hidden so that any *new*
-failure breaks the build and this list only ever shrinks — the `SHIM_CAP`
-idiom. Reproduce a case with `#eval genCase (nextRand (i * 104729 + 17)) 14`.
+**Two seeds fail today**, pinned rather than hidden so that any *new* failure
+breaks the build and this list only ever shrinks — the `SHIM_CAP` idiom.
+Reproduce a case with `#eval genCase (nextRand (i * 104729 + 17)) 14`.
 
-Seed 3 is the important one, and it corrects `knownGap` above: it reaches the
-width-2-cell-in-the-final-column state with **`\x1b[?7l` and a wide glyph**,
-no `ICH` involved. With wrap off, `printWideWrap` does not pre-wrap, so a wide
-glyph printed at the last column writes its base there and drops its shadow
-off the row end. So that grid shape is far more reachable than the ICH route
-suggested — any program that turns off autowrap and prints CJK at the margin
-produces it. Seeds 24 and 139 are also wide-glyph cases (with charset and
-mark interactions respectively) and are not yet narrowed.
+Seed 3 used to be here and is **fixed** (fix 11): it reached the
+width-2-cell-in-the-final-column state with `\x1b[?7l` and a wide glyph, no
+`ICH` involved, which refuted the `knownGap` reasoning above — with wrap off
+`printWideWrap` does not pre-wrap, so any program that disables autowrap and
+prints CJK at the margin produced it. `Vt.printPut` now stores a blank when a
+wide glyph has no room for its shadow, so the grid never holds that shape.
+Seeds 24 and 139 are also wide-glyph cases (charset and mark interactions)
+and are not yet narrowed.
 
 Delete a seed from this list when its fix lands. -/
 def failingDeep (count : Nat) : List Nat :=
@@ -108,6 +108,6 @@ def failingDeep (count : Nat) : List Nat :=
     let (c, r) := dims[seed % dims.size]!
     !roundtrips (screen c r (genCase seed 14)))
 
-example : failingDeep 150 = [3, 24, 139] := by native_decide
+example : failingDeep 150 = [24, 139] := by native_decide
 
 end Zmx.Core.Render.Fuzz

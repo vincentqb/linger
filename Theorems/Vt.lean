@@ -401,9 +401,10 @@ theorem printShift {v : Vt} (w : Nat) (h : Good v) : Good (v.printShift w) := by
 theorem printPut {v : Vt} (ch : Char) (w : Nat) (h : Good v) : Good (v.printPut ch w) := by
   unfold Vt.printPut
   dsimp only
-  split
-  · exact putCell _ _ _ (putCell _ _ _ h)
-  · exact putCell _ _ _ h
+  repeat' split
+  all_goals first
+    | exact putCell _ _ _ (putCell _ _ _ h)
+    | exact putCell _ _ _ h
 
 theorem printAdvance {v : Vt} (w : Nat) (h : Good v) : Good (v.printAdvance w) := by
   obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := h
@@ -903,7 +904,10 @@ theorem frame_printShift (v : Vt) (w : Nat) :
 
 theorem frame_printPut (v : Vt) (ch : Char) (w : Nat) :
     v.printPut ch w = { v with grid := (v.printPut ch w).grid } := by
-  unfold Vt.printPut Vt.putCell; dsimp only; split <;> rfl
+  unfold Vt.printPut Vt.putCell
+  dsimp only
+  repeat' split
+  all_goals rfl
 
 theorem frame_printAdvance (v : Vt) (w : Nat) :
     v.printAdvance w = { v with cursor := (v.printAdvance w).cursor } := by
@@ -1007,7 +1011,10 @@ theorem ps_printShift (v : Vt) (w : Nat) : (v.printShift w).pstate = v.pstate :=
 
 theorem ps_printPut (v : Vt) (ch : Char) (w : Nat) :
     (v.printPut ch w).pstate = v.pstate := by
-  unfold Vt.printPut; dsimp only; split <;> rfl
+  unfold Vt.printPut
+  dsimp only
+  repeat' split
+  all_goals rfl
 
 theorem ps_printAdvance (v : Vt) (w : Nat) : (v.printAdvance w).pstate = v.pstate := by
   unfold Vt.printAdvance; dsimp only; split <;> rfl
@@ -1190,7 +1197,10 @@ theorem un_printShift (v : Vt) (w : Nat) : (v.printShift w).u8need = v.u8need :=
 
 theorem un_printPut (v : Vt) (ch : Char) (w : Nat) :
     (v.printPut ch w).u8need = v.u8need := by
-  unfold Vt.printPut; dsimp only; split <;> rfl
+  unfold Vt.printPut
+  dsimp only
+  repeat' split
+  all_goals rfl
 
 theorem un_printAdvance (v : Vt) (w : Nat) : (v.printAdvance w).u8need = v.u8need := by
   unfold Vt.printAdvance; dsimp only; split <;> rfl
@@ -1469,7 +1479,10 @@ theorem dims_printShift (v : Vt) (w : Nat) : dims (v.printShift w) = dims v := b
   unfold Vt.printShift; dsimp only; split <;> rfl
 
 theorem dims_printPut (v : Vt) (ch : Char) (w : Nat) : dims (v.printPut ch w) = dims v := by
-  unfold Vt.printPut; dsimp only; split <;> rfl
+  unfold Vt.printPut
+  dsimp only
+  repeat' split
+  all_goals rfl
 
 theorem dims_printAdvance (v : Vt) (w : Nat) : dims (v.printAdvance w) = dims v := by
   unfold Vt.printAdvance; dsimp only; split <;> rfl
@@ -1804,7 +1817,10 @@ theorem org_printShift (v : Vt) (w : Nat) :
 
 theorem org_printPut (v : Vt) (ch : Char) (w : Nat) :
     (v.printPut ch w).modes.origin = v.modes.origin := by
-  unfold Vt.printPut; dsimp only; split <;> rfl
+  unfold Vt.printPut
+  dsimp only
+  repeat' split
+  all_goals rfl
 
 theorem org_printAdvance (v : Vt) (w : Nat) :
     (v.printAdvance w).modes.origin = v.modes.origin := by

@@ -348,14 +348,26 @@ def Vt.printShift (v : Vt) (w : Nat) : Vt :=
     { v with grid := v.grid.setIfInBounds v.cursor.y shifted }
   else v
 
-/-- Write the glyph (and its shadow cell if wide). Grid only. -/
+/-- Write the glyph (and its shadow cell if wide). Grid only.
+
+A wide glyph with no room for its shadow stores a **blank** instead (fix 11).
+Reachable whenever autowrap is off — `printWideWrap` only pre-wraps when wrap
+is on — and previously it left a width-2 cell in the final column with no
+shadow, which `Render.rowAnsi` cannot express: on replay the glyph wraps to
+the next row and the joining CRLF scrolls the whole grid. Half a glyph is not
+displayable either, so a blank is what a terminal shows. Keeping the grid
+free of shapes the painter cannot express is what makes `Renderable` an
+invariant rather than a hypothesis. -/
 def Vt.printPut (v : Vt) (ch : Char) (w : Nat) : Vt :=
   let x := v.cursor.x
   let y := v.cursor.y
-  let v' := v.putCell x y { base := ch, marks := [], width := w, pen := v.pen }
-  if w == 2 then
-    v'.putCell (x + 1) y { base := ' ', marks := [], width := 0, pen := v.pen }
-  else v'
+  if w == 2 && x + 1 ≥ v.cols then
+    v.putCell x y { base := ' ', marks := [], width := 1, pen := v.pen }
+  else
+    let v' := v.putCell x y { base := ch, marks := [], width := w, pen := v.pen }
+    if w == 2 then
+      v'.putCell (x + 1) y { base := ' ', marks := [], width := 0, pen := v.pen }
+    else v'
 
 /-- Advance the cursor by `w`, arming wrap-pending at the margin. -/
 def Vt.printAdvance (v : Vt) (w : Nat) : Vt :=

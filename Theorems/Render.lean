@@ -2511,7 +2511,10 @@ theorem print_narrow {v : Vt} (ch : Char)
     intro w hw'; unfold Vt.printShift; rw [if_neg (by simp [hw'])]
   have h4 : ∀ (w : Vt) (c : Char), w.printPut c 1
       = w.putCell w.cursor.x w.cursor.y { base := c, marks := [], width := 1, pen := w.pen } := by
-    intro w c; unfold Vt.printPut; dsimp only; rw [if_neg (by decide)]
+    intro w c
+    unfold Vt.printPut
+    dsimp only
+    rw [if_neg (by simp), if_neg (by decide)]
   rw [h1, h2, h3 _ (by rw [Zmx.Core.Vt.frame_clearPending]; exact hins), h4]
   -- `printAdvance` moves only the cursor, so the cell is what `putCell` wrote
   rw [show ∀ (w : Vt) (n : Nat), (w.printAdvance n).getCell = w.getCell from by
@@ -2553,7 +2556,10 @@ theorem print_narrow_frame {v : Vt} (ch : Char)
   have h4 : ∀ (w : Vt) (c : Char), w.printPut c 1
       = w.putCell w.cursor.x w.cursor.y
           { base := c, marks := [], width := 1, pen := w.pen } := by
-    intro w c; unfold Vt.printPut; dsimp only; rw [if_neg (by decide)]
+    intro w c
+    unfold Vt.printPut
+    dsimp only
+    rw [if_neg (by simp), if_neg (by decide)]
   rw [h1, h2, h3 _ (by rw [Zmx.Core.Vt.frame_clearPending]; exact hins), h4]
   rw [show ∀ (w : Vt) (n : Nat), (w.printAdvance n).getCell = w.getCell from by
     intro w n
@@ -2600,13 +2606,17 @@ theorem print_wide {v : Vt} (ch : Char)
     rw [if_neg (by simp [hcp]; omega)]
   have h3 : ∀ (w : Vt), w.modes.insert = false → w.printShift 2 = w := by
     intro w hw'; unfold Vt.printShift; rw [if_neg (by simp [hw'])]
-  have h4 : ∀ (w : Vt) (c : Char), w.printPut c 2
+  have h4 : ∀ (w : Vt) (c : Char), w.cursor.x + 1 < w.cols → w.printPut c 2
       = (w.putCell w.cursor.x w.cursor.y
             { base := c, marks := [], width := 2, pen := w.pen }).putCell
           (w.cursor.x + 1) w.cursor.y
             { base := ' ', marks := [], width := 0, pen := w.pen } := by
-    intro w c; unfold Vt.printPut; dsimp only; rw [if_pos (by decide)]
-  rw [h1, h2, h3 _ (by rw [Zmx.Core.Vt.frame_clearPending]; exact hins), h4]
+    intro w c hf
+    unfold Vt.printPut
+    dsimp only
+    rw [if_neg (by simp; omega), if_pos (by decide)]
+  rw [h1, h2, h3 _ (by rw [Zmx.Core.Vt.frame_clearPending]; exact hins),
+    h4 _ ch (by simp [hcp]; omega)]
   rw [show ∀ (w : Vt) (n : Nat), (w.printAdvance n).getCell = w.getCell from by
     intro w n
     unfold Vt.getCell Vt.getRow
