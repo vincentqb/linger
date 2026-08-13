@@ -65,6 +65,12 @@ structure State where
   property of the **session**, not of a viewer — "last looked" is a session
   event, so no per-client bookkeeping is created for a one-off connection. -/
   lookSeq : Nat := 0
+  /-- `outSeq` as of the previous `.tick`, and whether output arrived since
+  it. Freshness from a *counter comparison across ticks* rather than a stored
+  timestamp: the poll loop already ticks, so "output since the last tick" is
+  the signal, and the core needs no clock arithmetic. -/
+  tickOutSeq : Nat := 0
+  freshFlag : Bool := false
   deriving Repr, Inhabited
 
 /-- What the runtime feeds in. All byte payloads are `List UInt8`; the
@@ -115,9 +121,26 @@ def State.setClient (s : State) (c : Client) : State :=
 def State.dropClient (s : State) (id : Nat) : State :=
   { s with clients := s.clients.filter (·.id != id) }
 
+/-- Unread: output arrived while nobody was watching. What
+`Status.wantsYou` is derived from — a property of the **session**, since
+"last looked" is a session event rather than a viewer attribute, so a one-off
+connection creates no state. -/
+def unseen (s : State) : Bool := s.lookSeq < s.outSeq
+
+/-- How much arrived unseen — free from the counter, where a boolean would
+have thrown it away. -/
+def behind (s : State) : Nat := s.outSeq - s.lookSeq
+
 def infoText (s : State) : List UInt8 :=
   let fields := s.metaKv
     ++ [("clients", toString (s.clients.filter (·.attached)).length)]
+    -- the observations `Status.classify` needs from the daemon; the rest
+    -- (reachability, checkpoint loadability) only the caller can know
+    ++ [("unseen", toString (unseen s)), ("fresh", toString s.freshFlag),
+        ("behind", toString (behind s))]
+    ++ (match s.exited with
+        | some st => [("exit", toString st.toNat)]
+        | none => [])
     ++ s.labels.map (fun (k, v) => (s!"label.{k}", v))
   (String.join (fields.map (fun (k, v) => s!"{k}\t{v}\n"))).toUTF8.toList
 
@@ -142,16 +165,6 @@ def broadcast (s : State) (bytes : List UInt8) : List Effect :=
   s.clients.filter (·.attached) |>.flatMap (fun c => outputMsgs c.id bytes)
 
 /-! ## Message handling (client → daemon) -/
-
-/-- Unread: output arrived while nobody was watching. What
-`Status.wantsYou` is derived from — a property of the **session**, since
-"last looked" is a session event rather than a viewer attribute, so a one-off
-connection creates no state. -/
-def unseen (s : State) : Bool := s.lookSeq < s.outSeq
-
-/-- How much arrived unseen — free from the counter, where a boolean would
-have thrown it away. -/
-def behind (s : State) : Nat := s.outSeq - s.lookSeq
 
 def onMsg (s : State) (c : Client) (m : Msg) : State × List Effect :=
   match m with
@@ -268,9 +281,14 @@ def step (s : State) (ev : Event) : State × List Effect :=
     let closes := s.clients.map (fun c => Effect.close c.id)
     (s, notify ++ closes ++ [.dropCheckpoint, .exit])
   | .tick now =>
+    -- the activity flag is refreshed in both branches as a field value: a
+    -- `let` before the `if` would hide the `if` from the proofs that `split`
+    -- on this handler
     if s.dirty && now ≥ s.lastCkptMs + ckptIntervalMs then
-      ({ s with dirty := false, lastCkptMs := now }, [.checkpoint])
-    else (s, [])
+      ({ s with dirty := false, lastCkptMs := now,
+                freshFlag := s.tickOutSeq < s.outSeq, tickOutSeq := s.outSeq },
+       [.checkpoint])
+    else ({ s with freshFlag := s.tickOutSeq < s.outSeq, tickOutSeq := s.outSeq }, [])
 
 /-- A whole event trace folded through `step`, effects in arrival
 order — the specification of the runtime's poll loop (which feeds one

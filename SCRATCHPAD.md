@@ -2607,3 +2607,51 @@ list and is opaque to arithmetic. `onMsg_seq` then `feedMsgs_seq` by fold
 induction is the shape; two lemmas, next increment. I cut them rather than
 leave a `sorry`, and `unseen_ptyOut` carries `lookSeq ≤ outSeq` as a
 hypothesis where the trace theorem would have supplied it.
+
+
+
+## All seven states wired — 2026-08-12
+
+Daemon side: `freshFlag`/`tickOutSeq` in `State`, refreshed on `.tick` by
+comparing `outSeq` across ticks — freshness from a **counter comparison**, not
+a stored timestamp, so the core still needs no clock arithmetic. `infoText`
+now reports `unseen`, `fresh`, `behind`, and `exit` when the child is gone.
+
+Client side: `Listing.rowStatus` builds `Status.Obs` from two sources — the
+daemon's reply for activity, and the caller for what only it can know (socket
+present, daemon answered, checkpoint loads). That split is what extends §Row
+to the status column, and `Theorems/Listing.lean` now states it:
+`rowStatus_unanswered` (a live socket that did not answer is `unknown`
+whatever the reply said), `rowStatus_resumable`, `rowStatus_gone`,
+`flag_absent` (a missing flag reads `false`, so an omission cannot make a row
+look fresher than it is).
+
+### A bug the theorem found, in the theorem's own subject
+
+`rowStatus_resumable` would not close by `rfl`, and the reason was real:
+`classify` tests `exit` **before** `daemonUp`, so an `exit` key in a reply
+made a socket-less row classify as a completed run. A peer crafting `exit 0`
+could have shown a dead session as finished-successfully. Fixed where it
+belongs — `rowStatus` only reads `exit` when a socket is present, since
+without a daemon there is nobody who could have observed the child. Then the
+three theorems are `rfl`.
+
+That is the fifth bug found by stating a claim rather than by testing, and it
+is the first one *outside* the emitter. The pattern holds exactly: the claim
+was "a reply cannot lie about a row's health", writing it down forced the
+question "which fields come from the reply?", and one of them should not have.
+
+### The handler-shape lesson, twice more
+
+Adding the tick refresh as a `let` before the `if` hid the `if` from the two
+proofs that `split` on that handler. Putting it in **both branches as field
+values** kept the shape and cost one proof line (`.tick`'s second bullet,
+which now needs the same conjunction as the first instead of a bare
+hypothesis). Same lesson as the `.ptyOut` counter: in a state machine whose
+proofs case-split on the handler, new behaviour is cheapest as data inside an
+existing branch — and a `let` in front of the branch is the specific thing to
+avoid.
+
+Remaining before this ships as a visible column: `Cli` rendering (icon +
+client count) and a live test. The pure and proved parts are done — all seven
+states are now computable from data that exists.

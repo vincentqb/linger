@@ -261,7 +261,7 @@ theorem step_bounded (s : State) (ev : Event) (h : Bounded s) :
   · -- tick
     split
     · exact ⟨hcl, hlb, hdec⟩
-    · exact h'
+    · exact ⟨hcl, hlb, hdec⟩
 
 /-! ## The emulator stays Good through the daemon -/
 

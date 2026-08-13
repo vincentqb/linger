@@ -27,4 +27,34 @@ theorem rowFields_reply_excluded (socketName v : String)
     (⟨"name", v⟩ : String × String) ∉ (rowFields socketName info).tail := by
   simp [rowFields, List.mem_filter]
 
+/-! ## §Row extends to the status column
+
+The identity half of §Row says a reply cannot rename a row. These say it
+cannot lie about the row's *health* either: the two facts that decide whether
+a row is trustworthy at all come from the caller, never from the reply.
+-/
+
+open Zmx.Core.Status (Status)
+
+/-- A live socket that did not answer is `unknown`, whatever the reply
+contained — so a daemon too busy to answer cannot be reported as idle, and a
+crafted reply cannot claim otherwise. -/
+theorem rowStatus_unanswered (ckpt : Bool) (info : List (String × String)) :
+    rowStatus true false ckpt info = Status.unknown := rfl
+
+/-- No socket but a loadable checkpoint is `resumable`, whatever the reply
+contained (there is no daemon to have sent one). -/
+theorem rowStatus_resumable (answered : Bool) (info : List (String × String)) :
+    rowStatus false answered true info = Status.resumable := rfl
+
+/-- No socket and no loadable checkpoint is `unknown`. -/
+theorem rowStatus_gone (answered : Bool) (info : List (String × String)) :
+    rowStatus false answered false info = Status.unknown := rfl
+
+/-- A missing or malformed flag reads as `false`, so an omission cannot make
+a row look busier or fresher than it is. -/
+theorem flag_absent (info : List (String × String)) (k : String)
+    (h : info.find? (·.1 == k) = none) : flag info k = false := by
+  simp [flag, h]
+
 end Zmx.Core.Listing
