@@ -11,6 +11,7 @@
 #   7. remote-over-ssh e2e (fake ssh: `-r` listing, attach name@host argv)
 #   8. adverse timing: busy-daemon listing (§Row) + name-ownership race
 #   9. graphics passthrough (kitty APC / sixel DCS reach the client raw)
+#  (1) also covers Tests/Fuzz.lean: randomized §Replay round-trip search
 set -e
 cd "$(dirname "$0")/.."
 

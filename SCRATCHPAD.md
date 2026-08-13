@@ -2378,3 +2378,46 @@ Two cheap mechanical nets, neither built yet:
    this bug class *precisely*, because it explores state combinations nobody
    thought to write down. Highest value-per-line available right now — higher
    than the next proof, on the evidence of this session.
+
+
+
+## The fuzzer, and what it found in its first run — 2026-08-12
+
+`Tests/Fuzz.lean`: a pure LCG splices escape-sequence fragments, feeds them,
+checks `roundtrips`. A failing *seed* is a bug with a reproducer attached.
+Two claims, `native_decide`d so they gate the build: 400 short cases (6
+fragments) and 150 long ones (14).
+
+**It found three bugs on the first run**, all in the deep set — which
+confirms the reason for having a deep set at all: fix 9 needed a pen *and* an
+alt switch *and* a default-pen first cell to show up, so breadth alone would
+never have reached it.
+
+**Seed 3 is the important one, because it corrects the exclusion list I had
+just written.** I had held out `ICH`/`DCH` as the only way to reach a
+width-2 cell in the final column. Wrong: `\x1b[?7l` plus a wide glyph gets
+there too. With autowrap off, `printWideWrap` does not pre-wrap, so a wide
+glyph printed at the last column writes its base there and its shadow falls
+off the row end. **Any program that disables autowrap and prints CJK near the
+margin produces the state** — vastly more reachable than the ICH route
+implied, and it means the wrap-off idea from the previous entry would not just
+conflict with fix 8, it would *manufacture* this shape.
+
+The lesson is about the exclusion list, not the bug: I wrote "these two
+mutations are the only route" from reading the code, and a dumb random
+generator refuted it in one pass. **An exclusion list justified by reading is
+a hypothesis; only a search can support it.**
+
+Seeds 24 and 139 are also wide-glyph cases (charset and mark interactions)
+and are not yet narrowed.
+
+Pinned as `failingDeep 150 = [3, 24, 139]` rather than hidden — the
+`SHIM_CAP` idiom, so the list can only shrink and any *new* failure breaks
+the build. Delete a seed when its fix lands.
+
+**Why this was worth building before the next proof.** One file, ~100 lines,
+found three bugs immediately and refuted a stated assumption. On this
+session's evidence the ordering is: fuzz first, then prove the things the
+fuzzer cannot reach (it can only check states it can *generate*, so it says
+nothing about the universally-quantified claims — the two are complements,
+not substitutes).
