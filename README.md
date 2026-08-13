@@ -55,6 +55,7 @@ recipes in [`recipes/`](recipes/) do the composing (fish functions —
 | `lzo.fish` | every session on a host as kitty tabs, one shot |
 | `lza.fish` | attach that auto-reconnects while a link flaps |
 | `lzs.fish` | live status board for sessions you have no tab open on |
+| `lzh.fish` | detach (ctrl-\\) pops a picker, so it acts as a switch key |
 | `ssh_config` | dead links declared in ~15 s — no more `Enter ~ .` |
 
 Transport is yours: `attach name@host` execs ssh, and mosh composes as

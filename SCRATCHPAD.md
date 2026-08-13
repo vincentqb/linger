@@ -2823,3 +2823,29 @@ the real binary: `linger run board-demo sleep 300`, then three redraws
 observed under `timeout 3 fish -c '… lzs "" 1'` with `cat -v` confirming
 `ESC[H ESC[J ESC[3J` before each table and the `⣿` row present; session
 killed afterwards.
+
+
+## recipes/lzh.fish notes — 2025-06-14
+
+"No prefix key" (the reason ctrl-\ is a single action, not a leader) has
+a real cost: no `prefix + s` to switch sessions. Closed it outside the
+binary instead of reopening the decision — wrap `attach` in a loop, so
+detach falls into the picker and you land in the next session. ctrl-\
+becomes a switch key with no keybinding, no leader, and no new syscall.
+Falls out of a property already true: detach returns control to the
+caller, so the caller can decide what "detach" means. Worth remembering
+as a shape — in-session verbs can live in the *wrapper* rather than in a
+key vocabulary inside the client.
+
+Two properties it gets for free: rows are `name@host` (`ls -r`), so the
+switcher spans machines, which a tmux session list cannot — its server
+is per-host; and fzf's nonzero exit on Esc is the loop's only exit, so
+quitting the picker quits the wrapper.
+
+Verified `set x (cmd)` propagates the substitution's status in fish
+(`set -l x (false)` → `$status` 1). `lz.fish` already depended on this
+via `and`; now a `break` does, so it was worth confirming rather than
+inheriting. Control flow exercised with stubbed `linger`/`fzf` (a real
+`attach` wants a tty): attach → pick `b@gpu2` → attach → Esc(130) →
+clean exit 0; bare `lzh` starts at the picker; Esc with nothing to pick
+exits 0 without attaching.
