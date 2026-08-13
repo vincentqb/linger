@@ -2551,6 +2551,84 @@ theorem print_narrow_frame {v : Vt} (ch : Char)
     · exact congrArg (fun r => Array.getD r x' default) (getD_set_ne _ _ _ _ _ hy')
   · exact congrArg (fun r => Array.getD r x' default) (getD_set_ne _ _ _ _ _ hy)
 
+/-- **A wide glyph writes two cells**: the glyph at the cursor with width 2,
+and a width-0 *shadow* to its right. The shadow is what makes §Replay fix 1
+necessary — a combining mark typed after a wide char parks on it, so
+`rowAnsi` must re-emit the marks of width-0 cells even though it skips their
+(blank) base. -/
+theorem print_wide {v : Vt} (ch : Char)
+    (htr : ((v.shiftOut && v.g1Line) || (!v.shiftOut && v.g0Line)) = false)
+    (hw : charWidth ch = 2) (hins : v.modes.insert = false)
+    (hpend : v.cursor.pending = false) (hfit : v.cursor.x + 1 < v.cols)
+    (hrow : (v.getRow v.cursor.y).size = v.cols) (hgrid : v.grid.size = v.rows)
+    (hy : v.cursor.y < v.rows) :
+    (v.print ch).getCell v.cursor.x v.cursor.y
+        = { base := ch, marks := [], width := 2, pen := v.pen }
+      ∧ (v.print ch).getCell (v.cursor.x + 1) v.cursor.y
+        = { base := ' ', marks := [], width := 0, pen := v.pen } := by
+  have hcp : v.clearPending = { v with cursor := { v.cursor with pending := false } } := rfl
+  have hgs : v.cursor.y < v.grid.size := by rw [hgrid]; exact hy
+  unfold Vt.print
+  simp only [htr, Bool.false_eq_true, if_false, hw]
+  rw [if_neg (by decide)]
+  have h1 : v.printWrap = v.clearPending := by
+    unfold Vt.printWrap
+    rw [if_neg (by simp [hpend])]
+  have h2 : v.clearPending.printWideWrap 2 = v.clearPending := by
+    unfold Vt.printWideWrap
+    rw [if_neg (by simp [hcp]; omega)]
+  have h3 : ∀ (w : Vt), w.modes.insert = false → w.printShift 2 = w := by
+    intro w hw'; unfold Vt.printShift; rw [if_neg (by simp [hw'])]
+  have h4 : ∀ (w : Vt) (c : Char), w.printPut c 2
+      = (w.putCell w.cursor.x w.cursor.y
+            { base := c, marks := [], width := 2, pen := w.pen }).putCell
+          (w.cursor.x + 1) w.cursor.y
+            { base := ' ', marks := [], width := 0, pen := w.pen } := by
+    intro w c; unfold Vt.printPut; dsimp only; rw [if_pos (by decide)]
+  rw [h1, h2, h3 _ (by rw [Zmx.Core.Vt.frame_clearPending]; exact hins), h4]
+  rw [show ∀ (w : Vt) (n : Nat), (w.printAdvance n).getCell = w.getCell from by
+    intro w n
+    unfold Vt.getCell Vt.getRow
+    rw [Zmx.Core.Vt.frame_printAdvance]]
+  unfold Vt.putCell Vt.getCell Vt.getRow
+  unfold Vt.getRow at hrow
+  simp only [hcp]
+  refine ⟨?_, ?_⟩
+  · -- the glyph cell: the shadow was written one to the right
+    rw [getD_set_self _ _ _ _ (by simpa using hgs)]
+    rw [getD_set_ne _ _ _ _ _ (by omega)]
+    rw [getD_set_self _ _ _ _ (by simpa using hgs)]
+    exact getD_set_self _ _ _ _ (by rw [hrow]; omega)
+  · -- the shadow cell
+    rw [getD_set_self _ _ _ _ (by simpa using hgs)]
+    exact getD_set_self _ _ _ _ (by
+      rw [getD_set_self _ _ _ _ (by simpa using hgs), Array.size_setIfInBounds, hrow]
+      omega)
+
+/-- **A combining mark attaches to the cell before the cursor** (§Replay
+fix 1). The `< 8` cap is §Bound's: an adversarial mark stream must not grow a
+cell without limit, so past eight the mark is dropped. -/
+theorem print_mark {v : Vt} (m : Char)
+    (htr : ((v.shiftOut && v.g1Line) || (!v.shiftOut && v.g0Line)) = false)
+    (hw : charWidth m = 0) (hpend : v.cursor.pending = false) (hx0 : v.cursor.x ≠ 0)
+    (hcap : (v.getCell (v.cursor.x - 1) v.cursor.y).marks.length < 8)
+    (hrow : (v.getRow v.cursor.y).size = v.cols) (hgrid : v.grid.size = v.rows)
+    (hx : v.cursor.x - 1 < v.cols) (hy : v.cursor.y < v.rows) :
+    (v.print m).getCell (v.cursor.x - 1) v.cursor.y
+      = { v.getCell (v.cursor.x - 1) v.cursor.y with
+          marks := (v.getCell (v.cursor.x - 1) v.cursor.y).marks ++ [m] } := by
+  unfold Vt.print
+  simp only [htr, Bool.false_eq_true, if_false, hw]
+  rw [if_pos (by decide)]
+  simp only [hpend, if_false, Bool.false_eq_true]
+  rw [if_neg (show ¬((v.cursor.x == 0) = true) from by simp only [beq_iff_eq]; exact hx0)]
+  have hcap' : ¬ ((v.getCell (v.cursor.x - 1) v.cursor.y).marks.length ≥ 8) := by omega
+  rw [if_neg hcap']
+  unfold Vt.putCell Vt.getCell Vt.getRow
+  unfold Vt.getRow at hrow
+  rw [getD_set_self _ _ _ _ (by rw [hgrid]; exact hy)]
+  exact getD_set_self _ _ _ _ (by rw [hrow]; exact hx)
+
 /-! ### §Replay stage 3c — the cursor lands where the session had it
 
 The composition. `cup_places_cursor` says the final `CUP` delivers its two

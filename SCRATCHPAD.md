@@ -2051,3 +2051,64 @@ Step 3 remaining: the wide-glyph group (a width-2 cell plus its width-0
 shadow, written by the same `printPut`) and the mark case (a zero-width char
 attaches to the cell *before* the cursor — §Replay fix 1, and the reason
 marks are replayed at all).
+
+
+
+## grid-fidelity step 3 CLOSED — wide glyphs and marks — 2026-08-12
+
+`print_wide` and `print_mark` finish the per-glyph layer:
+
+- **`print_wide`** — a width-2 glyph writes *two* cells: the glyph with
+  `width := 2` at the cursor, and a `width := 0`, `base := ' '` **shadow** to
+  its right. Both come from the same `printPut`, so reading the glyph cell
+  means stepping *past* the shadow write with `getD_set_ne` (`x ≠ x + 1`)
+  before the glyph's own `getD_set_self`.
+- **`print_mark`** — a zero-width char attaches to the cell *before* the
+  cursor, appending to its `marks`. Carries `cursor.x ≠ 0` and the §Bound cap
+  `marks.length < 8` (past eight the mark is dropped, so an adversarial mark
+  stream cannot grow a cell).
+
+Together with `print_narrow` + `print_narrow_frame` that is the whole
+observable content of one glyph, and it explains §Replay fix 1 from the other
+direction: a mark parks on a wide char's *shadow*, so `rowAnsi` has to
+re-emit the marks of width-0 cells even though it skips their blank base.
+Dropping them would lose the mark — which is exactly the bug fix 1 was.
+
+### Trap: nested `if`s resolve outside-in, and a failure cascades
+
+`print_mark`'s two rewrites failed *together*, and the second failure was a
+red herring: the cap `if`'s cell mentions `cx`, and `cx` was still an
+unresolved `if` because the rewrite above it had failed. So "pattern not
+found" for the cap test was caused by the cx test, not by anything about the
+cap. Fixing the outer one fixed both. General rule: in a chain of
+`rw [if_neg …]`, fix the *first* failure and re-read; later "pattern not
+found" errors in the same chain are usually downstream of it.
+
+Also: `by simp [hx0]` did not discharge `¬((v.cursor.x == 0) = true)` from
+`hx0 : v.cursor.x ≠ 0`; `by simp only [beq_iff_eq]; exact hx0` did.
+
+Break-verified: the shadow cell's `width := 0` changed to `1` fails three
+proofs. A record-field break again, which is the reliable kind.
+
+### Step 4 is where this stops, deliberately
+
+The remaining work — a row, then the grid — is one large induction with
+several interacting invariants, and I would rather leave it unstarted than
+half-landed. What the per-glyph layer now hands it:
+
+- each glyph's effect is `print_narrow`/`print_wide` (what it writes) plus
+  `print_narrow_frame` (what it leaves alone), with **no bounds hypotheses**
+  in the frame, so the induction need not thread bounds for the frame half;
+- `cellText_feed` already turns a cell's bytes into those prints;
+- `penSgr_feed` turns `rowAnsi`'s conditional pen emission into `pen := c.pen`.
+
+The two shapes to design for before writing any of it:
+
+1. **The fold's invariant.** `rowAnsi` threads `(bytes, pen)` and emits
+   `penSgr` only when the cell's pen differs, so the invariant is "the
+   emulator's pen equals the pen `rowAnsi` is carrying" — which `penSgr_feed`
+   maintains at each change and which holds vacuously when there is none.
+2. **The step is a glyph *group*, not a cell.** A width-2 cell and its
+   width-0 shadow are written by one `print`, so the induction must consume
+   two array positions at once there. Stating it over positions rather than
+   over a list of cells is what will keep that honest.
