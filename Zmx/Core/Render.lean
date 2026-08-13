@@ -229,7 +229,7 @@ The alternative was a reachability invariant on `Vt`; one guarded emit is
 cheaper than a field every constructor must maintain. -/
 def modesAnsi (v : Vt) : Bytes :=
   let set := fun (n : Nat) (on : Bool) => csiPriv n (if on then 0x68 else 0x6C)
-  (if v.modes.wrap then [] else set 7 false)
+  set 7 v.modes.wrap
     ++ (if v.modes.appCursor then set 1 true else [])
     ++ (if v.modes.appKeypad then escSeq 0x3D else [])
     ++ (if v.modes.cursorVisible then [] else set 25 false)

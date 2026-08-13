@@ -2312,3 +2312,69 @@ broke was the **unstated** one — `gridAnsi` is only correct when the incoming
 live pen is default, and `screensAnsi` was the one call site that deliberately
 violated it. Worth generalising: the bugs are not in the claims people wrote
 down, they are in the assumptions nobody wrote down.
+
+
+
+## Two §Replay fixes are in tension at the right margin — 2026-08-12
+
+Tried the recorded candidate fix for the wide-glyph-in-last-column bug: turn
+wrap **off** for the repaint (`?7l` after the clean slate) and let `modesAnsi`
+restore it. It works — the `ICH`-pushed wide glyph stops wrapping and the grid
+stops shifting — and it **broke fix 8's margin fixture**, which is why that
+fixture exists.
+
+**The conflict.** With wrap on, `printAdvance` arms wrap-pending at the
+margin, and that pending flag is the *only* way a combining mark can be
+attached to the last column: the mark branch reads `cx = cursor.x` when
+pending, and `cursor.x - 1` otherwise, and with wrap off the cursor can never
+exceed `cols - 1`, so `cx ≤ cols - 2` always. So:
+
+- a wide **glyph** in the last column needs wrap **off** (or it wraps away);
+- a **mark** in the last column needs wrap **on** (or it lands one left).
+
+A global switch cannot satisfy both. Resolving it needs per-row wrap control
+(turn wrap off for rows with no last-column mark, on for the rest), which is
+a real design decision and not a one-liner. Reverted the `?7l`; the reasoning
+is now in `restoreBody`'s doc comment so the next attempt starts from it
+rather than rediscovering it.
+
+**Kept** the independent half: `modesAnsi` now states wrap
+*unconditionally* (`set 7 v.modes.wrap`) instead of only when it is off, so
+the repaint no longer depends on the fresh terminal's default being wrap-on.
+Self-contained for the same reason fix 9 made `gridAnsi` self-contained.
+
+**What this says about the method.** The fixture that caught it was written
+one commit earlier, *for the case the fix was about to break*. Break-verifying
+fix 8 at the margin is what made fix 10's failure loud instead of silent —
+the argument for pinning the boundary case even when it already passes.
+
+## Answering "how do we catch unwritten assumptions?" — 2026-08-12
+
+All four proving-found bugs are the same shape: **a function correct only
+under a precondition on the emulator state it is fed into, which its caller
+violated.** `gridAnsi` assumed a default pen (fix 9); `cellText` assumed the
+cursor lands one column right (fix 8); `penSgrBody` assumed ≤ 16 parameters;
+`cursorAnsi` assumes `cursor.y ≥ top`.
+
+So the detector is a theorem *shape*, and it is mechanical:
+
+    feed (stage v) from ANY quiesced emulator = ⟨stated pure effect⟩
+
+with **no hypotheses on the incoming state beyond quiescence**. A stage that
+cannot be stated that way is either not self-contained (make it so — that is
+exactly what fix 9 did) or is carrying an unstated precondition. `Ends`/`Quiet`
+already have this shape for the *parser*; no stage had it for *values*, which
+is precisely where all four bugs were.
+
+Two cheap mechanical nets, neither built yet:
+
+1. **Unclaimed-surface gate.** Every `def` in `Zmx/Core/Render.lean` must be
+   named by some theorem in `Theorems/`. Grep-able, same shape as the
+   `SHIM_CAP` ratchet. Would have flagged `screensAnsi` as having parser
+   claims but no value claim — which is where fix 9 was hiding.
+2. **A fuzzer over `roundtrips`.** The delegated hunt hand-fuzzed 96 cases and
+   found three bugs in one pass. Random escape-sequence strings + `roundtrips`
+   as oracle + shrink on failure is ~30 lines and runs forever. It targets
+   this bug class *precisely*, because it explores state combinations nobody
+   thought to write down. Highest value-per-line available right now — higher
+   than the next proof, on the evidence of this session.

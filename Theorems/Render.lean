@@ -827,8 +827,7 @@ theorem ends_modesAnsi (v : Vt) : Ends (modesAnsi v) := by
     by_cases h : on <;> simp only [h, if_true]
     · exact ends_csiPriv n 0x68 (by decide) (by decide)
     · exact ends_csiPriv n 0x6C (by decide) (by decide)
-  have e1 : Ends (if v.modes.wrap then [] else csiPriv 7 (if false then 0x68 else 0x6C)) :=
-    Ends.ite Ends.nil (hset 7 false)
+  have e1 : Ends (csiPriv 7 (if v.modes.wrap then 0x68 else 0x6C)) := hset 7 v.modes.wrap
   have e2 := Ends.ite (c := v.modes.appCursor = true) (hset 1 true) Ends.nil
   have e3 := Ends.ite (c := v.modes.appKeypad = true) (ends_escSeq 0x3D (by decide)) Ends.nil
   have e4 := Ends.ite (c := v.modes.cursorVisible = true) Ends.nil (hset 25 false)
@@ -1647,8 +1646,8 @@ theorem quiet_modesAnsi (v : Vt) (ho : v.modes.origin = false) : Quiet (modesAns
     by_cases h : on <;> simp only [h, if_true]
     · exact quiet_csiPriv n 0x68 hn (by decide) (by decide)
     · exact quiet_csiPriv n 0x6C hn (by decide) (by decide)
-  have e1 : Quiet (if v.modes.wrap then [] else csiPriv 7 (if false then 0x68 else 0x6C)) :=
-    Quiet.ite (fun _ => Quiet.nil) (fun _ => hset 7 false (by decide))
+  have e1 : Quiet (csiPriv 7 (if v.modes.wrap then 0x68 else 0x6C)) :=
+    hset 7 v.modes.wrap (by decide)
   have e2 := Quiet.ite (c := v.modes.appCursor = true)
     (fun _ => hset 1 true (by decide)) (fun _ => Quiet.nil)
   have e3 := Quiet.ite (c := v.modes.appKeypad = true)
@@ -1679,8 +1678,7 @@ theorem quiet_modesAnsi (v : Vt) (ho : v.modes.origin = false) : Quiet (modesAns
 /-- **§Replay: DECOM survives a restore.** Every stage of a restore body
 leaves the parser ground and DECOM off, given the session had DECOM off —
 which is what lets the final `CUP` be read as an absolute address. -/
-theorem quiet_restoreBody (v : Vt) (ho : v.modes.origin = false) :
-    Quiet (restoreBody v) := by
+theorem quiet_restoreBody (v : Vt) (ho : v.modes.origin = false) : Quiet (restoreBody v) := by
   unfold restoreBody
   exact ((((((((
     (quiet_csiNum 0 0x6D (by decide) (by decide)).append
