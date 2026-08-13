@@ -2185,3 +2185,53 @@ the grid induction. The last three all came from *proving*, and each was
 invisible to a fixture suite that was passing. The pattern is worth naming:
 every one surfaced at the moment someone had to state precisely what a
 function's output means, rather than check an example of it.
+
+
+
+## Fix 8 landed: marks on a wide cell — 2026-08-12
+
+The blocker from the previous entry is fixed. `rowAnsi` now carries the
+**column** in its fold accumulator (`Bytes × Pen × Nat`), and for a wide cell
+with marks emits
+
+```
+utf8 (safeChar base) ++ CHA (x+2) ++ utf8s marks ++ CHA (x+3)
+```
+
+parking the cursor between glyph and shadow so `print`'s `cursor.x - 1`
+lands on the glyph, then moving past the shadow for whatever follows.
+Verified: `roundtrips markOnWide` went `false` → `true`, with the mark back
+on cell 0 and the shadow empty.
+
+**Absolute `CHA`, not a relative backspace** — and the right margin is why.
+When a wide char ends at the last column, `printAdvance` clamps the cursor
+and arms wrap-pending; the mark branch then reads `cx = cursor.x`, which is
+already the shadow. A backspace there would land a column too far left and
+corrupt the *previous* cell. `CHA` is correct in both cases because it
+addresses by column and clears pending. Two fixtures: the fix itself, and the
+margin case where the correction must not change the outcome.
+
+**Residual limit, documented in `rowAnsi`**: at the right margin, a wide cell
+with marks on *both* the glyph and its shadow is not expressible — the
+shadow's marks need wrap-pending still armed, and the absolute move that
+fixes the glyph's marks clears it. Same shape as the DECOM cursor limit:
+named in the emitter rather than papered over.
+
+### Proof repairs the accumulator change forced
+
+`ends_rowAnsi` and `quiet_rowAnsi` fold over the accumulator, so both needed
+updating — which is the cost of making the emitter positional, and it was
+small because both were already written in the order-robust style
+(`repeat' split` + `all_goals first | …`): the new branch just adds
+alternatives. Two things bit:
+
+- `ends_utf8s [c.base]` is **not** what the emitter emits — that is
+  `utf8 (safeChar c.base)`. Extracted the inline argument from
+  `ends_cellText` into `ends_utf8_safe` (and the `Quiet` twin) so both
+  callers share it.
+- **Association.** The emitted body is one parenthesised chunk appended to
+  the accumulator: `acc.fst ++ (((b1++b2)++b3)++b4)`, not
+  `((((acc++b1)++b2)++b3)++b4)`. The `Ends.append` term has to mirror that
+  exactly. Third time this session that `++` association cost a build; the
+  reliable move is to read the *expected* type in the mismatch and bracket to
+  match it, rather than reasoning about the emitter's source text.

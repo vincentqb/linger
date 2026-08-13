@@ -108,6 +108,22 @@ example : roundtrips (screen 10 3
     "\x1b[1;2;3;4;5;7;9m\x1b[38;5;123m\x1b[48;5;200mY")
     = true := by native_decide
 
+/-- Spec fix 8 — a combining mark on a **wide** cell's own position, not on
+its shadow. Reachable: print 漢 (cursor lands past the shadow), step back
+with `CSI 2 G`, print the mark — `print` attaches at `cursor.x - 1`, the
+wide cell itself. `rowAnsi` emitted base-then-marks, and the 2-column
+advance made the marks re-attach to the *shadow*: the mark moved one cell
+right on every reattach. Found while designing the grid induction, not by
+testing. -/
+example : roundtrips (screen 12 3 "\u6f22\x1b[2G\u0301") = true := by native_decide
+
+/-- The same path at the **right margin**, where the fix must not fire: a
+wide char ending at the last column leaves the cursor clamped with
+wrap-pending, so a mark then lands on the shadow through a different branch
+and needs no correction. A relative backspace would have landed a column too
+far left here, which is why the correction is an absolute `CHA`. -/
+example : roundtrips (screen 4 2 "ab\u6f22\u0301") = true := by native_decide
+
 /-- Spec fixes 4+5: DECOM origin mode (with a region) and IRM insert
 mode; the final cursor address is region-relative under DECOM. -/
 example : roundtrips (screen 10 6 "\x1b[2;4r\x1b[?6h\x1b[4h\x1b[2;2H")

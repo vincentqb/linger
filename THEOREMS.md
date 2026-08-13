@@ -46,7 +46,7 @@ and both colours lost. The state is reachable (an application sets
 attributes and colours in separate SGRs), and sixteen fixtures had missed
 it. `penSgr` now emits at most 8 parameters per sequence, and
 `penSgr_under_cap` states the bound so the failure cannot come back
-silently.
+silently. The tenth was found while *designing* the grid induction rather than writing it: a combining mark on a wide char's own cell replayed onto its shadow, because the emitter put the marks after a 2-column advance. Reachable by moving the cursor back into a CJK line. Fixed by carrying the column in \`rowAnsi\` and parking the cursor with an absolute \`CHA\`.
 
 ## The rungs
 

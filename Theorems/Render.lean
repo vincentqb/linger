@@ -708,6 +708,11 @@ theorem invariant_foldl {α β : Type} (P : β → Prop) (f : β → α → β)
 theorem ends_utf8s (cs : List Char) : Ends (utf8s cs) :=
   Ends.text (utf8s_no_esc cs)
 
+theorem ends_utf8_safe (ch : Char) : Ends (utf8 (safeChar ch)) :=
+  Ends.text (fun b hb => by
+    obtain ⟨hge, -⟩ := utf8_no_ctl (safeChar ch) (safeChar_ge ch).1 (safeChar_ge ch).2 b hb
+    intro he; rw [he] at hge; exact absurd hge (by decide))
+
 theorem ends_cellText (c : Cell) : Ends (cellText c) := by
   unfold cellText
   exact (Ends.text (fun b hb => by
@@ -718,15 +723,21 @@ theorem ends_cellText (c : Cell) : Ends (cellText c) := by
 theorem ends_rowAnsi (row : Row) (p : Pen) : Ends (rowAnsi row p).1 := by
   unfold rowAnsi
   rw [← Array.foldl_toList]
-  refine invariant_foldl (fun acc => Ends acc.1) _ ?_ row.toList ([], p) Ends.nil
+  refine invariant_foldl (fun acc => Ends acc.1) _ ?_ row.toList ([], p, 0) Ends.nil
   intro acc c hacc
   dsimp only
-  split
-  · exact hacc.append (ends_utf8s c.marks)
-  · dsimp only
-    split
-    · exact hacc.append (ends_cellText c)
-    · exact (hacc.append (ends_penSgr c.pen)).append (ends_cellText c)
+  -- the marked-wide branch is `glyph CHA marks CHA`, four pieces
+  repeat' split
+  all_goals first
+    | exact hacc.append (ends_utf8s c.marks)
+    | exact hacc.append (ends_cellText c)
+    | exact (hacc.append (ends_penSgr c.pen)).append (ends_cellText c)
+    | exact hacc.append ((((ends_utf8_safe c.base).append
+        (ends_csiNum _ 0x47 (by decide) (by decide))).append
+        (ends_utf8s c.marks)).append (ends_csiNum _ 0x47 (by decide) (by decide)))
+    | exact (hacc.append (ends_penSgr c.pen)).append ((((ends_utf8_safe c.base).append
+        (ends_csiNum _ 0x47 (by decide) (by decide))).append
+        (ends_utf8s c.marks)).append (ends_csiNum _ 0x47 (by decide) (by decide)))
 
 theorem ends_crlf : Ends [0x0D, 0x0A] := Ends.text (by decide)
 
@@ -1519,6 +1530,11 @@ theorem quiet_osc (payload : List Char) :
 theorem quiet_utf8s (cs : List Char) : Quiet (utf8s cs) :=
   Quiet.text (utf8s_no_esc cs)
 
+theorem quiet_utf8_safe (ch : Char) : Quiet (utf8 (safeChar ch)) :=
+  Quiet.text (fun b hb => by
+    obtain ⟨hge, -⟩ := utf8_no_ctl (safeChar ch) (safeChar_ge ch).1 (safeChar_ge ch).2 b hb
+    intro he; rw [he] at hge; exact absurd hge (by decide))
+
 theorem quiet_cellText (c : Cell) : Quiet (cellText c) := by
   unfold cellText
   exact (Quiet.text (fun b hb => by
@@ -1529,15 +1545,20 @@ theorem quiet_cellText (c : Cell) : Quiet (cellText c) := by
 theorem quiet_rowAnsi (row : Row) (p : Pen) : Quiet (rowAnsi row p).1 := by
   unfold rowAnsi
   rw [← Array.foldl_toList]
-  refine invariant_foldl (fun acc => Quiet acc.1) _ ?_ row.toList ([], p) Quiet.nil
+  refine invariant_foldl (fun acc => Quiet acc.1) _ ?_ row.toList ([], p, 0) Quiet.nil
   intro acc c hacc
   dsimp only
-  split
-  · exact hacc.append (quiet_utf8s c.marks)
-  · dsimp only
-    split
-    · exact hacc.append (quiet_cellText c)
-    · exact (hacc.append (quiet_penSgr c.pen)).append (quiet_cellText c)
+  repeat' split
+  all_goals first
+    | exact hacc.append (quiet_utf8s c.marks)
+    | exact hacc.append (quiet_cellText c)
+    | exact (hacc.append (quiet_penSgr c.pen)).append (quiet_cellText c)
+    | exact hacc.append ((((quiet_utf8_safe c.base).append
+        (quiet_csiNum _ 0x47 (by decide) (by decide))).append
+        (quiet_utf8s c.marks)).append (quiet_csiNum _ 0x47 (by decide) (by decide)))
+    | exact (hacc.append (quiet_penSgr c.pen)).append ((((quiet_utf8_safe c.base).append
+        (quiet_csiNum _ 0x47 (by decide) (by decide))).append
+        (quiet_utf8s c.marks)).append (quiet_csiNum _ 0x47 (by decide) (by decide)))
 
 theorem quiet_joinCRLF : ∀ (l : List Bytes), (∀ bs ∈ l, Quiet bs) → Quiet (joinCRLF l)
   | [], _ => Quiet.nil

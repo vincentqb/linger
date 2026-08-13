@@ -156,17 +156,35 @@ def cellText (c : Cell) : Bytes := utf8 (safeChar c.base) ++ utf8s c.marks
 wide char to its left: its base is not re-emitted, but combining marks
 parked on it are (a mark typed after a wide char lands on the shadow
 cell, and on replay re-attaches there — dropping them would lose the
-mark; §Replay fix 1). -/
+mark; §Replay fix 1).
+
+A wide cell's **own** marks need the cursor parked *between* the glyph and
+its shadow, or they attach to the shadow instead: `print` puts a mark at
+`cursor.x - 1`, and a 2-column advance leaves the cursor two past the glyph
+(§Replay fix 8). `CHA` puts it there by absolute column, which is also right
+at the right margin, where the advance clamps and arms wrap-pending instead —
+a relative backspace would land a column too far left there. This is why the
+fold carries the column.
+
+Residual limit, documented rather than papered over: at the right margin a
+wide cell with marks on *both* the glyph and its shadow is not expressible.
+The shadow's marks there need wrap-pending to still be armed, and the
+absolute move that fixes the glyph's marks clears it. -/
 def rowAnsi (row : Row) (startPen : Pen) : Bytes × Pen :=
-  row.foldl
-    (fun (acc : Bytes × Pen) c =>
-      if c.width == 0 then (acc.1 ++ utf8s c.marks, acc.2)
+  let (bs, pen, _) := row.foldl
+    (fun (acc : Bytes × Pen × Nat) c =>
+      let (s, pen, x) := acc
+      if c.width == 0 then (s ++ utf8s c.marks, pen, x + 1)
       else
-        let (s, pen) := acc
-        let s := if c.pen == pen then s ++ cellText c
-                 else s ++ penSgr c.pen ++ cellText c
-        (s, c.pen))
-    ([], startPen)
+        let s := if c.pen == pen then s else s ++ penSgr c.pen
+        let body :=
+          if c.width == 2 && !c.marks.isEmpty then
+            utf8 (safeChar c.base) ++ csiNum (x + 2) 0x47 ++ utf8s c.marks
+              ++ csiNum (x + 3) 0x47
+          else cellText c
+        (s ++ body, c.pen, x + c.width))
+    ([], startPen, 0)
+  (bs, pen)
 
 /-- Join painted rows with CR+LF, no trailing separator (a trailing
 CRLF on the last row would scroll the screen). -/
