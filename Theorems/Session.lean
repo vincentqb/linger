@@ -54,7 +54,8 @@ recipients). This is what makes reattach-after-a-week work. -/
 theorem step_ptyOut_no_clients (s : State) (chunk : List UInt8)
     (h : s.clients = []) :
     step s (.ptyOut chunk)
-      = ({ s with vt := s.vt.feed chunk, dirty := true }, []) := by
+      = ({ s with vt := s.vt.feed chunk, dirty := true,
+                  outSeq := s.outSeq + 1 }, []) := by
   simp [step, broadcast, h]
 
 /-- With or without clients, the emulator advances identically. -/
@@ -322,6 +323,44 @@ end Zmx.Core.Session
 
 
 namespace Zmx.Core.Session
+/-! ## §Unread — the output counter
+
+`unseen` is "output arrived while nobody was watching", and it is a property
+of the **session**: `lookSeq` catches up on attach and on every output that
+happens while somebody is attached, so a one-off connection from a stranger
+creates no per-client state. A counter rather than a timestamp because it is
+determined by the event list alone.
+
+Scope of what is proved here: the two claims about the event that *writes*
+the counters. The general `∀ ev` versions need an induction showing
+`feedMsgs` preserves `outSeq` (client messages never touch it), which the
+`.bytes` case makes opaque to arithmetic; recorded in SCRATCHPAD as the next
+increment rather than asserted here.
+-/
+
+/-- Pty output advances the counter by exactly one. -/
+theorem outSeq_ptyOut (s : State) (chunk : List UInt8) :
+    (step s (.ptyOut chunk)).1.outSeq = s.outSeq + 1 := rfl
+
+/-- Output while somebody is attached is seen as it happens; output with
+nobody attached is not. This is the whole mechanism behind `wantsYou`. -/
+theorem unseen_ptyOut (s : State) (chunk : List UInt8) (h : s.lookSeq ≤ s.outSeq) :
+    unseen (step s (.ptyOut chunk)).1 = !(s.clients.any (·.attached)) := by
+  unfold unseen
+  show decide ((if s.clients.any (·.attached) then s.outSeq + 1 else s.lookSeq)
+      < s.outSeq + 1) = _
+  split
+  · simp_all
+  · simp_all [Nat.lt_succ_of_le h]
+
+/-- The read mark never overtakes the output counter, so `behind` is honest:
+`outSeq - lookSeq` is a real count and never underflows to a misleading zero. -/
+theorem lookSeq_le_ptyOut (s : State) (chunk : List UInt8)
+    (h : s.lookSeq ≤ s.outSeq) :
+    (step s (.ptyOut chunk)).1.lookSeq ≤ (step s (.ptyOut chunk)).1.outSeq := by
+  show (if s.clients.any (·.attached) then s.outSeq + 1 else s.lookSeq) ≤ s.outSeq + 1
+  split <;> omega
+
 /-! ## §Isolate — one client cannot reach another client's state
 
 The concurrency question, at the layer where it is answerable. The

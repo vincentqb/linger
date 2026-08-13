@@ -54,6 +54,17 @@ structure State where
   lastCkptMs : UInt64 := 0
   /-- monotone attach counter, for size ownership. -/
   attachSeq : Nat := 0
+  /-- Monotone output counter: bumped once per pty-output event. A counter
+  rather than a timestamp, so "has anything happened since you looked" is
+  determined by the event list alone — `.tick` already carries time for the
+  checkpoint clock, but this needs no tick to be *correct*, only to be
+  reported. -/
+  outSeq : Nat := 0
+  /-- The `outSeq` as of the last time somebody looked: set on attach and
+  when an attached client leaves. `outSeq > lookSeq` is "unread", which is a
+  property of the **session**, not of a viewer — "last looked" is a session
+  event, so no per-client bookkeeping is created for a one-off connection. -/
+  lookSeq : Nat := 0
   deriving Repr, Inhabited
 
 /-- What the runtime feeds in. All byte payloads are `List UInt8`; the
@@ -132,6 +143,16 @@ def broadcast (s : State) (bytes : List UInt8) : List Effect :=
 
 /-! ## Message handling (client → daemon) -/
 
+/-- Unread: output arrived while nobody was watching. What
+`Status.wantsYou` is derived from — a property of the **session**, since
+"last looked" is a session event rather than a viewer attribute, so a one-off
+connection creates no state. -/
+def unseen (s : State) : Bool := s.lookSeq < s.outSeq
+
+/-- How much arrived unseen — free from the counter, where a boolean would
+have thrown it away. -/
+def behind (s : State) : Nat := s.outSeq - s.lookSeq
+
 def onMsg (s : State) (c : Client) (m : Msg) : State × List Effect :=
   match m with
   | .attach cols rows =>
@@ -139,7 +160,7 @@ def onMsg (s : State) (c : Client) (m : Msg) : State × List Effect :=
     -- but never owns the size and its input is dropped
     let sizer := cols != 0 && rows != 0
     let c := { c with attached := true, sizer, seq := s.attachSeq, cols, rows }
-    let s := { s.setClient c with attachSeq := s.attachSeq + 1 }
+    let s := { s.setClient c with attachSeq := s.attachSeq + 1, lookSeq := s.outSeq }
     let s := if sizer then { s with vt := s.vt.resize cols.toNat rows.toNat } else s
     (s, resizeEffects s c
           ++ outputMsgs c.id (Render.restore s.vt)
@@ -236,7 +257,10 @@ def step (s : State) (ev : Event) : State × List Effect :=
     else
       (s', [])
   | .ptyOut chunk =>
-    ({ s with vt := s.vt.feed chunk, dirty := true }, broadcast s chunk)
+    ({ s with vt := s.vt.feed chunk, dirty := true, outSeq := s.outSeq + 1,
+              lookSeq := if s.clients.any (·.attached) then s.outSeq + 1
+                         else s.lookSeq },
+     broadcast s chunk)
   | .childExited status =>
     let s := { s with exited := some status }
     let notify := s.clients.filter (fun c => c.attached || c.waiting)

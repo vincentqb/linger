@@ -2549,3 +2549,61 @@ loop) and wiring into \`Listing\`. Five of the seven states are computable
 from data that already exists. Known limit to document when it lands:
 \`lastDetach\` is per-daemon, not per-viewer, so with two people on one
 session \`⣿\` means "unread by whoever looked last".
+
+
+
+## The unread counter, per-session not per-client — 2026-08-12
+
+Landed `outSeq`/`lookSeq` in `Session.State`, plus `unseen` and `behind`.
+`outSeq` bumps per pty-output event; `lookSeq` catches up on attach and on any
+output that arrives *while somebody is attached*. So `unseen` means "output
+arrived while nobody was watching" — a property of the **session**.
+
+The user killed my first design and was right: keying read state to a viewer
+id would allocate durable, checkpoint-persisted state for a stranger who
+connects once, and would stop a listing row being a fact about the session.
+"Last looked" is a session *event* (attach, or output-while-attached), not a
+viewer attribute. Once it is an event, two `Nat`s carry it.
+
+I also overstated the case for counters earlier: I claimed a timestamp in
+`State` would break A2, because `step` must be a function of the trace. Not
+so — `Event` already has `.tick (nowMs)` and `State` already holds
+`lastCkptMs`, so time is threaded through the *event list* and timestamps were
+expressible all along. The counter still wins, for weaker reasons: `unseen`
+stays exact and needs no tick to be correct, and `outSeq - lookSeq` gives
+"behind by N" free where a `Bool` throws it away.
+
+### The implementation lesson: keep the conditional out of the handler
+
+Three attempts. Putting `if hadAttached then … else …` in `step`'s `.closed`
+branch broke four proofs, because `step`'s **branch structure** is what a
+dozen proofs `split` on. Hiding it in a `markLooked` helper did not help
+either — `(markLooked s id).dropClient id` is no longer `rfl`-transparent for
+field preservation.
+
+What worked: put the conditional in a **field value**, not a branch.
+
+    outSeq  := s.outSeq + 1,
+    lookSeq := if s.clients.any (·.attached) then s.outSeq + 1 else s.lookSeq
+
+`step`'s branch shape is untouched, so every existing `split`-based proof
+still applies, and exactly one theorem statement had to change
+(`step_ptyOut_no_clients`, which now records the counter bump — honest, since
+output with no clients advancing the counter *is* the unread mechanism).
+Worth generalising: **in a state machine whose proofs case-split on the
+handler, new behaviour is cheapest as data inside an existing branch.**
+
+### Scope of what is proved
+
+`outSeq_ptyOut`; `unseen_ptyOut` (output while attached is seen as it happens,
+with nobody attached it is not — the whole `wantsYou` mechanism); and
+`lookSeq_le_ptyOut` (the mark never overtakes the counter, so `behind` never
+underflows to a misleading zero).
+
+**Not proved, and named rather than asserted**: the `∀ ev` monotonicity
+versions. They need an induction showing `feedMsgs` preserves `outSeq` —
+client messages never touch it, but the `.bytes` case folds a whole message
+list and is opaque to arithmetic. `onMsg_seq` then `feedMsgs_seq` by fold
+induction is the shape; two lemmas, next increment. I cut them rather than
+leave a `sorry`, and `unseen_ptyOut` carries `lookSeq ≤ outSeq` as a
+hypothesis where the trace theorem would have supplied it.
