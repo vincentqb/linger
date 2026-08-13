@@ -89,4 +89,16 @@ def name : Status → String
   | .working => "working"
   | .idle => "idle"
 
+/-- Back from the porcelain name. Total: an unrecognised name is `unknown`,
+which is the safe direction -- a row we cannot interpret is reported as one we
+cannot interpret. Left inverse of `name` (`ofName_name`). -/
+def ofName : String → Status
+  | "exited-bad" => .exitedBad
+  | "exited-ok" => .exitedOk
+  | "resumable" => .resumable
+  | "wants-you" => .wantsYou
+  | "working" => .working
+  | "idle" => .idle
+  | _ => .unknown
+
 end Zmx.Core.Status

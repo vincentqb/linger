@@ -41,6 +41,13 @@ malformed — a reply cannot make a row *more* alive by omission. -/
 def flag (info : List (String × String)) (key : String) : Bool :=
   (info.find? (·.1 == key)).any (·.2 == "true")
 
+/-- Did the daemon actually answer? A connection can succeed while the daemon
+is too busy to fill in the reply within the window, and the row must not then
+be reported as a healthy idle session. `pid`/`cmd` are the fields a real reply
+always carries, so their absence is the signal. -/
+def answered (info : List (String × String)) : Bool :=
+  info.any (fun kv => (kv.1 == "pid" || kv.1 == "cmd") && kv.2 != "")
+
 def rowStatus (socketPresent answered ckptLoadable : Bool)
     (info : List (String × String)) : Status :=
   classify {

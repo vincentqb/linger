@@ -51,6 +51,15 @@ theorem rowStatus_resumable (answered : Bool) (info : List (String × String)) :
 theorem rowStatus_gone (answered : Bool) (info : List (String × String)) :
     rowStatus false answered false info = Status.unknown := rfl
 
+/-- An empty reply is not an answer, so a busy daemon lists as `unknown`
+rather than as a healthy idle session. This is the §Row property applied to
+health: the row still carries its real name, and is honestly marked as one we
+could not read. -/
+theorem answered_nil : answered [] = false := rfl
+
+theorem rowStatus_empty_reply : rowStatus true (answered []) true [] = Status.unknown :=
+  rfl
+
 /-- A missing or malformed flag reads as `false`, so an omission cannot make
 a row look busier or fresher than it is. -/
 theorem flag_absent (info : List (String × String)) (k : String)

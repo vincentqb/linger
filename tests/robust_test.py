@@ -51,8 +51,11 @@ porc = subprocess.run([LINGER, 'list', '--porcelain'], env=ENV,
 socks = [f for f in os.listdir(LDIR) if f.endswith('.sock')]
 os.kill(dpid, signal.SIGCONT)
 
-fails += expect(out.strip() == 'busy\t(busy)',
-                f'busy daemon lists under its name (got {out.strip()!r})')
+# the leading glyph is the status column: a daemon that did not answer within
+# the reply window is reported as unknown ('?'), which is the designed state
+# for it -- so this pins §Row *and* that a busy row is not shown as healthy
+fails += expect(out.strip() == '? busy\t(busy)',
+                f'busy daemon lists under its name, marked unknown (got {out.strip()!r})')
 fails += expect('name\tbusy' in porc, 'porcelain carries the name for a busy daemon')
 fails += expect(socks == ['busy.sock'], f'busy daemon keeps its socket ({socks})')
 time.sleep(0.4)

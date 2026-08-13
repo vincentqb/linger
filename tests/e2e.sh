@@ -12,6 +12,7 @@
 #   7. remote-over-ssh e2e (fake ssh: `-r` listing, attach name@host argv)
 #   8. adverse timing: busy-daemon listing (§Row) + name-ownership race
 #   9. graphics passthrough (kitty APC / sixel DCS reach the client raw)
+#  10. status column: attach marks seen, output while away marks unread
 #  (1) also covers Tests/Fuzz.lean: randomized §Replay round-trip search
 set -e
 cd "$(dirname "$0")/.."
@@ -101,5 +102,9 @@ say "9. graphics passthrough (kitty / sixel)"
 pkill -x linger 2>/dev/null || true; sleep 0.2
 python3 tests/graphics_test.py | tail -1 | grep -q '^FAILURES: 0$' || fail "graphics_test"
 
+say "10. status column (unread / seen transitions)"
+pkill -x linger 2>/dev/null || true; sleep 0.2
+python3 tests/status_test.py | tail -1 | grep -q '^FAILURES: 0$' || fail "status_test"
+
 pkill -x linger 2>/dev/null || true
-printf '\nE2E OK — linger builds clean, core is pure, 6 live suites green.\n'
+printf '\nE2E OK — linger builds clean, core is pure, 7 live suites green.\n'

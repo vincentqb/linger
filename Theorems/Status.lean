@@ -128,4 +128,9 @@ without an escaping pass. -/
 theorem name_clean (s : Status) : ∀ c ∈ (name s).toList, c ≠ '\t' ∧ c ≠ '\n' := by
   cases s <;> simp [name] <;> decide
 
+/-- `ofName` is a left inverse of `name`, so the human column and the
+porcelain column can never disagree about a row. -/
+theorem ofName_name (s : Status) : ofName (name s) = s := by
+  cases s <;> rfl
+
 end Zmx.Core.Status

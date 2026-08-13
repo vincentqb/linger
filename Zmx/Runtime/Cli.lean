@@ -190,18 +190,30 @@ def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
       -- rule, proved in Core.Listing.rowFields): a daemon too busy to
       -- answer still lists with its real name, and a peer can't spoof
       -- another session's identity
-      rows := rows ++ [Zmx.Core.Listing.rowFields name info ++ [("state", "live")]]
+      -- the status column goes through `Listing.rowStatus`, so the two facts
+      -- that decide whether a row is trustworthy (socket present, daemon
+      -- answered) come from here and not from the reply -- §Row, extended
+      rows := rows ++ [Zmx.Core.Listing.rowFields name info
+        ++ [("state", "live"),
+            ("status", Zmx.Core.Status.name
+              (Zmx.Core.Listing.rowStatus true (Zmx.Core.Listing.answered info) true info))]]
     | none =>
       -- connect() itself failed: nothing is listening, the file is stale
       try IO.FS.removeFile (← Paths.socketPath name) catch _ => pure ()
   for name in ckpts do
     if !live.contains name then
-      rows := rows ++ [[("name", name), ("state", "resumable")]]
+      rows := rows ++ [[("name", name), ("state", "resumable"),
+        ("status", Zmx.Core.Status.name
+          (Zmx.Core.Listing.rowStatus false false true []))]]
   -- remotes last (per host), so a slow ssh can't reorder local rows
   for host in remotes do
     for (rname, rlive, rcmd) in ← listRemote host do
+      -- a remote row carries no activity fields (the peer's porcelain does
+      -- not forward them), so it reports liveness only
       rows := rows ++ [[("name", s!"{rname}@{host}"), ("cmd", rcmd),
-                        ("state", if rlive then "live" else "resumable")]]
+                        ("state", if rlive then "live" else "resumable"),
+                        ("status", Zmx.Core.Status.name
+                          (Zmx.Core.Listing.rowStatus rlive rlive true []))]]
   if porcelain then
     for info in rows do
       for (k, v) in info do
@@ -223,7 +235,12 @@ def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
         else if pid.isEmpty && cmd.isEmpty then "(busy)"
         else if pid.isEmpty then cmd
         else s!"pid {pid}  {cmd}"
-      IO.println s!"{name}\t{detail}{labelStr}"
+      -- one glyph, most-specific-state-wins (Core.Status); the client count
+      -- is the separate integer axis, blank when nobody is attached
+      let st := Zmx.Core.Status.ofName (kv info "status")
+      let watchers := kv info "clients"
+      let watch := if watchers.isEmpty || watchers == "0" then "" else s!"  +{watchers}"
+      IO.println s!"{Zmx.Core.Status.icon st} {name}\t{detail}{labelStr}{watch}"
   return 0
 
 /-- Parse the `ls` argument set: an optional `--porcelain` and an

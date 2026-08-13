@@ -2655,3 +2655,52 @@ avoid.
 Remaining before this ships as a visible column: `Cli` rendering (icon +
 client count) and a live test. The pure and proved parts are done — all seven
 states are now computable from data that exists.
+
+
+
+## The status column ships — 2026-08-12
+
+`linger ls` renders one glyph per row plus a client count; `--porcelain` gains
+a `status` field. `Status.ofName` parses it back, with `ofName_name` proving
+the two columns can never disagree about a row. Live test as e2e step 10
+(seven live suites now): attach marks a session seen, output while away marks
+it unread, `behind` counts, and the human listing shows the glyph.
+
+Verified by hand first, which is how the next finding surfaced:
+
+    ⣿ demo   pid 141908  /…/fish
+    unseen true · fresh false · behind 2 · status wants-you
+
+### A gap the *existing* test caught, which is the point of it
+
+`robust_test`'s §Row case asserted the exact human line for a busy daemon, so
+adding the glyph broke it — expected. But the value it broke *to* was `⣀`
+(idle), not `?` (unknown). A busy daemon connects and answers with an empty
+reply, and I had hardcoded `answered := true` at the call site, so "did not
+answer" could never arise: a session too busy to report would have been shown
+as a healthy idle one.
+
+Fixed with `Listing.answered info`, which asks whether the reply carried
+`pid`/`cmd` at all — the fields a real reply always has. Now a busy row reads
+`? busy (busy)`, and `answered_nil` / `rowStatus_empty_reply` state it.
+
+The test's assertion is now **stronger** than before: it pins §Row (the row
+keeps its real name) *and* that an unreadable row is not reported as healthy.
+Worth noting the shape — an exact-output assertion that looks brittle earned
+its keep, because "the format changed" and "the meaning changed" arrived
+together and only the exact assertion could tell them apart. If it had matched
+loosely on `busy` being present, the idle-vs-unknown bug would have shipped.
+
+That is the sixth bug found by stating a claim, and the second outside the
+emitter. Both of those came from wiring a *proved* core into the runtime,
+where the mismatch is between what the theorem assumes and what the call site
+passes — `rowStatus`'s `answered` parameter was proved correct and then fed a
+constant.
+
+### Left for later
+
+`⣷ working` has the tick interval as its granularity, so it is only as
+responsive as the poll period — check that is what it should be keyed to
+before advertising it. And `⣿` means "output since *anyone* last looked"
+(the deliberate per-session choice); that belongs in the README when this is
+documented for users.
