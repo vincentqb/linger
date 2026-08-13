@@ -1959,3 +1959,56 @@ attributes). Then `penAfter_attrCodes` demands `q.bold = false ∧ …` of an
 *arbitrary* starting pen and cannot be proved — which is exactly the content
 of "from any starting pen". Third time this session that a shape break
 masqueraded as verification; the rule is holding up.
+
+
+
+## grid-fidelity step 3 started — one glyph, placed — 2026-08-12
+
+`print_narrow`: under the conditions a repaint actually runs in — insert mode
+off, no charset translation, no pending wrap, cursor in bounds — printing a
+width-1 glyph writes exactly `{base := ch, marks := [], width := 1,
+pen := v.pen}` at the cursor. Four of `print`'s five stages are the identity
+there; the fifth writes the cell.
+
+### A gap in §Bound this turned up
+
+`putCell` writes through `setIfInBounds`, so a row shorter than `cols` would
+swallow the write **silently**. Every reachable state has
+`row.size = cols` and `grid.size = rows` — `Vt.init` builds them that way,
+`resize` re-fits, `putCell` preserves them — but **`Good` does not say so**.
+So `print_narrow` carries the two shape facts as hypotheses, and step 1's
+`Renderable` is where they belong (or `Good` itself, which would be the
+better home since it is §Bound's business). Worth noting that a *silent*
+no-op is exactly the failure mode a grid-shape invariant exists to exclude;
+nothing in the test suite would catch a short row either.
+
+### Traps
+
+- **`simp only [frame_X]` loops.** The frames are self-referential by
+  construction (`v.op = { v with f := (v.op).f }`), which is fine for a
+  single `rw` but makes `simp` rewrite forever — "maximum recursion depth".
+  When a *normalising* rewrite is wanted, use the direct definitional
+  equation instead: `have hcp : v.clearPending = { v with cursor := … } :=
+  rfl`, whose right-hand side does not mention `clearPending`.
+- **The two `getD` positions must agree syntactically.** `putCell` writes at
+  `v.clearPending.cursor.y` while the read is at `v.cursor.y`; they are
+  definitionally equal, but `rw [getD_set_self]` needs one metavariable to
+  match both, so `clearPending` has to be normalised away first.
+- `rw [if_neg …]` matches the **first** `if` in the goal, which after
+  `unfold Vt.print` is the *width* test, not the charset test — the reported
+  side goal was `¬charWidth ch = 0`, which is how it showed up. Normalising
+  with `simp only [htr, …, hw]` picks the intended ones by content instead of
+  by position.
+- Two `Array.getD`/`setIfInBounds` lemmas had to be proved by hand
+  (`exact?` finds only `Array.size_setIfInBounds`): `getD_set_self` and
+  `getD_set_ne`. The latter needs `Ne.symm h`, since the residual goal comes
+  out as `x = j → …` while the hypothesis is `j ≠ x`.
+
+Break-verified: `printPut` writing `pen := {}` instead of `pen := v.pen`
+makes `print_narrow` fail with the same term shape. A content break at last
+on the first attempt — the pattern is that a break inside a *record field*
+keeps the shape, whereas a break in a *list or append structure* does not.
+
+Remaining in step 3: the wide-glyph group (a width-2 cell plus its shadow),
+the mark case, and the frame (`print` leaves every other cell alone), which
+needs `getD_set_ne` lifted through both array levels.

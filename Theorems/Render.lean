@@ -2436,6 +2436,78 @@ theorem penSgr_feed {v : Vt} (p : Pen) (hg : v.pstate = .ground) (hu : v.u8need 
   rw [feed_append, feed_append, h1, h2, h3]
   exact congrArg (fun q => { v with pen := q }) (pen_codes_recover v.pen p)
 
+/-! ### Step 3 — one glyph, placed
+
+`print` is five stages; under the conditions a repaint actually runs in
+(insert mode off, no charset translation, no pending wrap) four of them are
+the identity and the fifth writes one cell. That is the rung a row induction
+steps by.
+
+Note the **grid-shape hypotheses**. `putCell` writes through
+`setIfInBounds`, so a row shorter than `cols` would swallow the write
+silently. Every reachable state satisfies `row.size = cols` and
+`grid.size = rows` — `Vt.init` builds them that way and `resize` re-fits —
+but `Good` does not say so, which is a gap in §Bound rather than in this
+proof. `Renderable` (step 1 of specs/grid-fidelity.md) is where it belongs.
+-/
+
+private theorem getD_set_self {α} [Inhabited α] (r : Array α) (x : Nat) (c d : α)
+    (h : x < r.size) : (r.setIfInBounds x c).getD x d = c := by
+  simp [Array.getD, Array.setIfInBounds, h]
+
+private theorem getD_set_ne {α} [Inhabited α] (r : Array α) (x j : Nat) (c d : α)
+    (h : j ≠ x) : (r.setIfInBounds x c).getD j d = r.getD j d := by
+  simp only [Array.getD, Array.setIfInBounds]
+  split
+  · simp only [Array.size_set]
+    split
+    · simp [Array.getElem_set, Ne.symm h]
+    · rfl
+  · rfl
+
+/-- **One narrow glyph writes one cell.** `htr` says no charset translation
+is in effect — true of a fresh emulator, and the reason `charsetAnsi` is
+emitted *after* the repaint: with `ESC ( 0` already in force, every ASCII
+glyph would be re-drawn as a box character. -/
+theorem print_narrow {v : Vt} (ch : Char)
+    (htr : ((v.shiftOut && v.g1Line) || (!v.shiftOut && v.g0Line)) = false)
+    (hw : charWidth ch = 1) (hins : v.modes.insert = false)
+    (hpend : v.cursor.pending = false)
+    (hrow : (v.getRow v.cursor.y).size = v.cols) (hgrid : v.grid.size = v.rows)
+    (hx : v.cursor.x < v.cols) (hy : v.cursor.y < v.rows) :
+    (v.print ch).getCell v.cursor.x v.cursor.y
+        = { base := ch, marks := [], width := 1, pen := v.pen } := by
+  unfold Vt.print
+  simp only [htr, Bool.false_eq_true, if_false, hw]
+  rw [if_neg (by decide)]
+  -- the four stages that do nothing here
+  have h1 : v.printWrap = v.clearPending := by
+    unfold Vt.printWrap
+    rw [if_neg (by simp [hpend])]
+  have h2 : ∀ (w : Vt), w.printWideWrap 1 = w := by
+    intro w; unfold Vt.printWideWrap; rw [if_neg (by simp)]
+  have h3 : ∀ (w : Vt), w.modes.insert = false → w.printShift 1 = w := by
+    intro w hw'; unfold Vt.printShift; rw [if_neg (by simp [hw'])]
+  have h4 : ∀ (w : Vt) (c : Char), w.printPut c 1
+      = w.putCell w.cursor.x w.cursor.y { base := c, marks := [], width := 1, pen := w.pen } := by
+    intro w c; unfold Vt.printPut; dsimp only; rw [if_neg (by decide)]
+  rw [h1, h2, h3 _ (by rw [Zmx.Core.Vt.frame_clearPending]; exact hins), h4]
+  -- `printAdvance` moves only the cursor, so the cell is what `putCell` wrote
+  rw [show ∀ (w : Vt) (n : Nat), (w.printAdvance n).getCell = w.getCell from by
+    intro w n
+    unfold Vt.getCell Vt.getRow
+    rw [Zmx.Core.Vt.frame_printAdvance]]
+  -- and `putCell` at an in-bounds coordinate reads back. `clearPending` is
+  -- normalised away first: it leaves the cursor's x/y alone, but not
+  -- syntactically, and the two `getD` positions have to agree for the
+  -- rewrite to fire.
+  have hcp : v.clearPending = { v with cursor := { v.cursor with pending := false } } := rfl
+  unfold Vt.putCell Vt.getCell Vt.getRow
+  unfold Vt.getRow at hrow
+  simp only [hcp]
+  rw [getD_set_self _ _ _ _ (by rw [hgrid]; exact hy),
+    getD_set_self _ _ _ _ (by rw [hrow]; exact hx)]
+
 /-! ### §Replay stage 3c — the cursor lands where the session had it
 
 The composition. `cup_places_cursor` says the final `CUP` delivers its two
