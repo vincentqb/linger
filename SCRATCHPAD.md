@@ -2421,3 +2421,36 @@ session's evidence the ordering is: fuzz first, then prove the things the
 fuzzer cannot reach (it can only check states it can *generate*, so it says
 nothing about the universally-quantified claims — the two are complements,
 not substitutes).
+
+
+
+## The unclaimed-surface gate — 2026-08-12
+
+`tests/e2e.sh` step 2b: for every `def` in `Zmx/Core/*.lean`, is its name
+mentioned by any theorem in `Theorems/`? A ratchet at `CLAIM_CAP=17`, the
+same idiom as `SHIM_CAP` — it may only go down, and raising it is a
+deliberate edit meaning "new surface, no claim yet".
+
+Current 17 of 187, and the list is worth reading because it is **not** noise:
+
+    blankRow  chunksOf  ckptIntervalMs  decLine  defaultTabs  erased
+    feedBytes  firstDupHost  infoText  isWide  isZeroWidth  outputChunk
+    outputMsgs  resizeEffects  resizeRow  rowText  sizeOwner
+
+`isWide`, `isZeroWidth`, `decLine`, `blankRow`, `erased`, `resizeRow` are
+exactly the width and grid-shape functions the three open wide-glyph bugs run
+through. The gate pointed at the bug cluster without being told where to look
+— which is the whole claim for it. `sizeOwner`/`resizeEffects` are the
+attach-time size policy that `graphics_test.py` had to pin behaviourally
+because no theorem covers it.
+
+Deliberately crude: it asks "is this name mentioned", not "is the right thing
+claimed about it". `screensAnsi` would pass despite fix 9 having lived there,
+because its *parser* claims mention it. So the gate catches unclaimed
+surface, not under-claimed surface. The stronger check is the theorem *shape*
+from the previous entry (a stage stated with no hypotheses on the incoming
+state), which cannot be grepped — that one needs the claims to exist first.
+
+Cheap enough to be worth it anyway: a name with no theorem at all is a
+surface nobody has had to think precisely about, and on this project's record
+that is where the bugs are.
