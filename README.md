@@ -63,30 +63,58 @@ protocol never crosses the network, so any carrier works. Details in
 
 ## Graphics
 
-Images work while you are attached, and are gone when you reattach.
+Images reach your terminal while you are attached, and whether they come
+back after a reattach depends on whether the application redraws.
 
 Kitty graphics (`APC`), sixel (`DCS`) and iTerm2 inline images
-(`OSC 1337`) reach your terminal **byte for byte**: the daemon forwards
-every raw pty chunk to attached clients as it arrives. There is no
-switch to turn on — tmux needs `allow-passthrough`, linger does not.
-`tests/graphics_test.py` pins it.
+(`OSC 1337`) pass through **byte for byte**: the daemon forwards every raw
+pty chunk to attached clients as it arrives. There is no switch to turn on
+— tmux needs `allow-passthrough`, linger does not.
 
 The emulator itself *ignores* the payload: an image sequence parks the
 parser in its string state until the terminator and accumulates nothing.
 So a program streaming megabytes of base64 cannot grow a session or reach
-a checkpoint, and cannot wedge the parser — that is the same bound that
-covers any other hostile output (§Bound, §Total in `THEOREMS.md`).
+a checkpoint, and cannot wedge the parser — the same bound that covers any
+other hostile output (§Bound, §Total in `THEOREMS.md`).
 
-The consequence is that `restore` has no image data to replay. It
-repaints from the cell grid, so on reattach the text comes back exactly
-and the picture does not. Redrawing is the application's job — the same
-place `tmux` and `screen` leave it.
+### On reattach
 
-Storing images to replay them is a deliberate non-goal: it would put
-unbounded, program-controlled bytes into the periodic checkpoint, which
-is the one thing §Bound exists to prevent. If you want a picture to
-survive a detach, run the program in a kitty tab (`recipes/lzo.fish`
-makes one per session) rather than asking the multiplexer to remember it.
+`restore` repaints from the cell grid, and a cell holds a character, its
+combining marks, a width and a pen — there is no image plane. Kitty
+placements are overlays anchored to cell coordinates, out of band from
+cell content, so a grid repaint cannot carry them. What brings an image
+back is the *application* redrawing:
+
+| on reattach | what happens |
+|---|---|
+| terminal size **changed** | the pty is resized, the program gets `SIGWINCH`, a full-screen app redraws — and re-emits its own images |
+| terminal size **unchanged** | the kernel suppresses `SIGWINCH` (it compares the winsize first), so nothing redraws; press the app's refresh key (`Ctrl-L` for most) |
+| the image came from a command that has **exited** | nothing will re-emit it — e.g. a `kitten icat` left in scrollback is gone |
+
+An app's own redraw is strictly better than any replay we could do, since
+it also refreshes anything the emulator models imperfectly. Both halves of
+the size rule are pinned by `tests/graphics_test.py`.
+
+### Why linger doesn't store images
+
+It could be made to work — cap the stored bytes, or remember only kitty
+*placements* (an id and a position, which re-place with a payload-free
+`a=p` sequence). Neither is free:
+
+- placements only replay into the *same* terminal process that still holds
+  the image, so a reattach from elsewhere, or after a reboot, gets
+  nothing — and reboot-resume is the whole point of the checkpoint;
+- replaying them correctly means implementing kitty's placement model
+  (ids, z-index, cropping, whether a placement scrolls with content); an
+  image in the wrong place is worse than no image;
+- sixel and iTerm2 have no re-place concept at all, so those need the full
+  payload or nothing;
+- payloads would land in the periodic on-disk checkpoint, turning a small
+  timed write into a multi-megabyte one.
+
+So the scope is passthrough plus the application's own redraw. If you want
+a picture to survive independently of the program that drew it, give it its
+own kitty tab — `recipes/lzo.fish` makes one per session.
 
 ## Notes
 

@@ -281,10 +281,13 @@ Verified.
   ignores their payloads — parked in the string state until the
   terminator, accumulating nothing, so §Bound holds for a program
   streaming megabytes of base64 exactly as it does for any other output.
-  Nothing is stored, so `restore` cannot replay them: the text screen
-  comes back, the picture does not. Storing them would put unbounded
-  program-controlled bytes into the periodic checkpoint, which is the one
-  thing §Bound exists to prevent — so this is a scope decision, not a
-  missing proof. Pinned by `tests/graphics_test.py`, which also guards
-  the passthrough itself: rendering from the grid instead of forwarding
-  raw chunks would break images with no other test noticing.
+  Nothing is stored, so `restore` cannot replay them: a cell carries a
+  character, marks, a width and a pen, and image placements are overlays
+  anchored to cells rather than cell content. What brings an image back is
+  the application redrawing, which a reattach triggers only when the
+  terminal size changed (the kernel suppresses `SIGWINCH` otherwise). Both
+  halves of that rule, and the passthrough itself, are pinned by
+  `tests/graphics_test.py` — rendering from the grid instead of forwarding
+  raw chunks would break images with no other test noticing. Storing them
+  is a scope decision rather than a missing proof, and README "Graphics"
+  gives the four reasons.

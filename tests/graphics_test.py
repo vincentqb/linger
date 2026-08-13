@@ -123,5 +123,72 @@ os.close(fd2)
 os.waitpid(pid2, 0)
 subprocess.run([LINGER, 'kill', 'gfx'], env=ENV, capture_output=True, timeout=10)
 
+# ---------------------------------------------------------------------------
+# 6+7. The repaint shortcut: an application that redraws brings its OWN
+# images back, and what makes it redraw is SIGWINCH. We deliver that by
+# resizing the pty for the size-owning client on attach, so a reattach at a
+# new size nudges the program; at the same size the kernel suppresses the
+# signal (tty_do_resize compares the winsize first) and nothing redraws.
+#
+# Both halves are asserted because the *asymmetry* is the user-visible rule:
+# "images come back if the app redraws, and it redraws when the size
+# changed". The reporter logs to a file — anything on stdout would be
+# replayed by `restore` and could not be told apart from a fresh signal —
+# and runs in the FOREGROUND, since a background process group gets no
+# SIGWINCH at all.
+WLOG = os.path.join(LDIR, 'winch')
+REPORTER = (f"python3 -c \"import signal,time;f=open('{WLOG}','a');"
+            "signal.signal(signal.SIGWINCH, lambda *a:(f.write('W'),f.flush()));"
+            "time.sleep(120)\"\r")
+
+
+def winch_count():
+    try:
+        with open(WLOG) as f:
+            return f.read().count('W')
+    except FileNotFoundError:
+        return 0
+
+
+def spawn_sized(name, cols, rows):
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.execve(LINGER, [LINGER, 'attach', name], ENV)
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
+    return pid, fd
+
+
+pid3, fd3 = spawn_sized('winch', 80, 24)
+time.sleep(1.2)
+os.write(fd3, REPORTER.encode())
+time.sleep(1.0)
+drain(fd3, 0.4)
+base = winch_count()
+os.write(fd3, b'\x1c')
+time.sleep(0.6)
+os.close(fd3)
+os.waitpid(pid3, 0)
+
+pid4, fd4 = spawn_sized('winch', 80, 24)
+time.sleep(1.6)
+drain(fd4, 0.4)
+same = winch_count()
+fails += expect(same == base, 'same-size reattach delivers no SIGWINCH (no redraw)')
+os.write(fd4, b'\x1c')
+time.sleep(0.6)
+os.close(fd4)
+os.waitpid(pid4, 0)
+
+pid5, fd5 = spawn_sized('winch', 100, 30)
+time.sleep(1.6)
+drain(fd5, 0.4)
+grown = winch_count()
+fails += expect(grown > same, 'reattach at a new size nudges the program (SIGWINCH)')
+os.write(fd5, b'\x1c')
+time.sleep(0.5)
+os.close(fd5)
+os.waitpid(pid5, 0)
+subprocess.run([LINGER, 'kill', 'winch'], env=ENV, capture_output=True, timeout=10)
+
 print(f'FAILURES: {fails}')
 sys.exit(1 if fails else 0)

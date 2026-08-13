@@ -1768,3 +1768,76 @@ Break-verified the passthrough itself by stripping ESC from `broadcast`:
 the two passthrough checks fail while liveness and restore keep passing,
 so the test discriminates images specifically rather than "the session
 works".
+
+
+
+## The repaint shortcut, measured — 2026-08-12
+
+Asked why images don't come back on reattach and whether there's a repaint
+shortcut. There is, it already works, and my earlier write-up was too flat
+("images are gone on reattach"). Corrected in README/THEOREMS/AGENTS.
+
+### Why a grid repaint cannot carry them
+
+A `Cell` is `{base, marks, width, pen}`. There is no image plane, and kitty
+placements are *overlays anchored to cell coordinates*, out of band from
+cell content. So it is not that `restore` forgets to emit them — a
+grid-shaped repaint has nowhere to put them.
+
+### The shortcut: the application's own redraw
+
+Measured, both halves:
+
+| reattach | SIGWINCH to the program |
+|---|---|
+| same size (80x24 → 80x24) | **no** — Linux `tty_do_resize` compares the winsize and skips the signal |
+| new size (80x24 → 100x30) | **yes** — one signal |
+| resize while attached | **yes** — one signal |
+
+So a full-screen app redraws on a size-changing reattach and re-emits its
+own images; at the same size nothing redraws and `Ctrl-L` (or the app's
+refresh key) is the manual version. An image from a command that has since
+exited is unrecoverable by any redraw.
+
+An app's own redraw is *better* than our replay would be: it also refreshes
+whatever the emulator models imperfectly. Worth remembering as a general
+point — for a full-screen program the multiplexer's grid is a cache, and
+the authority is the program.
+
+Both halves are now checks 8 and 9 of `tests/graphics_test.py` (9 total),
+which also guards the `sizeOwner`/`resizePty`-on-attach path from
+regressing.
+
+### Correcting my own overreach
+
+I had written that storing images "would put unbounded program-controlled
+bytes into the checkpoint, which is the one thing §Bound exists to
+prevent". That is rhetoric, not an argument: a cap makes it bounded by
+construction. The honest reasons are four, and they are now in README:
+placements only replay into the same terminal process that still holds the
+image (so nothing after a reboot — which is the point of the checkpoint);
+correct replay needs kitty's placement model (ids, z-index, cropping,
+scroll behaviour) and a misplaced image is worse than none; sixel and
+iTerm2 have no re-place concept so they need full payloads or nothing; and
+payloads turn a small timed checkpoint write into a multi-megabyte one.
+
+### Three test bugs in a row, same family
+
+Getting this measured took three wrong tests, all of the same shape —
+**the observation channel was contaminated by the thing being observed**:
+
+1. `trap 'echo SAW-WINCH' WINCH` reported a signal on *every* reattach.
+   The marker was in the echoed command line, which `restore` repaints, so
+   I was reading the repaint as a signal.
+2. Fixed the marker (runtime arithmetic, `$((20+2))`) and got zero
+   everywhere — because the reporter had been started with `&`, and a
+   background process group receives no `SIGWINCH` at all.
+3. Also mid-way: a `linger run`-spawned reporter logged nothing, for the
+   same foreground-process-group reason.
+
+Rules for pty tests, now applied in `graphics_test.py`: put the observation
+in a **file**, not on stdout (stdout is grid state and gets replayed); keep
+the observer in the **foreground** process group; and make anything typed
+at a shell distinguishable from its own echo at the byte level (runtime
+arithmetic, or octal-encoded markers). A green pty test that reads stdout
+for a marker it also typed is not evidence.

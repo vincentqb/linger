@@ -40,10 +40,14 @@ fresh pair of eyes.
   `linger` now prints a listing and exits, and `tests/overview_test.py`
   guards that. Pickers live in `recipes/` (six lines of fish + fzf).
 - **Storing images so they survive reattach.** Kitty/sixel/iTerm2
-  sequences already pass through byte for byte while attached; persisting
-  them would put unbounded program-controlled bytes into the periodic
-  checkpoint, which is precisely what §Bound exists to prevent. See
-  README "Graphics" and `tests/graphics_test.py`.
+  sequences already pass through byte for byte while attached, and an app
+  that redraws re-emits its own images (a reattach at a *changed* size
+  nudges it via `SIGWINCH`; at the same size the kernel suppresses the
+  signal). Persisting them needs kitty's placement model, only replays
+  into the same terminal process that still holds the image — so not after
+  a reboot, which is the point of the checkpoint — does nothing for
+  sixel/iTerm2, and puts payloads in a periodic on-disk write. See README
+  "Graphics" and `tests/graphics_test.py`.
 - **Restoring the process tree.** Reboot-resume restores the screen,
   scrollback, modes, labels and cwd — not the programs. The
   tmux-continuum trade, taken deliberately.
