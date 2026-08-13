@@ -48,17 +48,43 @@ always carries, so their absence is the signal. -/
 def answered (info : List (String × String)) : Bool :=
   info.any (fun kv => (kv.1 == "pid" || kv.1 == "cmd") && kv.2 != "")
 
-def rowStatus (socketPresent answered ckptLoadable : Bool)
-    (info : List (String × String)) : Status :=
-  classify {
-    known := if socketPresent then answered else ckptLoadable,
-    daemonUp := socketPresent,
-    -- an exit status can only come from a live daemon: without one there is
-    -- nobody to have observed the child, so a reply-supplied "exit" must not
-    -- make a socket-less row look like a completed run
-    exit := if socketPresent then (info.find? (·.1 == "exit")).bind (fun kv => kv.2.toNat?)
-            else none,
-    fresh := flag info "fresh",
-    unseen := flag info "unseen" }
+/-- Where a listing row came from. **A sum type rather than a handful of
+`Bool`s on purpose.** The previous signature took `socketPresent`,
+`answered` and `ckptLoadable` separately, and a caller passed a literal
+`true` for `answered` — so "the daemon did not answer" became unreachable and
+a busy session listed as a healthy idle one, even though the theorem about it
+was correct. Booleans a caller has to get right are the hazard; each
+constructor here carries exactly the facts its case has, so there is no
+argument left to pass wrongly. -/
+inductive Row where
+  /-- A socket accepted the connection; `info` is whatever it replied (possibly
+  nothing, if it was too busy). -/
+  | live (info : List (String × String))
+  /-- No socket, but a checkpoint file is there. -/
+  | stale
+  /-- No socket, and the checkpoint will not load. Not produced by `Cli` yet —
+  it lists checkpoint *names* without probing them — and that gap is visible
+  here as an unused constructor rather than hidden in a `true`. -/
+  | broken
+  /-- From a peer's porcelain over ssh. A peer forwards liveness but not
+  activity, so `⣀` on a remote row means "alive, activity unknown"; forwarding
+  the peer's own `status` field is the improvement that would fix it. -/
+  | remote (live : Bool)
+  deriving Repr
+
+def rowStatus : Row → Status
+  | .live info =>
+    classify {
+      known := answered info,
+      daemonUp := true,
+      -- an exit status can only come from a live daemon, so it is read only
+      -- here: a reply-supplied "exit" must never make a socket-less row look
+      -- like a completed run
+      exit := (info.find? (·.1 == "exit")).bind (fun kv => kv.2.toNat?),
+      fresh := flag info "fresh",
+      unseen := flag info "unseen" }
+  | .stale => .resumable
+  | .broken => .unknown
+  | .remote live => if live then .idle else .resumable
 
 end Zmx.Core.Listing

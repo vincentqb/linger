@@ -2704,3 +2704,55 @@ responsive as the poll period — check that is what it should be keyed to
 before advertising it. And `⣿` means "output since *anyone* last looked"
 (the deliberate per-session choice); that belongs in the README when this is
 documented for users.
+
+
+
+## Fixing the failure mode, not watching for it — 2026-08-12
+
+The bug from the previous entry was: a proved function, fed a constant at the
+call site, so a case the theorem quantified over became unreachable.
+`rowStatus (socketPresent answered ckptLoadable : Bool)` got a literal `true`
+for `answered`, and "the daemon did not answer" could never happen — a busy
+session listed as healthy-idle while the theorem about it stayed true.
+
+Detecting that class is awkward (grep for literal booleans at call sites?).
+**Removing it is easy**: replace the booleans a caller has to get right with a
+sum type that carries the case.
+
+```lean
+inductive Row
+  | live (info : List (String × String))   -- a socket accepted; info may be empty
+  | stale                                   -- no socket, a checkpoint file exists
+  | broken                                  -- no socket, the checkpoint won't load
+  | remote (live : Bool)                    -- from a peer's porcelain
+```
+
+Each constructor carries exactly the facts its case has, so **there is no
+argument left to pass wrongly**. The three call sites became `.live info`,
+`.stale`, `.remote rlive` — no literals at all. Boolean-blindness was the
+underlying smell; the constant was the symptom.
+
+A second thing fell out of the refactor that the booleans had hidden: `Cli`
+lists checkpoint *names* without probing them, so `unrestorable` was never
+produced. Under the old signature that was a `true` passed for
+`ckptLoadable`; now it is an **unused `.broken` constructor**, which is visible
+in the source instead of buried in an argument. That is the general benefit —
+a sum type makes an unhandled case look unhandled.
+
+### The two flagged items, closed
+
+- **`⣷ working` granularity**: fine. `.tick` fires every poll round
+  (`Daemon.lean:260`, after `pump`), not on the checkpoint schedule, so
+  freshness is poll-period granular. `ckptIntervalMs = 60000` is *not* the
+  granularity — worth having checked, since keying it to the checkpoint clock
+  would have made "right now" mean "within a minute".
+- **`⣿` semantics documented**: README gains a status table, with both caveats
+  stated — that it means "since *anyone* last looked" (a property of the
+  session, not of a viewer), and that `⣷` is only as responsive as the poll
+  round.
+
+Remote rows are the honest weak spot and are labelled as such in `Row.remote`:
+a peer forwards liveness but not activity, so `⣀` there means "alive, activity
+unknown". The fix is to forward the peer's own `status` field — `ofName` exists
+for exactly that and `ofName_name` already proves the round trip — but it needs
+`listRemote` extended, so it is named rather than half-done.

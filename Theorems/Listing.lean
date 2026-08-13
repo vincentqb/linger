@@ -39,17 +39,16 @@ open Zmx.Core.Status (Status)
 /-- A live socket that did not answer is `unknown`, whatever the reply
 contained — so a daemon too busy to answer cannot be reported as idle, and a
 crafted reply cannot claim otherwise. -/
-theorem rowStatus_unanswered (ckpt : Bool) (info : List (String × String)) :
-    rowStatus true false ckpt info = Status.unknown := rfl
+theorem rowStatus_unanswered (info : List (String × String))
+    (h : answered info = false) : rowStatus (.live info) = Status.unknown := by
+  simp [rowStatus, Zmx.Core.Status.classify, h]
 
 /-- No socket but a loadable checkpoint is `resumable`, whatever the reply
 contained (there is no daemon to have sent one). -/
-theorem rowStatus_resumable (answered : Bool) (info : List (String × String)) :
-    rowStatus false answered true info = Status.resumable := rfl
+theorem rowStatus_resumable : rowStatus .stale = Status.resumable := rfl
 
 /-- No socket and no loadable checkpoint is `unknown`. -/
-theorem rowStatus_gone (answered : Bool) (info : List (String × String)) :
-    rowStatus false answered false info = Status.unknown := rfl
+theorem rowStatus_gone : rowStatus .broken = Status.unknown := rfl
 
 /-- An empty reply is not an answer, so a busy daemon lists as `unknown`
 rather than as a healthy idle session. This is the §Row property applied to
@@ -57,8 +56,7 @@ health: the row still carries its real name, and is honestly marked as one we
 could not read. -/
 theorem answered_nil : answered [] = false := rfl
 
-theorem rowStatus_empty_reply : rowStatus true (answered []) true [] = Status.unknown :=
-  rfl
+theorem rowStatus_empty_reply : rowStatus (.live []) = Status.unknown := rfl
 
 /-- A missing or malformed flag reads as `false`, so an omission cannot make
 a row look busier or fresher than it is. -/

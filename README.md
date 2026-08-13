@@ -61,6 +61,33 @@ Transport is yours: `attach name@host` execs ssh, and mosh composes as
 protocol never crosses the network, so any carrier works. Details in
 `recipes/README.md`.
 
+## Session status
+
+Each row in `linger ls` carries one glyph — the most specific state that
+applies — plus `+N` when N clients are attached.
+
+| | |
+|---|---|
+| `⣷` | working — output right now |
+| `⣿` | unread — output arrived while nobody was watching |
+| `⡀` | idle — nothing since it was last watched |
+| `✓` | exited 0 |
+| `!` | exited nonzero, or killed by a signal |
+| `~` | resumable — no daemon, but a checkpoint is on disk |
+| `?` | unknown — the daemon did not answer, or the checkpoint will not load |
+
+Two states share a glyph only when they call for the same action, which is why
+a bell folds into unread and a busy daemon folds into unknown. `--porcelain`
+carries the same seven as a `status` field (`working`, `wants-you`, `idle`,
+`exited-ok`, `exited-bad`, `resumable`, `unknown`), and `behind` counts how
+many output events arrived unseen.
+
+Two things worth knowing. Unread means "since anyone last looked", not since
+*you* did: it is a property of the session, so if a colleague watched it a
+moment ago the output is no longer news to the row. And working is only as
+responsive as the daemon's poll round, because freshness is a counter
+comparison across polls rather than a stored timestamp.
+
 ## Graphics
 
 Images reach your terminal while you are attached, and whether they come

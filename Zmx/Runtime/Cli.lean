@@ -196,7 +196,7 @@ def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
       rows := rows ++ [Zmx.Core.Listing.rowFields name info
         ++ [("state", "live"),
             ("status", Zmx.Core.Status.name
-              (Zmx.Core.Listing.rowStatus true (Zmx.Core.Listing.answered info) true info))]]
+              (Zmx.Core.Listing.rowStatus (.live info)))]]
     | none =>
       -- connect() itself failed: nothing is listening, the file is stale
       try IO.FS.removeFile (← Paths.socketPath name) catch _ => pure ()
@@ -204,7 +204,7 @@ def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
     if !live.contains name then
       rows := rows ++ [[("name", name), ("state", "resumable"),
         ("status", Zmx.Core.Status.name
-          (Zmx.Core.Listing.rowStatus false false true []))]]
+          (Zmx.Core.Listing.rowStatus .stale))]]
   -- remotes last (per host), so a slow ssh can't reorder local rows
   for host in remotes do
     for (rname, rlive, rcmd) in ← listRemote host do
@@ -213,7 +213,7 @@ def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
       rows := rows ++ [[("name", s!"{rname}@{host}"), ("cmd", rcmd),
                         ("state", if rlive then "live" else "resumable"),
                         ("status", Zmx.Core.Status.name
-                          (Zmx.Core.Listing.rowStatus rlive rlive true []))]]
+                          (Zmx.Core.Listing.rowStatus (.remote rlive)))]]
   if porcelain then
     for info in rows do
       for (k, v) in info do
