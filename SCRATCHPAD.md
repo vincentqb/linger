@@ -2012,3 +2012,42 @@ keeps the shape, whereas a break in a *list or append structure* does not.
 Remaining in step 3: the wide-glyph group (a width-2 cell plus its shadow),
 the mark case, and the frame (`print` leaves every other cell alone), which
 needs `getD_set_ne` lifted through both array levels.
+
+
+
+## grid-fidelity step 3 — the frame — 2026-08-12
+
+`print_narrow_frame`: a narrow glyph touches **no other cell**. With
+`print_narrow` (which cell it writes) this is the pair a row induction needs
+— "writes this one, leaves the rest" — and together they are the whole
+observable content of one glyph.
+
+Both array levels go through `getD_set_ne`, with a three-way split: a
+different row is untouched; the same row at a different column is untouched
+within the row; and if the row index is out of bounds `setIfInBounds` is the
+identity, so the read is too. That last case is not hypothetical — the lemma
+takes no bounds hypotheses at all, which is what makes it usable at the edge
+of a row induction without carrying bounds around.
+
+### Traps (both already in this file, both bit again)
+
+- `subst hy'` eliminated `y'`, so the very next `by_cases hg : y' < …` failed
+  with "unknown identifier". Second time this session. After a `subst`, refer
+  to the *surviving* term (`v.cursor.y`), or use `rw … at` instead.
+- `exact getD_set_ne _ _ _ _ _ h` gave "typeclass instance problem is stuck"
+  and a type mismatch: the goal is the row equality with `.getD x' default`
+  applied to *both* sides, not the raw row equality. Wrap it:
+  `congrArg (fun r => Array.getD r x' default) (getD_set_ne …)`. Underscores
+  hid the shape mismatch behind an instance error, which is the misleading
+  part — read the mismatch, not the instance complaint.
+
+Break-verified: `printPut` writing at `x+1` instead of `x` fails four
+proofs. A record-field break for `print_narrow` (wrong pen) and an index
+break for the frame — the index one is what the frame specifically catches,
+since writing one cell to the right leaves the cursor cell untouched *and*
+disturbs a cell the frame promises is untouched.
+
+Step 3 remaining: the wide-glyph group (a width-2 cell plus its width-0
+shadow, written by the same `printPut`) and the mark case (a zero-width char
+attaches to the cell *before* the cursor — §Replay fix 1, and the reason
+marks are replayed at all).

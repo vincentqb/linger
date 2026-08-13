@@ -2508,6 +2508,49 @@ theorem print_narrow {v : Vt} (ch : Char)
   rw [getD_set_self _ _ _ _ (by rw [hgrid]; exact hy),
     getD_set_self _ _ _ _ (by rw [hrow]; exact hx)]
 
+/-- **…and touches no other cell.** The frame a row induction needs: each
+glyph must leave the ones already painted alone. Both array levels go
+through `getD_set_ne` — a different row is untouched, and within the row a
+different column is. -/
+theorem print_narrow_frame {v : Vt} (ch : Char)
+    (htr : ((v.shiftOut && v.g1Line) || (!v.shiftOut && v.g0Line)) = false)
+    (hw : charWidth ch = 1) (hins : v.modes.insert = false)
+    (hpend : v.cursor.pending = false) (x' y' : Nat)
+    (hne : x' ≠ v.cursor.x ∨ y' ≠ v.cursor.y) :
+    (v.print ch).getCell x' y' = v.getCell x' y' := by
+  have hcp : v.clearPending = { v with cursor := { v.cursor with pending := false } } := rfl
+  unfold Vt.print
+  simp only [htr, Bool.false_eq_true, if_false, hw]
+  rw [if_neg (by decide)]
+  have h1 : v.printWrap = v.clearPending := by
+    unfold Vt.printWrap
+    rw [if_neg (by simp [hpend])]
+  have h2 : ∀ (w : Vt), w.printWideWrap 1 = w := by
+    intro w; unfold Vt.printWideWrap; rw [if_neg (by simp)]
+  have h3 : ∀ (w : Vt), w.modes.insert = false → w.printShift 1 = w := by
+    intro w hw'; unfold Vt.printShift; rw [if_neg (by simp [hw'])]
+  have h4 : ∀ (w : Vt) (c : Char), w.printPut c 1
+      = w.putCell w.cursor.x w.cursor.y
+          { base := c, marks := [], width := 1, pen := w.pen } := by
+    intro w c; unfold Vt.printPut; dsimp only; rw [if_neg (by decide)]
+  rw [h1, h2, h3 _ (by rw [Zmx.Core.Vt.frame_clearPending]; exact hins), h4]
+  rw [show ∀ (w : Vt) (n : Nat), (w.printAdvance n).getCell = w.getCell from by
+    intro w n
+    unfold Vt.getCell Vt.getRow
+    rw [Zmx.Core.Vt.frame_printAdvance]]
+  unfold Vt.putCell Vt.getCell Vt.getRow
+  simp only [hcp]
+  rcases hne with hx | hy
+  · -- same row, different column: the row's other cells survive the write
+    by_cases hy' : y' = v.cursor.y
+    · subst hy'
+      by_cases hg : v.cursor.y < v.grid.size
+      · rw [getD_set_self _ _ _ _ hg]
+        exact getD_set_ne _ _ _ _ _ hx
+      · simp only [Array.setIfInBounds, dif_neg hg]
+    · exact congrArg (fun r => Array.getD r x' default) (getD_set_ne _ _ _ _ _ hy')
+  · exact congrArg (fun r => Array.getD r x' default) (getD_set_ne _ _ _ _ _ hy)
+
 /-! ### §Replay stage 3c — the cursor lands where the session had it
 
 The composition. `cup_places_cursor` says the final `CUP` delivers its two
