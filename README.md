@@ -54,6 +54,7 @@ recipes in [`recipes/`](recipes/) do the composing (fish functions —
 | `lz.fish` | fuzzy-pick a session (fzf) and attach, local or remote |
 | `lzo.fish` | every session on a host as kitty tabs, one shot |
 | `lza.fish` | attach that auto-reconnects while a link flaps |
+| `lzs.fish` | live status board for sessions you have no tab open on |
 | `ssh_config` | dead links declared in ~15 s — no more `Enter ~ .` |
 
 Transport is yours: `attach name@host` execs ssh, and mosh composes as
@@ -87,6 +88,9 @@ Two things worth knowing. Unread means "since anyone last looked", not since
 moment ago the output is no longer news to the row. And working is only as
 responsive as the daemon's poll round, because freshness is a counter
 comparison across polls rather than a stored timestamp.
+
+The column earns its keep for sessions with no tab open — those are the ones
+you cannot see. `recipes/lzs.fish` parks it in a tab as a live board.
 
 ## Graphics
 

@@ -2787,3 +2787,39 @@ Also worth noting how the fix arrived: I had *labelled* the weak spot in a doc
 comment and moved on, which felt like diligence. It was not — the label was
 accurate and the behaviour was still wrong. A known-wrong behaviour with a
 comment explaining it is still known-wrong; the comment only makes it survivable.
+
+
+## recipes/lzs.fish notes — 2025-06-14
+
+New recipe: a live status board (`linger ls -r` on a loop) for the one
+case the status column is *for*. Sharpened while answering "can kitty
+show session status in a tab title?" — it can (OSC 2), and it would be
+useless: a session with a tab open is one you can already see. Status is
+information about sessions you are **not** attached to, so it belongs in
+`ls`, and the gap versus a remote multiplexer is not the glyph but
+tmux's *in-band window list* — state for windows you aren't looking at,
+inside one connection. `lzs` fills that without windows/panes (settled
+non-goal): one small tab, N sessions reported, terminal still owns
+composition.
+
+Two environment facts, both measured, one of which killed an assumed bug:
+
+* fish `--argument-names x` with the arg omitted leaves `x` an **empty
+  list** (`count $x` = 0), not a one-element empty string — so
+  `linger ls -r $hosts` collapses to a bare `-r` and reads
+  `~/.config/linger/remotes`. My first check simulated this with
+  `set -l hosts ""`, which is a *one-element* list containing "" and
+  expands to `''`; the simulation disagreed with the real mechanism.
+  Reproducing the actual construct is worth the extra command.
+* That sim implied `lzs '' 2` (default hosts, custom interval) would
+  `ssh` to an empty hostname. It does not: `resolveRemotes` already
+  filters `!h.isEmpty && !h.startsWith "#"`, so `ls -r ''` is local-only,
+  verified directly. Negative result — no guard needed in the recipe, and
+  the escape hatch is documented in its comment.
+
+Break-verify: not applicable (no theorem, no runtime change — recipes and
+docs only, so `e2e.sh` was not the gate here). Behaviour checked against
+the real binary: `linger run board-demo sleep 300`, then three redraws
+observed under `timeout 3 fish -c '… lzs "" 1'` with `cat -v` confirming
+`ESC[H ESC[J ESC[3J` before each table and the `⣿` row present; session
+killed afterwards.

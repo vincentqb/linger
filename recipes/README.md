@@ -13,6 +13,7 @@ cp recipes/lz*.fish ~/.config/fish/functions/
 | `lz.fish` | fuzzy-pick a session (local + remote) and attach | fzf |
 | `lzo.fish` | every session on a host as kitty tabs, one shot | kitty remote control |
 | `lza.fish` | attach that auto-reconnects while a link flaps | — |
+| `lzs.fish` | live status board for the sessions you have no tab open on | — |
 | `ssh_config` | dead links declared in ~15 s, no `Enter ~ .` | paste into `~/.ssh/config` |
 
 ## Transport: ssh, mosh, anything
