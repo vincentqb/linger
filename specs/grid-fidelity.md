@@ -21,8 +21,7 @@ to reason about bytes. What remains is a statement about `print`.
 | Rung | Theorem |
 |---|---|
 | bytes → prints | `utf8_feed`, `utf8s_feed`, `cellText_feed`, `crlf_feed` |
-| codes → pen | `pen_codes_recover` (step 2's semantic half, **done**) |
-| bytes → codes | *open* — step 2's parser half |
+| a pen replays exactly | `penSgr_feed` (**step 2, done**) |
 | parser stays ground | `Ends`, `restore_quiesced` |
 | DECOM stays off | `Quiet`, `quiet_restoreBody` |
 | cursor lands right | `cup_places_cursor`, `restore_cursor` |
@@ -49,18 +48,20 @@ invariant, and proving it preserved by `step` is step 5. Do *not* weaken
 the theorem to dodge these: they are facts about the emulator, and the
 right move is to prove them.
 
-**Step 2 — the pen round trip** (`penSgr_feed`), independent of the grid.
-**The semantic half is done**: `pen_codes_recover` proves `Vt.applySgr`
-inverts the pen encoding, from any starting pen. What remains is the parser
-half.
+**Step 2 — the pen round trip: DONE** (`penSgr_feed`). Feeding the sequences
+`penSgr` emits to a quiet emulator sets its pen to `p` and changes nothing
+else. Both halves landed:
 
-1. *(open)* the parser accumulates `joinSemi codes` into
+1. *(done)* the parser accumulates `joinSemi codes` into
    `params = codes.map (min · 65535, false)` — an induction threading the
    params array, with the ≤ 16 bound from `penSgr_under_cap` discharging
    the `ignore` branch. State the run lemma with the *pushed* array
    (`(s'.params.push (min s'.cur 65535, s'.curSub)).toList = …`) rather than
    with `dropLast`/`getLast`: `csiFinish` performs exactly that push, and
-   the induction then follows `joinSemi`'s own three-arm recursion.
+   the induction then follows `joinSemi`'s own three-arm recursion. Kept
+   separate from `csi_param_run_frame`, which says the run touches nothing
+   but `pstate` — the two views are then identified through the injectivity
+   of `PState.csi`.
 2. *(done)* `Vt.applySgr` recovers the pen. The fuel turned out not to need
    a pure-fold detour: every sequence is called at `length + 1`, which is
    exactly what the fold consumes, so the concrete cases close directly.

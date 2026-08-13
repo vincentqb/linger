@@ -2124,7 +2124,17 @@ theorem colorCodes_eq_nil (c : Color) (isFg : Bool) :
     colorCodes c isFg = [] ↔ c = .default := by
   cases c with
   | default => simp [colorCodes]
-  | idx i => unfold colorCodes; dsimp only; repeat' split <;> simp
+  | idx i =>
+    -- resolve the range guards first: with a literal list as the scrutinee
+    -- the outer match reduces by iota
+    unfold colorCodes
+    dsimp only
+    by_cases h8 : i.toNat < 8
+    · rw [if_pos h8]; simp
+    rw [if_neg h8]
+    by_cases h16 : i.toNat < 16
+    · rw [if_pos h16]; simp
+    · rw [if_neg h16]; simp
   | rgb r g b => simp [colorCodes]
 
 /-- The pen after a colour sequence *as the emitter decides whether to send
@@ -2157,6 +2167,274 @@ theorem pen_codes_recover (q : Pen) (p : Pen) :
   rw [penAfterColor_eq _ _ true rfl]
   rw [penAfterColor_eq _ _ false rfl]
   simp
+
+/-! ### The pen round trip, parser half — the accumulator delivers the numbers
+
+`joinSemi` emits `<n1>;<n2>;…`, and the CSI accumulator turns that into the
+parameter array `applySgr` folds over. Two lemmas, deliberately separate:
+`csi_param_run_frame` says a parameter run changes *nothing but the parser
+state*, and `csi_joinSemi_feed` says what that state contains. The second is
+stated in terms of the array *after* the final push, because that push is
+exactly what `csiFinish` performs — carrying `dropLast`/`getLast` through the
+induction instead would fight `joinSemi`'s three-arm recursion for no gain.
+-/
+
+/-- Inside a CSI with nothing half-decoded, `step` is `stepCsi`. -/
+theorem step_of_csi_quiet {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi s)
+    (hu : v.u8need = 0) : v.step b = v.stepCsi s b := by
+  have ha : v.abortUtf8 b = v := by
+    unfold Vt.abortUtf8
+    rw [if_neg (by simp [hu])]
+  unfold Vt.step
+  dsimp only
+  rw [ha, hg]
+
+/-- `ESC [` from a quiet ground state opens an empty CSI and touches nothing
+else. -/
+theorem csi_open_feed {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) :
+    ((v.step 0x1B).step 0x5B) = { v with pstate := .csi {} } := by
+  have h1 : v.step 0x1B = { v with pstate := .esc } := by
+    rw [step_of_ground_quiet _ hg hu]
+    unfold Vt.stepGround
+    rw [if_pos (by decide)]
+  rw [h1]
+  have ha : ({ v with pstate := .esc } : Vt).abortUtf8 0x5B = { v with pstate := .esc } := by
+    unfold Vt.abortUtf8
+    rw [if_neg (by simp [hu])]
+  unfold Vt.step
+  dsimp only
+  rw [ha]
+  rfl
+
+/-- A parameter byte moves the accumulator and nothing else. -/
+theorem csi_param_step_frame {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi s)
+    (hu : v.u8need = 0) (h1 : 0x30 ≤ b) (h2 : b ≤ 0x3B) :
+    ∃ s', v.step b = { v with pstate := .csi s' } := by
+  obtain ⟨hn1, hn2⟩ := u8_bounds h1 h2
+  simp only [show ((0x30 : UInt8)).toNat = 48 from rfl,
+    show ((0x3B : UInt8)).toNat = 59 from rfl] at hn1 hn2
+  rw [step_of_csi_quiet b hg hu]
+  unfold Vt.stepCsi
+  by_cases hd : (b ≥ 0x30 && b ≤ 0x39) = true
+  · rw [if_pos hd]; exact ⟨_, rfl⟩
+  by_cases hsemi : (b == 0x3B) = true
+  · rw [if_neg (by simp [hd]), if_pos hsemi]; exact ⟨_, rfl⟩
+  by_cases hcolon : (b == 0x3A) = true
+  · rw [if_neg (by simp [hd]), if_neg (by simp [hsemi]), if_pos hcolon]; exact ⟨_, rfl⟩
+  · exfalso
+    have hb39 : ¬ (b.toNat ≤ 57) := by
+      intro hle
+      exact hd (by
+        simp only [Bool.and_eq_true, decide_eq_true_eq, UInt8.le_iff_toNat_le,
+          show ((0x30 : UInt8)).toNat = 48 from rfl,
+          show ((0x39 : UInt8)).toNat = 57 from rfl]
+        omega)
+    have hne3B : b.toNat ≠ 59 := by
+      intro he
+      exact hsemi (by
+        simp only [beq_iff_eq]
+        apply UInt8.toNat_inj.mp
+        simpa [show ((0x3B : UInt8)).toNat = 59 from rfl] using he)
+    have hne3A : b.toNat ≠ 58 := by
+      intro he
+      exact hcolon (by
+        simp only [beq_iff_eq]
+        apply UInt8.toNat_inj.mp
+        simpa [show ((0x3A : UInt8)).toNat = 58 from rfl] using he)
+    omega
+
+/-- …and so does a whole run of them: only `pstate` differs at the end. -/
+theorem csi_param_run_frame : ∀ (bs : Bytes) {v : Vt} {s : CsiState}, v.pstate = .csi s →
+    v.u8need = 0 → ParamBytes bs → ∃ s', v.feed bs = { v with pstate := .csi s' }
+  | [], v, s, hg, _, _ => ⟨s, by rw [show v.feed [] = v from rfl, ← hg]⟩
+  | x :: xs, v, s, hg, hu, hp => by
+    obtain ⟨s1, hs1⟩ := csi_param_step_frame x hg hu (hp x (by simp)).1 (hp x (by simp)).2
+    rw [feed_cons, hs1]
+    obtain ⟨s2, hs2⟩ :=
+      csi_param_run_frame xs (v := { v with pstate := .csi s1 }) rfl hu
+        (fun b hb => hp b (by simp [hb]))
+    exact ⟨s2, by rw [hs2]⟩
+
+/-- One `<digits>;` group: the number closes into the array and the
+accumulator is clear for the next. -/
+theorem csi_group_step {v : Vt} {s : CsiState} (n : Nat) (hg : v.pstate = .csi s)
+    (hcur : s.cur = 0) (hsize : s.params.size < 16) :
+    (v.feed (digits n ++ [0x3B])).pstate
+      = .csi { s with params := s.params.push (min n 65535, s.curSub),
+                      cur := 0, curSub := false, haveCur := false } := by
+  rw [feed_append]
+  obtain ⟨s1, hs1, hcur1, hhave1, hpar1, hint1, hign1, hsub1, hpv1⟩ :=
+    csi_digits_value n hg hcur
+  rw [show ∀ (w : Vt), w.feed [(0x3B : UInt8)] = w.step 0x3B from fun _ => rfl]
+  rw [csi_semi_step hs1]
+  unfold csiPush
+  rw [if_pos (by simp [hhave1]), if_neg (by rw [hpar1]; omega)]
+  obtain ⟨p, ps, c, cs, hc, it, ig⟩ := s1
+  simp_all
+
+/-- **The parameter run.** Feeding a `;`-joined list of numbers leaves the
+last one pending; pushing it — which is what `csiFinish` does — yields
+exactly those numbers as the parameter array. -/
+theorem csi_joinSemi_feed : ∀ (codes : List Nat) {v : Vt} {s : CsiState},
+    v.pstate = .csi s → s.cur = 0 → s.curSub = false → codes ≠ [] →
+    s.params.size + codes.length ≤ 16 →
+    ∃ s', (v.feed (joinSemi codes)).pstate = .csi s'
+      ∧ s'.haveCur = true ∧ s'.curSub = false ∧ s'.priv = s.priv
+      ∧ s'.inter = s.inter ∧ s'.ignore = s.ignore ∧ s'.params.size < 16
+      ∧ (s'.params.push (min s'.cur 65535, s'.curSub)).toList
+          = s.params.toList ++ codes.map (fun n => (min n 65535, false))
+  | [], _, _, _, _, _, hne, _ => absurd rfl hne
+  | [n], v, s, hg, hcur, hsub, _, hcap => by
+    obtain ⟨s1, hs1, hcur1, hhave1, hpar1, hint1, hign1, hsub1, hpv1⟩ :=
+      csi_digits_value n hg hcur
+    refine ⟨s1, hs1, hhave1, by rw [hsub1, hsub], hpv1, hint1, hign1, ?_, ?_⟩
+    · rw [hpar1]; simp at hcap; omega
+    · rw [hcur1, hpar1, hsub1, hsub,
+        show min (min n 65535) 65535 = min n 65535 from by omega]
+      simp
+  | n :: m :: ns, v, s, hg, hcur, hsub, _, hcap => by
+    rw [show joinSemi (n :: m :: ns) = (digits n ++ [0x3B]) ++ joinSemi (m :: ns) from by
+      simp [joinSemi, List.append_assoc]]
+    rw [feed_append]
+    have hsz : s.params.size < 16 := by simp at hcap; omega
+    obtain ⟨s', hs', h1, h2, h3, h4, h5, h6, h7⟩ :=
+      csi_joinSemi_feed (m :: ns) (csi_group_step n hg hcur hsz) rfl rfl (by simp)
+        (by simp only [Array.size_push]; simp at hcap ⊢; omega)
+    refine ⟨s', hs', h1, h2, by rw [h3], by rw [h4], by rw [h5], h6, ?_⟩
+    rw [h7, hsub]
+    simp
+
+/-- **The pen round trip.** Feeding one emitted SGR sets the pen to exactly
+what its parameter numbers encode, and touches nothing else. With
+`pen_codes_recover`, this is what makes a pen replay. -/
+theorem sgrOf_feed {v : Vt} (codes : List Nat) (hne : codes ≠ [])
+    (hcap : codes.length ≤ 16) (hle : ∀ n ∈ codes, n ≤ 65535)
+    (hg : v.pstate = .ground) (hu : v.u8need = 0) :
+    v.feed (sgrOf codes) = { v with pen := penAfter v.pen codes } := by
+  rw [show sgrOf codes = 0x1B :: 0x5B :: (joinSemi codes ++ [0x6D]) from by
+    simp [sgrOf, csiB]]
+  rw [feed_cons, feed_cons, csi_open_feed hg hu, feed_append]
+  -- the run: only the parser state moves, and we know what it holds
+  obtain ⟨s1, hframe⟩ :=
+    csi_param_run_frame (joinSemi codes) (v := { v with pstate := .csi {} }) rfl hu
+      (paramBytes_joinSemi codes)
+  obtain ⟨s', hs', hhave, hsub, hpriv, hinter, hign, hsize, hpush⟩ :=
+    csi_joinSemi_feed codes (v := { v with pstate := .csi {} }) rfl rfl rfl hne
+      (by simpa using hcap)
+  -- the two views agree, so the run's result is a record we can compute with
+  have hid : s1 = s' := by
+    rw [hframe] at hs'
+    exact PState.csi.inj hs'
+  rw [hid] at hframe
+  rw [hframe, show ∀ (w : Vt), w.feed [(0x6D : UInt8)] = w.step 0x6D from fun _ => rfl]
+  rw [step_of_csi_quiet (v := { v with pstate := .csi s' }) (s := s') 0x6D rfl hu]
+  -- 0x6D is a final byte, with no intermediate, so it dispatches
+  unfold Vt.stepCsi
+  rw [if_neg (by decide), if_neg (by decide), if_neg (by decide), if_neg (by decide),
+    if_neg (by decide), if_pos (by decide), if_neg (by simp [hinter])]
+  unfold Vt.csiFinish
+  dsimp only
+  rw [if_pos hhave, if_neg (by simp; omega)]
+  unfold Vt.csiDispatch
+  dsimp only
+  rw [if_neg (by simp [hign])]
+  -- SGR: the parameters are the numbers the emitter chose
+  -- stated over any record with that array, since `priv` gets normalised to
+  -- its default on the way here and a fixed shape would stop matching
+  have hparams : ∀ (t : CsiState),
+      t.params = s'.params.push (min s'.cur 65535, s'.curSub) →
+      t.sgrParams = sgrParamsOf codes := by
+    intro t ht
+    unfold CsiState.sgrParams
+    rw [ht, hpush]
+    simp only [List.nil_append]
+    unfold sgrParamsOf
+    exact List.map_congr_left (fun n hn => by
+      rw [show min n 65535 = n from by have := hle n hn; omega])
+  have hne' : ¬ (sgrParamsOf codes).isEmpty = true := by
+    cases codes with
+    | nil => exact absurd rfl hne
+    | cons a as => simp [sgrParamsOf]
+  simp only [hpriv, beq_self_eq_true, if_pos]
+  unfold Vt.applySgr
+  dsimp only
+  rw [hparams _ rfl, if_neg hne']
+  -- everything above the pen is untouched, and the parser is back in ground
+  unfold penAfter
+  simp only [sgrParamsOf, List.length_map]
+  rw [← hg]
+
+/-! ### Step 2 complete — a pen replays exactly -/
+
+theorem penAttrCodes_ne_nil (p : Pen) : penAttrCodes p ≠ [] := by
+  unfold penAttrCodes; simp
+
+theorem penAttrCodes_le (p : Pen) : ∀ n ∈ penAttrCodes p, n ≤ 65535 := by
+  obtain ⟨fg, bg, b, d, i, u, bl, r, s⟩ := p
+  cases b <;> cases d <;> cases i <;> cases u <;> cases bl <;> cases r <;> cases s <;>
+    simp [penAttrCodes]
+
+theorem colorCodes_le (c : Color) (isFg : Bool) : ∀ n ∈ colorCodes c isFg, n ≤ 65535 := by
+  intro n hn
+  cases c with
+  | default => simp [colorCodes] at hn
+  | idx i =>
+    have hi := u8_lt256 i
+    cases isFg <;> unfold colorCodes at hn <;> dsimp only at hn <;> repeat' split at hn
+    all_goals (simp at hn; omega)
+  | rgb r g b =>
+    have hr := u8_lt256 r; have hg := u8_lt256 g; have hb := u8_lt256 b
+    cases isFg <;> (simp [colorCodes] at hn; omega)
+
+/-- `sgrColorSeq` as an `if`, which is what the proofs want: rewriting a
+`match` scrutinee runs into "motive is not type correct". -/
+theorem sgrColorSeq_eq (c : Color) (isFg : Bool) :
+    sgrColorSeq c isFg = if c = .default then [] else sgrOf (colorCodes c isFg) := by
+  unfold sgrColorSeq
+  cases c with
+  | default => simp [colorCodes]
+  | idx i =>
+    -- resolve the range guards first: with a literal list as the scrutinee
+    -- the outer match reduces by iota
+    unfold colorCodes
+    dsimp only
+    by_cases h8 : i.toNat < 8
+    · rw [if_pos h8]; simp
+    rw [if_neg h8]
+    by_cases h16 : i.toNat < 16
+    · rw [if_pos h16]; simp
+    · rw [if_neg h16]; simp
+  | rgb r g b => simp [colorCodes]
+
+theorem sgrColorSeq_feed {v : Vt} (c : Color) (isFg : Bool) (hg : v.pstate = .ground)
+    (hu : v.u8need = 0) :
+    v.feed (sgrColorSeq c isFg) = { v with pen := penAfterColor v.pen c isFg } := by
+  rw [sgrColorSeq_eq]
+  unfold penAfterColor
+  by_cases hc : c = .default
+  · rw [if_pos hc, if_pos hc, show v.feed [] = v from rfl]
+  · rw [if_neg hc, if_neg hc]
+    exact sgrOf_feed _ (fun h => hc ((colorCodes_eq_nil c isFg).mp h))
+      (by have := colorCodes_length c isFg; omega) (colorCodes_le c isFg) hg hu
+
+/-- **A pen replays exactly.** Feeding the sequences `penSgr` emits to a
+quiet emulator sets its pen to `p` and changes nothing else — the parser
+half (`sgrOf_feed`) composed with the semantic half
+(`pen_codes_recover`). §Replay's pen fidelity, closed. -/
+theorem penSgr_feed {v : Vt} (p : Pen) (hg : v.pstate = .ground) (hu : v.u8need = 0) :
+    v.feed (penSgr p) = { v with pen := p } := by
+  -- each stage's starting state is the previous stage's result, so they are
+  -- pinned explicitly rather than left to unification
+  have h1 := sgrOf_feed (v := v) (penAttrCodes p) (penAttrCodes_ne_nil p)
+    (by have := penAttrCodes_length p; omega) (penAttrCodes_le p) hg hu
+  have h2 := sgrColorSeq_feed (v := { v with pen := penAfter v.pen (penAttrCodes p) })
+    p.fg true hg hu
+  have h3 := sgrColorSeq_feed
+    (v := { v with pen := penAfterColor (penAfter v.pen (penAttrCodes p)) p.fg true })
+    p.bg false hg hu
+  unfold penSgr
+  rw [feed_append, feed_append, h1, h2, h3]
+  exact congrArg (fun q => { v with pen := q }) (pen_codes_recover v.pen p)
 
 /-! ### §Replay stage 3c — the cursor lands where the session had it
 

@@ -1899,3 +1899,63 @@ these numbers. Recipe recorded in the spec: state the run lemma with the
 *pushed* array rather than with `dropLast`/`getLast`, since `csiFinish`
 performs exactly that push and the induction then follows `joinSemi`'s own
 three-arm recursion.
+
+
+
+## grid-fidelity step 2 CLOSED — a pen replays exactly — 2026-08-12
+
+`penSgr_feed`: feeding the sequences `penSgr` emits to a quiet emulator sets
+its pen to `p` and changes nothing else. §Replay's pen axis is closed;
+what remains of anchor A1 is the cells.
+
+Parser half, on top of the semantic half from the previous entry:
+
+- `step_of_csi_quiet` — with nothing half-decoded, `step` is `stepCsi`. The
+  `.csi` twin of `step_of_ground_quiet`, and the same trick: keep the
+  `pstate` rewrite inside a bridge lemma so it cannot touch a caller's
+  right-hand side.
+- `csi_param_run_frame` — a parameter run changes **nothing but** `pstate`.
+  Deliberately separate from the contents lemma: mixing "what moved" with
+  "what it holds" in one statement is what made the first attempt unwieldy.
+  The two views are identified afterwards through `PState.csi.inj`.
+- `csi_joinSemi_feed` — the contents, stated in terms of the array *after*
+  the final push. That was the key choice: `csiFinish` performs exactly that
+  push, so the induction follows `joinSemi`'s three-arm recursion and
+  `dropLast`/`getLast` never appear.
+- `sgrOf_feed` / `sgrColorSeq_feed` / `penSgr_feed` — the walk and the
+  composition.
+
+### Traps
+
+- **`rw [lemma h1 h2]` picks the wrong state when a hypothesis is `rfl`.**
+  `rfl` cannot determine the implicit `{v}`, so unification grabbed the
+  *outer* `v` and the rewrite looked for `v.step 109` instead of
+  `(record).step 109`. Pin it: `rw [step_of_csi_quiet (v := …) (s := …) …]`.
+- **`subst` on `h : a = b` may eliminate the name you meant to keep.**
+  `subst hid` removed `s'`, so every later mention became "unknown
+  identifier". `rw [hid] at hframe` keeps both names alive and is what the
+  rest of the proof wants anyway.
+- **A record's default-valued field is *dropped* by the elaborator's
+  normal form.** After `simp only [hpriv]` rewrote `s'.priv` to `0`, the
+  goal held a `CsiState` literal with no `priv` field at all, so a helper
+  stated as `{ s' with params := … }` (which carries `priv := s'.priv`) no
+  longer matched. Fix: state such helpers **universally quantified over the
+  record**, with the field of interest as a hypothesis
+  (`∀ t, t.params = … → t.sgrParams = …`), then apply with `rfl`.
+- `rw` into a `match` scrutinee is the usual motive failure, so proof-side
+  mirrors of emitter functions get an `if` and a characterisation lemma
+  (`sgrColorSeq_eq`) rather than a catch-all `match`.
+- Resolving range guards *before* a `match` on the result lets the match
+  reduce by iota: `by_cases h8 : i.toNat < 8` then `rw [if_pos h8]` turns
+  the scrutinee into a literal list, and `simp` finishes.
+
+### Break-verification, and two more shape-only near-misses
+
+Reordering `penSgr`'s three sequences broke three proofs — but all on term
+*shape* (the appends reassociate), which tests the scripts, not the claims.
+The real catch needed a same-shape content change: **the leading `0` in
+`penAttrCodes` changed to `39`** (reset-foreground, which does not reset
+attributes). Then `penAfter_attrCodes` demands `q.bold = false ∧ …` of an
+*arbitrary* starting pen and cannot be proved — which is exactly the content
+of "from any starting pen". Third time this session that a shape break
+masqueraded as verification; the rule is holding up.
