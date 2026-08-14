@@ -3641,3 +3641,27 @@ the `Keeps` failure is the one that names the reason. Restored, 0 errors/warning
 
 Only the repaint: the row induction over `rowAnsi`, the `joinCRLF` separator, and the
 alt switch. The tail is no longer in the way.
+
+
+### Sixth rung, same session — the non-repaint remainder
+
+`keeps_sgrReset` and `keeps_park` close out everything in `restore` that is neither
+the clear nor the paint nor the switch. Both are compositions of pieces already
+proved, so they cost nothing; the point is the resulting statement of position:
+
+> The only bytes in `restore` that may legitimately touch a cell are `CSI 2 J`
+> (clear), `gridAnsi` (paint), and `CSI ? 1049 h` (alt switch).
+
+`keeps_park` is stated on bare naturals rather than on a cursor record so that all
+three occurrences of the shape instantiate it (DECSC replay, alt-stash parking, final
+placement). Note it will not slot in by `rw` as-is: `++` is right-associative, so
+`penSgr p ++ csiNum2 … ++ rest` parses as `penSgr p ++ (csiNum2 … ++ rest)` and the
+parking pair is not a syntactic subterm of either `savedAnsi` or `screensAnsi`. The
+eventual decomposition has to re-associate explicitly (the
+`rw [show … = … from by simp]` move used throughout this file) — which it would have
+had to do anyway.
+
+Next, in the order I would take them: (a) `CSI 2 J` blanks the grid — self-contained,
+needs `eraseDisplay`'s post-state to line up with a blank-grid term, and does not
+depend on the row induction; (b) the `rowAnsi` induction; (c) `joinCRLF`; (d) the alt
+switch. (a) is the one to try next because it is independent of the hard part.

@@ -3441,3 +3441,28 @@ theorem keeps_restoreTail (v : Vt) :
     (keeps_penSgr v.pen)).append (keeps_cursorAnsi v))
 
 end Zmx.Core.Render
+
+
+
+namespace Zmx.Core.Render
+
+open Zmx.Core.Vt
+/-! ### What is left that is not the repaint
+
+With the tail done, the only bytes in `restore` that may legitimately touch a cell
+are the clear (`CSI 2 J`), the paint (`gridAnsi`), and the alt switch
+(`CSI ? 1049 h`). The leading SGR reset and the alt-stash parking are not among
+them, and both fall out of pieces already proved. -/
+
+/-- The `restoreBody` head: an SGR reset writes no cell. -/
+theorem keeps_sgrReset : Keeps (csiNum 0 0x6D) :=
+  keeps_csiNum 0 0x6D (by decide) (by decide) grid_csiDispatch_sgr
+
+/-- **Park the pen and the cursor.** The shape recurs: the DECSC replay
+(`savedAnsi`), the alt-stash parking inside `screensAnsi`, and — without the pen —
+the final placement. Stated on bare naturals so all three instantiate it. -/
+theorem keeps_park (y x : Nat) (p : Pen) : Keeps (penSgr p ++ csiNum2 y x 0x48) :=
+  (keeps_penSgr p).append
+    (keeps_csiNum2 _ _ 0x48 (by decide) (by decide) grid_csiDispatch_cup)
+
+end Zmx.Core.Render
