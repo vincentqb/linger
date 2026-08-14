@@ -162,32 +162,89 @@ theorem Ends.append {a b : Bytes} (ha : Ends a) (hb : Ends b) : Ends (a ++ b) :=
   rw [this]
   exact hb (v.feed a) (ha v h)
 
-theorem Ends.append3 {a b c : Bytes} (ha : Ends a) (hb : Ends b) (hc : Ends c) :
-    Ends (a ++ b ++ c) := (ha.append hb).append hc
+/-- **The shape all three stream layers share.**
 
-theorem Ends.append4 {a b c d : Bytes} (ha : Ends a) (hb : Ends b) (hc : Ends c)
-    (hd : Ends d) : Ends (a ++ b ++ c ++ d) := ((ha.append hb).append hc).append hd
+`Ends`, `Quiet` and `Keeps` are three predicates on a byte string, each closed
+under concatenation, and each needing the same five derived combinators. Written
+out per layer that is fifteen proofs of five facts.
 
-/-- An `if` over two `Ends` pieces is `Ends` (restore is full of
-conditional fragments). -/
-theorem Ends.ite {c : Prop} [Decidable c] {a b : Bytes}
-    (ha : Ends a) (hb : Ends b) : Ends (if c then a else b) := by
-  by_cases h : c <;> simp only [h, if_true, if_false] <;> assumption
+Everything derived follows from `nil` and `append` alone, so those two are the
+bundle and the rest are generic: a fourth layer costs one instance instead of five
+proofs. That is the reason to do it now — the decision recorded in SCRATCHPAD was
+to leave the duplication alone "unless a third layer wants the same skeleton", and
+`Keeps` is that third layer.
 
-theorem Ends.flatten {l : List Bytes} (h : ∀ bs ∈ l, Ends bs) : Ends l.flatten := by
+The boundary is deliberate: only the *combinators* generalize, and `Keeps` is what
+shows why. `Ends.text` and `Quiet.text` both say an ESC-free run is harmless, but
+the same statement for `Keeps` is **false** — printable bytes are exactly what
+writes cells. A shared instance ladder would have had to weaken to accommodate
+that, which is the trap the earlier sketch hit from the other direction
+(`modesAnsi`'s DECOM branch is hypothesis-free for `Ends` and hypothesis-bearing
+for `Quiet`). -/
+structure StreamPred (P : Bytes → Prop) : Prop where
+  nil : P []
+  append : ∀ {a b : Bytes}, P a → P b → P (a ++ b)
+
+namespace StreamPred
+
+theorem append3 {P : Bytes → Prop} (hP : StreamPred P) {a b c : Bytes}
+    (ha : P a) (hb : P b) (hc : P c) : P (a ++ b ++ c) :=
+  hP.append (hP.append ha hb) hc
+
+theorem append4 {P : Bytes → Prop} (hP : StreamPred P) {a b c d : Bytes}
+    (ha : P a) (hb : P b) (hc : P c) (hd : P d) : P (a ++ b ++ c ++ d) :=
+  hP.append (hP.append3 ha hb hc) hd
+
+/-- Both branches, with the condition available — a guarded emit is what proves a
+mode number is not the one that would break the claim, so the branch hypotheses
+have to be able to use it (`Quiet`'s DECOM branch, `Keeps`'s screen-switch
+branch). -/
+theorem ite {P : Bytes → Prop} (_hP : StreamPred P) {c : Prop} [Decidable c]
+    {a b : Bytes} (ha : c → P a) (hb : ¬c → P b) : P (if c then a else b) := by
+  by_cases h : c
+  · rw [if_pos h]; exact ha h
+  · rw [if_neg h]; exact hb h
+
+theorem flatten {P : Bytes → Prop} (hP : StreamPred P) {l : List Bytes}
+    (h : ∀ bs ∈ l, P bs) : P l.flatten := by
   induction l with
-  | nil => exact Ends.nil
+  | nil => exact hP.nil
   | cons a as ih =>
     rw [List.flatten_cons]
-    exact (h a (by simp)).append (ih (fun bs hbs => h bs (by simp [hbs])))
+    exact hP.append (h a (by simp)) (ih (fun bs hbs => h bs (by simp [hbs])))
 
-theorem Ends.flatMap {α : Type} {f : α → Bytes} {l : List α}
-    (h : ∀ a, Ends (f a)) : Ends (l.flatMap f) := by
+theorem flatMap {P : Bytes → Prop} (hP : StreamPred P) {α : Type} {f : α → Bytes}
+    {l : List α} (h : ∀ a, P (f a)) : P (l.flatMap f) := by
   induction l with
-  | nil => exact Ends.nil
+  | nil => exact hP.nil
   | cons a as ih =>
     rw [List.flatMap_cons]
-    exact (h a).append ih
+    exact hP.append (h a) ih
+
+end StreamPred
+
+theorem Ends.streamPred : StreamPred Ends := ⟨Ends.nil, fun ha hb => Ends.append ha hb⟩
+
+/-! The five derived combinators keep their own names, so no downstream proof
+changes — the conversion rule from the frames pass. -/
+
+theorem Ends.append3 {a b c : Bytes} (ha : Ends a) (hb : Ends b) (hc : Ends c) :
+    Ends (a ++ b ++ c) := Ends.streamPred.append3 ha hb hc
+
+theorem Ends.append4 {a b c d : Bytes} (ha : Ends a) (hb : Ends b) (hc : Ends c)
+    (hd : Ends d) : Ends (a ++ b ++ c ++ d) := Ends.streamPred.append4 ha hb hc hd
+
+/-- An `if` over two `Ends` pieces is `Ends` (restore is full of conditional
+fragments). Unconditional in both branches, unlike the `Quiet`/`Keeps` forms. -/
+theorem Ends.ite {c : Prop} [Decidable c] {a b : Bytes}
+    (ha : Ends a) (hb : Ends b) : Ends (if c then a else b) :=
+  Ends.streamPred.ite (fun _ => ha) (fun _ => hb)
+
+theorem Ends.flatten {l : List Bytes} (h : ∀ bs ∈ l, Ends bs) : Ends l.flatten :=
+  Ends.streamPred.flatten h
+
+theorem Ends.flatMap {α : Type} {f : α → Bytes} {l : List α}
+    (h : ∀ a, Ends (f a)) : Ends (l.flatMap f) := Ends.streamPred.flatMap h
 
 /-! ### One lemma per emitted construct
 
@@ -707,11 +764,8 @@ assembles a row preserves "everything so far is `Ends`" — the generic
 fold-invariant lemma below is what carries that, and it is reused for the
 grid's list of painted rows. -/
 
-theorem invariant_foldl {α β : Type} (P : β → Prop) (f : β → α → β)
-    (hf : ∀ acc a, P acc → P (f acc a)) :
-    ∀ (l : List α) (acc : β), P acc → P (l.foldl f acc)
-  | [], _, h => h
-  | a :: as, acc, h => invariant_foldl P f hf as (f acc a) (hf acc a h)
+-- `invariant_foldl` now lives in `Theorems/Vt.lean`, shared with the four
+-- specializations there; this file's uses resolve to it through `open`.
 
 theorem ends_utf8s (cs : List Char) : Ends (utf8s cs) :=
   Ends.text (utf8s_no_esc cs)
@@ -1275,31 +1329,22 @@ theorem Quiet.append {a b : Bytes} (ha : Quiet a) (hb : Quiet b) : Quiet (a ++ b
   obtain ⟨h1, h2⟩ := ha v hg ho
   exact hb _ h1 h2
 
+theorem Quiet.streamPred : StreamPred Quiet := ⟨Quiet.nil, fun ha hb => Quiet.append ha hb⟩
+
 theorem Quiet.append3 {a b c : Bytes} (ha : Quiet a) (hb : Quiet b) (hc : Quiet c) :
-    Quiet (a ++ b ++ c) := (ha.append hb).append hc
+    Quiet (a ++ b ++ c) := Quiet.streamPred.append3 ha hb hc
 
 /-- Both branches, with the condition available: the mode replays need it
 (a guarded emit is what proves the mode number is not 6). -/
 theorem Quiet.ite {c : Prop} [Decidable c] {a b : Bytes}
-    (ha : c → Quiet a) (hb : ¬c → Quiet b) : Quiet (if c then a else b) := by
-  by_cases h : c
-  · rw [if_pos h]; exact ha h
-  · rw [if_neg h]; exact hb h
+    (ha : c → Quiet a) (hb : ¬c → Quiet b) : Quiet (if c then a else b) :=
+  Quiet.streamPred.ite ha hb
 
-theorem Quiet.flatten {l : List Bytes} (h : ∀ bs ∈ l, Quiet bs) : Quiet l.flatten := by
-  induction l with
-  | nil => exact Quiet.nil
-  | cons a as ih =>
-    rw [List.flatten_cons]
-    exact (h a (by simp)).append (ih (fun bs hbs => h bs (by simp [hbs])))
+theorem Quiet.flatten {l : List Bytes} (h : ∀ bs ∈ l, Quiet bs) : Quiet l.flatten :=
+  Quiet.streamPred.flatten h
 
 theorem Quiet.flatMap {α : Type} {f : α → Bytes} {l : List α}
-    (h : ∀ a, Quiet (f a)) : Quiet (l.flatMap f) := by
-  induction l with
-  | nil => exact Quiet.nil
-  | cons a as ih =>
-    rw [List.flatMap_cons]
-    exact (h a).append ih
+    (h : ∀ a, Quiet (f a)) : Quiet (l.flatMap f) := Quiet.streamPred.flatMap h
 
 /-- Text (no ESC): the grid repaint, and the one shift-out byte. -/
 theorem quiet_ground_feed : ∀ (bs : Bytes) (v : Vt), v.pstate = .ground →
@@ -2663,22 +2708,25 @@ theorem Keeps.append {a b : Bytes} (ha : Keeps a) (hb : Keeps b) : Keeps (a ++ b
   obtain ⟨h4, h5, h6⟩ := hb _ h1 h2
   exact ⟨h4, h5, h6.trans h3⟩
 
-theorem Keeps.append3 {a b c : Bytes} (ha : Keeps a) (hb : Keeps b) (hc : Keeps c) :
-    Keeps (a ++ b ++ c) := (ha.append hb).append hc
+theorem Keeps.streamPred : StreamPred Keeps := ⟨Keeps.nil, fun ha hb => Keeps.append ha hb⟩
 
+theorem Keeps.append3 {a b c : Bytes} (ha : Keeps a) (hb : Keeps b) (hc : Keeps c) :
+    Keeps (a ++ b ++ c) := Keeps.streamPred.append3 ha hb hc
+
+theorem Keeps.append4 {a b c d : Bytes} (ha : Keeps a) (hb : Keeps b) (hc : Keeps c)
+    (hd : Keeps d) : Keeps (a ++ b ++ c ++ d) := Keeps.streamPred.append4 ha hb hc hd
+
+/-- Both branches, with the condition available — `modesAnsi`'s screen-switch
+guard is what will discharge `grid_setMode`'s hypotheses. -/
 theorem Keeps.ite {c : Prop} [Decidable c] {a b : Bytes}
-    (ha : c → Keeps a) (hb : ¬c → Keeps b) : Keeps (if c then a else b) := by
-  by_cases h : c
-  · rw [if_pos h]; exact ha h
-  · rw [if_neg h]; exact hb h
+    (ha : c → Keeps a) (hb : ¬c → Keeps b) : Keeps (if c then a else b) :=
+  Keeps.streamPred.ite ha hb
+
+theorem Keeps.flatten {l : List Bytes} (h : ∀ bs ∈ l, Keeps bs) : Keeps l.flatten :=
+  Keeps.streamPred.flatten h
 
 theorem Keeps.flatMap {α : Type} {f : α → Bytes} {l : List α}
-    (h : ∀ a, Keeps (f a)) : Keeps (l.flatMap f) := by
-  induction l with
-  | nil => exact Keeps.nil
-  | cons a as ih =>
-    rw [List.flatMap_cons]
-    exact (h a).append ih
+    (h : ∀ a, Keeps (f a)) : Keeps (l.flatMap f) := Keeps.streamPred.flatMap h
 
 /-! ### The CSI workhorse
 

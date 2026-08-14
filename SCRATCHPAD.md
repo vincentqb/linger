@@ -3417,3 +3417,59 @@ has not been pointed at the mode numbers. That is the next step, and it also
 unblocks the remaining non-CSI instances (`escSeq` for DECSC/HTS/app-keypad,
 `escCharset`, the OSC title, the shift-out byte), each of which is a short byte
 walk in the style of `ends_escSeq`/`ends_osc` plus a grid fact per step.
+
+
+## Generalizing the repeated shapes — measured, and smaller than it looks — 2026-08-14T05:40:00Z
+
+Two duplicated shapes collapsed. The first was on a recorded trigger: the §Replay
+3c-rest entry sketched a `StreamPred` bundle, rejected it ("not worth it to dedupe
+thirteen 3-line proofs"), and said **"revisit if a third layer wants the same
+skeleton."** `Keeps` is that third layer, so the condition was met rather than
+guessed at.
+
+### 1. `StreamPred` — the stream-layer skeleton
+
+`Ends`, `Quiet` and `Keeps` are each a predicate on a byte string closed under
+concatenation, and each needed the same five derived combinators — fifteen proofs
+of five facts. Everything derived follows from `nil` and `append` alone, so those
+two are the bundle (`StreamPred`) and `append3`/`append4`/`ite`/`flatten`/`flatMap`
+are generic. Each layer now has a one-line `streamPred` instance and five one-line
+derivations **keeping their own names**, so no downstream proof changed — the
+conversion rule from the frames pass.
+
+The boundary is the interesting part, and `Keeps` is what settles it: **only the
+combinators generalize.** `Ends.text` and `Quiet.text` both say an ESC-free run is
+harmless; the same statement for `Keeps` is **false**, because printable bytes are
+exactly what writes cells. So a shared *instance* ladder would have to weaken to
+accommodate the third layer — the same trap the original sketch hit from the other
+side (`modesAnsi`'s DECOM branch is hypothesis-free for `Ends`, hypothesis-bearing
+for `Quiet`). The earlier refusal was right for two layers and right again now for
+the instances; it was only the combinators that were worth pulling out.
+
+One mechanical note: `StreamPred.ite` does not use its bundle argument at all (an
+`if` needs no closure law), so it takes `_hP` — kept as a parameter only so
+`Ends.streamPred.ite` reads like its siblings.
+
+### 2. `invariant_foldl` — fold invariance, once
+
+`invariant_foldl` already existed in `Theorems/Render.lean`, and I had then written
+its statement out four more times in `Theorems/Vt.lean` for `Good`, `Renderable`, a
+row's cells and a grid's rows. Moved the general lemma up into `Theorems/Vt.lean`
+(where `Render` sees it through `open`) and made all four derivations; a sixth
+predicate now costs one line.
+
+### The honest measurement
+
+**This is not a line win.** Proof code went from ~67 lines to ~82; the diff's
++119/−71 is mostly the doc comment explaining the boundary above. What actually
+improved:
+
+* a fourth stream layer costs one instance instead of five proofs;
+* a sixth fold predicate costs one line instead of a six-line induction;
+* the `ite` and `text` asymmetries are now stated in exactly one place, where the
+  next person will read them, instead of being implicit in which of three files
+  happened to have a hypothesis.
+
+Same shape of result as the frames pass, and worth recording in the same terms: a
+real but smaller win than "fifteen proofs become five" suggests. The value is in
+what the *next* layer costs, not in what this diff removed.

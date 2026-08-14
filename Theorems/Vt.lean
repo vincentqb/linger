@@ -42,6 +42,17 @@ theorem good_init (cols rows : Nat) : Good (Vt.init cols rows) := by
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;>
     simp [Vt.init, clampDim, Ring.size, sbCap] <;> omega
 
+/-- **Fold invariance, once.** Any predicate preserved by one step is preserved
+by a whole `List.foldl`. Five lemmas in this repo were this statement written out
+for a specific predicate (`Good`, `Renderable`, a row's cells, a grid's rows, and
+`Ends`/`Quiet` over the row painter's accumulator); they are now derivations that
+keep their own names, so no call site changed. A sixth predicate costs one line. -/
+theorem invariant_foldl {α β : Type} (P : β → Prop) (f : β → α → β)
+    (hf : ∀ acc a, P acc → P (f acc a)) :
+    ∀ (l : List α) (acc : β), P acc → P (l.foldl f acc)
+  | [], _, h => h
+  | a :: as, acc, h => invariant_foldl P f hf as (f acc a) (hf acc a h)
+
 end Zmx.Core.Vt
 
 
@@ -205,11 +216,8 @@ theorem setCol {v : Vt} (x : Nat) (h : Good v) : Good (v.setCol x) := by
 
 theorem good_foldl {α : Type} {f : Vt → α → Vt}
     (hf : ∀ v a, Good v → Good (f v a)) :
-    ∀ (l : List α) {v : Vt}, Good v → Good (l.foldl f v)
-  | [], _, h => h
-  | a :: l, v, h => by
-    rw [List.foldl_cons]
-    exact good_foldl hf l (hf v a h)
+    ∀ (l : List α) {v : Vt}, Good v → Good (l.foldl f v) :=
+  fun l _ h => Zmx.Core.Vt.invariant_foldl Good f hf l _ h
 
 /-! ## Erase / insert / delete — grid-only (plus ED 3's scrollback reset) -/
 
@@ -2750,11 +2758,9 @@ theorem cells_set {row : Row} (i : Nat) (c : Cell)
 
 theorem cells_foldl {β : Type} {f : Row → β → Row}
     (hf : ∀ (r : Row) (b : β), (∀ x, CellOk (r.at x)) → ∀ x, CellOk ((f r b).at x)) :
-    ∀ (l : List β) (row : Row), (∀ x, CellOk (row.at x)) → ∀ x, CellOk ((l.foldl f row).at x)
-  | [], _, h => h
-  | b :: l, row, h => by
-    rw [List.foldl_cons]
-    exact cells_foldl hf l (f row b) (hf row b h)
+    ∀ (l : List β) (row : Row), (∀ x, CellOk (row.at x)) →
+      ∀ x, CellOk ((l.foldl f row).at x) :=
+  invariant_foldl (fun r => ∀ x, CellOk (r.at x)) f hf
 
 theorem cells_mendAt {row : Row} (i : Nat) (hrow : ∀ x, CellOk (row.at x)) :
     ∀ x, CellOk ((Row.mendAt row i).at x) := by
@@ -3025,11 +3031,8 @@ theorem gridOk_set_row {cols rows : Nat} {g : Array Row} (h : GridOk cols rows g
 
 theorem gridOk_foldl {cols rows : Nat} {β : Type} {f : Array Row → β → Array Row}
     (hf : ∀ (g : Array Row) (b : β), GridOk cols rows g → GridOk cols rows (f g b)) :
-    ∀ (l : List β) (g : Array Row), GridOk cols rows g → GridOk cols rows (l.foldl f g)
-  | [], _, h => h
-  | b :: l, g, h => by
-    rw [List.foldl_cons]
-    exact gridOk_foldl hf l (f g b) (hf g b h)
+    ∀ (l : List β) (g : Array Row), GridOk cols rows g → GridOk cols rows (l.foldl f g) :=
+  invariant_foldl (GridOk cols rows) f hf
 
 /-- Scrolling moves whole rows and blanks one, so it never breaks a pair. The
 scrollback push is outside `Renderable`'s scope (a repaint paints the screen). -/
@@ -3187,11 +3190,8 @@ theorem renderable_eraseLine {v : Vt} (h : Renderable v) (m : Nat) :
 
 theorem renderable_foldl {β : Type} {f : Vt → β → Vt}
     (hf : ∀ (u : Vt) (b : β), Renderable u → Renderable (f u b)) :
-    ∀ (l : List β) (v : Vt), Renderable v → Renderable (l.foldl f v)
-  | [], _, h => h
-  | b :: l, v, h => by
-    rw [List.foldl_cons]
-    exact renderable_foldl hf l (f v b) (hf v b h)
+    ∀ (l : List β) (v : Vt), Renderable v → Renderable (l.foldl f v) :=
+  invariant_foldl Renderable f hf
 
 theorem renderable_eraseScreen {v : Vt} (h : Renderable v) (m : Nat) :
     Renderable (v.eraseScreen m) := by
