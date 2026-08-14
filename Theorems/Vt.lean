@@ -2630,21 +2630,41 @@ operation which does not touch `grid`/`cols`/`rows`/`altGrid` be discharged by
 its frame — most of `csiDispatch` — instead of by its own lemma.
 -/
 
+/-- A codepoint the emitter reproduces as itself: not a C0 control and not DEL.
+
+Stated concretely rather than as `printableChar c = c`, which would be a
+tautology against the very function that establishes it — mutating
+`printableChar` would weaken the predicate and the storer together and
+`renderable_print` would still prove. This way such a mutation has to break
+`printableChar_emittable`, which is a claim about `printableChar`'s *range*. -/
+def Emittable (c : Char) : Prop := 0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F
+
+theorem printableChar_emittable (c : Char) : Emittable (printableChar c) := by
+  unfold Emittable printableChar
+  split
+  · exact ⟨by decide, by decide⟩
+  · rename_i h
+    simp only [Bool.or_eq_true, decide_eq_true_eq, beq_iff_eq, not_or,
+      Nat.not_lt] at h
+    exact ⟨h.1, h.2⟩
+
+theorem emittable_space : Emittable ' ' := ⟨by decide, by decide⟩
+
 /-- A cell a repaint can reproduce. -/
 structure CellOk (c : Cell) : Prop where
-  base : printableChar c.base = c.base
+  base : Emittable c.base
   width : c.width ≠ 0 → charWidth c.base = c.width
   marksLe : c.marks.length ≤ 8
-  marks : ∀ m ∈ c.marks, charWidth m = 0 ∧ printableChar m = m
+  marks : ∀ m ∈ c.marks, charWidth m = 0 ∧ Emittable m
 
 theorem cellOk_erased (p : Pen) : CellOk (Cell.erased p) :=
-  ⟨rfl, fun _ => rfl, Nat.zero_le _, fun _ hm => nomatch hm⟩
+  ⟨emittable_space, fun _ => rfl, Nat.zero_le _, fun _ hm => nomatch hm⟩
 
 theorem cellOk_shadow (c : Cell) : CellOk (Cell.shadow c) :=
-  ⟨rfl, fun h => absurd rfl h, Nat.zero_le _, fun _ hm => nomatch hm⟩
+  ⟨emittable_space, fun h => absurd rfl h, Nat.zero_le _, fun _ hm => nomatch hm⟩
 
 theorem cellOk_default : CellOk (default : Cell) :=
-  ⟨rfl, fun _ => rfl, Nat.zero_le _, fun _ hm => nomatch hm⟩
+  ⟨emittable_space, fun _ => rfl, Nat.zero_le _, fun _ hm => nomatch hm⟩
 
 /-- A row a repaint can reproduce: exact width, reproducible cells, whole
 pairs. Cells are quantified over *all* indices — an out-of-range read is a
@@ -2857,5 +2877,715 @@ theorem size_foldl {β : Type} {f : Row → β → Row}
   | [], _ => rfl
   | b :: l, row => by
     rw [List.foldl_cons, size_foldl hf l (f row b), hf row b]
+
+end Zmx.Core.Vt
+
+namespace Zmx.Core.Vt
+/-! ### Renderable is preserved by every operation
+
+Two shapes cover the emulator. An operation that leaves `grid`, `cols`, `rows`
+and `altGrid` alone is discharged by its frame (`renderable_congr`) — that is
+most of `csiDispatch`. An operation that writes cells goes
+`GridOk → GridOkExcept y → write → mendRow`, which is why every row mutation
+ends in `Row.mend`. -/
+
+/-- Same grid, dimensions and stash ⇒ same verdict, whatever else moved. -/
+theorem renderable_of_gridOk {v w : Vt} (h : Renderable v)
+    (hc : w.cols = v.cols) (hr : w.rows = v.rows) (ha : w.altGrid = v.altGrid)
+    (hg : GridOk w.cols w.rows w.grid) : Renderable w :=
+  ⟨hg, fun g c p hs => by rw [hc, hr]; exact h.alt g c p (by rw [← ha]; exact hs)⟩
+
+theorem gridOkExcept_putCell {v : Vt} {y : Nat}
+    (h : GridOkExcept v.cols v.rows y v.grid) (x : Nat) (c : Cell) (hc : CellOk c) :
+    GridOkExcept v.cols v.rows y (v.putCell x y c).grid := by
+  unfold Vt.putCell Vt.getRow
+  dsimp only
+  exact gridOkExcept_set h x c hc _ (fun hb => getD_of_lt _ _ _ _ hb)
+
+theorem gridOk_mendRow {v : Vt} {y : Nat}
+    (h : GridOkExcept v.cols v.rows y v.grid) :
+    GridOk v.cols v.rows (v.mendRow y).grid := by
+  have hkey : (v.mendRow y).grid
+      = v.grid.setIfInBounds y (Row.mend (v.grid.getD y (blankRow v.cols {}))) := by
+    unfold Vt.mendRow Vt.getRow
+    dsimp only
+    by_cases hb : y < v.grid.size
+    · rw [getD_of_lt v.grid y (blankRow v.cols v.pen) (blankRow v.cols {}) hb]
+    · simp only [Array.setIfInBounds]
+      rw [dif_neg hb, dif_neg hb]
+  rw [hkey]
+  exact gridOk_of_except h
+
+/-- The write-then-repair sandwich, as one step. -/
+theorem renderable_write_mend {v : Vt} (h : Renderable v) (y : Nat)
+    (f : Vt → Vt) (hf : GridOkExcept v.cols v.rows y (f v).grid)
+    (hc : (f v).cols = v.cols) (hr : (f v).rows = v.rows)
+    (ha : (f v).altGrid = v.altGrid) :
+    Renderable ((f v).mendRow y) := by
+  refine renderable_of_gridOk h (by rw [Vt.mendRow]; exact hc) (by rw [Vt.mendRow]; exact hr)
+    (by rw [Vt.mendRow]; exact ha) ?_
+  have := gridOk_mendRow (v := f v) (y := y) (by rw [hc, hr]; exact hf)
+  rw [hc, hr] at this
+  show GridOk ((f v).mendRow y).cols ((f v).mendRow y).rows ((f v).mendRow y).grid
+  rw [show ((f v).mendRow y).cols = v.cols from by rw [Vt.mendRow]; exact hc,
+    show ((f v).mendRow y).rows = v.rows from by rw [Vt.mendRow]; exact hr]
+  exact this
+
+/-! #### Printing -/
+
+theorem renderable_printPut {v : Vt} (h : Renderable v) (ch : Char) (w : Nat)
+    (hpc : Emittable ch) (hw : charWidth ch = w) :
+    Renderable (v.printPut ch w) := by
+  have hbase : CellOk { base := ch, marks := [], width := w, pen := v.pen } :=
+    ⟨hpc, fun _ => hw, Nat.zero_le _, fun _ hm => nomatch hm⟩
+  have hblank : CellOk { base := ' ', marks := [], width := 1, pen := v.pen } :=
+    ⟨emittable_space, fun _ => rfl, Nat.zero_le _, fun _ hm => nomatch hm⟩
+  have hshadow : CellOk { base := ' ', marks := [], width := 0, pen := v.pen } :=
+    ⟨emittable_space, fun hz => absurd rfl hz, Nat.zero_le _,
+      fun _ hm => nomatch hm⟩
+  unfold Vt.printPut
+  dsimp only
+  split
+  · exact renderable_write_mend h _ (fun u => u.putCell v.cursor.x v.cursor.y _)
+      (gridOkExcept_putCell (gridOkExcept_of_gridOk _ h.main) _ _ hblank) rfl rfl rfl
+  · split
+    · exact renderable_write_mend h _
+        (fun u => (u.putCell v.cursor.x v.cursor.y _).putCell (v.cursor.x + 1) v.cursor.y _)
+        (gridOkExcept_putCell (gridOkExcept_putCell
+          (gridOkExcept_of_gridOk _ h.main) _ _ hbase) _ _ hshadow) rfl rfl rfl
+    · exact renderable_write_mend h _ (fun u => u.putCell v.cursor.x v.cursor.y _)
+        (gridOkExcept_putCell (gridOkExcept_of_gridOk _ h.main) _ _ hbase) rfl rfl rfl
+
+/-- Every cell of a renderable emulator is reproducible, including the
+out-of-range reads that `getCell` answers with a default. -/
+theorem cellOk_getCell {v : Vt} (h : Renderable v) (x y : Nat) : CellOk (v.getCell x y) := by
+  unfold Vt.getCell Vt.getRow
+  by_cases hb : y < v.grid.size
+  · rw [getD_of_lt v.grid y (blankRow v.cols v.pen) (blankRow v.cols {}) hb]
+    exact (h.main.2 y).cells _
+  · rw [show v.grid.getD y (blankRow v.cols v.pen) = blankRow v.cols v.pen from by
+      simp [Array.getD, hb]]
+    exact (rowOk_blankRow v.cols v.pen).cells _
+
+/-- Appending one legal mark to a cell, then repairing the row. Stated over an
+arbitrary column so `printMark`'s shadow redirect does not have to be unfolded
+inside the proof. -/
+theorem renderable_addMark {v : Vt} (h : Renderable v) (cx y : Nat) (ch : Char)
+    (hpc : Emittable ch) (hw : charWidth ch = 0)
+    (hcap : (v.getCell cx y).marks.length < 8) :
+    Renderable ((v.putCell cx y { v.getCell cx y with
+      marks := (v.getCell cx y).marks ++ [ch] }).mendRow y) := by
+  have hold := cellOk_getCell h cx y
+  refine renderable_write_mend h y (fun u => u.putCell cx y _)
+    (gridOkExcept_putCell (gridOkExcept_of_gridOk y h.main) cx _ ?_) rfl rfl rfl
+  refine ⟨hold.base, hold.width, ?_, ?_⟩
+  · simp only [List.length_append, List.length_cons, List.length_nil]
+    omega
+  · intro m hm
+    rcases List.mem_append.mp hm with hm' | hm'
+    · exact hold.marks m hm'
+    · rw [show m = ch from by simpa using hm']
+      exact ⟨hw, hpc⟩
+
+theorem renderable_printMark {v : Vt} (h : Renderable v) (ch : Char)
+    (hpc : Emittable ch) (hw : charWidth ch = 0) :
+    Renderable (v.printMark ch) := by
+  unfold Vt.printMark
+  dsimp only
+  repeat' split
+  all_goals first
+    | exact h
+    | exact renderable_addMark h _ _ _ hpc hw (by omega)
+
+end Zmx.Core.Vt
+
+namespace Zmx.Core.Vt
+/-! #### Whole-row moves, and the stages around a write -/
+
+theorem rowOk_getRow {v : Vt} (h : Renderable v) (y : Nat) : RowOk v.cols (v.getRow y) := by
+  unfold Vt.getRow
+  by_cases hb : y < v.grid.size
+  · rw [getD_of_lt v.grid y (blankRow v.cols v.pen) (blankRow v.cols {}) hb]
+    exact h.main.2 y
+  · rw [show v.grid.getD y (blankRow v.cols v.pen) = blankRow v.cols v.pen from by
+      simp [Array.getD, hb]]
+    exact rowOk_blankRow v.cols v.pen
+
+theorem gridOk_set_row {cols rows : Nat} {g : Array Row} (h : GridOk cols rows g)
+    (y : Nat) (r : Row) (hr : RowOk cols r) : GridOk cols rows (g.setIfInBounds y r) := by
+  refine ⟨by simp [h.1], fun y' => ?_⟩
+  by_cases hy' : y' = y
+  · subst hy'
+    by_cases hb : y' < g.size
+    · rw [getD_set_self _ _ _ _ hb]; exact hr
+    · rw [show g.setIfInBounds y' r = g from by
+        simp only [Array.setIfInBounds]; rw [dif_neg hb]]
+      exact h.2 y'
+  · rw [getD_set_ne _ _ _ _ _ hy']; exact h.2 y'
+
+theorem gridOk_foldl {cols rows : Nat} {β : Type} {f : Array Row → β → Array Row}
+    (hf : ∀ (g : Array Row) (b : β), GridOk cols rows g → GridOk cols rows (f g b)) :
+    ∀ (l : List β) (g : Array Row), GridOk cols rows g → GridOk cols rows (l.foldl f g)
+  | [], _, h => h
+  | b :: l, g, h => by
+    rw [List.foldl_cons]
+    exact gridOk_foldl hf l (f g b) (hf g b h)
+
+/-- Scrolling moves whole rows and blanks one, so it never breaks a pair. The
+scrollback push is outside `Renderable`'s scope (a repaint paints the screen). -/
+theorem renderable_scrollUpIn {v : Vt} (h : Renderable v) (t b : Nat) (a : Bool) :
+    Renderable (v.scrollUpIn t b a) := by
+  have hgrid : GridOk v.cols v.rows (v.scrollUpIn t b a).grid := by
+    have hstep : GridOk v.cols v.rows
+        ((List.range (b - t)).foldl
+          (fun g i => g.setIfInBounds (t + i) (v.getRow (t + i + 1))) v.grid) :=
+      gridOk_foldl (fun g i hg => gridOk_set_row hg _ _ (rowOk_getRow h _)) _ _ h.main
+    have hblank := gridOk_set_row hstep b (blankRow v.cols v.pen) (rowOk_blankRow _ _)
+    unfold Vt.scrollUpIn
+    dsimp only
+    split <;> exact hblank
+  refine renderable_of_gridOk h ?_ ?_ ?_ ?_
+  · rw [frame_scrollUpIn]
+  · rw [frame_scrollUpIn]
+  · rw [frame_scrollUpIn]
+  · rw [show (v.scrollUpIn t b a).cols = v.cols from by rw [frame_scrollUpIn],
+      show (v.scrollUpIn t b a).rows = v.rows from by rw [frame_scrollUpIn]]
+    exact hgrid
+
+theorem renderable_scrollDownIn {v : Vt} (h : Renderable v) (t b : Nat) :
+    Renderable (v.scrollDownIn t b) := by
+  have hgrid : GridOk v.cols v.rows (v.scrollDownIn t b).grid := by
+    have hstep : GridOk v.cols v.rows
+        ((List.range (b - t)).foldl
+          (fun g i => g.setIfInBounds (b - i) (v.getRow (b - i - 1))) v.grid) :=
+      gridOk_foldl (fun g i hg => gridOk_set_row hg _ _ (rowOk_getRow h _)) _ _ h.main
+    exact gridOk_set_row hstep t (blankRow v.cols v.pen) (rowOk_blankRow _ _)
+  refine renderable_of_gridOk h ?_ ?_ ?_ ?_
+  · rw [frame_scrollDownIn]
+  · rw [frame_scrollDownIn]
+  · rw [frame_scrollDownIn]
+  · rw [show (v.scrollDownIn t b).cols = v.cols from by rw [frame_scrollDownIn],
+      show (v.scrollDownIn t b).rows = v.rows from by rw [frame_scrollDownIn]]
+    exact hgrid
+
+theorem renderable_scrollUp {v : Vt} (h : Renderable v) : Renderable v.scrollUp :=
+  renderable_scrollUpIn h _ _ _
+
+theorem renderable_scrollDown {v : Vt} (h : Renderable v) : Renderable v.scrollDown :=
+  renderable_scrollDownIn h _ _
+
+/-- Cursor-only motion: the frame says the grid, dimensions and stash are
+untouched, so the verdict carries. -/
+theorem renderable_clearPending {v : Vt} (h : Renderable v) : Renderable v.clearPending :=
+  renderable_congr h rfl rfl rfl rfl
+
+theorem renderable_carriageReturn {v : Vt} (h : Renderable v) : Renderable v.carriageReturn :=
+  renderable_congr h rfl rfl rfl rfl
+
+theorem renderable_printAdvance {v : Vt} (h : Renderable v) (w : Nat) :
+    Renderable (v.printAdvance w) := by
+  refine renderable_congr h ?_ ?_ ?_ ?_ <;> rw [frame_printAdvance]
+
+theorem renderable_lineFeed {v : Vt} (h : Renderable v) : Renderable v.lineFeed := by
+  have h' := renderable_clearPending h
+  unfold Vt.lineFeed
+  dsimp only
+  split
+  · exact renderable_scrollUp h'
+  · split
+    · exact renderable_congr h' rfl rfl rfl rfl
+    · exact h'
+
+theorem renderable_reverseIndex {v : Vt} (h : Renderable v) : Renderable v.reverseIndex := by
+  have h' := renderable_clearPending h
+  unfold Vt.reverseIndex
+  dsimp only
+  split
+  · exact renderable_scrollDown h'
+  · exact renderable_congr h' rfl rfl rfl rfl
+
+theorem renderable_printWrap {v : Vt} (h : Renderable v) : Renderable v.printWrap := by
+  unfold Vt.printWrap
+  split
+  · exact renderable_lineFeed (renderable_carriageReturn h)
+  · exact renderable_clearPending h
+
+theorem renderable_printWideWrap {v : Vt} (h : Renderable v) (w : Nat) :
+    Renderable (v.printWideWrap w) := by
+  unfold Vt.printWideWrap
+  split
+  · exact renderable_lineFeed (renderable_carriageReturn h)
+  · exact h
+
+/-- Insert mode shifts cells within a row and then repairs it. Every cell it
+writes came from the same row, so `CellOk` carries; the width bookkeeping is
+`Row.mend`'s. -/
+theorem renderable_printShift {v : Vt} (h : Renderable v) (w : Nat) :
+    Renderable (v.printShift w) := by
+  unfold Vt.printShift
+  dsimp only
+  split
+  · rename_i hins
+    refine renderable_of_gridOk h rfl rfl rfl ?_
+    show GridOk v.cols v.rows (v.grid.setIfInBounds v.cursor.y (Row.mend _))
+    refine gridOk_set_row h.main _ _ (rowOk_mend ?_ ?_)
+    · exact size_foldl (fun r b => by simp) _ _ |>.trans (rowOk_getRow h v.cursor.y).size
+    · exact cells_foldl (fun r b hr =>
+        cells_set _ _ hr ((rowOk_getRow h v.cursor.y).cells _)) _ _
+        (rowOk_getRow h v.cursor.y).cells
+  · exact h
+
+/-- **Printing preserves `Renderable`.** The stored codepoint is
+`printableChar`-stable by construction, which is what `CellOk.base` needs, and
+its width is `charWidth` of exactly that codepoint. -/
+theorem renderable_print {v : Vt} (h : Renderable v) (ch : Char) :
+    Renderable (v.print ch) := by
+  have hpc' : ∀ (u : Vt) (c : Char), Emittable (u.printChar c) := by
+    intro u c
+    unfold Vt.printChar
+    exact printableChar_emittable _
+  unfold Vt.print
+  dsimp only
+  split
+  · rename_i h0
+    exact renderable_printMark h _ (hpc' v ch) (by simpa using h0)
+  · exact renderable_printAdvance (renderable_printPut
+      (renderable_printShift (renderable_printWideWrap (renderable_printWrap h) _) _) _ _
+        (hpc' v ch) rfl) _
+
+end Zmx.Core.Vt
+
+namespace Zmx.Core.Vt
+/-! #### Erase, insert, delete -/
+
+/-- Every row mutation has the same skeleton: fold writes over the row, mend it,
+put it back. Only the written cells differ, and each is either copied from the
+same row or an erased blank. -/
+theorem renderable_row_mutation {v : Vt} (h : Renderable v) {β : Type}
+    (y : Nat) (f : Row → β → Row) (l : List β)
+    (hsz : ∀ (r : Row) (b : β), (f r b).size = r.size)
+    (hc : ∀ (r : Row) (b : β), (∀ x, CellOk (r.at x)) → ∀ x, CellOk ((f r b).at x)) :
+    GridOk v.cols v.rows
+      (v.grid.setIfInBounds y (Row.mend (l.foldl f (v.getRow y)))) := by
+  refine gridOk_set_row h.main _ _ (rowOk_mend ?_ ?_)
+  · exact (size_foldl hsz l (v.getRow y)).trans (rowOk_getRow h y).size
+  · exact cells_foldl hc l (v.getRow y) (rowOk_getRow h y).cells
+
+theorem renderable_eraseRowSpan {v : Vt} (h : Renderable v) (y a b : Nat) :
+    Renderable (v.eraseRowSpan y a b) := by
+  refine renderable_of_gridOk h rfl rfl rfl ?_
+  exact renderable_row_mutation h y _ _ (fun r b => by simp)
+    (fun r b hr => cells_set _ _ hr (cellOk_erased _))
+
+theorem renderable_eraseChars {v : Vt} (h : Renderable v) (n : Nat) :
+    Renderable (v.eraseChars n) := renderable_eraseRowSpan h _ _ _
+
+theorem renderable_eraseLine {v : Vt} (h : Renderable v) (m : Nat) :
+    Renderable (v.eraseLine m) := by
+  unfold Vt.eraseLine
+  split <;> exact renderable_eraseRowSpan h _ _ _
+
+theorem renderable_foldl {β : Type} {f : Vt → β → Vt}
+    (hf : ∀ (u : Vt) (b : β), Renderable u → Renderable (f u b)) :
+    ∀ (l : List β) (v : Vt), Renderable v → Renderable (l.foldl f v)
+  | [], _, h => h
+  | b :: l, v, h => by
+    rw [List.foldl_cons]
+    exact renderable_foldl hf l (f v b) (hf v b h)
+
+theorem renderable_eraseScreen {v : Vt} (h : Renderable v) (m : Nat) :
+    Renderable (v.eraseScreen m) := by
+  unfold Vt.eraseScreen
+  split
+  · exact renderable_foldl (fun u i hu => renderable_eraseRowSpan hu _ _ _) _ _
+      (renderable_eraseLine h _)
+  · exact renderable_foldl (fun u i hu => renderable_eraseRowSpan hu _ _ _) _ _
+      (renderable_eraseLine h _)
+  · -- ED 3 also drops scrollback, which `Renderable` does not watch
+    exact renderable_congr
+      (renderable_foldl (fun u i hu => renderable_eraseRowSpan hu _ _ _) _ _ h)
+      rfl rfl rfl rfl
+  · exact renderable_foldl (fun u i hu => renderable_eraseRowSpan hu _ _ _) _ _ h
+
+theorem renderable_deleteChars {v : Vt} (h : Renderable v) (n : Nat) :
+    Renderable (v.deleteChars n) := by
+  refine renderable_of_gridOk h rfl rfl rfl ?_
+  exact renderable_row_mutation h _ _ _ (fun r b => by simp)
+    (fun r b hr => cells_set _ _ hr (by
+      split
+      · exact (rowOk_getRow h v.cursor.y).cells _
+      · exact cellOk_erased _))
+
+theorem renderable_insertChars {v : Vt} (h : Renderable v) (n : Nat) :
+    Renderable (v.insertChars n) := by
+  refine renderable_of_gridOk h rfl rfl rfl ?_
+  exact renderable_row_mutation h _ _ _ (fun r b => by simp)
+    (fun r b hr => cells_set _ _ hr (by
+      split
+      · exact (rowOk_getRow h v.cursor.y).cells _
+      · exact cellOk_erased _))
+
+theorem renderable_insertLines {v : Vt} (h : Renderable v) (n : Nat) :
+    Renderable (v.insertLines n) := by
+  unfold Vt.insertLines
+  split
+  · exact h
+  · exact renderable_foldl (fun u i hu => renderable_scrollDownIn hu _ _) _ _ h
+
+theorem renderable_deleteLines {v : Vt} (h : Renderable v) (n : Nat) :
+    Renderable (v.deleteLines n) := by
+  unfold Vt.deleteLines
+  split
+  · exact h
+  · exact renderable_foldl (fun u i hu => renderable_scrollUpIn hu _ _ _) _ _ h
+
+/-! #### Cursor, pen, modes, and the alt screen -/
+
+theorem renderable_moveTo {v : Vt} (h : Renderable v) (x y : Nat) :
+    Renderable (v.moveTo x y) := renderable_congr h rfl rfl rfl rfl
+
+/-- Setting a field and then homing the cursor, as one step. Stated over the
+*result* record so `csiDispatch`'s `DECSTBM` and `setMode`'s `DECOM` arms unify
+with it instead of with the incoming state. -/
+theorem renderable_moveTo_congr {v w : Vt} (h : Renderable v)
+    (hg : w.grid = v.grid) (hc : w.cols = v.cols) (hr : w.rows = v.rows)
+    (ha : w.altGrid = v.altGrid) (x y : Nat) : Renderable (w.moveTo x y) :=
+  renderable_moveTo (renderable_congr h hg hc hr ha) x y
+
+theorem renderable_moveRel {v : Vt} (h : Renderable v) (dx dy : Int) :
+    Renderable (v.moveRel dx dy) := renderable_congr h rfl rfl rfl rfl
+
+theorem renderable_setCol {v : Vt} (h : Renderable v) (x : Nat) :
+    Renderable (v.setCol x) := renderable_congr h rfl rfl rfl rfl
+
+theorem renderable_applySgr {v : Vt} (h : Renderable v) (ps : List (Nat × Bool)) :
+    Renderable (v.applySgr ps) := renderable_congr h rfl rfl rfl rfl
+
+theorem renderable_backspace {v : Vt} (h : Renderable v) : Renderable v.backspace := by
+  refine renderable_congr h ?_ ?_ ?_ ?_ <;> rw [frame_backspace]
+
+theorem renderable_tab {v : Vt} (h : Renderable v) : Renderable v.tab := by
+  refine renderable_congr h ?_ ?_ ?_ ?_ <;> rw [frame_tab]
+
+theorem renderable_backTab {v : Vt} (h : Renderable v) : Renderable v.backTab := by
+  refine renderable_congr h ?_ ?_ ?_ ?_ <;> rw [frame_backTab]
+
+theorem renderable_enterAlt {v : Vt} (h : Renderable v) (s : Bool) :
+    Renderable (v.enterAlt s) := by
+  unfold Vt.enterAlt
+  split
+  · exact h
+  · refine ⟨gridOk_replicate _ _ _, fun g c p hs => ?_⟩
+    -- the stash is the main grid we just left
+    simp only [Option.some.injEq, Prod.mk.injEq] at hs
+    obtain ⟨hg, -, -⟩ := hs
+    subst hg
+    exact h.main
+
+theorem renderable_leaveAlt {v : Vt} (h : Renderable v) (s : Bool) :
+    Renderable (v.leaveAlt s) := by
+  unfold Vt.leaveAlt
+  split
+  · exact h
+  · rename_i g cur pen heq
+    exact ⟨h.alt g cur pen heq, fun _ _ _ hs => nomatch hs⟩
+
+theorem renderable_setMode {v : Vt} (h : Renderable v) (priv : Bool) (n : Nat) (on : Bool) :
+    Renderable (v.setMode priv n on) := by
+  unfold Vt.setMode
+  split <;> split
+  all_goals first
+    | exact h
+    | exact renderable_congr h rfl rfl rfl rfl
+    | (refine renderable_moveTo_congr h ?_ ?_ ?_ ?_ 0 0 <;> rfl)
+    | (split <;> first
+        | exact renderable_enterAlt h _
+        | exact renderable_leaveAlt h _
+        | exact renderable_congr h rfl rfl rfl rfl)
+
+/-! #### Dispatch, and the parser -/
+
+set_option maxHeartbeats 1000000 in
+theorem renderable_csiDispatch {v : Vt} (h : Renderable v) (s : CsiState) (final : UInt8) :
+    Renderable (v.csiDispatch s final) := by
+  unfold Vt.csiDispatch
+  split
+  · exact h
+  · split
+    all_goals first
+      | exact h
+      | exact renderable_congr h rfl rfl rfl rfl
+      | exact renderable_insertChars h _
+      | exact renderable_moveRel h _ _
+      | exact renderable_carriageReturn (renderable_moveRel h _ _)
+      | exact renderable_setCol h _
+      | exact renderable_moveTo h _ _
+      | exact renderable_eraseScreen h _
+      | exact renderable_eraseLine h _
+      | exact renderable_insertLines h _
+      | exact renderable_deleteLines h _
+      | exact renderable_deleteChars h _
+      | exact renderable_eraseChars h _
+      | exact renderable_setMode h _ _ _
+      | exact renderable_foldl (fun u i hu => renderable_tab hu) _ _ h
+      | exact renderable_foldl (fun u i hu => renderable_scrollUp hu) _ _ h
+      | exact renderable_foldl (fun u i hu => renderable_scrollDown hu) _ _ h
+      | exact renderable_foldl (fun u i hu => renderable_backTab hu) _ _ h
+      | (split <;> first
+          | exact renderable_applySgr h _
+          | exact renderable_congr h rfl rfl rfl rfl
+          | exact h
+          | (dsimp only
+             split <;> first
+              | exact h
+              | (refine renderable_moveTo_congr h ?_ ?_ ?_ ?_ 0 0 <;> rfl)))
+
+theorem renderable_acceptChar {v : Vt} (h : Renderable v) (n : Nat) :
+    Renderable (v.acceptChar n) := by
+  unfold Vt.acceptChar
+  split <;> exact renderable_print h _
+
+theorem renderable_ctl {v : Vt} (h : Renderable v) (b : UInt8) : Renderable (v.ctl b) := by
+  unfold Vt.ctl
+  split
+  all_goals first
+    | exact renderable_congr h rfl rfl rfl rfl
+    | exact renderable_backspace h
+    | exact renderable_tab h
+    | exact renderable_lineFeed h
+    | exact renderable_carriageReturn h
+    | exact h
+
+theorem renderable_oscFinish {v : Vt} (h : Renderable v) (acc : Array UInt8) :
+    Renderable (v.oscFinish acc) := by
+  unfold Vt.oscFinish
+  dsimp only
+  repeat' split
+  all_goals exact renderable_congr h rfl rfl rfl rfl
+
+theorem renderable_csiFinish {v : Vt} (h : Renderable v) (s : CsiState) (final : UInt8) :
+    Renderable (v.csiFinish s final) := by
+  unfold Vt.csiFinish
+  exact renderable_congr (renderable_csiDispatch h _ _) rfl rfl rfl rfl
+
+/-- Setting the UTF-8 accumulator and then accepting a codepoint. Named for the
+same reason as `renderable_moveTo_congr`: `stepGround`'s continuation-byte arm
+applies `acceptChar` to a *record*, and an `exact` with `rfl` arguments would fix
+the implicit state to the incoming one instead. -/
+theorem renderable_acceptChar_congr {v w : Vt} (h : Renderable v)
+    (hg : w.grid = v.grid) (hc : w.cols = v.cols) (hr : w.rows = v.rows)
+    (ha : w.altGrid = v.altGrid) (n : Nat) : Renderable (w.acceptChar n) :=
+  renderable_acceptChar (renderable_congr h hg hc hr ha) n
+
+set_option maxRecDepth 4096 in
+set_option maxHeartbeats 2000000 in
+theorem renderable_stepGround {v : Vt} (h : Renderable v) (b : UInt8) :
+    Renderable (v.stepGround b) := by
+  unfold Vt.stepGround
+  repeat' split
+  all_goals first
+    | exact h
+    | exact renderable_congr h rfl rfl rfl rfl
+    | exact renderable_ctl h _
+    | exact renderable_acceptChar h _
+    | (refine renderable_acceptChar_congr h ?_ ?_ ?_ ?_ _ <;> rfl)
+
+theorem renderable_stepEsc {v : Vt} (h : Renderable v) (b : UInt8) :
+    Renderable (v.stepEsc b) := by
+  unfold Vt.stepEsc
+  split
+  all_goals first
+    | exact h
+    | exact renderable_congr h rfl rfl rfl rfl
+    | exact renderable_congr (renderable_lineFeed h) rfl rfl rfl rfl
+    | exact renderable_congr (renderable_lineFeed (renderable_carriageReturn h)) rfl rfl rfl rfl
+    | exact renderable_congr (renderable_reverseIndex h) rfl rfl rfl rfl
+    | -- RIS: a fresh screen of the same dimensions
+      (dsimp only
+       split <;> exact renderable_congr (renderable_init v.cols v.rows) rfl rfl rfl rfl)
+    | (split <;> exact renderable_congr h rfl rfl rfl rfl)
+
+theorem renderable_stepEscInter {v : Vt} (h : Renderable v) (i b : UInt8) :
+    Renderable (v.stepEscInter i b) := by
+  unfold Vt.stepEscInter
+  dsimp only
+  repeat' split
+  all_goals exact renderable_congr h rfl rfl rfl rfl
+
+theorem renderable_stepCsi {v : Vt} (h : Renderable v) (s : CsiState) (b : UInt8) :
+    Renderable (v.stepCsi s b) := by
+  unfold Vt.stepCsi
+  repeat' split
+  all_goals first
+    | exact renderable_congr h rfl rfl rfl rfl
+    | exact renderable_csiFinish h _ _
+    | exact renderable_ctl h _
+
+theorem renderable_stepOsc {v : Vt} (h : Renderable v) (acc : Array UInt8) (e : Bool)
+    (b : UInt8) : Renderable (v.stepOsc acc e b) := by
+  unfold Vt.stepOsc
+  repeat' split
+  all_goals first
+    | exact renderable_oscFinish h _
+    | exact renderable_congr h rfl rfl rfl rfl
+
+theorem renderable_stepStr {v : Vt} (h : Renderable v) (e : Bool) (b : UInt8) :
+    Renderable (v.stepStr e b) := by
+  unfold Vt.stepStr
+  repeat' split
+  all_goals exact renderable_congr h rfl rfl rfl rfl
+
+/-- **§Renderable is preserved by every byte.** With `renderable_init` this
+covers every state the daemon can hold: the emulator never stores a grid the row
+painter cannot express, for any input at all. -/
+theorem renderable_step {v : Vt} (h : Renderable v) (b : UInt8) : Renderable (v.step b) := by
+  unfold Vt.step Vt.abortUtf8
+  dsimp only
+  have h' : Renderable (if v.u8need > 0 && (b < 0x80 || b ≥ 0xC0) then
+      { v with u8need := 0, u8acc := 0 } else v) := by
+    split
+    · exact renderable_congr h rfl rfl rfl rfl
+    · exact h
+  split
+  all_goals first
+    | exact renderable_stepGround h' _
+    | exact renderable_stepEsc h' _
+    | exact renderable_stepEscInter h' _ _
+    | exact renderable_stepCsi h' _ _
+    | exact renderable_stepOsc h' _ _ _
+    | exact renderable_stepStr h' _ _
+
+/-- The stream form. -/
+theorem renderable_feed {v : Vt} (h : Renderable v) (bytes : List UInt8) :
+    Renderable (v.feed bytes) :=
+  renderable_foldl (fun _ b hu => renderable_step hu b) bytes v h
+
+/-- Forgetting partial parser state cannot change the screen. -/
+theorem renderable_quiesce {v : Vt} (h : Renderable v) : Renderable v.quiesce :=
+  renderable_congr h rfl rfl rfl rfl
+
+end Zmx.Core.Vt
+
+namespace Zmx.Core.Vt
+/-! #### Resize
+
+The last operation that writes cells. Both `resizeRow` and `Vt.resize`'s `fit`
+are maps over their target range, so each needs one lemma about `getD` of a
+mapped `Array.range` and nothing about array splicing. -/
+
+/-- Reading a mapped `Array.range`: in range it is the function, out of range the
+default. Generic in the element type, because `resizeRow` maps over cells and
+`Vt.resize`'s `fit` maps over rows. -/
+theorem getD_map_range {α : Type} (f : Nat → α) (n x : Nat) (d : α) :
+    ((Array.range n).map f).getD x d = if x < n then f x else d := by
+  by_cases hb : x < n
+  · rw [if_pos hb]
+    have hsz : x < ((Array.range n).map f).size := by simp [hb]
+    rw [Array.getD, dif_pos hsz]
+    simp
+  · rw [if_neg hb]
+    have hsz : ¬ x < ((Array.range n).map f).size := by simpa using hb
+    rw [Array.getD, dif_neg hsz]
+
+theorem cells_map_range (f : Nat → Cell) (n : Nat) (hf : ∀ i, CellOk (f i)) :
+    ∀ x, CellOk (Row.at ((Array.range n).map f) x) := by
+  intro x
+  unfold Row.at
+  rw [getD_map_range]
+  split
+  · exact hf x
+  · exact cellOk_default
+
+theorem rowOk_resizeRow (row : Row) (c : Nat) (p : Pen) (h : ∀ x, CellOk (row.at x)) :
+    RowOk c (resizeRow row c p) := by
+  unfold resizeRow
+  refine rowOk_mend (by simp) (cells_map_range _ _ (fun i => ?_))
+  by_cases hi : i < row.size
+  · rw [if_pos hi]
+    exact h i
+  · rw [if_neg hi]
+    exact cellOk_erased p
+
+/-- A grid re-fitted to `c × r` is reproducible: each row is an old row at the
+new width, or a blank. -/
+theorem gridOk_fit {cols : Nat} {g : Array Row} (c r : Nat)
+    (h : ∀ y, RowOk cols (g.getD y (blankRow cols {}))) :
+    GridOk c r ((Array.range r).map (fun j =>
+      let src := if g.size ≥ r then g.size - r + j else j
+      if src < g.size then resizeRow (g.getD src #[]) c {} else blankRow c {})) := by
+  -- a source row that exists is one of `g`'s, whatever default the read carries
+  have hsrc : ∀ (j : Nat), j < g.size → ∀ x, CellOk (Row.at (g.getD j (#[] : Row)) x) := by
+    intro j hj x
+    have hc := (h j).cells x
+    unfold Row.at at hc ⊢
+    rw [getD_of_lt g j (blankRow cols {}) (#[] : Row) hj] at hc
+    exact hc
+  refine ⟨by simp, fun y => ?_⟩
+  rw [getD_map_range]
+  by_cases hy : y < r
+  · rw [if_pos hy]
+    dsimp only
+    by_cases hge : g.size ≥ r
+    · rw [if_pos hge]
+      by_cases hb : g.size - r + y < g.size
+      · rw [if_pos hb]
+        exact rowOk_resizeRow _ _ _ (hsrc _ hb)
+      · rw [if_neg hb]
+        exact rowOk_blankRow c {}
+    · rw [if_neg hge]
+      by_cases hb : y < g.size
+      · rw [if_pos hb]
+        exact rowOk_resizeRow _ _ _ (hsrc _ hb)
+      · rw [if_neg hb]
+        exact rowOk_blankRow c {}
+  · rw [if_neg hy]
+    exact rowOk_blankRow c {}
+
+theorem renderable_resize {v : Vt} (h : Renderable v) (cols rows : Nat) :
+    Renderable (v.resize cols rows) := by
+  unfold Vt.resize
+  refine ⟨gridOk_fit _ _ h.main.2, fun g c p hs => ?_⟩
+  dsimp only at hs
+  rcases hv : v.altGrid with - | x
+  · rw [hv] at hs; exact nomatch hs
+  · obtain ⟨g0, c0, p0⟩ := x
+    rw [hv] at hs
+    simp only [Option.map_some, Option.some.injEq, Prod.mk.injEq] at hs
+    obtain ⟨hg, -, -⟩ := hs
+    subst hg
+    exact gridOk_fit _ _ (h.alt g0 c0 p0 hv).2
+
+/-! ### §LiveReachable — the states a running session can actually hold
+
+The predicate a replay theorem may assume: the least set containing a fresh
+emulator and closed under the three things a live session does to one — feed pty
+bytes, resize on attach, and forget partial parser state (what a checkpoint
+save/load does). Fidelity is claimed for these and not for an arbitrary decoded
+checkpoint, which no theorem can vouch for. -/
+
+inductive LiveReachableVt : Vt → Prop where
+  | init (cols rows : Nat) : LiveReachableVt (Vt.init cols rows)
+  | feed {v : Vt} (h : LiveReachableVt v) (bytes : List UInt8) : LiveReachableVt (v.feed bytes)
+  | resize {v : Vt} (h : LiveReachableVt v) (cols rows : Nat) :
+      LiveReachableVt (v.resize cols rows)
+  | quiesce {v : Vt} (h : LiveReachableVt v) : LiveReachableVt v.quiesce
+
+/-- **The shape hypothesis, discharged.** Every state a live session can hold is
+one the row painter can express — so the replay theorem needs no side condition
+on the grid, and cannot be satisfied vacuously by excluding awkward states. -/
+theorem renderable_of_liveReachable {v : Vt} (h : LiveReachableVt v) : Renderable v := by
+  induction h with
+  | init c r => exact renderable_init c r
+  | feed _ bytes ih => exact renderable_feed ih bytes
+  | resize _ c r ih => exact renderable_resize ih c r
+  | quiesce _ ih => exact renderable_quiesce ih
+
+/-- …and `Good` likewise, so the two invariants travel together. -/
+theorem good_of_liveReachable {v : Vt} (h : LiveReachableVt v) : Good v := by
+  induction h with
+  | init c r => exact good_init c r
+  | feed _ bytes ih => exact Good.feed bytes ih
+  | resize _ c r ih => exact Good.resize c r ih
+  | quiesce _ ih => exact Good.set_ground (Good.set_u8 0 0 (by omega) ih)
 
 end Zmx.Core.Vt

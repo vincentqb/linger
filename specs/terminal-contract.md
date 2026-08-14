@@ -9,14 +9,12 @@ Predecessor: `specs/grid-fidelity.md` (superseded; every open obligation is carr
 Steps 1 and 2 are **complete and break-verified**: the pure mediator owns the
 query profile and the daemon answers with zero, one or many clients attached.
 
-Step 3 is **partly complete**. The emulator half is done and gated — wide-pair
-normalization at every row mutation, marks normalized onto a base, controls
-neutralized on store, the `rowAnsi` column repair, `mend_pairOk`, and an empty
-fuzz exclusion list with both failure lists empty. The proof half has its
-definitions and workhorse lemmas (`CellOk`, `RowOk`, `GridOk`, `Renderable`,
-`renderable_init`, `mend_keeps_*`, the write-then-repair layer) but not
-`renderable_step`, so `LiveReachableVt` and `renderable_of_liveReachable` are
-not yet stated.
+Step 3 is **complete**: the emulator half (wide-pair normalization at every row
+mutation, marks on a base, controls neutralized on store, the `rowAnsi` column
+repair, an empty fuzz exclusion list with both failure lists empty) and the proof
+half (`renderable_step`/`feed`/`resize`/`quiesce`, `LiveReachableVt`,
+`renderable_of_liveReachable`, and the Session trace lift
+`run_vt_renderable`).
 
 Step 4 is **not started**, and deliberately so: `restore_grid` is the row/grid
 replay induction — the `rowAnsi` pen-and-column fold, `joinCRLF`, the alt-screen
@@ -26,9 +24,11 @@ without the budget to close it would leave a half-proved replay path, which is
 worse than a documented gap. What Step 3 bought it is real: the side conditions
 it would have needed on the *emulator* side are now unreachable states instead.
 
-The exit criteria below are unchanged. A successor spec should carry Step 3's
-remaining rung and Step 4 forward; this one stays `active` until then rather
-than being archived with unmet criteria.
+The exit criteria below are unchanged. A successor spec should carry Step 4
+forward; this one stays `active` until then rather than being archived with unmet
+criteria. Steps 1, 2, 3 and Step 5's review/documentation half are done, and
+`renderable_of_liveReachable` means Step 4 now starts from a discharged shape
+hypothesis rather than a side condition it would have had to invent.
 
 ## Goal
 
@@ -186,18 +186,18 @@ inspects executable name, argv, or shell.
 
 ## Step 3 — Live-reachable grids are renderable
 
-Status: in progress (2026-08-14). **Done**: wide-pair normalization at every row
-mutation (`Row.halfPair`/`mendAt`/`mend`, `Vt.mendRow`), marks normalized onto a
-wide base (`Vt.printMark`), controls neutralized on store
-(`Vt.printableChar`), the `rowAnsi` cell-index repair, `mend_pairOk` plus
+Status: complete (2026-08-14). Wide-pair normalization at every row mutation
+(`Row.halfPair`/`mendAt`/`mend`, `Vt.mendRow`), marks normalized onto a wide base
+(`Vt.printMark`), controls neutralized on store (`Vt.printableChar`), the
+`rowAnsi` cell-index repair, `mend_pairOk` plus
 `mend_keeps_narrow`/`mend_keeps_wide`, the write-then-repair read-back layer,
-`CellOk`/`RowOk`/`GridOk`/`Renderable` with `renderable_init`, and the fuzz
-gates (`knownGap = #[]`, `failing 400 = []`, `failingDeep 150 = []`, a fixture
-per removed failure, plus 4600 clean out-of-band cases). **Remaining**:
-`renderable_step` — per-operation preservation composed through `csiDispatch`
-and `step`, for which `GridOkExcept` and the fold lemmas are already in place —
-and then `LiveReachableVt`, `renderable_of_liveReachable`, and the Session trace
-lift.
+`CellOk`/`RowOk`/`GridOk`/`Renderable` with `renderable_init`,
+`renderable_step`/`renderable_feed`/`renderable_resize`/`renderable_quiesce`,
+`LiveReachableVt` with `renderable_of_liveReachable` and `good_of_liveReachable`,
+and the Session trace lift (`step_vt_live`, `run_vt_live`,
+`run_vt_renderable`). Fuzz gates green: `knownGap = #[]`, `failing 400 = []`,
+`failingDeep 150 = []`, a fixture per removed failure, plus 4600 clean
+out-of-band cases. `CLAIM_CAP` 17 → 12.
 
 Purpose: close inherited semantic blockers instead of weakening replay with
 false side conditions.

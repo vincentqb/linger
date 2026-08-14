@@ -3187,3 +3187,80 @@ Hand-off: `specs/terminal-contract.md` stays **active** with per-step status
 written in it; it is deliberately *not* archived, because Steps 3–5 exit criteria
 are unmet and archiving with unmet criteria is the one thing the spec's own
 re-plan clause forbids.
+
+
+## Step 3 CLOSED — §Renderable is an invariant, not a hypothesis — 2026-08-14T04:25:42Z
+
+`renderable_of_liveReachable` is proved, so Step 3's exit criteria are met. Every
+state a live session can hold — fresh emulator, any byte stream, any resize, a
+checkpoint quiesce — stores only grids `Render.rowAnsi` can express. Lifted to
+the daemon by `Session.run_vt_renderable` for any event trace.
+
+### What made the campaign tractable
+
+Two structural choices did most of the work, both instances of "restructure for
+provability rather than weaken the theorem":
+
+1. **`Renderable` is stated over the grid array with a fixed default row**, not
+   over `Vt.getRow` (whose default carries the current pen). That single choice
+   means every operation which does not touch `grid`/`cols`/`rows`/`altGrid` is
+   discharged by its existing *frame* through one lemma (`renderable_congr`) —
+   which is most of `csiDispatch`, all of the cursor motion, SGR, modes, tabs and
+   the parser transitions. Only about a dozen operations write cells.
+2. **Every cell write ends in `Row.mend`**, so `mend_pairOk` discharges the pair
+   rule once for any input row. The per-operation obligation collapses to "the
+   cells I wrote are reproducible", and *where* they were written never matters —
+   which is why `cells_foldl`/`cells_set` need no index reasoning at all. A copied
+   cell is reproducible because out-of-range reads are a default cell, which is
+   itself reproducible; that is the trick that keeps column bounds out of the
+   proofs entirely.
+
+`renderable_row_mutation` is the shape every row mutation shares (fold writes,
+mend, put back), so erase/ICH/DCH/IRM are one line each.
+
+### A vacuity trap I walked into, and the break check that caught it
+
+`CellOk.base` was first stated as `printableChar c.base = c.base`. That is a
+**tautology against the function that establishes it**: mutating `printableChar`
+to never substitute (`||` → `&&`) weakens the predicate and the storer together,
+so `renderable_step` still proved — while the DEL and overlong-UTF-8 replay
+fixtures failed. The invariant was true and useless.
+
+Fixed by stating the clause concretely: `Emittable c := 0x20 ≤ c.toNat ∧
+c.toNat ≠ 0x7F`, with `printableChar_emittable` as a claim about `printableChar`'s
+*range*. Re-ran the same mutation: it now breaks `printableChar_emittable`. This
+is the same failure mode the reviewer found twice in the Session theorems
+(a claim about a helper mistaken for a claim about the machine), arrived at from a
+third direction — defining an invariant in terms of the code it constrains. Worth
+generalising: **an invariant must be stated in vocabulary the implementation does
+not get to redefine.**
+
+### Code restructured for the proof, behaviour unchanged
+
+`resizeRow` and `Vt.resize`'s `fit` were rewritten from `extract`/`++` splicing
+to a **map over the target range**. Same semantics — column `i` keeps its cell if
+the old row had one, row `j` comes from the bottom-aligned source or is blank —
+but the result's width and per-row contents are then one step from the
+definition, so `rowOk_resizeRow`/`gridOk_fit` need one generic lemma
+(`getD_map_range`) instead of three about array splicing. Verified
+behaviour-identical by the resize fixture, the fuzz corpus and the live
+attach/resume/graphics suites, all green.
+
+Two elaboration traps worth keeping, both the same shape: `exact f h rfl rfl` fixes
+an implicit state to the *incoming* one before the conclusion is seen, so an arm
+like `csiDispatch`'s `DECSTBM` (`{v with top := …}.moveTo 0 0`) or
+`stepGround`'s continuation byte (`{v with u8need := …}.acceptChar n`) does not
+unify. Fix: state a `*_congr` helper over the *result* record and use `refine …
+?_ ?_ ?_ ?_ <;> rfl`, which unifies the conclusion first. `renderable_stepGround`
+also needs `maxHeartbeats 2000000` on top of `maxRecDepth 4096`.
+
+### Gate
+
+`./lake build`, `./lake build Theorems Tests`, `./tests/e2e.sh` green and
+warning-free. `CLAIM_CAP` **16 → 12** — the new theorems claim `isWide`,
+`isZeroWidth`, `blankRow` and `resizeRow`, which the ratchet had been pointing at
+as the unclaimed width/grid-shape cluster since it was introduced. That cluster
+was exactly the bug neighbourhood, and it is now covered.
+
+Step 4 (`restore_grid`) remains, and now starts from a *discharged* shape
+hypothesis: the row/grid replay induction is the only thing left in it.

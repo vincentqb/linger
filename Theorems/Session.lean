@@ -651,3 +651,100 @@ theorem run_bytes_isolates (s : State) (id : Nat) (chunks : List (List UInt8))
     exact step_bytes_isolates s id c h
 
 end Zmx.Core.Session
+
+
+
+namespace Zmx.Core.Session
+/-! ## §Renderable lifted to the daemon's whole life
+
+The emulator-level invariant is only useful if the *daemon's* terminal satisfies
+it, for any event trace. A session does exactly three things to its `Vt`: feeds
+it pty bytes (through the mediator, whose VT projection is `Vt.feed` —
+`Terminal.feed_vt`), resizes it on attach or resize, and nothing else. Those are
+precisely `LiveReachableVt`'s constructors, so the lift is an induction with no
+new content — which is the point: the replay theorem may assume a *reachable*
+grid without that assumption smuggling in a side condition.
+-/
+
+open Zmx.Core.Wire (Msg)
+open Zmx.Core.Vt (LiveReachableVt Renderable)
+
+/-- The daemon's terminal is one a live session can hold. -/
+def LiveVt (s : State) : Prop := LiveReachableVt s.vt
+
+theorem onMsg_vt_live {s : State} {c : Client} (m : Msg) (h : LiveVt s) :
+    LiveVt (onMsg s c m).1 := by
+  unfold LiveVt at h ⊢
+  unfold onMsg
+  dsimp only
+  repeat' split
+  all_goals first
+    | exact h
+    | exact LiveReachableVt.resize (by simpa [State.setClient] using h) _ _
+    | simpa [State.setClient] using h
+
+theorem feedMsgs_vt_live (id : Nat) (msgs : List Msg) (acc : State × List Effect)
+    (h : LiveVt acc.1) : LiveVt (feedMsgs id msgs acc).1 := by
+  induction msgs generalizing acc with
+  | nil => exact h
+  | cons m ms ih =>
+    unfold feedMsgs
+    rw [List.foldl_cons]
+    rcases hc : acc.1.client? id with - | c'
+    · dsimp only [hc]
+      exact ih acc h
+    · dsimp only [hc]
+      exact ih _ (onMsg_vt_live m h)
+
+/-- One event keeps the terminal reachable. -/
+theorem step_vt_live (s : State) (ev : Event) (h : LiveVt s) : LiveVt (step s ev).1 := by
+  unfold LiveVt at h ⊢
+  unfold step
+  split
+  · split
+    · exact h
+    · exact h
+  · split
+    · exact h
+    · dsimp only
+      split
+      · exact h
+      · refine feedMsgs_vt_live _ _ _ ?_
+        show LiveReachableVt _
+        simpa [State.setClient] using h
+  · dsimp only
+    split
+    · exact h
+    · exact h
+  · -- pty output: the mediator's VT projection is exactly `Vt.feed`
+    dsimp only
+    rw [Terminal.feed_vt]
+    exact LiveReachableVt.feed h _
+  · exact h
+  · split
+    · exact h
+    · exact h
+
+/-- …and so does a trace of any length. -/
+theorem run_vt_live (s : State) (evs : List Event) (h : LiveVt s) :
+    LiveVt (run s evs).1 := by
+  induction evs generalizing s with
+  | nil => exact h
+  | cons ev evs ih =>
+    show LiveVt (run (step s ev).1 evs).1
+    exact ih _ (step_vt_live s ev h)
+
+/-- **The shape hypothesis, discharged at the daemon level.** Whatever a session
+has been through — adversarial clients, hostile pty bytes, resizes, any
+interleaving — the grid it holds is one `Render.restore` can express. -/
+theorem run_vt_renderable (s : State) (evs : List Event) (h : LiveVt s) :
+    Renderable (run s evs).1.vt :=
+  Zmx.Core.Vt.renderable_of_liveReachable (run_vt_live s evs h)
+
+/-- A daemon booting from a fresh emulator satisfies the hypothesis, so the
+statement above is not conditional in practice. -/
+theorem liveVt_init (cols rows : Nat) (cs : List Client) (ls : List (String × String)) :
+    LiveVt { vt := Vt.Vt.init cols rows, clients := cs, labels := ls } :=
+  LiveReachableVt.init cols rows
+
+end Zmx.Core.Session

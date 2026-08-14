@@ -61,7 +61,7 @@ say "2b. unclaimed pure-core surface (ratchet)"
 # watch. This is a ratchet, not a target: it may only go down. Lowering the
 # cap when a claim lands is the point; raising it is a deliberate edit that
 # says "new surface, no claim yet".
-CLAIM_CAP=16
+CLAIM_CAP=12
 unclaimed=0
 unclaimed_list=""
 for name in $(grep -h '^\(private \)*def ' Zmx/Core/*.lean \

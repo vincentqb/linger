@@ -660,19 +660,26 @@ def Vt.leaveAlt (v : Vt) (restoreCursor : Bool) : Vt :=
 
 /-! ## Resize (truncate/pad; no reflow — see header) -/
 
-/-- Truncate or pad one row. Truncation can cut a wide pair in half, so the
-result is mended. -/
+/-- Truncate or pad one row, then repair it: truncation can cut a wide pair in
+half. Built as a map over the target columns rather than `extract`/`++` so the
+result's width and cell contents are one step from the definition — the proofs
+(`rowOk_resizeRow`) would otherwise be index arithmetic over two array shapes.
+Semantics are unchanged: column `i` keeps its cell when the old row had one, and
+is a blank otherwise. -/
 def resizeRow (row : Row) (cols : Nat) (p : Pen) : Row :=
-  Row.mend (if row.size ≥ cols then row.extract 0 cols
-            else row ++ Array.replicate (cols - row.size) (Cell.erased p))
+  Row.mend ((Array.range cols).map
+    (fun i => if i < row.size then row.getD i default else Cell.erased p))
 
 def Vt.resize (v : Vt) (cols rows : Nat) : Vt :=
   let c := clampDim cols
   let r := clampDim rows
+  -- keep the bottom `r` rows, padding at the end when growing. A map over the
+  -- target rows for the same reason `resizeRow` is one: it makes the result's
+  -- height and per-row contents immediate (`gridOk_fit`).
   let fit := fun (g : Array Row) =>
-    let g := g.map (resizeRow · c {})
-    if g.size ≥ r then g.extract (g.size - r) g.size  -- keep the bottom
-    else g ++ Array.replicate (r - g.size) (blankRow c {})
+    (Array.range r).map (fun j =>
+      let src := if g.size ≥ r then g.size - r + j else j
+      if src < g.size then resizeRow (g.getD src #[]) c {} else blankRow c {})
   { v with cols := c, rows := r,
            grid := fit v.grid,
            altGrid := v.altGrid.map (fun (g, cur, pen) =>
