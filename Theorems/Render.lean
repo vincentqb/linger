@@ -3466,3 +3466,73 @@ theorem keeps_park (y x : Nat) (p : Pen) : Keeps (penSgr p ++ csiNum2 y x 0x48) 
     (keeps_csiNum2 _ _ 0x48 (by decide) (by decide) grid_csiDispatch_cup)
 
 end Zmx.Core.Render
+
+
+
+namespace Zmx.Core.Vt
+
+/-! ### The clear, framed
+
+`CSI 2 J` is the one part of `restore` that is *supposed* to change cells, so the
+useful statement about it is what it leaves alone. `eraseRowSpan` is a single
+`grid` record update, so everything but the grid is `rfl`; the fold over rows needs
+one induction, shared by all four ED modes. -/
+
+theorem rows_eraseRowSpan (v : Vt) (y f t : Nat) :
+    (v.eraseRowSpan y f t).rows = v.rows := rfl
+
+theorem cols_eraseRowSpan (v : Vt) (y f t : Nat) :
+    (v.eraseRowSpan y f t).cols = v.cols := rfl
+
+theorem pen_eraseRowSpan (v : Vt) (y f t : Nat) :
+    (v.eraseRowSpan y f t).pen = v.pen := rfl
+
+theorem cursor_eraseRowSpan (v : Vt) (y f t : Nat) :
+    (v.eraseRowSpan y f t).cursor = v.cursor := rfl
+
+/-- Erasing a span never resizes the grid: `setIfInBounds` is a no-op out of range
+and length-preserving in range. -/
+theorem size_eraseRowSpan (v : Vt) (y f t : Nat) :
+    (v.eraseRowSpan y f t).grid.size = v.grid.size := by
+  unfold Vt.eraseRowSpan
+  dsimp only
+  simp
+
+/-- The row fold shared by every ED mode. `f` is the row index as a function of the
+iteration only — in each of the four modes the index is independent of the
+accumulator, which is what lets one lemma serve all of them. -/
+theorem foldl_erase_frame (f : Nat → Nat) : ∀ (l : List Nat) (v : Vt),
+    (l.foldl (fun v' i => v'.eraseRowSpan (f i) 0 v'.cols) v).rows = v.rows
+      ∧ (l.foldl (fun v' i => v'.eraseRowSpan (f i) 0 v'.cols) v).cols = v.cols
+      ∧ (l.foldl (fun v' i => v'.eraseRowSpan (f i) 0 v'.cols) v).pen = v.pen
+      ∧ (l.foldl (fun v' i => v'.eraseRowSpan (f i) 0 v'.cols) v).cursor = v.cursor
+      ∧ (l.foldl (fun v' i => v'.eraseRowSpan (f i) 0 v'.cols) v).grid.size
+          = v.grid.size
+  | [], v => ⟨rfl, rfl, rfl, rfl, rfl⟩
+  | i :: is, v => by
+    obtain ⟨h1, h2, h3, h4, h5⟩ := foldl_erase_frame f is (v.eraseRowSpan (f i) 0 v.cols)
+    refine ⟨?_, ?_, ?_, ?_, ?_⟩
+    · rw [List.foldl_cons, h1, rows_eraseRowSpan]
+    · rw [List.foldl_cons, h2, cols_eraseRowSpan]
+    · rw [List.foldl_cons, h3, pen_eraseRowSpan]
+    · rw [List.foldl_cons, h4, cursor_eraseRowSpan]
+    · rw [List.foldl_cons, h5, size_eraseRowSpan]
+
+/-- `ED 2` is the `_` arm of the match, so this is definitional. Having the equation
+as a lemma keeps the match out of the frame proof, where an in-tactic split leaves an
+unreduced `match 2 with …` that `rw` cannot see through. -/
+theorem eraseScreen_two_eq (v : Vt) : v.eraseScreen 2
+    = (List.range v.rows).foldl (fun v' y => v'.eraseRowSpan y 0 v'.cols) v := rfl
+
+/-- **The clear resizes nothing and moves nothing.** `CSI 2 J` is the one part of
+`restore` that is supposed to change cells, so the useful statement is what it leaves
+alone: the dimensions, the pen, the cursor, and the row count. The repaint that
+follows depends on all four. -/
+theorem eraseScreen_two_frame (v : Vt) :
+    (v.eraseScreen 2).rows = v.rows ∧ (v.eraseScreen 2).cols = v.cols
+      ∧ (v.eraseScreen 2).pen = v.pen ∧ (v.eraseScreen 2).cursor = v.cursor
+      ∧ (v.eraseScreen 2).grid.size = v.grid.size := by
+  rw [eraseScreen_two_eq]
+  exact foldl_erase_frame (fun y => y) (List.range v.rows) v
+
+end Zmx.Core.Vt

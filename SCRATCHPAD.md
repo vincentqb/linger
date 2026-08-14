@@ -3665,3 +3665,26 @@ Next, in the order I would take them: (a) `CSI 2 J` blanks the grid — self-con
 needs `eraseDisplay`'s post-state to line up with a blank-grid term, and does not
 depend on the row induction; (b) the `rowAnsi` induction; (c) `joinCRLF`; (d) the alt
 switch. (a) is the one to try next because it is independent of the hard part.
+
+
+### Seventh rung — the clear, framed
+
+`eraseScreen_two_frame`: `CSI 2 J` leaves the dimensions, the pen, the cursor and the
+row count alone. This is the useful statement about the clear, since it is the one
+part of `restore` that is *supposed* to change cells — and the repaint that follows
+depends on all four. `eraseRowSpan` turns out to be a single `grid` record update, so
+its frame lemmas are `rfl`; only the fold over rows needed an induction
+(`foldl_erase_frame`).
+
+Two things worth recording:
+
+- **`ps_eraseRowSpan` and `un_eraseRowSpan` already existed.** Grep before adding a
+  frame lemma; this file is at 350+ theorems and the invariance layer is dense.
+- **An in-tactic `match m with` on a variable leaves `match 2 with …` unreduced**,
+  and `dsimp only` with no lemmas will not iota-reduce it, so the subsequent `rw`
+  cannot see through it. The fix is an equation lemma (`eraseScreen_two_eq`, which is
+  `rfl` because `2` hits the `_` arm) proved *outside* the frame proof. Same family of
+  trap as the `{}`-vs-`default` one: keep concrete state terms out of tactic blocks.
+- I had written the frame for all four ED modes; cut it to mode 2, which is the only
+  one `restore` emits. `foldl_erase_frame` stays general, so the others are a
+  three-line each if ever needed.
