@@ -3006,3 +3006,143 @@ theorem grid_setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool)
     all_goals rfl
 
 end Zmx.Core.Render
+
+
+
+namespace Zmx.Core.Render
+
+open Zmx.Core.Vt
+/-! ### The non-CSI tail
+
+`ESC`-singles (DECSC, HTS, app-keypad), charset designations and the shift-out
+byte. Each is a two- or three-byte walk, and at each step the grid is untouched
+because every branch `stepEsc`/`stepEscInter`/`ctl` takes for these bytes is a
+record update on some *other* field — the saved slot, the tab ruler, a mode flag,
+the charset flags, `shiftOut`. -/
+
+theorem step_of_esc_quiet {v : Vt} (b : UInt8) (hg : v.pstate = .esc) (hu : v.u8need = 0) :
+    v.step b = v.stepEsc b := by
+  have ha : v.abortUtf8 b = v := by
+    unfold Vt.abortUtf8
+    rw [if_neg (by simp [hu])]
+  unfold Vt.step
+  dsimp only
+  rw [ha, hg]
+
+theorem step_of_escInter_quiet {v : Vt} {i : UInt8} (b : UInt8) (hg : v.pstate = .escInter i)
+    (hu : v.u8need = 0) : v.step b = v.stepEscInter i b := by
+  have ha : v.abortUtf8 b = v := by
+    unfold Vt.abortUtf8
+    rw [if_neg (by simp [hu])]
+  unfold Vt.step
+  dsimp only
+  rw [ha, hg]
+
+/-- From ground, `ESC` only arms the parser. Stated as an equation (not just a
+`pstate` fact) so the layers that care about other fields can use it. -/
+theorem esc_step_eq {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) :
+    v.step 0x1B = { v with pstate := .esc } := by
+  unfold Vt.step Vt.abortUtf8
+  dsimp only
+  rw [if_neg (by simp [hu]), hg]
+  dsimp only
+  unfold Vt.stepGround
+  rw [if_pos (by decide)]
+
+/-- `ESC 7` (DECSC), `ESC H` (HTS) and `ESC =` (app keypad) write the saved slot,
+the tab ruler and a mode flag respectively — never a cell. -/
+theorem keeps_escSeq (b : UInt8) (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x48) :
+    Keeps (escSeq b) := by
+  intro v hg hu
+  rw [show escSeq b = [0x1B] ++ [b] from rfl]
+  rw [show ∀ (w : Vt), w.feed ([0x1B] ++ [b]) = (w.step 0x1B).step b from
+    fun w => by simp [Vt.feed]]
+  rw [esc_step_eq hg hu, step_of_esc_quiet b rfl (by simpa using hu)]
+  rcases hb with h | h | h
+  · subst h
+    show _ ∧ _ ∧ _
+    unfold Vt.stepEsc
+    exact ⟨rfl, by simpa using hu, rfl⟩
+  · subst h
+    show _ ∧ _ ∧ _
+    unfold Vt.stepEsc
+    exact ⟨rfl, by simpa using hu, rfl⟩
+  · subst h
+    show _ ∧ _ ∧ _
+    unfold Vt.stepEsc
+    exact ⟨rfl, by simpa using hu, rfl⟩
+
+/-- `ESC ( x` / `ESC ) x` set a charset flag. -/
+theorem keeps_escCharset (i x : UInt8) (hi : i = 0x28 ∨ i = 0x29) :
+    Keeps (escCharset i x) := by
+  intro v hg hu
+  rw [show escCharset i x = [0x1B] ++ [i, x] from rfl]
+  rw [show ∀ (w : Vt), w.feed ([0x1B] ++ [i, x]) = ((w.step 0x1B).step i).step x from
+    fun w => by simp [Vt.feed]]
+  rw [esc_step_eq hg hu]
+  have hinter : ({ v with pstate := .esc } : Vt).step i
+      = { v with pstate := .escInter i } := by
+    rw [step_of_esc_quiet i rfl (by simpa using hu)]
+    unfold Vt.stepEsc
+    rcases hi with h | h
+    · subst h; rfl
+    · subst h; rfl
+  rw [hinter, step_of_escInter_quiet x rfl (by simpa using hu)]
+  show _ ∧ _ ∧ _
+  unfold Vt.stepEscInter
+  dsimp only
+  repeat' split
+  all_goals exact ⟨rfl, by simpa using hu, rfl⟩
+
+/-- `SO` selects G1. A C0 byte from ground goes through `ctl`, which for `0x0E`
+sets one flag. -/
+theorem keeps_shiftOut : Keeps [0x0E] := by
+  intro v hg hu
+  rw [show ∀ (w : Vt), w.feed [(0x0E : UInt8)] = w.step 0x0E from fun _ => rfl]
+  rw [step_of_ground_quiet (0x0E : UInt8) hg hu]
+  show _ ∧ _ ∧ _
+  unfold Vt.stepGround
+  rw [if_neg (by decide), if_pos (by decide)]
+  unfold Vt.ctl
+  -- `SO` leaves the parser exactly where it was, so the ground fact is `hg`
+  exact ⟨hg, by simpa using hu, rfl⟩
+
+/-! ### The stages that need no digit bridge
+
+Everything except `modesAnsi`, which needs the emitted mode number identified with
+the parsed one before `grid_setMode` applies. -/
+
+theorem keeps_regionAnsi (v : Vt) : Keeps (regionAnsi v) := by
+  unfold regionAnsi
+  exact Keeps.ite (fun _ => Keeps.nil)
+    (fun _ => keeps_csiNum2 _ _ 0x72 (by decide) (by decide) grid_csiDispatch_stbm)
+
+theorem keeps_cursorAnsi (v : Vt) : Keeps (cursorAnsi v) := by
+  unfold cursorAnsi
+  exact Keeps.ite
+    (fun _ => keeps_csiNum2 _ _ 0x48 (by decide) (by decide) grid_csiDispatch_cup)
+    (fun _ => keeps_csiNum2 _ _ 0x48 (by decide) (by decide) grid_csiDispatch_cup)
+
+theorem keeps_savedAnsi (v : Vt) : Keeps (savedAnsi v) := by
+  unfold savedAnsi
+  exact ((keeps_penSgr _).append
+    (keeps_csiNum2 _ _ 0x48 (by decide) (by decide) grid_csiDispatch_cup)).append
+    (keeps_escSeq 0x37 (by decide))
+
+theorem keeps_tabsAnsi (v : Vt) : Keeps (tabsAnsi v) := by
+  unfold tabsAnsi
+  refine Keeps.ite (fun _ => Keeps.nil) (fun _ => ?_)
+  refine (keeps_csiNum 3 0x67 (by decide) (by decide) grid_csiDispatch_tbc).append ?_
+  refine Keeps.flatMap (fun i => ?_)
+  exact (keeps_csiNum (i + 1) 0x47 (by decide) (by decide) grid_csiDispatch_cha).append
+    (keeps_escSeq 0x48 (by decide))
+
+theorem keeps_charsetAnsi (v : Vt) : Keeps (charsetAnsi v) := by
+  unfold charsetAnsi
+  refine ((Keeps.ite (fun _ => keeps_escCharset 0x28 0x30 (by decide))
+    (fun _ => keeps_escCharset 0x28 0x42 (by decide))).append
+    (Keeps.ite (fun _ => keeps_escCharset 0x29 0x30 (by decide))
+      (fun _ => keeps_escCharset 0x29 0x42 (by decide)))).append ?_
+  exact Keeps.ite (fun _ => keeps_shiftOut) (fun _ => Keeps.nil)
+
+end Zmx.Core.Render

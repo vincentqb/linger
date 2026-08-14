@@ -3473,3 +3473,41 @@ improved:
 Same shape of result as the frames pass, and worth recording in the same terms: a
 real but smaller win than "fifteen proofs become five" suggests. The value is in
 what the *next* layer costs, not in what this diff removed.
+
+
+## Step 4, third rung — the non-CSI tail — 2026-08-14T05:55:00Z
+
+Five of `restoreBody`'s eight tail stages are now proved to write no cell:
+`regionAnsi`, `cursorAnsi`, `savedAnsi`, `tabsAnsi`, `charsetAnsi`. Each is a
+two-line composition, which is the shape the earlier rungs were paying for.
+
+Three new primitives, each a short walk whose steps are record updates on some
+*other* field — the saved slot, the tab ruler, a mode flag, the charset flags,
+`shiftOut`:
+
+* `keeps_escSeq` for `ESC 7` (DECSC), `ESC H` (HTS), `ESC =` (app keypad);
+* `keeps_escCharset` for `ESC ( x` / `ESC ) x`;
+* `keeps_shiftOut` for the bare `SO` byte.
+
+Supporting them: `step_of_esc_quiet` and `step_of_escInter_quiet` (the `.esc` and
+`.escInter` twins of `step_of_csi_quiet`), plus `esc_step_eq` — `ESC` from ground
+as an *equation* rather than only a `pstate` fact, which is what a layer that cares
+about other fields needs.
+
+One trap, and it is the mirror of the `keeps_csi_open` over-claim from two rungs
+ago: `SO` leaves the parser exactly where it was, so `Keeps`'s ground component is
+discharged by the incoming hypothesis `hg`, not by `rfl`. Reaching for `rfl` on a
+component that happens to be *unchanged* rather than *established* is the same
+mistake in the opposite direction — there I claimed a field was zeroed when it was
+carried through, here I claimed a field was re-established when it was carried
+through.
+
+### What is left
+
+`modesAnsi` is the only tail stage still open, and it needs exactly the bridge
+recorded two entries ago: `grid_setMode` excludes 47/1047/1049, `modesAnsi` never
+emits them, but the `h`/`l` dispatch reads `s.arg 0 0` — the number the *parser*
+accumulated — so the digit round trip (`csi_digits_value`, already built for the
+pen and cursor rungs) has to identify the two. Then `keeps_restoreTail` is a
+composition, and what remains of `restore_grid` is the row induction, the
+`joinCRLF` grid induction, and the alt switch.
