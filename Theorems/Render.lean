@@ -306,6 +306,41 @@ theorem csi_param_feed : ∀ (bs : Bytes) {v : Vt} {s : CsiState}, v.pstate = .c
     rw [feed_cons]
     exact csi_param_feed xs hs' (fun b hb => h b (by simp [hb]))
 
+/-- The six pre-final guards in `stepCsi`, all false below `0x40`. Factored out
+because two layers need them: the parser claim (`csi_final_step`, just below) and
+the state claim (`csi_final_step_eq`, which needs `step_of_csi_quiet` and so lives
+with the grid layer at the end of this file). Re-deriving UInt8 comparisons at
+each use is what made a first attempt at the grid layer unpleasant. -/
+theorem csi_final_guards (b : UInt8) (h1 : 0x40 ≤ b) (h2 : b ≤ 0x7E) :
+    (b ≥ 0x30 && b ≤ 0x39) = false ∧ (b == 0x3B) = false ∧ (b == 0x3A) = false
+      ∧ (b ≥ 0x3C && b ≤ 0x3F) = false ∧ (b ≥ 0x20 && b ≤ 0x2F) = false
+      ∧ (b ≥ 0x40 && b ≤ 0x7E) = true := by
+  obtain ⟨hn1, hn2⟩ := u8_bounds h1 h2
+  simp only [show ((0x40 : UInt8)).toNat = 64 from rfl,
+    show ((0x7E : UInt8)).toNat = 126 from rfl] at hn1 hn2
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
+  · simp only [Bool.and_eq_false_iff, decide_eq_false_iff_not, UInt8.le_iff_toNat_le,
+      show ((0x39 : UInt8)).toNat = 57 from rfl]
+    right; omega
+  · simp only [beq_eq_false_iff_ne, ne_eq]
+    intro he
+    rw [he] at hn1
+    simp only [show ((0x3B : UInt8)).toNat = 59 from rfl] at hn1
+    omega
+  · simp only [beq_eq_false_iff_ne, ne_eq]
+    intro he
+    rw [he] at hn1
+    simp only [show ((0x3A : UInt8)).toNat = 58 from rfl] at hn1
+    omega
+  · simp only [Bool.and_eq_false_iff, decide_eq_false_iff_not, UInt8.le_iff_toNat_le,
+      show ((0x3F : UInt8)).toNat = 63 from rfl]
+    right; omega
+  · simp only [Bool.and_eq_false_iff, decide_eq_false_iff_not, UInt8.le_iff_toNat_le,
+      show ((0x2F : UInt8)).toNat = 47 from rfl]
+    right; omega
+  · simp only [Bool.and_eq_true, decide_eq_true_eq]
+    exact ⟨h1, h2⟩
+
 /-- A final byte in 0x40…0x7E dispatches the sequence and returns to
 ground: `csiFinish` assigns `.ground` unconditionally, and so does the
 intermediate-ignore branch. -/
@@ -316,34 +351,7 @@ theorem csi_final_step {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi
     show ((0x7E : UInt8)).toNat = 126 from rfl] at hn1 hn2
   have hw : (v.abortUtf8 b).pstate = PState.csi s := by
     rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
-  -- every pre-final guard is below 0x40, so all are false
-  have g1 : (b ≥ 0x30 && b ≤ 0x39) = false := by
-    simp only [Bool.and_eq_false_iff, decide_eq_false_iff_not, UInt8.le_iff_toNat_le,
-      show ((0x39 : UInt8)).toNat = 57 from rfl]
-    right; omega
-  have g2 : (b == 0x3B) = false := by
-    simp only [beq_eq_false_iff_ne, ne_eq]
-    intro he
-    rw [he] at hn1
-    simp only [show ((0x3B : UInt8)).toNat = 59 from rfl] at hn1
-    omega
-  have g3 : (b == 0x3A) = false := by
-    simp only [beq_eq_false_iff_ne, ne_eq]
-    intro he
-    rw [he] at hn1
-    simp only [show ((0x3A : UInt8)).toNat = 58 from rfl] at hn1
-    omega
-  have g4 : (b ≥ 0x3C && b ≤ 0x3F) = false := by
-    simp only [Bool.and_eq_false_iff, decide_eq_false_iff_not, UInt8.le_iff_toNat_le,
-      show ((0x3F : UInt8)).toNat = 63 from rfl]
-    right; omega
-  have g5 : (b ≥ 0x20 && b ≤ 0x2F) = false := by
-    simp only [Bool.and_eq_false_iff, decide_eq_false_iff_not, UInt8.le_iff_toNat_le,
-      show ((0x2F : UInt8)).toNat = 47 from rfl]
-    right; omega
-  have g6 : (b ≥ 0x40 && b ≤ 0x7E) = true := by
-    simp only [Bool.and_eq_true, decide_eq_true_eq]
-    exact ⟨h1, h2⟩
+  obtain ⟨g1, g2, g3, g4, g5, g6⟩ := csi_final_guards b h1 h2
   unfold Vt.step
   dsimp only
   rw [hw]
@@ -2603,5 +2611,296 @@ theorem restore_cursor (v : Vt) (hgood : Good v) (ho : v.modes.origin = false) :
     (by rw [hdr]; simpa using hgood.curY)
     (by rw [hdc]; simpa using hgood.curX) hpo
   exact ⟨by simpa using hx, by simpa using hy⟩
+
+end Zmx.Core.Render
+
+
+
+namespace Zmx.Core.Render
+
+open Zmx.Core.Vt
+/-! ## §Replay stage 3d — everything after the repaint leaves the screen alone
+
+`restore` paints the grid and then tells the terminal the rest: scroll region,
+tab ruler, DECSC slot, title, modes, charset, pen, and the final cursor address.
+For the grid claim to be about the *repaint*, none of that tail may write a cell —
+and that is not obvious from reading it, because `CSI r` moves the cursor, a
+private mode set can home it, and `ESC H` edits the tab ruler.
+
+`Keeps` is the third stream predicate, after `Ends` (the parser ends in ground)
+and `Quiet` (DECOM stays off), and it is bundled for the same reason: the grid
+claim needs the parser-state claim at every step, so carrying them separately
+would mean re-establishing one in order to use the other. `u8need` rides along
+because a stream must not leave a half-decoded character armed for the next one.
+-/
+
+/-- **The final byte, as a state equation.** `csi_final_step` gives only the
+parser state; the grid layer needs the whole result. Stated here rather than
+beside `csi_final_step` because it needs `step_of_csi_quiet`. The `s.inter = 0`
+hypothesis is what separates a dispatched sequence from an ignored one
+(`DECSCUSR` and friends take the intermediate branch). -/
+theorem csi_final_step_eq {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi s)
+    (hu : v.u8need = 0) (hi : s.inter = 0) (h1 : 0x40 ≤ b) (h2 : b ≤ 0x7E) :
+    v.step b = v.csiFinish s b := by
+  obtain ⟨g1, g2, g3, g4, g5, g6⟩ := csi_final_guards b h1 h2
+  rw [step_of_csi_quiet b hg hu]
+  unfold Vt.stepCsi
+  rw [if_neg (by simp [g1]), if_neg (by simp [g2]), if_neg (by simp [g3]),
+      if_neg (by simp [g4]), if_neg (by simp [g5]), if_pos g6]
+  rw [if_neg (by simp [hi])]
+
+def Keeps (bs : Bytes) : Prop :=
+  ∀ v : Vt, v.pstate = .ground → v.u8need = 0 →
+    ((v.feed bs).pstate = .ground ∧ (v.feed bs).u8need = 0
+      ∧ (v.feed bs).grid = v.grid)
+
+theorem Keeps.nil : Keeps [] := fun _ hg hu => ⟨hg, hu, rfl⟩
+
+theorem Keeps.append {a b : Bytes} (ha : Keeps a) (hb : Keeps b) : Keeps (a ++ b) := by
+  intro v hg hu
+  rw [show v.feed (a ++ b) = (v.feed a).feed b from by simp [Vt.feed, List.foldl_append]]
+  obtain ⟨h1, h2, h3⟩ := ha v hg hu
+  obtain ⟨h4, h5, h6⟩ := hb _ h1 h2
+  exact ⟨h4, h5, h6.trans h3⟩
+
+theorem Keeps.append3 {a b c : Bytes} (ha : Keeps a) (hb : Keeps b) (hc : Keeps c) :
+    Keeps (a ++ b ++ c) := (ha.append hb).append hc
+
+theorem Keeps.ite {c : Prop} [Decidable c] {a b : Bytes}
+    (ha : c → Keeps a) (hb : ¬c → Keeps b) : Keeps (if c then a else b) := by
+  by_cases h : c
+  · rw [if_pos h]; exact ha h
+  · rw [if_neg h]; exact hb h
+
+theorem Keeps.flatMap {α : Type} {f : α → Bytes} {l : List α}
+    (h : ∀ a, Keeps (f a)) : Keeps (l.flatMap f) := by
+  induction l with
+  | nil => exact Keeps.nil
+  | cons a as ih =>
+    rw [List.flatMap_cons]
+    exact (h a).append ih
+
+/-! ### The CSI workhorse
+
+A `CSI … <final>` sequence can change the grid only through
+`csiDispatch s final`: the walk to the final byte is a chain of `pstate` record
+updates, which `csi_param_run_frame` already says. So the walk is done once here,
+and each construct supplies only the one fact about its own final byte. -/
+
+/-- `csiPush` closes a parameter; it never touches the intermediate slot. -/
+theorem inter_csiPush (s : CsiState) (sub : Bool) : (csiPush s sub).inter = s.inter := by
+  unfold csiPush
+  repeat' split
+  all_goals rfl
+
+/-- A parameter run leaves the intermediate slot alone, which is what
+`csi_final_step_eq` needs of it. -/
+theorem csi_param_run_inter : ∀ (bs : Bytes) {v : Vt} {s : CsiState}, v.pstate = .csi s →
+    v.u8need = 0 → ParamBytes bs →
+    ∃ s', v.feed bs = { v with pstate := .csi s' } ∧ s'.inter = s.inter
+  | [], v, s, hg, _, _ => ⟨s, by rw [show v.feed [] = v from rfl, ← hg], rfl⟩
+  | x :: xs, v, s, hg, hu, hp => by
+    obtain ⟨hx1, hx2⟩ := hp x (by simp)
+    -- one parameter byte: a digit accumulates, `;`/`:` closes — both keep `inter`
+    have hstep : ∃ t, v.step x = { v with pstate := .csi t } ∧ t.inter = s.inter := by
+      rw [step_of_csi_quiet x hg hu]
+      unfold Vt.stepCsi
+      by_cases hd : (x ≥ 0x30 && x ≤ 0x39) = true
+      · rw [if_pos hd]
+        exact ⟨_, rfl, rfl⟩
+      · rw [if_neg hd]
+        by_cases hsemi : (x == 0x3B) = true
+        · rw [if_pos hsemi]
+          exact ⟨_, rfl, inter_csiPush s false⟩
+        · rw [if_neg hsemi]
+          by_cases hcolon : (x == 0x3A) = true
+          · rw [if_pos hcolon]
+            exact ⟨_, rfl, inter_csiPush s true⟩
+          · -- 0x30…0x3B with none of the above is impossible
+            exfalso
+            simp only [Bool.and_eq_true, decide_eq_true_eq, UInt8.le_iff_toNat_le,
+              show ((0x30 : UInt8)).toNat = 48 from rfl,
+              show ((0x39 : UInt8)).toNat = 57 from rfl] at hd
+            simp only [beq_iff_eq] at hsemi hcolon
+            obtain ⟨hb1, hb2⟩ := u8_bounds hx1 hx2
+            simp only [show ((0x30 : UInt8)).toNat = 48 from rfl,
+              show ((0x3B : UInt8)).toNat = 59 from rfl] at hb1 hb2
+            have h3A : x ≠ 0x3A := hcolon
+            have h3B : x ≠ 0x3B := hsemi
+            have hn3A : x.toNat ≠ 58 := fun he => h3A (UInt8.toNat_inj.mp
+              (by simpa [show ((0x3A : UInt8)).toNat = 58 from rfl] using he))
+            have hn3B : x.toNat ≠ 59 := fun he => h3B (UInt8.toNat_inj.mp
+              (by simpa [show ((0x3B : UInt8)).toNat = 59 from rfl] using he))
+            have hgt : 57 < x.toNat := by
+              rcases Nat.lt_or_ge 57 x.toNat with h | h
+              · exact h
+              · exact absurd ⟨hb1, h⟩ hd
+            omega
+    obtain ⟨t, hxs, hti⟩ := hstep
+    rw [feed_cons, hxs]
+    obtain ⟨s', hs', hsi⟩ := csi_param_run_inter xs (v := { v with pstate := .csi t })
+      (s := t) rfl hu (fun b hb => hp b (by simp [hb]))
+    exact ⟨s', by rw [hs'], hsi.trans hti⟩
+
+/-- From ground, `ESC [` lands in a fresh collector with nothing else touched. -/
+theorem keeps_csi_open {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) :
+    v.feed [0x1B, 0x5B] = { v with pstate := .csi {} } := by
+  rw [show v.feed [0x1B, 0x5B] = (v.step 0x1B).step 0x5B from by simp [Vt.feed]]
+  have hesc : v.step 0x1B = { v with pstate := .esc } := by
+    unfold Vt.step Vt.abortUtf8
+    dsimp only
+    rw [if_neg (by simp [hu]), hg]
+    dsimp only
+    unfold Vt.stepGround
+    rw [if_pos (by decide)]
+  rw [hesc]
+  unfold Vt.step Vt.abortUtf8
+  dsimp only
+  rw [if_neg (by simp [hu])]
+  unfold Vt.stepEsc
+  rfl
+
+/-- The shared tail: from a collector with no intermediate, a parameter run and a
+final byte return to ground and touch the grid only as the dispatch does. -/
+theorem keeps_csi_tail (params : Bytes) (final : UInt8) (hp : ParamBytes params)
+    (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E)
+    (hgrid : ∀ (w : Vt) (t : CsiState), (w.csiDispatch t final).grid = w.grid)
+    {v : Vt} {s : CsiState} (hg : v.pstate = .csi s) (hu : v.u8need = 0)
+    (hi : s.inter = 0) :
+    ((v.feed (params ++ [final])).pstate = .ground
+      ∧ (v.feed (params ++ [final])).u8need = 0
+      ∧ (v.feed (params ++ [final])).grid = v.grid) := by
+  obtain ⟨s', hs', hsi⟩ := csi_param_run_inter params hg hu hp
+  rw [show ∀ (w : Vt), w.feed (params ++ [final]) = (w.feed params).feed [final] from
+    fun w => by simp [Vt.feed, List.foldl_append]]
+  rw [hs', show ∀ (w : Vt), w.feed [final] = w.step final from fun _ => rfl]
+  rw [csi_final_step_eq final (v := { v with pstate := .csi s' }) (s := s') rfl
+    (by simpa using hu) (by rw [hsi]; exact hi) h1 h2]
+  unfold Vt.csiFinish
+  dsimp only
+  refine ⟨rfl, ?_, ?_⟩
+  · rw [un_csiDispatch]
+    simpa using hu
+  · rw [hgrid]
+
+theorem keeps_csi_seq (params : Bytes) (final : UInt8) (hp : ParamBytes params)
+    (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E)
+    (hgrid : ∀ (w : Vt) (t : CsiState), (w.csiDispatch t final).grid = w.grid) :
+    Keeps (csiB ++ params ++ [final]) := by
+  intro v hg hu
+  rw [show (csiB ++ params ++ [final] : Bytes) = [0x1B, 0x5B] ++ (params ++ [final]) from by
+    unfold csiB; simp]
+  rw [show ∀ (w : Vt), w.feed ([0x1B, 0x5B] ++ (params ++ [final]))
+      = (w.feed [0x1B, 0x5B]).feed (params ++ [final]) from
+    fun w => by simp [Vt.feed, List.foldl_append]]
+  rw [keeps_csi_open hg hu]
+  exact keeps_csi_tail params final hp h1 h2 hgrid rfl (by simpa using hu) rfl
+
+/-- The private form (`CSI ? n h/l`), which is what a mode replay is made of. The
+marker byte sits outside `ParamBytes` — deliberately, since a marker is what
+decides whether a sequence can be DECOM — so it takes one explicit step. -/
+theorem keeps_csi_priv_seq (params : Bytes) (final : UInt8) (hp : ParamBytes params)
+    (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E)
+    (hgrid : ∀ (w : Vt) (t : CsiState), (w.csiDispatch t final).grid = w.grid) :
+    Keeps (csiB ++ ([0x3F] ++ params) ++ [final]) := by
+  intro v hg hu
+  rw [show (csiB ++ ([0x3F] ++ params) ++ [final] : Bytes)
+      = [0x1B, 0x5B] ++ ([(0x3F : UInt8)] ++ (params ++ [final])) from by unfold csiB; simp]
+  rw [show ∀ (w : Vt), w.feed ([0x1B, 0x5B] ++ ([(0x3F : UInt8)] ++ (params ++ [final])))
+      = ((w.feed [0x1B, 0x5B]).feed [(0x3F : UInt8)]).feed (params ++ [final]) from
+    fun w => by simp [Vt.feed, List.foldl_append]]
+  rw [keeps_csi_open hg hu]
+  rw [show ∀ (w : Vt), w.feed [(0x3F : UInt8)] = w.step 0x3F from fun _ => rfl]
+  rw [step_of_csi_quiet (0x3F : UInt8) (v := { v with pstate := .csi {} }) (s := {}) rfl
+    (by simpa using hu)]
+  unfold Vt.stepCsi
+  rw [if_neg (by decide), if_neg (by decide), if_neg (by decide), if_pos (by decide)]
+  exact keeps_csi_tail params final hp h1 h2 hgrid rfl (by simpa using hu) rfl
+
+/-! ### One fact per final byte the tail uses -/
+
+theorem grid_csiDispatch_cup (v : Vt) (s : CsiState) :
+    (v.csiDispatch s 0x48).grid = v.grid := by
+  by_cases hi : s.ignore = true
+  · simp [Vt.csiDispatch, hi]
+  · unfold Vt.csiDispatch
+    rw [if_neg hi]
+    show (v.moveTo (s.arg 1 1 - 1) (s.arg 0 1 - 1)).grid = v.grid
+    rw [frame_moveTo]
+
+theorem grid_csiDispatch_cha (v : Vt) (s : CsiState) :
+    (v.csiDispatch s 0x47).grid = v.grid := by
+  by_cases hi : s.ignore = true
+  · simp [Vt.csiDispatch, hi]
+  · unfold Vt.csiDispatch
+    rw [if_neg hi]
+    show (v.setCol (s.arg 0 1 - 1)).grid = v.grid
+    rw [frame_setCol]
+
+theorem grid_csiDispatch_sgr (v : Vt) (s : CsiState) :
+    (v.csiDispatch s 0x6D).grid = v.grid := by
+  by_cases hi : s.ignore = true
+  · simp [Vt.csiDispatch, hi]
+  · unfold Vt.csiDispatch
+    rw [if_neg hi]
+    show (if s.priv == 0 then v.applySgr s.sgrParams else v).grid = v.grid
+    split
+    · rw [frame_applySgr]
+    · rfl
+
+theorem grid_csiDispatch_tbc (v : Vt) (s : CsiState) :
+    (v.csiDispatch s 0x67).grid = v.grid := by
+  by_cases hi : s.ignore = true
+  · simp [Vt.csiDispatch, hi]
+  · unfold Vt.csiDispatch
+    rw [if_neg hi]
+    show (match s.arg 0 0 with
+      | 0 => { v with tabs := v.tabs.setIfInBounds v.cursor.x false }
+      | 3 => { v with tabs := Array.replicate v.cols false }
+      | _ => v).grid = v.grid
+    repeat' split
+    all_goals rfl
+
+theorem grid_csiDispatch_stbm (v : Vt) (s : CsiState) :
+    (v.csiDispatch s 0x72).grid = v.grid := by
+  by_cases hi : s.ignore = true
+  · simp [Vt.csiDispatch, hi]
+  · unfold Vt.csiDispatch
+    rw [if_neg hi]
+    show (if s.priv != 0 then v else
+            if s.arg 0 1 - 1 < s.arg 1 v.rows - 1 && s.arg 1 v.rows - 1 < v.rows then
+              ({ v with top := s.arg 0 1 - 1, bot := s.arg 1 v.rows - 1 }).moveTo 0 0
+            else v).grid = v.grid
+    repeat' split
+    all_goals first
+      | rfl
+      | rw [frame_moveTo]
+
+/-! ### The CSI-shaped constructs in the tail -/
+
+theorem keeps_csiNum (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E)
+    (hgrid : ∀ (w : Vt) (t : CsiState), (w.csiDispatch t final).grid = w.grid) :
+    Keeps (csiNum n final) :=
+  keeps_csi_seq _ _ (paramBytes_digits n) h1 h2 hgrid
+
+theorem keeps_csiNum2 (a b : Nat) (final : UInt8) (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E)
+    (hgrid : ∀ (w : Vt) (t : CsiState), (w.csiDispatch t final).grid = w.grid) :
+    Keeps (csiNum2 a b final) := by
+  rw [show csiNum2 a b final = csiB ++ (digits a ++ [0x3B] ++ digits b) ++ [final] from by
+    unfold csiNum2; simp]
+  refine keeps_csi_seq _ _ (fun x hx => ?_) h1 h2 hgrid
+  rcases List.mem_append.mp hx with hx' | hx'
+  · rcases List.mem_append.mp hx' with hx'' | hx''
+    · exact paramBytes_digits a x hx''
+    · rw [show x = 0x3B from by simpa using hx'']
+      exact ⟨by decide, by decide⟩
+  · exact paramBytes_digits b x hx'
+
+theorem keeps_csiPriv (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E)
+    (hgrid : ∀ (w : Vt) (t : CsiState), (w.csiDispatch t final).grid = w.grid) :
+    Keeps (csiPriv n final) := by
+  rw [show csiPriv n final = csiB ++ ([0x3F] ++ digits n) ++ [final] from by
+    unfold csiPriv; simp]
+  exact keeps_csi_priv_seq _ _ (paramBytes_digits n) h1 h2 hgrid
 
 end Zmx.Core.Render

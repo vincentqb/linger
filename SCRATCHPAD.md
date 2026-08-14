@@ -3332,3 +3332,59 @@ layers.
 
 Step 3's `renderable_of_liveReachable` means none of these needs a side condition
 on the grid; every one of them is now purely about the emitter and the parser.
+
+
+## Step 4, first rung landed — `Keeps`, the grid stream layer — 2026-08-14T05:05:00Z
+
+The rung the previous entry spiked and reverted is in, done the way that entry
+said to do it: **generalize the guard lemma first**, then the layer falls out.
+
+`csi_final_guards` factors `stepCsi`'s six pre-final guards (all false below
+`0x40`) out of `csi_final_step`, and `csi_final_step_eq` is the state equation
+the grid layer needs — `v.step b = v.csiFinish s b`, given `s.inter = 0`, which is
+what separates a dispatched sequence from an ignored one. `csi_final_step` now
+uses the shared guards, so the UInt8 comparison work exists once instead of per
+layer. That was the whole blocker last time.
+
+`Keeps bs` is the third stream predicate: from ground with nothing half-decoded,
+feeding `bs` returns to ground, leaves nothing half-decoded, and **leaves the
+grid alone**. Bundled like `Quiet` and for the same reason. Combinators are
+copies. The CSI walk is done once in `keeps_csi_tail`, resting on
+`csi_param_run_inter` (a parameter run is a `pstate` record update *and* keeps
+`inter` — the new part, since `csi_param_run_frame` gave only the record shape),
+so each construct supplies just one fact about its own final byte:
+`keeps_csiNum`, `keeps_csiNum2`, `keeps_csiPriv`, with
+`grid_csiDispatch_{cup,cha,sgr,tbc,stbm}`.
+
+### Traps, all the same shape as before
+
+* `keeps_csi_open` first claimed `ESC [` lands in `{v with pstate := .csi {},
+  u8need := 0, u8acc := 0}`. Wrong: with nothing pending, `abortUtf8` is the
+  *identity*, so `u8acc` is carried through unchanged. Over-claiming a record
+  field is easy when the field is irrelevant to the conclusion — state the
+  minimum (`{v with pstate := .csi {}}`) and pass `u8need = 0` as a hypothesis.
+* A `match` on a **literal** final byte does not reduce under `dsimp only` or
+  `repeat' split`, and `simp [Vt.csiDispatch, hi]` normalizes the branches into a
+  form a hand-written `have` will not match. What works is `show` with the
+  reduced term spelled out: it forces whnf through the literal match. Spell the
+  guard exactly as the source does — DECSTBM's is `t < b && b < rows` (Bool
+  `&&`), and writing `∧` fails the pattern.
+
+### Break verification, and why it is shape-only here
+
+Mutated `csiDispatch`'s `CHA` arm from `setCol` to `eraseChars` (a grid write):
+`grid_csiDispatch_cha` fails. That is a **shape** break, and for this class it is
+the honest one — a "this final writes no cell" claim can only be broken by making
+it write, which necessarily changes the dispatch term. The content-bearing claim
+in the block is `keeps_csi_tail` ("a CSI sequence touches the grid *only* through
+its dispatch"), and its content is carried by `csi_param_run_inter`, whose own
+break would likewise be structural. Recorded rather than dressed up as a value
+break, per the rule from the §Replay 3c-rest entry.
+
+### What is left in `restore_grid`
+
+Unchanged from the recon, minus this rung: `Keeps` instances for the non-CSI tail
+(`escSeq`, `escCharset`, the OSC title, `[0x0E]`), `grid_setMode` restricted to
+the mode numbers `modesAnsi` actually emits (it never emits 47/1047/1049 — the
+same guarded-emit argument `quiet_modesAnsi` already makes for mode 6), then the
+row induction, the `joinCRLF` grid induction, and the alt switch.
