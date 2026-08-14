@@ -224,11 +224,18 @@ computed, and insert mode would corrupt the *next* app output if lost.
 Emitted after the repaint (insert mode during the repaint would shift
 cells) and before the final cursor (setting DECOM homes the cursor).
 
-The `mouse != 6` guard looks redundant — `setMode` only ever stores
-1000/1002/1003 in that field — but it is what makes §Replay's DECOM claim
-(`quiet_modesAnsi`) provable *from the emitter alone*: private mode 6 is
-DECOM, so replaying a `mouse` of 6 would silently turn origin mode on.
-The alternative was a reachability invariant on `Vt`; one guarded emit is
+The mouse guard is an **allowlist**, not a denylist, and that is the whole point.
+`setMode` only ever stores 1000/1002/1003 in that field, but a `Vt` does not only
+come from `setMode`: `Checkpoint.load` reads `mouse` as an arbitrary `Nat` and is
+deliberately total on arbitrary bytes, so a corrupt or foreign checkpoint can put
+anything there — and this line replays it verbatim. A denylist got the first case
+right and the rest wrong: `!= 6` was there because private mode 6 is DECOM, so
+replaying a `mouse` of 6 would silently turn origin mode on (§Replay's
+`quiet_modesAnsi`), but 47, 1047 and 1049 **switch screens**, which would corrupt
+the very grid the restore is rebuilding. Naming the three modes the emulator can
+legitimately hold closes both holes at once and cannot grow a third.
+
+The alternative was a reachability invariant on `Vt`; one guarded emit is still
 cheaper than a field every constructor must maintain. -/
 def modesAnsi (v : Vt) : Bytes :=
   let set := fun (n : Nat) (on : Bool) => csiPriv n (if on then 0x68 else 0x6C)
@@ -237,7 +244,8 @@ def modesAnsi (v : Vt) : Bytes :=
     ++ (if v.modes.appKeypad then escSeq 0x3D else [])
     ++ (if v.modes.cursorVisible then [] else set 25 false)
     ++ (if v.modes.bracketedPaste then set 2004 true else [])
-    ++ (if v.modes.mouse != 0 && v.modes.mouse != 6 then set v.modes.mouse true else [])
+    ++ (if v.modes.mouse == 1000 || v.modes.mouse == 1002 || v.modes.mouse == 1003
+        then set v.modes.mouse true else [])
     ++ (if v.modes.mouseSgr then set 1006 true else [])
     ++ (if v.modes.focusEvents then set 1004 true else [])
     ++ (if v.modes.origin then set 6 true else [])

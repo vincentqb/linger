@@ -237,6 +237,28 @@ example : roundtrips (screen 12 6
     "main1\r\nmain2\x1b[35m\x1b[5;3H\x1b[?1049h\x1b[33malt\x1b[3;2H")
     = true := by native_decide
 
+/-- A **decoded checkpoint** can carry a mouse mode the emulator would never
+store: `Checkpoint.load` reads that field as an arbitrary `Nat` and is total on
+arbitrary bytes by design. `modesAnsi` replays it, so a denylist that named only
+DECOM would have emitted `CSI ? 1049 h` here — switching the client to the alt
+screen in the middle of a restore, corrupting the very screen being restored.
+
+Asserted on the **grid**, not `replayEq`: the allowlist deliberately does *not*
+replay a mode the emulator cannot hold, so `modes` is expected to differ. What
+must survive is the screen, and that no alt switch happened. -/
+example : (let v := { screen 6 2 "ab" with
+             modes := { (screen 6 2 "ab").modes with mouse := 1049 } }
+           let w := (Vt.init v.cols v.rows).feed (restore v)
+           w.grid == v.grid && w.altGrid.isNone) = true := by native_decide
+
+example : (let v := { screen 6 2 "ab" with
+             modes := { (screen 6 2 "ab").modes with mouse := 47 } }
+           let w := (Vt.init v.cols v.rows).feed (restore v)
+           w.grid == v.grid && w.altGrid.isNone) = true := by native_decide
+
+/-- …and a legitimate mouse mode still round-trips in full. -/
+example : roundtrips (screen 6 2 "\x1b[?1002h\x1b[?1006hab") = true := by native_decide
+
 /-- Title (OSC 2). -/
 example : roundtrips (screen 10 3 "\x1b]2;my title\x07hey")
     = true := by native_decide

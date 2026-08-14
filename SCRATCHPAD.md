@@ -3511,3 +3511,56 @@ accumulated — so the digit round trip (`csi_digits_value`, already built for t
 pen and cursor rungs) has to identify the two. Then `keeps_restoreTail` is a
 composition, and what remains of `restore_grid` is the row induction, the
 `joinCRLF` grid induction, and the alt switch.
+
+
+## A real restore bug, found by setting up the last tail stage — 2026-08-14T06:15:00Z
+
+Setting up `Keeps (modesAnsi v)` needed `grid_setMode`'s hypotheses discharged —
+that the replayed mode is not 47, 1047 or 1049, the three that switch screens. So:
+can `v.modes.mouse` hold one of those? Checked instead of assuming, and it can.
+
+**`Checkpoint.load` reads `mouse` as an arbitrary `rNat`**, and §Restore is
+deliberately total on arbitrary bytes ("corrupt/torn/foreign file → load = none →
+fresh start" applies to *parse failure*, not to field values a parse accepts). So a
+corrupt, tampered or foreign checkpoint can carry `mouse = 1049`, and `modesAnsi`
+replayed it verbatim behind a **denylist** (`!= 0 && != 6`). The emitted
+`CSI ? 1049 h` would switch the reattaching client to the alt screen *in the middle
+of the restore* — blanking the very screen being restored, and leaving the client
+in alt with the real content stashed.
+
+The `!= 6` half was already there for exactly this class: private mode 6 is DECOM,
+and replaying a `mouse` of 6 would silently turn origin mode on (`quiet_modesAnsi`
+turns on that guard). The guard was right about the mechanism and incomplete about
+the values — a denylist naming one of four hazards.
+
+**Fix: allowlist.** `modesAnsi` now emits the mouse mode only when it is one of
+1000/1002/1003, which is what `setMode` can actually store. That closes DECOM and
+all three screen-switches at once, cannot grow a fourth hole, and makes both proof
+obligations trivial by construction. Strictly more defensive than extending the
+denylist, and the same reasoning that made `printableChar` a store-time guard
+rather than an emit-time one: name what is allowed, not what is forbidden.
+
+`quiet_modesAnsi`'s DECOM branch got *simpler* — the allowlist gives `mouse ≠ 6` by
+`omega` from three concrete values, instead of unpacking a two-clause `bne`.
+
+### Break verification — a content break, first try
+
+Two fixtures assert on the **grid**, not `replayEq`: the allowlist deliberately
+does not replay a mode the emulator cannot hold, so `modes` is *expected* to
+differ. What must survive is the screen and the absence of an alt switch
+(`w.grid == v.grid && w.altGrid.isNone`). Reverting to the denylist fails both;
+the allowlist passes both. A legitimate `?1002h`/`?1006h` session still round-trips
+in full, so the guard did not just disable the feature.
+
+My first draft of those fixtures used `roundtrips` and failed — correctly, and the
+fixture was wrong rather than the code, which is the third time that has happened
+in this project. `replayEq` compares `modes`, and not replaying a bogus mode means
+`modes` cannot match. Assert the property you actually claim.
+
+### Where this leaves the tail
+
+Six of eight stages proved (`regionAnsi`, `cursorAnsi`, `savedAnsi`, `tabsAnsi`,
+`charsetAnsi`, and now `modesAnsi` is *unblocked* rather than proved — the
+allowlist supplies the values, the digit bridge still has to identify the emitted
+number with the parsed one). `titleAnsi` (OSC) is the other one left, and it is a
+straightforward accumulate-then-`oscFinish` walk in the style of `ends_osc`.

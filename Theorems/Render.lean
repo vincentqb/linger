@@ -894,8 +894,8 @@ theorem ends_modesAnsi (v : Vt) : Ends (modesAnsi v) := by
   have e3 := Ends.ite (c := v.modes.appKeypad = true) (ends_escSeq 0x3D (by decide)) Ends.nil
   have e4 := Ends.ite (c := v.modes.cursorVisible = true) Ends.nil (hset 25 false)
   have e5 := Ends.ite (c := v.modes.bracketedPaste = true) (hset 2004 true) Ends.nil
-  have e6 := Ends.ite (c := (v.modes.mouse != 0 && v.modes.mouse != 6) = true)
-    (hset v.modes.mouse true) Ends.nil
+  have e6 := Ends.ite (c := (v.modes.mouse == 1000 || v.modes.mouse == 1002
+      || v.modes.mouse == 1003) = true) (hset v.modes.mouse true) Ends.nil
   have e7 := Ends.ite (c := v.modes.mouseSgr = true) (hset 1006 true) Ends.nil
   have e8 := Ends.ite (c := v.modes.focusEvents = true) (hset 1004 true) Ends.nil
   have e9 := Ends.ite (c := v.modes.origin = true) (hset 6 true) Ends.nil
@@ -1709,11 +1709,12 @@ theorem quiet_modesAnsi (v : Vt) (ho : v.modes.origin = false) : Quiet (modesAns
     (fun _ => Quiet.nil) (fun _ => hset 25 false (by decide))
   have e5 := Quiet.ite (c := v.modes.bracketedPaste = true)
     (fun _ => hset 2004 true (by decide)) (fun _ => Quiet.nil)
-  -- the guarded emit: the condition itself supplies `mouse ≠ 6`
-  have e6 := Quiet.ite (c := (v.modes.mouse != 0 && v.modes.mouse != 6) = true)
+  -- the guarded emit: the allowlist names three modes, none of them DECOM
+  have e6 := Quiet.ite (c := (v.modes.mouse == 1000 || v.modes.mouse == 1002
+      || v.modes.mouse == 1003) = true)
     (fun h => hset v.modes.mouse true (by
-      simp only [Bool.and_eq_true, bne_iff_ne, ne_eq] at h
-      exact h.2)) (fun _ => Quiet.nil)
+      simp only [Bool.or_eq_true, beq_iff_eq] at h
+      omega)) (fun _ => Quiet.nil)
   have e7 := Quiet.ite (c := v.modes.mouseSgr = true)
     (fun _ => hset 1006 true (by decide)) (fun _ => Quiet.nil)
   have e8 := Quiet.ite (c := v.modes.focusEvents = true)
