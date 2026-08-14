@@ -3256,3 +3256,188 @@ theorem keeps_titleAnsi (v : Vt) : Keeps (titleAnsi v) := by
   exact Keeps.ite (fun _ => Keeps.nil) (fun _ => keeps_osc _)
 
 end Zmx.Core.Render
+
+
+
+namespace Zmx.Core.Render
+
+open Zmx.Core.Vt
+/-! ### The digit bridge, and the last tail stage
+
+`modesAnsi` is the one construct whose grid claim depends on *which number* it
+emitted: `grid_setMode` holds for every mode except the three that switch screens.
+The emitter never emits those (its allowlist), but the dispatch reads
+`s.arg 0 0` — the number the **parser** accumulated — so the two have to be
+identified. `accDigits_digits` already says the accumulator inverts `digits`; what
+is added here is carrying that through the record equation the grid layer needs. -/
+
+theorem arg_of_one (s : CsiState) (a : Nat) (f : Bool) (d : Nat) :
+    CsiState.arg { s with params := #[(a, f)] } 0 d = if a = 0 then d else a := by
+  unfold CsiState.arg
+  cases a <;> simp
+
+/-- A digit run, as a record equation *and* with its accumulated value — the two
+halves that `csi_param_run_inter` and `csi_digits_value` each give separately. -/
+theorem csi_digits_run_eq (n : Nat) {v : Vt} {s : CsiState} (hg : v.pstate = .csi s)
+    (hu : v.u8need = 0) (hcur : s.cur = 0) :
+    ∃ s', v.feed (digits n) = { v with pstate := .csi s' }
+      ∧ s'.cur = min n 65535 ∧ s'.haveCur = true ∧ s'.params = s.params
+      ∧ s'.inter = s.inter ∧ s'.curSub = s.curSub := by
+  obtain ⟨s1, heq, -⟩ := csi_param_run_inter (digits n) hg hu (paramBytes_digits n)
+  obtain ⟨s2, hps, hcur2, hhave, hpar, hint, -, hsub, -⟩ := csi_digits_value n hg hcur
+  have hid : s1 = s2 := by
+    have h1 : (v.feed (digits n)).pstate = PState.csi s1 := by rw [heq]
+    exact PState.csi.inj (h1.symm.trans hps)
+  exact ⟨s1, heq, by rw [hid]; exact hcur2, by rw [hid]; exact hhave,
+    by rw [hid]; exact hpar, by rw [hid]; exact hint, by rw [hid]; exact hsub⟩
+
+theorem grid_csiDispatch_sm (v : Vt) (s : CsiState) (h47 : s.arg 0 0 ≠ 47)
+    (h1047 : s.arg 0 0 ≠ 1047) (h1049 : s.arg 0 0 ≠ 1049) :
+    (v.csiDispatch s 0x68).grid = v.grid := by
+  by_cases hi : s.ignore = true
+  · simp [Vt.csiDispatch, hi]
+  · unfold Vt.csiDispatch
+    rw [if_neg hi]
+    show (v.setMode (s.priv == 0x3F) (s.arg 0 0) true).grid = v.grid
+    exact grid_setMode v _ _ _ h47 h1047 h1049
+
+theorem grid_csiDispatch_rm (v : Vt) (s : CsiState) (h47 : s.arg 0 0 ≠ 47)
+    (h1047 : s.arg 0 0 ≠ 1047) (h1049 : s.arg 0 0 ≠ 1049) :
+    (v.csiDispatch s 0x6C).grid = v.grid := by
+  by_cases hi : s.ignore = true
+  · simp [Vt.csiDispatch, hi]
+  · unfold Vt.csiDispatch
+    rw [if_neg hi]
+    show (v.setMode (s.priv == 0x3F) (s.arg 0 0) false).grid = v.grid
+    exact grid_setMode v _ _ _ h47 h1047 h1049
+
+/-- The shared tail for a **single-parameter** sequence, carrying the accumulated
+number out so a caller can discharge a hypothesis about it. The digit run is done
+here rather than at the call site: naming the collector state outside the lemma
+means writing it the way the elaborator happened to build it, and `{}` and
+`default` are not the same term. -/
+theorem keeps_csi_digits_tail (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
+    (h2 : final ≤ 0x7E) (hn : 0 < n) (hlt : n < 65535)
+    (hgrid : ∀ (w : Vt) (t : CsiState), t.arg 0 0 = n →
+      (w.csiDispatch t final).grid = w.grid)
+    {v : Vt} {s : CsiState} (hg : v.pstate = .csi s) (hu : v.u8need = 0)
+    (hi : s.inter = 0) (hcur : s.cur = 0) (hpar : s.params = #[]) :
+    ((v.feed (digits n ++ [final])).pstate = .ground
+      ∧ (v.feed (digits n ++ [final])).u8need = 0
+      ∧ (v.feed (digits n ++ [final])).grid = v.grid) := by
+  obtain ⟨s', heq, hcur', hhave, hpar', hint, -⟩ := csi_digits_run_eq n hg hu hcur
+  rw [show ∀ (w : Vt), w.feed (digits n ++ [final]) = (w.feed (digits n)).feed [final] from
+    fun w => by simp [Vt.feed, List.foldl_append]]
+  rw [heq, show ∀ (w : Vt), w.feed [final] = w.step final from fun _ => rfl]
+  rw [csi_final_step_eq final rfl (by simpa using hu) (by rw [hint]; exact hi) h1 h2]
+  unfold Vt.csiFinish
+  rw [if_pos (by simpa using hhave), if_neg (by rw [hpar', hpar]; simp)]
+  dsimp only
+  refine ⟨rfl, by rw [un_csiDispatch]; simpa using hu, ?_⟩
+  refine hgrid _ _ ?_
+  rw [show ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState)
+      = { s' with params := #[(n, s'.curSub)] } from by
+    rw [hpar', hpar, hcur']
+    rw [show min (min n 65535) 65535 = n from by omega]
+    rfl]
+  rw [arg_of_one, if_neg (by omega)]
+
+/-- `CSI ? n <final>` with a grid fact that may depend on `n`. -/
+theorem keeps_csiPriv_arg (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
+    (h2 : final ≤ 0x7E) (hn : 0 < n) (hlt : n < 65535)
+    (hgrid : ∀ (w : Vt) (t : CsiState), t.arg 0 0 = n →
+      (w.csiDispatch t final).grid = w.grid) :
+    Keeps (csiPriv n final) := by
+  intro v hg hu
+  rw [show csiPriv n final
+      = [0x1B, 0x5B] ++ ([(0x3F : UInt8)] ++ (digits n ++ [final])) from by
+    unfold csiPriv csiB; simp]
+  rw [show ∀ (w : Vt), w.feed ([0x1B, 0x5B] ++ ([(0x3F : UInt8)] ++ (digits n ++ [final])))
+      = ((w.feed [0x1B, 0x5B]).feed [(0x3F : UInt8)]).feed (digits n ++ [final]) from
+    fun w => by simp [Vt.feed, List.foldl_append]]
+  rw [keeps_csi_open hg hu]
+  rw [show ∀ (w : Vt), w.feed [(0x3F : UInt8)] = w.step 0x3F from fun _ => rfl]
+  rw [step_of_csi_quiet (0x3F : UInt8) (v := { v with pstate := .csi {} }) (s := {}) rfl
+    (by simpa using hu)]
+  unfold Vt.stepCsi
+  rw [if_neg (by decide), if_neg (by decide), if_neg (by decide), if_pos (by decide)]
+  exact keeps_csi_digits_tail n final h1 h2 hn hlt hgrid rfl (by simpa using hu) rfl rfl rfl
+
+/-- …and the non-private form, for `modesAnsi`'s one ANSI emit (`CSI 4 h`, IRM). -/
+theorem keeps_csiNum_arg (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
+    (h2 : final ≤ 0x7E) (hn : 0 < n) (hlt : n < 65535)
+    (hgrid : ∀ (w : Vt) (t : CsiState), t.arg 0 0 = n →
+      (w.csiDispatch t final).grid = w.grid) :
+    Keeps (csiNum n final) := by
+  intro v hg hu
+  rw [show csiNum n final = [0x1B, 0x5B] ++ (digits n ++ [final]) from by
+    unfold csiNum csiB; simp]
+  rw [show ∀ (w : Vt), w.feed ([0x1B, 0x5B] ++ (digits n ++ [final]))
+      = (w.feed [0x1B, 0x5B]).feed (digits n ++ [final]) from
+    fun w => by simp [Vt.feed, List.foldl_append]]
+  rw [keeps_csi_open hg hu]
+  exact keeps_csi_digits_tail n final h1 h2 hn hlt hgrid rfl (by simpa using hu) rfl rfl rfl
+
+/-- **The mode replay writes no cell.** `modesAnsi`'s allowlist is what discharges
+the screen-switch hypotheses: every number it emits is either a literal in the
+source or one of the three the mouse guard names. -/
+theorem keeps_modesAnsi (v : Vt) : Keeps (modesAnsi v) := by
+  have hset : ∀ (n : Nat) (on : Bool), 0 < n → n < 65535 → n ≠ 47 → n ≠ 1047 → n ≠ 1049 →
+      Keeps (csiPriv n (if on then 0x68 else 0x6C)) := by
+    intro n on hn hlt h47 h1047 h1049
+    cases on
+    · exact keeps_csiPriv_arg n 0x6C (by decide) (by decide) hn hlt
+        (fun w t ha => grid_csiDispatch_rm w t (by rw [ha]; exact h47)
+          (by rw [ha]; exact h1047) (by rw [ha]; exact h1049))
+    · exact keeps_csiPriv_arg n 0x68 (by decide) (by decide) hn hlt
+        (fun w t ha => grid_csiDispatch_sm w t (by rw [ha]; exact h47)
+          (by rw [ha]; exact h1047) (by rw [ha]; exact h1049))
+  unfold modesAnsi
+  dsimp only
+  have e1 := hset 7 v.modes.wrap (by omega) (by omega) (by omega) (by omega) (by omega)
+  have e2 := Keeps.ite (c := v.modes.appCursor = true)
+    (fun _ => hset 1 true (by omega) (by omega) (by omega) (by omega) (by omega))
+    (fun _ => Keeps.nil)
+  have e3 := Keeps.ite (c := v.modes.appKeypad = true)
+    (fun _ => keeps_escSeq 0x3D (by decide)) (fun _ => Keeps.nil)
+  have e4 := Keeps.ite (c := v.modes.cursorVisible = true) (fun _ => Keeps.nil)
+    (fun _ => hset 25 false (by omega) (by omega) (by omega) (by omega) (by omega))
+  have e5 := Keeps.ite (c := v.modes.bracketedPaste = true)
+    (fun _ => hset 2004 true (by omega) (by omega) (by omega) (by omega) (by omega))
+    (fun _ => Keeps.nil)
+  -- the allowlist: three literals, none of them a screen switch
+  have e6 := Keeps.ite (c := (v.modes.mouse == 1000 || v.modes.mouse == 1002
+      || v.modes.mouse == 1003) = true)
+    (fun h => by
+      simp only [Bool.or_eq_true, beq_iff_eq] at h
+      exact hset v.modes.mouse true (by omega) (by omega) (by omega) (by omega) (by omega))
+    (fun _ => Keeps.nil)
+  have e7 := Keeps.ite (c := v.modes.mouseSgr = true)
+    (fun _ => hset 1006 true (by omega) (by omega) (by omega) (by omega) (by omega))
+    (fun _ => Keeps.nil)
+  have e8 := Keeps.ite (c := v.modes.focusEvents = true)
+    (fun _ => hset 1004 true (by omega) (by omega) (by omega) (by omega) (by omega))
+    (fun _ => Keeps.nil)
+  have e9 := Keeps.ite (c := v.modes.origin = true)
+    (fun _ => hset 6 true (by omega) (by omega) (by omega) (by omega) (by omega))
+    (fun _ => Keeps.nil)
+  have e10 := Keeps.ite (c := v.modes.insert = true)
+    (fun _ => keeps_csiNum_arg 4 0x68 (by decide) (by decide) (by omega) (by omega)
+      (fun w t ha => grid_csiDispatch_sm w t (by rw [ha]; omega) (by rw [ha]; omega)
+        (by rw [ha]; omega)))
+    (fun _ => Keeps.nil)
+  exact ((((((((e1.append e2).append e3).append e4).append e5).append e6).append
+    e7).append e8).append e9).append e10
+
+/-- **The whole tail.** Everything `restore` emits after the repaint, proved to
+leave the painted grid alone. What remains of `restore_grid` is the repaint itself:
+the row induction, the row separator, and the alt switch. -/
+theorem keeps_restoreTail (v : Vt) :
+    Keeps (regionAnsi v ++ tabsAnsi v ++ savedAnsi v ++ titleAnsi v ++ modesAnsi v
+      ++ charsetAnsi v ++ penSgr v.pen ++ cursorAnsi v) :=
+  ((((((((keeps_regionAnsi v).append (keeps_tabsAnsi v)).append
+    (keeps_savedAnsi v)).append (keeps_titleAnsi v)).append
+    (keeps_modesAnsi v)).append (keeps_charsetAnsi v)).append
+    (keeps_penSgr v.pen)).append (keeps_cursorAnsi v))
+
+end Zmx.Core.Render

@@ -3599,3 +3599,45 @@ that for the pen and cursor rungs; `keeps_csi_tail` has to be given a variant wh
 `hgrid` may depend on the accumulated state rather than being universally quantified
 over it. Then `keeps_restoreTail` is a composition and `restore_grid` reduces to the
 row induction, the `joinCRLF` grid induction, and the alt switch.
+
+
+## Step 4, fifth rung — the digit bridge, and the tail is DONE — 2026-08-14T07:10:00Z
+
+`keeps_modesAnsi` lands and with it **`keeps_restoreTail`: everything `restore`
+emits after the repaint is proved to leave the painted grid alone** — all eight
+stages (`regionAnsi`, `tabsAnsi`, `savedAnsi`, `titleAnsi`, `modesAnsi`,
+`charsetAnsi`, the trailing `penSgr`, `cursorAnsi`).
+
+`modesAnsi` was the one stage whose grid claim depends on *which number* it emitted:
+`grid_setMode` holds for every mode but the three that switch screens. The emitter
+never emits those, but the dispatch reads `s.arg 0 0` — the number the **parser**
+accumulated — so the two had to be identified. `csi_digits_run_eq` is that bridge:
+it welds the record equation from `csi_param_run_inter` to the accumulated value from
+`csi_digits_value`, identifying their two existential states through
+`PState.csi.inj`. On top of it, `keeps_csi_digits_tail` + the private/non-private
+wrappers `keeps_csiPriv_arg` / `keeps_csiNum_arg`.
+
+### The trap that cost the first attempt
+
+I first instantiated the digit run at the *call site*, naming the collector state as
+`{ (default : CsiState) with priv := 0x3F }`. `rw` then could not find it: the goal
+held the state the way `stepCsi` had built it, and **`{}` and `default` do not
+elaborate to the same term** (the error prints `let __src := default; …`). The fix is
+structural, and is the better design anyway: do the digit run *inside*
+`keeps_csi_digits_tail`, where the state is still a bound variable, so unification
+picks it up from the goal and nothing has to be spelled out. Rule of thumb — never
+write a mid-walk state literal; take it as an implicit and let `rfl` discharge it.
+
+### Break-verify (required by AGENTS.md)
+
+Changed `modesAnsi`'s `set 1006 true` to `set 1049 true` (a real screen switch).
+`keeps_modesAnsi` stopped compiling at its final composition, since `grid_setMode`
+has no case for 1049 — the theorem is exactly what forces the allowlist. Honest
+caveat: the same edit also tripped `ends_modesAnsi` and `quiet_modesAnsi`, which pin
+the literal positionally, so the break is not a clean isolation of the grid claim;
+the `Keeps` failure is the one that names the reason. Restored, 0 errors/warnings.
+
+### What is left of `restore_grid`
+
+Only the repaint: the row induction over `rowAnsi`, the `joinCRLF` separator, and the
+alt switch. The tail is no longer in the way.
