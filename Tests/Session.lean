@@ -9,6 +9,7 @@ these also exercise the per-client decoder path the daemon runs.
 namespace Zmx.Core.Session.Tests
 
 open Zmx.Core.Session
+open Zmx.Core.Terminal
 open Zmx.Core.Wire (Msg encode)
 
 def s0 : State := { vt := Vt.Vt.init 20 5, metaKv := [("name", "t")] }
@@ -46,6 +47,46 @@ example :
      hasEffect effs1 (fun e => match e with | .send 1 (.output _) => true | _ => false)
        && !hasEffect effs2 (fun e => match e with | .send _ _ => true | _ => false)
        && ((s1.vt.getRow 0).toList.take 5 == (s2.vt.getRow 0).toList.take 5)) = true := by
+  native_decide
+
+
+def ptyWrites (effs : List Effect) : List (List UInt8) :=
+  effs.filterMap (fun e => match e with | .writePty bs => some bs | _ => none)
+
+/-- DA1 is owned once with zero, one, or two clients: the reply stream is
+identical and no presentation output frame leaks the request. -/
+example :
+    (let query := [ESC, 0x5B, 0x63]
+     let one : State := { s0 with clients := [{ id := 1, attached := true }] }
+     let two : State := { s0 with clients := [{ id := 1, attached := true },
+                                               { id := 2, attached := true }] }
+     let rz := step s0 (.ptyOut query)
+     let r1 := step one (.ptyOut query)
+     let r2 := step two (.ptyOut query)
+     ptyWrites rz.2 == [da1Reply] && ptyWrites r1.2 == [da1Reply] &&
+       ptyWrites r2.2 == [da1Reply] &&
+       !hasEffect r1.2 (fun e => match e with | .send _ (.output _) => true | _ => false) &&
+       !hasEffect r2.2 (fun e => match e with | .send _ (.output _) => true | _ => false)) = true := by
+  native_decide
+
+/-- A query split across pty reads persists in the sole scanner and replies
+once when its final byte arrives. -/
+example :
+    (let first := step s0 (.ptyOut [ESC, 0x5B])
+     let second := step first.1 (.ptyOut [0x63])
+     first.2.isEmpty && ptyWrites second.2 == [da1Reply] &&
+       second.1.scan == .ground) = true := by
+  native_decide
+
+/-- Child exit flushes an incomplete prefix before exited/close effects and
+resets the scanner without feeding those bytes to `Vt` again. -/
+example :
+    (let s : State := { s0 with scan := .csi [0x5B, ESC],
+                                clients := [{ id := 7, attached := true }] }
+     let r := step s (.childExited 0)
+     r.1.scan == .ground && r.1.vt.cursor == s.vt.cursor &&
+       r.2 == [.send 7 (.output [ESC, 0x5B]), .send 7 (.exited 0), .close 7,
+               .dropCheckpoint, .exit]) = true := by
   native_decide
 
 /-- A client closing changes nothing but the roster (a checkpoint

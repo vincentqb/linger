@@ -364,6 +364,7 @@ theorem csiDispatch {v : Vt} (s : CsiState) (final : UInt8) (h : Good v) :
           | exact applySgr _ h'
           | exact set_tabs _ h'
           | exact h'
+          | exact ⟨cp, rp, cl, rl, sx, sy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
           | (dsimp only
              split <;> first
               | exact h'
@@ -374,11 +375,35 @@ theorem csiDispatch {v : Vt} (s : CsiState) (final : UInt8) (h : Good v) :
                    (dsimp only; omega))))
 
 
+/-- Private final-`u` sequences (notably kitty's `CSI ? u` query) are
+state-neutral; only public ANSI `CSI u` is DECRC. -/
+theorem csiDispatch_private_u (v : Vt) (s : CsiState)
+    (hi : s.ignore = false) (hp : s.priv ≠ 0) :
+    v.csiDispatch s 0x75 = v := by
+  simp [Vt.csiDispatch, hi, hp]
+
+/-- Public ANSI `CSI u` still restores the saved cursor and pen. -/
+theorem csiDispatch_public_u (v : Vt) (s : CsiState)
+    (hi : s.ignore = false) (hp : s.priv = 0) :
+    v.csiDispatch s 0x75 = { v with cursor := v.saved.cur, pen := v.saved.pen } := by
+  simp [Vt.csiDispatch, hi, hp]
+
 /-! ## Printing -/
 
 theorem putCell {v : Vt} (x y : Nat) (c : Cell) (h : Good v) : Good (v.putCell x y c) := by
   obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := h
   exact ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
+
+/-! ### Wide-pair repair
+
+`mendAt` and `mendRow` are grid-only record updates, so `Good` passes
+straight through them. Stated as their own lemmas rather than left to `split`:
+their guards read cells through `getD` chains, and letting a proof descend into
+those is what made `Good.printPut` time out at `whnf`. -/
+
+theorem mendAt {v : Vt} (x y : Nat) (h : Good v) : Good (v.mendAt x y) := set_grid _ h
+
+theorem mendRow {v : Vt} (y : Nat) (h : Good v) : Good (v.mendRow y) := set_grid _ h
 
 theorem printWrap {v : Vt} (h : Good v) : Good v.printWrap := by
   unfold Vt.printWrap
@@ -401,10 +426,11 @@ theorem printShift {v : Vt} (w : Nat) (h : Good v) : Good (v.printShift w) := by
 theorem printPut {v : Vt} (ch : Char) (w : Nat) (h : Good v) : Good (v.printPut ch w) := by
   unfold Vt.printPut
   dsimp only
-  repeat' split
-  all_goals first
-    | exact putCell _ _ _ (putCell _ _ _ h)
-    | exact putCell _ _ _ h
+  split
+  · exact mendRow _ (putCell _ _ _ h)
+  · split
+    · exact mendRow _ (putCell _ _ _ (putCell _ _ _ h))
+    · exact mendRow _ (putCell _ _ _ h)
 
 theorem printAdvance {v : Vt} (w : Nat) (h : Good v) : Good (v.printAdvance w) := by
   obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := h
@@ -414,17 +440,20 @@ theorem printAdvance {v : Vt} (w : Nat) (h : Good v) : Good (v.printAdvance w) :
   · exact ⟨cp, rp, cl, rl, by dsimp only; omega, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
   · exact ⟨cp, rp, cl, rl, by dsimp only; omega, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
 
+theorem printMark {v : Vt} (ch : Char) (h : Good v) : Good (v.printMark ch) := by
+  unfold Vt.printMark
+  dsimp only
+  repeat' split
+  all_goals first
+    | exact h
+    | exact mendRow _ (putCell _ _ _ h)
+
 theorem print {v : Vt} (ch : Char) (h : Good v) : Good (v.print ch) := by
   unfold Vt.print
   dsimp only
-  split <;> split
-  all_goals first
-    | exact putCell _ _ _ h
-    | exact printAdvance _ (printPut _ _ (printShift _ (printWideWrap _ (printWrap h))))
-    | (repeat' split
-       all_goals first
-         | exact h
-         | exact putCell _ _ _ h)
+  split
+  · exact printMark _ h
+  · exact printAdvance _ (printPut _ _ (printShift _ (printWideWrap _ (printWrap h))))
 
 theorem acceptChar {v : Vt} (n : Nat) (h : Good v) : Good (v.acceptChar n) := by
   unfold Vt.acceptChar
@@ -902,12 +931,29 @@ theorem frame_printShift (v : Vt) (w : Nat) :
     v.printShift w = { v with grid := (v.printShift w).grid } := by
   unfold Vt.printShift; dsimp only; split <;> rfl
 
+/-- Wide-pair repair writes only the grid. One frame covers all four layers
+below, plus any field a later one adds. -/
+theorem frame_mendAt (v : Vt) (x y : Nat) :
+    v.mendAt x y = { v with grid := (v.mendAt x y).grid } := rfl
+
+theorem frame_mendRow (v : Vt) (y : Nat) :
+    v.mendRow y = { v with grid := (v.mendRow y).grid } := rfl
+
 theorem frame_printPut (v : Vt) (ch : Char) (w : Nat) :
     v.printPut ch w = { v with grid := (v.printPut ch w).grid } := by
-  unfold Vt.printPut Vt.putCell
+  unfold Vt.printPut
   dsimp only
   repeat' split
-  all_goals rfl
+  all_goals (rw [frame_mendRow]; rfl)
+
+theorem frame_printMark (v : Vt) (ch : Char) :
+    v.printMark ch = { v with grid := (v.printMark ch).grid } := by
+  unfold Vt.printMark
+  dsimp only
+  repeat' split
+  all_goals first
+    | rfl
+    | (rw [frame_mendRow]; rfl)
 
 theorem frame_printAdvance (v : Vt) (w : Nat) :
     v.printAdvance w = { v with cursor := (v.printAdvance w).cursor } := by
@@ -1009,23 +1055,31 @@ theorem ps_printWideWrap (v : Vt) (w : Nat) : (v.printWideWrap w).pstate = v.pst
 theorem ps_printShift (v : Vt) (w : Nat) : (v.printShift w).pstate = v.pstate := by
   unfold Vt.printShift; dsimp only; split <;> rfl
 
+theorem ps_mendRow (v : Vt) (y : Nat) :
+    (v.mendRow y).pstate = v.pstate := by
+  rw [frame_mendRow]
+
 theorem ps_printPut (v : Vt) (ch : Char) (w : Nat) :
     (v.printPut ch w).pstate = v.pstate := by
   unfold Vt.printPut
   dsimp only
   repeat' split
-  all_goals rfl
+  all_goals (rw [ps_mendRow]; rfl)
 
 theorem ps_printAdvance (v : Vt) (w : Nat) : (v.printAdvance w).pstate = v.pstate := by
   unfold Vt.printAdvance; dsimp only; split <;> rfl
 
 /-- The composite: printing a glyph never touches the parser. -/
+theorem ps_printMark (v : Vt) (ch : Char) : (v.printMark ch).pstate = v.pstate := by
+  rw [frame_printMark]
+
 theorem ps_print (v : Vt) (c : Char) : (v.print c).pstate = v.pstate := by
   unfold Vt.print
   dsimp only
   repeat' split
   all_goals first
     | rfl
+    | rw [ps_printMark]
     | rw [ps_printAdvance, ps_printPut, ps_printShift, ps_printWideWrap, ps_printWrap]
 
 theorem ps_acceptChar (v : Vt) (n : Nat) : (v.acceptChar n).pstate = v.pstate := by
@@ -1044,6 +1098,7 @@ theorem ua_print (v : Vt) (c : Char) : (v.print c).u8acc = v.u8acc := by
   repeat' split
   all_goals first
     | rfl
+    | rw [frame_printMark]
     | rw [frame_putCell]
     | rw [frame_printAdvance, frame_printPut, frame_printShift, frame_printWideWrap,
           frame_printWrap]
@@ -1195,15 +1250,22 @@ theorem un_printWideWrap (v : Vt) (w : Nat) : (v.printWideWrap w).u8need = v.u8n
 theorem un_printShift (v : Vt) (w : Nat) : (v.printShift w).u8need = v.u8need := by
   unfold Vt.printShift; dsimp only; split <;> rfl
 
+theorem un_mendRow (v : Vt) (y : Nat) :
+    (v.mendRow y).u8need = v.u8need := by
+  rw [frame_mendRow]
+
 theorem un_printPut (v : Vt) (ch : Char) (w : Nat) :
     (v.printPut ch w).u8need = v.u8need := by
   unfold Vt.printPut
   dsimp only
   repeat' split
-  all_goals rfl
+  all_goals (rw [un_mendRow]; rfl)
 
 theorem un_printAdvance (v : Vt) (w : Nat) : (v.printAdvance w).u8need = v.u8need := by
   unfold Vt.printAdvance; dsimp only; split <;> rfl
+
+theorem un_printMark (v : Vt) (ch : Char) : (v.printMark ch).u8need = v.u8need := by
+  rw [frame_printMark]
 
 theorem un_print (v : Vt) (c : Char) : (v.print c).u8need = v.u8need := by
   unfold Vt.print
@@ -1211,6 +1273,7 @@ theorem un_print (v : Vt) (c : Char) : (v.print c).u8need = v.u8need := by
   repeat' split
   all_goals first
     | rfl
+    | rw [un_printMark]
     | rw [un_printAdvance, un_printPut, un_printShift, un_printWideWrap, un_printWrap]
 
 theorem un_acceptChar (v : Vt) (n : Nat) : (v.acceptChar n).u8need = v.u8need := by
@@ -1478,14 +1541,21 @@ theorem dims_printWideWrap (v : Vt) (w : Nat) : dims (v.printWideWrap w) = dims 
 theorem dims_printShift (v : Vt) (w : Nat) : dims (v.printShift w) = dims v := by
   unfold Vt.printShift; dsimp only; split <;> rfl
 
+theorem dims_mendRow (v : Vt) (y : Nat) :
+    dims (v.mendRow y) = dims v := by
+  rw [frame_mendRow]; rfl
+
 theorem dims_printPut (v : Vt) (ch : Char) (w : Nat) : dims (v.printPut ch w) = dims v := by
   unfold Vt.printPut
   dsimp only
   repeat' split
-  all_goals rfl
+  all_goals (rw [dims_mendRow]; rfl)
 
 theorem dims_printAdvance (v : Vt) (w : Nat) : dims (v.printAdvance w) = dims v := by
   unfold Vt.printAdvance; dsimp only; split <;> rfl
+
+theorem dims_printMark (v : Vt) (ch : Char) : dims (v.printMark ch) = dims v := by
+  rw [frame_printMark]; rfl
 
 theorem dims_print (v : Vt) (c : Char) : dims (v.print c) = dims v := by
   unfold Vt.print
@@ -1493,6 +1563,7 @@ theorem dims_print (v : Vt) (c : Char) : dims (v.print c) = dims v := by
   repeat' split
   all_goals first
     | rfl
+    | rw [dims_printMark]
     | rw [dims_printAdvance, dims_printPut, dims_printShift, dims_printWideWrap,
         dims_printWrap]
 
@@ -1815,16 +1886,24 @@ theorem org_printShift (v : Vt) (w : Nat) :
     (v.printShift w).modes.origin = v.modes.origin := by
   unfold Vt.printShift; dsimp only; split <;> rfl
 
+theorem org_mendRow (v : Vt) (y : Nat) :
+    (v.mendRow y).modes.origin = v.modes.origin := by
+  rw [frame_mendRow]
+
 theorem org_printPut (v : Vt) (ch : Char) (w : Nat) :
     (v.printPut ch w).modes.origin = v.modes.origin := by
   unfold Vt.printPut
   dsimp only
   repeat' split
-  all_goals rfl
+  all_goals (rw [org_mendRow]; rfl)
 
 theorem org_printAdvance (v : Vt) (w : Nat) :
     (v.printAdvance w).modes.origin = v.modes.origin := by
   unfold Vt.printAdvance; dsimp only; split <;> rfl
+
+theorem org_printMark (v : Vt) (ch : Char) :
+    (v.printMark ch).modes.origin = v.modes.origin := by
+  rw [frame_printMark]
 
 theorem org_print (v : Vt) (c : Char) : (v.print c).modes.origin = v.modes.origin := by
   unfold Vt.print
@@ -1832,6 +1911,7 @@ theorem org_print (v : Vt) (c : Char) : (v.print c).modes.origin = v.modes.origi
   repeat' split
   all_goals first
     | rfl
+    | rw [org_printMark]
     | rw [org_printAdvance, org_printPut, org_printShift, org_printWideWrap,
         org_printWrap]
 
@@ -1995,3 +2075,787 @@ end Zmx.Core.Vt
 
 
 
+
+
+
+namespace Zmx.Core.Vt
+/-! ## Wide pairs: the repair's postcondition
+
+`Render.rowAnsi` can express a row only if every wide glyph in it is whole: a
+width-2 base immediately followed by its width-0 shadow, that shadow carrying
+nothing of its own (the painter emits the base and nothing else), and no shadow
+without a base. Half a pair is not displayable either — a lone base re-wraps on
+replay, a lone shadow paints nothing while still occupying a column — so rather
+than adding side conditions to the replay theorem, the emulator does not reach
+those shapes. Every cell-writing operation ends in `Row.mend`.
+
+This section proves the postcondition that makes those calls worth anything:
+after `Row.mend`, **every column satisfies `PairOk`**. It is what `Renderable`
+rests on, and proving it once here is what keeps the pair invariant out of every
+individual mutation's proof.
+-/
+
+/-- Reading back the cell a `setIfInBounds` wrote. -/
+theorem getD_set_self {α} [Inhabited α] (r : Array α) (x : Nat) (c d : α)
+    (h : x < r.size) : (r.setIfInBounds x c).getD x d = c := by
+  simp [Array.getD, Array.setIfInBounds, h]
+
+/-- …and reading back any other cell. -/
+theorem getD_set_ne {α} [Inhabited α] (r : Array α) (x j : Nat) (c d : α)
+    (h : j ≠ x) : (r.setIfInBounds x c).getD j d = r.getD j d := by
+  simp only [Array.getD, Array.setIfInBounds]
+  split
+  · simp only [Array.size_set]
+    split
+    · simp [Array.getElem_set, Ne.symm h]
+    · rfl
+  · rfl
+
+/-- Out of range reads a default (width-1) cell, which is what lets the pair
+rules treat "no neighbour" and "a narrow neighbour" alike. -/
+theorem at_of_size_le (row : Row) (x : Nat) (h : row.size ≤ x) : row.at x = default := by
+  unfold Row.at
+  simp [Array.getD, Nat.not_lt.mpr h]
+
+/-- **The pair rule for one column**, in `Prop`: a base keeps its shadow (and
+that shadow is exactly what repainting the base re-creates), and a shadow keeps
+its base. -/
+def PairOk (row : Row) (x : Nat) : Prop :=
+  ((row.at x).width = 2 → row.at (x + 1) = Cell.shadow (row.at x))
+    ∧ ((row.at x).width = 0 → x ≠ 0 ∧ (row.at (x - 1)).width = 2)
+
+/-- `halfPair` reads nothing but the three neighbouring widths. -/
+theorem halfPair_congr {row row' : Row} (x : Nat)
+    (h0 : (row'.at (x - 1)).width = (row.at (x - 1)).width)
+    (h1 : (row'.at x).width = (row.at x).width)
+    (h2 : (row'.at (x + 1)).width = (row.at (x + 1)).width) :
+    row'.halfPair x = row.halfPair x := by
+  simp only [Row.halfPair]
+  rw [h0, h1, h2]
+
+/-- `halfPair` in `Prop` — the width half of `PairOk`. -/
+theorem halfPair_eq_false_iff (row : Row) (x : Nat) :
+    row.halfPair x = false ↔
+      ((row.at x).width = 2 → (row.at (x + 1)).width = 0)
+        ∧ ((row.at x).width = 0 → x ≠ 0 ∧ (row.at (x - 1)).width = 2) := by
+  unfold Row.halfPair
+  simp only [Bool.or_eq_false_iff, Bool.and_eq_false_iff, beq_eq_false_iff_ne,
+    bne_eq_false_iff_eq, ne_eq]
+  constructor
+  · intro h
+    refine ⟨fun h2 => ?_, fun h0 => ?_⟩
+    · rcases h.1 with hc | hs
+      · exact absurd h2 hc
+      · exact hs
+    · rcases h.2 with hc | hs
+      · exact absurd h0 hc
+      · exact ⟨hs.1, hs.2⟩
+  · intro h
+    refine ⟨?_, ?_⟩
+    · by_cases h2 : (row.at x).width = 2
+      · exact Or.inr (h.1 h2)
+      · exact Or.inl h2
+    · by_cases h0 : (row.at x).width = 0
+      · exact Or.inr ⟨(h.2 h0).1, (h.2 h0).2⟩
+      · exact Or.inl h0
+
+/-- A width-1 cell is not half of anything, so a blanked column is repaired. -/
+theorem halfPair_of_width_one (row : Row) (x : Nat) (h : (row.at x).width = 1) :
+    row.halfPair x = false := by
+  rw [halfPair_eq_false_iff]
+  exact ⟨fun h2 => absurd (h.symm.trans h2) (by decide),
+         fun h0 => absurd (h.symm.trans h0) (by decide)⟩
+
+/-! ### One repair step -/
+
+theorem size_mendAt (row : Row) (x : Nat) : (Row.mendAt row x).size = row.size := by
+  unfold Row.mendAt
+  repeat' split
+  all_goals first
+    | simp
+    | rfl
+
+theorem mendAt_ne (row : Row) (x j : Nat) (h : j ≠ x) :
+    (Row.mendAt row x).at j = row.at j := by
+  unfold Row.mendAt Row.at
+  repeat' split
+  all_goals first
+    | exact getD_set_ne _ _ _ _ _ h
+    | rfl
+
+/-- A half pair becomes a blank. -/
+theorem mendAt_self_blank (row : Row) (x : Nat) (hx : x < row.size)
+    (h : row.halfPair x = true) :
+    (Row.mendAt row x).at x = Cell.erased (row.at x).pen := by
+  unfold Row.mendAt Row.at
+  rw [if_pos h]
+  exact getD_set_self _ _ _ _ hx
+
+/-- A whole pair's shadow becomes canonical. -/
+theorem mendAt_self_shadow (row : Row) (x : Nat) (hx : x < row.size)
+    (h : row.halfPair x = false) (hw : (row.at x).width = 0) :
+    (Row.mendAt row x).at x = Cell.shadow (row.at (x - 1)) := by
+  unfold Row.mendAt Row.at
+  rw [if_neg (by simp [h]), if_pos (by simp [Row.at] at hw ⊢; exact hw)]
+  exact getD_set_self _ _ _ _ hx
+
+/-- Anything else is left alone. -/
+theorem mendAt_self_id (row : Row) (x : Nat)
+    (h : row.halfPair x = false) (hw : (row.at x).width ≠ 0) :
+    (Row.mendAt row x).at x = row.at x := by
+  unfold Row.mendAt Row.at
+  rw [if_neg (by simp [h]), if_neg (by simp only [Row.at] at hw ⊢; simpa using hw)]
+
+/-- A repair that does not blank preserves every width, since a canonical
+shadow is still a shadow. -/
+theorem width_mendAt_of_whole (row : Row) (x j : Nat) (h : row.halfPair x = false) :
+    ((Row.mendAt row x).at j).width = (row.at j).width := by
+  by_cases hj : j = x
+  · subst hj
+    by_cases hw : (row.at j).width = 0
+    · by_cases hb : j < row.size
+      · rw [mendAt_self_shadow row j hb h hw]; rw [hw]; rfl
+      · rw [at_of_size_le row j (by omega)] at hw
+        exact absurd hw (by decide)
+    · rw [mendAt_self_id row j h hw]
+  · rw [mendAt_ne row x j hj]
+
+/-! ### The sweep -/
+
+/-- The repaired column comes out repaired. -/
+theorem halfPair_mendAt_self (row : Row) (n : Nat) (hn : n < row.size) :
+    (Row.mendAt row n).halfPair n = false := by
+  by_cases h : row.halfPair n = true
+  · refine halfPair_of_width_one _ _ ?_
+    rw [mendAt_self_blank row n hn h]
+    rfl
+  · have h' : row.halfPair n = false := by simpa using h
+    rw [halfPair_congr n (width_mendAt_of_whole row n _ h')
+      (width_mendAt_of_whole row n _ h') (width_mendAt_of_whole row n _ h')]
+    exact h'
+
+/-- …and so does its shadow clause. -/
+theorem shadow_mendAt_self (row : Row) (n : Nat) (hn : n < row.size)
+    (hw : ((Row.mendAt row n).at n).width = 0) :
+    n ≠ 0 ∧ (Row.mendAt row n).at n = Cell.shadow ((Row.mendAt row n).at (n - 1)) := by
+  by_cases h : row.halfPair n = true
+  · rw [mendAt_self_blank row n hn h] at hw
+    simp [Cell.erased] at hw
+  · have h' : row.halfPair n = false := by simpa using h
+    have hw0 : (row.at n).width = 0 := by
+      rw [width_mendAt_of_whole row n n h'] at hw; exact hw
+    have hne : n ≠ 0 := ((halfPair_eq_false_iff row n).mp h').2 hw0 |>.1
+    refine ⟨hne, ?_⟩
+    rw [mendAt_self_shadow row n hn h' hw0, mendAt_ne row n (n - 1) (by omega)]
+
+/-- A repair step leaves every column below it repaired.
+
+The content is that a *whole* pair is never touched: blanking column `n` could
+only orphan a base at `n - 1` if `n` were that base's shadow, and such a shadow
+is exactly what `mendAt`'s guard protects. That argument is direction-free,
+which is why the sweep's order does not matter (see `Row.mend`); the `j < n`
+form is what the sweep induction consumes. -/
+theorem halfPair_mendAt_lt (row : Row) (n j : Nat) (hj : j < n)
+    (h : row.halfPair j = false) : (Row.mendAt row n).halfPair j = false := by
+  rw [halfPair_eq_false_iff] at h ⊢
+  have hj0 : (Row.mendAt row n).at j = row.at j := mendAt_ne row n j (by omega)
+  have hjm : (Row.mendAt row n).at (j - 1) = row.at (j - 1) :=
+    mendAt_ne row n (j - 1) (by omega)
+  refine ⟨fun h2 => ?_, fun h0 => ?_⟩
+  · rw [hj0] at h2
+    by_cases hn : j + 1 = n
+    · -- the column being repaired is this base's shadow, so it is not blanked
+      subst hn
+      have hshadow : row.halfPair (j + 1) = false := by
+        rw [halfPair_eq_false_iff]
+        have hw : (row.at (j + 1)).width = 0 := h.1 h2
+        exact ⟨fun hc => absurd (hw.symm.trans hc) (by decide),
+               fun _ => ⟨by omega, h2⟩⟩
+      rw [width_mendAt_of_whole row (j + 1) (j + 1) hshadow]
+      exact h.1 h2
+    · rw [mendAt_ne row n (j + 1) (by omega)]
+      exact h.1 h2
+  · rw [hj0] at h0
+    exact ⟨(h.2 h0).1, by rw [hjm]; exact (h.2 h0).2⟩
+
+/-- …including their shadow clause, which reads only columns at or below `j`. -/
+theorem shadow_mendAt_lt (row : Row) (n j : Nat) (hj : j < n)
+    (h : (row.at j).width = 0 → j ≠ 0 ∧ row.at j = Cell.shadow (row.at (j - 1))) :
+    ((Row.mendAt row n).at j).width = 0 →
+      j ≠ 0 ∧ (Row.mendAt row n).at j = Cell.shadow ((Row.mendAt row n).at (j - 1)) := by
+  intro hw
+  have hj0 : (Row.mendAt row n).at j = row.at j := mendAt_ne row n j (by omega)
+  have hjm : (Row.mendAt row n).at (j - 1) = row.at (j - 1) :=
+    mendAt_ne row n (j - 1) (by omega)
+  rw [hj0] at hw
+  exact ⟨(h hw).1, by rw [hj0, hjm]; exact (h hw).2⟩
+
+/-- The sweep, up to a bound: every column below `n` is repaired — both the
+width rule and the canonical-shadow rule — and the row keeps its size. -/
+theorem mendUpto_spec (row : Row) :
+    ∀ n, ((List.range n).foldl (fun r x => Row.mendAt r x) row).size = row.size
+      ∧ ∀ j, j < n → n ≤ row.size →
+          (((List.range n).foldl (fun r x => Row.mendAt r x) row).halfPair j = false
+            ∧ ((((List.range n).foldl (fun r x => Row.mendAt r x) row).at j).width = 0 →
+                j ≠ 0 ∧ ((List.range n).foldl (fun r x => Row.mendAt r x) row).at j
+                  = Cell.shadow (((List.range n).foldl (fun r x => Row.mendAt r x) row).at (j - 1))))
+  | 0 => ⟨rfl, fun _ hj => absurd hj (by omega)⟩
+  | n + 1 => by
+    have ih := mendUpto_spec row n
+    have hstep : (List.range (n + 1)).foldl (fun r x => Row.mendAt r x) row
+        = Row.mendAt ((List.range n).foldl (fun r x => Row.mendAt r x) row) n := by
+      rw [List.range_succ, List.foldl_append, List.foldl_cons, List.foldl_nil]
+    refine ⟨by rw [hstep, size_mendAt]; exact ih.1, fun j hj hn => ?_⟩
+    rw [hstep]
+    by_cases hje : j = n
+    · subst hje
+      have hlt : j < ((List.range j).foldl (fun r x => Row.mendAt r x) row).size := by
+        rw [ih.1]; omega
+      exact ⟨halfPair_mendAt_self _ _ hlt, fun hw => shadow_mendAt_self _ _ hlt hw⟩
+    · have hprev := ih.2 j (by omega) (by omega)
+      exact ⟨halfPair_mendAt_lt _ _ _ (by omega) hprev.1,
+             shadow_mendAt_lt _ _ _ (by omega) hprev.2⟩
+
+theorem size_mend (row : Row) : (Row.mend row).size = row.size := by
+  unfold Row.mend
+  exact (mendUpto_spec row row.size).1
+
+theorem mend_halfPair (row : Row) (x : Nat) (hx : x < row.size) :
+    (Row.mend row).halfPair x = false := by
+  unfold Row.mend
+  exact ((mendUpto_spec row row.size).2 x hx (by omega)).1
+
+theorem mend_shadow (row : Row) (x : Nat) (hx : x < row.size)
+    (hw : ((Row.mend row).at x).width = 0) :
+    x ≠ 0 ∧ (Row.mend row).at x = Cell.shadow ((Row.mend row).at (x - 1)) := by
+  unfold Row.mend at hw ⊢
+  exact ((mendUpto_spec row row.size).2 x hx (by omega)).2 hw
+
+/-- **The repair's postcondition.** Every column of a mended row satisfies the
+pair rule — for any input row at all, which is what lets every mutation end in
+`Row.mend` and lets `Renderable` be an invariant rather than a hypothesis. -/
+theorem mend_pairOk (row : Row) (x : Nat) (hx : x < row.size) :
+    PairOk (Row.mend row) x := by
+  have hsz : (Row.mend row).size = row.size := size_mend row
+  refine ⟨fun h2 => ?_, fun h0 => ?_⟩
+  · -- a base keeps its shadow, and that shadow is canonical
+    have hhp := (halfPair_eq_false_iff (Row.mend row) x).mp (mend_halfPair row x hx)
+    have hw : ((Row.mend row).at (x + 1)).width = 0 := hhp.1 h2
+    have hb : x + 1 < (Row.mend row).size := by
+      rcases Nat.lt_or_ge (x + 1) (Row.mend row).size with h | h
+      · exact h
+      · rw [at_of_size_le _ _ h] at hw
+        exact absurd hw (by decide)
+    have hsh := mend_shadow row (x + 1) (by rw [hsz] at hb; exact hb) hw
+    have hx1 : x + 1 - 1 = x := by omega
+    rw [hx1] at hsh
+    exact hsh.2
+  · have hhp := (halfPair_eq_false_iff (Row.mend row) x).mp (mend_halfPair row x hx)
+    exact hhp.2 h0
+
+/-! ### What the sweep leaves alone
+
+A repaint reads back the cell it just wrote, so the sweep must be the identity
+on a cell that is already well formed. Two cases cover every write: a narrow
+glyph, and a wide glyph together with its canonical shadow. -/
+
+private theorem mendUpto_keeps_narrow (row : Row) (x : Nat) (h : (row.at x).width = 1) :
+    ∀ n, ((List.range n).foldl (fun r y => Row.mendAt r y) row).at x = row.at x
+  | 0 => rfl
+  | n + 1 => by
+    have ih := mendUpto_keeps_narrow row x h n
+    have hstep : (List.range (n + 1)).foldl (fun r y => Row.mendAt r y) row
+        = Row.mendAt ((List.range n).foldl (fun r y => Row.mendAt r y) row) n := by
+      rw [List.range_succ, List.foldl_append, List.foldl_cons, List.foldl_nil]
+    rw [hstep]
+    by_cases hn : n = x
+    · subst hn
+      have hw1 : (((List.range n).foldl (fun r y => Row.mendAt r y) row).at n).width = 1 := by
+        rw [ih]; exact h
+      rw [mendAt_self_id _ _ (halfPair_of_width_one _ _ hw1) (by rw [hw1]; decide)]
+      exact ih
+    · rw [mendAt_ne _ _ _ (fun hc => hn hc.symm)]
+      exact ih
+
+/-- The sweep is the identity on a narrow cell. -/
+theorem mend_keeps_narrow (row : Row) (x : Nat) (h : (row.at x).width = 1) :
+    (Row.mend row).at x = row.at x := mendUpto_keeps_narrow row x h row.size
+
+private theorem mendUpto_keeps_wide (row : Row) (x : Nat)
+    (h2 : (row.at x).width = 2) (hs : row.at (x + 1) = Cell.shadow (row.at x)) :
+    ∀ n, ((List.range n).foldl (fun r y => Row.mendAt r y) row).at x = row.at x
+      ∧ ((List.range n).foldl (fun r y => Row.mendAt r y) row).at (x + 1) = row.at (x + 1)
+  | 0 => ⟨rfl, rfl⟩
+  | n + 1 => by
+    have ih := mendUpto_keeps_wide row x h2 hs n
+    have hstep : (List.range (n + 1)).foldl (fun r y => Row.mendAt r y) row
+        = Row.mendAt ((List.range n).foldl (fun r y => Row.mendAt r y) row) n := by
+      rw [List.range_succ, List.foldl_append, List.foldl_cons, List.foldl_nil]
+    -- the two columns still hold a whole pair, so neither repair branch moves them
+    have hb : (((List.range n).foldl (fun r y => Row.mendAt r y) row).at x).width = 2 := by
+      rw [ih.1]; exact h2
+    have hsh : (((List.range n).foldl (fun r y => Row.mendAt r y) row).at (x + 1)).width = 0 := by
+      rw [ih.2, hs]; rfl
+    have hwhole : ((List.range n).foldl (fun r y => Row.mendAt r y) row).halfPair x = false := by
+      rw [halfPair_eq_false_iff]
+      exact ⟨fun _ => hsh, fun h0 => absurd (hb.symm.trans h0) (by decide)⟩
+    have hwhole1 : ((List.range n).foldl (fun r y => Row.mendAt r y) row).halfPair (x + 1)
+        = false := by
+      rw [halfPair_eq_false_iff]
+      refine ⟨fun hc => absurd (hsh.symm.trans hc) (by decide), fun _ => ⟨by omega, ?_⟩⟩
+      simpa using hb
+    rw [hstep]
+    refine ⟨?_, ?_⟩
+    · by_cases hn : n = x
+      · subst hn
+        rw [mendAt_self_id _ _ hwhole (by rw [hb]; decide)]
+        exact ih.1
+      · rw [mendAt_ne _ _ _ (fun hc => hn hc.symm)]
+        exact ih.1
+    · by_cases hn : n = x + 1
+      · subst hn
+        rw [mendAt_self_shadow _ _ ?_ hwhole1 hsh]
+        · rw [show x + 1 - 1 = x from by omega, ih.1, hs]
+        · -- the column is in range, or its cell would read as a width-1 default
+          rcases Nat.lt_or_ge (x + 1)
+            ((List.range (x + 1)).foldl (fun r y => Row.mendAt r y) row).size with hlt | hge
+          · exact hlt
+          · rw [at_of_size_le _ _ hge] at hsh
+            exact absurd hsh (by decide)
+      · rw [mendAt_ne _ _ _ (fun hc => hn hc.symm)]
+        exact ih.2
+
+/-- The sweep is the identity on a wide glyph and its canonical shadow. -/
+theorem mend_keeps_wide (row : Row) (x : Nat)
+    (h2 : (row.at x).width = 2) (hs : row.at (x + 1) = Cell.shadow (row.at x)) :
+    (Row.mend row).at x = row.at x ∧ (Row.mend row).at (x + 1) = row.at (x + 1) :=
+  mendUpto_keeps_wide row x h2 hs row.size
+
+/-! ### Reading a mended row back out of the grid -/
+
+theorem getCell_mendRow_same (v : Vt) (y x : Nat) (hy : y < v.grid.size) :
+    (v.mendRow y).getCell x y = (v.getRow y).mend.at x := by
+  unfold Vt.mendRow Vt.getCell Vt.getRow Row.at
+  dsimp only
+  rw [getD_set_self _ _ _ _ hy]
+
+theorem getCell_mendRow_other (v : Vt) (y y' x : Nat) (h : y' ≠ y) :
+    (v.mendRow y).getCell x y' = v.getCell x y' := by
+  unfold Vt.mendRow Vt.getCell Vt.getRow
+  dsimp only
+  rw [getD_set_ne _ _ _ _ _ h]
+
+/-! ### Write a cell, mend the row, read it back
+
+What a repaint needs at every glyph. The write survives the sweep exactly when
+it did not leave a half pair, and the two shapes a print produces are a narrow
+cell and a wide base whose shadow the same print already wrote. -/
+
+theorem grid_size_putCell (u : Vt) (x y : Nat) (c : Cell) :
+    (u.putCell x y c).grid.size = u.grid.size := by
+  unfold Vt.putCell
+  simp
+
+theorem getRow_putCell_same (u : Vt) (x y : Nat) (c : Cell) (hy : y < u.grid.size) :
+    (u.putCell x y c).getRow y = (u.getRow y).setIfInBounds x c := by
+  unfold Vt.putCell Vt.getRow
+  dsimp only
+  rw [getD_set_self _ _ _ _ hy]
+
+theorem size_getRow_putCell (u : Vt) (x y : Nat) (c : Cell) (hy : y < u.grid.size) :
+    ((u.putCell x y c).getRow y).size = (u.getRow y).size := by
+  rw [getRow_putCell_same u x y c hy]
+  simp
+
+theorem getRow_putCell_self (u : Vt) (x y : Nat) (c : Cell)
+    (hy : y < u.grid.size) (hx : x < (u.getRow y).size) :
+    ((u.putCell x y c).getRow y).at x = c := by
+  rw [getRow_putCell_same u x y c hy]
+  unfold Row.at
+  exact getD_set_self _ _ _ _ hx
+
+/-- One narrow write survives the repair sweep. -/
+theorem getCell_write_mendRow_narrow (u : Vt) (x y : Nat) (c : Cell)
+    (hc : c.width = 1) (hy : y < u.grid.size) (hx : x < (u.getRow y).size) :
+    ((u.putCell x y c).mendRow y).getCell x y = c := by
+  have hcell := getRow_putCell_self u x y c hy hx
+  rw [getCell_mendRow_same _ _ _ (by rw [grid_size_putCell]; exact hy)]
+  rw [mend_keeps_narrow _ _ (by rw [hcell]; exact hc)]
+  exact hcell
+
+/-- A wide write and its shadow survive together. -/
+theorem getCell_write_mendRow_wide (u : Vt) (x y : Nat) (cb : Cell)
+    (h2 : cb.width = 2) (hy : y < u.grid.size) (hx : x + 1 < (u.getRow y).size) :
+    (((u.putCell x y cb).putCell (x + 1) y (Cell.shadow cb)).mendRow y).getCell x y = cb
+      ∧ (((u.putCell x y cb).putCell (x + 1) y (Cell.shadow cb)).mendRow y).getCell (x + 1) y
+          = Cell.shadow cb := by
+  have hy' : y < (u.putCell x y cb).grid.size := by rw [grid_size_putCell]; exact hy
+  have hrow' : ((u.putCell x y cb).getRow y).size = (u.getRow y).size :=
+    size_getRow_putCell u x y cb hy
+  have hshadow := getRow_putCell_self (u.putCell x y cb) (x + 1) y (Cell.shadow cb) hy'
+    (by rw [hrow']; exact hx)
+  have hbase : (((u.putCell x y cb).putCell (x + 1) y (Cell.shadow cb)).getRow y).at x = cb := by
+    rw [getRow_putCell_same _ (x + 1) y _ hy']
+    unfold Row.at
+    rw [getD_set_ne _ _ _ _ _ (by omega)]
+    have := getRow_putCell_self u x y cb hy (by omega)
+    unfold Row.at at this
+    exact this
+  have hkeep := mend_keeps_wide
+    (((u.putCell x y cb).putCell (x + 1) y (Cell.shadow cb)).getRow y) x
+    (by rw [hbase]; exact h2) (by rw [hbase, hshadow])
+  have hgs : y < ((u.putCell x y cb).putCell (x + 1) y (Cell.shadow cb)).grid.size := by
+    rw [grid_size_putCell]; exact hy'
+  rw [getCell_mendRow_same _ _ _ hgs, getCell_mendRow_same _ _ _ hgs]
+  exact ⟨by rw [hkeep.1]; exact hbase, by rw [hkeep.2]; exact hshadow⟩
+
+/-- A write plus repair on one row leaves every other row alone. -/
+theorem getCell_write_mendRow_other (u : Vt) (x y : Nat) (c : Cell) (x' y' : Nat)
+    (h : y' ≠ y) : ((u.putCell x y c).mendRow y).getCell x' y' = u.getCell x' y' := by
+  rw [getCell_mendRow_other _ _ _ _ h]
+  unfold Vt.putCell Vt.getCell Vt.getRow
+  dsimp only
+  exact congrArg (fun r => Array.getD r x' default) (getD_set_ne _ _ _ _ _ h)
+
+/-! ### `print`, reduced to its write
+
+Three shape lemmas so the per-glyph fidelity theorems never have to walk
+`print`'s five stages. Each is stated with `v.cursor` and `v.pen` rather than
+`v.clearPending`'s, which are definitionally the same — `clearPending` writes
+only the wrap flag. -/
+
+theorem getCell_printAdvance (v : Vt) (n x y : Nat) :
+    (v.printAdvance n).getCell x y = v.getCell x y := by
+  unfold Vt.getCell Vt.getRow
+  rw [frame_printAdvance]
+
+theorem print_narrow_eq {v : Vt} {ch : Char}
+    (hpc : v.printChar ch = ch) (hw : charWidth ch = 1)
+    (hins : v.modes.insert = false) (hpend : v.cursor.pending = false) :
+    v.print ch = ((v.clearPending.putCell v.cursor.x v.cursor.y
+        { base := ch, marks := [], width := 1, pen := v.pen }).mendRow
+          v.cursor.y).printAdvance 1 := by
+  unfold Vt.print
+  simp only [hpc, hw]
+  rw [if_neg (by decide)]
+  have h1 : v.printWrap = v.clearPending := by
+    unfold Vt.printWrap; rw [if_neg (by simp [hpend])]
+  have h2 : ∀ (w : Vt), w.printWideWrap 1 = w := by
+    intro w; unfold Vt.printWideWrap; rw [if_neg (by simp)]
+  have h3 : ∀ (w : Vt), w.modes.insert = false → w.printShift 1 = w := by
+    intro w hw'; unfold Vt.printShift; rw [if_neg (by simp [hw'])]
+  have h4 : ∀ (w : Vt) (c : Char), w.printPut c 1
+      = (w.putCell w.cursor.x w.cursor.y
+          { base := c, marks := [], width := 1, pen := w.pen }).mendRow w.cursor.y := by
+    intro w c
+    unfold Vt.printPut
+    dsimp only
+    rw [if_neg (by simp), if_neg (by decide)]
+  rw [h1, h2, h3 _ (by rw [frame_clearPending]; exact hins), h4]
+  rfl
+
+theorem print_wide_eq {v : Vt} {ch : Char}
+    (hpc : v.printChar ch = ch) (hw : charWidth ch = 2)
+    (hins : v.modes.insert = false) (hpend : v.cursor.pending = false)
+    (hfit : v.cursor.x + 1 < v.cols) :
+    v.print ch = (((v.clearPending.putCell v.cursor.x v.cursor.y
+        { base := ch, marks := [], width := 2, pen := v.pen }).putCell
+          (v.cursor.x + 1) v.cursor.y
+            (Cell.shadow { base := ch, marks := [], width := 2, pen := v.pen })).mendRow
+              v.cursor.y).printAdvance 2 := by
+  unfold Vt.print
+  simp only [hpc, hw]
+  rw [if_neg (by decide)]
+  have hcp : v.clearPending = { v with cursor := { v.cursor with pending := false } } := rfl
+  have h1 : v.printWrap = v.clearPending := by
+    unfold Vt.printWrap; rw [if_neg (by simp [hpend])]
+  have h2 : v.clearPending.printWideWrap 2 = v.clearPending := by
+    unfold Vt.printWideWrap
+    rw [if_neg (by first | (simp [hcp]; done) | (simp [hcp]; omega))]
+  have h3 : ∀ (w : Vt), w.modes.insert = false → w.printShift 2 = w := by
+    intro w hw'; unfold Vt.printShift; rw [if_neg (by simp [hw'])]
+  have h4 : ∀ (w : Vt) (c : Char), w.cursor.x + 1 < w.cols → w.printPut c 2
+      = ((w.putCell w.cursor.x w.cursor.y
+            { base := c, marks := [], width := 2, pen := w.pen }).putCell
+          (w.cursor.x + 1) w.cursor.y
+            (Cell.shadow { base := c, marks := [], width := 2, pen := w.pen })).mendRow
+              w.cursor.y := by
+    intro w c hf
+    unfold Vt.printPut
+    dsimp only
+    rw [if_neg (by first | (simp; done) | (simp; omega)), if_pos (by decide)]
+    rfl
+  rw [h1, h2, h3 _ (by rw [frame_clearPending]; exact hins),
+    h4 _ ch (by first | (simp [hcp]; done) | (simp [hcp]; omega))]
+  rfl
+
+theorem print_mark_eq {v : Vt} {m : Char}
+    (hpc : v.printChar m = m) (hw : charWidth m = 0) (hpend : v.cursor.pending = false)
+    (hx0 : v.cursor.x ≠ 0) (hnw : (v.getCell (v.cursor.x - 1) v.cursor.y).width ≠ 0)
+    (hcap : (v.getCell (v.cursor.x - 1) v.cursor.y).marks.length < 8) :
+    v.print m = (v.putCell (v.cursor.x - 1) v.cursor.y
+      { v.getCell (v.cursor.x - 1) v.cursor.y with
+        marks := (v.getCell (v.cursor.x - 1) v.cursor.y).marks ++ [m] }).mendRow v.cursor.y := by
+  unfold Vt.print
+  simp only [hpc, hw]
+  rw [if_pos (by decide)]
+  unfold Vt.printMark
+  simp only [hpend, if_false, Bool.false_eq_true]
+  rw [if_neg (show ¬((v.cursor.x == 0) = true) from by simp only [beq_iff_eq]; exact hx0)]
+  rw [if_neg (show ¬(((v.getCell (v.cursor.x - 1) v.cursor.y).width == 0
+      && v.cursor.x - 1 != 0) = true) from by
+    simp only [Bool.and_eq_true, beq_iff_eq]
+    exact fun h => hnw h.1)]
+  rw [if_neg (show ¬((v.getCell (v.cursor.x - 1) v.cursor.y).marks.length ≥ 8) from by omega)]
+
+end Zmx.Core.Vt
+
+namespace Zmx.Core.Vt
+/-! ## §Renderable — the emulator only reaches grids a repaint can reproduce
+
+`Good` bounds the emulator; this bounds what it *stores*. `Render.restore`
+paints a grid by emitting one glyph per cell, so a cell it can reproduce must
+hold a printable base of the width it claims, at most eight zero-width marks,
+and — for a wide glyph — its shadow, carrying nothing of its own.
+
+The point of proving this is negative: it means the replay theorem needs no side
+conditions. Every clause is established at the write, not assumed: controls are
+neutralized on store (`printableChar`), marks are capped and land on a base
+(`printMark`), and pairs are repaired at every row mutation (`Row.mend`), so
+`mend_pairOk` discharges the pair clause uniformly.
+
+The predicate is stated over the grid *array* with a fixed default row, not over
+`Vt.getRow` (whose default carries the current pen). That is what lets every
+operation which does not touch `grid`/`cols`/`rows`/`altGrid` be discharged by
+its frame — most of `csiDispatch` — instead of by its own lemma.
+-/
+
+/-- A cell a repaint can reproduce. -/
+structure CellOk (c : Cell) : Prop where
+  base : printableChar c.base = c.base
+  width : c.width ≠ 0 → charWidth c.base = c.width
+  marksLe : c.marks.length ≤ 8
+  marks : ∀ m ∈ c.marks, charWidth m = 0 ∧ printableChar m = m
+
+theorem cellOk_erased (p : Pen) : CellOk (Cell.erased p) :=
+  ⟨rfl, fun _ => rfl, Nat.zero_le _, fun _ hm => nomatch hm⟩
+
+theorem cellOk_shadow (c : Cell) : CellOk (Cell.shadow c) :=
+  ⟨rfl, fun h => absurd rfl h, Nat.zero_le _, fun _ hm => nomatch hm⟩
+
+theorem cellOk_default : CellOk (default : Cell) :=
+  ⟨rfl, fun _ => rfl, Nat.zero_le _, fun _ hm => nomatch hm⟩
+
+/-- A row a repaint can reproduce: exact width, reproducible cells, whole
+pairs. Cells are quantified over *all* indices — an out-of-range read is a
+default cell, which is fine — so no proof has to carry column bounds. -/
+structure RowOk (cols : Nat) (row : Row) : Prop where
+  size : row.size = cols
+  cells : ∀ x, CellOk (row.at x)
+  pairs : ∀ x, PairOk row x
+
+/-- A width-1 row is trivially paired. -/
+theorem pairOk_of_width_one {row : Row} (h : ∀ x, (row.at x).width = 1) (x : Nat) :
+    PairOk row x :=
+  ⟨fun h2 => absurd ((h x).symm.trans h2) (by decide),
+   fun h0 => absurd ((h x).symm.trans h0) (by decide)⟩
+
+theorem at_blankRow (cols : Nat) (p : Pen) (x : Nat) :
+    (blankRow cols p).at x = if x < cols then Cell.erased p else default := by
+  unfold Row.at blankRow
+  by_cases h : x < cols
+  · rw [if_pos h]
+    simp [Array.getD, h]
+  · rw [if_neg h]
+    simp [Array.getD, h]
+
+theorem rowOk_blankRow (cols : Nat) (p : Pen) : RowOk cols (blankRow cols p) := by
+  refine ⟨by simp [blankRow], fun x => ?_, pairOk_of_width_one (fun x => ?_)⟩
+  · rw [at_blankRow]
+    split
+    · exact cellOk_erased p
+    · exact cellOk_default
+  · rw [at_blankRow]
+    split <;> rfl
+
+/-- A grid a repaint can reproduce. -/
+def GridOk (cols rows : Nat) (g : Array Row) : Prop :=
+  g.size = rows ∧ ∀ y, RowOk cols (g.getD y (blankRow cols {}))
+
+structure Renderable (v : Vt) : Prop where
+  main : GridOk v.cols v.rows v.grid
+  alt : ∀ g c p, v.altGrid = some (g, c, p) → GridOk v.cols v.rows g
+
+theorem gridOk_replicate (cols rows : Nat) (p : Pen) :
+    GridOk cols rows (Array.replicate rows (blankRow cols p)) := by
+  refine ⟨by simp, fun y => ?_⟩
+  by_cases h : y < rows
+  · rw [show (Array.replicate rows (blankRow cols p)).getD y (blankRow cols {})
+        = blankRow cols p from by simp [Array.getD, h]]
+    exact rowOk_blankRow cols p
+  · rw [show (Array.replicate rows (blankRow cols p)).getD y (blankRow cols {})
+        = blankRow cols {} from by simp [Array.getD, h]]
+    exact rowOk_blankRow cols {}
+
+theorem renderable_init (cols rows : Nat) : Renderable (Vt.init cols rows) :=
+  ⟨gridOk_replicate _ _ _, fun _ _ _ h => nomatch h⟩
+
+/-! ### Frames discharge everything that does not write the grid -/
+
+/-- An operation that leaves `grid`, `cols`, `rows` and `altGrid` alone
+preserves `Renderable`. Most of `csiDispatch` is this. -/
+theorem renderable_congr {v w : Vt} (h : Renderable v)
+    (hg : w.grid = v.grid) (hc : w.cols = v.cols) (hr : w.rows = v.rows)
+    (ha : w.altGrid = v.altGrid) : Renderable w := by
+  refine ⟨by rw [hg, hc, hr]; exact h.main, fun g c p hs => ?_⟩
+  rw [hc, hr]
+  exact h.alt g c p (by rw [← ha]; exact hs)
+
+/-! ### Writing cells -/
+
+theorem cells_set {row : Row} (i : Nat) (c : Cell)
+    (hrow : ∀ x, CellOk (row.at x)) (hc : CellOk c) :
+    ∀ x, CellOk (Row.at (row.setIfInBounds i c) x) := by
+  intro x
+  unfold Row.at
+  unfold Row.at at hrow
+  by_cases hx : x = i
+  · subst hx
+    by_cases hb : x < row.size
+    · rw [getD_set_self _ _ _ _ hb]; exact hc
+    · rw [show row.setIfInBounds x c = row from by
+        simp only [Array.setIfInBounds]; rw [dif_neg hb]]
+      exact hrow x
+  · rw [getD_set_ne _ _ _ _ _ hx]; exact hrow x
+
+theorem cells_foldl {β : Type} {f : Row → β → Row}
+    (hf : ∀ (r : Row) (b : β), (∀ x, CellOk (r.at x)) → ∀ x, CellOk ((f r b).at x)) :
+    ∀ (l : List β) (row : Row), (∀ x, CellOk (row.at x)) → ∀ x, CellOk ((l.foldl f row).at x)
+  | [], _, h => h
+  | b :: l, row, h => by
+    rw [List.foldl_cons]
+    exact cells_foldl hf l (f row b) (hf row b h)
+
+theorem cells_mendAt {row : Row} (i : Nat) (hrow : ∀ x, CellOk (row.at x)) :
+    ∀ x, CellOk ((Row.mendAt row i).at x) := by
+  unfold Row.mendAt
+  repeat' split
+  all_goals first
+    | exact cells_set _ _ hrow (cellOk_erased _)
+    | exact cells_set _ _ hrow (cellOk_shadow _)
+    | exact hrow
+
+theorem cells_mend {row : Row} (hrow : ∀ x, CellOk (row.at x)) :
+    ∀ x, CellOk ((Row.mend row).at x) := by
+  unfold Row.mend
+  exact cells_foldl (fun r b h => cells_mendAt b h) _ row hrow
+
+/-- **The row-mutation workhorse.** A row whose cells are reproducible becomes a
+reproducible row once mended — pairs included, by `mend_pairOk`. Every row
+mutation ends in `Row.mend`, so every row mutation ends here. -/
+theorem rowOk_mend {cols : Nat} {row : Row} (hsize : row.size = cols)
+    (hcells : ∀ x, CellOk (row.at x)) : RowOk cols (Row.mend row) := by
+  refine ⟨by rw [size_mend]; exact hsize, cells_mend hcells, fun x => ?_⟩
+  by_cases hx : x < row.size
+  · exact mend_pairOk row x hx
+  · -- past the end every read is a default width-1 cell
+    have hz : ∀ j, row.size ≤ j → (Row.mend row).at j = default := by
+      intro j hj
+      exact at_of_size_le _ _ (by rw [size_mend]; exact hj)
+    refine ⟨fun h2 => absurd ((by rw [hz x (by omega)] : (Row.mend row).at x = default) ▸ h2)
+              (by decide), fun h0 => ?_⟩
+    exact absurd ((by rw [hz x (by omega)] : (Row.mend row).at x = default) ▸ h0) (by decide)
+
+end Zmx.Core.Vt
+
+namespace Zmx.Core.Vt
+/-! ### One row at a time
+
+Every cell-writing operation has the same shape: write into one row, then mend
+it. `GridOkExcept y` is the state in between — every row reproducible except
+row `y`, which has the right width and reproducible cells but no pair claim yet.
+`mendRow` closes it. -/
+
+theorem getD_of_lt {α} (g : Array α) (y : Nat) (d d' : α) (h : y < g.size) :
+    g.getD y d = g.getD y d' := by
+  simp [Array.getD, h]
+
+def GridOkExcept (cols rows y : Nat) (g : Array Row) : Prop :=
+  g.size = rows
+    ∧ (∀ y', y' ≠ y → RowOk cols (g.getD y' (blankRow cols {})))
+    ∧ (g.getD y (blankRow cols {})).size = cols
+    ∧ (∀ x, CellOk ((g.getD y (blankRow cols {})).at x))
+
+theorem gridOkExcept_of_gridOk {cols rows : Nat} {g : Array Row} (y : Nat)
+    (h : GridOk cols rows g) : GridOkExcept cols rows y g :=
+  ⟨h.1, fun y' _ => h.2 y', (h.2 y).size, (h.2 y).cells⟩
+
+/-- Writing one reproducible cell into the excepted row keeps the shape. -/
+theorem gridOkExcept_set {cols rows y : Nat} {g : Array Row}
+    (h : GridOkExcept cols rows y g) (x : Nat) (c : Cell) (hc : CellOk c) (d : Row)
+    (hd : y < g.size → g.getD y d = g.getD y (blankRow cols {})) :
+    GridOkExcept cols rows y (g.setIfInBounds y ((g.getD y d).setIfInBounds x c)) := by
+  obtain ⟨hsz, hother, hrsz, hcells⟩ := h
+  refine ⟨by simp [hsz], fun y' hy' => ?_, ?_, ?_⟩
+  · rw [getD_set_ne _ _ _ _ _ hy']; exact hother y' hy'
+  · by_cases hb : y < g.size
+    · rw [getD_set_self _ _ _ _ hb, Array.size_setIfInBounds, hd hb]; exact hrsz
+    · rw [show g.setIfInBounds y ((g.getD y d).setIfInBounds x c) = g from by
+        simp only [Array.setIfInBounds]; rw [dif_neg hb]]
+      exact hrsz
+  · by_cases hb : y < g.size
+    · rw [getD_set_self _ _ _ _ hb, hd hb]
+      exact cells_set _ _ hcells hc
+    · rw [show g.setIfInBounds y ((g.getD y d).setIfInBounds x c) = g from by
+        simp only [Array.setIfInBounds]; rw [dif_neg hb]]
+      exact hcells
+
+/-- Replacing the excepted row wholesale, with a row built from it. -/
+theorem gridOkExcept_replace {cols rows y : Nat} {g : Array Row}
+    (h : GridOkExcept cols rows y g) (r : Row)
+    (hsz : r.size = cols) (hcells : ∀ x, CellOk (r.at x)) :
+    GridOkExcept cols rows y (g.setIfInBounds y r) := by
+  obtain ⟨hgsz, hother, hrsz, hocells⟩ := h
+  refine ⟨by simp [hgsz], fun y' hy' => ?_, ?_, ?_⟩
+  · rw [getD_set_ne _ _ _ _ _ hy']; exact hother y' hy'
+  · by_cases hb : y < g.size
+    · rw [getD_set_self _ _ _ _ hb]; exact hsz
+    · rw [show g.setIfInBounds y r = g from by
+        simp only [Array.setIfInBounds]; rw [dif_neg hb]]
+      exact hrsz
+  · by_cases hb : y < g.size
+    · rw [getD_set_self _ _ _ _ hb]; exact hcells
+    · rw [show g.setIfInBounds y r = g from by
+        simp only [Array.setIfInBounds]; rw [dif_neg hb]]
+      exact hocells
+
+/-- …and the repair closes it. -/
+theorem gridOk_of_except {cols rows y : Nat} {g : Array Row}
+    (h : GridOkExcept cols rows y g) :
+    GridOk cols rows (g.setIfInBounds y (Row.mend (g.getD y (blankRow cols {})))) := by
+  obtain ⟨hsz, hother, hrsz, hcells⟩ := h
+  refine ⟨by simp [hsz], fun y' => ?_⟩
+  by_cases hy' : y' = y
+  · subst hy'
+    by_cases hb : y' < g.size
+    · rw [getD_set_self _ _ _ _ hb]
+      exact rowOk_mend hrsz hcells
+    · rw [show g.setIfInBounds y' (Row.mend (g.getD y' (blankRow cols {}))) = g from by
+        simp only [Array.setIfInBounds]; rw [dif_neg hb]]
+      -- out of range: the read is the default row, which is reproducible
+      rw [show g.getD y' (blankRow cols {}) = blankRow cols {} from by
+        simp [Array.getD, hb]]
+      exact rowOk_blankRow cols {}
+  · rw [getD_set_ne _ _ _ _ _ hy']
+    exact hother y' hy'
+
+/-! ### Folds that build a row -/
+
+theorem size_foldl {β : Type} {f : Row → β → Row}
+    (hf : ∀ (r : Row) (b : β), (f r b).size = r.size) :
+    ∀ (l : List β) (row : Row), (l.foldl f row).size = row.size
+  | [], _ => rfl
+  | b :: l, row => by
+    rw [List.foldl_cons, size_foldl hf l (f row b), hf row b]
+
+end Zmx.Core.Vt

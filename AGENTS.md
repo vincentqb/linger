@@ -11,11 +11,11 @@ closed build plans with their completion records
 
 ## Where things stand — read this first after any compaction
 
-1. **`specs/grid-fidelity.md` is the ACTIVE plan** — goal,
-   definition-of-done, what is already in hand, the steps, and the risks
-   that were measured rather than guessed. Its header block is the
-   ten-second version. (Don't look for a living `PLAN.md`: the root one is
-   requirements, and everything in `specs/archive/` is closed.)
+1. **`specs/terminal-contract.md` is the ACTIVE plan** — it adds the
+   client-independent virtual-terminal reply channel and carries the former
+   grid-fidelity plan through exact cells/pens and `resume_grid`. Its header
+   block is the ten-second version. (Don't look for a living `PLAN.md`: the
+   root one is requirements, and everything in `specs/archive/` is closed.)
 2. **`SCRATCHPAD.md`** — append-only worklog: proof recipes, measured
    environment facts, break-verify records, and the negative results.
    Read before writing; append after; never delete prior entries.

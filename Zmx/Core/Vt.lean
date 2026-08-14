@@ -99,12 +99,79 @@ def isWide (c : Nat) : Bool :=
 def charWidth (c : Char) : Nat :=
   if isZeroWidth c.toNat then 0 else if isWide c.toNat then 2 else 1
 
+/-- The codepoint a cell is allowed to store: a C0 control or DEL becomes
+U+FFFD.
+
+A cell holding a control codepoint cannot be repainted — `Render.safeChar`
+substitutes U+FFFD on emit, so the replayed screen would differ from the live
+one — and such a codepoint is reachable: DEL arrives as itself, and an
+overlong UTF-8 sequence decodes to a C0. Substituting **on store** is what
+makes every stored cell repaintable, so `Renderable` is an invariant rather
+than a hypothesis (the same move as fix 11). `Render.safeChar` stays as the
+emit-side guard, which still has work to do for a decoded checkpoint. -/
+def printableChar (c : Char) : Char :=
+  if c.toNat < 0x20 || c.toNat == 0x7F then '\uFFFD' else c
+
 /-! ## Rows and the scrollback ring -/
 
 abbrev Row := Array Cell
 
 def blankRow (cols : Nat) (p : Pen) : Row :=
   Array.replicate cols (Cell.erased p)
+
+/-- The continuation cell a width-2 base owns: a blank carrying the base's
+pen. Exactly what repainting the base re-creates, which is why a shadow may
+hold nothing of its own — see `Row.mendAt`. -/
+def Cell.shadow (c : Cell) : Cell :=
+  { base := ' ', marks := [], width := 0, pen := c.pen }
+
+/-- Total cell read; out of range is a default (width-1) cell. -/
+def Row.at (row : Row) (x : Nat) : Cell := row.getD x default
+
+/-- Is the cell at `x` half of a wide pair whose other half is gone? A
+width-2 base with no shadow on its right, or a shadow with no base on its
+left. Out-of-range reads are width 1, so a base in the final column counts
+as broken — fix 11's rule, stated once instead of per operation. -/
+def Row.halfPair (row : Row) (x : Nat) : Bool :=
+  let c := row.at x
+  (c.width == 2 && (row.at (x + 1)).width != 0)
+    || (c.width == 0 && (x == 0 || (row.at (x - 1)).width != 2))
+
+/-- Blank a half pair, keeping its background (BCE); otherwise canonicalize a
+whole pair's shadow, so a shadow carries exactly what a repaint of its base
+re-creates and nothing of its own. -/
+def Row.mendAt (row : Row) (x : Nat) : Row :=
+  if row.halfPair x then row.setIfInBounds x (Cell.erased (row.at x).pen)
+  else if (row.at x).width == 0 then row.setIfInBounds x (Cell.shadow (row.at (x - 1)))
+  else row
+
+/-- Repair every wide pair in a row, left to right.
+
+Half a wide glyph is not displayable and — the reason this exists — not
+*expressible* by `Render.rowAnsi`: a lone width-2 base re-wraps on replay and
+a lone width-0 shadow paints nothing while still occupying a column, so the
+rest of the row lands one column off. A shadow carrying content of its own is
+equally inexpressible, since the painter emits the base and nothing else.
+Rather than adding side conditions to the replay theorem, the emulator does not
+reach those shapes (fix 11's principle, generalized from printing to every row
+mutation).
+
+One pass is enough, in any order: a blank never creates a new half pair.
+`mendAt` blanks a column only when its partner is *already* absent — a shadow
+whose left neighbour is a width-2 base is left alone, and a base whose right
+neighbour is a width-0 shadow is left alone — so the columns it rewrites are
+exactly the ones no surviving pair depends on. (Order-independence is measured,
+not assumed: sweeping right to left passes every fixture and the whole fuzz
+corpus. Left to right is simply the order the proof is stated in.)
+
+Every cell-writing operation ends here, printing included. That is a deliberate
+trade: `putCell` reads its row out of the grid, so the row is shared and the
+write copies it — printing is already O(cols) — and one more pass over the row
+it just copied buys the pair invariant *uniformly*, with no per-operation index
+reasoning (`mend_pairOk`). Restructuring for provability rather than weakening
+the theorem, per AGENTS.md. -/
+def Row.mend (row : Row) : Row :=
+  (List.range row.size).foldl (fun r x => r.mendAt x) row
 
 /-- Scrollback: a ring over an array. `data.size ≤ cap` is §Bound's
 structural invariant — `push` either grows toward the cap or overwrites
@@ -228,6 +295,15 @@ def Vt.putCell (v : Vt) (x y : Nat) (c : Cell) : Vt :=
 
 def Vt.getCell (v : Vt) (x y : Nat) : Cell := (v.getRow y).getD x default
 
+/-- Repair a half wide pair at one column. Grid only. -/
+def Vt.mendAt (v : Vt) (x y : Nat) : Vt :=
+  { v with grid := v.grid.setIfInBounds y ((v.getRow y).mendAt x) }
+
+/-- Repair every pair in one row. Every cell-writing operation ends here, so
+the pair invariant holds by construction rather than per operation. -/
+def Vt.mendRow (v : Vt) (y : Nat) : Vt :=
+  { v with grid := v.grid.setIfInBounds y (v.getRow y).mend }
+
 /-- Scroll rows [top, bot] up by one, no questions asked about the
 current region. Grid + (optionally) scrollback only — never the
 cursor. `allowSb`: evicted top line may go to scrollback (LF at screen
@@ -335,7 +411,8 @@ def Vt.printWideWrap (v : Vt) (w : Nat) : Vt :=
   if w == 2 && v.cursor.x + 1 ≥ v.cols && v.modes.wrap then (v.carriageReturn).lineFeed
   else v
 
-/-- IRM: shift the rest of the row right by `w`. Grid only. -/
+/-- IRM: shift the rest of the row right by `w`. Grid only. A pair pushed
+off the row end loses its shadow, so the row is mended. -/
 def Vt.printShift (v : Vt) (w : Nat) : Vt :=
   if v.modes.insert then
     let x := v.cursor.x
@@ -345,7 +422,7 @@ def Vt.printShift (v : Vt) (w : Nat) : Vt :=
         let i := v.cols - 1 - iRev
         r.setIfInBounds i (row.getD (i - w) default))
       row
-    { v with grid := v.grid.setIfInBounds v.cursor.y shifted }
+    { v with grid := v.grid.setIfInBounds v.cursor.y shifted.mend }
   else v
 
 /-- Write the glyph (and its shadow cell if wide). Grid only.
@@ -355,19 +432,26 @@ Reachable whenever autowrap is off — `printWideWrap` only pre-wraps when wrap
 is on — and previously it left a width-2 cell in the final column with no
 shadow, which `Render.rowAnsi` cannot express: on replay the glyph wraps to
 the next row and the joining CRLF scrolls the whole grid. Half a glyph is not
-displayable either, so a blank is what a terminal shows. Keeping the grid
-free of shapes the painter cannot express is what makes `Renderable` an
-invariant rather than a hypothesis. -/
+displayable either, so a blank is what a terminal shows.
+
+The write can equally orphan the *other* half of a pair it partly overwrote: a
+narrow glyph over a wide base leaves that base's shadow behind, and any glyph
+over a shadow leaves its base behind. Both are reachable by ordinary
+redrawing over CJK text — no `ICH`/`DCH` needed, which is what the two pinned
+deep fuzz seeds turned out to be — so the row is mended after every print.
+Keeping the grid free of shapes the painter cannot express is what makes
+`Renderable` an invariant rather than a hypothesis. -/
 def Vt.printPut (v : Vt) (ch : Char) (w : Nat) : Vt :=
   let x := v.cursor.x
   let y := v.cursor.y
   if w == 2 && x + 1 ≥ v.cols then
-    v.putCell x y { base := ' ', marks := [], width := 1, pen := v.pen }
+    (v.putCell x y { base := ' ', marks := [], width := 1, pen := v.pen }).mendRow y
   else
     let v' := v.putCell x y { base := ch, marks := [], width := w, pen := v.pen }
     if w == 2 then
-      v'.putCell (x + 1) y { base := ' ', marks := [], width := 0, pen := v.pen }
-    else v'
+      (v'.putCell (x + 1) y
+        { base := ' ', marks := [], width := 0, pen := v.pen }).mendRow y
+    else v'.mendRow y
 
 /-- Advance the cursor by `w`, arming wrap-pending at the margin. -/
 def Vt.printAdvance (v : Vt) (w : Nat) : Vt :=
@@ -377,22 +461,47 @@ def Vt.printAdvance (v : Vt) (w : Nat) : Vt :=
   else
     { v with cursor := { v.cursor with x := nx, pending := false } }
 
+/-- The codepoint a print actually stores: charset translation, then control
+neutralization. A named stage so a proof never has to peel these two `if`s out
+of `print`'s width scrutinee — `split` picks the first splittable term it
+finds, which would otherwise be the charset test rather than the width test. -/
+def Vt.printChar (v : Vt) (ch : Char) : Char :=
+  printableChar (if (v.shiftOut && v.g1Line) || (!v.shiftOut && v.g0Line)
+                 then decLine ch else ch)
+
+/-- A combining mark attaches to the cell before the cursor — and to a wide
+glyph's **base**, never to its shadow.
+
+Capped at 8: an adversarial mark stream must not grow a cell (§Bound).
+
+The shadow redirect is what lets a mark on the final column round-trip. A
+shadow is a blank continuation cell that a repaint re-creates from its base, so
+`Render.rowAnsi` cannot carry marks parked there, `Render.rowText` skips them
+outright (they never appeared in `linger history`), and at the right margin the
+cursor sits on the shadow with wrap pending — the one position no absolute
+cursor move can address.
+
+The `cx0 != 0` guard makes the step-left total rather than relying on the pair
+invariant: a shadow in column 0 is a broken pair (`Row.halfPair`) that no
+reachable state holds, but `cx0 - 1` on `Nat` would silently park the mark back
+on column 0 and the repair would then blank it away. `renderable_step` does not
+yet prove that state unreachable, so the guard carries it. -/
+def Vt.printMark (v : Vt) (ch : Char) : Vt :=
+  let cx0 := if v.cursor.pending then v.cursor.x
+             else if v.cursor.x == 0 then 0 else v.cursor.x - 1
+  let cx := if (v.getCell cx0 v.cursor.y).width == 0 && cx0 != 0 then cx0 - 1 else cx0
+  let cell := v.getCell cx v.cursor.y
+  if cell.marks.length ≥ 8 then v
+  else (v.putCell cx v.cursor.y
+    { cell with marks := cell.marks ++ [ch] }).mendRow v.cursor.y
+
 /-- Place one printable character at the cursor, handling wrap-pending,
 wide characters, insert mode, and combining marks. -/
 def Vt.print (v : Vt) (ch : Char) : Vt :=
-  let ch := if (v.shiftOut && v.g1Line) || (!v.shiftOut && v.g0Line)
-            then decLine ch else ch
+  let ch := v.printChar ch
   let w := charWidth ch
-  if w == 0 then
-    -- combining mark: attach to the cell before the cursor (capped:
-    -- adversarial mark-streams must not grow a cell — §Bound)
-    let cx := if v.cursor.pending then v.cursor.x
-              else if v.cursor.x == 0 then 0 else v.cursor.x - 1
-    let cell := v.getCell cx v.cursor.y
-    if cell.marks.length ≥ 8 then v
-    else v.putCell cx v.cursor.y { cell with marks := cell.marks ++ [ch] }
-  else
-    ((((v.printWrap).printWideWrap w).printShift w).printPut ch w).printAdvance w
+  if w == 0 then v.printMark ch
+  else ((((v.printWrap).printWideWrap w).printShift w).printPut ch w).printAdvance w
 
 /-! ## Erase / insert / delete -/
 
@@ -400,7 +509,7 @@ def Vt.eraseRowSpan (v : Vt) (y from_ to_ : Nat) : Vt :=  -- [from, to)
   let row := v.getRow y
   let row := (List.range (to_ - from_)).foldl
     (fun (r : Row) i => r.setIfInBounds (from_ + i) (Cell.erased v.pen)) row
-  { v with grid := v.grid.setIfInBounds y row }
+  { v with grid := v.grid.setIfInBounds y row.mend }
 
 def Vt.eraseLine (v : Vt) (mode : Nat) : Vt :=
   match mode with
@@ -445,7 +554,7 @@ def Vt.deleteChars (v : Vt) (n : Nat) : Vt :=
       r.setIfInBounds (x + i)
         (if src < v.cols then row.getD src default else Cell.erased v.pen))
     row
-  { v with grid := v.grid.setIfInBounds y row }
+  { v with grid := v.grid.setIfInBounds y row.mend }
 
 def Vt.insertChars (v : Vt) (n : Nat) : Vt :=
   let x := v.cursor.x
@@ -458,7 +567,7 @@ def Vt.insertChars (v : Vt) (n : Nat) : Vt :=
       r.setIfInBounds i
         (if i ≥ x + n then row.getD (i - n) default else Cell.erased v.pen))
     row
-  { v with grid := v.grid.setIfInBounds y row }
+  { v with grid := v.grid.setIfInBounds y row.mend }
 
 def Vt.eraseChars (v : Vt) (n : Nat) : Vt :=
   v.eraseRowSpan v.cursor.y v.cursor.x (min (v.cursor.x + n) v.cols)
@@ -551,9 +660,11 @@ def Vt.leaveAlt (v : Vt) (restoreCursor : Bool) : Vt :=
 
 /-! ## Resize (truncate/pad; no reflow — see header) -/
 
+/-- Truncate or pad one row. Truncation can cut a wide pair in half, so the
+result is mended. -/
 def resizeRow (row : Row) (cols : Nat) (p : Pen) : Row :=
-  if row.size ≥ cols then row.extract 0 cols
-  else row ++ Array.replicate (cols - row.size) (Cell.erased p)
+  Row.mend (if row.size ≥ cols then row.extract 0 cols
+            else row ++ Array.replicate (cols - row.size) (Cell.erased p))
 
 def Vt.resize (v : Vt) (cols rows : Nat) : Vt :=
   let c := clampDim cols
@@ -661,7 +772,9 @@ def Vt.csiDispatch (v : Vt) (s : CsiState) (final : UInt8) : Vt :=
         ({ v with top := t, bot := b }).moveTo 0 0
       else v
   | 0x73 => { v with saved := { cur := v.cursor, pen := v.pen } }  -- s DECSC (ANSI)
-  | 0x75 => { v with cursor := v.saved.cur, pen := v.saved.pen }   -- u DECRC (ANSI)
+  | 0x75 =>                                                    -- u DECRC (ANSI)
+      if s.priv == 0 then { v with cursor := v.saved.cur, pen := v.saved.pen }
+      else v
   | _ => v  -- DA/DSR/CPR/DECSCUSR/… : queries and styling we don't act on
 
 /-! ## Byte-at-a-time parser -/

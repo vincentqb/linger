@@ -239,7 +239,10 @@ partial def serve (name : String) (cwd : String) (argv : List String)
     | [] => ((shell, #[]) : String × Array String)
     | p :: rest => (p, rest.toArray)
   let (pid, ptyFd) ← spawnPty 80 24 cwd prog args
-    #[s!"LINGER_SESSION={name}"]
+    #[s!"LINGER_SESSION={name}",
+      "TERM=xterm-256color",
+      "TERM_PROGRAM=linger",
+      "TERM_PROGRAM_VERSION=0.1.0"]
   setNonblock ptyFd
   let created ← realtimeS
   let vt0 := (restore.map (·.1)).getD (Zmx.Core.Vt.Vt.init 80 24)

@@ -2849,3 +2849,341 @@ inheriting. Control flow exercised with stubbed `linger`/`fzf` (a real
 `attach` wants a tty): attach → pick `b@gpu2` → attach → Esc(130) →
 clean exit 0; bare `lzh` starts at the picker; Esc with nothing to pick
 exits 0 without attaching.
+
+## Step 1 notes — 2026-08-13T19:04:22Z
+
+Landed the pure bounded terminal mediator in `Zmx/Core/Terminal.lean` plus
+`Theorems/Terminal.lean` and `Tests/Terminal.lean`. `Terminal.feed` feeds `Vt`
+byte-by-byte, then classifies the same byte for ownership, so CPR samples the
+cursor at the query's stream position. The API returns final VT/scanner plus
+visible bytes and the ordered reply stream; `finish` returns only pending
+presentation bytes and ground, so an EOF flush cannot feed `Vt` twice.
+
+Scanner shape: CSI and OSC retain reversed candidates under 128/256-byte caps;
+DCS buffers only after exact `+q`/`$q` prefixes under the 2048-byte cap. APC,
+SOS, PM, rejected DCS (including sixel `DCS q`), and over-cap candidates enter
+payload-free passthrough states. Per-byte feed uses a bounded left append
+(normally a singleton), so megabyte graphics are linear rather than repeated
+whole-buffer appends.
+
+Proved: full-result `feed_append` (VT, scanner, visible concatenation, reply
+concatenation); exact `Vt.feed` projection; one-step and arbitrary-stream
+scanner bounds; exact CSI/OSC profile classification; exact arbitrary-payload
+XTGETTCAP/DECRQSS negatives; owned exclusion versus unowned exact release;
+CPR origin-row cases; `finish_exact`; and quantified APC/sixel passthrough for
+all payloads without their own `ESC \\` terminator. Twenty owned request forms
+(accepted aliases and OSC terminators included) pass at every byte split;
+every proper owned-query prefix passes the EOF flush check. Cap overflow and
+query-looking bytes inside >cap graphics are concrete regressions.
+
+Fixed the pre-existing parser bug: final `u` restores only when `s.priv == 0`.
+Private `CSI ? u` is state-neutral; public ANSI `CSI u` still restores cursor
+and pen. General dispatch theorems and a parser-level fixture cover both.
+
+Break verification (all same-shape value changes, all reverted):
+- inverted the private/public `u` guard (`== 0` → `!= 0`): both dispatch
+  theorems and the concrete VT fixture failed; the existing replay fuzzer also
+  changed its pinned failure set;
+- changed the short DA1 recognizer final from `c` to `d`: `classifyCsi_da1`
+  became unprovable and the all-owned/all-splits test failed;
+- changed APC's string-introducer byte from `_` to `` ` ``: the quantified
+  `apc_passthrough` theorem failed and the concrete APC payload test detected
+  the embedded DA1 being consumed.
+
+Gate after restoration: `./lake build Theorems Tests` green and warning-free.
+Hand-off: Step 2 should store exactly one `Terminal.Scan`, mediate `.ptyOut`
+once, write `Result.replies` once via `Effect.writePty`, broadcast only
+`Result.visible`, and flush `finish` before child-exit notifications/closes.
+
+## Step 2 notes — 2026-08-13T19:20:34Z
+
+Integrated the pure terminal mediator as the PTY-facing owner. `Session.State`
+now carries one `Terminal.Scan`; `.ptyOut` calls `Terminal.feed` once, writes
+its ordered replies once, and broadcasts only visible bytes. Empty visible
+output produces no output frame. `.childExited` calls `Terminal.finish`, resets
+the scanner, broadcasts any pending prefix before exit notifications and
+closes, then drops the checkpoint and exits. `Daemon.serve` gives every child
+the fixed profile `TERM=xterm-256color`, `TERM_PROGRAM=linger`, and
+`TERM_PROGRAM_VERSION=0.1.0`; no mediator or runtime branch inspects the child
+executable, argv, shell, or attached terminal type.
+
+Proved scanner boundedness through `onMsg`, `step`, and arbitrary `run` traces;
+exact `.ptyOut` VT/scanner/effect projections; roster-independent reply
+selection; and exact EOF scanner/effect ordering. Session fixtures cover
+zero/one/two attached clients, a split request, hidden owned bytes, and
+flush-before-exit ordering. The generic raw-PTY live probe confirms one exact
+DA1 reply before any attach and with one/two clients, ordinary presentation
+output, parent-`TERM` independence, and the fixed three-variable child profile;
+fish remains only a detached-command regression.
+
+Break verification (all restored):
+- Changed reply emission from `r.replies.isEmpty` to `s.clients.isEmpty`.
+  Session effect theorems and concrete ownership tests failed: detached replies
+  disappeared and attached non-query output could generate an empty PTY write.
+- Reordered child-exit effects from `flush ++ notify` to `notify ++ flush`.
+  `step_childExited_effects` ceased to be definitional and the exact Session
+  exit-order fixture failed, proving pending presentation bytes must precede
+  exit notification. Restoring `flush ++ notify` made both green.
+- Changed the child profile from `TERM=xterm-256color` to `TERM=screen` and
+  rebuilt `linger`. The raw-PTY suite failed exactly the stable-profile check
+  for zero, one, and two clients while all DA1 progress/reply checks still
+  passed. Restoring `xterm-256color` returned all ten probe checks to green.
+
+Final Step 2 gate after restoration: `./lake build Theorems Tests`,
+`python3 tests/terminal_query_test.py`, `python3 tests/graphics_test.py`, and
+`./tests/e2e.sh` all pass warning-free. The source-claim ratchet remains 17,
+the shim ratchet did not rise, and all eight live suites are green.
+
+
+## Step 3 notes, part 1 — the emulator stops producing unrenderable grids — 2026-08-14T02:41:36Z
+
+The two deep fuzz seeds pinned as failing (24 and 139) were **the same bug**, and
+not the one the exclusion list described. Narrowed by evaluating both cases
+cell by cell rather than reasoning from the code:
+
+```
+idx 24  6x3  …漢 at cols 1-2, then CUP 1;1, then é A
+  live y0: (é,w1,m[301]) (A,w1) (sp,w0) …      ← orphaned shadow at col 2
+  rep  y0: (é,w1,m[301]) (A,w1) (sp,w1) …
+idx 139 4x2  漢́ at cols 0-1, then … b at col 0
+  live y0: (b,w1) (sp,w0,m[301]) …             ← orphan carries the mark
+  rep  y0: (b,w1,m[301]) (sp,w1) …             ← mark re-attached to the wrong cell
+```
+
+**Printing a narrow glyph over a wide base orphans that base's shadow.** No
+`ICH`/`DCH` involved — any redraw over CJK text does it, which makes the four
+held-out `knownGap` mutations a special case of a much more reachable bug. The
+exclusion list's stated cause was wrong for the second time (fix 11 refuted it
+once already); "reachable only via X" from reading the code keeps being a
+hypothesis a search refutes.
+
+### What landed
+
+Repair at the mutation, generalizing fix 11 from printing to every row write:
+`Row.halfPair` (is this column half a pair?), `Row.mendAt` (blank a half,
+keeping its background), `Row.mend` (sweep a row), `Vt.mendAt`/`mendAround`
+(the O(1) pair a print needs)/`mendRow`. Call sites: `printPut` mends the two
+columns a write can half-orphan; `printShift`, `eraseRowSpan`, `deleteChars`,
+`insertChars` and `resizeRow` mend the row. `Vt.printPut`'s fix-11 branch stays.
+
+Two other normalizations, both of which remove a case rather than handle it:
+
+* **Marks attach to a wide glyph's base, never its shadow** (`Vt.printMark`).
+  A shadow is a blank column a repaint re-creates from its base, so a mark
+  parked there cannot survive `rowAnsi`; `rowText` skipped it outright, so it
+  never appeared in `linger history` either. This **retires the documented
+  right-margin limit** ("a wide cell with marks on both glyph and shadow is not
+  expressible"): at the margin only an armed wrap-pending flag can address the
+  last column, and no absolute cursor move reproduces that — so the fix is to
+  keep marks off shadows, not to address them.
+* **C0/DEL become U+FFFD on store** (`Vt.printableChar`). `Render.safeChar`
+  already substituted on emit, so a stored control byte made live and replayed
+  screens differ. DEL arrives as itself and an overlong UTF-8 sequence decodes
+  to a C0, so both are reachable. `safeChar` stays as the emit-side guard — it
+  still has work to do for a decoded checkpoint.
+
+### A latent emitter bug the mark change exposed
+
+`rowAnsi`'s fold carries a **cell index**, and a width-2 base advanced it by two
+while its shadow advanced it by one — three per pair. The `CHA` emitted for the
+*second* marked wide glyph in a row therefore addressed one column too far
+right, the rest of the row drifted, and its last cell wrapped into a line feed
+that scrolled the whole grid. Invisible before because marks used to land on
+shadows, leaving wide bases mark-free and that branch nearly dead code; with
+marks on the base it fires for an ordinary `漢`+mark, and the fuzzer found it at
+two independent seeds immediately. `Zmx/Core/Render.lean` and
+`Tests/Render.lean` were added to Step 3's `Writes` for this (spec amended
+first) — the repair belongs with the change that exposed it.
+
+### Gate
+
+`knownGap = #[]` with all four former entries in `frags`; `failing 400 = []`;
+`failingDeep 150 = []`. Out of band, 4600 further cases across four
+generator/depth combinations (3000 x6, 800 x14, 400 x24, 400 x18) are also
+clean, so the repair generalizes rather than relocating the failure. Fixtures
+added for every removed failure plus the overprint, mirror-overprint, partial
+erase, insert-shift, resize-truncation, DEL and overlong-C0 cases.
+`CLAIM_CAP` **lowered 17 → 16** (`erased` is now claimed).
+
+### Proof work
+
+`mend_halfPair`: after `Row.mend`, no column of any row is a half pair — the
+postcondition `Renderable` will rest on. Ladder: `halfPair_eq_false_iff` (the
+predicate in `Prop`, where pair reasoning is legible), `halfPair_of_width_one`,
+`mendAt_ne`/`mendAt_self_of_*`, `halfPair_mendAt_lt`/`_self`, `mendUpto_spec`
+(the sweep induction via `List.range_succ`), `size_mend`.
+
+`Vt.printChar` and `Vt.printMark` were extracted as named stages because
+`split` picks the first splittable term it finds: with the charset test and the
+control test inline in `print`'s width scrutinee, `Good.print` and the four
+invariance layers had to peel two `if`s they did not care about, and
+`Good.printPut` timed out at `whnf` descending into the repair's `getD` chains.
+Frames for `mendAt`/`mendAround`/`mendRow`/`printMark` reduce each layer to one
+`rw`. `getD_set_self`/`getD_set_ne` moved from private copies in
+`Theorems/Render.lean` up to `Theorems/Vt.lean`.
+
+`Vt.mendAround` gained an `x == 0` guard. Not a bounds nicety: `x - 1` collapses
+to `x` there, so the repair would read the column the write just filled, and the
+guard is what makes `getCell_mendAround` provable. Its hypothesis is stated
+`x + 1 ≠ xw`, not `x ≠ xw - 1`, because truncated subtraction makes the latter
+false at column 0 — exactly where the repair is skipped.
+
+`print_narrow_frame` had to weaken: a narrow glyph now touches its own cell and
+possibly the two beside it, since the repair blanks an orphan. The sharper
+"touches one cell" form needs the row to be pair-consistent, which is
+`Renderable`'s job, so it is stated there rather than assumed here.
+
+### Break verification
+
+| break | result | verdict |
+|---|---|---|
+| shadow guard reads `width != 1` instead of `!= 2` | 7+ replay fixtures fail; `halfPair_eq_false_iff` type-mismatches | **real** (fixtures), weak (theorem — the lemma restates the definition) |
+| a shadow looks *right* for its base (`x + 1`) | same shape | weak — the characterization lemma names the offset |
+| repair writes `Cell.shadow` instead of a blank | type mismatch | weak — the lemma names the written value |
+| sweep stops one column short (`range (size - 1)`) | `ICH`, insert-mode and resize-truncation fixtures fail; `mend_halfPair` unprovable | **real** |
+
+**Negative result, and it corrected a comment I had just written.** Sweeping
+right to left (`mendAt (size - 1 - x)`) passes every fixture and the entire fuzz
+corpus. The sweep order is genuinely unobservable: `mendAt` blanks a column only
+when its partner is *already* gone — a shadow with a width-2 base on its left is
+left alone, and a base with a width-0 shadow on its right is left alone — so a
+blank can never create a new half pair and there is no cascade to order. My
+`Row.mend` comment had claimed left-to-right was what made one pass enough;
+that justification was wrong and is corrected in both the code and
+`halfPair_mendAt_lt`. Measuring the mutation is what caught it.
+
+### Deliberately not done, with the measurement behind it
+
+Using `Row.mend` on the print path too would make every mutation end in a
+whole-row sweep, so `Renderable`'s pair half would follow from `mend_halfPair`
+uniformly with no local index reasoning — a large proof saving. Rejected:
+`putCell` is O(1) amortized (Lean updates a uniquely-referenced array in place),
+while a row sweep is O(cols) *per glyph*, so this would put an asymptotic
+regression on the hottest path in the daemon to save proof work. `mendAround`
+stays O(1) and `printPut` keeps its bounded case analysis. (An attempt to
+measure the crossover with `#eval` timings was inconclusive — a closed payload
+term is constant-folded before the first clock reading, and even a
+clock-seeded payload reported 0 ms for 3.2 MB, so the numbers are not
+trustworthy and the argument above rests on the complexity, not on them.)
+
+Hand-off: `Renderable`/`LiveReachableVt`/`renderable_of_liveReachable` and the
+Session trace lift are the rest of Step 3. `mend_halfPair` discharges the pair
+clause for every row-sweeping mutation; `printPut` is the one site needing the
+window argument (changed columns are `x`, `x+1` from the write and `x-1`,
+`x+w` from the repair, so only `halfPair` at `x-2 … x+w+1` can move).
+
+
+## Step 3 notes, part 2 — correction, §Renderable, and a review that earned its keep — 2026-08-14T03:43:17Z
+
+### Correction to part 1 (read that entry with this one)
+
+Part 1 describes a design the tree does **not** ship. It recorded `Vt.mendAround`
+— an O(1) repair of the two columns beside a write — and a "deliberately not
+done" decision rejecting whole-row mending on the print path as an *asymptotic*
+regression. Both are wrong, and the reasoning behind the rejection was the wrong
+part:
+
+`Vt.putCell` reads its row out of the grid before writing it back, so the row is
+shared and the inner `setIfInBounds` **copies it**. Printing was already O(cols)
+per glyph. A whole-row sweep is therefore a constant factor over a copy that
+already happens, not a new asymptotic class — so the trade I had "measured" did
+not exist. `Vt.mendAround` is gone; `printPut` and `printMark` both end in
+`Vt.mendRow`, and every row mutation now ends in the same place.
+
+What that bought is the reason to prefer it: the pair invariant is established
+**once**, by `mend_pairOk`, for any input row at all. The window design would
+have needed a bounded case analysis at every write site (changed columns `x`,
+`x+1` from the write and `x-1`, `x+w` from the repair, so `halfPair` moves at
+`x-2 … x+w+1`) and would have had to be redone for each mutation. This is the
+AGENTS.md rule working as intended: restructure the code for provability rather
+than weaken the theorem — and my part-1 note had it backwards.
+
+Part 1's hand-off also lists `Renderable` as remaining; the definitions landed
+(below). Its break-verification table stands as recorded.
+
+### §Renderable landed, partly
+
+`Row.mendAt` now also **canonicalizes** a whole pair's shadow, so a shadow holds
+exactly what repainting its base re-creates and nothing of its own. That upgrade
+is what makes the sweep establish the *full* pair rule rather than just widths:
+`PairOk` says a base keeps a canonical shadow and a shadow keeps its base, and
+`mend_pairOk` proves it for every column of any mended row.
+
+Landed: `CellOk`/`RowOk`/`GridOk`/`Renderable`, `renderable_init`,
+`mend_pairOk`, `mend_keeps_narrow`/`mend_keeps_wide` (the sweep is the identity
+on a well-formed write — what lets a repaint read back what it painted),
+`print_narrow_eq`/`print_wide_eq`/`print_mark_eq` (print reduced to its write,
+so the per-glyph theorems never walk five stages), the write-then-repair
+read-back layer, and `GridOkExcept` plus the fold lemmas for the remaining rung.
+
+**Not landed**: `renderable_step`, and therefore `LiveReachableVt` and
+`renderable_of_liveReachable`. Stopped deliberately rather than half-built. The
+shape of what remains: `renderable_congr` discharges every operation that leaves
+`grid`/`cols`/`rows`/`altGrid` alone (most of `csiDispatch`) from its existing
+frame; the dozen that write cells go `GridOk → GridOkExcept y → write → mendRow`
+via `gridOkExcept_set`/`gridOkExcept_replace`/`gridOk_of_except`; `resize` and
+the alt swap need `Array.extract`/append cell lemmas; `RIS` reuses
+`renderable_init` under `Good`'s `clampDim` identity.
+
+**Step 4 (`restore_grid`) was not started, on a scope check rather than a
+whim**: it is the row/grid replay induction — `rowAnsi`'s combined pen-and-column
+fold, `joinCRLF` and its scroll interaction, `screensAnsi`'s alt switch, the
+wide-with-marks `CHA` moves — comparable in size to the whole §Replay parser
+half, which took several sessions. Step 3 removed the *side conditions* it would
+have needed on the emulator side; the induction itself is untouched.
+
+### The review found a bug in my own documentation, and two vacuous theorems
+
+Ran the semantic reviewer on the working tree. Verdict NEEDS_CHANGES, 10
+findings, **none in runtime behavior** — every defect was in a claim. Worth
+recording because two of them are the failure mode this project keeps hitting: a
+theorem that cannot fail.
+
+1. **I destroyed a THEOREMS.md row.** Inserting §Renderable ate `§Status`'s row
+   prefix and glued its body on, giving a 7-cell row where every other row has 4
+   — so a shipped, proved family silently stopped being documented. A pipe count
+   per line would have caught it instantly. Restored.
+2. **`ptyOut_reply_roster_independent` could not fail.** Its conclusion mentioned
+   only `Terminal.feed s.vt s.scan chunk`, which cannot depend on the roster *by
+   construction*, so the theorem stayed green when `.ptyOut` was mutated to gate
+   replies on `s.clients` — the exact regression it was cited for in THEOREMS.md.
+   Restated over `(step s (.ptyOut chunk)).2`, filtered to the child writes, with
+   a new `broadcast_no_writePty` doing the real work. **Break-verified after the
+   fix**: the roster-gating mutation now fails it (plus two other theorems).
+   This is the third time in this project that a theorem about a *helper* has
+   been mistaken for a theorem about the *machine*; the rule is that a claim
+   about `step` must mention `step`.
+3. **`finish_exact` is `rfl` on its own definition** and was cited for "released
+   once at EOF and never re-fed to the VT" — neither of which it states. The
+   citation now points at `step_childExited_effects`, which is `rfl` against the
+   literal effect list and does carry the ordering.
+4. **The §Terminal row over-credited passthrough**: `apc_passthrough`/
+   `sixel_passthrough` cover two protocols under an unmentioned `StFree`
+   hypothesis, while ordinary-ANSI and vendor-query passthrough rest on fixtures.
+   The row now says exactly that, and names the general conservation lemma as not
+   yet stated. The reviewer also supplied its inductive step: every `Scan.step`
+   transition satisfies `pending ++ [b] = visible ++ pending'` (or `= seq` on
+   completion), including the two that look like drops (`.csi`/`.csiPass` on ESC
+   retain the byte as `.esc`'s pending).
+
+Also fixed: `printMark`'s `cx0 - 1` is now guarded by `cx0 != 0` — a width-0 cell
+in column 0 is unreachable but `renderable_step` does not yet *prove* it, and the
+failure mode was silent (mark parked on column 0, then blanked by the repair);
+`broadcast`'s empty guard is documented and pinned by `broadcast_empty`
+(`chunksOf n [] = [[]]`, so without it every owned query would push a zero-length
+frame to every client — a state unreachable before the mediator existed);
+`Tests/Fuzz.lean`'s header, which still claimed a hold-out list that is now
+empty; the stale window language in `print_narrow_frame` and a fixture comment;
+and `rowAnsi`'s width-0 comment, which said a shadow paints nothing while the
+branch still emits marks found there (dead for live grids, defensive for a
+decoded checkpoint).
+
+Gate after all fixes: `./lake build`, `./lake build Theorems Tests`, and
+`./tests/e2e.sh` green and warning-free, `CLAIM_CAP` 16, `git diff --check`
+clean. The review doc is in `semantic-review/` and is a transient artifact, not a
+deliverable.
+
+Hand-off: `specs/terminal-contract.md` stays **active** with per-step status
+written in it; it is deliberately *not* archived, because Steps 3–5 exit criteria
+are unmet and archiving with unmet criteria is the one thing the spec's own
+re-plan clause forbids.

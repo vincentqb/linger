@@ -1,6 +1,7 @@
 import Zmx.Core.Session
 import Theorems.Wire
 import Theorems.Vt
+import Theorems.Terminal
 /-! # §Detach / §Bound(session) — the daemon state machine theorems
 
 THEOREMS.md rows:
@@ -48,19 +49,96 @@ theorem step_closed (s : State) (id : Nat) :
   · exact ⟨rfl, rfl, by simp⟩
   · exact ⟨rfl, rfl, by simp⟩
 
-/-- The session with zero clients still advances: pty output reaches
-the emulator exactly as it would with clients (broadcast just has no
-recipients). This is what makes reattach-after-a-week work. -/
+/-- With zero clients the mediator still advances, and an owned query still
+gets its one child-facing reply; only presentation broadcast disappears. -/
 theorem step_ptyOut_no_clients (s : State) (chunk : List UInt8)
     (h : s.clients = []) :
-    step s (.ptyOut chunk)
-      = ({ s with vt := s.vt.feed chunk, dirty := true,
-                  outSeq := s.outSeq + 1 }, []) := by
+    step s (.ptyOut chunk) =
+      let r := Terminal.feed s.vt s.scan chunk
+      ({ s with vt := r.vt, scan := r.scan, dirty := true,
+                  outSeq := s.outSeq + 1 },
+       if r.replies.isEmpty then [] else [Effect.writePty r.replies]) := by
   simp [step, broadcast, h]
 
-/-- With or without clients, the emulator advances identically. -/
+/-- With or without clients, the emulator advances identically to `Vt.feed`. -/
 theorem step_ptyOut_vt (s : State) (chunk : List UInt8) :
-    (step s (.ptyOut chunk)).1.vt = s.vt.feed chunk := rfl
+    (step s (.ptyOut chunk)).1.vt = s.vt.feed chunk := by
+  simpa [step] using Terminal.feed_vt s.vt s.scan chunk
+
+/-- The one persistent scanner advances exactly once per pty-output event. -/
+theorem step_ptyOut_scan (s : State) (chunk : List UInt8) :
+    (step s (.ptyOut chunk)).1.scan = (Terminal.feed s.vt s.scan chunk).scan := rfl
+
+/-- **No empty output frame.** A chunk that is entirely an owned query leaves no
+visible bytes, and `chunksOf n [] = [[]]` — so without `broadcast`'s guard every
+terminal query would push a zero-length `output` frame to every attached client.
+Stated for an arbitrary roster, since that is where the frames would come from. -/
+theorem broadcast_empty (s : State) : broadcast s [] = [] := rfl
+
+/-- A presentation broadcast contains no child write, whatever the roster —
+what makes the reply channel and the presentation channel separable. -/theorem broadcast_no_writePty (s : State) (bytes : List UInt8) :
+    (broadcast s bytes).filter (fun e => match e with
+        | .writePty _ => true
+        | _ => false) = [] := by
+  unfold broadcast
+  split
+  · rfl
+  · -- every effect a broadcast emits is a `.send`
+    induction (s.clients.filter (·.attached)) with
+    | nil => rfl
+    | cons c cs ih =>
+      rw [List.flatMap_cons, List.filter_append, ih, List.append_nil]
+      unfold outputMsgs
+      rw [List.filter_map]
+      simp
+
+/-- The reply prefix depends only on VT, scanner, and bytes; the roster appears
+only in the following presentation broadcast. -/
+theorem step_ptyOut_effects (s : State) (chunk : List UInt8) :
+    (step s (.ptyOut chunk)).2 =
+      let r := Terminal.feed s.vt s.scan chunk
+      (if r.replies.isEmpty then [] else [Effect.writePty r.replies]) ++
+        broadcast s r.visible := rfl
+
+/-- **The roster-independence claim, stated over `step` so it can fail.** Two
+states that agree on the terminal state but have *arbitrarily different client
+rosters* prescribe the same zero-or-one child write. Quantifying over `step`
+rather than over `Terminal.feed` is the whole point: an earlier version of this
+theorem mentioned only `feed`, whose result cannot depend on the roster by
+construction, so it stayed true when `.ptyOut` was mutated to gate replies on
+`s.clients` — the exact regression it was supposed to guard. -/
+theorem ptyOut_reply_roster_independent (s t : State) (chunk : List UInt8)
+    (hv : s.vt = t.vt) (hs : s.scan = t.scan) :
+    (step s (.ptyOut chunk)).2.filter (fun e => match e with
+        | .writePty _ => true
+        | _ => false)
+      = (step t (.ptyOut chunk)).2.filter (fun e => match e with
+        | .writePty _ => true
+        | _ => false) := by
+  rw [step_ptyOut_effects, step_ptyOut_effects]
+  dsimp only
+  rw [hv, hs]
+  -- the presentation broadcast contributes no child write, whatever the roster
+  rw [List.filter_append, List.filter_append, broadcast_no_writePty,
+    broadcast_no_writePty]
+
+/-- Child exit resets the scanner; `finish`'s pending bytes are broadcast by
+`step` before exited notifications and close effects. -/
+theorem step_childExited_scan (s : State) (status : UInt32) :
+    (step s (.childExited status)).1.scan = .ground := by
+  simp [step, Terminal.finish]
+
+/-- The incomplete prefix is the first effect segment, before exited notices,
+closes, checkpoint deletion, and daemon exit. -/
+theorem step_childExited_effects (s : State) (status : UInt32) :
+    (step s (.childExited status)).2 =
+      let flushed := Terminal.finish s.scan
+      let s' := { s with exited := some status, scan := flushed.2 }
+      let flush := if flushed.1.isEmpty then [] else broadcast s' flushed.1
+      let notify := s'.clients.filter (fun c => c.attached || c.waiting)
+        |>.map (fun c => Effect.send c.id (.exited status))
+      let closes := s'.clients.map (fun c => Effect.close c.id)
+      flush ++ notify ++ closes ++ [.dropCheckpoint, .exit] := rfl
 
 /-- `detach-all` closes clients; it cannot touch the screen. -/
 theorem onMsg_detachAll_vt (s : State) (c : Client) :
@@ -100,6 +178,7 @@ structure Bounded (s : State) : Prop where
   labelsLe : s.labels.length ≤ maxLabels
   decOk : ∀ c ∈ s.clients,
     c.decoder.errored = false ∧ c.decoder.buf.length ≤ 4 + Wire.maxPayload
+  scanOk : s.scan.Bounded
 
 theorem setClient_length (s : State) (c : Client) :
     (s.setClient c).clients.length = s.clients.length := by
@@ -170,13 +249,21 @@ theorem onMsg_decOk (s : State) (c : Client) (m : Msg)
     | exact decOk_setClient _ _ hc h
     | (intro c' hmem; exact h c' hmem)
 
-/-- One message preserves the bound triple. -/
+theorem onMsg_scan (s : State) (c : Client) (m : Msg) :
+    (onMsg s c m).1.scan = s.scan := by
+  unfold onMsg
+  dsimp only
+  repeat' split
+  all_goals simp_all [State.setClient]
+
+/-- One message preserves the bound quadruple. -/
 theorem onMsg_bounded {s : State} {c : Client} (m : Msg)
     (hc : c.decoder.errored = false ∧ c.decoder.buf.length ≤ 4 + Wire.maxPayload)
     (h : Bounded s) : Bounded (onMsg s c m).1 :=
   ⟨Nat.le_trans (onMsg_clients_length_le s c m) h.clientsLe,
    onMsg_labels_le s c m h.labelsLe,
-   onMsg_decOk s c m hc h.decOk⟩
+   onMsg_decOk s c m hc h.decOk,
+   by rw [onMsg_scan]; exact h.scanOk⟩
 
 theorem client?_mem {s : State} {id : Nat} {c : Client}
     (h : s.client? id = some c) : c ∈ s.clients :=
@@ -197,18 +284,18 @@ theorem feedMsgs_bounded (id : Nat) (msgs : List Msg)
       exact ih _ (onMsg_bounded m (h.decOk c' (client?_mem hc)) h)
 
 /-- §Bound at the daemon level: no event stream can grow the client
-list, the label table, or any client's decoder past their caps. -/
+list, label table, client decoders, or terminal scanner past their caps. -/
 theorem step_bounded (s : State) (ev : Event) (h : Bounded s) :
     Bounded (step s ev).1 := by
-  obtain ⟨hcl, hlb, hdec⟩ := h
-  have h' : Bounded s := ⟨hcl, hlb, hdec⟩
+  obtain ⟨hcl, hlb, hdec, hscan⟩ := h
+  have h' : Bounded s := ⟨hcl, hlb, hdec, hscan⟩
   unfold step
   split
   · -- connected
     split
     · exact h'
     · rename_i hlt
-      refine ⟨?_, hlb, ?_⟩
+      refine ⟨?_, hlb, ?_, hscan⟩
       · simp only [List.length_append, List.length_cons, List.length_nil]
         omega
       · intro c' hmem
@@ -225,7 +312,7 @@ theorem step_bounded (s : State) (ev : Event) (h : Bounded s) :
       dsimp only
       split
       · -- decoder errored: client dropped
-        refine ⟨Nat.le_trans (dropClient_length_le s _) hcl, hlb, ?_⟩
+        refine ⟨Nat.le_trans (dropClient_length_le s _) hcl, hlb, ?_, hscan⟩
         intro c' hmem
         exact hdec c' ((List.mem_filter.mp hmem).1)
       · rename_i herr
@@ -234,7 +321,7 @@ theorem step_bounded (s : State) (ev : Event) (h : Bounded s) :
         have hcmem := client?_mem hfind
         have hcok := hdec c hcmem
         -- the new decoder is healthy: not errored (guard) and capped
-        refine ⟨?_, hlb, ?_⟩
+        refine ⟨?_, hlb, ?_, hscan⟩
         · simpa [setClient_length] using hcl
         · refine decOk_setClient s _ ⟨?_, ?_⟩ hdec
           · dsimp only
@@ -248,20 +335,20 @@ theorem step_bounded (s : State) (ev : Event) (h : Bounded s) :
   · -- closed (may checkpoint; state shape identical either way)
     dsimp only
     split
-    · refine ⟨Nat.le_trans (dropClient_length_le s _) hcl, hlb, ?_⟩
+    · refine ⟨Nat.le_trans (dropClient_length_le s _) hcl, hlb, ?_, hscan⟩
       intro c' hmem
       exact hdec c' ((List.mem_filter.mp hmem).1)
-    · refine ⟨Nat.le_trans (dropClient_length_le s _) hcl, hlb, ?_⟩
+    · refine ⟨Nat.le_trans (dropClient_length_le s _) hcl, hlb, ?_, hscan⟩
       intro c' hmem
       exact hdec c' ((List.mem_filter.mp hmem).1)
   · -- ptyOut
-    exact ⟨hcl, hlb, hdec⟩
-  · -- childExited
-    exact ⟨hcl, hlb, hdec⟩
+    exact ⟨hcl, hlb, hdec, Terminal.feed_bounded _ _ _ hscan⟩
+  · -- childExited: finish always returns ground
+    exact ⟨hcl, hlb, hdec, Terminal.finish_bounded s.scan⟩
   · -- tick
     split
-    · exact ⟨hcl, hlb, hdec⟩
-    · exact ⟨hcl, hlb, hdec⟩
+    · exact ⟨hcl, hlb, hdec, hscan⟩
+    · exact ⟨hcl, hlb, hdec, hscan⟩
 
 /-! ## The emulator stays Good through the daemon -/
 
@@ -312,7 +399,10 @@ theorem step_vt_good (s : State) (ev : Event) (h : Good s.vt) :
     split
     · exact h
     · exact h
-  · exact Zmx.Core.Vt.Good.feed _ h
+  · -- ptyOut
+    dsimp only
+    rw [Terminal.feed_vt]
+    exact Zmx.Core.Vt.Good.feed _ h
   · exact h
   · split
     · exact h

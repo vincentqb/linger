@@ -75,8 +75,13 @@ example : roundtrips (screen 10 6
 example : roundtrips (screen 12 3 "漢字e\u0301x")
     = true := by native_decide
 
-/-- Spec fix 1: a combining mark on a WIDE char lives on the width-0
-continuation cell; the emitter must not drop it. -/
+/-- A combining mark on a WIDE char. It is stored on the **base**, never on
+the width-0 continuation cell: a shadow is a blank column that a repaint
+re-creates from its base, `Render.rowText` skips it outright (so a mark parked
+there never appeared in `linger history`), and at the right margin only an
+armed wrap-pending flag could address it — which no absolute cursor move
+reproduces. `Vt.print` redirects there, so the emitter has one case instead of
+a documented inexpressible one. -/
 example : roundtrips (screen 12 3 "漢\u0301x")
     = true := by native_decide
 
@@ -117,12 +122,76 @@ right on every reattach. Found while designing the grid induction, not by
 testing. -/
 example : roundtrips (screen 12 3 "\u6f22\x1b[2G\u0301") = true := by native_decide
 
-/-- The same path at the **right margin**, where the fix must not fire: a
-wide char ending at the last column leaves the cursor clamped with
-wrap-pending, so a mark then lands on the shadow through a different branch
-and needs no correction. A relative backspace would have landed a column too
-far left here, which is why the correction is an absolute `CHA`. -/
+/-- The same path at the **right margin**: a wide char ending in the last
+column leaves the cursor clamped there with wrap-pending, so the mark's target
+is the shadow, which is exactly the case the redirect has to catch — a mark on
+the final column is the one position an absolute `CHA` cannot reach. -/
 example : roundtrips (screen 4 2 "ab\u6f22\u0301") = true := by native_decide
+
+/-- Two marked wide glyphs in one row. The emitted `CHA` column is a **cell
+index**, and a width-2 base used to advance it by two while its shadow advanced
+it by one — so the second glyph's mark address was a column too far right, the
+rest of the row drifted, and its last cell wrapped into a line feed that
+scrolled the whole grid. Latent until marks were normalized onto the base made
+this branch fire for an ordinary marked `漢`; the fuzzer found it in the same
+pass, at two independent seeds. -/
+example : roundtrips (screen 6 3 "\u6f22\u0301\u6f22\u0301") = true := by native_decide
+
+/-- …and with a line-insert after it, which is how the fuzzer first showed the
+drift: the spurious wrap moved every row down by one. -/
+example : roundtrips (screen 6 3 "\x1b[?2004h\u6f22\u0301\u6f22\u0301\x1b[L")
+    = true := by native_decide
+
+/-- A **narrow glyph printed over a wide base** orphans that base's shadow: a
+width-0 cell with no base to its left, which `rowAnsi` paints as nothing while
+it still occupies a column, so the rest of the row lands one column left. This
+needs no `ICH`/`DCH` — any redraw over CJK text does it — and it was both of
+the deep fuzz seeds pinned as failing. `Vt.printPut` mends the two columns a
+write can half-orphan. -/
+example : roundtrips (screen 6 3 "\u6f22b\x1b[1;1HA") = true := by native_decide
+
+/-- The same overprint where the orphaned shadow carries the wide glyph's
+marks — the second pinned seed. Before the repair the mark re-attached to the
+overprinting glyph. -/
+example : roundtrips (screen 4 2 "\u6f22\u0301\x1b[1;1Hb") = true := by native_decide
+
+/-- A **wide glyph printed over a shadow** orphans the shadow's base on the
+left, the mirror of the case above. -/
+example : roundtrips (screen 6 3 "\u6f22\x1b[1;2H\u6f22") = true := by native_decide
+
+/-- `ICH` pushing a pair's shadow off the row end, and `DCH` deleting a wide
+base out from under its shadow: the four mutations held out of the fuzz corpus
+until now. Each leaves a half pair that the row painter cannot express, and
+each is repaired where it happens. -/
+example : roundtrips (screen 6 2 "ab\u6f22cd\x1b[1;1H\x1b[3@") = true := by native_decide
+
+example : roundtrips (screen 6 2 "\u6f22ab\x1b[1;1H\x1b[1P") = true := by native_decide
+
+example : roundtrips (screen 6 2 "a\u6f22b\x1b[1;2H\x1b[1@") = true := by native_decide
+
+example : roundtrips (screen 6 2 "a\u6f22b\x1b[1;3H\x1b[2@") = true := by native_decide
+
+/-- A partial erase that clears one half of a pair (`ECH` over the base, `EL`
+from inside a pair). -/
+example : roundtrips (screen 6 2 "a\u6f22b\x1b[1;2H\x1b[1X") = true := by native_decide
+
+example : roundtrips (screen 6 2 "a\u6f22b\x1b[1;3H\x1b[K") = true := by native_decide
+
+/-- Insert mode shifting a pair off the row end. -/
+example : roundtrips (screen 6 2 "abc\u6f22\x1b[1;1H\x1b[4hxy") = true := by native_decide
+
+/-- A stored **DEL**, and a C0 reached through an overlong UTF-8 sequence.
+Either would be repainted as U+FFFD by `Render.safeChar` while the live cell
+held the control codepoint, so the substitution happens on store instead
+(`Vt.printableChar`) and the two agree. The overlong case is fed as raw bytes:
+a Lean `"\xc0"` literal is a character, which `toUTF8` re-encodes. -/
+example : roundtrips (screen 6 2 "a\x7fb") = true := by native_decide
+
+example : roundtrips ((Vt.init 6 2).feed [0x61, 0xC0, 0x80, 0x62]) = true := by
+  native_decide
+
+/-- Resize truncating a row through the middle of a wide pair. -/
+example : roundtrips ((screen 6 2 "ab\u6f22cd").resize 4 2) = true := by native_decide
 
 /-- Spec fix 9 — the **stashed main pen leaked into the alt repaint**.
 `screensAnsi` sets the stashed pen just before `?1049h` so the switch stashes

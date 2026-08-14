@@ -1,6 +1,7 @@
 import Zmx.Core.Wire
 import Zmx.Core.Vt
 import Zmx.Core.Render
+import Zmx.Core.Terminal
 import Zmx.Core.Name
 /-! # Zmx.Core.Session — the daemon's brain, as data
 
@@ -44,6 +45,8 @@ structure Client where
 
 structure State where
   vt : Vt.Vt
+  /-- One bounded scanner owned by the PTY-facing virtual terminal. -/
+  scan : Terminal.Scan := .ground
   clients : List Client := []
   labels : List (String × String) := []
   /-- name/pid/created/cwd…, set once by the runtime at boot. -/
@@ -161,8 +164,17 @@ def resizeEffects (s : State) (c : Client) : List Effect :=
 def outputMsgs (id : Nat) (bytes : List UInt8) : List Effect :=
   (chunksOf outputChunk bytes).map (fun c => .send id (.output c))
 
+/-- Broadcast presentation bytes to the attached clients.
+
+The empty guard is load-bearing, not defensive tidiness: `chunksOf n [] = [[]]`,
+so without it a chunk consisting *entirely* of an owned query — whose visible
+bytes are empty by design — would push a zero-length `output` frame to every
+attached client on every terminal query. Unreachable before the mediator
+existed, since the runtime raises `.ptyOut` only for a non-empty read.
+Pinned by `broadcast_empty` and by a Session fixture. -/
 def broadcast (s : State) (bytes : List UInt8) : List Effect :=
-  s.clients.filter (·.attached) |>.flatMap (fun c => outputMsgs c.id bytes)
+  if bytes.isEmpty then []
+  else s.clients.filter (·.attached) |>.flatMap (fun c => outputMsgs c.id bytes)
 
 /-! ## Message handling (client → daemon) -/
 
@@ -270,16 +282,21 @@ def step (s : State) (ev : Event) : State × List Effect :=
     else
       (s', [])
   | .ptyOut chunk =>
-    ({ s with vt := s.vt.feed chunk, dirty := true, outSeq := s.outSeq + 1,
+    let r := Terminal.feed s.vt s.scan chunk
+    ({ s with vt := r.vt, scan := r.scan, dirty := true,
+              outSeq := s.outSeq + 1,
               lookSeq := if s.clients.any (·.attached) then s.outSeq + 1
                          else s.lookSeq },
-     broadcast s chunk)
+     (if r.replies.isEmpty then [] else [.writePty r.replies]) ++
+       broadcast s r.visible)
   | .childExited status =>
-    let s := { s with exited := some status }
+    let flushed := Terminal.finish s.scan
+    let s := { s with exited := some status, scan := flushed.2 }
+    let flush := if flushed.1.isEmpty then [] else broadcast s flushed.1
     let notify := s.clients.filter (fun c => c.attached || c.waiting)
       |>.map (fun c => Effect.send c.id (.exited status))
     let closes := s.clients.map (fun c => Effect.close c.id)
-    (s, notify ++ closes ++ [.dropCheckpoint, .exit])
+    (s, flush ++ notify ++ closes ++ [.dropCheckpoint, .exit])
   | .tick now =>
     -- the activity flag is refreshed in both branches as a field value: a
     -- `let` before the `if` would hide the `if` from the proofs that `split`

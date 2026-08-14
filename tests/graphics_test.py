@@ -3,9 +3,9 @@
 What linger promises here, and what it does not:
 
   * live, while attached: image bytes reach the client's terminal
-    VERBATIM, because the daemon broadcasts each raw pty chunk alongside
-    feeding its own emulator (Zmx/Core/Session.lean, `.ptyBytes`). No
-    allow-passthrough switch, unlike tmux.
+    VERBATIM. The bounded terminal mediator recognizes only its owned query
+    profile and emits every unowned APC/DCS byte unchanged; kitty/sixel enter
+    payload-free passthrough states, so no allow-passthrough switch is needed.
   * the emulator IGNORES the payload (parser state `.str` until ST) and
     accumulates nothing, so a megabyte of base64 cannot grow the session
     or reach the checkpoint (§Bound).

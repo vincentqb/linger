@@ -2472,119 +2472,47 @@ but `Good` does not say so, which is a gap in §Bound rather than in this
 proof. `Renderable` (step 1 of specs/grid-fidelity.md) is where it belongs.
 -/
 
-private theorem getD_set_self {α} [Inhabited α] (r : Array α) (x : Nat) (c d : α)
-    (h : x < r.size) : (r.setIfInBounds x c).getD x d = c := by
-  simp [Array.getD, Array.setIfInBounds, h]
-
-private theorem getD_set_ne {α} [Inhabited α] (r : Array α) (x j : Nat) (c d : α)
-    (h : j ≠ x) : (r.setIfInBounds x c).getD j d = r.getD j d := by
-  simp only [Array.getD, Array.setIfInBounds]
-  split
-  · simp only [Array.size_set]
-    split
-    · simp [Array.getElem_set, Ne.symm h]
-    · rfl
-  · rfl
-
-/-- **One narrow glyph writes one cell.** `htr` says no charset translation
-is in effect — true of a fresh emulator, and the reason `charsetAnsi` is
-emitted *after* the repaint: with `ESC ( 0` already in force, every ASCII
-glyph would be re-drawn as a box character. -/
+/-- **One narrow glyph writes one cell.** `hpc` says the glyph is stored as
+itself: no charset translation is in effect — true of a fresh emulator, and the
+reason `charsetAnsi` is emitted *after* the repaint, since with `ESC ( 0` in
+force every ASCII glyph would be re-drawn as a box character — and it is not a
+control codepoint, which `Vt.printableChar` would otherwise replace. -/
 theorem print_narrow {v : Vt} (ch : Char)
-    (htr : ((v.shiftOut && v.g1Line) || (!v.shiftOut && v.g0Line)) = false)
+    (hpc : v.printChar ch = ch)
     (hw : charWidth ch = 1) (hins : v.modes.insert = false)
     (hpend : v.cursor.pending = false)
     (hrow : (v.getRow v.cursor.y).size = v.cols) (hgrid : v.grid.size = v.rows)
     (hx : v.cursor.x < v.cols) (hy : v.cursor.y < v.rows) :
     (v.print ch).getCell v.cursor.x v.cursor.y
         = { base := ch, marks := [], width := 1, pen := v.pen } := by
-  unfold Vt.print
-  simp only [htr, Bool.false_eq_true, if_false, hw]
-  rw [if_neg (by decide)]
-  -- the four stages that do nothing here
-  have h1 : v.printWrap = v.clearPending := by
-    unfold Vt.printWrap
-    rw [if_neg (by simp [hpend])]
-  have h2 : ∀ (w : Vt), w.printWideWrap 1 = w := by
-    intro w; unfold Vt.printWideWrap; rw [if_neg (by simp)]
-  have h3 : ∀ (w : Vt), w.modes.insert = false → w.printShift 1 = w := by
-    intro w hw'; unfold Vt.printShift; rw [if_neg (by simp [hw'])]
-  have h4 : ∀ (w : Vt) (c : Char), w.printPut c 1
-      = w.putCell w.cursor.x w.cursor.y { base := c, marks := [], width := 1, pen := w.pen } := by
-    intro w c
-    unfold Vt.printPut
-    dsimp only
-    rw [if_neg (by simp), if_neg (by decide)]
-  rw [h1, h2, h3 _ (by rw [Zmx.Core.Vt.frame_clearPending]; exact hins), h4]
-  -- `printAdvance` moves only the cursor, so the cell is what `putCell` wrote
-  rw [show ∀ (w : Vt) (n : Nat), (w.printAdvance n).getCell = w.getCell from by
-    intro w n
-    unfold Vt.getCell Vt.getRow
-    rw [Zmx.Core.Vt.frame_printAdvance]]
-  -- and `putCell` at an in-bounds coordinate reads back. `clearPending` is
-  -- normalised away first: it leaves the cursor's x/y alone, but not
-  -- syntactically, and the two `getD` positions have to agree for the
-  -- rewrite to fire.
-  have hcp : v.clearPending = { v with cursor := { v.cursor with pending := false } } := rfl
-  unfold Vt.putCell Vt.getCell Vt.getRow
-  unfold Vt.getRow at hrow
-  simp only [hcp]
-  rw [getD_set_self _ _ _ _ (by rw [hgrid]; exact hy),
-    getD_set_self _ _ _ _ (by rw [hrow]; exact hx)]
+  rw [print_narrow_eq hpc hw hins hpend, getCell_printAdvance]
+  refine getCell_write_mendRow_narrow _ _ _ _ rfl ?_ ?_
+  · show v.cursor.y < v.grid.size
+    rw [hgrid]; exact hy
+  · show v.cursor.x < (v.getRow v.cursor.y).size
+    rw [hrow]; exact hx
 
-/-- **…and touches no other cell.** The frame a row induction needs: each
-glyph must leave the ones already painted alone. Both array levels go
-through `getD_set_ne` — a different row is untouched, and within the row a
-different column is. -/
+/-- **…and touches no other row.** The frame a grid induction needs: a glyph
+paints inside one row. *Within* that row the claim is deliberately absent — the
+print ends in a whole-row repair (`Row.mend`), which may rewrite any column of a
+row that was not already pair-consistent — so the one-cell form is stated where
+the row is known pair-consistent (`Renderable`), not here. -/
 theorem print_narrow_frame {v : Vt} (ch : Char)
-    (htr : ((v.shiftOut && v.g1Line) || (!v.shiftOut && v.g0Line)) = false)
+    (hpc : v.printChar ch = ch)
     (hw : charWidth ch = 1) (hins : v.modes.insert = false)
     (hpend : v.cursor.pending = false) (x' y' : Nat)
-    (hne : x' ≠ v.cursor.x ∨ y' ≠ v.cursor.y) :
+    (hne : y' ≠ v.cursor.y) :
     (v.print ch).getCell x' y' = v.getCell x' y' := by
-  have hcp : v.clearPending = { v with cursor := { v.cursor with pending := false } } := rfl
-  unfold Vt.print
-  simp only [htr, Bool.false_eq_true, if_false, hw]
-  rw [if_neg (by decide)]
-  have h1 : v.printWrap = v.clearPending := by
-    unfold Vt.printWrap
-    rw [if_neg (by simp [hpend])]
-  have h2 : ∀ (w : Vt), w.printWideWrap 1 = w := by
-    intro w; unfold Vt.printWideWrap; rw [if_neg (by simp)]
-  have h3 : ∀ (w : Vt), w.modes.insert = false → w.printShift 1 = w := by
-    intro w hw'; unfold Vt.printShift; rw [if_neg (by simp [hw'])]
-  have h4 : ∀ (w : Vt) (c : Char), w.printPut c 1
-      = w.putCell w.cursor.x w.cursor.y
-          { base := c, marks := [], width := 1, pen := w.pen } := by
-    intro w c
-    unfold Vt.printPut
-    dsimp only
-    rw [if_neg (by simp), if_neg (by decide)]
-  rw [h1, h2, h3 _ (by rw [Zmx.Core.Vt.frame_clearPending]; exact hins), h4]
-  rw [show ∀ (w : Vt) (n : Nat), (w.printAdvance n).getCell = w.getCell from by
-    intro w n
-    unfold Vt.getCell Vt.getRow
-    rw [Zmx.Core.Vt.frame_printAdvance]]
-  unfold Vt.putCell Vt.getCell Vt.getRow
-  simp only [hcp]
-  rcases hne with hx | hy
-  · -- same row, different column: the row's other cells survive the write
-    by_cases hy' : y' = v.cursor.y
-    · subst hy'
-      by_cases hg : v.cursor.y < v.grid.size
-      · rw [getD_set_self _ _ _ _ hg]
-        exact getD_set_ne _ _ _ _ _ hx
-      · simp only [Array.setIfInBounds, dif_neg hg]
-    · exact congrArg (fun r => Array.getD r x' default) (getD_set_ne _ _ _ _ _ hy')
-  · exact congrArg (fun r => Array.getD r x' default) (getD_set_ne _ _ _ _ _ hy)
+  rw [print_narrow_eq hpc hw hins hpend, getCell_printAdvance]
+  rw [getCell_write_mendRow_other _ _ _ _ _ _ (show y' ≠ v.cursor.y from hne)]
+  rfl
 
-/-- **A wide glyph writes two cells**: the glyph at the cursor with width 2,
-and a width-0 *shadow* to its right. The shadow is what makes §Replay fix 1
-necessary — a combining mark typed after a wide char parks on it, so
-`rowAnsi` must re-emit the marks of width-0 cells even though it skips their
-(blank) base. -/
+/-- **A wide glyph writes two cells**: the glyph at the cursor with width 2, and
+a width-0 *shadow* to its right, which carries nothing of its own — a repaint of
+the base re-creates it, which is why marks are stored on the base
+(`Vt.printMark`) and why a half pair is repaired rather than emitted. -/
 theorem print_wide {v : Vt} (ch : Char)
-    (htr : ((v.shiftOut && v.g1Line) || (!v.shiftOut && v.g0Line)) = false)
+    (hpc : v.printChar ch = ch)
     (hw : charWidth ch = 2) (hins : v.modes.insert = false)
     (hpend : v.cursor.pending = false) (hfit : v.cursor.x + 1 < v.cols)
     (hrow : (v.getRow v.cursor.y).size = v.cols) (hgrid : v.grid.size = v.rows)
@@ -2593,72 +2521,35 @@ theorem print_wide {v : Vt} (ch : Char)
         = { base := ch, marks := [], width := 2, pen := v.pen }
       ∧ (v.print ch).getCell (v.cursor.x + 1) v.cursor.y
         = { base := ' ', marks := [], width := 0, pen := v.pen } := by
-  have hcp : v.clearPending = { v with cursor := { v.cursor with pending := false } } := rfl
-  have hgs : v.cursor.y < v.grid.size := by rw [hgrid]; exact hy
-  unfold Vt.print
-  simp only [htr, Bool.false_eq_true, if_false, hw]
-  rw [if_neg (by decide)]
-  have h1 : v.printWrap = v.clearPending := by
-    unfold Vt.printWrap
-    rw [if_neg (by simp [hpend])]
-  have h2 : v.clearPending.printWideWrap 2 = v.clearPending := by
-    unfold Vt.printWideWrap
-    rw [if_neg (by simp [hcp]; omega)]
-  have h3 : ∀ (w : Vt), w.modes.insert = false → w.printShift 2 = w := by
-    intro w hw'; unfold Vt.printShift; rw [if_neg (by simp [hw'])]
-  have h4 : ∀ (w : Vt) (c : Char), w.cursor.x + 1 < w.cols → w.printPut c 2
-      = (w.putCell w.cursor.x w.cursor.y
-            { base := c, marks := [], width := 2, pen := w.pen }).putCell
-          (w.cursor.x + 1) w.cursor.y
-            { base := ' ', marks := [], width := 0, pen := w.pen } := by
-    intro w c hf
-    unfold Vt.printPut
-    dsimp only
-    rw [if_neg (by simp; omega), if_pos (by decide)]
-  rw [h1, h2, h3 _ (by rw [Zmx.Core.Vt.frame_clearPending]; exact hins),
-    h4 _ ch (by simp [hcp]; omega)]
-  rw [show ∀ (w : Vt) (n : Nat), (w.printAdvance n).getCell = w.getCell from by
-    intro w n
-    unfold Vt.getCell Vt.getRow
-    rw [Zmx.Core.Vt.frame_printAdvance]]
-  unfold Vt.putCell Vt.getCell Vt.getRow
-  unfold Vt.getRow at hrow
-  simp only [hcp]
-  refine ⟨?_, ?_⟩
-  · -- the glyph cell: the shadow was written one to the right
-    rw [getD_set_self _ _ _ _ (by simpa using hgs)]
-    rw [getD_set_ne _ _ _ _ _ (by omega)]
-    rw [getD_set_self _ _ _ _ (by simpa using hgs)]
-    exact getD_set_self _ _ _ _ (by rw [hrow]; omega)
-  · -- the shadow cell
-    rw [getD_set_self _ _ _ _ (by simpa using hgs)]
-    exact getD_set_self _ _ _ _ (by
-      rw [getD_set_self _ _ _ _ (by simpa using hgs), Array.size_setIfInBounds, hrow]
-      omega)
+  rw [print_wide_eq hpc hw hins hpend hfit, getCell_printAdvance, getCell_printAdvance]
+  refine getCell_write_mendRow_wide _ _ _ _ rfl ?_ ?_
+  · show v.cursor.y < v.grid.size
+    rw [hgrid]; exact hy
+  · show v.cursor.x + 1 < (v.getRow v.cursor.y).size
+    rw [hrow]; exact hfit
 
-/-- **A combining mark attaches to the cell before the cursor** (§Replay
-fix 1). The `< 8` cap is §Bound's: an adversarial mark stream must not grow a
-cell without limit, so past eight the mark is dropped. -/
+/-- **A combining mark attaches to the cell before the cursor** — provided that
+cell is not a wide glyph's shadow, in which case `Vt.printMark` redirects to its
+base instead. The `< 8` cap is §Bound's: an adversarial mark stream must not
+grow a cell without limit, so past eight the mark is dropped.
+
+`hnarrow` is what the repair sweep needs to leave the marked cell alone. Marks
+on a *wide* base survive too — its shadow is untouched by the write — but that
+case reads the row's pair fact, so it is stated with `Renderable`. -/
 theorem print_mark {v : Vt} (m : Char)
-    (htr : ((v.shiftOut && v.g1Line) || (!v.shiftOut && v.g0Line)) = false)
+    (hpc : v.printChar m = m)
     (hw : charWidth m = 0) (hpend : v.cursor.pending = false) (hx0 : v.cursor.x ≠ 0)
+    (hnw : (v.getCell (v.cursor.x - 1) v.cursor.y).width ≠ 0)
+    (hnarrow : (v.getCell (v.cursor.x - 1) v.cursor.y).width = 1)
     (hcap : (v.getCell (v.cursor.x - 1) v.cursor.y).marks.length < 8)
     (hrow : (v.getRow v.cursor.y).size = v.cols) (hgrid : v.grid.size = v.rows)
     (hx : v.cursor.x - 1 < v.cols) (hy : v.cursor.y < v.rows) :
     (v.print m).getCell (v.cursor.x - 1) v.cursor.y
       = { v.getCell (v.cursor.x - 1) v.cursor.y with
           marks := (v.getCell (v.cursor.x - 1) v.cursor.y).marks ++ [m] } := by
-  unfold Vt.print
-  simp only [htr, Bool.false_eq_true, if_false, hw]
-  rw [if_pos (by decide)]
-  simp only [hpend, if_false, Bool.false_eq_true]
-  rw [if_neg (show ¬((v.cursor.x == 0) = true) from by simp only [beq_iff_eq]; exact hx0)]
-  have hcap' : ¬ ((v.getCell (v.cursor.x - 1) v.cursor.y).marks.length ≥ 8) := by omega
-  rw [if_neg hcap']
-  unfold Vt.putCell Vt.getCell Vt.getRow
-  unfold Vt.getRow at hrow
-  rw [getD_set_self _ _ _ _ (by rw [hgrid]; exact hy)]
-  exact getD_set_self _ _ _ _ (by rw [hrow]; exact hx)
+  rw [print_mark_eq hpc hw hpend hx0 hnw hcap]
+  exact getCell_write_mendRow_narrow _ _ _ _ hnarrow (by rw [hgrid]; exact hy)
+    (by rw [hrow]; exact hx)
 
 /-! ### §Replay stage 3c — the cursor lands where the session had it
 

@@ -1,5 +1,9 @@
 # grid-fidelity — the replayed screen equals the saved screen
 
+Status: superseded
+Superseded-by: `specs/terminal-contract.md`
+Reason: the terminal-reply contract changes the same VT boundary; every open grid obligation is carried into Steps 3–4 of the successor rather than abandoned.
+
 **Goal.** Close anchor A1's last gap: prove that
 `(Vt.init v.cols v.rows).feed (Render.restore v)` has the *same cells and
 pens* as `v`, not merely the same cursor and a quiesced parser.

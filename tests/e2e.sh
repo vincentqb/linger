@@ -12,7 +12,8 @@
 #   7. remote-over-ssh e2e (fake ssh: `-r` listing, attach name@host argv)
 #   8. adverse timing: busy-daemon listing (§Row) + name-ownership race
 #   9. graphics passthrough (kitty APC / sixel DCS reach the client raw)
-#  10. status column: attach marks seen, output while away marks unread
+#  10. terminal ownership (query progress with zero/one/two clients + stable env)
+#  11. status column: attach marks seen, output while away marks unread
 #  (1) also covers Tests/Fuzz.lean: randomized §Replay round-trip search
 set -e
 cd "$(dirname "$0")/.."
@@ -60,7 +61,7 @@ say "2b. unclaimed pure-core surface (ratchet)"
 # watch. This is a ratchet, not a target: it may only go down. Lowering the
 # cap when a claim lands is the point; raising it is a deliberate edit that
 # says "new surface, no claim yet".
-CLAIM_CAP=17
+CLAIM_CAP=16
 unclaimed=0
 unclaimed_list=""
 for name in $(grep -h '^\(private \)*def ' Zmx/Core/*.lean \
@@ -102,9 +103,13 @@ say "9. graphics passthrough (kitty / sixel)"
 pkill -x linger 2>/dev/null || true; sleep 0.2
 python3 tests/graphics_test.py | tail -1 | grep -q '^FAILURES: 0$' || fail "graphics_test"
 
-say "10. status column (unread / seen transitions)"
+say "10. terminal ownership (queries + stable child profile)"
+pkill -x linger 2>/dev/null || true; sleep 0.2
+python3 tests/terminal_query_test.py | tail -1 | grep -q '^FAILURES: 0$' || fail "terminal_query_test"
+
+say "11. status column (unread / seen transitions)"
 pkill -x linger 2>/dev/null || true; sleep 0.2
 python3 tests/status_test.py | tail -1 | grep -q '^FAILURES: 0$' || fail "status_test"
 
 pkill -x linger 2>/dev/null || true
-printf '\nE2E OK — linger builds clean, core is pure, 7 live suites green.\n'
+printf '\nE2E OK — linger builds clean, core is pure, 8 live suites green.\n'

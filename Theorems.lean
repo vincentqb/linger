@@ -1,5 +1,6 @@
 import Theorems.Wire
 import Theorems.Vt
+import Theorems.Terminal
 import Theorems.Session
 import Theorems.Name
 import Theorems.Checkpoint

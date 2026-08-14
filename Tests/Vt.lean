@@ -66,6 +66,56 @@ example : (let v := screen 10 2 "日x"
            (v.getCell 0 0).width == 2 && (v.getCell 1 0).width == 0
              && (v.getCell 2 0).base == 'x') = true := by native_decide
 
+/-- A combining mark after a wide char attaches to the **base**, not to the
+width-0 shadow: a shadow is a blank column re-created from its base, so a mark
+parked there is invisible to `linger history` and unaddressable at the right
+margin. -/
+example : (let v := screen 10 2 "漢\u0301"
+           (v.getCell 0 0).marks == ['\u0301'] && (v.getCell 1 0).marks == []) = true := by
+  native_decide
+
+/-- …including at the right margin, where the cursor sits on the shadow with
+wrap pending. -/
+example : (let v := screen 4 2 "ab漢\u0301"
+           (v.getCell 2 0).marks == ['\u0301'] && (v.getCell 3 0).marks == []) = true := by
+  native_decide
+
+/-- No half wide pairs, whatever the mutation. A narrow glyph over a wide
+base blanks the orphaned shadow; a wide glyph over a shadow blanks the
+orphaned base; `ICH`/`DCH`/`ECH` and a truncating resize do the same. Half a
+glyph is not displayable, and `Render.rowAnsi` cannot express it — so the
+emulator does not reach it (`Row.mend`). -/
+example : (let v := screen 6 2 "漢b\x1b[1;1HA"
+           (v.getCell 0 0).width == 1 && (v.getCell 0 0).base == 'A'
+             && (v.getCell 1 0).width == 1 && (v.getCell 1 0).base == ' ') = true := by
+  native_decide
+
+example : (let v := screen 6 2 "漢\x1b[1;2H漢"
+           (v.getCell 0 0).width == 1 && (v.getCell 1 0).width == 2
+             && (v.getCell 2 0).width == 0) = true := by native_decide
+
+example : (let v := screen 6 2 "漢ab\x1b[1;1H\x1b[1P"
+           (v.getCell 0 0).width == 1 && (v.getCell 0 0).base == ' '
+             && (v.getCell 1 0).base == 'a') = true := by native_decide
+
+example : (let v := screen 6 2 "ab漢cd\x1b[1;1H\x1b[3@"
+           (List.range 6).all (fun x => (v.getCell x 0).width != 0
+             || ((v.getCell (x-1) 0).width == 2 && x != 0))) = true := by native_decide
+
+/-- Truncating resize through the middle of a pair leaves no orphan base in
+the final column. -/
+example : (let v := (screen 6 2 "ab漢cd").resize 3 2
+           (v.getCell 2 0).width == 1) = true := by native_decide
+
+/-- A stored DEL, and a C0 reached by an overlong UTF-8 sequence, become
+U+FFFD on store: a cell holding a control codepoint cannot be repainted, since
+the emitter would substitute one anyway. Fed as raw bytes — a Lean `"\xc0"`
+literal is a *character*, which `toUTF8` re-encodes, so a string cannot
+express an overlong sequence. -/
+example : (let v := (Vt.init 6 2).feed [0x61, 0x7F, 0xC0, 0x80, 0x62]
+           (v.getCell 1 0).base == '\uFFFD' && (v.getCell 2 0).base == '\uFFFD'
+             && (v.getCell 3 0).base == 'b') = true := by native_decide
+
 /-- UTF-8 split across feeds decodes identically (§Chunk in action). -/
 example : (let bytes := "é".toUTF8.toList
            let v1 := (Vt.init 10 2).feed bytes
@@ -94,6 +144,15 @@ example : (let v := screen 10 2 "abcdef\x1b[1;3H\x1b[2@XY"
 example : (let v := screen 10 3 "\x1b[31m\x1b7\x1b[0m\x1b[3;5Hzz\x1b8A"
            (v.getCell 0 0).base == 'A' && (v.getCell 0 0).pen.fg == .idx 1
              && v.cursor.x == 1 && v.cursor.y == 0) = true := by native_decide
+
+/-- Kitty's private `CSI ? u` query is state-neutral; public ANSI `CSI u`
+still performs DECRC. -/
+example : (let v := screen 10 3 "\x1b[31m\x1b[s\x1b[0m\x1b[3;5H"
+           let queried := feedStr v "\x1b[?u"
+           let restored := feedStr v "\x1b[u"
+           queried.cursor == v.cursor && queried.pen == v.pen
+             && restored.cursor == v.saved.cur && restored.pen == v.saved.pen) = true := by
+  native_decide
 
 /-- Resize clamps the cursor and keeps content (truncate/pad). -/
 example : (let v := (screen 10 4 "hello\x1b[4;9H").resize 6 2

@@ -12,10 +12,12 @@ So: splice random escape-sequence fragments, feed them, and check
 `roundtrips`. A failing seed is a bug with a reproducer attached. The
 generator is a pure LCG so a seed is all you need to replay a case.
 
-This is deliberately cheap and dumb. It found nothing on the corpus below
-only because the corpus excludes the two shapes that are *known* broken —
-see `knownGap` — and every previously-found bug in the corpus's range is
-fixed.
+This is deliberately cheap and dumb, and it has earned its keep: it found
+three real replay bugs, two of which no fixture would have reached (see
+`failingDeep`). Nothing is held out of the corpus any more — `knownGap` is
+empty and the `ICH`/`DCH` mutations that used to be excluded are in `frags`,
+because the shapes they produced are now repaired in the emulator rather than
+avoided in the test.
 -/
 
 namespace Zmx.Core.Render.Fuzz
@@ -45,19 +47,22 @@ def frags : Array String := #[
   "\x1b(0", "\x1b(B", "\x1b)0", "\x0e", "\x0f",
   "\x1b[3g", "\x1bH", "\x1b[0g",
   "\x1b[2J", "\x1b[K", "\x1b[1J", "\x1b[2X",
-  "\x1b]2;t\x07", "\x1b[T", "\x1b[S", "\x1b[L", "\x1b[M"
+  "\x1b]2;t\x07", "\x1b[T", "\x1b[S", "\x1b[L", "\x1b[M",
+  -- the four former `knownGap` mutations: `ICH`/`DCH` split a wide pair, which
+  -- `Vt.printPut`/`Row.mend` now repair at the mutation instead of leaving a
+  -- shape the row painter cannot express
+  "\x1b[3@", "\x1b[1P", "\x1b[2@", "\x1b[1@"
 ]
 
-/-- **The known-gap exclusion list, stated rather than quietly omitted.**
-`ICH`/`DCH` can split a wide glyph, leaving a grid the row painter cannot
-express: a width-2 cell in the final column (its shadow pushed off the row)
-or an orphaned width-0 cell (its base deleted). Both are recorded in
-specs/grid-fidelity.md with candidate fixes; the right one normalises the
-*grid* at the mutation, since no terminal can produce these by printing.
-Until then the fuzzer would rediscover them on every run, so they are held
-out here — and this list existing is what makes the hold-out honest. Delete
-an entry when its fix lands. -/
-def knownGap : Array String := #["\x1b[3@", "\x1b[1P", "\x1b[2@", "\x1b[1@"]
+/-- **The exclusion list, now empty.** `ICH`/`DCH` used to be held out here:
+they can split a wide glyph, leaving a width-2 cell whose shadow was pushed off
+the row or an orphaned width-0 cell whose base was deleted, and the row painter
+cannot express either. Both are repaired in the emulator now — the mutations are
+in `frags` above, and this list existing is what keeps such a hold-out honest.
+
+Kept as the empty array rather than deleted: a future gap gets recorded here
+instead of quietly narrowing the corpus. -/
+def knownGap : Array String := #[]
 
 /-- Splice `n` fragments chosen by the seed. -/
 def genCase (seed n : Nat) : String :=
@@ -88,26 +93,25 @@ example : failing 400 = [] := by native_decide
 /-- Longer cases, fewer of them: depth finds interactions that breadth does
 not (fix 9 needed a pen *and* an alt switch *and* a default-pen first cell).
 
-**Two seeds fail today**, pinned rather than hidden so that any *new* failure
-breaks the build and this list only ever shrinks — the `SHIM_CAP` idiom.
-Reproduce a case with `#eval genCase (nextRand (i * 104729 + 17)) 14`.
+**The list is empty**, and pinned as empty so that any new failure breaks the
+build — the `SHIM_CAP` idiom. Reproduce a case with
+`#eval genCase (nextRand (i * 104729 + 17)) 14`.
 
-Seed 3 used to be here and is **fixed** (fix 11): it reached the
-width-2-cell-in-the-final-column state with `\x1b[?7l` and a wide glyph, no
-`ICH` involved, which refuted the `knownGap` reasoning above — with wrap off
-`printWideWrap` does not pre-wrap, so any program that disables autowrap and
-prints CJK at the margin produced it. `Vt.printPut` now stores a blank when a
-wide glyph has no room for its shadow, so the grid never holds that shape.
-Seeds 24 and 139 are also wide-glyph cases (charset and mark interactions)
-and are not yet narrowed.
-
-Delete a seed from this list when its fix lands. -/
+Three seeds have been here and are fixed. Seed 3 (fix 11) reached a width-2
+cell in the final column with `\x1b[?7l` and a wide glyph, no `ICH` involved,
+refuting the reasoning that had held `ICH`/`DCH` out of the corpus. Seeds 24
+and 139 turned out to be the same bug as each other and equally free of
+`ICH`/`DCH`: printing a **narrow** glyph over a wide base orphans that base's
+shadow, which the row painter then paints as a plain blank (seed 24) or whose
+marks it re-attaches to the wrong cell (seed 139). Ordinary redrawing over CJK
+text reaches it, so the repair is in the emulator (`Vt.printPut` mends the two
+columns a write can half-orphan, and the row mutations mend the row). -/
 def failingDeep (count : Nat) : List Nat :=
   (List.range count).filter (fun i =>
     let seed := nextRand (i * 104729 + 17)
     let (c, r) := dims[seed % dims.size]!
     !roundtrips (screen c r (genCase seed 14)))
 
-example : failingDeep 150 = [24, 139] := by native_decide
+example : failingDeep 150 = [] := by native_decide
 
 end Zmx.Core.Render.Fuzz
