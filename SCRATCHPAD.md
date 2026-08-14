@@ -3264,3 +3264,71 @@ was exactly the bug neighbourhood, and it is now covered.
 
 Step 4 (`restore_grid`) remains, and now starts from a *discharged* shape
 hypothesis: the row/grid replay induction is the only thing left in it.
+
+
+## Step 4 recon — the `Keeps` rung, spiked and reverted — 2026-08-14T04:40:00Z
+
+Spiked the next rung of `restore_grid` and **reverted it**: the shape is right and
+the ladder is worth recording, but the UInt8 guard chain fought back and a
+half-fought block in the tree is worth less than a note.
+
+### The rung, and why it comes first
+
+`restore` paints the grid and then emits the tail — scroll region, tab ruler,
+DECSC slot, title, modes, charset, pen, final cursor. For `restore_grid` to be a
+claim about the *repaint*, none of that tail may write a cell, and that is not
+obvious from reading it: `CSI r` moves the cursor, a private mode set can home it,
+`ESC H` edits the ruler, and `modesAnsi` is one guard away from emitting a
+screen-switch. So the tail needs its own stream predicate, third after `Ends`
+(parser ends ground) and `Quiet` (DECOM stays off):
+
+```lean
+def Keeps (bs : Bytes) : Prop :=
+  ∀ v : Vt, v.pstate = .ground → v.u8need = 0 →
+    ((v.feed bs).pstate = .ground ∧ (v.feed bs).u8need = 0
+      ∧ (v.feed bs).grid = v.grid)
+```
+
+Bundled for the same reason `Quiet` is: the grid half needs the parser half at
+every step. `u8need` rides along so a stream cannot leave a half-decoded
+character armed for the next one. Combinators are copies of `Quiet`'s
+(nil/append/append3/ite/flatMap) and compiled first try.
+
+### What made it work, and what stopped it
+
+The load-bearing reuse is **`csi_param_run_frame`**: from `.csi s`, a parameter
+run is `{ v with pstate := .csi s' }` — a record update — so the grid is
+unchanged for free and the *only* place a CSI sequence can touch the grid is
+`csiDispatch s final`. That collapses the whole tail to one walk plus one fact
+per final byte used (`H` → `frame_moveTo`, `G` → `frame_setCol`, `m` →
+`frame_applySgr`, `g`/`r` → record updates or `moveTo`). Factor the walk as
+`keeps_csi_tail` over `.csi s` so the private form (`CSI ? n h/l`, which is what
+a mode replay *is*) can prefix its own marker step — `0x3F` is outside
+`ParamBytes` (0x30–0x3B), which is the first thing that bit.
+
+What stopped it: re-deriving `stepCsi`'s guard chain. `omega` cannot see UInt8
+comparisons, so each `if_neg` needs the house pattern — `u8_bounds h1 h2` then
+`simp only [UInt8.le_iff_toNat_le, show ((0xNN : UInt8)).toNat = NN from rfl] at`
+— which `csi_final_step` already does for the *pstate* half. **The right move next
+time is to generalize `csi_final_step` to return the resulting state**
+(`v.step b = v.csiFinish s b`) rather than just its `pstate`; then `Keeps`'s CSI
+case is three lines and every guard is discharged in one place, once, for both
+layers.
+
+### Also needed for `restore_grid`, in dependency order
+
+1. `Keeps` for the tail (above) — mechanical once the guard lemma is generalized.
+2. `grid_setMode` for the mode numbers `modesAnsi` actually emits: it must exclude
+   47/1047/1049, and it can, because `modesAnsi` never emits them — the same
+   guarded-emit argument `quiet_modesAnsi` already makes for mode 6.
+3. The **row induction** — the real content, and unchanged by any of this:
+   `rowAnsi`'s combined pen-and-column fold, painting cells [0,i) with the cursor
+   at column i, plus the wide-with-marks `CHA` excursion and the wrap-pending
+   state at the right margin.
+4. The grid induction over `joinCRLF`, where the row separator's `lineFeed` must
+   not scroll — true because `regionAnsi` comes *after* the paint, so the region
+   is full-screen throughout, but it needs saying.
+5. `screensAnsi`'s alt switch, then `resume_grid` composing with §Restore.
+
+Step 3's `renderable_of_liveReachable` means none of these needs a side condition
+on the grid; every one of them is now purely about the emitter and the parser.
