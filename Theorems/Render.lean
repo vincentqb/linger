@@ -3147,3 +3147,112 @@ theorem keeps_charsetAnsi (v : Vt) : Keeps (charsetAnsi v) := by
   exact Keeps.ite (fun _ => keeps_shiftOut) (fun _ => Keeps.nil)
 
 end Zmx.Core.Render
+
+
+
+namespace Zmx.Core.Render
+
+open Zmx.Core.Vt
+/-! ### The window title
+
+An OSC is the one tail construct with an unbounded payload, so it is the one that
+needs an induction. Every step is still a `pstate` record update — the accumulator
+lives inside the parser state — and `oscFinish` writes the title and nothing else. -/
+
+theorem step_of_osc_quiet {v : Vt} {acc : Array UInt8} {e : Bool} (b : UInt8)
+    (hg : v.pstate = .osc acc e) (hu : v.u8need = 0) : v.step b = v.stepOsc acc e b := by
+  have ha : v.abortUtf8 b = v := by
+    unfold Vt.abortUtf8
+    rw [if_neg (by simp [hu])]
+  unfold Vt.step
+  dsimp only
+  rw [ha, hg]
+
+theorem grid_oscFinish (v : Vt) (acc : Array UInt8) : (v.oscFinish acc).grid = v.grid := by
+  unfold Vt.oscFinish
+  dsimp only
+  repeat' split
+  all_goals rfl
+
+theorem un_oscFinish' (v : Vt) (acc : Array UInt8) : (v.oscFinish acc).u8need = v.u8need := by
+  unfold Vt.oscFinish
+  dsimp only
+  repeat' split
+  all_goals rfl
+
+theorem ps_oscFinish' (v : Vt) (acc : Array UInt8) : (v.oscFinish acc).pstate = .ground := by
+  unfold Vt.oscFinish
+  dsimp only
+  repeat' split
+  all_goals rfl
+
+/-- A payload byte only grows the accumulator, which lives in the parser state. -/
+theorem osc_accum_eq {v : Vt} {acc : Array UInt8} (b : UInt8)
+    (hg : v.pstate = .osc acc false) (hu : v.u8need = 0) (h1 : b ≠ 0x1B) (h2 : b ≠ 0x07) :
+    ∃ acc', v.step b = { v with pstate := .osc acc' false } := by
+  rw [step_of_osc_quiet b hg hu]
+  unfold Vt.stepOsc
+  -- the guards in order: ST (impossible, no pending ESC), BEL, ESC, then the cap
+  rw [if_neg (by simp), if_neg (by simp [h2]), if_neg (by simp [h1])]
+  split
+  · exact ⟨acc, rfl⟩
+  · exact ⟨acc.push b, rfl⟩
+
+theorem osc_accum_run : ∀ (bs : Bytes) {v : Vt} {acc : Array UInt8},
+    v.pstate = .osc acc false → v.u8need = 0 → (∀ b ∈ bs, b ≠ 0x1B ∧ b ≠ 0x07) →
+    ∃ acc', v.feed bs = { v with pstate := .osc acc' false }
+  | [], v, acc, hg, _, _ => ⟨acc, by rw [show v.feed [] = v from rfl, ← hg]⟩
+  | x :: xs, v, acc, hg, hu, h => by
+    obtain ⟨acc1, hx⟩ := osc_accum_eq x hg hu (h x (by simp)).1 (h x (by simp)).2
+    rw [feed_cons, hx]
+    obtain ⟨acc2, hrest⟩ := osc_accum_run xs (v := { v with pstate := .osc acc1 false })
+      (acc := acc1) rfl (by simpa using hu) (fun b hb => h b (by simp [hb]))
+    exact ⟨acc2, by rw [hrest]⟩
+
+/-- **The title writes no cell.** The payload cannot terminate its own sequence:
+`utf8s` puts every byte at or above `0x20`, so neither `ESC` nor `BEL` can appear
+in it — the same fact that makes `ends_osc` work. -/
+theorem keeps_osc (payload : List Char) :
+    Keeps (escB ++ [0x5D, 0x32, 0x3B] ++ utf8s payload ++ [0x07]) := by
+  intro v hg hu
+  rw [show (escB ++ [0x5D, 0x32, 0x3B] ++ utf8s payload ++ [0x07] : Bytes)
+      = [0x1B] ++ ([0x5D] ++ ([0x32, 0x3B] ++ (utf8s payload ++ [0x07]))) from by
+    simp [escB]]
+  rw [show ∀ (w : Vt), w.feed ([0x1B] ++ ([0x5D] ++ ([0x32, 0x3B]
+        ++ (utf8s payload ++ [0x07]))))
+      = ((((w.step 0x1B).step 0x5D).feed [0x32, 0x3B]).feed (utf8s payload)).step 0x07 from
+    fun w => by simp [Vt.feed, List.foldl_append]]
+  rw [esc_step_eq hg hu]
+  -- `ESC ]` opens the string
+  rw [show ({ v with pstate := .esc } : Vt).step 0x5D
+      = { v with pstate := .osc #[] false } from by
+    rw [step_of_esc_quiet 0x5D rfl (by simpa using hu)]
+    unfold Vt.stepEsc
+    rfl]
+  -- the code and its separator, then the payload
+  obtain ⟨acc1, h1⟩ := osc_accum_run [0x32, 0x3B]
+    (v := { v with pstate := .osc #[] false }) (acc := #[]) rfl (by simpa using hu)
+    (by intro b hb; rcases List.mem_cons.mp hb with h | h
+        · subst h; exact ⟨by decide, by decide⟩
+        · rw [show b = 0x3B from by simpa using h]; exact ⟨by decide, by decide⟩)
+  rw [h1]
+  obtain ⟨acc2, h2⟩ := osc_accum_run (utf8s payload)
+    (v := { v with pstate := .osc acc1 false }) (acc := acc1) rfl (by simpa using hu)
+    (by intro b hb
+        obtain ⟨hge, hne⟩ := utf8s_no_ctl payload b hb
+        refine ⟨?_, ?_⟩
+        · intro he; rw [he] at hge; exact absurd hge (by decide)
+        · intro he; rw [he] at hge; exact absurd hge (by decide))
+  rw [h2]
+  -- BEL finishes it
+  rw [step_of_osc_quiet (0x07 : UInt8) rfl (by simpa using hu)]
+  unfold Vt.stepOsc
+  rw [if_neg (by decide), if_pos (by decide)]
+  exact ⟨ps_oscFinish' _ _, by rw [un_oscFinish']; simpa using hu,
+    by rw [grid_oscFinish]⟩
+
+theorem keeps_titleAnsi (v : Vt) : Keeps (titleAnsi v) := by
+  unfold titleAnsi
+  exact Keeps.ite (fun _ => Keeps.nil) (fun _ => keeps_osc _)
+
+end Zmx.Core.Render

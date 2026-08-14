@@ -3564,3 +3564,38 @@ Six of eight stages proved (`regionAnsi`, `cursorAnsi`, `savedAnsi`, `tabsAnsi`,
 allowlist supplies the values, the digit bridge still has to identify the emitted
 number with the parsed one). `titleAnsi` (OSC) is the other one left, and it is a
 straightforward accumulate-then-`oscFinish` walk in the style of `ends_osc`.
+
+
+## Step 4, fourth rung — the title, and the tail is down to one stage — 2026-08-14T06:35:00Z
+
+`keeps_titleAnsi` lands, so **seven of `restoreBody`'s eight tail pieces are proved
+to write no cell**: `regionAnsi`, `tabsAnsi`, `savedAnsi`, `titleAnsi`,
+`charsetAnsi`, the trailing `penSgr`, and `cursorAnsi`. Only `modesAnsi` is left.
+
+An OSC is the one tail construct with an unbounded payload, so it is the one that
+needed an induction (`osc_accum_run`). Every step is still a `pstate` record update
+— the accumulator lives *inside* the parser state, which is what makes this cheap —
+and `oscFinish` writes the title and nothing else. The payload cannot terminate its
+own sequence because `utf8s` emits nothing below `0x20`, the same fact `ends_osc`
+turns on; `utf8s_no_ctl` supplies it, so no new reasoning about the payload.
+
+Supporting: `step_of_osc_quiet` (the fourth of the `step_of_*_quiet` family, after
+ground/csi/esc/escInter), `osc_accum_eq`, and `grid`/`u8need`/`pstate` facts for
+`oscFinish`.
+
+One trap: **`stepOsc`'s guards are in a different order than I assumed** — ST
+(`esc && b == 0x5C`) comes *first*, then BEL, then ESC, then the 2048-byte cap. I
+wrote two `if_neg`s for the first two guards and got a mismatch against the
+`.osc acc true` branch. Read the guard chain in the source rather than the order the
+doc comment lists the cases in.
+
+### The one remaining stage
+
+`modesAnsi` needs the digit bridge and nothing else now: `grid_setMode` is proved,
+the allowlist supplies mode numbers that are none of 47/1047/1049, and what is
+missing is the identification of the *emitted* number with `s.arg 0 0`, the number
+the parser accumulated. `accDigits_digits` and `csi_digits_value` already do exactly
+that for the pen and cursor rungs; `keeps_csi_tail` has to be given a variant whose
+`hgrid` may depend on the accumulated state rather than being universally quantified
+over it. Then `keeps_restoreTail` is a composition and `restore_grid` reduces to the
+row induction, the `joinCRLF` grid induction, and the alt switch.
