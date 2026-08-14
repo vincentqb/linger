@@ -2904,3 +2904,57 @@ theorem keeps_csiPriv (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final) (h2 : fina
   exact keeps_csi_priv_seq _ _ (paramBytes_digits n) h1 h2 hgrid
 
 end Zmx.Core.Render
+
+
+
+namespace Zmx.Core.Render
+
+open Zmx.Core.Vt
+/-! ### The SGR pen, and the one mode fact the replay turns on -/
+
+theorem keeps_sgrOf (codes : List Nat) : Keeps (sgrOf codes) := by
+  unfold sgrOf
+  exact keeps_csi_seq _ _ (paramBytes_joinSemi codes) (by decide) (by decide)
+    grid_csiDispatch_sgr
+
+theorem keeps_sgrColorSeq (c : Color) (isFg : Bool) : Keeps (sgrColorSeq c isFg) := by
+  unfold sgrColorSeq
+  split
+  · exact Keeps.nil
+  · exact keeps_sgrOf _
+
+/-- **An SGR pen writes no cell**, for any pen — 16-colour, 256-colour or
+truecolour, and however `penSgr` splits it across sequences. This is the piece
+`savedAnsi` and `restoreBody`'s trailing pen both rest on. -/
+theorem keeps_penSgr (p : Pen) : Keeps (penSgr p) := by
+  unfold penSgr
+  exact ((keeps_sgrOf _).append (keeps_sgrColorSeq _ _)).append (keeps_sgrColorSeq _ _)
+
+/-- **A mode set writes no cell — unless it switches screens.** `47`, `1047` and
+`1049` swap the grid for the alternate one, and nothing else in `setMode` touches
+a cell. `modesAnsi` never emits those three, which is the same guarded-emit
+argument `quiet_modesAnsi` makes for DECOM (mode 6): the emitter is what keeps the
+claim true, so the hypothesis is discharged where the bytes are chosen rather than
+assumed about the parser.
+
+Turning this into `Keeps (modesAnsi v)` needs one more bridge — that the digits
+the emitter writes are the number the parser accumulates (`csi_digits_value`) — so
+that `s.arg 0 0` can be identified with the emitted mode. That bridge exists for
+the pen and cursor rungs and is the next step here. -/
+theorem grid_setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool)
+    (h47 : n ≠ 47) (h1047 : n ≠ 1047) (h1049 : n ≠ 1049) :
+    (v.setMode priv n on).grid = v.grid := by
+  unfold Vt.setMode
+  split
+  · split
+    all_goals first
+      | rfl
+      | rw [frame_moveTo]
+      | exact absurd rfl h47
+      | exact absurd rfl h1047
+      | exact absurd rfl h1049
+      | (split <;> rfl)
+  · split
+    all_goals rfl
+
+end Zmx.Core.Render

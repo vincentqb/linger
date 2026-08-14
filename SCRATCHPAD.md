@@ -3388,3 +3388,32 @@ Unchanged from the recon, minus this rung: `Keeps` instances for the non-CSI tai
 the mode numbers `modesAnsi` actually emits (it never emits 47/1047/1049 — the
 same guarded-emit argument `quiet_modesAnsi` already makes for mode 6), then the
 row induction, the `joinCRLF` grid induction, and the alt switch.
+
+
+## Step 4, second rung — the SGR pen and the mode fact — 2026-08-14T05:20:00Z
+
+Two more `Keeps` pieces, both first try, because `keeps_csi_seq` had already paid
+for the walk: `keeps_sgrOf`/`keeps_sgrColorSeq`/`keeps_penSgr` (an SGR pen writes
+no cell, for any pen and however `penSgr` splits it across sequences — the piece
+`savedAnsi` and `restoreBody`'s trailing pen both rest on) and `grid_setMode`.
+
+`grid_setMode` is the interesting one. A mode set writes no cell **unless it
+switches screens**: `47`, `1047` and `1049` swap the grid for the alternate one,
+and nothing else in `setMode` touches a cell. So the theorem carries those three
+as hypotheses, and `modesAnsi` discharges them by never emitting them — the same
+guarded-emit argument `quiet_modesAnsi` already makes for DECOM. The emitter is
+what keeps the claim true, which is the right place for it: a reachability
+invariant on `Vt` would have been the alternative, and one guarded emit is cheaper
+than a field every constructor must maintain.
+
+### The bridge the mode instance still needs
+
+`Keeps (modesAnsi v)` does not follow yet. `grid_csiDispatch` for the `h`/`l`
+finals has to know `s.arg 0 0 ∉ {47, 1047, 1049}`, and `s.arg 0 0` is what the
+*parser* accumulated — so it needs the digit round trip (`accDigits_digits` /
+`csi_digits_value`) to identify the emitted number with the parsed one. That
+bridge exists, and is exactly what the pen and cursor rungs were built on; it just
+has not been pointed at the mode numbers. That is the next step, and it also
+unblocks the remaining non-CSI instances (`escSeq` for DECSC/HTS/app-keypad,
+`escCharset`, the OSC title, the shift-out byte), each of which is a short byte
+walk in the style of `ends_escSeq`/`ends_osc` plus a grid fact per step.
