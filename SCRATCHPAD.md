@@ -3920,3 +3920,47 @@ wide glyph plus combining mark, and an alt-screen session. Break-verified by del
   mode replay cannot turn origin *on*, and the prologue needs the complement, that
   `?6l` turns it *off*. Proved at the dispatch (`org_setMode_decom_off` →
   `org_csiDispatch_decom_off` → `org_csiFinish_decom_off` → `org_step_of_csi_decom_off`).
+
+
+## Step 1 of restore-conformance — `Sets`, and two more instances of the same bug
+
+Wrote `Sets P x bs := ∀ w, P (w.feed bs) = x` — "feeding `bs` to **any** state leaves
+`P` at `x`" — with `prefix`/`suffix`/`ite` laws. The asymmetry is the content:
+appending on the *left* is free, which is precisely what makes both-ways emission
+provable, while a right-append needs the suffix to preserve `P`.
+
+Then tried to prove an instance and could not, for a reason that turned out to be two
+more bugs of the family this spec is about.
+
+### Bug: a receiver mid-OSC or mid-DCS swallowed the whole restore stream
+
+`Vt.stepOsc` accumulates any byte that is not `BEL` or `ST` — including our leading
+`ESC`, after which our `[` is not `\\` so it is accumulated too. `Vt.stepStr` (DCS,
+APC, SOS, PM) only leaves on `ST`. So a client left in either state consumed **every
+byte of `restore`** into a window title or a discarded string, and displayed nothing.
+
+Fix: `prologueAnsi` leads with `escSeq 0x5C` = `ESC \\` (ST). It terminates both, and
+from `ground`/`esc`/`escInter`/`csi` it lands in `ground`. The one side effect is that
+in `escInter` the `ESC` designates a charset from a junk byte and the `\\` then prints
+a backslash — both erased by the `ED 2` two lines later, and `charsetAnsi` re-emits
+the real designation. `stepEsc` sends `0x5C` to its default arm, so no new parser
+surface was needed; the `escSeq` allowlist grew by one byte in four places.
+
+### Bug: an empty session title left the client's old title on display
+
+`titleAnsi` was `if v.title.isEmpty then [] else …` — the same set-only shape as the
+modes. Now emitted unconditionally; an empty OSC 2 clears the title. This also
+simplified its three predicate proofs from `ite` to a single branch.
+
+Both break-verified: removing the ST lead-in fails 4 tests, and `Tests/Render.lean`
+now carries one receiver per parser state (`midOsc`, `midDcs`, `midCsi`,
+`midEscInter`, `midUtf8`) plus a non-vacuity check that `midOsc` really is stuck.
+
+### Where Step 1 stands
+
+The predicate and its laws are in; no field instance is proved yet. What each needs is
+a *dispatch fact* — "after feeding `csiPriv n final` from ground, the state is
+`u.csiDispatch t final` with `t.arg 0 0 = n` and `u.modes = w.modes`" — which is the
+walk `keeps_csi_digits_tail` already performs internally but only exposes for the
+grid. Factoring that walk out so both the grid and the mode claims consume it is the
+next edit, and it is a refactor of proved code rather than new reasoning.

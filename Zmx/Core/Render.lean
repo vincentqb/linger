@@ -245,10 +245,18 @@ below is a hazard that was previously latent:
 * `(B`, `)B`, `SI` — a leftover DEC line-drawing charset would translate the
   ASCII the painter emits into box glyphs.
 
+It **leads** with `ESC \\` (ST), because a receiver's parser state is part of the
+state being assumed. A client caught mid-OSC or mid-DCS swallows every byte until its
+terminator — `Vt.stepOsc` accumulates our `ESC` and then our `[`, so the whole restore
+stream would vanish into a window title. `ST` closes both, and from any other state
+(`ground`, `esc`, `escInter`, `csi`) it lands in `ground` with nothing written that
+the `ED 2` two lines later does not erase.
+
 `charsetAnsi` re-emits the charset state afterwards, since the session's own
 value may differ from the ASCII default this establishes. -/
 def prologueAnsi (v : Vt) : Bytes :=
-  modeSet 1049 false
+  escSeq 0x5C
+    ++ modeSet 1049 false
     ++ csiNum 4 0x6C
     ++ modeSet 6 false
     ++ modeSet 7 true
@@ -345,10 +353,13 @@ def charsetAnsi (v : Vt) : Bytes :=
 
 /-- Window title as an OSC 2, BEL-terminated. The payload is scrubbed
 (`utf8s`), so it can contain neither ESC nor BEL and cannot terminate or
-extend its own sequence. -/
+extend its own sequence.
+
+Emitted **unconditionally**, including with an empty payload: skipping it for an empty
+title was the same set-only bug as the modes had, leaving the client showing whatever
+its previous occupant set. An empty OSC 2 clears it. -/
 def titleAnsi (v : Vt) : Bytes :=
-  if v.title.isEmpty then []
-  else escB ++ [0x5D, 0x32, 0x3B] ++ utf8s v.title.toList ++ [0x07]
+  escB ++ [0x5D, 0x32, 0x3B] ++ utf8s v.title.toList ++ [0x07]
 
 /-- Final cursor placement — region-relative under DECOM (§Replay fix 5).
 `restore` ends with this, which is also what makes the parser provably

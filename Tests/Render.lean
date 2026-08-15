@@ -315,4 +315,38 @@ example : roundtripsFrom (dirty 6 3) (screen 6 3 "\u6f22e\u0301") = true := by n
 example : roundtripsFrom (dirty 6 3) (screen 6 3 "ab\x1b[?1049hcd") = true := by
   native_decide
 
+
+/-! ### A receiver caught mid-sequence
+
+The client's *parser* state is part of the state restore was assuming. A terminal
+sitting in an unterminated OSC or DCS swallows every byte until its terminator, so
+before `prologueAnsi` led with `ST` the entire restore stream vanished into a window
+title. These starts cover one receiver per parser state. -/
+
+def midOsc (cols rows : Nat) : Vt := feedStr (Vt.init cols rows) "\x1b]2;unfinished"
+
+def midDcs (cols rows : Nat) : Vt := feedStr (Vt.init cols rows) "\x1bPq#0;2;0;0;0"
+
+def midCsi (cols rows : Nat) : Vt := feedStr (Vt.init cols rows) "\x1b[38;5"
+
+def midEscInter (cols rows : Nat) : Vt := feedStr (Vt.init cols rows) "\x1b("
+
+def midUtf8 (cols rows : Nat) : Vt := (Vt.init cols rows).feedBytes ⟨#[0xE6, 0xBC]⟩
+
+example : roundtripsFrom (midOsc 6 3) (screen 6 3 "hi") = true := by native_decide
+example : roundtripsFrom (midDcs 6 3) (screen 6 3 "hi") = true := by native_decide
+example : roundtripsFrom (midCsi 6 3) (screen 6 3 "hi") = true := by native_decide
+example : roundtripsFrom (midEscInter 6 3) (screen 6 3 "hi") = true := by native_decide
+example : roundtripsFrom (midUtf8 6 3) (screen 6 3 "hi") = true := by native_decide
+
+/-- The mid-OSC receiver really is stuck: it has eaten the bytes and is still in an
+OSC, so this is not a vacuous test. -/
+example : ((midOsc 6 3).pstate == PState.ground) = false := by native_decide
+
+/-- A session with **no** title clears the client's leftover one, rather than leaving
+it on display: the last of the set-only emits. -/
+example : (let v := screen 6 3 "hi"
+           let w := (feedStr (Vt.init 6 3) "\x1b]2;stale\x07").feed (restore v)
+           w.title == v.title && v.title.isEmpty) = true := by native_decide
+
 end Zmx.Core.Render.Tests

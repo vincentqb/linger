@@ -616,7 +616,7 @@ go to `.escInter`, whose every branch is `.ground`. -/
 `restore` emits — `7` (DECSC), `=` (app keypad), `H` (HTS) — lands back
 in ground. -/
 theorem esc_single_step {v : Vt} (b : UInt8) (hg : v.pstate = .esc)
-    (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x48 ∨ b = 0x3E) :
+    (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x48 ∨ b = 0x3E ∨ b = 0x5C) :
     (v.step b).pstate = .ground := by
   have hw : (v.abortUtf8 b).pstate = PState.esc := by
     rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
@@ -624,7 +624,7 @@ theorem esc_single_step {v : Vt} (b : UInt8) (hg : v.pstate = .esc)
   dsimp only
   rw [hw]
   unfold Vt.stepEsc
-  rcases hb with h | h | h | h <;> subst h <;> rfl
+  rcases hb with h | h | h | h | h <;> subst h <;> rfl
 
 /-- `ESC (` / `ESC )` enter the charset-designation state. -/
 theorem esc_inter_step {v : Vt} (b : UInt8) (hg : v.pstate = .esc)
@@ -651,7 +651,7 @@ theorem esc_inter_finish {v : Vt} {i : UInt8} (b : UInt8) (hg : v.pstate = .escI
   all_goals rfl
 
 /-- `ESC 7` (DECSC), `ESC =` and `ESC H` (HTS) are `Ends`. -/
-theorem ends_escSeq (b : UInt8) (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x48 ∨ b = 0x3E) :
+theorem ends_escSeq (b : UInt8) (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x48 ∨ b = 0x3E ∨ b = 0x5C) :
     Ends (escSeq b) := by
   intro v hg
   show (v.feed ([0x1B] ++ [b])).pstate = .ground
@@ -880,7 +880,7 @@ theorem ends_charsetAnsi (v : Vt) : Ends (charsetAnsi v) := by
 
 theorem ends_titleAnsi (v : Vt) : Ends (titleAnsi v) := by
   unfold titleAnsi
-  exact Ends.ite Ends.nil (ends_osc _)
+  exact ends_osc _
 
 /-- One both-ways mode emit. `modeSet` is a definition rather than a local lambda
 precisely so this matches structurally. -/
@@ -922,7 +922,8 @@ theorem ends_prologueAnsi (v : Vt) : Ends (prologueAnsi v) := by
   refine Ends.append ?_ (ends_csiNum2 1 v.rows 0x72 (by decide) (by decide))
   refine Ends.append ?_ (ends_modeSet 7 true)
   refine Ends.append ?_ (ends_modeSet 6 false)
-  exact (ends_modeSet 1049 false).append (ends_csiNum 4 0x6C (by decide) (by decide))
+  refine Ends.append ?_ (ends_csiNum 4 0x6C (by decide) (by decide))
+  exact (ends_escSeq 0x5C (by decide)).append (ends_modeSet 1049 false)
 
 theorem ends_cursorAnsi (v : Vt) : Ends (cursorAnsi v) := by
   unfold cursorAnsi
@@ -1600,7 +1601,7 @@ theorem quiet_csiPriv (n : Nat) (final : UInt8) (hn : n ≠ 6) (h1 : 0x40 ≤ fi
 
 /-! #### `ESC`-single, charset, and the OSC title -/
 
-theorem quiet_escSeq (b : UInt8) (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x48 ∨ b = 0x3E) :
+theorem quiet_escSeq (b : UInt8) (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x48 ∨ b = 0x3E ∨ b = 0x5C) :
     Quiet (escSeq b) := by
   intro v hg ho
   refine ⟨ends_escSeq b hb v hg, ?_⟩
@@ -1756,7 +1757,7 @@ theorem quiet_charsetAnsi (v : Vt) : Quiet (charsetAnsi v) := by
 
 theorem quiet_titleAnsi (v : Vt) : Quiet (titleAnsi v) := by
   unfold titleAnsi
-  exact Quiet.ite (fun _ => Quiet.nil) (fun _ => quiet_osc _)
+  exact quiet_osc _
 
 theorem quiet_modeSet (n : Nat) (on : Bool) (hn : n ≠ 6) : Quiet (modeSet n on) := by
   unfold modeSet
@@ -1822,8 +1823,8 @@ theorem quiet_prologueAnsi (v : Vt) : Quiet (prologueAnsi v) := by
   refine Quiet.append ?_ (quiet_csiNum2 1 v.rows 0x72 (by decide) (by decide))
   refine Quiet.append ?_ (quiet_modeSet 7 true (by decide))
   refine Quiet.append ?_ quiet_modeSet_decom_off
-  exact (quiet_modeSet 1049 false (by decide)).append
-    (quiet_csiNum 4 0x6C (by decide) (by decide))
+  refine Quiet.append ?_ (quiet_csiNum 4 0x6C (by decide) (by decide))
+  exact (quiet_escSeq 0x5C (by decide)).append (quiet_modeSet 1049 false (by decide))
 
 theorem quiet_restoreBody (v : Vt) (ho : v.modes.origin = false) : Quiet (restoreBody v) := by
   unfold restoreBody
@@ -3151,14 +3152,14 @@ theorem esc_step_eq {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) :
 
 /-- `ESC 7` (DECSC), `ESC H` (HTS) and `ESC =` (app keypad) write the saved slot,
 the tab ruler and a mode flag respectively — never a cell. -/
-theorem keeps_escSeq (b : UInt8) (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x48 ∨ b = 0x3E) :
+theorem keeps_escSeq (b : UInt8) (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x48 ∨ b = 0x3E ∨ b = 0x5C) :
     Keeps (escSeq b) := by
   intro v hg hu
   rw [show escSeq b = [0x1B] ++ [b] from rfl]
   rw [show ∀ (w : Vt), w.feed ([0x1B] ++ [b]) = (w.step 0x1B).step b from
     fun w => by simp [Vt.feed]]
   rw [esc_step_eq hg hu, step_of_esc_quiet b rfl (by simpa using hu)]
-  rcases hb with h | h | h | h <;> subst h <;> show _ ∧ _ ∧ _ <;> unfold Vt.stepEsc <;>
+  rcases hb with h | h | h | h | h <;> subst h <;> show _ ∧ _ ∧ _ <;> unfold Vt.stepEsc <;>
     exact ⟨rfl, by simpa using hu, rfl⟩
 
 /-- `ESC ( x` / `ESC ) x` set a charset flag. -/
@@ -3341,7 +3342,7 @@ theorem keeps_osc (payload : List Char) :
 
 theorem keeps_titleAnsi (v : Vt) : Keeps (titleAnsi v) := by
   unfold titleAnsi
-  exact Keeps.ite (fun _ => Keeps.nil) (fun _ => keeps_osc _)
+  exact keeps_osc _
 
 end Zmx.Core.Render
 
@@ -3740,3 +3741,51 @@ example : Row.mend #[{ base := 'x', marks := [], width := 2, pen := {} }]
 
 end Zmx.Core.Vt
 
+
+
+
+namespace Zmx.Core.Render
+
+open Zmx.Core.Vt
+/-! ## `Sets` — what a chunk establishes, whatever the receiver was doing
+
+`Ends`, `Quiet` and `Keeps` all quantify over a receiver that starts in `ground`, and
+the fidelity theorem quantifies over `Vt.init` outright. That is the one receiver
+state in which every precondition the emitter depends on already holds, which is
+exactly why it hid the mode leak fixed in `87f64b3`
+(`specs/restore-conformance.md`, Step 1).
+
+`Sets` has no hypothesis on the receiver at all:
+
+> feeding `bs` to **any** state leaves `P` at `x`.
+
+Two composition laws, and the asymmetry between them is the point. Appending on the
+**left** is free — whatever came before is overwritten — which is what makes
+both-ways emission provable. Appending on the right requires the suffix to preserve
+`P`, which is the same obligation `Keeps` already discharges for the grid. -/
+
+def Sets {α : Type} (P : Vt → α) (x : α) (bs : Bytes) : Prop :=
+  ∀ w : Vt, P (w.feed bs) = x
+
+/-- **Anything before is irrelevant.** The load-bearing law: a later emit overwrites
+an earlier one, so a chunk that sets a mode can be prefixed by arbitrary bytes. -/
+theorem Sets.prefix {α : Type} {P : Vt → α} {x : α} {b : Bytes} (h : Sets P x b)
+    (a : Bytes) : Sets P x (a ++ b) := by
+  intro w
+  rw [feed_append]
+  exact h _
+
+/-- A suffix may be appended when it preserves `P` from any state. -/
+theorem Sets.suffix {α : Type} {P : Vt → α} {x : α} {a : Bytes} (h : Sets P x a)
+    {b : Bytes} (hb : ∀ w : Vt, P (w.feed b) = P w) : Sets P x (a ++ b) := by
+  intro w
+  rw [feed_append, hb]
+  exact h _
+
+theorem Sets.ite {α : Type} {P : Vt → α} {x : α} {c : Prop} [Decidable c] {a b : Bytes}
+    (ha : c → Sets P x a) (hb : ¬c → Sets P x b) : Sets P x (if c then a else b) := by
+  by_cases h : c
+  · rw [if_pos h]; exact ha h
+  · rw [if_neg h]; exact hb h
+
+end Zmx.Core.Render
