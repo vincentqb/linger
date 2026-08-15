@@ -3964,3 +3964,49 @@ a *dispatch fact* — "after feeding `csiPriv n final` from ground, the state is
 walk `keeps_csi_digits_tail` already performs internally but only exposes for the
 grid. Factoring that walk out so both the grid and the mode claims consume it is the
 next edit, and it is a refactor of proved code rather than new reasoning.
+
+
+## Step 2, first half — `restore` grounds ANY receiver, proved — 2026-08-15T16:05:00Z
+
+`restore_grounds (v w : Vt) : (w.feed (restore v)).pstate = .ground`. No hypothesis on
+`w` at all: not `ground`, not `Vt.init`, nothing. This is `restore_quiesced`'s parser
+claim with the receiver quantified, and it is the first theorem in the file to have
+that shape — the whole point of `specs/restore-conformance.md`.
+
+The chain:
+
+* `un_abortUtf8_esc` — `ESC` is neither ASCII nor a continuation byte, so `abortUtf8`
+  clears any half-decoded character.
+* `esc_lands` — one case per `PState` for where `ESC` puts you: `.esc` from
+  `ground`/`esc`/`csi`, `ground` from `escInter`, and the two string states with their
+  ST check armed. This is the case analysis that says the lead-in cannot be swallowed.
+* `st_finish` — `\` sends each of those four to `ground`. The `ground` case is the
+  interesting one: the `\` *prints a backslash*, which is why the lead-in must precede
+  `ED 2` rather than follow it.
+* `st_grounds` — their composition, over all `w`.
+* `prologue_grounds`, then `restore_grounds` — `Ends` carries the remaining chunks
+  once the first two bytes have established `ground`.
+
+### Notes
+
+* **`show` with underscores does not reduce a match.** `match h : e with` substitutes
+  the scrutinee, so `rw [h]` is then redundant *and* fails; but `show _ = _` will not
+  iota-reduce the substituted match either. Only an explicit `show <full term>` does.
+  Both mistakes cost a build cycle each; the working pattern is
+  `match h : e with | .ctor => show <explicit>; unfold; rw [...]`.
+* `Vt.abortUtf8` contains an `if`, so an unguarded `rw [if_neg …]` after
+  `unfold Vt.step` can hit *that* `if` instead of the intended one. The explicit
+  `show` also fixes this by pinning which term is being rewritten.
+* The break-verify is not clean: deleting the ST lead-in trips `ends_prologueAnsi` on
+  the shape mismatch before `restore_grounds` is reached. Non-vacuity is what carries
+  it instead — `Tests/Render.lean` asserts `(midOsc 6 3).pstate == PState.ground` is
+  `false`, so the `∀ w` really does range over states that would otherwise swallow the
+  stream.
+
+### What is left of Step 2
+
+The `u8need` half. `st_grounds` proves it for the lead-in, but carrying it through the
+remaining chunks needs each of them to preserve `u8need = 0` from an arbitrary start,
+which is the same per-chunk work `Keeps` already does for the grid. `Quiet`'s origin
+half needs the same treatment. Then Step 1's field instances become provable, since
+each will be able to assume `ground` at its own chunk boundary.

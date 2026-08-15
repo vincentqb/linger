@@ -80,14 +80,22 @@ Deleting any one both-ways emit from `modesAnsi` breaks the corresponding claim.
 
 ## Step 2 — drop the ground-parser assumption
 
-Status: not started.
+Status: **first half done** (2026-08-15). `restore_grounds (v w : Vt) :
+(w.feed (restore v)).pstate = .ground` holds with no hypothesis on `w` — the first
+receiver-quantified theorem in the file. Chain: `un_abortUtf8_esc`, `esc_lands` (one
+case per `PState`), `st_finish`, `st_grounds`, `prologue_grounds`.
+
+The abort turned out to be `ESC \` (ST) rather than `CAN`: our `stepOsc` treats a C0
+byte as payload, so `CAN` would have needed a Core semantics change, while `ST` is
+what both string states already listen for and `stepEsc` routes `0x5C` to its default
+arm. No new parser surface.
+
+Remaining: the `u8need` half, and the same treatment for `Quiet`'s origin half. Both
+need each chunk to preserve its property from an arbitrary start — the per-chunk work
+`Keeps` already does for the grid.
 
 Purpose: a client cut off mid-escape is a real state, and every existing stream
-theorem assumes it away.
-
-Shape: lead `prologueAnsi` with a sequence abort (`CAN`, 0x18), prove
-`abort_grounds : ∀ w, (w.step 0x18).pstate = .ground` for every `PState`, then
-re-state `Ends`/`Quiet`/`Keeps` over an arbitrary incoming `pstate` and `u8need`.
+theorem assumed it away.
 
 Exit: the three predicates carry no hypothesis on the receiver's parser state.
 `restore_quiesced` and `resume_quiesced` follow with their hypotheses removed.

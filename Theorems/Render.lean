@@ -3789,3 +3789,185 @@ theorem Sets.ite {α : Type} {P : Vt → α} {x : α} {c : Prop} [Decidable c] {
   · rw [if_neg h]; exact hb h
 
 end Zmx.Core.Render
+
+
+
+namespace Zmx.Core.Render
+
+open Zmx.Core.Vt
+/-! ### The lead-in grounds any receiver
+
+`Ends`, `Quiet` and `Keeps` all assume the receiver starts in `ground`. That
+assumption is exactly the kind this spec exists to remove: a client left mid-OSC or
+mid-DCS swallows every byte until its terminator, so `restore` fed to one displayed
+nothing at all (SCRATCHPAD 2026-08-15).
+
+`prologueAnsi` leads with `ESC \` for that reason, and these are the theorems saying
+it works — the `Tests/Render.lean` `midOsc`/`midDcs` cases in proof form, over *all*
+receivers rather than five of them. Split in two so that each proof unfolds one
+`Vt.step`: where `ESC` lands, and what `\` does from there. -/
+
+theorem un_abortUtf8_esc (w : Vt) : (w.abortUtf8 0x1B).u8need = 0 := by
+  unfold Vt.abortUtf8
+  by_cases h : w.u8need > 0
+  · rw [if_pos (by simp [h])]
+  · rw [if_neg (by simp [h])]
+    omega
+
+/-- Where `ESC` lands, from anywhere. The four reachable states are the ones `\` can
+finish: `.esc` (from `ground`, `esc`, `csi`), `ground` (from `escInter`, whose
+designation `ED 2` and `charsetAnsi` both undo), and the two string states with their
+ST check armed. -/
+theorem esc_lands (w : Vt) :
+    ((w.step 0x1B).pstate = .esc ∨ (w.step 0x1B).pstate = .ground
+      ∨ (∃ acc, (w.step 0x1B).pstate = .osc acc true)
+      ∨ (w.step 0x1B).pstate = .str true)
+    ∧ (w.step 0x1B).u8need = 0 := by
+  have hun := un_abortUtf8_esc w
+  unfold Vt.step
+  dsimp only
+  match h : (w.abortUtf8 0x1B).pstate with
+  | .ground =>
+    refine ⟨Or.inl ?_, ?_⟩
+    · show ((w.abortUtf8 0x1B).stepGround 0x1B).pstate = PState.esc
+      unfold Vt.stepGround
+      rw [if_pos (by decide)]
+    · show ((w.abortUtf8 0x1B).stepGround 0x1B).u8need = 0
+      unfold Vt.stepGround
+      rw [if_pos (by decide)]
+      exact hun
+  | .esc =>
+    refine ⟨Or.inl ?_, ?_⟩
+    · show ((w.abortUtf8 0x1B).stepEsc 0x1B).pstate = PState.esc
+      unfold Vt.stepEsc
+      exact h
+    · show ((w.abortUtf8 0x1B).stepEsc 0x1B).u8need = 0
+      unfold Vt.stepEsc
+      exact hun
+  | .escInter i =>
+    refine ⟨Or.inr (Or.inl ?_), ?_⟩
+    · show ((w.abortUtf8 0x1B).stepEscInter i 0x1B).pstate = PState.ground
+      unfold Vt.stepEscInter
+      dsimp only
+      repeat' split
+      all_goals rfl
+    · show ((w.abortUtf8 0x1B).stepEscInter i 0x1B).u8need = 0
+      unfold Vt.stepEscInter
+      dsimp only
+      repeat' split
+      all_goals exact hun
+  | .csi s =>
+    refine ⟨Or.inl ?_, ?_⟩
+    · show ((w.abortUtf8 0x1B).stepCsi s 0x1B).pstate = PState.esc
+      unfold Vt.stepCsi
+      rw [if_neg (by decide), if_neg (by decide), if_neg (by decide), if_neg (by decide),
+        if_neg (by decide), if_neg (by decide), if_pos (by decide)]
+    · show ((w.abortUtf8 0x1B).stepCsi s 0x1B).u8need = 0
+      unfold Vt.stepCsi
+      rw [if_neg (by decide), if_neg (by decide), if_neg (by decide), if_neg (by decide),
+        if_neg (by decide), if_neg (by decide), if_pos (by decide)]
+      exact hun
+  | .osc acc e =>
+    refine ⟨Or.inr (Or.inr (Or.inl ⟨acc, ?_⟩)), ?_⟩
+    · show ((w.abortUtf8 0x1B).stepOsc acc e 0x1B).pstate = PState.osc acc true
+      unfold Vt.stepOsc
+      rw [if_neg (by simp), if_neg (by decide), if_pos (by decide)]
+    · show ((w.abortUtf8 0x1B).stepOsc acc e 0x1B).u8need = 0
+      unfold Vt.stepOsc
+      rw [if_neg (by simp), if_neg (by decide), if_pos (by decide)]
+      exact hun
+  | .str e =>
+    refine ⟨Or.inr (Or.inr (Or.inr ?_)), ?_⟩
+    · show ((w.abortUtf8 0x1B).stepStr e 0x1B).pstate = PState.str true
+      unfold Vt.stepStr
+      rw [if_neg (by simp), if_pos (by decide)]
+    · show ((w.abortUtf8 0x1B).stepStr e 0x1B).u8need = 0
+      unfold Vt.stepStr
+      rw [if_neg (by simp), if_pos (by decide)]
+      exact hun
+
+/-- …and `\` finishes every one of them. -/
+theorem st_finish (u : Vt) (hu : u.u8need = 0)
+    (h : u.pstate = .esc ∨ u.pstate = .ground ∨ (∃ acc, u.pstate = .osc acc true)
+      ∨ u.pstate = .str true) :
+    (u.step 0x5C).pstate = .ground ∧ (u.step 0x5C).u8need = 0 := by
+  have ha : u.abortUtf8 0x5C = u := by
+    unfold Vt.abortUtf8
+    rw [if_neg (by simp [hu])]
+  unfold Vt.step
+  dsimp only
+  rw [ha]
+  rcases h with h | h | ⟨acc, h⟩ | h
+  · rw [h]
+    show ((u.stepEsc 0x5C).pstate = _) ∧ ((u.stepEsc 0x5C).u8need = _)
+    unfold Vt.stepEsc
+    exact ⟨rfl, hu⟩
+  · rw [h]
+    show ((u.stepGround 0x5C).pstate = _) ∧ ((u.stepGround 0x5C).u8need = _)
+    unfold Vt.stepGround
+    rw [if_neg (by decide), if_neg (by decide), if_pos (by decide)]
+    exact ⟨(ps_acceptChar _ _).trans h, (un_acceptChar _ _).trans hu⟩
+  · rw [h]
+    show ((u.stepOsc acc true 0x5C).pstate = _) ∧ ((u.stepOsc acc true 0x5C).u8need = _)
+    unfold Vt.stepOsc
+    rw [if_pos (by decide)]
+    exact ⟨ps_oscFinish' _ _, (un_oscFinish' _ _).trans hu⟩
+  · rw [h]
+    show ((u.stepStr true 0x5C).pstate = _) ∧ ((u.stepStr true 0x5C).u8need = _)
+    unfold Vt.stepStr
+    rw [if_pos (by decide)]
+    exact ⟨rfl, hu⟩
+
+/-- **`ESC \` returns any receiver to `ground` with nothing half-decoded.** -/
+theorem st_grounds (w : Vt) :
+    (w.feed (escSeq 0x5C)).pstate = .ground ∧ (w.feed (escSeq 0x5C)).u8need = 0 := by
+  rw [show escSeq 0x5C = [0x1B, 0x5C] from by simp [escSeq, escB],
+    show w.feed [(0x1B : UInt8), 0x5C] = (w.step 0x1B).step 0x5C from by simp [Vt.feed]]
+  obtain ⟨hstate, hun⟩ := esc_lands w
+  exact st_finish _ hun hstate
+
+/-- **The prologue grounds any receiver**, since `Ends` carries the rest. This is what
+lets a `Sets`-shaped claim — one with no hypothesis on the receiver at all — be
+composed from the chunk lemmas, which all assume `ground`. -/
+theorem prologue_grounds (v w : Vt) :
+    (w.feed (prologueAnsi v)).pstate = .ground := by
+  have hrest : Ends (modeSet 1049 false ++ csiNum 4 0x6C ++ modeSet 6 false
+      ++ modeSet 7 true ++ csiNum2 1 v.rows 0x72 ++ escCharset 0x28 0x42
+      ++ escCharset 0x29 0x42 ++ [0x0F]) := by
+    refine Ends.append ?_ (Ends.text (bs := [0x0F]) (by decide))
+    refine Ends.append ?_ (ends_escCharset 0x29 0x42 (by decide))
+    refine Ends.append ?_ (ends_escCharset 0x28 0x42 (by decide))
+    refine Ends.append ?_ (ends_csiNum2 1 v.rows 0x72 (by decide) (by decide))
+    refine Ends.append ?_ (ends_modeSet 7 true)
+    refine Ends.append ?_ (ends_modeSet 6 false)
+    exact (ends_modeSet 1049 false).append (ends_csiNum 4 0x6C (by decide) (by decide))
+  rw [show prologueAnsi v = escSeq 0x5C ++ (modeSet 1049 false ++ csiNum 4 0x6C
+      ++ modeSet 6 false ++ modeSet 7 true ++ csiNum2 1 v.rows 0x72
+      ++ escCharset 0x28 0x42 ++ escCharset 0x29 0x42 ++ [0x0F]) from by
+    unfold prologueAnsi; simp]
+  rw [feed_append]
+  exact hrest _ (st_grounds w).1
+
+/-- **`restore` grounds any receiver.** The hypothesis-free form of
+`restore_quiesced`: no assumption on the client's parser state at all, which is what
+the `ESC \` lead-in buys. The `u8need` half needs the same treatment for every chunk
+and is left to `specs/restore-conformance.md` Step 2. -/
+theorem restore_grounds (v w : Vt) : (w.feed (restore v)).pstate = .ground := by
+  rw [show restore v = prologueAnsi v ++ (csiNum 0 0x6D ++ csiNum 2 0x4A
+      ++ screensAnsi v ++ regionAnsi v ++ tabsAnsi v ++ savedAnsi v ++ titleAnsi v
+      ++ modesAnsi v ++ charsetAnsi v ++ penSgr v.pen ++ cursorAnsi v) from by
+    unfold restore restoreBody; simp]
+  rw [feed_append]
+  refine Ends.append ?_ (ends_cursorAnsi v) _ (prologue_grounds v w)
+  refine Ends.append ?_ (ends_penSgr v.pen)
+  refine Ends.append ?_ (ends_charsetAnsi v)
+  refine Ends.append ?_ (ends_modesAnsi v)
+  refine Ends.append ?_ (ends_titleAnsi v)
+  refine Ends.append ?_ (ends_savedAnsi v)
+  refine Ends.append ?_ (ends_tabsAnsi v)
+  refine Ends.append ?_ (ends_regionAnsi v)
+  refine Ends.append ?_ (ends_screensAnsi v)
+  exact (ends_csiNum 0 0x6D (by decide) (by decide)).append
+    (ends_csiNum 2 0x4A (by decide) (by decide))
+
+end Zmx.Core.Render
