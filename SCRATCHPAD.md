@@ -3730,3 +3730,75 @@ fold of `rowAnsi` carrying the pen across rows. In order of dependency:
 4. **The alt switch** — `csiPriv 1049 0x68` is the one emitted screen switch, and it
    is deliberate here (unlike the `modesAnsi` bug); `grid_setMode`'s excluded cases
    are exactly the three it belongs to.
+
+
+## Step 4, ninth rung — into the paint, and an honest scope map — 2026-08-14T08:20:00Z
+
+Asked to finish Step 4. It is **not finished**, and this entry says exactly where it
+stands so the next session does not re-derive the map. What landed: the `Row.mend`
+fixed-point lemmas, which are what the row induction needs, plus two findings that
+change the plan.
+
+### Landed
+
+`mend_of_pairOk` — **`mend` is the identity on a row whose pairs are whole and whose
+shadows are canonical.** This is the lemma the row induction turns on: every
+cell-writing operation ends in `Row.mend`, so painting cell `k` re-mends the whole
+row, and the induction has to know that does not disturb columns `< k`. It does not,
+and the reason is exactly `RowOk.pairs`. Supporting: `set_self_eq` (writing back the
+value already there is identity), `mendAt_of_pairOk`, `mendAt_of_width_one`,
+`width_at_blankRow`, `mend_blankRow`.
+
+Note `PairOk` gives the *cell* equation `row.at (x+1) = Cell.shadow (row.at x)` while
+`halfPair_eq_false_iff` wants the *width* form; converting is one `rw`, but the
+mismatch is not visible from the names.
+
+### Finding 1 — `ED 2`'s blanking is NOT on the critical path
+
+I was about to prove "`CSI 2 J` blanks every cell", listed as the next step last
+session. It is not needed. `gridAnsi` paints `grid.size` rows of `cols` columns and
+**every column is written**: a width-1 cell by its own print, a width-2 base by its
+print, and a shadow by its base's print (`printPut` writes both halves). A stored
+width-2 base in the final column cannot occur in a `RowOk` row — `mend` blanks it as
+a half pair — so there is no uncovered column. The clear therefore matters only for
+what it *leaves alone*, which `eraseScreen_two_frame` already proves. That deletes a
+planned induction outright.
+
+### Finding 2 — the pen stream round-trip is a prerequisite I had not listed
+
+`(w.feed (penSgr p)).pen = p` is **not proved**. The semantic half is
+(`pen_codes_recover`: `applySgr` inverts the encoding, from any starting pen), and the
+file says so at its §"pen round trip" header — what is missing is that the CSI
+accumulator delivers those numbers, i.e. a *multi-parameter* version of
+`csi_digits_run_eq` for `joinSemi`-separated lists. `restore_grid` needs it, because
+`rowAnsi` only emits `penSgr` on a pen *change* and the replayed pen must track the
+emitted one cell by cell.
+
+### The remaining work, in dependency order
+
+1. **Multi-param accumulator bridge** → `(w.feed (penSgr p)).pen = p`. Generalizes
+   `csi_digits_run_eq` from one number to a `;`-separated list. Medium; the
+   single-param case is done and the semantic half is done.
+2. **`SGR 0` sets the pen to `{}`** — the single-param special case of (1), and what
+   makes the paint's initial pen match `rowAnsi`'s `startPen = {}`.
+3. **`CSI H` homes the cursor** — bare `CSI H` with default args; `cup_places_cursor`
+   is the two-arg analogue.
+4. **The row induction** — the large one. `rowAnsi`'s fold carries `(bytes, pen, x)`;
+   the proof needs `Array.foldl` → list fold, a prefix-decomposition of the emitted
+   bytes, and a per-cell step through `printWrap`/`printWideWrap`/`printShift`/
+   `printPut`/`printAdvance` under wrap=true, insert=false (both hold during the
+   paint, since `modesAnsi` comes *after* it — which is §Replay fix 1's ordering
+   earning its keep a second time). Three cell cases: width 1, width 2 with room,
+   width 0. The wide-with-marks branch emits two `CHA` moves, so the invariant must
+   survive an absolute cursor jump. `mend_of_pairOk` is the stability argument.
+5. **`joinCRLF`** — the row separator, and the argument that no `LF` scrolls (the
+   last row has no separator, which is why `joinCRLF` special-cases `[b]`).
+6. **The alt switch** — `csiPriv 1049 0x68` is deliberate here, unlike the
+   `modesAnsi` bug; `grid_setMode`'s three excluded modes are exactly this one's.
+7. **Compose**: `restore_grid` (via `restore_grid_of_paint`, already proved),
+   then `restore_grid_reachable` (add `LiveReachableVt` →
+   `renderable_of_liveReachable`), then `resume_grid` in `Theorems/Resume.lean`.
+
+Item 4 is the bulk. The original scope check — "comparable in size to the entire
+§Replay parser half, which took several sessions" — still looks right, with items
+1–3 and 5–7 the smaller half around it.

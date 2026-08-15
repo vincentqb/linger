@@ -260,7 +260,20 @@ Done so far, all break-verified and gate-green:
 - One real fix the theorems forced: `modesAnsi` could emit a screen switch
   (`5414e0e`).
 
-Open: the paint. `gridAnsi`'s row fold, `joinCRLF`, and the alt switch.
+Open: the paint. In dependency order — the multi-parameter accumulator bridge
+giving `(w.feed (penSgr p)).pen = p` (the semantic half, `pen_codes_recover`,
+is done; the accumulator half is the single-param `csi_digits_run_eq`
+generalized to a `;`-separated list), `SGR 0` setting the pen to `{}`, bare
+`CSI H` homing the cursor, the `rowAnsi` row induction, `joinCRLF`, the alt
+switch, then the composition through `restore_grid_of_paint` to
+`restore_grid_reachable` and `resume_grid`.
+
+`Row.mend`'s fixed-point lemmas are in (`mend_of_pairOk` and friends): mending
+does not disturb already-painted columns, which is what lets the row induction
+step past a cell write. Two scope findings are recorded in `SCRATCHPAD.md`:
+`ED 2`'s cell-level blanking is *not* needed (the paint covers every column, so
+only the frame matters, and that is proved), and the pen stream round-trip is a
+prerequisite that was not previously listed.
 
 Purpose: lift the per-glyph facts through row/grid/restore and close anchor A1.
 
