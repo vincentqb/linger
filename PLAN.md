@@ -15,6 +15,8 @@ Reference:
 - https://github.com/neurosnap/zmx and https://github.com/mdsakalu/zmx-session-manager are nicely decoupled
 - https://github.com/martanne/abduco -- but unmaintained
 - https://github.com/zellij-org/zellij -- Love the interface but seems to crash under high cpu or memory load. Need theorems preventing this.
+- https://github.com/kenn-io/ghosthub
+- https://github.com/herdrdev/herdr
 - Experimental: ~/CodebaseQUENNV/2026/lean-dean and ~/CodebaseQUENNV/2026/pcae-lean for structural inspiration.
 - Experimental: ~/pytmux for a python port of tmux
 - Experimental: ~/lean-tmux/ for an attempt that started as a port of tmux but wanted to become zmx.
