@@ -13,7 +13,8 @@ closed build plans with their completion records
 
 1. **`specs/restore-conformance.md` is the ACTIVE plan** — restore works into
    any client, and the proofs quantify over that client instead of over
-   `Vt.init`. Its header block is the ten-second version.
+   `Vt.init`. **Its "Where this stands" block names the one next step; read
+   that before doing anything else.**
    `specs/terminal-contract.md` is its predecessor: Steps 1–3 are complete
    there and stay as the record, its Step 4 is carried forward in a different
    shape, and it is not archived because its exit criteria are unmet.
@@ -23,7 +24,13 @@ closed build plans with their completion records
    environment facts, break-verify records, and the negative results.
    Read before writing; append after; never delete prior entries.
 3. Re-ground against those two files, not against a compaction summary:
-   the summary is what dropped the nuance.
+   the summary is what dropped the nuance. Check the current work against
+   the spec's Goal and Definition of done, not against the summary's
+   description of it.
+4. Close each round by updating the spec's status block (done ✓, next →) and
+   committing a verified checkpoint. One item in flight at a time: a half-done
+   item straddling a compaction is the thing most likely to be silently
+   abandoned.
 
 New work opens a new `specs/<slug>.md` and gets named in item 1 above;
 archive the old one with a completion record rather than editing it.

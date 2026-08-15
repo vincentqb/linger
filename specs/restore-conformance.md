@@ -5,23 +5,60 @@ Updated: 2026-08-15
 Predecessor: `specs/terminal-contract.md` (Steps 1–3 complete; its Step 4 is carried
 here in a different shape, and its Step 5 archival gate is carried unchanged)
 
-## Where this stands (2026-08-15)
+## Where this stands — read this first
 
-The diagnosis this spec is built on: **every §Replay bug had the same shape, and the
-shape was in the quantifier.** `Tests/Fuzz.lean`'s header calls it "an emitter stage
+**Next step:** the sibling-bug audit (Step 0). Then Step 2's `u8need` half, which
+unblocks Step 1.
+
+**Done:** Step 0 — not started. Step 1 — predicate and laws only, no instances.
+Step 2 — first half (`restore_grounds`). Steps 3–5 — not started.
+
+**The diagnosis this spec is built on:** every §Replay bug had the same shape, and the
+shape was in the quantifier. `Tests/Fuzz.lean`'s header calls it "an emitter stage
 correct only under a precondition on the emulator state it is fed into" — and the
-fidelity theorem quantifies over `Vt.init`, the one receiver state in which every
-such precondition already holds. So the theorem was structurally blind to the class.
+fidelity theorem quantifies over `Vt.init`, the one receiver state in which every such
+precondition already holds. The theorem was structurally blind to the class.
 
-`87f64b3` fixed the live instance: `modesAnsi` was set-only for eight modes and the
-repaint ran before any receiver state was established, so a real client's leftover
-IRM, DECOM, mouse reporting, scroll region, charset or alt screen either corrupted
-the repaint or survived it. `prologueAnsi` now establishes what the repaint needs and
-every mode is emitted both ways.
+Two live bugs came out of that reading, both fixed and break-verified:
 
-What is *not* fixed is the theorem. `restore_grid` and the `Ends`/`Quiet`/`Keeps`
-layers all still start from a pristine, ground receiver, so nothing above the tests
-rules out the next instance of the same class.
+- `87f64b3` — `modesAnsi` was set-only for eight modes and the repaint ran before any
+  receiver state was established, so a client's leftover IRM, DECOM, mouse reporting,
+  scroll region, charset or alt screen either corrupted the repaint or survived it.
+- `cd7c17b` — a client mid-OSC or mid-DCS **swallowed the entire restore stream**,
+  because `stepOsc` accumulates our `ESC` and then our `[`. Also `titleAnsi` was
+  set-only, so an empty session title left the client's old one on display.
+
+`906bf11` then closed the first of these *at the theorem level*: `restore_grounds`
+holds for any receiver with no hypothesis at all. The rest of the layers
+(`Ends`/`Quiet`/`Keeps`, `restore_grid`) still assume a pristine, ground receiver, so
+for everything except the parser state the tests are still the only guard.
+
+## Open questions
+
+- **Self-consistency is not conformance.** `restore_grid` models the client with our
+  own `Vt`, so it proves emitter/parser agreement, not that xterm renders it. The pty
+  and e2e suites are the only evidence about real terminals. Belongs in THEOREMS.md as
+  a stated limitation.
+- **Is the bug family exhausted?** Two hits in one session from the same question
+  ("what does this stream assume about what it is writing to?") argues for looking
+  before proving. That is Step 0.
+- **Does the `u8need` half need a per-chunk predicate of its own**, or can `Keeps` be
+  generalized to carry an arbitrary property? The latter would subsume `Sets`.
+
+## Step 0 — audit for siblings of the receiver-state bug
+
+Status: not started. Cheap, and the evidence says the hit rate is high: two bugs in
+one session, both from assuming the state of the thing being written to.
+
+Every place linger emits bytes at something stateful is a candidate. Known list:
+`resizeEffects` on attach; the history and listing output, which writes SGR to the
+user's terminal and may not reset it; the reply channel's assumptions about the
+child's parser state; and anything in `Zmx/Core/Listing.lean` or `Status.lean` that
+emits escape sequences.
+
+Exit: each emitter either establishes what it depends on, or has a recorded reason it
+need not. A finding here outranks Steps 1–4, since it may change what the paint has to
+establish.
 
 ## Goal
 
