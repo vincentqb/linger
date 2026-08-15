@@ -3688,3 +3688,45 @@ Two things worth recording:
 - I had written the frame for all four ED modes; cut it to mode 2, which is the only
   one `restore` emits. `foldl_erase_frame` stays general, so the others are a
   three-line each if ever needed.
+
+
+### Eighth rung — `restore_grid`, reduced to the paint
+
+`restore_grid_of_paint` turns the tail work from a scratchpad claim into a theorem:
+**if the clear-and-paint prefix leaves the grid equal to `v`'s, the parser in ground,
+and no UTF-8 half-decoded, then all of `restore` leaves the grid equal to `v`'s.**
+Everything after the paint is `keeps_restoreTail`. The three hypotheses are precisely
+what the repaint half still owes, about a prefix three constructs long.
+
+`restore_split` is the one re-association it needs (`++` is right-associative, so
+splitting off the prefix is not free) — the same associativity tax noted for
+`keeps_park`.
+
+Break-verify, in the form Step 4's exit criterion asks for (*a same-shape value
+mutation breaks the proof*): changed `cursorAnsi`'s final byte from `0x48` (CUP) to
+`0x40` (ICH), which shifts cells. `keeps_cursorAnsi` stops compiling — `grid_csiDispatch_cup`
+correctly has nothing to say about ICH — and the failure propagates through
+`keeps_restoreTail` to `restore_grid_of_paint`. Three other layers caught it too
+(`ends_`/`quiet_`/a `rfl` at 2640). Restored, 0 errors/warnings.
+
+Spec header updated: it still said Step 4 was *not started*, stale by ten commits.
+Now records tail-done/paint-open with the list of landed pieces. The original scope
+check is kept verbatim rather than softened — the tail work does not shrink the
+induction, it clears everything around it.
+
+### The paint, when it is next opened
+
+`gridAnsi grid = csiNum 0 0x6D ++ csiB ++ [0x48] ++ joinCRLF rows` where `rows` is a
+fold of `rowAnsi` carrying the pen across rows. In order of dependency:
+
+1. **`ED 2` blanks every cell** (cell-level, not just the frame proved above). Needs
+   a row-size hypothesis: the inner fold uses `setIfInBounds`, so a row shorter than
+   `cols` would not become `blankRow cols`. `renderable_of_liveReachable` should
+   supply it — check what shape it gives before writing the induction.
+2. **`rowAnsi` writes its row.** The hard one: one fold carrying `(bytes, pen, x)`,
+   with the wide-with-marks branch emitting two `CHA` moves.
+3. **`joinCRLF`** separates rows without scrolling — interacts with the scroll region,
+   so `regionAnsi` ordering matters (§Replay fix 1).
+4. **The alt switch** — `csiPriv 1049 0x68` is the one emitted screen switch, and it
+   is deliberate here (unlike the `modesAnsi` bug); `grid_setMode`'s excluded cases
+   are exactly the three it belongs to.

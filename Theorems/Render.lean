@@ -3536,3 +3536,40 @@ theorem eraseScreen_two_frame (v : Vt) :
   exact foldl_erase_frame (fun y => y) (List.range v.rows) v
 
 end Zmx.Core.Vt
+
+
+
+namespace Zmx.Core.Render
+
+open Zmx.Core.Vt
+/-! ### `restore_grid`, reduced to the paint
+
+The tail is done, so the remaining obligation can be stated as a theorem rather than
+left as a note: **if the clear-and-paint prefix gets the grid right and leaves the
+parser quiesced, the whole of `restore` gets it right.** Everything after the paint is
+`keeps_restoreTail`. What is left for the repaint half is exactly the three
+hypotheses below, about a prefix that is three constructs long. -/
+
+/-- The one re-association `restore_grid` needs: the clear-and-paint prefix, then the
+eight tail stages. `++` is right-associative, so this is not free. -/
+theorem restore_split (v : Vt) :
+    restore v = (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v)
+      ++ (regionAnsi v ++ tabsAnsi v ++ savedAnsi v ++ titleAnsi v ++ modesAnsi v
+          ++ charsetAnsi v ++ penSgr v.pen ++ cursorAnsi v) := by
+  unfold restore restoreBody
+  simp
+
+/-- **`restore_grid`, reduced to the paint.** The three hypotheses are the whole of
+what the repaint half still owes: that `SGR 0`, `ED 2` and `screensAnsi` together
+leave the grid equal to `v`'s, the parser in ground, and no UTF-8 half-decoded. The
+eight stages that follow are proved to preserve all three. -/
+theorem restore_grid_of_paint {v w : Vt}
+    (hps : (w.feed (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v)).pstate = .ground)
+    (hun : (w.feed (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v)).u8need = 0)
+    (hpaint : (w.feed (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v)).grid = v.grid) :
+    (w.feed (restore v)).grid = v.grid := by
+  rw [restore_split, feed_append]
+  obtain ⟨-, -, hg⟩ := keeps_restoreTail v _ hps hun
+  rw [hg, hpaint]
+
+end Zmx.Core.Render

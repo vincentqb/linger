@@ -16,19 +16,27 @@ half (`renderable_step`/`feed`/`resize`/`quiesce`, `LiveReachableVt`,
 `renderable_of_liveReachable`, and the Session trace lift
 `run_vt_renderable`).
 
-Step 4 is **not started**, and deliberately so: `restore_grid` is the row/grid
-replay induction — the `rowAnsi` pen-and-column fold, `joinCRLF`, the alt-screen
-switch, and the wide-with-marks cursor moves — which is a campaign on the scale
-of the whole §Replay parser half, not a step that fits beside Step 3. Opening it
-without the budget to close it would leave a half-proved replay path, which is
-worse than a documented gap. What Step 3 bought it is real: the side conditions
-it would have needed on the *emulator* side are now unreachable states instead.
+Step 4 is **in progress: the tail half is done, the paint half is not.**
+`restore` splits into a clear-and-paint prefix (`SGR 0`, `ED 2`, `screensAnsi`)
+and eight tail stages. The tail is finished — `keeps_restoreTail` proves every
+one of those eight leaves the painted grid alone — and
+`restore_grid_of_paint` reduces the exit criterion to three hypotheses about the
+prefix alone. `eraseScreen_two_frame` frames the clear. So the only bytes in
+`restore` that may still touch a cell are `ED 2`, `gridAnsi`, and `CSI ? 1049 h`.
 
-The exit criteria below are unchanged. A successor spec should carry Step 4
-forward; this one stays `active` until then rather than being archived with unmet
-criteria. Steps 1, 2, 3 and Step 5's review/documentation half are done, and
-`renderable_of_liveReachable` means Step 4 now starts from a discharged shape
-hypothesis rather than a side condition it would have had to invent.
+What remains is the induction the original scope check named, undiminished:
+`rowAnsi`'s combined pen-and-column fold, `joinCRLF`'s row separator, the
+alt-screen switch, and the wide-with-marks `CHA` moves. The tail work does not
+shrink it; it removes everything around it, so a future session opens on the
+induction with nothing else in the way. One fix came out of the tail work — a
+restore stream could leave the client on the alt screen (`5414e0e`), found by
+the theorem, not by a test.
+
+The exit criteria below are unchanged and still unmet. This spec stays `active`.
+Steps 1, 2, 3 and Step 5's review/documentation half are done, and
+`renderable_of_liveReachable` means the remaining induction starts from a
+discharged shape hypothesis rather than a side condition it would have had to
+invent.
 
 ## Goal
 
@@ -227,13 +235,32 @@ fixed fixtures for every removed failure.
 
 ## Step 4 — Exact restore and resume
 
-Status: not started (2026-08-14). Scope check, recorded rather than discovered
-later: `restore_grid` is the row/grid replay induction — `rowAnsi`'s combined
-pen-and-column fold, `joinCRLF`'s row separator and its scroll interaction,
-`screensAnsi`'s alt switch, and the wide-with-marks `CHA` moves — comparable in
-size to the entire §Replay parser half, which took several sessions. Step 3
-removed the *side conditions* it would have needed (unrenderable grids are no
-longer reachable) but not the induction itself.
+Status: in progress (2026-08-14) — tail half done, paint half open. The original
+scope check stands and is worth keeping: `restore_grid` is the row/grid replay
+induction — `rowAnsi`'s combined pen-and-column fold, `joinCRLF`'s row separator
+and its scroll interaction, `screensAnsi`'s alt switch, and the wide-with-marks
+`CHA` moves — comparable in size to the entire §Replay parser half, which took
+several sessions. Step 3 removed the *side conditions* it would have needed
+(unrenderable grids are no longer reachable) but not the induction itself.
+
+Done so far, all break-verified and gate-green:
+
+- `Keeps`, the grid-preservation stream predicate, with its `nil`/`append`/`ite`
+  composition laws (mirroring `Ends` and `Quiet`).
+- `keeps_restoreTail` — all eight stages after the paint (`regionAnsi`,
+  `tabsAnsi`, `savedAnsi`, `titleAnsi`, `modesAnsi`, `charsetAnsi`, the trailing
+  `penSgr`, `cursorAnsi`) preserve the grid.
+- `restore_grid_of_paint` — the exit criterion reduced to three hypotheses about
+  the clear-and-paint prefix.
+- `eraseScreen_two_frame` — `ED 2` resizes nothing and moves neither pen nor
+  cursor.
+- The digit bridge (`csi_digits_run_eq`, `keeps_csiPriv_arg`,
+  `keeps_csiNum_arg`) identifying an emitted number with the one the parser
+  accumulates, which is what `modesAnsi` needed.
+- One real fix the theorems forced: `modesAnsi` could emit a screen switch
+  (`5414e0e`).
+
+Open: the paint. `gridAnsi`'s row fold, `joinCRLF`, and the alt switch.
 
 Purpose: lift the per-glyph facts through row/grid/restore and close anchor A1.
 
