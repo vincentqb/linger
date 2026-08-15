@@ -1,4 +1,5 @@
 import Zmx.Core.Terminal
+import Theorems.Render
 /-! # §Terminal — owned terminal queries without client dependence
 
 The mediator is a pure stream transducer. These theorems pin its exact profile,
@@ -109,7 +110,7 @@ theorem textAreaReply_exact (v : Vt) :
 
 theorem xtgetcapReply_exact (payload : Bytes) :
     xtgetcapReply payload =
-      [ESC, 0x50, 0x30, 0x2B, 0x72] ++ payload ++ [ESC, STFinal] := rfl
+      [ESC, 0x50, 0x30, 0x2B, 0x72] ++ payload.filter capByte ++ [ESC, STFinal] := rfl
 
 /-- An owned request is excluded from presentation output and contributes its
 single prescribed reply stream. Empty is the table's deliberate zero reply. -/
@@ -159,6 +160,125 @@ theorem step_decrqss (v : Vt) (payloadRev : Bytes) :
     (Scan.dcs 0x24 payloadRev true).step v STFinal =
       { scan := .ground, visible := [], replies := decrqssReply } := by
   simp [Scan.step, complete]
+
+/-! ## No reply linger writes to the child can commit a line
+
+A terminal query's reply is written straight into the child's own input
+(`Session.onMsg .ptyOut` routes `replies` to `.writePty`), and the child's
+output is untrusted — a `cat` of a hostile file, an ssh stream, a log tail. The
+one reply that echoed child bytes, XTGETTCAP, could carry a CR and a shell
+command; on a cooked-mode tty the CR commits a line, so the untrusted output ran
+a command. This is the §Replay bug family aimed at the child instead of the
+client: an emitter correct only under an unstated precondition on what it writes
+to.
+
+The invariant that closes it: **no reply contains a line terminator** (`0x0D`
+CR or `0x0A` LF). Every fixed reply satisfies it by inspection; `cprReply` and
+`textAreaReply` carry only digits; and `xtgetcapReply` now filters its echo to
+the XTGETTCAP alphabet (`capByte`: hex and `;`), none of which is a terminator.
+Proved over the whole `feed` stream, so a future reply builder that reintroduced
+an echo would fail here rather than ship. -/
+
+/-- A byte stream that cannot terminate a line in the child's input. -/
+def NoNl (bs : Bytes) : Prop := ∀ b ∈ bs, b ≠ 0x0D ∧ b ≠ 0x0A
+
+theorem NoNl.nil : NoNl [] := by intro b hb; simp at hb
+
+theorem NoNl.append {a b : Bytes} (ha : NoNl a) (hb : NoNl b) : NoNl (a ++ b) := by
+  intro x hx
+  rcases List.mem_append.1 hx with h | h
+  · exact ha x h
+  · exact hb x h
+
+/-- The filter alphabet is line-terminator-free by construction. -/
+theorem capByte_no_nl (b : UInt8) (h : capByte b = true) : b ≠ 0x0D ∧ b ≠ 0x0A :=
+  ⟨by rintro rfl; revert h; decide, by rintro rfl; revert h; decide⟩
+
+/-- Digits are `0x30…0x39`, well above either terminator. -/
+theorem noNl_digits (n : Nat) : NoNl (digits n) := fun b hb =>
+  let h := (digits_range n b hb).1
+  ⟨by rintro rfl; exact absurd h (by decide), by rintro rfl; exact absurd h (by decide)⟩
+
+/-- A concrete literal reply carries no terminator — the workhorse for the fixed
+rows. -/
+theorem noNl_lit {bs : Bytes} (h : bs.all (fun b => b != 0x0D && b != 0x0A) = true) :
+    NoNl bs := by
+  intro b hb
+  have := List.all_eq_true.1 h b hb
+  simp only [Bool.and_eq_true, bne_iff_ne] at this
+  exact this
+
+/-- The echoed payload survives the filter only within the safe alphabet. -/
+theorem noNl_filter (payload : Bytes) : NoNl (payload.filter capByte) :=
+  fun b hb => capByte_no_nl b (List.mem_filter.1 hb).2
+
+theorem noNl_xtgetcapReply (payload : Bytes) : NoNl (xtgetcapReply payload) := by
+  rw [xtgetcapReply]
+  repeat' apply NoNl.append
+  · exact noNl_lit (by decide)
+  · exact noNl_filter _
+  · exact noNl_lit (by decide)
+
+theorem noNl_cprReply (v : Vt) (p : Bool) : NoNl (cprReply v p) := by
+  cases p <;>
+    (rw [cprReply]; repeat' apply NoNl.append) <;>
+    first | exact noNl_digits _ | exact noNl_lit (by decide)
+
+theorem noNl_textAreaReply (v : Vt) : NoNl (textAreaReply v) := by
+  rw [textAreaReply]
+  repeat' apply NoNl.append
+  all_goals first | exact noNl_digits _ | exact noNl_lit (by decide)
+
+/-- Every reply `classifyCsi` can name is terminator-free. -/
+theorem classifyCsi_reply_noNl (v : Vt) (seq r : Bytes)
+    (h : classifyCsi v seq = .owned r) : NoNl r := by
+  unfold classifyCsi at h
+  repeat' split at h
+  all_goals first
+    | (injection h with e; subst e; first | exact noNl_lit (by decide) | exact noNl_cprReply v _ | exact noNl_textAreaReply v)
+    | exact Decision.noConfusion h
+
+/-- …and every reply `classifyOsc` can name. -/
+theorem classifyOsc_reply_noNl (seq r : Bytes)
+    (h : classifyOsc seq = .owned r) : NoNl r := by
+  unfold classifyOsc at h
+  repeat' split at h
+  all_goals first
+    | (injection h with e; subst e; exact noNl_lit (by decide))
+    | exact Decision.noConfusion h
+
+/-- `complete` produces a terminator-free reply whenever the decision it is given
+does. `.unowned` produces no reply at all. -/
+theorem complete_reply_noNl {d : Decision} {seq : Bytes}
+    (h : ∀ r, d = .owned r → NoNl r) : NoNl (complete d seq).replies := by
+  cases d with
+  | unowned => exact NoNl.nil
+  | owned r => exact h r rfl
+
+/-- One scanner step never emits a line terminator, from any state and any byte.
+Replies arise only from `complete`, and every owned reply is one of the
+terminator-free builders above (the DCS arm's `xtgetcapReply`/`decrqssReply`
+included); `complete .unowned` and every non-completing branch reply is empty. -/
+theorem step_reply_noNl (s : Scan) (v : Vt) (b : UInt8) : NoNl (s.step v b).replies := by
+  cases s <;> simp only [Scan.step] <;> (repeat' split)
+  all_goals first
+    | exact NoNl.nil
+    | exact complete_reply_noNl (fun r hr => classifyCsi_reply_noNl v _ r hr)
+    | exact complete_reply_noNl (fun r hr => classifyOsc_reply_noNl _ r hr)
+    | exact complete_reply_noNl (fun r hr => by injection hr with e; subst e; exact noNl_xtgetcapReply _)
+    | exact complete_reply_noNl (fun r hr => by injection hr with e; subst e; exact noNl_lit (by decide))
+
+/-- **linger never writes a line terminator into the child.** The reply stream of
+any child output, from any scanner state, contains no CR or LF — so untrusted
+output cannot commit a command line through a query reply. Anchor: the child half
+of §Terminal's client-independence, and the injection guard the audit added. -/
+theorem feed_replies_noNl (v : Vt) (s : Scan) (bs : Bytes) :
+    NoNl (feed v s bs).replies := by
+  induction bs generalizing v s with
+  | nil => intro b hb; simp [feed] at hb
+  | cons c cs ih =>
+    simp only [feed]
+    exact NoNl.append (step_reply_noNl s (v.step c) c) (ih (v.step c) _)
 
 /-! ## Stream laws -/
 

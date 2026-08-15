@@ -4097,3 +4097,97 @@ The prerequisite is unchanged and is the edit Step 1 already named: factor the C
 walk so it exposes the **dispatch**, not just the grid fact — `csi_digits_run_eq`
 already carries `ignore` and `priv` through, and `org_*_decom_off` is the template
 for one field.
+
+## Step 0, second finding — XTGETTCAP echo was a command-injection channel — 2026-08-15T22:30:00Z
+
+The Step 0 audit (a fanned-out read with adversarial verification) surfaced more
+siblings than the hand-back. The one that mattered most is a **security** bug, and
+it is the §Replay family pointed at the *child* rather than the client.
+
+### The bug
+
+`Terminal.xtgetcapReply payload = ESC P 0 + r ++ payload ++ ESC \` echoed the
+requested capability name **verbatim**. That reply is routed by
+`Session.onMsg .ptyOut` as `.writePty r.replies` — i.e. written into the child's own
+pty **input**. And an XTGETTCAP request is child *output*: it arrives from whatever
+the child prints, which includes untrusted data — `cat evil.txt`, an ssh stream, a
+tailed log, a crafted filename in `ls`.
+
+So a hostile file containing `ESC P + q 5 4 <CR> ; i d > /tmp/x <CR> ESC \` makes
+linger write `ESC P 0 + r 5 4 <CR> ; i d > /tmp/x <CR> ESC \` into the shell's stdin.
+On a cooked-mode tty the CR commits a line, and `;` separates commands, so the
+injected `id > /tmp/x` runs. Classic terminal-reply injection (the xterm CVE class),
+reintroduced because we echoed unvalidated child bytes.
+
+Confirmed at the byte level:
+`(feed (Vt.init 80 24) .ground [ESC,P,+,q,'5','4',CR,';','i','d',ESC,\]).replies`
+= `[27,80,48,43,114,53,52,13,59,105,100,27,92]` — the CR (13) and `;id` are present.
+
+Only `xtgetcapReply` echoes child bytes; every other owned reply is fixed
+(`da1/da2/status/version/palette/decrqss`) or built from `digits` of the cursor/size
+(`cpr`, `textArea`), all `0x30–0x39`. So the injection surface is exactly one builder.
+
+### The fix
+
+`xtgetcapReply` now filters the echo to the legal XTGETTCAP alphabet — hex digits and
+`;` (`capByte`) — which is the payload format a conforming request uses, so it is the
+identity on real queries (tmux's `ESC P + q 544e ESC \` is unchanged), and strips
+exactly the bytes that could terminate a line from a malformed one. `54;d` remains
+from the evil payload above: harmless, since no CR/LF means the shell never commits it.
+
+Faithfulness notes: we still always reply *negative* (`0`), which is honest (we
+support no cap); DECSTR-style broad resets were rejected for the same reason as in the
+restore prologue (varies by terminal, and we would trust bytes we do not parse); and
+the filter, not a reject, keeps the reply "shaped like" the query.
+
+### The theorem, and why it is stream-wide
+
+`feed_replies_noNl` (Theorems/Terminal.lean): for any `v`, scanner state and child
+input, `(feed v s bs).replies` contains **no `0x0D` and no `0x0A`**. This is the
+real invariant — "linger never writes a line terminator into the child" — and the
+reason to state it over the whole stream rather than just `xtgetcapReply` is
+regression: a *future* reply builder that echoed child bytes would fail this proof
+rather than ship. Structure: `NoNl` (+ `nil`/`append`), one lemma per builder
+(`noNl_digits` via `digits_range`, `noNl_filter` via `capByte_no_nl` + `List.mem_filter`),
+`classifyCsi/Osc_reply_noNl` (a `repeat' split at h` case analysis — **`split_ifs`
+does not exist here, there is no Mathlib**; core `split` with `repeat'` fully splits
+the if-chain), `complete_reply_noNl`, `step_reply_noNl` (`cases s <;> simp only
+[Scan.step] <;> (repeat' split)` then `all_goals first | …`), and `feed_replies_noNl`
+by induction on the input.
+
+`capByte_no_nl` is `⟨by rintro rfl; revert h; decide, …⟩` — no `∀ b : UInt8` decide
+(no Fintype instance without Mathlib); substitute the concrete terminator, then the
+`capByte 0x0D = true → False` goal is closed-term-decidable.
+
+### Break-verified
+
+Delete `.filter capByte` from `xtgetcapReply`: `noNl_xtgetcapReply`'s proof
+(`noNl_filter _`) no longer typechecks — the no-newline invariant is *unprovable* for
+the raw echo — and `xtgetcapReply_exact`'s `rfl` fails. So the theorem catches the
+missing guard. Pinned three ways: the Lean proof, `Tests/Terminal.lean` (`evilXtget`
+reply `.contains 0x0D = false`, with a non-vacuity check that the raw payload did
+carry the CR), and `tests/terminal_query_test.py` step (the evil query over a real
+pty, asserting the bytes linger wrote back carry no CR/LF and a filtered negative
+reply still came back).
+
+### The rest of the audit's survivors, recorded not fixed
+
+The audit found more real ones, none a security hole, none fixed this session (one
+item in flight). Triaged in `specs/restore-conformance.md` "Step 0 findings ledger"
+so they are not lost:
+- **resize-at-same-size wipes scroll region + tab ruler** (`Vt.resize` resets
+  `top/bot/tabs` unconditionally; reattach at unchanged size → no SIGWINCH → the
+  child never re-establishes them). Also makes `tabsAnsi` dead on the attach path.
+  In-family and in-scope for a future restore step.
+- **label values are not tab/newline-scrubbed** → a label can forge a row/status in
+  `infoText`'s tab-separated listing (`name_clean` is proved for the status column
+  only). Local-listing `cmd`/label fields also lost their `Remote.scrub` in a refactor.
+- **pty input buffer (`rt.ptyIn`) is uncapped**, unlike the per-client 4 MiB output
+  queue — §Bound's runtime half is asymmetric.
+- **resume spawns the pty at hardcoded 80×24** while the restored `Vt` keeps the
+  checkpoint's size, until the first sizing attach (narrow: `linger run` on a
+  checkpointed-not-live session).
+- **modes `Vt` does not model** (DECSCNM, ?1005/?1015, DECSCUSR) can be neither
+  established nor cleared in either direction — a completeness limit of the model.
+- **`.err` is dropped by `Client.attach`** (only `drainReplies` prints it) — a
+  "too many clients" refusal reads as a clean detach.

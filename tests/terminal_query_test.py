@@ -36,7 +36,9 @@ def probe_main(result_path, ready_path, trigger_path):
         if not os.path.exists(trigger_path):
             raise RuntimeError("trigger timeout")
 
-        os.write(1, DA1_QUERY)
+        query = bytes.fromhex(os.environ["PROBE_QUERY_HEX"]) \
+            if os.environ.get("PROBE_QUERY_HEX") else DA1_QUERY
+        os.write(1, query)
         reply = b""
         deadline = time.time() + 2
         while time.time() < deadline:
@@ -117,7 +119,7 @@ def stop_client(pid, fd):
         pass
 
 
-def run_probe_case(index, clients, inherited_term):
+def run_probe_case(index, clients, inherited_term, query_hex=None):
     name = f"term-{index}-{clients}"
     case = pathlib.Path(LDIR) / name
     case.mkdir(exist_ok=True)
@@ -127,6 +129,8 @@ def run_probe_case(index, clients, inherited_term):
 
     env = dict(BASE_ENV, TERM_PROGRAM="inherited-program",
                TERM_PROGRAM_VERSION="9.9.9")
+    if query_hex:
+        env["PROBE_QUERY_HEX"] = query_hex
     if inherited_term is None:
         env.pop("TERM", None)
     else:
@@ -211,6 +215,20 @@ fails += expect(
 # Original regression only: interactive fish must consume a command before any
 # client attaches. The marker is a file, not echoed terminal output, so startup
 # echo cannot make this pass accidentally.
+# XTGETTCAP reply injection: linger writes query replies into the child's own
+# input, and the request is untrusted child output. A raw echo of a payload
+# carrying a CR let a `cat` of a hostile file run a command. The reply must
+# carry no line terminator. Payload: 54 (hex '5','4') CR ; i d > x CR — the CRs
+# are the injection primitive.
+evil_hex = "1b502b7135340d3b69643e780d1b5c"
+inj = run_probe_case(9, 0, None, query_hex=evil_hex)
+inj_reply = bytes(inj.get("reply", []))
+fails += expect(inj_reply != b"" and 0x0D not in inj_reply and 0x0A not in inj_reply,
+                "XTGETTCAP reply carries no CR/LF (no command injection)")
+# non-vacuity: linger did answer the query (a filtered negative reply came back)
+fails += expect(inj_reply.startswith(b"\x1bP0+r"),
+                "XTGETTCAP still answered (filtered negative reply reached the child)")
+
 fish = shutil.which("fish")
 if fish:
     marker = pathlib.Path(LDIR) / "fish-command-ran"

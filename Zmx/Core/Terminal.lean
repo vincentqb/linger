@@ -59,8 +59,25 @@ def paletteReply (selector hex : UInt8) : Bytes :=
     List.replicate 4 hex ++ [0x2F] ++ List.replicate 4 hex ++ [0x2F] ++
     List.replicate 4 hex ++ [ESC, STFinal]
 
+/-- The legal XTGETTCAP payload alphabet: hex digits and the `;` that
+separates capability names. Everything a well-formed request carries. -/
+def capByte (b : UInt8) : Bool :=
+  (0x30 ≤ b && b ≤ 0x39) || (0x41 ≤ b && b ≤ 0x46)
+    || (0x61 ≤ b && b ≤ 0x66) || b == 0x3B
+
+/-- XTGETTCAP is answered negatively for every capability, echoing the
+requested name so the child knows *which* is unsupported. The echo is
+**filtered to the legal alphabet**, because the reply is written into the
+child's own input (`Session.onMsg .ptyOut → .writePty`), and a request is
+child-controlled output — a `cat` of a hostile file, an ssh stream, a log
+tail. A raw payload could carry a CR and a shell command; on a cooked-mode
+tty the CR commits a line, so echoing it verbatim let untrusted output run
+a command (terminal-reply injection). A conforming request is hex, so the
+filter is the identity on it; a malformed one loses exactly the bytes that
+could terminate a line. `feed_replies_no_newline` states the guarantee this
+buys: no reply linger ever writes to the child contains a line terminator. -/
 def xtgetcapReply (payload : Bytes) : Bytes :=
-  [ESC, 0x50, 0x30, 0x2B, 0x72] ++ payload ++ [ESC, STFinal]
+  [ESC, 0x50, 0x30, 0x2B, 0x72] ++ payload.filter capByte ++ [ESC, STFinal]
 
 def decrqssReply : Bytes :=
   [ESC, 0x50, 0x30, 0x24, 0x72, ESC, STFinal]

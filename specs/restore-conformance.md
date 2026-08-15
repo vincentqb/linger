@@ -125,19 +125,64 @@ shipped fixes) → Step 2 → Step 3 → Step 4.
 
 ## Step 0 — audit for siblings of the receiver-state bug
 
-Status: **done** (2026-08-15). One finding, fixed: the hand-back (`Render.leaveAnsi`,
-`tests/attach_test.py` step 9, SCRATCHPAD 2026-08-15T20:10). Its theorem is folded
-into Step 1.
+Status: **done** (2026-08-15). Ran as a fanned-out read across five lenses (emitters,
+runtime hygiene, the child's side, theorem quantifiers, dead surface) with an
+adversarial verifier per candidate. **Two fixed this round; the rest recorded below.**
 
-What was checked and needs no emitter of its own, so a future session does not redo
-it: `linger history` emits `rowText`, whose every character passes `safeChar`, so it
-carries no escape byte and cannot dirty the terminal it prints to (`withAnsi = true`
-is unreachable from the CLI — `Session.onMsg` passes `false`); `Zmx/Core/Listing.lean`
-and `Status.lean` emit no escape sequences at all, glyphs only; `resizeEffects`
-carries no bytes, only a `resizePty` effect.
+Fixed:
+- **The hand-back** (`Render.leaveAnsi`, `tests/attach_test.py` step 9, SCRATCHPAD
+  2026-08-15T20:10). Its theorem is folded into Step 1.
+- **XTGETTCAP reply command injection** (`Terminal.xtgetcapReply`, SCRATCHPAD
+  2026-08-15T22:30). The §Replay family aimed at the *child*: query replies are
+  written into the child's own pty input, and an XTGETTCAP request is untrusted child
+  output, so echoing its payload verbatim let a `cat` of a hostile file smuggle a CR
+  and run a command. Fixed by filtering the echo to the hex+`;` alphabet; proved by
+  `feed_replies_noNl` (no reply linger writes to the child contains a line
+  terminator, over the whole stream). This is a security fix and outranked the
+  remaining proof steps, which is why it was taken this round.
 
-Exit criterion, met: each emitter either establishes what it depends on, or has a
-recorded reason it need not.
+Checked and needing no emitter of its own (so a future session does not redo it):
+`linger history` emits `rowText`, every character `safeChar`-scrubbed, so no escape
+byte (and `withAnsi = true` is unreachable from the CLI — `Session.onMsg` passes
+`false`); `Zmx/Core/Listing.lean` and `Status.lean` emit glyphs only; `resizeEffects`
+carries no bytes.
+
+Exit criterion, met: each emitter either establishes/handles what it depends on, or
+is recorded below with a reason and a severity.
+
+### Step 0 findings ledger — real, not yet fixed
+
+Recorded so they are not lost; none is a security hole, and one-item-in-flight is why
+they wait. Roughly by severity:
+
+1. **Reattach at an unchanged size wipes the scroll region and tab ruler.**
+   `Session.onMsg .attach` calls `Vt.resize` for every sizer client with no dimension
+   guard, and `Vt.resize` unconditionally sets `top := 0`, `bot := rows-1`,
+   `tabs := defaultTabs cols`. At equal dimensions those are its whole effect, and the
+   kernel suppresses `SIGWINCH`, so the child — the only author of `DECSTBM` and the
+   tab ruler — is never nudged to re-establish them. Also makes `tabsAnsi` dead on the
+   attach path (the ruler is already default by the time `restore` runs). **In-family,
+   in-scope for the grid step**: fix is to skip the reset when dimensions are unchanged.
+2. **Label values are not tab/newline-scrubbed.** `infoText` frames fields as
+   `k\tv\n`; `.labelSet`/`linger set` apply no filter, so a label value with a newline
+   and tab forges an extra row — including a `status`/`state` pair — in the listing.
+   `name_clean` proves the status column is clean; labels bypass it. The local-listing
+   `cmd` and `label.*` display also lost the `Remote.scrub` that the old `Tui.rowOfInfo`
+   applied, in a refactor. **§Row/§Status integrity**; fix is to scrub or reject the
+   two framing bytes at `.labelSet`.
+3. **The pty input buffer (`rt.ptyIn`) is uncapped**, unlike the per-client 4 MiB
+   output queue — §Bound's runtime half is asymmetric. A child that stops reading plus
+   a client that floods input grows it unboundedly. Runtime (`IO`), so not a core
+   theorem, but the cap belongs next to the client one in `Daemon.lean`.
+4. **Resume spawns the pty at a hardcoded 80×24** while the restored `Vt` keeps the
+   checkpoint's dimensions, until the first sizing attach reconciles them. Narrow
+   reach: `linger run`/`send`/`wait` on a checkpointed-but-not-live session.
+5. **Modes the `Vt` does not model** (DECSCNM `?5`, `?1005`/`?1015` mouse encodings,
+   DECSCUSR cursor shape) can be neither established by the prologue nor cleared by the
+   hand-back, in either direction — a completeness limit of the emulator, not a leak
+   the current model can even represent.
+6. **`.err` is dropped by `Client.attach`** (only `drainReplies` prints it), so a
+   "too many clients" refusal reads to the user as a clean detach. UX, easy fix.
 
 ## Goal
 

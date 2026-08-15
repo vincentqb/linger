@@ -123,4 +123,36 @@ were withheld, emits no reply, and resets the scanner. -/
 example : (ownedCases profileVt).all (finishAllProperPrefixes profileVt) = true := by
   native_decide
 
+
+/-! ### XTGETTCAP echo cannot inject a command
+
+The reply is written into the child's own input, and the request is untrusted
+child output, so a raw echo of a payload carrying a CR let a `cat` of a hostile
+file run a command (`feed_replies_noNl` is the invariant; these pin the concrete
+behavior). A well-formed hex request is echoed unchanged; a malicious one loses
+its line terminator. -/
+
+/-- ESC P + q <hex> ESC \ — a genuine capability request, hex-encoded. -/
+def goodXtget : Bytes := [ESC, 0x50, 0x2B, 0x71, 0x35, 0x34, 0x34, 0x65, ESC, STFinal]
+/-- ESC P + q 5 4 CR ; i d > x CR ESC \ — the payload smuggles a CR and a
+command, as a hostile file would. -/
+def evilXtget : Bytes :=
+  [ESC, 0x50, 0x2B, 0x71, 0x35, 0x34, 0x0D, 0x3B, 0x69, 0x64, 0x3E, 0x78, 0x0D,
+   ESC, STFinal]
+
+/-- The hex request round-trips: every legal byte is preserved. -/
+example : (feed profileVt .ground goodXtget).replies =
+    [ESC, 0x50, 0x30, 0x2B, 0x72, 0x35, 0x34, 0x34, 0x65, ESC, STFinal] := by
+  native_decide
+
+/-- The malicious request cannot commit a line: the CR (and the non-hex `i`, `>`,
+`x`) are gone; what remains (`54;d`) sits harmlessly in the line buffer. This is
+the byte that made it a command injection. -/
+example : (feed profileVt .ground evilXtget).replies.contains 0x0D = false := by
+  native_decide
+example : (feed profileVt .ground evilXtget).replies.contains 0x0A = false := by
+  native_decide
+/-- Non-vacuity: the raw payload really did contain the injected CR. -/
+example : evilXtget.contains 0x0D = true := by native_decide
+
 end Zmx.Core.Terminal.Tests
