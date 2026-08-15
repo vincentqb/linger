@@ -1,6 +1,6 @@
 # terminal-contract — linger remains the terminal with zero clients
 
-Status: active
+Status: superseded by `specs/restore-conformance.md` (2026-08-15)
 Updated: 2026-08-14
 Predecessor: `specs/grid-fidelity.md` (superseded; every open obligation is carried below)
 

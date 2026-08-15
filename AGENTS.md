@@ -11,11 +11,14 @@ closed build plans with their completion records
 
 ## Where things stand — read this first after any compaction
 
-1. **`specs/terminal-contract.md` is the ACTIVE plan** — it adds the
-   client-independent virtual-terminal reply channel and carries the former
-   grid-fidelity plan through exact cells/pens and `resume_grid`. Its header
-   block is the ten-second version. (Don't look for a living `PLAN.md`: the
-   root one is requirements, and everything in `specs/archive/` is closed.)
+1. **`specs/restore-conformance.md` is the ACTIVE plan** — restore works into
+   any client, and the proofs quantify over that client instead of over
+   `Vt.init`. Its header block is the ten-second version.
+   `specs/terminal-contract.md` is its predecessor: Steps 1–3 are complete
+   there and stay as the record, its Step 4 is carried forward in a different
+   shape, and it is not archived because its exit criteria are unmet.
+   (Don't look for a living `PLAN.md`: the root one is requirements, and
+   everything in `specs/archive/` is closed.)
 2. **`SCRATCHPAD.md`** — append-only worklog: proof recipes, measured
    environment facts, break-verify records, and the negative results.
    Read before writing; append after; never delete prior entries.
