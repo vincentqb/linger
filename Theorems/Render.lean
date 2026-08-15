@@ -4026,4 +4026,387 @@ theorem leave_grounds (w : Vt) : (w.feed leaveAnsi).pstate = .ground := by
   rw [feed_append]
   exact hrest _ (st_grounds w).1
 
+
+/-! ## §Handback / anchor A5 — the hand-back leaves the modes canonical
+
+`leave_grounds` gave the parser half for any receiver; this gives the modes half.
+The machinery is a `Modes`-projection analog of `Keeps`: `modeSet_modes` exposes a
+private mode set as its `setMode` (the dispatch-exposing bridge the spec named),
+`MMap` composes per-chunk modes transforms from ground, and `leave_modes` folds the
+hand-back's chunks — each mode set absolutely, each non-mode chunk transparent — to
+the default record, for **any** receiver `w`. -/
+
+-- setMode's effect on `modes` is a function of the incoming modes alone.
+theorem modes_moveTo (v : Vt) (x y : Nat) : (v.moveTo x y).modes = v.modes := rfl
+theorem modes_leaveAlt (v : Vt) (r : Bool) : (v.leaveAlt r).modes = v.modes := by
+  unfold Vt.leaveAlt; split <;> rfl
+theorem modes_enterAlt (v : Vt) (s : Bool) : (v.enterAlt s).modes = v.modes := by
+  unfold Vt.enterAlt; split <;> rfl
+
+theorem modes_setMode {w1 w2 : Vt} (p : Bool) (n : Nat) (on : Bool)
+    (h : w1.modes = w2.modes) : (w1.setMode p n on).modes = (w2.setMode p n on).modes := by
+  unfold Vt.setMode
+  split <;> (repeat' split) <;>
+    simp_all [modes_moveTo, modes_leaveAlt, modes_enterAlt]
+
+/-- The dispatch of `CSI ? … h`/`l` is `setMode`, on its `modes`. The `match`
+on the concrete final byte reduces, so this is `rfl` after the ignore guard. -/
+theorem modes_csiDispatch_sm (v : Vt) (s : CsiState) (hi : s.ignore = false) :
+    (v.csiDispatch s 0x68).modes = (v.setMode (s.priv == 0x3F) (s.arg 0 0) true).modes := by
+  unfold Vt.csiDispatch; rw [if_neg (by rw [hi]; simp)]; rfl
+
+theorem modes_csiDispatch_rm (v : Vt) (s : CsiState) (hi : s.ignore = false) :
+    (v.csiDispatch s 0x6C).modes = (v.setMode (s.priv == 0x3F) (s.arg 0 0) false).modes := by
+  unfold Vt.csiDispatch; rw [if_neg (by rw [hi]; simp)]; rfl
+
+/-- One step: `ESC [ ?` sets the private marker without touching the frame. -/
+theorem frame_csi_marker_step {v : Vt} {s : CsiState} (hg : v.pstate = .csi s) :
+    Frame (v.step 0x3F) = Frame v := by
+  have hw : (v.abortUtf8 0x3F).pstate = PState.csi s := by
+    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
+  unfold Vt.step
+  dsimp only
+  rw [hw]
+  unfold Vt.stepCsi
+  dsimp only
+  rw [if_neg (by decide), if_neg (by decide), if_neg (by decide), if_pos (by decide)]
+  exact frame_abortUtf8 v 0x3F
+
+/-- **The digit-run-and-dispatch tail of a private mode set**, over an abstract
+collector already carrying the private marker. Its modes become `setMode true n on`;
+the parser returns to ground. Split out so the `ESC [ ?` prologue is applied to the
+concrete receiver separately (there is no `set` tactic here — no Mathlib). -/
+theorem modeSet_tail (n : Nat) (on : Bool) (hn : 0 < n) (hlt : n < 65535)
+    {w : Vt} (hm : w.pstate = .csi ({ priv := 0x3F } : CsiState)) (hwu : w.u8need = 0) :
+    (w.feed (digits n ++ [(if on then 0x68 else 0x6C : UInt8)])).modes
+        = (w.setMode true n on).modes
+      ∧ (w.feed (digits n ++ [(if on then 0x68 else 0x6C : UInt8)])).pstate = .ground
+      ∧ (w.feed (digits n ++ [(if on then 0x68 else 0x6C : UInt8)])).u8need = 0 := by
+  have hfinal : (0x40 : UInt8) ≤ (if on then 0x68 else 0x6C)
+      ∧ (if on then (0x68 : UInt8) else 0x6C) ≤ 0x7E := by
+    cases on <;> exact ⟨by decide, by decide⟩
+  obtain ⟨sa, hfeed, -⟩ := csi_param_run_inter (digits n) hm hwu (paramBytes_digits n)
+  obtain ⟨sb, hpsb, hcur', hhave', hpar', hint', hign', -, hpriv'⟩ := csi_digits_value n hm rfl
+  have hsab : sa = sb :=
+    PState.csi.inj ((by rw [hfeed] : (w.feed (digits n)).pstate = .csi sa).symm.trans hpsb)
+  rw [show ∀ (u : Vt), u.feed (digits n ++ [(if on then 0x68 else 0x6C : UInt8)])
+      = (u.feed (digits n)).feed [(if on then 0x68 else 0x6C : UInt8)] from
+    fun u => by simp [Vt.feed, List.foldl_append]]
+  rw [show ∀ (u : Vt), u.feed [(if on then 0x68 else 0x6C : UInt8)]
+      = u.step (if on then 0x68 else 0x6C) from fun _ => rfl, hfeed]
+  rw [csi_final_step_eq (if on then 0x68 else 0x6C) rfl (by rw [hwu]) (by rw [hsab]; exact hint')
+    hfinal.1 hfinal.2]
+  unfold Vt.csiFinish
+  rw [if_pos (by rw [hsab]; simpa using hhave'), if_neg (by rw [hsab, hpar']; decide)]
+  dsimp only
+  refine ⟨?_, rfl, by rw [un_csiDispatch]; exact hwu⟩
+  have hmin : min (min n 65535) 65535 = n := by omega
+  -- normalize the closed collector: single parameter `n`, marker set, ignore clear
+  have hstate : ({ sa with params := sa.params.push (min sa.cur 65535, sa.curSub) } : CsiState)
+      = { sa with params := #[(n, sa.curSub)] } := by
+    rw [hsab, hpar', hcur', hmin]; rfl
+  have harg : ({ sa with params := #[(n, sa.curSub)] } : CsiState).arg 0 0 = n := by
+    rw [arg_of_one, if_neg (by omega)]
+  have hpriv2 : ({ sa with params := #[(n, sa.curSub)] } : CsiState).priv = 0x3F := by
+    show sa.priv = 0x3F; rw [hsab]; exact hpriv'
+  have hign2 : ({ sa with params := #[(n, sa.curSub)] } : CsiState).ignore = false := by
+    show sa.ignore = false; rw [hsab]; exact hign'
+  have hopmodes : ({ w with pstate := .csi sa } : Vt).modes = w.modes := rfl
+  show (({ w with pstate := .csi sa }).csiDispatch
+      { sa with params := sa.params.push (min sa.cur 65535, sa.curSub) }
+      (if on then 0x68 else 0x6C)).modes = (w.setMode true n on).modes
+  rw [hstate]
+  cases on
+  · show (({ w with pstate := .csi sa }).csiDispatch _ 0x6C).modes = (w.setMode true n false).modes
+    rw [modes_csiDispatch_rm _ _ hign2, harg, hpriv2]
+    exact modes_setMode true n false hopmodes
+  · show (({ w with pstate := .csi sa }).csiDispatch _ 0x68).modes = (w.setMode true n true).modes
+    rw [modes_csiDispatch_sm _ _ hign2, harg, hpriv2]
+    exact modes_setMode true n true hopmodes
+
+theorem modeSet_modes (n : Nat) (on : Bool) (hn : 0 < n) (hlt : n < 65535)
+    {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) :
+    (v.feed (modeSet n on)).modes = (v.setMode true n on).modes
+      ∧ (v.feed (modeSet n on)).pstate = .ground
+      ∧ (v.feed (modeSet n on)).u8need = 0 := by
+  rw [show modeSet n on
+      = [0x1B, 0x5B, 0x3F] ++ (digits n ++ [(if on then 0x68 else 0x6C : UInt8)]) from by
+    simp [modeSet, csiPriv, csiB]]
+  rw [show ∀ (w : Vt), w.feed ([0x1B, 0x5B, 0x3F] ++ (digits n ++ [(if on then 0x68 else 0x6C : UInt8)]))
+      = (((w.step 0x1B).step 0x5B).step 0x3F).feed (digits n ++ [(if on then 0x68 else 0x6C : UInt8)]) from
+    fun w => by simp [Vt.feed]]
+  -- the `ESC [ ?` prologue: reaches the marked collector, preserving frame + u8need
+  have he : (v.step 0x1B) = { v with pstate := .esc } := esc_step_eq hg hu
+  have hb : ((v.step 0x1B).step 0x5B).pstate = .csi {} := csi_open_step (by rw [he])
+  obtain ⟨hm, -⟩ := csi_marker_step hb (by decide)
+  have hframe : Frame (((v.step 0x1B).step 0x5B).step 0x3F) = Frame v :=
+    (frame_csi_marker_step hb).trans ((frame_csi_open_step (by rw [he])).trans (frame_esc_step hg))
+  have hmodes : (((v.step 0x1B).step 0x5B).step 0x3F).modes = v.modes := congrArg (·.2.2) hframe
+  have hun : (((v.step 0x1B).step 0x5B).step 0x3F).u8need = 0 :=
+    uz_step 0x3F (by decide) (uz_step 0x5B (by decide) (uz_step_esc v))
+  obtain ⟨ht, hp, hu'⟩ := modeSet_tail n on hn hlt hm hun
+  refine ⟨?_, hp, hu'⟩
+  rw [ht, modes_setMode true n on hmodes]
+
+/-! ## MMap — modes-from-ground, and per-chunk transforms -/
+
+def MMap (f : Modes → Modes) (bs : Bytes) : Prop :=
+  ∀ v : Vt, v.pstate = .ground → v.u8need = 0 →
+    (v.feed bs).pstate = .ground ∧ (v.feed bs).u8need = 0 ∧ (v.feed bs).modes = f v.modes
+
+theorem MMap.comp {f g : Modes → Modes} {a b : Bytes} (ha : MMap f a) (hb : MMap g b) :
+    MMap (fun m => g (f m)) (a ++ b) := by
+  intro v hg hu
+  rw [feed_append]
+  obtain ⟨h1, h2, h3⟩ := ha v hg hu
+  obtain ⟨h4, h5, h6⟩ := hb _ h1 h2
+  exact ⟨h4, h5, by rw [h6, h3]⟩
+
+/-- modes-analog of `keeps_csi_tail`: a parameter run and a final byte whose dispatch
+preserves modes leaves modes alone and returns to ground. -/
+theorem csi_tail_modes (params : Bytes) (final : UInt8) (hp : ParamBytes params)
+    (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E)
+    (hmodes : ∀ (w : Vt) (t : CsiState), (w.csiDispatch t final).modes = w.modes)
+    {v : Vt} {s : CsiState} (hg : v.pstate = .csi s) (hu : v.u8need = 0) (hi : s.inter = 0) :
+    (v.feed (params ++ [final])).modes = v.modes
+      ∧ (v.feed (params ++ [final])).pstate = .ground
+      ∧ (v.feed (params ++ [final])).u8need = 0 := by
+  obtain ⟨s', hs', hsi⟩ := csi_param_run_inter params hg hu hp
+  rw [show ∀ (w : Vt), w.feed (params ++ [final]) = (w.feed params).feed [final] from
+    fun w => by simp [Vt.feed, List.foldl_append]]
+  rw [hs', show ∀ (w : Vt), w.feed [final] = w.step final from fun _ => rfl]
+  rw [csi_final_step_eq final (v := { v with pstate := .csi s' }) (s := s') rfl
+    (by simpa using hu) (by rw [hsi]; exact hi) h1 h2]
+  unfold Vt.csiFinish
+  dsimp only
+  refine ⟨by rw [hmodes], rfl, by rw [un_csiDispatch]; simpa using hu⟩
+
+theorem mmap_id_csi_seq (params : Bytes) (final : UInt8) (hp : ParamBytes params)
+    (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E)
+    (hmodes : ∀ (w : Vt) (t : CsiState), (w.csiDispatch t final).modes = w.modes) :
+    MMap id (csiB ++ params ++ [final]) := by
+  intro v hg hu
+  rw [show (csiB ++ params ++ [final] : Bytes) = [0x1B, 0x5B] ++ (params ++ [final]) from by
+    unfold csiB; simp]
+  rw [show ∀ (w : Vt), w.feed ([0x1B, 0x5B] ++ (params ++ [final]))
+      = (w.feed [0x1B, 0x5B]).feed (params ++ [final]) from
+    fun w => by simp [Vt.feed, List.foldl_append]]
+  rw [keeps_csi_open hg hu]
+  obtain ⟨hmod, hp', hu'⟩ := csi_tail_modes params final hp h1 h2 hmodes
+    (v := { v with pstate := .csi {} }) rfl (by simpa using hu) rfl
+  exact ⟨hp', hu', hmod⟩
+
+/-! ### per-final dispatch-modes facts for the preservers -/
+
+theorem modes_csiDispatch_stbm (v : Vt) (s : CsiState) : (v.csiDispatch s 0x72).modes = v.modes := by
+  by_cases hi : s.ignore = true
+  · simp [Vt.csiDispatch, hi]
+  · unfold Vt.csiDispatch
+    rw [if_neg (by simp [hi])]
+    dsimp only
+    -- kill every wrong-final arm by its absurd equation; the DECSTBM arm and the
+    -- catch-all are cursor/region moves that never touch modes
+    split <;>
+      first
+        | (rename_i heq; exact absurd heq (by decide))
+        | ((repeat' split) <;> first | rfl | rw [modes_moveTo])
+
+theorem modes_csiDispatch_cup (v : Vt) (s : CsiState) : (v.csiDispatch s 0x48).modes = v.modes := by
+  by_cases hi : s.ignore = true
+  · simp [Vt.csiDispatch, hi]
+  · unfold Vt.csiDispatch; rw [if_neg (by simp [hi])]; exact modes_moveTo _ _ _
+
+theorem modes_csiDispatch_sgr (v : Vt) (s : CsiState) : (v.csiDispatch s 0x6D).modes = v.modes := by
+  by_cases hi : s.ignore = true
+  · simp [Vt.csiDispatch, hi]
+  · unfold Vt.csiDispatch; rw [if_neg (by simp [hi])]; dsimp only
+    split <;>
+      first
+        | (rename_i heq; exact absurd heq (by decide))
+        | ((repeat' split) <;> rfl)
+
+/-! ### per-chunk MMap bridges -/
+
+def smMod (n : Nat) (on : Bool) (m : Modes) : Modes :=
+  (Vt.setMode { (default : Vt) with modes := m } true n on).modes
+
+theorem mmap_modeSet (n : Nat) (on : Bool) (hn : 0 < n) (hlt : n < 65535) :
+    MMap (smMod n on) (modeSet n on) := by
+  intro v hg hu
+  obtain ⟨hm, hp, hun⟩ := modeSet_modes n on hn hlt hg hu
+  exact ⟨hp, hun, by rw [hm]; exact modes_setMode true n on rfl⟩
+
+theorem MMap.congr {f g : Modes → Modes} {bs : Bytes} (h : MMap f bs)
+    (hfg : ∀ m, f m = g m) : MMap g bs := by
+  intro v hg hu; obtain ⟨a, b, c⟩ := h v hg hu; exact ⟨a, b, by rw [c, hfg]⟩
+
+-- IRM: `CSI 4 h/l` (non-private), sets `insert`. The non-private analog of
+-- `modeSet_tail` with `n = 4`, so a marker-free walk to the same dispatch shape.
+theorem mmap_irm (on : Bool) :
+    MMap (fun m => { m with insert := on }) (csiNum 4 (if on then 0x68 else 0x6C)) := by
+  intro v hg hu
+  have hfinal : (0x40 : UInt8) ≤ (if on then 0x68 else 0x6C)
+      ∧ (if on then (0x68 : UInt8) else 0x6C) ≤ 0x7E := by cases on <;> exact ⟨by decide, by decide⟩
+  rw [show csiNum 4 (if on then 0x68 else 0x6C)
+      = [0x1B, 0x5B] ++ (digits 4 ++ [(if on then 0x68 else 0x6C : UInt8)]) from by
+    simp [csiNum, csiB]]
+  rw [show ∀ (w : Vt), w.feed ([0x1B, 0x5B] ++ (digits 4 ++ [(if on then 0x68 else 0x6C : UInt8)]))
+      = (w.feed [0x1B, 0x5B]).feed (digits 4 ++ [(if on then 0x68 else 0x6C : UInt8)]) from
+    fun w => by simp [Vt.feed, List.foldl_append]]
+  rw [keeps_csi_open hg hu]
+  obtain ⟨sa, hfeed, -⟩ := csi_param_run_inter (digits 4)
+    (v := { v with pstate := .csi {} }) rfl (by simpa using hu) (paramBytes_digits 4)
+  obtain ⟨sb, hpsb, hcur', hhave', hpar', hint', hign', -, hpriv'⟩ :=
+    csi_digits_value 4 (v := { v with pstate := .csi {} }) rfl rfl
+  have hsab : sa = sb :=
+    PState.csi.inj ((by rw [hfeed] :
+      (({ v with pstate := .csi {} } : Vt).feed (digits 4)).pstate = .csi sa).symm.trans hpsb)
+  rw [show ∀ (u : Vt), u.feed (digits 4 ++ [(if on then 0x68 else 0x6C : UInt8)])
+      = (u.feed (digits 4)).feed [(if on then 0x68 else 0x6C : UInt8)] from
+    fun u => by simp [Vt.feed, List.foldl_append]]
+  rw [show ∀ (u : Vt), u.feed [(if on then 0x68 else 0x6C : UInt8)]
+      = u.step (if on then 0x68 else 0x6C) from fun _ => rfl, hfeed]
+  rw [csi_final_step_eq (if on then 0x68 else 0x6C) rfl (by rw [hu]) (by rw [hsab]; exact hint')
+    hfinal.1 hfinal.2]
+  unfold Vt.csiFinish
+  rw [if_pos (by rw [hsab]; simpa using hhave'), if_neg (by rw [hsab, hpar']; decide)]
+  dsimp only
+  refine ⟨rfl, by rw [un_csiDispatch]; exact hu, ?_⟩
+  have hstate : ({ sa with params := sa.params.push (min sa.cur 65535, sa.curSub) } : CsiState)
+      = { sa with params := #[(4, sa.curSub)] } := by rw [hsab, hpar', hcur']; rfl
+  have harg : ({ sa with params := #[(4, sa.curSub)] } : CsiState).arg 0 0 = 4 := by
+    rw [arg_of_one, if_neg (by decide)]
+  have hpriv2 : ({ sa with params := #[(4, sa.curSub)] } : CsiState).priv = 0 := by
+    show sa.priv = 0; rw [hsab]; exact hpriv'
+  have hign2 : ({ sa with params := #[(4, sa.curSub)] } : CsiState).ignore = false := by
+    show sa.ignore = false; rw [hsab]; exact hign'
+  have hop : ({ v with pstate := .csi sa } : Vt).modes = v.modes := rfl
+  show (({ v with pstate := .csi sa }).csiDispatch
+      { sa with params := sa.params.push (min sa.cur 65535, sa.curSub) }
+      (if on then 0x68 else 0x6C)).modes = { v.modes with insert := on }
+  rw [hstate]
+  cases on
+  · show (({ v with pstate := .csi sa }).csiDispatch _ 0x6C).modes = _
+    rw [modes_csiDispatch_rm _ _ hign2, harg, hpriv2]; rfl
+  · show (({ v with pstate := .csi sa }).csiDispatch _ 0x68).modes = _
+    rw [modes_csiDispatch_sm _ _ hign2, harg, hpriv2]; rfl
+
+-- Application keypad: `ESC =` (on) / `ESC >` (off)
+theorem mmap_keypad (on : Bool) :
+    MMap (fun m => { m with appKeypad := on }) (if on then escSeq 0x3D else escSeq 0x3E) := by
+  intro v hg hu
+  have step : ∀ (b : UInt8), b = 0x3D ∨ b = 0x3E →
+      (v.feed (escSeq b)).pstate = .ground ∧ (v.feed (escSeq b)).u8need = 0
+        ∧ (v.feed (escSeq b)).modes = { v.modes with appKeypad := (b == 0x3D) } := by
+    intro b hb
+    rw [show escSeq b = [0x1B, b] from rfl,
+      show v.feed [0x1B, b] = (v.step 0x1B).step b from by simp [Vt.feed],
+      esc_step_eq hg hu, step_of_esc_quiet b rfl (by simpa using hu)]
+    rcases hb with h | h <;> subst h <;> (unfold Vt.stepEsc; exact ⟨rfl, by simpa using hu, rfl⟩)
+  cases on
+  · simpa using step 0x3E (Or.inr rfl)
+  · simpa using step 0x3D (Or.inl rfl)
+
+-- Charset designations `ESC ( B` / `ESC ) B` and Shift-In `SI`: modes untouched
+theorem mmap_id_charset (i x : UInt8) (hi : i = 0x28 ∨ i = 0x29) :
+    MMap id (escCharset i x) := by
+  intro v hg hu
+  rw [show escCharset i x = [0x1B] ++ [i, x] from rfl,
+    show ∀ (w : Vt), w.feed ([0x1B] ++ [i, x]) = ((w.step 0x1B).step i).step x from
+      fun w => by simp [Vt.feed],
+    esc_step_eq hg hu]
+  have hinter : ({ v with pstate := .esc } : Vt).step i = { v with pstate := .escInter i } := by
+    rcases hi with h | h <;> subst h <;>
+      (rw [step_of_esc_quiet _ rfl (by simpa using hu)]; unfold Vt.stepEsc; rfl)
+  rw [hinter, show ({ v with pstate := .escInter i } : Vt).step x
+      = ({ v with pstate := .escInter i }).stepEscInter i x from by
+    rw [step_of_escInter_quiet x rfl (by simpa using hu)]]
+  unfold Vt.stepEscInter
+  rcases hi with h | h <;> subst h <;> dsimp only <;> exact ⟨rfl, by simpa using hu, rfl⟩
+
+theorem mmap_id_si : MMap id [0x0F] := by
+  intro v hg hu
+  have hstep : v.step 0x0F = { v with shiftOut := false } := by
+    unfold Vt.step Vt.abortUtf8
+    dsimp only
+    rw [if_neg (by simp [hu]), hg]
+    dsimp only
+    unfold Vt.stepGround
+    rw [if_neg (by decide), if_pos (by decide)]
+    simp only [Vt.ctl]
+    congr 1
+  rw [show v.feed [0x0F] = v.step 0x0F from rfl, hstep]
+  exact ⟨hg, by simpa using hu, rfl⟩
+
+theorem mmap_id_stbm : MMap id (csiPlain 0x72) := by
+  rw [show csiPlain 0x72 = csiB ++ [] ++ [0x72] from by simp [csiPlain]]
+  exact mmap_id_csi_seq [] 0x72 ParamBytes.nil (by decide) (by decide)
+    (fun w t => modes_csiDispatch_stbm w t)
+
+theorem mmap_id_cup (a b : Nat) : MMap id (csiNum2 a b 0x48) := by
+  rw [show csiNum2 a b 0x48 = csiB ++ (digits a ++ [0x3B] ++ digits b) ++ [0x48] from by
+    simp [csiNum2]]
+  exact mmap_id_csi_seq _ 0x48
+    ((paramBytes_digits a |>.append (ParamBytes.cons (by decide) (by decide) ParamBytes.nil)).append
+      (paramBytes_digits b)) (by decide) (by decide)
+    (fun w t => modes_csiDispatch_cup w t)
+
+theorem mmap_id_sgr : MMap id (csiNum 0 0x6D) := by
+  rw [show csiNum 0 0x6D = csiB ++ digits 0 ++ [0x6D] from by simp [csiNum]]
+  exact mmap_id_csi_seq (digits 0) 0x6D (paramBytes_digits 0) (by decide) (by decide)
+    (fun w t => modes_csiDispatch_sgr w t)
+
+theorem MMap.id_of {f : Modes → Modes} {bs : Bytes} (h : MMap f bs) (hf : ∀ m, f m = m) :
+    MMap id bs := h.congr hf
+
+/-- **The hand-back leaves the modes canonical, for any receiver** (anchor A5,
+outbound value half). `leaveAnsi`'s lead-in grounds `w`, then each mode chunk sets
+its field absolutely and the non-mode chunks leave modes alone, so the composite is
+the default record regardless of what the session left behind. -/
+theorem leave_modes (w : Vt) : (w.feed leaveAnsi).modes = ({} : Modes) := by
+  -- the tail (everything after the `ESC \` lead-in), right-associated
+  have htail : MMap (fun _ => ({} : Modes))
+      (modeSet 1049 false ++ (csiNum 4 0x6C ++ (modeSet 25 true ++ (modeSet 2004 false ++
+       (modeSet 1000 false ++ (modeSet 1002 false ++ (modeSet 1003 false ++ (modeSet 1006 false ++
+       (modeSet 1004 false ++ (modeSet 1 false ++ (escSeq 0x3E ++ (modeSet 6 false ++
+       (modeSet 7 true ++ (csiPlain 0x72 ++ (escCharset 0x28 0x42 ++ (escCharset 0x29 0x42 ++
+       ([0x0F] ++ (csiNum2 999 1 0x48 ++ csiNum 0 0x6D)))))))))))))))))) := by
+    refine MMap.congr ?_ (by intro m; rfl)
+    exact (mmap_modeSet 1049 false (by decide) (by decide)).comp
+      ((mmap_irm false).comp
+      ((mmap_modeSet 25 true (by decide) (by decide)).comp
+      ((mmap_modeSet 2004 false (by decide) (by decide)).comp
+      ((mmap_modeSet 1000 false (by decide) (by decide)).comp
+      ((mmap_modeSet 1002 false (by decide) (by decide)).comp
+      ((mmap_modeSet 1003 false (by decide) (by decide)).comp
+      ((mmap_modeSet 1006 false (by decide) (by decide)).comp
+      ((mmap_modeSet 1004 false (by decide) (by decide)).comp
+      ((mmap_modeSet 1 false (by decide) (by decide)).comp
+      ((mmap_keypad false).comp
+      ((mmap_modeSet 6 false (by decide) (by decide)).comp
+      ((mmap_modeSet 7 true (by decide) (by decide)).comp
+      ((mmap_id_stbm).comp
+      ((mmap_id_charset 0x28 0x42 (Or.inl rfl)).comp
+      ((mmap_id_charset 0x29 0x42 (Or.inr rfl)).comp
+      ((mmap_id_si).comp
+      ((mmap_id_cup 999 1).comp mmap_id_sgr)))))))))))))))))
+  have hlead := st_grounds w
+  rw [show leaveAnsi = escSeq 0x5C ++
+      (modeSet 1049 false ++ (csiNum 4 0x6C ++ (modeSet 25 true ++ (modeSet 2004 false ++
+       (modeSet 1000 false ++ (modeSet 1002 false ++ (modeSet 1003 false ++ (modeSet 1006 false ++
+       (modeSet 1004 false ++ (modeSet 1 false ++ (escSeq 0x3E ++ (modeSet 6 false ++
+       (modeSet 7 true ++ (csiPlain 0x72 ++ (escCharset 0x28 0x42 ++ (escCharset 0x29 0x42 ++
+       ([0x0F] ++ (csiNum2 999 1 0x48 ++ csiNum 0 0x6D)))))))))))))))))) from by
+    simp only [leaveAnsi, List.append_assoc]]
+  rw [feed_append]
+  exact (htail _ hlead.1 hlead.2).2.2
+
+
+/-- **A5, outbound.** The hand-back returns the parser to ground with nothing
+half-decoded and the modes to the default, for any receiver — the value companion
+to `leave_grounds`. -/
+theorem leave_canonical (w : Vt) :
+    (w.feed leaveAnsi).pstate = .ground ∧ (w.feed leaveAnsi).modes = ({} : Modes) :=
+  ⟨leave_grounds w, leave_modes w⟩
+
 end Zmx.Core.Render

@@ -20,7 +20,7 @@ Read this file at whichever depth you need:
 | **A2. The daemon cannot be broken by traffic** | no event trace of any length — adversarial clients, hostile pty bytes, any interleaving — breaks a buffer cap, the screen invariant, or one client's isolation from another | `Session.run_wf`, `Session.run_bytes_isolates` (§Bound ∘ §Total ∘ §Isolate) |
 | **A3. The transport is invisible** | any re-chunking of any well-formed encoded stream decodes to exactly that stream: same messages, same order, nothing retained, no error | `Wire.decode_encode_chunked` (§Stream = §Frame ∘ §Chunk) |
 | **A4. A session name has one owner** | given the kernel grants at most one `flock` holder, at most one daemon ever unlinks or binds a given name | `Claim.at_most_one_owner` (§Claim) |
-| **A5. linger is invisible to the terminal it borrows** | whatever state a client's terminal is in, the restore stream establishes what the repaint needs; whatever state the session's program left, the hand-back returns the terminal to a state the next program can use. Both quantified over the receiver, with no hypothesis on it | inbound: `Render.restore_grounds` ✓, the modes pending (§Handback); outbound: `Render.leaveAnsi` shipped and pinned by `tests/attach_test.py`, theorem pending |
+| **A5. linger is invisible to the terminal it borrows** | whatever state a client's terminal is in, the restore stream establishes what the repaint needs; whatever state the session's program left, the hand-back returns the terminal to a state the next program can use. Both quantified over the receiver, with no hypothesis on it | inbound: `Render.restore_grounds` ✓ (parser); the inbound modes value is carried by the `dirty`-receiver round-trip fixtures. **outbound: `Render.leave_canonical` ✓** — for any receiver `w`, `w.feed leaveAnsi` leaves the parser ground and the modes at the default (`leave_grounds` ∘ `leave_modes`) |
 
 Each anchor is a *composition* of rungs, which is why the rung table is
 still worth having: A1 is §Restore plus §Replay, A2 lifts three §s from
@@ -46,6 +46,19 @@ The rung table has fifteen entries and A5 adds no sixteenth idea, only a
 direction: §Handback is §Replay's question — *what does this stream
 assume about, or leave behind in, the thing it writes to?* — asked about
 the terminal linger gives back rather than the one it paints into.
+
+A5's outbound half is now proved at the value level, not just the parser
+level. `leave_modes` quantifies over the receiver with no hypothesis on
+it — the shape `specs/restore-conformance.md` exists to reach — and it
+rests on a small reusable layer: `modeSet_modes` exposes a private mode
+set as its `setMode` (the dispatch-exposing bridge the spec named, for
+any mode number, alt-screen modes included — where `keeps_modeSet`
+excludes them because they touch the grid, but the parser and the modes
+projection do not), and `MMap` is the modes-from-ground analog of
+`Keeps` that composes per-chunk transforms. The inbound modes value
+(`restore_modes_any`) is the same shape pointed the other way, blocked
+only on lifting the repaint prefix (`gridAnsi`) to `MMap id`; until then
+the `dirty`-receiver round-trip fixtures carry it.
 
 ### What the proof effort caught that the tests did not
 

@@ -4220,3 +4220,76 @@ dropping the guard fails both the test and the theorem.
 Residual (still in the ledger): `tabsAnsi` is set-only, so restoring into a *fresh*
 terminal whose ruler differs is not repaired by `restore` — the emitter would need to
 be both-ways. Out of scope for this fix, which is about the same-size reattach.
+
+## A5 outbound proved — the hand-back leaves canonical modes for ANY receiver — 2026-08-16T02:30:00Z
+
+`leave_canonical (w : Vt) : (w.feed leaveAnsi).pstate = .ground ∧ (w.feed leaveAnsi).modes = ({} : Modes)`,
+for **any** `w`, no hypothesis. This is A5's outbound value half — the theorem the
+Step-0 hand-back finding earned — and the first receiver-quantified *value* claim in
+the file (parser-quantified `restore_grounds`/`leave_grounds` came first).
+
+### The predicate that worked: `MMap`, not `Sets`
+
+`Sets P x bs := ∀ w, P (w.feed bs) = x` is **false for a lone chunk**: a receiver
+mid-OSC swallows `modeSet 7 true` entirely, so `modes.wrap` is whatever it was. The
+`∀ w` only becomes true once the stream is grounded first. So the working predicate
+is the *from-ground* one — `MMap (f : Modes → Modes) (bs) := ∀ v, ground → u8 0 →
+ground ∧ u8 0 ∧ (v.feed bs).modes = f v.modes` — the modes analog of `Keeps`, with a
+`comp` law. `leave_modes` peels the `ESC \` lead-in with `st_grounds` (which grounds
+any `w`), then composes the tail from ground. This is the generalization the spec's
+open question anticipated ("can `Keeps` carry an arbitrary property"): yes — `MMap`
+carries the modes projection; `Keeps` is the grid instance.
+
+### The dispatch-exposing bridge (the spec's named prerequisite)
+
+`modeSet_modes (n on) (0<n) (n<65535) (ground) (u8 0) : (v.feed (modeSet n on)).modes
+= (v.setMode true n on).modes ∧ ground ∧ u8 0`. Feeding a private mode set from
+ground has modes *exactly* `setMode true n on` — for **any** `n`, alt-screen modes
+included. `keeps_modeSet` had to exclude 47/1047/1049 (they change the grid), but the
+parser and the modes projection don't care, so `modeSet_modes` is unconditional in n.
+
+Chain: `esc_step_eq` → `csi_open_step` → `csi_marker_step` (the `?`) → the digit run
+carried by `Frame` (`= (cols,rows,modes)`, so `frame_csi_digits_feed` gives modes
+preserved) → `csi_final_step_eq` → the dispatch, read off by `modes_csiDispatch_sm/rm`
+(the `match` on the concrete final byte reduces, so those are `rfl` after the ignore
+guard). `modes_setMode` (setMode's modes-output is a function of the input modes
+alone; `split <;> (repeat' split) <;> simp_all` over setMode's arms, with
+`modes_moveTo`/`leaveAlt`/`enterAlt` as the three "modes untouched" facts) ties the
+walk-state's modes back to `v`'s.
+
+### Per-chunk bridges and the fold to `{}`
+
+`mmap_modeSet` (via `modeSet_modes` + `smMod`, the setMode-modes-as-a-function
+witness), `mmap_irm` (the non-private IRM, a marker-free clone of the walk),
+`mmap_keypad` (`ESC =`/`ESC >`), and the preservers `mmap_id_csi_seq` (+
+`modes_csiDispatch_{stbm,cup,sgr}` — the last two by `exact modes_moveTo`; `stbm` by
+`split <;> first | (rename_i heq; absurd heq (by decide)) | ((repeat' split) <;> …)`,
+discharging the wrong-final arms of `csiDispatch` by their false byte equation),
+`mmap_id_charset`, `mmap_id_si`. `leave_modes` composes them right-associated and
+`MMap.congr`s the composite transform to `fun _ => {}` — provable by `rfl` because
+each `smMod`/insert/keypad reduces at its literal mode number and every field ends at
+its default.
+
+### Engineering notes (Mathlib-free)
+
+* **No `set` tactic** (Mathlib). Abstract the marker state as a `∀`-quantified helper
+  (`modeSet_tail`) applied to the concrete walk, rather than `set w3 := …`.
+* **No `split_ifs`** — core `split`, and `repeat' split` to exhaust nested ifs.
+* **No `∀ b : UInt8, … := by decide`** (no Fintype instance) — substitute the concrete
+  byte (`rintro rfl`) and decide the closed goal.
+* `dsimp only` does **not** iota-reduce a `match` on a UInt8 literal, but `exact`/`rfl`
+  (defeq) and `simp [·]` do; `csiDispatch`'s outer match is best left to `split` +
+  absurd-arm discharge.
+* Passing a hypothesis term (`hu : v.u8need = 0`) to a lemma with an implicit receiver
+  **pins that receiver to `v`**; pass `(by rw [hu])` instead so the receiver unifies
+  from the goal.
+
+### Not yet: inbound, and the non-modes fields
+
+`restore_modes_any` (inbound, certifies `87f64b3`) is the same machinery pointed the
+other way; it waits on `MMap id (gridAnsi)` — the repaint preserves modes, i.e.
+`quiet_gridAnsi` (origin only) lifted to the full record, plus `eraseScreen`'s
+modes-frame for `ED 2`. Since `modesAnsi` overwrites every mode field absolutely, the
+prefix only needs to be `MMap`-*something* (ground-preserving), not `MMap id`. The
+non-modes projections (charset/region/pen/alt) repeat the `MMap` shape. All are
+carried meanwhile by `Tests/Render.lean`'s `dirty`-receiver round-trips.

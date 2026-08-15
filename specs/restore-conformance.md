@@ -7,13 +7,25 @@ here in a different shape, and its Step 5 archival gate is carried unchanged)
 
 ## Where this stands — read this first
 
-**Next step:** Step 1, built on the hand-back first (`leave_canonical`) and then
-reused for `modesAnsi` — see Step 1, which names the one prerequisite edit (factor
-the CSI walk to expose the dispatch). Everything below Step 1 is unchanged.
+**Next step:** `restore_modes_any` (Step 1's inbound half). All its per-chunk
+bridges exist (`modeSet_modes`, `mmap_*`); the one missing piece is `MMap id`
+for the repaint prefix — lift `quiet_gridAnsi` (origin only) to the full modes
+record, then compose exactly as `leave_modes` does. After that, the charset/region/
+pen projections repeat the pattern with their own `MMap` transforms.
 
-**Done:** Step 0 — **done, two bugs fixed** (both shipped, both pinned, one theorem
-still pending). Step 1 — predicate and laws only, no instances. Step 2 — first half
-(`restore_grounds`). Steps 3–5 — not started.
+**Done:** Step 0 — done, two bugs fixed. Step 1 — **outbound modes proved
+(`leave_canonical`)**; the reusable layer (`modeSet_modes` dispatch bridge, `MMap`
+composition, per-chunk bridges) is in. Step 2 — first half (`restore_grounds`).
+Steps 3–5 — not started.
+
+**The dispatch-exposing edit is done, and it generalized.** Step 1 named one
+prerequisite: factor the CSI walk to expose the dispatch, not just the grid fact.
+That is `modeSet_modes` — feeding `modeSet n on` from ground has modes exactly
+`setMode true n on`, for *any* `n` (alt-screen modes included, unlike `keeps_modeSet`).
+On top of it, `MMap` (the modes-from-ground analog of `Keeps`) composes per-chunk
+transforms, and `leave_modes` folds the hand-back's chunks to the default record for
+any receiver. `restore_modes_any` is the same machinery pointed inbound; it waits
+only on `MMap id (gridAnsi)`.
 
 **Step 0 changed the shape of the goal.** The bug family was not exhausted, and the
 question that keeps paying is the §Replay one asked in *both directions and at both
@@ -235,42 +247,47 @@ And it is not scrollback: restore repaints the screen, not history.
 
 Review/revise cap: two fresh-review rounds, as before.
 
-## Step 1 — `Sets`, in both directions
+## Step 1 — the receiver-quantified value claims, in both directions
 
-Status: predicate and laws in; no instances yet.
+Status: **outbound modes done** (`leave_canonical`); the reusable layer is in;
+inbound and the non-modes projections remain.
 
-Purpose: make three shipped fixes theorems rather than tests — `87f64b3`'s both-ways
-modes, `cd7c17b`'s lead-in, and the hand-back. This is the cheapest step and the one
-that pays first, because it is a frame-shaped claim — the kind that has caught every
-real bug in this project — with the quantifier corrected.
+Purpose: make the shipped fixes theorems rather than tests — the hand-back
+(anchor A5, done) and `87f64b3`'s both-ways modes (`restore_modes_any`, next).
 
 Reads: `Zmx/Core/Render.lean`, `Theorems/Render.lean`, `SCRATCHPAD.md`.
 Writes: `Theorems/Render.lean`, `THEOREMS.md`, `SCRATCHPAD.md`.
 
-Shape: `Sets (P : Vt → α) (x : α) (bs : Bytes) : Prop := ∀ w, P (w.feed bs) = x`.
-The composition law that matters is *left*-absorbing: `Sets P x b → Sets P x (a ++ b)`
-for any `a`, which is what lets a later chunk overwrite an earlier one and is why
-both-ways emission is provable at all.
+**What landed, and the layer it built** (SCRATCHPAD 2026-08-16). The predicate that
+worked is not `Sets` (a bare `∀ w`, false for a lone chunk since a mid-OSC receiver
+swallows it) but `MMap`, the modes-from-ground analog of `Keeps`: `∀ v, ground → u8
+0 → ground ∧ u8 0 ∧ modes = f v.modes`, with a `comp` law. The lead-in is peeled by
+`st_grounds` (grounds any `w`), then the tail composes from ground. The dispatch-
+exposing bridge the spec named is `modeSet_modes`: feeding `modeSet n on` from ground
+has modes exactly `setMode true n on`, for **any** `n` — alt-screen modes included,
+where `keeps_modeSet` excludes 47/1047/1049 because they touch the grid, but the
+parser and the modes projection do not. Per-chunk bridges: `mmap_modeSet`, `mmap_irm`
+(non-private IRM), `mmap_keypad`, `mmap_id_csi_seq` (+ `modes_csiDispatch_{stbm,cup,
+sgr}` for the CSI preservers), `mmap_id_charset`, `mmap_id_si`. `leave_modes` folds
+them to the default record; break-verified (drop any `modeSet` from `leaveAnsi` and
+the `rfl` that the composite equals `{}` fails).
 
-**Do the hand-back first.** `leaveAnsi` is the same claim with every complication
-removed: a constant, no `ite`, canonical values as literals. Prove the ladder there,
-then `modesAnsi`'s session-dependent version is that ladder plus `Sets.ite`. The
-reverse order pays the hardest case first for no reason.
+**Inbound (`restore_modes_any`), the next step.** Same machinery, target `v.modes`
+instead of `{}`. `modesAnsi` sets every mode field absolutely, so nothing *before* it
+needs a specific modes transform — only `MMap`-something (ground-preserving). The one
+missing bridge is `MMap id (gridAnsi)`: the repaint preserves modes (it writes cells,
+pen and cursor, never a mode), which is `quiet_gridAnsi` (origin only) lifted to the
+full record. Then compose prefix (`MMap _`) → `modesAnsi` (`MMap (fun _ => v.modes)`)
+→ suffix (`MMap id`). `ED 2` (`eraseScreen`) needs the same modes-frame as a fold.
 
-**The one prerequisite edit**, unchanged from the last session's reading: factor the
-CSI walk so it exposes the **dispatch**, not just the grid fact.
-`keeps_csi_digits_tail` performs the walk and then discards everything except
-`pstate`/`u8need`/`grid`; a mode claim needs the same walk to hand back "this is
-`csiDispatch t final` for a `t` whose only parameter is `n`, with `priv` and `ignore`
-as they were". `csi_digits_run_eq` already carries `ignore` and `priv` through the
-digit run, and `org_setMode_decom_off` → `org_csiFinish_decom_off` is the template
-for one field. Consumers stay in the `∀ w` shape, so no pstate-congruence lemma for
-`csiDispatch` is needed: the dispatch fact applies to the walked state directly.
+**Non-modes projections** (`g0Line`/`g1Line`/`shiftOut`, `top`/`bot`, `pen`,
+`altGrid.isNone`) repeat the `MMap` shape with their own projection and transforms;
+fewer chunks touch each. Carried by the `dirty`-receiver round-trip fixtures until
+proved.
 
-Exit: `leave_canonical` for the ten `Modes` fields, `g0Line`, `g1Line`, `shiftOut`,
-`top`, `bot`, `altGrid.isNone`, `pen` and `pstate`; then `restore_modes_any` for the
-same fields with the session's values. Deleting any one both-ways emit from
-`modesAnsi`, or any one line of `leaveAnsi`, breaks the corresponding claim.
+Exit: `restore_modes_any` for the ten `Modes` fields; then the non-modes projections.
+Deleting any one both-ways emit from `modesAnsi`, or any one line of `leaveAnsi`,
+breaks the corresponding claim (the `leaveAnsi` half is verified).
 
 ## Step 2 — drop the ground-parser assumption
 
