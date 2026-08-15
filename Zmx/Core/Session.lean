@@ -186,7 +186,15 @@ def onMsg (s : State) (c : Client) (m : Msg) : State × List Effect :=
     let sizer := cols != 0 && rows != 0
     let c := { c with attached := true, sizer, seq := s.attachSeq, cols, rows }
     let s := { s.setClient c with attachSeq := s.attachSeq + 1, lookSeq := s.outSeq }
-    let s := if sizer then { s with vt := s.vt.resize cols.toNat rows.toNat } else s
+    -- resize only on a genuine size change. `Vt.resize` resets the scroll
+    -- region and tab ruler (top/bot/tabs) unconditionally, so resizing at an
+    -- unchanged size wiped a child's DECSTBM and custom tab stops from the
+    -- model — and, since the winsize did not change, the kernel sends no
+    -- SIGWINCH, so the child is never nudged to re-establish them. A same-size
+    -- reattach must therefore leave the emulator alone (restore-conformance
+    -- Step 0 ledger item 1).
+    let s := if sizer && (s.vt.cols != cols.toNat || s.vt.rows != rows.toNat)
+             then { s with vt := s.vt.resize cols.toNat rows.toNat } else s
     (s, resizeEffects s c
           ++ outputMsgs c.id (Render.restore s.vt)
           ++ (match s.exited with

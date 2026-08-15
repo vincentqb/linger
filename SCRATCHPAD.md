@@ -4191,3 +4191,32 @@ so they are not lost:
   established nor cleared in either direction — a completeness limit of the model.
 - **`.err` is dropped by `Client.attach`** (only `drainReplies` prints it) — a
   "too many clients" refusal reads as a clean detach.
+
+## Ledger item 1 fixed — same-size reattach no longer wipes the scroll region/tabs — 2026-08-16T00:10:00Z
+
+`Session.onMsg .attach` resized the `Vt` for every sizer client with no dimension
+guard, and `Vt.resize` unconditionally sets `top := 0`, `bot := rows-1`,
+`tabs := defaultTabs cols`. So a reattach at the *same* size wiped a child's
+`DECSTBM` scroll region and custom tab ruler from the model — and since the winsize
+did not change, the kernel sends no `SIGWINCH`, so the child (the only author of
+those) is never nudged to re-emit them. Reproducible with `tabs -4` in your own
+shell then `linger attach`.
+
+Fix: guard the attach resize on an actual dimension change
+(`s.vt.cols != cols.toNat || s.vt.rows != rows.toNat`). A genuine resize still runs
+(the region and ruler are size-relative, so resetting them there is correct); a
+same-size reattach now leaves the emulator alone. Chosen over guarding inside
+`Vt.resize` to keep that heavily-depended-on def (and its `Good`/`renderable`/
+`LiveReachable` proofs) untouched.
+
+Theorem `onMsg_attach_same_size_vt`: with `s.vt.cols = cols.toNat` and
+`s.vt.rows = rows.toNat`, `(onMsg s c (.attach cols rows)).1.vt = s.vt` — the whole
+emulator, region and ruler included, is preserved. Executable pins in
+`Tests/Session.lean`: child sets `CSI 2;4 r` + `CSI 3 g`, reattach at 20×5 keeps
+`top=1 bot=3` and cleared tabs; a reattach at 40×10 resets `top=0 bot=9`
+(non-vacuity — the guard, not a dead resize, is what preserves it). Break-verified:
+dropping the guard fails both the test and the theorem.
+
+Residual (still in the ledger): `tabsAnsi` is set-only, so restoring into a *fresh*
+terminal whose ruler differs is not repaired by `restore` — the emitter would need to
+be both-ways. Out of scope for this fix, which is about the same-size reattach.

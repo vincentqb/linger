@@ -154,6 +154,23 @@ theorem onMsg_attach_sb (s : State) (c : Client) (cols rows : UInt32) :
   · simp [State.setClient, Vt.Vt.resize]
   · simp [State.setClient]
 
+/-- **A same-size reattach leaves the emulator untouched.** `Vt.resize` resets the
+scroll region and tab ruler (`top`/`bot`/`tabs`) unconditionally, so resizing at an
+unchanged size wiped a child's `DECSTBM` and custom tab stops from the model — and
+the kernel sends no `SIGWINCH` at an unchanged winsize, so the child never re-emits
+them. The attach handler now resizes only on a genuine change, and this is why it is
+safe: the whole `vt`, region and ruler included, is preserved (restore-conformance
+Step 0 ledger 1). -/
+theorem onMsg_attach_same_size_vt (s : State) (c : Client) (cols rows : UInt32)
+    (hc : s.vt.cols = cols.toNat) (hr : s.vt.rows = rows.toNat) :
+    (onMsg s c (.attach cols rows)).1.vt = s.vt := by
+  unfold onMsg
+  dsimp only
+  split
+  · rename_i h
+    exfalso; revert h; simp [State.setClient, hc, hr]
+  · simp [State.setClient]
+
 /-- Keystrokes from a full client go to the pty, not the emulator:
 echo is the shell's job, so the machine's screen cannot drift. -/
 theorem onMsg_input (s : State) (c : Client) (bs : List UInt8)

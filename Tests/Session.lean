@@ -194,6 +194,27 @@ example :
        | .resizePty c r => some (c, r) | _ => none)
      resizes == [(80, 24), (100, 30)]) = true := by native_decide
 
+/-- A same-size reattach preserves the scroll region and tab ruler the child set:
+`Vt.resize` resets `top`/`bot`/`tabs`, so an unconditional resize on attach would
+wipe a child's `DECSTBM` and tab stops, and no `SIGWINCH` fires at an unchanged
+winsize to make it re-emit them (restore-conformance Step 0 ledger 1). -/
+example :
+    (let dirty := "\x1b[2;4r\x1b[3g".toUTF8.toList  -- DECSTBM top=1 bot=3, clear all tabs
+     let (s, _) := Tests.run [.connected 1, .bytes 1 (encode (.attach 20 5)),
+                        .ptyOut dirty,
+                        .connected 2, .bytes 2 (encode (.attach 20 5))]
+     s.vt.top == 1 && s.vt.bot == 3 && s.vt.tabs == Array.replicate 20 false) = true := by
+  native_decide
+
+/-- Non-vacuity: a genuine size change still resets the region (it is size-relative),
+so the same-size guard is what preserves it above, not a dead resize. -/
+example :
+    (let dirty := "\x1b[2;4r".toUTF8.toList
+     let (s, _) := Tests.run [.connected 1, .bytes 1 (encode (.attach 20 5)),
+                        .ptyOut dirty,
+                        .connected 2, .bytes 2 (encode (.attach 40 10))]
+     s.vt.top == 0 && s.vt.bot == 9) = true := by native_decide
+
 /-- An observer never owns the size, even as the newest attacher. -/
 example :
     (let (_, effs) := Tests.run [
