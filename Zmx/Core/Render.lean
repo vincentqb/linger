@@ -80,6 +80,12 @@ def csiNum2 (a b : Nat) (final : UInt8) : Bytes :=
 def csiPriv (n : Nat) (final : UInt8) : Bytes :=
   csiB ++ [0x3F] ++ digits n ++ [final]
 
+/-- `CSI <final>` with no parameters, so the receiver applies its own
+defaults. Used for `DECSTBM` (`CSI r`), whose defaults are exactly "the
+whole screen" — which is the one scroll region we can name without
+knowing the receiver's height. -/
+def csiPlain (final : UInt8) : Bytes := csiB ++ [final]
+
 /-- A two-byte `ESC <final>` sequence (DECSC, HTS, app-keypad…). Named so
 its bytes stay one syntactic unit: `a ++ escB ++ [b]` would associate as
 `(a ++ escB) ++ [b]` and split the sequence in two. -/
@@ -405,6 +411,76 @@ def restoreBody (v : Vt) : Bytes :=
 
 /-- The reattach byte stream. -/
 def restore (v : Vt) : Bytes := restoreBody v ++ cursorAnsi v
+
+/-! ## Leave -/
+
+/-- **Hand the terminal back.** The bytes a detaching client writes to the
+user's terminal before it goes.
+
+`prologueAnsi` exists because a *client* is whatever its previous occupant left
+behind. The mirror image was unhandled: the user's **shell** is whatever the
+*session* left behind. A client that only restores termios (which is the kernel's
+line discipline, not the terminal's state) hands back a terminal still holding
+whatever the session's last program set — and detaching out of a full-screen
+application is the ordinary way to leave, not an edge case. Measured before this
+existed (SCRATCHPAD 2026-08-15): after `printf` of a full-screen app's opening
+sequences and `ctrl-\`, the shell was left on the alt screen, with mouse
+reporting on, the cursor hidden, bracketed paste on, autowrap off, a six-line
+scroll region, DEC line drawing selected (every ASCII character rendered as a box
+glyph) and a bold red pen.
+
+So this is the same discipline as the prologue, pointed the other way, and it is
+a **constant**: what linger hands back does not depend on what the session was
+doing. Each line is a hazard for the next program to use the terminal:
+
+* `ESC \` (ST) — a program that died mid-OSC/DCS (a crashed sixel writer, a
+  truncated title) leaves the parser in a string state that would swallow this
+  entire stream, exactly as it swallowed `restore` before `cd7c17b`;
+* `?1049l` — leave the alt screen, which also hands back the screen the terminal
+  itself saved when the application switched;
+* `4l` (IRM), `?6l` (DECOM), `?7h` (DECAWM), `CSI r` (DECSTBM) — a shell that
+  inserts instead of overwriting, addresses relative to a stale region, does not
+  wrap, or scrolls inside six lines;
+* `?25h`, `?2004l`, the three mouse modes, `?1006l`, `?1004l` — a cursor you
+  cannot see, pastes arriving wrapped in `ESC [ 200 ~`, and clicks or window
+  focus changes arriving as garbage on the shell's command line;
+* `?1l` (DECCKM), `ESC >` (DECKPNM) — arrow and keypad keys sending application
+  forms the shell's line editor does not bind;
+* `( B`, `) B`, `SI` — line-drawing ASCII;
+* `SGR 0` — a coloured prompt.
+
+Two positions are deliberate. `DECOM` reset and `DECSTBM` both home the cursor
+(here and on real terminals), so the cursor **must** be placed afterwards rather
+than preserved: `CSI 999 ; 1 H` parks it at the bottom-left — clamped by the
+receiver, so it needs no size — which is where a program that painted the screen
+and exited leaves the next prompt. And `SGR 0` comes last, since `DECSTBM` and
+the mode resets do not touch the pen but a receiver's `DECRC`-like bundling
+might.
+
+What is **not** here, deliberately: the window title. `titleAnsi` set it on
+attach, so linger is not fully invisible until it is put back, but we never read
+the user's title and the emitter does not guess. xterm's title stack
+(`CSI 22 ; 0 t` / `CSI 23 ; 0 t`) would do it and is not universal; recorded as a
+known limit rather than a silent one.
+
+Not `DECSTR` (`CSI ! p`), for the reason already recorded in
+`specs/restore-conformance.md`: its reset list varies by terminal, and we would
+be trusting bytes we do not parse. -/
+def leaveAnsi : Bytes :=
+  escSeq 0x5C
+    ++ modeSet 1049 false
+    ++ csiNum 4 0x6C
+    ++ modeSet 25 true
+    ++ modeSet 2004 false
+    ++ modeSet 1000 false ++ modeSet 1002 false ++ modeSet 1003 false
+    ++ modeSet 1006 false ++ modeSet 1004 false
+    ++ modeSet 1 false ++ escSeq 0x3E
+    ++ modeSet 6 false
+    ++ modeSet 7 true
+    ++ csiPlain 0x72
+    ++ escCharset 0x28 0x42 ++ escCharset 0x29 0x42 ++ [0x0F]
+    ++ csiNum2 999 1 0x48
+    ++ csiNum 0 0x6D
 
 /-! ## History (text) -/
 

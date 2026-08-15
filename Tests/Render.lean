@@ -349,4 +349,55 @@ example : (let v := screen 6 3 "hi"
            let w := (feedStr (Vt.init 6 3) "\x1b]2;stale\x07").feed (restore v)
            w.title == v.title && v.title.isEmpty) = true := by native_decide
 
+
+/-! ### The hand-back (§Handback, anchor A5's outbound half)
+
+The mirror image of everything above. `restore` establishes what the repaint needs in
+whatever terminal it is given; `leaveAnsi` gives that terminal back to the user's
+shell in a state the next program can use, whatever the session's last program left
+behind. `leave_grounds` proves the parser half for every receiver; these pin the
+values until the `Sets` instances land (`specs/restore-conformance.md` Step 1). -/
+
+/-- The canonical state a detaching client owes the next program. `rows` is a
+parameter because two of the fields are dimension-relative: the scroll region is the
+whole screen, and the cursor is parked on the last row. -/
+def sane (rows : Nat) (w : Vt) : Bool :=
+  w.pstate == PState.ground
+  && w.modes == ({} : Modes)
+  && !w.g0Line && !w.g1Line && !w.shiftOut
+  && w.top == 0 && w.bot == rows - 1
+  && w.altGrid.isNone
+  && w.pen == ({} : Pen)
+  && w.cursor.x == 0 && w.cursor.y == rows - 1
+
+/-- A dirty client is not sane, or the checks below would hold vacuously. -/
+example : sane 3 (dirty 6 3) = false := by native_decide
+
+example : sane 3 ((dirty 6 3).feed leaveAnsi) = true := by native_decide
+
+/-- …from every parser state a dying program can leave, too. -/
+example : sane 3 ((midOsc 6 3).feed leaveAnsi) = true := by native_decide
+example : sane 3 ((midDcs 6 3).feed leaveAnsi) = true := by native_decide
+example : sane 3 ((midCsi 6 3).feed leaveAnsi) = true := by native_decide
+example : sane 3 ((midEscInter 6 3).feed leaveAnsi) = true := by native_decide
+example : sane 3 ((midUtf8 6 3).feed leaveAnsi) = true := by native_decide
+
+/-- The worst real case: a full-screen application that died mid-OSC. Both halves of
+the hazard at once — dirty modes *and* a parser that eats what it is sent. -/
+def dirtyMidOsc (cols rows : Nat) : Vt := feedStr (dirty cols rows) "\x1b]2;half"
+
+example : sane 3 ((dirtyMidOsc 6 3).feed leaveAnsi) = true := by native_decide
+
+/-- **The lead-in is load-bearing**, in the form a code break would show: drop the
+two bytes of `ESC \` and the same receiver eats the entire hand-back, so the shell
+inherits the application's terminal. This is `leave_grounds`'s non-vacuity — its
+`∀ w` really does range over receivers that would otherwise swallow the stream. -/
+example : sane 3 ((dirtyMidOsc 6 3).feed (leaveAnsi.drop 2)) = false := by native_decide
+
+/-- And the hand-back is a *constant*: what linger gives back cannot depend on what
+the session was doing, which is why it takes no `Vt`. Two very different sessions,
+same result. -/
+example : (((dirty 6 3).feed leaveAnsi).modes == ((midDcs 6 3).feed leaveAnsi).modes)
+    = true := by native_decide
+
 end Zmx.Core.Render.Tests

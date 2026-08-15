@@ -160,6 +160,11 @@ own kitty tab — `recipes/lzo.fish` makes one per session.
 - A dropped link cannot hurt a session — it detaches; reattach restores
   the screen (see `recipes/` for the client-side comfort).
 - Detach key `Ctrl-\`; `LINGER_NO_DETACH_KEY=1` disables it.
+- Detaching hands the terminal back: leaving a full-screen program does
+  not leave your shell on the alt screen, with mouse reporting on, no
+  cursor, a stale scroll region or line-drawing glyphs. Every exit path
+  does it (detach, session exit, dropped link). The window title is the
+  one thing not put back — we never read yours.
 - Remotes: `-r host,host` for one run, `~/.config/linger/remotes` to
   persist (duplicates are an error). Hosts need `linger` on their `$PATH`.
 - `LINGER_DIR=<dir>` isolates sockets + state on local storage.

@@ -4010,3 +4010,90 @@ remaining chunks needs each of them to preserve `u8need = 0` from an arbitrary s
 which is the same per-chunk work `Keeps` already does for the grid. `Quiet`'s origin
 half needs the same treatment. Then Step 1's field instances become provable, since
 each will be able to assume `ground` at its own chunk boundary.
+
+## Step 0 of restore-conformance — the audit, and the bug on the way OUT — 2026-08-15T20:10:00Z
+
+Step 0 asked: is the bug family exhausted? It is not, and the miss was one of
+**direction**. Every fix so far concerned what `restore` assumes about the client it
+writes into. Nothing asked the same question about what linger *leaves behind* — and
+the answer was a user-visible defect with no test, no theorem and no recorded
+decision anywhere.
+
+### Measured, before any change
+
+`Client.attach`'s only cleanup is `termRestore`, which restores **termios** — the
+kernel's line discipline. Terminal state is not termios. A probe (a full-screen
+app's opening sequences from inside the session, then `ctrl-\`):
+
+```
+bytes the client wrote after the detach key:
+b"\r\r\nlinger: detached from 'probe'\r\n"
+```
+
+Nothing else. So the shell that gets the terminal back is left on the **alt
+screen**, with **mouse reporting** on (clicks arrive as escape garbage on the
+command line), the **cursor hidden**, **bracketed paste** on, **autowrap off**, a
+**six-line scroll region**, **DEC line drawing** selected (every ASCII character
+renders as a box glyph) and a **bold red pen**. Reachable by detaching from vim,
+htop, less, fzf — the ordinary way to leave a session.
+
+This is the same class as `87f64b3` (restore assumed a pristine client) with the
+arrow reversed: an emitter — here, the *absence* of one — correct only under an
+unstated precondition about a stateful thing it hands to someone else.
+
+### The fix
+
+`Render.leaveAnsi`, a **constant**: what linger hands back does not depend on what
+the session was doing. Same discipline as `prologueAnsi`, same ST lead-in (a program
+that died mid-OSC/DCS would otherwise swallow the whole hand-back exactly as it
+swallowed `restore` before `cd7c17b`), plus the modes that only matter *afterwards*
+(`?25h`, `?2004l`, the three mouse modes + `?1006l`, `?1004l`, `?1l`, `ESC >`) and
+`SGR 0`. Written in `Client.attach`'s `finally`, so every exit — detach key, session
+exit, EOF, decoder error, exception — goes through it, and both `attach` and
+`watch` (read-only) get it.
+
+Two orderings are forced, and neither is obvious:
+
+* **`DECOM` reset and `DECSTBM` both home the cursor** — in our `Vt` (`setMode 6`
+  ends in `moveTo 0 0`; `0x72` likewise) *and* on real terminals. So the cursor
+  cannot be preserved across the hand-back; it has to be **placed**. `CSI 999 ; 1 H`
+  parks it bottom-left, clamped by the receiver so the stream needs no size — where
+  a program that painted the screen and exited leaves the next prompt.
+* **`SGR 0` last.** DECSC/DECRC-style bundling (a real terminal's DECRC restores
+  pen, charset, origin and wrap together) would otherwise undo resets emitted
+  before it. This is also why the hand-back does *not* use DECSC/DECRC to save the
+  cursor: the bundle it restores is exactly the state being reset.
+
+`ESC \` from true ground is clean in both our model and reality (`stepEsc`'s default
+arm → `ground`, nothing printed). The one state where our model prints a stray
+backslash is a receiver caught in `escInter`: the `ESC` is consumed as a charset
+designator and the `\` then prints. Real terminals treat ESC as a cancel-and-restart,
+so the model is the pessimistic one; `restore` erases it with `ED 2`, and the
+hand-back accepts one stray character in that rare state rather than risk the whole
+stream being swallowed.
+
+### Break-verified
+
+`tests/attach_test.py` step 9 dirties the terminal from inside the session, detaches,
+and asserts every reset plus "the stream leads with ST". Deleting the one
+`writeAll` line in `Client.attach` fails 12 of the 13 assertions and the ST index
+lookup raises. The sanity check ("the app state really reached the client terminal")
+is there so the test cannot pass vacuously by the session never dirtying anything.
+
+### What is NOT fixed, deliberately
+
+The **window title**. `titleAnsi` sets it on attach, so linger is not yet invisible
+to the terminal it borrows. We never read the user's title and the emitter does not
+guess; xterm's title stack (`CSI 22 ; 0 t` / `CSI 23 ; 0 t`) would do it properly and
+is not universal. Recorded as a known limit rather than left silent.
+
+### Why this belongs in the theorem ladder, and where
+
+`leaveAnsi` is a **strictly easier instance of Step 1's target**: no `ite`, no
+dependence on `v`, and the canonical values are literals. So the `Sets` ladder that
+Step 1 needs for `modesAnsi` should be built on the hand-back first and then reused
+with `Sets.ite` for the session-dependent case, rather than the other way round.
+The prerequisite is unchanged and is the edit Step 1 already named: factor the CSI
+walk so it exposes the **dispatch**, not just the grid fact — `csi_digits_run_eq`
+already carries `ignore` and `priv` through, and `org_*_decom_off` is the template
+for one field.

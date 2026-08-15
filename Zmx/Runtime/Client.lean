@@ -1,5 +1,6 @@
 import Zmx.Posix
 import Zmx.Core.Wire
+import Zmx.Core.Render
 import Zmx.Runtime.Paths
 /-! # Zmx.Runtime.Client — attach and one-shot conversations
 
@@ -146,6 +147,12 @@ partial def attach (fd : UInt32) (readOnly : Bool := false) : IO (Option UInt32)
                 leaving := true
               | _ => pure ()
   finally
+    -- hand the terminal back before the line discipline: the session's last
+    -- program may have left the alt screen, mouse reporting, a scroll region or
+    -- a line-drawing charset on, and termios restores none of that
+    -- (`Render.leaveAnsi`). In `finally`, so every way out of the loop — detach
+    -- key, session exit, EOF, a decoder error, an exception — goes through it.
+    writeAll stdoutFd (ByteArray.mk Zmx.Core.Render.leaveAnsi.toArray)
     termRestore stdinFd saved
   close fd
   return result

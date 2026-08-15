@@ -104,5 +104,39 @@ os.write(fd_m, b'\x1c')   # detach
 time.sleep(0.4)
 subprocess.run([LINGER, 'kill', 'main'], env=ENV)
 
+# 9. detach hands the terminal back (Render.leaveAnsi). A full-screen app's
+#    opening sequences are set from inside the session; after ctrl-\\ the client
+#    must undo every one of them, or the user's shell is left on the alt screen
+#    with mouse reporting on, no cursor, a six-line scroll region and every
+#    ASCII character rendered as a box glyph. termios restores none of this.
+pid_h, fd_h = spawn_attach('hyg')
+time.sleep(0.8)
+drain(fd_h, 0.3)
+os.write(fd_h, (r"printf '\033[?1049h\033[?1000h\033[?1006h\033[?25l\033[?2004h"
+                r"\033[?7l\033[5;10r\033(0\033[1;31;4m\033[?1h\033=X'" + "\r").encode())
+time.sleep(0.6)
+dirty = drain(fd_h, 0.8)
+fails += expect(b'\x1b[?1049h' in dirty and b'\x1b[5;10r' in dirty,
+                'hygiene: the app state really reached the client terminal')
+os.write(fd_h, b'\x1c')            # detach
+back = drain(fd_h, 1.5)
+for seqs, what in [((b'\x1b[?1049l',), 'leaves the alt screen'),
+                   ((b'\x1b[4l',), 'clears insert mode'),
+                   ((b'\x1b[?25h',), 'shows the cursor'),
+                   ((b'\x1b[?2004l',), 'clears bracketed paste'),
+                   ((b'\x1b[?1000l', b'\x1b[?1002l', b'\x1b[?1003l', b'\x1b[?1006l'),
+                    'clears mouse reporting'),
+                   ((b'\x1b[?1004l',), 'clears focus events'),
+                   ((b'\x1b[?1l', b'\x1b>'), 'restores normal cursor/keypad keys'),
+                   ((b'\x1b[?6l',), 'clears origin mode'),
+                   ((b'\x1b[?7h',), 'restores autowrap'),
+                   ((b'\x1b[r',), 'restores the full scroll region'),
+                   ((b'\x1b(B', b'\x1b)B', b'\x0f'), 'restores the ASCII charset'),
+                   ((b'\x1b[0m',), 'resets the pen')]:
+    fails += expect(all(s in back for s in seqs), 'detach ' + what)
+fails += expect(back.index(b'\x1b\\') == 0,
+                'detach leads with ST (a program that died mid-OSC/DCS would eat the rest)')
+subprocess.run([LINGER, 'kill', 'hyg'], env=ENV)
+
 print('FAILURES:', fails)
 sys.exit(1 if fails else 0)

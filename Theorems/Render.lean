@@ -3970,4 +3970,60 @@ theorem restore_grounds (v w : Vt) : (w.feed (restore v)).pstate = .ground := by
   exact (ends_csiNum 0 0x6D (by decide) (by decide)).append
     (ends_csiNum 2 0x4A (by decide) (by decide))
 
+/-! ### …and so does the hand-back
+
+`leaveAnsi` is A5's outbound half (§Handback): whatever the session's last program
+left behind, the detaching client returns the terminal to a state the next program
+can use. Its parser claim is `restore_grounds` with the same lead-in doing the same
+job — a program that died mid-OSC or mid-DCS would swallow the hand-back exactly as
+it swallowed the repaint before `cd7c17b` — and the same proof, one chunk longer.
+
+The *value* claims (each mode at its canonical setting, for every receiver) are the
+`Sets` instances of `specs/restore-conformance.md` Step 1, which the hand-back is the
+easiest instance of: no `ite`, no dependence on a `Vt`. -/
+
+/-- A parameterless CSI: the receiver's own defaults apply. -/
+theorem ends_csiPlain (final : UInt8) (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E) :
+    Ends (csiPlain final) := by
+  simpa [csiPlain] using ends_csi_seq [] final ParamBytes.nil h1 h2
+
+/-- **The hand-back grounds any receiver.** No hypothesis on `w`: not `ground`, not
+`Vt.init`. The receiver here is a real terminal whose last occupant was an
+application, so every state it could be in is reachable — which is exactly why the
+claim has to be stated this way. -/
+theorem leave_grounds (w : Vt) : (w.feed leaveAnsi).pstate = .ground := by
+  have hrest : Ends (modeSet 1049 false ++ csiNum 4 0x6C ++ modeSet 25 true
+      ++ modeSet 2004 false ++ modeSet 1000 false ++ modeSet 1002 false
+      ++ modeSet 1003 false ++ modeSet 1006 false ++ modeSet 1004 false
+      ++ modeSet 1 false ++ escSeq 0x3E ++ modeSet 6 false ++ modeSet 7 true
+      ++ csiPlain 0x72 ++ escCharset 0x28 0x42 ++ escCharset 0x29 0x42 ++ [0x0F]
+      ++ csiNum2 999 1 0x48 ++ csiNum 0 0x6D) := by
+    refine Ends.append ?_ (ends_csiNum 0 0x6D (by decide) (by decide))
+    refine Ends.append ?_ (ends_csiNum2 999 1 0x48 (by decide) (by decide))
+    refine Ends.append ?_ (Ends.text (bs := [0x0F]) (by decide))
+    refine Ends.append ?_ (ends_escCharset 0x29 0x42 (by decide))
+    refine Ends.append ?_ (ends_escCharset 0x28 0x42 (by decide))
+    refine Ends.append ?_ (ends_csiPlain 0x72 (by decide) (by decide))
+    refine Ends.append ?_ (ends_modeSet 7 true)
+    refine Ends.append ?_ (ends_modeSet 6 false)
+    refine Ends.append ?_ (ends_escSeq 0x3E (by decide))
+    refine Ends.append ?_ (ends_modeSet 1 false)
+    refine Ends.append ?_ (ends_modeSet 1004 false)
+    refine Ends.append ?_ (ends_modeSet 1006 false)
+    refine Ends.append ?_ (ends_modeSet 1003 false)
+    refine Ends.append ?_ (ends_modeSet 1002 false)
+    refine Ends.append ?_ (ends_modeSet 1000 false)
+    refine Ends.append ?_ (ends_modeSet 2004 false)
+    refine Ends.append ?_ (ends_modeSet 25 true)
+    exact (ends_modeSet 1049 false).append (ends_csiNum 4 0x6C (by decide) (by decide))
+  rw [show leaveAnsi = escSeq 0x5C ++ (modeSet 1049 false ++ csiNum 4 0x6C
+      ++ modeSet 25 true ++ modeSet 2004 false ++ modeSet 1000 false
+      ++ modeSet 1002 false ++ modeSet 1003 false ++ modeSet 1006 false
+      ++ modeSet 1004 false ++ modeSet 1 false ++ escSeq 0x3E ++ modeSet 6 false
+      ++ modeSet 7 true ++ csiPlain 0x72 ++ escCharset 0x28 0x42
+      ++ escCharset 0x29 0x42 ++ [0x0F] ++ csiNum2 999 1 0x48 ++ csiNum 0 0x6D) from by
+    unfold leaveAnsi; simp]
+  rw [feed_append]
+  exact hrest _ (st_grounds w).1
+
 end Zmx.Core.Render
