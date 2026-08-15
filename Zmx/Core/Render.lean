@@ -316,7 +316,16 @@ the §Replay constraint (specs/archive/bigger-theorems.md):
    clobbers `saved`) and *before* DECOM is set (its address is
    absolute) (fix 3);
 4. the final cursor address is region-relative iff DECOM is on (fix 5,
-   in `cursorAnsi`). -/
+   in `cursorAnsi`).
+
+Autowrap is deliberately **left on** across the repaint. Turning it off looks
+attractive — it would delete the wrap-pending branches from the row-replay
+induction — but it is wrong: `Vt.printMark` uses `cursor.pending` to tell
+"parked on the margin cell just written" from "positioned before writing it",
+and with wrap off both look identical, so a combining mark in the final column
+attaches one cell to the left. Two fuzz seeds catch it (see SCRATCHPAD,
+2026-08-15). The pending flag is load-bearing, and the replay proof has to
+model it rather than legislate it away. -/
 def restoreBody (v : Vt) : Bytes :=
   csiNum 0 0x6D ++ csiNum 2 0x4A          -- clean slate
     ++ screensAnsi v

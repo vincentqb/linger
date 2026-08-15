@@ -3802,3 +3802,58 @@ emitted one cell by cell.
 Item 4 is the bulk. The original scope check — "comparable in size to the entire
 §Replay parser half, which took several sessions" — still looks right, with items
 1–3 and 5–7 the smaller half around it.
+
+
+## Negative result — painting with autowrap off is WRONG, not merely awkward — 2026-08-15T12:40:00Z
+
+Tried the change I had recommended: emit `CSI ?7l` before the repaint in
+`restoreBody` so the row-replay induction would not have to carry wrap-pending
+(`printAdvance` never arms it, `printWrap`/`printWideWrap` collapse to no-ops), with
+`modesAnsi` restoring the session's real wrap value afterwards. **Reverted: it breaks
+combining marks in the final column.**
+
+`Tests/Fuzz.lean`'s `failingDeep 150` went from `[]` to `[33, 110]` immediately. Both
+seeds are the same shape — a combining mark on the bottom-right cell of a 2×2 screen.
+Case 33 is `\x1b[?1047h\x1b[3;5H\x1b[4hb\x1b[1;2;3;4;5;7;9mb\x1bH\x1b[?47l\x0e\x1b(0\x1b[0g\x1b[3;5Hé\x1b[41m`.
+
+Live row 1 is `space`, `'e'`+1 mark. Replayed row 1 was `space`+1 mark, `'e'`+0 — the
+mark landed one column left.
+
+### Why
+
+`Vt.printMark` picks its target with
+
+```
+let cx0 := if v.cursor.pending then v.cursor.x
+           else if v.cursor.x == 0 then 0 else v.cursor.x - 1
+```
+
+At the right margin `printAdvance` parks the cursor *on* `cols-1` and arms `pending`
+— but only when wrap is on. So `pending` is what distinguishes **"parked on the
+margin cell I just wrote"** from **"positioned before writing it"**. With wrap off both
+states are `x = cols-1, pending = false`, and `printMark` steps left. `printMark`'s own
+doc comment already said this ("at the right margin the cursor sits on the shadow with
+wrap pending — the one position no absolute cursor move can address"); I read it as a
+remark about `Row.mend`'s shadow redirect and missed that it is also the reason the
+*flag* has to exist.
+
+The alternatives are worse: no absolute cursor move can express "on the margin cell,
+after writing it", so making the painter emit an explicit move instead would require
+changing `printMark`'s live semantics; and emitting `?7l` only for rows without a
+trailing mark makes the wire format depend on cell contents.
+
+### What this means for the row induction
+
+Wrap-pending is **load-bearing state, not proof noise**. The induction must carry
+`cursor.pending` through every cell, and the invariant at the end of a full row is
+`x = cols-1 ∧ pending = modes.wrap`, not `x = cols`. That is the cost of the feature,
+and the theorem should model it rather than legislate it away. The `Renderable`
+robustness argument I also offered for wrap-off (a width-2 base at the final column
+pre-wraps under wrap-on and shifts the rest of the paint) stands on its own but is
+unreachable, so it does not justify the change.
+
+Vindication for the fuzz layer: this is exactly the "an emitter stage correct only
+under a precondition on the emulator state" shape `Tests/Fuzz.lean`'s header describes,
+and it was caught in one build. The proof-side lesson is the opposite of the one I
+proposed last session — do not simplify the emitted stream to make the induction
+cheaper without checking the emulator's own preconditions first.
