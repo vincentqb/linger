@@ -7,28 +7,39 @@ here in a different shape, and its Step 5 archival gate is carried unchanged)
 
 ## Where this stands — read this first
 
-**Next step:** Step 1, built on the hand-back first (`sets_leaveAnsi_*`) and then
-reused for `modesAnsi` — see Step 1, which now names the one prerequisite edit.
+**Next step:** Step 1, built on the hand-back first (`leave_canonical`) and then
+reused for `modesAnsi` — see Step 1, which names the one prerequisite edit (factor
+the CSI walk to expose the dispatch). Everything below Step 1 is unchanged.
 
-**Done:** Step 0 — done, **one finding, fixed and pinned by a test, theorem
-pending** (the hand-back; see below and SCRATCHPAD 2026-08-15T20:10). Step 1 —
-predicate and laws only, no instances. Step 2 — first half (`restore_grounds`).
-Steps 3–5 — not started.
+**Done:** Step 0 — **done, two bugs fixed** (both shipped, both pinned, one theorem
+still pending). Step 1 — predicate and laws only, no instances. Step 2 — first half
+(`restore_grounds`). Steps 3–5 — not started.
 
-**Step 0's finding, because it changes the shape of the goal.** The bug family was
-not exhausted, and the miss was one of *direction*: every fix so far concerned what
-`restore` assumes about the client it writes **into**, and nothing asked what linger
-**leaves behind**. A detaching client restored termios and nothing else, so
-detaching out of any full-screen program handed the user's shell a terminal still on
-the alt screen, with mouse reporting on, no cursor, autowrap off, a stale scroll
-region and DEC line drawing selected. Fixed with `Render.leaveAnsi` — a constant, in
-`Client.attach`'s `finally` — and pinned by `tests/attach_test.py` step 9.
+**Step 0 changed the shape of the goal.** The bug family was not exhausted, and the
+question that keeps paying is the §Replay one asked in *both directions and at both
+ends*: *what does this byte stream assume about, or leave behind in, the stateful
+thing it writes to?* Two hits:
+
+- **The hand-back (into the user's terminal).** A detaching client restored termios
+  and nothing else, so leaving any full-screen program handed the user's shell a
+  terminal still on the alt screen, mouse reporting on, no cursor, autowrap off, a
+  stale scroll region, DEC line drawing selected. Fixed with `Render.leaveAnsi` — a
+  constant, in `Client.attach`'s `finally`. Pinned by `tests/attach_test.py` step 9;
+  theorem `leave_canonical` is folded into Step 1.
+- **The XTGETTCAP reply (into the child's input).** A security bug — query replies
+  are written into the child's own pty input, and the request is untrusted child
+  output, so echoing its payload verbatim let a `cat` of a hostile file inject a CR
+  and run a command. Fixed by filtering the echo, and **proved**: `feed_replies_noNl`
+  says no reply linger writes to the child contains a line terminator, for any input.
+  (SCRATCHPAD 2026-08-15T22:30.)
 
 So the goal below is half of a pair, and the pair is what the product actually
-promises: **linger borrows your terminal and must both establish what it needs and
-give back what it took.** Both halves are the same theorem shape (`Sets`, quantified
-over the receiver), which is why the hand-back joins Step 1 rather than opening its
-own spec.
+promises: **linger borrows terminals — the user's and the child's — and must both
+establish what it needs and give back what it took, at both ends.** The receiver-
+facing halves are all one theorem shape (`Sets`/`Ends`, quantified over the
+receiver), which is why the hand-back joins Step 1. The audit's other real findings
+(none a security hole) are the ledger at the end of Step 0 — deliberately not fixed
+this round, one item in flight.
 
 **The diagnosis this spec is built on:** every §Replay bug had the same shape, and the
 shape was in the quantifier. `Tests/Fuzz.lean`'s header calls it "an emitter stage
