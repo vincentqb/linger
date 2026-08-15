@@ -616,14 +616,15 @@ go to `.escInter`, whose every branch is `.ground`. -/
 `restore` emits — `7` (DECSC), `=` (app keypad), `H` (HTS) — lands back
 in ground. -/
 theorem esc_single_step {v : Vt} (b : UInt8) (hg : v.pstate = .esc)
-    (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x48) : (v.step b).pstate = .ground := by
+    (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x48 ∨ b = 0x3E) :
+    (v.step b).pstate = .ground := by
   have hw : (v.abortUtf8 b).pstate = PState.esc := by
     rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
   unfold Vt.step
   dsimp only
   rw [hw]
   unfold Vt.stepEsc
-  rcases hb with h | h | h <;> subst h <;> rfl
+  rcases hb with h | h | h | h <;> subst h <;> rfl
 
 /-- `ESC (` / `ESC )` enter the charset-designation state. -/
 theorem esc_inter_step {v : Vt} (b : UInt8) (hg : v.pstate = .esc)
@@ -650,7 +651,7 @@ theorem esc_inter_finish {v : Vt} {i : UInt8} (b : UInt8) (hg : v.pstate = .escI
   all_goals rfl
 
 /-- `ESC 7` (DECSC), `ESC =` and `ESC H` (HTS) are `Ends`. -/
-theorem ends_escSeq (b : UInt8) (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x48) :
+theorem ends_escSeq (b : UInt8) (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x48 ∨ b = 0x3E) :
     Ends (escSeq b) := by
   intro v hg
   show (v.feed ([0x1B] ++ [b])).pstate = .ground
@@ -881,28 +882,47 @@ theorem ends_titleAnsi (v : Vt) : Ends (titleAnsi v) := by
   unfold titleAnsi
   exact Ends.ite Ends.nil (ends_osc _)
 
+/-- One both-ways mode emit. `modeSet` is a definition rather than a local lambda
+precisely so this matches structurally. -/
+theorem ends_modeSet (n : Nat) (on : Bool) : Ends (modeSet n on) := by
+  unfold modeSet
+  cases on
+  · exact ends_csiPriv n 0x6C (by decide) (by decide)
+  · exact ends_csiPriv n 0x68 (by decide) (by decide)
+
+theorem ends_irm (on : Bool) : Ends (csiNum 4 (if on then 0x68 else 0x6C)) := by
+  cases on
+  · exact ends_csiNum 4 0x6C (by decide) (by decide)
+  · exact ends_csiNum 4 0x68 (by decide) (by decide)
+
+/-- The chains below are **right**-associated to match `++`. Left-associating them
+makes the elaborator reconcile the two shapes by unfolding `List.append`, which at a
+dozen chunks exhausts the heartbeat budget. -/
 theorem ends_modesAnsi (v : Vt) : Ends (modesAnsi v) := by
   unfold modesAnsi
-  dsimp only
-  have hset : ∀ (n : Nat) (on : Bool), Ends (csiPriv n (if on then 0x68 else 0x6C)) := by
-    intro n on
-    by_cases h : on <;> simp only [h, if_true]
-    · exact ends_csiPriv n 0x68 (by decide) (by decide)
-    · exact ends_csiPriv n 0x6C (by decide) (by decide)
-  have e1 : Ends (csiPriv 7 (if v.modes.wrap then 0x68 else 0x6C)) := hset 7 v.modes.wrap
-  have e2 := Ends.ite (c := v.modes.appCursor = true) (hset 1 true) Ends.nil
-  have e3 := Ends.ite (c := v.modes.appKeypad = true) (ends_escSeq 0x3D (by decide)) Ends.nil
-  have e4 := Ends.ite (c := v.modes.cursorVisible = true) Ends.nil (hset 25 false)
-  have e5 := Ends.ite (c := v.modes.bracketedPaste = true) (hset 2004 true) Ends.nil
-  have e6 := Ends.ite (c := (v.modes.mouse == 1000 || v.modes.mouse == 1002
-      || v.modes.mouse == 1003) = true) (hset v.modes.mouse true) Ends.nil
-  have e7 := Ends.ite (c := v.modes.mouseSgr = true) (hset 1006 true) Ends.nil
-  have e8 := Ends.ite (c := v.modes.focusEvents = true) (hset 1004 true) Ends.nil
-  have e9 := Ends.ite (c := v.modes.origin = true) (hset 6 true) Ends.nil
-  have e10 := Ends.ite (c := v.modes.insert = true)
-    (ends_csiNum 4 0x68 (by decide) (by decide)) Ends.nil
-  exact ((((((((e1.append e2).append e3).append e4).append e5).append e6).append
-    e7).append e8).append e9).append e10
+  refine Ends.append ?_ (ends_irm v.modes.insert)
+  refine Ends.append ?_ (ends_modeSet 6 _)
+  refine Ends.append ?_ (ends_modeSet 1004 _)
+  refine Ends.append ?_ (ends_modeSet 1006 _)
+  refine Ends.append ?_ (Ends.ite (ends_modeSet v.modes.mouse true) Ends.nil)
+  refine Ends.append ?_ (ends_modeSet 1003 false)
+  refine Ends.append ?_ (ends_modeSet 1002 false)
+  refine Ends.append ?_ (ends_modeSet 1000 false)
+  refine Ends.append ?_ (ends_modeSet 2004 _)
+  refine Ends.append ?_ (ends_modeSet 25 _)
+  refine Ends.append ?_
+    (Ends.ite (ends_escSeq 0x3D (by decide)) (ends_escSeq 0x3E (by decide)))
+  exact (ends_modeSet 7 _).append (ends_modeSet 1 _)
+
+theorem ends_prologueAnsi (v : Vt) : Ends (prologueAnsi v) := by
+  unfold prologueAnsi
+  refine Ends.append ?_ (Ends.text (bs := [0x0F]) (by decide))
+  refine Ends.append ?_ (ends_escCharset 0x29 0x42 (by decide))
+  refine Ends.append ?_ (ends_escCharset 0x28 0x42 (by decide))
+  refine Ends.append ?_ (ends_csiNum2 1 v.rows 0x72 (by decide) (by decide))
+  refine Ends.append ?_ (ends_modeSet 7 true)
+  refine Ends.append ?_ (ends_modeSet 6 false)
+  exact (ends_modeSet 1049 false).append (ends_csiNum 4 0x6C (by decide) (by decide))
 
 theorem ends_cursorAnsi (v : Vt) : Ends (cursorAnsi v) := by
   unfold cursorAnsi
@@ -911,17 +931,16 @@ theorem ends_cursorAnsi (v : Vt) : Ends (cursorAnsi v) := by
 
 theorem ends_restoreBody (v : Vt) : Ends (restoreBody v) := by
   unfold restoreBody
-  exact ((((((((
-    (ends_csiNum 0 0x6D (by decide) (by decide)).append
-    (ends_csiNum 2 0x4A (by decide) (by decide))).append
-    (ends_screensAnsi v)).append
-    (ends_regionAnsi v)).append
-    (ends_tabsAnsi v)).append
-    (ends_savedAnsi v)).append
-    (ends_titleAnsi v)).append
-    (ends_modesAnsi v)).append
-    (ends_charsetAnsi v)).append
-    (ends_penSgr v.pen)
+  refine Ends.append ?_ (ends_penSgr v.pen)
+  refine Ends.append ?_ (ends_charsetAnsi v)
+  refine Ends.append ?_ (ends_modesAnsi v)
+  refine Ends.append ?_ (ends_titleAnsi v)
+  refine Ends.append ?_ (ends_savedAnsi v)
+  refine Ends.append ?_ (ends_tabsAnsi v)
+  refine Ends.append ?_ (ends_regionAnsi v)
+  refine Ends.append ?_ (ends_screensAnsi v)
+  refine Ends.append ?_ (ends_csiNum 2 0x4A (by decide) (by decide))
+  exact (ends_prologueAnsi v).append (ends_csiNum 0 0x6D (by decide) (by decide))
 
 /-- **§Replay (parser half).** Feeding a whole restore stream to a fresh
 terminal emulator leaves its parser in `ground`: no reattach can wedge a
@@ -1119,6 +1138,60 @@ theorem csi_semi_step {v : Vt} {s : CsiState} (hg : v.pstate = .csi s) :
   rw [if_neg (by decide), if_pos (by decide)]
 
 /-- `CsiState.arg` over a literal two-parameter list, computed. -/
+theorem arg_of_one (s : CsiState) (a : Nat) (f : Bool) (d : Nat) :
+    CsiState.arg { s with params := #[(a, f)] } 0 d = if a = 0 then d else a := by
+  unfold CsiState.arg
+  cases a <;> simp
+
+/-! ### DECOM, reset on purpose
+
+The `≠ 6` family in `Theorems/Vt.lean` says a private mode replay cannot *turn
+origin on*. The repaint's prologue needs the complement: `CSI ? 6 l` turns it
+**off**, whatever it was. That is a claim about a value rather than a frame, so it
+is proved at the one dispatch it belongs to. -/
+
+theorem org_setMode_decom_off (v : Vt) : (v.setMode true 6 false).modes.origin = false := by
+  show (({ v with modes := { v.modes with origin := false } } : Vt).moveTo 0 0).modes.origin
+      = false
+  rw [Zmx.Core.Vt.org_moveTo]
+
+theorem org_csiDispatch_decom_off (v : Vt) (s : CsiState) (hi : s.ignore = false)
+    (hpriv : (s.priv == 0x3F) = true) (h6 : s.arg 0 0 = 6) :
+    (v.csiDispatch s 0x6C).modes.origin = false := by
+  unfold Vt.csiDispatch
+  rw [if_neg (by rw [hi]; simp)]
+  show (v.setMode (s.priv == 0x3F) (s.arg 0 0) false).modes.origin = false
+  rw [hpriv, h6]
+  exact org_setMode_decom_off v
+
+theorem org_csiFinish_decom_off (v : Vt) (s : CsiState) (hi : s.ignore = false)
+    (hpriv : (s.priv == 0x3F) = true) (hparams : s.params = #[]) (hhave : s.haveCur = true)
+    (hcur : min s.cur 65535 = 6) :
+    (v.csiFinish s 0x6C).modes.origin = false := by
+  have hsize : ¬ (s.params.size ≥ 16) := by rw [hparams]; simp
+  unfold Vt.csiFinish
+  dsimp only
+  rw [if_pos hhave, if_neg hsize]
+  refine org_csiDispatch_decom_off _ _ hi hpriv ?_
+  rw [show ({ s with params := s.params.push (min s.cur 65535, s.curSub) } : CsiState)
+      = { s with params := #[(6, s.curSub)] } from by rw [hparams, hcur]; rfl]
+  rw [arg_of_one, if_neg (by decide)]
+
+theorem org_step_of_csi_decom_off {v : Vt} {s : CsiState} (hg : v.pstate = .csi s)
+    (hi : s.ignore = false) (hpriv : (s.priv == 0x3F) = true) (hparams : s.params = #[])
+    (hhave : s.haveCur = true) (hint : s.inter = 0) (hcur : min s.cur 65535 = 6) :
+    (v.step 0x6C).modes.origin = false := by
+  have hw : (v.abortUtf8 0x6C).pstate = PState.csi s := by
+    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
+  unfold Vt.step
+  dsimp only
+  rw [hw]
+  unfold Vt.stepCsi
+  dsimp only
+  rw [if_neg (by decide), if_neg (by decide), if_neg (by decide), if_neg (by decide),
+    if_neg (by decide), if_pos (by decide), if_neg (by rw [hint]; simp)]
+  exact org_csiFinish_decom_off _ _ hi hpriv hparams hhave hcur
+
 theorem arg_of_two (s : CsiState) (a b : Nat) (fa fb : Bool) (d : Nat) :
     (CsiState.arg { s with params := #[(a, fa), (b, fb)] } 0 d = if a = 0 then d else a)
       ∧ (CsiState.arg { s with params := #[(a, fa), (b, fb)] } 1 d
@@ -1527,7 +1600,7 @@ theorem quiet_csiPriv (n : Nat) (final : UInt8) (hn : n ≠ 6) (h1 : 0x40 ≤ fi
 
 /-! #### `ESC`-single, charset, and the OSC title -/
 
-theorem quiet_escSeq (b : UInt8) (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x48) :
+theorem quiet_escSeq (b : UInt8) (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x48 ∨ b = 0x3E) :
     Quiet (escSeq b) := by
   intro v hg ho
   refine ⟨ends_escSeq b hb v hg, ?_⟩
@@ -1685,66 +1758,85 @@ theorem quiet_titleAnsi (v : Vt) : Quiet (titleAnsi v) := by
   unfold titleAnsi
   exact Quiet.ite (fun _ => Quiet.nil) (fun _ => quiet_osc _)
 
-/-- The mode replay is where the hypothesis lands. Every private mode the
-emitter names is a literal ≠ 6 except two: the mouse mode, which the
-emitter *guards* (mode 6 is not a mouse mode — see `modesAnsi`), and DECOM
-itself, which is emitted only when the session had it on. So a session
-with DECOM off replays with DECOM off. -/
+theorem quiet_modeSet (n : Nat) (on : Bool) (hn : n ≠ 6) : Quiet (modeSet n on) := by
+  unfold modeSet
+  cases on
+  · exact quiet_csiPriv n 0x6C hn (by decide) (by decide)
+  · exact quiet_csiPriv n 0x68 hn (by decide) (by decide)
+
+/-- **DECOM reset is `Quiet` because it makes the conclusion true outright.** The
+`≠ 6` family says a mode replay cannot turn origin *on*; this says `?6l` turns it
+*off*, which is what the repaint's prologue needs. -/
+theorem quiet_modeSet_decom_off : Quiet (modeSet 6 false) := by
+  intro v hg ho
+  refine ⟨ends_modeSet 6 false v hg, ?_⟩
+  rw [show modeSet 6 false = 0x1B :: 0x5B :: 0x3F :: (digits 6 ++ [(0x6C : UInt8)]) from by
+    simp [modeSet, csiPriv, csiB]]
+  rw [feed_cons, feed_cons, feed_cons]
+  have hb := csi_open_step (esc_step hg)
+  obtain ⟨hm, -⟩ := csi_marker_step hb (by decide)
+  rw [show ∀ (w : Vt), w.feed (digits 6 ++ [(0x6C : UInt8)])
+      = (w.feed (digits 6)).feed [(0x6C : UInt8)] from
+    fun w => by simp [Vt.feed, List.foldl_append]]
+  obtain ⟨s', hs', hcur', hhave', hpar', hint', hign', -, hpriv'⟩ :=
+    csi_digits_value 6 hm rfl
+  rw [show ∀ (w : Vt), w.feed [(0x6C : UInt8)] = w.step 0x6C from fun _ => rfl]
+  exact org_step_of_csi_decom_off hs' (by simp [hign']) (by simp [hpriv']) (by simp [hpar'])
+    hhave' (by simp [hint']) (by rw [hcur']; decide)
+
+theorem quiet_irm (on : Bool) : Quiet (csiNum 4 (if on then 0x68 else 0x6C)) := by
+  cases on
+  · exact quiet_csiNum 4 0x6C (by decide) (by decide)
+  · exact quiet_csiNum 4 0x68 (by decide) (by decide)
+
+/-- The mode replay is where the DECOM hypothesis lands: with the session's origin
+off the emit at mode 6 is a *reset*, discharged outright by
+`quiet_modeSet_decom_off`. Every other private mode the emitter names is a literal
+≠ 6, or the guarded mouse mode, whose allowlist contains no 6. -/
 theorem quiet_modesAnsi (v : Vt) (ho : v.modes.origin = false) : Quiet (modesAnsi v) := by
   unfold modesAnsi
-  dsimp only
-  have hset : ∀ (n : Nat) (on : Bool), n ≠ 6 →
-      Quiet (csiPriv n (if on then 0x68 else 0x6C)) := by
-    intro n on hn
-    by_cases h : on <;> simp only [h, if_true]
-    · exact quiet_csiPriv n 0x68 hn (by decide) (by decide)
-    · exact quiet_csiPriv n 0x6C hn (by decide) (by decide)
-  have e1 : Quiet (csiPriv 7 (if v.modes.wrap then 0x68 else 0x6C)) :=
-    hset 7 v.modes.wrap (by decide)
-  have e2 := Quiet.ite (c := v.modes.appCursor = true)
-    (fun _ => hset 1 true (by decide)) (fun _ => Quiet.nil)
-  have e3 := Quiet.ite (c := v.modes.appKeypad = true)
-    (fun _ => quiet_escSeq 0x3D (by decide)) (fun _ => Quiet.nil)
-  have e4 := Quiet.ite (c := v.modes.cursorVisible = true)
-    (fun _ => Quiet.nil) (fun _ => hset 25 false (by decide))
-  have e5 := Quiet.ite (c := v.modes.bracketedPaste = true)
-    (fun _ => hset 2004 true (by decide)) (fun _ => Quiet.nil)
-  -- the guarded emit: the allowlist names three modes, none of them DECOM
-  have e6 := Quiet.ite (c := (v.modes.mouse == 1000 || v.modes.mouse == 1002
-      || v.modes.mouse == 1003) = true)
-    (fun h => hset v.modes.mouse true (by
+  rw [ho]
+  refine Quiet.append ?_ (quiet_irm v.modes.insert)
+  refine Quiet.append ?_ quiet_modeSet_decom_off
+  refine Quiet.append ?_ (quiet_modeSet 1004 _ (by decide))
+  refine Quiet.append ?_ (quiet_modeSet 1006 _ (by decide))
+  refine Quiet.append ?_ (Quiet.ite (c := (v.modes.mouse == 1000 || v.modes.mouse == 1002
+    || v.modes.mouse == 1003) = true)
+    (fun h => quiet_modeSet v.modes.mouse true (by
       simp only [Bool.or_eq_true, beq_iff_eq] at h
-      omega)) (fun _ => Quiet.nil)
-  have e7 := Quiet.ite (c := v.modes.mouseSgr = true)
-    (fun _ => hset 1006 true (by decide)) (fun _ => Quiet.nil)
-  have e8 := Quiet.ite (c := v.modes.focusEvents = true)
-    (fun _ => hset 1004 true (by decide)) (fun _ => Quiet.nil)
-  -- DECOM itself: the hypothesis is consumed exactly here, at the one emit
-  -- that would turn it on
-  have e9 : Quiet (if v.modes.origin = true then csiPriv 6 (if true = true then 0x68 else 0x6C)
-      else []) :=
-    Quiet.ite (fun h => absurd (ho.symm.trans h) (by simp)) (fun _ => Quiet.nil)
-  have e10 := Quiet.ite (c := v.modes.insert = true)
-    (fun _ => quiet_csiNum 4 0x68 (by decide) (by decide)) (fun _ => Quiet.nil)
-  exact ((((((((e1.append e2).append e3).append e4).append e5).append e6).append
-    e7).append e8).append e9).append e10
+      omega)) (fun _ => Quiet.nil))
+  refine Quiet.append ?_ (quiet_modeSet 1003 false (by decide))
+  refine Quiet.append ?_ (quiet_modeSet 1002 false (by decide))
+  refine Quiet.append ?_ (quiet_modeSet 1000 false (by decide))
+  refine Quiet.append ?_ (quiet_modeSet 2004 _ (by decide))
+  refine Quiet.append ?_ (quiet_modeSet 25 _ (by decide))
+  refine Quiet.append ?_ (Quiet.ite (fun _ => quiet_escSeq 0x3D (by decide))
+    (fun _ => quiet_escSeq 0x3E (by decide)))
+  exact (quiet_modeSet 7 _ (by decide)).append (quiet_modeSet 1 _ (by decide))
 
-/-- **§Replay: DECOM survives a restore.** Every stage of a restore body
-leaves the parser ground and DECOM off, given the session had DECOM off —
-which is what lets the final `CUP` be read as an absolute address. -/
+theorem quiet_prologueAnsi (v : Vt) : Quiet (prologueAnsi v) := by
+  unfold prologueAnsi
+  refine Quiet.append ?_ (Quiet.text (bs := [0x0F]) (by decide))
+  refine Quiet.append ?_ (quiet_escCharset 0x29 0x42 (by decide))
+  refine Quiet.append ?_ (quiet_escCharset 0x28 0x42 (by decide))
+  refine Quiet.append ?_ (quiet_csiNum2 1 v.rows 0x72 (by decide) (by decide))
+  refine Quiet.append ?_ (quiet_modeSet 7 true (by decide))
+  refine Quiet.append ?_ quiet_modeSet_decom_off
+  exact (quiet_modeSet 1049 false (by decide)).append
+    (quiet_csiNum 4 0x6C (by decide) (by decide))
+
 theorem quiet_restoreBody (v : Vt) (ho : v.modes.origin = false) : Quiet (restoreBody v) := by
   unfold restoreBody
-  exact ((((((((
-    (quiet_csiNum 0 0x6D (by decide) (by decide)).append
-    (quiet_csiNum 2 0x4A (by decide) (by decide))).append
-    (quiet_screensAnsi v)).append
-    (quiet_regionAnsi v)).append
-    (quiet_tabsAnsi v)).append
-    (quiet_savedAnsi v)).append
-    (quiet_titleAnsi v)).append
-    (quiet_modesAnsi v ho)).append
-    (quiet_charsetAnsi v)).append
-    (quiet_penSgr v.pen)
+  refine Quiet.append ?_ (quiet_penSgr v.pen)
+  refine Quiet.append ?_ (quiet_charsetAnsi v)
+  refine Quiet.append ?_ (quiet_modesAnsi v ho)
+  refine Quiet.append ?_ (quiet_titleAnsi v)
+  refine Quiet.append ?_ (quiet_savedAnsi v)
+  refine Quiet.append ?_ (quiet_tabsAnsi v)
+  refine Quiet.append ?_ (quiet_regionAnsi v)
+  refine Quiet.append ?_ (quiet_screensAnsi v)
+  refine Quiet.append ?_ (quiet_csiNum 2 0x4A (by decide) (by decide))
+  exact (quiet_prologueAnsi v).append (quiet_csiNum 0 0x6D (by decide) (by decide))
 
 /-! ## §Replay stage 3d — the painted cells come back
 
@@ -2621,6 +2713,12 @@ theorem init_dims (v : Vt) (h : Good v) :
   have hr := h.rowsPos; have hrl := h.rowsLe
   refine ⟨?_, ?_⟩ <;> simp only [Vt.init, clampDim] <;> omega
 
+/-- Projecting `dims`, proved on a variable so that no call site has to reduce the
+state it is applied to. -/
+theorem dims_fst (w : Vt) : (dims w).1 = w.cols := rfl
+
+theorem dims_snd (w : Vt) : (dims w).2 = w.rows := rfl
+
 /-- **§Replay (cursor).** Feeding a whole restore stream to a fresh
 emulator of the session's size leaves the cursor exactly where the session
 had it. `Good v` supplies the bounds (a real session always satisfies it —
@@ -2642,13 +2740,14 @@ theorem restore_cursor (v : Vt) (hgood : Good v) (ho : v.modes.origin = false) :
   obtain ⟨hpg, hpo⟩ := quiet_restoreBody v ho (Vt.init v.cols v.rows) rfl rfl
   -- …and cannot have resized the emulator
   have hd := dims_feed (restoreBody v) (good_init v.cols v.rows)
+  -- `dims` is a pair, and projecting it with `rfl` at this type forces the whole
+  -- `feed` to whnf; the two accessor lemmas above are the same fact proved once on a
+  -- variable, which is why they exist
   have hdc : ((Vt.init v.cols v.rows).feed (restoreBody v)).cols = v.cols := by
-    rw [show ((Vt.init v.cols v.rows).feed (restoreBody v)).cols
-        = (dims ((Vt.init v.cols v.rows).feed (restoreBody v))).1 from rfl, hd]
+    rw [← dims_fst ((Vt.init v.cols v.rows).feed (restoreBody v)), hd]
     exact hic
   have hdr : ((Vt.init v.cols v.rows).feed (restoreBody v)).rows = v.rows := by
-    rw [show ((Vt.init v.cols v.rows).feed (restoreBody v)).rows
-        = (dims ((Vt.init v.cols v.rows).feed (restoreBody v))).2 from rfl, hd]
+    rw [← dims_snd ((Vt.init v.cols v.rows).feed (restoreBody v)), hd]
     exact hir
   obtain ⟨hx, hy⟩ := cup_places_cursor (v.cursor.y + 1) (v.cursor.x + 1) hpg
     (by omega) (by omega)
@@ -3052,25 +3151,14 @@ theorem esc_step_eq {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) :
 
 /-- `ESC 7` (DECSC), `ESC H` (HTS) and `ESC =` (app keypad) write the saved slot,
 the tab ruler and a mode flag respectively — never a cell. -/
-theorem keeps_escSeq (b : UInt8) (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x48) :
+theorem keeps_escSeq (b : UInt8) (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x48 ∨ b = 0x3E) :
     Keeps (escSeq b) := by
   intro v hg hu
   rw [show escSeq b = [0x1B] ++ [b] from rfl]
   rw [show ∀ (w : Vt), w.feed ([0x1B] ++ [b]) = (w.step 0x1B).step b from
     fun w => by simp [Vt.feed]]
   rw [esc_step_eq hg hu, step_of_esc_quiet b rfl (by simpa using hu)]
-  rcases hb with h | h | h
-  · subst h
-    show _ ∧ _ ∧ _
-    unfold Vt.stepEsc
-    exact ⟨rfl, by simpa using hu, rfl⟩
-  · subst h
-    show _ ∧ _ ∧ _
-    unfold Vt.stepEsc
-    exact ⟨rfl, by simpa using hu, rfl⟩
-  · subst h
-    show _ ∧ _ ∧ _
-    unfold Vt.stepEsc
+  rcases hb with h | h | h | h <;> subst h <;> show _ ∧ _ ∧ _ <;> unfold Vt.stepEsc <;>
     exact ⟨rfl, by simpa using hu, rfl⟩
 
 /-- `ESC ( x` / `ESC ) x` set a charset flag. -/
@@ -3271,11 +3359,6 @@ The emitter never emits those (its allowlist), but the dispatch reads
 identified. `accDigits_digits` already says the accumulator inverts `digits`; what
 is added here is carrying that through the record equation the grid layer needs. -/
 
-theorem arg_of_one (s : CsiState) (a : Nat) (f : Bool) (d : Nat) :
-    CsiState.arg { s with params := #[(a, f)] } 0 d = if a = 0 then d else a := by
-  unfold CsiState.arg
-  cases a <;> simp
-
 /-- A digit run, as a record equation *and* with its accumulated value — the two
 halves that `csi_param_run_inter` and `csi_digits_value` each give separately. -/
 theorem csi_digits_run_eq (n : Nat) {v : Vt} {s : CsiState} (hg : v.pstate = .csi s)
@@ -3378,56 +3461,59 @@ theorem keeps_csiNum_arg (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
   rw [keeps_csi_open hg hu]
   exact keeps_csi_digits_tail n final h1 h2 hn hlt hgrid rfl (by simpa using hu) rfl rfl rfl
 
+theorem keeps_modeSet (n : Nat) (on : Bool) (hn : 0 < n) (hlt : n < 65535)
+    (h47 : n ≠ 47) (h1047 : n ≠ 1047) (h1049 : n ≠ 1049) : Keeps (modeSet n on) := by
+  unfold modeSet
+  cases on
+  · exact keeps_csiPriv_arg n 0x6C (by decide) (by decide) hn hlt
+      (fun w t ha => grid_csiDispatch_rm w t (by rw [ha]; exact h47)
+        (by rw [ha]; exact h1047) (by rw [ha]; exact h1049))
+  · exact keeps_csiPriv_arg n 0x68 (by decide) (by decide) hn hlt
+      (fun w t ha => grid_csiDispatch_sm w t (by rw [ha]; exact h47)
+        (by rw [ha]; exact h1047) (by rw [ha]; exact h1049))
+
+theorem keeps_irm (on : Bool) : Keeps (csiNum 4 (if on then 0x68 else 0x6C)) := by
+  cases on
+  · exact keeps_csiNum_arg 4 0x6C (by decide) (by decide) (by omega) (by omega)
+      (fun w t ha => grid_csiDispatch_rm w t (by rw [ha]; omega) (by rw [ha]; omega)
+        (by rw [ha]; omega))
+  · exact keeps_csiNum_arg 4 0x68 (by decide) (by decide) (by omega) (by omega)
+      (fun w t ha => grid_csiDispatch_sm w t (by rw [ha]; omega) (by rw [ha]; omega)
+        (by rw [ha]; omega))
+
 /-- **The mode replay writes no cell.** `modesAnsi`'s allowlist is what discharges
 the screen-switch hypotheses: every number it emits is either a literal in the
 source or one of the three the mouse guard names. -/
 theorem keeps_modesAnsi (v : Vt) : Keeps (modesAnsi v) := by
-  have hset : ∀ (n : Nat) (on : Bool), 0 < n → n < 65535 → n ≠ 47 → n ≠ 1047 → n ≠ 1049 →
-      Keeps (csiPriv n (if on then 0x68 else 0x6C)) := by
-    intro n on hn hlt h47 h1047 h1049
-    cases on
-    · exact keeps_csiPriv_arg n 0x6C (by decide) (by decide) hn hlt
-        (fun w t ha => grid_csiDispatch_rm w t (by rw [ha]; exact h47)
-          (by rw [ha]; exact h1047) (by rw [ha]; exact h1049))
-    · exact keeps_csiPriv_arg n 0x68 (by decide) (by decide) hn hlt
-        (fun w t ha => grid_csiDispatch_sm w t (by rw [ha]; exact h47)
-          (by rw [ha]; exact h1047) (by rw [ha]; exact h1049))
   unfold modesAnsi
-  dsimp only
-  have e1 := hset 7 v.modes.wrap (by omega) (by omega) (by omega) (by omega) (by omega)
-  have e2 := Keeps.ite (c := v.modes.appCursor = true)
-    (fun _ => hset 1 true (by omega) (by omega) (by omega) (by omega) (by omega))
-    (fun _ => Keeps.nil)
-  have e3 := Keeps.ite (c := v.modes.appKeypad = true)
-    (fun _ => keeps_escSeq 0x3D (by decide)) (fun _ => Keeps.nil)
-  have e4 := Keeps.ite (c := v.modes.cursorVisible = true) (fun _ => Keeps.nil)
-    (fun _ => hset 25 false (by omega) (by omega) (by omega) (by omega) (by omega))
-  have e5 := Keeps.ite (c := v.modes.bracketedPaste = true)
-    (fun _ => hset 2004 true (by omega) (by omega) (by omega) (by omega) (by omega))
-    (fun _ => Keeps.nil)
-  -- the allowlist: three literals, none of them a screen switch
-  have e6 := Keeps.ite (c := (v.modes.mouse == 1000 || v.modes.mouse == 1002
-      || v.modes.mouse == 1003) = true)
+  refine Keeps.append ?_ (keeps_irm v.modes.insert)
+  refine Keeps.append ?_ (keeps_modeSet 6 _ (by omega) (by omega) (by omega) (by omega)
+    (by omega))
+  refine Keeps.append ?_ (keeps_modeSet 1004 _ (by omega) (by omega) (by omega) (by omega)
+    (by omega))
+  refine Keeps.append ?_ (keeps_modeSet 1006 _ (by omega) (by omega) (by omega) (by omega)
+    (by omega))
+  refine Keeps.append ?_ (Keeps.ite (c := (v.modes.mouse == 1000 || v.modes.mouse == 1002
+    || v.modes.mouse == 1003) = true)
     (fun h => by
       simp only [Bool.or_eq_true, beq_iff_eq] at h
-      exact hset v.modes.mouse true (by omega) (by omega) (by omega) (by omega) (by omega))
-    (fun _ => Keeps.nil)
-  have e7 := Keeps.ite (c := v.modes.mouseSgr = true)
-    (fun _ => hset 1006 true (by omega) (by omega) (by omega) (by omega) (by omega))
-    (fun _ => Keeps.nil)
-  have e8 := Keeps.ite (c := v.modes.focusEvents = true)
-    (fun _ => hset 1004 true (by omega) (by omega) (by omega) (by omega) (by omega))
-    (fun _ => Keeps.nil)
-  have e9 := Keeps.ite (c := v.modes.origin = true)
-    (fun _ => hset 6 true (by omega) (by omega) (by omega) (by omega) (by omega))
-    (fun _ => Keeps.nil)
-  have e10 := Keeps.ite (c := v.modes.insert = true)
-    (fun _ => keeps_csiNum_arg 4 0x68 (by decide) (by decide) (by omega) (by omega)
-      (fun w t ha => grid_csiDispatch_sm w t (by rw [ha]; omega) (by rw [ha]; omega)
-        (by rw [ha]; omega)))
-    (fun _ => Keeps.nil)
-  exact ((((((((e1.append e2).append e3).append e4).append e5).append e6).append
-    e7).append e8).append e9).append e10
+      exact keeps_modeSet v.modes.mouse true (by omega) (by omega) (by omega) (by omega)
+        (by omega))
+    (fun _ => Keeps.nil))
+  refine Keeps.append ?_ (keeps_modeSet 1003 false (by omega) (by omega) (by omega)
+    (by omega) (by omega))
+  refine Keeps.append ?_ (keeps_modeSet 1002 false (by omega) (by omega) (by omega)
+    (by omega) (by omega))
+  refine Keeps.append ?_ (keeps_modeSet 1000 false (by omega) (by omega) (by omega)
+    (by omega) (by omega))
+  refine Keeps.append ?_ (keeps_modeSet 2004 _ (by omega) (by omega) (by omega) (by omega)
+    (by omega))
+  refine Keeps.append ?_ (keeps_modeSet 25 _ (by omega) (by omega) (by omega) (by omega)
+    (by omega))
+  refine Keeps.append ?_ (Keeps.ite (fun _ => keeps_escSeq 0x3D (by decide))
+    (fun _ => keeps_escSeq 0x3E (by decide)))
+  exact (keeps_modeSet 7 _ (by omega) (by omega) (by omega) (by omega) (by omega)).append
+    (keeps_modeSet 1 _ (by omega) (by omega) (by omega) (by omega) (by omega))
 
 /-- **The whole tail.** Everything `restore` emits after the repaint, proved to
 leave the painted grid alone. What remains of `restore_grid` is the repaint itself:
@@ -3553,7 +3639,7 @@ hypotheses below, about a prefix that is three constructs long. -/
 /-- The one re-association `restore_grid` needs: the clear-and-paint prefix, then the
 eight tail stages. `++` is right-associative, so this is not free. -/
 theorem restore_split (v : Vt) :
-    restore v = (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v)
+    restore v = (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v)
       ++ (regionAnsi v ++ tabsAnsi v ++ savedAnsi v ++ titleAnsi v ++ modesAnsi v
           ++ charsetAnsi v ++ penSgr v.pen ++ cursorAnsi v) := by
   unfold restore restoreBody
@@ -3564,9 +3650,9 @@ what the repaint half still owes: that `SGR 0`, `ED 2` and `screensAnsi` togethe
 leave the grid equal to `v`'s, the parser in ground, and no UTF-8 half-decoded. The
 eight stages that follow are proved to preserve all three. -/
 theorem restore_grid_of_paint {v w : Vt}
-    (hps : (w.feed (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v)).pstate = .ground)
-    (hun : (w.feed (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v)).u8need = 0)
-    (hpaint : (w.feed (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v)).grid = v.grid) :
+    (hps : (w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v)).pstate = .ground)
+    (hun : (w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v)).u8need = 0)
+    (hpaint : (w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v)).grid = v.grid) :
     (w.feed (restore v)).grid = v.grid := by
   rw [restore_split, feed_append]
   obtain ⟨-, -, hg⟩ := keeps_restoreTail v _ hps hun
@@ -3653,3 +3739,4 @@ example : Row.mend #[{ base := 'x', marks := [], width := 2, pen := {} }]
     ≠ #[{ base := 'x', marks := [], width := 2, pen := {} }] := by decide
 
 end Zmx.Core.Vt
+

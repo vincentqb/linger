@@ -217,12 +217,57 @@ def gridAnsi (grid : Array Row) : Bytes :=
 
 /-! ## Modes -/
 
+/-- One DEC private mode, set **or** reset. Named rather than a local lambda so
+that a mode-replay proof matches it structurally instead of reducing a beta-redex
+per mode — with a dozen modes the difference is a heartbeat timeout. -/
+def modeSet (n : Nat) (on : Bool) : Bytes := csiPriv n (if on then 0x68 else 0x6C)
+
+/-- **Put the receiver in a known state before painting.**
+
+`restore` is fed to a client terminal in whatever state its previous occupant
+left it — `Session.onMsg` sends it on attach with nothing before it — so every
+mode the repaint depends on has to be established rather than assumed. Each line
+below is a hazard that was previously latent:
+
+* `?1049l` — if the client sits on the alt screen, the main-grid repaint would
+  land there and `screensAnsi`'s own `?1049h` would then be a no-op, so the main
+  screen would never be painted;
+* `4l` (IRM) — insert mode shifts the row right at every glyph, so the paint
+  would smear;
+* `?6l` (DECOM) — under origin mode `CSI H` homes to the region top, not row 0,
+  and every absolute address in the stream is reinterpreted;
+* `?7h` (DECAWM) — wrap must be **on**: `Vt.printMark` reads wrap-pending to
+  attach a combining mark to the margin cell it just wrote (see SCRATCHPAD
+  2026-08-15, and the note on `restoreBody`);
+* `1;rows r` — a leftover scroll region turns the repaint's line feeds into
+  scrolls. Degenerate for one row, where `DECSTBM` is a no-op and the region is
+  already whole;
+* `(B`, `)B`, `SI` — a leftover DEC line-drawing charset would translate the
+  ASCII the painter emits into box glyphs.
+
+`charsetAnsi` re-emits the charset state afterwards, since the session's own
+value may differ from the ASCII default this establishes. -/
+def prologueAnsi (v : Vt) : Bytes :=
+  modeSet 1049 false
+    ++ csiNum 4 0x6C
+    ++ modeSet 6 false
+    ++ modeSet 7 true
+    ++ csiNum2 1 v.rows 0x72
+    ++ escCharset 0x28 0x42 ++ escCharset 0x29 0x42 ++ [0x0F]
+
 /-- Mode replay: what a fresh terminal must be told so the application
 keeps working after reattach. DECOM and IRM are included (§Replay
 fix 4): origin mode changes how the final cursor address must be
 computed, and insert mode would corrupt the *next* app output if lost.
 Emitted after the repaint (insert mode during the repaint would shift
 cells) and before the final cursor (setting DECOM homes the cursor).
+
+Every mode is emitted **both ways**. A mode that is only ever *set* leaks the
+client's previous state: attaching a session with the mouse off to a terminal that
+a crashed program left reporting leaves the mouse on, and the same held for IRM,
+DECOM, bracketed paste, focus events, SGR mouse, application cursor and keypad.
+`prologueAnsi` already neutralizes the subset that would corrupt the *paint*; this
+is the same discipline for the ones that only affect what happens afterwards.
 
 The mouse guard is an **allowlist**, not a denylist, and that is the whole point.
 `setMode` only ever stores 1000/1002/1003 in that field, but a `Vt` does not only
@@ -236,20 +281,29 @@ the very grid the restore is rebuilding. Naming the three modes the emulator can
 legitimately hold closes both holes at once and cannot grow a third.
 
 The alternative was a reachability invariant on `Vt`; one guarded emit is still
-cheaper than a field every constructor must maintain. -/
+cheaper than a field every constructor must maintain.
+
+Every mode is emitted **both ways**. A mode that is only ever *set* leaks the
+client's previous state: attaching a session with the mouse off to a terminal that
+a crashed program left reporting leaves the mouse on, and the same held for IRM,
+DECOM, bracketed paste, focus events, SGR mouse, application cursor and keypad.
+The three mouse modes are mutually exclusive, so all three are cleared before the
+live one is set. `prologueAnsi` already neutralizes the subset that would corrupt
+the *paint*; this is the same discipline for the ones that only affect what the
+application does afterwards. -/
 def modesAnsi (v : Vt) : Bytes :=
-  let set := fun (n : Nat) (on : Bool) => csiPriv n (if on then 0x68 else 0x6C)
-  set 7 v.modes.wrap
-    ++ (if v.modes.appCursor then set 1 true else [])
-    ++ (if v.modes.appKeypad then escSeq 0x3D else [])
-    ++ (if v.modes.cursorVisible then [] else set 25 false)
-    ++ (if v.modes.bracketedPaste then set 2004 true else [])
+  modeSet 7 v.modes.wrap
+    ++ modeSet 1 v.modes.appCursor
+    ++ (if v.modes.appKeypad then escSeq 0x3D else escSeq 0x3E)
+    ++ modeSet 25 v.modes.cursorVisible
+    ++ modeSet 2004 v.modes.bracketedPaste
+    ++ modeSet 1000 false ++ modeSet 1002 false ++ modeSet 1003 false
     ++ (if v.modes.mouse == 1000 || v.modes.mouse == 1002 || v.modes.mouse == 1003
-        then set v.modes.mouse true else [])
-    ++ (if v.modes.mouseSgr then set 1006 true else [])
-    ++ (if v.modes.focusEvents then set 1004 true else [])
-    ++ (if v.modes.origin then set 6 true else [])
-    ++ (if v.modes.insert then csiNum 4 0x68 else [])
+        then modeSet v.modes.mouse true else [])
+    ++ modeSet 1006 v.modes.mouseSgr
+    ++ modeSet 1004 v.modes.focusEvents
+    ++ modeSet 6 v.modes.origin
+    ++ csiNum 4 (if v.modes.insert then 0x68 else 0x6C)
 
 /-! ## Restore
 
@@ -327,7 +381,8 @@ attaches one cell to the left. Two fuzz seeds catch it (see SCRATCHPAD,
 2026-08-15). The pending flag is load-bearing, and the replay proof has to
 model it rather than legislate it away. -/
 def restoreBody (v : Vt) : Bytes :=
-  csiNum 0 0x6D ++ csiNum 2 0x4A          -- clean slate
+  prologueAnsi v                          -- establish the receiver's state
+    ++ csiNum 0 0x6D ++ csiNum 2 0x4A     -- clean slate
     ++ screensAnsi v
     ++ regionAnsi v
     ++ tabsAnsi v

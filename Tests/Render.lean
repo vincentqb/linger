@@ -269,4 +269,50 @@ example : roundtrips (screen 24 8
      "\x1b[?2004h\x1b[44mBCE\x1b[K\x1b[4;2H"))
     = true := by native_decide
 
+/-! ## Restoring into a client that is **not** pristine
+
+`roundtrips` starts from `Vt.init`, which is the one receiver state in which every
+mode the emitter depends on is already correct. A real client is whatever its
+previous occupant left behind — `Session.onMsg` sends `restore` on attach with
+nothing before it — so the interesting question is whether restore *establishes*
+the state it needs rather than assuming it.
+
+Before `prologueAnsi` and the both-ways `modesAnsi`, it did not: modes that the
+emitter only ever *set* leaked the client's previous value, and IRM, DECOM, a stale
+scroll region, a DEC line-drawing charset or the alt screen each corrupted the
+repaint itself. -/
+
+/-- Everything a previous occupant might have left on: insert mode, origin mode,
+mouse reporting, bracketed paste, hidden cursor, application cursor and keypad, the
+alt screen, line-drawing G0 with shift-out, and a scroll region. -/
+def dirty (cols rows : Nat) : Vt :=
+  feedStr (Vt.init cols rows)
+    "\x1b[4h\x1b[?6h\x1b[?1000h\x1b[?1006h\x1b[?1004h\x1b[?2004h\x1b[?25l\x1b[?1h\x1b=\x1b[?1049h\x1b(0\x0e\x1b[2;3r"
+
+/-- The round trip, from an arbitrary receiver rather than a fresh one. -/
+def roundtripsFrom (start v : Vt) : Bool := replayEq (start.feed (restore v)) v
+
+example : roundtripsFrom (dirty 6 3) (screen 6 3 "hi") = true := by native_decide
+
+example : roundtripsFrom (dirty 8 4) (screen 8 4 "\x1b[31mab\r\ncd") = true := by
+  native_decide
+
+/-- The dirty client's own modes must not survive: this is the leak itself. -/
+example : ((dirty 6 3).modes.insert && (dirty 6 3).modes.origin
+    && (dirty 6 3).modes.mouse == 1000 && (dirty 6 3).shiftOut) = true := by native_decide
+
+example : (let v := screen 6 3 "hi"
+           let w := (dirty 6 3).feed (restore v)
+           w.modes == v.modes && w.g0Line == v.g0Line && w.shiftOut == v.shiftOut
+             && w.top == v.top && w.bot == v.bot && w.altGrid.isNone) = true := by
+  native_decide
+
+/-- A wide glyph and a combining mark, from a dirty start: the two shapes the
+repaint is most sensitive to. -/
+example : roundtripsFrom (dirty 6 3) (screen 6 3 "\u6f22e\u0301") = true := by native_decide
+
+/-- And a session that *is* on the alt screen still restores into a dirty client. -/
+example : roundtripsFrom (dirty 6 3) (screen 6 3 "ab\x1b[?1049hcd") = true := by
+  native_decide
+
 end Zmx.Core.Render.Tests

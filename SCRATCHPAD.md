@@ -3857,3 +3857,66 @@ under a precondition on the emulator state" shape `Tests/Fuzz.lean`'s header des
 and it was caught in one build. The proof-side lesson is the opposite of the one I
 proposed last session — do not simplify the emitted stream to make the induction
 cheaper without checking the emulator's own preconditions first.
+
+
+## Bug fix — restore assumed a pristine client, and leaked the old one's modes — 2026-08-15T14:10:00Z
+
+Found by asking why every §Replay bug has the same shape. The answer was in the
+*quantifier*, not the encoding: `restore_grid`'s statement is
+`(Vt.init cols rows).feed (restore v) ≃ v`, and `Vt.init` is the one receiver state
+in which every precondition the emitter depends on already holds. `Session.onMsg`
+sends `restore` on attach with **nothing** before it, so a real client is whatever
+its previous occupant left behind.
+
+### The leak
+
+`modesAnsi` was *set-only* for eight modes — it emitted nothing when the session had
+them off (`if v.modes.origin then set 6 true else []`, and the same for appCursor,
+appKeypad, bracketed paste, the mouse modes, SGR mouse, focus events, IRM). Only
+wrap was emitted both ways, and `cursorVisible` was emitted only when hidden. So:
+
+* client IRM on, session off → the repaint **shifts cells as it paints**, and IRM
+  stays on afterwards;
+* client DECOM on → stays on, and `cursorAnsi`'s absolute address is reinterpreted
+  region-relative, landing the cursor in the wrong row;
+* client mouse reporting on from a crashed program → stays on, and mouse events flow
+  into the session as input;
+* client on the **alt screen** → the main-grid repaint lands there, and
+  `screensAnsi`'s own `?1049h` is then a no-op, so the main screen is never painted;
+* stale scroll region → the repaint's line feeds **scroll**;
+* DEC line-drawing G0 → the ASCII the painter emits comes out as box glyphs.
+
+### The fix
+
+`prologueAnsi` establishes the receiver state the repaint depends on — `?1049l`,
+`4l`, `?6l`, `?7h`, `1;rows r`, `(B`, `)B`, `SI` — and `modesAnsi` now emits every
+mode **both ways**, clearing all three mouse modes before setting the live one.
+`?7h` sets wrap **on**, deliberately: the 2026-08-15 negative result above is why.
+
+Pinned by `Tests/Render.lean`'s new `dirty` receiver and `roundtripsFrom`: a client
+with all of the above turned on, restored into, must match the session — including a
+wide glyph plus combining mark, and an alt-screen session. Break-verified by deleting
+`prologueAnsi v ++` from `restoreBody`: 7 tests fail. Fuzz stayed green throughout
+(`failing 400 = []`, `failingDeep 150 = []`).
+
+### Proof-engineering notes, all of them elaboration cost rather than logic
+
+* **`++` is left-associative in Lean.** I "fixed" the append chains to be right-assoc
+  and it was wrong. The chains must peel from the **right**:
+  `refine Ends.append ?_ (last)` repeatedly. Doing it as one giant `exact` of a
+  nested chain, or in the wrong direction, makes the elaborator reconcile the two
+  shapes by unfolding `List.append` — at a dozen chunks that is a heartbeat timeout,
+  which is what all the `whnf` timeouts in this change were.
+* **A `let`-bound lambda in a definition costs a beta-redex per use at proof time.**
+  `modesAnsi`'s `let set := fun n on => …` timed out once there were 13 modes;
+  promoting it to `def modeSet` made every chunk match structurally. Same instinct as
+  "name the stages".
+* **`(dims X).1 = X.cols` by `rfl` forces `X` to whnf.** With `X` a `feed` of the
+  whole restore stream that is a timeout. `dims_fst`/`dims_snd`, proved once on a
+  *variable*, fix it — the lemma is trivial but the call site is not.
+* `escSeq`'s allowlist needed `ESC >` (DECKPNM) added in four places, since keypad
+  mode is now emitted both ways.
+* `quiet_modeSet_decom_off` is the one genuinely new proof: the `≠ 6` family says a
+  mode replay cannot turn origin *on*, and the prologue needs the complement, that
+  `?6l` turns it *off*. Proved at the dispatch (`org_setMode_decom_off` →
+  `org_csiDispatch_decom_off` → `org_csiFinish_decom_off` → `org_step_of_csi_decom_off`).
