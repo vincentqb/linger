@@ -4357,3 +4357,50 @@ region (`top`/`bot`), pen, alt-screen flag — as their own `MMap`-projection cl
 Each is touched by few chunks and repeats this pattern; carried meanwhile by the
 `dirty`-receiver `roundtripsFrom` fixtures. The grid *cells* remain §Replay's open
 induction (Steps 3–4), unchanged.
+
+## Coverage enforcement + A5 pen + README-promise audit — 2026-08-16T08:00:00Z
+
+Five things, from the "how do we enforce coverage" review.
+
+### Gate hardening (tests/e2e.sh)
+* **native_decide banned in `Theorems/`** — `! git grep -nE '\bnative_decide\b' --
+  'Theorems/*'`. THEOREMS.md always promised proofs reduce in the kernel; now
+  enforced. (Reworded Wire.lean's one comment that contained the literal token so
+  the grep is a clean oracle — `verifier-in-the-loop`: a source-tree property can't
+  be a theorem, the grep is the gate.)
+* **Fuzz corpus un-held-out** — grep asserts `knownGap = #[]` and that the
+  `failing 400 = []` / `failingDeep 150 = []` assertions exist un-weakened. The
+  Tests build already *proves* they hold; this stops the assertions themselves from
+  being shrunk.
+* **No external Lean deps** — fail-closed `require`-in-lakefile + empty
+  `lake-manifest` packages check (closes a README-promise gap, below).
+
+### CLAIM_CAP 12 → 10
+Claimed two genuinely-theoremed defs: `resizeEffects_owner_only` (only the size
+owner resizes the pty — abduco's rule as a theorem, names both `resizeEffects` and
+`sizeOwner`) and `resizeEffects_atMostOne`. Real invariants, not ratchet-gaming.
+The residual 10 are constants (`ckptIntervalMs`, `outputChunk`), width/charset
+helpers, and `infoText`/`rowText` — the last two want the label-scrub fix (Step-0
+ledger item 2) before a clean claim, so they stay unclaimed honestly.
+
+### A5 pen (a non-modes restored field)
+`restore_pen_any (v w) : (w.feed (restore v)).pen = v.pen`, for any receiver.
+`penSgr_feed` already gave `feed (penSgr p) = {v with pen := p}` from ground+u8need0;
+the new machinery is the **pen-projection CSI walk** (`pen_moveTo`,
+`pen_csiDispatch_cup`, `csi_tail_pen`, `pen_cursorAnsi`) showing the trailing
+`cursorAnsi` (`CUP`/`moveTo`) preserves pen. u8need-at-penSgr threaded via
+`un_modesAnsi` (modesAnsi ends in `CSI 4`, and `u8_zero_after_csi` zeroes u8need for
+any prior state) + `mmap_id_charsetAnsi` carrying 0 through the charsets. This is
+the FIRST non-modes field lifted off the fixtures. `csi_tail_pen` is a near-clone of
+`csi_tail_modes` — the remaining fields (g0/g1/shiftOut, top/bot, altGrid) should
+motivate generalizing `csi_tail` to an arbitrary projection rather than cloning it
+three more times.
+
+### README-promise coverage audit (workflow, 6 agents)
+Classified all 72 README promises: 22 proved, 41 test-pinned (runtime IO, on
+`tests/` by design), 6 bounded by a limitation/non-goal, 2 gaps — both fixed
+(no-deps gate; LINGER_NO_DETACH_KEY test). Ledger + maintenance rule written into
+THEOREMS.md "Coverage ledger": every README promise maps to a theorem, a test, a
+limitation, or a non-goal — an unmapped promise is the shape that let the hand-back
+ship, so it's a bug, not a doc lapse. Re-derivable by re-running the audit; a review
+gate, not an automated one (a grep can't judge "does this sentence have backing").

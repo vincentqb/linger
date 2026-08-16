@@ -41,10 +41,22 @@ say "2. purity of the core (no sorry, no partial, no IO)"
 ! git grep -n 'sorryAx' -- 'Zmx/Core/*' 'Theorems/*' || fail "sorryAx found"
 ! git grep -nE '\bpartial def\b' -- 'Zmx/Core/*' || fail "partial def in pure core"
 ! git grep -nE ': *IO ' -- 'Zmx/Core/*' || fail "IO in pure core"
+# Proofs must reduce in the kernel, never by compiled evaluation: a
+# `native_decide` in Theorems/ would trust the compiler + `Decidable`
+# instance instead of the kernel, and (unlike the tests, where evaluating
+# golden bytes is the point) that is a hole in a *proof*. THEOREMS.md's
+# "Reading a row" makes this a promise; this makes it enforced.
+! git grep -nE '\bnative_decide\b' -- 'Theorems/*' || fail "native_decide in a proof (Theorems/)"
 # the OS surface stays where AGENTS.md says it is
 [ "$(git grep -l '@\[extern' -- 'Zmx/*' | tr -d ' ')" = "Zmx/Posix.lean" ] \
   || fail "extern declarations outside Zmx/Posix.lean"
 [ "$(ls c/ | tr -d ' \n')" = "shim.c" ] || fail "more than one C file"
+# README promises "no external Lean dependencies"; make it fail-closed rather
+# than rest on inspection (README-promise coverage audit, the unbacked-promise
+# class). A `require` in the lakefile would pull in a package.
+! grep -qE '^[[:space:]]*require ' lakefile.lean || fail "external Lean dependency in lakefile.lean (README promises none)"
+[ "$(tr -d ' \n' < lake-manifest.json | grep -o '\"packages\":\[[^]]*\]')" = '"packages":[]' ] \
+  || fail "lake-manifest has packages (README promises no external Lean deps)"
 # shim-size ratchet: the C trust boundary must not grow silently. This
 # number only ever goes DOWN without discussion; raising it is a
 # deliberate, reviewable act — the checkpoint for "does this genuinely
@@ -61,7 +73,7 @@ say "2b. unclaimed pure-core surface (ratchet)"
 # watch. This is a ratchet, not a target: it may only go down. Lowering the
 # cap when a claim lands is the point; raising it is a deliberate edit that
 # says "new surface, no claim yet".
-CLAIM_CAP=12
+CLAIM_CAP=10
 unclaimed=0
 unclaimed_list=""
 for name in $(grep -h '^\(private \)*def ' Zmx/Core/*.lean \
@@ -75,6 +87,19 @@ done
 printf 'unclaimed core defs: %s (cap %s)\n' "$unclaimed" "$CLAIM_CAP"
 printf '  %s\n' "$unclaimed_list"
 [ "$unclaimed" -le "$CLAIM_CAP" ] || fail "unclaimed core surface grew past $CLAIM_CAP"
+
+say "2c. fuzz corpus: no held-out mutations, failure lists asserted empty"
+# The §Replay fuzzer is only a guarantee if nothing is excluded and the
+# empty-failure assertions are not quietly shrunk. The Tests build already
+# proves `failing/failingDeep = []` (the examples fail to compile otherwise);
+# these greps stop the *assertions themselves* from being weakened or the
+# exclusion list from regrowing — asserted here rather than trusted to a reader.
+grep -qE 'def knownGap : Array String := #\[\]' Tests/Fuzz.lean \
+  || fail "fuzz: knownGap exclusion list is not empty (a mutation is held out)"
+grep -qE 'example : failing 400 = \[\]' Tests/Fuzz.lean \
+  || fail "fuzz: 'failing 400 = []' assertion missing or weakened"
+grep -qE 'example : failingDeep 150 = \[\]' Tests/Fuzz.lean \
+  || fail "fuzz: 'failingDeep 150 = []' assertion missing or weakened"
 
 say "3. posix shim smoke tests"
 ./lake exe ztest | tail -1 | grep -q '^ALL PASS$' || fail "ztest"

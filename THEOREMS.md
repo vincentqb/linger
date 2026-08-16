@@ -20,7 +20,7 @@ Read this file at whichever depth you need:
 | **A2. The daemon cannot be broken by traffic** | no event trace of any length — adversarial clients, hostile pty bytes, any interleaving — breaks a buffer cap, the screen invariant, or one client's isolation from another | `Session.run_wf`, `Session.run_bytes_isolates` (§Bound ∘ §Total ∘ §Isolate) |
 | **A3. The transport is invisible** | any re-chunking of any well-formed encoded stream decodes to exactly that stream: same messages, same order, nothing retained, no error | `Wire.decode_encode_chunked` (§Stream = §Frame ∘ §Chunk) |
 | **A4. A session name has one owner** | given the kernel grants at most one `flock` holder, at most one daemon ever unlinks or binds a given name | `Claim.at_most_one_owner` (§Claim) |
-| **A5. linger is invisible to the terminal it borrows** | whatever state a client's terminal is in, the restore stream establishes what the repaint needs; whatever state the session's program left, the hand-back returns the terminal to a state the next program can use. Both quantified over the receiver, with no hypothesis on it | **inbound (modes): `Render.restore_modes_any` ✓** — for any `v`, `w`, `(w.feed (restore v)).modes = v.modes` (given `v.modes.mouse` in the emulator's allowlist, which `setMode` guarantees); parser half `restore_grounds` ✓. **outbound: `Render.leave_canonical` ✓** — `w.feed leaveAnsi` leaves the parser ground and the modes default. The other restored fields (charset/region/pen/scrollback) stay on the `dirty`-receiver round-trip fixtures |
+| **A5. linger is invisible to the terminal it borrows** | whatever state a client's terminal is in, the restore stream establishes what the repaint needs; whatever state the session's program left, the hand-back returns the terminal to a state the next program can use. Both quantified over the receiver, with no hypothesis on it | **inbound (modes): `Render.restore_modes_any` ✓** — for any `v`, `w`, `(w.feed (restore v)).modes = v.modes` (given `v.modes.mouse` in the emulator's allowlist, which `setMode` guarantees); parser half `restore_grounds` ✓. **outbound: `Render.leave_canonical` ✓** — `w.feed leaveAnsi` leaves the parser ground and the modes default. the **pen** is proved too (`restore_pen_any`, via `penSgr_feed` + the pen-projection CSI walk); charset/region/alt-flag stay on the `dirty`-receiver round-trip fixtures |
 
 Each anchor is a *composition* of rungs, which is why the rung table is
 still worth having: A1 is §Restore plus §Replay, A2 lifts three §s from
@@ -46,6 +46,34 @@ The rung table has fifteen entries and A5 adds no sixteenth idea, only a
 direction: §Handback is §Replay's question — *what does this stream
 assume about, or leave behind in, the thing it writes to?* — asked about
 the terminal linger gives back rather than the one it paints into.
+
+## Coverage ledger — every README promise is backed or bounded
+
+The hand-back bug shipped because a real product promise ("detaching leaves
+your terminal usable") had no anchor — nothing proved it, no test pinned it,
+no limitation bounded it. That is the one coverage failure that matters, so it
+is the one we enforce: **every user-facing promise in README.md maps to a
+theorem (anchor/rung), a live test suite, a stated limitation, or a settled
+non-goal — never to nothing.**
+
+A fanned-out audit (2026-08-16) classified all **72** README promises:
+**22 proved** by an anchor/rung, **41 test-pinned** (runtime `IO`, which
+`Zmx/Runtime/*` puts on `tests/` by design — see "§Total covers the emulator,
+not the runtime" below), **6 bounded** by a stated limitation or non-goal,
+and **2 gaps** — both now closed:
+
+* *"no external Lean dependencies"* — was true but unguarded; now a fail-closed
+  `lakefile.lean`/`lake-manifest.json` check in `tests/e2e.sh`.
+* *"`LINGER_NO_DETACH_KEY=1` disables the detach key"* — was unexercised; now a
+  case in `tests/attach_test.py` (the mirror of the ctrl-\ detach test).
+
+Maintenance rule (the discipline, not a script): a new README promise, or a new
+`§`/anchor, must land with its mapping — the anchor table above, the `§` "Where"
+column, a named test, or a one-line limitation here. A promise with none of
+those is the shape that let the hand-back through; treat an unmapped promise as a
+bug, not a doc lapse. The mapping is re-derivable by re-running the audit
+workflow; it is a review gate, not an automated one, because "does this sentence
+have backing" is a judgement a grep cannot make.
 
 A5 is now proved at the value level in both directions, not just the
 parser level. Both quantify over the receiver with no hypothesis on it —

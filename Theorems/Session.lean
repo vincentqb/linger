@@ -764,4 +764,24 @@ theorem liveVt_init (cols rows : Nat) (cs : List Client) (ls : List (String × S
     LiveVt { vt := Vt.Vt.init cols rows, clients := cs, labels := ls } :=
   LiveReachableVt.init cols rows
 
+/-- **Only the size owner resizes the pty** (abduco's rule, as a theorem rather than
+a comment). `resizeEffects` emits a `resizePty` only for the client the size-ownership
+cascade (`sizeOwner`: newest attached real-terminal attacher) actually selected — a
+read-only observer or an older mirror never moves the pty out from under the active
+user. -/
+theorem resizeEffects_owner_only (s : State) (c : Client) :
+    resizeEffects s c ≠ [] → (sizeOwner s).any (·.id == c.id) = true := by
+  intro hne
+  by_cases hc : (sizeOwner s).any (·.id == c.id) = true
+  · exact hc
+  · exact absurd (by unfold resizeEffects; rw [if_neg hc]) hne
+
+/-- …and when it does resize, it is exactly one `resizePty` at the client's size —
+never a burst, never a stale size. -/
+theorem resizeEffects_atMostOne (s : State) (c : Client) :
+    resizeEffects s c = [] ∨ resizeEffects s c = [Effect.resizePty c.cols c.rows] := by
+  unfold resizeEffects; split
+  · exact Or.inr rfl
+  · exact Or.inl rfl
+
 end Zmx.Core.Session

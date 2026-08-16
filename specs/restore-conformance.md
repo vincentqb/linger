@@ -7,10 +7,12 @@ here in a different shape, and its Step 5 archival gate is carried unchanged)
 
 ## Where this stands — read this first
 
-**Next step:** the non-modes restored fields (charset flags, scroll region, pen,
-alt-screen flag) as their own `MMap`-projection claims — cheap, each touched by few
-chunks, currently carried by the `dirty`-receiver round-trip fixtures. Then Step 2's
-`u8need` half, then Steps 3–4 (the grid induction).
+**Next step:** the remaining non-modes restored fields — charset flags
+(`g0Line`/`g1Line`/`shiftOut`), scroll region (`top`/`bot`), alt-screen flag — as
+their own projection claims (`pen` is done, `restore_pen_any`). Each wants a
+projection-generalized `csi_tail`/frame walk rather than a per-field clone of
+`csi_tail_pen`; that small refactor is the right move before the last three. Then
+Step 2's `u8need` half, then Steps 3–4 (the grid induction).
 
 **Done:** Step 0 — two bugs fixed. Step 1 — **A5 modes proved both directions**:
 `leave_canonical` (outbound → default) and `restore_modes_any` (inbound → the

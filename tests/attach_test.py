@@ -138,5 +138,30 @@ fails += expect(back.index(b'\x1b\\') == 0,
                 'detach leads with ST (a program that died mid-OSC/DCS would eat the rest)')
 subprocess.run([LINGER, 'kill', 'hyg'], env=ENV)
 
+# 10. LINGER_NO_DETACH_KEY=1 disables the ctrl-\\ detach key (README promise, and
+#     the mirror of step 2). With the env var set, ctrl-\\ is ordinary input: the
+#     client stays attached and the byte reaches the session's pty.
+env_nd = dict(ENV, LINGER_NO_DETACH_KEY='1')
+pid_nd, fd_nd = pty.fork()
+if pid_nd == 0:
+    os.execve(LINGER, [LINGER, 'attach', 'nd'], env_nd)
+fcntl.ioctl(fd_nd, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 0, 0))
+time.sleep(0.8)
+drain(fd_nd, 0.3)
+os.write(fd_nd, b'\x1c')          # would detach if the key were enabled
+time.sleep(0.5)
+try:
+    wpid_nd, _ = os.waitpid(pid_nd, os.WNOHANG)
+except ChildProcessError:
+    wpid_nd = pid_nd
+fails += expect(wpid_nd == 0, 'LINGER_NO_DETACH_KEY: ctrl-\\ does not detach (client still attached)')
+ls_nd = subprocess.run([LINGER, 'list'], env=ENV, capture_output=True, text=True).stdout
+fails += expect('nd' in ls_nd, 'LINGER_NO_DETACH_KEY: session still live')
+os.write(fd_nd, b'echo nd-$((20+2))\r')  # still interactive: input reaches the pty
+time.sleep(0.6)
+hist_nd = subprocess.run([LINGER, 'history', 'nd'], env=ENV, capture_output=True, text=True).stdout
+fails += expect('nd-22' in hist_nd, 'LINGER_NO_DETACH_KEY: input still reaches the session')
+subprocess.run([LINGER, 'kill', 'nd'], env=ENV)
+
 print('FAILURES:', fails)
 sys.exit(1 if fails else 0)

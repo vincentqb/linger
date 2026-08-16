@@ -4630,4 +4630,119 @@ theorem restore_modes_any (v w : Vt)
     (mmap_id_penSgr v.pen)).comp (mmap_id_cursorAnsi v)
   exact (htail _ (ends_titleAnsi v _ hg2) (uz_titleAnsi v hg2)).2.2
 
+
+/-! ### A5 inbound, continued: the pen (a non-modes restored field)
+
+`restore` installs the session's pen into any receiver — the first non-modes field
+lifted from the `dirty`-receiver fixtures to a theorem. `penSgr_feed` sets the pen;
+the pen-projection CSI walk (`csi_tail_pen`) shows the trailing `cursorAnsi` (a
+`CUP`/`moveTo`) preserves it. -/
+
+theorem pen_moveTo (v : Vt) (x y : Nat) : (v.moveTo x y).pen = v.pen := rfl
+
+theorem pen_csiDispatch_cup (v : Vt) (s : CsiState) : (v.csiDispatch s 0x48).pen = v.pen := by
+  by_cases hi : s.ignore = true
+  · simp [Vt.csiDispatch, hi]
+  · unfold Vt.csiDispatch; rw [if_neg (by simp [hi])]; exact pen_moveTo _ _ _
+
+/-- pen-projection analog of `csi_tail_modes`. -/
+theorem csi_tail_pen (params : Bytes) (final : UInt8) (hp : ParamBytes params)
+    (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E)
+    (hpen : ∀ (w : Vt) (t : CsiState), (w.csiDispatch t final).pen = w.pen)
+    {v : Vt} {s : CsiState} (hg : v.pstate = .csi s) (hu : v.u8need = 0) (hi : s.inter = 0) :
+    (v.feed (params ++ [final])).pen = v.pen
+      ∧ (v.feed (params ++ [final])).pstate = .ground
+      ∧ (v.feed (params ++ [final])).u8need = 0 := by
+  obtain ⟨s', hs', hsi⟩ := csi_param_run_inter params hg hu hp
+  rw [show ∀ (w : Vt), w.feed (params ++ [final]) = (w.feed params).feed [final] from
+    fun w => by simp [Vt.feed, List.foldl_append]]
+  rw [hs', show ∀ (w : Vt), w.feed [final] = w.step final from fun _ => rfl]
+  rw [csi_final_step_eq final (v := { v with pstate := .csi s' }) (s := s') rfl
+    (by simpa using hu) (by rw [hsi]; exact hi) h1 h2]
+  unfold Vt.csiFinish
+  dsimp only
+  refine ⟨by rw [hpen], rfl, by rw [un_csiDispatch]; simpa using hu⟩
+
+theorem pen_cursorAnsi (v : Vt) {g : Vt} (hg : g.pstate = .ground) (hu : g.u8need = 0) :
+    (g.feed (cursorAnsi v)).pen = g.pen := by
+  have key : ∀ (a b : Nat), (g.feed (csiNum2 a b 0x48)).pen = g.pen := by
+    intro a b
+    rw [show csiNum2 a b 0x48 = csiB ++ (digits a ++ [0x3B] ++ digits b) ++ [0x48] from by
+      simp [csiNum2]]
+    rw [show (csiB ++ (digits a ++ [0x3B] ++ digits b) ++ [0x48] : Bytes)
+        = [0x1B, 0x5B] ++ ((digits a ++ [0x3B] ++ digits b) ++ [0x48]) from by unfold csiB; simp]
+    rw [show ∀ (w : Vt), w.feed ([0x1B, 0x5B] ++ ((digits a ++ [0x3B] ++ digits b) ++ [0x48]))
+        = (w.feed [0x1B, 0x5B]).feed ((digits a ++ [0x3B] ++ digits b) ++ [0x48]) from
+      fun w => by simp [Vt.feed, List.foldl_append]]
+    rw [keeps_csi_open hg hu]
+    exact (csi_tail_pen _ 0x48
+      (((paramBytes_digits a).append (ParamBytes.cons (by decide) (by decide) ParamBytes.nil)).append
+        (paramBytes_digits b)) (by decide) (by decide)
+      (fun w t => pen_csiDispatch_cup w t) rfl (by simpa using hu) rfl).1
+  unfold cursorAnsi
+  split <;> exact key _ _
+
+/-- `modesAnsi` ends with `CSI 4 h/l` (IRM), and a CSI final zeroes `u8need`
+regardless of what came before. -/
+theorem un_modesAnsi (v : Vt) (g : Vt) : (g.feed (modesAnsi v)).u8need = 0 := by
+  rw [show modesAnsi v = (modeSet 7 v.modes.wrap ++ modeSet 1 v.modes.appCursor
+      ++ (if v.modes.appKeypad then escSeq 0x3D else escSeq 0x3E) ++ modeSet 25 v.modes.cursorVisible
+      ++ modeSet 2004 v.modes.bracketedPaste ++ modeSet 1000 false ++ modeSet 1002 false
+      ++ modeSet 1003 false ++ (if v.modes.mouse == 1000 || v.modes.mouse == 1002 || v.modes.mouse == 1003
+        then modeSet v.modes.mouse true else []) ++ modeSet 1006 v.modes.mouseSgr
+      ++ modeSet 1004 v.modes.focusEvents ++ modeSet 6 v.modes.origin)
+      ++ (csiB ++ digits 4 ++ [(if v.modes.insert then 0x68 else 0x6C : UInt8)]) from by
+    simp only [modesAnsi, csiNum]]
+  rw [feed_append]
+  exact u8_zero_after_csi (digits 4) _ (paramBytes_digits 4) (by cases v.modes.insert <;> decide) _
+
+/-- **A5 inbound, the pen.** `restore` installs the session's pen into any receiver:
+the body ends `… charsetAnsi ++ penSgr v.pen`, `penSgr_feed` sets the pen to exactly
+`v.pen` from the grounded prefix, and the trailing `cursorAnsi` (a `CUP`, i.e.
+`moveTo`) preserves it. -/
+theorem restore_pen_any (v w : Vt) : (w.feed (restore v)).pen = v.pen := by
+  -- C = everything up to (not including) penSgr; it grounds `w` with nothing pending
+  have hEndsC : Ends (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++ regionAnsi v
+      ++ tabsAnsi v ++ savedAnsi v ++ titleAnsi v ++ modesAnsi v ++ charsetAnsi v) :=
+    ((((((((ends_csiNum 0 0x6D (by decide) (by decide)).append
+      (ends_csiNum 2 0x4A (by decide) (by decide))).append (ends_screensAnsi v)).append
+      (ends_regionAnsi v)).append (ends_tabsAnsi v)).append (ends_savedAnsi v)).append
+      (ends_titleAnsi v)).append (ends_modesAnsi v)).append (ends_charsetAnsi v)
+  have hCground : (w.feed (prologueAnsi v ++ (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v
+      ++ regionAnsi v ++ tabsAnsi v ++ savedAnsi v ++ titleAnsi v ++ modesAnsi v
+      ++ charsetAnsi v))).pstate = .ground := by
+    rw [feed_append]; exact hEndsC _ (prologue_grounds v w)
+  -- u8need 0 at C: modesAnsi ends in a CSI (→0), and charsetAnsi preserves 0
+  have hMground : (w.feed (prologueAnsi v ++ (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v
+      ++ regionAnsi v ++ tabsAnsi v ++ savedAnsi v ++ titleAnsi v ++ modesAnsi v))).pstate
+      = .ground := by
+    rw [feed_append]
+    exact (((((((ends_csiNum 0 0x6D (by decide) (by decide)).append
+      (ends_csiNum 2 0x4A (by decide) (by decide))).append (ends_screensAnsi v)).append
+      (ends_regionAnsi v)).append (ends_tabsAnsi v)).append (ends_savedAnsi v)).append
+      (ends_titleAnsi v)).append (ends_modesAnsi v) _ (prologue_grounds v w)
+  have hMu : (w.feed (prologueAnsi v ++ (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v
+      ++ regionAnsi v ++ tabsAnsi v ++ savedAnsi v ++ titleAnsi v ++ modesAnsi v))).u8need = 0 := by
+    rw [show (prologueAnsi v ++ (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++ regionAnsi v
+        ++ tabsAnsi v ++ savedAnsi v ++ titleAnsi v ++ modesAnsi v))
+        = (prologueAnsi v ++ (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++ regionAnsi v
+          ++ tabsAnsi v ++ savedAnsi v ++ titleAnsi v)) ++ modesAnsi v from by
+      simp only [List.append_assoc], feed_append]
+    exact un_modesAnsi v _
+  have hCu : (w.feed (prologueAnsi v ++ (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v
+      ++ regionAnsi v ++ tabsAnsi v ++ savedAnsi v ++ titleAnsi v ++ modesAnsi v
+      ++ charsetAnsi v))).u8need = 0 := by
+    rw [show (prologueAnsi v ++ (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++ regionAnsi v
+        ++ tabsAnsi v ++ savedAnsi v ++ titleAnsi v ++ modesAnsi v ++ charsetAnsi v))
+        = (prologueAnsi v ++ (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++ regionAnsi v
+          ++ tabsAnsi v ++ savedAnsi v ++ titleAnsi v ++ modesAnsi v)) ++ charsetAnsi v from by
+      simp only [List.append_assoc], feed_append]
+    exact (mmap_id_charsetAnsi v _ hMground hMu).2.1
+  -- assemble
+  rw [show restore v = (prologueAnsi v ++ (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v
+      ++ regionAnsi v ++ tabsAnsi v ++ savedAnsi v ++ titleAnsi v ++ modesAnsi v ++ charsetAnsi v))
+      ++ penSgr v.pen ++ cursorAnsi v from by simp only [restore, restoreBody, List.append_assoc]]
+  rw [feed_append, feed_append, penSgr_feed v.pen hCground hCu]
+  rw [pen_cursorAnsi v (by simpa using hCground) (by simpa using hCu)]
+
 end Zmx.Core.Render
