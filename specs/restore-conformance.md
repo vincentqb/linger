@@ -1,24 +1,58 @@
 # restore-conformance — restore works into any client, and the proofs say so
 
 Status: active
-Updated: 2026-08-15
+Updated: 2026-08-16
 Predecessor: `specs/terminal-contract.md` (Steps 1–3 complete; its Step 4 is carried
 here in a different shape, and its Step 5 archival gate is carried unchanged)
 
 ## Where this stands — read this first
 
-**Next step:** the remaining non-modes restored fields — charset flags
-(`g0Line`/`g1Line`/`shiftOut`), scroll region (`top`/`bot`), alt-screen flag — as
-their own projection claims (`pen` is done, `restore_pen_any`). Each wants a
-projection-generalized `csi_tail`/frame walk rather than a per-field clone of
-`csi_tail_pen`; that small refactor is the right move before the last three. Then
-Step 2's `u8need` half, then Steps 3–4 (the grid induction).
+**Next step:** the **tab-ruler leak** an adversarial review of this round turned
+up (Step 0 findings ledger, item 0) — `tabsAnsi` is set-only, so a client whose
+previous occupant set a custom ruler keeps it. Same shape as `87f64b3`, reproduced
+against `replayEq`, and it is a *behaviour* fix so it outranks the remaining proof
+work. Then Step 2's `u8need` half (Definition-of-done item 3; the parser half is
+done), then Steps 3–4 — `PaintState` and the grid *cells* induction (items 4–5).
+Items 3, 4 and 5 are what remain of the Definition of done.
 
-**Done:** Step 0 — two bugs fixed. Step 1 — **A5 modes proved both directions**:
-`leave_canonical` (outbound → default) and `restore_modes_any` (inbound → the
-session's modes, given the mouse allowlist). The reusable layer (`modeSet_modes`
-dispatch bridge, `MMap` composition + `MMap.ite`, per-chunk bridges, `uz_titleAnsi`)
-is in. Step 2 — first half (`restore_grounds`). Steps 3–5 — not started.
+**Done:** Step 0 — two bugs fixed. **Step 1 is complete**: A5 is proved at the
+value level in both directions for the modes, the pen and the sticky bundle
+(region, both charsets, shift state, screen selection). Four restored fields are
+*not* covered and are named here so the list is not mistaken for "just the cells":
+the screen **cells** (Steps 3–4), the window **title**, the **tab ruler** (which a
+theorem would find FALSE — ledger item 0) and the **DECSC slot**; `restore_cursor`
+also still quantifies over `Vt.init` rather than any receiver.
+* outbound: `leave_canonical` (parser ground + modes default, any receiver) and
+  `leave_canonical_all` (+ region, charsets, shift state, screen, pen — for a
+  receiver at least two rows tall, which is `DECSTBM`'s own constraint).
+* inbound modes: `restore_modes_any` (given the mouse allowlist).
+* inbound pen: `restore_pen_any`.
+* inbound sticky fields: `restore_sticky_any` — the scroll region, both charset
+  designations, the shift state and the screen selection, for any receiver of the
+  same height, given `Good v` and `v.top < v.bot` (the region `DECSTBM` accepts;
+  a one-row region is the excluded degenerate case). Its three projections are
+  `restore_region_any`, `restore_charset_any`, `restore_alt_any`.
+
+The reusable layer: `modeSet_modes` (dispatch bridge), `MMap` + `MMap.ite`,
+`uz_titleAnsi`, and — from the sticky round — `Vt.stick` (one **bundled**
+projection, so `print` and `csiDispatch`, the two operations frames could not
+cover, are paid for once instead of per field), `csi_tail_proj` (the CSI walk with
+the projection as a parameter; `csi_tail_modes` and `csi_tail_pen` are now its
+instances), `smap_csi_one_arg` (the digit-run-and-dispatch walk, once for both
+markers), and `SMap` (the `Quiet` shape at the bundle, with no `u8need` side
+condition — an `ESC` clears a half-decoded character and nothing sticky rides on
+it, which is what lets the *repaint* be a chunk).
+
+Step 2 — first half (`restore_grounds`). Steps 3–5 — not started.
+
+**Two long-range dependencies are now visible in the theorems rather than left to
+inspection.** `charsetAnsi` is set-only for the shift state and `regionAnsi` emits
+nothing for a whole-screen region, so both claims run back through the entire
+repaint to the prologue's `SI` and `CSI 1 ; rows r`. They hold — but the transform
+in `smap_charsetAnsi` now *says* that it rests on the prologue, which is the same
+set-only shape `87f64b3` fixed in `modesAnsi`. Recorded, not fixed: making them
+absolute would change emitted bytes for no behavioural gain now that the
+dependency is proved rather than assumed.
 
 **The inbound proof needed no paint ladder** — a discovery that corrected the plan.
 Because every `modesAnsi` chunk is `ESC`-initiated and `ESC` clears `u8need`, the
@@ -35,8 +69,8 @@ That is `modeSet_modes` — feeding `modeSet n on` from ground has modes exactly
 `setMode true n on`, for *any* `n` (alt-screen modes included, unlike `keeps_modeSet`).
 On top of it, `MMap` (the modes-from-ground analog of `Keeps`) composes per-chunk
 transforms, and `leave_modes` folds the hand-back's chunks to the default record for
-any receiver. `restore_modes_any` is the same machinery pointed inbound; it waits
-only on `MMap id (gridAnsi)`.
+any receiver. `restore_modes_any` is the same machinery pointed inbound, and needed
+no `MMap id (gridAnsi)` after all — see the paint-ladder note above.
 
 **Step 0 changed the shape of the goal.** The bug family was not exhausted, and the
 question that keeps paying is the §Replay one asked in *both directions and at both
@@ -80,9 +114,12 @@ Two live bugs came out of that reading, both fixed and break-verified:
   set-only, so an empty session title left the client's old one on display.
 
 `906bf11` then closed the first of these *at the theorem level*: `restore_grounds`
-holds for any receiver with no hypothesis at all. The rest of the layers
-(`Ends`/`Quiet`/`Keeps`, `restore_grid`) still assume a pristine, ground receiver, so
-for everything except the parser state the tests are still the only guard.
+holds for any receiver with no hypothesis at all. Step 1 then closed the modes, the
+pen and the sticky bundle the same way. `restore_grid` still quantifies over
+`Vt.init`, so the **cells** are fixture-and-fuzz-carried (Steps 3–4) — and so are
+the **title**, the **tab ruler** and the **DECSC slot**, which have no
+receiver-quantified theorem at all. Asking the same quantifier question of them is
+what found ledger item 0.
 
 ## The bigger picture — what this ladder is for
 
@@ -97,7 +134,8 @@ and splits are settled non-goals — so it *borrows* a terminal you already had
 instead of owning one. Everything about the borrow is one claim in two directions:
 
 * **inbound**: whatever state the client's terminal is in, the restore stream
-  establishes what the repaint needs (`restore_grounds` ✓; the modes are Step 1);
+  establishes what the repaint needs (`restore_grounds` ✓, and every restored field
+  but the cells ✓ — Step 1);
 * **outbound**: whatever state the session's program left, the hand-back returns the
   terminal to a state the next program can use (`leaveAnsi`, Step 1).
 
@@ -189,14 +227,33 @@ is recorded below with a reason and a severity.
 Recorded so they are not lost; none is a security hole, and one-item-in-flight is why
 they wait. Roughly by severity:
 
-1. **Reattach at an unchanged size wipes the scroll region and tab ruler.**
-   `Session.onMsg .attach` calls `Vt.resize` for every sizer client with no dimension
-   guard, and `Vt.resize` unconditionally sets `top := 0`, `bot := rows-1`,
-   `tabs := defaultTabs cols`. At equal dimensions those are its whole effect, and the
-   kernel suppresses `SIGWINCH`, so the child — the only author of `DECSTBM` and the
-   tab ruler — is never nudged to re-establish them. Also makes `tabsAnsi` dead on the
-   attach path (the ruler is already default by the time `restore` runs). **In-family,
-   in-scope for the grid step**: fix is to skip the reset when dimensions are unchanged.
+0. **`tabsAnsi` is set-only: a client's leftover tab ruler survives the restore.**
+   *The next item.* Found 2026-08-16 by an adversarial review of the sticky-field
+   claims, asking the spec's own question of a field no theorem covers. `tabsAnsi`
+   (`Zmx/Core/Render.lean`) emits `[]` when `v.tabs == defaultTabs v.cols`, and
+   nothing else in linger's output clears tab stops — no `TBC`, and no `RIS`
+   anywhere — so a client whose previous occupant ran `CSI 3 g` plus its own `HTS`es
+   keeps that ruler, and `\t` in the session lands on the wrong column. Exactly the
+   shape `87f64b3` fixed in `modesAnsi`, and the reason ledger item 1's fix
+   *un-deadened* this path: `tabsAnsi` is live on the attach path again.
+   **Reproduced against the project's own oracle**, not argued: with `sess` on the
+   default ruler and a receiver whose ruler was re-set every four columns,
+   `roundtripsFrom` is `false` and `replayEq` fails on `.tabs` (it compares `r.tabs`,
+   `Tests/Render.lean:35`); it passes today only because no fixture moves the
+   *receiver's* ruler. Fix: emit the ruler unconditionally (`CSI 3 g` then one `HTS`
+   per stop), which also makes `restore_tabs_any` provable — as things stand such a
+   theorem would be **false**, not merely absent. Needs a `dirtyTabs` fixture and the
+   five `ends_`/`quiet_`/`keeps_`/`mmap_id_`/`smap_id_` `tabsAnsi` proofs updated
+   (they all `split` on the guard that would go away).
+
+1. ~~**Reattach at an unchanged size wipes the scroll region and tab ruler.**~~
+   **Fixed in `33b107e`**, and certified: `Session.onMsg .attach` now guards the
+   `Vt.resize` on an actual dimension change, `Theorems/Session.lean`'s
+   `onMsg_attach_same_size_vt` proves the same-size attach leaves `vt` untouched, and
+   `Tests/Session.lean` pins it with a non-vacuity case. Kept here with its original
+   diagnosis because it is what made item 0 reachable: with the guard in place a
+   same-size reattach preserves the child's ruler, so `tabsAnsi` is no longer dead on
+   the attach path — it is live and wrong.
 2. **Label values are not tab/newline-scrubbed.** `infoText` frames fields as
    `k\tv\n`; `.labelSet`/`linger set` apply no filter, so a label value with a newline
    and tab forges an extra row — including a `status`/`state` pair — in the listing.
@@ -232,17 +289,20 @@ And it is not scrollback: restore repaints the screen, not history.
 
 ## Definition of done
 
-1. `Sets`, a predicate for "this chunk leaves property `P` at value `x` regardless of
-   the receiver's incoming state", with `nil`/`append`/`ite` composition laws
-   mirroring `Ends`/`Quiet`/`Keeps`.
-2. `restore_modes_any`: for every `v` and every `w`, the modes after
-   `w.feed (restore v)` are `v`'s — the theorem that certifies `87f64b3` instead of
-   the tests carrying it alone. Likewise the charset flags, the scroll region, and
-   the alt-screen flag.
-2b. `leave_canonical`: for every `w`, the modes, charset flags, scroll region,
-   alt-screen flag and pen after `w.feed leaveAnsi` are the canonical ones and the
-   parser is `ground` — the outbound half, and anchor A5. Independent of any session
-   state, since `leaveAnsi` takes no argument.
+1. **Done, in a different shape.** `Sets` (a bare `∀ w` per chunk) is false for a
+   lone chunk — a mid-OSC receiver swallows it — so the predicates that landed are
+   `MMap` (modes-from-ground, with `comp`/`congr`/`ite`/`nil`) and `SMap` (the same
+   at the sticky bundle, without `u8need`). Both mirror `Ends`/`Quiet`/`Keeps`.
+2. **Done.** `restore_modes_any` (the ten `Modes` fields, certifying `87f64b3`),
+   `restore_pen_any`, and `restore_sticky_any` — the charset designations and shift
+   state, the scroll region, and the alt-screen flag, with `restore_charset_any` /
+   `restore_region_any` / `restore_alt_any` as its named projections.
+2b. **Done.** `leave_canonical` (parser `ground` + modes default, no hypothesis on
+   the receiver) and `leave_canonical_all` (also the charset flags, the scroll
+   region, the alt-screen flag and the pen, for a receiver at least two rows tall).
+   Independent of any session state, since `leaveAnsi` takes no argument. What no
+   theorem covers is the final cursor position: `CSI 999 ; 1 H` is clamped by the
+   receiver, so where it lands is the receiver's business.
 3. `Ends`, `Quiet` and `Keeps` re-stated without the ground-parser assumption, which
    requires the prologue to lead with a sequence abort so a client caught
    mid-escape resynchronises.
@@ -260,11 +320,13 @@ Review/revise cap: two fresh-review rounds, as before.
 
 ## Step 1 — the receiver-quantified value claims, in both directions
 
-Status: **outbound modes done** (`leave_canonical`); the reusable layer is in;
-inbound and the non-modes projections remain.
+Status: **done** (2026-08-16). Outbound `leave_canonical`; inbound
+`restore_modes_any`, `restore_pen_any`, `restore_sticky_any` (+ its three named
+projections). Every restored field except the screen cells is now a theorem
+quantified over the receiver.
 
 Purpose: make the shipped fixes theorems rather than tests — the hand-back
-(anchor A5, done) and `87f64b3`'s both-ways modes (`restore_modes_any`, next).
+(anchor A5, done) and `87f64b3`'s both-ways modes (`restore_modes_any`, done).
 
 Reads: `Zmx/Core/Render.lean`, `Theorems/Render.lean`, `SCRATCHPAD.md`.
 Writes: `Theorems/Render.lean`, `THEOREMS.md`, `SCRATCHPAD.md`.
@@ -283,22 +345,34 @@ sgr}` for the CSI preservers), `mmap_id_charset`, `mmap_id_si`. `leave_modes` fo
 them to the default record; break-verified (drop any `modeSet` from `leaveAnsi` and
 the `rfl` that the composite equals `{}` fails).
 
-**Inbound (`restore_modes_any`), the next step.** Same machinery, target `v.modes`
-instead of `{}`. `modesAnsi` sets every mode field absolutely, so nothing *before* it
-needs a specific modes transform — only `MMap`-something (ground-preserving). The one
-missing bridge is `MMap id (gridAnsi)`: the repaint preserves modes (it writes cells,
-pen and cursor, never a mode), which is `quiet_gridAnsi` (origin only) lifted to the
-full record. Then compose prefix (`MMap _`) → `modesAnsi` (`MMap (fun _ => v.modes)`)
-→ suffix (`MMap id`). `ED 2` (`eraseScreen`) needs the same modes-frame as a fold.
+**Inbound (`restore_modes_any`), as landed.** Same machinery, target `v.modes`
+instead of `{}`. It needed **no** `MMap id (gridAnsi)` and no `eraseScreen`
+modes-frame, which is where the plan was wrong: `modesAnsi` overwrites every mode
+field absolutely, so the whole prefix (prologue, `SGR 0`, `ED 2`, the repaint,
+region, tabs, DECSC, title) only has to reach `pstate = ground` — `prologue_grounds`
+plus the `Ends` ladder plus `uz_titleAnsi` — and the suffix folds as
+`mmap_modesAnsi ∘ mmap_id_charsetAnsi ∘ mmap_id_penSgr ∘ mmap_id_cursorAnsi`. The
+paint never enters a modes proof. (It does enter the *sticky* proof, which is why
+that one needed `smap_id_gridAnsi`.)
 
-**Non-modes projections** (`g0Line`/`g1Line`/`shiftOut`, `top`/`bot`, `pen`,
-`altGrid.isNone`) repeat the `MMap` shape with their own projection and transforms;
-fewer chunks touch each. Carried by the `dirty`-receiver round-trip fixtures until
-proved.
+**Non-modes projections, as landed.** The `pen` repeated the `MMap` shape with its
+own projection (`csi_tail_pen`). The rest did **not**, and the difference is worth
+recording: the scroll region is emitted before the title and the screen switch in
+the middle of the repaint, so those claims cannot step over `gridAnsi` the way the
+modes proof could. They went through `Vt.stick`, one bundled projection with the
+frames idiom underneath, plus `csi_tail_proj` (the walk with the projection as a
+parameter — `csi_tail_modes` and `csi_tail_pen` are now instances, so the walk's
+proof *script* is written once instead of three times — the file still grew, because
+the new docstrings outweigh the saved script; the honest claim is that it paid for
+itself at the third projection and keeps a fourth free) and `SMap`, a `u8need`-free
+stream predicate.
 
-Exit: `restore_modes_any` for the ten `Modes` fields; then the non-modes projections.
-Deleting any one both-ways emit from `modesAnsi`, or any one line of `leaveAnsi`,
-breaks the corresponding claim (the `leaveAnsi` half is verified).
+Exit, met: `restore_modes_any` for the ten `Modes` fields; `restore_pen_any`;
+`restore_sticky_any` for the other five. Break-verified (SCRATCHPAD 2026-08-16):
+negating `charsetAnsi`'s shift-state condition fails **only** the new
+`smap_charsetAnsi`, and putting `regionAnsi`'s `DECSTBM` top parameter off by one
+fails **only** the new `smap_regionAnsi` — two isolating breaks; the alt-screen and
+G0 breaks also trip the older parser ladder, which names the mode numbers.
 
 ## Step 2 — drop the ground-parser assumption
 

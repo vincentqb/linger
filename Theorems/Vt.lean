@@ -1696,6 +1696,45 @@ theorem dims_feed : ∀ (bs : List UInt8) {v : Vt}, Good v → dims (v.feed bs) 
     rw [hstep]
     exact (dims_feed xs (Good.step x h)).trans (dims_step x h)
 
+/-! ### …and without `Good`, for streams that do not emit `RIS`
+
+`Good` is in the three lemmas above for `RIS` alone (`Vt.init` re-clamps, and
+`Good` is what makes that the identity). No linger stream emits `ESC c`, so the
+receiver-quantified restore claims can have the height fact for **any** receiver
+rather than only a structurally sane one — which matters, because "any receiver"
+is the whole point of `Render.SMap`. -/
+
+theorem dims_stepEsc_ne_ris {v : Vt} (b : UInt8) (h : b ≠ 0x63) :
+    dims (v.stepEsc b) = dims v := by
+  unfold Vt.stepEsc
+  dsimp only
+  repeat' split
+  all_goals first
+    | rfl
+    | exact dims_lineFeed v
+    | exact dims_reverseIndex v
+    | exact (dims_lineFeed _).trans (dims_carriageReturn v)
+    | exact absurd rfl h
+
+theorem dims_step_ne_ris {v : Vt} (b : UInt8) (h : b ≠ 0x63) : dims (v.step b) = dims v := by
+  have hd : dims (v.abortUtf8 b) = dims v := dims_abortUtf8 v b
+  unfold Vt.step
+  dsimp only
+  split
+  all_goals try simp only [dims_stepGround, dims_stepEscInter, dims_stepCsi,
+    dims_stepOsc, dims_stepStr]
+  all_goals first
+    | exact hd
+    | exact (dims_stepEsc_ne_ris _ h).trans hd
+
+theorem dims_feed_ne_ris : ∀ (bs : List UInt8) {v : Vt}, (∀ b ∈ bs, b ≠ 0x63) →
+    dims (v.feed bs) = dims v
+  | [], _, _ => rfl
+  | x :: xs, v, h => by
+    rw [show v.feed (x :: xs) = (v.step x).feed xs from by simp [Vt.feed]]
+    exact (dims_feed_ne_ris xs (fun b hb => h b (by simp [hb]))).trans
+      (dims_step_ne_ris x (h x (by simp)))
+
 end Zmx.Core.Vt
 
 
@@ -3587,5 +3626,519 @@ theorem good_of_liveReachable {v : Vt} (h : LiveReachableVt v) : Good v := by
   | feed _ bytes ih => exact Good.feed bytes ih
   | resize _ c r ih => exact Good.resize c r ih
   | quiesce _ ih => exact Good.set_ground (Good.set_u8 0 0 (by omega) ih)
+
+end Zmx.Core.Vt
+
+
+namespace Zmx.Core.Vt
+/-! ## §Restore — the sticky receiver state, as one bundled projection
+
+The frames pass above retired four single-field invariance layers (`ps_`, `un_`,
+`dims_`, `org_`) for every operation whose result is a *syntactic* record update.
+It named the two it could not: `print` (a five-stage chain) and `csiDispatch` (a
+thirty-arm match), plus the fold-based erases. Those still cost one lemma per
+field per operation.
+
+A fifth layer is wanted here, for `Render.restore`'s receiver-quantified value
+claims: the state the stream **establishes and must then leave alone** outside
+the grid, cursor, pen, modes and parser — the scroll region, the two charset
+designations, the shift state, and which screen is current. Four more families
+over the un-framed operations would be ~40 lemmas; one **bundle** is ~10.
+
+Bundling was the idea the frames note rejected ("fixes only the fields we
+happened to need"), and the objection is answered rather than ignored: this
+bundle is not a chosen subset but a *closed* one. `rows` rides along because two
+of the transforms read it — `DECSTBM` clamps against it, and the alt switch
+resets the region to it — so a bundle without `rows` would not be closed under
+its own transforms. Everything else the stream writes already has a layer.
+
+The transforms are named (`stAlt`, `stStbm`, `stCharset`, `stSetMode`) so the
+`Render` ladder composes them the way `MMap` composes `Modes` transforms. -/
+
+/-- The receiver fields `restore` establishes and then must not disturb. -/
+structure Sticky where
+  rows : Nat
+  top : Nat
+  bot : Nat
+  g0 : Bool
+  g1 : Bool
+  so : Bool
+  alt : Bool
+  deriving DecidableEq, Repr
+
+def stick (v : Vt) : Sticky :=
+  { rows := v.rows, top := v.top, bot := v.bot, g0 := v.g0Line, g1 := v.g1Line,
+    so := v.shiftOut, alt := v.altGrid.isSome }
+
+/-! The projections, as rewrite rules. `rfl` for a *variable* receiver, which is
+what keeps the field corollaries in `Render` from asking the elaborator to whnf a
+whole restore stream. -/
+theorem stick_rows (u : Vt) : (stick u).rows = u.rows := rfl
+theorem stick_top (u : Vt) : (stick u).top = u.top := rfl
+theorem stick_bot (u : Vt) : (stick u).bot = u.bot := rfl
+theorem stick_g0 (u : Vt) : (stick u).g0 = u.g0Line := rfl
+theorem stick_g1 (u : Vt) : (stick u).g1 = u.g1Line := rfl
+theorem stick_so (u : Vt) : (stick u).so = u.shiftOut := rfl
+theorem stick_alt (u : Vt) : (stick u).alt = u.altGrid.isSome := rfl
+
+/-! ### The framed operations: one `rw` each, every field at once -/
+
+theorem stick_putCell (v : Vt) (x y : Nat) (c : Cell) :
+    stick (v.putCell x y c) = stick v := by rw [frame_putCell]; rfl
+theorem stick_moveTo (v : Vt) (x y : Nat) : stick (v.moveTo x y) = stick v := by rw [frame_moveTo]; rfl
+theorem stick_moveRel (v : Vt) (dx dy : Int) : stick (v.moveRel dx dy) = stick v := by
+  rw [frame_moveRel]; rfl
+theorem stick_setCol (v : Vt) (x : Nat) : stick (v.setCol x) = stick v := by rw [frame_setCol]; rfl
+theorem stick_clearPending (v : Vt) : stick v.clearPending = stick v := by rw [frame_clearPending]; rfl
+theorem stick_carriageReturn (v : Vt) : stick v.carriageReturn = stick v := by
+  rw [frame_carriageReturn]; rfl
+theorem stick_backspace (v : Vt) : stick v.backspace = stick v := by rw [frame_backspace]; rfl
+theorem stick_tab (v : Vt) : stick v.tab = stick v := by rw [frame_tab]; rfl
+theorem stick_backTab (v : Vt) : stick v.backTab = stick v := by rw [frame_backTab]; rfl
+theorem stick_lineFeed (v : Vt) : stick v.lineFeed = stick v := by rw [frame_lineFeed]; rfl
+theorem stick_reverseIndex (v : Vt) : stick v.reverseIndex = stick v := by rw [frame_reverseIndex]; rfl
+theorem stick_scrollUpIn (v : Vt) (t b : Nat) (a : Bool) :
+    stick (v.scrollUpIn t b a) = stick v := by rw [frame_scrollUpIn]; rfl
+theorem stick_scrollDownIn (v : Vt) (t b : Nat) : stick (v.scrollDownIn t b) = stick v := by
+  rw [frame_scrollDownIn]; rfl
+theorem stick_scrollUp (v : Vt) : stick v.scrollUp = stick v := stick_scrollUpIn _ _ _ _
+theorem stick_scrollDown (v : Vt) : stick v.scrollDown = stick v := stick_scrollDownIn _ _ _
+theorem stick_eraseRowSpan (v : Vt) (y a b : Nat) : stick (v.eraseRowSpan y a b) = stick v := by
+  rw [frame_eraseRowSpan]; rfl
+theorem stick_eraseLine (v : Vt) (m : Nat) : stick (v.eraseLine m) = stick v := by
+  rw [frame_eraseLine]; rfl
+theorem stick_eraseChars (v : Vt) (n : Nat) : stick (v.eraseChars n) = stick v := by
+  rw [frame_eraseChars]; rfl
+theorem stick_deleteChars (v : Vt) (n : Nat) : stick (v.deleteChars n) = stick v := by
+  rw [frame_deleteChars]; rfl
+theorem stick_insertChars (v : Vt) (n : Nat) : stick (v.insertChars n) = stick v := by
+  rw [frame_insertChars]; rfl
+theorem stick_applySgr (v : Vt) (ps : List (Nat × Bool)) : stick (v.applySgr ps) = stick v := by
+  rw [frame_applySgr]; rfl
+theorem stick_oscFinish (v : Vt) (acc : Array UInt8) : stick (v.oscFinish acc) = stick v := by
+  rw [frame_oscFinish]; rfl
+theorem stick_stepStr (v : Vt) (e : Bool) (b : UInt8) : stick (v.stepStr e b) = stick v := by
+  rw [frame_stepStr]; rfl
+theorem stick_abortUtf8 (v : Vt) (b : UInt8) : stick (v.abortUtf8 b) = stick v := by
+  unfold Vt.abortUtf8; split <;> rfl
+
+/-- **Fold invariance for the bundle**, so the three fold-based erases and the
+repeat-count dispatches (`CHT`, `SU`, `SD`, `CBT`) cost one line each. -/
+theorem stick_foldl {α : Type} (f : Vt → α → Vt) (hf : ∀ (w : Vt) (a : α), stick (f w a) = stick w) :
+    ∀ (l : List α) (v : Vt), stick (l.foldl f v) = stick v
+  | [], _ => rfl
+  | a :: as, v => (stick_foldl f hf as (f v a)).trans (hf v a)
+
+theorem stick_eraseScreen (v : Vt) (m : Nat) : stick (v.eraseScreen m) = stick v := by
+  unfold Vt.eraseScreen
+  split
+  all_goals first
+    | exact (stick_foldl _ (fun w _ => stick_eraseRowSpan w _ _ _) _ _).trans (stick_eraseLine _ _)
+    | exact (stick_foldl _ (fun w _ => stick_eraseRowSpan w _ _ _) _ _)
+    | exact (stick_foldl _ (fun w _ => stick_eraseRowSpan w _ _ _) _ _)
+
+theorem stick_insertLines (v : Vt) (n : Nat) : stick (v.insertLines n) = stick v := by
+  unfold Vt.insertLines
+  split
+  · rfl
+  · exact stick_foldl _ (fun w _ => stick_scrollDownIn w _ _) _ _
+
+theorem stick_deleteLines (v : Vt) (n : Nat) : stick (v.deleteLines n) = stick v := by
+  unfold Vt.deleteLines
+  split
+  · rfl
+  · exact stick_foldl _ (fun w _ => stick_scrollUpIn w _ _ _) _ _
+
+/-! ### `print`: the first operation frames could not cover
+
+Each of its five stages *is* framed, so the bundle costs one composition instead
+of a family per field. -/
+
+theorem stick_printWrap (v : Vt) : stick v.printWrap = stick v := by rw [frame_printWrap]; rfl
+theorem stick_printWideWrap (v : Vt) (w : Nat) : stick (v.printWideWrap w) = stick v := by
+  rw [frame_printWideWrap]; rfl
+theorem stick_printShift (v : Vt) (w : Nat) : stick (v.printShift w) = stick v := by
+  rw [frame_printShift]; rfl
+theorem stick_printPut (v : Vt) (ch : Char) (w : Nat) : stick (v.printPut ch w) = stick v := by
+  rw [frame_printPut]; rfl
+theorem stick_printAdvance (v : Vt) (w : Nat) : stick (v.printAdvance w) = stick v := by
+  rw [frame_printAdvance]; rfl
+theorem stick_printMark (v : Vt) (ch : Char) : stick (v.printMark ch) = stick v := by
+  rw [frame_printMark]; rfl
+
+/-- Printing a glyph cannot move the region, the charsets, the shift state or the
+screen selection — it *reads* the charsets (`printChar` translates) and reads the
+screen selection (a full-screen scroll goes to scrollback only on main), and
+writes neither. -/
+theorem stick_print (v : Vt) (ch : Char) : stick (v.print ch) = stick v := by
+  unfold Vt.print
+  dsimp only
+  split
+  · exact stick_printMark _ _
+  · exact ((((stick_printAdvance _ _).trans (stick_printPut _ _ _)).trans
+      (stick_printShift _ _)).trans (stick_printWideWrap _ _)).trans (stick_printWrap _)
+
+theorem stick_acceptChar (v : Vt) (n : Nat) : stick (v.acceptChar n) = stick v := by
+  unfold Vt.acceptChar; split <;> exact stick_print _ _
+
+/-- `SO`/`SI` are the two C0 bytes that write a sticky field, so they are the two
+excluded here — the reason `Render.charsetAnsi`'s shift state needs a claim of
+its own and the rest of the stream can be transparent to it. -/
+theorem stick_ctl (v : Vt) (b : UInt8) (h1 : b ≠ 0x0E) (h2 : b ≠ 0x0F) :
+    stick (v.ctl b) = stick v := by
+  unfold Vt.ctl
+  split
+  all_goals first
+    | rfl
+    | exact stick_backspace _
+    | exact stick_tab _
+    | exact stick_lineFeed _
+    | exact stick_carriageReturn _
+    | exact absurd rfl h1
+    | exact absurd rfl h2
+
+set_option maxRecDepth 2000 in
+theorem stick_stepGround (v : Vt) (b : UInt8) (h1 : b ≠ 0x0E) (h2 : b ≠ 0x0F) :
+    stick (v.stepGround b) = stick v := by
+  unfold Vt.stepGround
+  split
+  · rfl                                       -- ESC: parser state only
+  split
+  · exact stick_ctl _ _ h1 h2                 -- C0
+  split
+  · exact stick_acceptChar _ _                -- ASCII
+  split
+  · -- a continuation byte: dropped, accumulated, or completes a codepoint
+    split
+    · rfl
+    · split
+      · exact stick_acceptChar _ _
+      · rfl
+  repeat' split
+  all_goals rfl
+
+/-! ### The transforms — the four things in a restore stream that DO write a
+sticky field. Named, so the `Render` ladder composes them the way `MMap`
+composes `Modes` transforms, and so "what can move this field" is a list. -/
+
+/-- `?1049 h`/`l` (also `?47`, `?1047`): the screen switch, which resets the
+region as a side effect. Mirrors `enterAlt`/`leaveAlt` including their
+idempotence — which is why `alt` has to be *in* the bundle and not just an
+output of it. -/
+def stAlt (on : Bool) (s : Sticky) : Sticky :=
+  match on with
+  | true => if s.alt then s else { s with alt := true, top := 0, bot := s.rows - 1 }
+  | false => if s.alt then { s with alt := false, top := 0, bot := s.rows - 1 } else s
+
+/-- `CSI t ; b r` (DECSTBM), on the arguments after defaults and the 1-based
+decrement — including the receiver-side refusal of a region of fewer than two
+lines or one that does not fit, which is why `rows` is in the bundle. -/
+def stStbm (t bo : Nat) (s : Sticky) : Sticky :=
+  if t < bo && bo < s.rows then { s with top := t, bot := bo } else s
+
+/-- `ESC ( x` / `ESC ) x`: a charset designation. -/
+def stCharset (i x : UInt8) (s : Sticky) : Sticky :=
+  if i == 0x28 then { s with g0 := x == 0x30 }
+  else if i == 0x29 then { s with g1 := x == 0x30 }
+  else s
+
+/-- `SM`/`RM`: of the fourteen modes `setMode` knows, only the three
+screen-switch numbers reach a sticky field. -/
+def stSetMode (n : Nat) (on : Bool) (s : Sticky) : Sticky :=
+  if n == 47 || n == 1047 || n == 1049 then stAlt on s else s
+
+/-! The transforms' own arithmetic, so the value chain in `Render` can be a
+sequence of rewrites rather than one giant `rfl`. -/
+
+theorem stAlt_rows (on : Bool) (s : Sticky) : (stAlt on s).rows = s.rows := by
+  unfold stAlt; cases on <;> (dsimp only; split <;> rfl)
+
+theorem stAlt_alt (on : Bool) (s : Sticky) : (stAlt on s).alt = on := by
+  unfold stAlt
+  cases on
+  · dsimp only
+    split
+    · rfl
+    · rename_i h; simpa using h
+  · dsimp only
+    split
+    · rename_i h; exact h
+    · rfl
+
+/-- `DECSTBM` accepted: the receiver-side guard is exactly "at least two rows and
+it fits". -/
+theorem stStbm_of {t bo : Nat} {s : Sticky} (h1 : t < bo) (h2 : bo < s.rows) :
+    stStbm t bo s = { s with top := t, bot := bo } := by
+  unfold stStbm; rw [if_pos (by simp [h1, h2])]
+
+theorem stStbm_rows (t bo : Nat) (s : Sticky) : (stStbm t bo s).rows = s.rows := by
+  unfold stStbm; split <;> rfl
+
+theorem stick_enterAlt (v : Vt) (b : Bool) : stick (v.enterAlt b) = stAlt true (stick v) := by
+  unfold Vt.enterAlt stAlt
+  dsimp only
+  by_cases h : v.altGrid.isSome = true
+  · rw [if_pos h, if_pos (show (stick v).alt = true from h)]
+  · rw [if_neg h, if_neg (show ¬((stick v).alt = true) from h)]
+    rfl
+
+theorem stick_leaveAlt (v : Vt) (b : Bool) : stick (v.leaveAlt b) = stAlt false (stick v) := by
+  unfold Vt.leaveAlt stAlt
+  dsimp only
+  rcases hv : v.altGrid with - | x
+  · rw [if_neg (show ¬((stick v).alt = true) from by
+      show ¬(v.altGrid.isSome = true); rw [hv]; simp)]
+  · rw [if_pos (show (stick v).alt = true from by
+      show v.altGrid.isSome = true; rw [hv]; simp)]
+    rfl
+
+theorem stick_stepEscInter (v : Vt) (i x : UInt8) :
+    stick (v.stepEscInter i x) = stCharset i x (stick v) := by
+  unfold Vt.stepEscInter stCharset
+  dsimp only
+  by_cases h28 : (i == 0x28) = true
+  · rw [if_pos h28, if_pos h28]; rfl
+  · rw [if_neg h28, if_neg h28]
+    by_cases h29 : (i == 0x29) = true
+    · rw [if_pos h29, if_pos h29]; rfl
+    · rw [if_neg h29, if_neg h29]
+      rfl
+
+theorem stick_setMode (v : Vt) (n : Nat) (on : Bool) :
+    stick (v.setMode true n on) = stSetMode n on (stick v) := by
+  have halt : ∀ (u : Vt) (sv : Bool),
+      stick (if on then u.enterAlt sv else u.leaveAlt sv) = stAlt on (stick u) := by
+    intro u sv
+    cases on
+    · rw [if_neg (by decide)]; exact stick_leaveAlt u sv
+    · rw [if_pos rfl]; exact stick_enterAlt u sv
+  by_cases h47 : n = 47
+  · subst h47
+    show stick (if on then v.enterAlt false else v.leaveAlt false) = _
+    rw [halt v false]
+    unfold stSetMode
+    rw [if_pos (by decide)]
+  by_cases h1047 : n = 1047
+  · subst h1047
+    show stick (if on then v.enterAlt false else v.leaveAlt false) = _
+    rw [halt v false]
+    unfold stSetMode
+    rw [if_pos (by decide)]
+  by_cases h1049 : n = 1049
+  · subst h1049
+    show stick (if on then v.enterAlt true else v.leaveAlt true) = _
+    rw [halt v true]
+    unfold stSetMode
+    rw [if_pos (by decide)]
+  -- every remaining arm writes `modes`, the cursor or the saved slot only
+  unfold stSetMode
+  rw [if_neg (by
+    intro h
+    simp only [Bool.or_eq_true, beq_iff_eq] at h
+    rcases h with (h | h) | h
+    · exact h47 h
+    · exact h1047 h
+    · exact h1049 h)]
+  unfold Vt.setMode
+  split <;> rename_i hpv
+  · split
+    all_goals first
+      | rfl
+      | exact stick_moveTo _ _ _
+      | (split <;> rfl)
+      | (exfalso; simp_all)
+  · exact absurd rfl hpv
+
+/-- IRM is the only non-private mode we parse, and it is `modes`-only. -/
+theorem stick_setMode_plain (v : Vt) (n : Nat) (on : Bool) :
+    stick (v.setMode false n on) = stick v := by
+  unfold Vt.setMode
+  split <;> rename_i hpv
+  · exact absurd hpv (by decide)
+  · split <;> rfl
+
+/-! ### `csiDispatch`: the second operation frames could not cover
+
+One case-bash over every final byte, so that a new sequence in the emitter cannot
+quietly acquire a sticky effect: the three finals that *can* have one are
+hypotheses, not omissions. -/
+
+/-- `SM` **is** `setMode`, as a state equation rather than a per-field one — which
+is what lets one walk serve every projection (`modes_csiDispatch_sm` is this at
+`modes`). -/
+theorem csiDispatch_sm (v : Vt) (s : CsiState) (hi : s.ignore = false) :
+    v.csiDispatch s 0x68 = v.setMode (s.priv == 0x3F) (s.arg 0 0) true := by
+  unfold Vt.csiDispatch; rw [if_neg (by rw [hi]; simp)]; rfl
+
+theorem csiDispatch_rm (v : Vt) (s : CsiState) (hi : s.ignore = false) :
+    v.csiDispatch s 0x6C = v.setMode (s.priv == 0x3F) (s.arg 0 0) false := by
+  unfold Vt.csiDispatch; rw [if_neg (by rw [hi]; simp)]; rfl
+
+/-- `DECSTBM`, likewise as a state equation. -/
+theorem csiDispatch_stbm (v : Vt) (s : CsiState) (hi : s.ignore = false) (hp : s.priv = 0) :
+    v.csiDispatch s 0x72 =
+      (if s.arg 0 1 - 1 < s.arg 1 v.rows - 1 && s.arg 1 v.rows - 1 < v.rows
+       then ({ v with top := s.arg 0 1 - 1, bot := s.arg 1 v.rows - 1 }).moveTo 0 0 else v) := by
+  unfold Vt.csiDispatch
+  rw [if_neg (by rw [hi]; simp)]
+  show (if s.priv != 0 then v else
+      if s.arg 0 1 - 1 < s.arg 1 v.rows - 1 && s.arg 1 v.rows - 1 < v.rows
+      then ({ v with top := s.arg 0 1 - 1, bot := s.arg 1 v.rows - 1 }).moveTo 0 0 else v) = _
+  rw [if_neg (by rw [hp]; simp)]
+
+theorem stick_csiDispatch_stbm (v : Vt) (s : CsiState) (hi : s.ignore = false) (hp : s.priv = 0) :
+    stick (v.csiDispatch s 0x72)
+      = stStbm (s.arg 0 1 - 1) (s.arg 1 v.rows - 1) (stick v) := by
+  have hst : stStbm (s.arg 0 1 - 1) (s.arg 1 v.rows - 1) (stick v)
+      = (if s.arg 0 1 - 1 < s.arg 1 v.rows - 1 && s.arg 1 v.rows - 1 < v.rows
+         then { stick v with top := s.arg 0 1 - 1, bot := s.arg 1 v.rows - 1 } else stick v) := rfl
+  rw [csiDispatch_stbm v s hi hp, hst]
+  split
+  · exact stick_moveTo _ 0 0
+  · rfl
+
+/-! #### The preservers, one per final byte the emitters use
+
+Per-final rather than one bash over all thirty: the tail walk
+(`Render.csi_tail_proj`) takes the dispatch fact as a *hypothesis*, and every
+sequence linger emits has a concrete final byte, so a 30-way case split with a
+variable scrutinee would be work nobody needs. The same shape as
+`modes_csiDispatch_{cup,sgr,stbm}`. -/
+
+theorem stick_csiDispatch_cup (v : Vt) (s : CsiState) :
+    stick (v.csiDispatch s 0x48) = stick v := by
+  by_cases hi : s.ignore = true
+  · simp [Vt.csiDispatch, hi]
+  · unfold Vt.csiDispatch; rw [if_neg (by simp [hi])]; exact stick_moveTo _ _ _
+
+theorem stick_csiDispatch_cha (v : Vt) (s : CsiState) :
+    stick (v.csiDispatch s 0x47) = stick v := by
+  by_cases hi : s.ignore = true
+  · simp [Vt.csiDispatch, hi]
+  · unfold Vt.csiDispatch; rw [if_neg (by simp [hi])]; exact stick_setCol _ _
+
+theorem stick_csiDispatch_sgr (v : Vt) (s : CsiState) :
+    stick (v.csiDispatch s 0x6D) = stick v := by
+  by_cases hi : s.ignore = true
+  · simp [Vt.csiDispatch, hi]
+  · unfold Vt.csiDispatch
+    rw [if_neg (by simp [hi])]
+    show stick (if s.priv == 0 then v.applySgr s.sgrParams else v) = _
+    split
+    · exact stick_applySgr _ _
+    · rfl
+
+theorem stick_csiDispatch_ed (v : Vt) (s : CsiState) :
+    stick (v.csiDispatch s 0x4A) = stick v := by
+  by_cases hi : s.ignore = true
+  · simp [Vt.csiDispatch, hi]
+  · unfold Vt.csiDispatch; rw [if_neg (by simp [hi])]; exact stick_eraseScreen _ _
+
+theorem stick_csiDispatch_tbc (v : Vt) (s : CsiState) :
+    stick (v.csiDispatch s 0x67) = stick v := by
+  by_cases hi : s.ignore = true
+  · simp [Vt.csiDispatch, hi]
+  · unfold Vt.csiDispatch
+    rw [if_neg (by simp [hi])]
+    show stick (match s.arg 0 0 with
+      | 0 => { v with tabs := v.tabs.setIfInBounds v.cursor.x false }
+      | 3 => { v with tabs := Array.replicate v.cols false }
+      | _ => v) = _
+    split <;> rfl
+
+/-! ### The remaining parser states -/
+
+theorem stick_stepOsc (v : Vt) (acc : Array UInt8) (e : Bool) (b : UInt8) :
+    stick (v.stepOsc acc e b) = stick v := by
+  unfold Vt.stepOsc
+  repeat' split
+  all_goals first | exact stick_oscFinish _ _ | rfl
+
+/-- `RIS` (`ESC c`) is the one escape that resets everything, and no linger
+stream emits it. -/
+theorem stick_stepEsc (v : Vt) (b : UInt8) (h : b ≠ 0x63) :
+    stick (v.stepEsc b) = stick v := by
+  unfold Vt.stepEsc
+  split
+  all_goals first
+    | rfl
+    | exact stick_lineFeed _
+    | exact (stick_lineFeed _).trans (stick_carriageReturn _)
+    | exact stick_reverseIndex _
+    | exact absurd rfl h
+    | (split <;> rfl)
+
+/-! ### `step`, one lemma per incoming parser state
+
+Each is the `stick` analog of `ground_step` / `org_step_of_*`: `abortUtf8` cannot
+move a sticky field (it drops pending UTF-8 and nothing else), so the incoming
+state selects the arm and the arm's lemma finishes it. -/
+
+theorem stick_step_of_ground {v : Vt} (b : UInt8) (hg : v.pstate = .ground)
+    (h1 : b ≠ 0x0E) (h2 : b ≠ 0x0F) : stick (v.step b) = stick v := by
+  have hw : (v.abortUtf8 b).pstate = PState.ground := by rw [ps_abortUtf8]; exact hg
+  unfold Vt.step
+  dsimp only
+  rw [hw]
+  exact (stick_stepGround _ b h1 h2).trans (stick_abortUtf8 v b)
+
+theorem stick_step_of_esc {v : Vt} (b : UInt8) (hg : v.pstate = .esc) (h : b ≠ 0x63) :
+    stick (v.step b) = stick v := by
+  have hw : (v.abortUtf8 b).pstate = PState.esc := by rw [ps_abortUtf8]; exact hg
+  unfold Vt.step
+  dsimp only
+  rw [hw]
+  exact (stick_stepEsc _ b h).trans (stick_abortUtf8 v b)
+
+theorem stick_step_of_osc {v : Vt} {acc : Array UInt8} {e : Bool} (b : UInt8)
+    (hg : v.pstate = .osc acc e) : stick (v.step b) = stick v := by
+  have hw : (v.abortUtf8 b).pstate = PState.osc acc e := by rw [ps_abortUtf8]; exact hg
+  unfold Vt.step
+  dsimp only
+  rw [hw]
+  exact (stick_stepOsc _ acc e b).trans (stick_abortUtf8 v b)
+
+theorem stick_step_of_str {v : Vt} {e : Bool} (b : UInt8) (hg : v.pstate = .str e) :
+    stick (v.step b) = stick v := by
+  have hw : (v.abortUtf8 b).pstate = PState.str e := by rw [ps_abortUtf8]; exact hg
+  unfold Vt.step
+  dsimp only
+  rw [hw]
+  exact (stick_stepStr _ e b).trans (stick_abortUtf8 v b)
+
+theorem stick_step_of_escInter {v : Vt} {i : UInt8} (x : UInt8) (hg : v.pstate = .escInter i) :
+    stick (v.step x) = stCharset i x (stick v) := by
+  have hw : (v.abortUtf8 x).pstate = PState.escInter i := by rw [ps_abortUtf8]; exact hg
+  unfold Vt.step
+  dsimp only
+  rw [hw]
+  rw [stick_stepEscInter, stick_abortUtf8]
+
+/-- `SO` and `SI` from ground, the two bytes `stick_ctl` excludes. -/
+theorem stick_step_si {v : Vt} (hg : v.pstate = .ground) :
+    stick (v.step 0x0F) = { stick v with so := false } := by
+  have hw : (v.abortUtf8 0x0F).pstate = PState.ground := by rw [ps_abortUtf8]; exact hg
+  unfold Vt.step
+  dsimp only
+  rw [hw]
+  unfold Vt.stepGround
+  rw [if_neg (by decide), if_pos (by decide)]
+  rw [show (v.abortUtf8 0x0F).ctl 0x0F = { (v.abortUtf8 0x0F) with shiftOut := false } from rfl,
+    show stick { (v.abortUtf8 0x0F) with shiftOut := false }
+      = { stick (v.abortUtf8 0x0F) with so := false } from rfl,
+    stick_abortUtf8]
+
+theorem stick_step_so {v : Vt} (hg : v.pstate = .ground) :
+    stick (v.step 0x0E) = { stick v with so := true } := by
+  have hw : (v.abortUtf8 0x0E).pstate = PState.ground := by rw [ps_abortUtf8]; exact hg
+  unfold Vt.step
+  dsimp only
+  rw [hw]
+  unfold Vt.stepGround
+  rw [if_neg (by decide), if_pos (by decide)]
+  rw [show (v.abortUtf8 0x0E).ctl 0x0E = { (v.abortUtf8 0x0E) with shiftOut := true } from rfl,
+    show stick { (v.abortUtf8 0x0E) with shiftOut := true }
+      = { stick (v.abortUtf8 0x0E) with so := true } from rfl,
+    stick_abortUtf8]
 
 end Zmx.Core.Vt

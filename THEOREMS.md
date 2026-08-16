@@ -20,17 +20,18 @@ Read this file at whichever depth you need:
 | **A2. The daemon cannot be broken by traffic** | no event trace of any length — adversarial clients, hostile pty bytes, any interleaving — breaks a buffer cap, the screen invariant, or one client's isolation from another | `Session.run_wf`, `Session.run_bytes_isolates` (§Bound ∘ §Total ∘ §Isolate) |
 | **A3. The transport is invisible** | any re-chunking of any well-formed encoded stream decodes to exactly that stream: same messages, same order, nothing retained, no error | `Wire.decode_encode_chunked` (§Stream = §Frame ∘ §Chunk) |
 | **A4. A session name has one owner** | given the kernel grants at most one `flock` holder, at most one daemon ever unlinks or binds a given name | `Claim.at_most_one_owner` (§Claim) |
-| **A5. linger is invisible to the terminal it borrows** | whatever state a client's terminal is in, the restore stream establishes what the repaint needs; whatever state the session's program left, the hand-back returns the terminal to a state the next program can use. Both quantified over the receiver, with no hypothesis on it | **inbound (modes): `Render.restore_modes_any` ✓** — for any `v`, `w`, `(w.feed (restore v)).modes = v.modes` (given `v.modes.mouse` in the emulator's allowlist, which `setMode` guarantees); parser half `restore_grounds` ✓. **outbound: `Render.leave_canonical` ✓** — `w.feed leaveAnsi` leaves the parser ground and the modes default. the **pen** is proved too (`restore_pen_any`, via `penSgr_feed` + the pen-projection CSI walk); charset/region/alt-flag stay on the `dirty`-receiver round-trip fixtures |
+| **A5. linger is invisible to the terminal it borrows** | whatever state a client's terminal is in, the restore stream establishes what the repaint needs; whatever state the session's program left, the hand-back returns the terminal to a state the next program can use. Both quantified over the receiver, with no hypothesis on it | **inbound (modes): `Render.restore_modes_any` ✓** — for any `v`, `w`, `(w.feed (restore v)).modes = v.modes` (given `v.modes.mouse` in the emulator's allowlist, which `setMode` guarantees); parser half `restore_grounds` ✓. **outbound: `Render.leave_canonical_all` ✓** — for any receiver at least two rows tall, `w.feed leaveAnsi` leaves the parser `ground`, the modes at the default record, the scroll region whole, both charsets ASCII with G0 shifted in, the main screen current and the pen reset (`leave_canonical` is the parser+modes half, kept as the hypothesis-free statement). **inbound pen ✓** — `restore_pen_any`, via `penSgr_feed` + the pen-projection CSI walk. **inbound sticky fields ✓** — `Render.restore_sticky_any` installs the session's scroll region, both charset designations, the shift state and the screen selection into any receiver of the same height (`restore_region_any`, `restore_charset_any`, `restore_alt_any` are its projections); the two hypotheses are `Good v` and `v.top < v.bot`, the region `DECSTBM` accepts. **Still on the round-trip fixtures alone**, and named so the list is not "just the cells": the screen **cells** (A1's half), the window **title**, the **tab ruler** and the **DECSC slot** — and the cursor claim (`restore_cursor`) is still quantified over `Vt.init`, not over any receiver. The tab ruler is worse than unproved: see the §Replay note below |
 
 Each anchor is a *composition* of rungs, which is why the rung table is
 still worth having: A1 is §Restore plus §Replay, A2 lifts three §s from
 one event to a whole process lifetime, A3 subsumes §Frame and §Chunk as
-special cases. A5 is listed with its proof half open, because the
-tension is real whether or not the theorem exists yet: linger is not a
-window manager (windows, tabs and splits are settled non-goals), so it
-*borrows* a terminal you already had — and a borrow has two ends. The
-outbound end was missing entirely until 2026-08-15, which is why the
-anchor is on the record before its theorem is.
+special cases. A5 exists because linger is not a window manager (windows,
+tabs and splits are settled non-goals), so it *borrows* a terminal you
+already had — and a borrow has two ends. The outbound end was missing
+entirely until 2026-08-15; both ends are now proved at the value level for
+the modes, the pen and the sticky bundle (region, charsets, shift state,
+screen selection). The cells, the title, the tab ruler and the DECSC slot
+are still fixture-carried — see the A5 row.
 
 The one anchor still incomplete on the inbound side is A1's screen half — the
 replayed *cells* equalling the saved cells is carried by
@@ -94,9 +95,57 @@ mouse allowlist (`setMode` only ever stores those), and is exactly why
 `modesAnsi` normalizes a foreign checkpoint's garbage mouse value to off
 rather than replaying it.
 
+**The sticky fields close A5's inbound half** (2026-08-16). The scroll region,
+both charset designations, the shift state and the screen selection are the
+group whose emitters are *not* all in the tail — `regionAnsi` runs before the
+title, and `screensAnsi` switches screens in the middle of the repaint — so
+unlike the modes and the pen these claims cannot step over `gridAnsi`; they have
+to prove the repaint leaves them alone. Three things made that affordable:
+
+* **One bundled projection, not four layers.** `Vt.stick` is `(rows, top, bot,
+  g0, g1, so, alt)`. The frames pass retired the four single-field invariance
+  layers for every operation whose result is a syntactic record update, and
+  named the two it could not — `print` (a five-stage chain) and `csiDispatch` (a
+  thirty-arm match) — so a fifth *layer* would have cost those two ~40 lemmas
+  and a *bundle* costs them ~10. The frames note rejected bundling for fixing
+  "only the fields we happened to need"; the answer is that this bundle is
+  **closed**: `rows` is in it because `DECSTBM`'s clamp and the alt switch's
+  region reset both read it.
+* **The CSI walk, generalized.** `csi_tail_proj` takes the projection as a
+  parameter (its one requirement, `PsBlind`, is that a bare `pstate` update
+  cannot move it — `rfl` for every field accessor *but* `pstate` itself, which is
+  the one projection this walk cannot serve and does not need to). `csi_tail_modes` and
+  `csi_tail_pen` are now its instances, and `stick` a third; likewise
+  `smap_csi_one_arg` does the digit-run-and-dispatch walk once for both markers,
+  where `mmap_irm` and `modeSet_tail` each did it by hand.
+* **No `u8need` in the stream predicate.** `SMap` is the `Quiet` shape — ground
+  in, ground out, projection transformed — because every CSI/ESC chunk clears a
+  half-decoded character at its own leading `ESC`, and a text run cannot move a
+  sticky field whatever is pending. That is what lets the repaint be a chunk
+  here at all.
+
+The same machinery then closed A5's **outbound** non-modes fields
+(`leave_canonical_all`), which Definition-of-done item 2b had asked for and which
+`leave_canonical` alone did not cover: leaving the outbound half at "modes only"
+while the inbound half was complete is exactly the asymmetry that let the
+hand-back ship. `CSI r` — `DECSTBM` with no parameters, which is how the hand-back
+names "the whole screen" without knowing the receiver's height — needed its own
+short walk (`smap_stbm_plain`), and the trailing `SGR 0` turns out to *be*
+`penSgr {}`, so `penSgr_feed` gives the pen directly.
+
+Two long-range dependencies became visible rather than staying inspection-only.
+`charsetAnsi` is set-only for the shift state (it sends `SO` when the session has
+G1 shifted in and *nothing* when it does not), and `regionAnsi` emits nothing for
+a whole-screen region — so both claims run back through the entire repaint to the
+prologue's `SI` and `CSI 1 ; rows r`. They hold; the transform in
+`smap_charsetAnsi` now says out loud that they *rest on* the prologue, which is
+the same set-only shape `87f64b3` fixed in `modesAnsi` and worth watching. The
+excluded case is a one-row region (`v.top = v.bot`): `CSI t ; t r` is refused
+here and on every real terminal, so there is nothing to install.
+
 ### What the proof effort caught that the tests did not
 
-Eight infidelities have been found in `Render.restore`. Seven came from
+Twelve infidelities have been found in `Render.restore`. Seven came from
 reading the emitter against the parser. The eighth came from *proving*:
 setting up the pen round trip required counting the parameters an SGR
 carries, and a pen with all seven attributes plus truecolour foreground
@@ -107,6 +156,18 @@ attributes and colours in separate SGRs), and sixteen fixtures had missed
 it. `penSgr` now emits at most 8 parameters per sequence, and
 `penSgr_under_cap` states the bound so the failure cannot come back
 silently. The tenth was found while *designing* the grid induction rather than writing it: a combining mark on a wide char's own cell replayed onto its shadow, because the emitter put the marks after a 2-column advance. Reachable by moving the cursor back into a CJK line. Fixed by carrying the column in \`rowAnsi\` and parking the cursor with an absolute \`CHA\`.
+
+The twelfth came out of an adversarial review of the sticky-field claims, and it
+is the *same* set-only shape as `87f64b3`: **`tabsAnsi` is set-only for the tab
+ruler.** It emits nothing when the session's ruler is the default, and neither the
+prologue nor `ED 2` clears tab stops (no `TBC`, no `RIS` anywhere in linger's
+output), so a client whose previous occupant ran `CSI 3 g` plus its own `HTS`es
+keeps that ruler and the session's tabs come back wrong. Reproduced against the
+project's own decidable oracle: with a receiver whose ruler was re-set every four
+columns, `replayEq` fails on `.tabs` — it passes today only because no fixture
+moves the *receiver's* ruler. Recorded in `specs/restore-conformance.md`'s Step 0
+findings ledger with the reproduction; it is the next item, and it is why the A5
+row above names the tab ruler separately instead of saying "only the cells".
 
 The eleventh was found by neither proving nor testing but by taking the
 *diagnosis* seriously. Once the pattern was named — an emitter correct
@@ -134,7 +195,7 @@ what found it, which is worth remembering the next time the plan says
 | §Row | a list row's identity vs an unreliable `info` reply | a row's name is the sanitized socket filename alone; the reply can neither change it nor smuggle a second one in | Theorems/Listing.lean |
 | §Claim | one session name vs many daemons racing for it | *given* the kernel grants ≤1 `flock` holder, ≤1 daemon ever unlinks or binds that name | Theorems/Claim.lean |
 | §Replay | one saved byte stream must recreate the live screen on a fresh terminal | **parser half proved**: a fresh emulator fed a whole restore stream is quiesced — parser in `ground`, no half-decoded character (`restore_quiesced`), for any `Vt` and with no hypotheses. So a reattach can never wedge a client mid-sequence. **Cursor proved end to end** (`restore_cursor`): the replayed cursor equals the session's, given `Good` (§Bound) and DECOM off — resting on `Quiet`, which says a restore body leaves the parser ground *and* DECOM off, so the final `CUP` is read as an absolute address. **Byte layer proved**: feeding the bytes of a glyph *is* printing it (`utf8_feed`, `cellText_feed`, `crlf_feed`), so nothing below the emulator-operation level is left to trust. **Pen proved** (`penSgr_feed`): the emitted SGRs set the pen to exactly the saved one, from any starting pen — the parser's accumulator delivers the numbers `penSgr` chose (`csi_joinSemi_feed`) and `applySgr` inverts them (`pen_codes_recover`); every sequence stays under the parser's 16-parameter cap (`penSgr_under_cap`), the invariant that replaced a real bug. Remaining: the *cells* — that the replayed grid equals the saved grid, pinned meanwhile by the decidable `replayEq` fixtures and the `Tests/Fuzz.lean` corpus (both failure lists empty, no held-out mutations). The emulator side of that claim is now closed by §Renderable — the shapes the row painter cannot express are no longer reachable — so what is left is the row/grid replay induction itself, not side conditions on it | Theorems/Render.lean, Tests/Render.lean |
-| §Handback | the session's program owns the terminal's state while attached vs. the user's shell gets that terminal back | a detaching client hands back a terminal the next program can use, and what it hands back does not depend on what the session was doing: `Render.leaveAnsi` is a **constant**, written in `Client.attach`'s `finally` so every exit path — detach key, session exit, EOF, decoder error, exception — goes through it. It leads with `ESC \` for the same reason the restore prologue does (a program that died mid-OSC/DCS would swallow the whole stream), then leaves the alt screen, clears IRM/DECOM/mouse×3/SGR-mouse/focus/bracketed-paste/DECCKM/DECKPNM, restores autowrap, the full scroll region and the ASCII charsets, parks the cursor bottom-left (`?6l` and `CSI r` both home it, so it is placed rather than preserved — and DECSC/DECRC cannot help, since the bundle a real DECRC restores is exactly the state being reset) and ends with `SGR 0`. **Pinned by `tests/attach_test.py` step 9, not yet by a theorem**: the `Sets`-shaped claim (`leave_canonical`, for every receiver and no hypothesis on it) is Step 1 of `specs/restore-conformance.md`. Termios is not terminal state — `termRestore` was the whole of the cleanup before this, and detaching out of a full-screen program left the shell on the alt screen with mouse reporting on, no cursor, autowrap off, a stale scroll region and DEC line drawing selected. Still leaked outbound: the **window title**, which `titleAnsi` sets on attach and we cannot put back because we never read it (xterm's title stack would; it is not universal) | Zmx/Core/Render.lean, Zmx/Runtime/Client.lean, tests/attach_test.py |
+| §Handback | the session's program owns the terminal's state while attached vs. the user's shell gets that terminal back | a detaching client hands back a terminal the next program can use, and what it hands back does not depend on what the session was doing: `Render.leaveAnsi` is a **constant**, written in `Client.attach`'s `finally` so every exit path — detach key, session exit, EOF, decoder error, exception — goes through it. It leads with `ESC \` for the same reason the restore prologue does (a program that died mid-OSC/DCS would swallow the whole stream), then leaves the alt screen, clears IRM/DECOM/mouse×3/SGR-mouse/focus/bracketed-paste/DECCKM/DECKPNM, restores autowrap, the full scroll region and the ASCII charsets, parks the cursor bottom-left (`?6l` and `CSI r` both home it, so it is placed rather than preserved — and DECSC/DECRC cannot help, since the bundle a real DECRC restores is exactly the state being reset) and ends with `SGR 0`. **Proved as `Render.leave_canonical_all`** — for every receiver at least two rows tall, the parser ends `ground`, the modes are the default record, the scroll region is whole, both charsets are ASCII with G0 shifted in, the main screen is current and the pen is reset. (`leave_canonical` is the parser+modes half and needs no hypothesis at all; the two-row one is `DECSTBM`'s own, here and on every real terminal.) What no theorem covers is the **cursor position** — `CSI 999 ; 1 H` is clamped by the receiver, so where it lands is the receiver's business — and pinned by `tests/attach_test.py` step 9's thirteen assertions. Termios is not terminal state — `termRestore` was the whole of the cleanup before this, and detaching out of a full-screen program left the shell on the alt screen with mouse reporting on, no cursor, autowrap off, a stale scroll region and DEC line drawing selected. Still leaked outbound: the **window title**, which `titleAnsi` sets on attach and we cannot put back because we never read it (xterm's title stack would; it is not universal) | Zmx/Core/Render.lean, Zmx/Runtime/Client.lean, tests/attach_test.py |
 | §Terminal | a child needs a terminal that answers, but linger has no terminal of its own and may have no client attached | one bounded pure transducer owns a documented query profile: for a fixed starting `Vt`, scanner and child byte stream, the VT projection, the scanner and the **ordered reply stream are independent of the client roster** (`Terminal.feed_vt`, `Session.ptyOut_reply_roster_independent`); a complete owned query is removed from presentation output and answered exactly once, everything else is byte-for-byte passthrough — proved for arbitrary APC and sixel payloads that do not carry their own terminator (`apc_passthrough`, `sixel_passthrough`, both under `StFree`), and pinned for ordinary ANSI, over-cap candidates and unknown/vendor queries by `Tests/Terminal.lean` at every byte split rather than by a theorem; the general conservation lemma is not yet stated; the scanner is capped at 128/256/2048 bytes for CSI/OSC/DCS and an over-cap candidate becomes passthrough rather than growth (`feed_bounded`); an incomplete trailing prefix is released once at EOF, broadcast before the exit notifications, and never re-fed to the VT (`Session.step_childExited_effects`, which is `rfl` against the literal effect list; `finish_exact` only says what `finish` returns). Chunking-invariant end to end (`feed_append`). No input to the mediator names the child. **No reply linger writes to the child can commit a line**: replies are routed into the child's own pty input (`.writePty`), and a request is untrusted child output, so an echoed reply carrying a `CR`/`LF` was a terminal-reply command injection — `cat`ing a crafted file could run a command. `feed_replies_noNl` proves the reply stream contains no `0x0D`/`0x0A` for any child bytes and any scanner state; the one echoing reply, XTGETTCAP, filters its payload to the hex+`;` alphabet a conforming request uses (`capByte`), identity on a real query and terminator-free on a malformed one. Found by the Step 0 audit, not by a test; pinned by the proof, `Tests/Terminal.lean` and a live pty case in `tests/terminal_query_test.py` | Theorems/Terminal.lean, Theorems/Session.lean |
 | §Renderable | the painter can express only some grids, and the emulator can reach more of them | the emulator does not store a shape a repaint cannot reproduce. A cell holds a printable base of the width it claims and at most eight zero-width marks (`printableChar` substitutes controls **on store**, `printMark` caps marks and parks them on a base, never a shadow); a wide glyph keeps its shadow and that shadow carries nothing of its own. Every row mutation ends in `Row.mend`, and `mend_pairOk` discharges the pair rule for **any** input row, so the invariant costs no per-operation index reasoning. `mend_keeps_narrow`/`mend_keeps_wide` say the repair is the identity on a well-formed write, which is what lets a repaint read back what it just painted. `renderable_step` carries it for **any byte** and `renderable_feed` for any stream, so with `renderable_init` it holds of every state the emulator can reach; `renderable_resize` and `renderable_quiesce` cover the other two things a live session does to a terminal. `LiveReachableVt` is the least predicate closed under those three, and `renderable_of_liveReachable` discharges the shape hypothesis a replay theorem would otherwise have to assume — so it cannot be satisfied vacuously by excluding awkward states. Lifted to the daemon by `Session.run_vt_renderable`, for any event trace. The base clause is stated concretely (`Emittable`) rather than as `printableChar c = c`, which would be a tautology against the function that establishes it | Zmx/Core/Vt.lean, Theorems/Vt.lean |
 | §Status | one glyph per listing row vs seven distinguishable conditions | the seven states **partition** the observation space: \`cover\` (every row is in some state), \`disjoint\` (none is in two), \`classify_sound\` + \`classify_unique\` (the priority cascade computes the legend, and is the only function that does), \`reachable\` (no glyph is a state the program cannot report), \`icon_injective\` / \`name_injective\` (distinct states, distinct symbols -- so a merge must delete a state rather than overload a glyph), \`name_clean\` (porcelain names carry no tab or newline, which is what makes tab-separated rows unambiguous without escaping) | Theorems/Status.lean |

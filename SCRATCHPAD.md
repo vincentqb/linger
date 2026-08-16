@@ -4404,3 +4404,188 @@ THEOREMS.md "Coverage ledger": every README promise maps to a theorem, a test, a
 limitation, or a non-goal — an unmapped promise is the shape that let the hand-back
 ship, so it's a bug, not a doc lapse. Re-derivable by re-running the audit; a review
 gate, not an automated one (a grep can't judge "does this sentence have backing").
+
+## Step 1 notes (sticky fields) — 2026-08-16
+
+**Claim landed.** `restore_sticky_any (v w) (Good v) (w.rows = v.rows)
+(v.top < v.bot) : stick (w.feed (restore v)) = stick v`, where
+`stick v = (rows, top, bot, g0Line, g1Line, shiftOut, altGrid.isSome)`. Three named
+projections: `restore_region_any`, `restore_charset_any`, `restore_alt_any`. With
+`restore_modes_any` and `restore_pen_any` this is **every restored field except the
+screen cells**, all quantified over the receiver.
+
+**Why these three needed different machinery from the modes and the pen.** Those
+two are emitted in the *tail* (after the title), so their proofs stepped over
+`gridAnsi` entirely — the prefix only had to reach `ground`. The sticky fields do
+not: `regionAnsi` runs before the title, and `screensAnsi` switches screens **in
+the middle of the repaint**. So `SMap id (gridAnsi …)` was unavoidable, and with it
+the two operations the frames pass could not cover (`print`, `csiDispatch`).
+
+**Design choices, with the reasons:**
+
+1. **One bundled projection, not four `org_`-style families.** `Vt.stick`. Four
+   layers × the un-framed operations ≈ 40 lemmas; the bundle ≈ 10. The frames note
+   rejected bundling for fixing "only the fields we happened to need" — the answer
+   is that this bundle is *closed*: `rows` has to be in it because `DECSTBM`'s
+   clamp and the alt switch's region reset both read it. Everything framed is a
+   one-line `by rw [frame_X]; rfl` (the trailing `rfl` is needed — `rw`'s implicit
+   one only has reducible transparency and `stick` is a plain `def`).
+2. **`csi_tail_proj`** — the CSI walk with the projection as a parameter, its one
+   requirement being `PsBlind π` (a bare `pstate` update cannot move `π`; `rfl` for
+   every field accessor **except `pstate` itself**, which is the one projection this
+   walk cannot serve — and does not need to, since its conclusion pins the parser). `csi_tail_modes` and `csi_tail_pen` are now one-line
+   instances, so the walk's *proof script* is written once instead of three times.
+   Measured, because the first draft of this note said "shrank the file" and that is
+   false: the region grew ~22 lines (the new docstrings outweigh the ~17 saved script
+   lines), and ~5 lines even against the three-hand-copies counterfactual. The honest
+   claim is that it paid for itself at the third projection and keeps a fourth free.
+   `keeps_csi_tail` (grid) is *also* an instance — grid is `PsBlind` by `rfl` and its
+   `hgrid` is `hπ`; a probe file derived its exact shipped statement from
+   `csi_tail_proj`. It keeps its own copy only because it sits 1200 lines earlier in
+   the file; collapsing it needs `PsBlind`/`csi_tail_proj` hoisted above the `Keeps`
+   section (feasible — the proof's dependencies all precede it). The first draft of
+   this note gave "a dispatch does write cells" as the reason, which is wrong: the
+   *not*-writing is the hypothesis, discharged per final byte by the caller.
+3. **`smap_csi_one_arg`** — the digit-run-and-dispatch walk, once for both markers
+   (`CSI ? n h/l` and `CSI n h/l`), where `mmap_irm` and `modeSet_tail` had each
+   done it by hand. Delivering the *closed collector's contents* (`t.params =
+   s0.params.push (n, s0.curSub)`) rather than a computed `arg` is what let the
+   same lemma serve the two-parameter `DECSTBM` walk: stage one closes the first
+   parameter with `;` (`stick_csi_semi_open`), stage two is `stick_csi_arg_tail`
+   again with a one-element collector.
+4. **`SMap` carries no `u8need`.** This is the discovery of the round and it is why
+   the repaint is affordable as a chunk. Every CSI/ESC chunk clears a half-decoded
+   character at its own leading `ESC` (`uz_step_esc` needs no hypothesis), and a
+   text run cannot move a sticky field whatever is pending. So `SMap` is the
+   `Quiet` shape, not the `MMap`/`Keeps` shape — and the text case (`SMap.text`,
+   excluding only `ESC`/`SO`/`SI`) is *true*, where `Keeps.text` would be false.
+5. **`dims_feed_ne_ris`** — the dims layer's `Good` hypothesis exists for `RIS`
+   alone, and no linger stream emits `ESC c`, so the `ST` lead-in's height fact
+   holds for **any** receiver. Needed because the lead-in *can* move a sticky field
+   (a receiver caught mid-`ESC (` reads our `ESC` as the designator byte), so the
+   value chain starts from an unknown state whose only known field is `rows`.
+
+**Two long-range dependencies, now visible in the theorems.** `charsetAnsi` is
+set-only for the shift state (`if v.shiftOut then [SO] else []`) and `regionAnsi`
+emits nothing for a whole-screen region. Both claims therefore run back through the
+whole repaint to the prologue's `SI` and `CSI 1 ; rows r`. They hold, and
+`smap_charsetAnsi`'s transform (`so := if v.shiftOut then true else s.so`) now says
+out loud that it *rests on* the prologue. Same set-only shape `87f64b3` fixed in
+`modesAnsi`; deliberately **not** changed, because the dependency is now proved
+rather than assumed and making it absolute would move emitted bytes for no
+behavioural gain. Worth watching if either emitter is reordered.
+
+**Hypotheses, and what they exclude.** `Good v` bounds `v.rows ≤ 1000` (so
+`DECSTBM`'s parameters are never clamped to 65535) and gives `v.bot < v.rows`.
+`v.top < v.bot` is the region `DECSTBM` will *accept* — the exact analog of
+`restore_modes_any`'s mouse allowlist, and needed for the same reason
+(`Checkpoint.load` is total on arbitrary bytes, so a foreign checkpoint can hold a
+region no emulator would produce). The excluded case is a one-row region
+(`v.top = v.bot`): `CSI t ; t r` is refused here and on every real terminal, so
+there is nothing to install and nothing to claim.
+
+**Break-verified.** Two isolating breaks and two cascading:
+* `charsetAnsi`'s shift-state condition negated (`if !v.shiftOut then [SO]`) —
+  fails **only** `smap_charsetAnsi`. ✓
+* `regionAnsi`'s `DECSTBM` top parameter off by one (`v.top + 2`) — fails **only**
+  `smap_regionAnsi`. ✓
+* prologue resets `?1048l` instead of `?1049l` — fails `ends_prologueAnsi`,
+  `quiet_prologueAnsi`, `prologue_grounds` **and** `restore_sticky_any`.
+* `charsetAnsi` designates G0 as set `1` instead of `0` — fails the older
+  `ends`/`quiet`/`keeps`/`mmap` charset lemmas **and** `smap_charsetAnsi`.
+The cascades are because the older ladder names the mode number / designator byte
+explicitly; the two isolating breaks are the evidence that the *new* claims are not
+implied by anything already proved.
+
+**Negative results / traps hit, so the next session does not repeat them:**
+* A multi-line `{ s with f := …, g := … }` must indent its continuation lines at
+  least to the **first field's** column, not just past the `{`. Otherwise the
+  parser stops at the comma with "unexpected identifier; expected '}'" and the
+  `have` recovers as a truncated record — which then shows up as a confusing
+  *elaboration* error somewhere else.
+* Composing the twenty per-chunk transforms symbolically and evaluating the nest at
+  the end blows up: each record update duplicates its argument once per field, so
+  the goal became megabytes (same failure mode as `mmap_modesAnsi`'s 13-transform
+  `rfl`). Fix: `sput_step`/`sput_congr` — carry explicit *values* and normalize
+  after every rung. Destructuring the one opaque intermediate (`obtain ⟨Ar, At, …⟩`)
+  is what makes the per-rung `show`s small enough to write.
+* `congrArg Sticky.top h` for the field corollaries times out at `whnf` (the
+  elaborator tries to reduce `stick (w.feed (restore v))`). Fix: projection lemmas
+  on a *variable* receiver (`stick_top (u : Vt) : (stick u).top = u.top := rfl`) and
+  `rw [← stick_top _, h, stick_top]`.
+* `split` on `Vt.setMode` reverts hypotheses mentioning `n`, so a `by_cases n = 47`
+  *before* the split is useless in the split's branches. Case on the three
+  screen-switch numbers with `subst` + `show` instead, and let the catch-all arm's
+  own disequalities discharge `stSetMode`.
+* `intro a b - -` does **not** anonymously introduce in Lean 4 core `intro`; the
+  `-` parses as subtraction and the goal becomes `Int`. Use `_`.
+* Never build these edits with a Python `s[i:j]` slice whose indices can invert:
+  `s.replace('', new)` inserts `new` between *every character* (373 MB file, 251k
+  copies). Recovered by `s.replace(new, '')`, but use exact-string edits.
+
+### A5 outbound, same round
+`leave_canonical_all (w) (2 ≤ w.rows)`: parser `ground`, modes default, sticky
+canonical (`⟨rows, 0, rows-1, false, false, false, false⟩`) and pen reset. Item 2b of
+the spec's Definition of done had asked for the non-modes fields on the hand-back
+side too, and `leave_canonical` covered only modes + parser — so marking 2b done on
+that basis would have been an overclaim, and the asymmetry (inbound complete,
+outbound modes-only) is the same shape that let the hand-back ship. Cost with `SMap`
+already in place: one more `sput` chain plus two small pieces.
+* `smap_stbm_plain` — `CSI r`, `DECSTBM` with **no** parameters. Not an instance of
+  `smap_csi_one_arg` (nothing to walk) nor of `csi_tail_proj` (the dispatch is the
+  point): both arguments fall back to their defaults, `1` and the **receiver's own**
+  `rows`, which is how the hand-back names "the whole screen" without knowing the
+  size. Hence the `2 ≤ w.rows` hypothesis — a one-row region is refused by DECSTBM
+  here and on every real terminal, so nothing can be established.
+* The trailing `SGR 0` **is** `penSgr {}` (`penAttrCodes {} = [0]`, both colours
+  default so `sgrColorSeq` is `[]`), modulo two `List.append_nil`s — so
+  `penSgr_feed` gives the pen with no new machinery. `show csiNum 0 0x6D ++ [] ++ []
+  = csiNum 0 0x6D; simp` is the way to state that (simp with the defs unfolded
+  strands `sgrOf [0] = csiNum 0 109`; `show` gets there by defeq instead).
+* `smap_id_irm_reset : SMap id (csiNum 4 0x6C) := smap_id_irm false` — a chain of
+  `sput_step`s has to match the emitter's bytes *syntactically*, and
+  `smap_id_irm false` states them as `csiNum 4 (if false then 0x68 else 0x6C)`.
+  Defeq is not enough once you want to `rw` the byte list.
+Not covered outbound, deliberately: the final **cursor position** (`CSI 999 ; 1 H`
+is clamped by the receiver) and the **window title** (we never read it — the
+standing known leak).
+
+### Adversarial review of this round (workflow: 5 lenses, per-finding refutation)
+Ran before committing. **No defect in the Lean survived refutation** — the proofs and
+their hypotheses held up, including a specific attempt to show `v.top < v.bot` was
+misattributed as "the analog of the mouse allowlist" (refuted: `Checkpoint.load` is
+total on arbitrary bytes for both fields, so the analogy is exact). What did survive
+was one real product bug and six prose defects; all are fixed above or recorded:
+
+* **The bug: `tabsAnsi` is set-only.** Now ledger item 0 in the spec and the twelfth
+  infidelity in THEOREMS.md. Found by asking this spec's own question of a field no
+  theorem covers, and *reproduced against `replayEq`* rather than argued. Worth the
+  lesson: the review found it because the finder was pointed at "what does `restore`
+  write that has no receiver-quantified theorem", which is a question the summary
+  prose ("only the cells remain") had actively obscured.
+* **"Only the screen cells remain on the round-trip fixtures" was false** — title,
+  tab ruler and DECSC slot also have no receiver-quantified theorem, and
+  `restore_cursor` is still `Vt.init`-quantified. Fixed in THEOREMS.md and the spec;
+  the four are now named, because an inaccurate "what's left" list is precisely what
+  stops the next round from asking the question that just paid.
+* Spec's "Steps 3–4 are the only part of the Definition of done still open" —
+  item 3 (Step 2's u8need half) is open too. Fixed.
+* Spec's Step 1 body still read "**Inbound, the next step** … the one missing bridge
+  is `MMap id (gridAnsi)`", contradicting the front block's own note that no paint
+  ladder was needed. Rewritten past-tense.
+* Ledger item 1 still read as "real, not yet fixed" in the present tense though
+  `33b107e` fixed it — and its fix is *what made item 0 reachable*, so the staleness
+  hid a live bug. Struck through with that connection recorded.
+* "`PsBlind` is true of every field accessor by `rfl`" — `pstate` is the exception.
+  Fixed in THEOREMS.md and above.
+* "the refactor reduced/shrank the file" — measurably false. Corrected above.
+* `csi_tail_proj`'s docstring blamed the grid walk's hypothesis shape; the real
+  reason is file order, and a probe file derived `keeps_csi_tail` from
+  `csi_tail_proj` to prove it. Docstring corrected.
+
+Method note worth keeping: the lens that paid was "**does the prose match the
+Lean?**", and it paid *because* the prose was where the overclaim lived. Two lenses
+aimed at the Lean itself (vacuity, transform-vs-semantics) found nothing that
+survived — which is the outcome to expect when the theorems were built against the
+emitter, and is the reason to keep spending the review budget on the summary
+documents instead.
