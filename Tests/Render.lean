@@ -316,6 +316,46 @@ example : roundtripsFrom (dirty 6 3) (screen 6 3 "ab\x1b[?1049hcd") = true := by
   native_decide
 
 
+/-! ### The tab ruler — the set-only field the `dirty` receiver missed
+
+`tabsAnsi` used to emit nothing when the *session's* ruler was the default, on the
+theory that a reset terminal already has it. A client is not a reset terminal, and
+nothing else in a restore stream clears a tab stop, so the previous occupant's
+ruler survived and a `\t` from the session landed on the wrong column. The `dirty`
+receiver above never moves the ruler, which is exactly why sixteen fixtures and a
+receiver-quantified modes proof all missed it; this one moves it. -/
+
+/-- A previous occupant that cleared the ruler and set its own stops every four
+columns: `CSI 3 g`, then `CHA` + `HTS` at columns 5, 9, 13 and 17. -/
+def dirtyTabs (cols rows : Nat) : Vt :=
+  feedStr (Vt.init cols rows) "\x1b[3g\x1b[5G\x1bH\x1b[9G\x1bH\x1b[13G\x1bH\x1b[17G\x1bH"
+
+/-- The hazard itself: the receiver's ruler is not the default one. -/
+example : ((dirtyTabs 20 3).tabs == defaultTabs 20) = false := by native_decide
+
+/-- **The assertion that was false before the fix.** A default-ruler session
+restored into that receiver used to come back holding the *receiver's* ruler. -/
+example : (((dirtyTabs 20 3).feed (restore (screen 20 3 "hi"))).tabs
+    == (screen 20 3 "hi").tabs) = true := by native_decide
+
+example : roundtripsFrom (dirtyTabs 20 3) (screen 20 3 "hi") = true := by native_decide
+
+/-- The other direction too: a session with its own custom ruler, into a receiver
+with a different one. -/
+example : roundtripsFrom (dirtyTabs 20 3) (screen 20 3 "\x1b[3g\x1b[7G\x1bHhi")
+    = true := by native_decide
+
+/-- Non-vacuity, part one: a default-ruler session now emits a ruler at all. This is
+the byte range the old guard skipped. -/
+example : (tabsAnsi (screen 20 3 "hi")).isEmpty = false := by native_decide
+
+/-- Non-vacuity, part two: **nothing before `tabsAnsi` clears a tab stop** — no
+`TBC` in the prologue, and `ED 2` does not touch the ruler — so the emit is the only
+thing standing between a client's ruler and the session's. -/
+example : (((dirtyTabs 20 3).feed (prologueAnsi (screen 20 3 "hi") ++ csiNum 0 0x6D
+    ++ csiNum 2 0x4A)).tabs == (dirtyTabs 20 3).tabs) = true := by native_decide
+
+
 /-! ### A receiver caught mid-sequence
 
 The client's *parser* state is part of the state restore was assuming. A terminal

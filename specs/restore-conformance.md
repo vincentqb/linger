@@ -7,21 +7,22 @@ here in a different shape, and its Step 5 archival gate is carried unchanged)
 
 ## Where this stands — read this first
 
-**Next step:** the **tab-ruler leak** an adversarial review of this round turned
-up (Step 0 findings ledger, item 0) — `tabsAnsi` is set-only, so a client whose
-previous occupant set a custom ruler keeps it. Same shape as `87f64b3`, reproduced
-against `replayEq`, and it is a *behaviour* fix so it outranks the remaining proof
-work. Then Step 2's `u8need` half (Definition-of-done item 3; the parser half is
-done), then Steps 3–4 — `PaintState` and the grid *cells* induction (items 4–5).
-Items 3, 4 and 5 are what remain of the Definition of done.
+**Next step:** Step 2's `u8need` half (Definition-of-done item 3; the parser half
+is done), then Steps 3–4 — `PaintState` and the grid *cells* induction (items 4–5).
+Items 3, 4 and 5 are what remain of the Definition of done. `restore_tabs_any` is
+newly *available* (ledger item 0's fix made it true) and is the cheapest remaining
+receiver-quantified field if a warm-up is wanted before the induction.
 
 **Done:** Step 0 — two bugs fixed. **Step 1 is complete**: A5 is proved at the
 value level in both directions for the modes, the pen and the sticky bundle
 (region, both charsets, shift state, screen selection). Four restored fields are
 *not* covered and are named here so the list is not mistaken for "just the cells":
-the screen **cells** (Steps 3–4), the window **title**, the **tab ruler** (which a
-theorem would find FALSE — ledger item 0) and the **DECSC slot**; `restore_cursor`
-also still quantifies over `Vt.init` rather than any receiver.
+the screen **cells** (Steps 3–4), the window **title**, the **tab ruler** and the
+**DECSC slot**; `restore_cursor` also still quantifies over `Vt.init` rather than
+any receiver. The tab ruler was worse than unproved until ledger item 0 was fixed
+in the same session — a theorem would have found it *false* — which is the clearest
+argument this spec has produced for naming the uncovered fields instead of writing
+"only the cells".
 * outbound: `leave_canonical` (parser ground + modes default, any receiver) and
   `leave_canonical_all` (+ region, charsets, shift state, screen, pen — for a
   receiver at least two rows tall, which is `DECSTBM`'s own constraint).
@@ -227,9 +228,10 @@ is recorded below with a reason and a severity.
 Recorded so they are not lost; none is a security hole, and one-item-in-flight is why
 they wait. Roughly by severity:
 
-0. **`tabsAnsi` is set-only: a client's leftover tab ruler survives the restore.**
-   *The next item.* Found 2026-08-16 by an adversarial review of the sticky-field
-   claims, asking the spec's own question of a field no theorem covers. `tabsAnsi`
+0. ~~**`tabsAnsi` is set-only: a client's leftover tab ruler survives the
+   restore.**~~ **Fixed 2026-08-16, same session it was found.** Found by an
+   adversarial review of the sticky-field claims, asking the spec's own question of
+   a field no theorem covers. `tabsAnsi`
    (`Zmx/Core/Render.lean`) emits `[]` when `v.tabs == defaultTabs v.cols`, and
    nothing else in linger's output clears tab stops — no `TBC`, and no `RIS`
    anywhere — so a client whose previous occupant ran `CSI 3 g` plus its own `HTS`es
@@ -240,11 +242,16 @@ they wait. Roughly by severity:
    default ruler and a receiver whose ruler was re-set every four columns,
    `roundtripsFrom` is `false` and `replayEq` fails on `.tabs` (it compares `r.tabs`,
    `Tests/Render.lean:35`); it passes today only because no fixture moves the
-   *receiver's* ruler. Fix: emit the ruler unconditionally (`CSI 3 g` then one `HTS`
-   per stop), which also makes `restore_tabs_any` provable — as things stand such a
-   theorem would be **false**, not merely absent. Needs a `dirtyTabs` fixture and the
-   five `ends_`/`quiet_`/`keeps_`/`mmap_id_`/`smap_id_` `tabsAnsi` proofs updated
-   (they all `split` on the guard that would go away).
+   *receiver's* ruler. **Fixed** by emitting the ruler unconditionally (`CSI 3 g`
+   then one `CHA`+`HTS` per stop): ~70 bytes for an 80-column default ruler, against
+   a field that was only right when the client happened to be pristine. Pinned by
+   the `dirtyTabs` fixtures in `Tests/Render.lean` (including a non-vacuity case
+   showing nothing *before* `tabsAnsi` clears a stop), break-verified by restoring
+   the guard. `restore_tabs_any` is now **provable** and was not proved — as the code
+   stood such a theorem would have been *false*, so this is the one place where the
+   fix had to precede the theorem. It wants a `tabs` projection of its own (an
+   `Array Bool`, so not a scalar to fold into `stick`) and the `TBC` + `HTS` fold;
+   that is the natural next receiver-quantified field.
 
 1. ~~**Reattach at an unchanged size wipes the scroll region and tab ruler.**~~
    **Fixed in `33b107e`**, and certified: `Session.onMsg .attach` now guards the

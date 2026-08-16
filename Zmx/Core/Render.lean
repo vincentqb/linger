@@ -340,10 +340,29 @@ def regionAnsi (v : Vt) : Bytes :=
   if v.top == 0 && v.bot == v.rows - 1 then []
   else csiNum2 (v.top + 1) (v.bot + 1) 0x72
 
-/-- Custom tab ruler only (the default is what a reset terminal has). -/
+/-- **The tab ruler, emitted unconditionally**: `CSI 3 g` clears every stop, then
+one `HTS` per stop the session holds.
+
+This used to skip the whole thing when the session's ruler was the default, on the
+theory that "the default is what a reset terminal has". That is the set-only
+mistake `87f64b3` fixed in `modesAnsi`, one field later — a client is **not** a
+reset terminal. Its previous occupant may have run `CSI 3 g` and set its own stops,
+and nothing else in a restore stream clears a tab stop: the prologue has no `TBC`,
+`ED 2` does not touch the ruler, and linger emits no `RIS` anywhere. So the
+previous occupant's ruler survived verbatim and a `\t` from the session landed on
+the wrong column. Reproduced against `Tests/Render.lean`'s own `replayEq` before
+the fix (a receiver whose ruler was re-set every four columns made
+`roundtripsFrom` false on `.tabs`) and pinned by the `dirtyTabs` fixture there; it
+had passed only because no fixture moved the *receiver's* ruler.
+
+Being unconditional costs one `CSI 3 g` plus a `CHA`+`HTS` pair per stop on every
+attach — nine stops and ~70 bytes for an 80-column default ruler. The alternative
+is a field that is only right when the client happens to be pristine, which is the
+one thing `specs/restore-conformance.md` says a client never is. The `CHA`s move
+the cursor, which is safe here because `savedAnsi` and `cursorAnsi` both address it
+absolutely afterwards. -/
 def tabsAnsi (v : Vt) : Bytes :=
-  if v.tabs == defaultTabs v.cols then []
-  else csiNum 3 0x67 ++ (((List.range v.cols).filter (fun i => v.tabs.getD i false)).flatMap
+  csiNum 3 0x67 ++ (((List.range v.cols).filter (fun i => v.tabs.getD i false)).flatMap
     (fun i => csiNum (i + 1) 0x47 ++ escSeq 0x48))
 
 /-- Replay the DECSC slot (§Replay fix 3). -/

@@ -4589,3 +4589,42 @@ aimed at the Lean itself (vacuity, transform-vs-semantics) found nothing that
 survived — which is the outcome to expect when the theorems were built against the
 emitter, and is the reason to keep spending the review budget on the summary
 documents instead.
+
+### Ledger item 0 fixed — `tabsAnsi` emitted unconditionally
+Same session it was found, because it is a *behaviour* bug and the reproduction was
+already in hand. `tabsAnsi` no longer guards on `v.tabs == defaultTabs v.cols`; it
+always sends `CSI 3 g` then one `CHA`+`HTS` per stop. Cost: ~70 bytes per attach for
+an 80-column default ruler. Benefit: the field stops being right-only-when-the-
+client-is-pristine, which is the one thing this spec says a client never is.
+
+Measured, before and after, with `./lake env lean` on a probe (`sess := screen 20 3
+"hi"`, receiver `dirtyTabs` = `CSI 3 g` + CHA/HTS at 5, 9, 13, 17):
+* `(tabsAnsi sess).length`: 0 → 17
+* `((dirtyTabs 20 3).feed (restore sess)).tabs == sess.tabs`: false → **true**
+* `... == (dirtyTabs 20 3).tabs`: true → **false** (the leak is gone)
+* `roundtripsFrom (dirtyTabs 20 3) sess`: false → **true**
+* `roundtripsFrom (dirty 20 3) sess`: true → true (the old dirty receiver never
+  moved the ruler, which is exactly why it missed this)
+
+Proof churn was mechanical and small: `ends_`/`quiet_`/`keeps_`/`smap_id_tabsAnsi`
+each lost their one `*.ite` line, since the guard they were splitting on is gone.
+Nothing else referenced the emitter's shape.
+
+Break-verified: restoring the guard fails the three new `dirtyTabs` fixtures
+(`Tests/Render.lean` — the was-false-before assertion, the round trip, and the
+`isEmpty` non-vacuity) plus the four proofs whose `ite` line went away.
+
+The fixture set now includes a second non-vacuity case worth keeping: feeding only
+`prologueAnsi ++ SGR 0 ++ ED 2` into the dirty-ruler receiver leaves its ruler
+untouched. That is the assertion that says *why* the emit is load-bearing — no `TBC`
+in the prologue, and `ED 2` does not touch tab stops — rather than just that it
+happens to work.
+
+`restore_tabs_any` is now provable and deliberately not proved: `tabs` is an
+`Array Bool`, so it is not a scalar to fold into `stick`, and it wants its own
+projection plus a `TBC`-then-`HTS`-fold argument. Cheapest remaining
+receiver-quantified field; noted in the spec as a warm-up option before the grid
+induction. **The ordering lesson: this is the one field where the fix had to precede
+the theorem, because the theorem would have been false.** Which is the answer to
+"why prove what the tests already cover" — the proof attempt is what makes you look,
+and looking is what found it.

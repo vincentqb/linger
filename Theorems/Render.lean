@@ -859,7 +859,6 @@ theorem ends_regionAnsi (v : Vt) : Ends (regionAnsi v) := by
 
 theorem ends_tabsAnsi (v : Vt) : Ends (tabsAnsi v) := by
   unfold tabsAnsi
-  refine Ends.ite Ends.nil ?_
   refine (ends_csiNum 3 0x67 (by decide) (by decide)).append ?_
   refine Ends.flatMap (fun i => ?_)
   exact (ends_csiNum (i + 1) 0x47 (by decide) (by decide)).append
@@ -1736,7 +1735,6 @@ theorem quiet_regionAnsi (v : Vt) : Quiet (regionAnsi v) := by
 
 theorem quiet_tabsAnsi (v : Vt) : Quiet (tabsAnsi v) := by
   unfold tabsAnsi
-  refine Quiet.ite (fun _ => Quiet.nil) (fun _ => ?_)
   refine (quiet_csiNum 3 0x67 (by decide) (by decide)).append ?_
   refine Quiet.flatMap (fun i => ?_)
   exact (quiet_csiNum (i + 1) 0x47 (by decide) (by decide)).append
@@ -3221,7 +3219,6 @@ theorem keeps_savedAnsi (v : Vt) : Keeps (savedAnsi v) := by
 
 theorem keeps_tabsAnsi (v : Vt) : Keeps (tabsAnsi v) := by
   unfold tabsAnsi
-  refine Keeps.ite (fun _ => Keeps.nil) (fun _ => ?_)
   refine (keeps_csiNum 3 0x67 (by decide) (by decide) grid_csiDispatch_tbc).append ?_
   refine Keeps.flatMap (fun i => ?_)
   exact (keeps_csiNum (i + 1) 0x47 (by decide) (by decide) grid_csiDispatch_cha).append
@@ -5283,7 +5280,6 @@ theorem smap_id_savedAnsi (v : Vt) : SMap id (savedAnsi v) := by
 
 theorem smap_id_tabsAnsi (v : Vt) : SMap id (tabsAnsi v) := by
   unfold tabsAnsi
-  refine SMap.streamPred.ite (fun _ => SMap.nil) (fun _ => ?_)
   refine (smap_id_tbc 3).append ?_
   refine SMap.streamPred.flatMap (fun i => ?_)
   exact (smap_id_cha (i + 1)).append (smap_id_escSeq 0x48 (by decide))
