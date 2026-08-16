@@ -4293,3 +4293,67 @@ modes-frame for `ED 2`. Since `modesAnsi` overwrites every mode field absolutely
 prefix only needs to be `MMap`-*something* (ground-preserving), not `MMap id`. The
 non-modes projections (charset/region/pen/alt) repeat the `MMap` shape. All are
 carried meanwhile by `Tests/Render.lean`'s `dirty`-receiver round-trips.
+
+## A5 inbound proved — restore installs the session's modes into any receiver — 2026-08-16T05:30:00Z
+
+`restore_modes_any (v w : Vt) (hmouse : v.modes.mouse ∈ {0,1000,1002,1003}) :
+(w.feed (restore v)).modes = v.modes`. The mirror of `leave_modes`, and the
+theorem that certifies `87f64b3` (the both-ways modes fix) instead of the tests
+carrying it alone. Same `MMap` machinery pointed inbound.
+
+### The discovery that made it cheap: no paint ladder needed
+
+I set out expecting to need `MMap id (gridAnsi)` — lifting the whole repaint to
+"preserves modes". **Not needed.** `restore v = PREFIX ++ modesAnsi ++ SUFFIX`, and
+`modesAnsi` overwrites *every* mode field absolutely. So the prefix's effect on
+modes is irrelevant; the prefix only has to reach `pstate = ground` so `modesAnsi`
+parses. And it does: `prologue_grounds` grounds any `w`, then the `Ends` ladder
+(already proven, `ends_screensAnsi` etc) carries `ground` through the paint —
+**pstate only, no modes, no u8need for the paint.** The paint never enters a modes
+proof. This corrected the plan the spec had recorded ("lift quiet_gridAnsi").
+
+The one subtlety was `u8need`: `modesAnsi`'s first chunk is `modeSet 7` = `ESC [ …`,
+and `MMap` wants `u8need = 0` at its start. The state entering `modesAnsi` is after
+`titleAnsi`, whose leading `ESC` clears `u8need` and whose OSC body preserves 0
+(`uz_titleAnsi`, built on `un_osc_run` + `uz_step_esc`). So `g1` is `ground ∧
+u8need 0` without any paint-u8need reasoning either.
+
+### The mouse allowlist is a real hypothesis, not a blemish
+
+`restore_modes_any` is FALSE without `hmouse`. `modesAnsi` clears mouse (1000/1002/
+1003 off) then re-sets the live one *only if it is in the allowlist* — a foreign
+checkpoint with `mouse = 5` restores as mouse-off, not mouse-5. That is the
+documented allowlist behavior (`modesAnsi`'s comment: 47/1047/1049 would switch
+screens, 6 is DECOM), so the honest theorem carries `v.modes.mouse ∈
+{0,1000,1002,1003}` — which `setMode` guarantees for any live `Vt`, so it discharges
+for real sessions and is stated rather than hidden.
+
+### Engineering notes
+
+* `mmap_modesAnsi`'s composite of 13 record-update transforms is **exponential under
+  `rfl`/`whnf`** (nested `{· with f}` has no sharing — each update copies 10 fields,
+  ×13 = 10¹³ term). `rfl` and even single-field `rfl` time out at 1M heartbeats. The
+  fix: a `cases`-based `Modes.ext'`, then each field via **`simp`** (which shares
+  subterms and pushes projections top-down) rather than `rfl`. Nine fields close by
+  `simp`; the mouse field needs `rcases hmouse` to decide the ite.
+* Give each mode chunk its *explicit* record-update transform (`mmap_wrap` etc =
+  `mmap_modeSet …|>.congr`), not the opaque `smMod`, so the composite is shallow
+  record updates rather than nested `setMode` unfoldings.
+* `MMap.ite` composes the transform by the same condition as the bytes; the mouse
+  chunk (`if cond then modeSet mouse true else []`) uses it, with `0 < mouse` /
+  `mouse < 65535` discharged from the ite's condition hypothesis.
+* All Mathlib-free: no `set` (abstract via `∀`-helpers or explicit exprs), no
+  `split_ifs`, no `tauto` (explicit `Or.inl`/`Or.inr`).
+
+Break-verified: deleting `modeSet 25 v.modes.cursorVisible` from `modesAnsi` breaks
+`ends_modesAnsi`, `quiet_modesAnsi` and `mmap_modesAnsi` together. Non-vacuity by
+eval: a dirty client restored into a session with mouse=1000 ends with the session's
+modes, and the client's own modes differ.
+
+### What is left of A5
+
+The non-modes restored fields — charset flags (`g0Line`/`g1Line`/`shiftOut`), scroll
+region (`top`/`bot`), pen, alt-screen flag — as their own `MMap`-projection claims.
+Each is touched by few chunks and repeats this pattern; carried meanwhile by the
+`dirty`-receiver `roundtripsFrom` fixtures. The grid *cells* remain §Replay's open
+induction (Steps 3–4), unchanged.

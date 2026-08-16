@@ -7,16 +7,25 @@ here in a different shape, and its Step 5 archival gate is carried unchanged)
 
 ## Where this stands — read this first
 
-**Next step:** `restore_modes_any` (Step 1's inbound half). All its per-chunk
-bridges exist (`modeSet_modes`, `mmap_*`); the one missing piece is `MMap id`
-for the repaint prefix — lift `quiet_gridAnsi` (origin only) to the full modes
-record, then compose exactly as `leave_modes` does. After that, the charset/region/
-pen projections repeat the pattern with their own `MMap` transforms.
+**Next step:** the non-modes restored fields (charset flags, scroll region, pen,
+alt-screen flag) as their own `MMap`-projection claims — cheap, each touched by few
+chunks, currently carried by the `dirty`-receiver round-trip fixtures. Then Step 2's
+`u8need` half, then Steps 3–4 (the grid induction).
 
-**Done:** Step 0 — done, two bugs fixed. Step 1 — **outbound modes proved
-(`leave_canonical`)**; the reusable layer (`modeSet_modes` dispatch bridge, `MMap`
-composition, per-chunk bridges) is in. Step 2 — first half (`restore_grounds`).
-Steps 3–5 — not started.
+**Done:** Step 0 — two bugs fixed. Step 1 — **A5 modes proved both directions**:
+`leave_canonical` (outbound → default) and `restore_modes_any` (inbound → the
+session's modes, given the mouse allowlist). The reusable layer (`modeSet_modes`
+dispatch bridge, `MMap` composition + `MMap.ite`, per-chunk bridges, `uz_titleAnsi`)
+is in. Step 2 — first half (`restore_grounds`). Steps 3–5 — not started.
+
+**The inbound proof needed no paint ladder** — a discovery that corrected the plan.
+Because every `modesAnsi` chunk is `ESC`-initiated and `ESC` clears `u8need`, the
+prefix (prologue through the title) only has to reach `pstate = ground` — the
+already-proven `Ends` ladder — so `gridAnsi` is never dragged into a modes proof.
+`restore_modes_any` carries one hypothesis, `v.modes.mouse ∈ {0,1000,1002,1003}`:
+the emulator's own mouse allowlist (`setMode` stores only those), and the reason
+`modesAnsi` normalizes a foreign checkpoint's garbage mouse to off rather than
+replaying it.
 
 **The dispatch-exposing edit is done, and it generalized.** Step 1 named one
 prerequisite: factor the CSI walk to expose the dispatch, not just the grid fact.

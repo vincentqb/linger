@@ -4409,4 +4409,225 @@ theorem leave_canonical (w : Vt) :
     (w.feed leaveAnsi).pstate = .ground ∧ (w.feed leaveAnsi).modes = ({} : Modes) :=
   ⟨leave_grounds w, leave_modes w⟩
 
+
+/-! ## §Handback / anchor A5 — inbound: restore installs the session's modes
+
+The mirror of `leave_modes`. `restore`'s prologue grounds any receiver; the chunks
+up to the title only need to leave the parser in `ground` (the `Ends` ladder, no
+modes reasoning — so the repaint is *not* dragged into a modes proof), and the
+title's leading `ESC` clears `u8need` (`uz_titleAnsi`); then `modesAnsi` sets every
+mode field to the session's value (`mmap_modesAnsi`, a constant transform once the
+mouse field is in its allowlist) and the suffix preserves them. -/
+
+theorem MMap.ite {c : Prop} [Decidable c] {f g : Modes → Modes} {a b : Bytes}
+    (ha : c → MMap f a) (hb : ¬c → MMap g b) :
+    MMap (if c then f else g) (if c then a else b) := by
+  by_cases h : c
+  · rw [if_pos h, if_pos h]; exact ha h
+  · rw [if_neg h, if_neg h]; exact hb h
+
+theorem MMap.nil : MMap id [] := fun _ hg hu => ⟨hg, hu, rfl⟩
+
+theorem mmap_id_append {a b : Bytes} (ha : MMap id a) (hb : MMap id b) : MMap id (a ++ b) :=
+  (ha.comp hb).congr (fun _ => rfl)
+
+/-! ### SUFFIX preservers (modes untouched) -/
+
+theorem mmap_id_sgrOf (codes : List Nat) : MMap id (sgrOf codes) := by
+  rw [show sgrOf codes = csiB ++ joinSemi codes ++ [0x6D] from rfl]
+  exact mmap_id_csi_seq _ 0x6D (paramBytes_joinSemi codes) (by decide) (by decide)
+    (fun w t => modes_csiDispatch_sgr w t)
+
+theorem mmap_id_sgrColorSeq (c : Color) (isFg : Bool) : MMap id (sgrColorSeq c isFg) := by
+  unfold sgrColorSeq
+  split
+  · exact MMap.nil
+  · exact mmap_id_sgrOf _
+
+theorem mmap_id_penSgr (p : Pen) : MMap id (penSgr p) := by
+  unfold penSgr
+  exact mmap_id_append (mmap_id_append (mmap_id_sgrOf _) (mmap_id_sgrColorSeq _ _))
+    (mmap_id_sgrColorSeq _ _)
+
+theorem mmap_id_so : MMap id [0x0E] := by
+  intro v hg hu
+  have hstep : v.step 0x0E = { v with shiftOut := true } := by
+    unfold Vt.step Vt.abortUtf8
+    dsimp only
+    rw [if_neg (by simp [hu]), hg]
+    dsimp only
+    unfold Vt.stepGround
+    rw [if_neg (by decide), if_pos (by decide)]
+    simp only [Vt.ctl]
+    congr 1
+  rw [show v.feed [0x0E] = v.step 0x0E from rfl, hstep]
+  exact ⟨hg, by simpa using hu, rfl⟩
+
+theorem mmap_id_charsetAnsi (v : Vt) : MMap id (charsetAnsi v) := by
+  unfold charsetAnsi
+  refine mmap_id_append (mmap_id_append ?_ ?_) ?_
+  · split
+    · exact mmap_id_charset 0x28 0x30 (Or.inl rfl)
+    · exact mmap_id_charset 0x28 0x42 (Or.inl rfl)
+  · split
+    · exact mmap_id_charset 0x29 0x30 (Or.inr rfl)
+    · exact mmap_id_charset 0x29 0x42 (Or.inr rfl)
+  · split
+    · exact mmap_id_so
+    · exact MMap.nil
+
+theorem mmap_id_cursorAnsi (v : Vt) : MMap id (cursorAnsi v) := by
+  unfold cursorAnsi
+  split <;> exact mmap_id_cup _ _
+
+/-! ### The window title leaves nothing half-decoded -/
+
+/-- Feeding an OSC body from `.osc acc false` with nothing pending keeps `u8need` 0. -/
+theorem un_osc_run : ∀ (bs : Bytes) {v : Vt} {acc : Array UInt8},
+    v.pstate = .osc acc false → v.u8need = 0 → (∀ b ∈ bs, b ≠ 0x1B ∧ b ≠ 0x07) →
+    (v.feed bs).u8need = 0
+  | [], _, _, _, hu, _ => hu
+  | x :: xs, v, acc, hg, hu, h => by
+    rw [feed_cons]
+    obtain ⟨acc', hs⟩ := osc_accum_step x hg (h x (by simp)).1 (h x (by simp)).2
+    have hux : (v.step x).u8need = 0 := by
+      rw [step_of_osc_quiet x hg hu, un_stepOsc]; exact hu
+    exact un_osc_run xs hs hux (fun b hb => h b (by simp [hb]))
+
+theorem uz_titleAnsi (v : Vt) {g : Vt} (hg : g.pstate = .ground) :
+    (g.feed (titleAnsi v)).u8need = 0 := by
+  unfold titleAnsi
+  rw [show (escB ++ [0x5D, 0x32, 0x3B] ++ utf8s v.title.toList ++ [0x07] : Bytes)
+      = 0x1B :: 0x5D :: 0x32 :: 0x3B :: (utf8s v.title.toList ++ [0x07]) from by simp [escB]]
+  rw [feed_cons, feed_cons, feed_cons, feed_cons]
+  have he : (g.step 0x1B).pstate = .esc := esc_step hg
+  have hu1 : (g.step 0x1B).u8need = 0 := uz_step_esc g
+  have ho : ((g.step 0x1B).step 0x5D).pstate = .osc #[] false := osc_open_step he
+  have hu2 : ((g.step 0x1B).step 0x5D).u8need = 0 := by
+    rw [step_of_esc_quiet 0x5D he hu1, uz_stepEsc 0x5D hu1]
+  obtain ⟨acc2, ho2⟩ := osc_accum_step 0x32 ho (by decide) (by decide)
+  have hu3 : (((g.step 0x1B).step 0x5D).step 0x32).u8need = 0 := by
+    rw [step_of_osc_quiet 0x32 ho hu2, un_stepOsc]; exact hu2
+  obtain ⟨acc3, ho3⟩ := osc_accum_step 0x3B ho2 (by decide) (by decide)
+  have hu4 : ((((g.step 0x1B).step 0x5D).step 0x32).step 0x3B).u8need = 0 := by
+    rw [step_of_osc_quiet 0x3B ho2 hu3, un_stepOsc]; exact hu3
+  -- feed the payload (stays in osc, u8need 0), then BEL (oscFinish preserves u8need)
+  rw [show ∀ (w : Vt), w.feed (utf8s v.title.toList ++ [0x07])
+      = (w.feed (utf8s v.title.toList)).feed [0x07] from
+    fun w => by simp [Vt.feed, List.foldl_append]]
+  obtain ⟨acc4, ho4⟩ := osc_accum_feed (utf8s v.title.toList) ho3 (utf8s_no_esc_bel _)
+  have hu5 : (((((g.step 0x1B).step 0x5D).step 0x32).step 0x3B).feed
+      (utf8s v.title.toList)).u8need = 0 :=
+    un_osc_run (utf8s v.title.toList) ho3 hu4 (utf8s_no_esc_bel _)
+  rw [show ∀ (w : Vt), w.feed [(0x07 : UInt8)] = w.step 0x07 from fun _ => rfl]
+  rw [step_of_osc_quiet 0x07 ho4 hu5, un_stepOsc]
+  exact hu5
+
+/-! ### modesAnsi sets every mode to the session's value
+
+Each mode chunk is given its *explicit* record-update transform (not the opaque
+`smMod`), so the composite of thirteen is a shallow nest of `{· with field := …}`
+that `rfl` collapses — `smMod` nested that deep blows the `whnf` budget. -/
+
+theorem mmap_wrap (b : Bool) : MMap (fun m => { m with wrap := b }) (modeSet 7 b) :=
+  (mmap_modeSet 7 b (by decide) (by decide)).congr (fun m => by simp [smMod, Vt.setMode])
+theorem mmap_appCursor (b : Bool) : MMap (fun m => { m with appCursor := b }) (modeSet 1 b) :=
+  (mmap_modeSet 1 b (by decide) (by decide)).congr (fun m => by simp [smMod, Vt.setMode])
+theorem mmap_cursorVis (b : Bool) : MMap (fun m => { m with cursorVisible := b }) (modeSet 25 b) :=
+  (mmap_modeSet 25 b (by decide) (by decide)).congr (fun m => by simp [smMod, Vt.setMode])
+theorem mmap_bracketed (b : Bool) : MMap (fun m => { m with bracketedPaste := b }) (modeSet 2004 b) :=
+  (mmap_modeSet 2004 b (by decide) (by decide)).congr (fun m => by simp [smMod, Vt.setMode])
+theorem mmap_mouse0 (n : Nat) (hn : 0 < n) (hlt : n < 65535)
+    (hn' : n = 1000 ∨ n = 1002 ∨ n = 1003) :
+    MMap (fun m => { m with mouse := 0 }) (modeSet n false) :=
+  (mmap_modeSet n false hn hlt).congr (fun m => by
+    rcases hn' with h|h|h <;> subst h <;> simp [smMod, Vt.setMode])
+theorem mmap_mouseSet (n : Nat) (hn : 0 < n) (hlt : n < 65535)
+    (hn' : n = 1000 ∨ n = 1002 ∨ n = 1003) :
+    MMap (fun m => { m with mouse := n }) (modeSet n true) :=
+  (mmap_modeSet n true hn hlt).congr (fun m => by
+    rcases hn' with h|h|h <;> subst h <;> simp [smMod, Vt.setMode])
+theorem mmap_mouseSgr (b : Bool) : MMap (fun m => { m with mouseSgr := b }) (modeSet 1006 b) :=
+  (mmap_modeSet 1006 b (by decide) (by decide)).congr (fun m => by simp [smMod, Vt.setMode])
+theorem mmap_focus (b : Bool) : MMap (fun m => { m with focusEvents := b }) (modeSet 1004 b) :=
+  (mmap_modeSet 1004 b (by decide) (by decide)).congr (fun m => by simp [smMod, Vt.setMode])
+theorem mmap_origin (b : Bool) : MMap (fun m => { m with origin := b }) (modeSet 6 b) :=
+  (mmap_modeSet 6 b (by decide) (by decide)).congr (fun m => by simp [smMod, Vt.setMode, Vt.moveTo])
+
+theorem Modes.ext' {a b : Modes} (h1 : a.wrap = b.wrap) (h2 : a.origin = b.origin)
+    (h3 : a.insert = b.insert) (h4 : a.cursorVisible = b.cursorVisible)
+    (h5 : a.appCursor = b.appCursor) (h6 : a.appKeypad = b.appKeypad)
+    (h7 : a.bracketedPaste = b.bracketedPaste) (h8 : a.mouse = b.mouse)
+    (h9 : a.mouseSgr = b.mouseSgr) (h10 : a.focusEvents = b.focusEvents) : a = b := by
+  cases a; cases b; simp_all
+
+theorem mmap_modesAnsi (v : Vt)
+    (hmouse : v.modes.mouse = 0 ∨ v.modes.mouse = 1000 ∨ v.modes.mouse = 1002
+      ∨ v.modes.mouse = 1003) :
+    MMap (fun _ => v.modes) (modesAnsi v) := by
+  unfold modesAnsi
+  have hmite : MMap (if (v.modes.mouse == 1000 || v.modes.mouse == 1002 || v.modes.mouse == 1003) = true
+      then (fun m => { m with mouse := v.modes.mouse }) else id)
+      (if v.modes.mouse == 1000 || v.modes.mouse == 1002 || v.modes.mouse == 1003
+        then modeSet v.modes.mouse true else []) :=
+    MMap.ite (c := (v.modes.mouse == 1000 || v.modes.mouse == 1002 || v.modes.mouse == 1003) = true)
+      (fun hc => mmap_mouseSet v.modes.mouse
+        (by rcases hmouse with h|h|h|h <;> (rw [h] at hc ⊢; first | omega | simp at hc))
+        (by rcases hmouse with h|h|h|h <;> rw [h] <;> omega)
+        (by rcases hmouse with h|h|h|h
+            · rw [h] at hc; simp at hc
+            · exact Or.inl h
+            · exact Or.inr (Or.inl h)
+            · exact Or.inr (Or.inr h)))
+      (fun _ => MMap.nil)
+  have h1 := (mmap_wrap v.modes.wrap).comp (mmap_appCursor v.modes.appCursor)
+  have h2 := h1.comp (mmap_keypad v.modes.appKeypad)
+  have h3 := h2.comp (mmap_cursorVis v.modes.cursorVisible)
+  have h4 := h3.comp (mmap_bracketed v.modes.bracketedPaste)
+  have h5 := h4.comp (mmap_mouse0 1000 (by decide) (by decide) (Or.inl rfl))
+  have h6 := h5.comp (mmap_mouse0 1002 (by decide) (by decide) (Or.inr (Or.inl rfl)))
+  have h7 := h6.comp (mmap_mouse0 1003 (by decide) (by decide) (Or.inr (Or.inr rfl)))
+  have h8 := h7.comp hmite
+  have h9 := h8.comp (mmap_mouseSgr v.modes.mouseSgr)
+  have h10 := h9.comp (mmap_focus v.modes.focusEvents)
+  have h11 := h10.comp (mmap_origin v.modes.origin)
+  have h12 := h11.comp (mmap_irm v.modes.insert)
+  refine h12.congr ?_
+  intro m
+  refine Modes.ext' ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ <;>
+    (rcases hmouse with h | h | h | h <;> simp [h])
+
+/-! ### The inbound value claim (A5 inbound) -/
+
+set_option maxHeartbeats 800000 in
+theorem restore_modes_any (v w : Vt)
+    (hmouse : v.modes.mouse = 0 ∨ v.modes.mouse = 1000 ∨ v.modes.mouse = 1002
+      ∨ v.modes.mouse = 1003) :
+    (w.feed (restore v)).modes = v.modes := by
+  -- MID2 = prologue .. saved (before the title); it grounds any receiver
+  have hEndsRest : Ends (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v
+      ++ regionAnsi v ++ tabsAnsi v ++ savedAnsi v) :=
+    (((((ends_csiNum 0 0x6D (by decide) (by decide)).append (ends_csiNum 2 0x4A (by decide) (by decide))).append
+      (ends_screensAnsi v)).append (ends_regionAnsi v)).append (ends_tabsAnsi v)).append (ends_savedAnsi v)
+  have hg2 : (w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v
+      ++ regionAnsi v ++ tabsAnsi v ++ savedAnsi v)).pstate = .ground := by
+    rw [show prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v
+        ++ regionAnsi v ++ tabsAnsi v ++ savedAnsi v
+        = prologueAnsi v ++ (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v
+          ++ regionAnsi v ++ tabsAnsi v ++ savedAnsi v) from by simp only [List.append_assoc],
+      feed_append]
+    exact hEndsRest _ (prologue_grounds v w)
+  -- g1 = w.feed (MID2 ++ title): ground, u8need 0
+  have hsplitMID : restore v = (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v
+      ++ regionAnsi v ++ tabsAnsi v ++ savedAnsi v)
+      ++ (titleAnsi v ++ (modesAnsi v ++ charsetAnsi v ++ penSgr v.pen ++ cursorAnsi v)) := by
+    simp only [restore, restoreBody, List.append_assoc]
+  rw [hsplitMID, feed_append, feed_append]
+  -- after the title the parser is ground with nothing pending (`ends_titleAnsi`,
+  -- `uz_titleAnsi`); the suffix chain `modesAnsi ++ charset ++ pen ++ cursor` is the
+  -- constant transform `fun _ => v.modes`
+  have htail := (((mmap_modesAnsi v hmouse).comp (mmap_id_charsetAnsi v)).comp
+    (mmap_id_penSgr v.pen)).comp (mmap_id_cursorAnsi v)
+  exact (htail _ (ends_titleAnsi v _ hg2) (uz_titleAnsi v hg2)).2.2
+
 end Zmx.Core.Render
