@@ -5163,3 +5163,47 @@ Gotchas this round, all AGENTS.md-relevant:
   def, not a lambda). It is temporarily unclaimed → `STATEMENT_CAP` 21 → 22, with a comment;
   it comes back down when `rowAnsi_writes_row` names it. The three `dsimp only` sites in
   `ends_rowAnsi`/`quiet_rowAnsi`/`smap_id_rowAnsi` each needed `unfold rowSlot` first.
+
+Break-verify (mark loop), 2026-08-17: changed `Vt.printMark`'s write from
+`{cell with marks := cell.marks ++ [ch]}` to `{cell with marks := cell.marks}` (drop the
+mark). `Theorems/Vt.lean` fails at `print_mark_eq` (2774) and `print_mark_pending_eq`
+(2799) with unsolved goals, cascading through `mark_step`/`step_narrow_marks`. Reverted;
+`diff` confirms Core byte-identical; `./lake build Theorems Tests` green. So the mark chain
+is load-bearing on the emulator actually storing the mark, not vacuous.
+
+## Step 3 notes — 2026-08-17 (the wide-with-marks rung)
+
+`step_wide_marks` closes spec item 2: `rowSlot`'s marked-wide branch
+`glyph · CHA(k+2) · marks · CHA(k+3)`. Interior only (`k+2 < cols`); a width-2 base with no
+room for its shadow is stored as a blank (`printPut` fix 11), so `RowOk` never presents a
+wide base whose pair overruns — the "pair at the very margin" (shadow in the last column)
+is the one wide case still needing a margin rung (see below).
+
+The load-bearing new lemma is `cha_feed_eq : v.feed (csiNum n 0x47) = v.setCol (n-1)` (given
+ground + u8need 0). `csiFinish` ends by forcing `pstate := .ground`, and `setCol` keeps the
+ground pstate a `Matches` receiver already has, so the whole feed collapses to `setCol` and
+every non-cursor field frames through `frame_setCol` at once — that is `cha_matches`. Far
+cheaper than one preservation lemma per field. `cha_matches_lt` is the in-range corollary
+(no clamp, cursor exactly `n-1`); `cha_cols` and `foldl_print_cols` keep the CHA bounds in
+range across the sequence.
+
+`hcb : k + 3 < 65535` is a real precondition, not bookkeeping: `CHA n` clamps its parameter
+to 65535, so if the emitted column reached 65535 the repaint would mis-address. It is the
+column analogue of `restore_sticky_any`'s `hfits` on rows; downstream (`restore_grid`) will
+supply it from the ≤1000 dim clamp. `cha_matches_lt`'s `hin` (the addressed column is in
+range) is what `k+2 < cols` buys — both jumps (`k+1` for the mark, `k+2` past the pair) land
+inside the row.
+
+`mark_step`/`marks_fold` were generalized to a write column `wcol < kf` (frontier) so the one
+loop serves narrow (`wcol=k, kf=k+1`) and wide-marks (`wcol=k, kf=k+2`, cursor parked at
+`k+1` by the first CHA). The frontier field is carried forward via `withMarks_keeps`'s
+width-invariance rather than recomputed, since for the wide case `kf-1 = k+1 ≠ wcol`.
+
+Break-verify: `Vt.setCol`'s `min x (cols-1)` → `min (x+1) (cols-1)`. Fails at
+`cha_places_cursor` (5894) and `cha_matches` (6717, the `unfold; rfl` for cursor.x),
+cascading to `step_wide_marks`. Reverted; Core byte-identical; green.
+
+Remaining for `rowAnsi_writes_row`: margin rungs — `step_narrow_margin_marks` (a marked
+narrow last cell), `step_wide_margin` and `step_wide_margin_marks` (a wide pair whose shadow
+is the final column, where the base print clamps and the trailing CHA clamps too) — then the
+fold over `rowSlot` itself, inducting on the byte accumulator.

@@ -7,19 +7,24 @@ here in a different shape, and its Step 5 archival gate is carried unchanged)
 
 ## Where this stands — read this first
 
-**Next step:** the **wide-with-marks rung** — Step 3's item 2. `rowAnsi`'s marked-wide
-branch emits `glyph · CHA(x+2) · marks · CHA(x+3)`, parking the cursor between the glyph
-and its shadow (a mark on a wide glyph must land on the base, and `printMark` steps one
-left). `cha_places_cursor` is in and now covers the final-column clamp (`min (n-1)
-(cols-1)`); what it needs is the two-jump bookkeeping and the `step_wide` base underneath.
-Then `rowAnsi_writes_row` (which will *name* `rowSlot`, bringing the coverage cap back to
-21), then Step 4.
+**Next step:** `rowAnsi_writes_row` — the fold over `rowSlot`, Step 3's item 3. It inducts
+on `rowSlot`'s byte accumulator (invariant `Matches (w.feed acc.1) …`, using
+`feed (a ++ b) = feed b ∘ feed a`). It will *name* `rowSlot`, bringing `STATEMENT_CAP` back
+to 21. It needs three **margin rungs** the interior ones don't cover, all for the row's last
+cell: `step_narrow_margin_marks` (a marked narrow last cell — `step_narrow_margin` +
+`marks_fold` at the margin, `hdisj`'s pending branch), `step_wide_margin` (a wide pair whose
+shadow is the final column — `cursor_print_wide_margin` clamps), and `step_wide_margin_marks`
+(that pair, marked — the trailing `CHA(k+3)` addresses `cols` and clamps). Then Step 4.
 
-The **mark loop is done** (2026-08-17): `withMarks` + its `at`/`size`/`RowOk` lemmas,
-`matches_below`/`matches_row_congr`, `mark_step` (interior and margin unified by one
-`hdisj` disjunction), `marks_fold`, and `step_narrow_marks` — a narrow cell with its full
-mark list, for any receiver. `print_mark_pending_eq` / `cursor_print_mark_pending` were
-added to carry the margin case, where the cursor is *on* column `k` with wrap-pending.
+The **mark loop and the wide-with-marks rung are done** (2026-08-17). Mark loop: `withMarks`
++ its `at`/`size`/`RowOk` lemmas, `matches_below`/`matches_row_congr`, `mark_step` (write
+column `wcol < kf` so one loop serves narrow and wide; interior and margin unified by one
+`hdisj`), `marks_fold`, `step_narrow_marks`. `print_mark_pending_eq` /
+`cursor_print_mark_pending` carry the margin, where the cursor is *on* `k` with wrap-pending.
+Wide-with-marks (`step_wide_marks`, interior): the `CHA`/`CHA` dance, resting on
+`cha_feed_eq` (`feed (CHA n) = setCol (n-1)`), `cha_matches`, `cha_matches_lt`, `cha_cols`,
+`foldl_print_cols`. `hcb : k + 3 < 65535` is the column analogue of `restore_sticky_any`'s
+row bound — `CHA` clamps its parameter to 65535, so the emitted column must stay under it.
 
 **Definition-of-done items 4 (partly done) and 5 are all that remain.** Items 1, 2, 2b
 and 3 are done — three of them restated on contact, which is recorded in each — and item
