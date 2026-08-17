@@ -7,30 +7,33 @@ here in a different shape, and its Step 5 archival gate is carried unchanged)
 
 ## Where this stands — read this first
 
-**Next step:** `rowAnsi_writes_row` — the fold over `rowSlot`, Step 3's item 3. It inducts
-on `rowSlot`'s byte accumulator (invariant `Matches (w.feed acc.1) …`, using
-`feed (a ++ b) = feed b ∘ feed a`). It will *name* `rowSlot`, bringing `STATEMENT_CAP` back
-to 21. It needs three **margin rungs** the interior ones don't cover, all for the row's last
-cell: `step_narrow_margin_marks` (a marked narrow last cell — `step_narrow_margin` +
-`marks_fold` at the margin, `hdisj`'s pending branch), `step_wide_margin` (a wide pair whose
-shadow is the final column — `cursor_print_wide_margin` clamps), and `step_wide_margin_marks`
-(that pair, marked — the trailing `CHA(k+3)` addresses `cols` and clamps). Then Step 4.
+**Next step:** **Step 4** — the grid, and the end-to-end claim. `rowAnsi_writes_row` is the
+per-row lemma to build on; Step 4 walks it over `joinCRLF` (with the argument that no line
+feed scrolls the grid mid-restore), handles the alt-screen switch, and composes through
+`restore_grid_of_paint` (which already exists and whose first hypothesis `paint_grounds` is
+discharged for any receiver) to `restore_grid_any` / `restore_grid_reachable` / `resume_grid`.
 
-The **mark loop and the wide-with-marks rung are done** (2026-08-17). Mark loop: `withMarks`
-+ its `at`/`size`/`RowOk` lemmas, `matches_below`/`matches_row_congr`, `mark_step` (write
-column `wcol < kf` so one loop serves narrow and wide; interior and margin unified by one
-`hdisj`), `marks_fold`, `step_narrow_marks`. `print_mark_pending_eq` /
-`cursor_print_mark_pending` carry the margin, where the cursor is *on* `k` with wrap-pending.
-Wide-with-marks (`step_wide_marks`, interior): the `CHA`/`CHA` dance, resting on
-`cha_feed_eq` (`feed (CHA n) = setCol (n-1)`), `cha_matches`, `cha_matches_lt`, `cha_cols`,
-`foldl_print_cols`. `hcb : k + 3 < 65535` is the column analogue of `restore_sticky_any`'s
-row bound — `CHA` clamps its parameter to 65535, so the emitted column must stay under it.
+**Step 3 is COMPLETE** (2026-08-17). `rowAnsi_writes_row`: feeding `rowAnsi g startPen` into
+any receiver matching `g` at frontier 0 paints the whole row, ending matched at every column
+with `rowAnsi`'s returned pen in effect. Built bottom-up: the mark loop (`withMarks`,
+`mark_step`/`marks_fold` over a write column `wcol < kf` so one loop serves narrow and wide,
+`step_narrow_marks`); the wide-with-marks `CHA`/`CHA` dance (`cha_feed_eq :
+feed (CHA n) = setCol (n-1)`, `cha_matches`/`_lt`, `step_wide_marks`); the eight cell rungs
+(narrow/wide × marks/no-marks × interior/margin) plus `step_pen` and `shadow_emits_nothing`;
+and the fold (`rowSlot` extracted from the lambda; `rowSlot_eq_*` output equations;
+`rowSlot_fold_split` peel; `paint_range` — strong induction peeling a cell or a pair, with
+`Matches.frontier` making a shadow at a recursion point a *type error*). `STATEMENT_CAP` back
+to 21 (`rowSlot` now named by a theorem). Break-verified emitter-side (`rowSlot`) and
+emulator-side (`printMark`, `setCol`).
 
-**Definition-of-done items 4 (partly done) and 5 are all that remain.** Items 1, 2, 2b
-and 3 are done — three of them restated on contact, which is recorded in each — and item
-6 (gates green, every theorem break-verified) is standing. `restore_tabs_any` is an
-optional warm-up, not on the critical path: ledger item 0's fix made it *true*, and it is
-the last restored field with no receiver-quantified theorem besides the cells.
+`hcb : k + 3 < 65535` (per rung) / `w.cols < 65533` (row) is the column analogue of
+`restore_sticky_any`'s row bound — `CHA` clamps its parameter to 65535, so the emitted column
+must stay under it; the ≤1000 dim clamp supplies it downstream.
+
+**Definition-of-done items 4 (mostly done — `rowAnsi_writes_row` landed, the grid walk
+remains) and 5 are all that remain.** Items 1, 2, 2b and 3 are done — three restated on
+contact, recorded in each — and item 6 (gates green, every theorem break-verified) is
+standing. `restore_tabs_any` is an optional warm-up, not on the critical path.
 
 **Done:** Step 0 — two bugs fixed. **Step 1 is complete**: A5 is proved at the
 value level in both directions for the modes, the pen and the sticky bundle

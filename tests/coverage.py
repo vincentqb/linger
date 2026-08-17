@@ -54,12 +54,10 @@ ROOT = Path(__file__).resolve().parent.parent
 # without discussion; raising it is a deliberate, reviewable edit that says "new
 # surface, no claim yet".
 #
-# 22 (was 21): `rowSlot` is the row painter's per-cell fold body, extracted from
-# `rowAnsi`'s inline lambda so the row-replay theorem can *name* it — a lambda
-# cannot appear in a theorem statement. Its claim (`rowAnsi_writes_row`, via a
-# `rowSlot`-shaped step lemma) is the next rung; this bump comes back down when it
-# lands. Until then it is honestly "new surface, no claim yet".
-STATEMENT_CAP = 22
+# `rowSlot` (the row painter's per-cell fold body) was briefly at 22 while its claim
+# was pending; `rowAnsi_writes_row` and the `rowSlot_eq_*` equations now name it, so
+# it is back to 21.
+STATEMENT_CAP = 21
 
 # ── Check 2 ────────────────────────────────────────────────────────────────────
 # Every byte stream the runtime emits, and what backs it. `theorem` entries must

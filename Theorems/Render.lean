@@ -7263,3 +7263,383 @@ theorem step_wide_margin_marks {w : Vt} {P : PaintState} {g : Row} {k : Nat}
   have hcha2 := cha_matches (n := k + 3) hmg (by omega) (by omega)
   rw [hu3cols, show min (k + 3 - 1) (w.cols - 1) = w.cols - 1 from by omega] at hcha2
   exact hcha2
+
+/-! ### The row fold assembled — `rowAnsi_writes_row`
+
+The rungs above are one cell (or one pair) each; this folds them over the row. Two
+structural facts about `rowSlot` come first: it only ever *appends* to the byte
+accumulator, and its pen/index evolution ignores the bytes already there. That lets the
+fold be peeled a cell at a time (or a pair at a time for a wide glyph) with the receiver
+threaded through. -/
+
+/-- `rowSlot` appends to the byte accumulator and its `(pen, index)` output ignores the
+bytes already accumulated. -/
+theorem rowSlot_split (B : Bytes) (p : Pen) (x : Nat) (c : Cell) :
+    (rowSlot (B, p, x) c).1 = B ++ (rowSlot ([], p, x) c).1
+      ∧ (rowSlot (B, p, x) c).2 = (rowSlot ([], p, x) c).2 := by
+  unfold rowSlot
+  dsimp only
+  by_cases hw : c.width == 0
+  · rw [if_pos hw, if_pos hw]; exact ⟨rfl, rfl⟩
+  · rw [if_neg hw, if_neg hw]
+    dsimp only
+    by_cases hp : c.pen == p
+    · rw [if_pos hp, if_pos hp]; exact ⟨by simp, rfl⟩
+    · rw [if_neg hp, if_neg hp]; exact ⟨by simp [List.append_assoc], rfl⟩
+
+/-- …and therefore so does the whole fold. -/
+theorem rowSlot_fold_split : ∀ (cs : List Cell) (B : Bytes) (p : Pen) (x : Nat),
+    (cs.foldl rowSlot (B, p, x)).1 = B ++ (cs.foldl rowSlot ([], p, x)).1
+      ∧ (cs.foldl rowSlot (B, p, x)).2 = (cs.foldl rowSlot ([], p, x)).2
+  | [], B, p, x => ⟨by simp, rfl⟩
+  | c :: cs, B, p, x => by
+    rw [List.foldl_cons, List.foldl_cons]
+    obtain ⟨hb, hpx⟩ := rowSlot_split B p x c
+    have h0 := rowSlot_fold_split cs (rowSlot (B, p, x) c).1 (rowSlot (B, p, x) c).2.1
+      (rowSlot (B, p, x) c).2.2
+    have h1 := rowSlot_fold_split cs (rowSlot ([], p, x) c).1 (rowSlot ([], p, x) c).2.1
+      (rowSlot ([], p, x) c).2.2
+    -- the one-step output is its own components (product eta), so `h0`/`h1` are about the
+    -- same accumulators the goal folds over
+    rw [show ((rowSlot (B, p, x) c).1, (rowSlot (B, p, x) c).2.1, (rowSlot (B, p, x) c).2.2)
+        = rowSlot (B, p, x) c from rfl] at h0
+    rw [show ((rowSlot ([], p, x) c).1, (rowSlot ([], p, x) c).2.1, (rowSlot ([], p, x) c).2.2)
+        = rowSlot ([], p, x) c from rfl] at h1
+    -- the (pen, index) after one step agree, so the two tails fold the same
+    rw [congrArg Prod.fst hpx, congrArg Prod.snd hpx] at h0
+    refine ⟨?_, ?_⟩
+    · rw [h0.1, h1.1, hb, List.append_assoc]
+    · rw [h0.2, h1.2]
+
+/-- Peel the head of a `range`-indexed cell list: `g.at n` followed by the same shape at
+`n + 1`. This is how the row walk advances one column without ever materializing
+`g.toList`. -/
+theorem range_map_cons (g : Row) (n m : Nat) (hm : 0 < m) :
+    (List.range m).map (fun i => g.at (n + i))
+      = g.at n :: (List.range (m - 1)).map (fun i => g.at (n + 1 + i)) := by
+  obtain ⟨m', rfl⟩ : ∃ m', m = m' + 1 := ⟨m - 1, by omega⟩
+  rw [List.range_succ_eq_map, List.map_cons, List.map_map]
+  simp only [Nat.add_zero, Nat.add_sub_cancel]
+  congr 1
+  apply List.map_congr_left
+  intro i _
+  show g.at (n + (i + 1)) = g.at (n + 1 + i)
+  rw [show n + (i + 1) = n + 1 + i from by omega]
+
+/-- The array fold `rowAnsi` runs is the fold over `g`'s cells read positionally, which is
+the shape `paint_range` inducts on. -/
+theorem foldl_rowSlot_range (g : Row) (acc : Bytes × Pen × Nat) :
+    g.foldl rowSlot acc = ((List.range g.size).map (fun i => g.at i)).foldl rowSlot acc := by
+  rw [← Array.foldl_toList]
+  congr 1
+  apply List.ext_getElem
+  · simp
+  · intro i h1 h2
+    have hi : i < g.size := by simpa using h1
+    rw [List.getElem_map, List.getElem_range]
+    show g.toList[i] = g.at i
+    unfold Row.at
+    rw [Array.getElem_toList, Array.getD, dif_pos hi]
+    rfl
+
+/-- The optional `SGR` `rowSlot` emits before a cell whose pen differs from the one in
+effect: either empty (pens match) or `penSgr`, and in both cases the receiver's pen ends at
+the cell's. Wraps `step_pen` so the row walk need not case on the pen at every cell. -/
+theorem pen_prefix_matches {w : Vt} {P : PaintState} {g : Row} {k : Nat}
+    (hm : Matches w P g k) (c : Cell) :
+    Matches (w.feed (if c.pen == P.pen then ([] : Bytes) else penSgr c.pen))
+      { P with pen := c.pen } g k := by
+  by_cases hpe : c.pen == P.pen
+  · rw [if_pos hpe]
+    rw [show (w.feed ([] : Bytes)) = w from rfl]
+    rw [show ({ P with pen := c.pen } : PaintState) = P from by
+      rw [beq_iff_eq] at hpe; rw [hpe]]
+    exact hm
+  · rw [if_neg hpe]
+    exact step_pen hm c.pen
+
+/-! ### `rowSlot`'s output per cell shape, folding from empty bytes. -/
+
+theorem rowSlot_eq_narrow (c : Cell) (p : Pen) (x : Nat) (hw : c.width = 1) :
+    rowSlot ([], p, x) c
+      = ((if c.pen == p then [] else penSgr c.pen) ++ cellText c, c.pen, x + 1) := by
+  unfold rowSlot
+  dsimp only
+  rw [if_neg (show ¬(c.width == 0) = true from by simp [hw]),
+    if_neg (show ¬(c.width == 2 && !c.marks.isEmpty) = true from by simp [hw])]
+  by_cases hpe : c.pen == p
+  · rw [if_pos hpe, if_pos hpe]
+  · rw [if_neg hpe, if_neg hpe]; simp
+
+theorem rowSlot_eq_wide_nomarks (c : Cell) (p : Pen) (x : Nat)
+    (hw : c.width = 2) (hmk : c.marks = []) :
+    rowSlot ([], p, x) c
+      = ((if c.pen == p then [] else penSgr c.pen) ++ cellText c, c.pen, x + 1) := by
+  unfold rowSlot
+  dsimp only
+  rw [if_neg (show ¬(c.width == 0) = true from by simp [hw]),
+    if_neg (show ¬(c.width == 2 && !c.marks.isEmpty) = true from by simp [hmk])]
+  by_cases hpe : c.pen == p
+  · rw [if_pos hpe, if_pos hpe]
+  · rw [if_neg hpe, if_neg hpe]; simp
+
+theorem rowSlot_eq_wide_marks (c : Cell) (p : Pen) (x : Nat)
+    (hw : c.width = 2) (hmk : c.marks ≠ []) :
+    rowSlot ([], p, x) c
+      = ((if c.pen == p then [] else penSgr c.pen)
+          ++ (utf8 (safeChar c.base) ++ csiNum (x + 2) 0x47 ++ utf8s c.marks
+            ++ csiNum (x + 3) 0x47), c.pen, x + 1) := by
+  unfold rowSlot
+  dsimp only
+  rw [if_neg (show ¬(c.width == 0) = true from by simp [hw]),
+    if_pos (show (c.width == 2 && !c.marks.isEmpty) = true from by
+      rcases List.exists_cons_of_ne_nil hmk with ⟨a, t, hcm⟩
+      rw [hw, hcm]; rfl)]
+  by_cases hpe : c.pen == p
+  · rw [if_pos hpe, if_pos hpe]
+  · rw [if_neg hpe, if_neg hpe]; simp
+
+theorem rowSlot_eq_shadow (c : Cell) (B : Bytes) (p : Pen) (x : Nat) (hw : c.width = 0) :
+    rowSlot (B, p, x) c = (B ++ utf8s c.marks, p, x + 1) := by
+  unfold rowSlot
+  dsimp only
+  rw [if_pos (show (c.width == 0) = true from by simp [hw])]
+
+/-! ### Column count is preserved across a cell's bytes (for the row walk's recursion). -/
+
+theorem penSgr_cols {w : Vt} (p : Pen) (hg : w.pstate = .ground) (hu : w.u8need = 0) :
+    (w.feed (penSgr p)).cols = w.cols := by rw [penSgr_feed p hg hu]
+
+theorem pen_prefix_cols {w : Vt} (c : Cell) (p : Pen) (hg : w.pstate = .ground)
+    (hu : w.u8need = 0) :
+    (w.feed (if c.pen == p then ([] : Bytes) else penSgr c.pen)).cols = w.cols := by
+  by_cases hpe : c.pen == p
+  · rw [if_pos hpe]; rfl
+  · rw [if_neg hpe]; exact penSgr_cols c.pen hg hu
+
+theorem cellText_cols {w : Vt} (c : Cell) (hg : w.pstate = .ground) (hu : w.u8need = 0)
+    (ha : w.u8acc = 0) : (w.feed (cellText c)).cols = w.cols := by
+  rw [cellText_feed c hg hu ha, foldl_print_cols]
+  exact cols_print w (safeChar c.base)
+
+theorem utf8s_cols {w : Vt} (ms : List Char) (hg : w.pstate = .ground) (hu : w.u8need = 0)
+    (ha : w.u8acc = 0) : (w.feed (utf8s ms)).cols = w.cols := by
+  rw [utf8s_feed ms hg hu ha, foldl_print_cols]
+
+theorem foldl_print_quiet : ∀ (l : List Char) (w : Vt),
+    w.pstate = .ground → w.u8need = 0 → w.u8acc = 0 →
+    (l.foldl (fun w c => w.print (safeChar c)) w).pstate = .ground
+      ∧ (l.foldl (fun w c => w.print (safeChar c)) w).u8need = 0
+      ∧ (l.foldl (fun w c => w.print (safeChar c)) w).u8acc = 0
+  | [], w, hg, hu, ha => ⟨hg, hu, ha⟩
+  | a :: l, w, hg, hu, ha => by
+    rw [List.foldl_cons]
+    obtain ⟨h1, h2, h3⟩ := print_quiet (safeChar a) hg hu ha
+    exact foldl_print_quiet l (w.print (safeChar a)) h1 h2 h3
+
+theorem utf8s_quiet (ms : List Char) {w : Vt} (hg : w.pstate = .ground) (hu : w.u8need = 0)
+    (ha : w.u8acc = 0) :
+    (w.feed (utf8s ms)).pstate = .ground ∧ (w.feed (utf8s ms)).u8need = 0
+      ∧ (w.feed (utf8s ms)).u8acc = 0 := by
+  rw [utf8s_feed ms hg hu ha]; exact foldl_print_quiet ms w hg hu ha
+
+/-- The wide-with-marks branch's bytes preserve the column count. Each piece — the glyph, the
+two `CHA`s, the marks — does; threaded through the intermediate quiescent states. -/
+theorem dance_cols {w : Vt} (b : Char) (ms : List Char) (a a' : Nat)
+    (hg : w.pstate = .ground) (hu : w.u8need = 0) (ha : w.u8acc = 0)
+    (ha1 : 0 < a) (ha1' : a < 65535) (ha2 : 0 < a') (ha2' : a' < 65535) :
+    (w.feed (utf8 (safeChar b) ++ csiNum a 0x47 ++ utf8s ms ++ csiNum a' 0x47)).cols = w.cols := by
+  have hb := (safeChar_ge b).1
+  -- after the glyph
+  have e1 : w.feed (utf8 (safeChar b)) = w.print (safeChar b) := utf8_feed (safeChar b) hb hg hu ha
+  obtain ⟨hg1, hu1, ha1q⟩ := print_quiet (safeChar b) hg hu ha
+  have hgw1 : (w.feed (utf8 (safeChar b))).pstate = .ground := by rw [e1]; exact hg1
+  have huw1 : (w.feed (utf8 (safeChar b))).u8need = 0 := by rw [e1]; exact hu1
+  have hc1 : (w.feed (utf8 (safeChar b))).cols = w.cols := by rw [e1]; exact cols_print w (safeChar b)
+  -- after the first CHA
+  have e2 : (w.feed (utf8 (safeChar b))).feed (csiNum a 0x47)
+      = (w.feed (utf8 (safeChar b))).setCol (a - 1) := by
+    rw [e1]; exact cha_feed_eq a hg1 hu1 ha1 ha1'
+  have hg2 : ((w.feed (utf8 (safeChar b))).feed (csiNum a 0x47)).pstate = .ground := by
+    rw [e2, Zmx.Core.Vt.ps_setCol, e1]; exact hg1
+  have hu2 : ((w.feed (utf8 (safeChar b))).feed (csiNum a 0x47)).u8need = 0 := by
+    rw [e2, Zmx.Core.Vt.un_setCol, e1]; exact hu1
+  have ha2q : ((w.feed (utf8 (safeChar b))).feed (csiNum a 0x47)).u8acc = 0 := by
+    rw [e2, show ((w.feed (utf8 (safeChar b))).setCol (a - 1)).u8acc
+        = (w.feed (utf8 (safeChar b))).u8acc from by rw [frame_setCol], e1]; exact ha1q
+  have hc2 : ((w.feed (utf8 (safeChar b))).feed (csiNum a 0x47)).cols = w.cols := by
+    rw [cha_cols a hgw1 huw1 ha1 ha1', hc1]
+  -- after the marks
+  have hg3 : (((w.feed (utf8 (safeChar b))).feed (csiNum a 0x47)).feed (utf8s ms)).pstate = .ground
+      ∧ (((w.feed (utf8 (safeChar b))).feed (csiNum a 0x47)).feed (utf8s ms)).u8need = 0
+      ∧ (((w.feed (utf8 (safeChar b))).feed (csiNum a 0x47)).feed (utf8s ms)).u8acc = 0 :=
+    utf8s_quiet ms hg2 hu2 ha2q
+  have hc3 : (((w.feed (utf8 (safeChar b))).feed (csiNum a 0x47)).feed (utf8s ms)).cols = w.cols := by
+    rw [utf8s_cols ms hg2 hu2 ha2q, hc2]
+  -- after the last CHA
+  rw [feed_append, feed_append, feed_append,
+    cha_cols a' hg3.1 hg3.2.1 ha2 ha2', hc3]
+
+set_option maxHeartbeats 4000000 in
+/-- **The row walk.** Feeding `rowSlot` folded over the cells from column `n` onward carries
+the receiver from frontier `n` to the full row. Peels a narrow cell (advance one) or a wide
+pair (advance two) each step; `Matches.frontier` rules out ever landing on a shadow. The
+final pen is `rowAnsi`'s returned pen, so a grid can thread it into the next row. -/
+theorem paint_range {cols : Nat} {g : Row} {Y : Nat}
+    (hrow : RowOk cols g) (hcb : cols < 65533) :
+    ∀ (m n : Nat) (w : Vt) (pen : Pen),
+      w.cols = cols → n + m = cols → 0 < m →
+      Matches w { x := n, y := Y, pen := pen, pending := false } g n →
+      ∃ pd : Bool,
+        Matches (w.feed (((List.range m).map (fun i => g.at (n + i))).foldl rowSlot ([], pen, n)).1)
+          { x := cols - 1, y := Y,
+            pen := (((List.range m).map (fun i => g.at (n + i))).foldl rowSlot ([], pen, n)).2.1,
+            pending := pd } g cols := by
+  intro m
+  induction m using Nat.strongRecOn with
+  | ind m ih =>
+    intro n w pen hcols hsum hm0 hmatch
+    have hncols : n < cols := by omega
+    have hwle : (g.at n).width ≤ 2 := by
+      by_cases hz : (g.at n).width = 0
+      · omega
+      · have := (hrow.cells n).width hz
+        rw [← this]; unfold charWidth; split
+        · omega
+        · split <;> omega
+    rw [range_map_cons g n m hm0, List.foldl_cons]
+    by_cases hw0 : (g.at n).width = 0
+    · exfalso
+      obtain ⟨hne0, hprev⟩ := (hrow.pairs n).2 hw0
+      rcases hmatch.frontier with hz | hne
+      · exact hne0 hz
+      · exact hne hprev
+    · by_cases hw1 : (g.at n).width = 1
+      · -- NARROW
+        rw [rowSlot_eq_narrow (g.at n) pen n hw1]
+        have hm1 := pen_prefix_matches hmatch (g.at n)
+        have hw1c : (w.feed (if (g.at n).pen == pen then ([] : Bytes) else penSgr (g.at n).pen)).cols
+            = cols := by rw [pen_prefix_cols (g.at n) pen hmatch.ground hmatch.u8need]; exact hcols
+        by_cases hmar : n + 1 < cols
+        · -- interior narrow
+          obtain ⟨hs1, hs2⟩ := rowSlot_fold_split
+            ((List.range (m - 1)).map (fun i => g.at (n + 1 + i)))
+            ((if (g.at n).pen == pen then [] else penSgr (g.at n).pen) ++ cellText (g.at n))
+            (g.at n).pen (n + 1)
+          rw [hs1, hs2, feed_append, feed_append]
+          have hstep := step_narrow_marks (hw1c ▸ hrow) hm1 rfl rfl (by rw [hw1c]; exact hmar) hw1 rfl
+          exact ih (m - 1) (by omega) (n + 1) _ (g.at n).pen
+            (by rw [cellText_cols (g.at n) hm1.ground hm1.u8need hm1.u8acc]; exact hw1c)
+            (by omega) (by omega) hstep
+        · -- margin narrow (n + 1 = cols)
+          have hmeq : n + 1 = cols := by omega
+          have hm2 : m = 1 := by omega
+          subst hm2
+          simp only [Nat.sub_self, List.range_zero, List.map_nil, List.foldl_nil]
+          rw [feed_append]
+          refine ⟨true, ?_⟩
+          have hstep := step_narrow_margin_marks (hw1c ▸ hrow) hm1 rfl rfl
+            (by rw [hw1c]; exact hncols) (by rw [hw1c]; omega) hw1 rfl
+          rw [show cols - 1 = n from by omega, ← hmeq]
+          exact hstep
+      · -- WIDE: (g.at n).width = 2
+        have hw2 : (g.at n).width = 2 := by omega
+        have hshadow : g.at (n + 1) = Cell.shadow (g.at n) := (hrow.pairs n).1 hw2
+        have hn1 : n + 1 < cols := by
+          rcases Nat.lt_or_ge (n + 1) cols with h | h
+          · exact h
+          · exfalso
+            have hd : g.at (n + 1) = default := at_of_size_le g (n + 1) (by rw [hrow.size]; omega)
+            rw [hd] at hshadow
+            have hcw := congrArg Cell.width hshadow
+            rw [show (default : Cell).width = 1 from rfl,
+              show (Cell.shadow (g.at n)).width = 0 from rfl] at hcw
+            exact absurd hcw (by decide)
+        have hrs : RowOk g.size g := by rw [hrow.size]; exact hrow
+        have hsm : utf8s (g.at (n + 1)).marks = [] := shadow_emits_nothing hrs hw2
+        have hshw0 : (g.at (n + 1)).width = 0 := by rw [hshadow]; rfl
+        have hm1 := pen_prefix_matches hmatch (g.at n)
+        have hw1c : (w.feed (if (g.at n).pen == pen then ([] : Bytes) else penSgr (g.at n).pen)).cols
+            = cols := by rw [pen_prefix_cols (g.at n) pen hmatch.ground hmatch.u8need]; exact hcols
+        -- peel the shadow cell too
+        rw [range_map_cons g (n + 1) (m - 1) (by omega), List.foldl_cons]
+        by_cases hmk : (g.at n).marks = []
+        · -- wide, no marks: base body is `cellText`
+          rw [rowSlot_eq_wide_nomarks (g.at n) pen n hw2 hmk,
+            rowSlot_eq_shadow (g.at (n + 1)) _ (g.at n).pen (n + 1) hshw0, hsm, List.append_nil]
+          obtain ⟨hs1, hs2⟩ := rowSlot_fold_split
+            ((List.range (m - 1 - 1)).map (fun i => g.at (n + 1 + 1 + i)))
+            ((if (g.at n).pen == pen then [] else penSgr (g.at n).pen) ++ cellText (g.at n))
+            (g.at n).pen (n + 2)
+          rw [hs1, hs2, feed_append, feed_append]
+          by_cases hmar2 : n + 2 < cols
+          · -- interior wide
+            have hstep := step_wide (hw1c ▸ hrow) hm1 rfl rfl
+              (by rw [hw1c]; exact hn1) (by rw [hw1c]; exact hmar2) hw2 hmk rfl
+            exact ih (m - 2) (by omega) (n + 2) _ (g.at n).pen
+              (by rw [cellText_cols (g.at n) hm1.ground hm1.u8need hm1.u8acc]; exact hw1c)
+              (by omega) (by omega) hstep
+          · -- margin wide (n + 2 = cols)
+            have hmeq2 : n + 2 = cols := by omega
+            rw [show m - 1 - 1 = 0 from by omega]
+            simp only [List.range_zero, List.map_nil, List.foldl_nil]
+            refine ⟨true, ?_⟩
+            have hstep := step_wide_margin (hw1c ▸ hrow) hm1 rfl rfl
+              (by rw [hw1c]; exact hn1) (by rw [hw1c]; omega) hw2 hmk rfl
+            rw [hw1c] at hstep
+            rw [← hmeq2, show n + 2 - 1 = cols - 1 from by omega]
+            exact hstep
+        · -- wide, marks: base body is the CHA dance
+          rw [rowSlot_eq_wide_marks (g.at n) pen n hw2 hmk,
+            rowSlot_eq_shadow (g.at (n + 1)) _ (g.at n).pen (n + 1) hshw0, hsm, List.append_nil]
+          obtain ⟨hs1, hs2⟩ := rowSlot_fold_split
+            ((List.range (m - 1 - 1)).map (fun i => g.at (n + 1 + 1 + i)))
+            ((if (g.at n).pen == pen then [] else penSgr (g.at n).pen)
+              ++ (utf8 (safeChar (g.at n).base) ++ csiNum (n + 2) 0x47 ++ utf8s (g.at n).marks
+                ++ csiNum (n + 3) 0x47))
+            (g.at n).pen (n + 2)
+          rw [hs1, hs2, feed_append, feed_append]
+          by_cases hmar2 : n + 2 < cols
+          · -- interior wide with marks
+            have hstep := step_wide_marks (hw1c ▸ hrow) hm1 rfl rfl
+              (by rw [hw1c]; exact hn1) (by rw [hw1c]; exact hmar2) (by omega) hw2 rfl
+            exact ih (m - 2) (by omega) (n + 2) _ (g.at n).pen
+              (by
+                rw [dance_cols (g.at n).base (g.at n).marks (n + 2) (n + 3)
+                  hm1.ground hm1.u8need hm1.u8acc (by omega) (by omega) (by omega) (by omega)]
+                exact hw1c)
+              (by omega) (by omega) hstep
+          · -- margin wide with marks (n + 2 = cols)
+            have hmeq2 : n + 2 = cols := by omega
+            rw [show m - 1 - 1 = 0 from by omega]
+            simp only [List.range_zero, List.map_nil, List.foldl_nil]
+            refine ⟨false, ?_⟩
+            have hstep := step_wide_margin_marks (hw1c ▸ hrow) hm1 rfl rfl
+              (by rw [hw1c]; exact hn1) (by rw [hw1c]; omega) (by omega) hw2 rfl
+            rw [hw1c] at hstep
+            rw [← hmeq2, show n + 2 - 1 = cols - 1 from by omega]
+            exact hstep
+
+/-- **A painted row lands, for any receiver.** Feeding `rowAnsi g startPen` into a receiver
+that matches `g` on nothing yet (frontier 0), with `startPen` in effect, paints the whole
+row: the receiver ends matching `g` at every column, with `rowAnsi`'s returned pen in
+effect so a grid can thread it into the next row. `pending` is left existential — it depends
+on the last cell's shape (§ Step 3 constraint 3) and the joining `CR` discards it. -/
+theorem rowAnsi_writes_row {w : Vt} {g : Row} {startPen : Pen} {Y : Nat}
+    (hrow : RowOk w.cols g) (hcb : w.cols < 65533) (hpos : 0 < w.cols)
+    (hm : Matches w { x := 0, y := Y, pen := startPen, pending := false } g 0) :
+    ∃ pd : Bool,
+      Matches (w.feed (rowAnsi g startPen).1)
+        { x := w.cols - 1, y := Y, pen := (rowAnsi g startPen).2, pending := pd } g w.cols := by
+  have key := paint_range (cols := w.cols) hrow hcb w.cols 0 w startPen rfl (by omega) hpos hm
+  have hlist : ((List.range w.cols).map (fun i => g.at (0 + i))).foldl rowSlot ([], startPen, 0)
+      = g.foldl rowSlot ([], startPen, 0) := by
+    rw [foldl_rowSlot_range g ([], startPen, 0), hrow.size]
+    congr 1
+    apply List.map_congr_left
+    intro i _
+    rw [Nat.zero_add]
+  rw [hlist] at key
+  rw [show (rowAnsi g startPen).1 = (g.foldl rowSlot ([], startPen, 0)).1 from rfl,
+    show (rowAnsi g startPen).2 = (g.foldl rowSlot ([], startPen, 0)).2.1 from rfl]
+  exact key

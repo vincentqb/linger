@@ -5231,3 +5231,48 @@ fold must peel a wide pair (base+shadow) as a **unit** (two `rowSlot` steps, fro
 +2 together), i.e. a peel-1-or-2 induction well-founded on `cols - n`, not a plain
 `invariant_foldl`. Pen threading interleaves via `step_pen` (rowSlot emits `penSgr` before a
 cell whose pen differs from the fold's accumulator).
+
+## Step 3 notes — 2026-08-17 (rowAnsi_writes_row — Step 3's exit)
+
+`rowAnsi_writes_row` landed: feeding `rowAnsi g startPen` into any receiver matching `g` at
+frontier 0 (with `startPen` in effect) paints the whole row — the receiver ends matching `g`
+at every column, with `rowAnsi`'s returned pen in effect (threaded for the next row).
+`pending` is existential (last-cell-shape dependent; the joining CR discards it).
+
+Assembly, bottom-up:
+- `rowSlot` extracted from `rowAnsi`'s lambda (so the theorem names a def) — `rowSlot_eq_narrow`
+  / `_wide_nomarks` / `_wide_marks` / `_shadow` give its output as explicit tuples, folding
+  from empty bytes.
+- `rowSlot_split` / `rowSlot_fold_split`: rowSlot only appends to the byte accumulator and its
+  (pen, index) ignore prior bytes, so the fold peels a cell at a time.
+- `range_map_cons` + `foldl_rowSlot_range`: the array fold is the fold over `g`'s cells read
+  positionally (`(range g.size).map (g.at ·)`), peelable from the front.
+- `paint_range`: strong induction (`Nat.strongRecOn`) on the remaining-cell count, peeling a
+  narrow cell (advance 1) or a wide pair base+shadow (advance 2). `Matches.frontier` makes a
+  width-0 cell at a recursion point a contradiction (never land on a shadow) — spec constraint
+  2 as a type error, not a runtime check. Pen threads via `pen_prefix_matches` (rowSlot's
+  optional leading `penSgr`) + the eight cell rungs.
+- cols bookkeeping: `penSgr_cols` / `pen_prefix_cols` / `cellText_cols` / `utf8s_cols` /
+  `dance_cols` keep `w.cols = cols` across each cell's bytes, needed because the rungs are
+  stated over `w.cols` (not a threaded `cols`).
+
+Gotchas (AGENTS.md-relevant):
+- `by_contra` is Mathlib-only — banned. Use `rcases Nat.lt_or_ge ...` + `exfalso`.
+- `Nat.strong_induction_on` doesn't exist here; `Nat.strongRecOn` does (`| ind m ih =>`).
+- `decide` refuses a goal with free variables even when the value is constant
+  (`(Cell.shadow (g.at n)).width` is 0 regardless of `g.at n`, but `decide` still balks) —
+  reduce the widths to literals with `rw [show … from rfl]` first, then `decide`.
+- `rw [hmeq2] at hstep` (hmeq2 : n+2 = cols) clobbered `csiNum (n+2)` in the *bytes*, not just
+  the frontier — rewrite the goal's frontier instead (`rw [← hmeq2, show n+2-1 = cols-1 …]`).
+- `exact ih …` checks up to defeq, so `m-1-1` vs `m-2` and `n+1+1` vs `n+2` need no rewrite
+  (both reduce to `pred (pred m)` / `succ (succ n)`). The spurious `rw [this] at hstep ⊢` I
+  first wrote failed precisely because those terms weren't in `hstep`'s goal.
+
+Break-verify: `rowSlot`'s narrow branch `cellText c` → `cellText c ++ [0x41]` (spurious 'A').
+Fails at `rowSlot_eq_narrow`/`rowSlot_eq_wide_nomarks` and the fold invariants
+`ends_rowAnsi`/`quiet_rowAnsi`/`smap_id_rowAnsi`. Reverted; Core byte-identical; green.
+Complements the earlier emulator-side breaks (printMark, setCol): this pins the *emitter*.
+
+**Step 3 is complete.** `STATEMENT_CAP` back to 21 (`rowSlot` now named by a theorem).
+Remaining: Step 4 (`joinCRLF` row walk + no-scroll, alt switch, `restore_grid_any` /
+`restore_grid_reachable` / `resume_grid`) and Step 5 (conformance profile, archive).
