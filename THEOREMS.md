@@ -125,22 +125,22 @@ with a theorem that constrains it or a stated limitation:
 |---|---|---|
 | `Render.restore` | `Session.onMsg .attach` | **proved**: `restore_grounds`, `restore_u8_zero`, `restore_modes_any`, `restore_pen_any`, `restore_sticky_any`, `restore_cursor_any` — receiver-quantified for the parser, the decoder and every restored field but the screen cells |
 | `Render.leaveAnsi` | `Client.attach`'s `finally` | **proved**: `leave_canonical`, `leave_canonical_all` |
-| `Render.history` | `Session.onMsg` (`linger history`) | **bounded, not proved** — see below |
+| `Render.history` | `Session.onMsg` (`linger history`) | **proved**: `history_framing`, `history_lines` — every byte is a line terminator or printable content, and the newline count *is* the row count, so a cell cannot forge a line however the session's program filled the grid |
 | `Render.utf8s` | reached from outside `Render` by `Session.infoText`, which frames listing records with it | **proved**: `utf8s_no_ctl`, `utf8s_no_esc`, `utf8s_no_esc_bel`, `Session.utf8s_no_frame` — no scrubbed text can carry an escape, a BEL, or a framing byte |
 
-A fourth emitter wired into the runtime fails the gate until it is classified, and an
+A new emitter wired into the runtime fails the gate until it is classified, and an
 entry for a stream the runtime *no longer* emits fails too, so the list cannot drift
 into being a description of the past. All three failure modes are break-verified.
 
-**The one stated limitation, with its cause.** `Render.history` is the last emitter
-still assembled through `String` (`rowText` → `String.intercalate` → `String.toUTF8`),
-which is precisely the shape `Zmx/Core/Render.lean`'s own header says makes output
-unprovable: a `String` literal does not reduce in the kernel, so no theorem can see
-its bytes. It is bounded rather than proved — every character goes through
-`Render.safeChar`, the CLI only ever passes `withAnsi = false`, and
-`tests/attach_test.py` step 3 exercises it — and the route to promoting it to a
-theorem is known and recorded: restructure it to build `List UInt8` directly, as the
-rest of the module already does.
+**There are now no stated limitations in that table**, and getting there is the
+clearest thing the measure bought. `Render.history` was the last emitter assembled
+through `String` (`rowText` → `String.intercalate` → `String.toUTF8`) — precisely the
+shape `Zmx/Core/Render.lean`'s own header says makes output unprovable, since a `String`
+does not reduce in the kernel. It was classified as *bounded*, with the route recorded in
+the entry: restructure it to build `List UInt8`. That route then got walked twice — first
+for `Session.infoText`, where it also fixed a live injection bug, and then for `history`
+itself. The limitation entry existed for about as long as it took to act on it, which is
+the argument for writing a limitation down in a form that names its fix.
 
 A5 is now proved at the value level in both directions, not just the
 parser level. Both quantify over the receiver with no hypothesis on it —
