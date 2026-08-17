@@ -7,8 +7,10 @@ here in a different shape, and its Step 5 archival gate is carried unchanged)
 
 ## Where this stands — read this first
 
-**Next step:** Steps 3–4 — `PaintState` and the grid *cells* induction
-(Definition-of-done items 4–5). **They are all that remain**: items 1, 2, 2b and 3
+**Next step:** the **mark loop** (Step 3, item 1 of its remaining list — the shape to
+use is `Matches` against `withMarks g k acc`, so the fifteen-field bookkeeping is reused
+rather than restated). Then the wide-with-marks `CHA` dance, then `rowAnsi_writes_row`,
+then Step 4. Definition-of-done items 4 (partly done) and 5 are all that remain. **They are all that remain**: items 1, 2, 2b and 3
 are done, and item 6 (gates green, everything break-verified) is standing. Two
 optional warm-ups, both newly cheap and neither on the critical path:
 `restore_tabs_any` (ledger item 0's fix made it *true*, and it is the last restored
@@ -332,9 +334,18 @@ And it is not scrollback: restore repaints the screen, not history.
    those now carry no hypothesis on the receiver at all: `restore_grounds`,
    `restore_u8_zero`, `restore_quiesced_any`, `resume_quiesced_any`. The prologue's
    `ESC \` lead-in is what makes it true, exactly as this item said.
-4. `PaintState` — the painter's abstract state (`x`, `y`, `pen`, `pending`) as a
-   named record, with `rowAnsi` threading it, and a `Matches` relation tying it to a
-   `Vt` and a row prefix.
+4. **Partly done, and "with `rowAnsi` threading it" is the wrong shape** — recorded
+   rather than quietly dropped. `PaintState` (`x`, `y`, `pen`, `pending`) ✓ and
+   `Matches` ✓ are in, along with every cell-shape rung but one. But `rowAnsi` must
+   *not* thread `PaintState`: two of its four fields — `y` and `pending` — are
+   **receiver** state that the emitter cannot see and must not carry. `rowAnsi` already
+   threads the emitter's half (`(bytes, pen, x)`); `PaintState` is the receiver's, and
+   `Matches` is what ties them. So the remaining work under this item is
+   `rowAnsi_writes_row` folding the rungs over the row, not an emitter refactor.
+   Landed rungs: `step_narrow` (interior), `step_narrow_margin` (the clamp-and-arm
+   case), `step_wide` (the pair, one rung, `k` to `k+2`), `step_pen`, and
+   `shadow_emits_nothing`. Remaining: the mark loop (narrow-with-marks, then the
+   wide-with-marks `CHA`/`CHA` dance), then `rowAnsi_writes_row`.
 5. `restore_grid_any`: for every `v` and every `w` of the same dimensions, the grid
    after `w.feed (restore v)` is `v.grid`, with cell and pen equality. Then
    `restore_grid_reachable` from `LiveReachableVt`, and `resume_grid` composing with
@@ -517,10 +528,26 @@ are verified load-bearing.
 statement for `print` would have to reason through `printWrap`'s scroll, which those
 hypotheses exist to rule out.
 
-What remains of Step 3: the other step lemmas — narrow at the right margin (where the
-advance clamps and arms wrap-pending), the wide pair (one rung, `k` to `k+2`), the mark
-loop (an inner induction that does not move `k`), and the pen change — then
-`rowAnsi_writes_row` folding them over the row.
+**Four more rungs landed** (2026-08-17): `step_narrow_margin` (the clamp-and-arm case
+the interior rung cannot cover), `step_wide` (the pair in one rung, `k` to `k+2`),
+`step_pen` (which is what makes the cell rungs' `hpen` dischargeable), and
+`shadow_emits_nothing` (the pair's second slot emits nothing, which is *why* `step_wide`
+has to advance by two). `prefix_kept` was refactored into `mend_keeps_prefix` on the way:
+the original bundled "the writes missed the prefix" with "the sweep keeps it", which only
+fits a single write, and the wide rung does two.
+
+**What remains of Step 3**, in order:
+1. the **mark loop** — an inner induction that does not move `k`. The shape to use is
+   `Matches` against `withMarks g k acc` (the source row with column `k`'s marks
+   truncated), so the fifteen-field bookkeeping is reused rather than restated; that needs
+   `withMarks`, its `at`/`size`/`RowOk` lemmas, and the observation that `PairOk` of the
+   truncated row holds because column `k` is narrow (so neither a base nor a shadow);
+2. the **wide-with-marks** rung — `rowAnsi`'s `CHA`/`CHA` dance, which parks the cursor
+   between glyph and shadow because `printMark` steps one left. `cha_places_cursor` is
+   already in; what it needs is the two-jump bookkeeping;
+3. `rowAnsi_writes_row` — the fold over the row. Note it inducts over `rowAnsi`'s *byte*
+   accumulator, so the invariant is `Matches (w.feed acc.1) …`, using
+   `feed (a ++ b) = feed b ∘ feed a`.
 
 Also landed: `paint_grounds`, the first of `restore_grid_of_paint`'s three hypotheses,
 for any receiver. The `u8need` one is *not* free the same way — the whole stream ends

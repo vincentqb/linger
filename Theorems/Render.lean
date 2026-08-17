@@ -6476,4 +6476,55 @@ theorem step_wide {w : Vt} {P : PaintState} {g : Row} {k : Nat}
         rw [h1]
         exact (shadow_congr hpenW).trans hsh.symm
 
+/-- **A pen change.** `rowAnsi` emits `penSgr c.pen` before a cell whose pen differs from
+the one it is carrying, and that is the whole of the SGR handling: the glyph bytes carry no
+colour, so the cell the receiver *stores* takes the receiver's current pen
+(`Vt.printPut`). This rung is what makes the cell rungs' `hpen` hypothesis discharegable,
+and it is where the invariant's `pen` field earns its keep. -/
+theorem step_pen {w : Vt} {P : PaintState} {g : Row} {k : Nat} (hm : Matches w P g k)
+    (p : Pen) : Matches (w.feed (penSgr p)) { P with pen := p } g k := by
+  have heq : w.feed (penSgr p) = { w with pen := p } := penSgr_feed p hm.ground hm.u8need
+  -- the pen is in `getRow`'s *default* row, so a cell read only survives because the
+  -- invariant says the row index is in the grid
+  have hcell : ∀ j, ({ w with pen := p } : Vt).getCell j P.y = w.getCell j P.y := by
+    intro j
+    show (((({ w with pen := p } : Vt)).grid.getD P.y
+        (blankRow ({ w with pen := p } : Vt).cols p)).getD j default)
+      = ((w.grid.getD P.y (blankRow w.cols w.pen)).getD j default)
+    rw [getD_of_lt w.grid P.y (blankRow w.cols p) (blankRow w.cols w.pen) hm.inGrid]
+  have hrow : (({ w with pen := p } : Vt).getRow P.y) = w.getRow P.y := by
+    show ((({ w with pen := p } : Vt)).grid.getD P.y
+        (blankRow ({ w with pen := p } : Vt).cols p)) = w.grid.getD P.y (blankRow w.cols w.pen)
+    rw [getD_of_lt w.grid P.y (blankRow w.cols p) (blankRow w.cols w.pen) hm.inGrid]
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · rw [heq]; exact hm.curX
+  · rw [heq]; exact hm.curY
+  · rw [heq]; exact hm.pend
+  · rw [heq]
+  · rw [heq]; exact hm.ground
+  · rw [heq]; exact hm.u8need
+  · rw [heq]; exact hm.u8acc
+  · rw [heq]; exact hm.ins
+  · rw [heq]; exact hm.wrap
+  · rw [heq]; exact hm.ascii0
+  · rw [heq]; exact hm.ascii1
+  · rw [heq, hrow]; exact hm.rowLen
+  · rw [heq]; exact hm.inGrid
+  · exact hm.frontier
+  · intro j hj
+    rw [heq, hcell j]
+    exact hm.cells j hj
+
+/-- **The shadow slot emits nothing.** `rowAnsi`'s fold visits a width-0 cell and appends
+`utf8s c.marks`, which for a shadow is empty — so the pair's second column needs no rung
+of its own, which is exactly why `step_wide` had to advance the frontier by two. Stated
+about the source row rather than assumed: `RowOk.pairs` is what makes a shadow's marks
+empty, and `rowAnsi`'s width-0 branch is defensive code for a decoded checkpoint that has
+no such guarantee. -/
+theorem shadow_emits_nothing {g : Row} {k : Nat} (hrow : RowOk g.size g)
+    (hwid : (g.at k).width = 2) : utf8s (g.at (k + 1)).marks = [] := by
+  rw [(hrow.pairs k).1 hwid]
+  rfl
+
+
 end Zmx.Core.Render

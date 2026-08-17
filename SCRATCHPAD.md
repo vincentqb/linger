@@ -5078,3 +5078,31 @@ Traps, both recurrences:
   mentioning the fed state, so unifying against the `putCell`/`mendRow` composite is a
   defeq check per field. Cheaper than splitting the invariant into smaller records, which
   would move the cost to every call site.
+
+### `step_pen`, `shadow_emits_nothing`, and a correction to Definition-of-done item 4
+`step_pen` — `rowAnsi` emits `penSgr c.pen` before a cell whose pen differs from the one it
+carries, and that is the whole of the SGR handling, because the glyph bytes carry no colour:
+the cell the receiver *stores* takes the receiver's current pen (`Vt.printPut`). So this rung
+is what makes the cell rungs' `hpen` hypothesis dischargeable, and it is where the
+invariant's `pen` field earns its keep.
+One trap worth keeping: `Vt.getRow`'s *default* row is `blankRow cols pen`, so changing the
+pen changes the default — and a `getCell` read only survives a pen change because
+`Matches.inGrid` says the row index is in the grid, making the default unreachable
+(`getD_of_lt`). Without that field the pen rung would be unprovable.
+
+`shadow_emits_nothing` — the pair's second slot in `rowAnsi`'s fold appends `utf8s c.marks`,
+which is empty for a shadow. That is *why* `step_wide` has to advance the frontier by two:
+there is no rung available for the shadow's column. Stated about the source row via
+`RowOk.pairs` rather than assumed, because `rowAnsi`'s width-0 branch is defensive code for
+a decoded checkpoint that carries no such guarantee.
+
+**Correction to DoD item 4, recorded rather than quietly dropped.** The item says
+"`PaintState` … with `rowAnsi` threading it". `rowAnsi` must **not** thread `PaintState`:
+two of its four fields — `y` and `pending` — are *receiver* state the emitter cannot see and
+must not carry. `rowAnsi` already threads the emitter's half, `(bytes, pen, x)`;
+`PaintState` is the receiver's half; `Matches` is what ties them. Writing the item's literal
+text would have put receiver state into the emitter, which is the opposite of what this
+spec is about. The remaining work under item 4 is `rowAnsi_writes_row`, not a refactor.
+Third DoD item this spec has had to restate on contact (1, 3, now 4) — all three for the
+same underlying reason: the plan was written before the shape of the receiver/emitter split
+was understood.
