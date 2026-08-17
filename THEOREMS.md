@@ -57,7 +57,9 @@ is the one we enforce: **every user-facing promise in README.md maps to a
 theorem (anchor/rung), a live test suite, a stated limitation, or a settled
 non-goal — never to nothing.**
 
-A fanned-out audit (2026-08-16) classified all **72** README promises:
+A fanned-out audit (2026-08-16) classified all **72** README promises (the
+mechanically enforced part of this is below, and it found the audit's own ledger
+understating the gap by 2.7×):
 **22 proved** by an anchor/rung, **41 test-pinned** (runtime `IO`, which
 `Zmx/Runtime/*` puts on `tests/` by design — see "§Total covers the emulator,
 not the runtime" below), **6 bounded** by a stated limitation or non-goal,
@@ -72,9 +74,57 @@ Maintenance rule (the discipline, not a script): a new README promise, or a new
 `§`/anchor, must land with its mapping — the anchor table above, the `§` "Where"
 column, a named test, or a one-line limitation here. A promise with none of
 those is the shape that let the hand-back through; treat an unmapped promise as a
-bug, not a doc lapse. The mapping is re-derivable by re-running the audit
-workflow; it is a review gate, not an automated one, because "does this sentence
-have backing" is a judgement a grep cannot make.
+bug, not a doc lapse. The README-promise mapping is re-derivable by re-running the
+audit; it is a review gate, not an automated one, because "does this sentence have
+backing" is a judgement a grep cannot make.
+
+### …and the part that *is* automated, because the review gate was being fooled
+
+Two things a grep **can** judge, so `tests/coverage.py` judges them on every
+`./tests/e2e.sh` run and the review gate no longer has to be trusted for either.
+
+**1. Theorem-*statement* coverage of the pure core, as a ratchet.** The previous gate
+grepped all of `Theorems/*.lean` for each core definition's name. That cannot tell a
+claim from a word, and it was being fooled in the most embarrassing possible place:
+`Render.history` — a byte stream the binary writes to the user's terminal — counted as
+claimed because the word "history" appears in a **doc comment** in
+`Theorems/Session.lean`. Nine of the ten definitions it *did* flag had zero mentions
+anywhere, so what it actually measured was "is this name absent entirely".
+
+The replacement strips Lean comments and looks only between `theorem <name>` and the
+`:=`/`by` that opens the proof. The honest number is **27 of 229 core definitions
+named by no theorem statement**, where the old gate reported 10 — so the real
+uncovered surface was 2.7× what the ledger claimed. Most of the 27 are bounds
+constants and predicates (`csiCap`, `oscCap`, `isWide`, `clampDim`), but some are
+runtime-facing and worth naming as the queue they are: `infoText` (the listing
+framing — and Step 0 ledger item 2 is an unfixed injection bug in exactly that
+framing), `outputMsgs`/`outputChunk` (what a client receives), and the checkpoint
+codec's `parseRecord`/`records`/`knownTag`/`magic`/`writeU32`.
+
+**2. Every byte stream the runtime emits is classified.** This is the check that
+answers "are we proving things about the code that actually runs". The runtime's
+emitter surface is small and enumerable — three functions — and each must be listed
+with a theorem that constrains it or a stated limitation:
+
+| stream | where the runtime writes it | backing |
+|---|---|---|
+| `Render.restore` | `Session.onMsg .attach` | **proved**: `restore_grounds`, `restore_u8_zero`, `restore_modes_any`, `restore_pen_any`, `restore_sticky_any`, `restore_cursor_any` — receiver-quantified for the parser, the decoder and every restored field but the screen cells |
+| `Render.leaveAnsi` | `Client.attach`'s `finally` | **proved**: `leave_canonical`, `leave_canonical_all` |
+| `Render.history` | `Session.onMsg` (`linger history`) | **bounded, not proved** — see below |
+
+A fourth emitter wired into the runtime fails the gate until it is classified, and an
+entry for a stream the runtime *no longer* emits fails too, so the list cannot drift
+into being a description of the past. All three failure modes are break-verified.
+
+**The one stated limitation, with its cause.** `Render.history` is the last emitter
+still assembled through `String` (`rowText` → `String.intercalate` → `String.toUTF8`),
+which is precisely the shape `Zmx/Core/Render.lean`'s own header says makes output
+unprovable: a `String` literal does not reduce in the kernel, so no theorem can see
+its bytes. It is bounded rather than proved — every character goes through
+`Render.safeChar`, the CLI only ever passes `withAnsi = false`, and
+`tests/attach_test.py` step 3 exercises it — and the route to promoting it to a
+theorem is known and recorded: restructure it to build `List UInt8` directly, as the
+rest of the module already does.
 
 A5 is now proved at the value level in both directions, not just the
 parser level. Both quantify over the receiver with no hypothesis on it —

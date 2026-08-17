@@ -5885,4 +5885,86 @@ theorem cha_places_cursor {v : Vt} (n : Nat) (hg : v.pstate = .ground) (hu : v.u
   exact ⟨by simp only []; omega, rfl, rfl⟩
 
 
+/-! ## §Replay — the cursor, for any receiver
+
+`restore_cursor` was stated over `Vt.init v.cols v.rows`, and that was an artefact of
+when it was written rather than of what it needs: the claim is about the stream's
+**final** `CUP`, which addresses absolutely. Three facts about the state `restoreBody`
+leaves are what the fresh-emulator form got for free, and each is now available for any
+receiver — the parser is ground (the prologue's lead-in), DECOM is off (`modesAnsi`
+sets it to the session's value, which the hypothesis says is off), and the dimensions
+are unchanged.
+
+`Good w` on the receiver is doing one job: `dims_feed` needs it, because `RIS`
+(`ESC c`) rebuilds the state through `Vt.init`, which re-clamps. No linger stream
+emits `RIS` — but the painted text certainly contains the byte `0x63`, so
+`dims_feed_ne_ris` is too crude here and the invariant is the honest route. Every
+client's emulator satisfies it (`good_of_liveReachable`). -/
+
+theorem restoreBody_grounds (v w : Vt) : (w.feed (restoreBody v)).pstate = .ground := by
+  rw [show restoreBody v = prologueAnsi v ++ (csiNum 0 0x6D ++ csiNum 2 0x4A
+      ++ screensAnsi v ++ regionAnsi v ++ tabsAnsi v ++ savedAnsi v ++ titleAnsi v
+      ++ modesAnsi v ++ charsetAnsi v ++ penSgr v.pen) from by
+    simp only [restoreBody, List.append_assoc], feed_append]
+  exact ((((((((((ends_csiNum 0 0x6D (by decide) (by decide)).append
+    (ends_csiNum 2 0x4A (by decide) (by decide))).append (ends_screensAnsi v)).append
+    (ends_regionAnsi v)).append (ends_tabsAnsi v)).append (ends_savedAnsi v)).append
+    (ends_titleAnsi v)).append (ends_modesAnsi v)).append (ends_charsetAnsi v)).append
+    (ends_penSgr v.pen)) _ (prologue_grounds v w)
+
+/-- The modes at the end of `restoreBody` — `restore_modes_any` one chunk earlier, so
+the final `CUP` can be told whether DECOM is on before it is read. -/
+theorem restoreBody_modes_any (v w : Vt)
+    (hmouse : v.modes.mouse = 0 ∨ v.modes.mouse = 1000 ∨ v.modes.mouse = 1002
+      ∨ v.modes.mouse = 1003) :
+    (w.feed (restoreBody v)).modes = v.modes := by
+  have hEndsRest : Ends (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v
+      ++ regionAnsi v ++ tabsAnsi v ++ savedAnsi v) :=
+    (((((ends_csiNum 0 0x6D (by decide) (by decide)).append
+      (ends_csiNum 2 0x4A (by decide) (by decide))).append
+      (ends_screensAnsi v)).append (ends_regionAnsi v)).append (ends_tabsAnsi v)).append
+      (ends_savedAnsi v)
+  have hg2 : (w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v
+      ++ regionAnsi v ++ tabsAnsi v ++ savedAnsi v)).pstate = .ground := by
+    rw [show prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v
+        ++ regionAnsi v ++ tabsAnsi v ++ savedAnsi v
+        = prologueAnsi v ++ (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v
+          ++ regionAnsi v ++ tabsAnsi v ++ savedAnsi v) from by simp only [List.append_assoc],
+      feed_append]
+    exact hEndsRest _ (prologue_grounds v w)
+  rw [show restoreBody v = (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A
+      ++ screensAnsi v ++ regionAnsi v ++ tabsAnsi v ++ savedAnsi v)
+      ++ (titleAnsi v ++ (modesAnsi v ++ charsetAnsi v ++ penSgr v.pen)) from by
+    simp only [restoreBody, List.append_assoc], feed_append, feed_append]
+  exact ((((mmap_modesAnsi v hmouse).comp (mmap_id_charsetAnsi v)).comp
+    (mmap_id_penSgr v.pen)) _ (ends_titleAnsi v _ hg2) (uz_titleAnsi v hg2)).2.2
+
+/-- **§Replay (cursor), receiver-quantified.** The final `CUP` lands where the session
+had it in *any* client's emulator of the session's size, not only a fresh one. -/
+theorem restore_cursor_any (v w : Vt) (hgood : Good v) (hgw : Good w)
+    (hcols : w.cols = v.cols) (hrows : w.rows = v.rows) (ho : v.modes.origin = false)
+    (hmouse : v.modes.mouse = 0 ∨ v.modes.mouse = 1000 ∨ v.modes.mouse = 1002
+      ∨ v.modes.mouse = 1003) :
+    ((w.feed (restore v)).cursor.x = v.cursor.x)
+      ∧ ((w.feed (restore v)).cursor.y = v.cursor.y) := by
+  rw [show restore v = restoreBody v ++ cursorAnsi v from rfl, feed_append]
+  rw [show cursorAnsi v = csiNum2 (v.cursor.y + 1) (v.cursor.x + 1) 0x48 from by
+    simp only [cursorAnsi, ho]; rfl]
+  have hpg : (w.feed (restoreBody v)).pstate = .ground := restoreBody_grounds v w
+  have hpo : (w.feed (restoreBody v)).modes.origin = false := by
+    rw [restoreBody_modes_any v w hmouse]; exact ho
+  have hd := dims_feed (restoreBody v) hgw
+  have hdc : (w.feed (restoreBody v)).cols = v.cols := by
+    rw [← dims_fst (w.feed (restoreBody v)), hd, dims_fst]; exact hcols
+  have hdr : (w.feed (restoreBody v)).rows = v.rows := by
+    rw [← dims_snd (w.feed (restoreBody v)), hd, dims_snd]; exact hrows
+  obtain ⟨hx, hy⟩ := cup_places_cursor (v.cursor.y + 1) (v.cursor.x + 1) hpg
+    (by omega) (by omega)
+    (by have := hgood.curY; have := hgood.rowsLe; omega)
+    (by have := hgood.curX; have := hgood.colsLe; omega)
+    (by rw [hdr]; simpa using hgood.curY)
+    (by rw [hdc]; simpa using hgood.curX) hpo
+  exact ⟨by simpa using hx, by simpa using hy⟩
+
+
 end Zmx.Core.Render

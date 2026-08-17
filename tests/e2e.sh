@@ -4,7 +4,8 @@
 #
 #   1. clean build of program + proofs + unit tests, zero warnings
 #   2. no `sorry` / `partial` in the pure core or the proofs
-#  2b. unclaimed pure-core surface: defs named by no theorem (ratchet)
+#  2b. coverage: defs named by no theorem STATEMENT (ratchet), and every byte
+#      stream the runtime emits classified as proved or bounded
 #   3. posix shim smoke tests (ztest)
 #   4. attach/detach/reattach/mirror/wait e2e (real ptys)
 #   5. reboot-resume e2e (SIGKILL + restore + corrupt tolerance)
@@ -67,26 +68,16 @@ shim_n="$(grep -c LEAN_EXPORT c/shim.c)"
 [ "$shim_n" -le "$SHIM_CAP" ] \
   || fail "shim grew to $shim_n wrappers (cap $SHIM_CAP); justify the new syscall and bump the cap"
 
-say "2b. unclaimed pure-core surface (ratchet)"
-# Every bug this project found by PROVING was an assumption nobody wrote
-# down, so a definition with no theorem naming it at all is the shape to
-# watch. This is a ratchet, not a target: it may only go down. Lowering the
-# cap when a claim lands is the point; raising it is a deliberate edit that
-# says "new surface, no claim yet".
-CLAIM_CAP=10
-unclaimed=0
-unclaimed_list=""
-for name in $(grep -h '^\(private \)*def ' Zmx/Core/*.lean \
-                | sed 's/^\(private \)*def \([A-Za-z0-9_.]*\).*/\2/' \
-                | sed 's/.*\.//' | sort -u); do
-  if ! grep -qw -- "$name" Theorems/*.lean; then
-    unclaimed=$((unclaimed + 1))
-    unclaimed_list="$unclaimed_list $name"
-  fi
-done
-printf 'unclaimed core defs: %s (cap %s)\n' "$unclaimed" "$CLAIM_CAP"
-printf '  %s\n' "$unclaimed_list"
-[ "$unclaimed" -le "$CLAIM_CAP" ] || fail "unclaimed core surface grew past $CLAIM_CAP"
+say "2b. coverage of the code by the theorems (two ratchets)"
+# Every bug this project found by PROVING was an assumption nobody wrote down, so
+# the shape to watch is a definition no theorem says anything about. This used to
+# be a grep over all of Theorems/, which could not tell a claim from a word:
+# `Render.history` — a stream the binary writes to the user's terminal — passed it
+# because "history" occurs in a doc comment. `tests/coverage.py` measures theorem
+# *statements* with comments stripped, and separately requires every byte stream
+# the runtime emits to be classified as proved or bounded. See its header.
+python3 tests/coverage.py | tee /tmp/linger-coverage.log
+tail -1 /tmp/linger-coverage.log | grep -q '^FAILURES: 0$' || fail "coverage.py"
 
 say "2c. fuzz corpus: no held-out mutations, failure lists asserted empty"
 # The §Replay fuzzer is only a guarantee if nothing is excluded and the

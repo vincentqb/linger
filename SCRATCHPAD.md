@@ -4792,3 +4792,73 @@ short and writes past the end vanish. The grid claim needs `GridOk w.cols w.rows
 (i.e. `Renderable w`) on the receiver, alongside `w.cols = v.cols` and
 `w.rows = v.rows`. Worth stating in the theorem rather than a comment: unlike the modes,
 pen and sticky claims, the *cells* cannot be claimed for a literally arbitrary receiver.
+
+## Coverage, generality, and whether the target is too strong — 2026-08-17
+
+Asked to check that the theorem shapes are general enough, that they are about the
+code that runs, and that coverage is **enforced**. Measured rather than reassured;
+three real problems, all now fixed or named.
+
+### 1. The old coverage gate was theatre, and provably so
+`CLAIM_CAP` grepped all of `Theorems/*.lean` for each core def's name. It cannot tell
+a claim from a word, and it was fooled in the worst possible place: **`Render.history`
+— a byte stream the binary writes to the user's terminal — counted as "claimed"
+because the word "history" appears in a doc comment in `Theorems/Session.lean`.**
+Measured: of the ten it flagged, **nine had zero mentions anywhere**, so what it
+actually measured was "is this name absent entirely".
+
+`tests/coverage.py` replaces it with two checks a grep genuinely *can* judge:
+* **statement-level ratchet** — comments stripped, and only the text between
+  `theorem <name>` and the `:=`/`by` counts. Honest number: **27 of 229** core defs
+  named by no theorem statement, where the old gate said 10. The real uncovered
+  surface was 2.7× the ledger's claim.
+* **runtime-emitter classification** — every `Render.<f>` returning `Bytes`/`String`
+  that is referenced outside `Zmx/Core/Render.lean` must be listed as proved or
+  bounded. The runtime's emitter surface is exactly three: `restore`, `leaveAnsi`,
+  `history`.
+
+Break-verified, three ways: claiming `history` is theorem-backed fails (it is in no
+statement); lowering the cap by one fails; pointing the runtime at a fourth emitter
+fails *and* the now-stale entry for the old one fails, so the list cannot drift into a
+description of the past.
+
+Trap worth keeping: my first version of the emitter check reported `rowAnsi`,
+`rowText` and `safeChar` as runtime-emitted — all three hits were **doc comments** in
+`Zmx/Core/Vt.lean`. I had written a gate that reads prose while complaining about a
+gate that reads prose. `strip_comments` is load-bearing in both checks.
+
+### 2. Not general enough — found and fixed
+`restore_cursor` and `resume_cursor` were still quantified over `Vt.init v.cols v.rows`.
+That was an artefact of *when* they were written, not of what they need: the claim is
+about the stream's final `CUP`, which addresses absolutely. The three facts the
+fresh-emulator form got for free are all available for any receiver now — parser
+ground (`restoreBody_grounds`, new), DECOM off (`restoreBody_modes_any`, new — this is
+`restore_modes_any` one chunk earlier), dims unchanged (`dims_feed`). So
+`restore_cursor_any` and `resume_cursor_any`, lifting **anchor A1's cursor half** off
+the fresh-terminal assumption.
+`Good w` on the receiver is honest and load-bearing: `dims_feed` needs it because
+`RIS` re-clamps through `Vt.init`, and `dims_feed_ne_ris` is too crude here — the
+*painted text* contains the byte `0x63`, so "no `ESC c`" is not a byte-set property of
+the stream. Every client's emulator satisfies `Good` (`good_of_liveReachable`).
+Combined with last round's `Good v` → three-inequality weakening of
+`restore_sticky_any`, the over-hypothesis sweep is done for the value claims. The
+remaining `Vt.init`-quantified theorems are either superseded-but-kept
+(`restore_quiesced`, `resume_quiesced`, `resume_exact`) or genuinely *about* `Vt.init`
+(`good_init`, `renderable_init`, `init_dims`, `liveVt_init`).
+
+### 3. Too strong? — the fear is well placed, and the answer is opportunity cost
+`restore_grid_any` is the one candidate for over-reach, and the hazard enumeration
+priced it: it needs `GridOk w` **plus** `w.cols = v.cols` **plus** `w.rows = v.rows`,
+so it is *not* "any receiver" — `ED 2` does not make a short-rowed receiver's rows the
+right length. Against that, the spec's own evidence: of the twelve infidelities found
+in `restore`, **zero** would have been caught by the row induction. It buys
+universality over the fuzz corpus, which is worth having and worth having last.
+Meanwhile the statement-level measure names a queue that is *more* likely to catch
+something, because it is claim-less runtime-facing surface: `infoText` (and Step 0
+ledger item 2 is an **unfixed injection bug** in exactly that framing — labels are not
+tab/newline scrubbed, while `name_clean` proves the status column is), `outputMsgs`/
+`outputChunk` (what a client receives), and the checkpoint codec's
+`parseRecord`/`records`/`knownTag`/`magic`/`writeU32`.
+Recommendation recorded: keep the grid induction last, and treat the claim-less
+runtime surface as the higher-yield queue — the same argument the spec used to order
+Step 1 before Step 4, applied one level out.

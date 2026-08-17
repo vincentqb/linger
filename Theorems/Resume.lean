@@ -90,4 +90,21 @@ theorem resume_cursor (c : Ckpt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need =
    (Render.restore_cursor c.vt hgood ho).1,
    (Render.restore_cursor c.vt hgood ho).2⟩
 
+/-- **§Resume (cursor), receiver-quantified.** The end-to-end cursor claim into *any*
+client's emulator of the session's size, not only a fresh one. `Good w` is what
+`dims_feed` needs of the receiver (see `Render.restore_cursor_any`); every client's
+emulator satisfies it. -/
+theorem resume_cursor_any (c : Ckpt) (w : Vt.Vt) (h : c.vt.pstate = .ground)
+    (h8 : c.vt.u8need = 0) (ha : c.vt.u8acc = 0) (hgood : Vt.Good c.vt)
+    (hgw : Vt.Good w) (hcols : w.cols = c.vt.cols) (hrows : w.rows = c.vt.rows)
+    (ho : c.vt.modes.origin = false)
+    (hmouse : c.vt.modes.mouse = 0 ∨ c.vt.modes.mouse = 1000 ∨ c.vt.modes.mouse = 1002
+      ∨ c.vt.modes.mouse = 1003) :
+    load (save c) = some c
+      ∧ ((w.feed (Render.restore c.vt)).cursor.x = c.vt.cursor.x)
+      ∧ ((w.feed (Render.restore c.vt)).cursor.y = c.vt.cursor.y) :=
+  ⟨Checkpoint.load_save_exact c h h8 ha,
+   (Render.restore_cursor_any c.vt w hgood hgw hcols hrows ho hmouse).1,
+   (Render.restore_cursor_any c.vt w hgood hgw hcols hrows ho hmouse).2⟩
+
 end Zmx.Core
