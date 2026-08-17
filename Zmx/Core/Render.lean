@@ -158,12 +158,15 @@ def penSgr (p : Pen) : Bytes :=
 
 def cellText (c : Cell) : Bytes := utf8 (safeChar c.base) ++ utf8s c.marks
 
-/-- One row as SGR-colored bytes. A width-0 cell is the shadow of the wide char
-to its left: for a grid the emulator produced it paints nothing, because
-`Vt.printMark` keeps marks off shadows and `Row.mend` canonicalizes them, so a
-repaint of the base re-creates it (`Vt.Cell.shadow`). The branch still emits any
-marks it finds there, which is dead code for a live grid and the defensive path
-for a decoded checkpoint, whose rows carry no such guarantee.
+/-- One cell's slot in the row painter's fold, over
+`(bytes so far, the pen already in effect, the next cell index)`.
+
+A width-0 cell is the shadow of the wide char to its left: for a grid the
+emulator produced it paints nothing, because `Vt.printMark` keeps marks off
+shadows and `Row.mend` canonicalizes them, so a repaint of the base re-creates
+it (`Vt.Cell.shadow`). The branch still emits any marks it finds there, which is
+dead code for a live grid and the defensive path for a decoded checkpoint, whose
+rows carry no such guarantee.
 
 A wide cell's **own** marks need the cursor parked *between* the glyph and
 its shadow, or they attach to the shadow instead: `print` puts a mark at
@@ -178,21 +181,29 @@ then addressed one column too far right, which drifted the rest of the row and
 wrapped its last cell into a spurious line feed that scrolled the whole grid.
 Latent until marks were normalized onto the base (`Vt.print`), which is what
 made this branch fire for an ordinary `漢` plus a combining mark; the fuzzer
-found it in the same pass. -/
+found it in the same pass.
+
+Named rather than left as a lambda inside `rowAnsi`, for the reason `modeSet`
+gives above: the row-replay theorem has to *mention* the fold body in its own
+statement, which is impossible for a lambda, and each branch is then reached by
+`rw` on a named equation instead of by reducing a four-way beta-redex per
+cell. -/
+def rowSlot (acc : Bytes × Pen × Nat) (c : Cell) : Bytes × Pen × Nat :=
+  let (s, pen, x) := acc
+  if c.width == 0 then (s ++ utf8s c.marks, pen, x + 1)
+  else
+    let s := if c.pen == pen then s else s ++ penSgr c.pen
+    let body :=
+      if c.width == 2 && !c.marks.isEmpty then
+        utf8 (safeChar c.base) ++ csiNum (x + 2) 0x47 ++ utf8s c.marks
+          ++ csiNum (x + 3) 0x47
+      else cellText c
+    (s ++ body, c.pen, x + 1)
+
+/-- One row as SGR-colored bytes: `rowSlot` folded over the cells, keeping the
+bytes and the pen the row leaves in effect. -/
 def rowAnsi (row : Row) (startPen : Pen) : Bytes × Pen :=
-  let (bs, pen, _) := row.foldl
-    (fun (acc : Bytes × Pen × Nat) c =>
-      let (s, pen, x) := acc
-      if c.width == 0 then (s ++ utf8s c.marks, pen, x + 1)
-      else
-        let s := if c.pen == pen then s else s ++ penSgr c.pen
-        let body :=
-          if c.width == 2 && !c.marks.isEmpty then
-            utf8 (safeChar c.base) ++ csiNum (x + 2) 0x47 ++ utf8s c.marks
-              ++ csiNum (x + 3) 0x47
-          else cellText c
-        (s ++ body, c.pen, x + 1))
-    ([], startPen, 0)
+  let (bs, pen, _) := row.foldl rowSlot ([], startPen, 0)
   (bs, pen)
 
 /-- Join painted rows with CR+LF, no trailing separator (a trailing

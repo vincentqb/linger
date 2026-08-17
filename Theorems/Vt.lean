@@ -2784,6 +2784,30 @@ theorem print_mark_eq {v : Vt} {m : Char}
     exact fun h => hnw h.1)]
   rw [if_neg (show ¬((v.getCell (v.cursor.x - 1) v.cursor.y).marks.length ≥ 8) from by omega)]
 
+/-- The same, for a receiver with **wrap pending**. Not a variation for its own sake:
+the row painter reaches this state on every marked cell in the final column. There the
+advance clamped the column and armed wrap-pending instead of moving, so the glyph the
+mark belongs to sits *at* the cursor rather than one to its left — which is precisely
+the position `printMark`'s `pending` branch exists to name, and the one no absolute
+cursor move can address. -/
+theorem print_mark_pending_eq {v : Vt} {m : Char}
+    (hpc : v.printChar m = m) (hw : charWidth m = 0) (hpend : v.cursor.pending = true)
+    (hnw : (v.getCell v.cursor.x v.cursor.y).width ≠ 0)
+    (hcap : (v.getCell v.cursor.x v.cursor.y).marks.length < 8) :
+    v.print m = (v.putCell v.cursor.x v.cursor.y
+      { v.getCell v.cursor.x v.cursor.y with
+        marks := (v.getCell v.cursor.x v.cursor.y).marks ++ [m] }).mendRow v.cursor.y := by
+  unfold Vt.print
+  simp only [hpc, hw]
+  rw [if_pos (by decide)]
+  unfold Vt.printMark
+  simp only [hpend, if_true]
+  rw [if_neg (show ¬(((v.getCell v.cursor.x v.cursor.y).width == 0
+      && v.cursor.x != 0) = true) from by
+    simp only [Bool.and_eq_true, beq_iff_eq]
+    exact fun h => hnw h.1)]
+  rw [if_neg (show ¬((v.getCell v.cursor.x v.cursor.y).marks.length ≥ 8) from by omega)]
+
 end Zmx.Core.Vt
 
 namespace Zmx.Core.Vt
@@ -4097,6 +4121,15 @@ theorem cursor_print_mark {v : Vt} {m : Char}
     (hcap : (v.getCell (v.cursor.x - 1) v.cursor.y).marks.length < 8) :
     (v.print m).cursor = v.cursor := by
   rw [print_mark_eq hpc hw hpend hx0 hnw hcap, cursor_mendRow, cursor_putCell]
+
+/-- …and it does not *disarm* wrap-pending either, which is what lets a run of marks on
+a final-column glyph all land on the same cell. -/
+theorem cursor_print_mark_pending {v : Vt} {m : Char}
+    (hpc : v.printChar m = m) (hw : charWidth m = 0) (hpend : v.cursor.pending = true)
+    (hnw : (v.getCell v.cursor.x v.cursor.y).width ≠ 0)
+    (hcap : (v.getCell v.cursor.x v.cursor.y).marks.length < 8) :
+    (v.print m).cursor = v.cursor := by
+  rw [print_mark_pending_eq hpc hw hpend hnw hcap, cursor_mendRow, cursor_putCell]
 
 /-! ### `print`: the first operation frames could not cover
 

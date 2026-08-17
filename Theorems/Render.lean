@@ -788,6 +788,7 @@ theorem ends_rowAnsi (row : Row) (p : Pen) : Ends (rowAnsi row p).1 := by
   rw [← Array.foldl_toList]
   refine invariant_foldl (fun acc => Ends acc.1) _ ?_ row.toList ([], p, 0) Ends.nil
   intro acc c hacc
+  unfold rowSlot
   dsimp only
   -- the marked-wide branch is `glyph CHA marks CHA`, four pieces
   repeat' split
@@ -1673,6 +1674,7 @@ theorem quiet_rowAnsi (row : Row) (p : Pen) : Quiet (rowAnsi row p).1 := by
   rw [← Array.foldl_toList]
   refine invariant_foldl (fun acc => Quiet acc.1) _ ?_ row.toList ([], p, 0) Quiet.nil
   intro acc c hacc
+  unfold rowSlot
   dsimp only
   repeat' split
   all_goals first
@@ -5230,6 +5232,7 @@ theorem smap_id_rowAnsi (row : Row) (p : Pen) : SMap id (rowAnsi row p).1 := by
   rw [← Array.foldl_toList]
   refine invariant_foldl (fun acc => SMap id acc.1) _ ?_ row.toList ([], p, 0) SMap.nil
   intro acc c hacc
+  unfold rowSlot
   dsimp only
   repeat' split
   all_goals first
@@ -5835,10 +5838,16 @@ theorem home_places_cursor {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0
 /-- **`CHA` places the column.** `CSI n G` is `setCol (n-1)`: the row is untouched and
 wrap-pending is cleared, which is exactly what the wide-with-marks branch needs of
 it — the mark must attach to the base at `n-2`, and `printMark` steps one left from
-a cursor that is *not* wrap-pending. -/
+a cursor that is *not* wrap-pending.
+
+The `min` is not decoration. The branch's *trailing* `CHA` addresses the column after
+the pair, and for a pair that ends at the margin that column does not exist — so it
+clamps, and the row exits with the cursor on the last column and wrap-pending
+**clear**. An in-range-only statement would have left that case unprovable rather than
+false, which is the shape of hypothesis this spec exists to remove. -/
 theorem cha_places_cursor {v : Vt} (n : Nat) (hg : v.pstate = .ground) (hu : v.u8need = 0)
-    (hn : 0 < n) (hlt : n < 65535) (hx : n - 1 < v.cols) :
-    (v.feed (csiNum n 0x47)).cursor.x = n - 1
+    (hn : 0 < n) (hlt : n < 65535) :
+    (v.feed (csiNum n 0x47)).cursor.x = min (n - 1) (v.cols - 1)
       ∧ (v.feed (csiNum n 0x47)).cursor.y = v.cursor.y
       ∧ (v.feed (csiNum n 0x47)).cursor.pending = false := by
   rw [show csiNum n 0x47 = [0x1B, 0x5B] ++ (digits n ++ [(0x47 : UInt8)]) from by
@@ -5882,7 +5891,7 @@ theorem cha_places_cursor {v : Vt} (n : Nat) (hg : v.pstate = .ground) (hu : v.u
       : CsiState).arg 0 1 - 1) = u.setCol (n - 1)
     rw [harg]]
   unfold Vt.setCol
-  exact ⟨by simp only []; omega, rfl, rfl⟩
+  exact ⟨rfl, rfl, rfl⟩
 
 
 /-! ## §Replay — the cursor, for any receiver
@@ -6526,5 +6535,321 @@ theorem shadow_emits_nothing {g : Row} {k : Nat} (hrow : RowOk g.size g)
   rw [(hrow.pairs k).1 hwid]
   rfl
 
+/-! ### The mark loop
 
-end Zmx.Core.Render
+A cell's marks are printed one at a time *after* its base glyph, and each one lands on
+a cell the previous rung already painted. So the loop does not move the frontier — it
+refines what sits below it, and the honest way to say that is to move the **source
+row**: after `n` marks the receiver agrees with `withMarks g k (ms.take n)`, and after
+all of them with `g` itself. Reusing `Matches` this way is what keeps the fifteen-field
+bookkeeping out of the loop; a bespoke mid-cell invariant would have restated it. -/
+
+/-- The source row with column `k`'s marks replaced. -/
+def withMarks (g : Row) (k : Nat) (ms : List Char) : Row :=
+  g.setIfInBounds k { g.at k with marks := ms }
+
+theorem size_withMarks (g : Row) (k : Nat) (ms : List Char) :
+    (withMarks g k ms).size = g.size := by
+  simp [withMarks]
+
+/-- Out of range it is the identity, which is why no lemma here needs a column bound
+except the one that reads column `k` back. -/
+theorem withMarks_of_ge (g : Row) (k : Nat) (ms : List Char) (h : g.size ≤ k) :
+    withMarks g k ms = g := by
+  simp [withMarks, Array.setIfInBounds, Nat.not_lt.mpr h]
+
+theorem at_withMarks_self (g : Row) (k : Nat) (ms : List Char) (hk : k < g.size) :
+    (withMarks g k ms).at k = { g.at k with marks := ms } := by
+  unfold withMarks Row.at
+  exact getD_set_self g k _ default hk
+
+theorem at_withMarks_ne (g : Row) (k : Nat) (ms : List Char) (j : Nat) (h : j ≠ k) :
+    (withMarks g k ms).at j = g.at j := by
+  unfold withMarks Row.at
+  exact getD_set_ne g k j _ default h
+
+/-- **`withMarks` rewrites nothing but a mark list.** Every column keeps its base, its
+width and its pen — which is what makes the truncated row still pair-consistent, and
+`Cell.shadow` (a blank carrying the base's pen) unchanged. -/
+theorem withMarks_keeps (g : Row) (k : Nat) (ms : List Char) (x : Nat) :
+    ((withMarks g k ms).at x).base = (g.at x).base
+      ∧ ((withMarks g k ms).at x).width = (g.at x).width
+      ∧ ((withMarks g k ms).at x).pen = (g.at x).pen := by
+  by_cases hx : x = k
+  · subst hx
+    by_cases hk : x < g.size
+    · rw [at_withMarks_self g x ms hk]
+      exact ⟨rfl, rfl, rfl⟩
+    · rw [withMarks_of_ge g x ms (by omega)]
+      exact ⟨rfl, rfl, rfl⟩
+  · rw [at_withMarks_ne g k ms x hx]
+    exact ⟨rfl, rfl, rfl⟩
+
+/-- The truncated row is still one a repaint can reproduce.
+
+`hwid` is what the pair clause needs, and the spec named it before the proof: column
+`k` is a glyph — never a shadow — so it is not the second half of anything, and the
+only column whose *content* the pair rule constrains is a shadow. Its own shadow (if
+it has one) is untouched and still canonical, because `Cell.shadow` reads the pen and
+nothing else. -/
+theorem rowOk_withMarks {cols : Nat} {g : Row} {k : Nat} {ms : List Char}
+    (hrow : RowOk cols g) (hwid : (g.at k).width ≠ 0)
+    (hlen : ms.length ≤ 8) (hmk : ∀ m ∈ ms, charWidth m = 0 ∧ Emittable m) :
+    RowOk cols (withMarks g k ms) := by
+  refine ⟨by rw [size_withMarks]; exact hrow.size, fun x => ?_, fun x => ?_⟩
+  · by_cases hx : x = k
+    · subst hx
+      by_cases hk : x < g.size
+      · rw [at_withMarks_self g x ms hk]
+        exact ⟨(hrow.cells x).base, (hrow.cells x).width, hlen, hmk⟩
+      · rw [withMarks_of_ge g x ms (by omega)]
+        exact hrow.cells x
+    · rw [at_withMarks_ne g k ms x hx]
+      exact hrow.cells x
+  · obtain ⟨-, hw, hp⟩ := withMarks_keeps g k ms x
+    refine ⟨fun h2 => ?_, fun h0 => ?_⟩
+    · have h2' : (g.at x).width = 2 := by rw [← hw]; exact h2
+      have hsh : g.at (x + 1) = Cell.shadow (g.at x) := (hrow.pairs x).1 h2'
+      -- column `k` is a glyph, so it is not this pair's shadow — hence untouched
+      have hne : x + 1 ≠ k := by
+        intro hc
+        rw [← hc, hsh] at hwid
+        exact hwid rfl
+      rw [at_withMarks_ne g k ms (x + 1) hne, hsh]
+      exact (shadow_congr hp).symm
+    · have h0' : (g.at x).width = 0 := by rw [← hw]; exact h0
+      obtain ⟨hne0, hpr⟩ := (hrow.pairs x).2 h0'
+      exact ⟨hne0, by rw [(withMarks_keeps g k ms (x - 1)).2.1]; exact hpr⟩
+
+/-- **`Matches … k` reads the source row only below `k`.** So a rung may swap the row
+out from under it for any row that agrees there — which is how the mark loop enters
+(against `withMarks g k []`, the cell as the base glyph alone leaves it) and how it
+leaves (against `g`, once every mark is on). -/
+theorem matches_below {w : Vt} {P : PaintState} {g g' : Row} {k : Nat}
+    (h : ∀ j, j < k → g'.at j = g.at j) (hm : Matches w P g k) : Matches w P g' k := by
+  refine ⟨hm.curX, hm.curY, hm.pend, hm.pen, hm.ground, hm.u8need, hm.u8acc, hm.ins,
+    hm.wrap, hm.ascii0, hm.ascii1, hm.rowLen, hm.inGrid, ?_, ?_⟩
+  · by_cases hk : k = 0
+    · exact Or.inl hk
+    · rcases hm.frontier with hz | hne
+      · exact Or.inl hz
+      · exact Or.inr (by rw [h (k - 1) (by omega)]; exact hne)
+  · intro j hj
+    rw [h j hj]
+    exact hm.cells j hj
+
+/-- Full pointwise agreement, for the loop's *exit*: after every mark is on, the
+receiver matches `withMarks g k (g.at k).marks`, which reads back as `g` at every
+column. -/
+theorem matches_row_congr {w : Vt} {P : PaintState} {g g' : Row} {k : Nat}
+    (h : ∀ j, g'.at j = g.at j) (hm : Matches w P g' k) : Matches w P g k := by
+  refine ⟨hm.curX, hm.curY, hm.pend, hm.pen, hm.ground, hm.u8need, hm.u8acc, hm.ins,
+    hm.wrap, hm.ascii0, hm.ascii1, hm.rowLen, hm.inGrid, ?_, ?_⟩
+  · rcases hm.frontier with hz | hne
+    · exact Or.inl hz
+    · exact Or.inr (by rw [← h (k - 1)]; exact hne)
+  · intro j hj
+    rw [← h j]
+    exact hm.cells j hj
+
+/-- `safeChar` is the identity on a list of emittable marks, so the marks the painter
+re-emits are exactly the ones the cell stored. -/
+theorem map_safeChar_id : ∀ (l : List Char), (∀ x ∈ l, Emittable x) → l.map safeChar = l
+  | [], _ => rfl
+  | a :: l, h => by
+    rw [List.map_cons, safeChar_of_emittable (h a (List.mem_cons_self)),
+      map_safeChar_id l (fun x hx => h x (List.mem_cons_of_mem a hx))]
+
+set_option maxHeartbeats 1000000 in
+/-- **One mark lands on column `k` and moves nothing.** The receiver's row already
+agrees with `withMarks g k done` (the source cell with only the marks seen so far); one
+more `print (safeChar m)` extends that to `withMarks g k (done ++ [safeChar m])`.
+
+`hdisj` is the one fact that distinguishes the interior column from the final one, and
+it is the whole reason the margin case needed its own `printMark` equation: interior,
+the mark attaches one column left of a cursor that already advanced; at the margin the
+cursor is *on* column `k` with wrap-pending, and `print_mark_pending_eq` is what says
+the mark lands there rather than being lost. Both write column `k`, so the tail is
+shared. -/
+theorem mark_step {cols : Nat} {w : Vt} {Q : PaintState} {g : Row} {k : Nat} {done : List Char}
+    (hrow : RowOk cols g) (hcols : w.cols = cols) (hwid : (g.at k).width = 1) (hk : k < cols)
+    (hdisj : (Q.x = k + 1 ∧ Q.pending = false) ∨ (Q.x = k ∧ Q.pending = true))
+    (hcap : done.length < 8) (hdone : ∀ x ∈ done, charWidth x = 0 ∧ Emittable x)
+    (hm : Matches w Q (withMarks g k done) (k + 1))
+    (m : Char) (hmw : charWidth m = 0) (hme : Emittable m) :
+    Matches (w.print (safeChar m)) Q (withMarks g k (done ++ [safeChar m])) (k + 1) := by
+  have hsafe : safeChar m = m := safeChar_of_emittable hme
+  have hcw : charWidth (safeChar m) = 0 := by rw [hsafe]; exact hmw
+  have hpc : w.printChar (safeChar m) = safeChar m := printChar_id_of_ascii hm.ascii0 hm.ascii1
+    (by rw [hsafe]; exact hme.1) (by rw [hsafe]; exact hme.2)
+  have hkg : k < g.size := by rw [hrow.size]; exact hk
+  have hgetk : w.getCell k Q.y = { g.at k with marks := done } := by
+    rw [hm.cells k (by omega), at_withMarks_self g k done hkg]
+  have hyk : w.cursor.y = Q.y := hm.curY
+  have hgs : Q.y < w.grid.size := hm.inGrid
+  have hwk0 : (w.getCell k Q.y).width ≠ 0 := by
+    rw [hgetk]; show (g.at k).width ≠ 0; rw [hwid]; decide
+  have hcapk : (w.getCell k Q.y).marks.length < 8 := by
+    rw [hgetk]; show done.length < 8; exact hcap
+  have hcelleq : ({ w.getCell k Q.y with marks := (w.getCell k Q.y).marks ++ [safeChar m] } : Cell)
+      = { g.at k with marks := done ++ [safeChar m] } := by rw [hgetk]
+  -- the write, whichever branch: the source cell with one more mark
+  obtain ⟨hpm, hcur⟩ :
+      w.print (safeChar m)
+          = (w.putCell k Q.y { g.at k with marks := done ++ [safeChar m] }).mendRow Q.y
+        ∧ (w.print (safeChar m)).cursor = w.cursor := by
+    rcases hdisj with ⟨hQx, hQp⟩ | ⟨hQx, hQp⟩
+    · have hx : w.cursor.x = k + 1 := by rw [hm.curX, hQx]
+      have hpd : w.cursor.pending = false := by rw [hm.pend, hQp]
+      have hx1 : w.cursor.x - 1 = k := by omega
+      have hnw : (w.getCell (w.cursor.x - 1) w.cursor.y).width ≠ 0 := by rw [hx1, hyk]; exact hwk0
+      have hcapp : (w.getCell (w.cursor.x - 1) w.cursor.y).marks.length < 8 := by
+        rw [hx1, hyk]; exact hcapk
+      exact ⟨by rw [print_mark_eq hpc hcw hpd (by omega) hnw hcapp, hx1, hyk, hcelleq],
+        cursor_print_mark hpc hcw hpd (by omega) hnw hcapp⟩
+    · have hx : w.cursor.x = k := by rw [hm.curX, hQx]
+      have hpd : w.cursor.pending = true := by rw [hm.pend, hQp]
+      have hnw : (w.getCell w.cursor.x w.cursor.y).width ≠ 0 := by rw [hx, hyk]; exact hwk0
+      have hcapp : (w.getCell w.cursor.x w.cursor.y).marks.length < 8 := by rw [hx, hyk]; exact hcapk
+      exact ⟨by rw [print_mark_pending_eq hpc hcw hpd hnw hcapp, hx, hyk, hcelleq],
+        cursor_print_mark_pending hpc hcw hpd hnw hcapp⟩
+  -- the source row after this mark, and that it is still reproducible
+  have hmv : ∀ x ∈ done ++ [safeChar m], charWidth x = 0 ∧ Emittable x := by
+    intro x hx
+    rcases List.mem_append.mp hx with h | h
+    · exact hdone x h
+    · rw [List.mem_singleton.mp h, hsafe]; exact ⟨hmw, hme⟩
+  have hrowW : RowOk w.cols (withMarks g k (done ++ [safeChar m])) := by
+    rw [hcols]
+    exact rowOk_withMarks hrow (by rw [hwid]; decide)
+      (by simp only [List.length_append, List.length_cons, List.length_nil]; omega) hmv
+  have hgsW : Q.y < (w.putCell k Q.y { g.at k with marks := done ++ [safeChar m] }).grid.size := by
+    rw [grid_size_putCell]; exact hgs
+  have hfront : (k + 1) = 0
+      ∨ ((withMarks g k (done ++ [safeChar m])).at (k + 1 - 1)).width ≠ 2 :=
+    Or.inr (by
+      rw [show k + 1 - 1 = k from by omega, at_withMarks_self g k (done ++ [safeChar m]) hkg]
+      show (g.at k).width ≠ 2; rw [hwid]; decide)
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, hfront, ?_⟩
+  · rw [hcur]; exact hm.curX
+  · rw [hcur]; exact hm.curY
+  · rw [hcur]; exact hm.pend
+  · rw [pen_print]; exact hm.pen
+  · rw [Zmx.Core.Vt.ps_print]; exact hm.ground
+  · rw [Zmx.Core.Vt.un_print]; exact hm.u8need
+  · rw [ua_print']; exact hm.u8acc
+  · rw [ins_print]; exact hm.ins
+  · rw [wrap_print]; exact hm.wrap
+  · rw [g0_print]; exact hm.ascii0
+  · rw [g1_print]; exact hm.ascii1
+  · show ((w.print (safeChar m)).getRow Q.y).size = (w.print (safeChar m)).cols
+    rw [hpm,
+      show ((w.putCell k Q.y { g.at k with marks := done ++ [safeChar m] }).mendRow Q.y).cols
+          = w.cols from by rw [frame_mendRow, frame_putCell],
+      size_getRow_mendRow _ Q.y hgsW Q.y,
+      size_getRow_putCell_any w k Q.y { g.at k with marks := done ++ [safeChar m] } hgs Q.y]
+    exact hm.rowLen
+  · show Q.y < (w.print (safeChar m)).grid.size
+    rw [hpm, grid_size_mendRow, grid_size_putCell]; exact hgs
+  · intro j hj
+    show (w.print (safeChar m)).getCell j Q.y = (withMarks g k (done ++ [safeChar m])).at j
+    rw [hpm]
+    have hcellsW : ∀ i, i < k + 1 →
+        (w.putCell k Q.y { g.at k with marks := done ++ [safeChar m] }).getCell i Q.y
+          = (withMarks g k (done ++ [safeChar m])).at i := by
+      intro i hi
+      show ((w.putCell k Q.y { g.at k with marks := done ++ [safeChar m] }).getRow Q.y).at i
+        = (withMarks g k (done ++ [safeChar m])).at i
+      rcases Nat.lt_or_ge i k with hik | hik
+      · rw [at_putCell_ne w k Q.y { g.at k with marks := done ++ [safeChar m] } i (by omega) hgs]
+        show w.getCell i Q.y = _
+        rw [hm.cells i (by omega), at_withMarks_ne g k done i (by omega),
+          at_withMarks_ne g k (done ++ [safeChar m]) i (by omega)]
+      · have hik' : i = k := by omega
+        rw [hik', getRow_putCell_self w k Q.y { g.at k with marks := done ++ [safeChar m] } hgs
+            (by rw [hm.rowLen, hcols]; exact hk),
+          at_withMarks_self g k (done ++ [safeChar m]) hkg]
+    exact mend_keeps_prefix (u := w.putCell k Q.y { g.at k with marks := done ++ [safeChar m] })
+      hrowW hcellsW hfront hgsW j hj
+
+set_option maxHeartbeats 1000000 in
+/-- **The mark loop.** Fold `mark_step` over the marks not yet emitted: the receiver's
+row grows from `withMarks g k acc` to `withMarks g k (acc ++ rest.map safeChar)`, and the
+paint state `Q` never moves because a mark moves no cursor. `cols` is fixed once; each
+step's receiver keeps it (`cols_print`), which is what lets the one `RowOk cols g` serve
+the whole fold. -/
+theorem marks_fold {cols : Nat} {Q : PaintState} {g : Row} {k : Nat}
+    (hrow : RowOk cols g) (hwid : (g.at k).width = 1) (hk : k < cols)
+    (hdisj : (Q.x = k + 1 ∧ Q.pending = false) ∨ (Q.x = k ∧ Q.pending = true)) :
+    ∀ (rest : List Char) (u : Vt) (acc : List Char),
+      (∀ x ∈ acc, charWidth x = 0 ∧ Emittable x) →
+      (∀ x ∈ rest, charWidth x = 0 ∧ Emittable x) →
+      acc.length + rest.length ≤ 8 →
+      u.cols = cols →
+      Matches u Q (withMarks g k acc) (k + 1) →
+      Matches (rest.foldl (fun w c => w.print (safeChar c)) u) Q
+        (withMarks g k (acc ++ rest.map safeChar)) (k + 1)
+  | [], u, acc, _, _, _, _, hu => by simpa using hu
+  | m :: rest, u, acc, hacc, hrest, hlen, hucols, hu => by
+    have hmm := hrest m (List.mem_cons_self)
+    have hstep := mark_step (w := u) (cols := cols) hrow hucols hwid hk hdisj
+      (by simp only [List.length_cons] at hlen; omega) hacc hu m hmm.1 hmm.2
+    have hacc' : ∀ x ∈ acc ++ [safeChar m], charWidth x = 0 ∧ Emittable x := by
+      intro x hx
+      rcases List.mem_append.mp hx with h | h
+      · exact hacc x h
+      · rw [List.mem_singleton.mp h, safeChar_of_emittable hmm.2]; exact hmm
+    have hucols' : (u.print (safeChar m)).cols = cols := by rw [cols_print]; exact hucols
+    have hrec := marks_fold hrow hwid hk hdisj rest (u.print (safeChar m)) (acc ++ [safeChar m])
+      hacc' (fun x hx => hrest x (List.mem_cons_of_mem m hx))
+      (by simp only [List.length_append, List.length_cons, List.length_nil] at hlen ⊢; omega)
+      hucols' hstep
+    simpa [List.foldl_cons, List.map_cons, List.append_assoc] using hrec
+
+/-- **One narrow cell with its marks, in the interior.** `step_narrow` paints the base
+glyph, leaving the receiver matching `withMarks g k []`; `marks_fold` then walks the
+marks on. This is the rung `step_narrow` becomes once a cell may carry combining marks —
+`step_narrow` is its `marks = []` special case, kept because the base step reuses it. -/
+theorem step_narrow_marks {w : Vt} {P : PaintState} {g : Row} {k : Nat}
+    (hrow : RowOk w.cols g) (hm : Matches w P g k)
+    (hPx : P.x = k) (hpend : P.pending = false) (hfit : k + 1 < w.cols)
+    (hwid : (g.at k).width = 1) (hpen : (g.at k).pen = P.pen) :
+    Matches (w.feed (cellText (g.at k))) { P with x := k + 1, pending := false } g (k + 1) := by
+  have hkg : k < g.size := by rw [hrow.size]; omega
+  have hmks := (hrow.cells k).marks
+  have hmle := (hrow.cells k).marksLe
+  -- paint the base glyph on the row truncated to no marks at `k`
+  have hrow0 : RowOk w.cols (withMarks g k []) :=
+    rowOk_withMarks hrow (by rw [hwid]; decide) (by simp) (by simp)
+  have hwid0 : ((withMarks g k []).at k).width = 1 := by rw [at_withMarks_self g k [] hkg]; exact hwid
+  have hmk0 : ((withMarks g k []).at k).marks = [] := by rw [at_withMarks_self g k [] hkg]
+  have hpen0 : ((withMarks g k []).at k).pen = P.pen := by
+    rw [at_withMarks_self g k [] hkg]; exact hpen
+  have hm0 : Matches w P (withMarks g k []) k :=
+    matches_below (fun j hj => at_withMarks_ne g k [] j (by omega)) hm
+  have hbase := step_narrow hrow0 hm0 hPx hpend hfit hwid0 hmk0 hpen0
+  -- the base glyph of `g`'s cell is `cellText` of the truncated cell
+  have hbtext : cellText ((withMarks g k []).at k) = utf8 (safeChar (g.at k).base) := by
+    rw [at_withMarks_self g k [] hkg]
+    show utf8 (safeChar (g.at k).base) ++ utf8s [] = utf8 (safeChar (g.at k).base)
+    simp [utf8s]
+  rw [hbtext] at hbase
+  -- so the full cellText is the base glyph then the marks; feed splits there
+  have hct : cellText (g.at k) = utf8 (safeChar (g.at k).base) ++ utf8s (g.at k).marks := rfl
+  rw [hct, feed_append]
+  have hucols : (w.feed (utf8 (safeChar (g.at k).base))).cols = w.cols := by
+    rw [utf8_feed (safeChar (g.at k).base) (safeChar_ge (g.at k).base).1
+      hm.ground hm.u8need hm.u8acc]
+    exact cols_print w (safeChar (g.at k).base)
+  rw [utf8s_feed (g.at k).marks hbase.ground hbase.u8need hbase.u8acc]
+  have hfold := marks_fold (Q := { P with x := k + 1, pending := false }) hrow hwid
+    (by omega : k < w.cols) (Or.inl ⟨rfl, rfl⟩) (g.at k).marks
+    (w.feed (utf8 (safeChar (g.at k).base))) []
+    (by simp) hmks (by simpa using hmle) hucols hbase
+  rw [map_safeChar_id (g.at k).marks (fun x hx => (hmks x hx).2)] at hfold
+  simp only [List.nil_append] at hfold
+  -- exit: the fully-marked truncated row reads back as `g` at every column
+  refine matches_row_congr (fun j => ?_) hfold
+  by_cases hjk : j = k
+  · subst hjk; rw [at_withMarks_self g j (g.at j).marks hkg]
+  · exact at_withMarks_ne g k (g.at k).marks j hjk

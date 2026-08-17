@@ -5106,3 +5106,60 @@ spec is about. The remaining work under item 4 is `rowAnsi_writes_row`, not a re
 Third DoD item this spec has had to restate on contact (1, 3, now 4) — all three for the
 same underlying reason: the plan was written before the shape of the receiver/emitter split
 was understood.
+
+## Step 3 notes — 2026-08-17 (the mark loop)
+
+The mark loop landed, closing Step 3's remaining item 1. Shape used, exactly as the spec
+directed: reuse `Matches` against `withMarks g k acc` (the source row with column `k`'s
+marks truncated) so the fifteen-field bookkeeping is reused, not restated.
+
+New source-row surgery (`withMarks g k ms := g.setIfInBounds k {g.at k with marks := ms}`),
+with `at_withMarks_self` / `at_withMarks_ne` / `size_withMarks` / `withMarks_of_ge` /
+`withMarks_keeps` and `rowOk_withMarks`. The last is the load-bearing one: the truncated
+row is still `RowOk`, because column `k` is a *glyph* (`hwid ≠ 0`) so it is never the second
+half of a pair, and the only content the pair rule constrains is a shadow — which `withMarks`
+leaves untouched. `Cell.shadow` reads the pen only, so a base's shadow stays canonical.
+
+Two `Matches` converters: `matches_below` (agreement below `k` only — the loop's *entry*,
+swapping `g` for `withMarks g k []`) and `matches_row_congr` (full pointwise agreement — the
+*exit*, swapping `withMarks g k (g.at k).marks` back for `g`, which reads back identically at
+every column by structure-eta on `{g.at k with marks := (g.at k).marks}`).
+
+`mark_step` is one mark: `Matches u Q (withMarks g k done) (k+1) → Matches (u.print (safeChar m))
+Q (withMarks g k (done ++ [safeChar m])) (k+1)`. The single hypothesis that separates interior
+from margin is `hdisj : (Q.x = k+1 ∧ ¬pending) ∨ (Q.x = k ∧ pending)`. That disjunction is
+the whole reason `print_mark_pending_eq` / `cursor_print_mark_pending` had to be added to
+`Theorems/Vt.lean`: at the final column the base print clamped the cursor to `cols-1 = k` and
+armed wrap-pending, so the mark attaches *at* the cursor, not one left of it — the position
+`printMark`'s `pending` branch names and no absolute move can address. Both branches write
+column `k`, so the fifteen-field tail is shared.
+
+`marks_fold` folds `mark_step` over the marks. `cols` is threaded as a fixed parameter with a
+per-receiver `u.cols = cols` (kept across the fold by `cols_print`) — the earlier draft wrote
+`RowOk w.cols g` with `w` unbound in the fold and did not compile; the `{cols}` + `hcols`
+shape is the fix. `map_safeChar_id` closes the loop: the re-emitted marks are `safeChar`
+images, equal to the stored marks because every mark is `Emittable`.
+
+`step_narrow_marks` assembles it: `step_narrow` (mark-free, kept) paints the base against
+`withMarks g k []`, then `marks_fold` walks the marks on. So `step_narrow` is now the
+`marks = []` special case of `step_narrow_marks`.
+
+`cha_places_cursor` generalized: dropped `hx : n - 1 < v.cols`, conclusion now
+`min (n-1) (v.cols-1)`. The trailing `CHA` of a final-column marked-wide pair addresses past
+the margin; the old in-range statement would have left that case unprovable, not false.
+
+Gotchas this round, all AGENTS.md-relevant:
+- `set` is Mathlib-only — banned. Rewrote `mark_step` inlining the cell/write terms instead
+  of `set c := … / set W := …`. Cost: verbosity; benefit: it compiles.
+- `List.mem_cons_self` / `List.not_mem_nil` take *no* explicit args in 4.32.0 (`... a l` / `... x`
+  is "function expected"/"type mismatch"). Use bare `List.mem_cons_self`, and `by simp` for the
+  empty-list vacuity.
+- `subst hik'` on `hik' : i = k` eliminated `k` (the older var), leaving my `{g.at k with …}`
+  literals dangling — "unknown identifier k". Use `rw [hik']` to fold `i → k` in the goal instead.
+- `mend_keeps_prefix`'s receiver `u` is inferred from `hrow : RowOk u.cols _`. Stating `hrowW`
+  as `RowOk w.cols _` made it infer `u := w` and reject `hgsW`/`hcellsW` (about the `putCell`).
+  Pass `(u := w.putCell …)` explicitly, as `step_narrow`/`step_wide` already do.
+- `rowSlot` extracted from `rowAnsi`'s inline lambda (so the row-replay theorem can name a
+  def, not a lambda). It is temporarily unclaimed → `STATEMENT_CAP` 21 → 22, with a comment;
+  it comes back down when `rowAnsi_writes_row` names it. The three `dsimp only` sites in
+  `ends_rowAnsi`/`quiet_rowAnsi`/`smap_id_rowAnsi` each needed `unfold rowSlot` first.

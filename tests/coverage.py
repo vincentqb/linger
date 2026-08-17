@@ -53,7 +53,13 @@ ROOT = Path(__file__).resolve().parent.parent
 # Ratchet: pure-core defs named by no theorem *statement*. Only ever goes down
 # without discussion; raising it is a deliberate, reviewable edit that says "new
 # surface, no claim yet".
-STATEMENT_CAP = 21
+#
+# 22 (was 21): `rowSlot` is the row painter's per-cell fold body, extracted from
+# `rowAnsi`'s inline lambda so the row-replay theorem can *name* it — a lambda
+# cannot appear in a theorem statement. Its claim (`rowAnsi_writes_row`, via a
+# `rowSlot`-shaped step lemma) is the next rung; this bump comes back down when it
+# lands. Until then it is honestly "new surface, no claim yet".
+STATEMENT_CAP = 22
 
 # ── Check 2 ────────────────────────────────────────────────────────────────────
 # Every byte stream the runtime emits, and what backs it. `theorem` entries must

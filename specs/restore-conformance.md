@@ -7,11 +7,19 @@ here in a different shape, and its Step 5 archival gate is carried unchanged)
 
 ## Where this stands — read this first
 
-**Next step:** the **mark loop** — Step 3's remaining item 1. Use `Matches` against
-`withMarks g k acc` (the source row with column `k`'s marks truncated) so the
-fifteen-field bookkeeping is reused rather than restated; `PairOk` of the truncated row
-holds because column `k` is narrow, hence neither a base nor a shadow. Then the
-wide-with-marks `CHA`/`CHA` dance, then `rowAnsi_writes_row`, then Step 4.
+**Next step:** the **wide-with-marks rung** — Step 3's item 2. `rowAnsi`'s marked-wide
+branch emits `glyph · CHA(x+2) · marks · CHA(x+3)`, parking the cursor between the glyph
+and its shadow (a mark on a wide glyph must land on the base, and `printMark` steps one
+left). `cha_places_cursor` is in and now covers the final-column clamp (`min (n-1)
+(cols-1)`); what it needs is the two-jump bookkeeping and the `step_wide` base underneath.
+Then `rowAnsi_writes_row` (which will *name* `rowSlot`, bringing the coverage cap back to
+21), then Step 4.
+
+The **mark loop is done** (2026-08-17): `withMarks` + its `at`/`size`/`RowOk` lemmas,
+`matches_below`/`matches_row_congr`, `mark_step` (interior and margin unified by one
+`hdisj` disjunction), `marks_fold`, and `step_narrow_marks` — a narrow cell with its full
+mark list, for any receiver. `print_mark_pending_eq` / `cursor_print_mark_pending` were
+added to carry the margin case, where the cursor is *on* column `k` with wrap-pending.
 
 **Definition-of-done items 4 (partly done) and 5 are all that remain.** Items 1, 2, 2b
 and 3 are done — three of them restated on contact, which is recorded in each — and item
@@ -537,18 +545,26 @@ has to advance by two). `prefix_kept` was refactored into `mend_keeps_prefix` on
 the original bundled "the writes missed the prefix" with "the sweep keeps it", which only
 fits a single write, and the wide rung does two.
 
+**The mark loop landed** (2026-08-17), closing item 1 below. `withMarks g k acc` (the
+source row with column `k`'s marks truncated) is the reused invariant: `rowOk_withMarks`
+shows it is still `RowOk` because column `k` is a glyph, never a shadow, and only a
+shadow's content is pair-constrained. `mark_step` does one mark — interior and margin
+unified by one `hdisj` disjunction, which is why the margin needed
+`print_mark_pending_eq` (the cursor is *on* `k` with wrap-pending, so the mark attaches
+there). `marks_fold` folds it; `step_narrow_marks` assembles base + marks, making
+`step_narrow` its `marks = []` case. `matches_below`/`matches_row_congr` are the row
+swaps at the loop's entry and exit.
+
 **What remains of Step 3**, in order:
-1. the **mark loop** — an inner induction that does not move `k`. The shape to use is
-   `Matches` against `withMarks g k acc` (the source row with column `k`'s marks
-   truncated), so the fifteen-field bookkeeping is reused rather than restated; that needs
-   `withMarks`, its `at`/`size`/`RowOk` lemmas, and the observation that `PairOk` of the
-   truncated row holds because column `k` is narrow (so neither a base nor a shadow);
+1. ~~the **mark loop**~~ — **done** (see above).
 2. the **wide-with-marks** rung — `rowAnsi`'s `CHA`/`CHA` dance, which parks the cursor
    between glyph and shadow because `printMark` steps one left. `cha_places_cursor` is
-   already in; what it needs is the two-jump bookkeeping;
+   already in and now covers the final-column clamp (`min (n-1) (cols-1)`); what it needs
+   is the two-jump bookkeeping and the `step_wide` base underneath it;
 3. `rowAnsi_writes_row` — the fold over the row. Note it inducts over `rowAnsi`'s *byte*
    accumulator, so the invariant is `Matches (w.feed acc.1) …`, using
-   `feed (a ++ b) = feed b ∘ feed a`.
+   `feed (a ++ b) = feed b ∘ feed a`. This is the theorem that will *name* `rowSlot` (the
+   fold body extracted from `rowAnsi`'s lambda), bringing `STATEMENT_CAP` back to 21.
 
 Also landed: `paint_grounds`, the first of `restore_grid_of_paint`'s three hypotheses,
 for any receiver. The `u8need` one is *not* free the same way — the whole stream ends
