@@ -6055,6 +6055,16 @@ theorem history_lines (v : Vt) :
   exact count_rows _
 
 
+/-- `safeChar` is the identity on a character a cell is allowed to hold. The emit-side
+guard and the store-side one agree, which is what lets a repaint reproduce a stored
+cell — `printableChar` on store, `safeChar` on emit, both `Emittable`'s range. -/
+theorem safeChar_of_emittable {c : Char} (h : Emittable c) : safeChar c = c := by
+  unfold safeChar
+  rw [if_neg (by
+    simp only [Bool.or_eq_true, decide_eq_true_eq, beq_iff_eq]
+    obtain ⟨h20, h7⟩ := h
+    omega)]
+
 /-! ## Step 3 — `PaintState` and `Matches`, the row induction's invariant
 
 The monolithic row induction is replaced by a named invariant, which is what makes the
@@ -6175,5 +6185,84 @@ theorem prefix_kept {w : Vt} {g : Row} {y k x : Nat} {c : Cell}
         exact (hrow.pairs j).1 hz)
     rw [h0]
     exact hcells j hj
+
+/-! ### The step lemmas
+
+One per cell shape. Each takes `Matches … k` and returns `Matches … (k+1)` (or `(k+2)`
+for a pair), so the row walk is a fold rather than a case analysis, and each
+re-establishes every field of the invariant the next rung reads.
+
+`hfit : k + 1 < w.cols` is the *interior* case. The final column is deliberately a
+separate rung: there the advance clamps and arms wrap-pending, which is the state the
+2026-08-15 negative result showed no absolute cursor move can express. -/
+
+/-- **One narrow cell with no marks, in the interior of a row.** The first rung. -/
+theorem step_narrow {w : Vt} {P : PaintState} {g : Row} {k : Nat}
+    (hrow : RowOk w.cols g) (hm : Matches w P g k)
+    (hPx : P.x = k) (hpend : P.pending = false) (hfit : k + 1 < w.cols)
+    (hwid : (g.at k).width = 1) (hmk : (g.at k).marks = [])
+    (hpen : (g.at k).pen = P.pen) :
+    Matches (w.feed (cellText (g.at k))) { P with x := k + 1, pending := false } g (k + 1) := by
+  have hem : Emittable (g.at k).base := (hrow.cells k).base
+  have hpc : w.printChar (g.at k).base = (g.at k).base :=
+    printChar_id_of_ascii hm.ascii0 hm.ascii1 hem.1 hem.2
+  have hcw : charWidth (g.at k).base = 1 := by
+    rw [(hrow.cells k).width (by rw [hwid]; omega), hwid]
+  have hpd : w.cursor.pending = false := by rw [hm.pend, hpend]
+  -- the bytes of one cell are one `print`
+  have hfeed : w.feed (cellText (g.at k)) = w.print (g.at k).base := by
+    rw [cellText_feed (g.at k) hm.ground hm.u8need hm.u8acc, hmk, safeChar_of_emittable hem]
+    rfl
+  -- …and one `print` is one write plus an advance
+  have hx : w.cursor.x = k := by rw [hm.curX, hPx]
+  have hwrite := print_narrow_eq hpc hcw hm.ins hpd
+  have hcur := cursor_print_narrow_fits hpc hcw hm.ins hpd (by rw [hx]; exact hfit)
+  have hgs : w.cursor.y < w.clearPending.grid.size := by
+    show w.cursor.y < w.grid.size
+    rw [hm.curY]; exact hm.inGrid
+  have hrl : w.cursor.x < (w.clearPending.getRow w.cursor.y).size := by
+    show w.cursor.x < (w.getRow w.cursor.y).size
+    rw [hm.curY, hm.rowLen, hx]; omega
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · rw [hfeed, hcur]; show w.cursor.x + 1 = k + 1; rw [hx]
+  · rw [hfeed, hcur]; show w.cursor.y = P.y; exact hm.curY
+  · rw [hfeed, hcur]
+  · rw [hfeed, pen_print]; exact hm.pen
+  · rw [hfeed, Zmx.Core.Vt.ps_print]; exact hm.ground
+  · rw [hfeed, Zmx.Core.Vt.un_print]; exact hm.u8need
+  · rw [hfeed, ua_print']; exact hm.u8acc
+  · rw [hfeed, ins_print]; exact hm.ins
+  · rw [hfeed, wrap_print]; exact hm.wrap
+  · rw [hfeed, g0_print]; exact hm.ascii0
+  · rw [hfeed, g1_print]; exact hm.ascii1
+  · -- the painted row is still `cols` long: a write and a sweep resize nothing
+    show ((w.feed (cellText (g.at k))).getRow P.y).size = (w.feed (cellText (g.at k))).cols
+    rw [hfeed, hwrite]
+    obtain ⟨hcl, -, hrw⟩ := write_shape w.clearPending w.cursor.x w.cursor.y
+      { base := (g.at k).base, marks := [], width := 1, pen := w.pen } 1 hgs
+    rw [hcl, hrw P.y]
+    show (w.getRow P.y).size = w.cols
+    exact hm.rowLen
+  · show P.y < (w.feed (cellText (g.at k))).grid.size
+    rw [hfeed, hwrite]
+    obtain ⟨-, hgz, -⟩ := write_shape w.clearPending w.cursor.x w.cursor.y
+      { base := (g.at k).base, marks := [], width := 1, pen := w.pen } 1 hgs
+    rw [hgz]
+    show P.y < w.grid.size
+    exact hm.inGrid
+  · exact Or.inr (by rw [show k + 1 - 1 = k from by omega, hwid]; decide)
+  · -- the cells: the prefix by `prefix_kept`, column `k` by the write itself
+    intro j hj
+    show (w.feed (cellText (g.at k))).getCell j P.y = g.at j
+    rw [hfeed, hwrite, getCell_printAdvance, show P.y = w.cursor.y from hm.curY.symm]
+    rcases Nat.lt_or_ge j k with hjk | hjk
+    · exact prefix_kept hrow (fun i hi => by rw [hm.curY]; exact hm.cells i hi)
+        hm.frontier hgs (by omega) j hjk
+    · have hje : j = k := by omega
+      subst hje
+      -- the write's index is the receiver's cursor; `hx` is what identifies it with `j`
+      rw [hx] at hrl ⊢
+      rw [getCell_write_mendRow_narrow _ _ _ _ rfl hgs hrl]
+      exact Cell.ext' rfl hmk.symm hwid.symm (hm.pen.trans hpen.symm)
 
 end Zmx.Core.Render

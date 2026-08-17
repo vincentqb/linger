@@ -5005,3 +5005,37 @@ Remaining for Step 3: the step lemmas (narrow, wide, mark, pen change) and
 `rowAnsi_writes_row`. Known missing pieces for them, from writing the narrow one on
 paper: `safeChar_of_emittable`, and size/grid-size preservation through `print`
 (`Row.mend` preserves size via `setIfInBounds`, but nothing names it).
+
+### Step 3: the first step lemma — `step_narrow` — 2026-08-17
+One narrow, mark-free cell in the interior of a row: `Matches … k → Matches … (k+1)`,
+re-establishing all fifteen fields. The rung the whole row walk is built from.
+
+Shape: `cellText_feed` turns the cell's bytes into one `print`; `print_narrow_eq` turns
+that print into a write plus an advance; `cursor_print_narrow_fits` gives the cursor;
+`off_print`'s corollaries give pen/parser/modes/charsets; `write_shape` (new) gives the
+two shape fields; `prefix_kept` gives columns `< k` and `getCell_write_mendRow_narrow`
+gives column `k`. Nothing in it is novel — which is the point of having built the layer
+first.
+
+Plumbing that was missing and is now in: `safeChar_of_emittable` (the emit-side guard is
+the identity on what a cell may hold — `printableChar` on store and `safeChar` on emit
+share `Emittable`'s range), `size_getRow_putCell_any`, `grid_size_mendRow`,
+`size_getRow_mendRow`, `Cell.ext'` (no `ext` without Mathlib), and `write_shape` — stated
+about the *composite* `((u.putCell x y c).mendRow y).printAdvance n` rather than about
+`print`, because under `print_narrow_eq`'s hypotheses that composite **is** the print,
+whereas a general statement for `print` would have to reason through `printWrap`'s scroll,
+which those hypotheses exist to rule out.
+
+Traps:
+* `subst` on `hje : j = k` eliminates `k`, so afterwards everything is phrased in `j`; and
+  `rw [← hx]` to align the write's index rewrites *inside* `g.at k` too, breaking the
+  cell hypotheses. Rewrite the goal's index forward (`rw [hx] at hrl ⊢`) instead.
+* `size_mendAt` and `size_mend` already existed (2218, 2366) and I added duplicates.
+  Second time this session that "verify before adding" would have saved a build — the
+  first was the map's false gaps. Grep for the *name* before writing the lemma, always.
+* All three hypotheses (`hfit`, `hmk`, `hpen`) verified load-bearing by replacing each
+  with `True`. **My first attempt at that test reported `hfit` as not load-bearing**, and
+  it was a quoting bug in the shell loop that fed python a pattern matching something
+  else. A broken break-test reads exactly like a passing one — so when a hypothesis comes
+  back "not load-bearing", check the harness before believing it, and prefer one explicit
+  invocation per hypothesis over a loop.

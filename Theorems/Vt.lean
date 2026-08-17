@@ -2556,6 +2556,62 @@ theorem getCell_write_mendRow_wide (u : Vt) (x y : Nat) (cb : Cell)
   rw [getCell_mendRow_same _ _ _ hgs, getCell_mendRow_same _ _ _ hgs]
   exact ⟨by rw [hkeep.1]; exact hbase, by rw [hkeep.2]; exact hshadow⟩
 
+/-! #### Shapes: the repair sweep resizes nothing
+
+`Matches` carries two shape facts — the painted row is `cols` long and its index is in
+the grid — and no frame covers them, because both are about the grid a write *does*
+touch. `mendAt` and `putCell` both go through `setIfInBounds`, so both are preserved
+(`size_mendAt`/`size_mend` above); these lift that to the `Vt` level. -/
+
+theorem size_getRow_putCell_any (u : Vt) (x y : Nat) (c : Cell) (hy : y < u.grid.size)
+    (y' : Nat) : ((u.putCell x y c).getRow y').size = (u.getRow y').size := by
+  by_cases h : y' = y
+  · subst h; exact size_getRow_putCell _ _ _ _ hy
+  · unfold Vt.putCell Vt.getRow
+    dsimp only
+    rw [getD_set_ne _ _ _ _ _ h]
+
+/-- Structure equality by fields; there is no `ext` without Mathlib. -/
+theorem Cell.ext' {a b : Cell} (hb : a.base = b.base) (hm : a.marks = b.marks)
+    (hw : a.width = b.width) (hp : a.pen = b.pen) : a = b := by
+  cases a; cases b; simp_all
+
+theorem grid_size_mendRow (u : Vt) (y : Nat) : (u.mendRow y).grid.size = u.grid.size := by
+  unfold Vt.mendRow
+  simp
+
+theorem size_getRow_mendRow (u : Vt) (y : Nat) (hy : y < u.grid.size) (y' : Nat) :
+    ((u.mendRow y).getRow y').size = (u.getRow y').size := by
+  by_cases h : y' = y
+  · subst h
+    unfold Vt.mendRow Vt.getRow
+    dsimp only
+    rw [getD_set_self _ _ _ _ hy, size_mend]
+  · unfold Vt.mendRow Vt.getRow
+    dsimp only
+    rw [getD_set_ne _ _ _ _ _ h]
+
+/-- **The write term's shape**, as the row induction needs it: a cell write, its repair
+sweep and the cursor advance change no dimension, no row length and no row count. Stated
+about the composite rather than about `print`, because under `print_narrow_eq`'s
+hypotheses that composite *is* the print — and the general statement for `print` would
+have to reason through `printWrap`'s scroll, which these hypotheses rule out. -/
+theorem write_shape (u : Vt) (x y : Nat) (c : Cell) (n : Nat) (hy : y < u.grid.size) :
+    (((u.putCell x y c).mendRow y).printAdvance n).cols = u.cols
+      ∧ (((u.putCell x y c).mendRow y).printAdvance n).grid.size = u.grid.size
+      ∧ ∀ y', ((((u.putCell x y c).mendRow y).printAdvance n).getRow y').size
+              = (u.getRow y').size := by
+  have hgs : y < (u.putCell x y c).grid.size := by rw [grid_size_putCell]; exact hy
+  refine ⟨?_, ?_, ?_⟩
+  · rw [frame_printAdvance, frame_mendRow, frame_putCell]
+  · rw [frame_printAdvance, grid_size_mendRow, grid_size_putCell]
+  · intro y'
+    rw [show (((u.putCell x y c).mendRow y).printAdvance n).getRow y'
+        = ((u.putCell x y c).mendRow y).getRow y' from by
+      unfold Vt.getRow
+      rw [frame_printAdvance]]
+    rw [size_getRow_mendRow _ y hgs y', size_getRow_putCell_any u x y c hy y']
+
 /-! #### The within-row frame — the k-th write does not disturb columns already painted
 
 The frames above cover the columns a write *touches* and every other *row*. The row

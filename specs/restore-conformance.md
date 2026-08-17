@@ -503,8 +503,24 @@ the induction. Three clusters, all now closed:
 `prefix_kept`'s width-2 case, which is the case where the shadow would sit at `k`,
 unpainted, and the sweep would blank the base the previous rung had just painted.
 
-What remains of Step 3 is the step lemmas themselves (narrow, wide, mark, pen change) and
-`rowAnsi_writes_row`.
+**The first step lemma landed too**: `step_narrow` — one narrow, mark-free cell in the
+interior of a row, `Matches … k → Matches … (k+1)`, re-establishing all fifteen fields.
+Nothing in it is novel, which is the point of having built the layer first: the cell's
+bytes become one `print` (`cellText_feed`), the print becomes a write plus an advance
+(`print_narrow_eq`), and the invariant's fields fall to `cursor_print_narrow_fits`,
+`off_print`'s corollaries, `write_shape` and `prefix_kept`. All three of its hypotheses
+are verified load-bearing.
+
+`write_shape` is worth noting: it is stated about the *composite*
+`((u.putCell x y c).mendRow y).printAdvance n` rather than about `print`, because under
+`print_narrow_eq`'s hypotheses that composite **is** the print — where a general
+statement for `print` would have to reason through `printWrap`'s scroll, which those
+hypotheses exist to rule out.
+
+What remains of Step 3: the other step lemmas — narrow at the right margin (where the
+advance clamps and arms wrap-pending), the wide pair (one rung, `k` to `k+2`), the mark
+loop (an inner induction that does not move `k`), and the pen change — then
+`rowAnsi_writes_row` folding them over the row.
 
 Also landed: `paint_grounds`, the first of `restore_grid_of_paint`'s three hypotheses,
 for any receiver. The `u8need` one is *not* free the same way — the whole stream ends
