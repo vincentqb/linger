@@ -4935,3 +4935,33 @@ statement does not mention the function that runs is a claim *next to* the code,
 about it — which is the same failure the coverage gate was built to catch, one level in.
 This is now the second time today that shape appeared; worth watching for in the
 remaining queue.
+
+### The last limitation closed — `history` proved — 2026-08-17
+`Render.history` was the one entry in `tests/coverage.py`'s EMITTERS table classified as
+*bounded* rather than proved, because it was assembled through `String`
+(`rowText` → `String.intercalate` → `String.toUTF8`) and a `String` does not reduce in
+the kernel. Walked the route the entry itself recorded: `rowChars` and
+`dropTrailingBlanks` as named stages, `rowText : Row → Bytes`, and `history`'s plain
+branch as `rows.flatMap (fun row => rowText row ++ [0x0A])`.
+
+* `history_framing` — every byte is a line terminator or printable content.
+* `history_lines` — the newline count **is** the row count. This is the claim that
+  matters: `linger history` is line-oriented output a caller may parse, and a cell is
+  attacker-influenced (a program in the session writes whatever it likes into the grid),
+  so "a cell cannot forge a line" is the same §Row-integrity property as `infoText`'s.
+* `rowChars_scrubbed` — the scrubbing happens at the **fold**, not only at the encoder.
+  Worth its own theorem: `rowText_scrubbed` is true regardless, because `utf8s` scrubs
+  again on the way out, so without this the claim would rest on a single guard.
+  Break-verified by dropping the `safeChar` in the fold — only `rowChars_scrubbed` fails,
+  which is exactly the point (the outer guard still holds).
+
+Behavioural note recorded in the docstring: the old shape emitted a lone newline for an
+*empty* row list, the new one emits nothing. Unreachable for a live session (`clampDim`
+keeps a grid at ≥ 1 row) and the more honest output for a decoded checkpoint.
+
+`Tests/Vt.lean`'s harness used `rowText` for readable string assertions; the decode
+(`plain`) moved into the harness rather than keeping the production path on `String`.
+The test harness adapts; the production code gets to be provable.
+
+**EMITTERS is now four entries and no limitations**: `restore`, `leaveAnsi`, `history`,
+`utf8s` — all proved. Statement ratchet 27 → 21 over this request.

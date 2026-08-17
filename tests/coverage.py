@@ -53,7 +53,7 @@ ROOT = Path(__file__).resolve().parent.parent
 # Ratchet: pure-core defs named by no theorem *statement*. Only ever goes down
 # without discussion; raising it is a deliberate, reviewable edit that says "new
 # surface, no claim yet".
-STATEMENT_CAP = 23
+STATEMENT_CAP = 21
 
 # ── Check 2 ────────────────────────────────────────────────────────────────────
 # Every byte stream the runtime emits, and what backs it. `theorem` entries must
@@ -71,16 +71,12 @@ EMITTERS = {
                          "not DEL, so no scrubbed text can carry an escape, a BEL, or "
                          "a tab/newline framing byte. Reached from outside Render by "
                          "Session.infoText, which frames listing records with it"),
-    "history": ("limitation", "the one emitter still assembled through `String` "
-                              "(`rowText` + `String.intercalate` + `String.toUTF8`), "
-                              "which is the shape Zmx/Core/Render.lean's header says "
-                              "makes output unprovable — a String literal does not "
-                              "reduce in the kernel. Bounded instead of proved: every "
-                              "character goes through `Render.safeChar`, the CLI only "
-                              "ever passes `withAnsi = false` (`Session.onMsg`), and "
-                              "`tests/attach_test.py` step 3 exercises it. To promote "
-                              "this to a theorem, restructure `history` to build "
-                              "`List UInt8` directly as the rest of the module does."),
+    "history": ("theorem", "history_framing / history_lines — every byte is a line "
+                           "terminator or printable content, and the newline count is "
+                           "the row count, so a cell cannot forge a line however the "
+                           "session's program filled the grid. Was the last emitter "
+                           "assembled through `String` (unprovable: a String does not "
+                           "reduce in the kernel); `rowText` now builds List UInt8"),
 }
 
 

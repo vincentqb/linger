@@ -16,7 +16,14 @@ def feedStr (v : Vt) (s : String) : Vt := v.feedBytes s.toUTF8
 
 def screen (cols rows : Nat) (s : String) : Vt := feedStr (Vt.init cols rows) s
 
-def rowStr (v : Vt) (y : Nat) : String := rowText (v.getRow y)
+def plain (row : Row) : String :=
+  (String.fromUTF8? ⟨(rowText row).toArray⟩).getD ""
+
+/-- `rowText` builds bytes now (it was the last emitter assembled through `String`,
+which is what made `linger history` unprovable — see `Render.history_lines`). The
+fixtures still read better against string literals, so the decode lives here in the
+harness rather than in the production path. -/
+def rowStr (v : Vt) (y : Nat) : String := plain (v.getRow y)
 
 /-- Plain echo with newline: CR+LF discipline. -/
 example : (let v := screen 10 3 "hi\r\nyo"
@@ -130,7 +137,7 @@ example : (let v := screen 10 4 "a\r\nb\r\nc\r\nd\x1b[2;3r\x1b[3;1H\nX"
 /-- Scrollback: lines pushed off the top are retained (ring, capped). -/
 example : (let v := screen 5 2 "1\r\n2\r\n3\r\n4"
            v.sb.size == 2
-             && (v.sb.toList.map rowText) == ["1", "2"]) = true := by native_decide
+             && (v.sb.toList.map plain) == ["1", "2"]) = true := by native_decide
 
 /-- ED 3 wipes scrollback. -/
 example : (let v := screen 5 2 "1\r\n2\r\n3\r\n4\x1b[3J"

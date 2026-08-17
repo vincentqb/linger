@@ -12,8 +12,8 @@ no theorem could see that `csi` is `[0x1B, 0x5B]` (`decide` gets stuck
 on `"\x1b[".toUTF8`). Everything here now builds `List UInt8` through
 named stages — `digits`, `utf8`, `csiNum`, `penSgr`, `rowAnsi` — each of
 which the §Replay ladder in `Theorems/Render.lean` can state a lemma
-about. Only `rowText` (plain text for `history`) still produces a
-`String`, because there its output *is* text.
+about. `rowText` (plain text for `history`) was the last holdout and is now
+bytes too, which is what let `history_framing`/`history_lines` be stated at all.
 
 Emitted characters pass `safeChar`: a C0/DEL codepoint is replaced by
 U+FFFD. That makes the emitter's output provably free of control bytes
@@ -503,15 +503,37 @@ def leaveAnsi : Bytes :=
 
 /-! ## History (text) -/
 
-/-- Row as plain text (no SGR), trailing blanks trimmed. -/
-def rowText (row : Row) : String :=
-  let s := row.foldl
-    (fun (acc : String) c =>
+/-- One row's characters, width-0 shadows skipped, every codepoint scrubbed. A named
+stage so the trim and the encoding are separate steps a lemma can talk about. -/
+def rowChars (row : Row) : List Char :=
+  row.foldl
+    (fun (acc : List Char) c =>
       if c.width == 0 then acc
-      else acc ++ (safeChar c.base).toString ++ String.ofList (c.marks.map safeChar)) ""
-  (s.dropEndWhile (· == ' ')).toString
+      else acc ++ [safeChar c.base] ++ c.marks.map safeChar) []
 
-/-- Scrollback + screen, oldest first; for `linger history`. -/
+/-- Drop trailing blanks. On the character list rather than on the bytes, though the
+two agree: no byte of a multi-byte UTF-8 sequence is `0x20`. -/
+def dropTrailingBlanks (cs : List Char) : List Char :=
+  (cs.reverse.dropWhile (· == ' ')).reverse
+
+/-- Row as plain text bytes (no SGR), trailing blanks trimmed.
+
+This used to build a `String` — `(s.dropEndWhile (· == ' ')).toString` over a fold of
+`String` appends — and it was the last thing in this module that did. That is the shape
+the header above says makes output unprovable: a `String` does not reduce in the kernel,
+so no theorem could see the bytes `linger history` writes to a terminal. Byte-level now,
+so `history_framing` and `history_lines` can say that a cell cannot inject a line
+break. -/
+def rowText (row : Row) : Bytes := utf8s (dropTrailingBlanks (rowChars row))
+
+/-- Scrollback + screen, oldest first; for `linger history`.
+
+The plain branch emits one `LF`-terminated line per row. It was
+`String.intercalate "\n" (rows.map rowText) ++ "\n"`, which agrees with this for every
+reachable state and differs only when there are *no* rows at all: the old shape emitted a
+lone newline, this emits nothing. A grid always has at least one row (`clampDim`), so the
+difference is unreachable for a live session and is the more honest output for a decoded
+one. -/
 def history (v : Vt) (withAnsi : Bool) : Bytes :=
   let rows := v.sb.toList ++ v.grid.toList
   if withAnsi then
@@ -522,6 +544,6 @@ def history (v : Vt) (withAnsi : Bool) : Bytes :=
       ([], ({} : Pen))
     body
   else
-    (String.intercalate "\n" (rows.map rowText) ++ "\n").toUTF8.toList
+    rows.flatMap (fun row => rowText row ++ [0x0A])
 
 end Zmx.Core.Render
