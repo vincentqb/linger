@@ -237,3 +237,44 @@ example :
        | _ => false)) = true := by native_decide
 
 end Abduco
+
+namespace Zmx.Core.Session.Tests
+
+open Zmx.Core.Session
+
+/-! ### §Row/§Status integrity — the forged listing record
+
+Step 0 ledger item 2 of `specs/restore-conformance.md`, as a fixture. `infoText` frames
+records as `k` TAB `v` LF, `.labelSet` applies no filter and `linger set` passes the
+value through — so a label value carrying a newline and a tab used to forge an **extra
+record**, including a `status`/`state` pair that `linger list` would then display as the
+session's state.
+
+`infoText_records` proves it cannot happen now. These pin the *before* as well, so the
+channel is documented rather than merely closed: the old `String`-interpolation shape is
+computed here and shown to produce one newline too many. -/
+
+def forged : State :=
+  { s0 with labels := [("x", "a\nstatus\tlive")] }
+
+/-- The value really does carry the two framing characters. -/
+example : ("a\nstatus\tlive".toList.any (fun c => c == '\n')
+    && "a\nstatus\tlive".toList.any (fun c => c == '\t')) = true := by native_decide
+
+/-- **The bug, pinned.** The old shape — `String.join` of `s!"{k}\t{v}\n"`, then
+`String.toUTF8` — emits one newline *more* than there are fields, which is exactly one
+forged record. -/
+example : ((String.join ((infoFields forged).map
+      (fun (kv : String × String) => s!"{kv.1}\t{kv.2}\n"))).toUTF8.toList).count 0x0A
+    = (infoFields forged).length + 1 := by native_decide
+
+/-- **The fix.** One record per field, with the injected control characters replaced by
+U+FFFD on the way out. -/
+example : (infoText forged).count 0x0A = (infoFields forged).length := by native_decide
+
+example : (infoText forged).count 0x09 = (infoFields forged).length := by native_decide
+
+/-- And the replacement really is in the value, so nothing was silently dropped. -/
+example : (infoText forged).any (· == 0xEF) = true := by native_decide
+
+end Zmx.Core.Session.Tests

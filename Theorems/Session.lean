@@ -2,6 +2,7 @@ import Zmx.Core.Session
 import Theorems.Wire
 import Theorems.Vt
 import Theorems.Terminal
+import Theorems.Render
 /-! # §Detach / §Bound(session) — the daemon state machine theorems
 
 THEOREMS.md rows:
@@ -783,5 +784,89 @@ theorem resizeEffects_atMostOne (s : State) (c : Client) :
   unfold resizeEffects; split
   · exact Or.inr rfl
   · exact Or.inl rfl
+
+end Zmx.Core.Session
+
+namespace Zmx.Core.Session
+
+open Zmx.Core.Vt
+
+/-! ## §Row / §Status integrity — a listing record cannot be forged
+
+`Status.name_clean` proves the *status* column carries neither framing byte, which is
+what lets the porcelain be tab-separated with no escaping pass. This is the same
+promise for every **other** column — and it was false until 2026-08-17.
+
+`infoText` framed its records with a `String` interpolation, so a label value
+containing a newline forged an extra record: `.labelSet` applies no filter and
+`linger set` passes the value through, so `linger set s x=$'a\nstatus\tlive'` put a
+`status`/`state` pair into the listing that `Status.classify`'s consumers would read as
+the session's state. Recorded as Step 0 ledger item 2 in
+`specs/restore-conformance.md`; fixed at the **emit site**, which is why the claims
+below need no hypothesis about where a field came from.
+
+The fix is also what makes them provable at all: the old shape ended in
+`String.toUTF8`, and a `String` does not reduce in the kernel — the same argument
+`Zmx/Core/Render.lean`'s header makes, and the reason `Render.history` is still only
+*bounded* rather than proved (`tests/coverage.py`). `infoText` now builds
+`List UInt8` directly. -/
+
+/-- Scrubbed glyph bytes are ≥ 0x20, so neither framing byte can come out of a key or
+a value. `Render.utf8s` maps a C0 control — tab and newline included — to U+FFFD. -/
+theorem utf8s_no_frame (cs : List Char) :
+    ∀ b ∈ Render.utf8s cs, b ≠ 0x09 ∧ b ≠ 0x0A := by
+  intro b hb
+  obtain ⟨hge, -⟩ := Render.utf8s_no_ctl cs b hb
+  exact ⟨fun he => by rw [he] at hge; exact absurd hge (by decide),
+         fun he => by rw [he] at hge; exact absurd hge (by decide)⟩
+
+/-- **Every byte of a listing is a framing byte or printable content.** -/
+theorem infoText_framing (s : State) :
+    ∀ b ∈ infoText s, b = 0x09 ∨ b = 0x0A ∨ (0x20 ≤ b ∧ b ≠ 0x7F) := by
+  intro b hb
+  unfold infoText at hb
+  simp only [List.mem_flatMap] at hb
+  obtain ⟨kv, -, hmem⟩ := hb
+  rcases List.mem_append.mp hmem with h | h
+  · rcases List.mem_append.mp h with h' | h'
+    · rcases List.mem_append.mp h' with h'' | h''
+      · exact Or.inr (Or.inr (Render.utf8s_no_ctl _ b h''))
+      · simp only [List.mem_singleton] at h''
+        exact Or.inl h''
+    · exact Or.inr (Or.inr (Render.utf8s_no_ctl _ b h'))
+  · simp only [List.mem_singleton] at h
+    exact Or.inr (Or.inl h)
+
+private theorem count_utf8s_frame (cs : List Char) (b : UInt8) (hb : b = 0x09 ∨ b = 0x0A) :
+    (Render.utf8s cs).count b = 0 := by
+  rw [List.count_eq_zero]
+  intro hmem
+  obtain ⟨h9, h10⟩ := utf8s_no_frame cs b hmem
+  rcases hb with h | h
+  · exact h9 h
+  · exact h10 h
+
+private theorem count_frame : ∀ (l : List (String × String)) (b : UInt8),
+    b = 0x09 ∨ b = 0x0A →
+    (l.flatMap (fun kv => Render.utf8s kv.1.toList ++ [0x09]
+      ++ Render.utf8s kv.2.toList ++ [0x0A])).count b = l.length
+  | [], _, _ => rfl
+  | kv :: t, b, hb => by
+    have hz : ∀ cs : List Char, (Render.utf8s cs).count b = 0 :=
+      fun cs => count_utf8s_frame cs b hb
+    rw [List.flatMap_cons, List.count_append, count_frame t b hb]
+    simp only [List.count_append, hz]
+    rcases hb with h | h <;> subst h <;> simp <;> omega
+
+/-- **One record per field, structurally.** As many newlines as fields and as many tabs
+as fields — so a field *cannot* forge a record, however it was set. This is the
+anti-forgery claim: an injected newline would make the newline count exceed the field
+count, and `Remote.parseRecord` reads one record per line. -/
+theorem infoText_records (s : State) :
+    (infoText s).count 0x0A = (infoFields s).length
+      ∧ (infoText s).count 0x09 = (infoFields s).length := by
+  unfold infoText
+  exact ⟨count_frame (infoFields s) 0x0A (Or.inr rfl),
+         count_frame (infoFields s) 0x09 (Or.inl rfl)⟩
 
 end Zmx.Core.Session

@@ -53,7 +53,7 @@ ROOT = Path(__file__).resolve().parent.parent
 # Ratchet: pure-core defs named by no theorem *statement*. Only ever goes down
 # without discussion; raising it is a deliberate, reviewable edit that says "new
 # surface, no claim yet".
-STATEMENT_CAP = 27
+STATEMENT_CAP = 26
 
 # ── Check 2 ────────────────────────────────────────────────────────────────────
 # Every byte stream the runtime emits, and what backs it. `theorem` entries must
@@ -66,6 +66,11 @@ EMITTERS = {
                            "restored field but the screen cells"),
     "leaveAnsi": ("theorem", "leave_canonical / leave_canonical_all — parser, modes, "
                              "region, charsets, screen and pen, for any receiver"),
+    "utf8s": ("theorem", "utf8s_no_ctl / utf8s_no_esc / utf8s_no_esc_bel / "
+                         "Session.utf8s_no_frame — every emitted byte is >= 0x20 and "
+                         "not DEL, so no scrubbed text can carry an escape, a BEL, or "
+                         "a tab/newline framing byte. Reached from outside Render by "
+                         "Session.infoText, which frames listing records with it"),
     "history": ("limitation", "the one emitter still assembled through `String` "
                               "(`rowText` + `String.intercalate` + `String.toUTF8`), "
                               "which is the shape Zmx/Core/Render.lean's header says "

@@ -4862,3 +4862,49 @@ tab/newline scrubbed, while `name_clean` proves the status column is), `outputMs
 Recommendation recorded: keep the grid induction last, and treat the claim-less
 runtime surface as the higher-yield queue — the same argument the spec used to order
 Step 1 before Step 4, applied one level out.
+
+## Ledger item 2 fixed and proved — the forged listing record — 2026-08-17
+
+Went to the top of the queue the new statement-level coverage measure produced, and it
+was there for a reason: `infoText` had no theorem **and** a live injection bug.
+
+`infoText` framed records as `k` TAB `v` LF through a `String` interpolation, and
+`.labelSet`/`linger set` apply no filter — so `linger set s x=$'a\nstatus\tlive'` forged
+an extra record, including a `status`/`state` pair that `linger list` would display as
+the session's state. `Status.name_clean` proves the *status* column carries no framing
+byte; every other column bypassed it.
+
+**Fixed at the emit site, not at `.labelSet`.** `infoText` now builds `List UInt8` with
+`Render.utf8s`, which maps a C0 control — tab and newline included — to U+FFFD. Same
+argument `gridAnsi` makes for establishing its own pen: a guard at the emit site needs
+no invariant about where the field came from, and it covers fields nobody has added yet.
+A scrub at the setter would have had to be repeated for every future field.
+
+**The restructure is what made it provable, and that is the transferable part.** The old
+shape ended in `String.toUTF8`, and a `String` does not reduce in the kernel — the exact
+argument in `Zmx/Core/Render.lean`'s header. Byte-level now, so:
+* `infoText_framing` — every byte is a framing byte or printable content;
+* `infoText_records` — as many newlines *and* as many tabs as fields. This is the
+  anti-forgery claim: an injected newline would push the count above the field count,
+  and `Remote.parseRecord` reads one record per line.
+`infoFields` split out as a named stage so the framing claim has something to count.
+
+Fixture pins the **before** as well as the after, which is worth doing when the fix
+deletes the buggy shape: `Tests/Session.lean` computes the old
+`String.join`/`toUTF8` path on the same state and shows it emits *one newline too many*.
+So the channel is documented, not merely closed. Break-verified: restoring the
+interpolation fails both theorems and three fixtures.
+
+### What the coverage gate did while I worked
+It fired twice, correctly, and both times on real signal rather than noise:
+* after the restructure, `Render.utf8s` became byte-producing code reached from outside
+  `Render` (by `Session.infoText`). The gate demanded it be classified. It is genuinely
+  theorem-backed (`utf8s_no_ctl`, `utf8s_no_esc`, `utf8s_no_esc_bel`, and the new
+  `utf8s_no_frame`), so classifying it was the right answer rather than a workaround —
+  and the EMITTERS table is now a more complete description of the code than it was.
+* the statement-level ratchet dropped 27 → 26 the moment `infoText` acquired a claim,
+  which is the ratchet doing exactly what it is for. Lowered the cap in the same commit.
+
+Two `Vt.init`-quantified theorems remain that are *not* about `Vt.init`:
+`restore_quiesced` and `resume_quiesced`/`resume_exact` — kept deliberately, since the
+fresh-terminal form is what `Tests/` exercises and the `_any` versions supersede them.

@@ -96,10 +96,17 @@ The replacement strips Lean comments and looks only between `theorem <name>` and
 named by no theorem statement**, where the old gate reported 10 — so the real
 uncovered surface was 2.7× what the ledger claimed. Most of the 27 are bounds
 constants and predicates (`csiCap`, `oscCap`, `isWide`, `clampDim`), but some are
-runtime-facing and worth naming as the queue they are: `infoText` (the listing
-framing — and Step 0 ledger item 2 is an unfixed injection bug in exactly that
-framing), `outputMsgs`/`outputChunk` (what a client receives), and the checkpoint
-codec's `parseRecord`/`records`/`knownTag`/`magic`/`writeU32`.
+runtime-facing and worth naming as the queue they are: `outputMsgs`/`outputChunk`
+(what a client receives) and the checkpoint codec's
+`parseRecord`/`records`/`knownTag`/`magic`/`writeU32`.
+
+The measure paid for itself immediately. `infoText` was top of that queue, and it was
+top for a reason: Step 0 ledger item 2 was an **unfixed injection bug in exactly that
+framing** — a label value carrying a newline forged an extra listing record, including
+a `status`/`state` pair. Fixed at the emit site and proved (`infoText_framing`,
+`infoText_records`), which dropped the ratchet from 27 to 26. The restructure that made
+it provable — building `List UInt8` instead of interpolating a `String` — is the same
+one recorded as the route for `history`.
 
 **2. Every byte stream the runtime emits is classified.** This is the check that
 answers "are we proving things about the code that actually runs". The runtime's
@@ -111,6 +118,7 @@ with a theorem that constrains it or a stated limitation:
 | `Render.restore` | `Session.onMsg .attach` | **proved**: `restore_grounds`, `restore_u8_zero`, `restore_modes_any`, `restore_pen_any`, `restore_sticky_any`, `restore_cursor_any` — receiver-quantified for the parser, the decoder and every restored field but the screen cells |
 | `Render.leaveAnsi` | `Client.attach`'s `finally` | **proved**: `leave_canonical`, `leave_canonical_all` |
 | `Render.history` | `Session.onMsg` (`linger history`) | **bounded, not proved** — see below |
+| `Render.utf8s` | reached from outside `Render` by `Session.infoText`, which frames listing records with it | **proved**: `utf8s_no_ctl`, `utf8s_no_esc`, `utf8s_no_esc_bel`, `Session.utf8s_no_frame` — no scrubbed text can carry an escape, a BEL, or a framing byte |
 
 A fourth emitter wired into the runtime fails the gate until it is classified, and an
 entry for a stream the runtime *no longer* emits fails too, so the list cannot drift

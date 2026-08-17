@@ -134,8 +134,11 @@ def unseen (s : State) : Bool := s.lookSeq < s.outSeq
 have thrown it away. -/
 def behind (s : State) : Nat := s.outSeq - s.lookSeq
 
-def infoText (s : State) : List UInt8 :=
-  let fields := s.metaKv
+/-- The fields one listing record carries, as a named stage. Split out from
+`infoText` because the framing below is only unambiguous if no field contains a
+framing byte, and that is a claim about *these* — see `infoText_framing`. -/
+def infoFields (s : State) : List (String × String) :=
+  s.metaKv
     ++ [("clients", toString (s.clients.filter (·.attached)).length)]
     -- the observations `Status.classify` needs from the daemon; the rest
     -- (reachability, checkpoint loadability) only the caller can know
@@ -145,7 +148,31 @@ def infoText (s : State) : List UInt8 :=
         | some st => [("exit", toString st.toNat)]
         | none => [])
     ++ s.labels.map (fun (k, v) => (s!"label.{k}", v))
-  (String.join (fields.map (fun (k, v) => s!"{k}\t{v}\n"))).toUTF8.toList
+
+/-- Frame the fields as `k` TAB `v` LF records.
+
+**The two framing bytes are emitted structurally, and nothing else can produce
+them.** Every character of a key or a value goes through `Render.utf8s`, which
+replaces a C0 control — tab and newline included — with U+FFFD. So a label value
+containing a newline shows a replacement character instead of **forging an extra
+record**, and in particular cannot forge a `status`/`state` pair that the listing
+would then display as a session's state.
+
+Established here rather than at `.labelSet`, for the same reason `Render.gridAnsi`
+establishes its own pen instead of trusting its callers: a guard at the emit site
+needs no invariant about where the field came from, and it covers fields nobody has
+added yet. `Status.name_clean` proves the *status* column carries no framing byte;
+this is the same promise for every other column, and labels used to bypass both.
+
+This was `(String.join (fields.map (fun (k, v) => s!"{k}\t{v}\n"))).toUTF8.toList`,
+which passed a label's newline through verbatim (`specs/restore-conformance.md`
+Step 0 ledger item 2, §Row/§Status integrity). That shape was also what made the
+output unprovable — a `String` literal does not reduce in the kernel, so no theorem
+could see its bytes, which is exactly the argument in `Zmx/Core/Render.lean`'s
+header. Building `List UInt8` directly fixes both at once. -/
+def infoText (s : State) : List UInt8 :=
+  (infoFields s).flatMap (fun (k, v) =>
+    Render.utf8s k.toList ++ [0x09] ++ Render.utf8s v.toList ++ [0x0A])
 
 /-- Resize the pty only on behalf of the size owner: the most recently
 attached client with a real terminal (abduco's rule — a read-only

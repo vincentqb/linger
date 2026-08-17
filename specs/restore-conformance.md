@@ -265,13 +265,24 @@ they wait. Roughly by severity:
    diagnosis because it is what made item 0 reachable: with the guard in place a
    same-size reattach preserves the child's ruler, so `tabsAnsi` is no longer dead on
    the attach path — it is live and wrong.
-2. **Label values are not tab/newline-scrubbed.** `infoText` frames fields as
-   `k\tv\n`; `.labelSet`/`linger set` apply no filter, so a label value with a newline
-   and tab forges an extra row — including a `status`/`state` pair — in the listing.
-   `name_clean` proves the status column is clean; labels bypass it. The local-listing
-   `cmd` and `label.*` display also lost the `Remote.scrub` that the old `Tui.rowOfInfo`
-   applied, in a refactor. **§Row/§Status integrity**; fix is to scrub or reject the
-   two framing bytes at `.labelSet`.
+2. ~~**Label values are not tab/newline-scrubbed.**~~ **Fixed 2026-08-17, and proved.**
+   `infoText` framed fields as `k\tv\n` through a `String` interpolation, and
+   `.labelSet`/`linger set` apply no filter — so a label value with a newline and a tab
+   forged an extra record, including a `status`/`state` pair that the listing would
+   display as the session's state. Fixed at the **emit site** rather than at
+   `.labelSet`: `infoText` now builds `List UInt8` with `Render.utf8s`, which maps a C0
+   control (tab and newline included) to U+FFFD, so a guard needs no invariant about
+   where a field came from and covers fields nobody has added yet — the same argument
+   `gridAnsi` makes for establishing its own pen. Proved by `infoText_framing` (every
+   byte is a framing byte or printable content) and `infoText_records` (as many
+   newlines and tabs as fields — the anti-forgery claim). Break-verified, and the
+   fixture pins the *before* as well: the old shape emits one newline too many.
+   The restructure is also what made it provable, which is the point — the old shape
+   ended in `String.toUTF8`, and a `String` does not reduce in the kernel. That is now
+   the recorded route for `Render.history`, the last emitter still in that shape.
+   Still open, and much smaller: the local-listing `cmd` and `label.*` *display* lost
+   the `Remote.scrub` the old `Tui.rowOfInfo` applied, so a control character shows raw
+   in the human column. Cosmetic, not a forged record.
 3. **The pty input buffer (`rt.ptyIn`) is uncapped**, unlike the per-client 4 MiB
    output queue — §Bound's runtime half is asymmetric. A child that stops reading plus
    a client that floods input grows it unboundedly. Runtime (`IO`), so not a core
