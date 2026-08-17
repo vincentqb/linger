@@ -3749,6 +3749,226 @@ theorem stick_deleteLines (v : Vt) (n : Nat) : stick (v.deleteLines n) = stick v
   · rfl
   · exact stick_foldl _ (fun w _ => stick_scrollUpIn w _ _ _) _ _
 
+/-! ### The cut `print` induces — everything it does not write
+
+`print` is the first of the two operations a frame *equation* cannot cover: five
+composed stages, and a frame is `rfl` only for a syntactic record update. The
+`stick` bundle above solved that for the sticky fields; this solves it for `print`
+in general, by bundling **everything outside the screen** — the cut `print` actually
+induces, since each of its stages writes only `grid`, `cursor` or `sb`.
+
+One bundle, and the composition is by transitivity, which a frame equation is not.
+Every field invariance across a print is then one `congrArg`, including the two the
+row induction needs and nobody had named (`pen`, `modes.insert`) and the one the
+byte layer needs (`u8acc`, which `Render.cellText_feed` carries as a hypothesis and
+must therefore re-establish per cell). -/
+
+structure OffScreen where
+  cols : Nat
+  rows : Nat
+  pen : Pen
+  modes : Modes
+  top : Nat
+  bot : Nat
+  tabs : Array Bool
+  saved : Saved
+  title : String
+  g0 : Bool
+  g1 : Bool
+  so : Bool
+  alt : Option (Array Row × Cursor × Pen)
+  pstate : PState
+  u8need : Nat
+  u8acc : Nat
+  bell : Bool
+
+def offScreen (v : Vt) : OffScreen :=
+  { cols := v.cols, rows := v.rows, pen := v.pen, modes := v.modes, top := v.top,
+    bot := v.bot, tabs := v.tabs, saved := v.saved, title := v.title, g0 := v.g0Line,
+    g1 := v.g1Line, so := v.shiftOut, alt := v.altGrid, pstate := v.pstate,
+    u8need := v.u8need, u8acc := v.u8acc, bell := v.bell }
+
+/-! The stages, one `rw` each — the payoff of the frames pass. -/
+theorem off_printWrap (v : Vt) : offScreen v.printWrap = offScreen v := by
+  rw [frame_printWrap]; rfl
+theorem off_printWideWrap (v : Vt) (w : Nat) :
+    offScreen (v.printWideWrap w) = offScreen v := by rw [frame_printWideWrap]; rfl
+theorem off_printShift (v : Vt) (w : Nat) : offScreen (v.printShift w) = offScreen v := by
+  rw [frame_printShift]; rfl
+theorem off_printPut (v : Vt) (ch : Char) (w : Nat) :
+    offScreen (v.printPut ch w) = offScreen v := by rw [frame_printPut]; rfl
+theorem off_printAdvance (v : Vt) (w : Nat) :
+    offScreen (v.printAdvance w) = offScreen v := by rw [frame_printAdvance]; rfl
+theorem off_printMark (v : Vt) (ch : Char) : offScreen (v.printMark ch) = offScreen v := by
+  rw [frame_printMark]; rfl
+
+/-- **A print writes only the screen.** The composition `frames` could not state. -/
+theorem off_print (v : Vt) (ch : Char) : offScreen (v.print ch) = offScreen v := by
+  unfold Vt.print
+  dsimp only
+  split
+  · exact off_printMark _ _
+  · exact ((((off_printAdvance _ _).trans (off_printPut _ _ _)).trans
+      (off_printShift _ _)).trans (off_printWideWrap _ _)).trans (off_printWrap _)
+
+/-! The corollaries the row induction asks for. Each is a `congrArg`, so a field the
+next layer wants costs one line rather than a proof. -/
+theorem pen_print (v : Vt) (ch : Char) : (v.print ch).pen = v.pen :=
+  congrArg OffScreen.pen (off_print v ch)
+theorem modes_print' (v : Vt) (ch : Char) : (v.print ch).modes = v.modes :=
+  congrArg OffScreen.modes (off_print v ch)
+theorem ins_print (v : Vt) (ch : Char) : (v.print ch).modes.insert = v.modes.insert :=
+  congrArg Modes.insert (modes_print' v ch)
+theorem wrap_print (v : Vt) (ch : Char) : (v.print ch).modes.wrap = v.modes.wrap :=
+  congrArg Modes.wrap (modes_print' v ch)
+theorem cols_print (v : Vt) (ch : Char) : (v.print ch).cols = v.cols :=
+  congrArg OffScreen.cols (off_print v ch)
+theorem rows_print (v : Vt) (ch : Char) : (v.print ch).rows = v.rows :=
+  congrArg OffScreen.rows (off_print v ch)
+theorem g0_print (v : Vt) (ch : Char) : (v.print ch).g0Line = v.g0Line :=
+  congrArg OffScreen.g0 (off_print v ch)
+theorem g1_print (v : Vt) (ch : Char) : (v.print ch).g1Line = v.g1Line :=
+  congrArg OffScreen.g1 (off_print v ch)
+theorem so_print (v : Vt) (ch : Char) : (v.print ch).shiftOut = v.shiftOut :=
+  congrArg OffScreen.so (off_print v ch)
+theorem ua_print' (v : Vt) (ch : Char) : (v.print ch).u8acc = v.u8acc :=
+  congrArg OffScreen.u8acc (off_print v ch)
+
+/-- **The charset translation is stable across a print**, so a row induction proves
+`printChar ch = ch` once instead of per column. `print_narrow_eq` and its siblings
+each take that as a hypothesis. -/
+theorem printChar_congr {u v : Vt} (h0 : u.g0Line = v.g0Line) (h1 : u.g1Line = v.g1Line)
+    (hs : u.shiftOut = v.shiftOut) (c : Char) : u.printChar c = v.printChar c := by
+  unfold Vt.printChar
+  rw [h0, h1, hs]
+
+theorem printChar_print (v : Vt) (ch c : Char) : (v.print ch).printChar c = v.printChar c :=
+  printChar_congr (g0_print v ch) (g1_print v ch) (so_print v ch) c
+
+/-- With both charsets ASCII, `printChar` is the identity on anything the painter
+emits — `safeChar` and `printableChar` agree on a non-control codepoint. -/
+theorem printChar_id_of_ascii {v : Vt} (hg0 : v.g0Line = false) (hg1 : v.g1Line = false)
+    {c : Char} (h20 : 0x20 ≤ c.toNat) (h7 : c.toNat ≠ 0x7F) : v.printChar c = c := by
+  unfold Vt.printChar printableChar
+  rw [show ((v.shiftOut && v.g1Line) || (!v.shiftOut && v.g0Line)) = false from by
+    rw [hg0, hg1]; cases v.shiftOut <;> rfl]
+  rw [show (if (false : Bool) = true then decLine c else c) = c from rfl]
+  rw [if_neg (by
+    simp only [Bool.or_eq_true, decide_eq_true_eq, beq_iff_eq]
+    omega)]
+
+/-! #### Where the cursor goes
+
+`print_narrow_eq` and its siblings say what a print *writes*; the row induction also
+needs where it leaves the cursor, because `hpend : cursor.pending = false` is a
+hypothesis of all three and has to be re-established for column `k+1`. The margin
+case is the interesting one and it is why `pending` is in the invariant at all: at
+the right margin `printAdvance` clamps the column and arms wrap-pending, so the last
+cell of a row leaves a state no absolute cursor move can express. -/
+
+theorem off_putCell' (v : Vt) (x y : Nat) (c : Cell) :
+    offScreen (v.putCell x y c) = offScreen v := by rw [frame_putCell]; rfl
+theorem off_mendRow (v : Vt) (y : Nat) : offScreen (v.mendRow y) = offScreen v := by
+  rw [frame_mendRow]; rfl
+theorem off_clearPending (v : Vt) : offScreen v.clearPending = offScreen v := by
+  rw [frame_clearPending]; rfl
+
+theorem cursor_putCell (v : Vt) (x y : Nat) (c : Cell) :
+    (v.putCell x y c).cursor = v.cursor := by rw [frame_putCell]
+theorem cursor_mendRow (v : Vt) (y : Nat) : (v.mendRow y).cursor = v.cursor := by
+  rw [frame_mendRow]
+theorem cursor_clearPending (v : Vt) :
+    v.clearPending.cursor = { v.cursor with pending := false } := rfl
+
+theorem cursor_printAdvance_lt (v : Vt) (n : Nat) (h : v.cursor.x + n < v.cols) :
+    (v.printAdvance n).cursor = { v.cursor with x := v.cursor.x + n, pending := false } := by
+  unfold Vt.printAdvance
+  rw [if_neg (by omega)]
+
+theorem cursor_printAdvance_ge (v : Vt) (n : Nat) (h : v.cols ≤ v.cursor.x + n) :
+    (v.printAdvance n).cursor
+      = { v.cursor with x := v.cols - 1, pending := v.modes.wrap } := by
+  unfold Vt.printAdvance
+  rw [if_pos (by omega)]
+
+/-- The three facts `printAdvance` needs about the state a cell write leaves, as one
+lemma: a write touches only the grid, so the cursor is the `clearPending` one and the
+columns and modes are `v`'s. -/
+private theorem write_frame (v : Vt) (f : Vt → Vt)
+    (hf : ∀ u : Vt, offScreen (f u) = offScreen u ∧ (f u).cursor = u.cursor) :
+    (f v.clearPending).cursor = { v.cursor with pending := false }
+      ∧ (f v.clearPending).cols = v.cols ∧ (f v.clearPending).modes = v.modes := by
+  obtain ⟨ho, hc⟩ := hf v.clearPending
+  exact ⟨by rw [hc]; rfl, congrArg OffScreen.cols ho, congrArg OffScreen.modes ho⟩
+
+theorem cursor_print_narrow_fits {v : Vt} {ch : Char}
+    (hpc : v.printChar ch = ch) (hw : charWidth ch = 1) (hins : v.modes.insert = false)
+    (hpend : v.cursor.pending = false) (hfit : v.cursor.x + 1 < v.cols) :
+    (v.print ch).cursor = { v.cursor with x := v.cursor.x + 1, pending := false } := by
+  rw [print_narrow_eq hpc hw hins hpend]
+  obtain ⟨hcur, hcol, -⟩ := write_frame v
+    (fun u => (u.putCell v.cursor.x v.cursor.y
+      { base := ch, marks := [], width := 1, pen := v.pen }).mendRow v.cursor.y)
+    (fun u => ⟨(off_mendRow _ _).trans (off_putCell' _ _ _ _),
+      (cursor_mendRow _ _).trans (cursor_putCell _ _ _ _)⟩)
+  rw [cursor_printAdvance_lt _ 1 (by rw [hcur, hcol]; exact hfit), hcur]
+
+theorem cursor_print_narrow_margin {v : Vt} {ch : Char}
+    (hpc : v.printChar ch = ch) (hw : charWidth ch = 1) (hins : v.modes.insert = false)
+    (hpend : v.cursor.pending = false) (hmar : v.cols ≤ v.cursor.x + 1) :
+    (v.print ch).cursor
+      = { v.cursor with x := v.cols - 1, pending := v.modes.wrap } := by
+  rw [print_narrow_eq hpc hw hins hpend]
+  obtain ⟨hcur, hcol, hmod⟩ := write_frame v
+    (fun u => (u.putCell v.cursor.x v.cursor.y
+      { base := ch, marks := [], width := 1, pen := v.pen }).mendRow v.cursor.y)
+    (fun u => ⟨(off_mendRow _ _).trans (off_putCell' _ _ _ _),
+      (cursor_mendRow _ _).trans (cursor_putCell _ _ _ _)⟩)
+  rw [cursor_printAdvance_ge _ 1 (by rw [hcur, hcol]; exact hmar), hcur, hcol, hmod]
+
+theorem cursor_print_wide_fits {v : Vt} {ch : Char}
+    (hpc : v.printChar ch = ch) (hw : charWidth ch = 2) (hins : v.modes.insert = false)
+    (hpend : v.cursor.pending = false) (hfit : v.cursor.x + 1 < v.cols)
+    (hfit2 : v.cursor.x + 2 < v.cols) :
+    (v.print ch).cursor = { v.cursor with x := v.cursor.x + 2, pending := false } := by
+  rw [print_wide_eq hpc hw hins hpend hfit]
+  obtain ⟨hcur, hcol, -⟩ := write_frame v
+    (fun u => ((u.putCell v.cursor.x v.cursor.y
+        { base := ch, marks := [], width := 2, pen := v.pen }).putCell
+          (v.cursor.x + 1) v.cursor.y
+          (Cell.shadow { base := ch, marks := [], width := 2, pen := v.pen })).mendRow
+            v.cursor.y)
+    (fun u => ⟨((off_mendRow _ _).trans (off_putCell' _ _ _ _)).trans (off_putCell' _ _ _ _),
+      ((cursor_mendRow _ _).trans (cursor_putCell _ _ _ _)).trans (cursor_putCell _ _ _ _)⟩)
+  rw [cursor_printAdvance_lt _ 2 (by rw [hcur, hcol]; exact hfit2), hcur]
+
+/-- The pair that ends exactly at the margin: the shadow occupies the last column, so
+the advance clamps and arms wrap-pending — the state the spec's negative result says
+is load-bearing. -/
+theorem cursor_print_wide_margin {v : Vt} {ch : Char}
+    (hpc : v.printChar ch = ch) (hw : charWidth ch = 2) (hins : v.modes.insert = false)
+    (hpend : v.cursor.pending = false) (hfit : v.cursor.x + 1 < v.cols)
+    (hmar : v.cols ≤ v.cursor.x + 2) :
+    (v.print ch).cursor = { v.cursor with x := v.cols - 1, pending := v.modes.wrap } := by
+  rw [print_wide_eq hpc hw hins hpend hfit]
+  obtain ⟨hcur, hcol, hmod⟩ := write_frame v
+    (fun u => ((u.putCell v.cursor.x v.cursor.y
+        { base := ch, marks := [], width := 2, pen := v.pen }).putCell
+          (v.cursor.x + 1) v.cursor.y
+          (Cell.shadow { base := ch, marks := [], width := 2, pen := v.pen })).mendRow
+            v.cursor.y)
+    (fun u => ⟨((off_mendRow _ _).trans (off_putCell' _ _ _ _)).trans (off_putCell' _ _ _ _),
+      ((cursor_mendRow _ _).trans (cursor_putCell _ _ _ _)).trans (cursor_putCell _ _ _ _)⟩)
+  rw [cursor_printAdvance_ge _ 2 (by rw [hcur, hcol]; exact hmar), hcur, hcol, hmod]
+
+/-- A combining mark moves nothing: `print_mark_eq` is a write and a mend. -/
+theorem cursor_print_mark {v : Vt} {m : Char}
+    (hpc : v.printChar m = m) (hw : charWidth m = 0) (hpend : v.cursor.pending = false)
+    (hx0 : v.cursor.x ≠ 0) (hnw : (v.getCell (v.cursor.x - 1) v.cursor.y).width ≠ 0)
+    (hcap : (v.getCell (v.cursor.x - 1) v.cursor.y).marks.length < 8) :
+    (v.print m).cursor = v.cursor := by
+  rw [print_mark_eq hpc hw hpend hx0 hnw hcap, cursor_mendRow, cursor_putCell]
+
 /-! ### `print`: the first operation frames could not cover
 
 Each of its five stages *is* framed, so the bundle costs one composition instead

@@ -4685,3 +4685,69 @@ worth not skipping:
 Lesson for the next review round: run the lens aimed at the *hypotheses* even when
 the theorem is green, and cap the agent — the one that found a real defect is also
 the one that would have run forever.
+
+## Step 3 notes (the layer under the induction) — 2026-08-17
+
+Mapped the existing machinery with a fanned-out read before writing anything, and the
+map changed the plan: the row induction was blocked on **named facts**, not on the
+induction. Landed the three clusters it found, all break-verified.
+
+**1. `OffScreen` — the cut `print` induces.** The frames pass named two operations it
+could not cover; `print` is one. `Vt.offScreen` bundles everything outside
+`grid`/`cursor`/`sb`, so `off_print` composes its five stages **by transitivity**,
+which a frame equation cannot do, and each field invariance is one `congrArg`. This is
+the same move as `stick` (§Restore) at a different cut, and it is the general answer to
+"a fifth invariance layer costs 28 lemmas": bundle at the cut the *operation* makes,
+not at the fields you happen to want.
+Payoff beyond the obvious (`pen_print`, `ins_print`, `wrap_print`, charsets): **`u8acc`**.
+`Render.cellText_feed`/`utf8s_feed` carry `u8acc = 0` as a hypothesis, so a row
+induction must re-establish it per cell, and nothing said a print preserves it.
+`ua_print'` is now a `congrArg`.
+
+**2. Where the cursor goes.** All three `print_*_eq` lemmas take
+`cursor.pending = false`, so the induction re-establishes it for column k+1 or it
+stops. `cursor_printAdvance_lt`/`_ge` + `cursor_print_narrow_fits`/`_margin`,
+`cursor_print_wide_fits`/`_margin`, `cursor_print_mark`. The margin cases are the
+2026-08-15 negative result *as a theorem*: at the right margin the advance clamps the
+column and arms wrap-pending, which no absolute cursor move can express.
+Proof idiom worth reusing: `write_frame`, a private helper taking the write as a
+function `f` plus `∀ u, offScreen (f u) = offScreen u ∧ (f u).cursor = u.cursor`, and
+returning the three facts `printAdvance` needs about its input. Both narrow and wide
+cases instantiate it; the wide one just chains one more `off_putCell'`.
+
+**3. The two byte→cursor bridges.** `cup_places_cursor` covered two-argument `CUP`
+only, and the repaint uses two other addressing forms with no bridge at all:
+`home_places_cursor` (bare `CSI H`, both arguments defaulted — what establishes column
+0 row 0 for the first cell, and why `?6l` must precede it) and `cha_places_cursor`
+(`CSI n G` = `setCol (n-1)`, row untouched and wrap-pending cleared — what the
+wide-with-marks branch needs, since the mark must land between glyph and shadow).
+
+Also: `paint_grounds`, hypothesis 1 of `restore_grid_of_paint`, for any receiver.
+Hypothesis 2 (`u8need = 0` after the paint prefix) is **not** free the same way and the
+asymmetry is worth naming: the whole stream ends in a `CSI … H`, so `restore_u8_zero`
+is three lines, but this *prefix* ends in glyph bytes. It goes with the cell induction.
+
+**Traps hit:**
+* `rw [congrArg Field h]` fails where `exact congrArg Field h` succeeds: the rewrite
+  wants a syntactic match for `(offScreen X).cols`, the goal has `X.cols`, and they are
+  only defeq. Use `exact` for projection-of-bundle facts.
+* `unfold Vt.csiFinish` leaves `let s := …; let v := …` in the goal; a later
+  `rw [show … csiDispatch …]` then finds no match. Insert `dsimp only` after the
+  `if_pos`/`if_neg` pair. (Cost me one build cycle; it is the same trap as
+  SCRATCHPAD:3369.)
+* `printChar_id_of_ascii`: reduce the *inner* `if` before the outer one, via
+  `rw [show (if (false : Bool) = true then decLine c else c) = c from rfl]`. Going
+  outer-first makes `if_neg`'s side goal contain free variables and it is rejected
+  ("Expected type must not contain free variables").
+* Two 60-second breaks plus a restore exceeds a 2-minute Bash timeout, and the timeout
+  leaves **Core mutated**. Run one break per invocation and `diff` Core against the
+  backup before doing anything else.
+
+**On the map itself — the lesson is about the worklog, not the agents.** The readers
+reported `mend_of_pairOk`, `mendAt_of_pairOk`, `mend_blankRow` as non-existent (they
+are in `Theorems/Render.lean`, not `Theorems/Vt.lean`) and reported `penSgr_feed` /
+`sgrOf_feed` as gaps by quoting SCRATCHPAD entries written *before* those landed.
+Every disputed claim was grepped before being planned on. **A stale worklog entry is
+indistinguishable from a current gap**, which is an argument for closing entries when
+the thing lands, not only appending. The genuinely-missing list survived the check and
+is what got built.

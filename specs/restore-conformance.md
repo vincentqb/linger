@@ -439,14 +439,59 @@ caught mid-UTF-8, mid-OSC and mid-CSI are each left quiesced.
 
 ## Step 3 — `PaintState`
 
-Status: not started.
+Status: **the layer under it is in** (2026-08-17); the row induction itself is not
+started.
+
+What landed, and why this order: a fanned-out map of the existing machinery found
+that the row induction's step lemmas were blocked on facts nobody had named, not on
+the induction. Three clusters, all now closed:
+
+* **`OffScreen`, the cut `print` induces.** `print` is one of the two operations a
+  frame *equation* cannot cover (five composed stages). `Vt.offScreen` bundles
+  everything outside `grid`/`cursor`/`sb` — the cut `print` actually makes — so
+  `off_print` composes by transitivity, which a frame cannot, and every field
+  invariance across a print is one `congrArg`. That is where `pen_print`,
+  `ins_print`, `wrap_print`, `g0_print`/`g1_print`/`so_print` and `ua_print'` come
+  from. The last one matters most: `Render.cellText_feed` carries `u8acc = 0` as a
+  hypothesis, so a row induction has to *re-establish* it per cell, and nothing said
+  a print preserves it.
+* **Where the cursor goes.** `print_narrow_eq` and its siblings say what a print
+  writes; all three take `cursor.pending = false` as a hypothesis, so the induction
+  has to re-establish it for column `k+1`. `cursor_printAdvance_lt`/`_ge` and
+  `cursor_print_narrow_fits`/`_margin`, `cursor_print_wide_fits`/`_margin`,
+  `cursor_print_mark` do that — and the margin cases are where the spec's
+  wrap-`pending` negative result shows up as a theorem: at the right margin the
+  advance clamps the column and arms wrap-pending, a state no absolute cursor move
+  can express.
+* **The two byte→cursor bridges.** `cup_places_cursor` covered two-argument `CUP`
+  only. The repaint uses two other forms and neither had a bridge, so the induction
+  could not say where it was writing: `gridAnsi` homes with a bare `CSI H`
+  (`home_places_cursor`) and `rowAnsi`'s wide-with-marks branch parks the cursor with
+  `CHA` twice (`cha_places_cursor`). Same walk as `cup_places_cursor`, one parameter
+  shorter.
+
+Also landed: `paint_grounds`, the first of `restore_grid_of_paint`'s three hypotheses,
+for any receiver. The `u8need` one is *not* free the same way — the whole stream ends
+in a `CSI … H` but this prefix ends in glyph bytes — so it belongs with the cell
+induction, where UTF-8 completeness is in scope anyway.
+
+Break-verified, both isolating: making `CHA` off by one in `Vt.csiDispatch` fails
+**only** `cha_places_cursor`; making `printAdvance` not arm wrap-pending at the margin
+fails **only** `cursor_printAdvance_ge`.
+
+**What the map got wrong, recorded because it is the lesson.** The readers reported
+`mend_of_pairOk`, `mendAt_of_pairOk` and `mend_blankRow` as non-existent — they are in
+`Theorems/Render.lean`, not `Theorems/Vt.lean` — and reported `penSgr_feed` and
+`sgrOf_feed` as gaps by quoting SCRATCHPAD entries that predate them landing. Verified
+each disputed claim by grep before planning on it. A stale worklog entry reads exactly
+like a current gap; the check is cheap and the plan built on it is not.
 
 Purpose: replace the monolithic row induction with a named invariant, which is what
 makes the exact claim affordable. `rowAnsi` already threads `(bytes, pen, x)`; the
 missing piece is `pending`, which the 2026-08-15 negative result proved is
 load-bearing rather than noise.
 
-Shape: a `PaintState` record; `rowAnsi` refactored to carry it; `Matches w P g k`
+Remaining shape: a `PaintState` record; `rowAnsi` refactored to carry it; `Matches w P g k`
 meaning "`w`'s row agrees with `g` on columns `< k`, and `w`'s cursor and pen are
 `P`"; one step lemma per cell shape (width 1, width 2 with room, width 0), with
 `mend_of_pairOk` as the stability argument for the re-mend after each write.

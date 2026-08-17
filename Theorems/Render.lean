@@ -5626,6 +5626,26 @@ theorem restore_quiesced_any (v w : Vt) :
     (w.feed (restore v)).pstate = .ground ∧ (w.feed (restore v)).u8need = 0 :=
   ⟨restore_grounds v w, restore_u8_zero v w⟩
 
+/-- **The first of `restore_grid_of_paint`'s three hypotheses, discharged for any
+receiver.** The clear-and-paint prefix leaves the parser in `ground`: the prologue
+grounds `w` whatever state it was in (`prologue_grounds`, Step 2's first half) and
+the three constructs after it are each `Ends`.
+
+The `u8need` one is *not* free the same way, and the asymmetry is worth naming: the
+whole stream ends in a `CSI … H`, whose final byte cannot leave a character
+half-decoded (`restore_u8_zero`), but this **prefix** ends in glyph bytes. So that
+hypothesis belongs with the cell induction, where the UTF-8 completeness of what
+`rowAnsi` emits is in scope anyway. -/
+theorem paint_grounds (v w : Vt) :
+    (w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v)).pstate
+      = .ground := by
+  rw [show prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v
+      = prologueAnsi v ++ (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v) from by
+    simp only [List.append_assoc], feed_append]
+  exact (((ends_csiNum 0 0x6D (by decide) (by decide)).append
+    (ends_csiNum 2 0x4A (by decide) (by decide))).append (ends_screensAnsi v)) _
+    (prologue_grounds v w)
+
 /-! ### A5 outbound, the same fields — `leave_canonical`'s other half
 
 Definition-of-done item 2b names the charset flags, the scroll region, the
@@ -5766,5 +5786,103 @@ theorem leave_canonical_all (w : Vt) (h2 : 2 ≤ w.rows) :
       rw [hps]; simp only [leaveAnsi]]
     rw [feed_append, penSgr_feed ({} : Pen) l18.1 hu18]
   exact ⟨leave_grounds w, leave_modes w, l19.2, hpen⟩
+
+/-! ## §Replay stage 3d — the two byte→cursor bridges the paint needs
+
+`cup_places_cursor` says where a two-argument `CUP` puts the cursor. The repaint uses
+two *other* addressing forms and neither had a bridge, so the row induction could not
+say where it was writing:
+
+* `gridAnsi` homes with a bare `CSI H` — both arguments defaulted — which is what
+  establishes column 0, row 0 for the first cell;
+* `rowAnsi`'s wide-with-marks branch parks the cursor with `CHA` (`CSI n G`), twice,
+  because a mark on a wide glyph must land between the glyph and its shadow (§Replay
+  fix 8) and no relative move can express that.
+
+Both are the same walk as `cup_places_cursor`, one parameter shorter. -/
+
+/-- **A bare `CSI H` homes the cursor.** With no parameters both arguments fall back
+to `1`, so this is `moveTo 0 0` — and with DECOM off that is the true origin rather
+than the scroll region's top, which is why `prologueAnsi` resets `?6l` before the
+paint. -/
+theorem home_places_cursor {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0)
+    (ho : v.modes.origin = false) :
+    (v.feed (csiB ++ [0x48])).cursor.x = 0 ∧ (v.feed (csiB ++ [0x48])).cursor.y = 0
+      ∧ (v.feed (csiB ++ [0x48])).cursor.pending = false := by
+  rw [show (csiB ++ [0x48] : Bytes) = [0x1B, 0x5B] ++ [(0x48 : UInt8)] from by simp [csiB]]
+  rw [feed_append, keeps_csi_open hg hu,
+    show ∀ (u : Vt), u.feed [(0x48 : UInt8)] = u.step 0x48 from fun _ => rfl]
+  rw [csi_final_step_eq 0x48 (v := { v with pstate := .csi ({} : CsiState) })
+    (s := ({} : CsiState)) rfl (by simpa using hu) rfl (by decide) (by decide)]
+  unfold Vt.csiFinish
+  rw [if_neg (by decide)]
+  show ((({ v with pstate := .csi ({} : CsiState) } : Vt).csiDispatch
+      ({} : CsiState) 0x48).cursor.x = 0)
+    ∧ ((({ v with pstate := .csi ({} : CsiState) } : Vt).csiDispatch
+      ({} : CsiState) 0x48).cursor.y = 0)
+    ∧ ((({ v with pstate := .csi ({} : CsiState) } : Vt).csiDispatch
+      ({} : CsiState) 0x48).cursor.pending = false)
+  rw [show ({ v with pstate := .csi ({} : CsiState) } : Vt).csiDispatch ({} : CsiState) 0x48
+      = ({ v with pstate := .csi ({} : CsiState) } : Vt).moveTo 0 0 from by
+    unfold Vt.csiDispatch
+    rw [if_neg (by decide)]
+    rfl]
+  unfold Vt.moveTo
+  rw [if_neg (show ¬(({ v with pstate := .csi ({} : CsiState) } : Vt).modes.origin = true) from by
+    show ¬(v.modes.origin = true); rw [ho]; simp)]
+  refine ⟨?_, ?_, rfl⟩ <;> simp
+
+/-- **`CHA` places the column.** `CSI n G` is `setCol (n-1)`: the row is untouched and
+wrap-pending is cleared, which is exactly what the wide-with-marks branch needs of
+it — the mark must attach to the base at `n-2`, and `printMark` steps one left from
+a cursor that is *not* wrap-pending. -/
+theorem cha_places_cursor {v : Vt} (n : Nat) (hg : v.pstate = .ground) (hu : v.u8need = 0)
+    (hn : 0 < n) (hlt : n < 65535) (hx : n - 1 < v.cols) :
+    (v.feed (csiNum n 0x47)).cursor.x = n - 1
+      ∧ (v.feed (csiNum n 0x47)).cursor.y = v.cursor.y
+      ∧ (v.feed (csiNum n 0x47)).cursor.pending = false := by
+  rw [show csiNum n 0x47 = [0x1B, 0x5B] ++ (digits n ++ [(0x47 : UInt8)]) from by
+    simp [csiNum, csiB]]
+  rw [feed_append, keeps_csi_open hg hu]
+  obtain ⟨s', heq, hcur', hhave, hpar, hint, hsub⟩ :=
+    csi_digits_run_eq n (v := { v with pstate := .csi ({} : CsiState) })
+      (s := ({} : CsiState)) rfl (by simpa using hu) rfl
+  rw [show ∀ (u : Vt), u.feed (digits n ++ [(0x47 : UInt8)])
+      = (u.feed (digits n)).feed [(0x47 : UInt8)] from
+    fun u => by simp [Vt.feed, List.foldl_append]]
+  rw [heq, show ∀ (u : Vt), u.feed [(0x47 : UInt8)] = u.step 0x47 from fun _ => rfl]
+  rw [csi_final_step_eq 0x47 rfl (by simpa using hu) (by rw [hint]) (by decide) (by decide)]
+  unfold Vt.csiFinish
+  rw [if_pos (by simpa using hhave), if_neg (by rw [hpar]; decide)]
+  dsimp only
+  have harg : ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) }
+      : CsiState).arg 0 1 = n := by
+    rw [arg_of_one_of 1 (show ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) }
+        : CsiState).params = (#[] : Array (Nat × Bool)).push (n, s'.curSub) from by
+      rw [hpar, hcur', show min (min n 65535) 65535 = n from by omega]),
+      if_neg (by omega)]
+  rw [show ∀ (u : Vt), u.csiDispatch
+      ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState) 0x47
+      = u.setCol (n - 1) from by
+    intro u
+    unfold Vt.csiDispatch
+    rw [if_neg (show ¬(({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) }
+      : CsiState)).ignore = true from by
+      show ¬(s'.ignore = true)
+      rw [show s'.ignore = ({} : CsiState).ignore from by
+        have := csi_digits_value n (v := { v with pstate := .csi ({} : CsiState) })
+          (s := ({} : CsiState)) rfl rfl
+        obtain ⟨s2, hps2, -, -, -, -, hign2, -, -⟩ := this
+        have : s' = s2 := PState.csi.inj ((by rw [heq] :
+          ((({ v with pstate := .csi ({} : CsiState) } : Vt)).feed (digits n)).pstate
+            = PState.csi s').symm.trans hps2)
+        rw [this]; exact hign2]
+      simp)]
+    show u.setCol (({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) }
+      : CsiState).arg 0 1 - 1) = u.setCol (n - 1)
+    rw [harg]]
+  unfold Vt.setCol
+  exact ⟨by simp only []; omega, rfl, rfl⟩
+
 
 end Zmx.Core.Render
