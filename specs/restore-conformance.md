@@ -1,17 +1,20 @@
 # restore-conformance — restore works into any client, and the proofs say so
 
 Status: active
-Updated: 2026-08-16
+Updated: 2026-08-17
 Predecessor: `specs/terminal-contract.md` (Steps 1–3 complete; its Step 4 is carried
 here in a different shape, and its Step 5 archival gate is carried unchanged)
 
 ## Where this stands — read this first
 
-**Next step:** Step 2's `u8need` half (Definition-of-done item 3; the parser half
-is done), then Steps 3–4 — `PaintState` and the grid *cells* induction (items 4–5).
-Items 3, 4 and 5 are what remain of the Definition of done. `restore_tabs_any` is
-newly *available* (ledger item 0's fix made it true) and is the cheapest remaining
-receiver-quantified field if a warm-up is wanted before the induction.
+**Next step:** Steps 3–4 — `PaintState` and the grid *cells* induction
+(Definition-of-done items 4–5). **They are all that remain**: items 1, 2, 2b and 3
+are done, and item 6 (gates green, everything break-verified) is standing. Two
+optional warm-ups, both newly cheap and neither on the critical path:
+`restore_tabs_any` (ledger item 0's fix made it *true*, and it is the last restored
+field with no receiver-quantified theorem besides the cells) and generalizing
+`restore_cursor` off `Vt.init`, which is really a grid-level claim and so belongs
+with Step 4 anyway.
 
 **Done:** Step 0 — two bugs fixed. **Step 1 is complete**: A5 is proved at the
 value level in both directions for the modes, the pen and the sticky bundle
@@ -44,7 +47,8 @@ markers), and `SMap` (the `Quiet` shape at the bundle, with no `u8need` side
 condition — an `ESC` clears a half-decoded character and nothing sticky rides on
 it, which is what lets the *repaint* be a chunk).
 
-Step 2 — first half (`restore_grounds`). Steps 3–5 — not started.
+Step 2 — **done** (`restore_grounds` + `restore_u8_zero`, composed as
+`restore_quiesced_any` / `resume_quiesced_any`). Steps 3–5 — not started.
 
 **Two long-range dependencies are now visible in the theorems rather than left to
 inspection.** `charsetAnsi` is set-only for the shift state and `regionAnsi` emits
@@ -310,9 +314,13 @@ And it is not scrollback: restore repaints the screen, not history.
    Independent of any session state, since `leaveAnsi` takes no argument. What no
    theorem covers is the final cursor position: `CSI 999 ; 1 H` is clamped by the
    receiver, so where it lands is the receiver's business.
-3. `Ends`, `Quiet` and `Keeps` re-stated without the ground-parser assumption, which
-   requires the prologue to lead with a sequence abort so a client caught
-   mid-escape resynchronises.
+3. **Done, in a different shape** (see Step 2). The *predicates* keep their
+   ground-parser assumption — they must, since a receiver mid-OSC swallows a lone
+   chunk — and the receiver-quantification happens once, by peeling the lead-in
+   (`st_grounds`). What the criterion was reaching for is the top-level claims, and
+   those now carry no hypothesis on the receiver at all: `restore_grounds`,
+   `restore_u8_zero`, `restore_quiesced_any`, `resume_quiesced_any`. The prologue's
+   `ESC \` lead-in is what makes it true, exactly as this item said.
 4. `PaintState` — the painter's abstract state (`x`, `y`, `pen`, `pending`) as a
    named record, with `rowAnsi` threading it, and a `Matches` relation tying it to a
    `Vt` and a row prefix.
@@ -383,7 +391,7 @@ G0 breaks also trip the older parser ladder, which names the mode numbers.
 
 ## Step 2 — drop the ground-parser assumption
 
-Status: **first half done** (2026-08-15). `restore_grounds (v w : Vt) :
+Status: **done** (2026-08-17). `restore_grounds (v w : Vt) :
 (w.feed (restore v)).pstate = .ground` holds with no hypothesis on `w` — the first
 receiver-quantified theorem in the file. Chain: `un_abortUtf8_esc`, `esc_lands` (one
 case per `PState`), `st_finish`, `st_grounds`, `prologue_grounds`.
@@ -393,15 +401,41 @@ byte as payload, so `CAN` would have needed a Core semantics change, while `ST` 
 what both string states already listen for and `stepEsc` routes `0x5C` to its default
 arm. No new parser surface.
 
-Remaining: the `u8need` half, and the same treatment for `Quiet`'s origin half. Both
-need each chunk to preserve its property from an arbitrary start — the per-chunk work
-`Keeps` already does for the grid.
+**The `u8need` half needed no ladder at all**, and the reason is the mirror of the
+lead-in: `restore` *ends* with `cursorAnsi`, one `CSI … H`, and `u8_zero_after_csi`
+zeroes `u8need` whatever the incoming state was — a CSI's final byte cannot leave a
+character half-decoded. So `restore_u8_zero (v w)` is fifteen lines and the whole
+stream in front of it is irrelevant, where `restore_quiesced` had to assume a fresh
+`Vt.init`. `restore_quiesced_any` and `resume_quiesced_any` compose the two ends.
 
 Purpose: a client cut off mid-escape is a real state, and every existing stream
 theorem assumed it away.
 
-Exit: the three predicates carry no hypothesis on the receiver's parser state.
-`restore_quiesced` and `resume_quiesced` follow with their hypotheses removed.
+**The exit criterion as first written was wrong, and this is the same correction
+item 1 needed.** It asked for "the three predicates carry no hypothesis on the
+receiver's parser state" — but a per-chunk predicate *cannot* drop it: a receiver
+mid-OSC swallows a lone chunk, which is exactly why `Sets` became `MMap`. The
+achievable — and achieved — form is about the **top-level claims**, with `st_grounds`
+peeling the lead-in once:
+
+* `restore_grounds` — parser, any receiver, no hypothesis. ✓
+* `restore_u8_zero` — decoder, any receiver, no hypothesis. ✓
+* `restore_modes_any`, `restore_pen_any`, `restore_sticky_any` — the values. ✓
+* `restore_quiesced_any`, `resume_quiesced_any` — the composition, replacing the
+  `Vt.init`-quantified `restore_quiesced` / `resume_quiesced` (kept, since the
+  fresh-terminal form is what `Tests/` exercises). ✓
+
+`Quiet`'s origin half is **subsumed**, not carried: a receiver-quantified
+"DECOM ends off" is the `origin` component of `restore_modes_any`. What is *not*
+done, and belongs to Steps 3–4 rather than here, is generalizing `restore_cursor`
+off `Vt.init`: where the cursor lands depends on where the paint left it, so it is a
+grid-level claim, not a parser-level one.
+
+Break-verified: ending `restore` with a dangling UTF-8 lead byte (`0xC3`) fails
+`restore_u8_zero`; replacing the prologue's `ESC \` lead-in with `ESC 7` fails
+`restore_grounds`. Both also fail `restore_sticky_any`, so the value claims are
+sensitive to both ends of the stream. Witnessed in `Tests/Render.lean`: receivers
+caught mid-UTF-8, mid-OSC and mid-CSI are each left quiesced.
 
 ## Step 3 — `PaintState`
 

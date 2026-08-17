@@ -4628,3 +4628,60 @@ induction. **The ordering lesson: this is the one field where the fix had to pre
 the theorem, because the theorem would have been false.** Which is the answer to
 "why prove what the tests already cover" — the proof attempt is what makes you look,
 and looking is what found it.
+
+## Step 2 notes — 2026-08-17
+
+**Closed, and the second half cost almost nothing.** `restore_u8_zero (v w) :
+(w.feed (restore v)).u8need = 0`, for any receiver, no hypothesis — fifteen lines.
+The insight is the mirror of the lead-in: `restore` *ends* with `cursorAnsi`, one
+`CSI … H`, and `u8_zero_after_csi` zeroes `u8need` whatever the incoming state was.
+A CSI's final byte cannot leave a character half-decoded, so the whole stream in
+front of it is irrelevant to this half. `restore_quiesced` had the same proof but
+over `Vt.init cols rows`; generalizing it was a matter of not instantiating the
+receiver. Composed as `restore_quiesced_any` and (Theorems/Resume.lean)
+`resume_quiesced_any`, which lifts anchor A1's parser half off `Vt.init`.
+
+**The exit criterion was wrong and this is the same correction item 1 needed.** It
+asked for `Ends`/`Quiet`/`Keeps` themselves to drop the ground-parser hypothesis. A
+per-chunk predicate *cannot*: a receiver mid-OSC swallows a lone chunk, which is
+precisely why `Sets` became `MMap`. Receiver-quantification belongs at the top level,
+with `st_grounds` peeling the lead-in exactly once. Restated in the spec that way —
+worth keeping as a pattern, because both halves of this spec discovered it
+independently before anyone wrote it down.
+
+`Quiet`'s origin half is **subsumed**, not carried: a receiver-quantified "DECOM ends
+off" is the `origin` component of `restore_modes_any`. What is genuinely not done is
+`restore_cursor` off `Vt.init` — where the cursor lands depends on where the paint
+left it, so it is a grid-level claim and belongs with Step 4, not here. Moved.
+
+Break-verified: appending a dangling UTF-8 lead byte (`0xC3`) to `restore` fails
+`restore_u8_zero`; replacing the prologue's `ESC \` with `ESC 7` fails
+`restore_grounds`. Both also fail `restore_sticky_any` — the value claims are
+sensitive to *both* ends of the stream, which is a fact worth having recorded.
+Witnessed in `Tests/Render.lean`: receivers mid-UTF-8, mid-OSC and mid-CSI each come
+back quiesced.
+
+### The vacuity lens, done by hand
+The review workflow's `vacuity` agent never returned — 28 agents, 27 results, and
+that one ran ~9.5 h (still writing, 42 `Bash` calls, so looping rather than hung).
+Killed it and did the lens directly. It found one real thing, which is why it was
+worth not skipping:
+
+* **`Good v` was stronger than the proof needs.** `restore_sticky_any` used it for
+  three arithmetic facts only (`botLt`, `rowsLe` → the parameter clamp, `rowsPos`),
+  while `Good` also asserts things about the cursor, the saved slot, the scrollback
+  and the CSI accumulator that the proof never reads. A hypothesis a proof does not
+  use makes the theorem weaker than it is, so the primary form now takes
+  `v.top < v.bot`, `v.bot < v.rows`, `v.rows < 65535` — the region `DECSTBM` accepts
+  plus the clamp, i.e. exactly what the emitter's guards are about — and
+  `restore_sticky_good` is the `Good`-flavoured entry point. Same for the three
+  projections.
+* Non-vacuity is now witnessed rather than argued (`Tests/Render.lean`): the `dirty`
+  receiver differs from the session on *every* group the bundle names before the
+  restore and agrees on all of them after; the session-side hypotheses hold for an
+  ordinary 3-row screen; and the excluded case (a one-row session, `top = bot`) is
+  pinned so it cannot be mistaken for an oversight.
+
+Lesson for the next review round: run the lens aimed at the *hypotheses* even when
+the theorem is green, and cap the agent — the one that found a real defect is also
+the one that would have run forever.

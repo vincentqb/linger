@@ -356,6 +356,40 @@ example : (((dirtyTabs 20 3).feed (prologueAnsi (screen 20 3 "hi") ++ csiNum 0 0
     ++ csiNum 2 0x4A)).tabs == (dirtyTabs 20 3).tabs) = true := by native_decide
 
 
+/-! ### Non-vacuity of the receiver-quantified claims
+
+`restore_sticky_any`'s hypotheses are all about the *session* — a region `DECSTBM`
+will accept, parameters under the parser's clamp — plus one about the receiver's
+height. **Nothing constrains the receiver's state**, so the claim is only worth
+having if a receiver can actually differ from the session on every field in the
+bundle. It can, and these are the witnesses; the theorem is that `∀ w`. -/
+
+/-- Before: the `dirty` receiver differs from the session on the scroll region, the
+G0 charset, the shift state and which screen is current — every group the bundle
+names. -/
+example : (let v := screen 20 3 "hi"
+           let w := dirty 20 3
+           (w.top != v.top) && (w.g0Line != v.g0Line) && (w.shiftOut != v.shiftOut)
+             && (w.altGrid.isSome != v.altGrid.isSome)) = true := by native_decide
+
+/-- After: it agrees on all of them. -/
+example : (let v := screen 20 3 "hi"
+           let r := (dirty 20 3).feed (restore v)
+           (r.top == v.top) && (r.bot == v.bot) && (r.g0Line == v.g0Line)
+             && (r.g1Line == v.g1Line) && (r.shiftOut == v.shiftOut)
+             && (r.altGrid.isSome == v.altGrid.isSome)) = true := by native_decide
+
+/-- The session-side hypotheses are met by an ordinary session, so the quantifier is
+not empty. -/
+example : (let v := screen 20 3 "hi"
+           decide (v.top < v.bot) && decide (v.bot < v.rows)
+             && decide (v.rows < 65535)) = true := by native_decide
+
+/-- And the one case they exclude, named so it is not mistaken for an oversight: a
+one-row session has `top = bot`, and `CSI 1 ; 1 r` is refused by this emulator and by
+every real terminal, so there is no region to install. -/
+example : (let v := screen 20 1 "hi"; (v.top == v.bot)) = true := by native_decide
+
 /-! ### A receiver caught mid-sequence
 
 The client's *parser* state is part of the state restore was assuming. A terminal
@@ -417,6 +451,16 @@ example : sane 3 ((dirty 6 3).feed leaveAnsi) = true := by native_decide
 
 /-- …from every parser state a dying program can leave, too. -/
 example : sane 3 ((midOsc 6 3).feed leaveAnsi) = true := by native_decide
+/-- Step 2 at witnesses: a receiver caught mid-UTF-8, mid-OSC or mid-CSI is left
+*quiesced* by `restore` — parser `ground`, nothing half-decoded — which is what
+`restore_quiesced_any` says for all of them, and what `restore_quiesced` (fresh
+`Vt.init` only) could not. -/
+example : (let v := screen 6 3 "hi"
+           ((midUtf8 6 3).feed (restore v)).pstate == PState.ground
+             && ((midUtf8 6 3).feed (restore v)).u8need == 0
+             && ((midOsc 6 3).feed (restore v)).pstate == PState.ground
+             && ((midCsi 6 3).feed (restore v)).u8need == 0) = true := by native_decide
+
 example : sane 3 ((midDcs 6 3).feed leaveAnsi) = true := by native_decide
 example : sane 3 ((midCsi 6 3).feed leaveAnsi) = true := by native_decide
 example : sane 3 ((midEscInter 6 3).feed leaveAnsi) = true := by native_decide

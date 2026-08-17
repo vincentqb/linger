@@ -16,7 +16,7 @@ Read this file at whichever depth you need:
 
 | Anchor | Statement | Theorem |
 |---|---|---|
-| **A1. A session survives a crash** | a checkpoint round-trips exactly, and the byte stream rebuilt from it leaves a fresh terminal quiesced — parser in `ground`, no half-decoded character. Any state, no hypotheses. The **cursor** lands where the session had it (given the §Bound invariant and DECOM off) | `Resume.resume_quiesced` (§Restore ∘ §Replay), `Resume.resume_cursor` |
+| **A1. A session survives a crash** | a checkpoint round-trips exactly, and the byte stream rebuilt from it leaves the terminal quiesced — parser in `ground`, no half-decoded character — for **any** receiver, not just a fresh one. Any session state, no hypotheses. The **cursor** lands where the session had it (given the §Bound invariant and DECOM off) | `Resume.resume_quiesced_any` (§Restore ∘ §Replay; `resume_quiesced` is the fresh-`Vt.init` form), `Resume.resume_cursor` |
 | **A2. The daemon cannot be broken by traffic** | no event trace of any length — adversarial clients, hostile pty bytes, any interleaving — breaks a buffer cap, the screen invariant, or one client's isolation from another | `Session.run_wf`, `Session.run_bytes_isolates` (§Bound ∘ §Total ∘ §Isolate) |
 | **A3. The transport is invisible** | any re-chunking of any well-formed encoded stream decodes to exactly that stream: same messages, same order, nothing retained, no error | `Wire.decode_encode_chunked` (§Stream = §Frame ∘ §Chunk) |
 | **A4. A session name has one owner** | given the kernel grants at most one `flock` holder, at most one daemon ever unlinks or binds a given name | `Claim.at_most_one_owner` (§Claim) |
@@ -114,7 +114,14 @@ to prove the repaint leaves them alone. Three things made that affordable:
 * **The CSI walk, generalized.** `csi_tail_proj` takes the projection as a
   parameter (its one requirement, `PsBlind`, is that a bare `pstate` update
   cannot move it — `rfl` for every field accessor *but* `pstate` itself, which is
-  the one projection this walk cannot serve and does not need to). `csi_tail_modes` and
+  the one projection this walk cannot serve and does not need to)
+* **`SMap` needed no `u8need`, and neither did Step 2's second half.** The same
+  observation closes both: a CSI's *final* byte cannot leave a character
+  half-decoded, and `restore` ends with one (`cursorAnsi`). So
+  `restore_u8_zero (v w)` holds for any receiver in fifteen lines — the entire stream
+  in front of it is irrelevant — where `restore_quiesced` had to assume a fresh
+  `Vt.init`. With `restore_grounds` (the `ESC \` lead-in, the other end) that is
+  `restore_quiesced_any`, and A1 now reads over any receiver. `csi_tail_modes` and
   `csi_tail_pen` are now its instances, and `stick` a third; likewise
   `smap_csi_one_arg` does the digit-run-and-dispatch walk once for both markers,
   where `mmap_irm` and `modeSet_tail` each did it by hand.

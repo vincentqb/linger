@@ -5434,16 +5434,21 @@ Two hypotheses, both the analog of `restore_modes_any`'s mouse allowlist: a `Vt`
 does not only come from `setMode`, so `Checkpoint.load` can hand us a region no
 emulator would produce.
 
-* `hgood` bounds `v.rows` (so `DECSTBM`'s parameters are not clamped to 65535)
-  and gives `v.bot < v.rows`.
-* `hlt : v.top < v.bot` is the region `DECSTBM` will **accept**. The excluded case
-  is a one-row region: `CSI t ; t r` is refused here and on every real terminal,
-  so there is nothing to install and nothing to claim. -/
-theorem restore_sticky_any (v w : Vt) (hgood : Good v) (hrows : w.rows = v.rows)
-    (hlt : v.top < v.bot) : stick (w.feed (restore v)) = stick v := by
-  have hbot : v.bot < v.rows := hgood.botLt
-  have hcap : v.rows ≤ 1000 := hgood.rowsLe
-  have hpos : 1 ≤ v.rows := hgood.rowsPos
+* `hlt : v.top < v.bot` together with `hbot : v.bot < v.rows` is the region
+  `DECSTBM` will **accept**. The excluded case is a one-row region: `CSI t ; t r` is
+  refused here and on every real terminal, so there is nothing to install and
+  nothing to claim.
+* `hfits : v.rows < 65535` keeps `DECSTBM`'s parameters off the parser's clamp.
+
+The last two are what `Good v` would give (`botLt`, `rowsLe`), but they are taken
+directly: `Good` also asserts things about the cursor, the saved slot, the
+scrollback and the CSI accumulator that this proof never reads, and a hypothesis a
+proof does not use makes the theorem weaker than it is. `restore_sticky_good` is the
+`Good`-flavoured entry point for callers that have it. -/
+theorem restore_sticky_any (v w : Vt) (hrows : w.rows = v.rows)
+    (hlt : v.top < v.bot) (hbot : v.bot < v.rows) (hfits : v.rows < 65535) :
+    stick (w.feed (restore v)) = stick v := by
+  have hpos : 1 ≤ v.rows := by omega
   rw [show restore v = escSeq 0x5C ++ modeSet 1049 false ++ csiNum 4 0x6C ++ modeSet 6 false
       ++ modeSet 7 true ++ csiNum2 1 v.rows 0x72 ++ escCharset 0x28 0x42
       ++ escCharset 0x29 0x42 ++ [0x0F] ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v
@@ -5552,10 +5557,10 @@ payoff of bundling rather than proving four `org_`-style families. -/
 /-- **The scroll region.** Set by `regionAnsi`, or — when the session's region is
 the whole screen and `regionAnsi` therefore emits nothing — by the prologue's
 `CSI 1 ; rows r`, through the repaint and the alt switch. -/
-theorem restore_region_any (v w : Vt) (hgood : Good v) (hrows : w.rows = v.rows)
-    (hlt : v.top < v.bot) :
+theorem restore_region_any (v w : Vt) (hrows : w.rows = v.rows) (hlt : v.top < v.bot)
+    (hbot : v.bot < v.rows) (hfits : v.rows < 65535) :
     (w.feed (restore v)).top = v.top ∧ (w.feed (restore v)).bot = v.bot := by
-  have h := restore_sticky_any v w hgood hrows hlt
+  have h := restore_sticky_any v w hrows hlt hbot hfits
   refine ⟨?_, ?_⟩
   · rw [← stick_top (w.feed (restore v)), h, stick_top]
   · rw [← stick_bot (w.feed (restore v)), h, stick_bot]
@@ -5563,11 +5568,11 @@ theorem restore_region_any (v w : Vt) (hgood : Good v) (hrows : w.rows = v.rows)
 /-- **The charset designations and the shift state.** G0 and G1 are set
 absolutely by `charsetAnsi`; the shift state is set-only there, so its claim runs
 back through the whole repaint to the prologue's `SI`. -/
-theorem restore_charset_any (v w : Vt) (hgood : Good v) (hrows : w.rows = v.rows)
-    (hlt : v.top < v.bot) :
+theorem restore_charset_any (v w : Vt) (hrows : w.rows = v.rows) (hlt : v.top < v.bot)
+    (hbot : v.bot < v.rows) (hfits : v.rows < 65535) :
     (w.feed (restore v)).g0Line = v.g0Line ∧ (w.feed (restore v)).g1Line = v.g1Line
       ∧ (w.feed (restore v)).shiftOut = v.shiftOut := by
-  have h := restore_sticky_any v w hgood hrows hlt
+  have h := restore_sticky_any v w hrows hlt hbot hfits
   refine ⟨?_, ?_, ?_⟩
   · rw [← stick_g0 (w.feed (restore v)), h, stick_g0]
   · rw [← stick_g1 (w.feed (restore v)), h, stick_g1]
@@ -5578,10 +5583,48 @@ all: `screensAnsi` switches in the *middle* of it, and the switch only lands
 because the prologue left the receiver on the main screen (`enterAlt` is a no-op
 when the receiver is already in alt — the hazard `prologueAnsi`'s first comment
 names, now a theorem rather than a comment). -/
-theorem restore_alt_any (v w : Vt) (hgood : Good v) (hrows : w.rows = v.rows)
-    (hlt : v.top < v.bot) :
+theorem restore_alt_any (v w : Vt) (hrows : w.rows = v.rows) (hlt : v.top < v.bot)
+    (hbot : v.bot < v.rows) (hfits : v.rows < 65535) :
     (w.feed (restore v)).altGrid.isSome = v.altGrid.isSome := by
-  rw [← stick_alt (w.feed (restore v)), restore_sticky_any v w hgood hrows hlt, stick_alt]
+  rw [← stick_alt (w.feed (restore v)), restore_sticky_any v w hrows hlt hbot hfits, stick_alt]
+
+/-- The `Good`-flavoured entry point: the codebase's standard sanity invariant
+supplies both arithmetic facts, so a caller holding `Good v` (every live-reachable
+session — `good_of_liveReachable`) needs nothing else. -/
+theorem restore_sticky_good (v w : Vt) (hgood : Good v) (hrows : w.rows = v.rows)
+    (hlt : v.top < v.bot) : stick (w.feed (restore v)) = stick v :=
+  restore_sticky_any v w hrows hlt hgood.botLt (by have := hgood.rowsLe; omega)
+
+/-! ### Step 2's second half — `u8need`, for any receiver
+
+`restore_grounds` gave the parser state for any receiver; this gives the decoder.
+It needs no ladder at all, and the reason is worth stating: `restore` **ends** with
+`cursorAnsi`, which is one `CSI … H`, and `u8_zero_after_csi` zeroes `u8need`
+whatever the incoming state was — a CSI's final byte cannot leave a character
+half-decoded. So the whole stream in front of it is irrelevant to this half, where
+`restore_quiesced` had to assume a fresh `Vt.init`. -/
+
+theorem restore_u8_zero (v w : Vt) : (w.feed (restore v)).u8need = 0 := by
+  unfold restore
+  rw [show ∀ (u : Vt), u.feed (restoreBody v ++ cursorAnsi v)
+        = (u.feed (restoreBody v)).feed (cursorAnsi v) from
+      fun u => by simp [Vt.feed, List.foldl_append]]
+  unfold cursorAnsi
+  split
+  all_goals
+    (unfold csiNum2
+     refine u8_zero_after_csi _ 0x48 ?_ (by decide) _
+     exact ((paramBytes_digits _).append
+       (ParamBytes.cons (by decide) (by decide) ParamBytes.nil)).append
+       (paramBytes_digits _))
+
+/-- **§Replay's parser half, receiver-quantified** — Step 2's exit for `restore`.
+`restore_quiesced` said this of a fresh `Vt.init`; a client is never that. Any
+receiver in any parser state, mid-escape or mid-OSC or holding a half-decoded
+character, is left `ground` with nothing pending. -/
+theorem restore_quiesced_any (v w : Vt) :
+    (w.feed (restore v)).pstate = .ground ∧ (w.feed (restore v)).u8need = 0 :=
+  ⟨restore_grounds v w, restore_u8_zero v w⟩
 
 /-! ### A5 outbound, the same fields — `leave_canonical`'s other half
 

@@ -15,8 +15,10 @@ The two halves:
 
 * **§Restore** (`Checkpoint.load_save`): what `save` writes, `load` reads
   back, modulo the parser state a checkpoint deliberately drops.
-* **§Replay** (`Render.restore_quiesced`): the byte stream `restore`
-  builds from that state leaves a fresh emulator quiesced.
+* **§Replay** (`Render.restore_quiesced_any`): the byte stream `restore`
+  builds from that state leaves **any** emulator quiesced — the receiver's own
+  parser state does not have to be assumed, which is what `restore_quiesced`
+  (fresh `Vt.init` only) had to do.
 
 `resume_quiesced` is their composition, `resume_cursor` adds the cursor —
 the first *value* fidelity claim to reach the end-to-end statement — and
@@ -42,6 +44,23 @@ theorem resume_quiesced (c : Ckpt) (cols rows : Nat) :
   refine ⟨{ c with vt := c.vt.quiesce }, Checkpoint.load_save c, ?_, ?_⟩
   · exact (Render.restore_quiesced _ cols rows).1
   · exact (Render.restore_quiesced _ cols rows).2
+
+/-- **§Resume, receiver-quantified** (Step 2 of `specs/restore-conformance.md`).
+The same claim into **any** client's terminal rather than a fresh emulator: a
+reattaching client is left ready for the application's next byte whatever state its
+terminal was in — mid-escape, mid-OSC, mid-DCS, or holding a half-decoded character.
+That is the state a real client is in, and `resume_quiesced` above assumed it away.
+
+It rests on two properties of the stream's ends and nothing in between: `restore`
+**leads** with `ESC \` so a receiver in a string state resynchronises
+(`Render.restore_grounds`), and **ends** with a `CSI … H` whose final byte cannot
+leave a character half-decoded (`Render.restore_u8_zero`). -/
+theorem resume_quiesced_any (c : Ckpt) (w : Vt.Vt) :
+    ∃ c', load (save c) = some c'
+      ∧ ((w.feed (Render.restore c'.vt)).pstate = .ground)
+      ∧ ((w.feed (Render.restore c'.vt)).u8need = 0) :=
+  ⟨{ c with vt := c.vt.quiesce }, Checkpoint.load_save c,
+   (Render.restore_quiesced_any _ w).1, (Render.restore_quiesced_any _ w).2⟩
 
 /-- The same, in the form the runtime uses it: a *quiescent* checkpoint
 (which is what the daemon writes, being taken between poll rounds) comes
