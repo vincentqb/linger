@@ -96,9 +96,8 @@ The replacement strips Lean comments and looks only between `theorem <name>` and
 named by no theorem statement**, where the old gate reported 10 — so the real
 uncovered surface was 2.7× what the ledger claimed. Most of the 27 are bounds
 constants and predicates (`csiCap`, `oscCap`, `isWide`, `clampDim`), but some are
-runtime-facing and worth naming as the queue they are: `outputMsgs`/`outputChunk`
-(what a client receives) and the checkpoint codec's
-`parseRecord`/`records`/`knownTag`/`magic`/`writeU32`.
+runtime-facing and worth naming as the queue they are — as of 2026-08-17 the head of
+it is the checkpoint codec's `parseRecord`/`records`/`knownTag`/`magic`/`writeU32`.
 
 The measure paid for itself immediately. `infoText` was top of that queue, and it was
 top for a reason: Step 0 ledger item 2 was an **unfixed injection bug in exactly that
@@ -107,6 +106,15 @@ a `status`/`state` pair. Fixed at the emit site and proved (`infoText_framing`,
 `infoText_records`), which dropped the ratchet from 27 to 26. The restructure that made
 it provable — building `List UInt8` instead of interpolating a `String` — is the same
 one recorded as the route for `history`.
+
+Next on the queue was `chunksOf`/`outputMsgs`/`outputChunk`, the session's own framing
+of what a client receives. `chunksOf` had appeared in `Theorems/` exactly once, in a
+comment — the same blindness. Now `outputMsgs_faithful` and `outputMsgs_bounded`
+(§Chunk row above), which took the ratchet to **23**. The break-verify there is worth
+recording as a lesson about statement *shape*: the bound was first stated on
+`chunksOf outputChunk bs`, and doubling `outputMsgs`' chunk size left it green. Restated
+via `outputMsgs_payloads`, which pins the frames' payloads to the chunker, both claims
+now fail. A theorem next to the code is not a theorem about it.
 
 **2. Every byte stream the runtime emits is classified.** This is the check that
 answers "are we proving things about the code that actually runs". The runtime's
@@ -251,7 +259,7 @@ what found it, which is worth remembering the next time the plan says
 | § | Tension | Invariant | Where |
 |---|---------|-----------|-------|
 | §Frame | evolvable protocol vs simple daemon | `decode (encode m) = ([m], ∅)`; unknown tag skips exactly its frame | Theorems/Wire.lean |
-| §Chunk | TCP/pty chunking is arbitrary vs stateful parsers | decode/feed invariant under concatenation: `feed (a ++ b) = feed b ∘ feed a` | Theorems/Wire.lean, Theorems/Vt.lean |
+| §Chunk | TCP/pty chunking is arbitrary vs stateful parsers | decode/feed invariant under concatenation: `feed (a ++ b) = feed b ∘ feed a`. And the session's *own* framing on top of the transport: `outputMsgs_faithful` (the payloads of the ≤ 64 KiB `output` frames concatenate back to exactly the bytes handed in, so a reattaching client gets the whole repaint, not a prefix) and `outputMsgs_bounded` | Theorems/Wire.lean, Theorems/Vt.lean, Theorems/Session.lean |
 | §Stream | transport fragmentation vs one parsed conversation | any re-chunking of any well-formed encoded stream feeds back to exactly that stream — nothing retained, no error (`decode_encode_chunked`; §Frame and §Chunk are its special cases) | Theorems/Wire.lean |
 | §Bound | zellij crashes under cpu/mem load (unbounded actor queues) | every buffer has a structural cap preserved by `step`; nothing to fill | Theorems/Wire.lean, Theorems/Vt.lean, Theorems/Session.lean |
 | §Total | emulator fed adversarial bytes vs no crashes ever | `Vt.step`/`feed` total (no `partial`, grep-checked); `Good` invariant preserved for any byte: cursor + saved + alt-stashed cursors strictly in bounds, top ≤ bot < rows. Grid dimensions are preserved by every operation too (`dims_feed`; `RIS` re-clamps, which `Good` makes the identity) | Theorems/Vt.lean |

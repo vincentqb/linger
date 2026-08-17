@@ -4908,3 +4908,30 @@ It fired twice, correctly, and both times on real signal rather than noise:
 Two `Vt.init`-quantified theorems remain that are *not* about `Vt.init`:
 `restore_quiesced` and `resume_quiesced`/`resume_exact` — kept deliberately, since the
 fresh-terminal form is what `Tests/` exercises and the `_any` versions supersede them.
+
+### §Chunk at the session layer — 2026-08-17
+Next off the coverage queue: `chunksOf`, the function that splits what a client
+receives into ≤ 64 KiB `output` frames. It had appeared in `Theorems/` exactly once, in
+a **comment** — the same blindness that hid `infoText`. Two claims, both about what the
+runtime sends: `outputMsgs_faithful` (the payloads concatenate back to exactly the bytes
+handed in, so a reattaching client gets the whole repaint rather than a prefix) and
+`outputMsgs_bounded` (no frame exceeds the cap, which is what makes every `output`
+message well-formed by `Wire`'s §Bound measure). Ratchet 26 → 23.
+
+Proof note: `chunksOf` recurses on `l.drop n` under a well-founded measure, and
+re-supplying its `decreasing_by` inside a theorem fought the auto-bound hypothesis
+names. Inducting on a length **bound** instead (`chunksOf_flatten_aux`, `chunksOf_le_aux`)
+keeps both proofs Mathlib-free and short. Watch the `nil` base case: `split` still
+generates the `isFalse` branch, which is impossible because `[].length ≤ n` always —
+discharge it with `absurd (Or.inl …) h` rather than expecting `simp` to see it.
+
+**The break-verify found a defect in my own statement, which is the lesson worth
+keeping.** `outputMsgs_bounded` was first stated as `∀ c ∈ chunksOf outputChunk bs,
+c.length ≤ outputChunk`. Doubling `outputMsgs`' chunk size — the exact regression the
+claim exists to catch — left it **green**, because the statement never mentioned
+`outputMsgs`. Restated through `outputMsgs_payloads` (the frames' payloads *are* the
+chunker's output), and both claims now fail on that break. Generalizing: a claim whose
+statement does not mention the function that runs is a claim *next to* the code, not
+about it — which is the same failure the coverage gate was built to catch, one level in.
+This is now the second time today that shape appeared; worth watching for in the
+remaining queue.

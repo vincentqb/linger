@@ -870,3 +870,131 @@ theorem infoText_records (s : State) :
          count_frame (infoFields s) 0x09 (Or.inl rfl)⟩
 
 end Zmx.Core.Session
+
+namespace Zmx.Core.Session
+
+open Zmx.Core.Wire (Msg)
+
+/-! ## §Chunk at the session layer — what a client receives is what was sent
+
+A3 says the *transport* is invisible: any re-chunking of an encoded stream decodes to
+exactly that stream. The session does its own framing on top of that — `outputMsgs`
+splits a payload into ≤ 64 KiB `output` frames — and that framing had no claim at all.
+`chunksOf`, the function that does it, appeared in `Theorems/` exactly once, in a
+comment; it is the same blindness in the old coverage gate that let `infoText` pass.
+
+Two claims, and they are the two properties the runtime depends on: the split loses
+nothing (so a reattaching client's repaint is complete) and no frame exceeds the cap
+(so `Wire`'s §Bound well-formedness holds of what the daemon actually sends). -/
+
+/-! `chunksOf` recurses on `l.drop n` under a well-founded measure. Rather than
+re-supply its `decreasing_by`, both proofs below induct on a length *bound* — the
+standard trick, and it keeps them Mathlib-free. -/
+
+private theorem chunksOf_flatten_aux {α : Type} (n : Nat) :
+    ∀ (k : Nat) (l : List α), l.length ≤ k → (chunksOf n l).flatten = l := by
+  intro k
+  induction k with
+  | zero =>
+    intro l hl
+    cases l with
+    | nil =>
+      unfold chunksOf
+      split
+      · simp
+      · rename_i h
+        exact absurd (Or.inl (by simp : ([] : List α).length ≤ n)) h
+    | cons a t => simp at hl
+  | succ k ih =>
+    intro l hl
+    unfold chunksOf
+    split
+    · simp
+    · rename_i h
+      have hn0 : n ≠ 0 := fun hz => h (Or.inr hz)
+      have hgt : n < l.length := Nat.lt_of_not_le (fun hle => h (Or.inl hle))
+      simp only [List.flatten_cons]
+      rw [ih (l.drop n) (by simp only [List.length_drop]; omega)]
+      exact List.take_append_drop n l
+
+theorem chunksOf_flatten {α : Type} (n : Nat) (l : List α) : (chunksOf n l).flatten = l :=
+  chunksOf_flatten_aux n l.length l (Nat.le_refl _)
+
+private theorem chunksOf_le_aux {α : Type} (n : Nat) (hn : 0 < n) :
+    ∀ (k : Nat) (l : List α), l.length ≤ k → ∀ c ∈ chunksOf n l, c.length ≤ n := by
+  intro k
+  induction k with
+  | zero =>
+    intro l hl
+    cases l with
+    | nil =>
+      unfold chunksOf
+      split
+      · intro c hc
+        simp only [List.mem_singleton] at hc
+        subst hc
+        simp
+      · rename_i h
+        exact absurd (Or.inl (by simp : ([] : List α).length ≤ n)) h
+    | cons a t => simp at hl
+  | succ k ih =>
+    intro l hl
+    unfold chunksOf
+    split
+    · rename_i h
+      intro c hc
+      simp only [List.mem_singleton] at hc
+      subst hc
+      rcases h with h | h
+      · exact h
+      · omega
+    · rename_i h
+      have hn0 : n ≠ 0 := fun hz => h (Or.inr hz)
+      have hgt : n < l.length := Nat.lt_of_not_le (fun hle => h (Or.inl hle))
+      intro c hc
+      rcases List.mem_cons.mp hc with hh | hh
+      · subst hh
+        simp only [List.length_take]
+        omega
+      · exact ih (l.drop n) (by simp only [List.length_drop]; omega) c hh
+
+theorem chunksOf_le {α : Type} (n : Nat) (hn : 0 < n) (l : List α) :
+    ∀ c ∈ chunksOf n l, c.length ≤ n :=
+  chunksOf_le_aux n hn l.length l (Nat.le_refl _)
+
+/-- The payloads of the frames `outputMsgs` produces are exactly its chunks.
+
+Factored out because *both* claims below have to be stated about `outputMsgs` rather
+than about `chunksOf`, and the break-verify is what showed why: a bound stated on
+`chunksOf outputChunk bs` does not notice `outputMsgs` changing its chunk size —
+doubling it left such a claim green. That is the difference between a claim about the
+code and a claim sitting next to it. -/
+theorem outputMsgs_payloads (id : Nat) (bs : List UInt8) :
+    (outputMsgs id bs).filterMap (fun e => match e with
+      | .send _ (.output c) => some c
+      | _ => none) = chunksOf outputChunk bs := by
+  unfold outputMsgs
+  induction chunksOf outputChunk bs with
+  | nil => rfl
+  | cons a t ih => rw [List.map_cons, List.filterMap_cons]; simpa using ih
+
+/-- **The session's framing loses nothing.** Concatenating the payloads of the frames
+`outputMsgs` produces gives back exactly the bytes it was handed — so the repaint a
+reattaching client receives is the whole of `Render.restore`, not a prefix of it. -/
+theorem outputMsgs_faithful (id : Nat) (bs : List UInt8) :
+    ((outputMsgs id bs).filterMap (fun e => match e with
+      | .send _ (.output c) => some c
+      | _ => none)).flatten = bs := by
+  rw [outputMsgs_payloads id bs]
+  exact chunksOf_flatten outputChunk bs
+
+/-- **…and no frame exceeds the cap**, which is what makes every `output` message the
+daemon sends well-formed by `Wire`'s §Bound measure. -/
+theorem outputMsgs_bounded (id : Nat) (bs : List UInt8) :
+    ∀ c ∈ (outputMsgs id bs).filterMap (fun e => match e with
+      | .send _ (.output c) => some c
+      | _ => none), c.length ≤ outputChunk := by
+  rw [outputMsgs_payloads id bs]
+  exact chunksOf_le outputChunk (by decide) bs
+
+end Zmx.Core.Session

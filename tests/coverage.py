@@ -53,7 +53,7 @@ ROOT = Path(__file__).resolve().parent.parent
 # Ratchet: pure-core defs named by no theorem *statement*. Only ever goes down
 # without discussion; raising it is a deliberate, reviewable edit that says "new
 # surface, no claim yet".
-STATEMENT_CAP = 26
+STATEMENT_CAP = 23
 
 # ── Check 2 ────────────────────────────────────────────────────────────────────
 # Every byte stream the runtime emits, and what backs it. `theorem` entries must
