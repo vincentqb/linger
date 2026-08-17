@@ -4751,3 +4751,44 @@ Every disputed claim was grepped before being planned on. **A stale worklog entr
 indistinguishable from a current gap**, which is an argument for closing entries when
 the thing lands, not only appending. The genuinely-missing list survived the check and
 is what got built.
+
+### The hazard enumeration for Steps 3–4 — what it changed
+Two agents enumerated cell shapes and the row→grid boundary against the emitter and
+the parser. The synthesizer that was to turn it into a design **stalled and the
+workflow failed** (I inlined the maps *and* the hazards into its prompt at
+`effort: 'max'` — too big; next time pass a digest or let it read the journal). The
+enumeration itself was the valuable half, and five of its findings are now recorded in
+the spec because each is a way the obvious statement would have been **wrong**:
+
+1. The parser component is a **triple** (`pstate`, `u8need`, `u8acc`), not a pair —
+   the wide-with-marks rung goes CSI → glyph inside one cell, so `u8acc = 0` has to be
+   re-established, not assumed once.
+2. **The wide pair is one induction step advancing `k` by two.** If `k` ever sat
+   between base and shadow, `halfPair (k-1)` is true at that moment and the re-mend
+   blanks the base the previous rung painted. I would have written it as two steps.
+3. **The row-exit `pending` is branch-dependent**: `modes.wrap` after a plain last
+   cell, **false** after a marked wide last cell (its trailing `CHA` cleared it). So
+   the conclusion must claim `x = cols - 1` and let the following `carriageReturn`
+   re-establish `pending` — it discards it unconditionally.
+4. `RowOk` is load-bearing for row **isolation**, not just agreement: a width-2 base
+   in the final column would wrap and the joining CRLF would scroll the whole grid.
+5. `cols = 1` must not be excluded (the fuzz `dims` includes `(1,1)`); `cols = 0`
+   needs no side condition.
+
+**And it corrected Step 4's plan.** The spec said the no-scroll argument "needs Step
+1's scroll-region claim". It does not — citing `restore_region_any` or
+`restore_alt_any` there is a category error, because those are *end-of-stream*
+conclusions and `regionAnsi` is emitted **after** the paint. The paint needs three
+*mid-stream* facts about what the prologue leaves (`top = 0 ∧ bot = rows - 1`,
+`altGrid = none`, `origin = false`), the first of which exists today only inside
+`restore_sticky_any`'s proof and has to be lifted out. Two named traps: `smap_id_gridAnsi`
+looks like a no-scroll theorem and is only region-*persistence*; `stick_lineFeed` is an
+unconditional theorem about the operation that *does* scroll.
+
+**One genuine new receiver hypothesis, and it is a real limit on "any receiver".**
+`ED 2` does not make the receiver's rows the right length — `eraseScreen` is a fold of
+`eraseRowSpan`, which writes into *existing* cells, so a receiver with short rows stays
+short and writes past the end vanish. The grid claim needs `GridOk w.cols w.rows w.grid`
+(i.e. `Renderable w`) on the receiver, alongside `w.cols = v.cols` and
+`w.rows = v.rows`. Worth stating in the theorem rather than a comment: unlike the modes,
+pen and sticky claims, the *cells* cannot be claimed for a literally arbitrary receiver.

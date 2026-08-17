@@ -493,8 +493,39 @@ load-bearing rather than noise.
 
 Remaining shape: a `PaintState` record; `rowAnsi` refactored to carry it; `Matches w P g k`
 meaning "`w`'s row agrees with `g` on columns `< k`, and `w`'s cursor and pen are
-`P`"; one step lemma per cell shape (width 1, width 2 with room, width 0), with
-`mend_of_pairOk` as the stability argument for the re-mend after each write.
+`P`"; one step lemma per cell shape, with `mend_of_pairOk` as the stability argument
+for the re-mend after each write.
+
+**Constraints the hazard enumeration turned up** (2026-08-17). Each of these is a way
+the obvious statement would be wrong, so they are recorded before the proof rather
+than discovered during it:
+
+1. **`PaintState` carries the parser *triple*, not a pair**: `pstate = .ground`,
+   `u8need = 0` **and** `u8acc = 0`. `cellText_feed`/`utf8s_feed` all require the
+   third, and inside the wide-with-marks rung the stream goes CSI → glyph, so it must
+   be re-established rather than assumed once. (`ua_print'` is the print half; the
+   CSI half comes from the walk's own record equation.)
+2. **The wide pair is ONE induction step advancing `k` by two.** Not two steps of one.
+   If `k` ever sat between a width-2 base and its shadow, `halfPair (k-1)` would be
+   true at that moment and the re-mend would blank the base the previous rung just
+   painted. The shadow slot is a no-op on the receiver — its column was written by the
+   base's `printPut` — but it still advances the fold, which is exactly why the two
+   must be consumed together.
+3. **The row-exit `pending` is branch-dependent, so do not claim it unconditionally.**
+   After a width-1 or unmarked width-2 last cell it is `w.modes.wrap`; after a
+   *marked wide* last cell it is **false**, because the branch's trailing `CHA`
+   cleared it. `rowAnsi_writes_row`'s conclusion should claim `x = cols - 1` and
+   leave `pending` to be re-established by the following `carriageReturn` — which
+   discards it unconditionally, so nothing downstream cares.
+4. **`RowOk` is load-bearing for row *isolation*, not just for agreement.** A width-2
+   base in the final column is a broken pair (its out-of-range neighbour reads as a
+   width-1 default), and `RowOk.pairs` excludes it. Without that, the base would wrap
+   and the joining CRLF would scroll the whole grid — a cross-row catastrophe, not a
+   cell mismatch. Likewise `RowOk.size : row.size = cols` is what keeps `printWrap`
+   from ever firing mid-row.
+5. **`cols = 1` must not be excluded** — the fuzz corpus's `dims` includes `(1,1)`, so
+   every seed exercises it. `cols = 0` needs no side condition (the claim is vacuous
+   via `RowOk.size`, not via the receiver), so do not add `0 < w.cols`.
 
 Exit: `rowAnsi_writes_row` for any `RowOk` row, from any receiver matching the
 claimed `PaintState`. A same-shape value mutation in `rowAnsi` breaks it.
@@ -503,10 +534,43 @@ claimed `PaintState`. A same-shape value mutation in `rowAnsi` breaks it.
 
 Status: not started. Depends on Steps 1–3.
 
-Shape: `joinCRLF` row walk (including the argument that no line feed scrolls, which
-needs Step 1's scroll-region claim), the alt switch, then composition through
-`restore_grid_of_paint` — which already exists and already reduces `restore_grid` to
-the paint prefix.
+Shape: `joinCRLF` row walk (including the argument that no line feed scrolls), the
+alt switch, then composition through `restore_grid_of_paint` — which already exists,
+already reduces `restore_grid` to the paint prefix, and whose first hypothesis is
+now discharged for any receiver (`paint_grounds`).
+
+**Correction to this step, from the same enumeration.** The line above used to say the
+no-scroll argument "needs Step 1's scroll-region claim". **It does not, and citing
+`restore_region_any` or `restore_alt_any` there would be a category error**: those are
+*end-of-stream* conclusions, and `regionAnsi` is emitted **after** the paint. What the
+paint needs are three **mid-stream** facts about the state the prologue leaves:
+
+* `(w.feed (prologueAnsi v)).top = 0 ∧ .bot = w.rows - 1` — the accepted `DECSTBM`.
+  It exists today only *inside* `restore_sticky_any`'s proof and has to be lifted out.
+* `(w.feed (prologueAnsi v)).altGrid = none` — holds for **any** receiver with no
+  hypothesis, both branches of `leaveAlt` ending there.
+* `(w.feed (prologueAnsi v)).modes.origin = false` — without it the bare `CSI H`
+  homes to `(0, top)` and every absolute address downstream shifts.
+
+Then `cursor.y = y` plus `bot = rows - 1` is what rules the scroll out at each CRLF,
+by the row induction's own cursor bookkeeping. Two traps to avoid:
+`smap_id_gridAnsi` **looks** like a no-scroll theorem and is not one — it is
+region-*persistence* only, and says nothing about the grid; and `stick_lineFeed` is an
+unconditional theorem about the operation that *does* scroll, so it is not evidence
+that a line feed is harmless.
+
+A wrap-`pending` armed by the last cell of a row **cannot** cause a scroll at the
+CRLF: `printWrap` is the only consumer that line-feeds and it fires only on a
+printable byte, of which the separator has none — the `CR` discards `pending` before
+the `LF` looks at anything.
+
+**And one genuine new receiver hypothesis.** `ED 2` does *not* establish that the
+receiver's rows are the right length: `Vt.eraseScreen 2` is a fold of `eraseRowSpan`,
+which writes into *existing* cells, so a receiver whose rows are shorter than its
+`cols` stays short and writes past the end vanish. So the grid claim needs
+`GridOk w.cols w.rows w.grid` (equivalently `Renderable w`) on the **receiver**,
+alongside `w.cols = v.cols` and `w.rows = v.rows`. That is a real limit on "any
+receiver" and belongs in the statement, not in a comment.
 
 Exit: criteria 5 of Definition of done.
 
