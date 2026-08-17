@@ -6055,4 +6055,125 @@ theorem history_lines (v : Vt) :
   exact count_rows _
 
 
+/-! ## Step 3 — `PaintState` and `Matches`, the row induction's invariant
+
+The monolithic row induction is replaced by a named invariant, which is what makes the
+exact claim affordable. `rowAnsi` already threads `(bytes, pen, x)`; what the invariant
+adds is the two things a receiver has that the emitter cannot see — wrap-`pending`, which
+the 2026-08-15 negative result proved load-bearing, and the decoder triple.
+
+Design constraints, all recorded in `specs/restore-conformance.md` before the proof and
+each a way the obvious statement would be wrong:
+
+* the parser component is a **triple** (`pstate`, `u8need`, `u8acc`), not a pair —
+  `cellText_feed` needs the third, and inside a wide-with-marks cell the stream goes
+  CSI → glyph, so it has to be re-established rather than assumed once;
+* the frontier `k` must be a **glyph-group boundary**. If `k` ever sat between a width-2
+  base and its shadow, `halfPair (k-1)` would be true at that moment and the re-mend
+  would blank the base the previous rung had just painted. Hence `frontier`;
+* `Matches` asserts **nothing** about columns `≥ k`. That is what lets the theorem
+  quantify over an arbitrary client: every unpainted column still holds the previous
+  occupant's junk, half pairs included.
+-/
+
+/-- Where the painter believes the receiver is. -/
+structure PaintState where
+  x : Nat
+  y : Nat
+  pen : Pen
+  pending : Bool
+  deriving DecidableEq, Repr
+
+/-- `Matches w P g k` — the receiver agrees with row `g` on columns `< k`, its cursor and
+pen are `P`, its decoder is quiet, and the receiver-side context every rung needs
+(autowrap on, IRM off, ASCII charsets, a full-length row) holds. The context travels
+inside the invariant rather than beside it so that one step lemma re-establishes
+everything the next one needs. -/
+structure Matches (w : Vt) (P : PaintState) (g : Row) (k : Nat) : Prop where
+  curX : w.cursor.x = P.x
+  curY : w.cursor.y = P.y
+  pend : w.cursor.pending = P.pending
+  pen : w.pen = P.pen
+  ground : w.pstate = .ground
+  u8need : w.u8need = 0
+  u8acc : w.u8acc = 0
+  ins : w.modes.insert = false
+  wrap : w.modes.wrap = true
+  ascii0 : w.g0Line = false
+  ascii1 : w.g1Line = false
+  rowLen : (w.getRow P.y).size = w.cols
+  inGrid : P.y < w.grid.size
+  /-- `k` is a glyph-group boundary: it never splits a wide pair. -/
+  frontier : k = 0 ∨ (g.at (k - 1)).width ≠ 2
+  cells : ∀ j, j < k → w.getCell j P.y = g.at j
+
+/-- **A write at or past the frontier leaves the painted prefix alone.**
+
+The case analysis is on the *source* row's shape at each column — which the induction
+knows, because the prefix already equals the source there — and `RowOk.pairs` is what
+turns "width 0 at `j`" into "a whole pair at `j-1`", so `mend_keeps_wide` applies to the
+pair rather than to half of it. `frontier` is what rules out the one bad split: without
+it, `j = k-1` could be a width-2 base whose shadow sits at `k`, unpainted, and the sweep
+would blank the base. -/
+theorem prefix_kept {w : Vt} {g : Row} {y k x : Nat} {c : Cell}
+    (hrow : RowOk w.cols g)
+    (hcells : ∀ j, j < k → w.getCell j y = g.at j)
+    (hfront : k = 0 ∨ (g.at (k - 1)).width ≠ 2)
+    (hy : y < w.grid.size) (hx : k ≤ x) :
+    ∀ j, j < k → ((w.putCell x y c).mendRow y).getCell j y = g.at j := by
+  intro j hj
+  have hjx : j ≠ x := by omega
+  have hwj : (w.getCell j y).width = (g.at j).width := by rw [hcells j hj]
+  -- a stored width is 0, 1 or 2: `CellOk` ties a non-zero one to `charWidth`
+  have hw3 : (g.at j).width = 0 ∨ (g.at j).width = 1 ∨ (g.at j).width = 2 := by
+    by_cases hz : (g.at j).width = 0
+    · exact Or.inl hz
+    · rw [← (hrow.cells j).width hz]
+      unfold charWidth
+      split
+      · exact Or.inl rfl
+      · split
+        · exact Or.inr (Or.inr rfl)
+        · exact Or.inr (Or.inl rfl)
+  rcases hw3 with hz | hz | hz
+  · -- a shadow: `PairOk` puts its base at `j-1`, so the whole pair is in the prefix
+    obtain ⟨hne0, hbase⟩ := (hrow.pairs j).2 hz
+    have hj1eq : j - 1 + 1 = j := by omega
+    have hj1 : j - 1 < k := by omega
+    have hsh : g.at j = Cell.shadow (g.at (j - 1)) := by
+      rw [← hj1eq]; exact (hrow.pairs (j - 1)).1 hbase
+    obtain ⟨-, h1⟩ := getCell_write_mendRow_keep_wide w x y c (j - 1) (by omega) (by omega) hy
+      (by rw [hcells (j - 1) hj1]; exact hbase)
+      (by
+        show (w.getRow y).at (j - 1 + 1) = Cell.shadow ((w.getRow y).at (j - 1))
+        rw [hj1eq]
+        show w.getCell j y = Cell.shadow (w.getCell (j - 1) y)
+        rw [hcells j hj, hcells (j - 1) hj1]
+        exact hsh)
+    rw [hj1eq] at h1
+    rw [h1]
+    exact hcells j hj
+  · -- narrow: no pair reasoning needed
+    rw [getCell_write_mendRow_keep_narrow w x y c j hjx hy (by rw [hwj, hz])]
+    exact hcells j hj
+  · -- a base: `frontier` is what puts its shadow inside the prefix too
+    have hshIn : j + 1 < k := by
+      rcases hfront with h | h
+      · omega
+      · rcases Nat.lt_or_ge (j + 1) k with hh | hh
+        · exact hh
+        · exfalso
+          apply h
+          rw [show k - 1 = j from by omega]
+          exact hz
+    obtain ⟨h0, -⟩ := getCell_write_mendRow_keep_wide w x y c j hjx (by omega) hy
+      (by rw [hwj, hz])
+      (by
+        show (w.getRow y).at (j + 1) = Cell.shadow ((w.getRow y).at j)
+        show w.getCell (j + 1) y = Cell.shadow (w.getCell j y)
+        rw [hcells (j + 1) hshIn, hcells j hj]
+        exact (hrow.pairs j).1 hz)
+    rw [h0]
+    exact hcells j hj
+
 end Zmx.Core.Render

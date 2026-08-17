@@ -4965,3 +4965,43 @@ The test harness adapts; the production code gets to be provable.
 
 **EMITTERS is now four entries and no limitations**: `restore`, `leaveAnsi`, `history`,
 `utf8s` — all proved. Statement ratchet 27 → 21 over this request.
+
+## Step 3 notes (the invariant and its frame) — 2026-08-17
+
+`PaintState` + `Matches` + `prefix_kept` landed, with the three within-row write frames
+they rest on. All five design constraints recorded before the proof survived contact:
+the parser component really is a triple, the frontier really has to be a glyph-group
+boundary, `Matches` really can say nothing about columns ≥ k.
+
+**`prefix_kept` is the delicate one and the shape matters.** "A write at or past the
+frontier leaves the painted prefix alone" cannot be proved per *row*: `Vt.mendRow` sweeps
+the whole row and on a row with broken pairs `mendAt` may rewrite any column — which is
+exactly the mid-paint situation, because every unpainted column still holds the previous
+occupant's junk. `mend_of_pairOk` (row-level) is therefore unavailable mid-induction, and
+that is what forced the per-column route: `mend_keeps_narrow`/`mend_keeps_wide` need no
+global pair-consistency, so each column is discharged with **its own shape**, which the
+induction knows because the prefix already equals the source there. `RowOk.pairs` is what
+turns "width 0 at j" into "a whole pair at j-1", so `mend_keeps_wide` gets a pair rather
+than half of one. Carrying the shape is the price of quantifying over an arbitrary
+receiver, and it is a price the induction can pay.
+
+**The frontier hypothesis is verified load-bearing**: replacing it with `True` collapses
+exactly the width-2 case. That is the case where the base sits at k-1 and its shadow at
+k — unpainted — so the sweep sees a half pair and blanks the base the previous rung just
+painted. Recorded because a reader will otherwise read `frontier` as bookkeeping.
+
+New write frames (`at_putCell_ne`, `getCell_write_mendRow_keep_narrow`,
+`getCell_write_mendRow_keep_wide`) all compiled first try — the frames pass really did
+leave the layer in a state where the missing lemmas are one `rw` each.
+
+Break-verified the mend layer as a whole: making `Row.mendAt` blank a settled narrow cell
+fails `mendAt_self_id`, the foundation everything here rests on. Worth noting the shape of
+that result honestly — for pure frame lemmas over Core operations, *any* Core break lands
+at the base rather than on the new lemma, so the informative check for new content is
+whether its own hypotheses are load-bearing (the `frontier` test above), not whether a
+Core mutation reaches it.
+
+Remaining for Step 3: the step lemmas (narrow, wide, mark, pen change) and
+`rowAnsi_writes_row`. Known missing pieces for them, from writing the narrow one on
+paper: `safeChar_of_emittable`, and size/grid-size preservation through `print`
+(`Row.mend` preserves size via `setIfInBounds`, but nothing names it).

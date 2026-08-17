@@ -2556,6 +2556,57 @@ theorem getCell_write_mendRow_wide (u : Vt) (x y : Nat) (cb : Cell)
   rw [getCell_mendRow_same _ _ _ hgs, getCell_mendRow_same _ _ _ hgs]
   exact ⟨by rw [hkeep.1]; exact hbase, by rw [hkeep.2]; exact hshadow⟩
 
+/-! #### The within-row frame — the k-th write does not disturb columns already painted
+
+The frames above cover the columns a write *touches* and every other *row*. The row
+induction needs the third case and it is the delicate one: another column of the **same**
+row. `Vt.mendRow` sweeps the whole row, and on a row whose pairs are broken `mendAt` may
+rewrite any column — which is exactly the situation mid-paint, because every column the
+paint has not reached still holds the previous occupant's junk.
+
+So these are stated **per column, with that column's own shape** rather than with a
+hypothesis about the row. `mend_keeps_narrow`/`mend_keeps_wide` need no global
+pair-consistency, which is what makes that possible: a narrow cell, or a whole pair,
+survives the sweep whatever surrounds it. Carrying the shape is the price of quantifying
+over an arbitrary receiver, and it is a price the induction can pay — it painted those
+columns and knows what it put there. -/
+
+/-- Reading back another column of the written row: the write is invisible there. -/
+theorem at_putCell_ne (u : Vt) (x y : Nat) (c : Cell) (x' : Nat) (hne : x' ≠ x)
+    (hy : y < u.grid.size) :
+    ((u.putCell x y c).getRow y).at x' = (u.getRow y).at x' := by
+  rw [getRow_putCell_same u x y c hy]
+  unfold Row.at
+  exact getD_set_ne _ _ _ _ _ hne
+
+/-- **A narrow cell at another column survives the write and the sweep.** -/
+theorem getCell_write_mendRow_keep_narrow (u : Vt) (x y : Nat) (c : Cell) (x' : Nat)
+    (hne : x' ≠ x) (hy : y < u.grid.size) (hnarrow : (u.getCell x' y).width = 1) :
+    ((u.putCell x y c).mendRow y).getCell x' y = u.getCell x' y := by
+  have hat : ((u.putCell x y c).getRow y).at x' = (u.getRow y).at x' :=
+    at_putCell_ne u x y c x' hne hy
+  rw [getCell_mendRow_same _ _ _ (by rw [grid_size_putCell]; exact hy)]
+  rw [mend_keeps_narrow _ x' (by rw [hat]; exact hnarrow), hat]
+  rfl
+
+/-- **…and so does a whole pair**, which is the case a painted wide glyph below `k`
+lands in. Both halves are named because `mend` only leaves them alone together. -/
+theorem getCell_write_mendRow_keep_wide (u : Vt) (x y : Nat) (c : Cell) (x' : Nat)
+    (hne : x' ≠ x) (hne1 : x' + 1 ≠ x) (hy : y < u.grid.size)
+    (hwide : (u.getCell x' y).width = 2)
+    (hshadow : (u.getRow y).at (x' + 1) = Cell.shadow ((u.getRow y).at x')) :
+    ((u.putCell x y c).mendRow y).getCell x' y = u.getCell x' y
+      ∧ ((u.putCell x y c).mendRow y).getCell (x' + 1) y = u.getCell (x' + 1) y := by
+  have hat : ((u.putCell x y c).getRow y).at x' = (u.getRow y).at x' :=
+    at_putCell_ne u x y c x' hne hy
+  have hat1 : ((u.putCell x y c).getRow y).at (x' + 1) = (u.getRow y).at (x' + 1) :=
+    at_putCell_ne u x y c (x' + 1) hne1 hy
+  have hgs : y < (u.putCell x y c).grid.size := by rw [grid_size_putCell]; exact hy
+  obtain ⟨h0, h1⟩ := mend_keeps_wide ((u.putCell x y c).getRow y) x'
+    (by rw [hat]; exact hwide) (by rw [hat, hat1]; exact hshadow)
+  rw [getCell_mendRow_same _ _ _ hgs, getCell_mendRow_same _ _ _ hgs, h0, h1, hat, hat1]
+  exact ⟨rfl, rfl⟩
+
 /-- A write plus repair on one row leaves every other row alone. -/
 theorem getCell_write_mendRow_other (u : Vt) (x y : Nat) (c : Cell) (x' y' : Nat)
     (h : y' ≠ y) : ((u.putCell x y c).mendRow y).getCell x' y' = u.getCell x' y' := by

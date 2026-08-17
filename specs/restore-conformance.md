@@ -481,6 +481,31 @@ the induction. Three clusters, all now closed:
   `CHA` twice (`cha_places_cursor`). Same walk as `cup_places_cursor`, one parameter
   shorter.
 
+**The invariant itself landed 2026-08-17**, with the frame that makes it usable:
+* `PaintState` (`x`, `y`, `pen`, `pending`) and `Matches w P g k`. `Matches` carries the
+  parser **triple** and the receiver-side context every rung needs (autowrap on, IRM off,
+  ASCII charsets, a full-length row, `y` in the grid) so that one step lemma
+  re-establishes everything the next needs, and it asserts **nothing** about columns
+  `≥ k` — which is what lets the theorem quantify over an arbitrary client whose
+  unpainted columns still hold the previous occupant's junk, half pairs included.
+* `frontier : k = 0 ∨ (g.at (k-1)).width ≠ 2`, the recorded constraint, as a field.
+* `prefix_kept` — **a write at or past the frontier leaves the painted prefix alone.**
+  This is the delicate one and it is per column, not per row: `Vt.mendRow` sweeps the
+  whole row and on a row with broken pairs `mendAt` may rewrite any column, which is
+  exactly the mid-paint situation. So the case analysis is on the *source* row's shape at
+  each column (which the induction knows, because the prefix already equals the source
+  there) and `RowOk.pairs` turns "width 0 at `j`" into "a whole pair at `j-1`", so
+  `mend_keeps_wide` applies to the pair rather than half of it.
+* the within-row write frames it rests on, which did not exist:
+  `at_putCell_ne`, `getCell_write_mendRow_keep_narrow`, `getCell_write_mendRow_keep_wide`.
+
+`frontier` is **verified load-bearing**: replacing it with `True` collapses
+`prefix_kept`'s width-2 case, which is the case where the shadow would sit at `k`,
+unpainted, and the sweep would blank the base the previous rung had just painted.
+
+What remains of Step 3 is the step lemmas themselves (narrow, wide, mark, pen change) and
+`rowAnsi_writes_row`.
+
 Also landed: `paint_grounds`, the first of `restore_grid_of_paint`'s three hypotheses,
 for any receiver. The `u8need` one is *not* free the same way — the whole stream ends
 in a `CSI … H` but this prefix ends in glyph bytes — so it belongs with the cell
