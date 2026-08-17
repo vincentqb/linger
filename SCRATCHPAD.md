@@ -5039,3 +5039,42 @@ Traps:
   else. A broken break-test reads exactly like a passing one — so when a hypothesis comes
   back "not load-bearing", check the harness before believing it, and prefer one explicit
   invocation per hypothesis over a loop.
+
+### Step 3: the mechanical rungs — margin and the wide pair — 2026-08-17
+`step_narrow_margin` and `step_wide`, plus a refactor that unblocked the second.
+
+**The refactor: `prefix_kept` became `mend_keeps_prefix`.** The original bundled "the
+writes missed the prefix" with "the sweep keeps it", which only fits a *single* write —
+and the wide rung does two. Separating them makes one lemma serve every cell shape: each
+rung shows its own writes are invisible below the frontier (one `at_putCell_ne` per write)
+and then applies the sweep lemma. `step_narrow` moved onto it unchanged in substance.
+
+`step_narrow_margin` is the rung the interior case cannot cover: the advance clamps the
+column and arms wrap-pending. Note what it does *not* claim — `x` does not move (it is
+already `cols - 1`), and the row-exit shape is `x = cols - 1` rather than a claim about
+`pending`, because the following `carriageReturn` discards it. That is recorded constraint
+3 landing as a signature.
+
+`step_wide` consumes the pair in one rung, `k` to `k+2`. Constraint 2, and it is a
+correctness requirement not a convenience: a frontier between base and shadow makes
+`halfPair (k-1)` true at that moment and the sweep blanks the base just painted. The
+shadow's own slot in `rowAnsi`'s fold emits nothing, so there is no second rung to give
+it. `shadow_congr` (`Cell.shadow` reads only the pen) is what identifies the shadow the
+print writes with the one the source row holds.
+
+Traps, both recurrences:
+* **multi-line structure instances again.** `{ base := …, marks := [], width := 2,` then a
+  continuation indented below the first field's column is a parse error ("unexpected
+  identifier; expected '}'"), and it surfaces as a confusing *elaboration* error further
+  down. Third time this session. Keep structure instances on one line even at the cost of
+  going slightly over the column budget.
+* `decide` on `(Cell.shadow (g.at k)).width ≠ 2` is rejected — the expected type contains
+  a free variable. `show (0 : Nat) ≠ 2` first (the shadow's width field is the literal 0,
+  so it is defeq), then `decide`.
+* `mend_keeps_prefix`'s `u` is inferred from `hrow : RowOk u.cols g`, which unifies with
+  the *unwritten* receiver first. Pass `(u := …)` explicitly. Both wide and narrow rungs
+  need it.
+* Both rungs need `set_option maxHeartbeats 1000000`: `Matches` has fifteen fields, each
+  mentioning the fed state, so unifying against the `putCell`/`mendRow` composite is a
+  defeq check per field. Cheaper than splitting the invariant into smaller records, which
+  would move the cost to every call site.

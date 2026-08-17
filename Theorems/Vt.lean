@@ -2612,6 +2612,28 @@ theorem write_shape (u : Vt) (x y : Nat) (c : Cell) (n : Nat) (hy : y < u.grid.s
       rw [frame_printAdvance]]
     rw [size_getRow_mendRow _ y hgs y', size_getRow_putCell_any u x y c hy y']
 
+/-- The same for a wide glyph, which writes its base and its shadow before the sweep. -/
+theorem write_shape2 (u : Vt) (x y : Nat) (c1 c2 : Cell) (n : Nat) (hy : y < u.grid.size) :
+    ((((u.putCell x y c1).putCell (x + 1) y c2).mendRow y).printAdvance n).cols = u.cols
+      ∧ ((((u.putCell x y c1).putCell (x + 1) y c2).mendRow y).printAdvance n).grid.size
+          = u.grid.size
+      ∧ ∀ y', (((((u.putCell x y c1).putCell (x + 1) y c2).mendRow y).printAdvance n).getRow
+                y').size = (u.getRow y').size := by
+  have h1 : y < (u.putCell x y c1).grid.size := by rw [grid_size_putCell]; exact hy
+  obtain ⟨hc, hg, hr⟩ := write_shape (u.putCell x y c1) (x + 1) y c2 n h1
+  refine ⟨?_, ?_, ?_⟩
+  · rw [hc, frame_putCell]
+  · rw [hg, grid_size_putCell]
+  · intro y'
+    rw [hr y', size_getRow_putCell_any u x y c1 hy y']
+
+/-- `Cell.shadow` reads only the pen, so two cells with the same pen have the same
+shadow — which is what identifies the shadow a wide print writes with the one the source
+row holds. -/
+theorem shadow_congr {a b : Cell} (h : a.pen = b.pen) : Cell.shadow a = Cell.shadow b := by
+  unfold Cell.shadow
+  rw [h]
+
 /-! #### The within-row frame — the k-th write does not disturb columns already painted
 
 The frames above cover the columns a write *touches* and every other *row*. The row
