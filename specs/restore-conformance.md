@@ -7,16 +7,17 @@ here in a different shape, and its Step 5 archival gate is carried unchanged)
 
 ## Where this stands — read this first
 
-**Next step:** the **mark loop** (Step 3, item 1 of its remaining list — the shape to
-use is `Matches` against `withMarks g k acc`, so the fifteen-field bookkeeping is reused
-rather than restated). Then the wide-with-marks `CHA` dance, then `rowAnsi_writes_row`,
-then Step 4. Definition-of-done items 4 (partly done) and 5 are all that remain. **They are all that remain**: items 1, 2, 2b and 3
-are done, and item 6 (gates green, everything break-verified) is standing. Two
-optional warm-ups, both newly cheap and neither on the critical path:
-`restore_tabs_any` (ledger item 0's fix made it *true*, and it is the last restored
-field with no receiver-quantified theorem besides the cells) and generalizing
-`restore_cursor` off `Vt.init`, which is really a grid-level claim and so belongs
-with Step 4 anyway.
+**Next step:** the **mark loop** — Step 3's remaining item 1. Use `Matches` against
+`withMarks g k acc` (the source row with column `k`'s marks truncated) so the
+fifteen-field bookkeeping is reused rather than restated; `PairOk` of the truncated row
+holds because column `k` is narrow, hence neither a base nor a shadow. Then the
+wide-with-marks `CHA`/`CHA` dance, then `rowAnsi_writes_row`, then Step 4.
+
+**Definition-of-done items 4 (partly done) and 5 are all that remain.** Items 1, 2, 2b
+and 3 are done — three of them restated on contact, which is recorded in each — and item
+6 (gates green, every theorem break-verified) is standing. `restore_tabs_any` is an
+optional warm-up, not on the critical path: ledger item 0's fix made it *true*, and it is
+the last restored field with no receiver-quantified theorem besides the cells.
 
 **Done:** Step 0 — two bugs fixed. **Step 1 is complete**: A5 is proved at the
 value level in both directions for the modes, the pen and the sticky bundle
