@@ -5207,3 +5207,27 @@ Remaining for `rowAnsi_writes_row`: margin rungs — `step_narrow_margin_marks` 
 narrow last cell), `step_wide_margin` and `step_wide_margin_marks` (a wide pair whose shadow
 is the final column, where the base print clamps and the trailing CHA clamps too) — then the
 fold over `rowSlot` itself, inducting on the byte accumulator.
+
+## Step 3 notes — 2026-08-17 (the margin rungs)
+
+The three last-cell rungs `rowAnsi_writes_row` needs, all built by adapting the interior
+versions:
+- `step_narrow_margin_marks` — a marked narrow last cell: `step_narrow_margin` base +
+  `marks_fold`'s pending branch (`Or.inr`), exit `{P with pending := true}` (x unchanged).
+- `step_wide_margin` — a wide pair whose shadow is the final column (`k+1 < cols ≤ k+2`, so
+  `cols = k+2`): same base+shadow write as `step_wide`, only the advance clamps
+  (`cursor_print_wide_margin`), exit `{P with x := cols-1, pending := true}`. The 13
+  non-cursor fields are verbatim `step_wide`.
+- `step_wide_margin_marks` — that pair, marked: CHA(k+2) still lands in range (`k+1 =
+  cols-1`), but the trailing CHA(k+3) addresses `cols` and **clamps** to `cols-1`, so the
+  final cursor is `cols-1` not `k+2` (used `cha_matches` with the clamp, not `cha_matches_lt`),
+  and pending is false (the CHA cleared it). Exit `{P with x := cols-1, pending := false}`.
+
+Design note for `rowAnsi_writes_row` (the remaining item): `rowSlot` advances its cell index
+by 1 per cell, but a wide base paints TWO columns, so the receiver frontier runs one ahead of
+`rowSlot`'s x between a base and its shadow. Matches's `frontier` field FORBIDS sitting there
+(`g.at(k) width = 2` at frontier k+1 violates it) — spec constraint 2 as a type error. So the
+fold must peel a wide pair (base+shadow) as a **unit** (two `rowSlot` steps, frontier +2, x
++2 together), i.e. a peel-1-or-2 induction well-founded on `cols - n`, not a plain
+`invariant_foldl`. Pen threading interleaves via `step_pen` (rowSlot emits `penSgr` before a
+cell whose pen differs from the fold's accumulator).
