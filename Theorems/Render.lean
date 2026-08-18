@@ -8160,6 +8160,52 @@ theorem gridAnsi_eq (grid : Array Row) :
 theorem getD_lt {α} [Inhabited α] (a : Array α) (i : Nat) (h : i < a.size) :
     a.getD i default = a[i] := by rw [Array.getD, dif_pos h]; rfl
 
+/-- In range, `getD` returns the element whatever the default is. -/
+theorem getD_lt' {α} (a : Array α) (i : Nat) (d : α) (h : i < a.size) :
+    a.getD i d = a[i] := by rw [Array.getD, dif_pos h]; rfl
+
+/-- Row length depends only on the grid and the column count, not the pen (which sets the
+out-of-range default's *content*, never its size). -/
+theorem size_getRow_congr {v w : Vt} (hg : v.grid = w.grid) (hc : v.cols = w.cols) (y : Nat) :
+    (v.getRow y).size = (w.getRow y).size := by
+  unfold Vt.getRow
+  rw [hg]
+  by_cases h : y < w.grid.size
+  · rw [getD_lt' w.grid y (blankRow v.cols v.pen) h, getD_lt' w.grid y (blankRow w.cols w.pen) h]
+  · rw [Array.getD, dif_neg h, Array.getD, dif_neg h]; simp [blankRow, hc]
+
+/-- **A grid equals its target when every in-range cell agrees and the rows are the right
+length.** The array-`ext` plumbing the grid claim needs, done once: grid `ext` over rows,
+then row `ext` over columns, both bounded to what's actually there. -/
+theorem grid_eq_of_cells {w : Vt} {tg : Array Row} {cols rows : Nat}
+    (hwsz : w.grid.size = rows) (htgsz : tg.size = rows)
+    (hcell : ∀ y', y' < rows → ∀ x, x < cols →
+      w.getCell x y' = (tg.getD y' (blankRow cols {})).at x)
+    (hwlen : ∀ y', y' < rows → (w.getRow y').size = cols)
+    (htglen : ∀ y', y' < rows → (tg.getD y' (blankRow cols {})).size = cols) :
+    w.grid = tg := by
+  apply Array.ext
+  · rw [hwsz, htgsz]
+  · intro y' hy _
+    have hyr : y' < rows := by rw [hwsz] at hy; exact hy
+    have hrow : w.getRow y' = tg.getD y' (blankRow cols {}) := by
+      apply Array.ext
+      · rw [hwlen y' hyr, htglen y' hyr]
+      · intro x hx _
+        have hxc : x < cols := by rw [hwlen y' hyr] at hx; exact hx
+        have := hcell y' hyr x hxc
+        rw [show w.getCell x y' = (w.getRow y')[x] from by
+            unfold Vt.getCell; rw [getD_lt' _ x default (by rw [hwlen y' hyr]; exact hxc)],
+          show (tg.getD y' (blankRow cols {})).at x
+              = (tg.getD y' (blankRow cols {}))[x] from by
+            unfold Row.at; rw [getD_lt' _ x default (by rw [htglen y' hyr]; exact hxc)]] at this
+        exact this
+    rw [show w.grid[y'] = w.getRow y' from by
+        unfold Vt.getRow; rw [getD_lt' _ y' _ (by rw [hwsz]; exact hyr)],
+      show tg[y'] = tg.getD y' (blankRow cols {}) from
+        (getD_lt' tg y' (blankRow cols {}) (by rw [htgsz]; exact hyr)).symm]
+    exact hrow
+
 /-- Build the frontier-0 `Matches` a row's paint starts from, out of the receiver's plain
 state. Every field is a hypothesis the grid walk already carries; the `cells` obligation is
 vacuous at frontier 0. -/
@@ -8330,3 +8376,95 @@ theorem paint_rows {cols rows : Nat} {tg : Array Row} (hcb : cols < 65533) (hpos
           have := hrstg (i + 1) (by simp only [List.length_cons] at hi ⊢; omega)
           rw [show Y + (i + 1) = Y + 1 + i from by omega] at this
           simpa using this)
+
+/-! ### `gridAnsi`, painted into a receiver — the grid claim's core
+
+`gridAnsi` is `SGR 0 · CSI H · joinCRLF (rows)`: reset the pen to default, home the cursor,
+paint. The `SGR 0` and the home are what let the walk start from a *known* `(0, 0, {})`
+whatever the receiver's cursor and pen were; `paint_rows` does the rest. -/
+
+/-- **A bare `CSI H` is `moveTo 0 0`** — the state equation `home_places_cursor` leaves
+implicit. `csiFinish` returns to ground and `moveTo` keeps it, so every non-cursor field
+frames through at once. -/
+theorem home_feed_eq {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) :
+    v.feed (csiB ++ [0x48]) = v.moveTo 0 0 := by
+  rw [show (csiB ++ [0x48] : Bytes) = [0x1B, 0x5B] ++ [(0x48 : UInt8)] from by simp [csiB]]
+  rw [feed_append, keeps_csi_open hg hu,
+    show ∀ (u : Vt), u.feed [(0x48 : UInt8)] = u.step 0x48 from fun _ => rfl]
+  rw [csi_final_step_eq 0x48 (v := { v with pstate := .csi ({} : CsiState) })
+    (s := ({} : CsiState)) rfl (by simpa using hu) rfl (by decide) (by decide)]
+  unfold Vt.csiFinish
+  rw [if_neg (by decide)]
+  dsimp only
+  rw [show ({ v with pstate := .csi ({} : CsiState) } : Vt).csiDispatch ({} : CsiState) 0x48
+      = ({ v with pstate := .csi ({} : CsiState) } : Vt).moveTo 0 0 from by
+    unfold Vt.csiDispatch; rw [if_neg (by decide)]; rfl]
+  show ({ ({ v with pstate := .csi ({} : CsiState) } : Vt).moveTo 0 0 with
+    pstate := .ground } : Vt) = v.moveTo 0 0
+  unfold Vt.moveTo
+  rw [hg]
+
+/-- **The grid, painted.** From a receiver established by the prologue (ground, the right
+modes, `top = 0`, `bot = rows - 1`, no alt screen) and of matching dimensions with
+reproducible rows, `gridAnsi v.grid` reproduces `v.grid` exactly — array for array, cell for
+cell. This is the heart of the grid claim; `restore_grid_of_paint` bolts the clear and the
+tail onto it. -/
+theorem gridAnsi_writes_grid {u v : Vt}
+    (hcols : u.cols = v.cols) (hrows : u.rows = v.rows) (hpos : 0 < v.cols) (hub : v.cols < 65533)
+    (htop : u.top = 0) (hbot : u.bot = v.rows - 1)
+    (hg : u.pstate = .ground) (hun : u.u8need = 0) (hua : u.u8acc = 0)
+    (hins : u.modes.insert = false) (hwrap : u.modes.wrap = true) (horg : u.modes.origin = false)
+    (hg0 : u.g0Line = false) (hg1 : u.g1Line = false)
+    (hgsz : u.grid.size = v.rows) (hrlens : ∀ y', (u.getRow y').size = v.cols)
+    (hvok : ∀ y', RowOk v.cols (v.grid.getD y' (blankRow v.cols {}))) (hvsz : v.grid.size = v.rows) :
+    (u.feed (gridAnsi v.grid)).grid = v.grid := by
+  rw [gridAnsi_eq]
+  -- reset the pen, then home the cursor: a known (0, 0, {}) entry state
+  have hsgr : u.feed (csiNum 0 0x6D) = { u with pen := {} } := by
+    rw [show csiNum 0 0x6D = sgrOf [0] from by simp [csiNum, sgrOf, joinSemi],
+      sgrOf_feed [0] (by decide) (by decide) (by decide) hg hun,
+      show penAfter u.pen [0] = ({} : Pen) from by simp [penAfter, sgrParamsOf, Vt.applySgr.go]]
+  rw [feed_append, feed_append, hsgr,
+    home_feed_eq (v := { u with pen := ({} : Pen) }) hg hun]
+  have hu2cursor := home_places_cursor (v := { u with pen := ({} : Pen) }) hg hun horg
+  rw [home_feed_eq (v := { u with pen := ({} : Pen) }) hg hun] at hu2cursor
+  have hwalk : Walking v.cols v.rows v.grid (({ u with pen := ({} : Pen) }).moveTo 0 0) 0 {} := by
+    refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+    · show (({ u with pen := ({} : Pen) }).moveTo 0 0).cols = v.cols
+      rw [frame_moveTo]; exact hcols
+    · show (({ u with pen := ({} : Pen) }).moveTo 0 0).rows = v.rows
+      rw [frame_moveTo]; exact hrows
+    · show (({ u with pen := ({} : Pen) }).moveTo 0 0).top = 0; rw [frame_moveTo]; exact htop
+    · show (({ u with pen := ({} : Pen) }).moveTo 0 0).bot = v.rows - 1
+      rw [frame_moveTo]; exact hbot
+    · show (({ u with pen := ({} : Pen) }).moveTo 0 0).pstate = .ground
+      rw [frame_moveTo]; exact hg
+    · show (({ u with pen := ({} : Pen) }).moveTo 0 0).u8need = 0; rw [frame_moveTo]; exact hun
+    · show (({ u with pen := ({} : Pen) }).moveTo 0 0).u8acc = 0; rw [frame_moveTo]; exact hua
+    · show (({ u with pen := ({} : Pen) }).moveTo 0 0).modes.insert = false
+      rw [frame_moveTo]; exact hins
+    · show (({ u with pen := ({} : Pen) }).moveTo 0 0).modes.wrap = true
+      rw [frame_moveTo]; exact hwrap
+    · show (({ u with pen := ({} : Pen) }).moveTo 0 0).g0Line = false; rw [frame_moveTo]; exact hg0
+    · show (({ u with pen := ({} : Pen) }).moveTo 0 0).g1Line = false; rw [frame_moveTo]; exact hg1
+    · exact hu2cursor.1
+    · exact hu2cursor.2.1
+    · exact hu2cursor.2.2
+    · show (({ u with pen := ({} : Pen) }).moveTo 0 0).pen = {}; rw [frame_moveTo]
+    · show (({ u with pen := ({} : Pen) }).moveTo 0 0).grid.size = v.rows
+      rw [frame_moveTo]; exact hgsz
+    · intro y'
+      exact (size_getRow_congr (v := ({ u with pen := ({} : Pen) }).moveTo 0 0) (w := u)
+        (by rw [frame_moveTo]) (by rw [frame_moveTo]) y').trans (hrlens y')
+    · intro y' x h; exact absurd h (by omega)
+  have hrs_len : v.grid.toList.length = v.rows := by rw [← hvsz]; simp
+  have htlist : ∀ i (hi : i < v.grid.toList.length),
+      v.grid.toList[i] = v.grid.getD i (blankRow v.cols {}) := fun i hi => by
+    rw [Array.getElem_toList, getD_lt' v.grid i (blankRow v.cols {}) (by simpa using hi)]
+  obtain ⟨hcell, hgsz', hrl'⟩ := paint_rows hub hpos v.grid.toList 0
+    (({ u with pen := ({} : Pen) }).moveTo 0 0) {} hwalk (by rw [Nat.zero_add]; exact hrs_len)
+    (fun i hi => by rw [htlist i hi]; exact hvok i)
+    (fun i hi => by rw [htlist i hi, Nat.zero_add])
+  refine grid_eq_of_cells (cols := v.cols) (rows := v.rows) hgsz' hvsz ?_ (fun y' _ => hrl' y') ?_
+  · intro y' hyr x _; exact hcell y' x hyr
+  · intro y' _; exact (hvok y').size
