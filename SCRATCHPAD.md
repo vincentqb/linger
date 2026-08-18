@@ -5322,3 +5322,58 @@ WHAT REMAINS for `restore_grid_any` (Def-of-done item 5), and the genuine subtle
    to the post-`?1049h` state; the switch's state establishment is the new work.
 6. `restore_grid_reachable` (supplies items 1/2's invariants from `LiveReachableVt`) and
    `resume_grid` (composes with checkpoint exactness).
+
+## Step 4 notes — 2026-08-18 (the composition; DoD item 5 for the main screen)
+
+`restore_grid_any_main` and `restore_grid_reachable` are **proved**: feeding `restore v` to any
+live-reachable client of the session's dimensions leaves its grid equal to `v.grid`, array for
+array. Non-vacuity checked by instantiating at a real 80×24 `Vt.init` (both the hypothesis
+bundle and the conclusion).
+
+The `u8acc` blocker from the previous round is **solved twice over**:
+1. `uaz_feed` — an all-ASCII stream leaves the decoder quiesced. Built as the `u8acc` twin of
+   the existing `un_*`/`uz_*` family (`ua_ctl` … `ua_stepStr`, `uaz_stepGround`, `uaz_step`).
+   Restricting to `b < 0x80` (not `< 0xC0`) is what makes it easy: the UTF-8 continuation
+   branch cannot arise, and every non-glyph restore byte is ASCII anyway. The `Ascii`
+   predicate family (`Ascii.append/cons/nil`, `ascii_digits`, `ascii_csiNum`, `ascii_modeSet`,
+   `ascii_penSgr`, …) discharges the side condition compositionally, the repo's own idiom.
+2. `U8Ok v := v.u8need = 0 → v.u8acc = 0`, proved for **every live-reachable state**
+   (`u8Ok_of_liveReachable`). So the precondition I flagged last round as "a real limit on any
+   receiver" is a limit only on paper: no reachable client violates it. `Good` bounds `u8need`
+   but says nothing about `u8acc`, which is why it needed its own invariant.
+   `u8pair_stepEsc` is the honest shape for the `.esc` case: unchanged **or** both cleared —
+   the backwards direction is *false*, because `RIS` rebuilds through `Vt.init` and reports
+   zero whatever the receiver held. (I wrote the backwards lemma first; it does not hold.)
+
+Other new machinery: `paint_entry` (the establishing prefix leaves the receiver ready — dims
+via `dims_feed`+`Good`, rows via `renderable_feed`, region/charsets/alt via `prologue_sticky`,
+modes via `prologue_modes`+`mmap_id_sgr`/`mmap_id_ed`, decoder via `uaz_feed`);
+`modeSet_feed_eq` (a private mode set as a **state** equation, which `modeSet_modes` was not —
+it saw only the `Modes` field, and `?1049h`'s real work is stashing the grid);
+`setMode_pstate`; `csi_priv_open_eq`; `alt_switch_entry`; `modes_eraseScreen`; `grid_eq_of_cells`.
+
+Gotchas: `set` and `by_contra` are Mathlib-only (banned) — hit both again. `dsimp only` after
+`unfold Vt.csiFinish` eta-expands the record field-by-field, so a `rw` on the dispatch must go
+through a **∀-quantified** equation (`show ∀ (u : Vt), u.csiDispatch … = …`), the trick
+`cha_feed_eq` already used. `repeat' split; all_goals rfl` misaligns two sides that differ
+only in `pstate` (the `enterAlt` branches split independently) — `setMode_pstate` with a
+leading `dsimp only` is the fix.
+
+Break-verify: `gridAnsi`'s home `CSI H` → `CSI 2;1 H` (a one-cell drift). Fails
+`gridAnsi_eq` (8162) plus `ends_gridAnsi`/`quiet_gridAnsi`/`smap_id_gridAnsi`. Reverted; Core
+byte-identical; green.
+
+**STILL OPEN** (and now narrow): the **alt-screen** branch. `alt_switch_entry` +
+`modeSet_feed_eq` are its hard half — the switch fires and hands the second paint a blank grid
+of the right shape, region reset, cursor homed. What is missing is only the **modes** at the
+switch (`insert`/`wrap`/`origin`), which sit between the prologue that sets them and the
+switch that inherits them, across the main paint. Two routes, neither a one-liner, recorded in
+a note above `restore_grid_reachable` in `Theorems/Render.lean`: `MMap id (gridAnsi …)` needs
+`MMap` over `utf8s` and `MMap` carries no `u8acc`; or expose the modes from `paint_rows`
+(`Walking` already carries `insert`/`wrap`) — which does not reach `origin`, since `Matches`
+has no `origin` field. **The second is the better shape** and the recommended next step: add
+`org` to `Matches` (one line per rung via `modes_print'` / `frame_setCol`, ten rungs), thread
+it through `paint_range`/`paint_rows`/`gridAnsi_writes_grid`, then the alt branch is a
+composition like the main one. Also still open: `rows = 1` (excluded by `h2 : 0 < v.rows - 1`,
+`DECSTBM`'s own degenerate case — a one-row grid cannot scroll, so `Walking.bot` should weaken
+to `rows ≤ 1 ∨ bot = rows - 1`), and `resume_grid` (compose with checkpoint exactness).

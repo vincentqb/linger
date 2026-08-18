@@ -8288,6 +8288,7 @@ theorem paint_rows {cols rows : Nat} {tg : Array Row} (hcb : cols < 65533) (hpos
         ∧ (∀ y', ((w.feed (joinCRLF (rowsAnsi rs p))).getRow y').size = cols)
         ∧ (w.feed (joinCRLF (rowsAnsi rs p))).pstate = .ground
         ∧ (w.feed (joinCRLF (rowsAnsi rs p))).u8need = 0
+        ∧ (w.feed (joinCRLF (rowsAnsi rs p))).u8acc = 0
   | [], Y, w, p, hw, hsum, _, _ => by
     have hYrows : Y = rows := by simpa using hsum
     subst hYrows
@@ -8295,7 +8296,7 @@ theorem paint_rows {cols rows : Nat} {tg : Array Row} (hcb : cols < 65533) (hpos
         = (tg.getD y' (blankRow cols {})).at x) ∧ _ ∧ _
     rw [show rowsAnsi ([] : List Row) p = [] from rfl, show joinCRLF ([] : List Bytes) = [] from rfl,
       show w.feed ([] : Bytes) = w from rfl]
-    exact ⟨fun y' x h => hw.done y' x h, hw.gsz, hw.rlens, hw.ground, hw.u8need⟩
+    exact ⟨fun y' x h => hw.done y' x h, hw.gsz, hw.rlens, hw.ground, hw.u8need, hw.u8acc⟩
   | r :: rest, Y, w, p, hw, hsum, hrsok, hrstg => by
     have hYrows : Y < rows := by simp only [List.length_cons] at hsum; omega
     have hr0 : r = tg.getD Y (blankRow cols {}) := by
@@ -8318,7 +8319,7 @@ theorem paint_rows {cols rows : Nat} {tg : Array Row} (hcb : cols < 65533) (hpos
       have hYlast : Y + 1 = rows := by simpa using hsum
       rw [show rowsAnsi [r] p = [(rowAnsi r p).1] from rfl,
         show joinCRLF [(rowAnsi r p).1] = (rowAnsi r p).1 from rfl]
-      refine ⟨fun y' x hy' => ?_, ?_, ?_, hM.ground, hM.u8need⟩
+      refine ⟨fun y' x hy' => ?_, ?_, ?_, hM.ground, hM.u8need, hM.u8acc⟩
       · by_cases hyY : y' = Y
         · subst hyY
           rw [show (w.feed (rowAnsi r p).1).getCell x y'
@@ -8431,7 +8432,8 @@ theorem gridAnsi_writes_grid {u v : Vt}
     (hvok : ∀ y', RowOk v.cols (v.grid.getD y' (blankRow v.cols {}))) (hvsz : v.grid.size = v.rows) :
     (u.feed (gridAnsi v.grid)).grid = v.grid
       ∧ (u.feed (gridAnsi v.grid)).pstate = .ground
-      ∧ (u.feed (gridAnsi v.grid)).u8need = 0 := by
+      ∧ (u.feed (gridAnsi v.grid)).u8need = 0
+      ∧ (u.feed (gridAnsi v.grid)).u8acc = 0 := by
   rw [gridAnsi_eq]
   -- reset the pen, then home the cursor: a known (0, 0, {}) entry state
   have hsgr : u.feed (csiNum 0 0x6D) = { u with pen := {} } := by
@@ -8475,12 +8477,12 @@ theorem gridAnsi_writes_grid {u v : Vt}
   have htlist : ∀ i (hi : i < v.grid.toList.length),
       v.grid.toList[i] = v.grid.getD i (blankRow v.cols {}) := fun i hi => by
     rw [Array.getElem_toList, getD_lt' v.grid i (blankRow v.cols {}) (by simpa using hi)]
-  obtain ⟨hcell, hgsz', hrl', hpg', hpu'⟩ := paint_rows hub hpos v.grid.toList 0
+  obtain ⟨hcell, hgsz', hrl', hpg', hpu', hpa'⟩ := paint_rows hub hpos v.grid.toList 0
     (({ u with pen := ({} : Pen) }).moveTo 0 0) {} hwalk (by rw [Nat.zero_add]; exact hrs_len)
     (fun i hi => by rw [htlist i hi]; exact hvok i)
     (fun i hi => by rw [htlist i hi, Nat.zero_add])
   refine ⟨grid_eq_of_cells (cols := v.cols) (rows := v.rows) hgsz' hvsz ?_
-    (fun y' _ => hrl' y') ?_, hpg', hpu'⟩
+    (fun y' _ => hrl' y') ?_, hpg', hpu', hpa'⟩
   · intro y' hyr x _; exact hcell y' x hyr
   · intro y' _; exact (hvok y').size
 
@@ -8657,6 +8659,28 @@ theorem ascii_escCharset (i x : UInt8) (hi : i < 0x80) (hx : x < 0x80) :
   rw [show escCharset i x = escB ++ [i, x] from rfl]
   exact ascii_escB.append (Ascii.cons hi (Ascii.cons hx Ascii.nil))
 
+theorem ascii_joinSemi : ∀ (l : List Nat), Ascii (joinSemi l)
+  | [] => Ascii.nil
+  | [n] => by rw [show joinSemi [n] = digits n from rfl]; exact ascii_digits n
+  | n :: m :: l => by
+    rw [show joinSemi (n :: m :: l) = digits n ++ [0x3B] ++ joinSemi (m :: l) from rfl]
+    exact (ascii_digits n |>.append (Ascii.cons (by decide) Ascii.nil)).append
+      (ascii_joinSemi (m :: l))
+
+theorem ascii_sgrOf (codes : List Nat) : Ascii (sgrOf codes) := by
+  rw [show sgrOf codes = csiB ++ joinSemi codes ++ [0x6D] from rfl]
+  exact (ascii_csiB.append (ascii_joinSemi codes)).append (Ascii.cons (by decide) Ascii.nil)
+
+theorem ascii_sgrColorSeq (c : Color) (isFg : Bool) : Ascii (sgrColorSeq c isFg) := by
+  unfold sgrColorSeq
+  split
+  · exact Ascii.nil
+  · exact ascii_sgrOf _
+
+theorem ascii_penSgr (p : Pen) : Ascii (penSgr p) := by
+  unfold penSgr
+  exact ((ascii_sgrOf _).append (ascii_sgrColorSeq _ _)).append (ascii_sgrColorSeq _ _)
+
 /-- The establishing prefix — prologue, SGR reset, clear — is all ASCII. -/
 theorem ascii_paint_prefix (v : Vt) :
     Ascii (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A) := by
@@ -8681,7 +8705,8 @@ theorem paint_entry (v w : Vt) (hgood : Good w) (hren : Renderable w)
       ∧ u.pstate = .ground ∧ u.u8need = 0 ∧ u.u8acc = 0
       ∧ u.modes.insert = false ∧ u.modes.wrap = true ∧ u.modes.origin = false
       ∧ u.g0Line = false ∧ u.g1Line = false
-      ∧ u.grid.size = v.rows ∧ (∀ y', (u.getRow y').size = v.cols) := by
+      ∧ u.grid.size = v.rows ∧ (∀ y', (u.getRow y').size = v.cols)
+      ∧ u.altGrid = none ∧ stick u = ⟨v.rows, 0, v.rows - 1, false, false, false, false⟩ := by
   intro u
   -- dimensions: no linger stream emits RIS, but `Good` is what `dims_feed` needs anyway
   have hd : dims u = dims w := dims_feed _ hgood
@@ -8721,7 +8746,10 @@ theorem paint_entry (v w : Vt) (hgood : Good w) (hren : Renderable w)
   -- the decoder: the whole prefix is ASCII, so nothing is half-decoded
   obtain ⟨huun, huua⟩ := uaz_feed _ (ascii_paint_prefix v) hun hua
   refine ⟨hucols, hurows, ?_, ?_, hst.1, huun, huua, hmod.1, hmod.2.1, hmod.2.2, ?_, ?_,
-    by rw [hgsz, hurows], fun y' => ?_⟩
+    by rw [hgsz, hurows], fun y' => ?_, ?_, hst.2⟩
+  case refine_6 =>
+    have : u.altGrid.isSome = false := by rw [← stick_alt u, hst.2]
+    exact Option.not_isSome_iff_eq_none.mp (by rw [this]; simp)
   · rw [← stick_top u, hst.2]
   · rw [← stick_bot u, hst.2]
   · rw [← stick_g0 u, hst.2]
@@ -8754,7 +8782,7 @@ theorem restore_grid_any_main (v w : Vt) (hgood : Good w) (hren : Renderable w)
     (hpos : 0 < v.cols) (hub : v.cols < 65533)
     (hvren : Renderable v) (hvsz : v.grid.size = v.rows) :
     (w.feed (restore v)).grid = v.grid := by
-  obtain ⟨e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11, e12, e13, e14⟩ :=
+  obtain ⟨e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11, e12, e13, e14, -, -⟩ :=
     paint_entry v w hgood hren hcols hrows hua hun h2 hfits
   have hscreens : screensAnsi v = gridAnsi v.grid := by
     unfold screensAnsi; rw [halt]
@@ -8768,7 +8796,7 @@ theorem restore_grid_any_main (v w : Vt) (hgood : Good w) (hren : Renderable w)
         = (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A) ++ screensAnsi v from rfl,
       feed_append, hscreens]
     exact (gridAnsi_writes_grid e1 e2 hpos hub e3 e4 e5 e6 e7 e8 e9 e10 e11 e12
-      (by rw [e13]) e14 hvren.main.2 hvsz).2.2
+      (by rw [e13]) e14 hvren.main.2 hvsz).2.2.1
   · rw [show prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v
         = (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A) ++ screensAnsi v from rfl,
       feed_append, hscreens]
@@ -8901,3 +8929,39 @@ theorem alt_switch_entry {u : Vt} (halt : u.altGrid = none)
   rw [heq, hent]
   exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
+
+/-! **The alt-screen branch: what it still needs, precisely.** `alt_switch_entry` and
+`modeSet_feed_eq` above are its hard half — the switch fires (the prologue's `?1049l` leaves
+`altGrid = none`, and `stick` carries that across the main paint) and hands the second paint a
+blank grid of the receiver's shape, its region reset and its cursor homed. What is missing is
+narrower than it looks: the **modes** at the switch. `gridAnsi_writes_grid` needs
+`insert = false`, `wrap = true` and `origin = false`, and the main paint sits between the
+prologue that establishes them and the switch that inherits them.
+
+Neither available route is a one-liner, which is why it is recorded rather than attempted:
+`MMap id (gridAnsi …)` would need `MMap` over `utf8s`, and `MMap` does not carry `u8acc`,
+which `utf8_feed` requires for a multi-byte glyph; and exposing the modes from `paint_rows`
+(where `Walking` already carries `insert`/`wrap`) does not reach `origin`, because `Matches`
+has no `origin` field — adding one is a rung-by-rung change (`modes_print'` and
+`frame_setCol` make each case a line, but there are ten). The second is the better shape: it
+puts the fact where the walk already re-establishes its siblings. -/
+
+/-- **The grid claim with every hypothesis discharged from reachability.** The receiver's
+`Good`, `Renderable` and decoder invariants are not assumptions about a *cooperative* client —
+they hold of every state a terminal can reach by being fed bytes, which is every client there
+is (`good_of_liveReachable`, `renderable_of_liveReachable`, `u8Ok_of_liveReachable`). What is
+left in the statement is the genuine part: matching dimensions, at least two rows, and the
+session not being on the alt screen. -/
+theorem restore_grid_reachable (v w : Vt)
+    (hw : LiveReachableVt w) (hv : LiveReachableVt v)
+    (hcols : w.cols = v.cols) (hrows : w.rows = v.rows) (hun : w.u8need = 0)
+    (halt : v.altGrid = none) (h2 : 0 < v.rows - 1) :
+    (w.feed (restore v)).grid = v.grid := by
+  have hg : Good v := good_of_liveReachable hv
+  refine restore_grid_any_main v w (good_of_liveReachable hw) (renderable_of_liveReachable hw)
+    hcols hrows (u8Ok_of_liveReachable hw hun) hun halt h2 ?_ ?_ ?_
+    (renderable_of_liveReachable hv) ?_
+  · exact Nat.lt_of_le_of_lt hg.rowsLe (by decide)
+  · exact hg.colsPos
+  · exact Nat.lt_of_le_of_lt hg.colsLe (by decide)
+  · exact (renderable_of_liveReachable hv).main.1

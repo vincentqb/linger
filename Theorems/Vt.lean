@@ -1602,6 +1602,24 @@ theorem uaz_stepEsc {v : Vt} (b : UInt8) (h : v.u8acc = 0) :
     | exact h
     | rfl
 
+/-- **`stepEsc` on the decoder pair: unchanged, or both cleared.** The honest statement — the
+backwards direction is *false*, because `RIS` rebuilds through `Vt.init` and so reports zero
+whatever the receiver held. This is what `U8Ok` needs, and stating it as one disjunction is
+what lets every branch fall to a uniform script. -/
+theorem u8pair_stepEsc (v : Vt) (b : UInt8) :
+    ((v.stepEsc b).u8need = v.u8need ∧ (v.stepEsc b).u8acc = v.u8acc)
+      ∨ ((v.stepEsc b).u8need = 0 ∧ (v.stepEsc b).u8acc = 0) := by
+  unfold Vt.stepEsc
+  dsimp only
+  repeat' split
+  all_goals first
+    | exact Or.inl ⟨rfl, rfl⟩
+    | exact Or.inr ⟨rfl, rfl⟩
+    | exact Or.inl ⟨un_lineFeed _, ua_lineFeed _⟩
+    | exact Or.inl ⟨(un_lineFeed _).trans (un_carriageReturn _),
+        (ua_lineFeed _).trans (ua_carriageReturn _)⟩
+    | exact Or.inl ⟨un_reverseIndex _, ua_reverseIndex _⟩
+
 set_option maxRecDepth 8000 in
 /-- `stepGround` keeps `u8acc` at zero for any byte that is not a
 multi-byte UTF-8 lead (≥ 0xC0): a lead byte is exactly what *starts* a
@@ -4105,6 +4123,90 @@ theorem good_of_liveReachable {v : Vt} (h : LiveReachableVt v) : Good v := by
   | feed _ bytes ih => exact Good.feed bytes ih
   | resize _ c r ih => exact Good.resize c r ih
   | quiesce _ ih => exact Good.set_ground (Good.set_u8 0 0 (by omega) ih)
+
+/-- **The decoder invariant a live state carries.** Whenever no UTF-8 sequence is pending the
+accumulator is zero — `stepGround` zeroes it on the byte that *completes* a sequence, and
+`abortUtf8` zeroes it on the byte that abandons one. This is the precondition the grid claim
+needs on its receiver and could not get from `Good` or `Renderable`: `Good` bounds `u8need`
+but says nothing about `u8acc`. -/
+def U8Ok (v : Vt) : Prop := v.u8need = 0 → v.u8acc = 0
+
+theorem u8Ok_init (cols rows : Nat) : U8Ok (Vt.init cols rows) := fun _ => rfl
+
+theorem u8Ok_stepGround {v : Vt} (b : UInt8) (h : U8Ok v) : U8Ok (v.stepGround b) := by
+  intro hz
+  unfold Vt.stepGround at hz ⊢
+  by_cases h1 : (b == 0x1B) = true
+  · rw [if_pos h1] at hz ⊢; exact h hz
+  rw [if_neg h1] at hz ⊢
+  by_cases h2 : b < 0x20
+  · rw [if_pos h2] at hz ⊢
+    rw [ua_ctl]; rw [un_ctl] at hz; exact h hz
+  rw [if_neg h2] at hz ⊢
+  by_cases h3 : b < 0x80
+  · rw [if_pos h3] at hz ⊢
+    rw [ua_acceptChar]; rw [un_acceptChar] at hz; exact h hz
+  rw [if_neg h3] at hz ⊢
+  by_cases h4 : b < 0xC0
+  · rw [if_pos h4] at hz ⊢
+    dsimp only at hz ⊢
+    by_cases h5 : (v.u8need == 0) = true
+    · rw [if_pos h5] at hz ⊢; exact h hz
+    rw [if_neg h5] at hz ⊢
+    by_cases h6 : (v.u8need == 1) = true
+    · rw [if_pos h6] at hz ⊢
+      rw [ua_acceptChar]
+    · rw [if_neg h6] at hz ⊢
+      exfalso
+      simp only [beq_iff_eq] at h5 h6
+      simp only [] at hz
+      omega
+  rw [if_neg h4] at hz ⊢
+  by_cases h7 : b < 0xE0
+  · rw [if_pos h7] at hz ⊢; exact absurd hz (by simp)
+  rw [if_neg h7] at hz ⊢
+  by_cases h8 : b < 0xF0
+  · rw [if_pos h8] at hz ⊢; exact absurd hz (by simp)
+  rw [if_neg h8] at hz ⊢
+  by_cases h9 : b < 0xF8
+  · rw [if_pos h9] at hz ⊢; exact absurd hz (by simp)
+  rw [if_neg h9] at hz ⊢
+  exact h hz
+
+theorem u8Ok_step {v : Vt} (b : UInt8) (h : U8Ok v) : U8Ok (v.step b) := by
+  have hab : U8Ok (v.abortUtf8 b) := by
+    unfold Vt.abortUtf8
+    split
+    · intro _; rfl
+    · exact h
+  unfold Vt.step
+  dsimp only
+  split
+  · exact u8Ok_stepGround _ hab
+  all_goals
+    (intro hz
+     first
+       | (rw [ua_stepEscInter]; rw [un_stepEscInter] at hz; exact hab hz)
+       | (rw [ua_stepCsi]; rw [un_stepCsi] at hz; exact hab hz)
+       | (rw [ua_stepOsc]; rw [un_stepOsc] at hz; exact hab hz)
+       | (rw [ua_stepStr]; rw [un_stepStr] at hz; exact hab hz)
+       | (rcases u8pair_stepEsc (v.abortUtf8 b) b with ⟨hn, ha⟩ | ⟨-, ha⟩
+          · rw [ha]; exact hab (by rw [← hn]; exact hz)
+          · exact ha))
+
+theorem u8Ok_feed : ∀ (bs : List UInt8) {v : Vt}, U8Ok v → U8Ok (v.feed bs)
+  | [], _, h => h
+  | b :: bs, v, h => by
+    rw [show v.feed (b :: bs) = (v.step b).feed bs from rfl]
+    exact u8Ok_feed bs (u8Ok_step b h)
+
+theorem u8Ok_of_liveReachable {v : Vt} (h : LiveReachableVt v) : U8Ok v := by
+  induction h with
+  | init c r => exact u8Ok_init c r
+  | feed _ bytes ih => exact u8Ok_feed bytes ih
+  | resize _ c r ih => intro hz; rw [show (Vt.resize _ c r).u8acc = _ from rfl] at *; exact ih hz
+  | quiesce _ _ => intro _; rfl
+
 
 end Zmx.Core.Vt
 
