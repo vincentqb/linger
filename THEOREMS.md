@@ -467,6 +467,53 @@ the socket's bind state, so a daemon that is merely slow (or SIGSTOPed)
 keeps its socket — and §Row keeps it correctly named in the listing.
 Verified.
 
+## The conformance profile — what `restore`/`leave` assume of the receiver
+
+These are emitter/parser self-consistency theorems: the model receiver is our own `Vt`, so a
+green proof says the stream `restore` emits is read back by *that* parser as the state it
+encodes. Each entry below is a behaviour the stream depends on, and so a place a nonconforming
+terminal would diverge from the proof — the honest boundary of the claim, and linger's stated
+compatibility requirement. (The pty and e2e suites remain the only evidence about real
+terminals; see the note under `## What these theorems do not settle`.)
+
+1. **Absolute cursor addressing with origin mode off.** After `CSI ? 6 l` (DECOM off), `CSI H`
+   homes to (0,0) and `CSI r ; c H` / `CHA` address from the screen origin, not the scroll
+   region. The paint homes with `CSI H` and places a wide glyph's marks with `CHA`; a terminal
+   that kept origin mode after `?6l`, or made `CHA` region-relative, would misplace cells.
+   (`prologueAnsi`'s `?6l`, `home_places_cursor`, `cha_matches`.)
+2. **Deferred wrap at the right margin, with autowrap on.** A glyph in the last column arms a
+   wrap-pending rather than moving the cursor, and a following combining mark attaches to that
+   cell. `CSI ? 7 h` sets it; the row induction models `cursor.pending`. A terminal that
+   wrapped eagerly would push a margin cell's mark to the next line. (`?7h`,
+   `step_narrow_margin`, `Vt.printMark`; two fuzz seeds in SCRATCHPAD 2026-08-15.)
+3. **The SGR parameter cap: at most sixteen parameters, the seventeenth sets `ignore` and drops
+   the sequence.** `penSgr` splits a pen into ≤3 sequences of ≤8 parameters so none is dropped.
+   A terminal with a smaller cap would lose attributes or colours. (`penSgr`,
+   `penSgr_under_cap`, `pen_codes_recover`.)
+4. **`ED 2` clears the screen and touches nothing else** — not the modes, pen, cursor or
+   dimensions. It is the clean slate before the paint. (`eraseScreen_two_frame`, `mmap_id_ed`.)
+5. **Charset designations are honoured (`ESC ( B`, `ESC ) B`, `SI`).** The stream re-designates
+   ASCII and shifts G0 in; a terminal left in DEC line-drawing would render the paint's ASCII as
+   box glyphs. (`charsetAnsi`, `prologueAnsi`.)
+6. **DECSTBM sets the scroll region, and refuses a region of fewer than two lines.** `CSI 1 ;
+   rows r` resets the region whole for `rows ≥ 2`; for one row it is a no-op and a conforming
+   (`Good`) one-row screen already has the whole region. A terminal that accepted a one-row
+   region, or ignored DECSTBM, could scroll the paint. (`prologue_sticky`, `smap_stbm`,
+   `stStbm`.)
+7. **The alt-screen switch stashes and blanks.** `CSI ? 1049 h` replaces the grid with a blank
+   of the current size, saves the cursor and pen, and resets the region; `?1049l` restores. A
+   terminal that switched without blanking or without resetting the region would corrupt the
+   alt-screen paint. (`alt_switch_entry`, `modeSet_feed_eq`, `Vt.enterAlt`.)
+8. **The final cursor address is clamped to the receiver's size.** `CSI 999 ; 1 H` parks the
+   cursor bottom-left (region-relative under DECOM), clamped by the receiver — which is why the
+   stream carries no dimensions for it, and why *where* it lands is the receiver's business.
+   (`cursorAnsi`, `restore_cursor`, `leave_canonical_all`'s note.)
+9. **A leading `ST` (`ESC \`) resynchronises a receiver caught in a string state.** It closes an
+   in-progress OSC/DCS so the rest of the stream is parsed as commands rather than swallowed
+   into a title. (`prologueAnsi`'s lead-in, `restore_grounds`, `st_grounds`.)
+10. **UTF-8 decoding returns to a clean state after each complete glyph**, and the stream ends
+    ESC-initiated so nothing is left half-decoded. (`utf8_feed`, `restore_u8_zero`, `U8Ok`.)
+
 ## What these theorems do not settle
 
 * **§Total covers the emulator, not the runtime.** `Zmx/Runtime/*` is

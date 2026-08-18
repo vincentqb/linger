@@ -317,3 +317,21 @@ exist.
 Exit: fresh semantic review reports no correctness blocker; no stale active
 spec/reference remains; `./lake build Theorems Tests` and `./tests/e2e.sh`
 pass from the repository root; `git diff --check` is clean.
+
+## Completion record — closed 2026-08-18
+
+Archived to `specs/archive/`. Every open obligation is landed in the successor
+`specs/restore-conformance.md` (itself now complete through item 5):
+
+- **Step 4's exit criteria are met.** `restore_grid_any` proves cell-and-pen equality (grid
+  array equality is cell-for-cell, and a `Cell` carries its pen) for every renderable state,
+  on both the main and alt screens and at every height; `restore_grid_reachable` takes only
+  `LiveReachableVt`; `resume_grid` composes it with checkpoint exactness. No `sorry`, no
+  `native_decide`; the source gate enforces both over `Theorems/*.lean`; a same-shape value
+  mutation breaks the proof (break-verified — SCRATCHPAD 2026-08-18).
+- The "paint" that was open here — `penSgr`/`SGR 0`/`CSI H`/`rowAnsi` induction/`joinCRLF`/the
+  alt switch — all landed, in the receiver-quantified shape the successor adopted (over any
+  client rather than over `Vt.init`). Steps 1–3 stay as their own completion records above.
+- The §Terminal, §Renderable and A1/A5 rows in `THEOREMS.md` are current, and the conformance
+  profile there is the reviewable boundary Step 5 called for. `./tests/e2e.sh` green and
+  warning-free.

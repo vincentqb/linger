@@ -148,3 +148,16 @@ under DECOM and emits a silently wrong address.
 
 * Whether `Renderable` should live in `Zmx/Core/Vt.lean` next to `Good` or
   in `Theorems/`. It is a proof-side notion, but so was `Good`.
+
+## Completion record — closed 2026-08-18
+
+Archived to `specs/archive/`. The Definition of done is met, in the receiver-quantified shape
+the successor `specs/restore-conformance.md` adopted (over **any** client of the right
+dimensions, not only `Vt.init`):
+
+- `restore_grid_any` / `restore_grid_reachable` (in `Theorems/Render.lean`) prove the replayed
+  screen equals the saved screen — same cells and pens — with no `sorry` and no `native_decide`;
+  `resume_grid` (in `Theorems/Resume.lean`) lifts it to a checkpoint round-trip. Both screens,
+  every height (the one-row corner included). Break-verified (SCRATCHPAD 2026-08-18), its A5
+  row in `THEOREMS.md`, `./tests/e2e.sh` green. `Tests/Render.lean`'s `replayEq` fixtures are
+  now regression tests, not the fidelity oracle — exactly the handoff this spec described.

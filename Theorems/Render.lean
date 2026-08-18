@@ -2,7 +2,7 @@ import Zmx.Core.Render
 import Theorems.Vt
 /-! # §Replay, stage 3b — a restore stream leaves the parser in ground
 
-The §Replay target (specs/grid-fidelity.md; the parser half was closed
+The §Replay target (specs/archive/grid-fidelity.md; the parser half was closed
 in specs/archive/bigger-theorems.md) is
 `(Vt.init v.cols v.rows).feed (restore v) ≃ v`. This file proves the
 *parser* half of that `≃`, for ANY `Vt` and with no hypotheses: after
@@ -2226,7 +2226,7 @@ Two shapes of proof, both driven by the guards in `applySgr`'s fold:
   computation instead of needing a disequality per rung.
 
 What is *not* here: that the parser's CSI accumulator delivers these
-numbers in the first place (step 1 of specs/grid-fidelity.md). This half is
+numbers in the first place (step 1 of specs/archive/grid-fidelity.md). This half is
 about `Vt.applySgr` alone.
 -/
 
@@ -2328,7 +2328,7 @@ theorem penAfterColor_eq (q : Pen) (c : Color) (isFg : Bool)
 `penSgr` emits — attributes, then foreground, then background — to *any*
 starting pen recovers exactly `p`. The semantic half of the pen round trip:
 what remains is that the parser hands these numbers to `applySgr`, which is
-step 1 of specs/grid-fidelity.md. -/
+step 1 of specs/archive/grid-fidelity.md. -/
 theorem pen_codes_recover (q : Pen) (p : Pen) :
     penAfterColor (penAfterColor (penAfter q (penAttrCodes p)) p.fg true) p.bg false = p := by
   rw [penAfter_attrCodes]
@@ -2616,7 +2616,7 @@ Note the **grid-shape hypotheses**. `putCell` writes through
 silently. Every reachable state satisfies `row.size = cols` and
 `grid.size = rows` — `Vt.init` builds them that way and `resize` re-fits —
 but `Good` does not say so, which is a gap in §Bound rather than in this
-proof. `Renderable` (step 1 of specs/grid-fidelity.md) is where it belongs.
+proof. `Renderable` (step 1 of specs/archive/grid-fidelity.md) is where it belongs.
 -/
 
 /-- **One narrow glyph writes one cell.** `hpc` says the glyph is stored as

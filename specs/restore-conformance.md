@@ -1,14 +1,20 @@
 # restore-conformance — restore works into any client, and the proofs say so
 
-Status: active
+Status: **complete** (2026-08-18) — all six Definition-of-done items landed and Step 5 (profile
++ archival) done. Kept in `specs/` (not archived) as the current record until new work opens a
+successor. Optional, non-blocking leftovers named below: `restore_tabs_any`, and Step 0 ledger
+items 3–6.
 Updated: 2026-08-18
 Predecessor: `specs/terminal-contract.md` (Steps 1–3 complete; its Step 4 is carried
 here in a different shape, and its Step 5 archival gate is carried unchanged)
 
 ## Where this stands — read this first
 
-**Next step:** Step 5 — write the conformance profile into THEOREMS.md and archive
-`terminal-contract.md` + `grid-fidelity.md` with completion records. All of item 5 is proved.
+**This spec is complete.** All six Definition-of-done items landed; Step 5 (conformance profile
+into THEOREMS.md + archival of the two predecessor specs) is done. What remains is optional and
+off the critical path: `restore_tabs_any` (a warm-up), and Step 0 ledger items 3–6 (uncapped
+`rt.ptyIn`; resume pty fixed at 80×24; the unmodelled modes; `.err` dropped by `Client.attach`)
+— found real but deliberately not fixed here. New work should open a fresh `specs/<slug>.md`.
 
 **Definition-of-done item 5 is COMPLETE — both screens, every height** (2026-08-18):
 `restore_grid_any` dispatches on `v.altGrid`, and `restore_grid_reachable` / `resume_grid` (now
@@ -738,7 +744,11 @@ Exit: criteria 5 of Definition of done.
 
 ## Step 5 — review, document, archive
 
-Status: not started.
+Status: **done** (2026-08-18). The **conformance profile** is written into THEOREMS.md
+(`## The conformance profile — what restore/leave assume of the receiver`, ten entries).
+`specs/terminal-contract.md` and `specs/grid-fidelity.md` are archived to `specs/archive/`
+with completion records — both carried obligations (Step 4's exact restore, the grid-fidelity
+DoD) landed here, in the receiver-quantified shape. Gates green and warning-free.
 
 Write the **conformance profile** into THEOREMS.md (route 1 above): the receiver
 behaviours the restore stream depends on, as a reviewable list — absolute `CUP` with

@@ -7,17 +7,21 @@ format identifier, not branding).
 `README.md` is the user-facing overview. `PLAN.md` is the original
 requirements (goal-level, not current state); `specs/archive/` holds the
 closed build plans with their completion records
-(`lean-zmx.md`, `bigger-theorems.md`).
+(`lean-zmx.md`, `bigger-theorems.md`, `terminal-contract.md`, `grid-fidelity.md`).
 
 ## Where things stand — read this first after any compaction
 
-1. **`specs/restore-conformance.md` is the ACTIVE plan** — restore works into
-   any client, and the proofs quantify over that client instead of over
-   `Vt.init`. **Its "Where this stands" block names the one next step; read
-   that before doing anything else.**
-   `specs/terminal-contract.md` is its predecessor: Steps 1–3 are complete
-   there and stay as the record, its Step 4 is carried forward in a different
-   shape, and it is not archived because its exit criteria are unmet.
+1. **`specs/restore-conformance.md` is COMPLETE** (2026-08-18) — all six
+   Definition-of-done items landed and Step 5 (conformance profile + archival)
+   is done. `restore` works into any client, and the proofs quantify over that
+   client instead of over `Vt.init`; the screen-cells claim (`restore_grid_any`,
+   `restore_grid_reachable`, `resume_grid`) holds on both screens at every
+   height. It stays in `specs/` as the current record, not archived, until new
+   work opens a successor. Its "Where this stands" block lists the optional,
+   off-critical-path leftovers (`restore_tabs_any`; Step 0 ledger items 3–6) —
+   there is **no** required next step. `specs/terminal-contract.md` and
+   `specs/grid-fidelity.md` are its now-archived predecessors (their carried
+   obligations landed here).
    (Don't look for a living `PLAN.md`: the root one is requirements, and
    everything in `specs/archive/` is closed.)
 2. **`SCRATCHPAD.md`** — append-only worklog: proof recipes, measured
