@@ -1222,6 +1222,27 @@ theorem un_eraseScreen (v : Vt) (m : Nat) : (v.eraseScreen m).u8need = v.u8need 
     | exact (un_foldl _ (fun w i => un_eraseRowSpan w _ _ _) _ _).trans (un_eraseLine _ _)
     | exact un_foldl _ (fun w i => un_eraseRowSpan w _ _ _) _ _
 
+/-- `ED` writes cells and nothing else, so it writes no mode — what the `MMap` for the
+clear needs. The fold mirrors `un_eraseScreen`. -/
+theorem modes_foldl {α : Type} (f : Vt → α → Vt) (hf : ∀ v a, (f v a).modes = v.modes) :
+    ∀ (l : List α) (v : Vt), (l.foldl f v).modes = v.modes
+  | [], _ => rfl
+  | a :: as, v => (modes_foldl f hf as (f v a)).trans (hf v a)
+
+theorem modes_eraseRowSpan (v : Vt) (y a b : Nat) :
+    (v.eraseRowSpan y a b).modes = v.modes := by rw [frame_eraseRowSpan]
+
+theorem modes_eraseLine (v : Vt) (m : Nat) : (v.eraseLine m).modes = v.modes := by
+  rw [frame_eraseLine]
+
+theorem modes_eraseScreen (v : Vt) (m : Nat) : (v.eraseScreen m).modes = v.modes := by
+  unfold Vt.eraseScreen
+  repeat' split
+  all_goals first
+    | exact (modes_foldl _ (fun w i => modes_eraseRowSpan w _ _ _) _ _).trans
+        (modes_eraseLine _ _)
+    | exact modes_foldl _ (fun w i => modes_eraseRowSpan w _ _ _) _ _
+
 theorem un_insertLines (v : Vt) (n : Nat) : (v.insertLines n).u8need = v.u8need := by
   unfold Vt.insertLines
   dsimp only

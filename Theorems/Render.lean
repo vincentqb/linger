@@ -4466,6 +4466,16 @@ theorem mmap_id_append {a b : Bytes} (ha : MMap id a) (hb : MMap id b) : MMap id
 
 /-! ### SUFFIX preservers (modes untouched) -/
 
+/-- `ED` writes cells, never a mode. -/
+theorem mmap_id_ed (n : Nat) : MMap id (csiNum n 0x4A) := by
+  rw [show csiNum n 0x4A = csiB ++ digits n ++ [0x4A] from rfl]
+  refine mmap_id_csi_seq _ 0x4A (paramBytes_digits n) (by decide) (by decide) (fun w t => ?_)
+  unfold Vt.csiDispatch
+  dsimp only
+  split
+  · rfl
+  · exact modes_eraseScreen w _
+
 theorem mmap_id_sgrOf (codes : List Nat) : MMap id (sgrOf codes) := by
   rw [show sgrOf codes = csiB ++ joinSemi codes ++ [0x6D] from rfl]
   exact mmap_id_csi_seq _ 0x6D (paramBytes_joinSemi codes) (by decide) (by decide)
@@ -8575,3 +8585,147 @@ theorem prologue_modes (v w : Vt) :
   dsimp only
   rw [smMod_daw7, smMod_dom6]
   exact ⟨rfl, rfl, rfl⟩
+
+/-! ### The paint's entry state, assembled
+
+`gridAnsi_writes_grid` asks for a receiver already established. `restore` establishes it with
+`prologueAnsi ++ SGR 0 ++ ED 2`, and every fact it needs is now available: the sticky bundle
+and the modes from the prologue, the dimensions from `dims_feed`, the reproducible rows from
+`renderable_feed`, and the decoder from `uaz_feed` — the last being the one that needed its
+own argument, since a CSI final byte zeroes `u8need` but not `u8acc`. -/
+
+/-- **All bytes ASCII** — the side condition `uaz_feed` reads. Composable like `Ends`,
+`Quiet` and `ParamBytes`, so each emitter stage discharges it once. -/
+def Ascii (bs : Bytes) : Prop := ∀ b ∈ bs, b < 0x80
+
+theorem Ascii.nil : Ascii [] := fun _ h => absurd h (by simp)
+
+theorem Ascii.append {a b : Bytes} (ha : Ascii a) (hb : Ascii b) : Ascii (a ++ b) := by
+  intro x hx
+  rcases List.mem_append.mp hx with h | h
+  · exact ha x h
+  · exact hb x h
+
+theorem Ascii.cons {x : UInt8} {l : Bytes} (hx : x < 0x80) (hl : Ascii l) : Ascii (x :: l) := by
+  intro y hy
+  rcases List.mem_cons.mp hy with h | h
+  · subst h; exact hx
+  · exact hl y h
+
+theorem ascii_digits (n : Nat) : Ascii (digits n) := by
+  intro b hb
+  obtain ⟨-, h2⟩ := digits_range n b hb
+  rw [UInt8.le_iff_toNat_le, show ((0x39 : UInt8)).toNat = 57 from rfl] at h2
+  rw [UInt8.lt_iff_toNat_lt, show ((0x80 : UInt8)).toNat = 128 from rfl]
+  omega
+
+theorem ascii_csiB : Ascii csiB :=
+  Ascii.cons (by decide) (Ascii.cons (by decide) Ascii.nil)
+
+theorem ascii_escB : Ascii escB := Ascii.cons (by decide) Ascii.nil
+
+theorem ascii_csiNum (n : Nat) (f : UInt8) (hf : f < 0x80) : Ascii (csiNum n f) := by
+  rw [show csiNum n f = csiB ++ digits n ++ [f] from rfl]
+  exact (ascii_csiB.append (ascii_digits n)).append (Ascii.cons hf Ascii.nil)
+
+theorem ascii_csiNum2 (a b : Nat) (f : UInt8) (hf : f < 0x80) : Ascii (csiNum2 a b f) := by
+  rw [show csiNum2 a b f = csiB ++ digits a ++ [0x3B] ++ digits b ++ [f] from rfl]
+  exact ((((ascii_csiB.append (ascii_digits a)).append
+    (Ascii.cons (by decide) Ascii.nil)).append (ascii_digits b))).append
+    (Ascii.cons hf Ascii.nil)
+
+theorem ascii_csiPriv (n : Nat) (f : UInt8) (hf : f < 0x80) : Ascii (csiPriv n f) := by
+  rw [show csiPriv n f = csiB ++ [0x3F] ++ digits n ++ [f] from rfl]
+  exact ((ascii_csiB.append (Ascii.cons (by decide) Ascii.nil)).append
+    (ascii_digits n)).append (Ascii.cons hf Ascii.nil)
+
+theorem ascii_modeSet (n : Nat) (on : Bool) : Ascii (modeSet n on) := by
+  unfold modeSet
+  exact ascii_csiPriv n _ (by cases on <;> decide)
+
+theorem ascii_escSeq (f : UInt8) (hf : f < 0x80) : Ascii (escSeq f) := by
+  rw [show escSeq f = escB ++ [f] from rfl]
+  exact ascii_escB.append (Ascii.cons hf Ascii.nil)
+
+theorem ascii_escCharset (i x : UInt8) (hi : i < 0x80) (hx : x < 0x80) :
+    Ascii (escCharset i x) := by
+  rw [show escCharset i x = escB ++ [i, x] from rfl]
+  exact ascii_escB.append (Ascii.cons hi (Ascii.cons hx Ascii.nil))
+
+/-- The establishing prefix — prologue, SGR reset, clear — is all ASCII. -/
+theorem ascii_paint_prefix (v : Vt) :
+    Ascii (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A) := by
+  refine (Ascii.append ?_ (ascii_csiNum 0 0x6D (by decide))).append (ascii_csiNum 2 0x4A (by decide))
+  unfold prologueAnsi
+  exact ((((((((ascii_escSeq 0x5C (by decide)).append (ascii_modeSet 1049 false)).append
+    (ascii_csiNum 4 0x6C (by decide))).append (ascii_modeSet 6 false)).append
+    (ascii_modeSet 7 true)).append (ascii_csiNum2 1 v.rows 0x72 (by decide))).append
+    (ascii_escCharset 0x28 0x42 (by decide) (by decide))).append
+    (ascii_escCharset 0x29 0x42 (by decide) (by decide))).append
+    (Ascii.cons (by decide) Ascii.nil)
+
+/-- **The paint's entry state.** After the establishing prefix, a `Good`/`Renderable` receiver
+of the session's dimensions — whose decoder is quiesced, which is the `u8acc` precondition —
+satisfies every hypothesis `gridAnsi_writes_grid` asks for. -/
+theorem paint_entry (v w : Vt) (hgood : Good w) (hren : Renderable w)
+    (hcols : w.cols = v.cols) (hrows : w.rows = v.rows)
+    (hua : w.u8acc = 0) (hun : w.u8need = 0)
+    (h2 : 0 < v.rows - 1) (hfits : v.rows < 65535) :
+    let u := w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)
+    u.cols = v.cols ∧ u.rows = v.rows ∧ u.top = 0 ∧ u.bot = v.rows - 1
+      ∧ u.pstate = .ground ∧ u.u8need = 0 ∧ u.u8acc = 0
+      ∧ u.modes.insert = false ∧ u.modes.wrap = true ∧ u.modes.origin = false
+      ∧ u.g0Line = false ∧ u.g1Line = false
+      ∧ u.grid.size = v.rows ∧ (∀ y', (u.getRow y').size = v.cols) := by
+  intro u
+  -- dimensions: no linger stream emits RIS, but `Good` is what `dims_feed` needs anyway
+  have hd : dims u = dims w := dims_feed _ hgood
+  have hucols : u.cols = v.cols := by
+    rw [← dims_fst u, hd, dims_fst]; exact hcols
+  have hurows : u.rows = v.rows := by
+    rw [← dims_snd u, hd, dims_snd]; exact hrows
+  -- reproducible rows survive any stream
+  have hurend : Renderable u := renderable_feed hren _
+  obtain ⟨hgsz, hrok⟩ := hurend.main
+  -- the sticky bundle and the modes, from the prologue, then through `SGR 0` and `ED 2`
+  have hpro := prologue_sticky v w hrows h2 hfits
+  have hst : (u.pstate = .ground ∧ stick u = ⟨v.rows, 0, v.rows - 1, false, false, false, false⟩) := by
+    have e1 := sput_congr (sput_step hpro (smap_id_sgrNum 0)) (id_eq _)
+    have e2 := sput_congr (sput_step e1 (smap_id_ed 2)) (id_eq _)
+    exact e2
+  have hmod : u.modes.insert = false ∧ u.modes.wrap = true ∧ u.modes.origin = false := by
+    obtain ⟨hi, hw, ho⟩ := prologue_modes v w
+    have hm : MMap id (csiNum 0 0x6D ++ csiNum 2 0x4A) :=
+      mmap_id_append mmap_id_sgr (mmap_id_ed 2)
+    have hpg : (w.feed (prologueAnsi v)).pstate = .ground := prologue_grounds v w
+    have hpu : (w.feed (prologueAnsi v)).u8need = 0 := by
+      obtain ⟨-, h⟩ := uaz_feed (prologueAnsi v) (fun b hb =>
+        ascii_paint_prefix v b (List.mem_append.mpr (Or.inl (List.mem_append.mpr (Or.inl hb)))))
+        hun hua
+      exact (uaz_feed (prologueAnsi v) (fun b hb =>
+        ascii_paint_prefix v b (List.mem_append.mpr (Or.inl (List.mem_append.mpr (Or.inl hb)))))
+        hun hua).1
+    obtain ⟨-, -, hmm⟩ := hm (w.feed (prologueAnsi v)) hpg hpu
+    have : u.modes = (w.feed (prologueAnsi v)).modes := by
+      show (w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).modes = _
+      rw [show prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A
+          = prologueAnsi v ++ (csiNum 0 0x6D ++ csiNum 2 0x4A) from by
+        simp only [List.append_assoc], feed_append, hmm, id_eq]
+    rw [this]
+    exact ⟨hi, hw, ho⟩
+  -- the decoder: the whole prefix is ASCII, so nothing is half-decoded
+  obtain ⟨huun, huua⟩ := uaz_feed _ (ascii_paint_prefix v) hun hua
+  refine ⟨hucols, hurows, ?_, ?_, hst.1, huun, huua, hmod.1, hmod.2.1, hmod.2.2, ?_, ?_,
+    by rw [hgsz, hurows], fun y' => ?_⟩
+  · rw [← stick_top u, hst.2]
+  · rw [← stick_bot u, hst.2]
+  · rw [← stick_g0 u, hst.2]
+  · rw [← stick_g1 u, hst.2]
+  · have := (hrok y').size
+    rw [show u.getRow y' = u.grid.getD y' (blankRow u.cols u.pen) from rfl]
+    by_cases hy : y' < u.grid.size
+    · rw [getD_lt' u.grid y' _ hy, ← getD_lt' u.grid y' (blankRow u.cols {}) hy, hucols] at *
+      exact this
+    · rw [Array.getD, dif_neg hy]
+      show (blankRow u.cols u.pen).size = v.cols
+      rw [show (blankRow u.cols u.pen).size = u.cols from by simp [blankRow]]; exact hucols
