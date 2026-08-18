@@ -24,6 +24,11 @@ def version : String := "linger 0.1.0"
 session" without having to invent a name. -/
 def defaultName : String := "main"
 
+/-- Cap on an `info` reply we will accumulate. A real reply is a few hundred bytes
+(`Session.infoText`); this bounds a peer that streams `infoReply` frames forever,
+which the silence-only timeout below cannot. -/
+def infoReplyCap : Nat := 1048576
+
 def usage : String := "Usage: linger [command] [args...]
 
   (no args) | ls [-r [h,..]]  List sessions; -r also lists remote hosts
@@ -119,7 +124,14 @@ def queryInfo (name : String) : IO (Option (List (String × String))) := do
   | some fd =>
     Client.sendMsg fd .info
     let mut dec : Zmx.Core.Wire.Decoder := {}
-    let mut acc : ByteArray := .empty
+    -- Bounded, through the same proved queue the daemon uses. This loop's only
+    -- exits are `.done`/`.err`/EOF/a 2000 ms *silence* timeout, so a peer that
+    -- streams `infoReply` frames steadily never ends it — an unbounded
+    -- accumulation on the client side, the same class as the `ptyIn` one.
+    -- `bufOffer` refuses whole frames past the cap (`Buf.bufOffer_bound`), so a
+    -- hostile or broken daemon costs a truncated listing rather than the client's
+    -- memory. An info reply is a few hundred bytes; 1 MiB is far above any real one.
+    let mut acc : Zmx.Core.Buf.Buf := {}
     let mut go := true
     while go do
       let revs ← poll #[fd] #[POLLIN] 2000
@@ -133,12 +145,14 @@ def queryInfo (name : String) : IO (Option (List (String × String))) := do
           dec := dec'
           for m in msgs do
             match m with
-            | .infoReply payload => acc := acc ++ ByteArray.mk payload.toArray
+            | .infoReply payload =>
+              acc := (Zmx.Core.Buf.bufOffer infoReplyCap acc
+                       (ByteArray.mk payload.toArray)).1
             | .done => go := false
             | .err _ => go := false
             | _ => pure ()
     close fd
-    let txt := String.fromUTF8? acc |>.getD ""
+    let txt := String.fromUTF8? (Zmx.Core.Buf.writeFrom acc) |>.getD ""
     return some <| txt.splitOn "\n" |>.filterMap (fun line =>
       match line.splitOn "\t" with
       | [k, v] => some (k, v)

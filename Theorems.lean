@@ -1,3 +1,4 @@
+import Theorems.Buf
 import Theorems.Wire
 import Theorems.Vt
 import Theorems.Terminal

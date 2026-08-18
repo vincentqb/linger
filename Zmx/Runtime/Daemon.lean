@@ -6,13 +6,18 @@ import Zmx.Runtime.Paths
 All decisions live in the pure machine; this file only:
 * turns fd readiness into `Session.Event`s,
 * executes `Session.Effect`s as syscalls,
-* owns the runtime's byte buffers, both bounded at 4 MiB so no buffer can
-  grow the daemon — the runtime half of §Bound (the machine half is proved).
-  A client that stops reading is disconnected at `outbufCap`; a child that
-  stops reading has its input dropped at `ptyInCap` (there is nothing to
-  disconnect — the child is the session). Both reclaim written bytes on every
-  flush, not only on a full drain, so a slow-but-not-stopped consumer cannot
-  grow them either.
+* drives the runtime's two byte queues, both bounded at 4 MiB so no buffer can
+  grow the daemon. A client that stops reading is disconnected at `outbufCap`;
+  a child that stops reading has its input dropped at `ptyInCap` (there is
+  nothing to disconnect — the child is the session).
+
+The queues themselves are **not** this file's: they are `Zmx.Core.Buf`, whose
+`Theorems/Buf.lean` proves the caps and that nothing written is retained. That is
+the runtime half of §Bound, and it used to be a paragraph saying "not proved".
+What this file still owns is *when* to enqueue and how to react to a short write,
+which is `IO` and therefore gated rather than proved: `tests/e2e.sh` checks that
+`Zmx/Runtime/*` declares no byte buffer of its own, because no theorem can see
+that this file calls those functions instead of open-coding the same sums.
 
 Checkpoint effects are wired to hooks filled by `Zmx.Runtime.Resume`
 (spec step 7): the daemon knows *when*, that module knows *what*.
@@ -22,6 +27,7 @@ namespace Zmx.Runtime.Daemon
 
 open Zmx.Posix
 open Zmx.Core.Session (State Event Effect step)
+open Zmx.Core.Buf (Buf owedLen bufOffer bufEnqueue bufAdvance)
 
 /-- A stopped-reading client is cut here (runtime §Bound). -/
 def outbufCap : Nat := 4194304
@@ -38,8 +44,7 @@ def ptyInCap : Nat := 4194304
 
 structure Conn where
   fd : UInt32
-  out : ByteArray := .empty
-  off : Nat := 0
+  out : Buf := {}
   deriving Inhabited
 
 structure Rt where
@@ -48,8 +53,7 @@ structure Rt where
   ptyFd : UInt32
   childPid : UInt32
   conns : List Conn := []
-  ptyIn : ByteArray := .empty
-  ptyInOff : Nat := 0
+  ptyIn : Buf := {}
   /-- Whether we have already logged that `ptyIn` hit the cap, so the log
   records the *transition* into backpressure rather than one line per dropped
   chunk (which would be the same unbounded-growth defect, in the log file). -/
@@ -69,36 +73,41 @@ def Rt.setConn (rt : Rt) (c : Conn) : Rt :=
 def Rt.dropConn (rt : Rt) (fd : UInt32) : Rt :=
   { rt with conns := rt.conns.filter (·.fd != fd) }
 
-/-- Try to flush one connection's buffer; `none` = peer gone. On a partial
-write we drop the already-written prefix (`extract`) rather than keep it: the
-cap at `runEffect .send` measures `size - off`, but memory is the whole array,
-so a peer that drains a little every round — never enough to empty the buffer —
-would grow `out` without limit while `size - off` stayed small and the cap
-never tripped. Compacting keeps `off` at 0 outside the loop, so pending and
-size agree. -/
+/-- Try to flush one connection's queue; `none` = peer gone.
+
+The cursor is a **local** `Nat`, and `bufAdvance` is called once when the loop
+stops: a `Buf` holds exactly what is still owed, so the written prefix is never
+retained and the cap therefore measures memory rather than a counter
+(`Buf.bufNoRetain`, `Buf.bufAdvance_owed`). The two write reactions are the
+reason this is not shared with `flushPty`: here `n < 0` means the peer is gone and
+the caller must close the fd and feed `.closed` back into the machine, while
+`n == 0` is EAGAIN and POLLOUT resumes. -/
 def flushConn (c : Conn) : IO (Option Conn) := do
-  let mut c := c
-  while c.off < c.out.size do
-    let n ← write c.fd c.out (USize.ofNat c.off)
+  let mut wrote := 0
+  let owed := owedLen c.out
+  while wrote < owed do
+    let n ← writeBuf c.fd c.out wrote
     if n < 0 then return none
     if n == 0 then break  -- would block; POLLOUT will resume
-    c := { c with off := c.off + n.toNatClampNeg }
-  if c.off ≥ c.out.size then
-    return some { c with out := .empty, off := 0 }
-  return some { c with out := c.out.extract c.off c.out.size, off := 0 }
+    wrote := wrote + n.toNatClampNeg
+  return some { c with out := bufAdvance c.out wrote }
 
+/-- The same bookkeeping for the child's input queue, with the *other* reaction:
+both `n ≤ 0` cases collapse to `break`, because a dead child surfaces as `read`
+returning `none` → `.childExited`, and there is nothing to disconnect. Sharing the
+loop would invite "fixing" that asymmetry, which would either drop the pty queue
+on a transient or leave a dead client's frames queued. -/
 def flushPty (rt : Rt) : IO Rt := do
-  let mut buf := rt.ptyIn
-  let mut off := rt.ptyInOff
-  while off < buf.size do
-    let n ← write rt.ptyFd buf (USize.ofNat off)
+  let mut wrote := 0
+  let owed := owedLen rt.ptyIn
+  while wrote < owed do
+    let n ← writeBuf rt.ptyFd rt.ptyIn wrote
     if n ≤ 0 then break  -- EAGAIN or child gone; POLLOUT/EOF handles it
-    off := off + n.toNatClampNeg
-  if off ≥ buf.size then
-    return { rt with ptyIn := .empty, ptyInOff := 0, ptyInFull := false }
-  -- same compaction as `flushConn`, and the same reason: without it a
-  -- partly-draining child grows the array while the pending count stays small.
-  return { rt with ptyIn := buf.extract off buf.size, ptyInOff := 0 }
+    wrote := wrote + n.toNatClampNeg
+  let q := bufAdvance rt.ptyIn wrote
+  -- clear the backpressure latch exactly when the queue drains, so the log
+  -- records the transition once (`robust_test` asserts exactly-once)
+  return { rt with ptyIn := q, ptyInFull := rt.ptyInFull && owedLen q != 0 }
 
 /-- Queue bytes for the child, bounded (runtime §Bound, the input half). Past
 `ptyInCap` unwritten bytes the newest frame is dropped and the transition is
@@ -109,13 +118,14 @@ client id (it is produced by `.input` from any client AND by the terminal
 mediator's own query replies — see `Theorems/Session.lean`), and because the
 flooder is usually the human's own paste into a program that stopped reading. -/
 def queuePty (rt : Rt) (bytes : List UInt8) : IO Rt := do
-  let pending := rt.ptyIn.size - rt.ptyInOff
-  if pending + bytes.length > ptyInCap then
+  let pending := owedLen rt.ptyIn
+  let (q, dropped) := bufOffer ptyInCap rt.ptyIn (ByteArray.mk bytes.toArray)
+  if dropped then
     if !rt.ptyInFull then
       IO.eprintln s!"linger: pty input buffer full ({pending} B, cap {ptyInCap}); \
         the child is not reading — dropping input until it does"
     return { rt with ptyInFull := true }
-  flushPty { rt with ptyIn := rt.ptyIn ++ ByteArray.mk bytes.toArray }
+  flushPty { rt with ptyIn := q }
 
 /-- Execute one effect. Returns follow-up events (a close feeds
 `.closed` back so the machine's roster stays true). -/
@@ -126,8 +136,9 @@ def runEffect (rt : Rt) (eff : Effect) : IO (Rt × List Event) := do
     | none => return (rt, [])
     | some c =>
       let bytes := ByteArray.mk (Zmx.Core.Wire.encode m).toArray
-      let c := { c with out := c.out ++ bytes }
-      if c.out.size - c.off > outbufCap then
+      let (q, cut) := bufEnqueue outbufCap c.out bytes
+      let c := { c with out := q }
+      if cut then
         -- runtime §Bound: cut the slow client rather than grow
         close c.fd
         return (rt.dropConn c.fd, [.closed c.fd.toNat])
@@ -181,10 +192,10 @@ def pollRound (rt : Rt) : IO (Rt × List Event) := do
   let polled := rt.conns
   let mut fds : Array UInt32 := #[rt.listenFd, rt.ptyFd]
   let mut evts : Array UInt32 := #[POLLIN,
-    POLLIN ||| (if rt.ptyIn.size > rt.ptyInOff then POLLOUT else 0)]
+    POLLIN ||| (if owedLen rt.ptyIn != 0 then POLLOUT else 0)]
   for c in polled do
     fds := fds.push c.fd
-    evts := evts.push (POLLIN ||| (if c.out.size > c.off then POLLOUT else 0))
+    evts := evts.push (POLLIN ||| (if owedLen c.out != 0 then POLLOUT else 0))
   let revs ← poll fds evts 1000
   let mut rt := rt
   let mut events : List Event := []

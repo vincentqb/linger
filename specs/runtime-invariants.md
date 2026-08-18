@@ -7,10 +7,23 @@ cap and the twin partial-drain compaction that this spec turns into theorems).
 
 ## Where this stands — read this first
 
-**Next step:** Step 1 — drop the vestigial `partial def`s. Five deleted words, no
-new theorem, no gate. Do it alone and first; it makes a documented limitation
-(`THEOREMS.md:520-523`, "`Zmx/Runtime/*` is `IO` with `partial def` loops") false
-as written for the cost of a one-line commit.
+**Next step:** nothing required. Steps 1 and 2 are done — the value increment has
+landed, so if Steps 3-4 never happen this bet has delivered what it honestly could.
+Two follow-ups are parked, both small: apply the `THEOREMS.md` §Bound/§Total
+rewrites (drafted in `/tmp/theorems-bound.md` during step 2, held back only because
+another agent held that file), and revisit per-field `private` on `Buf.bytes` if
+`tests/coverage.py` is ever taught to count theorems in `Zmx/Core` — see the
+measured negative result in SCRATCHPAD 2026-08-18.
+
+**Done (2026-08-18):** Step 1 (five vestigial `partial def`s dropped; `pump` and
+`parseLs` remain, each for a stated reason) and Step 2 (`Zmx/Core/Buf.lean`,
+`Theorems/Buf.lean`'s nine theorems with their content twins, `Tests/Buf.lean`'s
+fixtures, the three-grep gate, and `Cli.queryInfo`'s live unbounded accumulator
+closed). **Step 2 diverged from the design below**: `Buf` has no write cursor, because
+`bufOffer_owed` needed an `off ≤ bytes.size` invariant no type enforced — so the
+definition moved and the partial-drain leak became unrepresentable rather than fixed.
+`bufCompact` and its two theorems therefore do not exist; `bufNoRetain` replaces them.
+Details and the four break records in SCRATCHPAD 2026-08-18.
 
 **What this spec deliberately does NOT build:** a pure poll plan / `revents`
 classifier. See "## Settled non-goal for this spec" below. The negative result
@@ -139,7 +152,7 @@ spelled out. Re-opening it needs a new reason, not a fresh pair of eyes.
 
 ### Step 1 — the vestigial `partial def`s
 
-Status: → next.
+Status: **done** (2026-08-18).
 
 Delete `partial` from the five functions in Definition-of-done item 6.
 `lakefile.lean` states the reason for banning `partial def` ("it hides a
@@ -155,8 +168,9 @@ and why.
 
 ### Step 2 — `Buf`, its theorems, and the gate
 
-Status: pending. **The value increment: if everything after this slips, the bet
-has delivered what it honestly could.**
+Status: **done** (2026-08-18), with the no-write-cursor divergence recorded above.
+**The value increment: if everything after this slips, the bet has delivered what it
+honestly could.**
 
 `Zmx/Core/Buf.lean` (~70 lines), `Theorems/Buf.lean` (~150), `Tests/Buf.lean`
 (~20, `native_decide` allowed), `Zmx/Posix.lean` +4 (`writeBuf fd b := write fd

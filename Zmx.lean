@@ -1,3 +1,4 @@
+import Zmx.Core.Buf
 import Zmx.Posix
 import Zmx.Core.Wire
 import Zmx.Core.Vt

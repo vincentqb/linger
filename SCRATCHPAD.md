@@ -5709,3 +5709,91 @@ rungs are discharge-heavy (`step_pen`, 34 lines, ~47%) while the *large* ones ar
 this grows with the difficulty of the step. Verdict: hard core. That also prices the deferred
 "read-only fields into parameter position" refactor — it would attack the 204 bookkeeping lines
 and none of the 742, i.e. legibility, not length.
+
+## runtime-invariants step 2 — 2026-08-18 (Buf: the daemon's queues as a proved value)
+
+`Zmx/Core/Buf.lean` + `Theorems/Buf.lean` + `Tests/Buf.lean` + a three-grep gate in
+`tests/e2e.sh`. The runtime half of §Bound is now arithmetic with a proof and a source-tree
+gate instead of a paragraph ending "not proved".
+
+**The design diverged from the spec, and this is the interesting part.** The spec (and today's
+daemon) shape a queue as `bytes` + an `off` the writer advances, with `bufCompact` reclaiming
+the written prefix on every flush. Writing `bufOffer_owed` — "an accepted offer really is
+appended" — needs `off ≤ bytes.size`, which no type enforced and every *content* proof would
+have had to assume. That is the `design-for-provability` trigger, so the definition moved
+rather than the theorem: since we compact on every flush, `off` is always 0 between rounds, so
+the persistent state never needed it at all. `Buf` now holds exactly the bytes still owed; the
+flush loop keeps its cursor as a local `Nat` and calls `bufAdvance` once when it stops.
+
+Consequences worth knowing:
+* The partial-drain leak is **unrepresentable**, not merely absent — there is no prefix to
+  retain. `bufCompact` and its two theorems disappeared; `bufNoRetain : bufSize b = owedLen b`
+  is `rfl` and *that is the claim*: memory equals debt structurally. Re-introducing the bug
+  means changing the type, not deleting a line.
+* Several proofs are one word (`rfl`) for the same reason. Short proofs here are the payoff of
+  the representation, not a sign the claims are weak — `bufAdvance_owed` and `writeFrom_owed`
+  are the same statement twice precisely because the queue *is* its debt.
+* Nine theorems, each bound paired with a content twin so it cannot be satisfied by discarding
+  data: `owedLen_eq` (the bridge — without it every bound is about an unrelated `Nat`),
+  `bufNoRetain`, `bufAdvance_wf`/`bufAdvance_owed`, `bufOffer_bound`/`bufOffer_owed`,
+  `bufEnqueue_bound`/`bufEnqueue_owed`, `writeFrom_owed`.
+* `bufEnqueue_bound` stays **hypothesis-guarded** (`.2 = false → owedLen ≤ cap`). `.send`
+  appends and *then* decides, so at the decision the frame that crossed the cap is queued and
+  the honest unconditional bound is `cap` + one wire frame. Two enqueue functions, not one: the
+  child path measures before appending (unconditional bound, no partial frame ever queued), the
+  client path after. One shared function would force a theorem false of the shipped `.send`.
+
+**A performance regression I introduced and caught.** The first flush loop called
+`writeBuf fd (bufAdvance c.out wrote)`, which re-slices — O(n) *per iteration*, where the old
+code passed an offset. Fixed by giving `Posix.writeBuf` a transient `sent` cursor: stored state
+stays offset-free, the syscall gets the offset, one copy per flush as before. (`from` is a
+reserved keyword in Lean 4; the parameter is `sent`.)
+
+**Open-decision 1 (per-field `private`) — MEASURED, and the answer is no, for a reason worth
+recording.** Lean 4.32 *does* block a cross-module read of a private structure field
+("Field `bytes` from structure `Zmx.Core.Buf.Buf` is private"), and reading is what every
+buffer arithmetic needs — so it would make the discipline compiler-enforced. Two findings kill
+it for now: (a) `private` hides the field from `Theorems/` too, so the proofs would have to live
+in `Zmx/Core/Buf.lean`, and `tests/coverage.py:100-113` scans `Theorems/**` *only* for theorem
+statements — all seven new defs would become unclaimed surface and breach the 20/20 ratchet,
+which must stay monotone; (b) it is only half a discipline anyway: structure-instance notation
+and `{ b with … }` can still **write** a private field where they cannot read one (verified
+both ways). Revisit the day `coverage.py` also counts theorems in `Zmx/Core` — that is the one
+change that would make this adoptable.
+
+**`Cli.queryInfo`'s accumulator was a live unbounded accumulation** and is now capped through
+`bufOffer` at `infoReplyCap = 1 MiB`. Its loop's only exits are `.done`/`.err`/EOF/a 2000 ms
+*silence* timeout, so a peer streaming `infoReply` frames steadily never ended it. Low severity
+(`linger ls` is short-lived), but it is the same class as the `ptyIn` bug and the gate's first
+act was to find it.
+
+**The gate.** Three greps after the `SHIM_CAP` block: no `ByteArray` structure field, no
+accumulating `mut … : ByteArray` local, no `.extract` in `Zmx/Runtime/*`. It is non-negotiable
+because `Zmx/Runtime/*` is `IO`: no theorem can see that the daemon calls the proved functions,
+so without it the theorems are arithmetic about a value nothing forces the runtime to use.
+Zero false positives — `Client.encodeBA`'s *return* type and `splitDetach`'s *parameter* are
+correctly permitted, which matters because a gate that cries wolf gets disabled.
+**It measures something:** on `9ea62b0` it finds 5 hits (`Conn.out`, `Rt.ptyIn`,
+`Cli.queryInfo`'s `mut acc`, and the two `.extract` compactions); after, 0.
+
+Break-verify, four, two of them independent oracles for the same regression:
+* `bufAdvance := fun b _ => b` (keep the prefix — the partial-drain regression): 5 errors,
+  failing `bufAdvance_wf` (Theorems/Buf.lean:53) and `bufAdvance_owed` (:60).
+* The same break also refutes **four `native_decide` fixtures** in `Tests/Buf.lean` (:28, :29,
+  :35, :38) — the ones that assert `bufSize` tracks `owedLen` across a partial drain.
+  **The contrast is the entire justification for this step:** the equivalent regression in the
+  pre-`Buf` daemon (deleting the `extract` from `flushConn`/`flushPty`) left
+  `./lake build Theorems Tests` completely green, and its only live oracle was the daemon's RSS
+  under a 16 MiB flood — which the 2026-08-18 entry above records as measured and *rejected* as
+  too noisy to assert. Same bug, previously invisible to the build, now two kernel-reducing
+  oracles.
+* Gate, twice: `dummy : ByteArray` added to `Conn` → G1 fires with the file and line;
+  a stray `.extract` in `flushPty` → G3 fires. Both reverted.
+
+Gates: `./lake build`, `./lake build Theorems Tests` green and warning-free; `coverage.py`
+`20 (cap 20)`, `FAILURES: 0` (all seven new core defs named by a theorem statement — note
+`bufSize`/`owedLen`/`owed`/`writeFrom` were chosen to dodge the namespace-stripping collision
+the gate has with `Ring.push`/`Vt.size`); `./tests/e2e.sh` `E2E OK`; robust/attach/resume/
+overview/status all `FAILURES: 0`, including robust case 3's exactly-once backpressure log and
+its pending-within-cap assertion through the new `bufOffer` path. `SHIM_CAP` untouched at 27 —
+`Posix.writeBuf` is a Lean-level wrapper over the existing `zmx_write` extern.

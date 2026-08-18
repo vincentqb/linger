@@ -1,3 +1,4 @@
+import Zmx.Core.Buf
 /-! # Zmx.Posix — the only module that touches the OS
 
 Most bindings map 1:1 onto `c/shim.c` (syscall + errno only; object
@@ -38,6 +39,23 @@ kill the process. -/
 
 /-- Blocking full write, for fds whose slowness is our own (client stdout). -/
 @[extern "zmx_write_all"] opaque writeAll (fd : UInt32) (bytes : @& ByteArray) : IO Unit
+
+/-- One write attempt for a `Zmx.Core.Buf` queue, skipping the `sent` bytes the
+flush loop already got out.
+`Buf.writeFrom_owed` is the theorem that what reaches `write(2)` here is the debt
+and nothing else.
+
+`sent` is the flush loop's **transient** cursor, not stored state: a `Buf` holds
+exactly the bytes still owed, and the loop calls `Buf.bufAdvance` once when it
+stops. Passing the cursor here rather than re-slicing per iteration is what keeps a
+flush to a single copy, as it was before the queue became a value.
+
+This is a **Lean-level wrapper** over the existing `zmx_write` extern, not a new
+syscall: `SHIM_CAP` is untouched. It is also the one place outside `Zmx/Core` that
+reads a `Buf`'s representation, which is why `tests/e2e.sh` can gate the whole of
+`Zmx/Runtime/*` against declaring byte buffers of its own. -/
+def writeBuf (fd : UInt32) (b : Zmx.Core.Buf.Buf) (sent : Nat) : IO Int64 :=
+  write fd (Zmx.Core.Buf.writeFrom b) (USize.ofNat sent)
 
 /-- poll(2). `fds` and `events` are parallel arrays; returns `revents`
 per fd (all zero on timeout or EINTR). `timeoutMs < 0` waits forever. -/

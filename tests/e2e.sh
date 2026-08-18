@@ -68,6 +68,26 @@ shim_n="$(grep -c LEAN_EXPORT c/shim.c)"
 [ "$shim_n" -le "$SHIM_CAP" ] \
   || fail "shim grew to $shim_n wrappers (cap $SHIM_CAP); justify the new syscall and bump the cap"
 
+# The runtime keeps no byte queue of its own. `Zmx/Core/Buf.lean` owns the two
+# long-lived queues -- their caps, their drop and cut policies, and the fact that
+# nothing written is retained (`Theorems/Buf.lean`) -- and `Zmx/Runtime/*` is `IO`,
+# so NO theorem can see that the daemon calls those functions rather than
+# open-coding the same sums. Without this grep the Buf theorems are arithmetic
+# about a value nothing forces the runtime to use. A source-tree property cannot
+# be a theorem, so it is a gate, in the same spirit as SHIM_CAP above: evadeable
+# by deliberately writing something new, not by reverting a fix.
+# On the commit before Buf landed these three found 5 hits (Conn.out, Rt.ptyIn,
+# Cli.queryInfo's accumulator, and two .extract compactions).
+! grep -qE '^[[:space:]]+[a-zA-Z_]+ : ByteArray' Zmx/Runtime/*.lean \
+  || { grep -nE '^[[:space:]]+[a-zA-Z_]+ : ByteArray' Zmx/Runtime/*.lean; \
+       fail "a ByteArray field in Zmx/Runtime (use Zmx.Core.Buf, which is proved)"; }
+! grep -qE 'mut [a-zA-Z_]+ : ByteArray' Zmx/Runtime/*.lean \
+  || { grep -nE 'mut [a-zA-Z_]+ : ByteArray' Zmx/Runtime/*.lean; \
+       fail "an accumulating ByteArray local in Zmx/Runtime (use Zmx.Core.Buf: it is capped)"; }
+! grep -qE '\.extract\b' Zmx/Runtime/*.lean \
+  || { grep -nE '\.extract\b' Zmx/Runtime/*.lean; \
+       fail "buffer arithmetic in Zmx/Runtime (Buf.bufAdvance owns it, and is proved)"; }
+
 say "2b. coverage of the code by the theorems (two ratchets)"
 # Every bug this project found by PROVING was an assumption nobody wrote down, so
 # the shape to watch is a definition no theorem says anything about. This used to
