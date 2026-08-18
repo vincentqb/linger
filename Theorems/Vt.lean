@@ -1263,6 +1263,17 @@ theorem un_enterAlt (v : Vt) (s : Bool) : (v.enterAlt s).u8need = v.u8need := by
 theorem un_leaveAlt (v : Vt) (s : Bool) : (v.leaveAlt s).u8need = v.u8need := by
   unfold Vt.leaveAlt; split <;> rfl
 
+/-- **`setMode` commutes with a parser-state change.** `csiFinish` dispatches on a receiver
+whose `pstate` it has already moved to `.csi s`, then forces `.ground`; the mode operation
+itself reads no parser state, so the two can be separated — which is what turns the CSI walk
+into a *state* equation rather than a field-by-field one. -/
+theorem setMode_pstate (v : Vt) (p : PState) (priv : Bool) (n : Nat) (on : Bool) :
+    ({ v with pstate := p }).setMode priv n on = { v.setMode priv n on with pstate := p } := by
+  unfold Vt.setMode Vt.enterAlt Vt.leaveAlt Vt.moveTo
+  dsimp only
+  repeat' split
+  all_goals rfl
+
 theorem un_setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool) :
     (v.setMode priv n on).u8need = v.u8need := by
   unfold Vt.setMode

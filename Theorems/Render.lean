@@ -8774,3 +8774,100 @@ theorem restore_grid_any_main (v w : Vt) (hgood : Good w) (hren : Renderable w)
       feed_append, hscreens]
     exact (gridAnsi_writes_grid e1 e2 hpos hub e3 e4 e5 e6 e7 e8 e9 e10 e11 e12
       (by rw [e13]) e14 hvren.main.2 hvsz).1
+
+/-! ### The alt screen — `restore_grid_any`'s other branch
+
+On the alt screen `screensAnsi` paints main, parks the stashed cursor/pen, switches with
+`?1049h`, then paints the alt grid. The switch is the useful part: `Vt.enterAlt` *replaces*
+the client's grid with a fresh blank of the right shape and resets the region, so the second
+paint's entry state is established by the switch itself rather than inherited — which makes
+this branch cleaner than the main one, not harder. What it needs is the switch as a **state**
+equation, which the modes-only `modeSet_modes` did not give. -/
+
+/-- `ESC [ ?` opens a private CSI: the full state equation, not just the parser state. -/
+theorem csi_priv_open_eq {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) :
+    v.feed [0x1B, 0x5B, 0x3F] = { v with pstate := .csi ({ priv := 0x3F } : CsiState) } := by
+  rw [show v.feed [(0x1B : UInt8), 0x5B, 0x3F] = (v.feed [0x1B, 0x5B]).step 0x3F from by
+    simp [Vt.feed], keeps_csi_open hg hu]
+  unfold Vt.step Vt.abortUtf8
+  dsimp only
+  rw [if_neg (by simp [hu])]
+  show (({ v with pstate := .csi ({} : CsiState) } : Vt).stepCsi ({} : CsiState) 0x3F)
+    = { v with pstate := .csi ({ priv := 0x3F } : CsiState) }
+  unfold Vt.stepCsi
+  rw [if_neg (by decide), if_neg (by decide), if_neg (by decide), if_pos (by decide)]
+
+set_option maxHeartbeats 1000000 in
+/-- **A private mode set, as a state equation.** `?<n>h` / `?<n>l` *is* `setMode true n on`,
+with the parser back in ground. `modeSet_modes` gave only the `Modes` field, which cannot see
+`?1049h`'s real work — stashing the grid and blanking the screen. -/
+theorem modeSet_feed_eq (n : Nat) (on : Bool) (hn : 0 < n) (hlt : n < 65535)
+    {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) :
+    v.feed (modeSet n on) = { v.setMode true n on with pstate := .ground } := by
+  rw [show modeSet n on
+      = [0x1B, 0x5B, 0x3F] ++ (digits n ++ [(if on then 0x68 else 0x6C : UInt8)]) from by
+    simp [modeSet, csiPriv, csiB]]
+  rw [feed_append, csi_priv_open_eq hg hu]
+  obtain ⟨s', heq, hcur', hhave, hpar, hint, hsub⟩ :=
+    csi_digits_run_eq n (v := { v with pstate := .csi ({ priv := 0x3F } : CsiState) })
+      (s := ({ priv := 0x3F } : CsiState)) rfl (by simpa using hu) rfl
+  have hfinal : (0x40 : UInt8) ≤ (if on then 0x68 else 0x6C)
+      ∧ (if on then (0x68 : UInt8) else 0x6C) ≤ 0x7E := by
+    cases on <;> exact ⟨by decide, by decide⟩
+  rw [show ∀ (u : Vt), u.feed (digits n ++ [(if on then 0x68 else 0x6C : UInt8)])
+      = (u.feed (digits n)).feed [(if on then 0x68 else 0x6C : UInt8)] from
+    fun u => by simp [Vt.feed, List.foldl_append]]
+  rw [heq, show ∀ (u : Vt), u.feed [(if on then 0x68 else 0x6C : UInt8)]
+      = u.step (if on then 0x68 else 0x6C) from fun _ => rfl]
+  rw [csi_final_step_eq (if on then 0x68 else 0x6C) rfl (by simpa using hu) (by rw [hint])
+    hfinal.1 hfinal.2]
+  unfold Vt.csiFinish
+  rw [if_pos (by simpa using hhave), if_neg (by rw [hpar]; decide)]
+  dsimp only
+  -- the closed collector: one parameter `n`, the private marker set, ignore clear
+  have hnorm : ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState)
+      = { s' with params := #[(n, s'.curSub)] } := by
+    rw [hpar, hcur', show min (min n 65535) 65535 = n from by omega]; rfl
+  have harg : ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) }
+      : CsiState).arg 0 0 = n := by
+    rw [hnorm, arg_of_one, if_neg (by omega)]
+  have hpriv : ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) }
+      : CsiState).priv = 0x3F := by
+    show s'.priv = 0x3F
+    obtain ⟨s2, hps2, -, -, -, -, -, -, hpriv2⟩ := csi_digits_value n
+      (v := { v with pstate := .csi ({ priv := 0x3F } : CsiState) })
+      (s := ({ priv := 0x3F } : CsiState)) rfl rfl
+    have : s' = s2 := PState.csi.inj ((by rw [heq] :
+      ((({ v with pstate := .csi ({ priv := 0x3F } : CsiState) } : Vt)).feed (digits n)).pstate
+        = PState.csi s').symm.trans hps2)
+    rw [this]; exact hpriv2
+  have hign : ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) }
+      : CsiState).ignore = false := by
+    show s'.ignore = false
+    obtain ⟨s2, hps2, -, -, -, -, hign2, -, -⟩ := csi_digits_value n
+      (v := { v with pstate := .csi ({ priv := 0x3F } : CsiState) })
+      (s := ({ priv := 0x3F } : CsiState)) rfl rfl
+    have : s' = s2 := PState.csi.inj ((by rw [heq] :
+      ((({ v with pstate := .csi ({ priv := 0x3F } : CsiState) } : Vt)).feed (digits n)).pstate
+        = PState.csi s').symm.trans hps2)
+    rw [this]; exact hign2
+  cases on
+  all_goals simp only [Bool.false_eq_true, if_false, if_true]
+  · rw [show ∀ (u : Vt), u.csiDispatch
+        ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState) 0x6C
+        = u.setMode true n false from by
+      intro u
+      rw [csiDispatch_rm _ _ hign, harg, hpriv]
+      rfl]
+    show ({ (({ v with pstate := .csi s' } : Vt)).setMode true n false with pstate := .ground } : Vt)
+      = { v.setMode true n false with pstate := .ground }
+    rw [setMode_pstate v (.csi s') true n false]
+  · rw [show ∀ (u : Vt), u.csiDispatch
+        ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState) 0x68
+        = u.setMode true n true from by
+      intro u
+      rw [csiDispatch_sm _ _ hign, harg, hpriv]
+      rfl]
+    show ({ (({ v with pstate := .csi s' } : Vt)).setMode true n true with pstate := .ground } : Vt)
+      = { v.setMode true n true with pstate := .ground }
+    rw [setMode_pstate v (.csi s') true n true]
