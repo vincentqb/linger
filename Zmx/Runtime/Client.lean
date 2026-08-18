@@ -34,7 +34,7 @@ def sendMsg (fd : UInt32) (m : Msg) : IO Unit :=
 /-- Read frames until the daemon closes or a terminator arrives.
 Output payloads stream to stdout as they come. Returns the exit status
 if the session reported one. -/
-partial def drainReplies (fd : UInt32) (untilDone : Bool) : IO (Option UInt32) := do
+def drainReplies (fd : UInt32) (untilDone : Bool) : IO (Option UInt32) := do
   let mut dec : Decoder := {}
   let mut result : Option UInt32 := none
   let mut go := true
@@ -117,7 +117,7 @@ inductive Outcome where
 /-- Interactive attach. `readOnly` attaches as a 0×0 observer: output
 mirrors, keyboard is not forwarded (abduco's `-r`), detach key still
 works. -/
-partial def attach (fd : UInt32) (readOnly : Bool := false) : IO Outcome := do
+def attach (fd : UInt32) (readOnly : Bool := false) : IO Outcome := do
   let detachEnabled := (← IO.getEnv "LINGER_NO_DETACH_KEY").isNone
   let (cols, rows) ← winsizeGet stdinFd
   if readOnly then

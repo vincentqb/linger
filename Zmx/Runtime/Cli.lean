@@ -113,7 +113,7 @@ def cmdAttach (hooks : Hooks) (name : String) (cmd : List String) : IO UInt32 :=
       return 1
 
 /-- Fetch a session's info key-values. -/
-partial def queryInfo (name : String) : IO (Option (List (String × String))) := do
+def queryInfo (name : String) : IO (Option (List (String × String))) := do
   match ← Client.connect name with
   | none => return none
   | some fd =>

@@ -175,7 +175,7 @@ partial def pump (rt : Rt) (evs : List Event) : IO Rt := do
     pump rt queue
 
 /-- One poll round: gather events from fd readiness. -/
-partial def pollRound (rt : Rt) : IO (Rt × List Event) := do
+def pollRound (rt : Rt) : IO (Rt × List Event) := do
   -- snapshot: only these conns are in the poll set; accepts during
   -- this round join the NEXT one (revs stays index-aligned)
   let polled := rt.conns
@@ -247,7 +247,7 @@ partial def pollRound (rt : Rt) : IO (Rt × List Event) := do
 /-- Daemon main. Blocks until the session ends. `restore` is a loaded
 checkpoint: prior screen + labels (cwd was already consumed by the
 spawner). -/
-partial def serve (name : String) (cwd : String) (argv : List String)
+def serve (name : String) (cwd : String) (argv : List String)
     (saveCkpt : State → IO Unit) (dropCkpt : IO Unit)
     (restore : Option (Zmx.Core.Vt.Vt × List (String × String))) : IO Unit := do
   Zmx.Posix.init
