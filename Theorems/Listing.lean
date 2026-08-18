@@ -1,4 +1,5 @@
 import Theorems.Status
+import Theorems.Render
 import Zmx.Core.Listing
 /-! # §Row — a list row's identity is its socket filename, not the reply
 
@@ -81,5 +82,46 @@ a row look busier or fresher than it is. -/
 theorem flag_absent (info : List (String × String)) (k : String)
     (h : info.find? (·.1 == k) = none) : flag info k = false := by
   simp [flag, h]
+
+/-! ## The human-readable listing is safe to print
+
+The listing goes straight to a terminal, so a control byte in any displayed value — a `cmd`, a
+label, a checkpoint filename, a `-r` host — would run as an escape sequence. These say it
+cannot, for ANY `info` a reply could carry: the row is rendered through `Render.utf8s`, which
+maps every C0/DEL codepoint to U+FFFD, so the guarantee needs no hypothesis about the source.
+The `infoText` argument (`Session.infoText_framing`), applied one layer out at the display. -/
+
+open Zmx.Core.Render (utf8s_no_ctl)
+
+/-- **Every byte of a printed row is printable content** — no C0 control, no DEL — whatever the
+reply contained. `humanRow` ends in `utf8s`, so this is `utf8s`'s own guarantee. -/
+theorem humanRow_printable (nameCol : Nat) (info : List (String × String)) :
+    ∀ b ∈ humanRow nameCol info, 0x20 ≤ b ∧ b ≠ 0x7F :=
+  utf8s_no_ctl _
+
+/-- A row carries no newline, so a `cmd` or label value cannot forge a listing row. -/
+theorem humanRow_no_lf (nameCol : Nat) (info : List (String × String)) :
+    ∀ b ∈ humanRow nameCol info, b ≠ 0x0A := by
+  intro b hb he
+  have := (humanRow_printable nameCol info b hb).1
+  rw [he] at this; exact absurd this (by decide)
+
+/-- **Every byte of the whole listing is printable content or a row-terminating newline** — the
+only bytes are what the rows render (safe by `humanRow_printable`) and the `0x0A` separators. -/
+theorem humanListing_printable (rows : List (List (String × String))) :
+    ∀ b ∈ humanListing rows, (0x20 ≤ b ∧ b ≠ 0x7F) ∨ b = 0x0A := by
+  intro b hb
+  unfold humanListing at hb
+  by_cases hz : rows.isEmpty
+  · rw [if_pos hz] at hb
+    rcases List.mem_append.mp hb with h | h
+    · exact Or.inl (utf8s_no_ctl _ b h)
+    · exact Or.inr (by simpa using h)
+  · rw [if_neg hz] at hb
+    rw [List.mem_flatMap] at hb
+    obtain ⟨r, -, hbr⟩ := hb
+    rcases List.mem_append.mp hbr with h | h
+    · exact Or.inl (humanRow_printable _ r b h)
+    · exact Or.inr (by simpa using h)
 
 end Zmx.Core.Listing

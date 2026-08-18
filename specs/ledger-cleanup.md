@@ -8,13 +8,17 @@ cosmetic display gap recorded under its ledger item 2)
 
 ## Where this stands — read this first
 
-**Next step:** Step 5 (the listing theorem, `humanRow`/`humanListing`) then Step 1
-(`restore_tabs_any`, the proof). The three runtime items are done.
+**Next step:** Step 1 (`restore_tabs_any`, the proof — recon plan in hand). Then this spec is
+done bar the parked ssh-argv host validation (a security follow-up, not a visual).
 
 **Done (2026-08-18):** items 2 (`ptyIn` cap + the twin `flushConn`/`flushPty` partial-drain
-compaction), 3 (resume at the checkpoint's dimensions, `clampDim`-guarded), and 4 (`.err` on the
-attach path via an `Outcome` sum). All in `Zmx/Runtime/*`, tested (`robust_test` case 3,
-`resume_test` geom), break-verified, full `e2e.sh` green. SCRATCHPAD 2026-08-18.
+compaction), 3 (resume at the checkpoint's dimensions, `clampDim`-guarded), 4 (`.err` on the
+attach path via an `Outcome` sum), and 5 (the human listing rendered in the pure core —
+`Listing.humanRow`/`humanListing` through `utf8s`, `humanRow_printable`/`humanListing_printable`
+in `Theorems/Listing.lean`; the resumable-row and `-r`-host display leaks closed; columns
+aligned, `(busy)`-on-remote and trailing-whitespace fixed). Tested (`Tests/Listing.lean`
+fixtures, `overview_test` hostile-ckpt guard, `robust_test`/`resume_test`), break-verified, full
+`e2e.sh` green. SCRATCHPAD 2026-08-18.
 
 ## Goal
 

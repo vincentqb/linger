@@ -4,5 +4,6 @@ import Tests.Terminal
 import Tests.Render
 import Tests.Session
 import Tests.Remote
+import Tests.Listing
 import Tests.Checkpoint
 import Tests.Fuzz

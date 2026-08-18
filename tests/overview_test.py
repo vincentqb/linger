@@ -58,5 +58,19 @@ fails += expect('name\talpha' in out and 'state\tlive' in out,
 
 for n in ('alpha', 'beta'):
     subprocess.run([LINGER, 'kill', n], env=ENV)
+time.sleep(0.5)
+
+# a checkpoint filename with an ESC and a TAB must not reach the terminal as an
+# escape sequence in the resumable row. The name goes through rowFields ->
+# sanitize (which drops non-ASCII-alnum), and the whole row through utf8s, so
+# the control bytes cannot appear in the human listing. (Before: the row was a
+# raw `("name", filename)` interpolation.)
+with open(os.path.join(LDIR, 'ev\x1b[31mil\tfake.ckpt'), 'wb') as f:
+    f.write(b'LINGER\x01' + b'\x00' * 32)
+rc, out = overview(['ls'])
+fails += expect(rc == 0 and '\x1b' not in out and '\t' not in out,
+                'a hostile checkpoint filename cannot inject an escape into the listing')
+fails += expect('resumable' in out, 'the hostile checkpoint still lists (as resumable)')
+
 print('FAILURES:', fails)
 sys.exit(1 if fails else 0)

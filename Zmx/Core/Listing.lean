@@ -1,5 +1,6 @@
 import Zmx.Core.Name
 import Zmx.Core.Status
+import Zmx.Core.Render
 /-! # Zmx.Core.Listing — a `list` row's identity
 
 §Row (THEOREMS.md): a listed session's *identity* is a function of its
@@ -87,5 +88,56 @@ def rowStatus : Row → Status
   | .broken => .unknown
   | .remote live peerStatus =>
     if live then ofName peerStatus else .resumable
+
+/-! ## Rendering the human-readable listing
+
+The `--porcelain` output is `k\tv\n` records, parsed by a peer and proved framing-safe by
+`Session.infoText_records`. The *human* listing is different: it is printed straight to a
+terminal, so a control byte in a `cmd`, a label value, a checkpoint filename or a `-r` host
+would execute as an escape sequence. Rather than scrub at the call site — an audit that has to
+be redone whenever a new field is displayed — the row is rendered here, in the core, through
+`Render.utf8s` (which maps every C0/DEL codepoint to U+FFFD), and `Theorems/Listing.lean` proves
+the result carries no control byte for *any* `info`. That is the same move `infoText` makes for
+the daemon's reply, one layer out.
+
+Rendering here also lets the column alignment be a property of the whole row *set* (the name
+column is as wide as the widest name), which a per-`IO.println` call site cannot express. -/
+
+open Zmx.Core.Render (utf8s dropTrailingBlanks)
+
+/-- One human-readable listing row, as bytes. Every reply-supplied value flows
+through `utf8s`, so the printable-content guarantee (`Theorems/Listing.lean`)
+needs no hypothesis about where the value came from. The status glyph, a space,
+the name padded to `nameCol` so the detail columns line up, then the
+detail/labels/watcher tail — trailing blanks trimmed so an empty tail leaves no
+ragged whitespace. Names are sanitized (`sanitize` admits only ASCII), so a
+character is one column and padding by length aligns them. -/
+def humanRow (nameCol : Nat) (info : List (String × String)) : List UInt8 :=
+  let f := fun k => (info.lookup k).getD ""
+  let st := Status.ofName (f "status")
+  let labels := info.filterMap (fun (k, v) =>
+    if k.startsWith "label." then some s!"{(k.drop 6).toString}={v}" else none)
+  let labelStr := if labels.isEmpty then "" else "  [" ++ String.intercalate " " labels ++ "]"
+  -- `(busy)` is only for a *local* daemon that did not answer (status unknown,
+  -- no pid/cmd); a live remote row carries no pid but is not busy.
+  let detail :=
+    if f "state" == "resumable" then "(resumable)"
+    else if st == .unknown && (f "pid").isEmpty && (f "cmd").isEmpty then "(busy)"
+    else if (f "pid").isEmpty then f "cmd"
+    else s!"pid {f "pid"}  {f "cmd"}"
+  let watch := if (f "clients").isEmpty || f "clients" == "0" then "" else s!"  +{f "clients"}"
+  let name := (f "name").toList
+  utf8s (dropTrailingBlanks
+    ([Status.icon st, ' '] ++ name ++ List.replicate (nameCol - name.length) ' '
+      ++ [' '] ++ (detail ++ labelStr ++ watch).toList))
+
+/-- The whole human-readable listing, one LF-terminated row per session (or the
+empty-state line). The name column is as wide as the widest name in the set, so
+the detail columns align. -/
+def humanListing (rows : List (List (String × String))) : List UInt8 :=
+  if rows.isEmpty then utf8s "no sessions".toList ++ [0x0A]
+  else
+    let nameCol := rows.foldl (fun m r => max m ((r.lookup "name").getD "").toList.length) 0
+    rows.flatMap (fun r => humanRow nameCol r ++ [0x0A])
 
 end Zmx.Core.Listing

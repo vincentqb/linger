@@ -53,8 +53,9 @@ os.kill(dpid, signal.SIGCONT)
 
 # the leading glyph is the status column: a daemon that did not answer within
 # the reply window is reported as unknown ('?'), which is the designed state
-# for it -- so this pins §Row *and* that a busy row is not shown as healthy
-fails += expect(out.strip() == '? busy\t(busy)',
+# for it -- so this pins §Row *and* that a busy row is not shown as healthy.
+# The human row is now space-aligned (Listing.humanRow), not tab-separated.
+fails += expect(out.strip() == '? busy (busy)',
                 f'busy daemon lists under its name, marked unknown (got {out.strip()!r})')
 fails += expect('name\tbusy' in porc, 'porcelain carries the name for a busy daemon')
 fails += expect(socks == ['busy.sock'], f'busy daemon keeps its socket ({socks})')

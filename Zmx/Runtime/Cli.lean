@@ -184,8 +184,10 @@ def listRemote (host : String) : IO (List (String × Bool × String × String)) 
     (fun r => (r.name, r.live, r.cmd, r.status))
 
 def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
-  let live ← Paths.listSocketNames
-  let ckpts ← Paths.listCkptNames
+  -- sort the local names so the listing order is deterministic (the directory
+  -- read order is not); remotes stay last and per-host.
+  let live := (← Paths.listSocketNames).toArray.qsort (· < ·) |>.toList
+  let ckpts := (← Paths.listCkptNames).toArray.qsort (· < ·) |>.toList
   let mut rows : List (List (String × String)) := []
   for name in live do
     match ← queryInfo name with
@@ -206,9 +208,12 @@ def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
       try IO.FS.removeFile (← Paths.socketPath name) catch _ => pure ()
   for name in ckpts do
     if !live.contains name then
-      rows := rows ++ [[("name", name), ("state", "resumable"),
-        ("status", Zmx.Core.Status.name
-          (Zmx.Core.Listing.rowStatus .stale))]]
+      -- through `rowFields` like the live rows, so the displayed name is the
+      -- sanitized one `attach` accepts and §Row (`rowFields_name`) covers it —
+      -- a checkpoint filename is not trusted to name its own row.
+      rows := rows ++ [Zmx.Core.Listing.rowFields name
+        [("state", "resumable"),
+         ("status", Zmx.Core.Status.name (Zmx.Core.Listing.rowStatus .stale))]]
   -- remotes last (per host), so a slow ssh can't reorder local rows
   for host in remotes do
     for (rname, rlive, rcmd, rstatus) in ← listRemote host do
@@ -223,28 +228,14 @@ def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
       for (k, v) in info do
         IO.println s!"{k}\t{v}"
       IO.println ""
-  else if rows.isEmpty then
-    IO.println "no sessions"
   else
-    for info in rows do
-      let name := kv info "name"
-      let state := kv info "state"
-      let pid := kv info "pid"
-      let cmd := kv info "cmd"
-      let labels := info.filterMap (fun (k, v) =>
-        if k.startsWith "label." then some s!"{(k.drop 6).toString}={v}" else none)
-      let labelStr := if labels.isEmpty then "" else "  [" ++ String.intercalate " " labels ++ "]"
-      let detail :=
-        if state == "resumable" then "(resumable)"
-        else if pid.isEmpty && cmd.isEmpty then "(busy)"
-        else if pid.isEmpty then cmd
-        else s!"pid {pid}  {cmd}"
-      -- one glyph, most-specific-state-wins (Core.Status); the client count
-      -- is the separate integer axis, blank when nobody is attached
-      let st := Zmx.Core.Status.ofName (kv info "status")
-      let watchers := kv info "clients"
-      let watch := if watchers.isEmpty || watchers == "0" then "" else s!"  +{watchers}"
-      IO.println s!"{Zmx.Core.Status.icon st} {name}\t{detail}{labelStr}{watch}"
+    -- the human listing is rendered in the pure core (`Listing.humanListing`):
+    -- every displayed value passes through `utf8s`, so a control byte in a
+    -- `cmd`, a label, a checkpoint filename or a `-r` host cannot reach the
+    -- terminal as an escape sequence (`Theorems/Listing.lean`
+    -- `humanListing_printable`), the columns align, and there is no trailing
+    -- whitespace. The empty-state line is part of it.
+    writeAll stdoutFd (ByteArray.mk (Zmx.Core.Listing.humanListing rows).toArray)
   return 0
 
 /-- Parse the `ls` argument set: an optional `--porcelain` and an

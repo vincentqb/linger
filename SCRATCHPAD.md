@@ -5530,3 +5530,52 @@ the log line vanish and the three log assertions fail (build stays green).
 Constants live in `Daemon.lean` (Runtime), not Core — a Core constant would hit
 `tests/coverage.py`'s 21/21 cap (nothing in Core reads `ptyIn`). `THEOREMS.md` §Bound paragraph
 now names both caps and the compaction. No shim change (SHIM_CAP untouched).
+
+## ledger-cleanup notes — 2026-08-18 (item 5: the human listing, safe and clean)
+
+The `list` human output was a per-row `IO.println s!"{icon} {name}\t{detail}…"` with NO scrub,
+against three sources that are not ours: a `cmd`/label from an older/foreign daemon on the
+socket, a checkpoint filename (resumable rows), and a `-r` host. The recon confirmed our own
+daemon already scrubs at the emit site (`infoText` via `utf8s`, proved by `infoText_framing`),
+so the *current* leaks were exactly the two rows that bypassed it: the resumable row's raw
+`("name", filename)` and the raw `@host`.
+
+Fixed the repo's way — make the emitter total and provable, not audit the call site. New pure
+core `Listing.humanRow`/`humanListing` (in `Zmx/Core/Listing.lean`) render the row as
+`List UInt8` through `Render.utf8s`, which maps every C0/DEL to U+FFFD. `Theorems/Listing.lean`:
+`humanRow_printable` (∀ b, 0x20 ≤ b ∧ b ≠ 0x7F — literally `utf8s_no_ctl _`, one line),
+`humanRow_no_lf`, and `humanListing_printable` (every byte printable-or-`0x0A`, via
+`List.mem_flatMap`). The CLI human branch is now one `writeAll (humanListing rows)`.
+
+The claim is a **byte-range framing** theorem, not "printable ASCII": the status glyph is
+U+28xx (braille) and `✓` is U+2713, so ASCII-only would be false — same shape as
+`infoText_framing`/`history_framing`.
+
+Data fixes in the same commit: the resumable row now goes through `rowFields` (→ `sanitize`, so
+§Row's `rowFields_name` covers it and the shown name is the one `attach` accepts); local rows
+are sorted (`qsort`) for deterministic order; the host leak is closed by `humanListing`'s scrub
+(the display path — the ssh-argv host validation via `Remote.checkHosts` is a separate security
+item, noted below, not needed for clean visuals). Visual bugs fixed for free: ragged columns
+(name padded to the set's widest, computed in `humanListing` — sanitized names are ASCII so
+length-padding aligns), `(busy)` on healthy remote rows (guarded on `status = unknown`), and
+trailing whitespace (`dropTrailingBlanks`).
+
+Elegance note (the user's steer): the first cut had `dispWidth`/`padTo`/`nameWidth` as three
+top-level core defs, each of which the coverage gate (21/21) would demand a naming theorem for —
+and `dispWidth` over `charWidth` needs a foldl-over-append lemma. That is proof weight for a
+visual nicety. Inlined them as `let`s (length-based padding, correct for ASCII names), leaving
+only `humanRow`/`humanListing` top-level, each named by the safety theorem. Cleaner code,
+cleaner proofs, coverage stays at 21.
+
+Break-verify: replace the final `utf8s (...)` in `humanRow` with a raw
+`(...).map (UInt8.ofNat ·.toNat)` — `humanRow_printable` fails to typecheck
+(`utf8s_no_ctl _` no longer applies, Theorems/Listing.lean:100) AND every `Tests/Listing.lean`
+`native_decide` fixture (`count 0x1B = 0` etc.) is *refuted*. Reverted; green. `Tests/Listing`
+also pins the *before*: the old `String`-interpolated row carried the ESC (`count 0x1B = 1`).
+e2e: `overview_test` now touches a checkpoint named `ev\x1b[31mil\tfake.ckpt` and asserts no ESC
+/TAB in the listing; `robust_test:57` updated from `? busy\t(busy)` to the space-aligned
+`? busy (busy)`.
+
+**Follow-up (security, not visuals):** the `-r` host string still flows into `ssh` argv
+unvalidated (`resolveRemotes`); the display is now safe but a host with a control byte or shell
+metacharacter is a separate concern for `Remote.checkHosts`. Parked, not done.
