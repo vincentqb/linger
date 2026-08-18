@@ -39,9 +39,9 @@ day `coverage.py` also counts theorems in `Zmx/Core`.
 **`ByteArray`, not `List UInt8`.** The rest of `Zmx/Core` speaks `List UInt8`
 because the emitters must reduce in the kernel; a queue must not. A 4 MiB
 `List UInt8` costs ~48 bytes per byte and `++` is O(left), so every `.send` would
-become a multi-megabyte cons walk. `ByteArray` in `Zmx/Core` is house-legal (the
-purity gate bans `sorry`, `sorryAx`, `partial def` and `IO`, not a representation)
-and has precedent in `Vt.feedBytes`. Nothing here is stated through
+become a multi-megabyte cons walk. `ByteArray` in `Zmx/Core` is house-legal — the
+purity gate bans unproved axioms, `partial` definitions and effects, not a choice
+of representation — and has precedent in `Vt.feedBytes`. Nothing here is stated through
 `ByteArray.toList`, which is a `get!` + `reverse` loop.
 -/
 

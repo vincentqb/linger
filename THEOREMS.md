@@ -517,18 +517,30 @@ terminals; see the note under `## What these theorems do not settle`.)
 
 ## What these theorems do not settle
 
-* **§Total covers the emulator, not the runtime.** `Zmx/Runtime/*` is
-  `IO` with `partial def` loops; its correctness rests on the live
-  suites in `tests/`, not on proof. The pure/impure line is the
-  `Zmx/Core` boundary, enforced by `tests/e2e.sh`.
-* **§Bound bounds our buffers, not the OS's.** A peer that never reads
-  eventually fills the kernel socket buffer; the runtime caps *both* of its own
-  byte buffers at 4 MiB rather than grow — the per-client output queue
-  (`outbufCap`, disconnect the slow client) and the pty input buffer
-  (`ptyInCap`, drop the newest input, as a tty's own input buffer does when the
-  child stops reading). Both compact written bytes on every flush, so a
-  slow-but-not-stopped consumer cannot grow them either. These caps live in
-  `Zmx/Runtime/Daemon.lean` and are not proved (the runtime is `IO`).
+* **§Total covers the emulator, not the runtime.** `Zmx/Runtime/*` is `IO`, and two
+  of its loops are still `partial def` — `pump` (its recursion is genuinely
+  unbounded without a two-pass argument) and `parseLs` (wants a `decreasing_by`);
+  the other five shed the keyword on 2026-08-18, since `while`/`for` in a `do`
+  block never needed it. Its correctness rests on the live suites in `tests/`, not
+  on proof. The pure/impure line is the `Zmx/Core` boundary, enforced by
+  `tests/e2e.sh`.
+* **§Bound bounds our buffers, not the OS's.** A peer that never reads eventually
+  fills the kernel socket buffer; the runtime caps *both* of its own byte queues at
+  4 MiB rather than grow — the per-client output backlog (`outbufCap`, disconnect the
+  slow client) and the pty input backlog (`ptyInCap`, drop the newest whole frame, as
+  a tty's own input buffer does when the child stops reading). Those queues are
+  `Zmx.Core.Buf`, and `Theorems/Buf.lean` proves the arithmetic: each cap bounds what
+  is *owed* (`bufOffer_bound`, and `bufEnqueue_bound` guarded by "the peer was not
+  cut", because `.send` appends before it decides), memory equals the debt so nothing
+  written is retained (`bufNoRetain`), and each bound is paired with a content claim
+  through `owed` so it cannot be met by discarding data (`bufOffer_owed`,
+  `bufEnqueue_owed`, `bufAdvance_owed`). `Buf` holds only the bytes still owed, so the
+  partial-drain leak — reclaim on empty, and a peer draining a little each round grows
+  the array while the debt stays small — is unrepresentable rather than merely fixed.
+  **What is proved is the arithmetic, not the daemon.** `Zmx/Runtime/*` is `IO`, and no
+  theorem can see that it calls these functions rather than open-coding the same sums;
+  `tests/e2e.sh` gates that it declares no byte buffer of its own, which is a
+  source-tree property and therefore a grep, in the same spirit as `SHIM_CAP`.
 * **Grid dimensions are invariant by theorem now** (`dims_feed`,
   Theorems/Vt.lean): no byte stream changes `cols`/`rows`. `RIS`
   re-derives them through `clampDim`, which is the identity exactly when
