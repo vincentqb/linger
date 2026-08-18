@@ -8523,11 +8523,12 @@ values, set by the tail). The grid walk needs it *after the prologue* — canoni
 whole, no alt screen, ASCII charsets — which is the same chain stopped early. `rows ≥ 2` is
 `DECSTBM`'s own constraint (a one-row region is degenerate); the one-row grid is handled
 without it, since a single row cannot scroll. -/
-theorem prologue_sticky (v w : Vt) (hrows : w.rows = v.rows) (h2 : 0 < v.rows - 1)
+theorem prologue_sticky (v w : Vt) (hgood : Good w) (hrows : w.rows = v.rows)
     (hfits : v.rows < 65535) :
     (w.feed (prologueAnsi v)).pstate = .ground
       ∧ stick (w.feed (prologueAnsi v))
         = ⟨v.rows, 0, v.rows - 1, false, false, false, false⟩ := by
+  have hpos1 : 1 ≤ v.rows := hrows ▸ hgood.rowsPos
   rw [show prologueAnsi v = escSeq 0x5C ++ modeSet 1049 false ++ csiNum 4 0x6C ++ modeSet 6 false
       ++ modeSet 7 true ++ csiNum2 1 v.rows 0x72 ++ escCharset 0x28 0x42
       ++ escCharset 0x29 0x42 ++ [0x0F] from by simp only [prologueAnsi]]
@@ -8540,6 +8541,24 @@ theorem prologue_sticky (v w : Vt) (hrows : w.rows = v.rows) (h2 : 0 < v.rows - 
   obtain ⟨Ar, At, Ab, Ag0, Ag1, Aso, Aal⟩ := A
   simp only at hArows hAalt
   subst hArows hAalt
+  -- For a one-row screen `DECSTBM 1;1r` is a no-op, so the region it leaves is whatever the
+  -- lead-in left — which `Good w` forces to be whole (`bot < rows = 1` ⟹ `bot = 0`, `top ≤ bot`).
+  have hAtb : v.rows = 1 → At = 0 ∧ Ab = 0 := by
+    intro hr1
+    have hgoodE : Good (w.feed (escSeq 0x5C)) := Good.feed _ hgood
+    have hrE : (w.feed (escSeq 0x5C)).rows = 1 := by rw [rows_st_lead, hrows]; exact hr1
+    have key : (stAlt false (stick (w.feed (escSeq 0x5C)))).top = 0
+        ∧ (stAlt false (stick (w.feed (escSeq 0x5C)))).bot = 0 := by
+      unfold stAlt; dsimp only
+      by_cases ha : (stick (w.feed (escSeq 0x5C))).alt = true
+      · rw [if_pos ha]
+        exact ⟨rfl, by show (stick (w.feed (escSeq 0x5C))).rows - 1 = 0; rw [stick_rows, hrE]⟩
+      · rw [if_neg ha]
+        have hb0 : (w.feed (escSeq 0x5C)).bot = 0 := by have := hgoodE.botLt; rw [hrE] at this; omega
+        have ht0 : (w.feed (escSeq 0x5C)).top = 0 := by have := hgoodE.topLe; omega
+        exact ⟨by show (stick (w.feed (escSeq 0x5C))).top = 0; rw [stick_top]; exact ht0,
+               by show (stick (w.feed (escSeq 0x5C))).bot = 0; rw [stick_bot]; exact hb0⟩
+    rw [hA] at key; exact key
   have h0 : (w.feed (escSeq 0x5C)).pstate = .ground
       ∧ stick (w.feed (escSeq 0x5C)) = stick (w.feed (escSeq 0x5C)) := ⟨(st_grounds w).1, rfl⟩
   have h1 := sput_congr (sput_step h0 (smap_modeSet 1049 false (by decide) (by decide)))
@@ -8558,8 +8577,12 @@ theorem prologue_sticky (v w : Vt) (hrows : w.rows = v.rows) (h2 : 0 < v.rows - 
     (sput_step h4 (smap_stbm 1 v.rows (by decide) (by omega) (by decide) (by omega)))
     (show stStbm (1 - 1) (v.rows - 1) (⟨v.rows, At, Ab, Ag0, Ag1, Aso, false⟩ : Sticky)
         = ⟨v.rows, 0, v.rows - 1, Ag0, Ag1, Aso, false⟩ from by
-      rw [stStbm_of (by omega) (show v.rows - 1 < (⟨v.rows, At, Ab, Ag0, Ag1, Aso, false⟩
-        : Sticky).rows from by simp only; omega)])
+      by_cases hrge : 0 < v.rows - 1
+      · rw [stStbm_of (by omega) (show v.rows - 1 < (⟨v.rows, At, Ab, Ag0, Ag1, Aso, false⟩
+          : Sticky).rows from by simp only; omega)]
+      · have hr1 : v.rows = 1 := by omega
+        obtain ⟨hat0, hab0⟩ := hAtb hr1
+        rw [hr1, hat0, hab0]; rfl)
   have h6 := sput_congr (sput_step h5 (smap_charset 0x28 0x42 (Or.inl rfl)))
     (show stCharset 0x28 0x42 (⟨v.rows, 0, v.rows - 1, Ag0, Ag1, Aso, false⟩ : Sticky)
         = ⟨v.rows, 0, v.rows - 1, false, Ag1, Aso, false⟩ from by
@@ -8729,7 +8752,7 @@ satisfies every hypothesis `gridAnsi_writes_grid` asks for. -/
 theorem paint_entry (v w : Vt) (hgood : Good w) (hren : Renderable w)
     (hcols : w.cols = v.cols) (hrows : w.rows = v.rows)
     (hua : w.u8acc = 0) (hun : w.u8need = 0)
-    (h2 : 0 < v.rows - 1) (hfits : v.rows < 65535) :
+    (hfits : v.rows < 65535) :
     let u := w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)
     u.cols = v.cols ∧ u.rows = v.rows ∧ u.top = 0 ∧ u.bot = v.rows - 1
       ∧ u.pstate = .ground ∧ u.u8need = 0 ∧ u.u8acc = 0
@@ -8748,7 +8771,7 @@ theorem paint_entry (v w : Vt) (hgood : Good w) (hren : Renderable w)
   have hurend : Renderable u := renderable_feed hren _
   obtain ⟨hgsz, hrok⟩ := hurend.main
   -- the sticky bundle and the modes, from the prologue, then through `SGR 0` and `ED 2`
-  have hpro := prologue_sticky v w hrows h2 hfits
+  have hpro := prologue_sticky v w hgood hrows hfits
   have hst : (u.pstate = .ground ∧ stick u = ⟨v.rows, 0, v.rows - 1, false, false, false, false⟩) := by
     have e1 := sput_congr (sput_step hpro (smap_id_sgrNum 0)) (id_eq _)
     have e2 := sput_congr (sput_step e1 (smap_id_ed 2)) (id_eq _)
@@ -8808,12 +8831,12 @@ theorem restore_grid_any_main (v w : Vt) (hgood : Good w) (hren : Renderable w)
     (hcols : w.cols = v.cols) (hrows : w.rows = v.rows)
     (hua : w.u8acc = 0) (hun : w.u8need = 0)
     (halt : v.altGrid = none)
-    (h2 : 0 < v.rows - 1) (hfits : v.rows < 65535)
+    (hfits : v.rows < 65535)
     (hpos : 0 < v.cols) (hub : v.cols < 65533)
     (hvren : Renderable v) (hvsz : v.grid.size = v.rows) :
     (w.feed (restore v)).grid = v.grid := by
   obtain ⟨e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11, e12, e13, e14, -, -⟩ :=
-    paint_entry v w hgood hren hcols hrows hua hun h2 hfits
+    paint_entry v w hgood hren hcols hrows hua hun hfits
   have hscreens : screensAnsi v = gridAnsi v.grid := by
     unfold screensAnsi; rw [halt]
   refine restore_grid_of_paint ?_ ?_ ?_
@@ -9048,12 +9071,12 @@ theorem restore_grid_any_alt (v w : Vt) (hgood : Good w) (hren : Renderable w)
     (hua : w.u8acc = 0) (hun : w.u8need = 0)
     {mainGrid : Array Row} {mcur : Cursor} {mpen : Pen}
     (halt : v.altGrid = some (mainGrid, mcur, mpen))
-    (h2 : 0 < v.rows - 1) (hfits : v.rows < 65535)
+    (hfits : v.rows < 65535)
     (hpos : 0 < v.cols) (hub : v.cols < 65533)
     (hvren : Renderable v) (hvsz : v.grid.size = v.rows) :
     (w.feed (restore v)).grid = v.grid := by
   obtain ⟨e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11, e12, e13, e14, ealt, -⟩ :=
-    paint_entry v w hgood hren hcols hrows hua hun h2 hfits
+    paint_entry v w hgood hren hcols hrows hua hun hfits
   obtain ⟨hmsz, hmok⟩ := hvren.alt mainGrid mcur mpen halt
   have hgoodU : Good (w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)) := Good.feed _ hgood
   -- across the discarded main paint and the park, the entry state is preserved
@@ -9113,15 +9136,15 @@ above. -/
 theorem restore_grid_any (v w : Vt) (hgood : Good w) (hren : Renderable w)
     (hcols : w.cols = v.cols) (hrows : w.rows = v.rows)
     (hua : w.u8acc = 0) (hun : w.u8need = 0)
-    (h2 : 0 < v.rows - 1) (hfits : v.rows < 65535)
+    (hfits : v.rows < 65535)
     (hpos : 0 < v.cols) (hub : v.cols < 65533)
     (hvren : Renderable v) (hvsz : v.grid.size = v.rows) :
     (w.feed (restore v)).grid = v.grid := by
   match halt : v.altGrid with
   | none =>
-    exact restore_grid_any_main v w hgood hren hcols hrows hua hun halt h2 hfits hpos hub hvren hvsz
+    exact restore_grid_any_main v w hgood hren hcols hrows hua hun halt hfits hpos hub hvren hvsz
   | some (mainGrid, mcur, mpen) =>
-    exact restore_grid_any_alt v w hgood hren hcols hrows hua hun halt h2 hfits hpos hub hvren hvsz
+    exact restore_grid_any_alt v w hgood hren hcols hrows hua hun halt hfits hpos hub hvren hvsz
 
 /-- **The grid claim with every hypothesis discharged from reachability.** The receiver's
 `Good`, `Renderable` and decoder invariants are not assumptions about a *cooperative* client —
@@ -9132,11 +9155,11 @@ holds on **both** screens, main and alt. -/
 theorem restore_grid_reachable (v w : Vt)
     (hw : LiveReachableVt w) (hv : LiveReachableVt v)
     (hcols : w.cols = v.cols) (hrows : w.rows = v.rows) (hun : w.u8need = 0)
-    (h2 : 0 < v.rows - 1) :
+    :
     (w.feed (restore v)).grid = v.grid := by
   have hg : Good v := good_of_liveReachable hv
   refine restore_grid_any v w (good_of_liveReachable hw) (renderable_of_liveReachable hw)
-    hcols hrows (u8Ok_of_liveReachable hw hun) hun h2 ?_ ?_ ?_
+    hcols hrows (u8Ok_of_liveReachable hw hun) hun ?_ ?_ ?_
     (renderable_of_liveReachable hv) ?_
   · exact Nat.lt_of_le_of_lt hg.rowsLe (by decide)
   · exact hg.colsPos

@@ -7,16 +7,20 @@ here in a different shape, and its Step 5 archival gate is carried unchanged)
 
 ## Where this stands — read this first
 
-**Next step:** the `rows = 1` corner and then `resume_grid`, then Step 5 (archive). `rows = 1`
-is excluded by `h2 : 0 < v.rows - 1` — `DECSTBM`'s degenerate case; the fix is to weaken
-`Walking.bot` to `rows ≤ 1 ∨ bot = rows - 1`, since a one-row grid cannot scroll. `resume_grid`
-composes `restore_grid_reachable` with checkpoint exactness. Details in SCRATCHPAD 2026-08-18.
+**Next step:** Step 5 — write the conformance profile into THEOREMS.md and archive
+`terminal-contract.md` + `grid-fidelity.md` with completion records. All of item 5 is proved.
 
-**Definition-of-done item 5 is COMPLETE — both screens** (2026-08-18): `restore_grid_any`
-dispatches on `v.altGrid`, and `restore_grid_reachable` (now with **no** `altGrid` hypothesis)
-feeds `restore v` to any **live-reachable** client of the session's dimensions and leaves its
-grid equal to `v.grid`, array for array, cell for cell. Non-vacuity checked at a real 80×24
-`Vt.init`.
+**Definition-of-done item 5 is COMPLETE — both screens, every height** (2026-08-18):
+`restore_grid_any` dispatches on `v.altGrid`, and `restore_grid_reachable` / `resume_grid` (now
+with **no** `altGrid` and **no** `rows ≥ 2` hypothesis) feed `restore v` to any client of the
+session's dimensions and leave its grid equal to `v.grid`, array for array, cell for cell.
+Non-vacuity checked at a real 80×24 `Vt.init` and, for the one-row corner, at 80×1.
+
+The `rows = 1` corner cost less than projected: `Walking.bot` never needed weakening (`bot =
+rows - 1 = 0` already holds for one row), and `h2` was load-bearing only in `prologue_sticky`'s
+DECSTBM step. For one row `CSI 1;1r` is a degenerate no-op, so the region stays whatever the
+lead-in left — which a **`Good`** one-row client forces whole (`bot < 1 ⟹ 0`, `top ≤ bot`). So
+`prologue_sticky` now takes `Good w` and case-splits; `h2` is gone from the whole chain.
 
 The **alt-screen** branch (`restore_grid_any_alt`) came in far cheaper than last round's note
 projected: the "add an `org` field to `Matches`, ten rungs" plan was **not needed**. The modes
@@ -681,16 +685,16 @@ claimed `PaintState`. A same-shape value mutation in `rowAnsi` breaks it.
 
 ## Step 4 — the grid, and the end-to-end claim
 
-Status: **item 5 proved on both screens (`restore_grid_any`); `rows = 1` and `resume_grid` remain** (2026-08-18).
+Status: **item 5 COMPLETE — both screens, every height (`restore_grid_any`, `resume_grid`); Step 5 remains** (2026-08-18).
 The `joinCRLF` row walk with the no-scroll argument (`paint_rows`, `crlf_step`,
 `lineFeed_interior`), the whole-grid paint (`gridAnsi_writes_grid`), the cross-row locality
 (`OffRow` + companions), and the prologue's canonical entry state (`prologue_sticky`,
 `prologue_modes`) are all proved and committed, and so are the composition
 (`paint_entry`, `restore_grid_any_main`, `restore_grid_reachable`), the decoder
 preconditions (`uaz_feed`, `U8Ok`), and **both branches of `restore_grid_any`** — the
-alt-screen one (`restore_grid_any_alt` via `alt_pre_switch` + `alt_switch_entry` +
-`gridAnsi_writes_grid'`) closed without adding an `org` field to `Matches` (see "Where this
-stands"). Remaining: the `rows = 1` corner and `resume_grid`.
+alt-screen one (`restore_grid_any_alt`) closed without an `org` field on `Matches`, the
+`rows = 1` corner closed via `Good w` in `prologue_sticky` (no `Walking.bot` weakening), and
+`resume_grid` composed with checkpoint exactness. Remaining: only Step 5 (archival).
 
 Shape: `joinCRLF` row walk (including the argument that no line feed scrolls), the
 alt switch, then composition through `restore_grid_of_paint` — which already exists,

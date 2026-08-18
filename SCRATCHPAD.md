@@ -5437,3 +5437,36 @@ Thin plumbing over already-break-verified lemmas — no new proof risk. The one 
 receiver is `Vt.init c.vt.cols c.vt.rows`, whose dims are `clampDim`ed; `Good`'s `colsPos`/
 `colsLe`/`rowsLe` make `clampDim = id` (`simp only [Vt.clampDim]; omega`). Non-vacuity pinned by
 an `example` at a real 80×24 checkpoint.
+
+## Step 4 notes — 2026-08-18 (rows = 1 — item 5 now truly "every v/w")
+
+The `h2 : 0 < v.rows - 1` hypothesis is **gone** from the whole grid chain
+(`prologue_sticky`, `paint_entry`, `restore_grid_any_main`/`_alt`/`_any`,
+`restore_grid_reachable`, `resume_grid`). Item 5 now holds for *every* height, the one-row
+screen included.
+
+The corner was cheaper than the "weaken `Walking.bot`" note projected — `Walking.bot` never
+needed touching, because `bot = rows - 1 = 0` already holds for one row. `h2` was load-bearing
+in exactly one place: `prologue_sticky`'s DECSTBM step. For `rows ≥ 2`, `CSI 1;rows r` *resets*
+the region whole regardless of the client (`stStbm_of`). For `rows = 1` the emitted `1;1r` is
+degenerate (`stStbm 0 0 = ` no-op), so the region it leaves is whatever the lead-in left — and
+that is already whole, because a **`Good`** one-row client has `bot < rows = 1 ⟹ bot = 0` and
+`top ≤ bot ⟹ top = 0`. So `prologue_sticky` now takes `Good w` (which `paint_entry` already
+had) and case-splits: `stStbm_of` for `rows ≥ 2`, the no-op + `Good (w.feed escSeq)`'s region
+bounds (via `Good.feed` and `rows_st_lead`) for `rows = 1`. No region-across-lead lemma needed
+— `Good.feed` on the ESC\ prefix supplies the bound directly, whichever way `?1049l` (`stAlt
+false`) leaves the region (reset-to-whole if the client was on alt, unchanged otherwise, both
+whole for one row).
+
+The paint itself already worked for one row: `paint_rows` over a length-1 row list hits only
+the last-row case, so `crlf_step` (the only place `bot < rows` / `cursor.y < bot` matters) is
+never invoked — a single row cannot scroll, exactly as the design said.
+
+Non-vacuity: `resume_grid` instantiated at `Vt.init 80 1` reproduces the 80×1 grid (an
+`example` in `Theorems/Resume.lean`). Break-verify: `gridAnsi`'s home `CSI H → CSI 2;1 H`
+fails `gridAnsi_eq` (8162) and the `Ends`/`Quiet`/`SMap` stream predicates (841/1722/5282); the
+rows=1 example flows through this chain, so its claim is substantive, not vacuous. Reverted;
+Core byte-identical; `./lake build Theorems Tests` + `./tests/e2e.sh` green, `STATEMENT_CAP` 21.
+
+**Item 5 is now complete with no height caveat.** Remaining for the spec: Step 5 (conformance
+profile into THEOREMS.md; archive `terminal-contract.md` + `grid-fidelity.md`).
