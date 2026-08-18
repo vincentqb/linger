@@ -7,11 +7,29 @@ here in a different shape, and its Step 5 archival gate is carried unchanged)
 
 ## Where this stands — read this first
 
-**Next step:** **Step 4** — the grid, and the end-to-end claim. `rowAnsi_writes_row` is the
-per-row lemma to build on; Step 4 walks it over `joinCRLF` (with the argument that no line
-feed scrolls the grid mid-restore), handles the alt-screen switch, and composes through
-`restore_grid_of_paint` (which already exists and whose first hypothesis `paint_grounds` is
-discharged for any receiver) to `restore_grid_any` / `restore_grid_reachable` / `resume_grid`.
+**Next step:** finish **Step 4's composition** — the grid-painting *core* is proved (see
+below); what remains is wiring it through the clear + prologue to `restore_grid_any`. In
+order: `paint_entry` (the entry state after `prologue ++ SGR0 ++ ED2`, from the pieces
+listed), the no-alt `restore_grid_any`, the `rows = 1` case, the alt-screen case, then
+`restore_grid_reachable` / `resume_grid`. **The one genuine subtlety, found and recorded in
+SCRATCHPAD (2026-08-18):** the entry needs `u8acc = 0` (`utf8_feed` needs it for multi-byte
+glyphs; a CSI final byte forces `u8need = 0` but not `u8acc = 0`), so `restore_grid_any` must
+carry the receiver's live invariant `w.u8need = 0 → w.u8acc = 0` — a real precondition,
+not in `Good`/`Renderable`. `restore_grid_reachable` supplies it from `LiveReachableVt`.
+
+**Step 4's grid-painting core is COMPLETE** (2026-08-18), the mathematically hard part:
+* `OffRow` — a row's paint touches no other row (the cross-row scroll `RowOk` guards
+  against, stated positively; the half `Matches`, being about one row, could not carry).
+  `paint_range`/`rowAnsi_writes_row` now also conclude it.
+* `crlf_step` / `lineFeed_interior` — the inter-row `CRLF` is one clean cursor move; below
+  `bot` the line feed does not scroll. The no-scroll argument.
+* `paint_rows` — the grid row walk (over `rowsAnsi`/`joinCRLF`); no line feed scrolls
+  because `joinCRLF` emits no trailing separator, so the last row's LF never fires.
+* `gridAnsi_writes_grid` — **the whole grid, painted into any client of matching
+  dimensions with reproducible rows, reproduces `v.grid` exactly**, array for array.
+* `prologue_sticky` / `prologue_modes` — the prologue's canonical mid-stream entry state
+  (region whole, no alt, ASCII charsets; insert off, wrap on, origin off). `rows ≥ 2` is
+  `DECSTBM`'s own constraint; the one-row grid needs no region fact (it cannot scroll).
 
 **Step 3 is COMPLETE** (2026-08-17). `rowAnsi_writes_row`: feeding `rowAnsi g startPen` into
 any receiver matching `g` at frontier 0 paints the whole row, ending matched at every column
@@ -636,7 +654,14 @@ claimed `PaintState`. A same-shape value mutation in `rowAnsi` breaks it.
 
 ## Step 4 — the grid, and the end-to-end claim
 
-Status: not started. Depends on Steps 1–3.
+Status: **grid-painting core done, composition to `restore_grid_any` remains** (2026-08-18).
+The `joinCRLF` row walk with the no-scroll argument (`paint_rows`, `crlf_step`,
+`lineFeed_interior`), the whole-grid paint (`gridAnsi_writes_grid`), the cross-row locality
+(`OffRow` + companions), and the prologue's canonical entry state (`prologue_sticky`,
+`prologue_modes`) are all proved and committed. Remaining: `paint_entry` (assemble
+`gridAnsi_writes_grid`'s entry facts, incl. the `u8acc = 0` precondition — see the "Where
+this stands" block and SCRATCHPAD 2026-08-18), the no-alt/`rows = 1`/alt-screen
+`restore_grid_any`, then `restore_grid_reachable` / `resume_grid`.
 
 Shape: `joinCRLF` row walk (including the argument that no line feed scrolls), the
 alt switch, then composition through `restore_grid_of_paint` — which already exists,

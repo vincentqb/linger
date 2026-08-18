@@ -5276,3 +5276,49 @@ Complements the earlier emulator-side breaks (printMark, setCol): this pins the 
 **Step 3 is complete.** `STATEMENT_CAP` back to 21 (`rowSlot` now named by a theorem).
 Remaining: Step 4 (`joinCRLF` row walk + no-scroll, alt switch, `restore_grid_any` /
 `restore_grid_reachable` / `resume_grid`) and Step 5 (conformance profile, archive).
+
+## Step 4 notes — 2026-08-18 (the grid, painted)
+
+The grid-painting core is proved and committed (6 checkpoints):
+- `OffRow` (a row's paint touches no other row — the half `Matches`, being about one row,
+  could not carry; the cross-row scroll catastrophe `RowOk` guards against, stated
+  positively) + per-rung companions `offRow_narrow`/`_wide`/`_mark`/`_marks_fold`/
+  `_narrow_marks`/`_narrow_margin_marks`/`_wide_marks`/`_wide_margin`/`_wide_margin_marks`.
+- `paint_range` and `rowAnsi_writes_row` now also conclude `OffRow`.
+- `crlf_step`: the CRLF between rows is one clean cursor move — `lineFeed_interior` (below
+  `bot` the LF moves down, does not scroll) + `carriageReturn`. The no-scroll argument.
+- `rowsAnsi`/`gridFold_eq_rowsAnsi`/`gridAnsi_eq`: the array fold `gridAnsi` runs, as a
+  peelable head-first list.
+- `paint_rows` (`Walking` bundle + strong-ish structural induction): the grid row walk, no
+  line feed scrolls (`joinCRLF` has no trailing separator, so the last row's LF never fires).
+- `gridAnsi_writes_grid`: **the whole grid, painted into any client of matching dims with
+  reproducible rows, reproduces `v.grid` exactly** — array for array (`grid_eq_of_cells`,
+  `row_eq_of_paint`, `size_getRow_congr`, `getD_lt'`). Entry established via `SGR 0`
+  (`penAfter _ [0] = {}`) then `home_feed_eq` (`CSI H = moveTo 0 0`).
+- `prologue_sticky` / `prologue_modes`: the prologue's **canonical mid-stream** state
+  (region whole, no alt, ASCII charsets; insert off / wrap on / origin off), lifted from
+  `restore_sticky_any`'s chain and the `MMap` machinery. `rows ≥ 2` is `DECSTBM`'s constraint.
+
+WHAT REMAINS for `restore_grid_any` (Def-of-done item 5), and the genuine subtlety found:
+1. **The entry `u = w.feed (prologue ++ SGR0 ++ ED2)` needs `u.u8acc = 0`** —
+   `utf8_feed`/`cellText_feed` require it (via `reset_u8`) for *multi-byte* glyphs, and it
+   is carried through the whole row/grid walk as a `Matches`/`Walking` field. A CSI final
+   byte forces `u8need = 0` (`u8_zero_after_csi`) but **not** `u8acc = 0`
+   (`abortUtf8` only zeroes `u8acc` when `u8need > 0`). So the entry `u8acc = 0` needs the
+   receiver's live invariant `w.u8need = 0 → w.u8acc = 0` (true for any client reached by
+   feeding; not in `Good`/`Renderable`), threaded through the lead-in's abort and preserved
+   across the CSIs (which never touch `u8acc` from a `u8need = 0` state). This is a real
+   precondition and belongs in the statement — the same shape of hazard this spec exists to
+   surface.
+2. `paint_entry`: assemble `gridAnsi_writes_grid`'s ~14 entry facts about `u` — dims
+   (`dims_feed`, needs `Good w`), `GridOk` (`renderable_feed`), sticky through `SGR0`/`ED2`
+   (`smap_id_sgrNum`/`smap_id_ed`), modes through them (`mmap_id_sgr`; `mmap_id_ed` still to
+   build), ground (`Ends`), and the `u8acc` of item 1.
+3. no-alt `restore_grid_any` = `paint_entry` ∘ `gridAnsi_writes_grid` ∘ `restore_grid_of_paint`.
+4. the `rows = 1` case (DECSTBM degenerate; a single row cannot scroll, so `Walking.bot`
+   should weaken to `rows ≤ 1 ∨ bot = rows-1`).
+5. the **alt-screen** case: `screensAnsi` paints main, parks, `?1049h` (enterAlt on the
+   client blanks and resets region), then paints the alt — so `gridAnsi_writes_grid` applies
+   to the post-`?1049h` state; the switch's state establishment is the new work.
+6. `restore_grid_reachable` (supplies items 1/2's invariants from `LiveReachableVt`) and
+   `resume_grid` (composes with checkpoint exactness).
