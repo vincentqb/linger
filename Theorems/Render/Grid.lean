@@ -191,7 +191,6 @@ theorem offRow_mark {cols : Nat} {w : Vt} {Q : PaintState} {g : Row} {wcol kf : 
   · rw [grid_size_mendRow, grid_size_putCell]
   · rw [frame_mendRow, frame_putCell]
 
-set_option maxHeartbeats 1000000 in
 /-- **The mark loop is transparent off its row.** Runs the same recursion as `marks_fold`,
 carrying `Matches` alongside so each step's `offRow_mark` has its hypotheses. -/
 theorem offRow_marks_fold {cols : Nat} {Q : PaintState} {g : Row} {wcol kf : Nat}
@@ -303,7 +302,6 @@ theorem offRow_narrow_margin_marks {w : Vt} {P : PaintState} {g : Row} {k : Nat}
   exact hoffbase.trans hoffmarks
 
 
-set_option maxHeartbeats 1000000 in
 /-- **A wide glyph carrying marks is transparent off its row** (interior). Four pieces —
 glyph, `CHA`, marks, `CHA` — composed by `trans`. The two `CHA`s write no cell at all, so
 they cost `OffRow.of_grid_eq`; the base print and the mark loop are the real work. -/
@@ -383,7 +381,6 @@ theorem offRow_wide_margin {w : Vt} {P : PaintState} {g : Row} {k : Nat}
     (hfit : k + 1 < w.cols) (hwid : (g.at k).width = 2) (hmk : (g.at k).marks = []) :
     OffRow P.y w (w.feed (cellText (g.at k))) :=
   offRow_wide hrow hm hPx hpend hfit hwid hmk
-set_option maxHeartbeats 1000000 in
 /-- **A wide glyph carrying marks is transparent off its row** (at the margin). Four pieces —
 glyph, `CHA`, marks, `CHA` — composed by `trans`. The two `CHA`s write no cell at all, so
 they cost `OffRow.of_grid_eq`; the base print and the mark loop are the real work. -/
@@ -455,7 +452,6 @@ theorem offRow_wide_margin_marks {w : Vt} {P : PaintState} {g : Row} {k : Nat}
     utf8s_feed (g.at k).marks hcha1.ground hcha1.u8need hcha1.u8acc]
   exact ((hoffbase.trans hoffcha1).trans hoffmarks).trans hoffcha2
 
-set_option maxHeartbeats 4000000 in
 /-- **The row walk.** Feeding `rowSlot` folded over the cells from column `n` onward carries
 the receiver from frontier `n` to the full row. Peels a narrow cell (advance one) or a wide
 pair (advance two) each step; `Matches.frontier` rules out ever landing on a shadow. The
@@ -790,7 +786,6 @@ structure Walking (cols rows : Nat) (tg : Array Row) (w : Vt) (Y : Nat) (p : Pen
   rlens : ∀ y', (w.getRow y').size = cols
   done : ∀ y' x, y' < Y → w.getCell x y' = (tg.getD y' (blankRow cols {})).at x
 
-set_option maxHeartbeats 1000000 in
 /-- **The grid walk.** Painting the source rows `rs` from row `Y` onward carries the
 receiver to a grid that matches `tg` on every row: rows below `Y` were already right and are
 left alone (`OffRow`), row `Y` is painted (`rowAnsi_writes_row`), and the `CRLF` between rows
@@ -1398,7 +1393,6 @@ theorem csi_priv_open_eq {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) 
   unfold Vt.stepCsi
   rw [if_neg (by decide), if_neg (by decide), if_neg (by decide), if_pos (by decide)]
 
-set_option maxHeartbeats 1000000 in
 /-- **A private mode set, as a state equation.** `?<n>h` / `?<n>l` *is* `setMode true n on`,
 with the parser back in ground. `modeSet_modes` gave only the `Modes` field, which cannot see
 `?1049h`'s real work — stashing the grid and blanking the screen. -/
@@ -1518,7 +1512,6 @@ theorem getRow_size_replicate {u : Vt} {n c : Nat}
         = blankRow u.cols u.pen from by simp [Array.getD, Array.size_replicate, hy]]
     simp only [blankRow, Array.size_replicate]; exact hc
 
-set_option maxHeartbeats 1000000 in
 /-- **The state just before the alt switch is fully re-established.** Feed a receiver `z` (in
 the prologue's canonical entry state) the discarded main paint `gridAnsi mg` and then the park
 (`penSgr`/`CUP`); every field the second paint's entry state reads is left intact — dimensions,
@@ -1579,7 +1572,6 @@ theorem alt_pre_switch {z : Vt} {mg : Array Row} {mc : Cursor} {mp : Pen} {cols 
   · rw [← stick_g0, hPstick, id_eq, hAstick, stick_g0, hg0]
   · rw [← stick_g1, hPstick, id_eq, hAstick, stick_g1, hg1]
 
-set_option maxHeartbeats 1000000 in
 /-- **The grid, restored into any client — alt screen.** With the session on the alt screen,
 `screensAnsi` paints the stashed main grid, parks its cursor/pen, switches with `?1049h`, then
 paints the visible (alt) grid. `alt_pre_switch` carries the entry state across the discarded

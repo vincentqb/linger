@@ -904,7 +904,6 @@ theorem mmap_modesAnsi (v : Vt)
 
 /-! ### The inbound value claim (A5 inbound) -/
 
-set_option maxHeartbeats 800000 in
 theorem restore_modes_any (v w : Vt)
     (hmouse : v.modes.mouse = 0 ∨ v.modes.mouse = 1000 ∨ v.modes.mouse = 1002
       ∨ v.modes.mouse = 1003) :

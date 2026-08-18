@@ -5661,3 +5661,51 @@ Break-verify, two of them, and the second is the one that matters:
   That is the demonstration that the ruler claim does real work.
 Reverted both; `Zmx/Core/*` byte-identical; `./lake build Theorems Tests` green and
 warning-free, `./tests/e2e.sh` green, coverage 20/20.
+
+## FINDINGS item 1 — 2026-08-18 (split Theorems/Render.lean; the heartbeat sweep refutes its own hypothesis)
+
+`Theorems/Render.lean` (9,866 lines, 13 namespace open/close cycles) is now a 38-line façade
+over ten parts in `Theorems/Render/`: Ends, Quiet, Pen, Keeps, Modes, Sticky, History, Row,
+Grid, Tabs — cut at the boundaries the file's own `/-! ## …` headers already named, in a linear
+import chain so declaration order is preserved exactly. Verbatim move, checked mechanically:
+the 607-name declaration set diffs empty, and each part's body is byte-identical to its slice
+of the original (a script reconstructs the original from the parts). No statement, proof or
+docstring text changed.
+
+Two things the split forced, both worth knowing before splitting any Lean file:
+* **`private` does not cross a module boundary.** `u8_bounds` (used by the Quiet, Pen and Keeps
+  rungs) and `print_quiet` (used by Row) were private only because everything lived in one
+  file. They lost the modifier, with a comment saying why. Every other private helper turned
+  out to be genuinely file-local — checked by grepping each one's usages across the new parts.
+* **`tests/coverage.py` globbed `Theorems/*.lean` non-recursively**, so the moment the theorem
+  statements moved into a subdirectory the gate read 58 core defs as unclaimed and failed.
+  `rglob`, which is what it already did for `Zmx`. The e2e `git grep -- 'Theorems/*'` gates
+  (sorry / native_decide) were fine — git pathspec globs match across `/`.
+
+**The acceptance criterion was "bumps that survive are the record-width tax, the ones that
+disappear were file size". The control refutes it.** 18 of the 20 `maxHeartbeats` raises turned
+out deletable — but re-running the same deletions at the PRE-SPLIT commit (`1f68e42`, throwaway
+worktree) shows all six representative ones were *already* deletable there. So the split earns
+no credit: those raises were paying for neither file size nor record width. They were stale —
+budget added when the proofs were in an earlier, rougher shape and never re-measured once the
+surrounding lemmas got factored. **A `maxHeartbeats` raise is a measurement with an expiry
+date, and nothing expires it.** The sweep is cheap (delete the line, build the module, restore)
+and belongs after any large refactor.
+
+Where the real cost is, measured by capping each file at half the default (100,000): exactly
+three tight declarations — `Grid.paint_range` (the `Matches` strong induction), `Vt.csiDispatch`
+and `Vt.renderable_csiDispatch` (dispatch-table case splits under `Good`/`Renderable`). All
+three are invariant-over-wide-record work, so THEOREMS.md's record-width diagnosis survives as
+a description of *where* cost concentrates — and note `Vt.csiDispatch` never had a raise at
+all. `Row.lean` and `Modes.lean` pass at 50,000, a quarter of the default. Survivors kept:
+`Checkpoint.load_save` needs its 2,000,000 (fails at 1,000,000); `Vt.renderable_stepGround`
+needs 600k–1M, so its 2,000,000 is generous — left alone rather than tightened into fragility,
+since a raise that is merely generous costs nothing and a tight one is a future surprise.
+
+Item 2 (measured, not refactored): across the 12 invariant-discharging rungs, field bookkeeping
+is ~22% of proof lines against ~78% argument, and the distribution is the tell — the *small*
+rungs are discharge-heavy (`step_pen`, 34 lines, ~47%) while the *large* ones are argument
+(`paint_range` 8%, `mark_step` 18%). Bad factoring would show cost growing with field count;
+this grows with the difficulty of the step. Verdict: hard core. That also prices the deferred
+"read-only fields into parameter position" refactor — it would attack the 204 bookkeeping lines
+and none of the 742, i.e. legibility, not length.

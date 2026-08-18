@@ -3841,7 +3841,6 @@ theorem renderable_setMode {v : Vt} (h : Renderable v) (priv : Bool) (n : Nat) (
 
 /-! #### Dispatch, and the parser -/
 
-set_option maxHeartbeats 1000000 in
 theorem renderable_csiDispatch {v : Vt} (h : Renderable v) (s : CsiState) (final : UInt8) :
     Renderable (v.csiDispatch s final) := by
   unfold Vt.csiDispatch

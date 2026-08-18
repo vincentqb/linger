@@ -135,7 +135,6 @@ re-establishes every field of the invariant the next rung reads.
 separate rung: there the advance clamps and arms wrap-pending, which is the state the
 2026-08-15 negative result showed no absolute cursor move can express. -/
 
-set_option maxHeartbeats 1000000 in
 /-- **One narrow cell with no marks, in the interior of a row.** The first rung.
 
 The heartbeat bump is the write term: `Matches`'s fifteen fields each mention the fed
@@ -225,7 +224,6 @@ theorem step_narrow {w : Vt} {P : PaintState} {g : Row} {k : Nat}
       rw [getCell_write_mendRow_narrow _ _ _ _ rfl hgs hrl]
       exact Cell.ext' rfl hmk.symm hwid.symm (hm.pen.trans hpen.symm)
 
-set_option maxHeartbeats 1000000 in
 /-- **One narrow cell at the right margin.** The rung the interior case cannot cover: the
 advance clamps the column and arms wrap-pending, which is the state the 2026-08-15
 negative result showed no absolute cursor move can express. `x` does not move (it is
@@ -312,7 +310,6 @@ theorem step_narrow_margin {w : Vt} {P : PaintState} {g : Row} {k : Nat}
       exact Cell.ext' rfl hmk.symm hwid.symm (hm.pen.trans hpen.symm)
 
 
-set_option maxHeartbeats 1000000 in
 /-- **A wide glyph and its shadow — one rung, `k` to `k+2`.**
 
 The pair is consumed together, and that is a correctness requirement rather than a
@@ -661,7 +658,6 @@ theorem map_safeChar_id : ∀ (l : List Char), (∀ x ∈ l, Emittable x) → l.
     rw [List.map_cons, safeChar_of_emittable (h a (List.mem_cons_self)),
       map_safeChar_id l (fun x hx => h x (List.mem_cons_of_mem a hx))]
 
-set_option maxHeartbeats 1000000 in
 /-- **One mark lands on column `wcol` and moves nothing.** The receiver's row already
 agrees with `withMarks g wcol done` (the source cell with only the marks seen so far, at a
 frontier `kf` already past it); one more `print (safeChar m)` extends that to
@@ -783,7 +779,6 @@ theorem mark_step {cols : Nat} {w : Vt} {Q : PaintState} {g : Row} {wcol kf : Na
       (u := w.putCell wcol Q.y { g.at wcol with marks := done ++ [safeChar m] })
       hrowW hcellsW hfront hgsW j hj
 
-set_option maxHeartbeats 1000000 in
 /-- **The mark loop.** Fold `mark_step` over the marks not yet emitted: the receiver's
 row grows from `withMarks g wcol acc` to `withMarks g wcol (acc ++ rest.map safeChar)`, and
 the paint state `Q` never moves because a mark moves no cursor. `cols` is fixed once; each
@@ -866,7 +861,6 @@ theorem step_narrow_marks {w : Vt} {P : PaintState} {g : Row} {k : Nat}
   · subst hjk; rw [at_withMarks_self g j (g.at j).marks hkg]
   · exact at_withMarks_ne g k (g.at k).marks j hjk
 
-set_option maxHeartbeats 1000000 in
 /-- **A wide glyph carrying its own marks — the `CHA`/`CHA` dance.** `rowSlot`'s
 marked-wide branch is `glyph · CHA(k+2) · marks · CHA(k+3)`: the wide base advances the
 cursor two, the first `CHA` parks it at `k + 1` (between glyph and shadow) so the marks
@@ -981,7 +975,6 @@ theorem step_narrow_margin_marks {w : Vt} {P : PaintState} {g : Row} {k : Nat}
   by_cases hjk : j = k
   · subst hjk; rw [at_withMarks_self g j (g.at j).marks hkg]
   · exact at_withMarks_ne g k (g.at k).marks j hjk
-set_option maxHeartbeats 1000000 in
 /-- **A wide glyph whose shadow is the final column.** The pair fits (`k + 1 < cols`) but
 ends at the margin (`cols ≤ k + 2`), so the advance clamps to `cols - 1` and arms
 wrap-pending. The write is the same base-and-shadow as `step_wide`; only the cursor lands
@@ -1083,7 +1076,6 @@ theorem step_wide_margin {w : Vt} {P : PaintState} {g : Row} {k : Nat}
         rw [h1]
         exact (shadow_congr hpenW).trans hsh.symm
 
-set_option maxHeartbeats 1000000 in
 /-- **A wide glyph carrying marks, whose shadow is the final column.** As `step_wide_marks`,
 but the pair ends at the margin (`cols ≤ k + 2`): the base clamps (via `step_wide_margin`),
 the first `CHA(k+2)` still parks in range at `k + 1 = cols - 1`, and the trailing `CHA(k+3)`
