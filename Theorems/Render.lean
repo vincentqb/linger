@@ -8468,3 +8468,110 @@ theorem gridAnsi_writes_grid {u v : Vt}
   refine grid_eq_of_cells (cols := v.cols) (rows := v.rows) hgsz' hvsz ?_ (fun y' _ => hrl' y') ?_
   · intro y' hyr x _; exact hcell y' x hyr
   · intro y' _; exact (hvok y').size
+
+/-! ### The prologue's canonical mid-stream state — the entry `gridAnsi_writes_grid` assumes
+
+`restore_sticky_any` computes the sticky bundle at the *end* of the stream (the session's
+values, set by the tail). The grid walk needs it *after the prologue* — canonical: region
+whole, no alt screen, ASCII charsets — which is the same chain stopped early. `rows ≥ 2` is
+`DECSTBM`'s own constraint (a one-row region is degenerate); the one-row grid is handled
+without it, since a single row cannot scroll. -/
+theorem prologue_sticky (v w : Vt) (hrows : w.rows = v.rows) (h2 : 0 < v.rows - 1)
+    (hfits : v.rows < 65535) :
+    (w.feed (prologueAnsi v)).pstate = .ground
+      ∧ stick (w.feed (prologueAnsi v))
+        = ⟨v.rows, 0, v.rows - 1, false, false, false, false⟩ := by
+  rw [show prologueAnsi v = escSeq 0x5C ++ modeSet 1049 false ++ csiNum 4 0x6C ++ modeSet 6 false
+      ++ modeSet 7 true ++ csiNum2 1 v.rows 0x72 ++ escCharset 0x28 0x42
+      ++ escCharset 0x29 0x42 ++ [0x0F] from by simp only [prologueAnsi]]
+  have eid : ∀ (n : Nat) (on : Bool) (Y : Sticky), (n == 47 || n == 1047 || n == 1049) = false →
+      stSetMode n on Y = Y := by
+    intro n on Y h; unfold stSetMode; rw [if_neg (by rw [h]; simp)]
+  obtain ⟨A, hA⟩ : ∃ y : Sticky, stAlt false (stick (w.feed (escSeq 0x5C))) = y := ⟨_, rfl⟩
+  have hArows : A.rows = v.rows := by rw [← hA, stAlt_rows]; exact (rows_st_lead w).trans hrows
+  have hAalt : A.alt = false := by rw [← hA]; exact stAlt_alt false _
+  obtain ⟨Ar, At, Ab, Ag0, Ag1, Aso, Aal⟩ := A
+  simp only at hArows hAalt
+  subst hArows hAalt
+  have h0 : (w.feed (escSeq 0x5C)).pstate = .ground
+      ∧ stick (w.feed (escSeq 0x5C)) = stick (w.feed (escSeq 0x5C)) := ⟨(st_grounds w).1, rfl⟩
+  have h1 := sput_congr (sput_step h0 (smap_modeSet 1049 false (by decide) (by decide)))
+    (show stSetMode 1049 false (stick (w.feed (escSeq 0x5C)))
+        = ⟨v.rows, At, Ab, Ag0, Ag1, Aso, false⟩ from by
+      rw [show stSetMode 1049 false (stick (w.feed (escSeq 0x5C)))
+        = stAlt false (stick (w.feed (escSeq 0x5C))) from by
+          unfold stSetMode; rw [if_pos (by decide)]]
+      exact hA)
+  have h2s := sput_congr (sput_step h1 smap_id_irm_reset) (id_eq _)
+  have h3 := sput_congr (sput_step h2s (smap_modeSet 6 false (by decide) (by decide)))
+    (eid 6 false _ (by decide))
+  have h4 := sput_congr (sput_step h3 (smap_modeSet 7 true (by decide) (by decide)))
+    (eid 7 true _ (by decide))
+  have h5 := sput_congr
+    (sput_step h4 (smap_stbm 1 v.rows (by decide) (by omega) (by decide) (by omega)))
+    (show stStbm (1 - 1) (v.rows - 1) (⟨v.rows, At, Ab, Ag0, Ag1, Aso, false⟩ : Sticky)
+        = ⟨v.rows, 0, v.rows - 1, Ag0, Ag1, Aso, false⟩ from by
+      rw [stStbm_of (by omega) (show v.rows - 1 < (⟨v.rows, At, Ab, Ag0, Ag1, Aso, false⟩
+        : Sticky).rows from by simp only; omega)])
+  have h6 := sput_congr (sput_step h5 (smap_charset 0x28 0x42 (Or.inl rfl)))
+    (show stCharset 0x28 0x42 (⟨v.rows, 0, v.rows - 1, Ag0, Ag1, Aso, false⟩ : Sticky)
+        = ⟨v.rows, 0, v.rows - 1, false, Ag1, Aso, false⟩ from by
+      unfold stCharset; rw [if_pos (by decide)]; rfl)
+  have h7 := sput_congr (sput_step h6 (smap_charset 0x29 0x42 (Or.inr rfl)))
+    (show stCharset 0x29 0x42 (⟨v.rows, 0, v.rows - 1, false, Ag1, Aso, false⟩ : Sticky)
+        = ⟨v.rows, 0, v.rows - 1, false, false, Aso, false⟩ from by
+      unfold stCharset; rw [if_neg (by decide), if_pos (by decide)]; rfl)
+  have h8 := sput_congr (sput_step h7 smap_si)
+    (show ({ (⟨v.rows, 0, v.rows - 1, false, false, Aso, false⟩ : Sticky) with so := false })
+        = ⟨v.rows, 0, v.rows - 1, false, false, false, false⟩ from rfl)
+  exact h8
+
+/-- The prologue's `DECSTBM` (`CSI 1 ; rows r`) writes no `Modes` field — it moves the
+region and homes the cursor, both outside `Modes`. -/
+theorem mmap_id_stbm2 (a b : Nat) : MMap id (csiNum2 a b 0x72) := by
+  rw [show csiNum2 a b 0x72 = csiB ++ (digits a ++ [0x3B] ++ digits b) ++ [0x72] from by
+    simp [csiNum2, csiB, List.append_assoc]]
+  exact mmap_id_csi_seq _ 0x72
+    (((paramBytes_digits a).append
+      (by intro x hx; rw [List.mem_singleton] at hx; subst hx; exact ⟨by decide, by decide⟩)).append
+      (paramBytes_digits b))
+    (by decide) (by decide) (fun w t => modes_csiDispatch_stbm w t)
+
+/-- `DECAWM`/`DECOM` on the abstract modes: each sets exactly its field. `DECOM` goes
+through `moveTo`, which frames away. -/
+theorem smMod_daw7 (X : Modes) (on : Bool) : smMod 7 on X = { X with wrap := on } := rfl
+
+theorem smMod_dom6 (X : Modes) (on : Bool) : smMod 6 on X = { X with origin := on } := by
+  show (({ (default : Vt) with modes := { X with origin := on } }).moveTo 0 0).modes
+    = { X with origin := on }
+  rw [frame_moveTo]
+
+/-- **The prologue leaves insert off, wrap on, origin off** — the three `Modes` facts the
+grid walk needs, established absolutely by `IRM 4l`, `DECAWM ?7h`, `DECOM ?6l`, and untouched
+by the region set, the charsets and the shift state that follow. -/
+theorem prologue_modes (v w : Vt) :
+    (w.feed (prologueAnsi v)).modes.insert = false
+      ∧ (w.feed (prologueAnsi v)).modes.wrap = true
+      ∧ (w.feed (prologueAnsi v)).modes.origin = false := by
+  rw [show prologueAnsi v = escSeq 0x5C ++ (modeSet 1049 false ++ csiNum 4 0x6C ++ modeSet 6 false
+      ++ modeSet 7 true ++ csiNum2 1 v.rows 0x72 ++ escCharset 0x28 0x42
+      ++ escCharset 0x29 0x42 ++ [0x0F]) from by simp only [prologueAnsi, List.append_assoc],
+    feed_append]
+  obtain ⟨hlg, hlu⟩ := st_grounds w
+  -- the mode-affecting chain, after the lead-in has grounded the receiver
+  have hmm : MMap (fun m =>
+      smMod 7 true (smMod 6 false ({ (smMod 1049 false m) with insert := false }))) (modeSet 1049 false
+        ++ csiNum 4 0x6C ++ modeSet 6 false ++ modeSet 7 true ++ csiNum2 1 v.rows 0x72
+        ++ escCharset 0x28 0x42 ++ escCharset 0x29 0x42 ++ [0x0F]) := by
+    have := (((((((mmap_modeSet 1049 false (by decide) (by decide)).comp
+      (mmap_irm false)).comp (mmap_modeSet 6 false (by decide) (by decide))).comp
+      (mmap_modeSet 7 true (by decide) (by decide))).comp (mmap_id_stbm2 1 v.rows)).comp
+      (mmap_id_charset 0x28 0x42 (Or.inl rfl))).comp
+      (mmap_id_charset 0x29 0x42 (Or.inr rfl))).comp mmap_id_si
+    refine this.congr (fun m => ?_)
+    simp only [id_eq]
+  obtain ⟨-, -, hmodes⟩ := hmm (w.feed (escSeq 0x5C)) hlg hlu
+  rw [hmodes]
+  dsimp only
+  rw [smMod_daw7, smMod_dom6]
+  exact ⟨rfl, rfl, rfl⟩
