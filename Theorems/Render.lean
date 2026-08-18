@@ -7643,3 +7643,448 @@ theorem rowAnsi_writes_row {w : Vt} {g : Row} {startPen : Pen} {Y : Nat}
   rw [show (rowAnsi g startPen).1 = (g.foldl rowSlot ([], startPen, 0)).1 from rfl,
     show (rowAnsi g startPen).2 = (g.foldl rowSlot ([], startPen, 0)).2.1 from rfl]
   exact key
+
+/-! ## Step 4 — the grid
+
+Step 3 proved a row. A grid is not a list of independent rows: the walk's invariant is
+"the rows below `y` are already painted", so each later row's paint must leave them
+alone — and `Matches`, a statement about **one** row, cannot say that. `OffRow` is the
+missing half, and it is the cross-row catastrophe `RowOk` was guarding against stated
+positively. -/
+
+/-- **What a row's paint owes the grid walk**: it changes no cell outside row `y`, resizes
+no row, and changes neither dimension. Composable by `trans`, which is the whole point —
+the row's bytes arrive in pieces (a pen prefix, a glyph, a `CHA`, marks) and each piece
+must be transparent off row `y`. -/
+structure OffRow (y : Nat) (u u' : Vt) : Prop where
+  /-- Bounded to rows the grid actually has, and that bound is load-bearing: out of range
+  `getRow` returns `blankRow cols pen`, so a **pen change** alters it. The grid walk only
+  ever reads rows in the grid. -/
+  cells : ∀ i y', y' ≠ y → y' < u.grid.size → u'.getCell i y' = u.getCell i y'
+  sizes : ∀ y', (u'.getRow y').size = (u.getRow y').size
+  gridSize : u'.grid.size = u.grid.size
+  cols : u'.cols = u.cols
+
+theorem OffRow.refl (y : Nat) (u : Vt) : OffRow y u u :=
+  ⟨fun _ _ _ _ => rfl, fun _ => rfl, rfl, rfl⟩
+
+theorem OffRow.trans {y : Nat} {u u' u'' : Vt} (h1 : OffRow y u u') (h2 : OffRow y u' u'') :
+    OffRow y u u'' :=
+  ⟨fun i y' hne hlt =>
+      (h2.cells i y' hne (by rw [h1.gridSize]; exact hlt)).trans (h1.cells i y' hne hlt),
+   fun y' => (h2.sizes y').trans (h1.sizes y'),
+   h2.gridSize.trans h1.gridSize,
+   h2.cols.trans h1.cols⟩
+
+/-- A stream that writes no cell at all is transparent off every row. Covers the pen
+prefix and both `CHA`s. -/
+theorem OffRow.of_grid_eq {y : Nat} {u u' : Vt} (hg : u'.grid = u.grid) (hc : u'.cols = u.cols) :
+    OffRow y u u' := by
+  refine ⟨fun i y' _ hlt => ?_, fun y' => ?_, by rw [hg], hc⟩
+  · show Array.getD (u'.grid.getD y' (blankRow u'.cols u'.pen)) i default
+      = Array.getD (u.grid.getD y' (blankRow u.cols u.pen)) i default
+    rw [hg, getD_of_lt u.grid y' (blankRow u'.cols u'.pen) (blankRow u.cols u.pen) hlt]
+  · show (u'.grid.getD y' (blankRow u'.cols u'.pen)).size
+      = (u.grid.getD y' (blankRow u.cols u.pen)).size
+    rw [hg]
+    by_cases hlt : y' < u.grid.size
+    · rw [getD_of_lt u.grid y' (blankRow u'.cols u'.pen) (blankRow u.cols u.pen) hlt]
+    · rw [Array.getD, dif_neg hlt, Array.getD, dif_neg hlt]
+      show (blankRow u'.cols u'.pen).size = (blankRow u.cols u.pen).size
+      simp [blankRow, hc]
+
+theorem offRow_penSgr {w : Vt} (y : Nat) (p : Pen) (hg : w.pstate = .ground) (hu : w.u8need = 0) :
+    OffRow y w (w.feed (penSgr p)) :=
+  OffRow.of_grid_eq (by rw [penSgr_feed p hg hu]) (by rw [penSgr_feed p hg hu])
+
+theorem offRow_pen_prefix {w : Vt} (y : Nat) (c : Cell) (p : Pen) (hg : w.pstate = .ground)
+    (hu : w.u8need = 0) :
+    OffRow y w (w.feed (if c.pen == p then ([] : Bytes) else penSgr c.pen)) := by
+  by_cases hpe : c.pen == p
+  · rw [if_pos hpe]; exact OffRow.refl y w
+  · rw [if_neg hpe]; exact offRow_penSgr y c.pen hg hu
+
+theorem offRow_cha {w : Vt} (y n : Nat) (hg : w.pstate = .ground) (hu : w.u8need = 0)
+    (hn : 0 < n) (hlt : n < 65535) : OffRow y w (w.feed (csiNum n 0x47)) :=
+  OffRow.of_grid_eq (by rw [cha_feed_eq n hg hu hn hlt, frame_setCol])
+    (by rw [cha_feed_eq n hg hu hn hlt, frame_setCol])
+
+/-! ### `OffRow` for the cell rungs
+
+Each mirrors a rung's hypotheses, because each needs the same reduction of the print to
+its write — the general statement for `print` would have to reason through `printWrap`'s
+scroll, which is precisely the cross-row catastrophe these hypotheses rule out. -/
+
+/-- **A narrow cell's bytes touch no other row.** Serves both the interior and the margin
+rung: the advance differs, `getCell_printAdvance` does not care. -/
+theorem offRow_narrow {w : Vt} {P : PaintState} {g : Row} {k : Nat}
+    (hrow : RowOk w.cols g) (hm : Matches w P g k) (hpend : P.pending = false)
+    (hwid : (g.at k).width = 1) (hmk : (g.at k).marks = []) :
+    OffRow P.y w (w.feed (cellText (g.at k))) := by
+  have hem : Emittable (g.at k).base := (hrow.cells k).base
+  have hpc : w.printChar (g.at k).base = (g.at k).base :=
+    printChar_id_of_ascii hm.ascii0 hm.ascii1 hem.1 hem.2
+  have hcw : charWidth (g.at k).base = 1 := by
+    rw [(hrow.cells k).width (by rw [hwid]; omega), hwid]
+  have hpd : w.cursor.pending = false := by rw [hm.pend, hpend]
+  have hfeed : w.feed (cellText (g.at k)) = w.print (g.at k).base := by
+    rw [cellText_feed (g.at k) hm.ground hm.u8need hm.u8acc, hmk, safeChar_of_emittable hem]
+    rfl
+  have hgs : w.cursor.y < w.clearPending.grid.size := by
+    show w.cursor.y < w.grid.size
+    rw [hm.curY]; exact hm.inGrid
+  rw [hfeed, print_narrow_eq hpc hcw hm.ins hpd]
+  obtain ⟨hc, hgz, hr⟩ := write_shape w.clearPending w.cursor.x w.cursor.y
+    { base := (g.at k).base, marks := [], width := 1, pen := w.pen } 1 hgs
+  refine ⟨fun i y' hne _ => ?_, fun y' => ?_, ?_, ?_⟩
+  · rw [getCell_write_off w.clearPending w.cursor.x w.cursor.y _ 1 i y'
+      (by rw [hm.curY]; exact hne)]
+    exact getCell_clearPending w i y'
+  · rw [hr y']
+    show (w.clearPending.getRow y').size = (w.getRow y').size
+    unfold Vt.getRow; rw [frame_clearPending]
+  · rw [hgz]; exact congrArg Array.size (grid_clearPending w)
+  · rw [hc]; rw [frame_clearPending]
+
+/-- **A wide glyph's bytes touch no other row**, base and shadow together. -/
+theorem offRow_wide {w : Vt} {P : PaintState} {g : Row} {k : Nat}
+    (hrow : RowOk w.cols g) (hm : Matches w P g k) (hPx : P.x = k) (hpend : P.pending = false)
+    (hfit : k + 1 < w.cols) (hwid : (g.at k).width = 2) (hmk : (g.at k).marks = []) :
+    OffRow P.y w (w.feed (cellText (g.at k))) := by
+  have hem : Emittable (g.at k).base := (hrow.cells k).base
+  have hpc : w.printChar (g.at k).base = (g.at k).base :=
+    printChar_id_of_ascii hm.ascii0 hm.ascii1 hem.1 hem.2
+  have hcw : charWidth (g.at k).base = 2 := by
+    rw [(hrow.cells k).width (by rw [hwid]; omega), hwid]
+  have hpd : w.cursor.pending = false := by rw [hm.pend, hpend]
+  have hx : w.cursor.x = k := by rw [hm.curX, hPx]
+  have hfitc : w.cursor.x + 1 < w.cols := by rw [hx]; exact hfit
+  have hfeed : w.feed (cellText (g.at k)) = w.print (g.at k).base := by
+    rw [cellText_feed (g.at k) hm.ground hm.u8need hm.u8acc, hmk, safeChar_of_emittable hem]
+    rfl
+  have hgs : w.cursor.y < w.clearPending.grid.size := by
+    show w.cursor.y < w.grid.size
+    rw [hm.curY]; exact hm.inGrid
+  rw [hfeed, print_wide_eq hpc hcw hm.ins hpd hfitc]
+  obtain ⟨hc, hgz, hr⟩ := write_shape2 w.clearPending w.cursor.x w.cursor.y
+    { base := (g.at k).base, marks := [], width := 2, pen := w.pen }
+    (Cell.shadow { base := (g.at k).base, marks := [], width := 2, pen := w.pen }) 2 hgs
+  refine ⟨fun i y' hne _ => ?_, fun y' => ?_, ?_, ?_⟩
+  · rw [getCell_write2_off w.clearPending w.cursor.x w.cursor.y _ _ 2 i y'
+      (by rw [hm.curY]; exact hne)]
+    exact getCell_clearPending w i y'
+  · rw [hr y']
+    show (w.clearPending.getRow y').size = (w.getRow y').size
+    unfold Vt.getRow; rw [frame_clearPending]
+  · rw [hgz]; exact congrArg Array.size (grid_clearPending w)
+  · rw [hc]; rw [frame_clearPending]
+
+/-- **A combining mark's bytes touch no other row.** Mirrors `mark_step`, including its
+interior/margin disjunction, since the two use different `printMark` equations. -/
+theorem offRow_mark {cols : Nat} {w : Vt} {Q : PaintState} {g : Row} {wcol kf : Nat}
+    {done : List Char}
+    (hrow : RowOk cols g) (hwid : (g.at wcol).width ≠ 0)
+    (hwcol : wcol < cols) (hlt : wcol < kf)
+    (hdisj : (Q.x = wcol + 1 ∧ Q.pending = false) ∨ (Q.x = wcol ∧ Q.pending = true))
+    (hcap : done.length < 8)
+    (hm : Matches w Q (withMarks g wcol done) kf)
+    (m : Char) (hmw : charWidth m = 0) (hme : Emittable m) :
+    OffRow Q.y w (w.print (safeChar m)) := by
+  have hsafe : safeChar m = m := safeChar_of_emittable hme
+  have hcw : charWidth (safeChar m) = 0 := by rw [hsafe]; exact hmw
+  have hpc : w.printChar (safeChar m) = safeChar m := printChar_id_of_ascii hm.ascii0 hm.ascii1
+    (by rw [hsafe]; exact hme.1) (by rw [hsafe]; exact hme.2)
+  have hkg : wcol < g.size := by rw [hrow.size]; exact hwcol
+  have hgetk : w.getCell wcol Q.y = { g.at wcol with marks := done } := by
+    rw [hm.cells wcol hlt, at_withMarks_self g wcol done hkg]
+  have hyk : w.cursor.y = Q.y := hm.curY
+  have hgs : Q.y < w.grid.size := hm.inGrid
+  have hwk0 : (w.getCell wcol Q.y).width ≠ 0 := by rw [hgetk]; exact hwid
+  have hcapk : (w.getCell wcol Q.y).marks.length < 8 := by
+    rw [hgetk]; show done.length < 8; exact hcap
+  have hpm : w.print (safeChar m)
+      = (w.putCell wcol Q.y { w.getCell wcol Q.y with
+          marks := (w.getCell wcol Q.y).marks ++ [safeChar m] }).mendRow Q.y := by
+    rcases hdisj with ⟨hQx, hQp⟩ | ⟨hQx, hQp⟩
+    · have hx : w.cursor.x = wcol + 1 := by rw [hm.curX, hQx]
+      have hpd : w.cursor.pending = false := by rw [hm.pend, hQp]
+      have hx1 : w.cursor.x - 1 = wcol := by omega
+      have hnw : (w.getCell (w.cursor.x - 1) w.cursor.y).width ≠ 0 := by rw [hx1, hyk]; exact hwk0
+      have hcapp : (w.getCell (w.cursor.x - 1) w.cursor.y).marks.length < 8 := by
+        rw [hx1, hyk]; exact hcapk
+      rw [print_mark_eq hpc hcw hpd (by omega) hnw hcapp, hx1, hyk]
+    · have hx : w.cursor.x = wcol := by rw [hm.curX, hQx]
+      have hpd : w.cursor.pending = true := by rw [hm.pend, hQp]
+      have hnw : (w.getCell w.cursor.x w.cursor.y).width ≠ 0 := by rw [hx, hyk]; exact hwk0
+      have hcapp : (w.getCell w.cursor.x w.cursor.y).marks.length < 8 := by rw [hx, hyk]; exact hcapk
+      rw [print_mark_pending_eq hpc hcw hpd hnw hcapp, hx, hyk]
+  rw [hpm]
+  refine ⟨fun i y' hne _ => getCell_mark_off w wcol Q.y _ i y' hne, fun y' => ?_, ?_, ?_⟩
+  · rw [size_getRow_mendRow _ Q.y (by rw [grid_size_putCell]; exact hgs) y',
+      size_getRow_putCell_any w wcol Q.y _ hgs y']
+  · rw [grid_size_mendRow, grid_size_putCell]
+  · rw [frame_mendRow, frame_putCell]
+
+set_option maxHeartbeats 1000000 in
+/-- **The mark loop is transparent off its row.** Runs the same recursion as `marks_fold`,
+carrying `Matches` alongside so each step's `offRow_mark` has its hypotheses. -/
+theorem offRow_marks_fold {cols : Nat} {Q : PaintState} {g : Row} {wcol kf : Nat}
+    (hrow : RowOk cols g) (hwid : (g.at wcol).width ≠ 0) (hwcol : wcol < cols) (hlt : wcol < kf)
+    (hdisj : (Q.x = wcol + 1 ∧ Q.pending = false) ∨ (Q.x = wcol ∧ Q.pending = true)) :
+    ∀ (rest : List Char) (u : Vt) (acc : List Char),
+      (∀ x ∈ acc, charWidth x = 0 ∧ Emittable x) →
+      (∀ x ∈ rest, charWidth x = 0 ∧ Emittable x) →
+      acc.length + rest.length ≤ 8 →
+      u.cols = cols →
+      Matches u Q (withMarks g wcol acc) kf →
+      OffRow Q.y u (rest.foldl (fun w c => w.print (safeChar c)) u)
+  | [], u, _, _, _, _, _, _ => OffRow.refl Q.y u
+  | m :: rest, u, acc, hacc, hrest, hlen, hucols, hu => by
+    have hmm := hrest m (List.mem_cons_self)
+    have hoff := offRow_mark (cols := cols) hrow hwid hwcol hlt hdisj
+      (by simp only [List.length_cons] at hlen; omega) hu m hmm.1 hmm.2
+    have hstep := mark_step (w := u) (cols := cols) hrow hucols hwid hwcol hlt hdisj
+      (by simp only [List.length_cons] at hlen; omega) hacc hu m hmm.1 hmm.2
+    have hacc' : ∀ x ∈ acc ++ [safeChar m], charWidth x = 0 ∧ Emittable x := by
+      intro x hx
+      rcases List.mem_append.mp hx with h | h
+      · exact hacc x h
+      · rw [List.mem_singleton.mp h, safeChar_of_emittable hmm.2]; exact hmm
+    have hucols' : (u.print (safeChar m)).cols = cols := by rw [cols_print]; exact hucols
+    have hrec := offRow_marks_fold hrow hwid hwcol hlt hdisj rest (u.print (safeChar m))
+      (acc ++ [safeChar m]) hacc' (fun x hx => hrest x (List.mem_cons_of_mem m hx))
+      (by simp only [List.length_append, List.length_cons, List.length_nil] at hlen ⊢; omega)
+      hucols' hstep
+    rw [List.foldl_cons]
+    exact hoff.trans hrec
+
+
+/-- **A narrow cell with its marks is transparent off its row, in the interior.** Base
+glyph (`offRow_narrow`) then the loop (`offRow_marks_fold`), composed by `trans`. -/
+theorem offRow_narrow_marks {w : Vt} {P : PaintState} {g : Row} {k : Nat}
+    (hrow : RowOk w.cols g) (hm : Matches w P g k) (hPx : P.x = k) (hpend : P.pending = false)
+    (hfit : k + 1 < w.cols) (hwid : (g.at k).width = 1) (hpen : (g.at k).pen = P.pen) :
+    OffRow P.y w (w.feed (cellText (g.at k))) := by
+  have hkg : k < g.size := by rw [hrow.size]; omega
+  have hmks := (hrow.cells k).marks
+  have hmle := (hrow.cells k).marksLe
+  have hrow0 : RowOk w.cols (withMarks g k []) :=
+    rowOk_withMarks hrow (by rw [hwid]; decide) (by simp) (by simp)
+  have hwid0 : ((withMarks g k []).at k).width = 1 := by
+    rw [at_withMarks_self g k [] hkg]; exact hwid
+  have hmk0 : ((withMarks g k []).at k).marks = [] := by rw [at_withMarks_self g k [] hkg]
+  have hpen0 : ((withMarks g k []).at k).pen = P.pen := by
+    rw [at_withMarks_self g k [] hkg]; exact hpen
+  have hm0 : Matches w P (withMarks g k []) k :=
+    matches_below (fun j hj => at_withMarks_ne g k [] j (by omega)) hm
+  have hoffbase : OffRow P.y w (w.feed (cellText ((withMarks g k []).at k))) :=
+    offRow_narrow hrow0 hm0 hpend hwid0 hmk0
+  have hbase := step_narrow hrow0 hm0 hPx hpend hfit hwid0 hmk0 hpen0
+  have hbtext : cellText ((withMarks g k []).at k) = utf8 (safeChar (g.at k).base) := by
+    rw [at_withMarks_self g k [] hkg]
+    show utf8 (safeChar (g.at k).base) ++ utf8s [] = utf8 (safeChar (g.at k).base)
+    simp [utf8s]
+  rw [hbtext] at hoffbase hbase
+  have hucols : (w.feed (utf8 (safeChar (g.at k).base))).cols = w.cols := by
+    rw [utf8_feed (safeChar (g.at k).base) (safeChar_ge (g.at k).base).1
+      hm.ground hm.u8need hm.u8acc]
+    exact cols_print w (safeChar (g.at k).base)
+  have hoffmarks := offRow_marks_fold (Q := { P with x := k + 1, pending := false }) hrow
+    (by rw [hwid]; decide) (by omega : k < w.cols) (by omega : k < k + 1) (Or.inl ⟨rfl, rfl⟩)
+    (g.at k).marks (w.feed (utf8 (safeChar (g.at k).base))) []
+    (by simp) hmks (by simpa using hmle) hucols hbase
+  rw [show cellText (g.at k) = utf8 (safeChar (g.at k).base) ++ utf8s (g.at k).marks from rfl,
+    feed_append, utf8s_feed (g.at k).marks hbase.ground hbase.u8need hbase.u8acc]
+  exact hoffbase.trans hoffmarks
+
+/-- The same at the right margin, where the base print clamped and armed wrap-pending, so
+the loop runs through `hdisj`'s other branch. -/
+theorem offRow_narrow_margin_marks {w : Vt} {P : PaintState} {g : Row} {k : Nat}
+    (hrow : RowOk w.cols g) (hm : Matches w P g k) (hPx : P.x = k) (hpend : P.pending = false)
+    (hk : k < w.cols) (hmar : w.cols ≤ k + 1) (hwid : (g.at k).width = 1)
+    (hpen : (g.at k).pen = P.pen) :
+    OffRow P.y w (w.feed (cellText (g.at k))) := by
+  have hkg : k < g.size := by rw [hrow.size]; omega
+  have hmks := (hrow.cells k).marks
+  have hmle := (hrow.cells k).marksLe
+  have hrow0 : RowOk w.cols (withMarks g k []) :=
+    rowOk_withMarks hrow (by rw [hwid]; decide) (by simp) (by simp)
+  have hwid0 : ((withMarks g k []).at k).width = 1 := by
+    rw [at_withMarks_self g k [] hkg]; exact hwid
+  have hmk0 : ((withMarks g k []).at k).marks = [] := by rw [at_withMarks_self g k [] hkg]
+  have hpen0 : ((withMarks g k []).at k).pen = P.pen := by
+    rw [at_withMarks_self g k [] hkg]; exact hpen
+  have hm0 : Matches w P (withMarks g k []) k :=
+    matches_below (fun j hj => at_withMarks_ne g k [] j (by omega)) hm
+  have hoffbase : OffRow P.y w (w.feed (cellText ((withMarks g k []).at k))) :=
+    offRow_narrow hrow0 hm0 hpend hwid0 hmk0
+  have hbase := step_narrow_margin hrow0 hm0 hPx hpend hk hmar hwid0 hmk0 hpen0
+  have hbtext : cellText ((withMarks g k []).at k) = utf8 (safeChar (g.at k).base) := by
+    rw [at_withMarks_self g k [] hkg]
+    show utf8 (safeChar (g.at k).base) ++ utf8s [] = utf8 (safeChar (g.at k).base)
+    simp [utf8s]
+  rw [hbtext] at hoffbase hbase
+  have hucols : (w.feed (utf8 (safeChar (g.at k).base))).cols = w.cols := by
+    rw [utf8_feed (safeChar (g.at k).base) (safeChar_ge (g.at k).base).1
+      hm.ground hm.u8need hm.u8acc]
+    exact cols_print w (safeChar (g.at k).base)
+  have hoffmarks := offRow_marks_fold (Q := { P with pending := true }) hrow
+    (by rw [hwid]; decide) hk (by omega : k < k + 1) (Or.inr ⟨hPx, rfl⟩)
+    (g.at k).marks (w.feed (utf8 (safeChar (g.at k).base))) []
+    (by simp) hmks (by simpa using hmle) hucols hbase
+  rw [show cellText (g.at k) = utf8 (safeChar (g.at k).base) ++ utf8s (g.at k).marks from rfl,
+    feed_append, utf8s_feed (g.at k).marks hbase.ground hbase.u8need hbase.u8acc]
+  exact hoffbase.trans hoffmarks
+
+
+set_option maxHeartbeats 1000000 in
+/-- **A wide glyph carrying marks is transparent off its row** (interior). Four pieces —
+glyph, `CHA`, marks, `CHA` — composed by `trans`. The two `CHA`s write no cell at all, so
+they cost `OffRow.of_grid_eq`; the base print and the mark loop are the real work. -/
+theorem offRow_wide_marks {w : Vt} {P : PaintState} {g : Row} {k : Nat}
+    (hrow : RowOk w.cols g) (hm : Matches w P g k) (hPx : P.x = k) (hpend : P.pending = false)
+    (hfit : k + 1 < w.cols) (hfit2 : k + 2 < w.cols) (hcb : k + 3 < 65535)
+    (hwid : (g.at k).width = 2) (hpen : (g.at k).pen = P.pen) :
+    OffRow P.y w (w.feed (utf8 (safeChar (g.at k).base) ++ csiNum (k + 2) 0x47
+      ++ utf8s (g.at k).marks ++ csiNum (k + 3) 0x47)) := by
+  have hkg : k < g.size := by rw [hrow.size]; omega
+  have hmks := (hrow.cells k).marks
+  have hmle := (hrow.cells k).marksLe
+  have hrow0 : RowOk w.cols (withMarks g k []) :=
+    rowOk_withMarks hrow (by rw [hwid]; decide) (by simp) (by simp)
+  have hwid0 : ((withMarks g k []).at k).width = 2 := by
+    rw [at_withMarks_self g k [] hkg]; exact hwid
+  have hmk0 : ((withMarks g k []).at k).marks = [] := by rw [at_withMarks_self g k [] hkg]
+  have hpen0 : ((withMarks g k []).at k).pen = P.pen := by
+    rw [at_withMarks_self g k [] hkg]; exact hpen
+  have hm0 : Matches w P (withMarks g k []) k :=
+    matches_below (fun j hj => at_withMarks_ne g k [] j (by omega)) hm
+  have hbtext : cellText ((withMarks g k []).at k) = utf8 (safeChar (g.at k).base) := by
+    rw [at_withMarks_self g k [] hkg]
+    show utf8 (safeChar (g.at k).base) ++ utf8s [] = utf8 (safeChar (g.at k).base)
+    simp [utf8s]
+  have hoffbase : OffRow P.y w (w.feed (utf8 (safeChar (g.at k).base))) := by
+    have := offRow_wide hrow0 hm0 hPx hpend hfit hwid0 hmk0
+    rwa [hbtext] at this
+  have hbase := step_wide hrow0 hm0 hPx hpend hfit hfit2 hwid0 hmk0 hpen0
+  rw [hbtext] at hbase
+  have hw1cols : (w.feed (utf8 (safeChar (g.at k).base))).cols = w.cols := by
+    rw [utf8_feed (safeChar (g.at k).base) (safeChar_ge (g.at k).base).1
+      hm.ground hm.u8need hm.u8acc]
+    exact cols_print w (safeChar (g.at k).base)
+  have hoffcha1 : OffRow P.y (w.feed (utf8 (safeChar (g.at k).base)))
+      ((w.feed (utf8 (safeChar (g.at k).base))).feed (csiNum (k + 2) 0x47)) :=
+    offRow_cha P.y (k + 2) hbase.ground hbase.u8need (by omega) (by omega)
+  have hcha1 := cha_matches_lt (n := k + 2) hbase (by omega) (by omega) (by rw [hw1cols]; omega)
+  rw [show k + 2 - 1 = k + 1 from by omega] at hcha1
+  have hu2cols : ((w.feed (utf8 (safeChar (g.at k).base))).feed (csiNum (k + 2) 0x47)).cols
+      = w.cols := by
+    rw [cha_cols (k + 2) hbase.ground hbase.u8need (by omega) (by omega)]; exact hw1cols
+  have hoffmarks := offRow_marks_fold
+    (Q := { { P with x := k + 2, pending := false } with x := k + 1, pending := false }) hrow
+    (by rw [hwid]; decide) (by omega : k < w.cols) (by omega : k < k + 2) (Or.inl ⟨rfl, rfl⟩)
+    (g.at k).marks ((w.feed (utf8 (safeChar (g.at k).base))).feed (csiNum (k + 2) 0x47)) []
+    (by simp) hmks (by simpa using hmle) hu2cols hcha1
+  have hmg := matches_row_congr (g := g)
+    (fun j => by
+      by_cases hjk : j = k
+      · subst hjk; rw [at_withMarks_self g j (g.at j).marks hkg]
+      · exact at_withMarks_ne g k (g.at k).marks j hjk)
+    (by
+      have h := marks_fold
+        (Q := { { P with x := k + 2, pending := false } with x := k + 1, pending := false }) hrow
+        (by rw [hwid]; decide) (by omega : k < w.cols) (by omega : k < k + 2) (Or.inl ⟨rfl, rfl⟩)
+        (g.at k).marks ((w.feed (utf8 (safeChar (g.at k).base))).feed (csiNum (k + 2) 0x47)) []
+        (by simp) hmks (by simpa using hmle) hu2cols hcha1
+      rw [map_safeChar_id (g.at k).marks (fun x hx => (hmks x hx).2)] at h
+      simpa using h)
+  have hoffcha2 : OffRow P.y
+      ((g.at k).marks.foldl (fun w c => w.print (safeChar c))
+        ((w.feed (utf8 (safeChar (g.at k).base))).feed (csiNum (k + 2) 0x47)))
+      (((g.at k).marks.foldl (fun w c => w.print (safeChar c))
+        ((w.feed (utf8 (safeChar (g.at k).base))).feed (csiNum (k + 2) 0x47))).feed
+          (csiNum (k + 3) 0x47)) :=
+    offRow_cha P.y (k + 3) hmg.ground hmg.u8need (by omega) (by omega)
+  rw [feed_append, feed_append, feed_append,
+    utf8s_feed (g.at k).marks hcha1.ground hcha1.u8need hcha1.u8acc]
+  exact ((hoffbase.trans hoffcha1).trans hoffmarks).trans hoffcha2
+
+/-- The plain wide pair at the margin needs no new proof: `offRow_wide` never used
+`k + 2 < cols`, only `k + 1 < cols` — the shadow's write, not the advance. Recorded as a
+named corollary so the grid walk reads uniformly. -/
+theorem offRow_wide_margin {w : Vt} {P : PaintState} {g : Row} {k : Nat}
+    (hrow : RowOk w.cols g) (hm : Matches w P g k) (hPx : P.x = k) (hpend : P.pending = false)
+    (hfit : k + 1 < w.cols) (hwid : (g.at k).width = 2) (hmk : (g.at k).marks = []) :
+    OffRow P.y w (w.feed (cellText (g.at k))) :=
+  offRow_wide hrow hm hPx hpend hfit hwid hmk
+set_option maxHeartbeats 1000000 in
+/-- **A wide glyph carrying marks is transparent off its row** (at the margin). Four pieces —
+glyph, `CHA`, marks, `CHA` — composed by `trans`. The two `CHA`s write no cell at all, so
+they cost `OffRow.of_grid_eq`; the base print and the mark loop are the real work. -/
+theorem offRow_wide_margin_marks {w : Vt} {P : PaintState} {g : Row} {k : Nat}
+    (hrow : RowOk w.cols g) (hm : Matches w P g k) (hPx : P.x = k) (hpend : P.pending = false)
+    (hfit : k + 1 < w.cols) (hmar : w.cols ≤ k + 2) (hcb : k + 3 < 65535)
+    (hwid : (g.at k).width = 2) (hpen : (g.at k).pen = P.pen) :
+    OffRow P.y w (w.feed (utf8 (safeChar (g.at k).base) ++ csiNum (k + 2) 0x47
+      ++ utf8s (g.at k).marks ++ csiNum (k + 3) 0x47)) := by
+  have hkg : k < g.size := by rw [hrow.size]; omega
+  have hmks := (hrow.cells k).marks
+  have hmle := (hrow.cells k).marksLe
+  have hrow0 : RowOk w.cols (withMarks g k []) :=
+    rowOk_withMarks hrow (by rw [hwid]; decide) (by simp) (by simp)
+  have hwid0 : ((withMarks g k []).at k).width = 2 := by
+    rw [at_withMarks_self g k [] hkg]; exact hwid
+  have hmk0 : ((withMarks g k []).at k).marks = [] := by rw [at_withMarks_self g k [] hkg]
+  have hpen0 : ((withMarks g k []).at k).pen = P.pen := by
+    rw [at_withMarks_self g k [] hkg]; exact hpen
+  have hm0 : Matches w P (withMarks g k []) k :=
+    matches_below (fun j hj => at_withMarks_ne g k [] j (by omega)) hm
+  have hbtext : cellText ((withMarks g k []).at k) = utf8 (safeChar (g.at k).base) := by
+    rw [at_withMarks_self g k [] hkg]
+    show utf8 (safeChar (g.at k).base) ++ utf8s [] = utf8 (safeChar (g.at k).base)
+    simp [utf8s]
+  have hoffbase : OffRow P.y w (w.feed (utf8 (safeChar (g.at k).base))) := by
+    have := offRow_wide hrow0 hm0 hPx hpend hfit hwid0 hmk0
+    rwa [hbtext] at this
+  have hbase := step_wide_margin hrow0 hm0 hPx hpend hfit hmar hwid0 hmk0 hpen0
+  rw [hbtext] at hbase
+  have hw1cols : (w.feed (utf8 (safeChar (g.at k).base))).cols = w.cols := by
+    rw [utf8_feed (safeChar (g.at k).base) (safeChar_ge (g.at k).base).1
+      hm.ground hm.u8need hm.u8acc]
+    exact cols_print w (safeChar (g.at k).base)
+  have hoffcha1 : OffRow P.y (w.feed (utf8 (safeChar (g.at k).base)))
+      ((w.feed (utf8 (safeChar (g.at k).base))).feed (csiNum (k + 2) 0x47)) :=
+    offRow_cha P.y (k + 2) hbase.ground hbase.u8need (by omega) (by omega)
+  have hcha1 := cha_matches_lt (n := k + 2) hbase (by omega) (by omega) (by rw [hw1cols]; omega)
+  rw [show k + 2 - 1 = k + 1 from by omega] at hcha1
+  have hu2cols : ((w.feed (utf8 (safeChar (g.at k).base))).feed (csiNum (k + 2) 0x47)).cols
+      = w.cols := by
+    rw [cha_cols (k + 2) hbase.ground hbase.u8need (by omega) (by omega)]; exact hw1cols
+  have hoffmarks := offRow_marks_fold
+    (Q := { { P with x := w.cols - 1, pending := true } with x := k + 1, pending := false }) hrow
+    (by rw [hwid]; decide) (by omega : k < w.cols) (by omega : k < k + 2) (Or.inl ⟨rfl, rfl⟩)
+    (g.at k).marks ((w.feed (utf8 (safeChar (g.at k).base))).feed (csiNum (k + 2) 0x47)) []
+    (by simp) hmks (by simpa using hmle) hu2cols hcha1
+  have hmg := matches_row_congr (g := g)
+    (fun j => by
+      by_cases hjk : j = k
+      · subst hjk; rw [at_withMarks_self g j (g.at j).marks hkg]
+      · exact at_withMarks_ne g k (g.at k).marks j hjk)
+    (by
+      have h := marks_fold
+        (Q := { { P with x := w.cols - 1, pending := true } with x := k + 1, pending := false }) hrow
+        (by rw [hwid]; decide) (by omega : k < w.cols) (by omega : k < k + 2) (Or.inl ⟨rfl, rfl⟩)
+        (g.at k).marks ((w.feed (utf8 (safeChar (g.at k).base))).feed (csiNum (k + 2) 0x47)) []
+        (by simp) hmks (by simpa using hmle) hu2cols hcha1
+      rw [map_safeChar_id (g.at k).marks (fun x hx => (hmks x hx).2)] at h
+      simpa using h)
+  have hoffcha2 : OffRow P.y
+      ((g.at k).marks.foldl (fun w c => w.print (safeChar c))
+        ((w.feed (utf8 (safeChar (g.at k).base))).feed (csiNum (k + 2) 0x47)))
+      (((g.at k).marks.foldl (fun w c => w.print (safeChar c))
+        ((w.feed (utf8 (safeChar (g.at k).base))).feed (csiNum (k + 2) 0x47))).feed
+          (csiNum (k + 3) 0x47)) :=
+    offRow_cha P.y (k + 3) hmg.ground hmg.u8need (by omega) (by omega)
+  rw [feed_append, feed_append, feed_append,
+    utf8s_feed (g.at k).marks hcha1.ground hcha1.u8need hcha1.u8acc]
+  exact ((hoffbase.trans hoffcha1).trans hoffmarks).trans hoffcha2

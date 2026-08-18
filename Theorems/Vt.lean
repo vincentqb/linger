@@ -2705,6 +2705,46 @@ theorem getCell_printAdvance (v : Vt) (n x y : Nat) :
   unfold Vt.getCell Vt.getRow
   rw [frame_printAdvance]
 
+/-! #### Off the written row — what the *grid* walk needs and the row walk did not
+
+`Matches` is a statement about **one** row, so it cannot say that painting row `y` leaves
+row `y'` alone. The grid walk needs exactly that: its invariant is "rows below `y` are
+already painted", and each later row's paint must not disturb them. Every clause here is
+about the composite a print reduces to (`print_narrow_eq` and friends), for the same
+reason `write_shape` is — the general statement for `print` would have to reason through
+`printWrap`'s scroll, which is the cross-row catastrophe those hypotheses rule out. -/
+
+theorem grid_clearPending (u : Vt) : u.clearPending.grid = u.grid := by
+  rw [frame_clearPending]
+
+theorem getCell_clearPending (u : Vt) (x y : Nat) : u.clearPending.getCell x y = u.getCell x y := by
+  unfold Vt.getCell Vt.getRow
+  rw [frame_clearPending]
+
+/-- **One narrow write touches no other row.** -/
+theorem getCell_write_off (u : Vt) (x y : Nat) (c : Cell) (n : Nat) (x' y' : Nat)
+    (hne : y' ≠ y) :
+    ((((u.putCell x y c).mendRow y).printAdvance n).getCell x' y') = u.getCell x' y' := by
+  rw [getCell_printAdvance]
+  exact getCell_write_mendRow_other u x y c x' y' hne
+
+/-- …and neither does a wide one, which writes its base and its shadow. -/
+theorem getCell_write2_off (u : Vt) (x y : Nat) (c1 c2 : Cell) (n : Nat) (x' y' : Nat)
+    (hne : y' ≠ y) :
+    (((((u.putCell x y c1).putCell (x + 1) y c2).mendRow y).printAdvance n).getCell x' y')
+      = u.getCell x' y' := by
+  rw [getCell_printAdvance,
+    getCell_write_mendRow_other (u.putCell x y c1) (x + 1) y c2 x' y' hne]
+  unfold Vt.putCell Vt.getCell Vt.getRow
+  dsimp only
+  exact congrArg (fun r => Array.getD r x' default) (getD_set_ne _ _ _ _ _ hne)
+
+/-- …nor a combining mark, whose write has no advance after it. -/
+theorem getCell_mark_off (u : Vt) (x y : Nat) (c : Cell) (x' y' : Nat) (hne : y' ≠ y) :
+    (((u.putCell x y c).mendRow y).getCell x' y') = u.getCell x' y' :=
+  getCell_write_mendRow_other u x y c x' y' hne
+
+
 theorem print_narrow_eq {v : Vt} {ch : Char}
     (hpc : v.printChar ch = ch) (hw : charWidth ch = 1)
     (hins : v.modes.insert = false) (hpend : v.cursor.pending = false) :
