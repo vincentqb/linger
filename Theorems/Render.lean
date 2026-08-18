@@ -8112,3 +8112,221 @@ theorem rowAnsi_writes_row {w : Vt} {g : Row} {startPen : Pen} {Y : Nat}
     show (rowAnsi g startPen).2 = (g.foldl rowSlot ([], startPen, 0)).2.1 from rfl]
   exact key
 
+
+/-! ### The grid walk — `joinCRLF` over the rows
+
+`rowAnsi_writes_row` paints one row; `OffRow` says it leaves the others alone. The grid
+walk threads them with `CRLF` separators, and the whole no-scroll argument is one fact:
+between rows the cursor sits at `y < bot`, so the `LF` moves down rather than scrolling
+(`lineFeed_interior`). `joinCRLF` emits no *trailing* separator, so the last row's `LF`
+— the only one that could scroll — never happens. -/
+
+/-- **`CRLF` between rows: cursor to the next row's start, every cell untouched.** The `CR`
+discards any wrap-`pending` the row's last cell armed, and the `LF` (below `bot`) does not
+scroll — so the whole `CRLF` is one clean cursor move on `v`, leaving grid, dims and modes. -/
+theorem crlf_step {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0)
+    (hy : v.cursor.y < v.bot) (hlt : v.bot < v.rows) :
+    v.feed [0x0D, 0x0A]
+      = { v with cursor := { x := 0, y := v.cursor.y + 1, pending := false } } := by
+  rw [crlf_feed hg hu, lineFeed_interior v.carriageReturn (by exact hy) (by exact hlt)]
+  rfl
+
+/-- The per-row byte list `gridAnsi` builds, with the pen threaded — head-first, so the row
+walk can peel it. `gridAnsi`'s fold appends left-to-right and produces this same list. -/
+def rowsAnsi : List Row → Pen → List Bytes
+  | [], _ => []
+  | r :: rs, p => (rowAnsi r p).1 :: rowsAnsi rs (rowAnsi r p).2
+
+/-- `gridAnsi`'s left-appending fold produces exactly `rowsAnsi`. -/
+theorem gridFold_eq_rowsAnsi : ∀ (rs : List Row) (pre : List Bytes) (p : Pen),
+    (rs.foldl (fun (acc : List Bytes × Pen) row =>
+        ((acc.1 ++ [(rowAnsi row acc.2).1]), (rowAnsi row acc.2).2)) (pre, p)).1
+      = pre ++ rowsAnsi rs p
+  | [], pre, p => by simp [rowsAnsi]
+  | r :: rs, pre, p => by
+    rw [List.foldl_cons, gridFold_eq_rowsAnsi rs (pre ++ [(rowAnsi r p).1]) (rowAnsi r p).2]
+    rw [List.append_assoc]
+    rfl
+
+theorem gridAnsi_eq (grid : Array Row) :
+    gridAnsi grid = csiNum 0 0x6D ++ (csiB ++ [0x48] ++ joinCRLF (rowsAnsi grid.toList {})) := by
+  unfold gridAnsi
+  dsimp only
+  rw [show (grid.foldl (fun (acc : List Bytes × Pen) row =>
+        ((acc.1 ++ [(rowAnsi row acc.2).1]), (rowAnsi row acc.2).2)) ([], ({} : Pen))).1
+      = rowsAnsi grid.toList {} from by
+    rw [← Array.foldl_toList, gridFold_eq_rowsAnsi grid.toList [] {}]; rfl]
+
+theorem getD_lt {α} [Inhabited α] (a : Array α) (i : Nat) (h : i < a.size) :
+    a.getD i default = a[i] := by rw [Array.getD, dif_pos h]; rfl
+
+/-- Build the frontier-0 `Matches` a row's paint starts from, out of the receiver's plain
+state. Every field is a hypothesis the grid walk already carries; the `cells` obligation is
+vacuous at frontier 0. -/
+theorem matches_zero {w : Vt} {g : Row} {Y : Nat} {p : Pen}
+    (hx : w.cursor.x = 0) (hy : w.cursor.y = Y) (hpd : w.cursor.pending = false)
+    (hpen : w.pen = p) (hg : w.pstate = .ground) (hu : w.u8need = 0) (ha : w.u8acc = 0)
+    (hins : w.modes.insert = false) (hwrap : w.modes.wrap = true)
+    (h0 : w.g0Line = false) (h1 : w.g1Line = false)
+    (hrl : (w.getRow Y).size = w.cols) (hin : Y < w.grid.size) :
+    Matches w { x := 0, y := Y, pen := p, pending := false } g 0 :=
+  ⟨hx, hy, hpd, hpen, hg, hu, ha, hins, hwrap, h0, h1, hrl, hin, Or.inl rfl,
+   fun j hj => absurd hj (by omega)⟩
+
+/-- A painted row *is* the source row, as arrays: `Matches` at the full width plus both
+being `cols` long makes them equal cell for cell and length for length. -/
+theorem row_eq_of_paint {w : Vt} {g : Row} {Y cols : Nat} {pp : Pen} {pd : Bool}
+    (hcols : w.cols = cols) (hrok : RowOk cols g)
+    (hm : Matches w { x := cols - 1, y := Y, pen := pp, pending := pd } g cols) :
+    w.getRow Y = g := by
+  have hsz : (w.getRow Y).size = cols := by
+    have := hm.rowLen; rw [hcols] at this; exact this
+  apply Array.ext
+  · rw [hsz, hrok.size]
+  · intro j hj1 hj2
+    have hjc : j < cols := by rw [hsz] at hj1; exact hj1
+    have hjr : j < (w.getRow Y).size := by rw [hsz]; exact hjc
+    have hjg : j < g.size := by rw [hrok.size]; exact hjc
+    have hc : (w.getRow Y).getD j default = g.getD j default := hm.cells j hjc
+    rw [getD_lt (w.getRow Y) j hjr, getD_lt g j hjg] at hc
+    exact hc
+
+/-- The receiver, poised to paint row `Y` of a `rows × cols` grid onto the target `tg`.
+Bundled so the row walk's twenty-odd invariants read as one hypothesis and re-establish as
+one. `done` is the running invariant: rows below `Y` already match `tg`. -/
+structure Walking (cols rows : Nat) (tg : Array Row) (w : Vt) (Y : Nat) (p : Pen) : Prop where
+  colsEq : w.cols = cols
+  rowsEq : w.rows = rows
+  top : w.top = 0
+  bot : w.bot = rows - 1
+  ground : w.pstate = .ground
+  u8need : w.u8need = 0
+  u8acc : w.u8acc = 0
+  ins : w.modes.insert = false
+  wrap : w.modes.wrap = true
+  g0 : w.g0Line = false
+  g1 : w.g1Line = false
+  curx : w.cursor.x = 0
+  cury : w.cursor.y = Y
+  cpend : w.cursor.pending = false
+  pen : w.pen = p
+  gsz : w.grid.size = rows
+  rlens : ∀ y', (w.getRow y').size = cols
+  done : ∀ y' x, y' < Y → w.getCell x y' = (tg.getD y' (blankRow cols {})).at x
+
+set_option maxHeartbeats 1000000 in
+/-- **The grid walk.** Painting the source rows `rs` from row `Y` onward carries the
+receiver to a grid that matches `tg` on every row: rows below `Y` were already right and are
+left alone (`OffRow`), row `Y` is painted (`rowAnsi_writes_row`), and the `CRLF` between rows
+moves down without scrolling (`crlf_step`, since `Y < bot`). `joinCRLF`'s missing trailing
+separator is why the last row's line feed — the only one that could scroll — never fires. -/
+theorem paint_rows {cols rows : Nat} {tg : Array Row} (hcb : cols < 65533) (hpos : 0 < cols) :
+    ∀ (rs : List Row) (Y : Nat) (w : Vt) (p : Pen),
+      Walking cols rows tg w Y p →
+      Y + rs.length = rows →
+      (∀ i (hi : i < rs.length), RowOk cols rs[i]) →
+      (∀ i (hi : i < rs.length), rs[i] = tg.getD (Y + i) (blankRow cols {})) →
+      (∀ y' x, y' < rows → (w.feed (joinCRLF (rowsAnsi rs p))).getCell x y'
+          = (tg.getD y' (blankRow cols {})).at x)
+        ∧ (w.feed (joinCRLF (rowsAnsi rs p))).grid.size = rows
+        ∧ (∀ y', ((w.feed (joinCRLF (rowsAnsi rs p))).getRow y').size = cols)
+  | [], Y, w, p, hw, hsum, _, _ => by
+    have hYrows : Y = rows := by simpa using hsum
+    subst hYrows
+    show (∀ y' x, y' < Y → (w.feed (joinCRLF (rowsAnsi [] p))).getCell x y'
+        = (tg.getD y' (blankRow cols {})).at x) ∧ _ ∧ _
+    rw [show rowsAnsi ([] : List Row) p = [] from rfl, show joinCRLF ([] : List Bytes) = [] from rfl,
+      show w.feed ([] : Bytes) = w from rfl]
+    exact ⟨fun y' x h => hw.done y' x h, hw.gsz, hw.rlens⟩
+  | r :: rest, Y, w, p, hw, hsum, hrsok, hrstg => by
+    have hYrows : Y < rows := by simp only [List.length_cons] at hsum; omega
+    have hr0 : r = tg.getD Y (blankRow cols {}) := by
+      have := hrstg 0 (by simp); simpa using this
+    have hrok0 : RowOk cols r := by have := hrsok 0 (by simp); simpa using this
+    -- paint row Y
+    have hgsY : Y < w.grid.size := by rw [hw.gsz]; exact hYrows
+    have hm0 : Matches w { x := 0, y := Y, pen := p, pending := false } r 0 :=
+      matches_zero hw.curx hw.cury hw.cpend hw.pen hw.ground hw.u8need hw.u8acc hw.ins hw.wrap
+        hw.g0 hw.g1 (by rw [hw.rlens Y, hw.colsEq]) hgsY
+    have hrow_w : RowOk w.cols r := by rw [hw.colsEq]; exact hrok0
+    obtain ⟨pd, hM, hO⟩ := rowAnsi_writes_row hrow_w (by rw [hw.colsEq]; exact hcb)
+      (by rw [hw.colsEq]; exact hpos) hm0
+    -- the painted row equals the source, hence the target
+    have hrowY : (w.feed (rowAnsi r p).1).getRow Y = r :=
+      row_eq_of_paint (cols := w.cols) hO.cols hrow_w hM
+    cases rest with
+    | nil =>
+      -- last row: no trailing CRLF
+      have hYlast : Y + 1 = rows := by simpa using hsum
+      rw [show rowsAnsi [r] p = [(rowAnsi r p).1] from rfl,
+        show joinCRLF [(rowAnsi r p).1] = (rowAnsi r p).1 from rfl]
+      refine ⟨fun y' x hy' => ?_, ?_, ?_⟩
+      · by_cases hyY : y' = Y
+        · subst hyY
+          rw [show (w.feed (rowAnsi r p).1).getCell x y'
+              = ((w.feed (rowAnsi r p).1).getRow y').at x from rfl, hrowY, hr0]
+        · rw [hO.cells x y' hyY (by rw [hw.gsz]; omega)]
+          exact hw.done y' x (by omega)
+      · rw [hO.gridSize, hw.gsz]
+      · intro y'; rw [hO.sizes y', hw.rlens y']
+    | cons r' rest' =>
+      -- an interior row: paint, then CRLF, then recurse
+      have hstick : stick (w.feed (rowAnsi r p).1) = stick w := (smap_id_rowAnsi r p w hw.ground).2
+      have hbot1 : (w.feed (rowAnsi r p).1).bot = rows - 1 := by
+        have := congrArg Sticky.bot hstick; rw [stick_bot, stick_bot] at this; rw [this]; exact hw.bot
+      have hrows1 : (w.feed (rowAnsi r p).1).rows = rows := by
+        have := congrArg Sticky.rows hstick; rw [stick_rows, stick_rows] at this
+        rw [this]; exact hw.rowsEq
+      have htop1 : (w.feed (rowAnsi r p).1).top = 0 := by
+        have := congrArg Sticky.top hstick; rw [stick_top, stick_top] at this; rw [this]; exact hw.top
+      have hg01 : (w.feed (rowAnsi r p).1).g0Line = false := by
+        have := congrArg Sticky.g0 hstick; rw [stick_g0, stick_g0] at this; rw [this]; exact hw.g0
+      have hg11 : (w.feed (rowAnsi r p).1).g1Line = false := by
+        have := congrArg Sticky.g1 hstick; rw [stick_g1, stick_g1] at this; rw [this]; exact hw.g1
+      have hcuryY : (w.feed (rowAnsi r p).1).cursor.y = Y := hM.curY
+      have hcrlfy : (w.feed (rowAnsi r p).1).cursor.y < (w.feed (rowAnsi r p).1).bot := by
+        rw [hcuryY, hbot1]; simp only [List.length_cons] at hsum; omega
+      have hcrlf := crlf_step hM.ground hM.u8need hcrlfy (by rw [hbot1]; omega)
+      rw [show joinCRLF (rowsAnsi (r :: r' :: rest') p)
+          = (rowAnsi r p).1 ++ [0x0D, 0x0A] ++ joinCRLF (rowsAnsi (r' :: rest') (rowAnsi r p).2)
+          from rfl, feed_append, feed_append, hcrlf, hcuryY]
+      have hwalk : Walking cols rows tg
+          { (w.feed (rowAnsi r p).1) with
+            cursor := { x := 0, y := Y + 1, pending := false } } (Y + 1) (rowAnsi r p).2 := by
+        refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, rfl, rfl, rfl, ?_, ?_, ?_, ?_⟩
+        · show (w.feed (rowAnsi r p).1).cols = cols
+          rw [hO.cols, hw.colsEq]
+        · exact hrows1
+        · exact htop1
+        · exact hbot1
+        · exact hM.ground
+        · exact hM.u8need
+        · exact hM.u8acc
+        · exact hM.ins
+        · exact hM.wrap
+        · exact hg01
+        · exact hg11
+        · exact hM.pen
+        · show (w.feed (rowAnsi r p).1).grid.size = rows
+          rw [hO.gridSize, hw.gsz]
+        · intro y'
+          show ((w.feed (rowAnsi r p).1).getRow y').size = cols
+          rw [hO.sizes y', hw.rlens y']
+        · intro y' x hy'
+          show ((w.feed (rowAnsi r p).1).getCell x y') = (tg.getD y' (blankRow cols {})).at x
+          by_cases hyY : y' = Y
+          · subst hyY
+            rw [show (w.feed (rowAnsi r p).1).getCell x y'
+                = ((w.feed (rowAnsi r p).1).getRow y').at x from rfl, hrowY, hr0]
+          · rw [hO.cells x y' hyY (by rw [hw.gsz]; omega)]
+            exact hw.done y' x (by omega)
+      exact paint_rows hcb hpos (r' :: rest') (Y + 1)
+        { (w.feed (rowAnsi r p).1) with cursor := { x := 0, y := Y + 1, pending := false } }
+        (rowAnsi r p).2 hwalk (by simp only [List.length_cons] at hsum ⊢; omega)
+        (fun i hi => by
+          have := hrsok (i + 1) (by simp only [List.length_cons] at hi ⊢; omega)
+          simpa using this)
+        (fun i hi => by
+          have := hrstg (i + 1) (by simp only [List.length_cons] at hi ⊢; omega)
+          rw [show Y + (i + 1) = Y + 1 + i from by omega] at this
+          simpa using this)

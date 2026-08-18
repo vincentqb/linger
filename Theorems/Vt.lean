@@ -3889,6 +3889,25 @@ theorem stick_backspace (v : Vt) : stick v.backspace = stick v := by rw [frame_b
 theorem stick_tab (v : Vt) : stick v.tab = stick v := by rw [frame_tab]; rfl
 theorem stick_backTab (v : Vt) : stick v.backTab = stick v := by rw [frame_backTab]; rfl
 theorem stick_lineFeed (v : Vt) : stick v.lineFeed = stick v := by rw [frame_lineFeed]; rfl
+
+/-- **A line feed below the region bottom just moves the cursor down.** Its only scrolling
+consumer is the `cursor.y == bot` branch, and `y < bot` rules that out — the grid, and every
+row, is left exactly as it was. This is the no-scroll fact the grid walk turns each `CRLF`
+on. -/
+theorem lineFeed_interior (v : Vt) (hy : v.cursor.y < v.bot) (hlt : v.bot < v.rows) :
+    v.lineFeed = { v with cursor := { v.cursor with y := v.cursor.y + 1, pending := false } } := by
+  unfold Vt.lineFeed Vt.clearPending
+  dsimp only
+  rw [if_neg (show ¬(v.cursor.y == v.bot) = true from by simp; omega),
+    if_pos (show v.cursor.y + 1 < v.rows from by omega)]
+
+theorem grid_lineFeed_interior (v : Vt) (hy : v.cursor.y < v.bot) (hlt : v.bot < v.rows) :
+    v.lineFeed.grid = v.grid := by rw [lineFeed_interior v hy hlt]
+
+theorem getCell_lineFeed_interior (v : Vt) (x y : Nat) (hy : v.cursor.y < v.bot)
+    (hlt : v.bot < v.rows) : v.lineFeed.getCell x y = v.getCell x y := by
+  unfold Vt.getCell Vt.getRow
+  rw [lineFeed_interior v hy hlt]
 theorem stick_reverseIndex (v : Vt) : stick v.reverseIndex = stick v := by rw [frame_reverseIndex]; rfl
 theorem stick_scrollUpIn (v : Vt) (t b : Nat) (a : Bool) :
     stick (v.scrollUpIn t b a) = stick v := by rw [frame_scrollUpIn]; rfl
