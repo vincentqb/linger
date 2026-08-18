@@ -107,4 +107,33 @@ theorem resume_cursor_any (c : Ckpt) (w : Vt.Vt) (h : c.vt.pstate = .ground)
    (Render.restore_cursor_any c.vt w hgood hgw hcols hrows ho hmouse).1,
    (Render.restore_cursor_any c.vt w hgood hgw hcols hrows ho hmouse).2⟩
 
+/-- **§Resume (grid) — Definition-of-done item 5, end to end.** A quiescent checkpoint comes
+back byte-identical, and replaying it into a fresh emulator of the session's size reproduces
+the session's screen exactly, cell for cell — on either screen (`Render.restore_grid_any`
+dispatches on the alt flag). `Good`/`Renderable` are the §Bound invariants every live session
+satisfies; `rows ≥ 2` is `DECSTBM`'s own constraint (`h2`). -/
+theorem resume_grid (c : Ckpt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0)
+    (ha : c.vt.u8acc = 0) (hgood : Vt.Good c.vt) (hren : Vt.Renderable c.vt)
+    (h2 : 0 < c.vt.rows - 1) :
+    load (save c) = some c
+      ∧ ((Vt.Vt.init c.vt.cols c.vt.rows).feed (Render.restore c.vt)).grid = c.vt.grid := by
+  refine ⟨Checkpoint.load_save_exact c h h8 ha, ?_⟩
+  have hcolseq : (Vt.Vt.init c.vt.cols c.vt.rows).cols = c.vt.cols := by
+    show Vt.clampDim c.vt.cols = c.vt.cols
+    have := hgood.colsPos; have := hgood.colsLe; simp only [Vt.clampDim]; omega
+  have hrowseq : (Vt.Vt.init c.vt.cols c.vt.rows).rows = c.vt.rows := by
+    show Vt.clampDim c.vt.rows = c.vt.rows
+    have := hgood.rowsLe; simp only [Vt.clampDim]; omega
+  exact Render.restore_grid_any c.vt (Vt.Vt.init c.vt.cols c.vt.rows)
+    (Vt.good_init _ _) (Vt.renderable_init _ _) hcolseq hrowseq rfl rfl h2
+    (Nat.lt_of_le_of_lt hgood.rowsLe (by decide)) hgood.colsPos
+    (Nat.lt_of_le_of_lt hgood.colsLe (by decide)) hren hren.main.1
+
+/-- Non-vacuity: a real 80×24 checkpoint satisfies every hypothesis of `resume_grid`, so the
+theorem is not vacuously true. -/
+example : ∃ c : Ckpt, c.vt.pstate = .ground ∧ c.vt.u8need = 0 ∧ c.vt.u8acc = 0
+    ∧ Vt.Good c.vt ∧ Vt.Renderable c.vt ∧ 0 < c.vt.rows - 1 :=
+  ⟨{ vt := Vt.Vt.init 80 24, cwd := "", labels := [] },
+   rfl, rfl, rfl, Vt.good_init 80 24, Vt.renderable_init 80 24, by decide⟩
+
 end Zmx.Core

@@ -5427,3 +5427,13 @@ byte-identical; `./lake build Theorems Tests` + `./tests/e2e.sh` green, `STATEME
 **Still open** (both narrow, non-blocking): `rows = 1` (excluded by `h2 : 0 < v.rows - 1`,
 `DECSTBM`'s degenerate case — weaken `Walking.bot` to `rows ≤ 1 ∨ bot = rows - 1`), and
 `resume_grid` (compose `restore_grid_reachable` with checkpoint exactness). Then Step 5.
+
+## Step 4 notes — 2026-08-18 (resume_grid — the end-to-end composition)
+
+`resume_grid` closes the resume side of DoD item 5: a quiescent checkpoint round-trips
+byte-identical (`Checkpoint.load_save_exact`) and replaying it into a fresh `Vt.init` of the
+session's size reproduces the screen cell for cell, **either screen** (`restore_grid_any`).
+Thin plumbing over already-break-verified lemmas — no new proof risk. The one wrinkle: the
+receiver is `Vt.init c.vt.cols c.vt.rows`, whose dims are `clampDim`ed; `Good`'s `colsPos`/
+`colsLe`/`rowsLe` make `clampDim = id` (`simp only [Vt.clampDim]; omega`). Non-vacuity pinned by
+an `example` at a real 80×24 checkpoint.
