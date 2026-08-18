@@ -1382,6 +1382,242 @@ theorem uz_stepGround {v : Vt} (b : UInt8) (hb : b < 0xC0) (h : v.u8need = 0) :
          show ((0xF8 : UInt8)).toNat = 248 from rfl] at *
        omega)
 
+/-! ### The `u8acc` twin of the layer above
+
+`Matches`/`Walking` carry `u8acc = 0`, because `utf8_feed` needs it to decode a *multi-byte*
+glyph (`reset_u8`). A CSI's final byte forces `u8need = 0` but says nothing about `u8acc`:
+`abortUtf8` zeroes the accumulator only when a sequence was actually pending. So the paint's
+entry state needs its own argument, and this is it — the same shape as the `u8need` family,
+`rfl` for everything that is a record update and "stays zero" where `RIS` rebuilds. -/
+
+theorem ua_foldl {α : Type} (f : Vt → α → Vt)
+    (hf : ∀ v a, (f v a).u8acc = v.u8acc) :
+    ∀ (l : List α) (v : Vt), (l.foldl f v).u8acc = v.u8acc
+  | [], _ => rfl
+  | a :: as, v => (ua_foldl f hf as (f v a)).trans (hf v a)
+
+theorem ua_clearPending (v : Vt) : v.clearPending.u8acc = v.u8acc := rfl
+theorem ua_carriageReturn (v : Vt) : v.carriageReturn.u8acc = v.u8acc := rfl
+theorem ua_moveTo (v : Vt) (x y : Nat) : (v.moveTo x y).u8acc = v.u8acc := rfl
+theorem ua_moveRel (v : Vt) (dx dy : Int) : (v.moveRel dx dy).u8acc = v.u8acc := rfl
+theorem ua_setCol (v : Vt) (x : Nat) : (v.setCol x).u8acc = v.u8acc := rfl
+theorem ua_putCell (v : Vt) (x y : Nat) (c : Cell) :
+    (v.putCell x y c).u8acc = v.u8acc := rfl
+theorem ua_eraseRowSpan (v : Vt) (y a b : Nat) :
+    (v.eraseRowSpan y a b).u8acc = v.u8acc := rfl
+theorem ua_scrollDownIn (v : Vt) (t b : Nat) :
+    (v.scrollDownIn t b).u8acc = v.u8acc := rfl
+theorem ua_deleteChars (v : Vt) (n : Nat) : (v.deleteChars n).u8acc = v.u8acc := rfl
+theorem ua_insertChars (v : Vt) (n : Nat) : (v.insertChars n).u8acc = v.u8acc := rfl
+theorem ua_applySgr (v : Vt) (ps : List (Nat × Bool)) :
+    (v.applySgr ps).u8acc = v.u8acc := rfl
+theorem ua_backTab (v : Vt) : v.backTab.u8acc = v.u8acc := rfl
+
+theorem ua_scrollUpIn (v : Vt) (t b : Nat) (a : Bool) :
+    (v.scrollUpIn t b a).u8acc = v.u8acc := by
+  unfold Vt.scrollUpIn; dsimp only; split <;> rfl
+
+theorem ua_scrollUp (v : Vt) : v.scrollUp.u8acc = v.u8acc := ua_scrollUpIn _ _ _ _
+theorem ua_scrollDown (v : Vt) : v.scrollDown.u8acc = v.u8acc := ua_scrollDownIn _ _ _
+
+theorem ua_lineFeed (v : Vt) : v.lineFeed.u8acc = v.u8acc := by
+  rw [frame_lineFeed]
+
+theorem ua_reverseIndex (v : Vt) : v.reverseIndex.u8acc = v.u8acc := by
+  rw [frame_reverseIndex]
+
+theorem ua_backspace (v : Vt) : v.backspace.u8acc = v.u8acc := by
+  unfold Vt.backspace; split <;> rfl
+
+theorem ua_tab (v : Vt) : v.tab.u8acc = v.u8acc := by
+  unfold Vt.tab; dsimp only; exact ua_clearPending v
+
+theorem ua_eraseChars (v : Vt) (n : Nat) : (v.eraseChars n).u8acc = v.u8acc :=
+  ua_eraseRowSpan _ _ _ _
+
+theorem ua_eraseLine (v : Vt) (m : Nat) : (v.eraseLine m).u8acc = v.u8acc := by
+  rw [frame_eraseLine]
+
+theorem ua_eraseScreen (v : Vt) (m : Nat) : (v.eraseScreen m).u8acc = v.u8acc := by
+  unfold Vt.eraseScreen
+  repeat' split
+  all_goals first
+    | exact (ua_foldl _ (fun w i => ua_eraseRowSpan w _ _ _) _ _).trans (ua_eraseLine _ _)
+    | exact ua_foldl _ (fun w i => ua_eraseRowSpan w _ _ _) _ _
+
+theorem ua_insertLines (v : Vt) (n : Nat) : (v.insertLines n).u8acc = v.u8acc := by
+  unfold Vt.insertLines
+  dsimp only
+  split
+  · rfl
+  · exact ua_foldl _ (fun w _ => ua_scrollDownIn w _ _) _ _
+
+theorem ua_deleteLines (v : Vt) (n : Nat) : (v.deleteLines n).u8acc = v.u8acc := by
+  unfold Vt.deleteLines
+  dsimp only
+  split
+  · rfl
+  · exact ua_foldl _ (fun w _ => ua_scrollUpIn w _ _ _) _ _
+
+theorem ua_enterAlt (v : Vt) (s : Bool) : (v.enterAlt s).u8acc = v.u8acc := by
+  unfold Vt.enterAlt; dsimp only; split <;> rfl
+
+theorem ua_leaveAlt (v : Vt) (s : Bool) : (v.leaveAlt s).u8acc = v.u8acc := by
+  unfold Vt.leaveAlt; split <;> rfl
+
+theorem ua_setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool) :
+    (v.setMode priv n on).u8acc = v.u8acc := by
+  unfold Vt.setMode
+  repeat' split
+  all_goals try simp only [ua_moveTo, ua_enterAlt, ua_leaveAlt]
+  all_goals rfl
+
+theorem ua_printWrap (v : Vt) : v.printWrap.u8acc = v.u8acc := by
+  rw [frame_printWrap]
+
+theorem ua_printWideWrap (v : Vt) (w : Nat) : (v.printWideWrap w).u8acc = v.u8acc := by
+  rw [frame_printWideWrap]
+
+theorem ua_printShift (v : Vt) (w : Nat) : (v.printShift w).u8acc = v.u8acc := by
+  unfold Vt.printShift; dsimp only; split <;> rfl
+
+theorem ua_mendRow (v : Vt) (y : Nat) :
+    (v.mendRow y).u8acc = v.u8acc := by
+  rw [frame_mendRow]
+
+theorem ua_printPut (v : Vt) (ch : Char) (w : Nat) :
+    (v.printPut ch w).u8acc = v.u8acc := by
+  unfold Vt.printPut
+  dsimp only
+  repeat' split
+  all_goals (rw [ua_mendRow]; rfl)
+
+theorem ua_printAdvance (v : Vt) (w : Nat) : (v.printAdvance w).u8acc = v.u8acc := by
+  unfold Vt.printAdvance; dsimp only; split <;> rfl
+
+theorem ua_printMark (v : Vt) (ch : Char) : (v.printMark ch).u8acc = v.u8acc := by
+  rw [frame_printMark]
+
+theorem ua_ctl (v : Vt) (b : UInt8) : (v.ctl b).u8acc = v.u8acc := by
+  unfold Vt.ctl
+  repeat' split
+  all_goals first
+    | exact ua_backspace v
+    | exact ua_tab v
+    | exact ua_lineFeed v
+    | exact ua_carriageReturn v
+    | rfl
+
+theorem ua_csiDispatch (v : Vt) (s : CsiState) (final : UInt8) :
+    (v.csiDispatch s final).u8acc = v.u8acc := by
+  unfold Vt.csiDispatch
+  dsimp only
+  repeat' split
+  all_goals try simp only [ua_insertChars, ua_moveRel, ua_carriageReturn, ua_setCol,
+    ua_moveTo, ua_eraseScreen, ua_eraseLine, ua_insertLines, ua_deleteLines,
+    ua_deleteChars, ua_eraseChars, ua_setMode, ua_applySgr]
+  all_goals first
+    | rfl
+    | exact ua_foldl _ (fun w _ => ua_tab w) _ _
+    | exact ua_foldl _ (fun w _ => ua_scrollUp w) _ _
+    | exact ua_foldl _ (fun w _ => ua_scrollDown w) _ _
+    | exact ua_foldl _ (fun w _ => ua_backTab w) _ _
+
+theorem ua_csiFinish (v : Vt) (s : CsiState) (final : UInt8) :
+    (v.csiFinish s final).u8acc = v.u8acc := by
+  unfold Vt.csiFinish
+  dsimp only
+  split <;> exact ua_csiDispatch _ _ _
+
+theorem ua_stepCsi (v : Vt) (s : CsiState) (b : UInt8) :
+    (v.stepCsi s b).u8acc = v.u8acc := by
+  unfold Vt.stepCsi
+  repeat' split
+  all_goals first
+    | rfl
+    | exact ua_csiFinish _ _ _
+    | exact ua_ctl _ _
+
+theorem ua_stepEscInter (v : Vt) (i b : UInt8) :
+    (v.stepEscInter i b).u8acc = v.u8acc := by
+  rw [frame_stepEscInter]
+
+theorem ua_oscFinish (v : Vt) (acc : Array UInt8) :
+    (v.oscFinish acc).u8acc = v.u8acc := by
+  rw [frame_oscFinish]
+
+theorem ua_stepOsc (v : Vt) (acc : Array UInt8) (e : Bool) (b : UInt8) :
+    (v.stepOsc acc e b).u8acc = v.u8acc := by
+  unfold Vt.stepOsc
+  repeat' split
+  all_goals first
+    | rfl
+    | exact ua_oscFinish _ _
+
+theorem ua_stepStr (v : Vt) (e : Bool) (b : UInt8) :
+    (v.stepStr e b).u8acc = v.u8acc := by
+  rw [frame_stepStr]
+
+/-- `stepEsc` in "stays zero" form: `RIS` rebuilds through `Vt.init`,
+which has no pending sequence by construction. -/
+theorem uaz_stepEsc {v : Vt} (b : UInt8) (h : v.u8acc = 0) :
+    (v.stepEsc b).u8acc = 0 := by
+  unfold Vt.stepEsc
+  dsimp only
+  repeat' split
+  all_goals try simp only [ua_lineFeed, ua_carriageReturn, ua_reverseIndex]
+  all_goals first
+    | exact h
+    | rfl
+
+set_option maxRecDepth 8000 in
+/-- `stepGround` keeps `u8acc` at zero for any byte that is not a
+multi-byte UTF-8 lead (≥ 0xC0): a lead byte is exactly what *starts* a
+pending sequence. -/
+theorem uaz_stepGround {v : Vt} (b : UInt8) (hb : b < 0x80) (h : v.u8acc = 0) :
+    (v.stepGround b).u8acc = 0 := by
+  unfold Vt.stepGround
+  repeat' split
+  all_goals try simp only [ua_ctl, ua_acceptChar]
+  all_goals first
+    | exact h
+    | rfl
+    | (simp [h])
+    | (exfalso
+       simp only [UInt8.lt_iff_toNat_lt, Bool.not_eq_true,
+         decide_eq_false_iff_not, decide_eq_true_eq, Nat.not_lt,
+         show ((0x20 : UInt8)).toNat = 32 from rfl,
+         show ((0x80 : UInt8)).toNat = 128 from rfl,
+         show ((0xC0 : UInt8)).toNat = 192 from rfl,
+         show ((0xE0 : UInt8)).toNat = 224 from rfl,
+         show ((0xF0 : UInt8)).toNat = 240 from rfl,
+         show ((0xF8 : UInt8)).toNat = 248 from rfl] at *
+       omega)
+
+/-- **One step keeps `u8acc` at zero**, in any parser state, for any byte that is not a
+UTF-8 lead byte. `abortUtf8` either zeroes the accumulator (a sequence was pending) or is
+the identity (none was, and it was already zero) — so either way it stays zero. -/
+theorem uaz_step {v : Vt} (b : UInt8) (hb : b < 0x80) (hn : v.u8need = 0) (h : v.u8acc = 0) :
+    (v.step b).u8acc = 0 := by
+  have hab : (v.abortUtf8 b).u8acc = 0 := by
+    unfold Vt.abortUtf8
+    split
+    · rfl
+    · exact h
+  have habn : (v.abortUtf8 b).u8need = 0 := by
+    unfold Vt.abortUtf8
+    split
+    · rfl
+    · exact hn
+  unfold Vt.step
+  dsimp only
+  split
+  all_goals try simp only [ua_stepEscInter, ua_stepCsi, ua_stepOsc, ua_stepStr]
+  all_goals first
+    | exact hab
+    | exact uaz_stepGround _ hb hab
+    | exact uaz_stepEsc _ hab
+
 /-- One step keeps `u8need` at zero, in any parser state, for any byte
 that is not a UTF-8 lead byte. -/
 theorem uz_step {v : Vt} (b : UInt8) (hb : b < 0xC0) (h : v.u8need = 0) :
@@ -1399,6 +1635,24 @@ theorem uz_step {v : Vt} (b : UInt8) (hb : b < 0xC0) (h : v.u8need = 0) :
     | exact hab
     | exact uz_stepGround _ hb hab
     | exact uz_stepEsc _ hab
+
+theorem ascii_lt_c0 {b : UInt8} (h : b < 0x80) : b < 0xC0 := by
+  rw [UInt8.lt_iff_toNat_lt] at h ⊢
+  rw [show ((0x80 : UInt8)).toNat = 128 from rfl] at h
+  rw [show ((0xC0 : UInt8)).toNat = 192 from rfl]
+  omega
+
+/-- **An all-ASCII stream leaves the decoder quiesced.** Every byte the restore
+emits is ASCII except the glyphs themselves, so this is what carries `u8need = 0 ∧ u8acc = 0`
+across the prologue, the SGR reset and the clear — the entry state the paint assumes. -/
+theorem uaz_feed : ∀ (bs : List UInt8) {v : Vt}, (∀ b ∈ bs, b < 0x80) →
+    v.u8need = 0 → v.u8acc = 0 → (v.feed bs).u8need = 0 ∧ (v.feed bs).u8acc = 0
+  | [], _, _, hn, ha => ⟨hn, ha⟩
+  | b :: bs, v, hb, hn, ha => by
+    rw [show v.feed (b :: bs) = (v.step b).feed bs from rfl]
+    exact uaz_feed bs (fun x hx => hb x (List.mem_cons_of_mem b hx))
+      (uz_step b (ascii_lt_c0 (hb b (List.mem_cons_self))) hn)
+      (uaz_step b (hb b (List.mem_cons_self)) hn ha)
 
 /-- Feeding ESC from ANY state (pending UTF-8 or not) leaves none: the
 abort fires, and no ESC branch of any parser state re-arms it. -/
