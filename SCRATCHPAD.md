@@ -5377,3 +5377,53 @@ it through `paint_range`/`paint_rows`/`gridAnsi_writes_grid`, then the alt branc
 composition like the main one. Also still open: `rows = 1` (excluded by `h2 : 0 < v.rows - 1`,
 `DECSTBM`'s own degenerate case — a one-row grid cannot scroll, so `Walking.bot` should weaken
 to `rows ≤ 1 ∨ bot = rows - 1`), and `resume_grid` (compose with checkpoint exactness).
+
+## Step 4 notes — 2026-08-18 (the alt screen; DoD item 5 now COMPLETE for both screens)
+
+`restore_grid_any` (both screens) and `restore_grid_reachable` (no `altGrid` hypothesis) are
+**proved**. The alt branch turned out much cheaper than the previous round's note projected:
+the "add an `org` field to `Matches`, ten rungs" plan was **not needed**.
+
+The realisation that unlocked it: the modes at the `?1049h` switch do not have to be threaded
+through `Matches`. Two of them (`insert`, `wrap`) are already `Walking` invariants — I only had
+to **expose** them in the output tuples of `paint_rows` and `gridAnsi_writes_grid` (two extra
+conjuncts each, discharged by `hw.ins`/`hw.wrap` / `hM.ins`/`hM.wrap`, which were already in
+hand). The third (`origin`) rides the **existing `Quiet` family**: `quiet_gridAnsi` already
+proves the paint keeps `pstate = ground ∧ origin = false`, because `Quiet` crosses a multi-byte
+glyph byte-by-byte through `ground_step` (UTF-8 state lives in `u8need`/`u8acc`, *not* `pstate`)
+— which is exactly why it needs no `u8acc`, the thing that blocked the `MMap id (gridAnsi …)`
+route. So `origin` after the paint is a one-liner: `(quiet_gridAnsi mg z hg horg).2`.
+
+Machinery added:
+* `gridAnsi_writes_grid'` — the paint theorem restated over a bare `tg : Array Row` + explicit
+  `cols`/`rows` (the stashed main grid is not any `Vt`'s `.grid`). Trick: instantiate the
+  original's target as `{u with grid := tg, cols := cols, rows := rows}` so **every** hypothesis
+  lines up definitionally — no `by rw` conversions. Reused for the final alt paint too.
+* `getRow_size_replicate` — every row of the freshly-blanked `enterAlt` grid is `cols` long,
+  regardless of the default the `getRow` lookup falls back to. (Factored out after an inline
+  version ballooned to ~30 lines of giant terms.)
+* `alt_pre_switch` — the state just before the switch is fully re-established across the
+  **discarded** main paint and the park (`penSgr ++ CUP`). The main paint's *cells* are thrown
+  away by `enterAlt`, so only framed invariants matter: `insert`/`wrap` from
+  `gridAnsi_writes_grid'`, `origin` from `Quiet`, the sticky fields (rows/top/bot/alt/g0/g1)
+  from `SMap`, the dimensions from `dims_feed`; the park preserves all of them
+  (`MMap id` = `mmap_id_penSgr`+`mmap_id_cup`; `SMap.append`; `uaz_feed` with `ascii_penSgr`+
+  `ascii_csiNum2`). `MMap id` needs only `ground ∧ u8need = 0`; `SMap id` needs only `ground`.
+* `restore_grid_any_alt` — composes the above with `alt_switch_entry` and the final
+  `gridAnsi_writes_grid'`, then `restore_grid_of_paint`. The full alt `screensAnsi` is peeled
+  with `feed_append × 4` after regrouping the park via `simp only [List.append_assoc]`.
+* `restore_grid_any` — the one theorem, dispatching on `v.altGrid` (`match halt : v.altGrid`).
+
+Gotchas: `set` is Mathlib-only (banned) — hit it again abbreviating `park`, replaced with a
+helper lemma taking `park` as a bound term. `obtain ⟨…⟩ := by … exact ⟨…⟩` fails ("expected type
+could not be determined" for `⟨…⟩`) — use a plain `have` and project. Parenthesis miscount on a
+`show` (`.size` needs one wrapping paren the sibling `.cols`/`.getRow` haves don't).
+
+Break-verify: `screensAnsi`'s alt branch final paint `gridAnsi v.grid` → `gridAnsi mainGrid`
+(a plausible copy-paste slip — paint the stash twice). Fails `restore_grid_any_alt`'s `hscreens`
+(9094) and the `SMap`/`Ends` stream predicate over `screensAnsi` (5397). Reverted; Core
+byte-identical; `./lake build Theorems Tests` + `./tests/e2e.sh` green, `STATEMENT_CAP` 21.
+
+**Still open** (both narrow, non-blocking): `rows = 1` (excluded by `h2 : 0 < v.rows - 1`,
+`DECSTBM`'s degenerate case — weaken `Walking.bot` to `rows ≤ 1 ∨ bot = rows - 1`), and
+`resume_grid` (compose `restore_grid_reachable` with checkpoint exactness). Then Step 5.

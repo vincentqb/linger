@@ -8289,6 +8289,8 @@ theorem paint_rows {cols rows : Nat} {tg : Array Row} (hcb : cols < 65533) (hpos
         ∧ (w.feed (joinCRLF (rowsAnsi rs p))).pstate = .ground
         ∧ (w.feed (joinCRLF (rowsAnsi rs p))).u8need = 0
         ∧ (w.feed (joinCRLF (rowsAnsi rs p))).u8acc = 0
+        ∧ (w.feed (joinCRLF (rowsAnsi rs p))).modes.insert = false
+        ∧ (w.feed (joinCRLF (rowsAnsi rs p))).modes.wrap = true
   | [], Y, w, p, hw, hsum, _, _ => by
     have hYrows : Y = rows := by simpa using hsum
     subst hYrows
@@ -8296,7 +8298,8 @@ theorem paint_rows {cols rows : Nat} {tg : Array Row} (hcb : cols < 65533) (hpos
         = (tg.getD y' (blankRow cols {})).at x) ∧ _ ∧ _
     rw [show rowsAnsi ([] : List Row) p = [] from rfl, show joinCRLF ([] : List Bytes) = [] from rfl,
       show w.feed ([] : Bytes) = w from rfl]
-    exact ⟨fun y' x h => hw.done y' x h, hw.gsz, hw.rlens, hw.ground, hw.u8need, hw.u8acc⟩
+    exact ⟨fun y' x h => hw.done y' x h, hw.gsz, hw.rlens, hw.ground, hw.u8need, hw.u8acc,
+      hw.ins, hw.wrap⟩
   | r :: rest, Y, w, p, hw, hsum, hrsok, hrstg => by
     have hYrows : Y < rows := by simp only [List.length_cons] at hsum; omega
     have hr0 : r = tg.getD Y (blankRow cols {}) := by
@@ -8319,7 +8322,7 @@ theorem paint_rows {cols rows : Nat} {tg : Array Row} (hcb : cols < 65533) (hpos
       have hYlast : Y + 1 = rows := by simpa using hsum
       rw [show rowsAnsi [r] p = [(rowAnsi r p).1] from rfl,
         show joinCRLF [(rowAnsi r p).1] = (rowAnsi r p).1 from rfl]
-      refine ⟨fun y' x hy' => ?_, ?_, ?_, hM.ground, hM.u8need, hM.u8acc⟩
+      refine ⟨fun y' x hy' => ?_, ?_, ?_, hM.ground, hM.u8need, hM.u8acc, hM.ins, hM.wrap⟩
       · by_cases hyY : y' = Y
         · subst hyY
           rw [show (w.feed (rowAnsi r p).1).getCell x y'
@@ -8433,7 +8436,12 @@ theorem gridAnsi_writes_grid {u v : Vt}
     (u.feed (gridAnsi v.grid)).grid = v.grid
       ∧ (u.feed (gridAnsi v.grid)).pstate = .ground
       ∧ (u.feed (gridAnsi v.grid)).u8need = 0
-      ∧ (u.feed (gridAnsi v.grid)).u8acc = 0 := by
+      ∧ (u.feed (gridAnsi v.grid)).u8acc = 0
+      ∧ (u.feed (gridAnsi v.grid)).modes.insert = false
+      ∧ (u.feed (gridAnsi v.grid)).modes.wrap = true := by
+  -- `insert`/`wrap` are `Walking` invariants the walk re-establishes, surfaced by
+  -- `paint_rows`. (origin rides the `Quiet` family instead — `quiet_gridAnsi` — since it is
+  -- about the whole `gridAnsi` term and would not survive `gridAnsi_eq`'s rewrite here.)
   rw [gridAnsi_eq]
   -- reset the pen, then home the cursor: a known (0, 0, {}) entry state
   have hsgr : u.feed (csiNum 0 0x6D) = { u with pen := {} } := by
@@ -8477,14 +8485,36 @@ theorem gridAnsi_writes_grid {u v : Vt}
   have htlist : ∀ i (hi : i < v.grid.toList.length),
       v.grid.toList[i] = v.grid.getD i (blankRow v.cols {}) := fun i hi => by
     rw [Array.getElem_toList, getD_lt' v.grid i (blankRow v.cols {}) (by simpa using hi)]
-  obtain ⟨hcell, hgsz', hrl', hpg', hpu', hpa'⟩ := paint_rows hub hpos v.grid.toList 0
+  obtain ⟨hcell, hgsz', hrl', hpg', hpu', hpa', hpi', hpw'⟩ := paint_rows hub hpos v.grid.toList 0
     (({ u with pen := ({} : Pen) }).moveTo 0 0) {} hwalk (by rw [Nat.zero_add]; exact hrs_len)
     (fun i hi => by rw [htlist i hi]; exact hvok i)
     (fun i hi => by rw [htlist i hi, Nat.zero_add])
   refine ⟨grid_eq_of_cells (cols := v.cols) (rows := v.rows) hgsz' hvsz ?_
-    (fun y' _ => hrl' y') ?_, hpg', hpu', hpa'⟩
+    (fun y' _ => hrl' y') ?_, hpg', hpu', hpa', hpi', hpw'⟩
   · intro y' hyr x _; exact hcell y' x hyr
   · intro y' _; exact (hvok y').size
+
+/-- **`gridAnsi_writes_grid` with the target grid as a bare `Array Row`.** The stashed main
+grid in `screensAnsi`'s alt branch is not any `Vt`'s `.grid`, so the paint theorem is restated
+over an explicit `tg : Array Row` and its `cols`/`rows`. Threading them through a receiver
+record whose own dimensions are set to `cols`/`rows` makes every hypothesis line up
+definitionally. -/
+theorem gridAnsi_writes_grid' {u : Vt} {tg : Array Row} {cols rows : Nat}
+    (hcols : u.cols = cols) (hrows : u.rows = rows) (hpos : 0 < cols) (hub : cols < 65533)
+    (htop : u.top = 0) (hbot : u.bot = rows - 1)
+    (hg : u.pstate = .ground) (hun : u.u8need = 0) (hua : u.u8acc = 0)
+    (hins : u.modes.insert = false) (hwrap : u.modes.wrap = true) (horg : u.modes.origin = false)
+    (hg0 : u.g0Line = false) (hg1 : u.g1Line = false)
+    (hgsz : u.grid.size = rows) (hrlens : ∀ y', (u.getRow y').size = cols)
+    (hvok : ∀ y', RowOk cols (tg.getD y' (blankRow cols {}))) (hvsz : tg.size = rows) :
+    (u.feed (gridAnsi tg)).grid = tg
+      ∧ (u.feed (gridAnsi tg)).pstate = .ground
+      ∧ (u.feed (gridAnsi tg)).u8need = 0
+      ∧ (u.feed (gridAnsi tg)).u8acc = 0
+      ∧ (u.feed (gridAnsi tg)).modes.insert = false
+      ∧ (u.feed (gridAnsi tg)).modes.wrap = true :=
+  gridAnsi_writes_grid (u := u) (v := { u with grid := tg, cols := cols, rows := rows })
+    hcols hrows hpos hub htop hbot hg hun hua hins hwrap horg hg0 hg1 hgsz hrlens hvok hvsz
 
 /-! ### The prologue's canonical mid-stream state — the entry `gridAnsi_writes_grid` assumes
 
@@ -8930,36 +8960,183 @@ theorem alt_switch_entry {u : Vt} (halt : u.altGrid = none)
   exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 
-/-! **The alt-screen branch: what it still needs, precisely.** `alt_switch_entry` and
-`modeSet_feed_eq` above are its hard half — the switch fires (the prologue's `?1049l` leaves
-`altGrid = none`, and `stick` carries that across the main paint) and hands the second paint a
-blank grid of the receiver's shape, its region reset and its cursor homed. What is missing is
-narrower than it looks: the **modes** at the switch. `gridAnsi_writes_grid` needs
-`insert = false`, `wrap = true` and `origin = false`, and the main paint sits between the
-prologue that establishes them and the switch that inherits them.
+/-- Every row of a freshly-blanked grid (what `enterAlt` installs) is `cols` cells long,
+whatever the default the `getRow` lookup would fall back to. -/
+theorem getRow_size_replicate {u : Vt} {n c : Nat}
+    (hg : u.grid = Array.replicate n (blankRow c {})) (hc : u.cols = c) (y' : Nat) :
+    (u.getRow y').size = c := by
+  show (u.grid.getD y' (blankRow u.cols u.pen)).size = c
+  rw [hg]
+  by_cases hy : y' < n
+  · rw [show (Array.replicate n (blankRow c {})).getD y' (blankRow u.cols u.pen) = blankRow c {}
+        from by simp [Array.getD, Array.size_replicate, Array.getElem_replicate, hy]]
+    simp [blankRow, Array.size_replicate]
+  · rw [show (Array.replicate n (blankRow c {})).getD y' (blankRow u.cols u.pen)
+        = blankRow u.cols u.pen from by simp [Array.getD, Array.size_replicate, hy]]
+    simp only [blankRow, Array.size_replicate]; exact hc
 
-Neither available route is a one-liner, which is why it is recorded rather than attempted:
-`MMap id (gridAnsi …)` would need `MMap` over `utf8s`, and `MMap` does not carry `u8acc`,
-which `utf8_feed` requires for a multi-byte glyph; and exposing the modes from `paint_rows`
-(where `Walking` already carries `insert`/`wrap`) does not reach `origin`, because `Matches`
-has no `origin` field — adding one is a rung-by-rung change (`modes_print'` and
-`frame_setCol` make each case a line, but there are ten). The second is the better shape: it
-puts the fact where the walk already re-establishes its siblings. -/
+set_option maxHeartbeats 1000000 in
+/-- **The state just before the alt switch is fully re-established.** Feed a receiver `z` (in
+the prologue's canonical entry state) the discarded main paint `gridAnsi mg` and then the park
+(`penSgr`/`CUP`); every field the second paint's entry state reads is left intact — dimensions,
+region top, no alt screen, the decoder quiesced, the three paint modes and the ASCII charsets.
+The main paint's *cells* are thrown away by the switch, so only these framed invariants matter:
+`insert`/`wrap` from `gridAnsi_writes_grid'`'s exposed output, `origin` from the `Quiet` frame,
+the sticky fields from `SMap`, the dimensions from `dims_feed`; the park preserves all of them
+(`MMap`/`SMap`/`uaz_feed`). This is what carries the modes to the switch without an `origin`
+field on `Matches`. -/
+theorem alt_pre_switch {z : Vt} {mg : Array Row} {mc : Cursor} {mp : Pen} {cols rows : Nat}
+    (hcols : z.cols = cols) (hrows : z.rows = rows) (htop : z.top = 0) (hbot : z.bot = rows - 1)
+    (hg : z.pstate = .ground) (hun : z.u8need = 0) (hua : z.u8acc = 0)
+    (hins : z.modes.insert = false) (hwrap : z.modes.wrap = true) (horg : z.modes.origin = false)
+    (hg0 : z.g0Line = false) (hg1 : z.g1Line = false)
+    (hgsz : z.grid.size = rows) (hrlens : ∀ y', (z.getRow y').size = cols)
+    (halt : z.altGrid = none) (hgood : Good z) (hpos : 0 < cols) (hub : cols < 65533)
+    (hmok : ∀ y', RowOk cols (mg.getD y' (blankRow cols {}))) (hmsz : mg.size = rows) :
+    ((z.feed (gridAnsi mg)).feed (penSgr mp ++ csiNum2 (mc.y + 1) (mc.x + 1) 0x48)).cols = cols
+      ∧ ((z.feed (gridAnsi mg)).feed (penSgr mp ++ csiNum2 (mc.y + 1) (mc.x + 1) 0x48)).rows = rows
+      ∧ ((z.feed (gridAnsi mg)).feed (penSgr mp ++ csiNum2 (mc.y + 1) (mc.x + 1) 0x48)).top = 0
+      ∧ ((z.feed (gridAnsi mg)).feed (penSgr mp ++ csiNum2 (mc.y + 1) (mc.x + 1) 0x48)).altGrid = none
+      ∧ ((z.feed (gridAnsi mg)).feed (penSgr mp ++ csiNum2 (mc.y + 1) (mc.x + 1) 0x48)).pstate = .ground
+      ∧ ((z.feed (gridAnsi mg)).feed (penSgr mp ++ csiNum2 (mc.y + 1) (mc.x + 1) 0x48)).u8need = 0
+      ∧ ((z.feed (gridAnsi mg)).feed (penSgr mp ++ csiNum2 (mc.y + 1) (mc.x + 1) 0x48)).u8acc = 0
+      ∧ ((z.feed (gridAnsi mg)).feed (penSgr mp ++ csiNum2 (mc.y + 1) (mc.x + 1) 0x48)).modes.insert = false
+      ∧ ((z.feed (gridAnsi mg)).feed (penSgr mp ++ csiNum2 (mc.y + 1) (mc.x + 1) 0x48)).modes.wrap = true
+      ∧ ((z.feed (gridAnsi mg)).feed (penSgr mp ++ csiNum2 (mc.y + 1) (mc.x + 1) 0x48)).modes.origin = false
+      ∧ ((z.feed (gridAnsi mg)).feed (penSgr mp ++ csiNum2 (mc.y + 1) (mc.x + 1) 0x48)).g0Line = false
+      ∧ ((z.feed (gridAnsi mg)).feed (penSgr mp ++ csiNum2 (mc.y + 1) (mc.x + 1) 0x48)).g1Line = false := by
+  -- A: the main paint. Its result is discarded; only these framed facts survive.
+  obtain ⟨-, -, hAun, hAua, hAins, hAwrap⟩ :=
+    gridAnsi_writes_grid' (u := z) (tg := mg) hcols hrows hpos hub htop hbot hg hun hua
+      hins hwrap horg hg0 hg1 hgsz hrlens hmok hmsz
+  have hAg : (z.feed (gridAnsi mg)).pstate = .ground := (quiet_gridAnsi mg z hg horg).1
+  have hAorg : (z.feed (gridAnsi mg)).modes.origin = false := (quiet_gridAnsi mg z hg horg).2
+  have hAstick : stick (z.feed (gridAnsi mg)) = stick z := (smap_id_gridAnsi mg z hg).2
+  have hAdims : dims (z.feed (gridAnsi mg)) = dims z := dims_feed _ hgood
+  have hgoodA : Good (z.feed (gridAnsi mg)) := Good.feed _ hgood
+  -- the park: `penSgr ++ CUP`. Modes / sticky bundle / decoder / dims all preserved.
+  have hMpark := mmap_id_append (mmap_id_penSgr mp) (mmap_id_cup (mc.y + 1) (mc.x + 1))
+  have hSpark := SMap.append (smap_id_penSgr mp) (smap_id_cup (mc.y + 1) (mc.x + 1))
+  have hAscii := (ascii_penSgr mp).append (ascii_csiNum2 (mc.y + 1) (mc.x + 1) 0x48 (by decide))
+  obtain ⟨hPg, hPn, hPmodes⟩ := hMpark _ hAg hAun
+  obtain ⟨-, hPstick⟩ := hSpark _ hAg
+  obtain ⟨-, hPua⟩ := uaz_feed _ hAscii hAun hAua
+  have hPdims : dims ((z.feed (gridAnsi mg)).feed (penSgr mp ++ csiNum2 (mc.y + 1) (mc.x + 1) 0x48))
+      = dims (z.feed (gridAnsi mg)) := dims_feed _ hgoodA
+  refine ⟨?_, ?_, ?_, ?_, hPg, hPn, hPua, ?_, ?_, ?_, ?_, ?_⟩
+  · rw [← dims_fst, hPdims, hAdims, dims_fst, hcols]
+  · rw [← dims_snd, hPdims, hAdims, dims_snd, hrows]
+  · rw [← stick_top, hPstick, id_eq, hAstick, stick_top, htop]
+  · have hnone : ((z.feed (gridAnsi mg)).feed (penSgr mp ++ csiNum2 (mc.y + 1) (mc.x + 1) 0x48)).altGrid.isSome
+        = false := by rw [← stick_alt, hPstick, id_eq, hAstick, stick_alt, halt]; rfl
+    exact Option.not_isSome_iff_eq_none.mp (by rw [hnone]; simp)
+  · rw [hPmodes, id_eq, hAins]
+  · rw [hPmodes, id_eq, hAwrap]
+  · rw [hPmodes, id_eq, hAorg]
+  · rw [← stick_g0, hPstick, id_eq, hAstick, stick_g0, hg0]
+  · rw [← stick_g1, hPstick, id_eq, hAstick, stick_g1, hg1]
+
+set_option maxHeartbeats 1000000 in
+/-- **The grid, restored into any client — alt screen.** With the session on the alt screen,
+`screensAnsi` paints the stashed main grid, parks its cursor/pen, switches with `?1049h`, then
+paints the visible (alt) grid. `alt_pre_switch` carries the entry state across the discarded
+main paint and the park; `alt_switch_entry` hands the second paint a blank grid of the
+receiver's shape with its region reset and cursor homed; `gridAnsi_writes_grid'` then
+reproduces `v.grid`. -/
+theorem restore_grid_any_alt (v w : Vt) (hgood : Good w) (hren : Renderable w)
+    (hcols : w.cols = v.cols) (hrows : w.rows = v.rows)
+    (hua : w.u8acc = 0) (hun : w.u8need = 0)
+    {mainGrid : Array Row} {mcur : Cursor} {mpen : Pen}
+    (halt : v.altGrid = some (mainGrid, mcur, mpen))
+    (h2 : 0 < v.rows - 1) (hfits : v.rows < 65535)
+    (hpos : 0 < v.cols) (hub : v.cols < 65533)
+    (hvren : Renderable v) (hvsz : v.grid.size = v.rows) :
+    (w.feed (restore v)).grid = v.grid := by
+  obtain ⟨e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11, e12, e13, e14, ealt, -⟩ :=
+    paint_entry v w hgood hren hcols hrows hua hun h2 hfits
+  obtain ⟨hmsz, hmok⟩ := hvren.alt mainGrid mcur mpen halt
+  have hgoodU : Good (w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)) := Good.feed _ hgood
+  -- across the discarded main paint and the park, the entry state is preserved
+  obtain ⟨hs2cols, hs2rows, hs2top, hs2alt, hs2g, hs2n, hs2ua, hs2ins, hs2wrap, hs2org,
+      hs2g0, hs2g1⟩ :=
+    alt_pre_switch (z := w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A))
+      (mg := mainGrid) (mc := mcur) (mp := mpen) (cols := v.cols) (rows := v.rows)
+      e1 e2 e3 e4 e5 e6 e7 e8 e9 e10 e11 e12 e13 e14 ealt hgoodU hpos hub hmok hmsz
+  -- the switch establishes the second paint's entry state
+  obtain ⟨hZcols, hZrows, hZtop, hZbot, hZg, hZun, hZua, hZmodes, hZg0, hZg1, hZgrid,
+      -, -, -⟩ := alt_switch_entry
+      (u := ((w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).feed
+        (gridAnsi mainGrid)).feed (penSgr mpen ++ csiNum2 (mcur.y + 1) (mcur.x + 1) 0x48))
+      hs2alt hs2g hs2n
+  -- the post-switch grid is a blank of the right shape; all its rows are `cols` long
+  have hs3cols : ((((w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).feed
+      (gridAnsi mainGrid)).feed (penSgr mpen ++ csiNum2 (mcur.y + 1) (mcur.x + 1) 0x48)).feed
+      (csiPriv 1049 0x68)).cols = v.cols := hZcols.trans hs2cols
+  have hs3rlens : ∀ y', (((((w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).feed
+      (gridAnsi mainGrid)).feed (penSgr mpen ++ csiNum2 (mcur.y + 1) (mcur.x + 1) 0x48)).feed
+      (csiPriv 1049 0x68)).getRow y').size = v.cols := fun y' =>
+    (getRow_size_replicate hZgrid hZcols y').trans hs2cols
+  have hs3gsz : ((((w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).feed
+      (gridAnsi mainGrid)).feed (penSgr mpen ++ csiNum2 (mcur.y + 1) (mcur.x + 1) 0x48)).feed
+      (csiPriv 1049 0x68)).grid.size = v.rows := by rw [hZgrid, Array.size_replicate]; exact hs2rows
+  -- the final paint reproduces the visible (alt) grid
+  have hfin := gridAnsi_writes_grid' (u := (((w.feed (prologueAnsi v ++ csiNum 0 0x6D
+      ++ csiNum 2 0x4A)).feed (gridAnsi mainGrid)).feed
+      (penSgr mpen ++ csiNum2 (mcur.y + 1) (mcur.x + 1) 0x48)).feed (csiPriv 1049 0x68))
+    (tg := v.grid) (cols := v.cols) (rows := v.rows)
+    hs3cols (hZrows.trans hs2rows) hpos hub hZtop (by rw [hZbot, hs2rows]) hZg
+    (hZun.trans hs2n) (hZua.trans hs2ua)
+    (by rw [hZmodes]; exact hs2ins) (by rw [hZmodes]; exact hs2wrap) (by rw [hZmodes]; exact hs2org)
+    (hZg0.trans hs2g0) (hZg1.trans hs2g1) hs3gsz hs3rlens hvren.main.2 hvsz
+  -- assemble via `restore_grid_of_paint`
+  have hscreens : screensAnsi v
+      = gridAnsi mainGrid ++ (penSgr mpen ++ csiNum2 (mcur.y + 1) (mcur.x + 1) 0x48)
+        ++ csiPriv 1049 0x68 ++ gridAnsi v.grid := by
+    unfold screensAnsi; rw [halt]; simp only [List.append_assoc]
+  refine restore_grid_of_paint ?_ ?_ ?_
+  · rw [show prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v
+        = (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A) ++ screensAnsi v from rfl,
+      feed_append, hscreens, feed_append, feed_append, feed_append]
+    exact hfin.2.1
+  · rw [show prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v
+        = (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A) ++ screensAnsi v from rfl,
+      feed_append, hscreens, feed_append, feed_append, feed_append]
+    exact hfin.2.2.1
+  · rw [show prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v
+        = (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A) ++ screensAnsi v from rfl,
+      feed_append, hscreens, feed_append, feed_append, feed_append]
+    exact hfin.1
+
+/-- **The grid, restored into any client — both screens (Definition-of-done item 5).** The one
+theorem that dispatches on whether the session is on the alt screen; each branch is proved
+above. -/
+theorem restore_grid_any (v w : Vt) (hgood : Good w) (hren : Renderable w)
+    (hcols : w.cols = v.cols) (hrows : w.rows = v.rows)
+    (hua : w.u8acc = 0) (hun : w.u8need = 0)
+    (h2 : 0 < v.rows - 1) (hfits : v.rows < 65535)
+    (hpos : 0 < v.cols) (hub : v.cols < 65533)
+    (hvren : Renderable v) (hvsz : v.grid.size = v.rows) :
+    (w.feed (restore v)).grid = v.grid := by
+  match halt : v.altGrid with
+  | none =>
+    exact restore_grid_any_main v w hgood hren hcols hrows hua hun halt h2 hfits hpos hub hvren hvsz
+  | some (mainGrid, mcur, mpen) =>
+    exact restore_grid_any_alt v w hgood hren hcols hrows hua hun halt h2 hfits hpos hub hvren hvsz
 
 /-- **The grid claim with every hypothesis discharged from reachability.** The receiver's
 `Good`, `Renderable` and decoder invariants are not assumptions about a *cooperative* client —
 they hold of every state a terminal can reach by being fed bytes, which is every client there
 is (`good_of_liveReachable`, `renderable_of_liveReachable`, `u8Ok_of_liveReachable`). What is
-left in the statement is the genuine part: matching dimensions, at least two rows, and the
-session not being on the alt screen. -/
+left in the statement is the genuine part: matching dimensions and at least two rows — and it
+holds on **both** screens, main and alt. -/
 theorem restore_grid_reachable (v w : Vt)
     (hw : LiveReachableVt w) (hv : LiveReachableVt v)
     (hcols : w.cols = v.cols) (hrows : w.rows = v.rows) (hun : w.u8need = 0)
-    (halt : v.altGrid = none) (h2 : 0 < v.rows - 1) :
+    (h2 : 0 < v.rows - 1) :
     (w.feed (restore v)).grid = v.grid := by
   have hg : Good v := good_of_liveReachable hv
-  refine restore_grid_any_main v w (good_of_liveReachable hw) (renderable_of_liveReachable hw)
-    hcols hrows (u8Ok_of_liveReachable hw hun) hun halt h2 ?_ ?_ ?_
+  refine restore_grid_any v w (good_of_liveReachable hw) (renderable_of_liveReachable hw)
+    hcols hrows (u8Ok_of_liveReachable hw hun) hun h2 ?_ ?_ ?_
     (renderable_of_liveReachable hv) ?_
   · exact Nat.lt_of_le_of_lt hg.rowsLe (by decide)
   · exact hg.colsPos

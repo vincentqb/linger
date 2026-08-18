@@ -7,23 +7,27 @@ here in a different shape, and its Step 5 archival gate is carried unchanged)
 
 ## Where this stands — read this first
 
-**Next step:** the **alt-screen branch** of `restore_grid_any`, and it is now narrow.
-`alt_switch_entry` + `modeSet_feed_eq` are its hard half (the switch fires and hands the
-second paint a blank grid of the receiver's shape, region reset, cursor homed). What is
-missing is only the **modes** at the switch — `insert`/`wrap`/`origin`, which sit between the
-prologue that sets them and the switch that inherits them, across the main paint. **Do it by
-adding an `org` field to `Matches`** (one line per rung via `modes_print'`/`frame_setCol`, ten
-rungs), threading it through `paint_range`/`paint_rows`/`gridAnsi_writes_grid`; then the alt
-branch composes exactly like the main one. The alternative (`MMap id (gridAnsi …)`) is worse:
-`MMap` carries no `u8acc`, which `utf8_feed` needs for a multi-byte glyph. Then `rows = 1`
-(weaken `Walking.bot` to `rows ≤ 1 ∨ bot = rows - 1`; a one-row grid cannot scroll) and
-`resume_grid`. Details in SCRATCHPAD 2026-08-18 and in a note above
-`restore_grid_reachable`.
+**Next step:** the `rows = 1` corner and then `resume_grid`, then Step 5 (archive). `rows = 1`
+is excluded by `h2 : 0 < v.rows - 1` — `DECSTBM`'s degenerate case; the fix is to weaken
+`Walking.bot` to `rows ≤ 1 ∨ bot = rows - 1`, since a one-row grid cannot scroll. `resume_grid`
+composes `restore_grid_reachable` with checkpoint exactness. Details in SCRATCHPAD 2026-08-18.
 
-**Definition-of-done item 5 is proved for the main screen** (2026-08-18):
-`restore_grid_any_main` and `restore_grid_reachable` — feeding `restore v` to any
-**live-reachable** client of the session's dimensions leaves its grid equal to `v.grid`, array
-for array, cell for cell. Non-vacuity checked at a real 80×24 `Vt.init`.
+**Definition-of-done item 5 is COMPLETE — both screens** (2026-08-18): `restore_grid_any`
+dispatches on `v.altGrid`, and `restore_grid_reachable` (now with **no** `altGrid` hypothesis)
+feeds `restore v` to any **live-reachable** client of the session's dimensions and leaves its
+grid equal to `v.grid`, array for array, cell for cell. Non-vacuity checked at a real 80×24
+`Vt.init`.
+
+The **alt-screen** branch (`restore_grid_any_alt`) came in far cheaper than last round's note
+projected: the "add an `org` field to `Matches`, ten rungs" plan was **not needed**. The modes
+at the `?1049h` switch need not be threaded through `Matches` — `insert`/`wrap` are already
+`Walking` invariants (just **exposed** now in `paint_rows`/`gridAnsi_writes_grid` output), and
+`origin` rides the existing `Quiet` family (`quiet_gridAnsi` keeps `origin = false` because
+`Quiet` crosses a glyph byte-by-byte through `ground_step`, needing no `u8acc` — the very thing
+that blocked the `MMap id (gridAnsi …)` route). New machinery: `gridAnsi_writes_grid'` (paint
+theorem over a bare `Array Row` target), `getRow_size_replicate`, `alt_pre_switch` (the entry
+state survives the discarded main paint + the park via `SMap`/`MMap`/`dims_feed`/`uaz_feed`),
+`restore_grid_any_alt`, `restore_grid_any`.
 
 **The `u8acc` precondition flagged last round is solved twice over**, and the honest summary
 is that it was a limit only on paper: `uaz_feed` (an all-ASCII stream leaves the decoder
@@ -70,7 +74,7 @@ emulator-side (`printMark`, `setCol`).
 `restore_sticky_any`'s row bound — `CHA` clamps its parameter to 65535, so the emitted column
 must stay under it; the ≤1000 dim clamp supplies it downstream.
 
-**Item 4 is done; item 5 is done for the main screen and open for the alt screen.** Items 1,
+**Items 4 and 5 are both done — item 5 on both screens.** Items 1,
 2, 2b and 3 are done — three restated on contact, recorded in each — and item 6 (gates green,
 every theorem break-verified) is standing. `restore_tabs_any` is an optional warm-up, not on
 the critical path.
@@ -108,7 +112,7 @@ it, which is what lets the *repaint* be a chunk).
 
 Step 2 — **done** (`restore_grounds` + `restore_u8_zero`, composed as
 `restore_quiesced_any` / `resume_quiesced_any`). Step 3 — **done**. Step 4 — the paint and the
-main-screen claim **done**, alt screen open. Step 5 — not started.
+main-screen claim **done**; alt screen **done** (`restore_grid_any`). Step 5 — not started.
 
 **Two long-range dependencies are now visible in the theorems rather than left to
 inspection.** `charsetAnsi` is set-only for the shift state and `regionAnsi` emits
@@ -677,15 +681,16 @@ claimed `PaintState`. A same-shape value mutation in `rowAnsi` breaks it.
 
 ## Step 4 — the grid, and the end-to-end claim
 
-Status: **item 5 proved for the main screen; the alt-screen branch remains** (2026-08-18).
+Status: **item 5 proved on both screens (`restore_grid_any`); `rows = 1` and `resume_grid` remain** (2026-08-18).
 The `joinCRLF` row walk with the no-scroll argument (`paint_rows`, `crlf_step`,
 `lineFeed_interior`), the whole-grid paint (`gridAnsi_writes_grid`), the cross-row locality
 (`OffRow` + companions), and the prologue's canonical entry state (`prologue_sticky`,
 `prologue_modes`) are all proved and committed, and so are the composition
-(`paint_entry`, `restore_grid_any_main`, `restore_grid_reachable`) and the decoder
-preconditions (`uaz_feed`, `U8Ok`). Remaining: the **alt-screen** branch (blocked only on the
-modes at the switch — add `org` to `Matches`; see "Where this stands"), the `rows = 1` corner,
-and `resume_grid`.
+(`paint_entry`, `restore_grid_any_main`, `restore_grid_reachable`), the decoder
+preconditions (`uaz_feed`, `U8Ok`), and **both branches of `restore_grid_any`** — the
+alt-screen one (`restore_grid_any_alt` via `alt_pre_switch` + `alt_switch_entry` +
+`gridAnsi_writes_grid'`) closed without adding an `org` field to `Matches` (see "Where this
+stands"). Remaining: the `rows = 1` corner and `resume_grid`.
 
 Shape: `joinCRLF` row walk (including the argument that no line feed scrolls), the
 alt switch, then composition through `restore_grid_of_paint` — which already exists,
