@@ -8286,6 +8286,8 @@ theorem paint_rows {cols rows : Nat} {tg : Array Row} (hcb : cols < 65533) (hpos
           = (tg.getD y' (blankRow cols {})).at x)
         ∧ (w.feed (joinCRLF (rowsAnsi rs p))).grid.size = rows
         ∧ (∀ y', ((w.feed (joinCRLF (rowsAnsi rs p))).getRow y').size = cols)
+        ∧ (w.feed (joinCRLF (rowsAnsi rs p))).pstate = .ground
+        ∧ (w.feed (joinCRLF (rowsAnsi rs p))).u8need = 0
   | [], Y, w, p, hw, hsum, _, _ => by
     have hYrows : Y = rows := by simpa using hsum
     subst hYrows
@@ -8293,7 +8295,7 @@ theorem paint_rows {cols rows : Nat} {tg : Array Row} (hcb : cols < 65533) (hpos
         = (tg.getD y' (blankRow cols {})).at x) ∧ _ ∧ _
     rw [show rowsAnsi ([] : List Row) p = [] from rfl, show joinCRLF ([] : List Bytes) = [] from rfl,
       show w.feed ([] : Bytes) = w from rfl]
-    exact ⟨fun y' x h => hw.done y' x h, hw.gsz, hw.rlens⟩
+    exact ⟨fun y' x h => hw.done y' x h, hw.gsz, hw.rlens, hw.ground, hw.u8need⟩
   | r :: rest, Y, w, p, hw, hsum, hrsok, hrstg => by
     have hYrows : Y < rows := by simp only [List.length_cons] at hsum; omega
     have hr0 : r = tg.getD Y (blankRow cols {}) := by
@@ -8316,7 +8318,7 @@ theorem paint_rows {cols rows : Nat} {tg : Array Row} (hcb : cols < 65533) (hpos
       have hYlast : Y + 1 = rows := by simpa using hsum
       rw [show rowsAnsi [r] p = [(rowAnsi r p).1] from rfl,
         show joinCRLF [(rowAnsi r p).1] = (rowAnsi r p).1 from rfl]
-      refine ⟨fun y' x hy' => ?_, ?_, ?_⟩
+      refine ⟨fun y' x hy' => ?_, ?_, ?_, hM.ground, hM.u8need⟩
       · by_cases hyY : y' = Y
         · subst hyY
           rw [show (w.feed (rowAnsi r p).1).getCell x y'
@@ -8427,7 +8429,9 @@ theorem gridAnsi_writes_grid {u v : Vt}
     (hg0 : u.g0Line = false) (hg1 : u.g1Line = false)
     (hgsz : u.grid.size = v.rows) (hrlens : ∀ y', (u.getRow y').size = v.cols)
     (hvok : ∀ y', RowOk v.cols (v.grid.getD y' (blankRow v.cols {}))) (hvsz : v.grid.size = v.rows) :
-    (u.feed (gridAnsi v.grid)).grid = v.grid := by
+    (u.feed (gridAnsi v.grid)).grid = v.grid
+      ∧ (u.feed (gridAnsi v.grid)).pstate = .ground
+      ∧ (u.feed (gridAnsi v.grid)).u8need = 0 := by
   rw [gridAnsi_eq]
   -- reset the pen, then home the cursor: a known (0, 0, {}) entry state
   have hsgr : u.feed (csiNum 0 0x6D) = { u with pen := {} } := by
@@ -8471,11 +8475,12 @@ theorem gridAnsi_writes_grid {u v : Vt}
   have htlist : ∀ i (hi : i < v.grid.toList.length),
       v.grid.toList[i] = v.grid.getD i (blankRow v.cols {}) := fun i hi => by
     rw [Array.getElem_toList, getD_lt' v.grid i (blankRow v.cols {}) (by simpa using hi)]
-  obtain ⟨hcell, hgsz', hrl'⟩ := paint_rows hub hpos v.grid.toList 0
+  obtain ⟨hcell, hgsz', hrl', hpg', hpu'⟩ := paint_rows hub hpos v.grid.toList 0
     (({ u with pen := ({} : Pen) }).moveTo 0 0) {} hwalk (by rw [Nat.zero_add]; exact hrs_len)
     (fun i hi => by rw [htlist i hi]; exact hvok i)
     (fun i hi => by rw [htlist i hi, Nat.zero_add])
-  refine grid_eq_of_cells (cols := v.cols) (rows := v.rows) hgsz' hvsz ?_ (fun y' _ => hrl' y') ?_
+  refine ⟨grid_eq_of_cells (cols := v.cols) (rows := v.rows) hgsz' hvsz ?_
+    (fun y' _ => hrl' y') ?_, hpg', hpu'⟩
   · intro y' hyr x _; exact hcell y' x hyr
   · intro y' _; exact (hvok y').size
 
@@ -8729,3 +8734,43 @@ theorem paint_entry (v w : Vt) (hgood : Good w) (hren : Renderable w)
     · rw [Array.getD, dif_neg hy]
       show (blankRow u.cols u.pen).size = v.cols
       rw [show (blankRow u.cols u.pen).size = u.cols from by simp [blankRow]]; exact hucols
+
+/-! ### `restore_grid_any` — Definition-of-done item 5
+
+The composition. `screensAnsi` has two branches; on the main screen it is exactly
+`gridAnsi v.grid`, so `paint_entry` + `gridAnsi_writes_grid` + `restore_grid_of_paint` close
+it. `hua`/`hun` are the decoder precondition — real, and satisfied by any receiver that got
+where it is by being fed bytes (`restore_grid_reachable` supplies it). -/
+
+/-- **The grid, restored into any client — main screen.** For a session not on the alt
+screen, feeding `restore v` to any `Good`/`Renderable` receiver of the session's dimensions
+and with a quiesced decoder leaves the receiver's grid equal to `v.grid`, cell for cell and
+pen for pen. -/
+theorem restore_grid_any_main (v w : Vt) (hgood : Good w) (hren : Renderable w)
+    (hcols : w.cols = v.cols) (hrows : w.rows = v.rows)
+    (hua : w.u8acc = 0) (hun : w.u8need = 0)
+    (halt : v.altGrid = none)
+    (h2 : 0 < v.rows - 1) (hfits : v.rows < 65535)
+    (hpos : 0 < v.cols) (hub : v.cols < 65533)
+    (hvren : Renderable v) (hvsz : v.grid.size = v.rows) :
+    (w.feed (restore v)).grid = v.grid := by
+  obtain ⟨e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11, e12, e13, e14⟩ :=
+    paint_entry v w hgood hren hcols hrows hua hun h2 hfits
+  have hscreens : screensAnsi v = gridAnsi v.grid := by
+    unfold screensAnsi; rw [halt]
+  refine restore_grid_of_paint ?_ ?_ ?_
+  · rw [show prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v
+        = (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A) ++ screensAnsi v from rfl,
+      feed_append, hscreens]
+    exact (gridAnsi_writes_grid e1 e2 hpos hub e3 e4 e5 e6 e7 e8 e9 e10 e11 e12
+      (by rw [e13]) e14 hvren.main.2 hvsz).2.1
+  · rw [show prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v
+        = (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A) ++ screensAnsi v from rfl,
+      feed_append, hscreens]
+    exact (gridAnsi_writes_grid e1 e2 hpos hub e3 e4 e5 e6 e7 e8 e9 e10 e11 e12
+      (by rw [e13]) e14 hvren.main.2 hvsz).2.2
+  · rw [show prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v
+        = (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A) ++ screensAnsi v from rfl,
+      feed_append, hscreens]
+    exact (gridAnsi_writes_grid e1 e2 hpos hub e3 e4 e5 e6 e7 e8 e9 e10 e11 e12
+      (by rw [e13]) e14 hvren.main.2 hvsz).1
