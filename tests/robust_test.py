@@ -7,7 +7,7 @@
      starts of one name produce exactly one daemon and one shell; no
      daemon is left holding a pty nobody can reach.
 """
-import os, subprocess, time, signal, sys, pathlib
+import os, subprocess, time, signal, sys, pathlib, socket, struct, re
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LINGER = str(ROOT / '.lake/build/bin/linger')
@@ -99,6 +99,48 @@ time.sleep(1.0)
 fails += expect(len(daemon_pids('claim')) == 1,
                 'name is re-claimable after the owner exits (no stale lock)')
 subprocess.run([LINGER, 'kill', 'claim'], env=ENV)
+time.sleep(0.5)
+
+# ---- 3. a child that stops reading cannot grow the daemon ----------------
+# `sleep` never reads its stdin, so the pty master's input buffer fills and
+# `flushPty` stops draining; every `.input` frame after that would append
+# forever without the `ptyInCap` cap. Input goes in over a raw control
+# connection (no .attach), which `Session.onMsg .input` routes to `.writePty`.
+subprocess.run([LINGER, 'run', 'stall', 'sleep', '600'], env=ENV)
+time.sleep(1.0)
+sp = daemon_pids('stall')
+if sp:
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.connect(os.path.join(LDIR, 'stall.sock'))
+    frame = bytes([0]) + struct.pack('<I', 262144) + b'x' * 262144  # .input, max payload
+    for _ in range(64):                                             # 16 MiB, ~4x the cap
+        s.sendall(frame)
+    s.close()
+    # the daemon logs the cap once on the transition into backpressure; its
+    # stderr is an O_APPEND file, so give the write a moment to land. The
+    # reported pending count is the bounded-buffer property itself — a full
+    # buffer that stayed <= cap is exactly "the child could not grow us".
+    logf = pathlib.Path(LDIR) / 'logs' / 'stall.log'
+    m = None
+    for _ in range(20):
+        time.sleep(0.2)
+        try:
+            m = re.search(r'pty input buffer full \((\d+) B, cap (\d+)\)', logf.read_text())
+        except OSError:
+            m = None
+        if m:
+            break
+    log = logf.read_text() if logf.exists() else ''
+    fails += expect(m is not None, 'daemon reports the full input buffer')
+    fails += expect(m is None or int(m.group(1)) <= int(m.group(2)),
+                    f'pending stayed within the cap ({m and m.group(1)})')
+    fails += expect(log.count('pty input buffer full') == 1,
+                    'logged once on the edge, not per dropped chunk')
+    fails += expect(subprocess.run([LINGER, 'send', 'stall', 'echo x\n'], env=ENV).returncode == 0,
+                    'the stalled session is still reachable')
+    subprocess.run([LINGER, 'kill', 'stall'], env=ENV)
+else:
+    fails += expect(False, 'stall daemon started')
 
 print('FAILURES:', fails)
 sys.exit(1 if fails else 0)

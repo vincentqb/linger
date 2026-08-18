@@ -5470,3 +5470,63 @@ Core byte-identical; `./lake build Theorems Tests` + `./tests/e2e.sh` green, `ST
 
 **Item 5 is now complete with no height caveat.** Remaining for the spec: Step 5 (conformance
 profile into THEOREMS.md; archive `terminal-contract.md` + `grid-fidelity.md`).
+
+## ledger-cleanup notes — 2026-08-18 (runtime items: resume dims, .err, ptyIn cap)
+
+New spec `specs/ledger-cleanup.md` opened for the leftovers `restore-conformance.md` parked.
+Three runtime (IO) items landed together — they share Daemon.lean/Client.lean and the pty test
+harness, so one checkpoint.
+
+**Resume dims (ledger item 4).** `Daemon.serve` spawned the pty at a hardcoded `spawnPty 80 24`
+while the restored `Vt` kept the checkpoint's size — so `linger run`/`send`/`wait` on a
+checkpointed-but-not-live session handed the child 80×24 against a differently-sized screen,
+and (per the resume-dims recon) this also *defeated* the same-size-attach guard
+(`onMsg_attach_same_size_vt`) for any non-80×24 session, since the reattach then saw a size
+change and `Vt.resize` wiped the region/ruler — restore-conformance ledger item 1 re-entering
+by the back door. Fixed: `spawnPty (UInt32.ofNat (clampDim vt0.cols)) (UInt32.ofNat (clampDim
+vt0.rows))`. Clamp only the two syscall args, NOT `vt0` (a `Vt.resize` here is the very
+ledger-item-1 regression); `clampDim` also guards a corrupt/foreign checkpoint whose unclamped
+`cols ≥ 65536` would wrap to a 0-column tty in the shim's `(unsigned short)` cast
+(`Checkpoint.load` is total on arbitrary bytes and does not clamp). Test: `resume_test.py`
+resumes an 80×40→100×40 session with NO sizing attach (`run`, which never sends `.attach`) and
+reads the pty's own `TIOCGWINSZ` from a probe *script file* — `run`/`send` space-join argv and
+type it as keystrokes, so `sh -c '…'` loses its quoting (that cost me an hour: `echo HELLO`
+came back as `\n` because `sh -c echo HELLO` runs `echo` with `HELLO` as `$0`); a script file
+has nothing to lose. This host's `stty size` prints a mode dump and `tput` needs terminfo, so
+`TIOCGWINSZ` is the honest oracle. Probe-verified: fixed → `100 40`; broken (the original
+`spawnPty 80 24`) → `80 24`, which the `== ['100','40']` assertion rejects. The proof cannot
+see this (`Daemon` is IO) — the pty test is the only guard, and reverting line ~304 keeps
+`./lake build Theorems Tests` green while `resume_test.py` fails. That asymmetry is the point.
+
+**.err on attach (ledger item 6).** `Client.attach` returned `Option UInt32` (status / none)
+and its message loop dropped `.err` into the catch-all, so a `too many clients` refusal read as
+a clean detach (`Cli` printed `detached from '<name>'`). Replaced the return with an `Outcome`
+sum (`ended`/`detached`/`refused msg`) — the `Core.Listing.Row` idiom: each constructor carries
+exactly its case's facts, so no caller can render one as another. `.err`'s payload is rendered
+via `String.fromUTF8?` and **scrubbed** with `Remote.scrub` before hitting the raw terminal (our
+daemon's message, but the socket is not a trusted channel), printed `\r\n`-prefixed to match the
+raw-mode convention. Both call sites (`cmdAttach`, `watch`) updated to report the refusal
+(exit 1). No test yet drives a 17th client — noted for the TUI step's e2e pass.
+
+**ptyIn cap (ledger item 3).** `rt.ptyIn` was the one unbounded runtime buffer; a child that
+stops reading (its pty input buffer fills → `flushPty` breaks at EAGAIN → every `.input` frame
+appends forever). Added `ptyInCap := 4194304` (= `outbufCap`) and a named `queuePty` stage that
+drops the newest frame past the cap and logs the transition once (`ptyInFull` edge flag).
+Drop-newest, not disconnect: a `.writePty` carries no client id (produced by `.input` from any
+client AND by the mediator's own query replies — pinned literally by `Theorems/Session.lean`'s
+`step_ptyOut_effects`, so splitting the Effect vocabulary to attribute it is off the table), and
+dropping the newest is what a tty does under `IMAXBEL` — it cuts at a frame boundary the client
+already chose, so no UTF-8/escape is split. **Also fixed the twin latent bug the ptyIn recon
+and I both found independently**: `flushPty` AND `flushConn` reclaimed memory only on a *full*
+drain, so a partly-draining consumer grew the array without limit while `size - off` (what
+`outbufCap` measures) stayed small — the cap never tripped. Both now `extract off …` on a
+partial write, keeping `off = 0` outside the loop so pending and size agree. Test: `robust_test`
+case 3 — `run stall sleep 600`, flood 16 MiB of 256 KiB `.input` frames over a raw control
+socket, assert the log reports the cap once with `pending ≤ cap` (the bounded-buffer property
+itself, deterministic — RSS-after-flood is dominated by transient decode garbage and is a noisy
+oracle, so it is *not* asserted). Break-verified: reverting `queuePty` to the plain append makes
+the log line vanish and the three log assertions fail (build stays green).
+
+Constants live in `Daemon.lean` (Runtime), not Core — a Core constant would hit
+`tests/coverage.py`'s 21/21 cap (nothing in Core reads `ptyIn`). `THEOREMS.md` §Bound paragraph
+now names both caps and the compaction. No shim change (SHIM_CAP untouched).

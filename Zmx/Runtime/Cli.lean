@@ -102,12 +102,15 @@ def cmdAttach (hooks : Hooks) (name : String) (cmd : List String) : IO UInt32 :=
   | _ =>
     let fd ← connectUpsert hooks name cmd
     match ← Client.attach fd with
-    | some status =>
+    | .ended status =>
       IO.eprintln s!"\r\nlinger: session '{name}' ended (status {status})"
       return status &&& 0xFF
-    | none =>
+    | .detached =>
       IO.eprintln s!"\r\nlinger: detached from '{name}'"
       return 0
+    | .refused msg =>
+      IO.eprintln s!"\r\nlinger: {msg}"
+      return 1
 
 /-- Fetch a session's info key-values. -/
 partial def queryInfo (name : String) : IO (Option (List (String × String))) := do
@@ -325,9 +328,13 @@ def main (hooks : Hooks) (args : List String) : IO UInt32 := do
       IO.eprintln s!"linger: no session '{name}'"
       return 1
     | some fd =>
-      let _ ← Client.attach fd true
-      IO.eprintln s!"\r\nlinger: stopped watching '{name}'"
-      return 0
+      match ← Client.attach fd true with
+      | .refused msg =>
+        IO.eprintln s!"\r\nlinger: {msg}"
+        return 1
+      | _ =>
+        IO.eprintln s!"\r\nlinger: stopped watching '{name}'"
+        return 0
   | "run" :: name :: cmd | "r" :: name :: cmd =>
     if cmd.isEmpty then
       IO.eprintln "usage: linger run <name> <command...>"

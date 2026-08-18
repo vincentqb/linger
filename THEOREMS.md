@@ -521,9 +521,13 @@ terminals; see the note under `## What these theorems do not settle`.)
   suites in `tests/`, not on proof. The pure/impure line is the
   `Zmx/Core` boundary, enforced by `tests/e2e.sh`.
 * **§Bound bounds our buffers, not the OS's.** A peer that never reads
-  eventually fills the kernel socket buffer; the runtime caps its own
-  per-client queue at 4 MiB and disconnects rather than grow. That cap
-  lives in `Zmx/Runtime/Daemon.lean` and is not proved.
+  eventually fills the kernel socket buffer; the runtime caps *both* of its own
+  byte buffers at 4 MiB rather than grow — the per-client output queue
+  (`outbufCap`, disconnect the slow client) and the pty input buffer
+  (`ptyInCap`, drop the newest input, as a tty's own input buffer does when the
+  child stops reading). Both compact written bytes on every flush, so a
+  slow-but-not-stopped consumer cannot grow them either. These caps live in
+  `Zmx/Runtime/Daemon.lean` and are not proved (the runtime is `IO`).
 * **Grid dimensions are invariant by theorem now** (`dims_feed`,
   Theorems/Vt.lean): no byte stream changes `cols`/`rows`. `RIS`
   re-derives them through `clampDim`, which is the identity exactly when

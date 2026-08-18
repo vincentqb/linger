@@ -1,6 +1,7 @@
 import Zmx.Posix
 import Zmx.Core.Wire
 import Zmx.Core.Render
+import Zmx.Core.Remote
 import Zmx.Runtime.Paths
 /-! # Zmx.Runtime.Client — attach and one-shot conversations
 
@@ -94,11 +95,29 @@ def splitDetach (bs : ByteArray) (enabled : Bool) : ByteArray × Bool :=
     | none => (bs, false)
     | some i => (ByteArray.mk (bs.toList.take i).toArray, true)
 
+/-- How an interactive attach ended.
+
+**A sum type rather than an `Option UInt32`**, for the reason
+`Core.Listing.Row` gives: each constructor carries exactly the facts its case
+has, so no caller can report one case as another. The `Option` could not say
+"refused" — a daemon that answers `.err` (a `too many clients` roster refusal)
+closed the connection immediately after, so the loop saw a clean EOF and
+returned `none`, and `Cli` printed `detached from '<name>'` for an attach that
+never happened. The refusal message was dropped on the floor: only
+`drainReplies` (the one-shot path) ever printed `.err`. -/
+inductive Outcome where
+  /-- The session's child exited with this status. -/
+  | ended (status : UInt32)
+  /-- We left; the session lives on. -/
+  | detached
+  /-- The daemon refused the attach and said why. -/
+  | refused (msg : String)
+  deriving Repr, Inhabited
+
 /-- Interactive attach. `readOnly` attaches as a 0×0 observer: output
 mirrors, keyboard is not forwarded (abduco's `-r`), detach key still
-works. Returns the child's exit status when the session ended, none
-when we detached. -/
-partial def attach (fd : UInt32) (readOnly : Bool := false) : IO (Option UInt32) := do
+works. -/
+partial def attach (fd : UInt32) (readOnly : Bool := false) : IO Outcome := do
   let detachEnabled := (← IO.getEnv "LINGER_NO_DETACH_KEY").isNone
   let (cols, rows) ← winsizeGet stdinFd
   if readOnly then
@@ -108,7 +127,7 @@ partial def attach (fd : UInt32) (readOnly : Bool := false) : IO (Option UInt32)
   let saved ← termRaw stdinFd
   let mut lastSize := (cols, rows)
   let mut dec : Decoder := {}
-  let mut result : Option UInt32 := none
+  let mut result : Outcome := .detached
   let mut leaving := false
   try
     while !leaving do
@@ -143,7 +162,16 @@ partial def attach (fd : UInt32) (readOnly : Bool := false) : IO (Option UInt32)
               match m with
               | .output payload => writeAll stdoutFd (ByteArray.mk payload.toArray)
               | .exited status =>
-                result := some status
+                result := .ended status
+                leaving := true
+              | .err msg =>
+                -- a roster refusal ("too many clients") or other daemon error:
+                -- carry the message out so `Cli` reports the refusal instead of
+                -- a phantom detach. Scrubbed like any byte stream reaching a
+                -- terminal — the message is our daemon's, but the socket is not
+                -- a trusted channel. The daemon closes right after, so leaving.
+                result := .refused (Zmx.Core.Remote.scrub
+                  (String.fromUTF8? (ByteArray.mk msg.toArray) |>.getD "refused"))
                 leaving := true
               | _ => pure ()
   finally

@@ -98,5 +98,54 @@ hist = subprocess.run([LINGER, 'history', 'corrupt'], env=ENV, capture_output=Tr
 fails += expect('fresh-start-ok' in hist, 'corrupt checkpoint: daemon starts fresh, no crash')
 subprocess.run([LINGER, 'kill', 'corrupt'], env=ENV)
 
+# ── the resumed pty is born at the CHECKPOINT's size, not a fixed 80x24 ──────
+# Measured with NO sizing attach: `run` sends only `.input`, never `.attach`,
+# so nothing reconciles the pty with the restored Vt. With an attach the
+# assertion passes either way (`.resizePty` fixes the winsize in milliseconds),
+# which is the version of this test that cannot fail.
+def spawn_attach_sized(name, cols, rows):
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.execve(LINGER, [LINGER, 'attach', name], ENV)
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', rows, cols, 0, 0))
+    return pid, fd
+
+pidg, fdg = spawn_attach_sized('geom', 100, 40)
+time.sleep(0.8)
+os.write(fdg, b'echo geom-ready\r')
+drain(fdg, 1.2)
+os.write(fdg, b'\x1c')                     # last detach -> checkpoint at 100x40
+time.sleep(0.8)
+os.close(fdg)
+try: os.waitpid(pidg, 0)
+except OSError: pass
+gpid = None
+for c in subprocess.run(['pgrep', '-f', '__daemon geom'], capture_output=True,
+                        text=True).stdout.split():
+    try:
+        if f'LINGER_DIR={LDIR}' in open(f'/proc/{c}/environ','rb').read().decode(errors='replace'):
+            gpid = int(c); break
+    except OSError: pass
+if gpid is not None:
+    os.kill(gpid, signal.SIGKILL); time.sleep(0.3)   # simulated reboot
+for f in os.listdir(LDIR):
+    if f == 'geom.sock': os.unlink(os.path.join(LDIR, f))
+SIZE = os.path.join(LDIR, 'geom.size')
+# `run` types its argv (space-joined) as keystrokes into the resumed shell, so a
+# quoted `sh -c '...'` would lose its quoting; run a probe *script file* instead.
+# It reads the pty's own winsize via TIOCGWINSZ (this host's `stty size` prints a
+# mode dump, and `tput` needs terminfo) and writes "cols rows".
+PROBE = os.path.join(LDIR, 'probe.sh')
+with open(PROBE, 'w') as f:
+    f.write("python3 -c \"import fcntl,termios,struct;"
+            "w=struct.unpack('HHHH',fcntl.ioctl(0,termios.TIOCGWINSZ,bytes(8)));"
+            f"open('{SIZE}','w').write('%d %d'%(w[1],w[0]))\"\n")
+subprocess.run([LINGER, 'run', 'geom', 'sh', PROBE], env=ENV, timeout=15)
+time.sleep(1.5)
+got = open(SIZE).read().split() if os.path.exists(SIZE) else []
+fails += expect(got == ['100', '40'],
+                f'resumed pty is born at the checkpoint size, not 80x24 ({got})')
+subprocess.run([LINGER, 'kill', 'geom'], env=ENV)
+
 print('FAILURES:', fails)
 sys.exit(1 if fails else 0)
