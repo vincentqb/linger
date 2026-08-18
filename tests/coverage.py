@@ -105,7 +105,8 @@ def theorem_statements() -> str:
     proof. Continuation lines are indented, which is what bounds the scan.
     """
     chunks = []
-    for f in sorted((ROOT / "Theorems").glob("*.lean")):
+    # rglob, not glob: the Render ladder lives in `Theorems/Render/*.lean`
+    for f in sorted((ROOT / "Theorems").rglob("*.lean")):
         src = strip_comments(f.read_text())
         for m in re.finditer(
                 r"\n(?:private )?theorem\s+([A-Za-z0-9_.']+)"
