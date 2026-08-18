@@ -56,8 +56,9 @@ ROOT = Path(__file__).resolve().parent.parent
 #
 # `rowSlot` (the row painter's per-cell fold body) was briefly at 22 while its claim
 # was pending; `rowAnsi_writes_row` and the `rowSlot_eq_*` equations now name it, so
-# it is back to 21.
-STATEMENT_CAP = 21
+# it is back to 21. Down to 20 with `size_defaultTabs`, which `restore_tabs_any` needs
+# as its ruler-length witness — the ratchet tightens when a claim lands, so it does.
+STATEMENT_CAP = 20
 
 # ── Check 2 ────────────────────────────────────────────────────────────────────
 # Every byte stream the runtime emits, and what backs it. `theorem` entries must
@@ -65,9 +66,10 @@ STATEMENT_CAP = 21
 # reason and are the honest alternative to a silent hole.
 EMITTERS = {
     "restore": ("theorem", "restore_grounds / restore_u8_zero / restore_modes_any / "
-                           "restore_pen_any / restore_sticky_any / restore_cursor_any — "
-                           "receiver-quantified for the parser, the decoder, and every "
-                           "restored field but the screen cells"),
+                           "restore_pen_any / restore_sticky_any / restore_cursor_any / "
+                           "restore_grid_any / restore_tabs_any — receiver-quantified for "
+                           "the parser, the decoder, the screen cells, the tab ruler and "
+                           "every restored field but the title and the DECSC slot"),
     "leaveAnsi": ("theorem", "leave_canonical / leave_canonical_all — parser, modes, "
                              "region, charsets, screen and pen, for any receiver"),
     "utf8s": ("theorem", "utf8s_no_ctl / utf8s_no_esc / utf8s_no_esc_bel / "

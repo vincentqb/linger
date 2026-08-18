@@ -5579,3 +5579,85 @@ e2e: `overview_test` now touches a checkpoint named `ev\x1b[31mil\tfake.ckpt` an
 **Follow-up (security, not visuals):** the `-r` host string still flows into `ssh` argv
 unvalidated (`resolveRemotes`); the display is now safe but a host with a control byte or shell
 metacharacter is a separate concern for `Remote.checkHosts`. Parked, not done.
+
+## ledger-cleanup notes — 2026-08-18 (restore_tabs_any — the tab ruler, proved)
+
+`restore_tabs_any` / `restore_tabs_reachable` / `resume_tabs` are green: for any receiver of
+the session's width, `(w.feed (restore v)).tabs = v.tabs`, array for array. The last restored
+field on the fixtures-only list except the title and the DECSC slot.
+
+**The elegance win, and it was the whole story.** `Keeps` (grid), `MMap id` (modes) and a tabs
+family are the *same* predicate three times with a different field in the hole. Rather than
+hand-roll a fourth copy (~25 lemmas, which is what the recon plan budgeted), I lifted the
+plumbing once: `Fixes π bs` — "from ground, this stream returns to ground with nothing
+half-decoded and leaves `π` alone" — with `nil`/`append`/`streamPred` and the generic CSI/OSC
+walks (`fixes_csi_seq`, `fixes_csi_priv_seq`, `fixes_csiNum`, `fixes_csiNum2`, `fixes_csiPriv`,
+`fixes_sgrOf`, `fixes_penSgr`, `fixes_osc`), each taking the π-fact for its own dispatch.
+`csi_tail_proj` already did the hard walk generically, so `fixes_csi_seq` is six lines.
+`keeps_eq_fixes : Keeps bs ↔ Fixes (·.grid) bs := Iff.rfl` records the duplication in the file;
+collapsing `Keeps`/`MMap id` onto it is a mechanical re-point of ~30 call sites, deliberately
+NOT done because those call sites carry the A1/A5 grid claims. The next field costs almost
+nothing now.
+
+Where I did NOT generalize, and why: `escSeq`/`escCharset`/`SO` are eight lines of case
+analysis each whose only field-dependent step is one `rfl`, and **the byte sets differ per
+field** — `ESC H` (HTS) writes the ruler but no cell, so `keeps_escSeq` admits `0x48` and
+`fixes_tabs_escSeq` must not. Copying that byte list verbatim would have given a *false*
+lemma; this is the §5 hazard the recon flagged and it is real. Generalizing there would have
+meant three extra hypotheses per lemma to say "and this byte is safe for π".
+
+**Two places the ruler's claim is genuinely simpler than the grid's**, both worth knowing:
+1. `tabs_setMode` is **unconditional** for every mode number (`setMode`'s only non-`modes`
+   arms are `enterAlt`/`leaveAlt`/`moveTo`/the DECSC slot, none of which writes `tabs`). So
+   `fixes_tabs_modesAnsi` needs no allowlist and **no digit bridge** — contrast
+   `keeps_modeSet`, which must exclude 47/1047/1049 because they swap the grid, and therefore
+   needs `csi_digits_value` to identify the emitted number with the parsed one.
+2. `tbc3_clears` asks only `pstate = .ground` of the receiver — **no `u8need = 0`**. The
+   leading `ESC` of `CSI 3 g` aborts a half-decoded character itself
+   (`step_esc_of_abort` + `feed_esc_of_abort` + `un_abortUtf8_esc`), and nothing about the
+   ruler rides on the bytes it discards. That is the same argument `SMap` makes for the sticky
+   bundle, and it is what keeps this claim free of the `paint_entry`/`U8Ok` apparatus the grid
+   needs: the paint ends in glyph bytes, so `u8need = 0` right after it is expensive — and
+   here it simply is not required.
+
+The core: `tbc3_feed_eq` (TBC 3 as a state equation, `cha_feed_eq`'s shape with final `0x67`
+and `arg 0 0 = 3`), `hts_feed_eq` (ESC H as a state equation), `hts_run` (the fold), and
+`tabs_rebuilt` (clear-then-set reproduces the ruler, `Array.ext` size-and-pointwise, the
+`grid_eq_of_cells` route). `hts_run`'s invariant carries `ground`, a quiesced decoder, `cols`
+and the ruler — the **cursor is not carried**, because `CHA` establishes it and `HTS` consumes
+it inside one iteration. That is why this is much simpler than `Matches`, which has to tie
+cursor and grid *across* iterations.
+
+Hypotheses, and why each: `Good w` (for `dims_feed` — the paint contains `0x63`, so
+`dims_feed_ne_ris` does not apply), `w.cols = v.cols` (TBC 3 writes `replicate (receiver's
+cols)`), `v.cols < 65535` (the largest emitted `CHA` parameter is `cols`, off the parser's
+clamp — note **not** `< 65533`, which is `rowSlot`'s `x + 3` bound and irrelevant here), and
+`v.tabs.size = v.cols`, which `Good`/`Renderable` do **not** carry: a longer ruler could hold a
+stop no `range cols` walk emits. Proving `tabs.size = cols` a reachability invariant is a
+`tabs_*` frame family of its own — worth doing, not needed here (recon's F2, deliberately not
+attempted). Non-vacuity: instantiated at `Vt.init 80 24`, with `size_defaultTabs` as the
+`hvtabs` witness — which also claims one more core def, so `STATEMENT_CAP` **tightens 21 → 20**.
+
+Gotchas: `min (min 3 65535) 65535 = 3` with *literals* is already reduced, so `cha_feed_eq`'s
+`rw [show … from by omega]` trick does not transfer — use `simp [hpar, hcur']`. A `match` on a
+literal needs an explicit `rfl` after `rw [harg]` (`rw`'s auto-rfl does not fire). `Array.getD`
++ `dif_pos` leaves `getInternal`, so use `getD_lt'`. `Bool.eq_false_or_eq_true` yields
+`= true ∨ = false` (that order). Destructuring `Fixes π` leaves a **beta-redex** where the goal
+has the field applied — `dsimp only at h` lines them up; that friction is inherent to
+parameterising by a function and is the same thing `MMap`'s users pay with `id_eq`.
+`frame_moveTo`/`frame_enterAlt`/`frame_leaveAlt` are **looping** simp lemmas (they rewrite
+`v.moveTo x y` into a record containing it), so `tabs_setMode` needs the *projection* lemmas
+`tabs_moveTo`/`tabs_enterAlt`/`tabs_leaveAlt` first — exactly what `dims_setMode` does.
+
+Break-verify, two of them, and the second is the one that matters:
+* **Emitter-side, shape:** `csiNum (i+1) 0x47 → csiNum i 0x47` in `tabsAnsi` (the off-by-one),
+  and separately dropping `escSeq 0x48` entirely. Both fail `restore_tabs_split` (9791) plus
+  the four pre-existing stream lemmas over `tabsAnsi` (`ends_`/`quiet_`/`keeps_`/`smap_id_`).
+  Legitimate, but these are *shape* catches — the split equation is syntactic.
+* **Emulator-side, semantic (the sharp one):** `HTS` sets the stop at `cursor.x + 1` instead of
+  `cursor.x` in `Zmx/Core/Vt.lean`. `tabsAnsi`'s shape is untouched, so `restore_tabs_split`
+  still holds and **nothing pre-existing notices** — the single failure is `hts_feed_eq`
+  (9731), i.e. the new ladder is the only thing in the repo that can catch a wrong tab column.
+  That is the demonstration that the ruler claim does real work.
+Reverted both; `Zmx/Core/*` byte-identical; `./lake build Theorems Tests` green and
+warning-free, `./tests/e2e.sh` green, coverage 20/20.

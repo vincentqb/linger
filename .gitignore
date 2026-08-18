@@ -4,3 +4,4 @@ build/
 *.olean
 
 semantic-review/
+__pycache__/

@@ -8,10 +8,14 @@ cosmetic display gap recorded under its ledger item 2)
 
 ## Where this stands — read this first
 
-**Next step:** Step 1 (`restore_tabs_any`, the proof — recon plan in hand). Then this spec is
-done bar the parked ssh-argv host validation (a security follow-up, not a visual).
+**Next step:** nothing required. All five items are done; what remains is the parked ssh-argv
+host validation (a security follow-up, not a visual) and, optionally, proving
+`tabs.size = cols` a reachability invariant so `restore_tabs_any`'s `hvtabs` hypothesis could
+be discharged rather than assumed (a `tabs_*` frame family, recon's "F2").
 
-**Done (2026-08-18):** items 2 (`ptyIn` cap + the twin `flushConn`/`flushPty` partial-drain
+**Done (2026-08-18):** item 1 (`restore_tabs_any` / `restore_tabs_reachable` / `resume_tabs`,
+on the generic `Fixes π` stream-predicate layer — see SCRATCHPAD for why that replaced a fourth
+hand-rolled copy of `Keeps`; `STATEMENT_CAP` tightened 21 → 20), items 2 (`ptyIn` cap + the twin `flushConn`/`flushPty` partial-drain
 compaction), 3 (resume at the checkpoint's dimensions, `clampDim`-guarded), 4 (`.err` on the
 attach path via an `Outcome` sum), and 5 (the human listing rendered in the pure core —
 `Listing.humanRow`/`humanListing` through `utf8s`, `humanRow_printable`/`humanListing_printable`

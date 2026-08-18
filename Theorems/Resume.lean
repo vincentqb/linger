@@ -135,6 +135,23 @@ example : ∃ c : Ckpt, c.vt.pstate = .ground ∧ c.vt.u8need = 0 ∧ c.vt.u8acc
   ⟨{ vt := Vt.Vt.init 80 24, cwd := "", labels := [] },
    rfl, rfl, rfl, Vt.good_init 80 24, Vt.renderable_init 80 24⟩
 
+/-- **§Resume (tab ruler).** A quiescent checkpoint comes back byte-identical, and
+replaying it into a fresh emulator of the session's width installs the session's tab
+ruler. `hvtabs` is the ruler-length hypothesis `Render.restore_tabs_any` explains:
+`Good`/`Renderable` do not carry it, and `Checkpoint.load` is total on arbitrary
+bytes, so it is asked for rather than assumed. -/
+theorem resume_tabs (c : Ckpt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0)
+    (ha : c.vt.u8acc = 0) (hgood : Vt.Good c.vt) (hvtabs : c.vt.tabs.size = c.vt.cols) :
+    load (save c) = some c
+      ∧ ((Vt.Vt.init c.vt.cols c.vt.rows).feed (Render.restore c.vt)).tabs = c.vt.tabs := by
+  refine ⟨Checkpoint.load_save_exact c h h8 ha, ?_⟩
+  have hcolseq : (Vt.Vt.init c.vt.cols c.vt.rows).cols = c.vt.cols := by
+    show Vt.clampDim c.vt.cols = c.vt.cols
+    have := hgood.colsPos; have := hgood.colsLe; simp only [Vt.clampDim]; omega
+  exact Render.restore_tabs_any c.vt (Vt.Vt.init c.vt.cols c.vt.rows)
+    (Vt.good_init _ _) hcolseq
+    (Nat.lt_of_le_of_lt hgood.colsLe (by decide)) hvtabs
+
 /-- Non-vacuity at the degenerate height: `resume_grid` genuinely covers a **one-row** screen,
 the case `h2 : 0 < rows - 1` used to exclude — the grid of an 80×1 session is reproduced. -/
 example : ((Vt.Vt.init 80 1).feed (Render.restore (Vt.Vt.init 80 1))).grid = (Vt.Vt.init 80 1).grid :=
