@@ -8871,3 +8871,33 @@ theorem modeSet_feed_eq (n : Nat) (on : Bool) (hn : 0 < n) (hlt : n < 65535)
     show ({ (({ v with pstate := .csi s' } : Vt)).setMode true n true with pstate := .ground } : Vt)
       = { v.setMode true n true with pstate := .ground }
     rw [setMode_pstate v (.csi s') true n true]
+
+/-- **The alt switch establishes the second paint's entry state by itself.** `enterAlt`
+replaces the grid with a fresh blank of the receiver's shape, homes the cursor and resets the
+region — so nothing has to be inherited across the main paint. The `altGrid = none`
+hypothesis is what makes the switch fire, and the prologue's `?1049l` is what supplies it. -/
+theorem alt_switch_entry {u : Vt} (halt : u.altGrid = none)
+    (hg : u.pstate = .ground) (hun : u.u8need = 0) :
+    let z := u.feed (csiPriv 1049 0x68)
+    z.cols = u.cols ∧ z.rows = u.rows ∧ z.top = 0 ∧ z.bot = u.rows - 1
+      ∧ z.pstate = .ground ∧ z.u8need = u.u8need ∧ z.u8acc = u.u8acc
+      ∧ z.modes = u.modes ∧ z.g0Line = u.g0Line ∧ z.g1Line = u.g1Line
+      ∧ z.grid = Array.replicate u.rows (blankRow u.cols {})
+      ∧ z.cursor.x = 0 ∧ z.cursor.y = 0 ∧ z.cursor.pending = false := by
+  intro z
+  have heq : z = { u.enterAlt true with pstate := .ground } := by
+    show u.feed (csiPriv 1049 0x68) = _
+    rw [show csiPriv 1049 0x68 = modeSet 1049 true from rfl,
+      modeSet_feed_eq 1049 true (by decide) (by decide) hg hun,
+      show u.setMode true 1049 true = u.enterAlt true from rfl]
+  have hent : u.enterAlt true
+      = { u with altGrid := some (u.grid, u.cursor, u.pen),
+                 grid := Array.replicate u.rows (blankRow u.cols {}),
+                 cursor := {}, saved := { cur := u.cursor, pen := u.pen },
+                 top := 0, bot := u.rows - 1 } := by
+    unfold Vt.enterAlt
+    dsimp only
+    rw [if_neg (show ¬(u.altGrid.isSome = true) from by rw [halt]; simp), if_pos rfl]
+  rw [heq, hent]
+  exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
