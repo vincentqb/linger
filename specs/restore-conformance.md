@@ -1,7 +1,7 @@
 # restore-conformance — restore works into any client, and the proofs say so
 
 Status: active
-Updated: 2026-08-17
+Updated: 2026-08-18
 Predecessor: `specs/terminal-contract.md` (Steps 1–3 complete; its Step 4 is carried
 here in a different shape, and its Step 5 archival gate is carried unchanged)
 
@@ -70,10 +70,10 @@ emulator-side (`printMark`, `setCol`).
 `restore_sticky_any`'s row bound — `CHA` clamps its parameter to 65535, so the emitted column
 must stay under it; the ≤1000 dim clamp supplies it downstream.
 
-**Definition-of-done items 4 (mostly done — `rowAnsi_writes_row` landed, the grid walk
-remains) and 5 are all that remain.** Items 1, 2, 2b and 3 are done — three restated on
-contact, recorded in each — and item 6 (gates green, every theorem break-verified) is
-standing. `restore_tabs_any` is an optional warm-up, not on the critical path.
+**Item 4 is done; item 5 is done for the main screen and open for the alt screen.** Items 1,
+2, 2b and 3 are done — three restated on contact, recorded in each — and item 6 (gates green,
+every theorem break-verified) is standing. `restore_tabs_any` is an optional warm-up, not on
+the critical path.
 
 **Done:** Step 0 — two bugs fixed. **Step 1 is complete**: A5 is proved at the
 value level in both directions for the modes, the pen and the sticky bundle
@@ -107,7 +107,8 @@ condition — an `ESC` clears a half-decoded character and nothing sticky rides 
 it, which is what lets the *repaint* be a chunk).
 
 Step 2 — **done** (`restore_grounds` + `restore_u8_zero`, composed as
-`restore_quiesced_any` / `resume_quiesced_any`). Steps 3–5 — not started.
+`restore_quiesced_any` / `resume_quiesced_any`). Step 3 — **done**. Step 4 — the paint and the
+main-screen claim **done**, alt screen open. Step 5 — not started.
 
 **Two long-range dependencies are now visible in the theorems rather than left to
 inspection.** `charsetAnsi` is set-only for the shift state and `regionAnsi` emits
