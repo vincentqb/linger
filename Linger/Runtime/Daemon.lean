@@ -283,7 +283,15 @@ def serve (name : String) (cwd : String) (argv : List String)
     if r ≥ 0 then
       close r.toUInt64.toUInt32
       throw (IO.userError s!"session '{name}' already running")
-    else if r == -111 then  -- ECONNREFUSED: stale socket, ours to replace
+    else
+      -- Nothing answered, so whatever is at the path is ours to replace.
+      -- This used to test `r == -111` for ECONNREFUSED, which is glibc's
+      -- number: on macOS it is 61, the branch never fired, and the bind
+      -- below failed EADDRINUSE for every daemon replacing a stale socket
+      -- (the name-ownership race test caught it). No errno needs
+      -- distinguishing here — we hold the name lock, so no live daemon owns
+      -- this path, and ENOENT just makes the removal a no-op. Same reading
+      -- as `cmdList`, which treats any failed connect as a stale file.
       try IO.FS.removeFile sockPath catch _ => pure ()
   let listenFd ← unixListen sockPath
   setNonblock listenFd

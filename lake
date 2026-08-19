@@ -1,16 +1,26 @@
 #!/bin/sh
 # Wrapper: run `./lake ...` instead of `lake ...` on this box.
 #
-# Host is AL2 with glibc 2.26. The v4.32.0 toolchain's bundled clang needs
+# On the AL2 host (glibc 2.26) the v4.32.0 toolchain's bundled clang needs
 # glibc >= 2.27 and dies with "GLIBC_2.29 not found", so C compilation goes
 # through Homebrew clang; linking then needs the toolchain's own lib dirs
 # on LIBRARY_PATH (-lgmp -luv -lc++abi). Lean elaboration is unaffected --
 # without this the build looks 90% green and dies in the C backend.
 # (Recipe proven in ~/lean-tmux/env/lean_env.sh.)
-export PATH="/home/linuxbrew/.linuxbrew/bin:$HOME/.elan/bin:$PATH"
-export LEAN_CC=clang
-# The toolchain's llvm-ar is also glibc-blocked; system binutils ar works.
-export LEAN_AR=/usr/bin/ar
-_TC="$HOME/.elan/toolchains/leanprover--lean4---v4.32.0"
-export LIBRARY_PATH="${_TC}/lib:${_TC}/lib/lean${LIBRARY_PATH:+:$LIBRARY_PATH}"
+#
+# None of that applies on macOS, and applying it *breaks* the build: the
+# toolchain there is a mac toolchain, so its clang and llvm-ar are the
+# right ones, and /usr/bin/ar is Apple's ar, which cannot read the @rsp
+# response file lake hands it (liblingershim.a: "No such file or
+# directory"). So the overrides are Linux-only and this is a pass-through
+# on Darwin -- `./lake build` stays the one command either way.
+export PATH="$HOME/.elan/bin:$PATH"
+if [ "$(uname -s)" = Linux ]; then
+  export PATH="/home/linuxbrew/.linuxbrew/bin:$PATH"
+  export LEAN_CC=clang
+  # The toolchain's llvm-ar is also glibc-blocked; system binutils ar works.
+  export LEAN_AR=/usr/bin/ar
+  _TC="$HOME/.elan/toolchains/leanprover--lean4---v4.32.0"
+  export LIBRARY_PATH="${_TC}/lib:${_TC}/lib/lean${LIBRARY_PATH:+:$LIBRARY_PATH}"
+fi
 exec lake "$@"

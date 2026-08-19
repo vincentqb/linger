@@ -8,6 +8,7 @@
      daemon is left holding a pty nobody can reach.
 """
 import os, subprocess, time, signal, sys, pathlib, socket, struct, re
+from procs import daemon_pids as _daemon_pids
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 LINGER = str(ROOT / '.lake/build/bin/linger')
@@ -20,17 +21,7 @@ def expect(cond, name):
     return 0 if cond else 1
 
 def daemon_pids(name):
-    out = subprocess.run(['pgrep', '-f', f'__daemon {name}'],
-                         capture_output=True, text=True).stdout.split()
-    mine = []
-    for c in out:
-        try:
-            env = open(f'/proc/{c}/environ', 'rb').read().decode(errors='replace')
-            if f'LINGER_DIR={LDIR}' in env:
-                mine.append(int(c))
-        except OSError:
-            pass
-    return mine
+    return _daemon_pids(name, LDIR)
 
 def children_of(pids):
     ps = subprocess.run(['ps', '-eo', 'pid,ppid,args'], capture_output=True,
@@ -107,13 +98,21 @@ time.sleep(0.5)
 # `flushPty` stops draining; every `.input` frame after that would append
 # forever without the `ptyInCap` cap. Input goes in over a raw control
 # connection (no .attach), which `Session.onMsg .input` routes to `.writePty`.
+#
+# The payload is newline-terminated lines, not one long run of 'x', and that
+# is load-bearing on macOS: measured 2026-08-19, a nonblocking write of an
+# unterminated blob to a pty master whose slave is not reading *succeeds*
+# forever (98 MB in 3 s) because the BSD tty layer discards an over-long
+# canonical line instead of pushing back, so `ptyIn` never grew and the cap
+# never tripped. With lines it is EAGAIN after ~1 KB, as on Linux.
 subprocess.run([LINGER, 'run', 'stall', 'sleep', '600'], env=ENV)
 time.sleep(1.0)
 sp = daemon_pids('stall')
 if sp:
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     s.connect(os.path.join(LDIR, 'stall.sock'))
-    frame = bytes([0]) + struct.pack('<I', 262144) + b'x' * 262144  # .input, max payload
+    payload = (b'x' * 63 + b'\n') * 4096                            # 262144 B
+    frame = bytes([0]) + struct.pack('<I', len(payload)) + payload  # .input, max payload
     for _ in range(64):                                             # 16 MiB, ~4x the cap
         s.sendall(frame)
     s.close()

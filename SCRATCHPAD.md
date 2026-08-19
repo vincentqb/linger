@@ -6163,3 +6163,80 @@ and the refusal fixture (`Tests/Checkpoint.lean:71,87`).
 Remote moved to `github.com/vincentqb/linger` (the old `lean-zmx` URL redirects). `git ls-remote`
 resolves; its HEAD is `3ea04e5`, so local is **8 commits ahead** and nothing has been pushed —
 that is the user's call, not mine.
+
+## macOS port: four Linux assumptions the build hid, and one the gate hid — 2026-08-19
+
+The tree moved to a darwin host (25.5, Apple clang, `/Users/quennv/lean-zmx`). `lake build` died
+in the C backend on `SOCK_CLOEXEC`/`accept4`; fixing that exposed three more Linux assumptions,
+two of which **compiled fine and were wrong at runtime** — the interesting kind.
+
+* **`SOCK_CLOEXEC` / `accept4` (compile error, honest).** Both are Linux/FreeBSD extensions. Now
+  `unix_socket_cloexec` / `accept_cloexec`, static helpers that take the atomic form where it
+  exists and `fcntl(FD_CLOEXEC)` after the fact where it does not. The non-atomic window only
+  leaks an fd if another thread forks inside it; the only fork here is `linger_spawn` from the
+  same single-threaded Lean runtime, so the fallback is safe *here* without being safe in
+  general — worth writing down, because that argument is what makes it acceptable. No new
+  `LEAN_EXPORT`, so `SHIM_CAP` (27) is untouched.
+* **`./lake`'s glibc workaround is Linux-only and *harmful* on macOS.** `LEAN_AR=/usr/bin/ar`
+  points at Apple's ar, which cannot read the `@…rsp` response file lake hands it:
+  `liblingershim.a: No such file or directory`. The mac toolchain's own clang and llvm-ar are
+  fine. The wrapper now branches on `uname -s`, so `./lake build` stays the one command on both
+  hosts (AGENTS.md's rule survives unchanged — the *reason* for it is just host-specific).
+* **`linger_getcwd_of` read `/proc/<pid>/cwd` and silently returned `""` on macOS** — the failure
+  mode was not a crash but a wrong session: `saveCkpt` falls back to `start_dir`, so
+  reboot-resume reopened where the session was *created*, not where the user had `cd`'d.
+  `resume_test`'s "fresh shell starts in the saved cwd" caught it. Replaced under `#ifdef
+  __APPLE__` with libproc `proc_pidinfo(PROC_PIDVNODEPATHINFO)`, measured working for a
+  same-uid process (the session shell is the daemon's child); it reports the resolved vnode path
+  (`/private/tmp` for `/tmp`), which `chdir` accepts, so the caller is unaffected.
+* **`Daemon.serve` tested `r == -111` for ECONNREFUSED.** That is glibc's number; macOS uses 61,
+  so the stale-socket branch never fired and every daemon replacing a stale socket died on
+  `bind: Address already in use (errno 48)` — eight of them at once in `robust_test`'s
+  name-ownership race. Fixed by deleting the errno comparison rather than adding a platform
+  table: we already hold the name lock at that point, so *any* failed connect means the path is
+  ours to replace, and `ENOENT` makes the removal a no-op. Same reading `cmdList` already used.
+  A raw errno constant in Lean is now a smell — the shim returns `-errno` and only the shim
+  knows the numbers.
+
+**The gate's own Linux assumption:** `resume_test` and `robust_test` found their daemon with
+`pgrep -f '__daemon <name>'` filtered by `/proc/<pid>/environ` for `LINGER_DIR`. The filter is not
+decoration — without it a test SIGKILLs whatever session of that name the developer has open.
+macOS has no `/proc`, and `ps -Eww -p <pid>` prints the command with **no environment at all**
+(measured, same uid), so there is nothing to read. New `tests/procs.py` keeps `/proc` where it
+exists and otherwise asks about open files: the daemon holds the name flock on
+`<ldir>/<name>.lock` and the bound `<ldir>/<name>.sock` for its whole life, so `lsof -nP -p`
+names our dir iff the daemon is ours. Both spellings of the dir are accepted — lsof reports the
+lock as `/private/tmp/…` while the socket says `/tmp/…`.
+Break-verified the filter can say *no*: daemon in `LDIR` → `[pid]`, same call with a foreign dir →
+`[]`. A fallback that always answered yes would pass every assertion in both tests and kill
+strangers.
+
+**Measured tty fact, and the one test payload that had to change.** `robust_test` part 3 needs a
+child that stops reading to push back on the daemon. On macOS a nonblocking write of an
+unterminated 256 KiB blob to a pty master whose slave never reads **succeeds forever** — 98 MB in
+3 s — because the BSD tty layer *discards* an over-long canonical line instead of applying
+backpressure. So `flushPty` always drained, `ptyIn` never grew, `ptyInCap` never tripped and the
+"buffer full" line never logged: the test was asserting a condition it had failed to create. With
+newline-terminated lines the same write gets `EAGAIN` after ~1022 B (canonical line queue), as on
+Linux where either shape fills the 4 KB queue. Payload is now `(b'x'*63 + b'\n')*4096`, same
+262144 B; the assertion then reports pending 4193282 B against cap 4194304. Nothing about the
+property changed — the *stall* is now real on both hosts.
+
+**What did not need touching**, checked rather than assumed: the `_Static_assert`s pinning the poll
+bits pass on darwin (POLLIN/OUT/ERR/HUP/NVAL have the same values), and the pty path was already
+`posix_openpt`/`grantpt`/`TIOCSCTTY` rather than glibc `forkpty`, so it ported for free — the
+`a9f2e83` decision to avoid `-lutil` (taken for modern glibc) paid off on a host nobody had in
+mind. All three builds and
+`./tests/e2e.sh` (8 live suites) are green on darwin; ratchets unchanged (coverage 19/19,
+`HEARTBEAT_CAP=1`, `SHIM_CAP=27`, `RUNTIME_PARTIAL_CAP` untouched). Not verified: that any of this
+still builds on the AL2 box — the Linux branches are unchanged code, but nothing re-ran there.
+
+**One repo hazard this surfaced, unrelated to any syscall:** the tree tracks *both* `Tests/`
+(the Lean unit tests) and `tests/` (the shell/python e2e scripts). macOS's filesystem is
+case-insensitive, so the two collapse into one on-disk directory (`Tests/`), and with
+`core.ignorecase=true` git recorded a newly created `tests/procs.py` as **`Tests/procs.py`** —
+which on a case-sensitive Linux checkout would put the helper in a different directory from the
+tests that import it, so `from procs import daemon_pids` would fail there and nowhere else.
+Staged deliberately instead: `git rm --cached Tests/procs.py` + `git update-index --add
+--cacheinfo 100644,<blob>,tests/procs.py`, verified with `git ls-files --stage`. Anyone adding a
+file to `tests/` from a mac must check the recorded path before committing.

@@ -2,6 +2,7 @@
 (simulated crash/reboot), session listed as resumable, attach restores
 the old screen and labels and starts a fresh shell in the saved cwd."""
 import os, pty, time, select, subprocess, sys, signal, fcntl, struct, termios, pathlib
+from procs import daemon_pids
 
 LINGER = str(pathlib.Path(__file__).resolve().parent.parent / '.lake/build/bin/linger')
 LDIR = os.environ.get('LINGER_TEST_DIR', '/tmp/linger-resume-' + str(os.getpid()))
@@ -63,19 +64,9 @@ fails += expect(ckpts == ['boot.ckpt'], f'checkpoint written on last detach ({ck
 
 # simulate reboot: SIGKILL the DAEMON (the pid in `list` is the shell —
 # killing that is a clean exit and rightly drops the checkpoint)
-cands = subprocess.run(['pgrep', '-f', '__daemon boot'], capture_output=True,
-                       text=True).stdout.split()
-dpid = None
-for c in cands:
-    try:
-        env = open(f'/proc/{c}/environ', 'rb').read().decode(errors='replace')
-        if f'LINGER_DIR={LDIR}' in env:
-            dpid = int(c)
-            break
-    except OSError:
-        pass
-assert dpid is not None, f'daemon not found among {cands}'
-os.kill(dpid, signal.SIGKILL)
+dpids = daemon_pids('boot', LDIR)
+assert dpids, 'daemon for this LINGER_DIR not found'
+os.kill(dpids[0], signal.SIGKILL)
 time.sleep(0.3)
 for f in os.listdir(LDIR):
     if f.endswith('.sock'):
@@ -132,15 +123,9 @@ time.sleep(0.8)
 os.close(fdg)
 try: os.waitpid(pidg, 0)
 except OSError: pass
-gpid = None
-for c in subprocess.run(['pgrep', '-f', '__daemon geom'], capture_output=True,
-                        text=True).stdout.split():
-    try:
-        if f'LINGER_DIR={LDIR}' in open(f'/proc/{c}/environ','rb').read().decode(errors='replace'):
-            gpid = int(c); break
-    except OSError: pass
-if gpid is not None:
-    os.kill(gpid, signal.SIGKILL); time.sleep(0.3)   # simulated reboot
+gpids = daemon_pids('geom', LDIR)
+if gpids:
+    os.kill(gpids[0], signal.SIGKILL); time.sleep(0.3)   # simulated reboot
 for f in os.listdir(LDIR):
     if f == 'geom.sock': os.unlink(os.path.join(LDIR, f))
 SIZE = os.path.join(LDIR, 'geom.size')

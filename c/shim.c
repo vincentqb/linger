@@ -29,6 +29,9 @@
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <libproc.h>   /* PROC_PIDVNODEPATHINFO: the /proc-less cwd read */
+#endif
 
 /* The Lean side hardcodes Linux poll bits; hold it to the ABI. */
 _Static_assert(POLLIN == 0x001, "POLLIN");
@@ -44,6 +47,49 @@ static lean_obj_res io_err(const char *what) {
 }
 
 static lean_obj_res io_ok_unit(void) { return lean_io_result_mk_ok(lean_box(0)); }
+
+/* SOCK_CLOEXEC and accept4 are Linux/FreeBSD extensions; macOS has
+ * neither, so there the flag goes on after the fact. The window between
+ * socket()/accept() and the fcntl is only a leak if another thread forks
+ * inside it, and the only fork in this project is linger_spawn, called
+ * from the same single-threaded Lean runtime -- so the fallback is safe
+ * here without being safe in general. Where the atomic form exists we
+ * still take it. Not exported: no new syscall surface (SHIM_CAP). */
+#ifdef SOCK_CLOEXEC
+#define LINGER_HAVE_SOCK_CLOEXEC 1
+#else
+#define LINGER_HAVE_SOCK_CLOEXEC 0
+#endif
+
+static int unix_socket_cloexec(void) {
+#if LINGER_HAVE_SOCK_CLOEXEC
+    return socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+#else
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd >= 0 && fcntl(fd, F_SETFD, FD_CLOEXEC) < 0) {
+        int e = errno;
+        close(fd);
+        errno = e;
+        return -1;
+    }
+    return fd;
+#endif
+}
+
+static int accept_cloexec(int fd) {
+#if LINGER_HAVE_SOCK_CLOEXEC
+    return accept4(fd, NULL, NULL, SOCK_CLOEXEC);
+#else
+    int c = accept(fd, NULL, NULL);
+    if (c >= 0 && fcntl(c, F_SETFD, FD_CLOEXEC) < 0) {
+        int e = errno;
+        close(c);
+        errno = e;
+        return -1;
+    }
+    return c;
+#endif
+}
 
 /* -------------------------------------------------------------------- */
 /* process-wide init                                                     */
@@ -341,7 +387,7 @@ LEAN_EXPORT lean_obj_res linger_unix_listen(b_lean_obj_arg path, lean_obj_arg w)
     if (fill_sockaddr(lean_string_cstr(path), &sa) < 0)
         return lean_io_result_mk_error(
             lean_mk_io_user_error(lean_mk_string("listen: socket path empty or too long")));
-    int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    int fd = unix_socket_cloexec();
     if (fd < 0) return io_err("socket");
     if (bind(fd, (struct sockaddr *)&sa, sizeof sa) < 0) {
         close(fd);
@@ -362,7 +408,7 @@ LEAN_EXPORT lean_obj_res linger_unix_connect(b_lean_obj_arg path, lean_obj_arg w
     struct sockaddr_un sa;
     if (fill_sockaddr(lean_string_cstr(path), &sa) < 0)
         return lean_io_result_mk_ok(lean_box_uint64((uint64_t)(int64_t)-ENAMETOOLONG));
-    int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    int fd = unix_socket_cloexec();
     if (fd < 0) return io_err("socket");
     int r;
     do { r = connect(fd, (struct sockaddr *)&sa, sizeof sa); }
@@ -381,7 +427,7 @@ LEAN_EXPORT lean_obj_res linger_unix_connect(b_lean_obj_arg path, lean_obj_arg w
 LEAN_EXPORT lean_obj_res linger_accept(uint32_t fd, lean_obj_arg w) {
     (void)w;
     int c;
-    do { c = accept4((int)fd, NULL, NULL, SOCK_CLOEXEC); }
+    do { c = accept_cloexec((int)fd); }
     while (c < 0 && errno == EINTR);
     if (c < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ECONNABORTED)
@@ -533,16 +579,33 @@ LEAN_EXPORT lean_obj_res linger_isatty(uint32_t fd, lean_obj_arg w) {
 }
 
 /* linger_getcwd_of : UInt32 -> IO String
- * /proc/<pid>/cwd -- where the session's shell currently sits, for
- * checkpointing. Falls back to "" when unreadable. */
+ * Where the session's shell currently sits, for checkpointing. Falls back
+ * to "" when unreadable, and the caller then keeps the recorded start_dir.
+ *
+ * /proc/<pid>/cwd on Linux; macOS has no /proc, so there it is libproc's
+ * PROC_PIDVNODEPATHINFO, which reports the same thing for a process of
+ * our own uid (the session shell is our child). Returning "" on macOS
+ * instead was silently wrong rather than broken: the resumed shell landed
+ * in start_dir, so a reboot-resume reopened where the session was created
+ * rather than where the user had cd'd to. libproc gives the resolved
+ * vnode path (/private/tmp for /tmp) -- the point is the directory, and
+ * the caller stores whatever string chdir will accept. */
 LEAN_EXPORT lean_obj_res linger_getcwd_of(uint32_t pid, lean_obj_arg w) {
     (void)w;
+#ifdef __APPLE__
+    struct proc_vnodepathinfo vpi;
+    int n = proc_pidinfo((int)pid, PROC_PIDVNODEPATHINFO, 0, &vpi, sizeof vpi);
+    if (n < (int)sizeof vpi) return lean_io_result_mk_ok(lean_mk_string(""));
+    vpi.pvi_cdir.vip_path[sizeof vpi.pvi_cdir.vip_path - 1] = '\0';
+    return lean_io_result_mk_ok(lean_mk_string(vpi.pvi_cdir.vip_path));
+#else
     char link[64], buf[4096];
     snprintf(link, sizeof link, "/proc/%u/cwd", pid);
     ssize_t n = readlink(link, buf, sizeof buf - 1);
     if (n < 0) n = 0;
     buf[n] = '\0';
     return lean_io_result_mk_ok(lean_mk_string(buf));
+#endif
 }
 
 /* linger_gethostname : IO String */

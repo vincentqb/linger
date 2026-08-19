@@ -117,12 +117,25 @@ fresh pair of eyes.
 
 ## Build
 
-- Always `./lake build` (the wrapper, not bare `lake`): this host's
-  glibc 2.26 cannot run the toolchain's bundled clang, the wrapper
+- Always `./lake build` (the wrapper, not bare `lake`): on the AL2 host
+  glibc 2.26 cannot run the toolchain's bundled clang, so the wrapper
   routes C compilation through Homebrew clang. Bare `lake` looks 90%
   green and dies in the C backend.
+- The wrapper branches on `uname -s` and is a **pass-through on macOS**,
+  where the same overrides break the build (`LEAN_AR=/usr/bin/ar` is
+  Apple's ar, which cannot read lake's `@…rsp` response file). Keep
+  using `./lake` on both — the command is the invariant, the workaround
+  is the host-specific part.
 - `./lake build` = program; `./lake build Theorems Tests` = proofs +
   unit tests. All three must be green before a commit.
+- The tree builds and passes `./tests/e2e.sh` on Linux and macOS as of
+  2026-08-19. Platform splits live in exactly two places — `#ifdef
+  __APPLE__` in `c/shim.c` (CLOEXEC sockets, and `getcwd_of` via libproc
+  where there is no `/proc`) and a `/proc`-or-`lsof` fallback in
+  `tests/procs.py`. **No errno numbers in Lean**: `-111` for
+  ECONNREFUSED in `Daemon.serve` compiled fine and silently disabled the
+  stale-socket path on macOS. The shim returns `-errno`; only the shim
+  knows the numbers. See the 2026-08-19 port entry in SCRATCHPAD.md.
 
 ## Rules
 
@@ -143,6 +156,11 @@ fresh pair of eyes.
   any path. Never interpolate raw names into socket/checkpoint paths.
 - `./tests/e2e.sh` is the gate before any commit that touches the
   runtime; it must stay green and warning-free.
+- **`Tests/` and `tests/` are two tracked directories** (Lean unit tests
+  vs. e2e scripts). On a case-insensitive filesystem they are one
+  directory on disk and git will silently record a new `tests/x` as
+  `Tests/x`; check `git ls-files --stage` after adding one, or the file
+  lands in the wrong directory on Linux only.
 - Restructure code for provability rather than weakening a theorem:
   name the stages (see `Vt.print*`, `Vt.step*`), clamp bounds locally,
   and prefer order-robust proof scripts (`repeat' split` +
