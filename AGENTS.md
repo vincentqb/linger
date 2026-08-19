@@ -12,16 +12,19 @@ closed build plans with their completion records (`lean-zmx.md`,
 
 ## Where things stand — read this first after any compaction
 
-1. **Two specs are live in `specs/`, and only one is started.**
-   * **`specs/scrollback-fidelity.md` — OPEN, not started. This is the next
-     piece of work.** Put the session's scrollback into the *receiver's own*
-     scrollback buffer and prove it, receiver-quantified like the screen.
-     Read its "Where this stands" before anything else: its Step 1 has a hard
-     exit criterion (`restore_grid_any` / `restore_grid_reachable` /
-     `resume_grid` must stay green **with their statements unchanged**), and the
-     obvious emitter shape — painting `sbRows v ++ v.grid` as one tall array —
-     *deletes* `paint_rows`' no-scroll argument and turns those three red. The
-     spec carries the design that doesn't, plus kill criteria.
+1. **Two specs are live in `specs/`, and both are started.**
+   * **`specs/scrollback-fidelity.md` — Step 1 done (2026-08-19), Step 2 next.**
+     `restore` now paints the session's ring into the *receiver's own* scrollback
+     (`scrollbackAnsi`), and the three flagship screen statements are
+     byte-identical to what they were — the hard exit criterion held. Read its
+     "Where this stands" before anything else: it names Step 2 (the positive
+     scroll specification, zero emitter change) and the two things not to
+     re-derive — `replayEq`'s `sb` conjunct is blind to bugs *inside* `sbRows`
+     (the literal-anchored fixtures are the oracle for the fit and the order),
+     and the twelve mode bytes ending `scrollbackAnsi` are behaviourally inert
+     but proof-load-bearing. The obvious emitter shape — painting
+     `sbRows v ++ v.grid` as one tall array — *deletes* `paint_rows`' no-scroll
+     argument; the staged push is why it did not.
    * **`specs/runtime-invariants.md` — Steps 1–2 done, 3–4 optional.** The
      daemon's two byte queues are now `Zmx.Core.Buf`, proved, with a grep gate
      in `tests/e2e.sh` that makes the theorems bite an `IO` caller no theorem

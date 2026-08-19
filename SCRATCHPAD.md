@@ -5845,3 +5845,167 @@ Also caught by running the gate myself rather than trusting a green report: `Zmx
 docstring contained the literal word `sorry` in prose, which trips the purity grep — the tree was
 failing `e2e.sh` when it was reported green. Reworded. The gate is deliberately dumb; prose must
 dodge the banned tokens.
+
+## scrollback step 1 notes — 2026-08-19
+
+`specs/scrollback-fidelity.md` Step 1: the ring reaches the receiver's own scrollback. The
+capability, the oracle, the budget and the bridge; no new induction. Completion record is in the
+spec. What follows is what only a worklog can carry.
+
+### The oracle has a blind spot, and it is structural
+
+`replayEq`'s new conjunct is `r.sb.toList == (sbRows v).toList` — the receiver's ring against the
+**emitter's own view of the ring**. So it cannot see a single bug *inside* `sbRows`: reverse the
+history and both sides reverse together. Found by break-verifying, not by design review, and it
+invalidated three of the planned breaks as written. The fix is fixtures anchored on **literals**:
+
+* `(sbRows scrolled).toList.map rowStr == ["aa", "bb", "cc"]` — the order;
+* `(sbRows wideRing)` texts `["a漢b", "éx", "zz"]` and widths `[1, 2, 0]` — the fit;
+* `hostileRing`, a ring row as only `Checkpoint.load` can make one — the sanitizer;
+* the headline `history` string, which spans ring **and** screen against a literal.
+
+Generalisation worth keeping: *a fixture that compares the code against the code is not an
+oracle.* The tab-ruler bug hid behind a receiver that never differed; this one would have hidden
+behind a comparison that always agreed.
+
+### Breaks
+
+Each was applied to the real tree, built, and reverted. "caught by" lists what went red.
+
+* **B1 — delete the paint branch** (`else csiNum 3 0x4A` only). 13 fixtures, including the
+  headline string, every `roundtripsFrom` on a scrolling session, the wide-glyph ring, the shrink
+  case and all three byte-budget fixtures. **And both Python halves**: `attach_test` step 11's two
+  "a line that scrolled off is replayed" assertions, and `resume_test`'s
+  `survives-the-reboot-42` — which is the assertion the spec said "fails today", now that the
+  marker is pushed off the screen before the detach. It does.
+* **B2 — drop `ED 3`.** `roundtripsFrom (dirtySb 6 2) scrolled` fails while **`roundtrips
+  scrolled` (fresh `Vt.init`) still passes**, and so does `roundtripsFrom (midOsc 6 2) scrolled`,
+  because `midOsc`'s ring is empty. That is the exact blind spot that hid the ruler bug,
+  reproduced on a new field. Also `Ends.lean:888` (the layer lemma) and the ED2/ED3 order fixture.
+  Measured without `ED 3`: a second attach gives `["OLD1","OLD2","aa","bb","cc","aa","bb","cc"]`.
+* **B3 — `ED 3` after the push.** Every ring fixture including the pristine `roundtrips scrolled`
+  — our model wipes what it just filled. The three byte-length fixtures **pass**, since the bytes
+  are the same ones reordered: lengths are not an oracle for order.
+* **B4 — flush `rows ± 1`.** Measured `history` strings, plain and coloured:
+  - `rows - 1` → `"aa\nbb\ndd\nee\n"` / `"AA\nBB\nDD\nEE\n"`: the **newest** history row is lost.
+    It never leaves the screen, and the screen paint overwrites it.
+  - `rows + 1` → `"aa\nbb\ncc\n\ndd\nee\n"` / `"AA\nBB\nCC\n\nDD\nEE\n"`: one spurious blank
+    pushed **after** the newest history row, i.e. between history and screen — not leading it.
+    Ring size 4 instead of 3, and on the coloured session the extra row's cell 0 carries
+    `bg = Color.idx 196`: it is a coloured bar in the user's scrollback, not a blank line. That is
+    `scrollUpIn` vacating with `blankRow cols v.pen`, with the pen the last painted row left.
+  - At `rows + 1` the whole-stream bound fixture also fails (one extra CRLF), so the bound is
+    sensitive to the flush count. Nothing else outside the `sb` oracle is: `replayEq` **minus**
+    `sb` is true at `rows - 1`, `rows` and `rows + 1` alike, so the grid theorems staying green is
+    zero evidence about the flush. `F = v.rows` was swept exhaustively over `rows, m ∈ 1…8` before
+    the build: 64 of 64 cells admit exactly one `F`, always `rows`. No `min`, no `rows = 1` case,
+    no `m < rows` case — for `m < rows` the surplus CRLFs are absorbed by the non-pushing descent
+    and push **zero** blanks.
+* **B5 — the double reverse, both halves.**
+  - drop the outer `.reverse` → history reads backwards. Caught by the two literal anchors and
+    the headline string; **not** by `replayEq` (see the blind spot above).
+  - feed `v.sb.toList` instead of its reverse → the **oldest** N survive a tight budget. Pinned as
+    a fact: a fitted 6-column row costs 12, so `sbTake 6 27` on the reverse gives `["bb","cc"]`
+    (right) and on `toList` gives `["aa","bb"]` (wrong). Both variants keep all three rows
+    whenever the ring fits whole, which is why every other fixture would have passed.
+* **B6 — bare `Vt.resizeRow` for `fitRow`.** Caught by `rowOk_fitRow` and `fitRow_id_of_rowOk`,
+  and — before the anchors were added — **by no fixture at all**. The spec predicted the shrink
+  fixtures would fail; they do not, because `resizeRow` also mends and re-widths. The only
+  difference is `cellFit`'s substitution/filter/width normalisation, which is unreachable from a
+  live session (its ring rows are already `CellOk`) and reachable only from a decoded checkpoint.
+  So `hostileRing` was added and now catches it. Recording the negative half deliberately: this
+  break is a *proof* break by nature.
+* **B7 — the budget.** `1 <<< 30` → the heavy-ring non-vacuity and both emitted-length fixtures
+  fail. `0` → the `scrolled` fixtures fail **including the `(sbRows scrolled).size == 3`
+  non-vacuity**, which is what proves the trim is not silently eating everything.
+* **B8 — `cellFit` without the width-0 guard.** Caught by the wide-ring anchors (the text and the
+  `[1,2,0]` widths) and by `fitRow_id_of_rowOk`. Note honestly: `cellOk_cellFit`'s *proof* also
+  breaks, but only because it is written around the `if`; the **statement** stays true (`width :=
+  charWidth base` satisfies the clause trivially). The spec's warning stands — `CellOk` does not
+  measure the sanitizer's correctness, and it is the literal anchors that do.
+* **The mode tail's kill criterion** (the one the spec said nobody would remember to check).
+  Dropped `csiNum 4 0x6C ++ modeSet 6 false ++ modeSet 7 true` and repaired the three layer
+  lemmas, then tried to close `scrollback_entry`'s conjuncts from what was left:
+  - `origin = false` **still closes**, via `Quiet` (which carries origin and needs no `u8need`).
+    Verified positively in `/tmp/killcrit.lean`, which compiles.
+  - `insert = false` and `wrap = true` **do not**: the only layer that carries them is `MMap`
+    (= `Fixes (·.modes)`), which demands `u8need = 0` going in, and the only instance that would
+    cross the paint is `mmap_id_gridAnsi` — `Unknown identifier`. It does not exist because
+    nothing in the repo proves the u8-quiescence of a glyph run (`Ends` is scoped to `pstate`;
+    `gridAnsi_writes_grid'` wants `painted.size = receiver.rows`, which `sbRows` violates by
+    design). So the bytes stay, and the reason is a **missing lemma, not a falsehood**.
+  Anyone checking only `origin` would wrongly shed twelve load-bearing bytes.
+* **`mmap_of_esc_lead` without its case split** (`h v hg rfl`): `Application type mismatch … rfl
+  has type ?m = ?m but is expected to have type v.u8need = 0`. The split is the whole lemma.
+* **`sbRowCost`'s `+ 6` → `+ 0`**: `rowAnsi_len_le_cost`'s `omega` fails. So the cost function is
+  a claim now, and Definition-of-done item 3's "the proofs would survive changing `+ 6` to `+ 0`"
+  is no longer true.
+
+### Measured numbers worth not re-measuring
+
+Ring shapes at 24 rows, `sbReplayBytes = 262144`, `outbufCap = 4194304`:
+
+| ring | avail | kept | Σ sbRowCost | stage bytes | whole `restore` |
+|---|---|---|---|---|---|
+| empty, 80 cols | 0 | 0 | 0 | 14 | 2,207 |
+| blank rows, 80 cols | 10,000 | 3,048 | 262,128 | 250,007 | 252,200 |
+| realistic mixed, 80 cols | 10,000 | 2,383 | 262,130 | 252,669 | 254,862 |
+| per-cell truecolour, 40 cols | 300 | 174 | 260,844 | 260,219 | 261,417 |
+| 84 plain + 1 truecolour, 85 cols | 3,000 | 2,166 | 262,086 | **262,153** | 264,304 |
+
+`(scrollbackAnsi v).length = Σ sbRowCost (sbRows v) + 2 * v.rows + 19` **exactly** on the last row
+of that table — and on every one of sixteen column widths swept from 70 to 85, which is why the
+bound is stated in that form and asserted as a fixture rather than left to Step 5. The 19 is
+`ED 3` (4) + the paint's `SGR 0 CUP` (7) + the mode tail (14) − the per-row CRLF credit the
+`joinCRLF` separators do not use (6). The last row also **exceeds** `sbReplayBytes` by 9 bytes:
+the budget bounds the counted cost, not the stream.
+
+Per-row: a blank 80-column row is 80 emitted / 86 counted; per-cell truecolour is 40 B/column, 57
+with all seven attributes; `penSgr {}` is 4 bytes and the `+ 4` is attained (a blank row is 80
+from the default pen and 84 from a truecolour one). A full `sbCap` ring is 32–46 MB at 80 columns
+— 8–11× `outbufCap`, which *disconnects*. The spec's "~86 MB" is the 150-column figure.
+
+Real pty bursts, 80×24: a 60-line plain reattach is **5,381** bytes; the same with 20 truecolour
+cells per line is **54,287**. Both two orders under `outbufCap`.
+
+**The unbudgeted term is the screen paint, not the ring.** With worst-case pens on both screens,
+today's `restore` emits 219,276 bytes at 80×24, 1,140,617 at 200×50, 3,420,922 at 300×100 and
+**4,561,018 at 400×100 — past `outbufCap` with no scrollback at all**. Pre-existing; Step 1 adds
+~262 KB, moving the cliff from ~36,800 to ~34,500 cells of window area. Recorded in THEOREMS.md
+§Restore so it is not rediscovered as a scrollback regression.
+
+### Proof recipes
+
+* **`mmap_of_esc_lead`** — the reusable trick. `MMap`/`Fixes` demand `u8need = 0` going in, which
+  is unavailable after glyph bytes. For an **ESC-leading** chunk it is free: `by_cases` on
+  `u8need = 0`; in the positive case apply the hypothesis, in the negative case `abortUtf8` on the
+  leading ESC makes the state *literally equal* to `{ v with u8need := 0, u8acc := 0 }`, whose
+  `modes` agree. Any future stage that must re-establish modes after a paint should end
+  ESC-leading and reuse this.
+* **`rw [feed_append]` chains are order-sensitive.** `++` is **left**-associative (the comment at
+  `Keeps.lean:888` claiming otherwise is wrong), so `rw` peels the *outermost* append first. With
+  the history stage in front of the alt branch's five chunks, the fourth peel reaches
+  `penSgr mpen ++ csiNum2 …` — the cursor park — and splits it, after which nothing matches and
+  the elaborator burns 2,000,000 heartbeats in `whnf` on `List.append`. Fix: one
+  `have hpeel : w.feed (…) = (((…).feed …).feed …) := by rw [hscreens]; simp only [feed_append]`.
+  `simp only [feed_append]` normalises **both** sides to the fully-peeled form, so it is
+  confluent where a hand-counted `rw` chain is not. Cost: 0 extra heartbeat raises
+  (`HEARTBEAT_CAP=2` untouched).
+* **`penSgr_default_len`** needs `have hd : digits 0 = [0x30] := by rw [digits]; simp` first —
+  `digits` is well-founded recursion and both `decide` and `rfl` get stuck on it.
+* **Lemma placement bites in `Ends.lean`/`Quiet.lean`.** `ends_modeSet`, `quiet_modeSet` and
+  `quiet_modeSet_decom_off` were defined *after* `ends_screensAnsi`/`quiet_screensAnsi`; the
+  stage's layer lemma needs them and has to precede the screens lemma. Moved the three blocks up
+  rather than duplicating them.
+* `smap_id_modeSet_safe` was lifted out of `smap_id_modesAnsi`'s local `have hm`, unchanged, so
+  the scrollback stage and the modes replay share one lemma instead of two copies.
+
+### Environment facts
+
+* `List.sum_reverse`, `List.map_reverse`, `List.toList_toArray`, `List.mem_of_mem_take`,
+  `List.take_of_length_le`, `List.filter_eq_self`, `Array.ext`, `Array.getElem_range` all exist in
+  4.32 core — the spec's worry about `List.sum_reverse` was unfounded.
+* `Array.toList_toArray` does **not** exist; the name is `List.toList_toArray`.
+* `Tests.Render` elaboration went from ~0.7s to ~17s with the byte-budget fixtures (two rings of
+  3,000 and 10,000 rows through `native_decide`). Acceptable, but that is where the time is if it
+  grows again.

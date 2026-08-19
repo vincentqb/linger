@@ -41,8 +41,15 @@ regression tests rather than the fidelity oracle — which is exactly the handof
 `specs/archive/grid-fidelity.md` described. A1's cursor half was proved earlier
 (`resume_cursor`), as was the whole byte layer beneath (`utf8_feed` and friends
 reduce a repaint to a chain of `Vt.print`s). What remains fixture-carried on the
-inbound side is the window **title** and the **DECSC slot** — and, separately,
-the *scrollback*: `restore` repaints the screen, not the history above it.
+inbound side is the window **title** and the **DECSC slot** — and the
+*scrollback*, which as of `specs/scrollback-fidelity.md` Step 1 is **repainted**
+into the receiver's own ring and fixture-carried there: the emitter's row half is
+proved (`rowOk_fitRow` unconditionally, `sbRows_budget`, `rowAnsi_len_le_cost`) and
+the bridge that keeps it out of the screen theorems' statements is proved
+(`scrollback_entry`), but the receiver-quantified claim `restore_sb_any` — that a
+client's ring *becomes* `sbRows v` — is Steps 2–4 and is carried meanwhile by
+`replayEq`'s `sb` conjunct, the `dirtySb` receiver, the literal-anchored ring
+fixtures and two pty assertions.
 
 The rung table has fifteen entries and A5 adds no sixteenth idea, only a
 direction: §Handback is §Replay's question — *what does this stream
@@ -514,6 +521,24 @@ terminals; see the note under `## What these theorems do not settle`.)
    into a title. (`prologueAnsi`'s lead-in, `restore_grounds`, `st_grounds`.)
 10. **UTF-8 decoding returns to a clean state after each complete glyph**, and the stream ends
     ESC-initiated so nothing is left half-decoded. (`utf8_feed`, `restore_u8_zero`, `U8Ok`.)
+11. **`CSI 3 J` — a divergence, not an assumption.** xterm's `ED 3` is Erase-Saved-Lines: it
+    discards the saved lines and leaves the screen alone. Ours clears the screen as well
+    (`Vt.eraseScreen`, `Zmx/Core/Vt.lean:529-531`), which is stricter than the sequence's
+    meaning and unobservable where we emit it — the stream's `ED 2` is four bytes earlier, so
+    the surplus erase is idempotent, and every field but `sb` is identical with it, without it,
+    and on either side of `ED 2`, under a default pen or a BCE one. `E3=\E[3J` is declared by
+    xterm, tmux, alacritty, foot, vte and the linux console, and ncurses' `clear(1)` sends
+    `CSI H CSI 2 J CSI 3 J` — our order. A terminal that does not implement it ignores it, and
+    the failure mode is benign: the previous occupant's history survives above ours and repeated
+    attaches stack copies. We emit it **only when there is history to put there**, because that
+    window's scrollback is the user's and shared with their shell — linger never enters the alt
+    screen. (`scrollbackAnsi`; `tests/attach_test.py` step 11 pins the order, and
+    `Tests/Render.lean`'s guard fixtures pin both branches.)
+12. **A printed line that scrolls off the top of a whole-screen region enters the terminal's own
+    scrollback.** That is the only way to put a line there, and it is what the history stage
+    does: paint the ring, then `rows` CR+LFs. A terminal with no scrollback, or one that
+    discards the region's evicted rows, shows the screen correctly and keeps no history — the
+    same benign failure as 11. (`scrollbackAnsi`, `Vt.scrollUpIn`'s push guard.)
 
 ## What these theorems do not settle
 
@@ -550,6 +575,24 @@ terminals; see the note under `## What these theorems do not settle`.)
   is restored.** A resumed session gets its screen, scrollback, modes,
   labels and cwd back — not its process tree. That is the deliberate
   continuum-shape trade: the work resumes, the programs do not.
+  The scrollback comes back **to the byte budget**, which is the limit worth
+  naming: `sbReplayBytes = 262144` bounds Σ `sbRowCost` over the replayed rows, so
+  a ring of plain 80-column lines replays about three thousand of them and a ring
+  of per-cell truecolour rows replays a few dozen. The budget is not prudence —
+  `outbufCap` *disconnects* a client, and an unbudgeted full ring is 32–46 MB at 80
+  columns. The emitted stage is bounded by `sbReplayBytes + 2 * rows + 19`, not by
+  the budget itself; the extra is `ED 3`, the paint's `SGR 0`/`CUP` and the mode
+  tail, and it is attained (measured: 262153 bytes for a ring whose rows each end
+  in a truecolour cell). `Vt.eraseScreen 3` clears `sb` as well as the screen
+  (`Zmx/Core/Vt.lean:529-531`), which is the receiver-ring-empty premise the
+  receiver-quantified claim will cite.
+* **The screen paint, not the history, is the unbudgeted term.** Measured while
+  sizing the ring budget: with worst-case pens on both screens `restore` alone
+  emits 4,561,018 bytes at 400×100 — already past `outbufCap` before any
+  scrollback. The cliff is around 34,500 cells of window area at worst-case pens,
+  and the history stage moved it there from ~36,800 by consuming ~6% of the
+  headroom. Pre-existing, not introduced here, and not yet closed: it wants a
+  budget on the paint, which is a bigger change than this step.
 * **Images are passed through, not modelled.** Kitty graphics, sixel and
   iTerm2 sequences reach attached clients byte for byte, and the emulator
   ignores their payloads — parked in the string state until the

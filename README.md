@@ -153,6 +153,14 @@ own kitty tab — `recipes/lzo.fish` makes one per session.
 - Reboot-resume is automatic (periodic checkpoint + restore on attach).
 - Images (kitty graphics, sixel, iTerm2) work while attached and vanish
   on reattach — see [Graphics](#graphics).
+- Reattach paints the session's scrollback into your terminal's own
+  scrollback, so wheel-scroll, search and selection find it. That is one
+  buffer shared with your shell — linger never uses the alt screen — so
+  attaching a session **that has history erases whatever history that
+  window held** (`CSI 3 J`, the sequence `clear` sends) and then pushes up
+  to about three thousand lines of the session's own. Attaching a session
+  with no history leaves your window alone. `linger history` prints a
+  session's scrollback without touching the terminal.
 - `attach` needs a terminal; bare `linger`/`ls`, `run`, `send` are scriptable.
 - An unreachable or mid-reboot host drops out of `ls -r` after a few
   seconds; `attach name@host` fails with ssh's own error. Once the host

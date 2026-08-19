@@ -9,15 +9,31 @@ it (`THEOREMS.md:45`, `Tests/Render.lean:22`).
 
 ## Where this stands — read this first
 
-**Next step:** Step 1 — the emitter and the oracle. Nothing else. Step 1 must
-leave `restore_grid_any` / `restore_grid_reachable` / `resume_grid` green with
-their statements unchanged; if it cannot, stop and read the kill criteria rather
-than weakening them.
+**Step 1 is COMPLETE** (2026-08-19). The capability ships: a reattach paints the
+session's ring into the client's own scrollback, and the three flagship screen
+statements are byte-identical to what they were (checked line by line —
+`restore_grid_any_main`, `restore_grid_any_alt`, `restore_grid_any`,
+`restore_grid_reachable`, `Resume.resume_grid`). See "Step 1 — completion record"
+below for what was built, what the spec had wrong, and the two decisions taken
+against its recommendation.
 
-**Precondition:** the working tree must be clean. `git status` at the time of
-writing shows uncommitted edits in `Theorems/Render/{Grid,Modes,Row}.lean` and
-`Theorems/Vt.lean` (-18 lines, post-split cleanup). Step 1 edits `Grid.lean`
-heavily; commit or stash that first.
+**Next step:** Step 2 — the positive scroll specification. Zero emitter change,
+and it stands alone even if Steps 3–4 never land.
+
+**Two things a resuming agent must not re-derive:**
+
+1. `replayEq`'s `sb` conjunct compares the receiver's ring against `sbRows v`,
+   i.e. against the **emitter's own view**. It is therefore blind to every bug
+   *inside* `sbRows` — reverse the history and both sides reverse together. The
+   oracle for the fit and the order is the fixtures anchored on **literals**
+   (`sbRows scrolled == ["aa","bb","cc"]`, the wide pair's `[1,2,0]` widths,
+   `hostileRing`). Do not delete those thinking the conjunct covers them.
+2. The twelve mode bytes at the end of `scrollbackAnsi` are **behaviourally
+   inert** and **proof-load-bearing**. The kill-criterion experiment was run:
+   `origin = false` still closes without them (via `Quiet`), `insert`/`wrap` do
+   not — they need `mmap_id_gridAnsi`, which does not exist, because nothing in
+   the repo proves the u8-quiescence of a glyph run. A writer checking only
+   `origin` will wrongly conclude the bytes are sheddable.
 
 **Stale reads to distrust:** any line number for `Theorems/Render.lean` — it is a
 38-line façade since `56eedda`; the ladder is in `Theorems/Render/*.lean`.
@@ -63,9 +79,16 @@ this reads as re-opening it.
    a `native_decide` bound on `(restore heavyRing).length` **and** a non-vacuity
    fixture `(sbRows heavyRing).size < heavyRing.sb.size`, plus a pty assertion on
    the reattach burst length with the measured number in the failure message. This
-   asymmetry is stated in the spec and in `THEOREMS.md`, not glossed: the proofs
-   are self-consistent about their own cost function and would survive changing
-   `sbRowCost`'s `+ 6` to `+ 0`. The fixtures are the oracle until item 8 lands.
+   asymmetry is stated in the spec and in `THEOREMS.md`, not glossed.
+   *Corrected in Step 1:* the row half of the asymmetry is **closed**, not
+   deferred — `rowAnsi_len_seed` + `rowAnsi_len_le_cost` say the emitted paint of
+   a row from any incoming pen is within its counted cost, so "the proofs would
+   survive changing `+ 6` to `+ 0`" is no longer true (break-verified: `+ 0` makes
+   `rowAnsi_len_le_cost`'s `omega` fail). What is still fixture-carried is the
+   *whole-stream* step, and in the form that is actually true:
+   `(scrollbackAnsi v).length ≤ Σ sbRowCost (sbRows v) + 2 * v.rows + 19`. That
+   bound is sharp — attained with zero slack — and `sbReplayBytes` alone is **not**
+   a bound on emitted bytes (measured overshoot: 262153 against 262144).
 4. `restore_grid_any`, `restore_grid_reachable` and `Resume.resume_grid` compile
    with their **statements unchanged** — no new hypothesis, in particular none
    about `v.sb`. This is what `fitRow`'s unconditional `RowOk` buys, and it is the
@@ -96,7 +119,10 @@ this reads as re-opening it.
 
 ### Step 1 — the emitter and the oracle: the whole capability, no new induction
 
-Status: → next.
+Status: **done ✓ (2026-08-19)**. The text below is the design as written, with the
+places it was factually wrong marked *[corrected]* from the four measurement lanes
+that ran the emulator before the build. The completion record is at the end of this
+step.
 
 New in `Zmx/Core/Render.lean`, after `gridAnsi`:
 
@@ -110,15 +136,25 @@ New in `Zmx/Core/Render.lean`, after `gridAnsi`:
 - `fitRow (row : Row) (cols : Nat) : Row := Row.mend ((Array.range cols).map (fun i => cellFit (row.at i)))`.
   **Not** `Vt.resizeRow`: that copies cells verbatim, and `sb` rows are the one
   place no stated invariant covers.
-- `sbReplayBytes : Nat := 262144` — the budget, **in emitted bytes, not rows**. A
-  blank 80-column row costs 82 (`Cell.erased` emits one space, no SGR, `+2` CRLF);
-  a truecolour-per-cell row costs ~43 B/column, so a full `sbCap = 10000` ring of
-  those is ~86 MB against a 4 MiB `outbufCap` that *disconnects*. A row cap bounds
-  nothing that matters.
+- `sbReplayBytes : Nat := 262144` — *[corrected]* the budget on **Σ `sbRowCost`**,
+  not on emitted bytes: the emitted stage is bounded by
+  `sbReplayBytes + 2 * v.rows + 19` and does exceed the budget by up to that much
+  (measured 262153 for an 80×24-shaped ring whose rows each end in a truecolour
+  cell). A blank 80-column row costs **86 counted** (82 emitted — `rowAnsi` does not
+  trim trailing blanks, so it is 80 spaces plus the `+2` CRLF and `+4` slack), so the
+  budget admits **3,048** of them, not ≈3200; a realistic mixed row gives 2,383,
+  still above tmux's default 2000. Per-cell truecolour costs **40 B/column** (57 with
+  all seven attributes), so a full `sbCap = 10000` ring is **32–46 MB at 80 columns**
+  and ~86 MB at 150 — against a 4 MiB `outbufCap` that *disconnects*. A row cap
+  bounds nothing that matters.
 - `sbRowCost (row : Row) : Nat := (rowAnsi row {}).1.length + 6` — paint, `+2` for
   the pushing CRLF, `+4` slack for the one `SGR 0` a row can emit that a
-  default-seeded count does not (`penSgr {}` is four bytes; bounded because the
-  fit's `mend` rules out a width-0 first cell).
+  default-seeded count does not (`penSgr {}` is four bytes). *[corrected]* The
+  reason has nothing to do with `mend` or a width-0 first cell: a width-0 cell
+  leaves `rowSlot`'s pen accumulator untouched, so the default-seeded fold and the
+  fold from an arbitrary pen diverge only at the first non-shadow cell and agree
+  from it on. The excess is one optional `SGR`, and it is **attained** — so the
+  slack is neither trimmable nor in need of growing (`rowAnsi_len_seed`).
 - `sbTake (cols budget : Nat) : List Row → List Row` — structural on the list,
   fit fused in so the per-cell work touches only the rows kept; **stops** at the
   first row that does not fit rather than skipping it, so the result is always
@@ -128,9 +164,16 @@ New in `Zmx/Core/Render.lean`, after `gridAnsi`:
   agree) and oldest-first is the push order. The double reverse is where the
   order bug will actually live.
 - `scrollbackAnsi (v : Vt) : Bytes := csiNum 3 0x4A ++ (if (sbRows v).isEmpty then [] else gridAnsi (sbRows v) ++ (List.replicate v.rows crlfB).flatten) ++ csiNum 4 0x6C ++ modeSet 6 false ++ modeSet 7 true`.
-  - `ED 3` first: a client is not a reset terminal, and a second attach would
-    otherwise stack another copy. The set-only lesson of `tabsAnsi`/`titleAnsi`,
-    one field further out.
+  - `ED 3`: a client is not a reset terminal, and a second attach would otherwise
+    stack another copy. *[corrected, twice]* It is emitted **after** the `ED 2`, not
+    before — `restoreBody` already sends `SGR 0 ++ ED 2` ahead of `screensAnsi`, so
+    prepending inside `screensAnsi` puts `ED 3` second (measured at offsets 42 and
+    46). That is the order ncurses `clear(1)` sends, so the emitted order is the
+    well-trodden one and it is the pty *assertion* that was wrong. And it is
+    **guarded by the emptiness test**, not unconditional — see the decision record
+    under Open decisions 1. The set-only lesson of `tabsAnsi`/`titleAnsi` does not
+    transfer: the tab ruler is a field linger owns, the window's scrollback is the
+    user's, shared with their shell.
   - `gridAnsi (sbRows v)` homes and paints `m` rows with `m-1` separators; `v.rows`
     more CRLFs push exactly `m` (pushes `= C - (rows-1)` where `C = (m-1)+rows`).
     `F = v.rows` is the unique correct count.
@@ -140,7 +183,11 @@ New in `Zmx/Core/Render.lean`, after `gridAnsi`:
     which cannot be pushed across the ring's **glyph** bytes (no
     `mmap_id_gridAnsi`; `Modes.lean` explains the asymmetry). Twelve ASCII bytes
     move the obligation to where `mmap_irm`/`mmap_modeSet` already close it, and
-    zero `u8need` for free through `abortUtf8`.
+    zero `u8need` for free through `abortUtf8` — *[corrected]* which needs one new
+    lemma, `mmap_of_esc_lead`: `MMap` **demands** `u8need = 0` going in, and after
+    the ring's glyphs nothing supplies it. The case split is what makes it free.
+    They must stay ESC-leading and contiguous at the end; that ordering is
+    proof-load-bearing now, not cosmetics.
 
 `screensAnsi` (`Zmx/Core/Render.lean:341`) gains `scrollbackAnsi v ++` at the
 front, **before** the `match v.altGrid`. Not a new top-level stage in
@@ -149,7 +196,10 @@ prefix exist across `Theorems/Render/{Keeps,Tabs,Sticky,Modes,Grid}.lean`, and
 `restore_split`, `restore_grid_of_paint`, `keeps_restoreTail`,
 `restore_tabs_split` and the `Modes.lean` chains all name `screensAnsi v`
 *opaquely* — so this placement touches four unfold sites instead of fifty-five
-rewrites. It also means the flush's evicted rows `m…rows-1` are the **blanks the
+rewrites. *[corrected]* Five occurrences in four files: `Quiet.lean:722`,
+`Sticky.lean:619`, `Ends.lean:852`, `Grid.lean:1356` **and** `Grid.lean:1630`. And
+`keeps_restoreTail` does not mention `screensAnsi` at all — drop it from the
+opacity list (harmlessly: it is even safer than opaque). It also means the flush's evicted rows `m…rows-1` are the **blanks the
 preceding `ED 2` left**, not the receiver's junk, which is strictly more forgiving
 than pushing before the clean slate.
 
@@ -196,7 +246,9 @@ with both `(sbRows v).all (·.size == 4)` and `!(v.sb.toList.all (·.size == 4))
 `heavyRing` (300 lines of per-cell truecolour through 40 columns) with the
 non-vacuity, cost and emitted-length bounds.
 
-Python: `tests/attach_test.py` step 11 — `\x1b[3J` present, `ED 3` before `ED 2`,
+Python: `tests/attach_test.py` step 11 — `\x1b[3J` present, `ED 3` **after** `ED 2`
+(*[corrected]*: the spec's own emitter design puts it there, and it is what
+`clear(1)` sends),
 a line that scrolled off the screen reappears, burst inside budget, client still
 alive after both the plain and the truecolour burst. `tests/resume_test.py` —
 push `survives-the-reboot-42` (`:42`) off the screen with a 60-line loop before
@@ -212,8 +264,14 @@ byte-identical to today** and green; the leak reproduced and closed under breaks
 B1 (delete the paint branch → `history` gives the screen only), B2 (drop `ED 3` →
 `roundtrips` from a fresh `Vt.init` still passes while `dirtySb` fails — the exact
 blind spot that hid the ruler bug), B3 (`ED 3` after the push → our model wipes
-what we just filled), B4 (flush `rows-1` loses the newest history row; `rows+1`
-leads with a blank), B5 (drop the outer `.reverse` → history reads backwards), B6
+what we just filled), B4 (flush `rows-1` loses the newest history row — it stays on
+screen and the screen paint overwrites it; `rows+1` appends one spurious blank row
+*after* the newest history row, carrying the pen the last painted row left in
+effect, so on a coloured session it is a coloured bar and not a blank line
+*[corrected]*), B5 (drop the outer `.reverse` → history reads backwards; **and**
+feed `v.sb.toList` rather than its reverse → the **oldest** N survive a tight
+budget, `["aa","bb"]` where `["bb","cc"]` is right, which is the more insidious of
+the two and is invisible to `replayEq` *[added]*), B6
 (bare `resizeRow` → the shrink fixtures fail; record which fixtures *don't*
 notice), B7 (budget to `1 <<< 30` → emitted-length fixture fails; budget to `0` →
 the `scrolled` fixtures fail, proving the trim is not silently eating everything),
@@ -221,9 +279,64 @@ B8 (`cellFit` without the width-0 guard → `fitRow_id_of_rowOk` and the wide-gl
 fixture fail while `cellOk_cellFit` still proves — the honest warning that `CellOk`
 does not measure the sanitizer's correctness), B11/B12 (the two Python halves).
 
+#### Step 1 — completion record (2026-08-19)
+
+**Shipped.** `Zmx/Core/Render.lean` gains `crlfB`, `cellFit`, `fitRow`,
+`sbReplayBytes`, `sbRowCost`, `sbTake`, `sbRows`, `scrollbackAnsi`, and
+`screensAnsi` leads with `scrollbackAnsi v`. A reattach now puts the session's
+history in the client's own scrollback: `history` after restoring `scrolled` into
+`dirtySb` is `"aa\nbb\ncc\ndd\nee\n"` exactly, and a 60-line pty session's
+`sbline-1` reappears on reattach where it could not before.
+
+**Proved.** `Theorems/Render/Scrollback.lean` (new, last rung, imported by the
+façade): `cellOk_cellFit`, `rowOk_fitRow` and `fitRow_id_of_rowOk` (the fit, with
+**no** hypothesis); `sbTake_budget`, `sbTake_prefix`, `sbRows_budget` (the budget);
+`foldl_rowSlot_seed`, `rowAnsi_len_seed`, `penSgr_default_len`,
+`rowAnsi_len_le_cost` (the `+ 6` as a claim, taken into Step 1 rather than left to
+Step 5). `Theorems/Render/Grid.lean` gains `scrollback_entry` beside `paint_entry`;
+`Theorems/Render/Modes.lean` gains `mmap_of_esc_lead` and `sbTail_modes`;
+`Ends`/`Quiet`/`Sticky` each gain the stage's layer lemma plus `crlfRun_no_esc`,
+and the five `unfold screensAnsi` sites are repaired.
+
+**The exit criterion held.** `restore_grid_any_main`, `restore_grid_any_alt`,
+`restore_grid_any`, `restore_grid_reachable` and `Resume.resume_grid` are
+byte-identical to HEAD — checked mechanically, statement text extracted and
+`diff`ed, zero lines changed. `paint_entry`, `alt_pre_switch`, `alt_switch_entry`,
+`restore_split`, `restore_grid_of_paint`, `restore_tabs_split` and
+`keeps_restoreTail` were not touched (`Keeps.lean` and `Tabs.lean` have a zero
+diff). No hypothesis about `v.sb` appears in any screen proof.
+
+**Two decisions taken against the spec**, both on measurement: `ED 3` is emitted
+**after** the `ED 2` (unavoidable given the design, and the order `clear(1)` sends)
+and **guarded** by the emptiness test (Open decisions 1). Both are recorded above.
+
+**Gates.** `./lake build`, `./lake build Theorems Tests` green and warning-free;
+`python3 tests/coverage.py` → `core defs 252; named by no theorem STATEMENT: 20
+(cap 20)`, `FAILURES: 0`, cap not bumped (all eight new defs are claimed);
+`sh tests/e2e.sh` → `E2E OK`; all nine pty suites green individually.
+
+**Breaks, all recorded in `SCRATCHPAD.md`.** B1–B8 plus three proof breaks (the
+mode tail's kill criterion, `mmap_of_esc_lead`'s case split, `sbRowCost`'s `+ 6`)
+and the two Python halves (B11/B12), which fail against a restore without the
+history paint — the resume assertion that the spec said "fails today" does.
+
+**What Step 1 changed about later steps.**
+
+* Step 4's `restore_sb_any` is **two branches**, because `ED 3` is guarded.
+* Step 5's `scrollbackAnsi_le` should be stated as
+  `≤ sbReplayBytes + 2 * v.rows + 19`, not `≤ sbReplayBytes`; `rowAnsi_len_seed` is
+  already in the tree, so what is left is one array-fold induction plus a
+  `joinCRLF` length lemma.
+* Flagged for the spec owner, outside this step: `restore` **alone** already exceeds
+  `outbufCap` at 400×100 with worst-case pens (4,561,018 > 4,194,304), with no
+  scrollback involved. The unbudgeted term is the **screen paint**, not the ring.
+  Step 1 does not cause it but consumes ~6% of the remaining headroom, so
+  "comfortably inside `outbufCap`" is true only up to about 34,500 cells of window
+  area at worst-case pens. Recorded in `THEOREMS.md` §Restore.
+
 ### Step 2 — the positive scroll specification, zero emitter change
 
-Status: pending.
+Status: → **next**.
 
 In `Theorems/Vt.lean`, beside `lineFeed_interior`:
 
@@ -329,11 +442,34 @@ state `tests/coverage.py` exists to prevent.
    to eliminate, and without it a second attach stacks a second copy of the ring.
    A `LINGER_NO_SB_REPLAY=1` opt-out is a legitimate alternative (a `Client` env
    read, not a core change) and is not costed here.
-2. **Is 262144 the right budget?** Derived (≈3200 blank 80-column rows, more than
-   tmux's default 2000-line history, one sixteenth of `outbufCap`), but the binding
-   constraint is time on a slow link: 256 KiB over 1 MB/s ssh is a quarter-second
-   stall on every attach. Measure one real reattach over the actual ssh path
-   before freezing it; 131072 is the safer number if attach latency wins.
+
+   **DECIDED, against that recommendation: guarded** (2026-08-19, on measurement;
+   the user should ratify, and un-guarding is a one-line move of the `if`).
+   Unguarded, attaching a session with **no scrollback at all** wipes the window's
+   history for zero benefit — measured, receiver ring `["P"]` → `[]` — and that is
+   the common case: a fresh session, and vim/less/htop never scroll the main
+   screen. Guarded, the anti-stacking property is untouched, because nothing is
+   pushed when the ring is empty and so nothing can stack (measured: a second
+   attach still yields exactly `["aa","bb","cc"]`). The set-only analogy does not
+   transfer: a tab ruler is a field linger owns; the window's scrollback is the
+   user's. The price, stated rather than hidden: `replayEq`'s `sb` conjunct is
+   false for a dirty-ring receiver paired with a no-history session — by design,
+   asserted separately as non-interference — and `restore_sb_any` (Step 4) becomes
+   two branches, `(sbRows v).isEmpty = false → (w.feed (restore v)).sb.toList =
+   (sbRows v).toList` and `(sbRows v).isEmpty = true → (w.feed (restore v)).sb =
+   w.sb`. The second is the cheap one (no `push_walk`; `fixes_sb_tail` alone), and
+   the pair says what the emitter actually promises. `LINGER_NO_SB_REPLAY=1` was
+   rejected as the primary answer: a destructive default with an opt-out still
+   surprises the first user, which is what the opt-out is for.
+2. **Is 262144 the right budget?** Derived (**3,048** blank 80-column rows
+   *[corrected]*, more than tmux's default 2000-line history, one sixteenth of
+   `outbufCap`), but the binding constraint is time on a slow link: 256 KiB over
+   1 MB/s ssh is a quarter-second stall on every attach. Measure one real reattach
+   over the actual ssh path before freezing it; 131072 is the safer number if
+   attach latency wins. **Still open** — not measurable from this host, and Step 1
+   froze 262144 provisionally. What *was* measured: the whole stage is ≤ ~262 KB in
+   every ring shape tried, i.e. 6.3% of `outbufCap`, and a real 60-line pty
+   reattach burst is 5,381 bytes (54,287 with truecolour rows).
 3. **`CSI 3 J` in real terminals.** Unverified from this host and unverifiable from
    a pty (a pty has no scrollback). Failure mode is benign — the previous
    occupant's history survives above ours and repeated attaches stack copies — but
