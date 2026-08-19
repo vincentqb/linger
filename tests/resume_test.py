@@ -41,6 +41,18 @@ pid, fd = spawn_attach('boot')
 time.sleep(0.8)
 os.write(fd, b'cd /tmp && echo survives-the-reboot-$((40+2))\r')
 drain(fd, 1.5)
+# …then push it off the screen. Before scrollback replay the marker below had to be
+# on the visible grid for the reattach assertion to pass, so that assertion proved
+# only that the *screen* survived the checkpoint. With 60 lines after it on a 24-row
+# terminal it is in the ring, and the same assertion now proves the ring survived the
+# checkpoint AND reached the terminal. It fails against a restore that drops history.
+os.write(fd, b'i=1; while [ $i -le 60 ]; do echo filler-$i; i=$((i+1)); done\r')
+drain(fd, 2.0)
+hist0 = subprocess.run([LINGER, 'history', 'boot'], env=ENV, capture_output=True,
+                       text=True).stdout.splitlines()
+fails += expect('survives-the-reboot-42' in hist0
+                and 'survives-the-reboot-42' not in hist0[-24:],
+                'the pre-reboot marker is in the ring, off the 24-row screen')
 subprocess.run([LINGER, 'set', 'boot', 'k=v'], env=ENV)
 
 # detach (last attached client): the machine checkpoints here
@@ -76,7 +88,8 @@ fails += expect('resumable' in ls and 'boot' in ls, 'killed session listed as re
 pid2, fd2 = spawn_attach('boot')
 time.sleep(1.0)
 out = drain(fd2, 1.5)
-fails += expect(b'survives-the-reboot-42' in out, 'reattach replays pre-reboot screen')
+fails += expect(b'survives-the-reboot-42' in out,
+                'reattach replays the pre-reboot scrollback, not just the screen')
 os.write(fd2, b'pwd\r')
 out = drain(fd2, 1.5)
 fails += expect(b'/tmp' in out, 'fresh shell starts in the saved cwd')

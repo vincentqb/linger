@@ -163,5 +163,72 @@ hist_nd = subprocess.run([LINGER, 'history', 'nd'], env=ENV, capture_output=True
 fails += expect('nd-22' in hist_nd, 'LINGER_NO_DETACH_KEY: input still reaches the session')
 subprocess.run([LINGER, 'kill', 'nd'], env=ENV)
 
+# 11. the scrollback reaches the client's own scrollback (specs/scrollback-fidelity.md).
+#     `restore` used to repaint the screen and drop everything above it. It now paints
+#     the session's ring first and scrolls it off, so the reattach burst carries lines
+#     that are no longer on the screen at all — and the client's wheel-scroll, search
+#     and selection find them. The `ED 3` that stops a second attach stacking a second
+#     copy is emitted AFTER the `ED 2` (the order ncurses `clear(1)` sends), because
+#     `restoreBody` already clears before `screensAnsi`.
+pid_s, fd_s = spawn_attach('sb')
+time.sleep(0.8)
+drain(fd_s, 0.3)
+os.write(fd_s, b'i=1; while [ $i -le 60 ]; do echo sbline-$i; i=$((i+1)); done\r')
+time.sleep(1.2)
+drain(fd_s, 1.2)
+hist_s = subprocess.run([LINGER, 'history', 'sb'], env=ENV, capture_output=True,
+                        text=True).stdout.splitlines()
+fails += expect('sbline-1' in hist_s and 'sbline-1' not in hist_s[-24:],
+                'scrollback: the early lines are in the ring, off the 24-row screen')
+os.write(fd_s, b'\x1c')                       # detach
+time.sleep(0.6)
+pid_s2, fd_s2 = spawn_attach('sb')
+burst = drain(fd_s2, 2.0)
+fails += expect(b'sbline-1' in burst,
+                'scrollback: a line that scrolled off the screen is replayed on reattach')
+fails += expect(b'sbline-60' in burst, 'scrollback: the screen is still replayed too')
+i2, i3 = burst.find(b'\x1b[2J'), burst.find(b'\x1b[3J')
+fails += expect(i3 >= 0 and 0 <= i2 < i3,
+                f'scrollback: ED 3 present and after ED 2 (2J at {i2}, 3J at {i3})')
+fails += expect(len(burst) < 65536,
+                f'scrollback: the reattach burst fits one outputChunk ({len(burst)} bytes, '
+                f'cap 65536; outbufCap is 4194304 and disconnects)')
+os.write(fd_s2, b'echo alive-$((20+22))\r')
+time.sleep(0.8)
+fails += expect(b'alive-42' in drain(fd_s2, 1.2),
+                'scrollback: the client survives the burst and is still interactive')
+
+#     …and again with a ring of per-cell truecolour rows, which is the shape whose
+#     bytes the budget exists for: ~40 B per column instead of one.
+TC = os.path.join(LDIR, 'tc.sh')
+with open(TC, 'w') as f:
+    f.write('i=1\n'
+            'while [ $i -le 60 ]; do\n'
+            '  j=1\n'
+            '  while [ $j -le 20 ]; do\n'
+            '    printf "\\033[38;2;%d;20;30m\\033[48;2;40;%d;60mX" $((i % 200)) $((j * 11 % 200))\n'
+            '    j=$((j+1))\n'
+            '  done\n'
+            '  printf "\\033[0m tcline-%d\\n" $i\n'
+            '  i=$((i+1))\n'
+            'done\n')
+os.write(fd_s2, ('sh ' + TC + '\r').encode())
+time.sleep(2.5)
+drain(fd_s2, 1.5)
+os.write(fd_s2, b'\x1c')
+time.sleep(0.6)
+pid_s3, fd_s3 = spawn_attach('sb')
+burst_tc = drain(fd_s3, 2.5)
+fails += expect(b'tcline-1' in burst_tc,
+                'scrollback: a truecolour line that scrolled off is replayed too')
+fails += expect(len(burst_tc) < 4194304,
+                f'scrollback: the truecolour burst stays under outbufCap '
+                f'({len(burst_tc)} bytes, cap 4194304)')
+os.write(fd_s3, b'echo tc-alive-$((21+21))\r')
+time.sleep(1.0)
+fails += expect(b'tc-alive-42' in drain(fd_s3, 1.5),
+                'scrollback: the client survives the truecolour burst')
+subprocess.run([LINGER, 'kill', 'sb'], env=ENV)
+
 print('FAILURES:', fails)
 sys.exit(1 if fails else 0)
