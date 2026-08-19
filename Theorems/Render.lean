@@ -1,4 +1,4 @@
-import Theorems.Render.Tabs
+import Theorems.Render.Scrollback
 /-! # §Replay — the restore stream, proved (façade)
 
 `Render.restore` is the byte stream a re-attaching client's terminal is fed, and
@@ -29,6 +29,10 @@ The rungs, in the order they are built (each imports the one above):
   `restore_grid_any` on both screens at every height.
 * `Theorems.Render.Tabs` — `Fixes π` (the projection-generic stream predicate that
   `Keeps` and `MMap id` are instances of) and `restore_tabs_any`.
+* `Theorems.Render.Scrollback` — the history stage's row half: the unconditional fit
+  (`cellOk_cellFit`, `rowOk_fitRow`, `fitRow_id_of_rowOk`) and the byte budget
+  (`sbTake_budget`, `sbRows_budget`, `sbTake_prefix`, `rowAnsi_len_le_cost`). Its
+  receiver half, `scrollback_entry`, is in `Grid` beside `paint_entry`.
 
 Why it is split: at ~9,900 lines the single file was accretion from
 one-commit-per-step, and the boundaries above are the ones its own section headers

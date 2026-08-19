@@ -1331,6 +1331,85 @@ theorem paint_entry (v w : Vt) (hgood : Good w) (hren : Renderable w)
       show (blankRow u.cols u.pen).size = v.cols
       rw [show (blankRow u.cols u.pen).size = u.cols from by simp [blankRow]]; exact hucols
 
+/-! ### The history stage, between the prefix and the paint
+
+`screensAnsi` now leads with `scrollbackAnsi v`, so the paint's entry state has to
+survive it. It does, and — the point of the whole staged design —
+**with no hypothesis about the ring**: none of `paint_entry`'s sixteen conjuncts is
+about cells, and `Good`/`Renderable` are preserved by feeding *any* bytes. That is
+why the three flagship statements below are byte-identical to what they were
+before the history existed, and why a `RowOk`/`fitRow`/`v.sb` hypothesis appearing
+in a *screen* proof would be a sign the shape had gone wrong. -/
+
+/-- **The bridge.** Feeding the history stage after `paint_entry`'s prefix
+re-establishes all sixteen of `paint_entry`'s conjuncts, so
+`gridAnsi_writes_grid` can be applied at the later state unchanged.
+
+Where each comes from: dims by `dims_feed`; the region, charsets, shift state and
+which-screen from `smap_id_scrollbackAnsi` (`SMap` carries no `u8need` side
+condition, which is what makes those one line each); `grid.size`/row lengths from
+`renderable_feed`; and `u8need` plus the three modes from `sbTail_modes`, i.e. from
+the stage's ESC-leading mode tail — **not** from "the stage ends in ASCII", which
+is not a route: `uaz_feed` needs every byte below 0x80 and the ring paint emits
+glyphs. `u8acc` then follows from `u8Ok_feed`. -/
+theorem scrollback_entry {u v : Vt} (hgood : Good u) (hren : Renderable u)
+    (hcols : u.cols = v.cols) (hrows : u.rows = v.rows)
+    (hg : u.pstate = .ground) (hua : u.u8acc = 0)
+    (hst : stick u = ⟨v.rows, 0, v.rows - 1, false, false, false, false⟩) :
+    let z := u.feed (scrollbackAnsi v)
+    z.cols = v.cols ∧ z.rows = v.rows ∧ z.top = 0 ∧ z.bot = v.rows - 1
+      ∧ z.pstate = .ground ∧ z.u8need = 0 ∧ z.u8acc = 0
+      ∧ z.modes.insert = false ∧ z.modes.wrap = true ∧ z.modes.origin = false
+      ∧ z.g0Line = false ∧ z.g1Line = false
+      ∧ z.grid.size = v.rows ∧ (∀ y', (z.getRow y').size = v.cols)
+      ∧ z.altGrid = none ∧ stick z = ⟨v.rows, 0, v.rows - 1, false, false, false, false⟩ := by
+  intro z
+  -- the sticky bundle, straight through
+  obtain ⟨hzg, hzst⟩ := smap_id_scrollbackAnsi v u hg
+  have hstz : stick z = ⟨v.rows, 0, v.rows - 1, false, false, false, false⟩ := by
+    show stick (u.feed (scrollbackAnsi v)) = _
+    rw [hzst, id_eq, hst]
+  -- dimensions
+  have hd : dims z = dims u := dims_feed _ hgood
+  have hzcols : z.cols = v.cols := by rw [← dims_fst z, hd, dims_fst]; exact hcols
+  have hzrows : z.rows = v.rows := by rw [← dims_snd z, hd, dims_snd]; exact hrows
+  -- reproducible rows survive any stream
+  obtain ⟨hgsz, hrok⟩ := (renderable_feed hren (scrollbackAnsi v)).main
+  -- the decoder and the three modes, through the ESC-leading mode tail
+  have hsplit : scrollbackAnsi v
+      = (if (sbRows v).isEmpty then []
+          else csiNum 3 0x4A ++ gridAnsi (sbRows v) ++ (List.replicate v.rows crlfB).flatten)
+        ++ (csiNum 4 0x6C ++ modeSet 6 false ++ modeSet 7 true) := by
+    unfold scrollbackAnsi; simp only [List.append_assoc]
+  obtain ⟨-, hzun, hzins, hzwrap, hzorg⟩ := sbTail_modes (smap_id_sbPush v u hg).1
+  have hzun' : z.u8need = 0 := by
+    show (u.feed (scrollbackAnsi v)).u8need = 0
+    rw [hsplit, feed_append]
+    exact hzun
+  have hzua : z.u8acc = 0 := u8Ok_feed (scrollbackAnsi v) (fun _ => hua) hzun'
+  refine ⟨hzcols, hzrows, ?_, ?_, hzg, hzun', hzua, ?_, ?_, ?_, ?_, ?_,
+    by rw [hgsz, hzrows], fun y' => ?_, ?_, hstz⟩
+  · rw [← stick_top z, hstz]
+  · rw [← stick_bot z, hstz]
+  · show (u.feed (scrollbackAnsi v)).modes.insert = false
+    rw [hsplit, feed_append]; exact hzins
+  · show (u.feed (scrollbackAnsi v)).modes.wrap = true
+    rw [hsplit, feed_append]; exact hzwrap
+  · show (u.feed (scrollbackAnsi v)).modes.origin = false
+    rw [hsplit, feed_append]; exact hzorg
+  · rw [← stick_g0 z, hstz]
+  · rw [← stick_g1 z, hstz]
+  · have := (hrok y').size
+    rw [show z.getRow y' = z.grid.getD y' (blankRow z.cols z.pen) from rfl]
+    by_cases hy : y' < z.grid.size
+    · rw [getD_lt' z.grid y' _ hy, ← getD_lt' z.grid y' (blankRow z.cols {}) hy, hzcols] at *
+      exact this
+    · rw [Array.getD, dif_neg hy]
+      show (blankRow z.cols z.pen).size = v.cols
+      rw [show (blankRow z.cols z.pen).size = z.cols from by simp [blankRow]]; exact hzcols
+  · have hns : z.altGrid.isSome = false := by rw [← stick_alt z, hstz]
+    exact Option.not_isSome_iff_eq_none.mp (by rw [hns]; simp)
+
 /-! ### `restore_grid_any` — Definition-of-done item 5
 
 The composition. `screensAnsi` has two branches; on the main screen it is exactly
@@ -1350,26 +1429,31 @@ theorem restore_grid_any_main (v w : Vt) (hgood : Good w) (hren : Renderable w)
     (hpos : 0 < v.cols) (hub : v.cols < 65533)
     (hvren : Renderable v) (hvsz : v.grid.size = v.rows) :
     (w.feed (restore v)).grid = v.grid := by
-  obtain ⟨e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11, e12, e13, e14, -, -⟩ :=
+  obtain ⟨e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11, e12, e13, e14, -, est⟩ :=
     paint_entry v w hgood hren hcols hrows hua hun hfits
-  have hscreens : screensAnsi v = gridAnsi v.grid := by
+  -- the history stage sits between the prefix and the paint, and hands the paint
+  -- back the same sixteen conjuncts (`scrollback_entry`)
+  obtain ⟨f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, -, -⟩ :=
+    scrollback_entry (u := w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)) (v := v)
+      (Good.feed _ hgood) (renderable_feed hren _) e1 e2 e5 e7 est
+  have hscreens : screensAnsi v = scrollbackAnsi v ++ gridAnsi v.grid := by
     unfold screensAnsi; rw [halt]
   refine restore_grid_of_paint ?_ ?_ ?_
   · rw [show prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v
         = (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A) ++ screensAnsi v from rfl,
-      feed_append, hscreens]
-    exact (gridAnsi_writes_grid e1 e2 hpos hub e3 e4 e5 e6 e7 e8 e9 e10 e11 e12
-      (by rw [e13]) e14 hvren.main.2 hvsz).2.1
+      feed_append, hscreens, feed_append]
+    exact (gridAnsi_writes_grid f1 f2 hpos hub f3 f4 f5 f6 f7 f8 f9 f10 f11 f12
+      (by rw [f13]) f14 hvren.main.2 hvsz).2.1
   · rw [show prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v
         = (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A) ++ screensAnsi v from rfl,
-      feed_append, hscreens]
-    exact (gridAnsi_writes_grid e1 e2 hpos hub e3 e4 e5 e6 e7 e8 e9 e10 e11 e12
-      (by rw [e13]) e14 hvren.main.2 hvsz).2.2.1
+      feed_append, hscreens, feed_append]
+    exact (gridAnsi_writes_grid f1 f2 hpos hub f3 f4 f5 f6 f7 f8 f9 f10 f11 f12
+      (by rw [f13]) f14 hvren.main.2 hvsz).2.2.1
   · rw [show prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v
         = (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A) ++ screensAnsi v from rfl,
-      feed_append, hscreens]
-    exact (gridAnsi_writes_grid e1 e2 hpos hub e3 e4 e5 e6 e7 e8 e9 e10 e11 e12
-      (by rw [e13]) e14 hvren.main.2 hvsz).1
+      feed_append, hscreens, feed_append]
+    exact (gridAnsi_writes_grid f1 f2 hpos hub f3 f4 f5 f6 f7 f8 f9 f10 f11 f12
+      (by rw [f13]) f14 hvren.main.2 hvsz).1
 
 /-! ### The alt screen — `restore_grid_any`'s other branch
 
@@ -1587,60 +1671,64 @@ theorem restore_grid_any_alt (v w : Vt) (hgood : Good w) (hren : Renderable w)
     (hpos : 0 < v.cols) (hub : v.cols < 65533)
     (hvren : Renderable v) (hvsz : v.grid.size = v.rows) :
     (w.feed (restore v)).grid = v.grid := by
-  obtain ⟨e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11, e12, e13, e14, ealt, -⟩ :=
+  obtain ⟨e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11, e12, e13, e14, -, est⟩ :=
     paint_entry v w hgood hren hcols hrows hua hun hfits
   obtain ⟨hmsz, hmok⟩ := hvren.alt mainGrid mcur mpen halt
-  have hgoodU : Good (w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)) := Good.feed _ hgood
+  -- the history stage, emitted identically on both screens and ahead of the
+  -- discarded main paint: `scrollback_entry` hands `alt_pre_switch` exactly what
+  -- `paint_entry` used to hand it
+  obtain ⟨f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, falt, -⟩ :=
+    scrollback_entry (u := w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)) (v := v)
+      (Good.feed _ hgood) (renderable_feed hren _) e1 e2 e5 e7 est
   -- across the discarded main paint and the park, the entry state is preserved
   obtain ⟨hs2cols, hs2rows, hs2top, hs2alt, hs2g, hs2n, hs2ua, hs2ins, hs2wrap, hs2org,
       hs2g0, hs2g1⟩ :=
-    alt_pre_switch (z := w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A))
+    alt_pre_switch (z := (w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).feed
+        (scrollbackAnsi v))
       (mg := mainGrid) (mc := mcur) (mp := mpen) (cols := v.cols) (rows := v.rows)
-      e1 e2 e3 e4 e5 e6 e7 e8 e9 e10 e11 e12 e13 e14 ealt hgoodU hpos hub hmok hmsz
+      f1 f2 f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 falt
+      (Good.feed _ (Good.feed _ hgood)) hpos hub hmok hmsz
   -- the switch establishes the second paint's entry state
   obtain ⟨hZcols, hZrows, hZtop, hZbot, hZg, hZun, hZua, hZmodes, hZg0, hZg1, hZgrid,
       -, -, -⟩ := alt_switch_entry
-      (u := ((w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).feed
-        (gridAnsi mainGrid)).feed (penSgr mpen ++ csiNum2 (mcur.y + 1) (mcur.x + 1) 0x48))
+      (u := ((((w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).feed
+        (scrollbackAnsi v)).feed (gridAnsi mainGrid)).feed
+        (penSgr mpen ++ csiNum2 (mcur.y + 1) (mcur.x + 1) 0x48)))
       hs2alt hs2g hs2n
-  -- the post-switch grid is a blank of the right shape; all its rows are `cols` long
-  have hs3cols : ((((w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).feed
-      (gridAnsi mainGrid)).feed (penSgr mpen ++ csiNum2 (mcur.y + 1) (mcur.x + 1) 0x48)).feed
-      (csiPriv 1049 0x68)).cols = v.cols := hZcols.trans hs2cols
-  have hs3rlens : ∀ y', (((((w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).feed
-      (gridAnsi mainGrid)).feed (penSgr mpen ++ csiNum2 (mcur.y + 1) (mcur.x + 1) 0x48)).feed
-      (csiPriv 1049 0x68)).getRow y').size = v.cols := fun y' =>
-    (getRow_size_replicate hZgrid hZcols y').trans hs2cols
-  have hs3gsz : ((((w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).feed
-      (gridAnsi mainGrid)).feed (penSgr mpen ++ csiNum2 (mcur.y + 1) (mcur.x + 1) 0x48)).feed
-      (csiPriv 1049 0x68)).grid.size = v.rows := by rw [hZgrid, Array.size_replicate]; exact hs2rows
-  -- the final paint reproduces the visible (alt) grid
-  have hfin := gridAnsi_writes_grid' (u := (((w.feed (prologueAnsi v ++ csiNum 0 0x6D
-      ++ csiNum 2 0x4A)).feed (gridAnsi mainGrid)).feed
+  -- the final paint reproduces the visible (alt) grid, over a post-switch blank of
+  -- the receiver's shape
+  have hfin := gridAnsi_writes_grid' (u := ((((w.feed (prologueAnsi v ++ csiNum 0 0x6D
+      ++ csiNum 2 0x4A)).feed (scrollbackAnsi v)).feed (gridAnsi mainGrid)).feed
       (penSgr mpen ++ csiNum2 (mcur.y + 1) (mcur.x + 1) 0x48)).feed (csiPriv 1049 0x68))
     (tg := v.grid) (cols := v.cols) (rows := v.rows)
-    hs3cols (hZrows.trans hs2rows) hpos hub hZtop (by rw [hZbot, hs2rows]) hZg
+    (hZcols.trans hs2cols) (hZrows.trans hs2rows) hpos hub hZtop (by rw [hZbot, hs2rows]) hZg
     (hZun.trans hs2n) (hZua.trans hs2ua)
     (by rw [hZmodes]; exact hs2ins) (by rw [hZmodes]; exact hs2wrap) (by rw [hZmodes]; exact hs2org)
-    (hZg0.trans hs2g0) (hZg1.trans hs2g1) hs3gsz hs3rlens hvren.main.2 hvsz
+    (hZg0.trans hs2g0) (hZg1.trans hs2g1)
+    (by rw [hZgrid, Array.size_replicate]; exact hs2rows)
+    (fun y' => (getRow_size_replicate hZgrid hZcols y').trans hs2cols)
+    hvren.main.2 hvsz
   -- assemble via `restore_grid_of_paint`
   have hscreens : screensAnsi v
-      = gridAnsi mainGrid ++ (penSgr mpen ++ csiNum2 (mcur.y + 1) (mcur.x + 1) 0x48)
+      = scrollbackAnsi v ++ gridAnsi mainGrid
+        ++ (penSgr mpen ++ csiNum2 (mcur.y + 1) (mcur.x + 1) 0x48)
         ++ csiPriv 1049 0x68 ++ gridAnsi v.grid := by
     unfold screensAnsi; rw [halt]; simp only [List.append_assoc]
+  -- peel the stream to the shape the chain above is stated over. `simp only
+  -- [feed_append]` on both sides rather than a hand-counted `rw` chain: the peels
+  -- are order-sensitive, since `++` is left-associative and a `rw` takes the
+  -- outermost append first — which with the history stage in front splits the
+  -- pen/cursor park before it reaches the stage, and then nothing matches.
+  have hpeel : w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v)
+      = (((((w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).feed
+          (scrollbackAnsi v)).feed (gridAnsi mainGrid)).feed
+          (penSgr mpen ++ csiNum2 (mcur.y + 1) (mcur.x + 1) 0x48)).feed
+          (csiPriv 1049 0x68)).feed (gridAnsi v.grid) := by
+    rw [hscreens]; simp only [feed_append]
   refine restore_grid_of_paint ?_ ?_ ?_
-  · rw [show prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v
-        = (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A) ++ screensAnsi v from rfl,
-      feed_append, hscreens, feed_append, feed_append, feed_append]
-    exact hfin.2.1
-  · rw [show prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v
-        = (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A) ++ screensAnsi v from rfl,
-      feed_append, hscreens, feed_append, feed_append, feed_append]
-    exact hfin.2.2.1
-  · rw [show prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v
-        = (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A) ++ screensAnsi v from rfl,
-      feed_append, hscreens, feed_append, feed_append, feed_append]
-    exact hfin.1
+  · rw [hpeel]; exact hfin.2.1
+  · rw [hpeel]; exact hfin.2.2.1
+  · rw [hpeel]; exact hfin.1
 
 /-- **The grid, restored into any client — both screens (Definition-of-done item 5).** The one
 theorem that dispatches on whether the session is on the alt screen; each branch is proved

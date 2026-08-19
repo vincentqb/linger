@@ -718,8 +718,51 @@ theorem quiet_gridAnsi (grid : Array Row) : Quiet (gridAnsi grid) := by
   exact (quiet_csiNum 0 0x6D (by decide) (by decide)).append
     (hhome.append (quiet_joinCRLF _ hrows))
 
+theorem quiet_modeSet (n : Nat) (on : Bool) (hn : n ≠ 6) : Quiet (modeSet n on) := by
+  unfold modeSet
+  cases on
+  · exact quiet_csiPriv n 0x6C hn (by decide) (by decide)
+  · exact quiet_csiPriv n 0x68 hn (by decide) (by decide)
+
+/-- **DECOM reset is `Quiet` because it makes the conclusion true outright.** The
+`≠ 6` family says a mode replay cannot turn origin *on*; this says `?6l` turns it
+*off*, which is what the repaint's prologue needs. -/
+theorem quiet_modeSet_decom_off : Quiet (modeSet 6 false) := by
+  intro v hg ho
+  refine ⟨ends_modeSet 6 false v hg, ?_⟩
+  rw [show modeSet 6 false = 0x1B :: 0x5B :: 0x3F :: (digits 6 ++ [(0x6C : UInt8)]) from by
+    simp [modeSet, csiPriv, csiB]]
+  rw [feed_cons, feed_cons, feed_cons]
+  have hb := csi_open_step (esc_step hg)
+  obtain ⟨hm, -⟩ := csi_marker_step hb (by decide)
+  rw [show ∀ (w : Vt), w.feed (digits 6 ++ [(0x6C : UInt8)])
+      = (w.feed (digits 6)).feed [(0x6C : UInt8)] from
+    fun w => by simp [Vt.feed, List.foldl_append]]
+  obtain ⟨s', hs', hcur', hhave', hpar', hint', hign', -, hpriv'⟩ :=
+    csi_digits_value 6 hm rfl
+  rw [show ∀ (w : Vt), w.feed [(0x6C : UInt8)] = w.step 0x6C from fun _ => rfl]
+  exact org_step_of_csi_decom_off hs' (by simp [hign']) (by simp [hpriv']) (by simp [hpar'])
+    hhave' (by simp [hint']) (by rw [hcur']; decide)
+
+/-- The flush run keeps DECOM off: it is ESC-free, so `Quiet.text` carries it. -/
+theorem quiet_crlfRun (n : Nat) : Quiet ((List.replicate n crlfB).flatten) :=
+  Quiet.text (crlfRun_no_1B n)
+
+/-- `Quiet (modeSet 6 false)` cannot come from `quiet_modeSet` — that carries
+`n ≠ 6`, for the good reason that mode 6 *is* DECOM. It is the one mode emit whose
+`Quiet` is about its value rather than its number. -/
+theorem quiet_scrollbackAnsi (v : Vt) : Quiet (scrollbackAnsi v) := by
+  unfold scrollbackAnsi
+  refine Quiet.append (Quiet.append (Quiet.append ?_
+    (quiet_csiNum 4 0x6C (by decide) (by decide))) quiet_modeSet_decom_off)
+    (quiet_modeSet 7 true (by decide))
+  exact Quiet.ite (fun _ => Quiet.nil)
+    (fun _ => (((quiet_csiNum 3 0x4A (by decide) (by decide)).append
+      (quiet_gridAnsi (sbRows v))).append (quiet_crlfRun v.rows)))
+
 theorem quiet_screensAnsi (v : Vt) : Quiet (screensAnsi v) := by
   unfold screensAnsi
+  refine (quiet_scrollbackAnsi v).append ?_
   split
   · exact quiet_gridAnsi _
   · exact ((((quiet_gridAnsi _).append (quiet_penSgr _)).append
@@ -755,32 +798,6 @@ theorem quiet_charsetAnsi (v : Vt) : Quiet (charsetAnsi v) := by
 theorem quiet_titleAnsi (v : Vt) : Quiet (titleAnsi v) := by
   unfold titleAnsi
   exact quiet_osc _
-
-theorem quiet_modeSet (n : Nat) (on : Bool) (hn : n ≠ 6) : Quiet (modeSet n on) := by
-  unfold modeSet
-  cases on
-  · exact quiet_csiPriv n 0x6C hn (by decide) (by decide)
-  · exact quiet_csiPriv n 0x68 hn (by decide) (by decide)
-
-/-- **DECOM reset is `Quiet` because it makes the conclusion true outright.** The
-`≠ 6` family says a mode replay cannot turn origin *on*; this says `?6l` turns it
-*off*, which is what the repaint's prologue needs. -/
-theorem quiet_modeSet_decom_off : Quiet (modeSet 6 false) := by
-  intro v hg ho
-  refine ⟨ends_modeSet 6 false v hg, ?_⟩
-  rw [show modeSet 6 false = 0x1B :: 0x5B :: 0x3F :: (digits 6 ++ [(0x6C : UInt8)]) from by
-    simp [modeSet, csiPriv, csiB]]
-  rw [feed_cons, feed_cons, feed_cons]
-  have hb := csi_open_step (esc_step hg)
-  obtain ⟨hm, -⟩ := csi_marker_step hb (by decide)
-  rw [show ∀ (w : Vt), w.feed (digits 6 ++ [(0x6C : UInt8)])
-      = (w.feed (digits 6)).feed [(0x6C : UInt8)] from
-    fun w => by simp [Vt.feed, List.foldl_append]]
-  obtain ⟨s', hs', hcur', hhave', hpar', hint', hign', -, hpriv'⟩ :=
-    csi_digits_value 6 hm rfl
-  rw [show ∀ (w : Vt), w.feed [(0x6C : UInt8)] = w.step 0x6C from fun _ => rfl]
-  exact org_step_of_csi_decom_off hs' (by simp [hign']) (by simp [hpriv']) (by simp [hpar'])
-    hhave' (by simp [hint']) (by rw [hcur']; decide)
 
 theorem quiet_irm (on : Bool) : Quiet (csiNum 4 (if on then 0x68 else 0x6C)) := by
   cases on

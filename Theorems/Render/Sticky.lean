@@ -525,23 +525,29 @@ theorem smap_id_tabsAnsi (v : Vt) : SMap id (tabsAnsi v) := by
   refine SMap.streamPred.flatMap (fun i => ?_)
   exact (smap_id_cha (i + 1)).append (smap_id_escSeq 0x48 (by decide))
 
+/-- **A private mode emit that is not a screen switch moves no sticky field.**
+`stSetMode`'s only non-identity case is 47/1047/1049, so naming the three
+exclusions is the whole content. Lifted out of `smap_id_modesAnsi`, which was
+where it was first needed; the scrollback stage's `?6l`/`?7h` need it too. -/
+theorem smap_id_modeSet_safe (n : Nat) (on : Bool) (hn : 0 < n) (hlt : n < 65535)
+    (h47 : n ≠ 47) (h1047 : n ≠ 1047) (h1049 : n ≠ 1049) : SMap id (modeSet n on) := by
+  refine (smap_modeSet n on hn hlt).congr (fun s => ?_)
+  unfold stSetMode
+  rw [if_neg (by
+    intro h
+    simp only [Bool.or_eq_true, beq_iff_eq] at h
+    rcases h with (h | h) | h
+    · exact h47 h
+    · exact h1047 h
+    · exact h1049 h)]
+  rfl
+
 /-- Every mode `modesAnsi` replays is one `setMode` cannot turn into a screen
 switch — including the mouse field, whose *guard* is what rules 47/1047/1049 out
 (the same allowlist that `restore_modes_any` needs). -/
 theorem smap_id_modesAnsi (v : Vt) : SMap id (modesAnsi v) := by
   have hm : ∀ (n : Nat) (on : Bool), 0 < n → n < 65535 → n ≠ 47 → n ≠ 1047 → n ≠ 1049 →
-      SMap id (modeSet n on) := by
-    intro n on h1 h2 h3 h4 h5
-    refine (smap_modeSet n on h1 h2).congr (fun s => ?_)
-    unfold stSetMode
-    rw [if_neg (by
-      intro h
-      simp only [Bool.or_eq_true, beq_iff_eq] at h
-      rcases h with (h | h) | h
-      · exact h3 h
-      · exact h4 h
-      · exact h5 h)]
-    rfl
+      SMap id (modeSet n on) := smap_id_modeSet_safe
   have hkey : SMap id (if v.modes.appKeypad then escSeq 0x3D else escSeq 0x3E) :=
     SMap.streamPred.ite (fun _ => smap_id_escSeq 0x3D (by decide))
       (fun _ => smap_id_escSeq 0x3E (by decide))
@@ -607,9 +613,37 @@ theorem smap_charsetAnsi (v : Vt) :
   unfold charsetAnsi
   exact ((h0.comp h1).comp h2).congr (fun s => rfl)
 
+/-- The flush run moves no sticky field: no ESC, no SO, no SI. -/
+theorem smap_id_crlfRun (n : Nat) : SMap id ((List.replicate n crlfB).flatten) :=
+  SMap.text (crlfRun_no_esc n)
+
+/-- **The push itself is sticky-transparent** — `ED 3` does not move the region, an
+`ED` of any mode is `smap_id_ed`, the paint is generic in the array, and the flush
+is text. Named separately from the stage because `scrollback_entry` needs the
+parser state at exactly this point: it is where the mode tail's `MMap` picks up. -/
+theorem smap_id_sbPush (v : Vt) :
+    SMap id (if (sbRows v).isEmpty then []
+      else csiNum 3 0x4A ++ gridAnsi (sbRows v) ++ (List.replicate v.rows crlfB).flatten) :=
+  (SMap.ite (c := (sbRows v).isEmpty = true) (fun _ => SMap.nil)
+    (fun _ => ((smap_id_ed 3).append (smap_id_gridAnsi (sbRows v))).append
+      (smap_id_crlfRun v.rows))).congr (fun s => by split <;> rfl)
+
+/-- **The history stage is sticky-transparent.** Nothing in it emits `?1049h`,
+`DECSTBM` or a charset designation — which is what keeps `paint_entry`'s region,
+charset, shift-state and which-screen conjuncts alive across it, and `SMap`
+carries no `u8need` side condition, so those six conjuncts cost one line each in
+`scrollback_entry`. -/
+theorem smap_id_scrollbackAnsi (v : Vt) : SMap id (scrollbackAnsi v) := by
+  unfold scrollbackAnsi
+  exact SMap.append (SMap.append (SMap.append (smap_id_sbPush v) smap_id_irm_reset)
+    (smap_id_modeSet_safe 6 false (by decide) (by decide) (by decide) (by decide) (by decide)))
+    (smap_id_modeSet_safe 7 true (by decide) (by decide) (by decide) (by decide) (by decide))
+
 /-- The alt switch, in the middle of the repaint: `screensAnsi` sends `?1049h`
 only when the session *is* on the alt screen, and the prologue's `?1049l` is what
-makes that switch land (`enterAlt` is a no-op when already there). -/
+makes that switch land (`enterAlt` is a no-op when already there). The history
+stage sits ahead of both branches and is transparent, so the transform is
+unchanged. -/
 theorem smap_screensAnsi (v : Vt) :
     SMap (if v.altGrid.isSome then stAlt true else id) (screensAnsi v) := by
   have h1049 : SMap (stAlt true) (csiPriv 1049 0x68) := by
@@ -617,6 +651,7 @@ theorem smap_screensAnsi (v : Vt) :
     rw [show modeSet 1049 true = csiPriv 1049 0x68 from rfl] at h
     exact h.congr (fun s => by unfold stSetMode; rw [if_pos (by decide)])
   unfold screensAnsi
+  refine ((smap_id_scrollbackAnsi v).comp ?_).congr (fun s => rfl)
   rcases hv : v.altGrid with - | x
   · rw [if_neg (by simp)]
     exact smap_id_gridAnsi _

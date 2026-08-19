@@ -19,11 +19,21 @@ open Zmx.Core.Vt Zmx.Core.Render
 
 /-- The §Replay equivalence. Compared: grid, cursor position, pen,
 scroll region, modes, title, tabs, charset, saved cursor/pen, the alt
-stash, and that the replay ends parser-ground. Deliberately excluded:
-`sb` (restore repaints the screen, not history), `bell` (a runtime
-signal), and every wrap-`pending` flag (cursor addressing clears it on
+stash, the **scrollback** (against `sbRows v`, the fitted and
+budget-trimmed history the emitter promises — not `v.sb`, since a
+session's ring may have wrapped and the receiver's is built from index
+zero, so the two agree as histories and differ as records), and that
+the replay ends parser-ground. Deliberately excluded: `bell` (a runtime
+signal) and every wrap-`pending` flag (cursor addressing clears it on
 any terminal — unrepresentable in a replay, harmless: the next glyph
-decides). -/
+decides).
+
+**One honest caveat on the `sb` conjunct.** `scrollbackAnsi` emits its
+`ED 3` only when it has history to put there, so a receiver with a ring
+of its own keeps it when the session has none. Pairing a dirty-ring
+receiver with a no-history session therefore makes this `false` **by
+design**; that combination is asserted separately, as non-interference,
+below. -/
 def replayEq (r v : Vt) : Bool :=
   r.cols == v.cols && r.rows == v.rows
   && r.grid == v.grid
@@ -43,6 +53,7 @@ def replayEq (r v : Vt) : Bool :=
       | _, _ => false)
   && r.pstate == PState.ground && v.pstate == PState.ground
   && r.u8need == 0
+  && r.sb.toList == (sbRows v).toList
 
 def feedStr (v : Vt) (s : String) : Vt := v.feedBytes s.toUTF8
 
@@ -422,6 +433,208 @@ it on display: the last of the set-only emits. -/
 example : (let v := screen 6 3 "hi"
            let w := (feedStr (Vt.init 6 3) "\x1b]2;stale\x07").feed (restore v)
            w.title == v.title && v.title.isEmpty) = true := by native_decide
+
+
+/-! ### The scrollback, in the receiver's own ring
+
+`restore` used to repaint the screen and drop everything above it. It now paints
+the session's ring into the *receiver's* scrollback — the only way a terminal
+takes a line into its native history is to print it inside a whole-screen region
+and let it scroll off — so wheel-scroll, search and selection find it.
+
+Every receiver above has an **empty** ring, and so does every session above
+(`Vt.scrollUpIn` pushes only from a whole-screen region on the main screen, which
+none of them exercises, not even the `CSI 2;4r` one). So `replayEq`'s new conjunct
+is vacuous for all thirty-seven of them, and the fixtures here are the whole
+oracle. -/
+
+/-- A session whose history really is in the ring: five lines through two rows
+leaves `["aa", "bb", "cc"]` above the screen. -/
+def scrolled : Vt := screen 6 2 "aa\r\nbb\r\ncc\r\ndd\r\nee"
+
+/-- Non-vacuity, part one: the session's ring is not empty, and the emitter's view
+of it is the same three rows. -/
+example : (scrolled.sb.size == 3 && (sbRows scrolled).size == 3) = true := by native_decide
+
+/-- A previous occupant that left **its own** history in the window — the ring
+analogue of `dirtyTabs`, and the receiver that makes the `ED 3` question real. -/
+def dirtySb (cols rows : Nat) : Vt := feedStr (Vt.init cols rows) "OLD1\r\nOLD2\r\nOLD3\r\nJUNK"
+
+/-- The hazard itself: the receiver's ring is non-empty and is *not* the
+session's. -/
+example : ((dirtySb 6 2).sb.size == 2) = true := by native_decide
+
+example : (((dirtySb 6 2).sb.toList) == (sbRows scrolled).toList) = false := by native_decide
+
+/-- **The headline.** `Render.history` is `v.sb.toList ++ v.grid.toList`, so this
+one string spans the replayed history *and* the screen: a wrong flush count shows
+up as a wrong string rather than a wrong length. The two off-by-one twins, for the
+record: a flush of `rows - 1` gives `"aa\nbb\ndd\nee\n"` (the newest history row
+never leaves the screen, and the screen paint overwrites it) and `rows + 1` gives
+`"aa\nbb\ncc\n\ndd\nee\n"` (one spurious blank row, pushed *after* the newest
+history row and carrying the pen the last painted row left in effect). -/
+example : (String.fromUTF8! ⟨(history ((dirtySb 6 2).feed (restore scrolled)) false).toArray⟩
+    == "aa\nbb\ncc\ndd\nee\n") = true := by native_decide
+
+example : roundtripsFrom (dirtySb 6 2) scrolled = true := by native_decide
+
+/-- Into a pristine client too, and into one caught mid-OSC — the push now sits
+*inside* the byte range a swallowed stream would eat (`cd7c17b`), so this is not a
+duplicate of the fixture above. -/
+example : roundtrips scrolled = true := by native_decide
+
+example : roundtripsFrom (midOsc 6 2) scrolled = true := by native_decide
+
+example : roundtripsFrom (dirty 6 2) scrolled = true := by native_decide
+
+/-- **Idempotent.** A second attach must not stack a second copy of the history —
+that is what the `ED 3` is for, and without it this is `["OLD1", "OLD2", "aa",
+"bb", "cc", "aa", "bb", "cc"]`. -/
+example : ((((dirtySb 6 2).feed (restore scrolled)).feed (restore scrolled)).sb.toList
+    == (sbRows scrolled).toList) = true := by native_decide
+
+/-- **The guard, stated as a promise.** `ED 3` erases the saved lines of the
+window the client is running in, and that window's scrollback belongs to the
+*user*, shared with their shell — linger never enters the alt screen. So it is
+emitted only when there is history to put there: attaching a session that never
+scrolled leaves the user's own history alone. (Unguarded, this is `[]`.) -/
+example : (((dirtySb 6 2).feed (restore (screen 6 2 "hi"))).sb.toList
+    == (dirtySb 6 2).sb.toList) = true := by native_decide
+
+example : ((sbRows (screen 6 2 "hi")).isEmpty && (sbRows (screen 6 4 "hi")).isEmpty)
+    = true := by native_decide
+
+/-- …and the anti-stacking property survives the guard, because a session with no
+ring pushes nothing that could stack. -/
+example : ((((dirtySb 6 4).feed (restore (screen 6 4 "hi"))).feed
+    (restore (screen 6 4 "hi"))).sb.toList == (dirtySb 6 4).sb.toList) = true := by
+  native_decide
+
+/-- `ED 3` is emitted **after** the `ED 2`, which is the order ncurses `clear(1)`
+sends (`CSI H CSI 2 J CSI 3 J`). Not decoration: our mode 3 erases the screen as
+well as the saved lines (`Vt.eraseScreen`), and it is the `ED 2` four bytes
+earlier that makes that surplus erase unobservable. -/
+example : (let r := restore scrolled
+           let idx := fun (needle : Bytes) =>
+             (List.range (r.length + 1 - needle.length)).find?
+               (fun i => (r.drop i).take needle.length == needle)
+           match idx (csiNum 2 0x4A), idx (csiNum 3 0x4A) with
+           | some a, some b => decide (a < b)
+           | _, _ => false) = true := by native_decide
+
+/-- A **wide glyph and a combining mark in the ring**, not on the screen: the two
+shapes the row painter is most sensitive to, now replayed through `fitRow` as
+well. -/
+example : roundtripsFrom (dirtySb 8 2) (screen 8 2 "a漢b\r\néx\r\nzz\r\nq1\r\nq2")
+    = true := by native_decide
+
+/-- Colour through the ring, and the pen of the newest history row preserved
+cell-for-cell — a history repainted in the wrong pen would still give the right
+`history` string. -/
+def colScrolled : Vt := screen 6 2 "\x1b[48;5;196mAA\r\nBB\r\nCC\r\nDD\r\nEE"
+
+example : roundtripsFrom (dirtySb 6 2) colScrolled = true := by native_decide
+
+example : (let r := (dirtySb 6 2).feed (restore colScrolled)
+           (r.sb.toList.getLast!.at 0).pen == (colScrolled.sb.toList.getLast!.at 0).pen
+             && !((r.sb.toList.getLast!.at 0).pen == ({} : Pen))) = true := by native_decide
+
+/-! #### The fit is mandatory, not hygiene
+
+`Vt.resize` re-fits the grid and leaves `sb` alone, so a resized session's ring
+rows are the *old* width. `fitRow` is what makes the replayed rows the session's
+width, and `rowOk_fitRow` is unconditional — which is what keeps every hypothesis
+about the ring out of the screen theorems. -/
+
+def shrunk : Vt := (screen 8 2 "abcdefgh\r\n22\r\n33\r\n44").resize 4 2
+
+/-- The hazard: the ring still holds 8-wide rows. -/
+example : (shrunk.sb.toList.all (fun r => r.size == 4)) = false := by native_decide
+
+/-- The fit: what the receiver is sent is 4 wide. -/
+example : ((sbRows shrunk).toList.all (fun r => r.size == 4)) = true := by native_decide
+
+example : roundtripsFrom (dirtySb 4 2) shrunk = true := by native_decide
+
+/-! #### The byte budget — a correctness requirement, not prudence
+
+`outbufCap = 4194304` **disconnects** a client on undrained bytes
+(`Zmx/Runtime/Daemon.lean`), and a full `sbCap = 10000` ring of per-cell
+truecolour rows is 32–46 MB at 80 columns. So the trim is what stands between a
+reattach and an attach-then-instant-drop.
+
+`sbTake_budget`/`sbRows_budget` bound the **counted** cost `sbRowCost`;
+`rowAnsi_len_le_cost` closes the row-level gap to emitted bytes. The whole-stream
+step is these fixtures, until `scrollbackAnsi_le` lands (Step 5): the emitted stage
+is bounded by `Σ sbRowCost (sbRows v) + 2 * v.rows + 19`, and that bound is
+**sharp** — attained with zero slack by the adversarial ring below. -/
+
+def ringOf (cols rows : Nat) (mk : Nat → Row) (n : Nat) : Vt :=
+  { screen cols rows "" with sb := { data := (Array.range n).map mk, start := 0 } }
+
+def costSum (v : Vt) : Nat := ((sbRows v).toList.map sbRowCost).sum
+
+/-- The whole-stream bound, in the form that is actually true. -/
+def stageInBudget (v : Vt) : Bool :=
+  decide ((scrollbackAnsi v).length ≤ costSum v + 2 * v.rows + 19)
+    && decide (costSum v ≤ sbReplayBytes)
+
+/-- 300 rows of per-cell truecolour through 40 columns: the pen changes at every
+cell, so no `SGR` is shared. -/
+def heavyRow (cols : Nat) (i : Nat) : Row :=
+  (Array.range cols).map (fun j =>
+    { base := 'x', width := 1,
+      pen := { fg := .rgb (UInt8.ofNat ((i + j) % 256)) 20 30,
+               bg := .rgb 40 (UInt8.ofNat (j % 251)) 60 } })
+
+def heavyRing : Vt := ringOf 40 24 (heavyRow 40) 300
+
+/-- Non-vacuity: the trim actually bites — 174 of 300 rows survive the budget. -/
+example : (decide ((sbRows heavyRing).size < heavyRing.sb.size)
+    && (sbRows heavyRing).size == 174) = true := by native_decide
+
+/-- The counted cost, and the emitted length of the whole reattach burst. The
+number is here rather than `sbReplayBytes` because the emitted stage is **not**
+bounded by the budget — only by the budget plus `2 * rows + 19`. -/
+example : (costSum heavyRing == 260844 && (scrollbackAnsi heavyRing).length == 260219
+    && (restore heavyRing).length == 261417 && stageInBudget heavyRing) = true := by
+  native_decide
+
+/-- 84 default-pen cells then one truecolour cell — a line of plain text ending in
+a coloured token. Every row after the first therefore pays the full `penSgr {}`
+that `sbRowCost`'s `+ 4` accounts for, which is what makes this the sharp case. -/
+def advRow (cols : Nat) : Row :=
+  (Array.range cols).map (fun i =>
+    if i + 1 < cols then ({ base := 'a', width := 1 } : Cell)
+    else { base := 'z', width := 1, pen := { fg := .rgb 1 2 3, bg := .rgb 4 5 6 } })
+
+def advRing : Vt := ringOf 85 24 (fun _ => advRow 85) 3000
+
+/-- **The overshoot, measured.** The stage emits 262153 bytes against a
+`sbReplayBytes` of 262144 — nine bytes over. A bound stated against
+`sbReplayBytes` alone would be false here, and no "budget to `1 <<< 30`" break
+would catch it. -/
+example : (decide ((scrollbackAnsi advRing).length > sbReplayBytes)
+    && (scrollbackAnsi advRing).length == 262153 && costSum advRing == 262086) = true := by
+  native_decide
+
+/-- …and the bound is attained with **zero** slack, so it is a sharp oracle rather
+than a loose one. -/
+example : ((scrollbackAnsi advRing).length == costSum advRing + 2 * advRing.rows + 19)
+    = true := by native_decide
+
+/-- The bound holds on every ring shape measured: empty, blank, a realistic mixed
+row, the truecolour heavy ring and the adversarial one. -/
+example : (stageInBudget (screen 80 24 "hi")
+    && stageInBudget (ringOf 80 24 (fun _ => blankRow 80 {}) 10000)
+    && stageInBudget heavyRing && stageInBudget advRing
+    && stageInBudget scrolled) = true := by native_decide
+
+/-- The empty guard is load-bearing (`broadcast_empty`, one module over): with no
+history the stage is twelve mode bytes and nothing else — no `ED 3`, no paint, no
+flush. -/
+example : ((scrollbackAnsi (screen 80 24 "hi")).length == 14
+    && (sbRows (screen 80 24 "hi")).isEmpty) = true := by native_decide
 
 
 /-! ### The hand-back (§Handback, anchor A5's outbound half)

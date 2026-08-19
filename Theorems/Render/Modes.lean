@@ -423,6 +423,47 @@ theorem MMap.comp {f g : Modes → Modes} {a b : Bytes} (ha : MMap f a) (hb : MM
   obtain ⟨h4, h5, h6⟩ := hb _ h1 h2
   exact ⟨h4, h5, by rw [h6, h3]⟩
 
+/-- **`MMap` without its `u8need` precondition, for an ESC-leading chunk.**
+
+`MMap` demands `u8need = 0` going in, and after the scrollback stage's *glyph*
+bytes nothing in the repo supplies that: `Ends` is deliberately scoped to
+`pstate`, `uz_feed` needs the very fact it would prove, and
+`gridAnsi_writes_grid'` — the only source of u8-quiescence after a paint —
+demands `painted.size = receiver.rows`, which the ring violates by design. So the
+mode re-establishment at the end of the stage would have no route.
+
+The case split is what makes it free. With `u8need = 0` the hypothesis applies
+directly; with `u8need` positive the leading ESC's `abortUtf8` makes the state
+*literally equal* to the quiesced one (it touches `u8need`/`u8acc` and nothing
+else), and the quiesced one has the same `modes`. Both branches land on `h`.
+
+This is the lemma the design review's Step-1 sketch was missing, and it delivers
+four of `scrollback_entry`'s sixteen conjuncts at once (`u8need`, `insert`,
+`wrap`, `origin`) — the fifth, `u8acc`, follows by `u8Ok_feed`. -/
+theorem mmap_of_esc_lead {f : Modes → Modes} {rest : Bytes}
+    (h : MMap f ((0x1B : UInt8) :: rest)) {v : Vt} (hg : v.pstate = .ground) :
+    (v.feed ((0x1B : UInt8) :: rest)).pstate = .ground
+      ∧ (v.feed ((0x1B : UInt8) :: rest)).u8need = 0
+      ∧ (v.feed ((0x1B : UInt8) :: rest)).modes = f v.modes := by
+  by_cases hu : v.u8need = 0
+  · exact h v hg hu
+  · have hpos : v.u8need > 0 := Nat.pos_of_ne_zero hu
+    have habort : v.abortUtf8 (0x1B : UInt8) = { v with u8need := 0, u8acc := 0 } := by
+      unfold Vt.abortUtf8
+      rw [if_pos (by simp [hpos])]
+    have habort2 : ({ v with u8need := 0, u8acc := 0 } : Vt).abortUtf8 (0x1B : UInt8)
+        = { v with u8need := 0, u8acc := 0 } := by
+      unfold Vt.abortUtf8
+      rw [if_neg (by simp)]
+    have hstep : v.step (0x1B : UInt8) = ({ v with u8need := 0, u8acc := 0 } : Vt).step 0x1B := by
+      unfold Vt.step
+      dsimp only
+      rw [habort, habort2]
+    rw [show v.feed ((0x1B : UInt8) :: rest)
+        = ({ v with u8need := 0, u8acc := 0 } : Vt).feed ((0x1B : UInt8) :: rest) from by
+      rw [feed_cons, feed_cons, hstep]]
+    exact h _ hg rfl
+
 /-- **A projection blind to the parser state.** Every field accessor but `pstate`
 is one, by `rfl`. It is the one thing the CSI walk needs of a projection, because
 the walk to the final byte is a chain of `pstate` updates and nothing else. -/
@@ -858,6 +899,37 @@ theorem mmap_focus (b : Bool) : MMap (fun m => { m with focusEvents := b }) (mod
   (mmap_modeSet 1004 b (by decide) (by decide)).congr (fun m => by simp [smMod, Vt.setMode])
 theorem mmap_origin (b : Bool) : MMap (fun m => { m with origin := b }) (modeSet 6 b) :=
   (mmap_modeSet 6 b (by decide) (by decide)).congr (fun m => by simp [smMod, Vt.setMode, Vt.moveTo])
+
+/-- **The scrollback stage's mode tail, from a receiver whose decoder may be
+mid-sequence.** `scrollbackAnsi` ends with `4l ?6l ?7h`, contiguous and
+ESC-leading, and this is the whole reason for that shape: an `MMap` cannot be
+pushed backwards across the ring's glyph bytes, so the three modes
+`gridAnsi_writes_grid` needs are re-established *after* the paint, where
+`mmap_irm`/`mmap_origin`/`mmap_wrap` already close them, and `mmap_of_esc_lead`
+supplies the missing `u8need = 0`.
+
+Twelve bytes, and behaviourally inert in every fixture (`prologueAnsi` already
+established the same three, and nothing between them and here changes them). So
+a test could not catch their removal; what catches it is this theorem — drop them
+and `scrollback_entry`'s `insert` and `wrap` conjuncts stop closing. -/
+theorem sbTail_modes {y : Vt} (hg : y.pstate = .ground) :
+    (y.feed (csiNum 4 0x6C ++ modeSet 6 false ++ modeSet 7 true)).pstate = .ground
+      ∧ (y.feed (csiNum 4 0x6C ++ modeSet 6 false ++ modeSet 7 true)).u8need = 0
+      ∧ (y.feed (csiNum 4 0x6C ++ modeSet 6 false ++ modeSet 7 true)).modes.insert = false
+      ∧ (y.feed (csiNum 4 0x6C ++ modeSet 6 false ++ modeSet 7 true)).modes.wrap = true
+      ∧ (y.feed (csiNum 4 0x6C ++ modeSet 6 false ++ modeSet 7 true)).modes.origin = false := by
+  have hm : MMap (fun m => { m with insert := false, origin := false, wrap := true })
+      (csiNum 4 0x6C ++ modeSet 6 false ++ modeSet 7 true) :=
+    (((show MMap (fun m => { m with insert := false }) (csiNum 4 0x6C) from
+        by simpa using mmap_irm false).comp (mmap_origin false)).comp
+      (mmap_wrap true)).congr (fun m => rfl)
+  have hcons : (csiNum 4 0x6C ++ modeSet 6 false ++ modeSet 7 true)
+      = (0x1B : UInt8) :: ((csiB ++ digits 4 ++ [(0x6C : UInt8)] ++ modeSet 6 false
+          ++ modeSet 7 true).drop 1) := by
+    simp [csiNum, csiB, modeSet, csiPriv]
+  rw [hcons] at hm ⊢
+  obtain ⟨h1, h2, h3⟩ := mmap_of_esc_lead hm hg
+  exact ⟨h1, h2, by rw [h3], by rw [h3], by rw [h3]⟩
 
 theorem Modes.ext' {a b : Modes} (h1 : a.wrap = b.wrap) (h2 : a.origin = b.origin)
     (h3 : a.insert = b.insert) (h4 : a.cursorVisible = b.cursorVisible)

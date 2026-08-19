@@ -842,6 +842,52 @@ theorem ends_gridAnsi (grid : Array Row) : Ends (gridAnsi grid) := by
   exact (ends_csiNum 0 0x6D (by decide) (by decide)).append
     (hhome.append (ends_joinCRLF _ hrows))
 
+/-- One both-ways mode emit. `modeSet` is a definition rather than a local lambda
+precisely so this matches structurally. -/
+theorem ends_modeSet (n : Nat) (on : Bool) : Ends (modeSet n on) := by
+  unfold modeSet
+  cases on
+  · exact ends_csiPriv n 0x6C (by decide) (by decide)
+  · exact ends_csiPriv n 0x68 (by decide) (by decide)
+
+/-! ### The scrollback stage
+
+The history push is a paint plus a run of CR+LF, and the run is what the three
+stream layers each need one new ingredient for: a `crlfB` carries no ESC, no SI
+and no SO, so it is `text` to all of them. That single fact plus the fact that
+`ends_gridAnsi`/`quiet_gridAnsi`/`smap_id_gridAnsi` are already generic in the
+array is what makes the whole stage cost a handful of lines per layer. -/
+
+/-- The flush carries no ESC, no SO and no SI — the three bytes every stream layer
+cares about. Stated for all three at once so `Quiet` and `SMap` reuse it. -/
+theorem crlfRun_no_esc (n : Nat) :
+    ∀ b ∈ (List.replicate n crlfB).flatten, b ≠ 0x1B ∧ b ≠ 0x0E ∧ b ≠ 0x0F := by
+  intro b hb
+  rw [List.mem_flatten] at hb
+  obtain ⟨l, hl, hbl⟩ := hb
+  rw [List.eq_of_mem_replicate hl] at hbl
+  simp only [crlfB, List.mem_cons, List.not_mem_nil, or_false] at hbl
+  rcases hbl with h | h
+  all_goals (subst h; exact ⟨by decide, by decide, by decide⟩)
+
+theorem crlfRun_no_1B (n : Nat) :
+    ∀ b ∈ (List.replicate n crlfB).flatten, b ≠ (0x1B : UInt8) :=
+  fun b hb => (crlfRun_no_esc n b hb).1
+
+/-- The flush run returns the parser to ground: it is `text`, whatever its
+length. -/
+theorem ends_crlfRun (n : Nat) : Ends ((List.replicate n crlfB).flatten) :=
+  Ends.text (crlfRun_no_1B n)
+
+theorem ends_scrollbackAnsi (v : Vt) : Ends (scrollbackAnsi v) := by
+  unfold scrollbackAnsi
+  refine Ends.append (Ends.append (Ends.append ?_
+    (ends_csiNum 4 0x6C (by decide) (by decide))) (ends_modeSet 6 false))
+    (ends_modeSet 7 true)
+  exact Ends.ite Ends.nil
+    (((ends_csiNum 3 0x4A (by decide) (by decide)).append (ends_gridAnsi (sbRows v))).append
+      (ends_crlfRun v.rows))
+
 /-! ### The composition: a whole restore stream
 
 Every stage of `restore` is `Ends`, so the stream is. This is §Replay's
@@ -850,6 +896,7 @@ parser half, for ANY `Vt` and with no hypotheses.
 
 theorem ends_screensAnsi (v : Vt) : Ends (screensAnsi v) := by
   unfold screensAnsi
+  refine (ends_scrollbackAnsi v).append ?_
   split
   · exact ends_gridAnsi _
   · exact ((((ends_gridAnsi _).append (ends_penSgr _)).append
@@ -883,14 +930,6 @@ theorem ends_charsetAnsi (v : Vt) : Ends (charsetAnsi v) := by
 theorem ends_titleAnsi (v : Vt) : Ends (titleAnsi v) := by
   unfold titleAnsi
   exact ends_osc _
-
-/-- One both-ways mode emit. `modeSet` is a definition rather than a local lambda
-precisely so this matches structurally. -/
-theorem ends_modeSet (n : Nat) (on : Bool) : Ends (modeSet n on) := by
-  unfold modeSet
-  cases on
-  · exact ends_csiPriv n 0x6C (by decide) (by decide)
-  · exact ends_csiPriv n 0x68 (by decide) (by decide)
 
 theorem ends_irm (on : Bool) : Ends (csiNum 4 (if on then 0x68 else 0x6C)) := by
   cases on

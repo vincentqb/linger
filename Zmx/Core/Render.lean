@@ -239,6 +239,158 @@ that a mode-replay proof matches it structurally instead of reducing a beta-rede
 per mode — with a dozen modes the difference is a heartbeat timeout. -/
 def modeSet (n : Nat) (on : Bool) : Bytes := csiPriv n (if on then 0x68 else 0x6C)
 
+/-! ## Scrollback
+
+The session's ring, painted into the **receiver's own** scrollback buffer, so
+wheel-scroll, search and selection find the history above the screen.
+
+There is exactly one way to put a line into a terminal's native scrollback:
+print it inside a whole-screen scroll region and let it scroll off. So the ring
+is painted and then pushed — and that push is its own stage, emitted *before*
+the screen paint, never fused with it. Painting `sbRows v ++ v.grid` as one tall
+array makes the painted-row count exceed the screen height, which deletes
+`paint_rows`' no-scroll argument and with it the whole screen-fidelity ladder
+(`restore_grid_any`, `Resume.resume_grid`). Staged, the screen paint is
+byte-for-byte what it was.
+
+**Text rows only**, named so it is a decision and not a side effect: a sixel or
+kitty placement that was in the ring stays gone, consistent with the settled
+non-goal on images (AGENTS.md). -/
+
+/-- One CR+LF, as one syntactic unit: the flush is `List.replicate v.rows crlfB`
+flattened, and a proof has to name the pushing pair rather than rediscover it
+inside a literal. CR **then** LF, which is also why a full-width row does not
+push twice — `carriageReturn` clears the wrap-pending flag the last glyph set. -/
+def crlfB : Bytes := [0x0D, 0x0A]
+
+/-- A cell as a repaint can reproduce it. Every clause is one field of
+`CellOk` (`Theorems/Vt.lean`), so `cellOk_cellFit` needs no hypothesis — which
+is the whole point: `sb` rows are the one place in a `Vt` that no stated
+invariant covers (`Vt.resize` re-fits the grid and leaves the ring alone), and a
+decoded checkpoint's ring is arbitrary bytes' worth of cells.
+
+**The width-0 branch is load-bearing.** A shadow must stay a shadow: collapsing
+it to `charWidth ' ' = 1` would shift every pair after it one column left. Same
+discipline as `Vt.printableChar` on store, one field further out. -/
+def cellFit (c : Cell) : Cell :=
+  let base := printableChar c.base
+  { base := base,
+    width := if c.width == 0 then 0 else charWidth base,
+    marks := (c.marks.filter (fun m => charWidth m == 0 && printableChar m == m)).take 8,
+    pen := c.pen }
+
+/-- A ring row at the session's width, reproducible unconditionally.
+
+**Not** `Vt.resizeRow`: that copies cells verbatim, so its `RowOk` carries a
+`∀ x, CellOk (row.at x)` hypothesis — and the ring is exactly where that
+hypothesis is unavailable. `Row.mend` then repairs the pair a truncation can
+halve. -/
+def fitRow (row : Row) (cols : Nat) : Row :=
+  Row.mend ((Array.range cols).map (fun i => cellFit (row.at i)))
+
+/-- The replay budget, as a bound on Σ `sbRowCost` — **not** on emitted bytes.
+The emitted stage is bounded by `sbReplayBytes + 2 * v.rows + 19` and does
+exceed `sbReplayBytes` by up to that much: measured 262,153 bytes for a full
+80×24 ring whose rows each end in a truecolour cell (the 19 is `ED 3` + the
+paint's `SGR 0`/`CUP` + the mode tail, less the per-row CRLF credit the
+separators do not use).
+
+A row cap would bound nothing that matters. `Cell.erased` emits one space and no
+SGR, so a blank 80-column row costs 86 counted (82 emitted); per-cell truecolour
+costs 40 bytes a column, 57 with all seven attributes. A full `sbCap = 10000`
+ring is therefore 32–46 MB at 80 columns and ~86 MB at 150 — against an
+`outbufCap` of 4 MiB that **disconnects** the client (`Zmx/Runtime/Daemon.lean`).
+Without a byte budget, attach becomes attach-then-instant-drop.
+
+262144 admits 3,048 blank 80-column rows, or 2,383 of a realistic mixed row —
+still more than tmux's default 2000-line history. The binding constraint is time
+on a slow link (256 KiB over 1 MB/s ssh is a quarter-second stall on every
+attach); that has not been measured over a real ssh path, and 131072 is the
+safer number if attach latency wins. -/
+def sbReplayBytes : Nat := 262144
+
+/-- What one replayed row costs the budget: its paint from the **default** pen,
+plus `+2` for the CRLF that pushes it and `+4` for the one `SGR 0` a row can
+emit that a default-seeded count does not.
+
+The `+4` is exact and attained, and the reason is not the fit: a width-0 cell
+leaves `rowSlot`'s pen accumulator untouched, so the default-seeded fold and the
+fold from an arbitrary incoming pen diverge only at the first non-shadow cell
+and agree from that cell on. The excess is therefore one optional `SGR`, and the
+only shape where the default-seeded fold emits nothing while the other emits is
+"that cell's pen is the default", costing exactly `penSgr {}` = 4 bytes
+(`rowAnsi_len_seed`, `rowAnsi_len_le_cost`; witness: a blank 80-column row is 80
+bytes from the default pen and 84 from a truecolour one). -/
+def sbRowCost (row : Row) : Nat := (rowAnsi row {}).1.length + 6
+
+/-- The rows a budget admits, newest first, each fitted to `cols`.
+
+Structural on the list with the fit **fused in**, so the per-cell work touches
+only the rows kept. It **stops** at the first row that does not fit rather than
+skipping it, so the result is always "the newest N lines" — a contiguous run
+(`sbTake_prefix`), which is what licenses "the oldest are dropped first" in the
+docs. -/
+def sbTake (cols budget : Nat) : List Row → List Row
+  | [] => []
+  | r :: rs =>
+    let f := fitRow r cols
+    let c := sbRowCost f
+    if c ≤ budget then f :: sbTake cols (budget - c) rs else []
+
+/-- The session's history as the receiver will be given it: oldest first, each
+row at the session's width, trimmed from the **oldest** end to `sbReplayBytes`.
+
+`Ring.toList` is oldest-first and oldest-first is the push order, so the budget
+walk — which has to start from the newest — runs on the reverse and the result is
+reversed back. Both reverses are load-bearing and in opposite ways: dropping the
+outer one plays the history backwards, and feeding `v.sb.toList` instead of its
+reverse keeps the **oldest** N under a tight budget instead of the newest. -/
+def sbRows (v : Vt) : Array Row :=
+  (sbTake v.cols sbReplayBytes v.sb.toList.reverse).reverse.toArray
+
+/-- **The history push.** Paint the fitted ring, then scroll it off the top with
+`v.rows` CRLFs.
+
+`gridAnsi (sbRows v)` homes and paints `m` rows with `m-1` separators; `v.rows`
+further CRLFs push exactly `m` of them into the receiver's ring (pushes
+`= C - (rows - 1)` where `C = (m-1) + rows`). `F = v.rows` is not merely
+sufficient, it is the **unique** correct count — swept over every
+`rows, m ∈ 1…8`, 64 of 64 cells admit exactly one `F`, always `rows`. No `min`
+and no special case: for `m < rows` the surplus CRLFs are absorbed by the
+non-pushing descent (`cursor.y < bot`), so zero blank rows are pushed, and for
+`m > rows` the paint itself pushes and the total is still `m`.
+
+Afterwards the receiver's screen is **fully blank** and the cursor is at `(0,0)`
+— `?6l` (DECOM reset) homes it — and every one of those blank cells carries the
+pen the ring paint left in effect (`scrollUpIn` vacates with
+`blankRow cols v.pen`). Harmless only because the screen paint that follows is
+`gridAnsi v.grid`, which leads with `CSI 0 m` and rewrites every column.
+
+`ED 3` (erase-saved-lines) is what stops a second attach stacking a second copy
+of the ring. It is **guarded by the same emptiness test as the paint**, and that
+guard is a user-facing decision, not an optimization: linger never enters the alt
+screen, so the session shares the user's own terminal scrollback — an
+unconditional `ED 3` would discard the history of any window a session is
+attached in, including the common case of a session with no history to put there.
+Guarded, the anti-stacking property is untouched (nothing is pushed when the ring
+is empty, so nothing can stack) and the price is stated where it belongs: what
+`restore` promises about a receiver's ring is two branches, not one. See
+README §Notes and THEOREMS.md's conformance-profile entry 11.
+
+The trailing `4l ?6l ?7h` re-establish what `paint_entry` needs — `insert`,
+`wrap`, `origin` — and are **proof-load-bearing ordering**, not cosmetics: an
+`MMap` cannot be pushed across the ring's glyph bytes (there is no
+`mmap_id_gridAnsi`; `Modes.lean` explains the asymmetry), so the obligation has
+to be moved to a chunk where `mmap_irm`/`mmap_modeSet` close it. They must stay
+ESC-leading and contiguous at the end, and they buy `u8need = 0` for free through
+`abortUtf8`. Behaviourally they are inert in every fixture — which is why their
+break-verification is a proof break, never a test. -/
+def scrollbackAnsi (v : Vt) : Bytes :=
+  (if (sbRows v).isEmpty then []
+   else csiNum 3 0x4A ++ gridAnsi (sbRows v) ++ (List.replicate v.rows crlfB).flatten)
+    ++ csiNum 4 0x6C ++ modeSet 6 false ++ modeSet 7 true
+
+
 /-- **Put the receiver in a known state before painting.**
 
 `restore` is fed to a client terminal in whatever state its previous occupant
@@ -336,15 +488,29 @@ Named stages throughout, so §Replay can discharge one at a time and the
 top theorem is their composition (`Theorems/Render.lean`).
 -/
 
-/-- The two screens: in alt, paint main, park the stashed cursor/pen,
-switch, then paint alt (§Replay fix 7). -/
+/-- The history, then the two screens: in alt, paint main, park the stashed
+cursor/pen, switch, then paint alt (§Replay fix 7).
+
+`scrollbackAnsi` goes here rather than being a new top-level stage in
+`restoreBody` because `screensAnsi v` is what the ladder names *opaquely*:
+`restore_split`, `restore_grid_of_paint` and `restore_tabs_split` all quote it as
+an atom, so this placement costs five `unfold screensAnsi` repairs instead of
+fifty-five rewrites of the `prologueAnsi v ++ csiNum 0 0x6D` prefix. It also
+means the flush's evicted rows are the blanks the preceding `ED 2` left rather
+than the receiver's junk.
+
+Emitted **identically on both screens**, and before the discarded main paint:
+`Vt.sb` is main-screen-only (`scrollUpIn` pushes only when `altGrid.isNone`), the
+alt grid is a fresh blank with no history of its own, and a branch-dependent
+stage here would make the two `restore_grid_any_*` statements diverge. -/
 def screensAnsi (v : Vt) : Bytes :=
-  match v.altGrid with
-  | none => gridAnsi v.grid
-  | some (mainGrid, mcur, mpen) =>
-    gridAnsi mainGrid
-      ++ penSgr mpen ++ csiNum2 (mcur.y + 1) (mcur.x + 1) 0x48
-      ++ csiPriv 1049 0x68 ++ gridAnsi v.grid
+  scrollbackAnsi v ++
+    match v.altGrid with
+    | none => gridAnsi v.grid
+    | some (mainGrid, mcur, mpen) =>
+      gridAnsi mainGrid
+        ++ penSgr mpen ++ csiNum2 (mcur.y + 1) (mcur.x + 1) 0x48
+        ++ csiPriv 1049 0x68 ++ gridAnsi v.grid
 
 /-- Scroll region, when it is not the whole screen. -/
 def regionAnsi (v : Vt) : Bytes :=
