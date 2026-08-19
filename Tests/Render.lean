@@ -57,6 +57,13 @@ def replayEq (r v : Vt) : Bool :=
 
 def feedStr (v : Vt) (s : String) : Vt := v.feedBytes s.toUTF8
 
+/-- A row as the text `linger history` would print for it. Used to pin the
+emitter's view of the ring against **literals**: `replayEq`'s `sb` conjunct
+compares the receiver's ring against `sbRows v`, i.e. against the emitter's own
+view, so it cannot see a bug *inside* `sbRows` — only a bug in emitting it. The
+fixtures anchored on literals below are the oracle for the fit and the order. -/
+def rowStr (r : Row) : String := String.fromUTF8! ⟨(rowText r).toArray⟩
+
 def screen (cols rows : Nat) (s : String) : Vt := feedStr (Vt.init cols rows) s
 
 /-- The round trip under test. -/
@@ -456,6 +463,32 @@ def scrolled : Vt := screen 6 2 "aa\r\nbb\r\ncc\r\ndd\r\nee"
 of it is the same three rows. -/
 example : (scrolled.sb.size == 3 && (sbRows scrolled).size == 3) = true := by native_decide
 
+/-- **The emitter's view of the ring, against a literal.** Oldest first. Dropping
+`sbRows`' outer `.reverse` plays the history backwards and `replayEq` does *not*
+notice — it compares against `sbRows v`, which the same bug reverses — so this is
+the fixture that catches it.  -/
+example : ((sbRows scrolled).toList.map rowStr == ["aa", "bb", "cc"]) = true := by
+  native_decide
+
+/-- `fitRow_id_of_rowOk` in executable form: on the rows a live session stores the
+fit is the identity, so comparing a receiver's ring against `sbRows v` is the
+session's own history and not a weakened target. (A *decoded checkpoint's* ring is
+where the fit has work to do — see `hostileRing` below.) -/
+example : ((sbRows scrolled).toList == scrolled.sb.toList) = true := by native_decide
+
+/-- **The trim drops the oldest first.** A fitted 6-column row costs 12, so a
+budget of 27 admits two of the three: the survivors are the **newest** two, still
+oldest-first. -/
+example : ((sbTake 6 27 scrolled.sb.toList.reverse).reverse.map rowStr == ["bb", "cc"])
+    = true := by native_decide
+
+/-- …and the wrong-order bug named as a fact, since it is the insidious one:
+feeding `v.sb.toList` rather than its reverse keeps the **oldest** two under the
+same budget. Both variants produce three rows whenever the whole ring fits, which
+is why every fixture but this one would have passed. -/
+example : ((sbTake 6 27 scrolled.sb.toList).map rowStr == ["aa", "bb"]) = true := by
+  native_decide
+
 /-- A previous occupant that left **its own** history in the window — the ring
 analogue of `dirtyTabs`, and the receiver that makes the `ED 3` question real. -/
 def dirtySb (cols rows : Nat) : Vt := feedStr (Vt.init cols rows) "OLD1\r\nOLD2\r\nOLD3\r\nJUNK"
@@ -555,6 +588,41 @@ example : (shrunk.sb.toList.all (fun r => r.size == 4)) = false := by native_dec
 example : ((sbRows shrunk).toList.all (fun r => r.size == 4)) = true := by native_decide
 
 example : roundtripsFrom (dirtySb 4 2) shrunk = true := by native_decide
+
+/-- **A wide pair in the ring, against literals.** `cellFit`'s width-0 branch is
+load-bearing: collapse a shadow to `charWidth ' ' = 1` and `Row.mend` sees a half
+pair and blanks the base, so the glyph is *lost*. `replayEq` cannot see that
+either — it compares against `sbRows`, which the same break rewrites. -/
+def wideRing : Vt := screen 8 2 "a漢b\r\néx\r\nzz\r\nq1\r\nq2"
+
+example : ((sbRows wideRing).toList.map rowStr == ["a漢b", "éx", "zz"]) = true := by
+  native_decide
+
+/-- …and the pair is still a pair: a width-2 base followed by its width-0 shadow. -/
+example : (((sbRows wideRing).toList.head!.toList.map (fun c => c.width)).take 3
+    == [1, 2, 0]) = true := by native_decide
+
+example : roundtripsFrom (dirtySb 8 2) wideRing = true := by native_decide
+
+/-- **The ring is the one place no invariant covers**, which is what the fit is for
+and why `rowOk_fitRow` may have no hypothesis. `Checkpoint.load` reads cells from
+arbitrary bytes and is total by design, so a ring row can hold a C0 control
+codepoint (unrepaintable — `Render.safeChar` would substitute it on emit, so the
+replayed screen would differ from the live one) and a mark that is neither
+zero-width nor printable. `cellFit` substitutes and filters; a bare
+`Vt.resizeRow` copies both through, and **no other fixture notices** — a live
+session's ring rows are already reproducible, so the two agree on every one of
+them. -/
+def hostileRing : Vt :=
+  { screen 4 2 "hi" with
+    sb := { data := #[#[{ base := '\x01', width := 1 },
+                        { base := 'x', marks := ['A'], width := 1 },
+                        { base := 'y', width := 1 },
+                        { base := 'z', width := 1 }]], start := 0 } }
+
+example : (let r := (sbRows hostileRing).toList.head!
+           (r.at 0).base == '�' && (r.at 1).marks.isEmpty && r.size == 4) = true := by
+  native_decide
 
 /-! #### The byte budget — a correctness requirement, not prudence
 
