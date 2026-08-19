@@ -6,15 +6,17 @@ namespace (`Linger.Core`, `Linger.Posix`, `Linger.Runtime`), the `Linger/`
 tree, the shim's `linger_*` symbols, the `lingertest` smoke exe. The old
 `zmx`/`lzmx` name survives in exactly three places, each on purpose:
 
-* **The checkpoint magic is now `"LNGR"`, with `"LZMX"` accepted on read**
-  (`Linger/Core/Checkpoint.lean`). The layout after the tag never changed, so this is
-  a re-tag rather than a format change: `load` takes either via the named `stripMagic`
-  stage, `save` writes only the new one, and a session therefore migrates on its next
-  checkpoint with no migration step and no flag. Both halves are theorems, and only the
-  pair is worth anything — `load_legacy_save` (an old file still resumes, so the rename
-  orphaned nothing on disk) and `save_no_legacy` (a new file carries no trace of the old
-  tag, so the legacy reader is temporary). `legacyMagic` goes away with the v1 files it
-  reads, at the next format version. Do not "tidy" it away sooner.
+* **The checkpoint magic is `"LNGR"` v1 and nothing else is accepted**
+  (`Linger/Core/Checkpoint.lean`, `save_tag`). The pre-rename `"LZMX"` reader existed
+  for exactly one commit: it was there to migrate files written before the rename, and
+  once `save` had been writing `"LNGR"` and no old-tag checkpoint was left on disk it
+  was deleted rather than carried. **If you ever need to read one, check out
+  `e1ac562`** — the reader and its two theorems (`load_legacy_save`, `save_no_legacy`)
+  are green there. That is the escape hatch, and it is cheaper than a branch for a file
+  nobody has: a checkpoint is a cache, not a contract.
+  `stripMagic` stays a **named stage** even though it now checks one tag — naming it is
+  what let `load_save` drop its `maxHeartbeats 2000000` raise, measured both ways. Do
+  not inline it back.
 * **`SCRATCHPAD.md` and `specs/archive/`** keep the old paths in their historical
   entries. The worklog is append-only and the archived specs are closed records:
   rewriting a path inside them would falsify what was true when it was written.

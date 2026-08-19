@@ -61,39 +61,29 @@ example :
      | some ck' => ck'.vt.sb.toList.map (·.size) == v.sb.toList.map (·.size)
      | none => false) = true := by native_decide
 
-/-! ### The legacy tag
+/-! ### The format tag
 
-`save` writes `"LNGR"`; `load` also accepts the pre-rename `"LZMX"`. These pin the
-bytes, because the theorems are about the *constants* and a fixture is what catches
-someone editing a constant to the wrong four bytes. -/
+`save` writes `"LNGR"` v1 and `load` accepts nothing else. The theorems are about the
+*constant*, so these pin the bytes — which is what catches someone editing four hex
+literals to the wrong value, a change no round-trip theorem can see. -/
 
-/-- The bytes themselves, both tags, spelled out. `"LNGR"` v1 and `"LZMX"` v1. -/
-example : (magic == [0x4C, 0x4E, 0x47, 0x52, 1]
-    && legacyMagic == [0x4C, 0x5A, 0x4D, 0x58, 1]) = true := by native_decide
+/-- The bytes themselves, spelled out. -/
+example : (magic == [0x4C, 0x4E, 0x47, 0x52, 1]) = true := by native_decide
 
-/-- A file written before the rename still loads, cell for cell — the migration
-orphans nothing on disk. -/
-example :
-    (let v := (Vt.init 10 2).feedBytes "1\r\n2\r\nkeep-me".toUTF8
-     let c : Ckpt := { vt := v, cwd := "/old", labels := [("k", "v")] }
-     match load (legacyMagic ++ (save c).drop 5) with
-     | some ck' => ck'.vt.grid == v.grid && ck'.cwd == "/old"
-         && ck'.labels == [("k", "v")] && ck'.vt.sb.toList == v.sb.toList
-     | none => false) = true := by native_decide
-
-/-- …and what `save` emits carries no trace of the old tag, so the next checkpoint
-completes the migration with nothing to run. -/
+/-- What `save` emits starts with exactly that. -/
 example :
     (let c : Ckpt := { vt := Vt.init 4 2, cwd := "", labels := [] }
-     ((save c).take 5 == magic) && !((save c).take 5 == legacyMagic)) = true := by
-  native_decide
+     (save c).take 5 == magic) = true := by native_decide
 
-/-- A tag that is neither is still refused — the legacy branch widened what `load`
-accepts by exactly one tag, not by "anything five bytes long". -/
+/-- Any other tag is refused — including the pre-rename `"LZMX"` (whose reader was
+removed in `e1ac562`'s successor; check that commit out if you ever need it), a future
+version byte, and rubbish. A checkpoint is a cache, not a contract. -/
 example :
     (let c : Ckpt := { vt := Vt.init 4 2, cwd := "", labels := [] }
-     (load ([0x4C, 0x4E, 0x47, 0x52, 2] ++ (save c).drop 5)).isNone
-       && (load ([0x00, 0x00, 0x00, 0x00, 0] ++ (save c).drop 5)).isNone) = true := by
+     let body := (save c).drop 5
+     (load ([0x4C, 0x5A, 0x4D, 0x58, 1] ++ body)).isNone      -- "LZMX" v1
+       && (load ([0x4C, 0x4E, 0x47, 0x52, 2] ++ body)).isNone  -- "LNGR" v2
+       && (load ([0x00, 0x00, 0x00, 0x00, 0] ++ body)).isNone) = true := by
   native_decide
 
 end Linger.Core.Checkpoint.Tests

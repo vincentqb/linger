@@ -6132,3 +6132,34 @@ daemon checkpointed), confirmed the file's tag is `[76,78,71,82,1] = "LNGR"`, ha
 `[76,90,77,88,1] = "LZMX"` to make a genuine pre-rename file, SIGKILLed the daemon and
 reattached — `legacy-survives-42` came back — then detached again and the re-written checkpoint's
 tag was `"LNGR"`. Migration observed, not inferred.
+
+## drop the legacy checkpoint reader — 2026-08-19
+
+`legacyMagic` and its read branch are gone; `load` accepts `"LNGR"` v1 and nothing else. The
+reader lived one commit, which was the point of it: it existed to carry files written before the
+rename, `save` had already been writing the new tag for a commit, and a check of
+`$XDG_STATE_HOME/linger/<host>/` found **no `.ckpt` files at all**, so there was nothing on disk
+to orphan. Verified before deleting rather than assumed — that check is the whole difference
+between "removing dead code" and "removing someone's screen".
+
+**The escape hatch, named so it is findable:** `e1ac562` has the reader plus
+`load_legacy_save` / `save_no_legacy` / `load_magic_agnostic`, all green. Recorded in the
+`save_tag` docstring, in AGENTS.md and in THEOREMS.md's §Restore row, because a deletion whose
+recovery path is "search the log" is not really recoverable. Kept as a *fixture* too: `load` is
+asserted to refuse `"LZMX"` v1 explicitly, so the old tag is now pinned as **rejected** rather
+than merely absent — the difference matters if anyone reintroduces a tag check.
+
+`stripMagic` stays a named stage even though it now tests a single tag. That is deliberate and
+was measured in both directions: inlining the decision is what made `load_save` need
+`maxHeartbeats 2000000`, and naming it is what let the raise be deleted. The tree still has
+**one** raise (`HEARTBEAT_CAP=1`) after the deletion, so the benefit came from the naming and not
+from the branch — worth knowing before someone "simplifies" a one-branch `if` back inline.
+
+Ratchets: `coverage.py` holds at 19/19 (`magic` stays claimed through `save_tag` and
+`stripMagic_magic`, so removing a claimed def did not push anything back into the unclaimed
+list). Break-verified: reverting `magic` to the old four bytes refutes the byte-pinning fixture
+and the refusal fixture (`Tests/Checkpoint.lean:71,87`).
+
+Remote moved to `github.com/vincentqb/linger` (the old `lean-zmx` URL redirects). `git ls-remote`
+resolves; its HEAD is `3ea04e5`, so local is **8 commits ahead** and nothing has been pushed —
+that is the user's call, not mine.
