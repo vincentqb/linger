@@ -42,6 +42,12 @@ closed build plans with their completion records (`lean-zmx.md`,
 2. **`SCRATCHPAD.md`** — append-only worklog: proof recipes, measured
    environment facts, break-verify records, and the negative results.
    Read before writing; append after; never delete prior entries.
+2b. **`.claude/last-compact-state.md`**, if it exists — written by a
+   `PreCompact` hook (`.claude/precompact-snapshot.sh`) at the moment
+   compaction started: the commit, what was uncommitted, and which worklog
+   round was in flight. Facts, not a summary, and the three things a
+   compaction genuinely eats — this file and the spec re-ground you; the
+   summary does not. Gitignored, so a stale one is only ever your own.
 3. Re-ground against those two files, not against a compaction summary:
    the summary is what dropped the nuance. Check the current work against
    the spec's Goal and Definition of done, not against the summary's
