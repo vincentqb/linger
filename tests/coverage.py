@@ -58,7 +58,7 @@ ROOT = Path(__file__).resolve().parent.parent
 # was pending; `rowAnsi_writes_row` and the `rowSlot_eq_*` equations now name it, so
 # it is back to 21. Down to 20 with `size_defaultTabs`, which `restore_tabs_any` needs
 # as its ruler-length witness — the ratchet tightens when a claim lands, so it does.
-STATEMENT_CAP = 20
+STATEMENT_CAP = 19
 
 # ── Check 2 ────────────────────────────────────────────────────────────────────
 # Every byte stream the runtime emits, and what backs it. `theorem` entries must

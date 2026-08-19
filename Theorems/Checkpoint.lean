@@ -189,7 +189,27 @@ theorem rt_vt (v : Vt) (rest : List UInt8) :
     rt_modes, rt_list rt_bool, rt_ring, rt_alt, rt_saved, rt_str, rt_bool,
     Option.bind_eq_bind, Option.bind_some]
 
-set_option maxHeartbeats 2000000 in
+/-! ### The format tag, as a named stage
+
+`stripMagic` accepts the current tag or the legacy one; these two say so, and every
+claim below goes through them rather than unfolding the decision inline. -/
+
+theorem stripMagic_magic (p : List UInt8) : stripMagic (magic ++ p) = some p := by
+  unfold stripMagic
+  rw [List.take_append_of_le_length (by simp [magic]),
+      List.take_of_length_le (by simp [magic]),
+      List.drop_append_of_le_length (by simp [magic]),
+      List.drop_of_length_le (by simp [magic]), List.nil_append]
+  rw [if_pos (by decide : ((magic = magic) || (magic = legacyMagic)) = true)]
+
+theorem stripMagic_legacy (p : List UInt8) : stripMagic (legacyMagic ++ p) = some p := by
+  unfold stripMagic
+  rw [List.take_append_of_le_length (by simp [legacyMagic]),
+      List.take_of_length_le (by simp [legacyMagic]),
+      List.drop_append_of_le_length (by simp [legacyMagic]),
+      List.drop_of_length_le (by simp [legacyMagic]), List.nil_append]
+  rw [if_pos (by decide : ((legacyMagic = magic) || (legacyMagic = legacyMagic)) = true)]
+
 /-- §Restore, top level: a checkpoint written by `save` loads back to
 exactly what was saved (parser state quiesced — which the daemon's
 checkpoints already are, being taken between poll rounds). Totality on
@@ -198,15 +218,54 @@ theorem load_save (c : Ckpt) :
     load (save c) = some { c with vt := c.vt.quiesce } := by
   unfold load save
   simp only [List.append_assoc]
-  rw [List.take_append_of_le_length (by simp [magic]),
-      List.take_of_length_le (by simp [magic]),
-      List.drop_append_of_le_length (by simp [magic]),
-      List.drop_of_length_le (by simp [magic])]
-  simp only [List.nil_append, rt_vt, rt_str, Option.bind_eq_bind, Option.bind_some]
+  rw [stripMagic_magic]
+  simp only [rt_vt, rt_str, Option.bind_eq_bind, Option.bind_some]
   have h := rt_list (rt_pair rt_str rt_str) c.labels []
   rw [List.append_nil] at h
   rw [h]
   rfl
+
+/-! ### The legacy tag — both halves of "migrate completely"
+
+The magic changed from `"LZMX"` to `"LNGR"` with the rename, and the layout after it
+did not, so `load` accepts either tag while `save` writes only the new one. That is a
+claim in two parts, and only the pair is worth anything: an old checkpoint must still
+resume (or the rename ate someone's screen), and a new one must carry no trace of the
+old tag (or "migrated" is an intention rather than a fact). Both go through the named
+`stripMagic` stage, which is why each is a couple of lines. -/
+
+/-- The tag is the only difference: a legacy-framed payload and a current-framed one
+parse to the same thing, whatever the payload. This is what makes the migration a
+re-tag rather than a format change. -/
+theorem load_magic_agnostic (p : List UInt8) : load (legacyMagic ++ p) = load (magic ++ p) := by
+  unfold load
+  rw [stripMagic_legacy, stripMagic_magic]
+
+/-- **An old checkpoint still resumes.** Re-tag a file `save` wrote and it loads to the
+same session, so the four-byte change orphaned nothing on disk. -/
+theorem load_legacy_save (c : Ckpt) :
+    load (legacyMagic ++ (save c).drop 5) = some { c with vt := c.vt.quiesce } := by
+  have hd : (save c).drop 5 = wVt c.vt ++ wStr c.cwd ++ wList (wPair wStr wStr) c.labels := by
+    unfold save
+    simp only [List.append_assoc]
+    rw [List.drop_append_of_le_length (by simp [magic]),
+        List.drop_of_length_le (by simp [magic]), List.nil_append]
+  rw [hd, load_magic_agnostic]
+  have hj : magic ++ (wVt c.vt ++ wStr c.cwd ++ wList (wPair wStr wStr) c.labels) = save c := by
+    unfold save; simp only [List.append_assoc]
+  rw [hj, load_save]
+
+/-- **…and a new checkpoint carries no trace of the old tag.** The write side is clean,
+so a session migrates on its next checkpoint with nothing to run and no flag to pass —
+the half that makes the legacy reader temporary rather than permanent. -/
+theorem save_no_legacy (c : Ckpt) :
+    (save c).take 5 = magic ∧ (save c).take 5 ≠ legacyMagic := by
+  have h : (save c).take 5 = magic := by
+    unfold save
+    simp only [List.append_assoc]
+    rw [List.take_append_of_le_length (by simp [magic]),
+        List.take_of_length_le (by simp [magic])]
+  exact ⟨h, by rw [h]; decide⟩
 
 /-- And when the parser is already quiescent, the round-trip is exact
 — the letter of the THEOREMS.md row. -/

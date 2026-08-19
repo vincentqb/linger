@@ -13,7 +13,7 @@ the working directory — to bytes and back.
   a corrupt or truncated checkpoint yields `none`, never a panic, and
   the daemon just starts fresh.
 
-Format: `magic "LZMX" ++ version 1 ++ payload`. Bump the version on
+Format: `magic "LNGR" ++ version 1 ++ payload`. Bump the version on
 any layout change; old daemons refuse newer files (load = none) and
 start fresh — a checkpoint is a cache, not a contract.
 -/
@@ -287,18 +287,38 @@ structure Ckpt where
   labels : List (String × String)
   deriving Inhabited
 
-/-- On-disk magic. Deliberately still the four bytes "LZMX" after the
-linger rename: this is a frozen format identifier (like a wire tag),
-not branding — changing it would orphan every checkpoint on disk. -/
-def magic : List UInt8 := [0x4C, 0x5A, 0x4D, 0x58, 1]  -- "LZMX" v1
+/-- On-disk magic: `"LNGR"` and the format version. What `save` writes. -/
+def magic : List UInt8 := [0x4C, 0x4E, 0x47, 0x52, 1]  -- "LNGR" v1
+
+/-- The pre-rename magic, `"LZMX"` v1, accepted on **read only**.
+
+A checkpoint is a cache, not a contract — but it is a cache holding the one thing
+a user cannot reconstruct, their screen, so orphaning the file to rename four bytes
+would be paying for tidiness with someone's session. The layout after the magic is
+byte-identical, so this is a tag change and not a format change: `load` takes either
+tag and `save` writes only the new one, which migrates a session on its next
+checkpoint with no migration step to run and no flag to pass. `save_no_legacy`
+proves the write side really is clean, and `load_legacy_save` proves the old files
+still resume; the pair is what makes "migrate completely" a theorem rather than an
+intention. When v2 arrives this constant goes away with the v1 files it reads. -/
+def legacyMagic : List UInt8 := [0x4C, 0x5A, 0x4D, 0x58, 1]  -- "LZMX" v1
 
 def save (c : Ckpt) : List UInt8 :=
   magic ++ wVt c.vt ++ wStr c.cwd ++ wList (wPair wStr wStr) c.labels
 
+/-- Strip the format tag, accepting the legacy one. A **named stage** rather than
+two `if`s inlined in `load`: with the branch inline, `load_save`'s round-trip proof
+has to carry the tag decision through the whole parser chain and times out. Naming it
+gives the round trip one rewrite (`stripMagic_magic`) and makes the legacy claim its
+own one-line lemma — the AGENTS.md "restructure for provability" rule, applied to the
+smallest possible thing. -/
+def stripMagic (l : List UInt8) : Option (List UInt8) :=
+  if l.take 5 = magic || l.take 5 = legacyMagic then some (l.drop 5) else none
+
 /-- Total: any byte list either parses fully or is `none`. Trailing
 garbage is rejected (a torn write is not a checkpoint). -/
 def load (l : List UInt8) : Option Ckpt := do
-  let rest ← if l.take 5 = magic then some (l.drop 5) else none
+  let rest ← stripMagic l
   let (vt, rest) ← rVt rest
   let (cwd, rest) ← rStr rest
   let (labels, rest) ← rList (rPair rStr rStr) rest

@@ -61,4 +61,39 @@ example :
      | some ck' => ck'.vt.sb.toList.map (·.size) == v.sb.toList.map (·.size)
      | none => false) = true := by native_decide
 
+/-! ### The legacy tag
+
+`save` writes `"LNGR"`; `load` also accepts the pre-rename `"LZMX"`. These pin the
+bytes, because the theorems are about the *constants* and a fixture is what catches
+someone editing a constant to the wrong four bytes. -/
+
+/-- The bytes themselves, both tags, spelled out. `"LNGR"` v1 and `"LZMX"` v1. -/
+example : (magic == [0x4C, 0x4E, 0x47, 0x52, 1]
+    && legacyMagic == [0x4C, 0x5A, 0x4D, 0x58, 1]) = true := by native_decide
+
+/-- A file written before the rename still loads, cell for cell — the migration
+orphans nothing on disk. -/
+example :
+    (let v := (Vt.init 10 2).feedBytes "1\r\n2\r\nkeep-me".toUTF8
+     let c : Ckpt := { vt := v, cwd := "/old", labels := [("k", "v")] }
+     match load (legacyMagic ++ (save c).drop 5) with
+     | some ck' => ck'.vt.grid == v.grid && ck'.cwd == "/old"
+         && ck'.labels == [("k", "v")] && ck'.vt.sb.toList == v.sb.toList
+     | none => false) = true := by native_decide
+
+/-- …and what `save` emits carries no trace of the old tag, so the next checkpoint
+completes the migration with nothing to run. -/
+example :
+    (let c : Ckpt := { vt := Vt.init 4 2, cwd := "", labels := [] }
+     ((save c).take 5 == magic) && !((save c).take 5 == legacyMagic)) = true := by
+  native_decide
+
+/-- A tag that is neither is still refused — the legacy branch widened what `load`
+accepts by exactly one tag, not by "anything five bytes long". -/
+example :
+    (let c : Ckpt := { vt := Vt.init 4 2, cwd := "", labels := [] }
+     (load ([0x4C, 0x4E, 0x47, 0x52, 2] ++ (save c).drop 5)).isNone
+       && (load ([0x00, 0x00, 0x00, 0x00, 0] ++ (save c).drop 5)).isNone) = true := by
+  native_decide
+
 end Linger.Core.Checkpoint.Tests

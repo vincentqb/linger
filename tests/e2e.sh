@@ -97,7 +97,7 @@ shim_n="$(grep -c LEAN_EXPORT c/shim.c)"
 # two that remain are real (`Checkpoint.load_save` and `Vt.renderable_stepGround`,
 # plus the record-width cost THEOREMS.md describes); a new one means a proof got
 # harder, which is the signal design-for-provability says to read, not silence.
-HEARTBEAT_CAP=2
+HEARTBEAT_CAP=1
 hb_n="$(grep -rc 'set_option maxHeartbeats' Theorems/ | awk -F: '{s+=$2} END {print s+0}')"
 [ "$hb_n" -le "$HEARTBEAT_CAP" ] \
   || fail "maxHeartbeats raises grew to $hb_n (cap $HEARTBEAT_CAP); a proof got harder — read that, or re-measure and delete a stale one"

@@ -6091,3 +6091,44 @@ counts 27, and the two new ratchets still count 2 and 2. Break-verified on the r
 `partial def` added to `Linger/Core/Name.lean` still trips `E2E FAIL: partial def in pure core`.
 That check — "does the gate still fire after you move what it points at?" — is the one worth
 repeating after any path change.
+
+## checkpoint tag: LZMX -> LNGR with a legacy reader — 2026-08-19
+
+`save` now writes `"LNGR"` v1; `load` accepts that or the pre-rename `"LZMX"` v1. The layout
+after the tag never changed, so this is a **re-tag, not a format change** — which is what makes
+"migrate completely without" achievable in one step: nothing to run, no flag, and a session's
+next checkpoint is clean.
+
+Two theorems, and only the pair means anything: `load_legacy_save` (an old file still resumes —
+the rename orphaned nothing on disk) and `save_no_legacy` (a new file carries no trace of the old
+tag — so the legacy reader is temporary rather than permanent). Plus `load_magic_agnostic`, which
+says the tag is the *only* difference for any payload, garbage included.
+
+**The interesting part was a proof getting harder, and what that meant.** Adding the second
+branch inline to `load` made `load_save` time out at its existing 2,000,000 heartbeats. Per
+AGENTS.md that is a signal to read rather than silence — and `HEARTBEAT_CAP` blocks silencing
+anyway. Cause: with the tag decision inline, the round-trip proof carries it through the whole
+parser chain. Fix was to name the stage (`stripMagic`, the `Vt.print*`/`rowSlot` idiom) and give
+it two one-line lemmas. Consequences worth recording:
+* `load_save`'s proof got **shorter** (four `List.take/drop` rewrites collapsed to one
+  `stripMagic_magic`), and no longer needs its heartbeat raise at all — deleted. The tree is down
+  to **one** raise (`Theorems/Vt.lean`), `HEARTBEAT_CAP` tightened 2 → 1.
+* The legacy claims became two lines each instead of fighting the same chain.
+* `magic` left `coverage.py`'s unclaimed list (the new theorems name it), and `stripMagic` /
+  `legacyMagic` arrived already claimed, so the ratchet tightened 20 → 19 rather than needing a
+  bump. That is the third time this round that naming a stage paid for itself twice.
+
+Break-verified, both halves, each failing a theorem *and* a fixture:
+* Remove the legacy branch from `stripMagic` → the old-file fixture is refuted and
+  `stripMagic_legacy` / `load_magic_agnostic` stop compiling.
+* Make `save` emit `legacyMagic` → `save_no_legacy` and its fixture fail (this is the break that
+  proves "migrated" is a fact about the write side, not a hope).
+Fixtures also pin the literal bytes of both tags, and that a *third* tag (`"LNGR"` v2, all-zero)
+is still refused — the legacy branch widened what `load` accepts by exactly one tag, not by
+"anything five bytes long".
+
+**Verified end to end on real files**, not just in the kernel: created a session, detached (so the
+daemon checkpointed), confirmed the file's tag is `[76,78,71,82,1] = "LNGR"`, hand-rewrote it to
+`[76,90,77,88,1] = "LZMX"` to make a genuine pre-rename file, SIGKILLed the daemon and
+reattached — `legacy-survives-42` came back — then detached again and the re-written checkpoint's
+tag was `"LNGR"`. Migration observed, not inferred.

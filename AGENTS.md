@@ -6,10 +6,15 @@ namespace (`Linger.Core`, `Linger.Posix`, `Linger.Runtime`), the `Linger/`
 tree, the shim's `linger_*` symbols, the `lingertest` smoke exe. The old
 `zmx`/`lzmx` name survives in exactly three places, each on purpose:
 
-* **The checkpoint magic stays the four bytes "LZMX"** (`Linger/Core/Checkpoint.lean`).
-  It is an on-disk **format identifier, not branding** — changing it makes every
-  existing checkpoint unreadable, so a session would resume blank. Renaming it is a
-  format-version bump with a migration, not a search-and-replace.
+* **The checkpoint magic is now `"LNGR"`, with `"LZMX"` accepted on read**
+  (`Linger/Core/Checkpoint.lean`). The layout after the tag never changed, so this is
+  a re-tag rather than a format change: `load` takes either via the named `stripMagic`
+  stage, `save` writes only the new one, and a session therefore migrates on its next
+  checkpoint with no migration step and no flag. Both halves are theorems, and only the
+  pair is worth anything — `load_legacy_save` (an old file still resumes, so the rename
+  orphaned nothing on disk) and `save_no_legacy` (a new file carries no trace of the old
+  tag, so the legacy reader is temporary). `legacyMagic` goes away with the v1 files it
+  reads, at the next format version. Do not "tidy" it away sooner.
 * **`SCRATCHPAD.md` and `specs/archive/`** keep the old paths in their historical
   entries. The worklog is append-only and the archived specs are closed records:
   rewriting a path inside them would falsify what was true when it was written.
