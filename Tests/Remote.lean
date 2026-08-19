@@ -53,4 +53,22 @@ example : (match checkHosts ["gpu2", "gpu3", "gpu2"] with
 example : (match checkHosts ([] : List String) with
     | .ok l => l.isEmpty | .error _ => false) = true := by native_decide
 
+/-- …and a host carrying a control byte is rejected, not scrubbed: the string goes
+into `ssh` argv, so rewriting it would connect somewhere the user did not name.
+A legitimate `user@host` must still pass — `Name.sanitize` would have eaten the `@`,
+which is why `hostClean` is its own predicate. -/
+example : (match checkHosts ["ok", "ev\x1b[31mil"] with
+    | .ok _ => false | .error _ => true) = true := by native_decide
+example : (match checkHosts ["ta\tb"] with
+    | .ok _ => false | .error _ => true) = true := by native_decide
+example : (match checkHosts ["de\x7fl"] with
+    | .ok _ => false | .error _ => true) = true := by native_decide
+example : (match checkHosts ["user@gpu2.example.com", "root@10.0.0.1"] with
+    | .ok l => l.length == 2 | .error _ => false) = true := by native_decide
+
+/-- The refusal message cannot itself carry the escape it is complaining about. -/
+example : (match checkHosts ["ev\x1b[31mil"] with
+    | .ok _ => false
+    | .error e => !(e.toList.any (fun c => c.toNat == 0x1B))) = true := by native_decide
+
 end Zmx.Core.Remote.Tests

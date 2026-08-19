@@ -88,6 +88,30 @@ shim_n="$(grep -c LEAN_EXPORT c/shim.c)"
   || { grep -nE '\.extract\b' Zmx/Runtime/*.lean; \
        fail "buffer arithmetic in Zmx/Runtime (Buf.bufAdvance owns it, and is proved)"; }
 
+# heartbeat ratchet. A `set_option maxHeartbeats` raise is a MEASUREMENT, and it
+# has an expiry date that nothing else enforces: the 2026-08-18 factoring audit
+# deleted 18 of 20, and the control run showed six of those were already
+# deletable BEFORE the file split — budget added when the proofs were rougher and
+# never re-measured once the surrounding lemmas were factored. So the sweep is
+# cheap and the number only goes DOWN: after a refactor, try deleting them. The
+# two that remain are real (`Checkpoint.load_save` and `Vt.renderable_stepGround`,
+# plus the record-width cost THEOREMS.md describes); a new one means a proof got
+# harder, which is the signal design-for-provability says to read, not silence.
+HEARTBEAT_CAP=2
+hb_n="$(grep -rc 'set_option maxHeartbeats' Theorems/ | awk -F: '{s+=$2} END {print s+0}')"
+[ "$hb_n" -le "$HEARTBEAT_CAP" ] \
+  || fail "maxHeartbeats raises grew to $hb_n (cap $HEARTBEAT_CAP); a proof got harder — read that, or re-measure and delete a stale one"
+
+# runtime `partial def` ratchet. Five of the seven shed the keyword on 2026-08-18
+# once someone checked: `while`/`for` in a `do` block never needed it, and none of
+# the five self-recursed. Two are honest — `pump` (genuinely unbounded recursion
+# without a two-pass argument) and `parseLs` (wants a `decreasing_by`). Ratcheted
+# so the keyword cannot creep back by habit; §Total in THEOREMS.md names both.
+RUNTIME_PARTIAL_CAP=2
+rp_n="$(grep -rc 'partial def' Zmx/Runtime/*.lean | awk -F: '{s+=$2} END {print s+0}')"
+[ "$rp_n" -le "$RUNTIME_PARTIAL_CAP" ] \
+  || fail "Zmx/Runtime grew to $rp_n partial defs (cap $RUNTIME_PARTIAL_CAP); a do-block loop does not need the keyword"
+
 say "2b. coverage of the code by the theorems (two ratchets)"
 # Every bug this project found by PROVING was an assumption nobody wrote down, so
 # the shape to watch is a definition no theorem says anything about. This used to

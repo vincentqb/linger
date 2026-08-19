@@ -69,3 +69,34 @@ current model can represent, and widening `Modes` is a different project.
 ## Steps
 
 Filled in as each round starts; one item in flight at a time.
+
+## Completion record — closed 2026-08-19
+
+Archived to `specs/archive/`. All five items landed, plus the parked follow-up:
+
+1. **`restore_tabs_any`** ✓ — with `restore_tabs_stop_any`, `restore_tabs_reachable` and
+   `Resume.resume_tabs`. Built on a new `Fixes π` stream predicate rather than a fourth
+   hand-rolled copy of `Keeps` (`keeps_eq_fixes : Keeps bs ↔ Fixes (·.grid) bs := Iff.rfl`
+   records the duplication in-file). Break-verified emulator-side: `HTS` at `cursor.x + 1`
+   leaves the emitter's shape untouched, so nothing pre-existing notices — only `hts_feed_eq`
+   fails. `STATEMENT_CAP` tightened 21 → 20.
+2. **`ptyIn` capped** ✓ (`ptyInCap`, drop-newest with an edge-logged transition), and the twin
+   `flushConn`/`flushPty` partial-drain compaction. Both later superseded by `Zmx.Core.Buf`
+   (`specs/runtime-invariants.md`), where the leak became *unrepresentable*.
+3. **Resume at the checkpoint's dimensions** ✓, `clampDim`-guarded against a corrupt checkpoint
+   whose unclamped `cols` would wrap to a 0-column tty. Pinned by `resume_test`'s geometry case,
+   measured with no sizing attach in the way.
+4. **`.err` reaches the user on the attach path** ✓ via `Client.Outcome` (`ended`/`detached`/
+   `refused`), so a roster refusal can no longer render as a clean detach.
+5. **The human listing is rendered in the pure core** ✓ — `Listing.humanRow`/`humanListing`
+   through `utf8s`, proved control-byte-free for any reply (`humanRow_printable`,
+   `humanListing_printable`). Closed the two real display leaks (the resumable row's raw
+   checkpoint filename, the raw `-r` host) and fixed the visual defects in the same move:
+   aligned columns, no trailing whitespace, `(busy)` no longer shown for live remote rows,
+   deterministic row order.
+6. **The parked ssh-argv host guard** ✓ (2026-08-19) — `checkHosts` rejects a host with a
+   control byte, loudly, because the string reaches `ssh` argv; the refusal message scrubs the
+   host it names. `checkHosts_ok_clean`.
+
+Every item break-verified with the break in `SCRATCHPAD.md`; `./tests/e2e.sh` green and
+warning-free throughout; coverage ratchet monotone (21 → 20, never raised).

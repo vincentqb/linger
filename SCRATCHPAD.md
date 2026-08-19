@@ -5797,3 +5797,51 @@ the gate has with `Ring.push`/`Vt.size`); `./tests/e2e.sh` `E2E OK`; robust/atta
 overview/status all `FAILURES: 0`, including robust case 3's exactly-once backpressure log and
 its pending-within-cap assertion through the new `bufOffer` path. `SHIM_CAP` untouched at 27 —
 `Posix.writeBuf` is a Lean-level wrapper over the existing `zmx_write` extern.
+
+## ledger-cleanup close-out — 2026-08-19 (the parked host guard, and two ratchets)
+
+**The last parked item is done.** `Remote.checkHosts` now rejects a host carrying a C0 control
+or DEL, alongside the existing duplicate rejection: `hostClean`, `firstDirtyHost`, and
+`checkHosts_ok_clean` (+ `firstDirtyHost_none` as the walk↔predicate bridge, which is what lets
+the headline theorem be about the *bytes* rather than about the walk). Both new core defs are
+named in theorem statements, so coverage stays 20/20.
+
+Three design points, each a "why not the obvious thing":
+* **Reject, don't scrub.** The host string goes into `ssh` argv, so rewriting it would connect
+  somewhere the user did not name. Same argument the duplicate guard already made ("a
+  configuration mistake with no valid meaning"). Contrast `humanListing`, which *scrubs*,
+  because there the string is only displayed.
+* **Not `Name.sanitize`.** `@` is not an `okChar`, so sanitizing would destroy a legitimate
+  `user@host` target. Pinned by a fixture (`user@gpu2.example.com` must pass).
+* **The refusal message scrubs the host it names.** The error is printed to a terminal, so
+  echoing the raw bytes back would inject the escape through the *error* path — the listing was
+  hardened yesterday and this was the remaining hole in the same class. Pinned by a fixture
+  asserting the message carries no `0x1B`.
+
+Break-verify: drop the rejection branch → `checkHosts_ok_nodup` and `checkHosts_ok_clean` both
+fail to compile (their `split` no longer has a match to split) **and** four `native_decide`
+fixtures are refuted, including the message-cleanliness one. Reverted; green.
+
+**Two ratchets added to `tests/e2e.sh` §2, both break-verified**, turning yesterday's two
+findings into gates rather than prose:
+* `HEARTBEAT_CAP=2`. The factoring audit's real lesson was not the split: the control run showed
+  six of the 18 deleted raises were **already deletable before it**, i.e. they were stale budget
+  from when the proofs were rougher, and nothing expires such a measurement. Adding a third raise
+  now fails with "a proof got harder — read that, or re-measure and delete a stale one".
+  (Verified the naive break first: putting `set_option` above the `import` fails the *build*, not
+  the ratchet — place it on a declaration to test the gate.)
+* `RUNTIME_PARTIAL_CAP=2`. `pump` and `parseLs` are honest; the other five had the keyword by
+  habit. Marking `flushPty` partial again fires the gate by name.
+Both live next to `SHIM_CAP` and the `Buf` greps, and the reason is written at the gate.
+
+`AGENTS.md` gained four rules from this stretch: the heartbeat-expiry rule, the
+do-block-loops-don't-need-`partial` rule, "a proved pure value needs a grep gate to bite"
+(generalising the `Buf` gate), and **one writer at a time on this tree** — two agents editing
+concurrently raced the coverage ratchet (untracked files are invisible to `git diff -- Zmx/`, so
+an out-of-band read caught a half-written state and reported 28 unclaimed defs), and both
+compile the same tree so each sees the other's partial files as errors.
+
+Also caught by running the gate myself rather than trusting a green report: `Zmx/Core/Buf.lean`'s
+docstring contained the literal word `sorry` in prose, which trips the purity grep — the tree was
+failing `e2e.sh` when it was reported green. Reworded. The gate is deliberately dumb; prose must
+dodge the banned tokens.

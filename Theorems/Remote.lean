@@ -62,10 +62,51 @@ theorem checkHosts_ok_nodup {hosts l : List String} (h : checkHosts hosts = .ok 
     l.Nodup := by
   unfold checkHosts at h
   split at h
-  · rename_i hnd
-    simp only [Except.ok.injEq] at h
-    subst h
-    exact hnd
   · simp at h
+  · rename_i hnd
+    split at h
+    · simp at h
+    · simp only [Except.ok.injEq] at h
+      subst h
+      simpa using hnd
+
+/-- A list with no dirty host is one where `hostClean` holds of every entry. The
+walk and the predicate agree, which is what lets the theorem below be about the
+*bytes* rather than about `firstDirtyHost`. -/
+theorem firstDirtyHost_none {hosts : List String} (h : firstDirtyHost hosts = none) :
+    ∀ x ∈ hosts, hostClean x = true := by
+  induction hosts with
+  | nil => intro x hx; exact absurd hx (by simp)
+  | cons a t ih =>
+    unfold firstDirtyHost at h
+    split at h
+    · rename_i hc
+      intro x hx
+      rcases List.mem_cons.mp hx with he | ht
+      · subst he; exact hc
+      · exact ih h x ht
+    · exact absurd h (by simp)
+
+/-- **§Remote (argv guard): a validated host carries no control byte.** The host
+string is handed to `ssh` as argv *and* printed into the listing, so a C0 control or
+DEL in it is refused at the boundary rather than scrubbed on the way out — scrubbing
+would silently connect somewhere the user did not name. With
+`checkHosts_ok_nodup` this is the whole contract `-r` and the remotes file rely on. -/
+theorem checkHosts_ok_clean {hosts l : List String} (h : checkHosts hosts = .ok l) :
+    ∀ x ∈ l, ∀ c ∈ x.toList, c.toNat ≥ 0x20 ∧ c.toNat ≠ 0x7F := by
+  unfold checkHosts at h
+  split at h
+  · simp at h
+  · split at h
+    · simp at h
+    · rename_i hdirty
+      simp only [Except.ok.injEq] at h
+      subst h
+      intro x hx c hc
+      have hcl : hostClean x = true := firstDirtyHost_none hdirty x hx
+      unfold hostClean at hcl
+      have := List.all_eq_true.mp hcl c hc
+      simp only [Bool.and_eq_true, decide_eq_true_eq] at this
+      exact this
 
 end Zmx.Core.Remote

@@ -786,3 +786,18 @@ Recorded so they are not relitigated:
   stream needs no size. `SGR 0` comes last for the same DECRC-bundling reason.
 - **The hand-back is a constant.** What linger gives back does not depend on what the
   session was doing — which is the whole claim, and is why it takes no `Vt`.
+
+## Completion record — archived 2026-08-19
+
+Archived to `specs/archive/`. All six Definition-of-done items landed (2026-08-18) and Step 5
+(conformance profile into THEOREMS.md + archival of `terminal-contract.md` and
+`grid-fidelity.md`) is done. Its optional leftovers were then all closed by the successor
+`specs/archive/ledger-cleanup.md`: `restore_tabs_any` is proved, and Step 0 ledger items 3, 4
+and 6 are fixed. Item 5 of that ledger (modes the `Vt` does not model — DECSCNM `?5`,
+`?1005`/`?1015`, DECSCUSR) remains a stated emulator-completeness limit, not a defect.
+
+The claim this spec set out to make, and made: `restore` puts **any** conforming receiver of the
+right size into the session's state, with the theorems quantified over that receiver rather than
+over `Vt.init` — for the modes, the pen, the sticky bundle, the parser and decoder, the screen
+cells on both screens at every height, and the tab ruler. What is still fixture-carried is named
+in THEOREMS.md's A5 row: the window title and the DECSC slot.

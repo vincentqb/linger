@@ -87,14 +87,35 @@ def firstDupHost : List String → Option String
   | [] => none
   | h :: t => if t.contains h then some h else firstDupHost t
 
-/-- Validate a remote-host list. A repeated host is a configuration
-mistake with no valid meaning — it would double-query and show
-duplicate rows — so reject it loudly rather than silently dedup. The
-overview runs this *before* any connection is attempted, so a bad host
-list refuses immediately and names the offender. Pure; the IO caller
-turns `.error` into `IO.userError`. -/
+/-- A host string fit to hand to `ssh` argv: no C0 control, no DEL. **Not**
+`Name.sanitize`, which would be wrong twice over — `@` is not an `okChar`, so it
+would destroy a legitimate `user@host` target, and silently rewriting a host means
+connecting somewhere the user did not ask for. -/
+def hostClean (h : String) : Bool :=
+  h.toList.all (fun c => decide (c.toNat ≥ 0x20) && decide (c.toNat ≠ 0x7F))
+
+/-- The first host carrying a control byte, for the error message. -/
+def firstDirtyHost : List String → Option String
+  | [] => none
+  | h :: t => if hostClean h then firstDirtyHost t else some h
+
+/-- Validate the `-r` host list. Two rejections, both **loud**, because each is a
+configuration mistake with no valid meaning: a repeated host would double-query and
+show duplicate rows, and a host with a control byte in it goes into `ssh` argv, so
+scrubbing it would connect somewhere the user did not name. Reject rather than
+silently dedup or rewrite. The overview runs this *before* any connection is
+attempted, so a bad list refuses immediately and names the offender. Pure; the IO
+caller turns `.error` into `IO.userError`.
+
+The message reports the offending host **scrubbed**: it is printed to a terminal,
+and echoing the raw bytes back is how a hostile remotes file would inject an escape
+sequence through the error path rather than the listing (`humanListing` covers the
+listing; this covers here). -/
 def checkHosts (hosts : List String) : Except String (List String) :=
-  if hosts.Nodup then .ok hosts
-  else .error s!"remote host '{(firstDupHost hosts).getD ""}' listed more than once"
+  if !hosts.Nodup then
+    .error s!"remote host '{scrub ((firstDupHost hosts).getD "")}' listed more than once"
+  else match firstDirtyHost hosts with
+    | some h => .error s!"remote host '{scrub h}' contains a control character"
+    | none => .ok hosts
 
 end Zmx.Core.Remote

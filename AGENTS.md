@@ -6,22 +6,34 @@ historical name, and the checkpoint magic stays "LZMX" — a frozen
 format identifier, not branding).
 `README.md` is the user-facing overview. `PLAN.md` is the original
 requirements (goal-level, not current state); `specs/archive/` holds the
-closed build plans with their completion records
-(`lean-zmx.md`, `bigger-theorems.md`, `terminal-contract.md`, `grid-fidelity.md`).
+closed build plans with their completion records (`lean-zmx.md`,
+`bigger-theorems.md`, `terminal-contract.md`, `grid-fidelity.md`,
+`restore-conformance.md`, `ledger-cleanup.md`).
 
 ## Where things stand — read this first after any compaction
 
-1. **`specs/restore-conformance.md` is COMPLETE** (2026-08-18) — all six
-   Definition-of-done items landed and Step 5 (conformance profile + archival)
-   is done. `restore` works into any client, and the proofs quantify over that
-   client instead of over `Vt.init`; the screen-cells claim (`restore_grid_any`,
-   `restore_grid_reachable`, `resume_grid`) holds on both screens at every
-   height. It stays in `specs/` as the current record, not archived, until new
-   work opens a successor. Its "Where this stands" block lists the optional,
-   off-critical-path leftovers (`restore_tabs_any`; Step 0 ledger items 3–6) —
-   there is **no** required next step. `specs/terminal-contract.md` and
-   `specs/grid-fidelity.md` are its now-archived predecessors (their carried
-   obligations landed here).
+1. **Two specs are live in `specs/`, and only one is started.**
+   * **`specs/scrollback-fidelity.md` — OPEN, not started. This is the next
+     piece of work.** Put the session's scrollback into the *receiver's own*
+     scrollback buffer and prove it, receiver-quantified like the screen.
+     Read its "Where this stands" before anything else: its Step 1 has a hard
+     exit criterion (`restore_grid_any` / `restore_grid_reachable` /
+     `resume_grid` must stay green **with their statements unchanged**), and the
+     obvious emitter shape — painting `sbRows v ++ v.grid` as one tall array —
+     *deletes* `paint_rows`' no-scroll argument and turns those three red. The
+     spec carries the design that doesn't, plus kill criteria.
+   * **`specs/runtime-invariants.md` — Steps 1–2 done, 3–4 optional.** The
+     daemon's two byte queues are now `Zmx.Core.Buf`, proved, with a grep gate
+     in `tests/e2e.sh` that makes the theorems bite an `IO` caller no theorem
+     can see. Its poll-plan half was **killed on purpose** (the
+     `revents[i]`↔`fds[i]` premise lives in `c/shim.c`, not in Lean, so proving
+     it would be decoration) — that negative result is recorded so nobody
+     re-proposes it.
+   Everything else is closed: `restore-conformance.md` (restore works into any
+   client, proved for the modes, pen, sticky bundle, parser/decoder, the screen
+   cells on both screens at every height, and the tab ruler) and
+   `ledger-cleanup.md` (its five parked items plus the ssh-argv host guard) are
+   in `specs/archive/` with completion records.
    (Don't look for a living `PLAN.md`: the root one is requirements, and
    everything in `specs/archive/` is closed.)
 2. **`SCRATCHPAD.md`** — append-only worklog: proof recipes, measured
@@ -37,7 +49,10 @@ closed build plans with their completion records
    abandoned.
 
 New work opens a new `specs/<slug>.md` and gets named in item 1 above;
-archive the old one with a completion record rather than editing it.
+archive the old one with a completion record rather than editing it. Keep the
+live count small — two open specs is already one more than the
+one-item-in-flight rule likes, and the second is only there because it is
+finished enough to leave alone.
 
 ## Settled non-goals — don't build these
 
@@ -100,6 +115,30 @@ fresh pair of eyes.
   `all_goals first | …`) so a new branch doesn't break the proof.
 - Any poll loop must freeze its fd set before polling (a mid-round
   accept desynced `revents` once and panicked the daemon).
+- **A `maxHeartbeats` raise is a measurement, and it expires.** Nothing
+  else expires it: a 2026-08-18 sweep deleted 18 of 20, and the control
+  showed six were already deletable *before* the file split that
+  prompted the sweep — they were budget added when the proofs were
+  rougher and never re-measured. After any refactor, try deleting them.
+  Ratcheted (`HEARTBEAT_CAP`); a new raise means a proof got harder,
+  which is a signal to read, not to silence.
+- **A `while`/`for` loop in a `do` block does not need `partial def`.**
+  Five of the runtime's seven had it by habit. Two are honest (`pump`,
+  `parseLs`) and named in THEOREMS.md §Total; ratcheted
+  (`RUNTIME_PARTIAL_CAP`). Don't add a fuel parameter to shed the
+  keyword — that converts a hang into a silent drop.
+- **A proved pure value needs a grep gate to bite.** `Zmx/Runtime/*` is
+  `IO`, so no theorem can see that the daemon calls `Zmx.Core.Buf`
+  rather than open-coding the same sums — without the gate the theorems
+  are arithmetic about a value nothing forces the runtime to use. Same
+  species of oracle as `SHIM_CAP`. When you move a decision into Core,
+  gate the runtime against re-growing it.
+- **One writer at a time on this tree.** Two agents editing
+  concurrently raced the coverage ratchet: untracked files are invisible
+  to `git diff -- Zmx/`, so an out-of-band `coverage.py` read caught a
+  half-written state and reported 28 unclaimed defs. Both also compile
+  the same tree, so each sees the other's partial files as errors.
+  Serialize, or give each writer a worktree.
 
 ## Scratchpad
 

@@ -1,6 +1,11 @@
 # FINDINGS — 2026-08-18 — factoring audit
 
-Left for whoever picks this repo up next: **resolve and commit here.** From a
+**CLOSED 2026-08-19.** Both threads are resolved (item 1) and measured (item 2), and
+the two lessons are now mechanical rather than prose: `HEARTBEAT_CAP` in
+`tests/e2e.sh` expires stale `maxHeartbeats` raises, and `AGENTS.md` carries the
+rule. Archived here as the record; nothing in it is outstanding.
+
+Originally left for whoever picked this repo up next: **resolve and commit here.** From a
 cross-repo audit of six Lean projects run while distilling the "restructure code
 for provability rather than weakening a theorem" rule (this repo's `AGENTS.md`)
 into a portable skill (`~/notes/skills/design-for-provability`). Tagged VERIFIED
@@ -145,3 +150,22 @@ Still true, and the ratchet has since moved the right way: the cap is **20** as 
 gate itself — it globbed `Theorems/*.lean` non-recursively, so moving statements into
 `Theorems/Render/` made 58 core defs read as unclaimed; `rglob` restores it. A gate that
 silently stops seeing its input is the failure mode to watch for in this mechanism.
+
+## Closing note — 2026-08-19
+
+What the audit was right about, and what it was wrong about, both worth keeping:
+
+* **Right:** the file was accretion and splittable at its own section headers at zero
+  logical cost. Done — a 38-line façade over ten parts, theorem-name diff empty, the
+  original reconstructible byte-for-byte.
+* **Wrong, usefully:** the acceptance criterion assumed the deletable heartbeat raises
+  were paying for *file size*. The control run at the pre-split commit shows six of
+  them were already deletable before the split, so the real diagnosis is **staleness**
+  — a `maxHeartbeats` raise is a measurement and nothing expires it. That is a better
+  finding than the hypothesis, and it generalises further: it is now an `AGENTS.md`
+  rule and a ratchet, and it belongs in the portable skill this audit fed.
+* **Settled:** the 16:1 theorem:implementation ratio is a hard core, not bad factoring
+  (bookkeeping ≈22% of proof lines, and the *distribution* is the tell — cost grows
+  with the difficulty of the step, not with field count). The deferred
+  read-only-fields-into-parameter-position refactor would attack the 22% and none of
+  the rest: legibility, not length. Not scheduled.
