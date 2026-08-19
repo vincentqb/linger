@@ -1,9 +1,9 @@
-import Zmx.Core.Wire
-import Zmx.Core.Vt
-import Zmx.Core.Render
-import Zmx.Core.Terminal
-import Zmx.Core.Name
-/-! # Zmx.Core.Session — the daemon's brain, as data
+import Linger.Core.Wire
+import Linger.Core.Vt
+import Linger.Core.Render
+import Linger.Core.Terminal
+import Linger.Core.Name
+/-! # Linger.Core.Session — the daemon's brain, as data
 
 One daemon = one session = one pty + one `Vt` + attached clients. This
 module is the *entire* decision logic: `step : State → Event → State ×
@@ -19,9 +19,9 @@ Tensions carried (THEOREMS.md):
 * §Frame (machine half) — an `unknown` message changes nothing.
 -/
 
-namespace Zmx.Core.Session
+namespace Linger.Core.Session
 
-open Zmx.Core.Wire (Msg)
+open Linger.Core.Wire (Msg)
 
 def maxClients : Nat := 16
 def maxLabels : Nat := 64
@@ -168,7 +168,7 @@ This was `(String.join (fields.map (fun (k, v) => s!"{k}\t{v}\n"))).toUTF8.toLis
 which passed a label's newline through verbatim (`specs/restore-conformance.md`
 Step 0 ledger item 2, §Row/§Status integrity). That shape was also what made the
 output unprovable — a `String` literal does not reduce in the kernel, so no theorem
-could see its bytes, which is exactly the argument in `Zmx/Core/Render.lean`'s
+could see its bytes, which is exactly the argument in `Linger/Core/Render.lean`'s
 header. Building `List UInt8` directly fixes both at once. -/
 def infoText (s : State) : List UInt8 :=
   (infoFields s).flatMap (fun (k, v) =>
@@ -355,4 +355,4 @@ def run (s : State) : List Event → State × List Effect
     let rest := run r.1 evs
     (rest.1, r.2 ++ rest.2)
 
-end Zmx.Core.Session
+end Linger.Core.Session

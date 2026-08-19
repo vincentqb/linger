@@ -5,9 +5,9 @@ import Theorems.Render.Sticky
 newline count is the row count, so a cell's contents cannot forge a line. Split out
 of `Theorems/Render.lean`. -/
 
-namespace Zmx.Core.Render
+namespace Linger.Core.Render
 
-open Zmx.Core.Vt
+open Linger.Core.Vt
 
 /-! ## §Row integrity for `linger history` — a cell cannot inject a line break
 
@@ -108,4 +108,4 @@ theorem safeChar_of_emittable {c : Char} (h : Emittable c) : safeChar c = c := b
     omega)]
 
 
-end Zmx.Core.Render
+end Linger.Core.Render

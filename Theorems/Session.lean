@@ -1,4 +1,4 @@
-import Zmx.Core.Session
+import Linger.Core.Session
 import Theorems.Wire
 import Theorems.Vt
 import Theorems.Terminal
@@ -19,9 +19,9 @@ THEOREMS.md rows:
   change and no effects.
 -/
 
-namespace Zmx.Core.Session
+namespace Linger.Core.Session
 
-open Zmx.Core.Wire (Msg)
+open Linger.Core.Wire (Msg)
 
 /-! ## §Frame (machine half) and other exact-shape facts -/
 
@@ -370,7 +370,7 @@ theorem step_bounded (s : State) (ev : Event) (h : Bounded s) :
 
 /-! ## The emulator stays Good through the daemon -/
 
-open Zmx.Core.Vt (Good) in
+open Linger.Core.Vt (Good) in
 theorem onMsg_vt_good {s : State} {c : Client} (m : Msg)
     (h : Good s.vt) : Good (onMsg s c m).1.vt := by
   unfold onMsg
@@ -378,10 +378,10 @@ theorem onMsg_vt_good {s : State} {c : Client} (m : Msg)
   repeat' split
   all_goals first
     | exact h
-    | exact Zmx.Core.Vt.Good.resize _ _ (by simpa [State.setClient] using h)
+    | exact Linger.Core.Vt.Good.resize _ _ (by simpa [State.setClient] using h)
     | simpa [State.setClient] using h
 
-open Zmx.Core.Vt (Good) in
+open Linger.Core.Vt (Good) in
 theorem feedMsgs_vt_good (id : Nat) (msgs : List Msg)
     (acc : State × List Effect) (h : Good acc.1.vt) :
     Good (feedMsgs id msgs acc).1.vt := by
@@ -396,7 +396,7 @@ theorem feedMsgs_vt_good (id : Nat) (msgs : List Msg)
     · dsimp only [hc]
       exact ih _ (onMsg_vt_good m h)
 
-open Zmx.Core.Vt (Good) in
+open Linger.Core.Vt (Good) in
 /-- §Total end-to-end: the screen state a daemon holds stays Good
 whatever events arrive — adversarial clients and pty output included. -/
 theorem step_vt_good (s : State) (ev : Event) (h : Good s.vt) :
@@ -420,17 +420,17 @@ theorem step_vt_good (s : State) (ev : Event) (h : Good s.vt) :
   · -- ptyOut
     dsimp only
     rw [Terminal.feed_vt]
-    exact Zmx.Core.Vt.Good.feed _ h
+    exact Linger.Core.Vt.Good.feed _ h
   · exact h
   · split
     · exact h
     · exact h
 
-end Zmx.Core.Session
+end Linger.Core.Session
 
 
 
-namespace Zmx.Core.Session
+namespace Linger.Core.Session
 /-! ## §Unread — the output counter
 
 `unseen` is "output arrived while nobody was watching", and it is a property
@@ -485,7 +485,7 @@ supplies the per-connection half: any split of A's stream yields the
 same messages in the same order).
 -/
 
-open Zmx.Core.Wire (Msg)
+open Linger.Core.Wire (Msg)
 
 theorem client?_id {s : State} {id : Nat} {c : Client}
     (h : s.client? id = some c) : c.id = id := by
@@ -589,11 +589,11 @@ theorem step_bytes_isolates (s : State) (id : Nat) (chunk : List UInt8)
     · rw [feedMsgs_other id _ _ h]
       exact setClient_other (by rw [client?_id hfind]; exact h)
 
-end Zmx.Core.Session
+end Linger.Core.Session
 
 
 
-namespace Zmx.Core.Session
+namespace Linger.Core.Session
 /-! ## Trace lift — the per-step theorems over the daemon's whole life
 
 `step`-level preservation says one event is safe; the daemon lives
@@ -642,7 +642,7 @@ theorem run_eq_foldl (s : State) (evs : List Event) :
 
 /-- The daemon's composite invariant: everything the per-step theorems
 preserve, as one predicate. -/
-def WF (s : State) : Prop := Bounded s ∧ Zmx.Core.Vt.Good s.vt
+def WF (s : State) : Prop := Bounded s ∧ Linger.Core.Vt.Good s.vt
 
 theorem step_wf (s : State) (ev : Event) (h : WF s) : WF (step s ev).1 :=
   ⟨step_bounded s ev h.1, step_vt_good s ev h.2⟩
@@ -668,11 +668,11 @@ theorem run_bytes_isolates (s : State) (id : Nat) (chunks : List (List UInt8))
     rw [ih (step s (.bytes id c)).1]
     exact step_bytes_isolates s id c h
 
-end Zmx.Core.Session
+end Linger.Core.Session
 
 
 
-namespace Zmx.Core.Session
+namespace Linger.Core.Session
 /-! ## §Renderable lifted to the daemon's whole life
 
 The emulator-level invariant is only useful if the *daemon's* terminal satisfies
@@ -684,8 +684,8 @@ new content — which is the point: the replay theorem may assume a *reachable*
 grid without that assumption smuggling in a side condition.
 -/
 
-open Zmx.Core.Wire (Msg)
-open Zmx.Core.Vt (LiveReachableVt Renderable)
+open Linger.Core.Wire (Msg)
+open Linger.Core.Vt (LiveReachableVt Renderable)
 
 /-- The daemon's terminal is one a live session can hold. -/
 def LiveVt (s : State) : Prop := LiveReachableVt s.vt
@@ -757,7 +757,7 @@ has been through — adversarial clients, hostile pty bytes, resizes, any
 interleaving — the grid it holds is one `Render.restore` can express. -/
 theorem run_vt_renderable (s : State) (evs : List Event) (h : LiveVt s) :
     Renderable (run s evs).1.vt :=
-  Zmx.Core.Vt.renderable_of_liveReachable (run_vt_live s evs h)
+  Linger.Core.Vt.renderable_of_liveReachable (run_vt_live s evs h)
 
 /-- A daemon booting from a fresh emulator satisfies the hypothesis, so the
 statement above is not conditional in practice. -/
@@ -785,11 +785,11 @@ theorem resizeEffects_atMostOne (s : State) (c : Client) :
   · exact Or.inr rfl
   · exact Or.inl rfl
 
-end Zmx.Core.Session
+end Linger.Core.Session
 
-namespace Zmx.Core.Session
+namespace Linger.Core.Session
 
-open Zmx.Core.Vt
+open Linger.Core.Vt
 
 /-! ## §Row / §Status integrity — a listing record cannot be forged
 
@@ -807,7 +807,7 @@ below need no hypothesis about where a field came from.
 
 The fix is also what makes them provable at all: the old shape ended in
 `String.toUTF8`, and a `String` does not reduce in the kernel — the same argument
-`Zmx/Core/Render.lean`'s header makes, and the reason `Render.history` is still only
+`Linger/Core/Render.lean`'s header makes, and the reason `Render.history` is still only
 *bounded* rather than proved (`tests/coverage.py`). `infoText` now builds
 `List UInt8` directly. -/
 
@@ -869,11 +869,11 @@ theorem infoText_records (s : State) :
   exact ⟨count_frame (infoFields s) 0x0A (Or.inr rfl),
          count_frame (infoFields s) 0x09 (Or.inl rfl)⟩
 
-end Zmx.Core.Session
+end Linger.Core.Session
 
-namespace Zmx.Core.Session
+namespace Linger.Core.Session
 
-open Zmx.Core.Wire (Msg)
+open Linger.Core.Wire (Msg)
 
 /-! ## §Chunk at the session layer — what a client receives is what was sent
 
@@ -997,4 +997,4 @@ theorem outputMsgs_bounded (id : Nat) (bs : List UInt8) :
   rw [outputMsgs_payloads id bs]
   exact chunksOf_le outputChunk (by decide) bs
 
-end Zmx.Core.Session
+end Linger.Core.Session

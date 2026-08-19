@@ -1,5 +1,5 @@
-import Zmx.Core.Name
-/-! # Zmx.Core.Remote — parsing `linger ls --porcelain` from other machines
+import Linger.Core.Name
+/-! # Linger.Core.Remote — parsing `linger ls --porcelain` from other machines
 
 The overview (`linger -r <hosts>`) folds in sessions from configured
 remote hosts by running `ssh <host> linger ls --porcelain` and parsing
@@ -23,9 +23,9 @@ state\tresumable
 ```
 -/
 
-namespace Zmx.Core.Remote
+namespace Linger.Core.Remote
 
-open Zmx.Core.Name (sanitize)
+open Linger.Core.Name (sanitize)
 
 structure RemoteRow where
   name : String
@@ -118,4 +118,4 @@ def checkHosts (hosts : List String) : Except String (List String) :=
     | some h => .error s!"remote host '{scrub h}' contains a control character"
     | none => .ok hosts
 
-end Zmx.Core.Remote
+end Linger.Core.Remote

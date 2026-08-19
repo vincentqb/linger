@@ -18,7 +18,7 @@ the right kind for a source-tree property (AGENTS.md, `verifier-in-the-loop`).
 
 Check 2 (`emitters`) is the one that answers "are we proving things about the code
 that runs". The runtime's byte-emitting surface is tiny and enumerable: every
-`Render.<f>` referenced outside `Zmx/Core/Render.lean` is a stream some code path
+`Render.<f>` referenced outside `Linger/Core/Render.lean` is a stream some code path
 actually writes to a terminal. Each must be in EMITTERS below with either a theorem
 that constrains it or a stated limitation. A new emitter wired into the runtime fails
 the gate until it is classified — which is exactly the failure mode that let the
@@ -41,7 +41,7 @@ def strip_comments(src: str) -> str:
     definition as claimed when its name appears in a *docstring*, which is the exact
     defect this file replaces — and check 2 reported `Render.rowAnsi`,
     `Render.rowText` and `Render.safeChar` as runtime-emitted because
-    `Zmx/Core/Vt.lean` *discusses* them in comments. A gate that reads prose is a
+    `Linger/Core/Vt.lean` *discusses* them in comments. A gate that reads prose is a
     gate that can be satisfied by writing prose.
     """
     src = re.sub(r"/-.*?-/", " ", src, flags=re.DOTALL)
@@ -92,7 +92,7 @@ def sh(cmd: str) -> str:
 
 
 def core_defs() -> list[str]:
-    out = sh(r"""grep -h '^\(private \)*def ' Zmx/Core/*.lean \
+    out = sh(r"""grep -h '^\(private \)*def ' Linger/Core/*.lean \
                  | sed 's/^\(private \)*def \([A-Za-z0-9_.]*\).*/\2/' \
                  | sed 's/.*\.//' | sort -u""")
     return out.split()
@@ -117,10 +117,10 @@ def theorem_statements() -> str:
 
 def runtime_emitters() -> set[str]:
     """`Render.<f>` referenced anywhere the runtime can reach, i.e. outside the
-    module that defines them. `Zmx/Core/Session.lean` counts: it is pure, but it
+    module that defines them. `Linger/Core/Session.lean` counts: it is pure, but it
     is what the daemon calls to build what a client is sent."""
     names: set[str] = set()
-    for f in list((ROOT / "Zmx").rglob("*.lean")) + [ROOT / "Main.lean"]:
+    for f in list((ROOT / "Linger").rglob("*.lean")) + [ROOT / "Main.lean"]:
         if f.name == "Render.lean" and f.parent.name == "Core":
             continue
         if not f.exists():
@@ -131,7 +131,7 @@ def runtime_emitters() -> set[str]:
     # friends are helpers inside the construction, not something anyone writes out.
     streams = set()
     for m in re.finditer(r"\ndef ([A-Za-z0-9_]+)[^\n:]*(?:\([^)]*\)\s*)*:\s*(Bytes|String)\b",
-                         strip_comments((ROOT / "Zmx/Core/Render.lean").read_text())):
+                         strip_comments((ROOT / "Linger/Core/Render.lean").read_text())):
         streams.add(m.group(1))
     return names & streams
 

@@ -1,5 +1,5 @@
-import Zmx.Core.Render
-/-! # Zmx.Core.Terminal — bounded child-facing terminal mediation
+import Linger.Core.Render
+/-! # Linger.Core.Terminal — bounded child-facing terminal mediation
 
 `Vt` remains the screen model. This module adds the other half of owning a
 PTY: recognizing the small documented query profile, replying to the child,
@@ -11,9 +11,9 @@ unowned, passthrough states emit each subsequent byte immediately, so kitty
 APC and sixel DCS payloads take constant scanner memory and linear time.
 -/
 
-namespace Zmx.Core.Terminal
+namespace Linger.Core.Terminal
 
-open Zmx.Core.Vt Zmx.Core.Render
+open Linger.Core.Vt Linger.Core.Render
 
 abbrev ESC : UInt8 := 0x1B
 abbrev BEL : UInt8 := 0x07
@@ -266,4 +266,4 @@ def feed (v : Vt) (scan : Scan) : Bytes → Result
         visible := out.visible ++ rest.visible,
         replies := out.replies ++ rest.replies }
 
-end Zmx.Core.Terminal
+end Linger.Core.Terminal

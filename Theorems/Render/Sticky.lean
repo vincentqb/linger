@@ -6,9 +6,9 @@ state and which screen is current — the restored fields whose proof cannot ste
 over the repaint — plus the receiver-quantified cursor claim. Split out of
 `Theorems/Render.lean`. -/
 
-namespace Zmx.Core.Render
+namespace Linger.Core.Render
 
-open Zmx.Core.Vt
+open Linger.Core.Vt
 
 /-! ## §Restore / A5 inbound, the sticky fields: region, charsets, screen
 
@@ -1302,4 +1302,4 @@ theorem restore_cursor_any (v w : Vt) (hgood : Good v) (hgw : Good w)
 
 
 
-end Zmx.Core.Render
+end Linger.Core.Render

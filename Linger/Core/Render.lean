@@ -1,5 +1,5 @@
-import Zmx.Core.Vt
-/-! # Zmx.Core.Render — Vt state → ANSI bytes
+import Linger.Core.Vt
+/-! # Linger.Core.Render — Vt state → ANSI bytes
 
 Pure functions from a `Vt` snapshot to the byte stream that reproduces
 it on a real terminal: `restore` (what a re-attaching client is sent)
@@ -22,9 +22,9 @@ defensive, since a control byte written into a repaint (or into an OSC
 title payload) would be re-parsed as a command and desync the replay.
 -/
 
-namespace Zmx.Core.Render
+namespace Linger.Core.Render
 
-open Zmx.Core.Vt
+open Linger.Core.Vt
 
 abbrev Bytes := List UInt8
 
@@ -299,7 +299,7 @@ A row cap would bound nothing that matters. `Cell.erased` emits one space and no
 SGR, so a blank 80-column row costs 86 counted (82 emitted); per-cell truecolour
 costs 40 bytes a column, 57 with all seven attributes. A full `sbCap = 10000`
 ring is therefore 32–46 MB at 80 columns and ~86 MB at 150 — against an
-`outbufCap` of 4 MiB that **disconnects** the client (`Zmx/Runtime/Daemon.lean`).
+`outbufCap` of 4 MiB that **disconnects** the client (`Linger/Runtime/Daemon.lean`).
 Without a byte budget, attach becomes attach-then-instant-drop.
 
 262144 admits 3,048 blank 80-column rows, or 2,383 of a realistic mixed row —
@@ -723,4 +723,4 @@ def history (v : Vt) (withAnsi : Bool) : Bytes :=
   else
     rows.flatMap (fun row => rowText row ++ [0x0A])
 
-end Zmx.Core.Render
+end Linger.Core.Render

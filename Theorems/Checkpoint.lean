@@ -1,4 +1,4 @@
-import Zmx.Core.Checkpoint
+import Linger.Core.Checkpoint
 /-! # §Restore — the reboot-resume codec theorems
 
 THEOREMS.md row: `load (save s) = some s` — exactly, for every state
@@ -12,9 +12,9 @@ Every combinator round-trip is unconditional: `wNat` is LEB128, so
 there is no "fits in N bits" side condition anywhere in the format.
 -/
 
-namespace Zmx.Core.Checkpoint
+namespace Linger.Core.Checkpoint
 
-open Zmx.Core.Vt
+open Linger.Core.Vt
 
 /-- "Reader `r` inverts writer `w`, leaving the rest untouched." -/
 abbrev RT {α : Type} (w : α → List UInt8) (r : R α) : Prop :=
@@ -221,4 +221,4 @@ theorem load_save_exact (c : Ckpt) (h : c.vt.pstate = .ground)
     cases vt
     simp_all [Vt.quiesce]
 
-end Zmx.Core.Checkpoint
+end Linger.Core.Checkpoint

@@ -1,5 +1,5 @@
-import Zmx.Core.Vt
-import Zmx.Core.Render
+import Linger.Core.Vt
+import Linger.Core.Render
 /-! # §Replay round-trip tests — restore fidelity, executable form
 
 The target theorem (specs/grid-fidelity.md):
@@ -13,9 +13,9 @@ against the pre-fix `Render.restore` (see SCRATCHPAD) — this is what
 "the emitter forgot X" looks like when it can be caught at build time.
 -/
 
-namespace Zmx.Core.Render.Tests
+namespace Linger.Core.Render.Tests
 
-open Zmx.Core.Vt Zmx.Core.Render
+open Linger.Core.Vt Linger.Core.Render
 
 /-- The §Replay equivalence. Compared: grid, cursor position, pen,
 scroll region, modes, title, tabs, charset, saved cursor/pen, the alt
@@ -627,7 +627,7 @@ example : (let r := (sbRows hostileRing).toList.head!
 /-! #### The byte budget — a correctness requirement, not prudence
 
 `outbufCap = 4194304` **disconnects** a client on undrained bytes
-(`Zmx/Runtime/Daemon.lean`), and a full `sbCap = 10000` ring of per-cell
+(`Linger/Runtime/Daemon.lean`), and a full `sbCap = 10000` ring of per-cell
 truecolour rows is 32–46 MB at 80 columns. So the trim is what stands between a
 reattach and an attach-then-instant-drop.
 
@@ -781,4 +781,4 @@ same result. -/
 example : (((dirty 6 3).feed leaveAnsi).modes == ((midDcs 6 3).feed leaveAnsi).modes)
     = true := by native_decide
 
-end Zmx.Core.Render.Tests
+end Linger.Core.Render.Tests

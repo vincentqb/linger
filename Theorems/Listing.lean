@@ -1,6 +1,6 @@
 import Theorems.Status
 import Theorems.Render
-import Zmx.Core.Listing
+import Linger.Core.Listing
 /-! # §Row — a list row's identity is its socket filename, not the reply
 
 The tension: the `info` reply is data from another process (a local
@@ -11,9 +11,9 @@ change it (`rowFields_name`) nor smuggle a second one in
 (`rowFields_reply_excluded`).
 -/
 
-namespace Zmx.Core.Listing
+namespace Linger.Core.Listing
 
-open Zmx.Core.Name (sanitize)
+open Linger.Core.Name (sanitize)
 
 /-- The row's `name` is the sanitized socket filename for ANY reply, so
 a peer's reply can never spoof another session's identity. -/
@@ -36,14 +36,14 @@ cannot lie about the row's *health* either: the two facts that decide whether
 a row is trustworthy at all come from the caller, never from the reply.
 -/
 
-open Zmx.Core.Status (Status)
+open Linger.Core.Status (Status)
 
 /-- A live socket that did not answer is `unknown`, whatever the reply
 contained — so a daemon too busy to answer cannot be reported as idle, and a
 crafted reply cannot claim otherwise. -/
 theorem rowStatus_unanswered (info : List (String × String))
     (h : answered info = false) : rowStatus (.live info) = Status.unknown := by
-  simp [rowStatus, Zmx.Core.Status.classify, h]
+  simp [rowStatus, Linger.Core.Status.classify, h]
 
 /-- No socket but a loadable checkpoint is `resumable`, whatever the reply
 contained (there is no daemon to have sent one). -/
@@ -64,7 +64,7 @@ theorem rowStatus_empty_reply : rowStatus (.live []) = Status.unknown := rfl
 `status` reports `unknown`, not `idle`. This is what keeps a remote glyph an
 honest statement rather than an inference from liveness alone. -/
 theorem rowStatus_remote_unreadable (junk : String)
-    (h : Zmx.Core.Status.ofName junk = Status.unknown) :
+    (h : Linger.Core.Status.ofName junk = Status.unknown) :
     rowStatus (.remote true junk) = Status.unknown := by
   simp [rowStatus, h]
 
@@ -74,8 +74,8 @@ theorem rowStatus_remote_absent : rowStatus (.remote true "") = Status.unknown :
 authority on its own session. Round-trips through the porcelain name by
 `ofName_name`. -/
 theorem rowStatus_remote_reported (st : Status) :
-    rowStatus (.remote true (Zmx.Core.Status.name st)) = st := by
-  simp [rowStatus, Zmx.Core.Status.ofName_name]
+    rowStatus (.remote true (Linger.Core.Status.name st)) = st := by
+  simp [rowStatus, Linger.Core.Status.ofName_name]
 
 /-- A missing or malformed flag reads as `false`, so an omission cannot make
 a row look busier or fresher than it is. -/
@@ -91,7 +91,7 @@ cannot, for ANY `info` a reply could carry: the row is rendered through `Render.
 maps every C0/DEL codepoint to U+FFFD, so the guarantee needs no hypothesis about the source.
 The `infoText` argument (`Session.infoText_framing`), applied one layer out at the display. -/
 
-open Zmx.Core.Render (utf8s_no_ctl)
+open Linger.Core.Render (utf8s_no_ctl)
 
 /-- **Every byte of a printed row is printable content** — no C0 control, no DEL — whatever the
 reply contained. `humanRow` ends in `utf8s`, so this is `utf8s`'s own guarantee. -/
@@ -124,4 +124,4 @@ theorem humanListing_printable (rows : List (List (String × String))) :
     · exact Or.inl (humanRow_printable _ r b h)
     · exact Or.inr (by simpa using h)
 
-end Zmx.Core.Listing
+end Linger.Core.Listing

@@ -1,5 +1,5 @@
-import Zmx.Core.Vt
-/-! # Zmx.Core.Checkpoint — the reboot-resume codec
+import Linger.Core.Vt
+/-! # Linger.Core.Checkpoint — the reboot-resume codec
 
 Serializes the resumable part of a session — the full `Vt` (grid,
 scrollback, cursor, pen, modes, title, parser state), the labels, and
@@ -18,9 +18,9 @@ any layout change; old daemons refuse newer files (load = none) and
 start fresh — a checkpoint is a cache, not a contract.
 -/
 
-namespace Zmx.Core.Checkpoint
+namespace Linger.Core.Checkpoint
 
-open Zmx.Core.Vt
+open Linger.Core.Vt
 
 /-- Readers: consume a prefix, return the value and the rest. -/
 def R (α : Type) : Type := List UInt8 → Option (α × List UInt8)
@@ -304,4 +304,4 @@ def load (l : List UInt8) : Option Ckpt := do
   let (labels, rest) ← rList (rPair rStr rStr) rest
   if rest.isEmpty then some { vt, cwd, labels } else none
 
-end Zmx.Core.Checkpoint
+end Linger.Core.Checkpoint

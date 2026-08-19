@@ -1,4 +1,4 @@
-import Zmx.Core.Vt
+import Linger.Core.Vt
 /-! # §Total / §Chunk / §Bound — the emulator theorems
 
 THEOREMS.md rows for `Vt`:
@@ -11,13 +11,13 @@ THEOREMS.md rows for `Vt`:
 * §Total — `step` preserves the structural sanity of the screen: grid
   dimensions don't change, and the cursor (plus every stashed cursor)
   stays strictly inside them. Together with "no `partial def` in
-  `Zmx/Core`" (checked by grep in e2e) this is the no-crash statement.
+  `Linger/Core`" (checked by grep in e2e) this is the no-crash statement.
 
 The invariant is one structure, `Good`, so each preservation lemma is
 one implication and `step` is a case-bash over the parser states.
 -/
 
-namespace Zmx.Core.Vt
+namespace Linger.Core.Vt
 
 /-- Everything §Total and §Bound need, as one induction hypothesis. -/
 structure Good (v : Vt) : Prop where
@@ -53,12 +53,12 @@ theorem invariant_foldl {α β : Type} (P : β → Prop) (f : β → α → β)
   | [], _, h => h
   | a :: as, acc, h => invariant_foldl P f hf as (f acc a) (hf acc a h)
 
-end Zmx.Core.Vt
+end Linger.Core.Vt
 
 
-namespace Zmx.Core.Vt.Good
+namespace Linger.Core.Vt.Good
 
-open Zmx.Core.Vt
+open Linger.Core.Vt
 
 /-- "Preserves Good and the screen dimensions." Every constituent of
 `step` gets one of these; `step` composes them. -/
@@ -109,10 +109,10 @@ theorem set_tabs {v : Vt} (t : Array Bool) (h : Good v) :
   obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := h
   exact ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
 
-end Zmx.Core.Vt.Good
+end Linger.Core.Vt.Good
 
 
-namespace Zmx.Core.Vt.Good
+namespace Linger.Core.Vt.Good
 
 
 /-! ## Cursor-writing primitives -/
@@ -217,7 +217,7 @@ theorem setCol {v : Vt} (x : Nat) (h : Good v) : Good (v.setCol x) := by
 theorem good_foldl {α : Type} {f : Vt → α → Vt}
     (hf : ∀ v a, Good v → Good (f v a)) :
     ∀ (l : List α) {v : Vt}, Good v → Good (l.foldl f v) :=
-  fun l _ h => Zmx.Core.Vt.invariant_foldl Good f hf l _ h
+  fun l _ h => Linger.Core.Vt.invariant_foldl Good f hf l _ h
 
 /-! ## Erase / insert / delete — grid-only (plus ED 3's scrollback reset) -/
 
@@ -749,11 +749,11 @@ theorem feed_singletons (v : Vt) (bytes : List UInt8) :
     rw [List.foldl_cons, ← ih]
     rfl
 
-end Zmx.Core.Vt.Good
+end Linger.Core.Vt.Good
 
 
 
-namespace Zmx.Core.Vt
+namespace Linger.Core.Vt
 /-! ## Frames: the generalization of the four invariance layers
 
 `pstate`, `u8need`, `dims` and `origin` above are ~110 lemmas that are
@@ -850,9 +850,9 @@ example (v : Vt) (t b : Nat) (a : Bool) : (v.scrollUpIn t b a).top = v.top := by
 example (v : Vt) : v.lineFeed.saved = v.saved := by
   rw [frame_lineFeed]
 
-end Zmx.Core.Vt
+end Linger.Core.Vt
 
-namespace Zmx.Core.Vt
+namespace Linger.Core.Vt
 /-! ### The frame set for the leaf operations
 
 One frame per operation, replacing what was four single-field lemmas
@@ -1001,9 +1001,9 @@ theorem frame_oscFinish (v : Vt) (acc : Array UInt8) :
   unfold Vt.oscFinish; dsimp only; repeat' split
   all_goals rfl
 
-end Zmx.Core.Vt
+end Linger.Core.Vt
 
-namespace Zmx.Core.Vt
+namespace Linger.Core.Vt
 /-! ## Parser-state invariance of the printing path
 
 Feeding a *printable* byte must not disturb the parser: only ESC (and
@@ -1142,13 +1142,13 @@ theorem ps_stepGround (v : Vt) (b : UInt8) (hb : b ≠ 0x1B) :
   all_goals try simp only [ps_ctl, ps_acceptChar]
   all_goals rfl
 
-end Zmx.Core.Vt
+end Linger.Core.Vt
 
 
 
 
 
-namespace Zmx.Core.Vt
+namespace Linger.Core.Vt
 /-! ## No half-decoded character (`u8need`) survives an operation
 
 The companion of the `pstate` layer above. Same staged shape, same
@@ -1737,10 +1737,10 @@ theorem uz_feed : ∀ (bs : List UInt8) (v : Vt), (∀ b ∈ bs, b < 0xC0) →
     exact uz_feed xs _ (fun b hm => hb b (by simp [hm]))
       (uz_step x (hb x (by simp)) h)
 
-end Zmx.Core.Vt
+end Linger.Core.Vt
 
 
-namespace Zmx.Core.Vt
+namespace Linger.Core.Vt
 /-! ## The grid keeps its dimensions
 
 The third invariance layer, and the one the step-4 notes recorded as
@@ -2039,10 +2039,10 @@ theorem dims_feed_ne_ris : ∀ (bs : List UInt8) {v : Vt}, (∀ b ∈ bs, b ≠ 
     exact (dims_feed_ne_ris xs (fun b hb => h b (by simp [hb]))).trans
       (dims_step_ne_ris x (h x (by simp)))
 
-end Zmx.Core.Vt
+end Linger.Core.Vt
 
 
-namespace Zmx.Core.Vt
+namespace Linger.Core.Vt
 /-! ## Origin mode survives everything that is not a mode set
 
 The rung §Replay's *restore-level* cursor claim stands on: a session with
@@ -2421,7 +2421,7 @@ theorem org_step_of_csi_pending {v : Vt} {s : CsiState} (b : UInt8)
   dsimp only
   rw [hw, org_stepCsi_pending _ _ _ hparams hhave hne, org_abortUtf8]
 
-end Zmx.Core.Vt
+end Linger.Core.Vt
 
 
 
@@ -2429,7 +2429,7 @@ end Zmx.Core.Vt
 
 
 
-namespace Zmx.Core.Vt
+namespace Linger.Core.Vt
 /-! ## Wide pairs: the repair's postcondition
 
 `Render.rowAnsi` can express a row only if every wide glyph in it is whole: a
@@ -3152,9 +3152,9 @@ theorem print_mark_pending_eq {v : Vt} {m : Char}
     exact fun h => hnw h.1)]
   rw [if_neg (show ¬((v.getCell v.cursor.x v.cursor.y).marks.length ≥ 8) from by omega)]
 
-end Zmx.Core.Vt
+end Linger.Core.Vt
 
-namespace Zmx.Core.Vt
+namespace Linger.Core.Vt
 /-! ## §Renderable — the emulator only reaches grids a repaint can reproduce
 
 `Good` bounds the emulator; this bounds what it *stores*. `Render.restore`
@@ -3328,9 +3328,9 @@ theorem rowOk_mend {cols : Nat} {row : Row} (hsize : row.size = cols)
               (by decide), fun h0 => ?_⟩
     exact absurd ((by rw [hz x (by omega)] : (Row.mend row).at x = default) ▸ h0) (by decide)
 
-end Zmx.Core.Vt
+end Linger.Core.Vt
 
-namespace Zmx.Core.Vt
+namespace Linger.Core.Vt
 /-! ### One row at a time
 
 Every cell-writing operation has the same shape: write into one row, then mend
@@ -3420,9 +3420,9 @@ theorem size_foldl {β : Type} {f : Row → β → Row}
   | b :: l, row => by
     rw [List.foldl_cons, size_foldl hf l (f row b), hf row b]
 
-end Zmx.Core.Vt
+end Linger.Core.Vt
 
-namespace Zmx.Core.Vt
+namespace Linger.Core.Vt
 /-! ### Renderable is preserved by every operation
 
 Two shapes cover the emulator. An operation that leaves `grid`, `cols`, `rows`
@@ -3539,9 +3539,9 @@ theorem renderable_printMark {v : Vt} (h : Renderable v) (ch : Char)
     | exact h
     | exact renderable_addMark h _ _ _ hpc hw (by omega)
 
-end Zmx.Core.Vt
+end Linger.Core.Vt
 
-namespace Zmx.Core.Vt
+namespace Linger.Core.Vt
 /-! #### Whole-row moves, and the stages around a write -/
 
 theorem rowOk_getRow {v : Vt} (h : Renderable v) (y : Nat) : RowOk v.cols (v.getRow y) := by
@@ -3692,9 +3692,9 @@ theorem renderable_print {v : Vt} (h : Renderable v) (ch : Char) :
       (renderable_printShift (renderable_printWideWrap (renderable_printWrap h) _) _) _ _
         (hpc' v ch) rfl) _
 
-end Zmx.Core.Vt
+end Linger.Core.Vt
 
-namespace Zmx.Core.Vt
+namespace Linger.Core.Vt
 /-! #### Erase, insert, delete -/
 
 /-- Every row mutation has the same skeleton: fold writes over the row, mend it,
@@ -3999,9 +3999,9 @@ theorem renderable_feed {v : Vt} (h : Renderable v) (bytes : List UInt8) :
 theorem renderable_quiesce {v : Vt} (h : Renderable v) : Renderable v.quiesce :=
   renderable_congr h rfl rfl rfl rfl
 
-end Zmx.Core.Vt
+end Linger.Core.Vt
 
-namespace Zmx.Core.Vt
+namespace Linger.Core.Vt
 /-! #### Resize
 
 The last operation that writes cells. Both `resizeRow` and `Vt.resize`'s `fit`
@@ -4207,10 +4207,10 @@ theorem u8Ok_of_liveReachable {v : Vt} (h : LiveReachableVt v) : U8Ok v := by
   | quiesce _ _ => intro _; rfl
 
 
-end Zmx.Core.Vt
+end Linger.Core.Vt
 
 
-namespace Zmx.Core.Vt
+namespace Linger.Core.Vt
 /-! ## §Restore — the sticky receiver state, as one bundled projection
 
 The frames pass above retired four single-field invariance layers (`ps_`, `un_`,
@@ -4969,4 +4969,4 @@ theorem stick_step_so {v : Vt} (hg : v.pstate = .ground) :
       = { stick (v.abortUtf8 0x0E) with so := true } from rfl,
     stick_abortUtf8]
 
-end Zmx.Core.Vt
+end Linger.Core.Vt

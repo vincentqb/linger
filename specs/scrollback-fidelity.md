@@ -15,7 +15,7 @@ still on the fixtures in `THEOREMS.md`'s A5 row.
 session's ring into the client's own scrollback, and the three flagship screen
 statements are byte-identical to what they were (checked line by line —
 `restore_grid_any_main`, `restore_grid_any_alt`, `restore_grid_any`,
-`restore_grid_reachable`, `Zmx.Core.resume_grid` (in `Theorems/Resume.lean`; there is no `Resume` namespace)). See "Step 1 — completion record"
+`restore_grid_reachable`, `Linger.Core.resume_grid` (in `Theorems/Resume.lean`; there is no `Resume` namespace)). See "Step 1 — completion record"
 below for what was built, what the spec had wrong, and the two decisions taken
 against its recommendation.
 
@@ -56,7 +56,7 @@ its no-scroll argument is `Y + rs.length = rows` plus `crlf_step` (`:653`) under
 `hy : v.cursor.y < v.bot`. **Painting `sbRows v ++ v.grid` as one tall array makes
 the painted-row count exceed the screen height and deletes that argument** — and
 with it `restore_grid_any_main` (`:1345`), `restore_grid_any` (`:1648`),
-`restore_grid_reachable`, `Zmx.Core.resume_grid`. So the history push is its own
+`restore_grid_reachable`, `Linger.Core.resume_grid`. So the history push is its own
 stage, *before* the screen paint, and the screen paint is byte-for-byte unchanged.
 
 Scope, named so it is a decision and not a side effect: **text rows only**. A
@@ -68,7 +68,7 @@ this reads as re-opening it.
 
 1. `restore` repaints the session's ring into the receiver's ring: the history
    rows, oldest first, each fitted to the session's width, trimmed to a byte
-   budget from the oldest end. `Vt.resize` (`Zmx/Core/Vt.lean:673-698`) does not
+   budget from the oldest end. `Vt.resize` (`Linger/Core/Vt.lean:673-698`) does not
    touch `sb`, so the fit is mandatory, not hygiene.
 2. `Tests/Render.lean`'s `replayEq` (`:27`) compares `sb` against `sbRows v`, and
    its docstring loses "Deliberately excluded: `sb`" (`:22`). The suite carries a
@@ -91,7 +91,7 @@ this reads as re-opening it.
    `(scrollbackAnsi v).length ≤ Σ sbRowCost (sbRows v) + 2 * v.rows + 19`. That
    bound is sharp — attained with zero slack — and `sbReplayBytes` alone is **not**
    a bound on emitted bytes (measured overshoot: 262153 against 262144).
-4. `restore_grid_any`, `restore_grid_reachable` and `Zmx.Core.resume_grid` compile
+4. `restore_grid_any`, `restore_grid_reachable` and `Linger.Core.resume_grid` compile
    with their **statements unchanged** — no new hypothesis, in particular none
    about `v.sb`. This is what `fitRow`'s unconditional `RowOk` buys, and it is the
    item that fails if anyone substitutes a bare `Vt.resizeRow`.
@@ -106,14 +106,14 @@ this reads as re-opening it.
    `Resume.resume_sb` — mirroring `restore_tabs_any` (`Tabs.lean:652`),
    `restore_tabs_reachable` (`:700`), `Resume.resume_tabs`.
 7. `THEOREMS.md`: a conformance-profile entry for `CSI 3 J` recorded as a
-   **divergence** (ours clears the screen too — `Zmx/Core/Vt.lean:529-531`; xterm's
+   **divergence** (ours clears the screen too — `Linger/Core/Vt.lean:529-531`; xterm's
    erases saved lines only); the A5 sentence at `:45` amended (scrollback leaves
    the fixture-carried list); the §Restore bullet at `:538` made true, with the
    budget named as its limit. `README.md` gains the note that attaching discards
    the user's own terminal scrollback in that window, next to the graphics limits.
 8. `./lake build`, `./lake build Theorems Tests`, `./tests/e2e.sh` green and
    warning-free at every step boundary; `python3 tests/coverage.py` still reports
-   `20 (cap 20)` — every new `Zmx/Core/*` def named in a theorem **statement**,
+   `20 (cap 20)` — every new `Linger/Core/*` def named in a theorem **statement**,
    the cap **not** bumped; every theorem and fixture break-verified with the break
    in `SCRATCHPAD.md`.
 
@@ -126,7 +126,7 @@ places it was factually wrong marked *[corrected]* from the four measurement lan
 that ran the emulator before the build. The completion record is at the end of this
 step.
 
-New in `Zmx/Core/Render.lean`, after `gridAnsi`:
+New in `Linger/Core/Render.lean`, after `gridAnsi`:
 
 - `crlfB : Bytes := [0x0D, 0x0A]` — one syntactic unit for the flush to rewrite.
 - `cellFit (c : Cell) : Cell` — `base := printableChar c.base`,
@@ -162,7 +162,7 @@ New in `Zmx/Core/Render.lean`, after `gridAnsi`:
   first row that does not fit rather than skipping it, so the result is always
   "the newest N lines".
 - `sbRows (v : Vt) : Array Row := (sbTake v.cols sbReplayBytes v.sb.toList.reverse).reverse.toArray`
-  — `Ring.toList` is oldest-first (`Zmx/Core/Vt.lean:196`, docstring and `push`
+  — `Ring.toList` is oldest-first (`Linger/Core/Vt.lean:196`, docstring and `push`
   agree) and oldest-first is the push order. The double reverse is where the
   order bug will actually live.
 - `scrollbackAnsi (v : Vt) : Bytes := csiNum 3 0x4A ++ (if (sbRows v).isEmpty then [] else gridAnsi (sbRows v) ++ (List.replicate v.rows crlfB).flatten) ++ csiNum 4 0x6C ++ modeSet 6 false ++ modeSet 7 true`.
@@ -191,7 +191,7 @@ New in `Zmx/Core/Render.lean`, after `gridAnsi`:
     They must stay ESC-leading and contiguous at the end; that ordering is
     proof-load-bearing now, not cosmetics.
 
-`screensAnsi` (`Zmx/Core/Render.lean:341`) gains `scrollbackAnsi v ++` at the
+`screensAnsi` (`Linger/Core/Render.lean:341`) gains `scrollbackAnsi v ++` at the
 front, **before** the `match v.altGrid`. Not a new top-level stage in
 `restoreBody`: 55 occurrences of the literal `prologueAnsi v ++ csiNum 0 0x6D`
 prefix exist across `Theorems/Render/{Keeps,Tabs,Sticky,Modes,Grid}.lean`, and
@@ -283,7 +283,7 @@ does not measure the sanitizer's correctness), B11/B12 (the two Python halves).
 
 #### Step 1 — completion record (2026-08-19)
 
-**Shipped.** `Zmx/Core/Render.lean` gains `crlfB`, `cellFit`, `fitRow`,
+**Shipped.** `Linger/Core/Render.lean` gains `crlfB`, `cellFit`, `fitRow`,
 `sbReplayBytes`, `sbRowCost`, `sbTake`, `sbRows`, `scrollbackAnsi`, and
 `screensAnsi` leads with `scrollbackAnsi v`. A reattach now puts the session's
 history in the client's own scrollback: `history` after restoring `scrolled` into
@@ -301,7 +301,7 @@ Step 5). `Theorems/Render/Grid.lean` gains `scrollback_entry` beside `paint_entr
 and the five `unfold screensAnsi` sites are repaired.
 
 **The exit criterion held.** `restore_grid_any_main`, `restore_grid_any_alt`,
-`restore_grid_any`, `restore_grid_reachable` and `Zmx.Core.resume_grid` are
+`restore_grid_any`, `restore_grid_reachable` and `Linger.Core.resume_grid` are
 byte-identical to HEAD — checked mechanically, statement text extracted and
 `diff`ed, zero lines changed. `paint_entry`, `alt_pre_switch`, `alt_switch_entry`,
 `restore_split`, `restore_grid_of_paint`, `restore_tabs_split` and
@@ -344,7 +344,7 @@ In `Theorems/Vt.lean`, beside `lineFeed_interior`:
 
 - `getD_foldl_set_range` — a fold of `setIfInBounds` at distinct indices from a
   **fixed source**. This is why `scrollUpIn` is tractable at all: its fold reads
-  `v.getRow`, never the accumulator (`Zmx/Core/Vt.lean:314`). Model:
+  `v.getRow`, never the accumulator (`Linger/Core/Vt.lean:314`). Model:
   `foldl_setTab_mem`/`_not_mem` in `Theorems/Render/Tabs.lean`, the same shape over
   `Array Bool`, so the recipe is proved in-repo.
 - `scrollUpIn_rows`, `scrollUpIn_sb`, `lineFeed_scroll` — as in Definition-of-done
@@ -364,7 +364,7 @@ In `Theorems/Vt.lean`, beside `lineFeed_interior`:
 
 **Exit:** gates green; `THEOREMS.md:358-361` gains the receipt that the positive
 specification now exists for the one operation the scrollback story rests on.
-Break-verified by changing `Zmx/Core/Vt.lean:314` to read the accumulator
+Break-verified by changing `Linger/Core/Vt.lean:314` to read the accumulator
 (`scrollUpIn_rows`' first conjunct stops closing) and `:315` to `blankRow v.cols {}`
 (the pen conjunct fails; a coloured-history fixture goes false while a plain one
 still passes). Deleting `OffRow.sb` and attempting Step 3 must fail on the
@@ -395,7 +395,7 @@ Status: pending.
   `sbTake_prefix`, so `Ring.push` never rotates and the wrap law is never needed.
 - `Theorems/Render/Scrollback.lean` (new file, so `Tabs.lean` is not disturbed):
   `psBlind_sb`, `sb_setMode` (**every** mode number — `enterAlt`/`leaveAlt` keep
-  `sb`, `Zmx/Core/Vt.lean:643-659`), the `sb_csiDispatch_*` family, `fixes_sb_tail`.
+  `sb`, `Linger/Core/Vt.lean:643-659`), the `sb_csiDispatch_*` family, `fixes_sb_tail`.
   A mechanical clone of `fixes_tabs_tail` (`Tabs.lean:375`) with `π := (·.sb)`: the
   `Fixes π` layer (`Tabs.lean:32-95`) is already generic given `PsBlind π`. No `J`
   appears in the tail, so `ED 3` never has to be excused. This is a third of the
@@ -422,7 +422,7 @@ the receiver's is built from index 0, so the two records differ in representatio
 and agree as histories. `THEOREMS.md` A5 gains the row; the fixture-carried list
 at `:45` loses scrollback.
 
-**Exit:** gates green; `Zmx/Core/Checkpoint.lean`'s `wRing` dropped from `save`
+**Exit:** gates green; `Linger/Core/Checkpoint.lean`'s `wRing` dropped from `save`
 must break `resume_sb`'s first conjunct (via `load_save_exact`), confirming the
 end-to-end claim depends on the checkpoint carrying history.
 
@@ -431,7 +431,7 @@ end-to-end claim depends on the checkpoint carrying history.
 Status: pending, off critical path.
 `rowAnsi_len_seed` (the `+4` slack made honest) and `scrollbackAnsi_le`, which
 retire Definition-of-done item 3's fixtures in favour of a theorem. And a
-decision about `Render.history`'s `withAnsi` branch (`Zmx/Core/Render.lean:548-558`):
+decision about `Render.history`'s `withAnsi` branch (`Linger/Core/Render.lean:548-558`):
 **it is dead** — the only call site is `Session.lean:250` at `false`,
 `history_framing`/`history_lines` are both stated at `false`, and `Cli.lean` has
 no flag. Either wire it up as `linger history --color` with its own framing
@@ -502,7 +502,7 @@ confirm the modes obligation fails. **If it still closes, `mmap_id_gridAnsi` is
 reachable after all and the stage should shed those bytes.**
 *Fallback that still ships:* `linger scrollback` / `linger history --color` — wire
 up `Render.history`'s existing-but-dead `withAnsi` branch
-(`Zmx/Core/Render.lean:548-558`; the only call site is `Session.lean:250` at
+(`Linger/Core/Render.lean:548-558`; the only call site is `Session.lean:250` at
 `false`, and `history_framing`/`history_lines` are both stated at `false`) behind
 a CLI flag with its own framing theorem. The user gets coloured history on demand,
 no `ED 3`, no destruction of their own scrollback, no touch to `restore`. Strictly
@@ -543,7 +543,7 @@ the outcome `lakefile.lean` asks for.
 
 *Step 2 (`Buf` + the gate).* Kill if the gate cannot be made to pass without
 hollowing it out — specifically, if bounding `Cli.queryInfo` through `Buf` turns
-into a rewrite of the reply loop, or if the whole-`Zmx/Runtime` scope turns up a
+into a rewrite of the reply loop, or if the whole-`Linger/Runtime` scope turns up a
 fourth long-lived buffer that does not fit the `Buf` shape. Do **not** narrow the
 gate's scope to `Daemon.lean` to make it pass: that leaves `Cli.lean:122`'s
 unbounded accumulator alive and puts the next buffer in `Client.lean` where the
@@ -552,7 +552,7 @@ Also kill if the answer to "does this theorem bite the shipped code?" comes out
 honestly *no* — i.e. if the grep turns out to be evadeable by ordinary refactoring
 rather than by deliberately writing something novel. The `SHIM_CAP` and
 `coverage.py` precedents say it is not, and `coverage.py:116-134` already scans
-`Zmx/**`, so there is precedent for a Runtime-side gate — but check, don't assume.
+`Linger/**`, so there is precedent for a Runtime-side gate — but check, don't assume.
 *Fallback that still ships:* Step 1, plus `Buf` and `Theorems/Buf.lean` **without**
 the runtime rewiring — a proved, claimed, unreferenced Core module is not much, so
 prefer instead: keep the two `Daemon.lean` buffers on `Buf` (the rewiring is 45

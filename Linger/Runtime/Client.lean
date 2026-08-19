@@ -1,9 +1,9 @@
-import Zmx.Posix
-import Zmx.Core.Wire
-import Zmx.Core.Render
-import Zmx.Core.Remote
-import Zmx.Runtime.Paths
-/-! # Zmx.Runtime.Client — attach and one-shot conversations
+import Linger.Posix
+import Linger.Core.Wire
+import Linger.Core.Render
+import Linger.Core.Remote
+import Linger.Runtime.Paths
+/-! # Linger.Runtime.Client — attach and one-shot conversations
 
 The attach client is deliberately dumb: raw mode, forward stdin bytes
 as `input` frames (watching for the detach key), write `output` frames
@@ -14,12 +14,12 @@ restore blob arrives as ordinary output.
 Detach key: `ctrl-\` (0x1C), disabled by `LINGER_NO_DETACH_KEY`.
 -/
 
-namespace Zmx.Runtime.Client
+namespace Linger.Runtime.Client
 
-open Zmx.Posix
-open Zmx.Core.Wire (Msg Decoder encode)
+open Linger.Posix
+open Linger.Core.Wire (Msg Decoder encode)
 
-def encodeBA (m : Msg) : ByteArray := ByteArray.mk (Zmx.Core.Wire.encode m).toArray
+def encodeBA (m : Msg) : ByteArray := ByteArray.mk (Linger.Core.Wire.encode m).toArray
 
 /-- Blocking connect to a session socket. `none` = no live daemon. -/
 def connect (name : String) : IO (Option UInt32) := do
@@ -170,7 +170,7 @@ def attach (fd : UInt32) (readOnly : Bool := false) : IO Outcome := do
                 -- a phantom detach. Scrubbed like any byte stream reaching a
                 -- terminal — the message is our daemon's, but the socket is not
                 -- a trusted channel. The daemon closes right after, so leaving.
-                result := .refused (Zmx.Core.Remote.scrub
+                result := .refused (Linger.Core.Remote.scrub
                   (String.fromUTF8? (ByteArray.mk msg.toArray) |>.getD "refused"))
                 leaving := true
               | _ => pure ()
@@ -180,9 +180,9 @@ def attach (fd : UInt32) (readOnly : Bool := false) : IO Outcome := do
     -- a line-drawing charset on, and termios restores none of that
     -- (`Render.leaveAnsi`). In `finally`, so every way out of the loop — detach
     -- key, session exit, EOF, a decoder error, an exception — goes through it.
-    writeAll stdoutFd (ByteArray.mk Zmx.Core.Render.leaveAnsi.toArray)
+    writeAll stdoutFd (ByteArray.mk Linger.Core.Render.leaveAnsi.toArray)
     termRestore stdinFd saved
   close fd
   return result
 
-end Zmx.Runtime.Client
+end Linger.Runtime.Client

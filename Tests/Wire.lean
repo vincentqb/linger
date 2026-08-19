@@ -1,4 +1,4 @@
-import Zmx.Core.Wire
+import Linger.Core.Wire
 /-! # Wire unit tests — concrete bytes the theorems quantify over
 
 The theorems say the codec is correct for all inputs; these pin the
@@ -8,9 +8,9 @@ chunking, garbage, oversize frames. `example : … := by decide` runs at
 build time.
 -/
 
-namespace Zmx.Core.Wire.Tests
+namespace Linger.Core.Wire.Tests
 
-open Zmx.Core.Wire
+open Linger.Core.Wire
 
 /-- Golden frame: `input "hi"` is tag 0, LE length 2, payload. A
 different byte layout would break every deployed peer — this test is
@@ -83,4 +83,4 @@ example :
 example : (decode (encode (.resize 213 58))).2 == [.resize 213 58] := by native_decide
 example : (decode (encode (.exited 127))).2 == [.exited 127] := by native_decide
 
-end Zmx.Core.Wire.Tests
+end Linger.Core.Wire.Tests

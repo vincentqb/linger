@@ -20,9 +20,9 @@ because the shapes they produced are now repaired in the emulator rather than
 avoided in the test.
 -/
 
-namespace Zmx.Core.Render.Fuzz
+namespace Linger.Core.Render.Fuzz
 
-open Zmx.Core.Vt Zmx.Core.Render Zmx.Core.Render.Tests
+open Linger.Core.Vt Linger.Core.Render Linger.Core.Render.Tests
 
 /-- A pure LCG. Reproducible: a failing seed replays exactly. -/
 def nextRand (s : Nat) : Nat := (s * 1103515245 + 12345) % 2147483648
@@ -114,4 +114,4 @@ def failingDeep (count : Nat) : List Nat :=
 
 example : failingDeep 150 = [] := by native_decide
 
-end Zmx.Core.Render.Fuzz
+end Linger.Core.Render.Fuzz

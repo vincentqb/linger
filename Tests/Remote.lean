@@ -1,9 +1,9 @@
-import Zmx.Core.Remote
+import Linger.Core.Remote
 /-! # Remote parser tests — real porcelain, and hostile porcelain -/
 
-namespace Zmx.Core.Remote.Tests
+namespace Linger.Core.Remote.Tests
 
-open Zmx.Core.Remote
+open Linger.Core.Remote
 
 def good : String :=
   "name\twork\nstate\tlive\nclients\t2\ncmd\tvim\nlabel.env\tdev\n\n" ++
@@ -71,4 +71,4 @@ example : (match checkHosts ["ev\x1b[31mil"] with
     | .ok _ => false
     | .error e => !(e.toList.any (fun c => c.toNat == 0x1B))) = true := by native_decide
 
-end Zmx.Core.Remote.Tests
+end Linger.Core.Remote.Tests

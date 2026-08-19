@@ -6055,3 +6055,39 @@ Left as known-loose, deliberately: the two pty burst-length assertions have 12x 
 so they catch a catastrophic blowup rather than a 5x regression. Tightening them means
 re-measuring on this host and pinning a number that will drift with the fixtures; the sharp
 oracle is the `native_decide` bound at 262,153, which is exact.
+
+## rename zmx → linger — 2026-08-19
+
+Everything live is `linger` now: the Lean library and namespaces (`Linger.Core`,
+`Linger.Posix`, `Linger.Runtime`), the `Linger/` tree, `Linger.lean`, the lake package and
+`extern_lib`, the shim's 55 `linger_*` symbols, and the smoke exe (`ztest`/`ZTest.lean` →
+`lingertest`/`LingerTest.lean`, with its `ZMXTEST` marker → `LINGERTEST`). 834 occurrences over
+72 files; 63 files rewritten. The build is the oracle for the code half and it came up clean
+first try, shim included — a `linger_*` symbol that failed to match its `@[extern]` would have
+been a link error, so the C boundary is checked, not inspected.
+
+**Three things deliberately NOT renamed**, each with a reason that is not branding:
+1. **The checkpoint magic stays `"LZMX"`** (`Linger/Core/Checkpoint.lean:293`,
+   `[0x4C,0x5A,0x4D,0x58,1]`). It is an on-disk **format identifier**: `load` accepts a payload
+   only if `l.take 5 = magic`, so changing those bytes makes every existing checkpoint
+   unreadable and a resumed session comes back blank. That is a format-version bump with a
+   migration, not a search-and-replace. AGENTS.md already recorded it as frozen; the rename
+   round did not get to overrule that by accident.
+2. **`SCRATCHPAD.md` and `specs/archive/`** keep the old paths in historical entries — the
+   worklog is append-only and the archived specs are closed records, so rewriting a path inside
+   them would falsify what was true when written. Entries before today say `Zmx/…`.
+3. **Citations of the upstream `zmx` project** ("verb surface mirrors zmx", "same resolution
+   order as zmx", §Detach's "the zmx decoupling", PLAN.md's links). Those name someone else's
+   project — prior art worth crediting, not stale branding.
+
+**The real hazard was the gates going vacuous, not the code breaking.** Four of them are greps
+over `Zmx/Core/*` / `Zmx/Runtime/*`, and `tests/coverage.py` globs `(ROOT/"Zmx").rglob`. Renaming
+the directory without them would have left every one **passing while measuring nothing** — the
+purity checks are `! git grep -n 'sorry' -- 'Zmx/Core/*'`, and a pathspec that matches no file
+makes `grep` fail and therefore `!` succeed. Updated in lockstep and then *verified they still
+measure*: coverage still reports the same `252 defs; 20 unclaimed (cap 20)` rather than a
+vacuous `0`, the extern gate still resolves to exactly `Linger/Posix.lean`, `SHIM_CAP` still
+counts 27, and the two new ratchets still count 2 and 2. Break-verified on the renamed path: a
+`partial def` added to `Linger/Core/Name.lean` still trips `E2E FAIL: partial def in pure core`.
+That check — "does the gate still fire after you move what it points at?" — is the one worth
+repeating after any path change.

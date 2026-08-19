@@ -1,4 +1,4 @@
-import Zmx.Core.Listing
+import Linger.Core.Listing
 /-! # Listing tests — the human row is safe and forgery-proof
 
 `Theorems/Listing.lean` proves `humanRow`/`humanListing` carry no control byte
@@ -8,9 +8,9 @@ example, show that the previous `String`-interpolated row *did* leak, so the
 channel is documented as closed rather than merely gone. `native_decide` is
 allowed here (it is banned only in `Theorems/`). -/
 
-namespace Zmx.Core.Listing.Tests
+namespace Linger.Core.Listing.Tests
 
-open Zmx.Core.Listing
+open Linger.Core.Listing
 
 /-- A reply carrying an ESC (SGR red), a TAB and a newline in its values, plus a
 label with an ESC — the injection a hostile porcelain or a crafted checkpoint
@@ -40,8 +40,8 @@ example : (humanListing []).count 0x0A = 1 := by native_decide
 interpolation of the raw values; on this same reply it carried the ESC straight
 to the terminal. Pinned so the regression is documented, not merely absent. -/
 example :
-    (s!"{Zmx.Core.Status.icon (Zmx.Core.Status.ofName "idle")} \
+    (s!"{Linger.Core.Status.icon (Linger.Core.Status.ofName "idle")} \
       {(hostile.lookup "name").getD ""}\t{(hostile.lookup "cmd").getD ""}").toUTF8.toList.count 0x1B
       = 1 := by native_decide
 
-end Zmx.Core.Listing.Tests
+end Linger.Core.Listing.Tests

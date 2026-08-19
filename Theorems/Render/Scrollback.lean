@@ -21,9 +21,9 @@ rather than a convention. The whole-stream form
 fixture in `Tests/Render.lean` and a Step-5 theorem; it is *sharp*, attained with
 zero slack by a ring whose rows each end in a truecolour cell. -/
 
-namespace Zmx.Core.Render
+namespace Linger.Core.Render
 
-open Zmx.Core.Vt
+open Linger.Core.Vt
 
 /-! ## The cost of a row, from any incoming pen
 
@@ -253,4 +253,4 @@ theorem sbRows_budget (v : Vt) :
   rw [List.toList_toArray, List.map_reverse, List.sum_reverse]
   exact sbTake_budget v.cols sbReplayBytes v.sb.toList.reverse
 
-end Zmx.Core.Render
+end Linger.Core.Render

@@ -1,4 +1,4 @@
-import Zmx.Core.Render
+import Linger.Core.Render
 import Theorems.Vt
 /-! # §Replay, stage 3b — a restore stream leaves the parser in ground
 
@@ -26,9 +26,9 @@ pen — that is stages 3c/3d, pinned meanwhile by the round-trip fixtures
 in `Tests/Render.lean`.
 -/
 
-namespace Zmx.Core.Render
+namespace Linger.Core.Render
 
-open Zmx.Core.Vt
+open Linger.Core.Vt
 
 /-! ## Byte facts about the emitters -/
 
@@ -258,10 +258,10 @@ theorem ground_step {v : Vt} (b : UInt8) (hg : v.pstate = .ground) (hb : b ≠ 0
   -- `abortUtf8` touches only u8need/u8acc, so the match scrutinee is
   -- still ground; rewriting it is what lets the match reduce
   have hw : (v.abortUtf8 b).pstate = PState.ground := by
-    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
+    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
   unfold Vt.step
   dsimp only
-  rw [hw, Zmx.Core.Vt.ps_stepGround _ b hb]
+  rw [hw, Linger.Core.Vt.ps_stepGround _ b hb]
   exact hw
 
 /-- Printable/control text (anything with no ESC in it) is `Ends`: the
@@ -280,7 +280,7 @@ theorem Ends.text {bs : Bytes} (h : ∀ b ∈ bs, b ≠ 0x1B) : Ends bs :=
 /-- ESC from ground opens `.esc`. -/
 theorem esc_step {v : Vt} (hg : v.pstate = .ground) : (v.step 0x1B).pstate = .esc := by
   have hw : (v.abortUtf8 0x1B).pstate = PState.ground := by
-    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
+    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
   unfold Vt.step
   dsimp only
   rw [hw]
@@ -290,7 +290,7 @@ theorem esc_step {v : Vt} (hg : v.pstate = .ground) : (v.step 0x1B).pstate = .es
 theorem csi_open_step {v : Vt} (hg : v.pstate = .esc) :
     (v.step 0x5B).pstate = .csi {} := by
   have hw : (v.abortUtf8 0x5B).pstate = PState.esc := by
-    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
+    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
   unfold Vt.step
   dsimp only
   rw [hw]
@@ -313,7 +313,7 @@ theorem csi_param_step {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi
   simp only [show ((0x30 : UInt8)).toNat = 48 from rfl,
     show ((0x3F : UInt8)).toNat = 63 from rfl] at hn1 hn2
   have hw : (v.abortUtf8 b).pstate = PState.csi s := by
-    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
+    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
   unfold Vt.step
   dsimp only
   rw [hw]
@@ -409,7 +409,7 @@ theorem csi_final_step {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi
   simp only [show ((0x40 : UInt8)).toNat = 64 from rfl,
     show ((0x7E : UInt8)).toNat = 126 from rfl] at hn1 hn2
   have hw : (v.abortUtf8 b).pstate = PState.csi s := by
-    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
+    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
   obtain ⟨g1, g2, g3, g4, g5, g6⟩ := csi_final_guards b h1 h2
   unfold Vt.step
   dsimp only
@@ -621,7 +621,7 @@ theorem esc_single_step {v : Vt} (b : UInt8) (hg : v.pstate = .esc)
     (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x48 ∨ b = 0x3E ∨ b = 0x5C) :
     (v.step b).pstate = .ground := by
   have hw : (v.abortUtf8 b).pstate = PState.esc := by
-    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
+    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
   unfold Vt.step
   dsimp only
   rw [hw]
@@ -632,7 +632,7 @@ theorem esc_single_step {v : Vt} (b : UInt8) (hg : v.pstate = .esc)
 theorem esc_inter_step {v : Vt} (b : UInt8) (hg : v.pstate = .esc)
     (hb : b = 0x28 ∨ b = 0x29) : (v.step b).pstate = .escInter b := by
   have hw : (v.abortUtf8 b).pstate = PState.esc := by
-    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
+    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
   unfold Vt.step
   dsimp only
   rw [hw]
@@ -643,7 +643,7 @@ theorem esc_inter_step {v : Vt} (b : UInt8) (hg : v.pstate = .esc)
 theorem esc_inter_finish {v : Vt} {i : UInt8} (b : UInt8) (hg : v.pstate = .escInter i) :
     (v.step b).pstate = .ground := by
   have hw : (v.abortUtf8 b).pstate = PState.escInter i := by
-    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
+    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
   unfold Vt.step
   dsimp only
   rw [hw]
@@ -680,7 +680,7 @@ cannot start a nested one. -/
 theorem osc_open_step {v : Vt} (hg : v.pstate = .esc) :
     (v.step 0x5D).pstate = .osc #[] false := by
   have hw : (v.abortUtf8 0x5D).pstate = PState.esc := by
-    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
+    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
   unfold Vt.step
   dsimp only
   rw [hw]
@@ -694,7 +694,7 @@ theorem osc_accum_step {v : Vt} {acc : Array UInt8} (b : UInt8)
     (hg : v.pstate = .osc acc false) (h1 : b ≠ 0x1B) (h2 : b ≠ 0x07) :
     ∃ acc', (v.step b).pstate = .osc acc' false := by
   have hw : (v.abortUtf8 b).pstate = PState.osc acc false := by
-    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
+    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
   unfold Vt.step
   dsimp only
   rw [hw]
@@ -721,7 +721,7 @@ whether the payload was a title. -/
 theorem osc_bel_step {v : Vt} {acc : Array UInt8} {e : Bool}
     (hg : v.pstate = .osc acc e) : (v.step 0x07).pstate = .ground := by
   have hw : (v.abortUtf8 0x07).pstate = PState.osc acc e := by
-    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
+    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
   unfold Vt.step
   dsimp only
   rw [hw]
@@ -1021,8 +1021,8 @@ theorem u8_zero_after_csi (params : Bytes) (final : UInt8) (hp : ParamBytes para
   have hshape : (csiB ++ params ++ [final] : Bytes)
       = 0x1B :: 0x5B :: (params ++ [final]) := by simp [csiB]
   rw [hshape, feed_cons, feed_cons]
-  refine Zmx.Core.Vt.uz_feed _ _ ?_
-    (Zmx.Core.Vt.uz_step 0x5B (by decide) (Zmx.Core.Vt.uz_step_esc v))
+  refine Linger.Core.Vt.uz_feed _ _ ?_
+    (Linger.Core.Vt.uz_step 0x5B (by decide) (Linger.Core.Vt.uz_step_esc v))
   intro b hb
   rcases List.mem_append.mp hb with h | h
   · exact paramBytes_lt_C0 hp b h
@@ -1055,4 +1055,4 @@ theorem restore_quiesced (v : Vt) (cols rows : Nat) :
        (paramBytes_digits _))
 
 
-end Zmx.Core.Render
+end Linger.Core.Render

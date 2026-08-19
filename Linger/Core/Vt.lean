@@ -1,4 +1,4 @@
-/-! # Zmx.Core.Vt — restore-grade terminal emulation, pure
+/-! # Linger.Core.Vt — restore-grade terminal emulation, pure
 
 The daemon feeds every pty byte here (a passive observer, zmx-style:
 clients get the raw bytes; this state exists so a *re*-attaching client
@@ -27,7 +27,7 @@ chosen because zmx delegates live rendering to the real terminal:
   them to a re-attaching client so applications keep working.
 -/
 
-namespace Zmx.Core.Vt
+namespace Linger.Core.Vt
 
 /-! ## Pen, color, cell -/
 
@@ -938,7 +938,7 @@ def Vt.feed (v : Vt) (bytes : List UInt8) : Vt :=
   bytes.foldl Vt.step v
 
 /-- Forget partial parser state (what a checkpoint deliberately does
-not persist — see `Zmx.Core.Checkpoint`). -/
+not persist — see `Linger.Core.Checkpoint`). -/
 def Vt.quiesce (v : Vt) : Vt :=
   { v with pstate := .ground, u8need := 0, u8acc := 0 }
 
@@ -946,4 +946,4 @@ def Vt.quiesce (v : Vt) : Vt :=
 def Vt.feedBytes (v : Vt) (bytes : ByteArray) : Vt :=
   v.feed bytes.toList
 
-end Zmx.Core.Vt
+end Linger.Core.Vt

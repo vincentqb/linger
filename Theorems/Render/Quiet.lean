@@ -6,9 +6,9 @@ the time the parser has accumulated them, that the cursor lands where the sessio
 had it, and that DECOM stays off through a whole restore stream. Split out of
 `Theorems/Render.lean`; see that façade for the ladder as a whole. -/
 
-namespace Zmx.Core.Render
+namespace Linger.Core.Render
 
-open Zmx.Core.Vt
+open Linger.Core.Vt
 
 /-! ## §Replay stage 3c — the numbers survive the round trip
 
@@ -63,7 +63,7 @@ theorem csi_digit_step {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi
     (v.step b).pstate
       = .csi { s with cur := min (s.cur * 10 + (b.toNat - 0x30)) 65535, haveCur := true } := by
   have hw : (v.abortUtf8 b).pstate = PState.csi s := by
-    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
+    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
   unfold Vt.step
   dsimp only
   rw [hw]
@@ -127,7 +127,7 @@ the state just before that byte (which `csi_digits_value` and
 theorem csi_semi_step {v : Vt} {s : CsiState} (hg : v.pstate = .csi s) :
     (v.step 0x3B).pstate = .csi (csiPush s false) := by
   have hw : (v.abortUtf8 0x3B).pstate = PState.csi s := by
-    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
+    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
   unfold Vt.step
   dsimp only
   rw [hw]
@@ -151,7 +151,7 @@ is proved at the one dispatch it belongs to. -/
 theorem org_setMode_decom_off (v : Vt) : (v.setMode true 6 false).modes.origin = false := by
   show (({ v with modes := { v.modes with origin := false } } : Vt).moveTo 0 0).modes.origin
       = false
-  rw [Zmx.Core.Vt.org_moveTo]
+  rw [Linger.Core.Vt.org_moveTo]
 
 theorem org_csiDispatch_decom_off (v : Vt) (s : CsiState) (hi : s.ignore = false)
     (hpriv : (s.priv == 0x3F) = true) (h6 : s.arg 0 0 = 6) :
@@ -180,7 +180,7 @@ theorem org_step_of_csi_decom_off {v : Vt} {s : CsiState} (hg : v.pstate = .csi 
     (hhave : s.haveCur = true) (hint : s.inter = 0) (hcur : min s.cur 65535 = 6) :
     (v.step 0x6C).modes.origin = false := by
   have hw : (v.abortUtf8 0x6C).pstate = PState.csi s := by
-    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
+    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
   unfold Vt.step
   dsimp only
   rw [hw]
@@ -213,7 +213,7 @@ theorem cup_step_cursor {w : Vt} {s : CsiState} (row col : Nat)
     (hry : row - 1 < w.rows) (hcx : col - 1 < w.cols) (ho : w.modes.origin = false) :
     ((w.step 0x48).cursor.x = col - 1) ∧ ((w.step 0x48).cursor.y = row - 1) := by
   have hw : (w.abortUtf8 0x48).pstate = PState.csi s := by
-    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hs
+    rw [Linger.Core.Vt.ps_abortUtf8]; exact hs
   -- the aborted state agrees with `w` on everything the dispatch reads
   have hac : (w.abortUtf8 0x48).cols = w.cols := by
     unfold Vt.abortUtf8; split <;> rfl
@@ -265,7 +265,7 @@ theorem frame_abortUtf8 (v : Vt) (b : UInt8) : Frame (v.abortUtf8 b) = Frame v :
 theorem frame_esc_step {v : Vt} (hg : v.pstate = .ground) :
     Frame (v.step 0x1B) = Frame v := by
   have hw : (v.abortUtf8 0x1B).pstate = PState.ground := by
-    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
+    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
   unfold Vt.step
   dsimp only
   rw [hw]
@@ -276,7 +276,7 @@ theorem frame_esc_step {v : Vt} (hg : v.pstate = .ground) :
 theorem frame_csi_open_step {v : Vt} (hg : v.pstate = .esc) :
     Frame (v.step 0x5B) = Frame v := by
   have hw : (v.abortUtf8 0x5B).pstate = PState.esc := by
-    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
+    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
   unfold Vt.step
   dsimp only
   rw [hw]
@@ -285,7 +285,7 @@ theorem frame_csi_open_step {v : Vt} (hg : v.pstate = .esc) :
 theorem frame_csi_digit_step {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi s)
     (h1 : 0x30 ≤ b) (h2 : b ≤ 0x39) : Frame (v.step b) = Frame v := by
   have hw : (v.abortUtf8 b).pstate = PState.csi s := by
-    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
+    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
   have hd : (b ≥ 0x30 && b ≤ 0x39) = true := by
     simp only [Bool.and_eq_true, decide_eq_true_eq]
     exact ⟨h1, h2⟩
@@ -300,7 +300,7 @@ theorem frame_csi_digit_step {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate 
 theorem frame_csi_semi_step {v : Vt} {s : CsiState} (hg : v.pstate = .csi s) :
     Frame (v.step 0x3B) = Frame v := by
   have hw : (v.abortUtf8 0x3B).pstate = PState.csi s := by
-    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
+    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
   unfold Vt.step
   dsimp only
   rw [hw]
@@ -448,7 +448,7 @@ theorem csi_plain_step {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi
   simp only [show ((0x30 : UInt8)).toNat = 48 from rfl,
     show ((0x3B : UInt8)).toNat = 59 from rfl] at hn1 hn2
   have hw : (v.abortUtf8 b).pstate = PState.csi s := by
-    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
+    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
   unfold Vt.step
   dsimp only
   rw [hw]
@@ -458,10 +458,10 @@ theorem csi_plain_step {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi
   · rw [if_pos hd]; exact ⟨_, rfl, rfl⟩
   by_cases hsemi : (b == 0x3B) = true
   · rw [if_neg (by simp [hd]), if_pos hsemi]
-    exact ⟨_, rfl, Zmx.Core.Vt.priv_csiPush _ _⟩
+    exact ⟨_, rfl, Linger.Core.Vt.priv_csiPush _ _⟩
   by_cases hcolon : (b == 0x3A) = true
   · rw [if_neg (by simp [hd]), if_neg (by simp [hsemi]), if_pos hcolon]
-    exact ⟨_, rfl, Zmx.Core.Vt.priv_csiPush _ _⟩
+    exact ⟨_, rfl, Linger.Core.Vt.priv_csiPush _ _⟩
   · -- 0x30…0x3B minus digits, `;` and `:` is empty
     exfalso
     have hb39 : ¬ (b.toNat ≤ 57) := by
@@ -555,7 +555,7 @@ theorem csi_marker_step {v : Vt} {s : CsiState} (hg : v.pstate = .csi s)
     (v.step 0x3F).pstate = .csi { s with priv := 0x3F }
       ∧ (v.step 0x3F).modes.origin = v.modes.origin := by
   have hw : (v.abortUtf8 0x3F).pstate = PState.csi s := by
-    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
+    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
   refine ⟨?_, org_step_of_csi 0x3F hg hp⟩
   unfold Vt.step
   dsimp only
@@ -854,4 +854,4 @@ theorem quiet_restoreBody (v : Vt) (ho : v.modes.origin = false) : Quiet (restor
   exact (quiet_prologueAnsi v).append (quiet_csiNum 0 0x6D (by decide) (by decide))
 
 
-end Zmx.Core.Render
+end Linger.Core.Render

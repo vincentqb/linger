@@ -1,4 +1,4 @@
-import Zmx.Core.Status
+import Linger.Core.Status
 /-! # §Status — the seven states partition the observation space
 
 A legend is a claim, and it can be wrong in three ways: two rows that differ
@@ -14,7 +14,7 @@ written, `classify_sound` is a real claim: the cascade computes the
 description.
 -/
 
-namespace Zmx.Core.Status
+namespace Linger.Core.Status
 
 /-- The legend, as predicates on an observation. -/
 def Is : Status → Obs → Prop
@@ -133,4 +133,4 @@ porcelain column can never disagree about a row. -/
 theorem ofName_name (s : Status) : ofName (name s) = s := by
   cases s <;> rfl
 
-end Zmx.Core.Status
+end Linger.Core.Status

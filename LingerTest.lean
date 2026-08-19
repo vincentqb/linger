@@ -1,12 +1,12 @@
-import Zmx.Posix
-/-! # ztest — IO smoke tests for the Posix shim
+import Linger.Posix
+/-! # lingertest — IO smoke tests for the Posix shim
 
 Pure code is tested in `Tests/` at elaboration time; things that spawn
 processes and poll fds need a real process. Each check prints PASS/FAIL;
-exit code is the count of failures. Run via `./lake exe ztest`.
+exit code is the count of failures. Run via `./lake exe lingertest`.
 -/
 
-open Zmx.Posix
+open Linger.Posix
 
 def check (name : String) (cond : Bool) : IO Nat := do
   IO.println s!"{if cond then "PASS" else "FAIL"} {name}"
@@ -40,7 +40,7 @@ def reap (pid : UInt32) : IO Int64 := do
 def testPtyEcho : IO Nat := do
   let (pid, master) ← spawnPty 80 24 "" "sh" #["-c", "echo hi-from-pty"] #["ZT=1"]
   let out ← drain master ((← monotonicMs) + 5000) .empty
-  Zmx.Posix.close master
+  Linger.Posix.close master
   let mut fails := 0
   fails := fails + (← check "pty spawn+echo roundtrip" (contains (String.fromUTF8! out) "hi-from-pty"))
   fails := fails + (← check "child reaped with status 0" ((← reap pid) == 0))
@@ -49,10 +49,10 @@ def testPtyEcho : IO Nat := do
 def testPtyEnvAndInput : IO Nat := do
   -- the shell must see the extra env, and input written to the master
   -- must reach its stdin
-  let (pid, master) ← spawnPty 80 24 "/" "sh" #[] #["ZMXTEST=marker42"]
-  let _ ← write master "echo $ZMXTEST; pwd; exit\n".toUTF8 0
+  let (pid, master) ← spawnPty 80 24 "/" "sh" #[] #["LINGERTEST=marker42"]
+  let _ ← write master "echo $LINGERTEST; pwd; exit\n".toUTF8 0
   let out ← drain master ((← monotonicMs) + 5000) .empty
-  Zmx.Posix.close master
+  Linger.Posix.close master
   let txt := String.fromUTF8! out
   let mut fails := 0
   fails := fails + (← check "extra env visible in child" (contains txt "marker42"))
@@ -79,12 +79,12 @@ def testUnixSocket : IO Nat := do
   let got := (← read afd 100).getD .empty
   fails := fails + (← check "bytes cross the socket" (String.fromUTF8! got == "ping"))
   -- peer-gone detection: close client, write from server side
-  Zmx.Posix.close cfd
+  Linger.Posix.close cfd
   let w1 ← write afd "x".toUTF8 0
   let w2 ← write afd "x".toUTF8 0
   fails := fails + (← check "write to dead peer yields -1 (not a crash)" (w1 == -1 || w2 == -1))
-  Zmx.Posix.close afd
-  Zmx.Posix.close lfd
+  Linger.Posix.close afd
+  Linger.Posix.close lfd
   IO.FS.removeDirAll dir
   -- connect to a nonexistent path: -ENOENT, not an exception
   let r ← unixConnect s!"{dir}/absent.sock"
@@ -94,13 +94,13 @@ def testUnixSocket : IO Nat := do
 def testWinsize : IO Nat := do
   let (pid, master) ← spawnPty 121 43 "" "sh" #["-c", "stty size; exit"] #[]
   let out ← drain master ((← monotonicMs) + 5000) .empty
-  Zmx.Posix.close master
+  Linger.Posix.close master
   let _ ← reap pid
   -- stty prints "rows cols"
   check "pty spawned with requested winsize" (contains (String.fromUTF8! out) "43 121")
 
 def main : IO UInt32 := do
-  Zmx.Posix.init
+  Linger.Posix.init
   let mut fails := 0
   fails := fails + (← testPtyEcho)
   fails := fails + (← testPtyEnvAndInput)

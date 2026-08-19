@@ -1,7 +1,7 @@
-import Zmx.Core.Name
-import Zmx.Core.Status
-import Zmx.Core.Render
-/-! # Zmx.Core.Listing — a `list` row's identity
+import Linger.Core.Name
+import Linger.Core.Status
+import Linger.Core.Render
+/-! # Linger.Core.Listing — a `list` row's identity
 
 §Row (THEOREMS.md): a listed session's *identity* is a function of its
 socket filename alone, never of the `info` reply the daemon returns. A
@@ -13,9 +13,9 @@ crafting a reply. `Cli.cmdList` builds every local row through
 than asserted at the call site.
 -/
 
-namespace Zmx.Core.Listing
+namespace Linger.Core.Listing
 
-open Zmx.Core.Name (sanitize)
+open Linger.Core.Name (sanitize)
 
 /-- A session's listing fields, from its socket filename and the
 key/values it reported. The leading `name` is always the sanitized
@@ -35,7 +35,7 @@ row look healthier than it is, because `known` and `daemonUp` are not taken
 from the reply.
 -/
 
-open Zmx.Core.Status (Status Obs classify ofName)
+open Linger.Core.Status (Status Obs classify ofName)
 
 /-- One boolean from the reply, defaulting to `false` when absent or
 malformed — a reply cannot make a row *more* alive by omission. -/
@@ -103,7 +103,7 @@ the daemon's reply, one layer out.
 Rendering here also lets the column alignment be a property of the whole row *set* (the name
 column is as wide as the widest name), which a per-`IO.println` call site cannot express. -/
 
-open Zmx.Core.Render (utf8s dropTrailingBlanks)
+open Linger.Core.Render (utf8s dropTrailingBlanks)
 
 /-- One human-readable listing row, as bytes. Every reply-supplied value flows
 through `utf8s`, so the printable-content guarantee (`Theorems/Listing.lean`)
@@ -140,4 +140,4 @@ def humanListing (rows : List (List (String × String))) : List UInt8 :=
     let nameCol := rows.foldl (fun m r => max m ((r.lookup "name").getD "").toList.length) 0
     rows.flatMap (fun r => humanRow nameCol r ++ [0x0A])
 
-end Zmx.Core.Listing
+end Linger.Core.Listing

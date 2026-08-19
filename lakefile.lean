@@ -1,7 +1,7 @@
 import Lake
 open Lake DSL
 
-package zmx where
+package linger where
   leanOptions := #[
     -- Pure-function port: `partial def` hides a termination argument we
     -- would rather be forced to write down; autoImplicit hides typos.
@@ -12,7 +12,7 @@ package zmx where
 /-- The program. Zero external Lean dependencies (core only): the whole
 point is that the state machines are ours to prove things about. -/
 @[default_target]
-lean_lib Zmx where
+lean_lib Linger where
 
 /-- The C shim — the project's entire non-Lean surface (see AGENTS.md).
 Compiled with clang (the ./lake wrapper puts Homebrew clang on PATH;
@@ -23,17 +23,17 @@ target shim.o pkg : System.FilePath := do
   let weakArgs := #["-I", (← getLeanIncludeDir).toString]
   buildO oFile srcJob weakArgs #["-fPIC", "-O2", "-Wall", "-Werror"] "clang" getLeanTrace
 
-extern_lib libzmxshim pkg := do
+extern_lib liblingershim pkg := do
   let shimO ← fetch <| pkg.target ``shim.o
-  buildStaticLib (pkg.staticLibDir / nameToStaticLib "zmxshim") #[shimO]
+  buildStaticLib (pkg.staticLibDir / nameToStaticLib "lingershim") #[shimO]
 
 /-- IO smoke tests for the Posix surface (spawns ptys; run, not just built):
-`./lake exe ztest`. The shim uses only libc (`posix_openpt`, not the
+`./lake exe lingertest`. The shim uses only libc (`posix_openpt`, not the
 libutil `forkpty`), so no extra link args on any glibc. -/
-lean_exe ztest where
-  root := `ZTest
+lean_exe lingertest where
+  root := `LingerTest
 
-/-- Proofs. Separate from `Zmx` so the executable does not carry them;
+/-- Proofs. Separate from `Linger` so the executable does not carry them;
 `THEOREMS.md` names the tension each section resolves. Root module
 imports every Theorems.X — a proof file not imported there is a bug. -/
 lean_lib Theorems where

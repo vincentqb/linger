@@ -6,7 +6,7 @@
 #   2. no `sorry` / `partial` in the pure core or the proofs
 #  2b. coverage: defs named by no theorem STATEMENT (ratchet), and every byte
 #      stream the runtime emits classified as proved or bounded
-#   3. posix shim smoke tests (ztest)
+#   3. posix shim smoke tests (lingertest)
 #   4. attach/detach/reattach/mirror/wait e2e (real ptys)
 #   5. reboot-resume e2e (SIGKILL + restore + corrupt tolerance)
 #   6. overview e2e (bare `linger`/`ls` print a list and exit, not a picker)
@@ -28,7 +28,7 @@ sleep 0.2
 
 say "1. build (program + theorems + tests)"
 rm -rf .lake/build
-./lake build Zmx Theorems Tests linger ztest > /tmp/linger-build.log 2>&1 \
+./lake build Linger Theorems Tests linger lingertest > /tmp/linger-build.log 2>&1 \
   || { tail -30 /tmp/linger-build.log; fail "build"; }
 if grep -qE '^(warning|error)' /tmp/linger-build.log; then
   grep -E '^(warning|error)' /tmp/linger-build.log
@@ -38,10 +38,10 @@ grep -c 'Build completed successfully' /tmp/linger-build.log > /dev/null \
   || fail "build did not report success"
 
 say "2. purity of the core (no sorry, no partial, no IO)"
-! git grep -n 'sorry' -- 'Zmx/Core/*' 'Theorems/*' || fail "sorry found"
-! git grep -n 'sorryAx' -- 'Zmx/Core/*' 'Theorems/*' || fail "sorryAx found"
-! git grep -nE '\bpartial def\b' -- 'Zmx/Core/*' || fail "partial def in pure core"
-! git grep -nE ': *IO ' -- 'Zmx/Core/*' || fail "IO in pure core"
+! git grep -n 'sorry' -- 'Linger/Core/*' 'Theorems/*' || fail "sorry found"
+! git grep -n 'sorryAx' -- 'Linger/Core/*' 'Theorems/*' || fail "sorryAx found"
+! git grep -nE '\bpartial def\b' -- 'Linger/Core/*' || fail "partial def in pure core"
+! git grep -nE ': *IO ' -- 'Linger/Core/*' || fail "IO in pure core"
 # Proofs must reduce in the kernel, never by compiled evaluation: a
 # `native_decide` in Theorems/ would trust the compiler + `Decidable`
 # instance instead of the kernel, and (unlike the tests, where evaluating
@@ -49,8 +49,8 @@ say "2. purity of the core (no sorry, no partial, no IO)"
 # "Reading a row" makes this a promise; this makes it enforced.
 ! git grep -nE '\bnative_decide\b' -- 'Theorems/*' || fail "native_decide in a proof (Theorems/)"
 # the OS surface stays where AGENTS.md says it is
-[ "$(git grep -l '@\[extern' -- 'Zmx/*' | tr -d ' ')" = "Zmx/Posix.lean" ] \
-  || fail "extern declarations outside Zmx/Posix.lean"
+[ "$(git grep -l '@\[extern' -- 'Linger/*' | tr -d ' ')" = "Linger/Posix.lean" ] \
+  || fail "extern declarations outside Linger/Posix.lean"
 [ "$(ls c/ | tr -d ' \n')" = "shim.c" ] || fail "more than one C file"
 # README promises "no external Lean dependencies"; make it fail-closed rather
 # than rest on inspection (README-promise coverage audit, the unbacked-promise
@@ -68,9 +68,9 @@ shim_n="$(grep -c LEAN_EXPORT c/shim.c)"
 [ "$shim_n" -le "$SHIM_CAP" ] \
   || fail "shim grew to $shim_n wrappers (cap $SHIM_CAP); justify the new syscall and bump the cap"
 
-# The runtime keeps no byte queue of its own. `Zmx/Core/Buf.lean` owns the two
+# The runtime keeps no byte queue of its own. `Linger/Core/Buf.lean` owns the two
 # long-lived queues -- their caps, their drop and cut policies, and the fact that
-# nothing written is retained (`Theorems/Buf.lean`) -- and `Zmx/Runtime/*` is `IO`,
+# nothing written is retained (`Theorems/Buf.lean`) -- and `Linger/Runtime/*` is `IO`,
 # so NO theorem can see that the daemon calls those functions rather than
 # open-coding the same sums. Without this grep the Buf theorems are arithmetic
 # about a value nothing forces the runtime to use. A source-tree property cannot
@@ -78,15 +78,15 @@ shim_n="$(grep -c LEAN_EXPORT c/shim.c)"
 # by deliberately writing something new, not by reverting a fix.
 # On the commit before Buf landed these three found 5 hits (Conn.out, Rt.ptyIn,
 # Cli.queryInfo's accumulator, and two .extract compactions).
-! grep -qE '^[[:space:]]+[a-zA-Z_]+ : ByteArray' Zmx/Runtime/*.lean \
-  || { grep -nE '^[[:space:]]+[a-zA-Z_]+ : ByteArray' Zmx/Runtime/*.lean; \
-       fail "a ByteArray field in Zmx/Runtime (use Zmx.Core.Buf, which is proved)"; }
-! grep -qE 'mut [a-zA-Z_]+ : ByteArray' Zmx/Runtime/*.lean \
-  || { grep -nE 'mut [a-zA-Z_]+ : ByteArray' Zmx/Runtime/*.lean; \
-       fail "an accumulating ByteArray local in Zmx/Runtime (use Zmx.Core.Buf: it is capped)"; }
-! grep -qE '\.extract\b' Zmx/Runtime/*.lean \
-  || { grep -nE '\.extract\b' Zmx/Runtime/*.lean; \
-       fail "buffer arithmetic in Zmx/Runtime (Buf.bufAdvance owns it, and is proved)"; }
+! grep -qE '^[[:space:]]+[a-zA-Z_]+ : ByteArray' Linger/Runtime/*.lean \
+  || { grep -nE '^[[:space:]]+[a-zA-Z_]+ : ByteArray' Linger/Runtime/*.lean; \
+       fail "a ByteArray field in Linger/Runtime (use Linger.Core.Buf, which is proved)"; }
+! grep -qE 'mut [a-zA-Z_]+ : ByteArray' Linger/Runtime/*.lean \
+  || { grep -nE 'mut [a-zA-Z_]+ : ByteArray' Linger/Runtime/*.lean; \
+       fail "an accumulating ByteArray local in Linger/Runtime (use Linger.Core.Buf: it is capped)"; }
+! grep -qE '\.extract\b' Linger/Runtime/*.lean \
+  || { grep -nE '\.extract\b' Linger/Runtime/*.lean; \
+       fail "buffer arithmetic in Linger/Runtime (Buf.bufAdvance owns it, and is proved)"; }
 
 # heartbeat ratchet. A `set_option maxHeartbeats` raise is a MEASUREMENT, and it
 # has an expiry date that nothing else enforces: the 2026-08-18 factoring audit
@@ -108,9 +108,9 @@ hb_n="$(grep -rc 'set_option maxHeartbeats' Theorems/ | awk -F: '{s+=$2} END {pr
 # without a two-pass argument) and `parseLs` (wants a `decreasing_by`). Ratcheted
 # so the keyword cannot creep back by habit; §Total in THEOREMS.md names both.
 RUNTIME_PARTIAL_CAP=2
-rp_n="$(grep -rc 'partial def' Zmx/Runtime/*.lean | awk -F: '{s+=$2} END {print s+0}')"
+rp_n="$(grep -rc 'partial def' Linger/Runtime/*.lean | awk -F: '{s+=$2} END {print s+0}')"
 [ "$rp_n" -le "$RUNTIME_PARTIAL_CAP" ] \
-  || fail "Zmx/Runtime grew to $rp_n partial defs (cap $RUNTIME_PARTIAL_CAP); a do-block loop does not need the keyword"
+  || fail "Linger/Runtime grew to $rp_n partial defs (cap $RUNTIME_PARTIAL_CAP); a do-block loop does not need the keyword"
 
 say "2b. coverage of the code by the theorems (two ratchets)"
 # Every bug this project found by PROVING was an assumption nobody wrote down, so
@@ -137,7 +137,7 @@ grep -qE 'example : failingDeep 150 = \[\]' Tests/Fuzz.lean \
   || fail "fuzz: 'failingDeep 150 = []' assertion missing or weakened"
 
 say "3. posix shim smoke tests"
-./lake exe ztest | tail -1 | grep -q '^ALL PASS$' || fail "ztest"
+./lake exe lingertest | tail -1 | grep -q '^ALL PASS$' || fail "lingertest"
 
 say "4. attach / detach / reattach / mirror / wait"
 pkill -x linger 2>/dev/null || true; sleep 0.2

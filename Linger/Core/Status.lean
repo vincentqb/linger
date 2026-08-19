@@ -16,7 +16,7 @@ state is reachable (a state no observation produces would be a lie in the
 legend).
 -/
 
-namespace Zmx.Core.Status
+namespace Linger.Core.Status
 
 /-- Seven mutually exclusive states, in priority order: a row shows the
 first one that applies. -/
@@ -101,4 +101,4 @@ def ofName : String → Status
   | "idle" => .idle
   | _ => .unknown
 
-end Zmx.Core.Status
+end Linger.Core.Status

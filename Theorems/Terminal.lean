@@ -1,4 +1,4 @@
-import Zmx.Core.Terminal
+import Linger.Core.Terminal
 import Theorems.Render
 /-! # §Terminal — owned terminal queries without client dependence
 
@@ -8,9 +8,9 @@ all retained candidate bytes. Presentation-client state does not occur in any
 statement or input.
 -/
 
-namespace Zmx.Core.Terminal
+namespace Linger.Core.Terminal
 
-open Zmx.Core.Vt Zmx.Core.Render
+open Linger.Core.Vt Linger.Core.Render
 
 /-! ## Exact normative profile -/
 
@@ -425,4 +425,4 @@ theorem finish_exact (s : Scan) : finish s = (s.pending, .ground) := rfl
 theorem finish_bounded (s : Scan) : (finish s).2.Bounded := by
   simp [finish, Scan.Bounded]
 
-end Zmx.Core.Terminal
+end Linger.Core.Terminal

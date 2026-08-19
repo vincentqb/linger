@@ -5,9 +5,9 @@ The value half begins here: `applySgr` inverts `penSgr`'s encoding (semantic hal
 the accumulator delivers the numbers the encoder wrote (parser half), and one glyph
 lands in one cell. Split out of `Theorems/Render.lean`. -/
 
-namespace Zmx.Core.Render
+namespace Linger.Core.Render
 
-open Zmx.Core.Vt
+open Linger.Core.Vt
 
 /-! ## §Replay stage 3d — the painted cells come back
 
@@ -331,9 +331,9 @@ Printing preserves it, which is what makes the run below an induction. -/
 theorem print_quiet {v : Vt} (c : Char) (hg : v.pstate = .ground) (hu : v.u8need = 0)
     (ha : v.u8acc = 0) :
     (v.print c).pstate = .ground ∧ (v.print c).u8need = 0 ∧ (v.print c).u8acc = 0 :=
-  ⟨by rw [Zmx.Core.Vt.ps_print]; exact hg,
-   by rw [Zmx.Core.Vt.un_print]; exact hu,
-   by rw [Zmx.Core.Vt.ua_print]; exact ha⟩
+  ⟨by rw [Linger.Core.Vt.ps_print]; exact hg,
+   by rw [Linger.Core.Vt.un_print]; exact hu,
+   by rw [Linger.Core.Vt.ua_print]; exact ha⟩
 
 /-- **A glyph run is a chain of prints.** The emitted bytes of a scrubbed
 char list feed back as exactly those characters printed, in order. -/
@@ -374,9 +374,9 @@ theorem crlf_feed {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) :
     rw [if_neg (by decide), if_pos (by decide)]
     rfl
   have hg2 : v.carriageReturn.pstate = .ground := by
-    rw [Zmx.Core.Vt.ps_carriageReturn]; exact hg
+    rw [Linger.Core.Vt.ps_carriageReturn]; exact hg
   have hu2 : v.carriageReturn.u8need = 0 := by
-    rw [Zmx.Core.Vt.un_carriageReturn]; exact hu
+    rw [Linger.Core.Vt.un_carriageReturn]; exact hu
   rw [feed2, hcr, step_of_ground_quiet _ hg2 hu2]
   unfold Vt.stepGround
   rw [if_neg (by decide), if_pos (by decide)]
@@ -930,4 +930,4 @@ theorem restore_cursor (v : Vt) (hgood : Good v) (ho : v.modes.origin = false) :
     (by rw [hdc]; simpa using hgood.curX) hpo
   exact ⟨by simpa using hx, by simpa using hy⟩
 
-end Zmx.Core.Render
+end Linger.Core.Render

@@ -1,10 +1,10 @@
-/-! # Zmx.Core.Buf — a bounded byte queue, as a value
+/-! # Linger.Core.Buf — a bounded byte queue, as a value
 
 The daemon owns two long-lived byte queues: the per-client output backlog and the
 pty input backlog. Both are the same shape, and both carry *decisions*, not
 plumbing: a cap, what to do when it is reached, and the discipline that keeps the
 cap measuring **memory** rather than a counter. Those decisions lived in
-`Zmx/Runtime/Daemon.lean`, where nothing could prove them; the runtime half of
+`Linger/Runtime/Daemon.lean`, where nothing could prove them; the runtime half of
 §Bound was a paragraph in THEOREMS.md ending "not proved".
 
 This module is the value; `Theorems/Buf.lean` is the proof; the daemon is the
@@ -34,18 +34,18 @@ only for theorem statements — every def here would become unclaimed surface an
 breach a ratchet that must stay monotone. (It is also only half a discipline:
 structure-instance notation can still *write* a private field where it cannot read
 one.) So the gate is `tests/e2e.sh`'s three greps, and this becomes attractive the
-day `coverage.py` also counts theorems in `Zmx/Core`.
+day `coverage.py` also counts theorems in `Linger/Core`.
 
-**`ByteArray`, not `List UInt8`.** The rest of `Zmx/Core` speaks `List UInt8`
+**`ByteArray`, not `List UInt8`.** The rest of `Linger/Core` speaks `List UInt8`
 because the emitters must reduce in the kernel; a queue must not. A 4 MiB
 `List UInt8` costs ~48 bytes per byte and `++` is O(left), so every `.send` would
-become a multi-megabyte cons walk. `ByteArray` in `Zmx/Core` is house-legal — the
+become a multi-megabyte cons walk. `ByteArray` in `Linger/Core` is house-legal — the
 purity gate bans unproved axioms, `partial` definitions and effects, not a choice
 of representation — and has precedent in `Vt.feedBytes`. Nothing here is stated through
 `ByteArray.toList`, which is a `get!` + `reverse` loop.
 -/
 
-namespace Zmx.Core.Buf
+namespace Linger.Core.Buf
 
 /-- A byte queue: exactly the bytes still owed to the peer, oldest first. -/
 structure Buf where
@@ -96,7 +96,7 @@ def bufAdvance (b : Buf) (n : Nat) : Buf :=
 
 /-- What the writer hands to `write(2)`: exactly the owed bytes, so the syscall
 needs no offset. The **one** sanctioned read of the representation, used only by
-`Zmx.Posix.writeBuf`; `writeFrom_owed` pins that it is the debt and nothing else. -/
+`Linger.Posix.writeBuf`; `writeFrom_owed` pins that it is the debt and nothing else. -/
 def writeFrom (b : Buf) : ByteArray := b.bytes
 
-end Zmx.Core.Buf
+end Linger.Core.Buf

@@ -1,4 +1,4 @@
-import Zmx.Core.Remote
+import Linger.Core.Remote
 import Theorems.Name
 /-! # §Remote — trusting a remote listing without trusting the remote
 
@@ -10,9 +10,9 @@ and display fields are scrubbed of control characters (nothing a
 remote returns can inject escape sequences into the local listing).
 -/
 
-namespace Zmx.Core.Remote
+namespace Linger.Core.Remote
 
-open Zmx.Core.Name
+open Linger.Core.Name
 
 /-- Every parsed row's name is sanitized-valid, whatever the remote
 sent. -/
@@ -109,4 +109,4 @@ theorem checkHosts_ok_clean {hosts l : List String} (h : checkHosts hosts = .ok 
       simp only [Bool.and_eq_true, decide_eq_true_eq] at this
       exact this
 
-end Zmx.Core.Remote
+end Linger.Core.Remote

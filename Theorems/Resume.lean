@@ -28,9 +28,9 @@ the same file as the claim is deliberate; a reader should not have to hunt
 THEOREMS.md to learn what is not yet proved.
 -/
 
-namespace Zmx.Core
+namespace Linger.Core
 
-open Zmx.Core.Checkpoint (Ckpt load save)
+open Linger.Core.Checkpoint (Ckpt load save)
 
 /-- **§Resume.** A checkpoint, reloaded and replayed into a fresh
 emulator of the same size, leaves that emulator quiesced: the parser is
@@ -158,4 +158,4 @@ example : ((Vt.Vt.init 80 1).feed (Render.restore (Vt.Vt.init 80 1))).grid = (Vt
   (resume_grid { vt := Vt.Vt.init 80 1, cwd := "", labels := [] }
     rfl rfl rfl (Vt.good_init 80 1) (Vt.renderable_init 80 1)).2
 
-end Zmx.Core
+end Linger.Core

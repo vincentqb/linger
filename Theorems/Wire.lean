@@ -1,4 +1,4 @@
-import Zmx.Core.Wire
+import Linger.Core.Wire
 /-! # §Frame / §Chunk / §Bound — the wire protocol theorems
 
 THEOREMS.md rows: §Frame (round-trip; unknown tags are data),
@@ -12,7 +12,7 @@ go through by kernel reduction alone (no proof in this directory uses
 the compiled-evaluation escape hatch; the e2e gate enforces it).
 -/
 
-namespace Zmx.Core.Wire
+namespace Linger.Core.Wire
 
 /-! ## u32 codec -/
 
@@ -493,4 +493,4 @@ theorem decode_encode_chunked (ms : List Msg) (hms : ∀ m ∈ ms, m.wf)
   rw [Decoder.feedAll_flatten _ _ (by simp), hc]
   simpa [decode] using decode_encode_stream ms hms
 
-end Zmx.Core.Wire
+end Linger.Core.Wire

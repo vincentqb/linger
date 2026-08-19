@@ -1,5 +1,5 @@
-import Zmx.Core.Checkpoint
-import Zmx.Core.Vt
+import Linger.Core.Checkpoint
+import Linger.Core.Vt
 /-! # Checkpoint codec tests
 
 §Restore is proved in `Theorems/Checkpoint.lean`; these pin the two
@@ -9,9 +9,9 @@ session comes back exactly (an end-to-end sanity check over the real
 `Vt.feed` path).
 -/
 
-namespace Zmx.Core.Checkpoint.Tests
+namespace Linger.Core.Checkpoint.Tests
 
-open Zmx.Core.Checkpoint Zmx.Core.Vt
+open Linger.Core.Checkpoint Linger.Core.Vt
 
 /-- runs/expand invert (the load-bearing RLE fact, on concrete data). -/
 example : (expand (runs [1, 1, 1, 2, 2, 3, 1, 1]) == [1, 1, 1, 2, 2, 3, 1, 1]) = true := by
@@ -61,4 +61,4 @@ example :
      | some ck' => ck'.vt.sb.toList.map (·.size) == v.sb.toList.map (·.size)
      | none => false) = true := by native_decide
 
-end Zmx.Core.Checkpoint.Tests
+end Linger.Core.Checkpoint.Tests

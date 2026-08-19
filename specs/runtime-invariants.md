@@ -12,11 +12,11 @@ landed, so if Steps 3-4 never happen this bet has delivered what it honestly cou
 Two follow-ups are parked, both small: apply the `THEOREMS.md` §Bound/§Total
 rewrites (drafted in `/tmp/theorems-bound.md` during step 2, held back only because
 another agent held that file), and revisit per-field `private` on `Buf.bytes` if
-`tests/coverage.py` is ever taught to count theorems in `Zmx/Core` — see the
+`tests/coverage.py` is ever taught to count theorems in `Linger/Core` — see the
 measured negative result in SCRATCHPAD 2026-08-18.
 
 **Done (2026-08-18):** Step 1 (five vestigial `partial def`s dropped; `pump` and
-`parseLs` remain, each for a stated reason) and Step 2 (`Zmx/Core/Buf.lean`,
+`parseLs` remain, each for a stated reason) and Step 2 (`Linger/Core/Buf.lean`,
 `Theorems/Buf.lean`'s nine theorems with their content twins, `Tests/Buf.lean`'s
 fixtures, the three-grep gate, and `Cli.queryInfo`'s live unbounded accumulator
 closed). **Step 2 diverged from the design below**: `Buf` has no write cursor, because
@@ -37,15 +37,15 @@ layer below that, the daemon still owns the **byte bookkeeping**: two long-lived
 queues, their caps, their drop and cut policies, and the compaction that keeps
 the cap measuring memory rather than a counter. Those are decisions dressed as
 plumbing, and they are the runtime half of §Bound, which `THEOREMS.md:524-531`
-currently ends with "These caps live in `Zmx/Runtime/Daemon.lean` and are not
+currently ends with "These caps live in `Linger/Runtime/Daemon.lean` and are not
 proved (the runtime is `IO`)."
 
-Move the *value* into `Zmx/Core/Buf.lean`, prove the caps and the compaction, and
+Move the *value* into `Linger/Core/Buf.lean`, prove the caps and the compaction, and
 gate — with a grep, because a source-tree property cannot be a theorem — that
-`Zmx/Runtime/*` declares no byte buffer of its own.
+`Linger/Runtime/*` declares no byte buffer of its own.
 
 **Correct framing, because both drafts got this wrong in opposite directions.**
-The partial-drain leak is **already fixed**: `flushConn` (`Zmx/Runtime/Daemon.lean:79-88`)
+The partial-drain leak is **already fixed**: `flushConn` (`Linger/Runtime/Daemon.lean:79-88`)
 and `flushPty` (`:90-101`) both compact on partial writes today, with the reason
 in `flushConn`'s docstring, and `queuePty` (`:111-118`) caps at `ptyInCap`. So this
 spec is not a bug fix. Its value is that the fix's **only live oracle was measured
@@ -58,7 +58,7 @@ adversarial review.
 
 ## Definition of done
 
-1. `Zmx/Core/Buf.lean`: `Buf` = `bytes : ByteArray` + `off : Nat`, with the six
+1. `Linger/Core/Buf.lean`: `Buf` = `bytes : ByteArray` + `off : Nat`, with the six
    named stages `owed` (spec-only, copies), `owedLen` (what the caps measure),
    `bufOffer` (drop the newest **whole** frame — the child-input discipline),
    `bufEnqueue` (append and report "cut this peer" — the client discipline),
@@ -77,16 +77,16 @@ adversarial review.
    owedLen ≤ cap`) is deliberate: the honest bound for the shipped
    append-then-cut discipline is `≤ cap + one wire frame` (`outputChunk = 65536`).
 3. **The gate** — three greps in `tests/e2e.sh` §2, after the `SHIM_CAP` block,
-   asserting that `Zmx/Runtime/*` declares no `ByteArray` structure field, no
+   asserting that `Linger/Runtime/*` declares no `ByteArray` structure field, no
    `mut … : ByteArray` local, and calls no `.extract`. This is the item the
-   adversary's finding makes non-negotiable: `Zmx/Runtime/*` is `IO`, so no
+   adversary's finding makes non-negotiable: `Linger/Runtime/*` is `IO`, so no
    theorem can see that it calls the proved functions, and without the gate the
    theorems are arithmetic about a value nothing forces the daemon to use. It is
    the same species of oracle as `SHIM_CAP` and `coverage.py`'s ratchet — evadeable
    by deliberately writing something new, not by reverting.
 4. The gate **fails on `HEAD`** before the work and passes after. It currently
    has three hits: `Conn.out` (`Daemon.lean:41`), `Rt.ptyIn` (`:51`), and
-   `Cli.queryInfo`'s `let mut acc : ByteArray := .empty` (`Zmx/Runtime/Cli.lean:122`,
+   `Cli.queryInfo`'s `let mut acc : ByteArray := .empty` (`Linger/Runtime/Cli.lean:122`,
    appended at `:136`). A new gate that passes before the work measures nothing.
 5. `Cli.queryInfo`'s accumulator is bounded. This is a **live unbounded
    accumulation**, verified: the loop's only exits are `.done`/`.err`/EOF/a 2000 ms
@@ -104,7 +104,7 @@ adversarial review.
    hang into a silent drop.
 7. `THEOREMS.md` §Bound rewritten to state exactly what is proved and what the
    grep carries, in that order, and no wider: "What is proved is the arithmetic,
-   not the daemon; `Zmx/Runtime/*` is `IO` and no theorem can see that it calls
+   not the daemon; `Linger/Runtime/*` is `IO` and no theorem can see that it calls
    these functions; `tests/e2e.sh` gates that it declares no byte buffer of its
    own, which is a source-tree property and therefore a grep." Anyone who writes
    "the runtime is proved" — including in a commit message — is overclaiming.
@@ -120,8 +120,8 @@ adversarial review.
    Every theorem and the gate break-verified, with the breaks in `SCRATCHPAD.md`.
 10. `SHIM_CAP=27` unchanged (`grep -c LEAN_EXPORT c/shim.c` reads the same number
     before and after) — `writeBuf` is a Lean-level wrapper over the existing
-    `zmx_write` extern, and `e2e.sh:52` only requires `@[extern` to stay inside
-    `Zmx/Posix.lean`.
+    `linger_write` extern, and `e2e.sh:52` only requires `@[extern` to stay inside
+    `Linger/Posix.lean`.
 
 ## Settled non-goal for this spec — the poll plan
 
@@ -142,7 +142,7 @@ reaction sequence*, not a classification (`:226` skips a conn an earlier
 iteration's close dropped, and `:236` re-checks after a POLLOUT-triggered close),
 so a pure `List Intent` must be re-validated against live state between every
 intent, which is the code you already have. The daemon's defect history supports
-this: `git log -- Zmx/Runtime/Daemon.lean` is 6 commits, 2 of them fixes, and the
+this: `git log -- Linger/Runtime/Daemon.lean` is 6 commits, 2 of them fixes, and the
 desync happened **once**, pre-release.
 
 Record this in `SCRATCHPAD.md` as a negative result, with the permutation break
@@ -162,7 +162,7 @@ verified these compile in a full copy at `/tmp/lzb`; **re-verify in this tree
 before committing** — I did not run it here.
 
 **Exit:** `./lake build` and `./tests/e2e.sh` green and warning-free; the
-`partial def` count in `Zmx/Runtime/*` is 2 (`pump`, `parseLs`) with the reason
+`partial def` count in `Linger/Runtime/*` is 2 (`pump`, `parseLs`) with the reason
 for each in a comment; `THEOREMS.md:520-523` amended to say which loops remain
 and why.
 
@@ -172,16 +172,16 @@ Status: **done** (2026-08-18), with the no-write-cursor divergence recorded abov
 **The value increment: if everything after this slips, the bet has delivered what it
 honestly could.**
 
-`Zmx/Core/Buf.lean` (~70 lines), `Theorems/Buf.lean` (~150), `Tests/Buf.lean`
-(~20, `native_decide` allowed), `Zmx/Posix.lean` +4 (`writeBuf fd b := write fd
+`Linger/Core/Buf.lean` (~70 lines), `Theorems/Buf.lean` (~150), `Tests/Buf.lean`
+(~20, `native_decide` allowed), `Linger/Posix.lean` +4 (`writeBuf fd b := write fd
 b.bytes (USize.ofNat b.off)` — the only place outside Core that reads a `Buf`'s
 representation), `Daemon.lean` ~45 lines changed (`Conn.off` disappears into the
 `Buf`; `Rt` loses `ptyIn`/`ptyInOff`), `Cli.lean` ~10, `e2e.sh` +8, plus the
 `THEOREMS.md` §Bound rewrite and a `SCRATCHPAD.md` entry with six break records.
 
-`ByteArray` in `Zmx/Core/` is house-legal (`e2e.sh:41-50` bans `sorry`,
+`ByteArray` in `Linger/Core/` is house-legal (`e2e.sh:41-50` bans `sorry`,
 `sorryAx`, `partial def` and `: IO ` only) and has precedent (`Vt.feedBytes`,
-`Zmx/Core/Vt.lean:946`). Lean 4.32 core carries a usable lemma set in
+`Linger/Core/Vt.lean:946`). Lean 4.32 core carries a usable lemma set in
 `Init/Data/ByteArray/Lemmas.lean` (`size_append`, `size_extract`,
 `extract_zero_size`, `extract_extract`, `extract_eq_empty_iff`, most `@[simp]`).
 Do **not** state anything through `ByteArray.toList` — it is a `get!` + `reverse`
@@ -203,7 +203,7 @@ asserts the backpressure line appears exactly once, and re-arming the log fails 
 **Exit:** three build gates green and warning-free; `coverage.py` at 20/20 with
 the distinct base names; the gate fails on `HEAD` and passes after; the gate
 break-verified twice (add `dummy : ByteArray` to `Conn`; re-add an `.extract` in
-`Zmx/Runtime/`); `bufCompact := id` fails `bufCompact_size`/`_off` and the
+`Linger/Runtime/`); `bufCompact := id` fails `bufCompact_size`/`_off` and the
 `native_decide` fixture **while `./lake build Theorems Tests` would have stayed
 green today** — record that contrast, it is the entire justification for the bet;
 `bufCompact := fun _ => {}` passes every bound and fails only `bufCompact_owed`;
@@ -217,7 +217,7 @@ than the theorem.
 
 Status: pending, off critical path.
 
-`Zmx/Core/Loop.lean` part A only: `Conn`/`Loop` (fds as `Nat`, matching
+`Linger/Core/Loop.lean` part A only: `Conn`/`Loop` (fds as `Nat`, matching
 `Session.Event.connected`), `conn?`/`setConn`/`dropConn`/`addConn`, the two cap
 policies, `Op`/`step`/`run`, `WF`, `run_wf` and `loop_run_bounded` — the exact
 shape of `Session.run_wf` (`Theorems/Session.lean:645-656`), one level down. Value:
@@ -245,7 +245,7 @@ returns a non-empty event list only from `.send`, twice, both immediately after
 `step_closed` already proves a `.closed` step emits only `.checkpoint`; and
 `runEffect .checkpoint` returns `(rt, [])` (`:153-155`). Follow-ups were already
 appended at the **tail** of the queue (`:174`), so the order is unchanged. Add
-`Effect.feedbackFree` in `Zmx/Core/Session.lean` and
+`Effect.feedbackFree` in `Linger/Core/Session.lean` and
 `step_closed_feedbackFree` so the runtime's comment cites a theorem instead of a
 reading of an `IO` file, and keep an `IO.eprintln "BUG —"` alarm for the day a
 future effect gains a feedback event.
@@ -260,7 +260,7 @@ return an event (the log assertion catches it).
 
 1. **Can the gate become a type discipline?** If Lean 4.32 supports per-field
    `private` on a structure, making `Buf.bytes` unreachable outside
-   `Zmx.Core.Buf` (with `Posix.writeBuf` taking the whole `Buf`) upgrades the gate
+   `Linger.Core.Buf` (with `Posix.writeBuf` taking the whole `Buf`) upgrades the gate
    from grep to compiler-enforced and demotes the three greps to belt-and-braces.
    **Test this first — it is a ten-minute experiment that could change the
    design's strength materially.** Unverified.
@@ -278,8 +278,8 @@ return an event (the log assertion catches it).
    after; do not "fix" it inside this bet.
 4. **`POLLNVAL` is decoded by nobody, today or here.** No path appears to reach it
    (every `close` is paired with a `dropConn`). If anyone adds it: do **not** map
-   it to a read — `zmx_read` on `EBADF` raises, which would kill `serve`.
-5. **`parseLs` is pure argument-parsing logic living in `Zmx/Runtime/`** with no
+   it to a read — `linger_read` on `EBADF` raises, which would kill `serve`.
+5. **`parseLs` is pure argument-parsing logic living in `Linger/Runtime/`** with no
    theorem. If someone wants a genuinely misplaced decision moved into Core, that
    is a better candidate than the poll plan.
 
@@ -300,7 +300,7 @@ confirm the modes obligation fails. **If it still closes, `mmap_id_gridAnsi` is
 reachable after all and the stage should shed those bytes.**
 *Fallback that still ships:* `linger scrollback` / `linger history --color` — wire
 up `Render.history`'s existing-but-dead `withAnsi` branch
-(`Zmx/Core/Render.lean:548-558`; the only call site is `Session.lean:250` at
+(`Linger/Core/Render.lean:548-558`; the only call site is `Session.lean:250` at
 `false`, and `history_framing`/`history_lines` are both stated at `false`) behind
 a CLI flag with its own framing theorem. The user gets coloured history on demand,
 no `ED 3`, no destruction of their own scrollback, no touch to `restore`. Strictly
@@ -341,7 +341,7 @@ the outcome `lakefile.lean` asks for.
 
 *Step 2 (`Buf` + the gate).* Kill if the gate cannot be made to pass without
 hollowing it out — specifically, if bounding `Cli.queryInfo` through `Buf` turns
-into a rewrite of the reply loop, or if the whole-`Zmx/Runtime` scope turns up a
+into a rewrite of the reply loop, or if the whole-`Linger/Runtime` scope turns up a
 fourth long-lived buffer that does not fit the `Buf` shape. Do **not** narrow the
 gate's scope to `Daemon.lean` to make it pass: that leaves `Cli.lean:122`'s
 unbounded accumulator alive and puts the next buffer in `Client.lean` where the
@@ -350,7 +350,7 @@ Also kill if the answer to "does this theorem bite the shipped code?" comes out
 honestly *no* — i.e. if the grep turns out to be evadeable by ordinary refactoring
 rather than by deliberately writing something novel. The `SHIM_CAP` and
 `coverage.py` precedents say it is not, and `coverage.py:116-134` already scans
-`Zmx/**`, so there is precedent for a Runtime-side gate — but check, don't assume.
+`Linger/**`, so there is precedent for a Runtime-side gate — but check, don't assume.
 *Fallback that still ships:* Step 1, plus `Buf` and `Theorems/Buf.lean` **without**
 the runtime rewiring — a proved, claimed, unreferenced Core module is not much, so
 prefer instead: keep the two `Daemon.lean` buffers on `Buf` (the rewiring is 45

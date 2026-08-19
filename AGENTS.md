@@ -1,9 +1,27 @@
-# lean-zmx → linger
+# linger
 
 Session attach/detach + a CLI session overview in pure-function Lean 4.
-The binary is `linger` (renamed from `lzmx`; the repo keeps its
-historical name, and the checkpoint magic stays "LZMX" — a frozen
-format identifier, not branding).
+Everything is `linger` as of 2026-08-19: the binary, the Lean library and
+namespace (`Linger.Core`, `Linger.Posix`, `Linger.Runtime`), the `Linger/`
+tree, the shim's `linger_*` symbols, the `lingertest` smoke exe. The old
+`zmx`/`lzmx` name survives in exactly three places, each on purpose:
+
+* **The checkpoint magic stays the four bytes "LZMX"** (`Linger/Core/Checkpoint.lean`).
+  It is an on-disk **format identifier, not branding** — changing it makes every
+  existing checkpoint unreadable, so a session would resume blank. Renaming it is a
+  format-version bump with a migration, not a search-and-replace.
+* **`SCRATCHPAD.md` and `specs/archive/`** keep the old paths in their historical
+  entries. The worklog is append-only and the archived specs are closed records:
+  rewriting a path inside them would falsify what was true when it was written.
+  Entries before 2026-08-19 say `Zmx/…`; read them as `Linger/…`.
+* The checkout directory is still `lean-zmx` (renaming it is the user's call, since
+  it changes everyone's paths).
+
+Separately, **`zmx` still appears as a citation of the upstream project** of that name
+— "verb surface mirrors zmx" (`Linger/Runtime/Cli.lean`), "same resolution order as
+zmx" (`Paths.lean`), "the zmx decoupling" (§Detach in THEOREMS.md), the links in
+`PLAN.md`. Those name *someone else's* project, which is prior art worth crediting;
+they are not stale branding and should not be renamed.
 `README.md` is the user-facing overview. `PLAN.md` is the original
 requirements (goal-level, not current state); `specs/archive/` holds the
 closed build plans with their completion records (`lean-zmx.md`,
@@ -26,7 +44,7 @@ closed build plans with their completion records (`lean-zmx.md`,
      `sbRows v ++ v.grid` as one tall array — *deletes* `paint_rows`' no-scroll
      argument; the staged push is why it did not.
    * **`specs/runtime-invariants.md` — Steps 1–2 done, 3–4 optional.** The
-     daemon's two byte queues are now `Zmx.Core.Buf`, proved, with a grep gate
+     daemon's two byte queues are now `Linger.Core.Buf`, proved, with a grep gate
      in `tests/e2e.sh` that makes the theorems bite an `IO` caller no theorem
      can see. Its poll-plan half was **killed on purpose** (the
      `revents[i]`↔`fds[i]` premise lives in `c/shim.c`, not in Lean, so proving
@@ -101,9 +119,9 @@ fresh pair of eyes.
 
 ## Rules
 
-- `Zmx/Core/*` is pure: no `IO`, no `partial def`, no `sorry`. Effects
+- `Linger/Core/*` is pure: no `IO`, no `partial def`, no `sorry`. Effects
   are data (`List Effect`); the runtime executes them.
-- Only `Zmx/Posix.lean` and `c/shim.c` touch the OS. Keep the shim
+- Only `Linger/Posix.lean` and `c/shim.c` touch the OS. Keep the shim
   logic-free (syscall + errno only). It carries a **wrapper-count
   ratchet** (`SHIM_CAP` in `tests/e2e.sh`): it drops silently, but
   raising it is a deliberate edit — the checkpoint for "does Lean core
@@ -114,7 +132,7 @@ fresh pair of eyes.
   invariant in THEOREMS.md and prove it, then code to it.
 - A theorem or test that cannot fail is worthless: break the code once
   to see it catch (record the break in SCRATCHPAD.md).
-- Session names pass through `Zmx.Core.Name.sanitize` before touching
+- Session names pass through `Linger.Core.Name.sanitize` before touching
   any path. Never interpolate raw names into socket/checkpoint paths.
 - `./tests/e2e.sh` is the gate before any commit that touches the
   runtime; it must stay green and warning-free.
@@ -136,15 +154,15 @@ fresh pair of eyes.
   `parseLs`) and named in THEOREMS.md §Total; ratcheted
   (`RUNTIME_PARTIAL_CAP`). Don't add a fuel parameter to shed the
   keyword — that converts a hang into a silent drop.
-- **A proved pure value needs a grep gate to bite.** `Zmx/Runtime/*` is
-  `IO`, so no theorem can see that the daemon calls `Zmx.Core.Buf`
+- **A proved pure value needs a grep gate to bite.** `Linger/Runtime/*` is
+  `IO`, so no theorem can see that the daemon calls `Linger.Core.Buf`
   rather than open-coding the same sums — without the gate the theorems
   are arithmetic about a value nothing forces the runtime to use. Same
   species of oracle as `SHIM_CAP`. When you move a decision into Core,
   gate the runtime against re-growing it.
 - **One writer at a time on this tree.** Two agents editing
   concurrently raced the coverage ratchet: untracked files are invisible
-  to `git diff -- Zmx/`, so an out-of-band `coverage.py` read caught a
+  to `git diff -- Linger/`, so an out-of-band `coverage.py` read caught a
   half-written state and reported 28 unclaimed defs. Both also compile
   the same tree, so each sees the other's partial files as errors.
   Serialize, or give each writer a worktree.

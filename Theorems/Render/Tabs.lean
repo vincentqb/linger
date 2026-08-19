@@ -5,9 +5,9 @@ import Theorems.Render.Grid
 `MMap id` are instances of — and the tab-ruler ladder built on it:
 `restore_tabs_any`. Split out of `Theorems/Render.lean`. -/
 
-namespace Zmx.Core.Render
+namespace Linger.Core.Render
 
-open Zmx.Core.Vt
+open Linger.Core.Vt
 
 /-! ## `Fixes` — one stream predicate, any projection
 
@@ -708,4 +708,4 @@ is not vacuously true. -/
 example : ((Vt.init 80 24).feed (restore (Vt.init 80 24))).tabs = (Vt.init 80 24).tabs :=
   restore_tabs_any _ _ (good_init 80 24) rfl (by decide) (size_defaultTabs _)
 
-end Zmx.Core.Render
+end Linger.Core.Render

@@ -1,4 +1,4 @@
-import Zmx.Core.Name
+import Linger.Core.Name
 /-! # §Name — session names cannot escape the socket directory
 
 `sanitize` output lands in `<dir>/<name>.sock` and `<name>.ckpt`
@@ -9,7 +9,7 @@ begin with a dot (no `.`/`..`/hidden files). Path escape is impossible
 because `/` is simply not in the alphabet.
 -/
 
-namespace Zmx.Core.Name
+namespace Linger.Core.Name
 
 theorem okChar_no_slash (c : Char) (h : okChar c = true) : c ≠ '/' := by
   intro he
@@ -95,4 +95,4 @@ theorem sanitize_no_at (s : String) : ∀ c ∈ (sanitize s).toList, c ≠ '@' :
   obtain ⟨-, -, hok, -⟩ := sanitize_valid s
   exact okChar_no_at c (hok c hc)
 
-end Zmx.Core.Name
+end Linger.Core.Name

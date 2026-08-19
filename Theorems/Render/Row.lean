@@ -5,9 +5,9 @@ import Theorems.Render.History
 shape, the mark loop, and the fold that assembles them: `rowAnsi_writes_row`. Split
 out of `Theorems/Render.lean`. -/
 
-namespace Zmx.Core.Render
+namespace Linger.Core.Render
 
-open Zmx.Core.Vt
+open Linger.Core.Vt
 
 /-! ## Step 3 — `PaintState` and `Matches`, the row induction's invariant
 
@@ -172,8 +172,8 @@ theorem step_narrow {w : Vt} {P : PaintState} {g : Row} {k : Nat}
   · rw [hfeed, hcur]; show w.cursor.y = P.y; exact hm.curY
   · rw [hfeed, hcur]
   · rw [hfeed, pen_print]; exact hm.pen
-  · rw [hfeed, Zmx.Core.Vt.ps_print]; exact hm.ground
-  · rw [hfeed, Zmx.Core.Vt.un_print]; exact hm.u8need
+  · rw [hfeed, Linger.Core.Vt.ps_print]; exact hm.ground
+  · rw [hfeed, Linger.Core.Vt.un_print]; exact hm.u8need
   · rw [hfeed, ua_print']; exact hm.u8acc
   · rw [hfeed, ins_print]; exact hm.ins
   · rw [hfeed, wrap_print]; exact hm.wrap
@@ -260,8 +260,8 @@ theorem step_narrow_margin {w : Vt} {P : PaintState} {g : Row} {k : Nat}
   · rw [hfeed, hcur]; show w.cursor.y = P.y; exact hm.curY
   · rw [hfeed, hcur]; show w.modes.wrap = true; exact hm.wrap
   · rw [hfeed, pen_print]; exact hm.pen
-  · rw [hfeed, Zmx.Core.Vt.ps_print]; exact hm.ground
-  · rw [hfeed, Zmx.Core.Vt.un_print]; exact hm.u8need
+  · rw [hfeed, Linger.Core.Vt.ps_print]; exact hm.ground
+  · rw [hfeed, Linger.Core.Vt.un_print]; exact hm.u8need
   · rw [hfeed, ua_print']; exact hm.u8acc
   · rw [hfeed, ins_print]; exact hm.ins
   · rw [hfeed, wrap_print]; exact hm.wrap
@@ -351,8 +351,8 @@ theorem step_wide {w : Vt} {P : PaintState} {g : Row} {k : Nat}
   · rw [hfeed, hcur]; show w.cursor.y = P.y; exact hm.curY
   · rw [hfeed, hcur]
   · rw [hfeed, pen_print]; exact hm.pen
-  · rw [hfeed, Zmx.Core.Vt.ps_print]; exact hm.ground
-  · rw [hfeed, Zmx.Core.Vt.un_print]; exact hm.u8need
+  · rw [hfeed, Linger.Core.Vt.ps_print]; exact hm.ground
+  · rw [hfeed, Linger.Core.Vt.un_print]; exact hm.u8need
   · rw [hfeed, ua_print']; exact hm.u8acc
   · rw [hfeed, ins_print]; exact hm.ins
   · rw [hfeed, wrap_print]; exact hm.wrap
@@ -601,8 +601,8 @@ theorem cha_matches {w : Vt} {P : PaintState} {g : Row} {kf n : Nat}
     unfold Vt.setCol; rfl
   · show (w.setCol (n - 1)).pen = P.pen
     rw [show (w.setCol (n - 1)).pen = w.pen from by rw [frame_setCol]]; exact hm.pen
-  · rw [Zmx.Core.Vt.ps_setCol]; exact hm.ground
-  · rw [Zmx.Core.Vt.un_setCol]; exact hm.u8need
+  · rw [Linger.Core.Vt.ps_setCol]; exact hm.ground
+  · rw [Linger.Core.Vt.un_setCol]; exact hm.u8need
   · show (w.setCol (n - 1)).u8acc = 0
     rw [show (w.setCol (n - 1)).u8acc = w.u8acc from by rw [frame_setCol]]; exact hm.u8acc
   · show (w.setCol (n - 1)).modes.insert = false
@@ -742,8 +742,8 @@ theorem mark_step {cols : Nat} {w : Vt} {Q : PaintState} {g : Row} {wcol kf : Na
   · rw [hcur]; exact hm.curY
   · rw [hcur]; exact hm.pend
   · rw [pen_print]; exact hm.pen
-  · rw [Zmx.Core.Vt.ps_print]; exact hm.ground
-  · rw [Zmx.Core.Vt.un_print]; exact hm.u8need
+  · rw [Linger.Core.Vt.ps_print]; exact hm.ground
+  · rw [Linger.Core.Vt.un_print]; exact hm.u8need
   · rw [ua_print']; exact hm.u8acc
   · rw [ins_print]; exact hm.ins
   · rw [wrap_print]; exact hm.wrap
@@ -1013,8 +1013,8 @@ theorem step_wide_margin {w : Vt} {P : PaintState} {g : Row} {k : Nat}
   · rw [hfeed, hcur]; show w.cursor.y = P.y; exact hm.curY
   · rw [hfeed, hcur]; show w.modes.wrap = true; exact hm.wrap
   · rw [hfeed, pen_print]; exact hm.pen
-  · rw [hfeed, Zmx.Core.Vt.ps_print]; exact hm.ground
-  · rw [hfeed, Zmx.Core.Vt.un_print]; exact hm.u8need
+  · rw [hfeed, Linger.Core.Vt.ps_print]; exact hm.ground
+  · rw [hfeed, Linger.Core.Vt.un_print]; exact hm.u8need
   · rw [hfeed, ua_print']; exact hm.u8acc
   · rw [hfeed, ins_print]; exact hm.ins
   · rw [hfeed, wrap_print]; exact hm.wrap
@@ -1336,9 +1336,9 @@ theorem dance_cols {w : Vt} (b : Char) (ms : List Char) (a a' : Nat)
       = (w.feed (utf8 (safeChar b))).setCol (a - 1) := by
     rw [e1]; exact cha_feed_eq a hg1 hu1 ha1 ha1'
   have hg2 : ((w.feed (utf8 (safeChar b))).feed (csiNum a 0x47)).pstate = .ground := by
-    rw [e2, Zmx.Core.Vt.ps_setCol, e1]; exact hg1
+    rw [e2, Linger.Core.Vt.ps_setCol, e1]; exact hg1
   have hu2 : ((w.feed (utf8 (safeChar b))).feed (csiNum a 0x47)).u8need = 0 := by
-    rw [e2, Zmx.Core.Vt.un_setCol, e1]; exact hu1
+    rw [e2, Linger.Core.Vt.un_setCol, e1]; exact hu1
   have ha2q : ((w.feed (utf8 (safeChar b))).feed (csiNum a 0x47)).u8acc = 0 := by
     rw [e2, show ((w.feed (utf8 (safeChar b))).setCol (a - 1)).u8acc
         = (w.feed (utf8 (safeChar b))).u8acc from by rw [frame_setCol], e1]; exact ha1q
@@ -1356,4 +1356,4 @@ theorem dance_cols {w : Vt} (b : Char) (ms : List Char) (a a' : Nat)
     cha_cols a' hg3.1 hg3.2.1 ha2 ha2', hc3]
 
 
-end Zmx.Core.Render
+end Linger.Core.Render

@@ -2,7 +2,7 @@
  *
  * Contract (AGENTS.md): syscall + errno only. No buffering, no retry
  * policy beyond EINTR, no session logic. Every function is a thin
- * wrapper whose behavior is stated in Zmx/Posix.lean next to its
+ * wrapper whose behavior is stated in Linger/Posix.lean next to its
  * binding. All Lean object parameters are borrowed (@& on the Lean
  * side), so nothing here inc/decs references except allocations we
  * hand back.
@@ -48,17 +48,17 @@ static lean_obj_res io_ok_unit(void) { return lean_io_result_mk_ok(lean_box(0));
 /* -------------------------------------------------------------------- */
 /* process-wide init                                                     */
 
-/* zmx_init : IO Unit
+/* linger_init : IO Unit
  * SIGPIPE must be ignored: a client vanishing between poll() and write()
  * would otherwise kill the daemon. Write errors surface as EPIPE. */
-LEAN_EXPORT lean_obj_res zmx_init(lean_obj_arg w) {
+LEAN_EXPORT lean_obj_res linger_init(lean_obj_arg w) {
     (void)w;
     signal(SIGPIPE, SIG_IGN);
     return io_ok_unit();
 }
 
-/* zmx_ignore_sighup : IO Unit  (daemon: survive controlling-tty death) */
-LEAN_EXPORT lean_obj_res zmx_ignore_sighup(lean_obj_arg w) {
+/* linger_ignore_sighup : IO Unit  (daemon: survive controlling-tty death) */
+LEAN_EXPORT lean_obj_res linger_ignore_sighup(lean_obj_arg w) {
     (void)w;
     signal(SIGHUP, SIG_IGN);
     return io_ok_unit();
@@ -67,15 +67,15 @@ LEAN_EXPORT lean_obj_res zmx_ignore_sighup(lean_obj_arg w) {
 /* -------------------------------------------------------------------- */
 /* fds                                                                   */
 
-/* zmx_close : UInt32 -> IO Unit */
-LEAN_EXPORT lean_obj_res zmx_close(uint32_t fd, lean_obj_arg w) {
+/* linger_close : UInt32 -> IO Unit */
+LEAN_EXPORT lean_obj_res linger_close(uint32_t fd, lean_obj_arg w) {
     (void)w;
     close((int)fd); /* errors on close are not actionable */
     return io_ok_unit();
 }
 
-/* zmx_set_nonblock : UInt32 -> IO Unit */
-LEAN_EXPORT lean_obj_res zmx_set_nonblock(uint32_t fd, lean_obj_arg w) {
+/* linger_set_nonblock : UInt32 -> IO Unit */
+LEAN_EXPORT lean_obj_res linger_set_nonblock(uint32_t fd, lean_obj_arg w) {
     (void)w;
     int fl = fcntl((int)fd, F_GETFL, 0);
     if (fl < 0 || fcntl((int)fd, F_SETFL, fl | O_NONBLOCK) < 0)
@@ -83,11 +83,11 @@ LEAN_EXPORT lean_obj_res zmx_set_nonblock(uint32_t fd, lean_obj_arg w) {
     return io_ok_unit();
 }
 
-/* zmx_read : UInt32 -> USize -> IO (Option ByteArray)
+/* linger_read : UInt32 -> USize -> IO (Option ByteArray)
  * none          = EOF (incl. EIO from a pty master whose child died)
  * some #[]      = nothing available right now (EAGAIN on nonblocking fd)
  * some bytes    = data. EINTR is retried. */
-LEAN_EXPORT lean_obj_res zmx_read(uint32_t fd, size_t max, lean_obj_arg w) {
+LEAN_EXPORT lean_obj_res linger_read(uint32_t fd, size_t max, lean_obj_arg w) {
     (void)w;
     if (max > 65536) max = 65536;
     unsigned char buf[65536];
@@ -111,11 +111,11 @@ LEAN_EXPORT lean_obj_res zmx_read(uint32_t fd, size_t max, lean_obj_arg w) {
     return lean_io_result_mk_ok(some);
 }
 
-/* zmx_write : UInt32 -> @& ByteArray -> USize -> IO Int64
+/* linger_write : UInt32 -> @& ByteArray -> USize -> IO Int64
  * One write(2) attempt from offset `off`. >=0: bytes written (0 on
  * EAGAIN). -1: peer gone (EPIPE/ECONNRESET/EIO) -- a normal event for
  * daemons, not an exception. EINTR retried. */
-LEAN_EXPORT lean_obj_res zmx_write(uint32_t fd, b_lean_obj_arg bytes, size_t off,
+LEAN_EXPORT lean_obj_res linger_write(uint32_t fd, b_lean_obj_arg bytes, size_t off,
                                    lean_obj_arg w) {
     (void)w;
     size_t len = lean_sarray_size(bytes);
@@ -134,9 +134,9 @@ LEAN_EXPORT lean_obj_res zmx_write(uint32_t fd, b_lean_obj_arg bytes, size_t off
     return lean_io_result_mk_ok(lean_box_uint64((uint64_t)(int64_t)n));
 }
 
-/* zmx_write_all : UInt32 -> @& ByteArray -> IO Unit
+/* linger_write_all : UInt32 -> @& ByteArray -> IO Unit
  * Blocking full write for fds we own end-to-end (client's stdout). */
-LEAN_EXPORT lean_obj_res zmx_write_all(uint32_t fd, b_lean_obj_arg bytes,
+LEAN_EXPORT lean_obj_res linger_write_all(uint32_t fd, b_lean_obj_arg bytes,
                                        lean_obj_arg w) {
     (void)w;
     size_t len = lean_sarray_size(bytes), off = 0;
@@ -154,10 +154,10 @@ LEAN_EXPORT lean_obj_res zmx_write_all(uint32_t fd, b_lean_obj_arg bytes,
 /* -------------------------------------------------------------------- */
 /* poll                                                                  */
 
-/* zmx_poll : @& Array UInt32 -> @& Array UInt32 -> Int32 -> IO (Array UInt32)
+/* linger_poll : @& Array UInt32 -> @& Array UInt32 -> Int32 -> IO (Array UInt32)
  * fds and requested-events arrays (same length), timeout in ms (<0 =
  * infinite). Returns revents per fd; all-zero on EINTR or timeout. */
-LEAN_EXPORT lean_obj_res zmx_poll(b_lean_obj_arg fds, b_lean_obj_arg events,
+LEAN_EXPORT lean_obj_res linger_poll(b_lean_obj_arg fds, b_lean_obj_arg events,
                                   int32_t timeout_ms, lean_obj_arg w) {
     (void)w;
     size_t n = lean_array_size(fds);
@@ -185,7 +185,7 @@ LEAN_EXPORT lean_obj_res zmx_poll(b_lean_obj_arg fds, b_lean_obj_arg events,
 /* -------------------------------------------------------------------- */
 /* pty                                                                   */
 
-/* zmx_spawn_pty : UInt32 -> UInt32 -> @& String -> @& String
+/* linger_spawn_pty : UInt32 -> UInt32 -> @& String -> @& String
  *                 -> @& Array String -> @& Array String -> IO UInt64
  * open a pty and fork+execvp a child on its slave. Returns
  * pid<<32 | masterFd. cwd "" = inherit. extraEnv entries are "K=V".
@@ -196,7 +196,7 @@ LEAN_EXPORT lean_obj_res zmx_poll(b_lean_obj_arg fds, b_lean_obj_arg events,
  * modern glibc (>= 2.34) folds into libc with no link stub — so
  * -lutil is unportable. posix_openpt/grantpt/unlockpt/ptsname/setsid/
  * TIOCSCTTY are all plain libc and do exactly what forkpty wraps. */
-LEAN_EXPORT lean_obj_res zmx_spawn_pty(uint32_t cols, uint32_t rows,
+LEAN_EXPORT lean_obj_res linger_spawn_pty(uint32_t cols, uint32_t rows,
                                        b_lean_obj_arg cwd, b_lean_obj_arg prog,
                                        b_lean_obj_arg args, b_lean_obj_arg extra_env,
                                        lean_obj_arg w) {
@@ -268,8 +268,8 @@ LEAN_EXPORT lean_obj_res zmx_spawn_pty(uint32_t cols, uint32_t rows,
         lean_box_uint64(((uint64_t)(uint32_t)pid << 32) | (uint32_t)master));
 }
 
-/* zmx_winsize_get : UInt32 -> IO UInt64   (cols<<32 | rows) */
-LEAN_EXPORT lean_obj_res zmx_winsize_get(uint32_t fd, lean_obj_arg w) {
+/* linger_winsize_get : UInt32 -> IO UInt64   (cols<<32 | rows) */
+LEAN_EXPORT lean_obj_res linger_winsize_get(uint32_t fd, lean_obj_arg w) {
     (void)w;
     struct winsize ws;
     if (ioctl((int)fd, TIOCGWINSZ, &ws) < 0) return io_err("TIOCGWINSZ");
@@ -277,9 +277,9 @@ LEAN_EXPORT lean_obj_res zmx_winsize_get(uint32_t fd, lean_obj_arg w) {
         lean_box_uint64(((uint64_t)ws.ws_col << 32) | ws.ws_row));
 }
 
-/* zmx_winsize_set : UInt32 -> UInt32 -> UInt32 -> IO Unit
+/* linger_winsize_set : UInt32 -> UInt32 -> UInt32 -> IO Unit
  * On a pty master this also delivers SIGWINCH to the foreground pgrp. */
-LEAN_EXPORT lean_obj_res zmx_winsize_set(uint32_t fd, uint32_t cols, uint32_t rows,
+LEAN_EXPORT lean_obj_res linger_winsize_set(uint32_t fd, uint32_t cols, uint32_t rows,
                                          lean_obj_arg w) {
     (void)w;
     struct winsize ws;
@@ -293,9 +293,9 @@ LEAN_EXPORT lean_obj_res zmx_winsize_set(uint32_t fd, uint32_t cols, uint32_t ro
 /* -------------------------------------------------------------------- */
 /* termios                                                               */
 
-/* zmx_term_raw : UInt32 -> IO ByteArray
+/* linger_term_raw : UInt32 -> IO ByteArray
  * cfmakeraw the fd; returns the prior termios as opaque bytes. */
-LEAN_EXPORT lean_obj_res zmx_term_raw(uint32_t fd, lean_obj_arg w) {
+LEAN_EXPORT lean_obj_res linger_term_raw(uint32_t fd, lean_obj_arg w) {
     (void)w;
     struct termios old, raw;
     if (tcgetattr((int)fd, &old) < 0) return io_err("tcgetattr");
@@ -309,8 +309,8 @@ LEAN_EXPORT lean_obj_res zmx_term_raw(uint32_t fd, lean_obj_arg w) {
     return lean_io_result_mk_ok(arr);
 }
 
-/* zmx_term_restore : UInt32 -> @& ByteArray -> IO Unit */
-LEAN_EXPORT lean_obj_res zmx_term_restore(uint32_t fd, b_lean_obj_arg saved,
+/* linger_term_restore : UInt32 -> @& ByteArray -> IO Unit */
+LEAN_EXPORT lean_obj_res linger_term_restore(uint32_t fd, b_lean_obj_arg saved,
                                           lean_obj_arg w) {
     (void)w;
     if (lean_sarray_size(saved) != sizeof(struct termios))
@@ -334,8 +334,8 @@ static int fill_sockaddr(const char *path, struct sockaddr_un *sa) {
     return 0;
 }
 
-/* zmx_unix_listen : @& String -> IO UInt32  (caller unlinks stale paths) */
-LEAN_EXPORT lean_obj_res zmx_unix_listen(b_lean_obj_arg path, lean_obj_arg w) {
+/* linger_unix_listen : @& String -> IO UInt32  (caller unlinks stale paths) */
+LEAN_EXPORT lean_obj_res linger_unix_listen(b_lean_obj_arg path, lean_obj_arg w) {
     (void)w;
     struct sockaddr_un sa;
     if (fill_sockaddr(lean_string_cstr(path), &sa) < 0)
@@ -354,10 +354,10 @@ LEAN_EXPORT lean_obj_res zmx_unix_listen(b_lean_obj_arg path, lean_obj_arg w) {
     return lean_io_result_mk_ok(lean_box_uint32((uint32_t)fd));
 }
 
-/* zmx_unix_connect : @& String -> IO Int64
+/* linger_unix_connect : @& String -> IO Int64
  * >=0: fd. <0: -errno (ENOENT / ECONNREFUSED are normal: no daemon /
  * stale socket; the caller decides). */
-LEAN_EXPORT lean_obj_res zmx_unix_connect(b_lean_obj_arg path, lean_obj_arg w) {
+LEAN_EXPORT lean_obj_res linger_unix_connect(b_lean_obj_arg path, lean_obj_arg w) {
     (void)w;
     struct sockaddr_un sa;
     if (fill_sockaddr(lean_string_cstr(path), &sa) < 0)
@@ -375,10 +375,10 @@ LEAN_EXPORT lean_obj_res zmx_unix_connect(b_lean_obj_arg path, lean_obj_arg w) {
     return lean_io_result_mk_ok(lean_box_uint64((uint64_t)(int64_t)fd));
 }
 
-/* zmx_accept : UInt32 -> IO Int64
+/* linger_accept : UInt32 -> IO Int64
  * >=0: connection fd. -1: nothing to accept (EAGAIN -- listen fd is
  * nonblocking to close the poll/accept race). EINTR retried. */
-LEAN_EXPORT lean_obj_res zmx_accept(uint32_t fd, lean_obj_arg w) {
+LEAN_EXPORT lean_obj_res linger_accept(uint32_t fd, lean_obj_arg w) {
     (void)w;
     int c;
     do { c = accept4((int)fd, NULL, NULL, SOCK_CLOEXEC); }
@@ -391,7 +391,7 @@ LEAN_EXPORT lean_obj_res zmx_accept(uint32_t fd, lean_obj_arg w) {
     return lean_io_result_mk_ok(lean_box_uint64((uint64_t)(int64_t)c));
 }
 
-/* zmx_flock : @& String -> IO Int64
+/* linger_flock : @& String -> IO Int64
  * Exclusive, non-blocking lock on `path` (created 0600). Returns the
  * held fd (>= 0) or -1 if someone else holds it.
  *
@@ -402,7 +402,7 @@ LEAN_EXPORT lean_obj_res zmx_accept(uint32_t fd, lean_obj_arg w) {
  * the lock, and must NOT unlink the lock file -- unlinking would let a
  * second process create a fresh inode and lock that while we still hold
  * the old one. */
-LEAN_EXPORT lean_obj_res zmx_flock(b_lean_obj_arg path, lean_obj_arg w) {
+LEAN_EXPORT lean_obj_res linger_flock(b_lean_obj_arg path, lean_obj_arg w) {
     (void)w;
     int fd = open(lean_string_cstr(path), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
     if (fd < 0) return io_err("open(lockfile)");
@@ -421,10 +421,10 @@ LEAN_EXPORT lean_obj_res zmx_flock(b_lean_obj_arg path, lean_obj_arg w) {
 /* -------------------------------------------------------------------- */
 /* processes                                                             */
 
-/* zmx_spawn_detached : @& String -> @& Array String -> @& String -> IO Unit
+/* linger_spawn_detached : @& String -> @& Array String -> @& String -> IO Unit
  * Double-fork + setsid; grandchild execvp's with stdio on logPath
  * (append, 0600; /dev/null if logPath == ""). No zombie remains. */
-LEAN_EXPORT lean_obj_res zmx_spawn_detached(b_lean_obj_arg prog, b_lean_obj_arg args,
+LEAN_EXPORT lean_obj_res linger_spawn_detached(b_lean_obj_arg prog, b_lean_obj_arg args,
                                             b_lean_obj_arg log_path, lean_obj_arg w) {
     (void)w;
     size_t nargs = lean_array_size(args);
@@ -464,8 +464,8 @@ LEAN_EXPORT lean_obj_res zmx_spawn_detached(b_lean_obj_arg prog, b_lean_obj_arg 
     return io_ok_unit();
 }
 
-/* zmx_exec : @& String -> @& Array String -> IO Unit  (replaces the process) */
-LEAN_EXPORT lean_obj_res zmx_exec(b_lean_obj_arg prog, b_lean_obj_arg args,
+/* linger_exec : @& String -> @& Array String -> IO Unit  (replaces the process) */
+LEAN_EXPORT lean_obj_res linger_exec(b_lean_obj_arg prog, b_lean_obj_arg args,
                                   lean_obj_arg w) {
     (void)w;
     size_t nargs = lean_array_size(args);
@@ -479,24 +479,24 @@ LEAN_EXPORT lean_obj_res zmx_exec(b_lean_obj_arg prog, b_lean_obj_arg args,
     return io_err("execvp");
 }
 
-/* zmx_kill : UInt32 -> UInt32 -> IO Unit  (ESRCH is not an error) */
-LEAN_EXPORT lean_obj_res zmx_kill(uint32_t pid, uint32_t sig, lean_obj_arg w) {
+/* linger_kill : UInt32 -> UInt32 -> IO Unit  (ESRCH is not an error) */
+LEAN_EXPORT lean_obj_res linger_kill(uint32_t pid, uint32_t sig, lean_obj_arg w) {
     (void)w;
     if (kill((pid_t)pid, (int)sig) < 0 && errno != ESRCH) return io_err("kill");
     return io_ok_unit();
 }
 
-/* zmx_alive : UInt32 -> IO Bool  (kill(pid, 0)) */
-LEAN_EXPORT lean_obj_res zmx_alive(uint32_t pid, lean_obj_arg w) {
+/* linger_alive : UInt32 -> IO Bool  (kill(pid, 0)) */
+LEAN_EXPORT lean_obj_res linger_alive(uint32_t pid, lean_obj_arg w) {
     (void)w;
     int r = kill((pid_t)pid, 0);
     return lean_io_result_mk_ok(lean_box(r == 0 ? 1 : 0));
 }
 
-/* zmx_waitpid_nohang : UInt32 -> IO Int64
+/* linger_waitpid_nohang : UInt32 -> IO Int64
  * -1: still running (or not our child). >=0: exit status byte
  * (128+sig if signalled), reaping the zombie. */
-LEAN_EXPORT lean_obj_res zmx_waitpid_nohang(uint32_t pid, lean_obj_arg w) {
+LEAN_EXPORT lean_obj_res linger_waitpid_nohang(uint32_t pid, lean_obj_arg w) {
     (void)w;
     int status;
     pid_t r;
@@ -508,7 +508,7 @@ LEAN_EXPORT lean_obj_res zmx_waitpid_nohang(uint32_t pid, lean_obj_arg w) {
         else if (WIFSIGNALED(status)) out = 128 + WTERMSIG(status);
         else out = -1;
     } else if (r < 0 && errno == ECHILD) {
-        out = -2; /* not our child / already reaped: caller checks zmx_alive */
+        out = -2; /* not our child / already reaped: caller checks linger_alive */
     }
     return lean_io_result_mk_ok(lean_box_uint64((uint64_t)out));
 }
@@ -518,24 +518,24 @@ LEAN_EXPORT lean_obj_res zmx_waitpid_nohang(uint32_t pid, lean_obj_arg w) {
 
 /* getpid, chmod, and CLOCK_MONOTONIC ms are Lean-core primitives
  * (IO.Process.getPID, IO.Prim.setAccessRights, IO.monoMsNow), so they
- * are not wrapped here — see Zmx/Posix.lean. */
+ * are not wrapped here — see Linger/Posix.lean. */
 
-/* zmx_getuid : IO UInt32 */
-LEAN_EXPORT lean_obj_res zmx_getuid(lean_obj_arg w) {
+/* linger_getuid : IO UInt32 */
+LEAN_EXPORT lean_obj_res linger_getuid(lean_obj_arg w) {
     (void)w;
     return lean_io_result_mk_ok(lean_box_uint32((uint32_t)getuid()));
 }
 
-/* zmx_isatty : UInt32 -> IO Bool */
-LEAN_EXPORT lean_obj_res zmx_isatty(uint32_t fd, lean_obj_arg w) {
+/* linger_isatty : UInt32 -> IO Bool */
+LEAN_EXPORT lean_obj_res linger_isatty(uint32_t fd, lean_obj_arg w) {
     (void)w;
     return lean_io_result_mk_ok(lean_box(isatty((int)fd) == 1 ? 1 : 0));
 }
 
-/* zmx_getcwd_of : UInt32 -> IO String
+/* linger_getcwd_of : UInt32 -> IO String
  * /proc/<pid>/cwd -- where the session's shell currently sits, for
  * checkpointing. Falls back to "" when unreadable. */
-LEAN_EXPORT lean_obj_res zmx_getcwd_of(uint32_t pid, lean_obj_arg w) {
+LEAN_EXPORT lean_obj_res linger_getcwd_of(uint32_t pid, lean_obj_arg w) {
     (void)w;
     char link[64], buf[4096];
     snprintf(link, sizeof link, "/proc/%u/cwd", pid);
@@ -545,8 +545,8 @@ LEAN_EXPORT lean_obj_res zmx_getcwd_of(uint32_t pid, lean_obj_arg w) {
     return lean_io_result_mk_ok(lean_mk_string(buf));
 }
 
-/* zmx_gethostname : IO String */
-LEAN_EXPORT lean_obj_res zmx_gethostname(lean_obj_arg w) {
+/* linger_gethostname : IO String */
+LEAN_EXPORT lean_obj_res linger_gethostname(lean_obj_arg w) {
     (void)w;
     char buf[256];
     if (gethostname(buf, sizeof buf) < 0) buf[0] = '\0';
@@ -554,9 +554,9 @@ LEAN_EXPORT lean_obj_res zmx_gethostname(lean_obj_arg w) {
     return lean_io_result_mk_ok(lean_mk_string(buf));
 }
 
-/* zmx_realtime_s : IO UInt64  (unix epoch seconds; Lean core has no
+/* linger_realtime_s : IO UInt64  (unix epoch seconds; Lean core has no
  * wall clock, so this one stays a shim call) */
-LEAN_EXPORT lean_obj_res zmx_realtime_s(lean_obj_arg w) {
+LEAN_EXPORT lean_obj_res linger_realtime_s(lean_obj_arg w) {
     (void)w;
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);

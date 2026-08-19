@@ -1,4 +1,4 @@
-import Zmx.Core.Terminal
+import Linger.Core.Terminal
 /-! # Terminal mediator behavior tests
 
 The theorem layer proves stream laws. These fixtures pin every row of the
@@ -6,9 +6,9 @@ normative profile, every possible chunk split, cap overflow, incomplete-prefix
 flushes, and graphics passthrough with query-looking payload bytes.
 -/
 
-namespace Zmx.Core.Terminal.Tests
+namespace Linger.Core.Terminal.Tests
 
-open Zmx.Core.Vt Zmx.Core.Render Zmx.Core.Terminal
+open Linger.Core.Vt Linger.Core.Render Linger.Core.Terminal
 
 structure OwnedCase where
   request : Bytes
@@ -155,4 +155,4 @@ example : (feed profileVt .ground evilXtget).replies.contains 0x0A = false := by
 /-- Non-vacuity: the raw payload really did contain the injected CR. -/
 example : evilXtget.contains 0x0D = true := by native_decide
 
-end Zmx.Core.Terminal.Tests
+end Linger.Core.Terminal.Tests

@@ -1,16 +1,16 @@
-import Zmx.Core.Buf
+import Linger.Core.Buf
 /-! # §Bound, the runtime half — the daemon's byte queues, proved
 
 `Session.run_wf` bounds the *machine*: no event trace grows a client roster, a
 label store or the screen. One layer below, the daemon's two byte queues were
 bounded only by code review — `THEOREMS.md`'s §Bound bullet said so in as many
-words. These are that bullet, turned into theorems about `Zmx.Core.Buf`.
+words. These are that bullet, turned into theorems about `Linger.Core.Buf`.
 
-**What is proved here is the arithmetic, not the daemon.** `Zmx/Runtime/*` is
+**What is proved here is the arithmetic, not the daemon.** `Linger/Runtime/*` is
 `IO`; no theorem can see that it calls these functions rather than open-coding the
 same sums. Two things carry that gap: `Buf.bytes` is `private`, so the runtime
 cannot *read* the representation, and every buffer arithmetic needs to read; and
-`tests/e2e.sh` greps that `Zmx/Runtime/*` declares no byte buffer of its own — a
+`tests/e2e.sh` greps that `Linger/Runtime/*` declares no byte buffer of its own — a
 source-tree property, and therefore a grep. Anyone who reads this file as "the
 runtime is proved" is overclaiming.
 
@@ -30,7 +30,7 @@ says to move the definition, so the definition moved. `bufNoRetain` is where tha
 shows up as a claim.
 -/
 
-namespace Zmx.Core.Buf
+namespace Linger.Core.Buf
 
 /-! ## The bridge -/
 
@@ -112,4 +112,4 @@ sanctioned read of the representation, so it is the one place a mismatch between
 "what we think is queued" and "what goes out" could hide. -/
 theorem writeFrom_owed (b : Buf) : writeFrom b = owed b := rfl
 
-end Zmx.Core.Buf
+end Linger.Core.Buf

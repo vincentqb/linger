@@ -1,4 +1,4 @@
-import Zmx.Core.Name
+import Linger.Core.Name
 /-! # §Claim — mutual exclusion, relative to exactly one assumption
 
 Can an *advisory* lock give us a theorem? Yes, but only a conditional
@@ -25,7 +25,7 @@ kernel ones, so they are reviewable and testable:
 stale socket, bind a new one — if it holds the lock. The theorem is
 that the two together give at most one owner of a session name.
 
-Scope: this is a model of the claim sequence in `Zmx.Runtime.Daemon.serve`,
+Scope: this is a model of the claim sequence in `Linger.Runtime.Daemon.serve`,
 not an extraction of it. The correspondence is by inspection (four
 lines of `serve`), and it is pinned from the outside by
 `tests/robust_test.py`, which races eight daemons over a stale socket
@@ -34,7 +34,7 @@ trust boundary explicit and would catch a reordering — not that it
 verifies the runtime.
 -/
 
-namespace Zmx.Core.Claim
+namespace Linger.Core.Claim
 
 /-- What an agent can do to a session name. -/
 inductive Act where
@@ -127,4 +127,4 @@ theorem ourClaim_no_early_mutation :
   daemons, which is the whole population that claims names.
 -/
 
-end Zmx.Core.Claim
+end Linger.Core.Claim

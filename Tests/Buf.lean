@@ -1,4 +1,4 @@
-import Zmx.Core.Buf
+import Linger.Core.Buf
 /-! # Buf fixtures — the caps and the no-retention property, evaluated
 
 `Theorems/Buf.lean` proves these for all inputs; these evaluate them on concrete
@@ -10,9 +10,9 @@ transient decode garbage. These reduce, so they cannot be noisy.
 `native_decide` is allowed here (it is banned only in `Theorems/`).
 -/
 
-namespace Zmx.Core.Buf.Tests
+namespace Linger.Core.Buf.Tests
 
-open Zmx.Core.Buf
+open Linger.Core.Buf
 
 def bytes (n : Nat) : ByteArray := ByteArray.mk (Array.replicate n 0x61)
 
@@ -54,4 +54,4 @@ that crossed the cap is queued at the moment of the decision. That asymmetry wit
 example : (bufEnqueue 30 {} (bytes 40)).2 = true := by native_decide
 example : owedLen (bufEnqueue 30 {} (bytes 40)).1 = 40 := by native_decide
 
-end Zmx.Core.Buf.Tests
+end Linger.Core.Buf.Tests

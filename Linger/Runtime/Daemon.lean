@@ -1,7 +1,7 @@
-import Zmx.Posix
-import Zmx.Core.Session
-import Zmx.Runtime.Paths
-/-! # Zmx.Runtime.Daemon — the poll loop around `Session.step`
+import Linger.Posix
+import Linger.Core.Session
+import Linger.Runtime.Paths
+/-! # Linger.Runtime.Daemon — the poll loop around `Session.step`
 
 All decisions live in the pure machine; this file only:
 * turns fd readiness into `Session.Event`s,
@@ -11,23 +11,23 @@ All decisions live in the pure machine; this file only:
   a child that stops reading has its input dropped at `ptyInCap` (there is
   nothing to disconnect — the child is the session).
 
-The queues themselves are **not** this file's: they are `Zmx.Core.Buf`, whose
+The queues themselves are **not** this file's: they are `Linger.Core.Buf`, whose
 `Theorems/Buf.lean` proves the caps and that nothing written is retained. That is
 the runtime half of §Bound, and it used to be a paragraph saying "not proved".
 What this file still owns is *when* to enqueue and how to react to a short write,
 which is `IO` and therefore gated rather than proved: `tests/e2e.sh` checks that
-`Zmx/Runtime/*` declares no byte buffer of its own, because no theorem can see
+`Linger/Runtime/*` declares no byte buffer of its own, because no theorem can see
 that this file calls those functions instead of open-coding the same sums.
 
-Checkpoint effects are wired to hooks filled by `Zmx.Runtime.Resume`
+Checkpoint effects are wired to hooks filled by `Linger.Runtime.Resume`
 (spec step 7): the daemon knows *when*, that module knows *what*.
 -/
 
-namespace Zmx.Runtime.Daemon
+namespace Linger.Runtime.Daemon
 
-open Zmx.Posix
-open Zmx.Core.Session (State Event Effect step)
-open Zmx.Core.Buf (Buf owedLen bufOffer bufEnqueue bufAdvance)
+open Linger.Posix
+open Linger.Core.Session (State Event Effect step)
+open Linger.Core.Buf (Buf owedLen bufOffer bufEnqueue bufAdvance)
 
 /-- A stopped-reading client is cut here (runtime §Bound). -/
 def outbufCap : Nat := 4194304
@@ -135,7 +135,7 @@ def runEffect (rt : Rt) (eff : Effect) : IO (Rt × List Event) := do
     match rt.conn? (UInt32.ofNat id) with
     | none => return (rt, [])
     | some c =>
-      let bytes := ByteArray.mk (Zmx.Core.Wire.encode m).toArray
+      let bytes := ByteArray.mk (Linger.Core.Wire.encode m).toArray
       let (q, cut) := bufEnqueue outbufCap c.out bytes
       let c := { c with out := q }
       if cut then
@@ -260,8 +260,8 @@ checkpoint: prior screen + labels (cwd was already consumed by the
 spawner). -/
 def serve (name : String) (cwd : String) (argv : List String)
     (saveCkpt : State → IO Unit) (dropCkpt : IO Unit)
-    (restore : Option (Zmx.Core.Vt.Vt × List (String × String))) : IO Unit := do
-  Zmx.Posix.init
+    (restore : Option (Linger.Core.Vt.Vt × List (String × String))) : IO Unit := do
+  Linger.Posix.init
   ignoreSighup
   let sockPath ← Paths.socketPath name
   -- Claim the *name* before touching the socket path. Without this the
@@ -301,7 +301,7 @@ def serve (name : String) (cwd : String) (argv : List String)
   -- (`Theorems/Session.lean`'s `onMsg_attach_same_size_vt`): a client of the
   -- session's own size now finds `vt` already that size, so no `Vt.resize`
   -- fires and the scroll region and tab ruler survive the reattach.
-  let vt0 := (restore.map (·.1)).getD (Zmx.Core.Vt.Vt.init 80 24)
+  let vt0 := (restore.map (·.1)).getD (Linger.Core.Vt.Vt.init 80 24)
   -- Clamp only the two numbers handed to the syscall, not `vt0` itself: a
   -- `Vt.resize` here would reset the scroll region and tab ruler (that is
   -- restore-conformance ledger item 1, re-introduced on the resume path where
@@ -312,8 +312,8 @@ def serve (name : String) (cwd : String) (argv : List String)
   -- live session is held to. A pathological checkpoint keeps a mismatched
   -- model, exactly as it did at the old fixed 80×24 — the alternative is
   -- mutating the restored screen.
-  let (pid, ptyFd) ← spawnPty (UInt32.ofNat (Zmx.Core.Vt.clampDim vt0.cols))
-    (UInt32.ofNat (Zmx.Core.Vt.clampDim vt0.rows)) cwd prog args
+  let (pid, ptyFd) ← spawnPty (UInt32.ofNat (Linger.Core.Vt.clampDim vt0.cols))
+    (UInt32.ofNat (Linger.Core.Vt.clampDim vt0.rows)) cwd prog args
     #[s!"LINGER_SESSION={name}",
       "TERM=xterm-256color",
       "TERM_PROGRAM=linger",
@@ -347,4 +347,4 @@ def serve (name : String) (cwd : String) (argv : List String)
   -- still held the old one)
   let _ := lockFd
 
-end Zmx.Runtime.Daemon
+end Linger.Runtime.Daemon

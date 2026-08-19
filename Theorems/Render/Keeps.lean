@@ -8,9 +8,9 @@ Split out of `Theorems/Render.lean`. -/
 
 
 
-namespace Zmx.Core.Render
+namespace Linger.Core.Render
 
-open Zmx.Core.Vt
+open Linger.Core.Vt
 /-! ## §Replay stage 3d — everything after the repaint leaves the screen alone
 
 `restore` paints the grid and then tells the terminal the rest: scroll region,
@@ -298,13 +298,13 @@ theorem keeps_csiPriv (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final) (h2 : fina
     unfold csiPriv; simp]
   exact keeps_csi_priv_seq _ _ (paramBytes_digits n) h1 h2 hgrid
 
-end Zmx.Core.Render
+end Linger.Core.Render
 
 
 
-namespace Zmx.Core.Render
+namespace Linger.Core.Render
 
-open Zmx.Core.Vt
+open Linger.Core.Vt
 /-! ### The SGR pen, and the one mode fact the replay turns on -/
 
 theorem keeps_sgrOf (codes : List Nat) : Keeps (sgrOf codes) := by
@@ -352,13 +352,13 @@ theorem grid_setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool)
   · split
     all_goals rfl
 
-end Zmx.Core.Render
+end Linger.Core.Render
 
 
 
-namespace Zmx.Core.Render
+namespace Linger.Core.Render
 
-open Zmx.Core.Vt
+open Linger.Core.Vt
 /-! ### The non-CSI tail
 
 `ESC`-singles (DECSC, HTS, app-keypad), charset designations and the shift-out
@@ -480,13 +480,13 @@ theorem keeps_charsetAnsi (v : Vt) : Keeps (charsetAnsi v) := by
       (fun _ => keeps_escCharset 0x29 0x42 (by decide)))).append ?_
   exact Keeps.ite (fun _ => keeps_shiftOut) (fun _ => Keeps.nil)
 
-end Zmx.Core.Render
+end Linger.Core.Render
 
 
 
-namespace Zmx.Core.Render
+namespace Linger.Core.Render
 
-open Zmx.Core.Vt
+open Linger.Core.Vt
 /-! ### The window title
 
 An OSC is the one tail construct with an unbounded payload, so it is the one that
@@ -589,13 +589,13 @@ theorem keeps_titleAnsi (v : Vt) : Keeps (titleAnsi v) := by
   unfold titleAnsi
   exact keeps_osc _
 
-end Zmx.Core.Render
+end Linger.Core.Render
 
 
 
-namespace Zmx.Core.Render
+namespace Linger.Core.Render
 
-open Zmx.Core.Vt
+open Linger.Core.Vt
 /-! ### The digit bridge, and the last tail stage
 
 `modesAnsi` is the one construct whose grid claim depends on *which number* it
@@ -772,13 +772,13 @@ theorem keeps_restoreTail (v : Vt) :
     (keeps_modesAnsi v)).append (keeps_charsetAnsi v)).append
     (keeps_penSgr v.pen)).append (keeps_cursorAnsi v))
 
-end Zmx.Core.Render
+end Linger.Core.Render
 
 
 
-namespace Zmx.Core.Render
+namespace Linger.Core.Render
 
-open Zmx.Core.Vt
+open Linger.Core.Vt
 /-! ### What is left that is not the repaint
 
 With the tail done, the only bytes in `restore` that may legitimately touch a cell
@@ -797,11 +797,11 @@ theorem keeps_park (y x : Nat) (p : Pen) : Keeps (penSgr p ++ csiNum2 y x 0x48) 
   (keeps_penSgr p).append
     (keeps_csiNum2 _ _ 0x48 (by decide) (by decide) grid_csiDispatch_cup)
 
-end Zmx.Core.Render
+end Linger.Core.Render
 
 
 
-namespace Zmx.Core.Vt
+namespace Linger.Core.Vt
 
 /-! ### The clear, framed
 
@@ -867,13 +867,13 @@ theorem eraseScreen_two_frame (v : Vt) :
   rw [eraseScreen_two_eq]
   exact foldl_erase_frame (fun y => y) (List.range v.rows) v
 
-end Zmx.Core.Vt
+end Linger.Core.Vt
 
 
 
-namespace Zmx.Core.Render
+namespace Linger.Core.Render
 
-open Zmx.Core.Vt
+open Linger.Core.Vt
 /-! ### `restore_grid`, reduced to the paint
 
 The tail is done, so the remaining obligation can be stated as a theorem rather than
@@ -904,11 +904,11 @@ theorem restore_grid_of_paint {v w : Vt}
   obtain ⟨-, -, hg⟩ := keeps_restoreTail v _ hps hun
   rw [hg, hpaint]
 
-end Zmx.Core.Render
+end Linger.Core.Render
 
 
 
-namespace Zmx.Core.Vt
+namespace Linger.Core.Vt
 
 /-! ### `Row.mend` is the identity on a row that needs no repair
 
@@ -984,4 +984,4 @@ definition is load-bearing but not that *this* lemma is. -/
 example : Row.mend #[{ base := 'x', marks := [], width := 2, pen := {} }]
     ≠ #[{ base := 'x', marks := [], width := 2, pen := {} }] := by decide
 
-end Zmx.Core.Vt
+end Linger.Core.Vt

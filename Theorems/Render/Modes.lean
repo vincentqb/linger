@@ -5,9 +5,9 @@ The lead-in that grounds any receiver, the hand-back's canonical modes
 (`leave_canonical`), `MMap` (modes-from-ground with per-chunk transforms), and the
 inbound value claims for the modes and the pen. Split out of
 `Theorems/Render.lean`. -/
-namespace Zmx.Core.Render
+namespace Linger.Core.Render
 
-open Zmx.Core.Vt
+open Linger.Core.Vt
 /-! ## `Sets` — what a chunk establishes, whatever the receiver was doing
 
 `Ends`, `Quiet` and `Keeps` all quantify over a receiver that starts in `ground`, and
@@ -49,13 +49,13 @@ theorem Sets.ite {α : Type} {P : Vt → α} {x : α} {c : Prop} [Decidable c] {
   · rw [if_pos h]; exact ha h
   · rw [if_neg h]; exact hb h
 
-end Zmx.Core.Render
+end Linger.Core.Render
 
 
 
-namespace Zmx.Core.Render
+namespace Linger.Core.Render
 
-open Zmx.Core.Vt
+open Linger.Core.Vt
 /-! ### The lead-in grounds any receiver
 
 `Ends`, `Quiet` and `Keeps` all assume the receiver starts in `ground`. That
@@ -324,7 +324,7 @@ theorem modes_csiDispatch_rm (v : Vt) (s : CsiState) (hi : s.ignore = false) :
 theorem frame_csi_marker_step {v : Vt} {s : CsiState} (hg : v.pstate = .csi s) :
     Frame (v.step 0x3F) = Frame v := by
   have hw : (v.abortUtf8 0x3F).pstate = PState.csi s := by
-    rw [Zmx.Core.Vt.ps_abortUtf8]; exact hg
+    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
   unfold Vt.step
   dsimp only
   rw [hw]
@@ -1116,4 +1116,4 @@ theorem restore_pen_any (v w : Vt) : (w.feed (restore v)).pen = v.pen := by
 
 
 
-end Zmx.Core.Render
+end Linger.Core.Render

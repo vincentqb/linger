@@ -1,4 +1,4 @@
-/-! # Zmx.Core.Name — session names that cannot escape their directory
+/-! # Linger.Core.Name — session names that cannot escape their directory
 
 A session name becomes a socket path (`<dir>/<name>.sock`) and a
 checkpoint path. §Name (THEOREMS.md): a sanitized name contains no
@@ -7,7 +7,7 @@ composed path stays inside the directory for ANY input string, local
 or arriving from a remote listing.
 -/
 
-namespace Zmx.Core.Name
+namespace Linger.Core.Name
 
 /-- Characters a name may contain: ASCII alphanumerics plus `-_.+`.
 `@` is deliberately excluded — it is reserved as the `name@host`
@@ -35,4 +35,4 @@ def Valid (s : String) : Prop :=
   s.toList.length > 0 ∧ s.toList.length ≤ maxLen ∧
   (∀ c ∈ s.toList, okChar c) ∧ s.toList.head? ≠ some '.'
 
-end Zmx.Core.Name
+end Linger.Core.Name

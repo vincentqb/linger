@@ -1,4 +1,4 @@
-import Zmx.Core.Session
+import Linger.Core.Session
 /-! # Session state-machine scenario tests
 
 Whole client conversations at the pure level: events in, effects out —
@@ -6,11 +6,11 @@ no sockets involved. Frames are built with the real `Wire.encode`, so
 these also exercise the per-client decoder path the daemon runs.
 -/
 
-namespace Zmx.Core.Session.Tests
+namespace Linger.Core.Session.Tests
 
-open Zmx.Core.Session
-open Zmx.Core.Terminal
-open Zmx.Core.Wire (Msg encode)
+open Linger.Core.Session
+open Linger.Core.Terminal
+open Linger.Core.Wire (Msg encode)
 
 def s0 : State := { vt := Vt.Vt.init 20 5, metaKv := [("name", "t")] }
 
@@ -18,7 +18,7 @@ def s0 : State := { vt := Vt.Vt.init 20 5, metaKv := [("name", "t")] }
 scenario below concretely pins its state threading + effect order),
 with the test-friendly argument order. -/
 def run (evs : List Event) (s : State := s0) : State × List Effect :=
-  Zmx.Core.Session.run s evs
+  Linger.Core.Session.run s evs
 
 def hasEffect (effs : List Effect) (p : Effect → Bool) : Bool := effs.any p
 
@@ -164,15 +164,15 @@ example :
      hasEffect effs (fun e => match e with | .send 9 (.exited 3) => true | _ => false))
       = true := by native_decide
 
-end Zmx.Core.Session.Tests
+end Linger.Core.Session.Tests
 
 
 namespace Abduco
 /-! Borrowed-from-abduco semantics (PLAN.md reference): read-only
 observers and newest-attacher-owns-the-size. -/
 
-open Zmx.Core.Session
-open Zmx.Core.Wire (Msg encode)
+open Linger.Core.Session
+open Linger.Core.Wire (Msg encode)
 
 /-- An observer (attach 0×0) sees output but its keys go nowhere. -/
 example :
@@ -238,9 +238,9 @@ example :
 
 end Abduco
 
-namespace Zmx.Core.Session.Tests
+namespace Linger.Core.Session.Tests
 
-open Zmx.Core.Session
+open Linger.Core.Session
 
 /-! ### §Row/§Status integrity — the forged listing record
 
@@ -277,4 +277,4 @@ example : (infoText forged).count 0x09 = (infoFields forged).length := by native
 /-- And the replacement really is in the value, so nothing was silently dropped. -/
 example : (infoText forged).any (· == 0xEF) = true := by native_decide
 
-end Zmx.Core.Session.Tests
+end Linger.Core.Session.Tests

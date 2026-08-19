@@ -1,6 +1,6 @@
-import Zmx.Posix
-import Zmx.Core.Name
-/-! # Zmx.Runtime.Paths — where sockets, checkpoints and logs live
+import Linger.Posix
+import Linger.Core.Name
+/-! # Linger.Runtime.Paths — where sockets, checkpoints and logs live
 
 Same resolution order as zmx:
 * sockets: `$LINGER_DIR` > `$XDG_RUNTIME_DIR/linger` > `/tmp/linger-$UID`
@@ -11,14 +11,14 @@ Every name passes `Name.sanitize` before touching a path (AGENTS.md
 rule; §Name is the theorem that makes it sufficient).
 -/
 
-namespace Zmx.Runtime.Paths
+namespace Linger.Runtime.Paths
 
-open Zmx.Core.Name (sanitize)
+open Linger.Core.Name (sanitize)
 
 def socketDir : IO String := do
   if let some d ← IO.getEnv "LINGER_DIR" then return d
   if let some d ← IO.getEnv "XDG_RUNTIME_DIR" then return s!"{d}/linger"
-  return s!"/tmp/linger-{← Zmx.Posix.getuid}"
+  return s!"/tmp/linger-{← Linger.Posix.getuid}"
 
 /-- Checkpoints and logs. The default is namespaced by hostname: a
 network-mounted `$HOME` is shared between machines, and two hosts each
@@ -29,14 +29,14 @@ anyway (different working tree, different process world). An explicit
 accident. -/
 def stateDir : IO String := do
   if let some d ← IO.getEnv "LINGER_DIR" then return d
-  let host := sanitize (← Zmx.Posix.gethostname)
+  let host := sanitize (← Linger.Posix.gethostname)
   if let some d ← IO.getEnv "XDG_STATE_HOME" then return s!"{d}/linger/{host}"
   let home := (← IO.getEnv "HOME").getD "/tmp"
   return s!"{home}/.local/state/linger/{host}"
 
 def ensureDir (d : String) : IO Unit := do
   IO.FS.createDirAll d
-  Zmx.Posix.chmod d 0o700
+  Linger.Posix.chmod d 0o700
 
 def socketPath (name : String) : IO String := do
   let d ← socketDir
@@ -48,7 +48,7 @@ def ckptPath (name : String) : IO String := do
   ensureDir d
   return s!"{d}/{sanitize name}.ckpt"
 
-/-- Name-ownership lock (see `Zmx.Posix.flock`). Lives beside the
+/-- Name-ownership lock (see `Linger.Posix.flock`). Lives beside the
 socket: same directory lifetime, same 0700 permissions. Never
 unlinked — a lock file that gets unlinked stops being a lock. -/
 def lockPath (name : String) : IO String := do
@@ -79,4 +79,4 @@ def listCkptNames : IO (List String) := do
     let n := e.fileName
     if n.endsWith ".ckpt" then some ((n.dropEnd 5).toString) else none)
 
-end Zmx.Runtime.Paths
+end Linger.Runtime.Paths

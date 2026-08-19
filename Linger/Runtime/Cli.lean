@@ -1,8 +1,8 @@
-import Zmx.Runtime.Daemon
-import Zmx.Runtime.Client
-import Zmx.Core.Remote
-import Zmx.Core.Listing
-/-! # Zmx.Runtime.Cli — argv dispatch
+import Linger.Runtime.Daemon
+import Linger.Runtime.Client
+import Linger.Core.Remote
+import Linger.Core.Listing
+/-! # Linger.Runtime.Cli — argv dispatch
 
 Verb surface mirrors zmx (attach is an upsert; one-shot verbs talk to a
 live daemon or say so). Bare `linger` — and `linger ls` — print a session
@@ -11,12 +11,12 @@ recipe in the README, or just `attach`). `__daemon` is the internal
 re-exec target of the detached spawn.
 -/
 
-namespace Zmx.Runtime.Cli
+namespace Linger.Runtime.Cli
 
-open Zmx.Posix
-open Zmx.Core.Wire (Msg)
-open Zmx.Runtime
-open Zmx.Core.Session (State)
+open Linger.Posix
+open Linger.Core.Wire (Msg)
+open Linger.Runtime
+open Linger.Core.Session (State)
 
 def version : String := "linger 0.1.0"
 
@@ -51,7 +51,7 @@ Detach key: ctrl-\\ (set LINGER_NO_DETACH_KEY to disable)."
 structure Hooks where
   save : String → State → IO Unit := fun _ _ => pure ()
   drop : String → IO Unit := fun _ => pure ()
-  load : String → IO (Option (Zmx.Core.Vt.Vt × String × List (String × String))) :=
+  load : String → IO (Option (Linger.Core.Vt.Vt × String × List (String × String))) :=
     fun _ => pure none
 
 def spawnDaemon (name cwd : String) (cmd : List String) : IO Unit := do
@@ -123,7 +123,7 @@ def queryInfo (name : String) : IO (Option (List (String × String))) := do
   | none => return none
   | some fd =>
     Client.sendMsg fd .info
-    let mut dec : Zmx.Core.Wire.Decoder := {}
+    let mut dec : Linger.Core.Wire.Decoder := {}
     -- Bounded, through the same proved queue the daemon uses. This loop's only
     -- exits are `.done`/`.err`/EOF/a 2000 ms *silence* timeout, so a peer that
     -- streams `infoReply` frames steadily never ends it — an unbounded
@@ -131,7 +131,7 @@ def queryInfo (name : String) : IO (Option (List (String × String))) := do
     -- `bufOffer` refuses whole frames past the cap (`Buf.bufOffer_bound`), so a
     -- hostile or broken daemon costs a truncated listing rather than the client's
     -- memory. An info reply is a few hundred bytes; 1 MiB is far above any real one.
-    let mut acc : Zmx.Core.Buf.Buf := {}
+    let mut acc : Linger.Core.Buf.Buf := {}
     let mut go := true
     while go do
       let revs ← poll #[fd] #[POLLIN] 2000
@@ -146,13 +146,13 @@ def queryInfo (name : String) : IO (Option (List (String × String))) := do
           for m in msgs do
             match m with
             | .infoReply payload =>
-              acc := (Zmx.Core.Buf.bufOffer infoReplyCap acc
+              acc := (Linger.Core.Buf.bufOffer infoReplyCap acc
                        (ByteArray.mk payload.toArray)).1
             | .done => go := false
             | .err _ => go := false
             | _ => pure ()
     close fd
-    let txt := String.fromUTF8? (Zmx.Core.Buf.writeFrom acc) |>.getD ""
+    let txt := String.fromUTF8? (Linger.Core.Buf.writeFrom acc) |>.getD ""
     return some <| txt.splitOn "\n" |>.filterMap (fun line =>
       match line.splitOn "\t" with
       | [k, v] => some (k, v)
@@ -176,7 +176,7 @@ def resolveRemotes (flag : Option (List String)) : IO (List String) := do
       else pure given
     let hosts := (raw.map (·.trimAscii.toString)).filter
       (fun h => !h.isEmpty && !h.startsWith "#")
-    match Zmx.Core.Remote.checkHosts hosts with
+    match Linger.Core.Remote.checkHosts hosts with
     | .ok l => return l
     | .error e => throw (IO.userError e)
 
@@ -194,7 +194,7 @@ def listRemote (host : String) : IO (List (String × Bool × String × String)) 
                   "--", host, "linger", "ls", "--porcelain"] }
     catch _ => pure { exitCode := 1, stdout := "", stderr := "" }
   if out.exitCode != 0 then return []
-  return (Zmx.Core.Remote.parse out.stdout).map
+  return (Linger.Core.Remote.parse out.stdout).map
     (fun r => (r.name, r.live, r.cmd, r.status))
 
 def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
@@ -213,10 +213,10 @@ def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
       -- the status column goes through `Listing.rowStatus`, so the two facts
       -- that decide whether a row is trustworthy (socket present, daemon
       -- answered) come from here and not from the reply -- §Row, extended
-      rows := rows ++ [Zmx.Core.Listing.rowFields name info
+      rows := rows ++ [Linger.Core.Listing.rowFields name info
         ++ [("state", "live"),
-            ("status", Zmx.Core.Status.name
-              (Zmx.Core.Listing.rowStatus (.live info)))]]
+            ("status", Linger.Core.Status.name
+              (Linger.Core.Listing.rowStatus (.live info)))]]
     | none =>
       -- connect() itself failed: nothing is listening, the file is stale
       try IO.FS.removeFile (← Paths.socketPath name) catch _ => pure ()
@@ -225,9 +225,9 @@ def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
       -- through `rowFields` like the live rows, so the displayed name is the
       -- sanitized one `attach` accepts and §Row (`rowFields_name`) covers it —
       -- a checkpoint filename is not trusted to name its own row.
-      rows := rows ++ [Zmx.Core.Listing.rowFields name
+      rows := rows ++ [Linger.Core.Listing.rowFields name
         [("state", "resumable"),
-         ("status", Zmx.Core.Status.name (Zmx.Core.Listing.rowStatus .stale))]]
+         ("status", Linger.Core.Status.name (Linger.Core.Listing.rowStatus .stale))]]
   -- remotes last (per host), so a slow ssh can't reorder local rows
   for host in remotes do
     for (rname, rlive, rcmd, rstatus) in ← listRemote host do
@@ -235,8 +235,8 @@ def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
       -- not forward them), so it reports liveness only
       rows := rows ++ [[("name", s!"{rname}@{host}"), ("cmd", rcmd),
                         ("state", if rlive then "live" else "resumable"),
-                        ("status", Zmx.Core.Status.name
-                          (Zmx.Core.Listing.rowStatus (.remote rlive rstatus)))]]
+                        ("status", Linger.Core.Status.name
+                          (Linger.Core.Listing.rowStatus (.remote rlive rstatus)))]]
   if porcelain then
     for info in rows do
       for (k, v) in info do
@@ -249,7 +249,7 @@ def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
     -- terminal as an escape sequence (`Theorems/Listing.lean`
     -- `humanListing_printable`), the columns align, and there is no trailing
     -- whitespace. The empty-state line is part of it.
-    writeAll stdoutFd (ByteArray.mk (Zmx.Core.Listing.humanListing rows).toArray)
+    writeAll stdoutFd (ByteArray.mk (Linger.Core.Listing.humanListing rows).toArray)
   return 0
 
 /-- Parse the `ls` argument set: an optional `--porcelain` and an
@@ -317,7 +317,7 @@ def overview (args : List String) : IO UInt32 := do
     return 2
 
 def main (hooks : Hooks) (args : List String) : IO UInt32 := do
-  Zmx.Posix.init
+  Linger.Posix.init
   match args with
   | "__daemon" :: name :: cwd :: cmd =>
     let restore := (← hooks.load name).map (fun (vt, _, labels) => (vt, labels))
@@ -387,4 +387,4 @@ def main (hooks : Hooks) (args : List String) : IO UInt32 := do
   | "ls" :: rest | "list" :: rest | "l" :: rest => overview rest
   | other => overview other
 
-end Zmx.Runtime.Cli
+end Linger.Runtime.Cli

@@ -6,9 +6,9 @@ import Theorems.Render.Row
 state, and the composition to `restore_grid_any` on both screens. Split out of
 `Theorems/Render.lean`. -/
 
-namespace Zmx.Core.Render
+namespace Linger.Core.Render
 
-open Zmx.Core.Vt
+open Linger.Core.Vt
 
 /-! ## Step 4 — the grid
 
@@ -1767,4 +1767,4 @@ theorem restore_grid_reachable (v w : Vt)
   · exact (renderable_of_liveReachable hv).main.1
 
 
-end Zmx.Core.Render
+end Linger.Core.Render

@@ -1,5 +1,5 @@
-import Zmx.Core.Vt
-import Zmx.Core.Render
+import Linger.Core.Vt
+import Linger.Core.Render
 /-! # Vt behavior tests
 
 The theorems say the emulator cannot crash or grow; these pin what it
@@ -8,9 +8,9 @@ emit. All `native_decide`: `Vt` ops are data-structure-heavy and the
 kernel evaluator would crawl.
 -/
 
-namespace Zmx.Core.Vt.Tests
+namespace Linger.Core.Vt.Tests
 
-open Zmx.Core.Vt Zmx.Core.Render
+open Linger.Core.Vt Linger.Core.Render
 
 def feedStr (v : Vt) (s : String) : Vt := v.feedBytes s.toUTF8
 
@@ -201,4 +201,4 @@ example : (let v := screen 5 2 "1\r\n2\r\n3\r\n4"
            String.fromUTF8! ⟨(history v false).toArray⟩ == "1\n2\n3\n4\n") = true := by
   native_decide
 
-end Zmx.Core.Vt.Tests
+end Linger.Core.Vt.Tests

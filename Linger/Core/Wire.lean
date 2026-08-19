@@ -1,4 +1,4 @@
-/-! # Zmx.Core.Wire — the client ↔ daemon protocol
+/-! # Linger.Core.Wire — the client ↔ daemon protocol
 
 One frame = 1 tag byte + 4 length bytes (LE u32) + payload. The codec
 works on `List UInt8` so the theorems in `Theorems/Wire.lean` are
@@ -12,10 +12,10 @@ Tensions carried here (see THEOREMS.md):
   oversize frame flips it into a sticky error state instead of growing.
 -/
 
-namespace Zmx.Core.Wire
+namespace Linger.Core.Wire
 
 /-- Largest payload a frame may carry. Reads from the OS are ≤ 64 KiB
-(`Zmx.Posix.read`), so honest senders stay far below; a frame claiming
+(`Linger.Posix.read`), so honest senders stay far below; a frame claiming
 more is either corruption or an attack, and §Bound turns it into a
 connection error rather than memory growth. -/
 def maxPayload : Nat := 262144
@@ -188,4 +188,4 @@ def Decoder.feedAll (d : Decoder) : List (List UInt8) → Decoder × List Msg
     let rest := r.1.feedAll cs
     (rest.1, r.2 ++ rest.2)
 
-end Zmx.Core.Wire
+end Linger.Core.Wire
