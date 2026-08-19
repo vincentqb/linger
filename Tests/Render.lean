@@ -661,6 +661,22 @@ def heavyRing : Vt := ringOf 40 24 (heavyRow 40) 300
 example : (decide ((sbRows heavyRing).size < heavyRing.sb.size)
     && (sbRows heavyRing).size == 174) = true := by native_decide
 
+/-- A row's identity, for the fixture below: `heavyRow i` puts `i` in its first
+cell's red channel, so a run of kept rows can be named. -/
+def fstFg (r : Row) : Nat :=
+  match (r.at 0).pen.fg with | .rgb a _ _ => a.toNat | _ => 999
+
+/-- **Which rows survived, asserted through `sbRows` itself.** The two `sbTake`
+anchors above spell the `.reverse` out in the fixture, so they *document* the trim
+rather than guard it: drop `sbRows`' own reverses and both still pass. This pins the
+identity of the kept run — the **newest** 174 of 300 (`i = 126…299`, so red channel
+126…43 after the `% 256` wrap), oldest-first. Dropping either reverse, or trimming
+the oldest end instead of the newest, moves these four numbers. -/
+example :
+    (((sbRows heavyRing).toList.map fstFg).take 2 == [126, 127]
+      && ((sbRows heavyRing).toList.map fstFg).reverse.take 2 == [43, 42]) = true := by
+  native_decide
+
 /-- The counted cost, and the emitted length of the whole reattach burst. The
 number is here rather than `sbReplayBytes` because the emitted stage is **not**
 bounded by the budget — only by the budget plus `2 * rows + 19`. -/

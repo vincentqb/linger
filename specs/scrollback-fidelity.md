@@ -3,9 +3,11 @@
 Status: active
 Updated: 2026-08-18
 Predecessors: `specs/restore-conformance.md` (complete — the screen, on both
-screens at every height), `specs/ledger-cleanup.md` (complete). This opens the
-successor both parked: `restore` repaints the screen and drops the history above
-it (`THEOREMS.md:45`, `Tests/Render.lean:22`).
+screens at every height), `specs/ledger-cleanup.md` (complete). This opened the
+successor both parked: `restore` repainted the screen and dropped the history above
+it. **Step 1 has since closed that** — the ring is emitted and the fixtures pin it
+cell-for-cell; what Steps 2-4 add is the *proof* (`restore_sb_any`), so the field is
+still on the fixtures in `THEOREMS.md`'s A5 row.
 
 ## Where this stands — read this first
 
@@ -13,7 +15,7 @@ it (`THEOREMS.md:45`, `Tests/Render.lean:22`).
 session's ring into the client's own scrollback, and the three flagship screen
 statements are byte-identical to what they were (checked line by line —
 `restore_grid_any_main`, `restore_grid_any_alt`, `restore_grid_any`,
-`restore_grid_reachable`, `Resume.resume_grid`). See "Step 1 — completion record"
+`restore_grid_reachable`, `Zmx.Core.resume_grid` (in `Theorems/Resume.lean`; there is no `Resume` namespace)). See "Step 1 — completion record"
 below for what was built, what the spec had wrong, and the two decisions taken
 against its recommendation.
 
@@ -54,7 +56,7 @@ its no-scroll argument is `Y + rs.length = rows` plus `crlf_step` (`:653`) under
 `hy : v.cursor.y < v.bot`. **Painting `sbRows v ++ v.grid` as one tall array makes
 the painted-row count exceed the screen height and deletes that argument** — and
 with it `restore_grid_any_main` (`:1345`), `restore_grid_any` (`:1648`),
-`restore_grid_reachable`, `Resume.resume_grid`. So the history push is its own
+`restore_grid_reachable`, `Zmx.Core.resume_grid`. So the history push is its own
 stage, *before* the screen paint, and the screen paint is byte-for-byte unchanged.
 
 Scope, named so it is a decision and not a side effect: **text rows only**. A
@@ -89,7 +91,7 @@ this reads as re-opening it.
    `(scrollbackAnsi v).length ≤ Σ sbRowCost (sbRows v) + 2 * v.rows + 19`. That
    bound is sharp — attained with zero slack — and `sbReplayBytes` alone is **not**
    a bound on emitted bytes (measured overshoot: 262153 against 262144).
-4. `restore_grid_any`, `restore_grid_reachable` and `Resume.resume_grid` compile
+4. `restore_grid_any`, `restore_grid_reachable` and `Zmx.Core.resume_grid` compile
    with their **statements unchanged** — no new hypothesis, in particular none
    about `v.sb`. This is what `fitRow`'s unconditional `RowOk` buys, and it is the
    item that fails if anyone substitutes a bare `Vt.resizeRow`.
@@ -299,7 +301,7 @@ Step 5). `Theorems/Render/Grid.lean` gains `scrollback_entry` beside `paint_entr
 and the five `unfold screensAnsi` sites are repaired.
 
 **The exit criterion held.** `restore_grid_any_main`, `restore_grid_any_alt`,
-`restore_grid_any`, `restore_grid_reachable` and `Resume.resume_grid` are
+`restore_grid_any`, `restore_grid_reachable` and `Zmx.Core.resume_grid` are
 byte-identical to HEAD — checked mechanically, statement text extracted and
 `diff`ed, zero lines changed. `paint_entry`, `alt_pre_switch`, `alt_switch_entry`,
 `restore_split`, `restore_grid_of_paint`, `restore_tabs_split` and
@@ -399,8 +401,12 @@ Status: pending.
   appears in the tail, so `ED 3` never has to be excused. This is a third of the
   proof lines and the least interesting third.
 
-**Exit:** gates green; the walk's heartbeat number recorded in `SCRATCHPAD.md`
-(`paint_rows` already needs `maxHeartbeats 1000000`, `Grid.lean:792`). Break: add
+**Exit:** gates green. **Do not budget a `maxHeartbeats` raise for this walk**: an
+earlier draft of this line claimed `paint_rows` already needs one at `Grid.lean:792`
+and that was wrong — there is no raise anywhere in `Theorems/Render/`, the tree's
+only two are `Theorems/Checkpoint.lean` and `Theorems/Vt.lean`, and `HEARTBEAT_CAP=2`
+in `tests/e2e.sh` has zero headroom. If the walk needs one, that is a signal the
+shape is wrong (AGENTS.md), not a number to add. Break: add
 `csiNum 3 0x4A` to `modesAnsi` and confirm `fixes_sb_modesAnsi` fails — the check
 that the tail family is not vacuous over `ED`.
 

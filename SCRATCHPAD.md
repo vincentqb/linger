@@ -5872,7 +5872,7 @@ behind a comparison that always agreed.
 
 Each was applied to the real tree, built, and reverted. "caught by" lists what went red.
 
-* **B1 — delete the paint branch** (`else csiNum 3 0x4A` only). 13 fixtures, including the
+* **B1 — delete the paint branch** (`else csiNum 3 0x4A` only). 15 fixtures, including the
   headline string, every `roundtripsFrom` on a scrolling session, the wide-glyph ring, the shrink
   case and all three byte-budget fixtures. **And both Python halves**: `attach_test` step 11's two
   "a line that scrolled off is replayed" assertions, and `resume_test`'s
@@ -6009,3 +6009,49 @@ today's `restore` emits 219,276 bytes at 80×24, 1,140,617 at 200×50, 3,420,922
 * `Tests.Render` elaboration went from ~0.7s to ~17s with the byte-budget fixtures (two rings of
   3,000 and 10,000 rows through `native_decide`). Acceptable, but that is where the time is if it
   grows again.
+
+## scrollback step 1 — audit follow-ups, 2026-08-19
+
+Three independent audits ran against Step 1. Exit criteria: PASS (statements of
+`restore_grid_any` / `restore_grid_reachable` / `resume_grid` byte-identical, gates green,
+coverage 20/20). Break quality: PASS. Doc honesty: **FAIL**, and it was right — fixed here.
+
+**The doc FAIL, because overclaiming is the one thing this repo cannot do.** Three live
+overclaims in `THEOREMS.md`, all created by Step 1 shipping the emitter without the proof:
+1. The `Render.restore` coverage row said "receiver-quantified for … every restored field but
+   the screen cells". After Step 1 that sentence silently asserts receiver-quantification for
+   **`sb`**, which has no theorem (`restore_sb_any` is Steps 2-4) — and its screen-cells
+   exclusion was stale besides. Now names the cells and the ruler as proved and `sb` as
+   fixture-carried.
+2. The stage-budget paragraph read as though the **emitted** bytes were proved. They are not:
+   `sbTake_budget`/`sbRows_budget` bound the *counted* cost `sbRowCost`, and the whole-stream
+   emitted bound is fixtures (sharp at 262,153) until `scrollbackAnsi_le` in Step 5. The
+   asymmetry is now stated where the claim is, per the spec's own DoD item 3 — the proofs would
+   survive changing `sbRowCost`'s `+ 6` to `+ 0`, and a reader is entitled to know that.
+3. The A5 row now lists scrollback as fixture-carried **and** records what this anchor's title
+   now has an exception to: replaying the ring emits `ED 3`, so attaching to a session with
+   history erases the borrowed terminal's saved lines. linger shares the user's scrollback (it
+   never enters the alt screen), so that is the one thing it does to a terminal it cannot undo.
+   Also deleted a stale sentence claiming the cursor claim is still `Vt.init`-only —
+   `restore_cursor_any` has existed since the sticky round.
+
+**The one real coverage gap the break audit found, now closed.** The two `sbTake` anchors spell
+`.reverse` out *in the fixture*, so they document the trim rather than guard it: dropping
+`sbRows`' own reverses left them passing. The break that describes — trim the oldest end with the
+output order still right — was caught only incidentally, by `heavyRing`'s exact counts. Added a
+fixture that asserts *which* rows survived **through `sbRows` itself**: `heavyRow i` encodes `i`
+in its first cell's red channel, so the kept run is named as the newest 174 of 300
+(`i = 126…299`; red 126,127 first and 43,42 last after the `% 256` wrap). Break-verified: the
+audit's exact break (`sbTake … v.sb.toList` with no reverses) now fails it directly, alongside
+two others. Reverted; green.
+
+Two stale-citation fixes in `specs/scrollback-fidelity.md`, both of the kind that mis-plan a
+resuming agent: it told a Step 3 agent that `paint_rows` "already needs `maxHeartbeats 1000000`,
+`Grid.lean:792`" — there is **no** raise anywhere in `Theorems/Render/`, the tree's only two are
+in `Checkpoint.lean` and `Vt.lean`, and `HEARTBEAT_CAP=2` has zero headroom, so a budgeted raise
+would fail the gate. And the theorem is `Zmx.Core.resume_grid`; there is no `Resume` namespace.
+
+Left as known-loose, deliberately: the two pty burst-length assertions have 12x and 77x headroom,
+so they catch a catastrophic blowup rather than a 5x regression. Tightening them means
+re-measuring on this host and pinning a number that will drift with the fixtures; the sharp
+oracle is the `native_decide` bound at 262,153, which is exact.
