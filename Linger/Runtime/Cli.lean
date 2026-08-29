@@ -39,6 +39,8 @@ def usage : String := "Usage: linger [command] [args...]
   [s]end <name> <text...>     Send raw input to session pty
   [d]etach <name>             Detach all clients from a session
   [k]ill <name>               Kill session and all attached clients
+  [i]nfo <name>               Print one session's k<TAB>v records (size, cursor,
+                              outseq, labels...; the porcelain, for scripts/agents)
   [hi]story <name>            Print session scrollback as plain text
   [w]ait <name>...            Wait for sessions' programs to exit
   [g]et / set / [un]set / [cl]ear <name>   Session labels (k=v)
@@ -278,6 +280,26 @@ def requireLiveSend (name : String) (m : Msg) : IO UInt32 := do
   IO.eprintln s!"linger: no session '{name}'"
   return 1
 
+/-- Like `requireLive` but through the bounded drain (`Client.drainBounded`):
+for verbs a pre-upgrade daemon does not know, which would otherwise hang the
+untimed drain (spec agent-cli, Decision 4). `wait` must NOT use this — waiting
+arbitrarily long is its job. -/
+def requireLiveBounded (name : String) (m : Msg) : IO UInt32 := do
+  match ← Client.connect name with
+  | none =>
+    IO.eprintln s!"linger: no session '{name}'"
+    return 1
+  | some fd =>
+    Client.sendMsg fd m
+    let r ← Client.drainBounded fd
+    close fd
+    match r with
+    | .done => return 0
+    | .refused => return 1  -- the daemon's .err text was already printed
+    | .silent =>
+      IO.eprintln s!"linger: no reply from '{name}' (daemon predates this command?)"
+      return 1
+
 def cmdWait (names : List String) : IO UInt32 := do
   let mut rc : UInt32 := 0
   for name in names do
@@ -355,6 +377,7 @@ def main (hooks : Hooks) (args : List String) : IO UInt32 := do
     requireLiveSend name (.input (String.intercalate " " text).toUTF8.toList)
   | ["detach", name] | ["d", name] => requireLive name .detachAll
   | ["kill", name] | ["k", name] => requireLiveSend name .kill
+  | ["info", name] | ["i", name] => requireLiveBounded name .info
   | ["history", name] | ["hi", name] => requireLive name .history
   | "wait" :: names | "w" :: names =>
     if names.isEmpty then

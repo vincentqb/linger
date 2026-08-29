@@ -86,6 +86,53 @@ def oneShot (name : String) (m : Msg) : IO Bool := do
     close fd
     return true
 
+/-- How a bounded request/reply drain ended: `.done` arrived, the daemon
+answered `.err` (message already printed), or it went silent/EOF'd without
+either. -/
+inductive Drained where
+  | done
+  | refused
+  | silent
+  deriving Repr, DecidableEq
+
+/-- Like `drainReplies untilDone := true`, but gives up after `silenceMs` of
+*silence*. For the one-shot verbs a pre-upgrade daemon does not know: an
+unknown tag is dropped without a trace (Wire §Frame), so a daemon from before
+the verb existed replies nothing at all, and the untimed drain would hang the
+client forever — the deadline has to be owned here. Output payloads stream to
+stdout as they come (`capture` is such a stream); the timeout is per poll
+round, so a long reply that keeps arriving never trips it. -/
+def drainBounded (fd : UInt32) (silenceMs : Int32 := 2000) : IO Drained := do
+  let mut dec : Decoder := {}
+  let mut result : Drained := .silent
+  let mut go := true
+  while go do
+    let revs ← poll #[fd] #[POLLIN] silenceMs
+    if revs[0]! &&& (POLLIN ||| POLLHUP ||| POLLERR) == 0 then
+      go := false  -- a full window of silence: no daemon is going to answer
+    else
+      match ← read fd 65536 with
+      | none => go := false
+      | some bs =>
+        if bs.isEmpty then continue
+        let (dec', msgs) := dec.feed bs.toList
+        dec := dec'
+        if dec.errored then go := false
+        for m in msgs do
+          match m with
+          | .output payload => writeAll stdoutFd (ByteArray.mk payload.toArray)
+          | .infoReply payload => writeAll stdoutFd (ByteArray.mk payload.toArray)
+          | .done =>
+            result := .done
+            go := false
+          | .err msg =>
+            let msgTxt := String.fromUTF8? (ByteArray.mk msg.toArray) |>.getD "error"
+            IO.eprintln s!"linger: {msgTxt}"
+            result := .refused
+            go := false
+          | _ => pure ()
+  return result
+
 /-- Split stdin bytes at the detach key. Returns (bytes-to-send,
 detach?). Bytes after the key are dropped — we're leaving. -/
 def splitDetach (bs : ByteArray) (enabled : Bool) : ByteArray × Bool :=

@@ -144,6 +144,13 @@ def infoFields (s : State) : List (String × String) :=
     -- (reachability, checkpoint loadability) only the caller can know
     ++ [("unseen", toString (unseen s)), ("fresh", toString s.freshFlag),
         ("behind", toString (behind s))]
+    -- what an agent needs to see the session (specs/agent-cli.md Step 1):
+    -- geometry + cursor for `capture`, `alt` for "a full-screen app is live",
+    -- `outseq` as the change cursor ("re-capture only when it moved"). Values
+    -- are read at reply time, so they are current as of this `.info`.
+    ++ [("cols", toString s.vt.cols), ("rows", toString s.vt.rows),
+        ("cursorx", toString s.vt.cursor.x), ("cursory", toString s.vt.cursor.y),
+        ("alt", toString s.vt.altGrid.isSome), ("outseq", toString s.outSeq)]
     ++ (match s.exited with
         | some st => [("exit", toString st.toNat)]
         | none => [])

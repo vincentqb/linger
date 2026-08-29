@@ -171,5 +171,9 @@ say "11. status column (unread / seen transitions)"
 pkill -x linger 2>/dev/null || true; sleep 0.2
 python3 tests/status_test.py | tail -1 | grep -q '^FAILURES: 0$' || fail "status_test"
 
+say "12. agent verbs (info / capture / send - / resize)"
+pkill -x linger 2>/dev/null || true; sleep 0.2
+python3 tests/agent_test.py | tail -1 | grep -q '^FAILURES: 0$' || fail "agent_test"
+
 pkill -x linger 2>/dev/null || true
-printf '\nE2E OK — linger builds clean, core is pure, 8 live suites green.\n'
+printf '\nE2E OK — linger builds clean, core is pure, 9 live suites green.\n'

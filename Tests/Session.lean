@@ -116,6 +116,36 @@ example :
          (txt.splitOn "label.env\tdev").length ≥ 2
        | _ => false)) = true := by native_decide
 
+/-! ### Agent observability fields (specs/agent-cli.md Step 1)
+
+`info` carries what an agent needs to *see* the session: geometry + cursor
+(for `capture`), `alt` (a full-screen app is live), and `outseq` (the change
+cursor — "look again only when it moved"). Pinned against the record text so a
+renamed or dropped key fails here, not in a consumer. -/
+
+def infoTxt (s : State) : String :=
+  String.fromUTF8? (ByteArray.mk (infoText s).toArray) |>.getD ""
+
+/-- Geometry and cursor are reported, current as of the reply. -/
+example :
+    (let (s, _) := run [.ptyOut "hi".toUTF8.toList]
+     let txt := infoTxt s
+     ((txt.splitOn "cols\t20").length ≥ 2) && ((txt.splitOn "rows\t5").length ≥ 2)
+       && ((txt.splitOn "cursorx\t2").length ≥ 2)
+       && ((txt.splitOn "cursory\t0").length ≥ 2)) = true := by native_decide
+
+/-- `alt` flips with the alt screen (1049h enters, 1049l leaves). -/
+example :
+    (let (sIn, _) := run [.ptyOut "\x1b[?1049h".toUTF8.toList]
+     let (sOut, _) := run [.ptyOut "\x1b[?1049l".toUTF8.toList] sIn
+     ((infoTxt sIn).splitOn "alt\ttrue").length ≥ 2
+       && ((infoTxt sOut).splitOn "alt\tfalse").length ≥ 2) = true := by native_decide
+
+/-- `outseq` counts pty-output events — the agent's change cursor. -/
+example :
+    (let (s2, _) := run [.ptyOut "a".toUTF8.toList, .ptyOut "b".toUTF8.toList]
+     ((infoTxt s2).splitOn "outseq\t2").length ≥ 2) = true := by native_decide
+
 /-- wait parks until the child exits, then everyone is told + closed
 and the daemon exits WITHOUT dropping the checkpoint... no — a clean
 child exit does drop it (resume is for crashes, not completed work). -/
