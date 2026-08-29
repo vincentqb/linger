@@ -734,4 +734,22 @@ ladder belongs to specs/scrollback-fidelity.md). -/
 def screenText (v : Vt) : Bytes :=
   v.grid.toList.flatMap (fun row => rowText row ++ [0x0A])
 
+/-- LF-terminated records, as a consumer's parser reads them — the
+specification of "split the capture on newlines". One record per `0x0A`; an
+unterminated trailing run still counts as a record (a parser does not discard
+bytes because the terminator is missing). This is the decode side of
+`screenText`/`history`/`infoText`'s shared framing discipline, named so the
+positional-parse contract can be a THEOREM rather than prose:
+`screenText_records` says `linesLF (screenText v)` IS `v.grid` row for row —
+line k of a capture is row k of the screen, not merely the right line count
+(`screenText_lines`) with no stray terminator (`screenText_framing`). -/
+def linesLF : Bytes → List Bytes
+  | [] => []
+  | b :: rest =>
+    if b == 0x0A then [] :: linesLF rest
+    else
+      match linesLF rest with
+      | [] => [[b]]
+      | l :: ls => (b :: l) :: ls
+
 end Linger.Core.Render

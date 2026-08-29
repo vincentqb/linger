@@ -77,18 +77,22 @@ EMITTERS = {
                          "not DEL, so no scrubbed text can carry an escape, a BEL, or "
                          "a tab/newline framing byte. Reached from outside Render by "
                          "Session.infoText, which frames listing records with it"),
-    "history": ("theorem", "history_framing / history_lines — every byte is a line "
-                           "terminator or printable content, and the newline count is "
-                           "the row count, so a cell cannot forge a line however the "
-                           "session's program filled the grid. Was the last emitter "
-                           "assembled through `String` (unprovable: a String does not "
-                           "reduce in the kernel); `rowText` now builds List UInt8"),
-    "screenText": ("theorem", "screenText_framing / screenText_lines — the capture "
-                              "stream (`linger capture`): every byte a line terminator "
-                              "or printable content, newline count = grid row count and "
-                              "the ring contributes nothing, so line k IS row k and a "
-                              "cell cannot forge a line. Same anti-forgery pair as "
-                              "history, grid-only"),
+    "history": ("theorem", "history_framing / history_lines / history_records — every "
+                           "byte is a line terminator or printable content, the newline "
+                           "count is the row count, and linesLF splits the stream into "
+                           "exactly the rows' texts in order, so a cell cannot forge a "
+                           "line however the session's program filled the grid. Was the "
+                           "last emitter assembled through `String` (unprovable: a "
+                           "String does not reduce in the kernel); `rowText` now builds "
+                           "List UInt8"),
+    "screenText": ("theorem", "screenText_framing / screenText_lines / screenText_records "
+                              "— the capture stream (`linger capture`): every byte a line "
+                              "terminator or printable content, newline count = grid row "
+                              "count, and the parse contract: linesLF (screenText v) IS "
+                              "the grid row for row (line k = rowText of row k), with "
+                              "history_screenText_suffix tying it byte-for-byte to the "
+                              "transcript's tail. Same anti-forgery pair as history, "
+                              "grid-only"),
 }
 
 

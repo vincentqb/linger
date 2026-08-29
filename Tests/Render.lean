@@ -805,4 +805,23 @@ example :
      let v2 := { v with grid := v.grid.setIfInBounds 0 row }
      (screenText v2).count 0x0A == 2) = true := by native_decide
 
+/-- `linesLF`, the consumer-side splitter the parse contract is stated
+against: one record per LF, an unterminated tail still counts (a parser does
+not discard bytes for a missing terminator), and no trailing phantom record
+after a final LF. -/
+example : linesLF [0x61, 0x0A, 0x62, 0x63, 0x0A] = [[0x61], [0x62, 0x63]] := by
+  native_decide
+example : linesLF [0x61, 0x0A, 0x62] = [[0x61], [0x62]] := by native_decide
+example : linesLF [0x0A, 0x0A] = [[], []] := by native_decide
+example : linesLF [] = [] := by native_decide
+
+/-- The parse contract on a concrete screen: splitting the capture gives the
+rows, in order — `screenText_records`' shape, evaluated. -/
+example :
+    (linesLF (screenText (screen 20 3 "one\r\ntwo"))
+      == [(screen 20 3 "one\r\ntwo").grid.toList.map rowText].flatten
+     && (String.fromUTF8? (ByteArray.mk (linesLF (screenText
+          (screen 20 3 "one\r\ntwo")) |>.getD 1 []).toArray)).getD "" == "two") = true := by
+  native_decide
+
 end Linger.Core.Render.Tests

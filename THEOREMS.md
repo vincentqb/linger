@@ -410,18 +410,36 @@ carry them, plus two decisions that are semantics, not accidents:
   `rowText` per row: every byte is a line terminator or printable content
   (`screenText_framing`) and the newline count is exactly the grid's row count
   (`screenText_lines`) — a cell the session's program filled cannot inject a
-  line break, so line k of a capture IS row k of the screen, and `rows` from
-  `info` suffices to parse it. Same anti-forgery species as `history_framing`
-  / `history_lines` and `infoText_records` (§Row's discipline applied to every
-  line-oriented stream a caller parses).
+  line break. The parse contract itself is a theorem, not a consequence the
+  reader has to trust: `screenText_records` says splitting the stream on LF
+  (`Render.linesLF`, the consumer's splitter as a specification) yields the
+  grid **row for row** — line k IS `rowText` of row k, which count + framing
+  alone do not give (a reversed-row emitter passes both; the break record
+  shows only `screenText_records` catching it). `history_records` is the same
+  contract for the transcript, and `history_screenText_suffix` ties the two
+  byte-for-byte: a capture is exactly the transcript's tail, so an agent may
+  mix the verbs without normalizing. Same anti-forgery species as
+  `infoText_records` (§Row's discipline applied to every line-oriented stream
+  a caller parses).
 * **A capture is a look — deliberately.** The `.screen` arm's only state
   change is the read mark catching up (`onMsg_screen`, which is `rfl`, so any
-  smuggled side effect breaks it; `screen_marks_seen` is the user-facing
-  half): after a capture, `unseen` is false and `behind` counts output since
-  *your* capture, which is the change cursor an agent polls. The line is
-  drawn at verbs that deliver the current screen: `.info` never marks seen
-  (`ls` polls every live daemon; a listing that marked everything read would
-  destroy the status column) and `history` stays an export.
+  smuggled side effect breaks it; `screen_marks_seen` and `screen_behind_zero`
+  are the user-facing halves): after a capture, `unseen` is false and `behind`
+  counts output since *your* capture, which is the change cursor an agent
+  polls. The line is drawn at verbs that deliver the current screen: `.info`
+  never marks seen (`ls` polls every live daemon; a listing that marked
+  everything read would destroy the status column) and `history` stays an
+  export.
+* **…and `behind` is honest over the daemon's whole life.** Capture made the
+  read mark a two-writer field and an agent-facing API, so the general claims
+  landed with it: no client message moves the output counter (`onMsg_outSeq` —
+  traffic cannot *forge* activity; only `.ptyOut` advances `outSeq`), and no
+  event trace of any length lets the read mark overtake it (`run_lookSeq_le`,
+  via `onMsg_lookSeq_le`/`step_lookSeq_le`), so `behind = outSeq - lookSeq` is
+  a real count and never a Nat-subtraction lie. The break record is the reason
+  this pair exists: a `.screen` arm that sets `lookSeq := outSeq + 1` leaves
+  `screen_marks_seen` and `screen_behind_zero` **green** — Nat clamps the lie
+  to zero — and only `onMsg_lookSeq_le` catches it.
 * **A control resize never overrides an attached sizer.** `linger resize`
   reaches `Session.controlResize` only from non-attached connections
   (`onMsg_resize_control`); while an attached sizer exists it changes nothing
@@ -431,7 +449,11 @@ carry them, plus two decisions that are semantics, not accidents:
   and the same-size branch is inert (`controlResize_same_size`) for the
   attach guard's reason: `Vt.resize` wipes the scroll region and tab ruler,
   and no SIGWINCH fires at an unchanged winsize to make the child re-establish
-  them.
+  them. On top of the three guarded shapes, `controlResize_replies` is the
+  guard-free totality: every control resize answers the requester — `.done`
+  or `.err`, silence unrepresentable — the pure half of the no-hang contract
+  (`Client.drainBounded` owns the impure half, against daemons that predate
+  the verb).
 
 The runtime half — one `.input` frame per ≤ 64 KiB stdin read in
 `send <name> -`, and the bounded drain that keeps a new verb from hanging

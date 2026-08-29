@@ -6343,3 +6343,53 @@ theorem sees.
 CLI validates 1..1000 (`clampDim`'s range) client-side: past 1000 the emulator would
 clamp while the pty winsize did not, and the two must not be allowed to disagree from
 this path (attach trusts a real terminal's report; an agent gets validated).
+
+
+## agent-cli theorem hardening — 2026-08-19
+
+Follow-up to the archived spec: three prose promises upgraded to statements, each chosen
+because a fixture-passing wrong implementation exists for it.
+
+**`screenText_records` / `history_records` / `history_screenText_suffix`** (+ the new
+consumer-spec splitter `Render.linesLF` and its workhorse `linesLF_record`). Count +
+framing say the right *number* of clean lines, not which bytes land on which line — the
+"line k IS row k" promise in README/THEOREMS was implied, not stated. Now:
+`linesLF (screenText v) = v.grid.toList.map rowText`, same for history over `sb ++ grid`,
+and the capture is byte-for-byte the transcript's tail (`List.flatMap_append`, one line).
+`linesLF` counts an unterminated trailing run as a record (a parser does not discard bytes
+for a missing terminator) — pinned by fixtures, including `[0x0A,0x0A] → [[],[]]`.
+
+**`onMsg_outSeq` + `onMsg_lookSeq_le` → `feedMsgs`/`step`/`run_lookSeq_le`** — the §Unread
+honesty pair over whole traces, closing the increment the section header had parked
+("the `.bytes` case makes it opaque to arithmetic"). The parked obstacle dissolved with
+the same `unfold onMsg controlResize; repeat' split; all_goals first | …` script the
+preservation theorems use; the one wrinkle was `step`'s ptyOut branch, where `omega` sees
+`(⟨record, effects⟩).fst.lookSeq` as an opaque atom — a `dsimp only` before `omega` in the
+alternative list reduces the pair/record projections and it closes. Landed now rather than
+someday because `.screen` made `lookSeq` a two-writer field and `behind` an agent-facing
+API (README tells agents to poll it).
+
+**`controlResize_replies`** — guard-free totality on top of the three guarded shapes:
+every control resize answers the requester (`.done` or `.err`), silence unrepresentable.
+The pure half of the no-hang contract; `Client.drainBounded` owns the impure half.
+
+Break-verified, three rounds:
+* screenText emits `grid.reverse` → **`screenText_lines` (count) and `screenText_framing`
+  stay green** — the wrong emitter passes both shipped step-2 theorems — while
+  `screenText_records` and `history_screenText_suffix` refute (History.lean:161/:176; :124
+  is the count theorem's *proof* needing a benign length-of-reverse rewrite, not a refuted
+  statement). This is the measured content gap between "right number of clean lines" and
+  "the right lines".
+* `.screen` sets `lookSeq := s.outSeq + 1` → **`screen_marks_seen` AND `screen_behind_zero`
+  stay green** (Nat subtraction clamps the lie to zero — `unseen` reads `outSeq+1 < outSeq`
+  as false) — only `onMsg_lookSeq_le` (Session.lean:519) catches the overtake, plus
+  `onMsg_screen`'s literal. The honesty chain is the ONLY oracle for this bug class;
+  without it a future look-arm typo would ship a permanently-zero `behind`.
+* same-size branch replies `(s, [])` → `controlResize_replies` (:942) and
+  `controlResize_same_size` (:916) both refute — the totality claim catches the silent
+  drop even where a shape theorem's guard doesn't reach.
+
+Ratchets: coverage cap 19 holds (`linesLF` arrives claimed by four statements);
+HEARTBEAT_CAP 1 (no raises — `linesLF_record`'s induction is light); nothing new in the
+EMITTERS list beyond the strengthened descriptions (`linesLF` returns `List Bytes`, which
+the stream regex correctly does not classify as an emitter).

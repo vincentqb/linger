@@ -434,17 +434,25 @@ namespace Linger.Core.Session
 /-! ## §Unread — the output counter
 
 `unseen` is "output arrived while nobody was watching", and it is a property
-of the **session**: `lookSeq` catches up on attach and on every output that
-happens while somebody is attached, so a one-off connection from a stranger
-creates no per-client state. A counter rather than a timestamp because it is
+of the **session**: `lookSeq` catches up on attach, on every output that
+happens while somebody is attached, and on a capture (`.screen` — a capture is
+a look, agent-cli Decision 1), so a one-off connection from a stranger creates
+no per-client state. A counter rather than a timestamp because it is
 determined by the event list alone.
 
-Scope of what is proved here: the two claims about the event that *writes*
-the counters. The general `∀ ev` versions need an induction showing
-`feedMsgs` preserves `outSeq` (client messages never touch it), which the
-`.bytes` case makes opaque to arithmetic; recorded in SCRATCHPAD as the next
-increment rather than asserted here.
+Two layers here: the exact claims about the events that *write* the counters,
+and — since `.screen` made the read mark a two-writer field and `behind` an
+agent-facing API — the general honesty pair over any traffic: no client
+message moves `outSeq` (`onMsg_outSeq`: activity cannot be forged), and the
+read mark never overtakes the counter (`run_lookSeq_le`), so
+`behind = outSeq - lookSeq` is a real count over the daemon's whole life,
+never a Nat-subtraction lie. The general form was parked when this section
+was written ("the `.bytes` case makes it opaque to arithmetic"); the same
+`unfold onMsg controlResize` + `repeat' split` script the preservation
+theorems use turned out to carry it.
 -/
+
+open Linger.Core.Wire (Msg)
 
 /-- Pty output advances the counter by exactly one. -/
 theorem outSeq_ptyOut (s : State) (chunk : List UInt8) :
@@ -485,6 +493,73 @@ stays an export — the line is drawn at verbs that show the current screen. -/
 theorem screen_marks_seen (s : State) (c : Client) :
     unseen (onMsg s c .screen).1 = false := by
   simp [onMsg, unseen]
+
+/-- …and `behind` counts from the capture: zero at the moment of the look, so
+what an agent reads later really is "output events since I captured". -/
+theorem screen_behind_zero (s : State) (c : Client) :
+    behind (onMsg s c .screen).1 = 0 := by
+  simp [onMsg, behind]
+
+/-- **No client message moves the output counter.** `outSeq` advances only on
+`.ptyOut` — real child output — so no connection, whatever it sends, can
+forge activity: `unseen`, `fresh` and `behind` can be *caught up* by a look
+(attach, capture) but never inflated by traffic. -/
+theorem onMsg_outSeq (s : State) (c : Client) (m : Msg) :
+    (onMsg s c m).1.outSeq = s.outSeq := by
+  unfold onMsg controlResize
+  dsimp only
+  repeat' split
+  all_goals simp_all [State.setClient]
+
+/-- The read mark never overtakes the counter through any message: every arm
+leaves `lookSeq` alone or catches it up to `outSeq` (attach and capture — the
+looks), and none touches `outSeq`. -/
+theorem onMsg_lookSeq_le (s : State) (c : Client) (m : Msg)
+    (h : s.lookSeq ≤ s.outSeq) :
+    (onMsg s c m).1.lookSeq ≤ (onMsg s c m).1.outSeq := by
+  unfold onMsg controlResize
+  dsimp only
+  repeat' split
+  all_goals first
+    | simp_all [State.setClient]
+    | (simp_all [State.setClient]; omega)
+
+theorem feedMsgs_lookSeq_le (id : Nat) (msgs : List Msg)
+    (acc : State × List Effect) (h : acc.1.lookSeq ≤ acc.1.outSeq) :
+    (feedMsgs id msgs acc).1.lookSeq ≤ (feedMsgs id msgs acc).1.outSeq := by
+  induction msgs generalizing acc with
+  | nil => exact h
+  | cons m ms ih =>
+    unfold feedMsgs
+    rw [List.foldl_cons]
+    rcases hc : acc.1.client? id with - | c'
+    · dsimp only [hc]
+      exact ih acc h
+    · dsimp only [hc]
+      exact ih _ (onMsg_lookSeq_le _ _ _ h)
+
+/-- One event keeps `behind` honest, whatever it is. -/
+theorem step_lookSeq_le (s : State) (ev : Event) (h : s.lookSeq ≤ s.outSeq) :
+    (step s ev).1.lookSeq ≤ (step s ev).1.outSeq := by
+  unfold step
+  dsimp only
+  repeat' split
+  all_goals first
+    | exact h
+    | (apply feedMsgs_lookSeq_le; exact h)
+    | (dsimp only; omega)
+
+/-- **§Unread over the daemon's whole life**: no event trace of any length —
+adversarial clients, captures, attaches, hostile pty bytes, any interleaving —
+makes the read mark overtake the output counter. `behind = outSeq - lookSeq`
+is therefore a real count forever (a fresh daemon starts at `0 ≤ 0`), and the
+agent loop "capture, then poll `behind`/`outseq`" rests on this rather than on
+Nat subtraction clamping a lie to zero. -/
+theorem run_lookSeq_le (s : State) (evs : List Event) (h : s.lookSeq ≤ s.outSeq) :
+    (run s evs).1.lookSeq ≤ (run s evs).1.outSeq := by
+  induction evs generalizing s with
+  | nil => exact h
+  | cons ev evs ih => exact ih (step s ev).1 (step_lookSeq_le s ev h)
 
 /-! ## §Isolate — one client cannot reach another client's state
 
@@ -852,6 +927,22 @@ theorem onMsg_resize_control (s : State) (c : Client) (cols rows : UInt32)
           { c with cols, rows } cols rows := by
   unfold onMsg
   simp [hc]
+
+/-- **Every control resize answers the requester** — `.done` or `.err`, never
+silence. The three shape theorems above each show a reply *under their guard*;
+this is the guard-free totality that makes the reply a contract: the branches
+are exhaustive, so a future branch that silently drops (the attached path's
+`(s, [])` shape) cannot appear here without failing this. It is the pure half
+of the no-hang story — `Client.drainBounded` owns the other half, against
+daemons that predate the verb entirely. -/
+theorem controlResize_replies (s : State) (c : Client) (cols rows : UInt32) :
+    (controlResize s c cols rows).2.any (fun e => match e with
+      | .send i .done => i == c.id
+      | .send i (.err _) => i == c.id
+      | _ => false) = true := by
+  unfold controlResize
+  repeat' split
+  all_goals simp
 
 end Linger.Core.Session
 

@@ -123,6 +123,60 @@ theorem screenText_lines (v : Vt) :
   unfold screenText
   exact count_rows _
 
+/-! ## The parse contract — line k IS row k
+
+`screenText_framing` + `screenText_lines` say the right *number* of clean
+lines; neither says which bytes land on which line. `linesLF` is the
+consumer's splitter as a specification, and these say splitting the stream
+gives back exactly the rows' texts, in order — the claim an agent's positional
+parser actually relies on. (A reversed-row emitter passes both count and
+framing; only this catches it.) -/
+
+/-- One LF-terminated record peels off `linesLF` whole, whatever follows —
+provided the record itself is LF-free, which `rowText_no_lf` supplies for
+every row. -/
+theorem linesLF_record (x rest : Bytes) (hx : ∀ b ∈ x, b ≠ 0x0A) :
+    linesLF (x ++ 0x0A :: rest) = x :: linesLF rest := by
+  induction x with
+  | nil => simp [linesLF]
+  | cons b x ih =>
+    have hb : (b == 0x0A) = false :=
+      beq_eq_false_iff_ne.mpr (hx b (List.mem_cons_self ..))
+    rw [List.cons_append, linesLF, if_neg (by simp [hb]),
+        ih (fun b' hb' => hx b' (List.mem_cons_of_mem _ hb'))]
+
+private theorem linesLF_rows (rows : List Row) :
+    linesLF (rows.flatMap (fun row => rowText row ++ [0x0A])) = rows.map rowText := by
+  induction rows with
+  | nil => rfl
+  | cons r rs ih =>
+    rw [List.flatMap_cons, List.map_cons, List.append_assoc, List.singleton_append,
+        linesLF_record _ _ (fun b hb => rowText_no_lf r b hb), ih]
+
+/-- **The capture parse contract.** Splitting a capture on `0x0A` yields the
+grid, row for row: line k IS `rowText` of row k. This is what licenses an
+agent to parse a capture positionally with `rows` from `info`. -/
+theorem screenText_records (v : Vt) :
+    linesLF (screenText v) = v.grid.toList.map rowText :=
+  linesLF_rows _
+
+/-- The same contract for `history`: the transcript parses as scrollback rows
+then screen rows, in order. -/
+theorem history_records (v : Vt) :
+    linesLF (history v false) = (v.sb.toList ++ v.grid.toList).map rowText := by
+  unfold history
+  rw [if_neg (by decide)]
+  exact linesLF_rows _
+
+/-- And the two streams agree byte-for-byte on the part they share: a capture
+is exactly the tail of the transcript — same renderer, same trimming, same
+framing — so an agent may mix the two verbs without normalizing anything. -/
+theorem history_screenText_suffix (v : Vt) :
+    history v false
+      = v.sb.toList.flatMap (fun row => rowText row ++ [0x0A]) ++ screenText v := by
+  unfold history screenText
+  rw [if_neg (by decide), List.flatMap_append]
+
 
 /-- `safeChar` is the identity on a character a cell is allowed to hold. The emit-side
 guard and the store-side one agree, which is what lets a repaint reproduce a stored
