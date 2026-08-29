@@ -1,10 +1,23 @@
-import Linger.Core.Session
+module
+
+public import Linger.Core.Session
+import all Linger.Core.Session
+-- `native_decide` compiles its goals, and a module's compiled code only sees
+-- meta-imported modules — names alone arrive via the public import above.
+public meta import Linger.Core.Session
+public meta import Linger.Core.Wire
+public meta import Linger.Core.Terminal
+
 /-! # Session state-machine scenario tests
 
 Whole client conversations at the pure level: events in, effects out —
 no sockets involved. Frames are built with the real `Wire.encode`, so
 these also exercise the per-client decoder path the daemon runs.
--/
+
+**Friend module** (lean-modules Step 5): the fixtures that rig rosters and
+scanners directly (`{ s0 with clients := …, scan := … }`) are legitimate test
+scaffolding, and `import all Linger.Core.Session` is what admits it now that
+the daemon itself cannot do the same. -/
 
 namespace Linger.Core.Session.Tests
 
@@ -393,5 +406,12 @@ example : (infoText forged).count 0x09 = (infoFields forged).length := by native
 
 /-- And the replacement really is in the value, so nothing was silently dropped. -/
 example : (infoText forged).any (· == 0xEF) = true := by native_decide
+
+/-- **Boot caps restored labels at `maxLabels`** — the Bounded-at-boot gap,
+closed at the door (lean-modules Step 5): `.labelSet` enforces the cap per
+message, and a forged checkpoint's 70-label list can no longer boot past it. -/
+example : (State.boot (Vt.Vt.init 20 5)
+    ((List.range 70).map (fun i => (toString i, "v"))) []).labels.length
+      == maxLabels := by native_decide
 
 end Linger.Core.Session.Tests

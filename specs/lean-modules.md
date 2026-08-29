@@ -35,10 +35,13 @@ system flips it to yes).
   `lake build Linger` does NOT compile `Linger/Runtime/**`; see SCRATCHPAD)
 - Step 3 (optional) → sealed `SessionName` (sanitize-at-construction)
 - Step 4 (optional) → `@[expose]`/`public` tightening beyond the blanket
-- Step 5 (in flight) → seal `Session.State`: `boot` + `step` as the only
-  doors, `run_wf`'s WF hypothesis made structural; boot caps restored labels
-  (the Bounded-at-boot gap). Carries the 15-file mechanical migration of the
-  theorem tree Session's friend conversion forces.
+- Step 5 ✓ `Session.State` sealed (2026-08-19): `boot` + `step` the only
+  doors; `boot` caps restored labels (the Bounded-at-boot gap, closed);
+  `boot_wf`/`run_boot_wf` make A2 structural. Friend conversions:
+  Theorems/Session + Tests/Session (which forced 5a's 15-file theorem-tree
+  migration). Measured along the way: `native_decide` in a module needs
+  `public meta import`; public-section term-`rfl`s become `by rfl`; the
+  purity gate reads prose (don't name the evaluation tactic in Theorems/).
 
 ## Harvest — 2026-08-19 (after Step 2)
 

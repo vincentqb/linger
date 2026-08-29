@@ -1,9 +1,26 @@
-import Linger.Core.Session
-import Theorems.Wire
-import Theorems.Vt
-import Theorems.Terminal
-import Theorems.Render
+module
+
+public import Linger.Core.Session
+public import Theorems.Wire
+public import Theorems.Vt
+public import Theorems.Terminal
+public import Theorems.Render
+import all Linger.Core.Session
+import all Linger.Core.Vt
+import all Linger.Core.Terminal
+import all Linger.Core.Wire
+import all Linger.Core.Render
+
 /-! # §Detach / §Bound(session) — the daemon state machine theorems
+
+**Friend module** (lean-modules Step 5): `import all Linger.Core.Session` is
+what lets these statements name `State`'s sealed bookkeeping fields —
+`clients`, the `outSeq`/`lookSeq` pair, `scan`, `dirty` — which every plain
+importer, the daemon included, can no longer read, poke or forge. No blanket
+`public section`, for the Buf-friend reasons: statements naming private fields
+cannot be public, nothing imports these theorems as lemmas (the root builds
+them, which is their job), and module-private is what keeps the `:= rfl`
+proofs elaborating in the private scope.
 
 THEOREMS.md rows:
 * §Detach — the zmx decoupling. A session with zero clients still
@@ -856,6 +873,45 @@ statement above is not conditional in practice. -/
 theorem liveVt_init (cols rows : Nat) (cs : List Client) (ls : List (String × String)) :
     LiveVt { vt := Vt.Vt.init cols rows, clients := cs, labels := ls } :=
   LiveReachableVt.init cols rows
+
+/-- …and stated through the one door the runtime actually walks through. -/
+theorem liveVt_boot (cols rows : Nat) (ls mk : List (String × String)) :
+    LiveVt (State.boot (Vt.Vt.init cols rows) ls mk) :=
+  LiveReachableVt.init cols rows
+
+/-! ## §Bound at the door — boot is well-formed, so every daemon state is
+
+With the constructor private (lean-modules Step 5), `State.boot` is the only
+way a `State` comes to exist outside this module's friends, and `step` the
+only way forward — so `boot_wf ∘ run_wf` stops being "the invariant holds if
+the runtime starts politely" and covers every state the daemon can possess.
+The labels conjunct is what `boot`'s `take` buys: before it, a corrupt
+checkpoint's label list booted straight past `maxLabels` and `Bounded` was
+simply false of a resumed daemon (the gap that sized this step). The `Good vt`
+hypothesis is honest: a fresh boot has `Good (Vt.init …)`, and the resume
+path's decoded emulator carries it from the checkpoint theorems' side. -/
+
+theorem boot_wf (vt : Vt.Vt) (labels metaKv : List (String × String))
+    (h : Linger.Core.Vt.Good vt) : WF (State.boot vt labels metaKv) := by
+  refine ⟨⟨?_, ?_, ?_, ?_⟩, h⟩
+  · show ([] : List Client).length ≤ maxClients
+    simp [maxClients]
+  · show (labels.take maxLabels).length ≤ maxLabels
+    rw [List.length_take]
+    exact Nat.min_le_left _ _
+  · intro c hc
+    exact absurd hc (List.not_mem_nil)
+  · show Terminal.Scan.Bounded .ground
+    trivial
+
+/-- **The A2 anchor made structural**: every state reachable from any boot —
+which, by the seal, is every state the daemon can possess — is well-formed,
+whatever the trace: adversarial clients, hostile pty bytes, forged
+checkpoints' label lists, any interleaving. -/
+theorem run_boot_wf (vt : Vt.Vt) (labels metaKv : List (String × String))
+    (evs : List Event) (h : Linger.Core.Vt.Good vt) :
+    WF (run (State.boot vt labels metaKv) evs).1 :=
+  run_wf _ _ (boot_wf vt labels metaKv h)
 
 /-- **Only the size owner resizes the pty** (abduco's rule, as a theorem rather than
 a comment). `resizeEffects` emits a `resizePty` only for the client the size-ownership

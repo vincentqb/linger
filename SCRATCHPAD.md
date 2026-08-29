@@ -6555,3 +6555,43 @@ so; `Daemon.Conn.out` / `Rt.ptyIn` field docs point at their lifetime bounds; TH
   `Tests/Session.lean` forges rosters as test rigging, so it needs the friend-module
   treatment end to end. Noted in specs/lean-modules.md as the natural Step 5 for
   whenever the spec's turn comes back; scrollback-fidelity Step 2 is still queued ahead.
+
+
+## lean-modules step 5 notes — 2026-08-19
+
+`Session.State` is sealed: `boot` + `step` are the only doors. Field split: `vt`/`labels`/
+`metaKv` stay public (exactly the checkpoint save-hook's reads, `Resume.saveCkpt`); the ten
+bookkeeping fields WF protects go `private`, which makes the anonymous constructor private —
+from the daemon, a field read, a `{ st with dirty := … }`, a `{ st with vt := … }` (public
+field! the ctor is the gate) and a forge all refuse to compile, break-verified against the
+`linger` exe target per the step-2 lesson. `boot_wf` + `run_boot_wf` land the A2 upgrade:
+every state the daemon can possess is WF, given `Good vt` at the door.
+
+**The Bounded-at-boot gap is real and is now closed at the door.** `.labelSet` enforces
+`maxLabels` per message, but `Checkpoint.load` is deliberately total on arbitrary bytes and
+the boot literal copied the restored label list verbatim — so `Bounded` was FALSE of a daemon
+resumed from a forged >64-label checkpoint, and `run_wf`'s protection was vacuous for it.
+`State.boot` takes `labels.take maxLabels` (oldest kept — `.labelSet` appends at the end).
+Break: removing the `take` refutes the 70-label fixture (Tests/Session.lean:415) AND
+`boot_wf`'s labels conjunct — two oracles.
+
+**Module-system facts this step measured, beyond step 5a's:**
+* `native_decide` inside a module needs `public meta import X` for every module whose
+  compiled code the goal touches — names arrive via `public import`, but compiled code is a
+  third scope (the error message says exactly which import to add). Tests/Session carries
+  three.
+* The friend posture generalizes: Theorems/Session (statements name sealed fields) and
+  Tests/Session (fixtures rig rosters) both convert; NO public section in either, which also
+  keeps every existing `:= rfl` term proof elaborating in the private scope — zero proof
+  edits in the 1000-line theorem file beyond the header.
+* The purity gate greps `Theorems/**` for the compiled-evaluation tactic's TOKEN, prose
+  included — a docstring naming it fails the gate (correct behavior; a parsing gate would be
+  evadable). Cost one fixup commit: pipefail when gating a chain, and don't name the tactic
+  in Theorems/ comments.
+
+Ratchets: coverage 257 defs (+`boot`, arriving claimed via `boot_wf`) / 18 unclaimed;
+SHIM 27; heartbeats 1; runtime partials 2. Fifteen theorem files migrated in step 5a carry
+the general recipe: `import all` every Core module whose bodies the proofs unfold, befriend
+the previous rung (`import all Theorems.X` — the ladder is one proof split across files),
+and term-`rfl`s under a blanket `public section` become `by rfl` (public statements
+elaborate proofs against the exported view; tactic blocks get the private scope).

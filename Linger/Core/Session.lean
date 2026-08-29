@@ -48,38 +48,62 @@ structure Client where
   decoder : Wire.Decoder := {}
   deriving Repr, Inhabited
 
+/-- The session's whole state. Sealed since lean-modules Step 5: the
+bookkeeping fields §Bound and §Unread protect are `private`, which makes the
+anonymous constructor private too — outside this module and its friends
+(`Theorems/Session.lean`, `Tests/Session.lean`, via `import all`) a `State`
+can only be `State.boot`ed and `step`ped, never forged or field-poked, so
+`run_wf`'s well-formedness is a fact about every state the daemon can possess
+rather than about the states it politely constructs. `vt`, `labels` and
+`metaKv` stay public-read: they are exactly what the checkpoint save hook
+serializes (`Linger/Runtime/Resume.lean`). -/
 structure State where
   vt : Vt.Vt
   /-- One bounded scanner owned by the PTY-facing virtual terminal. -/
-  scan : Terminal.Scan := .ground
-  clients : List Client := []
+  private scan : Terminal.Scan := .ground
+  private clients : List Client := []
   labels : List (String × String) := []
   /-- name/pid/created/cwd…, set once by the runtime at boot. -/
   metaKv : List (String × String) := []
-  exited : Option UInt32 := none
+  private exited : Option UInt32 := none
   /-- pty output since the last checkpoint? -/
-  dirty : Bool := false
-  lastCkptMs : UInt64 := 0
+  private dirty : Bool := false
+  private lastCkptMs : UInt64 := 0
   /-- monotone attach counter, for size ownership. -/
-  attachSeq : Nat := 0
+  private attachSeq : Nat := 0
   /-- Monotone output counter: bumped once per pty-output event. A counter
   rather than a timestamp, so "has anything happened since you looked" is
   determined by the event list alone — `.tick` already carries time for the
   checkpoint clock, but this needs no tick to be *correct*, only to be
   reported. -/
-  outSeq : Nat := 0
+  private outSeq : Nat := 0
   /-- The `outSeq` as of the last time somebody looked: set on attach and
   when an attached client leaves. `outSeq > lookSeq` is "unread", which is a
   property of the **session**, not of a viewer — "last looked" is a session
   event, so no per-client bookkeeping is created for a one-off connection. -/
-  lookSeq : Nat := 0
+  private lookSeq : Nat := 0
   /-- `outSeq` as of the previous `.tick`, and whether output arrived since
   it. Freshness from a *counter comparison across ticks* rather than a stored
   timestamp: the poll loop already ticks, so "output since the last tick" is
   the signal, and the core needs no clock arithmetic. -/
-  tickOutSeq : Nat := 0
-  freshFlag : Bool := false
+  private tickOutSeq : Nat := 0
+  private freshFlag : Bool := false
   deriving Repr, Inhabited
+
+/-- The one public door into a `State`: a fresh or restored emulator, the
+restored labels, the boot-time metadata. Everything else a `State` ever holds
+is `step`'s doing (the private fields above make the constructor private).
+
+Restored labels are capped HERE, which closes the Bounded-at-boot gap this
+step's sizing surfaced: `.labelSet` enforces `maxLabels` per message, but
+`Checkpoint.load` is deliberately total on arbitrary bytes, so a corrupt or
+forged checkpoint could carry any list and boot used to be the bypass. Over
+the cap, the first `maxLabels` survive (`.labelSet` appends at the end, so
+these are the oldest). `boot_wf` is the claim; composed with `run_wf`
+(`run_boot_wf`), every state the daemon can hold is well-formed. -/
+def State.boot (vt : Vt.Vt) (labels : List (String × String))
+    (metaKv : List (String × String)) : State :=
+  { vt, labels := labels.take maxLabels, metaKv }
 
 /-- What the runtime feeds in. All byte payloads are `List UInt8`; the
 runtime converts at the fd boundary. -/

@@ -339,15 +339,11 @@ def serve (name : String) (cwd : String) (argv : List String)
       "TERM_PROGRAM_VERSION=0.1.0"]
   setNonblock ptyFd
   let created ← realtimeS
-  let st : State := {
-    vt := vt0
-    labels := (restore.map (·.2)).getD []
-    metaKv := [
-      ("name", name), ("pid", toString pid),
-      ("created", toString created),
-      ("cmd", String.intercalate " " (prog :: args.toList)),
-      ("start_dir", cwd)]
-  }
+  let st := State.boot vt0 ((restore.map (·.2)).getD [])
+    [("name", name), ("pid", toString pid),
+     ("created", toString created),
+     ("cmd", String.intercalate " " (prog :: args.toList)),
+     ("start_dir", cwd)]
   let mut rt : Rt := { st, listenFd, ptyFd, childPid := pid, sockPath,
                        saveCkpt, dropCkpt }
   while !rt.exiting do
