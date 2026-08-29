@@ -1,8 +1,13 @@
-import Linger.Posix
-import Linger.Core.Wire
-import Linger.Core.Render
-import Linger.Core.Remote
-import Linger.Runtime.Paths
+module
+
+public import Linger.Posix
+public import Linger.Core.Wire
+public import Linger.Core.Render
+public import Linger.Core.Remote
+public import Linger.Runtime.Paths
+
+public section
+
 /-! # Linger.Runtime.Client — attach and one-shot conversations
 
 The attach client is deliberately dumb: raw mode, forward stdin bytes

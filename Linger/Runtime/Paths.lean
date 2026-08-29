@@ -1,5 +1,10 @@
-import Linger.Posix
-import Linger.Core.Name
+module
+
+public import Linger.Posix
+public import Linger.Core.Name
+
+public section
+
 /-! # Linger.Runtime.Paths — where sockets, checkpoints and logs live
 
 Same resolution order as zmx:

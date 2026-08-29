@@ -1,7 +1,12 @@
-import Linger.Runtime.Daemon
-import Linger.Runtime.Client
-import Linger.Core.Remote
-import Linger.Core.Listing
+module
+
+public import Linger.Runtime.Daemon
+public import Linger.Runtime.Client
+public import Linger.Core.Remote
+public import Linger.Core.Listing
+
+public section
+
 /-! # Linger.Runtime.Cli — argv dispatch
 
 Verb surface mirrors zmx (attach is an upsert; one-shot verbs talk to a

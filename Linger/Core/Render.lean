@@ -1,4 +1,9 @@
-import Linger.Core.Vt
+module
+
+public import Linger.Core.Vt
+
+public section
+
 /-! # Linger.Core.Render — Vt state → ANSI bytes
 
 Pure functions from a `Vt` snapshot to the byte stream that reproduces

@@ -1,6 +1,11 @@
-import Linger.Core.Name
-import Linger.Core.Status
-import Linger.Core.Render
+module
+
+public import Linger.Core.Name
+public import Linger.Core.Status
+public import Linger.Core.Render
+
+public section
+
 /-! # Linger.Core.Listing — a `list` row's identity
 
 §Row (THEOREMS.md): a listed session's *identity* is a function of its

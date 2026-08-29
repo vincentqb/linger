@@ -1,6 +1,11 @@
-import Linger.Posix
-import Linger.Core.Session
-import Linger.Runtime.Paths
+module
+
+public import Linger.Posix
+public import Linger.Core.Session
+public import Linger.Runtime.Paths
+
+public section
+
 /-! # Linger.Runtime.Daemon — the poll loop around `Session.step`
 
 All decisions live in the pure machine; this file only:

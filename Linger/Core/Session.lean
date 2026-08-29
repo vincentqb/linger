@@ -1,8 +1,13 @@
-import Linger.Core.Wire
-import Linger.Core.Vt
-import Linger.Core.Render
-import Linger.Core.Terminal
-import Linger.Core.Name
+module
+
+public import Linger.Core.Wire
+public import Linger.Core.Vt
+public import Linger.Core.Render
+public import Linger.Core.Terminal
+public import Linger.Core.Name
+
+public section
+
 /-! # Linger.Core.Session — the daemon's brain, as data
 
 One daemon = one session = one pty + one `Vt` + attached clients. This

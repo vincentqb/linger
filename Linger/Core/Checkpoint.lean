@@ -1,4 +1,9 @@
-import Linger.Core.Vt
+module
+
+public import Linger.Core.Vt
+
+public section
+
 /-! # Linger.Core.Checkpoint — the reboot-resume codec
 
 Serializes the resumable part of a session — the full `Vt` (grid,
@@ -22,8 +27,13 @@ namespace Linger.Core.Checkpoint
 
 open Linger.Core.Vt
 
-/-- Readers: consume a prefix, return the value and the rest. -/
-def R (α : Type) : Type := List UInt8 → Option (α × List UInt8)
+/-- Readers: consume a prefix, return the value and the rest.
+`@[expose]`: a type-level def must be visible across module boundaries or the
+compiler cannot agree on the compiled representation of anything typed by it
+("locally inferred compilation type differs…", a stated current limitation of
+`module`s). A type alias has no implementation to hide, so this costs
+nothing. -/
+@[expose] public def R (α : Type) : Type := List UInt8 → Option (α × List UInt8)
 
 /-! ## Primitive writers/readers -/
 

@@ -102,8 +102,12 @@ def sh(cmd: str) -> str:
 
 
 def core_defs() -> list[str]:
-    out = sh(r"""grep -h '^\(private \)*def ' Linger/Core/*.lean \
-                 | sed 's/^\(private \)*def \([A-Za-z0-9_.]*\).*/\2/' \
+    # `(@[expose] )?(public |private )?def` — the module system (2026-08-19)
+    # lets a decl wear these prefixes; the blanket `public section` posture
+    # keeps most as bare `def`, but e.g. `@[expose] def Vt.applySgr` must not
+    # silently leave this census, or the ratchet starts measuring less.
+    out = sh(r"""grep -hE '^(@\[expose\] )?(private |public )?def ' Linger/Core/*.lean \
+                 | sed -E 's/^(@\[expose\] )?(private |public )?def ([A-Za-z0-9_.]*).*/\3/' \
                  | sed 's/.*\.//' | sort -u""")
     return out.split()
 
@@ -119,7 +123,7 @@ def theorem_statements() -> str:
     for f in sorted((ROOT / "Theorems").rglob("*.lean")):
         src = strip_comments(f.read_text())
         for m in re.finditer(
-                r"\n(?:private )?theorem\s+([A-Za-z0-9_.']+)"
+                r"\n(?:private |public )?theorem\s+([A-Za-z0-9_.']+)"
                 r"((?:[^\n]|\n(?=\s))*?)(?::=|\bby\b)", src):
             chunks.append(m.group(2))
     return " ".join(chunks)
@@ -140,7 +144,7 @@ def runtime_emitters() -> set[str]:
     # A *stream* is a def whose result type is `Bytes` or `String`; `safeChar` and
     # friends are helpers inside the construction, not something anyone writes out.
     streams = set()
-    for m in re.finditer(r"\ndef ([A-Za-z0-9_]+)[^\n:]*(?:\([^)]*\)\s*)*:\s*(Bytes|String)\b",
+    for m in re.finditer(r"\n(?:@\[expose\] )?(?:public )?def ([A-Za-z0-9_]+)[^\n:]*(?:\([^)]*\)\s*)*:\s*(Bytes|String)\b",
                          strip_comments((ROOT / "Linger/Core/Render.lean").read_text())):
         streams.add(m.group(1))
     return names & streams

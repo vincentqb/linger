@@ -1,3 +1,7 @@
+module
+
+public section
+
 /-! # Linger.Core.Buf — a bounded byte queue, as a value
 
 The daemon owns two long-lived byte queues: the per-client output backlog and the

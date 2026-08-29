@@ -1,3 +1,7 @@
+module
+
+public section
+
 /-! # Linger.Core.Name — session names that cannot escape their directory
 
 A session name becomes a socket path (`<dir>/<name>.sock`) and a

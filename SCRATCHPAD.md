@@ -6438,3 +6438,29 @@ writing `specs/lean-modules.md`. Facts, each observed both ways where it matters
   `^(private )*def` scan and the e2e greps keep measuring unchanged; the regexes get
   hardened to also match `public def`/`@[expose] public def` anyway, with counts asserted
   identical, so a later per-decl tightening cannot silently blind check 1.
+
+
+## lean-modules step 1 notes — 2026-08-19
+
+The whole `Linger` lib plus the three roots are `module` files now (blanket `public
+section`, imports as `public import`). Total migration friction on ~11k lines of Lean and
+370 legacy lemmas: **two `@[expose]` annotations**, both of a kind worth knowing:
+
+* `Checkpoint.R` — a **type-level def**. The compiler cannot agree on compiled
+  representations across modules without seeing through it ("locally inferred compilation
+  type differs from type that would be inferred in other modules", self-described as a
+  current compiler limitation). Rule of thumb: a `def` that returns `Type` gets `@[expose]`
+  on migration day; it has no implementation to hide.
+* `Vt.applySgr` — its `let rec go` **compiler-generated auxiliary** (`Vt.applySgr.go`) is
+  what `Theorems/Render/Pen.lean` inducts on by name, and auxiliaries stay module-private
+  unless the parent's body is exposed. 101 `Unknown constant` errors from the legacy proof
+  importer, one annotation to fix. Any future `where`/`let rec` whose auxiliary a proof
+  names will need the same.
+
+Everything else held with zero edits: every `unfold`/`simp [f]`/`decide`/`native_decide`
+in legacy `Theorems/`/`Tests/` still sees the (public) bodies, exactly as the probe
+predicted. `coverage.py`'s two census regexes and the statement scanner were hardened to
+also match `@[expose]`/`public`/`private` prefixes — necessary already, since `applySgr`
+had left the def census — and the exit criterion held: **every gate number is bit-identical
+before/after** (coverage 256 defs/18 unclaimed, SHIM 27, runtime partial 2, heartbeats 1),
+checked by diffing the captured before/after readings, not by eyeball.

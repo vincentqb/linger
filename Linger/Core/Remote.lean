@@ -1,4 +1,9 @@
-import Linger.Core.Name
+module
+
+public import Linger.Core.Name
+
+public section
+
 /-! # Linger.Core.Remote — parsing `linger ls --porcelain` from other machines
 
 The overview (`linger -r <hosts>`) folds in sessions from configured

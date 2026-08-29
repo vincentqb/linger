@@ -1,4 +1,9 @@
-import Linger.Posix
+module
+
+public import Linger.Posix
+
+public section
+
 /-! # lingertest — IO smoke tests for the Posix shim
 
 Pure code is tested in `Tests/` at elaboration time; things that spawn

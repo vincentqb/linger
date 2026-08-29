@@ -1,4 +1,9 @@
-import Linger.Core.Buf
+module
+
+public import Linger.Core.Buf
+
+public section
+
 /-! # Linger.Posix — the only module that touches the OS
 
 Most bindings map 1:1 onto `c/shim.c` (syscall + errno only; object

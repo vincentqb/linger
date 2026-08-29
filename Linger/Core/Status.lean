@@ -1,3 +1,7 @@
+module
+
+public section
+
 /-! # Session status — what a listing row reports
 
 One glyph per row, and the design constraint that produced this set is

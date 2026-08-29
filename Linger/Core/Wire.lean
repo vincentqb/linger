@@ -1,3 +1,7 @@
+module
+
+public section
+
 /-! # Linger.Core.Wire — the client ↔ daemon protocol
 
 One frame = 1 tag byte + 4 length bytes (LE u32) + payload. The codec

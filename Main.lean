@@ -1,5 +1,10 @@
-import Linger.Runtime.Cli
-import Linger.Runtime.Resume
+module
+
+public import Linger.Runtime.Cli
+public import Linger.Runtime.Resume
+
+public section
+
 /-! linger entry point. Resume hooks give the daemon its continuum-shape
 persistence; bare `linger` prints the session overview. -/
 

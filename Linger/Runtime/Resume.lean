@@ -1,7 +1,12 @@
-import Linger.Core.Checkpoint
-import Linger.Core.Session
-import Linger.Runtime.Paths
-import Linger.Runtime.Cli
+module
+
+public import Linger.Core.Checkpoint
+public import Linger.Core.Session
+public import Linger.Runtime.Paths
+public import Linger.Runtime.Cli
+
+public section
+
 /-! # Linger.Runtime.Resume — checkpoint hooks (the continuum shape)
 
 The daemon decides *when* (60s cadence while dirty, last-detach,

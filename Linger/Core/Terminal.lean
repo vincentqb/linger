@@ -1,4 +1,9 @@
-import Linger.Core.Render
+module
+
+public import Linger.Core.Render
+
+public section
+
 /-! # Linger.Core.Terminal — bounded child-facing terminal mediation
 
 `Vt` remains the screen model. This module adds the other half of owning a

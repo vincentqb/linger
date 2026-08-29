@@ -1,3 +1,7 @@
+module
+
+public section
+
 /-! # Linger.Core.Vt — restore-grade terminal emulation, pure
 
 The daemon feeds every pty byte here (a passive observer, zmx-style:
@@ -577,8 +581,12 @@ def Vt.eraseChars (v : Vt) (n : Nat) : Vt :=
 def color256 (n : Nat) : Color := .idx (UInt8.ofNat (min n 255))
 
 /-- Apply one SGR parameter chain. Handles 38/48 in both `38;5;n` /
-`38;2;r;g;b` (semicolon) and `38:5:n` / `38:2::r:g:b` (colon) forms. -/
-def Vt.applySgr (v : Vt) (params : List (Nat × Bool)) : Vt :=
+`38;2;r;g;b` (semicolon) and `38:5:n` / `38:2::r:g:b` (colon) forms.
+`@[expose]`: the Pen rung's proofs (`Theorems/Render/Pen.lean`) induct on the
+`let rec go` auxiliary by name (`Vt.applySgr.go`), and a compiler-generated
+auxiliary stays module-private unless the parent's body is exposed — without
+this, 101 `Unknown constant` errors from the (legacy) proof importer. -/
+@[expose] def Vt.applySgr (v : Vt) (params : List (Nat × Bool)) : Vt :=
   -- (value, isSubParam); a lone `m` means reset
   let rec go (p : Pen) (l : List (Nat × Bool)) (fuel : Nat) : Pen :=
     match fuel with

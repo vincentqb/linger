@@ -5,10 +5,12 @@ Updated: 2026-08-19
 
 ## Where this stands — read this first
 
-**Next step: Step 1.** Step 0 (feasibility probe) is done — every load-bearing
-question was measured on the pinned v4.32.0 before this spec was written; the
-facts live in SCRATCHPAD 2026-08-19 ("Lean module system on v4.32.0") and are
-NOT to be re-derived. The two that shape everything: interop is
+**Next step: Step 2.** Step 1 landed 2026-08-19 — the whole lib is `module`
+files and the migration cost was two `@[expose]`s (see SCRATCHPAD, "lean-modules
+step 1": type-level defs, and `let rec` auxiliaries that proofs name, are the
+two shapes that need it). Step 0's probe facts are in SCRATCHPAD 2026-08-19
+("Lean module system on v4.32.0") and are NOT to be re-derived. The two that
+shape everything: interop is
 legacy-imports-module only (so migration walks the import DAG bottom-up), and
 `import all` lets proofs stay in `Theorems/` while internals go private — the
 exact pair of blockers that killed the 2026-08-18 per-field-`private`
@@ -16,9 +18,10 @@ experiment (runtime-invariants Open decision 1, measured "no" then; the module
 system flips it to yes).
 
 - Step 0 ✓ probe (SCRATCHPAD 2026-08-19)
-- Step 1 → whole `Linger` lib + exe roots become `module` files, blanket
-  `public section` (semantics-preserving); gate regexes hardened, counts
-  asserted identical
+- Step 1 ✓ whole `Linger` lib + exe roots are `module` files (blanket
+  `public section`); two `@[expose]`s were the entire friction (the
+  type-level `Checkpoint.R`, and `Vt.applySgr` whose `let rec` auxiliary the
+  Pen proofs induct on); gate regexes hardened, every count bit-identical
 - Step 2 → seal `Linger.Core.Buf` (private fields); `Theorems/Buf.lean`
   becomes the first `import all` friend; flip the recorded open decision
 - Step 3 (optional) → sealed `SessionName` (sanitize-at-construction)
