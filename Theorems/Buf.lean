@@ -135,4 +135,36 @@ sanctioned read of the representation, so it is the one place a mismatch between
 "what we think is queued" and "what goes out" could hide. -/
 theorem writeFrom_owed (b : Buf) : writeFrom b = owed b := rfl
 
+/-! ## §Bound over the queue's whole life
+
+The per-step bounds above compose into lifetime invariants of the reachability
+predicates (`Linger/Core/Buf.lean`), and the composition is only meaningful
+because the representation is sealed: every `Buf` a plain importer can possess
+is `empty` moved forward by the API, so "reachable" is not a subset of the
+runtime's states — it IS them. Pre-seal these theorems would have been true of
+a predicate that described nothing (the forge escape); that is why they were
+not written until specs/lean-modules.md Step 2 landed. -/
+
+/-- **The pty-input queue is bounded for the daemon's whole life**: any
+interleaving of capped offers and flush advances, from boot, stays within the
+cap. The step facts carry it — `bufOffer_bound` (refuse-before-append) and
+`bufAdvance_wf` (advancing only shrinks). -/
+theorem reachableIn_bound {cap : Nat} {b : Buf} (h : ReachableIn cap b) :
+    owedLen b ≤ cap := by
+  induction h with
+  | empty => rw [owedLen_empty]; exact Nat.zero_le cap
+  | offer b more _ ih => exact bufOffer_bound cap b more ih
+  | advance b n _ ih => rw [bufAdvance_wf]; omega
+
+/-- **Every client backlog the daemon retains is bounded for its whole life.**
+The enqueue constructor's not-cut hypothesis is what carries it — exactly the
+guard `bufEnqueue_bound` is stated under, because `.send` appends before it
+decides and a cut client leaves the roster with its queue. -/
+theorem reachableOut_bound {cap : Nat} {b : Buf} (h : ReachableOut cap b) :
+    owedLen b ≤ cap := by
+  induction h with
+  | empty => rw [owedLen_empty]; exact Nat.zero_le cap
+  | enqueue b more _ hcut _ => exact bufEnqueue_bound cap b more hcut
+  | advance b n _ ih => rw [bufAdvance_wf]; omega
+
 end Linger.Core.Buf

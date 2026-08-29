@@ -636,7 +636,13 @@ terminals; see the note under `## What these theorems do not settle`.)
   the friend import. And `tests/e2e.sh` still gates that the runtime declares no byte
   buffer *of its own* — privacy seals `Buf`, but only the grep bans a parallel
   `ByteArray` queue, which is a source-tree property and therefore a grep, in the same
-  spirit as `SHIM_CAP`.
+  spirit as `SHIM_CAP`. **The seal is also what upgraded the per-step bounds to
+  whole-lifetime ones**: `ReachableIn`/`ReachableOut` (Linger/Core/Buf.lean) are
+  exhaustive over what a plain importer can possess — pre-seal a forged `Buf` escaped
+  any such predicate, which is why they were not worth stating — and
+  `reachableIn_bound`/`reachableOut_bound` say any interleaving of capped offers (or
+  not-cut enqueues) and flush advances, from boot, stays within the cap: §Bound over
+  the queue's whole life, the same lift `run_wf` gives the machine one layer up.
 * **Grid dimensions are invariant by theorem now** (`dims_feed`,
   Theorems/Vt.lean): no byte stream changes `cols`/`rows`. `RIS`
   re-derives them through `clampDim`, which is the identity exactly when

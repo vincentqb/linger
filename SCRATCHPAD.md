@@ -6504,3 +6504,54 @@ marked as private". **Break-verify against the target that compiles the attacked
 Ratchets: coverage 256 defs / 18 unclaimed (`Buf.empty` arrived claimed by
 `owed_empty`/`owedLen_empty`); SHIM 27; heartbeats 1; runtime partials 2; e2e greps
 unchanged and still green.
+
+
+## lean-modules harvest — the theorems the seal newly makes TRUE — 2026-08-19
+
+Compound-engineering pass over Step 2: what claims does a sealed `Buf` enable that were
+not worth stating before? The test applied to each candidate was the poll-plan standard
+(runtime-invariants' recorded kill): a claim whose canonical break is not caught by
+anything is decoration.
+
+**Landed: the whole-lifetime §Bound pair.** `ReachableIn cap`/`ReachableOut cap`
+(Linger/Core/Buf.lean) are the least predicates containing `Buf.empty` and closed under the
+queue's API — the `LiveReachableVt` idiom one layer down — and `reachableIn_bound` /
+`reachableOut_bound` (Theorems/Buf.lean) prove any interleaving of capped offers (resp.
+not-cut enqueues) and flush advances stays ≤ cap from boot, forever. Both proofs are
+three-case inductions over the already-shipped step facts; no new arithmetic. The
+constructor carrying `(bufEnqueue …).2 = false` IS the shipped append-then-cut discipline
+(a cut client leaves the roster with its queue), so the guard is modeling, not weakening.
+No content twins needed at this level: a trace bound composed of twinned steps inherits
+the pairing.
+
+**Why these were NOT written pre-seal, recorded so nobody backfills wrong reasons:** with
+a public constructor, "reachable from empty" described a strict subset of what the runtime
+could hold — any `{ bytes := … }` forge escaped it — so the predicate failed the
+decoration test. The seal makes it exhaustive over what a plain importer can possess.
+Break 1 demonstrates exactly this: re-admitting a `forge (b) : ReachableIn cap b`
+constructor (the pre-seal world, as one line) makes `reachableIn_bound` unprovable
+("Alternative `forge` has not been provided" — the induction demands a case no fact can
+close). Break 2: dropping the not-cut guard from `ReachableOut.enqueue` refutes
+`reachableOut_bound` (the proof's binder for the guard vanishes and `bufEnqueue_bound`
+has nothing to eat).
+
+**Cleanup in the same pass** (docs made true rather than aspirational): `Posix.writeBuf`'s
+"the one place outside Core that reads a Buf's representation" was a convention — it now
+*cannot* read the representation and calls the `writeFrom` window, so the docstring says
+so; `Daemon.Conn.out` / `Rt.ptyIn` field docs point at their lifetime bounds; THEOREMS.md
+§Bound gained the whole-life sentence.
+
+**Candidates weighed and NOT built, with reasons:**
+* A whole-trace FIFO/content characterization (owed = accepted frames minus advanced
+  prefix) — real project, and the per-step twins already make each transition
+  content-exact; a lifetime bound was the missing kind of claim, a lifetime content
+  equation is not (nothing consumes it).
+* `bufSize`/`owedLen` or `owed`/`writeFrom` collapse — the name pairs carry roles
+  (footprint vs debt; spec vs syscall window), and `bufNoRetain`/`writeFrom_owed` are
+  the equations; deleting a name to save a `rfl` is negative cleanup.
+* Sealing `Session.State` the same way (boot + step as the only doors; would make
+  `run_wf`'s WF hypothesis structural for the daemon) — genuinely attractive, but it is
+  a new step, not a harvest: Daemon boots a literal `State`, Resume reads fields, and
+  `Tests/Session.lean` forges rosters as test rigging, so it needs the friend-module
+  treatment end to end. Noted in specs/lean-modules.md as the natural Step 5 for
+  whenever the spec's turn comes back; scrollback-fidelity Step 2 is still queued ahead.

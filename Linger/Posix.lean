@@ -56,9 +56,12 @@ stops. Passing the cursor here rather than re-slicing per iteration is what keep
 flush to a single copy, as it was before the queue became a value.
 
 This is a **Lean-level wrapper** over the existing `linger_write` extern, not a new
-syscall: `SHIM_CAP` is untouched. It is also the one place outside `Linger/Core` that
-reads a `Buf`'s representation, which is why `tests/e2e.sh` can gate the whole of
-`Linger/Runtime/*` against declaring byte buffers of its own. -/
+syscall: `SHIM_CAP` is untouched. Since the seal (specs/lean-modules.md Step 2) it
+could not read a `Buf`'s representation if it wanted to — `bytes` is `private`, and
+this calls the one API window, `writeFrom`. What was "the one sanctioned read
+outside Core" by convention is now the only one *possible*; `tests/e2e.sh`'s greps
+still gate `Linger/Runtime/*` against declaring parallel byte buffers of its own,
+the half privacy cannot see. -/
 def writeBuf (fd : UInt32) (b : Linger.Core.Buf.Buf) (sent : Nat) : IO Int64 :=
   write fd (Linger.Core.Buf.writeFrom b) (USize.ofNat sent)
 

@@ -49,6 +49,9 @@ def ptyInCap : Nat := 4194304
 
 structure Conn where
   fd : UInt32
+  /-- The client's backlog. Starts empty and is sealed: every state this field
+  can reach is covered by `Buf.reachableOut_bound` — within `outbufCap` for the
+  connection's whole life, given the cut discipline below. -/
   out : Buf := .empty
   deriving Inhabited
 
@@ -58,6 +61,9 @@ structure Rt where
   ptyFd : UInt32
   childPid : UInt32
   conns : List Conn := []
+  /-- The pty-input backlog. Starts empty and is sealed: every state it can
+  reach is `Buf.ReachableIn ptyInCap`, so `reachableIn_bound` bounds it for the
+  daemon's whole life — not per call. -/
   ptyIn : Buf := .empty
   /-- Whether we have already logged that `ptyIn` hit the cap, so the log
   records the *transition* into backpressure rather than one line per dropped

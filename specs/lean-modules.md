@@ -35,6 +35,27 @@ system flips it to yes).
   `lake build Linger` does NOT compile `Linger/Runtime/**`; see SCRATCHPAD)
 - Step 3 (optional) → sealed `SessionName` (sanitize-at-construction)
 - Step 4 (optional) → `@[expose]`/`public` tightening beyond the blanket
+- Step 5 (optional, added by the harvest) → seal `Session.State`: a public
+  `boot` constructor + `step` as the only doors, making `run_wf`'s WF
+  hypothesis structural for every state the daemon can hold — the `Buf` story
+  one layer up. Needs the friend treatment for `Tests/Session.lean` (its
+  roster-forging fixtures are legitimate rigging) and a `boot` API for
+  Daemon/Resume; also surfaces a real question first: `Bounded` at boot with
+  checkpoint-restored labels is currently unproven (a corrupt checkpoint's
+  label list has no cap at load).
+
+## Harvest — 2026-08-19 (after Step 2)
+
+The seal's theorem dividend, applied by the decoration test (a claim whose
+canonical break nothing catches is not written): `ReachableIn`/`ReachableOut`
+in Core + `reachableIn_bound`/`reachableOut_bound` in the friend module — §Bound
+over each queue's whole life, exhaustive over what an importer can possess
+*because* the constructor is private. Break 1 re-admits a one-line `forge`
+constructor (the pre-seal world) and the bound becomes unprovable; break 2
+drops the enqueue guard and the bound is refuted. Docs made literal in the
+same pass (`Posix.writeBuf`, the two Daemon queue fields, THEOREMS §Bound).
+Weighed and declined: lifetime FIFO content equation, name-pair collapses —
+reasons in SCRATCHPAD.
 
 ## Goal
 
