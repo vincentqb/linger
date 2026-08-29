@@ -5,18 +5,17 @@ Updated: 2026-08-19
 
 ## Where this stands — read this first
 
-**Next step: Step 3 (`send <name> -`).** Steps 1–2 done (2026-08-19): the info
-fields + `linger info` (through `Client.drainBounded` — new one-shot verbs own a
-reply deadline; `wait` stays untimed on purpose) and `linger capture` (tag 16,
-`Render.screenText` proved + EMITTERS-classified, capture marks seen via
-`lookSeq := outSeq`, `onMsg_screen` is `rfl`). Four breaks recorded in
-SCRATCHPAD 2026-08-19, including the live no-hang demonstration of the
-deadline. e2e suite 12 (`tests/agent_test.py`) carries the live assertions —
-note its `run`-not-`send` rule for commands that must execute.
+**Next step: Step 4 (`resize`).** Steps 1–3 done (2026-08-19). Two things not
+to re-derive: new one-shot verbs drain through `Client.drainBounded` (a
+pre-upgrade daemon drops an unknown tag silently; `wait` alone stays untimed,
+on purpose), and Step 3's break round found a worthless e2e assertion (tty
+echo of *typed* input satisfied a "was it delivered" check) — the oracles now
+assert on shell *expansions*; see SCRATCHPAD before weakening any agent_test
+marker.
 
 - Step 1 ✓ info fields (`cols rows cursorx cursory alt outseq`) + `linger info <name>`
 - Step 2 ✓ `linger capture <name>` (wire tag 16, `Render.screenText`, marks seen)
-- Step 3 → `linger send <name> -` (raw stdin bytes)
+- Step 3 ✓ `linger send <name> -` (raw stdin bytes; client-only)
 - Step 4 → `linger resize <name> <cols> <rows>` (control resize, never fights a live user)
 
 ## Goal

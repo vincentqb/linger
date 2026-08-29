@@ -110,6 +110,37 @@ fails += expect(len(cap2) == rows + 1 and len(hist) > len(cap2),
 r = linger('capture', 'nosuch')
 fails += expect(r.returncode == 1, 'capture on a missing session exits 1')
 
+# -- Step 3: send - (raw stdin) -----------------------------------------------
+
+# a full command line with its newline arrives verbatim and executes. The
+# marker is asserted on the *expansion* (GOT-42), which the typed line does
+# not contain -- the tty echoes typed input onto the screen, so asserting on
+# the typed text would pass even if the newline was lost and nothing ran.
+r = linger('send', 'ag', '-', input=b'echo "GOT-$((40+2))"\n')
+time.sleep(1.2)
+fails += expect(r.returncode == 0 and
+                'GOT-42' in linger('capture', 'ag').stdout.decode(),
+                'send - delivers bytes verbatim (newline included: it ran)')
+
+# a control byte works: ^C interrupts a foreground child, after which the
+# queued next line is read and runs (same trick: the typed line says
+# INTER""RUPTED-OK, only the executed output says INTERRUPTED-OK)
+linger('run', 'ag', 'sleep', '100')
+time.sleep(1.0)
+linger('send', 'ag', '-', input=b'\x03')
+time.sleep(0.5)
+linger('run', 'ag', 'echo', 'INTER""RUPTED-OK')
+time.sleep(1.2)
+fails += expect('INTERRUPTED-OK' in linger('capture', 'ag').stdout.decode(),
+                'send - carries ^C (the sleep died, the shell came back)')
+
+# empty stdin is a clean no-op
+r = linger('send', 'ag', '-', input=b'')
+fails += expect(r.returncode == 0, 'send - with empty stdin exits 0')
+
+r = linger('send', 'nosuch', '-', input=b'x')
+fails += expect(r.returncode == 1, 'send - on a missing session exits 1')
+
 linger('kill', 'ag')
 print(f'FAILURES: {fails}')
 sys.exit(1 if fails else 0)

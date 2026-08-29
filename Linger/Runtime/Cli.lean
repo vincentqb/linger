@@ -36,7 +36,8 @@ def usage : String := "Usage: linger [command] [args...]
   [a]ttach [name] [command]   Attach, creating if needed (name defaults to 'main')
   watch <name>                Attach read-only (view without touching)
   [r]un <name> <command...>   Run a command in a session without attaching
-  [s]end <name> <text...>     Send raw input to session pty
+  [s]end <name> <text...>     Send raw input to session pty ('linger send <name> -'
+                              sends stdin verbatim: newlines, ^C, escapes...)
   [d]etach <name>             Detach all clients from a session
   [k]ill <name>               Kill session and all attached clients
   [i]nfo <name>               Print one session's k<TAB>v records (size, cursor,
@@ -302,6 +303,31 @@ def requireLiveBounded (name : String) (m : Msg) : IO UInt32 := do
       IO.eprintln s!"linger: no reply from '{name}' (daemon predates this command?)"
       return 1
 
+/-- `send <name> -`: stdin to the session's pty, byte-exact, one `.input`
+frame per read (≤ 64 KiB, so every frame is Wire-wf). The agent's raw input
+path — Enter, ^C, ESC, arrow sequences, exact whitespace: everything argv
+cannot carry (agent-cli Decision 5). Poll-then-read so EOF (`read` = `none`)
+is distinguished from would-block (`some #[]`, looped past) without spinning;
+no timeout on purpose — a slow producer feeding a pipe is legitimate, and EOF
+is the only exit. Nothing accumulates (each chunk is sent and dropped), so no
+`Buf` is involved. -/
+def cmdSendStdin (name : String) : IO UInt32 := do
+  match ← Client.connect name with
+  | none =>
+    IO.eprintln s!"linger: no session '{name}'"
+    return 1
+  | some fd =>
+    let mut go := true
+    while go do
+      let revs ← poll #[stdinFd] #[POLLIN] 200
+      if revs[0]! &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
+        match ← read stdinFd 65536 with
+        | none => go := false
+        | some bs =>
+          if !bs.isEmpty then Client.sendMsg fd (.input bs.toList)
+    close fd
+    return 0
+
 def cmdWait (names : List String) : IO UInt32 := do
   let mut rc : UInt32 := 0
   for name in names do
@@ -374,9 +400,10 @@ def main (hooks : Hooks) (args : List String) : IO UInt32 := do
     return 0
   | "send" :: name :: text | "s" :: name :: text =>
     if text.isEmpty then
-      IO.eprintln "usage: linger send <name> <text...>"
+      IO.eprintln "usage: linger send <name> <text...>  (or: linger send <name> -)"
       return 2
-    requireLiveSend name (.input (String.intercalate " " text).toUTF8.toList)
+    if text == ["-"] then cmdSendStdin name
+    else requireLiveSend name (.input (String.intercalate " " text).toUTF8.toList)
   | ["detach", name] | ["d", name] => requireLive name .detachAll
   | ["kill", name] | ["k", name] => requireLiveSend name .kill
   | ["info", name] | ["i", name] => requireLiveBounded name .info

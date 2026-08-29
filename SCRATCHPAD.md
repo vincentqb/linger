@@ -6287,3 +6287,22 @@ e2e gotcha for later steps: `linger send` does not press Enter (by design). A te
 `send`s commands and expects them to have *run* leaves them queued on the shell's input
 line, and the junk corrupts the next `run` line — `tests/agent_test.py` floods via `run`
 for exactly this reason. `capture` shows the *typed* line too (it is on the screen).
+
+
+## agent-cli step 3 notes — 2026-08-19
+
+`send <name> -`: stdin to the pty byte-exact, one `.input` frame per ≤ 64 KiB read,
+poll-then-read (EOF = `read` → `none`; `some #[]` = would-block, looped past), no deadline on
+purpose — a slow producer is legitimate and EOF is the only exit. Client-only: no protocol,
+daemon or Core change, nothing accumulates (no `Buf` involvement, the e2e greps stay quiet).
+
+**Break-verify found a worthless test and fixed it.** The break (drop the last byte of each
+chunk) initially *passed* the e2e: the assertion looked for the marker in a capture, but the
+tty echoes *typed* input onto the screen, so `echo STDIN-BOUND` appeared in the capture even
+though the lost `\n` meant it never ran. The oracle now asserts on the shell *expansion*
+(`echo "GOT-$((40+2))"` → `GOT-42`; typed line ≠ output line), and the break is caught.
+Same trick for the ^C test (`INTER""RUPTED-OK` typed vs `INTERRUPTED-OK` executed) — though
+under the dropLast break that one still passes as a **cascade artifact** (the corrupted
+first line prevents `sleep` from ever starting), so the verbatim test is the load-bearing
+delivery oracle and the ^C test is the control-byte semantics demo. Both recorded here so
+nobody "simplifies" the markers back to plain text.
