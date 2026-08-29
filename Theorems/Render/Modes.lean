@@ -1,4 +1,12 @@
-import Theorems.Render.Keeps
+module
+
+public import Theorems.Render.Keeps
+import all Linger.Core.Render
+import all Linger.Core.Vt
+import all Theorems.Render.Keeps
+
+public section
+
 /-! # §Handback / anchor A5 — the modes, both directions
 
 The lead-in that grounds any receiver, the hand-back's canonical modes
@@ -298,7 +306,7 @@ hand-back's chunks — each mode set absolutely, each non-mode chunk transparent
 the default record, for **any** receiver `w`. -/
 
 -- setMode's effect on `modes` is a function of the incoming modes alone.
-theorem modes_moveTo (v : Vt) (x y : Nat) : (v.moveTo x y).modes = v.modes := rfl
+theorem modes_moveTo (v : Vt) (x y : Nat) : (v.moveTo x y).modes = v.modes := by rfl
 theorem modes_leaveAlt (v : Vt) (r : Bool) : (v.leaveAlt r).modes = v.modes := by
   unfold Vt.leaveAlt; split <;> rfl
 theorem modes_enterAlt (v : Vt) (s : Bool) : (v.enterAlt s).modes = v.modes := by
@@ -372,7 +380,7 @@ theorem modeSet_tail (n : Nat) (on : Bool) (hn : 0 < n) (hlt : n < 65535)
     show sa.priv = 0x3F; rw [hsab]; exact hpriv'
   have hign2 : ({ sa with params := #[(n, sa.curSub)] } : CsiState).ignore = false := by
     show sa.ignore = false; rw [hsab]; exact hign'
-  have hopmodes : ({ w with pstate := .csi sa } : Vt).modes = w.modes := rfl
+  have hopmodes : ({ w with pstate := .csi sa } : Vt).modes = w.modes := by rfl
   show (({ w with pstate := .csi sa }).csiDispatch
       { sa with params := sa.params.push (min sa.cur 65535, sa.curSub) }
       (if on then 0x68 else 0x6C)).modes = (w.setMode true n on).modes
@@ -616,7 +624,7 @@ theorem mmap_irm (on : Bool) :
     show sa.priv = 0; rw [hsab]; exact hpriv'
   have hign2 : ({ sa with params := #[(4, sa.curSub)] } : CsiState).ignore = false := by
     show sa.ignore = false; rw [hsab]; exact hign'
-  have hop : ({ v with pstate := .csi sa } : Vt).modes = v.modes := rfl
+  have hop : ({ v with pstate := .csi sa } : Vt).modes = v.modes := by rfl
   show (({ v with pstate := .csi sa }).csiDispatch
       { sa with params := sa.params.push (min sa.cur 65535, sa.curSub) }
       (if on then 0x68 else 0x6C)).modes = { v.modes with insert := on }
@@ -1014,7 +1022,7 @@ lifted from the `dirty`-receiver fixtures to a theorem. `penSgr_feed` sets the p
 the pen-projection CSI walk (`csi_tail_pen`) shows the trailing `cursorAnsi` (a
 `CUP`/`moveTo`) preserves it. -/
 
-theorem pen_moveTo (v : Vt) (x y : Nat) : (v.moveTo x y).pen = v.pen := rfl
+theorem pen_moveTo (v : Vt) (x y : Nat) : (v.moveTo x y).pen = v.pen := by rfl
 
 theorem pen_csiDispatch_cup (v : Vt) (s : CsiState) : (v.csiDispatch s 0x48).pen = v.pen := by
   by_cases hi : s.ignore = true

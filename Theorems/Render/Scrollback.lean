@@ -1,4 +1,12 @@
-import Theorems.Render.Tabs
+module
+
+public import Theorems.Render.Tabs
+import all Linger.Core.Render
+import all Linger.Core.Vt
+import all Theorems.Render.Tabs
+
+public section
+
 /-! # §Replay — the scrollback stage
 
 What `Render.scrollbackAnsi` sends is built from three pieces, and this file

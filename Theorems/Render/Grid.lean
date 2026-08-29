@@ -1,4 +1,12 @@
-import Theorems.Render.Row
+module
+
+public import Theorems.Render.Row
+import all Linger.Core.Render
+import all Linger.Core.Vt
+import all Theorems.Render.Row
+
+public section
+
 /-! # Step 4 — the grid
 
 `OffRow` (a row's paint leaves the other rows alone), the `joinCRLF` row walk
@@ -1124,7 +1132,7 @@ theorem mmap_id_stbm2 (a b : Nat) : MMap id (csiNum2 a b 0x72) := by
 
 /-- `DECAWM`/`DECOM` on the abstract modes: each sets exactly its field. `DECOM` goes
 through `moveTo`, which frames away. -/
-theorem smMod_daw7 (X : Modes) (on : Bool) : smMod 7 on X = { X with wrap := on } := rfl
+theorem smMod_daw7 (X : Modes) (on : Bool) : smMod 7 on X = { X with wrap := on } := by rfl
 
 theorem smMod_dom6 (X : Modes) (on : Bool) : smMod 6 on X = { X with origin := on } := by
   show (({ (default : Vt) with modes := { X with origin := on } }).moveTo 0 0).modes

@@ -1,4 +1,12 @@
-import Theorems.Render.Sticky
+module
+
+public import Theorems.Render.Sticky
+import all Linger.Core.Render
+import all Linger.Core.Vt
+import all Theorems.Render.Sticky
+
+public section
+
 /-! # §Row integrity for `linger history` — a cell cannot inject a line break
 
 `history`'s framing: every byte is a line terminator or printable content, and the

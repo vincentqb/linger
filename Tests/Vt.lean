@@ -201,4 +201,12 @@ example : (let v := screen 5 2 "1\r\n2\r\n3\r\n4"
            String.fromUTF8! ⟨(history v false).toArray⟩ == "1\n2\n3\n4\n") = true := by
   native_decide
 
+/-- **`mend` is not the identity** (moved from `Theorems/Render/Keeps.lean` in
+lean-modules Step 5 — a module-file kernel `decide` cannot reduce a derived
+`DecidableEq` whose body is unexposed, and this check is an evaluation anyway):
+a lone width-2 base is repaired away, so `mend_of_pairOk`'s hypothesis is
+load-bearing rather than decorative. -/
+example : (Row.mend #[{ base := 'x', marks := [], width := 2, pen := {} }]
+    != #[{ base := 'x', marks := [], width := 2, pen := {} }]) = true := by native_decide
+
 end Linger.Core.Vt.Tests

@@ -1,4 +1,10 @@
-import Linger.Core.Vt
+module
+
+public import Linger.Core.Vt
+import all Linger.Core.Vt
+
+public section
+
 /-! # §Total / §Chunk / §Bound — the emulator theorems
 
 THEOREMS.md rows for `Vt`:
@@ -799,13 +805,13 @@ conditional cases (`RIS`, `setMode`) live.
 
 /-- Pure record update: `rfl` suffices. -/
 theorem frame_putCell (v : Vt) (x y : Nat) (c : Cell) :
-    v.putCell x y c = { v with grid := (v.putCell x y c).grid } := rfl
+    v.putCell x y c = { v with grid := (v.putCell x y c).grid } := by rfl
 
 theorem frame_moveTo (v : Vt) (x y : Nat) :
-    v.moveTo x y = { v with cursor := (v.moveTo x y).cursor } := rfl
+    v.moveTo x y = { v with cursor := (v.moveTo x y).cursor } := by rfl
 
 theorem frame_eraseRowSpan (v : Vt) (y a b : Nat) :
-    v.eraseRowSpan y a b = { v with grid := (v.eraseRowSpan y a b).grid } := rfl
+    v.eraseRowSpan y a b = { v with grid := (v.eraseRowSpan y a b).grid } := by rfl
 
 /-- Branching operation: one `split`, both branches record updates.
 `scrollUpIn` may also push the evicted line to scrollback. -/
@@ -868,33 +874,33 @@ result is a *syntactic* record update; a composed chain times out and a
 -/
 
 theorem frame_clearPending (v : Vt) :
-    v.clearPending = { v with cursor := v.clearPending.cursor } := rfl
+    v.clearPending = { v with cursor := v.clearPending.cursor } := by rfl
 
 theorem frame_carriageReturn (v : Vt) :
-    v.carriageReturn = { v with cursor := v.carriageReturn.cursor } := rfl
+    v.carriageReturn = { v with cursor := v.carriageReturn.cursor } := by rfl
 
 theorem frame_moveRel (v : Vt) (dx dy : Int) :
-    v.moveRel dx dy = { v with cursor := (v.moveRel dx dy).cursor } := rfl
+    v.moveRel dx dy = { v with cursor := (v.moveRel dx dy).cursor } := by rfl
 
 theorem frame_setCol (v : Vt) (x : Nat) :
-    v.setCol x = { v with cursor := (v.setCol x).cursor } := rfl
+    v.setCol x = { v with cursor := (v.setCol x).cursor } := by rfl
 
 theorem frame_scrollDownIn (v : Vt) (t b : Nat) :
-    v.scrollDownIn t b = { v with grid := (v.scrollDownIn t b).grid } := rfl
+    v.scrollDownIn t b = { v with grid := (v.scrollDownIn t b).grid } := by rfl
 
 theorem frame_deleteChars (v : Vt) (n : Nat) :
-    v.deleteChars n = { v with grid := (v.deleteChars n).grid } := rfl
+    v.deleteChars n = { v with grid := (v.deleteChars n).grid } := by rfl
 
 theorem frame_insertChars (v : Vt) (n : Nat) :
-    v.insertChars n = { v with grid := (v.insertChars n).grid } := rfl
+    v.insertChars n = { v with grid := (v.insertChars n).grid } := by rfl
 
 theorem frame_applySgr (v : Vt) (ps : List (Nat × Bool)) :
-    v.applySgr ps = { v with pen := (v.applySgr ps).pen } := rfl
+    v.applySgr ps = { v with pen := (v.applySgr ps).pen } := by rfl
 
-theorem frame_backTab (v : Vt) : v.backTab = { v with cursor := v.backTab.cursor } := rfl
+theorem frame_backTab (v : Vt) : v.backTab = { v with cursor := v.backTab.cursor } := by rfl
 
 theorem frame_eraseChars (v : Vt) (n : Nat) :
-    v.eraseChars n = { v with grid := (v.eraseChars n).grid } := rfl
+    v.eraseChars n = { v with grid := (v.eraseChars n).grid } := by rfl
 
 theorem frame_backspace (v : Vt) :
     v.backspace = { v with cursor := v.backspace.cursor } := by
@@ -942,10 +948,10 @@ theorem frame_printShift (v : Vt) (w : Nat) :
 /-- Wide-pair repair writes only the grid. One frame covers all four layers
 below, plus any field a later one adds. -/
 theorem frame_mendAt (v : Vt) (x y : Nat) :
-    v.mendAt x y = { v with grid := (v.mendAt x y).grid } := rfl
+    v.mendAt x y = { v with grid := (v.mendAt x y).grid } := by rfl
 
 theorem frame_mendRow (v : Vt) (y : Nat) :
-    v.mendRow y = { v with grid := (v.mendRow y).grid } := rfl
+    v.mendRow y = { v with grid := (v.mendRow y).grid } := by rfl
 
 theorem frame_printPut (v : Vt) (ch : Char) (w : Nat) :
     v.printPut ch w = { v with grid := (v.printPut ch w).grid } := by
@@ -1023,16 +1029,16 @@ as open for `cols`/`rows` — the shape of proof is identical, ~15 small
 lemmas, and it turned out to be worth writing after all.)
 -/
 
-theorem ps_clearPending (v : Vt) : v.clearPending.pstate = v.pstate := rfl
-theorem ps_carriageReturn (v : Vt) : v.carriageReturn.pstate = v.pstate := rfl
+theorem ps_clearPending (v : Vt) : v.clearPending.pstate = v.pstate := by rfl
+theorem ps_carriageReturn (v : Vt) : v.carriageReturn.pstate = v.pstate := by rfl
 theorem ps_putCell (v : Vt) (x y : Nat) (c : Cell) :
-    (v.putCell x y c).pstate = v.pstate := rfl
-theorem ps_moveTo (v : Vt) (x y : Nat) : (v.moveTo x y).pstate = v.pstate := rfl
-theorem ps_moveRel (v : Vt) (dx dy : Int) : (v.moveRel dx dy).pstate = v.pstate := rfl
-theorem ps_setCol (v : Vt) (x : Nat) : (v.setCol x).pstate = v.pstate := rfl
-theorem ps_scrollDownIn (v : Vt) (t b : Nat) : (v.scrollDownIn t b).pstate = v.pstate := rfl
+    (v.putCell x y c).pstate = v.pstate := by rfl
+theorem ps_moveTo (v : Vt) (x y : Nat) : (v.moveTo x y).pstate = v.pstate := by rfl
+theorem ps_moveRel (v : Vt) (dx dy : Int) : (v.moveRel dx dy).pstate = v.pstate := by rfl
+theorem ps_setCol (v : Vt) (x : Nat) : (v.setCol x).pstate = v.pstate := by rfl
+theorem ps_scrollDownIn (v : Vt) (t b : Nat) : (v.scrollDownIn t b).pstate = v.pstate := by rfl
 theorem ps_eraseRowSpan (v : Vt) (y a b : Nat) :
-    (v.eraseRowSpan y a b).pstate = v.pstate := rfl
+    (v.eraseRowSpan y a b).pstate = v.pstate := by rfl
 
 theorem ps_scrollUpIn (v : Vt) (t b : Nat) (a : Bool) :
     (v.scrollUpIn t b a).pstate = v.pstate := by
@@ -1173,22 +1179,22 @@ theorem un_foldl {α : Type} (f : Vt → α → Vt)
   | [], _ => rfl
   | a :: as, v => (un_foldl f hf as (f v a)).trans (hf v a)
 
-theorem un_clearPending (v : Vt) : v.clearPending.u8need = v.u8need := rfl
-theorem un_carriageReturn (v : Vt) : v.carriageReturn.u8need = v.u8need := rfl
-theorem un_moveTo (v : Vt) (x y : Nat) : (v.moveTo x y).u8need = v.u8need := rfl
-theorem un_moveRel (v : Vt) (dx dy : Int) : (v.moveRel dx dy).u8need = v.u8need := rfl
-theorem un_setCol (v : Vt) (x : Nat) : (v.setCol x).u8need = v.u8need := rfl
+theorem un_clearPending (v : Vt) : v.clearPending.u8need = v.u8need := by rfl
+theorem un_carriageReturn (v : Vt) : v.carriageReturn.u8need = v.u8need := by rfl
+theorem un_moveTo (v : Vt) (x y : Nat) : (v.moveTo x y).u8need = v.u8need := by rfl
+theorem un_moveRel (v : Vt) (dx dy : Int) : (v.moveRel dx dy).u8need = v.u8need := by rfl
+theorem un_setCol (v : Vt) (x : Nat) : (v.setCol x).u8need = v.u8need := by rfl
 theorem un_putCell (v : Vt) (x y : Nat) (c : Cell) :
-    (v.putCell x y c).u8need = v.u8need := rfl
+    (v.putCell x y c).u8need = v.u8need := by rfl
 theorem un_eraseRowSpan (v : Vt) (y a b : Nat) :
-    (v.eraseRowSpan y a b).u8need = v.u8need := rfl
+    (v.eraseRowSpan y a b).u8need = v.u8need := by rfl
 theorem un_scrollDownIn (v : Vt) (t b : Nat) :
-    (v.scrollDownIn t b).u8need = v.u8need := rfl
-theorem un_deleteChars (v : Vt) (n : Nat) : (v.deleteChars n).u8need = v.u8need := rfl
-theorem un_insertChars (v : Vt) (n : Nat) : (v.insertChars n).u8need = v.u8need := rfl
+    (v.scrollDownIn t b).u8need = v.u8need := by rfl
+theorem un_deleteChars (v : Vt) (n : Nat) : (v.deleteChars n).u8need = v.u8need := by rfl
+theorem un_insertChars (v : Vt) (n : Nat) : (v.insertChars n).u8need = v.u8need := by rfl
 theorem un_applySgr (v : Vt) (ps : List (Nat × Bool)) :
-    (v.applySgr ps).u8need = v.u8need := rfl
-theorem un_backTab (v : Vt) : v.backTab.u8need = v.u8need := rfl
+    (v.applySgr ps).u8need = v.u8need := by rfl
+theorem un_backTab (v : Vt) : v.backTab.u8need = v.u8need := by rfl
 
 theorem un_scrollUpIn (v : Vt) (t b : Nat) (a : Bool) :
     (v.scrollUpIn t b a).u8need = v.u8need := by
@@ -1428,22 +1434,22 @@ theorem ua_foldl {α : Type} (f : Vt → α → Vt)
   | [], _ => rfl
   | a :: as, v => (ua_foldl f hf as (f v a)).trans (hf v a)
 
-theorem ua_clearPending (v : Vt) : v.clearPending.u8acc = v.u8acc := rfl
-theorem ua_carriageReturn (v : Vt) : v.carriageReturn.u8acc = v.u8acc := rfl
-theorem ua_moveTo (v : Vt) (x y : Nat) : (v.moveTo x y).u8acc = v.u8acc := rfl
-theorem ua_moveRel (v : Vt) (dx dy : Int) : (v.moveRel dx dy).u8acc = v.u8acc := rfl
-theorem ua_setCol (v : Vt) (x : Nat) : (v.setCol x).u8acc = v.u8acc := rfl
+theorem ua_clearPending (v : Vt) : v.clearPending.u8acc = v.u8acc := by rfl
+theorem ua_carriageReturn (v : Vt) : v.carriageReturn.u8acc = v.u8acc := by rfl
+theorem ua_moveTo (v : Vt) (x y : Nat) : (v.moveTo x y).u8acc = v.u8acc := by rfl
+theorem ua_moveRel (v : Vt) (dx dy : Int) : (v.moveRel dx dy).u8acc = v.u8acc := by rfl
+theorem ua_setCol (v : Vt) (x : Nat) : (v.setCol x).u8acc = v.u8acc := by rfl
 theorem ua_putCell (v : Vt) (x y : Nat) (c : Cell) :
-    (v.putCell x y c).u8acc = v.u8acc := rfl
+    (v.putCell x y c).u8acc = v.u8acc := by rfl
 theorem ua_eraseRowSpan (v : Vt) (y a b : Nat) :
-    (v.eraseRowSpan y a b).u8acc = v.u8acc := rfl
+    (v.eraseRowSpan y a b).u8acc = v.u8acc := by rfl
 theorem ua_scrollDownIn (v : Vt) (t b : Nat) :
-    (v.scrollDownIn t b).u8acc = v.u8acc := rfl
-theorem ua_deleteChars (v : Vt) (n : Nat) : (v.deleteChars n).u8acc = v.u8acc := rfl
-theorem ua_insertChars (v : Vt) (n : Nat) : (v.insertChars n).u8acc = v.u8acc := rfl
+    (v.scrollDownIn t b).u8acc = v.u8acc := by rfl
+theorem ua_deleteChars (v : Vt) (n : Nat) : (v.deleteChars n).u8acc = v.u8acc := by rfl
+theorem ua_insertChars (v : Vt) (n : Nat) : (v.insertChars n).u8acc = v.u8acc := by rfl
 theorem ua_applySgr (v : Vt) (ps : List (Nat × Bool)) :
-    (v.applySgr ps).u8acc = v.u8acc := rfl
-theorem ua_backTab (v : Vt) : v.backTab.u8acc = v.u8acc := rfl
+    (v.applySgr ps).u8acc = v.u8acc := by rfl
+theorem ua_backTab (v : Vt) : v.backTab.u8acc = v.u8acc := by rfl
 
 theorem ua_scrollUpIn (v : Vt) (t b : Nat) (a : Bool) :
     (v.scrollUpIn t b a).u8acc = v.u8acc := by
@@ -1766,18 +1772,18 @@ theorem dims_foldl {α : Type} (f : Vt → α → Vt) (hf : ∀ v a, dims (f v a
   | [], _ => rfl
   | a :: as, v => (dims_foldl f hf as (f v a)).trans (hf v a)
 
-theorem dims_clearPending (v : Vt) : dims v.clearPending = dims v := rfl
-theorem dims_carriageReturn (v : Vt) : dims v.carriageReturn = dims v := rfl
-theorem dims_moveTo (v : Vt) (x y : Nat) : dims (v.moveTo x y) = dims v := rfl
-theorem dims_moveRel (v : Vt) (dx dy : Int) : dims (v.moveRel dx dy) = dims v := rfl
-theorem dims_setCol (v : Vt) (x : Nat) : dims (v.setCol x) = dims v := rfl
-theorem dims_putCell (v : Vt) (x y : Nat) (c : Cell) : dims (v.putCell x y c) = dims v := rfl
-theorem dims_eraseRowSpan (v : Vt) (y a b : Nat) : dims (v.eraseRowSpan y a b) = dims v := rfl
-theorem dims_scrollDownIn (v : Vt) (t b : Nat) : dims (v.scrollDownIn t b) = dims v := rfl
-theorem dims_deleteChars (v : Vt) (n : Nat) : dims (v.deleteChars n) = dims v := rfl
-theorem dims_insertChars (v : Vt) (n : Nat) : dims (v.insertChars n) = dims v := rfl
-theorem dims_applySgr (v : Vt) (ps : List (Nat × Bool)) : dims (v.applySgr ps) = dims v := rfl
-theorem dims_backTab (v : Vt) : dims v.backTab = dims v := rfl
+theorem dims_clearPending (v : Vt) : dims v.clearPending = dims v := by rfl
+theorem dims_carriageReturn (v : Vt) : dims v.carriageReturn = dims v := by rfl
+theorem dims_moveTo (v : Vt) (x y : Nat) : dims (v.moveTo x y) = dims v := by rfl
+theorem dims_moveRel (v : Vt) (dx dy : Int) : dims (v.moveRel dx dy) = dims v := by rfl
+theorem dims_setCol (v : Vt) (x : Nat) : dims (v.setCol x) = dims v := by rfl
+theorem dims_putCell (v : Vt) (x y : Nat) (c : Cell) : dims (v.putCell x y c) = dims v := by rfl
+theorem dims_eraseRowSpan (v : Vt) (y a b : Nat) : dims (v.eraseRowSpan y a b) = dims v := by rfl
+theorem dims_scrollDownIn (v : Vt) (t b : Nat) : dims (v.scrollDownIn t b) = dims v := by rfl
+theorem dims_deleteChars (v : Vt) (n : Nat) : dims (v.deleteChars n) = dims v := by rfl
+theorem dims_insertChars (v : Vt) (n : Nat) : dims (v.insertChars n) = dims v := by rfl
+theorem dims_applySgr (v : Vt) (ps : List (Nat × Bool)) : dims (v.applySgr ps) = dims v := by rfl
+theorem dims_backTab (v : Vt) : dims v.backTab = dims v := by rfl
 
 theorem dims_scrollUpIn (v : Vt) (t b : Nat) (a : Bool) :
     dims (v.scrollUpIn t b a) = dims v := by
@@ -2063,26 +2069,26 @@ theorem org_foldl {α : Type} (f : Vt → α → Vt)
   | [], _ => rfl
   | a :: as, v => (org_foldl f hf as (f v a)).trans (hf v a)
 
-theorem org_clearPending (v : Vt) : v.clearPending.modes.origin = v.modes.origin := rfl
+theorem org_clearPending (v : Vt) : v.clearPending.modes.origin = v.modes.origin := by rfl
 theorem org_carriageReturn (v : Vt) :
-    v.carriageReturn.modes.origin = v.modes.origin := rfl
-theorem org_moveTo (v : Vt) (x y : Nat) : (v.moveTo x y).modes.origin = v.modes.origin := rfl
+    v.carriageReturn.modes.origin = v.modes.origin := by rfl
+theorem org_moveTo (v : Vt) (x y : Nat) : (v.moveTo x y).modes.origin = v.modes.origin := by rfl
 theorem org_moveRel (v : Vt) (dx dy : Int) :
-    (v.moveRel dx dy).modes.origin = v.modes.origin := rfl
-theorem org_setCol (v : Vt) (x : Nat) : (v.setCol x).modes.origin = v.modes.origin := rfl
+    (v.moveRel dx dy).modes.origin = v.modes.origin := by rfl
+theorem org_setCol (v : Vt) (x : Nat) : (v.setCol x).modes.origin = v.modes.origin := by rfl
 theorem org_putCell (v : Vt) (x y : Nat) (c : Cell) :
-    (v.putCell x y c).modes.origin = v.modes.origin := rfl
+    (v.putCell x y c).modes.origin = v.modes.origin := by rfl
 theorem org_eraseRowSpan (v : Vt) (y a b : Nat) :
-    (v.eraseRowSpan y a b).modes.origin = v.modes.origin := rfl
+    (v.eraseRowSpan y a b).modes.origin = v.modes.origin := by rfl
 theorem org_scrollDownIn (v : Vt) (t b : Nat) :
-    (v.scrollDownIn t b).modes.origin = v.modes.origin := rfl
+    (v.scrollDownIn t b).modes.origin = v.modes.origin := by rfl
 theorem org_deleteChars (v : Vt) (n : Nat) :
-    (v.deleteChars n).modes.origin = v.modes.origin := rfl
+    (v.deleteChars n).modes.origin = v.modes.origin := by rfl
 theorem org_insertChars (v : Vt) (n : Nat) :
-    (v.insertChars n).modes.origin = v.modes.origin := rfl
+    (v.insertChars n).modes.origin = v.modes.origin := by rfl
 theorem org_applySgr (v : Vt) (ps : List (Nat × Bool)) :
-    (v.applySgr ps).modes.origin = v.modes.origin := rfl
-theorem org_backTab (v : Vt) : v.backTab.modes.origin = v.modes.origin := rfl
+    (v.applySgr ps).modes.origin = v.modes.origin := by rfl
+theorem org_backTab (v : Vt) : v.backTab.modes.origin = v.modes.origin := by rfl
 
 theorem org_scrollUpIn (v : Vt) (t b : Nat) (a : Bool) :
     (v.scrollUpIn t b a).modes.origin = v.modes.origin := by
@@ -3086,7 +3092,7 @@ theorem print_wide_eq {v : Vt} {ch : Char}
   unfold Vt.print
   simp only [hpc, hw]
   rw [if_neg (by decide)]
-  have hcp : v.clearPending = { v with cursor := { v.cursor with pending := false } } := rfl
+  have hcp : v.clearPending = { v with cursor := { v.cursor with pending := false } } := by rfl
   have h1 : v.printWrap = v.clearPending := by
     unfold Vt.printWrap; rw [if_neg (by simp [hpend])]
   have h2 : v.clearPending.printWideWrap 2 = v.clearPending := by
@@ -4253,13 +4259,13 @@ def stick (v : Vt) : Sticky :=
 /-! The projections, as rewrite rules. `rfl` for a *variable* receiver, which is
 what keeps the field corollaries in `Render` from asking the elaborator to whnf a
 whole restore stream. -/
-theorem stick_rows (u : Vt) : (stick u).rows = u.rows := rfl
-theorem stick_top (u : Vt) : (stick u).top = u.top := rfl
-theorem stick_bot (u : Vt) : (stick u).bot = u.bot := rfl
-theorem stick_g0 (u : Vt) : (stick u).g0 = u.g0Line := rfl
-theorem stick_g1 (u : Vt) : (stick u).g1 = u.g1Line := rfl
-theorem stick_so (u : Vt) : (stick u).so = u.shiftOut := rfl
-theorem stick_alt (u : Vt) : (stick u).alt = u.altGrid.isSome := rfl
+theorem stick_rows (u : Vt) : (stick u).rows = u.rows := by rfl
+theorem stick_top (u : Vt) : (stick u).top = u.top := by rfl
+theorem stick_bot (u : Vt) : (stick u).bot = u.bot := by rfl
+theorem stick_g0 (u : Vt) : (stick u).g0 = u.g0Line := by rfl
+theorem stick_g1 (u : Vt) : (stick u).g1 = u.g1Line := by rfl
+theorem stick_so (u : Vt) : (stick u).so = u.shiftOut := by rfl
+theorem stick_alt (u : Vt) : (stick u).alt = u.altGrid.isSome := by rfl
 
 /-! ### The framed operations: one `rw` each, every field at once -/
 
@@ -4477,7 +4483,7 @@ theorem cursor_putCell (v : Vt) (x y : Nat) (c : Cell) :
 theorem cursor_mendRow (v : Vt) (y : Nat) : (v.mendRow y).cursor = v.cursor := by
   rw [frame_mendRow]
 theorem cursor_clearPending (v : Vt) :
-    v.clearPending.cursor = { v.cursor with pending := false } := rfl
+    v.clearPending.cursor = { v.cursor with pending := false } := by rfl
 
 theorem cursor_printAdvance_lt (v : Vt) (n : Nat) (h : v.cursor.x + n < v.cols) :
     (v.printAdvance n).cursor = { v.cursor with x := v.cursor.x + n, pending := false } := by
@@ -4819,7 +4825,7 @@ theorem stick_csiDispatch_stbm (v : Vt) (s : CsiState) (hi : s.ignore = false) (
       = stStbm (s.arg 0 1 - 1) (s.arg 1 v.rows - 1) (stick v) := by
   have hst : stStbm (s.arg 0 1 - 1) (s.arg 1 v.rows - 1) (stick v)
       = (if s.arg 0 1 - 1 < s.arg 1 v.rows - 1 && s.arg 1 v.rows - 1 < v.rows
-         then { stick v with top := s.arg 0 1 - 1, bot := s.arg 1 v.rows - 1 } else stick v) := rfl
+         then { stick v with top := s.arg 0 1 - 1, bot := s.arg 1 v.rows - 1 } else stick v) := by rfl
   rw [csiDispatch_stbm v s hi hp, hst]
   split
   · exact stick_moveTo _ 0 0

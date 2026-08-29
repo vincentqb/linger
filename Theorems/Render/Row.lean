@@ -1,4 +1,12 @@
-import Theorems.Render.History
+module
+
+public import Theorems.Render.History
+import all Linger.Core.Render
+import all Linger.Core.Vt
+import all Theorems.Render.History
+
+public section
+
 /-! # Step 3 — the row painter
 
 `PaintState` and `Matches` (the row induction's invariant), one step lemma per cell
@@ -841,7 +849,7 @@ theorem step_narrow_marks {w : Vt} {P : PaintState} {g : Row} {k : Nat}
     simp [utf8s]
   rw [hbtext] at hbase
   -- so the full cellText is the base glyph then the marks; feed splits there
-  have hct : cellText (g.at k) = utf8 (safeChar (g.at k).base) ++ utf8s (g.at k).marks := rfl
+  have hct : cellText (g.at k) = utf8 (safeChar (g.at k).base) ++ utf8s (g.at k).marks := by rfl
   rw [hct, feed_append]
   have hucols : (w.feed (utf8 (safeChar (g.at k).base))).cols = w.cols := by
     rw [utf8_feed (safeChar (g.at k).base) (safeChar_ge (g.at k).base).1
@@ -957,7 +965,7 @@ theorem step_narrow_margin_marks {w : Vt} {P : PaintState} {g : Row} {k : Nat}
     show utf8 (safeChar (g.at k).base) ++ utf8s [] = utf8 (safeChar (g.at k).base)
     simp [utf8s]
   rw [hbtext] at hbase
-  have hct : cellText (g.at k) = utf8 (safeChar (g.at k).base) ++ utf8s (g.at k).marks := rfl
+  have hct : cellText (g.at k) = utf8 (safeChar (g.at k).base) ++ utf8s (g.at k).marks := by rfl
   rw [hct, feed_append]
   have hucols : (w.feed (utf8 (safeChar (g.at k).base))).cols = w.cols := by
     rw [utf8_feed (safeChar (g.at k).base) (safeChar_ge (g.at k).base).1

@@ -35,14 +35,10 @@ system flips it to yes).
   `lake build Linger` does NOT compile `Linger/Runtime/**`; see SCRATCHPAD)
 - Step 3 (optional) → sealed `SessionName` (sanitize-at-construction)
 - Step 4 (optional) → `@[expose]`/`public` tightening beyond the blanket
-- Step 5 (optional, added by the harvest) → seal `Session.State`: a public
-  `boot` constructor + `step` as the only doors, making `run_wf`'s WF
-  hypothesis structural for every state the daemon can hold — the `Buf` story
-  one layer up. Needs the friend treatment for `Tests/Session.lean` (its
-  roster-forging fixtures are legitimate rigging) and a `boot` API for
-  Daemon/Resume; also surfaces a real question first: `Bounded` at boot with
-  checkpoint-restored labels is currently unproven (a corrupt checkpoint's
-  label list has no cap at load).
+- Step 5 (in flight) → seal `Session.State`: `boot` + `step` as the only
+  doors, `run_wf`'s WF hypothesis made structural; boot caps restored labels
+  (the Bounded-at-boot gap). Carries the 15-file mechanical migration of the
+  theorem tree Session's friend conversion forces.
 
 ## Harvest — 2026-08-19 (after Step 2)
 
@@ -166,9 +162,51 @@ coverage counts watched; it is the compile-perf bet (hidden bodies mean
 downstream re-elaboration can be skipped) and should be MEASURED (time a
 touch-rebuild of a hot proof file before/after) rather than assumed.
 
+### Step 5 — seal `Session.State`: boot + step become the only doors
+
+The `Buf` story one layer up, and the A2 anchor upgraded: with the constructor
+private, every `State` the daemon can possess is `State.boot …` moved forward
+by `step` — so `run_wf`'s WF hypothesis stops being "holds if the runtime is
+polite" and becomes structural. Field split: `vt`/`labels`/`metaKv` stay
+public (the checkpoint save-hook reads exactly these three); the bookkeeping
+WF protects — `clients`, `exited`, `scan`, `dirty`, `lastCkptMs`, `attachSeq`,
+`outSeq`, `lookSeq`, `tickOutSeq`, `freshFlag` — goes private, which makes the
+anonymous constructor (and every `{ s with … }` outside friends) refuse.
+
+`State.boot vt labels metaKv` caps restored labels at `maxLabels` — closing
+the gap this step's sizing surfaced: `.labelSet` enforces the cap per message,
+but a corrupt checkpoint's label list had no cap at boot, so `Bounded` was
+unprovable for a resumed daemon. Behaviour change, deliberate and tiny: a
+forged >64-label checkpoint truncates instead of booting an over-cap store.
+
+Consequences carried, not fought: `Theorems/Session.lean` and
+`Tests/Session.lean` become friend modules (their statements name sealed
+fields; their roster-forging fixtures are legitimate rigging) — which forces
+the 15 theorem files they import (`Wire`, `Vt`, `Terminal`, `Render` + the
+11-rung ladder) through the same mechanical `module` + blanket-public
+migration as Step 1, since a module cannot import a legacy file. The rest of
+`Theorems/`/`Tests/` stays legacy (Decision 2 holds where nothing names sealed
+internals; measured: mixed public/private fields read fine downstream,
+`native_decide` works inside a friend module, and a public-field `{ s with … }`
+is still refused — the ctor is the gate).
+
+**Exit:** gates green, every ratchet number unchanged except the def census
+(+1, `boot`, arriving claimed); `boot_wf` (`Good vt → WF (boot …)`) and the
+headline corollary `run_boot_wf` (every state reachable from any boot is WF)
+proved; the boot-labels cap pinned by a fixture; break-verified: a `State`
+forge/update from the daemon refuses to compile (against the `linger` exe
+target — the step-2 lesson), and `boot` without the `take` refutes `boot_wf`.
+The resume-path `Good vt` hypothesis is discharged where the checkpoint
+theorems put it, or recorded honestly as carried by them — check
+`Theorems/Checkpoint.lean` before claiming either way.
+
 ## Non-goals
 
-- **Module-izing `Theorems/`/`Tests/`** (Decision 2's reason).
+- **Module-izing `Theorems/`/`Tests/` wholesale** (Decision 2's reason) —
+  amended by Step 5: files whose statements name sealed `State` internals
+  convert (Session's theorem and fixture files), and the theorem files they
+  import migrate mechanically because a module cannot import a legacy file.
+  Conversion follows the boundary, never runs ahead of it.
 - **A toolchain bump.** Everything here is measured on the pinned v4.32.0;
   chasing newer module-system refinements is a separate risk (this host's
   glibc constraints make toolchain moves non-trivial — see `./lake`).

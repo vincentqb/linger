@@ -1,5 +1,14 @@
-import Linger.Core.Terminal
-import Theorems.Render
+module
+
+public import Linger.Core.Terminal
+public import Theorems.Render
+import all Linger.Core.Terminal
+import all Linger.Core.Vt
+import all Linger.Core.Render
+import all Theorems.Render
+
+public section
+
 /-! # §Terminal — owned terminal queries without client dependence
 
 The mediator is a pure stream transducer. These theorems pin its exact profile,
@@ -102,27 +111,27 @@ theorem fixed_replies_exact :
 theorem cprReply_exact (v : Vt) (private_ : Bool) :
     cprReply v private_ =
       [ESC, 0x5B] ++ (if private_ then [0x3F] else []) ++
-        digits (cprRow v) ++ [0x3B] ++ digits (v.cursor.x + 1) ++ [0x52] := rfl
+        digits (cprRow v) ++ [0x3B] ++ digits (v.cursor.x + 1) ++ [0x52] := by rfl
 
 theorem textAreaReply_exact (v : Vt) :
     textAreaReply v = [ESC, 0x5B, 0x38, 0x3B] ++ digits v.rows ++
-      [0x3B] ++ digits v.cols ++ [0x74] := rfl
+      [0x3B] ++ digits v.cols ++ [0x74] := by rfl
 
 theorem xtgetcapReply_exact (payload : Bytes) :
     xtgetcapReply payload =
-      [ESC, 0x50, 0x30, 0x2B, 0x72] ++ payload.filter capByte ++ [ESC, STFinal] := rfl
+      [ESC, 0x50, 0x30, 0x2B, 0x72] ++ payload.filter capByte ++ [ESC, STFinal] := by rfl
 
 /-- An owned request is excluded from presentation output and contributes its
 single prescribed reply stream. Empty is the table's deliberate zero reply. -/
 theorem complete_owned (reply seq : Bytes) :
     complete (.owned reply) seq =
-      { scan := .ground, visible := [], replies := reply } := rfl
+      { scan := .ground, visible := [], replies := reply } := by rfl
 
 /-- An unowned complete candidate is released byte-for-byte and never gains a
 linger reply. -/
 theorem complete_unowned (seq : Bytes) :
     complete .unowned seq =
-      { scan := .ground, visible := seq, replies := [] } := rfl
+      { scan := .ground, visible := seq, replies := [] } := by rfl
 
 /-- Completion always returns the scanner to ground, independently of which
 exact classifier result was selected. -/
@@ -420,7 +429,7 @@ theorem feed_bounded (v : Vt) (s : Scan) (bytes : Bytes) (h : s.Bounded) :
 
 /-- `finish` emits exactly the pending bytes and always resets to a bounded
 scanner. It cannot emit a child reply because its type has no reply field. -/
-theorem finish_exact (s : Scan) : finish s = (s.pending, .ground) := rfl
+theorem finish_exact (s : Scan) : finish s = (s.pending, .ground) := by rfl
 
 theorem finish_bounded (s : Scan) : (finish s).2.Bounded := by
   simp [finish, Scan.Bounded]

@@ -1,4 +1,12 @@
-import Theorems.Render.Pen
+module
+
+public import Theorems.Render.Pen
+import all Linger.Core.Render
+import all Linger.Core.Vt
+import all Theorems.Render.Pen
+
+public section
+
 /-! # §Replay stage 3d — everything after the repaint leaves the screen alone
 
 `Keeps`, the grid-preservation stream predicate, and one fact per construct the
@@ -811,16 +819,16 @@ useful statement about it is what it leaves alone. `eraseRowSpan` is a single
 one induction, shared by all four ED modes. -/
 
 theorem rows_eraseRowSpan (v : Vt) (y f t : Nat) :
-    (v.eraseRowSpan y f t).rows = v.rows := rfl
+    (v.eraseRowSpan y f t).rows = v.rows := by rfl
 
 theorem cols_eraseRowSpan (v : Vt) (y f t : Nat) :
-    (v.eraseRowSpan y f t).cols = v.cols := rfl
+    (v.eraseRowSpan y f t).cols = v.cols := by rfl
 
 theorem pen_eraseRowSpan (v : Vt) (y f t : Nat) :
-    (v.eraseRowSpan y f t).pen = v.pen := rfl
+    (v.eraseRowSpan y f t).pen = v.pen := by rfl
 
 theorem cursor_eraseRowSpan (v : Vt) (y f t : Nat) :
-    (v.eraseRowSpan y f t).cursor = v.cursor := rfl
+    (v.eraseRowSpan y f t).cursor = v.cursor := by rfl
 
 /-- Erasing a span never resizes the grid: `setIfInBounds` is a no-op out of range
 and length-preserving in range. -/
@@ -854,7 +862,7 @@ theorem foldl_erase_frame (f : Nat → Nat) : ∀ (l : List Nat) (v : Vt),
 as a lemma keeps the match out of the frame proof, where an in-tactic split leaves an
 unreduced `match 2 with …` that `rw` cannot see through. -/
 theorem eraseScreen_two_eq (v : Vt) : v.eraseScreen 2
-    = (List.range v.rows).foldl (fun v' y => v'.eraseRowSpan y 0 v'.cols) v := rfl
+    = (List.range v.rows).foldl (fun v' y => v'.eraseRowSpan y 0 v'.cols) v := by rfl
 
 /-- **The clear resizes nothing and moves nothing.** `CSI 2 J` is the one part of
 `restore` that is supposed to change cells, so the useful statement is what it leaves
@@ -975,13 +983,17 @@ theorem mend_blankRow (cols : Nat) (p : Pen) : Row.mend (blankRow cols p) = blan
       exact ih
   exact key _
 
-/-- **Non-vacuity, in place of a break-verify.** `mend` is emphatically *not* the
+/-! **Non-vacuity, in place of a break-verify.** `mend` is emphatically *not* the
 identity in general: a lone width-2 base is repaired away. So `mend_of_pairOk`'s
 hypothesis is load-bearing rather than decorative. This is recorded as a check
 because the usual break — mutating `Row.mendAt` — is caught upstream in
 `Theorems/Vt.lean` before the lemma above is ever elaborated, which proves the
-definition is load-bearing but not that *this* lemma is. -/
-example : Row.mend #[{ base := 'x', marks := [], width := 2, pen := {} }]
-    ≠ #[{ base := 'x', marks := [], width := 2, pen := {} }] := by decide
+definition is load-bearing but not that *this* lemma is.
+
+The check itself lives in `Tests/Vt.lean` since the module migration
+(lean-modules Step 5): it is an evaluation, and a kernel `decide` in a module
+file cannot reduce through a derived `DecidableEq` instance whose body is not
+exposed — under `native_decide`, where evaluating is the point, it keeps its
+full force. -/
 
 end Linger.Core.Vt

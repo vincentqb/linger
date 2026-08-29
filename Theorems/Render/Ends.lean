@@ -1,5 +1,13 @@
-import Linger.Core.Render
-import Theorems.Vt
+module
+
+public import Linger.Core.Render
+public import Theorems.Vt
+import all Linger.Core.Render
+import all Linger.Core.Vt
+import all Theorems.Vt
+
+public section
+
 /-! # §Replay, stage 3b — a restore stream leaves the parser in ground
 
 The §Replay target (specs/archive/grid-fidelity.md; the parser half was closed

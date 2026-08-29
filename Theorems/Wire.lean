@@ -1,4 +1,10 @@
-import Linger.Core.Wire
+module
+
+public import Linger.Core.Wire
+import all Linger.Core.Wire
+
+public section
+
 /-! # §Frame / §Chunk / §Bound — the wire protocol theorems
 
 THEOREMS.md rows: §Frame (round-trip; unknown tags are data),
@@ -84,7 +90,7 @@ theorem takeFrames_encode_prefix (m : Msg) (hm : m.wf) (rest : List UInt8) :
       = ((takeFrames rest).1, (takeFrames rest).2.1, m :: (takeFrames rest).2.2) := by
   have hp : m.payload.length ≤ maxPayload := hm.1
   have hlt : m.payload.length < 4294967296 := by
-    have he : maxPayload = 262144 := rfl
+    have he : maxPayload = 262144 := by rfl
     omega
   obtain ⟨b0, b1, b2, b3, hw⟩ :
       ∃ b0 b1 b2 b3, writeU32 (UInt32.ofNat m.payload.length) = [b0, b1, b2, b3] :=

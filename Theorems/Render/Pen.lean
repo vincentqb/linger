@@ -1,4 +1,12 @@
-import Theorems.Render.Quiet
+module
+
+public import Theorems.Render.Quiet
+import all Linger.Core.Render
+import all Linger.Core.Vt
+import all Theorems.Render.Quiet
+
+public section
+
 /-! # §Replay stage 3d — the pen round trip, and one glyph placed
 
 The value half begins here: `applySgr` inverts `penSgr`'s encoding (semantic half),
@@ -888,9 +896,9 @@ theorem init_dims (v : Vt) (h : Good v) :
 
 /-- Projecting `dims`, proved on a variable so that no call site has to reduce the
 state it is applied to. -/
-theorem dims_fst (w : Vt) : (dims w).1 = w.cols := rfl
+theorem dims_fst (w : Vt) : (dims w).1 = w.cols := by rfl
 
-theorem dims_snd (w : Vt) : (dims w).2 = w.rows := rfl
+theorem dims_snd (w : Vt) : (dims w).2 = w.rows := by rfl
 
 /-- **§Replay (cursor).** Feeding a whole restore stream to a fresh
 emulator of the session's size leaves the cursor exactly where the session

@@ -1,4 +1,12 @@
-import Theorems.Render.Modes
+module
+
+public import Theorems.Render.Modes
+import all Linger.Core.Render
+import all Linger.Core.Vt
+import all Theorems.Render.Modes
+
+public section
+
 /-! # §Restore / A5 inbound — the sticky bundle, and the cursor
 
 `SMap` and `Vt.stick`: the scroll region, both charset designations, the shift

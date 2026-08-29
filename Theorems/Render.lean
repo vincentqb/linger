@@ -1,4 +1,12 @@
-import Theorems.Render.Scrollback
+module
+
+public import Theorems.Render.Scrollback
+import all Linger.Core.Render
+import all Linger.Core.Vt
+import all Theorems.Render.Scrollback
+
+public section
+
 /-! # §Replay — the restore stream, proved (façade)
 
 `Render.restore` is the byte stream a re-attaching client's terminal is fed, and

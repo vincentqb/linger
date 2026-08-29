@@ -1,4 +1,12 @@
-import Theorems.Render.Ends
+module
+
+public import Theorems.Render.Ends
+import all Linger.Core.Render
+import all Linger.Core.Vt
+import all Theorems.Render.Ends
+
+public section
+
 /-! # §Replay stage 3c — the numbers survive the round trip
 
 `Quiet` and the digit/cursor bridges: what the emitted decimal parameters mean by

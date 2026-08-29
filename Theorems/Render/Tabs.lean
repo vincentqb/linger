@@ -1,4 +1,12 @@
-import Theorems.Render.Grid
+module
+
+public import Theorems.Render.Grid
+import all Linger.Core.Render
+import all Linger.Core.Vt
+import all Theorems.Render.Grid
+
+public section
+
 /-! # §Replay, the tab ruler
 
 `Fixes π` — one stream predicate for any projection, the generalization `Keeps` and
