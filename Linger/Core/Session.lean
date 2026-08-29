@@ -255,6 +255,15 @@ def onMsg (s : State) (c : Client) (m : Msg) : State × List Effect :=
   | .info => (s, [.send c.id (.infoReply (infoText s)), .send c.id .done])
   | .history =>
     (s, outputMsgs c.id (Render.history s.vt false) ++ [.send c.id .done])
+  | .screen =>
+    -- `linger capture`: the grid only, plain text. Delivering the current
+    -- screen IS a look, so it catches the read mark up — after a capture,
+    -- "output arrived while nobody was watching" is false and `behind` counts
+    -- from this moment (agent-cli Decision 1). `.info` must never do this
+    -- (`ls` polls every daemon; a listing that marks everything read destroys
+    -- the status column) and `.history` stays an export, not an observation.
+    ({ s with lookSeq := s.outSeq },
+     outputMsgs c.id (Render.screenText s.vt) ++ [.send c.id .done])
   | .wait =>
     match s.exited with
     | some st => (s, [.send c.id (.exited st)])

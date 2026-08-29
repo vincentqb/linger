@@ -5,10 +5,17 @@ Updated: 2026-08-19
 
 ## Where this stands — read this first
 
-**Next step: Step 1.** Nothing implemented yet.
+**Next step: Step 3 (`send <name> -`).** Steps 1–2 done (2026-08-19): the info
+fields + `linger info` (through `Client.drainBounded` — new one-shot verbs own a
+reply deadline; `wait` stays untimed on purpose) and `linger capture` (tag 16,
+`Render.screenText` proved + EMITTERS-classified, capture marks seen via
+`lookSeq := outSeq`, `onMsg_screen` is `rfl`). Four breaks recorded in
+SCRATCHPAD 2026-08-19, including the live no-hang demonstration of the
+deadline. e2e suite 12 (`tests/agent_test.py`) carries the live assertions —
+note its `run`-not-`send` rule for commands that must execute.
 
-- Step 1 → info fields (`cols rows cursorx cursory alt outseq`) + `linger info <name>`
-- Step 2 → `linger capture <name>` (wire tag 16, `Render.screenText`, marks seen)
+- Step 1 ✓ info fields (`cols rows cursorx cursory alt outseq`) + `linger info <name>`
+- Step 2 ✓ `linger capture <name>` (wire tag 16, `Render.screenText`, marks seen)
 - Step 3 → `linger send <name> -` (raw stdin bytes)
 - Step 4 → `linger resize <name> <cols> <rows>` (control resize, never fights a live user)
 

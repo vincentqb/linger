@@ -2,7 +2,9 @@
 
 Step 1: `linger info <name>` and the observability fields -- geometry + cursor
 (what `capture` needs), `alt`, and `outseq` (the change cursor: "look again
-only when it moved"). Pinned against the rendered porcelain, end to end.
+only when it moved"). Step 2: `linger capture <name>` -- the screen as plain
+text, one line per row, and capturing marks the session seen. All pinned
+against the rendered porcelain/bytes, end to end.
 """
 import os, pty, time, subprocess, fcntl, struct, termios, sys, pathlib
 
@@ -50,7 +52,7 @@ fails += expect(i.get('outseq', '').isdigit(), 'outseq is reported as a number')
 
 # outseq moves when output happens -- the change cursor
 before = int(info('ag').get('outseq', '0'))
-linger('send', 'ag', 'echo', 'MOVED')
+linger('run', 'ag', 'echo', 'MOVED')
 time.sleep(1.2)
 after = int(info('ag').get('outseq', '0'))
 fails += expect(after > before, 'outseq increases after output')
@@ -72,6 +74,41 @@ os.waitpid(pid, 0)
 r = linger('info', 'nosuch')
 fails += expect(r.returncode == 1 and b'no session' in r.stderr,
                 'info on a missing session exits 1 with a message')
+
+# -- Step 2: capture ----------------------------------------------------------
+
+linger('run', 'ag', 'echo', 'CAPTURED-MARKER')
+time.sleep(1.2)
+
+cap = linger('capture', 'ag')
+lines = cap.stdout.decode().split('\n')
+rows = int(info('ag').get('rows', '0'))
+fails += expect(cap.returncode == 0 and b'CAPTURED-MARKER' in cap.stdout,
+                'capture shows what the session printed')
+# screenText is LF-terminated per row: split yields rows + one trailing ''
+fails += expect(len(lines) == rows + 1 and lines[-1] == '',
+                'capture is exactly one line per row')
+
+# capture marks the session seen (the porcelain unseen flag flips)
+fails += expect(info('ag').get('unseen') == 'false' and
+                info('ag').get('behind') == '0',
+                'capture marks the session seen')
+linger('run', 'ag', 'echo', 'again')
+time.sleep(1.2)
+fails += expect(info('ag').get('unseen') == 'true',
+                'output after a capture reads unseen again')
+
+# capture is the screen, not the transcript: flood past one screen and the
+# capture stays `rows` lines while history grows beyond it
+linger('run', 'ag', 'seq', '1', '60')
+time.sleep(1.5)
+cap2 = linger('capture', 'ag').stdout.decode().split('\n')
+hist = linger('history', 'ag').stdout.decode().split('\n')
+fails += expect(len(cap2) == rows + 1 and len(hist) > len(cap2),
+                'capture stays screen-sized while history grows')
+
+r = linger('capture', 'nosuch')
+fails += expect(r.returncode == 1, 'capture on a missing session exits 1')
 
 linger('kill', 'ag')
 print(f'FAILURES: {fails}')

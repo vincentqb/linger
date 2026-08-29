@@ -781,4 +781,28 @@ same result. -/
 example : (((dirty 6 3).feed leaveAnsi).modes == ((midDcs 6 3).feed leaveAnsi).modes)
     = true := by native_decide
 
+/-! ## `screenText` — the capture stream, exact bytes (specs/agent-cli.md) -/
+
+/-- The freeze: grid only, `rowText` per row (trailing blanks trimmed), one LF
+each — a 4×2 screen holding "ab" is literally `a b LF LF`. -/
+example : screenText (screen 4 2 "ab") = [0x61, 0x62, 0x0A, 0x0A] := by native_decide
+
+/-- Grid-only, pinned against `history` on the same state: eight lines through
+a five-row screen leave a capture of exactly five lines while the transcript
+keeps all eight. -/
+example :
+    (let v := screen 20 5 (String.intercalate "\r\n"
+                ((List.range 8).map (fun i => s!"l{i}")))
+     (screenText v).count 0x0A == 5
+       && (history v false).count 0x0A == 8) = true := by native_decide
+
+/-- A control character smashed into a cell (unreachable live, but a decoded
+checkpoint's grid is arbitrary) cannot forge a capture line: it emits as
+U+FFFD and the line count stays the row count. -/
+example :
+    (let v := screen 10 2 "ab"
+     let row := (v.grid.getD 0 #[]).setIfInBounds 1 { base := '\x0A' }
+     let v2 := { v with grid := v.grid.setIfInBounds 0 row }
+     (screenText v2).count 0x0A == 2) = true := by native_decide
+
 end Linger.Core.Render.Tests

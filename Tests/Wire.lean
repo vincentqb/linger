@@ -83,4 +83,10 @@ example :
 example : (decode (encode (.resize 213 58))).2 == [.resize 213 58] := by native_decide
 example : (decode (encode (.exited 127))).2 == [.exited 127] := by native_decide
 
+/-- Golden frame: `screen` (capture) is tag 16, nullary — frozen-append, so
+16 is `.screen` forever (specs/agent-cli.md). And it round-trips as itself,
+not as `.unknown 16`. -/
+example : encode .screen = [16, 0, 0, 0, 0] := by decide
+example : (decode (encode .screen)).2 == [.screen] := by native_decide
+
 end Linger.Core.Wire.Tests

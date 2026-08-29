@@ -96,6 +96,33 @@ theorem history_lines (v : Vt) :
   rw [if_neg (by decide)]
   exact count_rows _
 
+/-! ## The same two claims for `screenText` (`linger capture`)
+
+Same emitter shape as `history`'s plain branch — `rowText`-per-row over the
+grid alone — so the anti-forgery pair transfers verbatim. `screenText_lines` is
+what makes a capture *positionally* parseable by an agent that read `rows` from
+`info`: exactly one line per grid row, so line k of the capture IS row k of the
+screen, whatever the session's program printed. -/
+
+/-- **Every byte is a line terminator or printable content.** -/
+theorem screenText_framing (v : Vt) :
+    ∀ b ∈ screenText v, b = 0x0A ∨ (0x20 ≤ b ∧ b ≠ 0x7F) := by
+  intro b hb
+  unfold screenText at hb
+  simp only [List.mem_flatMap] at hb
+  obtain ⟨row, -, hmem⟩ := hb
+  rcases List.mem_append.mp hmem with h | h
+  · exact Or.inr (rowText_scrubbed row b h)
+  · simp only [List.mem_singleton] at h
+    exact Or.inl h
+
+/-- **One line per grid row, and only the grid** — the scrollback ring
+contributes nothing, which is the whole difference from `history`. -/
+theorem screenText_lines (v : Vt) :
+    (screenText v).count 0x0A = v.grid.toList.length := by
+  unfold screenText
+  exact count_rows _
+
 
 /-- `safeChar` is the identity on a character a cell is allowed to hold. The emit-side
 guard and the store-side one agree, which is what lets a repaint reproduce a stored

@@ -83,6 +83,12 @@ EMITTERS = {
                            "session's program filled the grid. Was the last emitter "
                            "assembled through `String` (unprovable: a String does not "
                            "reduce in the kernel); `rowText` now builds List UInt8"),
+    "screenText": ("theorem", "screenText_framing / screenText_lines — the capture "
+                              "stream (`linger capture`): every byte a line terminator "
+                              "or printable content, newline count = grid row count and "
+                              "the ring contributes nothing, so line k IS row k and a "
+                              "cell cannot forge a line. Same anti-forgery pair as "
+                              "history, grid-only"),
 }
 
 

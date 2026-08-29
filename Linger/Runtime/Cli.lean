@@ -41,6 +41,8 @@ def usage : String := "Usage: linger [command] [args...]
   [k]ill <name>               Kill session and all attached clients
   [i]nfo <name>               Print one session's k<TAB>v records (size, cursor,
                               outseq, labels...; the porcelain, for scripts/agents)
+  [c]apture <name>            Print the current screen as plain text (one line
+                              per row; marks the session seen)
   [hi]story <name>            Print session scrollback as plain text
   [w]ait <name>...            Wait for sessions' programs to exit
   [g]et / set / [un]set / [cl]ear <name>   Session labels (k=v)
@@ -378,6 +380,7 @@ def main (hooks : Hooks) (args : List String) : IO UInt32 := do
   | ["detach", name] | ["d", name] => requireLive name .detachAll
   | ["kill", name] | ["k", name] => requireLiveSend name .kill
   | ["info", name] | ["i", name] => requireLiveBounded name .info
+  | ["capture", name] | ["c", name] => requireLiveBounded name .screen
   | ["history", name] | ["hi", name] => requireLive name .history
   | "wait" :: names | "w" :: names =>
     if names.isEmpty then

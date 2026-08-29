@@ -6240,3 +6240,50 @@ tests that import it, so `from procs import daemon_pids` would fail there and no
 Staged deliberately instead: `git rm --cached Tests/procs.py` + `git update-index --add
 --cacheinfo 100644,<blob>,tests/procs.py`, verified with `git ls-files --stage`. Anyone adding a
 file to `tests/` from a mac must check the recorded path before committing.
+||||||| parent of 8abdbcd (step 2: linger capture -- the screen one-shot, and a capture is a look)
+
+
+## agent-cli steps 1–2 notes — 2026-08-19
+
+Spec: `specs/agent-cli.md` (see its Decisions before touching any of this).
+
+**Step 1 (info fields + `linger info`).** `infoFields` gained
+`cols/rows/cursorx/cursory/alt/outseq`. `infoText_framing`/`infoText_records` needed zero
+edits — they quantify over the field list, which was the design bet and it held. The new
+verbs drain through `Client.drainBounded` (silence deadline, default 2000 ms): `oneShot`'s
+`poll … (-1)` hangs forever against a daemon that never answers, and a **pre-upgrade daemon
+answers a new verb with nothing at all** (§Frame drops unknown tags without a trace). That
+is not hypothetical — linger daemons outlive binary upgrades by design. `wait` deliberately
+stays on the untimed drain.
+
+**Step 2 (`capture`).** Wire tag 16 (`.screen`, frozen-append), `Render.screenText` (the
+grid only, `rowText` per row), `screenText_framing`/`screenText_lines` (proved, in
+coverage.py's EMITTERS), the `onMsg` arm replying `outputMsgs (screenText) ++ [.done]` and
+setting `lookSeq := s.outSeq` — **a capture is a look** (the user's call, spec Decision 1);
+`.info` must never mark seen (`ls` polls every daemon) and `.history` stays an export.
+`onMsg_screen` is `rfl`, so the reply shape and "the only state change is the read mark"
+are one statement; `screen_marks_seen` is the user-facing half.
+
+The `repeat' split; all_goals first | …` preservation proofs in `Theorems/Session.lean`
+absorbed the new arm with **zero edits** — the order-robust-proof-script rule paying out
+again. `decodeMsg_roundtrip` needed only `ne 16`; `decodeMsg_payload_le` one `by_cases`.
+
+**Break-verified, four breaks, each caught by at least two oracles:**
+* `infoFields` key renamed (`cols` → `width`) → `Tests/Session.lean:135` fixture refuted
+  (and `tests/agent_test.py` would fail e2e). The porcelain keys are pinned.
+* `screenText` painting `sb ++ grid` (the "obvious" transcript shape) →
+  `screenText_lines` **type-mismatches** (the count is no longer the grid length), plus the
+  grid-only fixtures in `Tests/Render.lean:797` and `Tests/Session.lean:174` refute. This is
+  the break that guards capture staying positional (line k IS row k).
+* `lookSeq` write dropped from the arm → `onMsg_screen` stops being `rfl`,
+  `screen_marks_seen` unsolved, capture fixture refutes on `!unseen s2`.
+* `.done` dropped from the reply → `onMsg_screen` fails, and **live**: `linger capture`
+  printed the screen, hit the deadline at 2.01 s measured, said
+  `no reply from 'b3' (daemon predates this command?)`, exit 1 — the no-hang contract
+  demonstrated against a real daemon, which is the closest a test can get to "old daemon
+  drops tag 16" without keeping an old binary around.
+
+e2e gotcha for later steps: `linger send` does not press Enter (by design). A test that
+`send`s commands and expects them to have *run* leaves them queued on the shell's input
+line, and the junk corrupts the next `run` line — `tests/agent_test.py` floods via `run`
+for exactly this reason. `capture` shows the *typed* line too (it is on the screen).

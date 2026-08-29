@@ -469,6 +469,23 @@ theorem lookSeq_le_ptyOut (s : State) (chunk : List UInt8)
   show (if s.clients.any (·.attached) then s.outSeq + 1 else s.lookSeq) ≤ s.outSeq + 1
   split <;> omega
 
+/-- **A capture is a look** (agent-cli Decision 1). The exact shape: the reply
+is `Render.screenText` — the grid, never the ring — chunked and closed with
+`.done`, and the ONLY state change is the read mark catching up. `rfl`, so any
+smuggled side effect (a vt touch, a label change) breaks it. -/
+theorem onMsg_screen (s : State) (c : Client) :
+    onMsg s c .screen
+      = ({ s with lookSeq := s.outSeq },
+         outputMsgs c.id (Render.screenText s.vt) ++ [.send c.id .done]) := rfl
+
+/-- …so after a capture nothing is unseen: "output arrived while nobody was
+watching" is false of a session whose screen was just delivered. `.info`
+deliberately has no such effect (`ls` polls every daemon), and `.history`
+stays an export — the line is drawn at verbs that show the current screen. -/
+theorem screen_marks_seen (s : State) (c : Client) :
+    unseen (onMsg s c .screen).1 = false := by
+  simp [onMsg, unseen]
+
 /-! ## §Isolate — one client cannot reach another client's state
 
 The concurrency question, at the layer where it is answerable. The

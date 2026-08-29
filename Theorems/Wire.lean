@@ -47,13 +47,14 @@ theorem decodeMsg_roundtrip (m : Msg) (hm : m.wf) :
     decodeMsg m.tag m.payload = m := by
   cases m with
   | unknown t p =>
-    have ht : ¬ t ≤ 15 := by simpa [knownTag] using hm.2
-    have ne : ∀ (i : UInt8), i ≤ 15 → t ≠ i := fun i hi h => ht (h ▸ hi)
+    have ht : ¬ t ≤ 16 := by simpa [knownTag] using hm.2
+    have ne : ∀ (i : UInt8), i ≤ 16 → t ≠ i := fun i hi h => ht (h ▸ hi)
     simp [decodeMsg, Msg.tag, Msg.payload,
       ne 0 (by decide), ne 1 (by decide), ne 2 (by decide), ne 3 (by decide),
       ne 4 (by decide), ne 5 (by decide), ne 6 (by decide), ne 7 (by decide),
       ne 8 (by decide), ne 9 (by decide), ne 10 (by decide), ne 11 (by decide),
-      ne 12 (by decide), ne 13 (by decide), ne 14 (by decide), ne 15 (by decide)]
+      ne 12 (by decide), ne 13 (by decide), ne 14 (by decide), ne 15 (by decide),
+      ne 16 (by decide)]
   | _ => simp [decodeMsg, Msg.tag, Msg.payload]
 
 /-! ## takeFrames, frame by frame -/
@@ -353,8 +354,10 @@ theorem decodeMsg_payload_le (t : UInt8) (p : List UInt8) (hp : p.length ≤ max
   · simp [h14, Msg.payload]
   by_cases h15 : t = 15
   · simp [h15, Msg.payload, hp]
+  by_cases h16 : t = 16
+  · simp [h16, Msg.payload]
   -- fall-through: every test is false, the result is `.unknown t p`
-  simp [h0, h1, h2, h3, h4', h5, h6, h7, h8', h9, h10, h11, h12, h13, h14, h15,
+  simp [h0, h1, h2, h3, h4', h5, h6, h7, h8', h9, h10, h11, h12, h13, h14, h15, h16,
     Msg.payload, hp]
 
 theorem takeFrames_msgs_payload_le (bytes : List UInt8) :

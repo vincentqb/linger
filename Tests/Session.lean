@@ -146,6 +146,33 @@ example :
     (let (s2, _) := run [.ptyOut "a".toUTF8.toList, .ptyOut "b".toUTF8.toList]
      ((infoTxt s2).splitOn "outseq\t2").length ≥ 2) = true := by native_decide
 
+/-! ### capture (specs/agent-cli.md Step 2)
+
+`.screen` replies with the grid — never the ring — and marks the session seen.
+The scenario forces the two apart: eight printed lines on a five-row screen
+push three into scrollback, so a capture that painted `history` would show
+eight lines and start at `line0`. -/
+
+def eightLines : List UInt8 :=
+  (String.intercalate "\r\n" ((List.range 8).map (fun i => s!"line{i}"))).toUTF8.toList
+
+example :
+    (let (s1, _) := run [.ptyOut eightLines]
+     let (s2, effs) := run [.connected 9, .bytes 9 (encode .screen)] s1
+     let sent := (effs.filterMap (fun e => match e with
+       | .send 9 (.output bs) => some bs | _ => none)).flatten
+     -- the reply is exactly the screen: five lines, the first being line3…
+     sent == Render.screenText s1.vt
+       && sent.count 0x0A == 5
+       && ((String.fromUTF8? (ByteArray.mk sent.toArray)).getD "").startsWith "line3"
+       && hasEffect effs (fun e => match e with | .send 9 .done => true | _ => false)
+       -- …while the ring really holds more (non-vacuity: history shows 8)
+       && (Render.history s2.vt false).count 0x0A == 8
+       -- a capture is a look: unread before, read after, nothing behind
+       && unseen s1 && !unseen s2 && behind s2 == 0
+       -- and the screen itself is untouched by being looked at
+       && s2.vt.grid == s1.vt.grid && s2.labels == s1.labels) = true := by native_decide
+
 /-- wait parks until the child exits, then everyone is told + closed
 and the daemon exits WITHOUT dropping the checkpoint... no — a clean
 child exit does drop it (resume is for crashes, not completed work). -/

@@ -56,6 +56,10 @@ inductive Msg where
   | done
   /-- daemon → client: request failed, human-readable reason. -/
   | err (msg : List UInt8)
+  /-- client → daemon: send the current screen (grid only, plain text) as
+  output frames, then `done`. `linger capture` — and it marks the session
+  seen (specs/agent-cli.md Decision 1: a capture IS a look). -/
+  | screen
   /-- any tag this version does not know: skipped, never fatal (§Frame). -/
   | unknown (tag : UInt8) (payload : List UInt8)
   deriving Repr, DecidableEq, Inhabited
@@ -92,22 +96,24 @@ def Msg.tag : Msg → UInt8
   | .labelClear   => 13
   | .done         => 14
   | .err _        => 15
+  | .screen       => 16
   | .unknown t _  => t
 
 /-- Tags with an assigned meaning in this version. -/
-def knownTag (t : UInt8) : Bool := t ≤ 15
+def knownTag (t : UInt8) : Bool := t ≤ 16
 
 def Msg.payload : Msg → List UInt8
   | .input b | .output b | .infoReply b | .err b
   | .labelSet b | .labelUnset b => b
   | .resize c r | .attach c r => writeU32 c ++ writeU32 r
   | .exited s => writeU32 s
-  | .detachAll | .kill | .info | .history | .wait | .labelClear | .done => []
+  | .detachAll | .kill | .info | .history | .wait | .labelClear | .done
+  | .screen => []
   | .unknown _ p => p
 
 /-- Interpret one frame. Total: every (tag, payload) is some `Msg`.
 An if-chain rather than a literal match so fall-through to `unknown`
-is provable by `t ≠ 0, …, t ≠ 15` instead of match-compilation facts. -/
+is provable by `t ≠ 0, …, t ≠ 16` instead of match-compilation facts. -/
 def decodeMsg (tag : UInt8) (p : List UInt8) : Msg :=
   if tag = 0 then .input p
   else if tag = 1 then .output p
@@ -125,6 +131,7 @@ def decodeMsg (tag : UInt8) (p : List UInt8) : Msg :=
   else if tag = 13 then .labelClear
   else if tag = 14 then .done
   else if tag = 15 then .err p
+  else if tag = 16 then .screen
   else .unknown tag p
 
 /-- A message the encoder may legally emit: payload within §Bound, and

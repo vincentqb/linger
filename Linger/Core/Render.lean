@@ -723,4 +723,15 @@ def history (v : Vt) (withAnsi : Bool) : Bytes :=
   else
     rows.flatMap (fun row => rowText row ++ [0x0A])
 
+/-- The current screen only — the grid, one LF-terminated plain-text line per
+row; for `linger capture` (specs/agent-cli.md). The shape of `history`'s plain
+branch minus the ring, so `screenText_framing`/`screenText_lines` carry the
+same anti-forgery claim: a cell cannot inject a line break, and the line count
+is exactly the row count — which is what lets an agent that knows `rows` (from
+`info`) parse the screen positionally. Plain text on purpose: the receiver is
+a parser, not a terminal (colored capture is a non-goal there, and the ANSI
+ladder belongs to specs/scrollback-fidelity.md). -/
+def screenText (v : Vt) : Bytes :=
+  v.grid.toList.flatMap (fun row => rowText row ++ [0x0A])
+
 end Linger.Core.Render
