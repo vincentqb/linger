@@ -33,19 +33,11 @@ they are not stale branding and should not be renamed.
 requirements (goal-level, not current state); `specs/archive/` holds the
 closed build plans with their completion records (`lean-zmx.md`,
 `bigger-theorems.md`, `terminal-contract.md`, `grid-fidelity.md`,
-`restore-conformance.md`, `ledger-cleanup.md`).
+`restore-conformance.md`, `ledger-cleanup.md`, `agent-cli.md`).
 
 ## Where things stand — read this first after any compaction
 
-1. **Three specs are live in `specs/`.**
-   * **`specs/agent-cli.md` — in flight, this is the item being worked.**
-     One-shot verbs so another agent can see and drive a session: geometry +
-     `outseq` in `info` (Step 1), `capture` (Step 2, wire tag 16 — a capture
-     *marks the session seen*, deliberately; `history` stays an export),
-     `send <name> -` raw stdin (Step 3), control `resize` that never fights an
-     attached sizer (Step 4). Read its Decisions section before touching it —
-     the reply-deadline rule exists because pre-upgrade daemons drop tag 16
-     silently and would hang a naive one-shot.
+1. **Two specs are live in `specs/`, and both are started.**
    * **`specs/scrollback-fidelity.md` — Step 1 done (2026-08-19), Step 2 next.**
      `restore` now paints the session's ring into the *receiver's own* scrollback
      (`scrollbackAnsi`), and the three flagship screen statements are
@@ -67,9 +59,13 @@ closed build plans with their completion records (`lean-zmx.md`,
      re-proposes it.
    Everything else is closed: `restore-conformance.md` (restore works into any
    client, proved for the modes, pen, sticky bundle, parser/decoder, the screen
-   cells on both screens at every height, and the tab ruler) and
-   `ledger-cleanup.md` (its five parked items plus the ssh-argv host guard) are
-   in `specs/archive/` with completion records.
+   cells on both screens at every height, and the tab ruler), `ledger-cleanup.md`
+   (its five parked items plus the ssh-argv host guard) and `agent-cli.md`
+   (2026-08-19: the agent verbs — `info` geometry+`outseq`, `capture` on wire
+   tag 16 which **marks the session seen** by design, `send <name> -` raw
+   stdin, and `controlResize` which never overrides an attached sizer; new
+   one-shot verbs must drain through `Client.drainBounded` or they hang against
+   pre-upgrade daemons) are in `specs/archive/` with completion records.
    (Don't look for a living `PLAN.md`: the root one is requirements, and
    everything in `specs/archive/` is closed.)
 2. **`SCRATCHPAD.md`** — append-only worklog: proof recipes, measured
@@ -92,10 +88,9 @@ closed build plans with their completion records (`lean-zmx.md`,
 
 New work opens a new `specs/<slug>.md` and gets named in item 1 above;
 archive the old one with a completion record rather than editing it. Keep the
-live count small — three open specs is over budget already: `agent-cli` is the
-one in flight, `scrollback-fidelity` Step 2 is queued behind it, and
-`runtime-invariants` is only open because its remaining steps are optional and
-it is finished enough to leave alone.
+live count small — two open specs is already one more than the
+one-item-in-flight rule likes, and the second is only there because it is
+finished enough to leave alone.
 
 ## Settled non-goals — don't build these
 

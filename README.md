@@ -35,13 +35,40 @@ linger attach           # attach the default session ("main")
 | `attach <name>@<host>` | attach a session on a remote host over ssh |
 | `watch <name>` | attach read-only |
 | `run <name> <cmd>` | run a command in a session, don't attach |
-| `send <name> <text>` | send raw input to its pty |
+| `send <name> <text>` | send raw input to its pty (`send <name> -`: stdin, byte-exact) |
 | `ls` / (no args) `[-r [h,..]]` | overview; `-r` also lists remote hosts |
 | `ls --porcelain` | machine-readable listing |
+| `info <name>` | one session's records: size, cursor, `outseq`, labels… |
+| `capture <name>` | the current screen as text, one line per row (marks it seen) |
+| `resize <name> <cols> <rows>` | size a detached session (refused while a client is attached) |
 | `history <name>` | scrollback as text |
 | `wait <name>` | block until its program exits (exit code follows) |
 | `kill` / `detach <name>` | end / disconnect |
 | `get` `set` `unset` `clear <name>` | labels (`k=v`) |
+
+## Agents
+
+Everything above the attach line is one-shot and scriptable, so another
+program — an AI agent, a monitor, a bot — can see and drive a session without
+owning a terminal:
+
+```
+linger run work 'make test'        # upsert + type the command
+linger resize work 120 40          # deterministic wrap (nobody attached)
+linger capture work                # the screen, one line per row
+printf 'y\n' | linger send work -  # exact bytes: Enter, ^C, escapes…
+linger wait work                   # block until the program exits
+```
+
+Poll cheaply: `info` reports `outseq`, a counter that moves once per burst of
+output — capture again only when it moved, and treat two equal reads as
+quiescence. A `capture` **marks the session seen** (it is a look, so the
+`ls` glyph stops saying unread and `behind` counts from your capture);
+`history` is an export and deliberately does not. While an agent drives,
+`watch <name>` gives a human a read-only view of the same screen. A resize is
+refused — loudly, exit 1 — while an attached client owns the size; captures
+are plain text (one line per grid row, controls scrubbed), so parse them
+positionally with `rows` from `info`.
 
 ## Recipes
 
@@ -161,7 +188,8 @@ own kitty tab — `recipes/lzo.fish` makes one per session.
   to about three thousand lines of the session's own. Attaching a session
   with no history leaves your window alone. `linger history` prints a
   session's scrollback without touching the terminal.
-- `attach` needs a terminal; bare `linger`/`ls`, `run`, `send` are scriptable.
+- `attach` needs a terminal; bare `linger`/`ls`, `run`, `send`, `info`,
+  `capture`, `resize` are scriptable (see §Agents).
 - An unreachable or mid-reboot host drops out of `ls -r` after a few
   seconds; `attach name@host` fails with ssh's own error. Once the host
   is back its sessions list as `resumable` and attach restores them.

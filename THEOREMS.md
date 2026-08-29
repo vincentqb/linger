@@ -396,7 +396,49 @@ Two clients typing at once still interleave into the pty — inherent to
 a shared terminal, not a defect, and no theorem should claim otherwise.
 What *is* deliberately ordered: the pty size is owned by the newest
 attached real terminal (`Session.sizeOwner`), so concurrent resizes
-converge instead of fighting.
+converge instead of fighting. `resizeEffects_owner_only` states it for
+attached clients, and the control path (`linger resize`, below) extends
+it rather than bending it.
+
+## The agent verbs (specs/agent-cli.md) — what they promise, and the two deliberate semantics
+
+One-shot verbs so another program can see and drive a session. Three claims
+carry them, plus two decisions that are semantics, not accidents:
+
+* **A capture cannot be forged and is positionally parseable.**
+  `Render.screenText` (the `linger capture` stream) emits the grid alone,
+  `rowText` per row: every byte is a line terminator or printable content
+  (`screenText_framing`) and the newline count is exactly the grid's row count
+  (`screenText_lines`) — a cell the session's program filled cannot inject a
+  line break, so line k of a capture IS row k of the screen, and `rows` from
+  `info` suffices to parse it. Same anti-forgery species as `history_framing`
+  / `history_lines` and `infoText_records` (§Row's discipline applied to every
+  line-oriented stream a caller parses).
+* **A capture is a look — deliberately.** The `.screen` arm's only state
+  change is the read mark catching up (`onMsg_screen`, which is `rfl`, so any
+  smuggled side effect breaks it; `screen_marks_seen` is the user-facing
+  half): after a capture, `unseen` is false and `behind` counts output since
+  *your* capture, which is the change cursor an agent polls. The line is
+  drawn at verbs that deliver the current screen: `.info` never marks seen
+  (`ls` polls every live daemon; a listing that marked everything read would
+  destroy the status column) and `history` stays an export.
+* **A control resize never overrides an attached sizer.** `linger resize`
+  reaches `Session.controlResize` only from non-attached connections
+  (`onMsg_resize_control`); while an attached sizer exists it changes nothing
+  and refuses loudly (`controlResize_never_overrides` — an agent must not
+  believe a size it never got), with nobody attached a genuine new size is
+  exactly one `resizePty` plus the emulator resize (`controlResize_applies`),
+  and the same-size branch is inert (`controlResize_same_size`) for the
+  attach guard's reason: `Vt.resize` wipes the scroll region and tab ruler,
+  and no SIGWINCH fires at an unchanged winsize to make the child re-establish
+  them.
+
+The runtime half — one `.input` frame per ≤ 64 KiB stdin read in
+`send <name> -`, and the bounded drain that keeps a new verb from hanging
+against a pre-upgrade daemon (§Frame drops an unknown tag *silently*, and
+linger daemons outlive binary upgrades by design) — is `IO`, so it is pinned
+by `tests/agent_test.py` (suite 12) rather than proved; the break records are
+in SCRATCHPAD 2026-08-19, including the live 2-second no-reply demonstration.
 
 ### Session identity at the socket path: closed by the kernel, not by a proof
 
