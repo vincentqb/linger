@@ -993,7 +993,9 @@ definition is load-bearing but not that *this* lemma is.
 The check itself lives in `Tests/Vt.lean` since the module migration
 (lean-modules Step 5): it is an evaluation, and a kernel `decide` in a module
 file cannot reduce through a derived `DecidableEq` instance whose body is not
-exposed — under `native_decide`, where evaluating is the point, it keeps its
-full force. -/
+exposed — in `Tests/`, under the compiled-evaluation tactic whose whole point
+is evaluating, it keeps its full force. (That tactic's name is deliberately
+not written here: the purity gate greps `Theorems/**` for the token, prose
+included.) -/
 
 end Linger.Core.Vt
