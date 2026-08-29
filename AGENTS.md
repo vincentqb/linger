@@ -37,7 +37,16 @@ closed build plans with their completion records (`lean-zmx.md`,
 
 ## Where things stand — read this first after any compaction
 
-1. **Two specs are live in `specs/`, and both are started.**
+1. **Three specs are live in `specs/`.**
+   * **`specs/lean-modules.md` — in flight, this is the item being worked.**
+     Adopt the v4.32 module system (probe done — the measured facts are in
+     SCRATCHPAD 2026-08-19, don't re-derive them): Step 1 blanket
+     semantics-preserving migration of `Linger/` + exe roots, Step 2 seals
+     `Buf`'s representation with `private` fields + an `import all` friend
+     import for `Theorems/Buf.lean` — which flips runtime-invariants' Open
+     decision 1 (measured "no" on 2026-08-18; both blockers are gone). The
+     byte-queue greps stay: privacy seals `Buf`, only greps ban a parallel
+     queue.
    * **`specs/scrollback-fidelity.md` — Step 1 done (2026-08-19), Step 2 next.**
      `restore` now paints the session's ring into the *receiver's own* scrollback
      (`scrollbackAnsi`), and the three flagship screen statements are

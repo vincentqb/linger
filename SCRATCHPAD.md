@@ -6393,3 +6393,48 @@ Ratchets: coverage cap 19 holds (`linesLF` arrives claimed by four statements);
 HEARTBEAT_CAP 1 (no raises — `linesLF_record`'s induction is light); nothing new in the
 EMITTERS list beyond the strengthened descriptions (`linesLF` returns `List Bytes`, which
 the stream regex correctly does not classify as an emitter).
+
+
+## Lean module system on v4.32.0 — measured, before adopting — 2026-08-19
+
+Probed in a scratch package (`/tmp/modprobe2`, same toolchain, same `./lake` wrapper) before
+writing `specs/lean-modules.md`. Facts, each observed both ways where it matters:
+
+* **Available, no experimental flag.** `module` + `public`/`private` + `@[expose]` +
+  `public section` + `import all` all elaborate on the pinned `leanprover/lean4:v4.32.0`.
+* **`private` structure fields now close BOTH holes** from the 2026-08-18 measurement that
+  killed runtime-invariants Open decision 1: a plain importer cannot *read* (`Unknown constant
+  _private…Buf.bytes`), cannot *write* (`{ b with off := 3 }` → "constructor for Buf is marked
+  as private"), and cannot *forge* (`{ bytes := …, off := … }` → same). The old experiment's
+  finding (b) — instance notation writes where it cannot read — is gone: field privacy makes
+  the constructor private.
+* **`import all` is the friend import the old experiment lacked** — finding (a) is gone too:
+  a proof file outside Core sees private fields, module-private defs, and non-exposed bodies
+  (`unfold`, `simp [f]`, `decide` all work), so proofs STAY in `Theorems/` and `coverage.py`'s
+  Theorems-only statement scan keeps counting them. Grammar: `public import X` + `import all X`
+  as two directives (`public import all` is rejected, with an error message saying exactly
+  this). Statements that NAME private things must be module-private theorems (fine — theorems
+  are leaves; being checked at build is their job); API-level statements can be `public`.
+* **Proof bodies always get the private scope** — only statements are visibility-checked. A
+  `public theorem` proved by `unfold`ing a non-exposed body compiles.
+* **`@[expose]` refuses a body that touches private fields** ("constructor … is marked as
+  private" on the exposed body). So sealed-type APIs are public-signature/hidden-body, and
+  kernel-reduction consumers go through `import all`.
+* **Interop is one-directional: legacy CAN import module, module CANNOT import legacy**
+  ("cannot import non-`module` X from `module`"). Migration must walk the import DAG
+  bottom-up. A legacy importer of a module file sees public bodies (its `decide`/
+  `native_decide`/`unfold` keep working) **and privacy still binds it** (private field read
+  and module-private def both refuse from a legacy file). So `Theorems/`/`Tests/` need no
+  conversion except where they *state* things about sealed internals.
+* **`public section` may run unclosed to EOF**, wrapping namespaces — so the
+  semantics-preserving blanket posture is two inserted lines per file plus
+  `import` → `public import`.
+* **`@[extern] opaque` and `deriving Repr/Inhabited` over private fields work** under
+  `module`; `partial def` unaffected.
+* **Module files run at least one stricter lint** (`linter.unusedSimpArgs` surfaced as an
+  error where legacy elaboration had been quiet) — expect small proof-hygiene fixes during
+  migration, which is signal, not noise.
+* **Gates:** the blanket posture leaves decl text as `def …`, so `coverage.py`'s
+  `^(private )*def` scan and the e2e greps keep measuring unchanged; the regexes get
+  hardened to also match `public def`/`@[expose] public def` anyway, with counts asserted
+  identical, so a later per-decl tightening cannot silently blind check 1.
