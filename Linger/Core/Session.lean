@@ -191,6 +191,27 @@ def sizeOwner (s : State) : Option Client :=
       | some b => if c.seq ≥ b.seq then some c else some b)
     none
 
+/-- The control-resize decision (`linger resize`, from a NON-attached
+connection — agent-cli Decision 3). The abduco rule extends rather than
+bends: while an attached sizer exists it always wins (refuse, loudly — a
+silent drop would let an agent believe a size it never got); with nobody
+attached there is nobody to fight, and the requested size applies. The
+same-size branch leaves the emulator alone for the attach guard's reason:
+`Vt.resize` resets the scroll region and tab ruler unconditionally, and at an
+unchanged winsize no SIGWINCH nudges the child to re-establish them
+(restore-conformance Step 0 ledger 1). Zero is refused — 0×0 is the observer
+marker on attach, and a zero dimension is never a size. -/
+def controlResize (s : State) (c : Client) (cols rows : UInt32) : State × List Effect :=
+  if (sizeOwner s).isSome then
+    (s, [.send c.id (.err "an attached client owns the size".toUTF8.toList)])
+  else if cols == 0 || rows == 0 then
+    (s, [.send c.id (.err "size must be nonzero".toUTF8.toList)])
+  else if s.vt.cols == cols.toNat && s.vt.rows == rows.toNat then
+    (s, [.send c.id .done])
+  else
+    ({ s with vt := s.vt.resize cols.toNat rows.toNat },
+     [.resizePty cols rows, .send c.id .done])
+
 def resizeEffects (s : State) (c : Client) : List Effect :=
   if (sizeOwner s).any (·.id == c.id) then [.resizePty c.cols c.rows] else []
 
@@ -242,12 +263,17 @@ def onMsg (s : State) (c : Client) (m : Msg) : State × List Effect :=
   | .resize cols rows =>
     let c := { c with cols, rows }
     let s := s.setClient c
-    -- only the newest real-terminal attacher owns the pty size
-    if c.attached && c.sizer && (sizeOwner s).any (·.id == c.id) then
-      ({ s with vt := s.vt.resize cols.toNat rows.toNat },
-       [.resizePty cols rows])
+    if c.attached then
+      -- only the newest real-terminal attacher owns the pty size
+      if c.sizer && (sizeOwner s).any (·.id == c.id) then
+        ({ s with vt := s.vt.resize cols.toNat rows.toNat },
+         [.resizePty cols rows])
+      else
+        (s, [])
     else
-      (s, [])
+      -- a control connection (`linger resize`): the named stage above owns
+      -- the decision, and `controlResize_never_overrides` the invariant
+      controlResize s c cols rows
   | .detachAll =>
     (s, (s.clients.filter (·.attached) |>.map (fun c' => Effect.close c'.id))
           ++ [.send c.id .done])

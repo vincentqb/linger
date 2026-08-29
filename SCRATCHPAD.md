@@ -6306,3 +6306,40 @@ under the dropLast break that one still passes as a **cascade artifact** (the co
 first line prevents `sleep` from ever starting), so the verbatim test is the load-bearing
 delivery oracle and the ^C test is the control-byte semantics demo. Both recorded here so
 nobody "simplifies" the markers back to plain text.
+
+
+## agent-cli step 4 notes — 2026-08-19
+
+`linger resize` — the control resize. The decision is a **named stage**
+(`Session.controlResize`), not branches inline in the `.resize` arm, for the
+`resizeEffects`/`stripMagic` reason: the theorems target the stage directly
+(`controlResize_never_overrides` / `_applies` / `_same_size`, all `unfold` + `rw` proofs
+with the guards as hypotheses) and `onMsg_resize_control` pins the routing, so no
+setClient/sizeOwner-invariance lemma was ever needed — the statement shape dodged the
+map/filter commuting proof entirely. The attached path is byte-identical to before (its
+fixtures and `resizeEffects_owner_only` needed zero edits).
+
+The seven message-generic preservation proofs (`onMsg_clients_length_le`, `_labels_le`,
+`_decOk`, `_scan`, `_vt_good`, `_vt_live`, `_other`) absorbed both new arms (`.screen`
+step 2, the restructured `.resize` here) with **only** `unfold onMsg` → `unfold onMsg
+controlResize` — the `repeat' split; all_goals first | …` idiom paying out a third time.
+No heartbeat raises anywhere in the spec's four steps (`HEARTBEAT_CAP=1` untouched); no
+new syscalls (`SHIM_CAP=27`); `RUNTIME_PARTIAL_CAP=2` (the new CLI loops are `while` in
+`do`); coverage tightened 19 → its cap held with `controlResize` and `screenText`
+arriving claimed.
+
+Break-verified (each caught by a theorem AND a fixture):
+* sizer guard dropped (`if false then refuse…`) → `controlResize_never_overrides`'s
+  `rw [if_pos h]` finds no `if` to rewrite (Theorems/Session.lean:819) and the
+  refused-while-attached fixture (Tests/Session.lean:312) is refuted.
+* same-size guard dropped → `controlResize_same_size` and `controlResize_applies`
+  both fail (:831/:843) and the DECSTBM/tab-ruler preservation fixture (:336) is
+  refuted — that fixture is the one that knows *why* the guard exists.
+
+e2e closes the loop the pure fixtures cannot: `stty size` inside the session reports
+`40 120` after `linger resize work 120 40` — the kernel's SIGWINCH path, the part no
+theorem sees.
+
+CLI validates 1..1000 (`clampDim`'s range) client-side: past 1000 the emulator would
+clamp while the pty winsize did not, and the two must not be allowed to disagree from
+this path (attach trusts a real terminal's report; an agent gets validated).

@@ -5,7 +5,7 @@ Updated: 2026-08-19
 
 ## Where this stands — read this first
 
-**Next step: Step 4 (`resize`).** Steps 1–3 done (2026-08-19). Two things not
+**All four steps done (2026-08-19) — this spec is complete.** Two things not
 to re-derive: new one-shot verbs drain through `Client.drainBounded` (a
 pre-upgrade daemon drops an unknown tag silently; `wait` alone stays untimed,
 on purpose), and Step 3's break round found a worthless e2e assertion (tty
@@ -16,7 +16,22 @@ marker.
 - Step 1 ✓ info fields (`cols rows cursorx cursory alt outseq`) + `linger info <name>`
 - Step 2 ✓ `linger capture <name>` (wire tag 16, `Render.screenText`, marks seen)
 - Step 3 ✓ `linger send <name> -` (raw stdin bytes; client-only)
-- Step 4 → `linger resize <name> <cols> <rows>` (control resize, never fights a live user)
+- Step 4 ✓ `linger resize <name> <cols> <rows>` (`Session.controlResize`, never
+  fights an attached sizer; e2e sees the child's own `stty size` follow)
+
+## Completion record — 2026-08-19
+
+Shipped across four commits (`step 1`–`step 4`), each gated by the full
+`./tests/e2e.sh` (suite 12, `tests/agent_test.py`, is this spec's live half).
+Theorems: `screenText_framing`/`screenText_lines` (+ EMITTERS entry),
+`onMsg_screen` (`rfl`) + `screen_marks_seen`, `controlResize_never_overrides`
+/`_applies`/`_same_size` + `onMsg_resize_control`; Wire tag 16 with the
+round-trip and payload-bound cases extended. Ratchets all held: SHIM_CAP 27,
+HEARTBEAT_CAP 1, RUNTIME_PARTIAL_CAP 2, coverage cap 19. Ten break records in
+SCRATCHPAD 2026-08-19 (three entries), including the live no-hang
+demonstration of the reply deadline and a worthless-test catch in Step 3.
+Docs: README §Agents, THEOREMS.md "The agent verbs" section. Every Decision
+in this spec was implemented as written; nothing was killed or descoped.
 
 ## Goal
 

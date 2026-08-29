@@ -282,6 +282,66 @@ example :
        | .resizePty c r => some (c, r) | _ => none)
      resizes == [(80, 24)]) = true := by native_decide
 
+/-! ### control resize (specs/agent-cli.md Step 4)
+
+`linger resize` from a non-attached connection: applies to a detached
+session, is refused — loudly — while an attached sizer exists, and leaves the
+emulator alone at an unchanged size. -/
+
+/-- Detached session: the control resize applies (one resizePty, then done)
+and the emulator follows. -/
+example :
+    (let (s, effs) := Tests.run [.connected 1, .bytes 1 (encode (.resize 100 30))]
+     let resizes := effs.filterMap (fun e => match e with
+       | .resizePty c r => some (c, r) | _ => none)
+     resizes == [(100, 30)] && s.vt.cols == 100 && s.vt.rows == 30
+       && Tests.hasEffect effs (fun e => match e with
+            | .send 1 .done => true | _ => false)) = true := by native_decide
+
+/-- While a sizer is attached, the control resize is refused with an `.err`,
+no `resizePty` is emitted beyond the attach's own, and the emulator keeps the
+attached client's size. -/
+example :
+    (let (s, effs) := Tests.run [
+        .connected 1, .bytes 1 (encode (.attach 80 24)),
+        .connected 2, .bytes 2 (encode (.resize 100 30))]
+     let resizes := effs.filterMap (fun e => match e with
+       | .resizePty c r => some (c, r) | _ => none)
+     resizes == [(80, 24)] && s.vt.cols == 80 && s.vt.rows == 24
+       && Tests.hasEffect effs (fun e => match e with
+            | .send 2 (.err _) => true | _ => false)) = true := by native_decide
+
+/-- …and once the owner leaves, the same request applies: attachment is the
+fact that decides, not history. -/
+example :
+    (let (s, effs) := Tests.run [
+        .connected 1, .bytes 1 (encode (.attach 80 24)),
+        .closed 1,
+        .connected 2, .bytes 2 (encode (.resize 100 30))]
+     let resizes := effs.filterMap (fun e => match e with
+       | .resizePty c r => some (c, r) | _ => none)
+     resizes == [(80, 24), (100, 30)] && s.vt.cols == 100) = true := by native_decide
+
+/-- A same-size control resize is a `.done` no-op that preserves what
+`Vt.resize` would wipe: the child's scroll region and tab ruler (the attach
+guard's reason, applied to this path — restore-conformance Step 0 ledger 1). -/
+example :
+    (let dirty := "\x1b[2;4r\x1b[3g".toUTF8.toList  -- DECSTBM 2..4, clear all tabs
+     let (s, effs) := Tests.run [.ptyOut dirty,
+                                 .connected 5, .bytes 5 (encode (.resize 20 5))]
+     s.vt.top == 1 && s.vt.bot == 3 && s.vt.tabs == Array.replicate 20 false
+       && !Tests.hasEffect effs (fun e => match e with
+            | .resizePty _ _ => true | _ => false)
+       && Tests.hasEffect effs (fun e => match e with
+            | .send 5 .done => true | _ => false)) = true := by native_decide
+
+/-- A zero dimension is never a size (0×0 is the observer marker on attach). -/
+example :
+    (let (s, effs) := Tests.run [.connected 1, .bytes 1 (encode (.resize 0 30))]
+     s.vt.cols == 20
+       && Tests.hasEffect effs (fun e => match e with
+            | .send 1 (.err _) => true | _ => false)) = true := by native_decide
+
 /-- `info` reports the attached-client count (abduco's session list
 marker, as data). -/
 example :

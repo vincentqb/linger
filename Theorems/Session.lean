@@ -210,7 +210,7 @@ theorem dropClient_length_le (s : State) (id : Nat) :
 /-- `onMsg` never grows the client list. -/
 theorem onMsg_clients_length_le (s : State) (c : Client) (m : Msg) :
     (onMsg s c m).1.clients.length ≤ s.clients.length := by
-  unfold onMsg
+  unfold onMsg controlResize
   dsimp only
   repeat' split
   all_goals simp_all [State.setClient]
@@ -219,7 +219,7 @@ theorem onMsg_clients_length_le (s : State) (c : Client) (m : Msg) :
 theorem onMsg_labels_le (s : State) (c : Client) (m : Msg)
     (h : s.labels.length ≤ maxLabels) :
     (onMsg s c m).1.labels.length ≤ maxLabels := by
-  unfold onMsg
+  unfold onMsg controlResize
   dsimp only
   repeat' split
   all_goals first
@@ -259,7 +259,7 @@ theorem onMsg_decOk (s : State) (c : Client) (m : Msg)
       c'.decoder.errored = false ∧ c'.decoder.buf.length ≤ 4 + Wire.maxPayload) :
     ∀ c' ∈ (onMsg s c m).1.clients,
       c'.decoder.errored = false ∧ c'.decoder.buf.length ≤ 4 + Wire.maxPayload := by
-  unfold onMsg
+  unfold onMsg controlResize
   dsimp only
   repeat' split
   all_goals first
@@ -269,7 +269,7 @@ theorem onMsg_decOk (s : State) (c : Client) (m : Msg)
 
 theorem onMsg_scan (s : State) (c : Client) (m : Msg) :
     (onMsg s c m).1.scan = s.scan := by
-  unfold onMsg
+  unfold onMsg controlResize
   dsimp only
   repeat' split
   all_goals simp_all [State.setClient]
@@ -373,7 +373,7 @@ theorem step_bounded (s : State) (ev : Event) (h : Bounded s) :
 open Linger.Core.Vt (Good) in
 theorem onMsg_vt_good {s : State} {c : Client} (m : Msg)
     (h : Good s.vt) : Good (onMsg s c m).1.vt := by
-  unfold onMsg
+  unfold onMsg controlResize
   dsimp only
   repeat' split
   all_goals first
@@ -563,7 +563,7 @@ theorem dropClient_other {s : State} {id other : Nat} (h : other ≠ id) :
 theorem onMsg_other (s : State) (c : Client) (m : Msg) {other : Nat}
     (h : other ≠ c.id) :
     (onMsg s c m).1.client? other = s.client? other := by
-  unfold onMsg
+  unfold onMsg controlResize
   dsimp only
   repeat' split
   all_goals first
@@ -710,7 +710,7 @@ def LiveVt (s : State) : Prop := LiveReachableVt s.vt
 theorem onMsg_vt_live {s : State} {c : Client} (m : Msg) (h : LiveVt s) :
     LiveVt (onMsg s c m).1 := by
   unfold LiveVt at h ⊢
-  unfold onMsg
+  unfold onMsg controlResize
   dsimp only
   repeat' split
   all_goals first
@@ -801,6 +801,57 @@ theorem resizeEffects_atMostOne (s : State) (c : Client) :
   unfold resizeEffects; split
   · exact Or.inr rfl
   · exact Or.inl rfl
+
+/-! ## §Size — a control resize never overrides an attached sizer
+
+`linger resize` (agent-cli Decision 3) lets an agent size a *detached* session
+so wrap is deterministic before a capture. The abduco rule extends rather than
+bends: an attached sizer always wins, and the refusal is loud — an agent must
+not believe a size it never got. -/
+
+/-- **The invariant.** While anybody attached owns the size, a control resize
+changes nothing — not the emulator, not the pty — and says so. -/
+theorem controlResize_never_overrides (s : State) (c : Client) (cols rows : UInt32)
+    (h : (sizeOwner s).isSome = true) :
+    controlResize s c cols rows
+      = (s, [.send c.id (.err "an attached client owns the size".toUTF8.toList)]) := by
+  unfold controlResize
+  rw [if_pos h]
+
+/-- With nobody to fight, a genuine new size applies: exactly one `resizePty`
+at the requested size, the emulator resized with it, then `.done`. -/
+theorem controlResize_applies (s : State) (c : Client) (cols rows : UInt32)
+    (hown : (sizeOwner s).isSome = false)
+    (hnz : (cols == 0 || rows == 0) = false)
+    (hdiff : (s.vt.cols == cols.toNat && s.vt.rows == rows.toNat) = false) :
+    controlResize s c cols rows
+      = ({ s with vt := s.vt.resize cols.toNat rows.toNat },
+         [.resizePty cols rows, .send c.id .done]) := by
+  unfold controlResize
+  rw [if_neg (by simp [hown]), if_neg (by simp [hnz]), if_neg (by simp [hdiff])]
+
+/-- The same-size branch is inert on purpose: the emulator — scroll region and
+tab ruler included — is untouched (`Vt.resize` would wipe both and no SIGWINCH
+re-establishes them at an unchanged winsize; the attach guard's reason), and
+the reply is still `.done`: idempotent success, the pty already IS that size. -/
+theorem controlResize_same_size (s : State) (c : Client) (cols rows : UInt32)
+    (hown : (sizeOwner s).isSome = false)
+    (hnz : (cols == 0 || rows == 0) = false)
+    (hsame : (s.vt.cols == cols.toNat && s.vt.rows == rows.toNat) = true) :
+    controlResize s c cols rows = (s, [.send c.id .done]) := by
+  unfold controlResize
+  rw [if_neg (by simp [hown]), if_neg (by simp [hnz]), if_pos hsame]
+
+/-- The `.resize` arm routes every non-attached connection to the stage above
+(after the cols/rows bookkeeping on the client record), so the three claims
+are about what the daemon actually runs. -/
+theorem onMsg_resize_control (s : State) (c : Client) (cols rows : UInt32)
+    (hc : c.attached = false) :
+    onMsg s c (.resize cols rows)
+      = controlResize (s.setClient { c with cols, rows })
+          { c with cols, rows } cols rows := by
+  unfold onMsg
+  simp [hc]
 
 end Linger.Core.Session
 

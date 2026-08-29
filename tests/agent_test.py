@@ -3,8 +3,13 @@
 Step 1: `linger info <name>` and the observability fields -- geometry + cursor
 (what `capture` needs), `alt`, and `outseq` (the change cursor: "look again
 only when it moved"). Step 2: `linger capture <name>` -- the screen as plain
-text, one line per row, and capturing marks the session seen. All pinned
-against the rendered porcelain/bytes, end to end.
+text, one line per row, and capturing marks the session seen. Step 3:
+`linger send <name> -` -- stdin to the pty byte-exact (the oracles assert on
+shell *expansions*: the tty echoes typed input onto the screen, so a typed-text
+marker would pass even if the bytes never ran; see SCRATCHPAD 2026-08-19).
+Step 4: `linger resize` -- applies detached (down to the child's own winsize,
+via `stty size`), refused while a client is attached. All pinned against the
+rendered porcelain/bytes, end to end.
 """
 import os, pty, time, subprocess, fcntl, struct, termios, sys, pathlib
 
@@ -142,5 +147,52 @@ r = linger('send', 'nosuch', '-', input=b'x')
 fails += expect(r.returncode == 1, 'send - on a missing session exits 1')
 
 linger('kill', 'ag')
+
+# -- Step 4: resize -----------------------------------------------------------
+
+linger('run', 'rz', 'true')
+time.sleep(1.5)
+
+r = linger('resize', 'rz', '120', '40')
+time.sleep(1.0)
+i = info('rz')
+fails += expect(r.returncode == 0 and i.get('cols') == '120' and i.get('rows') == '40',
+                'control resize applies to a detached session')
+
+# the pty winsize followed too: the child's own stty sees it (SIGWINCH path)
+linger('run', 'rz', 'stty', 'size')
+time.sleep(1.2)
+fails += expect('40 120' in linger('capture', 'rz').stdout.decode(),
+                'the child observes the new winsize (stty size: 40 120)')
+
+# an attached client owns the size: refused, loudly, and nothing moves
+pid, fd = pty.fork()
+if pid == 0:
+    os.execve(LINGER, [LINGER, 'attach', 'rz'], ENV)
+fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 80, 0, 0))
+time.sleep(1.5)
+r = linger('resize', 'rz', '90', '25')
+fails += expect(r.returncode == 1 and b'owns the size' in r.stderr,
+                'resize is refused while a client is attached')
+fails += expect(info('rz').get('cols') == '80',
+                'a refused resize moved nothing')
+os.write(fd, b'\x1c')
+time.sleep(0.8)
+os.close(fd)
+os.waitpid(pid, 0)
+
+r = linger('resize', 'rz', '90', '25')
+time.sleep(0.8)
+fails += expect(r.returncode == 0 and info('rz').get('cols') == '90',
+                'resize applies again once the client detached')
+
+# client-side validation: 1..1000 (clampDim's range)
+fails += expect(linger('resize', 'rz', '0', '10').returncode == 2 and
+                linger('resize', 'rz', '5000', '10').returncode == 2,
+                'zero and oversize are rejected client-side')
+fails += expect(linger('resize', 'nosuch', '80', '24').returncode == 1,
+                'resize on a missing session exits 1')
+
+linger('kill', 'rz')
 print(f'FAILURES: {fails}')
 sys.exit(1 if fails else 0)

@@ -44,6 +44,8 @@ def usage : String := "Usage: linger [command] [args...]
                               outseq, labels...; the porcelain, for scripts/agents)
   [c]apture <name>            Print the current screen as plain text (one line
                               per row; marks the session seen)
+  resize <name> <cols> <rows> Set a detached session's size (refused while an
+                              attached client owns it)
   [hi]story <name>            Print session scrollback as plain text
   [w]ait <name>...            Wait for sessions' programs to exit
   [g]et / set / [un]set / [cl]ear <name>   Session labels (k=v)
@@ -408,6 +410,20 @@ def main (hooks : Hooks) (args : List String) : IO UInt32 := do
   | ["kill", name] | ["k", name] => requireLiveSend name .kill
   | ["info", name] | ["i", name] => requireLiveBounded name .info
   | ["capture", name] | ["c", name] => requireLiveBounded name .screen
+  | ["resize", name, cs, rs] =>
+    match cs.toNat?, rs.toNat? with
+    | some cols, some rows =>
+      -- 1..1000 is `clampDim`'s range: past it the emulator would clamp while
+      -- the pty winsize did not, and the two must not be allowed to disagree
+      -- from this path (attach trusts the terminal; an agent gets validated)
+      if cols == 0 || rows == 0 || cols > 1000 || rows > 1000 then do
+        IO.eprintln "linger: size must be 1..1000 (the emulator clamps at 1000)"
+        return 2
+      else
+        requireLiveBounded name (.resize (UInt32.ofNat cols) (UInt32.ofNat rows))
+    | _, _ => do
+      IO.eprintln "usage: linger resize <name> <cols> <rows>"
+      return 2
   | ["history", name] | ["hi", name] => requireLive name .history
   | "wait" :: names | "w" :: names =>
     if names.isEmpty then
