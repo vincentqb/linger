@@ -1,5 +1,20 @@
-import Linger.Core.Buf
+module
+
+public import Linger.Core.Buf
+import all Linger.Core.Buf
+
 /-! # §Bound, the runtime half — the daemon's byte queues, proved
+
+This file is the tree's first **friend module**: `import all Linger.Core.Buf`
+is what lets these statements and proofs see a representation that is sealed to
+every plain importer (`Buf.bytes` is `private`; the runtime cannot read, write,
+or forge it — specs/lean-modules.md Step 2). There is deliberately no blanket
+`public section` here: these theorems are leaves — nothing imports them as
+lemmas (checked; they appear elsewhere only in prose) — and being CHECKED at
+build is their whole job, so module-private is their honest visibility, and it
+is also what lets the `rfl` proofs elaborate in the private scope where the
+sealed definitions still reduce. `tests/coverage.py`'s census is textual over
+`Theorems/**` and counts them regardless.
 
 `Session.run_wf` bounds the *machine*: no event trace grows a client roster, a
 label store or the screen. One layer below, the daemon's two byte queues were
@@ -9,7 +24,8 @@ words. These are that bullet, turned into theorems about `Linger.Core.Buf`.
 **What is proved here is the arithmetic, not the daemon.** `Linger/Runtime/*` is
 `IO`; no theorem can see that it calls these functions rather than open-coding the
 same sums. Two things carry that gap: `Buf.bytes` is `private`, so the runtime
-cannot *read* the representation, and every buffer arithmetic needs to read; and
+cannot *read* the representation — nor, since the module system sealed the
+constructor, **write or forge** one — and every buffer arithmetic needs to read; and
 `tests/e2e.sh` greps that `Linger/Runtime/*` declares no byte buffer of its own — a
 source-tree property, and therefore a grep. Anyone who reads this file as "the
 runtime is proved" is overclaiming.
@@ -37,6 +53,13 @@ namespace Linger.Core.Buf
 /-- **The bridge.** The number the caps compare is the length of what is actually
 owed. Nothing else in this file means anything without it. -/
 theorem owedLen_eq (b : Buf) : (owed b).size = owedLen b := rfl
+
+/-- The one public door in starts with zero debt — `empty`'s anchor, and what
+claims it in the census: an importer can begin a queue, never forge one
+mid-debt (the constructor is private with the field). -/
+theorem owed_empty : owed Buf.empty = ByteArray.empty := rfl
+
+theorem owedLen_empty : owedLen Buf.empty = 0 := rfl
 
 /-- **Nothing written is retained.** Memory footprint *is* the debt — an equation,
 not a bound, because an inequality would also hold of a queue that kept its whole

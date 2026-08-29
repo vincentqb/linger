@@ -143,7 +143,7 @@ def queryInfo (name : String) : IO (Option (List (String × String))) := do
     -- `bufOffer` refuses whole frames past the cap (`Buf.bufOffer_bound`), so a
     -- hostile or broken daemon costs a truncated listing rather than the client's
     -- memory. An info reply is a few hundred bytes; 1 MiB is far above any real one.
-    let mut acc : Linger.Core.Buf.Buf := {}
+    let mut acc : Linger.Core.Buf.Buf := .empty
     let mut go := true
     while go do
       let revs ← poll #[fd] #[POLLIN] 2000

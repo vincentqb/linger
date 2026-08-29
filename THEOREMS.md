@@ -627,9 +627,16 @@ terminals; see the note under `## What these theorems do not settle`.)
   partial-drain leak — reclaim on empty, and a peer draining a little each round grows
   the array while the debt stays small — is unrepresentable rather than merely fixed.
   **What is proved is the arithmetic, not the daemon.** `Linger/Runtime/*` is `IO`, and no
-  theorem can see that it calls these functions rather than open-coding the same sums;
-  `tests/e2e.sh` gates that it declares no byte buffer of its own, which is a
-  source-tree property and therefore a grep, in the same spirit as `SHIM_CAP`.
+  theorem can see that it calls these functions rather than open-coding the same sums.
+  Two enforcement layers carry that gap (2026-08-19, the module system —
+  specs/lean-modules.md Step 2): `Buf.bytes` is `private`, so the runtime cannot read,
+  write (`{ b with … }`), or forge a `Buf`'s representation — all three refuse at
+  compile time, break-verified from inside the daemon; `Buf.empty` is the one door in,
+  `writeFrom` the one window out, and `Theorems/Buf.lean` sees inside via `import all`,
+  the friend import. And `tests/e2e.sh` still gates that the runtime declares no byte
+  buffer *of its own* — privacy seals `Buf`, but only the grep bans a parallel
+  `ByteArray` queue, which is a source-tree property and therefore a grep, in the same
+  spirit as `SHIM_CAP`.
 * **Grid dimensions are invariant by theorem now** (`dims_feed`,
   Theorems/Vt.lean): no byte stream changes `cols`/`rows`. `RIS`
   re-derives them through `clampDim`, which is the identity exactly when

@@ -49,7 +49,7 @@ def ptyInCap : Nat := 4194304
 
 structure Conn where
   fd : UInt32
-  out : Buf := {}
+  out : Buf := .empty
   deriving Inhabited
 
 structure Rt where
@@ -58,7 +58,7 @@ structure Rt where
   ptyFd : UInt32
   childPid : UInt32
   conns : List Conn := []
-  ptyIn : Buf := {}
+  ptyIn : Buf := .empty
   /-- Whether we have already logged that `ptyIn` hit the cap, so the log
   records the *transition* into backpressure rather than one line per dropped
   chunk (which would be the same unbounded-growth defect, in the log file). -/

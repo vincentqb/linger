@@ -5,12 +5,16 @@ Updated: 2026-08-19
 
 ## Where this stands — read this first
 
-**Next step: Step 2.** Step 1 landed 2026-08-19 — the whole lib is `module`
-files and the migration cost was two `@[expose]`s (see SCRATCHPAD, "lean-modules
-step 1": type-level defs, and `let rec` auxiliaries that proofs name, are the
-two shapes that need it). Step 0's probe facts are in SCRATCHPAD 2026-08-19
-("Lean module system on v4.32.0") and are NOT to be re-derived. The two that
-shape everything: interop is
+**Next step: Steps 3–4 are optional — judge against the one-item-in-flight
+rule before starting either; `scrollback-fidelity` Step 2 has been queued
+longer.** Steps 0–2 landed 2026-08-19: the migration cost was two
+`@[expose]`s (type-level defs, and `let rec` auxiliaries that proofs name —
+see SCRATCHPAD "lean-modules step 1"), and `Buf` is sealed with its proofs in
+the first friend module (SCRATCHPAD "step 2" carries the false-green
+break-verify lesson: `lake build Linger` does not compile `Linger/Runtime/**`;
+verify runtime breaks against the `linger` exe target). Step 0's probe facts
+are in SCRATCHPAD 2026-08-19 ("Lean module system on v4.32.0") and are NOT to
+be re-derived. The two that shape everything: interop is
 legacy-imports-module only (so migration walks the import DAG bottom-up), and
 `import all` lets proofs stay in `Theorems/` while internals go private — the
 exact pair of blockers that killed the 2026-08-18 per-field-`private`
@@ -22,8 +26,13 @@ system flips it to yes).
   `public section`); two `@[expose]`s were the entire friction (the
   type-level `Checkpoint.R`, and `Vt.applySgr` whose `let rec` auxiliary the
   Pen proofs induct on); gate regexes hardened, every count bit-identical
-- Step 2 → seal `Linger.Core.Buf` (private fields); `Theorems/Buf.lean`
-  becomes the first `import all` friend; flip the recorded open decision
+- Step 2 ✓ `Buf` sealed: `private bytes`, `Buf.empty` the one door in,
+  `writeFrom` the one window out, `Theorems/Buf.lean` the first friend module
+  (`import all`, theorems deliberately module-private — public `:= rfl`
+  proofs elaborate against the body-hidden view and fail). Open decision 1
+  of runtime-invariants flipped; all three representation attacks refuse
+  from inside the daemon (break-verified against the `linger` exe target —
+  `lake build Linger` does NOT compile `Linger/Runtime/**`; see SCRATCHPAD)
 - Step 3 (optional) → sealed `SessionName` (sanitize-at-construction)
 - Step 4 (optional) → `@[expose]`/`public` tightening beyond the blanket
 

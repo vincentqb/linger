@@ -6464,3 +6464,43 @@ also match `@[expose]`/`public`/`private` prefixes — necessary already, since 
 had left the def census — and the exit criterion held: **every gate number is bit-identical
 before/after** (coverage 256 defs/18 unclaimed, SHIM 27, runtime partial 2, heartbeats 1),
 checked by diffing the captured before/after readings, not by eyeball.
+
+
+## lean-modules step 2 notes — 2026-08-19
+
+`Buf.bytes` is `private`. The 2026-08-18 open decision ("per-field private — MEASURED, and
+the answer is no") is flipped, and both of its killing findings are individually dead:
+(a) proofs stayed in `Theorems/Buf.lean` — now the tree's first friend module
+(`public import Linger.Core.Buf` + `import all Linger.Core.Buf`) — so `coverage.py`'s
+Theorems-only census kept counting (18 unclaimed, cap 19, unchanged); (b) the write hole is
+closed, because field privacy makes the anonymous constructor private, so
+structure-instance notation can no longer write or forge where it cannot read.
+
+Shape of the seal: `Buf.empty` is the one public door in (`{}` sites in Daemon/Cli/Tests
+became `.empty`), `writeFrom` stays the one window out (Posix calls it as API — no
+`import all` needed there, the docstring's "one sanctioned read" is now literal). The
+three e2e greps stay untouched: they ban a *parallel* runtime queue, which privacy cannot
+see.
+
+**Friend-module posture that worked:** no blanket `public section` in `Theorems/Buf.lean`.
+Its lemmas are leaves (nothing imports them as terms — checked; every mention elsewhere is
+prose), and module-private is ALSO what lets the `:= rfl` proofs elaborate: as `public
+theorem`s their term-mode `rfl` was refused ("Not a definitional equality") because a
+public statement's proof term elaborates against the exported (body-hidden) view, while the
+probe's public-theorem-with-tactic-`by rfl` had sailed. Private theorems elaborate wholly
+in the private scope. Rule of thumb: friend modules keep their theorems private unless
+something downstream genuinely consumes one.
+
+**A false-green break-verify, caught and worth remembering:** the three attacks (read /
+`{ b with }` write / forge) appended to `Daemon.lean` "passed" `./lake build Linger` — but
+`lean_lib Linger` builds the import closure of `Linger.lean`, which deliberately imports
+Core+Posix only; `Linger/Runtime/**` is reached solely through the `linger` exe target. The
+attack file was never compiled. Verified honestly against `./lake build linger` (and with
+the attacks *inside* the namespace's `open` scope — parked after the final `end` they fail
+on name resolution instead, which proves nothing): all three refuse, the read with
+`Unknown constant _private…Buf.bytes`, write and forge with "constructor for `Buf` is
+marked as private". **Break-verify against the target that compiles the attacked file.**
+
+Ratchets: coverage 256 defs / 18 unclaimed (`Buf.empty` arrived claimed by
+`owed_empty`/`owedLen_empty`); SHIM 27; heartbeats 1; runtime partials 2; e2e greps
+unchanged and still green.

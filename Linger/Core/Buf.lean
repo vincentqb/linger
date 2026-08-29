@@ -28,17 +28,17 @@ still owed; the write loop keeps its cursor as a local `Nat` and calls `bufAdvan
 once when it stops. Same single copy per flush as before, and the leak is now
 **unrepresentable** rather than merely absent.
 
-**Why the field is not `private`, though it should be.** Marking it `private`
-does block a cross-module read (Lean 4.32: "Field `bytes` ... is private"), and
-reading is what every piece of buffer arithmetic needs — so it would make the
-runtime's discipline compiler-enforced rather than grepped. It is not adoptable
-yet, for a measured reason: `private` also hides the field from `Theorems/`, so the
-proofs would have to live in this file, and `tests/coverage.py` scans `Theorems/**`
-only for theorem statements — every def here would become unclaimed surface and
-breach a ratchet that must stay monotone. (It is also only half a discipline:
-structure-instance notation can still *write* a private field where it cannot read
-one.) So the gate is `tests/e2e.sh`'s three greps, and this becomes attractive the
-day `coverage.py` also counts theorems in `Linger/Core`.
+**The field is `private` (2026-08-19, the module system).** The 2026-08-18
+measurement said "not adoptable yet" for two reasons, and the module system
+retired both: proofs no longer have to move here — `Theorems/Buf.lean` is a
+`module` with `import all Linger.Core.Buf`, the friend import, so
+`tests/coverage.py`'s Theorems-only census keeps counting its statements — and
+the write hole is closed, because a private field makes the *constructor*
+private, so structure-instance notation can no longer write or forge where it
+cannot read (all three refuse from `Linger/Runtime/`, break-verified). The
+runtime's discipline is now compiler-enforced at this boundary; `tests/e2e.sh`'s
+three greps stay unweakened, because they guard the half privacy cannot see — a
+*parallel* `ByteArray` queue declared in the runtime is sealed by nothing here.
 
 **`ByteArray`, not `List UInt8`.** The rest of `Linger/Core` speaks `List UInt8`
 because the emitters must reduce in the kernel; a queue must not. A 4 MiB
@@ -51,10 +51,18 @@ of representation — and has precedent in `Vt.feedBytes`. Nothing here is state
 
 namespace Linger.Core.Buf
 
-/-- A byte queue: exactly the bytes still owed to the peer, oldest first. -/
+/-- A byte queue: exactly the bytes still owed to the peer, oldest first.
+The representation is sealed: `writeFrom` is the one window out (for the
+syscall), `empty` the one door in, and `Theorems/Buf.lean` sees inside via
+`import all`. -/
 structure Buf where
-  bytes : ByteArray := .empty
+  private bytes : ByteArray := .empty
   deriving Inhabited
+
+/-- The empty queue. The public door where `{}` used to be: a private field
+makes the anonymous constructor private, which is the point — an importer can
+start a queue but not forge one mid-debt. -/
+def Buf.empty : Buf := {}
 
 /-- The bytes still owed to the peer. Every claim in `Theorems/Buf.lean` is stated
 about this rather than about a counter, which is what stops a bound from being a
