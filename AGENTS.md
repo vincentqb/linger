@@ -66,13 +66,19 @@ closed build plans with their completion records (`lean-zmx.md`,
      `revents[i]`↔`fds[i]` premise lives in `c/shim.c`, not in Lean, so proving
      it would be decoration) — that negative result is recorded so nobody
      re-proposes it.
-   Everything else is closed: `pin-the-gaps.md` (2026-08-29: the nine gaps a
+   Everything else is closed: `lean-suites.md` (2026-08-29: the ten pty suites
+   and the coverage gate are **Lean**, in `E2E/`, run as `./lake exe e2e
+   <suite>`; **zero `.py` files remain**. They are `IO` so they cannot be
+   theorems — what the port buys is that a suite naming `Render.leaveAnsi` or
+   `Status.wantsYou` cannot drift from the implementation the way a hardcoded
+   copy did. It cost no new syscall, so `SHIM_CAP` did not move, which was the
+   precondition. `tests/e2e.sh` stays shell on purpose), `pin-the-gaps.md`
+   (2026-08-29: the nine gaps a
    full test+theorem audit found — `linger watch` had no coverage at all,
    `.detachAll`/`.labelUnset`/`.labelClear` had unpinned effect lists, the width
    tables `isWide`/`isZeroWidth` were named nowhere in the repo; **every ratchet
-   is now at zero headroom**, including ten per-suite check-count floors, and
-   `tests/harness.py` exists so a tenth suite does not copy-paste a tenth
-   harness. Read its three findings before touching read-only, the width tables,
+   is now at zero headroom**, including ten per-suite check-count floors. Read
+   its three findings before touching read-only, the width tables,
    or a pty suite), `restore-conformance.md` (restore works into any
    client, proved for the modes, pen, sticky bundle, parser/decoder, the screen
    cells on both screens at every height, and the tab ruler), `ledger-cleanup.md`
@@ -151,8 +157,14 @@ fresh pair of eyes.
 - The tree builds and passes `./tests/e2e.sh` on Linux and macOS as of
   2026-08-19. Platform splits live in exactly two places — `#ifdef
   __APPLE__` in `c/shim.c` (CLOEXEC sockets, and `getcwd_of` via libproc
-  where there is no `/proc`) and a `/proc`-or-`lsof` fallback in
-  `tests/procs.py`. **No errno numbers in Lean**: `-111` for
+  where there is no `/proc`) and the `ps -o ppid=` in
+  `E2E/Harness.lean`'s `Env.daemonPid`, which is the *same* command on
+  both platforms and so is not really a split at all. It replaced the
+  `/proc`-or-`lsof` fallback that used to be the second one: asking
+  `linger info` over `<LINGER_DIR>/<name>.sock` makes the "is this
+  daemon mine?" isolation **structural**, so the filter it needed is
+  gone rather than ported (2026-08-29, the Lean port of the suites).
+  **No errno numbers in Lean**: `-111` for
   ECONNREFUSED in `Daemon.serve` compiled fine and silently disabled the
   stale-socket path on macOS. The shim returns `-errno`; only the shim
   knows the numbers. See the 2026-08-19 port entry in SCRATCHPAD.md.
@@ -177,10 +189,23 @@ fresh pair of eyes.
 - `./tests/e2e.sh` is the gate before any commit that touches the
   runtime; it must stay green and warning-free.
 - **`Tests/` and `tests/` are two tracked directories** (Lean unit tests
-  vs. e2e scripts). On a case-insensitive filesystem they are one
-  directory on disk and git will silently record a new `tests/x` as
+  vs. the e2e orchestrator). On a case-insensitive filesystem they are
+  one directory on disk and git will silently record a new `tests/x` as
   `Tests/x`; check `git ls-files --stage` after adding one, or the file
-  lands in the wrong directory on Linux only.
+  lands in the wrong directory on Linux only. The pty **suites** are no
+  longer under `tests/` at all: they are Lean, in `E2E/`, run as
+  `./lake exe e2e <suite>` (2026-08-29). `tests/` now holds only the
+  orchestrator `e2e.sh` and the coverage gate.
+- **`E2E/` is `IO`, so nothing in it can be a theorem** — that is what
+  `Theorems/` and `Tests/` are for, and the split is the point: a pty
+  suite drives the real binary through real syscalls. It is Lean anyway
+  because a suite in the implementation's own language cannot drift from
+  it — `E2E.Watch` compares against `Render.leaveAnsi` and
+  `Status.wantsYou` rather than against copies of what they emit, so a
+  rename is a compile error instead of a passing assertion. The port
+  cost **no new syscall** (`Posix` already had `spawnPty`, `winsizeSet`,
+  `kill`, `waitpidNohang`), which is the condition that made it worth
+  doing: `SHIM_CAP` did not move.
 - Restructure code for provability rather than weakening a theorem:
   name the stages (see `Vt.print*`, `Vt.step*`), clamp bounds locally,
   and prefer order-robust proof scripts (`repeat' split` +
@@ -213,8 +238,11 @@ fresh pair of eyes.
   check-count floor in `tests/e2e.sh` (`suite <name> <floor>`), because a
   suite whose assertions sit in a `for` over a list that went empty still
   prints `FAILURES: 0` — demonstrated, not assumed. Floors only go UP
-  without discussion. New suites use `tests/harness.py` rather than
-  copy-pasting a tenth harness.
+  without discussion. New suites go in `E2E/` and use `E2E/Harness.lean`.
+- **`tests/e2e.sh` is the one deliberate non-Lean file.** It sequences the
+  builds, the `git grep` purity gates and the ratchets; a Lean program
+  shelling out to `git grep` and `./lake` would be a worse shell script.
+  Everything else is Lean — if you are about to add a `.py`, don't.
 - **The purity greps read prose, not just code.** `native_decide` in a
   *docstring* under `Theorems/` fails `./tests/e2e.sh` step 2 exactly as
   it would in a proof. This has cost a full e2e run twice (`fb6a0e6`, and

@@ -37,14 +37,14 @@ suite() {                                   # suite <name> <check floor>
   pkill -x linger 2>/dev/null || true
   sleep 0.2
   out="/tmp/linger-$1.out"
-  python3 "tests/$1_test.py" > "$out" 2>&1 \
-    || { tail -25 "$out"; fail "$1_test"; }
+  ./.lake/build/bin/e2e "$1" > "$out" 2>&1 \
+    || { tail -25 "$out"; fail "$1 suite"; }
   tail -1 "$out" | grep -q '^FAILURES: 0$' \
-    || { tail -25 "$out"; fail "$1_test"; }
+    || { tail -25 "$out"; fail "$1 suite"; }
   # `^(PASS|FAIL) ` with the space: `FAILURES: 0` also starts with FAIL.
   n="$(grep -cE '^(PASS|FAIL) ' "$out")"
   [ "$n" -ge "$2" ] \
-    || fail "$1_test ran $n checks (floor $2) — an assertion stopped executing; a loop's list probably went empty"
+    || fail "$1 suite ran $n checks (floor $2) — an assertion stopped executing; a loop's list probably went empty"
   printf '  %s: %s checks (floor %s)\n' "$1" "$n" "$2"
 }
 
@@ -54,7 +54,7 @@ sleep 0.2
 
 say "1. build (program + theorems + tests)"
 rm -rf .lake/build
-./lake build Linger Theorems Tests linger lingertest > /tmp/linger-build.log 2>&1 \
+./lake build Linger Theorems Tests linger lingertest e2e > /tmp/linger-build.log 2>&1 \
   || { tail -30 /tmp/linger-build.log; fail "build"; }
 if grep -qE '^(warning|error)' /tmp/linger-build.log; then
   grep -E '^(warning|error)' /tmp/linger-build.log
@@ -158,11 +158,11 @@ say "2b. coverage of the code by the theorems (two ratchets)"
 # the shape to watch is a definition no theorem says anything about. This used to
 # be a grep over all of Theorems/, which could not tell a claim from a word:
 # `Render.history` — a stream the binary writes to the user's terminal — passed it
-# because "history" occurs in a doc comment. `tests/coverage.py` measures theorem
+# because "history" occurs in a doc comment. `E2E/Coverage.lean` measures theorem
 # *statements* with comments stripped, and separately requires every byte stream
 # the runtime emits to be classified as proved or bounded. See its header.
-python3 tests/coverage.py | tee /tmp/linger-coverage.log
-tail -1 /tmp/linger-coverage.log | grep -q '^FAILURES: 0$' || fail "coverage.py"
+./.lake/build/bin/e2e coverage | tee /tmp/linger-coverage.log
+tail -1 /tmp/linger-coverage.log | grep -q '^FAILURES: 0$' || fail "coverage gate"
 
 say "2c. fuzz corpus: no held-out mutations, failure lists asserted empty"
 # The §Replay fuzzer is only a guarantee if nothing is excluded and the
@@ -199,7 +199,7 @@ say "9. graphics passthrough (kitty / sixel)"
 suite graphics 9
 
 say "10. terminal ownership (queries + stable child profile)"
-suite terminal_query 12
+suite terminal 12
 
 say "11. status column (unread / seen transitions)"
 suite status 5

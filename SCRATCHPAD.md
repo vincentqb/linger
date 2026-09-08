@@ -6751,3 +6751,112 @@ each is still fine: `ckptIntervalMs` `maxClients` `maxLen` `csiCap` `dcsCap`
 `records` (helpers whose composites are claimed). `clampDim` is the one worth a
 future look: the runtime calls it on the `linger resize` path and no theorem
 names it.
+
+
+## the pty suites become Lean — the tree carries no Python — 2026-08-29
+
+`specs/archive/lean-suites.md`. Ten pty suites + the coverage gate ported from
+Python to Lean. 143 pty checks, all green, every floor exact; the coverage gate's
+output is byte-identical to the Python one it replaced.
+
+### The question that decided the shape
+
+"The tests would be stronger as Lean theorems" — **they cannot be theorems, and
+that is not what the port bought.** These suites drive the real binary through real
+ptys, so they are `IO`; a theorem needs a pure function, and the pure core already
+has 1467 of them. What they can be is Lean *programs*. `LingerTest.lean` was already
+the in-repo precedent, with the same `PASS`/`FAIL` contract.
+
+**What it actually bought: a suite in the implementation's own language cannot drift
+from it.** The Python hardcoded copies of what the implementation emits; the Lean
+suites name the emitter. Concretely — `E2E.Watch` compares the hand-back against
+`Render.leaveAnsi` byte-for-byte (the Python checked three substrings) and the status
+column against `Status.wantsYou` (the Python, the string `"wants-you"`);
+`E2E.Overview` compares the empty listing against `Listing.humanListing []`, which
+is literally what `Cli.cmdList` writes; `E2E.Graphics` builds its ST and its two
+introducers from `Render.escSeq`/`Terminal.STFinal`; `E2E.Remote`/`E2E.RemoteLive`
+parse with `Remote.parse`, the reader the runtime itself uses. A rename is now a
+compile error where it used to be a passing assertion.
+
+### THE PRECONDITION, and why it held: SHIM_CAP did not move
+
+The port was worth doing only if it did not grow the C trust boundary for a test's
+benefit. It did not — `Linger.Posix` already exposed everything:
+
+* `spawnPty cols rows cwd prog args env` — forkpty **with the winsize set before
+  exec**. The Python harness did `pty.fork()` then `ioctl(TIOCSWINSZ)`, which races
+  the child's own startup `winsizeGet`. Invisible until a suite's subject IS the
+  geometry a client reported, which is exactly `E2E.Watch`'s guard-A checks.
+* `winsizeSet`, `kill`, `alive`, `waitpidNohang`, `poll`/`read`/`write`, `chmod`,
+  `flock`, `unixConnect`. Plus `IO.Process.output`/`spawn` from core for one-shots.
+
+`SHIM_CAP` is still 27/27.
+
+### A platform split DELETED rather than ported
+
+`tests/procs.py` existed to answer "which `linger __daemon <name>` pid is mine?" —
+`pgrep -f` plus a `LINGER_DIR` filter that read `/proc/<pid>/environ` on Linux and
+fell back to `lsof -p` on macOS. AGENTS.md counted that as one of the repo's only
+two platform splits.
+
+It is gone, not translated. `linger info <name>` is answered over
+`<LINGER_DIR>/<name>.sock`, so a reply is **by construction** from the daemon in our
+own directory — the isolation is structural instead of a filter over candidates. The
+reply's `pid` is the child shell's, and the daemon is its parent because the daemon
+is the process that called forkpty. `Env.daemonPid` is one `info` + one
+`ps -o ppid=`, the same command on both platforms. AGENTS.md's split count updated.
+
+`Env.crashDaemon` also fixed a non-vacuity the Python only half had: `assert dpids`
+proved a pid was *found*, never that the SIGKILL landed. It now returns `true` only
+if the daemon was found, was alive first, and is gone after.
+
+### Break-verified, and two real bugs the port found
+
+* **`FAILURES: 0` with an aborted suite.** `E2E.Terminal` threw ECHILD before its
+  first check: `Child.tryWait` **reaps**, so calling it a second time after it has
+  returned a code is ECHILD. Fixed by asking `Posix.alive` (a `kill(pid,0)`, which
+  does not reap) in the cleanup path. `Client.reap` is now ECHILD-tolerant too,
+  since `bye` promises never to raise.
+* **The coverage port silently measured LESS.** First run: 193 defs against the
+  Python's 259, 14 unclaimed against 16. Cause: `takeWhile identChar` stops at the
+  namespace dot, so `def Vt.feedBytes` read as `Vt`. Caught by diffing the two gates
+  before deleting the Python — the two now produce **byte-identical** output, which
+  is the only reason the delete was safe. If you ever touch `declName`, diff it
+  against `git show HEAD~1:tests/coverage.py` again.
+* A `sh` trap for SIGWINCH replaced graphics' Python reporter. `trap …; while :; do
+  sleep 0.1; done` catches **zero** signals — `sleep` is not interruptible. POSIX
+  `wait` is, so `while :; do sleep 1 & wait; done` is the working idiom (measured
+  standalone before wiring it in: 2 signals sent, 2 caught).
+* A docstring containing the block-comment CLOSING delimiter ends the docstring
+  early — `E2E/Coverage.lean`'s `stripComments` doc could not spell the pattern it
+  implements. Sibling of the `native_decide`-in-prose trap.
+* `String.drop`/`take`/`takeWhile`/`dropWhile` return `String.Slice` on v4.32, not
+  `String`; `.toString` after each. `String.split` returns a slice ITERATOR, so
+  `splitOn` is the one to reach for. `String.mk` is deprecated → `String.ofList`.
+
+### Shape
+
+`E2E/Harness.lean` + one module per suite + `E2ETest.lean` dispatching on argv:
+`./lake exe e2e <suite>`. One `lean_exe`, not ten — ten would be ten copies of the
+same lakefile stanza. `tests/e2e.sh` keeps its per-suite check-count floors
+unchanged; only the command it runs moved.
+
+`remote-live` and `coverage` are dispatchable but are not pty suites in the gate:
+`remote-live` needs a real second host (a suite that cannot pass on a fresh checkout
+must not be able to fail the gate) and `coverage` is the source-tree ratchet.
+
+### What is still NOT Lean, stated plainly
+
+`tests/e2e.sh` — the orchestrator. It is shell, and it is the one thing that
+arguably should stay: it sequences the builds, runs the `git grep` purity gates and
+the ratchets, and a Lean program that shells out to `git grep` and `./lake` would be
+a worse shell script. **Recorded as a deliberate stop, not an oversight.**
+
+### The follow-up worth doing (not done here)
+
+`E2E/Coverage.lean` is a *textual* port, on purpose: identical scan, identical
+numbers, caps keep their meaning. The stronger design is to stop scanning text —
+import the `Theorems` environment and ask whether each `Linger.Core` constant appears
+in any theorem's **type**. That is semantic, needs no comment-stripping, and cannot
+be fooled by formatting. It changes the measure and therefore the cap, which would
+need re-justifying, so it belongs in its own commit.

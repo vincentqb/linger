@@ -42,6 +42,20 @@ lean_lib Theorems where
 target is running them. Same import-from-root convention. -/
 lean_lib Tests where
 
+/-- The pty suites, as Lean rather than Python: `./lake exe e2e <suite>`.
+
+These drive the real binary through real ptys, so they are `IO` and can never be
+theorems — `Theorems`/`Tests` above are what covers the pure core. They are Lean
+because a test in the implementation's own language cannot drift from it (a suite
+reads `Status.ofName`, not the string `"wants-you"`), and because it cost no new
+syscall: `Linger.Posix` already had `spawnPty`, `winsizeSet`, `kill`,
+`waitpidNohang` and `getcwdOf`, so the C trust boundary — the thing `SHIM_CAP`
+ratchets — is unchanged by the port. -/
+lean_lib E2E where
+
+lean_exe e2e where
+  root := `E2ETest
+
 @[default_target]
 lean_exe linger where
   root := `Main
