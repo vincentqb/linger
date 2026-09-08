@@ -66,7 +66,30 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
-      - name: pre-commit (hygiene + source-tree gates)
+      # lean-fmt BEFORE pre-commit, because the pre-commit hook skips its lean-fmt
+      # step with a note when the binary is absent — right for a fresh clone, wrong
+      # for CI, where a silent skip is exactly the thing that lets a finding through.
+      # Installing it here means the hook's step actually runs.
+      #
+      # Standalone `make install`, never a Lake `require`: the require-free lakefile
+      # and the empty lake-manifest are gates in tests/gates.sh, and README promises
+      # no external Lean dependencies. lean-fmt supports this explicitly.
+      #
+      # The tag must equal lean-toolchain: lean-fmt ships one release per toolchain.
+      # Read it rather than hardcoding it, so a future bump fails loudly at the clone
+      # instead of building a mismatched formatter.
+      - name: install lean-fmt (standalone, tag == lean-toolchain)
+        run: |
+          tag="$(sed -n 's|^leanprover/lean4:||p' lean-toolchain | tr -d '[:space:]')"
+          git clone --quiet --branch "v${tag}" --depth 1 \
+            https://github.com/jcreinhold/lean-fmt.git /tmp/lean-fmt \
+            || { echo "::error::lean-fmt has no tag v${tag}; it ships one release per toolchain"; exit 1; }
+          make -C /tmp/lean-fmt install
+          # PREFIX defaults to $HOME/.local, which is not on a runner's PATH.
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/lean-fmt" --version
+
+      - name: pre-commit (hygiene, source-tree gates, lean-fmt check)
         run: |
           python -m pip install --quiet pre-commit
           pre-commit run --all-files --show-diff-on-failure

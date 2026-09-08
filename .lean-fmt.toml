@@ -1,0 +1,50 @@
+# lean-fmt — the LINTER is adopted, the FORMATTER is declined. Both with reasons,
+# because "we ran a formatter" and "we chose not to" are equally worth recording.
+#
+# THE FORMATTER IS NOT RUN. Measured before deciding, at its default width:
+#
+#   66 of 71 files would be reformatted        (+8540 / -6173 lines)
+#   894 of those diff lines touch tactic blocks (repeat', all_goals, simp only, omega)
+#   502 commands it could not lay out at all   ("no layout passed validation")
+#
+# The first number alone is a whole-tree rewrite. The second is the one that decides
+# it: AGENTS.md keeps `repeat' split` + `all_goals first | …` shapes deliberately, so
+# that a new branch does not break a proof and so the script says WHICH lemma
+# discharged which arm. `specs/toolchain-and-fmt.md` wrote the kill criterion before
+# any of this was measured — "a formatter that reflows those is a formatter this repo
+# cannot use" — and 894 lines trips it. The third number means the result would not
+# even be internally consistent: a partial reformat, by construction.
+#
+# Narrowing helped less than it looked. `declaration-body = "same-line"` does fix the
+# `:= rfl` churn (the default moves `rfl` off the statement line, which would cost a
+# line on several hundred one-line proofs). But `line-width = 80`, to match the width
+# every docstring in the tree is wrapped to, made it WORSE: 680 unformattable commands
+# instead of 502. The tool cannot format this tree at this tree's own margin.
+#
+# Revisit if lean-fmt's layout engine improves, or if the tree is ever reflowed to its
+# width deliberately — as its own commit, which is lean-fmt's own advice.
+
+[lint]
+# `select` is left at the defaults on purpose. `select = ["all"]` adds FMT016
+# (line-width), which is `default: off` and whose own documentation says it "repeats
+# what `format` is about to fix, so run `format` first" — and we do not run format, so
+# all 105 of its findings here are noise about a reflow that is not happening.
+
+# FMT005, import ordering — 68 findings, BASELINED rather than fixed. The rule is
+# report-only by design because, in lean-fmt's own words, "reordering imports can
+# change initialization order in principle". On a 1467-theorem library that is real
+# risk for a cosmetic gain, and the current order is not random: `Theorems/*` files
+# list their rung's dependency first, which is the ladder's own order and how the
+# façade documents it. Gating forward on everything else is worth more than winning
+# this one.
+ignore = ["FMT005"]
+
+# FMT004, redundant imports. Eight of the eleven are in the two ROOT modules, and
+# there the redundancy IS the invariant: `lakefile.lean` says "Root module imports
+# every Theorems.X — a proof file not imported there is a bug", so the root lists all
+# of them as a completeness check even though most arrive transitively. Removing them
+# would delete the check. The rule cannot know that; this is where it is told.
+per-file-ignores = { "Theorems.lean" = ["FMT004"], "Tests.lean" = ["FMT004"] }
+
+# Everything else gates. A NEW redundant import outside the roots, or any other rule
+# lean-fmt grows, fails the commit — which is the point of adopting it at all.

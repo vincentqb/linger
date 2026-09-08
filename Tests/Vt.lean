@@ -1,4 +1,3 @@
-import Linger.Core.Vt
 import Linger.Core.Render
 /-! # Vt behavior tests
 

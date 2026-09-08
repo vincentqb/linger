@@ -1,5 +1,4 @@
 import Linger.Core.Checkpoint
-import Linger.Core.Vt
 /-! # Checkpoint codec tests
 
 §Restore is proved in `Theorems/Checkpoint.lean`; these pin the two

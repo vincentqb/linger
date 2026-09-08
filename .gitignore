@@ -5,3 +5,7 @@ build/
 
 semantic-review/
 __pycache__/
+
+# lean-fmt writes a build cache next to the config. Ignored rather than committed:
+# it is derived, it is large, and the pre-commit hook caught it trying to land here.
+.lean-fmt-cache/

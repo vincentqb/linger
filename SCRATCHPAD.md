@@ -1729,7 +1729,7 @@ Read the data path, then tested it. `Zmx/Core/Session.lean` on
 `broadcast s chunk` — the raw chunk, verbatim, to every attached client,
 which `Runtime/Client.lean` writes straight to stdout. Meanwhile
 `stepEsc` sends `ESC P` (DCS/sixel), `ESC X`, `ESC ^` and `ESC _`
-(APC/kitty) to `PState.str`, and `stepStr` discards bytes until `ESC \`
+(APC/kitty) to `PState.str`, and `stepStr` discards bytes until `ESC `
 without accumulating.
 
 Consequences, all now covered by `tests/graphics_test.py` (7 checks):
@@ -2506,49 +2506,49 @@ path), never-looked into wants-you, and busy into unknown (both "we cannot
 tell you the truth about this row"). Kept distinct where the response
 differs: exited-ok vs exited-bad, idle vs wants-you.
 
-Final set, priority order: \`?\` unknown, \`!\` exited-bad, \`✓\` exited-ok,
-\`~\` resumable, \`⣿\` wants-you, \`⣷\` working, \`⣀\` idle. Plus a plain
-\`Nat\` client count in its own column, which is what the whole third
+Final set, priority order: `?` unknown, `!` exited-bad, `✓` exited-ok,
+`~` resumable, `⣿` wants-you, `⣷` working, `⣀` idle. Plus a plain
+`Nat` client count in its own column, which is what the whole third
 "modifier axis" collapsed to.
 
 Two corrections I had to make along the way, both from the user pushing:
-\`x\` for a successful exit was carrying the wrong meaning (\`✓\` is right,
-\`!\` was already the failure glyph), and \`⣀\` idle vs \`…\` busy were
+`x` for a successful exit was carrying the wrong meaning (`✓` is right,
+`!` was already the failure glyph), and `⣀` idle vs `…` busy were
 near-identical low dots meaning opposite things -- which is what forced the
 busy/unknown merge.
 
 ### The theorem
 
 A legend is a claim and can be wrong three ways: two different rows show the
-same glyph, a row matches no glyph, or a glyph is unreachable. \`Theorems/
-Status.lean\` rules out all three -- \`cover\`, \`disjoint\`,
-\`classify_sound\`/\`classify_unique\`, \`reachable\`.
+same glyph, a row matches no glyph, or a glyph is unreachable. `Theorems/
+Status.lean` rules out all three -- `cover`, `disjoint`,
+`classify_sound`/`classify_unique`, `reachable`.
 
-The load-bearing choice is that \`Is\` (the legend as predicates) is written
-**independently of \`classify\`'s cascade**. If \`Is\` were the guards with
+The load-bearing choice is that `Is` (the legend as predicates) is written
+**independently of `classify`'s cascade**. If `Is` were the guards with
 earlier branches negated, cover and disjointness would be tautologies and the
-theorems would say nothing. As written, \`classify_sound\` is a real claim
+theorems would say nothing. As written, `classify_sound` is a real claim
 about the cascade, and mis-ordering two guards breaks it -- which is the
-break-verification: swapping the \`fresh\` and \`unseen\` tests fails 6 proofs.
+break-verification: swapping the `fresh` and `unseen` tests fails 6 proofs.
 
-\`icon_injective\` is the one I would not have thought to write without the
-history: an earlier draft reused \`!\` for both a bell and a failed exit, and
+`icon_injective` is the one I would not have thought to write without the
+history: an earlier draft reused `!` for both a bell and a failed exit, and
 this theorem rejects exactly that. Break-verified by pointing two states at
-\`?\` -- 3 proofs fail. It makes the design rule enforceable: a future merge
+`?` -- 3 proofs fail. It makes the design rule enforceable: a future merge
 has to delete a state, not quietly overload a symbol.
 
-\`name_clean\` states the porcelain invariant that came out of the JSON
+`name_clean` states the porcelain invariant that came out of the JSON
 discussion: no field carries a tab or newline, which is what makes
 tab-separated rows unambiguous without an escaping pass. That is the theorem
 JSON would have discharged by construction -- worth having explicitly since
 we chose TSV.
 
-Not built: the runtime side. \`classify\` needs \`lastOutput\` and
-\`lastDetach\` in the daemon (one struct change, two assignments in the poll
-loop) and wiring into \`Listing\`. Five of the seven states are computable
+Not built: the runtime side. `classify` needs `lastOutput` and
+`lastDetach` in the daemon (one struct change, two assignments in the poll
+loop) and wiring into `Listing`. Five of the seven states are computable
 from data that already exists. Known limit to document when it lands:
-\`lastDetach\` is per-daemon, not per-viewer, so with two people on one
-session \`⣿\` means "unread by whoever looked last".
+`lastDetach` is per-daemon, not per-viewer, so with two people on one
+session `⣿` means "unread by whoever looked last".
 
 
 
@@ -2871,7 +2871,7 @@ concatenation); exact `Vt.feed` projection; one-step and arbitrary-stream
 scanner bounds; exact CSI/OSC profile classification; exact arbitrary-payload
 XTGETTCAP/DECRQSS negatives; owned exclusion versus unowned exact release;
 CPR origin-row cases; `finish_exact`; and quantified APC/sixel passthrough for
-all payloads without their own `ESC \\` terminator. Twenty owned request forms
+all payloads without their own `ESC \` terminator. Twenty owned request forms
 (accepted aliases and OSC terminators included) pass at every byte split;
 every proper owned-query prefix passes the EOF flush check. Cap overflow and
 query-looking bytes inside >cap graphics are concrete regressions.
@@ -3935,13 +3935,13 @@ more bugs of the family this spec is about.
 ### Bug: a receiver mid-OSC or mid-DCS swallowed the whole restore stream
 
 `Vt.stepOsc` accumulates any byte that is not `BEL` or `ST` — including our leading
-`ESC`, after which our `[` is not `\\` so it is accumulated too. `Vt.stepStr` (DCS,
+`ESC`, after which our `[` is not `\` so it is accumulated too. `Vt.stepStr` (DCS,
 APC, SOS, PM) only leaves on `ST`. So a client left in either state consumed **every
 byte of `restore`** into a window title or a discarded string, and displayed nothing.
 
-Fix: `prologueAnsi` leads with `escSeq 0x5C` = `ESC \\` (ST). It terminates both, and
+Fix: `prologueAnsi` leads with `escSeq 0x5C` = `ESC \` (ST). It terminates both, and
 from `ground`/`esc`/`escInter`/`csi` it lands in `ground`. The one side effect is that
-in `escInter` the `ESC` designates a charset from a junk byte and the `\\` then prints
+in `escInter` the `ESC` designates a charset from a junk byte and the `\` then prints
 a backslash — both erased by the `ED 2` two lines later, and `charsetAnsi` re-emits
 the real designation. `stepEsc` sends `0x5C` to its default arm, so no new parser
 surface was needed; the `escSeq` allowlist grew by one byte in four places.
@@ -3980,8 +3980,8 @@ The chain:
 * `esc_lands` — one case per `PState` for where `ESC` puts you: `.esc` from
   `ground`/`esc`/`csi`, `ground` from `escInter`, and the two string states with their
   ST check armed. This is the case analysis that says the lead-in cannot be swallowed.
-* `st_finish` — `\` sends each of those four to `ground`. The `ground` case is the
-  interesting one: the `\` *prints a backslash*, which is why the lead-in must precede
+* `st_finish` — `` sends each of those four to `ground`. The `ground` case is the
+  interesting one: the `` *prints a backslash*, which is why the lead-in must precede
   `ED 2` rather than follow it.
 * `st_grounds` — their composition, over all `w`.
 * `prologue_grounds`, then `restore_grounds` — `Ends` carries the remaining chunks
@@ -4023,7 +4023,7 @@ decision anywhere.
 
 `Client.attach`'s only cleanup is `termRestore`, which restores **termios** — the
 kernel's line discipline. Terminal state is not termios. A probe (a full-screen
-app's opening sequences from inside the session, then `ctrl-\`):
+app's opening sequences from inside the session, then `ctrl-`):
 
 ```
 bytes the client wrote after the detach key:
@@ -4064,10 +4064,10 @@ Two orderings are forced, and neither is obvious:
   before it. This is also why the hand-back does *not* use DECSC/DECRC to save the
   cursor: the bundle it restores is exactly the state being reset.
 
-`ESC \` from true ground is clean in both our model and reality (`stepEsc`'s default
+`ESC ` from true ground is clean in both our model and reality (`stepEsc`'s default
 arm → `ground`, nothing printed). The one state where our model prints a stray
 backslash is a receiver caught in `escInter`: the `ESC` is consumed as a charset
-designator and the `\` then prints. Real terminals treat ESC as a cancel-and-restart,
+designator and the `` then prints. Real terminals treat ESC as a cancel-and-restart,
 so the model is the pessimistic one; `restore` erases it with `ED 2`, and the
 hand-back accepts one stray character in that rare state rather than risk the whole
 stream being swallowed.
@@ -4106,15 +4106,15 @@ it is the §Replay family pointed at the *child* rather than the client.
 
 ### The bug
 
-`Terminal.xtgetcapReply payload = ESC P 0 + r ++ payload ++ ESC \` echoed the
+`Terminal.xtgetcapReply payload = ESC P 0 + r ++ payload ++ ESC ` echoed the
 requested capability name **verbatim**. That reply is routed by
 `Session.onMsg .ptyOut` as `.writePty r.replies` — i.e. written into the child's own
 pty **input**. And an XTGETTCAP request is child *output*: it arrives from whatever
 the child prints, which includes untrusted data — `cat evil.txt`, an ssh stream, a
 tailed log, a crafted filename in `ls`.
 
-So a hostile file containing `ESC P + q 5 4 <CR> ; i d > /tmp/x <CR> ESC \` makes
-linger write `ESC P 0 + r 5 4 <CR> ; i d > /tmp/x <CR> ESC \` into the shell's stdin.
+So a hostile file containing `ESC P + q 5 4 <CR> ; i d > /tmp/x <CR> ESC ` makes
+linger write `ESC P 0 + r 5 4 <CR> ; i d > /tmp/x <CR> ESC ` into the shell's stdin.
 On a cooked-mode tty the CR commits a line, and `;` separates commands, so the
 injected `id > /tmp/x` runs. Classic terminal-reply injection (the xterm CVE class),
 reintroduced because we echoed unvalidated child bytes.
@@ -4131,7 +4131,7 @@ Only `xtgetcapReply` echoes child bytes; every other owned reply is fixed
 
 `xtgetcapReply` now filters the echo to the legal XTGETTCAP alphabet — hex digits and
 `;` (`capByte`) — which is the payload format a conforming request uses, so it is the
-identity on real queries (tmux's `ESC P + q 544e ESC \` is unchanged), and strips
+identity on real queries (tmux's `ESC P + q 544e ESC ` is unchanged), and strips
 exactly the bytes that could terminate a line from a malformed one. `54;d` remains
 from the evil payload above: harmless, since no CR/LF means the shell never commits it.
 
@@ -4235,7 +4235,7 @@ mid-OSC swallows `modeSet 7 true` entirely, so `modes.wrap` is whatever it was. 
 `∀ w` only becomes true once the stream is grounded first. So the working predicate
 is the *from-ground* one — `MMap (f : Modes → Modes) (bs) := ∀ v, ground → u8 0 →
 ground ∧ u8 0 ∧ (v.feed bs).modes = f v.modes` — the modes analog of `Keeps`, with a
-`comp` law. `leave_modes` peels the `ESC \` lead-in with `st_grounds` (which grounds
+`comp` law. `leave_modes` peels the `ESC ` lead-in with `st_grounds` (which grounds
 any `w`), then composes the tail from ground. This is the generalization the spec's
 open question anticipated ("can `Keeps` carry an arbitrary property"): yes — `MMap`
 carries the modes projection; `Keeps` is the grid instance.
@@ -4655,7 +4655,7 @@ off" is the `origin` component of `restore_modes_any`. What is genuinely not don
 left it, so it is a grid-level claim and belongs with Step 4, not here. Moved.
 
 Break-verified: appending a dangling UTF-8 lead byte (`0xC3`) to `restore` fails
-`restore_u8_zero`; replacing the prologue's `ESC \` with `ESC 7` fails
+`restore_u8_zero`; replacing the prologue's `ESC ` with `ESC 7` fails
 `restore_grounds`. Both also fail `restore_sticky_any` — the value claims are
 sensitive to *both* ends of the stream, which is a fact worth having recorded.
 Witnessed in `Tests/Render.lean`: receivers mid-UTF-8, mid-OSC and mid-CSI each come
@@ -7042,3 +7042,32 @@ so it checks itself on every commit.
 * CI gained `pre-commit run --all-files` as its first step, so a clone that never ran
   `pre-commit install` is still checked, against the same config and the same
   `gates.sh`.
+
+## lean-fmt: the linter adopted, the formatter declined — 2026-08-29
+
+Full record in `specs/archive/toolchain-and-fmt.md`. The three numbers that decided
+it, so nobody re-runs the experiment:
+
+* the formatter would rewrite **66 of 71 files, +8540/-6173 lines**
+* **894** of those diff lines are inside tactic blocks (`repeat'`, `all_goals`,
+  `simp only`, `omega`) — which is the kill criterion the spec wrote before measuring
+* **502** commands it cannot lay out at all ("no layout passed validation"), so the
+  result would be a partial reformat, inconsistent by construction
+
+And the knob that backfired: `line-width = 80`, to match the width every docstring in
+this tree is wrapped to, took the unformattable count from 502 to **680**. The tool
+cannot format this tree at this tree's own margin. `declaration-body = "same-line"`
+does work and does fix the `:= rfl` churn, for whoever revisits this.
+
+The linter went 79 findings -> **0**, and now gates: FMT016 was noise about a reflow
+that is not happening (`default: off`, and its docs say so), FMT005 import-order is
+baselined with the tool's own reason (reordering "can change initialization order in
+principle"), and 8 of the 11 FMT004 redundant-import findings are in the two ROOT
+modules where the redundancy is the documented completeness check — suppressed there,
+the other 3 genuinely removed.
+
+Toolchain bump fallout, for the next one: 152 deprecations, all
+`if_pos`->`ite_eq_left` shaped, and the renames were safe because the new lemmas are
+**definitionally identical** (`if_pos` is *defined as* `ite_eq_left hc`) — checked in
+the toolchain source first, since a blind rename of a proof lemma can change meaning.
+No ratchet moved; `HEARTBEAT_CAP` holding at 1 was the one at risk.

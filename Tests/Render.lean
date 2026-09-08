@@ -1,4 +1,3 @@
-import Linger.Core.Vt
 import Linger.Core.Render
 /-! # §Replay round-trip tests — restore fidelity, executable form
 

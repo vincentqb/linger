@@ -19,7 +19,8 @@ listing, not a picker.
 ln -sf "$PWD/.lake/build/bin/linger" ~/.local/bin/linger
 ```
 
-Lean 4.32.0 via elan; no external Lean dependencies. Everything here is Lean
+Lean 4.34.0-rc2 via elan (an RC on purpose — it is what `lean-fmt` requires; see
+AGENTS.md); no external Lean dependencies. Everything here is Lean
 except one C file (`c/shim.c`, the syscall surface) and two shell scripts (the
 `lake` wrapper and the test orchestrator).
 
@@ -38,9 +39,13 @@ sh tests/gates.sh                # the fast source-tree gates (seconds)
 The pty suites are Lean programs, not theorems: they drive the real binary through
 real terminals, so they are `IO`. `Theorems/` is where the proofs are.
 
-Commit-time hygiene is `uvx pre-commit install` — whitespace, YAML and the
-source-tree gates, about a second, nothing compiled. The build and the suites run in
-CI, not in a hook.
+Commit-time hygiene is `uvx pre-commit install` — whitespace, YAML, the source-tree
+gates and `lean-fmt check`, under three seconds, nothing compiled. The build and the
+suites run in CI, not in a hook.
+
+`lean-fmt` is optional and installed standalone, so the hook skips it with a note if
+it is absent. Its linter is adopted; its formatter is not — `.lean-fmt.toml` records
+why, with numbers.
 
 ### Layout
 

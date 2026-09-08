@@ -79,3 +79,22 @@ repos:
         language: script
         pass_filenames: false
         always_run: true
+
+      # lean-fmt's LINTER — the only Lean linter that exists outside Mathlib, and it
+      # needs no dependency: installed standalone on PATH (`make install`), so the
+      # `require`-free lakefile and `"packages":[]` manifest that `gates.sh` enforces
+      # are untouched. Currently `71 files, no findings`, so it gates rather than
+      # nags: a new redundant import fails the commit.
+      #
+      # `check`, never `format`. The formatter is declined with measurements — see
+      # `.lean-fmt.toml`, which carries the numbers and the reason.
+      #
+      # It does not compile the project, so it stays inside the ~1 s commit budget.
+      # Skipped with a note if not installed, because a missing dev tool must not
+      # block a commit on a fresh clone — CI has it and will catch what this misses.
+      - id: lean-fmt
+        name: lean-fmt check (import hygiene, unused bindings, stray set_options)
+        entry: bash -c 'command -v lean-fmt >/dev/null || { echo "lean-fmt not installed; see specs/archive/toolchain-and-fmt.md"; exit 0; }; exec lean-fmt check'
+        language: system
+        pass_filenames: false
+        always_run: true

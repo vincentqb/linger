@@ -144,6 +144,13 @@ fresh pair of eyes.
 
 ## Build
 
+- **The pin is `v4.34.0-rc2`, a release candidate**, and that is deliberate:
+  `lean-fmt` is the only Lean formatter/linter that exists outside Mathlib,
+  it ships one release per toolchain, and every one of its releases
+  requires an rc of v4.34. `v4.34.0` stable does not exist yet. **Move the
+  pin when it does and lean-fmt tags it** — that is the whole trigger.
+  The bump cost 152 deprecation renames (all `if_pos`→`ite_eq_left` shaped,
+  definitionally identical) and moved no ratchet.
 - Always `./lake build` (the wrapper, not bare `lake`): on the AL2 host
   glibc 2.26 cannot run the toolchain's bundled clang, so the wrapper
   routes C compilation through Homebrew clang. Bare `lake` looks 90%
@@ -151,6 +158,15 @@ fresh pair of eyes.
   directory from `lean-toolchain` and fails loudly if it is missing —
   it used to hardcode `v4.32.0`, which meant a version bump broke the
   link on `-lgmp` with nothing to suggest why.
+- `lean-fmt` is installed **standalone**, never as a Lake `require`: the
+  require-free lakefile and empty `lake-manifest.json` are gates, and
+  README promises no external Lean dependencies.
+  `make -C <clone> install`, at the tag matching `lean-toolchain`.
+- **Its formatter is declined, its linter adopted.** `.lean-fmt.toml`
+  carries the measurements: the formatter would rewrite 66 of 71 files
+  (+8540/−6173), 894 diff lines inside tactic blocks, and 502 commands it
+  could not lay out at all. `repeat' split` + `all_goals first | …`
+  layout is a design-for-provability decision here, not accident.
 
 ## Gates, hooks and CI
 

@@ -1213,8 +1213,8 @@ theorem ascii_csiNum (n : Nat) (f : UInt8) (hf : f < 0x80) : Ascii (csiNum n f) 
 
 theorem ascii_csiNum2 (a b : Nat) (f : UInt8) (hf : f < 0x80) : Ascii (csiNum2 a b f) := by
   rw [show csiNum2 a b f = csiB ++ digits a ++ [0x3B] ++ digits b ++ [f] from rfl]
-  exact ((((ascii_csiB.append (ascii_digits a)).append
-    (Ascii.cons (by decide) Ascii.nil)).append (ascii_digits b))).append
+  exact (((ascii_csiB.append (ascii_digits a)).append
+    (Ascii.cons (by decide) Ascii.nil)).append (ascii_digits b)).append
     (Ascii.cons hf Ascii.nil)
 
 theorem ascii_csiPriv (n : Nat) (f : UInt8) (hf : f < 0x80) : Ascii (csiPriv n f) := by
