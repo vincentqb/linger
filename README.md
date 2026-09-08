@@ -14,11 +14,41 @@ listing, not a picker.
 ## Build
 
 ```
-./lake build          # use plain `lake build` on glibc >= 2.34
+./lake build          # always the wrapper, not bare `lake` (it derives the
+                      # toolchain path and fails loudly if it is missing)
 ln -sf "$PWD/.lake/build/bin/linger" ~/.local/bin/linger
 ```
 
-Lean 4.32.0 via elan; no external Lean dependencies.
+Lean 4.32.0 via elan; no external Lean dependencies. Everything here is Lean
+except one C file (`c/shim.c`, the syscall surface) and two shell scripts (the
+`lake` wrapper and the test orchestrator).
+
+### Tests
+
+```
+./lake build Theorems Tests      # the proofs and the unit fixtures — building is running
+./lake exe lingertest            # POSIX shim smoke tests
+./lake exe e2e <suite>           # one pty suite: attach resume overview remote robust
+                                 #   graphics terminal status agent watch
+./lake exe e2e coverage          # the coverage ratchets
+sh tests/gates.sh                # the fast source-tree gates (seconds)
+./tests/e2e.sh                   # everything, in order (minutes)
+```
+
+The pty suites are Lean programs, not theorems: they drive the real binary through
+real terminals, so they are `IO`. `Theorems/` is where the proofs are. To have the
+gates run automatically: `git config core.hooksPath .githooks`.
+
+### Layout
+
+| | |
+|---|---|
+| `Linger/Core/` | pure: no `IO`, no `partial def`, no `sorry`. Effects are data. |
+| `Linger/Runtime/`, `Linger/Posix.lean`, `c/shim.c` | the only code that touches the OS |
+| `Theorems/` | the proofs — what `THEOREMS.md` narrates |
+| `Tests/` | Lean fixtures, checked at elaboration time |
+| `E2E/` | the pty suites, `IO`, run against the real binary |
+| `specs/` | live build plans; `specs/archive/` the closed ones |
 
 ## Use
 
@@ -152,7 +182,7 @@ back is the *application* redrawing:
 
 An app's own redraw is strictly better than any replay we could do, since
 it also refreshes anything the emulator models imperfectly. Both halves of
-the size rule are pinned by `tests/graphics_test.py`.
+the size rule are pinned by `E2E/Graphics.lean`.
 
 ### Why linger doesn't store images
 

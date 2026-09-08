@@ -6860,3 +6860,123 @@ import the `Theorems` environment and ask whether each `Linger.Core` constant ap
 in any theorem's **type**. That is semantic, needs no comment-stripping, and cannot
 be fooled by formatting. It changes the measure and therefore the cap, which would
 need re-justifying, so it belongs in its own commit.
+
+
+## cleanup round — gates, hooks, CI, and the doc sweep — 2026-08-29
+
+Follows the Lean port. No new capability; the point was to stop the same mistake
+being possible twice.
+
+### `warningAsError := true` — the highest-ratio line in the round
+
+One entry in `lakefile.lean`'s `leanOptions`, and it lands **clean** on the whole
+tree. A `sorry` is a *warning* in Lean, so the ban on it rested on two greps: a
+source scan that cannot see a `sorry` a tactic introduced and that fires on the word
+in prose, plus a post-hoc scan of a build log. Now it is an error **at the
+declaration**. Both greps stay (lean-modules Decision 3): the source grep covers the
+prose half, the log scan covers warnings lake emits that are attached to no
+declaration.
+
+It also makes deprecations fatal, which is the actual reason to want it: `String.mk`
+and `String.splitOn` drifted into the tree because a warning scrolled past.
+
+### `tests/gates.sh` — one home for every ratchet number
+
+Split out of `e2e.sh`. These checks are milliseconds of `git grep` and `awk`, but
+inside `e2e.sh` they only fired *after* `rm -rf .lake/build`, a full rebuild and ten
+pty suites. Now three callers share the file: `e2e.sh`, `.githooks/pre-commit`, and
+CI. **That sharing is the point** — a hook carrying its own copy of a cap is worse
+than no hook, and this repo has already watched markdown copies of these same numbers
+rot (see the doc sweep below).
+
+Two new invariants live there, both break-verified:
+
+* **zero-Python**: `git ls-files '*.py'` must be empty. Verified — adding
+  `tests/sneaky.py` fails the gate by name.
+* **the `Tests/`-vs-`tests/` case trap**: a non-`.lean` file under `Tests/`, or a
+  `.lean` under `tests/`, fails. Verified with `Tests/orchestrate.sh`. AGENTS.md has
+  warned about this trap for months with nothing enforcing it.
+
+### NEGATIVE RESULT — the two `partial def`s in `E2E/` will not shed the keyword
+
+`E2E_PARTIAL_CAP` is **5**, not 4, and that is measured rather than conceded. The
+audit proposed rewriting `stripCsi` and `stripComments` around `List.dropWhile`,
+whose length lemma Lean does carry. Tried it: **still** `fail to show termination`,
+because the recursion is on a `dropWhile`-then-`drop` of a *tail*, not on a
+structural sub-term. Shedding them needs a real `decreasing_by`, which is proof work,
+not cleanup — and AGENTS.md rules out the other exit (a fuel parameter converts a
+hang into a silent drop). Reverted both, set the cap to the honest 5. The ratchet
+still does its job: it stops a *new* one creeping in.
+
+### The `./lake` wrapper hardcoded the toolchain — found by the CI agent
+
+`LIBRARY_PATH` named `leanprover--lean4---v4.32.0` literally, so bumping
+`lean-toolchain` would point it at a directory that does not exist and the link would
+die on `-lgmp` with nothing to suggest why. It now derives the name and fails loudly
+when absent. elan's escaping is **doubling, not single dashes**: `/` → `--` and
+`:` → `---`, so `leanprover/lean4:v4.32.0` is `leanprover--lean4---v4.32.0`. My
+first attempt used `tr '/:' '--'` and the wrapper immediately refused with the path
+it had computed — the loud failure working as designed, on its first run.
+
+### E2E factoring — and a quadratic scan deleted
+
+Three helpers were duplicated across independently-drafted suites, two of them with a
+comment noting the other copy:
+
+* `lines` (Attach + Resume, identical) → `Harness.lines`. Deliberately **not**
+  `String.Slice.lines`, which also strips a trailing `\r`: these are pty streams full
+  of `\r\n`, so that is a behaviour change dressed as a cleanup. Parked as its own
+  measured change.
+* `ckptNames` (Resume) / `dirNames` (Robust), same body, one hardcoding the extension
+  → `Env.dirNames e ext`.
+* `findBytes`/`findText`/`idxStr` (Attach) → the harness, **and `hasBytes` is now
+  built on them**. The old `hasBytes` scanned with `(h.drop i).take n`, and
+  `List.drop i` is O(i) — quadratic in the haystack, against reattach bursts of tens
+  of kilobytes. One primitive, walked once, and the quadratic version is gone.
+
+attach/resume/robust re-run green at 35/9/14 after the surgery.
+
+### Doc sweep — 39 substitutions, and the boundary that made it safe
+
+Every live document referenced Python files that no longer exist. Fixed across
+`README.md`, `AGENTS.md`, `THEOREMS.md`, the three live specs, `tests/gates.sh`,
+`tests/e2e.sh` and `Linger/Core/Vt.lean`. Also: the stale coverage cap (docs said
+`cap 20`, then `19`; it is 16), `THEOREMS.md` citing `Vt.lean:529-531` for
+`eraseScreen`'s mode **3** when that range is the mode-1 branch, and AGENTS.md's
+archive list naming 7 files when there are 10 — replaced with "read the directory",
+because a list of files is exactly the thing that rots.
+
+**SCRATCHPAD.md and `specs/archive/` were excluded on purpose.** AGENTS.md is
+explicit that the worklog is append-only and the archived specs are closed records:
+rewriting a path inside them would falsify what was true when it was written. That
+boundary is what made a mechanical 39-substitution sweep safe to run at all.
+
+### Not done, deliberately
+
+* **The 31 duplicated lines** between `specs/runtime-invariants.md` and
+  `specs/scrollback-fidelity.md` (runtime-invariants' Buf-gate kill criteria, copied
+  verbatim into scrollback's kill-criteria section). Will drift; both are live specs
+  and one is mid-flight, so deleting a section from it is not a cleanup-round edit.
+* **`grind`.** Audited and declined with a reason: the scripts it would replace
+  already close with `rfl`/`omega` after `repeat' split`, so it cannot be cheaper, and
+  `HEARTBEAT_CAP=1` has zero headroom. Order-robustness — the usual reason to adopt
+  it — is already bought by the `repeat' split` + `all_goals first | …` idiom AGENTS.md
+  prescribes.
+* **`Std.HashMap` for the KV association lists.** Declined: ~10–30 records, and the
+  **order is observable** (`Tests/Session.lean` asserts `infoText`'s record order;
+  `ls --porcelain` is a byte-anchored surface). A HashMap trades determinism for
+  nothing.
+* **Sealed `SessionName`** (lean-modules Step 3). Still the largest
+  convention→compiler conversion available and it needs no new feature, but it is a
+  spec step, not a cleanup.
+
+### The two conventions v4.32 could still seal (for whoever picks this up)
+
+1. **`native_decide` out of `Theorems/`.** Seven `Theorems/*.lean` are still legacy
+   files. Converting them makes `native_decide` *structurally* unavailable — it would
+   need a `public meta import`, a visible reviewable line, exactly like bumping
+   `SHIM_CAP`. `Tests/Session.lean` already proves the mechanism in-tree. This
+   directly retires a failure mode that has cost a full e2e run twice.
+2. Everything else the greps hold, they hold correctly — `SHIM_CAP` is a count, a
+   parallel byte queue is a new declaration privacy cannot ban, and the two
+   `!readOnly` guards are semantic no-ops nothing observable can see.

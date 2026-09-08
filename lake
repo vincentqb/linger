@@ -20,7 +20,20 @@ if [ "$(uname -s)" = Linux ]; then
   export LEAN_CC=clang
   # The toolchain's llvm-ar is also glibc-blocked; system binutils ar works.
   export LEAN_AR=/usr/bin/ar
-  _TC="$HOME/.elan/toolchains/leanprover--lean4---v4.32.0"
+  # Derived from `lean-toolchain`, never hardcoded. It used to name v4.32.0
+  # literally, which coupled this file to the pin silently: bump `lean-toolchain`
+  # and LIBRARY_PATH points at a directory that does not exist, so the link dies
+  # on `-lgmp` with nothing to suggest why. elan escapes the toolchain string by
+  # doubling: `/` becomes `--` and `:` becomes `---`, so
+  # `leanprover/lean4:v4.32.0` is `leanprover--lean4---v4.32.0`.
+  _TCNAME="$(tr -d ' \n' < "$(dirname "$0")/lean-toolchain" | sed 's|/|--|g; s|:|---|g')"
+  _TC="$HOME/.elan/toolchains/${_TCNAME}"
+  if [ ! -d "$_TC" ]; then
+    printf 'lake wrapper: no toolchain at %s\n' "$_TC" >&2
+    printf '  lean-toolchain says %s; run `elan toolchain install` for it.\n' \
+      "$(cat "$(dirname "$0")/lean-toolchain")" >&2
+    exit 1
+  fi
   export LIBRARY_PATH="${_TC}/lib:${_TC}/lib/lean${LIBRARY_PATH:+:$LIBRARY_PATH}"
 fi
 exec lake "$@"

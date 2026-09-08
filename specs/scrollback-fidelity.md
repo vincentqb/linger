@@ -112,8 +112,8 @@ this reads as re-opening it.
    budget named as its limit. `README.md` gains the note that attaching discards
    the user's own terminal scrollback in that window, next to the graphics limits.
 8. `./lake build`, `./lake build Theorems Tests`, `./tests/e2e.sh` green and
-   warning-free at every step boundary; `python3 tests/coverage.py` still reports
-   `20 (cap 20)` — every new `Linger/Core/*` def named in a theorem **statement**,
+   warning-free at every step boundary; `python3 E2E/Coverage.lean` still reports
+   the coverage cap unbumped (it is 16 now, and exact) — every new `Linger/Core/*` def named in a theorem **statement**,
    the cap **not** bumped; every theorem and fixture break-verified with the break
    in `SCRATCHPAD.md`.
 
@@ -206,7 +206,7 @@ preceding `ED 2` left**, not the receiver's junk, which is strictly more forgivi
 than pushing before the clean slate.
 
 Naming theorems (the coverage gate is at 20/20, so each base name must appear in
-a theorem *statement* — a docstring does not count, `coverage.py` strips comments):
+a theorem *statement* — a docstring does not count, `E2E/Coverage.lean` strips comments):
 
 - `sbTake_budget : ((sbTake cols budget l).map sbRowCost).sum ≤ budget` — names
   `sbTake`, `sbRowCost`. Induction on the list; `dsimp only` then `split`; `omega`.
@@ -248,11 +248,11 @@ with both `(sbRows v).all (·.size == 4)` and `!(v.sb.toList.all (·.size == 4))
 `heavyRing` (300 lines of per-cell truecolour through 40 columns) with the
 non-vacuity, cost and emitted-length bounds.
 
-Python: `tests/attach_test.py` step 11 — `\x1b[3J` present, `ED 3` **after** `ED 2`
+Python: `E2E/Attach.lean` step 11 — `\x1b[3J` present, `ED 3` **after** `ED 2`
 (*[corrected]*: the spec's own emitter design puts it there, and it is what
 `clear(1)` sends),
 a line that scrolled off the screen reappears, burst inside budget, client still
-alive after both the plain and the truecolour burst. `tests/resume_test.py` —
+alive after both the plain and the truecolour burst. `E2E/Resume.lean` —
 push `survives-the-reboot-42` (`:42`) off the screen with a 60-line loop before
 the detach, so the existing assertion at `:79` is *strengthened* to prove the ring
 survived the checkpoint **and** reached the terminal. It fails today.
@@ -260,7 +260,7 @@ survived the checkpoint **and** reached the terminal. It fails today.
 Docs: conformance-profile entry (a divergence), README note, `SCRATCHPAD.md` step
 notes with the breaks.
 
-**Exit:** all three build gates green and warning-free; `coverage.py` at 20/20;
+**Exit:** all three build gates green and warning-free; `E2E/Coverage.lean` at 20/20;
 `restore_grid_any` / `restore_grid_reachable` / `resume_grid` **statements
 byte-identical to today** and green; the leak reproduced and closed under breaks
 B1 (delete the paint branch → `history` gives the screen only), B2 (drop `ED 3` →
@@ -313,7 +313,7 @@ diff). No hypothesis about `v.sb` appears in any screen proof.
 and **guarded** by the emptiness test (Open decisions 1). Both are recorded above.
 
 **Gates.** `./lake build`, `./lake build Theorems Tests` green and warning-free;
-`python3 tests/coverage.py` → `core defs 252; named by no theorem STATEMENT: 20
+`python3 E2E/Coverage.lean` → `core defs 252; named by no theorem STATEMENT: 20
 (cap 20)`, `FAILURES: 0`, cap not bumped (all eight new defs are claimed);
 `sh tests/e2e.sh` → `E2E OK`; all nine pty suites green individually.
 
@@ -436,7 +436,7 @@ decision about `Render.history`'s `withAnsi` branch (`Linger/Core/Render.lean:54
 `history_framing`/`history_lines` are both stated at `false`, and `Cli.lean` has
 no flag. Either wire it up as `linger history --color` with its own framing
 theorem or delete the argument; unreachable unproved code in the emitter is the
-state `tests/coverage.py` exists to prevent.
+state `E2E/Coverage.lean` exists to prevent.
 
 ## Open decisions the implementer must not make alone
 
@@ -551,7 +551,7 @@ gate is not looking, which is a gate measuring nothing.
 Also kill if the answer to "does this theorem bite the shipped code?" comes out
 honestly *no* — i.e. if the grep turns out to be evadeable by ordinary refactoring
 rather than by deliberately writing something novel. The `SHIM_CAP` and
-`coverage.py` precedents say it is not, and `coverage.py:116-134` already scans
+`E2E/Coverage.lean` precedents say it is not, and ``E2E/Coverage.lean`'s runtime-emitter scan` already scans
 `Linger/**`, so there is precedent for a Runtime-side gate — but check, don't assume.
 *Fallback that still ships:* Step 1, plus `Buf` and `Theorems/Buf.lean` **without**
 the runtime rewiring — a proved, claimed, unreferenced Core module is not much, so

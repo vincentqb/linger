@@ -1,0 +1,17 @@
+#!/bin/sh
+# The whole gate, before anything leaves this machine. Enable once per clone:
+#
+#     git config core.hooksPath .githooks
+#
+# `pre-commit` runs the millisecond checks so a mistake is caught where it was made;
+# this runs `./tests/e2e.sh`, which AGENTS.md names as the gate before any commit that
+# touches the runtime — the clean rebuild, the proofs, the shim smoke tests and all ten
+# pty suites with their check-count floors.
+#
+# It is slow on purpose. A push is the moment the cost is worth paying, and it is the
+# last point where a failure is still cheap.
+#
+# If it fails, fix what it reports. `--no-verify` moves the failure to whoever pulls.
+set -e
+printf 'pre-push: running the full gate (./tests/e2e.sh) — this takes a few minutes\n'
+./tests/e2e.sh

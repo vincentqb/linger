@@ -31,9 +31,10 @@ zmx" (`Paths.lean`), "the zmx decoupling" (§Detach in THEOREMS.md), the links i
 they are not stale branding and should not be renamed.
 `README.md` is the user-facing overview. `PLAN.md` is the original
 requirements (goal-level, not current state); `specs/archive/` holds the
-closed build plans with their completion records (`lean-zmx.md`,
-`bigger-theorems.md`, `terminal-contract.md`, `grid-fidelity.md`,
-`restore-conformance.md`, `ledger-cleanup.md`, `agent-cli.md`).
+closed build plans with their completion records — ten of them, from
+`lean-zmx.md` (the original build) through `pin-the-gaps.md` and
+`lean-suites.md` (the most recent two). Read `specs/archive/` itself
+rather than trusting a list here to stay current.
 
 ## Where things stand — read this first after any compaction
 
@@ -126,7 +127,7 @@ fresh pair of eyes.
 - **An interactive picker.** One was built and shipped (step 8, with a
   passing pty test), then removed: a first-time user ran bare `linger`,
   got a full-screen picker and typed at it as if it were a shell. Bare
-  `linger` now prints a listing and exits, and `tests/overview_test.py`
+  `linger` now prints a listing and exits, and `E2E/Overview.lean`
   guards that. Pickers live in `recipes/` (six lines of fish + fzf).
 - **Storing images so they survive reattach.** Kitty/sixel/iTerm2
   sequences already pass through byte for byte while attached, and an app
@@ -136,7 +137,7 @@ fresh pair of eyes.
   into the same terminal process that still holds the image — so not after
   a reboot, which is the point of the checkpoint — does nothing for
   sixel/iTerm2, and puts payloads in a periodic on-disk write. See README
-  "Graphics" and `tests/graphics_test.py`.
+  "Graphics" and `E2E/Graphics.lean`.
 - **Restoring the process tree.** Reboot-resume restores the screen,
   scrollback, modes, labels and cwd — not the programs. The
   tmux-continuum trade, taken deliberately.
@@ -146,7 +147,29 @@ fresh pair of eyes.
 - Always `./lake build` (the wrapper, not bare `lake`): on the AL2 host
   glibc 2.26 cannot run the toolchain's bundled clang, so the wrapper
   routes C compilation through Homebrew clang. Bare `lake` looks 90%
-  green and dies in the C backend.
+  green and dies in the C backend. The wrapper derives the toolchain
+  directory from `lean-toolchain` and fails loudly if it is missing —
+  it used to hardcode `v4.32.0`, which meant a version bump broke the
+  link on `-lgmp` with nothing to suggest why.
+
+## Gates, hooks and CI
+
+- **`tests/gates.sh` is the only place a ratchet number lives.** The
+  purity greps, the OS-surface checks and all five ratchets
+  (`SHIM_CAP`, `HEARTBEAT_CAP`, `RUNTIME_PARTIAL_CAP`,
+  `E2E_PARTIAL_CAP`, plus the zero-Python and `Tests/`-vs-`tests/`
+  invariants) live there. `tests/e2e.sh` calls it, `.githooks/pre-commit`
+  calls it, CI calls it. Never copy a number out of it — the markdowns
+  did exactly that and every copy rotted.
+- **Three tiers, cheapest first.** `.githooks/pre-commit` runs
+  `gates.sh` plus an incremental `./lake build Linger Theorems Tests`
+  (seconds). `.githooks/pre-push` runs the whole `./tests/e2e.sh`
+  (minutes). `.github/workflows/ci.yml` runs both on push and PR, as a
+  ubuntu+macos matrix — the `#ifdef __APPLE__` branch in `c/shim.c` is
+  not compiled on Linux at all, so a Linux-only CI cannot typecheck code
+  this file claims works.
+- Enable the hooks once per clone: `git config core.hooksPath .githooks`.
+  Don't reach for `--no-verify`; the hook is the check.
 - The wrapper branches on `uname -s` and is a **pass-through on macOS**,
   where the same overrides break the build (`LEAN_AR=/usr/bin/ar` is
   Apple's ar, which cannot read lake's `@…rsp` response file). Keep
@@ -195,7 +218,8 @@ fresh pair of eyes.
   lands in the wrong directory on Linux only. The pty **suites** are no
   longer under `tests/` at all: they are Lean, in `E2E/`, run as
   `./lake exe e2e <suite>` (2026-08-29). `tests/` now holds only the
-  orchestrator `e2e.sh` and the coverage gate.
+  orchestrator `e2e.sh` and `gates.sh`; the coverage gate is
+  `E2E/Coverage.lean`.
 - **`E2E/` is `IO`, so nothing in it can be a theorem** — that is what
   `Theorems/` and `Tests/` are for, and the split is the point: a pty
   suite drives the real binary through real syscalls. It is Lean anyway
@@ -249,7 +273,7 @@ fresh pair of eyes.
   again on 2026-08-29). Say "compiled evaluation" in prose.
 - **One writer at a time on this tree.** Two agents editing
   concurrently raced the coverage ratchet: untracked files are invisible
-  to `git diff -- Linger/`, so an out-of-band `coverage.py` read caught a
+  to `git diff -- Linger/`, so an out-of-band `E2E/Coverage.lean` read caught a
   half-written state and reported 28 unclaimed defs. Both also compile
   the same tree, so each sees the other's partial files as errors.
   Serialize, or give each writer a worktree.

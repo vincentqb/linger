@@ -46,6 +46,32 @@ def expect (cond : Bool) (name : String) : IO Nat := do
 def has (haystack needle : String) : Bool :=
   (haystack.splitOn needle).length ≥ 2
 
+/-- First index of `needle` in `hay`, walking the haystack once.
+
+The primitive the other three are built on, and the reason it is `Option Nat`
+rather than `Bool`: the ED-2-before-ED-3 ordering check in `E2E.Attach` needs the
+positions, not just presence.
+
+Linear-ish by construction (`O(|hay| · |needle|)`), which matters more than it
+looks: the first version of `hasBytes` scanned with `(h.drop i).take n`, and
+`List.drop i` is `O(i)`, so it was QUADRATIC in the haystack — against a truecolour
+reattach burst of tens of kilobytes that is ~10⁹ list steps. `isPrefixOf` on the
+tail walks it once instead. -/
+def findFrom (needle : List UInt8) (i : Nat) : List UInt8 → Option Nat
+  | [] => if needle.isEmpty then some i else none
+  | h :: t => if needle.isPrefixOf (h :: t) then some i else findFrom needle (i + 1) t
+
+def findBytes (hay : ByteArray) (needle : List UInt8) : Option Nat :=
+  findFrom needle 0 hay.toList
+
+/-- …and the same needle spelled as text. -/
+def findText (hay : ByteArray) (needle : String) : Option Nat :=
+  findBytes hay needle.toUTF8.toList
+
+/-- A `find` result in a failure label: `-1` for absent, as the Python printed it. -/
+def idxStr (o : Option Nat) : String :=
+  match o with | some n => toString n | none => "-1"
+
 /-- Does `hay` contain `needle` as a contiguous byte run?
 
 The honest test for "the client wrote *this emitter's* output": a pty stream is
@@ -53,9 +79,7 @@ bytes, not text, and comparing against `Linger.Core.Render.leaveAnsi` itself is
 what stops a suite hardcoding a copy of what the implementation emits — the copy
 is what goes stale when the emitter changes. -/
 def hasBytes (hay : ByteArray) (needle : List UInt8) : Bool :=
-  let h := hay.toList
-  let n := needle.length
-  (List.range (h.length + 1 - n)).any fun i => (h.drop i).take n == needle
+  (findBytes hay needle).isSome
 
 /-- Does `hay` *begin* with `needle`? `leaveAnsi` leads with ST for a reason (a
 program that died mid-OSC would otherwise eat the rest of the hand-back), so
@@ -226,6 +250,28 @@ def Env.cliTimeout (e : Env) (args : Array String) (ms : UInt64)
     let out ← child.stdout.readToEnd
     let err ← child.stderr.readToEnd
     return some (c, out, err)
+
+/-- A stream's lines, without the empty field a trailing newline leaves.
+
+Was duplicated verbatim in two suites, each with a comment noting the other copy.
+Deliberately NOT `String.Slice.lines`, which also strips a trailing `\r`: these are
+pty streams full of `\r\n`, so that would be a behaviour change dressed as a
+cleanup. Worth revisiting as its own measured change. -/
+def lines (s : String) : List String :=
+  let l := s.splitOn "\n"
+  if l.getLast? == some "" then l.dropLast else l
+
+/-- Names in this suite's state dir ending in `ext`, sorted.
+
+Sorted because a directory read order is not defined and the failure labels print
+the list; every assertion on it is about a one-element or empty list, so order never
+decides one. Was `ckptNames` in one suite and `dirNames` in another — same body, one
+of them hardcoding the extension. -/
+def Env.dirNames (e : Env) (ext : String) : IO (List String) := do
+  let entries ← System.FilePath.readDir (System.FilePath.mk e.dir)
+  let names := entries.toList.filterMap fun de =>
+    if de.fileName.endsWith ext then some de.fileName else none
+  return names.toArray.qsort (· < ·) |>.toList
 
 /-- Parse `k<TAB>v` lines into an association list — the shape both
 `linger info` and `linger ls --porcelain` emit (`Session.infoText`). -/

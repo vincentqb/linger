@@ -50,39 +50,6 @@ open Linger.Core.Render (leaveAnsi modeSet csiNum csiNum2 csiPlain escSeq escCha
 open Linger.Core.Session (outputChunk)
 open Linger.Runtime.Daemon (outbufCap)
 
-/-- Python's `splitlines()`, which `String.splitOn "\n"` is not: a trailing LF
-leaves `splitOn` a final empty field, and the "last `rows` lines" window below is
-off by one real line without this. (Same helper as `E2E.Resume`; duplicated rather
-than importing another suite for three lines — a harness promotion candidate.) -/
-def lines (s : String) : List String :=
-  let l := s.splitOn "\n"
-  if l.getLast? == some "" then l.dropLast else l
-
-/-- First index of `needle` in `hay` — Python's `bytes.find`, as an `Option`
-rather than as `-1`.
-
-Not `Harness.hasBytes`, and the reason is cost, not taste: `hasBytes` scans with
-`(h.drop i).take n`, and `List.drop i` is O(i), so it is quadratic in the
-haystack. The truecolour reattach burst below is tens of kilobytes (54,287 bytes
-measured, `specs/scrollback-fidelity.md`), where that is ~10⁹ list steps. This
-walks the tail once, so it is O(|hay| · |needle|) — and the ED-2-before-ED-3 check
-needs the positions anyway, which `hasBytes` cannot give. `hasBytes` is still used
-on the small epilogue buffers, where it is the established idiom. -/
-def findFrom (needle : List UInt8) (i : Nat) : List UInt8 → Option Nat
-  | [] => if needle.isEmpty then some i else none
-  | h :: t => if needle.isPrefixOf (h :: t) then some i else findFrom needle (i + 1) t
-
-def findBytes (hay : ByteArray) (needle : List UInt8) : Option Nat :=
-  findFrom needle 0 hay.toList
-
-/-- …and the same needle spelled as text. -/
-def findText (hay : ByteArray) (needle : String) : Option Nat :=
-  findBytes hay needle.toUTF8.toList
-
-/-- Python's `find` result in a failure label: `-1` for absent. -/
-def idxStr (o : Option Nat) : String :=
-  match o with | some n => toString n | none => "-1"
-
 /-- The twelve hazards `leaveAnsi` undoes, each spelled with the emitter's own
 primitive and the same argument `leaveAnsi` passes it — so this list cannot become
 a stale copy of the emitter. Every group must appear in the epilogue.

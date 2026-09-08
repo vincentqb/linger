@@ -6,7 +6,17 @@ package linger where
     -- Pure-function port: `partial def` hides a termination argument we
     -- would rather be forced to write down; autoImplicit hides typos.
     ⟨`autoImplicit, false⟩,
-    ⟨`relaxedAutoImplicit, false⟩
+    ⟨`relaxedAutoImplicit, false⟩,
+    -- A `sorry` is a WARNING, and this repo's ban on it rested on two greps: a
+    -- source scan that cannot see a `sorry` a tactic introduced and that fires on
+    -- the word in prose, plus a post-hoc scan of a whole build log. This makes it
+    -- an error AT THE DECLARATION that caused it — the compiler holding what a
+    -- convention held, which is the same move as sealing `Buf`'s fields. It also
+    -- makes a deprecation fatal, which is the point: `String.mk` and
+    -- `String.splitOn` drifted into the tree unnoticed because a warning scrolled
+    -- past. Both greps STAY (specs/archive/lean-modules Decision 3): the source
+    -- grep still covers prose, the log scan still covers non-declaration warnings.
+    ⟨`warningAsError, true⟩
   ]
 
 /-- The program. Zero external Lean dependencies (core only): the whole

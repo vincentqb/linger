@@ -12,7 +12,7 @@ landed, so if Steps 3-4 never happen this bet has delivered what it honestly cou
 Two follow-ups are parked, both small: apply the `THEOREMS.md` §Bound/§Total
 rewrites (drafted in `/tmp/theorems-bound.md` during step 2, held back only because
 another agent held that file), and revisit per-field `private` on `Buf.bytes` if
-`tests/coverage.py` is ever taught to count theorems in `Linger/Core` — see the
+`E2E/Coverage.lean` is ever taught to count theorems in `Linger/Core` — see the
 measured negative result in SCRATCHPAD 2026-08-18.
 
 **Done (2026-08-18):** Step 1 (five vestigial `partial def`s dropped; `pump` and
@@ -82,7 +82,7 @@ adversarial review.
    adversary's finding makes non-negotiable: `Linger/Runtime/*` is `IO`, so no
    theorem can see that it calls the proved functions, and without the gate the
    theorems are arithmetic about a value nothing forces the daemon to use. It is
-   the same species of oracle as `SHIM_CAP` and `coverage.py`'s ratchet — evadeable
+   the same species of oracle as `SHIM_CAP` and `E2E/Coverage.lean`'s ratchet — evadeable
    by deliberately writing something new, not by reverting.
 4. The gate **fails on `HEAD`** before the work and passes after. It currently
    has three hits: `Conn.out` (`Daemon.lean:41`), `Rt.ptyIn` (`:51`), and
@@ -108,12 +108,12 @@ adversarial review.
    these functions; `tests/e2e.sh` gates that it declares no byte buffer of its
    own, which is a source-tree property and therefore a grep." Anyone who writes
    "the runtime is proved" — including in a commit message — is overclaiming.
-8. `python3 tests/coverage.py` still reports `20 (cap 20)`. Use the distinct base
+8. `python3 E2E/Coverage.lean` still reports its two counts (the cap is 16 as of pin-the-gaps item 6, and is exact). Use the distinct base
    names above and **not** `push`/`size`/`pending`/`classify`: the gate strips
-   namespaces (`coverage.py:93-97`), so a `Buf.push` would be silently auto-claimed
+   namespaces (``E2E/Coverage.lean`'s base-name normalisation`), so a `Buf.push` would be silently auto-claimed
    by `Ring.push` and add surface with no claim. Consider fixing that hole, but in
    its own commit — it shakes a ratchet.
-9. `./tests/e2e.sh` green and warning-free, including `tests/robust_test.py`'s
+9. `./tests/e2e.sh` green and warning-free, including `E2E/Robust.lean`'s
    exactly-once backpressure-log assertion (`:138`) and the pending-within-cap
    assertion (`:136-137`, which parses the number out of the log string at `:129`
    — the format is a test oracle, keep it and print the **pre-push** pending).
@@ -197,10 +197,10 @@ returning `none` → `.childExited`, and there is nothing to disconnect). Share 
 bookkeeping, **not** the loop — a shared `flushInto` invites "fixing" that
 asymmetry, which would either drop the pty queue on a transient or leave a dead
 client's frames queued. Compact exactly **once**, after the loop, in both.
-`bufAdvance` must not clear the `full` flag on a partial drain: `robust_test.py:138`
+`bufAdvance` must not clear the `full` flag on a partial drain: ``E2E/Robust.lean`'s exactly-once backpressure assertion`
 asserts the backpressure line appears exactly once, and re-arming the log fails it.
 
-**Exit:** three build gates green and warning-free; `coverage.py` at 20/20 with
+**Exit:** three build gates green and warning-free; `E2E/Coverage.lean` at 20/20 with
 the distinct base names; the gate fails on `HEAD` and passes after; the gate
 break-verified twice (add `dummy : ByteArray` to `Conn`; re-add an `.extract` in
 `Linger/Runtime/`); `bufCompact := id` fails `bufCompact_size`/`_off` and the
@@ -349,7 +349,7 @@ gate is not looking, which is a gate measuring nothing.
 Also kill if the answer to "does this theorem bite the shipped code?" comes out
 honestly *no* — i.e. if the grep turns out to be evadeable by ordinary refactoring
 rather than by deliberately writing something novel. The `SHIM_CAP` and
-`coverage.py` precedents say it is not, and `coverage.py:116-134` already scans
+`E2E/Coverage.lean` precedents say it is not, and ``E2E/Coverage.lean`'s runtime-emitter scan` already scans
 `Linger/**`, so there is precedent for a Runtime-side gate — but check, don't assume.
 *Fallback that still ships:* Step 1, plus `Buf` and `Theorems/Buf.lean` **without**
 the runtime rewiring — a proved, claimed, unreferenced Core module is not much, so

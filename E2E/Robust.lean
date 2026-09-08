@@ -101,15 +101,6 @@ def signalByName (pid : UInt32) (sig : String) : IO Unit := do
   let _ ← IO.Process.output { cmd := "/bin/sh", args := #["-c", s!"kill -s {sig} {pid}"] }
   pure ()
 
-/-- Files in this suite's state dir with a given extension, sorted. Sorted because
-directory read order is not defined and the failure label prints the list — every
-assertion below is on a one-element list, so order never decides one. -/
-def dirNames (e : Env) (ext : String) : IO (List String) := do
-  let entries ← System.FilePath.readDir e.dir
-  let names := entries.toList.filterMap fun de =>
-    if de.fileName.endsWith ext then some de.fileName else none
-  return names.toArray.qsort (· < ·) |>.toList
-
 /-- The daemon's backpressure line, as a marker rather than a regex (Lean has no
 regex engine, and this needs none):
 
@@ -152,7 +143,7 @@ def run : IO UInt32 := do
   signalByName dpid "STOP"
   let out ← e.out #["list"]
   let porc ← e.out #["list", "--porcelain"]
-  let socks ← dirNames e ".sock"
+  let socks ← e.dirNames ".sock"
   signalByName dpid "CONT"
 
   -- the leading glyph is the status column: a daemon that did not answer within
@@ -192,7 +183,7 @@ def run : IO UInt32 := do
   -- as a number (POSIX fixes 1–15); STOP and CONT above are not.
   Linger.Posix.kill victim 9
   IO.sleep 300
-  let stale ← dirNames e ".sock"
+  let stale ← e.dirNames ".sock"
   f := f + (← expect (stale == [s!"{claim}.sock"])
     s!"stale socket present for the race ({stale})")
 
@@ -220,7 +211,7 @@ def run : IO UInt32 := do
   -- earlier sessions leave theirs behind; ours must be among them. Listed BEFORE
   -- the flock probe, because `flock` opens the path with O_CREAT and would make
   -- the presence half of this check true by having run it.
-  let locks ← dirNames e ".lock"
+  let locks ← e.dirNames ".lock"
   -- …and present is not held: `flock` returns `-1` when another process holds it,
   -- which is the property the file's existence only hints at. On the failing
   -- branch it returns a held fd, which must be closed or THIS process would own

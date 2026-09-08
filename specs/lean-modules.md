@@ -71,7 +71,7 @@ belt-and-braces for the half the type system cannot see.
 
 1. **Blanket `public section`, not per-decl `public`.** Two inserted lines per
    file plus `import` → `public import` preserves today's visibility exactly,
-   keeps decl text as `def …` (so `coverage.py`'s scans keep matching), and
+   keeps decl text as `def …` (so `E2E/Coverage.lean`'s scans keep matching), and
    makes Step 1 mechanical. Tightening is separate, later, per-boundary work
    (Steps 2/4) — the same split as agent-cli's "mechanical step, then
    semantics".
@@ -89,7 +89,7 @@ belt-and-braces for the half the type system cannot see.
 4. **The ratchet counts must come through Step 1 bit-identical.** Any regex
    hardening lands in the same commit as the migration, and the exit criterion
    is the before/after equality of every gate's measured number (coverage
-   19-cap counts, SHIM_CAP 27, HEARTBEAT_CAP 1, RUNTIME_PARTIAL_CAP 2).
+   coverage cap, SHIM_CAP, HEARTBEAT_CAP and RUNTIME_PARTIAL_CAP — the numbers live in `tests/gates.sh`, not here).
 
 ## Definition of done
 
@@ -97,7 +97,7 @@ belt-and-braces for the half the type system cannot see.
    `LingerTest.lean`, is a `module` file with `public import`s and a blanket
    `public section`; `./lake build` / `Theorems` / `Tests` / `tests/e2e.sh`
    green and warning-free.
-2. `coverage.py` regexes also match `public def` / `@[expose] public def` and
+2. `E2E/Coverage.lean` regexes also match `public def` / `@[expose] public def` and
    `public theorem`; all measured counts identical before/after Step 1.
 3. Step 2: `Buf.bytes` and `Buf.off` are `private`; `Linger/Posix.lean`'s
    `writeBuf` (the one representation reader outside Core) moves behind the
@@ -124,7 +124,7 @@ Client` → `Cli` → `Resume` → roots (`Linger.lean`, `Main.lean`,
 `public import`, one `public section` after the imports (unclosed to EOF —
 measured legal). Fix what the stricter lints surface; nothing else changes.
 
-**Exit:** all three builds + e2e green; `python3 tests/coverage.py` prints the
+**Exit:** all three builds + e2e green; `python3 E2E/Coverage.lean` prints the
 same two counts as on the previous commit; the e2e ratchet numbers unchanged;
 `git diff --stat` shows only header-line insertions and import keyword changes
 outside the lint fixes.

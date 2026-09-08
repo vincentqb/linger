@@ -37,22 +37,6 @@ namespace E2E.Resume
 open E2E.Harness
 open Linger.Core.Status (Status)
 
-/-- Python's `splitlines()`, which `String.splitOn "\n"` is not: a trailing LF
-leaves `splitOn` a final empty field, and the "last `rows` lines" window below is
-off by one real line without this. -/
-def lines (s : String) : List String :=
-  let l := s.splitOn "\n"
-  if l.getLast? == some "" then l.dropLast else l
-
-/-- The checkpoint files in this suite's own state dir, sorted. Sorted because a
-directory read order is not defined and the failure label prints the list — the
-assertions are on a one-element and an empty list, so order never decides them. -/
-def ckptNames (e : Env) : IO (List String) := do
-  let entries ← System.FilePath.readDir e.dir
-  let names := entries.toList.filterMap fun de =>
-    if de.fileName.endsWith ".ckpt" then some de.fileName else none
-  return names.toArray.qsort (· < ·) |>.toList
-
 def run : IO UInt32 := do
   let e ← Env.make "resume"
   let mut f := 0
@@ -88,7 +72,7 @@ def run : IO UInt32 := do
   boot.detach
   IO.sleep 800
   boot.bye (sendDetach := false)   -- fd and zombie only; the client already left
-  let ckpts ← ckptNames e
+  let ckpts ← e.dirNames ".ckpt"
   let ckptOk := ckpts == ["boot.ckpt"]
   -- …and it is a checkpoint in THIS format, compared against the writer's own
   -- tag. Read only when the name check passed, so a missing file is a FAIL line
@@ -125,7 +109,7 @@ def run : IO UInt32 := do
   -- clean exit drops the checkpoint
   boot2.type "exit\r"
   IO.sleep 1000
-  let ckpts2 ← ckptNames e
+  let ckpts2 ← e.dirNames ".ckpt"
   f := f + (← expect (ckpts2 == []) s!"clean exit drops the checkpoint ({ckpts2})")
   boot2.bye (sendDetach := false)
 

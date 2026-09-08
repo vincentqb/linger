@@ -1,0 +1,39 @@
+#!/bin/sh
+# Fast pre-commit gate. Enable once per clone:
+#
+#     git config core.hooksPath .githooks
+#
+# WHY THIS EXISTS. `./tests/e2e.sh` is the gate before any commit that touches the
+# runtime (AGENTS.md), and it takes minutes: it starts with `rm -rf .lake/build` and
+# ends with ten pty suites. But the checks that catch the mistakes an agent actually
+# makes — a `sorry`, a `partial def` in the pure core, a `native_decide` in a proof, a
+# ratchet raised without noticing, a `.py` creeping back — are milliseconds of
+# `git grep`. Running them here gives the feedback in the second the mistake was made
+# instead of after a full rebuild. This is the "red squigglies for agents" idea: a
+# deterministic checker in the loop, feeding its own errors back.
+#
+# WHAT IT IS NOT. It is not a substitute for `./tests/e2e.sh`, and it does not run the
+# pty suites or the proofs — those need the build. `pre-push` runs the whole gate.
+#
+# THE ONE RULE. It calls `tests/gates.sh`; it does NOT carry its own copy of a cap.
+# A hook whose numbers can disagree with the gate's is worse than no hook, and this
+# repo has already watched markdown copies of these numbers rot.
+#
+# If it fails, fix what it reports. Do not reach for `--no-verify`: the hook IS the
+# check, and skipping it moves the failure to CI or to someone else's checkout.
+set -e
+
+# 1. the source-tree gates and every ratchet, from their single source
+sh tests/gates.sh
+
+# 2. the pure core and the proofs must still elaborate. `warningAsError` is on
+#    (lakefile.lean), so a `sorry` or a deprecation is an error at the declaration
+#    that caused it, not a warning scrolling past. No `rm -rf`: an incremental build
+#    is what makes this fast enough to be a hook.
+if ! ./lake build Linger Theorems Tests > /tmp/linger-precommit.log 2>&1; then
+  tail -40 /tmp/linger-precommit.log
+  printf '\npre-commit: the build or the proofs failed. Run `./lake build Theorems Tests`.\n' >&2
+  exit 1
+fi
+
+printf 'pre-commit OK — gates green, core + proofs elaborate\n'
