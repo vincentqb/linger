@@ -1,4 +1,5 @@
 import Linger.Core.Checkpoint
+
 /-! # Checkpoint codec tests
 
 §Restore is proved in `Theorems/Checkpoint.lean`; these pin the two
@@ -21,44 +22,53 @@ a blank 80-cell row is one run. This is why an empty screen dropped
 from 22.7 KiB to under 2. -/
 example :
     (let blank : Row := blankRow 80 {}
-     (wRow blank).length < 20) = true := by native_decide
+     (wRow blank).length < 20) =
+      true := by
+  native_decide
 
 /-- …and it still round-trips (RLE is exact, not lossy). -/
 example :
     (let blank : Row := blankRow 80 {}
      match rRow (wRow blank) with
-     | some (r, rest) => r == blank && rest.isEmpty
-     | none => false) = true := by native_decide
+      | some (r, rest) => r == blank && rest.isEmpty
+      | none => false) =
+      true := by
+  native_decide
 
 /-- A mixed row round-trips through the run boundaries. -/
 example :
-    (let row : Row := #[{ base := 'a' }, { base := 'a' },
-                        { base := 'b', pen := { bold := true } },
-                        { base := ' ' }, { base := ' ' }]
+    (let row : Row :=
+        #[{ base := 'a' }, { base := 'a' }, { base := 'b', pen := { bold := true } },
+          { base := ' ' }, { base := ' ' }]
      match rRow (wRow row) with
-     | some (r, _) => r == row
-     | none => false) = true := by native_decide
+      | some (r, _) => r == row
+      | none => false) =
+      true := by
+  native_decide
 
 /-- End-to-end: feed a real byte stream, checkpoint it, load it back,
 and the visible screen (and scrollback, cwd, labels) matches modulo the
 parser-state quiesce the format deliberately drops. -/
 example :
-    (let v := (Vt.init 40 6).feedBytes
-        "hello\r\n\x1b[33mworld\x1b[0m\r\nline3\r\nline4".toUTF8
+    (let v := (Vt.init 40 6).feedBytes "hello\r\n\x1b[33mworld\x1b[0m\r\nline3\r\nline4".toUTF8
      let ck : Ckpt := { vt := v, cwd := "/tmp/x", labels := [("k", "v")] }
-     match load (save ck) with
-     | some ck' =>
-       ck'.vt.grid == v.grid && ck'.vt.sb.toList == v.sb.toList
-         && ck'.vt.cursor == v.cursor && ck'.cwd == "/tmp/x"
-         && ck'.labels == [("k", "v")]
-     | none => false) = true := by native_decide
+      match load (save ck) with
+      | some ck' =>
+        ck'.vt.grid == v.grid && ck'.vt.sb.toList == v.sb.toList && ck'.vt.cursor == v.cursor &&
+          ck'.cwd == "/tmp/x" &&
+          ck'.labels == [("k", "v")]
+      | none => false) =
+      true := by
+  native_decide
 
 /-- A checkpoint with scrollback round-trips the history too. -/
 example :
     (let v := (Vt.init 10 2).feedBytes "1\r\n2\r\n3\r\n4\r\n5".toUTF8
      match load (save { vt := v, cwd := "", labels := [] }) with
-     | some ck' => ck'.vt.sb.toList.map (·.size) == v.sb.toList.map (·.size)
-     | none => false) = true := by native_decide
+      | some ck' => ck'.vt.sb.toList.map (·.size) == v.sb.toList.map (·.size)
+      | none => false) =
+      true := by
+  native_decide
 
 /-! ### The format tag
 
@@ -72,7 +82,9 @@ example : (magic == [0x4C, 0x4E, 0x47, 0x52, 1]) = true := by native_decide
 /-- What `save` emits starts with exactly that. -/
 example :
     (let c : Ckpt := { vt := Vt.init 4 2, cwd := "", labels := [] }
-     (save c).take 5 == magic) = true := by native_decide
+     (save c).take 5 == magic) =
+      true := by
+  native_decide
 
 /-- Any other tag is refused — including the pre-rename `"LZMX"` (whose reader was
 removed in `e1ac562`'s successor; check that commit out if you ever need it), a future

@@ -1,4 +1,5 @@
 import Linger.Core.Name
+
 /-! # §Claim — mutual exclusion, relative to exactly one assumption
 
 Can an *advisory* lock give us a theorem? Yes, but only a conditional
@@ -57,13 +58,11 @@ def Act.mutates : Act → Bool
 
 /-- **Our obligation.** An agent that mutates the shared name appears in
 the trace holding the lock. -/
-def Guarded (t : Trace) : Prop :=
-  ∀ e ∈ t, e.2.mutates = true → (e.1, Act.lock) ∈ t
+def Guarded (t : Trace) : Prop := ∀ e ∈ t, e.2.mutates = true → (e.1, Act.lock) ∈ t
 
 /-- **The kernel's obligation** (the assumption; see the header). At most
 one agent ever completes a lock. -/
-def Exclusive (t : Trace) : Prop :=
-  ∀ i j, (i, Act.lock) ∈ t → (j, Act.lock) ∈ t → i = j
+def Exclusive (t : Trace) : Prop := ∀ i j, (i, Act.lock) ∈ t → (j, Act.lock) ∈ t → i = j
 
 /-- §Claim: at most one agent binds the socket — so a session name has
 at most one owner, and no daemon can be left holding a pty that nobody
@@ -83,8 +82,7 @@ theorem at_most_one_unlinker {t : Trace} (hg : Guarded t) (he : Exclusive t) :
 
 /-- And the owner is the lock holder, never a bystander. -/
 theorem owner_holds_lock {t : Trace} (hg : Guarded t) :
-    ∀ i, (i, Act.bind) ∈ t → (i, Act.lock) ∈ t :=
-  fun _ hi => hg _ hi rfl
+    ∀ i, (i, Act.bind) ∈ t → (i, Act.lock) ∈ t := fun _ hi => hg _ hi rfl
 
 /-! ## Our sequence satisfies the obligation
 
@@ -97,21 +95,22 @@ def ourClaim : List Act := [.lock, .probe, .unlinkStale, .bind]
 /-- One agent following `ourClaim` is `Guarded`. -/
 theorem ourClaim_guarded (a : Nat) : Guarded (ourClaim.map (fun act => (a, act))) := by
   intro e he hm
-  simp only [ourClaim, List.map_cons, List.map_nil, List.mem_cons,
-    List.not_mem_nil, or_false] at he ⊢
+  simp only [ourClaim, List.map_cons, List.map_nil, List.mem_cons, List.not_mem_nil,
+    or_false] at he ⊢
   left
-  rcases he with h | h | h | h <;> subst h <;> first | rfl | simp [Act.mutates] at hm
+  rcases he with h | h | h | h <;> subst h <;>
+    first
+    | rfl
+    | simp [Act.mutates] at hm
 
 /-- The lock comes *first*: no mutation is even attempted before it, so
 a failed lock cannot leave a half-claimed name behind. -/
 theorem ourClaim_lock_first :
-    (ourClaim.takeWhile (fun a => a.mutates == false)).contains Act.lock = true := by
-  decide
+    (ourClaim.takeWhile (fun a => a.mutates == false)).contains Act.lock = true := by decide
 
 /-- Nothing mutating precedes the lock. -/
 theorem ourClaim_no_early_mutation :
-    ((ourClaim.takeWhile (· != Act.lock)).all (fun a => a.mutates == false)) = true := by
-  decide
+    ((ourClaim.takeWhile (· != Act.lock)).all (fun a => a.mutates == false)) = true := by decide
 
 /-! ## What §Claim does not say
 

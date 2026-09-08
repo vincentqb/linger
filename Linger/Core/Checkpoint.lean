@@ -33,7 +33,8 @@ compiler cannot agree on the compiled representation of anything typed by it
 ("locally inferred compilation type differs…", a stated current limitation of
 `module`s). A type alias has no implementation to hide, so this costs
 nothing. -/
-@[expose] public def R (α : Type) : Type := List UInt8 → Option (α × List UInt8)
+@[expose]
+public def R (α : Type) : Type := List UInt8 → Option (α × List UInt8)
 
 /-! ## Primitive writers/readers -/
 
@@ -48,8 +49,7 @@ def rU8 : R UInt8 := fun l =>
 "more follows". Total in both directions and round-trips with no
 side conditions — no "fits in u32" caveat anywhere in the format. -/
 def wNat (n : Nat) : List UInt8 :=
-  if h : n < 128 then [UInt8.ofNat n]
-  else UInt8.ofNat (128 + n % 128) :: wNat (n / 128)
+  if h : n < 128 then [UInt8.ofNat n] else UInt8.ofNat (128 + n % 128) :: wNat (n / 128)
 decreasing_by exact Nat.div_lt_self (by omega) (by omega)
 
 def rNat : R Nat := fun l =>
@@ -73,11 +73,12 @@ def wChar (c : Char) : List UInt8 := wNat c.toNat
 
 def rChar : R Char := fun l => do
   let (n, rest) ← rNat l
-  if h : n.isValidChar then some (Char.ofNatAux n h, rest)
-  else none
+  if h : n.isValidChar then
+    some (Char.ofNatAux n h, rest)
+  else
+    none
 
-def wList {α : Type} (w : α → List UInt8) (l : List α) : List UInt8 :=
-  wNat l.length ++ l.flatMap w
+def wList {α : Type} (w : α → List UInt8) (l : List α) : List UInt8 := wNat l.length ++ l.flatMap w
 
 def rListAux {α : Type} (r : R α) : Nat → R (List α)
   | 0 => fun l => some ([], l)
@@ -96,9 +97,8 @@ def rStr : R String := fun l => do
   let (cs, rest) ← rList rChar l
   some (String.ofList cs, rest)
 
-def wPair {α β : Type} (wa : α → List UInt8) (wb : β → List UInt8)
-    (p : α × β) : List UInt8 :=
-  wa p.1 ++ wb p.2
+def wPair {α β : Type} (wa : α → List UInt8) (wb : β → List UInt8) (p : α × β) :
+    List UInt8 := wa p.1 ++ wb p.2
 
 def rPair {α β : Type} (ra : R α) (rb : R β) : R (α × β) := fun l => do
   let (a, rest) ← ra l
@@ -133,9 +133,11 @@ def rColor : R Color := fun l =>
   | _ => none
 
 def wPen (p : Pen) : List UInt8 :=
-  wColor p.fg ++ wColor p.bg ++
-  wBool p.bold ++ wBool p.dim ++ wBool p.italic ++ wBool p.underline ++
-  wBool p.blink ++ wBool p.reverse ++ wBool p.strike
+  wColor p.fg ++ wColor p.bg ++ wBool p.bold ++ wBool p.dim ++ wBool p.italic ++
+    wBool p.underline ++
+    wBool p.blink ++
+    wBool p.reverse ++
+    wBool p.strike
 
 def rPen : R Pen := fun l => do
   let (fg, l) ← rColor l
@@ -194,8 +196,7 @@ def rRow : R Row := fun l => do
   let (cs, l) ← rRLE rCell l
   some (cs.toArray, l)
 
-def wCursor (c : Cursor) : List UInt8 :=
-  wNat c.x ++ wNat c.y ++ wBool c.pending
+def wCursor (c : Cursor) : List UInt8 := wNat c.x ++ wNat c.y ++ wBool c.pending
 
 def rCursor : R Cursor := fun l => do
   let (x, l) ← rNat l
@@ -204,9 +205,12 @@ def rCursor : R Cursor := fun l => do
   some ({ x, y, pending }, l)
 
 def wModes (m : Modes) : List UInt8 :=
-  wBool m.wrap ++ wBool m.origin ++ wBool m.insert ++ wBool m.cursorVisible ++
-  wBool m.appCursor ++ wBool m.appKeypad ++ wBool m.bracketedPaste ++
-  wNat m.mouse ++ wBool m.mouseSgr ++ wBool m.focusEvents
+  wBool m.wrap ++ wBool m.origin ++ wBool m.insert ++ wBool m.cursorVisible ++ wBool m.appCursor ++
+    wBool m.appKeypad ++
+    wBool m.bracketedPaste ++
+    wNat m.mouse ++
+    wBool m.mouseSgr ++
+    wBool m.focusEvents
 
 def rModes : R Modes := fun l => do
   let (wrap, l) ← rBool l
@@ -219,8 +223,10 @@ def rModes : R Modes := fun l => do
   let (mouse, l) ← rNat l
   let (mouseSgr, l) ← rBool l
   let (focusEvents, l) ← rBool l
-  some ({ wrap, origin, insert, cursorVisible, appCursor, appKeypad,
-          bracketedPaste, mouse, mouseSgr, focusEvents }, l)
+  some
+      ({ wrap, origin, insert, cursorVisible, appCursor, appKeypad,
+          bracketedPaste, mouse, mouseSgr, focusEvents },
+        l)
 
 def wSaved (s : Saved) : List UInt8 := wCursor s.cur ++ wPen s.pen
 
@@ -242,11 +248,12 @@ def wAlt : Option (Array Row × Cursor × Pen) → List UInt8 :=
   wOpt (fun (g, c, p) => wList wRow g.toList ++ wCursor c ++ wPen p)
 
 def rAlt : R (Option (Array Row × Cursor × Pen)) :=
-  rOpt (fun l => do
-    let (rows, l) ← rList rRow l
-    let (c, l) ← rCursor l
-    let (p, l) ← rPen l
-    some ((rows.toArray, c, p), l))
+  rOpt
+    (fun l => do
+      let (rows, l) ← rList rRow l
+      let (c, l) ← rCursor l
+      let (p, l) ← rPen l
+      some ((rows.toArray, c, p), l))
 
 /-- The parser state is deliberately NOT persisted: a checkpoint lands
 between escape sequences almost surely, and resuming into `.ground`
@@ -254,17 +261,19 @@ loses at most one partial sequence from a torn write. What must
 survive is what the *user sees* plus what applications *depend on*
 (modes). -/
 def wVt (v : Vt) : List UInt8 :=
-  wNat v.cols ++ wNat v.rows ++
-  wList wRow v.grid.toList ++
-  wCursor v.cursor ++ wPen v.pen ++ wModes v.modes ++
-  wNat v.top ++ wNat v.bot ++
-  wList wBool v.tabs.toList ++
-  wRing v.sb ++
-  wAlt v.altGrid ++
-  wSaved v.saved ++
-  wStr v.title ++
-  wBool v.g0Line ++ wBool v.g1Line ++ wBool v.shiftOut ++
-  wBool v.bell
+  wNat v.cols ++ wNat v.rows ++ wList wRow v.grid.toList ++ wCursor v.cursor ++ wPen v.pen ++
+    wModes v.modes ++
+    wNat v.top ++
+    wNat v.bot ++
+    wList wBool v.tabs.toList ++
+    wRing v.sb ++
+    wAlt v.altGrid ++
+    wSaved v.saved ++
+    wStr v.title ++
+    wBool v.g0Line ++
+    wBool v.g1Line ++
+    wBool v.shiftOut ++
+    wBool v.bell
 
 def rVt : R Vt := fun l => do
   let (cols, l) ← rNat l
@@ -284,10 +293,11 @@ def rVt : R Vt := fun l => do
   let (g1Line, l) ← rBool l
   let (shiftOut, l) ← rBool l
   let (bell, l) ← rBool l
-  some ({ cols, rows, grid := grid.toArray, cursor, pen, modes, top, bot,
-          tabs := tabs.toArray, sb, altGrid, saved, title,
-          g0Line, g1Line, shiftOut, pstate := .ground, u8need := 0, u8acc := 0,
-          bell }, l)
+  some
+      ({ cols, rows, grid := grid.toArray, cursor, pen, modes, top, bot, tabs := tabs.toArray, sb,
+         altGrid, saved, title, g0Line, g1Line, shiftOut, pstate := .ground, u8need := 0,
+         u8acc := 0, bell },
+        l)
 
 /-! ## The checkpoint record -/
 
@@ -298,7 +308,7 @@ structure Ckpt where
   deriving Inhabited
 
 /-- On-disk magic: `"LNGR"` and the format version. What `save` writes. -/
-def magic : List UInt8 := [0x4C, 0x4E, 0x47, 0x52, 1]  -- "LNGR" v1
+def magic : List UInt8 := [0x4C, 0x4E, 0x47, 0x52, 1] -- "LNGR" v1
 
 def save (c : Ckpt) : List UInt8 :=
   magic ++ wVt c.vt ++ wStr c.cwd ++ wList (wPair wStr wStr) c.labels
@@ -319,6 +329,9 @@ def load (l : List UInt8) : Option Ckpt := do
   let (vt, rest) ← rVt rest
   let (cwd, rest) ← rStr rest
   let (labels, rest) ← rList (rPair rStr rStr) rest
-  if rest.isEmpty then some { vt, cwd, labels } else none
+  if rest.isEmpty then
+    some { vt, cwd, labels }
+  else
+    none
 
 end Linger.Core.Checkpoint

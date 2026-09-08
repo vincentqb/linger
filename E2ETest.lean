@@ -27,20 +27,14 @@ per-suite floor. An unknown name is an error, not a silent success — a typo in
 `tests/e2e.sh` must not look like a passing suite. -/
 
 def suites : List (String × IO UInt32) :=
-  [("watch",    E2E.Watch.run),
-   ("status",   E2E.Status.run),
-   ("overview", E2E.Overview.run),
-   ("graphics", E2E.Graphics.run),
-   ("agent",    E2E.Agent.run),
-   ("resume",   E2E.Resume.run),
-   ("attach",   E2E.Attach.run),
-   ("robust",   E2E.Robust.run),
-   ("remote",   E2E.Remote.run),
-   ("terminal", E2E.Terminal.run),
-   -- opt-in: needs a real reachable host, so NOT in tests/e2e.sh
-   ("remote-live", E2E.RemoteLive.run),
-   -- not a pty suite: the source-tree coverage ratchets (was tests/coverage.py)
-   ("coverage", E2E.Coverage.run)]
+  [("watch", E2E.Watch.run), ("status", E2E.Status.run), ("overview", E2E.Overview.run),
+    ("graphics", E2E.Graphics.run), ("agent", E2E.Agent.run), ("resume", E2E.Resume.run),
+    ("attach", E2E.Attach.run), ("robust", E2E.Robust.run), ("remote", E2E.Remote.run),
+    ("terminal", E2E.Terminal.run),
+    -- opt-in: needs a real reachable host, so NOT in tests/e2e.sh
+    ("remote-live", E2E.RemoteLive.run),
+    -- not a pty suite: the source-tree coverage ratchets (was tests/coverage.py)
+    ("coverage", E2E.Coverage.run)]
 
 def main (args : List String) : IO UInt32 := do
   Linger.Posix.init
@@ -50,10 +44,12 @@ def main (args : List String) : IO UInt32 := do
   -- be written to the session's OWN tty and read back from it — nothing on this
   -- side of the pty can do either. Four argv elements, so it can never collide
   -- with a one-element suite name.
-  | ["--probe", result, ready, trigger] => E2E.Terminal.probe result ready trigger
+  | ["--probe", result, ready, trigger] =>
+    E2E.Terminal.probe result ready trigger
   | [name] =>
     match suites.find? (·.1 == name) with
-    | some (_, run) => run
+    | some (_, run) =>
+      run
     | none =>
       IO.eprintln s!"e2e: unknown suite '{name}'"
       IO.eprintln s!"     known: {String.intercalate " " (suites.map (·.1))}"

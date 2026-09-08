@@ -43,8 +43,7 @@ def expect (cond : Bool) (name : String) : IO Nat := do
   return if cond then 0 else 1
 
 /-- Substring test — `String.splitOn` is what the repo already uses for this. -/
-def has (haystack needle : String) : Bool :=
-  (haystack.splitOn needle).length ≥ 2
+def has (haystack needle : String) : Bool := (haystack.splitOn needle).length ≥ 2
 
 /-- First index of `needle` in `hay`, walking the haystack once.
 
@@ -61,16 +60,16 @@ def findFrom (needle : List UInt8) (i : Nat) : List UInt8 → Option Nat
   | [] => if needle.isEmpty then some i else none
   | h :: t => if needle.isPrefixOf (h :: t) then some i else findFrom needle (i + 1) t
 
-def findBytes (hay : ByteArray) (needle : List UInt8) : Option Nat :=
-  findFrom needle 0 hay.toList
+def findBytes (hay : ByteArray) (needle : List UInt8) : Option Nat := findFrom needle 0 hay.toList
 
 /-- …and the same needle spelled as text. -/
-def findText (hay : ByteArray) (needle : String) : Option Nat :=
-  findBytes hay needle.toUTF8.toList
+def findText (hay : ByteArray) (needle : String) : Option Nat := findBytes hay needle.toUTF8.toList
 
 /-- A `find` result in a failure label: `-1` for absent, as the Python printed it. -/
-def idxStr (o : Option Nat) : String :=
-  match o with | some n => toString n | none => "-1"
+def idxStr (o : Option Nat) :
+    String := match o with
+  | some n => toString n
+  | none => "-1"
 
 /-- Does `hay` contain `needle` as a contiguous byte run?
 
@@ -78,8 +77,7 @@ The honest test for "the client wrote *this emitter's* output": a pty stream is
 bytes, not text, and comparing against `Linger.Core.Render.leaveAnsi` itself is
 what stops a suite hardcoding a copy of what the implementation emits — the copy
 is what goes stale when the emitter changes. -/
-def hasBytes (hay : ByteArray) (needle : List UInt8) : Bool :=
-  (findBytes hay needle).isSome
+def hasBytes (hay : ByteArray) (needle : List UInt8) : Bool := (findBytes hay needle).isSome
 
 /-- Does `hay` *begin* with `needle`? `leaveAnsi` leads with ST for a reason (a
 program that died mid-OSC would otherwise eat the rest of the hand-back), so
@@ -89,8 +87,7 @@ def startsWithBytes (hay : ByteArray) (needle : List UInt8) : Bool :=
 
 /-- A `String` needle against a pty's bytes, without spelling the needle twice.
 The byte-level form of `has`, for streams that also carry escape sequences. -/
-def hasText (hay : ByteArray) (needle : String) : Bool :=
-  hasBytes hay needle.toUTF8.toList
+def hasText (hay : ByteArray) (needle : String) : Bool := hasBytes hay needle.toUTF8.toList
 
 /-- One suite's world: where the binary is, and which `LINGER_DIR` it owns.
 
@@ -106,15 +103,15 @@ def Env.make (slug : String) : IO Env := do
   let bin := (cwd / ".lake" / "build" / "bin" / "linger").toString
   let pid ← getpid
   let envDir ← IO.getEnv "LINGER_TEST_DIR"
-  let dir : String := match envDir with
+  let dir : String :=
+    match envDir with
     | some d => d
     | none => s!"/tmp/linger-{slug}-{pid}"
   IO.FS.createDirAll (System.FilePath.mk dir)
   return { bin, dir }
 
 /-- `extraEnv` for `spawnPty`: the state dir plus a predictable shell. -/
-def Env.ptyEnv (e : Env) : Array String :=
-  #[s!"LINGER_DIR={e.dir}", "SHELL=/bin/sh"]
+def Env.ptyEnv (e : Env) : Array String := #[s!"LINGER_DIR={e.dir}", "SHELL=/bin/sh"]
 
 /-- …and the same for `IO.Process.output`, which wants pairs. -/
 def Env.procEnv (e : Env) : Array (String × Option String) :=
@@ -131,8 +128,8 @@ The size is set **before** exec by `spawnPty`, which is the bug the Python
 harness had: `pty.fork()` then `ioctl(TIOCSWINSZ)` races the child's own startup
 `winsizeGet`, and that race is invisible until a suite's subject IS the geometry a
 client reported (`E2E.Watch`). -/
-def Env.spawn (e : Env) (args : Array String)
-    (cols : UInt32 := 80) (rows : UInt32 := 24) : IO Client := do
+def Env.spawn (e : Env) (args : Array String) (cols : UInt32 := 80) (rows : UInt32 := 24) :
+    IO Client := do
   let (pid, fd) ← spawnPty cols rows "" e.bin args e.ptyEnv
   return { pid, fd }
 
@@ -140,12 +137,20 @@ def Env.spawn (e : Env) (args : Array String)
 partial def drain (fd : UInt32) (ms : UInt64) : IO ByteArray := do
   let deadline := (← monotonicMs) + ms
   let rec go (acc : ByteArray) : IO ByteArray := do
-    if (← monotonicMs) ≥ deadline then return acc
+    if (← monotonicMs) ≥ deadline then
+      return acc
     let revs ← poll #[fd] #[POLLIN] 100
-    if revs[0]! &&& (POLLIN ||| POLLHUP ||| POLLERR) == 0 then go acc
-    else match ← read fd 65536 with
-      | none => return acc
-      | some bs => if bs.isEmpty then return acc else go (acc ++ bs)
+    if revs[0]! &&& (POLLIN ||| POLLHUP ||| POLLERR) == 0 then
+      go acc
+    else
+      match ← read fd 65536 with
+      | none =>
+        return acc
+      | some bs =>
+        if bs.isEmpty then
+          return acc
+        else
+          go (acc ++ bs)
   go .empty
 
 /-- Drain and decode. Lossy on purpose: a pty carries escape sequences and a
@@ -163,8 +168,7 @@ def Client.detach (c : Client) : IO Unit := do
   let _ ← write c.fd detachKey 0
 
 /-- Resize a client's terminal, as dragging the window would. -/
-def Client.resize (c : Client) (cols rows : UInt32) : IO Unit :=
-  winsizeSet c.fd cols rows
+def Client.resize (c : Client) (cols rows : UInt32) : IO Unit := winsizeSet c.fd cols rows
 
 /-- Poll-wait for the child to be reaped, or give up.
 
@@ -175,17 +179,28 @@ def Client.reap (c : Client) (ms : UInt64 := 5000) : IO Int64 := do
   let deadline := (← monotonicMs) + ms
   let mut status : Int64 := -1
   while status == -1 && (← monotonicMs) < deadline do
-    status ← try waitpidNohang c.pid catch _ => pure 0
-    if status == -1 then IO.sleep 20
+    status ←
+      try
+        waitpidNohang c.pid
+      catch _ =>
+        pure 0
+    if status == -1 then
+      IO.sleep 20
   return status
 
 /-- Retire a client: detach (unless it is already gone), close, reap. Never
 raises — a suite's cleanup must not mask the failure that got it here. -/
 def Client.bye (c : Client) (sendDetach : Bool := true) : IO Unit := do
   if sendDetach then
-    try let _ ← write c.fd detachKey 0 catch _ => pure ()
+    try
+      let _ ← write c.fd detachKey 0
+    catch _ =>
+      pure ()
     IO.sleep 600
-  try Linger.Posix.close c.fd catch _ => pure ()
+  try
+    Linger.Posix.close c.fd
+  catch _ =>
+    pure ()
   let _ ← c.reap
   pure ()
 
@@ -210,8 +225,8 @@ environment, so `extra` last is an override and `("K", none)` removes a variable
 outright. Both are load-bearing for a suite whose SUBJECT is the environment:
 `E2E.Terminal` needs `TERM` inherited as one value, as another, and then absent
 entirely, and `E2E.Remote` needs a `PATH` whose first entry holds a fake `ssh`. -/
-def Env.cliEnv (e : Env) (extra : Array (String × Option String))
-    (args : Array String) : IO (UInt32 × String × String) := do
+def Env.cliEnv (e : Env) (extra : Array (String × Option String)) (args : Array String) :
+    IO (UInt32 × String × String) := do
   let out ← IO.Process.output { cmd := e.bin, args, env := e.procEnv ++ extra }
   return (out.exitCode, out.stdout, out.stderr)
 
@@ -219,8 +234,8 @@ def Env.cliEnv (e : Env) (extra : Array (String × Option String))
 pty-side twin of `cliEnv`. `spawnPty`'s `extraEnv` is putenv-on-top-of-inherited
 in the forked child, so the override rule is the same; `Array String` because that
 is the shim's shape. The size still goes in before exec. -/
-def Env.spawnEnv (e : Env) (extra : Array String) (args : Array String)
-    (cols : UInt32 := 80) (rows : UInt32 := 24) : IO Client := do
+def Env.spawnEnv (e : Env) (extra : Array String) (args : Array String) (cols : UInt32 := 80)
+    (rows : UInt32 := 24) : IO Client := do
   let (pid, fd) ← spawnPty cols rows "" e.bin args (e.ptyEnv ++ extra)
   return { pid, fd }
 
@@ -235,17 +250,20 @@ of failing it, which is the difference between a test and a liability.
 
 Deliberately a piped spawn, not a pty one: the picker was tty-gated, so putting
 the verb on a tty would change the premise being tested. -/
-def Env.cliTimeout (e : Env) (args : Array String) (ms : UInt64)
-    : IO (Option (UInt32 × String × String)) := do
-  let child ← IO.Process.spawn { cmd := e.bin, args, env := e.procEnv,
-                                 stdin := .null, stdout := .piped, stderr := .piped }
+def Env.cliTimeout (e : Env) (args : Array String) (ms : UInt64) :
+    IO (Option (UInt32 × String × String)) := do
+  let child ←
+    IO.Process.spawn
+        { cmd := e.bin, args, env := e.procEnv, stdin := .null, stdout := .piped, stderr := .piped }
   let deadline := (← monotonicMs) + ms
   let mut code : Option UInt32 := none
   while code.isNone && (← monotonicMs) < deadline do
     code ← child.tryWait
-    if code.isNone then IO.sleep 50
+    if code.isNone then
+      IO.sleep 50
   match code with
-  | none => return none          -- still running: the caller reports it as a fail
+  | none =>
+    return none -- still running: the caller reports it as a fail
   | some c =>
     let out ← child.stdout.readToEnd
     let err ← child.stderr.readToEnd
@@ -269,8 +287,8 @@ decides one. Was `ckptNames` in one suite and `dirNames` in another — same bod
 of them hardcoding the extension. -/
 def Env.dirNames (e : Env) (ext : String) : IO (List String) := do
   let entries ← System.FilePath.readDir (System.FilePath.mk e.dir)
-  let names := entries.toList.filterMap fun de =>
-    if de.fileName.endsWith ext then some de.fileName else none
+  let names :=
+    entries.toList.filterMap fun de => if de.fileName.endsWith ext then some de.fileName else none
   return names.toArray.qsort (· < ·) |>.toList
 
 /-- Parse `k<TAB>v` lines into an association list — the shape both
@@ -292,8 +310,10 @@ def Env.field (e : Env) (name field : String) : IO (Option String) := do
   let mut cur : Option String := none
   let mut found : Option String := none
   for (k, v) in records (← e.out #["ls", "--porcelain"]) do
-    if k == "name" then cur := some v
-    else if cur == some name && k == field && found.isNone then found := some v
+    if k == "name" then
+      cur := some v
+    else if cur == some name && k == field && found.isNone then
+      found := some v
   return found
 
 /-- A session's status column, as the `Status` type rather than as a string
@@ -325,11 +345,12 @@ reached for lsof: same command on both platforms, so this adds no split back.
 so a daemon's cwd is whatever directory its spawning client was in. -/
 def Env.daemonPid (e : Env) (name : String) : IO (Option UInt32) := do
   match (← e.info name "pid").bind (·.toNat?) with
-  | none => return none
+  | none =>
+    return none
   | some child =>
-    let out ← IO.Process.output
-      { cmd := "ps", args := #["-o", "ppid=", "-p", toString child] }
-    if out.exitCode != 0 then return none
+    let out ← IO.Process.output { cmd := "ps", args := #["-o", "ppid=", "-p", toString child] }
+    if out.exitCode != 0 then
+      return none
     return (out.stdout.trimAscii.toString.toNat?).map UInt32.ofNat
 
 /-- SIGKILL the daemon behind `name` and unlink its socket: the simulated crash a
@@ -344,12 +365,17 @@ SIGKILLed daemon cannot unlink its own socket, so leaving the file behind hides 
 session from the very listing under test. -/
 def Env.crashDaemon (e : Env) (name : String) : IO Bool := do
   match ← e.daemonPid name with
-  | none => return false
+  | none =>
+    return false
   | some dpid =>
-    if !(← alive dpid) then return false
-    kill dpid 9   -- SIGKILL: no cleanup, no checkpoint drop — a crash, not an exit
+    if !(← alive dpid) then
+      return false
+    kill dpid 9 -- SIGKILL: no cleanup, no checkpoint drop — a crash, not an exit
     IO.sleep 300
-    try IO.FS.removeFile (System.FilePath.mk s!"{e.dir}/{name}.sock") catch _ => pure ()
+    try
+      IO.FS.removeFile (System.FilePath.mk s!"{e.dir}/{name}.sock")
+    catch _ =>
+      pure ()
     -- the daemon is double-forked (init's child, not ours), so a SIGKILLed one is
     -- reaped by init and `kill(pid, 0)` genuinely goes ESRCH — no zombie to make
     -- `alive` lie the way it would for one of our own unreaped children

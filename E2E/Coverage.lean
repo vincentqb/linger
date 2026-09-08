@@ -54,8 +54,19 @@ claim lands, so it does. 19 → 16 on 2026-08-29 (pin-the-gaps item 4): the widt
 tables `isWide`/`isZeroWidth` were named nowhere in the repo, and the per-clause
 edge pins in `Theorems/Vt.lean` claim both. The cap is the measured count with ZERO
 headroom — it had one free slot before, which is a slot a new unclaimed def can
-occupy silently, and every other ratchet in `tests/e2e.sh` is exact. -/
-def statementCap : Nat := 16
+occupy silently, and every other ratchet in `tests/e2e.sh` is exact.
+
+16 → 15 on 2026-08-29, and this one was a GATE BUG being fixed rather than surface
+being claimed: `dropModifiers` stripped only `@[expose] ` by name, so an
+`@[simp] theorem …` line did not start with `theorem` and the whole declaration was
+skipped. `writeU32` had two genuine claims that were invisible the whole time.
+`lean-fmt` moved every attribute onto its own line and the count fell by itself, which
+is how the blind spot was noticed at all; the scanner now strips any `@[…]`, so the
+number no longer depends on where a formatter happens to put an attribute.
+Break-verified both ways — 15 with the attributes inline and 15 with them on their own
+line, where the old scanner said 16. -/
+
+def statementCap : Nat := 15
 
 /-- Every byte stream the runtime emits, and what backs it. A `theorem` entry must
 also appear in a theorem statement (checked below); a `limitation` entry must carry
@@ -65,26 +76,31 @@ inductive Backing where
   | limitation (why : String)
 
 def emitters : List (String × Backing) :=
-  [("restore", .theorem
-      "restore_grounds / restore_u8_zero / restore_modes_any / restore_pen_any / \
+  [("restore",
+      .theorem
+        "restore_grounds / restore_u8_zero / restore_modes_any / restore_pen_any / \
        restore_sticky_any / restore_cursor_any / restore_grid_any / restore_tabs_any \
        — receiver-quantified for the parser, the decoder, the screen cells, the tab \
        ruler and every restored field but the title and the DECSC slot"),
-   ("leaveAnsi", .theorem
-      "leave_canonical / leave_canonical_all — parser, modes, region, charsets, \
+    ("leaveAnsi",
+      .theorem
+        "leave_canonical / leave_canonical_all — parser, modes, region, charsets, \
        screen and pen, for any receiver"),
-   ("utf8s", .theorem
-      "utf8s_no_ctl / utf8s_no_esc / utf8s_no_esc_bel / Session.utf8s_no_frame — \
+    ("utf8s",
+      .theorem
+        "utf8s_no_ctl / utf8s_no_esc / utf8s_no_esc_bel / Session.utf8s_no_frame — \
        every emitted byte is >= 0x20 and not DEL, so no scrubbed text can carry an \
        escape, a BEL, or a tab/newline framing byte. Reached from outside Render by \
        Session.infoText, which frames listing records with it"),
-   ("history", .theorem
-      "history_framing / history_lines / history_records — every byte is a line \
+    ("history",
+      .theorem
+        "history_framing / history_lines / history_records — every byte is a line \
        terminator or printable content, the newline count is the row count, and \
        linesLF splits the stream into exactly the rows' texts in order, so a cell \
        cannot forge a line however the session's program filled the grid"),
-   ("screenText", .theorem
-      "screenText_framing / screenText_lines / screenText_records — the capture \
+    ("screenText",
+      .theorem
+        "screenText_framing / screenText_lines / screenText_records — the capture \
        stream (`linger capture`): newline count = grid row count, and the parse \
        contract (line k IS rowText of row k), with history_screenText_suffix tying \
        it byte-for-byte to the transcript's tail. Grid-only")]
@@ -96,8 +112,7 @@ what the Python's corresponding pattern did, deliberately including the places t
 pattern was loose (non-nested block comments), so the numbers cannot shift. -/
 
 /-- Is `c` part of an identifier? The word boundary both checks rely on. -/
-def identChar (c : Char) : Bool :=
-  c.isAlphanum || c == '_' || c == '\''
+def identChar (c : Char) : Bool := c.isAlphanum || c == '_' || c == '\''
 
 /-- Does `needle` occur in `hay` bounded by non-identifier characters?
 
@@ -110,13 +125,21 @@ def hasWord (hay needle : String) : Bool :=
   let rec go (pre : Option Char) (rest : List Char) : Bool :=
     if rest.take len == n then
       let after := (rest.drop len).head?
-      let okBefore := match pre with | none => true | some c => !identChar c
-      let okAfter := match after with | none => true | some c => !identChar c
+      let okBefore :=
+        match pre with
+        | none => true
+        | some c => !identChar c
+      let okAfter :=
+        match after with
+        | none => true
+        | some c => !identChar c
       if okBefore && okAfter then true
-      else match rest with
+      else
+        match rest with
         | [] => false
         | c :: t => go (some c) t
-    else match rest with
+    else
+      match rest with
       | [] => false
       | c :: t => go (some c) t
   len > 0 && go none h
@@ -167,10 +190,14 @@ partial def leanFiles (root : System.FilePath) : IO (Array System.FilePath) := d
 
 /-- Strip a leading `@[expose] `, `private ` or `public ` from a declaration line. -/
 def dropModifiers (line : String) : String :=
-  let l := if line.startsWith "@[expose] " then (line.drop 10).toString else line
+  let l :=
+    if line.startsWith "@[" then
+      match (line.splitOn "]").tail? with
+      | some (rest :: _) => rest.trimAsciiStart.toString
+      | _ => line
+    else line
   if l.startsWith "private " then (l.drop 8).toString
-  else if l.startsWith "public " then (l.drop 7).toString
-  else l
+  else if l.startsWith "public " then (l.drop 7).toString else l
 
 /-- The name a declaration line declares, namespace stripped to its last component
 (what the Python did with sed).
@@ -180,8 +207,9 @@ alone stops at the namespace separator, so `def Vt.feedBytes` reads as `Vt` — 
 collapsed 259 defs to 193 and made the ratchet measure LESS. Caught by diffing this
 gate against the Python one before deleting it. -/
 def declName (afterKeyword : String) : String :=
-  let tok := ((afterKeyword.dropWhile (· == ' ')).toString.takeWhile
-    (fun c => identChar c || c == '.')).toString
+  let tok :=
+    ((afterKeyword.dropWhile (· == ' ')).toString.takeWhile
+        (fun c => identChar c || c == '.')).toString
   (tok.splitOn ".").getLast!
 
 /-- Names of the pure core's definitions — the census the ratchet is over.
@@ -197,7 +225,8 @@ def coreDefs : IO (Array String) := do
       let l := dropModifiers line
       if l.startsWith "def " then
         let n := declName (l.drop 4).toString
-        if !n.isEmpty && !names.contains n then names := names.push n
+        if !n.isEmpty && !names.contains n then
+          names := names.push n
   return names.qsort (· < ·)
 
 /-- The text of every theorem statement in `Theorems/`, concatenated.
@@ -213,7 +242,8 @@ def theoremStatements : IO String := do
     for line in lines do
       let l := dropModifiers line
       let starting := l.startsWith "theorem "
-      if starting then capturing := true
+      if starting then
+        capturing := true
       else if capturing && !(line.startsWith " " || line.startsWith "\t") then
         capturing := false
       if capturing then
@@ -222,13 +252,15 @@ def theoremStatements : IO String := do
         let cutAt (hay sep : String) : Option Nat :=
           let hs := hay.splitOn sep
           if hs.length ≥ 2 then some hs[0]!.length else none
-        let cuts := [cutAt piece ":=", cutAt piece " by ",
-                     if piece.endsWith " by" then some (piece.length - 3) else none]
+        let cuts :=
+          [cutAt piece ":=", cutAt piece " by ",
+            if piece.endsWith " by" then some (piece.length - 3) else none]
         match (cuts.filterMap id).min? with
         | some k =>
           out := out ++ " " ++ (piece.take k).toString
           capturing := false
-        | none => out := out ++ " " ++ piece
+        | none =>
+          out := out ++ " " ++ piece
   return out
 
 /-- `Render.<f>` referenced anywhere the runtime can reach, i.e. outside the module
@@ -241,11 +273,13 @@ def runtimeEmitters : IO (Array String) := do
   for f in files do
     if f.fileName == some "Render.lean" && f.parent.map (·.fileName) == some (some "Core") then
       continue
-    if !(← f.pathExists) then continue
+    if !(← f.pathExists) then
+      continue
     let src := stripComments (← IO.FS.readFile f)
     for chunk in (src.splitOn "Render.").tail! do
       let n := (chunk.takeWhile identChar).toString
-      if !n.isEmpty && !refs.contains n then refs := refs.push n
+      if !n.isEmpty && !refs.contains n then
+        refs := refs.push n
   -- A *stream* is a def whose result type is `Bytes` or `String`; `safeChar` and
   -- friends are helpers inside the construction, not something anyone writes out.
   let renderSrc := stripComments (← IO.FS.readFile (System.FilePath.mk "Linger/Core/Render.lean"))
@@ -254,45 +288,53 @@ def runtimeEmitters : IO (Array String) := do
     let l := dropModifiers line
     if l.startsWith "def " && (has l ": Bytes" || has l ": String") then
       let n := declName (l.drop 4).toString
-      if !n.isEmpty then streams := streams.push n
+      if !n.isEmpty then
+        streams := streams.push n
   return (refs.filter (streams.contains ·)).qsort (· < ·)
 
 def run : IO UInt32 := do
   let mut fails : Array String := #[]
-
   -- Check 1 — statement-level claim ratchet
   let defs ← coreDefs
   let blob ← theoremStatements
   let unclaimed := defs.filter (fun d => !hasWord blob d)
-  IO.println s!"core defs {defs.size}; named by no theorem STATEMENT: \
+  IO.println
+      s!"core defs {defs.size}; named by no theorem STATEMENT: \
     {unclaimed.size} (cap {statementCap})"
   IO.println ("  " ++ String.intercalate " " unclaimed.toList)
   if unclaimed.size > statementCap then
-    fails := fails.push s!"unclaimed core surface grew to {unclaimed.size} \
+    fails :=
+      fails.push
+        s!"unclaimed core surface grew to {unclaimed.size} \
       (cap {statementCap}); add a claim or bump the cap deliberately"
-
   -- Check 2 — every runtime-emitted byte stream is classified
   let found ← runtimeEmitters
   IO.println s!"runtime-emitted byte streams: {String.intercalate " " found.toList}"
   for name in found do
     match (emitters.find? (·.1 == name)).map (·.2) with
     | none =>
-      fails := fails.push s!"the runtime emits `Render.{name}` and it is in neither \
+      fails :=
+        fails.push
+          s!"the runtime emits `Render.{name}` and it is in neither \
         the theorem list nor the limitation list of E2E/Coverage.lean — classify it \
         (that unclassified state is what let the hand-back ship)"
     | some (.theorem why) =>
       if !hasWord blob name then
-        fails := fails.push s!"`Render.{name}` is listed as theorem-backed but \
+        fails :=
+          fails.push
+            s!"`Render.{name}` is listed as theorem-backed but \
           appears in no theorem statement"
-      else IO.println s!"  {name}: proved — {(why.take 60).toString}…"
+      else
+        IO.println s!"  {name}: proved — {(why.take 60).toString}…"
     | some (.limitation why) =>
       IO.println s!"  {name}: bounded — {(why.take 60).toString}…"
   for (name, _) in emitters do
     if !found.contains name then
-      fails := fails.push s!"E2E/Coverage.lean classifies `Render.{name}` but the \
+      fails :=
+        fails.push
+          s!"E2E/Coverage.lean classifies `Render.{name}` but the \
         runtime no longer emits it — delete the entry so the list stays a \
         description of the code"
-
   for msg in fails do
     IO.eprintln s!"COVERAGE FAIL: {msg}"
   IO.println s!"FAILURES: {fails.size}"

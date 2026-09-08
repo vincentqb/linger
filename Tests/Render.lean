@@ -1,4 +1,5 @@
 import Linger.Core.Render
+
 /-! # §Replay round-trip tests — restore fidelity, executable form
 
 The target theorem (specs/grid-fidelity.md):
@@ -34,25 +35,28 @@ receiver with a no-history session therefore makes this `false` **by
 design**; that combination is asserted separately, as non-interference,
 below. -/
 def replayEq (r v : Vt) : Bool :=
-  r.cols == v.cols && r.rows == v.rows
-  && r.grid == v.grid
-  && r.cursor.x == v.cursor.x && r.cursor.y == v.cursor.y
-  && r.pen == v.pen
-  && r.top == v.top && r.bot == v.bot
-  && r.modes == v.modes
-  && r.title == v.title
-  && r.tabs == v.tabs
-  && r.g0Line == v.g0Line && r.g1Line == v.g1Line && r.shiftOut == v.shiftOut
-  && r.saved.cur.x == v.saved.cur.x && r.saved.cur.y == v.saved.cur.y
-  && r.saved.pen == v.saved.pen
-  && (match r.altGrid, v.altGrid with
-      | none, none => true
-      | some (g1, c1, p1), some (g2, c2, p2) =>
-        g1 == g2 && c1.x == c2.x && c1.y == c2.y && p1 == p2
-      | _, _ => false)
-  && r.pstate == PState.ground && v.pstate == PState.ground
-  && r.u8need == 0
-  && r.sb.toList == (sbRows v).toList
+  r.cols == v.cols && r.rows == v.rows && r.grid == v.grid && r.cursor.x == v.cursor.x &&
+    r.cursor.y == v.cursor.y &&
+    r.pen == v.pen &&
+    r.top == v.top &&
+    r.bot == v.bot &&
+    r.modes == v.modes &&
+    r.title == v.title &&
+    r.tabs == v.tabs &&
+    r.g0Line == v.g0Line &&
+    r.g1Line == v.g1Line &&
+    r.shiftOut == v.shiftOut &&
+    r.saved.cur.x == v.saved.cur.x &&
+    r.saved.cur.y == v.saved.cur.y &&
+    r.saved.pen == v.saved.pen &&
+    (match r.altGrid, v.altGrid with
+    | none, none => true
+    | some (g1, c1, p1), some (g2, c2, p2) => g1 == g2 && c1.x == c2.x && c1.y == c2.y && p1 == p2
+    | _, _ => false) &&
+    r.pstate == PState.ground &&
+    v.pstate == PState.ground &&
+    r.u8need == 0 &&
+    r.sb.toList == (sbRows v).toList
 
 def feedStr (v : Vt) (s : String) : Vt := v.feedBytes s.toUTF8
 
@@ -69,28 +73,24 @@ def screen (cols rows : Nat) (s : String) : Vt := feedStr (Vt.init cols rows) s
 def roundtrips (v : Vt) : Bool := replayEq ((Vt.init v.cols v.rows).feed (restore v)) v
 
 /-- Text, 16-color SGR, attributes, cursor parked mid-screen. -/
-example : roundtrips (screen 20 5
-    "\x1b[31;1mred bold\x1b[0m\r\nplain \x1b[4munder\x1b[24m\x1b[2;3H")
-    = true := by native_decide
+example :
+    roundtrips (screen 20 5 "\x1b[31;1mred bold\x1b[0m\r\nplain \x1b[4munder\x1b[24m\x1b[2;3H") =
+      true := by
+  native_decide
 
 /-- 256-color and RGB pens. -/
-example : roundtrips (screen 12 3
-    "\x1b[38;5;196mX\x1b[48;2;10;20;30mY")
-    = true := by native_decide
+example : roundtrips (screen 12 3 "\x1b[38;5;196mX\x1b[48;2;10;20;30mY") = true := by native_decide
 
 /-- Erased-with-background cells (BCE): a full-screen app's canvas. -/
-example : roundtrips (screen 10 4 "\x1b[44m\x1b[2J\x1b[1;1Hx")
-    = true := by native_decide
+example : roundtrips (screen 10 4 "\x1b[44m\x1b[2J\x1b[1;1Hx") = true := by native_decide
 
 /-- Scroll region set and content scrolled inside it; region must
 survive the trip. -/
-example : roundtrips (screen 10 6
-    "\x1b[2;4r\x1b[2;1Haaa\r\nbbb\r\nccc\r\nddd")
-    = true := by native_decide
+example : roundtrips (screen 10 6 "\x1b[2;4r\x1b[2;1Haaa\r\nbbb\r\nccc\r\nddd") = true := by
+  native_decide
 
 /-- Wide chars, and a combining mark on a narrow char. -/
-example : roundtrips (screen 12 3 "漢字e\u0301x")
-    = true := by native_decide
+example : roundtrips (screen 12 3 "漢字e\u0301x") = true := by native_decide
 
 /-- A combining mark on a WIDE char. It is stored on the **base**, never on
 the width-0 continuation cell: a shadow is a blank column that a repaint
@@ -99,18 +99,16 @@ there never appeared in `linger history`), and at the right margin only an
 armed wrap-pending flag could address it — which no absolute cursor move
 reproduces. `Vt.print` redirects there, so the emitter has one case instead of
 a documented inexpressible one. -/
-example : roundtrips (screen 12 3 "漢\u0301x")
-    = true := by native_decide
+example : roundtrips (screen 12 3 "漢\u0301x") = true := by native_decide
 
 /-- Spec fix 2: charset state — G0 designated line-drawing (glyphs land
 translated), G1 designated + SO active at detach time. -/
-example : roundtrips (screen 12 3 "\x1b(0lqk\x1b(B ab\x1b)0\x0e")
-    = true := by native_decide
+example : roundtrips (screen 12 3 "\x1b(0lqk\x1b(B ab\x1b)0\x0e") = true := by native_decide
 
 /-- Spec fix 3: DECSC-saved cursor + pen must survive, or DECRC after
 reattach jumps to 0,0 with the wrong pen. -/
-example : roundtrips (screen 12 5 "\x1b[36m\x1b[3;7H\x1b7\x1b[0m\x1b[1;1Hz")
-    = true := by native_decide
+example : roundtrips (screen 12 5 "\x1b[36m\x1b[3;7H\x1b7\x1b[0m\x1b[1;1Hz") = true := by
+  native_decide
 
 /-- Spec fix 8 — the **parameter cap**. Seven attributes plus truecolour
 foreground *and* background, set by three separate SGRs the way a real
@@ -119,16 +117,16 @@ parameters, the parser sets `ignore` on the 17th and drops the lot: the
 pen came back entirely default, every attribute and both colours lost.
 Found by proving §Replay rather than by testing; `penSgr` now emits at
 most 8 parameters per sequence. -/
-example : roundtrips (screen 10 3
-    "\x1b[1;2;3;4;5;7;9m\x1b[38;2;10;20;30m\x1b[48;2;40;50;60mX")
-    = true := by native_decide
+example :
+    roundtrips (screen 10 3 "\x1b[1;2;3;4;5;7;9m\x1b[38;2;10;20;30m\x1b[48;2;40;50;60mX") =
+      true := by
+  native_decide
 
 /-- The same cap, one rung down: 256-colour fg and bg (3 parameters each)
 alongside every attribute — 14 combined, just under the cap, so this one
 passed even before the fix. Kept as the boundary case. -/
-example : roundtrips (screen 10 3
-    "\x1b[1;2;3;4;5;7;9m\x1b[38;5;123m\x1b[48;5;200mY")
-    = true := by native_decide
+example : roundtrips (screen 10 3 "\x1b[1;2;3;4;5;7;9m\x1b[38;5;123m\x1b[48;5;200mY") = true := by
+  native_decide
 
 /-- Spec fix 8 — a combining mark on a **wide** cell's own position, not on
 its shadow. Reachable: print 漢 (cursor lands past the shadow), step back
@@ -156,8 +154,8 @@ example : roundtrips (screen 6 3 "\u6f22\u0301\u6f22\u0301") = true := by native
 
 /-- …and with a line-insert after it, which is how the fuzzer first showed the
 drift: the spurious wrap moved every row down by one. -/
-example : roundtrips (screen 6 3 "\x1b[?2004h\u6f22\u0301\u6f22\u0301\x1b[L")
-    = true := by native_decide
+example : roundtrips (screen 6 3 "\x1b[?2004h\u6f22\u0301\u6f22\u0301\x1b[L") = true := by
+  native_decide
 
 /-- A **narrow glyph printed over a wide base** orphans that base's shadow: a
 width-0 cell with no base to its left, which `rowAnsi` paints as nothing while
@@ -204,8 +202,7 @@ held the control codepoint, so the substitution happens on store instead
 a Lean `"\xc0"` literal is a character, which `toUTF8` re-encodes. -/
 example : roundtrips (screen 6 2 "a\x7fb") = true := by native_decide
 
-example : roundtrips ((Vt.init 6 2).feed [0x61, 0xC0, 0x80, 0x62]) = true := by
-  native_decide
+example : roundtrips ((Vt.init 6 2).feed [0x61, 0xC0, 0x80, 0x62]) = true := by native_decide
 
 /-- Resize truncating a row through the middle of a wide pair. -/
 example : roundtrips ((screen 6 2 "ab\u6f22cd").resize 4 2) = true := by native_decide
@@ -223,36 +220,39 @@ example : roundtrips (screen 1 1 "\x1b[7m\x1b[?1049h") = true := by native_decid
 
 /-- The same, with the leak visible across a row boundary and healing at the
 first non-default cell — the shape that made it hard to notice. -/
-example : roundtrips (screen 6 3 "\x1b[41mm\x1b[?1049h\x1b[0mA\x1b[32mB") = true := by
-  native_decide
+example : roundtrips (screen 6 3 "\x1b[41mm\x1b[?1049h\x1b[0mA\x1b[32mB") = true := by native_decide
 
 /-- A heavy pen at the switch over a blank alt screen: before the fix every
 cell replayed bold+dim+italic+underline+blink+reverse+strike in truecolour. -/
-example : roundtrips
-    (screen 8 3 "\x1b[1;2;3;4;5;7;9m\x1b[38;2;10;20;30m\x1b[48;2;40;50;60mm\x1b[?1049h")
-    = true := by native_decide
+example :
+    roundtrips
+        (screen 8 3 "\x1b[1;2;3;4;5;7;9m\x1b[38;2;10;20;30m\x1b[48;2;40;50;60mm\x1b[?1049h") =
+      true := by
+  native_decide
 
 /-- Spec fixes 4+5: DECOM origin mode (with a region) and IRM insert
 mode; the final cursor address is region-relative under DECOM. -/
-example : roundtrips (screen 10 6 "\x1b[2;4r\x1b[?6h\x1b[4h\x1b[2;2H")
-    = true := by native_decide
+example : roundtrips (screen 10 6 "\x1b[2;4r\x1b[?6h\x1b[4h\x1b[2;2H") = true := by native_decide
 
 /-- Replayable modes: bracketed paste, mouse+SGR, app cursor, hidden
 cursor, wrap off, focus events, app keypad. -/
-example : roundtrips (screen 10 3
-    "\x1b[?2004h\x1b[?1002h\x1b[?1006h\x1b[?1h\x1b[?25l\x1b[?7l\x1b[?1004h\x1b=")
-    = true := by native_decide
+example :
+    roundtrips
+        (screen 10 3 "\x1b[?2004h\x1b[?1002h\x1b[?1006h\x1b[?1h\x1b[?25l\x1b[?7l\x1b[?1004h\x1b=") =
+      true := by
+  native_decide
 
 /-- Spec fix 6: custom tab stops (TBC 3 then HTS at columns 6 and 10). -/
-example : roundtrips (screen 20 3 "\x1b[3g\x1b[1;6H\x1bH\x1b[1;10H\x1bH\x1b[1;1H")
-    = true := by native_decide
+example : roundtrips (screen 20 3 "\x1b[3g\x1b[1;6H\x1bH\x1b[1;10H\x1bH\x1b[1;1H") = true := by
+  native_decide
 
 /-- Spec fix 7: alt screen — the stashed main cursor/pen (what ?1049l
 will restore) and the `saved` slot must both survive; paint-then-switch
 alone stashes wherever the main repaint happened to end. -/
-example : roundtrips (screen 12 6
-    "main1\r\nmain2\x1b[35m\x1b[5;3H\x1b[?1049h\x1b[33malt\x1b[3;2H")
-    = true := by native_decide
+example :
+    roundtrips (screen 12 6 "main1\r\nmain2\x1b[35m\x1b[5;3H\x1b[?1049h\x1b[33malt\x1b[3;2H") =
+      true := by
+  native_decide
 
 /-- A **decoded checkpoint** can carry a mouse mode the emulator would never
 store: `Checkpoint.load` reads that field as an arbitrary `Nat` and is total on
@@ -263,28 +263,34 @@ screen in the middle of a restore, corrupting the very screen being restored.
 Asserted on the **grid**, not `replayEq`: the allowlist deliberately does *not*
 replay a mode the emulator cannot hold, so `modes` is expected to differ. What
 must survive is the screen, and that no alt switch happened. -/
-example : (let v := { screen 6 2 "ab" with
-             modes := { (screen 6 2 "ab").modes with mouse := 1049 } }
+example :
+          (let v := { screen 6 2 "ab" with modes := { (screen 6 2 "ab").modes with mouse := 1049 } }
            let w := (Vt.init v.cols v.rows).feed (restore v)
-           w.grid == v.grid && w.altGrid.isNone) = true := by native_decide
+           w.grid == v.grid && w.altGrid.isNone) =
+      true := by
+  native_decide
 
-example : (let v := { screen 6 2 "ab" with
-             modes := { (screen 6 2 "ab").modes with mouse := 47 } }
+example :
+          (let v := { screen 6 2 "ab" with modes := { (screen 6 2 "ab").modes with mouse := 47 } }
            let w := (Vt.init v.cols v.rows).feed (restore v)
-           w.grid == v.grid && w.altGrid.isNone) = true := by native_decide
+           w.grid == v.grid && w.altGrid.isNone) =
+      true := by
+  native_decide
 
 /-- …and a legitimate mouse mode still round-trips in full. -/
 example : roundtrips (screen 6 2 "\x1b[?1002h\x1b[?1006hab") = true := by native_decide
 
 /-- Title (OSC 2). -/
-example : roundtrips (screen 10 3 "\x1b]2;my title\x07hey")
-    = true := by native_decide
+example : roundtrips (screen 10 3 "\x1b]2;my title\x07hey") = true := by native_decide
 
 /-- Kitchen sink: region + modes + colors + wide + title + saved. -/
-example : roundtrips (screen 24 8
-    ("\x1b]0;sink\x07\x1b[2;7r\x1b[36m\x1b[3;7H\x1b7\x1b[38;5;40mok 漢字\r\n" ++
-     "\x1b[?2004h\x1b[44mBCE\x1b[K\x1b[4;2H"))
-    = true := by native_decide
+example :
+    roundtrips
+        (screen 24 8
+          ("\x1b]0;sink\x07\x1b[2;7r\x1b[36m\x1b[3;7H\x1b7\x1b[38;5;40mok 漢字\r\n" ++
+            "\x1b[?2004h\x1b[44mBCE\x1b[K\x1b[4;2H")) =
+      true := by
+  native_decide
 
 /-! ## Restoring into a client that is **not** pristine
 
@@ -311,17 +317,23 @@ def roundtripsFrom (start v : Vt) : Bool := replayEq (start.feed (restore v)) v
 
 example : roundtripsFrom (dirty 6 3) (screen 6 3 "hi") = true := by native_decide
 
-example : roundtripsFrom (dirty 8 4) (screen 8 4 "\x1b[31mab\r\ncd") = true := by
-  native_decide
+example : roundtripsFrom (dirty 8 4) (screen 8 4 "\x1b[31mab\r\ncd") = true := by native_decide
 
 /-- The dirty client's own modes must not survive: this is the leak itself. -/
-example : ((dirty 6 3).modes.insert && (dirty 6 3).modes.origin
-    && (dirty 6 3).modes.mouse == 1000 && (dirty 6 3).shiftOut) = true := by native_decide
+example :
+    ((dirty 6 3).modes.insert && (dirty 6 3).modes.origin && (dirty 6 3).modes.mouse == 1000 &&
+        (dirty 6 3).shiftOut) =
+      true := by
+  native_decide
 
-example : (let v := screen 6 3 "hi"
+example :
+          (let v := screen 6 3 "hi"
            let w := (dirty 6 3).feed (restore v)
-           w.modes == v.modes && w.g0Line == v.g0Line && w.shiftOut == v.shiftOut
-             && w.top == v.top && w.bot == v.bot && w.altGrid.isNone) = true := by
+           w.modes == v.modes && w.g0Line == v.g0Line && w.shiftOut == v.shiftOut &&
+        w.top == v.top &&
+        w.bot == v.bot &&
+        w.altGrid.isNone) =
+      true := by
   native_decide
 
 /-- A wide glyph and a combining mark, from a dirty start: the two shapes the
@@ -329,9 +341,7 @@ repaint is most sensitive to. -/
 example : roundtripsFrom (dirty 6 3) (screen 6 3 "\u6f22e\u0301") = true := by native_decide
 
 /-- And a session that *is* on the alt screen still restores into a dirty client. -/
-example : roundtripsFrom (dirty 6 3) (screen 6 3 "ab\x1b[?1049hcd") = true := by
-  native_decide
-
+example : roundtripsFrom (dirty 6 3) (screen 6 3 "ab\x1b[?1049hcd") = true := by native_decide
 
 /-! ### The tab ruler — the set-only field the `dirty` receiver missed
 
@@ -352,15 +362,17 @@ example : ((dirtyTabs 20 3).tabs == defaultTabs 20) = false := by native_decide
 
 /-- **The assertion that was false before the fix.** A default-ruler session
 restored into that receiver used to come back holding the *receiver's* ruler. -/
-example : (((dirtyTabs 20 3).feed (restore (screen 20 3 "hi"))).tabs
-    == (screen 20 3 "hi").tabs) = true := by native_decide
+example :
+    (((dirtyTabs 20 3).feed (restore (screen 20 3 "hi"))).tabs == (screen 20 3 "hi").tabs) =
+      true := by
+  native_decide
 
 example : roundtripsFrom (dirtyTabs 20 3) (screen 20 3 "hi") = true := by native_decide
 
 /-- The other direction too: a session with its own custom ruler, into a receiver
 with a different one. -/
-example : roundtripsFrom (dirtyTabs 20 3) (screen 20 3 "\x1b[3g\x1b[7G\x1bHhi")
-    = true := by native_decide
+example : roundtripsFrom (dirtyTabs 20 3) (screen 20 3 "\x1b[3g\x1b[7G\x1bHhi") = true := by
+  native_decide
 
 /-- Non-vacuity, part one: a default-ruler session now emits a ruler at all. This is
 the byte range the old guard skipped. -/
@@ -369,9 +381,12 @@ example : (tabsAnsi (screen 20 3 "hi")).isEmpty = false := by native_decide
 /-- Non-vacuity, part two: **nothing before `tabsAnsi` clears a tab stop** — no
 `TBC` in the prologue, and `ED 2` does not touch the ruler — so the emit is the only
 thing standing between a client's ruler and the session's. -/
-example : (((dirtyTabs 20 3).feed (prologueAnsi (screen 20 3 "hi") ++ csiNum 0 0x6D
-    ++ csiNum 2 0x4A)).tabs == (dirtyTabs 20 3).tabs) = true := by native_decide
-
+example :
+    (((dirtyTabs 20 3).feed
+            (prologueAnsi (screen 20 3 "hi") ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).tabs ==
+        (dirtyTabs 20 3).tabs) =
+      true := by
+  native_decide
 
 /-! ### Non-vacuity of the receiver-quantified claims
 
@@ -384,17 +399,24 @@ bundle. It can, and these are the witnesses; the theorem is that `∀ w`. -/
 /-- Before: the `dirty` receiver differs from the session on the scroll region, the
 G0 charset, the shift state and which screen is current — every group the bundle
 names. -/
-example : (let v := screen 20 3 "hi"
+example :
+          (let v := screen 20 3 "hi"
            let w := dirty 20 3
-           (w.top != v.top) && (w.g0Line != v.g0Line) && (w.shiftOut != v.shiftOut)
-             && (w.altGrid.isSome != v.altGrid.isSome)) = true := by native_decide
+           (w.top != v.top) && (w.g0Line != v.g0Line) && (w.shiftOut != v.shiftOut) &&
+        (w.altGrid.isSome != v.altGrid.isSome)) =
+      true := by
+  native_decide
 
 /-- After: it agrees on all of them. -/
-example : (let v := screen 20 3 "hi"
+example :
+          (let v := screen 20 3 "hi"
            let r := (dirty 20 3).feed (restore v)
-           (r.top == v.top) && (r.bot == v.bot) && (r.g0Line == v.g0Line)
-             && (r.g1Line == v.g1Line) && (r.shiftOut == v.shiftOut)
-             && (r.altGrid.isSome == v.altGrid.isSome)) = true := by native_decide
+           (r.top == v.top) && (r.bot == v.bot) && (r.g0Line == v.g0Line) &&
+        (r.g1Line == v.g1Line) &&
+        (r.shiftOut == v.shiftOut) &&
+        (r.altGrid.isSome == v.altGrid.isSome)) =
+      true := by
+  native_decide
 
 /-- The session-side hypotheses are met by an ordinary session, so the quantifier is
 not empty. -/
@@ -405,7 +427,11 @@ example : (let v := screen 20 3 "hi"
 /-- And the one case they exclude, named so it is not mistaken for an oversight: a
 one-row session has `top = bot`, and `CSI 1 ; 1 r` is refused by this emulator and by
 every real terminal, so there is no region to install. -/
-example : (let v := screen 20 1 "hi"; (v.top == v.bot)) = true := by native_decide
+example :
+    (let v := screen 20 1 "hi";
+      (v.top == v.bot)) =
+      true := by
+  native_decide
 
 /-! ### A receiver caught mid-sequence
 
@@ -425,9 +451,13 @@ def midEscInter (cols rows : Nat) : Vt := feedStr (Vt.init cols rows) "\x1b("
 def midUtf8 (cols rows : Nat) : Vt := (Vt.init cols rows).feedBytes ⟨#[0xE6, 0xBC]⟩
 
 example : roundtripsFrom (midOsc 6 3) (screen 6 3 "hi") = true := by native_decide
+
 example : roundtripsFrom (midDcs 6 3) (screen 6 3 "hi") = true := by native_decide
+
 example : roundtripsFrom (midCsi 6 3) (screen 6 3 "hi") = true := by native_decide
+
 example : roundtripsFrom (midEscInter 6 3) (screen 6 3 "hi") = true := by native_decide
+
 example : roundtripsFrom (midUtf8 6 3) (screen 6 3 "hi") = true := by native_decide
 
 /-- The mid-OSC receiver really is stuck: it has eaten the bytes and is still in an
@@ -436,10 +466,12 @@ example : ((midOsc 6 3).pstate == PState.ground) = false := by native_decide
 
 /-- A session with **no** title clears the client's leftover one, rather than leaving
 it on display: the last of the set-only emits. -/
-example : (let v := screen 6 3 "hi"
+example :
+          (let v := screen 6 3 "hi"
            let w := (feedStr (Vt.init 6 3) "\x1b]2;stale\x07").feed (restore v)
-           w.title == v.title && v.title.isEmpty) = true := by native_decide
-
+           w.title == v.title && v.title.isEmpty) =
+      true := by
+  native_decide
 
 /-! ### The scrollback, in the receiver's own ring
 
@@ -466,8 +498,7 @@ example : (scrolled.sb.size == 3 && (sbRows scrolled).size == 3) = true := by na
 `sbRows`' outer `.reverse` plays the history backwards and `replayEq` does *not*
 notice — it compares against `sbRows v`, which the same bug reverses — so this is
 the fixture that catches it.  -/
-example : ((sbRows scrolled).toList.map rowStr == ["aa", "bb", "cc"]) = true := by
-  native_decide
+example : ((sbRows scrolled).toList.map rowStr == ["aa", "bb", "cc"]) = true := by native_decide
 
 /-- `fitRow_id_of_rowOk` in executable form: on the rows a live session stores the
 fit is the identity, so comparing a receiver's ring against `sbRows v` is the
@@ -478,15 +509,14 @@ example : ((sbRows scrolled).toList == scrolled.sb.toList) = true := by native_d
 /-- **The trim drops the oldest first.** A fitted 6-column row costs 12, so a
 budget of 27 admits two of the three: the survivors are the **newest** two, still
 oldest-first. -/
-example : ((sbTake 6 27 scrolled.sb.toList.reverse).reverse.map rowStr == ["bb", "cc"])
-    = true := by native_decide
+example : ((sbTake 6 27 scrolled.sb.toList.reverse).reverse.map rowStr == ["bb", "cc"]) = true := by
+  native_decide
 
 /-- …and the wrong-order bug named as a fact, since it is the insidious one:
 feeding `v.sb.toList` rather than its reverse keeps the **oldest** two under the
 same budget. Both variants produce three rows whenever the whole ring fits, which
 is why every fixture but this one would have passed. -/
-example : ((sbTake 6 27 scrolled.sb.toList).map rowStr == ["aa", "bb"]) = true := by
-  native_decide
+example : ((sbTake 6 27 scrolled.sb.toList).map rowStr == ["aa", "bb"]) = true := by native_decide
 
 /-- A previous occupant that left **its own** history in the window — the ring
 analogue of `dirtyTabs`, and the receiver that makes the `ED 3` question real. -/
@@ -505,8 +535,11 @@ record: a flush of `rows - 1` gives `"aa\nbb\ndd\nee\n"` (the newest history row
 never leaves the screen, and the screen paint overwrites it) and `rows + 1` gives
 `"aa\nbb\ncc\n\ndd\nee\n"` (one spurious blank row, pushed *after* the newest
 history row and carrying the pen the last painted row left in effect). -/
-example : (String.fromUTF8! ⟨(history ((dirtySb 6 2).feed (restore scrolled)) false).toArray⟩
-    == "aa\nbb\ncc\ndd\nee\n") = true := by native_decide
+example :
+    (String.fromUTF8! ⟨(history ((dirtySb 6 2).feed (restore scrolled)) false).toArray⟩ ==
+        "aa\nbb\ncc\ndd\nee\n") =
+      true := by
+  native_decide
 
 example : roundtripsFrom (dirtySb 6 2) scrolled = true := by native_decide
 
@@ -522,24 +555,32 @@ example : roundtripsFrom (dirty 6 2) scrolled = true := by native_decide
 /-- **Idempotent.** A second attach must not stack a second copy of the history —
 that is what the `ED 3` is for, and without it this is `["OLD1", "OLD2", "aa",
 "bb", "cc", "aa", "bb", "cc"]`. -/
-example : ((((dirtySb 6 2).feed (restore scrolled)).feed (restore scrolled)).sb.toList
-    == (sbRows scrolled).toList) = true := by native_decide
+example :
+    ((((dirtySb 6 2).feed (restore scrolled)).feed (restore scrolled)).sb.toList ==
+        (sbRows scrolled).toList) =
+      true := by
+  native_decide
 
 /-- **The guard, stated as a promise.** `ED 3` erases the saved lines of the
 window the client is running in, and that window's scrollback belongs to the
 *user*, shared with their shell — linger never enters the alt screen. So it is
 emitted only when there is history to put there: attaching a session that never
 scrolled leaves the user's own history alone. (Unguarded, this is `[]`.) -/
-example : (((dirtySb 6 2).feed (restore (screen 6 2 "hi"))).sb.toList
-    == (dirtySb 6 2).sb.toList) = true := by native_decide
+example :
+    (((dirtySb 6 2).feed (restore (screen 6 2 "hi"))).sb.toList == (dirtySb 6 2).sb.toList) =
+      true := by
+  native_decide
 
-example : ((sbRows (screen 6 2 "hi")).isEmpty && (sbRows (screen 6 4 "hi")).isEmpty)
-    = true := by native_decide
+example : ((sbRows (screen 6 2 "hi")).isEmpty && (sbRows (screen 6 4 "hi")).isEmpty) = true := by
+  native_decide
 
 /-- …and the anti-stacking property survives the guard, because a session with no
 ring pushes nothing that could stack. -/
-example : ((((dirtySb 6 4).feed (restore (screen 6 4 "hi"))).feed
-    (restore (screen 6 4 "hi"))).sb.toList == (dirtySb 6 4).sb.toList) = true := by
+example :
+    ((((dirtySb 6 4).feed (restore (screen 6 4 "hi"))).feed
+            (restore (screen 6 4 "hi"))).sb.toList ==
+        (dirtySb 6 4).sb.toList) =
+      true := by
   native_decide
 
 /-- `ED 3` is emitted **after** the `ED 2`, which is the order ncurses `clear(1)`
@@ -557,8 +598,8 @@ example : (let r := restore scrolled
 /-- A **wide glyph and a combining mark in the ring**, not on the screen: the two
 shapes the row painter is most sensitive to, now replayed through `fitRow` as
 well. -/
-example : roundtripsFrom (dirtySb 8 2) (screen 8 2 "a漢b\r\néx\r\nzz\r\nq1\r\nq2")
-    = true := by native_decide
+example : roundtripsFrom (dirtySb 8 2) (screen 8 2 "a漢b\r\néx\r\nzz\r\nq1\r\nq2") = true := by
+  native_decide
 
 /-- Colour through the ring, and the pen of the newest history row preserved
 cell-for-cell — a history repainted in the wrong pen would still give the right
@@ -567,9 +608,12 @@ def colScrolled : Vt := screen 6 2 "\x1b[48;5;196mAA\r\nBB\r\nCC\r\nDD\r\nEE"
 
 example : roundtripsFrom (dirtySb 6 2) colScrolled = true := by native_decide
 
-example : (let r := (dirtySb 6 2).feed (restore colScrolled)
-           (r.sb.toList.getLast!.at 0).pen == (colScrolled.sb.toList.getLast!.at 0).pen
-             && !((r.sb.toList.getLast!.at 0).pen == ({} : Pen))) = true := by native_decide
+example :
+          (let r := (dirtySb 6 2).feed (restore colScrolled)
+           (r.sb.toList.getLast!.at 0).pen == (colScrolled.sb.toList.getLast!.at 0).pen &&
+        !((r.sb.toList.getLast!.at 0).pen == ({} : Pen))) =
+      true := by
+  native_decide
 
 /-! #### The fit is mandatory, not hygiene
 
@@ -594,12 +638,13 @@ pair and blanks the base, so the glyph is *lost*. `replayEq` cannot see that
 either — it compares against `sbRows`, which the same break rewrites. -/
 def wideRing : Vt := screen 8 2 "a漢b\r\néx\r\nzz\r\nq1\r\nq2"
 
-example : ((sbRows wideRing).toList.map rowStr == ["a漢b", "éx", "zz"]) = true := by
-  native_decide
+example : ((sbRows wideRing).toList.map rowStr == ["a漢b", "éx", "zz"]) = true := by native_decide
 
 /-- …and the pair is still a pair: a width-2 base followed by its width-0 shadow. -/
-example : (((sbRows wideRing).toList.head!.toList.map (fun c => c.width)).take 3
-    == [1, 2, 0]) = true := by native_decide
+example :
+    (((sbRows wideRing).toList.head!.toList.map (fun c => c.width)).take 3 == [1, 2, 0]) =
+      true := by
+  native_decide
 
 example : roundtripsFrom (dirtySb 8 2) wideRing = true := by native_decide
 
@@ -614,10 +659,12 @@ session's ring rows are already reproducible, so the two agree on every one of
 them. -/
 def hostileRing : Vt :=
   { screen 4 2 "hi" with
-    sb := { data := #[#[{ base := '\x01', width := 1 },
-                        { base := 'x', marks := ['A'], width := 1 },
-                        { base := 'y', width := 1 },
-                        { base := 'z', width := 1 }]], start := 0 } }
+    sb :=
+      {
+        data :=
+          #[#[{ base := '\x01', width := 1 }, { base := 'x', marks := ['A'], width := 1 },
+              { base := 'y', width := 1 }, { base := 'z', width := 1 }]],
+        start := 0 } }
 
 example : (let r := (sbRows hostileRing).toList.head!
            (r.at 0).base == '�' && (r.at 1).marks.isEmpty && r.size == 4) = true := by
@@ -643,27 +690,33 @@ def costSum (v : Vt) : Nat := ((sbRows v).toList.map sbRowCost).sum
 
 /-- The whole-stream bound, in the form that is actually true. -/
 def stageInBudget (v : Vt) : Bool :=
-  decide ((scrollbackAnsi v).length ≤ costSum v + 2 * v.rows + 19)
-    && decide (costSum v ≤ sbReplayBytes)
+  decide ((scrollbackAnsi v).length ≤ costSum v + 2 * v.rows + 19) &&
+    decide (costSum v ≤ sbReplayBytes)
 
 /-- 300 rows of per-cell truecolour through 40 columns: the pen changes at every
 cell, so no `SGR` is shared. -/
 def heavyRow (cols : Nat) (i : Nat) : Row :=
-  (Array.range cols).map (fun j =>
-    { base := 'x', width := 1,
-      pen := { fg := .rgb (UInt8.ofNat ((i + j) % 256)) 20 30,
-               bg := .rgb 40 (UInt8.ofNat (j % 251)) 60 } })
+  (Array.range cols).map
+    (fun j =>
+      { base := 'x', width := 1,
+        pen :=
+          { fg := .rgb (UInt8.ofNat ((i + j) % 256)) 20 30,
+            bg := .rgb 40 (UInt8.ofNat (j % 251)) 60 } })
 
 def heavyRing : Vt := ringOf 40 24 (heavyRow 40) 300
 
 /-- Non-vacuity: the trim actually bites — 174 of 300 rows survive the budget. -/
-example : (decide ((sbRows heavyRing).size < heavyRing.sb.size)
-    && (sbRows heavyRing).size == 174) = true := by native_decide
+example :
+    (decide ((sbRows heavyRing).size < heavyRing.sb.size) && (sbRows heavyRing).size == 174) =
+      true := by
+  native_decide
 
 /-- A row's identity, for the fixture below: `heavyRow i` puts `i` in its first
 cell's red channel, so a run of kept rows can be named. -/
-def fstFg (r : Row) : Nat :=
-  match (r.at 0).pen.fg with | .rgb a _ _ => a.toNat | _ => 999
+def fstFg (r : Row) :
+    Nat := match (r.at 0).pen.fg with
+  | .rgb a _ _ => a.toNat
+  | _ => 999
 
 /-- **Which rows survived, asserted through `sbRows` itself.** The two `sbTake`
 anchors above spell the `.reverse` out in the fixture, so they *document* the trim
@@ -672,24 +725,29 @@ identity of the kept run — the **newest** 174 of 300 (`i = 126…299`, so red 
 126…43 after the `% 256` wrap), oldest-first. Dropping either reverse, or trimming
 the oldest end instead of the newest, moves these four numbers. -/
 example :
-    (((sbRows heavyRing).toList.map fstFg).take 2 == [126, 127]
-      && ((sbRows heavyRing).toList.map fstFg).reverse.take 2 == [43, 42]) = true := by
+    (((sbRows heavyRing).toList.map fstFg).take 2 == [126, 127] &&
+        ((sbRows heavyRing).toList.map fstFg).reverse.take 2 == [43, 42]) =
+      true := by
   native_decide
 
 /-- The counted cost, and the emitted length of the whole reattach burst. The
 number is here rather than `sbReplayBytes` because the emitted stage is **not**
 bounded by the budget — only by the budget plus `2 * rows + 19`. -/
-example : (costSum heavyRing == 260844 && (scrollbackAnsi heavyRing).length == 260219
-    && (restore heavyRing).length == 261417 && stageInBudget heavyRing) = true := by
+example :
+    (costSum heavyRing == 260844 && (scrollbackAnsi heavyRing).length == 260219 &&
+        (restore heavyRing).length == 261417 &&
+        stageInBudget heavyRing) =
+      true := by
   native_decide
 
 /-- 84 default-pen cells then one truecolour cell — a line of plain text ending in
 a coloured token. Every row after the first therefore pays the full `penSgr {}`
 that `sbRowCost`'s `+ 4` accounts for, which is what makes this the sharp case. -/
 def advRow (cols : Nat) : Row :=
-  (Array.range cols).map (fun i =>
-    if i + 1 < cols then ({ base := 'a', width := 1 } : Cell)
-    else { base := 'z', width := 1, pen := { fg := .rgb 1 2 3, bg := .rgb 4 5 6 } })
+  (Array.range cols).map
+    (fun i =>
+      if i + 1 < cols then ({ base := 'a', width := 1 } : Cell)
+      else { base := 'z', width := 1, pen := { fg := .rgb 1 2 3, bg := .rgb 4 5 6 } })
 
 def advRing : Vt := ringOf 85 24 (fun _ => advRow 85) 3000
 
@@ -697,28 +755,36 @@ def advRing : Vt := ringOf 85 24 (fun _ => advRow 85) 3000
 `sbReplayBytes` of 262144 — nine bytes over. A bound stated against
 `sbReplayBytes` alone would be false here, and no "budget to `1 <<< 30`" break
 would catch it. -/
-example : (decide ((scrollbackAnsi advRing).length > sbReplayBytes)
-    && (scrollbackAnsi advRing).length == 262153 && costSum advRing == 262086) = true := by
+example :
+    (decide ((scrollbackAnsi advRing).length > sbReplayBytes) &&
+        (scrollbackAnsi advRing).length == 262153 &&
+        costSum advRing == 262086) =
+      true := by
   native_decide
 
 /-- …and the bound is attained with **zero** slack, so it is a sharp oracle rather
 than a loose one. -/
-example : ((scrollbackAnsi advRing).length == costSum advRing + 2 * advRing.rows + 19)
-    = true := by native_decide
+example : ((scrollbackAnsi advRing).length == costSum advRing + 2 * advRing.rows + 19) = true := by
+  native_decide
 
 /-- The bound holds on every ring shape measured: empty, blank, a realistic mixed
 row, the truecolour heavy ring and the adversarial one. -/
-example : (stageInBudget (screen 80 24 "hi")
-    && stageInBudget (ringOf 80 24 (fun _ => blankRow 80 {}) 10000)
-    && stageInBudget heavyRing && stageInBudget advRing
-    && stageInBudget scrolled) = true := by native_decide
+example :
+    (stageInBudget (screen 80 24 "hi") &&
+        stageInBudget (ringOf 80 24 (fun _ => blankRow 80 {}) 10000) &&
+        stageInBudget heavyRing &&
+        stageInBudget advRing &&
+        stageInBudget scrolled) =
+      true := by
+  native_decide
 
 /-- The empty guard is load-bearing (`broadcast_empty`, one module over): with no
 history the stage is twelve mode bytes and nothing else — no `ED 3`, no paint, no
 flush. -/
-example : ((scrollbackAnsi (screen 80 24 "hi")).length == 14
-    && (sbRows (screen 80 24 "hi")).isEmpty) = true := by native_decide
-
+example :
+    ((scrollbackAnsi (screen 80 24 "hi")).length == 14 && (sbRows (screen 80 24 "hi")).isEmpty) =
+      true := by
+  native_decide
 
 /-! ### The hand-back (§Handback, anchor A5's outbound half)
 
@@ -732,13 +798,13 @@ values until the `Sets` instances land (`specs/restore-conformance.md` Step 1). 
 parameter because two of the fields are dimension-relative: the scroll region is the
 whole screen, and the cursor is parked on the last row. -/
 def sane (rows : Nat) (w : Vt) : Bool :=
-  w.pstate == PState.ground
-  && w.modes == ({} : Modes)
-  && !w.g0Line && !w.g1Line && !w.shiftOut
-  && w.top == 0 && w.bot == rows - 1
-  && w.altGrid.isNone
-  && w.pen == ({} : Pen)
-  && w.cursor.x == 0 && w.cursor.y == rows - 1
+  w.pstate == PState.ground && w.modes == ({} : Modes) && !w.g0Line && !w.g1Line && !w.shiftOut &&
+    w.top == 0 &&
+    w.bot == rows - 1 &&
+    w.altGrid.isNone &&
+    w.pen == ({} : Pen) &&
+    w.cursor.x == 0 &&
+    w.cursor.y == rows - 1
 
 /-- A dirty client is not sane, or the checks below would hold vacuously. -/
 example : sane 3 (dirty 6 3) = false := by native_decide
@@ -747,6 +813,7 @@ example : sane 3 ((dirty 6 3).feed leaveAnsi) = true := by native_decide
 
 /-- …from every parser state a dying program can leave, too. -/
 example : sane 3 ((midOsc 6 3).feed leaveAnsi) = true := by native_decide
+
 /-- Step 2 at witnesses: a receiver caught mid-UTF-8, mid-OSC or mid-CSI is left
 *quiesced* by `restore` — parser `ground`, nothing half-decoded — which is what
 `restore_quiesced_any` says for all of them, and what `restore_quiesced` (fresh
@@ -758,8 +825,11 @@ example : (let v := screen 6 3 "hi"
              && ((midCsi 6 3).feed (restore v)).u8need == 0) = true := by native_decide
 
 example : sane 3 ((midDcs 6 3).feed leaveAnsi) = true := by native_decide
+
 example : sane 3 ((midCsi 6 3).feed leaveAnsi) = true := by native_decide
+
 example : sane 3 ((midEscInter 6 3).feed leaveAnsi) = true := by native_decide
+
 example : sane 3 ((midUtf8 6 3).feed leaveAnsi) = true := by native_decide
 
 /-- The worst real case: a full-screen application that died mid-OSC. Both halves of
@@ -777,8 +847,8 @@ example : sane 3 ((dirtyMidOsc 6 3).feed (leaveAnsi.drop 2)) = false := by nativ
 /-- And the hand-back is a *constant*: what linger gives back cannot depend on what
 the session was doing, which is why it takes no `Vt`. Two very different sessions,
 same result. -/
-example : (((dirty 6 3).feed leaveAnsi).modes == ((midDcs 6 3).feed leaveAnsi).modes)
-    = true := by native_decide
+example : (((dirty 6 3).feed leaveAnsi).modes == ((midDcs 6 3).feed leaveAnsi).modes) = true := by
+  native_decide
 
 /-! ## `screenText` — the capture stream, exact bytes (specs/agent-cli.md) -/
 
@@ -790,10 +860,10 @@ example : screenText (screen 4 2 "ab") = [0x61, 0x62, 0x0A, 0x0A] := by native_d
 a five-row screen leave a capture of exactly five lines while the transcript
 keeps all eight. -/
 example :
-    (let v := screen 20 5 (String.intercalate "\r\n"
-                ((List.range 8).map (fun i => s!"l{i}")))
-     (screenText v).count 0x0A == 5
-       && (history v false).count 0x0A == 8) = true := by native_decide
+    (let v := screen 20 5 (String.intercalate "\r\n" ((List.range 8).map (fun i => s!"l{i}")))
+     (screenText v).count 0x0A == 5 && (history v false).count 0x0A == 8) =
+      true := by
+  native_decide
 
 /-- A control character smashed into a cell (unreachable live, but a decoded
 checkpoint's grid is arbitrary) cannot forge a capture line: it emits as
@@ -801,26 +871,34 @@ U+FFFD and the line count stays the row count. -/
 example :
     (let v := screen 10 2 "ab"
      let row := (v.grid.getD 0 #[]).setIfInBounds 1 { base := '\x0A' }
-     let v2 := { v with grid := v.grid.setIfInBounds 0 row }
-     (screenText v2).count 0x0A == 2) = true := by native_decide
+      let v2 := { v with grid := v.grid.setIfInBounds 0 row }
+      (screenText v2).count 0x0A == 2) =
+      true := by
+  native_decide
 
 /-- `linesLF`, the consumer-side splitter the parse contract is stated
 against: one record per LF, an unterminated tail still counts (a parser does
 not discard bytes for a missing terminator), and no trailing phantom record
 after a final LF. -/
-example : linesLF [0x61, 0x0A, 0x62, 0x63, 0x0A] = [[0x61], [0x62, 0x63]] := by
-  native_decide
+example : linesLF [0x61, 0x0A, 0x62, 0x63, 0x0A] = [[0x61], [0x62, 0x63]] := by native_decide
+
 example : linesLF [0x61, 0x0A, 0x62] = [[0x61], [0x62]] := by native_decide
+
 example : linesLF [0x0A, 0x0A] = [[], []] := by native_decide
+
 example : linesLF [] = [] := by native_decide
 
 /-- The parse contract on a concrete screen: splitting the capture gives the
 rows, in order — `screenText_records`' shape, evaluated. -/
 example :
-    (linesLF (screenText (screen 20 3 "one\r\ntwo"))
-      == [(screen 20 3 "one\r\ntwo").grid.toList.map rowText].flatten
-     && (String.fromUTF8? (ByteArray.mk (linesLF (screenText
-          (screen 20 3 "one\r\ntwo")) |>.getD 1 []).toArray)).getD "" == "two") = true := by
+    (linesLF (screenText (screen 20 3 "one\r\ntwo")) ==
+          [(screen 20 3 "one\r\ntwo").grid.toList.map rowText].flatten &&
+        (String.fromUTF8?
+                (ByteArray.mk
+                  (linesLF (screenText (screen 20 3 "one\r\ntwo")) |>.getD 1 []).toArray)).getD
+            "" ==
+          "two") =
+      true := by
   native_decide
 
 end Linger.Core.Render.Tests

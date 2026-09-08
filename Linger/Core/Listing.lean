@@ -80,19 +80,16 @@ inductive Row where
 
 def rowStatus : Row → Status
   | .live info =>
-    classify {
-      known := answered info,
-      daemonUp := true,
-      -- an exit status can only come from a live daemon, so it is read only
-      -- here: a reply-supplied "exit" must never make a socket-less row look
-      -- like a completed run
-      exit := (info.find? (·.1 == "exit")).bind (fun kv => kv.2.toNat?),
-      fresh := flag info "fresh",
-      unseen := flag info "unseen" }
+    classify
+      { known := answered info, daemonUp := true,
+        -- an exit status can only come from a live daemon, so it is read only
+        -- here: a reply-supplied "exit" must never make a socket-less row look
+        -- like a completed run
+        exit := (info.find? (·.1 == "exit")).bind (fun kv => kv.2.toNat?),
+        fresh := flag info "fresh", unseen := flag info "unseen" }
   | .stale => .resumable
   | .broken => .unknown
-  | .remote live peerStatus =>
-    if live then ofName peerStatus else .resumable
+  | .remote live peerStatus => if live then ofName peerStatus else .resumable
 
 /-! ## Rendering the human-readable listing
 
@@ -120,21 +117,23 @@ character is one column and padding by length aligns them. -/
 def humanRow (nameCol : Nat) (info : List (String × String)) : List UInt8 :=
   let f := fun k => (info.lookup k).getD ""
   let st := Status.ofName (f "status")
-  let labels := info.filterMap (fun (k, v) =>
-    if k.startsWith "label." then some s!"{(k.drop 6).toString}={v}" else none)
+  let labels :=
+    info.filterMap
+      (fun (k, v) => if k.startsWith "label." then some s!"{(k.drop 6).toString}={v}" else none)
   let labelStr := if labels.isEmpty then "" else "  [" ++ String.intercalate " " labels ++ "]"
   -- `(busy)` is only for a *local* daemon that did not answer (status unknown,
   -- no pid/cmd); a live remote row carries no pid but is not busy.
   let detail :=
     if f "state" == "resumable" then "(resumable)"
-    else if st == .unknown && (f "pid").isEmpty && (f "cmd").isEmpty then "(busy)"
-    else if (f "pid").isEmpty then f "cmd"
-    else s!"pid {f "pid"}  {f "cmd"}"
+    else
+      if st == .unknown && (f "pid").isEmpty && (f "cmd").isEmpty then "(busy)"
+      else if (f "pid").isEmpty then f "cmd" else s!"pid {f "pid"}  {f "cmd"}"
   let watch := if (f "clients").isEmpty || f "clients" == "0" then "" else s!"  +{f "clients"}"
   let name := (f "name").toList
-  utf8s (dropTrailingBlanks
-    ([Status.icon st, ' '] ++ name ++ List.replicate (nameCol - name.length) ' '
-      ++ [' '] ++ (detail ++ labelStr ++ watch).toList))
+  utf8s
+    (dropTrailingBlanks
+      ([Status.icon st, ' '] ++ name ++ List.replicate (nameCol - name.length) ' ' ++ [' '] ++
+        (detail ++ labelStr ++ watch).toList))
 
 /-- The whole human-readable listing, one LF-terminated row per session (or the
 empty-state line). The name column is as wide as the widest name in the set, so

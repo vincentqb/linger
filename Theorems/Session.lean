@@ -47,9 +47,9 @@ theorem onMsg_unknown (s : State) (c : Client) (t : UInt8) (p : List UInt8) :
 
 /-- Wrong-direction messages are dropped too. -/
 theorem onMsg_wrong_direction (s : State) (c : Client) (bs : List UInt8) :
-    onMsg s c (.output bs) = (s, []) ∧ onMsg s c (.infoReply bs) = (s, []) ∧
-    onMsg s c (.err bs) = (s, []) ∧ onMsg s c .done = (s, []) :=
-  ⟨rfl, rfl, rfl, rfl⟩
+    onMsg s c (.output bs) = (s, []) ∧
+      onMsg s c (.infoReply bs) = (s, []) ∧
+      onMsg s c (.err bs) = (s, []) ∧ onMsg s c .done = (s, []) := ⟨rfl, rfl, rfl, rfl⟩
 
 /-! ## Label removal (pin-the-gaps item 3)
 
@@ -66,9 +66,9 @@ key is the payload through `labelText` (invalid bytes → `""`, which matches no
 the only effect is `.done`. `rfl`, so a smuggled side effect — a vt touch, a
 `.err`, an append — breaks it. -/
 theorem onMsg_labelUnset (s : State) (c : Client) (k : List UInt8) :
-    onMsg s c (.labelUnset k)
-      = ({ s with labels := s.labels.filter (fun kv => kv.1 != labelText k) },
-         [.send c.id .done]) := rfl
+    onMsg s c (.labelUnset k) =
+      ({ s with labels := s.labels.filter (fun kv => kv.1 != labelText k) },
+        [.send c.id .done]) := rfl
 
 /-- …and the consequence, stated where a reader looks for it: after an unset, no
 label carries that key. This is the promise; the shape above is how it is kept. -/
@@ -81,8 +81,8 @@ theorem onMsg_labelUnset_gone (s : State) (c : Client) (k : List UInt8) :
 /-- …and it removes *only* that key: every other label survives. Without this,
 `onMsg_labelUnset_gone` is satisfied by an arm that clears the whole store — the
 vacuity that makes a removal claim worthless. -/
-theorem onMsg_labelUnset_keeps (s : State) (c : Client) (k : List UInt8)
-    (kv : String × String) (hmem : kv ∈ s.labels) (hne : kv.1 ≠ labelText k) :
+theorem onMsg_labelUnset_keeps (s : State) (c : Client) (k : List UInt8) (kv : String × String)
+    (hmem : kv ∈ s.labels) (hne : kv.1 ≠ labelText k) :
     kv ∈ (onMsg s c (.labelUnset k)).1.labels := by
   simp only [onMsg, List.mem_filter, bne_iff_ne]
   exact ⟨hmem, hne⟩
@@ -103,8 +103,8 @@ only effect detach may produce is a checkpoint (reboot-resume's save
 point when the last attached client leaves). -/
 theorem step_closed (s : State) (id : Nat) :
     (step s (.closed id)).1.vt = s.vt ∧
-    (step s (.closed id)).1.labels = s.labels ∧
-    (step s (.closed id)).2.all (· == .checkpoint) := by
+      (step s (.closed id)).1.labels = s.labels ∧
+      (step s (.closed id)).2.all (· == .checkpoint) := by
   unfold step
   dsimp only
   split
@@ -113,13 +113,12 @@ theorem step_closed (s : State) (id : Nat) :
 
 /-- With zero clients the mediator still advances, and an owned query still
 gets its one child-facing reply; only presentation broadcast disappears. -/
-theorem step_ptyOut_no_clients (s : State) (chunk : List UInt8)
-    (h : s.clients = []) :
+theorem step_ptyOut_no_clients (s : State) (chunk : List UInt8) (h : s.clients = []) :
     step s (.ptyOut chunk) =
       let r := Terminal.feed s.vt s.scan chunk
-      ({ s with vt := r.vt, scan := r.scan, dirty := true,
-                  outSeq := s.outSeq + 1 },
-       if r.replies.isEmpty then [] else [Effect.writePty r.replies]) := by
+      ({ s with
+          vt := r.vt, scan := r.scan, dirty := true, outSeq := s.outSeq + 1 },
+        if r.replies.isEmpty then [] else [Effect.writePty r.replies]) := by
   simp [step, broadcast, h]
 
 /-- With or without clients, the emulator advances identically to `Vt.feed`. -/
@@ -138,10 +137,14 @@ Stated for an arbitrary roster, since that is where the frames would come from. 
 theorem broadcast_empty (s : State) : broadcast s [] = [] := rfl
 
 /-- A presentation broadcast contains no child write, whatever the roster —
-what makes the reply channel and the presentation channel separable. -/theorem broadcast_no_writePty (s : State) (bytes : List UInt8) :
-    (broadcast s bytes).filter (fun e => match e with
-        | .writePty _ => true
-        | _ => false) = [] := by
+what makes the reply channel and the presentation channel separable. -/
+theorem broadcast_no_writePty (s : State) (bytes : List UInt8) :
+    (broadcast s bytes).filter
+        (fun e =>
+          match e with
+          | .writePty _ => true
+          | _ => false) =
+      [] := by
   unfold broadcast
   split
   · rfl
@@ -169,36 +172,41 @@ rather than over `Terminal.feed` is the whole point: an earlier version of this
 theorem mentioned only `feed`, whose result cannot depend on the roster by
 construction, so it stayed true when `.ptyOut` was mutated to gate replies on
 `s.clients` — the exact regression it was supposed to guard. -/
-theorem ptyOut_reply_roster_independent (s t : State) (chunk : List UInt8)
-    (hv : s.vt = t.vt) (hs : s.scan = t.scan) :
-    (step s (.ptyOut chunk)).2.filter (fun e => match e with
-        | .writePty _ => true
-        | _ => false)
-      = (step t (.ptyOut chunk)).2.filter (fun e => match e with
-        | .writePty _ => true
-        | _ => false) := by
+theorem ptyOut_reply_roster_independent (s t : State) (chunk : List UInt8) (hv : s.vt = t.vt)
+    (hs : s.scan = t.scan) :
+    (step s (.ptyOut chunk)).2.filter
+        (fun e =>
+          match e with
+          | .writePty _ => true
+          | _ => false) =
+      (step t (.ptyOut chunk)).2.filter
+        (fun e =>
+          match e with
+          | .writePty _ => true
+          | _ => false) := by
   rw [step_ptyOut_effects, step_ptyOut_effects]
   dsimp only
   rw [hv, hs]
   -- the presentation broadcast contributes no child write, whatever the roster
-  rw [List.filter_append, List.filter_append, broadcast_no_writePty,
-    broadcast_no_writePty]
+  rw [List.filter_append, List.filter_append, broadcast_no_writePty, broadcast_no_writePty]
 
 /-- Child exit resets the scanner; `finish`'s pending bytes are broadcast by
 `step` before exited notifications and close effects. -/
 theorem step_childExited_scan (s : State) (status : UInt32) :
-    (step s (.childExited status)).1.scan = .ground := by
-  simp [step, Terminal.finish]
+    (step s (.childExited status)).1.scan = .ground := by simp [step, Terminal.finish]
 
 /-- The incomplete prefix is the first effect segment, before exited notices,
 closes, checkpoint deletion, and daemon exit. -/
 theorem step_childExited_effects (s : State) (status : UInt32) :
     (step s (.childExited status)).2 =
       let flushed := Terminal.finish s.scan
-      let s' := { s with exited := some status, scan := flushed.2 }
+      let s' :=
+        { s with
+          exited := some status, scan := flushed.2 }
       let flush := if flushed.1.isEmpty then [] else broadcast s' flushed.1
-      let notify := s'.clients.filter (fun c => c.attached || c.waiting)
-        |>.map (fun c => Effect.send c.id (.exited status))
+      let notify :=
+        s'.clients.filter (fun c => c.attached || c.waiting) |>.map
+          (fun c => Effect.send c.id (.exited status))
       let closes := s'.clients.map (fun c => Effect.close c.id)
       flush ++ notify ++ closes ++ [.dropCheckpoint, .exit] := rfl
 
@@ -214,9 +222,10 @@ attached subset each break it.
 Before this, the only claim about `.detachAll` was `onMsg_detachAll_vt` below —
 the state half of a message whose state half is `s`. -/
 theorem onMsg_detachAll (s : State) (c : Client) :
-    onMsg s c .detachAll
-      = (s, (s.clients.filter (·.attached) |>.map (fun c' => Effect.close c'.id))
-              ++ [.send c.id .done]) := rfl
+    onMsg s c .detachAll =
+      (s,
+        (s.clients.filter (·.attached) |>.map (fun c' => Effect.close c'.id)) ++
+          [.send c.id .done]) := rfl
 
 /-- `detach-all` closes clients; it cannot touch the screen. Now a corollary of
 the full shape above, kept because §Detach's prose cites this weaker name. -/
@@ -253,16 +262,14 @@ theorem onMsg_attach_same_size_vt (s : State) (c : Client) (cols rows : UInt32)
 /-- Keystrokes from a full client go to the pty, not the emulator:
 echo is the shell's job, so the machine's screen cannot drift. -/
 theorem onMsg_input (s : State) (c : Client) (bs : List UInt8)
-    (h : ¬(c.attached && !c.sizer) = true) :
-    onMsg s c (.input bs) = (s, [.writePty bs]) := by
+    (h : ¬(c.attached && !c.sizer) = true) : onMsg s c (.input bs) = (s, [.writePty bs]) := by
   unfold onMsg
   simp [h]
 
 /-- A read-only observer's keyboard goes nowhere (abduco's `-r`):
 neither state nor pty sees it. -/
 theorem onMsg_input_readonly (s : State) (c : Client) (bs : List UInt8)
-    (h : (c.attached && !c.sizer) = true) :
-    onMsg s c (.input bs) = (s, []) := by
+    (h : (c.attached && !c.sizer) = true) : onMsg s c (.input bs) = (s, []) := by
   unfold onMsg
   simp [h]
 
@@ -272,13 +279,11 @@ theorem onMsg_input_readonly (s : State) (c : Client) (bs : List UInt8)
 structure Bounded (s : State) : Prop where
   clientsLe : s.clients.length ≤ maxClients
   labelsLe : s.labels.length ≤ maxLabels
-  decOk : ∀ c ∈ s.clients,
-    c.decoder.errored = false ∧ c.decoder.buf.length ≤ 4 + Wire.maxPayload
+  decOk : ∀ c ∈ s.clients, c.decoder.errored = false ∧ c.decoder.buf.length ≤ 4 + Wire.maxPayload
   scanOk : s.scan.Bounded
 
 theorem setClient_length (s : State) (c : Client) :
-    (s.setClient c).clients.length = s.clients.length := by
-  simp [State.setClient]
+    (s.setClient c).clients.length = s.clients.length := by simp [State.setClient]
 
 theorem dropClient_length_le (s : State) (id : Nat) :
     (s.dropClient id).clients.length ≤ s.clients.length := by
@@ -294,28 +299,27 @@ theorem onMsg_clients_length_le (s : State) (c : Client) (m : Msg) :
   all_goals simp_all [State.setClient]
 
 /-- `onMsg` keeps labels within the cap. -/
-theorem onMsg_labels_le (s : State) (c : Client) (m : Msg)
-    (h : s.labels.length ≤ maxLabels) :
+theorem onMsg_labels_le (s : State) (c : Client) (m : Msg) (h : s.labels.length ≤ maxLabels) :
     (onMsg s c m).1.labels.length ≤ maxLabels := by
   unfold onMsg controlResize
   dsimp only
   repeat' split
-  all_goals first
+  all_goals
+    first
     | (simp_all [State.setClient]; done)
-    | (rename_i hguard
-       simp only [List.length_append, List.length_cons, List.length_nil,
-         Nat.not_lt] at hguard
-       dsimp only
-       omega)
-    | (dsimp only
-       exact Nat.le_trans (List.length_filter_le _ _) h)
+    | ( rename_i hguard
+        simp only [List.length_append, List.length_cons, List.length_nil, Nat.not_lt] at hguard
+        dsimp only
+        omega)
+    | ( dsimp only
+        exact Nat.le_trans (List.length_filter_le _ _) h)
 
 /-- Rewriting one client (same decoder) keeps every stored decoder
 healthy. -/
 theorem decOk_setClient (s : State) (c0 : Client)
     (hc0 : c0.decoder.errored = false ∧ c0.decoder.buf.length ≤ 4 + Wire.maxPayload)
-    (h : ∀ c' ∈ s.clients,
-      c'.decoder.errored = false ∧ c'.decoder.buf.length ≤ 4 + Wire.maxPayload) :
+    (h :
+      ∀ c' ∈ s.clients, c'.decoder.errored = false ∧ c'.decoder.buf.length ≤ 4 + Wire.maxPayload) :
     ∀ c' ∈ (s.setClient c0).clients,
       c'.decoder.errored = false ∧ c'.decoder.buf.length ≤ 4 + Wire.maxPayload := by
   intro c' hmem
@@ -333,20 +337,20 @@ theorem decOk_setClient (s : State) (c0 : Client)
 existing decoders around (attach/resize/wait rewrite other fields). -/
 theorem onMsg_decOk (s : State) (c : Client) (m : Msg)
     (hc : c.decoder.errored = false ∧ c.decoder.buf.length ≤ 4 + Wire.maxPayload)
-    (h : ∀ c' ∈ s.clients,
-      c'.decoder.errored = false ∧ c'.decoder.buf.length ≤ 4 + Wire.maxPayload) :
+    (h :
+      ∀ c' ∈ s.clients, c'.decoder.errored = false ∧ c'.decoder.buf.length ≤ 4 + Wire.maxPayload) :
     ∀ c' ∈ (onMsg s c m).1.clients,
       c'.decoder.errored = false ∧ c'.decoder.buf.length ≤ 4 + Wire.maxPayload := by
   unfold onMsg controlResize
   dsimp only
   repeat' split
-  all_goals first
+  all_goals
+    first
     | exact h
     | exact decOk_setClient _ _ hc h
     | (intro c' hmem; exact h c' hmem)
 
-theorem onMsg_scan (s : State) (c : Client) (m : Msg) :
-    (onMsg s c m).1.scan = s.scan := by
+theorem onMsg_scan (s : State) (c : Client) (m : Msg) : (onMsg s c m).1.scan = s.scan := by
   unfold onMsg controlResize
   dsimp only
   repeat' split
@@ -354,20 +358,17 @@ theorem onMsg_scan (s : State) (c : Client) (m : Msg) :
 
 /-- One message preserves the bound quadruple. -/
 theorem onMsg_bounded {s : State} {c : Client} (m : Msg)
-    (hc : c.decoder.errored = false ∧ c.decoder.buf.length ≤ 4 + Wire.maxPayload)
-    (h : Bounded s) : Bounded (onMsg s c m).1 :=
-  ⟨Nat.le_trans (onMsg_clients_length_le s c m) h.clientsLe,
-   onMsg_labels_le s c m h.labelsLe,
-   onMsg_decOk s c m hc h.decOk,
-   by rw [onMsg_scan]; exact h.scanOk⟩
+    (hc : c.decoder.errored = false ∧ c.decoder.buf.length ≤ 4 + Wire.maxPayload) (h : Bounded s) :
+    Bounded (onMsg s c m).1 :=
+  ⟨Nat.le_trans (onMsg_clients_length_le s c m) h.clientsLe, onMsg_labels_le s c m h.labelsLe,
+    onMsg_decOk s c m hc h.decOk, by
+    rw [onMsg_scan]; exact h.scanOk⟩
 
-theorem client?_mem {s : State} {id : Nat} {c : Client}
-    (h : s.client? id = some c) : c ∈ s.clients :=
-  List.mem_of_find?_eq_some h
+theorem client?_mem {s : State} {id : Nat} {c : Client} (h : s.client? id = some c) :
+    c ∈ s.clients := List.mem_of_find?_eq_some h
 
-theorem feedMsgs_bounded (id : Nat) (msgs : List Msg)
-    (acc : State × List Effect) (h : Bounded acc.1) :
-    Bounded (feedMsgs id msgs acc).1 := by
+theorem feedMsgs_bounded (id : Nat) (msgs : List Msg) (acc : State × List Effect)
+    (h : Bounded acc.1) : Bounded (feedMsgs id msgs acc).1 := by
   induction msgs generalizing acc with
   | nil => exact h
   | cons m ms ih =>
@@ -381,8 +382,7 @@ theorem feedMsgs_bounded (id : Nat) (msgs : List Msg)
 
 /-- §Bound at the daemon level: no event stream can grow the client
 list, label table, client decoders, or terminal scanner past their caps. -/
-theorem step_bounded (s : State) (ev : Event) (h : Bounded s) :
-    Bounded (step s ev).1 := by
+theorem step_bounded (s : State) (ev : Event) (h : Bounded s) : Bounded (step s ev).1 := by
   obtain ⟨hcl, hlb, hdec, hscan⟩ := h
   have h' : Bounded s := ⟨hcl, hlb, hdec, hscan⟩
   unfold step
@@ -423,8 +423,7 @@ theorem step_bounded (s : State) (ev : Event) (h : Bounded s) :
           · dsimp only
             simpa using herr
           · dsimp only
-            have := Wire.Decoder.feed_buf_le c.decoder chunk
-              (by simp [hcok.1])
+            have := Wire.Decoder.feed_buf_le c.decoder chunk (by simp [hcok.1])
             rcases hsplit : c.decoder.feed chunk with ⟨d2, ms2⟩
             rw [hsplit] at this
             simpa [hsplit] using this
@@ -449,20 +448,20 @@ theorem step_bounded (s : State) (ev : Event) (h : Bounded s) :
 /-! ## The emulator stays Good through the daemon -/
 
 open Linger.Core.Vt (Good) in
-theorem onMsg_vt_good {s : State} {c : Client} (m : Msg)
-    (h : Good s.vt) : Good (onMsg s c m).1.vt := by
+theorem onMsg_vt_good {s : State} {c : Client} (m : Msg) (h : Good s.vt) :
+    Good (onMsg s c m).1.vt := by
   unfold onMsg controlResize
   dsimp only
   repeat' split
-  all_goals first
+  all_goals
+    first
     | exact h
     | exact Linger.Core.Vt.Good.resize _ _ (by simpa [State.setClient] using h)
     | simpa [State.setClient] using h
 
 open Linger.Core.Vt (Good) in
-theorem feedMsgs_vt_good (id : Nat) (msgs : List Msg)
-    (acc : State × List Effect) (h : Good acc.1.vt) :
-    Good (feedMsgs id msgs acc).1.vt := by
+theorem feedMsgs_vt_good (id : Nat) (msgs : List Msg) (acc : State × List Effect)
+    (h : Good acc.1.vt) : Good (feedMsgs id msgs acc).1.vt := by
   induction msgs generalizing acc with
   | nil => exact h
   | cons m ms ih =>
@@ -477,8 +476,7 @@ theorem feedMsgs_vt_good (id : Nat) (msgs : List Msg)
 open Linger.Core.Vt (Good) in
 /-- §Total end-to-end: the screen state a daemon holds stays Good
 whatever events arrive — adversarial clients and pty output included. -/
-theorem step_vt_good (s : State) (ev : Event) (h : Good s.vt) :
-    Good (step s ev).1.vt := by
+theorem step_vt_good (s : State) (ev : Event) (h : Good s.vt) : Good (step s ev).1.vt := by
   unfold step
   split
   · split
@@ -506,9 +504,8 @@ theorem step_vt_good (s : State) (ev : Event) (h : Good s.vt) :
 
 end Linger.Core.Session
 
-
-
 namespace Linger.Core.Session
+
 /-! ## §Unread — the output counter
 
 `unseen` is "output arrived while nobody was watching", and it is a property
@@ -541,16 +538,14 @@ nobody attached is not. This is the whole mechanism behind `wantsYou`. -/
 theorem unseen_ptyOut (s : State) (chunk : List UInt8) (h : s.lookSeq ≤ s.outSeq) :
     unseen (step s (.ptyOut chunk)).1 = !(s.clients.any (·.attached)) := by
   unfold unseen
-  show decide ((if s.clients.any (·.attached) then s.outSeq + 1 else s.lookSeq)
-      < s.outSeq + 1) = _
+  show decide ((if s.clients.any (·.attached) then s.outSeq + 1 else s.lookSeq) < s.outSeq + 1) = _
   split
   · simp_all
   · simp_all [Nat.lt_succ_of_le h]
 
 /-- The read mark never overtakes the output counter, so `behind` is honest:
 `outSeq - lookSeq` is a real count and never underflows to a misleading zero. -/
-theorem lookSeq_le_ptyOut (s : State) (chunk : List UInt8)
-    (h : s.lookSeq ≤ s.outSeq) :
+theorem lookSeq_le_ptyOut (s : State) (chunk : List UInt8) (h : s.lookSeq ≤ s.outSeq) :
     (step s (.ptyOut chunk)).1.lookSeq ≤ (step s (.ptyOut chunk)).1.outSeq := by
   show (if s.clients.any (·.attached) then s.outSeq + 1 else s.lookSeq) ≤ s.outSeq + 1
   split <;> omega
@@ -560,30 +555,27 @@ is `Render.screenText` — the grid, never the ring — chunked and closed with
 `.done`, and the ONLY state change is the read mark catching up. `rfl`, so any
 smuggled side effect (a vt touch, a label change) breaks it. -/
 theorem onMsg_screen (s : State) (c : Client) :
-    onMsg s c .screen
-      = ({ s with lookSeq := s.outSeq },
-         outputMsgs c.id (Render.screenText s.vt) ++ [.send c.id .done]) := rfl
+    onMsg s c .screen =
+      ({ s with lookSeq := s.outSeq },
+        outputMsgs c.id (Render.screenText s.vt) ++ [.send c.id .done]) := rfl
 
 /-- …so after a capture nothing is unseen: "output arrived while nobody was
 watching" is false of a session whose screen was just delivered. `.info`
 deliberately has no such effect (`ls` polls every daemon), and `.history`
 stays an export — the line is drawn at verbs that show the current screen. -/
-theorem screen_marks_seen (s : State) (c : Client) :
-    unseen (onMsg s c .screen).1 = false := by
+theorem screen_marks_seen (s : State) (c : Client) : unseen (onMsg s c .screen).1 = false := by
   simp [onMsg, unseen]
 
 /-- …and `behind` counts from the capture: zero at the moment of the look, so
 what an agent reads later really is "output events since I captured". -/
-theorem screen_behind_zero (s : State) (c : Client) :
-    behind (onMsg s c .screen).1 = 0 := by
+theorem screen_behind_zero (s : State) (c : Client) : behind (onMsg s c .screen).1 = 0 := by
   simp [onMsg, behind]
 
 /-- **No client message moves the output counter.** `outSeq` advances only on
 `.ptyOut` — real child output — so no connection, whatever it sends, can
 forge activity: `unseen`, `fresh` and `behind` can be *caught up* by a look
 (attach, capture) but never inflated by traffic. -/
-theorem onMsg_outSeq (s : State) (c : Client) (m : Msg) :
-    (onMsg s c m).1.outSeq = s.outSeq := by
+theorem onMsg_outSeq (s : State) (c : Client) (m : Msg) : (onMsg s c m).1.outSeq = s.outSeq := by
   unfold onMsg controlResize
   dsimp only
   repeat' split
@@ -592,18 +584,18 @@ theorem onMsg_outSeq (s : State) (c : Client) (m : Msg) :
 /-- The read mark never overtakes the counter through any message: every arm
 leaves `lookSeq` alone or catches it up to `outSeq` (attach and capture — the
 looks), and none touches `outSeq`. -/
-theorem onMsg_lookSeq_le (s : State) (c : Client) (m : Msg)
-    (h : s.lookSeq ≤ s.outSeq) :
+theorem onMsg_lookSeq_le (s : State) (c : Client) (m : Msg) (h : s.lookSeq ≤ s.outSeq) :
     (onMsg s c m).1.lookSeq ≤ (onMsg s c m).1.outSeq := by
   unfold onMsg controlResize
   dsimp only
   repeat' split
-  all_goals first
+  all_goals
+    first
     | simp_all [State.setClient]
     | (simp_all [State.setClient]; omega)
 
-theorem feedMsgs_lookSeq_le (id : Nat) (msgs : List Msg)
-    (acc : State × List Effect) (h : acc.1.lookSeq ≤ acc.1.outSeq) :
+theorem feedMsgs_lookSeq_le (id : Nat) (msgs : List Msg) (acc : State × List Effect)
+    (h : acc.1.lookSeq ≤ acc.1.outSeq) :
     (feedMsgs id msgs acc).1.lookSeq ≤ (feedMsgs id msgs acc).1.outSeq := by
   induction msgs generalizing acc with
   | nil => exact h
@@ -622,7 +614,8 @@ theorem step_lookSeq_le (s : State) (ev : Event) (h : s.lookSeq ≤ s.outSeq) :
   unfold step
   dsimp only
   repeat' split
-  all_goals first
+  all_goals
+    first
     | exact h
     | (apply feedMsgs_lookSeq_le; exact h)
     | (dsimp only; omega)
@@ -657,8 +650,7 @@ same messages in the same order).
 
 open Linger.Core.Wire (Msg)
 
-theorem client?_id {s : State} {id : Nat} {c : Client}
-    (h : s.client? id = some c) : c.id = id := by
+theorem client?_id {s : State} {id : Nat} {c : Client} (h : s.client? id = some c) : c.id = id := by
   have hp := (List.find?_eq_some_iff_append.mp h).1
   simpa using hp
 
@@ -666,17 +658,19 @@ theorem client?_id {s : State} {id : Nat} {c : Client}
 for a *different* id finds. -/
 theorem find?_map_set (c : Client) (other : Nat) (hne : other ≠ c.id) :
     ∀ (l : List Client),
-      (l.map (fun c' => if c'.id == c.id then c else c')).find? (·.id == other)
-        = l.find? (·.id == other)
+      (l.map (fun c' => if c'.id == c.id then c else c')).find? (·.id == other) =
+        l.find? (·.id == other)
   | [] => rfl
   | a :: l => by
-    have hc : (c.id == other) = false :=
-      beq_eq_false_iff_ne.mpr (fun hh => hne hh.symm)
+    have hc : (c.id == other) = false := beq_eq_false_iff_ne.mpr (fun hh => hne hh.symm)
     rw [List.map_cons, List.find?_cons, List.find?_cons]
     by_cases hid : (a.id == c.id) = true
     · have ha : (a.id == other) = false := by
         have : a.id = c.id := by simpa using hid
-        exact beq_eq_false_iff_ne.mpr (by rw [this]; exact fun hh => hne hh.symm)
+        exact
+          beq_eq_false_iff_ne.mpr
+            (by
+              rw [this]; exact fun hh => hne hh.symm)
       simp only [hid, ite_true, hc, ha]
       exact find?_map_set c other hne l
     · simp only [hid, Bool.false_eq_true, ite_false]
@@ -687,8 +681,7 @@ theorem find?_map_set (c : Client) (other : Nat) (hne : other ≠ c.id) :
 /-- Dropping one client cannot change what a lookup for a different id
 finds. -/
 theorem find?_filter_drop (id other : Nat) (hne : other ≠ id) :
-    ∀ (l : List Client),
-      (l.filter (·.id != id)).find? (·.id == other) = l.find? (·.id == other)
+    ∀ (l : List Client), (l.filter (·.id != id)).find? (·.id == other) = l.find? (·.id == other)
   | [] => rfl
   | a :: l => by
     rw [List.filter_cons, List.find?_cons]
@@ -699,34 +692,34 @@ theorem find?_filter_drop (id other : Nat) (hne : other ≠ id) :
       · rfl
     · have ha : (a.id == other) = false := by
         have : a.id = id := by simpa using hid
-        exact beq_eq_false_iff_ne.mpr (by rw [this]; exact fun hh => hne hh.symm)
+        exact
+          beq_eq_false_iff_ne.mpr
+            (by
+              rw [this]; exact fun hh => hne hh.symm)
       rw [ite_eq_right hid]
       simp only [ha]
       exact find?_filter_drop id other hne l
 
 theorem setClient_other {s : State} {c : Client} {other : Nat} (h : other ≠ c.id) :
-    (s.setClient c).client? other = s.client? other :=
-  find?_map_set c other h s.clients
+    (s.setClient c).client? other = s.client? other := find?_map_set c other h s.clients
 
 theorem dropClient_other {s : State} {id other : Nat} (h : other ≠ id) :
-    (s.dropClient id).client? other = s.client? other :=
-  find?_filter_drop id other h s.clients
+    (s.dropClient id).client? other = s.client? other := find?_filter_drop id other h s.clients
 
 /-- One message from `c` leaves every other client's record alone. -/
-theorem onMsg_other (s : State) (c : Client) (m : Msg) {other : Nat}
-    (h : other ≠ c.id) :
+theorem onMsg_other (s : State) (c : Client) (m : Msg) {other : Nat} (h : other ≠ c.id) :
     (onMsg s c m).1.client? other = s.client? other := by
   unfold onMsg controlResize
   dsimp only
   repeat' split
-  all_goals first
+  all_goals
+    first
     | rfl
     | exact setClient_other h
 
 /-- …and so does a whole batch of them. -/
-theorem feedMsgs_other (id : Nat) (msgs : List Msg) (acc : State × List Effect)
-    {other : Nat} (h : other ≠ id) :
-    (feedMsgs id msgs acc).1.client? other = acc.1.client? other := by
+theorem feedMsgs_other (id : Nat) (msgs : List Msg) (acc : State × List Effect) {other : Nat}
+    (h : other ≠ id) : (feedMsgs id msgs acc).1.client? other = acc.1.client? other := by
   induction msgs generalizing acc with
   | nil => rfl
   | cons m ms ih =>
@@ -739,16 +732,18 @@ theorem feedMsgs_other (id : Nat) (msgs : List Msg) (acc : State × List Effect)
       have hstep := ih ((onMsg acc.1 c' m).1, acc.2 ++ (onMsg acc.1 c' m).2)
       unfold feedMsgs at hstep
       rw [hstep]
-      exact onMsg_other _ _ _ (by rw [client?_id hc]; exact h)
+      exact
+        onMsg_other _ _ _
+          (by
+            rw [client?_id hc]; exact h)
 
 /-- §Isolate: bytes from one client cannot alter another client's
 record — including its wire decoder, so a peer stuck mid-frame stays
 mid-frame and resumes correctly on its next chunk. Daemon-level
 concurrency safety is this, plus §Chunk (per-connection ordering),
 plus single-threadedness. -/
-theorem step_bytes_isolates (s : State) (id : Nat) (chunk : List UInt8)
-    {other : Nat} (h : other ≠ id) :
-    (step s (.bytes id chunk)).1.client? other = s.client? other := by
+theorem step_bytes_isolates (s : State) (id : Nat) (chunk : List UInt8) {other : Nat}
+    (h : other ≠ id) : (step s (.bytes id chunk)).1.client? other = s.client? other := by
   unfold step
   dsimp only
   split
@@ -757,13 +752,15 @@ theorem step_bytes_isolates (s : State) (id : Nat) (chunk : List UInt8)
     split
     · exact dropClient_other h
     · rw [feedMsgs_other id _ _ h]
-      exact setClient_other (by rw [client?_id hfind]; exact h)
+      exact
+        setClient_other
+          (by
+            rw [client?_id hfind]; exact h)
 
 end Linger.Core.Session
 
-
-
 namespace Linger.Core.Session
+
 /-! ## Trace lift — the per-step theorems over the daemon's whole life
 
 `step`-level preservation says one event is safe; the daemon lives
@@ -779,17 +776,23 @@ single events.
 threading and effect order both. Pins the definition: any deviation
 (dropped effects, unthreaded state) breaks this. -/
 theorem run_eq_foldl (s : State) (evs : List Event) :
-    run s evs = evs.foldl
-      (fun (acc : State × List Effect) ev =>
-        ((step acc.1 ev).1, acc.2 ++ (step acc.1 ev).2))
-      (s, []) := by
-  suffices hgen : ∀ evs (s : State) (fx : List Effect),
-      (fx ++ (run s evs).2 = (evs.foldl
-        (fun (acc : State × List Effect) ev =>
-          ((step acc.1 ev).1, acc.2 ++ (step acc.1 ev).2)) (s, fx)).2)
-      ∧ (run s evs).1 = (evs.foldl
-        (fun (acc : State × List Effect) ev =>
-          ((step acc.1 ev).1, acc.2 ++ (step acc.1 ev).2)) (s, fx)).1 by
+    run s evs =
+      evs.foldl
+        (fun (acc : State × List Effect) ev => ((step acc.1 ev).1, acc.2 ++ (step acc.1 ev).2))
+        (s, []) := by
+  suffices hgen :
+    ∀ evs (s : State) (fx : List Effect),
+      (fx ++ (run s evs).2 =
+          (evs.foldl
+              (fun (acc : State × List Effect) ev =>
+                ((step acc.1 ev).1, acc.2 ++ (step acc.1 ev).2))
+              (s, fx)).2) ∧
+        (run s evs).1 =
+          (evs.foldl
+              (fun (acc : State × List Effect) ev =>
+                ((step acc.1 ev).1, acc.2 ++ (step acc.1 ev).2))
+              (s, fx)).1
+    by
     have h := hgen evs s []
     rcases hr : run s evs with ⟨s', fx'⟩
     rw [hr] at h
@@ -798,7 +801,8 @@ theorem run_eq_foldl (s : State) (evs : List Event) :
     exact ⟨h.2, h.1.symm ▸ rfl⟩
   intro evs
   induction evs with
-  | nil => intro s fx; simp [run]
+  | nil =>
+    intro s fx; simp [run]
   | cons ev evs ih =>
     intro s fx
     have h := ih (step s ev).1 (fx ++ (step s ev).2)
@@ -828,21 +832,20 @@ theorem run_wf (s : State) (evs : List Event) (h : WF s) : WF (run s evs).1 := b
 /-- §Isolate over a whole trace: one client's entire byte stream,
 however chunked, leaves every other client's record — decoder included
 — bit-identical. -/
-theorem run_bytes_isolates (s : State) (id : Nat) (chunks : List (List UInt8))
-    {other : Nat} (h : other ≠ id) :
-    (run s (chunks.map (Event.bytes id))).1.client? other = s.client? other := by
+theorem run_bytes_isolates (s : State) (id : Nat) (chunks : List (List UInt8)) {other : Nat}
+    (h : other ≠ id) : (run s (chunks.map (Event.bytes id))).1.client? other = s.client? other := by
   induction chunks generalizing s with
   | nil => rfl
-  | cons c cs ih =>
+  | cons c cs
+    ih =>
     show (run (step s (.bytes id c)).1 (cs.map (Event.bytes id))).1.client? other = _
     rw [ih (step s (.bytes id c)).1]
     exact step_bytes_isolates s id c h
 
 end Linger.Core.Session
 
-
-
 namespace Linger.Core.Session
+
 /-! ## §Renderable lifted to the daemon's whole life
 
 The emulator-level invariant is only useful if the *daemon's* terminal satisfies
@@ -866,7 +869,8 @@ theorem onMsg_vt_live {s : State} {c : Client} (m : Msg) (h : LiveVt s) :
   unfold onMsg controlResize
   dsimp only
   repeat' split
-  all_goals first
+  all_goals
+    first
     | exact h
     | exact LiveReachableVt.resize (by simpa [State.setClient] using h) _ _
     | simpa [State.setClient] using h
@@ -914,8 +918,7 @@ theorem step_vt_live (s : State) (ev : Event) (h : LiveVt s) : LiveVt (step s ev
     · exact h
 
 /-- …and so does a trace of any length. -/
-theorem run_vt_live (s : State) (evs : List Event) (h : LiveVt s) :
-    LiveVt (run s evs).1 := by
+theorem run_vt_live (s : State) (evs : List Event) (h : LiveVt s) : LiveVt (run s evs).1 := by
   induction evs generalizing s with
   | nil => exact h
   | cons ev evs ih =>
@@ -926,8 +929,7 @@ theorem run_vt_live (s : State) (evs : List Event) (h : LiveVt s) :
 has been through — adversarial clients, hostile pty bytes, resizes, any
 interleaving — the grid it holds is one `Render.restore` can express. -/
 theorem run_vt_renderable (s : State) (evs : List Event) (h : LiveVt s) :
-    Renderable (run s evs).1.vt :=
-  Linger.Core.Vt.renderable_of_liveReachable (run_vt_live s evs h)
+    Renderable (run s evs).1.vt := Linger.Core.Vt.renderable_of_liveReachable (run_vt_live s evs h)
 
 /-- A daemon booting from a fresh emulator satisfies the hypothesis, so the
 statement above is not conditional in practice. -/
@@ -937,8 +939,7 @@ theorem liveVt_init (cols rows : Nat) (cs : List Client) (ls : List (String × S
 
 /-- …and stated through the one door the runtime actually walks through. -/
 theorem liveVt_boot (cols rows : Nat) (ls mk : List (String × String)) :
-    LiveVt (State.boot (Vt.Vt.init cols rows) ls mk) :=
-  LiveReachableVt.init cols rows
+    LiveVt (State.boot (Vt.Vt.init cols rows) ls mk) := LiveReachableVt.init cols rows
 
 /-! ## §Bound at the door — boot is well-formed, so every daemon state is
 
@@ -952,8 +953,8 @@ simply false of a resumed daemon (the gap that sized this step). The `Good vt`
 hypothesis is honest: a fresh boot has `Good (Vt.init …)`, and the resume
 path's decoded emulator carries it from the checkpoint theorems' side. -/
 
-theorem boot_wf (vt : Vt.Vt) (labels metaKv : List (String × String))
-    (h : Linger.Core.Vt.Good vt) : WF (State.boot vt labels metaKv) := by
+theorem boot_wf (vt : Vt.Vt) (labels metaKv : List (String × String)) (h : Linger.Core.Vt.Good vt) :
+    WF (State.boot vt labels metaKv) := by
   refine ⟨⟨?_, ?_, ?_, ?_⟩, h⟩
   · show ([] : List Client).length ≤ maxClients
     simp [maxClients]
@@ -969,10 +970,9 @@ theorem boot_wf (vt : Vt.Vt) (labels metaKv : List (String × String))
 which, by the seal, is every state the daemon can possess — is well-formed,
 whatever the trace: adversarial clients, hostile pty bytes, forged
 checkpoints' label lists, any interleaving. -/
-theorem run_boot_wf (vt : Vt.Vt) (labels metaKv : List (String × String))
-    (evs : List Event) (h : Linger.Core.Vt.Good vt) :
-    WF (run (State.boot vt labels metaKv) evs).1 :=
-  run_wf _ _ (boot_wf vt labels metaKv h)
+theorem run_boot_wf (vt : Vt.Vt) (labels metaKv : List (String × String)) (evs : List Event)
+    (h : Linger.Core.Vt.Good vt) :
+    WF (run (State.boot vt labels metaKv) evs).1 := run_wf _ _ (boot_wf vt labels metaKv h)
 
 /-- **Only the size owner resizes the pty** (abduco's rule, as a theorem rather than
 a comment). `resizeEffects` emits a `resizePty` only for the client the size-ownership
@@ -984,7 +984,11 @@ theorem resizeEffects_owner_only (s : State) (c : Client) :
   intro hne
   by_cases hc : (sizeOwner s).any (·.id == c.id) = true
   · exact hc
-  · exact absurd (by unfold resizeEffects; rw [ite_eq_right hc]) hne
+  · exact
+      absurd
+        (by
+          unfold resizeEffects; rw [ite_eq_right hc])
+        hne
 
 /-- …and when it does resize, it is exactly one `resizePty` at the client's size —
 never a burst, never a stale size. -/
@@ -1005,20 +1009,19 @@ not believe a size it never got. -/
 changes nothing — not the emulator, not the pty — and says so. -/
 theorem controlResize_never_overrides (s : State) (c : Client) (cols rows : UInt32)
     (h : (sizeOwner s).isSome = true) :
-    controlResize s c cols rows
-      = (s, [.send c.id (.err "an attached client owns the size".toUTF8.toList)]) := by
+    controlResize s c cols rows =
+      (s, [.send c.id (.err "an attached client owns the size".toUTF8.toList)]) := by
   unfold controlResize
   rw [ite_eq_left h]
 
 /-- With nobody to fight, a genuine new size applies: exactly one `resizePty`
 at the requested size, the emulator resized with it, then `.done`. -/
 theorem controlResize_applies (s : State) (c : Client) (cols rows : UInt32)
-    (hown : (sizeOwner s).isSome = false)
-    (hnz : (cols == 0 || rows == 0) = false)
+    (hown : (sizeOwner s).isSome = false) (hnz : (cols == 0 || rows == 0) = false)
     (hdiff : (s.vt.cols == cols.toNat && s.vt.rows == rows.toNat) = false) :
-    controlResize s c cols rows
-      = ({ s with vt := s.vt.resize cols.toNat rows.toNat },
-         [.resizePty cols rows, .send c.id .done]) := by
+    controlResize s c cols rows =
+      ({ s with vt := s.vt.resize cols.toNat rows.toNat },
+        [.resizePty cols rows, .send c.id .done]) := by
   unfold controlResize
   rw [ite_eq_right (by simp [hown]), ite_eq_right (by simp [hnz]), ite_eq_right (by simp [hdiff])]
 
@@ -1027,8 +1030,7 @@ tab ruler included — is untouched (`Vt.resize` would wipe both and no SIGWINCH
 re-establishes them at an unchanged winsize; the attach guard's reason), and
 the reply is still `.done`: idempotent success, the pty already IS that size. -/
 theorem controlResize_same_size (s : State) (c : Client) (cols rows : UInt32)
-    (hown : (sizeOwner s).isSome = false)
-    (hnz : (cols == 0 || rows == 0) = false)
+    (hown : (sizeOwner s).isSome = false) (hnz : (cols == 0 || rows == 0) = false)
     (hsame : (s.vt.cols == cols.toNat && s.vt.rows == rows.toNat) = true) :
     controlResize s c cols rows = (s, [.send c.id .done]) := by
   unfold controlResize
@@ -1039,9 +1041,14 @@ theorem controlResize_same_size (s : State) (c : Client) (cols rows : UInt32)
 are about what the daemon actually runs. -/
 theorem onMsg_resize_control (s : State) (c : Client) (cols rows : UInt32)
     (hc : c.attached = false) :
-    onMsg s c (.resize cols rows)
-      = controlResize (s.setClient { c with cols, rows })
-          { c with cols, rows } cols rows := by
+    onMsg s c (.resize cols rows) =
+      controlResize
+        (s.setClient
+          { c with
+            cols, rows })
+        { c with
+          cols, rows }
+        cols rows := by
   unfold onMsg
   simp [hc]
 
@@ -1053,10 +1060,13 @@ are exhaustive, so a future branch that silently drops (the attached path's
 of the no-hang story — `Client.drainBounded` owns the other half, against
 daemons that predate the verb entirely. -/
 theorem controlResize_replies (s : State) (c : Client) (cols rows : UInt32) :
-    (controlResize s c cols rows).2.any (fun e => match e with
-      | .send i .done => i == c.id
-      | .send i (.err _) => i == c.id
-      | _ => false) = true := by
+    (controlResize s c cols rows).2.any
+        (fun e =>
+          match e with
+          | .send i .done => i == c.id
+          | .send i (.err _) => i == c.id
+          | _ => false) =
+      true := by
   unfold controlResize
   repeat' split
   all_goals simp
@@ -1089,12 +1099,13 @@ The fix is also what makes them provable at all: the old shape ended in
 
 /-- Scrubbed glyph bytes are ≥ 0x20, so neither framing byte can come out of a key or
 a value. `Render.utf8s` maps a C0 control — tab and newline included — to U+FFFD. -/
-theorem utf8s_no_frame (cs : List Char) :
-    ∀ b ∈ Render.utf8s cs, b ≠ 0x09 ∧ b ≠ 0x0A := by
+theorem utf8s_no_frame (cs : List Char) : ∀ b ∈ Render.utf8s cs, b ≠ 0x09 ∧ b ≠ 0x0A := by
   intro b hb
   obtain ⟨hge, -⟩ := Render.utf8s_no_ctl cs b hb
-  exact ⟨fun he => by rw [he] at hge; exact absurd hge (by decide),
-         fun he => by rw [he] at hge; exact absurd hge (by decide)⟩
+  exact
+    ⟨fun he => by
+      rw [he] at hge; exact absurd hge (by decide), fun he => by
+      rw [he] at hge; exact absurd hge (by decide)⟩
 
 /-- **Every byte of a listing is a framing byte or printable content.** -/
 theorem infoText_framing (s : State) :
@@ -1122,14 +1133,17 @@ private theorem count_utf8s_frame (cs : List Char) (b : UInt8) (hb : b = 0x09 �
   · exact h9 h
   · exact h10 h
 
-private theorem count_frame : ∀ (l : List (String × String)) (b : UInt8),
-    b = 0x09 ∨ b = 0x0A →
-    (l.flatMap (fun kv => Render.utf8s kv.1.toList ++ [0x09]
-      ++ Render.utf8s kv.2.toList ++ [0x0A])).count b = l.length
+private theorem count_frame :
+    ∀ (l : List (String × String)) (b : UInt8),
+      b = 0x09 ∨ b = 0x0A →
+        (l.flatMap
+                (fun kv =>
+                  Render.utf8s kv.1.toList ++ [0x09] ++ Render.utf8s kv.2.toList ++ [0x0A])).count
+            b =
+          l.length
   | [], _, _ => rfl
   | kv :: t, b, hb => by
-    have hz : ∀ cs : List Char, (Render.utf8s cs).count b = 0 :=
-      fun cs => count_utf8s_frame cs b hb
+    have hz : ∀ cs : List Char, (Render.utf8s cs).count b = 0 := fun cs => count_utf8s_frame cs b hb
     rw [List.flatMap_cons, List.count_append, count_frame t b hb]
     simp only [List.count_append, hz]
     rcases hb with h | h <;> subst h <;> simp <;> omega
@@ -1139,11 +1153,10 @@ as fields — so a field *cannot* forge a record, however it was set. This is th
 anti-forgery claim: an injected newline would make the newline count exceed the field
 count, and `Remote.parseRecord` reads one record per line. -/
 theorem infoText_records (s : State) :
-    (infoText s).count 0x0A = (infoFields s).length
-      ∧ (infoText s).count 0x09 = (infoFields s).length := by
+    (infoText s).count 0x0A = (infoFields s).length ∧
+      (infoText s).count 0x09 = (infoFields s).length := by
   unfold infoText
-  exact ⟨count_frame (infoFields s) 0x0A (Or.inr rfl),
-         count_frame (infoFields s) 0x09 (Or.inl rfl)⟩
+  exact ⟨count_frame (infoFields s) 0x0A (Or.inr rfl), count_frame (infoFields s) 0x09 (Or.inl rfl)⟩
 
 end Linger.Core.Session
 
@@ -1190,7 +1203,9 @@ private theorem chunksOf_flatten_aux {α : Type} (n : Nat) :
       have hn0 : n ≠ 0 := fun hz => h (Or.inr hz)
       have hgt : n < l.length := Nat.lt_of_not_le (fun hle => h (Or.inl hle))
       simp only [List.flatten_cons]
-      rw [ih (l.drop n) (by simp only [List.length_drop]; omega)]
+      rw [ih (l.drop n)
+          (by
+            simp only [List.length_drop]; omega)]
       exact List.take_append_drop n l
 
 theorem chunksOf_flatten {α : Type} (n : Nat) (l : List α) : (chunksOf n l).flatten = l :=
@@ -1232,11 +1247,14 @@ private theorem chunksOf_le_aux {α : Type} (n : Nat) (hn : 0 < n) :
       · subst hh
         simp only [List.length_take]
         omega
-      · exact ih (l.drop n) (by simp only [List.length_drop]; omega) c hh
+      · exact
+          ih (l.drop n)
+            (by
+              simp only [List.length_drop]; omega)
+            c hh
 
 theorem chunksOf_le {α : Type} (n : Nat) (hn : 0 < n) (l : List α) :
-    ∀ c ∈ chunksOf n l, c.length ≤ n :=
-  chunksOf_le_aux n hn l.length l (Nat.le_refl _)
+    ∀ c ∈ chunksOf n l, c.length ≤ n := chunksOf_le_aux n hn l.length l (Nat.le_refl _)
 
 /-- The payloads of the frames `outputMsgs` produces are exactly its chunks.
 
@@ -1246,30 +1264,42 @@ than about `chunksOf`, and the break-verify is what showed why: a bound stated o
 doubling it left such a claim green. That is the difference between a claim about the
 code and a claim sitting next to it. -/
 theorem outputMsgs_payloads (id : Nat) (bs : List UInt8) :
-    (outputMsgs id bs).filterMap (fun e => match e with
-      | .send _ (.output c) => some c
-      | _ => none) = chunksOf outputChunk bs := by
+    (outputMsgs id bs).filterMap
+        (fun e =>
+          match e with
+          | .send _ (.output c) => some c
+          | _ => none) =
+      chunksOf outputChunk bs := by
   unfold outputMsgs
   induction chunksOf outputChunk bs with
   | nil => rfl
-  | cons a t ih => rw [List.map_cons, List.filterMap_cons]; simpa using ih
+  | cons a t ih =>
+    rw [List.map_cons, List.filterMap_cons]; simpa using ih
 
 /-- **The session's framing loses nothing.** Concatenating the payloads of the frames
 `outputMsgs` produces gives back exactly the bytes it was handed — so the repaint a
 reattaching client receives is the whole of `Render.restore`, not a prefix of it. -/
 theorem outputMsgs_faithful (id : Nat) (bs : List UInt8) :
-    ((outputMsgs id bs).filterMap (fun e => match e with
-      | .send _ (.output c) => some c
-      | _ => none)).flatten = bs := by
+    ((outputMsgs id bs).filterMap
+          (fun e =>
+            match e with
+            | .send _ (.output c) => some c
+            | _ => none)).flatten =
+      bs := by
   rw [outputMsgs_payloads id bs]
   exact chunksOf_flatten outputChunk bs
 
 /-- **…and no frame exceeds the cap**, which is what makes every `output` message the
 daemon sends well-formed by `Wire`'s §Bound measure. -/
 theorem outputMsgs_bounded (id : Nat) (bs : List UInt8) :
-    ∀ c ∈ (outputMsgs id bs).filterMap (fun e => match e with
-      | .send _ (.output c) => some c
-      | _ => none), c.length ≤ outputChunk := by
+    ∀
+      c ∈
+        (outputMsgs id bs).filterMap
+          (fun e =>
+            match e with
+            | .send _ (.output c) => some c
+            | _ => none),
+      c.length ≤ outputChunk := by
   rw [outputMsgs_payloads id bs]
   exact chunksOf_le outputChunk (by decide) bs
 

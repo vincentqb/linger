@@ -18,8 +18,7 @@ namespace Linger.Core.Name
 remote-attach delimiter, so a name never collides with that syntax.
 Everything else (slashes, NULs, spaces, controls, unicode, `@`) is
 mapped away by `sanitize`. -/
-def okChar (c : Char) : Bool :=
-  c.isAlphanum || c == '-' || c == '_' || c == '.' || c == '+'
+def okChar (c : Char) : Bool := c.isAlphanum || c == '-' || c == '_' || c == '.' || c == '+'
 
 def maxLen : Nat := 80
 
@@ -36,7 +35,7 @@ def sanitize (s : String) : String :=
 /-- The §Name predicate, over the character list so proofs stay in
 list-land. -/
 def Valid (s : String) : Prop :=
-  s.toList.length > 0 ∧ s.toList.length ≤ maxLen ∧
-  (∀ c ∈ s.toList, okChar c) ∧ s.toList.head? ≠ some '.'
+  s.toList.length > 0 ∧
+    s.toList.length ≤ maxLen ∧ (∀ c ∈ s.toList, okChar c) ∧ s.toList.head? ≠ some '.'
 
 end Linger.Core.Name

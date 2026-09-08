@@ -30,11 +30,11 @@ def encodeBA (m : Msg) : ByteArray := ByteArray.mk (Linger.Core.Wire.encode m).t
 def connect (name : String) : IO (Option UInt32) := do
   let path ← Paths.socketPath name
   let r ← unixConnect path
-  if r ≥ 0 then return some r.toUInt64.toUInt32
+  if r ≥ 0 then
+    return some r.toUInt64.toUInt32
   return none
 
-def sendMsg (fd : UInt32) (m : Msg) : IO Unit :=
-  writeAll fd (encodeBA m)
+def sendMsg (fd : UInt32) (m : Msg) : IO Unit := writeAll fd (encodeBA m)
 
 /-- Read frames until the daemon closes or a terminator arrives.
 Output payloads stream to stdout as they come. Returns the exit status
@@ -48,33 +48,40 @@ def drainReplies (fd : UInt32) (untilDone : Bool) : IO (Option UInt32) := do
     if revs[0]! &&& (POLLIN ||| POLLHUP ||| POLLERR) == 0 then
       continue
     match ← read fd 65536 with
-    | none => go := false
+    | none =>
+      go := false
     | some bs =>
-      if bs.isEmpty then continue
+      if bs.isEmpty then
+        continue
       let (dec', msgs) := dec.feed bs.toList
       dec := dec'
       if dec.errored then
         go := false
       for m in msgs do
         match m with
-        | .output payload => writeAll stdoutFd (ByteArray.mk payload.toArray)
-        | .infoReply payload => writeAll stdoutFd (ByteArray.mk payload.toArray)
+        | .output payload =>
+          writeAll stdoutFd (ByteArray.mk payload.toArray)
+        | .infoReply payload =>
+          writeAll stdoutFd (ByteArray.mk payload.toArray)
         | .exited status =>
           result := some status
           go := false
         | .done =>
-          if untilDone then go := false
+          if untilDone then
+            go := false
         | .err msg =>
           let msgTxt := String.fromUTF8? (ByteArray.mk msg.toArray) |>.getD "error"
           IO.eprintln s!"linger: {msgTxt}"
           go := false
-        | _ => pure ()
+        | _ =>
+          pure ()
   return result
 
 /-- Fire-and-forget: deliver one message, no reply expected. -/
 def sendOnly (name : String) (m : Msg) : IO Bool := do
   match ← connect name with
-  | none => return false
+  | none =>
+    return false
   | some fd =>
     sendMsg fd m
     close fd
@@ -84,7 +91,8 @@ def sendOnly (name : String) (m : Msg) : IO Bool := do
 no live daemon. -/
 def oneShot (name : String) (m : Msg) : IO Bool := do
   match ← connect name with
-  | none => return false
+  | none =>
+    return false
   | some fd =>
     sendMsg fd m
     let _ ← drainReplies fd true
@@ -114,19 +122,24 @@ def drainBounded (fd : UInt32) (silenceMs : Int32 := 2000) : IO Drained := do
   while go do
     let revs ← poll #[fd] #[POLLIN] silenceMs
     if revs[0]! &&& (POLLIN ||| POLLHUP ||| POLLERR) == 0 then
-      go := false  -- a full window of silence: no daemon is going to answer
+      go := false -- a full window of silence: no daemon is going to answer
     else
       match ← read fd 65536 with
-      | none => go := false
+      | none =>
+        go := false
       | some bs =>
-        if bs.isEmpty then continue
+        if bs.isEmpty then
+          continue
         let (dec', msgs) := dec.feed bs.toList
         dec := dec'
-        if dec.errored then go := false
+        if dec.errored then
+          go := false
         for m in msgs do
           match m with
-          | .output payload => writeAll stdoutFd (ByteArray.mk payload.toArray)
-          | .infoReply payload => writeAll stdoutFd (ByteArray.mk payload.toArray)
+          | .output payload =>
+            writeAll stdoutFd (ByteArray.mk payload.toArray)
+          | .infoReply payload =>
+            writeAll stdoutFd (ByteArray.mk payload.toArray)
           | .done =>
             result := .done
             go := false
@@ -135,7 +148,8 @@ def drainBounded (fd : UInt32) (silenceMs : Int32 := 2000) : IO Drained := do
             IO.eprintln s!"linger: {msgTxt}"
             result := .refused
             go := false
-          | _ => pure ()
+          | _ =>
+            pure ()
   return result
 
 /-- Split stdin bytes at the detach key. Returns (bytes-to-send,
@@ -192,13 +206,15 @@ def attach (fd : UInt32) (readOnly : Bool := false) : IO Outcome := do
       -- stdin → daemon (read-only: only the detach key is honored)
       if revs[0]! &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
         match ← read stdinFd 65536 with
-        | none => leaving := true
+        | none =>
+          leaving := true
         | some bs =>
           if !bs.isEmpty then
             let (out, detach) := splitDetach bs detachEnabled
             if !out.isEmpty && !readOnly then
               sendMsg fd (.input out.toList)
-            if detach then leaving := true
+            if detach then
+              leaving := true
       -- daemon → stdout
       if revs[1]! &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
         match ← read fd 65536 with
@@ -209,10 +225,12 @@ def attach (fd : UInt32) (readOnly : Bool := false) : IO Outcome := do
           if !bs.isEmpty then
             let (dec', msgs) := dec.feed bs.toList
             dec := dec'
-            if dec.errored then leaving := true
+            if dec.errored then
+              leaving := true
             for m in msgs do
               match m with
-              | .output payload => writeAll stdoutFd (ByteArray.mk payload.toArray)
+              | .output payload =>
+                writeAll stdoutFd (ByteArray.mk payload.toArray)
               | .exited status =>
                 result := .ended status
                 leaving := true
@@ -222,10 +240,13 @@ def attach (fd : UInt32) (readOnly : Bool := false) : IO Outcome := do
                 -- a phantom detach. Scrubbed like any byte stream reaching a
                 -- terminal — the message is our daemon's, but the socket is not
                 -- a trusted channel. The daemon closes right after, so leaving.
-                result := .refused (Linger.Core.Remote.scrub
-                  (String.fromUTF8? (ByteArray.mk msg.toArray) |>.getD "refused"))
+                result :=
+                  .refused
+                    (Linger.Core.Remote.scrub
+                      (String.fromUTF8? (ByteArray.mk msg.toArray) |>.getD "refused"))
                 leaving := true
-              | _ => pure ()
+              | _ =>
+                pure ()
   finally
     -- hand the terminal back before the line discipline: the session's last
     -- program may have left the alt screen, mouse reporting, a scroll region or

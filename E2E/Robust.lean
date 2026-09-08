@@ -86,12 +86,12 @@ below FAIL rather than pass — fail-closed. -/
 def psTable : IO (List (Nat × Nat × String)) := do
   let out ← IO.Process.output { cmd := "ps", args := #["-e", "-ww", "-o", "pid,ppid,args"] }
   return (out.stdout.splitOn "\n").filterMap fun l =>
-    match words l with
-    | p :: pp :: _ =>
-      match p.toNat?, pp.toNat? with
-      | some pid, some ppid => some (pid, ppid, l)
-      | _, _ => none
-    | _ => none
+      match words l with
+      | p :: pp :: _ =>
+        match p.toNat?, pp.toNat? with
+        | some pid, some ppid => some (pid, ppid, l)
+        | _, _ => none
+      | _ => none
 
 /-- Send a signal by NAME. See the module docstring: the numbers for SIGSTOP and
 SIGCONT differ between Linux and macOS, so they never enter Lean. `kill` through
@@ -129,7 +129,6 @@ def countFull (log : String) : Nat := (log.splitOn fullMarker).length - 1
 def run : IO UInt32 := do
   let e ← Env.make "robust"
   let mut f := 0
-
   -- ── 1. busy daemon still lists correctly ──────────────────────────────────
   let _ ← e.cli #["run", "busy", "echo hi"]
   IO.sleep 1000
@@ -138,14 +137,13 @@ def run : IO UInt32 := do
   -- `daemon_pids('busy')[0]` on the line before `os.kill(..., SIGSTOP)`. Aborts
   -- rather than printing a check, as the Python's implicit `[0]` IndexError did:
   -- with no pid there is nothing below this line left to mean anything.
-  let some dpid ← e.daemonPid "busy"
-    | throw (IO.userError "no daemon answered for 'busy' — nothing to SIGSTOP")
+  let some dpid ←
+    e.daemonPid "busy" | throw (IO.userError "no daemon answered for 'busy' — nothing to SIGSTOP")
   signalByName dpid "STOP"
   let out ← e.out #["list"]
   let porc ← e.out #["list", "--porcelain"]
   let socks ← e.dirNames ".sock"
   signalByName dpid "CONT"
-
   -- the leading glyph is the status column: a daemon that did not answer within
   -- the reply window is reported as unknown (`Status.icon .unknown`), which is the
   -- designed state for it — so this pins §Row *and* that a busy row is not shown
@@ -153,21 +151,32 @@ def run : IO UInt32 := do
   -- against a copy of it: `Cli.cmdList` writes `humanListing rows` straight to
   -- stdout, and for a socket that connected but sent nothing back the row is
   -- `rowFields name []` plus `state=live` and `rowStatus (.live [])`.
-  let expected := humanListing
-    [rowFields "busy" [("state", "live"), ("status", Linger.Core.Status.name (rowStatus (.live [])))]]
-  f := f + (← expect (out.toUTF8.toList == expected)
-    s!"busy daemon lists under its name, marked unknown (got '{out.trimAscii.toString}')")
+  let expected :=
+    humanListing
+      [rowFields "busy"
+          [("state", "live"), ("status", Linger.Core.Status.name (rowStatus (.live [])))]]
+  f :=
+    f +
+      (←
+        expect (out.toUTF8.toList == expected)
+            s!"busy daemon lists under its name, marked unknown (got '{out.trimAscii.toString}')")
   let recs := records porc
-  f := f + (← expect (recs.contains ("name", "busy")
-                      && recs.contains ("status", Linger.Core.Status.name Status.unknown))
-    "porcelain carries the name for a busy daemon")
+  f :=
+    f +
+      (←
+        expect
+            (recs.contains ("name", "busy") &&
+              recs.contains ("status", Linger.Core.Status.name Status.unknown))
+            "porcelain carries the name for a busy daemon")
   f := f + (← expect (socks == ["busy.sock"]) s!"busy daemon keeps its socket ({socks})")
   IO.sleep 400
-  f := f + (← expect ((← e.cli #["send", "busy", "echo x\n"]).1 == 0)
-    "busy daemon still reachable afterwards")
+  f :=
+    f +
+      (←
+        expect ((← e.cli #["send", "busy", "echo x\n"]).1 == 0)
+            "busy daemon still reachable afterwards")
   e.killAll #["busy"]
   IO.sleep 500
-
   -- ── 2. stale socket + concurrent starts -> one owner ──────────────────────
   -- The name is unique to this run so the `ps` scan below cannot see a developer's
   -- own session of the same name. See the module docstring: this replaces
@@ -176,37 +185,36 @@ def run : IO UInt32 := do
   let claim := s!"claim-{← Linger.Posix.getpid}"
   let _ ← e.cli #["run", claim, "echo one"]
   IO.sleep 1000
-  let some victim ← e.daemonPid claim
-    | throw (IO.userError s!"no daemon answered for '{claim}' — nothing to SIGKILL")
+  let some victim ←
+    e.daemonPid
+        claim | throw (IO.userError s!"no daemon answered for '{claim}' — nothing to SIGKILL")
   -- SIGKILL directly, NOT `Env.crashDaemon`: that unlinks the socket, and the
   -- socket left behind stale is the premise of the race below. 9 is safe to spell
   -- as a number (POSIX fixes 1–15); STOP and CONT above are not.
   Linger.Posix.kill victim 9
   IO.sleep 300
   let stale ← e.dirNames ".sock"
-  f := f + (← expect (stale == [s!"{claim}.sock"])
-    s!"stale socket present for the race ({stale})")
-
+  f := f + (← expect (stale == [s!"{claim}.sock"]) s!"stale socket present for the race ({stale})")
   -- eight concurrent `run <name>`, spawned before any is waited on — the Python's
   -- `[Popen(...) for _ in range(8)]` then `for p: p.wait()`
   let cfg : IO.Process.SpawnArgs :=
-    { cmd := e.bin, args := #["run", claim, "echo two"], env := e.procEnv,
-      stdin := .null, stdout := .null, stderr := .null }
+    { cmd := e.bin, args := #["run", claim, "echo two"], env := e.procEnv, stdin := .null,
+      stdout := .null, stderr := .null }
   let kids ← (List.range 8).mapM fun _ => IO.Process.spawn cfg
   for k in kids do
     let _ ← k.wait
   IO.sleep 1500
-
   let ps ← psTable
-  let owners := ps.filterMap fun (pid, _, args) =>
-    if has args s!"__daemon {claim}" then some pid else none
-  let shells := ps.filter fun (_, ppid, args) =>
-    owners.contains ppid && has args "/bin/sh"
-  f := f + (← expect (owners.length == 1)
-    s!"exactly one daemon owns the name (got {owners.length})")
+  let owners :=
+    ps.filterMap fun (pid, _, args) => if has args s!"__daemon {claim}" then some pid else none
+  let shells := ps.filter fun (_, ppid, args) => owners.contains ppid && has args "/bin/sh"
+  f :=
+    f + (← expect (owners.length == 1) s!"exactly one daemon owns the name (got {owners.length})")
   f := f + (← expect (shells.length == 1) s!"exactly one shell (got {shells.length})")
-  f := f + (← expect ((← e.cli #["send", claim, "echo y\n"]).1 == 0)
-    "the surviving session is reachable")
+  f :=
+    f +
+      (←
+        expect ((← e.cli #["send", claim, "echo y\n"]).1 == 0) "the surviving session is reachable")
   -- lock files are deliberately never unlinked (unlinking defeats flock), so
   -- earlier sessions leave theirs behind; ours must be among them. Listed BEFORE
   -- the flock probe, because `flock` opens the path with O_CREAT and would make
@@ -217,22 +225,26 @@ def run : IO UInt32 := do
   -- branch it returns a held fd, which must be closed or THIS process would own
   -- the name for the rest of the suite.
   let lockFd ← Linger.Posix.flock s!"{e.dir}/{claim}.lock"
-  if lockFd ≥ 0 then Linger.Posix.close (UInt32.ofNat lockFd.toNatClampNeg)
-  f := f + (← expect (locks.contains s!"{claim}.lock" && lockFd == -1)
-    s!"ownership lock file present ({locks})")
+  if lockFd ≥ 0 then
+    Linger.Posix.close (UInt32.ofNat lockFd.toNatClampNeg)
+  f :=
+    f +
+      (←
+        expect (locks.contains s!"{claim}.lock" && lockFd == -1)
+            s!"ownership lock file present ({locks})")
   e.killAll #[claim]
   IO.sleep 500
-
   -- the lock must be re-acquirable once the owner is gone (kernel released it)
   let _ ← e.cli #["run", claim, "echo three"]
   IO.sleep 1000
-  let owners2 := (← psTable).filterMap fun (pid, _, args) =>
-    if has args s!"__daemon {claim}" then some pid else none
-  f := f + (← expect (owners2.length == 1)
-    "name is re-claimable after the owner exits (no stale lock)")
+  let owners2 :=
+    (← psTable).filterMap fun (pid, _, args) =>
+      if has args s!"__daemon {claim}" then some pid else none
+  f :=
+    f +
+      (← expect (owners2.length == 1) "name is re-claimable after the owner exits (no stale lock)")
   e.killAll #[claim]
   IO.sleep 500
-
   -- ── 3. a child that stops reading cannot grow the daemon ──────────────────
   -- `sleep` never reads its stdin, so the pty master's input buffer fills and
   -- `flushPty` stops draining; every `.input` frame after that would append
@@ -257,11 +269,9 @@ def run : IO UInt32 := do
     -- length is `Wire.writeU32`, so a tag renumbering is a compile-time fact here
     -- instead of a silently-ignored frame. 262144 B is `Wire.maxPayload` exactly —
     -- the largest legal frame, which is what makes 64 of them ~4x the cap.
-    let payload := (List.replicate 4096
-      (List.replicate 63 (0x78 : UInt8) ++ [0x0A])).flatten
-    let frame := ByteArray.mk
-      (Linger.Core.Wire.encode (.input payload)).toArray
-    for _ in List.range 64 do                     -- 16 MiB, ~4x the cap
+    let payload := (List.replicate 4096 (List.replicate 63 (0x78 : UInt8) ++ [0x0A])).flatten
+    let frame := ByteArray.mk (Linger.Core.Wire.encode (.input payload)).toArray
+    for _ in List.range 64 do -- 16 MiB, ~4x the cap
       Linger.Posix.writeAll sock frame
     Linger.Posix.close sock
     -- the daemon logs the cap once on the transition into backpressure; its stderr
@@ -270,7 +280,10 @@ def run : IO UInt32 := do
     -- stayed <= cap is exactly "the child could not grow us".
     let logf := s!"{e.dir}/logs/stall.log"
     let readLog : IO String := do
-      try IO.FS.readFile logf catch _ => pure ""
+      try
+        IO.FS.readFile logf
+      catch _ =>
+        pure ""
     let mut log := ""
     let mut m : Option (Nat × Nat) := none
     for _ in List.range 20 do
@@ -281,18 +294,23 @@ def run : IO UInt32 := do
     f := f + (← expect m.isSome "daemon reports the full input buffer")
     -- …and the cap it reports is `Daemon.ptyInCap`, not merely some number it also
     -- compared itself against
-    f := f + (← expect (match m with
-                        | some (p, c) => p ≤ c && c == ptyInCap
-                        | none => true)
-      "pending stayed within the cap, and the cap is Daemon.ptyInCap")
-    f := f + (← expect (countFull log == 1)
-      "logged once on the edge, not per dropped chunk")
-    f := f + (← expect ((← e.cli #["send", "stall", "echo x\n"]).1 == 0)
-      "the stalled session is still reachable")
+    f :=
+      f +
+        (←
+          expect
+              (match m with
+              | some (p, c) => p ≤ c && c == ptyInCap
+              | none => true)
+              "pending stayed within the cap, and the cap is Daemon.ptyInCap")
+    f := f + (← expect (countFull log == 1) "logged once on the edge, not per dropped chunk")
+    f :=
+      f +
+        (←
+          expect ((← e.cli #["send", "stall", "echo x\n"]).1 == 0)
+              "the stalled session is still reachable")
     e.killAll #["stall"]
   else
     f := f + (← expect false "stall daemon started")
-
   verdict f
 
 end E2E.Robust

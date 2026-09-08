@@ -36,13 +36,13 @@ abbrev Bytes := List UInt8
 /-! ## Byte primitives -/
 
 def escB : Bytes := [0x1B]
+
 def csiB : Bytes := [0x1B, 0x5B]
 
 /-- Decimal, most significant digit first (`0` → `"0"`). Our own, so
 the ladder can prove every emitted digit is in `0x30…0x39`. -/
 def digits (n : Nat) : Bytes :=
-  if n < 10 then [UInt8.ofNat (0x30 + n)]
-  else digits (n / 10) ++ [UInt8.ofNat (0x30 + n % 10)]
+  if n < 10 then [UInt8.ofNat (0x30 + n)] else digits (n / 10) ++ [UInt8.ofNat (0x30 + n % 10)]
 termination_by n
 decreasing_by omega
 
@@ -51,8 +51,7 @@ C0 control or DEL (which the parser would execute rather than print).
 Cells can legitimately hold such a codepoint — an overlong UTF-8
 sequence decodes to one — so the guard is on the emit side, where it
 needs no hypothesis about the state. -/
-def safeChar (c : Char) : Char :=
-  if c.toNat < 0x20 || c.toNat == 0x7F then '\uFFFD' else c
+def safeChar (c : Char) : Char := if c.toNat < 0x20 || c.toNat == 0x7F then '\uFFFD' else c
 
 /-- UTF-8 encode one codepoint. Ours rather than `String.toUTF8` so the
 bytes are visible to the kernel and to proofs. The `min` is a local
@@ -62,14 +61,15 @@ range an arithmetic fact rather than a `Char.valid` derivation. -/
 def utf8 (c : Char) : Bytes :=
   let n := min c.toNat 0x10FFFF
   if n < 0x80 then [UInt8.ofNat n]
-  else if n < 0x800 then
-    [UInt8.ofNat (0xC0 + n / 64), UInt8.ofNat (0x80 + n % 64)]
-  else if n < 0x10000 then
-    [UInt8.ofNat (0xE0 + n / 4096), UInt8.ofNat (0x80 + n / 64 % 64),
-     UInt8.ofNat (0x80 + n % 64)]
   else
-    [UInt8.ofNat (0xF0 + n / 262144), UInt8.ofNat (0x80 + n / 4096 % 64),
-     UInt8.ofNat (0x80 + n / 64 % 64), UInt8.ofNat (0x80 + n % 64)]
+    if n < 0x800 then [UInt8.ofNat (0xC0 + n / 64), UInt8.ofNat (0x80 + n % 64)]
+    else
+      if n < 0x10000 then
+        [UInt8.ofNat (0xE0 + n / 4096), UInt8.ofNat (0x80 + n / 64 % 64),
+          UInt8.ofNat (0x80 + n % 64)]
+      else
+        [UInt8.ofNat (0xF0 + n / 262144), UInt8.ofNat (0x80 + n / 4096 % 64),
+          UInt8.ofNat (0x80 + n / 64 % 64), UInt8.ofNat (0x80 + n % 64)]
 
 /-- Encode a char list, control codepoints neutralized. -/
 def utf8s (cs : List Char) : Bytes := cs.flatMap (fun c => utf8 (safeChar c))
@@ -78,12 +78,10 @@ def utf8s (cs : List Char) : Bytes := cs.flatMap (fun c => utf8 (safeChar c))
 def csiNum (n : Nat) (final : UInt8) : Bytes := csiB ++ digits n ++ [final]
 
 /-- `CSI <a> ; <b> <final>`. -/
-def csiNum2 (a b : Nat) (final : UInt8) : Bytes :=
-  csiB ++ digits a ++ [0x3B] ++ digits b ++ [final]
+def csiNum2 (a b : Nat) (final : UInt8) : Bytes := csiB ++ digits a ++ [0x3B] ++ digits b ++ [final]
 
 /-- `CSI ? <n> <final>` (private mode set/reset). -/
-def csiPriv (n : Nat) (final : UInt8) : Bytes :=
-  csiB ++ [0x3F] ++ digits n ++ [final]
+def csiPriv (n : Nat) (final : UInt8) : Bytes := csiB ++ [0x3F] ++ digits n ++ [final]
 
 /-- `CSI <final>` with no parameters, so the receiver applies its own
 defaults. Used for `DECSTBM` (`CSI r`), whose defaults are exactly "the
@@ -110,18 +108,20 @@ def colorCodes (c : Color) (isFg : Bool) : List Nat :=
   | .idx i =>
     let n := i.toNat
     if n < 8 then [(if isFg then 30 else 40) + n]
-    else if n < 16 then [(if isFg then 90 else 100) + n - 8]
-    else [if isFg then 38 else 48, 5, n]
+    else if n < 16 then [(if isFg then 90 else 100) + n - 8] else [if isFg then 38 else 48, 5, n]
   | .rgb r g b => [if isFg then 38 else 48, 2, r.toNat, g.toNat, b.toNat]
 
 /-- The attribute half of a pen, as parameter numbers. Leads with `0`, so
 the sequence starts from a clean slate: we diff by "pen changed at all",
 not per attribute. -/
 def penAttrCodes (p : Pen) : List Nat :=
-  0 :: ((if p.bold then [1] else []) ++ (if p.dim then [2] else [])
-    ++ (if p.italic then [3] else []) ++ (if p.underline then [4] else [])
-    ++ (if p.blink then [5] else []) ++ (if p.reverse then [7] else [])
-    ++ (if p.strike then [9] else []))
+  0 ::
+    ((if p.bold then [1] else []) ++ (if p.dim then [2] else []) ++
+      (if p.italic then [3] else []) ++
+      (if p.underline then [4] else []) ++
+      (if p.blink then [5] else []) ++
+      (if p.reverse then [7] else []) ++
+      (if p.strike then [9] else []))
 
 /-- `<n1>;<n2>;…` — parameters joined by `;`, with no leading separator (a
 leading `;` would mean an empty first parameter, which SGR reads as a
@@ -200,8 +200,7 @@ def rowSlot (acc : Bytes × Pen × Nat) (c : Cell) : Bytes × Pen × Nat :=
     let s := if c.pen == pen then s else s ++ penSgr c.pen
     let body :=
       if c.width == 2 && !c.marks.isEmpty then
-        utf8 (safeChar c.base) ++ csiNum (x + 2) 0x47 ++ utf8s c.marks
-          ++ csiNum (x + 3) 0x47
+        utf8 (safeChar c.base) ++ csiNum (x + 2) 0x47 ++ utf8s c.marks ++ csiNum (x + 3) 0x47
       else cellText c
     (s ++ body, c.pen, x + 1)
 
@@ -230,11 +229,12 @@ grid, and without this reset the whole leading run of the alt screen came
 back in that pen (§Replay fix 9). Establishing the assumption here rather
 than trusting each call site is what makes `gridAnsi` self-contained. -/
 def gridAnsi (grid : Array Row) : Bytes :=
-  let (rows, _) := grid.foldl
-    (fun (acc : List Bytes × Pen) row =>
-      let (line, pen') := rowAnsi row acc.2
-      (acc.1 ++ [line], pen'))
-    (([], ({} : Pen)))
+  let (rows, _) :=
+    grid.foldl
+      (fun (acc : List Bytes × Pen) row =>
+        let (line, pen') := rowAnsi row acc.2
+        (acc.1 ++ [line], pen'))
+      (([], ({} : Pen)))
   csiNum 0 0x6D ++ (csiB ++ [0x48] ++ joinCRLF rows)
 
 /-! ## Modes -/
@@ -279,8 +279,7 @@ it to `charWidth ' ' = 1` would shift every pair after it one column left. Same
 discipline as `Vt.printableChar` on store, one field further out. -/
 def cellFit (c : Cell) : Cell :=
   let base := printableChar c.base
-  { base := base,
-    width := if c.width == 0 then 0 else charWidth base,
+  { base := base, width := if c.width == 0 then 0 else charWidth base,
     marks := (c.marks.filter (fun m => charWidth m == 0 && printableChar m == m)).take 8,
     pen := c.pen }
 
@@ -350,8 +349,7 @@ walk — which has to start from the newest — runs on the reverse and the resu
 reversed back. Both reverses are load-bearing and in opposite ways: dropping the
 outer one plays the history backwards, and feeding `v.sb.toList` instead of its
 reverse keeps the **oldest** N under a tight budget instead of the newest. -/
-def sbRows (v : Vt) : Array Row :=
-  (sbTake v.cols sbReplayBytes v.sb.toList.reverse).reverse.toArray
+def sbRows (v : Vt) : Array Row := (sbTake v.cols sbReplayBytes v.sb.toList.reverse).reverse.toArray
 
 /-- **The history push.** Paint the fitted ring, then scroll it off the top with
 `v.rows` CRLFs.
@@ -392,9 +390,10 @@ ESC-leading and contiguous at the end, and they buy `u8need = 0` for free throug
 break-verification is a proof break, never a test. -/
 def scrollbackAnsi (v : Vt) : Bytes :=
   (if (sbRows v).isEmpty then []
-   else csiNum 3 0x4A ++ gridAnsi (sbRows v) ++ (List.replicate v.rows crlfB).flatten)
-    ++ csiNum 4 0x6C ++ modeSet 6 false ++ modeSet 7 true
-
+    else csiNum 3 0x4A ++ gridAnsi (sbRows v) ++ (List.replicate v.rows crlfB).flatten) ++
+    csiNum 4 0x6C ++
+    modeSet 6 false ++
+    modeSet 7 true
 
 /-- **Put the receiver in a known state before painting.**
 
@@ -429,13 +428,11 @@ the `ED 2` two lines later does not erase.
 `charsetAnsi` re-emits the charset state afterwards, since the session's own
 value may differ from the ASCII default this establishes. -/
 def prologueAnsi (v : Vt) : Bytes :=
-  escSeq 0x5C
-    ++ modeSet 1049 false
-    ++ csiNum 4 0x6C
-    ++ modeSet 6 false
-    ++ modeSet 7 true
-    ++ csiNum2 1 v.rows 0x72
-    ++ escCharset 0x28 0x42 ++ escCharset 0x29 0x42 ++ [0x0F]
+  escSeq 0x5C ++ modeSet 1049 false ++ csiNum 4 0x6C ++ modeSet 6 false ++ modeSet 7 true ++
+    csiNum2 1 v.rows 0x72 ++
+    escCharset 0x28 0x42 ++
+    escCharset 0x29 0x42 ++
+    [0x0F]
 
 /-- Mode replay: what a fresh terminal must be told so the application
 keeps working after reattach. DECOM and IRM are included (§Replay
@@ -474,18 +471,20 @@ live one is set. `prologueAnsi` already neutralizes the subset that would corrup
 the *paint*; this is the same discipline for the ones that only affect what the
 application does afterwards. -/
 def modesAnsi (v : Vt) : Bytes :=
-  modeSet 7 v.modes.wrap
-    ++ modeSet 1 v.modes.appCursor
-    ++ (if v.modes.appKeypad then escSeq 0x3D else escSeq 0x3E)
-    ++ modeSet 25 v.modes.cursorVisible
-    ++ modeSet 2004 v.modes.bracketedPaste
-    ++ modeSet 1000 false ++ modeSet 1002 false ++ modeSet 1003 false
-    ++ (if v.modes.mouse == 1000 || v.modes.mouse == 1002 || v.modes.mouse == 1003
-        then modeSet v.modes.mouse true else [])
-    ++ modeSet 1006 v.modes.mouseSgr
-    ++ modeSet 1004 v.modes.focusEvents
-    ++ modeSet 6 v.modes.origin
-    ++ csiNum 4 (if v.modes.insert then 0x68 else 0x6C)
+  modeSet 7 v.modes.wrap ++ modeSet 1 v.modes.appCursor ++
+    (if v.modes.appKeypad then escSeq 0x3D else escSeq 0x3E) ++
+    modeSet 25 v.modes.cursorVisible ++
+    modeSet 2004 v.modes.bracketedPaste ++
+    modeSet 1000 false ++
+    modeSet 1002 false ++
+    modeSet 1003 false ++
+    (if v.modes.mouse == 1000 || v.modes.mouse == 1002 || v.modes.mouse == 1003 then
+      modeSet v.modes.mouse true
+    else []) ++
+    modeSet 1006 v.modes.mouseSgr ++
+    modeSet 1004 v.modes.focusEvents ++
+    modeSet 6 v.modes.origin ++
+    csiNum 4 (if v.modes.insert then 0x68 else 0x6C)
 
 /-! ## Restore
 
@@ -513,14 +512,13 @@ def screensAnsi (v : Vt) : Bytes :=
     match v.altGrid with
     | none => gridAnsi v.grid
     | some (mainGrid, mcur, mpen) =>
-      gridAnsi mainGrid
-        ++ penSgr mpen ++ csiNum2 (mcur.y + 1) (mcur.x + 1) 0x48
-        ++ csiPriv 1049 0x68 ++ gridAnsi v.grid
+      gridAnsi mainGrid ++ penSgr mpen ++ csiNum2 (mcur.y + 1) (mcur.x + 1) 0x48 ++
+        csiPriv 1049 0x68 ++
+        gridAnsi v.grid
 
 /-- Scroll region, when it is not the whole screen. -/
 def regionAnsi (v : Vt) : Bytes :=
-  if v.top == 0 && v.bot == v.rows - 1 then []
-  else csiNum2 (v.top + 1) (v.bot + 1) 0x72
+  if v.top == 0 && v.bot == v.rows - 1 then [] else csiNum2 (v.top + 1) (v.bot + 1) 0x72
 
 /-- **The tab ruler, emitted unconditionally**: `CSI 3 g` clears every stop, then
 one `HTS` per stop the session holds.
@@ -544,19 +542,19 @@ one thing `specs/restore-conformance.md` says a client never is. The `CHA`s move
 the cursor, which is safe here because `savedAnsi` and `cursorAnsi` both address it
 absolutely afterwards. -/
 def tabsAnsi (v : Vt) : Bytes :=
-  csiNum 3 0x67 ++ (((List.range v.cols).filter (fun i => v.tabs.getD i false)).flatMap
-    (fun i => csiNum (i + 1) 0x47 ++ escSeq 0x48))
+  csiNum 3 0x67 ++
+    (((List.range v.cols).filter (fun i => v.tabs.getD i false)).flatMap
+      (fun i => csiNum (i + 1) 0x47 ++ escSeq 0x48))
 
 /-- Replay the DECSC slot (§Replay fix 3). -/
 def savedAnsi (v : Vt) : Bytes :=
-  penSgr v.saved.pen
-    ++ csiNum2 (v.saved.cur.y + 1) (v.saved.cur.x + 1) 0x48 ++ escSeq 0x37
+  penSgr v.saved.pen ++ csiNum2 (v.saved.cur.y + 1) (v.saved.cur.x + 1) 0x48 ++ escSeq 0x37
 
 /-- Charset designations and the shift state (§Replay fix 2). -/
 def charsetAnsi (v : Vt) : Bytes :=
-  (if v.g0Line then escCharset 0x28 0x30 else escCharset 0x28 0x42)
-    ++ (if v.g1Line then escCharset 0x29 0x30 else escCharset 0x29 0x42)
-    ++ (if v.shiftOut then [0x0E] else [])
+  (if v.g0Line then escCharset 0x28 0x30 else escCharset 0x28 0x42) ++
+    (if v.g1Line then escCharset 0x29 0x30 else escCharset 0x29 0x42) ++
+    (if v.shiftOut then [0x0E] else [])
 
 /-- Window title as an OSC 2, BEL-terminated. The payload is scrubbed
 (`utf8s`), so it can contain neither ESC nor BEL and cannot terminate or
@@ -565,8 +563,7 @@ extend its own sequence.
 Emitted **unconditionally**, including with an empty payload: skipping it for an empty
 title was the same set-only bug as the modes had, leaving the client showing whatever
 its previous occupant set. An empty OSC 2 clears it. -/
-def titleAnsi (v : Vt) : Bytes :=
-  escB ++ [0x5D, 0x32, 0x3B] ++ utf8s v.title.toList ++ [0x07]
+def titleAnsi (v : Vt) : Bytes := escB ++ [0x5D, 0x32, 0x3B] ++ utf8s v.title.toList ++ [0x07]
 
 /-- Final cursor placement — region-relative under DECOM (§Replay fix 5).
 `restore` ends with this, which is also what makes the parser provably
@@ -599,16 +596,17 @@ attaches one cell to the left. Two fuzz seeds catch it (see SCRATCHPAD,
 2026-08-15). The pending flag is load-bearing, and the replay proof has to
 model it rather than legislate it away. -/
 def restoreBody (v : Vt) : Bytes :=
-  prologueAnsi v                          -- establish the receiver's state
-    ++ csiNum 0 0x6D ++ csiNum 2 0x4A     -- clean slate
-    ++ screensAnsi v
-    ++ regionAnsi v
-    ++ tabsAnsi v
-    ++ savedAnsi v
-    ++ titleAnsi v
-    ++ modesAnsi v
-    ++ charsetAnsi v
-    ++ penSgr v.pen
+  prologueAnsi v -- establish the receiver's state
+    ++ csiNum 0 0x6D ++
+    csiNum 2 0x4A -- clean slate
+    ++ screensAnsi v ++
+    regionAnsi v ++
+    tabsAnsi v ++
+    savedAnsi v ++
+    titleAnsi v ++
+    modesAnsi v ++
+    charsetAnsi v ++
+    penSgr v.pen
 
 /-- The reattach byte stream. -/
 def restore (v : Vt) : Bytes := restoreBody v ++ cursorAnsi v
@@ -668,20 +666,22 @@ Not `DECSTR` (`CSI ! p`), for the reason already recorded in
 `specs/restore-conformance.md`: its reset list varies by terminal, and we would
 be trusting bytes we do not parse. -/
 def leaveAnsi : Bytes :=
-  escSeq 0x5C
-    ++ modeSet 1049 false
-    ++ csiNum 4 0x6C
-    ++ modeSet 25 true
-    ++ modeSet 2004 false
-    ++ modeSet 1000 false ++ modeSet 1002 false ++ modeSet 1003 false
-    ++ modeSet 1006 false ++ modeSet 1004 false
-    ++ modeSet 1 false ++ escSeq 0x3E
-    ++ modeSet 6 false
-    ++ modeSet 7 true
-    ++ csiPlain 0x72
-    ++ escCharset 0x28 0x42 ++ escCharset 0x29 0x42 ++ [0x0F]
-    ++ csiNum2 999 1 0x48
-    ++ csiNum 0 0x6D
+  escSeq 0x5C ++ modeSet 1049 false ++ csiNum 4 0x6C ++ modeSet 25 true ++ modeSet 2004 false ++
+    modeSet 1000 false ++
+    modeSet 1002 false ++
+    modeSet 1003 false ++
+    modeSet 1006 false ++
+    modeSet 1004 false ++
+    modeSet 1 false ++
+    escSeq 0x3E ++
+    modeSet 6 false ++
+    modeSet 7 true ++
+    csiPlain 0x72 ++
+    escCharset 0x28 0x42 ++
+    escCharset 0x29 0x42 ++
+    [0x0F] ++
+    csiNum2 999 1 0x48 ++
+    csiNum 0 0x6D
 
 /-! ## History (text) -/
 
@@ -690,13 +690,12 @@ stage so the trim and the encoding are separate steps a lemma can talk about. -/
 def rowChars (row : Row) : List Char :=
   row.foldl
     (fun (acc : List Char) c =>
-      if c.width == 0 then acc
-      else acc ++ [safeChar c.base] ++ c.marks.map safeChar) []
+      if c.width == 0 then acc else acc ++ [safeChar c.base] ++ c.marks.map safeChar)
+    []
 
 /-- Drop trailing blanks. On the character list rather than on the bytes, though the
 two agree: no byte of a multi-byte UTF-8 sequence is `0x20`. -/
-def dropTrailingBlanks (cs : List Char) : List Char :=
-  (cs.reverse.dropWhile (· == ' ')).reverse
+def dropTrailingBlanks (cs : List Char) : List Char := (cs.reverse.dropWhile (· == ' ')).reverse
 
 /-- Row as plain text bytes (no SGR), trailing blanks trimmed.
 
@@ -719,14 +718,14 @@ one. -/
 def history (v : Vt) (withAnsi : Bool) : Bytes :=
   let rows := v.sb.toList ++ v.grid.toList
   if withAnsi then
-    let (body, _) := rows.foldl
-      (fun (acc : Bytes × Pen) row =>
-        let (line, pen') := rowAnsi row acc.2
-        (acc.1 ++ line ++ [0x0A], pen'))
-      ([], ({} : Pen))
+    let (body, _) :=
+      rows.foldl
+        (fun (acc : Bytes × Pen) row =>
+          let (line, pen') := rowAnsi row acc.2
+          (acc.1 ++ line ++ [0x0A], pen'))
+        ([], ({} : Pen))
     body
-  else
-    rows.flatMap (fun row => rowText row ++ [0x0A])
+  else rows.flatMap (fun row => rowText row ++ [0x0A])
 
 /-- The current screen only — the grid, one LF-terminated plain-text line per
 row; for `linger capture` (specs/agent-cli.md). The shape of `history`'s plain
@@ -736,8 +735,7 @@ is exactly the row count — which is what lets an agent that knows `rows` (from
 `info`) parse the screen positionally. Plain text on purpose: the receiver is
 a parser, not a terminal (colored capture is a non-goal there, and the ANSI
 ladder belongs to specs/scrollback-fidelity.md). -/
-def screenText (v : Vt) : Bytes :=
-  v.grid.toList.flatMap (fun row => rowText row ++ [0x0A])
+def screenText (v : Vt) : Bytes := v.grid.toList.flatMap (fun row => rowText row ++ [0x0A])
 
 /-- LF-terminated records, as a consumer's parser reads them — the
 specification of "split the capture on newlines". One record per `0x0A`; an

@@ -21,8 +21,10 @@ namespace Linger.Runtime.Paths
 open Linger.Core.Name (sanitize)
 
 def socketDir : IO String := do
-  if let some d ← IO.getEnv "LINGER_DIR" then return d
-  if let some d ← IO.getEnv "XDG_RUNTIME_DIR" then return s!"{d}/linger"
+  if let some d← IO.getEnv "LINGER_DIR" then
+    return d
+  if let some d← IO.getEnv "XDG_RUNTIME_DIR" then
+    return s!"{d}/linger"
   return s!"/tmp/linger-{← Linger.Posix.getuid}"
 
 /-- Checkpoints and logs. The default is namespaced by hostname: a
@@ -33,9 +35,11 @@ anyway (different working tree, different process world). An explicit
 `LINGER_DIR` is taken verbatim: an override is an instruction, not an
 accident. -/
 def stateDir : IO String := do
-  if let some d ← IO.getEnv "LINGER_DIR" then return d
+  if let some d← IO.getEnv "LINGER_DIR" then
+    return d
   let host := sanitize (← Linger.Posix.gethostname)
-  if let some d ← IO.getEnv "XDG_STATE_HOME" then return s!"{d}/linger/{host}"
+  if let some d← IO.getEnv "XDG_STATE_HOME" then
+    return s!"{d}/linger/{host}"
   let home := (← IO.getEnv "HOME").getD "/tmp"
   return s!"{home}/.local/state/linger/{host}"
 
@@ -71,17 +75,19 @@ def listSocketNames : IO (List String) := do
   let d ← socketDir
   ensureDir d
   let entries ← System.FilePath.readDir d
-  return entries.toList.filterMap (fun e =>
-    let n := e.fileName
-    if n.endsWith ".sock" then some ((n.dropEnd 5).toString) else none)
+  return entries.toList.filterMap
+      (fun e =>
+        let n := e.fileName
+        if n.endsWith ".sock" then some ((n.dropEnd 5).toString) else none)
 
 /-- Checkpoint names (resumable sessions after a reboot). -/
 def listCkptNames : IO (List String) := do
   let d ← stateDir
   ensureDir d
   let entries ← System.FilePath.readDir d
-  return entries.toList.filterMap (fun e =>
-    let n := e.fileName
-    if n.endsWith ".ckpt" then some ((n.dropEnd 5).toString) else none)
+  return entries.toList.filterMap
+      (fun e =>
+        let n := e.fileName
+        if n.endsWith ".ckpt" then some ((n.dropEnd 5).toString) else none)
 
 end Linger.Runtime.Paths

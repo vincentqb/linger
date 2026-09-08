@@ -33,12 +33,10 @@ def accDigits (cur : Nat) (bs : Bytes) : Nat :=
   bs.foldl (fun c b => min (c * 10 + (b.toNat - 0x30)) 65535) cur
 
 theorem accDigits_append (cur : Nat) (a b : Bytes) :
-    accDigits cur (a ++ b) = accDigits (accDigits cur a) b := by
-  simp [accDigits, List.foldl_append]
+    accDigits cur (a ++ b) = accDigits (accDigits cur a) b := by simp [accDigits, List.foldl_append]
 
 /-- A digit byte's numeric value is recovered by subtracting `'0'`. -/
-theorem digitByte_toNat (d : Nat) (hd : d < 10) :
-    (UInt8.ofNat (0x30 + d)).toNat - 0x30 = d := by
+theorem digitByte_toNat (d : Nat) (hd : d < 10) : (UInt8.ofNat (0x30 + d)).toNat - 0x30 = d := by
   have h : (0x30 + d) < 256 := by omega
   simp [UInt8.toNat_ofNat', Nat.mod_eq_of_lt h]
 
@@ -66,10 +64,12 @@ theorem accDigits_digits (n : Nat) : accDigits 0 (digits n) = min n 65535 := by
 /-! ### …and the accumulator is what the parser actually runs -/
 
 /-- One digit byte steps the accumulator, keeping every other field. -/
-theorem csi_digit_step {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi s)
-    (h1 : 0x30 ≤ b) (h2 : b ≤ 0x39) :
-    (v.step b).pstate
-      = .csi { s with cur := min (s.cur * 10 + (b.toNat - 0x30)) 65535, haveCur := true } := by
+theorem csi_digit_step {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi s) (h1 : 0x30 ≤ b)
+    (h2 : b ≤ 0x39) :
+    (v.step b).pstate =
+      .csi
+        { s with
+          cur := min (s.cur * 10 + (b.toNat - 0x30)) 65535, haveCur := true } := by
   have hw : (v.abortUtf8 b).pstate = PState.csi s := by
     rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
   unfold Vt.step
@@ -83,9 +83,15 @@ theorem csi_digit_step {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi
   rw [ite_eq_left hd]
 
 /-- A whole digit run drives the accumulator to `accDigits`. -/
-theorem csi_digits_feed : ∀ (bs : Bytes) {v : Vt} {s : CsiState}, v.pstate = .csi s →
-    (∀ b ∈ bs, 0x30 ≤ b ∧ b ≤ 0x39) → bs ≠ [] →
-    (v.feed bs).pstate = .csi { s with cur := accDigits s.cur bs, haveCur := true }
+theorem csi_digits_feed :
+    ∀ (bs : Bytes) {v : Vt} {s : CsiState},
+      v.pstate = .csi s →
+        (∀ b ∈ bs, 0x30 ≤ b ∧ b ≤ 0x39) →
+        bs ≠ [] →
+        (v.feed bs).pstate =
+          .csi
+            { s with
+              cur := accDigits s.cur bs, haveCur := true }
   | [], _, _, _, _, hne => absurd rfl hne
   | [x], v, s, hg, h, _ => by
     rw [show ([x] : Bytes) = x :: [] from rfl, feed_cons]
@@ -95,14 +101,12 @@ theorem csi_digits_feed : ∀ (bs : Bytes) {v : Vt} {s : CsiState}, v.pstate = .
   | x :: y :: rest, v, s, hg, h, _ => by
     rw [feed_cons]
     have hx := csi_digit_step x hg (h x (by simp)).1 (h x (by simp)).2
-    have hrest := csi_digits_feed (y :: rest) hx
-      (fun b hb => h b (by simp [hb])) (by simp)
+    have hrest := csi_digits_feed (y :: rest) hx (fun b hb => h b (by simp [hb])) (by simp)
     rw [hrest]
     simp [accDigits]
 
 /-- Every byte `digits` emits is a digit byte. -/
-theorem digits_are_digits (n : Nat) : ∀ b ∈ digits n, 0x30 ≤ b ∧ b ≤ 0x39 :=
-  digits_range n
+theorem digits_are_digits (n : Nat) : ∀ b ∈ digits n, 0x30 ≤ b ∧ b ≤ 0x39 := digits_range n
 
 /-- §Replay 3c: the parameter the parser accumulates from `digits n` is
 `n` (clamped) — the emitter and the parser are inverse on numbers. The
@@ -110,14 +114,17 @@ theorem digits_are_digits (n : Nat) : ∀ b ∈ digits n, 0x30 ≤ b ∧ b ≤ 0
 a record *update*: a digit run touches nothing else. -/
 theorem csi_digits_value (n : Nat) {v : Vt} {s : CsiState} (hg : v.pstate = .csi s)
     (hcur : s.cur = 0) :
-    ∃ s', (v.feed (digits n)).pstate = .csi s' ∧ s'.cur = min n 65535
-      ∧ s'.haveCur = true ∧ s'.params = s.params ∧ s'.inter = s.inter
-      ∧ s'.ignore = s.ignore ∧ s'.curSub = s.curSub ∧ s'.priv = s.priv := by
+    ∃ s',
+      (v.feed (digits n)).pstate = .csi s' ∧
+        s'.cur = min n 65535 ∧
+        s'.haveCur = true ∧
+        s'.params = s.params ∧
+        s'.inter = s.inter ∧ s'.ignore = s.ignore ∧ s'.curSub = s.curSub ∧ s'.priv = s.priv := by
   have hne : digits n ≠ [] := by
     rw [digits]
     split <;> simp
-  refine ⟨_, csi_digits_feed (digits n) hg (digits_are_digits n) hne, ?_, rfl, rfl, rfl,
-    rfl, rfl, rfl⟩
+  refine
+    ⟨_, csi_digits_feed (digits n) hg (digits_are_digits n) hne, ?_, rfl, rfl, rfl, rfl, rfl, rfl⟩
   show accDigits s.cur (digits n) = min n 65535
   rw [hcur]
   exact accDigits_digits n
@@ -157,30 +164,34 @@ origin on*. The repaint's prologue needs the complement: `CSI ? 6 l` turns it
 is proved at the one dispatch it belongs to. -/
 
 theorem org_setMode_decom_off (v : Vt) : (v.setMode true 6 false).modes.origin = false := by
-  show (({ v with modes := { v.modes with origin := false } } : Vt).moveTo 0 0).modes.origin
-      = false
+  show (({ v with modes := { v.modes with origin := false } } : Vt).moveTo 0 0).modes.origin = false
   rw [Linger.Core.Vt.org_moveTo]
 
 theorem org_csiDispatch_decom_off (v : Vt) (s : CsiState) (hi : s.ignore = false)
     (hpriv : (s.priv == 0x3F) = true) (h6 : s.arg 0 0 = 6) :
     (v.csiDispatch s 0x6C).modes.origin = false := by
   unfold Vt.csiDispatch
-  rw [ite_eq_right (by rw [hi]; simp)]
+  rw [ite_eq_right
+      (by
+        rw [hi]; simp)]
   show (v.setMode (s.priv == 0x3F) (s.arg 0 0) false).modes.origin = false
   rw [hpriv, h6]
   exact org_setMode_decom_off v
 
 theorem org_csiFinish_decom_off (v : Vt) (s : CsiState) (hi : s.ignore = false)
     (hpriv : (s.priv == 0x3F) = true) (hparams : s.params = #[]) (hhave : s.haveCur = true)
-    (hcur : min s.cur 65535 = 6) :
-    (v.csiFinish s 0x6C).modes.origin = false := by
-  have hsize : ¬ (s.params.size ≥ 16) := by rw [hparams]; simp
+    (hcur : min s.cur 65535 = 6) : (v.csiFinish s 0x6C).modes.origin = false := by
+  have hsize : ¬(s.params.size ≥ 16) := by
+    rw [hparams]; simp
   unfold Vt.csiFinish
   dsimp only
   rw [ite_eq_left hhave, ite_eq_right hsize]
   refine org_csiDispatch_decom_off _ _ hi hpriv ?_
-  rw [show ({ s with params := s.params.push (min s.cur 65535, s.curSub) } : CsiState)
-      = { s with params := #[(6, s.curSub)] } from by rw [hparams, hcur]; rfl]
+  rw [show
+      ({ s with params := s.params.push (min s.cur 65535, s.curSub) } : CsiState) =
+        { s with params := #[(6, s.curSub)] }
+      from by
+      rw [hparams, hcur]; rfl]
   rw [arg_of_one, ite_eq_right (by decide)]
 
 theorem org_step_of_csi_decom_off {v : Vt} {s : CsiState} (hg : v.pstate = .csi s)
@@ -194,14 +205,16 @@ theorem org_step_of_csi_decom_off {v : Vt} {s : CsiState} (hg : v.pstate = .csi 
   rw [hw]
   unfold Vt.stepCsi
   dsimp only
-  rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide),
-    ite_eq_right (by decide), ite_eq_left (by decide), ite_eq_right (by rw [hint]; simp)]
+  rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide),
+    ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_left (by decide),
+    ite_eq_right
+      (by
+        rw [hint]; simp)]
   exact org_csiFinish_decom_off _ _ hi hpriv hparams hhave hcur
 
 theorem arg_of_two (s : CsiState) (a b : Nat) (fa fb : Bool) (d : Nat) :
-    (CsiState.arg { s with params := #[(a, fa), (b, fb)] } 0 d = if a = 0 then d else a)
-      ∧ (CsiState.arg { s with params := #[(a, fa), (b, fb)] } 1 d
-          = if b = 0 then d else b) := by
+    (CsiState.arg { s with params := #[(a, fa), (b, fb)] } 0 d = if a = 0 then d else a) ∧
+      (CsiState.arg { s with params := #[(a, fa), (b, fb)] } 1 d = if b = 0 then d else b) := by
   unfold CsiState.arg
   refine ⟨?_, ?_⟩
   · cases a <;> simp
@@ -213,12 +226,11 @@ moves the cursor to exactly (`col-1`, `row-1`). The bounds hypotheses are
 what make `moveTo`'s clamps identities (`Good` supplies them at every
 call site); `origin = false` is required because under DECOM the address
 is region-relative — see the note in specs/archive/bigger-theorems.md. -/
-theorem cup_step_cursor {w : Vt} {s : CsiState} (row col : Nat)
-    (hs : w.pstate = .csi s) (hinter : s.inter = 0) (hignore : s.ignore = false)
-    (hhave : s.haveCur = true) (hcur : s.cur = min col 65535)
-    (hparams : s.params = #[(min row 65535, false)])
-    (hrow : 1 ≤ row) (hcol : 1 ≤ col) (hr : row ≤ 65535) (hc : col ≤ 65535)
-    (hry : row - 1 < w.rows) (hcx : col - 1 < w.cols) (ho : w.modes.origin = false) :
+theorem cup_step_cursor {w : Vt} {s : CsiState} (row col : Nat) (hs : w.pstate = .csi s)
+    (hinter : s.inter = 0) (hignore : s.ignore = false) (hhave : s.haveCur = true)
+    (hcur : s.cur = min col 65535) (hparams : s.params = #[(min row 65535, false)]) (hrow : 1 ≤ row)
+    (hcol : 1 ≤ col) (hr : row ≤ 65535) (hc : col ≤ 65535) (hry : row - 1 < w.rows)
+    (hcx : col - 1 < w.cols) (ho : w.modes.origin = false) :
     ((w.step 0x48).cursor.x = col - 1) ∧ ((w.step 0x48).cursor.y = row - 1) := by
   have hw : (w.abortUtf8 0x48).pstate = PState.csi s := by
     rw [Linger.Core.Vt.ps_abortUtf8]; exact hs
@@ -232,20 +244,22 @@ theorem cup_step_cursor {w : Vt} {s : CsiState} (row col : Nat)
   have hminr : min row 65535 = row := by omega
   have hminc : min (min col 65535) 65535 = col := by omega
   -- the parameter list `csiFinish` closes, as a literal
-  have hs4 : ({ s with params := s.params.push (min s.cur 65535, s.curSub) } : CsiState)
-      = { s with params := #[(row, false), (col, s.curSub)] } := by
+  have hs4 :
+    ({ s with params := s.params.push (min s.cur 65535, s.curSub) } : CsiState) =
+      { s with params := #[(row, false), (col, s.curSub)] } := by
     rw [hparams, hcur, hminc, hminr]
     rfl
   obtain ⟨ha0, ha1⟩ := arg_of_two s row col false s.curSub 1
-  rw [ite_eq_right (by omega : ¬ row = 0)] at ha0
-  rw [ite_eq_right (by omega : ¬ col = 0)] at ha1
+  rw [ite_eq_right (by omega : ¬row = 0)] at ha0
+  rw [ite_eq_right (by omega : ¬col = 0)] at ha1
   unfold Vt.step
   dsimp only
   rw [hw]
   unfold Vt.stepCsi
   dsimp only
-  rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide),
-      ite_eq_right (by decide), ite_eq_left (by decide), ite_eq_right (by simp [hinter])]
+  rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide),
+    ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_left (by decide),
+    ite_eq_right (by simp [hinter])]
   unfold Vt.csiFinish
   dsimp only
   rw [ite_eq_left hhave, ite_eq_right (by simp [hparams]), hs4]
@@ -270,8 +284,7 @@ def Frame (v : Vt) : Nat × Nat × Modes := (v.cols, v.rows, v.modes)
 theorem frame_abortUtf8 (v : Vt) (b : UInt8) : Frame (v.abortUtf8 b) = Frame v := by
   unfold Vt.abortUtf8 Frame; split <;> rfl
 
-theorem frame_esc_step {v : Vt} (hg : v.pstate = .ground) :
-    Frame (v.step 0x1B) = Frame v := by
+theorem frame_esc_step {v : Vt} (hg : v.pstate = .ground) : Frame (v.step 0x1B) = Frame v := by
   have hw : (v.abortUtf8 0x1B).pstate = PState.ground := by
     rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
   unfold Vt.step
@@ -281,8 +294,7 @@ theorem frame_esc_step {v : Vt} (hg : v.pstate = .ground) :
   rw [ite_eq_left (by decide)]
   exact frame_abortUtf8 v 0x1B
 
-theorem frame_csi_open_step {v : Vt} (hg : v.pstate = .esc) :
-    Frame (v.step 0x5B) = Frame v := by
+theorem frame_csi_open_step {v : Vt} (hg : v.pstate = .esc) : Frame (v.step 0x5B) = Frame v := by
   have hw : (v.abortUtf8 0x5B).pstate = PState.esc := by
     rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
   unfold Vt.step
@@ -318,14 +330,16 @@ theorem frame_csi_semi_step {v : Vt} {s : CsiState} (hg : v.pstate = .csi s) :
   exact frame_abortUtf8 v 0x3B
 
 /-- A digit run leaves the frame alone (and stays inside the CSI). -/
-theorem frame_csi_digits_feed : ∀ (bs : Bytes) {v : Vt} {s : CsiState},
-    v.pstate = .csi s → (∀ b ∈ bs, 0x30 ≤ b ∧ b ≤ 0x39) → Frame (v.feed bs) = Frame v
+theorem frame_csi_digits_feed :
+    ∀ (bs : Bytes) {v : Vt} {s : CsiState},
+      v.pstate = .csi s → (∀ b ∈ bs, 0x30 ≤ b ∧ b ≤ 0x39) → Frame (v.feed bs) = Frame v
   | [], _, _, _, _ => rfl
   | x :: xs, v, s, hg, h => by
     rw [feed_cons]
     have hx := csi_digit_step x hg (h x (by simp)).1 (h x (by simp)).2
-    exact (frame_csi_digits_feed xs hx (fun b hb => h b (by simp [hb]))).trans
-      (frame_csi_digit_step x hg (h x (by simp)).1 (h x (by simp)).2)
+    exact
+      (frame_csi_digits_feed xs hx (fun b hb => h b (by simp [hb]))).trans
+        (frame_csi_digit_step x hg (h x (by simp)).1 (h x (by simp)).2)
 
 /-- **Cursor fidelity for a whole `CSI row ; col H`.** Feeding the
 sequence `cursorAnsi` emits places the cursor at exactly (`col-1`,
@@ -333,15 +347,15 @@ sequence `cursorAnsi` emits places the cursor at exactly (`col-1`,
 `moveTo` all composed. Hypotheses as in `cup_step_cursor`: the bounds are
 what `Good` supplies, and `origin = false` because under DECOM the
 address is region-relative. -/
-theorem cup_places_cursor {v : Vt} (row col : Nat) (hg : v.pstate = .ground)
-    (hrow : 1 ≤ row) (hcol : 1 ≤ col) (hr : row ≤ 65535) (hc : col ≤ 65535)
-    (hry : row - 1 < v.rows) (hcx : col - 1 < v.cols) (ho : v.modes.origin = false) :
-    ((v.feed (csiNum2 row col 0x48)).cursor.x = col - 1)
-      ∧ ((v.feed (csiNum2 row col 0x48)).cursor.y = row - 1) := by
+theorem cup_places_cursor {v : Vt} (row col : Nat) (hg : v.pstate = .ground) (hrow : 1 ≤ row)
+    (hcol : 1 ≤ col) (hr : row ≤ 65535) (hc : col ≤ 65535) (hry : row - 1 < v.rows)
+    (hcx : col - 1 < v.cols) (ho : v.modes.origin = false) :
+    ((v.feed (csiNum2 row col 0x48)).cursor.x = col - 1) ∧
+      ((v.feed (csiNum2 row col 0x48)).cursor.y = row - 1) := by
   -- the stream as a chain of stages
-  have hchain : v.feed (csiNum2 row col 0x48)
-      = (((((v.step 0x1B).step 0x5B).feed (digits row)).step 0x3B).feed
-          (digits col)).step 0x48 := by
+  have hchain :
+    v.feed (csiNum2 row col 0x48) =
+      (((((v.step 0x1B).step 0x5B).feed (digits row)).step 0x3B).feed (digits col)).step 0x48 := by
     simp [csiNum2, csiB, Vt.feed, List.foldl_append]
   rw [hchain]
   -- parser states: ESC [ opens an empty CSI, the row accumulates, `;`
@@ -350,35 +364,47 @@ theorem cup_places_cursor {v : Vt} (row col : Nat) (hg : v.pstate = .ground)
   have hb := csi_open_step he
   obtain ⟨s1, hs1, hcur1, hhave1, hpar1, hint1, hign1, hsub1, hpv1⟩ := csi_digits_value row hb rfl
   have hs2 := csi_semi_step hs1
-  have hpush : csiPush s1 false
-      = { s1 with params := s1.params.push (min s1.cur 65535, s1.curSub),
-                  cur := 0, curSub := false, haveCur := false } := by
+  have hpush :
+    csiPush s1 false =
+      { s1 with
+        params := s1.params.push (min s1.cur 65535, s1.curSub), cur := 0, curSub := false,
+        haveCur := false } := by
     unfold csiPush
     rw [ite_eq_left (by simp [hhave1]), ite_eq_right (by simp [hpar1])]
   rw [hpush] at hs2
   obtain ⟨s3, hs3, hcur3, hhave3, hpar3, hint3, hign3, hsub3, hpv3⟩ := csi_digits_value col hs2 rfl
   -- the frame survives the prefix, so `v`'s bounds transport to it
-  have hfr : Frame ((((v.step 0x1B).step 0x5B).feed (digits row)).step 0x3B |>.feed
-      (digits col)) = Frame v :=
+  have hfr :
+    Frame ((((v.step 0x1B).step 0x5B).feed (digits row)).step 0x3B |>.feed (digits col)) =
+      Frame v :=
     ((frame_csi_digits_feed (digits col) hs2 (digits_are_digits col)).trans
       ((frame_csi_semi_step hs1).trans
         ((frame_csi_digits_feed (digits row) hb (digits_are_digits row)).trans
           ((frame_csi_open_step he).trans (frame_esc_step hg)))))
-  have hcols : ((((v.step 0x1B).step 0x5B).feed (digits row)).step 0x3B |>.feed
-      (digits col)).cols = v.cols := congrArg (·.1) hfr
-  have hrows : ((((v.step 0x1B).step 0x5B).feed (digits row)).step 0x3B |>.feed
-      (digits col)).rows = v.rows := congrArg (·.2.1) hfr
-  have hmod : ((((v.step 0x1B).step 0x5B).feed (digits row)).step 0x3B |>.feed
-      (digits col)).modes = v.modes := congrArg (·.2.2) hfr
+  have hcols :
+    ((((v.step 0x1B).step 0x5B).feed (digits row)).step 0x3B |>.feed (digits col)).cols = v.cols :=
+    congrArg (·.1) hfr
+  have hrows :
+    ((((v.step 0x1B).step 0x5B).feed (digits row)).step 0x3B |>.feed (digits col)).rows = v.rows :=
+    congrArg (·.2.1) hfr
+  have hmod :
+    ((((v.step 0x1B).step 0x5B).feed (digits row)).step 0x3B |>.feed (digits col)).modes =
+      v.modes :=
+    congrArg (·.2.2) hfr
   -- the row parameter, as `cup_step_cursor` wants it
   have hmm : min (min row 65535) 65535 = min row 65535 := by omega
   have hp : s3.params = #[(min row 65535, false)] := by
     rw [hpar3, hcur1, hpar1, hsub1, hmm]
     rfl
-  exact cup_step_cursor row col hs3 (by rw [hint3, hint1])
-    (by rw [hign3, hign1]) hhave3 hcur3 hp hrow hcol hr hc
-    (by rw [hrows]; exact hry) (by rw [hcols]; exact hcx)
-    (by rw [hmod]; exact ho)
+  exact
+    cup_step_cursor row col hs3 (by rw [hint3, hint1]) (by rw [hign3, hign1]) hhave3 hcur3 hp hrow
+      hcol hr hc
+      (by
+        rw [hrows]; exact hry)
+      (by
+        rw [hcols]; exact hcx)
+      (by
+        rw [hmod]; exact ho)
 
 /-! ### §Replay: DECOM stays off through a whole restore stream
 
@@ -396,8 +422,9 @@ state with the flag, which is exactly `Ends` and origin-off together:
 
 /-- From a ground parser with DECOM off, `bs` leaves both that way. -/
 def Quiet (bs : Bytes) : Prop :=
-  ∀ v : Vt, v.pstate = .ground → v.modes.origin = false →
-    ((v.feed bs).pstate = .ground ∧ (v.feed bs).modes.origin = false)
+  ∀ v : Vt,
+    v.pstate = .ground →
+      v.modes.origin = false → ((v.feed bs).pstate = .ground ∧ (v.feed bs).modes.origin = false)
 
 theorem Quiet.nil : Quiet [] := fun _ hg ho => ⟨hg, ho⟩
 
@@ -860,6 +887,5 @@ theorem quiet_restoreBody (v : Vt) (ho : v.modes.origin = false) : Quiet (restor
   refine Quiet.append ?_ (quiet_screensAnsi v)
   refine Quiet.append ?_ (quiet_csiNum 2 0x4A (by decide) (by decide))
   exact (quiet_prologueAnsi v).append (quiet_csiNum 0 0x6D (by decide) (by decide))
-
 
 end Linger.Core.Render

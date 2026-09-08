@@ -75,14 +75,12 @@ structure Rt where
   saveCkpt : State → IO Unit
   dropCkpt : IO Unit
 
-def Rt.conn? (rt : Rt) (fd : UInt32) : Option Conn :=
-  rt.conns.find? (·.fd == fd)
+def Rt.conn? (rt : Rt) (fd : UInt32) : Option Conn := rt.conns.find? (·.fd == fd)
 
 def Rt.setConn (rt : Rt) (c : Conn) : Rt :=
   { rt with conns := rt.conns.map (fun c' => if c'.fd == c.fd then c else c') }
 
-def Rt.dropConn (rt : Rt) (fd : UInt32) : Rt :=
-  { rt with conns := rt.conns.filter (·.fd != fd) }
+def Rt.dropConn (rt : Rt) (fd : UInt32) : Rt := { rt with conns := rt.conns.filter (·.fd != fd) }
 
 /-- Try to flush one connection's queue; `none` = peer gone.
 
@@ -98,8 +96,10 @@ def flushConn (c : Conn) : IO (Option Conn) := do
   let owed := owedLen c.out
   while wrote < owed do
     let n ← writeBuf c.fd c.out wrote
-    if n < 0 then return none
-    if n == 0 then break  -- would block; POLLOUT will resume
+    if n < 0 then
+      return none
+    if n == 0 then
+      break -- would block; POLLOUT will resume
     wrote := wrote + n.toNatClampNeg
   return some { c with out := bufAdvance c.out wrote }
 
@@ -113,12 +113,14 @@ def flushPty (rt : Rt) : IO Rt := do
   let owed := owedLen rt.ptyIn
   while wrote < owed do
     let n ← writeBuf rt.ptyFd rt.ptyIn wrote
-    if n ≤ 0 then break  -- EAGAIN or child gone; POLLOUT/EOF handles it
+    if n ≤ 0 then
+      break -- EAGAIN or child gone; POLLOUT/EOF handles it
     wrote := wrote + n.toNatClampNeg
   let q := bufAdvance rt.ptyIn wrote
   -- clear the backpressure latch exactly when the queue drains, so the log
   -- records the transition once (`robust_test` asserts exactly-once)
-  return { rt with ptyIn := q, ptyInFull := rt.ptyInFull && owedLen q != 0 }
+  return { rt with
+      ptyIn := q, ptyInFull := rt.ptyInFull && owedLen q != 0 }
 
 /-- Queue bytes for the child, bounded (runtime §Bound, the input half). Past
 `ptyInCap` unwritten bytes the newest frame is dropped and the transition is
@@ -133,7 +135,8 @@ def queuePty (rt : Rt) (bytes : List UInt8) : IO Rt := do
   let (q, dropped) := bufOffer ptyInCap rt.ptyIn (ByteArray.mk bytes.toArray)
   if dropped then
     if !rt.ptyInFull then
-      IO.eprintln s!"linger: pty input buffer full ({pending} B, cap {ptyInCap}); \
+      IO.eprintln
+          s!"linger: pty input buffer full ({pending} B, cap {ptyInCap}); \
         the child is not reading — dropping input until it does"
     return { rt with ptyInFull := true }
   flushPty { rt with ptyIn := q }
@@ -144,7 +147,8 @@ def runEffect (rt : Rt) (eff : Effect) : IO (Rt × List Event) := do
   match eff with
   | .send id m =>
     match rt.conn? (UInt32.ofNat id) with
-    | none => return (rt, [])
+    | none =>
+      return (rt, [])
     | some c =>
       let bytes := ByteArray.mk (Linger.Core.Wire.encode m).toArray
       let (q, cut) := bufEnqueue outbufCap c.out bytes
@@ -157,7 +161,8 @@ def runEffect (rt : Rt) (eff : Effect) : IO (Rt × List Event) := do
       | none =>
         close c.fd
         return (rt.dropConn c.fd, [.closed c.fd.toNat])
-      | some c => return (rt.setConn c, [])
+      | some c =>
+        return (rt.setConn c, [])
   | .close id =>
     let fd := UInt32.ofNat id
     if (rt.conn? fd).isSome then
@@ -167,10 +172,13 @@ def runEffect (rt : Rt) (eff : Effect) : IO (Rt × List Event) := do
   | .writePty bytes =>
     return (← queuePty rt bytes, [])
   | .resizePty cols rows =>
-    try winsizeSet rt.ptyFd cols rows catch _ => pure ()
+    try
+      winsizeSet rt.ptyFd cols rows
+    catch _ =>
+      pure ()
     return (rt, [])
   | .killChild =>
-    kill rt.childPid 15  -- SIGTERM
+    kill rt.childPid 15 -- SIGTERM
     return (rt, [])
   | .checkpoint =>
     rt.saveCkpt rt.st
@@ -185,7 +193,8 @@ def runEffect (rt : Rt) (eff : Effect) : IO (Rt × List Event) := do
 as they come. -/
 partial def pump (rt : Rt) (evs : List Event) : IO Rt := do
   match evs with
-  | [] => return rt
+  | [] =>
+    return rt
   | ev :: rest =>
     let (st', effs) := step rt.st ev
     let mut rt := { rt with st := st' }
@@ -202,8 +211,8 @@ def pollRound (rt : Rt) : IO (Rt × List Event) := do
   -- this round join the NEXT one (revs stays index-aligned)
   let polled := rt.conns
   let mut fds : Array UInt32 := #[rt.listenFd, rt.ptyFd]
-  let mut evts : Array UInt32 := #[POLLIN,
-    POLLIN ||| (if owedLen rt.ptyIn != 0 then POLLOUT else 0)]
+  let mut evts : Array UInt32 :=
+    #[POLLIN, POLLIN ||| (if owedLen rt.ptyIn != 0 then POLLOUT else 0)]
   for c in polled do
     fds := fds.push c.fd
     evts := evts.push (POLLIN ||| (if owedLen c.out != 0 then POLLOUT else 0))
@@ -237,7 +246,8 @@ def pollRound (rt : Rt) : IO (Rt × List Event) := do
       let deadline := (← monotonicMs) + 3000
       while status == -1 && (← monotonicMs) < deadline do
         status ← waitpidNohang rt.childPid
-        if status == -1 then IO.sleep 10
+        if status == -1 then
+          IO.sleep 10
       events := events ++ [.childExited (if status < 0 then 1 else status.toUInt64.toUInt32)]
   -- clients (the polled snapshot only)
   let mut idx := 2
@@ -253,7 +263,8 @@ def pollRound (rt : Rt) : IO (Rt × List Event) := do
         close c.fd
         rt := rt.dropConn c.fd
         events := events ++ [.closed c.fd.toNat]
-      | some c' => rt := rt.setConn c'
+      | some c' =>
+        rt := rt.setConn c'
     if r &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
       if (rt.conn? c.fd).isSome then
         match ← read c.fd 65536 with
@@ -269,9 +280,9 @@ def pollRound (rt : Rt) : IO (Rt × List Event) := do
 /-- Daemon main. Blocks until the session ends. `restore` is a loaded
 checkpoint: prior screen + labels (cwd was already consumed by the
 spawner). -/
-def serve (name : String) (cwd : String) (argv : List String)
-    (saveCkpt : State → IO Unit) (dropCkpt : IO Unit)
-    (restore : Option (Linger.Core.Vt.Vt × List (String × String))) : IO Unit := do
+def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State → IO Unit)
+    (dropCkpt : IO Unit) (restore : Option (Linger.Core.Vt.Vt × List (String × String))) :
+    IO Unit := do
   Linger.Posix.init
   ignoreSighup
   let sockPath ← Paths.socketPath name
@@ -303,11 +314,15 @@ def serve (name : String) (cwd : String) (argv : List String)
       -- distinguishing here — we hold the name lock, so no live daemon owns
       -- this path, and ENOENT just makes the removal a no-op. Same reading
       -- as `cmdList`, which treats any failed connect as a stale file.
-      try IO.FS.removeFile sockPath catch _ => pure ()
+      try
+        IO.FS.removeFile sockPath
+      catch _ =>
+        pure ()
   let listenFd ← unixListen sockPath
   setNonblock listenFd
   let shell := (← IO.getEnv "SHELL").getD "sh"
-  let (prog, args) := match argv with
+  let (prog, args) :=
+    match argv with
     | [] => ((shell, #[]) : String × Array String)
     | p :: rest => (p, rest.toArray)
   -- Resume at the checkpoint's dimensions, not at 80×24. The restored `Vt`
@@ -331,21 +346,18 @@ def serve (name : String) (cwd : String) (argv : List String)
   -- live session is held to. A pathological checkpoint keeps a mismatched
   -- model, exactly as it did at the old fixed 80×24 — the alternative is
   -- mutating the restored screen.
-  let (pid, ptyFd) ← spawnPty (UInt32.ofNat (Linger.Core.Vt.clampDim vt0.cols))
-    (UInt32.ofNat (Linger.Core.Vt.clampDim vt0.rows)) cwd prog args
-    #[s!"LINGER_SESSION={name}",
-      "TERM=xterm-256color",
-      "TERM_PROGRAM=linger",
-      "TERM_PROGRAM_VERSION=0.1.0"]
+  let (pid, ptyFd) ←
+    spawnPty (UInt32.ofNat (Linger.Core.Vt.clampDim vt0.cols))
+        (UInt32.ofNat (Linger.Core.Vt.clampDim vt0.rows)) cwd prog args
+        #[s!"LINGER_SESSION={name}", "TERM=xterm-256color", "TERM_PROGRAM=linger",
+          "TERM_PROGRAM_VERSION=0.1.0"]
   setNonblock ptyFd
   let created ← realtimeS
-  let st := State.boot vt0 ((restore.map (·.2)).getD [])
-    [("name", name), ("pid", toString pid),
-     ("created", toString created),
-     ("cmd", String.intercalate " " (prog :: args.toList)),
-     ("start_dir", cwd)]
-  let mut rt : Rt := { st, listenFd, ptyFd, childPid := pid, sockPath,
-                       saveCkpt, dropCkpt }
+  let st :=
+    State.boot vt0 ((restore.map (·.2)).getD [])
+      [("name", name), ("pid", toString pid), ("created", toString created),
+        ("cmd", String.intercalate " " (prog :: args.toList)), ("start_dir", cwd)]
+  let mut rt : Rt := { st, listenFd, ptyFd, childPid := pid, sockPath, saveCkpt, dropCkpt }
   while !rt.exiting do
     let (rt', events) ← pollRound rt
     let now ← monotonicMs
@@ -354,9 +366,13 @@ def serve (name : String) (cwd : String) (argv : List String)
   if ← alive rt.childPid then
     kill rt.childPid 15
     IO.sleep 150
-    if ← alive rt.childPid then kill rt.childPid 9
+    if ← alive rt.childPid then
+      kill rt.childPid 9
   let _ ← waitpidNohang rt.childPid
-  try IO.FS.removeFile sockPath catch _ => pure ()
+  try
+    IO.FS.removeFile sockPath
+  catch _ =>
+    pure ()
   -- the lock file stays; the kernel drops the lock as this process exits
   -- (unlinking it would let a newcomer lock a fresh inode while ours
   -- still held the old one)

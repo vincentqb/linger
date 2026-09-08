@@ -1,4 +1,5 @@
 import Linger.Core.Name
+
 /-! # §Name — session names cannot escape the socket directory
 
 `sanitize` output lands in `<dir>/<name>.sock` and `<name>.ckpt`
@@ -36,8 +37,7 @@ theorem sanitize_valid (s : String) : Valid (sanitize s) := by
   unfold sanitize Valid
   dsimp only
   simp only [String.toList_ofList]
-  generalize hbase :
-    (s.toList.take maxLen).map (fun c => if okChar c then c else '_') = base
+  generalize hbase : (s.toList.take maxLen).map (fun c => if okChar c then c else '_') = base
   have hb_ok : ∀ c ∈ base, okChar c = true := by
     intro c hc
     rw [← hbase] at hc
@@ -77,8 +77,7 @@ theorem sanitize_valid (s : String) : Valid (sanitize s) := by
 
 /-- The §Name corollary the runtime actually leans on: no character of
 a sanitized name is a path separator or NUL. -/
-theorem sanitize_no_escape (s : String) :
-    ∀ c ∈ (sanitize s).toList, c ≠ '/' ∧ c ≠ '\x00' := by
+theorem sanitize_no_escape (s : String) : ∀ c ∈ (sanitize s).toList, c ≠ '/' ∧ c ≠ '\x00' := by
   intro c hc
   obtain ⟨-, -, hok, -⟩ := sanitize_valid s
   exact ⟨okChar_no_slash c (hok c hc), okChar_no_nul c (hok c hc)⟩

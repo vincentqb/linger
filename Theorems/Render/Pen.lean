@@ -45,8 +45,8 @@ theorem acceptChar_toNat (v : Vt) (c : Char) : v.acceptChar c.toNat = v.print c 
 
 /-- With nothing pending, `step` is `stepGround`: `abortUtf8` is the
 identity. -/
-theorem step_of_ground_quiet {v : Vt} (b : UInt8) (hg : v.pstate = .ground)
-    (hu : v.u8need = 0) : v.step b = v.stepGround b := by
+theorem step_of_ground_quiet {v : Vt} (b : UInt8) (hg : v.pstate = .ground) (hu : v.u8need = 0) :
+    v.step b = v.stepGround b := by
   have ha : v.abortUtf8 b = v := by
     unfold Vt.abortUtf8
     rw [ite_eq_right (by simp [hu])]
@@ -74,12 +74,10 @@ private theorem ne_lit {m : Nat} (k : Nat) (hm : m < 256) (hk : (UInt8.ofNat k).
   exact h this
 
 /-- An ASCII byte ≥ 0x20 prints. -/
-theorem step_ascii {v : Vt} {m : Nat} (hg : v.pstate = .ground) (hu : v.u8need = 0)
-    (h20 : 0x20 ≤ m) (hlt : m < 0x80) :
-    v.step (UInt8.ofNat m) = v.acceptChar m := by
+theorem step_ascii {v : Vt} {m : Nat} (hg : v.pstate = .ground) (hu : v.u8need = 0) (h20 : 0x20 ≤ m)
+    (hlt : m < 0x80) : v.step (UInt8.ofNat m) = v.acceptChar m := by
   have hb : (UInt8.ofNat m).toNat = m := u8_ofNat_toNat m (by omega)
-  have c1 : ¬((UInt8.ofNat m == (0x1B : UInt8)) = true) :=
-    ne_lit 0x1B (by omega) rfl (by omega)
+  have c1 : ¬((UInt8.ofNat m == (0x1B : UInt8)) = true) := ne_lit 0x1B (by omega) rfl (by omega)
   have c2 : ¬((UInt8.ofNat m) < (0x20 : UInt8)) := by
     rw [show ((0x20 : UInt8)) = UInt8.ofNat 0x20 from rfl, lt_lit 0x20 (by omega) rfl]
     omega
@@ -94,9 +92,10 @@ theorem step_ascii {v : Vt} {m : Nat} (hg : v.pstate = .ground) (hu : v.u8need =
 Stated separately rather than parameterised: they take different rungs of
 `stepGround`'s ladder, so a shared statement would only move the case
 split somewhere less readable. -/
-theorem step_lead2 {v : Vt} {m : Nat} (hg : v.pstate = .ground) (hu : v.u8need = 0)
-    (hm : m < 32) :
-    v.step (UInt8.ofNat (0xC0 + m)) = { v with u8need := 1, u8acc := m } := by
+theorem step_lead2 {v : Vt} {m : Nat} (hg : v.pstate = .ground) (hu : v.u8need = 0) (hm : m < 32) :
+    v.step (UInt8.ofNat (0xC0 + m)) =
+      { v with
+        u8need := 1, u8acc := m } := by
   have hb : (UInt8.ofNat (0xC0 + m)).toNat = 0xC0 + m := u8_ofNat_toNat _ (by omega)
   have c1 : ¬((UInt8.ofNat (0xC0 + m) == (0x1B : UInt8)) = true) :=
     ne_lit 0x1B (by omega) rfl (by omega)
@@ -117,9 +116,10 @@ theorem step_lead2 {v : Vt} {m : Nat} (hg : v.pstate = .ground) (hu : v.u8need =
   unfold Vt.stepGround
   rw [ite_eq_right c1, ite_eq_right c2, ite_eq_right c3, ite_eq_right c4, ite_eq_left c5, hb, hval]
 
-theorem step_lead3 {v : Vt} {m : Nat} (hg : v.pstate = .ground) (hu : v.u8need = 0)
-    (hm : m < 16) :
-    v.step (UInt8.ofNat (0xE0 + m)) = { v with u8need := 2, u8acc := m } := by
+theorem step_lead3 {v : Vt} {m : Nat} (hg : v.pstate = .ground) (hu : v.u8need = 0) (hm : m < 16) :
+    v.step (UInt8.ofNat (0xE0 + m)) =
+      { v with
+        u8need := 2, u8acc := m } := by
   have hb : (UInt8.ofNat (0xE0 + m)).toNat = 0xE0 + m := u8_ofNat_toNat _ (by omega)
   have c1 : ¬((UInt8.ofNat (0xE0 + m) == (0x1B : UInt8)) = true) :=
     ne_lit 0x1B (by omega) rfl (by omega)
@@ -141,11 +141,13 @@ theorem step_lead3 {v : Vt} {m : Nat} (hg : v.pstate = .ground) (hu : v.u8need =
   have hval : 0xE0 + m - 0xE0 = m := by omega
   rw [step_of_ground_quiet _ hg hu]
   unfold Vt.stepGround
-  rw [ite_eq_right c1, ite_eq_right c2, ite_eq_right c3, ite_eq_right c4, ite_eq_right c5, ite_eq_left c6, hb, hval]
+  rw [ite_eq_right c1, ite_eq_right c2, ite_eq_right c3, ite_eq_right c4, ite_eq_right c5,
+    ite_eq_left c6, hb, hval]
 
-theorem step_lead4 {v : Vt} {m : Nat} (hg : v.pstate = .ground) (hu : v.u8need = 0)
-    (hm : m < 8) :
-    v.step (UInt8.ofNat (0xF0 + m)) = { v with u8need := 3, u8acc := m } := by
+theorem step_lead4 {v : Vt} {m : Nat} (hg : v.pstate = .ground) (hu : v.u8need = 0) (hm : m < 8) :
+    v.step (UInt8.ofNat (0xF0 + m)) =
+      { v with
+        u8need := 3, u8acc := m } := by
   have hb : (UInt8.ofNat (0xF0 + m)).toNat = 0xF0 + m := u8_ofNat_toNat _ (by omega)
   have c1 : ¬((UInt8.ofNat (0xF0 + m) == (0x1B : UInt8)) = true) :=
     ne_lit 0x1B (by omega) rfl (by omega)
@@ -170,7 +172,8 @@ theorem step_lead4 {v : Vt} {m : Nat} (hg : v.pstate = .ground) (hu : v.u8need =
   have hval : 0xF0 + m - 0xF0 = m := by omega
   rw [step_of_ground_quiet _ hg hu]
   unfold Vt.stepGround
-  rw [ite_eq_right c1, ite_eq_right c2, ite_eq_right c3, ite_eq_right c4, ite_eq_right c5, ite_eq_right c6, ite_eq_left c7, hb, hval]
+  rw [ite_eq_right c1, ite_eq_right c2, ite_eq_right c3, ite_eq_right c4, ite_eq_right c5,
+    ite_eq_right c6, ite_eq_left c7, hb, hval]
 
 /-- A continuation byte never aborts a sequence — that is what makes the
 `abortUtf8` guard invisible to a well-formed encoding. -/
@@ -206,13 +209,11 @@ private theorem step_cont_bridge {v : Vt} {m : Nat} (hg : v.pstate = .ground) (h
 /-- The four guards a continuation byte passes on its way to the
 accumulator branch, proved once for both continuation cases. -/
 private theorem cont_guards {m : Nat} (hm : m < 64) :
-    ¬((UInt8.ofNat (0x80 + m) == (0x1B : UInt8)) = true)
-      ∧ ¬((UInt8.ofNat (0x80 + m)) < (0x20 : UInt8))
-      ∧ ¬((UInt8.ofNat (0x80 + m)) < (0x80 : UInt8))
-      ∧ ((UInt8.ofNat (0x80 + m)) < (0xC0 : UInt8))
-      ∧ (UInt8.ofNat (0x80 + m)).toNat = 0x80 + m := by
-  refine ⟨ne_lit 0x1B (by omega) rfl (by omega), ?_, ?_, ?_,
-    u8_ofNat_toNat _ (by omega)⟩
+    ¬((UInt8.ofNat (0x80 + m) == (0x1B : UInt8)) = true) ∧
+      ¬((UInt8.ofNat (0x80 + m)) < (0x20 : UInt8)) ∧
+      ¬((UInt8.ofNat (0x80 + m)) < (0x80 : UInt8)) ∧
+      ((UInt8.ofNat (0x80 + m)) < (0xC0 : UInt8)) ∧ (UInt8.ofNat (0x80 + m)).toNat = 0x80 + m := by
+  refine ⟨ne_lit 0x1B (by omega) rfl (by omega), ?_, ?_, ?_, u8_ofNat_toNat _ (by omega)⟩
   · rw [show ((0x20 : UInt8)) = UInt8.ofNat 0x20 from rfl, lt_lit 0x20 (by omega) rfl]
     omega
   · rw [show ((0x80 : UInt8)) = UInt8.ofNat 0x80 from rfl, lt_lit 0x80 (by omega) rfl]
@@ -221,13 +222,16 @@ private theorem cont_guards {m : Nat} (hm : m < 64) :
     omega
 
 /-- A continuation byte with more to come: folds six bits in. -/
-theorem step_cont_more {v : Vt} {k acc m : Nat} (hg : v.pstate = .ground)
-    (hu : v.u8need = k + 2) (hacc : v.u8acc = acc) (hm : m < 64)
-    (hb2 : acc * 64 + m ≤ 2097151) :
-    v.step (UInt8.ofNat (0x80 + m)) = { v with u8need := k + 1, u8acc := acc * 64 + m } := by
+theorem step_cont_more {v : Vt} {k acc m : Nat} (hg : v.pstate = .ground) (hu : v.u8need = k + 2)
+    (hacc : v.u8acc = acc) (hm : m < 64) (hb2 : acc * 64 + m ≤ 2097151) :
+    v.step (UInt8.ofNat (0x80 + m)) =
+      { v with
+        u8need := k + 1, u8acc := acc * 64 + m } := by
   obtain ⟨c1, c2, c3, c4, hb⟩ := cont_guards hm
-  have e0 : ¬((v.u8need == 0) = true) := by simp only [hu, beq_iff_eq]; omega
-  have e1 : ¬((v.u8need == 1) = true) := by simp only [hu, beq_iff_eq]; omega
+  have e0 : ¬((v.u8need == 0) = true) := by
+    simp only [hu, beq_iff_eq]; omega
+  have e1 : ¬((v.u8need == 1) = true) := by
+    simp only [hu, beq_iff_eq]; omega
   have hval : 0x80 + m - 0x80 = m := by omega
   have hmin : min (acc * 64 + m) 2097151 = acc * 64 + m := by omega
   have hneed : v.u8need - 1 = k + 1 := by omega
@@ -238,13 +242,15 @@ theorem step_cont_more {v : Vt} {k acc m : Nat} (hg : v.pstate = .ground)
   rw [hb, hval, hacc, hmin, ite_eq_right e1, hneed]
 
 /-- The last continuation byte: the codepoint is complete, so it prints. -/
-theorem step_cont_last {v : Vt} {acc m : Nat} (hg : v.pstate = .ground)
-    (hu : v.u8need = 1) (hacc : v.u8acc = acc) (hm : m < 64)
-    (hb2 : acc * 64 + m ≤ 2097151) :
-    v.step (UInt8.ofNat (0x80 + m))
-      = ({ v with u8need := 0, u8acc := 0 }).acceptChar (acc * 64 + m) := by
+theorem step_cont_last {v : Vt} {acc m : Nat} (hg : v.pstate = .ground) (hu : v.u8need = 1)
+    (hacc : v.u8acc = acc) (hm : m < 64) (hb2 : acc * 64 + m ≤ 2097151) :
+    v.step (UInt8.ofNat (0x80 + m)) =
+      ({ v with
+            u8need := 0, u8acc := 0 }).acceptChar
+        (acc * 64 + m) := by
   obtain ⟨c1, c2, c3, c4, hb⟩ := cont_guards hm
-  have e0 : ¬((v.u8need == 0) = true) := by simp only [hu, beq_iff_eq]; omega
+  have e0 : ¬((v.u8need == 0) = true) := by
+    simp only [hu, beq_iff_eq]; omega
   have e1 : ((v.u8need == 1) = true) := by simp only [hu, beq_iff_eq]
   have hval : 0x80 + m - 0x80 = m := by omega
   have hmin : min (acc * 64 + m) 2097151 = acc * 64 + m := by omega
@@ -258,36 +264,38 @@ theorem step_cont_last {v : Vt} {acc m : Nat} (hg : v.pstate = .ground)
 leaves behind: from a quiet start, decoding one codepoint returns the
 accumulator to exactly where it was. -/
 private theorem reset_u8 {v : Vt} (hu : v.u8need = 0) (ha : v.u8acc = 0) (x y : Nat) :
-    ({ { v with u8need := x, u8acc := y } with u8need := 0, u8acc := 0 } : Vt) = v := by
+    ({
+          { v with
+            u8need := x, u8acc := y } with
+          u8need := 0, u8acc := 0 } :
+        Vt) =
+      v := by
   cases v
   simp_all
 
-private theorem feed1 (w : Vt) (a : UInt8) : w.feed [a] = w.step a := by
-  simp [Vt.feed]
+private theorem feed1 (w : Vt) (a : UInt8) : w.feed [a] = w.step a := by simp [Vt.feed]
+
 private theorem feed2 (w : Vt) (a b : UInt8) : w.feed [a, b] = (w.step a).step b := by
   simp [Vt.feed]
-private theorem feed3 (w : Vt) (a b c : UInt8) :
-    w.feed [a, b, c] = ((w.step a).step b).step c := by
+
+private theorem feed3 (w : Vt) (a b c : UInt8) : w.feed [a, b, c] = ((w.step a).step b).step c := by
   simp [Vt.feed]
+
 private theorem feed4 (w : Vt) (a b c d : UInt8) :
-    w.feed [a, b, c, d] = (((w.step a).step b).step c).step d := by
-  simp [Vt.feed]
+    w.feed [a, b, c, d] = (((w.step a).step b).step c).step d := by simp [Vt.feed]
 
 /-- **The UTF-8 round trip.** The bytes `utf8` emits for a printable
 codepoint decode back to exactly that codepoint: feeding them *is*
 printing it. This is the lemma that turns a repaint's byte stream into a
 chain of `Vt.print`s, after which the fidelity argument has no bytes left
 in it. -/
-theorem utf8_feed {v : Vt} (c : Char) (h20 : 0x20 ≤ c.toNat)
-    (hg : v.pstate = .ground) (hu : v.u8need = 0) (ha : v.u8acc = 0) :
-    v.feed (utf8 c) = v.print c := by
+theorem utf8_feed {v : Vt} (c : Char) (h20 : 0x20 ≤ c.toNat) (hg : v.pstate = .ground)
+    (hu : v.u8need = 0) (ha : v.u8acc = 0) : v.feed (utf8 c) = v.print c := by
   have hle := char_le c
   have hn : min c.toNat 0x10FFFF = c.toNat := by omega
   -- the two nested-division facts `omega` cannot see on its own
-  have e2 : c.toNat / 64 / 64 = c.toNat / 4096 := by
-    simp [Nat.div_div_eq_div_mul]
-  have e1 : c.toNat / 4096 / 64 = c.toNat / 262144 := by
-    simp [Nat.div_div_eq_div_mul]
+  have e2 : c.toNat / 64 / 64 = c.toNat / 4096 := by simp [Nat.div_div_eq_div_mul]
+  have e1 : c.toNat / 4096 / 64 = c.toNat / 262144 := by simp [Nat.div_div_eq_div_mul]
   unfold utf8
   dsimp only
   rw [hn]
@@ -297,37 +305,33 @@ theorem utf8_feed {v : Vt} (c : Char) (h20 : 0x20 ≤ c.toNat)
   rw [ite_eq_right h1]
   by_cases h2 : c.toNat < 0x800
   · -- two bytes: lead + final continuation
-    rw [ite_eq_left h2, feed2,
-      step_lead2 hg hu (by omega),
-      step_cont_last (acc := c.toNat / 64) (m := c.toNat % 64) (by rw [← hg]) rfl rfl (by omega) (by omega),
-      reset_u8 hu ha,
-      show c.toNat / 64 * 64 + c.toNat % 64 = c.toNat from by omega,
+    rw [ite_eq_left h2, feed2, step_lead2 hg hu (by omega),
+      step_cont_last (acc := c.toNat / 64) (m := c.toNat % 64) (by rw [← hg]) rfl rfl (by omega)
+        (by omega),
+      reset_u8 hu ha, show c.toNat / 64 * 64 + c.toNat % 64 = c.toNat from by omega,
       acceptChar_toNat]
   rw [ite_eq_right h2]
   by_cases h3 : c.toNat < 0x10000
   · -- three bytes
-    rw [ite_eq_left h3, feed3,
-      step_lead3 hg hu (by omega),
-      step_cont_more (k := 0) (acc := c.toNat / 4096) (m := c.toNat / 64 % 64) (by rw [← hg]) rfl rfl
-        (by omega) (by omega),
+    rw [ite_eq_left h3, feed3, step_lead3 hg hu (by omega),
+      step_cont_more (k := 0) (acc := c.toNat / 4096) (m := c.toNat / 64 % 64) (by rw [← hg]) rfl
+        rfl (by omega) (by omega),
       show c.toNat / 4096 * 64 + c.toNat / 64 % 64 = c.toNat / 64 from by omega,
-      step_cont_last (acc := c.toNat / 64) (m := c.toNat % 64) (by rw [← hg]) rfl rfl (by omega) (by omega),
-      reset_u8 hu ha,
-      show c.toNat / 64 * 64 + c.toNat % 64 = c.toNat from by omega,
+      step_cont_last (acc := c.toNat / 64) (m := c.toNat % 64) (by rw [← hg]) rfl rfl (by omega)
+        (by omega),
+      reset_u8 hu ha, show c.toNat / 64 * 64 + c.toNat % 64 = c.toNat from by omega,
       acceptChar_toNat]
   -- four bytes
-  rw [ite_eq_right h3, feed4,
-    step_lead4 hg hu (by omega),
-    step_cont_more (k := 1) (acc := c.toNat / 262144) (m := c.toNat / 4096 % 64) (by rw [← hg]) rfl rfl
-      (by omega) (by omega),
+  rw [ite_eq_right h3, feed4, step_lead4 hg hu (by omega),
+    step_cont_more (k := 1) (acc := c.toNat / 262144) (m := c.toNat / 4096 % 64) (by rw [← hg]) rfl
+      rfl (by omega) (by omega),
     show c.toNat / 262144 * 64 + c.toNat / 4096 % 64 = c.toNat / 4096 from by omega,
     step_cont_more (k := 0) (acc := c.toNat / 4096) (m := c.toNat / 64 % 64) (by rw [← hg]) rfl rfl
       (by omega) (by omega),
     show c.toNat / 4096 * 64 + c.toNat / 64 % 64 = c.toNat / 64 from by omega,
-    step_cont_last (acc := c.toNat / 64) (m := c.toNat % 64) (by rw [← hg]) rfl rfl (by omega) (by omega),
-    reset_u8 hu ha,
-    show c.toNat / 64 * 64 + c.toNat % 64 = c.toNat from by omega,
-    acceptChar_toNat]
+    step_cont_last (acc := c.toNat / 64) (m := c.toNat % 64) (by rw [← hg]) rfl rfl (by omega)
+      (by omega),
+    reset_u8 hu ha, show c.toNat / 64 * 64 + c.toNat % 64 = c.toNat from by omega, acceptChar_toNat]
 
 theorem feed_append (v : Vt) (a b : Bytes) : v.feed (a ++ b) = (v.feed a).feed b := by
   simp [Vt.feed, List.foldl_append]
@@ -339,19 +343,23 @@ Printing preserves it, which is what makes the run below an induction. -/
 theorem print_quiet {v : Vt} (c : Char) (hg : v.pstate = .ground) (hu : v.u8need = 0)
     (ha : v.u8acc = 0) :
     (v.print c).pstate = .ground ∧ (v.print c).u8need = 0 ∧ (v.print c).u8acc = 0 :=
-  ⟨by rw [Linger.Core.Vt.ps_print]; exact hg,
-   by rw [Linger.Core.Vt.un_print]; exact hu,
-   by rw [Linger.Core.Vt.ua_print]; exact ha⟩
+  ⟨by
+    rw [Linger.Core.Vt.ps_print]; exact hg, by
+    rw [Linger.Core.Vt.un_print]; exact hu, by
+    rw [Linger.Core.Vt.ua_print]; exact ha⟩
 
 /-- **A glyph run is a chain of prints.** The emitted bytes of a scrubbed
 char list feed back as exactly those characters printed, in order. -/
-theorem utf8s_feed : ∀ (cs : List Char) {v : Vt}, v.pstate = .ground → v.u8need = 0 →
-    v.u8acc = 0 → v.feed (utf8s cs) = cs.foldl (fun w c => w.print (safeChar c)) v
+theorem utf8s_feed :
+    ∀ (cs : List Char) {v : Vt},
+      v.pstate = .ground →
+        v.u8need = 0 →
+        v.u8acc = 0 → v.feed (utf8s cs) = cs.foldl (fun w c => w.print (safeChar c)) v
   | [], _, _, _, _ => rfl
   | c :: cs, v, hg, hu, ha => by
     have hb := safeChar_ge c
     rw [show utf8s (c :: cs) = utf8 (safeChar c) ++ utf8s cs from by
-      simp [utf8s, List.flatMap_cons]]
+        simp [utf8s, List.flatMap_cons]]
     rw [feed_append, utf8_feed (safeChar c) hb.1 hg hu ha]
     obtain ⟨h1, h2, h3⟩ := print_quiet (safeChar c) hg hu ha
     rw [utf8s_feed cs h1 h2 h3]
@@ -363,8 +371,8 @@ its combining marks. Where those land is `Vt.print`'s business — and
 the marks have to be replayed at all. -/
 theorem cellText_feed {v : Vt} (c : Cell) (hg : v.pstate = .ground) (hu : v.u8need = 0)
     (ha : v.u8acc = 0) :
-    v.feed (cellText c)
-      = c.marks.foldl (fun w m => w.print (safeChar m)) (v.print (safeChar c.base)) := by
+    v.feed (cellText c) =
+      c.marks.foldl (fun w m => w.print (safeChar m)) (v.print (safeChar c.base)) := by
   have hb := safeChar_ge c.base
   unfold cellText
   rw [feed_append, utf8_feed (safeChar c.base) hb.1 hg hu ha]
@@ -417,43 +425,50 @@ since `joinSemi` separates with `;` and never `:`. -/
 def sgrParamsOf (ns : List Nat) : List (Nat × Bool) := ns.map (fun n => (n, false))
 
 /-- The pen after one emitted SGR, at the fuel `applySgr` supplies. -/
-def penAfter (q : Pen) (ns : List Nat) : Pen :=
-  Vt.applySgr.go q (sgrParamsOf ns) (ns.length + 1)
+def penAfter (q : Pen) (ns : List Nat) : Pen := Vt.applySgr.go q (sgrParamsOf ns) (ns.length + 1)
 
 /-- **The attribute sequence resets, then re-establishes `p`'s attributes.**
 Both colours come out default because the leading `0` resets them and no
 attribute code touches a colour. -/
 theorem penAfter_attrCodes (q : Pen) (p : Pen) :
-    penAfter q (penAttrCodes p)
-      = { bold := p.bold, dim := p.dim, italic := p.italic,
-          underline := p.underline, blink := p.blink, reverse := p.reverse,
-          strike := p.strike } := by
+    penAfter q (penAttrCodes p) =
+      { bold := p.bold, dim := p.dim, italic := p.italic, underline := p.underline,
+        blink := p.blink, reverse := p.reverse, strike := p.strike } := by
   obtain ⟨fg, bg, b, d, i, u, bl, r, s⟩ := p
   cases b <;> cases d <;> cases i <;> cases u <;> cases bl <;> cases r <;> cases s <;>
     simp [penAfter, sgrParamsOf, penAttrCodes, Vt.applySgr.go]
 
 /-- **A colour sequence writes exactly that colour**, in all four emitted
 forms (16-colour, bright, 256-colour, truecolour). -/
-theorem penAfter_colorCodes (q : Pen) (c : Color) (isFg : Bool)
-    (hne : colorCodes c isFg ≠ []) :
-    penAfter q (colorCodes c isFg)
-      = (if isFg then { q with fg := c } else { q with bg := c }) := by
+theorem penAfter_colorCodes (q : Pen) (c : Color) (isFg : Bool) (hne : colorCodes c isFg ≠ []) :
+    penAfter q (colorCodes c isFg) = (if isFg then { q with fg := c } else { q with bg := c }) := by
   cases c with
   | default => simp [colorCodes] at hne
   | idx i =>
     have key : UInt8.ofNat i.toNat = i := UInt8.ofNat_toNat
     have hi := u8_lt256 i
     by_cases h8 : i.toNat < 8
-    · rcases (show i.toNat = 0 ∨ i.toNat = 1 ∨ i.toNat = 2 ∨ i.toNat = 3 ∨ i.toNat = 4
-          ∨ i.toNat = 5 ∨ i.toNat = 6 ∨ i.toNat = 7 from by omega) with
-        h'|h'|h'|h'|h'|h'|h'|h' <;>
-        rw [h'] at key <;> cases isFg <;>
+    · rcases
+          (show
+            i.toNat = 0 ∨
+              i.toNat = 1 ∨
+              i.toNat = 2 ∨ i.toNat = 3 ∨ i.toNat = 4 ∨ i.toNat = 5 ∨ i.toNat = 6 ∨ i.toNat = 7
+            from by omega) with
+          h' | h' | h' | h' | h' | h' | h' | h' <;>
+        rw [h'] at key <;>
+        cases isFg <;>
         simp [penAfter, sgrParamsOf, colorCodes, Vt.applySgr.go, ← key]
     by_cases h16 : i.toNat < 16
-    · rcases (show i.toNat = 8 ∨ i.toNat = 9 ∨ i.toNat = 10 ∨ i.toNat = 11
-          ∨ i.toNat = 12 ∨ i.toNat = 13 ∨ i.toNat = 14 ∨ i.toNat = 15 from by omega) with
-        h'|h'|h'|h'|h'|h'|h'|h' <;>
-        rw [h'] at key <;> cases isFg <;>
+    · rcases
+          (show
+            i.toNat = 8 ∨
+              i.toNat = 9 ∨
+              i.toNat = 10 ∨
+              i.toNat = 11 ∨ i.toNat = 12 ∨ i.toNat = 13 ∨ i.toNat = 14 ∨ i.toNat = 15
+            from by omega) with
+          h' | h' | h' | h' | h' | h' | h' | h' <;>
+        rw [h'] at key <;>
+        cases isFg <;>
         simp [penAfter, sgrParamsOf, colorCodes, Vt.applySgr.go, ← key]
     · cases isFg <;>
         simp [penAfter, sgrParamsOf, colorCodes, h8, h16, Vt.applySgr.go, color256,
@@ -462,14 +477,12 @@ theorem penAfter_colorCodes (q : Pen) (c : Color) (isFg : Bool)
     have hr := u8_lt256 r; have hg := u8_lt256 g; have hb := u8_lt256 b
     cases isFg <;>
       simp [penAfter, sgrParamsOf, colorCodes, Vt.applySgr.go, UInt8.ofNat_toNat,
-        show min r.toNat 255 = r.toNat from by omega,
-        show min g.toNat 255 = g.toNat from by omega,
+        show min r.toNat 255 = r.toNat from by omega, show min g.toNat 255 = g.toNat from by omega,
         show min b.toNat 255 = b.toNat from by omega]
 
 /-- `colorCodes` is empty exactly for the default colour — which is why
 `sgrColorSeq` can use emptiness as its "send nothing" test. -/
-theorem colorCodes_eq_nil (c : Color) (isFg : Bool) :
-    colorCodes c isFg = [] ↔ c = .default := by
+theorem colorCodes_eq_nil (c : Color) (isFg : Bool) : colorCodes c isFg = [] ↔ c = .default := by
   cases c with
   | default => simp [colorCodes]
   | idx i =>
@@ -498,11 +511,9 @@ theorem penAfterColor_eq (q : Pen) (c : Color) (isFg : Bool)
   · -- nothing emitted, and the attribute reset already left it default
     subst hc
     rw [ite_eq_left rfl]
-    cases isFg <;>
-      simp only [Bool.false_eq_true, ite_false, ite_true] at hdef ⊢ <;> rw [← hdef]
+    cases isFg <;> simp only [Bool.false_eq_true, ite_false, ite_true] at hdef ⊢ <;> rw [← hdef]
   · rw [ite_eq_right hc]
-    exact penAfter_colorCodes q c isFg
-      (fun h => hc ((colorCodes_eq_nil c isFg).mp h))
+    exact penAfter_colorCodes q c isFg (fun h => hc ((colorCodes_eq_nil c isFg).mp h))
 
 /-- **The pen encoding is invertible.** Feeding the three sequences
 `penSgr` emits — attributes, then foreground, then background — to *any*
@@ -568,32 +579,40 @@ theorem csi_param_step_frame {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate 
   by_cases hsemi : (b == 0x3B) = true
   · rw [ite_eq_right (by simp [hd]), ite_eq_left hsemi]; exact ⟨_, rfl⟩
   by_cases hcolon : (b == 0x3A) = true
-  · rw [ite_eq_right (by simp [hd]), ite_eq_right (by simp [hsemi]), ite_eq_left hcolon]; exact ⟨_, rfl⟩
+  · rw [ite_eq_right (by simp [hd]), ite_eq_right (by simp [hsemi]), ite_eq_left hcolon];
+    exact ⟨_, rfl⟩
   · exfalso
-    have hb39 : ¬ (b.toNat ≤ 57) := by
+    have hb39 : ¬(b.toNat ≤ 57) := by
       intro hle
-      exact hd (by
-        simp only [Bool.and_eq_true, decide_eq_true_eq, UInt8.le_iff_toNat_le,
-          show ((0x30 : UInt8)).toNat = 48 from rfl,
-          show ((0x39 : UInt8)).toNat = 57 from rfl]
-        omega)
+      exact
+        hd
+          (by
+            simp only [Bool.and_eq_true, decide_eq_true_eq, UInt8.le_iff_toNat_le,
+              show ((0x30 : UInt8)).toNat = 48 from rfl, show ((0x39 : UInt8)).toNat = 57 from rfl]
+            omega)
     have hne3B : b.toNat ≠ 59 := by
       intro he
-      exact hsemi (by
-        simp only [beq_iff_eq]
-        apply UInt8.toNat_inj.mp
-        simpa [show ((0x3B : UInt8)).toNat = 59 from rfl] using he)
+      exact
+        hsemi
+          (by
+            simp only [beq_iff_eq]
+            apply UInt8.toNat_inj.mp
+            simpa [show ((0x3B : UInt8)).toNat = 59 from rfl] using he)
     have hne3A : b.toNat ≠ 58 := by
       intro he
-      exact hcolon (by
-        simp only [beq_iff_eq]
-        apply UInt8.toNat_inj.mp
-        simpa [show ((0x3A : UInt8)).toNat = 58 from rfl] using he)
+      exact
+        hcolon
+          (by
+            simp only [beq_iff_eq]
+            apply UInt8.toNat_inj.mp
+            simpa [show ((0x3A : UInt8)).toNat = 58 from rfl] using he)
     omega
 
 /-- …and so does a whole run of them: only `pstate` differs at the end. -/
-theorem csi_param_run_frame : ∀ (bs : Bytes) {v : Vt} {s : CsiState}, v.pstate = .csi s →
-    v.u8need = 0 → ParamBytes bs → ∃ s', v.feed bs = { v with pstate := .csi s' }
+theorem csi_param_run_frame :
+    ∀ (bs : Bytes) {v : Vt} {s : CsiState},
+      v.pstate = .csi s →
+        v.u8need = 0 → ParamBytes bs → ∃ s', v.feed bs = { v with pstate := .csi s' }
   | [], v, s, hg, _, _ => ⟨s, by rw [show v.feed [] = v from rfl, ← hg]⟩
   | x :: xs, v, s, hg, hu, hp => by
     obtain ⟨s1, hs1⟩ := csi_param_step_frame x hg hu (hp x (by simp)).1 (hp x (by simp)).2
@@ -605,49 +624,62 @@ theorem csi_param_run_frame : ∀ (bs : Bytes) {v : Vt} {s : CsiState}, v.pstate
 
 /-- One `<digits>;` group: the number closes into the array and the
 accumulator is clear for the next. -/
-theorem csi_group_step {v : Vt} {s : CsiState} (n : Nat) (hg : v.pstate = .csi s)
-    (hcur : s.cur = 0) (hsize : s.params.size < 16) :
-    (v.feed (digits n ++ [0x3B])).pstate
-      = .csi { s with params := s.params.push (min n 65535, s.curSub),
-                      cur := 0, curSub := false, haveCur := false } := by
+theorem csi_group_step {v : Vt} {s : CsiState} (n : Nat) (hg : v.pstate = .csi s) (hcur : s.cur = 0)
+    (hsize : s.params.size < 16) :
+    (v.feed (digits n ++ [0x3B])).pstate =
+      .csi
+        { s with
+          params := s.params.push (min n 65535, s.curSub), cur := 0, curSub := false,
+          haveCur := false } := by
   rw [feed_append]
-  obtain ⟨s1, hs1, hcur1, hhave1, hpar1, hint1, hign1, hsub1, hpv1⟩ :=
-    csi_digits_value n hg hcur
+  obtain ⟨s1, hs1, hcur1, hhave1, hpar1, hint1, hign1, hsub1, hpv1⟩ := csi_digits_value n hg hcur
   rw [show ∀ (w : Vt), w.feed [(0x3B : UInt8)] = w.step 0x3B from fun _ => rfl]
   rw [csi_semi_step hs1]
   unfold csiPush
-  rw [ite_eq_left (by simp [hhave1]), ite_eq_right (by rw [hpar1]; omega)]
+  rw [ite_eq_left (by simp [hhave1]),
+    ite_eq_right
+      (by
+        rw [hpar1]; omega)]
   obtain ⟨p, ps, c, cs, hc, it, ig⟩ := s1
   simp_all
 
 /-- **The parameter run.** Feeding a `;`-joined list of numbers leaves the
 last one pending; pushing it — which is what `csiFinish` does — yields
 exactly those numbers as the parameter array. -/
-theorem csi_joinSemi_feed : ∀ (codes : List Nat) {v : Vt} {s : CsiState},
-    v.pstate = .csi s → s.cur = 0 → s.curSub = false → codes ≠ [] →
-    s.params.size + codes.length ≤ 16 →
-    ∃ s', (v.feed (joinSemi codes)).pstate = .csi s'
-      ∧ s'.haveCur = true ∧ s'.curSub = false ∧ s'.priv = s.priv
-      ∧ s'.inter = s.inter ∧ s'.ignore = s.ignore ∧ s'.params.size < 16
-      ∧ (s'.params.push (min s'.cur 65535, s'.curSub)).toList
-          = s.params.toList ++ codes.map (fun n => (min n 65535, false))
+theorem csi_joinSemi_feed :
+    ∀ (codes : List Nat) {v : Vt} {s : CsiState},
+      v.pstate = .csi s →
+        s.cur = 0 →
+        s.curSub = false →
+        codes ≠ [] →
+        s.params.size + codes.length ≤ 16 →
+        ∃ s',
+          (v.feed (joinSemi codes)).pstate = .csi s' ∧
+            s'.haveCur = true ∧
+            s'.curSub = false ∧
+            s'.priv = s.priv ∧
+            s'.inter = s.inter ∧
+            s'.ignore = s.ignore ∧
+            s'.params.size < 16 ∧
+            (s'.params.push (min s'.cur 65535, s'.curSub)).toList =
+              s.params.toList ++ codes.map (fun n => (min n 65535, false))
   | [], _, _, _, _, _, hne, _ => absurd rfl hne
   | [n], v, s, hg, hcur, hsub, _, hcap => by
-    obtain ⟨s1, hs1, hcur1, hhave1, hpar1, hint1, hign1, hsub1, hpv1⟩ :=
-      csi_digits_value n hg hcur
+    obtain ⟨s1, hs1, hcur1, hhave1, hpar1, hint1, hign1, hsub1, hpv1⟩ := csi_digits_value n hg hcur
     refine ⟨s1, hs1, hhave1, by rw [hsub1, hsub], hpv1, hint1, hign1, ?_, ?_⟩
     · rw [hpar1]; simp at hcap; omega
-    · rw [hcur1, hpar1, hsub1, hsub,
-        show min (min n 65535) 65535 = min n 65535 from by omega]
+    · rw [hcur1, hpar1, hsub1, hsub, show min (min n 65535) 65535 = min n 65535 from by omega]
       simp
   | n :: m :: ns, v, s, hg, hcur, hsub, _, hcap => by
     rw [show joinSemi (n :: m :: ns) = (digits n ++ [0x3B]) ++ joinSemi (m :: ns) from by
-      simp [joinSemi, List.append_assoc]]
+        simp [joinSemi, List.append_assoc]]
     rw [feed_append]
-    have hsz : s.params.size < 16 := by simp at hcap; omega
+    have hsz : s.params.size < 16 := by
+      simp at hcap; omega
     obtain ⟨s', hs', h1, h2, h3, h4, h5, h6, h7⟩ :=
       csi_joinSemi_feed (m :: ns) (csi_group_step n hg hcur hsz) rfl rfl (by simp)
-        (by simp only [Array.size_push]; simp at hcap ⊢; omega)
+        (by
+          simp only [Array.size_push]; simp at hcap ⊢; omega)
     refine ⟨s', hs', h1, h2, by rw [h3], by rw [h4], by rw [h5], h6, ?_⟩
     rw [h7, hsub]
     simp
@@ -655,12 +687,10 @@ theorem csi_joinSemi_feed : ∀ (codes : List Nat) {v : Vt} {s : CsiState},
 /-- **The pen round trip.** Feeding one emitted SGR sets the pen to exactly
 what its parameter numbers encode, and touches nothing else. With
 `pen_codes_recover`, this is what makes a pen replay. -/
-theorem sgrOf_feed {v : Vt} (codes : List Nat) (hne : codes ≠ [])
-    (hcap : codes.length ≤ 16) (hle : ∀ n ∈ codes, n ≤ 65535)
-    (hg : v.pstate = .ground) (hu : v.u8need = 0) :
+theorem sgrOf_feed {v : Vt} (codes : List Nat) (hne : codes ≠ []) (hcap : codes.length ≤ 16)
+    (hle : ∀ n ∈ codes, n ≤ 65535) (hg : v.pstate = .ground) (hu : v.u8need = 0) :
     v.feed (sgrOf codes) = { v with pen := penAfter v.pen codes } := by
-  rw [show sgrOf codes = 0x1B :: 0x5B :: (joinSemi codes ++ [0x6D]) from by
-    simp [sgrOf, csiB]]
+  rw [show sgrOf codes = 0x1B :: 0x5B :: (joinSemi codes ++ [0x6D]) from by simp [sgrOf, csiB]]
   rw [feed_cons, feed_cons, csi_open_feed hg hu, feed_append]
   -- the run: only the parser state moves, and we know what it holds
   obtain ⟨s1, hframe⟩ :=
@@ -678,28 +708,36 @@ theorem sgrOf_feed {v : Vt} (codes : List Nat) (hne : codes ≠ [])
   rw [step_of_csi_quiet (v := { v with pstate := .csi s' }) (s := s') 0x6D rfl hu]
   -- 0x6D is a final byte, with no intermediate, so it dispatches
   unfold Vt.stepCsi
-  rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide),
-    ite_eq_right (by decide), ite_eq_left (by decide), ite_eq_right (by simp [hinter])]
+  rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide),
+    ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_left (by decide),
+    ite_eq_right (by simp [hinter])]
   unfold Vt.csiFinish
   dsimp only
-  rw [ite_eq_left hhave, ite_eq_right (by simp; omega)]
+  rw [ite_eq_left hhave,
+    ite_eq_right
+      (by
+        simp; omega)]
   unfold Vt.csiDispatch
   dsimp only
   rw [ite_eq_right (by simp [hign])]
   -- SGR: the parameters are the numbers the emitter chose
   -- stated over any record with that array, since `priv` gets normalised to
   -- its default on the way here and a fixed shape would stop matching
-  have hparams : ∀ (t : CsiState),
+  have hparams :
+    ∀ (t : CsiState),
       t.params = s'.params.push (min s'.cur 65535, s'.curSub) →
-      t.sgrParams = sgrParamsOf codes := by
+        t.sgrParams = sgrParamsOf codes := by
     intro t ht
     unfold CsiState.sgrParams
     rw [ht, hpush]
     simp only [List.nil_append]
     unfold sgrParamsOf
-    exact List.map_congr_left (fun n hn => by
-      rw [show min n 65535 = n from by have := hle n hn; omega])
-  have hne' : ¬ (sgrParamsOf codes).isEmpty = true := by
+    exact
+      List.map_congr_left
+        (fun n hn => by
+          rw [show min n 65535 = n from by
+              have := hle n hn; omega])
+  have hne' : ¬(sgrParamsOf codes).isEmpty = true := by
     cases codes with
     | nil => exact absurd rfl hne
     | cons a as => simp [sgrParamsOf]
@@ -762,8 +800,11 @@ theorem sgrColorSeq_feed {v : Vt} (c : Color) (isFg : Bool) (hg : v.pstate = .gr
   by_cases hc : c = .default
   · rw [ite_eq_left hc, ite_eq_left hc, show v.feed [] = v from rfl]
   · rw [ite_eq_right hc, ite_eq_right hc]
-    exact sgrOf_feed _ (fun h => hc ((colorCodes_eq_nil c isFg).mp h))
-      (by have := colorCodes_length c isFg; omega) (colorCodes_le c isFg) hg hu
+    exact
+      sgrOf_feed _ (fun h => hc ((colorCodes_eq_nil c isFg).mp h))
+        (by
+          have := colorCodes_length c isFg; omega)
+        (colorCodes_le c isFg) hg hu
 
 /-- **A pen replays exactly.** Feeding the sequences `penSgr` emits to a
 quiet emulator sets its pen to `p` and changes nothing else — the parser
@@ -773,13 +814,16 @@ theorem penSgr_feed {v : Vt} (p : Pen) (hg : v.pstate = .ground) (hu : v.u8need 
     v.feed (penSgr p) = { v with pen := p } := by
   -- each stage's starting state is the previous stage's result, so they are
   -- pinned explicitly rather than left to unification
-  have h1 := sgrOf_feed (v := v) (penAttrCodes p) (penAttrCodes_ne_nil p)
-    (by have := penAttrCodes_length p; omega) (penAttrCodes_le p) hg hu
-  have h2 := sgrColorSeq_feed (v := { v with pen := penAfter v.pen (penAttrCodes p) })
-    p.fg true hg hu
-  have h3 := sgrColorSeq_feed
-    (v := { v with pen := penAfterColor (penAfter v.pen (penAttrCodes p)) p.fg true })
-    p.bg false hg hu
+  have h1 :=
+    sgrOf_feed (v := v) (penAttrCodes p) (penAttrCodes_ne_nil p)
+      (by
+        have := penAttrCodes_length p; omega)
+      (penAttrCodes_le p) hg hu
+  have h2 :=
+    sgrColorSeq_feed (v := { v with pen := penAfter v.pen (penAttrCodes p) }) p.fg true hg hu
+  have h3 :=
+    sgrColorSeq_feed (v :=
+      { v with pen := penAfterColor (penAfter v.pen (penAttrCodes p)) p.fg true }) p.bg false hg hu
   unfold penSgr
   rw [feed_append, feed_append, h1, h2, h3]
   exact congrArg (fun q => { v with pen := q }) (pen_codes_recover v.pen p)
@@ -804,14 +848,12 @@ itself: no charset translation is in effect — true of a fresh emulator, and th
 reason `charsetAnsi` is emitted *after* the repaint, since with `ESC ( 0` in
 force every ASCII glyph would be re-drawn as a box character — and it is not a
 control codepoint, which `Vt.printableChar` would otherwise replace. -/
-theorem print_narrow {v : Vt} (ch : Char)
-    (hpc : v.printChar ch = ch)
-    (hw : charWidth ch = 1) (hins : v.modes.insert = false)
-    (hpend : v.cursor.pending = false)
+theorem print_narrow {v : Vt} (ch : Char) (hpc : v.printChar ch = ch) (hw : charWidth ch = 1)
+    (hins : v.modes.insert = false) (hpend : v.cursor.pending = false)
     (hrow : (v.getRow v.cursor.y).size = v.cols) (hgrid : v.grid.size = v.rows)
     (hx : v.cursor.x < v.cols) (hy : v.cursor.y < v.rows) :
-    (v.print ch).getCell v.cursor.x v.cursor.y
-        = { base := ch, marks := [], width := 1, pen := v.pen } := by
+    (v.print ch).getCell v.cursor.x v.cursor.y =
+      { base := ch, marks := [], width := 1, pen := v.pen } := by
   rw [print_narrow_eq hpc hw hins hpend, getCell_printAdvance]
   refine getCell_write_mendRow_narrow _ _ _ _ rfl ?_ ?_
   · show v.cursor.y < v.grid.size
@@ -824,12 +866,9 @@ paints inside one row. *Within* that row the claim is deliberately absent — th
 print ends in a whole-row repair (`Row.mend`), which may rewrite any column of a
 row that was not already pair-consistent — so the one-cell form is stated where
 the row is known pair-consistent (`Renderable`), not here. -/
-theorem print_narrow_frame {v : Vt} (ch : Char)
-    (hpc : v.printChar ch = ch)
-    (hw : charWidth ch = 1) (hins : v.modes.insert = false)
-    (hpend : v.cursor.pending = false) (x' y' : Nat)
-    (hne : y' ≠ v.cursor.y) :
-    (v.print ch).getCell x' y' = v.getCell x' y' := by
+theorem print_narrow_frame {v : Vt} (ch : Char) (hpc : v.printChar ch = ch) (hw : charWidth ch = 1)
+    (hins : v.modes.insert = false) (hpend : v.cursor.pending = false) (x' y' : Nat)
+    (hne : y' ≠ v.cursor.y) : (v.print ch).getCell x' y' = v.getCell x' y' := by
   rw [print_narrow_eq hpc hw hins hpend, getCell_printAdvance]
   rw [getCell_write_mendRow_other _ _ _ _ _ _ (show y' ≠ v.cursor.y from hne)]
   rfl
@@ -838,16 +877,14 @@ theorem print_narrow_frame {v : Vt} (ch : Char)
 a width-0 *shadow* to its right, which carries nothing of its own — a repaint of
 the base re-creates it, which is why marks are stored on the base
 (`Vt.printMark`) and why a half pair is repaired rather than emitted. -/
-theorem print_wide {v : Vt} (ch : Char)
-    (hpc : v.printChar ch = ch)
-    (hw : charWidth ch = 2) (hins : v.modes.insert = false)
-    (hpend : v.cursor.pending = false) (hfit : v.cursor.x + 1 < v.cols)
-    (hrow : (v.getRow v.cursor.y).size = v.cols) (hgrid : v.grid.size = v.rows)
-    (hy : v.cursor.y < v.rows) :
-    (v.print ch).getCell v.cursor.x v.cursor.y
-        = { base := ch, marks := [], width := 2, pen := v.pen }
-      ∧ (v.print ch).getCell (v.cursor.x + 1) v.cursor.y
-        = { base := ' ', marks := [], width := 0, pen := v.pen } := by
+theorem print_wide {v : Vt} (ch : Char) (hpc : v.printChar ch = ch) (hw : charWidth ch = 2)
+    (hins : v.modes.insert = false) (hpend : v.cursor.pending = false)
+    (hfit : v.cursor.x + 1 < v.cols) (hrow : (v.getRow v.cursor.y).size = v.cols)
+    (hgrid : v.grid.size = v.rows) (hy : v.cursor.y < v.rows) :
+    (v.print ch).getCell v.cursor.x v.cursor.y =
+        { base := ch, marks := [], width := 2, pen := v.pen } ∧
+      (v.print ch).getCell (v.cursor.x + 1) v.cursor.y =
+        { base := ' ', marks := [], width := 0, pen := v.pen } := by
   rw [print_wide_eq hpc hw hins hpend hfit, getCell_printAdvance, getCell_printAdvance]
   refine getCell_write_mendRow_wide _ _ _ _ rfl ?_ ?_
   · show v.cursor.y < v.grid.size
@@ -863,20 +900,23 @@ grow a cell without limit, so past eight the mark is dropped.
 `hnarrow` is what the repair sweep needs to leave the marked cell alone. Marks
 on a *wide* base survive too — its shadow is untouched by the write — but that
 case reads the row's pair fact, so it is stated with `Renderable`. -/
-theorem print_mark {v : Vt} (m : Char)
-    (hpc : v.printChar m = m)
-    (hw : charWidth m = 0) (hpend : v.cursor.pending = false) (hx0 : v.cursor.x ≠ 0)
+theorem print_mark {v : Vt} (m : Char) (hpc : v.printChar m = m) (hw : charWidth m = 0)
+    (hpend : v.cursor.pending = false) (hx0 : v.cursor.x ≠ 0)
     (hnw : (v.getCell (v.cursor.x - 1) v.cursor.y).width ≠ 0)
     (hnarrow : (v.getCell (v.cursor.x - 1) v.cursor.y).width = 1)
     (hcap : (v.getCell (v.cursor.x - 1) v.cursor.y).marks.length < 8)
     (hrow : (v.getRow v.cursor.y).size = v.cols) (hgrid : v.grid.size = v.rows)
     (hx : v.cursor.x - 1 < v.cols) (hy : v.cursor.y < v.rows) :
-    (v.print m).getCell (v.cursor.x - 1) v.cursor.y
-      = { v.getCell (v.cursor.x - 1) v.cursor.y with
-          marks := (v.getCell (v.cursor.x - 1) v.cursor.y).marks ++ [m] } := by
+    (v.print m).getCell (v.cursor.x - 1) v.cursor.y =
+      { v.getCell (v.cursor.x - 1) v.cursor.y with
+        marks := (v.getCell (v.cursor.x - 1) v.cursor.y).marks ++ [m] } := by
   rw [print_mark_eq hpc hw hpend hx0 hnw hcap]
-  exact getCell_write_mendRow_narrow _ _ _ _ hnarrow (by rw [hgrid]; exact hy)
-    (by rw [hrow]; exact hx)
+  exact
+    getCell_write_mendRow_narrow _ _ _ _ hnarrow
+      (by
+        rw [hgrid]; exact hy)
+      (by
+        rw [hrow]; exact hx)
 
 /-! ### §Replay stage 3c — the cursor lands where the session had it
 
@@ -907,16 +947,17 @@ had it. `Good v` supplies the bounds (a real session always satisfies it —
 gap, since under DECOM a region-relative address cannot reproduce a cursor
 parked outside the scroll region. -/
 theorem restore_cursor (v : Vt) (hgood : Good v) (ho : v.modes.origin = false) :
-    (((Vt.init v.cols v.rows).feed (restore v)).cursor.x = v.cursor.x)
-      ∧ (((Vt.init v.cols v.rows).feed (restore v)).cursor.y = v.cursor.y) := by
+    (((Vt.init v.cols v.rows).feed (restore v)).cursor.x = v.cursor.x) ∧
+      (((Vt.init v.cols v.rows).feed (restore v)).cursor.y = v.cursor.y) := by
   obtain ⟨hic, hir⟩ := init_dims v hgood
   -- the stream splits at the final cursor address
   rw [show restore v = restoreBody v ++ cursorAnsi v from rfl]
-  rw [show ∀ (w : Vt), w.feed (restoreBody v ++ cursorAnsi v)
-      = (w.feed (restoreBody v)).feed (cursorAnsi v) from
-    fun w => by simp [Vt.feed, List.foldl_append]]
+  rw [show
+      ∀ (w : Vt),
+        w.feed (restoreBody v ++ cursorAnsi v) = (w.feed (restoreBody v)).feed (cursorAnsi v)
+      from fun w => by simp [Vt.feed, List.foldl_append]]
   rw [show cursorAnsi v = csiNum2 (v.cursor.y + 1) (v.cursor.x + 1) 0x48 from by
-    simp only [cursorAnsi, ho]; rfl]
+      simp only [cursorAnsi, ho]; rfl]
   -- the body leaves the parser ground with DECOM still off
   obtain ⟨hpg, hpo⟩ := quiet_restoreBody v ho (Vt.init v.cols v.rows) rfl rfl
   -- …and cannot have resized the emulator
@@ -930,12 +971,17 @@ theorem restore_cursor (v : Vt) (hgood : Good v) (ho : v.modes.origin = false) :
   have hdr : ((Vt.init v.cols v.rows).feed (restoreBody v)).rows = v.rows := by
     rw [← dims_snd ((Vt.init v.cols v.rows).feed (restoreBody v)), hd]
     exact hir
-  obtain ⟨hx, hy⟩ := cup_places_cursor (v.cursor.y + 1) (v.cursor.x + 1) hpg
-    (by omega) (by omega)
-    (by have := hgood.curY; have := hgood.rowsLe; omega)
-    (by have := hgood.curX; have := hgood.colsLe; omega)
-    (by rw [hdr]; simpa using hgood.curY)
-    (by rw [hdc]; simpa using hgood.curX) hpo
+  obtain ⟨hx, hy⟩ :=
+    cup_places_cursor (v.cursor.y + 1) (v.cursor.x + 1) hpg (by omega) (by omega)
+      (by
+        have := hgood.curY; have := hgood.rowsLe; omega)
+      (by
+        have := hgood.curX; have := hgood.colsLe; omega)
+      (by
+        rw [hdr]; simpa using hgood.curY)
+      (by
+        rw [hdc]; simpa using hgood.curX)
+      hpo
   exact ⟨by simpa using hx, by simpa using hy⟩
 
 end Linger.Core.Render

@@ -1,5 +1,6 @@
 import Theorems.Checkpoint
 import Theorems.Render
+
 /-! # §Resume — the end-to-end claim, as one theorem
 
 Everything else in `Theorems/` is a rung. This file states the thing the
@@ -38,9 +39,10 @@ in `ground` with no pending UTF-8 sequence. Holds for any session state
 whatsoever, with no hypotheses — the reattaching client is always left
 ready for the application's next byte. -/
 theorem resume_quiesced (c : Ckpt) (cols rows : Nat) :
-    ∃ c', load (save c) = some c'
-      ∧ ((Vt.Vt.init cols rows).feed (Render.restore c'.vt)).pstate = .ground
-      ∧ ((Vt.Vt.init cols rows).feed (Render.restore c'.vt)).u8need = 0 := by
+    ∃ c',
+      load (save c) = some c' ∧
+        ((Vt.Vt.init cols rows).feed (Render.restore c'.vt)).pstate = .ground ∧
+        ((Vt.Vt.init cols rows).feed (Render.restore c'.vt)).u8need = 0 := by
   refine ⟨{ c with vt := c.vt.quiesce }, Checkpoint.load_save c, ?_, ?_⟩
   · exact (Render.restore_quiesced _ cols rows).1
   · exact (Render.restore_quiesced _ cols rows).2
@@ -56,23 +58,23 @@ It rests on two properties of the stream's ends and nothing in between: `restore
 (`Render.restore_grounds`), and **ends** with a `CSI … H` whose final byte cannot
 leave a character half-decoded (`Render.restore_u8_zero`). -/
 theorem resume_quiesced_any (c : Ckpt) (w : Vt.Vt) :
-    ∃ c', load (save c) = some c'
-      ∧ ((w.feed (Render.restore c'.vt)).pstate = .ground)
-      ∧ ((w.feed (Render.restore c'.vt)).u8need = 0) :=
-  ⟨{ c with vt := c.vt.quiesce }, Checkpoint.load_save c,
-   (Render.restore_quiesced_any _ w).1, (Render.restore_quiesced_any _ w).2⟩
+    ∃ c',
+      load (save c) = some c' ∧
+        ((w.feed (Render.restore c'.vt)).pstate = .ground) ∧
+        ((w.feed (Render.restore c'.vt)).u8need = 0) :=
+  ⟨{ c with vt := c.vt.quiesce }, Checkpoint.load_save c, (Render.restore_quiesced_any _ w).1,
+    (Render.restore_quiesced_any _ w).2⟩
 
 /-- The same, in the form the runtime uses it: a *quiescent* checkpoint
 (which is what the daemon writes, being taken between poll rounds) comes
 back byte-identical, and its replay is quiesced. -/
-theorem resume_exact (c : Ckpt) (cols rows : Nat) (h : c.vt.pstate = .ground)
-    (h8 : c.vt.u8need = 0) (ha : c.vt.u8acc = 0) :
-    load (save c) = some c
-      ∧ ((Vt.Vt.init cols rows).feed (Render.restore c.vt)).pstate = .ground
-      ∧ ((Vt.Vt.init cols rows).feed (Render.restore c.vt)).u8need = 0 :=
-  ⟨Checkpoint.load_save_exact c h h8 ha,
-   (Render.restore_quiesced c.vt cols rows).1,
-   (Render.restore_quiesced c.vt cols rows).2⟩
+theorem resume_exact (c : Ckpt) (cols rows : Nat) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0)
+    (ha : c.vt.u8acc = 0) :
+    load (save c) = some c ∧
+      ((Vt.Vt.init cols rows).feed (Render.restore c.vt)).pstate = .ground ∧
+      ((Vt.Vt.init cols rows).feed (Render.restore c.vt)).u8need = 0 :=
+  ⟨Checkpoint.load_save_exact c h h8 ha, (Render.restore_quiesced c.vt cols rows).1,
+    (Render.restore_quiesced c.vt cols rows).2⟩
 
 /-- **§Resume (cursor).** The end-to-end cursor claim: a quiescent
 checkpoint comes back byte-identical, and replaying it into a fresh
@@ -81,31 +83,28 @@ had it. `Vt.Good` is the §Bound invariant every live session satisfies;
 `origin = false` is the documented DECOM gap (`Render.restore_cursor`). -/
 theorem resume_cursor (c : Ckpt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0)
     (ha : c.vt.u8acc = 0) (hgood : Vt.Good c.vt) (ho : c.vt.modes.origin = false) :
-    load (save c) = some c
-      ∧ (((Vt.Vt.init c.vt.cols c.vt.rows).feed
-          (Render.restore c.vt)).cursor.x = c.vt.cursor.x)
-      ∧ (((Vt.Vt.init c.vt.cols c.vt.rows).feed
-          (Render.restore c.vt)).cursor.y = c.vt.cursor.y) :=
-  ⟨Checkpoint.load_save_exact c h h8 ha,
-   (Render.restore_cursor c.vt hgood ho).1,
-   (Render.restore_cursor c.vt hgood ho).2⟩
+    load (save c) = some c ∧
+      (((Vt.Vt.init c.vt.cols c.vt.rows).feed (Render.restore c.vt)).cursor.x = c.vt.cursor.x) ∧
+      (((Vt.Vt.init c.vt.cols c.vt.rows).feed (Render.restore c.vt)).cursor.y = c.vt.cursor.y) :=
+  ⟨Checkpoint.load_save_exact c h h8 ha, (Render.restore_cursor c.vt hgood ho).1,
+    (Render.restore_cursor c.vt hgood ho).2⟩
 
 /-- **§Resume (cursor), receiver-quantified.** The end-to-end cursor claim into *any*
 client's emulator of the session's size, not only a fresh one. `Good w` is what
 `dims_feed` needs of the receiver (see `Render.restore_cursor_any`); every client's
 emulator satisfies it. -/
-theorem resume_cursor_any (c : Ckpt) (w : Vt.Vt) (h : c.vt.pstate = .ground)
-    (h8 : c.vt.u8need = 0) (ha : c.vt.u8acc = 0) (hgood : Vt.Good c.vt)
-    (hgw : Vt.Good w) (hcols : w.cols = c.vt.cols) (hrows : w.rows = c.vt.rows)
-    (ho : c.vt.modes.origin = false)
-    (hmouse : c.vt.modes.mouse = 0 ∨ c.vt.modes.mouse = 1000 ∨ c.vt.modes.mouse = 1002
-      ∨ c.vt.modes.mouse = 1003) :
-    load (save c) = some c
-      ∧ ((w.feed (Render.restore c.vt)).cursor.x = c.vt.cursor.x)
-      ∧ ((w.feed (Render.restore c.vt)).cursor.y = c.vt.cursor.y) :=
+theorem resume_cursor_any (c : Ckpt) (w : Vt.Vt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0)
+    (ha : c.vt.u8acc = 0) (hgood : Vt.Good c.vt) (hgw : Vt.Good w) (hcols : w.cols = c.vt.cols)
+    (hrows : w.rows = c.vt.rows) (ho : c.vt.modes.origin = false)
+    (hmouse :
+      c.vt.modes.mouse = 0 ∨
+        c.vt.modes.mouse = 1000 ∨ c.vt.modes.mouse = 1002 ∨ c.vt.modes.mouse = 1003) :
+    load (save c) = some c ∧
+      ((w.feed (Render.restore c.vt)).cursor.x = c.vt.cursor.x) ∧
+      ((w.feed (Render.restore c.vt)).cursor.y = c.vt.cursor.y) :=
   ⟨Checkpoint.load_save_exact c h h8 ha,
-   (Render.restore_cursor_any c.vt w hgood hgw hcols hrows ho hmouse).1,
-   (Render.restore_cursor_any c.vt w hgood hgw hcols hrows ho hmouse).2⟩
+    (Render.restore_cursor_any c.vt w hgood hgw hcols hrows ho hmouse).1,
+    (Render.restore_cursor_any c.vt w hgood hgw hcols hrows ho hmouse).2⟩
 
 /-- **§Resume (grid) — Definition-of-done item 5, end to end.** A quiescent checkpoint comes
 back byte-identical, and replaying it into a fresh emulator of the session's size reproduces
@@ -114,8 +113,8 @@ dispatches on the alt flag) and for **any** height, the one-row screen included.
 `Renderable` are the §Bound invariants every live session satisfies. -/
 theorem resume_grid (c : Ckpt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0)
     (ha : c.vt.u8acc = 0) (hgood : Vt.Good c.vt) (hren : Vt.Renderable c.vt) :
-    load (save c) = some c
-      ∧ ((Vt.Vt.init c.vt.cols c.vt.rows).feed (Render.restore c.vt)).grid = c.vt.grid := by
+    load (save c) = some c ∧
+      ((Vt.Vt.init c.vt.cols c.vt.rows).feed (Render.restore c.vt)).grid = c.vt.grid := by
   refine ⟨Checkpoint.load_save_exact c h h8 ha, ?_⟩
   have hcolseq : (Vt.Vt.init c.vt.cols c.vt.rows).cols = c.vt.cols := by
     show Vt.clampDim c.vt.cols = c.vt.cols
@@ -123,17 +122,19 @@ theorem resume_grid (c : Ckpt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0
   have hrowseq : (Vt.Vt.init c.vt.cols c.vt.rows).rows = c.vt.rows := by
     show Vt.clampDim c.vt.rows = c.vt.rows
     have := hgood.rowsLe; have := hgood.rowsPos; simp only [Vt.clampDim]; omega
-  exact Render.restore_grid_any c.vt (Vt.Vt.init c.vt.cols c.vt.rows)
-    (Vt.good_init _ _) (Vt.renderable_init _ _) hcolseq hrowseq rfl rfl
-    (Nat.lt_of_le_of_lt hgood.rowsLe (by decide)) hgood.colsPos
-    (Nat.lt_of_le_of_lt hgood.colsLe (by decide)) hren hren.main.1
+  exact
+    Render.restore_grid_any c.vt (Vt.Vt.init c.vt.cols c.vt.rows) (Vt.good_init _ _)
+      (Vt.renderable_init _ _) hcolseq hrowseq rfl rfl (Nat.lt_of_le_of_lt hgood.rowsLe (by decide))
+      hgood.colsPos (Nat.lt_of_le_of_lt hgood.colsLe (by decide)) hren hren.main.1
 
 /-- Non-vacuity: a real 80×24 checkpoint satisfies every hypothesis of `resume_grid`, so the
 theorem is not vacuously true. -/
-example : ∃ c : Ckpt, c.vt.pstate = .ground ∧ c.vt.u8need = 0 ∧ c.vt.u8acc = 0
-    ∧ Vt.Good c.vt ∧ Vt.Renderable c.vt :=
-  ⟨{ vt := Vt.Vt.init 80 24, cwd := "", labels := [] },
-   rfl, rfl, rfl, Vt.good_init 80 24, Vt.renderable_init 80 24⟩
+example :
+    ∃ c : Ckpt,
+      c.vt.pstate = .ground ∧
+        c.vt.u8need = 0 ∧ c.vt.u8acc = 0 ∧ Vt.Good c.vt ∧ Vt.Renderable c.vt :=
+  ⟨{ vt := Vt.Vt.init 80 24, cwd := "", labels := [] }, rfl, rfl, rfl, Vt.good_init 80 24,
+    Vt.renderable_init 80 24⟩
 
 /-- **§Resume (tab ruler).** A quiescent checkpoint comes back byte-identical, and
 replaying it into a fresh emulator of the session's width installs the session's tab
@@ -142,20 +143,21 @@ ruler. `hvtabs` is the ruler-length hypothesis `Render.restore_tabs_any` explain
 bytes, so it is asked for rather than assumed. -/
 theorem resume_tabs (c : Ckpt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0)
     (ha : c.vt.u8acc = 0) (hgood : Vt.Good c.vt) (hvtabs : c.vt.tabs.size = c.vt.cols) :
-    load (save c) = some c
-      ∧ ((Vt.Vt.init c.vt.cols c.vt.rows).feed (Render.restore c.vt)).tabs = c.vt.tabs := by
+    load (save c) = some c ∧
+      ((Vt.Vt.init c.vt.cols c.vt.rows).feed (Render.restore c.vt)).tabs = c.vt.tabs := by
   refine ⟨Checkpoint.load_save_exact c h h8 ha, ?_⟩
   have hcolseq : (Vt.Vt.init c.vt.cols c.vt.rows).cols = c.vt.cols := by
     show Vt.clampDim c.vt.cols = c.vt.cols
     have := hgood.colsPos; have := hgood.colsLe; simp only [Vt.clampDim]; omega
-  exact Render.restore_tabs_any c.vt (Vt.Vt.init c.vt.cols c.vt.rows)
-    (Vt.good_init _ _) hcolseq
-    (Nat.lt_of_le_of_lt hgood.colsLe (by decide)) hvtabs
+  exact
+    Render.restore_tabs_any c.vt (Vt.Vt.init c.vt.cols c.vt.rows) (Vt.good_init _ _) hcolseq
+      (Nat.lt_of_le_of_lt hgood.colsLe (by decide)) hvtabs
 
 /-- Non-vacuity at the degenerate height: `resume_grid` genuinely covers a **one-row** screen,
 the case `h2 : 0 < rows - 1` used to exclude — the grid of an 80×1 session is reproduced. -/
-example : ((Vt.Vt.init 80 1).feed (Render.restore (Vt.Vt.init 80 1))).grid = (Vt.Vt.init 80 1).grid :=
-  (resume_grid { vt := Vt.Vt.init 80 1, cwd := "", labels := [] }
-    rfl rfl rfl (Vt.good_init 80 1) (Vt.renderable_init 80 1)).2
+example :
+    ((Vt.Vt.init 80 1).feed (Render.restore (Vt.Vt.init 80 1))).grid = (Vt.Vt.init 80 1).grid :=
+  (resume_grid { vt := Vt.Vt.init 80 1, cwd := "", labels := [] } rfl rfl rfl (Vt.good_init 80 1)
+      (Vt.renderable_init 80 1)).2
 
 end Linger.Core

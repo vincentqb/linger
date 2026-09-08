@@ -2871,7 +2871,7 @@ concatenation); exact `Vt.feed` projection; one-step and arbitrary-stream
 scanner bounds; exact CSI/OSC profile classification; exact arbitrary-payload
 XTGETTCAP/DECRQSS negatives; owned exclusion versus unowned exact release;
 CPR origin-row cases; `finish_exact`; and quantified APC/sixel passthrough for
-all payloads without their own `ESC \` terminator. Twenty owned request forms
+all payloads without their own `ESC ` terminator. Twenty owned request forms
 (accepted aliases and OSC terminators included) pass at every byte split;
 every proper owned-query prefix passes the EOF flush check. Cap overflow and
 query-looking bytes inside >cap graphics are concrete regressions.
@@ -3935,13 +3935,13 @@ more bugs of the family this spec is about.
 ### Bug: a receiver mid-OSC or mid-DCS swallowed the whole restore stream
 
 `Vt.stepOsc` accumulates any byte that is not `BEL` or `ST` — including our leading
-`ESC`, after which our `[` is not `\` so it is accumulated too. `Vt.stepStr` (DCS,
+`ESC`, after which our `[` is not `` so it is accumulated too. `Vt.stepStr` (DCS,
 APC, SOS, PM) only leaves on `ST`. So a client left in either state consumed **every
 byte of `restore`** into a window title or a discarded string, and displayed nothing.
 
-Fix: `prologueAnsi` leads with `escSeq 0x5C` = `ESC \` (ST). It terminates both, and
+Fix: `prologueAnsi` leads with `escSeq 0x5C` = `ESC ` (ST). It terminates both, and
 from `ground`/`esc`/`escInter`/`csi` it lands in `ground`. The one side effect is that
-in `escInter` the `ESC` designates a charset from a junk byte and the `\` then prints
+in `escInter` the `ESC` designates a charset from a junk byte and the `` then prints
 a backslash — both erased by the `ED 2` two lines later, and `charsetAnsi` re-emits
 the real designation. `stepEsc` sends `0x5C` to its default arm, so no new parser
 surface was needed; the `escSeq` allowlist grew by one byte in four places.
@@ -7071,3 +7071,42 @@ Toolchain bump fallout, for the next one: 152 deprecations, all
 **definitionally identical** (`if_pos` is *defined as* `ite_eq_left hc`) — checked in
 the toolchain source first, since a blind rename of a proof lemma can change meaning.
 No ratchet moved; `HEARTBEAT_CAP` holding at 1 was the one at risk.
+
+## the reformat, and the gate bug it exposed — 2026-08-29
+
+`lean-fmt format` applied by decision after the numbers were on the table: 66 of 71
+files, +8351/-5985, 894 diff lines inside tactic blocks. **Nothing broke** — the whole
+tree elaborates warning-free with `warningAsError` on, and `HEARTBEAT_CAP` stayed at 1,
+so reflowing proof scripts made no proof more expensive. ~500 commands the engine still
+cannot lay out, which is why some declarations look hand-laid after a format run; that
+is the tool s limit, not a miss.
+
+Config: `declaration-body = "same-line"` (protects several hundred one-line `rfl`
+proofs) and `line-width` left at the default 100 — measured, 80 makes it WORSE (680
+unformattable vs ~500), so code sits at 100 while prose stays at 80 via
+`reflow-comments = false`. Asymmetric on purpose.
+
+### The finding: coverage 16 -> 15 was MY BUG, fixed by accident
+
+Checked before touching the cap, because a gate whose number improves while it weakens
+is the failure mode this repo watches for. It was the reverse.
+
+`E2E/Coverage.lean`'s `dropModifiers` stripped only `@[expose] ` **by name**. So an
+`@[simp] theorem writeU32_length …` line did not start with `theorem`, the scanner
+skipped the whole declaration, and `writeU32`'s two real claims
+(`readU32_writeU32`, `readU32_writeU32_append`) were invisible — it had been reported as
+unclaimed surface all along. The formatter moved every attribute onto its own line, the
+scanner saw them, and the count fell by itself.
+
+Inherited from the Python, which had the same `@\[expose\] ` literal in its regex — so
+this blind spot predates the Lean port by however long `@[simp]` theorems have existed
+in `Theorems/`. Any `@[…]` prefix is now stripped. Break-verified both ways: 15 with
+attributes inline, 15 with them on their own line, where the old scanner said 16.
+
+**Generalisable lesson:** a text-scanning gate is sensitive to layout, and adopting a
+formatter is therefore a way to *test* the gate. It also strengthens the case for the
+environment-reflection version noted in the lean-suites record — asking whether a
+constant appears in a theorem's *type* has no attribute-placement blind spot at all.
+
+Third real find by a formatter/linter in two days, after the trailing whitespace in
+`E2E/Coverage.lean` and the `.lean-fmt-cache/` that nearly got committed.

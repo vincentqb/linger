@@ -1,4 +1,5 @@
 import Linger.Core.Buf
+
 /-! # Buf fixtures — the caps and the no-retention property, evaluated
 
 `Theorems/Buf.lean` proves these for all inputs; these evaluate them on concrete
@@ -26,13 +27,15 @@ example : bufSize ((bufEnqueue 100 .empty (bytes 40)).1) = 40 := by native_decid
 **This is the regression oracle**: with a retained prefix, `bufSize` here would be
 40 while `owedLen` said 15. -/
 example : bufSize (bufAdvance (bufEnqueue 100 .empty (bytes 40)).1 25) = 15 := by native_decide
+
 example : owedLen (bufAdvance (bufEnqueue 100 .empty (bytes 40)).1 25) = 15 := by native_decide
 
 /-- Repeated partial drains do not accumulate: four rounds of "queue 40, write 25"
 leaves the debt bounded, not growing by 15 a round in memory terms. -/
 example :
     let step := fun (b : Buf) => bufAdvance (bufEnqueue 1000 b (bytes 40)).1 25
-    bufSize (step (step (step (step .empty)))) = 60 := by native_decide
+    bufSize (step (step (step (step .empty)))) = 60 := by
+  native_decide
 
 /-- Advancing past the end owes nothing and keeps nothing. -/
 example : bufSize (bufAdvance (bufEnqueue 100 .empty (bytes 40)).1 999) = 0 := by native_decide
@@ -40,18 +43,22 @@ example : bufSize (bufAdvance (bufEnqueue 100 .empty (bytes 40)).1 999) = 0 := b
 /-- The child-input discipline: an offer that would breach the cap is refused
 **whole**, so the queue is unchanged and the caller is told. -/
 example : (bufOffer 50 (bufEnqueue 100 .empty (bytes 40)).1 (bytes 20)).2 = true := by native_decide
+
 example : owedLen (bufOffer 50 (bufEnqueue 100 .empty (bytes 40)).1 (bytes 20)).1 = 40 := by
   native_decide
 
 /-- An accepted offer is appended in full. -/
 example : owedLen (bufOffer 50 (bufEnqueue 100 .empty (bytes 40)).1 (bytes 10)).1 = 50 := by
   native_decide
-example : (bufOffer 50 (bufEnqueue 100 .empty (bytes 40)).1 (bytes 10)).2 = false := by native_decide
+
+example : (bufOffer 50 (bufEnqueue 100 .empty (bytes 40)).1 (bytes 10)).2 = false := by
+  native_decide
 
 /-- The client-output discipline: `.send` appends and *then* reports, so the frame
 that crossed the cap is queued at the moment of the decision. That asymmetry with
 `bufOffer` is deliberate and is why `bufEnqueue_bound` is hypothesis-guarded. -/
 example : (bufEnqueue 30 .empty (bytes 40)).2 = true := by native_decide
+
 example : owedLen (bufEnqueue 30 .empty (bytes 40)).1 = 40 := by native_decide
 
 end Linger.Core.Buf.Tests

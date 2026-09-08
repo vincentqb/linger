@@ -57,15 +57,20 @@ open Linger.Posix (chmod kill)
 /-! ## The fixture -/
 
 def devHost : String := "dev-a"
+
 /-- The fake `ssh` exits 255 for this one: a host that is down. -/
 def deadHost : String := "dead"
+
 /-- A `user@host` ssh target, so the `attach` split has more than one `@` to get
 wrong. -/
 def userHost : String := s!"me@{devHost}"
+
 def goodName : String := "remote-work"
+
 /-- The hostile record's name: a path, with a leading dot. `Name.sanitize` is what
 defuses it, and the check below asks *it* what to expect. -/
 def hostileName : String := "../../etc/passwd"
+
 def attachMark : String := "FAKE-ATTACH-OK"
 
 /-- The rejection `Remote.checkHosts` itself produces for a repeated host.
@@ -89,28 +94,27 @@ Lean source. The two record names come from the constants above, so the sanitize
 expectation and the fixture cannot drift apart. The third `printf` is a line with
 no tabs: `Remote.parseRecord` must drop the record, not the listing. -/
 def fakeSsh (log : String) : String :=
-  "#!/bin/sh\n"
-    ++ s!"echo \"$@\" >> {log}\n"
-    ++ "# strip ssh options to find the destination and remote command\n"
-    ++ "while [ $# -gt 0 ]; do\n"
-    ++ "  case \"$1\" in\n"
-    ++ "    -o) shift 2 ;;\n"
-    ++ "    -t) shift ;;\n"
-    ++ "    --) shift; break ;;\n"
-    ++ "    *) break ;;\n"
-    ++ "  esac\n"
-    ++ "done\n"
-    ++ "host=\"$1\"; shift\n"
-    ++ s!"[ \"$host\" = \"{deadHost}\" ] && exit 255\n"
-    ++ "case \"$2\" in\n"
-    ++ "  ls)\n"
-    ++ s!"    printf 'name\\t{goodName}\\nstate\\tlive\\nclients\\t1\\ncmd\\tvim\\033[31mINJECT\\nlabel.env\\tprod\\n\\n'\n"
-    ++ s!"    printf 'name\\t{hostileName}\\nstate\\tresumable\\n\\n'\n"
-    ++ "    printf 'garbage line with no tabs\\n\\n'\n"
-    ++ "    ;;\n"
-    ++ s!"  attach)  printf '{attachMark}\\n'; sleep 5 ;;\n"
-    ++ "esac\n"
-    ++ "exit 0\n"
+  "#!/bin/sh\n" ++ s!"echo \"$@\" >> {log}\n" ++
+    "# strip ssh options to find the destination and remote command\n" ++
+    "while [ $# -gt 0 ]; do\n" ++
+    "  case \"$1\" in\n" ++
+    "    -o) shift 2 ;;\n" ++
+    "    -t) shift ;;\n" ++
+    "    --) shift; break ;;\n" ++
+    "    *) break ;;\n" ++
+    "  esac\n" ++
+    "done\n" ++
+    "host=\"$1\"; shift\n" ++
+    s!"[ \"$host\" = \"{deadHost}\" ] && exit 255\n" ++
+    "case \"$2\" in\n" ++
+    "  ls)\n" ++
+    s!"    printf 'name\\t{goodName}\\nstate\\tlive\\nclients\\t1\\ncmd\\tvim\\033[31mINJECT\\nlabel.env\\tprod\\n\\n'\n" ++
+    s!"    printf 'name\\t{hostileName}\\nstate\\tresumable\\n\\n'\n" ++
+    "    printf 'garbage line with no tabs\\n\\n'\n" ++
+    "    ;;\n" ++
+    s!"  attach)  printf '{attachMark}\\n'; sleep 5 ;;\n" ++
+    "esac\n" ++
+    "exit 0\n"
 
 /-- Drop `-o value` pairs and the end-of-options `--`: the `(-o \S+ )*(--\s+)?`
 half of the Python's regex. `--` terminates the strip, because that is what it
@@ -135,12 +139,12 @@ def sshTails (log : String) : IO (List (List String)) := do
   if (← System.FilePath.pathExists (System.FilePath.mk log)) then
     let txt ← IO.FS.readFile (System.FilePath.mk log)
     return (txt.splitOn "\n").filterMap sshTail
-  else return []
+  else
+    return []
 
 def run : IO UInt32 := do
   let e ← Env.make "remote"
   let mut f := 0
-
   -- ── the fake ssh: written, made executable, put first on PATH ──────────────
   let fakebin := (System.FilePath.mk e.dir) / "fakebin"
   IO.FS.createDirAll fakebin
@@ -156,53 +160,52 @@ def run : IO UInt32 := do
   let newPath := s!"{fakebin.toString}:{path0}"
   let procPath : Array (String × Option String) := #[("PATH", some newPath)]
   let ptyPath : Array String := #[s!"PATH={newPath}"]
-
   let _ ← e.cliEnv procPath #["run", "localsess", "echo local-content"]
   IO.sleep 1000
-
   -- 1. a duplicate host is a hard error, reported before anything runs (no tty
   -- needed — argv validation precedes the connection attempts)
   let (drc, _, derr) ← e.cliEnv procPath #["-r", s!"{devHost},{devHost}"]
-  f := f + (← expect (drc != 0 && has derr dupMsg)
-    "duplicate -r host errors loudly")
-
+  f := f + (← expect (drc != 0 && has derr dupMsg) "duplicate -r host errors loudly")
   -- 2-7. the overview folds in the remote host's sessions (plain stdout, no tty:
   -- `IO.Process.output` hands the child a null stdin, the Python's DEVNULL)
   let (rrc, out, _) ← e.cliEnv procPath #["-r", s!"{devHost},{deadHost}"]
-  let (_, pout, _) ← e.cliEnv procPath
-    #["ls", "--porcelain", "-r", s!"{devHost},{deadHost}"]
+  let (_, pout, _) ← e.cliEnv procPath #["ls", "--porcelain", "-r", s!"{devHost},{deadHost}"]
   let recs := records pout
   let tag := s!"{goodName}@{devHost}"
-
   f := f + (← expect (rrc == 0) "`linger -r` exits cleanly")
   f := f + (← expect (has out "localsess") "local session listed alongside remotes")
   -- as a porcelain RECORD as well as in the human listing: the porcelain is what
   -- a peer's own `-r` reads back, so that is where the tag must be well formed
-  f := f + (← expect (has out tag && recs.contains ("name", tag))
-    "remote session listed with @host tag")
+  f :=
+    f +
+      (← expect (has out tag && recs.contains ("name", tag)) "remote session listed with @host tag")
   -- the expected spelling comes from the sanitizer, not from a copy of its output
-  f := f + (← expect (has out (Linger.Core.Name.sanitize hostileName)
-                      && !has out "/etc/passwd")
-    "hostile remote name is sanitized (no slashes, no leading dot)")
-  f := f + (← expect (!has out "\x1b")
-    "remote escape sequences are scrubbed from the listing")
-  f := f + (← expect (!has out s!"@{deadHost}"
-                      && !recs.any (fun kv =>
-                           kv.1 == "name" && kv.2.endsWith s!"@{deadHost}"))
-    "unreachable host contributes no rows")
-
+  f :=
+    f +
+      (←
+        expect (has out (Linger.Core.Name.sanitize hostileName) && !has out "/etc/passwd")
+            "hostile remote name is sanitized (no slashes, no leading dot)")
+  f := f + (← expect (!has out "\x1b") "remote escape sequences are scrubbed from the listing")
+  f :=
+    f +
+      (←
+        expect
+            (!has out s!"@{deadHost}" &&
+              !recs.any (fun kv => kv.1 == "name" && kv.2.endsWith s!"@{deadHost}"))
+            "unreachable host contributes no rows")
   -- 8+9. `attach name@host` execs `ssh -t -- host linger attach name`. Needs a
   -- tty, so this one is a pty spawn and not `cliEnv`.
   let c1 ← e.spawnEnv ptyPath #["attach", tag] 100 24
   let attached ← drain c1.fd 2000
   let tails ← sshTails log
-  f := f + (← expect (hasText attached attachMark)
-    "attach name@host reaches the remote attach")
-  f := f + (← expect (tails.contains [devHost, "linger", "attach", goodName])
-    s!"remote attach ssh argv correct ({tails.filter (·.contains "attach")})")
+  f := f + (← expect (hasText attached attachMark) "attach name@host reaches the remote attach")
+  f :=
+    f +
+      (←
+        expect (tails.contains [devHost, "linger", "attach", goodName])
+            s!"remote attach ssh argv correct ({tails.filter (·.contains "attach")})")
   kill c1.pid 9
   c1.bye (sendDetach := false)
-
   -- 10. a `user@host` remote (multi-@) round-trips: the host is everything after
   -- the FIRST @, so `attach work@me@dev-a` execs ssh to `me@dev-a` and attaches
   -- `work` (session names never contain @ — sanitize reserves it, and
@@ -210,21 +213,25 @@ def run : IO UInt32 := do
   let c2 ← e.spawnEnv ptyPath #["attach", s!"{goodName}@{userHost}"] 100 24
   let _ ← drain c2.fd 2000
   let tails2 ← sshTails log
-  f := f + (← expect (tails2.contains [userHost, "linger", "attach", goodName])
-    s!"user@host remote round-trips via first-@ split ({tails2.filter (·.contains userHost)})")
+  f :=
+    f +
+      (←
+        expect (tails2.contains [userHost, "linger", "attach", goodName])
+            s!"user@host remote round-trips via first-@ split ({tails2.filter (·.contains userHost)})")
   kill c2.pid 9
   c2.bye (sendDetach := false)
-
   -- 11. a malformed target (empty host) is a loud error, not a silent local
   -- session. `Main` prints a caught `IO.userError` to stderr, which on a pty is
   -- the same terminal, so the message arrives in the drained bytes.
   let c3 ← e.spawnEnv ptyPath #["attach", "work@"] 100 24
   let bad ← drain c3.fd 1500
-  f := f + (← expect (hasText bad "malformed")
-    "trailing @ errors loudly instead of creating a local session")
+  f :=
+    f +
+      (←
+        expect (hasText bad "malformed")
+            "trailing @ errors loudly instead of creating a local session")
   kill c3.pid 9
   c3.bye (sendDetach := false)
-
   e.killAll #["localsess"]
   verdict f
 

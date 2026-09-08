@@ -34,7 +34,8 @@ def defaultName : String := "main"
 which the silence-only timeout below cannot. -/
 def infoReplyCap : Nat := 1048576
 
-def usage : String := "Usage: linger [command] [args...]
+def usage : String :=
+  "Usage: linger [command] [args...]
 
   (no args) | ls [-r [h,..]]  List sessions; -r also lists remote hosts
                               (from --remote arg, else ~/.config/linger/remotes)
@@ -63,8 +64,8 @@ Detach key: ctrl-\\ (set LINGER_NO_DETACH_KEY to disable)."
 structure Hooks where
   save : String → State → IO Unit := fun _ _ => pure ()
   drop : String → IO Unit := fun _ => pure ()
-  load : String → IO (Option (Linger.Core.Vt.Vt × String × List (String × String))) :=
-    fun _ => pure none
+  load : String → IO (Option (Linger.Core.Vt.Vt × String × List (String × String))) := fun _ =>
+    pure none
 
 def spawnDaemon (name cwd : String) (cmd : List String) : IO Unit := do
   let self ← IO.appPath
@@ -74,13 +75,18 @@ def spawnDaemon (name cwd : String) (cmd : List String) : IO Unit := do
 /-- Connect, spawning the daemon first if needed (attach-is-upsert). -/
 def connectUpsert (hooks : Hooks) (name : String) (cmd : List String) : IO UInt32 := do
   match ← Client.connect name with
-  | some fd => return fd
+  | some fd =>
+    return fd
   | none =>
     -- no live daemon: resume from checkpoint if one exists (step 7)
     let resumed ← hooks.load name
-    let cwd ← match resumed with
-      | some (_, cwd, _) => pure cwd
-      | none => do pure (← IO.Process.getCurrentDir).toString
+    let cwd ←
+      match resumed with
+      | some (_, cwd, _) =>
+        pure cwd
+      | none =>
+        do
+          pure (← IO.Process.getCurrentDir).toString
     spawnDaemon name cwd cmd
     let deadline := (← monotonicMs) + 3000
     let mut fdOpt : Option UInt32 := none
@@ -88,7 +94,8 @@ def connectUpsert (hooks : Hooks) (name : String) (cmd : List String) : IO UInt3
       IO.sleep 30
       fdOpt ← Client.connect name
     match fdOpt with
-    | some fd => return fd
+    | some fd =>
+      return fd
     | none =>
       let log ← Paths.logPath name
       throw (IO.userError s!"daemon for '{name}' did not come up (see {log})")
@@ -114,8 +121,8 @@ def cmdAttach (hooks : Hooks) (name : String) (cmd : List String) : IO UInt32 :=
     -- to flaky links is making death cheap — the session detaches and
     -- restores — which composes with ANY transport policy (ssh config,
     -- an autossh-style loop, mosh). See README "Flaky links".
-    exec "ssh" #["-t", "--", host, "linger", "attach", sess]  -- replaces us on success
-    return 1                                                 -- only reached if exec fails
+    exec "ssh" #["-t", "--", host, "linger", "attach", sess] -- replaces us on success
+    return 1 -- only reached if exec fails
   | _ =>
     let fd ← connectUpsert hooks name cmd
     match ← Client.attach fd with
@@ -132,7 +139,8 @@ def cmdAttach (hooks : Hooks) (name : String) (cmd : List String) : IO UInt32 :=
 /-- Fetch a session's info key-values. -/
 def queryInfo (name : String) : IO (Option (List (String × String))) := do
   match ← Client.connect name with
-  | none => return none
+  | none =>
+    return none
   | some fd =>
     Client.sendMsg fd .info
     let mut dec : Linger.Core.Wire.Decoder := {}
@@ -147,28 +155,35 @@ def queryInfo (name : String) : IO (Option (List (String × String))) := do
     let mut go := true
     while go do
       let revs ← poll #[fd] #[POLLIN] 2000
-      if revs[0]! == 0 then go := false  -- timeout: treat as dead
+      if revs[0]! == 0 then
+        go := false -- timeout: treat as dead
       else
         match ← read fd 65536 with
-        | none => go := false
+        | none =>
+          go := false
         | some bs =>
-          if bs.isEmpty then continue
+          if bs.isEmpty then
+            continue
           let (dec', msgs) := dec.feed bs.toList
           dec := dec'
           for m in msgs do
             match m with
             | .infoReply payload =>
-              acc := (Linger.Core.Buf.bufOffer infoReplyCap acc
-                       (ByteArray.mk payload.toArray)).1
-            | .done => go := false
-            | .err _ => go := false
-            | _ => pure ()
+              acc := (Linger.Core.Buf.bufOffer infoReplyCap acc (ByteArray.mk payload.toArray)).1
+            | .done =>
+              go := false
+            | .err _ =>
+              go := false
+            | _ =>
+              pure ()
     close fd
     let txt := String.fromUTF8? (Linger.Core.Buf.writeFrom acc) |>.getD ""
-    return some <| txt.splitOn "\n" |>.filterMap (fun line =>
-      match line.splitOn "\t" with
-      | [k, v] => some (k, v)
-      | _ => none)
+    return some <|
+        txt.splitOn "\n" |>.filterMap
+          (fun line =>
+            match line.splitOn "\t" with
+            | [k, v] => some (k, v)
+            | _ => none)
 
 def kv (l : List (String × String)) (k : String) : String :=
   (l.find? (·.1 == k)).map (·.2) |>.getD ""
@@ -178,19 +193,26 @@ Duplicates are a hard error (`Remote.checkHosts`). `none` means no `-r`
 (local only); `some []` means `-r` with no arg (read the file). -/
 def resolveRemotes (flag : Option (List String)) : IO (List String) := do
   match flag with
-  | none => return []
+  | none =>
+    return []
   | some given =>
-    let raw ← if given.isEmpty then do
-        let home := (← IO.getEnv "HOME").getD "/tmp"
-        let path := s!"{home}/.config/linger/remotes"
-        if ← System.FilePath.pathExists path then pure ((← IO.FS.readFile path).splitOn "\n")
-        else pure []
-      else pure given
-    let hosts := (raw.map (·.trimAscii.toString)).filter
-      (fun h => !h.isEmpty && !h.startsWith "#")
+    let raw ←
+      if given.isEmpty then
+        do
+          let home := (← IO.getEnv "HOME").getD "/tmp"
+          let path := s!"{home}/.config/linger/remotes"
+          if ← System.FilePath.pathExists path then
+            pure ((← IO.FS.readFile path).splitOn "\n")
+          else
+            pure []
+      else
+        pure given
+    let hosts := (raw.map (·.trimAscii.toString)).filter (fun h => !h.isEmpty && !h.startsWith "#")
     match Linger.Core.Remote.checkHosts hosts with
-    | .ok l => return l
-    | .error e => throw (IO.userError e)
+    | .ok l =>
+      return l
+    | .error e =>
+      throw (IO.userError e)
 
 /-- One remote's sessions over ssh; a failure (host down, no linger,
 timeout) yields `[]` so a dead remote never blocks the local overview.
@@ -198,16 +220,18 @@ ConnectTimeout bounds a host that is down; ServerAlive bounds one that
 is half-up (accepts the connection, then wedges mid-reboot) — either
 way the overview proceeds within a few seconds. -/
 def listRemote (host : String) : IO (List (String × Bool × String × String)) := do
-  let out ← try
-      IO.Process.output {
-        cmd := "ssh",
-        args := #["-o", "BatchMode=yes", "-o", "ConnectTimeout=3",
-                  "-o", "ServerAliveInterval=2", "-o", "ServerAliveCountMax=2",
-                  "--", host, "linger", "ls", "--porcelain"] }
-    catch _ => pure { exitCode := 1, stdout := "", stderr := "" }
-  if out.exitCode != 0 then return []
-  return (Linger.Core.Remote.parse out.stdout).map
-    (fun r => (r.name, r.live, r.cmd, r.status))
+  let out ←
+    try
+      IO.Process.output
+          { cmd := "ssh",
+            args :=
+              #["-o", "BatchMode=yes", "-o", "ConnectTimeout=3", "-o", "ServerAliveInterval=2",
+                "-o", "ServerAliveCountMax=2", "--", host, "linger", "ls", "--porcelain"] }
+    catch _ =>
+      pure { exitCode := 1, stdout := "", stderr := "" }
+  if out.exitCode != 0 then
+    return []
+  return (Linger.Core.Remote.parse out.stdout).map (fun r => (r.name, r.live, r.cmd, r.status))
 
 def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
   -- sort the local names so the listing order is deterministic (the directory
@@ -225,30 +249,38 @@ def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
       -- the status column goes through `Listing.rowStatus`, so the two facts
       -- that decide whether a row is trustworthy (socket present, daemon
       -- answered) come from here and not from the reply -- §Row, extended
-      rows := rows ++ [Linger.Core.Listing.rowFields name info
-        ++ [("state", "live"),
-            ("status", Linger.Core.Status.name
-              (Linger.Core.Listing.rowStatus (.live info)))]]
+      rows :=
+        rows ++
+          [Linger.Core.Listing.rowFields name info ++
+              [("state", "live"),
+                ("status", Linger.Core.Status.name (Linger.Core.Listing.rowStatus (.live info)))]]
     | none =>
       -- connect() itself failed: nothing is listening, the file is stale
-      try IO.FS.removeFile (← Paths.socketPath name) catch _ => pure ()
+      try
+        IO.FS.removeFile (← Paths.socketPath name)
+      catch _ =>
+        pure ()
   for name in ckpts do
     if !live.contains name then
       -- through `rowFields` like the live rows, so the displayed name is the
       -- sanitized one `attach` accepts and §Row (`rowFields_name`) covers it —
       -- a checkpoint filename is not trusted to name its own row.
-      rows := rows ++ [Linger.Core.Listing.rowFields name
-        [("state", "resumable"),
-         ("status", Linger.Core.Status.name (Linger.Core.Listing.rowStatus .stale))]]
+      rows :=
+        rows ++
+          [Linger.Core.Listing.rowFields name
+              [("state", "resumable"),
+                ("status", Linger.Core.Status.name (Linger.Core.Listing.rowStatus .stale))]]
   -- remotes last (per host), so a slow ssh can't reorder local rows
   for host in remotes do
     for (rname, rlive, rcmd, rstatus) in ← listRemote host do
       -- a remote row carries no activity fields (the peer's porcelain does
       -- not forward them), so it reports liveness only
-      rows := rows ++ [[("name", s!"{rname}@{host}"), ("cmd", rcmd),
-                        ("state", if rlive then "live" else "resumable"),
-                        ("status", Linger.Core.Status.name
-                          (Linger.Core.Listing.rowStatus (.remote rlive rstatus)))]]
+      rows :=
+        rows ++
+          [[("name", s!"{rname}@{host}"), ("cmd", rcmd),
+              ("state", if rlive then "live" else "resumable"),
+              ("status",
+                Linger.Core.Status.name (Linger.Core.Listing.rowStatus (.remote rlive rstatus)))]]
   if porcelain then
     for info in rows do
       for (k, v) in info do
@@ -280,13 +312,15 @@ partial def parseLs : List String → Option (Bool × Option (List String))
   | _ => none
 
 def requireLive (name : String) (m : Msg) : IO UInt32 := do
-  if ← Client.oneShot name m then return 0
+  if ← Client.oneShot name m then
+    return 0
   IO.eprintln s!"linger: no session '{name}'"
   return 1
 
 /-- Like `requireLive` but expects no reply (input/labels-fire-and-forget). -/
 def requireLiveSend (name : String) (m : Msg) : IO UInt32 := do
-  if ← Client.sendOnly name m then return 0
+  if ← Client.sendOnly name m then
+    return 0
   IO.eprintln s!"linger: no session '{name}'"
   return 1
 
@@ -304,8 +338,10 @@ def requireLiveBounded (name : String) (m : Msg) : IO UInt32 := do
     let r ← Client.drainBounded fd
     close fd
     match r with
-    | .done => return 0
-    | .refused => return 1  -- the daemon's .err text was already printed
+    | .done =>
+      return 0
+    | .refused =>
+      return 1 -- the daemon's .err text was already printed
     | .silent =>
       IO.eprintln s!"linger: no reply from '{name}' (daemon predates this command?)"
       return 1
@@ -329,9 +365,11 @@ def cmdSendStdin (name : String) : IO UInt32 := do
       let revs ← poll #[stdinFd] #[POLLIN] 200
       if revs[0]! &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
         match ← read stdinFd 65536 with
-        | none => go := false
+        | none =>
+          go := false
         | some bs =>
-          if !bs.isEmpty then Client.sendMsg fd (.input bs.toList)
+          if !bs.isEmpty then
+            Client.sendMsg fd (.input bs.toList)
     close fd
     return 0
 
@@ -339,13 +377,15 @@ def cmdWait (names : List String) : IO UInt32 := do
   let mut rc : UInt32 := 0
   for name in names do
     match ← Client.connect name with
-    | none => pure ()  -- no session = nothing to wait for
+    | none =>
+      pure () -- no session = nothing to wait for
     | some fd =>
       Client.sendMsg fd .wait
       let status ← Client.drainReplies fd false
       close fd
       if let some s := status then
-        if s != 0 then rc := s
+        if s != 0 then
+          rc := s
   return rc
 
 def cmdGet (name : String) : IO UInt32 := do
@@ -368,7 +408,8 @@ def cmdVersion : IO UInt32 := do
 /-- Bare `linger` and `linger ls [...]` share this overview path. -/
 def overview (args : List String) : IO UInt32 := do
   match parseLs args with
-  | some (porcelain, remoteFlag) => cmdList porcelain (← resolveRemotes remoteFlag)
+  | some (porcelain, remoteFlag) =>
+    cmdList porcelain (← resolveRemotes remoteFlag)
   | none =>
     IO.eprintln usage
     return 2
@@ -380,9 +421,12 @@ def main (hooks : Hooks) (args : List String) : IO UInt32 := do
     let restore := (← hooks.load name).map (fun (vt, _, labels) => (vt, labels))
     Daemon.serve name cwd cmd (hooks.save name) (hooks.drop name) restore
     return 0
-  | ["attach"] | ["a"] => cmdAttach hooks defaultName []
-  | ["attach", name] | ["a", name] => cmdAttach hooks name []
-  | "attach" :: name :: cmd | "a" :: name :: cmd => cmdAttach hooks name cmd
+  | ["attach"] | ["a"] =>
+    cmdAttach hooks defaultName []
+  | ["attach", name] | ["a", name] =>
+    cmdAttach hooks name []
+  | "attach" :: name :: cmd | "a" :: name :: cmd =>
+    cmdAttach hooks name cmd
   | ["watch", name] =>
     -- read-only mirror (abduco -r): output only, detach key works
     match ← Client.connect name with
@@ -409,33 +453,43 @@ def main (hooks : Hooks) (args : List String) : IO UInt32 := do
     if text.isEmpty then
       IO.eprintln "usage: linger send <name> <text...>  (or: linger send <name> -)"
       return 2
-    if text == ["-"] then cmdSendStdin name
-    else requireLiveSend name (.input (String.intercalate " " text).toUTF8.toList)
-  | ["detach", name] | ["d", name] => requireLive name .detachAll
-  | ["kill", name] | ["k", name] => requireLiveSend name .kill
-  | ["info", name] | ["i", name] => requireLiveBounded name .info
-  | ["capture", name] | ["c", name] => requireLiveBounded name .screen
+    if text == ["-"] then
+      cmdSendStdin name
+    else
+      requireLiveSend name (.input (String.intercalate " " text).toUTF8.toList)
+  | ["detach", name] | ["d", name] =>
+    requireLive name .detachAll
+  | ["kill", name] | ["k", name] =>
+    requireLiveSend name .kill
+  | ["info", name] | ["i", name] =>
+    requireLiveBounded name .info
+  | ["capture", name] | ["c", name] =>
+    requireLiveBounded name .screen
   | ["resize", name, cs, rs] =>
     match cs.toNat?, rs.toNat? with
     | some cols, some rows =>
       -- 1..1000 is `clampDim`'s range: past it the emulator would clamp while
       -- the pty winsize did not, and the two must not be allowed to disagree
       -- from this path (attach trusts the terminal; an agent gets validated)
-      if cols == 0 || rows == 0 || cols > 1000 || rows > 1000 then do
-        IO.eprintln "linger: size must be 1..1000 (the emulator clamps at 1000)"
-        return 2
+      if cols == 0 || rows == 0 || cols > 1000 || rows > 1000 then
+        do
+          IO.eprintln "linger: size must be 1..1000 (the emulator clamps at 1000)"
+          return 2
       else
         requireLiveBounded name (.resize (UInt32.ofNat cols) (UInt32.ofNat rows))
-    | _, _ => do
-      IO.eprintln "usage: linger resize <name> <cols> <rows>"
-      return 2
-  | ["history", name] | ["hi", name] => requireLive name .history
+    | _, _ =>
+      do
+        IO.eprintln "usage: linger resize <name> <cols> <rows>"
+        return 2
+  | ["history", name] | ["hi", name] =>
+    requireLive name .history
   | "wait" :: names | "w" :: names =>
     if names.isEmpty then
       IO.eprintln "usage: linger wait <name>..."
       return 2
     cmdWait names
-  | ["get", name] | ["g", name] => cmdGet name
+  | ["get", name] | ["g", name] =>
+    cmdGet name
   | "set" :: name :: kvs =>
     if kvs.isEmpty then
       IO.eprintln "usage: linger set <name> k=v ..."
@@ -452,13 +506,17 @@ def main (hooks : Hooks) (args : List String) : IO UInt32 := do
     for k in ks do
       rc := max rc (← requireLive name (.labelUnset k.toUTF8.toList))
     return rc
-  | ["clear", name] | ["cl", name] => requireLive name .labelClear
-  | ["version"] | ["v"] => cmdVersion
+  | ["clear", name] | ["cl", name] =>
+    requireLive name .labelClear
+  | ["version"] | ["v"] =>
+    cmdVersion
   | ["help"] | ["h"] | ["--help"] =>
     IO.println usage
     return 0
   -- bare `linger`, `linger ls ...`, `linger -r ...` → the overview
-  | "ls" :: rest | "list" :: rest | "l" :: rest => overview rest
-  | other => overview other
+  | "ls" :: rest | "list" :: rest | "l" :: rest =>
+    overview rest
+  | other =>
+    overview other
 
 end Linger.Runtime.Cli

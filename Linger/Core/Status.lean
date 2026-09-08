@@ -60,14 +60,13 @@ structure Obs where
 /-- The classifier: a priority cascade. -/
 def classify (o : Obs) : Status :=
   if !o.known then .unknown
-  else match o.exit with
+  else
+    match o.exit with
     | some 0 => .exitedOk
     | some _ => .exitedBad
     | none =>
       if !o.daemonUp then .resumable
-      else if o.fresh then .working
-      else if o.unseen then .wantsYou
-      else .idle
+      else if o.fresh then .working else if o.unseen then .wantsYou else .idle
 
 /-- The glyph for a state. All seven are single-column *by our own
 `charWidth`*; note that table covers East-Asian Wide and Fullwidth but not

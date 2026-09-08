@@ -67,8 +67,7 @@ def evilPayload : List UInt8 := "54\r;id>x\r".toUTF8.toList
 /-- …and the request around it, framed the way the mediator frames its own: DCS,
 the `+q` kind byte pair `Scan.dcsIntro`/`dcsKind` route into the buffered state,
 the payload, ST. -/
-def evilQuery : List UInt8 :=
-  escSeq 0x50 ++ [0x2B, 0x71] ++ evilPayload ++ escSeq STFinal
+def evilQuery : List UInt8 := escSeq 0x50 ++ [0x2B, 0x71] ++ evilPayload ++ escSeq STFinal
 
 /-- What the mediator decides to answer for an owned CSI request, read out of
 `classifyCsi` rather than copied from the test that used to spell it. The `Vt` is
@@ -98,9 +97,9 @@ def toHex (bs : List UInt8) : String :=
 def unNibble (c : Char) : Option UInt8 :=
   let n := c.toNat
   if decide (0x30 ≤ n) && decide (n ≤ 0x39) then some (UInt8.ofNat (n - 0x30))
-  else if decide (0x61 ≤ n) && decide (n ≤ 0x66) then some (UInt8.ofNat (n - 0x57))
-  else if decide (0x41 ≤ n) && decide (n ≤ 0x46) then some (UInt8.ofNat (n - 0x37))
-  else none
+  else
+    if decide (0x61 ≤ n) && decide (n ≤ 0x66) then some (UInt8.ofNat (n - 0x57))
+    else if decide (0x41 ≤ n) && decide (n ≤ 0x46) then some (UInt8.ofNat (n - 0x37)) else none
 
 /-- Hex pairs → bytes; `none` on a non-hex digit or an odd length, so a truncated
 result file reads as "no reply" rather than as a short one. -/
@@ -131,9 +130,11 @@ non-executable file called `fish` on `PATH` is not a case worth a syscall. -/
 def whichBin (name : String) : IO (Option String) := do
   let path := (← IO.getEnv "PATH").getD ""
   for d in path.splitOn ":" do
-    if d.isEmpty then continue
+    if d.isEmpty then
+      continue
     let p := (System.FilePath.mk d) / name
-    if ← p.pathExists then return some p.toString
+    if ← p.pathExists then
+      return some p.toString
   return none
 
 /-! ## The child side -/
@@ -164,17 +165,24 @@ def probe (resultPath readyPath triggerPath : String) : IO UInt32 := do
       let revs ← poll #[stdinFd] #[POLLIN] 100
       if revs[0]! &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
         match ← read stdinFd 4096 with
-        | none => reading := false
+        | none =>
+          reading := false
         | some bs =>
-          if bs.isEmpty then reading := false else reply := reply ++ bs.toList
-      else if !reply.isEmpty then reading := false
+          if bs.isEmpty then
+            reading := false
+          else
+            reply := reply ++ bs.toList
+      else if !reply.isEmpty then
+        reading := false
     -- one `k<TAB>v` record per fact; an ABSENT variable writes no record, which is
     -- the honest reading of `os.environ.get` returning None
     let mut txt := s!"reply\t{toHex reply}\n"
     for k in ["TERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"] do
       match ← IO.getEnv k with
-      | some v => txt := txt ++ s!"{k}\t{v}\n"
-      | none => pure ()
+      | some v =>
+        txt := txt ++ s!"{k}\t{v}\n"
+      | none =>
+        pure ()
     IO.FS.writeFile (System.FilePath.mk resultPath) txt
     writeAll stdoutFd "\r\nPROBE-DONE\r\n".toUTF8
     IO.sleep 250
@@ -206,28 +214,27 @@ def runCase (e : Env) (index clients : Nat) (inheritedTerm : Option String)
   let result := (caseDir / "result").toString
   let ready := (caseDir / "ready").toString
   let trigger := (caseDir / "trigger").toString
-
   -- The DAEMON's environment, which the child inherits and the mediator must
   -- override. `("TERM", inheritedTerm)` is the Python's two branches in one
   -- expression: `some v` sets it, `none` REMOVES it — which is what
   -- `env.pop("TERM", None)` did, and what case 0 needs.
-  let mut env := e.procEnv ++
-    #[("TERM_PROGRAM", some "inherited-program"),
-      ("TERM_PROGRAM_VERSION", some "9.9.9"),
-      ("TERM", inheritedTerm)]
+  let mut env :=
+    e.procEnv ++
+      #[("TERM_PROGRAM", some "inherited-program"), ("TERM_PROGRAM_VERSION", some "9.9.9"),
+        ("TERM", inheritedTerm)]
   if let some hex := queryHex then
     env := env.push ("PROBE_QUERY_HEX", some hex)
-
   -- `__daemon` directly rather than `attach`, because the child has to be the
   -- probe and not a shell; this is the argv `spawnDaemon` itself builds.
   let root ← IO.currentDir
   let probeBin ← IO.appPath
-  let daemon ← IO.Process.spawn
-    { cmd := e.bin, env := env,
-      args := #["__daemon", name, root.toString,
-                probeBin.toString, "--probe", result, ready, trigger],
-      stdout := .null, stderr := .null }
-
+  let daemon ←
+    IO.Process.spawn
+        { cmd := e.bin, env := env,
+          args :=
+            #["__daemon", name, root.toString, probeBin.toString, "--probe", result, ready,
+              trigger],
+          stdout := .null, stderr := .null }
   let mut c : Case := {}
   let mut cls : Array Client := #[]
   if !(← waitFor ready) then
@@ -237,7 +244,7 @@ def runCase (e : Env) (index clients : Nat) (inheritedTerm : Option String)
       let cl ← e.spawn #["attach", name] 80 24
       cls := cls.push cl
       IO.sleep 350
-      let _ ← drain cl.fd 150            -- discard the initial restore
+      let _ ← drain cl.fd 150 -- discard the initial restore
     IO.FS.writeFile (System.FilePath.mk trigger) "go"
     if !(← waitFor result) then
       c := { c with err := some "probe did not answer" }
@@ -249,12 +256,10 @@ def runCase (e : Env) (index clients : Nat) (inheritedTerm : Option String)
       for cl in cls do
         let o ← drain cl.fd 1200
         outs := outs ++ [o]
-      c := { reply := ((field "reply").bind fromHex).getD [],
-             term := field "TERM",
-             termProgram := field "TERM_PROGRAM",
-             termVersion := field "TERM_PROGRAM_VERSION",
-             clientOut := outs,
-             err := field "error" }
+      c :=
+        { reply := ((field "reply").bind fromHex).getD [], term := field "TERM",
+          termProgram := field "TERM_PROGRAM", termVersion := field "TERM_PROGRAM_VERSION",
+          clientOut := outs, err := field "error" }
       -- the daemon exits when its child does (`.childExited` → `.exit`), so this
       -- is a wait and not a kill
       let deadline := (← monotonicMs) + 5000
@@ -271,15 +276,15 @@ def runCase (e : Env) (index clients : Nat) (inheritedTerm : Option String)
   if ← Linger.Posix.alive daemon.pid then
     daemon.kill
     IO.sleep 2000
-    if ← Linger.Posix.alive daemon.pid then Linger.Posix.kill daemon.pid 9
+    if ← Linger.Posix.alive daemon.pid then
+      Linger.Posix.kill daemon.pid 9
   for cl in cls do
-    cl.bye (sendDetach := false)    -- close + reap; no detach key, as the Python
+    cl.bye (sendDetach := false) -- close + reap; no detach key, as the Python
   return c
 
 def run : IO UInt32 := do
   let e ← Env.make "terminal"
   let mut f := 0
-
   -- zero, one and two presentation clients — and a different inherited `TERM`
   -- each time, with none at all in the first, so the override is exercised from
   -- three different starting environments
@@ -289,46 +294,60 @@ def run : IO UInt32 := do
   for (index, clients, inherited) in plan do
     let c ← runCase e index clients inherited
     cases := cases ++ [(clients, c)]
-
   for (clients, data) in cases do
     if let some err := data.err then
       IO.eprintln s!"note: probe case with {clients} client(s): {err}"
     -- equality, not "contains": a duplicate reply is the failure this is for
-    f := f + (← expect (data.reply == da1Expected)
-      s!"DA1 progresses with {clients} client(s), exactly one reply")
+    f :=
+      f +
+        (←
+          expect (data.reply == da1Expected)
+              s!"DA1 progresses with {clients} client(s), exactly one reply")
     -- three literals, because `Daemon.serve`'s profile array is not an exported
     -- value; see the module docstring
-    f := f + (← expect (data.term == some "xterm-256color"
-                        && data.termProgram == some "linger"
-                        && data.termVersion == some "0.1.0")
-      s!"stable child terminal profile with {clients} client(s)")
+    f :=
+      f +
+        (←
+          expect
+              (data.term == some "xterm-256color" && data.termProgram == some "linger" &&
+                data.termVersion == some "0.1.0")
+              s!"stable child terminal profile with {clients} client(s)")
     if clients != 0 then
       -- nested a level deeper on purpose: with nobody attached there is no client
       -- stream to make a claim about. `tests/e2e.sh`'s check-count floor is what
       -- stops this arm silently going empty and still printing `FAILURES: 0`.
       let outs := data.clientOut
-      f := f + (← expect (outs.length == clients
-                          && outs.all (fun o => hasText o "PROBE-DONE")
-                          && outs.all (fun o => !hasBytes o da1Query))
-        s!"owned query hidden while ordinary output reaches {clients} client(s)")
-
-  f := f + (← expect (cases.map (·.2.reply) == List.replicate 3 da1Expected)
-    "reply stream is roster-independent")
-
+      f :=
+        f +
+          (←
+            expect
+                (outs.length == clients && outs.all (fun o => hasText o "PROBE-DONE") &&
+                  outs.all (fun o => !hasBytes o da1Query))
+                s!"owned query hidden while ordinary output reaches {clients} client(s)")
+  f :=
+    f +
+      (←
+        expect (cases.map (·.2.reply) == List.replicate 3 da1Expected)
+            "reply stream is roster-independent")
   -- XTGETTCAP reply injection: the reply must carry no line terminator. Payload:
   -- 54 (hex '5','4') CR ; i d > x CR — the CRs are the injection primitive.
   let inj ← runCase e 9 0 none (some (toHex evilQuery))
   let ir := inj.reply
   if let some err := inj.err then
     IO.eprintln s!"note: XTGETTCAP probe case: {err}"
-  f := f + (← expect (!ir.isEmpty && !ir.contains 0x0D && !ir.contains 0x0A)
-    "XTGETTCAP reply carries no CR/LF (no command injection)")
+  f :=
+    f +
+      (←
+        expect (!ir.isEmpty && !ir.contains 0x0D && !ir.contains 0x0A)
+            "XTGETTCAP reply carries no CR/LF (no command injection)")
   -- non-vacuity: linger did answer the query, and with the exact filtered negative
   -- reply `xtgetcapReply` prescribes for this payload — a prefix rather than
   -- equality, so a trailing byte from elsewhere in the stream does not decide it.
-  f := f + (← expect (ir.take evilExpected.length == evilExpected)
-    "XTGETTCAP still answered (filtered negative reply reached the child)")
-
+  f :=
+    f +
+      (←
+        expect (ir.take evilExpected.length == evilExpected)
+            "XTGETTCAP still answered (filtered negative reply reached the child)")
   -- The original regression, and only that: an interactive fish must consume a
   -- command before any client attaches. The marker is a FILE, not echoed terminal
   -- output, so startup echo cannot make this pass accidentally.
@@ -337,17 +356,17 @@ def run : IO UInt32 := do
     let marker := ((System.FilePath.mk e.dir) / "fish-command-ran").toString
     let fishEnv : Array (String × Option String) :=
       #[("SHELL", some fish), ("TERM", some "inherited-fish-term")]
-    let _ ← e.cliEnv fishEnv
-      #["run", "fish-regression", "printf", "ok", ">", marker]
-    f := f + (← expect (← waitFor marker 6000)
-      "fish regression: detached command executes before attach")
+    let _ ← e.cliEnv fishEnv #["run", "fish-regression", "printf", "ok", ">", marker]
+    f :=
+      f +
+        (←
+          expect (← waitFor marker 6000) "fish regression: detached command executes before attach")
     let _ ← e.cliEnv fishEnv #["kill", "fish-regression"]
   | none =>
     -- a bare PASS line, not a silent skip: `tests/e2e.sh` counts `PASS `/`FAIL `
     -- lines against a floor of 12, and a skip that printed nothing would drop the
     -- suite under it on a host without fish
     IO.println "PASS fish regression skipped (fish not installed)"
-
   verdict f
 
 end E2E.Terminal

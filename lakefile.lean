@@ -1,12 +1,12 @@
 import Lake
+
 open Lake DSL
 
-package linger where
-  leanOptions := #[
+package linger where leanOptions :=
+  #[
     -- Pure-function port: `partial def` hides a termination argument we
     -- would rather be forced to write down; autoImplicit hides typos.
-    ⟨`autoImplicit, false⟩,
-    ⟨`relaxedAutoImplicit, false⟩,
+    ⟨`autoImplicit, false⟩, ⟨`relaxedAutoImplicit, false⟩,
     -- A `sorry` is a WARNING, and this repo's ban on it rested on two greps: a
     -- source scan that cannot see a `sorry` a tactic introduced and that fires on
     -- the word in prose, plus a post-hoc scan of a whole build log. This makes it
@@ -16,13 +16,11 @@ package linger where
     -- `String.splitOn` drifted into the tree unnoticed because a warning scrolled
     -- past. Both greps STAY (specs/archive/lean-modules Decision 3): the source
     -- grep still covers prose, the log scan still covers non-declaration warnings.
-    ⟨`warningAsError, true⟩
-  ]
+    ⟨`warningAsError, true⟩]
 
 /-- The program. Zero external Lean dependencies (core only): the whole
 point is that the state machines are ours to prove things about. -/
-@[default_target]
-lean_lib Linger where
+@[default_target] lean_lib Linger where
 
 /-- The C shim — the project's entire non-Lean surface (see AGENTS.md).
 Compiled with clang (the ./lake wrapper puts Homebrew clang on PATH;
@@ -40,8 +38,7 @@ extern_lib liblingershim pkg := do
 /-- IO smoke tests for the Posix surface (spawns ptys; run, not just built):
 `./lake exe lingertest`. The shim uses only libc (`posix_openpt`, not the
 libutil `forkpty`), so no extra link args on any glibc. -/
-lean_exe lingertest where
-  root := `LingerTest
+lean_exe lingertest where root := `LingerTest
 
 /-- Proofs. Separate from `Linger` so the executable does not carry them;
 `THEOREMS.md` names the tension each section resolves. Root module
@@ -63,9 +60,6 @@ syscall: `Linger.Posix` already had `spawnPty`, `winsizeSet`, `kill`,
 ratchets — is unchanged by the port. -/
 lean_lib E2E where
 
-lean_exe e2e where
-  root := `E2ETest
+lean_exe e2e where root := `E2ETest
 
-@[default_target]
-lean_exe linger where
-  root := `Main
+@[default_target] lean_exe linger where root := `Main

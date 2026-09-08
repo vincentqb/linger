@@ -14,11 +14,10 @@ restore tail emits — so the paint is the only thing that writes cells. Also
 `Row.mend`'s fixed points, which is what lets the row induction step past a write.
 Split out of `Theorems/Render.lean`. -/
 
-
-
 namespace Linger.Core.Render
 
 open Linger.Core.Vt
+
 /-! ## §Replay stage 3d — everything after the repaint leaves the screen alone
 
 `restore` paints the grid and then tells the terminal the rest: scroll region,
@@ -46,13 +45,14 @@ theorem csi_final_step_eq {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .
   rw [step_of_csi_quiet b hg hu]
   unfold Vt.stepCsi
   rw [ite_eq_right (by simp [g1]), ite_eq_right (by simp [g2]), ite_eq_right (by simp [g3]),
-      ite_eq_right (by simp [g4]), ite_eq_right (by simp [g5]), ite_eq_left g6]
+    ite_eq_right (by simp [g4]), ite_eq_right (by simp [g5]), ite_eq_left g6]
   rw [ite_eq_right (by simp [hi])]
 
 def Keeps (bs : Bytes) : Prop :=
-  ∀ v : Vt, v.pstate = .ground → v.u8need = 0 →
-    ((v.feed bs).pstate = .ground ∧ (v.feed bs).u8need = 0
-      ∧ (v.feed bs).grid = v.grid)
+  ∀ v : Vt,
+    v.pstate = .ground →
+      v.u8need = 0 →
+      ((v.feed bs).pstate = .ground ∧ (v.feed bs).u8need = 0 ∧ (v.feed bs).grid = v.grid)
 
 theorem Keeps.nil : Keeps [] := fun _ hg hu => ⟨hg, hu, rfl⟩
 
@@ -308,11 +308,10 @@ theorem keeps_csiPriv (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final) (h2 : fina
 
 end Linger.Core.Render
 
-
-
 namespace Linger.Core.Render
 
 open Linger.Core.Vt
+
 /-! ### The SGR pen, and the one mode fact the replay turns on -/
 
 theorem keeps_sgrOf (codes : List Nat) : Keeps (sgrOf codes) := by
@@ -362,11 +361,10 @@ theorem grid_setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool)
 
 end Linger.Core.Render
 
-
-
 namespace Linger.Core.Render
 
 open Linger.Core.Vt
+
 /-! ### The non-CSI tail
 
 `ESC`-singles (DECSC, HTS, app-keypad), charset designations and the shift-out
@@ -490,11 +488,10 @@ theorem keeps_charsetAnsi (v : Vt) : Keeps (charsetAnsi v) := by
 
 end Linger.Core.Render
 
-
-
 namespace Linger.Core.Render
 
 open Linger.Core.Vt
+
 /-! ### The window title
 
 An OSC is the one tail construct with an unbounded payload, so it is the one that
@@ -599,11 +596,10 @@ theorem keeps_titleAnsi (v : Vt) : Keeps (titleAnsi v) := by
 
 end Linger.Core.Render
 
-
-
 namespace Linger.Core.Render
 
 open Linger.Core.Vt
+
 /-! ### The digit bridge, and the last tail stage
 
 `modesAnsi` is the one construct whose grid claim depends on *which number* it
@@ -782,11 +778,10 @@ theorem keeps_restoreTail (v : Vt) :
 
 end Linger.Core.Render
 
-
-
 namespace Linger.Core.Render
 
 open Linger.Core.Vt
+
 /-! ### What is left that is not the repaint
 
 With the tail done, the only bytes in `restore` that may legitimately touch a cell
@@ -806,8 +801,6 @@ theorem keeps_park (y x : Nat) (p : Pen) : Keeps (penSgr p ++ csiNum2 y x 0x48) 
     (keeps_csiNum2 _ _ 0x48 (by decide) (by decide) grid_csiDispatch_cup)
 
 end Linger.Core.Render
-
-
 
 namespace Linger.Core.Vt
 
@@ -877,11 +870,10 @@ theorem eraseScreen_two_frame (v : Vt) :
 
 end Linger.Core.Vt
 
-
-
 namespace Linger.Core.Render
 
 open Linger.Core.Vt
+
 /-! ### `restore_grid`, reduced to the paint
 
 The tail is done, so the remaining obligation can be stated as a theorem rather than
@@ -913,8 +905,6 @@ theorem restore_grid_of_paint {v w : Vt}
   rw [hg, hpaint]
 
 end Linger.Core.Render
-
-
 
 namespace Linger.Core.Vt
 

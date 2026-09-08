@@ -1,5 +1,6 @@
 import Linger.Core.Remote
 import Theorems.Name
+
 /-! # §Remote — trusting a remote listing without trusting the remote
 
 `parse` is total by construction (`filterMap` over `foldl`-split
@@ -16,8 +17,7 @@ open Linger.Core.Name
 
 /-- Every parsed row's name is sanitized-valid, whatever the remote
 sent. -/
-theorem parse_names_valid (out : String) :
-    ∀ r ∈ parse out, Valid r.name := by
+theorem parse_names_valid (out : String) : ∀ r ∈ parse out, Valid r.name := by
   intro r hr
   unfold parse at hr
   obtain ⟨rec, -, hparse⟩ := List.mem_filterMap.mp hr
@@ -32,8 +32,7 @@ theorem parse_names_valid (out : String) :
 
 /-- Scrubbed strings carry no control bytes (C0, DEL — the ANSI
 introducers). -/
-theorem scrub_no_ctl (s : String) :
-    ∀ c ∈ (scrub s).toList, c.toNat ≥ 0x20 ∧ c.toNat ≠ 0x7F := by
+theorem scrub_no_ctl (s : String) : ∀ c ∈ (scrub s).toList, c.toNat ≥ 0x20 ∧ c.toNat ≠ 0x7F := by
   intro c hc
   unfold scrub at hc
   rw [String.toList_ofList] at hc
@@ -58,8 +57,7 @@ theorem parse_cmd_scrubbed (out : String) :
 /-- §Remote (dup guard): a validated host list is duplicate-free, so no
 host is ever queried twice and no duplicate row can reach the listing.
 This is the enforcement the `-r` flag / remotes file rely on. -/
-theorem checkHosts_ok_nodup {hosts l : List String} (h : checkHosts hosts = .ok l) :
-    l.Nodup := by
+theorem checkHosts_ok_nodup {hosts l : List String} (h : checkHosts hosts = .ok l) : l.Nodup := by
   unfold checkHosts at h
   split at h
   · simp at h
@@ -76,7 +74,8 @@ walk and the predicate agree, which is what lets the theorem below be about the
 theorem firstDirtyHost_none {hosts : List String} (h : firstDirtyHost hosts = none) :
     ∀ x ∈ hosts, hostClean x = true := by
   induction hosts with
-  | nil => intro x hx; exact absurd hx (by simp)
+  | nil =>
+    intro x hx; exact absurd hx (by simp)
   | cons a t ih =>
     unfold firstDirtyHost at h
     split at h

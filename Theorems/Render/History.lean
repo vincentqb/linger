@@ -35,13 +35,14 @@ the line count is exactly the row count. -/
 separately: `rowText_scrubbed` below is true even without this, because `utf8s` scrubs
 again on the way out — so without it the claim would rest on a single guard, and this
 says the grid never hands a control codepoint to the encoder in the first place. -/
-theorem rowChars_scrubbed (row : Row) :
-    ∀ c ∈ rowChars row, 0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F := by
+theorem rowChars_scrubbed (row : Row) : ∀ c ∈ rowChars row, 0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F := by
   unfold rowChars
   rw [← Array.foldl_toList]
-  refine invariant_foldl
-    (fun acc : List Char => ∀ c ∈ acc, 0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F) _ ?_
-    row.toList [] (by intro c hc; simp at hc)
+  refine
+    invariant_foldl (fun acc : List Char => ∀ c ∈ acc, 0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F) _ ?_
+      row.toList []
+      (by
+        intro c hc; simp at hc)
   intro acc cell hacc
   split
   · exact hacc
@@ -57,15 +58,13 @@ theorem rowChars_scrubbed (row : Row) :
       exact safeChar_ge m
 
 /-- Trimming only drops, so it cannot introduce a character the fold excluded. -/
-theorem dropTrailingBlanks_subset (cs : List Char) :
-    ∀ c ∈ dropTrailingBlanks cs, c ∈ cs := by
+theorem dropTrailingBlanks_subset (cs : List Char) : ∀ c ∈ dropTrailingBlanks cs, c ∈ cs := by
   intro c hc
   unfold dropTrailingBlanks at hc
   rw [List.mem_reverse] at hc
   exact List.mem_reverse.mp ((List.dropWhile_sublist _).mem hc)
 
-theorem rowText_scrubbed (row : Row) : ∀ b ∈ rowText row, 0x20 ≤ b ∧ b ≠ 0x7F :=
-  utf8s_no_ctl _
+theorem rowText_scrubbed (row : Row) : ∀ b ∈ rowText row, 0x20 ≤ b ∧ b ≠ 0x7F := utf8s_no_ctl _
 
 theorem rowText_no_lf (row : Row) : ∀ b ∈ rowText row, b ≠ 0x0A := by
   intro b hb
@@ -75,8 +74,7 @@ theorem rowText_no_lf (row : Row) : ∀ b ∈ rowText row, b ≠ 0x0A := by
   exact absurd hge (by decide)
 
 /-- **Every byte is a line terminator or printable content.** -/
-theorem history_framing (v : Vt) :
-    ∀ b ∈ history v false, b = 0x0A ∨ (0x20 ≤ b ∧ b ≠ 0x7F) := by
+theorem history_framing (v : Vt) : ∀ b ∈ history v false, b = 0x0A ∨ (0x20 ≤ b ∧ b ≠ 0x7F) := by
   intro b hb
   unfold history at hb
   rw [ite_eq_right (by decide)] at hb
@@ -87,8 +85,8 @@ theorem history_framing (v : Vt) :
   · simp only [List.mem_singleton] at h
     exact Or.inl h
 
-private theorem count_rows : ∀ (rows : List Row),
-    (rows.flatMap (fun row => rowText row ++ [0x0A])).count 0x0A = rows.length
+private theorem count_rows :
+    ∀ (rows : List Row), (rows.flatMap (fun row => rowText row ++ [0x0A])).count 0x0A = rows.length
   | [] => rfl
   | row :: t => by
     rw [List.flatMap_cons, List.count_append, count_rows t, List.count_append,
@@ -113,8 +111,7 @@ what makes a capture *positionally* parseable by an agent that read `rows` from
 screen, whatever the session's program printed. -/
 
 /-- **Every byte is a line terminator or printable content.** -/
-theorem screenText_framing (v : Vt) :
-    ∀ b ∈ screenText v, b = 0x0A ∨ (0x20 ≤ b ∧ b ≠ 0x7F) := by
+theorem screenText_framing (v : Vt) : ∀ b ∈ screenText v, b = 0x0A ∨ (0x20 ≤ b ∧ b ≠ 0x7F) := by
   intro b hb
   unfold screenText at hb
   simp only [List.mem_flatMap] at hb
@@ -126,8 +123,7 @@ theorem screenText_framing (v : Vt) :
 
 /-- **One line per grid row, and only the grid** — the scrollback ring
 contributes nothing, which is the whole difference from `history`. -/
-theorem screenText_lines (v : Vt) :
-    (screenText v).count 0x0A = v.grid.toList.length := by
+theorem screenText_lines (v : Vt) : (screenText v).count 0x0A = v.grid.toList.length := by
   unfold screenText
   exact count_rows _
 
@@ -147,11 +143,11 @@ theorem linesLF_record (x rest : Bytes) (hx : ∀ b ∈ x, b ≠ 0x0A) :
     linesLF (x ++ 0x0A :: rest) = x :: linesLF rest := by
   induction x with
   | nil => simp [linesLF]
-  | cons b x ih =>
-    have hb : (b == 0x0A) = false :=
-      beq_eq_false_iff_ne.mpr (hx b (List.mem_cons_self ..))
+  | cons b x
+    ih =>
+    have hb : (b == 0x0A) = false := beq_eq_false_iff_ne.mpr (hx b (List.mem_cons_self ..))
     rw [List.cons_append, linesLF, ite_eq_right (by simp [hb]),
-        ih (fun b' hb' => hx b' (List.mem_cons_of_mem _ hb'))]
+      ih (fun b' hb' => hx b' (List.mem_cons_of_mem _ hb'))]
 
 private theorem linesLF_rows (rows : List Row) :
     linesLF (rows.flatMap (fun row => rowText row ++ [0x0A])) = rows.map rowText := by
@@ -159,14 +155,13 @@ private theorem linesLF_rows (rows : List Row) :
   | nil => rfl
   | cons r rs ih =>
     rw [List.flatMap_cons, List.map_cons, List.append_assoc, List.singleton_append,
-        linesLF_record _ _ (fun b hb => rowText_no_lf r b hb), ih]
+      linesLF_record _ _ (fun b hb => rowText_no_lf r b hb), ih]
 
 /-- **The capture parse contract.** Splitting a capture on `0x0A` yields the
 grid, row for row: line k IS `rowText` of row k. This is what licenses an
 agent to parse a capture positionally with `rows` from `info`. -/
 theorem screenText_records (v : Vt) :
-    linesLF (screenText v) = v.grid.toList.map rowText :=
-  linesLF_rows _
+    linesLF (screenText v) = v.grid.toList.map rowText := linesLF_rows _
 
 /-- The same contract for `history`: the transcript parses as scrollback rows
 then screen rows, in order. -/
@@ -180,21 +175,19 @@ theorem history_records (v : Vt) :
 is exactly the tail of the transcript — same renderer, same trimming, same
 framing — so an agent may mix the two verbs without normalizing anything. -/
 theorem history_screenText_suffix (v : Vt) :
-    history v false
-      = v.sb.toList.flatMap (fun row => rowText row ++ [0x0A]) ++ screenText v := by
+    history v false = v.sb.toList.flatMap (fun row => rowText row ++ [0x0A]) ++ screenText v := by
   unfold history screenText
   rw [ite_eq_right (by decide), List.flatMap_append]
-
 
 /-- `safeChar` is the identity on a character a cell is allowed to hold. The emit-side
 guard and the store-side one agree, which is what lets a repaint reproduce a stored
 cell — `printableChar` on store, `safeChar` on emit, both `Emittable`'s range. -/
 theorem safeChar_of_emittable {c : Char} (h : Emittable c) : safeChar c = c := by
   unfold safeChar
-  rw [ite_eq_right (by
-    simp only [Bool.or_eq_true, decide_eq_true_eq, beq_iff_eq]
-    obtain ⟨h20, h7⟩ := h
-    omega)]
-
+  rw [ite_eq_right
+      (by
+        simp only [Bool.or_eq_true, decide_eq_true_eq, beq_iff_eq]
+        obtain ⟨h20, h7⟩ := h
+        omega)]
 
 end Linger.Core.Render

@@ -106,8 +106,7 @@ theorem bufOffer_bound (cap : Nat) (b : Buf) (more : ByteArray) (h : owedLen b �
 /-- **The twin.** An accepted offer really is appended, in order — so the cap is
 not met by silently discarding what it claimed to accept. -/
 theorem bufOffer_owed (cap : Nat) (b : Buf) (more : ByteArray)
-    (h : (bufOffer cap b more).2 = false) :
-    owed (bufOffer cap b more).1 = owed b ++ more := by
+    (h : (bufOffer cap b more).2 = false) : owed (bufOffer cap b more).1 = owed b ++ more := by
   unfold bufOffer at h ⊢
   by_cases hc : owedLen b + more.size > cap
   · rw [ite_eq_left hc] at h; exact absurd h (by simp)
@@ -119,8 +118,7 @@ so at the moment of the decision the frame that crossed the cap is queued, and t
 honest unconditional bound is `cap` plus one wire frame. Changing that would change
 when a slow client is disconnected — a behaviour change, not a proof convenience. -/
 theorem bufEnqueue_bound (cap : Nat) (b : Buf) (more : ByteArray)
-    (h : (bufEnqueue cap b more).2 = false) :
-    owedLen (bufEnqueue cap b more).1 ≤ cap := by
+    (h : (bufEnqueue cap b more).2 = false) : owedLen (bufEnqueue cap b more).1 ≤ cap := by
   unfold bufEnqueue at h ⊢
   simp only [decide_eq_false_iff_not, Nat.not_lt] at h
   exact h
@@ -149,22 +147,24 @@ not written until specs/lean-modules.md Step 2 landed. -/
 interleaving of capped offers and flush advances, from boot, stays within the
 cap. The step facts carry it — `bufOffer_bound` (refuse-before-append) and
 `bufAdvance_wf` (advancing only shrinks). -/
-theorem reachableIn_bound {cap : Nat} {b : Buf} (h : ReachableIn cap b) :
-    owedLen b ≤ cap := by
+theorem reachableIn_bound {cap : Nat} {b : Buf} (h : ReachableIn cap b) : owedLen b ≤ cap := by
   induction h with
-  | empty => rw [owedLen_empty]; exact Nat.zero_le cap
+  | empty =>
+    rw [owedLen_empty]; exact Nat.zero_le cap
   | offer b more _ ih => exact bufOffer_bound cap b more ih
-  | advance b n _ ih => rw [bufAdvance_wf]; omega
+  | advance b n _ ih =>
+    rw [bufAdvance_wf]; omega
 
 /-- **Every client backlog the daemon retains is bounded for its whole life.**
 The enqueue constructor's not-cut hypothesis is what carries it — exactly the
 guard `bufEnqueue_bound` is stated under, because `.send` appends before it
 decides and a cut client leaves the roster with its queue. -/
-theorem reachableOut_bound {cap : Nat} {b : Buf} (h : ReachableOut cap b) :
-    owedLen b ≤ cap := by
+theorem reachableOut_bound {cap : Nat} {b : Buf} (h : ReachableOut cap b) : owedLen b ≤ cap := by
   induction h with
-  | empty => rw [owedLen_empty]; exact Nat.zero_le cap
+  | empty =>
+    rw [owedLen_empty]; exact Nat.zero_le cap
   | enqueue b more _ hcut _ => exact bufEnqueue_bound cap b more hcut
-  | advance b n _ ih => rw [bufAdvance_wf]; omega
+  | advance b n _ ih =>
+    rw [bufAdvance_wf]; omega
 
 end Linger.Core.Buf

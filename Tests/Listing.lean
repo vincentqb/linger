@@ -1,4 +1,5 @@
 import Linger.Core.Listing
+
 /-! # Listing tests — the human row is safe and forgery-proof
 
 `Theorems/Listing.lean` proves `humanRow`/`humanListing` carry no control byte
@@ -16,13 +17,16 @@ open Linger.Core.Listing
 label with an ESC — the injection a hostile porcelain or a crafted checkpoint
 name could attempt. -/
 def hostile : List (String × String) :=
-  [("name", "x"), ("status", "idle"), ("pid", "1"),
-   ("cmd", "vi\x1b[31m\tm\ny"), ("label.a", "b\x1bc"), ("clients", "2")]
+  [("name", "x"), ("status", "idle"), ("pid", "1"), ("cmd", "vi\x1b[31m\tm\ny"),
+    ("label.a", "b\x1bc"), ("clients", "2")]
 
 /-- No ESC, TAB, DEL or newline survives into the rendered row. -/
 example : (humanRow 8 hostile).count 0x1B = 0 := by native_decide
+
 example : (humanRow 8 hostile).count 0x09 = 0 := by native_decide
+
 example : (humanRow 8 hostile).count 0x0A = 0 := by native_decide
+
 example : (humanRow 8 hostile).count 0x7F = 0 := by native_decide
 
 /-- The scrub is a *replacement*, not a deletion: the control bytes became
@@ -41,7 +45,9 @@ interpolation of the raw values; on this same reply it carried the ESC straight
 to the terminal. Pinned so the regression is documented, not merely absent. -/
 example :
     (s!"{Linger.Core.Status.icon (Linger.Core.Status.ofName "idle")} \
-      {(hostile.lookup "name").getD ""}\t{(hostile.lookup "cmd").getD ""}").toUTF8.toList.count 0x1B
-      = 1 := by native_decide
+      {(hostile.lookup "name").getD ""}\t{(hostile.lookup "cmd").getD ""}").toUTF8.toList.count
+        0x1B =
+      1 := by
+  native_decide
 
 end Linger.Core.Listing.Tests

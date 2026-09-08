@@ -90,8 +90,7 @@ and no escape. Reports whether the frame was dropped.
 Dropping the newest is what a tty does when its own input buffer fills
 (`IMAXBEL`); there is nothing to disconnect, because the child *is* the session. -/
 def bufOffer (cap : Nat) (b : Buf) (more : ByteArray) : Buf × Bool :=
-  if owedLen b + more.size > cap then (b, true)
-  else ({ bytes := b.bytes ++ more }, false)
+  if owedLen b + more.size > cap then (b, true) else ({ bytes := b.bytes ++ more }, false)
 
 /-- Append, then report whether the peer must be cut — the **client-output**
 discipline (`.send`). Appends *first* and measures after, which is the shipped
@@ -106,8 +105,7 @@ def bufEnqueue (cap : Nat) (b : Buf) (more : ByteArray) : Buf × Bool :=
 
 /-- Drop the `n` bytes the writer got out, clamped to what was owed. Called once
 per flush with the loop's total, so the written prefix is never retained. -/
-def bufAdvance (b : Buf) (n : Nat) : Buf :=
-  { bytes := b.bytes.extract n b.bytes.size }
+def bufAdvance (b : Buf) (n : Nat) : Buf := { bytes := b.bytes.extract n b.bytes.size }
 
 /-- What the writer hands to `write(2)`: exactly the owed bytes, so the syscall
 needs no offset. The **one** sanctioned read of the representation, used only by
@@ -134,10 +132,8 @@ the trace claims are bounds composed of steps that already carry their twins
 only through capped `bufOffer`s (`queuePty`) and flush `bufAdvance`s. -/
 inductive ReachableIn (cap : Nat) : Buf → Prop where
   | empty : ReachableIn cap .empty
-  | offer (b : Buf) (more : ByteArray) :
-      ReachableIn cap b → ReachableIn cap (bufOffer cap b more).1
-  | advance (b : Buf) (n : Nat) :
-      ReachableIn cap b → ReachableIn cap (bufAdvance b n)
+  | offer (b : Buf) (more : ByteArray) : ReachableIn cap b → ReachableIn cap (bufOffer cap b more).1
+  | advance (b : Buf) (n : Nat) : ReachableIn cap b → ReachableIn cap (bufAdvance b n)
 
 /-- The client-output queue's **retained** states: `Conn.out` starts `empty`,
 and a `bufEnqueue` that reports "cut" gets the client dropped from the roster —
@@ -147,10 +143,10 @@ append-then-cut discipline; drop it and `reachableOut_bound` is refutable
 (break-verified). -/
 inductive ReachableOut (cap : Nat) : Buf → Prop where
   | empty : ReachableOut cap .empty
-  | enqueue (b : Buf) (more : ByteArray) :
-      ReachableOut cap b → (bufEnqueue cap b more).2 = false →
-      ReachableOut cap (bufEnqueue cap b more).1
-  | advance (b : Buf) (n : Nat) :
-      ReachableOut cap b → ReachableOut cap (bufAdvance b n)
+  |
+  enqueue (b : Buf) (more : ByteArray) :
+    ReachableOut cap b →
+      (bufEnqueue cap b more).2 = false → ReachableOut cap (bufEnqueue cap b more).1
+  | advance (b : Buf) (n : Nat) : ReachableOut cap b → ReachableOut cap (bufAdvance b n)
 
 end Linger.Core.Buf

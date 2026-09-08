@@ -44,7 +44,6 @@ def run : IO UInt32 := do
   let cols : UInt32 := 80
   let rows : UInt32 := 24
   let marker := "survives-the-reboot-42"
-
   -- create a session working in /tmp, leave a marker on screen and a label
   let boot ← e.spawn #["attach", "boot"] cols rows
   IO.sleep 800
@@ -63,56 +62,57 @@ def run : IO UInt32 := do
   -- line is the marker itself. That is what Python's `x in <list of lines>`
   -- meant, and `has` would have weakened it.
   let hist0 := lines (← e.out #["history", "boot"])
-  f := f + (← expect (hist0.contains marker
-                      && !(hist0.drop (hist0.length - rows.toNat)).contains marker)
-    "the pre-reboot marker is in the ring, off the 24-row screen")
+  f :=
+    f +
+      (←
+        expect (hist0.contains marker && !(hist0.drop (hist0.length - rows.toNat)).contains marker)
+            "the pre-reboot marker is in the ring, off the 24-row screen")
   let _ ← e.cli #["set", "boot", "k=v"]
-
   -- detach (last attached client): the machine checkpoints here
   boot.detach
   IO.sleep 800
-  boot.bye (sendDetach := false)   -- fd and zombie only; the client already left
+  boot.bye (sendDetach := false) -- fd and zombie only; the client already left
   let ckpts ← e.dirNames ".ckpt"
   let ckptOk := ckpts == ["boot.ckpt"]
   -- …and it is a checkpoint in THIS format, compared against the writer's own
   -- tag. Read only when the name check passed, so a missing file is a FAIL line
   -- rather than an exception that costs the `FAILURES:` verdict entirely.
-  let magicOk ← if ckptOk then do
-      let bytes ← IO.FS.readBinFile s!"{e.dir}/boot.ckpt"
-      pure (startsWithBytes bytes Linger.Core.Checkpoint.magic)
-    else pure false
-  f := f + (← expect (ckptOk && magicOk)
-    s!"checkpoint written on last detach ({ckpts})")
-
+  let magicOk ←
+    if ckptOk then
+      do
+        let bytes ← IO.FS.readBinFile s!"{e.dir}/boot.ckpt"
+        pure (startsWithBytes bytes Linger.Core.Checkpoint.magic)
+    else
+      pure false
+  f := f + (← expect (ckptOk && magicOk) s!"checkpoint written on last detach ({ckpts})")
   -- simulate reboot: SIGKILL the DAEMON (the pid in `list` is the shell —
   -- killing that is a clean exit and rightly drops the checkpoint). Aborts the
   -- suite rather than printing a check, exactly as the Python `assert` did: with
   -- no crash there is nothing below this line left to mean anything.
   unless (← e.crashDaemon "boot") do
     throw (IO.userError "daemon for this LINGER_DIR not found, or the SIGKILL did not land")
-
-  f := f + (← expect ((← e.status "boot") == Status.resumable
-                      && has (← e.out #["list"]) "boot")
-    "killed session listed as resumable")
-
+  f :=
+    f +
+      (←
+        expect ((← e.status "boot") == Status.resumable && has (← e.out #["list"]) "boot")
+            "killed session listed as resumable")
   -- attach again: fresh shell, restored screen, restored labels, saved cwd
   let boot2 ← e.spawn #["attach", "boot"] cols rows
   IO.sleep 1000
-  f := f + (← expect (has (← drainStr boot2.fd 1500) marker)
-    "reattach replays the pre-reboot scrollback, not just the screen")
+  f :=
+    f +
+      (←
+        expect (has (← drainStr boot2.fd 1500) marker)
+            "reattach replays the pre-reboot scrollback, not just the screen")
   boot2.type "pwd\r"
-  f := f + (← expect (has (← drainStr boot2.fd 1500) "/tmp")
-    "fresh shell starts in the saved cwd")
-  f := f + (← expect (has (← e.out #["get", "boot"]) "k=v")
-    "labels survive the reboot")
-
+  f := f + (← expect (has (← drainStr boot2.fd 1500) "/tmp") "fresh shell starts in the saved cwd")
+  f := f + (← expect (has (← e.out #["get", "boot"]) "k=v") "labels survive the reboot")
   -- clean exit drops the checkpoint
   boot2.type "exit\r"
   IO.sleep 1000
   let ckpts2 ← e.dirNames ".ckpt"
   f := f + (← expect (ckpts2 == []) s!"clean exit drops the checkpoint ({ckpts2})")
   boot2.bye (sendDetach := false)
-
   -- corrupt checkpoint: daemon must start fresh, not crash.
   --
   -- Written with `Checkpoint.magic`, not with the Python's `b'LINGER\x01'`:
@@ -128,14 +128,16 @@ def run : IO UInt32 := do
   -- of the list and `load` is `none` for certain. A random body is a random
   -- branch, and a flake here would be unreproducible.
   IO.FS.writeBinFile s!"{e.dir}/corrupt.ckpt"
-    (ByteArray.mk (Linger.Core.Checkpoint.magic ++ [80, 24]
-                    ++ List.replicate 198 (0xFF : UInt8)).toArray)
+      (ByteArray.mk
+        (Linger.Core.Checkpoint.magic ++ [80, 24] ++ List.replicate 198 (0xFF : UInt8)).toArray)
   let _ ← e.cli #["run", "corrupt", "echo fresh-start-ok"]
   IO.sleep 800
-  f := f + (← expect (has (← e.out #["history", "corrupt"]) "fresh-start-ok")
-    "corrupt checkpoint: daemon starts fresh, no crash")
+  f :=
+    f +
+      (←
+        expect (has (← e.out #["history", "corrupt"]) "fresh-start-ok")
+            "corrupt checkpoint: daemon starts fresh, no crash")
   e.killAll #["corrupt"]
-
   -- ── the resumed pty is born at the CHECKPOINT's size, not a fixed 80x24 ────
   -- Measured with NO sizing attach: `run` sends only `.input`, never `.attach`,
   -- so nothing reconciles the pty with the restored Vt. With an attach the
@@ -150,11 +152,10 @@ def run : IO UInt32 := do
   IO.sleep 800
   geom.type "echo geom-ready\r"
   let _ ← drain geom.fd 1200
-  geom.detach                       -- last detach → checkpoint at 100x40
+  geom.detach -- last detach → checkpoint at 100x40
   IO.sleep 800
   geom.bye (sendDetach := false)
-  let _ ← e.crashDaemon "geom"      -- simulated reboot; tolerated if already gone
-
+  let _ ← e.crashDaemon "geom" -- simulated reboot; tolerated if already gone
   let sizePath := s!"{e.dir}/geom.size"
   -- `run` types its argv (space-joined) as keystrokes into the resumed shell, so
   -- a quoted `sh -c '...'` would lose its quoting; run a probe *script file*
@@ -165,18 +166,22 @@ def run : IO UInt32 := do
   -- read — from here we would measure this process's terminal instead.
   let probe := s!"{e.dir}/probe.sh"
   IO.FS.writeFile probe
-    ("python3 -c \"import fcntl,termios,struct;"
-      ++ "w=struct.unpack('HHHH',fcntl.ioctl(0,termios.TIOCGWINSZ,bytes(8)));"
-      ++ s!"open('{sizePath}','w').write('%d %d'%(w[1],w[0]))\"\n")
+      ("python3 -c \"import fcntl,termios,struct;" ++
+        "w=struct.unpack('HHHH',fcntl.ioctl(0,termios.TIOCGWINSZ,bytes(8)));" ++
+        s!"open('{sizePath}','w').write('%d %d'%(w[1],w[0]))\"\n")
   let _ ← e.cli #["run", "geom", "sh", probe]
   IO.sleep 1500
-  let got ← if (← System.FilePath.pathExists sizePath) then
+  let got ←
+    if (← System.FilePath.pathExists sizePath) then
       pure ((← IO.FS.readFile sizePath).trimAscii.toString.splitOn " ")
-    else pure []
-  f := f + (← expect (got == [toString gCols, toString gRows])
-    s!"resumed pty is born at the checkpoint size, not 80x24 ({got})")
+    else
+      pure []
+  f :=
+    f +
+      (←
+        expect (got == [toString gCols, toString gRows])
+            s!"resumed pty is born at the checkpoint size, not 80x24 ({got})")
   e.killAll #["geom"]
-
   verdict f
 
 end E2E.Resume

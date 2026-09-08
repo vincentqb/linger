@@ -17,21 +17,23 @@ def check (name : String) (cond : Bool) : IO Nat := do
   IO.println s!"{if cond then "PASS" else "FAIL"} {name}"
   return if cond then 0 else 1
 
-def contains (haystack needle : String) : Bool :=
-  (haystack.splitOn needle).length ≥ 2
+def contains (haystack needle : String) : Bool := (haystack.splitOn needle).length ≥ 2
 
 /-- Drain a pty until EOF or deadline, via poll — the daemon's read shape. -/
 partial def drain (fd : UInt32) (deadlineMs : UInt64) (acc : ByteArray) : IO ByteArray := do
   let now ← monotonicMs
-  if now ≥ deadlineMs then return acc
+  if now ≥ deadlineMs then
+    return acc
   let revs ← poll #[fd] #[POLLIN] 200
   let r := revs[0]!
   if r &&& (POLLIN ||| POLLHUP ||| POLLERR) == 0 then
     drain fd deadlineMs acc
   else
     match ← read fd 65536 with
-    | none => return acc            -- EOF: child gone
-    | some bs => drain fd deadlineMs (acc ++ bs)
+    | none =>
+      return acc -- EOF: child gone
+    | some bs =>
+      drain fd deadlineMs (acc ++ bs)
 
 /-- Poll-wait until the child is reaped or the deadline passes. -/
 def reap (pid : UInt32) : IO Int64 := do
@@ -39,7 +41,8 @@ def reap (pid : UInt32) : IO Int64 := do
   let mut status : Int64 := -1
   while status == -1 && (← monotonicMs) < deadline do
     status ← waitpidNohang pid
-    if status == -1 then IO.sleep 20
+    if status == -1 then
+      IO.sleep 20
   return status
 
 def testPtyEcho : IO Nat := do
@@ -47,7 +50,8 @@ def testPtyEcho : IO Nat := do
   let out ← drain master ((← monotonicMs) + 5000) .empty
   Linger.Posix.close master
   let mut fails := 0
-  fails := fails + (← check "pty spawn+echo roundtrip" (contains (String.fromUTF8! out) "hi-from-pty"))
+  fails :=
+    fails + (← check "pty spawn+echo roundtrip" (contains (String.fromUTF8! out) "hi-from-pty"))
   fails := fails + (← check "child reaped with status 0" ((← reap pid) == 0))
   return fails
 

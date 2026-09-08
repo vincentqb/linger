@@ -1,4 +1,5 @@
 import Linger.Core.Status
+
 /-! # §Status — the seven states partition the observation space
 
 A legend is a claim, and it can be wrong in three ways: two rows that differ
@@ -22,16 +23,14 @@ def Is : Status → Obs → Prop
   | .exitedOk, o => o.known = true ∧ o.exit = some 0
   | .exitedBad, o => o.known = true ∧ ∃ n, o.exit = some n ∧ n ≠ 0
   | .resumable, o => o.known = true ∧ o.exit = none ∧ o.daemonUp = false
-  | .working, o => o.known = true ∧ o.exit = none ∧ o.daemonUp = true
-      ∧ o.fresh = true
-  | .wantsYou, o => o.known = true ∧ o.exit = none ∧ o.daemonUp = true
-      ∧ o.fresh = false ∧ o.unseen = true
-  | .idle, o => o.known = true ∧ o.exit = none ∧ o.daemonUp = true
-      ∧ o.fresh = false ∧ o.unseen = false
+  | .working, o => o.known = true ∧ o.exit = none ∧ o.daemonUp = true ∧ o.fresh = true
+  | .wantsYou, o =>
+    o.known = true ∧ o.exit = none ∧ o.daemonUp = true ∧ o.fresh = false ∧ o.unseen = true
+  | .idle, o =>
+    o.known = true ∧ o.exit = none ∧ o.daemonUp = true ∧ o.fresh = false ∧ o.unseen = false
 
 /-- All seven states, for the quantifiers below. -/
-def all : List Status :=
-  [.unknown, .exitedBad, .exitedOk, .resumable, .wantsYou, .working, .idle]
+def all : List Status := [.unknown, .exitedBad, .exitedOk, .resumable, .wantsYou, .working, .idle]
 
 theorem mem_all (s : Status) : s ∈ all := by cases s <;> simp [all]
 
@@ -57,11 +56,11 @@ same glyph really are in the same state. -/
 theorem disjoint (o : Obs) (s t : Status) (hs : Is s o) (ht : Is t o) : s = t := by
   cases s <;> cases t <;> simp only [Is] at hs ht <;>
     first
-      | rfl
-      | (exfalso
-         obtain _ := hs
-         obtain _ := ht
-         simp_all)
+    | rfl
+    | ( exfalso
+        obtain _ := hs
+        obtain _ := ht
+        simp_all)
 
 /-- **Sound.** The cascade computes the legend: what `classify` returns is
 the state the row is actually in. This is the claim that would break if a
@@ -130,7 +129,6 @@ theorem name_clean (s : Status) : ∀ c ∈ (name s).toList, c ≠ '\t' ∧ c �
 
 /-- `ofName` is a left inverse of `name`, so the human column and the
 porcelain column can never disagree about a row. -/
-theorem ofName_name (s : Status) : ofName (name s) = s := by
-  cases s <;> rfl
+theorem ofName_name (s : Status) : ofName (name s) = s := by cases s <;> rfl
 
 end Linger.Core.Status

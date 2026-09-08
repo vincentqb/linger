@@ -1,6 +1,7 @@
 import Theorems.Status
 import Theorems.Render
 import Linger.Core.Listing
+
 /-! # §Row — a list row's identity is its socket filename, not the reply
 
 The tension: the `info` reply is data from another process (a local
@@ -18,14 +19,12 @@ open Linger.Core.Name (sanitize)
 /-- The row's `name` is the sanitized socket filename for ANY reply, so
 a peer's reply can never spoof another session's identity. -/
 theorem rowFields_name (socketName : String) (info : List (String × String)) :
-    (rowFields socketName info).lookup "name" = some (sanitize socketName) := by
-  simp [rowFields]
+    (rowFields socketName info).lookup "name" = some (sanitize socketName) := by simp [rowFields]
 
 /-- Nothing after the leading name — everything the reply contributed —
 carries the "name" key: the reply's own name (if any) is physically
 dropped, not merely shadowed. -/
-theorem rowFields_reply_excluded (socketName v : String)
-    (info : List (String × String)) :
+theorem rowFields_reply_excluded (socketName v : String) (info : List (String × String)) :
     (⟨"name", v⟩ : String × String) ∉ (rowFields socketName info).tail := by
   simp [rowFields, List.mem_filter]
 
@@ -41,9 +40,8 @@ open Linger.Core.Status (Status)
 /-- A live socket that did not answer is `unknown`, whatever the reply
 contained — so a daemon too busy to answer cannot be reported as idle, and a
 crafted reply cannot claim otherwise. -/
-theorem rowStatus_unanswered (info : List (String × String))
-    (h : answered info = false) : rowStatus (.live info) = Status.unknown := by
-  simp [rowStatus, Linger.Core.Status.classify, h]
+theorem rowStatus_unanswered (info : List (String × String)) (h : answered info = false) :
+    rowStatus (.live info) = Status.unknown := by simp [rowStatus, Linger.Core.Status.classify, h]
 
 /-- No socket but a loadable checkpoint is `resumable`, whatever the reply
 contained (there is no daemon to have sent one). -/
@@ -65,8 +63,7 @@ theorem rowStatus_empty_reply : rowStatus (.live []) = Status.unknown := rfl
 honest statement rather than an inference from liveness alone. -/
 theorem rowStatus_remote_unreadable (junk : String)
     (h : Linger.Core.Status.ofName junk = Status.unknown) :
-    rowStatus (.remote true junk) = Status.unknown := by
-  simp [rowStatus, h]
+    rowStatus (.remote true junk) = Status.unknown := by simp [rowStatus, h]
 
 theorem rowStatus_remote_absent : rowStatus (.remote true "") = Status.unknown := rfl
 
@@ -80,8 +77,7 @@ theorem rowStatus_remote_reported (st : Status) :
 /-- A missing or malformed flag reads as `false`, so an omission cannot make
 a row look busier or fresher than it is. -/
 theorem flag_absent (info : List (String × String)) (k : String)
-    (h : info.find? (·.1 == k) = none) : flag info k = false := by
-  simp [flag, h]
+    (h : info.find? (·.1 == k) = none) : flag info k = false := by simp [flag, h]
 
 /-! ## The human-readable listing is safe to print
 
@@ -96,8 +92,7 @@ open Linger.Core.Render (utf8s_no_ctl)
 /-- **Every byte of a printed row is printable content** — no C0 control, no DEL — whatever the
 reply contained. `humanRow` ends in `utf8s`, so this is `utf8s`'s own guarantee. -/
 theorem humanRow_printable (nameCol : Nat) (info : List (String × String)) :
-    ∀ b ∈ humanRow nameCol info, 0x20 ≤ b ∧ b ≠ 0x7F :=
-  utf8s_no_ctl _
+    ∀ b ∈ humanRow nameCol info, 0x20 ≤ b ∧ b ≠ 0x7F := utf8s_no_ctl _
 
 /-- A row carries no newline, so a `cmd` or label value cannot forge a listing row. -/
 theorem humanRow_no_lf (nameCol : Nat) (info : List (String × String)) :

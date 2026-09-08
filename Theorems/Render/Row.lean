@@ -87,12 +87,9 @@ still holds the previous occupant's junk, half pairs included.
 shadow sits at `k`, unpainted, so the sweep would see a half pair and blank the base the
 previous rung just painted. Verified load-bearing: replacing it with `True` collapses
 exactly the width-2 case. -/
-theorem mend_keeps_prefix {u : Vt} {g : Row} {y k : Nat}
-    (hrow : RowOk u.cols g)
-    (hcells : ∀ j, j < k → u.getCell j y = g.at j)
-    (hfront : k = 0 ∨ (g.at (k - 1)).width ≠ 2)
-    (hy : y < u.grid.size) :
-    ∀ j, j < k → (u.mendRow y).getCell j y = g.at j := by
+theorem mend_keeps_prefix {u : Vt} {g : Row} {y k : Nat} (hrow : RowOk u.cols g)
+    (hcells : ∀ j, j < k → u.getCell j y = g.at j) (hfront : k = 0 ∨ (g.at (k - 1)).width ≠ 2)
+    (hy : y < u.grid.size) : ∀ j, j < k → (u.mendRow y).getCell j y = g.at j := by
   intro j hj
   -- `getCell x y` *is* `(getRow y).at x`; ascribing once keeps every `rw` syntactic
   have hat : ∀ i, i < k → (u.getRow y).at i = g.at i := fun i hi => hcells i hi
@@ -114,11 +111,13 @@ theorem mend_keeps_prefix {u : Vt} {g : Row} {y k : Nat}
     obtain ⟨hne0, hbase⟩ := (hrow.pairs j).2 hz
     have hj1eq : j - 1 + 1 = j := by omega
     have hj1 : j - 1 < k := by omega
-    obtain ⟨-, h1⟩ := mend_keeps_wide (u.getRow y) (j - 1)
-      (by rw [hat (j - 1) hj1]; exact hbase)
-      (by
-        rw [hj1eq, hat j hj, hat (j - 1) hj1, ← hj1eq]
-        exact (hrow.pairs (j - 1)).1 hbase)
+    obtain ⟨-, h1⟩ :=
+      mend_keeps_wide (u.getRow y) (j - 1)
+        (by
+          rw [hat (j - 1) hj1]; exact hbase)
+        (by
+          rw [hj1eq, hat j hj, hat (j - 1) hj1, ← hj1eq]
+          exact (hrow.pairs (j - 1)).1 hbase)
     rw [hj1eq] at h1
     rw [h1]; exact hwj
   · rw [mend_keeps_narrow _ j (by rw [hwj, hz])]; exact hwj
@@ -128,9 +127,15 @@ theorem mend_keeps_prefix {u : Vt} {g : Row} {y k : Nat}
       · omega
       · rcases Nat.lt_or_ge (j + 1) k with hh | hh
         · exact hh
-        · exact absurd (by rw [show k - 1 = j from by omega]; exact hz) h
-    obtain ⟨h0, -⟩ := mend_keeps_wide (u.getRow y) j (by rw [hwj, hz])
-      (by rw [hat (j + 1) hshIn, hat j hj]; exact (hrow.pairs j).1 hz)
+        · exact
+            absurd
+              (by
+                rw [show k - 1 = j from by omega]; exact hz)
+              h
+    obtain ⟨h0, -⟩ :=
+      mend_keeps_wide (u.getRow y) j (by rw [hwj, hz])
+        (by
+          rw [hat (j + 1) hshIn, hat j hj]; exact (hrow.pairs j).1 hz)
     rw [h0]; exact hwj
 
 /-! ### The step lemmas
@@ -149,17 +154,21 @@ The heartbeat bump is the write term: `Matches`'s fifteen fields each mention th
 state, and unifying `RowOk u.cols g` against the `putCell`/`mendRow` composite is a defeq
 check per field. Cheaper than restructuring the invariant into a conjunction of smaller
 records, which would move the cost to every call site instead. -/
-theorem step_narrow {w : Vt} {P : PaintState} {g : Row} {k : Nat}
-    (hrow : RowOk w.cols g) (hm : Matches w P g k)
-    (hPx : P.x = k) (hpend : P.pending = false) (hfit : k + 1 < w.cols)
-    (hwid : (g.at k).width = 1) (hmk : (g.at k).marks = [])
-    (hpen : (g.at k).pen = P.pen) :
-    Matches (w.feed (cellText (g.at k))) { P with x := k + 1, pending := false } g (k + 1) := by
+theorem step_narrow {w : Vt} {P : PaintState} {g : Row} {k : Nat} (hrow : RowOk w.cols g)
+    (hm : Matches w P g k) (hPx : P.x = k) (hpend : P.pending = false) (hfit : k + 1 < w.cols)
+    (hwid : (g.at k).width = 1) (hmk : (g.at k).marks = []) (hpen : (g.at k).pen = P.pen) :
+    Matches (w.feed (cellText (g.at k)))
+      { P with
+        x := k + 1, pending := false }
+      g (k + 1) := by
   have hem : Emittable (g.at k).base := (hrow.cells k).base
   have hpc : w.printChar (g.at k).base = (g.at k).base :=
     printChar_id_of_ascii hm.ascii0 hm.ascii1 hem.1 hem.2
   have hcw : charWidth (g.at k).base = 1 := by
-    rw [(hrow.cells k).width (by rw [hwid]; omega), hwid]
+    rw [(hrow.cells k).width
+        (by
+          rw [hwid]; omega),
+      hwid]
   have hpd : w.cursor.pending = false := by rw [hm.pend, hpend]
   -- the bytes of one cell are one `print`
   have hfeed : w.feed (cellText (g.at k)) = w.print (g.at k).base := by
@@ -168,7 +177,10 @@ theorem step_narrow {w : Vt} {P : PaintState} {g : Row} {k : Nat}
   -- …and one `print` is one write plus an advance
   have hx : w.cursor.x = k := by rw [hm.curX, hPx]
   have hwrite := print_narrow_eq hpc hcw hm.ins hpd
-  have hcur := cursor_print_narrow_fits hpc hcw hm.ins hpd (by rw [hx]; exact hfit)
+  have hcur :=
+    cursor_print_narrow_fits hpc hcw hm.ins hpd
+      (by
+        rw [hx]; exact hfit)
   have hgs : w.cursor.y < w.clearPending.grid.size := by
     show w.cursor.y < w.grid.size
     rw [hm.curY]; exact hm.inGrid
@@ -190,41 +202,57 @@ theorem step_narrow {w : Vt} {P : PaintState} {g : Row} {k : Nat}
   · -- the painted row is still `cols` long: a write and a sweep resize nothing
     show ((w.feed (cellText (g.at k))).getRow P.y).size = (w.feed (cellText (g.at k))).cols
     rw [hfeed, hwrite]
-    obtain ⟨hcl, -, hrw⟩ := write_shape w.clearPending w.cursor.x w.cursor.y
-      { base := (g.at k).base, marks := [], width := 1, pen := w.pen } 1 hgs
+    obtain ⟨hcl, -, hrw⟩ :=
+      write_shape w.clearPending w.cursor.x w.cursor.y
+        { base := (g.at k).base, marks := [], width := 1, pen := w.pen } 1 hgs
     rw [hcl, hrw P.y]
     show (w.getRow P.y).size = w.cols
     exact hm.rowLen
   · show P.y < (w.feed (cellText (g.at k))).grid.size
     rw [hfeed, hwrite]
-    obtain ⟨-, hgz, -⟩ := write_shape w.clearPending w.cursor.x w.cursor.y
-      { base := (g.at k).base, marks := [], width := 1, pen := w.pen } 1 hgs
+    obtain ⟨-, hgz, -⟩ :=
+      write_shape w.clearPending w.cursor.x w.cursor.y
+        { base := (g.at k).base, marks := [], width := 1, pen := w.pen } 1 hgs
     rw [hgz]
     show P.y < w.grid.size
     exact hm.inGrid
-  · exact Or.inr (by rw [show k + 1 - 1 = k from by omega, hwid]; decide)
+  · exact
+      Or.inr
+        (by
+          rw [show k + 1 - 1 = k from by omega, hwid]; decide)
   · -- the cells: the prefix by `prefix_kept`, column `k` by the write itself
     intro j hj
     show (w.feed (cellText (g.at k))).getCell j P.y = g.at j
     rw [hfeed, hwrite, getCell_printAdvance, show P.y = w.cursor.y from hm.curY.symm]
     rcases Nat.lt_or_ge j k with hjk | hjk
-    · have hcellsW : ∀ i, i < k → (w.clearPending.putCell w.cursor.x w.cursor.y
-          { base := (g.at k).base, marks := [], width := 1, pen := w.pen }).getCell i
-          w.cursor.y = g.at i := by
+    · have hcellsW :
+        ∀ i,
+          i < k →
+            (w.clearPending.putCell w.cursor.x w.cursor.y
+                    { base := (g.at k).base, marks := [], width := 1, pen := w.pen }).getCell
+                i w.cursor.y =
+              g.at i := by
         intro i hi
-        show ((w.clearPending.putCell w.cursor.x w.cursor.y
-          { base := (g.at k).base, marks := [], width := 1, pen := w.pen }).getRow
-            w.cursor.y).at i = g.at i
+        show
+          ((w.clearPending.putCell w.cursor.x w.cursor.y
+                      { base := (g.at k).base, marks := [], width := 1, pen := w.pen }).getRow
+                  w.cursor.y).at
+              i =
+            g.at i
         rw [at_putCell_ne _ _ _ _ i (by omega) hgs]
         show w.getCell i w.cursor.y = g.at i
         rw [hm.curY]
         exact hm.cells i hi
-      have hgsW : w.cursor.y < (w.clearPending.putCell w.cursor.x w.cursor.y
-          { base := (g.at k).base, marks := [], width := 1, pen := w.pen }).grid.size := by
+      have hgsW :
+        w.cursor.y <
+          (w.clearPending.putCell w.cursor.x w.cursor.y
+              { base := (g.at k).base, marks := [], width := 1, pen := w.pen }).grid.size := by
         rw [grid_size_putCell]; exact hgs
-      exact mend_keeps_prefix (u := w.clearPending.putCell w.cursor.x w.cursor.y
-        { base := (g.at k).base, marks := [], width := 1, pen := w.pen })
-        hrow hcellsW hm.frontier hgsW j hjk
+      exact
+        mend_keeps_prefix (u :=
+          w.clearPending.putCell w.cursor.x w.cursor.y
+            { base := (g.at k).base, marks := [], width := 1, pen := w.pen })
+          hrow hcellsW hm.frontier hgsW j hjk
     · have hje : j = k := by omega
       subst hje
       -- the write's index is the receiver's cursor; `hx` is what identifies it with `j`
@@ -238,25 +266,29 @@ negative result showed no absolute cursor move can express. `x` does not move (i
 already `cols - 1`); what changes is `pending`, and the following `carriageReturn`
 discards it — which is why the row-exit shape is `x = cols - 1` and not a claim about
 `pending`. -/
-theorem step_narrow_margin {w : Vt} {P : PaintState} {g : Row} {k : Nat}
-    (hrow : RowOk w.cols g) (hm : Matches w P g k)
-    (hPx : P.x = k) (hpend : P.pending = false)
-    (hk : k < w.cols) (hmar : w.cols ≤ k + 1)
-    (hwid : (g.at k).width = 1) (hmk : (g.at k).marks = [])
+theorem step_narrow_margin {w : Vt} {P : PaintState} {g : Row} {k : Nat} (hrow : RowOk w.cols g)
+    (hm : Matches w P g k) (hPx : P.x = k) (hpend : P.pending = false) (hk : k < w.cols)
+    (hmar : w.cols ≤ k + 1) (hwid : (g.at k).width = 1) (hmk : (g.at k).marks = [])
     (hpen : (g.at k).pen = P.pen) :
     Matches (w.feed (cellText (g.at k))) { P with pending := true } g (k + 1) := by
   have hem : Emittable (g.at k).base := (hrow.cells k).base
   have hpc : w.printChar (g.at k).base = (g.at k).base :=
     printChar_id_of_ascii hm.ascii0 hm.ascii1 hem.1 hem.2
   have hcw : charWidth (g.at k).base = 1 := by
-    rw [(hrow.cells k).width (by rw [hwid]; omega), hwid]
+    rw [(hrow.cells k).width
+        (by
+          rw [hwid]; omega),
+      hwid]
   have hpd : w.cursor.pending = false := by rw [hm.pend, hpend]
   have hfeed : w.feed (cellText (g.at k)) = w.print (g.at k).base := by
     rw [cellText_feed (g.at k) hm.ground hm.u8need hm.u8acc, hmk, safeChar_of_emittable hem]
     rfl
   have hx : w.cursor.x = k := by rw [hm.curX, hPx]
   have hwrite := print_narrow_eq hpc hcw hm.ins hpd
-  have hcur := cursor_print_narrow_margin hpc hcw hm.ins hpd (by rw [hx]; exact hmar)
+  have hcur :=
+    cursor_print_narrow_margin hpc hcw hm.ins hpd
+      (by
+        rw [hx]; exact hmar)
   have hgs : w.cursor.y < w.clearPending.grid.size := by
     show w.cursor.y < w.grid.size
     rw [hm.curY]; exact hm.inGrid
@@ -277,46 +309,61 @@ theorem step_narrow_margin {w : Vt} {P : PaintState} {g : Row} {k : Nat}
   · rw [hfeed, g1_print]; exact hm.ascii1
   · show ((w.feed (cellText (g.at k))).getRow P.y).size = (w.feed (cellText (g.at k))).cols
     rw [hfeed, hwrite]
-    obtain ⟨hcl, -, hrw⟩ := write_shape w.clearPending w.cursor.x w.cursor.y
-      { base := (g.at k).base, marks := [], width := 1, pen := w.pen } 1 hgs
+    obtain ⟨hcl, -, hrw⟩ :=
+      write_shape w.clearPending w.cursor.x w.cursor.y
+        { base := (g.at k).base, marks := [], width := 1, pen := w.pen } 1 hgs
     rw [hcl, hrw P.y]
     show (w.getRow P.y).size = w.cols
     exact hm.rowLen
   · show P.y < (w.feed (cellText (g.at k))).grid.size
     rw [hfeed, hwrite]
-    obtain ⟨-, hgz, -⟩ := write_shape w.clearPending w.cursor.x w.cursor.y
-      { base := (g.at k).base, marks := [], width := 1, pen := w.pen } 1 hgs
+    obtain ⟨-, hgz, -⟩ :=
+      write_shape w.clearPending w.cursor.x w.cursor.y
+        { base := (g.at k).base, marks := [], width := 1, pen := w.pen } 1 hgs
     rw [hgz]
     show P.y < w.grid.size
     exact hm.inGrid
-  · exact Or.inr (by rw [show k + 1 - 1 = k from by omega, hwid]; decide)
+  · exact
+      Or.inr
+        (by
+          rw [show k + 1 - 1 = k from by omega, hwid]; decide)
   · intro j hj
     show (w.feed (cellText (g.at k))).getCell j P.y = g.at j
     rw [hfeed, hwrite, getCell_printAdvance, show P.y = w.cursor.y from hm.curY.symm]
     rcases Nat.lt_or_ge j k with hjk | hjk
-    · have hcellsW : ∀ i, i < k → (w.clearPending.putCell w.cursor.x w.cursor.y
-          { base := (g.at k).base, marks := [], width := 1, pen := w.pen }).getCell i
-          w.cursor.y = g.at i := by
+    · have hcellsW :
+        ∀ i,
+          i < k →
+            (w.clearPending.putCell w.cursor.x w.cursor.y
+                    { base := (g.at k).base, marks := [], width := 1, pen := w.pen }).getCell
+                i w.cursor.y =
+              g.at i := by
         intro i hi
-        show ((w.clearPending.putCell w.cursor.x w.cursor.y
-          { base := (g.at k).base, marks := [], width := 1, pen := w.pen }).getRow
-            w.cursor.y).at i = g.at i
+        show
+          ((w.clearPending.putCell w.cursor.x w.cursor.y
+                      { base := (g.at k).base, marks := [], width := 1, pen := w.pen }).getRow
+                  w.cursor.y).at
+              i =
+            g.at i
         rw [at_putCell_ne _ _ _ _ i (by omega) hgs]
         show w.getCell i w.cursor.y = g.at i
         rw [hm.curY]
         exact hm.cells i hi
-      have hgsW : w.cursor.y < (w.clearPending.putCell w.cursor.x w.cursor.y
-          { base := (g.at k).base, marks := [], width := 1, pen := w.pen }).grid.size := by
+      have hgsW :
+        w.cursor.y <
+          (w.clearPending.putCell w.cursor.x w.cursor.y
+              { base := (g.at k).base, marks := [], width := 1, pen := w.pen }).grid.size := by
         rw [grid_size_putCell]; exact hgs
-      exact mend_keeps_prefix (u := w.clearPending.putCell w.cursor.x w.cursor.y
-        { base := (g.at k).base, marks := [], width := 1, pen := w.pen })
-        hrow hcellsW hm.frontier hgsW j hjk
+      exact
+        mend_keeps_prefix (u :=
+          w.clearPending.putCell w.cursor.x w.cursor.y
+            { base := (g.at k).base, marks := [], width := 1, pen := w.pen })
+          hrow hcellsW hm.frontier hgsW j hjk
     · have hje : j = k := by omega
       subst hje
       rw [hx] at hrl ⊢
       rw [getCell_write_mendRow_narrow _ _ _ _ rfl hgs hrl]
       exact Cell.ext' rfl hmk.symm hwid.symm (hm.pen.trans hpen.symm)
-
 
 /-- **A wide glyph and its shadow — one rung, `k` to `k+2`.**
 
@@ -325,35 +372,44 @@ convenience: if the frontier ever sat between a base and its shadow, `halfPair (
 would be true at that moment and the repair sweep would blank the base the rung had just
 painted. The shadow's own slot in `rowAnsi`'s fold emits nothing, so there is no second
 rung to give it. -/
-theorem step_wide {w : Vt} {P : PaintState} {g : Row} {k : Nat}
-    (hrow : RowOk w.cols g) (hm : Matches w P g k)
-    (hPx : P.x = k) (hpend : P.pending = false)
-    (hfit : k + 1 < w.cols) (hfit2 : k + 2 < w.cols)
-    (hwid : (g.at k).width = 2) (hmk : (g.at k).marks = [])
+theorem step_wide {w : Vt} {P : PaintState} {g : Row} {k : Nat} (hrow : RowOk w.cols g)
+    (hm : Matches w P g k) (hPx : P.x = k) (hpend : P.pending = false) (hfit : k + 1 < w.cols)
+    (hfit2 : k + 2 < w.cols) (hwid : (g.at k).width = 2) (hmk : (g.at k).marks = [])
     (hpen : (g.at k).pen = P.pen) :
-    Matches (w.feed (cellText (g.at k))) { P with x := k + 2, pending := false } g (k + 2) := by
+    Matches (w.feed (cellText (g.at k)))
+      { P with
+        x := k + 2, pending := false }
+      g (k + 2) := by
   have hem : Emittable (g.at k).base := (hrow.cells k).base
   have hpc : w.printChar (g.at k).base = (g.at k).base :=
     printChar_id_of_ascii hm.ascii0 hm.ascii1 hem.1 hem.2
   have hcw : charWidth (g.at k).base = 2 := by
-    rw [(hrow.cells k).width (by rw [hwid]; omega), hwid]
+    rw [(hrow.cells k).width
+        (by
+          rw [hwid]; omega),
+      hwid]
   have hpd : w.cursor.pending = false := by rw [hm.pend, hpend]
   have hsh : g.at (k + 1) = Cell.shadow (g.at k) := (hrow.pairs k).1 hwid
   have hfeed : w.feed (cellText (g.at k)) = w.print (g.at k).base := by
     rw [cellText_feed (g.at k) hm.ground hm.u8need hm.u8acc, hmk, safeChar_of_emittable hem]
     rfl
   have hx : w.cursor.x = k := by rw [hm.curX, hPx]
-  have hfitc : w.cursor.x + 1 < w.cols := by rw [hx]; exact hfit
+  have hfitc : w.cursor.x + 1 < w.cols := by
+    rw [hx]; exact hfit
   have hwrite := print_wide_eq hpc hcw hm.ins hpd hfitc
-  have hcur := cursor_print_wide_fits hpc hcw hm.ins hpd hfitc (by rw [hx]; exact hfit2)
+  have hcur :=
+    cursor_print_wide_fits hpc hcw hm.ins hpd hfitc
+      (by
+        rw [hx]; exact hfit2)
   have hgs : w.cursor.y < w.clearPending.grid.size := by
     show w.cursor.y < w.grid.size
     rw [hm.curY]; exact hm.inGrid
   have hrl : w.cursor.x + 1 < (w.clearPending.getRow w.cursor.y).size := by
     show w.cursor.x + 1 < (w.getRow w.cursor.y).size
     rw [hm.curY, hm.rowLen, hx]; omega
-  have hpenW : ({ base := (g.at k).base, marks := [], width := 2, pen := w.pen } : Cell).pen
-      = (g.at k).pen := hm.pen.trans hpen.symm
+  have hpenW :
+    ({ base := (g.at k).base, marks := [], width := 2, pen := w.pen } : Cell).pen = (g.at k).pen :=
+    hm.pen.trans hpen.symm
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · rw [hfeed, hcur]; show w.cursor.x + 2 = k + 2; rw [hx]
   · rw [hfeed, hcur]; show w.cursor.y = P.y; exact hm.curY
@@ -368,17 +424,19 @@ theorem step_wide {w : Vt} {P : PaintState} {g : Row} {k : Nat}
   · rw [hfeed, g1_print]; exact hm.ascii1
   · show ((w.feed (cellText (g.at k))).getRow P.y).size = (w.feed (cellText (g.at k))).cols
     rw [hfeed, hwrite]
-    obtain ⟨hcl, -, hrw⟩ := write_shape2 w.clearPending w.cursor.x w.cursor.y
-      { base := (g.at k).base, marks := [], width := 2, pen := w.pen }
-      (Cell.shadow { base := (g.at k).base, marks := [], width := 2, pen := w.pen }) 2 hgs
+    obtain ⟨hcl, -, hrw⟩ :=
+      write_shape2 w.clearPending w.cursor.x w.cursor.y
+        { base := (g.at k).base, marks := [], width := 2, pen := w.pen }
+        (Cell.shadow { base := (g.at k).base, marks := [], width := 2, pen := w.pen }) 2 hgs
     rw [hcl, hrw P.y]
     show (w.getRow P.y).size = w.cols
     exact hm.rowLen
   · show P.y < (w.feed (cellText (g.at k))).grid.size
     rw [hfeed, hwrite]
-    obtain ⟨-, hgz, -⟩ := write_shape2 w.clearPending w.cursor.x w.cursor.y
-      { base := (g.at k).base, marks := [], width := 2, pen := w.pen }
-      (Cell.shadow { base := (g.at k).base, marks := [], width := 2, pen := w.pen }) 2 hgs
+    obtain ⟨-, hgz, -⟩ :=
+      write_shape2 w.clearPending w.cursor.x w.cursor.y
+        { base := (g.at k).base, marks := [], width := 2, pen := w.pen }
+        (Cell.shadow { base := (g.at k).base, marks := [], width := 2, pen := w.pen }) 2 hgs
     rw [hgz]
     show P.y < w.grid.size
     exact hm.inGrid
@@ -392,29 +450,53 @@ theorem step_wide {w : Vt} {P : PaintState} {g : Row} {k : Nat}
     rw [hfeed, hwrite, getCell_printAdvance, show P.y = w.cursor.y from hm.curY.symm]
     rcases Nat.lt_or_ge j k with hjk | hjk
     · -- the prefix: both writes are above it, then the sweep keeps it
-      have hcellsW : ∀ i, i < k →
-          ((w.clearPending.putCell w.cursor.x w.cursor.y { base := (g.at k).base, marks := [], width := 2, pen := w.pen }).putCell
-            (w.cursor.x + 1) w.cursor.y (Cell.shadow { base := (g.at k).base, marks := [], width := 2, pen := w.pen })).getCell i w.cursor.y = g.at i := by
+      have hcellsW :
+        ∀ i,
+          i < k →
+            ((w.clearPending.putCell w.cursor.x w.cursor.y
+                        { base := (g.at k).base, marks := [], width := 2, pen := w.pen }).putCell
+                    (w.cursor.x + 1) w.cursor.y
+                    (Cell.shadow
+                      { base := (g.at k).base, marks := [], width := 2, pen := w.pen })).getCell
+                i w.cursor.y =
+              g.at i := by
         intro i hi
-        show (((w.clearPending.putCell w.cursor.x w.cursor.y { base := (g.at k).base, marks := [], width := 2, pen := w.pen }).putCell
-          (w.cursor.x + 1) w.cursor.y (Cell.shadow { base := (g.at k).base, marks := [], width := 2, pen := w.pen })).getRow w.cursor.y).at i = g.at i
-        rw [at_putCell_ne _ _ _ _ i (by omega) (by rw [grid_size_putCell]; exact hgs),
+        show
+          (((w.clearPending.putCell w.cursor.x w.cursor.y
+                          { base := (g.at k).base, marks := [], width := 2, pen := w.pen }).putCell
+                      (w.cursor.x + 1) w.cursor.y
+                      (Cell.shadow
+                        { base := (g.at k).base, marks := [], width := 2, pen := w.pen })).getRow
+                  w.cursor.y).at
+              i =
+            g.at i
+        rw [at_putCell_ne _ _ _ _ i (by omega)
+            (by
+              rw [grid_size_putCell]; exact hgs),
           at_putCell_ne _ _ _ _ i (by omega) hgs]
         show w.getCell i w.cursor.y = g.at i
         rw [hm.curY]
         exact hm.cells i hi
-      have hgsW : w.cursor.y <
-          ((w.clearPending.putCell w.cursor.x w.cursor.y { base := (g.at k).base, marks := [], width := 2, pen := w.pen }).putCell
-            (w.cursor.x + 1) w.cursor.y (Cell.shadow { base := (g.at k).base, marks := [], width := 2, pen := w.pen })).grid.size := by
+      have hgsW :
+        w.cursor.y <
+          ((w.clearPending.putCell w.cursor.x w.cursor.y
+                  { base := (g.at k).base, marks := [], width := 2, pen := w.pen }).putCell
+              (w.cursor.x + 1) w.cursor.y
+              (Cell.shadow
+                { base := (g.at k).base, marks := [], width := 2, pen := w.pen })).grid.size := by
         rw [grid_size_putCell, grid_size_putCell]; exact hgs
-      exact mend_keeps_prefix
-        (u := (w.clearPending.putCell w.cursor.x w.cursor.y { base := (g.at k).base, marks := [], width := 2, pen := w.pen }).putCell
-          (w.cursor.x + 1) w.cursor.y (Cell.shadow { base := (g.at k).base, marks := [], width := 2, pen := w.pen }))
-        hrow hcellsW hm.frontier hgsW j hjk
+      exact
+        mend_keeps_prefix (u :=
+          (w.clearPending.putCell w.cursor.x w.cursor.y
+                { base := (g.at k).base, marks := [], width := 2, pen := w.pen }).putCell
+            (w.cursor.x + 1) w.cursor.y
+            (Cell.shadow { base := (g.at k).base, marks := [], width := 2, pen := w.pen }))
+          hrow hcellsW hm.frontier hgsW j hjk
     · -- the pair itself
       rw [hx] at hrl ⊢
-      obtain ⟨h0, h1⟩ := getCell_write_mendRow_wide w.clearPending k w.cursor.y
-        { base := (g.at k).base, marks := [], width := 2, pen := w.pen } rfl hgs hrl
+      obtain ⟨h0, h1⟩ :=
+        getCell_write_mendRow_wide w.clearPending k w.cursor.y
+          { base := (g.at k).base, marks := [], width := 2, pen := w.pen } rfl hgs hrl
       rcases Nat.lt_or_ge j (k + 1) with hj1 | hj1
       · have hjk0 : j = k := by omega
         subst hjk0
@@ -430,20 +512,23 @@ the one it is carrying, and that is the whole of the SGR handling: the glyph byt
 colour, so the cell the receiver *stores* takes the receiver's current pen
 (`Vt.printPut`). This rung is what makes the cell rungs' `hpen` hypothesis discharegable,
 and it is where the invariant's `pen` field earns its keep. -/
-theorem step_pen {w : Vt} {P : PaintState} {g : Row} {k : Nat} (hm : Matches w P g k)
-    (p : Pen) : Matches (w.feed (penSgr p)) { P with pen := p } g k := by
+theorem step_pen {w : Vt} {P : PaintState} {g : Row} {k : Nat} (hm : Matches w P g k) (p : Pen) :
+    Matches (w.feed (penSgr p)) { P with pen := p } g k := by
   have heq : w.feed (penSgr p) = { w with pen := p } := penSgr_feed p hm.ground hm.u8need
   -- the pen is in `getRow`'s *default* row, so a cell read only survives because the
   -- invariant says the row index is in the grid
   have hcell : ∀ j, ({ w with pen := p } : Vt).getCell j P.y = w.getCell j P.y := by
     intro j
-    show (((({ w with pen := p } : Vt)).grid.getD P.y
-        (blankRow ({ w with pen := p } : Vt).cols p)).getD j default)
-      = ((w.grid.getD P.y (blankRow w.cols w.pen)).getD j default)
+    show
+      (((({ w with pen := p } : Vt)).grid.getD P.y
+              (blankRow ({ w with pen := p } : Vt).cols p)).getD
+          j default) =
+        ((w.grid.getD P.y (blankRow w.cols w.pen)).getD j default)
     rw [getD_of_lt w.grid P.y (blankRow w.cols p) (blankRow w.cols w.pen) hm.inGrid]
   have hrow : (({ w with pen := p } : Vt).getRow P.y) = w.getRow P.y := by
-    show ((({ w with pen := p } : Vt)).grid.getD P.y
-        (blankRow ({ w with pen := p } : Vt).cols p)) = w.grid.getD P.y (blankRow w.cols w.pen)
+    show
+      ((({ w with pen := p } : Vt)).grid.getD P.y (blankRow ({ w with pen := p } : Vt).cols p)) =
+        w.grid.getD P.y (blankRow w.cols w.pen)
     rw [getD_of_lt w.grid P.y (blankRow w.cols p) (blankRow w.cols w.pen) hm.inGrid]
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · rw [heq]; exact hm.curX
@@ -488,15 +573,13 @@ bookkeeping out of the loop; a bespoke mid-cell invariant would have restated it
 def withMarks (g : Row) (k : Nat) (ms : List Char) : Row :=
   g.setIfInBounds k { g.at k with marks := ms }
 
-theorem size_withMarks (g : Row) (k : Nat) (ms : List Char) :
-    (withMarks g k ms).size = g.size := by
+theorem size_withMarks (g : Row) (k : Nat) (ms : List Char) : (withMarks g k ms).size = g.size := by
   simp [withMarks]
 
 /-- Out of range it is the identity, which is why no lemma here needs a column bound
 except the one that reads column `k` back. -/
 theorem withMarks_of_ge (g : Row) (k : Nat) (ms : List Char) (h : g.size ≤ k) :
-    withMarks g k ms = g := by
-  simp [withMarks, Array.setIfInBounds, Nat.not_lt.mpr h]
+    withMarks g k ms = g := by simp [withMarks, Array.setIfInBounds, Nat.not_lt.mpr h]
 
 theorem at_withMarks_self (g : Row) (k : Nat) (ms : List Char) (hk : k < g.size) :
     (withMarks g k ms).at k = { g.at k with marks := ms } := by
@@ -512,9 +595,9 @@ theorem at_withMarks_ne (g : Row) (k : Nat) (ms : List Char) (j : Nat) (h : j �
 width and its pen — which is what makes the truncated row still pair-consistent, and
 `Cell.shadow` (a blank carrying the base's pen) unchanged. -/
 theorem withMarks_keeps (g : Row) (k : Nat) (ms : List Char) (x : Nat) :
-    ((withMarks g k ms).at x).base = (g.at x).base
-      ∧ ((withMarks g k ms).at x).width = (g.at x).width
-      ∧ ((withMarks g k ms).at x).pen = (g.at x).pen := by
+    ((withMarks g k ms).at x).base = (g.at x).base ∧
+      ((withMarks g k ms).at x).width = (g.at x).width ∧
+      ((withMarks g k ms).at x).pen = (g.at x).pen := by
   by_cases hx : x = k
   · subst hx
     by_cases hk : x < g.size
@@ -532,11 +615,12 @@ theorem withMarks_keeps (g : Row) (k : Nat) (ms : List Char) (x : Nat) :
 only column whose *content* the pair rule constrains is a shadow. Its own shadow (if
 it has one) is untouched and still canonical, because `Cell.shadow` reads the pen and
 nothing else. -/
-theorem rowOk_withMarks {cols : Nat} {g : Row} {k : Nat} {ms : List Char}
-    (hrow : RowOk cols g) (hwid : (g.at k).width ≠ 0)
-    (hlen : ms.length ≤ 8) (hmk : ∀ m ∈ ms, charWidth m = 0 ∧ Emittable m) :
-    RowOk cols (withMarks g k ms) := by
-  refine ⟨by rw [size_withMarks]; exact hrow.size, fun x => ?_, fun x => ?_⟩
+theorem rowOk_withMarks {cols : Nat} {g : Row} {k : Nat} {ms : List Char} (hrow : RowOk cols g)
+    (hwid : (g.at k).width ≠ 0) (hlen : ms.length ≤ 8)
+    (hmk : ∀ m ∈ ms, charWidth m = 0 ∧ Emittable m) : RowOk cols (withMarks g k ms) := by
+  refine
+    ⟨by
+      rw [size_withMarks]; exact hrow.size, fun x => ?_, fun x => ?_⟩
   · by_cases hx : x = k
     · subst hx
       by_cases hk : x < g.size
@@ -548,7 +632,8 @@ theorem rowOk_withMarks {cols : Nat} {g : Row} {k : Nat} {ms : List Char}
       exact hrow.cells x
   · obtain ⟨-, hw, hp⟩ := withMarks_keeps g k ms x
     refine ⟨fun h2 => ?_, fun h0 => ?_⟩
-    · have h2' : (g.at x).width = 2 := by rw [← hw]; exact h2
+    · have h2' : (g.at x).width = 2 := by
+        rw [← hw]; exact h2
       have hsh : g.at (x + 1) = Cell.shadow (g.at x) := (hrow.pairs x).1 h2'
       -- column `k` is a glyph, so it is not this pair's shadow — hence untouched
       have hne : x + 1 ≠ k := by
@@ -557,9 +642,12 @@ theorem rowOk_withMarks {cols : Nat} {g : Row} {k : Nat} {ms : List Char}
         exact hwid rfl
       rw [at_withMarks_ne g k ms (x + 1) hne, hsh]
       exact (shadow_congr hp).symm
-    · have h0' : (g.at x).width = 0 := by rw [← hw]; exact h0
+    · have h0' : (g.at x).width = 0 := by
+        rw [← hw]; exact h0
       obtain ⟨hne0, hpr⟩ := (hrow.pairs x).2 h0'
-      exact ⟨hne0, by rw [(withMarks_keeps g k ms (x - 1)).2.1]; exact hpr⟩
+      exact
+        ⟨hne0, by
+          rw [(withMarks_keeps g k ms (x - 1)).2.1]; exact hpr⟩
 
 /-- **`Matches … k` reads the source row only below `k`.** So a rung may swap the row
 out from under it for any row that agrees there — which is how the mark loop enters
@@ -567,13 +655,17 @@ out from under it for any row that agrees there — which is how the mark loop e
 leaves (against `g`, once every mark is on). -/
 theorem matches_below {w : Vt} {P : PaintState} {g g' : Row} {k : Nat}
     (h : ∀ j, j < k → g'.at j = g.at j) (hm : Matches w P g k) : Matches w P g' k := by
-  refine ⟨hm.curX, hm.curY, hm.pend, hm.pen, hm.ground, hm.u8need, hm.u8acc, hm.ins,
-    hm.wrap, hm.ascii0, hm.ascii1, hm.rowLen, hm.inGrid, ?_, ?_⟩
+  refine
+    ⟨hm.curX, hm.curY, hm.pend, hm.pen, hm.ground, hm.u8need, hm.u8acc, hm.ins, hm.wrap, hm.ascii0,
+      hm.ascii1, hm.rowLen, hm.inGrid, ?_, ?_⟩
   · by_cases hk : k = 0
     · exact Or.inl hk
     · rcases hm.frontier with hz | hne
       · exact Or.inl hz
-      · exact Or.inr (by rw [h (k - 1) (by omega)]; exact hne)
+      · exact
+          Or.inr
+            (by
+              rw [h (k - 1) (by omega)]; exact hne)
   · intro j hj
     rw [h j hj]
     exact hm.cells j hj
@@ -583,11 +675,15 @@ receiver matches `withMarks g k (g.at k).marks`, which reads back as `g` at ever
 column. -/
 theorem matches_row_congr {w : Vt} {P : PaintState} {g g' : Row} {k : Nat}
     (h : ∀ j, g'.at j = g.at j) (hm : Matches w P g' k) : Matches w P g k := by
-  refine ⟨hm.curX, hm.curY, hm.pend, hm.pen, hm.ground, hm.u8need, hm.u8acc, hm.ins,
-    hm.wrap, hm.ascii0, hm.ascii1, hm.rowLen, hm.inGrid, ?_, ?_⟩
+  refine
+    ⟨hm.curX, hm.curY, hm.pend, hm.pen, hm.ground, hm.u8need, hm.u8acc, hm.ins, hm.wrap, hm.ascii0,
+      hm.ascii1, hm.rowLen, hm.inGrid, ?_, ?_⟩
   · rcases hm.frontier with hz | hne
     · exact Or.inl hz
-    · exact Or.inr (by rw [← h (k - 1)]; exact hne)
+    · exact
+        Or.inr
+          (by
+            rw [← h (k - 1)]; exact hne)
   · intro j hj
     rw [← h j]
     exact hm.cells j hj
@@ -595,10 +691,12 @@ theorem matches_row_congr {w : Vt} {P : PaintState} {g g' : Row} {k : Nat}
 /-- **`Matches` survives a `CHA`.** The receiver stays matched to the same row `g` at the
 same frontier `kf`; only the paint state's column moves (clamped to the margin) and
 wrap-pending clears. This is the cursor park the wide-with-marks branch does twice. -/
-theorem cha_matches {w : Vt} {P : PaintState} {g : Row} {kf n : Nat}
-    (hm : Matches w P g kf) (hn : 0 < n) (hlt : n < 65535) :
+theorem cha_matches {w : Vt} {P : PaintState} {g : Row} {kf n : Nat} (hm : Matches w P g kf)
+    (hn : 0 < n) (hlt : n < 65535) :
     Matches (w.feed (csiNum n 0x47))
-      { P with x := min (n - 1) (w.cols - 1), pending := false } g kf := by
+      { P with
+        x := min (n - 1) (w.cols - 1), pending := false }
+      g kf := by
   rw [cha_feed_eq n hm.ground hm.u8need hn hlt]
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · show (w.setCol (n - 1)).cursor.x = min (n - 1) (w.cols - 1)
@@ -632,15 +730,18 @@ theorem cha_matches {w : Vt} {P : PaintState} {g : Row} {kf n : Nat}
   · intro j hj
     show (w.setCol (n - 1)).getCell j P.y = g.at j
     rw [show (w.setCol (n - 1)).getCell j P.y = w.getCell j P.y from by
-      unfold Vt.getCell Vt.getRow; rw [frame_setCol]]
+        unfold Vt.getCell Vt.getRow; rw [frame_setCol]]
     exact hm.cells j hj
 
 /-- `CHA` to an **in-range** column: no clamp, so the paint state's column is exactly
 `n - 1`. This is the form the wide-with-marks branch uses — both its jumps land inside the
 row (`k + 1` for the mark, `k + 2` past the pair), which is what `k + 2 < cols` gives. -/
-theorem cha_matches_lt {w : Vt} {P : PaintState} {g : Row} {kf n : Nat}
-    (hm : Matches w P g kf) (hn : 0 < n) (hlt : n < 65535) (hin : n - 1 < w.cols) :
-    Matches (w.feed (csiNum n 0x47)) { P with x := n - 1, pending := false } g kf := by
+theorem cha_matches_lt {w : Vt} {P : PaintState} {g : Row} {kf n : Nat} (hm : Matches w P g kf)
+    (hn : 0 < n) (hlt : n < 65535) (hin : n - 1 < w.cols) :
+    Matches (w.feed (csiNum n 0x47))
+      { P with
+        x := n - 1, pending := false }
+      g kf := by
   have h := cha_matches hm hn hlt
   rwa [show min (n - 1) (w.cols - 1) = n - 1 from by omega] at h
 
@@ -650,12 +751,13 @@ theorem foldl_print_cols (l : List Char) (u : Vt) :
     (l.foldl (fun w c => w.print (safeChar c)) u).cols = u.cols := by
   induction l generalizing u with
   | nil => rfl
-  | cons a l ih => rw [List.foldl_cons, ih]; exact cols_print u (safeChar a)
+  | cons a l ih =>
+    rw [List.foldl_cons, ih]; exact cols_print u (safeChar a)
 
 /-- `CHA` moves only the cursor, so the column count is unchanged — the wide-with-marks
 branch keeps its `CHA` bounds in range across the whole sequence. -/
-theorem cha_cols {v : Vt} (n : Nat) (hg : v.pstate = .ground) (hu : v.u8need = 0)
-    (hn : 0 < n) (hlt : n < 65535) : (v.feed (csiNum n 0x47)).cols = v.cols := by
+theorem cha_cols {v : Vt} (n : Nat) (hg : v.pstate = .ground) (hu : v.u8need = 0) (hn : 0 < n)
+    (hlt : n < 65535) : (v.feed (csiNum n 0x47)).cols = v.cols := by
   rw [cha_feed_eq n hg hu hn hlt, frame_setCol]
 
 /-- `safeChar` is the identity on a list of emittable marks, so the marks the painter
@@ -682,48 +784,62 @@ right of the write, wrap-pending clear (a narrow cell that advanced, or a `CHA` 
 placed the cursor); at the margin — *on* the write column with wrap-pending, which is why
 `print_mark_pending_eq` had to exist. Both write `wcol`, so the tail is shared. -/
 theorem mark_step {cols : Nat} {w : Vt} {Q : PaintState} {g : Row} {wcol kf : Nat}
-    {done : List Char}
-    (hrow : RowOk cols g) (hcols : w.cols = cols) (hwid : (g.at wcol).width ≠ 0)
+    {done : List Char} (hrow : RowOk cols g) (hcols : w.cols = cols) (hwid : (g.at wcol).width ≠ 0)
     (hwcol : wcol < cols) (hlt : wcol < kf)
     (hdisj : (Q.x = wcol + 1 ∧ Q.pending = false) ∨ (Q.x = wcol ∧ Q.pending = true))
     (hcap : done.length < 8) (hdone : ∀ x ∈ done, charWidth x = 0 ∧ Emittable x)
-    (hm : Matches w Q (withMarks g wcol done) kf)
-    (m : Char) (hmw : charWidth m = 0) (hme : Emittable m) :
+    (hm : Matches w Q (withMarks g wcol done) kf) (m : Char) (hmw : charWidth m = 0)
+    (hme : Emittable m) :
     Matches (w.print (safeChar m)) Q (withMarks g wcol (done ++ [safeChar m])) kf := by
   have hsafe : safeChar m = m := safeChar_of_emittable hme
-  have hcw : charWidth (safeChar m) = 0 := by rw [hsafe]; exact hmw
-  have hpc : w.printChar (safeChar m) = safeChar m := printChar_id_of_ascii hm.ascii0 hm.ascii1
-    (by rw [hsafe]; exact hme.1) (by rw [hsafe]; exact hme.2)
-  have hkg : wcol < g.size := by rw [hrow.size]; exact hwcol
+  have hcw : charWidth (safeChar m) = 0 := by
+    rw [hsafe]; exact hmw
+  have hpc : w.printChar (safeChar m) = safeChar m :=
+    printChar_id_of_ascii hm.ascii0 hm.ascii1
+      (by
+        rw [hsafe]; exact hme.1)
+      (by
+        rw [hsafe]; exact hme.2)
+  have hkg : wcol < g.size := by
+    rw [hrow.size]; exact hwcol
   have hgetk : w.getCell wcol Q.y = { g.at wcol with marks := done } := by
     rw [hm.cells wcol hlt, at_withMarks_self g wcol done hkg]
   have hyk : w.cursor.y = Q.y := hm.curY
   have hgs : Q.y < w.grid.size := hm.inGrid
-  have hwk0 : (w.getCell wcol Q.y).width ≠ 0 := by rw [hgetk]; exact hwid
+  have hwk0 : (w.getCell wcol Q.y).width ≠ 0 := by
+    rw [hgetk]; exact hwid
   have hcapk : (w.getCell wcol Q.y).marks.length < 8 := by
     rw [hgetk]; show done.length < 8; exact hcap
-  have hcelleq : ({ w.getCell wcol Q.y with marks := (w.getCell wcol Q.y).marks ++ [safeChar m] }
-      : Cell) = { g.at wcol with marks := done ++ [safeChar m] } := by rw [hgetk]
+  have hcelleq :
+    ({ w.getCell wcol Q.y with marks := (w.getCell wcol Q.y).marks ++ [safeChar m] } : Cell) =
+      { g.at wcol with marks := done ++ [safeChar m] } := by
+    rw [hgetk]
   -- the write, whichever branch: the source cell with one more mark
   obtain ⟨hpm, hcur⟩ :
-      w.print (safeChar m)
-          = (w.putCell wcol Q.y { g.at wcol with marks := done ++ [safeChar m] }).mendRow Q.y
-        ∧ (w.print (safeChar m)).cursor = w.cursor := by
+    w.print (safeChar m) =
+        (w.putCell wcol Q.y { g.at wcol with marks := done ++ [safeChar m] }).mendRow Q.y ∧
+      (w.print (safeChar m)).cursor = w.cursor :=
+    by
     rcases hdisj with ⟨hQx, hQp⟩ | ⟨hQx, hQp⟩
     · have hx : w.cursor.x = wcol + 1 := by rw [hm.curX, hQx]
       have hpd : w.cursor.pending = false := by rw [hm.pend, hQp]
       have hx1 : w.cursor.x - 1 = wcol := by omega
-      have hnw : (w.getCell (w.cursor.x - 1) w.cursor.y).width ≠ 0 := by rw [hx1, hyk]; exact hwk0
+      have hnw : (w.getCell (w.cursor.x - 1) w.cursor.y).width ≠ 0 := by
+        rw [hx1, hyk]; exact hwk0
       have hcapp : (w.getCell (w.cursor.x - 1) w.cursor.y).marks.length < 8 := by
         rw [hx1, hyk]; exact hcapk
-      exact ⟨by rw [print_mark_eq hpc hcw hpd (by omega) hnw hcapp, hx1, hyk, hcelleq],
-        cursor_print_mark hpc hcw hpd (by omega) hnw hcapp⟩
+      exact
+        ⟨by rw [print_mark_eq hpc hcw hpd (by omega) hnw hcapp, hx1, hyk, hcelleq],
+          cursor_print_mark hpc hcw hpd (by omega) hnw hcapp⟩
     · have hx : w.cursor.x = wcol := by rw [hm.curX, hQx]
       have hpd : w.cursor.pending = true := by rw [hm.pend, hQp]
-      have hnw : (w.getCell w.cursor.x w.cursor.y).width ≠ 0 := by rw [hx, hyk]; exact hwk0
-      have hcapp : (w.getCell w.cursor.x w.cursor.y).marks.length < 8 := by rw [hx, hyk]; exact hcapk
-      exact ⟨by rw [print_mark_pending_eq hpc hcw hpd hnw hcapp, hx, hyk, hcelleq],
-        cursor_print_mark_pending hpc hcw hpd hnw hcapp⟩
+      have hnw : (w.getCell w.cursor.x w.cursor.y).width ≠ 0 := by
+        rw [hx, hyk]; exact hwk0
+      have hcapp : (w.getCell w.cursor.x w.cursor.y).marks.length < 8 := by
+        rw [hx, hyk]; exact hcapk
+      exact
+        ⟨by rw [print_mark_pending_eq hpc hcw hpd hnw hcapp, hx, hyk, hcelleq],
+          cursor_print_mark_pending hpc hcw hpd hnw hcapp⟩
   -- the source row after this mark, and that it is still reproducible
   have hmv : ∀ x ∈ done ++ [safeChar m], charWidth x = 0 ∧ Emittable x := by
     intro x hx
@@ -732,10 +848,13 @@ theorem mark_step {cols : Nat} {w : Vt} {Q : PaintState} {g : Row} {wcol kf : Na
     · rw [List.mem_singleton.mp h, hsafe]; exact ⟨hmw, hme⟩
   have hrowW : RowOk w.cols (withMarks g wcol (done ++ [safeChar m])) := by
     rw [hcols]
-    exact rowOk_withMarks hrow hwid
-      (by simp only [List.length_append, List.length_cons, List.length_nil]; omega) hmv
-  have hgsW : Q.y
-      < (w.putCell wcol Q.y { g.at wcol with marks := done ++ [safeChar m] }).grid.size := by
+    exact
+      rowOk_withMarks hrow hwid
+        (by
+          simp only [List.length_append, List.length_cons, List.length_nil]; omega)
+        hmv
+  have hgsW :
+    Q.y < (w.putCell wcol Q.y { g.at wcol with marks := done ++ [safeChar m] }).grid.size := by
     rw [grid_size_putCell]; exact hgs
   -- the frontier at `kf - 1` is a *width*, and `withMarks` never changes a width
   have hfront : kf = 0 ∨ ((withMarks g wcol (done ++ [safeChar m])).at (kf - 1)).width ≠ 2 := by
@@ -759,8 +878,10 @@ theorem mark_step {cols : Nat} {w : Vt} {Q : PaintState} {g : Row} {wcol kf : Na
   · rw [g1_print]; exact hm.ascii1
   · show ((w.print (safeChar m)).getRow Q.y).size = (w.print (safeChar m)).cols
     rw [hpm,
-      show ((w.putCell wcol Q.y { g.at wcol with marks := done ++ [safeChar m] }).mendRow Q.y).cols
-          = w.cols from by rw [frame_mendRow, frame_putCell],
+      show
+        ((w.putCell wcol Q.y { g.at wcol with marks := done ++ [safeChar m] }).mendRow Q.y).cols =
+          w.cols
+        from by rw [frame_mendRow, frame_putCell],
       size_getRow_mendRow _ Q.y hgsW Q.y,
       size_getRow_putCell_any w wcol Q.y { g.at wcol with marks := done ++ [safeChar m] } hgs Q.y]
     exact hm.rowLen
@@ -769,73 +890,91 @@ theorem mark_step {cols : Nat} {w : Vt} {Q : PaintState} {g : Row} {wcol kf : Na
   · intro j hj
     show (w.print (safeChar m)).getCell j Q.y = (withMarks g wcol (done ++ [safeChar m])).at j
     rw [hpm]
-    have hcellsW : ∀ i, i < kf →
-        (w.putCell wcol Q.y { g.at wcol with marks := done ++ [safeChar m] }).getCell i Q.y
-          = (withMarks g wcol (done ++ [safeChar m])).at i := by
+    have hcellsW :
+      ∀ i,
+        i < kf →
+          (w.putCell wcol Q.y { g.at wcol with marks := done ++ [safeChar m] }).getCell i Q.y =
+            (withMarks g wcol (done ++ [safeChar m])).at i := by
       intro i hi
-      show ((w.putCell wcol Q.y { g.at wcol with marks := done ++ [safeChar m] }).getRow Q.y).at i
-        = (withMarks g wcol (done ++ [safeChar m])).at i
+      show
+        ((w.putCell wcol Q.y { g.at wcol with marks := done ++ [safeChar m] }).getRow Q.y).at i =
+          (withMarks g wcol (done ++ [safeChar m])).at i
       by_cases hiw : i = wcol
-      · rw [hiw, getRow_putCell_self w wcol Q.y { g.at wcol with marks := done ++ [safeChar m] } hgs
-            (by rw [hm.rowLen, hcols]; exact hwcol),
+      · rw [hiw,
+          getRow_putCell_self w wcol Q.y { g.at wcol with marks := done ++ [safeChar m] } hgs
+            (by
+              rw [hm.rowLen, hcols]; exact hwcol),
           at_withMarks_self g wcol (done ++ [safeChar m]) hkg]
       · rw [at_putCell_ne w wcol Q.y { g.at wcol with marks := done ++ [safeChar m] } i hiw hgs]
         show w.getCell i Q.y = _
         rw [hm.cells i hi, at_withMarks_ne g wcol done i hiw,
           at_withMarks_ne g wcol (done ++ [safeChar m]) i hiw]
-    exact mend_keeps_prefix
-      (u := w.putCell wcol Q.y { g.at wcol with marks := done ++ [safeChar m] })
-      hrowW hcellsW hfront hgsW j hj
+    exact
+      mend_keeps_prefix (u := w.putCell wcol Q.y { g.at wcol with marks := done ++ [safeChar m] })
+        hrowW hcellsW hfront hgsW j hj
 
 /-- **The mark loop.** Fold `mark_step` over the marks not yet emitted: the receiver's
 row grows from `withMarks g wcol acc` to `withMarks g wcol (acc ++ rest.map safeChar)`, and
 the paint state `Q` never moves because a mark moves no cursor. `cols` is fixed once; each
 step's receiver keeps it (`cols_print`), which is what lets the one `RowOk cols g` serve
 the whole fold. -/
-theorem marks_fold {cols : Nat} {Q : PaintState} {g : Row} {wcol kf : Nat}
-    (hrow : RowOk cols g) (hwid : (g.at wcol).width ≠ 0) (hwcol : wcol < cols) (hlt : wcol < kf)
+theorem marks_fold {cols : Nat} {Q : PaintState} {g : Row} {wcol kf : Nat} (hrow : RowOk cols g)
+    (hwid : (g.at wcol).width ≠ 0) (hwcol : wcol < cols) (hlt : wcol < kf)
     (hdisj : (Q.x = wcol + 1 ∧ Q.pending = false) ∨ (Q.x = wcol ∧ Q.pending = true)) :
     ∀ (rest : List Char) (u : Vt) (acc : List Char),
       (∀ x ∈ acc, charWidth x = 0 ∧ Emittable x) →
-      (∀ x ∈ rest, charWidth x = 0 ∧ Emittable x) →
-      acc.length + rest.length ≤ 8 →
-      u.cols = cols →
-      Matches u Q (withMarks g wcol acc) kf →
-      Matches (rest.foldl (fun w c => w.print (safeChar c)) u) Q
-        (withMarks g wcol (acc ++ rest.map safeChar)) kf
+        (∀ x ∈ rest, charWidth x = 0 ∧ Emittable x) →
+        acc.length + rest.length ≤ 8 →
+        u.cols = cols →
+        Matches u Q (withMarks g wcol acc) kf →
+        Matches (rest.foldl (fun w c => w.print (safeChar c)) u) Q
+          (withMarks g wcol (acc ++ rest.map safeChar)) kf
   | [], u, acc, _, _, _, _, hu => by simpa using hu
   | m :: rest, u, acc, hacc, hrest, hlen, hucols, hu => by
     have hmm := hrest m (List.mem_cons_self)
-    have hstep := mark_step (w := u) (cols := cols) hrow hucols hwid hwcol hlt hdisj
-      (by simp only [List.length_cons] at hlen; omega) hacc hu m hmm.1 hmm.2
+    have hstep :=
+      mark_step (w := u) (cols := cols) hrow hucols hwid hwcol hlt hdisj
+        (by
+          simp only [List.length_cons] at hlen; omega)
+        hacc hu m hmm.1 hmm.2
     have hacc' : ∀ x ∈ acc ++ [safeChar m], charWidth x = 0 ∧ Emittable x := by
       intro x hx
       rcases List.mem_append.mp hx with h | h
       · exact hacc x h
       · rw [List.mem_singleton.mp h, safeChar_of_emittable hmm.2]; exact hmm
-    have hucols' : (u.print (safeChar m)).cols = cols := by rw [cols_print]; exact hucols
-    have hrec := marks_fold hrow hwid hwcol hlt hdisj rest (u.print (safeChar m))
-      (acc ++ [safeChar m]) hacc' (fun x hx => hrest x (List.mem_cons_of_mem m hx))
-      (by simp only [List.length_append, List.length_cons, List.length_nil] at hlen ⊢; omega)
-      hucols' hstep
+    have hucols' : (u.print (safeChar m)).cols = cols := by
+      rw [cols_print]; exact hucols
+    have hrec :=
+      marks_fold hrow hwid hwcol hlt hdisj rest (u.print (safeChar m)) (acc ++ [safeChar m]) hacc'
+        (fun x hx => hrest x (List.mem_cons_of_mem m hx))
+        (by
+          simp only [List.length_append, List.length_cons, List.length_nil] at hlen ⊢; omega)
+        hucols' hstep
     simpa [List.foldl_cons, List.map_cons, List.append_assoc] using hrec
 
 /-- **One narrow cell with its marks, in the interior.** `step_narrow` paints the base
 glyph, leaving the receiver matching `withMarks g k []`; `marks_fold` then walks the
 marks on. This is the rung `step_narrow` becomes once a cell may carry combining marks —
 `step_narrow` is its `marks = []` special case, kept because the base step reuses it. -/
-theorem step_narrow_marks {w : Vt} {P : PaintState} {g : Row} {k : Nat}
-    (hrow : RowOk w.cols g) (hm : Matches w P g k)
-    (hPx : P.x = k) (hpend : P.pending = false) (hfit : k + 1 < w.cols)
+theorem step_narrow_marks {w : Vt} {P : PaintState} {g : Row} {k : Nat} (hrow : RowOk w.cols g)
+    (hm : Matches w P g k) (hPx : P.x = k) (hpend : P.pending = false) (hfit : k + 1 < w.cols)
     (hwid : (g.at k).width = 1) (hpen : (g.at k).pen = P.pen) :
-    Matches (w.feed (cellText (g.at k))) { P with x := k + 1, pending := false } g (k + 1) := by
-  have hkg : k < g.size := by rw [hrow.size]; omega
+    Matches (w.feed (cellText (g.at k)))
+      { P with
+        x := k + 1, pending := false }
+      g (k + 1) := by
+  have hkg : k < g.size := by
+    rw [hrow.size]; omega
   have hmks := (hrow.cells k).marks
   have hmle := (hrow.cells k).marksLe
   -- paint the base glyph on the row truncated to no marks at `k`
   have hrow0 : RowOk w.cols (withMarks g k []) :=
-    rowOk_withMarks hrow (by rw [hwid]; decide) (by simp) (by simp)
-  have hwid0 : ((withMarks g k []).at k).width = 1 := by rw [at_withMarks_self g k [] hkg]; exact hwid
+    rowOk_withMarks hrow
+      (by
+        rw [hwid]; decide)
+      (by simp) (by simp)
+  have hwid0 : ((withMarks g k []).at k).width = 1 := by
+    rw [at_withMarks_self g k [] hkg]; exact hwid
   have hmk0 : ((withMarks g k []).at k).marks = [] := by rw [at_withMarks_self g k [] hkg]
   have hpen0 : ((withMarks g k []).at k).pen = P.pen := by
     rw [at_withMarks_self g k [] hkg]; exact hpen
@@ -852,15 +991,19 @@ theorem step_narrow_marks {w : Vt} {P : PaintState} {g : Row} {k : Nat}
   have hct : cellText (g.at k) = utf8 (safeChar (g.at k).base) ++ utf8s (g.at k).marks := by rfl
   rw [hct, feed_append]
   have hucols : (w.feed (utf8 (safeChar (g.at k).base))).cols = w.cols := by
-    rw [utf8_feed (safeChar (g.at k).base) (safeChar_ge (g.at k).base).1
-      hm.ground hm.u8need hm.u8acc]
+    rw [utf8_feed (safeChar (g.at k).base) (safeChar_ge (g.at k).base).1 hm.ground hm.u8need
+        hm.u8acc]
     exact cols_print w (safeChar (g.at k).base)
   rw [utf8s_feed (g.at k).marks hbase.ground hbase.u8need hbase.u8acc]
-  have hfold := marks_fold (Q := { P with x := k + 1, pending := false }) hrow
-    (by rw [hwid]; decide) (by omega : k < w.cols) (by omega : k < k + 1)
-    (Or.inl ⟨rfl, rfl⟩) (g.at k).marks
-    (w.feed (utf8 (safeChar (g.at k).base))) []
-    (by simp) hmks (by simpa using hmle) hucols hbase
+  have hfold :=
+    marks_fold (Q :=
+      { P with
+        x := k + 1, pending := false })
+      hrow
+      (by
+        rw [hwid]; decide)
+      (by omega : k < w.cols) (by omega : k < k + 1) (Or.inl ⟨rfl, rfl⟩) (g.at k).marks
+      (w.feed (utf8 (safeChar (g.at k).base))) [] (by simp) hmks (by simpa using hmle) hucols hbase
   rw [map_safeChar_id (g.at k).marks (fun x hx => (hmks x hx).2)] at hfold
   simp only [List.nil_append] at hfold
   -- exit: the fully-marked truncated row reads back as `g` at every column
@@ -877,21 +1020,29 @@ pair to `k + 2`. Interior form (`k + 2 < cols`); the pair cannot sit at the very
 because a width-2 base with no room for its shadow is stored as a blank (`printPut`), so
 `RowOk` never presents one. `hcb` bounds the emitted column so `CHA` addresses it exactly
 rather than clamping to 65535 — the column analogue of `restore_sticky_any`'s `hfits`. -/
-theorem step_wide_marks {w : Vt} {P : PaintState} {g : Row} {k : Nat}
-    (hrow : RowOk w.cols g) (hm : Matches w P g k)
-    (hPx : P.x = k) (hpend : P.pending = false)
-    (hfit : k + 1 < w.cols) (hfit2 : k + 2 < w.cols) (hcb : k + 3 < 65535)
-    (hwid : (g.at k).width = 2) (hpen : (g.at k).pen = P.pen) :
-    Matches (w.feed (utf8 (safeChar (g.at k).base) ++ csiNum (k + 2) 0x47
-        ++ utf8s (g.at k).marks ++ csiNum (k + 3) 0x47))
-      { P with x := k + 2, pending := false } g (k + 2) := by
-  have hkg : k < g.size := by rw [hrow.size]; omega
+theorem step_wide_marks {w : Vt} {P : PaintState} {g : Row} {k : Nat} (hrow : RowOk w.cols g)
+    (hm : Matches w P g k) (hPx : P.x = k) (hpend : P.pending = false) (hfit : k + 1 < w.cols)
+    (hfit2 : k + 2 < w.cols) (hcb : k + 3 < 65535) (hwid : (g.at k).width = 2)
+    (hpen : (g.at k).pen = P.pen) :
+    Matches
+      (w.feed
+        (utf8 (safeChar (g.at k).base) ++ csiNum (k + 2) 0x47 ++ utf8s (g.at k).marks ++
+          csiNum (k + 3) 0x47))
+      { P with
+        x := k + 2, pending := false }
+      g (k + 2) := by
+  have hkg : k < g.size := by
+    rw [hrow.size]; omega
   have hmks := (hrow.cells k).marks
   have hmle := (hrow.cells k).marksLe
   -- the wide base, painted on the row with `k`'s marks stripped
   have hrow0 : RowOk w.cols (withMarks g k []) :=
-    rowOk_withMarks hrow (by rw [hwid]; decide) (by simp) (by simp)
-  have hwid0 : ((withMarks g k []).at k).width = 2 := by rw [at_withMarks_self g k [] hkg]; exact hwid
+    rowOk_withMarks hrow
+      (by
+        rw [hwid]; decide)
+      (by simp) (by simp)
+  have hwid0 : ((withMarks g k []).at k).width = 2 := by
+    rw [at_withMarks_self g k [] hkg]; exact hwid
   have hmk0 : ((withMarks g k []).at k).marks = [] := by rw [at_withMarks_self g k [] hkg]
   have hpen0 : ((withMarks g k []).at k).pen = P.pen := by
     rw [at_withMarks_self g k [] hkg]; exact hpen
@@ -906,34 +1057,47 @@ theorem step_wide_marks {w : Vt} {P : PaintState} {g : Row} {k : Nat}
   -- split the emitted bytes into base · CHA · marks · CHA
   rw [feed_append, feed_append, feed_append]
   have hw1cols : (w.feed (utf8 (safeChar (g.at k).base))).cols = w.cols := by
-    rw [utf8_feed (safeChar (g.at k).base) (safeChar_ge (g.at k).base).1
-      hm.ground hm.u8need hm.u8acc]
+    rw [utf8_feed (safeChar (g.at k).base) (safeChar_ge (g.at k).base).1 hm.ground hm.u8need
+        hm.u8acc]
     exact cols_print w (safeChar (g.at k).base)
   -- CHA(k+2): park the cursor at k+1, between glyph and shadow
-  have hcha1 := cha_matches_lt (n := k + 2) hbase (by omega) (by omega)
-    (by rw [hw1cols]; omega)
+  have hcha1 :=
+    cha_matches_lt (n := k + 2) hbase (by omega) (by omega)
+      (by
+        rw [hw1cols]; omega)
   rw [show k + 2 - 1 = k + 1 from by omega] at hcha1
-  have hu2cols : ((w.feed (utf8 (safeChar (g.at k).base))).feed (csiNum (k + 2) 0x47)).cols
-      = w.cols := by
+  have hu2cols :
+    ((w.feed (utf8 (safeChar (g.at k).base))).feed (csiNum (k + 2) 0x47)).cols = w.cols := by
     rw [cha_cols (k + 2) hbase.ground hbase.u8need (by omega) (by omega)]; exact hw1cols
   -- the marks land on the base
   rw [utf8s_feed (g.at k).marks hcha1.ground hcha1.u8need hcha1.u8acc]
-  have hfold := marks_fold (Q := { { P with x := k + 2, pending := false } with
-      x := k + 1, pending := false }) hrow (by rw [hwid]; decide)
-    (by omega : k < w.cols) (by omega : k < k + 2) (Or.inl ⟨rfl, rfl⟩)
-    (g.at k).marks ((w.feed (utf8 (safeChar (g.at k).base))).feed (csiNum (k + 2) 0x47)) []
-    (by simp) hmks (by simpa using hmle) hu2cols hcha1
+  have hfold :=
+    marks_fold (Q :=
+      {
+        { P with
+          x := k + 2, pending := false } with
+        x := k + 1, pending := false })
+      hrow
+      (by
+        rw [hwid]; decide)
+      (by omega : k < w.cols) (by omega : k < k + 2) (Or.inl ⟨rfl, rfl⟩) (g.at k).marks
+      ((w.feed (utf8 (safeChar (g.at k).base))).feed (csiNum (k + 2) 0x47)) [] (by simp) hmks
+      (by simpa using hmle) hu2cols hcha1
   rw [map_safeChar_id (g.at k).marks (fun x hx => (hmks x hx).2)] at hfold
   simp only [List.nil_append] at hfold
   -- exit the mark loop back to `g`
-  have hmg := matches_row_congr (g := g)
-    (fun j => by
-      by_cases hjk : j = k
-      · subst hjk; rw [at_withMarks_self g j (g.at j).marks hkg]
-      · exact at_withMarks_ne g k (g.at k).marks j hjk) hfold
+  have hmg :=
+    matches_row_congr (g := g)
+      (fun j => by
+        by_cases hjk : j = k
+        · subst hjk; rw [at_withMarks_self g j (g.at j).marks hkg]
+        · exact at_withMarks_ne g k (g.at k).marks j hjk)
+      hfold
   -- CHA(k+3): step past the pair to k+2
-  have hcha2 := cha_matches_lt (n := k + 3) hmg (by omega) (by omega)
-    (by rw [foldl_print_cols, hu2cols]; omega)
+  have hcha2 :=
+    cha_matches_lt (n := k + 3) hmg (by omega) (by omega)
+      (by
+        rw [foldl_print_cols, hu2cols]; omega)
   rw [show k + 3 - 1 = k + 2 from by omega] at hcha2
   exact hcha2
 
@@ -943,17 +1107,21 @@ branch — the marks attach *on* the cursor rather than one left of it. Row-exit
 `x = P.x` (unchanged, already `cols - 1`) with `pending := true`, left for the following
 `carriageReturn` to discard. -/
 theorem step_narrow_margin_marks {w : Vt} {P : PaintState} {g : Row} {k : Nat}
-    (hrow : RowOk w.cols g) (hm : Matches w P g k)
-    (hPx : P.x = k) (hpend : P.pending = false)
-    (hk : k < w.cols) (hmar : w.cols ≤ k + 1)
-    (hwid : (g.at k).width = 1) (hpen : (g.at k).pen = P.pen) :
+    (hrow : RowOk w.cols g) (hm : Matches w P g k) (hPx : P.x = k) (hpend : P.pending = false)
+    (hk : k < w.cols) (hmar : w.cols ≤ k + 1) (hwid : (g.at k).width = 1)
+    (hpen : (g.at k).pen = P.pen) :
     Matches (w.feed (cellText (g.at k))) { P with pending := true } g (k + 1) := by
-  have hkg : k < g.size := by rw [hrow.size]; omega
+  have hkg : k < g.size := by
+    rw [hrow.size]; omega
   have hmks := (hrow.cells k).marks
   have hmle := (hrow.cells k).marksLe
   have hrow0 : RowOk w.cols (withMarks g k []) :=
-    rowOk_withMarks hrow (by rw [hwid]; decide) (by simp) (by simp)
-  have hwid0 : ((withMarks g k []).at k).width = 1 := by rw [at_withMarks_self g k [] hkg]; exact hwid
+    rowOk_withMarks hrow
+      (by
+        rw [hwid]; decide)
+      (by simp) (by simp)
+  have hwid0 : ((withMarks g k []).at k).width = 1 := by
+    rw [at_withMarks_self g k [] hkg]; exact hwid
   have hmk0 : ((withMarks g k []).at k).marks = [] := by rw [at_withMarks_self g k [] hkg]
   have hpen0 : ((withMarks g k []).at k).pen = P.pen := by
     rw [at_withMarks_self g k [] hkg]; exact hpen
@@ -968,54 +1136,65 @@ theorem step_narrow_margin_marks {w : Vt} {P : PaintState} {g : Row} {k : Nat}
   have hct : cellText (g.at k) = utf8 (safeChar (g.at k).base) ++ utf8s (g.at k).marks := by rfl
   rw [hct, feed_append]
   have hucols : (w.feed (utf8 (safeChar (g.at k).base))).cols = w.cols := by
-    rw [utf8_feed (safeChar (g.at k).base) (safeChar_ge (g.at k).base).1
-      hm.ground hm.u8need hm.u8acc]
+    rw [utf8_feed (safeChar (g.at k).base) (safeChar_ge (g.at k).base).1 hm.ground hm.u8need
+        hm.u8acc]
     exact cols_print w (safeChar (g.at k).base)
   rw [utf8s_feed (g.at k).marks hbase.ground hbase.u8need hbase.u8acc]
-  have hfold := marks_fold (Q := { P with pending := true }) hrow
-    (by rw [hwid]; decide) hk (by omega : k < k + 1)
-    (Or.inr ⟨hPx, rfl⟩) (g.at k).marks
-    (w.feed (utf8 (safeChar (g.at k).base))) []
-    (by simp) hmks (by simpa using hmle) hucols hbase
+  have hfold :=
+    marks_fold (Q := { P with pending := true }) hrow
+      (by
+        rw [hwid]; decide)
+      hk (by omega : k < k + 1) (Or.inr ⟨hPx, rfl⟩) (g.at k).marks
+      (w.feed (utf8 (safeChar (g.at k).base))) [] (by simp) hmks (by simpa using hmle) hucols hbase
   rw [map_safeChar_id (g.at k).marks (fun x hx => (hmks x hx).2)] at hfold
   simp only [List.nil_append] at hfold
   refine matches_row_congr (fun j => ?_) hfold
   by_cases hjk : j = k
   · subst hjk; rw [at_withMarks_self g j (g.at j).marks hkg]
   · exact at_withMarks_ne g k (g.at k).marks j hjk
+
 /-- **A wide glyph whose shadow is the final column.** The pair fits (`k + 1 < cols`) but
 ends at the margin (`cols ≤ k + 2`), so the advance clamps to `cols - 1` and arms
 wrap-pending. The write is the same base-and-shadow as `step_wide`; only the cursor lands
 differently. -/
-theorem step_wide_margin {w : Vt} {P : PaintState} {g : Row} {k : Nat}
-    (hrow : RowOk w.cols g) (hm : Matches w P g k)
-    (hPx : P.x = k) (hpend : P.pending = false)
-    (hfit : k + 1 < w.cols) (hmar : w.cols ≤ k + 2)
-    (hwid : (g.at k).width = 2) (hmk : (g.at k).marks = [])
+theorem step_wide_margin {w : Vt} {P : PaintState} {g : Row} {k : Nat} (hrow : RowOk w.cols g)
+    (hm : Matches w P g k) (hPx : P.x = k) (hpend : P.pending = false) (hfit : k + 1 < w.cols)
+    (hmar : w.cols ≤ k + 2) (hwid : (g.at k).width = 2) (hmk : (g.at k).marks = [])
     (hpen : (g.at k).pen = P.pen) :
-    Matches (w.feed (cellText (g.at k))) { P with x := w.cols - 1, pending := true } g (k + 2) := by
+    Matches (w.feed (cellText (g.at k)))
+      { P with
+        x := w.cols - 1, pending := true }
+      g (k + 2) := by
   have hem : Emittable (g.at k).base := (hrow.cells k).base
   have hpc : w.printChar (g.at k).base = (g.at k).base :=
     printChar_id_of_ascii hm.ascii0 hm.ascii1 hem.1 hem.2
   have hcw : charWidth (g.at k).base = 2 := by
-    rw [(hrow.cells k).width (by rw [hwid]; omega), hwid]
+    rw [(hrow.cells k).width
+        (by
+          rw [hwid]; omega),
+      hwid]
   have hpd : w.cursor.pending = false := by rw [hm.pend, hpend]
   have hsh : g.at (k + 1) = Cell.shadow (g.at k) := (hrow.pairs k).1 hwid
   have hfeed : w.feed (cellText (g.at k)) = w.print (g.at k).base := by
     rw [cellText_feed (g.at k) hm.ground hm.u8need hm.u8acc, hmk, safeChar_of_emittable hem]
     rfl
   have hx : w.cursor.x = k := by rw [hm.curX, hPx]
-  have hfitc : w.cursor.x + 1 < w.cols := by rw [hx]; exact hfit
+  have hfitc : w.cursor.x + 1 < w.cols := by
+    rw [hx]; exact hfit
   have hwrite := print_wide_eq hpc hcw hm.ins hpd hfitc
-  have hcur := cursor_print_wide_margin hpc hcw hm.ins hpd hfitc (by rw [hx]; exact hmar)
+  have hcur :=
+    cursor_print_wide_margin hpc hcw hm.ins hpd hfitc
+      (by
+        rw [hx]; exact hmar)
   have hgs : w.cursor.y < w.clearPending.grid.size := by
     show w.cursor.y < w.grid.size
     rw [hm.curY]; exact hm.inGrid
   have hrl : w.cursor.x + 1 < (w.clearPending.getRow w.cursor.y).size := by
     show w.cursor.x + 1 < (w.getRow w.cursor.y).size
     rw [hm.curY, hm.rowLen, hx]; omega
-  have hpenW : ({ base := (g.at k).base, marks := [], width := 2, pen := w.pen } : Cell).pen
-      = (g.at k).pen := hm.pen.trans hpen.symm
+  have hpenW :
+    ({ base := (g.at k).base, marks := [], width := 2, pen := w.pen } : Cell).pen = (g.at k).pen :=
+    hm.pen.trans hpen.symm
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · rw [hfeed, hcur]
   · rw [hfeed, hcur]; show w.cursor.y = P.y; exact hm.curY
@@ -1030,17 +1209,19 @@ theorem step_wide_margin {w : Vt} {P : PaintState} {g : Row} {k : Nat}
   · rw [hfeed, g1_print]; exact hm.ascii1
   · show ((w.feed (cellText (g.at k))).getRow P.y).size = (w.feed (cellText (g.at k))).cols
     rw [hfeed, hwrite]
-    obtain ⟨hcl, -, hrw⟩ := write_shape2 w.clearPending w.cursor.x w.cursor.y
-      { base := (g.at k).base, marks := [], width := 2, pen := w.pen }
-      (Cell.shadow { base := (g.at k).base, marks := [], width := 2, pen := w.pen }) 2 hgs
+    obtain ⟨hcl, -, hrw⟩ :=
+      write_shape2 w.clearPending w.cursor.x w.cursor.y
+        { base := (g.at k).base, marks := [], width := 2, pen := w.pen }
+        (Cell.shadow { base := (g.at k).base, marks := [], width := 2, pen := w.pen }) 2 hgs
     rw [hcl, hrw P.y]
     show (w.getRow P.y).size = w.cols
     exact hm.rowLen
   · show P.y < (w.feed (cellText (g.at k))).grid.size
     rw [hfeed, hwrite]
-    obtain ⟨-, hgz, -⟩ := write_shape2 w.clearPending w.cursor.x w.cursor.y
-      { base := (g.at k).base, marks := [], width := 2, pen := w.pen }
-      (Cell.shadow { base := (g.at k).base, marks := [], width := 2, pen := w.pen }) 2 hgs
+    obtain ⟨-, hgz, -⟩ :=
+      write_shape2 w.clearPending w.cursor.x w.cursor.y
+        { base := (g.at k).base, marks := [], width := 2, pen := w.pen }
+        (Cell.shadow { base := (g.at k).base, marks := [], width := 2, pen := w.pen }) 2 hgs
     rw [hgz]
     show P.y < w.grid.size
     exact hm.inGrid
@@ -1052,28 +1233,52 @@ theorem step_wide_margin {w : Vt} {P : PaintState} {g : Row} {k : Nat}
     show (w.feed (cellText (g.at k))).getCell j P.y = g.at j
     rw [hfeed, hwrite, getCell_printAdvance, show P.y = w.cursor.y from hm.curY.symm]
     rcases Nat.lt_or_ge j k with hjk | hjk
-    · have hcellsW : ∀ i, i < k →
-          ((w.clearPending.putCell w.cursor.x w.cursor.y { base := (g.at k).base, marks := [], width := 2, pen := w.pen }).putCell
-            (w.cursor.x + 1) w.cursor.y (Cell.shadow { base := (g.at k).base, marks := [], width := 2, pen := w.pen })).getCell i w.cursor.y = g.at i := by
+    · have hcellsW :
+        ∀ i,
+          i < k →
+            ((w.clearPending.putCell w.cursor.x w.cursor.y
+                        { base := (g.at k).base, marks := [], width := 2, pen := w.pen }).putCell
+                    (w.cursor.x + 1) w.cursor.y
+                    (Cell.shadow
+                      { base := (g.at k).base, marks := [], width := 2, pen := w.pen })).getCell
+                i w.cursor.y =
+              g.at i := by
         intro i hi
-        show (((w.clearPending.putCell w.cursor.x w.cursor.y { base := (g.at k).base, marks := [], width := 2, pen := w.pen }).putCell
-          (w.cursor.x + 1) w.cursor.y (Cell.shadow { base := (g.at k).base, marks := [], width := 2, pen := w.pen })).getRow w.cursor.y).at i = g.at i
-        rw [at_putCell_ne _ _ _ _ i (by omega) (by rw [grid_size_putCell]; exact hgs),
+        show
+          (((w.clearPending.putCell w.cursor.x w.cursor.y
+                          { base := (g.at k).base, marks := [], width := 2, pen := w.pen }).putCell
+                      (w.cursor.x + 1) w.cursor.y
+                      (Cell.shadow
+                        { base := (g.at k).base, marks := [], width := 2, pen := w.pen })).getRow
+                  w.cursor.y).at
+              i =
+            g.at i
+        rw [at_putCell_ne _ _ _ _ i (by omega)
+            (by
+              rw [grid_size_putCell]; exact hgs),
           at_putCell_ne _ _ _ _ i (by omega) hgs]
         show w.getCell i w.cursor.y = g.at i
         rw [hm.curY]
         exact hm.cells i hi
-      have hgsW : w.cursor.y <
-          ((w.clearPending.putCell w.cursor.x w.cursor.y { base := (g.at k).base, marks := [], width := 2, pen := w.pen }).putCell
-            (w.cursor.x + 1) w.cursor.y (Cell.shadow { base := (g.at k).base, marks := [], width := 2, pen := w.pen })).grid.size := by
+      have hgsW :
+        w.cursor.y <
+          ((w.clearPending.putCell w.cursor.x w.cursor.y
+                  { base := (g.at k).base, marks := [], width := 2, pen := w.pen }).putCell
+              (w.cursor.x + 1) w.cursor.y
+              (Cell.shadow
+                { base := (g.at k).base, marks := [], width := 2, pen := w.pen })).grid.size := by
         rw [grid_size_putCell, grid_size_putCell]; exact hgs
-      exact mend_keeps_prefix
-        (u := (w.clearPending.putCell w.cursor.x w.cursor.y { base := (g.at k).base, marks := [], width := 2, pen := w.pen }).putCell
-          (w.cursor.x + 1) w.cursor.y (Cell.shadow { base := (g.at k).base, marks := [], width := 2, pen := w.pen }))
-        hrow hcellsW hm.frontier hgsW j hjk
+      exact
+        mend_keeps_prefix (u :=
+          (w.clearPending.putCell w.cursor.x w.cursor.y
+                { base := (g.at k).base, marks := [], width := 2, pen := w.pen }).putCell
+            (w.cursor.x + 1) w.cursor.y
+            (Cell.shadow { base := (g.at k).base, marks := [], width := 2, pen := w.pen }))
+          hrow hcellsW hm.frontier hgsW j hjk
     · rw [hx] at hrl ⊢
-      obtain ⟨h0, h1⟩ := getCell_write_mendRow_wide w.clearPending k w.cursor.y
-        { base := (g.at k).base, marks := [], width := 2, pen := w.pen } rfl hgs hrl
+      obtain ⟨h0, h1⟩ :=
+        getCell_write_mendRow_wide w.clearPending k w.cursor.y
+          { base := (g.at k).base, marks := [], width := 2, pen := w.pen } rfl hgs hrl
       rcases Nat.lt_or_ge j (k + 1) with hj1 | hj1
       · have hjk0 : j = k := by omega
         subst hjk0
@@ -1089,20 +1294,28 @@ but the pair ends at the margin (`cols ≤ k + 2`): the base clamps (via `step_w
 the first `CHA(k+2)` still parks in range at `k + 1 = cols - 1`, and the trailing `CHA(k+3)`
 addresses `cols` and so **clamps** to `cols - 1` rather than reaching `k + 2`. Row-exit:
 `x = cols - 1`, `pending := false` (the trailing `CHA` cleared it). -/
-theorem step_wide_margin_marks {w : Vt} {P : PaintState} {g : Row} {k : Nat}
-    (hrow : RowOk w.cols g) (hm : Matches w P g k)
-    (hPx : P.x = k) (hpend : P.pending = false)
-    (hfit : k + 1 < w.cols) (hmar : w.cols ≤ k + 2) (hcb : k + 3 < 65535)
-    (hwid : (g.at k).width = 2) (hpen : (g.at k).pen = P.pen) :
-    Matches (w.feed (utf8 (safeChar (g.at k).base) ++ csiNum (k + 2) 0x47
-        ++ utf8s (g.at k).marks ++ csiNum (k + 3) 0x47))
-      { P with x := w.cols - 1, pending := false } g (k + 2) := by
-  have hkg : k < g.size := by rw [hrow.size]; omega
+theorem step_wide_margin_marks {w : Vt} {P : PaintState} {g : Row} {k : Nat} (hrow : RowOk w.cols g)
+    (hm : Matches w P g k) (hPx : P.x = k) (hpend : P.pending = false) (hfit : k + 1 < w.cols)
+    (hmar : w.cols ≤ k + 2) (hcb : k + 3 < 65535) (hwid : (g.at k).width = 2)
+    (hpen : (g.at k).pen = P.pen) :
+    Matches
+      (w.feed
+        (utf8 (safeChar (g.at k).base) ++ csiNum (k + 2) 0x47 ++ utf8s (g.at k).marks ++
+          csiNum (k + 3) 0x47))
+      { P with
+        x := w.cols - 1, pending := false }
+      g (k + 2) := by
+  have hkg : k < g.size := by
+    rw [hrow.size]; omega
   have hmks := (hrow.cells k).marks
   have hmle := (hrow.cells k).marksLe
   have hrow0 : RowOk w.cols (withMarks g k []) :=
-    rowOk_withMarks hrow (by rw [hwid]; decide) (by simp) (by simp)
-  have hwid0 : ((withMarks g k []).at k).width = 2 := by rw [at_withMarks_self g k [] hkg]; exact hwid
+    rowOk_withMarks hrow
+      (by
+        rw [hwid]; decide)
+      (by simp) (by simp)
+  have hwid0 : ((withMarks g k []).at k).width = 2 := by
+    rw [at_withMarks_self g k [] hkg]; exact hwid
   have hmk0 : ((withMarks g k []).at k).marks = [] := by rw [at_withMarks_self g k [] hkg]
   have hpen0 : ((withMarks g k []).at k).pen = P.pen := by
     rw [at_withMarks_self g k [] hkg]; exact hpen
@@ -1116,31 +1329,44 @@ theorem step_wide_margin_marks {w : Vt} {P : PaintState} {g : Row} {k : Nat}
   rw [hbtext] at hbase
   rw [feed_append, feed_append, feed_append]
   have hw1cols : (w.feed (utf8 (safeChar (g.at k).base))).cols = w.cols := by
-    rw [utf8_feed (safeChar (g.at k).base) (safeChar_ge (g.at k).base).1
-      hm.ground hm.u8need hm.u8acc]
+    rw [utf8_feed (safeChar (g.at k).base) (safeChar_ge (g.at k).base).1 hm.ground hm.u8need
+        hm.u8acc]
     exact cols_print w (safeChar (g.at k).base)
   -- CHA(k+2) still lands in range: k+1 = cols-1 < cols
-  have hcha1 := cha_matches_lt (n := k + 2) hbase (by omega) (by omega)
-    (by rw [hw1cols]; omega)
+  have hcha1 :=
+    cha_matches_lt (n := k + 2) hbase (by omega) (by omega)
+      (by
+        rw [hw1cols]; omega)
   rw [show k + 2 - 1 = k + 1 from by omega] at hcha1
-  have hu2cols : ((w.feed (utf8 (safeChar (g.at k).base))).feed (csiNum (k + 2) 0x47)).cols
-      = w.cols := by
+  have hu2cols :
+    ((w.feed (utf8 (safeChar (g.at k).base))).feed (csiNum (k + 2) 0x47)).cols = w.cols := by
     rw [cha_cols (k + 2) hbase.ground hbase.u8need (by omega) (by omega)]; exact hw1cols
   rw [utf8s_feed (g.at k).marks hcha1.ground hcha1.u8need hcha1.u8acc]
-  have hfold := marks_fold (Q := { { P with x := w.cols - 1, pending := true } with
-      x := k + 1, pending := false }) hrow (by rw [hwid]; decide)
-    (by omega : k < w.cols) (by omega : k < k + 2) (Or.inl ⟨rfl, rfl⟩)
-    (g.at k).marks ((w.feed (utf8 (safeChar (g.at k).base))).feed (csiNum (k + 2) 0x47)) []
-    (by simp) hmks (by simpa using hmle) hu2cols hcha1
+  have hfold :=
+    marks_fold (Q :=
+      {
+        { P with
+          x := w.cols - 1, pending := true } with
+        x := k + 1, pending := false })
+      hrow
+      (by
+        rw [hwid]; decide)
+      (by omega : k < w.cols) (by omega : k < k + 2) (Or.inl ⟨rfl, rfl⟩) (g.at k).marks
+      ((w.feed (utf8 (safeChar (g.at k).base))).feed (csiNum (k + 2) 0x47)) [] (by simp) hmks
+      (by simpa using hmle) hu2cols hcha1
   rw [map_safeChar_id (g.at k).marks (fun x hx => (hmks x hx).2)] at hfold
   simp only [List.nil_append] at hfold
-  have hmg := matches_row_congr (g := g)
-    (fun j => by
-      by_cases hjk : j = k
-      · subst hjk; rw [at_withMarks_self g j (g.at j).marks hkg]
-      · exact at_withMarks_ne g k (g.at k).marks j hjk) hfold
-  have hu3cols : ((g.at k).marks.foldl (fun w c => w.print (safeChar c))
-      ((w.feed (utf8 (safeChar (g.at k).base))).feed (csiNum (k + 2) 0x47))).cols = w.cols := by
+  have hmg :=
+    matches_row_congr (g := g)
+      (fun j => by
+        by_cases hjk : j = k
+        · subst hjk; rw [at_withMarks_self g j (g.at j).marks hkg]
+        · exact at_withMarks_ne g k (g.at k).marks j hjk)
+      hfold
+  have hu3cols :
+    ((g.at k).marks.foldl (fun w c => w.print (safeChar c))
+          ((w.feed (utf8 (safeChar (g.at k).base))).feed (csiNum (k + 2) 0x47))).cols =
+      w.cols := by
     rw [foldl_print_cols]; exact hu2cols
   -- CHA(k+3) addresses `cols`, so it clamps to cols-1
   have hcha2 := cha_matches (n := k + 3) hmg (by omega) (by omega)
@@ -1158,8 +1384,8 @@ threaded through. -/
 /-- `rowSlot` appends to the byte accumulator and its `(pen, index)` output ignores the
 bytes already accumulated. -/
 theorem rowSlot_split (B : Bytes) (p : Pen) (x : Nat) (c : Cell) :
-    (rowSlot (B, p, x) c).1 = B ++ (rowSlot ([], p, x) c).1
-      ∧ (rowSlot (B, p, x) c).2 = (rowSlot ([], p, x) c).2 := by
+    (rowSlot (B, p, x) c).1 = B ++ (rowSlot ([], p, x) c).1 ∧
+      (rowSlot (B, p, x) c).2 = (rowSlot ([], p, x) c).2 := by
   unfold rowSlot
   dsimp only
   by_cases hw : c.width == 0
@@ -1171,23 +1397,30 @@ theorem rowSlot_split (B : Bytes) (p : Pen) (x : Nat) (c : Cell) :
     · rw [ite_eq_right hp, ite_eq_right hp]; exact ⟨by simp [List.append_assoc], rfl⟩
 
 /-- …and therefore so does the whole fold. -/
-theorem rowSlot_fold_split : ∀ (cs : List Cell) (B : Bytes) (p : Pen) (x : Nat),
-    (cs.foldl rowSlot (B, p, x)).1 = B ++ (cs.foldl rowSlot ([], p, x)).1
-      ∧ (cs.foldl rowSlot (B, p, x)).2 = (cs.foldl rowSlot ([], p, x)).2
+theorem rowSlot_fold_split :
+    ∀ (cs : List Cell) (B : Bytes) (p : Pen) (x : Nat),
+      (cs.foldl rowSlot (B, p, x)).1 = B ++ (cs.foldl rowSlot ([], p, x)).1 ∧
+        (cs.foldl rowSlot (B, p, x)).2 = (cs.foldl rowSlot ([], p, x)).2
   | [], B, p, x => ⟨by simp, rfl⟩
   | c :: cs, B, p, x => by
     rw [List.foldl_cons, List.foldl_cons]
     obtain ⟨hb, hpx⟩ := rowSlot_split B p x c
-    have h0 := rowSlot_fold_split cs (rowSlot (B, p, x) c).1 (rowSlot (B, p, x) c).2.1
-      (rowSlot (B, p, x) c).2.2
-    have h1 := rowSlot_fold_split cs (rowSlot ([], p, x) c).1 (rowSlot ([], p, x) c).2.1
-      (rowSlot ([], p, x) c).2.2
+    have h0 :=
+      rowSlot_fold_split cs (rowSlot (B, p, x) c).1 (rowSlot (B, p, x) c).2.1
+        (rowSlot (B, p, x) c).2.2
+    have h1 :=
+      rowSlot_fold_split cs (rowSlot ([], p, x) c).1 (rowSlot ([], p, x) c).2.1
+        (rowSlot ([], p, x) c).2.2
     -- the one-step output is its own components (product eta), so `h0`/`h1` are about the
     -- same accumulators the goal folds over
-    rw [show ((rowSlot (B, p, x) c).1, (rowSlot (B, p, x) c).2.1, (rowSlot (B, p, x) c).2.2)
-        = rowSlot (B, p, x) c from rfl] at h0
-    rw [show ((rowSlot ([], p, x) c).1, (rowSlot ([], p, x) c).2.1, (rowSlot ([], p, x) c).2.2)
-        = rowSlot ([], p, x) c from rfl] at h1
+    rw [show
+        ((rowSlot (B, p, x) c).1, (rowSlot (B, p, x) c).2.1, (rowSlot (B, p, x) c).2.2) =
+          rowSlot (B, p, x) c
+        from rfl] at h0
+    rw [show
+        ((rowSlot ([], p, x) c).1, (rowSlot ([], p, x) c).2.1, (rowSlot ([], p, x) c).2.2) =
+          rowSlot ([], p, x) c
+        from rfl] at h1
     -- the (pen, index) after one step agree, so the two tails fold the same
     rw [congrArg Prod.fst hpx, congrArg Prod.snd hpx] at h0
     refine ⟨?_, ?_⟩
@@ -1198,8 +1431,8 @@ theorem rowSlot_fold_split : ∀ (cs : List Cell) (B : Bytes) (p : Pen) (x : Nat
 `n + 1`. This is how the row walk advances one column without ever materializing
 `g.toList`. -/
 theorem range_map_cons (g : Row) (n m : Nat) (hm : 0 < m) :
-    (List.range m).map (fun i => g.at (n + i))
-      = g.at n :: (List.range (m - 1)).map (fun i => g.at (n + 1 + i)) := by
+    (List.range m).map (fun i => g.at (n + i)) =
+      g.at n :: (List.range (m - 1)).map (fun i => g.at (n + 1 + i)) := by
   obtain ⟨m', rfl⟩ : ∃ m', m = m' + 1 := ⟨m - 1, by omega⟩
   rw [List.range_succ_eq_map, List.map_cons, List.map_map]
   simp only [Nat.add_zero, Nat.add_sub_cancel]
@@ -1228,15 +1461,15 @@ theorem foldl_rowSlot_range (g : Row) (acc : Bytes × Pen × Nat) :
 /-- The optional `SGR` `rowSlot` emits before a cell whose pen differs from the one in
 effect: either empty (pens match) or `penSgr`, and in both cases the receiver's pen ends at
 the cell's. Wraps `step_pen` so the row walk need not case on the pen at every cell. -/
-theorem pen_prefix_matches {w : Vt} {P : PaintState} {g : Row} {k : Nat}
-    (hm : Matches w P g k) (c : Cell) :
-    Matches (w.feed (if c.pen == P.pen then ([] : Bytes) else penSgr c.pen))
-      { P with pen := c.pen } g k := by
+theorem pen_prefix_matches {w : Vt} {P : PaintState} {g : Row} {k : Nat} (hm : Matches w P g k)
+    (c : Cell) :
+    Matches (w.feed (if c.pen == P.pen then ([] : Bytes) else penSgr c.pen)) { P with pen := c.pen }
+      g k := by
   by_cases hpe : c.pen == P.pen
   · rw [ite_eq_left hpe]
     rw [show (w.feed ([] : Bytes)) = w from rfl]
     rw [show ({ P with pen := c.pen } : PaintState) = P from by
-      rw [beq_iff_eq] at hpe; rw [hpe]]
+        rw [beq_iff_eq] at hpe; rw [hpe]]
     exact hm
   · rw [ite_eq_right hpe]
     exact step_pen hm c.pen
@@ -1244,8 +1477,8 @@ theorem pen_prefix_matches {w : Vt} {P : PaintState} {g : Row} {k : Nat}
 /-! ### `rowSlot`'s output per cell shape, folding from empty bytes. -/
 
 theorem rowSlot_eq_narrow (c : Cell) (p : Pen) (x : Nat) (hw : c.width = 1) :
-    rowSlot ([], p, x) c
-      = ((if c.pen == p then [] else penSgr c.pen) ++ cellText c, c.pen, x + 1) := by
+    rowSlot ([], p, x) c =
+      ((if c.pen == p then [] else penSgr c.pen) ++ cellText c, c.pen, x + 1) := by
   unfold rowSlot
   dsimp only
   rw [ite_eq_right (show ¬(c.width == 0) = true from by simp [hw]),
@@ -1254,10 +1487,10 @@ theorem rowSlot_eq_narrow (c : Cell) (p : Pen) (x : Nat) (hw : c.width = 1) :
   · rw [ite_eq_left hpe, ite_eq_left hpe]
   · rw [ite_eq_right hpe, ite_eq_right hpe]; simp
 
-theorem rowSlot_eq_wide_nomarks (c : Cell) (p : Pen) (x : Nat)
-    (hw : c.width = 2) (hmk : c.marks = []) :
-    rowSlot ([], p, x) c
-      = ((if c.pen == p then [] else penSgr c.pen) ++ cellText c, c.pen, x + 1) := by
+theorem rowSlot_eq_wide_nomarks (c : Cell) (p : Pen) (x : Nat) (hw : c.width = 2)
+    (hmk : c.marks = []) :
+    rowSlot ([], p, x) c =
+      ((if c.pen == p then [] else penSgr c.pen) ++ cellText c, c.pen, x + 1) := by
   unfold rowSlot
   dsimp only
   rw [ite_eq_right (show ¬(c.width == 0) = true from by simp [hw]),
@@ -1266,18 +1499,19 @@ theorem rowSlot_eq_wide_nomarks (c : Cell) (p : Pen) (x : Nat)
   · rw [ite_eq_left hpe, ite_eq_left hpe]
   · rw [ite_eq_right hpe, ite_eq_right hpe]; simp
 
-theorem rowSlot_eq_wide_marks (c : Cell) (p : Pen) (x : Nat)
-    (hw : c.width = 2) (hmk : c.marks ≠ []) :
-    rowSlot ([], p, x) c
-      = ((if c.pen == p then [] else penSgr c.pen)
-          ++ (utf8 (safeChar c.base) ++ csiNum (x + 2) 0x47 ++ utf8s c.marks
-            ++ csiNum (x + 3) 0x47), c.pen, x + 1) := by
+theorem rowSlot_eq_wide_marks (c : Cell) (p : Pen) (x : Nat) (hw : c.width = 2)
+    (hmk : c.marks ≠ []) :
+    rowSlot ([], p, x) c =
+      ((if c.pen == p then [] else penSgr c.pen) ++
+          (utf8 (safeChar c.base) ++ csiNum (x + 2) 0x47 ++ utf8s c.marks ++ csiNum (x + 3) 0x47),
+        c.pen, x + 1) := by
   unfold rowSlot
   dsimp only
   rw [ite_eq_right (show ¬(c.width == 0) = true from by simp [hw]),
-    ite_eq_left (show (c.width == 2 && !c.marks.isEmpty) = true from by
-      rcases List.exists_cons_of_ne_nil hmk with ⟨a, t, hcm⟩
-      rw [hw, hcm]; rfl)]
+    ite_eq_left
+      (show (c.width == 2 && !c.marks.isEmpty) = true from by
+        rcases List.exists_cons_of_ne_nil hmk with ⟨a, t, hcm⟩
+        rw [hw, hcm]; rfl)]
   by_cases hpe : c.pen == p
   · rw [ite_eq_left hpe, ite_eq_left hpe]
   · rw [ite_eq_right hpe, ite_eq_right hpe]; simp
@@ -1309,11 +1543,14 @@ theorem utf8s_cols {w : Vt} (ms : List Char) (hg : w.pstate = .ground) (hu : w.u
     (ha : w.u8acc = 0) : (w.feed (utf8s ms)).cols = w.cols := by
   rw [utf8s_feed ms hg hu ha, foldl_print_cols]
 
-theorem foldl_print_quiet : ∀ (l : List Char) (w : Vt),
-    w.pstate = .ground → w.u8need = 0 → w.u8acc = 0 →
-    (l.foldl (fun w c => w.print (safeChar c)) w).pstate = .ground
-      ∧ (l.foldl (fun w c => w.print (safeChar c)) w).u8need = 0
-      ∧ (l.foldl (fun w c => w.print (safeChar c)) w).u8acc = 0
+theorem foldl_print_quiet :
+    ∀ (l : List Char) (w : Vt),
+      w.pstate = .ground →
+        w.u8need = 0 →
+        w.u8acc = 0 →
+        (l.foldl (fun w c => w.print (safeChar c)) w).pstate = .ground ∧
+          (l.foldl (fun w c => w.print (safeChar c)) w).u8need = 0 ∧
+          (l.foldl (fun w c => w.print (safeChar c)) w).u8acc = 0
   | [], w, hg, hu, ha => ⟨hg, hu, ha⟩
   | a :: l, w, hg, hu, ha => by
     rw [List.foldl_cons]
@@ -1322,46 +1559,53 @@ theorem foldl_print_quiet : ∀ (l : List Char) (w : Vt),
 
 theorem utf8s_quiet (ms : List Char) {w : Vt} (hg : w.pstate = .ground) (hu : w.u8need = 0)
     (ha : w.u8acc = 0) :
-    (w.feed (utf8s ms)).pstate = .ground ∧ (w.feed (utf8s ms)).u8need = 0
-      ∧ (w.feed (utf8s ms)).u8acc = 0 := by
+    (w.feed (utf8s ms)).pstate = .ground ∧
+      (w.feed (utf8s ms)).u8need = 0 ∧ (w.feed (utf8s ms)).u8acc = 0 := by
   rw [utf8s_feed ms hg hu ha]; exact foldl_print_quiet ms w hg hu ha
 
 /-- The wide-with-marks branch's bytes preserve the column count. Each piece — the glyph, the
 two `CHA`s, the marks — does; threaded through the intermediate quiescent states. -/
-theorem dance_cols {w : Vt} (b : Char) (ms : List Char) (a a' : Nat)
-    (hg : w.pstate = .ground) (hu : w.u8need = 0) (ha : w.u8acc = 0)
-    (ha1 : 0 < a) (ha1' : a < 65535) (ha2 : 0 < a') (ha2' : a' < 65535) :
+theorem dance_cols {w : Vt} (b : Char) (ms : List Char) (a a' : Nat) (hg : w.pstate = .ground)
+    (hu : w.u8need = 0) (ha : w.u8acc = 0) (ha1 : 0 < a) (ha1' : a < 65535) (ha2 : 0 < a')
+    (ha2' : a' < 65535) :
     (w.feed (utf8 (safeChar b) ++ csiNum a 0x47 ++ utf8s ms ++ csiNum a' 0x47)).cols = w.cols := by
   have hb := (safeChar_ge b).1
   -- after the glyph
   have e1 : w.feed (utf8 (safeChar b)) = w.print (safeChar b) := utf8_feed (safeChar b) hb hg hu ha
   obtain ⟨hg1, hu1, ha1q⟩ := print_quiet (safeChar b) hg hu ha
-  have hgw1 : (w.feed (utf8 (safeChar b))).pstate = .ground := by rw [e1]; exact hg1
-  have huw1 : (w.feed (utf8 (safeChar b))).u8need = 0 := by rw [e1]; exact hu1
-  have hc1 : (w.feed (utf8 (safeChar b))).cols = w.cols := by rw [e1]; exact cols_print w (safeChar b)
+  have hgw1 : (w.feed (utf8 (safeChar b))).pstate = .ground := by
+    rw [e1]; exact hg1
+  have huw1 : (w.feed (utf8 (safeChar b))).u8need = 0 := by
+    rw [e1]; exact hu1
+  have hc1 : (w.feed (utf8 (safeChar b))).cols = w.cols := by
+    rw [e1]; exact cols_print w (safeChar b)
   -- after the first CHA
-  have e2 : (w.feed (utf8 (safeChar b))).feed (csiNum a 0x47)
-      = (w.feed (utf8 (safeChar b))).setCol (a - 1) := by
+  have e2 :
+    (w.feed (utf8 (safeChar b))).feed (csiNum a 0x47) =
+      (w.feed (utf8 (safeChar b))).setCol (a - 1) := by
     rw [e1]; exact cha_feed_eq a hg1 hu1 ha1 ha1'
   have hg2 : ((w.feed (utf8 (safeChar b))).feed (csiNum a 0x47)).pstate = .ground := by
     rw [e2, Linger.Core.Vt.ps_setCol, e1]; exact hg1
   have hu2 : ((w.feed (utf8 (safeChar b))).feed (csiNum a 0x47)).u8need = 0 := by
     rw [e2, Linger.Core.Vt.un_setCol, e1]; exact hu1
   have ha2q : ((w.feed (utf8 (safeChar b))).feed (csiNum a 0x47)).u8acc = 0 := by
-    rw [e2, show ((w.feed (utf8 (safeChar b))).setCol (a - 1)).u8acc
-        = (w.feed (utf8 (safeChar b))).u8acc from by rw [frame_setCol], e1]; exact ha1q
+    rw [e2,
+      show ((w.feed (utf8 (safeChar b))).setCol (a - 1)).u8acc = (w.feed (utf8 (safeChar b))).u8acc
+        from by rw [frame_setCol],
+      e1];
+    exact ha1q
   have hc2 : ((w.feed (utf8 (safeChar b))).feed (csiNum a 0x47)).cols = w.cols := by
     rw [cha_cols a hgw1 huw1 ha1 ha1', hc1]
   -- after the marks
-  have hg3 : (((w.feed (utf8 (safeChar b))).feed (csiNum a 0x47)).feed (utf8s ms)).pstate = .ground
-      ∧ (((w.feed (utf8 (safeChar b))).feed (csiNum a 0x47)).feed (utf8s ms)).u8need = 0
-      ∧ (((w.feed (utf8 (safeChar b))).feed (csiNum a 0x47)).feed (utf8s ms)).u8acc = 0 :=
+  have hg3 :
+    (((w.feed (utf8 (safeChar b))).feed (csiNum a 0x47)).feed (utf8s ms)).pstate = .ground ∧
+      (((w.feed (utf8 (safeChar b))).feed (csiNum a 0x47)).feed (utf8s ms)).u8need = 0 ∧
+      (((w.feed (utf8 (safeChar b))).feed (csiNum a 0x47)).feed (utf8s ms)).u8acc = 0 :=
     utf8s_quiet ms hg2 hu2 ha2q
-  have hc3 : (((w.feed (utf8 (safeChar b))).feed (csiNum a 0x47)).feed (utf8s ms)).cols = w.cols := by
+  have hc3 :
+    (((w.feed (utf8 (safeChar b))).feed (csiNum a 0x47)).feed (utf8s ms)).cols = w.cols := by
     rw [utf8s_cols ms hg2 hu2 ha2q, hc2]
   -- after the last CHA
-  rw [feed_append, feed_append, feed_append,
-    cha_cols a' hg3.1 hg3.2.1 ha2 ha2', hc3]
-
+  rw [feed_append, feed_append, feed_append, cha_cols a' hg3.1 hg3.2.1 ha2 ha2', hc3]
 
 end Linger.Core.Render

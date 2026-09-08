@@ -1,4 +1,5 @@
 import Linger.Core.Wire
+
 /-! # Wire unit tests — concrete bytes the theorems quantify over
 
 The theorems say the codec is correct for all inputs; these pin the
@@ -18,8 +19,7 @@ the freeze. -/
 example : encode (.input [0x68, 0x69]) = [0, 2, 0, 0, 0, 0x68, 0x69] := by decide
 
 /-- Golden frame: `attach 80×24`. cols/rows are LE u32s in the payload. -/
-example : encode (.attach 80 24)
-    = [3, 8, 0, 0, 0, 80, 0, 0, 0, 24, 0, 0, 0] := by decide
+example : encode (.attach 80 24) = [3, 8, 0, 0, 0, 80, 0, 0, 0, 24, 0, 0, 0] := by decide
 
 /-- Nullary verb: header only. -/
 example : encode .kill = [5, 0, 0, 0, 0] := by decide
@@ -29,13 +29,15 @@ delivers exactly the same messages as one-shot decoding. -/
 example :
     (let bytes := encode (.attach 80 24) ++ encode (.input [1, 2, 3]) ++ encode .kill
      let oneShot := (decode bytes).2
-     let byteWise := bytes.foldl
-       (fun (acc : Decoder × List Msg) b =>
-         let (d, ms) := acc.1.feed [b]
-         (d, acc.2 ++ ms))
-       ({}, [])
-     byteWise.2 == oneShot
-       && byteWise.1.buf.isEmpty && !byteWise.1.errored) = true := by native_decide
+      let byteWise :=
+        bytes.foldl
+          (fun (acc : Decoder × List Msg) b =>
+            let (d, ms) := acc.1.feed [b]
+            (d, acc.2 ++ ms))
+          ({}, [])
+      byteWise.2 == oneShot && byteWise.1.buf.isEmpty && !byteWise.1.errored) =
+      true := by
+  native_decide
 
 /-- Fixed-size chunker for the §Stream test (7 never divides a frame
 boundary in the stream below). -/
@@ -70,8 +72,9 @@ example :
 /-- An unassigned tag (99) is delivered as `.unknown`, payload intact,
 and the frame after it still parses — a newer peer cannot desync us. -/
 example :
-    ((decode ([99, 3, 0, 0, 0, 7, 8, 9] ++ encode .kill)).2
-      == [.unknown 99 [7, 8, 9], .kill]) = true := by native_decide
+    ((decode ([99, 3, 0, 0, 0, 7, 8, 9] ++ encode .kill)).2 == [.unknown 99 [7, 8, 9], .kill]) =
+      true := by
+  native_decide
 
 /-- A partial frame is retained, not delivered: 5-byte header claiming
 4 payload bytes, only 2 present. -/
@@ -81,12 +84,14 @@ example :
 
 /-- Structured fields survive the trip. -/
 example : (decode (encode (.resize 213 58))).2 == [.resize 213 58] := by native_decide
+
 example : (decode (encode (.exited 127))).2 == [.exited 127] := by native_decide
 
 /-- Golden frame: `screen` (capture) is tag 16, nullary — frozen-append, so
 16 is `.screen` forever (specs/agent-cli.md). And it round-trips as itself,
 not as `.unknown 16`. -/
 example : encode .screen = [16, 0, 0, 0, 0] := by decide
+
 example : (decode (encode .screen)).2 == [.screen] := by native_decide
 
 end Linger.Core.Wire.Tests

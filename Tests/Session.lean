@@ -30,8 +30,7 @@ def s0 : State := { vt := Vt.Vt.init 20 5, metaKv := [("name", "t")] }
 /-- Run a list of events, collecting effects — the Core `run` (so every
 scenario below concretely pins its state threading + effect order),
 with the test-friendly argument order. -/
-def run (evs : List Event) (s : State := s0) : State × List Effect :=
-  Linger.Core.Session.run s evs
+def run (evs : List Event) (s : State := s0) : State × List Effect := Linger.Core.Session.run s evs
 
 def hasEffect (effs : List Effect) (p : Effect → Bool) : Bool := effs.any p
 
@@ -46,10 +45,15 @@ example :
 
 /-- Keystrokes are forwarded to the pty verbatim, not interpreted. -/
 example :
-    (let (_, effs) := run [.connected 1, .bytes 1 (encode (.attach 80 24)),
-                           .bytes 1 (encode (.input [104, 105]))]
-     hasEffect effs (fun e => match e with
-       | .writePty [104, 105] => true | _ => false)) = true := by native_decide
+    (let (_, effs) :=
+        run [.connected 1, .bytes 1 (encode (.attach 80 24)), .bytes 1 (encode (.input [104, 105]))]
+     hasEffect effs
+        (fun e =>
+          match e with
+          | .writePty [104, 105] => true
+          | _ => false)) =
+      true := by
+  native_decide
 
 /-- pty output reaches the emulator AND every attached client — but a
 detached session still advances (§Detach, executable form). -/
@@ -62,24 +66,36 @@ example :
        && ((s1.vt.getRow 0).toList.take 5 == (s2.vt.getRow 0).toList.take 5)) = true := by
   native_decide
 
-
 def ptyWrites (effs : List Effect) : List (List UInt8) :=
-  effs.filterMap (fun e => match e with | .writePty bs => some bs | _ => none)
+  effs.filterMap
+    (fun e =>
+      match e with
+      | .writePty bs => some bs
+      | _ => none)
 
 /-- DA1 is owned once with zero, one, or two clients: the reply stream is
 identical and no presentation output frame leaks the request. -/
 example :
     (let query := [ESC, 0x5B, 0x63]
      let one : State := { s0 with clients := [{ id := 1, attached := true }] }
-     let two : State := { s0 with clients := [{ id := 1, attached := true },
-                                               { id := 2, attached := true }] }
-     let rz := step s0 (.ptyOut query)
-     let r1 := step one (.ptyOut query)
-     let r2 := step two (.ptyOut query)
-     ptyWrites rz.2 == [da1Reply] && ptyWrites r1.2 == [da1Reply] &&
-       ptyWrites r2.2 == [da1Reply] &&
-       !hasEffect r1.2 (fun e => match e with | .send _ (.output _) => true | _ => false) &&
-       !hasEffect r2.2 (fun e => match e with | .send _ (.output _) => true | _ => false)) = true := by
+      let two : State :=
+        { s0 with clients := [{ id := 1, attached := true }, { id := 2, attached := true }] }
+      let rz := step s0 (.ptyOut query)
+      let r1 := step one (.ptyOut query)
+      let r2 := step two (.ptyOut query)
+      ptyWrites rz.2 == [da1Reply] && ptyWrites r1.2 == [da1Reply] &&
+        ptyWrites r2.2 == [da1Reply] &&
+        !hasEffect r1.2
+            (fun e =>
+              match e with
+              | .send _ (.output _) => true
+              | _ => false) &&
+        !hasEffect r2.2
+            (fun e =>
+              match e with
+              | .send _ (.output _) => true
+              | _ => false)) =
+      true := by
   native_decide
 
 /-- A query split across pty reads persists in the sole scanner and replies
@@ -114,20 +130,27 @@ example :
 /-- kill: child killed, checkpoint dropped, daemon exits. -/
 example :
     (let (_, effs) := run [.connected 1, .bytes 1 (encode .kill)]
-     effs.take 3 == [.killChild, .dropCheckpoint, .exit]
-       || (hasEffect effs (· == .killChild) && hasEffect effs (· == .exit)
-             && hasEffect effs (· == .dropCheckpoint))) = true := by native_decide
+     effs.take 3 == [.killChild, .dropCheckpoint, .exit] ||
+        (hasEffect effs (· == .killChild) && hasEffect effs (· == .exit) &&
+          hasEffect effs (· == .dropCheckpoint))) =
+      true := by
+  native_decide
 
 /-- info replies with meta and labels; labels round-trip. -/
 example :
-    (let (_, effs) := run [.connected 1,
-                           .bytes 1 (encode (.labelSet "env=dev".toUTF8.toList)),
-                           .bytes 1 (encode .info)]
-     hasEffect effs (fun e => match e with
-       | .send 1 (.infoReply bs) =>
-         let txt := String.fromUTF8? (ByteArray.mk bs.toArray) |>.getD ""
-         (txt.splitOn "label.env\tdev").length ≥ 2
-       | _ => false)) = true := by native_decide
+    (let (_, effs) :=
+        run
+          [.connected 1, .bytes 1 (encode (.labelSet "env=dev".toUTF8.toList)),
+            .bytes 1 (encode .info)]
+     hasEffect effs
+        (fun e =>
+          match e with
+          | .send 1 (.infoReply bs) =>
+            let txt := String.fromUTF8? (ByteArray.mk bs.toArray) |>.getD ""
+            (txt.splitOn "label.env\tdev").length ≥ 2
+          | _ => false)) =
+      true := by
+  native_decide
 
 /-! ### `detach-all` and label removal (pin-the-gaps items 2 and 3)
 
@@ -151,38 +174,52 @@ example :
 /-- **`unset` removes exactly the named key**: `env` goes, `role` stays. A whole-
 store clear would satisfy "env is gone" too, which is why `role` is here. -/
 example :
-    (let (s, _) := run [.connected 1,
-                        .bytes 1 (encode (.labelSet "env=dev".toUTF8.toList)),
-                        .bytes 1 (encode (.labelSet "role=web".toUTF8.toList)),
-                        .bytes 1 (encode (.labelUnset "env".toUTF8.toList))]
-     s.labels == [("role", "web")]) = true := by native_decide
+    (let (s, _) :=
+        run
+          [.connected 1, .bytes 1 (encode (.labelSet "env=dev".toUTF8.toList)),
+            .bytes 1 (encode (.labelSet "role=web".toUTF8.toList)),
+            .bytes 1 (encode (.labelUnset "env".toUTF8.toList))]
+     s.labels == [("role", "web")]) =
+      true := by
+  native_decide
 
 /-- **`clear` empties the store.** -/
 example :
-    (let (s, _) := run [.connected 1,
-                        .bytes 1 (encode (.labelSet "env=dev".toUTF8.toList)),
-                        .bytes 1 (encode (.labelSet "role=web".toUTF8.toList)),
-                        .bytes 1 (encode .labelClear)]
-     s.labels.isEmpty) = true := by native_decide
+    (let (s, _) :=
+        run
+          [.connected 1, .bytes 1 (encode (.labelSet "env=dev".toUTF8.toList)),
+            .bytes 1 (encode (.labelSet "role=web".toUTF8.toList)), .bytes 1 (encode .labelClear)]
+     s.labels.isEmpty) =
+      true := by
+  native_decide
 
 /-- Unsetting a key that was never set is a no-op, not an error: the store is
 untouched and no `.err` is sent, so `linger unset` is idempotent for a script. -/
 example :
-    (let (s, effs) := run [.connected 1,
-                           .bytes 1 (encode (.labelSet "env=dev".toUTF8.toList)),
-                           .bytes 1 (encode (.labelUnset "nosuch".toUTF8.toList))]
-     s.labels == [("env", "dev")]
-       && !hasEffect effs (fun e => match e with
-            | .send _ (.err _) => true | _ => false)) = true := by native_decide
+    (let (s, effs) :=
+        run
+          [.connected 1, .bytes 1 (encode (.labelSet "env=dev".toUTF8.toList)),
+            .bytes 1 (encode (.labelUnset "nosuch".toUTF8.toList))]
+     s.labels == [("env", "dev")] &&
+        !hasEffect effs
+            (fun e =>
+              match e with
+              | .send _ (.err _) => true
+              | _ => false)) =
+      true := by
+  native_decide
 
 /-- An unset with an **invalid UTF-8** payload decodes to `""`, which matches no
 key `.labelSet` can store (it rejects an empty key) — so the store survives. This
 is the branch `onMsg_labelUnset`'s `getD ""` exists for. -/
 example :
-    (let (s, _) := run [.connected 1,
-                        .bytes 1 (encode (.labelSet "env=dev".toUTF8.toList)),
-                        .bytes 1 (encode (.labelUnset [0xFF, 0xFE]))]
-     s.labels == [("env", "dev")]) = true := by native_decide
+    (let (s, _) :=
+        run
+          [.connected 1, .bytes 1 (encode (.labelSet "env=dev".toUTF8.toList)),
+            .bytes 1 (encode (.labelUnset [0xFF, 0xFE]))]
+     s.labels == [("env", "dev")]) =
+      true := by
+  native_decide
 
 /-! ### Agent observability fields (specs/agent-cli.md Step 1)
 
@@ -191,8 +228,7 @@ example :
 cursor — "look again only when it moved"). Pinned against the record text so a
 renamed or dropped key fails here, not in a consumer. -/
 
-def infoTxt (s : State) : String :=
-  String.fromUTF8? (ByteArray.mk (infoText s).toArray) |>.getD ""
+def infoTxt (s : State) : String := String.fromUTF8? (ByteArray.mk (infoText s).toArray) |>.getD ""
 
 /-- Geometry and cursor are reported, current as of the reply. -/
 example :
@@ -212,7 +248,9 @@ example :
 /-- `outseq` counts pty-output events — the agent's change cursor. -/
 example :
     (let (s2, _) := run [.ptyOut "a".toUTF8.toList, .ptyOut "b".toUTF8.toList]
-     ((infoTxt s2).splitOn "outseq\t2").length ≥ 2) = true := by native_decide
+     ((infoTxt s2).splitOn "outseq\t2").length ≥ 2) =
+      true := by
+  native_decide
 
 /-! ### capture (specs/agent-cli.md Step 2)
 
@@ -227,19 +265,31 @@ def eightLines : List UInt8 :=
 example :
     (let (s1, _) := run [.ptyOut eightLines]
      let (s2, effs) := run [.connected 9, .bytes 9 (encode .screen)] s1
-     let sent := (effs.filterMap (fun e => match e with
-       | .send 9 (.output bs) => some bs | _ => none)).flatten
-     -- the reply is exactly the screen: five lines, the first being line3…
-     sent == Render.screenText s1.vt
-       && sent.count 0x0A == 5
-       && ((String.fromUTF8? (ByteArray.mk sent.toArray)).getD "").startsWith "line3"
-       && hasEffect effs (fun e => match e with | .send 9 .done => true | _ => false)
-       -- …while the ring really holds more (non-vacuity: history shows 8)
-       && (Render.history s2.vt false).count 0x0A == 8
-       -- a capture is a look: unread before, read after, nothing behind
-       && unseen s1 && !unseen s2 && behind s2 == 0
-       -- and the screen itself is untouched by being looked at
-       && s2.vt.grid == s1.vt.grid && s2.labels == s1.labels) = true := by native_decide
+      let sent :=
+        (effs.filterMap
+            (fun e =>
+              match e with
+              | .send 9 (.output bs) => some bs
+              | _ => none)).flatten
+      -- the reply is exactly the screen: five lines, the first being line3…
+      sent == Render.screenText s1.vt && sent.count 0x0A == 5 &&
+        ((String.fromUTF8? (ByteArray.mk sent.toArray)).getD "").startsWith "line3" &&
+        hasEffect effs
+          (fun e =>
+            match e with
+            | .send 9 .done => true
+            | _ => false)
+        -- …while the ring really holds more (non-vacuity: history shows 8)
+        && (Render.history s2.vt false).count 0x0A == 8
+        -- a capture is a look: unread before, read after, nothing behind
+        && unseen s1 &&
+        !unseen s2 &&
+        behind s2 == 0
+        -- and the screen itself is untouched by being looked at
+        && s2.vt.grid == s1.vt.grid &&
+        s2.labels == s1.labels) =
+      true := by
+  native_decide
 
 /-- wait parks until the child exits, then everyone is told + closed
 and the daemon exits WITHOUT dropping the checkpoint... no — a clean
@@ -271,8 +321,13 @@ example :
 not buffered (§Bound at the session layer). -/
 example :
     (let (s, effs) := run [.connected 1, .bytes 1 [0, 1, 0, 4, 0]]
-     s.clients.isEmpty
-       && hasEffect effs (fun e => match e with | .close 1 => true | _ => false)) = true := by
+     s.clients.isEmpty &&
+        hasEffect effs
+          (fun e =>
+            match e with
+            | .close 1 => true
+            | _ => false)) =
+      true := by
   native_decide
 
 /-- Checkpoint cadence: dirty output + a late-enough tick ⇒ exactly one
@@ -291,8 +346,8 @@ example :
 
 end Linger.Core.Session.Tests
 
-
 namespace Abduco
+
 /-! Borrowed-from-abduco semantics (PLAN.md reference): read-only
 observers and newest-attacher-owns-the-size. -/
 
@@ -301,12 +356,22 @@ open Linger.Core.Wire (Msg encode)
 
 /-- An observer (attach 0×0) sees output but its keys go nowhere. -/
 example :
-    (let (_, effs) := Tests.run [.connected 1, .bytes 1 (encode (.attach 0 0)),
-                                 .bytes 1 (encode (.input [120])),
-                                 .ptyOut [104, 105]]
-     (!Tests.hasEffect effs (fun e => match e with | .writePty _ => true | _ => false))
-       && Tests.hasEffect effs (fun e => match e with
-            | .send 1 (.output _) => true | _ => false)) = true := by native_decide
+    (let (_, effs) :=
+        Tests.run
+          [.connected 1, .bytes 1 (encode (.attach 0 0)), .bytes 1 (encode (.input [120])),
+            .ptyOut [104, 105]]
+     (!Tests.hasEffect effs
+            (fun e =>
+              match e with
+              | .writePty _ => true
+              | _ => false)) &&
+        Tests.hasEffect effs
+          (fun e =>
+            match e with
+            | .send 1 (.output _) => true
+            | _ => false)) =
+      true := by
+  native_decide
 
 /-- The newest full attacher owns the size; an older client's resize
 is recorded but does not touch the pty. -/
@@ -406,20 +471,30 @@ example :
 /-- A zero dimension is never a size (0×0 is the observer marker on attach). -/
 example :
     (let (s, effs) := Tests.run [.connected 1, .bytes 1 (encode (.resize 0 30))]
-     s.vt.cols == 20
-       && Tests.hasEffect effs (fun e => match e with
-            | .send 1 (.err _) => true | _ => false)) = true := by native_decide
+     s.vt.cols == 20 &&
+        Tests.hasEffect effs
+          (fun e =>
+            match e with
+            | .send 1 (.err _) => true
+            | _ => false)) =
+      true := by
+  native_decide
 
 /-- `info` reports the attached-client count (abduco's session list
 marker, as data). -/
 example :
-    (let (_, effs) := Tests.run [.connected 1, .bytes 1 (encode (.attach 80 24)),
-                                 .connected 2, .bytes 2 (encode .info)]
-     Tests.hasEffect effs (fun e => match e with
-       | .send 2 (.infoReply bs) =>
-         let txt := (String.fromUTF8? (ByteArray.mk bs.toArray)).getD ""
-         (txt.splitOn "clients\t1").length ≥ 2
-       | _ => false)) = true := by native_decide
+    (let (_, effs) :=
+        Tests.run
+          [.connected 1, .bytes 1 (encode (.attach 80 24)), .connected 2, .bytes 2 (encode .info)]
+     Tests.hasEffect effs
+        (fun e =>
+          match e with
+          | .send 2 (.infoReply bs) =>
+            let txt := (String.fromUTF8? (ByteArray.mk bs.toArray)).getD ""
+            (txt.splitOn "clients\t1").length ≥ 2
+          | _ => false)) =
+      true := by
+  native_decide
 
 end Abduco
 
@@ -439,19 +514,25 @@ session's state.
 channel is documented rather than merely closed: the old `String`-interpolation shape is
 computed here and shown to produce one newline too many. -/
 
-def forged : State :=
-  { s0 with labels := [("x", "a\nstatus\tlive")] }
+def forged : State := { s0 with labels := [("x", "a\nstatus\tlive")] }
 
 /-- The value really does carry the two framing characters. -/
-example : ("a\nstatus\tlive".toList.any (fun c => c == '\n')
-    && "a\nstatus\tlive".toList.any (fun c => c == '\t')) = true := by native_decide
+example :
+    ("a\nstatus\tlive".toList.any (fun c => c == '\n') &&
+        "a\nstatus\tlive".toList.any (fun c => c == '\t')) =
+      true := by
+  native_decide
 
 /-- **The bug, pinned.** The old shape — `String.join` of `s!"{k}\t{v}\n"`, then
 `String.toUTF8` — emits one newline *more* than there are fields, which is exactly one
 forged record. -/
-example : ((String.join ((infoFields forged).map
-      (fun (kv : String × String) => s!"{kv.1}\t{kv.2}\n"))).toUTF8.toList).count 0x0A
-    = (infoFields forged).length + 1 := by native_decide
+example :
+    ((String.join
+              ((infoFields forged).map
+                (fun (kv : String × String) => s!"{kv.1}\t{kv.2}\n"))).toUTF8.toList).count
+        0x0A =
+      (infoFields forged).length + 1 := by
+  native_decide
 
 /-- **The fix.** One record per field, with the injected control characters replaced by
 U+FFFD on the way out. -/
@@ -465,8 +546,10 @@ example : (infoText forged).any (· == 0xEF) = true := by native_decide
 /-- **Boot caps restored labels at `maxLabels`** — the Bounded-at-boot gap,
 closed at the door (lean-modules Step 5): `.labelSet` enforces the cap per
 message, and a forged checkpoint's 70-label list can no longer boot past it. -/
-example : (State.boot (Vt.Vt.init 20 5)
-    ((List.range 70).map (fun i => (toString i, "v"))) []).labels.length
-      == maxLabels := by native_decide
+example :
+    (State.boot (Vt.Vt.init 20 5) ((List.range 70).map (fun i => (toString i, "v")))
+          []).labels.length ==
+      maxLabels := by
+  native_decide
 
 end Linger.Core.Session.Tests

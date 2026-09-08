@@ -90,9 +90,12 @@ a non-control byte. The bridge from the emitters' arithmetic to byte
 facts. -/
 theorem ofNat_no_ctl (m : Nat) (h20 : 0x20 ≤ m) (hlt : m < 256) (h7 : m ≠ 0x7F) :
     (UInt8.ofNat m) ≥ 0x20 ∧ (UInt8.ofNat m) ≠ 0x7F := by
-  have htn : (UInt8.ofNat m).toNat = m := by
-    simp [UInt8.toNat_ofNat', Nat.mod_eq_of_lt hlt]
-  refine ⟨UInt8.le_iff_toNat_le.mpr (by rw [htn]; simpa using h20), ?_⟩
+  have htn : (UInt8.ofNat m).toNat = m := by simp [UInt8.toNat_ofNat', Nat.mod_eq_of_lt hlt]
+  refine
+    ⟨UInt8.le_iff_toNat_le.mpr
+        (by
+          rw [htn]; simpa using h20),
+      ?_⟩
   intro hcon
   have := congrArg UInt8.toNat hcon
   rw [htn] at this
@@ -154,11 +157,10 @@ whereas a stuck `.csi` state swallows everything. `restore` emits only
 complete encodings, and it is pinned by the `Tests/Render.lean` fixtures
 (`replayEq` checks `u8need == 0`); the theorem is listed as open in
 specs/archive/bigger-theorems.md. -/
-def Ends (bs : Bytes) : Prop :=
-  ∀ v : Vt, v.pstate = .ground → (v.feed bs).pstate = .ground
+def Ends (bs : Bytes) : Prop := ∀ v : Vt, v.pstate = .ground → (v.feed bs).pstate = .ground
 
-theorem feed_cons (v : Vt) (x : UInt8) (xs : Bytes) :
-    v.feed (x :: xs) = (v.step x).feed xs := by simp [Vt.feed]
+theorem feed_cons (v : Vt) (x : UInt8) (xs : Bytes) : v.feed (x :: xs) = (v.step x).feed xs := by
+  simp [Vt.feed]
 
 theorem Ends.nil : Ends [] := fun _ h => h
 
@@ -195,9 +197,8 @@ structure StreamPred (P : Bytes → Prop) : Prop where
 
 namespace StreamPred
 
-theorem append3 {P : Bytes → Prop} (hP : StreamPred P) {a b c : Bytes}
-    (ha : P a) (hb : P b) (hc : P c) : P (a ++ b ++ c) :=
-  hP.append (hP.append ha hb) hc
+theorem append3 {P : Bytes → Prop} (hP : StreamPred P) {a b c : Bytes} (ha : P a) (hb : P b)
+    (hc : P c) : P (a ++ b ++ c) := hP.append (hP.append ha hb) hc
 
 theorem append4 {P : Bytes → Prop} (hP : StreamPred P) {a b c d : Bytes}
     (ha : P a) (hb : P b) (hc : P c) (hd : P d) : P (a ++ b ++ c ++ d) :=
@@ -1061,6 +1062,5 @@ theorem restore_quiesced (v : Vt) (cols rows : Nat) :
      exact ((paramBytes_digits _).append
        (ParamBytes.cons (by decide) (by decide) ParamBytes.nil)).append
        (paramBytes_digits _))
-
 
 end Linger.Core.Render

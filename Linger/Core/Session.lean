@@ -29,7 +29,9 @@ namespace Linger.Core.Session
 open Linger.Core.Wire (Msg)
 
 def maxClients : Nat := 16
+
 def maxLabels : Nat := 64
+
 def outputChunk : Nat := 65536
 
 structure Client where
@@ -101,9 +103,8 @@ forged checkpoint could carry any list and boot used to be the bypass. Over
 the cap, the first `maxLabels` survive (`.labelSet` appends at the end, so
 these are the oldest). `boot_wf` is the claim; composed with `run_wf`
 (`run_boot_wf`), every state the daemon can hold is well-formed. -/
-def State.boot (vt : Vt.Vt) (labels : List (String × String))
-    (metaKv : List (String × String)) : State :=
-  { vt, labels := labels.take maxLabels, metaKv }
+def State.boot (vt : Vt.Vt) (labels : List (String × String)) (metaKv : List (String × String)) :
+    State := { vt, labels := labels.take maxLabels, metaKv }
 
 /-- What the runtime feeds in. All byte payloads are `List UInt8`; the
 runtime converts at the fd boundary. -/
@@ -139,8 +140,7 @@ anything.
 One decode shared by both arms, so they cannot drift about what a key *is*: a
 `.labelSet` that decoded differently from `.labelUnset` would leave a label no
 `unset` could reach. -/
-def labelText (bs : List UInt8) : String :=
-  String.fromUTF8? (ByteArray.mk bs.toArray) |>.getD ""
+def labelText (bs : List UInt8) : String := String.fromUTF8? (ByteArray.mk bs.toArray) |>.getD ""
 
 /-! ## Helpers -/
 
@@ -155,8 +155,7 @@ decreasing_by
   simp [List.length_drop]
   omega
 
-def State.client? (s : State) (id : Nat) : Option Client :=
-  s.clients.find? (·.id == id)
+def State.client? (s : State) (id : Nat) : Option Client := s.clients.find? (·.id == id)
 
 def State.setClient (s : State) (c : Client) : State :=
   { s with clients := s.clients.map (fun c' => if c'.id == c.id then c else c') }
@@ -178,23 +177,24 @@ def behind (s : State) : Nat := s.outSeq - s.lookSeq
 `infoText` because the framing below is only unambiguous if no field contains a
 framing byte, and that is a claim about *these* — see `infoText_framing`. -/
 def infoFields (s : State) : List (String × String) :=
-  s.metaKv
-    ++ [("clients", toString (s.clients.filter (·.attached)).length)]
+  s.metaKv ++ [("clients", toString (s.clients.filter (·.attached)).length)]
     -- the observations `Status.classify` needs from the daemon; the rest
     -- (reachability, checkpoint loadability) only the caller can know
-    ++ [("unseen", toString (unseen s)), ("fresh", toString s.freshFlag),
-        ("behind", toString (behind s))]
+    ++
+    [("unseen", toString (unseen s)), ("fresh", toString s.freshFlag),
+      ("behind", toString (behind s))]
     -- what an agent needs to see the session (specs/agent-cli.md Step 1):
     -- geometry + cursor for `capture`, `alt` for "a full-screen app is live",
     -- `outseq` as the change cursor ("re-capture only when it moved"). Values
     -- are read at reply time, so they are current as of this `.info`.
-    ++ [("cols", toString s.vt.cols), ("rows", toString s.vt.rows),
-        ("cursorx", toString s.vt.cursor.x), ("cursory", toString s.vt.cursor.y),
-        ("alt", toString s.vt.altGrid.isSome), ("outseq", toString s.outSeq)]
-    ++ (match s.exited with
-        | some st => [("exit", toString st.toNat)]
-        | none => [])
-    ++ s.labels.map (fun (k, v) => (s!"label.{k}", v))
+    ++
+    [("cols", toString s.vt.cols), ("rows", toString s.vt.rows),
+      ("cursorx", toString s.vt.cursor.x), ("cursory", toString s.vt.cursor.y),
+      ("alt", toString s.vt.altGrid.isSome), ("outseq", toString s.outSeq)] ++
+    (match s.exited with
+    | some st => [("exit", toString st.toNat)]
+    | none => []) ++
+    s.labels.map (fun (k, v) => (s!"label.{k}", v))
 
 /-- Frame the fields as `k` TAB `v` LF records.
 
@@ -218,15 +218,16 @@ output unprovable — a `String` literal does not reduce in the kernel, so no th
 could see its bytes, which is exactly the argument in `Linger/Core/Render.lean`'s
 header. Building `List UInt8` directly fixes both at once. -/
 def infoText (s : State) : List UInt8 :=
-  (infoFields s).flatMap (fun (k, v) =>
-    Render.utf8s k.toList ++ [0x09] ++ Render.utf8s v.toList ++ [0x0A])
+  (infoFields s).flatMap
+    (fun (k, v) => Render.utf8s k.toList ++ [0x09] ++ Render.utf8s v.toList ++ [0x0A])
 
 /-- Resize the pty only on behalf of the size owner: the most recently
 attached client with a real terminal (abduco's rule — a read-only
 observer or an older mirror must not fight the active user's size). -/
 def sizeOwner (s : State) : Option Client :=
   (s.clients.filter (fun c => c.attached && c.sizer)).foldl
-    (fun best c => match best with
+    (fun best c =>
+      match best with
       | none => some c
       | some b => if c.seq ≥ b.seq then some c else some b)
     none
@@ -244,13 +245,13 @@ marker on attach, and a zero dimension is never a size. -/
 def controlResize (s : State) (c : Client) (cols rows : UInt32) : State × List Effect :=
   if (sizeOwner s).isSome then
     (s, [.send c.id (.err "an attached client owns the size".toUTF8.toList)])
-  else if cols == 0 || rows == 0 then
-    (s, [.send c.id (.err "size must be nonzero".toUTF8.toList)])
-  else if s.vt.cols == cols.toNat && s.vt.rows == rows.toNat then
-    (s, [.send c.id .done])
   else
-    ({ s with vt := s.vt.resize cols.toNat rows.toNat },
-     [.resizePty cols rows, .send c.id .done])
+    if cols == 0 || rows == 0 then (s, [.send c.id (.err "size must be nonzero".toUTF8.toList)])
+    else
+      if s.vt.cols == cols.toNat && s.vt.rows == rows.toNat then (s, [.send c.id .done])
+      else
+        ({ s with vt := s.vt.resize cols.toNat rows.toNat },
+          [.resizePty cols rows, .send c.id .done])
 
 def resizeEffects (s : State) (c : Client) : List Effect :=
   if (sizeOwner s).any (·.id == c.id) then [.resizePty c.cols c.rows] else []
@@ -279,8 +280,12 @@ def onMsg (s : State) (c : Client) (m : Msg) : State × List Effect :=
     -- 0×0 marks a read-only observer (abduco `-r`): it mirrors output
     -- but never owns the size and its input is dropped
     let sizer := cols != 0 && rows != 0
-    let c := { c with attached := true, sizer, seq := s.attachSeq, cols, rows }
-    let s := { s.setClient c with attachSeq := s.attachSeq + 1, lookSeq := s.outSeq }
+    let c :=
+      { c with
+        attached := true, sizer, seq := s.attachSeq, cols, rows }
+    let s :=
+      { s.setClient c with
+        attachSeq := s.attachSeq + 1, lookSeq := s.outSeq }
     -- resize only on a genuine size change. `Vt.resize` resets the scroll
     -- region and tab ruler (top/bot/tabs) unconditionally, so resizing at an
     -- unchanged size wiped a child's DECSTBM and custom tab stops from the
@@ -288,39 +293,38 @@ def onMsg (s : State) (c : Client) (m : Msg) : State × List Effect :=
     -- SIGWINCH, so the child is never nudged to re-establish them. A same-size
     -- reattach must therefore leave the emulator alone (restore-conformance
     -- Step 0 ledger item 1).
-    let s := if sizer && (s.vt.cols != cols.toNat || s.vt.rows != rows.toNat)
-             then { s with vt := s.vt.resize cols.toNat rows.toNat } else s
-    (s, resizeEffects s c
-          ++ outputMsgs c.id (Render.restore s.vt)
-          ++ (match s.exited with
-              | some st => [.send c.id (.exited st)]
-              | none => []))
+    let s :=
+      if sizer && (s.vt.cols != cols.toNat || s.vt.rows != rows.toNat) then
+        { s with vt := s.vt.resize cols.toNat rows.toNat }
+      else s
+    (s,
+      resizeEffects s c ++ outputMsgs c.id (Render.restore s.vt) ++
+        (match s.exited with
+        | some st => [.send c.id (.exited st)]
+        | none => []))
   | .input bytes =>
     -- attached observers are read-only; control connections (not
     -- attached, e.g. `linger send`) keep their input rights
-    if c.attached && !c.sizer then (s, [])
-    else (s, [.writePty bytes])
+    if c.attached && !c.sizer then (s, []) else (s, [.writePty bytes])
   | .resize cols rows =>
-    let c := { c with cols, rows }
+    let c :=
+      { c with
+        cols, rows }
     let s := s.setClient c
     if c.attached then
       -- only the newest real-terminal attacher owns the pty size
       if c.sizer && (sizeOwner s).any (·.id == c.id) then
-        ({ s with vt := s.vt.resize cols.toNat rows.toNat },
-         [.resizePty cols rows])
-      else
-        (s, [])
+        ({ s with vt := s.vt.resize cols.toNat rows.toNat }, [.resizePty cols rows])
+      else (s, [])
     else
       -- a control connection (`linger resize`): the named stage above owns
       -- the decision, and `controlResize_never_overrides` the invariant
       controlResize s c cols rows
   | .detachAll =>
-    (s, (s.clients.filter (·.attached) |>.map (fun c' => Effect.close c'.id))
-          ++ [.send c.id .done])
+    (s, (s.clients.filter (·.attached) |>.map (fun c' => Effect.close c'.id)) ++ [.send c.id .done])
   | .kill => (s, [.killChild, .dropCheckpoint, .exit])
   | .info => (s, [.send c.id (.infoReply (infoText s)), .send c.id .done])
-  | .history =>
-    (s, outputMsgs c.id (Render.history s.vt false) ++ [.send c.id .done])
+  | .history => (s, outputMsgs c.id (Render.history s.vt false) ++ [.send c.id .done])
   | .screen =>
     -- `linger capture`: the grid only, plain text. Delivering the current
     -- screen IS a look, so it catches the read mark up — after a capture,
@@ -328,8 +332,7 @@ def onMsg (s : State) (c : Client) (m : Msg) : State × List Effect :=
     -- from this moment (agent-cli Decision 1). `.info` must never do this
     -- (`ls` polls every daemon; a listing that marks everything read destroys
     -- the status column) and `.history` stays an export, not an observation.
-    ({ s with lookSeq := s.outSeq },
-     outputMsgs c.id (Render.screenText s.vt) ++ [.send c.id .done])
+    ({ s with lookSeq := s.outSeq }, outputMsgs c.id (Render.screenText s.vt) ++ [.send c.id .done])
   | .wait =>
     match s.exited with
     | some st => (s, [.send c.id (.exited st)])
@@ -342,8 +345,7 @@ def onMsg (s : State) (c : Client) (m : Msg) : State × List Effect :=
       else
         let v := String.intercalate "=" rest
         let labels := (s.labels.filter (·.1 != k)) ++ [(k, v)]
-        if labels.length > maxLabels then
-          (s, [.send c.id (.err "too many labels".toUTF8.toList)])
+        if labels.length > maxLabels then (s, [.send c.id (.err "too many labels".toUTF8.toList)])
         else ({ s with labels }, [.send c.id .done])
     | [] => (s, [.send c.id (.err "empty label".toUTF8.toList)])
   | .labelUnset k =>
@@ -361,8 +363,7 @@ def onMsg (s : State) (c : Client) (m : Msg) : State × List Effect :=
 The client record is re-read each round (attach mutates it); a message
 that closed the client stops affecting state. Named (not inline) so
 the preservation theorems can target it. -/
-def feedMsgs (id : Nat) (msgs : List Msg) (acc : State × List Effect) :
-    State × List Effect :=
+def feedMsgs (id : Nat) (msgs : List Msg) (acc : State × List Effect) : State × List Effect :=
   msgs.foldl
     (fun (acc : State × List Effect) m =>
       match acc.1.client? id with
@@ -377,17 +378,14 @@ def step (s : State) (ev : Event) : State × List Effect :=
   | .connected id =>
     if s.clients.length ≥ maxClients then
       (s, [.send id (.err "too many clients".toUTF8.toList), .close id])
-    else
-      ({ s with clients := s.clients ++ [{ id }] }, [])
+    else ({ s with clients := s.clients ++ [{ id }] }, [])
   | .bytes id chunk =>
     match s.client? id with
-    | none => (s, [])  -- late bytes from a dropped client
+    | none => (s, []) -- late bytes from a dropped client
     | some c =>
       let (dec, msgs) := c.decoder.feed chunk
-      if dec.errored then
-        (s.dropClient id, [.close id])
-      else
-        feedMsgs id msgs (s.setClient { c with decoder := dec }, [])
+      if dec.errored then (s.dropClient id, [.close id])
+      else feedMsgs id msgs (s.setClient { c with decoder := dec }, [])
   | .closed id =>
     -- checkpoint when the last attached client leaves (reboot-resume's
     -- main save point; detach itself must stay side-effect-free
@@ -396,22 +394,22 @@ def step (s : State) (ev : Event) : State × List Effect :=
     let s' := s.dropClient id
     if s.dirty && hadAttached && s'.clients.all (fun c => !c.attached) then
       ({ s' with dirty := false }, [.checkpoint])
-    else
-      (s', [])
+    else (s', [])
   | .ptyOut chunk =>
     let r := Terminal.feed s.vt s.scan chunk
-    ({ s with vt := r.vt, scan := r.scan, dirty := true,
-              outSeq := s.outSeq + 1,
-              lookSeq := if s.clients.any (·.attached) then s.outSeq + 1
-                         else s.lookSeq },
-     (if r.replies.isEmpty then [] else [.writePty r.replies]) ++
-       broadcast s r.visible)
+    ({ s with
+        vt := r.vt, scan := r.scan, dirty := true, outSeq := s.outSeq + 1,
+        lookSeq := if s.clients.any (·.attached) then s.outSeq + 1 else s.lookSeq },
+      (if r.replies.isEmpty then [] else [.writePty r.replies]) ++ broadcast s r.visible)
   | .childExited status =>
     let flushed := Terminal.finish s.scan
-    let s := { s with exited := some status, scan := flushed.2 }
+    let s :=
+      { s with
+        exited := some status, scan := flushed.2 }
     let flush := if flushed.1.isEmpty then [] else broadcast s flushed.1
-    let notify := s.clients.filter (fun c => c.attached || c.waiting)
-      |>.map (fun c => Effect.send c.id (.exited status))
+    let notify :=
+      s.clients.filter (fun c => c.attached || c.waiting) |>.map
+        (fun c => Effect.send c.id (.exited status))
     let closes := s.clients.map (fun c => Effect.close c.id)
     (s, flush ++ notify ++ closes ++ [.dropCheckpoint, .exit])
   | .tick now =>
@@ -419,10 +417,14 @@ def step (s : State) (ev : Event) : State × List Effect :=
     -- `let` before the `if` would hide the `if` from the proofs that `split`
     -- on this handler
     if s.dirty && now ≥ s.lastCkptMs + ckptIntervalMs then
-      ({ s with dirty := false, lastCkptMs := now,
-                freshFlag := s.tickOutSeq < s.outSeq, tickOutSeq := s.outSeq },
-       [.checkpoint])
-    else ({ s with freshFlag := s.tickOutSeq < s.outSeq, tickOutSeq := s.outSeq }, [])
+      ({ s with
+          dirty := false, lastCkptMs := now, freshFlag := s.tickOutSeq < s.outSeq,
+          tickOutSeq := s.outSeq },
+        [.checkpoint])
+    else
+      ({ s with
+          freshFlag := s.tickOutSeq < s.outSeq, tickOutSeq := s.outSeq },
+        [])
 
 /-- A whole event trace folded through `step`, effects in arrival
 order — the specification of the runtime's poll loop (which feeds one
