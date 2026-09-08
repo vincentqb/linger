@@ -1,0 +1,81 @@
+# Commit-time hygiene. Fast by construction — nothing here compiles Lean.
+#
+#   pre-commit  (this file)          seconds: whitespace, YAML, and the source-tree
+#                                   gates, which are `git grep` and `awk`
+#   CI (.github/workflows/ci.yml)   minutes: the build, the proofs, the shim smoke
+#                                   tests, and all ten pty suites
+#
+# An earlier version of this ran `./lake build Linger Theorems Tests` at commit time
+# and the whole of `./tests/e2e.sh` at push time. Both were the wrong tier: a commit
+# should cost a second, and a push should not cost six minutes. The build and the
+# suites belong on someone else's machine, which is what CI is for.
+#
+# Install once per clone:
+#
+#     uvx pre-commit install     # or: pre-commit install
+#
+# Run over everything (what CI does):
+#
+#     uvx pre-commit run --all-files
+#
+# NO RATCHET NUMBER APPEARS IN THIS FILE. `SHIM_CAP`, `HEARTBEAT_CAP`,
+# `RUNTIME_PARTIAL_CAP`, `E2E_PARTIAL_CAP` and the zero-Python and
+# `Tests/`-vs-`tests/` invariants all live in `tests/gates.sh`, which this calls and
+# which `tests/e2e.sh` and CI also call. A cap that can disagree between the hook and
+# the gate is worse than no hook.
+#
+# The framework is a dev tool, not a dependency: the config is YAML, the repo-local
+# hook is `language: script` pointing at shell, and nothing Python is tracked — so
+# `tests/gates.sh`'s zero-Python invariant still holds, and still checks itself.
+
+default_install_hook_types: [pre-commit]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      # Whitespace. `SCRATCHPAD.md` is append-only and `specs/archive/` is a set of
+      # closed records, but stripping a trailing space falsifies nothing in either —
+      # it is the CONTENT that is frozen, not the invisible characters.
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+      # A conflict marker or a merge stub reaching a commit is always a mistake.
+      - id: check-merge-conflict
+
+      # `check-case-conflict` is DELIBERATELY ABSENT. It fires on `Tests/` vs
+      # `tests/`, which is this repo's design, not an accident: `Tests/` is Lean unit
+      # fixtures, `tests/` is the shell orchestration (AGENTS.md). The blunt check
+      # cannot express "these two directories may coexist, but a file must not land in
+      # the wrong one" — `tests/gates.sh` does exactly that, and it is the check that
+      # actually catches the trap git falls into on a case-insensitive filesystem.
+
+      # `.github/workflows/ci.yml` — a malformed workflow fails silently on GitHub's
+      # side, which is the worst place to find out.
+      - id: check-yaml
+
+      # `lake`, `tests/*.sh` and `recipes/*.fish` are the executable surface; a script
+      # that lost its bit, or a shebang on a non-executable file, breaks quietly.
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
+
+      # Nothing here should ever be large or binary; a checkpoint fixture that escaped
+      # a temp dir would show up as one.
+      - id: check-added-large-files
+        args: [--maxkb=256]
+
+  - repo: local
+    hooks:
+      # The repo's own gates: purity of the pure core, the OS surface staying where
+      # AGENTS.md says it is, five ratchets, and the two structural invariants.
+      # Pure `git grep`/`grep`/`awk` — milliseconds, so it belongs at commit time
+      # rather than after a rebuild and ten pty suites.
+      - id: gates
+        name: source-tree gates (purity, OS surface, five ratchets)
+        entry: tests/gates.sh
+        language: script
+        pass_filenames: false
+        always_run: true

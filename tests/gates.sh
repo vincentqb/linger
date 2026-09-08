@@ -3,7 +3,7 @@
 #
 # Split out of tests/e2e.sh (2026-08-29) for one reason: these checks are
 # milliseconds of `git grep` and `awk`, but inside e2e.sh they only fired AFTER a
-# `rm -rf .lake/build`, a full rebuild and ten pty suites. `.githooks/pre-commit` now
+# `rm -rf .lake/build`, a full rebuild and ten pty suites. The `pre-commit` hook now
 # runs them at the moment the mistake is made, and e2e.sh runs THIS SAME FILE — so a
 # cap can never disagree between the hook and the gate, which is the one failure mode
 # that would make a hook worse than no hook.

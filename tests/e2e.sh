@@ -64,7 +64,7 @@ grep -c 'Build completed successfully' /tmp/linger-build.log > /dev/null \
   || fail "build did not report success"
 
 say "2. source-tree gates (purity, the OS surface, five ratchets)"
-# Extracted to tests/gates.sh so `.githooks/pre-commit` runs the SAME numbers.
+# Extracted to tests/gates.sh so the `pre-commit` hook and CI run the SAME numbers.
 # A hook with its own copy of a cap is worse than no hook.
 sh tests/gates.sh || fail "source-tree gates"
 

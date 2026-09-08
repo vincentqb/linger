@@ -1,13 +1,15 @@
-# CI — the same two-tier split as `.githooks/`, on someone else's machine.
+# CI — two tiers, on someone else's machine.
 #
-#   gates  (fast, ubuntu)   mirrors .githooks/pre-commit: tests/gates.sh + the
-#                           proofs elaborate. Seconds-to-minutes, blocks the rest.
-#   e2e    (slow, matrix)   mirrors .githooks/pre-push:   ./tests/e2e.sh, the whole
-#                           gate — clean rebuild, shim smoke tests, ten pty suites.
+#   gates  (fast, ubuntu)   what .pre-commit-config.yaml runs locally, plus the
+#                           proofs elaborating. Blocks the rest.
+#   e2e    (slow, matrix)   ./tests/e2e.sh, the whole gate — clean rebuild, shim
+#                           smoke tests, ten pty suites. THIS is where the slow
+#                           work lives; no local hook runs it.
 #
-# The hooks stay the primary gate; this is the net for a clone that never ran
-# `git config core.hooksPath .githooks`, and the only place the macOS half of
-# AGENTS.md's "builds and passes on Linux and macOS" is actually checked.
+# The local hook is deliberately cheap (about a second, no Lean compiled), so CI is
+# not a net here — it is where the build and the suites actually run. It is also the
+# only place the macOS half of AGENTS.md's "builds and passes on Linux and macOS"
+# is ever checked.
 #
 # NO RATCHET NUMBER APPEARS IN THIS FILE. SHIM_CAP, HEARTBEAT_CAP,
 # RUNTIME_PARTIAL_CAP, E2E_PARTIAL_CAP and the ten per-suite check-count floors
@@ -58,6 +60,17 @@ jobs:
       # error. NO DEVIATION FROM `./lake` IS NEEDED — and none was possible
       # anyway: tests/e2e.sh calls `./lake` itself, so the e2e job could not have
       # used bare `lake` without editing the gate.
+      # Commit-time hygiene, for a clone that never ran `pre-commit install`. Same
+      # config, same `tests/gates.sh`, so CI and the hook cannot disagree. First
+      # because it is the cheapest thing that can fail.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: pre-commit (hygiene + source-tree gates)
+        run: |
+          python -m pip install --quiet pre-commit
+          pre-commit run --all-files --show-diff-on-failure
+
       - name: preflight — the ./lake wrapper's Linux-branch preconditions
         run: |
           # LEAN_CC=clang: present on the ubuntu images, but assert it rather
@@ -70,7 +83,11 @@ jobs:
           clang --version | head -1
           # LEAN_AR=/usr/bin/ar
           test -x /usr/bin/ar || { echo "::error::/usr/bin/ar missing; ./lake sets LEAN_AR to it"; exit 1; }
-          # The wrapper hardcodes the toolchain directory into LIBRARY_PATH. If
+          # The wrapper derives its toolchain directory from lean-toolchain and
+          # exits with the path it computed if that directory is missing, so the
+          # drift this step used to check for is now impossible. Left as a note
+          # rather than a check: asserting a coupling that was removed is how a
+          # gate starts lying.
           # lean-toolchain is bumped and ./lake is not, LIBRARY_PATH silently
           # points at a directory that does not exist and the link fails on
           # -lgmp with no hint why. Catch the drift here instead.

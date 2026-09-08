@@ -36,8 +36,11 @@ sh tests/gates.sh                # the fast source-tree gates (seconds)
 ```
 
 The pty suites are Lean programs, not theorems: they drive the real binary through
-real terminals, so they are `IO`. `Theorems/` is where the proofs are. To have the
-gates run automatically: `git config core.hooksPath .githooks`.
+real terminals, so they are `IO`. `Theorems/` is where the proofs are.
+
+Commit-time hygiene is `uvx pre-commit install` — whitespace, YAML and the
+source-tree gates, about a second, nothing compiled. The build and the suites run in
+CI, not in a hook.
 
 ### Layout
 

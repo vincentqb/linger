@@ -158,18 +158,26 @@ fresh pair of eyes.
   purity greps, the OS-surface checks and all five ratchets
   (`SHIM_CAP`, `HEARTBEAT_CAP`, `RUNTIME_PARTIAL_CAP`,
   `E2E_PARTIAL_CAP`, plus the zero-Python and `Tests/`-vs-`tests/`
-  invariants) live there. `tests/e2e.sh` calls it, `.githooks/pre-commit`
-  calls it, CI calls it. Never copy a number out of it — the markdowns
-  did exactly that and every copy rotted.
-- **Three tiers, cheapest first.** `.githooks/pre-commit` runs
-  `gates.sh` plus an incremental `./lake build Linger Theorems Tests`
-  (seconds). `.githooks/pre-push` runs the whole `./tests/e2e.sh`
-  (minutes). `.github/workflows/ci.yml` runs both on push and PR, as a
-  ubuntu+macos matrix — the `#ifdef __APPLE__` branch in `c/shim.c` is
-  not compiled on Linux at all, so a Linux-only CI cannot typecheck code
-  this file claims works.
-- Enable the hooks once per clone: `git config core.hooksPath .githooks`.
-  Don't reach for `--no-verify`; the hook is the check.
+  invariants) live there. `tests/e2e.sh` calls it, `pre-commit` calls it,
+  CI calls it. Never copy a number out of it — the markdowns did exactly
+  that and every copy rotted.
+- **Two tiers, and the split is by cost.** Commit time is
+  `.pre-commit-config.yaml`: whitespace, YAML, and `gates.sh` — about a
+  second, and **nothing there compiles Lean**. Everything slow is CI
+  (`.github/workflows/ci.yml`): the build, the proofs, the shim smoke
+  tests and all ten pty suites, as a ubuntu+macos matrix, because the
+  `#ifdef __APPLE__` branch in `c/shim.c` is not compiled on Linux at
+  all and a Linux-only CI cannot typecheck code this file claims works.
+- There is deliberately **no pre-push hook**. An earlier version ran the
+  whole of `./tests/e2e.sh` there and it made pushing cost six minutes,
+  which is the wrong tier for it. Run `./tests/e2e.sh` yourself before a
+  commit that touches the runtime — that rule has not changed — but
+  nothing forces it at push time.
+- Install once per clone: `uvx pre-commit install` (or `pre-commit
+  install`). Don't reach for `--no-verify`; the hook is the check.
+- The framework is a dev tool, not a dependency: the config is YAML and
+  the repo-local hook is `language: script`, so nothing Python is
+  tracked and `gates.sh`'s zero-Python invariant still checks itself.
 - The wrapper branches on `uname -s` and is a **pass-through on macOS**,
   where the same overrides break the build (`LEAN_AR=/usr/bin/ar` is
   Apple's ar, which cannot read lake's `@…rsp` response file). Keep

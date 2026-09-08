@@ -222,7 +222,7 @@ def theoremStatements : IO String := do
         let cutAt (hay sep : String) : Option Nat :=
           let hs := hay.splitOn sep
           if hs.length ≥ 2 then some hs[0]!.length else none
-        let cuts := [cutAt piece ":=", cutAt piece " by ", 
+        let cuts := [cutAt piece ":=", cutAt piece " by ",
                      if piece.endsWith " by" then some (piece.length - 3) else none]
         match (cuts.filterMap id).min? with
         | some k =>

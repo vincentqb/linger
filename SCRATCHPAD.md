@@ -6980,3 +6980,65 @@ boundary is what made a mechanical 39-substitution sweep safe to run at all.
 2. Everything else the greps hold, they hold correctly — `SHIM_CAP` is a count, a
    parallel byte queue is a new declaration privacy cannot ban, and the two
    `!readOnly` guards are semantic no-ops nothing observable can see.
+
+
+## the hook tiers, corrected — 2026-08-29 (same day, superseding the round above)
+
+The cleanup round got the tiers wrong and the user caught it. Recorded because the
+mistake is the interesting part.
+
+### What was wrong
+
+`.githooks/pre-commit` ran `./lake build Linger Theorems Tests` and
+`.githooks/pre-push` ran the whole of `./tests/e2e.sh`. Both are the wrong tier. A
+commit hook that compiles Lean is not a commit hook, and a push that costs six
+minutes is a push people learn to `--no-verify` around — which turns a gate into a
+habit of skipping gates. The convention exists for a reason: **commit time is
+formatting and linting, CI is the build and the tests.**
+
+### What it is now
+
+`.pre-commit-config.yaml`, the standard framework:
+
+* whitespace / end-of-file / line-ending, `check-merge-conflict`, `check-yaml` (the
+  workflow), the shebang-vs-executable pair, `check-added-large-files`
+* one `language: script` hook: `tests/gates.sh`
+
+**Measured: ~1000 ms over the whole tree**, and nothing in it compiles Lean.
+`.githooks/` is deleted and `core.hooksPath` unset — the framework installs into
+`.git/hooks/` and refuses outright if `core.hooksPath` is set, so the two designs
+cannot coexist.
+
+**No pre-push hook at all.** CI owns the build, the proofs and the ten suites.
+AGENTS.md's rule that `./tests/e2e.sh` is the gate before a runtime-touching commit
+is unchanged — it is now a rule the author follows rather than one a hook enforces,
+which is the honest trade the user asked for.
+
+### `check-case-conflict` had to go, and the reason is a good one
+
+It fires on `Tests/` vs `tests/` — which is this repo's *design*, not an accident.
+The blunt hook cannot express "these two may coexist, but a file must not land in the
+wrong one". `tests/gates.sh` already says exactly that, and it is the check that
+catches the trap git actually falls into on a case-insensitive filesystem. So the
+generic hook was removed and the precise one kept, with the reasoning inline in the
+config so nobody re-adds it.
+
+### The framework is Python, and the zero-Python invariant still holds
+
+Worth stating because it looks like a contradiction. `.pre-commit-config.yaml` is
+YAML, the repo-local hook is `language: script` pointing at shell, and the framework
+lives in `~/.cache/pre-commit`. Nothing Python is **tracked**, so
+`git ls-files '*.py'` is still empty — and that invariant is itself one of the hooks,
+so it checks itself on every commit.
+
+### Fallout worth knowing
+
+* `trailing-whitespace` immediately found real trailing whitespace in
+  `E2E/Coverage.lean` that I had introduced two commits earlier. One second of hook
+  versus a reader eventually noticing.
+* CI's toolchain-drift check was **retired**, not kept: it asserted that `./lake`
+  hardcodes the version, and `./lake` now derives it. A gate that asserts a coupling
+  you removed is a gate that has started lying.
+* CI gained `pre-commit run --all-files` as its first step, so a clone that never ran
+  `pre-commit install` is still checked, against the same config and the same
+  `gates.sh`.
