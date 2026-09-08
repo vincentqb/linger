@@ -66,7 +66,14 @@ closed build plans with their completion records (`lean-zmx.md`,
      `revents[i]`↔`fds[i]` premise lives in `c/shim.c`, not in Lean, so proving
      it would be decoration) — that negative result is recorded so nobody
      re-proposes it.
-   Everything else is closed: `restore-conformance.md` (restore works into any
+   Everything else is closed: `pin-the-gaps.md` (2026-08-29: the nine gaps a
+   full test+theorem audit found — `linger watch` had no coverage at all,
+   `.detachAll`/`.labelUnset`/`.labelClear` had unpinned effect lists, the width
+   tables `isWide`/`isZeroWidth` were named nowhere in the repo; **every ratchet
+   is now at zero headroom**, including ten per-suite check-count floors, and
+   `tests/harness.py` exists so a tenth suite does not copy-paste a tenth
+   harness. Read its three findings before touching read-only, the width tables,
+   or a pty suite), `restore-conformance.md` (restore works into any
    client, proved for the modes, pen, sticky bundle, parser/decoder, the screen
    cells on both screens at every height, and the tab ruler), `ledger-cleanup.md`
    (its five parked items plus the ssh-argv host guard) and `agent-cli.md`
@@ -197,7 +204,21 @@ fresh pair of eyes.
   rather than open-coding the same sums — without the gate the theorems
   are arithmetic about a value nothing forces the runtime to use. Same
   species of oracle as `SHIM_CAP`. When you move a decision into Core,
-  gate the runtime against re-growing it.
+  gate the runtime against re-growing it. The same applies to a *guard*
+  no test can observe: two of `Client.attach`'s three `!readOnly` guards
+  are semantic no-ops (the daemon drops a non-sizer's input and resize
+  regardless), so they are held by greps and **not** by a pty assertion
+  pretending to see them — see `specs/archive/pin-the-gaps.md`.
+- **`FAILURES: 0` does not mean anything ran.** Every pty suite carries a
+  check-count floor in `tests/e2e.sh` (`suite <name> <floor>`), because a
+  suite whose assertions sit in a `for` over a list that went empty still
+  prints `FAILURES: 0` — demonstrated, not assumed. Floors only go UP
+  without discussion. New suites use `tests/harness.py` rather than
+  copy-pasting a tenth harness.
+- **The purity greps read prose, not just code.** `native_decide` in a
+  *docstring* under `Theorems/` fails `./tests/e2e.sh` step 2 exactly as
+  it would in a proof. This has cost a full e2e run twice (`fb6a0e6`, and
+  again on 2026-08-29). Say "compiled evaluation" in prose.
 - **One writer at a time on this tree.** Two agents editing
   concurrently raced the coverage ratchet: untracked files are invisible
   to `git diff -- Linger/`, so an out-of-band `coverage.py` read caught a

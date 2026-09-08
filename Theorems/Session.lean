@@ -51,6 +51,50 @@ theorem onMsg_wrong_direction (s : State) (c : Client) (bs : List UInt8) :
     onMsg s c (.err bs) = (s, []) ∧ onMsg s c .done = (s, []) :=
   ⟨rfl, rfl, rfl, rfl⟩
 
+/-! ## Label removal (pin-the-gaps item 3)
+
+`.labelSet` was pinned four ways — the cap (`onMsg_labels_le`), the round trip
+(`Tests/Session.lean`), the forged-record channel (`infoText_records`) and the
+boot cap. Its two *removal* siblings were pinned nowhere at all: no theorem, no
+fixture, no pty assertion, covered only by the generic cap and by
+`Wire.decode_encode`'s ∀-over-`Msg` codec claim. Both arms are unconditional, so
+both take the exact-shape treatment `onMsg_screen` gets. -/
+
+/-- **`linger unset <key>` removes exactly the named key.** The exact shape: the
+key is the payload through `labelText` (invalid bytes → `""`, which matches no key
+`.labelSet` can store since it rejects an empty key), the store is filtered, and
+the only effect is `.done`. `rfl`, so a smuggled side effect — a vt touch, a
+`.err`, an append — breaks it. -/
+theorem onMsg_labelUnset (s : State) (c : Client) (k : List UInt8) :
+    onMsg s c (.labelUnset k)
+      = ({ s with labels := s.labels.filter (fun kv => kv.1 != labelText k) },
+         [.send c.id .done]) := rfl
+
+/-- …and the consequence, stated where a reader looks for it: after an unset, no
+label carries that key. This is the promise; the shape above is how it is kept. -/
+theorem onMsg_labelUnset_gone (s : State) (c : Client) (k : List UInt8) :
+    ∀ kv ∈ (onMsg s c (.labelUnset k)).1.labels, kv.1 ≠ labelText k := by
+  intro kv hkv
+  simp only [onMsg, List.mem_filter, bne_iff_ne] at hkv
+  exact hkv.2
+
+/-- …and it removes *only* that key: every other label survives. Without this,
+`onMsg_labelUnset_gone` is satisfied by an arm that clears the whole store — the
+vacuity that makes a removal claim worthless. -/
+theorem onMsg_labelUnset_keeps (s : State) (c : Client) (k : List UInt8)
+    (kv : String × String) (hmem : kv ∈ s.labels) (hne : kv.1 ≠ labelText k) :
+    kv ∈ (onMsg s c (.labelUnset k)).1.labels := by
+  simp only [onMsg, List.mem_filter, bne_iff_ne]
+  exact ⟨hmem, hne⟩
+
+/-- **`linger clear` empties the store, and does nothing else.** -/
+theorem onMsg_labelClear (s : State) (c : Client) :
+    onMsg s c .labelClear = ({ s with labels := [] }, [.send c.id .done]) := rfl
+
+/-- …the consequence, so the name a reader greps for states the fact. -/
+theorem onMsg_labelClear_empty (s : State) (c : Client) :
+    (onMsg s c .labelClear).1.labels = [] := rfl
+
 /-! ## §Detach -/
 
 /-- A client vanishing changes nothing but the client list — screen,
@@ -158,9 +202,26 @@ theorem step_childExited_effects (s : State) (status : UInt32) :
       let closes := s'.clients.map (fun c => Effect.close c.id)
       flush ++ notify ++ closes ++ [.dropCheckpoint, .exit] := rfl
 
-/-- `detach-all` closes clients; it cannot touch the screen. -/
+/-- **`detach-all`'s whole purpose, as an equation** (pin-the-gaps item 2). The
+verb changes no state at all, so everything it promises lives in the effect
+list: one `.close` per *attached* client — the filter is the claim, since a
+control connection (`linger send`, `linger info`) must survive a detach-all it
+did not ask for — and a `.done` to the requester last, after the closes, so the
+caller's own socket is not shut before its reply is queued. `rfl`, so dropping
+the filter, reordering the `.done`, or closing the roster instead of the
+attached subset each break it.
+
+Before this, the only claim about `.detachAll` was `onMsg_detachAll_vt` below —
+the state half of a message whose state half is `s`. -/
+theorem onMsg_detachAll (s : State) (c : Client) :
+    onMsg s c .detachAll
+      = (s, (s.clients.filter (·.attached) |>.map (fun c' => Effect.close c'.id))
+              ++ [.send c.id .done]) := rfl
+
+/-- `detach-all` closes clients; it cannot touch the screen. Now a corollary of
+the full shape above, kept because §Detach's prose cites this weaker name. -/
 theorem onMsg_detachAll_vt (s : State) (c : Client) :
-    (onMsg s c .detachAll).1 = s := rfl
+    (onMsg s c .detachAll).1 = s := congrArg Prod.fst (onMsg_detachAll s c)
 
 /-- Attach only resizes: the scrollback — the session's history — is
 untouched by any attach/detach cycle (observer or not). -/

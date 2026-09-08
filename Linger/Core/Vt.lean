@@ -950,7 +950,16 @@ not persist — see `Linger.Core.Checkpoint`). -/
 def Vt.quiesce (v : Vt) : Vt :=
   { v with pstate := .ground, u8need := 0, u8acc := 0 }
 
-/-- The runtime hands us `ByteArray`s; convert at the boundary. -/
+/-- Feed a `ByteArray` by converting at the call site.
+
+**Test-facing, and named as such** (pin-the-gaps item 5): the docstring here used
+to read "the runtime hands us `ByteArray`s; convert at the boundary", which was
+false — the daemon's pty path is `Terminal.feed s.vt s.scan chunk` on a
+`List UInt8` (`Linger/Core/Session.lean`), and this definition has no caller
+outside `Tests/`. It is kept because five fixtures use it and a convenience with
+five callers is reachable code, not the unproved-and-unreachable state
+`tests/coverage.py` exists to prevent; what was wrong was the claim, not the
+function. -/
 def Vt.feedBytes (v : Vt) (bytes : ByteArray) : Vt :=
   v.feed bytes.toList
 

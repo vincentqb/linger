@@ -15,12 +15,38 @@
 #   9. graphics passthrough (kitty APC / sixel DCS reach the client raw)
 #  10. terminal ownership (query progress with zero/one/two clients + stable env)
 #  11. status column: attach marks seen, output while away marks unread
+#  12. agent verbs (info geometry/outseq, capture, send - , resize)
+#  13. watch: the read-only mirror (geometry, keyboard, hand-back, marks seen)
 #  (1) also covers Tests/Fuzz.lean: randomized §Replay round-trip search
+#  every pty suite also carries a CHECK-COUNT FLOOR (see `suite` below): green
+#  means "no failures AND at least N assertions actually ran".
 set -e
 cd "$(dirname "$0")/.."
 
 say() { printf '\n=== %s ===\n' "$1"; }
 fail() { printf 'E2E FAIL: %s\n' "$1" >&2; exit 1; }
+
+# Run one pty suite: no failures AND a floor on how many checks actually ran
+# (pin-the-gaps item 7). `FAILURES: 0` says nothing went wrong; it does not say
+# anything HAPPENED. Several suites nest assertions in a `for` over a list, and a
+# list that silently became empty still prints `FAILURES: 0` — so the gate would
+# stay green on a suite that had stopped checking. The floors are the measured
+# live counts; they only ever go UP without discussion, and a drop is a
+# deliberate, reviewable edit, exactly like SHIM_CAP below.
+suite() {                                   # suite <name> <check floor>
+  pkill -x linger 2>/dev/null || true
+  sleep 0.2
+  out="/tmp/linger-$1.out"
+  python3 "tests/$1_test.py" > "$out" 2>&1 \
+    || { tail -25 "$out"; fail "$1_test"; }
+  tail -1 "$out" | grep -q '^FAILURES: 0$' \
+    || { tail -25 "$out"; fail "$1_test"; }
+  # `^(PASS|FAIL) ` with the space: `FAILURES: 0` also starts with FAIL.
+  n="$(grep -cE '^(PASS|FAIL) ' "$out")"
+  [ "$n" -ge "$2" ] \
+    || fail "$1_test ran $n checks (floor $2) — an assertion stopped executing; a loop's list probably went empty"
+  printf '  %s: %s checks (floor %s)\n' "$1" "$n" "$2"
+}
 
 # no stray daemons from a previous run may influence the checks
 pkill -x linger 2>/dev/null || true
@@ -88,6 +114,21 @@ shim_n="$(grep -c LEAN_EXPORT c/shim.c)"
   || { grep -nE '\.extract\b' Linger/Runtime/*.lean; \
        fail "buffer arithmetic in Linger/Runtime (Buf.bufAdvance owns it, and is proved)"; }
 
+# `linger watch`'s client-side read-only guards (pin-the-gaps item 1). Read-only
+# is enforced DAEMON-side: the 0x0 attach geometry sets `sizer := false` and
+# `onMsg .input`/`onMsg .resize` then drop a non-sizer's traffic
+# (`onMsg_input_readonly`). So these two `!readOnly` call sites are defence in
+# depth and a pty test CANNOT see them — remove either and not one observable
+# byte changes. That makes a grep the only honest oracle, the same species as
+# SHIM_CAP above; faking it as a pty assertion would be decoration.
+# `tests/watch_test.py` covers guard A (the 0x0 attach), which IS observable.
+grep -qE 'if size != lastSize && !readOnly' Linger/Runtime/Client.lean \
+  || fail "Client.attach lost its read-only resize guard (a watcher would fight the user's size)"
+grep -qE 'if !out.isEmpty && !readOnly' Linger/Runtime/Client.lean \
+  || fail "Client.attach lost its read-only input guard (a watcher would forward keystrokes)"
+grep -qE 'sendMsg fd \(\.attach 0 0\)' Linger/Runtime/Client.lean \
+  || fail "Client.attach no longer marks a read-only client with a 0x0 attach (the wire's only read-only bit)"
+
 # heartbeat ratchet. A `set_option maxHeartbeats` raise is a MEASUREMENT, and it
 # has an expiry date that nothing else enforces: the 2026-08-18 factoring audit
 # deleted 18 of 20, and the control run showed six of those were already
@@ -140,40 +181,34 @@ say "3. posix shim smoke tests"
 ./lake exe lingertest | tail -1 | grep -q '^ALL PASS$' || fail "lingertest"
 
 say "4. attach / detach / reattach / mirror / wait"
-pkill -x linger 2>/dev/null || true; sleep 0.2
-python3 tests/attach_test.py | tail -1 | grep -q '^FAILURES: 0$' || fail "attach_test"
+suite attach 35
 
 say "5. reboot resume"
-pkill -x linger 2>/dev/null || true; sleep 0.2
-python3 tests/resume_test.py | tail -1 | grep -q '^FAILURES: 0$' || fail "resume_test"
+suite resume 9
 
 say "6. overview listing (bare linger / ls)"
-pkill -x linger 2>/dev/null || true; sleep 0.2
-python3 tests/overview_test.py | tail -1 | grep -q '^FAILURES: 0$' || fail "overview_test"
+suite overview 7
 
 say "7. remote sessions over ssh"
-pkill -x linger 2>/dev/null || true; sleep 0.2
-python3 tests/remote_test.py | tail -1 | grep -q '^FAILURES: 0$' || fail "remote_test"
+suite remote 11
 
 say "8. adverse timing (busy daemon listing, name-ownership race)"
-pkill -x linger 2>/dev/null || true; sleep 0.2
-python3 tests/robust_test.py | tail -1 | grep -q '^FAILURES: 0$' || fail "robust_test"
+suite robust 14
 
 say "9. graphics passthrough (kitty / sixel)"
-pkill -x linger 2>/dev/null || true; sleep 0.2
-python3 tests/graphics_test.py | tail -1 | grep -q '^FAILURES: 0$' || fail "graphics_test"
+suite graphics 9
 
 say "10. terminal ownership (queries + stable child profile)"
-pkill -x linger 2>/dev/null || true; sleep 0.2
-python3 tests/terminal_query_test.py | tail -1 | grep -q '^FAILURES: 0$' || fail "terminal_query_test"
+suite terminal_query 12
 
 say "11. status column (unread / seen transitions)"
-pkill -x linger 2>/dev/null || true; sleep 0.2
-python3 tests/status_test.py | tail -1 | grep -q '^FAILURES: 0$' || fail "status_test"
+suite status 5
 
 say "12. agent verbs (info / capture / send - / resize)"
-pkill -x linger 2>/dev/null || true; sleep 0.2
-python3 tests/agent_test.py | tail -1 | grep -q '^FAILURES: 0$' || fail "agent_test"
+suite agent 24
+
+say "13. watch (read-only mirror: geometry, keyboard, hand-back, seen)"
+suite watch 17
 
 pkill -x linger 2>/dev/null || true
-printf '\nE2E OK — linger builds clean, core is pure, 9 live suites green.\n'
+printf '\nE2E OK — linger builds clean, core is pure, 10 live suites green.\n'

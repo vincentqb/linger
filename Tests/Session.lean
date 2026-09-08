@@ -129,6 +129,61 @@ example :
          (txt.splitOn "label.env\tdev").length ≥ 2
        | _ => false)) = true := by native_decide
 
+/-! ### `detach-all` and label removal (pin-the-gaps items 2 and 3)
+
+`onMsg_detachAll` / `onMsg_labelUnset` / `onMsg_labelClear` pin the effect lists
+as equations; these run the same three verbs through the real decoder so the
+promise is checked end to end, and they are what fails if an arm is rewired
+rather than merely reshaped. -/
+
+/-- **`detach-all` closes the attached clients and spares a control connection.**
+Clients 1 and 2 attach; client 3 never does — it is the `linger detach` control
+connection, and it is the one asking. The `.attached` filter is the claim: drop it
+and client 3 closes its own socket before its `.done` is read. -/
+example :
+    (let (_, effs) := run [.connected 1, .bytes 1 (encode (.attach 80 24)),
+                           .connected 2, .bytes 2 (encode (.attach 80 24)),
+                           .connected 3, .bytes 3 (encode .detachAll)]
+     hasEffect effs (· == .close 1) && hasEffect effs (· == .close 2)
+       && !hasEffect effs (· == .close 3)
+       && hasEffect effs (· == .send 3 .done)) = true := by native_decide
+
+/-- **`unset` removes exactly the named key**: `env` goes, `role` stays. A whole-
+store clear would satisfy "env is gone" too, which is why `role` is here. -/
+example :
+    (let (s, _) := run [.connected 1,
+                        .bytes 1 (encode (.labelSet "env=dev".toUTF8.toList)),
+                        .bytes 1 (encode (.labelSet "role=web".toUTF8.toList)),
+                        .bytes 1 (encode (.labelUnset "env".toUTF8.toList))]
+     s.labels == [("role", "web")]) = true := by native_decide
+
+/-- **`clear` empties the store.** -/
+example :
+    (let (s, _) := run [.connected 1,
+                        .bytes 1 (encode (.labelSet "env=dev".toUTF8.toList)),
+                        .bytes 1 (encode (.labelSet "role=web".toUTF8.toList)),
+                        .bytes 1 (encode .labelClear)]
+     s.labels.isEmpty) = true := by native_decide
+
+/-- Unsetting a key that was never set is a no-op, not an error: the store is
+untouched and no `.err` is sent, so `linger unset` is idempotent for a script. -/
+example :
+    (let (s, effs) := run [.connected 1,
+                           .bytes 1 (encode (.labelSet "env=dev".toUTF8.toList)),
+                           .bytes 1 (encode (.labelUnset "nosuch".toUTF8.toList))]
+     s.labels == [("env", "dev")]
+       && !hasEffect effs (fun e => match e with
+            | .send _ (.err _) => true | _ => false)) = true := by native_decide
+
+/-- An unset with an **invalid UTF-8** payload decodes to `""`, which matches no
+key `.labelSet` can store (it rejects an empty key) — so the store survives. This
+is the branch `onMsg_labelUnset`'s `getD ""` exists for. -/
+example :
+    (let (s, _) := run [.connected 1,
+                        .bytes 1 (encode (.labelSet "env=dev".toUTF8.toList)),
+                        .bytes 1 (encode (.labelUnset [0xFF, 0xFE]))]
+     s.labels == [("env", "dev")]) = true := by native_decide
+
 /-! ### Agent observability fields (specs/agent-cli.md Step 1)
 
 `info` carries what an agent needs to *see* the session: geometry + cursor

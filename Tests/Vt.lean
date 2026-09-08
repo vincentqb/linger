@@ -68,6 +68,46 @@ example : (let v := screen 10 2 "main\x1b[?1049halt"
              && rowStr w 0 == "main" && w.altGrid.isNone
              && w.cursor.x == 4) = true := by native_decide
 
+/-! ### The width tables, behaviourally (pin-the-gaps item 4)
+
+`Theorems/Vt.lean` pins `isWide`/`isZeroWidth` at every clause edge as closed
+`decide` propositions. These pin the **composite** — `charWidth`, which is what
+the emulator, `CellOk` and the row painter actually call — at the boundaries
+where the naive expectation is wrong: at the two places the tables *touch*,
+"just outside a wide range" is width 0, not 1, and "just past a zero-width
+range" is width 2, not 1. -/
+
+/-- Every clause edge of both width tables, paired with the width `charWidth`
+must give it. **One table, two consumers** — the claim below and its non-vacuity
+check — so the probe list cannot drift between them, which is how a boundary
+suite rots: a codepoint gets corrected in one fixture and not the other.
+
+The entries that matter most are `0xFE2F → 0`, `0xFE30 → 2`, `0xFEFF → 0`,
+`0xFF00 → 2`: those are the two places the tables touch, and a fixture assuming
+"outside a wide range means width 1" is wrong at every one of them. -/
+def widthProbes : List (Nat × Nat) :=
+  [(0x10FF, 1), (0x1100, 2), (0x115F, 2), (0x1160, 1),
+   (0x02FF, 1), (0x0300, 0), (0x036F, 0), (0x0370, 1),
+   (0xFE2F, 0), (0xFE30, 2), (0xFE4F, 2), (0xFE50, 1),
+   (0xFEFE, 1), (0xFEFF, 0), (0xFF00, 2), (0xFF60, 2), (0xFF61, 1),
+   (0x200A, 1), (0x200B, 0), (0x200C, 0), (0x200D, 0), (0x200E, 1),
+   (0x2E7F, 1), (0x2E80, 2), (0x303E, 2), (0x303F, 1),
+   (0xABFF, 1), (0xAC00, 2), (0xD7A3, 2), (0xD7A4, 1),
+   (0x1F2FF, 1), (0x1F300, 2), (0x1F64F, 2), (0x1F650, 1),
+   (0x1FFFF, 1), (0x20000, 2), (0x2FFFD, 2), (0x2FFFE, 1)]
+
+/-- The claim: `charWidth` — the composite the emulator, `CellOk` and the row
+painter all call — agrees with the tables at every edge. -/
+example : (widthProbes.all (fun p => charWidth (Char.ofNat p.1) == p.2)) = true := by
+  native_decide
+
+/-- **Non-vacuity for the probes above.** `Char.ofNat` silently yields `'\0'` on
+an invalid scalar value, and `charWidth '\0' = 1` — so a typo'd probe (a
+surrogate, or anything past U+10FFFF) would pass for the wrong reason wherever the
+expected width is 1. Every codepoint round-trips, so none is `'\0'` in disguise. -/
+example : (widthProbes.all (fun p => (Char.ofNat p.1).toNat == p.1)) = true := by
+  native_decide
+
 /-- Wide char occupies two columns; the shadow cell has width 0. -/
 example : (let v := screen 10 2 "日x"
            (v.getCell 0 0).width == 2 && (v.getCell 1 0).width == 0

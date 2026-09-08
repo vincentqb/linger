@@ -45,7 +45,10 @@ because the emitters must reduce in the kernel; a queue must not. A 4 MiB
 `List UInt8` costs ~48 bytes per byte and `++` is O(left), so every `.send` would
 become a multi-megabyte cons walk. `ByteArray` in `Linger/Core` is house-legal — the
 purity gate bans unproved axioms, `partial` definitions and effects, not a choice
-of representation — and has precedent in `Vt.feedBytes`. Nothing here is stated through
+of representation — and is not even the first: `Vt.feedBytes` has taken one since
+long before this (a `Tests/`-facing convenience, which is all the precedent needs
+— it establishes that the gate admits the type, not that the daemon calls it).
+Nothing here is stated through
 `ByteArray.toList`, which is a `get!` + `reverse` loop.
 -/
 

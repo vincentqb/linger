@@ -131,6 +131,17 @@ inductive Effect where
 /-- Checkpoint cadence (§ reboot-resume): at most one per minute. -/
 def ckptIntervalMs : UInt64 := 60000
 
+/-- A label payload decoded as text: a bare key for `.labelUnset`, a `k=v` pair
+for `.labelSet`. Invalid UTF-8 becomes `""`, which is the safe direction —
+`.labelSet` rejects an empty key, so a corrupt payload can neither set nor unset
+anything.
+
+One decode shared by both arms, so they cannot drift about what a key *is*: a
+`.labelSet` that decoded differently from `.labelUnset` would leave a label no
+`unset` could reach. -/
+def labelText (bs : List UInt8) : String :=
+  String.fromUTF8? (ByteArray.mk bs.toArray) |>.getD ""
+
 /-! ## Helpers -/
 
 def chunksOf {α : Type} (n : Nat) (l : List α) : List (List α) :=
@@ -324,7 +335,7 @@ def onMsg (s : State) (c : Client) (m : Msg) : State × List Effect :=
     | some st => (s, [.send c.id (.exited st)])
     | none => (s.setClient { c with waiting := true }, [])
   | .labelSet kv =>
-    let txt := String.fromUTF8? (ByteArray.mk kv.toArray) |>.getD ""
+    let txt := labelText kv
     match txt.splitOn "=" with
     | k :: rest =>
       if k.isEmpty then (s, [.send c.id (.err "empty label key".toUTF8.toList)])
@@ -336,7 +347,7 @@ def onMsg (s : State) (c : Client) (m : Msg) : State × List Effect :=
         else ({ s with labels }, [.send c.id .done])
     | [] => (s, [.send c.id (.err "empty label".toUTF8.toList)])
   | .labelUnset k =>
-    let txt := String.fromUTF8? (ByteArray.mk k.toArray) |>.getD ""
+    let txt := labelText k
     ({ s with labels := s.labels.filter (·.1 != txt) }, [.send c.id .done])
   | .labelClear => ({ s with labels := [] }, [.send c.id .done])
   -- daemon-to-client vocabulary arriving at the daemon, and unknown

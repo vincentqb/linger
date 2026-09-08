@@ -126,14 +126,15 @@ now fail. A theorem next to the code is not a theorem about it.
 
 **2. Every byte stream the runtime emits is classified.** This is the check that
 answers "are we proving things about the code that actually runs". The runtime's
-emitter surface is small and enumerable — three functions — and each must be listed
+emitter surface is small and enumerable — five functions — and each must be listed
 with a theorem that constrains it or a stated limitation:
 
 | stream | where the runtime writes it | backing |
 |---|---|---|
 | `Render.restore` | `Session.onMsg .attach` | **proved**: `restore_grounds`, `restore_u8_zero`, `restore_modes_any`, `restore_pen_any`, `restore_sticky_any`, `restore_cursor_any`, `restore_grid_any`, `restore_tabs_any` — receiver-quantified for the parser, the decoder, the screen cells and the tab ruler. **Not** the **scrollback**: Step 1 of `specs/scrollback-fidelity.md` emits it and the fixtures pin it, but `restore_sb_any` is Steps 2–4 and does not exist yet. Nor the window title or the DECSC slot |
 | `Render.leaveAnsi` | `Client.attach`'s `finally` | **proved**: `leave_canonical`, `leave_canonical_all` |
-| `Render.history` | `Session.onMsg` (`linger history`) | **proved**: `history_framing`, `history_lines` — every byte is a line terminator or printable content, and the newline count *is* the row count, so a cell cannot forge a line however the session's program filled the grid |
+| `Render.history` | `Session.onMsg` (`linger history`) | **proved**: `history_framing`, `history_lines`, `history_records` — every byte is a line terminator or printable content, the newline count *is* the row count, and `linesLF` splits the stream into exactly the rows' texts in order, so a cell cannot forge a line however the session's program filled the grid |
+| `Render.screenText` | `Session.onMsg .screen` (`linger capture`) | **proved**: `screenText_framing`, `screenText_lines`, `screenText_records` — the same anti-forgery pair as `history` but grid-only, plus the parse contract (line *k* is `rowText` of row *k*) and `history_screenText_suffix`, which ties the capture byte-for-byte to the transcript's tail. Discussed at length under §Row; it was missing from **this table** until pin-the-gaps item 8, while `tests/coverage.py` had been enforcing it all along |
 | `Render.utf8s` | reached from outside `Render` by `Session.infoText`, which frames listing records with it | **proved**: `utf8s_no_ctl`, `utf8s_no_esc`, `utf8s_no_esc_bel`, `Session.utf8s_no_frame` — no scrubbed text can carry an escape, a BEL, or a framing byte |
 
 A new emitter wired into the runtime fails the gate until it is classified, and an
@@ -663,9 +664,14 @@ terminals; see the note under `## What these theorems do not settle`.)
   in a truecolour cell). **Who carries which half, stated rather than blurred:**
   `sbTake_budget`/`sbRows_budget` prove a bound on the *counted* cost `sbRowCost`;
   the *emitted* whole-stream bound is fixtures (five ring shapes, sharp at 262,153)
-  until `scrollbackAnsi_le` lands in Step 5. So the proofs are self-consistent about
-  their own cost function and would survive changing `sbRowCost`'s `+ 6` to `+ 0` —
-  the fixtures are the oracle for the bytes that actually leave. `Vt.eraseScreen 3` clears `sb` as well as the screen
+  until `scrollbackAnsi_le` lands in Step 5. The **row** half of that asymmetry is
+  closed, not deferred: `rowAnsi_len_seed` + `rowAnsi_len_le_cost` say a row's
+  emitted paint from *any* incoming pen is within its counted cost, so an earlier
+  version of this paragraph — "the proofs would survive changing `sbRowCost`'s
+  `+ 6` to `+ 0`" — is false, and was corrected under pin-the-gaps item 9.
+  Break-verified: `+ 0` makes `rowAnsi_len_le_cost`'s `omega` fail. What the
+  fixtures still carry alone is the *whole-stream* step.
+  `Vt.eraseScreen 3` clears `sb` as well as the screen
   (`Linger/Core/Vt.lean:529-531`), which is the receiver-ring-empty premise the
   receiver-quantified claim will cite.
 * **The screen paint, not the history, is the unbudgeted term.** Measured while

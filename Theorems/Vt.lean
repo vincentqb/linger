@@ -3200,6 +3200,169 @@ theorem printableChar_emittable (c : Char) : Emittable (printableChar c) := by
 
 theorem emittable_space : Emittable ' ' := ⟨by decide, by decide⟩
 
+/-! ### The width tables (pin-the-gaps item 4)
+
+`isZeroWidth` and `isWide` decide how many columns a glyph owns, and until this
+section they were named **nowhere in the repo** outside their own definitions and
+`charWidth` — 50 theorem statements mention `charWidth`, every one generic over
+the tables, so a shifted range was invisible to the entire proof tree and to every
+fixture. `CellOk.width` above is what makes them load-bearing: it ties a stored
+cell's `width` field to `charWidth c.base`, so a table edit silently redefines
+which grids are well-formed.
+
+Both take `Nat`, not `Char`, so the pins are **closed propositions** decided by
+the kernel — no `Char` literal (Lean's `\uXXXX` cannot reach plane 2), and no
+compiled evaluation, which `tests/e2e.sh` bans in `Theorems/` (and which greps
+prose as well as code, so this sentence may not name the tactic). Each edge is
+pinned on **both
+sides** (`lo-1 = false, lo = true`), so shifting a bound either way falsifies a
+conjunct. Deliberately *not* stated as `∀ c, isWide c = true ↔ <the disjunction>`:
+that is a verbatim second copy of the table whose repair after a regression is to
+edit the copy — the same anti-tautology argument as `Emittable` above.
+
+**Two seams are unobservable, and are recorded rather than pretended.**
+`0x3041-0x33FF ∪ 0x3400-0x4DBF` and `0x4E00-0x9FFF ∪ 0xA000-0xA4CF` are each one
+contiguous run written as two clauses; moving a split point in *both* clauses
+changes no value of the function, so no oracle can see it. The unions' outer edges
+carry the content and are pinned; the seam interiors are pinned as `true` on both
+sides, which catches a one-sided shrink (it opens a gap) but not an overlap.
+
+**And a third thing nothing here can catch, found by break-verifying this
+section:** `charWidth`'s *branch order*. Swapping its two `if`s is a semantic
+no-op — and `zeroWidth_not_wide` below is exactly why, since disjoint tables mean
+at most one branch can ever fire. So the order is a readability choice, not a
+decision, and a theorem shaped `charWidth c = 2 ↔ (isZeroWidth … = false ∧ isWide
+… = true)` would look like it pinned the order while pinning nothing. Those were
+weighed and declined for that reason; the disjointness claim is what carries the
+content they appeared to. -/
+
+/-- **The low wall: nothing below U+1100 is wide.** One claim covering 4352
+codepoints, and the property the grid actually rests on — every ASCII, Latin-1
+and box-drawing glyph owns exactly one column, so a clause whose lower bound
+slipped into the low plane mis-aligns every row of every restore. Tight: the
+minimum `lo` in the table *is* `0x1100`, so lowering any of them breaks this. -/
+theorem isWide_low (n : Nat) (h : n < 0x1100) : isWide n = false := by
+  unfold isWide
+  simp only [Bool.or_eq_false_iff, Bool.and_eq_false_iff, decide_eq_false_iff_not,
+    Nat.not_le]
+  omega
+
+/-- The same wall for the zero-width table, at U+0300. -/
+theorem isZeroWidth_low (n : Nat) (h : n < 0x0300) : isZeroWidth n = false := by
+  unfold isZeroWidth
+  simp only [Bool.or_eq_false_iff, Bool.and_eq_false_iff, decide_eq_false_iff_not,
+    Nat.not_le, beq_eq_false_iff_ne, ne_eq]
+  omega
+
+/-- The consequence the row painter consumes: ASCII and Latin-1 are one column
+wide. Composes the two walls through `charWidth`'s branch order. -/
+theorem charWidth_low (c : Char) (h : c.toNat < 0x0300) : charWidth c = 1 := by
+  unfold charWidth
+  simp only [isZeroWidth_low _ h, isWide_low _ (by omega : c.toNat < 0x1100),
+    Bool.false_eq_true, if_false]
+
+/-- Hangul Jamo leads (U+1100–U+115F), both edges. -/
+theorem isWide_hangulJamo : isWide 0x10FF = false ∧ isWide 0x1100 = true
+    ∧ isWide 0x115F = true ∧ isWide 0x1160 = false := by decide
+
+/-- CJK radicals through punctuation (U+2E80–U+303E). `0x303F` is the ideographic
+half-fill space, narrow — and the gap to the next clause is two codepoints, the
+tightest in the table. -/
+theorem isWide_cjkRadicals : isWide 0x2E7F = false ∧ isWide 0x2E80 = true
+    ∧ isWide 0x303E = true ∧ isWide 0x303F = false := by decide
+
+/-- Kana and CJK misc, the U+3041–U+4DBF run written as two clauses. The outer
+edges carry the content; `0x33FF`/`0x3400` is the unobservable seam. -/
+theorem isWide_kanaCjk : isWide 0x3040 = false ∧ isWide 0x3041 = true
+    ∧ isWide 0x33FF = true ∧ isWide 0x3400 = true
+    ∧ isWide 0x4DBF = true ∧ isWide 0x4DC0 = false := by decide
+
+/-- CJK unified through Yi, the U+4E00–U+A4CF run written as two clauses.
+`0x9FFF`/`0xA000` is the second unobservable seam. -/
+theorem isWide_cjkUnified : isWide 0x4DFF = false ∧ isWide 0x4E00 = true
+    ∧ isWide 0x9FFF = true ∧ isWide 0xA000 = true
+    ∧ isWide 0xA4CF = true ∧ isWide 0xA4D0 = false := by decide
+
+/-- Hangul syllables (U+AC00–U+D7A3). Both probes sit below the surrogate block,
+so neither is an invalid scalar. -/
+theorem isWide_hangulSyllables : isWide 0xABFF = false ∧ isWide 0xAC00 = true
+    ∧ isWide 0xD7A3 = true ∧ isWide 0xD7A4 = false := by decide
+
+/-- CJK compatibility ideographs (U+F900–U+FAFF). -/
+theorem isWide_cjkCompat : isWide 0xF8FF = false ∧ isWide 0xF900 = true
+    ∧ isWide 0xFAFF = true ∧ isWide 0xFB00 = false := by decide
+
+/-- CJK compatibility forms (U+FE30–U+FE4F). Its `lo-1` is U+FE2F, the last
+variation selector supplement — **zero-width**, not narrow: this edge is where
+the two tables touch, and `zeroWidth_not_wide` below is what keeps them apart. -/
+theorem isWide_cjkForms : isWide 0xFE2F = false ∧ isWide 0xFE30 = true
+    ∧ isWide 0xFE4F = true ∧ isWide 0xFE50 = false := by decide
+
+/-- Fullwidth forms (U+FF00–U+FF60) and fullwidth signs (U+FFE0–U+FFE6). The
+first `lo-1` is U+FEFF, the BOM — the second place the tables touch. -/
+theorem isWide_fullwidth : isWide 0xFEFF = false ∧ isWide 0xFF00 = true
+    ∧ isWide 0xFF60 = true ∧ isWide 0xFF61 = false
+    ∧ isWide 0xFFDF = false ∧ isWide 0xFFE0 = true
+    ∧ isWide 0xFFE6 = true ∧ isWide 0xFFE7 = false := by decide
+
+/-- Emoji (U+1F300–U+1F64F) and supplemental symbols (U+1F900–U+1F9FF), above
+the BMP — reachable here only because `isWide` takes a `Nat`. -/
+theorem isWide_emoji : isWide 0x1F2FF = false ∧ isWide 0x1F300 = true
+    ∧ isWide 0x1F64F = true ∧ isWide 0x1F650 = false
+    ∧ isWide 0x1F8FF = false ∧ isWide 0x1F900 = true
+    ∧ isWide 0x1F9FF = true ∧ isWide 0x1FA00 = false := by decide
+
+/-- Planes 2 and 3 (U+20000–U+2FFFD, U+30000–U+3FFFD). Both `hi+1` probes are
+noncharacters; Lean validates scalar-value-ness, not assignment. -/
+theorem isWide_planes23 : isWide 0x1FFFF = false ∧ isWide 0x20000 = true
+    ∧ isWide 0x2FFFD = true ∧ isWide 0x2FFFE = false
+    ∧ isWide 0x2FFFF = false ∧ isWide 0x30000 = true
+    ∧ isWide 0x3FFFD = true ∧ isWide 0x3FFFE = false := by decide
+
+/-- Combining diacritics (U+0300–U+036F). -/
+theorem isZeroWidth_combining : isZeroWidth 0x02FF = false
+    ∧ isZeroWidth 0x0300 = true ∧ isZeroWidth 0x036F = true
+    ∧ isZeroWidth 0x0370 = false := by decide
+
+/-- Vedic extensions and combining marks (U+1AB0–U+1AFF, U+20D0–U+20FF). -/
+theorem isZeroWidth_marks : isZeroWidth 0x1AAF = false ∧ isZeroWidth 0x1AB0 = true
+    ∧ isZeroWidth 0x1AFF = true ∧ isZeroWidth 0x1B00 = false
+    ∧ isZeroWidth 0x20CF = false ∧ isZeroWidth 0x20D0 = true
+    ∧ isZeroWidth 0x20FF = true ∧ isZeroWidth 0x2100 = false := by decide
+
+/-- The zero-width joiner cluster (U+200B, U+200C, U+200D) — three **mutually
+adjacent singletons**, so no neighbour probe can detect the loss of any one of
+them. Each is pinned individually; U+200A and U+200E are the only outside probes
+the cluster has. -/
+theorem isZeroWidth_joiners : isZeroWidth 0x200A = false
+    ∧ isZeroWidth 0x200B = true ∧ isZeroWidth 0x200C = true
+    ∧ isZeroWidth 0x200D = true ∧ isZeroWidth 0x200E = false := by decide
+
+/-- Variation selectors (U+FE00–U+FE0F) and their supplement (U+FE20–U+FE2F).
+`0xFE30` is `false` here because it belongs to the *wide* table. -/
+theorem isZeroWidth_varSel : isZeroWidth 0xFDFF = false
+    ∧ isZeroWidth 0xFE00 = true ∧ isZeroWidth 0xFE0F = true
+    ∧ isZeroWidth 0xFE10 = false ∧ isZeroWidth 0xFE1F = false
+    ∧ isZeroWidth 0xFE20 = true ∧ isZeroWidth 0xFE2F = true
+    ∧ isZeroWidth 0xFE30 = false := by decide
+
+/-- The BOM (U+FEFF), a singleton whose `hi+1` is the fullwidth block's `lo`. -/
+theorem isZeroWidth_bom : isZeroWidth 0xFEFE = false ∧ isZeroWidth 0xFEFF = true
+    ∧ isZeroWidth 0xFF00 = false := by decide
+
+/-- **The tables never overlap.** They are adjacent at exactly two places, gap
+one — U+FE2F/U+FE30 and U+FEFF/U+FF00 — and a one-codepoint slip in *either*
+table at *either* place would make a codepoint both zero-width and wide, which
+`charWidth`'s branch order then resolves silently. No per-table edge pin sees
+that; this is false the moment it happens. -/
+theorem zeroWidth_not_wide (n : Nat) (h : isZeroWidth n = true) : isWide n = false := by
+  unfold isZeroWidth at h
+  unfold isWide
+  simp only [Bool.or_eq_true, Bool.and_eq_true, decide_eq_true_eq, beq_iff_eq] at h
+  simp only [Bool.or_eq_false_iff, Bool.and_eq_false_iff, decide_eq_false_iff_not,
+    Nat.not_le]
+  omega
+
 /-- A cell a repaint can reproduce. -/
 structure CellOk (c : Cell) : Prop where
   base : Emittable c.base

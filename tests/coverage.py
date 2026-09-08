@@ -58,7 +58,12 @@ ROOT = Path(__file__).resolve().parent.parent
 # was pending; `rowAnsi_writes_row` and the `rowSlot_eq_*` equations now name it, so
 # it is back to 21. Down to 20 with `size_defaultTabs`, which `restore_tabs_any` needs
 # as its ruler-length witness — the ratchet tightens when a claim lands, so it does.
-STATEMENT_CAP = 19
+# 19 → 16 on 2026-08-29 (pin-the-gaps item 4): the width tables `isWide`/`isZeroWidth`
+# were named nowhere in the repo, and the per-clause edge pins in `Theorems/Vt.lean`
+# claim both. The cap is set to the measured count with ZERO headroom — it had one
+# free slot before (19 against 18 actual), which is a slot a new unclaimed def can
+# occupy silently, and every other ratchet here is exact.
+STATEMENT_CAP = 16
 
 # ── Check 2 ────────────────────────────────────────────────────────────────────
 # Every byte stream the runtime emits, and what backs it. `theorem` entries must

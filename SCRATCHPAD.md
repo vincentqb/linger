@@ -6595,3 +6595,159 @@ the general recipe: `import all` every Core module whose bodies the proofs unfol
 the previous rung (`import all Theorems.X` — the ladder is one proof split across files),
 and term-`rfl`s under a blanket `public section` become `by rfl` (public statements
 elaborate proofs against the exported view; tactic blocks get the private scope).
+
+
+## pin-the-gaps — the coverage audit and its nine closures — 2026-08-29
+
+`specs/pin-the-gaps.md`. An audit of the whole test+theorem surface, then the
+nine gaps it found, closed in one round. Numbering is the audit's and is used in
+the spec, the commits and below.
+
+### What the audit measured, so nobody re-derives it
+
+Baseline at `2f16167`: all three gates green; 1467 theorems and 1 lemma in
+`Theorems/`, 262 `example`s in `Tests/`; `coverage.py` at 18 unclaimed (cap 19).
+Structural checks that came back **clean** and are not worth re-running blind:
+
+* Every `Theorems/*.lean` (13) and `Tests/*.lean` (10) is imported by its root.
+* The Render ladder is one unbroken chain — Ends → Quiet → Pen → Keeps → Modes →
+  Sticky → History → Row → Grid → Tabs → Scrollback — and the façade imports the
+  last rung, so no rung is silently uncompiled.
+* **THEOREMS.md cites 156 theorem-shaped names; 153 resolve.** The three that do
+  not (`restore_sb_any`, `scrollbackAnsi_le`, and the `frame_print` /
+  `frame_csiDispatch` pair) are each explicitly marked in the ledger as not yet
+  existing or as recorded failures. No unbacked promises. Script: extract
+  backticked snake_case identifiers, resolve against every declaration in
+  `Theorems/` + `Linger/`; the false-positive class is env vars, tactic names and
+  C constants (`LINGER_DIR`, `decreasing_by`, `O_EXCL`, `SHIM_CAP`).
+* Ratchet headroom: `SHIM_CAP` 27/27, `HEARTBEAT_CAP` 1/1,
+  `RUNTIME_PARTIAL_CAP` 2/2 — all exact. `STATEMENT_CAP` was the only loose one.
+
+Two audit findings that are **not** defects and should not be "fixed":
+`tests/remote_live_test.py` is documented in its own docstring as out of the gate
+(it needs a real second host); `procs.py` is a helper, not a suite.
+
+### The finding that redirected item 1: read-only is enforced daemon-side
+
+`Client.attach`'s three `!readOnly` guards look like the mechanism for
+`linger watch` and are not. The mechanism is `sizer := cols != 0 && rows != 0`
+(`Session.lean` `.attach`) plus `onMsg .input`'s `if c.attached && !c.sizer`,
+already proved by `onMsg_input_readonly`. Consequence, measured by break-verify:
+
+| guard | what it does | observable? |
+|---|---|---|
+| A `sendMsg fd (.attach 0 0)` | the wire's only read-only bit | **yes, 3 ways** |
+| B `if size != lastSize && !readOnly` | suppresses the observer's resize | **no** — `onMsg .resize` drops a non-sizer's anyway |
+| C `if !out.isEmpty && !readOnly` | suppresses the observer's keys | **no** — `onMsg .input` drops them anyway |
+
+So a pty test can only bite A, and B/C got grep gates in `e2e.sh` (the `SHIM_CAP`
+species). **Do not write a pty assertion claiming to catch B or C.** Removing
+guard A fails exactly three `watch_test.py` assertions (geometry at attach, the
+mid-watch resize, and `linger resize` being refused because the watcher became
+the size owner) — verified.
+
+Also found and now pinned: **`linger watch` marks the session seen.**
+`onMsg .attach` sets `lookSeq := s.outSeq` for *any* attach, `0×0` included, so
+the read-only verb has one write effect. `status_test.py` only ever exercised
+that through `attach`.
+
+### Break-verify records (all eight intended breaks fired)
+
+Theorem/fixture breaks, each reverted after:
+
+1. `isWide` emoji clause `0x1F300`→`0x1F301` → `isWide_emoji` fails.
+2. Drop the `c == 0x200C` singleton → `isZeroWidth_joiners` fails.
+3. `isWide` Hangul-Jamo `lo` `0x1100`→`0x0100` → `isWide_low` fails (it is tight:
+   `0x1100` *is* the table's minimum `lo`).
+4. Overlap the tables at `0xFE2F` → `zeroWidth_not_wide` fails.
+5. `.detachAll` drops its `.attached` filter → `onMsg_detachAll` fails.
+6. `.labelUnset` clears the whole store → `onMsg_labelUnset` fails.
+7. `.labelClear` becomes a no-op → `onMsg_labelClear` fails.
+
+Gate breaks:
+
+8. Guard A removed → 3 `watch_test.py` assertions fail. Guards B and C removed →
+   the two new greps fire. One throwaway unclaimed def in `Linger/Core` →
+   `coverage.py` fails (17 > cap 16), i.e. the cap now has zero headroom. One
+   assertion in `status_test.py` wrapped in `if False:` → the check-count floor
+   catches it (4 < 5) **while the suite still prints `FAILURES: 0`** — which is
+   the whole reason item 7 exists, demonstrated rather than argued.
+
+### NEGATIVE RESULT — `charWidth`'s branch order cannot be pinned by anything
+
+Break 5 of the first batch was "swap `charWidth`'s two `if`s" and **nothing
+caught it, correctly**: `zeroWidth_not_wide` proves the tables are disjoint, so at
+most one branch can ever fire and the order cannot change any value. It is a
+readability choice, not a decision. This kills a shape that looks attractive —
+`charWidth c = 2 ↔ (isZeroWidth … = false ∧ isWide … = true)` — which appears to
+pin the order and pins nothing; both such theorems were weighed and declined,
+because landing them *instead of* the edge pins would drop the ratchet by 2 while
+claiming no range content. Recorded in the `Theorems/Vt.lean` section docstring.
+
+### Two more things no oracle can see (recorded, not pretended)
+
+* **The wide table's two seams.** `0x3041-0x33FF ∪ 0x3400-0x4DBF` and
+  `0x4E00-0x9FFF ∪ 0xA000-0xA4CF` are each one contiguous run written as two
+  clauses. Moving a split point in *both* clauses changes no value. Pinned as
+  `true` on both sides of each seam, which catches a one-sided shrink (it opens a
+  gap) but never an overlap.
+* **The `0x200B/0x200C/0x200D` cluster** is three mutually adjacent singletons, so
+  no neighbour probe detects the loss of any one. Each is pinned individually;
+  `0x200A` and `0x200E` are the cluster's only outside probes.
+
+### Traps hit while doing this
+
+* **The purity grep reads prose — again.** Writing "no `native_decide`" in a
+  `Theorems/Vt.lean` docstring failed `e2e.sh` step 2 exactly as the step-5a fixup
+  (`fb6a0e6`) recorded. The docstring now says "compiled evaluation" and warns the
+  next writer inside the sentence itself. Cost: one full e2e run.
+* **`^(PASS|FAIL)` also matches `FAILURES: 0`.** The first check-count measurement
+  was uniformly one too high. The floors use `^(PASS|FAIL) ` with the space.
+* **Structure-instance parsing.** `{ s with labels := s.labels.filter (·.1 != …) }`
+  with the `·` lambda on a continuation line does not parse; an explicit
+  `fun kv => …` does. Not a privacy or module problem, just layout.
+* `List.of_mem_filter` does not exist on v4.32 — `List.mem_filter.mp/.mpr` plus
+  `bne_iff_ne` is the idiom, and the `Bool`-vs-`Prop` gap at `!=` needs it in both
+  directions.
+
+### Compound-engineering pass (three duplications removed, one of them mine)
+
+* **`Session.labelText`** — `.labelSet` and `.labelUnset` each open-coded
+  `String.fromUTF8? (ByteArray.mk … .toArray) |>.getD ""`. Now one Core def, so
+  the two arms cannot drift about what a key *is* (a `.labelSet` that decoded
+  differently would leave a label no `unset` could reach). Census 258 → 259;
+  unclaimed stayed 16 because the new theorems name it in their statements.
+  `rfl` reduces through it unchanged.
+* **`Tests/Vt.lean` `widthProbes`** — the 38 boundary codepoints were duplicated
+  between the claim and its non-vacuity check. One `def`, two consumers; a
+  corrected probe can no longer be fixed in one copy and not the other.
+* **`tests/harness.py`** — writing `watch_test.py` meant copy-pasting a tenth set
+  of `LINGER`/`ENV`/`drain`/`expect`/`linger`/`info`/`field`. Extracted instead
+  (`procs.py` is the precedent for a shared test module), which also let `spawn`
+  fix a race every copy had: `pty.fork()` then `ioctl(TIOCSWINSZ)` sets the size
+  *after* the child may have read it, which is invisible until a test's subject IS
+  the reported geometry. `watch_test.py` is 131 lines instead of ~200.
+  **The nine older suites still carry their copies, deliberately** — porting them
+  is a ten-file diff across a green gate and belongs in its own commit, not folded
+  into this spec's step (AGENTS.md, one item in flight). It is now cheap *and*
+  safe, because the check-count floors mean a port that silently drops an
+  assertion fails the gate.
+
+### `e2e.sh` shape change
+
+Nine copy-pasted three-line suite invocations became one `suite <name> <floor>`
+function and ten one-line calls — net fewer lines, and the floors live next to
+`SHIM_CAP` where the other ratchets are read. Measured floors (live counts):
+attach 35, resume 9, overview 7, remote 11, robust 14, graphics 9,
+terminal_query 12, status 5, agent 24, watch 17.
+
+### Where the numbers ended
+
+`coverage.py`: `core defs 259; named by no theorem STATEMENT: 16 (cap 16)` —
+zero headroom, matching every other ratchet. Remaining unclaimed, with the reason
+each is still fine: `ckptIntervalMs` `maxClients` `maxLen` `csiCap` `dcsCap`
+`oscCap` (constants a claim would restate), `clampDim` `feedBytes` `color256`
+`decLine` `sgrParams` `knownTag` `writeU32` `firstDupHost` `parseRecord`
+`records` (helpers whose composites are claimed). `clampDim` is the one worth a
+future look: the runtime calls it on the `linger resize` path and no theorem
+names it.
