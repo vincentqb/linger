@@ -26,7 +26,7 @@ theorem rt_nat : RT wNat rNat := by
   intro n rest
   induction n using wNat.induct with
   | case1 n h =>
-    rw [wNat, dif_pos h]
+    rw [wNat, dite_eq_left h]
     have hb : (UInt8.ofNat n) < 128 := by
       simp only [UInt8.lt_iff_toNat_lt, UInt8.toNat_ofNat',
         show (128 : UInt8).toNat = 128 from rfl]
@@ -35,13 +35,13 @@ theorem rt_nat : RT wNat rNat := by
     clear hb
     omega
   | case2 n h ih =>
-    rw [wNat, dif_neg h]
+    rw [wNat, dite_eq_right h]
     have hmod : n % 128 < 128 := Nat.mod_lt _ (by omega)
     have hb : ¬ (UInt8.ofNat (128 + n % 128)) < 128 := by
       simp only [UInt8.lt_iff_toNat_lt, UInt8.toNat_ofNat',
         show (128 : UInt8).toNat = 128 from rfl]
       omega
-    simp only [rNat, List.cons_append, hb, if_false, ih]
+    simp only [rNat, List.cons_append, hb, ite_false, ih]
     clear hb
     simp only [UInt8.toNat_ofNat']
     have h1 : (128 + n % 128) % 256 = 128 + n % 128 := by omega
@@ -59,7 +59,7 @@ theorem rt_char : RT wChar rChar := by
   rw [rt_nat c.toNat rest]
   have hv : c.toNat.isValidChar := c.valid
   simp only [Option.bind_eq_bind, Option.bind_some]
-  rw [dif_pos hv]
+  rw [dite_eq_left hv]
   exact congrArg (fun x => some (x, rest)) (Char.ext rfl)
 
 theorem rt_pair {α β : Type} {wa : α → List UInt8} {ra : R α}
@@ -200,7 +200,7 @@ theorem stripMagic_magic (p : List UInt8) : stripMagic (magic ++ p) = some p := 
       List.take_of_length_le (by simp [magic]),
       List.drop_append_of_le_length (by simp [magic]),
       List.drop_of_length_le (by simp [magic]), List.nil_append]
-  rw [if_pos (rfl : magic = magic)]
+  rw [ite_eq_left (rfl : magic = magic)]
 
 /-- §Restore, top level: a checkpoint written by `save` loads back to
 exactly what was saved (parser state quiesced — which the daemon's

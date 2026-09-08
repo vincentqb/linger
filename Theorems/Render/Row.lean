@@ -1163,12 +1163,12 @@ theorem rowSlot_split (B : Bytes) (p : Pen) (x : Nat) (c : Cell) :
   unfold rowSlot
   dsimp only
   by_cases hw : c.width == 0
-  · rw [if_pos hw, if_pos hw]; exact ⟨rfl, rfl⟩
-  · rw [if_neg hw, if_neg hw]
+  · rw [ite_eq_left hw, ite_eq_left hw]; exact ⟨rfl, rfl⟩
+  · rw [ite_eq_right hw, ite_eq_right hw]
     dsimp only
     by_cases hp : c.pen == p
-    · rw [if_pos hp, if_pos hp]; exact ⟨by simp, rfl⟩
-    · rw [if_neg hp, if_neg hp]; exact ⟨by simp [List.append_assoc], rfl⟩
+    · rw [ite_eq_left hp, ite_eq_left hp]; exact ⟨by simp, rfl⟩
+    · rw [ite_eq_right hp, ite_eq_right hp]; exact ⟨by simp [List.append_assoc], rfl⟩
 
 /-- …and therefore so does the whole fold. -/
 theorem rowSlot_fold_split : ∀ (cs : List Cell) (B : Bytes) (p : Pen) (x : Nat),
@@ -1222,7 +1222,7 @@ theorem foldl_rowSlot_range (g : Row) (acc : Bytes × Pen × Nat) :
     rw [List.getElem_map, List.getElem_range]
     show g.toList[i] = g.at i
     unfold Row.at
-    rw [Array.getElem_toList, Array.getD, dif_pos hi]
+    rw [Array.getElem_toList, Array.getD, dite_eq_left hi]
     rfl
 
 /-- The optional `SGR` `rowSlot` emits before a cell whose pen differs from the one in
@@ -1233,12 +1233,12 @@ theorem pen_prefix_matches {w : Vt} {P : PaintState} {g : Row} {k : Nat}
     Matches (w.feed (if c.pen == P.pen then ([] : Bytes) else penSgr c.pen))
       { P with pen := c.pen } g k := by
   by_cases hpe : c.pen == P.pen
-  · rw [if_pos hpe]
+  · rw [ite_eq_left hpe]
     rw [show (w.feed ([] : Bytes)) = w from rfl]
     rw [show ({ P with pen := c.pen } : PaintState) = P from by
       rw [beq_iff_eq] at hpe; rw [hpe]]
     exact hm
-  · rw [if_neg hpe]
+  · rw [ite_eq_right hpe]
     exact step_pen hm c.pen
 
 /-! ### `rowSlot`'s output per cell shape, folding from empty bytes. -/
@@ -1248,11 +1248,11 @@ theorem rowSlot_eq_narrow (c : Cell) (p : Pen) (x : Nat) (hw : c.width = 1) :
       = ((if c.pen == p then [] else penSgr c.pen) ++ cellText c, c.pen, x + 1) := by
   unfold rowSlot
   dsimp only
-  rw [if_neg (show ¬(c.width == 0) = true from by simp [hw]),
-    if_neg (show ¬(c.width == 2 && !c.marks.isEmpty) = true from by simp [hw])]
+  rw [ite_eq_right (show ¬(c.width == 0) = true from by simp [hw]),
+    ite_eq_right (show ¬(c.width == 2 && !c.marks.isEmpty) = true from by simp [hw])]
   by_cases hpe : c.pen == p
-  · rw [if_pos hpe, if_pos hpe]
-  · rw [if_neg hpe, if_neg hpe]; simp
+  · rw [ite_eq_left hpe, ite_eq_left hpe]
+  · rw [ite_eq_right hpe, ite_eq_right hpe]; simp
 
 theorem rowSlot_eq_wide_nomarks (c : Cell) (p : Pen) (x : Nat)
     (hw : c.width = 2) (hmk : c.marks = []) :
@@ -1260,11 +1260,11 @@ theorem rowSlot_eq_wide_nomarks (c : Cell) (p : Pen) (x : Nat)
       = ((if c.pen == p then [] else penSgr c.pen) ++ cellText c, c.pen, x + 1) := by
   unfold rowSlot
   dsimp only
-  rw [if_neg (show ¬(c.width == 0) = true from by simp [hw]),
-    if_neg (show ¬(c.width == 2 && !c.marks.isEmpty) = true from by simp [hmk])]
+  rw [ite_eq_right (show ¬(c.width == 0) = true from by simp [hw]),
+    ite_eq_right (show ¬(c.width == 2 && !c.marks.isEmpty) = true from by simp [hmk])]
   by_cases hpe : c.pen == p
-  · rw [if_pos hpe, if_pos hpe]
-  · rw [if_neg hpe, if_neg hpe]; simp
+  · rw [ite_eq_left hpe, ite_eq_left hpe]
+  · rw [ite_eq_right hpe, ite_eq_right hpe]; simp
 
 theorem rowSlot_eq_wide_marks (c : Cell) (p : Pen) (x : Nat)
     (hw : c.width = 2) (hmk : c.marks ≠ []) :
@@ -1274,19 +1274,19 @@ theorem rowSlot_eq_wide_marks (c : Cell) (p : Pen) (x : Nat)
             ++ csiNum (x + 3) 0x47), c.pen, x + 1) := by
   unfold rowSlot
   dsimp only
-  rw [if_neg (show ¬(c.width == 0) = true from by simp [hw]),
-    if_pos (show (c.width == 2 && !c.marks.isEmpty) = true from by
+  rw [ite_eq_right (show ¬(c.width == 0) = true from by simp [hw]),
+    ite_eq_left (show (c.width == 2 && !c.marks.isEmpty) = true from by
       rcases List.exists_cons_of_ne_nil hmk with ⟨a, t, hcm⟩
       rw [hw, hcm]; rfl)]
   by_cases hpe : c.pen == p
-  · rw [if_pos hpe, if_pos hpe]
-  · rw [if_neg hpe, if_neg hpe]; simp
+  · rw [ite_eq_left hpe, ite_eq_left hpe]
+  · rw [ite_eq_right hpe, ite_eq_right hpe]; simp
 
 theorem rowSlot_eq_shadow (c : Cell) (B : Bytes) (p : Pen) (x : Nat) (hw : c.width = 0) :
     rowSlot (B, p, x) c = (B ++ utf8s c.marks, p, x + 1) := by
   unfold rowSlot
   dsimp only
-  rw [if_pos (show (c.width == 0) = true from by simp [hw])]
+  rw [ite_eq_left (show (c.width == 0) = true from by simp [hw])]
 
 /-! ### Column count is preserved across a cell's bytes (for the row walk's recursion). -/
 
@@ -1297,8 +1297,8 @@ theorem pen_prefix_cols {w : Vt} (c : Cell) (p : Pen) (hg : w.pstate = .ground)
     (hu : w.u8need = 0) :
     (w.feed (if c.pen == p then ([] : Bytes) else penSgr c.pen)).cols = w.cols := by
   by_cases hpe : c.pen == p
-  · rw [if_pos hpe]; rfl
-  · rw [if_neg hpe]; exact penSgr_cols c.pen hg hu
+  · rw [ite_eq_left hpe]; rfl
+  · rw [ite_eq_right hpe]; exact penSgr_cols c.pen hg hu
 
 theorem cellText_cols {w : Vt} (c : Cell) (hg : w.pstate = .ground) (hu : w.u8need = 0)
     (ha : w.u8acc = 0) : (w.feed (cellText c)).cols = w.cols := by

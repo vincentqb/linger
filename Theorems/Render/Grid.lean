@@ -63,7 +63,7 @@ theorem OffRow.of_grid_eq {y : Nat} {u u' : Vt} (hg : u'.grid = u.grid) (hc : u'
     rw [hg]
     by_cases hlt : y' < u.grid.size
     · rw [getD_of_lt u.grid y' (blankRow u'.cols u'.pen) (blankRow u.cols u.pen) hlt]
-    · rw [Array.getD, dif_neg hlt, Array.getD, dif_neg hlt]
+    · rw [Array.getD, dite_eq_right hlt, Array.getD, dite_eq_right hlt]
       show (blankRow u'.cols u'.pen).size = (blankRow u.cols u.pen).size
       simp [blankRow, hc]
 
@@ -75,8 +75,8 @@ theorem offRow_pen_prefix {w : Vt} (y : Nat) (c : Cell) (p : Pen) (hg : w.pstate
     (hu : w.u8need = 0) :
     OffRow y w (w.feed (if c.pen == p then ([] : Bytes) else penSgr c.pen)) := by
   by_cases hpe : c.pen == p
-  · rw [if_pos hpe]; exact OffRow.refl y w
-  · rw [if_neg hpe]; exact offRow_penSgr y c.pen hg hu
+  · rw [ite_eq_left hpe]; exact OffRow.refl y w
+  · rw [ite_eq_right hpe]; exact offRow_penSgr y c.pen hg hu
 
 theorem offRow_cha {w : Vt} (y n : Nat) (hg : w.pstate = .ground) (hu : w.u8need = 0)
     (hn : 0 < n) (hlt : n < 65535) : OffRow y w (w.feed (csiNum n 0x47)) :=
@@ -692,11 +692,11 @@ theorem gridAnsi_eq (grid : Array Row) :
     rw [← Array.foldl_toList, gridFold_eq_rowsAnsi grid.toList [] {}]; rfl]
 
 theorem getD_lt {α} [Inhabited α] (a : Array α) (i : Nat) (h : i < a.size) :
-    a.getD i default = a[i] := by rw [Array.getD, dif_pos h]; rfl
+    a.getD i default = a[i] := by rw [Array.getD, dite_eq_left h]; rfl
 
 /-- In range, `getD` returns the element whatever the default is. -/
 theorem getD_lt' {α} (a : Array α) (i : Nat) (d : α) (h : i < a.size) :
-    a.getD i d = a[i] := by rw [Array.getD, dif_pos h]; rfl
+    a.getD i d = a[i] := by rw [Array.getD, dite_eq_left h]; rfl
 
 /-- Row length depends only on the grid and the column count, not the pen (which sets the
 out-of-range default's *content*, never its size). -/
@@ -706,7 +706,7 @@ theorem size_getRow_congr {v w : Vt} (hg : v.grid = w.grid) (hc : v.cols = w.col
   rw [hg]
   by_cases h : y < w.grid.size
   · rw [getD_lt' w.grid y (blankRow v.cols v.pen) h, getD_lt' w.grid y (blankRow w.cols w.pen) h]
-  · rw [Array.getD, dif_neg h, Array.getD, dif_neg h]; simp [blankRow, hc]
+  · rw [Array.getD, dite_eq_right h, Array.getD, dite_eq_right h]; simp [blankRow, hc]
 
 /-- **A grid equals its target when every in-range cell agrees and the rows are the right
 length.** The array-`ext` plumbing the grid claim needs, done once: grid `ext` over rows,
@@ -933,11 +933,11 @@ theorem home_feed_eq {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) :
   rw [csi_final_step_eq 0x48 (v := { v with pstate := .csi ({} : CsiState) })
     (s := ({} : CsiState)) rfl (by simpa using hu) rfl (by decide) (by decide)]
   unfold Vt.csiFinish
-  rw [if_neg (by decide)]
+  rw [ite_eq_right (by decide)]
   dsimp only
   rw [show ({ v with pstate := .csi ({} : CsiState) } : Vt).csiDispatch ({} : CsiState) 0x48
       = ({ v with pstate := .csi ({} : CsiState) } : Vt).moveTo 0 0 from by
-    unfold Vt.csiDispatch; rw [if_neg (by decide)]; rfl]
+    unfold Vt.csiDispatch; rw [ite_eq_right (by decide)]; rfl]
   show ({ ({ v with pstate := .csi ({} : CsiState) } : Vt).moveTo 0 0 with
     pstate := .ground } : Vt) = v.moveTo 0 0
   unfold Vt.moveTo
@@ -1057,7 +1057,7 @@ theorem prologue_sticky (v w : Vt) (hgood : Good w) (hrows : w.rows = v.rows)
       ++ escCharset 0x29 0x42 ++ [0x0F] from by simp only [prologueAnsi]]
   have eid : ∀ (n : Nat) (on : Bool) (Y : Sticky), (n == 47 || n == 1047 || n == 1049) = false →
       stSetMode n on Y = Y := by
-    intro n on Y h; unfold stSetMode; rw [if_neg (by rw [h]; simp)]
+    intro n on Y h; unfold stSetMode; rw [ite_eq_right (by rw [h]; simp)]
   obtain ⟨A, hA⟩ : ∃ y : Sticky, stAlt false (stick (w.feed (escSeq 0x5C))) = y := ⟨_, rfl⟩
   have hArows : A.rows = v.rows := by rw [← hA, stAlt_rows]; exact (rows_st_lead w).trans hrows
   have hAalt : A.alt = false := by rw [← hA]; exact stAlt_alt false _
@@ -1074,9 +1074,9 @@ theorem prologue_sticky (v w : Vt) (hgood : Good w) (hrows : w.rows = v.rows)
         ∧ (stAlt false (stick (w.feed (escSeq 0x5C)))).bot = 0 := by
       unfold stAlt; dsimp only
       by_cases ha : (stick (w.feed (escSeq 0x5C))).alt = true
-      · rw [if_pos ha]
+      · rw [ite_eq_left ha]
         exact ⟨rfl, by show (stick (w.feed (escSeq 0x5C))).rows - 1 = 0; rw [stick_rows, hrE]⟩
-      · rw [if_neg ha]
+      · rw [ite_eq_right ha]
         have hb0 : (w.feed (escSeq 0x5C)).bot = 0 := by have := hgoodE.botLt; rw [hrE] at this; omega
         have ht0 : (w.feed (escSeq 0x5C)).top = 0 := by have := hgoodE.topLe; omega
         exact ⟨by show (stick (w.feed (escSeq 0x5C))).top = 0; rw [stick_top]; exact ht0,
@@ -1089,7 +1089,7 @@ theorem prologue_sticky (v w : Vt) (hgood : Good w) (hrows : w.rows = v.rows)
         = ⟨v.rows, At, Ab, Ag0, Ag1, Aso, false⟩ from by
       rw [show stSetMode 1049 false (stick (w.feed (escSeq 0x5C)))
         = stAlt false (stick (w.feed (escSeq 0x5C))) from by
-          unfold stSetMode; rw [if_pos (by decide)]]
+          unfold stSetMode; rw [ite_eq_left (by decide)]]
       exact hA)
   have h2s := sput_congr (sput_step h1 smap_id_irm_reset) (id_eq _)
   have h3 := sput_congr (sput_step h2s (smap_modeSet 6 false (by decide) (by decide)))
@@ -1109,11 +1109,11 @@ theorem prologue_sticky (v w : Vt) (hgood : Good w) (hrows : w.rows = v.rows)
   have h6 := sput_congr (sput_step h5 (smap_charset 0x28 0x42 (Or.inl rfl)))
     (show stCharset 0x28 0x42 (⟨v.rows, 0, v.rows - 1, Ag0, Ag1, Aso, false⟩ : Sticky)
         = ⟨v.rows, 0, v.rows - 1, false, Ag1, Aso, false⟩ from by
-      unfold stCharset; rw [if_pos (by decide)]; rfl)
+      unfold stCharset; rw [ite_eq_left (by decide)]; rfl)
   have h7 := sput_congr (sput_step h6 (smap_charset 0x29 0x42 (Or.inr rfl)))
     (show stCharset 0x29 0x42 (⟨v.rows, 0, v.rows - 1, false, Ag1, Aso, false⟩ : Sticky)
         = ⟨v.rows, 0, v.rows - 1, false, false, Aso, false⟩ from by
-      unfold stCharset; rw [if_neg (by decide), if_pos (by decide)]; rfl)
+      unfold stCharset; rw [ite_eq_right (by decide), ite_eq_left (by decide)]; rfl)
   have h8 := sput_congr (sput_step h7 smap_si)
     (show ({ (⟨v.rows, 0, v.rows - 1, false, false, Aso, false⟩ : Sticky) with so := false })
         = ⟨v.rows, 0, v.rows - 1, false, false, false, false⟩ from rfl)
@@ -1335,7 +1335,7 @@ theorem paint_entry (v w : Vt) (hgood : Good w) (hren : Renderable w)
     by_cases hy : y' < u.grid.size
     · rw [getD_lt' u.grid y' _ hy, ← getD_lt' u.grid y' (blankRow u.cols {}) hy, hucols] at *
       exact this
-    · rw [Array.getD, dif_neg hy]
+    · rw [Array.getD, dite_eq_right hy]
       show (blankRow u.cols u.pen).size = v.cols
       rw [show (blankRow u.cols u.pen).size = u.cols from by simp [blankRow]]; exact hucols
 
@@ -1412,7 +1412,7 @@ theorem scrollback_entry {u v : Vt} (hgood : Good u) (hren : Renderable u)
     by_cases hy : y' < z.grid.size
     · rw [getD_lt' z.grid y' _ hy, ← getD_lt' z.grid y' (blankRow z.cols {}) hy, hzcols] at *
       exact this
-    · rw [Array.getD, dif_neg hy]
+    · rw [Array.getD, dite_eq_right hy]
       show (blankRow z.cols z.pen).size = v.cols
       rw [show (blankRow z.cols z.pen).size = z.cols from by simp [blankRow]]; exact hzcols
   · have hns : z.altGrid.isSome = false := by rw [← stick_alt z, hstz]
@@ -1479,11 +1479,11 @@ theorem csi_priv_open_eq {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) 
     simp [Vt.feed], keeps_csi_open hg hu]
   unfold Vt.step Vt.abortUtf8
   dsimp only
-  rw [if_neg (by simp [hu])]
+  rw [ite_eq_right (by simp [hu])]
   show (({ v with pstate := .csi ({} : CsiState) } : Vt).stepCsi ({} : CsiState) 0x3F)
     = { v with pstate := .csi ({ priv := 0x3F } : CsiState) }
   unfold Vt.stepCsi
-  rw [if_neg (by decide), if_neg (by decide), if_neg (by decide), if_pos (by decide)]
+  rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_left (by decide)]
 
 /-- **A private mode set, as a state equation.** `?<n>h` / `?<n>l` *is* `setMode true n on`,
 with the parser back in ground. `modeSet_modes` gave only the `Modes` field, which cannot see
@@ -1509,7 +1509,7 @@ theorem modeSet_feed_eq (n : Nat) (on : Bool) (hn : 0 < n) (hlt : n < 65535)
   rw [csi_final_step_eq (if on then 0x68 else 0x6C) rfl (by simpa using hu) (by rw [hint])
     hfinal.1 hfinal.2]
   unfold Vt.csiFinish
-  rw [if_pos (by simpa using hhave), if_neg (by rw [hpar]; decide)]
+  rw [ite_eq_left (by simpa using hhave), ite_eq_right (by rw [hpar]; decide)]
   dsimp only
   -- the closed collector: one parameter `n`, the private marker set, ignore clear
   have hnorm : ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState)
@@ -1517,7 +1517,7 @@ theorem modeSet_feed_eq (n : Nat) (on : Bool) (hn : 0 < n) (hlt : n < 65535)
     rw [hpar, hcur', show min (min n 65535) 65535 = n from by omega]; rfl
   have harg : ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) }
       : CsiState).arg 0 0 = n := by
-    rw [hnorm, arg_of_one, if_neg (by omega)]
+    rw [hnorm, arg_of_one, ite_eq_right (by omega)]
   have hpriv : ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) }
       : CsiState).priv = 0x3F := by
     show s'.priv = 0x3F
@@ -1539,7 +1539,7 @@ theorem modeSet_feed_eq (n : Nat) (on : Bool) (hn : 0 < n) (hlt : n < 65535)
         = PState.csi s').symm.trans hps2)
     rw [this]; exact hign2
   cases on
-  all_goals simp only [Bool.false_eq_true, if_false, if_true]
+  all_goals simp only [Bool.false_eq_true, ite_false, ite_true]
   · rw [show ∀ (u : Vt), u.csiDispatch
         ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState) 0x6C
         = u.setMode true n false from by
@@ -1584,7 +1584,7 @@ theorem alt_switch_entry {u : Vt} (halt : u.altGrid = none)
                  top := 0, bot := u.rows - 1 } := by
     unfold Vt.enterAlt
     dsimp only
-    rw [if_neg (show ¬(u.altGrid.isSome = true) from by rw [halt]; simp), if_pos rfl]
+    rw [ite_eq_right (show ¬(u.altGrid.isSome = true) from by rw [halt]; simp), ite_eq_left rfl]
   rw [heq, hent]
   exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 

@@ -63,14 +63,14 @@ theorem sanitize_valid (s : String) : Valid (sanitize s) := by
         · simp [hdot]
           decide
         · simp only [Bool.not_eq_true] at hdot
-          simp only [hdot, Bool.false_eq_true, if_false]
+          simp only [hdot, Bool.false_eq_true, ite_false]
           exact hb_ok c0 List.mem_cons_self
       · exact hb_ok c (List.mem_cons_of_mem _ hc)
     · simp only [List.head?_cons, ne_eq, Option.some.injEq]
       by_cases hdot : c0 == '.'
       · simp [hdot]
       · simp only [Bool.not_eq_true] at hdot
-        simp only [hdot, Bool.false_eq_true, if_false]
+        simp only [hdot, Bool.false_eq_true, ite_false]
         intro he
         subst he
         simp at hdot

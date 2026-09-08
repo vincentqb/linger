@@ -54,8 +54,8 @@ theorem Sets.suffix {α : Type} {P : Vt → α} {x : α} {a : Bytes} (h : Sets P
 theorem Sets.ite {α : Type} {P : Vt → α} {x : α} {c : Prop} [Decidable c] {a b : Bytes}
     (ha : c → Sets P x a) (hb : ¬c → Sets P x b) : Sets P x (if c then a else b) := by
   by_cases h : c
-  · rw [if_pos h]; exact ha h
-  · rw [if_neg h]; exact hb h
+  · rw [ite_eq_left h]; exact ha h
+  · rw [ite_eq_right h]; exact hb h
 
 end Linger.Core.Render
 
@@ -79,8 +79,8 @@ receivers rather than five of them. Split in two so that each proof unfolds one
 theorem un_abortUtf8_esc (w : Vt) : (w.abortUtf8 0x1B).u8need = 0 := by
   unfold Vt.abortUtf8
   by_cases h : w.u8need > 0
-  · rw [if_pos (by simp [h])]
-  · rw [if_neg (by simp [h])]
+  · rw [ite_eq_left (by simp [h])]
+  · rw [ite_eq_right (by simp [h])]
     omega
 
 /-- Where `ESC` lands, from anywhere. The four reachable states are the ones `\` can
@@ -100,10 +100,10 @@ theorem esc_lands (w : Vt) :
     refine ⟨Or.inl ?_, ?_⟩
     · show ((w.abortUtf8 0x1B).stepGround 0x1B).pstate = PState.esc
       unfold Vt.stepGround
-      rw [if_pos (by decide)]
+      rw [ite_eq_left (by decide)]
     · show ((w.abortUtf8 0x1B).stepGround 0x1B).u8need = 0
       unfold Vt.stepGround
-      rw [if_pos (by decide)]
+      rw [ite_eq_left (by decide)]
       exact hun
   | .esc =>
     refine ⟨Or.inl ?_, ?_⟩
@@ -129,30 +129,30 @@ theorem esc_lands (w : Vt) :
     refine ⟨Or.inl ?_, ?_⟩
     · show ((w.abortUtf8 0x1B).stepCsi s 0x1B).pstate = PState.esc
       unfold Vt.stepCsi
-      rw [if_neg (by decide), if_neg (by decide), if_neg (by decide), if_neg (by decide),
-        if_neg (by decide), if_neg (by decide), if_pos (by decide)]
+      rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide),
+        ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_left (by decide)]
     · show ((w.abortUtf8 0x1B).stepCsi s 0x1B).u8need = 0
       unfold Vt.stepCsi
-      rw [if_neg (by decide), if_neg (by decide), if_neg (by decide), if_neg (by decide),
-        if_neg (by decide), if_neg (by decide), if_pos (by decide)]
+      rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide),
+        ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_left (by decide)]
       exact hun
   | .osc acc e =>
     refine ⟨Or.inr (Or.inr (Or.inl ⟨acc, ?_⟩)), ?_⟩
     · show ((w.abortUtf8 0x1B).stepOsc acc e 0x1B).pstate = PState.osc acc true
       unfold Vt.stepOsc
-      rw [if_neg (by simp), if_neg (by decide), if_pos (by decide)]
+      rw [ite_eq_right (by simp), ite_eq_right (by decide), ite_eq_left (by decide)]
     · show ((w.abortUtf8 0x1B).stepOsc acc e 0x1B).u8need = 0
       unfold Vt.stepOsc
-      rw [if_neg (by simp), if_neg (by decide), if_pos (by decide)]
+      rw [ite_eq_right (by simp), ite_eq_right (by decide), ite_eq_left (by decide)]
       exact hun
   | .str e =>
     refine ⟨Or.inr (Or.inr (Or.inr ?_)), ?_⟩
     · show ((w.abortUtf8 0x1B).stepStr e 0x1B).pstate = PState.str true
       unfold Vt.stepStr
-      rw [if_neg (by simp), if_pos (by decide)]
+      rw [ite_eq_right (by simp), ite_eq_left (by decide)]
     · show ((w.abortUtf8 0x1B).stepStr e 0x1B).u8need = 0
       unfold Vt.stepStr
-      rw [if_neg (by simp), if_pos (by decide)]
+      rw [ite_eq_right (by simp), ite_eq_left (by decide)]
       exact hun
 
 /-- …and `\` finishes every one of them. -/
@@ -162,7 +162,7 @@ theorem st_finish (u : Vt) (hu : u.u8need = 0)
     (u.step 0x5C).pstate = .ground ∧ (u.step 0x5C).u8need = 0 := by
   have ha : u.abortUtf8 0x5C = u := by
     unfold Vt.abortUtf8
-    rw [if_neg (by simp [hu])]
+    rw [ite_eq_right (by simp [hu])]
   unfold Vt.step
   dsimp only
   rw [ha]
@@ -174,17 +174,17 @@ theorem st_finish (u : Vt) (hu : u.u8need = 0)
   · rw [h]
     show ((u.stepGround 0x5C).pstate = _) ∧ ((u.stepGround 0x5C).u8need = _)
     unfold Vt.stepGround
-    rw [if_neg (by decide), if_neg (by decide), if_pos (by decide)]
+    rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_left (by decide)]
     exact ⟨(ps_acceptChar _ _).trans h, (un_acceptChar _ _).trans hu⟩
   · rw [h]
     show ((u.stepOsc acc true 0x5C).pstate = _) ∧ ((u.stepOsc acc true 0x5C).u8need = _)
     unfold Vt.stepOsc
-    rw [if_pos (by decide)]
+    rw [ite_eq_left (by decide)]
     exact ⟨ps_oscFinish' _ _, (un_oscFinish' _ _).trans hu⟩
   · rw [h]
     show ((u.stepStr true 0x5C).pstate = _) ∧ ((u.stepStr true 0x5C).u8need = _)
     unfold Vt.stepStr
-    rw [if_pos (by decide)]
+    rw [ite_eq_left (by decide)]
     exact ⟨rfl, hu⟩
 
 /-- **`ESC \` returns any receiver to `ground` with nothing half-decoded.** -/
@@ -322,11 +322,11 @@ theorem modes_setMode {w1 w2 : Vt} (p : Bool) (n : Nat) (on : Bool)
 on the concrete final byte reduces, so this is `rfl` after the ignore guard. -/
 theorem modes_csiDispatch_sm (v : Vt) (s : CsiState) (hi : s.ignore = false) :
     (v.csiDispatch s 0x68).modes = (v.setMode (s.priv == 0x3F) (s.arg 0 0) true).modes := by
-  unfold Vt.csiDispatch; rw [if_neg (by rw [hi]; simp)]; rfl
+  unfold Vt.csiDispatch; rw [ite_eq_right (by rw [hi]; simp)]; rfl
 
 theorem modes_csiDispatch_rm (v : Vt) (s : CsiState) (hi : s.ignore = false) :
     (v.csiDispatch s 0x6C).modes = (v.setMode (s.priv == 0x3F) (s.arg 0 0) false).modes := by
-  unfold Vt.csiDispatch; rw [if_neg (by rw [hi]; simp)]; rfl
+  unfold Vt.csiDispatch; rw [ite_eq_right (by rw [hi]; simp)]; rfl
 
 /-- One step: `ESC [ ?` sets the private marker without touching the frame. -/
 theorem frame_csi_marker_step {v : Vt} {s : CsiState} (hg : v.pstate = .csi s) :
@@ -338,7 +338,7 @@ theorem frame_csi_marker_step {v : Vt} {s : CsiState} (hg : v.pstate = .csi s) :
   rw [hw]
   unfold Vt.stepCsi
   dsimp only
-  rw [if_neg (by decide), if_neg (by decide), if_neg (by decide), if_pos (by decide)]
+  rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_left (by decide)]
   exact frame_abortUtf8 v 0x3F
 
 /-- **The digit-run-and-dispatch tail of a private mode set**, over an abstract
@@ -366,7 +366,7 @@ theorem modeSet_tail (n : Nat) (on : Bool) (hn : 0 < n) (hlt : n < 65535)
   rw [csi_final_step_eq (if on then 0x68 else 0x6C) rfl (by rw [hwu]) (by rw [hsab]; exact hint')
     hfinal.1 hfinal.2]
   unfold Vt.csiFinish
-  rw [if_pos (by rw [hsab]; simpa using hhave'), if_neg (by rw [hsab, hpar']; decide)]
+  rw [ite_eq_left (by rw [hsab]; simpa using hhave'), ite_eq_right (by rw [hsab, hpar']; decide)]
   dsimp only
   refine ⟨?_, rfl, by rw [un_csiDispatch]; exact hwu⟩
   have hmin : min (min n 65535) 65535 = n := by omega
@@ -375,7 +375,7 @@ theorem modeSet_tail (n : Nat) (on : Bool) (hn : 0 < n) (hlt : n < 65535)
       = { sa with params := #[(n, sa.curSub)] } := by
     rw [hsab, hpar', hcur', hmin]; rfl
   have harg : ({ sa with params := #[(n, sa.curSub)] } : CsiState).arg 0 0 = n := by
-    rw [arg_of_one, if_neg (by omega)]
+    rw [arg_of_one, ite_eq_right (by omega)]
   have hpriv2 : ({ sa with params := #[(n, sa.curSub)] } : CsiState).priv = 0x3F := by
     show sa.priv = 0x3F; rw [hsab]; exact hpriv'
   have hign2 : ({ sa with params := #[(n, sa.curSub)] } : CsiState).ignore = false := by
@@ -458,11 +458,11 @@ theorem mmap_of_esc_lead {f : Modes → Modes} {rest : Bytes}
   · have hpos : v.u8need > 0 := Nat.pos_of_ne_zero hu
     have habort : v.abortUtf8 (0x1B : UInt8) = { v with u8need := 0, u8acc := 0 } := by
       unfold Vt.abortUtf8
-      rw [if_pos (by simp [hpos])]
+      rw [ite_eq_left (by simp [hpos])]
     have habort2 : ({ v with u8need := 0, u8acc := 0 } : Vt).abortUtf8 (0x1B : UInt8)
         = { v with u8need := 0, u8acc := 0 } := by
       unfold Vt.abortUtf8
-      rw [if_neg (by simp)]
+      rw [ite_eq_right (by simp)]
     have hstep : v.step (0x1B : UInt8) = ({ v with u8need := 0, u8acc := 0 } : Vt).step 0x1B := by
       unfold Vt.step
       dsimp only
@@ -546,7 +546,7 @@ theorem modes_csiDispatch_stbm (v : Vt) (s : CsiState) : (v.csiDispatch s 0x72).
   by_cases hi : s.ignore = true
   · simp [Vt.csiDispatch, hi]
   · unfold Vt.csiDispatch
-    rw [if_neg (by simp [hi])]
+    rw [ite_eq_right (by simp [hi])]
     dsimp only
     -- kill every wrong-final arm by its absurd equation; the DECSTBM arm and the
     -- catch-all are cursor/region moves that never touch modes
@@ -558,12 +558,12 @@ theorem modes_csiDispatch_stbm (v : Vt) (s : CsiState) : (v.csiDispatch s 0x72).
 theorem modes_csiDispatch_cup (v : Vt) (s : CsiState) : (v.csiDispatch s 0x48).modes = v.modes := by
   by_cases hi : s.ignore = true
   · simp [Vt.csiDispatch, hi]
-  · unfold Vt.csiDispatch; rw [if_neg (by simp [hi])]; exact modes_moveTo _ _ _
+  · unfold Vt.csiDispatch; rw [ite_eq_right (by simp [hi])]; exact modes_moveTo _ _ _
 
 theorem modes_csiDispatch_sgr (v : Vt) (s : CsiState) : (v.csiDispatch s 0x6D).modes = v.modes := by
   by_cases hi : s.ignore = true
   · simp [Vt.csiDispatch, hi]
-  · unfold Vt.csiDispatch; rw [if_neg (by simp [hi])]; dsimp only
+  · unfold Vt.csiDispatch; rw [ite_eq_right (by simp [hi])]; dsimp only
     split <;>
       first
         | (rename_i heq; exact absurd heq (by decide))
@@ -613,13 +613,13 @@ theorem mmap_irm (on : Bool) :
   rw [csi_final_step_eq (if on then 0x68 else 0x6C) rfl (by rw [hu]) (by rw [hsab]; exact hint')
     hfinal.1 hfinal.2]
   unfold Vt.csiFinish
-  rw [if_pos (by rw [hsab]; simpa using hhave'), if_neg (by rw [hsab, hpar']; decide)]
+  rw [ite_eq_left (by rw [hsab]; simpa using hhave'), ite_eq_right (by rw [hsab, hpar']; decide)]
   dsimp only
   refine ⟨rfl, by rw [un_csiDispatch]; exact hu, ?_⟩
   have hstate : ({ sa with params := sa.params.push (min sa.cur 65535, sa.curSub) } : CsiState)
       = { sa with params := #[(4, sa.curSub)] } := by rw [hsab, hpar', hcur']; rfl
   have harg : ({ sa with params := #[(4, sa.curSub)] } : CsiState).arg 0 0 = 4 := by
-    rw [arg_of_one, if_neg (by decide)]
+    rw [arg_of_one, ite_eq_right (by decide)]
   have hpriv2 : ({ sa with params := #[(4, sa.curSub)] } : CsiState).priv = 0 := by
     show sa.priv = 0; rw [hsab]; exact hpriv'
   have hign2 : ({ sa with params := #[(4, sa.curSub)] } : CsiState).ignore = false := by
@@ -673,10 +673,10 @@ theorem mmap_id_si : MMap id [0x0F] := by
   have hstep : v.step 0x0F = { v with shiftOut := false } := by
     unfold Vt.step Vt.abortUtf8
     dsimp only
-    rw [if_neg (by simp [hu]), hg]
+    rw [ite_eq_right (by simp [hu]), hg]
     dsimp only
     unfold Vt.stepGround
-    rw [if_neg (by decide), if_pos (by decide)]
+    rw [ite_eq_right (by decide), ite_eq_left (by decide)]
     simp only [Vt.ctl]
     congr 1
   rw [show v.feed [0x0F] = v.step 0x0F from rfl, hstep]
@@ -767,8 +767,8 @@ theorem MMap.ite {c : Prop} [Decidable c] {f g : Modes → Modes} {a b : Bytes}
     (ha : c → MMap f a) (hb : ¬c → MMap g b) :
     MMap (if c then f else g) (if c then a else b) := by
   by_cases h : c
-  · rw [if_pos h, if_pos h]; exact ha h
-  · rw [if_neg h, if_neg h]; exact hb h
+  · rw [ite_eq_left h, ite_eq_left h]; exact ha h
+  · rw [ite_eq_right h, ite_eq_right h]; exact hb h
 
 theorem MMap.nil : MMap id [] := fun _ hg hu => ⟨hg, hu, rfl⟩
 
@@ -808,10 +808,10 @@ theorem mmap_id_so : MMap id [0x0E] := by
   have hstep : v.step 0x0E = { v with shiftOut := true } := by
     unfold Vt.step Vt.abortUtf8
     dsimp only
-    rw [if_neg (by simp [hu]), hg]
+    rw [ite_eq_right (by simp [hu]), hg]
     dsimp only
     unfold Vt.stepGround
-    rw [if_neg (by decide), if_pos (by decide)]
+    rw [ite_eq_right (by decide), ite_eq_left (by decide)]
     simp only [Vt.ctl]
     congr 1
   rw [show v.feed [0x0E] = v.step 0x0E from rfl, hstep]
@@ -1027,7 +1027,7 @@ theorem pen_moveTo (v : Vt) (x y : Nat) : (v.moveTo x y).pen = v.pen := by rfl
 theorem pen_csiDispatch_cup (v : Vt) (s : CsiState) : (v.csiDispatch s 0x48).pen = v.pen := by
   by_cases hi : s.ignore = true
   · simp [Vt.csiDispatch, hi]
-  · unfold Vt.csiDispatch; rw [if_neg (by simp [hi])]; exact pen_moveTo _ _ _
+  · unfold Vt.csiDispatch; rw [ite_eq_right (by simp [hi])]; exact pen_moveTo _ _ _
 
 /-- pen-projection analog of `csi_tail_modes` — the second instance of
 `csi_tail_proj`, which is what showed the walk wanted generalizing. -/

@@ -681,7 +681,7 @@ theorem step {v : Vt} (b : UInt8) (h : Good v) : Good (v.step b) := by
   unfold Vt.step Vt.abortUtf8
   dsimp only
   by_cases hc : (v.u8need > 0 && (b < 0x80 || b ≥ 0xC0)) = true
-  · rw [if_pos hc]
+  · rw [ite_eq_left hc]
     have h' := set_u8 0 0 (by omega) h
     split
     all_goals first
@@ -691,7 +691,7 @@ theorem step {v : Vt} (b : UInt8) (h : Good v) : Good (v.step b) := by
       | (rename_i heq; exact stepCsi _ _ (h'.csiLe _ heq) h')
       | (rename_i heq; exact stepOsc _ _ _ (h'.oscLe _ _ heq) h')
       | exact stepStr _ _ h'
-  · rw [if_neg hc]
+  · rw [ite_eq_right hc]
     split
     all_goals first
       | exact stepGround _ h
@@ -1141,7 +1141,7 @@ theorem ps_stepGround (v : Vt) (b : UInt8) (hb : b ≠ 0x1B) :
     (v.stepGround b).pstate = v.pstate := by
   have hesc : (b == 0x1B) = false := beq_eq_false_iff_ne.mpr hb
   unfold Vt.stepGround
-  simp only [hesc, Bool.false_eq_true, if_false]
+  simp only [hesc, Bool.false_eq_true, ite_false]
   repeat' split
   -- rewriting with the stage lemmas is *guided* (matches only the right
   -- shape); a blind `exact` on the wrong branch whnf's the print chain
@@ -1723,7 +1723,7 @@ theorem uz_step_esc (v : Vt) : (v.step 0x1B).u8need = 0 := by
         simp only [Bool.and_eq_true, Bool.or_eq_true, decide_eq_true_eq]
         exact ⟨hpos, Or.inl (by decide)⟩
       unfold Vt.abortUtf8
-      rw [if_pos hg]
+      rw [ite_eq_left hg]
   unfold Vt.step
   dsimp only
   split
@@ -2345,7 +2345,7 @@ theorem org_csiFinish_pending (v : Vt) (s : CsiState) (final : UInt8)
   have hsize : ¬ (s.params.size ≥ 16) := by rw [hparams]; simp
   unfold Vt.csiFinish
   dsimp only
-  rw [if_pos hhave, if_neg hsize]
+  rw [ite_eq_left hhave, ite_eq_right hsize]
   refine org_csiDispatch _ _ _ ?_
   rintro ⟨-, h6⟩
   apply hne
@@ -2545,7 +2545,7 @@ theorem mendAt_self_blank (row : Row) (x : Nat) (hx : x < row.size)
     (h : row.halfPair x = true) :
     (Row.mendAt row x).at x = Cell.erased (row.at x).pen := by
   unfold Row.mendAt Row.at
-  rw [if_pos h]
+  rw [ite_eq_left h]
   exact getD_set_self _ _ _ _ hx
 
 /-- A whole pair's shadow becomes canonical. -/
@@ -2553,7 +2553,7 @@ theorem mendAt_self_shadow (row : Row) (x : Nat) (hx : x < row.size)
     (h : row.halfPair x = false) (hw : (row.at x).width = 0) :
     (Row.mendAt row x).at x = Cell.shadow (row.at (x - 1)) := by
   unfold Row.mendAt Row.at
-  rw [if_neg (by simp [h]), if_pos (by simp [Row.at] at hw ⊢; exact hw)]
+  rw [ite_eq_right (by simp [h]), ite_eq_left (by simp [Row.at] at hw ⊢; exact hw)]
   exact getD_set_self _ _ _ _ hx
 
 /-- Anything else is left alone. -/
@@ -2561,7 +2561,7 @@ theorem mendAt_self_id (row : Row) (x : Nat)
     (h : row.halfPair x = false) (hw : (row.at x).width ≠ 0) :
     (Row.mendAt row x).at x = row.at x := by
   unfold Row.mendAt Row.at
-  rw [if_neg (by simp [h]), if_neg (by simp only [Row.at] at hw ⊢; simpa using hw)]
+  rw [ite_eq_right (by simp [h]), ite_eq_right (by simp only [Row.at] at hw ⊢; simpa using hw)]
 
 /-- A repair that does not blank preserves every width, since a canonical
 shadow is still a shadow. -/
@@ -3063,20 +3063,20 @@ theorem print_narrow_eq {v : Vt} {ch : Char}
           v.cursor.y).printAdvance 1 := by
   unfold Vt.print
   simp only [hpc, hw]
-  rw [if_neg (by decide)]
+  rw [ite_eq_right (by decide)]
   have h1 : v.printWrap = v.clearPending := by
-    unfold Vt.printWrap; rw [if_neg (by simp [hpend])]
+    unfold Vt.printWrap; rw [ite_eq_right (by simp [hpend])]
   have h2 : ∀ (w : Vt), w.printWideWrap 1 = w := by
-    intro w; unfold Vt.printWideWrap; rw [if_neg (by simp)]
+    intro w; unfold Vt.printWideWrap; rw [ite_eq_right (by simp)]
   have h3 : ∀ (w : Vt), w.modes.insert = false → w.printShift 1 = w := by
-    intro w hw'; unfold Vt.printShift; rw [if_neg (by simp [hw'])]
+    intro w hw'; unfold Vt.printShift; rw [ite_eq_right (by simp [hw'])]
   have h4 : ∀ (w : Vt) (c : Char), w.printPut c 1
       = (w.putCell w.cursor.x w.cursor.y
           { base := c, marks := [], width := 1, pen := w.pen }).mendRow w.cursor.y := by
     intro w c
     unfold Vt.printPut
     dsimp only
-    rw [if_neg (by simp), if_neg (by decide)]
+    rw [ite_eq_right (by simp), ite_eq_right (by decide)]
   rw [h1, h2, h3 _ (by rw [frame_clearPending]; exact hins), h4]
   rfl
 
@@ -3091,15 +3091,15 @@ theorem print_wide_eq {v : Vt} {ch : Char}
               v.cursor.y).printAdvance 2 := by
   unfold Vt.print
   simp only [hpc, hw]
-  rw [if_neg (by decide)]
+  rw [ite_eq_right (by decide)]
   have hcp : v.clearPending = { v with cursor := { v.cursor with pending := false } } := by rfl
   have h1 : v.printWrap = v.clearPending := by
-    unfold Vt.printWrap; rw [if_neg (by simp [hpend])]
+    unfold Vt.printWrap; rw [ite_eq_right (by simp [hpend])]
   have h2 : v.clearPending.printWideWrap 2 = v.clearPending := by
     unfold Vt.printWideWrap
-    rw [if_neg (by first | (simp [hcp]; done) | (simp [hcp]; omega))]
+    rw [ite_eq_right (by first | (simp [hcp]; done) | (simp [hcp]; omega))]
   have h3 : ∀ (w : Vt), w.modes.insert = false → w.printShift 2 = w := by
-    intro w hw'; unfold Vt.printShift; rw [if_neg (by simp [hw'])]
+    intro w hw'; unfold Vt.printShift; rw [ite_eq_right (by simp [hw'])]
   have h4 : ∀ (w : Vt) (c : Char), w.cursor.x + 1 < w.cols → w.printPut c 2
       = ((w.putCell w.cursor.x w.cursor.y
             { base := c, marks := [], width := 2, pen := w.pen }).putCell
@@ -3109,7 +3109,7 @@ theorem print_wide_eq {v : Vt} {ch : Char}
     intro w c hf
     unfold Vt.printPut
     dsimp only
-    rw [if_neg (by first | (simp; done) | (simp; omega)), if_pos (by decide)]
+    rw [ite_eq_right (by first | (simp; done) | (simp; omega)), ite_eq_left (by decide)]
     rfl
   rw [h1, h2, h3 _ (by rw [frame_clearPending]; exact hins),
     h4 _ ch (by first | (simp [hcp]; done) | (simp [hcp]; omega))]
@@ -3124,15 +3124,15 @@ theorem print_mark_eq {v : Vt} {m : Char}
         marks := (v.getCell (v.cursor.x - 1) v.cursor.y).marks ++ [m] }).mendRow v.cursor.y := by
   unfold Vt.print
   simp only [hpc, hw]
-  rw [if_pos (by decide)]
+  rw [ite_eq_left (by decide)]
   unfold Vt.printMark
-  simp only [hpend, if_false, Bool.false_eq_true]
-  rw [if_neg (show ¬((v.cursor.x == 0) = true) from by simp only [beq_iff_eq]; exact hx0)]
-  rw [if_neg (show ¬(((v.getCell (v.cursor.x - 1) v.cursor.y).width == 0
+  simp only [hpend, ite_false, Bool.false_eq_true]
+  rw [ite_eq_right (show ¬((v.cursor.x == 0) = true) from by simp only [beq_iff_eq]; exact hx0)]
+  rw [ite_eq_right (show ¬(((v.getCell (v.cursor.x - 1) v.cursor.y).width == 0
       && v.cursor.x - 1 != 0) = true) from by
     simp only [Bool.and_eq_true, beq_iff_eq]
     exact fun h => hnw h.1)]
-  rw [if_neg (show ¬((v.getCell (v.cursor.x - 1) v.cursor.y).marks.length ≥ 8) from by omega)]
+  rw [ite_eq_right (show ¬((v.getCell (v.cursor.x - 1) v.cursor.y).marks.length ≥ 8) from by omega)]
 
 /-- The same, for a receiver with **wrap pending**. Not a variation for its own sake:
 the row painter reaches this state on every marked cell in the final column. There the
@@ -3149,14 +3149,14 @@ theorem print_mark_pending_eq {v : Vt} {m : Char}
         marks := (v.getCell v.cursor.x v.cursor.y).marks ++ [m] }).mendRow v.cursor.y := by
   unfold Vt.print
   simp only [hpc, hw]
-  rw [if_pos (by decide)]
+  rw [ite_eq_left (by decide)]
   unfold Vt.printMark
-  simp only [hpend, if_true]
-  rw [if_neg (show ¬(((v.getCell v.cursor.x v.cursor.y).width == 0
+  simp only [hpend, ite_true]
+  rw [ite_eq_right (show ¬(((v.getCell v.cursor.x v.cursor.y).width == 0
       && v.cursor.x != 0) = true) from by
     simp only [Bool.and_eq_true, beq_iff_eq]
     exact fun h => hnw h.1)]
-  rw [if_neg (show ¬((v.getCell v.cursor.x v.cursor.y).marks.length ≥ 8) from by omega)]
+  rw [ite_eq_right (show ¬((v.getCell v.cursor.x v.cursor.y).marks.length ≥ 8) from by omega)]
 
 end Linger.Core.Vt
 
@@ -3259,7 +3259,7 @@ wide. Composes the two walls through `charWidth`'s branch order. -/
 theorem charWidth_low (c : Char) (h : c.toNat < 0x0300) : charWidth c = 1 := by
   unfold charWidth
   simp only [isZeroWidth_low _ h, isWide_low _ (by omega : c.toNat < 0x1100),
-    Bool.false_eq_true, if_false]
+    Bool.false_eq_true, ite_false]
 
 /-- Hangul Jamo leads (U+1100–U+115F), both edges. -/
 theorem isWide_hangulJamo : isWide 0x10FF = false ∧ isWide 0x1100 = true
@@ -3397,9 +3397,9 @@ theorem at_blankRow (cols : Nat) (p : Pen) (x : Nat) :
     (blankRow cols p).at x = if x < cols then Cell.erased p else default := by
   unfold Row.at blankRow
   by_cases h : x < cols
-  · rw [if_pos h]
+  · rw [ite_eq_left h]
     simp [Array.getD, h]
-  · rw [if_neg h]
+  · rw [ite_eq_right h]
     simp [Array.getD, h]
 
 theorem rowOk_blankRow (cols : Nat) (p : Pen) : RowOk cols (blankRow cols p) := by
@@ -3457,7 +3457,7 @@ theorem cells_set {row : Row} (i : Nat) (c : Cell)
     by_cases hb : x < row.size
     · rw [getD_set_self _ _ _ _ hb]; exact hc
     · rw [show row.setIfInBounds x c = row from by
-        simp only [Array.setIfInBounds]; rw [dif_neg hb]]
+        simp only [Array.setIfInBounds]; rw [dite_eq_right hb]]
       exact hrow x
   · rw [getD_set_ne _ _ _ _ _ hx]; exact hrow x
 
@@ -3532,13 +3532,13 @@ theorem gridOkExcept_set {cols rows y : Nat} {g : Array Row}
   · by_cases hb : y < g.size
     · rw [getD_set_self _ _ _ _ hb, Array.size_setIfInBounds, hd hb]; exact hrsz
     · rw [show g.setIfInBounds y ((g.getD y d).setIfInBounds x c) = g from by
-        simp only [Array.setIfInBounds]; rw [dif_neg hb]]
+        simp only [Array.setIfInBounds]; rw [dite_eq_right hb]]
       exact hrsz
   · by_cases hb : y < g.size
     · rw [getD_set_self _ _ _ _ hb, hd hb]
       exact cells_set _ _ hcells hc
     · rw [show g.setIfInBounds y ((g.getD y d).setIfInBounds x c) = g from by
-        simp only [Array.setIfInBounds]; rw [dif_neg hb]]
+        simp only [Array.setIfInBounds]; rw [dite_eq_right hb]]
       exact hcells
 
 /-- Replacing the excepted row wholesale, with a row built from it. -/
@@ -3552,12 +3552,12 @@ theorem gridOkExcept_replace {cols rows y : Nat} {g : Array Row}
   · by_cases hb : y < g.size
     · rw [getD_set_self _ _ _ _ hb]; exact hsz
     · rw [show g.setIfInBounds y r = g from by
-        simp only [Array.setIfInBounds]; rw [dif_neg hb]]
+        simp only [Array.setIfInBounds]; rw [dite_eq_right hb]]
       exact hrsz
   · by_cases hb : y < g.size
     · rw [getD_set_self _ _ _ _ hb]; exact hcells
     · rw [show g.setIfInBounds y r = g from by
-        simp only [Array.setIfInBounds]; rw [dif_neg hb]]
+        simp only [Array.setIfInBounds]; rw [dite_eq_right hb]]
       exact hocells
 
 /-- …and the repair closes it. -/
@@ -3572,7 +3572,7 @@ theorem gridOk_of_except {cols rows y : Nat} {g : Array Row}
     · rw [getD_set_self _ _ _ _ hb]
       exact rowOk_mend hrsz hcells
     · rw [show g.setIfInBounds y' (Row.mend (g.getD y' (blankRow cols {}))) = g from by
-        simp only [Array.setIfInBounds]; rw [dif_neg hb]]
+        simp only [Array.setIfInBounds]; rw [dite_eq_right hb]]
       -- out of range: the read is the default row, which is reproducible
       rw [show g.getD y' (blankRow cols {}) = blankRow cols {} from by
         simp [Array.getD, hb]]
@@ -3623,7 +3623,7 @@ theorem gridOk_mendRow {v : Vt} {y : Nat}
     by_cases hb : y < v.grid.size
     · rw [getD_of_lt v.grid y (blankRow v.cols v.pen) (blankRow v.cols {}) hb]
     · simp only [Array.setIfInBounds]
-      rw [dif_neg hb, dif_neg hb]
+      rw [dite_eq_right hb, dite_eq_right hb]
   rw [hkey]
   exact gridOk_of_except h
 
@@ -3730,7 +3730,7 @@ theorem gridOk_set_row {cols rows : Nat} {g : Array Row} (h : GridOk cols rows g
     by_cases hb : y' < g.size
     · rw [getD_set_self _ _ _ _ hb]; exact hr
     · rw [show g.setIfInBounds y' r = g from by
-        simp only [Array.setIfInBounds]; rw [dif_neg hb]]
+        simp only [Array.setIfInBounds]; rw [dite_eq_right hb]]
       exact h.2 y'
   · rw [getD_set_ne _ _ _ _ _ hy']; exact h.2 y'
 
@@ -4183,13 +4183,13 @@ default. Generic in the element type, because `resizeRow` maps over cells and
 theorem getD_map_range {α : Type} (f : Nat → α) (n x : Nat) (d : α) :
     ((Array.range n).map f).getD x d = if x < n then f x else d := by
   by_cases hb : x < n
-  · rw [if_pos hb]
+  · rw [ite_eq_left hb]
     have hsz : x < ((Array.range n).map f).size := by simp [hb]
-    rw [Array.getD, dif_pos hsz]
+    rw [Array.getD, dite_eq_left hsz]
     simp
-  · rw [if_neg hb]
+  · rw [ite_eq_right hb]
     have hsz : ¬ x < ((Array.range n).map f).size := by simpa using hb
-    rw [Array.getD, dif_neg hsz]
+    rw [Array.getD, dite_eq_right hsz]
 
 theorem cells_map_range (f : Nat → Cell) (n : Nat) (hf : ∀ i, CellOk (f i)) :
     ∀ x, CellOk (Row.at ((Array.range n).map f) x) := by
@@ -4205,9 +4205,9 @@ theorem rowOk_resizeRow (row : Row) (c : Nat) (p : Pen) (h : ∀ x, CellOk (row.
   unfold resizeRow
   refine rowOk_mend (by simp) (cells_map_range _ _ (fun i => ?_))
   by_cases hi : i < row.size
-  · rw [if_pos hi]
+  · rw [ite_eq_left hi]
     exact h i
-  · rw [if_neg hi]
+  · rw [ite_eq_right hi]
     exact cellOk_erased p
 
 /-- A grid re-fitted to `c × r` is reproducible: each row is an old row at the
@@ -4227,22 +4227,22 @@ theorem gridOk_fit {cols : Nat} {g : Array Row} (c r : Nat)
   refine ⟨by simp, fun y => ?_⟩
   rw [getD_map_range]
   by_cases hy : y < r
-  · rw [if_pos hy]
+  · rw [ite_eq_left hy]
     dsimp only
     by_cases hge : g.size ≥ r
-    · rw [if_pos hge]
+    · rw [ite_eq_left hge]
       by_cases hb : g.size - r + y < g.size
-      · rw [if_pos hb]
+      · rw [ite_eq_left hb]
         exact rowOk_resizeRow _ _ _ (hsrc _ hb)
-      · rw [if_neg hb]
+      · rw [ite_eq_right hb]
         exact rowOk_blankRow c {}
-    · rw [if_neg hge]
+    · rw [ite_eq_right hge]
       by_cases hb : y < g.size
-      · rw [if_pos hb]
+      · rw [ite_eq_left hb]
         exact rowOk_resizeRow _ _ _ (hsrc _ hb)
-      · rw [if_neg hb]
+      · rw [ite_eq_right hb]
         exact rowOk_blankRow c {}
-  · rw [if_neg hy]
+  · rw [ite_eq_right hy]
     exact rowOk_blankRow c {}
 
 theorem renderable_resize {v : Vt} (h : Renderable v) (cols rows : Nat) :
@@ -4305,40 +4305,40 @@ theorem u8Ok_stepGround {v : Vt} (b : UInt8) (h : U8Ok v) : U8Ok (v.stepGround b
   intro hz
   unfold Vt.stepGround at hz ⊢
   by_cases h1 : (b == 0x1B) = true
-  · rw [if_pos h1] at hz ⊢; exact h hz
-  rw [if_neg h1] at hz ⊢
+  · rw [ite_eq_left h1] at hz ⊢; exact h hz
+  rw [ite_eq_right h1] at hz ⊢
   by_cases h2 : b < 0x20
-  · rw [if_pos h2] at hz ⊢
+  · rw [ite_eq_left h2] at hz ⊢
     rw [ua_ctl]; rw [un_ctl] at hz; exact h hz
-  rw [if_neg h2] at hz ⊢
+  rw [ite_eq_right h2] at hz ⊢
   by_cases h3 : b < 0x80
-  · rw [if_pos h3] at hz ⊢
+  · rw [ite_eq_left h3] at hz ⊢
     rw [ua_acceptChar]; rw [un_acceptChar] at hz; exact h hz
-  rw [if_neg h3] at hz ⊢
+  rw [ite_eq_right h3] at hz ⊢
   by_cases h4 : b < 0xC0
-  · rw [if_pos h4] at hz ⊢
+  · rw [ite_eq_left h4] at hz ⊢
     dsimp only at hz ⊢
     by_cases h5 : (v.u8need == 0) = true
-    · rw [if_pos h5] at hz ⊢; exact h hz
-    rw [if_neg h5] at hz ⊢
+    · rw [ite_eq_left h5] at hz ⊢; exact h hz
+    rw [ite_eq_right h5] at hz ⊢
     by_cases h6 : (v.u8need == 1) = true
-    · rw [if_pos h6] at hz ⊢
+    · rw [ite_eq_left h6] at hz ⊢
       rw [ua_acceptChar]
-    · rw [if_neg h6] at hz ⊢
+    · rw [ite_eq_right h6] at hz ⊢
       exfalso
       simp only [beq_iff_eq] at h5 h6
       simp only [] at hz
       omega
-  rw [if_neg h4] at hz ⊢
+  rw [ite_eq_right h4] at hz ⊢
   by_cases h7 : b < 0xE0
-  · rw [if_pos h7] at hz ⊢; exact absurd hz (by simp)
-  rw [if_neg h7] at hz ⊢
+  · rw [ite_eq_left h7] at hz ⊢; exact absurd hz (by simp)
+  rw [ite_eq_right h7] at hz ⊢
   by_cases h8 : b < 0xF0
-  · rw [if_pos h8] at hz ⊢; exact absurd hz (by simp)
-  rw [if_neg h8] at hz ⊢
+  · rw [ite_eq_left h8] at hz ⊢; exact absurd hz (by simp)
+  rw [ite_eq_right h8] at hz ⊢
   by_cases h9 : b < 0xF8
-  · rw [if_pos h9] at hz ⊢; exact absurd hz (by simp)
-  rw [if_neg h9] at hz ⊢
+  · rw [ite_eq_left h9] at hz ⊢; exact absurd hz (by simp)
+  rw [ite_eq_right h9] at hz ⊢
   exact h hz
 
 theorem u8Ok_step {v : Vt} (b : UInt8) (h : U8Ok v) : U8Ok (v.step b) := by
@@ -4454,8 +4454,8 @@ theorem lineFeed_interior (v : Vt) (hy : v.cursor.y < v.bot) (hlt : v.bot < v.ro
     v.lineFeed = { v with cursor := { v.cursor with y := v.cursor.y + 1, pending := false } } := by
   unfold Vt.lineFeed Vt.clearPending
   dsimp only
-  rw [if_neg (show ¬(v.cursor.y == v.bot) = true from by simp; omega),
-    if_pos (show v.cursor.y + 1 < v.rows from by omega)]
+  rw [ite_eq_right (show ¬(v.cursor.y == v.bot) = true from by simp; omega),
+    ite_eq_left (show v.cursor.y + 1 < v.rows from by omega)]
 
 theorem grid_lineFeed_interior (v : Vt) (hy : v.cursor.y < v.bot) (hlt : v.bot < v.rows) :
     v.lineFeed.grid = v.grid := by rw [lineFeed_interior v hy hlt]
@@ -4621,7 +4621,7 @@ theorem printChar_id_of_ascii {v : Vt} (hg0 : v.g0Line = false) (hg1 : v.g1Line 
   rw [show ((v.shiftOut && v.g1Line) || (!v.shiftOut && v.g0Line)) = false from by
     rw [hg0, hg1]; cases v.shiftOut <;> rfl]
   rw [show (if (false : Bool) = true then decLine c else c) = c from rfl]
-  rw [if_neg (by
+  rw [ite_eq_right (by
     simp only [Bool.or_eq_true, decide_eq_true_eq, beq_iff_eq]
     omega)]
 
@@ -4651,13 +4651,13 @@ theorem cursor_clearPending (v : Vt) :
 theorem cursor_printAdvance_lt (v : Vt) (n : Nat) (h : v.cursor.x + n < v.cols) :
     (v.printAdvance n).cursor = { v.cursor with x := v.cursor.x + n, pending := false } := by
   unfold Vt.printAdvance
-  rw [if_neg (by omega)]
+  rw [ite_eq_right (by omega)]
 
 theorem cursor_printAdvance_ge (v : Vt) (n : Nat) (h : v.cols ≤ v.cursor.x + n) :
     (v.printAdvance n).cursor
       = { v.cursor with x := v.cols - 1, pending := v.modes.wrap } := by
   unfold Vt.printAdvance
-  rw [if_pos (by omega)]
+  rw [ite_eq_left (by omega)]
 
 /-- The three facts `printAdvance` needs about the state a cell write leaves, as one
 lemma: a write touches only the grid, so the cursor is the `clearPending` one and the
@@ -4866,7 +4866,7 @@ theorem stAlt_alt (on : Bool) (s : Sticky) : (stAlt on s).alt = on := by
 it fits". -/
 theorem stStbm_of {t bo : Nat} {s : Sticky} (h1 : t < bo) (h2 : bo < s.rows) :
     stStbm t bo s = { s with top := t, bot := bo } := by
-  unfold stStbm; rw [if_pos (by simp [h1, h2])]
+  unfold stStbm; rw [ite_eq_left (by simp [h1, h2])]
 
 theorem stStbm_rows (t bo : Nat) (s : Sticky) : (stStbm t bo s).rows = s.rows := by
   unfold stStbm; split <;> rfl
@@ -4875,17 +4875,17 @@ theorem stick_enterAlt (v : Vt) (b : Bool) : stick (v.enterAlt b) = stAlt true (
   unfold Vt.enterAlt stAlt
   dsimp only
   by_cases h : v.altGrid.isSome = true
-  · rw [if_pos h, if_pos (show (stick v).alt = true from h)]
-  · rw [if_neg h, if_neg (show ¬((stick v).alt = true) from h)]
+  · rw [ite_eq_left h, ite_eq_left (show (stick v).alt = true from h)]
+  · rw [ite_eq_right h, ite_eq_right (show ¬((stick v).alt = true) from h)]
     rfl
 
 theorem stick_leaveAlt (v : Vt) (b : Bool) : stick (v.leaveAlt b) = stAlt false (stick v) := by
   unfold Vt.leaveAlt stAlt
   dsimp only
   rcases hv : v.altGrid with - | x
-  · rw [if_neg (show ¬((stick v).alt = true) from by
+  · rw [ite_eq_right (show ¬((stick v).alt = true) from by
       show ¬(v.altGrid.isSome = true); rw [hv]; simp)]
-  · rw [if_pos (show (stick v).alt = true from by
+  · rw [ite_eq_left (show (stick v).alt = true from by
       show v.altGrid.isSome = true; rw [hv]; simp)]
     rfl
 
@@ -4894,11 +4894,11 @@ theorem stick_stepEscInter (v : Vt) (i x : UInt8) :
   unfold Vt.stepEscInter stCharset
   dsimp only
   by_cases h28 : (i == 0x28) = true
-  · rw [if_pos h28, if_pos h28]; rfl
-  · rw [if_neg h28, if_neg h28]
+  · rw [ite_eq_left h28, ite_eq_left h28]; rfl
+  · rw [ite_eq_right h28, ite_eq_right h28]
     by_cases h29 : (i == 0x29) = true
-    · rw [if_pos h29, if_pos h29]; rfl
-    · rw [if_neg h29, if_neg h29]
+    · rw [ite_eq_left h29, ite_eq_left h29]; rfl
+    · rw [ite_eq_right h29, ite_eq_right h29]
       rfl
 
 theorem stick_setMode (v : Vt) (n : Nat) (on : Bool) :
@@ -4907,29 +4907,29 @@ theorem stick_setMode (v : Vt) (n : Nat) (on : Bool) :
       stick (if on then u.enterAlt sv else u.leaveAlt sv) = stAlt on (stick u) := by
     intro u sv
     cases on
-    · rw [if_neg (by decide)]; exact stick_leaveAlt u sv
-    · rw [if_pos rfl]; exact stick_enterAlt u sv
+    · rw [ite_eq_right (by decide)]; exact stick_leaveAlt u sv
+    · rw [ite_eq_left rfl]; exact stick_enterAlt u sv
   by_cases h47 : n = 47
   · subst h47
     show stick (if on then v.enterAlt false else v.leaveAlt false) = _
     rw [halt v false]
     unfold stSetMode
-    rw [if_pos (by decide)]
+    rw [ite_eq_left (by decide)]
   by_cases h1047 : n = 1047
   · subst h1047
     show stick (if on then v.enterAlt false else v.leaveAlt false) = _
     rw [halt v false]
     unfold stSetMode
-    rw [if_pos (by decide)]
+    rw [ite_eq_left (by decide)]
   by_cases h1049 : n = 1049
   · subst h1049
     show stick (if on then v.enterAlt true else v.leaveAlt true) = _
     rw [halt v true]
     unfold stSetMode
-    rw [if_pos (by decide)]
+    rw [ite_eq_left (by decide)]
   -- every remaining arm writes `modes`, the cursor or the saved slot only
   unfold stSetMode
-  rw [if_neg (by
+  rw [ite_eq_right (by
     intro h
     simp only [Bool.or_eq_true, beq_iff_eq] at h
     rcases h with (h | h) | h
@@ -4965,11 +4965,11 @@ is what lets one walk serve every projection (`modes_csiDispatch_sm` is this at
 `modes`). -/
 theorem csiDispatch_sm (v : Vt) (s : CsiState) (hi : s.ignore = false) :
     v.csiDispatch s 0x68 = v.setMode (s.priv == 0x3F) (s.arg 0 0) true := by
-  unfold Vt.csiDispatch; rw [if_neg (by rw [hi]; simp)]; rfl
+  unfold Vt.csiDispatch; rw [ite_eq_right (by rw [hi]; simp)]; rfl
 
 theorem csiDispatch_rm (v : Vt) (s : CsiState) (hi : s.ignore = false) :
     v.csiDispatch s 0x6C = v.setMode (s.priv == 0x3F) (s.arg 0 0) false := by
-  unfold Vt.csiDispatch; rw [if_neg (by rw [hi]; simp)]; rfl
+  unfold Vt.csiDispatch; rw [ite_eq_right (by rw [hi]; simp)]; rfl
 
 /-- `DECSTBM`, likewise as a state equation. -/
 theorem csiDispatch_stbm (v : Vt) (s : CsiState) (hi : s.ignore = false) (hp : s.priv = 0) :
@@ -4977,11 +4977,11 @@ theorem csiDispatch_stbm (v : Vt) (s : CsiState) (hi : s.ignore = false) (hp : s
       (if s.arg 0 1 - 1 < s.arg 1 v.rows - 1 && s.arg 1 v.rows - 1 < v.rows
        then ({ v with top := s.arg 0 1 - 1, bot := s.arg 1 v.rows - 1 }).moveTo 0 0 else v) := by
   unfold Vt.csiDispatch
-  rw [if_neg (by rw [hi]; simp)]
+  rw [ite_eq_right (by rw [hi]; simp)]
   show (if s.priv != 0 then v else
       if s.arg 0 1 - 1 < s.arg 1 v.rows - 1 && s.arg 1 v.rows - 1 < v.rows
       then ({ v with top := s.arg 0 1 - 1, bot := s.arg 1 v.rows - 1 }).moveTo 0 0 else v) = _
-  rw [if_neg (by rw [hp]; simp)]
+  rw [ite_eq_right (by rw [hp]; simp)]
 
 theorem stick_csiDispatch_stbm (v : Vt) (s : CsiState) (hi : s.ignore = false) (hp : s.priv = 0) :
     stick (v.csiDispatch s 0x72)
@@ -5006,20 +5006,20 @@ theorem stick_csiDispatch_cup (v : Vt) (s : CsiState) :
     stick (v.csiDispatch s 0x48) = stick v := by
   by_cases hi : s.ignore = true
   · simp [Vt.csiDispatch, hi]
-  · unfold Vt.csiDispatch; rw [if_neg (by simp [hi])]; exact stick_moveTo _ _ _
+  · unfold Vt.csiDispatch; rw [ite_eq_right (by simp [hi])]; exact stick_moveTo _ _ _
 
 theorem stick_csiDispatch_cha (v : Vt) (s : CsiState) :
     stick (v.csiDispatch s 0x47) = stick v := by
   by_cases hi : s.ignore = true
   · simp [Vt.csiDispatch, hi]
-  · unfold Vt.csiDispatch; rw [if_neg (by simp [hi])]; exact stick_setCol _ _
+  · unfold Vt.csiDispatch; rw [ite_eq_right (by simp [hi])]; exact stick_setCol _ _
 
 theorem stick_csiDispatch_sgr (v : Vt) (s : CsiState) :
     stick (v.csiDispatch s 0x6D) = stick v := by
   by_cases hi : s.ignore = true
   · simp [Vt.csiDispatch, hi]
   · unfold Vt.csiDispatch
-    rw [if_neg (by simp [hi])]
+    rw [ite_eq_right (by simp [hi])]
     show stick (if s.priv == 0 then v.applySgr s.sgrParams else v) = _
     split
     · exact stick_applySgr _ _
@@ -5029,14 +5029,14 @@ theorem stick_csiDispatch_ed (v : Vt) (s : CsiState) :
     stick (v.csiDispatch s 0x4A) = stick v := by
   by_cases hi : s.ignore = true
   · simp [Vt.csiDispatch, hi]
-  · unfold Vt.csiDispatch; rw [if_neg (by simp [hi])]; exact stick_eraseScreen _ _
+  · unfold Vt.csiDispatch; rw [ite_eq_right (by simp [hi])]; exact stick_eraseScreen _ _
 
 theorem stick_csiDispatch_tbc (v : Vt) (s : CsiState) :
     stick (v.csiDispatch s 0x67) = stick v := by
   by_cases hi : s.ignore = true
   · simp [Vt.csiDispatch, hi]
   · unfold Vt.csiDispatch
-    rw [if_neg (by simp [hi])]
+    rw [ite_eq_right (by simp [hi])]
     show stick (match s.arg 0 0 with
       | 0 => { v with tabs := v.tabs.setIfInBounds v.cursor.x false }
       | 3 => { v with tabs := Array.replicate v.cols false }
@@ -5119,7 +5119,7 @@ theorem stick_step_si {v : Vt} (hg : v.pstate = .ground) :
   dsimp only
   rw [hw]
   unfold Vt.stepGround
-  rw [if_neg (by decide), if_pos (by decide)]
+  rw [ite_eq_right (by decide), ite_eq_left (by decide)]
   rw [show (v.abortUtf8 0x0F).ctl 0x0F = { (v.abortUtf8 0x0F) with shiftOut := false } from rfl,
     show stick { (v.abortUtf8 0x0F) with shiftOut := false }
       = { stick (v.abortUtf8 0x0F) with so := false } from rfl,
@@ -5132,7 +5132,7 @@ theorem stick_step_so {v : Vt} (hg : v.pstate = .ground) :
   dsimp only
   rw [hw]
   unfold Vt.stepGround
-  rw [if_neg (by decide), if_pos (by decide)]
+  rw [ite_eq_right (by decide), ite_eq_left (by decide)]
   rw [show (v.abortUtf8 0x0E).ctl 0x0E = { (v.abortUtf8 0x0E) with shiftOut := true } from rfl,
     show stick { (v.abortUtf8 0x0E) with shiftOut := true }
       = { stick (v.abortUtf8 0x0E) with so := true } from rfl,

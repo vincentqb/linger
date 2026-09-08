@@ -47,7 +47,7 @@ theorem digits_range (n : Nat) : ∀ b ∈ digits n, 0x30 ≤ b ∧ b ≤ 0x39 :
   | case1 n h =>
     intro b hb
     rw [digits] at hb
-    simp only [if_pos h, List.mem_singleton] at hb
+    simp only [ite_eq_left h, List.mem_singleton] at hb
     subst hb
     have h8 : (0x30 + n) < 256 := by omega
     refine ⟨UInt8.le_iff_toNat_le.mpr ?_, UInt8.le_iff_toNat_le.mpr ?_⟩
@@ -57,7 +57,7 @@ theorem digits_range (n : Nat) : ∀ b ∈ digits n, 0x30 ≤ b ∧ b ≤ 0x39 :
   | case2 n h ih =>
     intro b hb
     rw [digits] at hb
-    simp only [if_neg h, List.mem_append, List.mem_singleton] at hb
+    simp only [ite_eq_right h, List.mem_append, List.mem_singleton] at hb
     rcases hb with hb | hb
     · exact ih b hb
     · subst hb
@@ -79,9 +79,9 @@ theorem digits_no_esc (n : Nat) : ∀ b ∈ digits n, b ≠ 0x1B := by
 theorem safeChar_ge (c : Char) : (safeChar c).toNat ≥ 0x20 ∧ (safeChar c).toNat ≠ 0x7F := by
   unfold safeChar
   by_cases h : (c.toNat < 0x20 || c.toNat == 0x7F) = true
-  · simp only [h, if_true]
+  · simp only [h, ite_true]
     exact ⟨by decide, by decide⟩
-  · simp only [h, Bool.false_eq_true, if_false]
+  · simp only [h, Bool.false_eq_true, ite_false]
     simp only [Bool.or_eq_true, decide_eq_true_eq, beq_iff_eq, not_or, Nat.not_lt] at h
     exact ⟨h.1, h.2⟩
 
@@ -210,8 +210,8 @@ branch). -/
 theorem ite {P : Bytes → Prop} (_hP : StreamPred P) {c : Prop} [Decidable c]
     {a b : Bytes} (ha : c → P a) (hb : ¬c → P b) : P (if c then a else b) := by
   by_cases h : c
-  · rw [if_pos h]; exact ha h
-  · rw [if_neg h]; exact hb h
+  · rw [ite_eq_left h]; exact ha h
+  · rw [ite_eq_right h]; exact hb h
 
 theorem flatten {P : Bytes → Prop} (hP : StreamPred P) {l : List Bytes}
     (h : ∀ bs ∈ l, P bs) : P l.flatten := by
@@ -329,11 +329,11 @@ theorem csi_param_step {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi
   dsimp only
   -- digit? separator? private marker? — every case stays in `.csi`
   by_cases hd : (b ≥ 0x30 && b ≤ 0x39) = true
-  · rw [if_pos hd]; exact ⟨_, rfl⟩
+  · rw [ite_eq_left hd]; exact ⟨_, rfl⟩
   by_cases hsemi : (b == 0x3B) = true
-  · rw [if_neg (by simp [hd]), if_pos hsemi]; exact ⟨_, rfl⟩
+  · rw [ite_eq_right (by simp [hd]), ite_eq_left hsemi]; exact ⟨_, rfl⟩
   by_cases hcolon : (b == 0x3A) = true
-  · rw [if_neg (by simp [hd]), if_neg (by simp [hsemi]), if_pos hcolon]
+  · rw [ite_eq_right (by simp [hd]), ite_eq_right (by simp [hsemi]), ite_eq_left hcolon]
     exact ⟨_, rfl⟩
   · -- what remains is 0x3C…0x3F
     have hb39 : ¬ (b.toNat ≤ 57) := by
@@ -360,8 +360,8 @@ theorem csi_param_step {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi
         show ((0x3C : UInt8)).toNat = 60 from rfl,
         show ((0x3F : UInt8)).toNat = 63 from rfl]
       omega
-    rw [if_neg (by simp [hd]), if_neg (by simp [hsemi]), if_neg (by simp [hcolon]),
-        if_pos hpriv]
+    rw [ite_eq_right (by simp [hd]), ite_eq_right (by simp [hsemi]), ite_eq_right (by simp [hcolon]),
+        ite_eq_left hpriv]
     exact ⟨_, rfl⟩
 
 /-- A run of parameter bytes keeps us inside `.csi`. -/
@@ -424,8 +424,8 @@ theorem csi_final_step {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi
   rw [hw]
   unfold Vt.stepCsi
   dsimp only
-  rw [if_neg (by simp [g1]), if_neg (by simp [g2]), if_neg (by simp [g3]),
-      if_neg (by simp [g4]), if_neg (by simp [g5]), if_pos g6]
+  rw [ite_eq_right (by simp [g1]), ite_eq_right (by simp [g2]), ite_eq_right (by simp [g3]),
+      ite_eq_right (by simp [g4]), ite_eq_right (by simp [g5]), ite_eq_left g6]
   -- both remaining branches assign `.ground`
   split
   · rfl
@@ -710,7 +710,7 @@ theorem osc_accum_step {v : Vt} {acc : Array UInt8} (b : UInt8)
   dsimp only
   -- ST needs the esc flag (false here); BEL and ESC are excluded; both
   -- the cap branch and the accumulate branch stay `.osc … false`
-  rw [if_neg (by simp), if_neg (by simp [h2]), if_neg (by simp [h1])]
+  rw [ite_eq_right (by simp), ite_eq_right (by simp [h2]), ite_eq_right (by simp [h1])]
   split
   · exact ⟨_, rfl⟩
   · exact ⟨_, rfl⟩
@@ -735,7 +735,7 @@ theorem osc_bel_step {v : Vt} {acc : Array UInt8} {e : Bool}
   rw [hw]
   unfold Vt.stepOsc
   dsimp only
-  rw [if_neg (by simp), if_pos (by decide)]
+  rw [ite_eq_right (by simp), ite_eq_left (by decide)]
   unfold Vt.oscFinish
   dsimp only
   repeat' split

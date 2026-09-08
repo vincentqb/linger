@@ -113,11 +113,11 @@ theorem humanListing_printable (rows : List (List (String × String))) :
   intro b hb
   unfold humanListing at hb
   by_cases hz : rows.isEmpty
-  · rw [if_pos hz] at hb
+  · rw [ite_eq_left hz] at hb
     rcases List.mem_append.mp hb with h | h
     · exact Or.inl (utf8s_no_ctl _ b h)
     · exact Or.inr (by simpa using h)
-  · rw [if_neg hz] at hb
+  · rw [ite_eq_right hz] at hb
     rw [List.mem_flatMap] at hb
     obtain ⟨r, -, hbr⟩ := hb
     rcases List.mem_append.mp hbr with h | h

@@ -179,7 +179,7 @@ theorem fixes_osc {α : Type} {π : Vt → α} (hb : PsBlind π) (payload : List
   rw [h2]
   rw [step_of_osc_quiet (0x07 : UInt8) rfl (by simpa using hu)]
   unfold Vt.stepOsc
-  rw [if_neg (by decide), if_pos (by decide)]
+  rw [ite_eq_right (by decide), ite_eq_left (by decide)]
   exact ⟨ps_oscFinish' _ _, by rw [un_oscFinish']; simpa using hu,
     by rw [hπ, hb v (PState.osc acc2 false)]⟩
 
@@ -214,7 +214,7 @@ theorem tabs_csiDispatch_cup (v : Vt) (s : CsiState) :
   by_cases hi : s.ignore = true
   · simp [Vt.csiDispatch, hi]
   · unfold Vt.csiDispatch
-    rw [if_neg hi]
+    rw [ite_eq_right hi]
     show (v.moveTo (s.arg 1 1 - 1) (s.arg 0 1 - 1)).tabs = v.tabs
     rw [frame_moveTo]
 
@@ -223,7 +223,7 @@ theorem tabs_csiDispatch_sgr (v : Vt) (s : CsiState) :
   by_cases hi : s.ignore = true
   · simp [Vt.csiDispatch, hi]
   · unfold Vt.csiDispatch
-    rw [if_neg hi]
+    rw [ite_eq_right hi]
     show (if s.priv == 0 then v.applySgr s.sgrParams else v).tabs = v.tabs
     split
     · rw [frame_applySgr]
@@ -256,7 +256,7 @@ theorem tabs_csiDispatch_sm (v : Vt) (s : CsiState) :
   by_cases hi : s.ignore = true
   · simp [Vt.csiDispatch, hi]
   · unfold Vt.csiDispatch
-    rw [if_neg hi]
+    rw [ite_eq_right hi]
     show (v.setMode (s.priv == 0x3F) (s.arg 0 0) true).tabs = v.tabs
     rw [tabs_setMode]
 
@@ -265,7 +265,7 @@ theorem tabs_csiDispatch_rm (v : Vt) (s : CsiState) :
   by_cases hi : s.ignore = true
   · simp [Vt.csiDispatch, hi]
   · unfold Vt.csiDispatch
-    rw [if_neg hi]
+    rw [ite_eq_right hi]
     show (v.setMode (s.priv == 0x3F) (s.arg 0 0) false).tabs = v.tabs
     rw [tabs_setMode]
 
@@ -313,7 +313,7 @@ theorem fixes_tabs_shiftOut : Fixes (fun v : Vt => v.tabs) [0x0E] := by
   rw [step_of_ground_quiet (0x0E : UInt8) hg hu]
   show _ ∧ _ ∧ _
   unfold Vt.stepGround
-  rw [if_neg (by decide), if_pos (by decide)]
+  rw [ite_eq_right (by decide), ite_eq_left (by decide)]
   unfold Vt.ctl
   exact ⟨hg, by simpa using hu, rfl⟩
 
@@ -404,7 +404,7 @@ theorem getD_true_lt {a : Array Bool} {j : Nat} (h : a.getD j false = true) : j 
   rcases Nat.lt_or_ge j a.size with hlt | hge
   · exact hlt
   · exfalso
-    rw [Array.getD, dif_neg (by omega)] at h
+    rw [Array.getD, dite_eq_right (by omega)] at h
     exact absurd h (by decide)
 
 theorem size_foldl_setTab : ∀ (l : List Nat) (a : Array Bool),
@@ -491,7 +491,7 @@ theorem cols_abortUtf8 (v : Vt) (b : UInt8) : (v.abortUtf8 b).cols = v.cols := b
   unfold Vt.abortUtf8; split <;> rfl
 
 theorem abortUtf8_of_uz {v : Vt} (b : UInt8) (h : v.u8need = 0) : v.abortUtf8 b = v := by
-  unfold Vt.abortUtf8; rw [if_neg (by simp [h])]
+  unfold Vt.abortUtf8; rw [ite_eq_right (by simp [h])]
 
 /-- Feeding `ESC` is the same as discarding a half-decoded character first: `step`
 aborts before it dispatches, and a second abort at `0x1B` is the identity. -/
@@ -521,7 +521,7 @@ theorem tbc3_feed_eq {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) :
   rw [heq, show ∀ (u : Vt), u.feed [(0x67 : UInt8)] = u.step 0x67 from fun _ => rfl]
   rw [csi_final_step_eq 0x67 rfl (by simpa using hu) (by rw [hint]) (by decide) (by decide)]
   unfold Vt.csiFinish
-  rw [if_pos (by simpa using hhave), if_neg (by rw [hpar]; decide)]
+  rw [ite_eq_left (by simpa using hhave), ite_eq_right (by rw [hpar]; decide)]
   dsimp only
   have harg : ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) }
       : CsiState).arg 0 0 = 3 := by
@@ -534,7 +534,7 @@ theorem tbc3_feed_eq {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) :
       = { u with tabs := Array.replicate u.cols false } from by
     intro u
     unfold Vt.csiDispatch
-    rw [if_neg (show ¬(({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) }
+    rw [ite_eq_right (show ¬(({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) }
       : CsiState)).ignore = true from by
       show ¬(s'.ignore = true)
       rw [show s'.ignore = ({} : CsiState).ignore from by

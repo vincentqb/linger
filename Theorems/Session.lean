@@ -322,10 +322,10 @@ theorem decOk_setClient (s : State) (c0 : Client)
   simp only [State.setClient, List.mem_map] at hmem
   obtain ⟨a, ha, heq⟩ := hmem
   by_cases hid : a.id = c0.id
-  · simp only [hid, beq_self_eq_true, if_true] at heq
+  · simp only [hid, beq_self_eq_true, ite_true] at heq
     subst heq
     exact hc0
-  · simp only [hid, not_false_eq_true, if_neg, beq_iff_eq] at heq
+  · simp only [hid, not_false_eq_true, ite_eq_right, beq_iff_eq] at heq
     subst heq
     exact h a ha
 
@@ -677,9 +677,9 @@ theorem find?_map_set (c : Client) (other : Nat) (hne : other ≠ c.id) :
     · have ha : (a.id == other) = false := by
         have : a.id = c.id := by simpa using hid
         exact beq_eq_false_iff_ne.mpr (by rw [this]; exact fun hh => hne hh.symm)
-      simp only [hid, if_true, hc, ha]
+      simp only [hid, ite_true, hc, ha]
       exact find?_map_set c other hne l
-    · simp only [hid, Bool.false_eq_true, if_false]
+    · simp only [hid, Bool.false_eq_true, ite_false]
       cases (a.id == other)
       · exact find?_map_set c other hne l
       · rfl
@@ -693,14 +693,14 @@ theorem find?_filter_drop (id other : Nat) (hne : other ≠ id) :
   | a :: l => by
     rw [List.filter_cons, List.find?_cons]
     by_cases hid : (a.id != id) = true
-    · rw [if_pos hid, List.find?_cons]
+    · rw [ite_eq_left hid, List.find?_cons]
       cases (a.id == other)
       · exact find?_filter_drop id other hne l
       · rfl
     · have ha : (a.id == other) = false := by
         have : a.id = id := by simpa using hid
         exact beq_eq_false_iff_ne.mpr (by rw [this]; exact fun hh => hne hh.symm)
-      rw [if_neg hid]
+      rw [ite_eq_right hid]
       simp only [ha]
       exact find?_filter_drop id other hne l
 
@@ -984,7 +984,7 @@ theorem resizeEffects_owner_only (s : State) (c : Client) :
   intro hne
   by_cases hc : (sizeOwner s).any (·.id == c.id) = true
   · exact hc
-  · exact absurd (by unfold resizeEffects; rw [if_neg hc]) hne
+  · exact absurd (by unfold resizeEffects; rw [ite_eq_right hc]) hne
 
 /-- …and when it does resize, it is exactly one `resizePty` at the client's size —
 never a burst, never a stale size. -/
@@ -1008,7 +1008,7 @@ theorem controlResize_never_overrides (s : State) (c : Client) (cols rows : UInt
     controlResize s c cols rows
       = (s, [.send c.id (.err "an attached client owns the size".toUTF8.toList)]) := by
   unfold controlResize
-  rw [if_pos h]
+  rw [ite_eq_left h]
 
 /-- With nobody to fight, a genuine new size applies: exactly one `resizePty`
 at the requested size, the emulator resized with it, then `.done`. -/
@@ -1020,7 +1020,7 @@ theorem controlResize_applies (s : State) (c : Client) (cols rows : UInt32)
       = ({ s with vt := s.vt.resize cols.toNat rows.toNat },
          [.resizePty cols rows, .send c.id .done]) := by
   unfold controlResize
-  rw [if_neg (by simp [hown]), if_neg (by simp [hnz]), if_neg (by simp [hdiff])]
+  rw [ite_eq_right (by simp [hown]), ite_eq_right (by simp [hnz]), ite_eq_right (by simp [hdiff])]
 
 /-- The same-size branch is inert on purpose: the emulator — scroll region and
 tab ruler included — is untouched (`Vt.resize` would wipe both and no SIGWINCH
@@ -1032,7 +1032,7 @@ theorem controlResize_same_size (s : State) (c : Client) (cols rows : UInt32)
     (hsame : (s.vt.cols == cols.toNat && s.vt.rows == rows.toNat) = true) :
     controlResize s c cols rows = (s, [.send c.id .done]) := by
   unfold controlResize
-  rw [if_neg (by simp [hown]), if_neg (by simp [hnz]), if_pos hsame]
+  rw [ite_eq_right (by simp [hown]), ite_eq_right (by simp [hnz]), ite_eq_left hsame]
 
 /-- The `.resize` arm routes every non-attached connection to the stage above
 (after the cols/rows bookkeeping on the client record), so the three claims

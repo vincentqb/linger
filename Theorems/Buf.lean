@@ -95,8 +95,8 @@ theorem bufOffer_bound (cap : Nat) (b : Buf) (more : ByteArray) (h : owedLen b �
     owedLen (bufOffer cap b more).1 ≤ cap := by
   unfold bufOffer
   by_cases hc : owedLen b + more.size > cap
-  · rw [if_pos hc]; exact h
-  · rw [if_neg hc]
+  · rw [ite_eq_left hc]; exact h
+  · rw [ite_eq_right hc]
     show (b.bytes ++ more).size ≤ cap
     rw [ByteArray.size_append]
     show b.bytes.size + more.size ≤ cap
@@ -110,8 +110,8 @@ theorem bufOffer_owed (cap : Nat) (b : Buf) (more : ByteArray)
     owed (bufOffer cap b more).1 = owed b ++ more := by
   unfold bufOffer at h ⊢
   by_cases hc : owedLen b + more.size > cap
-  · rw [if_pos hc] at h; exact absurd h (by simp)
-  · rw [if_neg hc]; rfl
+  · rw [ite_eq_left hc] at h; exact absurd h (by simp)
+  · rw [ite_eq_right hc]; rfl
 
 /-- **The client-output cap, guarded.** If the peer was not cut, its backlog is
 within the cap. The guard is not a weakening: `.send` appends and *then* decides,

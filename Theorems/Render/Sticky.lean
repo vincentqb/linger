@@ -66,8 +66,8 @@ theorem SMap.ite {c : Prop} [Decidable c] {f g : Sticky → Sticky} {a b : Bytes
     (ha : c → SMap f a) (hb : ¬c → SMap g b) :
     SMap (if c then f else g) (if c then a else b) := by
   by_cases h : c
-  · rw [if_pos h, if_pos h]; exact ha h
-  · rw [if_neg h, if_neg h]; exact hb h
+  · rw [ite_eq_left h, ite_eq_left h]; exact ha h
+  · rw [ite_eq_right h, ite_eq_right h]; exact hb h
 
 /-- **A text run cannot move a sticky field.** True here and false for `Keeps` —
 printable bytes are exactly what writes cells — and the two excluded bytes are
@@ -205,7 +205,7 @@ theorem stick_csi_marker_step {v : Vt} {s : CsiState} (hg : v.pstate = .csi s)
     (hu : v.u8need = 0) : stick (v.step 0x3F) = stick v := by
   rw [step_of_csi_quiet 0x3F hg hu]
   unfold Vt.stepCsi
-  rw [if_neg (by decide), if_neg (by decide), if_neg (by decide), if_pos (by decide)]
+  rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_left (by decide)]
   rfl
 
 theorem stick_priv_open {v : Vt} (hg : v.pstate = .ground) :
@@ -242,8 +242,8 @@ theorem stick_csi_arg_tail (n : Nat) (final : UInt8) (f : Sticky → Sticky)
   rw [show ∀ (u : Vt), u.feed [final] = u.step final from fun _ => rfl, hfeed]
   rw [csi_final_step_eq final rfl (by rw [hwu]) (by rw [hsab, hint']; exact hs0int) h1 h2]
   unfold Vt.csiFinish
-  rw [if_pos (by rw [hsab]; simpa using hhave'),
-    if_neg (by rw [hsab, hpar']; omega)]
+  rw [ite_eq_left (by rw [hsab]; simpa using hhave'),
+    ite_eq_right (by rw [hsab, hpar']; omega)]
   dsimp only
   refine ⟨?_, rfl⟩
   have hstate : ({ sa with params := sa.params.push (min sa.cur 65535, sa.curSub) } : CsiState)
@@ -261,16 +261,16 @@ theorem smap_csi_one_arg (n : Nat) (final : UInt8) (priv : Bool) (f : Sticky →
     SMap f (if priv then csiPriv n final else csiNum n final) := by
   intro v hg
   cases priv
-  · rw [if_neg (by decide),
+  · rw [ite_eq_right (by decide),
       show csiNum n final = [0x1B, 0x5B] ++ (digits n ++ [final]) from by simp [csiNum, csiB]]
     rw [feed_append]
     obtain ⟨hc, hcu, hcs⟩ := stick_csi_open hg
     obtain ⟨ht, hp⟩ := stick_csi_arg_tail n final f hn hlt h1 h2
       (s0 := ({} : CsiState)) rfl rfl (by decide) rfl rfl
       (fun u t hpv hig hpar => hst u t (by rw [hpv]; rfl) hig
-        (by rw [arg_of_one_of 0 hpar, if_neg (by omega)])) hc hcu
+        (by rw [arg_of_one_of 0 hpar, ite_eq_right (by omega)])) hc hcu
     exact ⟨hp, by rw [ht, hcs]⟩
-  · rw [if_pos rfl,
+  · rw [ite_eq_left rfl,
       show csiPriv n final = [0x1B, 0x5B, 0x3F] ++ (digits n ++ [final]) from by
         simp [csiPriv, csiB]]
     rw [feed_append]
@@ -278,7 +278,7 @@ theorem smap_csi_one_arg (n : Nat) (final : UInt8) (priv : Bool) (f : Sticky →
     obtain ⟨ht, hp⟩ := stick_csi_arg_tail n final f hn hlt h1 h2
       (s0 := ({ priv := 0x3F } : CsiState)) rfl rfl (by decide) rfl rfl
       (fun u t hpv hig hpar => hst u t (by rw [hpv]; rfl) hig
-        (by rw [arg_of_one_of 0 hpar, if_neg (by omega)])) hc hcu
+        (by rw [arg_of_one_of 0 hpar, ite_eq_right (by omega)])) hc hcu
     exact ⟨hp, by rw [ht, hcs]⟩
 
 /-- **`?n h`/`l`: the screen-switch modes are the only ones that move a sticky
@@ -300,7 +300,7 @@ theorem smap_modeSet (n : Nat) (on : Bool) (hn : 0 < n) (hlt : n < 65535) :
   have h := smap_csi_one_arg n (if on then 0x68 else 0x6C) true (stSetMode n on) hn hlt
     (by cases on <;> decide) (by cases on <;> decide)
     (fun w t hpv hig harg => key w t (by simpa using hpv) hig harg)
-  rw [if_pos rfl] at h
+  rw [ite_eq_left rfl] at h
   exact h
 
 /-- IRM is a *non*-private `CSI 4 h/l`, so its `setMode` cannot reach a screen
@@ -318,7 +318,7 @@ theorem smap_id_irm (on : Bool) : SMap id (csiNum 4 (if on then 0x68 else 0x6C))
           csiDispatch_sm w t hig, show (t.priv == 0x3F) = false from by
             rw [show t.priv = 0 from by simpa using hpv]; rfl]
         exact stick_setMode_plain w _ _)
-  rw [if_neg (by decide)] at h
+  rw [ite_eq_right (by decide)] at h
   exact h
 
 /-- The reset form, stated literally: both the prologue and the hand-back emit
@@ -398,12 +398,12 @@ theorem stick_csi_semi_open (a : Nat) (halt : a < 65535)
       fun u => by simp [Vt.feed, List.foldl_append], hfA,
       step_of_csi_quiet 0x3B (v := { g with pstate := .csi sa }) rfl (by rw [hgu])]
     unfold Vt.stepCsi
-    rw [if_neg (by decide), if_pos (by decide)]
+    rw [ite_eq_right (by decide), ite_eq_left (by decide)]
   have hpush : csiPush sa false = { sa with
       params := sa.params.push (min sa.cur 65535, sa.curSub),
       cur := 0, curSub := false, haveCur := false } := by
     unfold csiPush
-    rw [if_pos (by rw [hsA, hhaveA]; simp), if_neg (by rw [hsA, hparA]; decide)]
+    rw [ite_eq_left (by rw [hsA, hhaveA]; simp), ite_eq_right (by rw [hsA, hparA]; decide)]
   refine ⟨csiPush sa false, by rw [hfeed], by rw [hpush], by rw [hpush], ?_, by rw [hpush],
     ?_, ?_, ?_, by rw [hfeed]; exact hgu, by rw [hfeed]; rfl⟩
   · rw [hpush]
@@ -432,7 +432,7 @@ theorem smap_stbm (a b : Nat) (ha : 0 < a) (hb : 0 < b) (halt : a < 65535) (hblt
       have hpv0 : t.priv = 0 := by rw [hpv]; exact hprivB
       rw [stick_csiDispatch_stbm u t hig hpv0,
         (arg_of_two_of 1 hpar').1, (arg_of_two_of u.rows hpar').2,
-        if_neg (by omega), if_neg (by omega)])
+        ite_eq_right (by omega), ite_eq_right (by omega)])
     hpB huB
   exact ⟨hp, by rw [ht, hsB, hcs]⟩
 
@@ -541,7 +541,7 @@ theorem smap_id_modeSet_safe (n : Nat) (on : Bool) (hn : 0 < n) (hlt : n < 65535
     (h47 : n ≠ 47) (h1047 : n ≠ 1047) (h1049 : n ≠ 1049) : SMap id (modeSet n on) := by
   refine (smap_modeSet n on hn hlt).congr (fun s => ?_)
   unfold stSetMode
-  rw [if_neg (by
+  rw [ite_eq_right (by
     intro h
     simp only [Bool.or_eq_true, beq_iff_eq] at h
     rcases h with (h | h) | h
@@ -597,25 +597,25 @@ theorem smap_charsetAnsi (v : Vt) :
   have h0 : SMap (fun s => { s with g0 := v.g0Line })
       (if v.g0Line then escCharset 0x28 0x30 else escCharset 0x28 0x42) := by
     by_cases hc : v.g0Line = true
-    · rw [if_pos hc]
+    · rw [ite_eq_left hc]
       exact (smap_charset 0x28 0x30 (Or.inl rfl)).congr (fun s => by simp [stCharset, hc])
-    · rw [if_neg hc]
+    · rw [ite_eq_right hc]
       exact (smap_charset 0x28 0x42 (Or.inl rfl)).congr (fun s => by
         simp [stCharset, show v.g0Line = false from by simpa using hc])
   have h1 : SMap (fun s => { s with g1 := v.g1Line })
       (if v.g1Line then escCharset 0x29 0x30 else escCharset 0x29 0x42) := by
     by_cases hc : v.g1Line = true
-    · rw [if_pos hc]
+    · rw [ite_eq_left hc]
       exact (smap_charset 0x29 0x30 (Or.inr rfl)).congr (fun s => by simp [stCharset, hc])
-    · rw [if_neg hc]
+    · rw [ite_eq_right hc]
       exact (smap_charset 0x29 0x42 (Or.inr rfl)).congr (fun s => by
         simp [stCharset, show v.g1Line = false from by simpa using hc])
   have h2 : SMap (fun s => { s with so := if v.shiftOut then true else s.so })
       (if v.shiftOut then [0x0E] else []) := by
     by_cases hc : v.shiftOut = true
-    · rw [if_pos hc]
+    · rw [ite_eq_left hc]
       exact smap_so.congr (fun s => by simp [hc])
-    · rw [if_neg hc]
+    · rw [ite_eq_right hc]
       exact SMap.nil.congr (fun s => by
         simp [show v.shiftOut = false from by simpa using hc])
   unfold charsetAnsi
@@ -657,14 +657,14 @@ theorem smap_screensAnsi (v : Vt) :
   have h1049 : SMap (stAlt true) (csiPriv 1049 0x68) := by
     have h := smap_modeSet 1049 true (by decide) (by decide)
     rw [show modeSet 1049 true = csiPriv 1049 0x68 from rfl] at h
-    exact h.congr (fun s => by unfold stSetMode; rw [if_pos (by decide)])
+    exact h.congr (fun s => by unfold stSetMode; rw [ite_eq_left (by decide)])
   unfold screensAnsi
   refine ((smap_id_scrollbackAnsi v).comp ?_).congr (fun s => rfl)
   rcases hv : v.altGrid with - | x
-  · rw [if_neg (by simp)]
+  · rw [ite_eq_right (by simp)]
     exact smap_id_gridAnsi _
   · obtain ⟨mg, mc, mp⟩ := x
-    rw [if_pos (by simp)]
+    rw [ite_eq_left (by simp)]
     exact ((((((smap_id_gridAnsi mg).append (smap_id_penSgr mp)).append
       (smap_id_cup _ _)).comp h1049).comp (smap_id_gridAnsi v.grid)).congr (fun s => rfl))
 
@@ -744,7 +744,7 @@ theorem restore_sticky_any (v w : Vt) (hrows : w.rows = v.rows)
       stSetMode n on Y = Y := by
     intro n on Y h
     unfold stSetMode
-    rw [if_neg (by rw [h]; simp)]
+    rw [ite_eq_right (by rw [h]; simp)]
   -- the lead-in leaves an unknown sticky state; only its height is known, and
   -- the prologue overwrites every other field absolutely
   obtain ⟨A, hA⟩ : ∃ y : Sticky, stAlt false (stick (w.feed (escSeq 0x5C))) = y := ⟨_, rfl⟩
@@ -763,7 +763,7 @@ theorem restore_sticky_any (v w : Vt) (hrows : w.rows = v.rows)
         = ⟨v.rows, At, Ab, Ag0, Ag1, Aso, false⟩ from by
       rw [show stSetMode 1049 false (stick (w.feed (escSeq 0x5C)))
         = stAlt false (stick (w.feed (escSeq 0x5C))) from by
-          unfold stSetMode; rw [if_pos (by decide)]]
+          unfold stSetMode; rw [ite_eq_left (by decide)]]
       exact hA)
   have h2 := sput_congr (sput_step h1 smap_id_irm_reset) (id_eq _)
   have h3 := sput_congr (sput_step h2 (smap_modeSet 6 false (by decide) (by decide)))
@@ -779,11 +779,11 @@ theorem restore_sticky_any (v w : Vt) (hrows : w.rows = v.rows)
   have h6 := sput_congr (sput_step h5 (smap_charset 0x28 0x42 (Or.inl rfl)))
     (show stCharset 0x28 0x42 (⟨v.rows, 0, v.rows - 1, Ag0, Ag1, Aso, false⟩ : Sticky)
         = ⟨v.rows, 0, v.rows - 1, false, Ag1, Aso, false⟩ from by
-      unfold stCharset; rw [if_pos (by decide)]; rfl)
+      unfold stCharset; rw [ite_eq_left (by decide)]; rfl)
   have h7 := sput_congr (sput_step h6 (smap_charset 0x29 0x42 (Or.inr rfl)))
     (show stCharset 0x29 0x42 (⟨v.rows, 0, v.rows - 1, false, Ag1, Aso, false⟩ : Sticky)
         = ⟨v.rows, 0, v.rows - 1, false, false, Aso, false⟩ from by
-      unfold stCharset; rw [if_neg (by decide), if_pos (by decide)]; rfl)
+      unfold stCharset; rw [ite_eq_right (by decide), ite_eq_left (by decide)]; rfl)
   have h8 := sput_congr (sput_step h7 smap_si)
     (show ({ (⟨v.rows, 0, v.rows - 1, false, false, Aso, false⟩ : Sticky) with so := false })
         = ⟨v.rows, 0, v.rows - 1, false, false, false, false⟩ from rfl)
@@ -795,11 +795,11 @@ theorem restore_sticky_any (v w : Vt) (hrows : w.rows = v.rows)
         (⟨v.rows, 0, v.rows - 1, false, false, false, false⟩ : Sticky)
         = ⟨v.rows, 0, v.rows - 1, false, false, false, v.altGrid.isSome⟩ from by
       by_cases hv : v.altGrid.isSome = true
-      · rw [if_pos hv, hv]
+      · rw [ite_eq_left hv, hv]
         unfold stAlt
         dsimp only
-        rw [if_neg (by simp)]
-      · rw [if_neg hv, show v.altGrid.isSome = false from by simpa using hv]
+        rw [ite_eq_right (by simp)]
+      · rw [ite_eq_right hv, show v.altGrid.isSome = false from by simpa using hv]
         rfl)
   -- the scroll region
   have h12 := sput_congr (sput_step h11 (smap_regionAnsi v (by omega) (by omega)))
@@ -807,11 +807,11 @@ theorem restore_sticky_any (v w : Vt) (hrows : w.rows = v.rows)
         (⟨v.rows, 0, v.rows - 1, false, false, false, v.altGrid.isSome⟩ : Sticky)
         = ⟨v.rows, v.top, v.bot, false, false, false, v.altGrid.isSome⟩ from by
       by_cases hd : (v.top == 0 && v.bot == v.rows - 1) = true
-      · rw [if_pos hd]
+      · rw [ite_eq_left hd]
         simp only [Bool.and_eq_true, beq_iff_eq] at hd
         rw [hd.1, hd.2]
         rfl
-      · rw [if_neg hd, stStbm_of hlt (show v.bot < (⟨v.rows, 0, v.rows - 1, false, false, false,
+      · rw [ite_eq_right hd, stStbm_of hlt (show v.bot < (⟨v.rows, 0, v.rows - 1, false, false, false,
           v.altGrid.isSome⟩ : Sticky).rows from by simp only; omega)])
   have h13 := sput_congr (sput_step h12 (smap_id_tabsAnsi v)) (id_eq _)
   have h14 := sput_congr (sput_step h13 (smap_id_savedAnsi v)) (id_eq _)
@@ -951,7 +951,7 @@ theorem smap_stbm_plain : SMap (fun s => stStbm 0 (s.rows - 1) s) (csiPlain 0x72
   rw [show ∀ (u : Vt), u.feed [(0x72 : UInt8)] = u.step 0x72 from fun _ => rfl]
   rw [csi_final_step_eq 0x72 hc hcu rfl (by decide) (by decide)]
   unfold Vt.csiFinish
-  rw [if_neg (by decide)]
+  rw [ite_eq_right (by decide)]
   refine ⟨rfl, ?_⟩
   show stick ((v.feed [(0x1B : UInt8), 0x5B]).csiDispatch ({} : CsiState) 0x72)
     = stStbm 0 ((stick v).rows - 1) (stick v)
@@ -978,7 +978,7 @@ theorem leave_canonical_all (w : Vt) (h2 : 2 ≤ w.rows) :
       stSetMode n on Y = Y := by
     intro n on Y h
     unfold stSetMode
-    rw [if_neg (by rw [h]; simp)]
+    rw [ite_eq_right (by rw [h]; simp)]
   obtain ⟨B, hB⟩ : ∃ y : Sticky, stAlt false (stick (w.feed (escSeq 0x5C))) = y := ⟨_, rfl⟩
   have hBrows : B.rows = w.rows := by rw [← hB, stAlt_rows]; exact rows_st_lead w
   have hBalt : B.alt = false := by rw [← hB]; exact stAlt_alt false _
@@ -992,7 +992,7 @@ theorem leave_canonical_all (w : Vt) (h2 : 2 ≤ w.rows) :
         = ⟨w.rows, Bt, Bb, Bg0, Bg1, Bso, false⟩ from by
       rw [show stSetMode 1049 false (stick (w.feed (escSeq 0x5C)))
         = stAlt false (stick (w.feed (escSeq 0x5C))) from by
-          unfold stSetMode; rw [if_pos (by decide)]]
+          unfold stSetMode; rw [ite_eq_left (by decide)]]
       exact hB)
   have l2 := sput_congr (sput_step l1 smap_id_irm_reset) (id_eq _)
   have l3 := sput_congr (sput_step l2 (smap_modeSet 25 true (by decide) (by decide)))
@@ -1025,11 +1025,11 @@ theorem leave_canonical_all (w : Vt) (h2 : 2 ≤ w.rows) :
   have l15 := sput_congr (sput_step l14 (smap_charset 0x28 0x42 (Or.inl rfl)))
     (show stCharset 0x28 0x42 (⟨w.rows, 0, w.rows - 1, Bg0, Bg1, Bso, false⟩ : Sticky)
         = ⟨w.rows, 0, w.rows - 1, false, Bg1, Bso, false⟩ from by
-      unfold stCharset; rw [if_pos (by decide)]; rfl)
+      unfold stCharset; rw [ite_eq_left (by decide)]; rfl)
   have l16 := sput_congr (sput_step l15 (smap_charset 0x29 0x42 (Or.inr rfl)))
     (show stCharset 0x29 0x42 (⟨w.rows, 0, w.rows - 1, false, Bg1, Bso, false⟩ : Sticky)
         = ⟨w.rows, 0, w.rows - 1, false, false, Bso, false⟩ from by
-      unfold stCharset; rw [if_neg (by decide), if_pos (by decide)]; rfl)
+      unfold stCharset; rw [ite_eq_right (by decide), ite_eq_left (by decide)]; rfl)
   have l17 := sput_congr (sput_step l16 smap_si)
     (show ({ (⟨w.rows, 0, w.rows - 1, false, false, Bso, false⟩ : Sticky) with so := false })
         = ⟨w.rows, 0, w.rows - 1, false, false, false, false⟩ from rfl)
@@ -1099,7 +1099,7 @@ theorem home_places_cursor {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0
   rw [csi_final_step_eq 0x48 (v := { v with pstate := .csi ({} : CsiState) })
     (s := ({} : CsiState)) rfl (by simpa using hu) rfl (by decide) (by decide)]
   unfold Vt.csiFinish
-  rw [if_neg (by decide)]
+  rw [ite_eq_right (by decide)]
   show ((({ v with pstate := .csi ({} : CsiState) } : Vt).csiDispatch
       ({} : CsiState) 0x48).cursor.x = 0)
     ∧ ((({ v with pstate := .csi ({} : CsiState) } : Vt).csiDispatch
@@ -1109,10 +1109,10 @@ theorem home_places_cursor {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0
   rw [show ({ v with pstate := .csi ({} : CsiState) } : Vt).csiDispatch ({} : CsiState) 0x48
       = ({ v with pstate := .csi ({} : CsiState) } : Vt).moveTo 0 0 from by
     unfold Vt.csiDispatch
-    rw [if_neg (by decide)]
+    rw [ite_eq_right (by decide)]
     rfl]
   unfold Vt.moveTo
-  rw [if_neg (show ¬(({ v with pstate := .csi ({} : CsiState) } : Vt).modes.origin = true) from by
+  rw [ite_eq_right (show ¬(({ v with pstate := .csi ({} : CsiState) } : Vt).modes.origin = true) from by
     show ¬(v.modes.origin = true); rw [ho]; simp)]
   refine ⟨?_, ?_, rfl⟩ <;> simp
 
@@ -1143,20 +1143,20 @@ theorem cha_places_cursor {v : Vt} (n : Nat) (hg : v.pstate = .ground) (hu : v.u
   rw [heq, show ∀ (u : Vt), u.feed [(0x47 : UInt8)] = u.step 0x47 from fun _ => rfl]
   rw [csi_final_step_eq 0x47 rfl (by simpa using hu) (by rw [hint]) (by decide) (by decide)]
   unfold Vt.csiFinish
-  rw [if_pos (by simpa using hhave), if_neg (by rw [hpar]; decide)]
+  rw [ite_eq_left (by simpa using hhave), ite_eq_right (by rw [hpar]; decide)]
   dsimp only
   have harg : ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) }
       : CsiState).arg 0 1 = n := by
     rw [arg_of_one_of 1 (show ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) }
         : CsiState).params = (#[] : Array (Nat × Bool)).push (n, s'.curSub) from by
       rw [hpar, hcur', show min (min n 65535) 65535 = n from by omega]),
-      if_neg (by omega)]
+      ite_eq_right (by omega)]
   rw [show ∀ (u : Vt), u.csiDispatch
       ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState) 0x47
       = u.setCol (n - 1) from by
     intro u
     unfold Vt.csiDispatch
-    rw [if_neg (show ¬(({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) }
+    rw [ite_eq_right (show ¬(({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) }
       : CsiState)).ignore = true from by
       show ¬(s'.ignore = true)
       rw [show s'.ignore = ({} : CsiState).ignore from by
@@ -1192,20 +1192,20 @@ theorem cha_feed_eq {v : Vt} (n : Nat) (hg : v.pstate = .ground) (hu : v.u8need 
   rw [heq, show ∀ (u : Vt), u.feed [(0x47 : UInt8)] = u.step 0x47 from fun _ => rfl]
   rw [csi_final_step_eq 0x47 rfl (by simpa using hu) (by rw [hint]) (by decide) (by decide)]
   unfold Vt.csiFinish
-  rw [if_pos (by simpa using hhave), if_neg (by rw [hpar]; decide)]
+  rw [ite_eq_left (by simpa using hhave), ite_eq_right (by rw [hpar]; decide)]
   dsimp only
   have harg : ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) }
       : CsiState).arg 0 1 = n := by
     rw [arg_of_one_of 1 (show ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) }
         : CsiState).params = (#[] : Array (Nat × Bool)).push (n, s'.curSub) from by
       rw [hpar, hcur', show min (min n 65535) 65535 = n from by omega]),
-      if_neg (by omega)]
+      ite_eq_right (by omega)]
   rw [show ∀ (u : Vt), u.csiDispatch
       ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState) 0x47
       = u.setCol (n - 1) from by
     intro u
     unfold Vt.csiDispatch
-    rw [if_neg (show ¬(({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) }
+    rw [ite_eq_right (show ¬(({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) }
       : CsiState)).ignore = true from by
       show ¬(s'.ignore = true)
       rw [show s'.ignore = ({} : CsiState).ignore from by

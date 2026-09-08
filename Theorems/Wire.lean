@@ -77,8 +77,8 @@ theorem takeFrames_header (t b0 b1 b2 b3 : UInt8) (payload rest : List UInt8)
   rw [takeFrames.eq_def]
   dsimp only
   rw [hb]
-  rw [if_neg (by omega)]
-  rw [if_neg (by rw [List.length_append]; omega)]
+  rw [ite_eq_right (by omega)]
+  rw [ite_eq_right (by rw [List.length_append]; omega)]
   rw [List.take_append_of_le_length hle, List.take_of_length_le (Nat.le_refl _),
       List.drop_append_of_le_length hle, List.drop_of_length_le (Nat.le_refl _),
       List.nil_append, hres]
@@ -142,16 +142,16 @@ theorem takeFrames_append (xs ys : List UInt8) :
   | case1 t l0 l1 l2 l3 rest len hlen =>
     replace hlen : (readU32 [l0, l1, l2, l3]).toNat > maxPayload := hlen
     have hx : takeFrames (t :: l0 :: l1 :: l2 :: l3 :: rest) = ([], true, []) := by
-      rw [takeFrames.eq_def]; dsimp only; rw [if_pos hlen]
+      rw [takeFrames.eq_def]; dsimp only; rw [ite_eq_left hlen]
     have hy : takeFrames (t :: l0 :: l1 :: l2 :: l3 :: (rest ++ ys)) = ([], true, []) := by
-      rw [takeFrames.eq_def]; dsimp only; rw [if_pos hlen]
+      rw [takeFrames.eq_def]; dsimp only; rw [ite_eq_left hlen]
     simp [hx, hy]
   | case2 t l0 l1 l2 l3 rest len hlen hshort =>
     replace hlen : ¬ (readU32 [l0, l1, l2, l3]).toNat > maxPayload := hlen
     replace hshort : rest.length < (readU32 [l0, l1, l2, l3]).toNat := hshort
     have hx : takeFrames (t :: l0 :: l1 :: l2 :: l3 :: rest)
         = (t :: l0 :: l1 :: l2 :: l3 :: rest, false, []) := by
-      rw [takeFrames.eq_def]; dsimp only; rw [if_neg hlen, if_pos hshort]
+      rw [takeFrames.eq_def]; dsimp only; rw [ite_eq_right hlen, ite_eq_left hshort]
     simp [hx]
   | case3 t l0 l1 l2 l3 rest len hlen hshort buf err msgs heq ih =>
     replace hlen : ¬ (readU32 [l0, l1, l2, l3]).toNat > maxPayload := hlen
@@ -160,13 +160,13 @@ theorem takeFrames_append (xs ys : List UInt8) :
     have hx : takeFrames (t :: l0 :: l1 :: l2 :: l3 :: rest)
         = (buf, err, decodeMsg t (rest.take (readU32 [l0, l1, l2, l3]).toNat) :: msgs) := by
       rw [takeFrames.eq_def]; dsimp only
-      rw [if_neg hlen, if_neg hshort, heq]
+      rw [ite_eq_right hlen, ite_eq_right hshort, heq]
     rcases h2 : takeFrames (rest.drop (readU32 [l0, l1, l2, l3]).toNat ++ ys)
       with ⟨buf2, err2, msgs2⟩
     have hy : takeFrames (t :: l0 :: l1 :: l2 :: l3 :: (rest ++ ys))
         = (buf2, err2, decodeMsg t (rest.take (readU32 [l0, l1, l2, l3]).toNat) :: msgs2) := by
       rw [takeFrames.eq_def]; dsimp only
-      rw [if_neg hlen, if_neg (by rw [List.length_append]; omega),
+      rw [ite_eq_right hlen, ite_eq_right (by rw [List.length_append]; omega),
           List.take_append_of_le_length hle, List.drop_append_of_le_length hle, h2]
     rw [ih, heq] at h2
     by_cases he : err
@@ -198,14 +198,14 @@ theorem takeFrames_errored_buf (bytes : List UInt8)
   | case1 t l0 l1 l2 l3 rest len hlen =>
     replace hlen : (readU32 [l0, l1, l2, l3]).toNat > maxPayload := hlen
     have hx : takeFrames (t :: l0 :: l1 :: l2 :: l3 :: rest) = ([], true, []) := by
-      rw [takeFrames.eq_def]; dsimp only; rw [if_pos hlen]
+      rw [takeFrames.eq_def]; dsimp only; rw [ite_eq_left hlen]
     simp [hx]
   | case2 t l0 l1 l2 l3 rest len hlen hshort =>
     replace hlen : ¬ (readU32 [l0, l1, l2, l3]).toNat > maxPayload := hlen
     replace hshort : rest.length < (readU32 [l0, l1, l2, l3]).toNat := hshort
     have hx : takeFrames (t :: l0 :: l1 :: l2 :: l3 :: rest)
         = (t :: l0 :: l1 :: l2 :: l3 :: rest, false, []) := by
-      rw [takeFrames.eq_def]; dsimp only; rw [if_neg hlen, if_pos hshort]
+      rw [takeFrames.eq_def]; dsimp only; rw [ite_eq_right hlen, ite_eq_left hshort]
     rw [hx] at h
     simp at h
   | case3 t l0 l1 l2 l3 rest len hlen hshort buf err msgs heq ih =>
@@ -214,7 +214,7 @@ theorem takeFrames_errored_buf (bytes : List UInt8)
     have hx : takeFrames (t :: l0 :: l1 :: l2 :: l3 :: rest)
         = (buf, err, decodeMsg t (rest.take (readU32 [l0, l1, l2, l3]).toNat) :: msgs) := by
       rw [takeFrames.eq_def]; dsimp only
-      rw [if_neg hlen, if_neg hshort, heq]
+      rw [ite_eq_right hlen, ite_eq_right hshort, heq]
     rw [hx] at h ⊢
     rw [heq] at ih
     exact ih h
@@ -248,7 +248,7 @@ theorem Decoder.feed_append (d : Decoder) (a b : List UInt8) :
         rw [h1] at h'
         exact h' (by simp [he1])
       subst hb1
-      simp only [he1, if_true] at hsplit
+      simp only [he1, ite_true] at hsplit
       simp [Decoder.feed, hd, h1, he1, ← List.append_assoc, hsplit]
     · simp only [he1] at hsplit
       rcases h2 : takeFrames (buf1 ++ b) with ⟨buf2, err2, msgs2⟩
@@ -274,14 +274,14 @@ theorem takeFrames_buf_le (bytes : List UInt8) :
   | case1 t l0 l1 l2 l3 rest len hlen =>
     replace hlen : (readU32 [l0, l1, l2, l3]).toNat > maxPayload := hlen
     have hx : takeFrames (t :: l0 :: l1 :: l2 :: l3 :: rest) = ([], true, []) := by
-      rw [takeFrames.eq_def]; dsimp only; rw [if_pos hlen]
+      rw [takeFrames.eq_def]; dsimp only; rw [ite_eq_left hlen]
     simp [hx]
   | case2 t l0 l1 l2 l3 rest len hlen hshort =>
     replace hlen : ¬ (readU32 [l0, l1, l2, l3]).toNat > maxPayload := hlen
     replace hshort : rest.length < (readU32 [l0, l1, l2, l3]).toNat := hshort
     have hx : takeFrames (t :: l0 :: l1 :: l2 :: l3 :: rest)
         = (t :: l0 :: l1 :: l2 :: l3 :: rest, false, []) := by
-      rw [takeFrames.eq_def]; dsimp only; rw [if_neg hlen, if_pos hshort]
+      rw [takeFrames.eq_def]; dsimp only; rw [ite_eq_right hlen, ite_eq_left hshort]
     simp [hx]
     omega
   | case3 t l0 l1 l2 l3 rest len hlen hshort buf err msgs heq ih =>
@@ -290,7 +290,7 @@ theorem takeFrames_buf_le (bytes : List UInt8) :
     have hx : takeFrames (t :: l0 :: l1 :: l2 :: l3 :: rest)
         = (buf, err, decodeMsg t (rest.take (readU32 [l0, l1, l2, l3]).toNat) :: msgs) := by
       rw [takeFrames.eq_def]; dsimp only
-      rw [if_neg hlen, if_neg hshort, heq]
+      rw [ite_eq_right hlen, ite_eq_right hshort, heq]
     rw [heq] at ih
     simpa [hx] using ih
   | case4 xs hno =>
@@ -372,14 +372,14 @@ theorem takeFrames_msgs_payload_le (bytes : List UInt8) :
   | case1 t l0 l1 l2 l3 rest len hlen =>
     replace hlen : (readU32 [l0, l1, l2, l3]).toNat > maxPayload := hlen
     have hx : takeFrames (t :: l0 :: l1 :: l2 :: l3 :: rest) = ([], true, []) := by
-      rw [takeFrames.eq_def]; dsimp only; rw [if_pos hlen]
+      rw [takeFrames.eq_def]; dsimp only; rw [ite_eq_left hlen]
     simp [hx]
   | case2 t l0 l1 l2 l3 rest len hlen hshort =>
     replace hlen : ¬ (readU32 [l0, l1, l2, l3]).toNat > maxPayload := hlen
     replace hshort : rest.length < (readU32 [l0, l1, l2, l3]).toNat := hshort
     have hx : takeFrames (t :: l0 :: l1 :: l2 :: l3 :: rest)
         = (t :: l0 :: l1 :: l2 :: l3 :: rest, false, []) := by
-      rw [takeFrames.eq_def]; dsimp only; rw [if_neg hlen, if_pos hshort]
+      rw [takeFrames.eq_def]; dsimp only; rw [ite_eq_right hlen, ite_eq_left hshort]
     simp [hx]
   | case3 t l0 l1 l2 l3 rest len hlen hshort buf err msgs heq ih =>
     replace hlen : ¬ (readU32 [l0, l1, l2, l3]).toNat > maxPayload := hlen
@@ -387,7 +387,7 @@ theorem takeFrames_msgs_payload_le (bytes : List UInt8) :
     have hx : takeFrames (t :: l0 :: l1 :: l2 :: l3 :: rest)
         = (buf, err, decodeMsg t (rest.take (readU32 [l0, l1, l2, l3]).toNat) :: msgs) := by
       rw [takeFrames.eq_def]; dsimp only
-      rw [if_neg hlen, if_neg hshort, heq]
+      rw [ite_eq_right hlen, ite_eq_right hshort, heq]
     rw [heq] at ih
     intro m hmem
     rw [hx] at hmem
@@ -426,14 +426,14 @@ theorem takeFrames_leftover_stable (bytes : List UInt8) :
   | case1 t l0 l1 l2 l3 rest len hlen =>
     replace hlen : (readU32 [l0, l1, l2, l3]).toNat > maxPayload := hlen
     have hx : takeFrames (t :: l0 :: l1 :: l2 :: l3 :: rest) = ([], true, []) := by
-      rw [takeFrames.eq_def]; dsimp only; rw [if_pos hlen]
+      rw [takeFrames.eq_def]; dsimp only; rw [ite_eq_left hlen]
     simp [hx]
   | case2 t l0 l1 l2 l3 rest len hlen hshort =>
     replace hlen : ¬ (readU32 [l0, l1, l2, l3]).toNat > maxPayload := hlen
     replace hshort : rest.length < (readU32 [l0, l1, l2, l3]).toNat := hshort
     have hx : takeFrames (t :: l0 :: l1 :: l2 :: l3 :: rest)
         = (t :: l0 :: l1 :: l2 :: l3 :: rest, false, []) := by
-      rw [takeFrames.eq_def]; dsimp only; rw [if_neg hlen, if_pos hshort]
+      rw [takeFrames.eq_def]; dsimp only; rw [ite_eq_right hlen, ite_eq_left hshort]
     simp [hx]
   | case3 t l0 l1 l2 l3 rest len hlen hshort buf err msgs heq ih =>
     replace hlen : ¬ (readU32 [l0, l1, l2, l3]).toNat > maxPayload := hlen
@@ -441,7 +441,7 @@ theorem takeFrames_leftover_stable (bytes : List UInt8) :
     have hx : takeFrames (t :: l0 :: l1 :: l2 :: l3 :: rest)
         = (buf, err, decodeMsg t (rest.take (readU32 [l0, l1, l2, l3]).toNat) :: msgs) := by
       rw [takeFrames.eq_def]; dsimp only
-      rw [if_neg hlen, if_neg hshort, heq]
+      rw [ite_eq_right hlen, ite_eq_right hshort, heq]
     rw [heq] at ih
     simpa [hx] using ih
   | case4 xs hno =>

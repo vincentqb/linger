@@ -41,7 +41,7 @@ theorem char_le (c : Char) : c.toNat ≤ 0x10FFFF := by
 never falls back to U+FFFD. -/
 theorem acceptChar_toNat (v : Vt) (c : Char) : v.acceptChar c.toNat = v.print c := by
   unfold Vt.acceptChar
-  rw [if_pos (show c.toNat.isValidChar from c.valid), Char.ofNat_toNat]
+  rw [ite_eq_left (show c.toNat.isValidChar from c.valid), Char.ofNat_toNat]
 
 /-- With nothing pending, `step` is `stepGround`: `abortUtf8` is the
 identity. -/
@@ -49,7 +49,7 @@ theorem step_of_ground_quiet {v : Vt} (b : UInt8) (hg : v.pstate = .ground)
     (hu : v.u8need = 0) : v.step b = v.stepGround b := by
   have ha : v.abortUtf8 b = v := by
     unfold Vt.abortUtf8
-    rw [if_neg (by simp [hu])]
+    rw [ite_eq_right (by simp [hu])]
   unfold Vt.step
   dsimp only
   rw [ha, hg]
@@ -88,7 +88,7 @@ theorem step_ascii {v : Vt} {m : Nat} (hg : v.pstate = .ground) (hu : v.u8need =
     omega
   rw [step_of_ground_quiet _ hg hu]
   unfold Vt.stepGround
-  rw [if_neg c1, if_neg c2, if_pos c3, hb]
+  rw [ite_eq_right c1, ite_eq_right c2, ite_eq_left c3, hb]
 
 /-- The three lead bytes, each announcing how many continuations follow.
 Stated separately rather than parameterised: they take different rungs of
@@ -115,7 +115,7 @@ theorem step_lead2 {v : Vt} {m : Nat} (hg : v.pstate = .ground) (hu : v.u8need =
   have hval : 0xC0 + m - 0xC0 = m := by omega
   rw [step_of_ground_quiet _ hg hu]
   unfold Vt.stepGround
-  rw [if_neg c1, if_neg c2, if_neg c3, if_neg c4, if_pos c5, hb, hval]
+  rw [ite_eq_right c1, ite_eq_right c2, ite_eq_right c3, ite_eq_right c4, ite_eq_left c5, hb, hval]
 
 theorem step_lead3 {v : Vt} {m : Nat} (hg : v.pstate = .ground) (hu : v.u8need = 0)
     (hm : m < 16) :
@@ -141,7 +141,7 @@ theorem step_lead3 {v : Vt} {m : Nat} (hg : v.pstate = .ground) (hu : v.u8need =
   have hval : 0xE0 + m - 0xE0 = m := by omega
   rw [step_of_ground_quiet _ hg hu]
   unfold Vt.stepGround
-  rw [if_neg c1, if_neg c2, if_neg c3, if_neg c4, if_neg c5, if_pos c6, hb, hval]
+  rw [ite_eq_right c1, ite_eq_right c2, ite_eq_right c3, ite_eq_right c4, ite_eq_right c5, ite_eq_left c6, hb, hval]
 
 theorem step_lead4 {v : Vt} {m : Nat} (hg : v.pstate = .ground) (hu : v.u8need = 0)
     (hm : m < 8) :
@@ -170,7 +170,7 @@ theorem step_lead4 {v : Vt} {m : Nat} (hg : v.pstate = .ground) (hu : v.u8need =
   have hval : 0xF0 + m - 0xF0 = m := by omega
   rw [step_of_ground_quiet _ hg hu]
   unfold Vt.stepGround
-  rw [if_neg c1, if_neg c2, if_neg c3, if_neg c4, if_neg c5, if_neg c6, if_pos c7, hb, hval]
+  rw [ite_eq_right c1, ite_eq_right c2, ite_eq_right c3, ite_eq_right c4, ite_eq_right c5, ite_eq_right c6, ite_eq_left c7, hb, hval]
 
 /-- A continuation byte never aborts a sequence — that is what makes the
 `abortUtf8` guard invisible to a well-formed encoding. -/
@@ -233,9 +233,9 @@ theorem step_cont_more {v : Vt} {k acc m : Nat} (hg : v.pstate = .ground)
   have hneed : v.u8need - 1 = k + 1 := by omega
   rw [step_cont_bridge hg hm]
   unfold Vt.stepGround
-  rw [if_neg c1, if_neg c2, if_neg c3, if_pos c4, if_neg e0]
+  rw [ite_eq_right c1, ite_eq_right c2, ite_eq_right c3, ite_eq_left c4, ite_eq_right e0]
   dsimp only
-  rw [hb, hval, hacc, hmin, if_neg e1, hneed]
+  rw [hb, hval, hacc, hmin, ite_eq_right e1, hneed]
 
 /-- The last continuation byte: the codepoint is complete, so it prints. -/
 theorem step_cont_last {v : Vt} {acc m : Nat} (hg : v.pstate = .ground)
@@ -250,9 +250,9 @@ theorem step_cont_last {v : Vt} {acc m : Nat} (hg : v.pstate = .ground)
   have hmin : min (acc * 64 + m) 2097151 = acc * 64 + m := by omega
   rw [step_cont_bridge hg hm]
   unfold Vt.stepGround
-  rw [if_neg c1, if_neg c2, if_neg c3, if_pos c4, if_neg e0]
+  rw [ite_eq_right c1, ite_eq_right c2, ite_eq_right c3, ite_eq_left c4, ite_eq_right e0]
   dsimp only
-  rw [hb, hval, hacc, hmin, if_pos e1]
+  rw [hb, hval, hacc, hmin, ite_eq_left e1]
 
 /-- Collapsing the nested `u8need`/`u8acc` writes that a completed sequence
 leaves behind: from a quiet start, decoding one codepoint returns the
@@ -293,20 +293,20 @@ theorem utf8_feed {v : Vt} (c : Char) (h20 : 0x20 ≤ c.toNat)
   rw [hn]
   by_cases h1 : c.toNat < 0x80
   · -- one byte: an ASCII glyph
-    rw [if_pos h1, feed1, step_ascii hg hu h20 h1, acceptChar_toNat]
-  rw [if_neg h1]
+    rw [ite_eq_left h1, feed1, step_ascii hg hu h20 h1, acceptChar_toNat]
+  rw [ite_eq_right h1]
   by_cases h2 : c.toNat < 0x800
   · -- two bytes: lead + final continuation
-    rw [if_pos h2, feed2,
+    rw [ite_eq_left h2, feed2,
       step_lead2 hg hu (by omega),
       step_cont_last (acc := c.toNat / 64) (m := c.toNat % 64) (by rw [← hg]) rfl rfl (by omega) (by omega),
       reset_u8 hu ha,
       show c.toNat / 64 * 64 + c.toNat % 64 = c.toNat from by omega,
       acceptChar_toNat]
-  rw [if_neg h2]
+  rw [ite_eq_right h2]
   by_cases h3 : c.toNat < 0x10000
   · -- three bytes
-    rw [if_pos h3, feed3,
+    rw [ite_eq_left h3, feed3,
       step_lead3 hg hu (by omega),
       step_cont_more (k := 0) (acc := c.toNat / 4096) (m := c.toNat / 64 % 64) (by rw [← hg]) rfl rfl
         (by omega) (by omega),
@@ -316,7 +316,7 @@ theorem utf8_feed {v : Vt} (c : Char) (h20 : 0x20 ≤ c.toNat)
       show c.toNat / 64 * 64 + c.toNat % 64 = c.toNat from by omega,
       acceptChar_toNat]
   -- four bytes
-  rw [if_neg h3, feed4,
+  rw [ite_eq_right h3, feed4,
     step_lead4 hg hu (by omega),
     step_cont_more (k := 1) (acc := c.toNat / 262144) (m := c.toNat / 4096 % 64) (by rw [← hg]) rfl rfl
       (by omega) (by omega),
@@ -379,7 +379,7 @@ theorem crlf_feed {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) :
   have hcr : v.step 0x0D = v.carriageReturn := by
     rw [step_of_ground_quiet _ hg hu]
     unfold Vt.stepGround
-    rw [if_neg (by decide), if_pos (by decide)]
+    rw [ite_eq_right (by decide), ite_eq_left (by decide)]
     rfl
   have hg2 : v.carriageReturn.pstate = .ground := by
     rw [Linger.Core.Vt.ps_carriageReturn]; exact hg
@@ -387,7 +387,7 @@ theorem crlf_feed {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) :
     rw [Linger.Core.Vt.un_carriageReturn]; exact hu
   rw [feed2, hcr, step_of_ground_quiet _ hg2 hu2]
   unfold Vt.stepGround
-  rw [if_neg (by decide), if_pos (by decide)]
+  rw [ite_eq_right (by decide), ite_eq_left (by decide)]
   rfl
 
 /-! ### The pen round trip, semantic half — `applySgr` inverts the encoding
@@ -478,11 +478,11 @@ theorem colorCodes_eq_nil (c : Color) (isFg : Bool) :
     unfold colorCodes
     dsimp only
     by_cases h8 : i.toNat < 8
-    · rw [if_pos h8]; simp
-    rw [if_neg h8]
+    · rw [ite_eq_left h8]; simp
+    rw [ite_eq_right h8]
     by_cases h16 : i.toNat < 16
-    · rw [if_pos h16]; simp
-    · rw [if_neg h16]; simp
+    · rw [ite_eq_left h16]; simp
+    · rw [ite_eq_right h16]; simp
   | rgb r g b => simp [colorCodes]
 
 /-- The pen after a colour sequence *as the emitter decides whether to send
@@ -497,10 +497,10 @@ theorem penAfterColor_eq (q : Pen) (c : Color) (isFg : Bool)
   by_cases hc : c = .default
   · -- nothing emitted, and the attribute reset already left it default
     subst hc
-    rw [if_pos rfl]
+    rw [ite_eq_left rfl]
     cases isFg <;>
-      simp only [Bool.false_eq_true, if_false, if_true] at hdef ⊢ <;> rw [← hdef]
-  · rw [if_neg hc]
+      simp only [Bool.false_eq_true, ite_false, ite_true] at hdef ⊢ <;> rw [← hdef]
+  · rw [ite_eq_right hc]
     exact penAfter_colorCodes q c isFg
       (fun h => hc ((colorCodes_eq_nil c isFg).mp h))
 
@@ -532,7 +532,7 @@ theorem step_of_csi_quiet {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .
     (hu : v.u8need = 0) : v.step b = v.stepCsi s b := by
   have ha : v.abortUtf8 b = v := by
     unfold Vt.abortUtf8
-    rw [if_neg (by simp [hu])]
+    rw [ite_eq_right (by simp [hu])]
   unfold Vt.step
   dsimp only
   rw [ha, hg]
@@ -544,11 +544,11 @@ theorem csi_open_feed {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) :
   have h1 : v.step 0x1B = { v with pstate := .esc } := by
     rw [step_of_ground_quiet _ hg hu]
     unfold Vt.stepGround
-    rw [if_pos (by decide)]
+    rw [ite_eq_left (by decide)]
   rw [h1]
   have ha : ({ v with pstate := .esc } : Vt).abortUtf8 0x5B = { v with pstate := .esc } := by
     unfold Vt.abortUtf8
-    rw [if_neg (by simp [hu])]
+    rw [ite_eq_right (by simp [hu])]
   unfold Vt.step
   dsimp only
   rw [ha]
@@ -564,11 +564,11 @@ theorem csi_param_step_frame {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate 
   rw [step_of_csi_quiet b hg hu]
   unfold Vt.stepCsi
   by_cases hd : (b ≥ 0x30 && b ≤ 0x39) = true
-  · rw [if_pos hd]; exact ⟨_, rfl⟩
+  · rw [ite_eq_left hd]; exact ⟨_, rfl⟩
   by_cases hsemi : (b == 0x3B) = true
-  · rw [if_neg (by simp [hd]), if_pos hsemi]; exact ⟨_, rfl⟩
+  · rw [ite_eq_right (by simp [hd]), ite_eq_left hsemi]; exact ⟨_, rfl⟩
   by_cases hcolon : (b == 0x3A) = true
-  · rw [if_neg (by simp [hd]), if_neg (by simp [hsemi]), if_pos hcolon]; exact ⟨_, rfl⟩
+  · rw [ite_eq_right (by simp [hd]), ite_eq_right (by simp [hsemi]), ite_eq_left hcolon]; exact ⟨_, rfl⟩
   · exfalso
     have hb39 : ¬ (b.toNat ≤ 57) := by
       intro hle
@@ -616,7 +616,7 @@ theorem csi_group_step {v : Vt} {s : CsiState} (n : Nat) (hg : v.pstate = .csi s
   rw [show ∀ (w : Vt), w.feed [(0x3B : UInt8)] = w.step 0x3B from fun _ => rfl]
   rw [csi_semi_step hs1]
   unfold csiPush
-  rw [if_pos (by simp [hhave1]), if_neg (by rw [hpar1]; omega)]
+  rw [ite_eq_left (by simp [hhave1]), ite_eq_right (by rw [hpar1]; omega)]
   obtain ⟨p, ps, c, cs, hc, it, ig⟩ := s1
   simp_all
 
@@ -678,14 +678,14 @@ theorem sgrOf_feed {v : Vt} (codes : List Nat) (hne : codes ≠ [])
   rw [step_of_csi_quiet (v := { v with pstate := .csi s' }) (s := s') 0x6D rfl hu]
   -- 0x6D is a final byte, with no intermediate, so it dispatches
   unfold Vt.stepCsi
-  rw [if_neg (by decide), if_neg (by decide), if_neg (by decide), if_neg (by decide),
-    if_neg (by decide), if_pos (by decide), if_neg (by simp [hinter])]
+  rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide),
+    ite_eq_right (by decide), ite_eq_left (by decide), ite_eq_right (by simp [hinter])]
   unfold Vt.csiFinish
   dsimp only
-  rw [if_pos hhave, if_neg (by simp; omega)]
+  rw [ite_eq_left hhave, ite_eq_right (by simp; omega)]
   unfold Vt.csiDispatch
   dsimp only
-  rw [if_neg (by simp [hign])]
+  rw [ite_eq_right (by simp [hign])]
   -- SGR: the parameters are the numbers the emitter chose
   -- stated over any record with that array, since `priv` gets normalised to
   -- its default on the way here and a fixed shape would stop matching
@@ -703,10 +703,10 @@ theorem sgrOf_feed {v : Vt} (codes : List Nat) (hne : codes ≠ [])
     cases codes with
     | nil => exact absurd rfl hne
     | cons a as => simp [sgrParamsOf]
-  simp only [hpriv, beq_self_eq_true, if_pos]
+  simp only [hpriv, beq_self_eq_true, ite_eq_left]
   unfold Vt.applySgr
   dsimp only
-  rw [hparams _ rfl, if_neg hne']
+  rw [hparams _ rfl, ite_eq_right hne']
   -- everything above the pen is untouched, and the parser is back in ground
   unfold penAfter
   simp only [sgrParamsOf, List.length_map]
@@ -747,11 +747,11 @@ theorem sgrColorSeq_eq (c : Color) (isFg : Bool) :
     unfold colorCodes
     dsimp only
     by_cases h8 : i.toNat < 8
-    · rw [if_pos h8]; simp
-    rw [if_neg h8]
+    · rw [ite_eq_left h8]; simp
+    rw [ite_eq_right h8]
     by_cases h16 : i.toNat < 16
-    · rw [if_pos h16]; simp
-    · rw [if_neg h16]; simp
+    · rw [ite_eq_left h16]; simp
+    · rw [ite_eq_right h16]; simp
   | rgb r g b => simp [colorCodes]
 
 theorem sgrColorSeq_feed {v : Vt} (c : Color) (isFg : Bool) (hg : v.pstate = .ground)
@@ -760,8 +760,8 @@ theorem sgrColorSeq_feed {v : Vt} (c : Color) (isFg : Bool) (hg : v.pstate = .gr
   rw [sgrColorSeq_eq]
   unfold penAfterColor
   by_cases hc : c = .default
-  · rw [if_pos hc, if_pos hc, show v.feed [] = v from rfl]
-  · rw [if_neg hc, if_neg hc]
+  · rw [ite_eq_left hc, ite_eq_left hc, show v.feed [] = v from rfl]
+  · rw [ite_eq_right hc, ite_eq_right hc]
     exact sgrOf_feed _ (fun h => hc ((colorCodes_eq_nil c isFg).mp h))
       (by have := colorCodes_length c isFg; omega) (colorCodes_le c isFg) hg hu
 

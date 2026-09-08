@@ -79,7 +79,7 @@ theorem history_framing (v : Vt) :
     ∀ b ∈ history v false, b = 0x0A ∨ (0x20 ≤ b ∧ b ≠ 0x7F) := by
   intro b hb
   unfold history at hb
-  rw [if_neg (by decide)] at hb
+  rw [ite_eq_right (by decide)] at hb
   simp only [List.mem_flatMap] at hb
   obtain ⟨row, -, hmem⟩ := hb
   rcases List.mem_append.mp hmem with h | h
@@ -101,7 +101,7 @@ the row count, whatever the session's program wrote into the grid. -/
 theorem history_lines (v : Vt) :
     (history v false).count 0x0A = (v.sb.toList ++ v.grid.toList).length := by
   unfold history
-  rw [if_neg (by decide)]
+  rw [ite_eq_right (by decide)]
   exact count_rows _
 
 /-! ## The same two claims for `screenText` (`linger capture`)
@@ -150,7 +150,7 @@ theorem linesLF_record (x rest : Bytes) (hx : ∀ b ∈ x, b ≠ 0x0A) :
   | cons b x ih =>
     have hb : (b == 0x0A) = false :=
       beq_eq_false_iff_ne.mpr (hx b (List.mem_cons_self ..))
-    rw [List.cons_append, linesLF, if_neg (by simp [hb]),
+    rw [List.cons_append, linesLF, ite_eq_right (by simp [hb]),
         ih (fun b' hb' => hx b' (List.mem_cons_of_mem _ hb'))]
 
 private theorem linesLF_rows (rows : List Row) :
@@ -173,7 +173,7 @@ then screen rows, in order. -/
 theorem history_records (v : Vt) :
     linesLF (history v false) = (v.sb.toList ++ v.grid.toList).map rowText := by
   unfold history
-  rw [if_neg (by decide)]
+  rw [ite_eq_right (by decide)]
   exact linesLF_rows _
 
 /-- And the two streams agree byte-for-byte on the part they share: a capture
@@ -183,7 +183,7 @@ theorem history_screenText_suffix (v : Vt) :
     history v false
       = v.sb.toList.flatMap (fun row => rowText row ++ [0x0A]) ++ screenText v := by
   unfold history screenText
-  rw [if_neg (by decide), List.flatMap_append]
+  rw [ite_eq_right (by decide), List.flatMap_append]
 
 
 /-- `safeChar` is the identity on a character a cell is allowed to hold. The emit-side
@@ -191,7 +191,7 @@ guard and the store-side one agree, which is what lets a repaint reproduce a sto
 cell — `printableChar` on store, `safeChar` on emit, both `Emittable`'s range. -/
 theorem safeChar_of_emittable {c : Char} (h : Emittable c) : safeChar c = c := by
   unfold safeChar
-  rw [if_neg (by
+  rw [ite_eq_right (by
     simp only [Bool.or_eq_true, decide_eq_true_eq, beq_iff_eq]
     obtain ⟨h20, h7⟩ := h
     omega)]

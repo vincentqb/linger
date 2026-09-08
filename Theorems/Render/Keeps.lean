@@ -45,9 +45,9 @@ theorem csi_final_step_eq {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .
   obtain ⟨g1, g2, g3, g4, g5, g6⟩ := csi_final_guards b h1 h2
   rw [step_of_csi_quiet b hg hu]
   unfold Vt.stepCsi
-  rw [if_neg (by simp [g1]), if_neg (by simp [g2]), if_neg (by simp [g3]),
-      if_neg (by simp [g4]), if_neg (by simp [g5]), if_pos g6]
-  rw [if_neg (by simp [hi])]
+  rw [ite_eq_right (by simp [g1]), ite_eq_right (by simp [g2]), ite_eq_right (by simp [g3]),
+      ite_eq_right (by simp [g4]), ite_eq_right (by simp [g5]), ite_eq_left g6]
+  rw [ite_eq_right (by simp [hi])]
 
 def Keeps (bs : Bytes) : Prop :=
   ∀ v : Vt, v.pstate = .ground → v.u8need = 0 →
@@ -109,15 +109,15 @@ theorem csi_param_run_inter : ∀ (bs : Bytes) {v : Vt} {s : CsiState}, v.pstate
       rw [step_of_csi_quiet x hg hu]
       unfold Vt.stepCsi
       by_cases hd : (x ≥ 0x30 && x ≤ 0x39) = true
-      · rw [if_pos hd]
+      · rw [ite_eq_left hd]
         exact ⟨_, rfl, rfl⟩
-      · rw [if_neg hd]
+      · rw [ite_eq_right hd]
         by_cases hsemi : (x == 0x3B) = true
-        · rw [if_pos hsemi]
+        · rw [ite_eq_left hsemi]
           exact ⟨_, rfl, inter_csiPush s false⟩
-        · rw [if_neg hsemi]
+        · rw [ite_eq_right hsemi]
           by_cases hcolon : (x == 0x3A) = true
-          · rw [if_pos hcolon]
+          · rw [ite_eq_left hcolon]
             exact ⟨_, rfl, inter_csiPush s true⟩
           · -- 0x30…0x3B with none of the above is impossible
             exfalso
@@ -152,14 +152,14 @@ theorem keeps_csi_open {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) :
   have hesc : v.step 0x1B = { v with pstate := .esc } := by
     unfold Vt.step Vt.abortUtf8
     dsimp only
-    rw [if_neg (by simp [hu]), hg]
+    rw [ite_eq_right (by simp [hu]), hg]
     dsimp only
     unfold Vt.stepGround
-    rw [if_pos (by decide)]
+    rw [ite_eq_left (by decide)]
   rw [hesc]
   unfold Vt.step Vt.abortUtf8
   dsimp only
-  rw [if_neg (by simp [hu])]
+  rw [ite_eq_right (by simp [hu])]
   unfold Vt.stepEsc
   rfl
 
@@ -217,7 +217,7 @@ theorem keeps_csi_priv_seq (params : Bytes) (final : UInt8) (hp : ParamBytes par
   rw [step_of_csi_quiet (0x3F : UInt8) (v := { v with pstate := .csi {} }) (s := {}) rfl
     (by simpa using hu)]
   unfold Vt.stepCsi
-  rw [if_neg (by decide), if_neg (by decide), if_neg (by decide), if_pos (by decide)]
+  rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_left (by decide)]
   exact keeps_csi_tail params final hp h1 h2 hgrid rfl (by simpa using hu) rfl
 
 /-! ### One fact per final byte the tail uses -/
@@ -227,7 +227,7 @@ theorem grid_csiDispatch_cup (v : Vt) (s : CsiState) :
   by_cases hi : s.ignore = true
   · simp [Vt.csiDispatch, hi]
   · unfold Vt.csiDispatch
-    rw [if_neg hi]
+    rw [ite_eq_right hi]
     show (v.moveTo (s.arg 1 1 - 1) (s.arg 0 1 - 1)).grid = v.grid
     rw [frame_moveTo]
 
@@ -236,7 +236,7 @@ theorem grid_csiDispatch_cha (v : Vt) (s : CsiState) :
   by_cases hi : s.ignore = true
   · simp [Vt.csiDispatch, hi]
   · unfold Vt.csiDispatch
-    rw [if_neg hi]
+    rw [ite_eq_right hi]
     show (v.setCol (s.arg 0 1 - 1)).grid = v.grid
     rw [frame_setCol]
 
@@ -245,7 +245,7 @@ theorem grid_csiDispatch_sgr (v : Vt) (s : CsiState) :
   by_cases hi : s.ignore = true
   · simp [Vt.csiDispatch, hi]
   · unfold Vt.csiDispatch
-    rw [if_neg hi]
+    rw [ite_eq_right hi]
     show (if s.priv == 0 then v.applySgr s.sgrParams else v).grid = v.grid
     split
     · rw [frame_applySgr]
@@ -256,7 +256,7 @@ theorem grid_csiDispatch_tbc (v : Vt) (s : CsiState) :
   by_cases hi : s.ignore = true
   · simp [Vt.csiDispatch, hi]
   · unfold Vt.csiDispatch
-    rw [if_neg hi]
+    rw [ite_eq_right hi]
     show (match s.arg 0 0 with
       | 0 => { v with tabs := v.tabs.setIfInBounds v.cursor.x false }
       | 3 => { v with tabs := Array.replicate v.cols false }
@@ -269,7 +269,7 @@ theorem grid_csiDispatch_stbm (v : Vt) (s : CsiState) :
   by_cases hi : s.ignore = true
   · simp [Vt.csiDispatch, hi]
   · unfold Vt.csiDispatch
-    rw [if_neg hi]
+    rw [ite_eq_right hi]
     show (if s.priv != 0 then v else
             if s.arg 0 1 - 1 < s.arg 1 v.rows - 1 && s.arg 1 v.rows - 1 < v.rows then
               ({ v with top := s.arg 0 1 - 1, bot := s.arg 1 v.rows - 1 }).moveTo 0 0
@@ -379,7 +379,7 @@ theorem step_of_esc_quiet {v : Vt} (b : UInt8) (hg : v.pstate = .esc) (hu : v.u8
     v.step b = v.stepEsc b := by
   have ha : v.abortUtf8 b = v := by
     unfold Vt.abortUtf8
-    rw [if_neg (by simp [hu])]
+    rw [ite_eq_right (by simp [hu])]
   unfold Vt.step
   dsimp only
   rw [ha, hg]
@@ -388,7 +388,7 @@ theorem step_of_escInter_quiet {v : Vt} {i : UInt8} (b : UInt8) (hg : v.pstate =
     (hu : v.u8need = 0) : v.step b = v.stepEscInter i b := by
   have ha : v.abortUtf8 b = v := by
     unfold Vt.abortUtf8
-    rw [if_neg (by simp [hu])]
+    rw [ite_eq_right (by simp [hu])]
   unfold Vt.step
   dsimp only
   rw [ha, hg]
@@ -399,10 +399,10 @@ theorem esc_step_eq {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) :
     v.step 0x1B = { v with pstate := .esc } := by
   unfold Vt.step Vt.abortUtf8
   dsimp only
-  rw [if_neg (by simp [hu]), hg]
+  rw [ite_eq_right (by simp [hu]), hg]
   dsimp only
   unfold Vt.stepGround
-  rw [if_pos (by decide)]
+  rw [ite_eq_left (by decide)]
 
 /-- `ESC 7` (DECSC), `ESC H` (HTS) and `ESC =` (app keypad) write the saved slot,
 the tab ruler and a mode flag respectively — never a cell. -/
@@ -446,7 +446,7 @@ theorem keeps_shiftOut : Keeps [0x0E] := by
   rw [step_of_ground_quiet (0x0E : UInt8) hg hu]
   show _ ∧ _ ∧ _
   unfold Vt.stepGround
-  rw [if_neg (by decide), if_pos (by decide)]
+  rw [ite_eq_right (by decide), ite_eq_left (by decide)]
   unfold Vt.ctl
   -- `SO` leaves the parser exactly where it was, so the ground fact is `hg`
   exact ⟨hg, by simpa using hu, rfl⟩
@@ -505,7 +505,7 @@ theorem step_of_osc_quiet {v : Vt} {acc : Array UInt8} {e : Bool} (b : UInt8)
     (hg : v.pstate = .osc acc e) (hu : v.u8need = 0) : v.step b = v.stepOsc acc e b := by
   have ha : v.abortUtf8 b = v := by
     unfold Vt.abortUtf8
-    rw [if_neg (by simp [hu])]
+    rw [ite_eq_right (by simp [hu])]
   unfold Vt.step
   dsimp only
   rw [ha, hg]
@@ -535,7 +535,7 @@ theorem osc_accum_eq {v : Vt} {acc : Array UInt8} (b : UInt8)
   rw [step_of_osc_quiet b hg hu]
   unfold Vt.stepOsc
   -- the guards in order: ST (impossible, no pending ESC), BEL, ESC, then the cap
-  rw [if_neg (by simp), if_neg (by simp [h2]), if_neg (by simp [h1])]
+  rw [ite_eq_right (by simp), ite_eq_right (by simp [h2]), ite_eq_right (by simp [h1])]
   split
   · exact ⟨acc, rfl⟩
   · exact ⟨acc.push b, rfl⟩
@@ -589,7 +589,7 @@ theorem keeps_osc (payload : List Char) :
   -- BEL finishes it
   rw [step_of_osc_quiet (0x07 : UInt8) rfl (by simpa using hu)]
   unfold Vt.stepOsc
-  rw [if_neg (by decide), if_pos (by decide)]
+  rw [ite_eq_right (by decide), ite_eq_left (by decide)]
   exact ⟨ps_oscFinish' _ _, by rw [un_oscFinish']; simpa using hu,
     by rw [grid_oscFinish]⟩
 
@@ -634,7 +634,7 @@ theorem grid_csiDispatch_sm (v : Vt) (s : CsiState) (h47 : s.arg 0 0 ≠ 47)
   by_cases hi : s.ignore = true
   · simp [Vt.csiDispatch, hi]
   · unfold Vt.csiDispatch
-    rw [if_neg hi]
+    rw [ite_eq_right hi]
     show (v.setMode (s.priv == 0x3F) (s.arg 0 0) true).grid = v.grid
     exact grid_setMode v _ _ _ h47 h1047 h1049
 
@@ -644,7 +644,7 @@ theorem grid_csiDispatch_rm (v : Vt) (s : CsiState) (h47 : s.arg 0 0 ≠ 47)
   by_cases hi : s.ignore = true
   · simp [Vt.csiDispatch, hi]
   · unfold Vt.csiDispatch
-    rw [if_neg hi]
+    rw [ite_eq_right hi]
     show (v.setMode (s.priv == 0x3F) (s.arg 0 0) false).grid = v.grid
     exact grid_setMode v _ _ _ h47 h1047 h1049
 
@@ -668,7 +668,7 @@ theorem keeps_csi_digits_tail (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
   rw [heq, show ∀ (w : Vt), w.feed [final] = w.step final from fun _ => rfl]
   rw [csi_final_step_eq final rfl (by simpa using hu) (by rw [hint]; exact hi) h1 h2]
   unfold Vt.csiFinish
-  rw [if_pos (by simpa using hhave), if_neg (by rw [hpar', hpar]; simp)]
+  rw [ite_eq_left (by simpa using hhave), ite_eq_right (by rw [hpar', hpar]; simp)]
   dsimp only
   refine ⟨rfl, by rw [un_csiDispatch]; simpa using hu, ?_⟩
   refine hgrid _ _ ?_
@@ -677,7 +677,7 @@ theorem keeps_csi_digits_tail (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
     rw [hpar', hpar, hcur']
     rw [show min (min n 65535) 65535 = n from by omega]
     rfl]
-  rw [arg_of_one, if_neg (by omega)]
+  rw [arg_of_one, ite_eq_right (by omega)]
 
 /-- `CSI ? n <final>` with a grid fact that may depend on `n`. -/
 theorem keeps_csiPriv_arg (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
@@ -697,7 +697,7 @@ theorem keeps_csiPriv_arg (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
   rw [step_of_csi_quiet (0x3F : UInt8) (v := { v with pstate := .csi {} }) (s := {}) rfl
     (by simpa using hu)]
   unfold Vt.stepCsi
-  rw [if_neg (by decide), if_neg (by decide), if_neg (by decide), if_pos (by decide)]
+  rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_left (by decide)]
   exact keeps_csi_digits_tail n final h1 h2 hn hlt hgrid rfl (by simpa using hu) rfl rfl rfl
 
 /-- …and the non-private form, for `modesAnsi`'s one ANSI emit (`CSI 4 h`, IRM). -/
@@ -942,7 +942,7 @@ theorem mendAt_of_pairOk {row : Row} {x : Nat} (h : ∀ j, PairOk row j) :
   have hhp : row.halfPair x = false := (halfPair_eq_false_iff row x).mpr
     ⟨fun h2 => by rw [(h x).1 h2]; rfl, (h x).2⟩
   unfold Row.mendAt
-  rw [hhp, if_neg (by decide)]
+  rw [hhp, ite_eq_right (by decide)]
   split
   · -- a shadow: `PairOk` at `x - 1` says it is already `Cell.shadow` of its base
     rename_i h0

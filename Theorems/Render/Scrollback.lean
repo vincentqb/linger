@@ -54,7 +54,7 @@ theorem rowSlot_eq_nonzero (B : Bytes) (p : Pen) (x : Nat) (c : Cell) (hw : ¬ c
               else cellText c), c.pen, x + 1) := by
   unfold rowSlot
   dsimp only
-  rw [if_neg (by simp [hw] : ¬ (c.width == 0))]
+  rw [ite_eq_right (by simp [hw] : ¬ (c.width == 0))]
 
 /-- **The seed lemma.** Painting a row from pen `p` instead of pen `q` costs at
 most one `penSgr q` more, however long the row is: the excess is one optional
@@ -89,19 +89,19 @@ theorem foldl_rowSlot_seed (q : Pen) :
           rcases h with ⟨hp, hle⟩ | ⟨hp, he⟩
           · rw [hp]
             by_cases hq : c.pen == p2
-            · rw [if_pos hq, if_pos hq]; omega
-            · rw [if_neg hq, if_neg hq]; simp only [List.length_append]; omega
+            · rw [ite_eq_left hq, ite_eq_left hq]; omega
+            · rw [ite_eq_right hq, ite_eq_right hq]; simp only [List.length_append]; omega
           · by_cases hq : c.pen == p2
-            · rw [if_pos hq]
+            · rw [ite_eq_left hq]
               have hcq : penSgr c.pen = penSgr q := by
                 rw [show c.pen = p2 from by simpa using hq, hp]
               by_cases hq1 : c.pen == p1
-              · rw [if_pos hq1]; omega
-              · rw [if_neg hq1]; simp only [List.length_append, hcq]; omega
-            · rw [if_neg hq]
+              · rw [ite_eq_left hq1]; omega
+              · rw [ite_eq_right hq1]; simp only [List.length_append, hcq]; omega
+            · rw [ite_eq_right hq]
               by_cases hq1 : c.pen == p1
-              · rw [if_pos hq1]; simp only [List.length_append]; omega
-              · rw [if_neg hq1]; simp only [List.length_append]; omega
+              · rw [ite_eq_left hq1]; simp only [List.length_append]; omega
+              · rw [ite_eq_right hq1]; simp only [List.length_append]; omega
         simp only [List.length_append]
         omega
 
@@ -147,7 +147,7 @@ checkpoint's ring is arbitrary). -/
 /-- A codepoint a repaint may emit is stored as itself. -/
 theorem printableChar_id_of_emittable {c : Char} (h : Emittable c) : printableChar c = c := by
   unfold printableChar
-  rw [if_neg (by
+  rw [ite_eq_right (by
     simp only [Bool.or_eq_true, decide_eq_true_eq, beq_iff_eq, not_or, Nat.not_lt]
     exact ⟨h.1, h.2⟩)]
 
@@ -159,8 +159,8 @@ theorem cellOk_cellFit (c : Cell) : CellOk (cellFit c) := by
   · show charWidth (printableChar c.base) = if c.width == 0 then 0 else charWidth (printableChar c.base)
     by_cases hz : c.width = 0
     · exact absurd (by show (if c.width == 0 then 0 else charWidth (printableChar c.base)) = 0
-                       rw [if_pos (by simp [hz])]) hw
-    · rw [if_neg (by simp [hz])]
+                       rw [ite_eq_left (by simp [hz])]) hw
+    · rw [ite_eq_right (by simp [hz])]
   · show ((c.marks.filter _).take 8).length ≤ 8
     rw [List.length_take]
     omega
@@ -186,8 +186,8 @@ theorem cellFit_id {c : Cell} (h : CellOk c) : cellFit c = c := by
       simp [hw, printableChar_id_of_emittable hem]
   have hwidth : (if c.width == 0 then 0 else charWidth c.base) = c.width := by
     by_cases hz : c.width = 0
-    · rw [if_pos (by simp [hz]), hz]
-    · rw [if_neg (by simp [hz])]; exact h.width hz
+    · rw [ite_eq_left (by simp [hz]), hz]
+    · rw [ite_eq_right (by simp [hz])]; exact h.width hz
   show ({ base := printableChar c.base,
           width := if c.width == 0 then 0 else charWidth (printableChar c.base),
           marks := (c.marks.filter (fun m => charWidth m == 0 && printableChar m == m)).take 8,
@@ -209,7 +209,7 @@ theorem fitRow_id_of_rowOk {cols : Nat} {row : Row} (h : RowOk cols row) :
     show cellFit (row.at i) = row[i]
     rw [cellFit_id (h.cells i)]
     show row.getD i default = row[i]
-    rw [Array.getD, dif_pos hi2]
+    rw [Array.getD, dite_eq_left hi2]
     rfl
   unfold fitRow
   rw [hcells]

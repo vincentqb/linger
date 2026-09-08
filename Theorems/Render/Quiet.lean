@@ -48,12 +48,12 @@ theorem accDigits_digits (n : Nat) : accDigits 0 (digits n) = min n 65535 := by
   induction n using digits.induct with
   | case1 n h =>
     rw [digits]
-    simp only [if_pos h, accDigits, List.foldl_cons, List.foldl_nil]
+    simp only [ite_eq_left h, accDigits, List.foldl_cons, List.foldl_nil]
     rw [digitByte_toNat n h]
     omega
   | case2 n h ih =>
     rw [digits]
-    simp only [if_neg h]
+    simp only [ite_eq_right h]
     rw [accDigits_append, ih]
     have hlt : n % 10 < 10 := Nat.mod_lt _ (by omega)
     have hdiv : n / 10 * 10 + n % 10 = n := Nat.div_add_mod' n 10
@@ -80,7 +80,7 @@ theorem csi_digit_step {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi
   have hd : (b ≥ 0x30 && b ≤ 0x39) = true := by
     simp only [Bool.and_eq_true, decide_eq_true_eq]
     exact ⟨h1, h2⟩
-  rw [if_pos hd]
+  rw [ite_eq_left hd]
 
 /-- A whole digit run drives the accumulator to `accDigits`. -/
 theorem csi_digits_feed : ∀ (bs : Bytes) {v : Vt} {s : CsiState}, v.pstate = .csi s →
@@ -141,7 +141,7 @@ theorem csi_semi_step {v : Vt} {s : CsiState} (hg : v.pstate = .csi s) :
   rw [hw]
   unfold Vt.stepCsi
   dsimp only
-  rw [if_neg (by decide), if_pos (by decide)]
+  rw [ite_eq_right (by decide), ite_eq_left (by decide)]
 
 /-- `CsiState.arg` over a literal two-parameter list, computed. -/
 theorem arg_of_one (s : CsiState) (a : Nat) (f : Bool) (d : Nat) :
@@ -165,7 +165,7 @@ theorem org_csiDispatch_decom_off (v : Vt) (s : CsiState) (hi : s.ignore = false
     (hpriv : (s.priv == 0x3F) = true) (h6 : s.arg 0 0 = 6) :
     (v.csiDispatch s 0x6C).modes.origin = false := by
   unfold Vt.csiDispatch
-  rw [if_neg (by rw [hi]; simp)]
+  rw [ite_eq_right (by rw [hi]; simp)]
   show (v.setMode (s.priv == 0x3F) (s.arg 0 0) false).modes.origin = false
   rw [hpriv, h6]
   exact org_setMode_decom_off v
@@ -177,11 +177,11 @@ theorem org_csiFinish_decom_off (v : Vt) (s : CsiState) (hi : s.ignore = false)
   have hsize : ¬ (s.params.size ≥ 16) := by rw [hparams]; simp
   unfold Vt.csiFinish
   dsimp only
-  rw [if_pos hhave, if_neg hsize]
+  rw [ite_eq_left hhave, ite_eq_right hsize]
   refine org_csiDispatch_decom_off _ _ hi hpriv ?_
   rw [show ({ s with params := s.params.push (min s.cur 65535, s.curSub) } : CsiState)
       = { s with params := #[(6, s.curSub)] } from by rw [hparams, hcur]; rfl]
-  rw [arg_of_one, if_neg (by decide)]
+  rw [arg_of_one, ite_eq_right (by decide)]
 
 theorem org_step_of_csi_decom_off {v : Vt} {s : CsiState} (hg : v.pstate = .csi s)
     (hi : s.ignore = false) (hpriv : (s.priv == 0x3F) = true) (hparams : s.params = #[])
@@ -194,8 +194,8 @@ theorem org_step_of_csi_decom_off {v : Vt} {s : CsiState} (hg : v.pstate = .csi 
   rw [hw]
   unfold Vt.stepCsi
   dsimp only
-  rw [if_neg (by decide), if_neg (by decide), if_neg (by decide), if_neg (by decide),
-    if_neg (by decide), if_pos (by decide), if_neg (by rw [hint]; simp)]
+  rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide),
+    ite_eq_right (by decide), ite_eq_left (by decide), ite_eq_right (by rw [hint]; simp)]
   exact org_csiFinish_decom_off _ _ hi hpriv hparams hhave hcur
 
 theorem arg_of_two (s : CsiState) (a b : Nat) (fa fb : Bool) (d : Nat) :
@@ -237,23 +237,23 @@ theorem cup_step_cursor {w : Vt} {s : CsiState} (row col : Nat)
     rw [hparams, hcur, hminc, hminr]
     rfl
   obtain ⟨ha0, ha1⟩ := arg_of_two s row col false s.curSub 1
-  rw [if_neg (by omega : ¬ row = 0)] at ha0
-  rw [if_neg (by omega : ¬ col = 0)] at ha1
+  rw [ite_eq_right (by omega : ¬ row = 0)] at ha0
+  rw [ite_eq_right (by omega : ¬ col = 0)] at ha1
   unfold Vt.step
   dsimp only
   rw [hw]
   unfold Vt.stepCsi
   dsimp only
-  rw [if_neg (by decide), if_neg (by decide), if_neg (by decide), if_neg (by decide),
-      if_neg (by decide), if_pos (by decide), if_neg (by simp [hinter])]
+  rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide),
+      ite_eq_right (by decide), ite_eq_left (by decide), ite_eq_right (by simp [hinter])]
   unfold Vt.csiFinish
   dsimp only
-  rw [if_pos hhave, if_neg (by simp [hparams]), hs4]
+  rw [ite_eq_left hhave, ite_eq_right (by simp [hparams]), hs4]
   unfold Vt.csiDispatch
   dsimp only
-  rw [if_neg (by simp [hignore])]
+  rw [ite_eq_right (by simp [hignore])]
   unfold Vt.moveTo
-  simp only [ha0, ha1, ham, ho, hac, har, Bool.false_eq_true, if_false]
+  simp only [ha0, ha1, ham, ho, hac, har, Bool.false_eq_true, ite_false]
   exact ⟨by omega, by omega⟩
 
 /-! ### From the final byte to the whole sequence
@@ -278,7 +278,7 @@ theorem frame_esc_step {v : Vt} (hg : v.pstate = .ground) :
   dsimp only
   rw [hw]
   unfold Vt.stepGround
-  rw [if_pos (by decide)]
+  rw [ite_eq_left (by decide)]
   exact frame_abortUtf8 v 0x1B
 
 theorem frame_csi_open_step {v : Vt} (hg : v.pstate = .esc) :
@@ -302,7 +302,7 @@ theorem frame_csi_digit_step {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate 
   rw [hw]
   unfold Vt.stepCsi
   dsimp only
-  rw [if_pos hd]
+  rw [ite_eq_left hd]
   exact frame_abortUtf8 v b
 
 theorem frame_csi_semi_step {v : Vt} {s : CsiState} (hg : v.pstate = .csi s) :
@@ -314,7 +314,7 @@ theorem frame_csi_semi_step {v : Vt} {s : CsiState} (hg : v.pstate = .csi s) :
   rw [hw]
   unfold Vt.stepCsi
   dsimp only
-  rw [if_neg (by decide), if_pos (by decide)]
+  rw [ite_eq_right (by decide), ite_eq_left (by decide)]
   exact frame_abortUtf8 v 0x3B
 
 /-- A digit run leaves the frame alone (and stays inside the CSI). -/
@@ -354,7 +354,7 @@ theorem cup_places_cursor {v : Vt} (row col : Nat) (hg : v.pstate = .ground)
       = { s1 with params := s1.params.push (min s1.cur 65535, s1.curSub),
                   cur := 0, curSub := false, haveCur := false } := by
     unfold csiPush
-    rw [if_pos (by simp [hhave1]), if_neg (by simp [hpar1])]
+    rw [ite_eq_left (by simp [hhave1]), ite_eq_right (by simp [hpar1])]
   rw [hpush] at hs2
   obtain ⟨s3, hs3, hcur3, hhave3, hpar3, hint3, hign3, hsub3, hpv3⟩ := csi_digits_value col hs2 rfl
   -- the frame survives the prefix, so `v`'s bounds transport to it
@@ -463,12 +463,12 @@ theorem csi_plain_step {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi
   unfold Vt.stepCsi
   dsimp only
   by_cases hd : (b ≥ 0x30 && b ≤ 0x39) = true
-  · rw [if_pos hd]; exact ⟨_, rfl, rfl⟩
+  · rw [ite_eq_left hd]; exact ⟨_, rfl, rfl⟩
   by_cases hsemi : (b == 0x3B) = true
-  · rw [if_neg (by simp [hd]), if_pos hsemi]
+  · rw [ite_eq_right (by simp [hd]), ite_eq_left hsemi]
     exact ⟨_, rfl, Linger.Core.Vt.priv_csiPush _ _⟩
   by_cases hcolon : (b == 0x3A) = true
-  · rw [if_neg (by simp [hd]), if_neg (by simp [hsemi]), if_pos hcolon]
+  · rw [ite_eq_right (by simp [hd]), ite_eq_right (by simp [hsemi]), ite_eq_left hcolon]
     exact ⟨_, rfl, Linger.Core.Vt.priv_csiPush _ _⟩
   · -- 0x30…0x3B minus digits, `;` and `:` is empty
     exfalso
@@ -570,7 +570,7 @@ theorem csi_marker_step {v : Vt} {s : CsiState} (hg : v.pstate = .csi s)
   rw [hw]
   unfold Vt.stepCsi
   dsimp only
-  rw [if_neg (by decide), if_neg (by decide), if_neg (by decide), if_pos (by decide)]
+  rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_left (by decide)]
 
 /-- **A private mode replay is `Quiet` iff it is not DECOM.** The number
 is accumulated before the guard exists, so the digit run's innocence comes

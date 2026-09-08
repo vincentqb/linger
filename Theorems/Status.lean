@@ -69,23 +69,23 @@ guard were mis-ordered. -/
 theorem classify_sound (o : Obs) : Is (classify o) o := by
   unfold classify
   by_cases hk : o.known = true
-  · rw [if_neg (by simp [hk])]
+  · rw [ite_eq_right (by simp [hk])]
     match hex : o.exit with
     | some 0 => exact ⟨hk, hex⟩
     | some (n + 1) => exact ⟨hk, ⟨n + 1, hex, by omega⟩⟩
     | none =>
       by_cases hd : o.daemonUp = true
-      · rw [if_neg (by simp [hd])]
+      · rw [ite_eq_right (by simp [hd])]
         by_cases hf : o.fresh = true
-        · rw [if_pos hf]; exact ⟨hk, hex, hd, hf⟩
-        · rw [if_neg (by simpa using hf)]
+        · rw [ite_eq_left hf]; exact ⟨hk, hex, hd, hf⟩
+        · rw [ite_eq_right (by simpa using hf)]
           by_cases hu : o.unseen = true
-          · rw [if_pos hu]; exact ⟨hk, hex, hd, by simpa using hf, hu⟩
-          · rw [if_neg (by simpa using hu)]
+          · rw [ite_eq_left hu]; exact ⟨hk, hex, hd, by simpa using hf, hu⟩
+          · rw [ite_eq_right (by simpa using hu)]
             exact ⟨hk, hex, hd, by simpa using hf, by simpa using hu⟩
-      · rw [if_pos (by simpa using hd)]
+      · rw [ite_eq_left (by simpa using hd)]
         exact ⟨hk, hex, by simpa using hd⟩
-  · rw [if_pos (by simpa using hk)]
+  · rw [ite_eq_left (by simpa using hk)]
     show o.known = false
     simpa using hk
 
