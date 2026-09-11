@@ -19,8 +19,8 @@ statements are byte-identical to what they were (checked line by line —
 below for what was built, what the spec had wrong, and the two decisions taken
 against its recommendation.
 
-**Next step:** Step 3 — the scroll walk and the `Fixes (·.sb)` tail. Step 2 landed
-2026-09-11 and its record is below.
+**Next step:** Step 3's remaining half — `push_walk`, the flush, `sbRoom`. Step 3's tail
+and CRLF step landed 2026-09-11; Step 2 landed the same day. Records are below.
 
 **Step 2 is COMPLETE** (2026-09-11). The positive scroll specification exists, zero
 emitter change: `scrollUpIn_rows`, `scrollUpIn_sb_push`, `scrollUpIn_sb_of_false`,
@@ -437,7 +437,48 @@ proof-only step must leave it.
 
 ### Step 3 — the scroll walk and the `Fixes (·.sb)` tail
 
-Status: pending.
+Status: **partly done (2026-09-11)** — the tail and the CRLF step landed; `push_walk`,
+the flush and `sbRoom` are the remaining work, and they are the hard half.
+
+**Done ✓** — `Theorems/Render/Scrollback.lean`: `psBlind_sb`, `sb_moveTo`/`sb_enterAlt`/
+`sb_leaveAlt`, `sb_setMode` (unconditional in the mode number — `enterAlt`/`leaveAlt` swap
+*cells*, never history, which is why a session's scrollback survives a full-screen
+program), the `sb_csiDispatch_*` family (`cup`, `sgr`, `sm`, `rm`, `cha`, `tbc`, `stbm`),
+`sb_oscFinish`, `fixes_sb_escSeq`/`escCharset`/`shiftOut`, `fixes_sb_modeSet`/`irm`/
+`modesAnsi`/`savedAnsi`/`titleAnsi`/`charsetAnsi`/`cursorAnsi`, `fixes_sb_regionAnsi`,
+`fixes_sb_tabsAnsi`, `fixes_sb_tail`, `crlf_scroll_step` and `crlf_scroll_sb`.
+
+**Remaining →** `push_walk`, the flush, `sbRoom`. `crlf_scroll_step`/`crlf_scroll_sb` are
+in the tree as the step the walk runs once per row, so what is left is the induction and
+its ring accumulator.
+
+**Three corrections to this step's plan, from doing it.**
+
+1. **`fixes_sb_tail` does not close Step 4, and the spec implied it would.** The tail it
+   clones starts after `tabsAnsi`, but the sb story starts after `scrollbackAnsi` — so the
+   stages in between (`gridAnsi`, `regionAnsi`, `tabsAnsi`) also need cover.
+   `fixes_sb_regionAnsi` and `fixes_sb_tabsAnsi` are therefore in this step, unlisted by
+   the plan.
+2. **`gridAnsi` can never be a `Fixes (·.sb)` lemma, and must not be attempted as one.** It
+   ends in `joinCRLF`, and a `CRLF` at the region bottom scrolls with `allowSb := true` and
+   *pushes* — `crlf_scroll_sb` is now the theorem that says so. Its sb-invariance is
+   conditional on the row count and lives in the paint ladder as `OffRow.sb` / the
+   `paint_rows` conjunct from Step 2. That is what Step 2's ninth conjunct was for, and it
+   is the piece Step 4 composes.
+3. **`fixes_sb_escSeq` admits `0x48`, which the ruler's twin must refuse.** As an ESC final
+   `0x48` is `HTS`: it sets a tab stop and writes no history. `Tabs.lean` excludes it and
+   says so; this family includes it, and that is exactly what lets `fixes_sb_tabsAnsi`
+   exist. Still excluded here: `0x63` (`RIS`, clears the ring) and `0x44`/`0x45`/`0x4D`
+   (`IND`/`NEL`/`RI`, which run `lineFeed` and may scroll).
+
+**Breaks.** The spec's proposed non-vacuity break — put `csiNum 3 0x4A` in `modesAnsi` —
+fires, but in `Theorems/Render/Ends.lean` first, because the emitter's byte shape is pinned
+several rungs earlier. The decisive check is the family's own obligation: `∀ w t,
+(w.csiDispatch t 0x4A).sb = w.sb` **refuses**, with the failing arm printed as
+`(w.eraseScreen (t.arg 0 0)).sb`. So there is no total `sb_csiDispatch_any` — `0x4A` reaches
+`ED 3` and `0x53` (`SU`) pushes — and the per-final family is mandatory rather than tidy.
+`crlf_scroll_sb` was falsified at the statement level: claiming `(v.feed [CR,LF]).sb = v.sb`
+under its own hypotheses is a type error, so it really does say the ring grew.
 
 - `crlf_scroll_step` — `crlf_step`'s twin at `cursor.y = bot`, as a **full state
   equation**: `crlf_feed` → `lineFeed_scroll` → `frame_scrollUpIn`

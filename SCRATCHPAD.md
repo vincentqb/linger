@@ -7230,3 +7230,40 @@ Zero emitter change: `Linger/Core/` is byte-identical to HEAD, and the whole ste
   as a build error, not a warning); `List.getD` reaches its element via
   `List.getD_eq_getElem?_getD`, and `simp [List.getD, …]` blows the recursion limit where
   that one `rw` closes it.
+
+
+## scrollback step 3 notes — 2026-09-11 (the tail; push_walk still open)
+
+Landed the `Fixes (·.sb)` family, `regionAnsi`/`tabsAnsi` cover, and `crlf_scroll_step` /
+`crlf_scroll_sb`. **`push_walk`, the flush and `sbRoom` are NOT done** — the induction is
+the remaining work and the spec's status block says so. `Linger/Core/` is again byte-identical
+to HEAD; the whole step is one theorem file.
+
+* **The tail clone really is mechanical, and it compiled first try** — the `Fixes`/`PsBlind`
+  layer in `Tabs.lean` is field-generic, so ~190 lines of it is a projection rename over
+  scripts whose every leaf is `rfl` on a record update that omits `sb`. Worth knowing before
+  the next field wants the same treatment: budget an hour, not a day.
+* **Two places the rename is NOT valid, and both are load-bearing.** `fixes_sb_escSeq` must
+  ADMIT `0x48` where the ruler's twin must refuse it (as an ESC final it is `HTS`, which
+  writes `tabs` and no history) — that inclusion is what lets `fixes_sb_tabsAnsi` exist at
+  all. And `0x63`/`0x44`/`0x45`/`0x4D` stay out: `RIS` clears the ring, the other three run
+  `lineFeed`.
+* **`gridAnsi` can never be a `Fixes (·.sb)` lemma.** A `CRLF` at the region bottom scrolls
+  with `allowSb := true` and pushes — which is now `crlf_scroll_sb`, a theorem rather than a
+  worry. So the grid stage's sb-invariance is conditional and must come from the paint
+  ladder (`OffRow.sb`, `paint_rows`' ninth conjunct, both from Step 2). Anyone who tries to
+  state `fixes_sb_gridAnsi` is trying to prove something false.
+* **The spec's own plan was short by two stage lemmas.** Its tail starts after `tabsAnsi`,
+  but the sb story starts after `scrollbackAnsi`, so `regionAnsi` and `tabsAnsi` need cover
+  too. Both are in now; without them Step 4 could not have composed.
+* **There is no total `sb_csiDispatch_any`, verified rather than assumed.** Probed
+  `∀ w t, (w.csiDispatch t 0x4A).sb = w.sb`: it refuses, and the failing arm prints as
+  `(w.eraseScreen (t.arg 0 0)).sb` — `ED 3` wipes the ring. `0x53` (`SU`) pushes for the same
+  family of reasons. The per-final list is therefore a requirement, not a style choice.
+* **Break-ordering lesson, third time in two days:** an emitter break aimed at a late rung
+  keeps firing at an early one (`Ends.lean` for a `modesAnsi` change, exactly as
+  `grid_scrollUpIn` swallowed the Step 2 scroll breaks). When the target theorem is
+  downstream of a byte-shape theorem, falsify at the STATEMENT level instead — assert the
+  wrong conclusion and require the type error. That worked cleanly for `crlf_scroll_sb`
+  (claiming `.sb = v.sb` under its own hypotheses is a type mismatch) and for
+  `scrollUpIn_rows` in Step 2.
