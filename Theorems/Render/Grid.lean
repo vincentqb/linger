@@ -38,9 +38,13 @@ structure OffRow (y : Nat) (u u' : Vt) : Prop where
   sizes : ∀ y', (u'.getRow y').size = (u.getRow y').size
   gridSize : u'.grid.size = u.grid.size
   cols : u'.cols = u.cols
+  /-- A row's paint pushes nothing to scrollback. `cells` cannot supply this: at
+  `rows = 1` a scroll rewrites only row `y`, so `cells` is vacuous while the ring grows —
+  which is exactly the confusion this field exists to make impossible. -/
+  sb : u'.sb = u.sb
 
 theorem OffRow.refl (y : Nat) (u : Vt) : OffRow y u u :=
-  ⟨fun _ _ _ _ => rfl, fun _ => rfl, rfl, rfl⟩
+  ⟨fun _ _ _ _ => rfl, fun _ => rfl, rfl, rfl, rfl⟩
 
 theorem OffRow.trans {y : Nat} {u u' u'' : Vt} (h1 : OffRow y u u') (h2 : OffRow y u' u'') :
     OffRow y u u'' :=
@@ -50,13 +54,13 @@ theorem OffRow.trans {y : Nat} {u u' u'' : Vt} (h1 : OffRow y u u') (h2 : OffRow
             rw [h1.gridSize]; exact hlt)).trans
       (h1.cells i y' hne hlt),
     fun y' => (h2.sizes y').trans (h1.sizes y'), h2.gridSize.trans h1.gridSize,
-    h2.cols.trans h1.cols⟩
+    h2.cols.trans h1.cols, h2.sb.trans h1.sb⟩
 
 /-- A stream that writes no cell at all is transparent off every row. Covers the pen
 prefix and both `CHA`s. -/
-theorem OffRow.of_grid_eq {y : Nat} {u u' : Vt} (hg : u'.grid = u.grid) (hc : u'.cols = u.cols) :
-    OffRow y u u' := by
-  refine ⟨fun i y' _ hlt => ?_, fun y' => ?_, by rw [hg], hc⟩
+theorem OffRow.of_grid_eq {y : Nat} {u u' : Vt} (hg : u'.grid = u.grid) (hc : u'.cols = u.cols)
+    (hsb : u'.sb = u.sb) : OffRow y u u' := by
+  refine ⟨fun i y' _ hlt => ?_, fun y' => ?_, by rw [hg], hc, hsb⟩
   · show
       Array.getD (u'.grid.getD y' (blankRow u'.cols u'.pen)) i default =
         Array.getD (u.grid.getD y' (blankRow u.cols u.pen)) i default
@@ -74,6 +78,7 @@ theorem OffRow.of_grid_eq {y : Nat} {u u' : Vt} (hg : u'.grid = u.grid) (hc : u'
 theorem offRow_penSgr {w : Vt} (y : Nat) (p : Pen) (hg : w.pstate = .ground) (hu : w.u8need = 0) :
     OffRow y w (w.feed (penSgr p)) :=
   OffRow.of_grid_eq (by rw [penSgr_feed p hg hu]) (by rw [penSgr_feed p hg hu])
+    (by rw [penSgr_feed p hg hu])
 
 theorem offRow_pen_prefix {w : Vt} (y : Nat) (c : Cell) (p : Pen) (hg : w.pstate = .ground)
     (hu : w.u8need = 0) :
@@ -85,6 +90,7 @@ theorem offRow_pen_prefix {w : Vt} (y : Nat) (c : Cell) (p : Pen) (hg : w.pstate
 theorem offRow_cha {w : Vt} (y n : Nat) (hg : w.pstate = .ground) (hu : w.u8need = 0) (hn : 0 < n)
     (hlt : n < 65535) : OffRow y w (w.feed (csiNum n 0x47)) :=
   OffRow.of_grid_eq (by rw [cha_feed_eq n hg hu hn hlt, frame_setCol])
+    (by rw [cha_feed_eq n hg hu hn hlt, frame_setCol])
     (by rw [cha_feed_eq n hg hu hn hlt, frame_setCol])
 
 /-! ### `OffRow` for the cell rungs
@@ -117,7 +123,7 @@ theorem offRow_narrow {w : Vt} {P : PaintState} {g : Row} {k : Nat} (hrow : RowO
   obtain ⟨hc, hgz, hr⟩ :=
     write_shape w.clearPending w.cursor.x w.cursor.y
       { base := (g.at k).base, marks := [], width := 1, pen := w.pen } 1 hgs
-  refine ⟨fun i y' hne _ => ?_, fun y' => ?_, ?_, ?_⟩
+  refine ⟨fun i y' hne _ => ?_, fun y' => ?_, ?_, ?_, ?_⟩
   · rw [getCell_write_off w.clearPending w.cursor.x w.cursor.y _ 1 i y'
         (by
           rw [hm.curY]; exact hne)]
@@ -127,6 +133,7 @@ theorem offRow_narrow {w : Vt} {P : PaintState} {g : Row} {k : Nat} (hrow : RowO
     unfold Vt.getRow; rw [frame_clearPending]
   · rw [hgz]; exact congrArg Array.size (grid_clearPending w)
   · rw [hc]; rw [frame_clearPending]
+  · rw [frame_printAdvance, frame_mendRow, frame_putCell, frame_clearPending]
 
 /-- **A wide glyph's bytes touch no other row**, base and shadow together. -/
 theorem offRow_wide {w : Vt} {P : PaintState} {g : Row} {k : Nat} (hrow : RowOk w.cols g)
@@ -156,7 +163,7 @@ theorem offRow_wide {w : Vt} {P : PaintState} {g : Row} {k : Nat} (hrow : RowOk 
     write_shape2 w.clearPending w.cursor.x w.cursor.y
       { base := (g.at k).base, marks := [], width := 2, pen := w.pen }
       (Cell.shadow { base := (g.at k).base, marks := [], width := 2, pen := w.pen }) 2 hgs
-  refine ⟨fun i y' hne _ => ?_, fun y' => ?_, ?_, ?_⟩
+  refine ⟨fun i y' hne _ => ?_, fun y' => ?_, ?_, ?_, ?_⟩
   · rw [getCell_write2_off w.clearPending w.cursor.x w.cursor.y _ _ 2 i y'
         (by
           rw [hm.curY]; exact hne)]
@@ -166,6 +173,7 @@ theorem offRow_wide {w : Vt} {P : PaintState} {g : Row} {k : Nat} (hrow : RowOk 
     unfold Vt.getRow; rw [frame_clearPending]
   · rw [hgz]; exact congrArg Array.size (grid_clearPending w)
   · rw [hc]; rw [frame_clearPending]
+  · rw [frame_printAdvance, frame_mendRow, frame_putCell, frame_putCell, frame_clearPending]
 
 /-- **A combining mark's bytes touch no other row.** Mirrors `mark_step`, including its
 interior/margin disjunction, since the two use different `printMark` equations. -/
@@ -216,13 +224,14 @@ theorem offRow_mark {cols : Nat} {w : Vt} {Q : PaintState} {g : Row} {wcol kf : 
         rw [hx, hyk]; exact hcapk
       rw [print_mark_pending_eq hpc hcw hpd hnw hcapp, hx, hyk]
   rw [hpm]
-  refine ⟨fun i y' hne _ => getCell_mark_off w wcol Q.y _ i y' hne, fun y' => ?_, ?_, ?_⟩
+  refine ⟨fun i y' hne _ => getCell_mark_off w wcol Q.y _ i y' hne, fun y' => ?_, ?_, ?_, ?_⟩
   · rw [size_getRow_mendRow _ Q.y
         (by
           rw [grid_size_putCell]; exact hgs)
         y',
       size_getRow_putCell_any w wcol Q.y _ hgs y']
   · rw [grid_size_mendRow, grid_size_putCell]
+  · rw [frame_mendRow, frame_putCell]
   · rw [frame_mendRow, frame_putCell]
 
 /-- **The mark loop is transparent off its row.** Runs the same recursion as `marks_fold`,
@@ -1021,7 +1030,8 @@ theorem paint_rows {cols rows : Nat} {tg : Array Row} (hcb : cols < 65533) (hpos
           (w.feed (joinCRLF (rowsAnsi rs p))).u8need = 0 ∧
           (w.feed (joinCRLF (rowsAnsi rs p))).u8acc = 0 ∧
           (w.feed (joinCRLF (rowsAnsi rs p))).modes.insert = false ∧
-          (w.feed (joinCRLF (rowsAnsi rs p))).modes.wrap = true
+          (w.feed (joinCRLF (rowsAnsi rs p))).modes.wrap = true ∧
+          (w.feed (joinCRLF (rowsAnsi rs p))).sb = w.sb
   | [], Y, w, p, hw, hsum, _, _ => by
     have hYrows : Y = rows := by simpa using hsum
     subst hYrows
@@ -1035,7 +1045,7 @@ theorem paint_rows {cols rows : Nat} {tg : Array Row} (hcb : cols < 65533) (hpos
       show joinCRLF ([] : List Bytes) = [] from rfl, show w.feed ([] : Bytes) = w from rfl]
     exact
       ⟨fun y' x h => hw.done y' x h, hw.gsz, hw.rlens, hw.ground, hw.u8need, hw.u8acc, hw.ins,
-        hw.wrap⟩
+        hw.wrap, rfl⟩
   | r :: rest, Y, w, p, hw, hsum, hrsok, hrstg => by
     have hYrows : Y < rows := by
       simp only [List.length_cons] at hsum; omega
@@ -1067,7 +1077,7 @@ theorem paint_rows {cols rows : Nat} {tg : Array Row} (hcb : cols < 65533) (hpos
       have hYlast : Y + 1 = rows := by simpa using hsum
       rw [show rowsAnsi [r] p = [(rowAnsi r p).1] from rfl,
         show joinCRLF [(rowAnsi r p).1] = (rowAnsi r p).1 from rfl]
-      refine ⟨fun y' x hy' => ?_, ?_, ?_, hM.ground, hM.u8need, hM.u8acc, hM.ins, hM.wrap⟩
+      refine ⟨fun y' x hy' => ?_, ?_, ?_, hM.ground, hM.u8need, hM.u8acc, hM.ins, hM.wrap, hO.sb⟩
       · by_cases hyY : y' = Y
         · subst hyY
           rw [show (w.feed (rowAnsi r p).1).getCell x y' = ((w.feed (rowAnsi r p).1).getRow y').at x
@@ -1142,7 +1152,7 @@ theorem paint_rows {cols rows : Nat} {tg : Array Row} (hcb : cols < 65533) (hpos
                 (by
                   rw [hw.gsz]; omega)]
             exact hw.done y' x (by omega)
-      exact
+      obtain ⟨hcellR, hgszR, hrlR, hgrR, hunR, huaR, hinsR, hwrapR, hsbR⟩ :=
         paint_rows hcb hpos (r' :: rest') (Y + 1)
           { (w.feed (rowAnsi r p).1) with cursor := { x := 0, y := Y + 1, pending := false } }
           (rowAnsi r p).2 hwalk
@@ -1161,6 +1171,7 @@ theorem paint_rows {cols rows : Nat} {tg : Array Row} (hcb : cols < 65533) (hpos
                   simp only [List.length_cons] at hi ⊢; omega)
             rw [show Y + (i + 1) = Y + 1 + i from by omega] at this
             simpa using this)
+      exact ⟨hcellR, hgszR, hrlR, hgrR, hunR, huaR, hinsR, hwrapR, hsbR.trans hO.sb⟩
 
 /-! ### `gridAnsi`, painted into a receiver — the grid claim's core
 
@@ -1260,7 +1271,7 @@ theorem gridAnsi_writes_grid {u v : Vt} (hcols : u.cols = v.cols) (hrows : u.row
     ∀ i (hi : i < v.grid.toList.length), v.grid.toList[i] = v.grid.getD i (blankRow v.cols {}) :=
     fun i hi => by
     rw [Array.getElem_toList, getD_lt' v.grid i (blankRow v.cols {}) (by simpa using hi)]
-  obtain ⟨hcell, hgsz', hrl', hpg', hpu', hpa', hpi', hpw'⟩ :=
+  obtain ⟨hcell, hgsz', hrl', hpg', hpu', hpa', hpi', hpw', -⟩ :=
     paint_rows hub hpos v.grid.toList 0 (({ u with pen := ({} : Pen) }).moveTo 0 0) {} hwalk
       (by
         rw [Nat.zero_add]; exact hrs_len)

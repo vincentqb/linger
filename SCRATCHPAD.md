@@ -7186,3 +7186,47 @@ all 22 survivors against public (not `Std.Internal`) APIs: no other exact
 replacement preserves raw-fd ownership, nonblocking/errno semantics, CLOEXEC,
 PTY/termios/ioctl, Unix sockets, process replacement/detachment, or
 arbitrary-pid operations.
+
+
+## scrollback step 2 notes — 2026-09-11 (the positive scroll specification)
+
+Zero emitter change: `Linger/Core/` is byte-identical to HEAD, and the whole step is
+`Theorems/Vt.lean` + `Theorems/Render/Grid.lean` + one fixture. Full record in
+`specs/scrollback-fidelity.md`; the reusable facts:
+
+* **`scrollUpIn`'s fold is tractable because it reads `v.getRow`, never the accumulator.**
+  So one pointwise characterization covers every write, and it generalizes: the three
+  `*_setRange` lemmas take an arbitrary `f : Nat → α`, so nothing in them knows the values
+  are rows. Recipe copied from `foldl_setTab_mem`/`_not_mem` over the tab ruler — the
+  append-at-the-end induction (`List.range_succ` + `List.foldl_append`) is what makes the
+  last write the outermost one, which is what makes it a two-case proof instead of needing
+  a monotonicity lemma.
+* **A real bug in this spec's own statement, caught by `omega`.** "Outside the region is
+  untouched" is FALSE when `bot < top`: the fold is empty and the vacated-row write at
+  `bot` is then outside `[top, bot]`. `omega`'s counterexample carried no `bot` constraint
+  at all, which is the tell. `top ≤ bot` is now a stated hypothesis (`Good.topLe` supplies
+  it) rather than a case the theorem quietly gets wrong.
+* **Declined to widen `write_shape` with `sb`, against the spec.** `sb` invariance is a
+  frame fact and the frames already exist; `write_shape` is for the grid-size/row-length
+  facts no frame covers. Widening it costs ten `obtain ⟨…⟩` edits for two consumers. The
+  two cell rungs use `rw [frame_printAdvance, frame_mendRow, frame_putCell,
+  frame_clearPending]` — and the double `frame_putCell` in the wide rung rewrites fine,
+  which was the thing I expected to fight.
+* **The `rows = 1` argument is now checkable.** `OffRow.cells` quantifies over rows *other
+  than* the painted one, so at one row it is vacuous while the ring grows. That is the
+  whole reason the field exists, and it is a `Tests/Vt.lean` fixture now
+  (`screen 5 1 "1\r\n2"` → `sb = ["1"]`, row 0 `"2"`). Break-verified: adding
+  `&& v.rows > 1` to `scrollUpIn`'s push guard fails it.
+* **Negative result worth more than a theorem: `paint_rows`' `sb` conjunct cannot be
+  broken from the code side.** Tried two routes; both are caught by an *earlier* theorem,
+  so the build never reaches `Grid.lean`: `lineFeed`'s scroll trigger fails
+  `lineFeed_interior` in `Theorems/Vt.lean`, and a trailing separator in `joinCRLF` fails
+  `ends_joinCRLF` in `Theorems/Render/Ends.lean`. The conjunct is compositional — it
+  exports "the walk never touches the ring" so Step 3 can conclude the pushed history
+  survives the screen paint — not diagnostic. Do not re-file it as decoration; also do not
+  claim a break record it does not have.
+* Toolchain notes for the next proof round on v4.34.0-rc2: `List.take_succ` is deprecated
+  in favour of `List.take_add_one` (and `warningAsError` makes that fatal, so it surfaces
+  as a build error, not a warning); `List.getD` reaches its element via
+  `List.getD_eq_getElem?_getD`, and `simp [List.getD, …]` blows the recursion limit where
+  that one `rw` closes it.

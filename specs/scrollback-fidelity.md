@@ -19,8 +19,15 @@ statements are byte-identical to what they were (checked line by line —
 below for what was built, what the spec had wrong, and the two decisions taken
 against its recommendation.
 
-**Next step:** Step 2 — the positive scroll specification. Zero emitter change,
-and it stands alone even if Steps 3–4 never land.
+**Next step:** Step 3 — the scroll walk and the `Fixes (·.sb)` tail. Step 2 landed
+2026-09-11 and its record is below.
+
+**Step 2 is COMPLETE** (2026-09-11). The positive scroll specification exists, zero
+emitter change: `scrollUpIn_rows`, `scrollUpIn_sb_push`, `scrollUpIn_sb_of_false`,
+`lineFeed_scroll`, `grid_scrollUpIn`, the `getD_foldl_setRange` family, and the three
+ring lemmas are in `Theorems/Vt.lean`; `Render.OffRow` gained its `sb` field and
+`paint_rows` its `sb` conclusion. See "Step 2 — completion record" below for the four
+places this spec was wrong or over-specified.
 
 **Two things a resuming agent must not re-derive:**
 
@@ -338,7 +345,8 @@ history paint — the resume assertion that the spec said "fails today" does.
 
 ### Step 2 — the positive scroll specification, zero emitter change
 
-Status: → **next**.
+Status: **done ✓ (2026-09-11)**. The design below is as written; the completion record
+at the end of this step names the four places it was wrong or over-specified.
 
 In `Theorems/Vt.lean`, beside `lineFeed_interior`:
 
@@ -369,6 +377,63 @@ Break-verified by changing `Linger/Core/Vt.lean:314` to read the accumulator
 (the pen conjunct fails; a coloured-history fixture goes false while a plain one
 still passes). Deleting `OffRow.sb` and attempting Step 3 must fail on the
 `rows = 1` fixture — run that once to see the vacuity.
+
+#### Step 2 — completion record (2026-09-11)
+
+**Shipped.** `Theorems/Vt.lean`: `size_foldl_setRange`, `getD_foldl_setRange`,
+`getD_foldl_setRange_of_ne` (the fold characterization, over an arbitrary source function
+— nothing in it depends on the values being rows), `grid_scrollUpIn`, `scrollUpIn_rows`,
+`scrollUpIn_sb_push`, `scrollUpIn_sb_of_false`, `lineFeed_scroll`, `ring_push_data`,
+`ring_toList_of_start_zero`, `take_succ_getD`. `Theorems/Render/Grid.lean`: `OffRow`
+gained `sb`, `paint_rows` a ninth conclusion conjunct. Three builds green and
+warning-free; `gates OK`; coverage `259 defs, 15 unclaimed, cap 15` — unchanged, as a
+proof-only step must leave it.
+
+**Four corrections to this spec, all forced by the compiler.**
+
+1. **`scrollUpIn_rows` needs `top ≤ bot`, and the spec did not say so.** Its third
+   conjunct ("outside the region is untouched") is **false** for an inverted region:
+   `bot - top` is then `0`, so the fold is empty and the vacated-row write at `bot` is the
+   only one — landing *outside* `[top, bot]` and changing `getRow bot`. Found by `omega`
+   refusing the `y' ≠ bot` side condition with a counterexample carrying no `bot`
+   constraint. Stated as a hypothesis rather than worked around; `Good.topLe` is where
+   every caller has it.
+2. **`write_shape`/`write_shape2` were NOT widened, against this spec's instruction.**
+   Declined because `sb` invariance is a *frame* fact and the tree already has the general
+   mechanism for those (`frame_putCell`/`frame_mendRow`/`frame_printAdvance`/
+   `frame_clearPending`), whereas `write_shape` exists precisely for the grid-size and
+   row-length facts **no** frame covers, because the write does touch the grid. Widening
+   it would duplicate the frames and edit ten `obtain ⟨…⟩` sites across `Grid.lean` and
+   `Row.lean` for two consumers; the two cell rungs prove their `sb` field with a one-line
+   frame chain instead. If a later step wants the bundle, that is the moment to widen it.
+3. **`scrollUpIn_sb` shipped as two lemmas, not one conditional.** `_push` takes the guard
+   apart into the hypotheses a caller actually has (`bot = v.rows - 1`, `altGrid = none`,
+   `allowSb := true`) and concludes `v.sb.push (v.getRow 0)`; `_of_false` covers
+   `allowSb := false`, the form `DL`/`IL`/`SU` need in Step 3's `Fixes (·.sb)` tail. One
+   `if … then … else` statement would have made every consumer re-derive the guard.
+4. **The `rows = 1` vacuity is a permanent fixture, not a one-off run.** `Tests/Vt.lean`
+   pins that `screen 5 1 "1\r\n2"` leaves `sb = ["1"]` with `"2"` on row 0 — the ring
+   grows at the one height where `OffRow.cells` quantifies over nothing.
+
+**Breaks, and one honest negative result.**
+
+* Fold reads the accumulator instead of `v.getRow` → 2 failures: `grid_scrollUpIn` and
+  the pre-existing `renderable_scrollUpIn`.
+* Vacated row blanked with `{}` instead of `v.pen` → the same 2 failures.
+* Both breaks stop at `grid_scrollUpIn`, which pins the whole grid term, so
+  `scrollUpIn_rows`' own conjuncts were falsified at the **statement** level instead:
+  asserting `getRow bot = blankRow v.cols {}` and `getRow y' = v.getRow y'` (no shift)
+  from it both refuse. The pen really is `v.pen`; the rows really do shift.
+* `rows = 1` fixture: suppressing the push at one row (`… && v.rows > 1` in the guard)
+  fails it.
+* **`paint_rows`' `sb` conjunct is not independently falsifiable by a code break, and
+  that is worth knowing.** Every route by which the row walk could reach the ring is a
+  scroll, and each is pinned earlier: `lineFeed_interior` in `Theorems/Vt.lean`, and
+  `joinCRLF`'s missing trailing separator in `Theorems/Render/Ends.lean` (giving
+  `joinCRLF` a trailing `CRLF` fails there before `Grid.lean` is built at all). Its value
+  is **compositional**, not diagnostic: without it Step 3 cannot conclude the history it
+  pushed survives the screen paint, and `restore_sb_any` cannot be stated. Recorded so
+  nobody re-litigates it as decoration.
 
 ### Step 3 — the scroll walk and the `Fixes (·.sb)` tail
 

@@ -207,6 +207,17 @@ example :
       true := by
   native_decide
 
+/-- **Why `Render.OffRow` carries an `sb` field, at the one height that shows it.** With a
+single row, a full-screen line feed pushes the evicted line to scrollback and rewrites row
+0 — and there is no *other* row. So `OffRow.cells`, which quantifies over rows other than
+the one being painted, is vacuous here while the ring grows underneath it: the two facts
+are independent, and only a field can carry the second one. -/
+example :
+          (let v := screen 5 1 "1\r\n2"
+           v.sb.size == 1 && (v.sb.toList.map plain) == ["1"] && rowStr v 0 == "2") =
+      true := by
+  native_decide
+
 /-- ICH/DCH shift within the row. -/
 example :
           (let v := screen 10 2 "abcdef\x1b[1;3H\x1b[2@XY"

@@ -4648,6 +4648,171 @@ theorem getCell_lineFeed_interior (v : Vt) (x y : Nat) (hy : v.cursor.y < v.bot)
   unfold Vt.getCell Vt.getRow
   rw [lineFeed_interior v hy hlt]
 
+/-! ### The positive scroll specification
+
+The frames above say what `scrollUpIn` leaves **alone**. These say what it **writes** —
+the gap §Total names in its own words ("a frame says what an operation leaves alone,
+never what the written fields *become*"), closed for the one operation the scrollback
+story rests on.
+
+The fold is tractable for exactly one reason: it reads `v.getRow`, never the accumulator
+it is building (`Linger/Core/Vt.lean`, `Vt.scrollUpIn`), so the writes are independent and
+one pointwise characterization covers all of them. `getD_foldl_setRange` is that
+characterization, stated over an arbitrary source function so nothing in it depends on the
+values being rows. Same shape as `foldl_setTab_mem`/`_not_mem` over the tab ruler. -/
+
+theorem size_foldl_setRange {α} [Inhabited α] (f : Nat → α) (top : Nat) :
+    ∀ (n : Nat) (a : Array α),
+      ((List.range n).foldl (fun b i => b.setIfInBounds (top + i) (f i)) a).size = a.size
+  | 0, _ => rfl
+  | n + 1, a => by
+    rw [List.range_succ, List.foldl_append]
+    simp only [List.foldl_cons, List.foldl_nil]
+    rw [Array.size_setIfInBounds, size_foldl_setRange f top n a]
+
+/-- **The write lands**: index `top + i` holds the `i`-th source value. The later writes
+are at strictly larger indices, so they cannot disturb it. -/
+theorem getD_foldl_setRange {α} [Inhabited α] (f : Nat → α) (top : Nat) (d : α) :
+    ∀ (n : Nat) (a : Array α) (i : Nat),
+      i < n →
+        top + i < a.size →
+          ((List.range n).foldl (fun b k => b.setIfInBounds (top + k) (f k)) a).getD (top + i) d =
+            f i
+  | 0, _, _, hi, _ => absurd hi (by omega)
+  | n + 1, a, i, hi, hlt => by
+    rw [List.range_succ, List.foldl_append]
+    simp only [List.foldl_cons, List.foldl_nil]
+    rcases Nat.lt_or_ge i n with h | h
+    · rw [getD_set_ne _ (top + n) (top + i) (f n) d (by omega)]
+      exact getD_foldl_setRange f top d n a i h hlt
+    · have hin : i = n := by omega
+      subst hin
+      exact
+        getD_set_self _ (top + i) (f i) d
+          (by
+            rw [size_foldl_setRange]; exact hlt)
+
+/-- …and every index the fold never writes keeps what it had. -/
+theorem getD_foldl_setRange_of_ne {α} [Inhabited α] (f : Nat → α) (top : Nat) (d : α) :
+    ∀ (n : Nat) (a : Array α) (j : Nat),
+      (∀ i, i < n → j ≠ top + i) →
+        ((List.range n).foldl (fun b k => b.setIfInBounds (top + k) (f k)) a).getD j d = a.getD j d
+  | 0, _, _, _ => rfl
+  | n + 1, a, j, h => by
+    rw [List.range_succ, List.foldl_append]
+    simp only [List.foldl_cons, List.foldl_nil]
+    rw [getD_set_ne _ (top + n) j (f n) d (h n (by omega))]
+    exact getD_foldl_setRange_of_ne f top d n a j fun i hi => h i (by omega)
+
+/-- The two branches of `scrollUpIn` differ only in `sb`, so its grid is one term. -/
+theorem grid_scrollUpIn (v : Vt) (top bot : Nat) (a : Bool) :
+    (v.scrollUpIn top bot a).grid =
+      ((List.range (bot - top)).foldl
+            (fun g i => g.setIfInBounds (top + i) (v.getRow (top + i + 1)))
+            v.grid).setIfInBounds bot (blankRow v.cols v.pen) := by
+  unfold Vt.scrollUpIn
+  dsimp only
+  split <;> rfl
+
+/-- **What a scroll writes.** Row `y'` inside the region becomes the row below it, the
+vacated bottom row is blank **in the pen currently in effect** (stated, not hidden — a
+coloured session scrolls up a coloured blank), and everything outside the region is
+untouched.
+
+`top ≤ bot` is load-bearing for the third conjunct and nothing else: with an inverted
+region `bot - top` is `0`, so the fold is empty and the blank write at `bot` is the only
+one — and it lands *outside* `[top, bot]`, which would make "outside is untouched" false
+at `y' = bot`. `Good.topLe` is where every caller gets it. -/
+theorem scrollUpIn_rows (v : Vt) (top bot : Nat) (a : Bool) (htb : top ≤ bot)
+    (hbot : bot < v.grid.size) :
+    (∀ y', top ≤ y' → y' < bot → (v.scrollUpIn top bot a).getRow y' = v.getRow (y' + 1)) ∧
+      (v.scrollUpIn top bot a).getRow bot = blankRow v.cols v.pen ∧
+        ∀ y', (y' < top ∨ bot < y') → (v.scrollUpIn top bot a).getRow y' = v.getRow y' := by
+  have hrow :
+    ∀ y',
+      (v.scrollUpIn top bot a).getRow y' =
+        (((List.range (bot - top)).foldl
+                (fun g i => g.setIfInBounds (top + i) (v.getRow (top + i + 1)))
+                v.grid).setIfInBounds bot (blankRow v.cols v.pen)).getD y'
+          (blankRow v.cols v.pen) := by
+    intro y'
+    show
+      (v.scrollUpIn top bot a).grid.getD y'
+          (blankRow (v.scrollUpIn top bot a).cols (v.scrollUpIn top bot a).pen) = _
+    rw [show (v.scrollUpIn top bot a).cols = v.cols from by rw [frame_scrollUpIn],
+      show (v.scrollUpIn top bot a).pen = v.pen from by rw [frame_scrollUpIn], grid_scrollUpIn]
+  refine ⟨fun y' hle hlt => ?_, ?_, fun y' hne => ?_⟩
+  · rw [hrow y', getD_set_ne _ bot y' _ _ (by omega)]
+    rw [show y' = top + (y' - top) from by omega]
+    exact
+      getD_foldl_setRange _ top _ (bot - top) v.grid (y' - top) (by omega)
+        (by
+          rw [show top + (y' - top) = y' from by omega]; omega)
+  · rw [hrow bot,
+      getD_set_self _ bot _ _
+        (by
+          rw [size_foldl_setRange]; exact hbot)]
+  · rw [hrow y', getD_set_ne _ bot y' _ _ (by rcases hne with h | h <;> omega),
+      getD_foldl_setRange_of_ne _ top _ (bot - top) v.grid y'
+        (fun i hi => by rcases hne with h | h <;> omega)]
+    unfold Vt.getRow
+    rfl
+
+/-- **What a scroll pushes**: the evicted top row, once, when the region is the whole
+screen and the alt screen is not up. The `getRow 0` is the row the guard's `top = 0`
+makes it. -/
+theorem scrollUpIn_sb_push (v : Vt) (bot : Nat) (hbot : bot = v.rows - 1)
+    (halt : v.altGrid = none) : (v.scrollUpIn 0 bot true).sb = v.sb.push (v.getRow 0) := by
+  unfold Vt.scrollUpIn
+  dsimp only
+  rw [ite_eq_left
+      (show (true && (0 : Nat) == 0 && bot == v.rows - 1 && v.altGrid.isNone) = true from by
+        simp [hbot, halt])]
+
+/-- …and a scroll that is not allowed to push does not touch scrollback. `frame_scrollUpIn`
+cannot say this: `sb` is inside the footprint it declares, so this is the positive fact
+about the branch not taken — what the `Fixes (·.sb)` tail needs of `DL`, `IL` and `SU`. -/
+theorem scrollUpIn_sb_of_false (v : Vt) (top bot : Nat) :
+    (v.scrollUpIn top bot false).sb = v.sb := by
+  unfold Vt.scrollUpIn
+  dsimp only
+  rw [ite_eq_right (by simp)]
+
+/-- **A line feed at the region bottom scrolls**: `lineFeed_interior`'s twin, and the
+bridge Step 3's `crlf_scroll_step` composes with the two theorems above. -/
+theorem lineFeed_scroll (v : Vt) (hy : v.cursor.y = v.bot) :
+    v.lineFeed = v.clearPending.scrollUp := by
+  unfold Vt.lineFeed
+  dsimp only
+  rw [ite_eq_left
+      (show (v.clearPending.cursor.y == v.clearPending.bot) = true from by
+        simp [Vt.clearPending, hy])]
+
+/-! ### The ring, below the cap
+
+The receiver's ring is empty when `restore` starts pushing (`ED 3`) and the pushed run is
+capped by `sbTake`, so the wrap branch is unreachable on the replay path. These are the
+three facts that let a push be read as an append. -/
+
+/-- Below the cap a push is an append, and the oldest index does not move. -/
+theorem ring_push_data {r : Ring} (row : Row) (h : r.data.size < sbCap) :
+    (r.push row).data = r.data.push row ∧ (r.push row).start = r.start := by
+  unfold Ring.push
+  rw [ite_eq_left h]
+  exact ⟨rfl, rfl⟩
+
+/-- A ring that never wrapped reads back as its own array, oldest first. -/
+theorem ring_toList_of_start_zero {r : Ring} (h : r.start = 0) : r.toList = r.data.toList := by
+  unfold Ring.toList
+  rw [h]
+  simp
+
+/-- One `take` step, which is how the walk grows the expected history by a row. -/
+theorem take_succ_getD {α} [Inhabited α] (l : List α) (n : Nat) (h : n < l.length) :
+    l.take (n + 1) = l.take n ++ [l.getD n default] := by
+  rw [List.take_add_one, List.getD_eq_getElem?_getD, List.getElem?_eq_getElem h]
+  rfl
+
 theorem stick_reverseIndex (v : Vt) : stick v.reverseIndex = stick v := by rw [frame_reverseIndex]; rfl
 
 theorem stick_scrollUpIn (v : Vt) (t b : Nat) (a : Bool) :

@@ -368,6 +368,27 @@ alone, never what the written fields *become*. Grid fidelity (§Replay
 stage 3d) needs the positive specification, which is real content rather
 than bookkeeping. Frames retire sprawl; they do not shorten that road.
 
+**That limit is now closed for `scrollUpIn`**, the one operation the
+scrollback story rests on (`specs/scrollback-fidelity.md` Step 2).
+`scrollUpIn_rows` says what a scroll *writes* — row `y'` inside the region
+becomes the row below it, and the vacated bottom row is blank **in the pen
+in effect**, so a coloured session scrolls up a coloured blank rather than
+a default one. `scrollUpIn_sb_push` says what it pushes (the evicted top
+row, once, only when the region is the whole screen and the alt screen is
+down); `scrollUpIn_sb_of_false` says the branch that may not push does not,
+which no frame can state because `sb` is inside the footprint a frame
+declares. `lineFeed_scroll` is `lineFeed_interior`'s twin at the region
+bottom. `top ≤ bot` is a stated hypothesis of `scrollUpIn_rows` and not
+decoration: with an inverted region the vacated-row write lands *outside*
+`[top, bot]`, which makes "outside the region is untouched" false at
+`y' = bot`. Every caller has it from `Good.topLe`.
+
+The row walk carries the ring across the screen paint: `Render.OffRow`
+gained an `sb` field and `paint_rows` an `sb` conclusion. `OffRow.cells`
+cannot supply it — at one row a scroll rewrites the only row there is, so
+`cells` is vacuous exactly where the ring grows, which `Tests/Vt.lean`
+pins as a fixture rather than an argument.
+
 ## Concurrency: what the model rules out, and what the theorems cover
 
 There are **no data races to reason about**, by construction rather
