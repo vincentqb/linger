@@ -21,7 +21,7 @@ DAEMON-side, not by `Client.attach`'s three `!readOnly` guards:
   semantic no-ops. `onMsg .resize` drops a non-sizer's resize and `onMsg .input`
   drops a non-sizer's input (`onMsg_input_readonly`), so removing either changes
   no observable byte. They are defence in depth, held by grep gates in
-  `tests/e2e.sh` — the `SHIM_CAP` species of oracle.
+  `tests/gates.sh` — the `SHIM_CAP` species of oracle.
 
 So: do not add a check here claiming to catch B or C. It cannot. -/
 

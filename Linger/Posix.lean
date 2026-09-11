@@ -1,6 +1,7 @@
 module
 
 public import Linger.Core.Buf
+import Std.Async.System
 
 public section
 
@@ -9,8 +10,9 @@ public section
 Most bindings map 1:1 onto `c/shim.c` (syscall + errno only; object
 arguments are borrowed `@&`, so the shim never manages refcounts). A
 few are thin wrappers over Lean core's own primitives rather than our
-shim — `getpid`, `chmod`, `monotonicMs` — kept here so call sites see
-one uniform `Linger.Posix` surface; the shim is smaller for it.
+shim — `getpid`, `chmod`, `monotonicMs`, `realtimeS`, `stdinIsTty`,
+`gethostname` — kept here so call sites see one uniform `Linger.Posix`
+surface; the shim is smaller for it.
 -/
 
 namespace Linger.Posix
@@ -25,12 +27,6 @@ def POLLERR : UInt32 := 0x008
 def POLLHUP : UInt32 := 0x010
 
 def POLLNVAL : UInt32 := 0x020
-
-/-- Ignore SIGPIPE process-wide. Call first in every `main`: a peer
-vanishing between `poll` and `write` must surface as an error code, not
-kill the process. -/
-@[extern "linger_init"]
-opaque init : IO Unit
 
 /-- Daemon-side: survive controlling-terminal death. -/
 @[extern "linger_ignore_sighup"]
@@ -52,9 +48,14 @@ opaque read (fd : UInt32) (max : USize) : IO (Option ByteArray)
 @[extern "linger_write"]
 opaque write (fd : UInt32) (bytes : @& ByteArray) (off : USize) : IO Int64
 
-/-- Blocking full write, for fds whose slowness is our own (client stdout). -/
-@[extern "linger_write_all"]
-opaque writeAll (fd : UInt32) (bytes : @& ByteArray) : IO Unit
+/-- Blocking full write over `write`; fails on would-block or peer gone. -/
+def writeAll (fd : UInt32) (bytes : ByteArray) : IO Unit := do
+  let mut off : Nat := 0
+  while off < bytes.size do
+    let n ← write fd bytes (USize.ofNat off)
+    if n ≤ 0 then
+      throw (IO.userError s!"write_all: peer gone (fd {fd})")
+    off := off + n.toNatClampNeg
 
 /-- One write attempt for a `Linger.Core.Buf` queue, skipping the `sent` bytes the
 flush loop already got out.
@@ -67,10 +68,10 @@ stops. Passing the cursor here rather than re-slicing per iteration is what keep
 flush to a single copy, as it was before the queue became a value.
 
 This is a **Lean-level wrapper** over the existing `linger_write` extern, not a new
-syscall: `SHIM_CAP` is untouched. Since the seal (specs/lean-modules.md Step 2) it
+syscall: `SHIM_CAP` is untouched. Since the seal (specs/archive/lean-modules.md Step 2) it
 could not read a `Buf`'s representation if it wanted to — `bytes` is `private`, and
 this calls the one API window, `writeFrom`. What was "the one sanctioned read
-outside Core" by convention is now the only one *possible*; `tests/e2e.sh`'s greps
+outside Core" by convention is now the only one *possible*; `tests/gates.sh`'s greps
 still gate `Linger/Runtime/*` against declaring parallel byte buffers of its own,
 the half privacy cannot see. -/
 def writeBuf (fd : UInt32) (b : Linger.Core.Buf.Buf) (sent : Nat) : IO Int64 :=
@@ -161,8 +162,9 @@ opaque waitpidNohang (pid : UInt32) : IO Int64
 @[extern "linger_getuid"]
 opaque getuid : IO UInt32
 
-@[extern "linger_isatty"]
-opaque isatty (fd : UInt32) : IO Bool
+/-- Is stdin a terminal? Thin wrapper over Lean core. -/
+def stdinIsTty : IO Bool := do
+  (← IO.getStdin).isTty
 
 /-- POSIX `chmod`. Lean core already wraps `chmod(2)` (`lean_chmod`), so
 this is core, not our shim. -/
@@ -175,18 +177,21 @@ def getpid : IO UInt32 := IO.Process.getPID
 @[extern "linger_getcwd_of"]
 opaque getcwdOf (pid : UInt32) : IO String
 
-@[extern "linger_gethostname"]
-opaque gethostname : IO String
+/-- Machine hostname; empty only if the platform call fails. -/
+def gethostname : IO String := do
+  try
+    Std.Async.System.getHostName
+  catch _ =>
+    pure ""
 
 /-- CLOCK_MONOTONIC in ms — checkpoint cadence, poll deadlines. Lean
 core's `IO.monoMsNow` is exactly this clock, so no shim needed. -/
 def monotonicMs : IO UInt64 := do
   return UInt64.ofNat (← IO.monoMsNow)
 
-/-- Unix epoch seconds — `created` timestamps in listings. (Lean core
-has no wall clock, so this one stays a shim call.) -/
-@[extern "linger_realtime_s"]
-opaque realtimeS : IO UInt64
+/-- Unix epoch seconds — `created` timestamps in listings. -/
+def realtimeS : IO UInt64 := do
+  return UInt64.ofNat (← Std.Time.Timestamp.now).toSecondsSinceUnixEpoch.val.toNat
 
 /-- Standard fds, named. -/
 def stdinFd : UInt32 := 0

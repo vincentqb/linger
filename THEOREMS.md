@@ -4,7 +4,7 @@ Read this file at whichever depth you need:
 
 * **The anchor set** (below) — four theorems that carry the product's
   promises. If you only ever read four statements, read these.
-* **The rungs** (the § table) — fourteen tensions from PLAN.md and the
+* **The rungs** (the § table) — the port's tensions and the
   invariant that resolves each. These are what the anchors are built
   from; a section is listed before its first proof so an open tension is
   on the record.
@@ -17,7 +17,7 @@ Read this file at whichever depth you need:
 | Anchor | Statement | Theorem |
 |---|---|---|
 | **A1. A session survives a crash** | a checkpoint round-trips exactly, and the byte stream rebuilt from it leaves the terminal quiesced — parser in `ground`, no half-decoded character — for **any** receiver, not just a fresh one. Any session state, no hypotheses. The **cursor** lands where the session had it (given the §Bound invariant and DECOM off) | `Resume.resume_quiesced_any` (§Restore ∘ §Replay; `resume_quiesced` is the fresh-`Vt.init` form), `Resume.resume_cursor` |
-| **A2. The daemon cannot be broken by traffic** | no event trace of any length — adversarial clients, hostile pty bytes, any interleaving — breaks a buffer cap, the screen invariant, or one client's isolation from another. **Structural since the `State` seal** (specs/lean-modules.md Step 5): the constructor is private and `State.boot` caps restored labels, so `run_boot_wf` covers every state the daemon can *possess*, not just the traces it politely runs — the runtime cannot read, poke or forge the bookkeeping (break-verified from inside the daemon, a public-field `{ st with … }` included), and a forged checkpoint's label list can no longer boot past `maxLabels` (the Bounded-at-boot gap, found by sizing the seal and closed at the door) | `Session.run_wf`, `Session.run_bytes_isolates` (§Bound ∘ §Total ∘ §Isolate), `Session.boot_wf` / `Session.run_boot_wf` (the door) |
+| **A2. The daemon cannot be broken by traffic** | no event trace of any length — adversarial clients, hostile pty bytes, any interleaving — breaks a buffer cap, the screen invariant, or one client's isolation from another. **Structural since the `State` seal** (specs/archive/lean-modules.md Step 5): the constructor is private and `State.boot` caps restored labels, so `run_boot_wf` covers every state the daemon can *possess*, not just the traces it politely runs — the runtime cannot read, poke or forge the bookkeeping (break-verified from inside the daemon, a public-field `{ st with … }` included), and a forged checkpoint's label list can no longer boot past `maxLabels` (the Bounded-at-boot gap, found by sizing the seal and closed at the door) | `Session.run_wf`, `Session.run_bytes_isolates` (§Bound ∘ §Total ∘ §Isolate), `Session.boot_wf` / `Session.run_boot_wf` (the door) |
 | **A3. The transport is invisible** | any re-chunking of any well-formed encoded stream decodes to exactly that stream: same messages, same order, nothing retained, no error | `Wire.decode_encode_chunked` (§Stream = §Frame ∘ §Chunk) |
 | **A4. A session name has one owner** | given the kernel grants at most one `flock` holder, at most one daemon ever unlinks or binds a given name | `Claim.at_most_one_owner` (§Claim) |
 | **A5. linger is invisible to the terminal it borrows** | whatever state a client's terminal is in, the restore stream establishes what the repaint needs; whatever state the session's program left, the hand-back returns the terminal to a state the next program can use. Both quantified over the receiver, with no hypothesis on it | **inbound (modes): `Render.restore_modes_any` ✓** — for any `v`, `w`, `(w.feed (restore v)).modes = v.modes` (given `v.modes.mouse` in the emulator's allowlist, which `setMode` guarantees); parser half `restore_grounds` ✓. **outbound: `Render.leave_canonical_all` ✓** — for any receiver at least two rows tall, `w.feed leaveAnsi` leaves the parser `ground`, the modes at the default record, the scroll region whole, both charsets ASCII with G0 shifted in, the main screen current and the pen reset (`leave_canonical` is the parser+modes half, kept as the hypothesis-free statement). **inbound pen ✓** — `restore_pen_any`, via `penSgr_feed` + the pen-projection CSI walk. **inbound sticky fields ✓** — `Render.restore_sticky_any` installs the session's scroll region, both charset designations, the shift state and the screen selection into any receiver of the same height (`restore_region_any`, `restore_charset_any`, `restore_alt_any` are its projections); the two hypotheses are `Good v` and `v.top < v.bot`, the region `DECSTBM` accepts. **inbound screen cells ✓** (2026-08-18) — `Render.restore_grid_any` (dispatching on `v.altGrid`), `Render.restore_grid_reachable` and `Resume.resume_grid` — both screens, **every height** (the one-row corner included, via `Good w` in `prologue_sticky`; no `rows ≥ 2` hypothesis): feeding `restore v` to any **live-reachable** client of the session's dimensions leaves its grid equal to `v.grid`, array for array and cell for cell. Main screen via the row painter (`rowAnsi_writes_row`), the grid walk (`paint_rows`, whose no-scroll argument is `crlf_step` plus `joinCRLF`'s missing trailing separator), `gridAnsi_writes_grid` and `paint_entry`; alt screen (`restore_grid_any_alt`) via `alt_pre_switch` (the entry state survives the discarded main paint and the park), `alt_switch_entry` and a second `gridAnsi_writes_grid'`. The receiver's `Good`/`Renderable`/decoder invariants are discharged from reachability, not assumed — including `U8Ok` (`u8need = 0 → u8acc = 0`), which `Good` does not carry and which the multi-byte-glyph decode needs. **inbound tab ruler ✓** (2026-08-18) — `Render.restore_tabs_any` / `restore_tabs_reachable` / `Resume.resume_tabs`: for any receiver of the session's width, `(w.feed (restore v)).tabs = v.tabs`, array for array. The clear (`tbc3_clears`, `TBC 3`) asks only `pstate = ground` of the receiver — the leading `ESC` aborts a half-decoded character itself, so unlike the grid this claim needs no `u8need`/`U8Ok` apparatus — the stops are one `setIfInBounds` fold (`hts_run`, whose `CHA`+`HTS` pair establishes and consumes the cursor inside a single iteration), and the fold reproduces the ruler by `tabs_rebuilt`. The tail after it is `Fixes (·.tabs)` (`fixes_tabs_tail`), needing no allowlist and no digit bridge because `tabs_setMode` holds for every mode number. Two hypotheses beyond matching width: `Good w` (for `dims_feed`) and `v.tabs.size = v.cols`, which `Good`/`Renderable` do not carry. **This is the field that was worse than unproved**: `tabsAnsi` used to skip the ruler when the session's was the default, so the claim would have been *false* until that set-only leak was fixed — the one place a fix had to precede its theorem. **Still on the round-trip fixtures alone**, and named so the list is not "just the cells": the **scrollback** (Step 1 of `specs/scrollback-fidelity.md` emits the ring into the receiver's own history and the fixtures pin it cell-for-cell, but `restore_sb_any` is Steps 2–4), the window **title** and the **DECSC slot**. **And one place this anchor's own title now has an exception, recorded rather than buried:** replaying the ring means emitting `ED 3`, so attaching to a session that has history *erases the borrowed terminal's saved lines* in that window — linger never enters the alt screen, so the session shares the user's scrollback. That is the one thing linger does to a terminal it cannot undo; conformance-profile entry 11 records the divergence (ours clears the screen too) and README §Notes tells the user |
@@ -51,7 +51,7 @@ client's ring *becomes* `sbRows v` — is Steps 2–4 and is carried meanwhile b
 `replayEq`'s `sb` conjunct, the `dirtySb` receiver, the literal-anchored ring
 fixtures and two pty assertions.
 
-The rung table has fifteen entries and A5 adds no sixteenth idea, only a
+A5 adds no new idea to the rung table, only a
 direction: §Handback is §Replay's question — *what does this stream
 assume about, or leave behind in, the thing it writes to?* — asked about
 the terminal linger gives back rather than the one it paints into.
@@ -74,7 +74,7 @@ not the runtime" below), **6 bounded** by a stated limitation or non-goal,
 and **2 gaps** — both now closed:
 
 * *"no external Lean dependencies"* — was true but unguarded; now a fail-closed
-  `lakefile.lean`/`lake-manifest.json` check in `tests/e2e.sh`.
+  `lakefile.lean`/`lake-manifest.json` check in `tests/gates.sh`.
 * *"`LINGER_NO_DETACH_KEY=1` disables the detach key"* — was unexercised; now a
   case in `E2E/Attach.lean` (the mirror of the ctrl-\ detach test).
 
@@ -153,7 +153,7 @@ the argument for writing a limitation down in a form that names its fix.
 
 A5 is now proved at the value level in both directions, not just the
 parser level. Both quantify over the receiver with no hypothesis on it —
-the shape `specs/restore-conformance.md` exists to reach — and rest on a
+the shape `specs/archive/restore-conformance.md` exists to reach — and rest on a
 reusable layer: `modeSet_modes` exposes a private mode set as its
 `setMode` (the dispatch-exposing bridge the spec named, for any mode
 number, alt-screen modes included — where `keeps_modeSet` excludes them
@@ -308,7 +308,7 @@ exactly (state threading and effect order), and `run_wf` /
 §Isolate to the daemon's whole life — no trace of any length breaks
 the caps, the screen invariant, or client isolation.
 
-## Why there are ~370 lemmas behind 15 rungs, and how much of it frames retire
+## Why the rungs carry hundreds of lemmas, and how much of it frames retire
 
 Four of the invariance layers — `pstate`, `u8need`, `dims`, `origin`
 (`Theorems/Vt.lean`) — are the same ~28 lemmas written four times: for
@@ -401,7 +401,7 @@ converge instead of fighting. `resizeEffects_owner_only` states it for
 attached clients, and the control path (`linger resize`, below) extends
 it rather than bending it.
 
-## The agent verbs (specs/agent-cli.md) — what they promise, and the two deliberate semantics
+## The agent verbs (specs/archive/agent-cli.md) — what they promise, and the two deliberate semantics
 
 One-shot verbs so another program can see and drive a session. Three claims
 carry them, plus two decisions that are semantics, not accidents:
@@ -611,9 +611,9 @@ terminals; see the note under `## What these theorems do not settle`.)
   of its loops are still `partial def` — `pump` (its recursion is genuinely
   unbounded without a two-pass argument) and `parseLs` (wants a `decreasing_by`);
   the other five shed the keyword on 2026-08-18, since `while`/`for` in a `do`
-  block never needed it. Its correctness rests on the live suites in `tests/`, not
+  block never needed it. Its correctness rests on the live suites in `E2E/`, not
   on proof. The pure/impure line is the `Linger/Core` boundary, enforced by
-  `tests/e2e.sh`.
+  `tests/gates.sh`.
 * **§Bound bounds our buffers, not the OS's.** A peer that never reads eventually
   fills the kernel socket buffer; the runtime caps *both* of its own byte queues at
   4 MiB rather than grow — the per-client output backlog (`outbufCap`, disconnect the
@@ -630,11 +630,11 @@ terminals; see the note under `## What these theorems do not settle`.)
   **What is proved is the arithmetic, not the daemon.** `Linger/Runtime/*` is `IO`, and no
   theorem can see that it calls these functions rather than open-coding the same sums.
   Two enforcement layers carry that gap (2026-08-19, the module system —
-  specs/lean-modules.md Step 2): `Buf.bytes` is `private`, so the runtime cannot read,
+  specs/archive/lean-modules.md Step 2): `Buf.bytes` is `private`, so the runtime cannot read,
   write (`{ b with … }`), or forge a `Buf`'s representation — all three refuse at
   compile time, break-verified from inside the daemon; `Buf.empty` is the one door in,
   `writeFrom` the one window out, and `Theorems/Buf.lean` sees inside via `import all`,
-  the friend import. And `tests/e2e.sh` still gates that the runtime declares no byte
+  the friend import. And `tests/gates.sh` still gates that the runtime declares no byte
   buffer *of its own* — privacy seals `Buf`, but only the grep bans a parallel
   `ByteArray` queue, which is a source-tree property and therefore a grep, in the same
   spirit as `SHIM_CAP`. **The seal is also what upgraded the per-step bounds to

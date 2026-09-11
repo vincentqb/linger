@@ -37,7 +37,6 @@ def suites : List (String × IO UInt32) :=
     ("coverage", E2E.Coverage.run)]
 
 def main (args : List String) : IO UInt32 := do
-  Linger.Posix.init
   match args with
   -- Not a suite: the child `E2E.Terminal` runs under its own session's pty. The
   -- Python suite re-entered itself the same way, because the terminal query has to

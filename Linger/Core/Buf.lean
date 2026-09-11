@@ -36,7 +36,7 @@ retired both: proofs no longer have to move here — `Theorems/Buf.lean` is a
 the write hole is closed, because a private field makes the *constructor*
 private, so structure-instance notation can no longer write or forge where it
 cannot read (all three refuse from `Linger/Runtime/`, break-verified). The
-runtime's discipline is now compiler-enforced at this boundary; `tests/e2e.sh`'s
+runtime's discipline is now compiler-enforced at this boundary; `tests/gates.sh`'s
 three greps stay unweakened, because they guard the half privacy cannot see — a
 *parallel* `ByteArray` queue declared in the runtime is sealed by nothing here.
 

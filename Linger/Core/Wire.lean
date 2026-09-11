@@ -62,7 +62,7 @@ inductive Msg where
   | err (msg : List UInt8)
   /-- client → daemon: send the current screen (grid only, plain text) as
   output frames, then `done`. `linger capture` — and it marks the session
-  seen (specs/agent-cli.md Decision 1: a capture IS a look). -/
+  seen (specs/archive/agent-cli.md Decision 1: a capture IS a look). -/
   | screen
   /-- any tag this version does not know: skipped, never fatal (§Frame). -/
   | unknown (tag : UInt8) (payload : List UInt8)

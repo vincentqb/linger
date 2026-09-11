@@ -183,7 +183,7 @@ def infoFields (s : State) : List (String × String) :=
     ++
     [("unseen", toString (unseen s)), ("fresh", toString s.freshFlag),
       ("behind", toString (behind s))]
-    -- what an agent needs to see the session (specs/agent-cli.md Step 1):
+    -- what an agent needs to see the session (specs/archive/agent-cli.md Step 1):
     -- geometry + cursor for `capture`, `alt` for "a full-screen app is live",
     -- `outseq` as the change cursor ("re-capture only when it moved"). Values
     -- are read at reply time, so they are current as of this `.info`.
@@ -212,7 +212,7 @@ added yet. `Status.name_clean` proves the *status* column carries no framing byt
 this is the same promise for every other column, and labels used to bypass both.
 
 This was `(String.join (fields.map (fun (k, v) => s!"{k}\t{v}\n"))).toUTF8.toList`,
-which passed a label's newline through verbatim (`specs/restore-conformance.md`
+which passed a label's newline through verbatim (`specs/archive/restore-conformance.md`
 Step 0 ledger item 2, §Row/§Status integrity). That shape was also what made the
 output unprovable — a `String` literal does not reduce in the kernel, so no theorem
 could see its bytes, which is exactly the argument in `Linger/Core/Render.lean`'s

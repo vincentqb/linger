@@ -2,7 +2,7 @@ import Linger.Core.Render
 
 /-! # §Replay round-trip tests — restore fidelity, executable form
 
-The target theorem (specs/grid-fidelity.md):
+The target theorem (specs/archive/grid-fidelity.md):
 
     (Vt.init v.cols v.rows).feed (Render.restore v) ≃ v
 
@@ -792,7 +792,7 @@ The mirror image of everything above. `restore` establishes what the repaint nee
 whatever terminal it is given; `leaveAnsi` gives that terminal back to the user's
 shell in a state the next program can use, whatever the session's last program left
 behind. `leave_grounds` proves the parser half for every receiver; these pin the
-values until the `Sets` instances land (`specs/restore-conformance.md` Step 1). -/
+values until the `Sets` instances land (`specs/archive/restore-conformance.md` Step 1). -/
 
 /-- The canonical state a detaching client owes the next program. `rows` is a
 parameter because two of the fields are dimension-relative: the scroll region is the
@@ -850,7 +850,7 @@ same result. -/
 example : (((dirty 6 3).feed leaveAnsi).modes == ((midDcs 6 3).feed leaveAnsi).modes) = true := by
   native_decide
 
-/-! ## `screenText` — the capture stream, exact bytes (specs/agent-cli.md) -/
+/-! ## `screenText` — the capture stream, exact bytes (specs/archive/agent-cli.md) -/
 
 /-- The freeze: grid only, `rowText` per row (trailing blanks trimmed), one LF
 each — a 4×2 screen holding "ab" is literally `a b LF LF`. -/

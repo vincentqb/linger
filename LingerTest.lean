@@ -109,7 +109,6 @@ def testWinsize : IO Nat := do
   check "pty spawned with requested winsize" (contains (String.fromUTF8! out) "43 121")
 
 def main : IO UInt32 := do
-  Linger.Posix.init
   let mut fails := 0
   fails := fails + (← testPtyEcho)
   fails := fails + (← testPtyEnvAndInput)

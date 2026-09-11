@@ -47,7 +47,7 @@ theorem resume_quiesced (c : Ckpt) (cols rows : Nat) :
   · exact (Render.restore_quiesced _ cols rows).1
   · exact (Render.restore_quiesced _ cols rows).2
 
-/-- **§Resume, receiver-quantified** (Step 2 of `specs/restore-conformance.md`).
+/-- **§Resume, receiver-quantified** (Step 2 of `specs/archive/restore-conformance.md`).
 The same claim into **any** client's terminal rather than a fresh emulator: a
 reattaching client is left ready for the application's next byte whatever state its
 terminal was in — mid-escape, mid-OSC, mid-DCS, or holding a half-decoded character.

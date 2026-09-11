@@ -1088,7 +1088,7 @@ containing a newline forged an extra record: `.labelSet` applies no filter and
 `linger set` passes the value through, so `linger set s x=$'a\nstatus\tlive'` put a
 `status`/`state` pair into the listing that `Status.classify`'s consumers would read as
 the session's state. Recorded as Step 0 ledger item 2 in
-`specs/restore-conformance.md`; fixed at the **emit site**, which is why the claims
+`specs/archive/restore-conformance.md`; fixed at the **emit site**, which is why the claims
 below need no hypothesis about where a field came from.
 
 The fix is also what makes them provable at all: the old shape ended in

@@ -8,7 +8,7 @@ import all Linger.Core.Buf
 This file is the tree's first **friend module**: `import all Linger.Core.Buf`
 is what lets these statements and proofs see a representation that is sealed to
 every plain importer (`Buf.bytes` is `private`; the runtime cannot read, write,
-or forge it — specs/lean-modules.md Step 2). There is deliberately no blanket
+or forge it — specs/archive/lean-modules.md Step 2). There is deliberately no blanket
 `public section` here: these theorems are leaves — nothing imports them as
 lemmas (checked; they appear elsewhere only in prose) — and being CHECKED at
 build is their whole job, so module-private is their honest visibility, and it
@@ -26,7 +26,7 @@ words. These are that bullet, turned into theorems about `Linger.Core.Buf`.
 same sums. Two things carry that gap: `Buf.bytes` is `private`, so the runtime
 cannot *read* the representation — nor, since the module system sealed the
 constructor, **write or forge** one — and every buffer arithmetic needs to read; and
-`tests/e2e.sh` greps that `Linger/Runtime/*` declares no byte buffer of its own — a
+`tests/gates.sh` greps that `Linger/Runtime/*` declares no byte buffer of its own — a
 source-tree property, and therefore a grep. Anyone who reads this file as "the
 runtime is proved" is overclaiming.
 
@@ -141,7 +141,7 @@ because the representation is sealed: every `Buf` a plain importer can possess
 is `empty` moved forward by the API, so "reachable" is not a subset of the
 runtime's states — it IS them. Pre-seal these theorems would have been true of
 a predicate that described nothing (the forge escape); that is why they were
-not written until specs/lean-modules.md Step 2 landed. -/
+not written until specs/archive/lean-modules.md Step 2 landed. -/
 
 /-- **The pty-input queue is bounded for the daemon's whole life**: any
 interleaving of capped offers and flush advances, from boot, stays within the

@@ -21,8 +21,8 @@ ln -sf "$PWD/.lake/build/bin/linger" ~/.local/bin/linger
 
 Lean 4.34.0-rc2 via elan (an RC on purpose — it is what `lean-fmt` requires; see
 AGENTS.md); no external Lean dependencies. Everything here is Lean
-except one C file (`c/shim.c`, the syscall surface) and two shell scripts (the
-`lake` wrapper and the test orchestrator).
+except the POSIX shim and small shell/Fish orchestration around builds,
+tests, hooks and recipes.
 
 ### Tests
 
@@ -44,8 +44,8 @@ gates and `lean-fmt check`, under three seconds, nothing compiled. The build and
 suites run in CI, not in a hook.
 
 `lean-fmt` is optional and installed standalone, so the hook skips it with a note if
-it is absent. Its linter is adopted; its formatter is not — `.lean-fmt.toml` records
-why, with numbers.
+it is absent. Its linter and formatter are both adopted — `.lean-fmt.toml` records
+the settings and the history, with numbers.
 
 ### Layout
 
@@ -250,3 +250,10 @@ input, sessions outlive clients, checkpoint round-trips, one session
 can't leak into another, a row's identity is its socket name).
 `tests/e2e.sh` — the whole-deliverable gate. `specs/archive/lean-zmx.md`
 — the build record.
+
+Prior art: [tmux](https://github.com/tmux/tmux/) (the gold standard),
+[zmx](https://github.com/neurosnap/zmx) and
+[abduco](https://github.com/martanne/abduco) (the attach/detach
+decoupling linger mirrors, down to the verb surface), and
+[zellij](https://github.com/zellij-org/zellij) (the interface bar —
+its crashes under load are why §Bound and §Total are theorems here).

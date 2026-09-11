@@ -538,7 +538,7 @@ had passed only because no fixture moved the *receiver's* ruler.
 Being unconditional costs one `CSI 3 g` plus a `CHA`+`HTS` pair per stop on every
 attach — nine stops and ~70 bytes for an 80-column default ruler. The alternative
 is a field that is only right when the client happens to be pristine, which is the
-one thing `specs/restore-conformance.md` says a client never is. The `CHA`s move
+one thing `specs/archive/restore-conformance.md` says a client never is. The `CHA`s move
 the cursor, which is safe here because `savedAnsi` and `cursorAnsi` both address it
 absolutely afterwards. -/
 def tabsAnsi (v : Vt) : Bytes :=
@@ -663,7 +663,7 @@ the user's title and the emitter does not guess. xterm's title stack
 known limit rather than a silent one.
 
 Not `DECSTR` (`CSI ! p`), for the reason already recorded in
-`specs/restore-conformance.md`: its reset list varies by terminal, and we would
+`specs/archive/restore-conformance.md`: its reset list varies by terminal, and we would
 be trusting bytes we do not parse. -/
 def leaveAnsi : Bytes :=
   escSeq 0x5C ++ modeSet 1049 false ++ csiNum 4 0x6C ++ modeSet 25 true ++ modeSet 2004 false ++
@@ -728,7 +728,7 @@ def history (v : Vt) (withAnsi : Bool) : Bytes :=
   else rows.flatMap (fun row => rowText row ++ [0x0A])
 
 /-- The current screen only — the grid, one LF-terminated plain-text line per
-row; for `linger capture` (specs/agent-cli.md). The shape of `history`'s plain
+row; for `linger capture` (specs/archive/agent-cli.md). The shape of `history`'s plain
 branch minus the ring, so `screenText_framing`/`screenText_lines` carry the
 same anti-forgery claim: a cell cannot inject a line break, and the line count
 is exactly the row count — which is what lets an agent that knows `rows` (from

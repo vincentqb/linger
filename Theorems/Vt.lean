@@ -3335,7 +3335,7 @@ which grids are well-formed.
 
 Both take `Nat`, not `Char`, so the pins are **closed propositions** decided by
 the kernel — no `Char` literal (Lean's `\uXXXX` cannot reach plane 2), and no
-compiled evaluation, which `tests/e2e.sh` bans in `Theorems/` (and which greps
+compiled evaluation, which `tests/gates.sh` bans in `Theorems/` (and which greps
 prose as well as code, so this sentence may not name the tactic). Each edge is
 pinned on **both
 sides** (`lo-1 = false, lo = true`), so shifting a bound either way falsifies a

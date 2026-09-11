@@ -40,7 +40,7 @@ fail() { printf 'GATE FAIL: %s\n' "$1" >&2; exit 1; }
 # deliberate, reviewable act — the checkpoint for "does this genuinely
 # need a syscall wrapper, or does Lean core already have it?" (see the
 # C-vs-Rust and shrink-the-shim notes in SCRATCHPAD.md).
-SHIM_CAP=27
+SHIM_CAP=22
 shim_n="$(grep -c LEAN_EXPORT c/shim.c)"
 [ "$shim_n" -le "$SHIM_CAP" ] \
   || fail "shim grew to $shim_n wrappers (cap $SHIM_CAP); justify the new syscall and bump the cap"
@@ -86,9 +86,10 @@ grep -qE 'sendMsg fd \(\.attach 0 0\)' Linger/Runtime/Client.lean \
 # deletable BEFORE the file split — budget added when the proofs were rougher and
 # never re-measured once the surrounding lemmas were factored. So the sweep is
 # cheap and the number only goes DOWN: after a refactor, try deleting them. The
-# two that remain are real (`Checkpoint.load_save` and `Vt.renderable_stepGround`,
-# plus the record-width cost THEOREMS.md describes); a new one means a proof got
-# harder, which is the signal design-for-provability says to read, not silence.
+# one that remains is real: `Vt.renderable_stepGround` (re-measured 2026-09-11 on
+# v4.34.0-rc2 — still fails without it; `Checkpoint.load_save` shed its raise when
+# `stripMagic` became a named stage). A new one means a proof got harder, which is
+# the signal design-for-provability says to read, not silence.
 HEARTBEAT_CAP=1
 hb_n="$(grep -rc 'set_option maxHeartbeats' Theorems/ | awk -F: '{s+=$2} END {print s+0}')"
 [ "$hb_n" -le "$HEARTBEAT_CAP" ] \

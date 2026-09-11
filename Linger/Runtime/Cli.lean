@@ -101,7 +101,7 @@ def connectUpsert (hooks : Hooks) (name : String) (cmd : List String) : IO UInt3
       throw (IO.userError s!"daemon for '{name}' did not come up (see {log})")
 
 def cmdAttach (hooks : Hooks) (name : String) (cmd : List String) : IO UInt32 := do
-  if !(← isatty stdinFd) then
+  if !(← stdinIsTty) then
     throw (IO.userError "attach needs a terminal (use `run`/`send` for scripting)")
   -- `name@host` attaches to a remote session: become `ssh -t host linger
   -- attach name`. Session names never contain `@` (Name.sanitize
@@ -415,7 +415,6 @@ def overview (args : List String) : IO UInt32 := do
     return 2
 
 def main (hooks : Hooks) (args : List String) : IO UInt32 := do
-  Linger.Posix.init
   match args with
   | "__daemon" :: name :: cwd :: cmd =>
     let restore := (← hooks.load name).map (fun (vt, _, labels) => (vt, labels))

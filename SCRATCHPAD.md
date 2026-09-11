@@ -7110,3 +7110,79 @@ constant appears in a theorem's *type* has no attribute-placement blind spot at 
 
 Third real find by a formatter/linter in two days, after the trailing whitespace in
 `E2E/Coverage.lean` and the `.lean-fmt-cache/` that nearly got committed.
+
+
+## cleanup round — 2026-09-11 (two specs archived, PLAN.md folded, shim 27→24)
+
+The measured facts, so nobody re-derives them:
+
+* **Toolchain trigger re-checked: NOT fired.** `git ls-remote --tags` on
+  leanprover/lean4 and jcreinhold/lean-fmt — the newest tag on both is still
+  `v4.34.0-rc2`. The pin stays; AGENTS.md §Build gains the dated re-check stamp.
+* **The last `maxHeartbeats` raise is still real.** Deleted
+  `Vt.renderable_stepGround`'s `2000000` raise (Theorems/Vt.lean) and built:
+  fails — elaboration blows the default budget and the kernel then reports the
+  constant unknown. Restored; `HEARTBEAT_CAP` stays 1. gates.sh's comment still
+  named `Checkpoint.load_save` as a second survivor — stale since the
+  `stripMagic` factoring shed that raise; the comment now names the one real
+  survivor with this re-measurement's date.
+* **Shim 27→24 — the v4.34 re-run of the 2026-06-01 "does core have it now?"
+  checkpoint.** Two wrappers existed only because 4.32 core lacked the
+  primitive, and 4.34 has it: `linger_realtime_s` → `Std.Time.Timestamp.now`
+  (the "core has no wall clock" note expired), `linger_isatty` →
+  `IO.FS.Stream.isTty` on stdin (`Posix.stdinIsTty`; sole caller was
+  `cmdAttach`'s needs-a-terminal guard, and nothing in the tree substitutes
+  stdin). Third, `linger_write_all`'s completion loop hoisted to a Lean
+  `do`-loop over `Posix.write` — it was the shim's one violation of its own
+  header contract ("no retry policy beyond EINTR"). Deliberate behavior deltas:
+  EPIPE mid-writeAll now throws `userError "write_all: peer gone"` where C
+  threw `io_err("write_all")` (same throw shape, different text), and a `0`
+  return (would-block, impossible on writeAll's blocking targets) throws
+  instead of spinning. Settled KEEPs from the audit, recorded so the next sweep
+  starts here: `flock` (core `Handle.mk` can't do 0600/CLOEXEC and its lock
+  species is unverifiable), `getuid`/`gethostname` (core's are
+  `Std.Internal.UV.*` — Internal namespace, no stability contract),
+  `getcwdOf` (the macOS libproc half keeps the wrapper alive; hoisting the
+  Linux half wins no cap and adds a third platform split).
+* **`format --check` is CI-tier, measured.** Warm full-tree run ~22 s and a
+  changed-file run re-renders every file it visits (frontend-bound; the cache
+  only skips untouched batches) — busts the hook's ~1 s budget. So the commit
+  hook keeps `lean-fmt check` and CI gains a `lean-fmt format --check` step:
+  the same two-tier split as the build.
+* **Formatter-adoption doc rot fixed.** The step-3 reformat (78cee28) updated
+  only `.lean-fmt.toml`; README, AGENTS.md §Build and the hook comment all
+  still said "formatter declined". AGENTS.md's copied measurement numbers are
+  deleted rather than corrected — they already disagreed with the toml (502 vs
+  ~500), which is the copied-number rot gates.sh's header warns about.
+* **Docs shrunk to their sources of truth.** PLAN.md deleted — its prior-art
+  links live in README §Design; THEOREMS.md's three mutually-inconsistent rung
+  counts ("fourteen"/"fifteen"/"15" over an 18-row table) went count-free.
+  lean-modules and runtime-invariants archived with completion records (their
+  remaining steps were explicitly optional, and runtime-invariants' two parked
+  follow-ups had both already resolved via the lean-modules Step 2 seal and
+  harvest). AGENTS.md item 1 no longer duplicates the specs' own status blocks
+  — the duplicates are what rotted. Closed specs are cited at
+  `specs/archive/…` paths tree-wide (frozen records untouched). The poll-plan
+  negative result moved up to AGENTS.md's Settled non-goals so it survives the
+  archival. pre-commit-hooks v5.0.0 → v6.0.0. Untracked strays: CLAUDE.md
+  (`@AGENTS.md`) is now tracked; two stale `semantic-review/` reports moved to
+  /tmp; the stale `.claude/last-compact-state.md` deleted (hook regenerates).
+
+
+Correction to the entry above: `CLAUDE.md` pre-existed untracked and remains
+untracked; this cleanup does not claim unrelated user work. `.lean-fmt.toml`
+now omits the explicit default `line-width = 100` and
+`reflow-comments = false`; only the three intentional exceptions remain.
+
+
+Second v4.34 shim pass: **24→22**. Exact-tag runtime source
+(`v4.34.0-rc2/src/runtime/io.cpp`, `initialize_io`) installs
+`SIGPIPE = SIG_IGN` before Lean `main`, so `linger_init` and all four calls were
+redundant; `spawnPty` still resets SIGPIPE in the child before `execvp`.
+`Std.Async.System.getHostName` is public in the pinned toolchain and replaces
+`linger_gethostname` with the old empty-on-error fallback preserved in Lean.
+`<sys/stat.h>` became a confirmed dead include. An independent pass challenged
+all 22 survivors against public (not `Std.Internal`) APIs: no other exact
+replacement preserves raw-fd ownership, nonblocking/errno semantics, CLOEXEC,
+PTY/termios/ioctl, Unix sockets, process replacement/detachment, or
+arbitrary-pid operations.

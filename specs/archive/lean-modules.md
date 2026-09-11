@@ -1,7 +1,18 @@
 # lean-modules — adopt the module system; seal Buf as the first compiler-enforced gate
 
-Status: active
+Status: **complete (2026-09-11)** — archived record, do not edit
 Updated: 2026-08-19
+
+## Completion record
+
+Steps 0–2 and 5 landed 2026-08-19 (see the status list below); the harvest
+(`ReachableIn`/`ReachableOut` bounds) landed the same day. Steps 3–4 are
+**declined as parked options**, not failures: Step 3 (sealed `SessionName`)
+carries its own kill criterion and waits for a reason beyond hygiene; Step 4
+(tighten beyond the blanket `public section`) is a compile-perf bet that must
+be measured, and nobody has needed it. Re-opening either is a new spec citing
+this one. Every ratchet came through unchanged except the def census (+1,
+`boot`, claimed).
 
 ## Where this stands — read this first
 

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Whole-deliverable check (specs/lean-zmx.md Step 10). Exits 0 only if
+# Whole-deliverable check (specs/archive/lean-zmx.md Step 10). Exits 0 only if
 # everything below holds. Run from the repo root: ./tests/e2e.sh
 #
 #   1. clean build of program + proofs + unit tests, zero warnings
@@ -32,7 +32,7 @@ fail() { printf 'E2E FAIL: %s\n' "$1" >&2; exit 1; }
 # list that silently became empty still prints `FAILURES: 0` — so the gate would
 # stay green on a suite that had stopped checking. The floors are the measured
 # live counts; they only ever go UP without discussion, and a drop is a
-# deliberate, reviewable edit, exactly like SHIM_CAP below.
+# deliberate, reviewable edit, exactly like SHIM_CAP in tests/gates.sh.
 suite() {                                   # suite <name> <check floor>
   pkill -x linger 2>/dev/null || true
   sleep 0.2

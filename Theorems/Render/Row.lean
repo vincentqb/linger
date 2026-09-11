@@ -24,7 +24,7 @@ exact claim affordable. `rowAnsi` already threads `(bytes, pen, x)`; what the in
 adds is the two things a receiver has that the emitter cannot see — wrap-`pending`, which
 the 2026-08-15 negative result proved load-bearing, and the decoder triple.
 
-Design constraints, all recorded in `specs/restore-conformance.md` before the proof and
+Design constraints, all recorded in `specs/archive/restore-conformance.md` before the proof and
 each a way the obvious statement would be wrong:
 
 * the parser component is a **triple** (`pstate`, `u8need`, `u8acc`), not a pair —

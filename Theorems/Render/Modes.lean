@@ -24,7 +24,7 @@ open Linger.Core.Vt
 the fidelity theorem quantifies over `Vt.init` outright. That is the one receiver
 state in which every precondition the emitter depends on already holds, which is
 exactly why it hid the mode leak fixed in `87f64b3`
-(`specs/restore-conformance.md`, Step 1).
+(`specs/archive/restore-conformance.md`, Step 1).
 
 `Sets` has no hypothesis on the receiver at all:
 
@@ -232,7 +232,7 @@ theorem prologue_grounds (v w : Vt) : (w.feed (prologueAnsi v)).pstate = .ground
 /-- **`restore` grounds any receiver.** The hypothesis-free form of
 `restore_quiesced`: no assumption on the client's parser state at all, which is what
 the `ESC \` lead-in buys. The `u8need` half needs the same treatment for every chunk
-and is left to `specs/restore-conformance.md` Step 2. -/
+and is left to `specs/archive/restore-conformance.md` Step 2. -/
 theorem restore_grounds (v w : Vt) : (w.feed (restore v)).pstate = .ground := by
   rw [show
       restore v =
@@ -268,7 +268,7 @@ job — a program that died mid-OSC or mid-DCS would swallow the hand-back exact
 it swallowed the repaint before `cd7c17b` — and the same proof, one chunk longer.
 
 The *value* claims (each mode at its canonical setting, for every receiver) are the
-`Sets` instances of `specs/restore-conformance.md` Step 1, which the hand-back is the
+`Sets` instances of `specs/archive/restore-conformance.md` Step 1, which the hand-back is the
 easiest instance of: no `ite`, no dependence on a `Vt`. -/
 
 /-- A parameterless CSI: the receiver's own defaults apply. -/

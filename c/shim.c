@@ -22,12 +22,10 @@
 #include <sys/ioctl.h>
 #include <sys/file.h>
 #include <sys/socket.h>
-#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/un.h>
 #include <sys/wait.h>
 #include <termios.h>
-#include <time.h>
 #include <unistd.h>
 #ifdef __APPLE__
 #include <libproc.h>   /* PROC_PIDVNODEPATHINFO: the /proc-less cwd read */
@@ -93,15 +91,6 @@ static int accept_cloexec(int fd) {
 
 /* -------------------------------------------------------------------- */
 /* process-wide init                                                     */
-
-/* linger_init : IO Unit
- * SIGPIPE must be ignored: a client vanishing between poll() and write()
- * would otherwise kill the daemon. Write errors surface as EPIPE. */
-LEAN_EXPORT lean_obj_res linger_init(lean_obj_arg w) {
-    (void)w;
-    signal(SIGPIPE, SIG_IGN);
-    return io_ok_unit();
-}
 
 /* linger_ignore_sighup : IO Unit  (daemon: survive controlling-tty death) */
 LEAN_EXPORT lean_obj_res linger_ignore_sighup(lean_obj_arg w) {
@@ -178,23 +167,6 @@ LEAN_EXPORT lean_obj_res linger_write(uint32_t fd, b_lean_obj_arg bytes, size_t 
         return io_err("write");
     }
     return lean_io_result_mk_ok(lean_box_uint64((uint64_t)(int64_t)n));
-}
-
-/* linger_write_all : UInt32 -> @& ByteArray -> IO Unit
- * Blocking full write for fds we own end-to-end (client's stdout). */
-LEAN_EXPORT lean_obj_res linger_write_all(uint32_t fd, b_lean_obj_arg bytes,
-                                       lean_obj_arg w) {
-    (void)w;
-    size_t len = lean_sarray_size(bytes), off = 0;
-    while (off < len) {
-        ssize_t n = write((int)fd, lean_sarray_cptr(bytes) + off, len - off);
-        if (n < 0) {
-            if (errno == EINTR) continue;
-            return io_err("write_all");
-        }
-        off += (size_t)n;
-    }
-    return io_ok_unit();
 }
 
 /* -------------------------------------------------------------------- */
@@ -562,20 +534,13 @@ LEAN_EXPORT lean_obj_res linger_waitpid_nohang(uint32_t pid, lean_obj_arg w) {
 /* -------------------------------------------------------------------- */
 /* misc                                                                  */
 
-/* getpid, chmod, and CLOCK_MONOTONIC ms are Lean-core primitives
- * (IO.Process.getPID, IO.Prim.setAccessRights, IO.monoMsNow), so they
- * are not wrapped here — see Linger/Posix.lean. */
+/* getpid, chmod, both clocks, hostname, stdin tty detection, and the
+ * full-write loop are Lean/core; see Linger/Posix.lean. */
 
 /* linger_getuid : IO UInt32 */
 LEAN_EXPORT lean_obj_res linger_getuid(lean_obj_arg w) {
     (void)w;
     return lean_io_result_mk_ok(lean_box_uint32((uint32_t)getuid()));
-}
-
-/* linger_isatty : UInt32 -> IO Bool */
-LEAN_EXPORT lean_obj_res linger_isatty(uint32_t fd, lean_obj_arg w) {
-    (void)w;
-    return lean_io_result_mk_ok(lean_box(isatty((int)fd) == 1 ? 1 : 0));
 }
 
 /* linger_getcwd_of : UInt32 -> IO String
@@ -606,22 +571,4 @@ LEAN_EXPORT lean_obj_res linger_getcwd_of(uint32_t pid, lean_obj_arg w) {
     buf[n] = '\0';
     return lean_io_result_mk_ok(lean_mk_string(buf));
 #endif
-}
-
-/* linger_gethostname : IO String */
-LEAN_EXPORT lean_obj_res linger_gethostname(lean_obj_arg w) {
-    (void)w;
-    char buf[256];
-    if (gethostname(buf, sizeof buf) < 0) buf[0] = '\0';
-    buf[sizeof buf - 1] = '\0';
-    return lean_io_result_mk_ok(lean_mk_string(buf));
-}
-
-/* linger_realtime_s : IO UInt64  (unix epoch seconds; Lean core has no
- * wall clock, so this one stays a shim call) */
-LEAN_EXPORT lean_obj_res linger_realtime_s(lean_obj_arg w) {
-    (void)w;
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    return lean_io_result_mk_ok(lean_box_uint64((uint64_t)ts.tv_sec));
 }

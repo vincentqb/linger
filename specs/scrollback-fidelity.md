@@ -2,8 +2,8 @@
 
 Status: active
 Updated: 2026-08-18
-Predecessors: `specs/restore-conformance.md` (complete — the screen, on both
-screens at every height), `specs/ledger-cleanup.md` (complete). This opened the
+Predecessors: `specs/archive/restore-conformance.md` (complete — the screen, on both
+screens at every height), `specs/archive/ledger-cleanup.md` (complete). This opened the
 successor both parked: `restore` repainted the screen and dropped the history above
 it. **Step 1 has since closed that** — the ring is emitted and the fixtures pin it
 cell-for-cell; what Steps 2-4 add is the *proof* (`restore_sb_any`), so the field is

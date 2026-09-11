@@ -20,7 +20,7 @@ The queues themselves are **not** this file's: they are `Linger.Core.Buf`, whose
 `Theorems/Buf.lean` proves the caps and that nothing written is retained. That is
 the runtime half of §Bound, and it used to be a paragraph saying "not proved".
 What this file still owns is *when* to enqueue and how to react to a short write,
-which is `IO` and therefore gated rather than proved: `tests/e2e.sh` checks that
+which is `IO` and therefore gated rather than proved: `tests/gates.sh` checks that
 `Linger/Runtime/*` declares no byte buffer of its own, because no theorem can see
 that this file calls those functions instead of open-coding the same sums.
 
@@ -283,7 +283,6 @@ spawner). -/
 def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State → IO Unit)
     (dropCkpt : IO Unit) (restore : Option (Linger.Core.Vt.Vt × List (String × String))) :
     IO Unit := do
-  Linger.Posix.init
   ignoreSighup
   let sockPath ← Paths.socketPath name
   -- Claim the *name* before touching the socket path. Without this the

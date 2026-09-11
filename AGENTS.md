@@ -26,71 +26,29 @@ tree, the shim's `linger_*` symbols, the `lingertest` smoke exe. The old
 
 Separately, **`zmx` still appears as a citation of the upstream project** of that name
 — "verb surface mirrors zmx" (`Linger/Runtime/Cli.lean`), "same resolution order as
-zmx" (`Paths.lean`), "the zmx decoupling" (§Detach in THEOREMS.md), the links in
-`PLAN.md`. Those name *someone else's* project, which is prior art worth crediting;
-they are not stale branding and should not be renamed.
-`README.md` is the user-facing overview. `PLAN.md` is the original
-requirements (goal-level, not current state); `specs/archive/` holds the
-closed build plans with their completion records — ten of them, from
-`lean-zmx.md` (the original build) through `pin-the-gaps.md` and
-`lean-suites.md` (the most recent two). Read `specs/archive/` itself
-rather than trusting a list here to stay current.
+zmx" (`Paths.lean`), "the zmx decoupling" (§Detach in THEOREMS.md), the prior-art
+note in `README.md` §Design. Those name *someone else's* project, which is prior
+art worth crediting; they are not stale branding and should not be renamed.
+`README.md` is the user-facing overview. `specs/archive/` holds the
+closed build plans with their completion records. Read `specs/archive/`
+itself rather than trusting a list here to stay current — two counts of
+it rotted in this file already.
 
 ## Where things stand — read this first after any compaction
 
-1. **Three specs are live in `specs/`.**
-   * **`specs/lean-modules.md` — in flight, this is the item being worked.**
-     Adopt the v4.32 module system (probe done — the measured facts are in
-     SCRATCHPAD 2026-08-19, don't re-derive them): Step 1 blanket
-     semantics-preserving migration of `Linger/` + exe roots, Step 2 seals
-     `Buf`'s representation with `private` fields + an `import all` friend
-     import for `Theorems/Buf.lean` — which flips runtime-invariants' Open
-     decision 1 (measured "no" on 2026-08-18; both blockers are gone). The
-     byte-queue greps stay: privacy seals `Buf`, only greps ban a parallel
-     queue.
-   * **`specs/scrollback-fidelity.md` — Step 1 done (2026-08-19), Step 2 next.**
-     `restore` now paints the session's ring into the *receiver's own* scrollback
-     (`scrollbackAnsi`), and the three flagship screen statements are
-     byte-identical to what they were — the hard exit criterion held. Read its
-     "Where this stands" before anything else: it names Step 2 (the positive
-     scroll specification, zero emitter change) and the two things not to
-     re-derive — `replayEq`'s `sb` conjunct is blind to bugs *inside* `sbRows`
-     (the literal-anchored fixtures are the oracle for the fit and the order),
-     and the twelve mode bytes ending `scrollbackAnsi` are behaviourally inert
-     but proof-load-bearing. The obvious emitter shape — painting
-     `sbRows v ++ v.grid` as one tall array — *deletes* `paint_rows`' no-scroll
-     argument; the staged push is why it did not.
-   * **`specs/runtime-invariants.md` — Steps 1–2 done, 3–4 optional.** The
-     daemon's two byte queues are now `Linger.Core.Buf`, proved, with a grep gate
-     in `tests/e2e.sh` that makes the theorems bite an `IO` caller no theorem
-     can see. Its poll-plan half was **killed on purpose** (the
-     `revents[i]`↔`fds[i]` premise lives in `c/shim.c`, not in Lean, so proving
-     it would be decoration) — that negative result is recorded so nobody
-     re-proposes it.
-   Everything else is closed: `lean-suites.md` (2026-08-29: the ten pty suites
-   and the coverage gate are **Lean**, in `E2E/`, run as `./lake exe e2e
-   <suite>`; **zero `.py` files remain**. They are `IO` so they cannot be
-   theorems — what the port buys is that a suite naming `Render.leaveAnsi` or
-   `Status.wantsYou` cannot drift from the implementation the way a hardcoded
-   copy did. It cost no new syscall, so `SHIM_CAP` did not move, which was the
-   precondition. `tests/e2e.sh` stays shell on purpose), `pin-the-gaps.md`
-   (2026-08-29: the nine gaps a
-   full test+theorem audit found — `linger watch` had no coverage at all,
-   `.detachAll`/`.labelUnset`/`.labelClear` had unpinned effect lists, the width
-   tables `isWide`/`isZeroWidth` were named nowhere in the repo; **every ratchet
-   is now at zero headroom**, including ten per-suite check-count floors. Read
-   its three findings before touching read-only, the width tables,
-   or a pty suite), `restore-conformance.md` (restore works into any
-   client, proved for the modes, pen, sticky bundle, parser/decoder, the screen
-   cells on both screens at every height, and the tab ruler), `ledger-cleanup.md`
-   (its five parked items plus the ssh-argv host guard) and `agent-cli.md`
-   (2026-08-19: the agent verbs — `info` geometry+`outseq`, `capture` on wire
-   tag 16 which **marks the session seen** by design, `send <name> -` raw
-   stdin, and `controlResize` which never overrides an attached sizer; new
-   one-shot verbs must drain through `Client.drainBounded` or they hang against
-   pre-upgrade daemons) are in `specs/archive/` with completion records.
-   (Don't look for a living `PLAN.md`: the root one is requirements, and
-   everything in `specs/archive/` is closed.)
+1. **One spec is live in `specs/`: `scrollback-fidelity.md`.** Step 1 is done
+   (2026-08-19) — a reattach paints the session's ring into the receiver's own
+   scrollback, and the flagship screen statements came through byte-identical.
+   Step 2 (the positive scroll specification, zero emitter change) is next.
+   Read its "Where this stands" before anything else: it names the two things
+   a resuming agent must not re-derive (`replayEq`'s `sb` conjunct is blind to
+   bugs *inside* `sbRows` — the literal-anchored fixtures are the oracle for
+   the fit and the order — and the twelve mode bytes ending `scrollbackAnsi`
+   are behaviourally inert but proof-load-bearing).
+   Everything else is closed and lives in `specs/archive/`; each file records
+   its completion. The records carry the nuance this list used to duplicate,
+   and the duplicates rotted. (There is no `PLAN.md`: its prior-art links live
+   in README §Design, and everything in `specs/archive/` is closed.)
 2. **`SCRATCHPAD.md`** — append-only worklog: proof recipes, measured
    environment facts, break-verify records, and the negative results.
    Read before writing; append after; never delete prior entries.
@@ -111,9 +69,8 @@ rather than trusting a list here to stay current.
 
 New work opens a new `specs/<slug>.md` and gets named in item 1 above;
 archive the old one with a completion record rather than editing it. Keep the
-live count small — two open specs is already one more than the
-one-item-in-flight rule likes, and the second is only there because it is
-finished enough to leave alone.
+live count at one — the one-item-in-flight rule. A spec whose remaining steps
+are all "optional" is finished; archive it saying so.
 
 ## Settled non-goals — don't build these
 
@@ -141,6 +98,12 @@ fresh pair of eyes.
 - **Restoring the process tree.** Reboot-resume restores the screen,
   scrollback, modes, labels and cwd — not the programs. The
   tmux-continuum trade, taken deliberately.
+- **A pure poll plan / `revents` classifier.** The premise that made the
+  one historical desync a desync — `revents[i]` belongs to `fds[i]` — is
+  established by the C loop in `c/shim.c` and is not a Lean-visible fact,
+  so the theorem's canonical break (permute the slots) does not catch its
+  canonical bug. Killed in `specs/archive/runtime-invariants.md`; the
+  negative result is also in SCRATCHPAD 2026-08-18.
 
 ## Build
 
@@ -149,6 +112,8 @@ fresh pair of eyes.
   it ships one release per toolchain, and every one of its releases
   requires an rc of v4.34. `v4.34.0` stable does not exist yet. **Move the
   pin when it does and lean-fmt tags it** — that is the whole trigger.
+  (Re-checked 2026-09-11: upstream's newest tags are still `v4.34.0-rc2`
+  on both lean4 and lean-fmt, so the trigger has not fired.)
   The bump cost 152 deprecation renames (all `if_pos`→`ite_eq_left` shaped,
   definitionally identical) and moved no ratchet.
 - Always `./lake build` (the wrapper, not bare `lake`): on the AL2 host
@@ -162,11 +127,13 @@ fresh pair of eyes.
   require-free lakefile and empty `lake-manifest.json` are gates, and
   README promises no external Lean dependencies.
   `make -C <clone> install`, at the tag matching `lean-toolchain`.
-- **Its formatter is declined, its linter adopted.** `.lean-fmt.toml`
-  carries the measurements: the formatter would rewrite 66 of 71 files
-  (+8540/−6173), 894 diff lines inside tactic blocks, and 502 commands it
-  could not lay out at all. `repeat' split` + `all_goals first | …`
-  layout is a design-for-provability decision here, not accident.
+- **Its linter and formatter are both adopted** — the format run landed at
+  `78cee28` (66 files); pre-commit runs `lean-fmt check`, and CI runs
+  `lean-fmt format --check`. `.lean-fmt.toml` carries the settings, the
+  history and the measurements; don't copy its numbers here, the copy rotted
+  once. `repeat' split` + `all_goals first | …` layout survives formatting;
+  commands the engine cannot lay out keep their hand layout, which is why some
+  proofs still look hand-laid — that is by design, not drift.
 
 ## Gates, hooks and CI
 
@@ -222,7 +189,7 @@ fresh pair of eyes.
   are data (`List Effect`); the runtime executes them.
 - Only `Linger/Posix.lean` and `c/shim.c` touch the OS. Keep the shim
   logic-free (syscall + errno only). It carries a **wrapper-count
-  ratchet** (`SHIM_CAP` in `tests/e2e.sh`): it drops silently, but
+  ratchet** (`SHIM_CAP` in `tests/gates.sh`): it drops silently, but
   raising it is a deliberate edit — the checkpoint for "does Lean core
   already expose this?" before adding a syscall. A source-tree property
   like this can't be a theorem; the grep gate is the right oracle
@@ -287,10 +254,11 @@ fresh pair of eyes.
   suite whose assertions sit in a `for` over a list that went empty still
   prints `FAILURES: 0` — demonstrated, not assumed. Floors only go UP
   without discussion. New suites go in `E2E/` and use `E2E/Harness.lean`.
-- **`tests/e2e.sh` is the one deliberate non-Lean file.** It sequences the
-  builds, the `git grep` purity gates and the ratchets; a Lean program
-  shelling out to `git grep` and `./lake` would be a worse shell script.
-  Everything else is Lean — if you are about to add a `.py`, don't.
+- **`tests/e2e.sh` and `tests/gates.sh` are the deliberate non-Lean files:**
+  gates.sh owns the `git grep` purity gates and every ratchet number,
+  e2e.sh sequences the builds and the suites; a Lean program shelling out
+  to `git grep` and `./lake` would be a worse shell script. Everything
+  else is Lean — if you are about to add a `.py`, don't.
 - **The purity greps read prose, not just code.** `native_decide` in a
   *docstring* under `Theorems/` fails `./tests/e2e.sh` step 2 exactly as
   it would in a proof. This has cost a full e2e run twice (`fb6a0e6`, and

@@ -54,7 +54,7 @@ claim lands, so it does. 19 → 16 on 2026-08-29 (pin-the-gaps item 4): the widt
 tables `isWide`/`isZeroWidth` were named nowhere in the repo, and the per-clause
 edge pins in `Theorems/Vt.lean` claim both. The cap is the measured count with ZERO
 headroom — it had one free slot before, which is a slot a new unclaimed def can
-occupy silently, and every other ratchet in `tests/e2e.sh` is exact.
+occupy silently; every ratchet in `tests/gates.sh` and `tests/e2e.sh` is exact.
 
 16 → 15 on 2026-08-29, and this one was a GATE BUG being fixed rather than surface
 being claimed: `dropModifiers` stripped only `@[expose] ` by name, so an

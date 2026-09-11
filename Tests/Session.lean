@@ -221,7 +221,7 @@ example :
       true := by
   native_decide
 
-/-! ### Agent observability fields (specs/agent-cli.md Step 1)
+/-! ### Agent observability fields (specs/archive/agent-cli.md Step 1)
 
 `info` carries what an agent needs to *see* the session: geometry + cursor
 (for `capture`), `alt` (a full-screen app is live), and `outseq` (the change
@@ -252,7 +252,7 @@ example :
       true := by
   native_decide
 
-/-! ### capture (specs/agent-cli.md Step 2)
+/-! ### capture (specs/archive/agent-cli.md Step 2)
 
 `.screen` replies with the grid — never the ring — and marks the session seen.
 The scenario forces the two apart: eight printed lines on a five-row screen
@@ -348,7 +348,7 @@ end Linger.Core.Session.Tests
 
 namespace Abduco
 
-/-! Borrowed-from-abduco semantics (PLAN.md reference): read-only
+/-! Borrowed-from-abduco semantics: read-only
 observers and newest-attacher-owns-the-size. -/
 
 open Linger.Core.Session
@@ -415,7 +415,7 @@ example :
        | .resizePty c r => some (c, r) | _ => none)
      resizes == [(80, 24)]) = true := by native_decide
 
-/-! ### control resize (specs/agent-cli.md Step 4)
+/-! ### control resize (specs/archive/agent-cli.md Step 4)
 
 `linger resize` from a non-attached connection: applies to a detached
 session, is refused — loudly — while an attached sizer exists, and leaves the
@@ -504,7 +504,7 @@ open Linger.Core.Session
 
 /-! ### §Row/§Status integrity — the forged listing record
 
-Step 0 ledger item 2 of `specs/restore-conformance.md`, as a fixture. `infoText` frames
+Step 0 ledger item 2 of `specs/archive/restore-conformance.md`, as a fixture. `infoText` frames
 records as `k` TAB `v` LF, `.labelSet` applies no filter and `linger set` passes the
 value through — so a label value carrying a newline and a tab used to forge an **extra
 record**, including a `status`/`state` pair that `linger list` would then display as the

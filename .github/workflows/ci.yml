@@ -160,6 +160,13 @@ jobs:
           python -m pip install --quiet pre-commit
           pre-commit run --all-files --show-diff-on-failure
 
+      # The formatter's drift gate — the layout half of lean-fmt; the linter half ran
+      # inside pre-commit above. Not in the commit hook: `format --check` re-renders
+      # every file it visits (~22 s warm over the tree), which is CI-tier cost by the
+      # two-tier split this file's header describes.
+      - name: lean-fmt format --check (layout drift)
+        run: lean-fmt format --check
+
       # Worth caching HERE and nowhere else: this job builds incrementally,
       # exactly as pre-commit does. The e2e job deliberately has no such cache —
       # see the note on that job. Keyed on the toolchain plus every input lake

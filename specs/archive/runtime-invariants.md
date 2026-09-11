@@ -1,9 +1,22 @@
 # runtime-invariants — the daemon's byte queues as data, proved, and gated
 
-Status: active
+Status: **complete (2026-09-11)** — archived record, do not edit
 Updated: 2026-08-18
 Predecessor: `specs/ledger-cleanup.md` (complete; its item 2 landed the `ptyIn`
 cap and the twin partial-drain compaction that this spec turns into theorems).
+
+## Completion record
+
+Steps 1–2 were the value increment and landed 2026-08-18; the spec's own words
+("if Steps 3-4 never happen this bet has delivered what it honestly could")
+are the close. Steps 3–4 are **declined as parked options** with their kill
+criteria recorded below. Both parked follow-ups have since resolved: the
+`THEOREMS.md` §Bound/§Total rewrite landed in the lean-modules harvest
+(2026-08-19 — "What is proved is the arithmetic, not the daemon" is in
+§Bound), and the per-field-`private` revisit was superseded outright by
+lean-modules Step 2, which sealed `Buf`'s representation via the module
+system (this spec's Open decision 1, flipped). The poll-plan half stays
+killed; the negative result is in SCRATCHPAD 2026-08-18.
 
 ## Where this stands — read this first
 
