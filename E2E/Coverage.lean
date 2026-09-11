@@ -64,9 +64,24 @@ skipped. `writeU32` had two genuine claims that were invisible the whole time.
 is how the blind spot was noticed at all; the scanner now strips any `@[…]`, so the
 number no longer depends on where a formatter happens to put an attribute.
 Break-verified both ways — 15 with the attributes inline and 15 with them on their own
-line, where the old scanner said 16. -/
+line, where the old scanner said 16.
 
-def statementCap : Nat := 15
+**15 → 0 on 2026-09-11, and the cap is now the floor it always wanted to be.** Every one
+of the 259 pure-core defs is named in some theorem *statement*. What the sweep found is
+worth more than the number: three of the caps this project's §Bound rests on (`csiCap`,
+`oscCap`, `dcsCap`) were named only inside `Scan.Bounded`, a **def**, and `maxClients` only
+inside `Bounded`, a **structure field** — so the gate could not see them, and neither could
+a reader looking for the claim. `maxClients`' enforcement had no theorem at all: nothing
+said the client past the cap is refused *and* closed. `clampDim` was re-derived inline in
+four proofs and stated in none. Two of the new claims are amendments waiting to happen
+rather than new content (`parseRecord_name_valid` is `parse_names_valid`'s own tail), and
+one attempt was **abandoned as false**: `sanitize` is not length-non-increasing, because the
+empty name becomes `"_"`.
+
+At zero, this ratchet flips meaning: it stops being a budget and becomes an invariant —
+a new pure-core def must arrive with a claim, in the same commit. -/
+
+def statementCap : Nat := 0
 
 /-- Every byte stream the runtime emits, and what backs it. A `theorem` entry must
 also appear in a theorem statement (checked below); a `limitation` entry must carry

@@ -108,4 +108,111 @@ theorem checkHosts_ok_clean {hosts l : List String} (h : checkHosts hosts = .ok 
       simp only [Bool.and_eq_true, decide_eq_true_eq] at this
       exact this
 
+/-! ## Records: every group the splitter emits is a real record
+
+`parse` `filterMap`s `parseRecord` over `records`' output, so an empty group would mean a run
+of blank lines had manufactured a record slot. A group is appended only under `¬cur.isEmpty`
+and `reverse` preserves that, so the invariant holds — and it is the one a consumer needs.
+
+Deliberately *not* stated: `(records lines).flatten = lines`. It is **false** — blank lines
+are dropped. The true version is `= lines.filter (¬·.trimAscii.isEmpty)`, which is strictly
+stronger and needs a `done.flatten ++ cur.reverse` invariant; it earns its keep only when a
+caller wants line-level fidelity, and none does. -/
+
+private theorem foldl_records_ne_nil :
+    ∀ (lines : List String) (done : List (List String)) (cur : List String),
+      (∀ g ∈ done, g ≠ []) →
+        ∀
+          g ∈
+            (lines.foldl
+                (fun (acc : List (List String) × List String) l =>
+                  if l.trimAscii.isEmpty then
+                    (if acc.2.isEmpty then acc.1 else acc.1 ++ [acc.2.reverse], [])
+                  else (acc.1, l :: acc.2))
+                (done, cur)).1,
+          g ≠ []
+  | [], _, _, hd => by simpa using hd
+  | l :: t, done, cur, hd => by
+    simp only [List.foldl_cons]
+    split
+    · split
+      · exact foldl_records_ne_nil t _ _ hd
+      · rename_i hne
+        refine foldl_records_ne_nil t _ _ ?_
+        intro g hg
+        rcases List.mem_append.mp hg with h1 | h2
+        · exact hd g h1
+        · rw [List.mem_singleton] at h2
+          subst h2
+          simpa using hne
+    · exact foldl_records_ne_nil t _ _ hd
+
+/-- **No record is empty.** A blank-line run cannot manufacture a slot for `parseRecord`. -/
+theorem records_ne_nil (lines : List String) : ∀ g ∈ records lines, g ≠ [] := by
+  intro g hg
+  unfold records at hg
+  dsimp only at hg
+  split at hg
+  · exact foldl_records_ne_nil lines [] [] (by simp) g hg
+  · rcases List.mem_append.mp hg with h1 | h2
+    · exact foldl_records_ne_nil lines [] [] (by simp) g h1
+    · rename_i hne
+      rw [List.mem_singleton] at h2
+      subst h2
+      simpa using hne
+
+/-- **§Name at the record level.** Whatever a remote host sent, a parsed row's name has been
+through `sanitize` — so it is safe to interpolate into a socket path. `parse_names_valid` is
+this plus `mem_filterMap`; stating it here is what makes the guarantee a property of the
+record parser rather than of the listing walk. -/
+theorem parseRecord_name_valid {lines : List String} {r : RemoteRow}
+    (h : parseRecord lines = some r) : Valid r.name := by
+  unfold parseRecord at h
+  dsimp only at h
+  split at h
+  · exact absurd h (by simp)
+  · rename_i kv heq
+    simp only [Option.some.injEq] at h
+    subst h
+    exact sanitize_valid _
+
+/-! ## The duplicate report
+
+`checkHosts` rejects on `¬hosts.Nodup` but fills its message from `firstDupHost`. If the two
+could disagree the refusal would read `remote host '' listed more than once`, so what needs
+proving is that the walk and `Nodup` agree exactly — not that the walk is the gate. -/
+
+/-- The walk finds nothing only on a duplicate-free list. -/
+theorem firstDupHost_none {hosts : List String} (h : firstDupHost hosts = none) : hosts.Nodup := by
+  induction hosts with
+  | nil => exact List.nodup_nil
+  | cons a t ih =>
+    unfold firstDupHost at h
+    split at h
+    · exact absurd h (by simp)
+    · rename_i hc
+      exact List.nodup_cons.mpr ⟨fun hm => hc (List.contains_iff_mem.mpr hm), ih h⟩
+
+/-- …and it finds nothing on every duplicate-free list. -/
+theorem firstDupHost_none_of_nodup {hosts : List String} (h : hosts.Nodup) :
+    firstDupHost hosts = none := by
+  induction hosts with
+  | nil => rfl
+  | cons a t ih =>
+    obtain ⟨ha, ht⟩ := List.nodup_cons.mp h
+    show (if t.contains a then some a else firstDupHost t) = none
+    split
+    · rename_i hc
+      exact absurd (List.contains_iff_mem.mp hc) ha
+    · exact ih ht
+
+/-- **So the refusal always names an offender.** This is the claim the message depends on:
+`checkHosts` decided on `Nodup`, and this says `firstDupHost` cannot come back empty once
+that decision has gone against the caller. -/
+theorem firstDupHost_isSome_of_not_nodup {hosts : List String} (h : ¬hosts.Nodup) :
+    (firstDupHost hosts).isSome := by
+  cases hd : firstDupHost hosts with
+  | none => exact absurd (firstDupHost_none hd) h
+  | some _ => rfl
+
 end Linger.Core.Remote

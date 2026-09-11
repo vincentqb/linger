@@ -94,4 +94,13 @@ theorem sanitize_no_at (s : String) : ∀ c ∈ (sanitize s).toList, c ≠ '@' :
   obtain ⟨-, -, hok, -⟩ := sanitize_valid s
   exact okChar_no_at c (hok c hc)
 
+/-- **The length cap, said at the top level.** `Valid` carries `≤ maxLen` as a field and
+`sanitize_valid` proves `Valid`, so the bound was reachable but never stated — and it is the
+half every path caller depends on, because a sanitized name becomes a filename.
+
+Note what is *not* true and was tried: `sanitize` is not length-non-increasing. The empty
+name becomes `"_"`, so the only honest bound is against the cap, not against the input. -/
+theorem sanitize_length_le (s : String) : (sanitize s).toList.length ≤ maxLen :=
+  (sanitize_valid s).2.1
+
 end Linger.Core.Name

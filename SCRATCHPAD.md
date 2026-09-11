@@ -7267,3 +7267,42 @@ to HEAD; the whole step is one theorem file.
   wrong conclusion and require the type error. That worked cleanly for `crlf_scroll_sb`
   (claiming `.sb = v.sb` under its own hypotheses is a type mismatch) and for
   `scrollUpIn_rows` in Step 2.
+
+
+## coverage to zero — 2026-09-11 (every pure-core def now carries a claim)
+
+`E2E/Coverage.lean`'s `statementCap` went **15 → 0**, and the gate was break-verified at
+zero (a single added `def` in `Linger/Core/` exits 1 with `COVERAGE FAIL: … grew to 1 (cap
+0)`). `Linger/Core/` is unchanged by this round — it is 14 new theorems across
+`Theorems/{Vt,Terminal,Session,Name,Wire,Remote}.lean`.
+
+**What the sweep found is worth more than the number.**
+
+* **A cap named only inside a `def` or a `structure` field is invisible.** `csiCap`,
+  `oscCap` and `dcsCap` appear in `Scan.Bounded` (a `def`), and `maxClients` in `Bounded`
+  (a structure field) — so the gate never saw them, and neither would a reader hunting for
+  the claim. The fix is not cosmetic: the new `Scan.pending_le_caps` /
+  `feed_pending_le_caps` / `finish_pending_le_caps` chain states the caps as a bound on the
+  bytes that actually **leave the daemon** (`Scan.pending` is what `finish` flushes),
+  which is the §Bound content that was implicit.
+* **`maxClients` had no enforcement theorem at all.** `Bounded.clientsLe` says the
+  invariant holds and `step_bounded` says it survives; nothing said the client past the cap
+  is refused. `step_connected_refused` now pins error-frame **and** close — a silent drop
+  would leave a peer waiting on a socket that never answers — and
+  `step_connected_admitted` pins append (not prepend: `attachSeq` hands out the sizer role
+  by arrival order).
+* **`clampDim` was re-derived inline in four proofs and stated in none.** `clampDim_range`
+  and `clampDim_eq_self` (an iff — the reverse direction is what those four re-derive, the
+  forward one falsifies a clamp whose range slipped).
+* **One attempted claim was FALSE, and the compiler said so.** `sanitize` is not
+  length-non-increasing: the empty name becomes `"_"`. Dropped rather than patched, with the
+  reason left in the docstring of the bound that IS true (`sanitize_length_le`). Worth
+  remembering as the shape of the failure — a claim that will not close may be false, not
+  hard.
+* **Two module-system traps, both already recorded and both hit again.** A term-mode
+  `:= rfl` on a public theorem elaborates against the body-hidden view and fails; `:= by rfl`
+  works. And `decide` on a goal with free variables ("Expected type must not contain free
+  variables") wants `rfl` instead.
+* Declined deliberately: restating `Vt`'s own `2048` OSC accumulator cap as `dcsCap`. Same
+  numeral, different subsystem — `Terminal.oscCap` is 256. That would have been a false
+  claim dressed as a rename, and it is exactly what a name-matching sweep tempts you into.

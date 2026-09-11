@@ -282,6 +282,59 @@ structure Bounded (s : State) : Prop where
   decOk : ∀ c ∈ s.clients, c.decoder.errored = false ∧ c.decoder.buf.length ≤ 4 + Wire.maxPayload
   scanOk : s.scan.Bounded
 
+/-! ### The roster cap at the door
+
+`Bounded.clientsLe` names `maxClients`, and `step_bounded` preserves it — but both are
+about the invariant *surviving*, and neither says the refusal happens. These two do, and
+they are the only statements in the tree about the `.connected` handler. -/
+
+/-- **At the cap, the client is refused loudly and disconnected** — an error frame *and* a
+close. Not silently dropped, which would leave a peer waiting on a socket that will never
+answer, and not admitted, which would break the cap. -/
+theorem step_connected_refused (s : State) (id : Nat) (h : maxClients ≤ s.clients.length) :
+    step s (.connected id) =
+      (s, [Effect.send id (.err "too many clients".toUTF8.toList), Effect.close id]) := by
+  unfold step
+  dsimp only
+  rw [ite_eq_left (show s.clients.length ≥ maxClients from h)]
+
+/-- **Below the cap it is admitted, and appended.** Append rather than prepend is the whole
+of attach ordering: `attachSeq` hands out the sizer role by arrival, so a prepend would
+silently make the newest client the oldest. -/
+theorem step_connected_admitted (s : State) (id : Nat) (h : s.clients.length < maxClients) :
+    step s (.connected id) = ({ s with clients := s.clients ++ [{ id }] }, []) := by
+  unfold step
+  dsimp only
+  rw [ite_eq_right (show ¬(s.clients.length ≥ maxClients) from by omega)]
+
+/-! ### The checkpoint cadence
+
+`ckptIntervalMs` gates the periodic save. The runtime supplies `now`, but the decision is
+pure, so what the constant buys is statable here. -/
+
+/-- Below the cadence, or with nothing dirty, a tick checkpoints nothing. -/
+theorem step_tick_quiet (s : State) (now : UInt64)
+    (h : (s.dirty && decide (now ≥ s.lastCkptMs + ckptIntervalMs)) = false) :
+    (step s (.tick now)).2 = [] := by
+  unfold step
+  dsimp only
+  split
+  · rename_i hc
+    exact absurd (h.symm.trans hc) Bool.false_ne_true
+  · rfl
+
+/-- When it does fire: exactly one checkpoint, and **the clock re-arms to `now`** — which is
+what makes the cadence a rate rather than a one-time threshold. -/
+theorem step_tick_checkpoint (s : State) (now : UInt64)
+    (h : (s.dirty && decide (now ≥ s.lastCkptMs + ckptIntervalMs)) = true) :
+    (step s (.tick now)).2 = [Effect.checkpoint] ∧ (step s (.tick now)).1.lastCkptMs = now := by
+  unfold step
+  dsimp only
+  rw [ite_eq_left
+      (by
+        simp only [Bool.and_eq_true, decide_eq_true_eq] at h ⊢; simp [h])]
+  exact ⟨rfl, rfl⟩
+
 theorem setClient_length (s : State) (c : Client) :
     (s.setClient c).clients.length = s.clients.length := by simp [State.setClient]
 

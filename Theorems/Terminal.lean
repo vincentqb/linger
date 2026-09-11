@@ -440,4 +440,29 @@ theorem finish_exact (s : Scan) : finish s = (s.pending, .ground) := by rfl
 
 theorem finish_bounded (s : Scan) : (finish s).2.Bounded := by simp [finish, Scan.Bounded]
 
+/-! ### The caps, as a bound on emitted bytes
+
+`Scan.Bounded` names all three caps, and `feed_bounded` preserves it — but `Bounded` is a
+`def` over the *stored* field, so nothing so far states what the caps buy a **client**.
+`Scan.pending` is the run `finish` flushes into the broadcast, so these turn the invariant
+into a bound on bytes that actually leave the daemon. -/
+
+/-- **The caps bound the retained run**, from any bounded scanner. -/
+theorem Scan.pending_le_caps {s : Scan} (h : s.Bounded) :
+    s.pending.length ≤ max csiCap (max oscCap dcsCap) := by
+  cases s <;> simp_all [Scan.Bounded, Scan.pending, csiCap, oscCap, dcsCap] <;> omega
+
+/-- **…for every finite child-output stream.** However many megabytes of hostile output the
+child writes, the scanner is holding at most one cap's worth when the stream stops. -/
+theorem feed_pending_le_caps (v : Vt) (s : Scan) (bs : Bytes) (h : s.Bounded) :
+    (feed v s bs).scan.pending.length ≤ max csiCap (max oscCap dcsCap) :=
+  Scan.pending_le_caps (feed_bounded v s bs h)
+
+/-- **…and the flush the daemon broadcasts on child exit is bounded by the same.** This is
+the one a client can observe, which is why the chain ends here rather than at `Bounded`. -/
+theorem finish_pending_le_caps (s : Scan) (h : s.Bounded) :
+    (finish s).1.length ≤ max csiCap (max oscCap dcsCap) := by
+  rw [finish_exact]
+  exact Scan.pending_le_caps h
+
 end Linger.Core.Terminal

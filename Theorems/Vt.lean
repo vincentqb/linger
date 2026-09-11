@@ -5525,4 +5525,65 @@ theorem stick_step_so {v : Vt} (hg : v.pstate = .ground) :
       = { stick (v.abortUtf8 0x0E) with so := true } from rfl,
     stick_abortUtf8]
 
+/-! ## The clamp and the two tables, said out loud
+
+Three pure-core values the tree *used* everywhere and *stated* nowhere: every proof that
+needed them re-derived them inline, which is why `E2E/Coverage.lean` counted them as
+unclaimed surface. Each theorem below is the postcondition its callers were already
+assuming. -/
+
+/-- **A clamped dimension is a legal dimension, and above the cap it *is* the cap.** The
+second half is what makes `clampDim n + 1` the smallest value a caller must reject. -/
+theorem clampDim_range (n : Nat) :
+    1 ≤ clampDim n ∧ clampDim n ≤ 1000 ∧ (1000 ≤ n → clampDim n = 1000) := by
+  unfold clampDim
+  omega
+
+/-- …and it touches nothing already legal. The **iff** matters: the reverse direction is
+what four proofs re-derive by hand, and the forward one falsifies a clamp whose range
+slipped — `max n 1` alone satisfies the reverse and fails this. -/
+theorem clampDim_eq_self (n : Nat) : clampDim n = n ↔ 1 ≤ n ∧ n ≤ 1000 := by
+  unfold clampDim
+  omega
+
+/-- **Both constructors apply the clamp, and the grid they build is the clamped height.**
+`Good.resize` bounds the `rows` *field*; the grid proofs take `grid.size = rows` as a
+hypothesis. This is what connects the two. -/
+theorem init_shape (cols rows : Nat) :
+    (Vt.init cols rows).cols = clampDim cols ∧ (Vt.init cols rows).rows = clampDim rows ∧
+      (Vt.init cols rows).grid.size = clampDim rows :=
+  ⟨rfl, rfl, by simp [Vt.init]⟩
+
+/-- **A 256-colour parameter cannot escape the palette.** -/
+theorem color256_idx (n : Nat) : color256 n = Color.idx (UInt8.ofNat (min n 255)) := by rfl
+
+/-- …and it **saturates rather than wraps**, which is the whole reason the `min` is there:
+`UInt8.ofNat 256` is `0`, so without it `SGR 38;5;256` would silently select colour 0
+instead of 255. -/
+theorem color256_saturates : color256 256 = color256 255 := by rfl
+
+/-- **Line drawing is geometry-neutral.** Every source is a one-column ASCII glyph and so
+is every box character it maps to, so a charset designation cannot change a row's column
+accounting — the thing `CellOk.width` ties stored cells to. A mapping added into the wide
+or zero-width tables falsifies this. -/
+theorem charWidth_decLine (c : Char) : charWidth (decLine c) = charWidth c := by
+  unfold decLine
+  repeat' split
+  all_goals first
+    | rfl
+    | (subst_vars; decide)
+    | decide
+
+/-- **The `ByteArray` door is the same machine.** The daemon feeds the emulator
+`ByteArray`s; `feedBytes` is the adapter, and this says it adds nothing — so every §Chunk
+and §Bound theorem stated over `feed` covers the surface the runtime actually calls. -/
+theorem feedBytes_eq (v : Vt) (bytes : ByteArray) : v.feedBytes bytes = v.feed bytes.toList := by
+  rfl
+
+/-- **The SGR parameter list is the parsed array, exactly.** `Good.csiLe` bounds
+`params.size`; `sgrParams` is the list view `applySgr` consumes, so this is what carries the
+CSI parameter cap across into the pen. -/
+theorem sgrParams_length (s : CsiState) : s.sgrParams.length = s.params.size := by
+  rfl
+
 end Linger.Core.Vt

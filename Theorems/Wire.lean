@@ -530,4 +530,25 @@ theorem decode_encode_chunked (ms : List Msg) (hms : ∀ m ∈ ms, m.wf) (chunks
   rw [Decoder.feedAll_flatten _ _ (by simp), hc]
   simpa [decode] using decode_encode_stream ms hms
 
+/-- **`knownTag` is exactly the encoder's own tag range.** Every assigned constructor carries
+a known tag, so `Msg.wf`'s side condition on `.unknown` is the only thing standing between a
+forged `unknown` and a collision with a real message — which is what `decodeMsg_roundtrip`
+leans on. Stated over the constructors so a new one with an out-of-range tag fails here. -/
+theorem knownTag_tag_of_assigned (m : Msg) (h : ∀ t p, m ≠ .unknown t p) :
+    knownTag m.tag = true := by
+  cases m with
+  | unknown t p => exact absurd rfl (h t p)
+  | _ => rfl
+
+/-- …and an unassigned tag decodes to `unknown`, carrying its bytes forward untouched: the
+skip-don't-fail half of §Frame, now naming the predicate that defines it. -/
+theorem decodeMsg_unknown_of_not_knownTag (t : UInt8) (p : List UInt8) (h : knownTag t = false) :
+    decodeMsg t p = .unknown t p := by
+  have ht : ¬t ≤ 16 := by simpa [knownTag] using h
+  have ne : ∀ i : UInt8, i ≤ 16 → t ≠ i := fun i hi hEq => ht (hEq ▸ hi)
+  simp [decodeMsg, ne 0 (by decide), ne 1 (by decide), ne 2 (by decide), ne 3 (by decide),
+    ne 4 (by decide), ne 5 (by decide), ne 6 (by decide), ne 7 (by decide), ne 8 (by decide),
+    ne 9 (by decide), ne 10 (by decide), ne 11 (by decide), ne 12 (by decide), ne 13 (by decide),
+    ne 14 (by decide), ne 15 (by decide), ne 16 (by decide)]
+
 end Linger.Core.Wire

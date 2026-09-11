@@ -239,8 +239,18 @@ fresh pair of eyes.
   `parseLs`) and named in THEOREMS.md §Total; ratcheted
   (`RUNTIME_PARTIAL_CAP`). Don't add a fuel parameter to shed the
   keyword — that converts a hang into a silent drop.
-- **A proved pure value needs a grep gate to bite.** `Linger/Runtime/*` is
-  `IO`, so no theorem can see that the daemon calls `Linger.Core.Buf`
+- **Every pure-core def is named by a theorem statement, and the ratchet is now
+  zero** (`E2E/Coverage.lean`, `statementCap`, 2026-09-11). That flips its
+  meaning: it is no longer a budget to spend but an invariant to keep — a new
+  `Linger/Core` def arrives **with its claim, in the same commit**, or the gate
+  fails. Break-verified: adding one unclaimed def exits 1. Two lessons from
+  getting there. A cap named only inside a `def` or a `structure` field is
+  invisible both to the gate and to a reader looking for the claim — that is how
+  `csiCap`/`oscCap`/`dcsCap` (in `Scan.Bounded`) and `maxClients` (in `Bounded`)
+  hid, and how `maxClients`' *enforcement* ended up with no theorem at all. And
+  a claim that will not close may be false rather than hard: `sanitize` is not
+  length-non-increasing, because the empty name becomes `"_"`.
+- **A proved pure value needs a grep gate to bite.** `Linger/Runtime/*` is  `IO`, so no theorem can see that the daemon calls `Linger.Core.Buf`
   rather than open-coding the same sums — without the gate the theorems
   are arithmetic about a value nothing forces the runtime to use. Same
   species of oracle as `SHIM_CAP`. When you move a decision into Core,
