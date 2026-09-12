@@ -19,8 +19,10 @@ statements are byte-identical to what they were (checked line by line —
 below for what was built, what the spec had wrong, and the two decisions taken
 against its recommendation.
 
-**Next step:** Step 3's remaining half — `push_walk`, the flush, `sbRoom`. Step 3's tail
-and CRLF step landed 2026-09-11; Step 2 landed the same day. Records are below.
+**Next step:** Step 4 — the composition (`restore_sb_any` → `restore_sb_reachable` →
+`Resume.resume_sb`). Every piece it consumes is now in the tree: `push_walk`,
+`fixes_sb_paint_prefix`, `fixes_sb_regionAnsi`/`tabsAnsi`/`tail`, and `paint_rows`' `sb`
+conjunct. Records for Steps 2 and 3 are below.
 
 **Step 2 is COMPLETE** (2026-09-11). The positive scroll specification exists, zero
 emitter change: `scrollUpIn_rows`, `scrollUpIn_sb_push`, `scrollUpIn_sb_of_false`,
@@ -437,8 +439,8 @@ proof-only step must leave it.
 
 ### Step 3 — the scroll walk and the `Fixes (·.sb)` tail
 
-Status: **partly done (2026-09-11)** — the tail and the CRLF step landed; `push_walk`,
-the flush and `sbRoom` are the remaining work, and they are the hard half.
+Status: **partly done (2026-09-11)** — the tail, the CRLF step and `push_walk` have landed;
+what remains of the scrollback story is Step 4's composition.
 
 **Done ✓** — `Theorems/Render/Scrollback.lean`: `psBlind_sb`, `sb_moveTo`/`sb_enterAlt`/
 `sb_leaveAlt`, `sb_setMode` (unconditional in the mode number — `enterAlt`/`leaveAlt` swap
@@ -448,9 +450,35 @@ program), the `sb_csiDispatch_*` family (`cup`, `sgr`, `sm`, `rm`, `cha`, `tbc`,
 `modesAnsi`/`savedAnsi`/`titleAnsi`/`charsetAnsi`/`cursorAnsi`, `fixes_sb_regionAnsi`,
 `fixes_sb_tabsAnsi`, `fixes_sb_tail`, `crlf_scroll_step` and `crlf_scroll_sb`.
 
-**Remaining →** `push_walk`, the flush, `sbRoom`. `crlf_scroll_step`/`crlf_scroll_sb` are
-in the tree as the step the walk runs once per row, so what is left is the induction and
-its ring accumulator.
+**Remaining →** the flush and `sbRoom` are folded into `push_walk` (below); what is left of
+this step is nothing, and Step 4's composition is next.
+
+**`push_walk` ✓ (2026-09-11)** — and the statement this spec and I both wrote for it was
+**false**, which the skeleton stage caught before any proof effort went in. Two `CRLF`s
+starting from row 0 of a *five*-row receiver never reach `bot`, so nothing is pushed at all:
+the flush count is `v.rows`, but the number of pushes is `m + v.rows − w.rows`, and it
+equals `m` only when `w.rows = v.rows`. Three hypotheses were added on counterexamples, not
+on proof convenience:
+
+* `hrows : w.rows = v.rows` — the counterexample above.
+* `hstart : w.sb.start = 0` — a receiver with `start = 1` yields
+  `["OLD2","aa","bb","cc","OLD1"]` where the claim wants `["OLD2","OLD1","aa","bb","cc"]`.
+  `Ring.push` appends *inside* `toList` only from index 0.
+* `hroom : w.sb.size + (sbRows v).size ≤ sbCap` — a receiver already at `sbCap` yields
+  length 10000 against an expected 10003.
+
+`Good` permits both of the last two (it bounds only `size`), so neither is derivable — and
+after `ED 3` the Step-4 caller has `w.sb = {}` and discharges both, `hroom` from `Good v`
+plus `sbTake_prefix`. `Good v` was **dropped** as genuinely unused: nothing reads `v` but
+`v.cols`, `v.rows` and `sbRows v`, whose rows are `RowOk v.cols` unconditionally. The
+`rows = 1` case needed no special handling and no `rows ≥ 2` hypothesis, as required.
+
+Five proof breaks fire (flush at `v.rows ± 1`; each added hypothesis weakened to a
+tautology), and the count was independently checked by evaluation on a real pair: `v.rows`
+is the unique correct one, `+1` appends a spurious blank row and `−1` loses the newest
+history line. The conclusion compares against `(sbRows v).toList` — the emitter's own view —
+so it stays blind to bugs *inside* `sbRows`, exactly as this spec's "Where this stands"
+warns; the literal-anchored fixtures remain the oracle for the fit and the order.
 
 **Three corrections to this step's plan, from doing it.**
 

@@ -7306,3 +7306,55 @@ zero (a single added `def` in `Linger/Core/` exits 1 with `COVERAGE FAIL: … gr
 * Declined deliberately: restating `Vt`'s own `2048` OSC accumulator cap as `dcsCap`. Same
   numeral, different subsystem — `Terminal.oscCap` is 256. That would have been a false
   claim dressed as a rename, and it is exactly what a name-matching sweep tempts you into.
+
+
+## push_walk, ED 2, and the skeleton-first workflow — 2026-09-11
+
+**The workflow, because it earned its keep on the first try.** State the target and its
+stubs, `sorry` them, compile the skeleton, *then* spend effort. `sorry` cannot live in this
+tree (`gates.sh` greps it; `warningAsError` makes it fatal), so the stub stage runs in a
+scratch file compiled against the real build — `./lake env lean /tmp/…/Skeleton.lean` — and
+only green theorems move into `Theorems/`. Cost: minutes. Return: **it caught a false
+statement before anyone tried to prove it.**
+
+* **My `push_walk` statement was FALSE, and so was the spec's description of it.** Two
+  `CRLF`s from row 0 of a *five*-row receiver never reach `bot`, so nothing is pushed: the
+  flush count is `v.rows`, but the pushes are `m + v.rows − w.rows`, equal to `m` only when
+  `w.rows = v.rows`. Had this been attacked proof-first, the effort would have gone into
+  proving something untrue.
+* Two more hypotheses came from counterexamples rather than from the proof fighting back:
+  `w.sb.start = 0` (a ring with `start = 1` interleaves the pushed rows wrongly —
+  `["OLD2","aa","bb","cc","OLD1"]`) and `w.sb.size + (sbRows v).size ≤ sbCap` (a ring at
+  `sbCap` rotates instead of appending). `Good` bounds only `size`, so it implies neither;
+  the Step-4 caller gets both free from `ED 3`.
+* `Good v` was **dropped** from the statement as genuinely unused — an unused binder in a
+  stated theorem is a small lie about what the claim needs.
+* `rows = 1` needed no special case and no `rows ≥ 2` hypothesis, which was the standing
+  requirement (`8dc61a4` fought to remove that restriction and this had to not re-introduce
+  it).
+
+**The ED-3 obligation is false, not hard — refuted, not assumed.** `fixes_csiNum`'s dispatch
+obligation is `∀ w t`, and at `0x4A` that is refutable: `(v.eraseScreen 3).sb = ({} : Ring)`
+by `rfl`, so a `v` with a non-empty ring is a counterexample. Hence the **digit bridge** is
+mandatory for `ED 2`, and it existed only at `π := (·.grid)`
+(`keeps_csi_digits_tail`). It is now generalized over `π` (`fixes_csi_digits_tail`,
+`fixes_csiNum_arg`), mirroring what `csi_tail_proj` does for the unconditional walk.
+`fixes_csiNum` is *not* redundant: it admits `n = 0`, which the bridge cannot (`arg_of_one`
+needs `0 < n`). The generic bridge could not go beside its grid original in `Keeps.lean`
+because `PsBlind` is defined *downstream* in `Modes.lean` — the same file-order reason
+`csi_tail_proj`'s docstring already records for the copy it did not collapse.
+
+**A real gap, one byte wide:** `prologueAnsi` emits `SI` (`0x0F`), and the family only had
+`SO` (`0x0E`, which `charsetAnsi` emits). `fixes_sb_shiftIn` closes it; substituting the `SO`
+lemma fails with `Fixes … [14]` against expected `[15]`. Near-misses like this are why the
+prologue got its own theorem instead of an assumption.
+
+**Module-system trap, third sighting, and it bit at integration rather than in the agent's
+scratch file:** a term-mode `:= rfl` on a **public** theorem cannot unfold an unexposed def
+("This theorem is exported from the current module…"). `joinCRLF_cons2` and `sb_eraseRowSpan`
+both needed `:= by rfl` / a tactic block. Anything proved in a plain scratch file will
+compile there and fail on arrival — check `:= rfl`s when landing external proof text.
+
+Axioms verified rather than assumed: `#print axioms` on `push_walk`, `fixes_sb_ed2`,
+`fixes_sb_prologueAnsi`, `fixes_sb_tail`, `crlf_scroll_sb` → `[propext, Classical.choice,
+Quot.sound]`; `sb_eraseScreen_two` → none. No `sorryAx` anywhere.

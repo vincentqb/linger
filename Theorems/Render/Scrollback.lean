@@ -564,3 +564,672 @@ theorem crlf_scroll_sb {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0)
       unfold Vt.getRow; rw [frame_carriageReturn]]
 
 end Linger.Core.Render
+
+/-! ## `ED 2` keeps the ring — and why the generic CSI walk cannot say so
+
+`fixes_csiNum`'s dispatch obligation is quantified over **every** `CsiState`, and at
+`final = 0x4A` that obligation is false: `eraseScreen 3` sets `sb := {}`. So `ED 2` needs the
+emitted parameter identified with the parsed one — the repo's "digit bridge", which existed
+only at `π := (·.grid)` (`keeps_csi_digits_tail`). It is generalized over `π` below, the same
+move `csi_tail_proj` makes for the unconditional walk.
+
+`fixes_csiNum` is **not** made redundant by the bridge form: it takes an unconditional
+obligation and admits `n = 0`, which the bridge cannot (`arg_of_one` needs `0 < n`). -/
+
+namespace Linger.Core.Vt
+
+theorem sb_eraseRowSpan (v : Vt) (y f t : Nat) : (v.eraseRowSpan y f t).sb = v.sb := by
+  unfold Vt.eraseRowSpan
+  dsimp only
+
+theorem foldl_eraseRowSpan_sb :
+    ∀ (l : List Nat) (v : Vt), (l.foldl (fun v' y => v'.eraseRowSpan y 0 v'.cols) v).sb = v.sb
+  | [], _ => rfl
+  | i :: is, v => by
+    rw [List.foldl_cons, foldl_eraseRowSpan_sb is (v.eraseRowSpan i 0 v.cols), sb_eraseRowSpan]
+
+/-- **`ED 2` clears cells and keeps history**, which is the whole difference between it and
+`ED 3` and the reason `restore` can start with a clean slate without discarding the ring it
+is about to replay. -/
+theorem sb_eraseScreen_two (v : Vt) : (v.eraseScreen 2).sb = v.sb := by
+  rw [eraseScreen_two_eq]
+  exact foldl_eraseRowSpan_sb _ v
+
+end Linger.Core.Vt
+
+namespace Linger.Core.Render
+
+open Linger.Core.Vt
+
+/-! ### The digit bridge, for any projection -/
+
+theorem fixes_csi_digits_tail {α : Type} {π : Vt → α} (hb : PsBlind π) (n : Nat) (final : UInt8)
+    (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E) (hn : 0 < n) (hlt : n < 65535)
+    (hπ : ∀ (w : Vt) (t : CsiState), t.arg 0 0 = n → π (w.csiDispatch t final) = π w) {v : Vt}
+    {s : CsiState} (hg : v.pstate = .csi s) (hu : v.u8need = 0) (hi : s.inter = 0)
+    (hcur : s.cur = 0) (hpar : s.params = #[]) :
+    (v.feed (digits n ++ [final])).pstate = .ground ∧
+      (v.feed (digits n ++ [final])).u8need = 0 ∧ π (v.feed (digits n ++ [final])) = π v := by
+  obtain ⟨s', heq, hcur', hhave, hpar', hint, -⟩ := csi_digits_run_eq n hg hu hcur
+  rw [show ∀ (w : Vt), w.feed (digits n ++ [final]) = (w.feed (digits n)).feed [final] from fun w =>
+      by simp [Vt.feed, List.foldl_append]]
+  rw [heq, show ∀ (w : Vt), w.feed [final] = w.step final from fun _ => rfl]
+  rw [csi_final_step_eq final rfl (by simpa using hu)
+      (by
+        rw [hint]; exact hi)
+      h1 h2]
+  unfold Vt.csiFinish
+  rw [ite_eq_left (by simpa using hhave),
+    ite_eq_right
+      (by
+        rw [hpar', hpar]; simp)]
+  dsimp only
+  refine
+    ⟨rfl, by
+      rw [un_csiDispatch]; simpa using hu, ?_⟩
+  have harg :
+    ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState).arg 0 0 =
+      n := by
+    rw [show
+        ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState) =
+          { s' with params := #[(n, s'.curSub)] }
+        from by
+        rw [hpar', hpar, hcur']
+        rw [show min (min n 65535) 65535 = n from by omega]
+        rfl]
+    rw [arg_of_one, ite_eq_right (by omega)]
+  rw [hb _ PState.ground, hπ _ _ harg, hb v (PState.csi s')]
+
+theorem fixes_csiNum_arg {α : Type} {π : Vt → α} (hb : PsBlind π) (n : Nat) (final : UInt8)
+    (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E) (hn : 0 < n) (hlt : n < 65535)
+    (hπ : ∀ (w : Vt) (t : CsiState), t.arg 0 0 = n → π (w.csiDispatch t final) = π w) :
+    Fixes π (csiNum n final) := by
+  intro v hg hu
+  rw [show csiNum n final = [0x1B, 0x5B] ++ (digits n ++ [final]) from by
+      unfold csiNum csiB; simp]
+  rw [show
+      ∀ (w : Vt),
+        w.feed ([0x1B, 0x5B] ++ (digits n ++ [final])) =
+          (w.feed [0x1B, 0x5B]).feed (digits n ++ [final])
+      from fun w => by simp [Vt.feed, List.foldl_append]]
+  rw [keeps_csi_open hg hu]
+  obtain ⟨hp', hu', hπ'⟩ :=
+    fixes_csi_digits_tail hb n final h1 h2 hn hlt hπ (v := { v with pstate := .csi {} }) rfl
+      (by simpa using hu) rfl rfl rfl
+  exact ⟨hp', hu', by rw [hπ', hb v (PState.csi {})]⟩
+
+theorem sb_csiDispatch_ed2 (v : Vt) (s : CsiState) (ha : s.arg 0 0 = 2) :
+    (v.csiDispatch s 0x4A).sb = v.sb := by
+  by_cases hi : s.ignore = true
+  · simp [Vt.csiDispatch, hi]
+  · unfold Vt.csiDispatch
+    rw [ite_eq_right hi]
+    show (v.eraseScreen (s.arg 0 0)).sb = v.sb
+    rw [ha, sb_eraseScreen_two]
+
+theorem fixes_sb_ed2 : Fixes (fun v : Vt => v.sb) (csiNum 2 0x4A) :=
+  fixes_csiNum_arg psBlind_sb 2 0x4A (by decide) (by decide) (by omega) (by omega)
+    (fun w t ha => sb_csiDispatch_ed2 w t ha)
+
+/-- `SI` (shift in). `fixes_sb_shiftOut` is `SO` (`0x0E`), which `charsetAnsi` emits; the
+prologue emits this one, and the near-miss is a real gap rather than a rename. -/
+theorem fixes_sb_shiftIn : Fixes (fun v : Vt => v.sb) [0x0F] := by
+  intro v hg hu
+  rw [show ∀ (w : Vt), w.feed [(0x0F : UInt8)] = w.step 0x0F from fun _ => rfl]
+  rw [step_of_ground_quiet (0x0F : UInt8) hg hu]
+  show _ ∧ _ ∧ _
+  unfold Vt.stepGround
+  rw [ite_eq_right (by decide), ite_eq_left (by decide)]
+  unfold Vt.ctl
+  exact ⟨hg, by simpa using hu, rfl⟩
+
+/-- **The prologue keeps the ring.** Nine stages, and every byte is inside the family: no
+`J`, no `RIS` (`0x63`, which clears the ring), no `IND`/`NEL`/`RI` (`0x44`/`0x45`/`0x4D`,
+which scroll). -/
+theorem fixes_sb_prologueAnsi (v : Vt) : Fixes (fun v : Vt => v.sb) (prologueAnsi v) := by
+  unfold prologueAnsi
+  refine Fixes.append ?_ fixes_sb_shiftIn
+  refine Fixes.append ?_ (fixes_sb_escCharset 0x29 0x42 (by decide))
+  refine Fixes.append ?_ (fixes_sb_escCharset 0x28 0x42 (by decide))
+  refine
+    Fixes.append ?_
+      (fixes_csiNum2 psBlind_sb 1 v.rows 0x72 (by decide) (by decide) sb_csiDispatch_stbm)
+  refine Fixes.append ?_ (fixes_sb_modeSet 7 true)
+  refine Fixes.append ?_ (fixes_sb_modeSet 6 false)
+  refine Fixes.append ?_ (fixes_csiNum psBlind_sb 4 0x6C (by decide) (by decide) sb_csiDispatch_rm)
+  exact (fixes_sb_escSeq 0x5C (by decide)).append (fixes_sb_modeSet 1049 false)
+
+/-- **The whole clear-and-paint prefix keeps the ring** — the prefix `ascii_paint_prefix`
+quotes, which is what lets Step 4 walk past it in one rewrite. -/
+theorem fixes_sb_paint_prefix (v : Vt) :
+    Fixes (fun v : Vt => v.sb) (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A) :=
+  ((fixes_sb_prologueAnsi v).append
+        (fixes_csiNum psBlind_sb 0 0x6D (by decide) (by decide) sb_csiDispatch_sgr)).append
+    fixes_sb_ed2
+
+/-- The history walk's byte stream, one unit per row: paint the row, then a `CRLF`. -/
+def pushBytes : List Row → Pen → Bytes
+  | [], _ => []
+  | r :: rs, p => (rowAnsi r p).1 ++ crlfB ++ pushBytes rs (rowAnsi r p).2
+
+theorem joinCRLF_cons2 (b c : Bytes) (bs : List Bytes) :
+    joinCRLF (b :: c :: bs) = b ++ crlfB ++ joinCRLF (c :: bs) := by rfl
+
+/-- **The flush's first `CRLF` completes the walk.** `joinCRLF` omits the trailing separator,
+so the first of the `v.rows` flushing `CRLF`s is the last row's own pushing one — which is
+what makes the walk uniform and `rows = 1` need no special case. -/
+theorem pushBytes_eq :
+    ∀ (rs : List Row) (p : Pen), rs ≠ [] → pushBytes rs p = joinCRLF (rowsAnsi rs p) ++ crlfB
+  | [], _, h => absurd rfl h
+  | [r], p, _ => by
+    show
+      (rowAnsi r p).1 ++ crlfB ++ pushBytes [] (rowAnsi r p).2 = joinCRLF [(rowAnsi r p).1] ++ crlfB
+    show (rowAnsi r p).1 ++ crlfB ++ [] = (rowAnsi r p).1 ++ crlfB
+    simp
+  | r :: r' :: rs, p, _ => by
+    show
+      (rowAnsi r p).1 ++ crlfB ++ pushBytes (r' :: rs) (rowAnsi r p).2 =
+        joinCRLF (rowsAnsi (r :: r' :: rs) p) ++ crlfB
+    rw [pushBytes_eq (r' :: rs) (rowAnsi r p).2 (by simp),
+      show rowsAnsi (r :: r' :: rs) p = (rowAnsi r p).1 :: rowsAnsi (r' :: rs) (rowAnsi r p).2 from
+        rfl,
+      show
+        rowsAnsi (r' :: rs) (rowAnsi r p).2 =
+          (rowAnsi r' (rowAnsi r p).2).1 :: rowsAnsi rs (rowAnsi r' (rowAnsi r p).2).2
+        from rfl,
+      joinCRLF_cons2]
+    simp only [List.append_assoc]
+
+theorem flatten_replicate_crlfB_add (a b : Nat) :
+    (List.replicate (a + b) crlfB).flatten =
+      (List.replicate a crlfB).flatten ++ (List.replicate b crlfB).flatten := by
+  induction a with
+  | zero => simp
+  | succ n ih =>
+    simp only [Nat.succ_add, List.replicate_succ, List.flatten_cons, ih, List.append_assoc]
+
+structure Painted (cols rows : Nat) (L B : List Row) (off D Y : Nat) (p : Pen) (u : Vt) : Prop where
+  colsEq : u.cols = cols
+  rowsEq : u.rows = rows
+  top : u.top = 0
+  bot : u.bot = rows - 1
+  alt : u.altGrid = none
+  ground : u.pstate = .ground
+  u8need : u.u8need = 0
+  u8acc : u.u8acc = 0
+  ins : u.modes.insert = false
+  wrap : u.modes.wrap = true
+  g0 : u.g0Line = false
+  g1 : u.g1Line = false
+  cury : u.cursor.y = Y
+  pen : u.pen = p
+  gsz : u.grid.size = rows
+  rlens : ∀ y', (u.getRow y').size = cols
+  known : ∀ y', y' < D → u.getRow y' = L.getD (off + y') default
+  dle : D ≤ rows
+  ylt : Y < rows
+  sbStart : u.sb.start = 0
+  sbData : u.sb.data.toList = B ++ L.take off
+  sum : off + D ≤ L.length
+
+structure Pushing (cols rows : Nat) (L B : List Row) (off D Y : Nat) (p : Pen) (u : Vt) :
+    Prop extends Painted cols rows L B off D Y p u where
+  curx : u.cursor.x = 0
+  cpend : u.cursor.pending = false
+
+/-- Rows a paint left alone are the same rows. -/
+theorem row_eq_of_offRow {y y' : Nat} {u u' : Vt} (hO : OffRow y u u') (hne : y' ≠ y)
+    (hlt : y' < u.grid.size) : u'.getRow y' = u.getRow y' := by
+  apply Array.ext
+  · exact hO.sizes y'
+  · intro i hi1 hi2
+    show (u'.getRow y')[i] = (u.getRow y')[i]
+    rw [show (u'.getRow y')[i] = u'.getCell i y' from (getD_lt' _ i default hi1).symm,
+      show (u.getRow y')[i] = u.getCell i y' from (getD_lt' _ i default hi2).symm]
+    exact hO.cells i y' hne hlt
+
+/-- **The paint of one history row.** At the frontier (`D = Y`) the receiver paints row `Y`
+with `L[off + Y]`; the row walk's `OffRow`/`SMap` layers carry every other field, the ring
+included (`OffRow.sb`). -/
+theorem pushing_paint {cols rows : Nat} {L B : List Row} {off Y : Nat} {p : Pen} {u : Vt} {r : Row}
+    (hcb : cols < 65533) (hpos : 0 < cols) (hP : Pushing cols rows L B off Y Y p u)
+    (hrok : RowOk cols r) (hval : r = L.getD (off + Y) default) (hsum : off + (Y + 1) ≤ L.length) :
+    Painted cols rows L B off (Y + 1) Y (rowAnsi r p).2 (u.feed (rowAnsi r p).1) := by
+  have hrow_u : RowOk u.cols r := by
+    rw [hP.colsEq]; exact hrok
+  have hgsY : Y < u.grid.size := by
+    rw [hP.gsz]; exact hP.ylt
+  have hm0 : Matches u { x := 0, y := Y, pen := p, pending := false } r 0 :=
+    matches_zero hP.curx hP.cury hP.cpend hP.pen hP.ground hP.u8need hP.u8acc hP.ins hP.wrap hP.g0
+      hP.g1 (by rw [hP.rlens Y, hP.colsEq]) hgsY
+  obtain ⟨pd, hM, hO⟩ :=
+    rowAnsi_writes_row hrow_u
+      (by
+        rw [hP.colsEq]; exact hcb)
+      (by
+        rw [hP.colsEq]; exact hpos)
+      hm0
+  have hrowY : (u.feed (rowAnsi r p).1).getRow Y = r :=
+    row_eq_of_paint (cols := u.cols) hO.cols hrow_u hM
+  have hstick : stick (u.feed (rowAnsi r p).1) = stick u := (smap_id_rowAnsi r p u hP.ground).2
+  have hylt := hP.ylt
+  refine
+    ⟨?_, ?_, ?_, ?_, ?_, hM.ground, hM.u8need, hM.u8acc, hM.ins, hM.wrap, ?_, ?_, hM.curY, hM.pen,
+      ?_, ?_, ?_, by omega, hylt, ?_, ?_, hsum⟩
+  · rw [hO.cols]; exact hP.colsEq
+  · have := congrArg Sticky.rows hstick; rw [stick_rows, stick_rows] at this
+    rw [this]; exact hP.rowsEq
+  · have := congrArg Sticky.top hstick; rw [stick_top, stick_top] at this
+    rw [this]; exact hP.top
+  · have := congrArg Sticky.bot hstick; rw [stick_bot, stick_bot] at this
+    rw [this]; exact hP.bot
+  · have h : (u.feed (rowAnsi r p).1).altGrid.isSome = false := by
+      have := congrArg Sticky.alt hstick; rw [stick_alt, stick_alt] at this
+      rw [this, hP.alt]; rfl
+    exact
+      Option.not_isSome_iff_eq_none.mp
+        (by
+          rw [h]; simp)
+  · have := congrArg Sticky.g0 hstick; rw [stick_g0, stick_g0] at this
+    rw [this]; exact hP.g0
+  · have := congrArg Sticky.g1 hstick; rw [stick_g1, stick_g1] at this
+    rw [this]; exact hP.g1
+  · rw [hO.gridSize]; exact hP.gsz
+  · intro y'; rw [hO.sizes y']; exact hP.rlens y'
+  · intro y' hy'
+    rcases Nat.lt_or_ge y' Y with h | h
+    · rw [row_eq_of_offRow hO (by omega)
+          (by
+            rw [hP.gsz]; omega)]
+      exact hP.known y' h
+    · have hyY : y' = Y := by omega
+      subst hyY
+      rw [hrowY, hval]
+  · rw [hO.sb]; exact hP.sbStart
+  · rw [hO.sb]; exact hP.sbData
+
+/-- **The interior `CRLF`.** Above the region bottom the line feed only moves the cursor
+down, so nothing but the cursor changes — `off` and `D` are untouched. -/
+theorem painted_crlf_down {cols rows : Nat} {L B : List Row} {off D Y : Nat} {p : Pen} {u : Vt}
+    (hP : Painted cols rows L B off D Y p u) (hy : Y < rows - 1) :
+    Pushing cols rows L B off D (Y + 1) p (u.feed crlfB) := by
+  have hylt := hP.ylt
+  have hcury := hP.cury
+  have hrowsEq := hP.rowsEq
+  have hstate :
+    u.feed crlfB = { u with cursor := { x := 0, y := u.cursor.y + 1, pending := false } } := by
+    rw [show (crlfB : Bytes) = [0x0D, 0x0A] from rfl,
+      crlf_step hP.ground hP.u8need
+        (by
+          rw [hP.cury, hP.bot]; omega)
+        (by
+          rw [hP.bot, hP.rowsEq]; omega)]
+  rw [hstate]
+  exact
+    ⟨⟨hP.colsEq, hP.rowsEq, hP.top, hP.bot, hP.alt, hP.ground, hP.u8need, hP.u8acc, hP.ins, hP.wrap,
+        hP.g0, hP.g1, by
+        show u.cursor.y + 1 = Y + 1
+        omega, hP.pen, hP.gsz, hP.rlens, hP.known, hP.dle, by omega, hP.sbStart, hP.sbData, hP.sum⟩,
+      rfl, rfl⟩
+
+/-- **The `CRLF` at the region bottom.** It scrolls: the oldest on-screen history row is
+pushed into the receiver's ring (`off + 1`), the rest shift up by one (`D - 1`), and the
+cursor stays where it is. No index arithmetic — row `y'` becomes what row `y' + 1` was. -/
+theorem painted_crlf_push {cols rows : Nat} {L B : List Row} {off D Y : Nat} {p : Pen} {u : Vt}
+    (hroom : B.length + L.length ≤ sbCap) (hP : Painted cols rows L B off D Y p u)
+    (hy : Y = rows - 1) (hD : 1 ≤ D) :
+    Pushing cols rows L B (off + 1) (D - 1) Y p (u.feed crlfB) := by
+  have hylt := hP.ylt
+  have hdle := hP.dle
+  have hsum := hP.sum
+  have hoff : off < L.length := by omega
+  have hcrRow : ∀ z, u.carriageReturn.getRow z = u.getRow z := fun z => by
+    unfold Vt.getRow; rw [frame_carriageReturn]
+  have hcrGsz : u.carriageReturn.grid.size = rows := by
+    rw [show u.carriageReturn.grid = u.grid from by rw [frame_carriageReturn]]; exact hP.gsz
+  have hsu : u.carriageReturn.scrollUp = u.carriageReturn.scrollUpIn 0 (rows - 1) true := by
+    unfold Vt.scrollUp
+    rw [show u.carriageReturn.top = 0 from by
+        rw [frame_carriageReturn]; exact hP.top,
+      show u.carriageReturn.bot = rows - 1 from by
+        rw [frame_carriageReturn]; exact hP.bot]
+  have hsbEq : (u.carriageReturn.scrollUpIn 0 (rows - 1) true).sb = u.sb.push (u.getRow 0) := by
+    rw [scrollUpIn_sb_push u.carriageReturn (rows - 1)
+        (by
+          rw [show u.carriageReturn.rows = rows from by
+              rw [frame_carriageReturn]; exact hP.rowsEq])
+        (by
+          rw [frame_carriageReturn]; exact hP.alt),
+      show u.carriageReturn.sb = u.sb from by rw [frame_carriageReturn], hcrRow 0]
+  obtain ⟨hshift, hvac, hout⟩ :=
+    scrollUpIn_rows u.carriageReturn 0 (rows - 1) true (by omega)
+      (by
+        rw [hcrGsz]; omega)
+  have hGsz : (u.carriageReturn.scrollUpIn 0 (rows - 1) true).grid.size = rows := by
+    rw [grid_scrollUpIn, Array.size_setIfInBounds, size_foldl_setRange]; exact hcrGsz
+  have hstate :
+    u.feed crlfB =
+      { u with
+        cursor := { x := 0, y := u.cursor.y, pending := false }
+        grid := (u.carriageReturn.scrollUpIn 0 (rows - 1) true).grid
+        sb := u.sb.push (u.getRow 0) } := by
+    rw [show (crlfB : Bytes) = [0x0D, 0x0A] from rfl,
+      crlf_scroll_step hP.ground hP.u8need (by rw [hP.cury, hP.bot, hy]), hsu, frame_scrollUpIn,
+      hsbEq]
+    rfl
+  have hrowEq :
+    ∀ y', (u.feed crlfB).getRow y' = (u.carriageReturn.scrollUpIn 0 (rows - 1) true).getRow y' := by
+    intro y'
+    unfold Vt.getRow
+    rw [hstate,
+      show (u.carriageReturn.scrollUpIn 0 (rows - 1) true).cols = u.cols from by
+        rw [frame_scrollUpIn, frame_carriageReturn],
+      show (u.carriageReturn.scrollUpIn 0 (rows - 1) true).pen = u.pen from by
+        rw [frame_scrollUpIn, frame_carriageReturn]]
+  have hsize : u.sb.data.size = B.length + off := by
+    rw [show u.sb.data.size = u.sb.data.toList.length from by simp, hP.sbData]
+    simp only [List.length_append, List.length_take]
+    omega
+  have hcap : u.sb.data.size < sbCap := by
+    rw [hsize]; omega
+  obtain ⟨hpd, hps⟩ := ring_push_data (r := u.sb) (u.getRow 0) hcap
+  refine
+    ⟨⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, by omega, hylt, ?_, ?_, by
+        omega⟩,
+      ?_, ?_⟩
+  · rw [hstate]; exact hP.colsEq
+  · rw [hstate]; exact hP.rowsEq
+  · rw [hstate]; exact hP.top
+  · rw [hstate]; exact hP.bot
+  · rw [hstate]; exact hP.alt
+  · rw [hstate]; exact hP.ground
+  · rw [hstate]; exact hP.u8need
+  · rw [hstate]; exact hP.u8acc
+  · rw [hstate]; exact hP.ins
+  · rw [hstate]; exact hP.wrap
+  · rw [hstate]; exact hP.g0
+  · rw [hstate]; exact hP.g1
+  · rw [hstate]; exact hP.cury
+  · rw [hstate]; exact hP.pen
+  · rw [hstate]; exact hGsz
+  · intro y'
+    rw [hrowEq y']
+    rcases Nat.lt_trichotomy y' (rows - 1) with h | h | h
+    · rw [hshift y' (Nat.zero_le _) h, hcrRow (y' + 1)]; exact hP.rlens (y' + 1)
+    · subst h
+      rw [hvac,
+        show (blankRow u.carriageReturn.cols u.carriageReturn.pen).size = u.cols from by
+          simp [blankRow, show u.carriageReturn.cols = u.cols from by rw [frame_carriageReturn]]]
+      exact hP.colsEq
+    · rw [hout y' (Or.inr h), hcrRow y']; exact hP.rlens y'
+  · intro y' hy'
+    rw [hrowEq y', hshift y' (Nat.zero_le _) (by omega), hcrRow (y' + 1),
+      hP.known (y' + 1) (by omega), show off + (y' + 1) = off + 1 + y' from by omega]
+  · rw [hstate]
+    show (u.sb.push (u.getRow 0)).start = 0
+    rw [hps]; exact hP.sbStart
+  · rw [hstate]
+    show (u.sb.push (u.getRow 0)).data.toList = B ++ L.take (off + 1)
+    rw [hpd]
+    simp only [Array.toList_push]
+    rw [hP.sbData, hP.known 0 (by omega), Nat.add_zero, take_succ_getD L off hoff,
+      List.append_assoc]
+  · rw [hstate]
+  · rw [hstate]
+
+/-! ### The three inductions -/
+
+/-- **The row walk.** Each unit paints one history row and pushes it down by a `CRLF`; the
+`CRLF` either descends (`Y < bot`, `off` and `D` unchanged) or scrolls (`Y = bot`, one row
+evicted). Either way the frontier invariant `D = Y` comes back, so the two phases are one
+induction and no height is special. -/
+theorem push_units {cols rows : Nat} {L B : List Row} (hcb : cols < 65533) (hpos : 0 < cols)
+    (hroom : B.length + L.length ≤ sbCap) :
+    ∀ (rs : List Row) (off Y : Nat) (p : Pen) (u : Vt),
+      Pushing cols rows L B off Y Y p u →
+        off + Y + rs.length = L.length →
+        (∀ i (hi : i < rs.length), RowOk cols rs[i]) →
+        (∀ i (hi : i < rs.length), rs[i] = L.getD (off + Y + i) default) →
+        ∃ off' Y' p',
+          Pushing cols rows L B off' Y' Y' p' (u.feed (pushBytes rs p)) ∧ off' + Y' = L.length
+  | [], off, Y, p, u, hP, hlen, _, _ =>
+    ⟨off, Y, p, by
+      show Pushing cols rows L B off Y Y p (u.feed [])
+      rw [show u.feed ([] : Bytes) = u from rfl]
+      exact hP, by simpa using hlen⟩
+  | r :: rs, off, Y, p, u, hP, hlen, hrok, hval => by
+    have hlen' : off + Y + rs.length + 1 = L.length := by
+      simp only [List.length_cons] at hlen; omega
+    have hylt := hP.ylt
+    have hr0 : r = L.getD (off + Y) default := by
+      have := hval 0 (by simp)
+      simpa using this
+    have hrok0 : RowOk cols r := by
+      have := hrok 0 (by simp)
+      simpa using this
+    have hpaint : Painted cols rows L B off (Y + 1) Y (rowAnsi r p).2 (u.feed (rowAnsi r p).1) :=
+      pushing_paint hcb hpos hP hrok0 hr0 (by omega)
+    rw [show pushBytes (r :: rs) p = (rowAnsi r p).1 ++ crlfB ++ pushBytes rs (rowAnsi r p).2 from
+        rfl,
+      feed_append, feed_append]
+    rcases Nat.lt_or_ge Y (rows - 1) with hlt | hge
+    · have hstep := painted_crlf_down hpaint hlt
+      exact
+        push_units hcb hpos hroom rs off (Y + 1) (rowAnsi r p).2 _ hstep (by omega)
+          (fun i hi => by
+            have :=
+              hrok (i + 1)
+                (by
+                  simp only [List.length_cons]; omega)
+            simpa using this)
+          (fun i hi => by
+            have :=
+              hval (i + 1)
+                (by
+                  simp only [List.length_cons]; omega)
+            rw [show off + Y + (i + 1) = off + (Y + 1) + i from by omega] at this
+            simpa using this)
+    · have hYb : Y = rows - 1 := by omega
+      have hstep := painted_crlf_push hroom hpaint hYb (by omega)
+      rw [show Y + 1 - 1 = Y from by omega] at hstep
+      exact
+        push_units hcb hpos hroom rs (off + 1) Y (rowAnsi r p).2 _ hstep (by omega)
+          (fun i hi => by
+            have :=
+              hrok (i + 1)
+                (by
+                  simp only [List.length_cons]; omega)
+            simpa using this)
+          (fun i hi => by
+            have :=
+              hval (i + 1)
+                (by
+                  simp only [List.length_cons]; omega)
+            rw [show off + Y + (i + 1) = off + 1 + Y + i from by omega] at this
+            simpa using this)
+
+/-- **The flush, phase one.** From above the region bottom, a `CRLF` only walks the cursor
+down; nothing is evicted. -/
+theorem push_descend {cols rows : Nat} {L B : List Row} :
+    ∀ (j off D Y : Nat) (p : Pen) (u : Vt),
+      Pushing cols rows L B off D Y p u →
+        Y + j ≤ rows - 1 →
+        Pushing cols rows L B off D (Y + j) p (u.feed (List.replicate j crlfB).flatten)
+  | 0, _, _, Y, _, u, hP, _ => by
+    rw [show (List.replicate 0 crlfB).flatten = ([] : Bytes) from rfl,
+      show u.feed ([] : Bytes) = u from rfl, Nat.add_zero]
+    exact hP
+  | j + 1, off, D, Y, p, u, hP, hle => by
+    have hstep := painted_crlf_down hP.toPainted (by omega)
+    have := push_descend j off D (Y + 1) p _ hstep (by omega)
+    rw [show Y + (j + 1) = Y + 1 + j from by omega]
+    rw [show (List.replicate (j + 1) crlfB).flatten = crlfB ++ (List.replicate j crlfB).flatten from
+        by simp [List.replicate_succ],
+      feed_append]
+    exact this
+
+/-- **The flush, phase two.** At the region bottom every `CRLF` evicts the oldest on-screen
+history row into the receiver's ring. -/
+theorem push_evict {cols rows : Nat} {L B : List Row} (hroom : B.length + L.length ≤ sbCap) :
+    ∀ (j off D : Nat) (p : Pen) (u : Vt),
+      Pushing cols rows L B off D (rows - 1) p u →
+        j ≤ D →
+        Pushing cols rows L B (off + j) (D - j) (rows - 1) p
+          (u.feed (List.replicate j crlfB).flatten)
+  | 0, off, D, _, u, hP, _ => by
+    rw [show (List.replicate 0 crlfB).flatten = ([] : Bytes) from rfl,
+      show u.feed ([] : Bytes) = u from rfl, Nat.add_zero, Nat.sub_zero]
+    exact hP
+  | j + 1, off, D, p, u, hP, hle => by
+    have hstep := painted_crlf_push hroom hP.toPainted rfl (by omega)
+    have := push_evict hroom j (off + 1) (D - 1) p _ hstep (by omega)
+    rw [show off + (j + 1) = off + 1 + j from by omega, show D - (j + 1) = D - 1 - j from by omega]
+    rw [show (List.replicate (j + 1) crlfB).flatten = crlfB ++ (List.replicate j crlfB).flatten from
+        by simp [List.replicate_succ],
+      feed_append]
+    exact this
+
+/-! ### The claim -/
+
+/-- Every row the history stage paints is `RowOk` at the session's width, with **no**
+hypothesis: `sbTake` fuses `fitRow` in and `rowOk_fitRow` is unconditional. This is what
+keeps a `v.sb` hypothesis out of the walk. -/
+theorem rowOk_mem_sbRows (v : Vt) : ∀ r ∈ (sbRows v).toList, RowOk v.cols r := by
+  intro r hr
+  rw [show (sbRows v).toList = (sbTake v.cols sbReplayBytes v.sb.toList.reverse).reverse from by
+      unfold sbRows; simp] at hr
+  rw [sbTake_prefix v.cols sbReplayBytes v.sb.toList.reverse] at hr
+  rw [List.mem_reverse] at hr
+  obtain ⟨q, -, hq⟩ := List.mem_map.mp hr
+  rw [← hq]
+  exact rowOk_fitRow q v.cols
+
+/-- **The walk, from the stage's entry state.** The row units push `L` into the ring one row
+at a time and the `rows - 1` remaining flush `CRLF`s drain whatever is still on screen; the
+two together evict exactly `L`, oldest first. -/
+theorem push_run {cols rows : Nat} {L B : List Row} {u : Vt} (hcb : cols < 65533) (hpos : 0 < cols)
+    (hroom : B.length + L.length ≤ sbCap) (hP : Pushing cols rows L B 0 0 0 {} u)
+    (hrok : ∀ i (hi : i < L.length), RowOk cols L[i]) :
+    (u.feed (pushBytes L {} ++ (List.replicate (rows - 1) crlfB).flatten)).sb.toList = B ++ L := by
+  obtain ⟨off', Y', p', hP', hsum'⟩ :=
+    push_units hcb hpos hroom L 0 0 {} u hP (by simp) hrok
+      (fun i hi => by simp [List.getElem?_eq_getElem hi])
+  have hylt := hP'.ylt
+  have hd := push_descend ((rows - 1) - Y') off' Y' Y' p' _ hP' (by omega)
+  rw [show Y' + ((rows - 1) - Y') = rows - 1 from by omega] at hd
+  have he := push_evict hroom Y' off' Y' p' _ hd (Nat.le_refl _)
+  rw [Nat.sub_self] at he
+  rw [feed_append,
+    show
+      (List.replicate (rows - 1) crlfB).flatten =
+        (List.replicate ((rows - 1) - Y') crlfB).flatten ++ (List.replicate Y' crlfB).flatten
+      from by rw [← flatten_replicate_crlfB_add, show rows - 1 - Y' + Y' = rows - 1 from by omega],
+    feed_append, ring_toList_of_start_zero he.sbStart, he.sbData,
+    show L.take (off' + Y') = L from List.take_of_length_le (by omega)]
+
+/-- **`push_walk`.** Painting the fitted history rows and then flushing with `v.rows` CRLFs
+pushes exactly those rows into the receiver's ring, oldest first.
+
+The hypotheses are the state `scrollback_entry` hands the stage — a full-screen scroll
+region on the main screen, a quiesced decoder, autowrap on, IRM and DECOM off, ASCII
+charsets — plus the two the ring needs: the receiver never wrapped (`ED 3` leaves
+`start = 0`) and the push has room, which after `ED 3` is `(sbRows v).size ≤ sbCap` from
+`Good v` and `sbTake_prefix`. `rows = 1` is not a special case: at one row every `CRLF`
+evicts, and the walk's frontier invariant is vacuous there rather than absent. -/
+theorem push_walk (v w : Vt) (hw : Good w) (hren : Renderable w) (hcols : w.cols = v.cols)
+    (hrows : w.rows = v.rows) (halt : w.altGrid = none) (htop : w.top = 0)
+    (hbot : w.bot = v.rows - 1) (hgr : w.pstate = .ground) (hun : w.u8need = 0) (hua : w.u8acc = 0)
+    (hins : w.modes.insert = false) (hwrap : w.modes.wrap = true) (horg : w.modes.origin = false)
+    (hz0 : w.g0Line = false) (hz1 : w.g1Line = false) (hstart : w.sb.start = 0)
+    (hroom : w.sb.size + (sbRows v).size ≤ sbCap) (hne : (sbRows v).isEmpty = false) :
+    (w.feed (gridAnsi (sbRows v) ++ (List.replicate v.rows crlfB).flatten)).sb.toList =
+      w.sb.toList ++ (sbRows v).toList := by
+  have hposc : 0 < v.cols := by
+    rw [← hcols]; exact hw.colsPos
+  have hcb : v.cols < 65533 := by
+    have := hw.colsLe; rw [hcols] at this; omega
+  have hposr : 0 < v.rows := by
+    rw [← hrows]; exact hw.rowsPos
+  have hLne : (sbRows v).toList ≠ [] := by
+    simp at hne
+    simpa using hne
+  -- the stream, split at the stage's two joints
+  have hcrlfsplit :
+    (List.replicate v.rows crlfB).flatten =
+      crlfB ++ (List.replicate (v.rows - 1) crlfB).flatten := by
+    obtain ⟨k, hk⟩ : ∃ k, v.rows = k + 1 := ⟨v.rows - 1, by omega⟩
+    rw [hk]
+    simp [List.replicate_succ]
+  have hbytes :
+    gridAnsi (sbRows v) ++ (List.replicate v.rows crlfB).flatten =
+      csiNum 0 0x6D ++ (csiB ++ [0x48]) ++
+        (pushBytes (sbRows v).toList {} ++ (List.replicate (v.rows - 1) crlfB).flatten) := by
+    rw [gridAnsi_eq, hcrlfsplit, pushBytes_eq _ {} hLne]
+    simp only [List.append_assoc]
+  -- the entry state: reset the pen, home the cursor
+  have hsgr : w.feed (csiNum 0 0x6D) = { w with pen := {} } := by
+    rw [show csiNum 0 0x6D = sgrOf [0] from by simp [csiNum, sgrOf, joinSemi],
+      sgrOf_feed [0] (by decide) (by decide) (by decide) hgr hun,
+      show penAfter w.pen [0] = ({} : Pen) from by simp [penAfter, sgrParamsOf, Vt.applySgr.go]]
+  have hu1 :
+    w.feed (csiNum 0 0x6D ++ (csiB ++ [0x48])) =
+      (({ w with pen := ({} : Pen) } : Vt)).moveTo 0 0 := by
+    rw [feed_append, hsgr, home_feed_eq (v := { w with pen := ({} : Pen) }) hgr hun]
+  have hcur := home_places_cursor (v := { w with pen := ({} : Pen) }) hgr hun horg
+  rw [home_feed_eq (v := { w with pen := ({} : Pen) }) hgr hun] at hcur
+  have hrlw : ∀ (P : Pen) (y' : Nat), ((({ w with pen := P } : Vt)).getRow y').size = v.cols := by
+    intro P y'
+    obtain ⟨-, hrok⟩ := hren.main
+    show (w.grid.getD y' (blankRow w.cols P)).size = v.cols
+    by_cases hy : y' < w.grid.size
+    · rw [getD_lt' w.grid y' (blankRow w.cols P) hy]
+      have h := (hrok y').size
+      rw [getD_lt' w.grid y' (blankRow w.cols {}) hy] at h
+      rw [h]; exact hcols
+    · rw [Array.getD, dite_eq_right hy]
+      show (blankRow w.cols P).size = v.cols
+      rw [show (blankRow w.cols P).size = w.cols from by simp [blankRow]]; exact hcols
+  have hP :
+    Pushing v.cols v.rows (sbRows v).toList w.sb.data.toList 0 0 0 {}
+      (w.feed (csiNum 0 0x6D ++ (csiB ++ [0x48]))) := by
+    rw [hu1]
+    refine
+      ⟨⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, hcur.2.1, ?_, ?_, ?_, fun y' h =>
+          absurd h (by omega), by omega, hposr, ?_, ?_, by simp⟩,
+        hcur.1, hcur.2.2⟩
+    · rw [frame_moveTo]; exact hcols
+    · rw [frame_moveTo]; exact hrows
+    · rw [frame_moveTo]; exact htop
+    · rw [frame_moveTo]; exact hbot
+    · rw [frame_moveTo]; exact halt
+    · rw [frame_moveTo]; exact hgr
+    · rw [frame_moveTo]; exact hun
+    · rw [frame_moveTo]; exact hua
+    · rw [frame_moveTo]; exact hins
+    · rw [frame_moveTo]; exact hwrap
+    · rw [frame_moveTo]; exact hz0
+    · rw [frame_moveTo]; exact hz1
+    · rw [frame_moveTo]
+    · rw [frame_moveTo]
+      show w.grid.size = v.rows
+      obtain ⟨hgsz, -⟩ := hren.main
+      rw [hgsz]; exact hrows
+    · intro y'
+      rw [show
+          ((({ w with pen := ({} : Pen) } : Vt)).moveTo 0 0).getRow y' =
+            (({ w with pen := ({} : Pen) } : Vt)).getRow y'
+          from by
+          unfold Vt.getRow; rw [frame_moveTo]]
+      exact hrlw {} y'
+    · rw [frame_moveTo]; exact hstart
+    · rw [frame_moveTo]; simp
+  have hroom' : (w.sb.data.toList).length + ((sbRows v).toList).length ≤ sbCap := by
+    rw [show (w.sb.data.toList).length = w.sb.size from by simp [Ring.size],
+      show ((sbRows v).toList).length = (sbRows v).size from by simp]
+    exact hroom
+  rw [hbytes, feed_append,
+    push_run (cols := v.cols) (rows := v.rows) hcb hposc hroom' hP
+      (fun i hi => rowOk_mem_sbRows v _ (List.getElem_mem hi)),
+    ring_toList_of_start_zero hstart]
+
+end Linger.Core.Render
