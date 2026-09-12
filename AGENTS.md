@@ -36,15 +36,24 @@ it rotted in this file already.
 
 ## Where things stand — read this first after any compaction
 
-1. **One spec is live in `specs/`: `scrollback-fidelity.md`.** Step 1 is done
-   (2026-08-19) — a reattach paints the session's ring into the receiver's own
-   scrollback, and the flagship screen statements came through byte-identical.
-   Step 2 (the positive scroll specification, zero emitter change) is next.
-   Read its "Where this stands" before anything else: it names the two things
-   a resuming agent must not re-derive (`replayEq`'s `sb` conjunct is blind to
-   bugs *inside* `sbRows` — the literal-anchored fixtures are the oracle for
-   the fit and the order — and the twelve mode bytes ending `scrollbackAnsi`
-   are behaviourally inert but proof-load-bearing).
+1. **One spec is in flight: `specs/scrollback-fidelity.md`.** Steps 1–3 are done
+   (2026-09-11: the emitter, the positive scroll specification, the `Fixes (·.sb)`
+   tail, and `push_walk`). **Step 4 — the composition (`restore_sb_any` →
+   `restore_sb_reachable` → `Resume.resume_sb`) — is next**, and every piece it
+   consumes is now in the tree. Read its "Where this stands" before anything
+   else: it names the two things not to re-derive (`replayEq`'s `sb` conjunct is
+   blind to bugs *inside* `sbRows` — the literal-anchored fixtures are the oracle
+   for the fit and the order — and the twelve mode bytes ending `scrollbackAnsi`
+   are behaviourally inert but proof-load-bearing), and its Step 3 record carries
+   the corrected `push_walk` statement plus why `gridAnsi` can never be a
+   `Fixes (·.sb)` lemma.
+   `specs/vt-toolkit.md` is **queued, not started** — a second file in `specs/`,
+   deliberately: it exists so its measured facts (the seal's 211-site blast
+   radius, of which exactly one is real code; the reachability harvest that
+   already exists as `LiveReachableVt`; and the tested negative result that Lake
+   cannot gate an import closure inside one package) are not re-derived, and so
+   the seal-before-harvest ordering is on the record. Do not start it while
+   Step 4 is open.
    Everything else is closed and lives in `specs/archive/`; each file records
    its completion. The records carry the nuance this list used to duplicate,
    and the duplicates rotted. (There is no `PLAN.md`: its prior-art links live
@@ -201,7 +210,14 @@ fresh pair of eyes.
 - Session names pass through `Linger.Core.Name.sanitize` before touching
   any path. Never interpolate raw names into socket/checkpoint paths.
 - `./tests/e2e.sh` is the gate before any commit that touches the
-  runtime; it must stay green and warning-free.
+  runtime; it must stay green and warning-free. **Run it in the
+  foreground.** A job started with `&` gets SIGINT and SIGQUIT *blocked*
+  (measured: `SigBlk 0x6`), the mask survives `execve`, and every
+  descendant inherits it — including the session shell the daemon spawns.
+  The agent suite's `^C` assertion then fails for a reason that has
+  nothing to do with linger, and it looks exactly like a flake: it passes
+  standalone every time. `setsid` and `nohup` alone are harmless; the `&`
+  is what does it. Cost an hour on 2026-09-11 before the mask was measured.
 - **`Tests/` and `tests/` are two tracked directories** (Lean unit tests
   vs. the e2e orchestrator). On a case-insensitive filesystem they are
   one directory on disk and git will silently record a new `tests/x` as

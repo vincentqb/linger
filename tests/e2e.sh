@@ -20,6 +20,13 @@
 #  (1) also covers Tests/Fuzz.lean: randomized §Replay round-trip search
 #  every pty suite also carries a CHECK-COUNT FLOOR (see `suite` below): green
 #  means "no failures AND at least N assertions actually ran".
+#
+# RUN THIS IN THE FOREGROUND. A shell without job control sets SIGINT and SIGQUIT
+# BLOCKED in a job started with `&` (measured: SigBlk 0x6), and a signal mask
+# survives execve — so every descendant, including the session shell the daemon
+# spawns and the child it runs, inherits the block. The agent suite's `^C`
+# assertion then fails for a reason that has nothing to do with linger. `setsid`
+# and `nohup` are fine on their own; it is the `&` that does it.
 set -e
 cd "$(dirname "$0")/.."
 
@@ -120,7 +127,7 @@ say "11. status column (unread / seen transitions)"
 suite status 5
 
 say "12. agent verbs (info / capture / send - / resize)"
-suite agent 24
+suite agent 25
 
 say "13. watch (read-only mirror: geometry, keyboard, hand-back, seen)"
 suite watch 17

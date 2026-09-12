@@ -7358,3 +7358,146 @@ compile there and fail on arrival — check `:= rfl`s when landing external proo
 Axioms verified rather than assumed: `#print axioms` on `push_walk`, `fixes_sb_ed2`,
 `fixes_sb_prologueAnsi`, `fixes_sb_tail`, `crlf_scroll_sb` → `[propext, Classical.choice,
 Quot.sound]`; `sb_eraseScreen_two` → none. No `sorryAx` anywhere.
+
+
+## the toolkit skeleton — what the sorry-first pass proved was already there — 2026-09-11
+
+Second run of the write-with-`sorry` → prove → implement workflow, this time aimed at the
+**VT toolkit** rather than at scrollback. The skeleton (`/tmp/sb-skeleton/Toolkit.lean`, never
+in the tree — `gates.sh` greps for `sorry` and `warningAsError` would fail it) stated the
+claims a sealed, standalone emulator *ought* to carry. Three of the seven stubs came back not
+as proofs but as findings, which is the point of stating before proving.
+
+**The reachability harvest was already harvested.** The skeleton opened an inductive
+`Reachable` with `init`/`feed`/`resize` constructors, on the assumption that the tree had no
+such thing. It does: `LiveReachableVt` (`Theorems/Vt.lean:4438`) has those three *plus*
+`quiesce`, and `good_of_liveReachable` / `renderable_of_liveReachable` /
+`u8Ok_of_liveReachable` already discharge exactly the hypotheses the skeleton wanted to
+discharge. A new inductive would have been a strict sub-relation under a different name —
+the worst kind of duplicate, because both would typecheck and only one would be used. **Do
+not add `Reachable`.** Recorded in `specs/vt-toolkit.md` under measured facts so the next
+pass does not re-open it.
+
+**One stub was a real strengthening, and it was to a flagship.**
+`Render.restore_grid_reachable` carried `hun : w.u8need = 0` — and reachability does not give
+that: `((Vt.init 80 24).feed [0xC3]).u8need = 1`, so a client holding a UTF-8 lead byte is
+perfectly reachable and the theorem did not apply to it. The hypothesis was an artefact of the
+*proof*, not of the claim: `restore` opens with `ESC` (`restore_cons`), and `abortUtf8`
+discards a pending sequence on a stray `ESC`, so the receiver's decoder state cannot survive
+the first byte of the replay. Four small lemmas make that argument (`restore_cons`,
+`zeroed_eq`, `abort_esc`, `step_esc_eq`, composed by `feed_restore_zeroed`) and the
+hypothesis is gone from the statement rather than being satisfied by the caller.
+
+`U8Ok` is **not** removable the same way, and the asymmetry is the interesting part:
+`abortUtf8` zeroes `u8need` but leaves `u8acc` alone, so a state with `u8need = 0` and
+`u8acc ≠ 0` normalises to itself and is *not* the zeroed state. `U8Ok` is what rules that out,
+and it comes free from `u8Ok_of_liveReachable` — an assumption about a cooperative client
+became a fact about every client there is. Fixture in `Tests/Vt.lean` pins the mid-character
+state so the reason the hypothesis went is visible from the test file, not only from the
+proof.
+
+The strengthening was made **in place** rather than as a new `restore_grid_reachable'`: only
+docstrings referenced `hun`, no theorem consumed it, so there was nothing to migrate. A
+strictly weaker hypothesis set on the same name is the honest edit; a primed twin would have
+left two flagships and a question about which one is current.
+
+**Lake cannot gate an import closure inside one package — tested, not assumed.** The
+toolkit's whole selling point is that `Vt`/`Render`/`Terminal` reach nothing else, and the
+obvious enforcement is a `lean_lib` with restricted `roots`. It does not work: Lake resolves
+imports through one package-wide `LEAN_PATH`, so a module outside the `roots` set still
+compiles when imported. A scratch two-lib package confirmed it. The failure mode only exists
+across a *package* boundary, which needs a path `require` — and `gates.sh` already forbids
+those to keep README's no-external-dependencies promise honest. So the closure lands as a
+`lean_lib` (positive: the closure elaborates) plus a source grep (negative: nothing else is
+imported), which is the `SHIM_CAP` species of oracle — evadeable by editing the list on
+purpose, not by reverting a fix.
+
+**The seal's blast radius, measured by brace-matched scan over every tracked `.lean`: 211
+sites, 210 free.** 204 are in `Theorems/**` (already `module` files, one `import all` line
+each), 6 in two legacy `Tests/` files, and **exactly one is real code** —
+`Linger/Core/Checkpoint.lean:296-299`, where `rVt` builds a `Vt` field-by-field out of decoded
+bytes. `Vt.mk` and anonymous-constructor forges: zero hits anywhere; `Linger/Runtime/**`,
+`Main.lean`, `E2E/**` and `Posix.lean` touch a `Vt` only through `init`/`resize`/`feed`. The
+shipping runtime pays nothing for the seal, which is what makes it cheap — and the one site
+that does pay is precisely the one the seal most wants to bite, since a corrupt on-disk record
+is how `cols := 0` would reach the emulator. It wants a smart constructor, **not** an
+`import all` friend escape: the escape would keep the forge and lose the reason for sealing.
+
+`specs/vt-toolkit.md` is queued, not started, and says so in its status line — Step 4 of
+scrollback-fidelity is the item in flight and the one-item rule stands. The spec exists now
+because these four facts are expensive to re-measure and cheap to write down.
+
+**Two docstrings went stale the moment the hypothesis did, and only a consumer grep found
+them.** `Theorems/Render/Grid.lean`'s §`restore_grid_any` header said `hua`/`hun` were
+"satisfied by any receiver that got where it is by being fed bytes (`restore_grid_reachable`
+supplies it)" — now false in the interesting half: reachability supplies `hua` (via `U8Ok`)
+and *cannot* supply `hun`. THEOREMS.md A5 carried the same shape twice: the grid sentence, and
+a contrast in the **tabs** sentence ("unlike the grid this claim needs no `u8need`/`U8Ok`
+apparatus") which was accurate about tabs and stale about the grid. Nothing compiled
+differently for either. Dropping a hypothesis is a documentation edit as much as a proof edit;
+`git grep <theorem name> -- '*.lean' '*.md'` is the cheap check and it is not optional.
+
+**The formatter will not keep a record update on one line, and the type ascription is not
+why.** `{ w with u8need := 0, u8acc := 0 }` comes back split across three lines in every
+position, and `({… } : Vt).step 0x1B` across four. Removing the ascriptions (tried) changes
+nothing. A `private abbrev` would fix the layout and cannot be used: it would appear in the
+signature of a public theorem. The formatter's output is accepted here rather than worked
+around — it is a gate (`lean-fmt check`), the layout is consistent with the other 70 files,
+and buying prettier plumbing with a new exported name in the API is the wrong trade.
+
+Axioms verified rather than assumed, and the guess was wrong twice — worth the habit:
+`restore_grid_reachable`, `feed_restore_zeroed`, `step_esc_eq`, `restore_cons` →
+`[propext, Classical.choice, Quot.sound]`; `abort_esc` → `[propext, Quot.sound]` (no choice);
+`zeroed_eq` → none. `restore_cons` was predicted axiom-free because it ends in `rfl`, and
+`unfold` through the emitter is what pulls the triple in. No `sorryAx`.
+
+
+## `&` blocks SIGINT, and the agent suite is where you find out — 2026-09-11
+
+Not a flake, not a timing bug, and not linger's: **a job started with `&` has SIGINT and
+SIGQUIT blocked** (measured, `/proc/self/status`: `SigBlk 0000000000000006`, bits for signals
+2 and 3), a signal mask **survives `execve`**, and so every descendant inherits it — the `e2e`
+binary, the daemon, the session shell the daemon spawns on the pty, and the child that shell
+runs. `^C` then generates a SIGINT that stays pending forever and kills nothing. `E2E.Agent`'s
+`send - carries ^C` assertion is the only check in the tree that can see this, so it is the one
+that fails.
+
+It looks *exactly* like a flake, which is why it cost an hour: two failures inside
+`setsid nohup ./tests/e2e.sh … &`, five passes standalone, no source change between them. The
+things that turned out **not** to matter, each tested rather than reasoned about: `setsid` on
+its own (passes), `nohup` on its own (passes — it ignores SIGHUP, `SigIgn 0x1`, not SIGINT),
+a preceding `status` suite, a preceding `attach` suite, a cold `rm -rf .lake/build` rebuild,
+and running the suite four times in a row. Only `&` reproduces.
+
+The measurement that ended it was two lines, and it should have been the first move rather
+than the sixth: `grep SigIgn /proc/self/status` in the foreground and again under `&`.
+Comparing masks is cheap; enumerating environmental hypotheses is not.
+
+Recorded in three places because the trap is *encouraged* by the surrounding advice — the rule
+"run `./tests/e2e.sh` before any commit that touches the runtime" meets the habit of
+backgrounding a ten-minute command: `AGENTS.md` (the gate rule now says run it in the
+foreground and why), the header of `tests/e2e.sh`, and the comment on the assertion itself. CI
+runs it in the foreground, so CI was never affected.
+
+**What the investigation left behind, kept because it is better and not because it was needed:**
+
+* `E2E.waitFor ms p` in `E2E/Harness.lean` — poll a predicate to a deadline, for assertions
+  that wait for something to **appear**. Same `while` + `monotonicMs` shape as
+  `Env.cliTimeout`, so no `partial def` and `E2E_PARTIAL_CAP` does not move. It replaces a
+  fixed `IO.sleep` with something that stops when the marker lands and still fails on a real
+  regression, just at the end of the budget. Explicitly **not** for negative assertions:
+  polling for a change that should never arrive returns on the first look and proves nothing,
+  so "a refused resize moved nothing" keeps its fixed settle time.
+* The `^C` step now makes its child **announce itself** — `sh -c 'echo RUN""NING-NOW; sleep
+  100'` — and waits for that before sending the byte, with the announcement as its own
+  assertion (floor 24 → **25**). That check is the discriminator that made the diagnosis
+  possible: "the child never started" and "^C did not reach it" were one failure message
+  before, and the second is what was actually happening. The `""` split is the trick the
+  neighbouring assertion already used — the tty echoes typed input, so a marker asserted on
+  the *typed* text passes even when nothing ran.
+* Break-verified both, as the rule requires: needle → `INTERRUPTED-NOPE` fails the ^C check
+  and spends the full 5 s budget doing it (22 s suite vs 17 s green, so the poll genuinely
+  polls); needle → `RUNNING-NEVER` fails the new announce check *while the ^C check still
+  passes*, which is the discrimination working in the direction it was added for.
+
+`./tests/e2e.sh` in the foreground: `E2E OK`, ten suites, `agent: 25 checks (floor 25)`.

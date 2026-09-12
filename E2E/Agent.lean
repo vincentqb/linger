@@ -170,27 +170,50 @@ def run : IO UInt32 := do
   -- not contain — the tty echoes typed input onto the screen, so asserting on
   -- the typed text would pass even if the newline was lost and nothing ran.
   let src ← sendStdin e "ag" "echo \"GOT-$((40+2))\"\n"
-  IO.sleep 1200
   f :=
     f +
       (←
-        expect (src == 0 && has (← e.out #["capture", "ag"]) "GOT-42")
+        expect
+            (src == 0 &&
+              (←
+                waitFor 4000
+                    (do
+                      return has (← e.out #["capture", "ag"]) "GOT-42")))
             "send - delivers bytes verbatim (newline included: it ran)")
   -- a control byte works: ^C interrupts a foreground child, after which the
   -- queued next line is read and runs (same trick: the typed line says
   -- INTER""RUPTED-OK, only the executed output says INTERRUPTED-OK)
-  let _ ← e.cli #["run", "ag", "sleep", "100"]
-  IO.sleep 1000
-  let _ ← sendStdin e "ag" "\x03"
-  IO.sleep 500
-  let _ ← e.cli #["run", "ag", "echo", "INTER\"\"RUPTED-OK"]
-  IO.sleep 1200
+  --
+  -- The child ANNOUNCES itself and the suite waits for that rather than sleeping a
+  -- fixed second, so a slow host cannot make this look like a broken `^C`. The
+  -- extra check is a discriminator: "the child never started" and "^C did not reach
+  -- it" are different bugs, and separating them is what identified the one
+  -- environment that breaks this assertion — a `&`-launched `./tests/e2e.sh`, whose
+  -- whole process tree has SIGINT BLOCKED (see the header of tests/e2e.sh). The
+  -- signal mask survives execve, so the session's shell and this child inherit it
+  -- and no `^C` can ever kill anything. Run the gate in the FOREGROUND.
+  let _ ← e.cli #["run", "ag", "sh -c 'echo RUN\"\"NING-NOW; sleep 100'"]
   f :=
     f +
       (←
-        expect (has (← e.out #["capture", "ag"]) "INTERRUPTED-OK")
-            "send - carries ^C (the sleep died, the shell came back)")
-  -- empty stdin is a clean no-op
+        expect
+            (←
+              waitFor 5000
+                  (do
+                    return has (← e.out #["capture", "ag"]) "RUNNING-NOW"))
+            "send - the foreground child is up (the ^C below has something to interrupt)")
+  let _ ← sendStdin e "ag" "\x03"
+  IO.sleep 500
+  let _ ← e.cli #["run", "ag", "echo", "INTER\"\"RUPTED-OK"]
+  f :=
+    f +
+      (←
+        expect
+            (←
+              waitFor 5000
+                  (do
+                    return has (← e.out #["capture", "ag"]) "INTERRUPTED-OK"))
+            "send - carries ^C (the foreground child died, the shell came back)")
   f := f + (← expect ((← sendStdin e "ag" "") == 0) "send - with empty stdin exits 0")
   f := f + (← expect ((← sendStdin e "nosuch" "x") == 1) "send - on a missing session exits 1")
   e.killAll #["ag"]

@@ -200,6 +200,13 @@ example :
       true := by
   native_decide
 
+/-- **A reachable client can be mid-character.** This is the fixture behind dropping
+`u8need = 0` from `Render.restore_grid_reachable`: being fed a UTF-8 lead byte is an
+ordinary thing for a live terminal to have happened to it, so reachability does *not*
+supply that hypothesis — and the claim holds anyway, because `restore` opens with `ESC`
+and `abortUtf8` discards the pending sequence. -/
+example : (((Vt.init 80 24).feed [0xC3]).u8need == 1) = true := by native_decide
+
 /-- ED 3 wipes scrollback. -/
 example :
           (let v := screen 5 2 "1\r\n2\r\n3\r\n4\x1b[3J"

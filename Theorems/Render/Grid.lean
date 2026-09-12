@@ -1782,8 +1782,9 @@ theorem scrollback_entry {u v : Vt} (hgood : Good u) (hren : Renderable u) (hcol
 
 The composition. `screensAnsi` has two branches; on the main screen it is exactly
 `gridAnsi v.grid`, so `paint_entry` + `gridAnsi_writes_grid` + `restore_grid_of_paint` close
-it. `hua`/`hun` are the decoder precondition — real, and satisfied by any receiver that got
-where it is by being fed bytes (`restore_grid_reachable` supplies it). -/
+it. `hua`/`hun` are the decoder precondition — real here, and **not** hypotheses of
+`restore_grid_reachable`: reachability supplies `hua` via `U8Ok`, and `hun` is discharged by
+the stream itself (`feed_restore_zeroed`, since `restore` opens with `ESC`). -/
 
 /-- **The grid, restored into any client — main screen.** For a session not on the alt
 screen, feeding `restore v` to any `Good`/`Renderable` receiver of the session's dimensions
@@ -2178,19 +2179,92 @@ theorem restore_grid_any (v w : Vt) (hgood : Good w) (hren : Renderable w) (hcol
   | some (mainGrid, mcur, mpen) =>
     exact restore_grid_any_alt v w hgood hren hcols hrows hua hun halt hfits hpos hub hvren hvsz
 
+/-! ### The receiver's decoder is not a hypothesis — the stream's own first byte resets it
+
+`restore_grid_reachable` used to carry `hun : w.u8need = 0`, and reachability does **not**
+supply it: `((Vt.init 80 24).feed [0xC3]).u8need = 1`, so a client holding a UTF-8 lead byte
+is perfectly reachable. The hypothesis was an artefact of the proof, not of the claim —
+`restore` begins with `ESC`, and `abortUtf8` discards a pending sequence on a stray `ESC`.
+So the receiver may be mid-character and the repaint still lands.
+
+`U8Ok` is still load-bearing and cannot be dropped: `abortUtf8` zeroes `u8need` but leaves a
+stale `u8acc` alone, so without `U8Ok` the normalised state is not the zeroed one. It comes
+free from reachability (`u8Ok_of_liveReachable`), which is the difference between an
+assumption about a cooperative client and a fact about every client there is. -/
+
+theorem restore_cons (v : Vt) : restore v = 0x1B :: (restore v).tail := by
+  unfold restore restoreBody prologueAnsi escSeq escB
+  rfl
+
+theorem zeroed_eq {w : Vt} (h0 : w.u8need = 0) (ha : w.u8acc = 0) :
+    { w with
+        u8need := 0, u8acc := 0 } =
+      w := by
+  cases w
+  subst h0
+  subst ha
+  rfl
+
+/-- **`ESC` normalises the decoder, uniformly.** -/
+theorem abort_esc {w : Vt} (hok : U8Ok w) :
+    w.abortUtf8 0x1B =
+      { w with
+        u8need := 0, u8acc := 0 } := by
+  unfold Vt.abortUtf8
+  by_cases hn : 0 < w.u8need
+  · rw [ite_eq_left (by simp [hn])]
+  · have h0 : w.u8need = 0 := by omega
+    rw [ite_eq_right (by simp [h0])]
+    exact (zeroed_eq h0 (hok h0)).symm
+
+theorem step_esc_eq {w : Vt} (hok : U8Ok w) :
+    w.step 0x1B =
+      ({ w with
+            u8need := 0, u8acc := 0 }).step
+        0x1B := by
+  have h1 := abort_esc hok
+  have h2 :
+    ({ w with
+            u8need := 0, u8acc := 0 }).abortUtf8
+        0x1B =
+      { w with
+        u8need := 0, u8acc := 0 } := by
+    unfold Vt.abortUtf8
+    rw [ite_eq_right (by simp)]
+  unfold Vt.step
+  dsimp only
+  rw [h1, h2]
+
+/-- **A `restore` replay does not care what the receiver's decoder was holding.** -/
+theorem feed_restore_zeroed (v w : Vt) (hok : U8Ok w) :
+    w.feed (restore v) =
+      ({ w with
+            u8need := 0, u8acc := 0 }).feed
+        (restore v) := by
+  rw [restore_cons v,
+    show ∀ (u : Vt) (b : UInt8) (bs : List UInt8), u.feed (b :: bs) = (u.step b).feed bs from
+      fun _ _ _ => rfl,
+    show ∀ (u : Vt) (b : UInt8) (bs : List UInt8), u.feed (b :: bs) = (u.step b).feed bs from
+      fun _ _ _ => rfl,
+    step_esc_eq hok]
+
 /-- **The grid claim with every hypothesis discharged from reachability.** The receiver's
 `Good`, `Renderable` and decoder invariants are not assumptions about a *cooperative* client —
 they hold of every state a terminal can reach by being fed bytes, which is every client there
 is (`good_of_liveReachable`, `renderable_of_liveReachable`, `u8Ok_of_liveReachable`). What is
 left in the statement is the genuine part: matching dimensions and at least two rows — and it
-holds on **both** screens, main and alt. -/
+holds on **both** screens, main and alt.
+
+The receiver's `u8need` used to be a hypothesis here and is not one any more: see the section
+above. A client that is mid-character is still a client. -/
 theorem restore_grid_reachable (v w : Vt) (hw : LiveReachableVt w) (hv : LiveReachableVt v)
-    (hcols : w.cols = v.cols) (hrows : w.rows = v.rows) (hun : w.u8need = 0) :
-    (w.feed (restore v)).grid = v.grid := by
+    (hcols : w.cols = v.cols) (hrows : w.rows = v.rows) : (w.feed (restore v)).grid = v.grid := by
   have hg : Good v := good_of_liveReachable hv
+  rw [feed_restore_zeroed v w (u8Ok_of_liveReachable hw)]
   refine
-    restore_grid_any v w (good_of_liveReachable hw) (renderable_of_liveReachable hw) hcols hrows
-      (u8Ok_of_liveReachable hw hun) hun ?_ ?_ ?_ (renderable_of_liveReachable hv) ?_
+    restore_grid_any v _ (Good.set_u8 0 0 (by omega) (good_of_liveReachable hw))
+      (renderable_congr (renderable_of_liveReachable hw) rfl rfl rfl rfl) hcols hrows rfl rfl ?_ ?_
+      ?_ (renderable_of_liveReachable hv) ?_
   · exact Nat.lt_of_le_of_lt hg.rowsLe (by decide)
   · exact hg.colsPos
   · exact Nat.lt_of_le_of_lt hg.colsLe (by decide)

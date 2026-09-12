@@ -45,6 +45,27 @@ def expect (cond : Bool) (name : String) : IO Nat := do
 /-- Substring test — `String.splitOn` is what the repo already uses for this. -/
 def has (haystack needle : String) : Bool := (haystack.splitOn needle).length ≥ 2
 
+/-- Poll `p` until it holds or `ms` elapses; the result is whether it ever held.
+
+For an assertion that waits for something to **appear**, this replaces a fixed
+`IO.sleep`. A fixed sleep budgets for the typical host and fails on a busy one:
+`E2E.Agent`'s `^C` check flaked exactly once this way (2026-09-11, a full e2e run
+racing a `lake build`) and then passed 4/4 in isolation with nothing changed. The
+deadline keeps the assertion honest — a genuine regression still fails, it just
+spends the whole budget before saying so — and the common case gets *faster*, since
+it stops as soon as the marker lands instead of always sleeping the worst case.
+
+Only for positive waits. An assertion that something did **not** happen must keep
+its fixed settle time: polling for a change that should never arrive would return
+early on the very first look and prove nothing. -/
+def waitFor (ms : UInt64) (p : IO Bool) : IO Bool := do
+  let deadline := (← monotonicMs) + ms
+  let mut ok ← p
+  while !ok && (← monotonicMs) < deadline do
+    IO.sleep 50
+    ok ← p
+  return ok
+
 /-- First index of `needle` in `hay`, walking the haystack once.
 
 The primitive the other three are built on, and the reason it is `Option Nat`
