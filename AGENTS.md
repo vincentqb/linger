@@ -53,12 +53,24 @@ it rotted in this file already.
    to bugs *inside* `sbRows` — the literal-anchored fixtures are the oracle for
    the fit and the order — and the twelve mode bytes ending `scrollbackAnsi` are
    behaviourally inert but proof-load-bearing **twice over** now.
-   `specs/vt-toolkit.md` is **queued, not started** — a second file in `specs/`,
-   deliberately: it exists so its measured facts (the seal's 211-site blast
-   radius, of which exactly one is real code; the reachability harvest that
-   already exists as `LiveReachableVt`; and the tested negative result that Lake
-   cannot gate an import closure inside one package) are not re-derived, and so
-   the seal-before-harvest ordering is on the record. It is now the next item.
+   **`specs/archive/vt-toolkit.md` is CLOSED** (2026-09-11, all four steps): `Vt`'s
+   twenty fields are `private` so no importer can read, write or forge one; the
+   checkpoint decoder validates `Good` **and** `Renderable` and refuses the rest;
+   `lean_lib LingerVt` plus an exact-set import grep pin the toolkit's closure; and
+   the friend set is computed transitively rather than grepped, because
+   **`import all` transits**. Two mechanism facts worth not re-deriving are in its
+   record: per-field `private` makes the *constructor* private too (so sealing one
+   field buys the whole no-forge property), and `import all` grants access but not
+   permission to re-export — a **public** declaration's type may not name a private
+   field, which is why 19 `Theorems/` files dropped `public section`.
+   **Two findings are open on purpose**, with compiled exhibits in SCRATCHPAD.md
+   under "the adversarial audit of the seal": `unsafe` + `@[implemented_by]` can
+   make every theorem true of a value the binary never returns (R4 — wants a
+   three-line grep in the `@[extern` family, measured at zero current hits), and
+   `Classical.choice` on `Nonempty Vt` yields a `Vt` nothing is provable about (R5 —
+   the concrete reason the exhaustiveness is compile-time prose and can never be a
+   theorem). Neither is a regression; both are why the seal's guarantee is stated
+   as a property of *importers* rather than of propositions.
    Everything else is closed and lives in `specs/archive/`; each file records
    its completion. The records carry the nuance this list used to duplicate,
    and the duplicates rotted. (There is no `PLAN.md`: its prior-art links live
