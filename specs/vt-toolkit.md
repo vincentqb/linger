@@ -1,9 +1,60 @@
 # vt-toolkit — seal `Vt`, then lift `Vt`+`Render`+`Terminal` as a standalone emulator
 
-Status: **Steps 1, 2 and 4 done (2026-09-11). Step 3 is the only one left.**
-`specs/scrollback-fidelity.md` is complete on its critical path, so this is the item in flight.
+Status: **All four steps done. Step 3 landed 2026-09-13; nothing remains.**
+Archive this with the completion record below.
 
 ## Where this stands
+
+**Step 3 is COMPLETE (2026-09-13), and the harvest came out smaller than this spec assumed
+in one direction and larger in another.** Three decisions, each measured:
+
+* **`deriving Inhabited` is off `structure Vt`** — and off `Checkpoint.Ckpt` and
+  `Session.State`, which only had it transitively. `(default : Vt)` was a **third public
+  door**: `cols = 0, rows = 0, grid = #[]`, obtainable by any importer with no friend
+  import and no forge, provably `¬Good` and `¬LiveReachableVt`, and the Step 1
+  break-verify never thought to try it. Measured before choosing: exactly **one** site in
+  the whole tree needed `Inhabited Vt` and it needed an arbitrary *carrier*, not a
+  default — `Theorems/Render/Modes.lean`'s `smMod` (plus the `show` in `Grid.lean`'s
+  `smMod_dom6`), now `Vt.init 1 1`. Removing the door beat re-pointing it at
+  `⟨Vt.init 80 24⟩`, on the axis Step 2 used: **fewer public doors**, not safer ones.
+* **No `ofDecoded` rung on `LiveReachableVt`.** A rung with premise `Good v` does not
+  merely make the harvest buy less — it makes the relation **unsound**:
+  `renderable_of_liveReachable` and `u8Ok_of_liveReachable` both stop closing, because
+  `Good` implies neither. Measured by adding it. A *sound* rung needs the decoder to
+  establish `Renderable`, i.e. decision 3, after which the relation is pinned between
+  `Good ∧ Renderable ∧ ground` and `Good ∧ Renderable ∧ U8Ok` and buys nothing an
+  induction principle is wanted for. The harvest is scoped to reachable states and the
+  scope is written next to the seal.
+* **`Renderable` is not established at the decoder's door, and it stays that way.**
+  `Vt.decodedOk` and `ofDecoded_of_good` are one predicate seen from both sides — the
+  door's acceptance and its non-rejection — so **every clause added to the check becomes a
+  hypothesis on `rt_vt` → `load_save` → `load_save_exact`, hence on five `resume_*` claims
+  that never read the grid**. That is the "hypothesis a proof does not use" anti-pattern
+  this repo names in `restore_sticky_any`, and A1's anchor has already moved once for
+  Step 2. The gain would be a *new* family (`resume_*_of_load`), not a discharged
+  hypothesis on the existing one: `Theorems/Resume.lean`'s subject is `save`'s **input**,
+  so `hren` cannot be recovered from `load (save c) = some c` when that equation is itself
+  gated on it. Declined; both halves. The shape half alone does not escape the mirror.
+
+**What the harvest actually was.** The `Good`/`Renderable` binders left in the toolkit's
+public claims are load-bearing — verified by enumerating all 43 of them, not asserted; the
+`*_reachable` family and commit `dbfd219` had already taken the derivable ones. What was
+still open was named in the source: `Theorems/Render/Tabs.lean`'s `restore_tabs_reachable`
+asked for `v.tabs.size = v.cols` and said "proving [it] an invariant of every reachable
+state is a `tabs_*` frame family of its own — worth doing, not needed here". It is done:
+`Theorems/Vt.lean` §Ruler, the **fifth** instance of the `dims`/`org` invariance-layer
+recipe, and it needs **no `Good`** where `dims` does, because `RIS` re-clamps ruler and
+width through the same `Vt.init`. `Vt.tabsOk_of_liveReachable` is the payoff and
+`Render.restore_tabs_live` — the twin of `restore_grid_reachable`, every invariant
+discharged — is the claim. `restore_tabs_reachable` **stays**, with a witness proving it is
+not redundant: a 1×1 record the decoder accepts, whose ruler is right and whose grid is
+empty, so it satisfies the old hypothesis and refutes reachability.
+
+**And one hypothesis that reachability provably cannot discharge**, which is a finding
+rather than a gap: `Render.restore_sb_exact`'s `hrok : ∀ r ∈ v.sb.toList, RowOk v.cols r`.
+`Vt.resize` reinstalls the grid *and* the ruler at the new width and leaves the scrollback
+rows at their old one — measured, `((Vt.init 80 3).feed 20×LF).resize 40 3` has `cols = 40`
+and eighteen 80-wide ring rows. So no amount of proof work moves that binder.
 
 **Step 4 is COMPLETE** — `lean_lib LingerVt` in `lakefile.lean` plus an **exact-set** import
 grep in `tests/gates.sh`. Two files; no Lean source changed, because the closure was already
@@ -77,8 +128,8 @@ better trade, measured:
    failures: `Unknown constant _private.…` means add `import all`; `Field `cols` … is private`
    means make the declaration module-private.
 
-**Next:** Step 3, the harvest — and read the Step 2 record in SCRATCHPAD.md first, because
-`ofDecoded` adds a second constructor that `LiveReachableVt` does not model.
+**Next:** nothing. Step 3 landed on 2026-09-13 and this spec is closed; its record is at the
+top of this file.
 
 ## Goal
 
@@ -178,14 +229,18 @@ that trips `gates.sh`'s existing no-`require` gate, which exists to keep README'
    that beats 15 public accessors, and `tests/gates.sh` for the two greps that stop the forge
    growing back. `Daemon.lean`'s `clampDim` stayed too, with a comment that now cites
    `load_good` for why it cannot change the value it is given.
-3. **Harvest** — drop `Good`/`Renderable` hypotheses from the toolkit's public claims where
-   reachability now discharges them, and state the exhaustiveness in prose next to the seal
-   (it is a compile-time property, not a theorem — do not fake it as one).
-   **Step 2 changed this step's input:** `LiveReachableVt` has `init`/`feed`/`resize`/`quiesce`
-   and no `ofDecoded` rung, so it no longer characterises every `Vt` a client can hold. Either
-   add the rung (its premise is `Good`, which is *weaker* than reachable, so the relation
-   collapses toward `Good` and the harvest buys less than the spec assumed) or scope the
-   harvest to states reached through `init` and say so. Decide that before writing lemmas.
+3. **Harvest** — DONE (2026-09-13). The exhaustiveness is prose, in the `structure Vt`
+   docstring, under "Every door, and why the list is prose and not a theorem": three doors
+   (`Vt.init`, the private validating `Vt.ofDecoded`, and the transformers), the four
+   invariants each establishes or preserves, and why `∀ v : Vt, Good v` is not provable and
+   would not mean what it looks like — this module's friends can `cases v`, so the
+   proposition is false *inside* the seal and the seal is not a statement about
+   propositions. `deriving Inhabited` went with it (it was the third door). The
+   `Good`/`Renderable` binders that remain are load-bearing; the ruler hypothesis this spec
+   did not anticipate is the one that fell, via `Theorems/Vt.lean` §Ruler +
+   `tabsOk_of_liveReachable` + `Render.restore_tabs_live`. The `ofDecoded` rung was measured
+   to be **unsound**, not merely weak, and `Renderable`-at-the-door was declined with the
+   mirror argument. See the completion record above and SCRATCHPAD.md.
 4. **The extraction target and its gate** — `lean_lib LingerVt` + the closure grep above.
 
 ## Non-goals

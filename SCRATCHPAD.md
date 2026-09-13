@@ -8117,3 +8117,353 @@ one info-level `SC2012` on the `ls c/` gate predates this).
 E2E_PARTIAL 5, coverage 263 defs / 0 unclaimed. No new number was added anywhere
 — the gate's ratchet-analogue is the three literal import lists, which is the
 `SHIM_CAP` species: evadeable by editing the list, not by reverting a fix.
+## Step 3 notes (vt-toolkit) — 2026-09-13
+
+**The harvest.** Three decisions, and the two that mattered went the way the spec did
+not expect: `deriving Inhabited` came **off** `structure Vt` (it was a third public
+door), and the thing that actually fell was a hypothesis the spec never mentions — the
+tab ruler's. The `Good`/`Renderable` binders the spec aimed at are all load-bearing,
+enumerated rather than assumed, and one of them is provably immovable.
+
+**`(default : Vt)` was a public door out of the Step 1 seal, and the Step 1
+break-verify did not think to try it.** Measured, in the real tree:
+
+```
+in Linger/Runtime/Daemon.lean (no `import all`, no forge):
+  def attackDefault : Vt := default        →  builds, PRE            (41 jobs, exit 0)
+                                          →  failed to synthesize instance
+                                             Inhabited Linger.Core.Vt.Vt, POST
+  def controlInit : Vt := Vt.init 80 24    →  builds, both           (the control)
+
+in a friend module (`import all`), the value it handed out:
+  (default : Vt).cols = 0    .rows = 0    .grid = #[]    .tabs = #[]    (all `rfl`)
+  ¬ Good (default : Vt)                                   proved
+  ¬ LiveReachableVt (default : Vt)                         proved
+  Renderable (default : Vt)                                proved — it IS shape-ok
+```
+
+That last line is the one worth keeping: `default` is `Renderable` (0 rows, empty grid,
+`grid.size = rows` reads `0 = 0`) and **not** `Good`, so a "check `Renderable` and you
+have caught it" instinct is wrong. Also worth knowing: **outside** the friend set the
+value is opaque — `(default : Vt).colCount = 0` is *not* provable by `rfl` there, the
+module system hides the derived instance's body. So the hole handed an outsider a `Vt` it
+could not reason about, and handed `Theorems/**` a live counterexample to
+`∀ v : Vt, Good v`. It is the second kind that matters, because that is where the
+harvest's lemmas live.
+
+**Which of the three options, measured by doing all three.** The task offered (a) drop
+it, (b) re-point it at `⟨Vt.init 80 24⟩`, (c) keep and document. Cost of (a), by
+deletion-and-build: `Inhabited Vt` has exactly **two** direct consumers, both
+`deriving Inhabited` (`Checkpoint.Ckpt`, `Session.State`), and those two have exactly
+**one** real consumer between them in the whole tree —
+`Theorems/Render/Modes.lean:680`'s `smMod`, which writes `{ (default : Vt) with modes := m }`
+as a **scratch carrier** to lift a `Modes → Modes`, plus the matching `show` in
+`Grid.lean`'s `smMod_dom6`. With all three `deriving` clauses gone, `./lake build` and
+`./lake build e2e` were already green; only `./lake build Theorems Tests` failed, at that
+one site. Total cost of (a): **five lines** (three `deriving`, two carriers → `Vt.init 1 1`).
+
+(a) beat (b) on Step 2's own axis: **fewer public doors, not safer ones**. (b) leaves
+`Inhabited` in place, and `Inhabited` exists precisely to let a partial operation return
+something instead of failing — the same species as the "fuel parameter converts a hang
+into a silent drop" rule. And (a) is what makes the seal's break-verify *complete*: four
+refusals become five, with the `v.colCount` control unchanged.
+
+**The `ofDecoded` rung is not weak, it is UNSOUND — and that is the whole of decision 2.**
+Adding `| ofDecoded {v : Vt} (h : Good v) : LiveReachableVt v` costs three
+`Alternative … has not been provided` errors, and only one of the three closes:
+
+```
+good_of_liveReachable      | ofDecoded hg => exact hg          ✓  (relation collapses to Good)
+renderable_of_liveReachable                                    ✗
+  Application type mismatch: hg.rowsPos has type 1 ≤ v.rows
+  but is expected to have type v.grid.size = v.rows
+  Type mismatch: rowOk_blankRow … but expected
+    RowOk v.cols (v.grid.getD y (blankRow v.cols {}))
+u8Ok_of_liveReachable                                          ✗
+  invalid `▸` notation, argument hg.u8Le has type v.u8need ≤ 3, equality expected
+```
+
+`Good` implies neither the grid shape nor `u8acc = 0`, so the rung does not weaken
+`LiveReachableVt` — it **breaks the two lemmas the relation exists to supply**, and
+`restore_grid_reachable`/`restore_sb_reachable` stand on both. A sound rung would need
+premise `Vt.ofDecoded … = some v` **and** decision 3's full per-cell validation; after
+that the relation is pinned between `Good ∧ Renderable ∧ ground ∧ u8-zeroed` and
+`Good ∧ Renderable ∧ U8Ok`, i.e. it becomes a conjunction with an induction principle
+nobody needs. Scoped to reachable states; the scope is prose next to the seal.
+
+**Decision 3 declined, and the reason is a mirror, not a cost estimate.** `Vt.decodedOk`
+and `ofDecoded_of_good` are one predicate seen from both sides — the door's *acceptance*
+and its *non-rejection*. So a clause added to the check becomes a hypothesis on
+`ofDecoded_of_good` → `rt_vt` → `load_save` → `load_save_exact` → **five `resume_*`
+claims that never read the grid** (`resume_quiesced`, `resume_quiesced_any`,
+`resume_exact`, `resume_cursor`, `resume_cursor_any`). That is the "a hypothesis a proof
+does not use makes the theorem weaker than it is" rule this repo states in
+`restore_sticky_any`'s docstring, and A1's anchor already moved once for Step 2.
+
+The trap to name, because it looks like the payoff and is not: **`Theorems/Resume.lean`'s
+subject is `save`'s INPUT, not `load`'s output.** `resume_grid`'s `hren` is about `c.vt`,
+the state the daemon held; the only bridge to the decoder is `load (save c) = some c`,
+which is `load_save_exact`'s *conclusion* — and that call is exactly what would acquire
+the new hypothesis. So `hren` cannot be discharged from it: circular. What
+`Renderable`-at-the-door would buy is a **new** family (`resume_grid_of_load` etc.,
+hypothesis-free over arbitrary bytes), which is genuinely nice and is not what "drop the
+derivable hypotheses" means. One new claim for five weakened ones is the wrong direction
+for a step called harvest.
+
+The two halves separately, for the record. **Shape** (`grid.size = rows`, per-row widths,
+`tabs.size = cols`): 3–4 `&&`s and `Array.all`, cheap to write, and it does not escape the
+mirror — `resume_tabs` would swap `hvtabs` for a strictly larger binder. **Per-cell**
+(`RowOk`'s `CellOk`/`PairOk`): a real Bool checker — `Emittable base`,
+`charWidth base = width`, `marks.length ≤ 8`, per-mark zero-width, plus a per-column pair
+scan — with a soundness proof per clause, and an O(rows·cols + ring·cols) second pass on
+every load, up to ~10^7 cells at the caps, each costing two ~40-branch range-table walks.
+Also noted: extending `Good` with the clause instead is *worse*, not better — `Good`'s
+decidable content **is** `decodedOk`, so that route reaches the same mirror while
+additionally rewriting ~50 `Good.*` preservation lemmas that destructure all fifteen
+fields by name.
+
+### The harvest that was actually there
+
+**The enumeration first, because "the binders are load-bearing" is a claim.** A script
+walked every `theorem` signature in `Theorems/{Vt,Render*,Terminal,Resume,Checkpoint,Session}`
+and printed the 43 that bind `Good` or `Renderable`. None binds `LiveReachableVt` *and*
+`Good`/`Renderable` for the same state — the `*_reachable` family and commit `dbfd219`
+had already taken those. `Theorems/Terminal.lean` binds neither, at all. The ones that
+look extra are documented keeps: `restore_sb_any`'s `hgv : Good v` is consumed as
+`.sbLe` by `push_walk`'s room bound (its own docstring says "only `.sbLe` … is consumed
+here"), and `restore_sticky_any` takes no `Good` on purpose. So: **zero droppable
+`Good`/`Renderable` binders**, and that is a measurement, not a shrug.
+
+**What was open was named in the source.** `Theorems/Render/Tabs.lean`'s
+`restore_tabs_reachable` asked for `v.tabs.size = v.cols` and said: "proving
+`tabs.size = cols` an invariant of every reachable state is a `tabs_*` frame family of
+its own — worth doing, not needed here." Done, as `Theorems/Vt.lean` §Ruler — the
+**fifth** instance of the `dims`/`org` invariance-layer recipe, generated from the `dims`
+block by substitution and then hand-finished at the three writers.
+
+Two facts about that layer worth not re-deriving:
+
+* **It needs no `Good`, where `dims` does.** `dims_step` takes `Good v` for `RIS` alone:
+  `Vt.init` re-clamps and `Good` is what makes the clamp the identity. `TabsOk` survives
+  the clamp *because* `RIS` re-clamps **both** sides through the same `Vt.init` —
+  `tabs := defaultTabs (clampDim cols)` beside `cols := clampDim cols`. So the ruler
+  layer is strictly cheaper than the layer it was modelled on.
+* **`TBC 3` re-establishes rather than preserves.** `tabs := Array.replicate v.cols false`
+  is the right length by construction, so `tsz` is *not* invariant there and the layer has
+  to be stated over `TabsOk` with `tsz` as the helper projection, not over `tsz` alone.
+  `TBC 0`/`HTS` are `setIfInBounds`, which cannot change a length. Five writers of `tabs`
+  in the whole emulator, two of `cols`; that census is what makes the sweep mechanical.
+
+**One Lean-mechanics trap, and it cost a build.** In `tabsOk_csiDispatch`, after
+`subst` on `final = 0x67`, `dsimp only` does **not** reduce `match (103 : UInt8) with …`,
+and a following `split` re-opens the whole `final` match — 20-odd goals with hypotheses
+like `heq : 103 = 67`. `show` does reduce it (`isDefEq` gets there where `dsimp` does
+not), which is why `Theorems/Render/Tabs.lean`'s existing `tabs_csiDispatch_cup` is
+written that way. Writing out the TBC arm in a `show` and *then* splitting gives `split`
+one splittable term. Same shape as Step 2's `decodedOk` naming and `stripMagic` before it.
+
+`size_defaultTabs` **moved** from `Theorems/Render/Tabs.lean` (`Linger.Core.Render`) to
+`Theorems/Vt.lean` (`Linger.Core.Vt`): the invariant generalises it and both `Vt.init`
+and `Vt.resize` need it. Coverage stayed at `265 / 0 (cap 0)`, which was the thing to
+check — the gate reads theorem *statements*, so moving the only claim naming
+`defaultTabs` could have un-claimed it.
+
+**`restore_tabs_reachable` was NOT weakened to consume the new invariant, and the witness
+is why.** Swapping its `hvtabs` for `LiveReachableVt v` trades a hypothesis for a strictly
+stronger one. So `restore_tabs_live` is an **addition** — the exact twin of
+`restore_grid_reachable`, both sides reachable, nothing left but matching width — and the
+old form stays, with a proof that it is not redundant: `Vt.ofDecoded 1 1 #[] … #[false] …`
+is **accepted** (every `Good` clause holds at 1×1 with a zero cursor), its ruler is one
+wide, and its grid is empty — so it satisfies `hvtabs`, refutes `Renderable`, and
+therefore refutes `LiveReachableVt`. A decoded checkpoint is exactly the case, and
+`Checkpoint.load` is total on arbitrary bytes, so it is not hypothetical.
+
+**And a hypothesis reachability provably CANNOT discharge**, which is the finding to keep:
+`Render.restore_sb_exact`'s `hrok : ∀ r ∈ v.sb.toList, RowOk v.cols r`. Its docstring says
+neither `Good` nor `Renderable` supplies it, which is true and stops one step short.
+Measured:
+
+```
+v1 := (Vt.init 80 3).feed (20 × LF)   → (cols, sb.size, row widths) = (80, 18, [80 × 18])
+v2 := v1.resize 40 3                  → (cols, sb.size, row widths) = (40, 18, [80 × 18])
+  ring rows all v2.cols wide?  false
+  tabs.size = cols after resize?  true
+```
+
+`v2` is `LiveReachableVt` by `init`/`feed`/`resize`. `Vt.resize` reinstalls the grid **and**
+the ruler at the new width and leaves the scrollback rows at their old one, deliberately
+(no reflow — the module header says so). So that binder is immovable by any amount of proof
+work, and the last line is the contrast that makes the ruler invariant worth having.
+
+### Break-verification
+
+`tabsOk_resize` — `Vt.resize` made to keep the old ruler (`tabs := v.tabs`):
+
+```
+error: Theorems/Vt.lean:2565:2: Type mismatch
+  size_defaultTabs ?m.1
+has type (defaultTabs ?m.1).size = ?m.1
+but is expected to have type TabsOk (v.resize cols rows)
+```
+
+`tabsOk_csiDispatch` — `TBC 3` made to build `Array.replicate v.rows false`. Bites, but on
+the proof's `show` (structural), so the honest version is the **off-by-one** with the
+`show` moved in step so only the arithmetic can fail:
+
+```
+error: Theorems/Vt.lean:2506:6: unsolved goals
+case h_2
+v : Vt   s : CsiState   h : TabsOk v   hi : ¬s.ignore = true
+heq✝ : s.arg 0 0 = 3
+⊢ v.cols + 1 = v.cols
+```
+
+`size_defaultTabs` — `defaultTabs` made one stop too long
+(`Array.range (cols + 1)`): `error: Theorems/Vt.lean:2262:65: unsolved goals  c : Nat  ⊢ False`.
+
+The seal's new refusal (see the `attackDefault`/`controlInit` block above) is
+break-verified in **both** directions: the attack builds before the change and fails
+after, with a control at the same position that builds in both.
+
+`restore_tabs_live` has no content of its own beyond "reachability supplies `hvtabs`", so
+its break *is* the two above; what it needs separately is non-vacuity, which is in the
+scratch file and in `Tabs.lean`'s existing 80×24 example.
+
+### The non-weakening check
+
+Step 3 removed **no theorem hypothesis**, so `dbfd219`'s exercise takes a different shape.
+A scratch file (`/tmp/ScratchNonWeaken.lean`, compiles clean) checks the three things that
+could have changed a claim's content:
+
+1. **The `smMod` carrier.** `smMod` appears in two theorem statements, so the
+   `default → Vt.init 1 1` swap could in principle have changed them. It cannot, and the
+   tree already had the lemma that says so: `modes_setMode true n on rfl` gives
+   `(Vt.setMode { u with modes := X } true n on).modes = (Vt.setMode { u' with modes := X } true n on).modes`
+   for **any** two carriers. So `smMod` is unchanged as a function; `smMod_daw7`,
+   `smMod_dom6`, `mmap_modeSet` and the thirteen `mmap_*` bridges are unchanged as claims.
+   (Their statements are carrier-free anyway — `smMod` only survives inside
+   `.congr (fun m => by simp [smMod, …])`.) Both `smMod_*` statements are restated verbatim
+   and closed from the tree.
+2. **The moved lemma**, restated under its old name in its old namespace
+   (`Linger.Core.Render.old_size_defaultTabs`) and closed from the new home.
+3. **The addition**, from both sides: non-vacuous (80×24 both sides, plus `TabsOk` on a
+   fed-then-resized state — the two rungs that could break it), and not a replacement
+   (the `wit` witness above).
+
+### Numbers
+
+Coverage **265 defs, 0 unclaimed (cap 0)** — unchanged; no `Linger/Core` def was added or
+removed (three `deriving` clauses are not defs). `maxHeartbeats` raises **1**, unchanged:
+the §Ruler layer needed none, including inside `Theorems/Vt.lean`, the heaviest file.
+SHIM 22, RUNTIME_PARTIAL 2, E2E_PARTIAL 5 untouched. Job counts unchanged: `./lake build`
+43, `Theorems Tests` 50, `e2e` 61, `LingerVt` 5. 60 new declarations in `Theorems/Vt.lean`
+(2 defs, 1 transfer lemma, 44 sweep lemmas, 13 at the writers and the stream) and 1 in
+`Theorems/Render/Tabs.lean`. `lean-fmt format` reformatted exactly one file (`Theorems/Vt.lean`,
+the generated block); `lean-fmt check` and `lean-fmt format --check` then both clean, 71 files.
+
+Axioms: `propext` and/or `Quot.sound` across the sweep, `Classical.choice` additionally on
+`tsz_oscFinish`/`tsz_stepOsc`/`tabsOk_step`/`tabsOk_feed`/`tabsOk_of_liveReachable`/
+`restore_tabs_live`. **Inherited, not introduced** — measured: the `dims_*` twins
+(`dims_oscFinish`, `dims_stepOsc`, `dims_step`, `dims_feed`) and
+`good_of_liveReachable`/`renderable_of_liveReachable` already carry the same three. No
+`sorryAx` anywhere.
+
+I did **not** run `./tests/e2e.sh` (it `pkill`s another agent's daemons on this shared
+host). I expect it green, and the reason is that nothing observable changed: no `Vt`
+operation, no byte the emitter writes, no wire format. The three `deriving Inhabited`
+clauses had no consumer outside two proof-scratch carriers, `size_defaultTabs` moved file,
+and everything else added is a `Theorems/` claim. `sh tests/gates.sh` — which `e2e.sh` step
+1 runs — is green here, as are all four build targets and `e2e coverage`.
+
+
+## the adversarial audit of the seal — two severity-1 holes — 2026-09-11
+
+Run **in parallel with Step 3, deliberately**, by an agent whose only brief was to break the
+claim "every `Vt` that can exist is `Good`". It broke it four ways, and the two that matter were
+not on Step 3's list of decisions — which is the argument for commissioning the attack separately
+from the harvest rather than asking the harvester to also audit itself.
+
+**R1 — `import all` TRANSITS, so the friend set is neither enumerable by grep nor closed.**
+`import all M` grants M's *own* all-access set, including whatever M has all-access to. So
+`import all Linger.Core.Render` — or `import all Theorems.Listing`, which is two hops and has no
+`import all Linger.Core.Vt` of its own — re-grants `Vt`'s private constructor, all 20 private
+fields, and the private `Vt.ofDecoded`, to any module at all. Verified **in the real position**,
+not in a scratch file: one added line in `Linger/Runtime/Client.lean` (which already has
+`public import Linger.Core.Render`) plus a forge of a non-`Good`, non-`Renderable` `Vt` gives
+`./lake build linger` exit 0 **and** `sh tests/gates.sh` exit 0. Both oracles consent.
+
+That is the Step 4 situation exactly — the compiler consents and a grep is the only possible
+oracle — except that no grep exists. `git grep -l 'import all Linger.Core.Vt'` under-reports the
+friend set by one file *today* (27 transitively, not 26), and any file joins for one line.
+**It also undercuts Step 2's decisive argument**: that record says the friend import "confines
+that power to one reviewed, grep-gated file", and the confinement is a convention, not a
+mechanism. The conclusion (2 private defs beat 16 public accessors) may still be right on the
+count; the argument that made it decisive needs the gate first.
+
+**R2 — `Vt.decodedOk` is never passed the grid, so `load` yields `Good` ∧ ¬`Renderable`, and the
+defect is OBSERVABLE.** The signature is the finding: `decodedOk` takes `cols rows cursor top bot
+sb altGrid saved` — no `grid`, no `tabs`. `Good`'s fifteen clauses do split 12 checked / 3 forced
+as the Step 2 record says; `Renderable`'s two are neither, because the constructor never sees the
+data they are about. Reached from disk with **one flipped byte of a real checkpoint** (the `rows`
+byte, 2 → 3), no Lean required of the attacker, and then:
+
+```
+((Vt.init badVt.colCount badVt.rowCount).feed (Render.restore badVt)).grid == badVt.grid  → false
+((Vt.init goodVt.colCount goodVt.rowCount).feed (Render.restore goodVt)).grid == goodVt.grid → true
+```
+
+The first line is exactly the property `resume_grid` claims, refuted by compiled evaluation for a
+state that came off disk. Every sub-clause is reachable and was exhibited with `Good ∧ ¬Renderable`
+proved: the main grid's size, the **alt stashed grid** (only its cursor is checked), `tabs.size`,
+and `CellOk` itself — a cell holding `'\x0A'` with `width := 7` is accepted, because `rCell` reads
+`base` as any valid `Char`, `marks` as any list and `width` as any `Nat`.
+
+**This overrides Step 3's decision (3).** That decision declined `Renderable`-at-the-door on a
+mirror argument: every clause added to `decodedOk` becomes a hypothesis on `rt_vt` → `load_save` →
+five `resume_*` claims. The argument is correct *about theorem hypotheses* and beside the point
+about correctness — a corrupt checkpoint currently produces a screen the emitter cannot reproduce,
+and `resume_grid`/`resume_sb` already take `hren`, so for them the added hypothesis is free. The
+mirror cost is four claims gaining a hypothesis every live session satisfies and
+`renderable_of_liveReachable` discharges. That is the right trade and the earlier reasoning
+weighed only one side of it.
+
+**R3 — `deriving Inhabited`, three exposures.** `(default : Vt).colCount = 0` from a plain import;
+`¬ Good (default : Vt)` proved and — the asymmetry worth noting — `Renderable (default : Vt)` is
+*true*, because `grid = #[]` and `rows = 0` make `GridOk` vacuous. It is the exact opposite of R2.
+Amplified by `(default : Session.State).vt` and `(default : Ckpt).vt`, both public fields of types
+that derive `Inhabited` themselves, with `¬ WF (default : State)` proved — so
+`specs/archive/lean-modules.md` Step 5's "every `State` the daemon can possess is `State.boot …`
+moved forward by `step`" has the same hole one layer up. Closed by Step 3, which deleted all three
+`deriving Inhabited` clauses for five lines (measured: `Inhabited Vt`'s only real consumer
+tree-wide was one proof-scratch carrier in `Theorems/Render/Modes.lean`).
+
+**R4 — `unsafe` + `@[implemented_by]`** makes the theorems true of a value the shipped binary
+never returns: `unsafe def launderImpl (v : Vt) : Vt := unsafeCast (0 : Nat)` behind
+`@[implemented_by]` on an identity function type-checks, `#print axioms` reports no axioms, and
+`#eval` segfaults. Needs deliberate malice, and `gates.sh` has no `unsafe` gate — the family of
+the existing `@[extern` check suggests the remedy.
+
+**R5 — `Classical.choice` on `Nonempty Vt`** typechecks and gives a `Vt` about which nothing is
+provable either way. Not a counterexample; the concrete reason "every `Vt` is `Good`" can never
+become a theorem even after every other hole shuts, and it survives deleting `Inhabited` because
+`Vt.init` alone witnesses `Nonempty`. The spec already says the exhaustiveness is compile-time
+prose; this is why it has to be.
+
+**R6 — `deriving Repr` defeats read-hiding.** `repr (Vt.init 3 2)` from a plain import prints all
+20 sealed fields. No way back (`DecidableEq`/`BEq`/`FromJson` all fail to synthesize), so it is
+not a forge — but the Step 1 record says 25 files paid for read-hiding, and write-hiding is what
+was actually obtained.
+
+**Closed routes, recorded because exhaustiveness prose needs them:** a plain legacy importer gets
+all six attacks refused; `import all Linger.Core.Session` (a plain importer of `Vt`) does not
+transit; `import all Linger` (the umbrella, `public import`s only) does not transit — which is
+what *bounds* R1: transit follows `import all` edges only. No manufacturing instance beyond
+`Inhabited`. And **`Vt.resize` is not a repair**, proved for all target sizes: it leaves `sb`,
+`pstate` and `u8need` alone, so four of `Good`'s clauses are inherited rather than
+re-established — a bad `Vt` stays bad through any number of resizes, and there is no accidental
+laundering path in either direction.
+
+**One nuance for the Step 1 record:** its break-verify block quotes
+`Unknown constant _private.…Vt.cols`, which is what a **`module`** importer gets. A **legacy**
+importer gets ``Field `cols` … is private`` instead. The entry explains the distinction elsewhere,
+but the break-verify recorded only one of the two texts, and they call for different fixes.

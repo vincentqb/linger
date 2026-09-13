@@ -90,7 +90,11 @@ structure State where
   the signal, and the core needs no clock arithmetic. -/
   private tickOutSeq : Nat := 0
   private freshFlag : Bool := false
-  deriving Repr, Inhabited
+  -- `Repr` only: `deriving Inhabited` here needed `Inhabited Vt`, which was a public
+  -- door out of the `Vt` seal admitting a zero-column screen (`specs/vt-toolkit.md`
+  -- Step 3, and the docstring on `structure Vt`). Nothing used the instance. A `State`
+  -- still has exactly one door, `State.boot`.
+  deriving Repr
 
 /-- The one public door into a `State`: a fresh or restored emulator, the
 restored labels, the boot-time metadata. Everything else a `State` ever holds

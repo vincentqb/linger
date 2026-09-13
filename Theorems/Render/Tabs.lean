@@ -779,23 +779,36 @@ theorem restore_tabs_stop_any (v w : Vt) (hgood : Good w) (hcols : w.cols = v.co
     (w.feed (restore v)).tabs.getD i false = v.tabs.getD i false := by
   rw [restore_tabs_any v w hgood hcols hvtabs]
 
-/-- A fresh ruler is exactly `cols` long — the `hvtabs` witness for a live session,
-and the reason the hypothesis is discharged rather than assumed at every call site
-that starts from `Vt.init`. -/
-theorem size_defaultTabs (c : Nat) : (defaultTabs c).size = c := by
-  unfold defaultTabs
-  simp
-
 /-- The ruler claim with the receiver's invariant discharged from reachability, the
 shape `restore_grid_reachable` has — minus the hypothesis on the *session*, which the
 ruler claim turns out not to need at all: the only thing `LiveReachableVt v` supplied
-was `v.cols < 65535`, and `Good w` plus `hcols` already give it. `hvtabs` stays:
-`Good` and `Renderable` say nothing about the ruler's length, and proving
-`tabs.size = cols` an invariant of every reachable state is a `tabs_*` frame family of
-its own — worth doing, not needed here. -/
+was `v.cols < 65535`, and `Good w` plus `hcols` already give it.
+
+`hvtabs` stays **here** on purpose, and it is now a choice rather than a gap: `Good`
+and `Renderable` still say nothing about the ruler's length, but `Vt.tabsOk_of_liveReachable`
+(`specs/vt-toolkit.md` Step 3) proves it of every reachable state, so a caller with
+reachability discharges it and `restore_tabs_live` below is that caller. Keeping this
+form is what makes the two claims different rather than redundant: a session whose ruler
+is the right length gets the ruler restored **whether or not it is reachable**, which
+covers a decoded checkpoint — and `Checkpoint.load` is total on arbitrary bytes, so that
+case is real. Weakening this signature to `LiveReachableVt v` would trade a hypothesis
+for a strictly stronger one and lose exactly that. -/
 theorem restore_tabs_reachable (v w : Vt) (hw : LiveReachableVt w) (hcols : w.cols = v.cols)
     (hvtabs : v.tabs.size = v.cols) : (w.feed (restore v)).tabs = v.tabs :=
   restore_tabs_any v w (good_of_liveReachable hw) hcols hvtabs
+
+/-- **The ruler claim with every invariant discharged**, the exact twin of
+`restore_grid_reachable`: between two states a live session can hold, matching width is
+the whole of what is left to say. `Good w` comes from the receiver's reachability and the
+ruler length from the session's (`Vt.tabsOk_of_liveReachable`) — the `tabs_*` frame family
+this file used to name as future work and `Theorems/Vt.lean`'s §Ruler section now is.
+
+This is an addition to `restore_tabs_reachable` rather than a replacement for it; see that
+theorem's docstring for why the weaker-hypothesis form is the one a decoded checkpoint
+needs. -/
+theorem restore_tabs_live (v w : Vt) (hw : LiveReachableVt w) (hv : LiveReachableVt v)
+    (hcols : w.cols = v.cols) : (w.feed (restore v)).tabs = v.tabs :=
+  restore_tabs_reachable v w hw hcols (tabsOk_of_liveReachable hv)
 
 /-- Non-vacuity: a real 80×24 session satisfies every hypothesis, so the ruler claim
 is not vacuously true. -/

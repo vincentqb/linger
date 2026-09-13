@@ -256,11 +256,57 @@ what a client can actually have and would prove nothing about the rest. The seal
 is what turns those predicates from decoration into guarantees.
 
 The friend set is `import all Linger.Core.Vt`: `Render`/`Terminal` (the rest of
-the toolkit), `Theorems/**`, `Tests/**`, and — **temporarily, until
-`specs/vt-toolkit.md` Step 2** — `Checkpoint`. Exhaustiveness of that list is a
-compile-time property, not a theorem: adding a reader outside it fails to build.
-Break-verified from `Linger/Runtime/` (a read, a `{ v with … }`, and a forge each
-refuse); see SCRATCHPAD.md. -/
+the toolkit), `Theorems/**`, `Tests/**`, and `Checkpoint` — the last **permanently**,
+for `wVt`'s field reads and the one validating door below; its reason is written at
+that file's import. Exhaustiveness of that list is a compile-time property, not a
+theorem: adding a reader outside it fails to build. Break-verified from
+`Linger/Runtime/` (a read, a `{ v with … }`, a `Vt.mk`, a bare `⟨…⟩` and
+`(default : Vt)` each refuse, against a `v.colCount` control that compiles); see
+SCRATCHPAD.md.
+
+## Every door, and why the list is prose and not a theorem
+
+`specs/vt-toolkit.md` Step 3. Outside the friend set there are exactly **two** ways a
+`Vt` comes into existence and **one** family of ways it changes:
+
+* `Vt.init` — the fresh session. `Good`, `Renderable` and `TabsOk` all hold of it
+  (`Vt.good_init`, `Vt.renderable_init`, `Vt.tabsOk_init`).
+* `Vt.ofDecoded` — the restored session, `private`, and it **validates**: a record that
+  does not describe a `Good` state decodes to `none` (`Vt.ofDecoded_good`, and
+  `Checkpoint.load_good` on the real path, for *arbitrary bytes*).
+* `Vt.resize`, `Vt.step`, `Vt.feed`, `Vt.quiesce` — the transformers, each of which
+  preserves `Good`, `Renderable`, `U8Ok` and `TabsOk`. `LiveReachableVt` is that closure
+  written as an inductive, and the four `*_of_liveReachable` lemmas are the payoff.
+
+There is deliberately **no `Inhabited Vt`**, and its absence is part of this list rather
+than an oversight: `deriving Inhabited` produced `cols = 0, rows = 0, grid = #[]`, which
+`(default : Vt)` handed to *any* importer with no `import all` and no forge — provably not
+`Good` and provably not `LiveReachableVt`. It was a third public door, it admitted a state
+the emulator cannot reach, and the Step 1 break-verify did not think to try it. `Repr` is
+untouched; nothing in the tree needed a canonical inhabitant (two proof-scratch sites used
+`default` as an arbitrary carrier and now say `Vt.init 1 1`).
+
+**Why this is prose.** `∀ v : Vt, Good v` is not provable and would not mean what it looks
+like if it were: this module and its friends can `cases v` and name any twenty field values
+they like, so the proposition is false *inside* the seal and the seal is not a statement
+about propositions. It is a statement about which modules the compiler will accept — the
+same species as `SHIM_CAP` and the `LingerVt` closure grep, and, per that spec's non-goals,
+a theorem shaped like it would be decoration. What the theorems can and do say is the list
+above: every door establishes the invariants and every transformer preserves them, so any
+*program* holding a `Vt` holds one of those. Extending the friend set, or adding a door,
+is what breaks the claim — and only a reader can see that, which is why the list is here
+and not in a `Prop`.
+
+**Still assumed, not proved, after Step 3.** `Vt.decodedOk` checks `Good`'s decidable
+content and nothing about the grid, so a decoded checkpoint is `Good` and need not be
+`Renderable`; `Theorems/Resume.lean`'s `resume_grid`/`resume_sb` therefore still take
+`hren` by hypothesis, and that is a considered trade rather than an omission (see
+`specs/vt-toolkit.md` Step 3 for the measurement — checking it at the door mirrors onto
+`ofDecoded_of_good` and would put a grid hypothesis on five claims that never read the
+grid). And `Render.restore_sb_exact`'s `hrok` is not merely unproved but **unprovable from
+reachability**: `Vt.resize` reinstalls the grid and the ruler at the new width and leaves
+the scrollback rows at their old one, so a resized live session has ring rows wider than
+`cols`. Measured, not argued. -/
 structure Vt where
   private cols : Nat
   private rows : Nat
@@ -282,7 +328,7 @@ structure Vt where
   private u8need : Nat := 0 -- UTF-8 continuation bytes still expected (≤ 3)
   private u8acc : Nat := 0 -- accumulated codepoint bits
   private bell : Bool := false -- sticky until the runtime clears it (activity signal)
-  deriving Repr, Inhabited
+  deriving Repr
 
 def clampDim (n : Nat) : Nat := min (max n 1) 1000
 

@@ -677,7 +677,7 @@ theorem modes_csiDispatch_sgr (v : Vt) (s : CsiState) : (v.csiDispatch s 0x6D).m
 /-! ### per-chunk MMap bridges -/
 
 def smMod (n : Nat) (on : Bool) (m : Modes) : Modes :=
-  (Vt.setMode { (default : Vt) with modes := m } true n on).modes
+  (Vt.setMode { Vt.init 1 1 with modes := m } true n on).modes
 
 theorem mmap_modeSet (n : Nat) (on : Bool) (hn : 0 < n) (hlt : n < 65535) :
     MMap (smMod n on) (modeSet n on) := by

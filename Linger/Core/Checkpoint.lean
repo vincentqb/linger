@@ -340,11 +340,16 @@ def rVt : R Vt := fun l => do
 
 /-! ## The checkpoint record -/
 
+/-- **No `deriving Inhabited`**, and that is deliberate (`specs/vt-toolkit.md` Step 3):
+it would need `Inhabited Vt`, which is the third public door out of the `Vt` seal — a
+`cols = 0` screen any importer could name as `default` with no friend import. Nothing in
+the tree used either instance. If a canonical checkpoint is ever wanted, write it out
+(`⟨Vt.init 80 24, "", []⟩`) rather than deriving one: a default that is a *choice* cannot
+silently become a state the emulator can't reach. -/
 structure Ckpt where
   vt : Vt
   cwd : String
   labels : List (String × String)
-  deriving Inhabited
 
 /-- On-disk magic: `"LNGR"` and the format version. What `save` writes. -/
 def magic : List UInt8 := [0x4C, 0x4E, 0x47, 0x52, 1] -- "LNGR" v1

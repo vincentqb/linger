@@ -2235,6 +2235,357 @@ theorem dims_feed_ne_ris :
       (dims_feed_ne_ris xs (fun b hb => h b (by simp [hb]))).trans
         (dims_step_ne_ris x (h x (by simp)))
 
+/-! ## §Ruler — the tab stops keep pace with the width
+
+The fifth instance of the invariance-layer recipe the `dims`/`org` sections
+above set up, and the one `Theorems/Render/Tabs.lean` asked for by name: its
+`restore_tabs_reachable` says "proving `tabs.size = cols` an invariant of every
+reachable state is a `tabs_*` frame family of its own — worth doing, not needed
+here". Here it is, because the harvest is what it is for
+(`specs/vt-toolkit.md` Step 3).
+
+`tabs` is written in exactly five places in the whole emulator — `Vt.init` and
+`Vt.resize` install `defaultTabs`, `TBC 0`/`HTS` poke one stop with
+`setIfInBounds`, and `TBC 3` replaces the array with `Array.replicate v.cols` —
+and `cols` in exactly two, `init` and `resize`. So `tsz` is invariant everywhere
+except `TBC 3` and `RIS`, and at those two the new size is `cols` by
+construction. That is why this layer needs **no `Good`**, unlike `dims`: `RIS`
+re-clamps *both* sides through `Vt.init`, so the equation survives a clamp that
+moves the value.
+-/
+
+/-- A fresh ruler is exactly `cols` long — the `hvtabs` witness for a live session,
+and the reason the hypothesis is discharged rather than assumed at every call site
+that starts from `Vt.init`. Stated here rather than in `Theorems/Render/Tabs.lean`,
+where it used to live, because the invariant below is what generalises it and both
+`Vt.init` and `Vt.resize` need it. -/
+theorem size_defaultTabs (c : Nat) : (defaultTabs c).size = c := by
+  unfold defaultTabs
+  simp
+
+/-- Ruler length, as its own projection so one lemma per operation covers it. -/
+def tsz (v : Vt) : Nat := v.tabs.size
+
+/-- **A ruler as wide as the screen.** The invariant `Render.restore_tabs_any`
+needs of the session it replays: `Render.tabsAnsi` walks `v.cols` columns and
+reads `v.tabs`, so a ruler of any other length makes the walk and the array
+disagree. `Good` and `Renderable` both say nothing about it — `Good` bounds the
+dimensions and `Renderable` speaks of the grid — which is why it is a predicate
+of its own rather than a clause of either. -/
+def TabsOk (v : Vt) : Prop := v.tabs.size = v.cols
+
+/-- Transfer along the two projections: an operation that moves neither the
+ruler's length nor the width keeps them equal. Every arm of the sweep below is
+this lemma plus the pair of equations for its operation. -/
+theorem TabsOk.transfer {v w : Vt} (h : TabsOk v) (ht : tsz w = tsz v) (hc : dims w = dims v) :
+    TabsOk w := by
+  unfold TabsOk tsz at *
+  rw [ht, show w.cols = v.cols from congrArg Prod.fst hc]
+  exact h
+
+theorem tsz_foldl {α : Type} (f : Vt → α → Vt) (hf : ∀ v a, tsz (f v a) = tsz v) :
+    ∀ (l : List α) (v : Vt), tsz (l.foldl f v) = tsz v
+  | [], _ => rfl
+  | a :: as, v => (tsz_foldl f hf as (f v a)).trans (hf v a)
+
+theorem tsz_clearPending (v : Vt) : tsz v.clearPending = tsz v := by rfl
+
+theorem tsz_carriageReturn (v : Vt) : tsz v.carriageReturn = tsz v := by rfl
+
+theorem tsz_moveTo (v : Vt) (x y : Nat) : tsz (v.moveTo x y) = tsz v := by rfl
+
+theorem tsz_moveRel (v : Vt) (dx dy : Int) : tsz (v.moveRel dx dy) = tsz v := by rfl
+
+theorem tsz_setCol (v : Vt) (x : Nat) : tsz (v.setCol x) = tsz v := by rfl
+
+theorem tsz_putCell (v : Vt) (x y : Nat) (c : Cell) : tsz (v.putCell x y c) = tsz v := by rfl
+
+theorem tsz_eraseRowSpan (v : Vt) (y a b : Nat) : tsz (v.eraseRowSpan y a b) = tsz v := by rfl
+
+theorem tsz_scrollDownIn (v : Vt) (t b : Nat) : tsz (v.scrollDownIn t b) = tsz v := by rfl
+
+theorem tsz_deleteChars (v : Vt) (n : Nat) : tsz (v.deleteChars n) = tsz v := by rfl
+
+theorem tsz_insertChars (v : Vt) (n : Nat) : tsz (v.insertChars n) = tsz v := by rfl
+
+theorem tsz_applySgr (v : Vt) (ps : List (Nat × Bool)) : tsz (v.applySgr ps) = tsz v := by rfl
+
+theorem tsz_backTab (v : Vt) : tsz v.backTab = tsz v := by rfl
+
+theorem tsz_scrollUpIn (v : Vt) (t b : Nat) (a : Bool) : tsz (v.scrollUpIn t b a) = tsz v := by
+  unfold Vt.scrollUpIn; dsimp only; split <;> rfl
+
+theorem tsz_scrollUp (v : Vt) : tsz v.scrollUp = tsz v := tsz_scrollUpIn _ _ _ _
+
+theorem tsz_scrollDown (v : Vt) : tsz v.scrollDown = tsz v := tsz_scrollDownIn _ _ _
+
+theorem tsz_lineFeed (v : Vt) : tsz v.lineFeed = tsz v := by
+  rw [frame_lineFeed]
+  rfl
+
+theorem tsz_reverseIndex (v : Vt) : tsz v.reverseIndex = tsz v := by
+  rw [frame_reverseIndex]
+  rfl
+
+theorem tsz_backspace (v : Vt) : tsz v.backspace = tsz v := by
+  unfold Vt.backspace; split <;> rfl
+
+theorem tsz_tab (v : Vt) : tsz v.tab = tsz v := by
+  unfold Vt.tab; dsimp only; exact tsz_clearPending v
+
+theorem tsz_eraseChars (v : Vt) (n : Nat) : tsz (v.eraseChars n) = tsz v := tsz_eraseRowSpan _ _ _ _
+
+theorem tsz_eraseLine (v : Vt) (m : Nat) : tsz (v.eraseLine m) = tsz v := by
+  rw [frame_eraseLine]
+  rfl
+
+theorem tsz_eraseScreen (v : Vt) (m : Nat) : tsz (v.eraseScreen m) = tsz v := by
+  unfold Vt.eraseScreen
+  repeat' split
+  all_goals
+    first
+    | exact (tsz_foldl _ (fun w i => tsz_eraseRowSpan w _ _ _) _ _).trans (tsz_eraseLine _ _)
+    | exact tsz_foldl _ (fun w i => tsz_eraseRowSpan w _ _ _) _ _
+
+theorem tsz_insertLines (v : Vt) (n : Nat) : tsz (v.insertLines n) = tsz v := by
+  unfold Vt.insertLines
+  dsimp only
+  split
+  · rfl
+  · exact tsz_foldl _ (fun w _ => tsz_scrollDownIn w _ _) _ _
+
+theorem tsz_deleteLines (v : Vt) (n : Nat) : tsz (v.deleteLines n) = tsz v := by
+  unfold Vt.deleteLines
+  dsimp only
+  split
+  · rfl
+  · exact tsz_foldl _ (fun w _ => tsz_scrollUpIn w _ _ _) _ _
+
+theorem tsz_enterAlt (v : Vt) (s : Bool) : tsz (v.enterAlt s) = tsz v := by
+  unfold Vt.enterAlt; dsimp only; split <;> rfl
+
+theorem tsz_leaveAlt (v : Vt) (s : Bool) : tsz (v.leaveAlt s) = tsz v := by
+  unfold Vt.leaveAlt; split <;> rfl
+
+theorem tsz_setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool) :
+    tsz (v.setMode priv n on) = tsz v := by
+  unfold Vt.setMode
+  repeat' split
+  all_goals try simp only [tsz_moveTo, tsz_enterAlt, tsz_leaveAlt]
+  all_goals rfl
+
+theorem tsz_printWrap (v : Vt) : tsz v.printWrap = tsz v := by
+  rw [frame_printWrap]
+  rfl
+
+theorem tsz_printWideWrap (v : Vt) (w : Nat) : tsz (v.printWideWrap w) = tsz v := by
+  rw [frame_printWideWrap]
+  rfl
+
+theorem tsz_printShift (v : Vt) (w : Nat) : tsz (v.printShift w) = tsz v := by
+  unfold Vt.printShift; dsimp only; split <;> rfl
+
+theorem tsz_mendRow (v : Vt) (y : Nat) : tsz (v.mendRow y) = tsz v := by
+  rw [frame_mendRow]; rfl
+
+theorem tsz_printPut (v : Vt) (ch : Char) (w : Nat) : tsz (v.printPut ch w) = tsz v := by
+  unfold Vt.printPut
+  dsimp only
+  repeat' split
+  all_goals (rw [tsz_mendRow]; rfl)
+
+theorem tsz_printAdvance (v : Vt) (w : Nat) : tsz (v.printAdvance w) = tsz v := by
+  unfold Vt.printAdvance; dsimp only; split <;> rfl
+
+theorem tsz_printMark (v : Vt) (ch : Char) : tsz (v.printMark ch) = tsz v := by
+  rw [frame_printMark]; rfl
+
+theorem tsz_print (v : Vt) (c : Char) : tsz (v.print c) = tsz v := by
+  unfold Vt.print
+  dsimp only
+  repeat' split
+  all_goals
+    first
+    | rfl
+    | rw [tsz_printMark]
+    | rw [tsz_printAdvance, tsz_printPut, tsz_printShift, tsz_printWideWrap, tsz_printWrap]
+
+theorem tsz_acceptChar (v : Vt) (n : Nat) : tsz (v.acceptChar n) = tsz v := by
+  unfold Vt.acceptChar; split <;> exact tsz_print _ _
+
+theorem tsz_ctl (v : Vt) (b : UInt8) : tsz (v.ctl b) = tsz v := by
+  unfold Vt.ctl
+  repeat' split
+  all_goals
+    first
+    | exact tsz_backspace v
+    | exact tsz_tab v
+    | exact tsz_lineFeed v
+    | exact tsz_carriageReturn v
+    | rfl
+
+theorem tsz_stepEscInter (v : Vt) (i b : UInt8) : tsz (v.stepEscInter i b) = tsz v := by
+  rw [frame_stepEscInter]
+  rfl
+
+theorem tsz_oscFinish (v : Vt) (acc : Array UInt8) : tsz (v.oscFinish acc) = tsz v := by
+  rw [frame_oscFinish]
+  rfl
+
+theorem tsz_stepOsc (v : Vt) (acc : Array UInt8) (e : Bool) (b : UInt8) :
+    tsz (v.stepOsc acc e b) = tsz v := by
+  unfold Vt.stepOsc
+  repeat' split
+  all_goals
+    first
+    | rfl
+    | exact tsz_oscFinish _ _
+
+theorem tsz_stepStr (v : Vt) (e : Bool) (b : UInt8) : tsz (v.stepStr e b) = tsz v := by
+  rw [frame_stepStr]
+  rfl
+
+theorem tsz_abortUtf8 (v : Vt) (b : UInt8) : tsz (v.abortUtf8 b) = tsz v := by
+  unfold Vt.abortUtf8; split <;> rfl
+
+theorem tsz_stepGround (v : Vt) (b : UInt8) : tsz (v.stepGround b) = tsz v := by
+  unfold Vt.stepGround
+  repeat' split
+  all_goals try simp only [tsz_ctl, tsz_acceptChar]
+  all_goals rfl
+
+/-! ### The three writers
+
+`TBC` and `HTS` are CSI `g` and **ESC** `H`; `RIS` is ESC `c`. Everything else is
+the sweep above, so each of these gets the honest treatment and nothing else has
+to. -/
+
+theorem tsz_csiDispatch_ne_tbc {v : Vt} (s : CsiState) (final : UInt8) (h : final ≠ 0x67) :
+    tsz (v.csiDispatch s final) = tsz v := by
+  unfold Vt.csiDispatch
+  dsimp only
+  repeat' split
+  all_goals
+    try
+      simp only [tsz_insertChars, tsz_moveRel, tsz_carriageReturn, tsz_setCol, tsz_moveTo,
+        tsz_eraseScreen, tsz_eraseLine, tsz_insertLines, tsz_deleteLines, tsz_deleteChars,
+        tsz_eraseChars, tsz_setMode, tsz_applySgr]
+  all_goals
+    first
+    | rfl
+    | exact tsz_foldl _ (fun w _ => tsz_tab w) _ _
+    | exact tsz_foldl _ (fun w _ => tsz_scrollUp w) _ _
+    | exact tsz_foldl _ (fun w _ => tsz_scrollDown w) _ _
+    | exact tsz_foldl _ (fun w _ => tsz_backTab w) _ _
+    | exact absurd rfl h
+
+/-- **`TBC` keeps the ruler as wide as the screen.** `TBC 0` pokes one stop with
+`setIfInBounds`, which cannot change a length; `TBC 3` installs
+`Array.replicate v.cols`, which is the right length by construction — so this arm
+*re-establishes* the invariant rather than preserving it, and is the reason the
+layer is stated over `TabsOk` and not over `tsz` alone. -/
+theorem tabsOk_csiDispatch {v : Vt} (s : CsiState) (final : UInt8) (h : TabsOk v) :
+    TabsOk (v.csiDispatch s final) := by
+  by_cases hg : final = 0x67
+  · subst hg
+    by_cases hi : s.ignore = true
+    · simpa [Vt.csiDispatch, hi] using h
+    · unfold Vt.csiDispatch
+      rw [ite_eq_right hi]
+      show
+        TabsOk
+          (match s.arg 0 0 with
+          | 0 => { v with tabs := v.tabs.setIfInBounds v.cursor.x false }
+          | 3 => { v with tabs := Array.replicate v.cols false }
+          | _ => v)
+      split
+      · show (v.tabs.setIfInBounds v.cursor.x false).size = v.cols
+        rw [Array.size_setIfInBounds]
+        exact h
+      · show (Array.replicate v.cols false).size = v.cols
+        rw [Array.size_replicate]
+      · exact h
+  · exact h.transfer (tsz_csiDispatch_ne_tbc s final hg) (dims_csiDispatch v s final)
+
+theorem tabsOk_csiFinish {v : Vt} (s : CsiState) (final : UInt8) (h : TabsOk v) :
+    TabsOk (v.csiFinish s final) := by
+  unfold Vt.csiFinish
+  dsimp only
+  split <;> exact tabsOk_csiDispatch _ _ h
+
+theorem tabsOk_stepCsi {v : Vt} (s : CsiState) (b : UInt8) (h : TabsOk v) :
+    TabsOk (v.stepCsi s b) := by
+  unfold Vt.stepCsi
+  repeat' split
+  all_goals
+    first
+    | exact h
+    | exact tabsOk_csiFinish _ _ h
+    | exact h.transfer (tsz_ctl _ _) (dims_ctl _ _)
+
+theorem tsz_stepEsc_ne {v : Vt} (b : UInt8) (h48 : b ≠ 0x48) (h63 : b ≠ 0x63) :
+    tsz (v.stepEsc b) = tsz v := by
+  unfold Vt.stepEsc
+  dsimp only
+  repeat' split
+  all_goals
+    first
+    | rfl
+    | exact tsz_lineFeed v
+    | exact tsz_reverseIndex v
+    | exact (tsz_lineFeed _).trans (tsz_carriageReturn v)
+    | exact absurd rfl h48
+    | exact absurd rfl h63
+
+/-- **`HTS` and `RIS`, the two escapes that move the ruler.** `HTS` sets a stop
+with `setIfInBounds`; `RIS` rebuilds through `Vt.init`, which installs
+`defaultTabs (clampDim v.cols)` beside `cols := clampDim v.cols` — the same clamp
+on both sides, which is why this needs no `Good` where `dims_stepEsc` does. -/
+theorem tabsOk_stepEsc {v : Vt} (b : UInt8) (h : TabsOk v) : TabsOk (v.stepEsc b) := by
+  by_cases h48 : b = 0x48
+  · subst h48
+    show (v.tabs.setIfInBounds v.cursor.x true).size = v.cols
+    rw [Array.size_setIfInBounds]
+    exact h
+  by_cases h63 : b = 0x63
+  · subst h63
+    show (defaultTabs (clampDim v.cols)).size = clampDim v.cols
+    exact size_defaultTabs _
+  · exact h.transfer (tsz_stepEsc_ne b h48 h63) (dims_stepEsc_ne_ris b h63)
+
+/-! ### …and the stream
+
+`Vt.init` and `Vt.resize` both install `defaultTabs` beside the clamped width, so
+the two doors into a `Vt` establish the invariant and every byte preserves it. -/
+
+theorem tabsOk_init (cols rows : Nat) : TabsOk (Vt.init cols rows) := size_defaultTabs _
+
+theorem tabsOk_resize (v : Vt) (cols rows : Nat) : TabsOk (v.resize cols rows) := size_defaultTabs _
+
+theorem tabsOk_quiesce {v : Vt} (h : TabsOk v) : TabsOk v.quiesce := h
+
+/-- **The ruler keeps pace with the width, for any byte.** -/
+theorem tabsOk_step {v : Vt} (b : UInt8) (h : TabsOk v) : TabsOk (v.step b) := by
+  have hab : TabsOk (v.abortUtf8 b) := h.transfer (tsz_abortUtf8 v b) (dims_abortUtf8 v b)
+  unfold Vt.step
+  dsimp only
+  split
+  all_goals
+    first
+    | exact hab.transfer (tsz_stepGround _ _) (dims_stepGround _ _)
+    | exact tabsOk_stepEsc _ hab
+    | exact hab.transfer (tsz_stepEscInter _ _ _) (dims_stepEscInter _ _ _)
+    | exact tabsOk_stepCsi _ _ hab
+    | exact hab.transfer (tsz_stepOsc _ _ _ _) (dims_stepOsc _ _ _ _)
+    | exact hab.transfer (tsz_stepStr _ _ _) (dims_stepStr _ _ _)
+
+/-- The stream form. -/
+theorem tabsOk_feed : ∀ (bs : List UInt8) {v : Vt}, TabsOk v → TabsOk (v.feed bs)
+  | [], _, h => h
+  | b :: bs, v, h => by
+    rw [show v.feed (b :: bs) = (v.step b).feed bs from rfl]
+    exact tabsOk_feed bs (tabsOk_step b h)
+
 end Linger.Core.Vt
 
 namespace Linger.Core.Vt
@@ -4682,6 +5033,25 @@ theorem u8Ok_of_liveReachable {v : Vt} (h : LiveReachableVt v) : U8Ok v := by
   | feed _ bytes ih => exact u8Ok_feed bytes ih
   | resize _ c r ih => intro hz; rw [show (Vt.resize _ c r).u8acc = _ from rfl] at *; exact ih hz
   | quiesce _ _ => intro _; rfl
+
+/-- **…and the ruler, which is `specs/vt-toolkit.md` Step 3's harvest.** The one
+hypothesis `Render.restore_tabs_reachable` still had to ask for —
+`v.tabs.size = v.cols` — is a fact about every state a live session can hold, so a
+caller with reachability no longer has to supply it. Neither `Good` nor
+`Renderable` implies it (the first bounds the dimensions, the second speaks of the
+grid), which is why it needed the §Ruler layer of its own rather than a clause on
+one of them.
+
+Note the two rungs that could have broken it and do not: `resize` reinstalls
+`defaultTabs` at the new width, and the `feed` rung covers `TBC 3`, which replaces
+the whole array — the invariant is *re-established* there rather than preserved,
+which is the shape `tabsOk_csiDispatch` records. -/
+theorem tabsOk_of_liveReachable {v : Vt} (h : LiveReachableVt v) : TabsOk v := by
+  induction h with
+  | init c r => exact tabsOk_init c r
+  | feed _ bytes ih => exact tabsOk_feed bytes ih
+  | resize _ c r ih => exact tabsOk_resize _ c r
+  | quiesce _ ih => exact tabsOk_quiesce ih
 
 end Linger.Core.Vt
 

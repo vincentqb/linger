@@ -1460,7 +1460,7 @@ theorem smMod_daw7 (X : Modes) (on : Bool) : smMod 7 on X = { X with wrap := on 
 
 theorem smMod_dom6 (X : Modes) (on : Bool) : smMod 6 on X = { X with origin := on } := by
   show
-    (({ (default : Vt) with modes := { X with origin := on } }).moveTo 0 0).modes =
+    (({ Vt.init 1 1 with modes := { X with origin := on } }).moveTo 0 0).modes =
       { X with origin := on }
   rw [frame_moveTo]
 
