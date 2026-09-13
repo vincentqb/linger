@@ -31,12 +31,13 @@ Every combinator round-trip is unconditional: `wNat` is LEB128, so
 there is no "fits in N bits" side condition anywhere in the format.
 
 **The `Vt` round trip is not.** `rVt` hands its decoded fields to
-`Vt.ofDecoded`, which returns `none` unless they describe a `Good` state
-(`specs/vt-toolkit.md` Step 2), so `rt_vt` and everything above it carries a
-`Good` hypothesis — satisfied by every live session, and false of exactly the
-records the validation exists to refuse. The two directions are `rVt_good` /
-`load_good` (nothing bad is ever decoded, for **any** byte string) and
-`load_save_none_of_cols_zero` (the canonical junk record is refused rather than
+`Vt.ofDecoded`, which returns `none` unless they describe a `Good` **and** `Renderable`
+state with a ruler the width of the screen (`specs/vt-toolkit.md` Step 2 for the first,
+finding R2 for the other two), so `rt_vt` and everything above it carries those three
+hypotheses — satisfied by every live session (`load_save_live`), and false of exactly the
+records the validation exists to refuse. The two directions are `rVt_good`/`rVt_shape` and
+`load_good`/`load_renderable`/`load_tabsOk` (nothing bad is ever decoded, for **any** byte
+string) and `load_save_none_of_cols_zero` (the canonical junk record is refused rather than
 clamped).
 -/
 
@@ -219,16 +220,24 @@ theorem rVt_fields (v : Vt) (rest : List UInt8) :
     rt_list rt_bool, rt_ring, rt_alt, rt_saved, rt_str, rt_bool, Option.bind_eq_bind,
     Option.bind_some, Array.toArray_toList, Option.map_eq_bind, Function.comp_def]
 
-/-- The Vt round-trip: exact modulo the deliberately-forgotten parser
+/-- The Vt round trip: exact modulo the deliberately-forgotten parser
 state, for any state the emulator can actually be in.
 
 `Good` is the hypothesis the smart constructor introduced, and it is not a weakening of
 the format: `good_init` plus the `Pres` machinery says every live session satisfies it,
 and a state that does not is precisely one a checkpoint must not restore. The old
-unconditional statement was true of `cols := 0`, which is the bug. -/
-theorem rt_vt (v : Vt) (h : Good v) (rest : List UInt8) :
+unconditional statement was true of `cols := 0`, which is the bug.
+
+**`hren` and `htabs` arrived with finding R2** (SCRATCHPAD.md), for the same reason and by
+the same mirror: the door now also refuses a record whose grid is not the shape its
+dimensions claim, so the round trip is conditional on the *input* being that shape. Same
+answer to "is this a weakening" — the unconditional statement was true of a screen
+`Render.restore` cannot repaint, which is what `resume_grid` was refuted at. Every live
+session satisfies all three (`good_of_liveReachable`, `renderable_of_liveReachable`,
+`tabsOk_of_liveReachable`), so `load_save_live` below is the honest reading of the cost. -/
+theorem rt_vt (v : Vt) (h : Good v) (hren : Renderable v) (htabs : TabsOk v) (rest : List UInt8) :
     rVt (wVt v ++ rest) = some (v.quiesce, rest) := by
-  rw [rVt_fields, ofDecoded_of_good h, Option.map_some]
+  rw [rVt_fields, ofDecoded_of_good h hren htabs, Option.map_some]
 
 /-- **Nothing bad is ever decoded, from any bytes at all.** Not "from bytes `save`
 wrote" — from an arbitrary `List UInt8`, which is what a checkpoint file is: the
@@ -250,6 +259,26 @@ theorem rVt_good {l : List UInt8} {v : Vt} {rest : List UInt8} (h : rVt l = some
     h
   simp only [Option.some.injEq, Prod.mk.injEq] at he
   exact he.1 ▸ ofDecoded_good hw
+
+/-- **…and nothing the emitter cannot repaint, either — finding R2.** The other half of
+"nothing bad is ever decoded", from an arbitrary `List UInt8`: if `rVt` yields a `Vt`, that
+`Vt`'s grid has exactly `rows` rows of exactly `cols` cells, every cell holds an emittable
+base of the width it claims, every wide glyph keeps its shadow, the stashed alt screen is
+the same shape, and the tab ruler is the width of the screen.
+
+`Good` implied none of that — `decodedOk` was never passed the grid — and the gap was
+observable: a real checkpoint with its `rows` byte flipped decoded to a screen whose replay
+is not the screen it came from. The bundled conjunction is deliberate: one destructuring of
+the seventeen readers, projected by `load_renderable` and `load_tabsOk` below. -/
+theorem rVt_shape {l : List UInt8} {v : Vt} {rest : List UInt8} (h : rVt l = some (v, rest)) :
+    Renderable v ∧ TabsOk v := by
+  simp only [rVt, Option.bind_eq_bind, Option.bind_eq_some_iff] at h
+  obtain
+    ⟨_, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -,
+      _, -, w, hw, he⟩ :=
+    h
+  simp only [Option.some.injEq, Prod.mk.injEq] at he
+  exact ⟨he.1 ▸ ofDecoded_renderable hw, he.1 ▸ ofDecoded_tabsOk hw⟩
 
 /-! ### The format tag, as a named stage
 
@@ -276,21 +305,68 @@ theorem load_good {l : List UInt8} {c : Ckpt} (h : load l = some c) : Good c.vt 
     exact rVt_good hvt
   · exact absurd h (by simp)
 
+/-- **The top-level shape claim, for any byte string — finding R2's payoff.** A checkpoint
+that loads at all loads to a screen the emitter can reproduce and a ruler the width of that
+screen. One destructuring of `load`, projected by the two claims below.
+
+This is what makes the §Replay theorems reachable from the *resume path* rather than merely
+stated over a hypothesis: `Theorems/Resume.lean`'s `resume_grid_of_load` /
+`resume_tabs_of_load` / `resume_sb_of_load` need no hypothesis at all beyond
+`load l = some c`, where their `save`-side twins must ask for `Renderable` because their
+subject is `save`'s input. -/
+theorem load_shape {l : List UInt8} {c : Ckpt} (h : load l = some c) :
+    Renderable c.vt ∧ TabsOk c.vt := by
+  simp only [load, Option.bind_eq_bind, Option.bind_eq_some_iff] at h
+  obtain ⟨_, -, ⟨vt, _⟩, hvt, _, -, _, -, h⟩ := h
+  split at h
+  · simp only [Option.some.injEq] at h
+    subst h
+    exact rVt_shape hvt
+  · exact absurd h (by simp)
+
+/-- **The twin of `load_good`**: every byte string `load` accepts decodes to a `Renderable`
+screen. Named as its own claim because that is the property `Render.restore`'s theorems ask
+for, and because before R2 it was false — refutably, from one flipped byte of a real
+checkpoint. -/
+theorem load_renderable {l : List UInt8} {c : Ckpt} (h : load l = some c) : Renderable c.vt :=
+  (load_shape h).1
+
+/-- …and the ruler, which `Renderable` does not carry (`Render.restore_tabs_any`'s
+`hvtabs`, `Resume.resume_tabs`'s). Before R2 a checkpoint could name a ruler of any length
+at all. -/
+theorem load_tabsOk {l : List UInt8} {c : Ckpt} (h : load l = some c) : TabsOk c.vt :=
+  (load_shape h).2
+
 /-- §Restore, top level: a checkpoint written by `save` loads back to
 exactly what was saved (parser state quiesced — which the daemon's
 checkpoints already are, being taken between poll rounds). Totality on
-garbage is by construction, and `load_good` says what that totality now
-delivers: garbage yields `none`, never a bad screen. -/
-theorem load_save (c : Ckpt) (h : Good c.vt) :
+garbage is by construction, and `load_good`/`load_renderable` say what that totality now
+delivers: garbage yields `none`, never a bad screen and never a screen the emitter cannot
+repaint.
+
+Three hypotheses, all of them the decoder's acceptance seen from this side (`rt_vt`):
+`Good` since Step 2, `Renderable` and `TabsOk` since R2. `load_save_live` below is the same
+claim with all three discharged from reachability, which is the answer to "what does this
+cost a real session". -/
+theorem load_save (c : Ckpt) (h : Good c.vt) (hren : Renderable c.vt) (htabs : TabsOk c.vt) :
     load (save c) = some { c with vt := c.vt.quiesce } := by
   unfold load save
   simp only [List.append_assoc]
   rw [stripMagic_magic]
-  simp only [rt_vt _ h, rt_str, Option.bind_eq_bind, Option.bind_some]
+  simp only [rt_vt _ h hren htabs, rt_str, Option.bind_eq_bind, Option.bind_some]
   have h := rt_list (rt_pair rt_str rt_str) c.labels []
   rw [List.append_nil] at h
   rw [h]
   rfl
+
+/-- **What the three hypotheses cost a real session: nothing.** Every state a live session
+can hold is `LiveReachableVt`, and that discharges `Good`, `Renderable` and `TabsOk` at
+once. Stated because R2 added two binders to `load_save` and a reader is entitled to see,
+in one place, that the checkpoint every daemon writes still loads — the alternative is
+three lemma names in a docstring and a reader taking them on trust. -/
+theorem load_save_live (c : Ckpt) (h : LiveReachableVt c.vt) :
+    load (save c) = some { c with vt := c.vt.quiesce } :=
+  load_save c (good_of_liveReachable h) (renderable_of_liveReachable h) (tabsOk_of_liveReachable h)
 
 /-- **The tag `save` writes.** Pinned as its own claim because the tag is the one part
 of a checkpoint another program reads before trusting the rest, and because a wrong
@@ -309,10 +385,12 @@ theorem save_tag (c : Ckpt) : (save c).take 5 = magic := by
   rw [List.take_append_of_le_length (by simp [magic]), List.take_of_length_le (by simp [magic])]
 
 /-- And when the parser is already quiescent, the round-trip is exact
-— the letter of the THEOREMS.md row. -/
-theorem load_save_exact (c : Ckpt) (hg : Good c.vt) (h : c.vt.pstate = .ground)
-    (h8 : c.vt.u8need = 0) (ha : c.vt.u8acc = 0) : load (save c) = some c := by
-  rw [load_save c hg]
+— the letter of the THEOREMS.md row. `hren`/`htabs` are `load_save`'s, hence
+`ofDecoded_of_good`'s; see there for why they are not a weakening. -/
+theorem load_save_exact (c : Ckpt) (hg : Good c.vt) (hren : Renderable c.vt) (htabs : TabsOk c.vt)
+    (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0) (ha : c.vt.u8acc = 0) :
+    load (save c) = some c := by
+  rw [load_save c hg hren htabs]
   congr 1
   cases c with
   | mk vt cwd labels =>

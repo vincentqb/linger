@@ -179,4 +179,111 @@ example :
       true := by
   native_decide
 
+/-! ### The corrupt record, part two: the shape of the screen (finding R2)
+
+`Vt.decodedOk` decided `Good`'s content and was **never passed the grid**, so none of the
+clauses below were checked and a `Good ∧ ¬Renderable` state was one byte away. The audit
+recorded in SCRATCHPAD.md exhibited that from disk and refuted `resume_grid`'s conclusion at
+it. `Vt.decodedRenderable` is the second stage of the door;
+`Theorems/Checkpoint.lean`'s `load_renderable`/`load_tabsOk` state its guarantee for *any*
+byte string, `Theorems/Vt.lean`'s `ofDecoded_none_of_rows_mismatch` states the refusal, and
+these pin what the theorems do not: the byte offsets, and that the four sub-clauses are
+independently reachable.
+
+The control above still applies to all of them — a real checkpoint loads, so `isNone`
+passing is not `load` having become unconditionally `none`. -/
+
+/-- **The exhibited attack, at the byte level.** The `rows` byte of a real 4×2 checkpoint,
+2 → 3. Every clause `decodedOk` checks still holds (`bot = 1 < 3`, cursor at the origin), the
+grid's own length is a separate `rNat` further along the record, and the result was a screen
+whose replay is not the screen it came from. Refused.
+
+This is the fixture the audit's `#eval` produced `false` for on the pre-change decoder, so it
+is the one to run first against any weakening of the guard. -/
+example :
+    (let c : Ckpt := { vt := Vt.init 4 2, cwd := "/tmp", labels := [("k", "v")] }
+     let bytes := save c
+     bytes[6]? == some 2                       -- the byte being patched IS `rows`
+       && (load (bytes.set 6 3)).isNone) =
+      true := by
+  native_decide
+
+/-- …and the same in the other direction, where the row count is *lower* than the grid's
+length. `grid.size = rows` is an equation, not a bound: a record with rows to spare would
+replay a screen with the surplus rows silently dropped. -/
+example :
+    (let v :=
+        { Vt.init 4 3 with
+          rows := 2, bot := 1 }
+     (load (save { vt := v, cwd := "", labels := [] })).isNone) =
+      true := by
+  native_decide
+
+/-- A row of the **wrong width** — the second sub-clause, and the one `rows` and `cols`
+cannot catch between them, since `wRow` writes each row's length itself. -/
+example :
+    (let short : Row := blankRow 3 {}
+     let v := { Vt.init 4 2 with grid := #[short, blankRow 4 {}] }
+     (load (save { vt := v, cwd := "", labels := [] })).isNone) =
+      true := by
+  native_decide
+
+/-- A **cell** the emitter cannot reproduce: base `'\x0A'` at width 7. `rCell` reads `base`
+as any valid `Char`, `marks` as any list and `width` as any `Nat`, so this was accepted —
+`Render.safeChar` would substitute U+FFFD on emit and the replayed screen would differ from
+the one on disk. Both halves of `CellOk` are wrong here at once, which is the point: a
+control codepoint *and* a width no `charWidth` returns. -/
+example :
+    (let bad : Row := (blankRow 4 {}).set! 0 { base := '\x0A', marks := [], width := 7, pen := {} }
+     let v := { Vt.init 4 2 with grid := #[bad, blankRow 4 {}] }
+     (load (save { vt := v, cwd := "", labels := [] })).isNone) =
+      true := by
+  native_decide
+
+/-- A **half wide pair**: a width-2 base whose right neighbour is an ordinary blank. Half a
+glyph is not expressible by `Render.rowAnsi` — the base re-wraps on replay and everything
+after it lands a column off — which is why the live emulator ends every write in `Row.mend`
+and why the door has to refuse what a file can still name. -/
+example :
+    (let bad : Row := (blankRow 4 {}).set! 1 { base := '中', marks := [], width := 2, pen := {} }
+     let v := { Vt.init 4 2 with grid := #[bad, blankRow 4 {}] }
+     (load (save { vt := v, cwd := "", labels := [] })).isNone) =
+      true := by
+  native_decide
+
+/-- The **stashed alt screen**, whose grid was checked *nowhere* before this — `decodedOk`
+looks at the stashed cursor and stops there. A session in the alt screen carries the main
+screen in `altGrid`, and `Render.restore_grid_any_alt` paints it, so a bad one is the same
+defect one indirection away. -/
+example :
+    (let v := { Vt.init 4 2 with altGrid := some (#[blankRow 4 {}], { x := 0, y := 0 }, {}) }
+     (load (save { vt := v, cwd := "", labels := [] })).isNone) =
+      true := by
+  native_decide
+
+/-- The **tab ruler**, the fourth sub-clause: `wVt` writes `tabs` as its own list, so a file
+can name a ruler of any length. `Render.restore_tabs_any` needs it to be the width of the
+screen (`Resume.resume_tabs_of_load` is what that buys), and `Renderable` does not carry it. -/
+example :
+    (let v := { Vt.init 4 2 with tabs := #[false, false] }
+     (load (save { vt := v, cwd := "", labels := [] })).isNone) =
+      true := by
+  native_decide
+
+/-- **The ring's rows are deliberately NOT checked**, and this fixture is that decision made
+visible rather than a hole left implied. `Vt.resize` reinstalls the grid and the ruler at the
+new width and leaves the scrollback rows at their old one, so a live session that has been
+resized holds ring rows wider than `cols` — a legitimate checkpoint the door must accept.
+The consequence is that `Render.restore_sb_exact`'s `hrok` stays unreachable from disk.
+
+Fed 5 lines into a 10×2 screen and then resized to 6 wide: the ring rows are 10 wide, the
+screen is 6, and the checkpoint loads. -/
+example :
+    (let v := ((Vt.init 10 2).feedBytes "1\r\n2\r\n3\r\n4\r\n5".toUTF8).resize 6 2
+     match load (save { vt := v, cwd := "", labels := [] }) with
+      | some ck' => ck'.vt.sb.toList.any (fun r => r.size != 6) && ck'.vt.colCount == 6
+      | none => false) =
+      true := by
+  native_decide
+
 end Linger.Core.Checkpoint.Tests

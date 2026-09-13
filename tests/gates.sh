@@ -74,6 +74,98 @@ toolkit_closure Linger/Core/Render.lean \
 toolkit_closure Linger/Core/Terminal.lean \
   'public import Linger.Core.Render;import all Linger.Core.Vt;'
 
+# The `Vt` friend set — who may forge a `Vt` (SCRATCHPAD.md, "the adversarial audit of
+# the seal", finding R1). `import all M` grants M's OWN all-access set, including
+# whatever M has all-access to, so **`import all` TRANSITS** and
+# `git grep -l 'import all Linger.Core.Vt'` is NOT an enumeration of the friend set.
+# Measured in the real position, not a scratch file: one added
+# `import all Linger.Core.Render` in `Linger/Runtime/Client.lean` (which already
+# `public import`s Render) plus a five-field `{ cols := 0, rows := 0, grid := #[], … }`
+# gives `./lake build linger` exit 0 AND `sh tests/gates.sh` exit 0. Two hops is the
+# same: `import all Theorems.Listing` from a file holding neither
+# `import all Linger.Core.Vt` nor `import all Linger.Core.Render` compiles the identical
+# forge. That is the Step 4 situation exactly — the compiler consents, so a grep is the
+# only possible oracle — except that until now no grep existed, which made joining the
+# friend set cost one line that nothing objected to, and made `private` on 20 fields
+# worth one line of anyone's diff.
+#
+# CLOSURE, not edges. Transit follows `import all` edges ONLY (measured:
+# `import all Linger.Core.Session` — a plain `public import`er of `Vt` — does not
+# transit, and neither does the `Linger` umbrella, whose imports are all `public`), so
+# the closure over those edges IS the friend set and nothing else can widen it. Gating
+# the edges instead would mean recording all 78 of them, of which about five matter, and
+# would fire on every legitimate rewire of the `Theorems/Render/*` chain — noise on the
+# common change, which is how a gate stops being read.
+#
+# The permitted region is an EXACT four-file list plus two directories, and that split
+# is by edit frequency, measured: of 192 commits, 36 added a `.lean` under `Theorems/`
+# or `Tests/` — about one commit in five — against 11 under `Linger/Core/`, only four of
+# which are in the closure. So a per-file list over `Theorems/**` would be edited
+# reflexively, while these four are edited essentially never, which is what makes them a
+# checkpoint. `Theorems/**` and `Tests/**` are friends BY DECLARATION (see
+# `Linger/Core/Vt.lean`, "## Every door"), and `Tests/` deliberately forges invalid
+# states in its negative fixtures, so listing its files one by one would gate a
+# non-property. Everything else is outside and fail-closed — `E2E/**`,
+# `LingerTest.lean`, `Main.lean`, `Linger/Posix.lean`, all of `Linger/Runtime/` and the
+# other seven `Linger/Core/` modules. `E2E/**` is outside deliberately: a pty suite
+# asserts on bytes the real binary emitted, so a forged `Vt` there would be an assertion
+# about a state the binary cannot reach — the very bug the seal exists to prevent.
+#
+# EXACT means both directions, as with the three toolkit lists above: a recorded friend
+# that stops reaching `Vt` fails too, so a future step taking a friend import out is a
+# reviewable edit here rather than a silent one. No cardinality number is recorded — the
+# Step 4 record killed the job-count ratchet because cardinality is blind to identity,
+# and that argument transfers whole.
+#
+# The regex is deliberately LOOSER than column 0, because `  import all Foo` (leading
+# spaces) and `meta import all Foo` both compile — measured, along with the two that do
+# not: `public import all` and `private import all` are rejected by Lean, and a tab is
+# refused before it reaches here. Anchoring at column 0 would leave a one-space evasion.
+# The cost is a prose hazard (AGENTS.md: these greps read docstrings), bounded by
+# measurement — the loose regex and the anchored one find the identical 78 lines today —
+# so: do not begin a docstring line with a bare `import all`.
+VT_ALL_RE='^[[:space:]]*(meta[[:space:]]+)*import[[:space:]]+all[[:space:]]+'
+VT_FRIEND_EXACT='Linger/Core/Vt.lean Linger/Core/Render.lean Linger/Core/Terminal.lean Linger/Core/Checkpoint.lean'
+VT_FRIEND_DIRS='Theorems/ Tests/'
+[ -f Linger/Core/Vt.lean ] \
+  || fail "Linger/Core/Vt.lean is gone — the friend-set gate has no seal left to guard"
+git grep -nE "$VT_ALL_RE" -- '*.lean' \
+| awk -F: -v seed='Linger/Core/Vt.lean' -v exact="$VT_FRIEND_EXACT" -v dirs="$VT_FRIEND_DIRS" '
+  BEGIN { ne = split(exact, E, " "); nd = split(dirs, D, " ") }
+  { mod = $3
+    sub(/^[ \t]*(meta[ \t]+)*import[ \t]+all[ \t]+/, "", mod); sub(/[ \t\r]+$/, "", mod)
+    tgt = mod; gsub(/[.]/, "/", tgt)
+    n++; src[n] = $1; ln[n] = $2; raw[n] = $3; dst[n] = tgt ".lean" }
+  END {
+    # Breadth-first BACKWARDS from the seal, so via[] is a shortest witness chain and
+    # the two-hop case prints as the two hops it is rather than as one bare filename.
+    q[1] = seed; inset[seed] = 1; qn = 1
+    for (qi = 1; qi <= qn; qi++)
+      for (i = 1; i <= n; i++)
+        if (dst[i] == q[qi] && !(src[i] in inset)) {
+          inset[src[i]] = 1; via[src[i]] = i; qn++; q[qn] = src[i] }
+    bad = 0
+    for (i = 1; i <= n; i++) {   # input order: git grep sorts, so the report is stable
+      f = src[i]
+      if (!(f in inset) || (f in seen)) continue
+      seen[f] = 1
+      ok = 0
+      for (j = 1; j <= ne; j++) if (f == E[j]) ok = 1
+      for (j = 1; j <= nd; j++) if (substr(f, 1, length(D[j])) == D[j]) ok = 1
+      if (ok) continue
+      bad++
+      printf "  %s has all-access to Linger.Core.Vt -- its 20 private fields, its\n", f
+      printf "  private constructor and Vt.ofDecoded -- by this chain of import all:\n"
+      for (cur = f; cur != seed; cur = dst[via[cur]])
+        printf "    %s:%s:%s\n", src[via[cur]], ln[via[cur]], raw[via[cur]] }
+    for (j = 1; j <= ne; j++)
+      if (!(E[j] in inset)) { bad++
+        printf "  %s is a RECORDED friend that no longer reaches Linger.Core.Vt", E[j]
+        printf " (renamed, moved, or its import all went)\n" }
+    if (bad > 0) printf "  permitted: %s -- plus anything under: %s\n", exact, dirs
+    exit (bad == 0 ? 0 : 1) }' >&2 \
+  || fail "the Linger.Core.Vt friend set changed (import all TRANSITS: it re-grants whatever the imported module itself has all-access to)"
+
 # shim-size ratchet: the C trust boundary must not grow silently. This
 # number only ever goes DOWN without discussion; raising it is a
 # deliberate, reviewable act — the checkpoint for "does this genuinely
@@ -199,4 +291,4 @@ ep_n="$(grep -rc 'partial def' E2E/*.lean LingerTest.lean | awk -F: '{s+=$2} END
 [ "$ep_n" -le "$E2E_PARTIAL_CAP" ] \
   || fail "E2E/ grew to $ep_n partial defs (cap $E2E_PARTIAL_CAP); a do-block loop does not need the keyword"
 
-printf 'gates OK — purity, the OS surface, and five ratchets\n'
+printf 'gates OK — purity, the OS surface, the Vt friend set, and five ratchets\n'

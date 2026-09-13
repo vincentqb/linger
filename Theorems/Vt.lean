@@ -140,32 +140,20 @@ theorem ofDecoded_good {cols rows : Nat} {grid : Array Row} {cursor : Cursor} {p
   unfold Vt.ofDecoded at h
   split at h
   · rename_i hg
-    obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, halt⟩ := decodedOk_iff.mp hg
+    simp only [Bool.and_eq_true] at hg
+    obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, halt⟩ := decodedOk_iff.mp hg.1
     cases h
     exact
       ⟨h1, h3, h2, h4, h5, h6, h7, h8, halt, h9, h10, h11, Nat.zero_le 3, fun s hs =>
         absurd hs (by simp), fun acc e hs => absurd hs (by simp)⟩
   · exact absurd h (by simp)
 
-/-- **Nothing good is rejected.** The other half: a `Vt` that is `Good` — which every
-live session's is, by `good_init` and the `Pres` machinery below — survives the door
-unchanged, modulo the parser state a checkpoint deliberately forgets.
-
-Without this, `ofDecoded_good` would be satisfied by a constructor that returned `none`
-always, and §Restore would be a claim about a codec that never restores anything. It is
-also exactly what `Checkpoint.rt_vt` needs, which is why the round-trip theorem grew a
-`Good` hypothesis in the same change. -/
-theorem ofDecoded_of_good {v : Vt} (h : Good v) :
-    Vt.ofDecoded v.cols v.rows v.grid v.cursor v.pen v.modes v.top v.bot v.tabs v.sb v.altGrid
-        v.saved v.title v.g0Line v.g1Line v.shiftOut v.bell =
-      some v.quiesce := by
-  unfold Vt.ofDecoded
-  rw [ite_eq_left
-      (decodedOk_iff.mpr
-        ⟨h.colsPos, h.colsLe, h.rowsPos, h.rowsLe, h.curX, h.curY, h.savX, h.savY, h.topLe, h.botLt,
-          h.sbLe, h.altCur⟩)]
-  cases v
-  rfl
+/-! **The other half of the door's claim — "nothing good is rejected" — is
+`ofDecoded_of_good`, and it is NOT here.** It lives in §The decoder's door, part two,
+below, because after R2 the door also decides `Renderable`, so the statement names a
+predicate nothing this early in the file can mention. `ofDecoded_good` above would be
+satisfied by a constructor that returned `none` always; that is what the other half
+rules out, so read them as a pair even though the file cannot state them as one. -/
 
 /-- **Junk dimensions are refused, not clamped**, and this is the concrete shape of
 that: `cols = 0` is the canonical corrupt value — no live session can hold it, `Good`
@@ -186,8 +174,15 @@ theorem ofDecoded_none_of_cols_zero {rows : Nat} {grid : Array Row} {cursor : Cu
     Vt.ofDecoded 0 rows grid cursor pen modes top bot tabs sb altGrid saved title g0Line g1Line
         shiftOut bell =
       none := by
+  have hno :
+    (Vt.decodedOk 0 rows cursor top bot sb altGrid saved &&
+        Vt.decodedRenderable 0 rows grid tabs altGrid) ≠
+      true := by
+    intro hg
+    simp only [Bool.and_eq_true] at hg
+    exact absurd (decodedOk_iff.mp hg.1).1 (by omega)
   unfold Vt.ofDecoded
-  rw [ite_eq_right (fun hg => absurd (decodedOk_iff.mp hg).1 (by omega))]
+  rw [ite_eq_right hno]
 
 /-- **Fold invariance, once.** Any predicate preserved by one step is preserved
 by a whole `List.foldl`. Five lemmas in this repo were this statement written out
@@ -4081,6 +4076,245 @@ theorem gridOk_replicate (cols rows : Nat) (p : Pen) :
 
 theorem renderable_init (cols rows : Nat) : Renderable (Vt.init cols rows) :=
   ⟨gridOk_replicate _ _ _, fun _ _ _ h => nomatch h⟩
+
+/-! ### The decoder's door, part two — the shape half (finding R2)
+
+`decodedOk_iff` above decides `Good`'s content, and `Good` says nothing about the grid.
+The audit recorded in SCRATCHPAD.md reached a `Good ∧ ¬Renderable` state **from disk**
+with one flipped byte of a real checkpoint and refuted `resume_grid`'s conclusion at it,
+which makes this an observable defect rather than a missing hypothesis. `Vt.decodedRenderable`
+(`Linger/Core/Vt.lean`) is the second half of the door's check; these are its claims.
+
+They live here, four thousand lines below the door's other claims, for one reason:
+`Renderable` and its `GridOk`/`RowOk`/`CellOk`/`PairOk` ladder are defined just above, and
+nothing earlier in this file can name them. One `iff` per rung, so the `Bool` and the
+`Prop` cannot drift apart at any level — the same discipline as `decodedOk_iff`, five
+times.
+
+**The mirror lands here too.** `ofDecoded_of_good` is the same predicate seen from the
+other side — the door's *non-rejection* — so it now asks for `Renderable` and `TabsOk`,
+and everything above it inherits them: `Checkpoint.rt_vt` → `load_save` →
+`load_save_exact` → the five `resume_*` claims that never read the grid. Every claim that
+gained one says so in its own docstring, `renderable_of_liveReachable` and
+`tabsOk_of_liveReachable` discharge them for any live session, and for the three claims
+that *do* read the grid (`resume_grid`, `resume_sb`, `resume_tabs`) the new hypothesis was
+already there. That trade was declined once, on the ground that a hypothesis a proof does
+not use makes a theorem weaker than it is; the override is that the old unconditional
+statements were also true of a screen the emitter cannot reproduce, which is a defect and
+not a strength. -/
+
+/-- Past its width a row reads default (width-1) cells, so no column out there is half of
+a wide pair. With `cellOk_default` this is what makes `decodedRowOk`'s finite scan decide
+`RowOk`'s two unbounded quantifiers. -/
+theorem pairOk_of_size_le {row : Row} {x : Nat} (h : row.size ≤ x) : PairOk row x := by
+  unfold PairOk
+  rw [at_of_size_le row x h]
+  exact ⟨fun h2 => absurd h2 (by decide), fun h0 => absurd h0 (by decide)⟩
+
+/-- What the door decides about one codepoint, in `Emittable`'s vocabulary. -/
+theorem decodedCharOk_iff {c : Char} : Vt.decodedCharOk c = true ↔ Emittable c := by
+  unfold Vt.decodedCharOk Emittable
+  simp
+
+/-- …about one cell, in `CellOk`'s. The `width = 0` disjunct is `CellOk.width`'s
+implication: a shadow's blank base is not the width it claims, and must not be. -/
+theorem decodedCellOk_iff {c : Cell} : Vt.decodedCellOk c = true ↔ CellOk c := by
+  unfold Vt.decodedCellOk
+  simp only [Bool.and_eq_true, Bool.or_eq_true, beq_iff_eq, decide_eq_true_eq, List.all_eq_true,
+    decodedCharOk_iff]
+  constructor
+  · rintro ⟨⟨⟨hb, hw⟩, hml⟩, hm⟩
+    exact ⟨hb, fun hne => hw.resolve_left hne, hml, fun m hmem => hm m hmem⟩
+  · rintro ⟨hb, hw, hml, hm⟩
+    refine ⟨⟨⟨hb, ?_⟩, hml⟩, fun m hmem => hm m hmem⟩
+    by_cases h0 : c.width = 0
+    · exact Or.inl h0
+    · exact Or.inr (hw h0)
+
+/-- …and about one column pair, in `PairOk`'s. -/
+theorem decodedPairOk_iff {row : Row} {x : Nat} : Vt.decodedPairOk row x = true ↔ PairOk row x := by
+  unfold Vt.decodedPairOk PairOk
+  simp only [Bool.and_eq_true, Bool.or_eq_true, bne_iff_ne, ne_eq, beq_iff_eq]
+  constructor
+  · rintro ⟨h2, h0⟩
+    exact ⟨fun hw => h2.resolve_left (by omega), fun hw => h0.resolve_left (by omega)⟩
+  · rintro ⟨h2, h0⟩
+    constructor
+    · by_cases hw : (row.at x).width = 2
+      · exact Or.inr (h2 hw)
+      · exact Or.inl hw
+    · by_cases hw : (row.at x).width = 0
+      · exact Or.inr (h0 hw)
+      · exact Or.inl hw
+
+/-- **A finite scan decides an unbounded quantifier.** `RowOk` quantifies over every `x`,
+not over `x < cols`; the door checks `[0, cols)` and the two agree, because a read past
+the width is the default cell — `cellOk_default` for the cells and `pairOk_of_size_le` for
+the pairs. That is what made the per-cell half affordable at all. -/
+theorem decodedRowOk_iff {cols : Nat} {row : Row} :
+    Vt.decodedRowOk cols row = true ↔ RowOk cols row := by
+  unfold Vt.decodedRowOk
+  simp only [Bool.and_eq_true, beq_iff_eq, List.all_eq_true, List.mem_range, decodedCellOk_iff,
+    decodedPairOk_iff]
+  constructor
+  · rintro ⟨hsz, hall⟩
+    refine ⟨hsz, fun x => ?_, fun x => ?_⟩
+    · by_cases hx : x < cols
+      · exact (hall x hx).1
+      · rw [at_of_size_le row x (by omega)]
+        exact cellOk_default
+    · by_cases hx : x < cols
+      · exact (hall x hx).2
+      · exact pairOk_of_size_le (by omega)
+  · rintro ⟨hsz, hc, hp⟩
+    exact ⟨hsz, fun x _ => ⟨hc x, hp x⟩⟩
+
+/-- …and one row per row decides the grid. Indexed with `GridOk`'s own
+`getD … (blankRow cols {})`, so the two cannot disagree past the last row: there both read
+a blank row of the right width, which `rowOk_blankRow` accepts. -/
+theorem decodedGridOk_iff {cols rows : Nat} {g : Array Row} :
+    Vt.decodedGridOk cols rows g = true ↔ GridOk cols rows g := by
+  unfold Vt.decodedGridOk GridOk
+  simp only [Bool.and_eq_true, beq_iff_eq, List.all_eq_true, List.mem_range, decodedRowOk_iff]
+  constructor
+  · rintro ⟨hsz, hall⟩
+    refine ⟨hsz, fun y => ?_⟩
+    by_cases hy : y < rows
+    · exact hall y hy
+    · rw [show g.getD y (blankRow cols {}) = blankRow cols {} from by simp [Array.getD, hsz, hy]]
+      exact rowOk_blankRow cols {}
+  · rintro ⟨hsz, hall⟩
+    exact ⟨hsz, fun y _ => hall y⟩
+
+/-- **What the second stage decides, in `Renderable`'s vocabulary plus the ruler's.** The
+alt clause is the sub-clause that was checked *nowhere* before: `decodedOk` looks at the
+stashed cursor and never at the stashed grid. -/
+theorem decodedRenderable_iff {cols rows : Nat} {grid : Array Row} {tabs : Array Bool}
+    {altGrid : Option (Array Row × Cursor × Pen)} :
+    Vt.decodedRenderable cols rows grid tabs altGrid = true ↔
+      GridOk cols rows grid ∧
+        tabs.size = cols ∧ ∀ g c p, altGrid = some (g, c, p) → GridOk cols rows g := by
+  unfold Vt.decodedRenderable
+  cases altGrid with
+  | none =>
+    simp only [Bool.and_eq_true, beq_iff_eq, decodedGridOk_iff, and_true]
+    simp
+  | some x =>
+    obtain ⟨g₀, c₀, p₀⟩ := x
+    simp only [Bool.and_eq_true, beq_iff_eq, decodedGridOk_iff, Option.some.injEq, Prod.mk.injEq]
+    constructor
+    · rintro ⟨⟨hg, ht⟩, ha⟩
+      refine ⟨hg, ht, ?_⟩
+      rintro g c p ⟨rfl, rfl, rfl⟩
+      exact ha
+    · rintro ⟨hg, ht, ha⟩
+      exact ⟨⟨hg, ht⟩, ha g₀ c₀ p₀ ⟨rfl, rfl, rfl⟩⟩
+
+/-- **Nothing the emitter cannot reproduce comes out of the decoder's door.** Whatever a
+checkpoint file says, if `Vt.ofDecoded` returns a `Vt` at all then that `Vt` is
+`Renderable`: the grid has exactly `rows` rows, each exactly `cols` wide, every cell holds
+an emittable base of the width it claims with at most eight zero-width marks, every wide
+glyph keeps its shadow — and the same of the stashed alt screen.
+
+This is the claim finding R2 exists for. Before it, the door never saw the grid, so a
+record whose `rows` byte disagreed with its grid's length decoded happily into a screen
+`Render.restore` cannot repaint. `Checkpoint.load_renderable` is the same claim on the
+real path, for *arbitrary bytes*. -/
+theorem ofDecoded_renderable {cols rows : Nat} {grid : Array Row} {cursor : Cursor} {pen : Pen}
+    {modes : Modes} {top bot : Nat} {tabs : Array Bool} {sb : Ring}
+    {altGrid : Option (Array Row × Cursor × Pen)} {saved : Saved} {title : String}
+    {g0Line g1Line shiftOut bell : Bool} {v : Vt}
+    (h :
+      Vt.ofDecoded cols rows grid cursor pen modes top bot tabs sb altGrid saved title g0Line g1Line
+          shiftOut bell =
+        some v) :
+    Renderable v := by
+  unfold Vt.ofDecoded at h
+  split at h
+  · rename_i hg
+    simp only [Bool.and_eq_true] at hg
+    obtain ⟨hgrid, -, halt⟩ := decodedRenderable_iff.mp hg.2
+    cases h
+    exact ⟨hgrid, halt⟩
+  · exact absurd h (by simp)
+
+/-- …and the tab ruler is the width of the screen. Split from `ofDecoded_renderable`
+because `TabsOk` is not one of `Renderable`'s clauses and the claims that consume it
+(`Render.restore_tabs_any`, `Resume.resume_tabs`) ask for it separately. -/
+theorem ofDecoded_tabsOk {cols rows : Nat} {grid : Array Row} {cursor : Cursor} {pen : Pen}
+    {modes : Modes} {top bot : Nat} {tabs : Array Bool} {sb : Ring}
+    {altGrid : Option (Array Row × Cursor × Pen)} {saved : Saved} {title : String}
+    {g0Line g1Line shiftOut bell : Bool} {v : Vt}
+    (h :
+      Vt.ofDecoded cols rows grid cursor pen modes top bot tabs sb altGrid saved title g0Line g1Line
+          shiftOut bell =
+        some v) :
+    TabsOk v := by
+  unfold Vt.ofDecoded at h
+  split at h
+  · rename_i hg
+    simp only [Bool.and_eq_true] at hg
+    obtain ⟨-, htabs, -⟩ := decodedRenderable_iff.mp hg.2
+    cases h
+    exact htabs
+  · exact absurd h (by simp)
+
+/-- **Nothing good is rejected.** The other half of the door: a `Vt` that is `Good`,
+`Renderable` and ruler-consistent — which every live session's is, by `good_init`,
+`renderable_init` and the `Pres`/frame machinery, and uniformly by
+`good_of_liveReachable`/`renderable_of_liveReachable`/`tabsOk_of_liveReachable` — survives
+the door unchanged, modulo the parser state a checkpoint deliberately forgets.
+
+Without this, `ofDecoded_good` and `ofDecoded_renderable` would both be satisfied by a
+constructor that returned `none` always, and §Restore would be a claim about a codec that
+never restores anything. It is also exactly what `Checkpoint.rt_vt` needs, which is why
+the round-trip theorem carries the same three hypotheses.
+
+**This is the mirror**, and the two added hypotheses are its whole cost: `hren` and
+`htabs` propagate from here to `rt_vt`, `load_save`, `load_save_exact` and five
+`resume_*` claims. They cannot be dropped in favour of deriving them at the door — that
+is what "validate, not clamp" means, and establishing `Renderable` from a bad record
+would mean rebuilding the grid, which is `Vt.resize`, which the resume path refuses. -/
+theorem ofDecoded_of_good {v : Vt} (h : Good v) (hren : Renderable v) (htabs : TabsOk v) :
+    Vt.ofDecoded v.cols v.rows v.grid v.cursor v.pen v.modes v.top v.bot v.tabs v.sb v.altGrid
+        v.saved v.title v.g0Line v.g1Line v.shiftOut v.bell =
+      some v.quiesce := by
+  unfold Vt.ofDecoded
+  rw [ite_eq_left
+      (by
+        simp only [Bool.and_eq_true]
+        exact
+          ⟨decodedOk_iff.mpr
+              ⟨h.colsPos, h.colsLe, h.rowsPos, h.rowsLe, h.curX, h.curY, h.savX, h.savY, h.topLe,
+                h.botLt, h.sbLe, h.altCur⟩,
+            decodedRenderable_iff.mpr ⟨hren.main, htabs, hren.alt⟩⟩)]
+  cases v
+  rfl
+
+/-- **The exhibited attack, refused.** A record whose row count disagrees with its grid's
+length is exactly finding R2's one-flipped-byte checkpoint — the `rows` byte of a real 4×2
+record changed 2 → 3 — and it is `Good` for every clause `decodedOk` checks, which is why
+it used to load. Now it does not.
+
+The twin of `ofDecoded_none_of_cols_zero`, and the more instructive of the two: `cols = 0`
+is refused by a dimension check anyone would think to write, and this one needed the
+decoder to be handed the grid. `Tests/Checkpoint.lean` pins the byte-level version. -/
+theorem ofDecoded_none_of_rows_mismatch {cols rows : Nat} {grid : Array Row} {cursor : Cursor}
+    {pen : Pen} {modes : Modes} {top bot : Nat} {tabs : Array Bool} {sb : Ring}
+    {altGrid : Option (Array Row × Cursor × Pen)} {saved : Saved} {title : String}
+    {g0Line g1Line shiftOut bell : Bool} (hne : grid.size ≠ rows) :
+    Vt.ofDecoded cols rows grid cursor pen modes top bot tabs sb altGrid saved title g0Line g1Line
+        shiftOut bell =
+      none := by
+  have hno :
+    (Vt.decodedOk cols rows cursor top bot sb altGrid saved &&
+        Vt.decodedRenderable cols rows grid tabs altGrid) ≠
+      true := by
+    intro hg
+    simp only [Bool.and_eq_true] at hg
+    exact absurd (decodedRenderable_iff.mp hg.2).1.1 hne
+  unfold Vt.ofDecoded
+  rw [ite_eq_right hno]
 
 /-! ### Frames discharge everything that does not write the grid -/
 

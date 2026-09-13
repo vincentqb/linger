@@ -272,8 +272,10 @@ SCRATCHPAD.md.
 * `Vt.init` — the fresh session. `Good`, `Renderable` and `TabsOk` all hold of it
   (`Vt.good_init`, `Vt.renderable_init`, `Vt.tabsOk_init`).
 * `Vt.ofDecoded` — the restored session, `private`, and it **validates**: a record that
-  does not describe a `Good` state decodes to `none` (`Vt.ofDecoded_good`, and
-  `Checkpoint.load_good` on the real path, for *arbitrary bytes*).
+  does not describe a `Good` **and** `Renderable` state, with a ruler the width of the
+  screen, decodes to `none` (`Vt.ofDecoded_good`, `Vt.ofDecoded_renderable`,
+  `Vt.ofDecoded_tabsOk`, and `Checkpoint.load_good`/`load_renderable`/`load_tabsOk` on
+  the real path, for *arbitrary bytes*).
 * `Vt.resize`, `Vt.step`, `Vt.feed`, `Vt.quiesce` — the transformers, each of which
   preserves `Good`, `Renderable`, `U8Ok` and `TabsOk`. `LiveReachableVt` is that closure
   written as an inductive, and the four `*_of_liveReachable` lemmas are the payoff.
@@ -297,16 +299,28 @@ above: every door establishes the invariants and every transformer preserves the
 is what breaks the claim — and only a reader can see that, which is why the list is here
 and not in a `Prop`.
 
-**Still assumed, not proved, after Step 3.** `Vt.decodedOk` checks `Good`'s decidable
-content and nothing about the grid, so a decoded checkpoint is `Good` and need not be
-`Renderable`; `Theorems/Resume.lean`'s `resume_grid`/`resume_sb` therefore still take
-`hren` by hypothesis, and that is a considered trade rather than an omission (see
-`specs/vt-toolkit.md` Step 3 for the measurement — checking it at the door mirrors onto
-`ofDecoded_of_good` and would put a grid hypothesis on five claims that never read the
-grid). And `Render.restore_sb_exact`'s `hrok` is not merely unproved but **unprovable from
-reachability**: `Vt.resize` reinstalls the grid and the ruler at the new width and leaves
-the scrollback rows at their old one, so a resized live session has ring rows wider than
-`cols`. Measured, not argued. -/
+**What the door establishes, after R2.** `Vt.decodedOk` decides `Good`'s content and
+`Vt.decodedRenderable` decides `Renderable`'s two clauses plus the ruler's length, so a
+decoded checkpoint is `Good`, `Renderable` and `TabsOk` — `Theorems/Resume.lean`'s
+`resume_grid`/`resume_sb`/`resume_tabs` are now reachable from an arbitrary byte string
+(`resume_grid_of_load` and its two siblings) and not only stated. Before that the check
+was never passed the grid at all, and the consequence was observable rather than
+theoretical: see the shape-half section below, and finding R2 in SCRATCHPAD.md.
+
+The price is a mirror, paid deliberately: `ofDecoded_of_good` is the same predicate seen
+from the other side, so `Checkpoint.rt_vt` → `load_save` → `load_save_exact` and the five
+`resume_*` claims that never read the grid now carry `Renderable` and `TabsOk`
+hypotheses. Every live session satisfies them (`renderable_of_liveReachable`,
+`tabsOk_of_liveReachable`), each claim says so in its own docstring, and correctness beat
+hypothesis-count: the old unconditional statements were *also* true of a screen the
+emitter cannot reproduce.
+
+**Still unreachable from disk:** `Render.restore_sb_exact`'s
+`hrok : ∀ r ∈ v.sb.toList, RowOk v.cols r`, and it is unprovable from reachability rather
+than merely unchecked — `Vt.resize` reinstalls the grid and the ruler at the new width and
+leaves the scrollback rows at their old one, so a resized live session has ring rows wider
+than `cols` and a decoder that demanded otherwise would refuse a legitimate checkpoint.
+Measured, not argued. -/
 structure Vt where
   private cols : Nat
   private rows : Nat
@@ -388,7 +402,7 @@ the grid, i.e. `Vt.resize`, which the resume path deliberately refuses (it reset
 scroll region and the tab ruler — see `Linger/Runtime/Daemon.lean`). Rejecting costs
 nothing new: `load` is already `Option`-valued and a checkpoint that fails to parse
 already means "start fresh". One rule, uniformly — *a record that does not describe a
-`Good` state is not a checkpoint*.
+`Good` and `Renderable` state is not a checkpoint*.
 
 `private`, which is the whole point: `Linger/Core/Checkpoint.lean` reaches it through
 the friend import it already has, and no module outside the toolkit gains the power to
@@ -396,12 +410,16 @@ build a `Vt` out of parts. A public smart constructor would be a second public d
 admitting every `Good` state — including unreachable ones — which is a wider hole than
 the forge it replaces.
 
-The check is `Good`'s decidable content, and it is a **named stage** rather than a
-conjunction inside the `if` — the AGENTS.md "restructure for provability" rule, and it
-was measured: with the guard inline, `split at h` in `ofDecoded_good` picks the `match
-altGrid` nested in the *condition* instead of the `if`, and the proof falls apart with
-`hg` bound to nothing useful. Naming it gives `split` one splittable term. -/
+The check is in **named stages** rather than a conjunction inside the `if` — the
+AGENTS.md "restructure for provability" rule, and it was measured: with the guard
+inline, `split at h` in `ofDecoded_good` picks the `match altGrid` nested in the
+*condition* instead of the `if`, and the proof falls apart with `hg` bound to nothing
+useful. Naming it gives `split` one splittable term. Two stages now, `decodedOk` and
+`decodedRenderable`, for the same reason one level down. -/
 
+/-- Screen geometry, cursors and the scroll region — `Good`'s decidable content, and
+nothing about the grid. `Vt.decodedRenderable` below is the other half; the door checks
+both. -/
 private def Vt.decodedOk (cols rows : Nat) (cursor : Cursor) (top bot : Nat) (sb : Ring)
     (altGrid : Option (Array Row × Cursor × Pen)) (saved : Saved) : Bool :=
   1 ≤ cols && cols ≤ 1000 && 1 ≤ rows && rows ≤ 1000 && cursor.x < cols && cursor.y < rows &&
@@ -414,20 +432,116 @@ private def Vt.decodedOk (cols rows : Nat) (cursor : Cursor) (top bot : Nat) (sb
     | none => true
     | some (_, c, _) => c.x < cols && c.y < rows)
 
-/-- The decoder's door itself: `Good`'s decidable content, then the record. Three of
-`Good`'s fifteen clauses need no check because this constructor *fixes* the fields they
-are about — `pstate := .ground` forces `csiLe`/`oscLe` and `u8need := 0` forces `u8Le`.
-Parser state is deliberately not persisted (`Checkpoint.wVt`), so there is nothing on
-disk to validate.
+/-! ### The shape half of the door
 
-Claimed by `Vt.ofDecoded_good` (nothing bad comes out), `Vt.ofDecoded_of_good` (nothing
-good is rejected) and `Vt.ofDecoded_none_of_cols_zero` (the canonical junk value is
-refused) in `Theorems/Vt.lean`. -/
+`decodedOk` above is `Good`'s content, and `Good` says nothing whatever about the grid:
+not its row count, not a row's width, not the shape of the stashed alt screen, not what
+a cell holds. That was an **observable** defect and not merely a missing hypothesis
+(SCRATCHPAD.md, "the adversarial audit of the seal", finding R2): one flipped byte of a
+real 4×2 checkpoint — the `rows` byte, 2 → 3 — decoded to a state that is `Good`, is not
+`Renderable`, and whose replay is not the screen it was made from, refuting the
+conclusion of `Theorems/Resume.lean`'s `resume_grid` for a state that came off disk. The
+grid's length is written as its own `rNat`, so nothing tied it to `rows`.
+
+The five deciders below are `Renderable`'s two clauses plus the tab ruler's length, in
+`Bool`. Each is a **named stage** with its own `iff` claim in `Theorems/Vt.lean`
+(`decodedCharOk_iff` … `decodedRenderable_iff`) — for the reason `decodedOk` is one, and
+for one more: an `iff` per rung is what keeps the `Bool` and the `Prop` from drifting,
+and this is a five-rung ladder rather than one flat conjunction.
+
+**What is deliberately NOT checked: the scrollback ring's rows.** `Vt.resize` reinstalls
+the grid and the ruler at the new width and leaves the ring rows at their old one (no
+reflow — measured in the Step 3 record), so a live session that has ever been resized
+holds ring rows wider than `cols`. Checking them would refuse a checkpoint every
+reachable state can produce. `Render.restore_sb_exact`'s `hrok` therefore stays
+unreachable from disk, which is a named gap rather than an oversight.
+
+**Cost: none worth naming, and that was measured rather than estimated.** The second stage
+walks the grid and the stashed grid once — 1920 cell checks at 80×24, 2·10⁶ at the
+1000×1000 cap — but `Checkpoint.rRow` already materialises every one of those cells through
+`expand`, so the walk is a second pass over data the parser just built. Timed both ways on
+the same interpreter (`load` of a filled checkpoint, before the change and after): 80×24
+187 vs 189 ms per 20 loads, 200×50 601 vs 603 ms per 10, 1000×1000 30.5 vs 31.0 s per 1 —
+i.e. inside the noise, and the 1000×1000 figure is the *parse* being slow, not the
+validation. Loads happen once per resume. -/
+
+/-- A codepoint a repaint reproduces as itself: not a C0 control, not DEL. The `Bool`
+half of `Emittable` (`decodedCharOk_iff`).
+
+Written as the comparison rather than as `printableChar c == c` on purpose: the two are
+equivalent today, and spelling it out means an edit to `printableChar` cannot silently
+move what the door accepts. Same reasoning as `Emittable`'s own docstring. -/
+private def Vt.decodedCharOk (c : Char) : Bool := 0x20 ≤ c.toNat && c.toNat != 0x7F
+
+/-- A cell a repaint reproduces: an emittable base of exactly the width it claims, and at
+most eight zero-width emittable marks. The `Bool` half of `CellOk` (`decodedCellOk_iff`).
+
+A `width = 0` cell is exempt from the width equation because a shadow carries a blank
+base (`Cell.shadow`); what ties a shadow to its wide neighbour is `decodedPairOk`. This
+clause is the one an attacker reaches most cheaply — `Checkpoint.rCell` reads `base` as
+any valid `Char`, `marks` as any list and `width` as any `Nat`, so a cell holding
+`'\x0A'` at width 7 was accepted. -/
+private def Vt.decodedCellOk (c : Cell) : Bool :=
+  Vt.decodedCharOk c.base && (c.width == 0 || charWidth c.base == c.width) && c.marks.length ≤ 8 &&
+    c.marks.all (fun m => charWidth m == 0 && Vt.decodedCharOk m)
+
+/-- The pair rule for one column: a width-2 base keeps exactly the shadow a repaint of it
+re-creates, and a shadow keeps its base. The `Bool` half of `PairOk`
+(`decodedPairOk_iff`).
+
+Out-of-range reads are width-1 default cells (`Row.at`), so a wide base in the final
+column is refused here with no special case — the same rule `Row.halfPair` states for the
+live path. -/
+private def Vt.decodedPairOk (row : Row) (x : Nat) : Bool :=
+  ((row.at x).width != 2 || row.at (x + 1) == Cell.shadow (row.at x)) &&
+    ((row.at x).width != 0 || (x != 0 && (row.at (x - 1)).width == 2))
+
+/-- A row a repaint reproduces: `cols` wide, every cell and every column pair well
+formed. The `Bool` half of `RowOk` (`decodedRowOk_iff`).
+
+`RowOk` quantifies over **all** `x` rather than `x < cols`, and that is what makes this
+finite rather than a partial approximation: past the width an out-of-range read is the
+default cell, which is `CellOk` and trivially paired, so scanning `[0, cols)` decides the
+whole quantifier. -/
+private def Vt.decodedRowOk (cols : Nat) (row : Row) : Bool :=
+  row.size == cols &&
+    (List.range cols).all (fun x => Vt.decodedCellOk (row.at x) && Vt.decodedPairOk row x)
+
+/-- A grid a repaint reproduces: `rows` rows of them. The `Bool` half of `GridOk`
+(`decodedGridOk_iff`). Indexed through the same `getD … (blankRow cols {})` as `GridOk`
+is, so past the last row both read a blank row of the right width and the two cannot
+disagree at the edge. -/
+private def Vt.decodedGridOk (cols rows : Nat) (g : Array Row) : Bool :=
+  g.size == rows &&
+    (List.range rows).all (fun y => Vt.decodedRowOk cols (g.getD y (blankRow cols {})))
+
+/-- The whole shape half: the live screen, the tab ruler's length, and the stashed alt
+screen — whose grid was checked *nowhere* before this, only its cursor. The `Bool` half
+of `Renderable` ∧ `TabsOk` (`decodedRenderable_iff`). -/
+private def Vt.decodedRenderable (cols rows : Nat) (grid : Array Row) (tabs : Array Bool)
+    (altGrid : Option (Array Row × Cursor × Pen)) : Bool :=
+  Vt.decodedGridOk cols rows grid && tabs.size == cols &&
+    (match altGrid with
+    | none => true
+    | some (g, _, _) => Vt.decodedGridOk cols rows g)
+
+/-- The decoder's door itself: `Good`'s decidable content **and** `Renderable`'s, then the
+record. Three of `Good`'s fifteen clauses need no check because this constructor *fixes*
+the fields they are about — `pstate := .ground` forces `csiLe`/`oscLe` and `u8need := 0`
+forces `u8Le`. Parser state is deliberately not persisted (`Checkpoint.wVt`), so there is
+nothing on disk to validate.
+
+Claimed by `Vt.ofDecoded_good` and `Vt.ofDecoded_renderable`/`Vt.ofDecoded_tabsOk`
+(nothing bad comes out), `Vt.ofDecoded_of_good` (nothing good is rejected) and
+`Vt.ofDecoded_none_of_cols_zero` / `Vt.ofDecoded_none_of_rows_mismatch` (the two canonical
+junk records are refused) in `Theorems/Vt.lean`. -/
 private def Vt.ofDecoded (cols rows : Nat) (grid : Array Row) (cursor : Cursor) (pen : Pen)
     (modes : Modes) (top bot : Nat) (tabs : Array Bool) (sb : Ring)
     (altGrid : Option (Array Row × Cursor × Pen)) (saved : Saved) (title : String)
     (g0Line g1Line shiftOut bell : Bool) : Option Vt :=
-  if Vt.decodedOk cols rows cursor top bot sb altGrid saved then
+  if
+      Vt.decodedOk cols rows cursor top bot sb altGrid saved &&
+        Vt.decodedRenderable cols rows grid tabs altGrid then
     some
       { cols, rows, grid, cursor, pen, modes, top, bot, tabs, sb, altGrid, saved, title, g0Line,
         g1Line, shiftOut, bell, pstate := .ground, u8need := 0, u8acc := 0 }

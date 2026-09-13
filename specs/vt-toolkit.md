@@ -1,6 +1,9 @@
 # vt-toolkit — seal `Vt`, then lift `Vt`+`Render`+`Terminal` as a standalone emulator
 
-Status: **All four steps done. Step 3 landed 2026-09-13; nothing remains.**
+Status: **All four steps done. Step 3 landed 2026-09-13; nothing remains.** One of Step 3's
+three decisions was **reversed on 2026-09-13** by the adversarial audit's finding R2 — the
+decoder now establishes `Renderable` and the ruler's length as well as `Good`. See
+"Amendment (2026-09-13)" below; the original decision is kept, marked, rather than rewritten.
 Archive this with the completion record below.
 
 ## Where this stands
@@ -35,6 +38,63 @@ in one direction and larger in another.** Three decisions, each measured:
   hypothesis on the existing one: `Theorems/Resume.lean`'s subject is `save`'s **input**,
   so `hren` cannot be recovered from `load (save c) = some c` when that equation is itself
   gated on it. Declined; both halves. The shape half alone does not escape the mirror.
+  **REVERSED on 2026-09-13 — see the amendment below.**
+
+## Amendment (2026-09-13): decision 3 reversed, both halves landed
+
+The adversarial audit run in parallel with Step 3 (SCRATCHPAD.md, finding **R2**) showed
+that decision 3 above weighed one side of the trade. Every sentence of it about *theorem
+hypotheses* is correct, and beside the point: `Vt.decodedOk` was never passed the grid, so a
+checkpoint with **one flipped byte** — the `rows` byte of a real 4×2 record, 2 → 3 — decoded
+to a `Good ∧ ¬Renderable` screen, and
+
+```
+((Vt.init badVt.colCount badVt.rowCount).feed (Render.restore badVt)).grid == badVt.grid → false
+```
+
+which is `resume_grid`'s conclusion, refuted for a state that came off disk. An observable
+defect outranks a hypothesis count.
+
+Both halves landed. The shape half and the per-cell half are the **same** hypothesis, which
+is the fact decision 3 missed: `Renderable`'s `GridOk` → `RowOk` carries `CellOk`/`PairOk`,
+so checking cells costs nothing over checking sizes, and the predicate it mirrors onto the
+five claims is `Renderable` — exactly what `resume_grid`/`resume_sb` already asked for. A
+shape-only door would have needed a *new*, weaker predicate to state the same mirror.
+
+What it cost, measured and counted rather than estimated: `Renderable` and `TabsOk` on
+`ofDecoded_of_good` → `rt_vt` → `load_save` → `load_save_exact`, and from there on **eight**
+`resume_*` claims rather than the five this decision predicted — `resume_grid`/`resume_sb`
+gain `htabs` for the round-trip conjunct even though `hren` was already theirs, and
+`resume_tabs` gains `hren` for the same reason. **Twelve claims, 21 new binders**: the four
+in the chain at two each, and thirteen between the eight `resume_*`. Every one is named in
+its own docstring and in THEOREMS.md's A1 / §Restore / §Resume rows. For a live session all
+of them are discharged by `renderable_of_liveReachable` and `tabsOk_of_liveReachable`;
+`Checkpoint.load_save_live` is that composition written out, so a reader sees in one place
+that the checkpoint every daemon writes still loads.
+
+What it bought: `load_renderable`/`load_tabsOk` (the twins of `load_good`, over arbitrary
+bytes) and the new family this decision correctly predicted — `resume_grid_of_load`,
+`resume_tabs_of_load`, `resume_sb_of_load`, hypothesis-free over an arbitrary byte string.
+The circularity argument above was re-checked rather than assumed and it holds: the existing
+family's `hren` cannot be discharged, because the only bridge is `load_save_exact`, which is
+the very call that acquires the hypothesis.
+
+Also settled: the ring's rows are **not** validated, and that is forced rather than chosen —
+`Vt.resize` leaves them at their old width (this file's own measurement, one section down),
+so demanding `RowOk cols` of them would refuse a checkpoint a live session can produce.
+`Render.restore_sb_exact`'s `hrok` therefore stays unreachable from disk. `Tests/Checkpoint.lean`
+carries that as a passing fixture, so the gap is visible rather than implied.
+
+**And one thing R2 unlocks that was NOT done here**, named so it is a decision rather than an
+oversight: the `ofDecoded` rung on `LiveReachableVt` that Step 3 measured as *unsound* is now
+sound. Its four components were checked in a scratch file — `Good` (`load_good`),
+`Renderable` (`load_renderable`), `TabsOk` (`load_tabsOk`) and `U8Ok`, the last because the
+door fixes `u8need := 0` and `u8acc := 0`, so `U8Ok` is `rfl`. What it would buy is no longer
+nothing: `Theorems/Session.lean`'s `LiveVt`/`run_vt_renderable` lifts the shape invariant to
+the daemon only for sessions booted from `Vt.init`, so a **resumed** session's `Renderable`
+travels through `renderable_feed`/`renderable_resize` individually rather than through one
+daemon-level theorem. Adding the rung changes what four `*_of_liveReachable` lemmas mean and
+touches the Session claims, so it is its own step, not a rider on this one.
 
 **What the harvest actually was.** The `Good`/`Renderable` binders left in the toolkit's
 public claims are load-bearing — verified by enumerating all 43 of them, not asserted; the
@@ -240,7 +300,11 @@ that trips `gates.sh`'s existing no-`require` gate, which exists to keep README'
    did not anticipate is the one that fell, via `Theorems/Vt.lean` §Ruler +
    `tabsOk_of_liveReachable` + `Render.restore_tabs_live`. The `ofDecoded` rung was measured
    to be **unsound**, not merely weak, and `Renderable`-at-the-door was declined with the
-   mirror argument. See the completion record above and SCRATCHPAD.md.
+   mirror argument — **and un-declined on 2026-09-13, finding R2; see the amendment at the
+   top of this file.** With the door now establishing `Renderable`, the sound `ofDecoded`
+   rung this decision described is available and still not worth adding, for the reason
+   given there (the relation would become a conjunction nobody needs an induction principle
+   for). See the completion record above and SCRATCHPAD.md.
 4. **The extraction target and its gate** — `lean_lib LingerVt` + the closure grep above.
 
 ## Non-goals

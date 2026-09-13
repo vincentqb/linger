@@ -8467,3 +8467,451 @@ laundering path in either direction.
 `Unknown constant _private.…Vt.cols`, which is what a **`module`** importer gets. A **legacy**
 importer gets ``Field `cols` … is private`` instead. The entry explains the distinction elsewhere,
 but the break-verify recorded only one of the two texts, and they call for different fixes.
+## R1 closed — the friend set is computed, not grepped — 2026-09-13
+
+The audit's R1 said `import all` TRANSITS and no oracle saw it. Reproduced first, in the
+real position, before writing anything: `import all Linger.Core.Render` added to
+`Linger/Runtime/Client.lean` (which already `public import`s Render) plus
+`{ cols := 0, rows := 0, grid := #[], bot := 0, tabs := #[] }` gives
+`./lake build linger` **exit 0, 41 jobs** and `sh tests/gates.sh` **exit 0**. Two hops
+the same, from a file holding neither of the obvious friend imports:
+`import all Theorems.Listing` in `Theorems/Wire.lean` → `./lake build Theorems` exit 0,
+`gates.sh` exit 0. And from the shipping binary at three edges —
+`Linger/Runtime/Client.lean` → `Theorems.Listing` → `Theorems.Render` →
+`Linger.Core.Vt` — `./lake build linger` **exit 0, 71 jobs** with the same forge. The
+decisive control: on that last tree, `git show 12cc764:tests/gates.sh` exits **0** and the
+new file exits **1**.
+
+**The design is (a), closure, and (b) was not close.** Transit follows `import all` edges
+only — the audit measured that (`import all Linger.Core.Session`, a plain `public
+import`er of `Vt`, does not transit; nor does the `Linger` umbrella) — so the closure over
+those edges *is* the friend set and nothing outside the edge relation can widen it. That
+makes (b), gating the edges, strictly worse on both sides of the ledger: to be airtight it
+needs all **78** edges recorded, of which about five bear on `Vt`, and it then fires on
+every legitimate rewire of the linear `import all Theorems.Render.*` chain — noise on the
+common change, which is how a gate stops being read. The narrower (b) the brief floated —
+a denylist of target *names* — fails outright on the two-hop case: `import all
+Linger.Core.Foo` for a new in-closure `Foo` is not in any list of names someone thought
+of, which is the objection the toolkit gate's own comment already makes ("EXACT SETS, not
+a denylist of names to fear").
+
+**The closure, computed: 28 modules — the seal plus 27 files.** `Linger/Core/`
+{Vt, Render, Terminal, Checkpoint} = 4; `Tests/` {Checkpoint, Fuzz, Render, Session,
+Terminal, Vt} = 6; `Theorems/` {Checkpoint, **Listing**, Render, Render/{Ends, Grid,
+History, Keeps, Modes, Pen, Quiet, Row, Scrollback, Sticky, Tabs}, Resume, Session,
+Terminal, Vt} = 18. `Theorems.Listing` is the depth-2 member the audit named, and the only
+one `git grep -l 'import all Linger.Core.Vt'` misses.
+
+**The recorded region is four exact files plus two directories, and the split is by
+measured edit frequency, not taste.** Of 192 commits, **36** added a `.lean` under
+`Theorems/` or `Tests/` — about one commit in five — against **11** under `Linger/Core/`,
+only four of which are in the closure. A per-file list over `Theorems/**` would therefore
+be edited reflexively about every fifth commit, which is the ratchet-erosion failure mode;
+the four Core files are edited essentially never, which is exactly what makes them a
+checkpoint. It also matches the declared policy rather than contradicting it:
+`Linger/Core/Vt.lean` §"Every door" already says the friend set is `Render`/`Terminal`,
+`Theorems/**`, `Tests/**` and `Checkpoint`. A gate that disagrees with the prose beside it
+is a gate someone deletes.
+
+**`E2E/**` is outside, deliberately, and that is the answer to the membership question.**
+`Tests/**` is inside because forging invalid states is its job — the negative fixtures are
+the point, and `Tests/Vt.lean`, `Tests/Render.lean`, `Tests/Terminal.lean`,
+`Tests/Session.lean`, `Tests/Fuzz.lean` and `Tests/Checkpoint.lean` already hold the friend
+import. `E2E/**` is the opposite case and has **zero** `import all` today: a pty suite
+asserts on bytes the real binary emitted, so a forged `Vt` there would be an assertion
+about a state the binary cannot reach — the precise bug the seal exists to prevent, dressed
+as a test. Same for `LingerTest.lean` and `Main.lean`. All three are outside by default
+because the region is fail-closed: a new top-level directory is out until someone records
+it, which is the right default for this property.
+
+**The regex had to get looser, and that was measured, not guessed.** Four forms tested
+against the compiler: `  import all Foo` (leading spaces) **compiles**; `meta import all
+Foo` **compiles**; `public import all Foo` is refused ("cannot use `all` with `public
+import`"); `private import all Foo` does not parse; a tab is refused by Lean before any
+gate sees it. So the column-0 anchor the toolkit gate uses would leave a **one-space
+evasion** — demonstrated: with `  import all Linger.Core.Render` in `E2E/Watch.lean`,
+`git grep -nE '^import all '` over `E2E/*` finds nothing while `./lake build e2e` succeeds
+(61 jobs). The cost of loosening is the prose hazard AGENTS.md warns about, and it is
+bounded by measurement: the loose regex and the anchored one find the **identical 78
+lines** today. The one new rule is written in the gate — do not begin a docstring line
+with a bare `import all`.
+
+**The diagnostic prints the witness chain, and BFS is why.** The relaxation is
+breadth-first *backwards* from the seal, so `via[]` is a shortest path and the three-edge
+case prints as its three hops rather than as one bare filename:
+
+```
+  Linger/Runtime/Client.lean has all-access to Linger.Core.Vt -- its 20 private fields, its
+  private constructor and Vt.ofDecoded -- by this chain of import all:
+    Linger/Runtime/Client.lean:6:import all Theorems.Listing
+    Theorems/Listing.lean:10:import all Theorems.Render
+    Theorems/Render.lean:5:import all Linger.Core.Vt
+  permitted: Linger/Core/Vt.lean Linger/Core/Render.lean Linger/Core/Terminal.lean Linger/Core/Checkpoint.lean -- plus anything under: Theorems/ Tests/
+GATE FAIL: the Linger.Core.Vt friend set changed (import all TRANSITS: it re-grants whatever the imported module itself has all-access to)
+```
+
+Two details worth not re-deriving. The chain quotes each line **verbatim** in
+`file:line:content` form rather than reconstructing `import all <module>` from the parsed
+module name — the first draft reconstructed, and on the `meta import all` evasion it
+printed a line that did not exist in the file, which is a diagnostic that sends the reader
+looking for the wrong string. And the offender loop walks the **edges in input order**
+(`git grep` sorts) rather than `for (f in inset)`, because awk array iteration order is
+unspecified and a gate whose message permutes between runs looks like a flake.
+
+**Break-verified seven ways, plus two negative controls.** One-hop join from
+`Linger/Runtime/`; two-hop (three edges) via `Theorems.Listing`; `git mv
+Linger/Core/Checkpoint.lean Linger/Core/Ckpt.lean` (fires **twice** — the new name is an
+intruder, the old name is a recorded friend that stopped reaching `Vt`); `Checkpoint.lean`
+dropping its `import all` with no rename; a non-friend Core module joining
+(`Linger/Core/Session.lean`); and both compile-valid regex evasions. Green on: the
+in-region two-hop (`Theorems/Wire.lean` gaining `import all Theorems.Listing` — correct,
+`Theorems/**` is a friend by declaration, and an unused friend import is dead weight, not
+a hole), and an `import all` whose target is outside the tree (`Init.Core` — ignored, not
+a crash). The rename break is worth one caution: renaming `Linger/Core/Render.lean`
+instead is caught by the **older** toolkit gate first, which exits before this one runs —
+so `Checkpoint.lean` is the member to break when testing *this* gate, being the only
+recorded friend no other gate covers.
+
+**Exact means both directions**, as with the three toolkit lists: a recorded friend that
+stops reaching `Vt` fails too, so a future step taking a friend import out is reviewable
+here rather than silent. **No cardinality number was added.** The Step 4 record killed the
+job-count ratchet because cardinality is blind to identity; a closure-size cap has the
+identical defect (any two files swap freely under a fixed count) and the same worse
+diagnostic. Nothing else moved either: SHIM 22, HEARTBEAT 1, RUNTIME_PARTIAL 2,
+E2E_PARTIAL 5, coverage `265 defs; named by no theorem STATEMENT: 0 (cap 0)`.
+
+**Zero `.lean` files changed** — 93 insertions, 1 deletion, one file. The closure was
+already correct; this only makes it checked. The one deletion is the summary line, now
+`gates OK — purity, the OS surface, the Vt friend set, and five ratchets`: a gate nobody
+knows ran is a gate nobody trusts, and no number was added to it, so it cannot rot.
+
+**Portability.** POSIX `sh` + POSIX `awk`, no `local`, no arrays, no `pipefail`, no
+`/dev/stderr` (the whole awk stage is redirected `>&2` instead, which is where the
+toolkit gate's diagnostics already go). Exercised under `sh`, `bash --posix` and `ksh` on
+both the pass and the fail path — byte-identical output. `shellcheck -s sh` reports
+nothing new; its one info-level `SC2012` on the `ls c/` gate predates this. Two shells
+covered by argument rather than measurement, for the same reason as Step 4: **dash is not
+installed on this host**, and neither is any awk but gawk 4.0.2 — so the awk was written
+to the POSIX subset on purpose (`split`, `substr`, `length`, `in`, `sub`/`gsub`, `exit
+expr`, `-v`; no `gensub`, no `asort`, no `length(array)`). `\t` inside a bracket
+expression is POSIX-blessed for awk EREs, and is belt-and-braces anyway since Lean refuses
+tabs.
+
+**R4 (`unsafe` + `@[implemented_by]`) — recommend a grep, and it is a three-line
+follow-up, not part of this one.** Reproduced here rather than taken on the audit's word:
+
+```
+unsafe def launderImpl (_v : Vt) : Vt := unsafeCast (0 : Nat)
+@[implemented_by launderImpl] def launder (v : Vt) : Vt := v
+theorem launder_id (v : Vt) : launder v = v := rfl
+```
+
+in `Theorems/Render/Ends.lean` → `Build completed successfully`, and
+`#print axioms launder_id` → `does not depend on any axioms`. `gates.sh` — including the
+new friend-set gate — says OK, confirming the two findings are orthogonal. The remedy is
+the family of the existing `@[extern` exact-set check, which already treats "a C
+implementation may disagree with the Lean model" as a source-tree property; `unsafe` and
+`@[implemented_by]` are the *Lean-side* version of the identical hole and the existing gate
+does not cover them. Measured cost: `git grep -nE '\bunsafe\b|unsafeCast|@\[implemented_by'
+-- '*.lean'` finds **zero** hits tree-wide, so it is a fail-closed gate with no
+grandfathered exceptions — the cheapest kind there is. Held out of this change only to keep
+one property per commit and the break record unambiguous.
+
+**Declined: adding `opaque` to that grep.** It reads differently from the other three.
+`opaque x : Vt` needs only `Nonempty Vt` (which `Vt.init` witnesses, so deleting
+`Inhabited` did not close it) and yields a `Vt` about which nothing is provable — but
+without `@[extern]` or `@[implemented_by]` the compiler emits no value for it, so it is a
+liveness hazard, not a forge: the R5 family, which the spec already bounds as compile-time
+prose. It would also cost two immediate prose edits, `Theorems/Render/Modes.lean:1058` and
+`Theorems/Session.lean:584`, both using the English word. Not worth it; `@[extern` outside
+`Linger/Posix.lean` is already gated, and that is the pairing that actually ships a
+disagreeing implementation.
+
+**What this does NOT close, and should be said plainly.** The gate makes the friend set
+enumerable and closed under review — it repairs Step 2's decisive argument, which claimed
+the friend import "confines that power to one reviewed, grep-gated file" when the
+confinement was a convention. It does nothing about R2 (`decodedOk` never sees the grid,
+so `load` yields `Good ∧ ¬Renderable` from one flipped byte) and nothing about R4/R5. And
+it is the `SHIM_CAP` species of oracle throughout: evadeable by deliberately editing the
+recorded list, not by reverting a fix.
+## R2 closed — the decoder's door decides `Renderable`, and the mirror was paid — 2026-09-13
+
+Finding **R2** of the adversarial audit (previous entry) was an *observable* defect, not a
+proof gap: `Vt.decodedOk` was never passed the grid, so `Checkpoint.load` accepted a
+`Good ∧ ¬Renderable` screen and `resume_grid`'s conclusion was refutable for a state that
+came off disk. Both halves the audit named — shape and per-cell — are now checked, in one
+change, and the mirror it warned about was paid in full and written down at each claim.
+
+**The two halves are the SAME hypothesis, and that is the fact Step 3's decision missed.**
+`Renderable` = `GridOk` = `size = rows ∧ ∀ y, RowOk cols row`, and `RowOk` carries
+`CellOk`/`PairOk`. So checking cells costs **no extra binder** over checking sizes, and the
+predicate that mirrors onto the `resume_*` family is `Renderable` itself — exactly what
+`resume_grid`/`resume_sb` already asked for. A shape-only door would have needed a *new,
+weaker* predicate to state the same mirror, and `renderable_of_liveReachable` would not have
+discharged it directly. Doing the "expensive" half is what made the cheap half cheap.
+
+### What landed
+
+Six `private` `Bool` deciders in `Linger/Core/Vt.lean`, a five-rung ladder plus the char
+leaf, each with an `iff` claim so the `Bool` and the `Prop` cannot drift:
+`decodedCharOk`/`decodedCellOk`/`decodedPairOk`/`decodedRowOk`/`decodedGridOk`/`decodedRenderable`,
+and `ofDecoded` now guards on `decodedOk … && decodedRenderable …`. Two named stages, for
+the reason `decodedOk` was named in Step 2.
+
+`decodedOk_iff`'s **statement and proof are untouched** — that was deliberate. Bolting three
+more conjuncts onto a twelve-way `iff` whose proof is a hand-written `rintro` of twelve
+binders would have been a bigger, riskier diff than a second stage with its own claim, and
+the second stage is where `Renderable` can be named at all (see next paragraph).
+
+**The new claims live 4000 lines below the old ones**, and that is forced, not sloppy:
+`Renderable`/`GridOk`/`RowOk`/`CellOk`/`PairOk`/`Emittable` are defined at
+`Theorems/Vt.lean:3800–4070`, and the decoder's door section is at line 85. So
+`ofDecoded_renderable`, `ofDecoded_tabsOk`, `ofDecoded_none_of_rows_mismatch` and the six
+`_iff`s are a new §"The decoder's door, part two", and **`ofDecoded_of_good` moved down to
+join them** because its statement now names `Renderable`. Its old position carries a pointer
+paragraph saying where the other half went and why, so the pair still reads as a pair.
+
+### The per-cell half was cheap for one reason, and it is in `RowOk`'s statement
+
+`RowOk` quantifies over **all** `x`, not `x < cols`. So the decidable form is
+`row.size == cols && (List.range cols).all (…)` plus the bridge that an out-of-range read is
+the default cell — `cellOk_default` was already there, and `pairOk_of_size_le` (three lines,
+on `at_of_size_le`) is its `PairOk` twin. `decodedGridOk` indexes with `GridOk`'s own
+`getD … (blankRow cols {})` so the two cannot disagree past the last row; `rowOk_blankRow`
+closes that branch. **No `maxHeartbeats` raise anywhere** — the ratchet stayed at 1, which is
+the signal the task said to watch for. The heaviest proof in the change is 20 lines.
+
+### Cost at run time: nothing, and this was measured both ways
+
+The audit's estimate was "an O(rows·cols + ring·cols) second pass … up to ~10^7 cells".
+The measurement says the second pass is free, because `rRow`'s `expand` already materialises
+every cell the validator then reads. Same interpreter, same filled checkpoints, before and
+after:
+
+```
+                 pre-change            post-change
+80x24    1117 B  187 ms / 20 loads     189 ms / 20 loads
+200x50   2330 B  601 ms / 10 loads     603 ms / 10 loads
+1000x1000 42084 B 30985 ms / 1 load    30502 ms / 1 load
+```
+
+Inside the noise at every size; the 30-second figure is the *parse* of a 10^6-cell grid and
+predates this change. (Interpreted `#eval`, so all six numbers are an upper bound on the
+shipped binary's.) The docstring quotes this rather than an estimate.
+
+### The mirror, paid: 12 claims, 21 binders, every one documented
+
+| claim | gained | why it was not free |
+|---|---|---|
+| `Vt.ofDecoded_of_good` | `hren`, `htabs` | the door's non-rejection *is* the check |
+| `Checkpoint.rt_vt` | `hren`, `htabs` | reads `ofDecoded_of_good` |
+| `Checkpoint.load_save` | `hren`, `htabs` | reads `rt_vt` |
+| `Checkpoint.load_save_exact` | `hren`, `htabs` | reads `load_save` |
+| `resume_quiesced` | `hren`, `htabs` | round-trip conjunct only; never reads the grid |
+| `resume_quiesced_any` | `hren`, `htabs` | ditto |
+| `resume_exact` | `hren`, `htabs` | ditto |
+| `resume_cursor` | `hren`, `htabs` | ditto |
+| `resume_cursor_any` | `hren`, `htabs` | ditto |
+| `resume_grid` | `htabs` | `hren` was already there |
+| `resume_sb` | `htabs` | `hren` was already there |
+| `resume_tabs` | `hren` | `hvtabs` was already there and *is* `TabsOk` |
+
+**Eight `resume_*` claims, not the five Step 3 predicted**, and the three extra are the
+interesting ones: `resume_grid`/`resume_sb`/`resume_tabs` each already carried one of the two
+new hypotheses and gained the *other*, because `load_save_exact` needs both. So "the claims
+that read the grid pay nothing" was half right.
+
+Each is stated in the claim's own docstring, in `structure Vt`'s docstring
+(`Linger/Core/Vt.lean`), in §"part two"'s section docstring, and in THEOREMS.md's A1,
+§Restore, §Renderable and §Resume rows. `Checkpoint.load_save_live` is new and exists for the
+reader rather than the prover: `LiveReachableVt c.vt → load (save c) = some …`, all three
+hypotheses discharged in one step, so "every live session satisfies them" is a theorem in the
+file and not three lemma names in a comment.
+
+### Can the existing family drop `hren`? No, and the circularity is real
+
+Checked rather than assumed, exactly as the task warned. `Theorems/Resume.lean`'s subject is
+`save`'s **input**; the only bridge to the decoder is `load_save_exact`, whose *conclusion* is
+the round trip and which is the very call that acquires the hypothesis. Every attempt to
+discharge `hren` from `load (save c) = some c` needs that equation first. So the payoff is a
+**new** family over `load`'s output, and it is hypothesis-free:
+
+* `resume_grid_of_load : load l = some c → ((Vt.init c.vt.cols c.vt.rows).feed (restore c.vt)).grid = c.vt.grid`
+* `resume_tabs_of_load` — the ruler, same shape
+* `resume_sb_of_load` — the history, keeping only `hne` (a property of the checkpoint's
+  *content*, not its well-formedness: an empty history is a different branch,
+  `restore_sb_keeps_of_empty`)
+
+No `Good`, no `Renderable`, no `TabsOk`, no quiescence, no `save` — for an **arbitrary byte
+string**. Before R2 the grid and ruler halves of this were not provable at all. Underneath
+them: `load_shape` (one destructuring of `load`), projected as `load_renderable` and
+`load_tabsOk`, the twins of `load_good`; and `rVt_shape` under that.
+
+### What is deliberately still open, named rather than implied
+
+**The scrollback ring's row widths are not validated, and must not be.** `Vt.resize`
+reinstalls the grid and the ruler at the new width and leaves the ring rows at their old one
+(Step 3's measurement, re-confirmed here as a fixture: feed 5 lines into 10×2, resize to 6
+wide, and the checkpoint loads with 10-wide ring rows on a 6-wide screen). A decoder that
+demanded `RowOk cols` of them would refuse a checkpoint every reachable state can produce.
+So `Render.restore_sb_exact`'s `hrok` stays unreachable from disk — by construction, with a
+*passing* fixture asserting the acceptance, so the gap is visible in the test file rather
+than only in prose.
+
+**The `ofDecoded` rung on `LiveReachableVt` is now sound and was still not added.** Step 3
+measured it unsound with premise `Good v` (it broke `renderable_of_liveReachable` and
+`u8Ok_of_liveReachable`). All four components now hold — checked in a scratch file, not
+asserted: `load_good`, `load_renderable`, `load_tabsOk`, and `U8Ok` because the door fixes
+`u8need := 0`/`u8acc := 0`, so it is `rfl`. And it would now buy something Step 3 said it
+would not: `Theorems/Session.lean`'s `LiveVt`/`run_vt_renderable` lifts the shape invariant to
+the daemon only for sessions booted from `Vt.init`, so a **resumed** session's `Renderable`
+currently travels through `renderable_feed`/`renderable_resize` one operation at a time
+instead of through one daemon-level theorem. Adding a rung changes what four
+`*_of_liveReachable` lemmas mean and touches the Session claims; it is its own step.
+
+### Break-verification — eleven breaks, every one bit
+
+Each is an edit to the **`Bool` side** (the decoder checking *less*), which is the direction a
+regression actually takes. Restored and re-verified green after each.
+
+`B1` `decodedCharOk` drops the DEL check:
+
+```
+error: Theorems/Vt.lean:4115:82: unsolved goals
+c : Char
+⊢ 32 ≤ c.toNat → ¬c.toNat = 127
+```
+
+`B2` `decodedCellOk` drops `charWidth c.base == c.width`:
+
+```
+error: Theorems/Vt.lean:4127:11: Application type mismatch: The argument hb
+has type 32 ≤ c.base.toNat but is expected to have type Emittable c.base
+error: Theorems/Vt.lean:4131:6: Type mismatch  Or.inl h0
+has type c.width = 0 ∨ ?m.67 but is expected to have type c.base.toNat ≠ 127
+```
+
+`B3` `decodedPairOk` checks the shadow's *width* instead of the shadow (i.e. `Row.halfPair`'s
+rule instead of `PairOk`'s) — the interesting near-miss, since it is the rule the *live* path
+uses:
+
+```
+error: Theorems/Vt.lean:4140:21: Type mismatch  Or.resolve_left h2 ?m.24
+has type (row.at (x + 1)).width = 0
+but is expected to have type row.at (x + 1) = (row.at x).shadow
+```
+
+`B4` `decodedRowOk` scans `List.range (cols - 1)` — the off-by-one that leaves the last
+column unchecked:
+
+```
+error: Theorems/Vt.lean:4163:22: Application type mismatch: The argument hx
+has type x < cols but is expected to have type x < cols - 1
+```
+
+`B5` `decodedGridOk` drops the row count — R2's own hole:
+
+```
+error: Theorems/Vt.lean:4180:11: Tactic `rcases` failed: `a✝ : ∀ (x : Nat),
+  x < rows → RowOk cols (g.getD x (blankRow cols { }))` is not an inductive datatype
+```
+
+`B6` `decodedRenderable` stops looking at the stashed alt grid:
+
+```
+error: Theorems/Vt.lean:4209:6: Type mismatch  ha
+has type True but is expected to have type GridOk cols rows g₀
+```
+
+`B7` the ruler check weakened from `= cols` to `≤ cols` (the first attempt, dropping it
+outright, bit on the *unused-variable linter* instead — a weaker demonstration, so it was
+redone):
+
+```
+error: Theorems/Vt.lean:4199:9: unsolved goals
+⊢ GridOk cols rows grid → (tabs.size ≤ cols ↔ tabs.size = cols)
+```
+
+`B8` **the pre-change door restored verbatim** (`ofDecoded` consults `decodedOk` only, i.e.
+the tree at `12cc764`). Six door claims fail — `ofDecoded_good`, `ofDecoded_none_of_cols_zero`,
+`ofDecoded_renderable`, `ofDecoded_tabsOk`, `ofDecoded_of_good`,
+`ofDecoded_none_of_rows_mismatch` — and, the part that matters, **seven of the eight new
+fixtures fail**, the exhibit first:
+
+```
+error: Tests/Checkpoint.lean:209:2: Tactic `native_decide` evaluated that the proposition
+  (let c := { vt := Vt.init 4 2, cwd := "/tmp", labels := [("k", "v")] };
+    let bytes := save c;
+    bytes[6]? == some 2 && (load (bytes.set 6 3)).isNone) = true
+is false
+```
+
+That is the audit's one-flipped-byte checkpoint, reproduced as a fixture: `bytes[6]` is the
+`rows` byte and patching 2 → 3 used to load. The eighth new fixture — the resized session
+with 10-wide ring rows — passes in **both** trees, which is what makes it the control for the
+deliberate non-check rather than an assertion that happens to hold.
+
+`B9` the door refuses everything (`decodedRenderable := false && …`). `ofDecoded_renderable`
+and `ofDecoded_tabsOk` would both be satisfied by that; the other half catches it:
+
+```
+error: Theorems/Vt.lean:4207:14: Application type mismatch: The argument hg
+has type false = true ∧ GridOk cols rows grid
+but is expected to have type GridOk cols rows grid
+```
+
+`B10` `resume_grid_of_load` takes its shape witness from the fresh emulator instead of from
+the decoder — the substitution that would make the claim true of the wrong state:
+
+```
+error: Theorems/Resume.lean:276:4: Application type mismatch: The argument
+  Vt.renderable_init c.vt.cols c.vt.rows
+has type Vt.Renderable (Vt.Vt.init c.vt.cols c.vt.rows)
+but is expected to have type Vt.Renderable c.vt
+```
+
+`B11` `load_save_live` drops the ruler lemma:
+
+```
+error: Theorems/Checkpoint.lean:369:72: Application type mismatch: The argument rfl
+has type ?m.7 = ?m.7 but is expected to have type TabsOk c.vt
+```
+
+**One process lesson, recorded because it cost a redo:** piping the break-runner through
+`head -n` kills it with SIGPIPE *before* it restores the tree, so B9's edit silently survived
+into B10 and B11 and their logs showed B9's errors. Restore first, then truncate output —
+or don't truncate.
+
+### Numbers
+
+Coverage **265 → 271 defs, 0 unclaimed (cap 0)** — six new pure-core defs, six new claims, in
+the same change, which is what the zero cap is for. `maxHeartbeats` raises **1**, unchanged.
+SHIM 22, RUNTIME_PARTIAL 2, E2E_PARTIAL 5 untouched. `tests/gates.sh` needed **no edit** —
+in particular the toolkit import-closure gate did not fire, because `Linger/Core/Vt.lean`
+still imports nothing and everything the deciders use (`List.range`, `Array.all`, `charWidth`,
+`Row.at`, `Cell.shadow`) was already there. Job counts unchanged: `./lake build` 43,
+`Theorems Tests` 50, `e2e` 61, `LingerVt` 5. `lean-fmt` reformatted five files on first run
+and then reports 71 files / no findings. New declarations: 10 in `Theorems/Vt.lean`, 5 in
+`Theorems/Checkpoint.lean`, 4 in `Theorems/Resume.lean` (one of them `init_dims_of_good`, a
+`clampDim`-is-the-identity helper that had been written out four times); 8 new fixtures.
+
+Axioms: `propext`/`Quot.sound` for every new `Theorems/Vt.lean` claim and for
+`rVt_shape`/`load_shape`/`load_renderable`/`load_tabsOk`/`init_dims_of_good`;
+`Classical.choice` additionally for `load_save_live`, `rt_vt`, `load_save`,
+`load_save_exact` and the whole `resume_*` family including the three `*_of_load`. The
+`Classical.choice` is **inherited, not introduced** — `rt_vt`/`load_save`/`load_save_exact`
+already carried it before this change (via `rVt_fields`), as the Step 2 record measured. No
+`sorryAx` anywhere.
+
+I did **not** run `./tests/e2e.sh` (it `pkill`s another agent's daemons on this shared host).
+Expected green, and the argument is a theorem rather than an inspection: every checkpoint the
+daemon writes is of a `Vt` that came from `init`/`feed`/`resize`/`quiesce` (so
+`LiveReachableVt`, hence `Renderable ∧ TabsOk` — accepted) or from `ofDecoded` itself (so
+`Renderable ∧ TabsOk` by `ofDecoded_renderable`/`ofDecoded_tabsOk` — accepted), and the
+format bytes are unchanged, so a pre-change checkpoint on disk still loads. Read
+`E2E/Resume.lean` for the three checkpoints it involves: `boot` (live 80×24 with 60 lines of
+history), `geom` (live 100×40) and `corrupt.ckpt` — the last dies in the grid's `rNat` on a
+run of `0xFF`, *before* `ofDecoded` is reached, so it takes the same branch as before. None
+is resized before its checkpoint, and a resized one would be accepted anyway, which is the
+whole point of not validating the ring. `sh tests/gates.sh`, all four build targets and
+`e2e coverage` are green here.
