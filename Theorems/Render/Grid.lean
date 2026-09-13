@@ -5,7 +5,10 @@ import all Linger.Core.Render
 import all Linger.Core.Vt
 import all Theorems.Render.Row
 
-public section
+-- No `public section`: a **public** declaration's type may not mention a private
+-- field, and `Vt`'s are private now (the seal, `specs/vt-toolkit.md` Step 1).
+-- Module-private is the default, so consumers reach in with `import all`. See the
+-- longer note in `Theorems/Vt.lean`.
 
 /-! # Step 4 — the grid
 

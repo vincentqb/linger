@@ -346,8 +346,8 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
   -- model, exactly as it did at the old fixed 80×24 — the alternative is
   -- mutating the restored screen.
   let (pid, ptyFd) ←
-    spawnPty (UInt32.ofNat (Linger.Core.Vt.clampDim vt0.cols))
-        (UInt32.ofNat (Linger.Core.Vt.clampDim vt0.rows)) cwd prog args
+    spawnPty (UInt32.ofNat (Linger.Core.Vt.clampDim vt0.colCount))
+        (UInt32.ofNat (Linger.Core.Vt.clampDim vt0.rowCount)) cwd prog args
         #[s!"LINGER_SESSION={name}", "TERM=xterm-256color", "TERM_PROGRAM=linger",
           "TERM_PROGRAM_VERSION=0.1.0"]
   setNonblock ptyFd

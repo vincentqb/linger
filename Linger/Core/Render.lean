@@ -1,6 +1,10 @@
 module
 
 public import Linger.Core.Vt
+-- `Vt`'s fields are `private` (the seal, `specs/vt-toolkit.md` Step 1). Render is
+-- inside the toolkit boundary and reads the state it emits, so it is a friend by
+-- construction: this is not an escape hatch, it is the library's own second module.
+import all Linger.Core.Vt
 
 public section
 

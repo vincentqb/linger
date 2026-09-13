@@ -1,4 +1,15 @@
-import Linger.Core.Render
+module
+
+public import Linger.Core.Render
+-- Converted from legacy by the `Vt` seal (`specs/vt-toolkit.md` Step 1): the
+-- round-trip fixtures compare fields on both sides, so they are a friend of the
+-- emulator.
+import all Linger.Core.Vt
+import all Linger.Core.Render
+-- `native_decide` compiles its goals, and a module's compiled code only sees
+-- meta-imported modules — names alone arrive via the public import above.
+public meta import Linger.Core.Vt
+public meta import Linger.Core.Render
 
 /-! # §Replay round-trip tests — restore fidelity, executable form
 

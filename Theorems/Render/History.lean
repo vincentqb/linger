@@ -5,7 +5,10 @@ import all Linger.Core.Render
 import all Linger.Core.Vt
 import all Theorems.Render.Sticky
 
-public section
+-- No `public section`: a **public** declaration's type may not mention a private
+-- field, and `Vt`'s are private now (the seal, `specs/vt-toolkit.md` Step 1).
+-- Module-private is the default, so consumers reach in with `import all`. See the
+-- longer note in `Theorems/Vt.lean`.
 
 /-! # §Row integrity for `linger history` — a cell cannot inject a line break
 

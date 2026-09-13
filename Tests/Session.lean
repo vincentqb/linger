@@ -2,6 +2,9 @@ module
 
 public import Linger.Core.Session
 import all Linger.Core.Session
+-- The `Vt` seal (`specs/vt-toolkit.md` Step 1): these fixtures read the screen they
+-- assert about, so they are a friend of the emulator too.
+import all Linger.Core.Vt
 -- `native_decide` compiles its goals, and a module's compiled code only sees
 -- meta-imported modules — names alone arrive via the public import above.
 public meta import Linger.Core.Session

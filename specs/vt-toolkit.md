@@ -1,8 +1,31 @@
 # vt-toolkit — seal `Vt`, then lift `Vt`+`Render`+`Terminal` as a standalone emulator
 
-Status: **queued, not started** (2026-09-11). `specs/scrollback-fidelity.md` Step 4 is the
-item in flight; this spec exists so its measured facts are not re-derived, and so the
-ordering argument below is on the record before anyone starts.
+Status: **Step 1 done (2026-09-11). Steps 2-4 next.** `specs/scrollback-fidelity.md` is
+complete on its critical path, so this is now the item in flight.
+
+## Where this stands
+
+**Step 1 is COMPLETE.** All 20 `Vt` fields are `private`; the seal bites, break-verified in the
+real tree with a compiling control at the same position. Read the Step 1 record below before
+Step 2 — it corrects this spec's own census, which was measuring forges and under-counted by
+18 files.
+
+**Two mechanism facts that cost the work, and are not re-derivable from the docs:**
+
+1. Per-field `private` makes the **constructor** private as a side effect, so `{ v with … }`,
+   `Vt.mk` and `⟨…⟩` all refuse even for fields that stayed public. Sealing *one* field would
+   therefore buy the entire no-forge property; sealing all twenty additionally buys
+   read-hiding, which is what the other 25 files paid for.
+2. `import all` grants **access**, not permission to re-export: a **public** declaration's
+   *type* may still not mention a private field. `Theorems/Vt.lean` already had the friend
+   import and still failed 101 times. The fix is the *absence* of a line — dropping
+   `public section` makes declarations module-private, which may name private fields, and a
+   downstream `import all` still reaches them. The two error texts distinguish the two
+   failures: `Unknown constant _private.…` means add `import all`; `Field `cols` … is private`
+   means make the declaration module-private.
+
+**Next:** Step 2, the checkpoint smart constructor, and it is bigger than this spec assumed —
+see the corrected numbers below.
 
 ## Goal
 
@@ -31,18 +54,27 @@ So: the seal is the load-bearing move, and the harvest is what pays for it.
 `renderable_of_liveReachable` and `u8Ok_of_liveReachable`. A new `Reachable` inductive would
 be a strict sub-relation and a rename — **do not add one**; use `LiveReachableVt`.
 
-**The seal's blast radius is 211 sites, and 210 of them are free.** Measured by
-brace-matched scan over every tracked `.lean`:
+**The seal's blast radius was measured wrong, and the corrected numbers are these.** The
+original scan was brace-matched, so it counted **forges**; the seal blocks **reads** too, and
+reads are the bulk. Measured by doing it:
 
-| where | sites | class |
+| where | files | what was needed |
 |---|---|---|
-| `Theorems/**` (10 files) | 204 | already `module` files — one `import all Linger.Core.Vt` line each |
-| `Tests/Render.lean`, `Tests/Terminal.lean` | 6 | legacy files; need the `module` + `public import` + `import all` conversion Step 5a rehearsed (Render also needs `public meta import` for its compiled-evaluation fixtures) |
-| `Linger/Core/Checkpoint.lean:296-299` | **1** | **the only real-code forge** |
-| `Linger/Runtime/**`, `Main.lean`, `E2E/**`, `Linger/Posix.lean` | **0** | they touch a `Vt` only through `Vt.init`/`resize`/`Terminal.feed` |
+| `Theorems/**` | **19** of 24 | drop `public section` (12 already had `import all` and it was *not sufficient*); `Session`/`Resume`/`Listing` also needed `import all Theorems.*` for the rungs they compose |
+| `Tests/**` | **6** | 5 legacy→`module`, each also needing `public meta import` for compiled evaluation |
+| `Linger/Core/` | **5** | `Vt` (the seal + a read-only window), `Render`/`Terminal` (friends — the toolkit's own other modules, **omitted entirely by the original census**), `Session` (5 sites → accessors), `Checkpoint` (a temporary friend import) |
+| `Linger/Runtime/` | **1** | `Daemon.lean` reads `vt0.cols`/`rows` to clamp a checkpoint-loaded size before `spawnPty` — the original census said zero, and **this is the corrupt-checkpoint path Step 2 is about**, so missing it mattered |
+| `Main.lean`, `E2E/**`, `Posix.lean` | 0 | genuinely zero, as claimed |
 
-`Vt.mk` and `⟨…⟩` forges: zero hits anywhere. **The seal costs the shipping runtime
-nothing**, which is the result that makes this cheap.
+`Vt.mk` and bare `⟨…⟩` forges: **zero hits anywhere** — the one original claim that survived
+intact.
+
+**`Linger/Core/Checkpoint.lean` is not 1 site but 18**: `rVt`'s one forge plus **`wVt`'s 17
+reads**, which the census did not count and which Step 2 must also relocate.
+
+**The import DAG still supports the split** (Steps 3 and 4 unaffected in substance): `Vt`
+imports nothing, `Render` only `Vt`, `Terminal` only `Render`; the two friend imports added are
+same-closure. `LiveReachableVt` is untouched.
 
 **The one genuine obstacle is the checkpoint decoder**, and it is the site the seal most
 wants to bite: `rVt` builds a `Vt` field-by-field out of decoded bytes, so a corrupt
@@ -74,13 +106,24 @@ that trips `gates.sh`'s existing no-`require` gate, which exists to keep README'
 
 ## Steps
 
-1. **Seal `structure Vt`** — `private` fields, `Vt.init` the door, `import all` in the ten
-   `Theorems/` files and the two `Tests/` files. Break-verify from `Linger/Runtime/`: a read,
-   a `{ v with … }` and a forge must each fail to compile (against the `linger` exe target —
-   `lake build Linger` does **not** compile `Linger/Runtime/**`, the step-2 lesson).
+1. **Seal `structure Vt`** — DONE (2026-09-11). All 20 fields `private`, `Vt.init` the door,
+   plus a **read-only window** (`Vt.colCount`/`rowCount`/`cursorPos`/`inAlt`, claimed by four
+   `@[simp]` equations in `Theorems/Vt.lean`) because the seal blocks reads as well as writes
+   and `Linger/Core/Session.lean` is a *client* of the emulator rather than part of it — a
+   friend import there would have handed the daemon the power to forge a `Vt`, which is the one
+   thing the seal exists to stop. `@[expose]` had to come off `Vt.applySgr`: an exposed body may
+   not mention a private constructor. Break-verified from `Linger/Runtime/` against the `linger`
+   exe target, with a control at the same position.
 2. **The checkpoint smart constructor** — `rVt` goes through it; a forged record with junk
    dimensions must decode to `none` rather than to a `Vt` that violates `Good`. This is a
-   behaviour change at the boundary and wants a fixture.
+   behaviour change at the boundary and wants a fixture. **Bigger than first assumed:**
+   `wVt`'s 17 field *reads* need a home too, or the temporary friend import cannot come out.
+   Two options, and the second is better — a per-field public accessor surface (which reopens
+   read-hiding, though the constructor stays private so no-forge survives), or a
+   `Vt.encode`/`decode` pair inside `Vt.lean` where the fields are visible, putting the wire
+   format next to the representation it serialises. Also: `Daemon.lean`'s `clampDim` on the
+   resume path becomes belt-and-braces once `rVt` clamps — its comment is the clearest statement
+   of the bug this step fixes, so rewrite it rather than deleting the call silently.
 3. **Harvest** — drop `Good`/`Renderable` hypotheses from the toolkit's public claims where
    reachability now discharges them, and state the exhaustiveness in prose next to the seal
    (it is a compile-time property, not a theorem — do not fake it as one).

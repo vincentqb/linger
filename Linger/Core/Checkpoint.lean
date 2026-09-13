@@ -1,6 +1,22 @@
 module
 
 public import Linger.Core.Vt
+-- TEMPORARY, and the one place in the tree where that word applies.
+--
+-- `Vt`'s fields are `private` (the seal, `specs/vt-toolkit.md` Step 1). This
+-- module is NOT inside the toolkit boundary: it is the on-disk codec, and `rVt`
+-- below forges a `Vt` field-by-field out of decoded bytes, which is precisely how
+-- a corrupt checkpoint would hand the emulator `cols := 0`. That forge is the site
+-- the seal most wants to bite, so this friend import is a *deliberate hole held
+-- open for exactly one step*.
+--
+-- **`specs/vt-toolkit.md` Step 2 removes this line**, by replacing `rVt`'s
+-- structure literal with an honest smart constructor in `Vt.lean` that validates
+-- or clamps and returns `none` on junk. `wVt`'s 17 field reads have to go through
+-- a public accessor surface at the same time. Until then the seal protects the
+-- runtime but not the decoder, which is the weaker half of the claim — do not read
+-- this import as settled, and do not copy the pattern to a third module.
+import all Linger.Core.Vt
 
 public section
 
@@ -275,6 +291,17 @@ def wVt (v : Vt) : List UInt8 :=
     wBool v.shiftOut ++
     wBool v.bell
 
+/-- **The one real-code forge, and the site the `Vt` seal most wants to bite.**
+This builds a `Vt` field-by-field out of decoded bytes, so a corrupt or hostile
+on-disk record is exactly how `cols := 0` — a state no `Vt.init`/`resize`/`feed`
+path can produce — would reach the emulator. Nothing here validates: `rNat`
+accepts whatever the file says.
+
+It compiles today only because this module holds a temporary `import all
+Linger.Core.Vt` (see the header). **`specs/vt-toolkit.md` Step 2 replaces this
+literal with a smart constructor in `Vt.lean`** that clamps or rejects, so that a
+junk record decodes to `none` rather than to a `Vt` violating `Good`; the friend
+import goes with it. -/
 def rVt : R Vt := fun l => do
   let (cols, l) ← rNat l
   let (rows, l) ← rNat l

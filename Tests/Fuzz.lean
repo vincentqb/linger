@@ -1,4 +1,16 @@
-import Tests.Render
+module
+
+public import Tests.Render
+-- Converted from legacy by the `Vt` seal (`specs/vt-toolkit.md` Step 1). Nothing
+-- here mentions a `Vt` field directly, but `Tests/Render.lean` had to become a
+-- module and its `roundtrips`/`roundtripsFrom` are module-private now, so they
+-- arrive via `import all` — and `native_decide` needs them compiled, hence the
+-- `meta` line as well.
+import all Tests.Render
+import all Linger.Core.Vt
+public meta import Tests.Render
+public meta import Linger.Core.Vt
+public meta import Linger.Core.Render
 
 /-! # §Replay fuzzing — the net for assumptions nobody wrote down
 

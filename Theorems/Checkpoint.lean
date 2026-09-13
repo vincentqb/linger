@@ -1,4 +1,15 @@
-import Linger.Core.Checkpoint
+module
+
+public import Linger.Core.Checkpoint
+import all Linger.Core.Checkpoint
+import all Linger.Core.Vt
+
+-- Converted from a legacy (non-`module`) file by the `Vt` seal
+-- (`specs/vt-toolkit.md` Step 1). Legacy files make every declaration public, and
+-- a public statement may not mention a private field — `load_save_exact` mentions
+-- three (`pstate`, `u8need`, `u8acc`) and `cases vt` needs the constructor. As a
+-- `module` with no `public section`, the declarations are module-private and both
+-- are allowed. `Theorems/Resume.lean` reaches in with `import all`.
 
 /-! # §Restore — the reboot-resume codec theorems
 

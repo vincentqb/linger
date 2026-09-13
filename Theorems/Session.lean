@@ -10,6 +10,12 @@ import all Linger.Core.Vt
 import all Linger.Core.Terminal
 import all Linger.Core.Wire
 import all Linger.Core.Render
+-- The `Vt` seal (`specs/vt-toolkit.md` Step 1) made the proof layer
+-- module-private, so the rungs this file composes need `import all` too, not just
+-- `public import`.
+import all Theorems.Terminal
+import all Theorems.Render
+import all Theorems.Wire
 
 /-! # §Detach / §Bound(session) — the daemon state machine theorems
 
@@ -1084,7 +1090,7 @@ re-establishes them at an unchanged winsize; the attach guard's reason), and
 the reply is still `.done`: idempotent success, the pty already IS that size. -/
 theorem controlResize_same_size (s : State) (c : Client) (cols rows : UInt32)
     (hown : (sizeOwner s).isSome = false) (hnz : (cols == 0 || rows == 0) = false)
-    (hsame : (s.vt.cols == cols.toNat && s.vt.rows == rows.toNat) = true) :
+    (hsame : (s.vt.colCount == cols.toNat && s.vt.rowCount == rows.toNat) = true) :
     controlResize s c cols rows = (s, [.send c.id .done]) := by
   unfold controlResize
   rw [ite_eq_right (by simp [hown]), ite_eq_right (by simp [hnz]), ite_eq_left hsame]

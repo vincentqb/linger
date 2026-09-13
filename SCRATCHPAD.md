@@ -7676,3 +7676,130 @@ as those files are imported today; a scratch file needs the line added.
 Coverage unchanged at `259` defs and `0 (cap 0)`, which mattered more than it looks: the gate
 scans the text *between* `theorem <name>` and the `:=`, so removing a binder can silently un-claim
 a def, and the cap has zero headroom. It didn't.
+## Step 1 notes (vt-toolkit) — 2026-09-13
+
+**Seal `structure Vt`.** All 20 fields `private`. Works, and bites.
+
+**The mechanism, measured in a scratch package before touching the tree**
+(`/tmp/privprobe`, v4.34.0-rc2). Per-field `private` inside a `structure` is
+real syntax and it does three things, not one:
+
+1. it makes the *projection* private — a plain importer gets
+   `Unknown constant _private.P.A.0.Vt.cols`;
+2. it makes the **constructor** private as a side effect — so `{ v with … }`,
+   `Vt.mk` and `⟨…⟩` all refuse *even for the fields that stayed public*. This
+   is the `Buf` lesson (2026-08-19) one layer up, and it is why sealing one
+   field would have bought the whole no-forge property;
+3. `deriving Repr, Inhabited` survives it. No derive-handler breakage at all —
+   the predicted obstacle that did not materialise.
+
+**`import all` grants ACCESS, not PERMISSION TO RE-EXPORT — and that is the
+finding that cost the most.** A module with `import all Linger.Core.Vt` may
+mention a private field in a *body*, but a **public** declaration's *type* still
+may not. `Theorems/Vt.lean` already had the friend import and still failed 101
+times, on `structure Good`'s field types and on every theorem statement naming
+`v.cols`. The two error texts are worth telling apart, because they mean
+different fixes:
+
+* `Unknown constant _private.…` — no access. Fix: add `import all`.
+* `Field `cols` from structure `Vt` is private` — access granted, but the
+  declaration is public and its type may not say so. Fix: make the declaration
+  module-private.
+
+Legacy (non-`module`) files hit the *second* error, not the first: pre-module
+files make every declaration public, so `Theorems/Checkpoint.lean` could see the
+field and still not state it.
+
+**The cheap fix for the second error is the absence of a line.** Default
+visibility in a `module` file is module-private, and a module-private
+declaration's type MAY name a private field (probe `P/I.lean`), and a downstream
+`import all` still reaches it (`P/J.lean`). So dropping `public section` from a
+proof file does in one line what `private` on a hundred theorems would. 19 of
+the 24 `Theorems/` files needed it — `Buf`, `Claim`, `Name`, `Remote` and `Wire`
+never mention a `Vt` and were untouched.
+
+**Cascades, both transitive and worth knowing:**
+* Making a proof file module-private forces `import all Theorems.X` on whoever
+  composes its rungs — `Session` (3 lines), `Resume` (2), `Listing` (2).
+* A `module` cannot import a non-`module`. Converting `Theorems/Listing.lean`
+  therefore dragged in `Theorems/Status.lean`, which has nothing to do with
+  `Vt`. Same shape in `Tests/`: `Tests/Fuzz.lean` had to convert because
+  `Tests/Render.lean`'s `roundtrips` went module-private.
+* Converted `Tests/` files need `public meta import` as well as `import all`:
+  `native_decide` compiles its goals and compiled code only sees meta-imported
+  modules. Already recorded for `Tests/Session.lean`; now four more.
+
+**One `@[expose]` had to go, and it was load-bearing.** `Vt.applySgr` carried
+it so `Theorems/Render/Pen.lean` could induct on `Vt.applySgr.go`. An exposed
+body may not mention a private constructor, and its body is `{ v with pen := … }`
+— so the attribute became illegal, not merely redundant. Deleting it is safe
+*now* because every importer that needs `go` is a `module` with `import all`,
+which grants the auxiliary directly; the docstring's "101 `Unknown constant`
+errors" were from a *legacy* importer that no longer exists. Verified: Pen,
+Grid, Scrollback and Tabs all still close. If a legacy importer of `go` ever
+returns, give it `import all` — do not restore the attribute.
+
+**Break-verify, from `Linger/Runtime/Daemon.lean`, inside the namespace's `open`
+scope, against `./lake build linger`** — both conditions from the 2026-08-19
+`Buf` false-green entry, which is why this one is honest:
+
+```
+(a) def attackRead (v : Vt) : Nat := v.cols
+    error: Unknown constant `_private.Linger.Core.Vt.0.Linger.Core.Vt.Vt.cols`
+(b) def attackWrite (v : Vt) : Vt := { v with cols := 0 }
+    error: invalid {...} notation, constructor for `Core.Vt.Vt` is marked as private
+(c) Linger.Core.Vt.Vt.mk 0 0 #[] … false
+    error: Unknown constant `Linger.Core.Vt.Vt.mk`
+(c') ⟨0, 0, #[], … , false⟩
+    error: Invalid `⟨...⟩` notation: Constructor for `Linger.Core.Vt.Vt` is marked as private
+```
+
+Plus a **control** in the same position, which the `Buf` entry did not have:
+`def controlRead (v : Vt) : Nat := v.colCount` compiles. Without it, four
+refusals are equally consistent with the attacks being unreachable from where
+they were parked.
+
+**A read-only window, because the seal blocks reads too.**
+`Vt.colCount`/`rowCount`/`cursorPos`/`inAlt`, claimed by four `@[simp]` equations
+in `Theorems/Vt.lean`. `Linger/Core/Session.lean` and the resume path in
+`Linger/Runtime/Daemon.lean` are clients of the emulator, not part of it, so they
+get the window rather than a friend import — a friend import would have handed
+the daemon the power to forge a `Vt`, which is the one thing the seal exists to
+stop. The `@[simp]` is not decoration: `onMsg_attach_same_size_vt` and two
+`Session` rungs stop closing without the bridge, and
+`controlResize_same_size`'s hypothesis had to be restated over the accessors
+because `rw` is syntactic and `simp` cannot reach it.
+
+**Ratchets: nothing moved.** Coverage 259 → 263 defs, still `0 (cap 0)` — the
+four accessors arrived with their claims in the same change, which is what the
+zero cap is for. `maxHeartbeats` count unchanged at 2; the seal made no proof
+harder, including `Theorems/Vt.lean`, which is the heaviest file in the tree.
+SHIM 22, HEARTBEAT 1, RUNTIME_PARTIAL 2 untouched.
+
+**The census in `specs/vt-toolkit.md` was measuring forges, not reads, and it
+under-counted by a lot.** It said 211 sites in 13 files with one real-code site;
+the truth is 31 files, and `Linger/Runtime/**` is not zero — `Daemon.lean` reads
+`vt0.cols`/`vt0.rows` to clamp a checkpoint-loaded size before `spawnPty`. That
+site is the corrupt-checkpoint path the spec's own Step 2 argument is about, so
+missing it mattered. Correct counts are in the Step 1 report. The one claim that
+survived intact: `Vt.mk` and bare `⟨…⟩` forges, zero hits anywhere.
+
+**`Linger/Core/Checkpoint.lean` holds a TEMPORARY `import all`.** `rVt`'s forge
+and `wVt`'s 17 reads keep it compiling; Step 2 removes both. Commented at the
+import and at `rVt`. The seal does not yet protect the decoder, which is the
+half it most wants to protect.
+
+
+**Break-verified again in the real tree**, not only in the probe copy, because the seal is the
+whole content of the step and a mechanism that works in a `cp -a` and not in `main` would be the
+worst possible outcome. From `Linger/Runtime/Daemon.lean` against `./lake build linger`:
+
+```
+v.cols                          → Unknown constant `_private.Linger.Core.Vt.0.…Vt.cols`
+{ v with cols := 0 }            → invalid {...} notation, constructor for `Core.Vt.Vt` is private
+Linger.Core.Vt.Vt.mk 0 0 #[] …  → Unknown constant `Linger.Core.Vt.Vt.mk`
+v.colCount  (the control)       → builds
+```
+
+`./tests/e2e.sh` green in the foreground afterwards, ten suites, so the accessor conversion in
+`Session.lean` and `Daemon.lean` is behaviourally a no-op as intended.

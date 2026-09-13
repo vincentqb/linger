@@ -246,27 +246,42 @@ structure Modes where
   focusEvents : Bool := false
   deriving Repr, DecidableEq, Inhabited
 
+/-- The emulator state. **The representation is sealed**: every field is
+`private`, which also makes the constructor private, so an importer can neither
+read a field nor write one nor forge a `Vt` — `Vt.init` is the one door in and
+`resize`/`step`/`feed` the only ways on. Same move as `Buf`, one layer up, and
+for the same reason: with a public constructor an importer could hold a `Vt` with
+`cols := 0`, so `Good`/`Renderable`/`LiveReachableVt` would describe a subset of
+what a client can actually have and would prove nothing about the rest. The seal
+is what turns those predicates from decoration into guarantees.
+
+The friend set is `import all Linger.Core.Vt`: `Render`/`Terminal` (the rest of
+the toolkit), `Theorems/**`, `Tests/**`, and — **temporarily, until
+`specs/vt-toolkit.md` Step 2** — `Checkpoint`. Exhaustiveness of that list is a
+compile-time property, not a theorem: adding a reader outside it fails to build.
+Break-verified from `Linger/Runtime/` (a read, a `{ v with … }`, and a forge each
+refuse); see SCRATCHPAD.md. -/
 structure Vt where
-  cols : Nat
-  rows : Nat
-  grid : Array Row
-  cursor : Cursor := {}
-  pen : Pen := {}
-  modes : Modes := {}
-  top : Nat := 0 -- scroll region [top, bot], 0-based inclusive
-  bot : Nat
-  tabs : Array Bool -- size cols
-  sb : Ring := {} -- scrollback (main screen only)
-  altGrid : Option (Array Row × Cursor × Pen) := none -- stashed MAIN state while in alt
-  saved : Saved := {}
-  title : String := ""
-  g0Line : Bool := false -- G0 is DEC line-drawing
-  g1Line : Bool := false
-  shiftOut : Bool := false -- SO selected G1
-  pstate : PState := .ground
-  u8need : Nat := 0 -- UTF-8 continuation bytes still expected (≤ 3)
-  u8acc : Nat := 0 -- accumulated codepoint bits
-  bell : Bool := false -- sticky until the runtime clears it (activity signal)
+  private cols : Nat
+  private rows : Nat
+  private grid : Array Row
+  private cursor : Cursor := {}
+  private pen : Pen := {}
+  private modes : Modes := {}
+  private top : Nat := 0 -- scroll region [top, bot], 0-based inclusive
+  private bot : Nat
+  private tabs : Array Bool -- size cols
+  private sb : Ring := {} -- scrollback (main screen only)
+  private altGrid : Option (Array Row × Cursor × Pen) := none -- stashed MAIN state while in alt
+  private saved : Saved := {}
+  private title : String := ""
+  private g0Line : Bool := false -- G0 is DEC line-drawing
+  private g1Line : Bool := false
+  private shiftOut : Bool := false -- SO selected G1
+  private pstate : PState := .ground
+  private u8need : Nat := 0 -- UTF-8 continuation bytes still expected (≤ 3)
+  private u8acc : Nat := 0 -- accumulated codepoint bits
+  private bell : Bool := false -- sticky until the runtime clears it (activity signal)
   deriving Repr, Inhabited
 
 def clampDim (n : Nat) : Nat := min (max n 1) 1000
@@ -278,6 +293,34 @@ def Vt.init (cols rows : Nat) : Vt :=
   let r := clampDim rows
   { cols := c, rows := r, grid := Array.replicate r (blankRow c {}), bot := r - 1,
     tabs := defaultTabs c }
+
+/-! ## The read-only window
+
+`Vt.init` is the door in; these are the window out, for consumers *outside* the
+toolkit (`Render`/`Terminal` are friends and read the fields directly). They exist
+because the seal blocks reads as well as writes, and `Linger/Core/Session.lean` —
+the daemon's session model, a client of the emulator and not part of it — needs
+geometry, cursor and the alt-screen flag to answer `linger info` and to decide
+whether a resize is a no-op.
+
+Read-only is the point: a friend import would have let the daemon *forge* a `Vt`,
+which is exactly what the seal exists to prevent, so `Session` gets these instead.
+Grow the window on demand and keep it total — every one of these is a projection,
+so there is nothing here to get wrong, which is why the claims naming them
+(`Theorems/Vt.lean`) are equations rather than bounds. -/
+
+/-- Screen width. The public reading of the sealed `cols`. -/
+def Vt.colCount (v : Vt) : Nat := v.cols
+
+/-- Screen height. The public reading of the sealed `rows`. -/
+def Vt.rowCount (v : Vt) : Nat := v.rows
+
+/-- Cursor column and row, in that order. -/
+def Vt.cursorPos (v : Vt) : Nat × Nat := (v.cursor.x, v.cursor.y)
+
+/-- Is the alternate screen live? True exactly when MAIN state is stashed, which is
+what "a full-screen app is running" means to `linger info`. -/
+def Vt.inAlt (v : Vt) : Bool := v.altGrid.isSome
 
 /-! ## Grid primitives (all total) -/
 
@@ -597,11 +640,17 @@ def color256 (n : Nat) : Color := .idx (UInt8.ofNat (min n 255))
 
 /-- Apply one SGR parameter chain. Handles 38/48 in both `38;5;n` /
 `38;2;r;g;b` (semicolon) and `38:5:n` / `38:2::r:g:b` (colon) forms.
-`@[expose]`: the Pen rung's proofs (`Theorems/Render/Pen.lean`) induct on the
-`let rec go` auxiliary by name (`Vt.applySgr.go`), and a compiler-generated
-auxiliary stays module-private unless the parent's body is exposed — without
-this, 101 `Unknown constant` errors from the (legacy) proof importer. -/
-@[expose]
+
+**Not `@[expose]` any more** (2026-09-13, the `Vt` seal). It was, because
+`Theorems/Render/Pen.lean` inducts on the `let rec go` auxiliary by name
+(`Vt.applySgr.go`) and a compiler-generated auxiliary stays module-private unless
+the parent's body is exposed — 101 `Unknown constant` errors without it, from a
+*legacy* (non-`module`) importer. Every importer that needs `go` is now a `module`
+with `import all Linger.Core.Vt`, which grants the auxiliary directly, so the
+attribute is redundant — and it is no longer *allowed*: an exposed body may not
+mention a private constructor, and `{ v with pen := … }` below is one now that
+every `Vt` field is `private`. If a legacy importer of `go` ever comes back, give
+it `import all`; do not restore the attribute. -/
 def Vt.applySgr (v : Vt) (params : List (Nat × Bool)) : Vt :=
   -- (value, isSubParam); a lone `m` means reset
   let rec go (p : Pen) (l : List (Nat × Bool)) (fuel : Nat) : Pen :=

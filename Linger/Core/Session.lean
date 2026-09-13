@@ -188,9 +188,9 @@ def infoFields (s : State) : List (String × String) :=
     -- `outseq` as the change cursor ("re-capture only when it moved"). Values
     -- are read at reply time, so they are current as of this `.info`.
     ++
-    [("cols", toString s.vt.cols), ("rows", toString s.vt.rows),
-      ("cursorx", toString s.vt.cursor.x), ("cursory", toString s.vt.cursor.y),
-      ("alt", toString s.vt.altGrid.isSome), ("outseq", toString s.outSeq)] ++
+    [("cols", toString s.vt.colCount), ("rows", toString s.vt.rowCount),
+      ("cursorx", toString s.vt.cursorPos.1), ("cursory", toString s.vt.cursorPos.2),
+      ("alt", toString s.vt.inAlt), ("outseq", toString s.outSeq)] ++
     (match s.exited with
     | some st => [("exit", toString st.toNat)]
     | none => []) ++
@@ -248,7 +248,7 @@ def controlResize (s : State) (c : Client) (cols rows : UInt32) : State × List 
   else
     if cols == 0 || rows == 0 then (s, [.send c.id (.err "size must be nonzero".toUTF8.toList)])
     else
-      if s.vt.cols == cols.toNat && s.vt.rows == rows.toNat then (s, [.send c.id .done])
+      if s.vt.colCount == cols.toNat && s.vt.rowCount == rows.toNat then (s, [.send c.id .done])
       else
         ({ s with vt := s.vt.resize cols.toNat rows.toNat },
           [.resizePty cols rows, .send c.id .done])
@@ -294,7 +294,7 @@ def onMsg (s : State) (c : Client) (m : Msg) : State × List Effect :=
     -- reattach must therefore leave the emulator alone (restore-conformance
     -- Step 0 ledger item 1).
     let s :=
-      if sizer && (s.vt.cols != cols.toNat || s.vt.rows != rows.toNat) then
+      if sizer && (s.vt.colCount != cols.toNat || s.vt.rowCount != rows.toNat) then
         { s with vt := s.vt.resize cols.toNat rows.toNat }
       else s
     (s,

@@ -3,7 +3,14 @@ module
 public import Linger.Core.Vt
 import all Linger.Core.Vt
 
-public section
+-- No `public section`, and that is forced by the `Vt` seal
+-- (`specs/vt-toolkit.md` Step 1). `import all` grants *access* to a private
+-- field, but a **public** declaration's type may still not mention one — so
+-- `structure Good` and every theorem stating `v.cols`/`v.cursor`/… must be
+-- module-private. Default visibility in a `module` file is exactly that, so the
+-- fix is the absence of one line rather than `private` on a hundred. Consumers
+-- reach in with `import all Theorems.Vt`, which `Theorems/Render/Ends.lean` and
+-- `Theorems/Session.lean` already do.
 
 /-! # §Total / §Chunk / §Bound — the emulator theorems
 
@@ -24,6 +31,29 @@ one implication and `step` is a case-bash over the parser states.
 -/
 
 namespace Linger.Core.Vt
+
+/-! ## The read-only window
+
+`Vt.colCount`/`rowCount`/`cursorPos`/`inAlt` are the public reading of four sealed
+fields (`Linger/Core/Vt.lean`), for consumers outside the toolkit —
+`Linger/Core/Session.lean` and the resume path in `Linger/Runtime/Daemon.lean`. Each
+is a projection, so its claim is the equation that says so, and `@[simp]` is what
+earns these their keep: a proof that has a hypothesis about a field and a goal about
+the accessor needs the bridge, and without it `onMsg_attach_same_size_vt` and two
+`Session` rungs stop closing. Equations, not bounds — there is nothing here that
+could be wrong, only something that could be missing. -/
+
+@[simp]
+theorem colCount_eq (v : Vt) : v.colCount = v.cols := rfl
+
+@[simp]
+theorem rowCount_eq (v : Vt) : v.rowCount = v.rows := rfl
+
+@[simp]
+theorem cursorPos_eq (v : Vt) : v.cursorPos = (v.cursor.x, v.cursor.y) := rfl
+
+@[simp]
+theorem inAlt_eq (v : Vt) : v.inAlt = v.altGrid.isSome := rfl
 
 /-- Everything §Total and §Bound need, as one induction hypothesis. -/
 structure Good (v : Vt) : Prop where
