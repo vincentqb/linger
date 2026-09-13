@@ -322,6 +322,71 @@ def Vt.cursorPos (v : Vt) : Nat × Nat := (v.cursor.x, v.cursor.y)
 what "a full-screen app is running" means to `linger info`. -/
 def Vt.inAlt (v : Vt) : Bool := v.altGrid.isSome
 
+/-! ## The decoder's door
+
+`Vt.init` is the door for a *fresh* session; this is the door for a *restored* one,
+and it is the only other way a `Vt` comes into existence. It exists because
+`Linger/Core/Checkpoint.lean` used to build one field-by-field out of decoded bytes
+(`specs/vt-toolkit.md` Step 2): every length in that format is an arbitrary-precision
+`Nat`, so a corrupt or hostile file could name `cols := 0`, a cursor outside the
+screen, or a scroll region inverted — states no `init`/`resize`/`feed` path can
+produce, and states `Good` is false of. The seal stopped an *importer* forging one;
+it did nothing about the file on disk, which is the input an attacker actually
+controls.
+
+**Validate, not clamp**, and the reason is the grid. Clamping `cols` to `[1,1000]`
+would satisfy `Good` while leaving `grid`'s rows at their decoded width, so the
+restored screen would be `Good` and **not** `Renderable` — and `Renderable` is what
+every `Render.restore` theorem needs. Establishing it by clamping means rebuilding
+the grid, i.e. `Vt.resize`, which the resume path deliberately refuses (it resets the
+scroll region and the tab ruler — see `Linger/Runtime/Daemon.lean`). Rejecting costs
+nothing new: `load` is already `Option`-valued and a checkpoint that fails to parse
+already means "start fresh". One rule, uniformly — *a record that does not describe a
+`Good` state is not a checkpoint*.
+
+`private`, which is the whole point: `Linger/Core/Checkpoint.lean` reaches it through
+the friend import it already has, and no module outside the toolkit gains the power to
+build a `Vt` out of parts. A public smart constructor would be a second public door
+admitting every `Good` state — including unreachable ones — which is a wider hole than
+the forge it replaces.
+
+The check is `Good`'s decidable content, and it is a **named stage** rather than a
+conjunction inside the `if` — the AGENTS.md "restructure for provability" rule, and it
+was measured: with the guard inline, `split at h` in `ofDecoded_good` picks the `match
+altGrid` nested in the *condition* instead of the `if`, and the proof falls apart with
+`hg` bound to nothing useful. Naming it gives `split` one splittable term. -/
+
+private def Vt.decodedOk (cols rows : Nat) (cursor : Cursor) (top bot : Nat) (sb : Ring)
+    (altGrid : Option (Array Row × Cursor × Pen)) (saved : Saved) : Bool :=
+  1 ≤ cols && cols ≤ 1000 && 1 ≤ rows && rows ≤ 1000 && cursor.x < cols && cursor.y < rows &&
+    saved.cur.x < cols &&
+    saved.cur.y < rows &&
+    top ≤ bot &&
+    bot < rows &&
+    sb.size ≤ sbCap &&
+    (match altGrid with
+    | none => true
+    | some (_, c, _) => c.x < cols && c.y < rows)
+
+/-- The decoder's door itself: `Good`'s decidable content, then the record. Three of
+`Good`'s fifteen clauses need no check because this constructor *fixes* the fields they
+are about — `pstate := .ground` forces `csiLe`/`oscLe` and `u8need := 0` forces `u8Le`.
+Parser state is deliberately not persisted (`Checkpoint.wVt`), so there is nothing on
+disk to validate.
+
+Claimed by `Vt.ofDecoded_good` (nothing bad comes out), `Vt.ofDecoded_of_good` (nothing
+good is rejected) and `Vt.ofDecoded_none_of_cols_zero` (the canonical junk value is
+refused) in `Theorems/Vt.lean`. -/
+private def Vt.ofDecoded (cols rows : Nat) (grid : Array Row) (cursor : Cursor) (pen : Pen)
+    (modes : Modes) (top bot : Nat) (tabs : Array Bool) (sb : Ring)
+    (altGrid : Option (Array Row × Cursor × Pen)) (saved : Saved) (title : String)
+    (g0Line g1Line shiftOut bell : Bool) : Option Vt :=
+  if Vt.decodedOk cols rows cursor top bot sb altGrid saved then
+    some
+      { cols, rows, grid, cursor, pen, modes, top, bot, tabs, sb, altGrid, saved, title, g0Line,
+        g1Line, shiftOut, bell, pstate := .ground, u8need := 0, u8acc := 0 }
+  else none
+
 /-! ## Grid primitives (all total) -/
 
 def Vt.getRow (v : Vt) (y : Nat) : Row := v.grid.getD y (blankRow v.cols v.pen)

@@ -79,6 +79,116 @@ theorem good_init (cols rows : Nat) : Good (Vt.init cols rows) := by
     simp [Vt.init, clampDim, Ring.size, sbCap] <;>
     omega
 
+/-! ### The decoder's door
+
+`Vt.ofDecoded` (`Linger/Core/Vt.lean`) is the only way a `Vt` comes into existence
+other than `Vt.init`, and unlike `init` its inputs are *attacker-controlled*: they are
+whatever `Linger/Core/Checkpoint.lean`'s `rVt` read out of a file. Three claims — the
+spec of the check, the guarantee, and what stops the guarantee being achieved by
+refusing everything. -/
+
+/-- What the decoder's check actually decides, in `Good`'s own vocabulary. Stated so the
+`Bool` and the `Prop` cannot drift: `ofDecoded_good` and `ofDecoded_of_good` both go
+through this rather than unfolding twelve `&&`s twice. -/
+theorem decodedOk_iff {cols rows top bot : Nat} {cursor : Cursor} {sb : Ring} {saved : Saved}
+    {altGrid : Option (Array Row × Cursor × Pen)} :
+    Vt.decodedOk cols rows cursor top bot sb altGrid saved = true ↔
+      1 ≤ cols ∧
+        cols ≤ 1000 ∧
+        1 ≤ rows ∧
+        rows ≤ 1000 ∧
+        cursor.x < cols ∧
+        cursor.y < rows ∧
+        saved.cur.x < cols ∧
+        saved.cur.y < rows ∧
+        top ≤ bot ∧
+        bot < rows ∧
+        sb.size ≤ sbCap ∧ ∀ g c p, altGrid = some (g, c, p) → c.x < cols ∧ c.y < rows := by
+  unfold Vt.decodedOk
+  cases altGrid with
+  | none =>
+    simp only [Bool.and_eq_true, decide_eq_true_eq, and_assoc, and_true]; simp
+  | some x =>
+    obtain ⟨g₀, c₀, p₀⟩ := x
+    simp only [Bool.and_eq_true, decide_eq_true_eq, and_assoc, Option.some.injEq, Prod.mk.injEq]
+    constructor
+    · rintro ⟨a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, hx, hy⟩
+      refine ⟨a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, ?_⟩
+      rintro g c p ⟨rfl, rfl, rfl⟩
+      exact ⟨hx, hy⟩
+    · rintro ⟨a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, halt⟩
+      obtain ⟨hx, hy⟩ := halt g₀ c₀ p₀ ⟨rfl, rfl, rfl⟩
+      exact ⟨a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, hx, hy⟩
+
+/-- **Nothing bad comes out of the decoder's door.** Whatever a checkpoint file says,
+if `Vt.ofDecoded` returns a `Vt` at all then that `Vt` is `Good`: the dimensions are in
+`[1,1000]`, both cursors and every stashed cursor are inside the screen, the scroll
+region is non-empty and on-screen, and the scrollback is within `sbCap`.
+
+This is the claim `specs/vt-toolkit.md` Step 2 exists for. Before it, `rVt` built a
+`Vt` field-by-field, so `cols := 0` — a state no `init`/`resize`/`feed` path can reach,
+and one the emulator's own theorems are all false of — was one hostile byte away. -/
+theorem ofDecoded_good {cols rows : Nat} {grid : Array Row} {cursor : Cursor} {pen : Pen}
+    {modes : Modes} {top bot : Nat} {tabs : Array Bool} {sb : Ring}
+    {altGrid : Option (Array Row × Cursor × Pen)} {saved : Saved} {title : String}
+    {g0Line g1Line shiftOut bell : Bool} {v : Vt}
+    (h :
+      Vt.ofDecoded cols rows grid cursor pen modes top bot tabs sb altGrid saved title g0Line g1Line
+          shiftOut bell =
+        some v) :
+    Good v := by
+  unfold Vt.ofDecoded at h
+  split at h
+  · rename_i hg
+    obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, halt⟩ := decodedOk_iff.mp hg
+    cases h
+    exact
+      ⟨h1, h3, h2, h4, h5, h6, h7, h8, halt, h9, h10, h11, Nat.zero_le 3, fun s hs =>
+        absurd hs (by simp), fun acc e hs => absurd hs (by simp)⟩
+  · exact absurd h (by simp)
+
+/-- **Nothing good is rejected.** The other half: a `Vt` that is `Good` — which every
+live session's is, by `good_init` and the `Pres` machinery below — survives the door
+unchanged, modulo the parser state a checkpoint deliberately forgets.
+
+Without this, `ofDecoded_good` would be satisfied by a constructor that returned `none`
+always, and §Restore would be a claim about a codec that never restores anything. It is
+also exactly what `Checkpoint.rt_vt` needs, which is why the round-trip theorem grew a
+`Good` hypothesis in the same change. -/
+theorem ofDecoded_of_good {v : Vt} (h : Good v) :
+    Vt.ofDecoded v.cols v.rows v.grid v.cursor v.pen v.modes v.top v.bot v.tabs v.sb v.altGrid
+        v.saved v.title v.g0Line v.g1Line v.shiftOut v.bell =
+      some v.quiesce := by
+  unfold Vt.ofDecoded
+  rw [ite_eq_left
+      (decodedOk_iff.mpr
+        ⟨h.colsPos, h.colsLe, h.rowsPos, h.rowsLe, h.curX, h.curY, h.savX, h.savY, h.topLe, h.botLt,
+          h.sbLe, h.altCur⟩)]
+  cases v
+  rfl
+
+/-- **Junk dimensions are refused, not clamped**, and this is the concrete shape of
+that: `cols = 0` is the canonical corrupt value — no live session can hold it, `Good`
+is false of it, and every `Render` theorem is vacuous at it — so the door shuts.
+
+Clamping was the alternative and it is worse, for a reason that is about the *grid*
+rather than the dimension: `clampDim cols` would satisfy `Good` while leaving the
+decoded rows at their own width, producing a state that is `Good` and not `Renderable`
+— and `Renderable` is what every `Render.restore` theorem needs. Establishing it by
+clamping means rebuilding the grid, i.e. `Vt.resize`, which the resume path refuses
+because it resets the scroll region and the tab ruler. Rejecting needs no new
+behaviour: `load` is already `Option`-valued, and its `none` already means "start
+fresh". -/
+theorem ofDecoded_none_of_cols_zero {rows : Nat} {grid : Array Row} {cursor : Cursor} {pen : Pen}
+    {modes : Modes} {top bot : Nat} {tabs : Array Bool} {sb : Ring}
+    {altGrid : Option (Array Row × Cursor × Pen)} {saved : Saved} {title : String}
+    {g0Line g1Line shiftOut bell : Bool} :
+    Vt.ofDecoded 0 rows grid cursor pen modes top bot tabs sb altGrid saved title g0Line g1Line
+        shiftOut bell =
+      none := by
+  unfold Vt.ofDecoded
+  rw [ite_eq_right (fun hg => absurd (decodedOk_iff.mp hg).1 (by omega))]
+
 /-- **Fold invariance, once.** Any predicate preserved by one step is preserved
 by a whole `List.foldl`. Five lemmas in this repo were this statement written out
 for a specific predicate (`Good`, `Renderable`, a row's cells, a grid's rows, and

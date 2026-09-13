@@ -44,15 +44,20 @@ open Linger.Core.Checkpoint (Ckpt load save)
 
 /-- **§Resume.** A checkpoint, reloaded and replayed into a fresh
 emulator of the same size, leaves that emulator quiesced: the parser is
-in `ground` with no pending UTF-8 sequence. Holds for any session state
-whatsoever, with no hypotheses — the reattaching client is always left
-ready for the application's next byte. -/
-theorem resume_quiesced (c : Ckpt) (cols rows : Nat) :
+in `ground` with no pending UTF-8 sequence. The reattaching client is always left
+ready for the application's next byte.
+
+`hgood` is the one hypothesis, and it arrived with the checkpoint validation
+(`specs/vt-toolkit.md` Step 2): `load` now refuses a record that does not describe a
+`Good` screen, so `load (save c)` is `none` for a `c` no live session could hold. This
+claim used to have no hypotheses and was, for exactly that reason, also true of
+`cols := 0`. `Vt.good_init` and the `Pres` machinery give it for every real session. -/
+theorem resume_quiesced (c : Ckpt) (cols rows : Nat) (hgood : Vt.Good c.vt) :
     ∃ c',
       load (save c) = some c' ∧
         ((Vt.Vt.init cols rows).feed (Render.restore c'.vt)).pstate = .ground ∧
         ((Vt.Vt.init cols rows).feed (Render.restore c'.vt)).u8need = 0 := by
-  refine ⟨{ c with vt := c.vt.quiesce }, Checkpoint.load_save c, ?_, ?_⟩
+  refine ⟨{ c with vt := c.vt.quiesce }, Checkpoint.load_save c hgood, ?_, ?_⟩
   · exact (Render.restore_quiesced _ cols rows).1
   · exact (Render.restore_quiesced _ cols rows).2
 
@@ -66,23 +71,23 @@ It rests on two properties of the stream's ends and nothing in between: `restore
 **leads** with `ESC \` so a receiver in a string state resynchronises
 (`Render.restore_grounds`), and **ends** with a `CSI … H` whose final byte cannot
 leave a character half-decoded (`Render.restore_u8_zero`). -/
-theorem resume_quiesced_any (c : Ckpt) (w : Vt.Vt) :
+theorem resume_quiesced_any (c : Ckpt) (w : Vt.Vt) (hgood : Vt.Good c.vt) :
     ∃ c',
       load (save c) = some c' ∧
         ((w.feed (Render.restore c'.vt)).pstate = .ground) ∧
         ((w.feed (Render.restore c'.vt)).u8need = 0) :=
-  ⟨{ c with vt := c.vt.quiesce }, Checkpoint.load_save c, (Render.restore_quiesced_any _ w).1,
+  ⟨{ c with vt := c.vt.quiesce }, Checkpoint.load_save c hgood, (Render.restore_quiesced_any _ w).1,
     (Render.restore_quiesced_any _ w).2⟩
 
 /-- The same, in the form the runtime uses it: a *quiescent* checkpoint
 (which is what the daemon writes, being taken between poll rounds) comes
 back byte-identical, and its replay is quiesced. -/
-theorem resume_exact (c : Ckpt) (cols rows : Nat) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0)
-    (ha : c.vt.u8acc = 0) :
+theorem resume_exact (c : Ckpt) (cols rows : Nat) (hgood : Vt.Good c.vt) (h : c.vt.pstate = .ground)
+    (h8 : c.vt.u8need = 0) (ha : c.vt.u8acc = 0) :
     load (save c) = some c ∧
       ((Vt.Vt.init cols rows).feed (Render.restore c.vt)).pstate = .ground ∧
       ((Vt.Vt.init cols rows).feed (Render.restore c.vt)).u8need = 0 :=
-  ⟨Checkpoint.load_save_exact c h h8 ha, (Render.restore_quiesced c.vt cols rows).1,
+  ⟨Checkpoint.load_save_exact c hgood h h8 ha, (Render.restore_quiesced c.vt cols rows).1,
     (Render.restore_quiesced c.vt cols rows).2⟩
 
 /-- **§Resume (cursor).** The end-to-end cursor claim: a quiescent
@@ -95,7 +100,7 @@ theorem resume_cursor (c : Ckpt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need =
     load (save c) = some c ∧
       (((Vt.Vt.init c.vt.cols c.vt.rows).feed (Render.restore c.vt)).cursor.x = c.vt.cursor.x) ∧
       (((Vt.Vt.init c.vt.cols c.vt.rows).feed (Render.restore c.vt)).cursor.y = c.vt.cursor.y) :=
-  ⟨Checkpoint.load_save_exact c h h8 ha, (Render.restore_cursor c.vt hgood ho).1,
+  ⟨Checkpoint.load_save_exact c hgood h h8 ha, (Render.restore_cursor c.vt hgood ho).1,
     (Render.restore_cursor c.vt hgood ho).2⟩
 
 /-- **§Resume (cursor), receiver-quantified.** The end-to-end cursor claim into *any*
@@ -111,7 +116,7 @@ theorem resume_cursor_any (c : Ckpt) (w : Vt.Vt) (h : c.vt.pstate = .ground) (h8
     load (save c) = some c ∧
       ((w.feed (Render.restore c.vt)).cursor.x = c.vt.cursor.x) ∧
       ((w.feed (Render.restore c.vt)).cursor.y = c.vt.cursor.y) :=
-  ⟨Checkpoint.load_save_exact c h h8 ha,
+  ⟨Checkpoint.load_save_exact c hgood h h8 ha,
     (Render.restore_cursor_any c.vt w hgood hgw hcols hrows ho hmouse).1,
     (Render.restore_cursor_any c.vt w hgood hgw hcols hrows ho hmouse).2⟩
 
@@ -124,7 +129,7 @@ theorem resume_grid (c : Ckpt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0
     (ha : c.vt.u8acc = 0) (hgood : Vt.Good c.vt) (hren : Vt.Renderable c.vt) :
     load (save c) = some c ∧
       ((Vt.Vt.init c.vt.cols c.vt.rows).feed (Render.restore c.vt)).grid = c.vt.grid := by
-  refine ⟨Checkpoint.load_save_exact c h h8 ha, ?_⟩
+  refine ⟨Checkpoint.load_save_exact c hgood h h8 ha, ?_⟩
   have hcolseq : (Vt.Vt.init c.vt.cols c.vt.rows).cols = c.vt.cols := by
     show Vt.clampDim c.vt.cols = c.vt.cols
     have := hgood.colsPos; have := hgood.colsLe; simp only [Vt.clampDim]; omega
@@ -153,7 +158,7 @@ theorem resume_tabs (c : Ckpt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0
     (ha : c.vt.u8acc = 0) (hgood : Vt.Good c.vt) (hvtabs : c.vt.tabs.size = c.vt.cols) :
     load (save c) = some c ∧
       ((Vt.Vt.init c.vt.cols c.vt.rows).feed (Render.restore c.vt)).tabs = c.vt.tabs := by
-  refine ⟨Checkpoint.load_save_exact c h h8 ha, ?_⟩
+  refine ⟨Checkpoint.load_save_exact c hgood h h8 ha, ?_⟩
   have hcolseq : (Vt.Vt.init c.vt.cols c.vt.rows).cols = c.vt.cols := by
     show Vt.clampDim c.vt.cols = c.vt.cols
     have := hgood.colsPos; have := hgood.colsLe; simp only [Vt.clampDim]; omega
@@ -187,7 +192,7 @@ theorem resume_sb (c : Ckpt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0)
     load (save c) = some c ∧
       ((Vt.Vt.init c.vt.cols c.vt.rows).feed (Render.restore c.vt)).sb.toList =
         (Render.sbRows c.vt).toList := by
-  refine ⟨Checkpoint.load_save_exact c h h8 ha, ?_⟩
+  refine ⟨Checkpoint.load_save_exact c hgood h h8 ha, ?_⟩
   have hcolseq : (Vt.Vt.init c.vt.cols c.vt.rows).cols = c.vt.cols := by
     show Vt.clampDim c.vt.cols = c.vt.cols
     have := hgood.colsPos; have := hgood.colsLe; simp only [Vt.clampDim]; omega

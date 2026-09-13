@@ -1,21 +1,29 @@
 module
 
 public import Linger.Core.Vt
--- TEMPORARY, and the one place in the tree where that word applies.
+-- A **permanent** friend import, and the one in the tree that needs its reason
+-- written down. `specs/vt-toolkit.md` Step 2 held it open for one step to remove
+-- `rVt`'s forge; the forge is gone (`rVt` goes through `Vt.ofDecoded`, which validates)
+-- and this line stayed. Two things it buys, and the difference between them is the
+-- whole design decision:
 --
--- `Vt`'s fields are `private` (the seal, `specs/vt-toolkit.md` Step 1). This
--- module is NOT inside the toolkit boundary: it is the on-disk codec, and `rVt`
--- below forges a `Vt` field-by-field out of decoded bytes, which is precisely how
--- a corrupt checkpoint would hand the emulator `cols := 0`. That forge is the site
--- the seal most wants to bite, so this friend import is a *deliberate hole held
--- open for exactly one step*.
+-- * **`wVt`'s 17 field reads.** The seal blocks reads as well as writes. The
+--   alternative was 15 new public accessors on `Vt` (13 fields have none; `cursorPos`
+--   drops `pending` and `inAlt` drops the stashed screen, so neither serves the
+--   codec) — 15 permanent public defs, 15 new claims for the zero-headroom coverage
+--   ratchet, and read-hiding surrendered on 15 of 20 fields to buy nothing the
+--   no-forge property needs. A `Vt` written *out* cannot create a bad one.
+-- * **`Vt.ofDecoded`, which is `private`.** That is what makes this line the cheaper
+--   trade rather than the lazier one: dropping the import would force the smart
+--   constructor to be *public*, i.e. a second public door admitting any `Good` state,
+--   unreachable ones included, for every module forever. The friend import confines
+--   that power to this file, which is reviewed and grep-gated.
 --
--- **`specs/vt-toolkit.md` Step 2 removes this line**, by replacing `rVt`'s
--- structure literal with an honest smart constructor in `Vt.lean` that validates
--- or clamps and returns `none` on junk. `wVt`'s 17 field reads have to go through
--- a public accessor surface at the same time. Until then the seal protects the
--- runtime but not the decoder, which is the weaker half of the claim — do not read
--- this import as settled, and do not copy the pattern to a third module.
+-- So: reads and one checked constructor, permanently. What must never come back is a
+-- `Vt` structure literal here — `tests/gates.sh` asserts `rVt` calls `Vt.ofDecoded`
+-- and that no `Vt` field is assigned anywhere in this file. Do not copy the pattern
+-- to a third module: `Render`/`Terminal` are friends because they *are* the emulator,
+-- and this one is a friend because it is the emulator's only serialiser.
 import all Linger.Core.Vt
 
 public section
@@ -291,17 +299,22 @@ def wVt (v : Vt) : List UInt8 :=
     wBool v.shiftOut ++
     wBool v.bell
 
-/-- **The one real-code forge, and the site the `Vt` seal most wants to bite.**
-This builds a `Vt` field-by-field out of decoded bytes, so a corrupt or hostile
-on-disk record is exactly how `cols := 0` — a state no `Vt.init`/`resize`/`feed`
-path can produce — would reach the emulator. Nothing here validates: `rNat`
-accepts whatever the file says.
+/-- **The decoder, and no longer a forge.** It used to build a `Vt` field-by-field
+out of decoded bytes, which is exactly how a corrupt or hostile on-disk record would
+hand the emulator `cols := 0` — a state no `Vt.init`/`resize`/`feed` path can produce.
+Nothing validated: `rNat` accepts whatever the file says.
 
-It compiles today only because this module holds a temporary `import all
-Linger.Core.Vt` (see the header). **`specs/vt-toolkit.md` Step 2 replaces this
-literal with a smart constructor in `Vt.lean`** that clamps or rejects, so that a
-junk record decodes to `none` rather than to a `Vt` violating `Good`; the friend
-import goes with it. -/
+Every field still comes off the wire unchecked; what changed is that they are handed
+to `Vt.ofDecoded` (`Linger/Core/Vt.lean`) rather than to the constructor, and that
+returns `none` unless they describe a `Good` state. So a junk record now fails to
+parse, which `load` already means "start fresh" for.
+
+`Vt.ofDecoded` is `private`, reached through this module's friend import — which is
+therefore **permanent, and for reads plus that one checked door**. What must not come
+back is the structure literal; `tests/gates.sh` greps for it in both directions (the
+positive check that this function calls `ofDecoded`, and the negative one that no
+`Vt` field is assigned anywhere in this file). Same species of oracle as `SHIM_CAP`:
+evadeable by deliberately writing something new, not by reverting a fix. -/
 def rVt : R Vt := fun l => do
   let (cols, l) ← rNat l
   let (rows, l) ← rNat l
@@ -320,11 +333,10 @@ def rVt : R Vt := fun l => do
   let (g1Line, l) ← rBool l
   let (shiftOut, l) ← rBool l
   let (bell, l) ← rBool l
-  some
-      ({ cols, rows, grid := grid.toArray, cursor, pen, modes, top, bot, tabs := tabs.toArray, sb,
-         altGrid, saved, title, g0Line, g1Line, shiftOut, pstate := .ground, u8need := 0,
-         u8acc := 0, bell },
-        l)
+  let v ←
+    Vt.ofDecoded cols rows grid.toArray cursor pen modes top bot tabs.toArray sb altGrid saved title
+        g0Line g1Line shiftOut bell
+  some (v, l)
 
 /-! ## The checkpoint record -/
 

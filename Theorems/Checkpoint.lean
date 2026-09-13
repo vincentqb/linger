@@ -1,8 +1,15 @@
 module
 
 public import Linger.Core.Checkpoint
+public import Theorems.Vt
 import all Linger.Core.Checkpoint
 import all Linger.Core.Vt
+-- `Theorems.Vt` for `Good`, and for the three claims about the decoder's door
+-- (`ofDecoded_good`, `ofDecoded_of_good`, `ofDecoded_none_of_cols_zero`) — the codec's
+-- theorems are stated in terms of it now that `rVt` validates rather than forges
+-- (`specs/vt-toolkit.md` Step 2). `import all` because those declarations are
+-- module-private, as the `Vt` seal forces.
+import all Theorems.Vt
 
 -- Converted from a legacy (non-`module`) file by the `Vt` seal
 -- (`specs/vt-toolkit.md` Step 1). Legacy files make every declaration public, and
@@ -22,6 +29,15 @@ recursion only) — the second half of §Restore needs no theorem.
 
 Every combinator round-trip is unconditional: `wNat` is LEB128, so
 there is no "fits in N bits" side condition anywhere in the format.
+
+**The `Vt` round trip is not.** `rVt` hands its decoded fields to
+`Vt.ofDecoded`, which returns `none` unless they describe a `Good` state
+(`specs/vt-toolkit.md` Step 2), so `rt_vt` and everything above it carries a
+`Good` hypothesis — satisfied by every live session, and false of exactly the
+records the validation exists to refuse. The two directions are `rVt_good` /
+`load_good` (nothing bad is ever decoded, for **any** byte string) and
+`load_save_none_of_cols_zero` (the canonical junk record is refused rather than
+clamped).
 -/
 
 namespace Linger.Core.Checkpoint
@@ -185,13 +201,55 @@ theorem rt_alt : RT wAlt rAlt := by
   simp only [List.append_assoc, rt_list rt_row, rt_cursor, rt_pen, Option.bind_eq_bind,
     Option.bind_some]
 
-/-- The Vt round-trip: exact modulo the deliberately-forgotten parser
-state. -/
-theorem rt_vt (v : Vt) (rest : List UInt8) : rVt (wVt v ++ rest) = some (v.quiesce, rest) := by
-  unfold wVt rVt Vt.quiesce
+/-- **The fields round-trip unconditionally; acceptance is exactly the smart
+constructor's decision.** This is what `rt_vt` used to be, and splitting it out is what
+makes the behaviour change legible: every combinator below is still an unconditional
+inverse, so nothing about the *format* got weaker — what changed is that the seventeen
+decoded values now go through `Vt.ofDecoded`, which is free to refuse them.
+
+Both of the claims above it read off this one: `rt_vt` by `ofDecoded_of_good`, and
+`load_save_none_of_cols_zero` by `ofDecoded_none_of_cols_zero`. -/
+theorem rVt_fields (v : Vt) (rest : List UInt8) :
+    rVt (wVt v ++ rest) =
+      (Vt.ofDecoded v.cols v.rows v.grid v.cursor v.pen v.modes v.top v.bot v.tabs v.sb v.altGrid
+            v.saved v.title v.g0Line v.g1Line v.shiftOut v.bell).map
+        (fun w => (w, rest)) := by
+  unfold wVt rVt
   simp only [List.append_assoc, rt_nat, rt_list rt_row, rt_cursor, rt_pen, rt_modes,
     rt_list rt_bool, rt_ring, rt_alt, rt_saved, rt_str, rt_bool, Option.bind_eq_bind,
-    Option.bind_some]
+    Option.bind_some, Array.toArray_toList, Option.map_eq_bind, Function.comp_def]
+
+/-- The Vt round-trip: exact modulo the deliberately-forgotten parser
+state, for any state the emulator can actually be in.
+
+`Good` is the hypothesis the smart constructor introduced, and it is not a weakening of
+the format: `good_init` plus the `Pres` machinery says every live session satisfies it,
+and a state that does not is precisely one a checkpoint must not restore. The old
+unconditional statement was true of `cols := 0`, which is the bug. -/
+theorem rt_vt (v : Vt) (h : Good v) (rest : List UInt8) :
+    rVt (wVt v ++ rest) = some (v.quiesce, rest) := by
+  rw [rVt_fields, ofDecoded_of_good h, Option.map_some]
+
+/-- **Nothing bad is ever decoded, from any bytes at all.** Not "from bytes `save`
+wrote" — from an arbitrary `List UInt8`, which is what a checkpoint file is: the
+attacker-controlled input the `Vt` seal could not reach. If `rVt` yields a `Vt`, that
+`Vt` is `Good`.
+
+This is the theorem the step is for, and it is the one that makes every
+`Good`-hypothesised claim in `Theorems/Render/*` and `Theorems/Resume.lean` reachable
+from the resume path rather than merely stated. -/
+theorem rVt_good {l : List UInt8} {v : Vt} {rest : List UInt8} (h : rVt l = some (v, rest)) :
+    Good v := by
+  simp only [rVt, Option.bind_eq_bind, Option.bind_eq_some_iff] at h
+  -- One flat `rcases` pattern rather than a `repeat'`: the seventeen readers nest to the
+  -- right, so the pattern flattens, and `repeat'` cannot be used because the eighteenth
+  -- attempt destructures a `Vt` and leaves a broken context behind when it fails.
+  obtain
+    ⟨_, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -,
+      _, -, w, hw, he⟩ :=
+    h
+  simp only [Option.some.injEq, Prod.mk.injEq] at he
+  exact he.1 ▸ ofDecoded_good hw
 
 /-! ### The format tag, as a named stage
 
@@ -205,15 +263,30 @@ theorem stripMagic_magic (p : List UInt8) : stripMagic (magic ++ p) = some p := 
     List.nil_append]
   rw [ite_eq_left (rfl : magic = magic)]
 
+/-- **The top-level no-forge claim**, and the one the runtime is entitled to lean on: a
+checkpoint that loads at all loads to a `Good` screen. `Linger/Runtime/Daemon.lean`'s
+resume path cites this for why the `clampDim` it still calls before `spawnPty` cannot
+change the value it is given. -/
+theorem load_good {l : List UInt8} {c : Ckpt} (h : load l = some c) : Good c.vt := by
+  simp only [load, Option.bind_eq_bind, Option.bind_eq_some_iff] at h
+  obtain ⟨_, -, ⟨vt, _⟩, hvt, _, -, _, -, h⟩ := h
+  split at h
+  · simp only [Option.some.injEq] at h
+    subst h
+    exact rVt_good hvt
+  · exact absurd h (by simp)
+
 /-- §Restore, top level: a checkpoint written by `save` loads back to
 exactly what was saved (parser state quiesced — which the daemon's
 checkpoints already are, being taken between poll rounds). Totality on
-garbage is by construction. -/
-theorem load_save (c : Ckpt) : load (save c) = some { c with vt := c.vt.quiesce } := by
+garbage is by construction, and `load_good` says what that totality now
+delivers: garbage yields `none`, never a bad screen. -/
+theorem load_save (c : Ckpt) (h : Good c.vt) :
+    load (save c) = some { c with vt := c.vt.quiesce } := by
   unfold load save
   simp only [List.append_assoc]
   rw [stripMagic_magic]
-  simp only [rt_vt, rt_str, Option.bind_eq_bind, Option.bind_some]
+  simp only [rt_vt _ h, rt_str, Option.bind_eq_bind, Option.bind_some]
   have h := rt_list (rt_pair rt_str rt_str) c.labels []
   rw [List.append_nil] at h
   rw [h]
@@ -237,14 +310,32 @@ theorem save_tag (c : Ckpt) : (save c).take 5 = magic := by
 
 /-- And when the parser is already quiescent, the round-trip is exact
 — the letter of the THEOREMS.md row. -/
-theorem load_save_exact (c : Ckpt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0)
-    (ha : c.vt.u8acc = 0) : load (save c) = some c := by
-  rw [load_save]
+theorem load_save_exact (c : Ckpt) (hg : Good c.vt) (h : c.vt.pstate = .ground)
+    (h8 : c.vt.u8need = 0) (ha : c.vt.u8acc = 0) : load (save c) = some c := by
+  rw [load_save c hg]
   congr 1
   cases c with
   | mk vt cwd labels =>
     simp only [Ckpt.mk.injEq, and_true]
     cases vt
     simp_all [Vt.quiesce]
+
+/-- **Junk dimensions are refused, not clamped** — the behaviour change of
+`specs/vt-toolkit.md` Step 2, stated at the top level rather than only fixtured.
+`cols = 0` is the canonical corrupt value: no live session can hold it, `Good` is false
+of it, and a decoder that accepted it would hand `Render.restore` a screen every one of
+its theorems is vacuous at.
+
+The `Ckpt` here is a *forged* one — a `Vt` no `init`/`resize`/`feed` path produces, which
+is reachable in this file only because the seal's friend import is. That is the point:
+the record on disk is the one input an attacker controls, and `save` of such a state is
+byte-for-byte what a hostile file looks like. -/
+theorem load_save_none_of_cols_zero (c : Ckpt) (h : c.vt.cols = 0) : load (save c) = none := by
+  unfold load save
+  simp only [List.append_assoc]
+  rw [stripMagic_magic]
+  simp only [Option.bind_eq_bind, Option.bind_some]
+  rw [rVt_fields, h, ofDecoded_none_of_cols_zero]
+  rfl
 
 end Linger.Core.Checkpoint

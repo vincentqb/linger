@@ -35,6 +35,45 @@ fail() { printf 'GATE FAIL: %s\n' "$1" >&2; exit 1; }
 ! grep -qE '^[[:space:]]*require ' lakefile.lean || fail "external Lean dependency in lakefile.lean (README promises none)"
 [ "$(tr -d ' \n' < lake-manifest.json | grep -o '\"packages\":\[[^]]*\]')" = '"packages":[]' ] \
   || fail "lake-manifest has packages (README promises no external Lean deps)"
+
+# The vt-toolkit's import closure (`specs/vt-toolkit.md` Step 4). The toolkit is
+# Linger/Core/{Vt,Render,Terminal}.lean, and the claim worth having is that its
+# closure contains NOTHING else -- no Posix, no Runtime, no Checkpoint, no Session.
+# `lean_lib LingerVt` in lakefile.lean is the positive half: it elaborates the
+# closure. It cannot be the whole claim, because Lake resolves imports through one
+# package-wide LEAN_PATH, so a lib with restricted `roots` compiles an out-of-set
+# module happily -- `import Linger.Posix` in Terminal.lean builds under
+# `./lake build LingerVt` without a murmur. Measured, twice, not assumed. A
+# build-level failure needs a sub-package with its own srcDir and a path `require`,
+# and the two gates immediately above forbid `require`. So this grep is the half
+# that bites: the same species of oracle as SHIM_CAP below, evadeable by
+# deliberately editing the list, not by reverting a fix.
+#
+# EXACT SETS, not a denylist of names to fear: a closure gate that only knows the
+# imports someone thought of is not a closure gate. And exact means it also fires
+# when an import GOES, which is right -- the list below is the recorded header, so
+# Step 2/3 taking a friend import out is a reviewable edit here rather than a
+# silent one. Vt imports nothing; Render imports Vt; Terminal imports Render; the
+# two `import all Linger.Core.Vt` are the seal's friend imports (Step 1) and are
+# inside the boundary by construction. Because Vt is a leaf, an exact check on
+# these three files IS the closure.
+toolkit_import_re='^(public |private |meta )*import '
+toolkit_closure() {
+  # Anchored at column 0, so neither a `--` comment nor a docstring's prose
+  # mention of `import all` counts. ';'-joined to keep the diagnostic one line.
+  tk_got="$(grep -E "$toolkit_import_re" "$1" | tr '\n' ';')"
+  [ "$tk_got" = "$2" ] || { \
+    printf '  %s import lines:\n' "$1" >&2; \
+    { grep -nE "$toolkit_import_re" "$1" >&2 || printf '    (none)\n' >&2; }; \
+    printf '  want: %s\n   got: %s\n' "${2:-(no imports)}" "${tk_got:-(no imports)}" >&2; \
+    fail "$1 left the vt-toolkit import closure (lakefile.lean's lean_lib LingerVt)"; }
+}
+toolkit_closure Linger/Core/Vt.lean ''
+toolkit_closure Linger/Core/Render.lean \
+  'public import Linger.Core.Vt;import all Linger.Core.Vt;'
+toolkit_closure Linger/Core/Terminal.lean \
+  'public import Linger.Core.Render;import all Linger.Core.Vt;'
+
 # shim-size ratchet: the C trust boundary must not grow silently. This
 # number only ever goes DOWN without discussion; raising it is a
 # deliberate, reviewable act — the checkpoint for "does this genuinely
@@ -79,6 +118,32 @@ grep -qE 'if !out.isEmpty && !readOnly' Linger/Runtime/Client.lean \
   || fail "Client.attach lost its read-only input guard (a watcher would forward keystrokes)"
 grep -qE 'sendMsg fd \(\.attach 0 0\)' Linger/Runtime/Client.lean \
   || fail "Client.attach no longer marks a read-only client with a 0x0 attach (the wire's only read-only bit)"
+
+# The checkpoint decoder must not grow its forge back (`specs/vt-toolkit.md` Step 2).
+# `Linger/Core/Checkpoint.lean` keeps a PERMANENT `import all Linger.Core.Vt`: `wVt` reads
+# 17 sealed fields, and dropping the import would force `Vt.ofDecoded` to be public — a
+# second public door admitting any `Good` state, for every module forever, which is a
+# wider hole than the one it replaces. The trade is that this one file retains the raw
+# constructor, so "the decoder validates instead of forging" is a source-tree property,
+# and a source-tree property cannot be a theorem. Same species of oracle as SHIM_CAP
+# above, with the same limitation: evadeable by deliberately writing something new (a
+# 20-field anonymous constructor), not by reverting the fix.
+# Positive: the decoder goes through the smart constructor. Negative: no `Vt` field is
+# assigned anywhere in the file. `cols`/`rows`/`grid`/`bot`/`tabs` have no defaults, so a
+# fresh literal must name all five; `pstate`/`u8need`/`u8acc` catch a `{ v with … }`.
+# The leading-backtick exclusion is deliberate: these greps read prose as well as code
+# (AGENTS.md, and it has cost a full e2e run twice), and this file's docstrings have to be
+# able to QUOTE the forge they describe. A gate nobody can write about is a gate someone
+# deletes. The positive check wants a TRAILING SPACE for the same reason — in prose the
+# name is always closed by a backtick, in code it is followed by its first argument.
+# Break-verified both ways: a real forge at the decoder's old position, and the call
+# deleted with the docstrings left in place.
+grep -qE '(^|[^`[:alnum:]_.])Vt\.ofDecoded ' Linger/Core/Checkpoint.lean \
+  || fail "Linger/Core/Checkpoint.lean no longer decodes through Vt.ofDecoded (a corrupt checkpoint could carry a zero column count)"
+FORGE='(^|[^`[:alnum:]_])(cols|rows|grid|bot|tabs|pstate|u8need|u8acc) *:='
+! grep -qE "$FORGE" Linger/Core/Checkpoint.lean \
+  || { grep -nE "$FORGE" Linger/Core/Checkpoint.lean; \
+       fail "a Vt field is assigned in Linger/Core/Checkpoint.lean — the decoder forge is back; go through Vt.ofDecoded, which validates"; }
 
 # heartbeat ratchet. A `set_option maxHeartbeats` raise is a MEASUREMENT, and it
 # has an expiry date that nothing else enforces: the 2026-08-18 factoring audit

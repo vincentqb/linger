@@ -108,4 +108,75 @@ example :
        && (load ([0x00, 0x00, 0x00, 0x00, 0] ++ body)).isNone) = true := by
   native_decide
 
+/-! ### The corrupt record
+
+`specs/vt-toolkit.md` Step 2. `rVt` hands its seventeen decoded values to
+`Vt.ofDecoded`, which returns `none` unless they describe a `Good` screen, so a hostile
+file cannot put `cols := 0` — or a cursor off the screen, or an inverted scroll region —
+into the emulator. `Theorems/Checkpoint.lean`'s `load_good` states it for *any* byte
+string and `load_save_none_of_cols_zero` for the canonical junk value; these pin the two
+things the theorems do not show.
+
+The first two are the honest shape of the attack: a **real** checkpoint with **one byte
+flipped**, not a forged `Vt` serialised. The payload starts at index 5 (after the
+`"LNGR"` v1 tag) with LEB128 `cols` then `rows`, both single-byte at these dimensions —
+which the fixtures assert rather than assume, so a format change fails here loudly
+instead of silently patching some other field. -/
+
+/-- The control. Without it, every refusal below is equally consistent with `load`
+having become unconditionally `none`. -/
+example :
+    (let c : Ckpt := { vt := Vt.init 4 2, cwd := "/tmp", labels := [("k", "v")] }
+     (load (save c)).isSome) =
+      true := by
+  native_decide
+
+/-- One byte flipped so the record claims **zero columns** — a screen no
+`init`/`resize`/`feed` path can produce, and the state the pre-Step-2 decoder built
+without complaint. Refused. -/
+example :
+    (let c : Ckpt := { vt := Vt.init 4 2, cwd := "/tmp", labels := [("k", "v")] }
+     let bytes := save c
+     bytes[5]? == some 4                       -- the byte being patched IS `cols`
+       && (load (bytes.set 5 0)).isNone) =
+      true := by
+  native_decide
+
+/-- The same at **zero rows**. -/
+example :
+    (let c : Ckpt := { vt := Vt.init 4 2, cwd := "/tmp", labels := [("k", "v")] }
+     let bytes := save c
+     bytes[6]? == some 2                       -- and this one IS `rows`
+       && (load (bytes.set 6 0)).isNone) =
+      true := by
+  native_decide
+
+/-- Past the **ceiling**, not the floor: `clampDim` bounds a live session to 1000
+columns, so 1001 is a state the emulator cannot reach and the shim's `(unsigned short)`
+cast is the reason it matters. Forged here rather than byte-patched because 1001 is two
+LEB128 bytes. -/
+example :
+    (let v := { Vt.init 4 2 with cols := 1001 }
+     (load (save { vt := v, cwd := "", labels := [] })).isNone) =
+      true := by
+  native_decide
+
+/-- Not only the dimensions: a cursor **outside** the screen is refused too, which is
+`Good.curX`/`curY` and the clause a naive "clamp the dimensions" fix would have missed
+entirely. -/
+example :
+    (let v := { Vt.init 4 2 with cursor := { x := 9, y := 0 } }
+     (load (save { vt := v, cwd := "", labels := [] })).isNone) =
+      true := by
+  native_decide
+
+/-- And an **inverted scroll region** (`Good.topLe`), the third independent clause. -/
+example :
+    (let v :=
+        { Vt.init 4 2 with
+          top := 1, bot := 0 }
+     (load (save { vt := v, cwd := "", labels := [] })).isNone) =
+      true := by
+  native_decide
+
 end Linger.Core.Checkpoint.Tests

@@ -22,6 +22,26 @@ package linger where leanOptions :=
 point is that the state machines are ours to prove things about. -/
 @[default_target] lean_lib Linger where
 
+/-- The VT toolkit as a library in its own right: the emulator, its emitter, and
+the child-facing mediation — `Linger.Core.Vt`, `.Render`, `.Terminal` — with an
+import closure that contains nothing else (no `Posix`, no `Runtime`, no
+`Checkpoint`, no `Session`). `specs/vt-toolkit.md` Step 4.
+
+Deliberately NOT a `@[default_target]`: `./lake build` is what every other
+command in this repo pays for, and its job count is a number people read. Build
+this one by name — `./lake build LingerVt`.
+
+This is the POSITIVE half of the closure claim, and it is only half. Lake
+resolves imports through one package-wide `LEAN_PATH`, so a `lean_lib` with
+restricted `roots` compiles an out-of-set module happily — an `import
+Linger.Posix` added to `Terminal.lean` builds here without a murmur (measured,
+`specs/vt-toolkit.md`; re-measured at Step 4). A build-level closure failure
+needs a sub-package with its own `srcDir` and a path `require`, which
+`tests/gates.sh` forbids to keep README's "no external Lean dependencies"
+honest. The half that BITES is therefore the import grep in `tests/gates.sh`,
+and this target is what that grep is a gate on. -/
+lean_lib LingerVt where roots := #[`Linger.Core.Vt, `Linger.Core.Render, `Linger.Core.Terminal]
+
 /-- The C shim — the project's entire non-Lean surface (see AGENTS.md).
 Compiled with clang (the ./lake wrapper puts Homebrew clang on PATH;
 the toolchain's bundled one cannot run on this host's glibc 2.26). -/

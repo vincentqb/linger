@@ -7803,3 +7803,317 @@ v.colCount  (the control)       → builds
 
 `./tests/e2e.sh` green in the foreground afterwards, ten suites, so the accessor conversion in
 `Session.lean` and `Daemon.lean` is behaviourally a no-op as intended.
+## Step 2 notes (vt-toolkit) — 2026-09-13
+
+**The checkpoint smart constructor.** The forge is gone; the friend import stayed, and
+that combination is the finding. `rVt` now decodes through `Vt.ofDecoded`, a **`private`**
+validating constructor in `Vt.lean`, and `Linger/Core/Checkpoint.lean`'s `import all`
+is no longer temporary — it is permanent and its reason is written at the import.
+
+**`import all` reaches a private `def`, not only a private field.** Measured, not
+assumed: `Vt.ofDecoded` and `Vt.decodedOk` are `private` in `Linger/Core/Vt.lean` and
+`Checkpoint.lean` calls them through the friend import, `./lake build` green. That single
+fact is what makes the whole trade available, because it means the smart constructor does
+**not** have to be public to be usable by the codec.
+
+**The spec's option (c) — `Vt.encode`/`decode` inside `Vt.lean` — does not typecheck, and
+it is not a near miss.** Adding `public import Linger.Core.Checkpoint` to `Vt.lean`:
+
+```
+error: build cycle detected:
+  linger/+Linger.Core.Checkpoint:leanArts
+  linger/+Linger.Core.Vt:importInfo
+  …
+error: Linger/Core/Checkpoint.lean: bad import 'Linger.Core.Vt'
+error: Linger/Core/Render.lean: bad import 'Linger.Core.Vt'
+```
+
+The `R`/`w*` combinators live in `Checkpoint.lean`, so the only cycle-free version moves
+the entire on-disk codec into `Vt.lean` — which puts the wire format inside the toolkit
+closure Step 4 exists to bound, and drags `Render`/`Terminal` down with it. Dead. Do not
+re-derive.
+
+**Why the friend import beat 15 public accessors, counted.** `wVt` performs 17 field
+reads. Two are already served (`colCount`, `rowCount`); `cursorPos` drops `pending` and
+`inAlt` drops the stashed screen, so neither serves the codec. That is **15 new public
+accessors + a public `ofDecoded` = 16 permanent public defs and 16 new claims** for a
+coverage ratchet at zero headroom, and read-hiding surrendered on 15 of 20 fields. What
+landed: **2 private defs, 4 claims naming them, 0 public surface change.**
+
+But the decisive argument is not the count, it is that **option (a) is worse on its own
+axis**. Dropping the friend import forces `ofDecoded` to be public, i.e. a second public
+door admitting *any* `Good` state — unreachable ones included — for every module forever.
+The friend import confines that power to one reviewed, grep-gated file. "No-forge, not
+read-hiding" was the right prior; it just pointed at the other option than expected.
+
+**Validate, not clamp, and the reason is the grid — not the dimension.** Clamping `cols`
+into `[1,1000]` satisfies `Good` while leaving the decoded rows at their own width, so the
+restored screen is `Good` and **not** `Renderable`, and `Renderable` is what every
+`Render.restore` theorem needs. Establishing it by clamping means rebuilding the grid, i.e.
+`Vt.resize`, which the resume path refuses (it resets the scroll region and tab ruler —
+restore-conformance ledger item 1). Rejecting needs no new behaviour: `load` is already
+`Option`-valued and its `none` already means "start fresh". One rule: a record that does
+not describe a `Good` state is not a checkpoint.
+
+**The guard is a NAMED STAGE (`Vt.decodedOk`) and that was forced by the proof, not
+taste.** With the twelve `&&`s inline in the `if`, `split at h` inside `ofDecoded_good`
+picks the `match altGrid` nested in the *condition* rather than the `if` itself, `rename_i
+hg` binds nothing useful and the proof collapses with errors that name neither cause
+(`simp made no progress`, then an `Eq.refl`-arity error three lines later). Naming it gives
+`split` exactly one splittable term. AGENTS.md's "restructure for provability" rule, on the
+smallest possible thing — same shape as `stripMagic`.
+
+**`Good`'s 15 clauses split 12 / 3.** Twelve are checked; `csiLe`, `oscLe` and `u8Le` are
+discharged by construction because the constructor fixes `pstate := .ground` and
+`u8need := 0`. That is not a hole — parser state is deliberately not persisted, so there
+is nothing on disk to validate.
+
+**Two Lean-mechanics traps in these proofs, both cheap once known.**
+* `omega` and `decide` cannot see through a projection of a structure *literal*:
+  `{ … u8need := 0 … }.u8need ≤ 3` defeats `omega` ("a possible counterexample … k ≥ 4")
+  and `decide` refuses outright ("Expected type must not contain free variables").
+  `Nat.zero_le 3` closes it, because elaboration reduces the projection.
+* `Option.bind_eq_some_iff` will **not** fire on a `do` block until
+  `Option.bind_eq_bind` has rewritten `Bind.bind` to `Option.bind`. Without it simp
+  reports the lemma as *unused* and the extraction silently does nothing — which reads
+  like the lemma being wrong. The existing proofs in `Theorems/Checkpoint.lean` already
+  carried `Option.bind_eq_bind` for this reason; that is why.
+* `repeat' obtain ⟨⟨_, _⟩, -, h⟩ := h` over the seventeen readers **fails destructively**:
+  the eighteenth attempt destructures a `Vt` and leaves a context where `h` no longer
+  exists (`Unknown identifier h`, plus an rcases failure on a metavariable). Use one flat
+  rcases pattern — the existentials nest right, so they flatten.
+
+**The cost, stated because it is real: three theorems lost their "no hypotheses".**
+`rt_vt`, `load_save` and `load_save_exact` now take `Good`, so
+`resume_quiesced`/`resume_quiesced_any`/`resume_exact` do too, and THEOREMS.md's A1 anchor
+no longer says "any session state, no hypotheses". That is not a weakening of the codec: the
+old unconditional statement was *also* true of a zero-column screen, which is the bug. The
+other five `Theorems/Resume.lean` rungs already carried `hgood` and cost nothing. `rt_vt`
+was split first — `rVt_fields` is the unconditional half (the *format* did not get weaker,
+only acceptance did), and both `rt_vt` and `load_save_none_of_cols_zero` read off it.
+
+**No behaviour regression on the live path, and this was checked rather than hoped.**
+Every `Vt` the daemon can hold comes from `init`, `feed`/`step`, `resize` or `quiesce`, and
+`Good` is preserved by all four (`good_of_liveReachable`). Enumerated from source: the only
+`Vt.*` operations reachable from `Linger/Core/Session.lean` + `Linger/Runtime/*` are
+`clampDim`, `init`, `ofDecoded`, `resize`. So every checkpoint the daemon writes still
+loads. Format bytes are unchanged, so a pre-change checkpoint on disk is still readable.
+
+**`Daemon.lean`'s `clampDim` stays, and the comment now cites `load_good`.** Both sources
+of `vt0` are provably in range — a loaded checkpoint by `load_good`, `Vt.init 80 24` by
+`clampDim` inside `init` — so the call cannot change either value. It is kept because it is
+the last line before `UInt32.ofNat` and the shim's `(unsigned short)` cast, because
+`Linger/Runtime/*` is `IO` so no theorem can see this call site, and because deleting it
+would silently mis-size the pty the first time someone adds a third source for `vt0`
+without re-deriving the argument. Two `min`/`max` per session spawn.
+
+**The gate, and its one deliberate subtlety.** `tests/gates.sh` gained a positive grep
+(the decoder calls `Vt.ofDecoded`) and a negative one (no `Vt` field is assigned anywhere
+in `Checkpoint.lean` — `cols`/`rows`/`grid`/`bot`/`tabs` have no defaults so a fresh
+literal must name all five; `pstate`/`u8need`/`u8acc` catch a `{ v with … }`). Both skip
+**backtick-quoted** occurrences, and that is not laziness: the first version of the negative
+grep failed on its own documentation —
+
+```
+304:hand the emulator `cols := 0` — a state no `Vt.init`/`resize`/`feed` path can produce.
+GATE FAIL: a Vt field is assigned in Linger/Core/Checkpoint.lean
+```
+
+— which is the third time the "purity greps read prose" trap has cost a run here. The
+repo's earlier remedy was to reword the prose; this one changes the *gate* instead, because
+a file whose whole job is to document the forge it replaced has to be able to quote it. The
+positive grep requires a **trailing space** for the same reason: in prose the name is closed
+by a backtick, in code it is followed by its first argument.
+
+### Break-verification — every new claim, the fixtures, and both gates
+
+`ofDecoded_good` / `decodedOk_iff`, guard weakened (`1 ≤ cols &&` deleted):
+
+```
+error: Theorems/Vt.lean:109:9: unsolved goals
+⊢ cols ≤ 1000 → 1 ≤ rows → … → sb.size ≤ sbCap → 1 ≤ cols
+error: Theorems/Vt.lean:116:14: Application type mismatch: The argument a1
+has type cols ≤ 1000 but is expected to have type 1 ≤ cols
+```
+
+`ofDecoded_of_good`, constructor made to refuse everything (`if false then`) — the
+non-vacuity half, and it bites:
+
+```
+error: Theorems/Vt.lean:143:84: Application type mismatch: The argument hg
+has type false = true
+but is expected to have type Vt.decodedOk ?m.28 … = true
+error: Theorems/Vt.lean:163:6: Tactic `rewrite` failed: Did not find an occurrence of the pattern
+  if Vt.decodedOk v.cols v.rows v.cursor v.top v.bot v.sb v.altGrid v.saved = true then ?m.52 else ?m.53
+```
+
+`rVt_fields` / `rVt_good` / `load_good`, the forge restored verbatim at its old position:
+
+```
+GATE FAIL: a Vt field is assigned in Linger/Core/Checkpoint.lean — the decoder forge is back
+error: Theorems/Checkpoint.lean:216:32: unsolved goals
+⊢ some ({ cols := v.cols, … }, rest) = (Vt.ofDecoded v.cols … ).bind fun x => some (x, rest)
+error: Theorems/Checkpoint.lean:251:50: Unknown identifier `he`
+```
+
+The positive gate, verified **with the docstrings left in place** (the call renamed to
+`Vt.ofForged`), because a gate that a doc comment satisfies is not a gate:
+
+```
+GATE FAIL: Linger/Core/Checkpoint.lean no longer decodes through Vt.ofDecoded
+(a corrupt checkpoint could carry a zero column count)
+```
+
+**The six fixtures, run against the PRE-change decoder in a pristine `88b4478` checkout.**
+All five negative ones fail, and the sixth is the control (a real checkpoint still loads),
+so `isNone` passing is not `load` having become unconditionally `none`:
+
+```
+/tmp/step2-base-fixture.lean:17:2: error: Tactic `native_decide` evaluated that the proposition
+  … bytes[5]? == some 4 && (load (bytes.set 5 0)).isNone) = true
+is false
+  (same for the rows byte, cols := 1001, cursor.x := 9, and top/bot inverted)
+#eval → "ACCEPTED with cols = 0, rows = 2"
+```
+
+That last line is the bug in one string. **Two of the fixtures are a real checkpoint with
+one byte flipped**, not a forged `Vt` serialised — the payload starts at index 5 with
+LEB128 `cols` then `rows`, single-byte at 4×2 — and each asserts *which* byte it is
+patching (`bytes[5]? == some 4`) so a format change fails there loudly instead of quietly
+corrupting some other field. The forged-`Vt` fixtures cover the clauses a byte patch cannot
+reach cheaply: the 1000 ceiling (two LEB128 bytes), an off-screen cursor, an inverted
+scroll region — the last two being exactly what a "just clamp the dimensions" fix misses.
+
+`E2E/Resume.lean`'s `corrupt.ckpt` is unaffected: `magic ++ [80, 24] ++ 198×0xFF` runs off
+the end of the list inside the grid's `rNat`, so it is `none` *before* `ofDecoded` is
+reached — the same branch as before. Its geometry test checkpoints a live 100×40 session,
+which is `Good`. I did **not** run `./tests/e2e.sh` (it `pkill`s another agent's daemons);
+on the reasoning above I expect it green.
+
+### Numbers
+
+Coverage **263 → 265 defs, still 0 unclaimed (cap 0)** — both new defs arrived with their
+claims in the same change, which is what the zero cap is for. `maxHeartbeats` raises **1**,
+unchanged: nothing here needed a raise, including `Theorems/Vt.lean`, the heaviest file in
+the tree. SHIM 22, RUNTIME_PARTIAL 2, E2E_PARTIAL 5 all untouched. Eleven `theorem` lines
+added or restated across `Theorems/Vt.lean` and `Theorems/Checkpoint.lean`.
+
+Axioms: `propext`/`Quot.sound` for all four `Theorems/Vt.lean` claims and for `rVt_good`
+and `load_good`; `Classical.choice` additionally for `rVt_fields`, `rt_vt`, `load_save`,
+`load_save_exact` and `load_save_none_of_cols_zero`. **The `Classical.choice` is inherited,
+not introduced** — measured in a pristine `88b4478` build, where `rt_vt`, `load_save` and
+`load_save_exact` already depended on it. No `sorryAx` anywhere.
+## Step 4 notes (vt-toolkit) — 2026-09-13
+
+**The extraction target and its gate.** `lean_lib LingerVt` in `lakefile.lean`
+(roots `Linger.Core.Vt`, `.Render`, `.Terminal`) plus an exact-set import grep in
+`tests/gates.sh`. Two files, no third: nothing in `Linger/`, `Theorems/` or
+`Tests/` changed, because the closure was already right — this step only makes it
+*checked*.
+
+**The Lake negative result holds, re-measured three ways.** Step 3's note says a
+`lean_lib` with restricted `roots` cannot fail on an out-of-set import because
+imports resolve through one package-wide `LEAN_PATH`. Confirmed by doing it, from
+inside the lib rather than in a scratch package:
+
+```
+import Linger.Posix         in Terminal.lean → ./lake build LingerVt  exit 0, 7 jobs
+public import Linger.Core.Name in Render.lean → ./lake build LingerVt exit 0, 6 jobs
+public import Linger.Core.Wire in Terminal.lean → ./lake build LingerVt exit 0, 6 jobs
+(clean)                                       → ./lake build LingerVt exit 0, 5 jobs
+```
+
+Not one warning, let alone an error, and `warningAsError := true` is on. So the
+positive half of the claim is real but narrow: it says the three roots exist and
+elaborate, and nothing more. The grep is the whole of the closure claim.
+
+**The job counts also say what a job-count ratchet would and would not buy, and
+the answer is: don't.** Jobs = modules in the closure + 2 (Posix drags
+`Linger.Core.Buf`, hence 7 not 6; `Name` and `Wire` are leaves, hence 6). So the
+count is closure *cardinality*, and cardinality is blind to identity — `Name` and
+`Wire` both read 6, so a cap of 6 raised for a legitimate fourth toolkit module
+would thereafter license any one out-of-set import silently. It is also strictly
+weaker than the grep on the trigger they share: worse diagnostic (`6 jobs, cap 5`
+against `Terminal.lean:8: import Linger.Posix`), and it costs a Lean build to
+evaluate, so it cannot live in `gates.sh` — which compiles nothing by design —
+and would have to sit in `tests/e2e.sh`, i.e. the slow tier, behind the check that
+already fired at commit time. Two of the +2 are Lake's own bookkeeping, and the
+pin is an rc scheduled to move (AGENTS.md: move it when v4.34.0 stable ships and
+lean-fmt tags it), so the number is one Lake change away from firing on nothing.
+The spec floated it; it is declined, and this is the reason.
+
+**Break-verified, both breaks, with a control that is the point of the exercise.**
+
+```
+$ sed -i '8i import Linger.Posix' Linger/Core/Terminal.lean && sh tests/gates.sh
+  Linger/Core/Terminal.lean import lines:
+3:public import Linger.Core.Render
+7:import all Linger.Core.Vt
+8:import Linger.Posix
+  want: public import Linger.Core.Render;import all Linger.Core.Vt;
+   got: public import Linger.Core.Render;import all Linger.Core.Vt;import Linger.Posix;
+GATE FAIL: Linger/Core/Terminal.lean left the vt-toolkit import closure (lakefile.lean's lean_lib LingerVt)
+exit 1
+
+$ sed -i '4i public import Linger.Core.Name' Linger/Core/Render.lean && sh tests/gates.sh
+  Linger/Core/Render.lean import lines:
+3:public import Linger.Core.Vt
+4:public import Linger.Core.Name
+8:import all Linger.Core.Vt
+  want: public import Linger.Core.Vt;import all Linger.Core.Vt;
+   got: public import Linger.Core.Vt;public import Linger.Core.Name;import all Linger.Core.Vt;
+GATE FAIL: Linger/Core/Render.lean left the vt-toolkit import closure (lakefile.lean's lean_lib LingerVt)
+exit 1
+```
+
+The control is the row above: **both broken trees build**, under
+`./lake build LingerVt` and therefore under `./lake build`. Unlike the Step 1
+seal, where the compiler refuses and the gate is decoration, here the compiler
+consents and the gate is the only oracle. That is the whole argument for the
+grep, and it is measured rather than argued.
+
+**A third break nobody asked for, and it is the useful one:** `git mv
+Linger/Core/Terminal.lean Linger/Core/TerminalX.lean` also fails the gate —
+`grep: Linger/Core/Terminal.lean: No such file or directory`, then
+`got: (no imports)`. So the grep covers the rename/move case that the `lean_lib`
+roots would otherwise be the only guard for, which is most of why the target's
+marginal check value is near zero.
+
+**Nothing builds `LingerVt`, and that is a deliberate gap left for a decision.**
+It is not a `@[default_target]` (that was the requirement: `./lake build` stays 43
+jobs), and it is not in `tests/e2e.sh` step 1's target list either, because adding
+it there moves step 1's job count for a check that cannot fail on the property.
+Measured cost if we ever want it exercised: **zero elaboration** — after a full
+`./lake build`, `./lake build LingerVt` rebuilds nothing at all, because module
+artefacts are shared across libs, so the honest home is one word in CI's
+`./lake build Linger Theorems Tests` step rather than in the gate.
+
+**Job counts, before → after, all incremental and stable across repeats:**
+`./lake build` 43 → 43, `./lake build Theorems Tests` 50 → 50, `./lake build e2e`
+61 → 61, `./lake build LingerVt` — → 5. Module-by-name targets unchanged and
+matching the numbers this spec recorded before the lib existed
+(`Linger.Core.Terminal` 4, `Vt` 2, `Session` 7), so a module belonging to two libs
+introduces no target ambiguity.
+
+**`declaration-body = "same-line"` reaches the lakefile, and the commit hook does
+not see it.** `lean_lib LingerVt where` + an indented `roots := …` is not the
+layout lean-fmt wants: it collapses them to one 95-character line (now the longest
+line in the file). `lean-fmt check` — the pre-commit half — passed on the
+two-line version; only `lean-fmt format --check`, which is CI-only by the
+two-tier split, said `lakefile.lean: would-format`. Worth knowing that the
+lakefile is one of the 71 files, since it is the file least likely to be
+formatted by habit.
+
+**Gate portability.** `/bin/sh` is bash on the dev host, but CI's ubuntu runner
+is dash and macOS is bash 3.2 in POSIX mode, so the block was exercised under
+`sh`, `bash --posix` and `ksh` — identical output on both the pass and the fail
+path. No `local`, no arrays, no `pipefail`; the one construct worth naming is
+`"${2:-(no imports)}"`, which is only safe because it sits inside a quoted
+`printf` argument. dash itself is not installed on this host, so that shell is
+covered by argument, not measurement. `shellcheck -s sh` reports nothing new (its
+one info-level `SC2012` on the `ls c/` gate predates this).
+
+**Ratchets: nothing moved.** SHIM 22, HEARTBEAT 1, RUNTIME_PARTIAL 2,
+E2E_PARTIAL 5, coverage 263 defs / 0 unclaimed. No new number was added anywhere
+— the gate's ratchet-analogue is the three literal import lists, which is the
+`SHIM_CAP` species: evadeable by editing the list, not by reverting a fix.

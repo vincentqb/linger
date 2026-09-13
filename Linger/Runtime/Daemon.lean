@@ -338,13 +338,24 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
   -- Clamp only the two numbers handed to the syscall, not `vt0` itself: a
   -- `Vt.resize` here would reset the scroll region and tab ruler (that is
   -- restore-conformance ledger item 1, re-introduced on the resume path where
-  -- no theorem watches). `Checkpoint.load` is total on arbitrary bytes and does
-  -- not clamp, so a corrupt or foreign checkpoint could carry `cols ≥ 65536`,
-  -- which `UInt32.ofNat` then wraps to a 0-column tty in the shim's
-  -- `(unsigned short)` cast. `clampDim` bounds it to [1,1000], the same range a
-  -- live session is held to. A pathological checkpoint keeps a mismatched
-  -- model, exactly as it did at the old fixed 80×24 — the alternative is
-  -- mutating the restored screen.
+  -- no theorem watches).
+  --
+  -- **This is now belt-and-braces, and it stays.** `Checkpoint.load` no longer accepts
+  -- a record whose dimensions are junk: `rVt` hands its decoded fields to
+  -- `Vt.ofDecoded`, which refuses anything that is not `Good`, and
+  -- `Theorems/Checkpoint.lean`'s `load_good` says so for *any* byte string —
+  -- `load l = some c → Good c.vt`, hence `1 ≤ cols ≤ 1000`. So both sources of `vt0`
+  -- are already in range: a loaded checkpoint by that theorem, `Vt.init 80 24` by
+  -- `clampDim` inside `init`. `clampDim` here cannot change either value.
+  --
+  -- It is kept for two reasons, neither of them doubt about the theorem. This is the
+  -- last line before `UInt32.ofNat` and the shim's `(unsigned short)` cast, where the
+  -- old failure was a `cols ≥ 65536` checkpoint wrapping to a 0-column tty — and
+  -- `Linger/Runtime/*` is `IO`, so no theorem can see this call site. Deleting the
+  -- clamp would move the syscall's safety into a chain of reasoning in another module
+  -- with no local evidence, and would silently mis-size the pty the first time
+  -- someone adds a third source for `vt0` (a `--size` flag, a second reader) without
+  -- re-deriving the argument. Two `min`/`max` per session spawn is the whole cost.
   let (pid, ptyFd) ←
     spawnPty (UInt32.ofNat (Linger.Core.Vt.clampDim vt0.colCount))
         (UInt32.ofNat (Linger.Core.Vt.clampDim vt0.rowCount)) cwd prog args

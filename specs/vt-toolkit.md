@@ -1,14 +1,67 @@
 # vt-toolkit — seal `Vt`, then lift `Vt`+`Render`+`Terminal` as a standalone emulator
 
-Status: **Step 1 done (2026-09-11). Steps 2-4 next.** `specs/scrollback-fidelity.md` is
-complete on its critical path, so this is now the item in flight.
+Status: **Steps 1, 2 and 4 done (2026-09-11). Step 3 is the only one left.**
+`specs/scrollback-fidelity.md` is complete on its critical path, so this is the item in flight.
 
 ## Where this stands
 
+**Step 4 is COMPLETE** — `lean_lib LingerVt` in `lakefile.lean` plus an **exact-set** import
+grep in `tests/gates.sh`. Two files; no Lean source changed, because the closure was already
+right and this only makes it *checked*. The Lake negative result was re-measured three ways and
+holds: a `lean_lib` with restricted `roots` compiles an out-of-set import without a murmur even
+under `warningAsError`, so the target is the positive half and the **grep is the whole of the
+closure claim**. Break-verified with a control that is the point — both broken trees *build*, so
+unlike the Step 1 seal (where the compiler refuses and a gate would be decoration) here the
+compiler consents and the gate is the only oracle. A `git mv` of a toolkit file also fails it.
+The optional job-count ratchet was **declined**: jobs = closure cardinality, which is blind to
+identity, so a cap raised for a legitimate fourth module would thereafter license any one
+out-of-set leaf import silently.
+
 **Step 1 is COMPLETE.** All 20 `Vt` fields are `private`; the seal bites, break-verified in the
 real tree with a compiling control at the same position. Read the Step 1 record below before
-Step 2 — it corrects this spec's own census, which was measuring forges and under-counted by
-18 files.
+anything else — it corrects this spec's own census, which was measuring forges and under-counted
+by 18 files.
+
+**Step 2 is COMPLETE**, and the design came out the *other* way from the plan: the forge is
+gone, and the friend import **stayed** — permanently, with its reason written at the import.
+`rVt` decodes through `Vt.ofDecoded`, a **`private`** validating constructor in `Vt.lean` that
+returns `none` unless the decoded fields describe a `Good` state. Dropping the friend import
+would have forced that constructor to be *public*, i.e. a second public door admitting any
+`Good` state — unreachable ones included — for every module forever, which is a **wider**
+no-forge hole than one grep-gated file. Two greps hold it: the decoder calls `ofDecoded`, and no
+`Vt` field is assigned anywhere in `Checkpoint.lean`.
+
+**Step 2 is COMPLETE, and it went the other way from this spec's recommendation.** The forge is
+gone — `rVt` decodes through `Vt.ofDecoded`, which **validates and returns `none`** rather than
+clamping — but the friend import in `Checkpoint.lean` **stayed, permanently**, and that is the
+better trade, measured:
+
+* The two options this spec offered were "15 public accessors" and "`Vt.encode`/`decode` inside
+  `Vt.lean`". The third is what landed: a **`private`** smart constructor, reached through the
+  friend import. `import all` grants access to a private *def*, not only a private field — tested
+  in the real tree, not assumed.
+* `Vt.encode`/`decode` inside `Vt.lean` **does not typecheck** and it is not a near miss: the
+  `R`/`w*` combinators live in `Checkpoint.lean`, so `Vt.lean` importing it is `error: build
+  cycle detected` (`Linger.Core.Vt:importInfo` → `Linger.Core.Checkpoint:leanArts` → back).
+  Avoiding the cycle means moving the whole codec into `Vt.lean`, which puts the on-disk format
+  inside the toolkit closure Step 4 exists to bound. Dead, with evidence.
+* Dropping the import would force `ofDecoded` to be **public** — a second public door admitting
+  any `Good` state, unreachable ones included, for every module forever. That is a *wider*
+  no-forge hole than one grep-gated file, so the accessor option loses on its own axis. Surface:
+  option (a) 16 new public defs + 16 new claims + read-hiding gone on 15 of 20 fields; what
+  landed, 2 private defs + 4 claims + 0 public surface.
+* The forge cannot come back: `tests/gates.sh` asserts positively that the decoder calls
+  `Vt.ofDecoded` and negatively that no `Vt` field is assigned anywhere in `Checkpoint.lean`.
+  SHIM_CAP's species of oracle, break-verified.
+* **Validate, not clamp**, and the reason is the grid: clamping `cols` into `[1,1000]` satisfies
+  `Good` while leaving the decoded rows at their own width, so the screen would be `Good` and
+  **not** `Renderable` — and `Renderable` is what every `Render.restore` theorem needs.
+  Establishing it by clamping means `Vt.resize`, which the resume path refuses.
+* **The cost, and it is real:** `rt_vt`, `load_save` and `load_save_exact` now carry a `Good`
+  hypothesis, so `resume_quiesced`/`resume_quiesced_any`/`resume_exact` are no longer
+  hypothesis-free. That is not a weakening — the old unconditional statement was *also* true of
+  `cols = 0`, which is the bug — but THEOREMS.md's A1 anchor said "no hypotheses" and now says
+  "any state a live session can be in".
 
 **Two mechanism facts that cost the work, and are not re-derivable from the docs:**
 
@@ -24,8 +77,8 @@ Step 2 — it corrects this spec's own census, which was measuring forges and un
    failures: `Unknown constant _private.…` means add `import all`; `Field `cols` … is private`
    means make the declaration module-private.
 
-**Next:** Step 2, the checkpoint smart constructor, and it is bigger than this spec assumed —
-see the corrected numbers below.
+**Next:** Step 3, the harvest — and read the Step 2 record in SCRATCHPAD.md first, because
+`ofDecoded` adds a second constructor that `LiveReachableVt` does not model.
 
 ## Goal
 
@@ -114,19 +167,25 @@ that trips `gates.sh`'s existing no-`require` gate, which exists to keep README'
    thing the seal exists to stop. `@[expose]` had to come off `Vt.applySgr`: an exposed body may
    not mention a private constructor. Break-verified from `Linger/Runtime/` against the `linger`
    exe target, with a control at the same position.
-2. **The checkpoint smart constructor** — `rVt` goes through it; a forged record with junk
-   dimensions must decode to `none` rather than to a `Vt` that violates `Good`. This is a
-   behaviour change at the boundary and wants a fixture. **Bigger than first assumed:**
-   `wVt`'s 17 field *reads* need a home too, or the temporary friend import cannot come out.
-   Two options, and the second is better — a per-field public accessor surface (which reopens
-   read-hiding, though the constructor stays private so no-forge survives), or a
-   `Vt.encode`/`decode` pair inside `Vt.lean` where the fields are visible, putting the wire
-   format next to the representation it serialises. Also: `Daemon.lean`'s `clampDim` on the
-   resume path becomes belt-and-braces once `rVt` clamps — its comment is the clearest statement
-   of the bug this step fixes, so rewrite it rather than deleting the call silently.
+2. **The checkpoint smart constructor** — DONE (2026-09-13). `rVt` decodes through
+   `Vt.ofDecoded`, a **`private`** validating constructor in `Vt.lean` (with the guard as a
+   named stage, `Vt.decodedOk`); a record that does not describe a `Good` state decodes to
+   `none`. Claimed by `Vt.decodedOk_iff` / `ofDecoded_good` / `ofDecoded_of_good` /
+   `ofDecoded_none_of_cols_zero` and, on the real path, `Checkpoint.rVt_good` / `load_good`
+   (any byte string) and `load_save_none_of_cols_zero` (the canonical junk record). Six
+   fixtures in `Tests/Checkpoint.lean`, two of them a real checkpoint with **one byte
+   flipped**. The friend import stayed and is now permanent — see the record above for why
+   that beats 15 public accessors, and `tests/gates.sh` for the two greps that stop the forge
+   growing back. `Daemon.lean`'s `clampDim` stayed too, with a comment that now cites
+   `load_good` for why it cannot change the value it is given.
 3. **Harvest** — drop `Good`/`Renderable` hypotheses from the toolkit's public claims where
    reachability now discharges them, and state the exhaustiveness in prose next to the seal
    (it is a compile-time property, not a theorem — do not fake it as one).
+   **Step 2 changed this step's input:** `LiveReachableVt` has `init`/`feed`/`resize`/`quiesce`
+   and no `ofDecoded` rung, so it no longer characterises every `Vt` a client can hold. Either
+   add the rung (its premise is `Good`, which is *weaker* than reachable, so the relation
+   collapses toward `Good` and the harvest buys less than the spec assumed) or scope the
+   harvest to states reached through `init` and say so. Decide that before writing lemmas.
 4. **The extraction target and its gate** — `lean_lib LingerVt` + the closure grep above.
 
 ## Non-goals
