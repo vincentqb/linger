@@ -722,15 +722,18 @@ and a `\t` landed on the wrong column. As the code stood then this theorem would
 been **false**, which is why the fix had to precede it.
 
 `Good w` is what `dims_feed` needs of the receiver (the paint contains the byte
-`0x63`, so the cheaper `dims_feed_ne_ris` does not apply). `hub` keeps the largest
-emitted `CHA` parameter — one more than the last column — off the parser's 65535
-clamp. `hvtabs` is the one hypothesis on the session that `Good`/`Renderable` do not
-already give: a ruler longer than `cols` could hold a stop no `range cols` walk would
-ever emit, and `Checkpoint.load` is total on arbitrary bytes, so it is asked for
-rather than assumed. -/
+`0x63`, so the cheaper `dims_feed_ne_ris` does not apply), and it is also where the
+`CHA` bound comes from: the largest emitted parameter — one more than the last column
+— must stay off the parser's 65535 clamp, and `Good.colsLe` caps `w.cols` at 1000,
+which `hcols` transports to `v.cols`. That bound used to be a stated binder and was a
+small lie about what the claim needs. `hvtabs` is the one hypothesis on the session
+that `Good`/`Renderable` do not already give: a ruler longer than `cols` could hold a
+stop no `range cols` walk would ever emit, and `Checkpoint.load` is total on arbitrary
+bytes, so it is asked for rather than assumed. -/
 theorem restore_tabs_any (v w : Vt) (hgood : Good w) (hcols : w.cols = v.cols)
-    (hub : v.cols < 65535) (hvtabs : v.tabs.size = v.cols) :
-    (w.feed (restore v)).tabs = v.tabs := by
+    (hvtabs : v.tabs.size = v.cols) : (w.feed (restore v)).tabs = v.tabs := by
+  have hub : v.cols < 65535 := by
+    have := hgood.colsLe; rw [hcols] at this; omega
   rw [restore_tabs_split, feed_append, feed_append, feed_append]
   -- the head grounds any receiver and cannot change its width
   have hhg :
@@ -769,9 +772,9 @@ theorem restore_tabs_any (v w : Vt) (hgood : Good w) (hcols : w.cols = v.cols)
 
 /-- The pointwise form: every column's stop is the session's. -/
 theorem restore_tabs_stop_any (v w : Vt) (hgood : Good w) (hcols : w.cols = v.cols)
-    (hub : v.cols < 65535) (hvtabs : v.tabs.size = v.cols) (i : Nat) :
+    (hvtabs : v.tabs.size = v.cols) (i : Nat) :
     (w.feed (restore v)).tabs.getD i false = v.tabs.getD i false := by
-  rw [restore_tabs_any v w hgood hcols hub hvtabs]
+  rw [restore_tabs_any v w hgood hcols hvtabs]
 
 /-- A fresh ruler is exactly `cols` long — the `hvtabs` witness for a live session,
 and the reason the hypothesis is discharged rather than assumed at every call site
@@ -781,19 +784,19 @@ theorem size_defaultTabs (c : Nat) : (defaultTabs c).size = c := by
   simp
 
 /-- The ruler claim with the receiver's invariant discharged from reachability, the
-shape `restore_grid_reachable` has. `hvtabs` stays: `Good` and `Renderable` say
-nothing about the ruler's length, and proving `tabs.size = cols` an invariant of
-every reachable state is a `tabs_*` frame family of its own — worth doing, not
-needed here. -/
-theorem restore_tabs_reachable (v w : Vt) (hw : LiveReachableVt w) (hv : LiveReachableVt v)
-    (hcols : w.cols = v.cols) (hvtabs : v.tabs.size = v.cols) :
-    (w.feed (restore v)).tabs = v.tabs :=
-  restore_tabs_any v w (good_of_liveReachable hw) hcols
-    (Nat.lt_of_le_of_lt (good_of_liveReachable hv).colsLe (by decide)) hvtabs
+shape `restore_grid_reachable` has — minus the hypothesis on the *session*, which the
+ruler claim turns out not to need at all: the only thing `LiveReachableVt v` supplied
+was `v.cols < 65535`, and `Good w` plus `hcols` already give it. `hvtabs` stays:
+`Good` and `Renderable` say nothing about the ruler's length, and proving
+`tabs.size = cols` an invariant of every reachable state is a `tabs_*` frame family of
+its own — worth doing, not needed here. -/
+theorem restore_tabs_reachable (v w : Vt) (hw : LiveReachableVt w) (hcols : w.cols = v.cols)
+    (hvtabs : v.tabs.size = v.cols) : (w.feed (restore v)).tabs = v.tabs :=
+  restore_tabs_any v w (good_of_liveReachable hw) hcols hvtabs
 
 /-- Non-vacuity: a real 80×24 session satisfies every hypothesis, so the ruler claim
 is not vacuously true. -/
 example : ((Vt.init 80 24).feed (restore (Vt.init 80 24))).tabs = (Vt.init 80 24).tabs :=
-  restore_tabs_any _ _ (good_init 80 24) rfl (by decide) (size_defaultTabs _)
+  restore_tabs_any _ _ (good_init 80 24) rfl (size_defaultTabs _)
 
 end Linger.Core.Render

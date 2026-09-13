@@ -1644,11 +1644,12 @@ theorem scrollback_sb_empty {u v : Vt} (hg : u.pstate = .ground) (hne : (sbRows 
 `Good`/`Renderable` receiver of the session's dimensions — including one that arrives with a
 history of its own, which the `ED 3` discards rather than stacks onto.
 
-**No `v.rows < 65535`.** `paint_entry` asks for it (`DECSTBM`'s parameter cap) and the sibling
-`restore_grid_any_main` carries it as a hypothesis, but wherever `Good w` and `hrows` are
-already present it is *derivable*: `Good.rowsLe` caps `w.rows` at 1000 and `hrows` transports
-that to `v.rows`. A stated binder would claim this theorem needs a bound the receiver's own
-`Good` supplies, so it is discharged inline instead. -/
+**No `v.rows < 65535`.** `DECSTBM`'s parameter cap is what wants it, and wherever `Good w` and
+`hrows` are already present it is *derivable*: `Good.rowsLe` caps `w.rows` at 1000 and `hrows`
+transports that to `v.rows`. A stated binder would claim this theorem needs a bound the
+receiver's own `Good` supplies, so it is discharged inline instead. `prologue_sticky` — the one
+place the bound is actually consumed — does the same, so no theorem in the `paint_entry` chain
+states it any more. -/
 theorem restore_sb_stage (v w : Vt) (hgood : Good w) (hren : Renderable w) (hgv : Good v)
     (hcols : w.cols = v.cols) (hrows : w.rows = v.rows) (hua : w.u8acc = 0) (hun : w.u8need = 0)
     (hne : (sbRows v).isEmpty = false) :
@@ -1656,9 +1657,6 @@ theorem restore_sb_stage (v w : Vt) (hgood : Good w) (hren : Renderable w) (hgv 
       (sbRows v).toList := by
   obtain ⟨e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11, e12, -, -, e15, -⟩ :=
     paint_entry v w hgood hren hcols hrows hua hun
-      (by
-        have := hgood.rowsLe
-        omega)
   rw [show
       prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ scrollbackAnsi v =
         (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A) ++ scrollbackAnsi v
@@ -1725,12 +1723,11 @@ fitting entry state, and `hvren.main.1` supplies the row count that makes the la
 the paint the one that does not scroll. -/
 theorem restore_sb_of_stage_main (v w : Vt) (hgood : Good w) (hren : Renderable w)
     (hcols : w.cols = v.cols) (hrows : w.rows = v.rows) (hua : w.u8acc = 0) (hun : w.u8need = 0)
-    (halt : v.altGrid = none) (hfits : v.rows < 65535) (hpos : 0 < v.cols) (hub : v.cols < 65533)
-    (hvren : Renderable v) :
+    (halt : v.altGrid = none) (hpos : 0 < v.cols) (hub : v.cols < 65533) (hvren : Renderable v) :
     (w.feed (restore v)).sb =
       (w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ scrollbackAnsi v)).sb := by
   obtain ⟨e1, e2, -, -, e5, -, e7, -, -, -, -, -, -, -, -, est⟩ :=
-    paint_entry v w hgood hren hcols hrows hua hun hfits
+    paint_entry v w hgood hren hcols hrows hua hun
   obtain ⟨f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, -, -⟩ :=
     scrollback_entry (u := w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)) (v := v)
       (Good.feed _ hgood) (renderable_feed hren _) e1 e2 e5 e7 est
@@ -1772,12 +1769,12 @@ this branch cannot be folded into the main one at this projection. -/
 theorem restore_sb_of_stage_alt (v w : Vt) (hgood : Good w) (hren : Renderable w)
     (hcols : w.cols = v.cols) (hrows : w.rows = v.rows) (hua : w.u8acc = 0) (hun : w.u8need = 0)
     {mainGrid : Array Row} {mcur : Cursor} {mpen : Pen}
-    (halt : v.altGrid = some (mainGrid, mcur, mpen)) (hfits : v.rows < 65535) (hpos : 0 < v.cols)
-    (hub : v.cols < 65533) (hvren : Renderable v) :
+    (halt : v.altGrid = some (mainGrid, mcur, mpen)) (hpos : 0 < v.cols) (hub : v.cols < 65533)
+    (hvren : Renderable v) :
     (w.feed (restore v)).sb =
       (w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ scrollbackAnsi v)).sb := by
   obtain ⟨e1, e2, -, -, e5, -, e7, -, -, -, -, -, -, -, -, est⟩ :=
-    paint_entry v w hgood hren hcols hrows hua hun hfits
+    paint_entry v w hgood hren hcols hrows hua hun
   obtain ⟨hmsz, hmok⟩ := hvren.alt mainGrid mcur mpen halt
   obtain ⟨f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, falt, -⟩ :=
     scrollback_entry (u := w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)) (v := v)
@@ -1871,9 +1868,10 @@ of §Restore for the ring: the walk says what goes in, and this says nothing els
 `Renderable v` is the load-bearing hypothesis: its `.1` pins `v.grid.size = v.rows`, and a
 target taller than the receiver keeps emitting separators past the last row, each of which
 pushes — which is why `gridAnsi` gets no `Fixes` lemma. `hcols`/`hrows` are the same fact from
-the other side: a receiver shorter than the target scrolls. The paint's three bounds
-(`0 < v.cols`, `v.cols < 65533`, `v.rows < 65535`) are **not** hypotheses — they follow from
-`Good w`'s `1 ≤ cols ≤ 1000` and `rows ≤ 1000` through the dimension equations. -/
+the other side: a receiver shorter than the target scrolls. The paint's two column bounds
+(`0 < v.cols`, `v.cols < 65533`) are **not** hypotheses — they follow from `Good w`'s
+`1 ≤ cols ≤ 1000` through `hcols`; the row bound `v.rows < 65535` is not stated anywhere in
+the chain any more, since `prologue_sticky` derives it the same way. -/
 theorem restore_sb_of_stage (v w : Vt) (hgood : Good w) (hren : Renderable w)
     (hcols : w.cols = v.cols) (hrows : w.rows = v.rows) (hua : w.u8acc = 0) (hun : w.u8need = 0)
     (hvren : Renderable v) :
@@ -1883,13 +1881,10 @@ theorem restore_sb_of_stage (v w : Vt) (hgood : Good w) (hren : Renderable w)
     rw [← hcols]; exact hgood.colsPos
   have hub : v.cols < 65533 := by
     have := hgood.colsLe; rw [hcols] at this; omega
-  have hfits : v.rows < 65535 := by
-    have := hgood.rowsLe; rw [hrows] at this; omega
   match halt : v.altGrid with
-  | none =>
-    exact restore_sb_of_stage_main v w hgood hren hcols hrows hua hun halt hfits hpos hub hvren
+  | none => exact restore_sb_of_stage_main v w hgood hren hcols hrows hua hun halt hpos hub hvren
   | some (mainGrid, mcur, mpen) =>
-    exact restore_sb_of_stage_alt v w hgood hren hcols hrows hua hun halt hfits hpos hub hvren
+    exact restore_sb_of_stage_alt v w hgood hren hcols hrows hua hun halt hpos hub hvren
 
 /-! ### Step 4 — the claim, and the two branches the guarded `ED 3` forces -/
 
@@ -1929,13 +1924,7 @@ theorem restore_sb_of_empty (v w : Vt) (hgood : Good w) (hren : Renderable w) (h
       w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ scrollbackAnsi v) =
         (w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).feed (scrollbackAnsi v)
       from by simp only [feed_append]]
-  exact
-    scrollback_sb_empty
-      (paint_entry v w hgood hren hcols hrows hua hun
-          (by
-            have := hgood.rowsLe
-            omega)).2.2.2.2.1
-      hne
+  exact scrollback_sb_empty (paint_entry v w hgood hren hcols hrows hua hun).2.2.2.2.1 hne
 
 /-- **A session with no history leaves the client's own scrollback alone.** The user-facing half
 of the `ED 3` guard: an unconditional erase would discard the history of any window a session is

@@ -1321,12 +1321,15 @@ theorem gridAnsi_writes_grid' {u : Vt} {tg : Array Row} {cols rows : Nat} (hcols
 values, set by the tail). The grid walk needs it *after the prologue* — canonical: region
 whole, no alt screen, ASCII charsets — which is the same chain stopped early. `rows ≥ 2` is
 `DECSTBM`'s own constraint (a one-row region is degenerate); the one-row grid is handled
-without it, since a single row cannot scroll. -/
+without it, since a single row cannot scroll. `DECSTBM`'s *parameter* cap
+(`v.rows < 65535`) is not a hypothesis: this is the only place in the chain that consumes it,
+and `Good w`'s `rowsLe` plus `hrows` supply it, so it is derived rather than stated. -/
 
-theorem prologue_sticky (v w : Vt) (hgood : Good w) (hrows : w.rows = v.rows)
-    (hfits : v.rows < 65535) :
+theorem prologue_sticky (v w : Vt) (hgood : Good w) (hrows : w.rows = v.rows) :
     (w.feed (prologueAnsi v)).pstate = .ground ∧
       stick (w.feed (prologueAnsi v)) = ⟨v.rows, 0, v.rows - 1, false, false, false, false⟩ := by
+  have hfits : v.rows < 65535 := by
+    have := hgood.rowsLe; rw [hrows] at this; omega
   have hpos1 : 1 ≤ v.rows := hrows ▸ hgood.rowsPos
   rw [show
       prologueAnsi v =
@@ -1609,7 +1612,7 @@ theorem ascii_paint_prefix (v : Vt) : Ascii (prologueAnsi v ++ csiNum 0 0x6D ++ 
 of the session's dimensions — whose decoder is quiesced, which is the `u8acc` precondition —
 satisfies every hypothesis `gridAnsi_writes_grid` asks for. -/
 theorem paint_entry (v w : Vt) (hgood : Good w) (hren : Renderable w) (hcols : w.cols = v.cols)
-    (hrows : w.rows = v.rows) (hua : w.u8acc = 0) (hun : w.u8need = 0) (hfits : v.rows < 65535) :
+    (hrows : w.rows = v.rows) (hua : w.u8acc = 0) (hun : w.u8need = 0) :
     let u := w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)
     u.cols = v.cols ∧
       u.rows = v.rows ∧
@@ -1637,7 +1640,7 @@ theorem paint_entry (v w : Vt) (hgood : Good w) (hren : Renderable w) (hcols : w
   have hurend : Renderable u := renderable_feed hren _
   obtain ⟨hgsz, hrok⟩ := hurend.main
   -- the sticky bundle and the modes, from the prologue, then through `SGR 0` and `ED 2`
-  have hpro := prologue_sticky v w hgood hrows hfits
+  have hpro := prologue_sticky v w hgood hrows
   have hst :
     (u.pstate = .ground ∧ stick u = ⟨v.rows, 0, v.rows - 1, false, false, false, false⟩) := by
     have e1 := sput_congr (sput_step hpro (smap_id_sgrNum 0)) (id_eq _)
@@ -1798,13 +1801,19 @@ the stream itself (`feed_restore_zeroed`, since `restore` opens with `ESC`). -/
 /-- **The grid, restored into any client — main screen.** For a session not on the alt
 screen, feeding `restore v` to any `Good`/`Renderable` receiver of the session's dimensions
 and with a quiesced decoder leaves the receiver's grid equal to `v.grid`, cell for cell and
-pen for pen. -/
+pen for pen.
+
+`Renderable v` carries the row count the last `CRLF` of the paint needs — `hvren.main.1` *is*
+`v.grid.size = v.rows`, so a separate binder for it would be the same fact stated twice. The
+two column bounds stay, and are the honest ones: `gridAnsi_writes_grid` takes no `Good`, so
+they are its hypotheses rather than this one's, and `restore_grid_any` derives them once for
+both branches. -/
 theorem restore_grid_any_main (v w : Vt) (hgood : Good w) (hren : Renderable w)
     (hcols : w.cols = v.cols) (hrows : w.rows = v.rows) (hua : w.u8acc = 0) (hun : w.u8need = 0)
-    (halt : v.altGrid = none) (hfits : v.rows < 65535) (hpos : 0 < v.cols) (hub : v.cols < 65533)
-    (hvren : Renderable v) (hvsz : v.grid.size = v.rows) : (w.feed (restore v)).grid = v.grid := by
+    (halt : v.altGrid = none) (hpos : 0 < v.cols) (hub : v.cols < 65533) (hvren : Renderable v) :
+    (w.feed (restore v)).grid = v.grid := by
   obtain ⟨e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11, e12, e13, e14, -, est⟩ :=
-    paint_entry v w hgood hren hcols hrows hua hun hfits
+    paint_entry v w hgood hren hcols hrows hua hun
   -- the history stage sits between the prefix and the paint, and hands the paint
   -- back the same sixteen conjuncts (`scrollback_entry`)
   obtain ⟨f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, -, -⟩ :=
@@ -1820,7 +1829,7 @@ theorem restore_grid_any_main (v w : Vt) (hgood : Good w) (hren : Renderable w)
       feed_append, hscreens, feed_append]
     exact
       (gridAnsi_writes_grid f1 f2 hpos hub f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 (by rw [f13]) f14
-          hvren.main.2 hvsz).2.1
+          hvren.main.2 hvren.main.1).2.1
   · rw [show
         prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v =
           (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A) ++ screensAnsi v
@@ -1828,7 +1837,7 @@ theorem restore_grid_any_main (v w : Vt) (hgood : Good w) (hren : Renderable w)
       feed_append, hscreens, feed_append]
     exact
       (gridAnsi_writes_grid f1 f2 hpos hub f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 (by rw [f13]) f14
-          hvren.main.2 hvsz).2.2.1
+          hvren.main.2 hvren.main.1).2.2.1
   · rw [show
         prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v =
           (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A) ++ screensAnsi v
@@ -1836,7 +1845,7 @@ theorem restore_grid_any_main (v w : Vt) (hgood : Good w) (hren : Renderable w)
       feed_append, hscreens, feed_append]
     exact
       (gridAnsi_writes_grid f1 f2 hpos hub f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 (by rw [f13]) f14
-          hvren.main.2 hvsz).1
+          hvren.main.2 hvren.main.1).1
 
 /-! ### The alt screen — `restore_grid_any`'s other branch
 
@@ -2103,11 +2112,10 @@ reproduces `v.grid`. -/
 theorem restore_grid_any_alt (v w : Vt) (hgood : Good w) (hren : Renderable w)
     (hcols : w.cols = v.cols) (hrows : w.rows = v.rows) (hua : w.u8acc = 0) (hun : w.u8need = 0)
     {mainGrid : Array Row} {mcur : Cursor} {mpen : Pen}
-    (halt : v.altGrid = some (mainGrid, mcur, mpen)) (hfits : v.rows < 65535) (hpos : 0 < v.cols)
-    (hub : v.cols < 65533) (hvren : Renderable v) (hvsz : v.grid.size = v.rows) :
-    (w.feed (restore v)).grid = v.grid := by
+    (halt : v.altGrid = some (mainGrid, mcur, mpen)) (hpos : 0 < v.cols) (hub : v.cols < 65533)
+    (hvren : Renderable v) : (w.feed (restore v)).grid = v.grid := by
   obtain ⟨e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11, e12, e13, e14, -, est⟩ :=
-    paint_entry v w hgood hren hcols hrows hua hun hfits
+    paint_entry v w hgood hren hcols hrows hua hun
   obtain ⟨hmsz, hmok⟩ := hvren.alt mainGrid mcur mpen halt
   -- the history stage, emitted identically on both screens and ahead of the
   -- discarded main paint: `scrollback_entry` hands `alt_pre_switch` exactly what
@@ -2148,7 +2156,7 @@ theorem restore_grid_any_alt (v w : Vt) (hgood : Good w) (hren : Renderable w)
       (hZg0.trans hs2g0) (hZg1.trans hs2g1)
       (by
         rw [hZgrid, Array.size_replicate]; exact hs2rows)
-      (fun y' => (getRow_size_replicate hZgrid hZcols y').trans hs2cols) hvren.main.2 hvsz
+      (fun y' => (getRow_size_replicate hZgrid hZcols y').trans hs2cols) hvren.main.2 hvren.main.1
   -- assemble via `restore_grid_of_paint`
   have hscreens :
     screensAnsi v =
@@ -2177,16 +2185,22 @@ theorem restore_grid_any_alt (v w : Vt) (hgood : Good w) (hren : Renderable w)
 
 /-- **The grid, restored into any client — both screens (Definition-of-done item 5).** The one
 theorem that dispatches on whether the session is on the alt screen; each branch is proved
-above. -/
+above.
+
+Every hypothesis here is one the claim genuinely needs: the paint's column bounds are derived
+once from `Good w` and handed to both branches, and the row count rides `Renderable v`. Same
+signature as `restore_sb_of_stage`, and for the same reason. -/
 theorem restore_grid_any (v w : Vt) (hgood : Good w) (hren : Renderable w) (hcols : w.cols = v.cols)
-    (hrows : w.rows = v.rows) (hua : w.u8acc = 0) (hun : w.u8need = 0) (hfits : v.rows < 65535)
-    (hpos : 0 < v.cols) (hub : v.cols < 65533) (hvren : Renderable v)
-    (hvsz : v.grid.size = v.rows) : (w.feed (restore v)).grid = v.grid := by
+    (hrows : w.rows = v.rows) (hua : w.u8acc = 0) (hun : w.u8need = 0) (hvren : Renderable v) :
+    (w.feed (restore v)).grid = v.grid := by
+  have hpos : 0 < v.cols := by
+    rw [← hcols]; exact hgood.colsPos
+  have hub : v.cols < 65533 := by
+    have := hgood.colsLe; rw [hcols] at this; omega
   match halt : v.altGrid with
-  | none =>
-    exact restore_grid_any_main v w hgood hren hcols hrows hua hun halt hfits hpos hub hvren hvsz
+  | none => exact restore_grid_any_main v w hgood hren hcols hrows hua hun halt hpos hub hvren
   | some (mainGrid, mcur, mpen) =>
-    exact restore_grid_any_alt v w hgood hren hcols hrows hua hun halt hfits hpos hub hvren hvsz
+    exact restore_grid_any_alt v w hgood hren hcols hrows hua hun halt hpos hub hvren
 
 /-! ### The receiver's decoder is not a hypothesis — the stream's own first byte resets it
 
@@ -2268,15 +2282,10 @@ The receiver's `u8need` used to be a hypothesis here and is not one any more: se
 above. A client that is mid-character is still a client. -/
 theorem restore_grid_reachable (v w : Vt) (hw : LiveReachableVt w) (hv : LiveReachableVt v)
     (hcols : w.cols = v.cols) (hrows : w.rows = v.rows) : (w.feed (restore v)).grid = v.grid := by
-  have hg : Good v := good_of_liveReachable hv
   rw [feed_restore_zeroed v w (u8Ok_of_liveReachable hw)]
-  refine
+  exact
     restore_grid_any v _ (Good.set_u8 0 0 (by omega) (good_of_liveReachable hw))
-      (renderable_congr (renderable_of_liveReachable hw) rfl rfl rfl rfl) hcols hrows rfl rfl ?_ ?_
-      ?_ (renderable_of_liveReachable hv) ?_
-  · exact Nat.lt_of_le_of_lt hg.rowsLe (by decide)
-  · exact hg.colsPos
-  · exact Nat.lt_of_le_of_lt hg.colsLe (by decide)
-  · exact (renderable_of_liveReachable hv).main.1
+      (renderable_congr (renderable_of_liveReachable hw) rfl rfl rfl rfl) hcols hrows rfl rfl
+      (renderable_of_liveReachable hv)
 
 end Linger.Core.Render

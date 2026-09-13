@@ -7614,3 +7614,65 @@ with `./lake env lean`; the main agent was the sole writer and did not rebuild w
 was working. Two of the five reported the file was not `lean-fmt`-clean *before* their text —
 correctly, and about the main agent's own edits. That is the failure mode the rule exists for,
 caught by the agents rather than by the gate.
+
+
+## the derivable hypotheses, dropped — 2026-09-11
+
+The loose thread the Step 4 entry above recorded and did not pull. Ten theorems in the paint and
+ruler chains carried binders that other binders already implied; all are gone, and the change is
+net **−1 line** (84 insertions, 85 deletions, most of the insertions docstring).
+
+`hfits : v.rows < 65535` is `Good.rowsLe` + `hrows`; `hpos`/`hub` are `Good.colsPos`/`colsLe` +
+`hcols`; `hvsz : v.grid.size = v.rows` is literally `hvren.main.1`, since `GridOk`'s first
+component is that equation.
+
+**The `hfits` cascade is forced, not a choice, and that is the finding.** The bound is consumed
+in exactly ONE place in the whole chain — `prologue_sticky`'s `smap_stbm` `omega`. Every other
+theorem was passing it down. So once `prologue_sticky` derives it, the binder goes *unused* in
+`paint_entry`, then in `restore_grid_any_main`, `restore_grid_any_alt`, `restore_sb_of_stage_main`,
+`restore_sb_of_stage_alt`, `restore_grid_any` and `restore_sb_of_stage` — seven theorems — and
+`linter.unusedVariables` is an **error** under `./lake build` here, so you cannot stop halfway.
+Dropping it from one theorem commits you to all eight.
+
+**A fifth candidate the Step 4 entry missed:** `restore_tabs_any`'s `hub : v.cols < 65535`, same
+`Good.colsLe` derivation. It cascades into `restore_tabs_reachable` losing
+`hv : LiveReachableVt v` **entirely** — the only thing session-reachability was buying there was
+that column bound. So the ruler claim is now *strictly stronger*: it holds for any session with a
+right-length ruler, reachable or not. THEOREMS.md's existing description of that theorem ("Two
+hypotheses beyond matching width: `Good w` … and `v.tabs.size = v.cols`") was accurate about the
+post-change signature and one hypothesis short of the pre-change one — the doc was right and the
+code was carrying an extra.
+
+**Deliberately kept.** `hpos`/`hub` stay on the four branch lemmas, where they are genuinely
+consumed by `gridAnsi_writes_grid`/`gridAnsi_keeps_sb`/`alt_pre_switch` — none of which takes
+`Good` — so removing them there would duplicate the derivation into two files instead of deriving
+it once in the dispatcher. That also keeps `restore_grid_any` byte-symmetric with
+`restore_sb_of_stage`, which already had this shape; the sb family written in Step 4 is the
+precedent this extends rather than a second convention.
+
+**`restore_sticky_any` and its three projections are untouched, and the reason is in its own
+docstring**: it takes no `Good` *on purpose* — "`Good` also asserts things about the cursor, the
+saved slot, the scrollback and the CSI accumulator that this proof never reads, and a hypothesis
+a proof does not use makes the theorem weaker than it is." Its `hfits` is real. Likewise
+`gridAnsi_writes_grid'` / `gridAnsi_keeps_sb'` / `alt_pre_switch` keep `hvsz` because their target
+is a bare `Array Row` with no `Vt` to project from, and the ~20 `hlt : n < 65535` binders in
+`Keeps`/`Modes`/`Row`/`Sticky`/`Quiet` are bounds on a **CSI parameter**, a different proposition
+entirely.
+
+**Non-weakening, checked rather than assumed.** A scratch file restates all ten *old* signatures
+verbatim (removed binders renamed `_h…`) and proves each by applying the new theorem. It compiles.
+So no caller can state anything the new forms cannot prove — the removals are provably redundant,
+not a silent weakening. That check is the one that matters here: "I removed a hypothesis and it
+still builds" is also what a genuine weakening looks like from the inside.
+
+**Break-verified** by weakening the derived bound in `prologue_sticky` from `< 65535` to `< 65536`:
+`omega could not prove the goal` at `Grid.lean:1406`, i.e. at exactly the point the old binder fed.
+
+**Module-system gotcha worth having.** `hvren.main.1` needs `import all Theorems.Vt` in the
+module's closure, because `GridOk` is a plain `def` — without it Lean says "`hvren.main` has type
+`GridOk …` which is not a one-constructor inductive type". It works throughout `Theorems/Render/*`
+as those files are imported today; a scratch file needs the line added.
+
+Coverage unchanged at `259` defs and `0 (cap 0)`, which mattered more than it looks: the gate
+scans the text *between* `theorem <name>` and the `:=`, so removing a binder can silently un-claim
+a def, and the cap has zero headroom. It didn't.

@@ -124,8 +124,7 @@ theorem resume_grid (c : Ckpt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0
     have := hgood.rowsLe; have := hgood.rowsPos; simp only [Vt.clampDim]; omega
   exact
     Render.restore_grid_any c.vt (Vt.Vt.init c.vt.cols c.vt.rows) (Vt.good_init _ _)
-      (Vt.renderable_init _ _) hcolseq hrowseq rfl rfl (Nat.lt_of_le_of_lt hgood.rowsLe (by decide))
-      hgood.colsPos (Nat.lt_of_le_of_lt hgood.colsLe (by decide)) hren hren.main.1
+      (Vt.renderable_init _ _) hcolseq hrowseq rfl rfl hren
 
 /-- Non-vacuity: a real 80×24 checkpoint satisfies every hypothesis of `resume_grid`, so the
 theorem is not vacuously true. -/
@@ -150,8 +149,7 @@ theorem resume_tabs (c : Ckpt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0
     show Vt.clampDim c.vt.cols = c.vt.cols
     have := hgood.colsPos; have := hgood.colsLe; simp only [Vt.clampDim]; omega
   exact
-    Render.restore_tabs_any c.vt (Vt.Vt.init c.vt.cols c.vt.rows) (Vt.good_init _ _) hcolseq
-      (Nat.lt_of_le_of_lt hgood.colsLe (by decide)) hvtabs
+    Render.restore_tabs_any c.vt (Vt.Vt.init c.vt.cols c.vt.rows) (Vt.good_init _ _) hcolseq hvtabs
 
 /-- Non-vacuity at the degenerate height: `resume_grid` genuinely covers a **one-row** screen,
 the case `h2 : 0 < rows - 1` used to exclude — the grid of an 80×1 session is reproduced. -/
