@@ -7501,3 +7501,116 @@ runs it in the foreground, so CI was never affected.
   passes*, which is the discrimination working in the direction it was added for.
 
 `./tests/e2e.sh` in the foreground: `E2E OK`, ten suites, `agent: 25 checks (floor 25)`.
+
+
+## scrollback step 4 notes — 2026-09-11 (the ring is proved; the fixtures lose their monopoly)
+
+`restore_sb_any` / `restore_sb_reachable` / `restore_sb_exact` / `Linger.Core.resume_sb` are
+green, and `THEOREMS.md`'s A5 anchor no longer lists the scrollback as fixture-carried. Third
+run of the write-with-`sorry` → prove → implement workflow, and the first where the skeleton
+found nothing false — eleven statements elaborated and four compiled evaluations on real states
+(dirty receiver, fresh receiver, one-row session, alt screen) all came back `true` before any
+proof effort started. That is what the stage is for either way: knowing the target is true is
+worth the twenty minutes even when the answer is "yes".
+
+**Six findings, in descending order of what they would cost to rediscover.**
+
+1. **`Fixes` cannot state the `ED 3`, because `Fixes` *is* invariance.** It is definitionally
+   `π (v.feed bs) = π v`, so `fixes_csiNum_arg` and `fixes_csi_digits_tail` hard-wire the wrong
+   conclusion into their statements and neither can be borrowed for a claim that the ring
+   becomes *empty*. `ed3_empties` walks the four bytes by hand — `keeps_csi_open` →
+   `csi_param_run_inter` + `csi_digits_value` → `csi_final_step_eq` → `arg_of_one`. Of the two
+   digit-run lemmas only `csi_digits_value` exposes `ignore`, which is exactly the field the
+   dispatch lemma needs; `csi_digits_run_eq` drops it. The nearest structural template for
+   "same walk, non-identity conclusion" is `smap_csi_one_arg`, which already carries an
+   `ignore = false` obligation but is hard-wired to `stick`.
+
+2. **`sb_csiDispatch_ed3` must carry `s.ignore = false` and its `ED 2` twin must not** — the
+   asymmetry is not tidiness. `csiDispatch` opens `if s.ignore then v`, so on that branch the
+   `ED 3` claim collapses to `v.sb = {}`, false for any `v` with history; the `ED 2` twin closes
+   the same branch with `v.sb = v.sb` and can therefore quantify over every collector. Measured
+   rather than argued: `¬∀ v s, s.arg 0 0 = 3 → (v.csiDispatch s 0x4A).sb = ({} : Ring)` is
+   provable, witness `s.ignore := true` with a one-row ring.
+
+3. **`u8need = 0` after the history paint does not exist in this repo and cannot.** So the mode
+   tail's `Fixes` precondition cannot be discharged by composition, and the recipe that said
+   "find it in `sbTail_modes` / `smap_id_sbPush` / the `ends_*` families" was wrong — `Modes.lean`
+   already records the negative result in prose for `MMap`: `Ends` is scoped to `pstate` on
+   purpose, `uaz_feed` needs every byte below 0x80, and `gridAnsi_writes_grid'` — the one lemma
+   that would supply it — wants `painted.size = receiver.rows`, which the history violates by
+   design. The fix is structural: `fixes_sb_of_esc_lead`, the `Fixes`-shaped twin of
+   `mmap_of_esc_lead`, same `abortUtf8` case split. **This gives the twelve trailing mode bytes
+   a second, independent proof-load-bearing role.** They were already ESC-leading-and-contiguous
+   for `insert`/`wrap`/`origin`; now the ring needs the same shape. Anyone tempted to shed them
+   has two proofs to break, not one.
+
+4. **`Good` says nothing whatever about `sb.start`.** It bounds `sb.size` and nothing ties
+   `start` to `data.size` — `Ring` carries no such invariant and `Good` adds no field for it.
+   So `push_walk`'s `hstart` has exactly **one** source in the repo, and it is the `ED 3`: the
+   byte is load-bearing for the proof, not merely anti-stacking for the user. Confirmed by grep
+   — `sb.start = 0` occurs under `Theorems/` only as `push_walk`'s own hypothesis and
+   `Painted.sbStart`, and no theorem produces it. The only alternative route is `Vt.init`'s
+   default, which would restrict the claim to a receiver nobody has typed into yet.
+
+5. **`Good v`, not `Good w`, is what the room needs**, and they are not interchangeable because
+   they bound different rings. `hroom` is `receiver.sb.size + (sbRows v).size ≤ sbCap`; the
+   `ED 3` zeroes the first summand, so the whole burden is a fact about the *session's* history.
+   The break makes it legible: sourcing `sbLe` from the receiver leaves `omega` with
+   `v.sb.size` unbounded, and two independent `≤ sbCap` bounds do not add to one. Only `.sbLe`
+   is consumed, so `v.sb.size ≤ sbCap` is the honest weakest form of the hypothesis; `Good v`
+   is kept because reachability supplies it and every caller has it.
+
+6. **The alt branch has *two* row pins, not one.** The visible paint's is `v.grid`'s, as
+   expected. The discarded main paint's is `mainGrid`'s — `?1049h` throws its cells away, but a
+   *stashed* grid taller than the receiver pushes **before** the switch runs. Both break
+   independently. That is the substantive reason the alt branch cannot be folded into the main
+   one at this projection, and it is not a fact the grid walk had any reason to notice.
+
+**The seventh conjunct, and why widening beat duplicating.** `gridAnsi_keeps_sb` is a two-line
+projection out of `gridAnsi_writes_grid`, whose proof already established the fact and threw it
+away with a `-` at the `paint_rows` `obtain`. Widening cost **one line at one call site**
+(`alt_pre_switch`'s six-wide anonymous pattern needed a seventh `-`; every other consumer uses
+prefix projections, which stay valid when a conjunct is appended). A standalone proof would have
+duplicated ~55 lines of `Walking` witness. The repo had already made this exact trade twice for
+this exact theorem, which is the kind of precedent worth checking before re-litigating.
+
+**Derivable hypotheses, dropped rather than stated.** `hfits : v.rows < 65535` wherever `Good w`
+and `hrows` are present (`Good.rowsLe` caps at 1000), and `hpos`/`hub` wherever `Good w` and
+`hcols` are. An unused-or-derivable binder is a small lie about what a claim needs. The same
+redundancy exists in four **shipped** grid theorems — `prologue_sticky`, `paint_entry`,
+`restore_grid_any_main`, `restore_grid_any` — which additionally all carry
+`hvsz : v.grid.size = v.rows` alongside `Renderable v` even though it *is* `hvren.main.1`. That
+is a pure call-site cleanup, noted and not taken: it belongs in its own change, not smuggled
+into a step about the ring. `restore_sticky_any`'s `hfits` is genuine — it deliberately takes no
+`Good`.
+
+**The guard makes the claim two branches, and the second one costs a hypothesis the first does
+not.** `restore_sb_of_empty` is stated against the *post-prefix* state precisely so it needs no
+`w.pstate = .ground`; the user-facing `restore_sb_keeps_of_empty` pays that hypothesis openly,
+because knowing the client's own history *survives* means knowing its pending sequence did
+nothing, and no theorem here bounds a mid-sequence receiver's pending effect. Reachability does
+not supply ground. The grid claim never needs this, because the grid is overwritten either way —
+a clean illustration of why an invariance claim is harder than an overwrite claim on the same
+stream.
+
+**Breaks, all at the statement level** (Step 3's recorded lesson: emitter breaks in this ladder
+fire at an earlier rung than intended): `hgv` dropped; `ed3_empties` replaced by `Good.feed`'s
+`sbLe`; `Renderable v` weakened to `v.grid.size ≤ v.rows` and separately to `≥` (the `≥`
+direction is where the conclusion is *false*, and `omega` prints that counterexample);
+`mainGrid`'s pin weakened alone; `hrok` dropped from `sbRows_toList_eq` (`simp made no
+progress`, with a width-0-row counterexample evaluated); `sbRows_size_le`'s `≤` strengthened to
+`<` (fails — the bound is attained on a real 6×3 session). And the step's own exit criterion:
+**commenting `wRing v.sb` out of `Linger/Core/Checkpoint.lean`'s `wVt` breaks `rt_vt`**, hence
+`load_save_exact`, hence `resume_sb`'s first conjunct. A checkpoint that does not carry history
+cannot restore one, and now a theorem says so.
+
+**No `maxHeartbeats` raise anywhere** — `HEARTBEAT_CAP` unmoved, which the step's own plan
+insisted on. **No new `Linger/Core` definition**, so the coverage cap stays at 0 without a
+bump; every theorem added is a claim about code that already existed.
+
+**Parallelism note, since the one-writer rule bounds it.** Five subagents ran read-only against
+the built tree (three reconnaissance, then two proof parcels), each compiling only `/tmp` files
+with `./lake env lean`; the main agent was the sole writer and did not rebuild while any of them
+was working. Two of the five reported the file was not `lean-fmt`-clean *before* their text —
+correctly, and about the main agent's own edits. That is the failure mode the rule exists for,
+caught by the agents rather than by the gate.

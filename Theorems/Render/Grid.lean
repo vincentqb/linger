@@ -1207,7 +1207,15 @@ theorem home_feed_eq {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) :
 modes, `top = 0`, `bot = rows - 1`, no alt screen) and of matching dimensions with
 reproducible rows, `gridAnsi v.grid` reproduces `v.grid` exactly — array for array, cell for
 cell. This is the heart of the grid claim; `restore_grid_of_paint` bolts the clear and the
-tail onto it. -/
+tail onto it.
+
+The seventh conjunct is the **history**, and it is here rather than in a `Fixes (·.sb)` lemma
+because `gridAnsi` cannot have one: the stage ends in `joinCRLF`, and a `CRLF` with the cursor
+at the region bottom scrolls with `allowSb := true` and pushes the evicted row. Invariance is
+therefore conditional on the row count, which this hypothesis list already carries — `hvsz` is
+the load-bearing one, and the claim is false without it (a target taller than the receiver
+pushes exactly `v.grid.size - v.rows` rows). `paint_rows` established it from Step 2 onward and
+this theorem discarded it; the pipe is now joined rather than duplicated. -/
 theorem gridAnsi_writes_grid {u v : Vt} (hcols : u.cols = v.cols) (hrows : u.rows = v.rows)
     (hpos : 0 < v.cols) (hub : v.cols < 65533) (htop : u.top = 0) (hbot : u.bot = v.rows - 1)
     (hg : u.pstate = .ground) (hun : u.u8need = 0) (hua : u.u8acc = 0)
@@ -1221,7 +1229,7 @@ theorem gridAnsi_writes_grid {u v : Vt} (hcols : u.cols = v.cols) (hrows : u.row
       (u.feed (gridAnsi v.grid)).u8need = 0 ∧
       (u.feed (gridAnsi v.grid)).u8acc = 0 ∧
       (u.feed (gridAnsi v.grid)).modes.insert = false ∧
-      (u.feed (gridAnsi v.grid)).modes.wrap = true := by
+      (u.feed (gridAnsi v.grid)).modes.wrap = true ∧ (u.feed (gridAnsi v.grid)).sb = u.sb := by
   -- `insert`/`wrap` are `Walking` invariants the walk re-establishes, surfaced by
   -- `paint_rows`. (origin rides the `Quiet` family instead — `quiet_gridAnsi` — since it is
   -- about the whole `gridAnsi` term and would not survive `gridAnsi_eq`'s rewrite here.)
@@ -1271,7 +1279,7 @@ theorem gridAnsi_writes_grid {u v : Vt} (hcols : u.cols = v.cols) (hrows : u.row
     ∀ i (hi : i < v.grid.toList.length), v.grid.toList[i] = v.grid.getD i (blankRow v.cols {}) :=
     fun i hi => by
     rw [Array.getElem_toList, getD_lt' v.grid i (blankRow v.cols {}) (by simpa using hi)]
-  obtain ⟨hcell, hgsz', hrl', hpg', hpu', hpa', hpi', hpw', -⟩ :=
+  obtain ⟨hcell, hgsz', hrl', hpg', hpu', hpa', hpi', hpw', hpsb⟩ :=
     paint_rows hub hpos v.grid.toList 0 (({ u with pen := ({} : Pen) }).moveTo 0 0) {} hwalk
       (by
         rw [Nat.zero_add]; exact hrs_len)
@@ -1280,7 +1288,7 @@ theorem gridAnsi_writes_grid {u v : Vt} (hcols : u.cols = v.cols) (hrows : u.row
       (fun i hi => by rw [htlist i hi, Nat.zero_add])
   refine
     ⟨grid_eq_of_cells (cols := v.cols) (rows := v.rows) hgsz' hvsz ?_ (fun y' _ => hrl' y') ?_,
-      hpg', hpu', hpa', hpi', hpw'⟩
+      hpg', hpu', hpa', hpi', hpw', hpsb.trans (by rw [frame_moveTo])⟩
   · intro y' hyr x _; exact hcell y' x hyr
   · intro y' _; exact (hvok y').size
 
@@ -1300,7 +1308,8 @@ theorem gridAnsi_writes_grid' {u : Vt} {tg : Array Row} {cols rows : Nat} (hcols
       (u.feed (gridAnsi tg)).pstate = .ground ∧
       (u.feed (gridAnsi tg)).u8need = 0 ∧
       (u.feed (gridAnsi tg)).u8acc = 0 ∧
-      (u.feed (gridAnsi tg)).modes.insert = false ∧ (u.feed (gridAnsi tg)).modes.wrap = true :=
+      (u.feed (gridAnsi tg)).modes.insert = false ∧
+      (u.feed (gridAnsi tg)).modes.wrap = true ∧ (u.feed (gridAnsi tg)).sb = u.sb :=
   gridAnsi_writes_grid (u := u) (v :=
     { u with
       grid := tg, cols := cols, rows := rows })
@@ -2047,7 +2056,7 @@ theorem alt_pre_switch {z : Vt} {mg : Array Row} {mc : Cursor} {mp : Pen} {cols 
       ((z.feed (gridAnsi mg)).feed (penSgr mp ++ csiNum2 (mc.y + 1) (mc.x + 1) 0x48)).g1Line =
         false := by
   -- A: the main paint. Its result is discarded; only these framed facts survive.
-  obtain ⟨-, -, hAun, hAua, hAins, hAwrap⟩ :=
+  obtain ⟨-, -, hAun, hAua, hAins, hAwrap, -⟩ :=
     gridAnsi_writes_grid' (u := z) (tg := mg) hcols hrows hpos hub htop hbot hg hun hua hins hwrap
       horg hg0 hg1 hgsz hrlens hmok hmsz
   have hAg : (z.feed (gridAnsi mg)).pstate = .ground := (quiet_gridAnsi mg z hg horg).1

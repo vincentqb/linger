@@ -160,4 +160,35 @@ example :
   (resume_grid { vt := Vt.Vt.init 80 1, cwd := "", labels := [] } rfl rfl rfl (Vt.good_init 80 1)
       (Vt.renderable_init 80 1)).2
 
+/-- **§Resume (scrollback).** A quiescent checkpoint comes back byte-identical, and replaying it
+into a fresh emulator of the session's size installs the session's history above the screen —
+oldest first, each row at the session's width, trimmed from the oldest end to the byte budget.
+
+This is the row `THEOREMS.md`'s A5 anchor could not claim while the scrollback rested on the
+round-trip fixtures alone. `.toList`, not `.sb`: a ring that has wrapped and a ring built from
+index 0 are the same history in different records, and `Render.restore_sb_any` explains why
+comparing the records instead would be a false claim about a true capability.
+
+`hne` is the branch, not a restriction smuggled in: with nothing to replay `restore` emits no
+`ED 3` and the client keeps its own scrollback, which is `Render.restore_sb_keeps_of_empty`
+rather than a weaker form of this. The exit criterion for this claim is the *first* conjunct —
+dropping `wRing` from `save` must break it, since a checkpoint that does not carry history
+cannot restore one. -/
+theorem resume_sb (c : Ckpt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0)
+    (ha : c.vt.u8acc = 0) (hgood : Vt.Good c.vt) (hren : Vt.Renderable c.vt)
+    (hne : (Render.sbRows c.vt).isEmpty = false) :
+    load (save c) = some c ∧
+      ((Vt.Vt.init c.vt.cols c.vt.rows).feed (Render.restore c.vt)).sb.toList =
+        (Render.sbRows c.vt).toList := by
+  refine ⟨Checkpoint.load_save_exact c h h8 ha, ?_⟩
+  have hcolseq : (Vt.Vt.init c.vt.cols c.vt.rows).cols = c.vt.cols := by
+    show Vt.clampDim c.vt.cols = c.vt.cols
+    have := hgood.colsPos; have := hgood.colsLe; simp only [Vt.clampDim]; omega
+  have hrowseq : (Vt.Vt.init c.vt.cols c.vt.rows).rows = c.vt.rows := by
+    show Vt.clampDim c.vt.rows = c.vt.rows
+    have := hgood.rowsLe; have := hgood.rowsPos; simp only [Vt.clampDim]; omega
+  exact
+    Render.restore_sb_any c.vt (Vt.Vt.init c.vt.cols c.vt.rows) (Vt.good_init _ _)
+      (Vt.renderable_init _ _) hgood hren hcolseq hrowseq rfl rfl hne
+
 end Linger.Core

@@ -36,24 +36,29 @@ it rotted in this file already.
 
 ## Where things stand — read this first after any compaction
 
-1. **One spec is in flight: `specs/scrollback-fidelity.md`.** Steps 1–3 are done
-   (2026-09-11: the emitter, the positive scroll specification, the `Fixes (·.sb)`
-   tail, and `push_walk`). **Step 4 — the composition (`restore_sb_any` →
-   `restore_sb_reachable` → `Resume.resume_sb`) — is next**, and every piece it
-   consumes is now in the tree. Read its "Where this stands" before anything
-   else: it names the two things not to re-derive (`replayEq`'s `sb` conjunct is
-   blind to bugs *inside* `sbRows` — the literal-anchored fixtures are the oracle
-   for the fit and the order — and the twelve mode bytes ending `scrollbackAnsi`
-   are behaviourally inert but proof-load-bearing), and its Step 3 record carries
-   the corrected `push_walk` statement plus why `gridAnsi` can never be a
-   `Fixes (·.sb)` lemma.
+1. **One spec is in flight: `specs/scrollback-fidelity.md`.** Steps 1–4 are done
+   (2026-09-11) — the emitter, the positive scroll specification, the
+   `Fixes (·.sb)` tail, `push_walk`, and the composition: `restore_sb_any` /
+   `restore_sb_reachable` / `restore_sb_exact` / `Linger.Core.resume_sb`, plus
+   `restore_sb_keeps_of_empty` for the branch the guarded `ED 3` forces. The
+   scrollback has left THEOREMS.md's fixture-carried list. **Only Step 5 remains
+   and it is optional and off the critical path** (the `+4` slack made honest,
+   `scrollbackAnsi_le` to retire the byte-budget fixtures, and the decision about
+   `Render.history`'s dead `withAnsi` branch). Read the Step 4 record before
+   touching the ring: it names six findings, of which the two most expensive to
+   rediscover are that `Fixes` **cannot** state the `ED 3` (it is an invariance
+   predicate; the byte walk is by hand) and that `Good` says nothing whatever
+   about `sb.start`, so the `ED 3` is the only source in the repo for what
+   `push_walk` needs. Also do not re-derive: `replayEq`'s `sb` conjunct is blind
+   to bugs *inside* `sbRows` — the literal-anchored fixtures are the oracle for
+   the fit and the order — and the twelve mode bytes ending `scrollbackAnsi` are
+   behaviourally inert but proof-load-bearing **twice over** now.
    `specs/vt-toolkit.md` is **queued, not started** — a second file in `specs/`,
    deliberately: it exists so its measured facts (the seal's 211-site blast
    radius, of which exactly one is real code; the reachability harvest that
    already exists as `LiveReachableVt`; and the tested negative result that Lake
    cannot gate an import closure inside one package) are not re-derived, and so
-   the seal-before-harvest ordering is on the record. Do not start it while
-   Step 4 is open.
+   the seal-before-harvest ordering is on the record. It is now the next item.
    Everything else is closed and lives in `specs/archive/`; each file records
    its completion. The records carry the nuance this list used to duplicate,
    and the duplicates rotted. (There is no `PLAN.md`: its prior-art links live

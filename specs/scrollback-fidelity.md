@@ -19,10 +19,10 @@ statements are byte-identical to what they were (checked line by line —
 below for what was built, what the spec had wrong, and the two decisions taken
 against its recommendation.
 
-**Next step:** Step 4 — the composition (`restore_sb_any` → `restore_sb_reachable` →
-`Resume.resume_sb`). Every piece it consumes is now in the tree: `push_walk`,
-`fixes_sb_paint_prefix`, `fixes_sb_regionAnsi`/`tabsAnsi`/`tail`, and `paint_rows`' `sb`
-conjunct. Records for Steps 2 and 3 are below.
+**Next step:** none on the critical path — **Step 4 is COMPLETE** (2026-09-11). Only Step 5
+(optional, off critical path) remains: `rowAnsi_len_seed`'s `+4` made honest,
+`scrollbackAnsi_le` to retire Definition-of-done item 3's fixtures, and the decision about
+`Render.history`'s dead `withAnsi` branch. Records for Steps 2, 3 and 4 are below.
 
 **Step 2 is COMPLETE** (2026-09-11). The positive scroll specification exists, zero
 emitter change: `scrollUpIn_rows`, `scrollUpIn_sb_push`, `scrollUpIn_sb_of_false`,
@@ -546,19 +546,81 @@ that the tail family is not vacuous over `ED`.
 
 ### Step 4 — the claim
 
-Status: pending.
+Status: **COMPLETE (2026-09-11).**
 
-`restore_sb_any` → `restore_sb_reachable` → `Resume.resume_sb`, plus
-`restore_sb_exact` (`= v.sb.toList` when the history is short enough and its rows
-are already the session's width, via `fitRow_id_of_rowOk`). `.toList`, not `.sb`,
-is deliberate and honest: the session's ring may have wrapped (`start ≠ 0`) while
-the receiver's is built from index 0, so the two records differ in representation
-and agree as histories. `THEOREMS.md` A5 gains the row; the fixture-carried list
-at `:45` loses scrollback.
+`restore_sb_any` → `restore_sb_reachable` → `Linger.Core.resume_sb`, plus `restore_sb_exact`
+(`= v.sb.toList` via `sbRows_toList_eq` + `fitRow_id_of_rowOk`) and — the thing this step's
+plan did not anticipate — `restore_sb_keeps_of_empty`, because the guarded `ED 3` makes the
+claim **two branches** and only one of them is this one. `THEOREMS.md` A5 gained the
+scrollback row and its fixture-carried list lost it; the `Render.restore` row at `:138` and
+the §Replay paragraph at `:44` were both updated, since each said in its own words that
+`restore_sb_any` did not exist.
 
-**Exit:** gates green; `Linger/Core/Checkpoint.lean`'s `wRing` dropped from `save`
-must break `resume_sb`'s first conjunct (via `load_save_exact`), confirming the
-end-to-end claim depends on the checkpoint carrying history.
+**Six findings from doing it, in descending order of how much they would cost to rediscover.**
+
+1. **`Fixes` cannot state the `ED 3`, because `Fixes` is invariance.** It is definitionally
+   `π (v.feed bs) = π v`, so `fixes_csiNum_arg` and `fixes_csi_digits_tail` hard-wire the
+   wrong conclusion and neither can be borrowed. `ed3_empties` walks the four bytes by hand
+   (`keeps_csi_open` → `csi_param_run_inter` + `csi_digits_value` → `csi_final_step_eq` →
+   `arg_of_one`). `csi_digits_value` is the one of the two digit-run lemmas that exposes
+   `ignore`, which is exactly the field `sb_csiDispatch_ed3` needs and the one
+   `csi_digits_run_eq` drops.
+2. **`sb_csiDispatch_ed3` must carry `s.ignore = false`, and its `ED 2` twin must not.**
+   `csiDispatch` opens `if s.ignore then v`, so on that branch the `ED 3` claim collapses to
+   `v.sb = {}` — false for any `v` with history. `sb_csiDispatch_ed2` closes the same branch
+   with `v.sb = v.sb` and can therefore quantify over every collector. Measured, not reasoned:
+   `¬∀ v s, s.arg 0 0 = 3 → (v.csiDispatch s 0x4A).sb = ({} : Ring)` is provable.
+3. **`u8need = 0` after the history paint does not exist in the repo and cannot.** The mode
+   tail's `Fixes` precondition therefore cannot be discharged by composition — the fix is
+   structural, `fixes_sb_of_esc_lead`, the exact `Fixes`-shaped twin of `mmap_of_esc_lead`
+   with the same `abortUtf8` case split. This gives the twelve trailing mode bytes a
+   **second, independent** proof-load-bearing role: `Modes.lean` needs them ESC-leading and
+   contiguous for `insert`/`wrap`/`origin`, and the ring needs the same shape here.
+4. **`Good` says nothing whatever about `sb.start`.** It bounds `sb.size` and nothing ties
+   `start` to `data.size` — `Ring` carries no such invariant and `Good` adds no field. So
+   `push_walk`'s `hstart` has exactly one source in the repo, the `ED 3`, and the byte is
+   load-bearing rather than merely anti-stacking. Confirmed by grep: `sb.start = 0` occurs in
+   `Theorems/` only as `push_walk`'s own hypothesis and `Painted.sbStart`.
+5. **`Good v`, not `Good w`, is what `hroom` needs**, and the two are not interchangeable
+   because they bound different rings. After the `ED 3` the receiver's summand is zero and
+   the whole burden is `(sbRows v).size ≤ sbCap`, a fact about the *session*. Only `.sbLe` is
+   consumed, so `v.sb.size ≤ sbCap` is the honest weakest form; `Good v` is kept because
+   reachability supplies it.
+6. **The alt branch has *two* row pins, not one.** The visible paint's is `v.grid`'s, as
+   expected. The *discarded* main paint's is `mainGrid`'s — `?1049h` throws its cells away,
+   but a stashed grid taller than the receiver pushes **before** the switch runs. Both were
+   break-verified separately, and this is the substantive reason the alt branch cannot be
+   folded into the main one at this projection.
+
+**Hypotheses that turned out derivable and were dropped rather than stated:** `hfits`
+(`v.rows < 65535`) wherever `Good w` and `hrows` are present, and `hpos`/`hub` wherever
+`Good w` and `hcols` are. The same redundancy exists in four shipped grid theorems
+(`prologue_sticky`, `paint_entry`, `restore_grid_any_main`, `restore_grid_any`), which all
+carry `hvsz : v.grid.size = v.rows` alongside `Renderable v` although it *is* `hvren.main.1`
+— a pure call-site cleanup, not taken here. `restore_sticky_any`'s `hfits` is real: it
+deliberately takes no `Good`.
+
+**Where the seventh conjunct went.** `gridAnsi_keeps_sb` is a two-line projection out of
+`gridAnsi_writes_grid`, whose proof already established the fact and threw it away with a `-`
+at the `paint_rows` `obtain`. Widening cost one line at one call site (`alt_pre_switch`'s
+six-wide pattern needed a seventh `-`); a standalone proof would have duplicated ~55 lines of
+`Walking` witness. The repo had already made this same trade twice for this same theorem.
+
+**Breaks (all at the statement level, never the emitter — the recorded lesson from Step 3):**
+`hgv : Good v` dropped → `hroom`'s `omega` prints the surviving counterexample with
+`v.sb.size` unbounded; `ed3_empties` replaced by `Good.feed`'s `sbLe` → type mismatch naming
+`sb.start = 0` as the gap, and `hroom` still open because two independent `≤ sbCap` bounds do
+not add to one; `Renderable v` weakened to `v.grid.size ≤ v.rows` and to `≥` → both directions
+fail at the paint, the `≥` one being the direction in which the *conclusion* is false;
+`mainGrid`'s pin weakened → fails independently of `v.grid`'s; `hrok` dropped from
+`sbRows_toList_eq` → `simp made no progress`, with a width-0-row counterexample evaluated;
+`sbRows_size_le`'s `≤` strengthened to `<` → fails, the bound being attained on a real 6×3
+session. And the step's own exit criterion: **`wRing v.sb` commented out of
+`Linger/Core/Checkpoint.lean`'s `wVt` breaks `rt_vt`**, hence `load_save_exact`, hence
+`resume_sb`'s first conjunct — a checkpoint that does not carry history cannot restore one.
+
+**Not needed, contrary to the plan:** a `maxHeartbeats` raise anywhere (`HEARTBEAT_CAP`
+unmoved), and any new `Linger/Core` definition (coverage cap unmoved at 0).
 
 ### Step 5 — optional
 
