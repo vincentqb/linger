@@ -251,9 +251,8 @@ can't leak into another, a row's identity is its socket name).
 `tests/e2e.sh` — the whole-deliverable gate. `specs/archive/lean-zmx.md`
 — the build record.
 
-Prior art: [tmux](https://github.com/tmux/tmux/) (the gold standard),
-[zmx](https://github.com/neurosnap/zmx) and
-[abduco](https://github.com/martanne/abduco) (the attach/detach
-decoupling linger mirrors, down to the verb surface), and
-[zellij](https://github.com/zellij-org/zellij) (the interface bar —
-its crashes under load are why §Bound and §Total are theorems here).
+Prior art: [screen](https://www.gnu.org/software/screen/),
+[tmux](https://github.com/tmux/tmux/),
+[zmx](https://github.com/neurosnap/zmx),
+[abduco](https://github.com/martanne/abduco), and
+[zellij](https://github.com/zellij-org/zellij).
