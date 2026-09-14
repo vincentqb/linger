@@ -15,24 +15,129 @@
 set -e
 cd "$(dirname "$0")/.."
 fail() { printf 'GATE FAIL: %s\n' "$1" >&2; exit 1; }
-! git grep -n 'sorry' -- 'Linger/Core/*' 'Theorems/*' || fail "sorry found"
-! git grep -n 'sorryAx' -- 'Linger/Core/*' 'Theorems/*' || fail "sorryAx found"
-! git grep -nE '\bpartial def\b' -- 'Linger/Core/*' || fail "partial def in pure core"
-! git grep -nE ': *IO ' -- 'Linger/Core/*' || fail "IO in pure core"
+
+# --- code_grep: the gates read CODE, not prose -------------------------------
+# Every source grep below goes through this, and the reason is one trap on its
+# FOURTH sighting: these greps read DOCSTRINGS as well as code. `native_decide`
+# in a doc comment under `Theorems/` fails the purity gate exactly as it would in
+# a proof (fb6a0e6; again 2026-08-29; again 2026-09-13), and the decoder-forge
+# gate once failed on its OWN documentation, which quoted the forge it had just
+# removed. That last one was fixed by teaching ONE gate to skip backtick-quoted
+# text — and a fix inside one gate is a fact the next gate has to rediscover,
+# which is exactly how this reached a fourth sighting. So it lives here, once,
+# and a gate inherits it by being written.
+#
+# `code_grep <ere> <pathspec>...` is `git grep -nE` minus every backtick-DELIMITED
+# span: same `file:line:content` output, same exit convention (0 = found), and the
+# content printed VERBATIM — a diagnostic that quotes a line the file does not
+# contain sends the reader after the wrong string (the friend-set gate's first
+# draft did that). An UNPAIRED backtick and everything after it is KEPT, because
+# Lean writes `Name literals and `(quotations) with a single one and those are
+# code. Backticks only: a `--` comment still counts as code, deliberately —
+# commented-out code is code someone uncomments, and the trap here is prose.
+#
+# Two rules for any regex handed to it, both because the matcher is POSIX awk and
+# not GNU grep:
+#   * no `\b` — spell a word boundary `(^|[^[:alnum:]_])x([^[:alnum:]_]|$)`;
+#   * no backslash escapes — spell a literal as a bracket expression: `[.]`.
+# The regex travels in the ENVIRONMENT rather than through `-v`, because `-v`
+# escape-processes its value and would eat a backslash before awk compiled it.
+# shellcheck disable=SC2016  # $0/$1 below are awk's fields; single quotes are the point
+CODE_AWK='
+BEGIN { re = ENVIRON["CG_RE"] }
+{ code = ""; rest = $0
+  while ((i = index(rest, "`")) > 0) {
+    j = index(substr(rest, i + 1), "`")
+    if (j == 0) break                        # unpaired: the rest is code, verbatim
+    code = code substr(rest, 1, i - 1) " "   # a SPACE, so deleting a span can never
+    rest = substr(rest, i + j + 1) }         # splice a match out of its two sides
+  if ((code rest) ~ re) { printf "%s:%d:%s\n", FILENAME, FNR, $0; hits++ } }
+END { exit (hits > 0 ? 0 : 1) }'
+code_grep() {                                # code_grep <ere> <pathspec>...
+  cg_re="$1"; shift
+  cg_files="$(git ls-files -- "$@")"
+  [ -n "$cg_files" ] || fail "code_grep: nothing tracked matches '$*' (a gate points at a path that moved)"
+  # Deliberate word split: no tracked path in this tree has a space. `/dev/null`
+  # is the last operand so awk can never fall back to stdin and hang.
+  # shellcheck disable=SC2086
+  CG_RE="$cg_re" awk "$CODE_AWK" $cg_files /dev/null
+}
+code_count() { code_grep "$@" | awk 'END { print NR + 0 }'; }   # -> a number
+
+# A pathspec that stops matching makes a `! code_grep …` gate pass by finding
+# nothing, and a ratchet read through `code_count` reads 0 — the one way a gate
+# rots in silence. `Linger/Core/Vt.lean` used to carry the only such guard, for
+# the friend set; this is that guard generalized to every path named below. (It
+# cannot live inside `code_grep`, because `code_count` runs it down a pipe and an
+# `exit` there would only leave the subshell.)
+for p in Linger/Core Linger/Core/Vt.lean Linger/Core/Checkpoint.lean \
+         Linger/Runtime Linger/Runtime/Client.lean Theorems Tests E2E \
+         LingerTest.lean c/shim.c lakefile.lean lake-manifest.json; do
+  [ -e "$p" ] || fail "$p is gone — a gate below would pass by matching nothing"
+done
+
+! code_grep 'sorry' 'Linger/Core/*' 'Theorems/*' || fail "sorry found"
+! code_grep 'sorryAx' 'Linger/Core/*' 'Theorems/*' || fail "sorryAx found"
+! code_grep '(^|[^[:alnum:]_])partial def([^[:alnum:]_]|$)' 'Linger/Core/*' \
+  || fail "partial def in pure core"
+! code_grep ': *IO ' 'Linger/Core/*' || fail "IO in pure core"
 # Proofs must reduce in the kernel, never by compiled evaluation: a
 # `native_decide` in Theorems/ would trust the compiler + `Decidable`
 # instance instead of the kernel, and (unlike the tests, where evaluating
 # golden bytes is the point) that is a hole in a *proof*. THEOREMS.md's
 # "Reading a row" makes this a promise; this makes it enforced.
-! git grep -nE '\bnative_decide\b' -- 'Theorems/*' || fail "native_decide in a proof (Theorems/)"
+! code_grep '(^|[^[:alnum:]_])native_decide([^[:alnum:]_]|$)' 'Theorems/*' \
+  || fail "native_decide in a proof (Theorems/)"
 # the OS surface stays where AGENTS.md says it is
-[ "$(git grep -l '@\[extern' -- 'Linger/*' | tr -d ' ')" = "Linger/Posix.lean" ] \
+[ "$(code_grep '@[[]extern' 'Linger/*' | awk -F: '!seen[$1]++ { print $1 }' | tr -d ' ')" = "Linger/Posix.lean" ] \
   || fail "extern declarations outside Linger/Posix.lean"
+# `unsafe` and `@[implemented_by]` — the Lean-side twin of the `@[extern` gate just
+# above, and the only route that makes the theorems false OF THE SHIPPED BINARY rather
+# than of some value inside it (SCRATCHPAD.md, "the adversarial audit of the seal",
+# finding R4). Re-measured here, in `Theorems/Render/Ends.lean`, on v4.34.0-rc2:
+#
+#   unsafe def launderImpl (_v : Vt) : Vt := unsafeCast (0 : Nat)
+#   @[implemented_by launderImpl] def launder (v : Vt) : Vt := v
+#   theorem launder_id (v : Vt) : launder v = v := rfl
+#
+# → `Build completed successfully (108 jobs)`, `#print axioms launder_id` → "does not
+# depend on any axioms", and one `#eval` of the result's `colCount` → `Lean exited with
+# code 139`, a segfault. The kernel sees an honest identity; the compiled program reads
+# arbitrary memory. So every theorem about `launder` is true and none of them is about
+# what runs — and no proof can ever see that, because `@[implemented_by]` is by
+# construction the part the kernel does not check. A source-tree gate is the only
+# possible oracle, the SHIM_CAP species: evadeable by deliberately editing this line,
+# not by reverting a fix. Control: on the tree carrying that exhibit, every other gate
+# in this file said OK.
+#
+# TREE-WIDE and fail-closed — measured zero hits across all 71 tracked `.lean` files, so
+# there is nothing to grandfather and no exemption list to rot. `Tests/` and `E2E/` are
+# inside it on purpose: a suite that laundered a value would be asserting about a state
+# the binary cannot produce, which is this defect wearing a test's clothes.
+#
+# `unsafe` is matched as "not preceded by an identifier character", which catches the
+# keyword AND every `unsafe*` name in one alternative (`unsafeCast`, `unsafeIO`,
+# `unsafeBaseIO`, `unsafePerformIO`, …) instead of the single name the audit happened to
+# use. `implemented_by` is unanchored for the same reason: `@[implemented_by f]` and
+# `attribute [implemented_by f] g` both set it.
+#
+# DECLINED: adding `opaque`. Measured rather than deferred to the earlier decision —
+# `opaque` has 26 hits over tracked `.lean`, 22 of them the actual `@[extern`
+# declarations in `Linger/Posix.lean`, so the gate could only ever read "opaque outside
+# Posix.lean". What that would catch is not a forge: with no `@[extern]` and no
+# `@[implemented_by]` the compiler emits no value at all, so `opaque x : Vt` is a
+# liveness hazard, not an implementation that disagrees with the model (the R5 family,
+# which the spec bounds as compile-time prose). Its three remaining uses are the English
+# word in prose and `code_grep` strips none of them — all three are unbackticked — so the
+# helper does not make it cheaper either.
+! code_grep '(^|[^[:alnum:]_])(unsafe|implemented_by)' '*.lean' \
+  || fail "unsafe / @[implemented_by] in Lean — the compiled program may then disagree with every theorem about it (R4; see the comment on this gate)"
 [ "$(ls c/ | tr -d ' \n')" = "shim.c" ] || fail "more than one C file"
 # README promises "no external Lean dependencies"; make it fail-closed rather
 # than rest on inspection (README-promise coverage audit, the unbacked-promise
 # class). A `require` in the lakefile would pull in a package.
-! grep -qE '^[[:space:]]*require ' lakefile.lean || fail "external Lean dependency in lakefile.lean (README promises none)"
+! code_grep '^[[:space:]]*require ' 'lakefile.lean' \
+  || fail "external Lean dependency in lakefile.lean (README promises none)"
 [ "$(tr -d ' \n' < lake-manifest.json | grep -o '\"packages\":\[[^]]*\]')" = '"packages":[]' ] \
   || fail "lake-manifest has packages (README promises no external Lean deps)"
 
@@ -59,12 +164,13 @@ fail() { printf 'GATE FAIL: %s\n' "$1" >&2; exit 1; }
 # these three files IS the closure.
 toolkit_import_re='^(public |private |meta )*import '
 toolkit_closure() {
-  # Anchored at column 0, so neither a `--` comment nor a docstring's prose
-  # mention of `import all` counts. ';'-joined to keep the diagnostic one line.
-  tk_got="$(grep -E "$toolkit_import_re" "$1" | tr '\n' ';')"
+  # Anchored at column 0 AND read through `code_grep`, so neither a `--` comment,
+  # nor an inline `import all` inside backticks, nor a docstring line that happens
+  # to begin with the word counts. ';'-joined to keep the diagnostic one line.
+  tk_got="$(code_grep "$toolkit_import_re" "$1" | sed 's/^[^:]*:[0-9]*://' | tr '\n' ';')"
   [ "$tk_got" = "$2" ] || { \
     printf '  %s import lines:\n' "$1" >&2; \
-    { grep -nE "$toolkit_import_re" "$1" >&2 || printf '    (none)\n' >&2; }; \
+    { code_grep "$toolkit_import_re" "$1" >&2 || printf '    (none)\n' >&2; }; \
     printf '  want: %s\n   got: %s\n' "${2:-(no imports)}" "${tk_got:-(no imports)}" >&2; \
     fail "$1 left the vt-toolkit import closure (lakefile.lean's lean_lib LingerVt)"; }
 }
@@ -121,15 +227,14 @@ toolkit_closure Linger/Core/Terminal.lean \
 # spaces) and `meta import all Foo` both compile — measured, along with the two that do
 # not: `public import all` and `private import all` are rejected by Lean, and a tab is
 # refused before it reaches here. Anchoring at column 0 would leave a one-space evasion.
-# The cost is a prose hazard (AGENTS.md: these greps read docstrings), bounded by
-# measurement — the loose regex and the anchored one find the identical 78 lines today —
-# so: do not begin a docstring line with a bare `import all`.
+# The prose hazard the loose regex used to buy (AGENTS.md: these greps read docstrings)
+# is now `code_grep`'s, not this gate's — a backticked `import all Foo` anywhere in a
+# docstring is invisible to it. What survives is narrower and still worth writing down:
+# do not begin a docstring line with a BARE, unbackticked `import all`.
 VT_ALL_RE='^[[:space:]]*(meta[[:space:]]+)*import[[:space:]]+all[[:space:]]+'
 VT_FRIEND_EXACT='Linger/Core/Vt.lean Linger/Core/Render.lean Linger/Core/Terminal.lean Linger/Core/Checkpoint.lean'
 VT_FRIEND_DIRS='Theorems/ Tests/'
-[ -f Linger/Core/Vt.lean ] \
-  || fail "Linger/Core/Vt.lean is gone — the friend-set gate has no seal left to guard"
-git grep -nE "$VT_ALL_RE" -- '*.lean' \
+code_grep "$VT_ALL_RE" '*.lean' \
 | awk -F: -v seed='Linger/Core/Vt.lean' -v exact="$VT_FRIEND_EXACT" -v dirs="$VT_FRIEND_DIRS" '
   BEGIN { ne = split(exact, E, " "); nd = split(dirs, D, " ") }
   { mod = $3
@@ -172,7 +277,7 @@ git grep -nE "$VT_ALL_RE" -- '*.lean' \
 # need a syscall wrapper, or does Lean core already have it?" (see the
 # C-vs-Rust and shrink-the-shim notes in SCRATCHPAD.md).
 SHIM_CAP=22
-shim_n="$(grep -c LEAN_EXPORT c/shim.c)"
+shim_n="$(code_count 'LEAN_EXPORT' 'c/shim.c')"
 [ "$shim_n" -le "$SHIM_CAP" ] \
   || fail "shim grew to $shim_n wrappers (cap $SHIM_CAP); justify the new syscall and bump the cap"
 
@@ -185,16 +290,15 @@ shim_n="$(grep -c LEAN_EXPORT c/shim.c)"
 # be a theorem, so it is a gate, in the same spirit as SHIM_CAP above: evadeable
 # by deliberately writing something new, not by reverting a fix.
 # On the commit before Buf landed these three found 5 hits (Conn.out, Rt.ptyIn,
-# Cli.queryInfo's accumulator, and two .extract compactions).
-! grep -qE '^[[:space:]]+[a-zA-Z_]+ : ByteArray' Linger/Runtime/*.lean \
-  || { grep -nE '^[[:space:]]+[a-zA-Z_]+ : ByteArray' Linger/Runtime/*.lean; \
-       fail "a ByteArray field in Linger/Runtime (use Linger.Core.Buf, which is proved)"; }
-! grep -qE 'mut [a-zA-Z_]+ : ByteArray' Linger/Runtime/*.lean \
-  || { grep -nE 'mut [a-zA-Z_]+ : ByteArray' Linger/Runtime/*.lean; \
-       fail "an accumulating ByteArray local in Linger/Runtime (use Linger.Core.Buf: it is capped)"; }
-! grep -qE '\.extract\b' Linger/Runtime/*.lean \
-  || { grep -nE '\.extract\b' Linger/Runtime/*.lean; \
-       fail "buffer arithmetic in Linger/Runtime (Buf.bufAdvance owns it, and is proved)"; }
+# Cli.queryInfo's accumulator, and two .extract compactions). Each used to spell its
+# regex twice — once to test, once to print the hits — and `code_grep` prints them, so
+# the duplicate is gone: two copies of a pattern is two things to keep in step.
+! code_grep '^[[:space:]]+[a-zA-Z_]+ : ByteArray' 'Linger/Runtime/*' \
+  || fail "a ByteArray field in Linger/Runtime (use Linger.Core.Buf, which is proved)"
+! code_grep 'mut [a-zA-Z_]+ : ByteArray' 'Linger/Runtime/*' \
+  || fail "an accumulating ByteArray local in Linger/Runtime (use Linger.Core.Buf: it is capped)"
+! code_grep '[.]extract([^[:alnum:]_]|$)' 'Linger/Runtime/*' \
+  || fail "buffer arithmetic in Linger/Runtime (Buf.bufAdvance owns it, and is proved)"
 
 # `linger watch`'s client-side read-only guards (pin-the-gaps item 1). Read-only
 # is enforced DAEMON-side: the 0x0 attach geometry sets `sizer := false` and
@@ -204,11 +308,11 @@ shim_n="$(grep -c LEAN_EXPORT c/shim.c)"
 # byte changes. That makes a grep the only honest oracle, the same species as
 # SHIM_CAP above; faking it as a pty assertion would be decoration.
 # `E2E/Watch.lean` covers guard A (the 0x0 attach), which IS observable.
-grep -qE 'if size != lastSize && !readOnly' Linger/Runtime/Client.lean \
+code_grep 'if size != lastSize && !readOnly' 'Linger/Runtime/Client.lean' > /dev/null \
   || fail "Client.attach lost its read-only resize guard (a watcher would fight the user's size)"
-grep -qE 'if !out.isEmpty && !readOnly' Linger/Runtime/Client.lean \
+code_grep 'if !out.isEmpty && !readOnly' 'Linger/Runtime/Client.lean' > /dev/null \
   || fail "Client.attach lost its read-only input guard (a watcher would forward keystrokes)"
-grep -qE 'sendMsg fd \(\.attach 0 0\)' Linger/Runtime/Client.lean \
+code_grep 'sendMsg fd [(][.]attach 0 0[)]' 'Linger/Runtime/Client.lean' > /dev/null \
   || fail "Client.attach no longer marks a read-only client with a 0x0 attach (the wire's only read-only bit)"
 
 # The checkpoint decoder must not grow its forge back (`specs/vt-toolkit.md` Step 2).
@@ -223,19 +327,18 @@ grep -qE 'sendMsg fd \(\.attach 0 0\)' Linger/Runtime/Client.lean \
 # Positive: the decoder goes through the smart constructor. Negative: no `Vt` field is
 # assigned anywhere in the file. `cols`/`rows`/`grid`/`bot`/`tabs` have no defaults, so a
 # fresh literal must name all five; `pstate`/`u8need`/`u8acc` catch a `{ v with … }`.
-# The leading-backtick exclusion is deliberate: these greps read prose as well as code
-# (AGENTS.md, and it has cost a full e2e run twice), and this file's docstrings have to be
-# able to QUOTE the forge they describe. A gate nobody can write about is a gate someone
-# deletes. The positive check wants a TRAILING SPACE for the same reason — in prose the
-# name is always closed by a backtick, in code it is followed by its first argument.
+# This pair is where the backtick rule was first learned: this file's docstrings have to
+# be able to QUOTE the forge they describe, and a gate nobody can write about is a gate
+# someone deletes. `code_grep` now owns that, for every gate — the leading-backtick class
+# and the TRAILING SPACE below are what is left of the local fix, kept because they still
+# bite on an UNPAIRED backtick, which `code_grep` deliberately treats as code.
 # Break-verified both ways: a real forge at the decoder's old position, and the call
 # deleted with the docstrings left in place.
-grep -qE '(^|[^`[:alnum:]_.])Vt\.ofDecoded ' Linger/Core/Checkpoint.lean \
+code_grep '(^|[^`[:alnum:]_.])Vt[.]ofDecoded ' 'Linger/Core/Checkpoint.lean' > /dev/null \
   || fail "Linger/Core/Checkpoint.lean no longer decodes through Vt.ofDecoded (a corrupt checkpoint could carry a zero column count)"
 FORGE='(^|[^`[:alnum:]_])(cols|rows|grid|bot|tabs|pstate|u8need|u8acc) *:='
-! grep -qE "$FORGE" Linger/Core/Checkpoint.lean \
-  || { grep -nE "$FORGE" Linger/Core/Checkpoint.lean; \
-       fail "a Vt field is assigned in Linger/Core/Checkpoint.lean — the decoder forge is back; go through Vt.ofDecoded, which validates"; }
+! code_grep "$FORGE" 'Linger/Core/Checkpoint.lean' \
+  || fail "a Vt field is assigned in Linger/Core/Checkpoint.lean — the decoder forge is back; go through Vt.ofDecoded, which validates"
 
 # heartbeat ratchet. A `set_option maxHeartbeats` raise is a MEASUREMENT, and it
 # has an expiry date that nothing else enforces: the 2026-08-18 factoring audit
@@ -248,7 +351,7 @@ FORGE='(^|[^`[:alnum:]_])(cols|rows|grid|bot|tabs|pstate|u8need|u8acc) *:='
 # `stripMagic` became a named stage). A new one means a proof got harder, which is
 # the signal design-for-provability says to read, not silence.
 HEARTBEAT_CAP=1
-hb_n="$(grep -rc 'set_option maxHeartbeats' Theorems/ | awk -F: '{s+=$2} END {print s+0}')"
+hb_n="$(code_count 'set_option maxHeartbeats' 'Theorems/*')"
 [ "$hb_n" -le "$HEARTBEAT_CAP" ] \
   || fail "maxHeartbeats raises grew to $hb_n (cap $HEARTBEAT_CAP); a proof got harder — read that, or re-measure and delete a stale one"
 
@@ -258,7 +361,7 @@ hb_n="$(grep -rc 'set_option maxHeartbeats' Theorems/ | awk -F: '{s+=$2} END {pr
 # without a two-pass argument) and `parseLs` (wants a `decreasing_by`). Ratcheted
 # so the keyword cannot creep back by habit; §Total in THEOREMS.md names both.
 RUNTIME_PARTIAL_CAP=2
-rp_n="$(grep -rc 'partial def' Linger/Runtime/*.lean | awk -F: '{s+=$2} END {print s+0}')"
+rp_n="$(code_count 'partial def' 'Linger/Runtime/*')"
 [ "$rp_n" -le "$RUNTIME_PARTIAL_CAP" ] \
   || fail "Linger/Runtime grew to $rp_n partial defs (cap $RUNTIME_PARTIAL_CAP); a do-block loop does not need the keyword"
 
@@ -287,8 +390,8 @@ git ls-files 'tests/*' | grep -qE '\.lean$' \
 # rules out a fuel parameter. The rest: `leanFiles` (filesystem depth), two `drain`s
 # (wall-clock deadline), `stripComments` (a two-token delimiter scan).
 E2E_PARTIAL_CAP=5
-ep_n="$(grep -rc 'partial def' E2E/*.lean LingerTest.lean | awk -F: '{s+=$2} END {print s+0}')"
+ep_n="$(code_count 'partial def' 'E2E/*' 'LingerTest.lean')"
 [ "$ep_n" -le "$E2E_PARTIAL_CAP" ] \
   || fail "E2E/ grew to $ep_n partial defs (cap $E2E_PARTIAL_CAP); a do-block loop does not need the keyword"
 
-printf 'gates OK — purity, the OS surface, the Vt friend set, and five ratchets\n'
+printf 'gates OK — purity, the OS and unsafe surfaces, the Vt friend set, and five ratchets\n'

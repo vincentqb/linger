@@ -265,7 +265,9 @@ structure Result where
   scan : Scan
   visible : Bytes
   replies : Bytes
-  deriving Repr
+
+-- No `deriving Repr`: it would need `Repr Vt`, which is the seal's read half
+-- (`structure Vt`, the audit's R6). Nothing used the instance.
 
 /-- Feed child output byte-by-byte. Per-step output is prepended with a bounded
 left append (normally a singleton), so megabyte passthrough remains linear. -/

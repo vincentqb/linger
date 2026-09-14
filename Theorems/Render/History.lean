@@ -77,10 +77,9 @@ theorem rowText_no_lf (row : Row) : ∀ b ∈ rowText row, b ≠ 0x0A := by
   exact absurd hge (by decide)
 
 /-- **Every byte is a line terminator or printable content.** -/
-theorem history_framing (v : Vt) : ∀ b ∈ history v false, b = 0x0A ∨ (0x20 ≤ b ∧ b ≠ 0x7F) := by
+theorem history_framing (v : Vt) : ∀ b ∈ history v, b = 0x0A ∨ (0x20 ≤ b ∧ b ≠ 0x7F) := by
   intro b hb
   unfold history at hb
-  rw [ite_eq_right (by decide)] at hb
   simp only [List.mem_flatMap] at hb
   obtain ⟨row, -, hmem⟩ := hb
   rcases List.mem_append.mp hmem with h | h
@@ -100,9 +99,8 @@ private theorem count_rows :
 /-- **One line per row, structurally.** A cell cannot forge a line: the newline count is
 the row count, whatever the session's program wrote into the grid. -/
 theorem history_lines (v : Vt) :
-    (history v false).count 0x0A = (v.sb.toList ++ v.grid.toList).length := by
+    (history v).count 0x0A = (v.sb.toList ++ v.grid.toList).length := by
   unfold history
-  rw [ite_eq_right (by decide)]
   exact count_rows _
 
 /-! ## The same two claims for `screenText` (`linger capture`)
@@ -169,18 +167,17 @@ theorem screenText_records (v : Vt) :
 /-- The same contract for `history`: the transcript parses as scrollback rows
 then screen rows, in order. -/
 theorem history_records (v : Vt) :
-    linesLF (history v false) = (v.sb.toList ++ v.grid.toList).map rowText := by
+    linesLF (history v) = (v.sb.toList ++ v.grid.toList).map rowText := by
   unfold history
-  rw [ite_eq_right (by decide)]
   exact linesLF_rows _
 
 /-- And the two streams agree byte-for-byte on the part they share: a capture
 is exactly the tail of the transcript — same renderer, same trimming, same
 framing — so an agent may mix the two verbs without normalizing anything. -/
 theorem history_screenText_suffix (v : Vt) :
-    history v false = v.sb.toList.flatMap (fun row => rowText row ++ [0x0A]) ++ screenText v := by
+    history v = v.sb.toList.flatMap (fun row => rowText row ++ [0x0A]) ++ screenText v := by
   unfold history screenText
-  rw [ite_eq_right (by decide), List.flatMap_append]
+  rw [List.flatMap_append]
 
 /-- `safeChar` is the identity on a character a cell is allowed to hold. The emit-side
 guard and the store-side one agree, which is what lets a repaint reproduce a stored

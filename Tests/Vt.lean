@@ -310,7 +310,7 @@ example :
 /-- History dump contains scrollback plus screen, oldest first. -/
 example :
           (let v := screen 5 2 "1\r\n2\r\n3\r\n4"
-           String.fromUTF8! ⟨(history v false).toArray⟩ == "1\n2\n3\n4\n") =
+           String.fromUTF8! ⟨(history v).toArray⟩ == "1\n2\n3\n4\n") =
       true := by
   native_decide
 

@@ -547,7 +547,7 @@ never leaves the screen, and the screen paint overwrites it) and `rows + 1` give
 `"aa\nbb\ncc\n\ndd\nee\n"` (one spurious blank row, pushed *after* the newest
 history row and carrying the pen the last painted row left in effect). -/
 example :
-    (String.fromUTF8! ⟨(history ((dirtySb 6 2).feed (restore scrolled)) false).toArray⟩ ==
+    (String.fromUTF8! ⟨(history ((dirtySb 6 2).feed (restore scrolled))).toArray⟩ ==
         "aa\nbb\ncc\ndd\nee\n") =
       true := by
   native_decide
@@ -872,7 +872,7 @@ a five-row screen leave a capture of exactly five lines while the transcript
 keeps all eight. -/
 example :
     (let v := screen 20 5 (String.intercalate "\r\n" ((List.range 8).map (fun i => s!"l{i}")))
-     (screenText v).count 0x0A == 5 && (history v false).count 0x0A == 8) =
+     (screenText v).count 0x0A == 5 && (history v).count 0x0A == 8) =
       true := by
   native_decide
 

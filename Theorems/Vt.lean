@@ -5155,10 +5155,39 @@ theorem renderable_resize {v : Vt} (h : Renderable v) (cols rows : Nat) :
 /-! ### §LiveReachable — the states a running session can actually hold
 
 The predicate a replay theorem may assume: the least set containing a fresh
-emulator and closed under the three things a live session does to one — feed pty
-bytes, resize on attach, and forget partial parser state (what a checkpoint
-save/load does). Fidelity is claimed for these and not for an arbitrary decoded
-checkpoint, which no theorem can vouch for. -/
+emulator and closed under the things a live session does to one — feed pty
+bytes, resize on attach, forget partial parser state (what a checkpoint
+save/load does), **and come off disk through the decoder's door**.
+
+**The fifth rung arrived after finding R2** (SCRATCHPAD.md), and the earlier prose
+here — "fidelity is claimed for these and not for an arbitrary decoded checkpoint,
+which no theorem can vouch for" — was true when the door only decided `Good`. It is
+not any more: `Vt.ofDecoded` now decides `Renderable` and the ruler as well, so
+`ofDecoded_good`/`ofDecoded_renderable`/`ofDecoded_tabsOk` vouch for exactly the
+three components the relation supplies, and `ofDecoded_u8Ok` for the fourth because
+the door *fixes* `u8need := 0` and `u8acc := 0`.
+
+The premise is the door's own conclusion (`Vt.ofDecoded … = some v`) and that is
+load-bearing rather than stylistic. Step 3 measured a rung premised on `Good v`
+**unsound**: `Good` implies neither the grid's shape nor a zeroed UTF-8
+accumulator, so that rung broke `renderable_of_liveReachable` and
+`u8Ok_of_liveReachable` — the two lemmas the relation exists to supply. Do not
+re-derive that; the error texts are in the Step 3 record.
+
+What the rung widens, deliberately: all four `*_of_liveReachable` lemmas now speak
+of decoded states too, so every `Render.restore_*_reachable` theorem — whose
+statements are unchanged — covers a receiver or a subject that came off disk, and
+`Session.LiveVt` becomes provable for a **resumed** daemon
+(`Session.liveVt_boot_of_load`, via `Checkpoint.load_live`). That last one is why
+the rung was added at all: without it the resumed session's shape invariant travels
+through `renderable_feed`/`renderable_resize` one operation at a time instead of
+through one daemon-level theorem.
+
+What it does **not** widen: nothing here says a ring row is the screen's width.
+`Vt.resize` leaves the scrollback at its old width by design, so
+`Render.restore_sb_exact`'s `hrok` is immovable by any amount of reachability — Step
+3's measurement, and the reason the decoder deliberately does not validate the ring
+either. -/
 
 inductive LiveReachableVt : Vt → Prop where
   | init (cols rows : Nat) : LiveReachableVt (Vt.init cols rows)
@@ -5166,16 +5195,35 @@ inductive LiveReachableVt : Vt → Prop where
   | resize {v : Vt} (h : LiveReachableVt v) (cols rows : Nat) :
       LiveReachableVt (v.resize cols rows)
   | quiesce {v : Vt} (h : LiveReachableVt v) : LiveReachableVt v.quiesce
+  /-- **The resume rung.** A `Vt` the decoder's door accepted is one a live session can
+  hold — not because the record on disk was trustworthy, but because the door refuses
+  every record that does not describe such a state. The premise is `Vt.ofDecoded`'s own
+  `some`, never `Good v`; see this section's docstring for why that distinction is the
+  difference between sound and unsound. -/
+  | ofDecoded {cols rows : Nat} {grid : Array Row} {cursor : Cursor} {pen : Pen} {modes : Modes}
+      {top bot : Nat} {tabs : Array Bool} {sb : Ring}
+      {altGrid : Option (Array Row × Cursor × Pen)} {saved : Saved} {title : String}
+      {g0Line g1Line shiftOut bell : Bool} {v : Vt}
+      (h :
+        Vt.ofDecoded cols rows grid cursor pen modes top bot tabs sb altGrid saved title g0Line
+            g1Line shiftOut bell =
+          some v) :
+      LiveReachableVt v
 
 /-- **The shape hypothesis, discharged.** Every state a live session can hold is
 one the row painter can express — so the replay theorem needs no side condition
-on the grid, and cannot be satisfied vacuously by excluding awkward states. -/
+on the grid, and cannot be satisfied vacuously by excluding awkward states.
+
+The `ofDecoded` arm is what widens this from "every state a fresh boot reaches" to
+"every state the daemon can hold, resumed sessions included", and it is the arm a
+`Good`-premised rung could not have closed (§LiveReachable's docstring). -/
 theorem renderable_of_liveReachable {v : Vt} (h : LiveReachableVt v) : Renderable v := by
   induction h with
   | init c r => exact renderable_init c r
   | feed _ bytes ih => exact renderable_feed ih bytes
   | resize _ c r ih => exact renderable_resize ih c r
   | quiesce _ ih => exact renderable_quiesce ih
+  | ofDecoded hd => exact ofDecoded_renderable hd
 
 /-- …and `Good` likewise, so the two invariants travel together. -/
 theorem good_of_liveReachable {v : Vt} (h : LiveReachableVt v) : Good v := by
@@ -5184,6 +5232,7 @@ theorem good_of_liveReachable {v : Vt} (h : LiveReachableVt v) : Good v := by
   | feed _ bytes ih => exact Good.feed bytes ih
   | resize _ c r ih => exact Good.resize c r ih
   | quiesce _ ih => exact Good.set_ground (Good.set_u8 0 0 (by omega) ih)
+  | ofDecoded hd => exact ofDecoded_good hd
 
 /-- **The decoder invariant a live state carries.** Whenever no UTF-8 sequence is pending the
 accumulator is zero — `stepGround` zeroes it on the byte that *completes* a sequence, and
@@ -5261,12 +5310,38 @@ theorem u8Ok_feed : ∀ (bs : List UInt8) {v : Vt}, U8Ok v → U8Ok (v.feed bs)
     rw [show v.feed (b :: bs) = (v.step b).feed bs from rfl]
     exact u8Ok_feed bs (u8Ok_step b h)
 
+/-- **The fourth component the resume rung needs, and the only one the door does not
+already claim.** `Vt.ofDecoded` *fixes* `u8need := 0` and `u8acc := 0` rather than
+validating them — parser state is deliberately not persisted (`Checkpoint.wVt`), so there
+is nothing on disk to check — which makes `U8Ok` immediate at the door.
+
+This is also the component that makes the premise's shape matter. `Good` bounds `u8need`
+and says nothing whatever about `u8acc`, so a rung premised on `Good v` cannot reach this
+claim; Step 3 measured exactly that failure (`invalid ▸ notation, argument hg.u8Le has type
+v.u8need ≤ 3, equality expected`). -/
+theorem ofDecoded_u8Ok {cols rows : Nat} {grid : Array Row} {cursor : Cursor} {pen : Pen}
+    {modes : Modes} {top bot : Nat} {tabs : Array Bool} {sb : Ring}
+    {altGrid : Option (Array Row × Cursor × Pen)} {saved : Saved} {title : String}
+    {g0Line g1Line shiftOut bell : Bool} {v : Vt}
+    (h :
+      Vt.ofDecoded cols rows grid cursor pen modes top bot tabs sb altGrid saved title g0Line g1Line
+          shiftOut bell =
+        some v) :
+    U8Ok v := by
+  unfold Vt.ofDecoded at h
+  split at h
+  · cases h
+    intro _
+    rfl
+  · exact absurd h (by simp)
+
 theorem u8Ok_of_liveReachable {v : Vt} (h : LiveReachableVt v) : U8Ok v := by
   induction h with
   | init c r => exact u8Ok_init c r
   | feed _ bytes ih => exact u8Ok_feed bytes ih
   | resize _ c r ih => intro hz; rw [show (Vt.resize _ c r).u8acc = _ from rfl] at *; exact ih hz
   | quiesce _ _ => intro _; rfl
+  | ofDecoded hd => exact ofDecoded_u8Ok hd
 
 /-- **…and the ruler, which is `specs/vt-toolkit.md` Step 3's harvest.** The one
 hypothesis `Render.restore_tabs_reachable` still had to ask for —
@@ -5279,13 +5354,16 @@ one of them.
 Note the two rungs that could have broken it and do not: `resize` reinstalls
 `defaultTabs` at the new width, and the `feed` rung covers `TBC 3`, which replaces
 the whole array — the invariant is *re-established* there rather than preserved,
-which is the shape `tabsOk_csiDispatch` records. -/
+which is the shape `tabsOk_csiDispatch` records. The `ofDecoded` rung is a third
+that could have: before finding R2 the door accepted a ruler of any length at all,
+and `ofDecoded_tabsOk` is exactly the claim that closed it. -/
 theorem tabsOk_of_liveReachable {v : Vt} (h : LiveReachableVt v) : TabsOk v := by
   induction h with
   | init c r => exact tabsOk_init c r
   | feed _ bytes ih => exact tabsOk_feed bytes ih
   | resize _ c r ih => exact tabsOk_resize _ c r
   | quiesce _ ih => exact tabsOk_quiesce ih
+  | ofDecoded hd => exact ofDecoded_tabsOk hd
 
 end Linger.Core.Vt
 

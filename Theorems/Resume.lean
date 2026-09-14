@@ -262,7 +262,20 @@ family above but a **new** one, whose subject is `load`'s output:
 
 No `Good`, no `Renderable`, no `TabsOk`, no quiescence, no `save` — only `load l = some c`,
 for an arbitrary `l`. Before R2 the grid and ruler halves of this were not provable at all,
-because `load` established nothing about either. -/
+because `load` established nothing about either.
+
+**The `ofDecoded` rung (2026-09-14) adds no statement to this family, and that is a
+measurement rather than an omission.** Every claim here is expressible from
+`Checkpoint.load_good`/`load_renderable`/`load_tabsOk`, which R2 already provided; what the
+rung supplies on top — `Checkpoint.load_live`, i.e. that a decoded screen is in the closure
+the `Render.restore_*_reachable` theorems quantify over — is only *needed* where the
+closure is the hypothesis of an induction, and the one induction in the tree that takes it
+is the daemon's (`Session.run_vt_live`). So the rung's payoff is
+`Theorems/Session.lean` §"Resume at the daemon", not another rung here. Where it does help
+locally is proof size: with `load_live` the three claims below reach
+`Render.restore_grid_reachable` and its siblings directly, receiver-quantified, instead of
+threading four hypotheses into the `_any` forms — a change with no effect on any statement,
+so it was not made. -/
 
 /-- **§Resume (grid), from disk.** Any byte string that loads, replayed into a fresh
 emulator of the checkpoint's size, reproduces the checkpoint's screen cell for cell.

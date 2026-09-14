@@ -283,7 +283,7 @@ example :
             | .send 9 .done => true
             | _ => false)
         -- …while the ring really holds more (non-vacuity: history shows 8)
-        && (Render.history s2.vt false).count 0x0A == 8
+        && (Render.history s2.vt).count 0x0A == 8
         -- a capture is a look: unread before, read after, nothing behind
         && unseen s1 &&
         !unseen s2 &&

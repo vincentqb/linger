@@ -8915,3 +8915,854 @@ run of `0xFF`, *before* `ofDecoded` is reached, so it takes the same branch as b
 is resized before its checkpoint, and a resized one would be accepted anyway, which is the
 whole point of not validating the ring. `sh tests/gates.sh`, all four build targets and
 `e2e coverage` are green here.
+## three lessons become mechanism — 2026-09-14 (R4 gated, the SIGINT trap enforced, the prose grep fixed once)
+
+Three facts this repo had already paid for, each held by prose, each converted to a check.
+They went in as **three separately break-verified commits** so the record stays legible —
+`step 1` (the prose/code helper), `step 2` (the R4 gate), `step 3` (the SIGINT refusal) —
+and in that order because step 2 is not *writable* without step 1: the grep the audit
+recommended matches its own documentation. Diff: **3 files, 201 insertions, 57 deletions**,
+no `.lean` touched, no ratchet moved.
+
+### The shape of all three
+
+Each was written down, and writing down is the weakest form of remembering: prose does not
+run. Two of the three had been written down *three times over* — which is worse than once,
+because three copies of a fact are three things to keep in step, and this repo's own
+AGENTS.md says so about markdown caps. The conversion in each case is the same move:
+**one home for the fact, and make that home executable.**
+
+---
+
+### (3) `code_grep` — the purity greps read prose, and the local fix did not travel
+
+**The lesson.** These greps read DOCSTRINGS as well as code. `native_decide` in a doc
+comment under `Theorems/` fails the gate exactly as it would in a proof (`fb6a0e6`; again
+2026-08-29; again 2026-09-13), and the Step 2 forge gate once failed on its *own*
+documentation, which quoted the forge it had just removed. **Fourth sighting.**
+
+**What held it before.** A sentence in AGENTS.md ("The purity greps read prose, not just
+code") plus, on exactly one gate, a leading-backtick character class:
+`(^|[^`[:alnum:]_])`. A fix inside one gate is a fact every later gate has to rediscover,
+which is the mechanism by which one trap reached a fourth sighting.
+
+**What holds it now.** `code_grep <ere> <pathspec>...` in `tests/gates.sh`: `git grep -nE`
+minus every backtick-**delimited** span, same `file:line:content` output, same exit
+convention, content printed **verbatim**. **21 pre-existing checks** now go through it
+(plus the new R4 gate = 22), including all four counting ratchets via `code_count`. A gate
+written tomorrow inherits the behaviour by being written.
+
+**Design decisions worth not re-deriving.**
+
+* **awk reads the files; it does not filter `git grep`.** A `git grep` prefilter would
+  itself have to answer the prose question, and it gets it wrong in one direction:
+  `: `x` IO ` does not match `: *IO ` before stripping and does after, so the prefilter
+  would silently drop a line the matcher would have caught.
+* **Two rules on any regex handed to it, both forced by POSIX awk.** No `\b` (not POSIX —
+  and in gawk `\b` inside a *string* is backspace), so a word boundary is spelled
+  `(^|[^[:alnum:]_])x([^[:alnum:]_]|$)`; and no backslash escapes, so a literal dot is
+  `[.]`. The regex travels in the **environment**, not through `-v`, because `-v`
+  escape-processes its value before awk ever compiles it.
+* **An unpaired backtick and everything after it is KEPT.** Lean writes `` `Name ``
+  literals and `` `(quotation) `` with a single backtick and those are code. Break-verified
+  (05c below): a real `native_decide` on a line also carrying a stray `` ` `` still fails.
+* **A deleted span leaves a SPACE**, not nothing, so removal can never splice a match out
+  of the two sides that surrounded it.
+* **Backticks only.** A `--` comment still counts as code, deliberately: commented-out code
+  is code someone uncomments, and the trap being closed is prose.
+* **The roots loop is new and is the helper's own precondition.** A pathspec that stops
+  matching makes `! code_grep …` pass by finding nothing and `code_count` read 0 — the one
+  way a gate rots in silence. It cannot live inside `code_grep`, because `code_count` runs
+  it down a pipe and an `exit` there only leaves the subshell. It **subsumes and replaces**
+  the old `[ -f Linger/Core/Vt.lean ]` guard, which was the same idea for one path.
+
+**Not converted, and why.** `toolkit_closure` **was** converted (it gains cover against a
+docstring line starting with `import `). Left alone: the `ls c/` single-C-file check and the
+`lake-manifest.json` packages check, which read filenames and JSON, not source text; and the
+`Tests/`-vs-`tests/` and zero-Python checks, which are `git ls-files` predicates. **The one
+real residual is `tests/e2e.sh` step 2c** — three greps on `Tests/Fuzz.lean` that cannot
+reach the helper, because `e2e.sh` runs `gates.sh` as a subprocess. They also carry two
+numbers (`failing 400`, `failingDeep 150`) outside `gates.sh`. Moving them into `gates.sh`
+would fix both and make `pre-commit` enforce them — which is a **tier** decision, by cost,
+and AGENTS.md records that the tier split was itself revised once on the same day it
+landed. Left for the owner; named here so it is not lost.
+
+**The before/after measurement, which is the part that makes this safe.** Every converted
+gate's hit set was dumped on the current tree with its 051b2b4 spelling and again through
+`code_grep`, normalized to `file:line:content`. **All 22 byte-identical:**
+
+```
+IDENTICAL  01-sorry             0 lines      IDENTICAL  12-guard-resize      1 lines
+IDENTICAL  02-sorryAx           0 lines      IDENTICAL  13-guard-input       1 lines
+IDENTICAL  03-partialcore       0 lines      IDENTICAL  14-guard-attach00    1 lines
+IDENTICAL  04-io                0 lines      IDENTICAL  15-ofDecoded         1 lines
+IDENTICAL  05-nativedecide      0 lines      IDENTICAL  16-forge             0 lines
+IDENTICAL  06-extern            1 lines      IDENTICAL  17-shim             22 lines
+IDENTICAL  07-require           0 lines      IDENTICAL  18-heartbeat         1 lines
+IDENTICAL  08-vtall            78 lines      IDENTICAL  19-rpartial          2 lines
+IDENTICAL  09-bytearr-field     0 lines      IDENTICAL  20-epartial          5 lines
+IDENTICAL  10-bytearr-mut       0 lines      IDENTICAL  21-unsafe            0 lines
+IDENTICAL  11-extract           0 lines      IDENTICAL  22-toolkit           3 lines
+```
+
+The 78-line and 22-line sets are the load-bearing comparisons; a zero-vs-zero row proves
+only that nothing was gained, which is why the break-verify below matters more.
+
+**Break-verified, three gates, both directions.** Full transcript below. The finding worth
+keeping: **on gate 16, the gate that had been "taught the trick", the trick did not
+cover the shape its own comment describes.** A docstring saying
+`` `{ cols := 0, rows := 0, grid := #[] }` `` still matched the old regex, because the
+character before `cols` is a space, not a backtick — the class only ever protected
+`` `cols := …` ``. The local fix was narrower than the comment claimed, which is the
+argument for the shared helper stated as a measurement rather than a preference.
+
+```
+--- control: unmodified tree
+gates OK — purity, the OS surface, the Vt friend set, and five ratchets
+    gates.sh EXIT=0
+
+--- (05a) REAL native_decide appended to Theorems/Buf.lean
+Theorems/Buf.lean:171:example : True := by native_decide
+GATE FAIL: native_decide in a proof (Theorems/)
+    gates.sh EXIT=1
+    pre-conversion spelling: MATCHES -> the old gate FAILS here
+
+--- (05b) BACKTICKED native_decide in a Theorems/Buf.lean docstring
+gates OK — purity, the OS surface, the Vt friend set, and five ratchets
+    gates.sh EXIT=0
+    pre-conversion spelling: MATCHES -> the old gate FAILS here
+
+--- (05c) REAL native_decide on a line carrying an UNPAIRED backtick
+Theorems/Buf.lean:171:example : True := by native_decide -- next to a stray `Name literal
+GATE FAIL: native_decide in a proof (Theorems/)
+    gates.sh EXIT=1
+
+--- (16a) REAL Vt-field forge appended to Linger/Core/Checkpoint.lean
+Linger/Core/Checkpoint.lean:382:  let _forged := { cols := 0, rows := 0 }
+GATE FAIL: a Vt field is assigned in Linger/Core/Checkpoint.lean — the decoder forge is back; …
+    gates.sh EXIT=1
+    pre-conversion spelling: MATCHES -> the old gate FAILS here
+
+--- (16b) BACKTICKED forge quoted in a Linger/Core/Checkpoint.lean docstring
+gates OK — purity, the OS surface, the Vt friend set, and five ratchets
+    gates.sh EXIT=0
+    pre-conversion spelling: MATCHES -> the old gate FAILS here      <-- the finding
+
+--- (19a) a REAL third partial def in Linger/Runtime (cap 2)
+GATE FAIL: Linger/Runtime grew to 3 partial defs (cap 2); a do-block loop does not need the keyword
+    gates.sh EXIT=1
+    pre-conversion spelling: MATCHES -> the old gate FAILS here
+
+--- (19b) a BACKTICKED partial def mention in a Linger/Runtime docstring
+gates OK — purity, the OS surface, the Vt friend set, and five ratchets
+    gates.sh EXIT=0
+    pre-conversion spelling: MATCHES -> the old gate FAILS here
+
+--- control: tree restored
+gates OK — purity, the OS surface, the Vt friend set, and five ratchets
+    gates.sh EXIT=0
+```
+
+**A caution on ratchets specifically.** Stripping prose can only *lower* a count, and a
+lower count under a `<=` cap is a **weaker** gate — if a prose mention were currently
+inflating a count to exactly its cap, a real new violation would slip in underneath.
+Measured before converting: `grep -nE '`[^`]*partial def' Linger/Runtime/*.lean E2E/*.lean`
+and the same for `set_option maxHeartbeats` under `Theorems/` both find **zero**, and none
+of the 78 `import all` lines contains a backtick. So no cap is prose-inflated today and the
+conversion is a no-op on all four. This is the check to repeat if a cap ever looks generous.
+
+---
+
+### (1) R4 — `unsafe` / `@[implemented_by]`, the only hole that reaches the shipped binary
+
+**The lesson.** Reproduced twice before this session, and re-measured here rather than taken
+on trust, in the real position (`Theorems/Render/Ends.lean`, v4.34.0-rc2):
+
+```
+namespace R4Exhibit
+open Linger.Core.Vt (Vt)
+unsafe def launderImpl (_v : Vt) : Vt := unsafeCast (0 : Nat)
+@[implemented_by launderImpl] def launder (v : Vt) : Vt := v
+theorem launder_id (v : Vt) : launder v = v := rfl
+#print axioms launder_id
+end R4Exhibit
+```
+
+```
+info: '…R4Exhibit.launder_id' does not depend on any axioms
+Build completed successfully (108 jobs).
+```
+
+and adding one `#eval (launder (Vt.init 3 2)).colCount`:
+
+```
+✖ [21/38] Building Theorems.Render.Ends (5.3s)
+error: Lean exited with code 139
+```
+
+139 = 128 + 11, SIGSEGV. The kernel sees an honest identity; the compiled program reads
+arbitrary memory. **The control that makes this a gate's job and not a proof's:** on that
+same tree, `sh tests/gates.sh` — including the friend-set gate and everything step 1 had
+just converted — printed `gates OK`, exit 0. Every oracle in the repo consented. `unsafe` +
+`@[implemented_by]` is by construction the part the kernel does not check, so no theorem can
+ever see it.
+
+**Two spellings that cost time and are worth recording.** `Vt` is declared *inside*
+`namespace Linger.Core.Vt`, so its full name is `Linger.Core.Vt.Vt` — `Linger.Core.Vt` as a
+type is `Unknown identifier`. And while `Vt` was unresolved, the `@[implemented_by]` line
+reported a **universe-count mismatch** ("2 universe level parameters, but `launder` has 1")
+rather than the name error; that diagnostic is downstream of the unresolved type, not a real
+obstacle. A `Nat`-typed version of the same exhibit compiles and reports no axioms
+immediately, which is the cheap way to confirm the hole before fighting the seal's names.
+
+**What held it before.** A recommendation in the R1 record ("a three-line follow-up") and a
+sentence in AGENTS.md. `gates.sh` had no `unsafe` gate at all.
+
+**What holds it now.** One gate, tree-wide over every tracked `.lean`, fail-closed —
+**measured zero hits across all 71 files**, so nothing is grandfathered and there is no
+exemption list to rot. Same species of oracle as `SHIM_CAP`: evadeable by deliberately
+editing the line, not by reverting a fix. `Tests/` and `E2E/` are inside it on purpose — a
+suite that laundered a value would be asserting about a state the binary cannot produce,
+which is this defect wearing a test's clothes.
+
+**Wider than the audit's regex, on purpose.** The audit proposed
+`\bunsafe\b|unsafeCast|@\[implemented_by`. Written as `unsafe` **not preceded by an
+identifier character**, one alternative catches the keyword *and* every `unsafe*` name —
+`unsafeCast`, `unsafeIO`, `unsafeBaseIO`, `unsafePerformIO` — instead of the single name the
+audit happened to use. `implemented_by` is unanchored because `attribute [implemented_by f]
+g` sets it just as `@[implemented_by f]` does.
+
+**`opaque` stays declined, and now for a measured reason rather than deference.** 26 hits
+over tracked `.lean`; **22 of them are the actual `opaque` declarations in
+`Linger/Posix.lean`**, i.e. the `@[extern` surface, which is correct and already gated. So
+the gate could only ever read "opaque outside Posix.lean", and what that catches is not a
+forge: with no `@[extern]` and no `@[implemented_by]` the compiler emits no value at all, so
+`opaque x : Vt` is a **liveness** hazard, the R5 family the spec bounds as compile-time
+prose. A new datum the R1 record could not have: `code_grep` **does not** reduce its cost
+either — all three non-Posix uses are the English word *unbackticked* ("names *opaquely*",
+"the opaque", "opaque to arithmetic"), and the helper strips none of them, so the two prose
+edits R1 priced are still the price. Decline stands.
+
+**Break-verified four ways.**
+
+```
+=== (1a) gates.sh on the tree carrying the R4 exhibit
+Theorems/Render/Ends.lean:1074:unsafe def launderImpl (_v : Vt) : Vt := unsafeCast (0 : Nat)
+Theorems/Render/Ends.lean:1075:@[implemented_by launderImpl] def launder (v : Vt) : Vt := v
+GATE FAIL: unsafe / @[implemented_by] in Lean — the compiled program may then disagree …
+    EXIT=1
+=== (1b) control, clean tree
+gates OK — purity, the OS and unsafe surfaces, the Vt friend set, and five ratchets
+    EXIT=0
+=== (1c) BACKTICKED `unsafe` / `@[implemented_by]` in a Lean docstring
+gates OK — …    EXIT=0
+    and the AUDIT's own grep on that same tree:
+      Theorems/Buf.lean:171:/-- R4: an `unsafe` def behind `@[implemented_by]` fools …
+      -> MATCHES: an ungated grep would have failed on the docstring
+=== (1d) the same sentence UNBACKTICKED -> still caught
+Theorems/Buf.lean:171:/-- R4: an unsafe def behind implemented_by fools the kernel. -/
+GATE FAIL: …    EXIT=1
+=== (1e) `unsafeCast` alone, in E2E/Watch.lean (tree-wide means tree-wide)
+E2E/Watch.lean:146:def x := unsafeCast (0 : Nat)
+GATE FAIL: …    EXIT=1
+```
+
+**(1c) is why the order of the two commits is not arbitrary.** The audit's recommended grep,
+taken literally, fails on the docstring that documents the gate. Without step 1 this gate
+could not describe itself, and a gate nobody can write about is a gate someone deletes —
+the argument the forge gate's comment already made, now load-bearing for a second gate.
+
+---
+
+### (2) The SIGINT trap — three copies of a warning become a refusal
+
+**The lesson.** A job started with `&` has SIGINT and SIGQUIT disabled, the state survives
+`execve`, and every descendant inherits it — the `e2e` binary, the daemon, the session shell
+the daemon spawns on the pty, and the child that shell runs. `^C` then kills nothing, and
+`E2E.Agent`'s `send - carries ^C` assertion fails while passing standalone every time. It
+cost an hour on 2026-09-11.
+
+**What held it before.** Three copies of a warning: AGENTS.md's gate rule, the header of
+`tests/e2e.sh`, and the comment on the assertion in `E2E/Agent.lean`. And the trap is
+*encouraged* by the surrounding advice — "run `./tests/e2e.sh` before any commit that
+touches the runtime" meets the habit of backgrounding a ten-minute command.
+
+**What holds it now.** `tests/e2e.sh` probes and refuses, before the `pkill` and before the
+build. Prose reduced to one pointer in AGENTS.md; the header is two lines pointing at the
+check; the measurement and the reasoning live on the check and nowhere else.
+
+**The probe is behavioural, and `/proc` was rejected on evidence, not on portability
+alone.**
+
+```
+sigint=0
+sh -c 'trap "exit 9" INT; kill -s INT $$; exit 7' > /dev/null 2>&1 || sigint=$?
+[ "$sigint" -ne 9 ] && refuse
+```
+
+* **The `/proc` route is INCOMPLETE, not merely Linux-only.** Measured here: bash 4.2
+  implements `&` as **`SigIgn: 0000000000000006`**, with `SigBlk` **all zero**. The 2026-09-11
+  entry recorded `SigBlk 0x6`; both mechanisms occur, and a check reading `SigBlk` alone
+  would have **passed in the very shell that reproduces the bug**. That is the decisive
+  argument — the portability objection (no `/proc` on macOS, and AGENTS.md keeps platform
+  splits to two places) merely agrees with it. `/proc` survives only to *print* both masks
+  in the failure message, where its absence costs a line of diagnosis and not the check.
+* **The child must TRAP, not die.** The obvious probe — `sh -c 'kill -s INT $$'` and look
+  for 130 — is unusable: measured, a child killed by SIGINT makes **ksh abandon the
+  enclosing script** (`ksh -c "sh -c 'kill -s INT $$' …"` → outer exit 130, and the line
+  after it never ran). That probe would sometimes kill `e2e.sh` instead of reporting on it.
+  With the trap the child exits 9 or 7 and never dies of a signal, so no shell has anything
+  to propagate. Verified on `sh` (bash 4.2), `bash --posix` and `ksh`.
+* **Any exit but 9 refuses**, deliberately: an unexpected probe result is not evidence that
+  SIGINT works.
+* **It cannot false-positive**, and this is the argument that made refusing safe without
+  being able to test CI: the probe tests *exactly the precondition step 12 already depends
+  on*. The disposition is inherited through the same fork/exec path as the daemon's session
+  shell, so an environment that fails the probe is an environment where the suite could not
+  have passed. CI is green and calls `./tests/e2e.sh` in the foreground (`run:
+  ./tests/e2e.sh`), so CI passes the probe by the same fact that makes CI green.
+* **Not in `tests/gates.sh`.** That file also runs from `pre-commit`, where a backgrounded
+  commit is nobody's bug.
+* The message avoids backticks, because `shellcheck` reads `` `&` `` inside a single-quoted
+  `printf` as an unexpanded command substitution (SC2016) and `tests/e2e.sh` was previously
+  shellcheck-clean.
+
+**Both runs, isolated.** `./tests/e2e.sh` was NOT run (it `pkill`s other agents' daemons);
+the check was extracted from the shipped file with `sed` so no divergent copy was exercised.
+
+```
+############ RUN A: FOREGROUND ############
+CHECK PASSED: SIGINT is deliverable, tests/e2e.sh would proceed
+check EXIT=0
+
+############ RUN B: UNDER '&' ############
+SIGINT is blocked or ignored in this process, and every descendant inherits it.
+SigBlk:	0000000000000000
+SigIgn:	0000000000000006
+Step 12 asserts that ^C reaches the session child, so it would fail for a
+reason that is not linger. Run this script in the FOREGROUND: a job started
+with & in a shell without job control gets SIGINT and SIGQUIT disabled, and
+that survives execve. setsid and nohup are fine alone; the & is what does it.
+E2E FAIL: SIGINT is not deliverable (probe exited 7, want 9) — run in the foreground, not with '&'
+check EXIT=1
+```
+
+Two further variants, for the record: `setsid nohup … &` → `SigIgn 0000000000000007` (the
+HUP bit is `nohup`'s), refused; `ksh -c '… &'` → `SigIgn 0x6`, refused; `ksh` foreground →
+passed. And the negative controls that show it refuses only the hazard: **`nohup` alone
+passes** and **`setsid` alone passes** — matching the 2026-09-11 finding that neither of
+those is what does it, now enforced rather than asserted.
+
+**The third copy survives and I could not remove it.** `E2E/Agent.lean:191–194` still
+carries four lines of the explanation. It is outside the files this change was scoped to.
+It already delegates ("see the header of tests/e2e.sh"), so the suggested follow-up is one
+sentence: keep the delegation, drop the restatement of the mechanism, and point at the
+check by name. Also stale-adjacent and out of scope: `.pre-commit-config.yaml`'s hook name
+still reads "purity, OS surface, five ratchets", which no longer mentions the unsafe gate.
+
+---
+
+### Portability, and what was argued rather than measured
+
+POSIX `sh` + POSIX `awk`. No `local`, no arrays, no `pipefail`, no `/dev/stderr`. The awk is
+the POSIX subset on purpose — `index`, `substr`, `printf`, `ENVIRON`, `~` on a dynamic
+regexp, `exit expr`, `!seen[$1]++`; no `gensub`, no `asort`, no `length(array)`. Both scripts
+exercised under `sh` (bash 4.2), `bash --posix` and `ksh`, on the pass and the fail path:
+identical output. **dash is still not installed on this host** and gawk 4.0.2 is still the
+only awk, exactly as the R1 record says — so dash and BSD awk are covered by writing to the
+subset, not by running.
+
+`shellcheck -s sh` output is **byte-identical to 051b2b4's** for both files: `tests/e2e.sh`
+clean, `tests/gates.sh` reporting only its pre-existing info-level `SC2012` on the `ls c/`
+gate. Two new directives were needed and both are load-bearing (verified by removing them):
+`SC2016` on `CODE_AWK` (the `$0`/`$1` are awk's fields) and `SC2086` on the deliberate word
+split of the file list.
+
+Every number and every list stays in `tests/gates.sh`. The one number the SIGINT check
+carries is the probe's own exit convention (9/7), which is a property of those four lines
+and not a cap; the signal names are facts.
+
+### Green, and what did not move
+
+`sh tests/gates.sh`, `lean-fmt check` (71 files, no findings), `./lake build` (43 jobs),
+`./lake build Theorems Tests` (50), `./lake build e2e` (61), `./lake build LingerVt` (5),
+`./.lake/build/bin/e2e coverage` (`core defs 271; named by no theorem STATEMENT: 0 (cap 0)`,
+`FAILURES: 0`). `SHIM_CAP` 22, `HEARTBEAT_CAP` 1, `RUNTIME_PARTIAL_CAP` 2, `E2E_PARTIAL_CAP`
+5 — none touched, and by construction: the counts are byte-identical hit sets.
+
+### What this does NOT close
+
+* **R5 is untouched and unclosable.** `Classical.choice` on `Nonempty Vt` still yields a
+  `Vt` nothing is provable about; `Vt.init` witnesses `Nonempty`, so deleting `Inhabited`
+  did not help and neither does this. The exhaustiveness stays compile-time prose.
+* **All three gates are the `SHIM_CAP` species.** Each is evadeable by deliberately editing
+  the recorded line, not by reverting a fix. That is the ceiling for a source-tree property,
+  and it is the right ceiling: the point is that joining the hole costs a reviewable diff.
+* **`code_grep` reads a line at a time.** A multi-line fenced block inside a docstring is
+  not stripped, so a forbidden token inside one still fires. That is the fail-closed
+  direction and is left as is; the fix, if it is ever wanted, is to say the thing in one
+  line or backtick it.
+* **`E2E/`, `Tests/` and `Main.lean` gained an `unsafe` prohibition they did not ask for.**
+  If a suite ever needs `unsafeIO`, the gate fails and the cap-raise conversation happens —
+  which is the intended cost, and cheaper than an exemption list nobody re-reads.
+## the resume rung — `LiveReachableVt` reaches the decoder, and the daemon reaches resume — 2026-09-14
+
+The gap the Step 3 and R2 records both left open, closed. Step 3 measured a `Good`-premised
+`ofDecoded` rung **unsound** and declined it; R2 changed the door so that a *sound* rung
+became possible, checked all four components in a scratch file, and deliberately did not add
+it, naming the payoff it would buy: `Theorems/Session.lean`'s `LiveVt`/`run_vt_renderable`
+lifted the shape invariant to the daemon **only for sessions booted from `Vt.init`**, so a
+resumed session's `Renderable` travelled through `renderable_feed`/`renderable_resize` one
+operation at a time. The rung is now in, and the daemon-level claim it exists for is one
+theorem with no hypotheses over an arbitrary byte string.
+
+### The decision, and the measurement that decided it
+
+**Added**, and the argument is that the rung is *load-bearing for exactly one thing* — which
+also says why R2 was right that it is its own step rather than a line in that one.
+
+Measured before editing the tree, in an off-tree probe (`/tmp/Probe.lean`, compiles clean):
+a copy of the relation with premise `Vt.ofDecoded … = some v` closes all four
+`*_of_liveReachable` lemmas — `ofDecoded_renderable`, `ofDecoded_good`, `ofDecoded_tabsOk`,
+and `U8Ok` by one new three-line leaf. R2's scratch-file check reproduced, and it holds.
+
+Then the question worth asking: **what can only be said with the rung?** The answer is
+narrow and it is the whole justification.
+
+* Every *statement* downstream of the four lemmas is expressible without the rung, from
+  `load_good`/`load_renderable`/`load_tabsOk`, which R2 already shipped. `Theorems/Resume.lean`
+  gets **no new claim** from the rung, and that is recorded in its §Resume-over-arbitrary-bytes
+  header rather than left for someone to try: the `_of_load` family is already hypothesis-free.
+* What the rung buys is *membership of the closure*, and the closure is only load-bearing where
+  it is the **hypothesis of an induction**. There is exactly one such induction in the tree:
+  the daemon's (`Session.run_vt_live` over `step`/`run`). Without a rung, `LiveVt` of a decoded
+  `vt0` is not merely hard, it is **unprovable** — the relation has no constructor whose subject
+  is a decoder output. Break-verified (B1b below).
+
+So: one rung, one new leaf lemma, two bridge lemmas, and five daemon-level claims. The
+alternative — lifting a bare `Renderable ∧ TabsOk` conjunction to the daemon with its own
+`onMsg`/`feedMsgs`/`step`/`run` induction — costs four more case-bashes and still leaves
+`Render.restore_grid_reachable`'s two-sided reachable form inapplicable to the resume path.
+
+### What landed
+
+`Theorems/Vt.lean` — the rung, premised on the door's own `some`, plus `ofDecoded_u8Ok` (the
+one component the door *fixes* rather than validates: `u8need := 0`, `u8acc := 0`, so the
+proof is `rfl` under one `split`). Four one-line arms.
+
+`Theorems/Checkpoint.lean` — `rVt_live` (the seventeen-reader destructuring, third of its
+kind after `rVt_good` and `rVt_shape`) and `load_live`, the top-level door: *a checkpoint
+that loads loads to a state a live session can hold*. Strictly stronger than
+`load_good`/`load_renderable`/`load_tabsOk` together, since those three are its projections.
+
+`Theorems/Session.lean` — a new §"Resume at the daemon", mirroring `boot_wf`/`run_boot_wf`:
+`liveVt_boot_of_load` (the resume door), `resumeVt` + `liveReachable_resumeVt` (both doors),
+`run_boot_vt_live`, `run_boot_vt_shape` (the hypothesised whole-life claim), and the two
+hypothesis-free headlines — `run_resume_vt_shape` and `run_resume_load_save`.
+
+`resumeVt l := ((Checkpoint.load l).map (·.vt)).getD (Vt.init 80 24)` is **`Daemon.lean:337`'s
+`vt0` with the `IO` peeled off**, and naming it is the one judgement call in the change. Spelled
+out inline, `run_resume_load_save`'s statement repeated the term four times and the formatter
+broke it across twenty lines — unreadable, which is a real cost for a headline. Named, it is
+also the single place this file's model of the runtime can drift from the runtime, which is
+better as one line to check than four. It needs the file's new `public import`/`import all
+Theorems.Checkpoint` pair; the friend-set gate does not fire, because `Theorems/` is a friend
+directory by declaration.
+
+**`run_resume_vt_shape` is the theorem the task asked for**: for an arbitrary `List UInt8` on
+disk and an arbitrary event trace afterwards, the daemon's screen is `Renderable` and its
+ruler is `TabsOk`. Both doors are the two branches of the `getD`; there are no hypotheses.
+`run_resume_load_save` is the same shape one level up — A1 across a **second** reboot, i.e.
+reboot-resume is idempotent rather than one-shot.
+
+### The `Good` premise is not hard, it is FALSE — and that upgrades the Step 3 record
+
+Step 3 recorded the unsoundness as three failed proof attempts. That is weaker than it needs
+to be, and the stronger form is cheap (`/tmp/Unsound.lean`, compiles clean):
+
+```
+bad  := { Vt.init 4 2 with grid := #[] }        Good bad  ∧ ¬Renderable bad      both proved
+bad8 := { Vt.init 4 2 with u8need := 0, u8acc := 1 }
+                                                Good bad8 ∧ ¬U8Ok bad8           both proved
+control: Vt.ofDecoded (bad's seventeen fields) = none      (ofDecoded_none_of_rows_mismatch)
+```
+
+`Good`'s fifteen clauses bound the dimensions, the cursors and the ring, and say **nothing**
+about the grid's length or about `u8acc`. So a `Good`-premised rung would hand
+`renderable_of_liveReachable` a counterexample, not a hard goal. The control matters: the real
+door refuses both witnesses, which is why the real rung is sound. Keep this file's shape if the
+question is ever re-opened — a counterexample settles it and a failed tactic does not.
+
+### Break-verification — six, and what each one is worth
+
+**B1a** the rung removed (baseline `Theorems/Vt.lean` restored):
+
+```
+error: Theorems/Checkpoint.lean:305:15: Unknown constant
+  `_private.Theorems.Vt.0.Linger.Core.Vt.LiveReachableVt.ofDecoded`
+```
+
+**B1b** rung *and* the two Checkpoint bridges removed, building `Theorems.Session` — the
+demonstration that the daemon claims have no other route:
+
+```
+error: Theorems/Session.lean:1032:73: Unknown identifier `Checkpoint.load_live`
+error: Theorems/Session.lean:1059:10: Unknown identifier `Checkpoint.load_live`
+```
+
+**B2** the door stops zeroing the accumulator (`u8acc := 1`) — `ofDecoded_u8Ok` bites, and
+`ofDecoded_of_good` bites beside it as a free control:
+
+```
+error: Theorems/Vt.lean:5335:4: Tactic `rfl` failed: The left-hand side
+  { cols := cols, …, u8acc := 1, bell := bell }.u8acc
+is not definitionally equal to the right-hand side
+  0
+error: Theorems/Vt.lean:4292:2: Tactic `rfl` failed: The left-hand side   (ofDecoded_of_good)
+```
+
+**B3** the premise swapped to `Good v`, in the current tree rather than Step 3's:
+
+```
+error: Theorems/Vt.lean:5218:47: Application type mismatch: The argument hd
+has type Good v✝ but is expected to have type Vt.ofDecoded ?m.33 … = some v✝
+in the application ofDecoded_renderable hd
+  (and the same at 5227 ofDecoded_good, 5336 ofDecoded_u8Ok, 5358 ofDecoded_tabsOk)
+```
+
+**B5** the door's ruler check weakened from `== cols` to `<= cols` — semantic, not
+structural, so it bites on content:
+
+```
+error: Theorems/Vt.lean:4199:9: unsolved goals
+⊢ GridOk cols rows grid → (tabs.size ≤ cols ↔ tabs.size = cols)
+```
+
+**B6** `liveReachable_resumeVt`'s two `getD` branches swapped — each needs its own witness,
+so the theorem is not one branch wearing a disguise:
+
+```
+error: Theorems/Session.lean:1058:31: Application type mismatch: The argument hl
+has type Checkpoint.load l = none but is expected to have type
+  Checkpoint.load ?m.19 = some ?m.20
+error: Theorems/Session.lean:1059:4: Type mismatch  LiveReachableVt.init 80 24
+has type LiveReachableVt (Vt.Vt.init 80 24) but is expected to have type
+  LiveReachableVt ((Option.map (fun x => x.vt) (some c)).getD (Vt.Vt.init 80 24))
+```
+
+**B4 / B7 — the two neighbouring statements that are false** (`/tmp/Break47.lean`), because
+the daemon claims are compositions and a composition's own content is *where it stops*:
+
+```
+b4_break: run_resume_load_save with the `.quiesce` dropped
+  error: Application type mismatch … has type LiveVt (run … ).fst
+         but is expected to have type LiveReachableVt (Checkpoint.Ckpt.vt ?m.12)
+b7_break: run_resume_vt_shape with `∀ r ∈ sb, RowOk cols r` appended
+  error: Type mismatch … has type Renderable … ∧ TabsOk …
+         but is expected to have type Renderable … ∧ TabsOk … ∧ ∀ (r : Vt.Row), …
+```
+
+and `b4_quiesce_is_content` **proves** the first is false rather than merely unprovable:
+`∃ v, LiveReachableVt v ∧ v ≠ v.quiesce`, witness `(Vt.init 4 2).feed [0x1B]` (parser in
+`PState.esc`). B7's conjunct is the ring, which is unvalidated *by design* — Step 3's
+measurement, R2's passing fixture — so this is the daemon-level restatement of a boundary the
+repo has now recorded three times.
+
+**One break that is not available, recorded because looking for it is the trap.**
+`run_boot_vt_shape` cannot be broken by mangling how `State.boot` treats its `Vt`: every
+plausible mangle (`vt.quiesce`, `vt.resize 0 0`, `vt.feed …`) lands *inside* the closure and
+the theorem stays true. Poking a field to escape it needs `import all Linger.Core.Vt` inside
+`Linger/Core/Session.lean`, which the friend-set gate refuses — so the seal is what makes the
+break unavailable, and the honest coverage for these two is their components (B1/B2/B3/B5)
+plus the non-vacuity witness. Same species of note as `Client.attach`'s no-op `!readOnly`
+guards: do not write a pty assertion that pretends to see something no test can.
+
+**And a scope limit on `rVt_live`/`load_live`, since it reads like a stronger claim than it
+is.** They claim *reachability*, not identity: making `rVt` return `some (Vt.init 1 1, rest)`
+and ignore the door leaves both theorems true (and breaks `rVt_fields`/`rVt_good`, which own
+identity). So `load_live`'s entire value is the door's, exactly as R2's B9 showed for
+`ofDecoded_renderable`.
+
+### The non-weakening check
+
+`dbfd219`'s exercise, adapted to a widened **hypothesis** (`/tmp/NonWeaken.lean`, compiles
+clean). `LR0` is the relation verbatim from `051b2b4`; `embed : LR0 v → LiveReachableVt v` is
+one line per rung. Then:
+
+1. **Hypothesis position — eleven claims, old signature restated, closed from the tree**
+   through `embed`: the four `*_of_liveReachable`, `Checkpoint.load_save_live`,
+   `Render.restore_grid_reachable`, `restore_tabs_reachable`, `restore_tabs_live`,
+   `restore_sb_reachable`, `restore_sb_exact`, and `Session.run_vt_renderable`. Every one is
+   still available at its old strength, and every one now says more.
+2. **Conclusion position — and this is where the mechanical restatement stops being
+   available, which is the honest part.** `onMsg_vt_live`, `feedMsgs_vt_live`,
+   `step_vt_live`, `run_vt_live`, `liveVt_init`, `liveVt_boot` have the relation in the
+   conclusion too; an `A → A` claim with `A` widened is neither stronger nor weaker, so
+   `embed` cannot recover them. They are **re-proved** at the old strength instead, by the
+   tree's own scripts with `LR0`'s constructors substituted — all six go through unchanged,
+   which is the measurement: the rung adds a base case and touches none of the closure
+   reasoning. The old `run_vt_renderable` then follows from the old scaffolding, so the whole
+   chain survives and not only its endpoints.
+3. **The widening is strict and the conclusions are not vacuous**: `load_live` is the witness
+   that the new relation admits something the old cannot (the old has no rung whose subject is
+   a decoder output); a real checkpoint's `load` is `some`, so `run_resume_vt_shape` is not the
+   `none` branch in disguise; and `¬Renderable { Vt.init 4 2 with grid := #[] }` is proved, so
+   `Renderable` is not true of every `Vt`.
+
+No consumer is weakened. Every consumer that takes the relation as a hypothesis is now a
+strictly stronger claim with an unchanged statement — which is the point of widening a
+hypothesis rather than adding a theorem.
+
+### Numbers
+
+Coverage **271 defs, 0 unclaimed (cap 0)** — unchanged; nothing was added under
+`Linger/Core/`, and `Session.resumeVt` lives in `Theorems/` (claimed anyway, by
+`liveReachable_resumeVt`, which is the spirit of the zero cap even where the gate does not
+reach). `maxHeartbeats` raises **1**, unchanged — no new raise anywhere, including
+`Theorems/Vt.lean`. SHIM 22, RUNTIME_PARTIAL 2, E2E_PARTIAL 5 untouched. `tests/gates.sh`
+needed **no edit**: the new `import all Theorems.Checkpoint` is a `Theorems/`-to-`Theorems/`
+edge and `Theorems/` is a friend directory by declaration. Job counts unchanged: `./lake
+build` 43, `Theorems Tests` 50, `e2e` 61, `LingerVt` 5 — the new import adds an edge, not a
+module. `lean-fmt format` reformatted one file (`Theorems/Session.lean`) on the first run;
+`check` and `format --check` then both clean, 71 files. Diff: +267/−12 over five files
+(`Theorems/Session.lean` +116/−0, `Theorems/Vt.lean` +84/−6, `Theorems/Checkpoint.lean`
++48/−0, `Theorems/Resume.lean` +14/−1, `THEOREMS.md` +5/−5). New declarations: 9 theorems, 1
+def and 1 constructor — 1 theorem plus the constructor in `Theorems/Vt.lean` (plus 4 amended
+arms), 2 in `Theorems/Checkpoint.lean`, 6 in `Theorems/Session.lean` (one of them the
+`resumeVt` def).
+
+Axioms: `propext` alone for `ofDecoded_u8Ok` and `resumeVt`; none for the constructor
+`LiveReachableVt.ofDecoded`; `propext`/`Classical.choice`/`Quot.sound` for `rVt_live`,
+`load_live` and all six Session claims. **Inherited, not introduced**, and measured in a
+pristine `051b2b4` build rather than asserted: the four widened `*_of_liveReachable` lemmas
+carried exactly `propext, Classical.choice, Quot.sound` there too, and so did the inductive
+`LiveReachableVt` itself, which is where `load_live`'s `Classical.choice` comes from — its
+siblings `rVt_shape`/`load_shape` carry only `propext, Quot.sound`, and the difference is the
+relation, not the proof. `load_save_live` and `run_vt_renderable` already carried all three at
+baseline. No `sorryAx` anywhere.
+
+### THEOREMS.md
+
+Five rows edited, each stating what it gained rather than absorbing it: **A1** gains reach
+(the closure now contains decoded screens, so "any state a live session can be in" covers a
+resumed one) and the second-reboot claim, and records that the premise is the door's `some`
+and not `Good v`; **A2** gains the screen invariant at the door for *both* sources of `vt0`,
+beside `run_boot_wf`'s `Bounded ∧ Good`; **§Restore** gains `load_live` and says it is
+strictly more than the three projections; **§Renderable** gains the fifth rung in the
+relation's description and the resumed-daemon lift; **§Resume** gains the daemon level and
+`Theorems/Session.lean` in its source column.
+
+### `./tests/e2e.sh`
+
+**Not run** — it `pkill`s other agents' daemons on this shared host. **Expected green**, and
+the argument is that nothing observable changed: no `Vt` operation, no `Linger/Core` def, no
+byte the emitter writes, no wire format, no runtime file. Every addition is a `Theorems/`
+claim plus one `Theorems/`-internal import. `sh tests/gates.sh` — which `e2e.sh` step 1 runs —
+is green here, as are all four build targets, `e2e coverage`, and `lean-fmt check` /
+`format --check`. The one thing a pty suite *could* have caught and cannot check for me is
+whether `Session.resumeVt` still matches `Daemon.lean`'s `vt0` after a future edit to the
+runtime; `Linger/Runtime/*` is `IO`, so that correspondence is prose next to the def, and a
+grep gate for it is the obvious follow-up (`getD` beside `Linger.Core.Vt.Vt.init 80 24` in
+`Daemon.lean`) — same species of oracle as `SHIM_CAP` and the `Buf` greps. I did not add it,
+because `tests/gates.sh` is another agent's file this round.
+## two records corrected: `history`'s dead branch deleted, and read-hiding was never obtained — 2026-09-14
+
+Both halves of this round are corrections rather than features: a dead branch a record kept
+describing as a live option, and a claim about the `Vt` seal that is stronger than what the
+seal bought. Neither changes a byte the binary writes.
+
+### `Render.history`'s `withAnsi` branch: deleted, not wired up
+
+**All four facts the spec asserted check out, and the line numbers had drifted** —
+`specs/scrollback-fidelity.md` Step 5 cites `Linger/Core/Render.lean:548-558`; `history` was at
+722. Found by name, as the spec's own instruction says to. Verified: the only production call
+site is `Linger/Core/Session.lean:331` (the spec says `Session.lean:250`, also drifted) at
+`false`; `Cli.lean:483` is `["history", name] | ["hi", name] => requireLive name .history`,
+with no flag anywhere; and no call site in the tree passes `true`.
+
+**The record undercounted the claims: four theorems were stated at `false`, not two.** Step 5
+names `history_framing`/`history_lines`; `history_records` and `history_screenText_suffix`
+were also pinned at `false`. All four lost the argument, and with it the
+`rw [ite_eq_right (by decide)]` that existed only to discharge the `if` — so the deletion made
+four proofs shorter rather than costing anything.
+
+**The break-verify for a deletion is a mutation, and it is worth more than the grep.** The
+grep ("nothing passes `true`") is an argument about the source; replacing the branch's *body*
+with `[0xDE, 0xAD, 0xBE, 0xEF]` is a question to the build, and the build said nothing cares:
+`./lake build` 43 jobs green, `./lake build Theorems Tests` 50 jobs green. No theorem, no unit
+fixture, no compiled-evaluation check observed four junk bytes sitting in a shipped emitter.
+That is the
+whole case for deleting rather than proving. The other half of the control, after the fact:
+`history (Vt.init 3 2) true` is now
+
+```
+error: Function expected at
+  history (Vt.init 3 2)
+but this term has type
+  Bytes
+```
+
+**Why not wire it up — the cost that decided it, and it is not the emitter.** `linger history
+--color` is cheap in `Render` and expensive in `Wire`. `Msg.history` carries no payload
+(`Msg.payload` maps it to `[]`) and the tag assignment is frozen by comment ("new tags append,
+old values never reused"), so the flag needs tag 17, which means `knownTag`'s `t ≤ 16` and a
+case in each of **four** exhaustive tag case-bashes in `Theorems/Wire.lean`
+(`decodeMsg_roundtrip`'s `ne 0…16` chain, the `by_cases h16` chain at ~377,
+`knownTag_tag_of_assigned`, `decodeMsg_unknown_of_not_knownTag`). And it could not reuse the
+framing claim it would need: **`rowAnsi` emits `ESC`, so `history_framing`'s "every byte is
+`LF` or printable content" is false of a coloured stream** — a colour transcript needs its own
+weaker predicate invented for it. Dead code that costs a protocol tag and a new predicate to
+reach, for a capability nobody has asked for, is a delete.
+
+**What did not move, checked rather than assumed.** `rowAnsi` is not orphaned — the grid paint
+uses it heavily (`Theorems/Render/Grid.lean` alone names it ~20 times). The coverage ratchet
+is unmoved at `core defs 271; named by no theorem STATEMENT: 0 (cap 0)`: deleting an
+*argument* removes no def, `history` is still named by four statements, and
+`E2E/Coverage.lean`'s emitter table matches the string `"history"` and the theorem *names*, so
+a signature change does not disturb it (`runtime-emitted byte streams: history leaveAnsi
+restore screenText utf8s`, `FAILURES: 0`). `gates.sh`'s exact import-header pin on
+`Linger/Core/{Vt,Render,Terminal}.lean` is untouched because no import changed.
+
+**No E2E assertion breaks, and the reason is that none could.** All six `history` assertions
+(`E2E/Agent.lean:159`, `E2E/Attach.lean:132,257,280`, `E2E/Graphics.lean:103`,
+`E2E/Resume.lean:64,138`) drive the CLI as `#["history", "<name>"]` and assert on plain-text
+content or line counts. The CLI surface is unchanged and the plain bytes are unchanged, so
+they are testing exactly what still exists. Confirmed on the real binary in an isolated
+`LINGER_DIR` rather than argued: `linger history` on a 24-row session emits **24 lines and
+zero `ESC` bytes** — which is `history_lines` (`count 0x0A = (sb ++ grid).length`, ring empty)
+observed end to end.
+
+`README.md` needed no edit: the `history <name>` row reads "scrollback as text", which was
+accurate before and after, and matches the `capture` row's "as text". Changing one and not the
+other would have introduced an inconsistency to record a decision that belongs in the
+docstring, where it now is.
+
+### R6 — read-hiding was never obtained, and `AGENTS.md` said it was
+
+The audit's R6 is right, and the overclaim had spread. `AGENTS.md` said `Vt`'s "twenty fields
+are `private` so no importer can **read**, write or forge one". Measured, from a plain
+importer with no `import all`:
+
+```
+$ ./lake env lean R6module.lean          # module importer, `public meta import`
+{ cols := 3, rows := 2, grid := #[…], …, u8acc := 0, bell := false }
+```
+
+Exactly **20** top-level fields printed — `altGrid bell bot cols cursor g0Line g1Line grid
+modes pen pstate rows saved sb shiftOut tabs title top u8acc u8need` — and the same from a
+**legacy** (non-`module`) importer. `deriving Repr` is a public, total reader of every sealed
+field. What the 25 files bought is **write-hiding plus no-forge**, which is real and worth
+having; "read-hiding" is the wrong word for it. Corrected in `AGENTS.md`; the patch for
+`Linger/Core/Vt.lean` (another writer's file this round) is in the handoff.
+
+### The Step 1 break-verify's missing second error text
+
+Recorded here because the worklog is append-only and the Step 1 entry stands. It quotes the
+`module` importer's text only; a direct read of a sealed field gives **two different errors
+calling for two different fixes**, both measured:
+
+```
+# module importer (`public meta import Linger.Core.Vt`)
+error(lean.unknownIdentifier): Unknown constant `_private.Linger.Core.Vt.0.Linger.Core.Vt.Vt.cols`
+
+# legacy importer (`import Linger.Core.Vt`)
+error: Field `cols` from structure `Linger.Core.Vt.Vt` is private
+```
+
+The first says the name does not exist for you and is fixed by `import all` (or by not
+reaching); the second says the field exists and is refused, and points at the seal. Someone
+who has only seen the first text will look for a missing import when they are actually looking
+at the seal working.
+
+### Is `deriving Repr` on `Vt` needed? No — and removing it obtains read-hiding, free
+
+Consumer grep: nothing applies `repr`, `toString` or `#eval` to a `Vt` or to any type holding
+one. Every `toString` in the tree is on a `Nat`/`Bool`/`FilePath` in `E2E/`. The instance's
+only consumers are **two dependent derives**, found by building rather than by grepping —
+which is how `Terminal.Result` turned up, since it was the *first* failure and the grep had
+only suggested `Session.State`:
+
+* `Linger/Core/Terminal.lean:264` `structure Result` (`vt : Vt`), clause `deriving Repr`;
+* `Linger/Core/Session.lean:63` `structure State` (public `vt : Vt.Vt`), clause `deriving Repr`;
+* `Linger/Core/Checkpoint.lean:350` `structure Ckpt` holds a `Vt` and derives **nothing** — so
+  the cascade is two, not three.
+
+Both clauses are `Repr`-only, so both disappear with it. Measured with all three dropped:
+`./lake build` 43 jobs, `./lake build Theorems Tests` 50 jobs, `./lake build e2e` 61 jobs,
+`sh tests/gates.sh` OK, `e2e coverage` `FAILURES: 0` — **all green**. Nothing in the tree
+consumes any of the three instances.
+
+**And it holds, which is the part that makes it worth doing.** With the derive gone the read
+is refused —
+
+```
+error(lean.synthInstanceFailed): failed to synthesize instance of type class
+  Repr Vt
+Hint: Adding the command `deriving instance Repr for Linger.Core.Vt.Vt` may allow Lean to derive the missing instance.
+```
+
+— and **Lean's own hint does not work from outside the seal**, measured: `deriving instance
+Repr for Linger.Core.Vt.Vt` in a plain importer fails with `Unknown constant
+_private.…Vt.cols` and nineteen more, one per field. So an importer cannot put back what the
+seal drops. Read-hiding is genuinely obtainable, not merely relocatable.
+
+**Recommended, not done.** It is a three-line deletion in `Linger/Core/Vt.lean` and
+`Linger/Core/Terminal.lean`, neither of which was mine this round — the blocker is ownership,
+not cost. Patch in the handoff. If it lands, `AGENTS.md`'s corrected R6 paragraph and the
+`structure Vt` docstring both get *stronger* again and should be revised a second time; the
+honest intermediate state is the corrected weaker claim, not a stale strong one.
+
+### Findings for someone else's round
+
+* **`specs/vt-toolkit.md` is stale in 33 files.** It archived to `specs/archive/vt-toolkit.md`
+  at `051b2b4`, and every citation still points at the old path — including `tests/gates.sh`,
+  `lakefile.lean`, `Linger/Core/{Vt,Render,Terminal,Session,Checkpoint}.lean` and fourteen
+  `Theorems/` files. Deliberately **not** fixed here: correcting the one or two in my
+  allocation would leave 31 stale and teach a reader that the path is unreliable rather than
+  that it moved. Wants one coordinated pass, or a redirect line in the archived file.
+* **`Theorems/Session.lean:1155` is stale on two counts, pre-existing.** It says
+  "`Render.history` is still only *bounded* rather than proved (`tests/coverage.py`)".
+  `history` has been proved since `history_framing`/`history_lines` landed, and
+  `tests/coverage.py` is now `E2E/Coverage.lean`. My change does not make this worse — it
+  does not mention the argument — but the sentence is now three facts behind. Forbidden file
+  this round.
+
+
+### Integration note — `deriving Repr` was dropped, so R6 is closed rather than corrected
+
+The round above recommended removing `deriving Repr` from `Vt` and left it undone on ownership
+grounds, with two patches: A, the honest correction (the seal buys write-hiding plus no-forge,
+not read-hiding), and B, the removal that makes the strong claim true. **Both were applied**, in
+that order, so the tree carries B's wording and A survives only in this worklog as the
+intermediate state it was.
+
+That is the right call and not merely the tidier one: a *correction* leaves a reader knowing the
+seal is weaker than its name, and the removal was measured free (cascade of exactly two
+`Repr`-only clauses on `Terminal.Result` and `Session.State`, no consumer anywhere) and measured
+to **hold** — `deriving instance Repr for Vt` from outside the seal fails with `Unknown constant`
+on all twenty private projections, so Lean's own suggestion cannot reopen it. Fixing the code
+beat fixing the sentence, which is the choice this session made three times over.
+
+`./tests/e2e.sh` green in the foreground after all three rounds landed together, and the
+**SIGINT refusal was exercised by that very run** — the first e2e since it went in.
+
+**Three follow-ups the agents named and could not take**, all cheap and all recorded here rather
+than left in three separate reports:
+
+1. **`E2E/Agent.lean:191–194`** still restates the SIGINT mechanism that `tests/e2e.sh` now
+   *enforces*. Keep the delegation, drop the restatement, point at the check by name.
+2. **`.pre-commit-config.yaml`'s hook name** reads "purity, OS surface, five ratchets" — the gate
+   now also covers the unsafe surface and the `Vt` friend set, and the summary line says so.
+3. **`specs/vt-toolkit.md` is cited by 33 files and moved to `specs/archive/`** at `051b2b4`.
+   Deliberately not half-fixed: correcting the two or three in one agent's allocation would
+   leave thirty stale and teach a reader the path is unreliable rather than that it moved. Wants
+   one coordinated pass, or a redirect line in the archived file. Also
+   `Theorems/Session.lean:1155` is three facts behind (`Render.history` is proved now, and
+   `tests/coverage.py` is `E2E/Coverage.lean`).
+
+**And one gap that is structural rather than a chore:** `Session.resumeVt` models
+`Linger/Runtime/Daemon.lean`'s `vt0`, and `Linger/Runtime/*` is `IO`, so no theorem can see that
+call site. The correspondence is prose next to the def. A grep gate (`getD` beside
+`Linger.Core.Vt.Vt.init 80 24` in `Daemon.lean`) is the right oracle — the `SHIM_CAP` species,
+same as the `Buf` greps — and it was not added only because `tests/gates.sh` belonged to a
+different agent this round. That is the next thing worth doing, and it is three lines.

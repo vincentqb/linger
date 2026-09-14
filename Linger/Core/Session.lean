@@ -90,11 +90,12 @@ structure State where
   the signal, and the core needs no clock arithmetic. -/
   private tickOutSeq : Nat := 0
   private freshFlag : Bool := false
-  -- `Repr` only: `deriving Inhabited` here needed `Inhabited Vt`, which was a public
-  -- door out of the `Vt` seal admitting a zero-column screen (`specs/vt-toolkit.md`
-  -- Step 3, and the docstring on `structure Vt`). Nothing used the instance. A `State`
-  -- still has exactly one door, `State.boot`.
-  deriving Repr
+
+-- No `deriving` clause at all. `Inhabited` went in `specs/archive/vt-toolkit.md`
+-- Step 3: it needed `Inhabited Vt`, a public door out of the `Vt` seal admitting a
+-- zero-column screen. `Repr` went with the seal's read half (the audit's R6): it
+-- needed `Repr Vt`, whose removal is what makes the seal actually hide reads.
+-- Nothing used either instance. A `State` still has exactly one door, `State.boot`.
 
 /-- The one public door into a `State`: a fresh or restored emulator, the
 restored labels, the boot-time metadata. Everything else a `State` ever holds
@@ -328,7 +329,7 @@ def onMsg (s : State) (c : Client) (m : Msg) : State × List Effect :=
     (s, (s.clients.filter (·.attached) |>.map (fun c' => Effect.close c'.id)) ++ [.send c.id .done])
   | .kill => (s, [.killChild, .dropCheckpoint, .exit])
   | .info => (s, [.send c.id (.infoReply (infoText s)), .send c.id .done])
-  | .history => (s, outputMsgs c.id (Render.history s.vt false) ++ [.send c.id .done])
+  | .history => (s, outputMsgs c.id (Render.history s.vt) ++ [.send c.id .done])
   | .screen =>
     -- `linger capture`: the grid only, plain text. Delivering the current
     -- screen IS a look, so it catches the read mark up — after a capture,

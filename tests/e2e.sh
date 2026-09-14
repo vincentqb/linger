@@ -21,17 +21,59 @@
 #  every pty suite also carries a CHECK-COUNT FLOOR (see `suite` below): green
 #  means "no failures AND at least N assertions actually ran".
 #
-# RUN THIS IN THE FOREGROUND. A shell without job control sets SIGINT and SIGQUIT
-# BLOCKED in a job started with `&` (measured: SigBlk 0x6), and a signal mask
-# survives execve — so every descendant, including the session shell the daemon
-# spawns and the child it runs, inherits the block. The agent suite's `^C`
-# assertion then fails for a reason that has nothing to do with linger. `setsid`
-# and `nohup` are fine on their own; it is the `&` that does it.
+# RUN THIS IN THE FOREGROUND. Enforced, not requested: see "SIGINT must be
+# deliverable" below, which carries the measurement and the reasoning.
 set -e
 cd "$(dirname "$0")/.."
 
 say() { printf '\n=== %s ===\n' "$1"; }
 fail() { printf 'E2E FAIL: %s\n' "$1" >&2; exit 1; }
+
+# --- SIGINT must be deliverable ---------------------------------------------
+# A shell without job control starts a `&` job with SIGINT and SIGQUIT disabled,
+# and that survives `execve`, so every descendant inherits it: the `e2e` binary,
+# the daemon, the session shell the daemon spawns on the pty, and the child that
+# shell runs. `^C` then generates a signal that kills nothing, and step 12's
+# `send - carries ^C` assertion fails — while passing standalone every time, which
+# is why it reads as a flake. It cost an hour on 2026-09-11 (SCRATCHPAD.md, "`&`
+# blocks SIGINT"). The remedy was three copies of a warning in prose; this check
+# is what replaces them, and the two surviving mentions (AGENTS.md's gate rule and
+# the comment on the assertion in E2E/Agent.lean) now point here.
+#
+# The probe is BEHAVIOURAL, so it holds on both halves of the CI matrix: a fresh
+# `sh -c` inherits the state, traps INT and signals itself. Delivered -> the trap
+# runs -> 9. Disabled -> the signal never arrives -> 7. The child never dies OF a
+# signal, and that is not incidental: a child killed by SIGINT makes some shells
+# abandon the enclosing script (measured, ksh), so the obvious probe would
+# sometimes kill this script instead of reporting on it.
+#
+# Reading `SigBlk` from /proc/self/status was the alternative, and it is wrong
+# twice. It is Linux-only, and AGENTS.md keeps platform splits to two places — but
+# worse, it is INCOMPLETE: measured here, bash 4.2 implements `&` as
+# `SigIgn 0x6`, NOT `SigBlk 0x6`, so a check reading `SigBlk` alone would have
+# passed in the very shell that reproduces the bug. /proc is used only to PRINT
+# both masks when the probe fires, where its absence on macOS costs a line of
+# diagnosis and not the check.
+#
+# Any exit but 9 refuses, deliberately: an unexpected probe result is not evidence
+# that SIGINT works. And this cannot false-positive, because the probe tests
+# exactly the precondition step 12 already depends on — an environment that fails
+# it is an environment where the suite could not have passed anyway. It is NOT in
+# tests/gates.sh: that file also runs from `pre-commit`, where a backgrounded
+# commit is nobody's bug.
+sigint=0
+sh -c 'trap "exit 9" INT; kill -s INT $$; exit 7' > /dev/null 2>&1 || sigint=$?
+if [ "$sigint" -ne 9 ]; then
+  printf 'SIGINT is blocked or ignored in this process, and every descendant inherits it.\n' >&2
+  if [ -r /proc/self/status ]; then                    # Linux only, and diagnosis only
+    grep -E '^Sig(Blk|Ign):' /proc/self/status >&2 || true
+  fi
+  printf 'Step 12 asserts that ^C reaches the session child, so it would fail for a\n' >&2
+  printf 'reason that is not linger. Run this script in the FOREGROUND: a job started\n' >&2
+  printf 'with & in a shell without job control gets SIGINT and SIGQUIT disabled, and\n' >&2
+  printf 'that survives execve. setsid and nohup are fine alone; the & is what does it.\n' >&2
+  fail "SIGINT is not deliverable (probe exited $sigint, want 9) — run in the foreground, not with '&'"
+fi
 
 # Run one pty suite: no failures AND a floor on how many checks actually ran
 # (pin-the-gaps item 7). `FAILURES: 0` says nothing went wrong; it does not say

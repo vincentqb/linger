@@ -713,27 +713,31 @@ def rowText (row : Row) : Bytes := utf8s (dropTrailingBlanks (rowChars row))
 
 /-- Scrollback + screen, oldest first; for `linger history`.
 
-The plain branch emits one `LF`-terminated line per row. It was
+One `LF`-terminated line per row. It was
 `String.intercalate "\n" (rows.map rowText) ++ "\n"`, which agrees with this for every
 reachable state and differs only when there are *no* rows at all: the old shape emitted a
 lone newline, this emits nothing. A grid always has at least one row (`clampDim`), so the
 difference is unreachable for a live session and is the more honest output for a decoded
-one. -/
-def history (v : Vt) (withAnsi : Bool) : Bytes :=
-  let rows := v.sb.toList ++ v.grid.toList
-  if withAnsi then
-    let (body, _) :=
-      rows.foldl
-        (fun (acc : Bytes × Pen) row =>
-          let (line, pen') := rowAnsi row acc.2
-          (acc.1 ++ line ++ [0x0A], pen'))
-        ([], ({} : Pen))
-    body
-  else rows.flatMap (fun row => rowText row ++ [0x0A])
+one.
+
+**Plain text only, and there is deliberately no colour variant.** This took a
+`withAnsi : Bool` and an unreachable `rowAnsi` branch behind it: the only call site
+passed `false`, all four claims below were stated at `false`, and `Cli.lean` had no flag
+to reach it — so the branch was dead *and* unproved, which is the state
+`E2E/Coverage.lean` exists to prevent (verified by mutation: replacing that branch's
+body with four junk bytes left `./lake build` and `./lake build Theorems Tests` green).
+Deleted rather than wired up, because a colour transcript is not a stated requirement
+and reaching it costs a wire tag: `Msg.history` carries no payload and the tag
+assignment is frozen, so `linger history --color` means a new tag plus a case in each
+of `Wire`'s four exhaustive tag case-bashes. It would also need a *weaker* framing
+claim of its own rather than a reuse of `history_framing` — `rowAnsi` emits `ESC`, so
+"every byte is `LF` or printable" is false of a coloured stream. -/
+def history (v : Vt) : Bytes :=
+  (v.sb.toList ++ v.grid.toList).flatMap (fun row => rowText row ++ [0x0A])
 
 /-- The current screen only — the grid, one LF-terminated plain-text line per
-row; for `linger capture` (specs/archive/agent-cli.md). The shape of `history`'s plain
-branch minus the ring, so `screenText_framing`/`screenText_lines` carry the
+row; for `linger capture` (specs/archive/agent-cli.md). The shape of `history`
+minus the ring, so `screenText_framing`/`screenText_lines` carry the
 same anti-forgery claim: a cell cannot inject a line break, and the line count
 is exactly the row count — which is what lets an agent that knows `rows` (from
 `info`) parse the screen positionally. Plain text on purpose: the receiver is

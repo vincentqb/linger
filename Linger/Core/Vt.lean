@@ -342,7 +342,14 @@ structure Vt where
   private u8need : Nat := 0 -- UTF-8 continuation bytes still expected (≤ 3)
   private u8acc : Nat := 0 -- accumulated codepoint bits
   private bell : Bool := false -- sticky until the runtime clears it (activity signal)
-  deriving Repr
+  -- No `deriving Repr`, and that is the seal's read half (the audit's R6). `Repr`
+  -- would be a PUBLIC, TOTAL reader of all twenty fields above — `repr (Vt.init 3 2)`
+  -- from a plain import printed every one — so with it the seal was write-hiding plus
+  -- no-forge only. Nothing consumed the instance; `Terminal.Result` and
+  -- `Session.State` shed their own `Repr`-only clauses with it. An importer cannot put
+  -- it back: `deriving instance Repr for Vt` from outside fails with `Unknown constant`
+  -- on all twenty private projections. Do not re-add it to make a `#eval` print; use
+  -- the read-only window below, or a friend import if you belong inside the toolkit.
 
 def clampDim (n : Nat) : Nat := min (max n 1) 1000
 
@@ -362,6 +369,13 @@ because the seal blocks reads as well as writes, and `Linger/Core/Session.lean` 
 the daemon's session model, a client of the emulator and not part of it — needs
 geometry, cursor and the alt-screen flag to answer `linger info` and to decide
 whether a resize is a no-op.
+
+**Reads really are blocked, as of the `deriving Repr` removal** — before it, `Repr`
+was a public total reader and the seal was write-hiding plus no-forge only (the audit's
+R6). It holds against a re-derive: `deriving instance Repr for Vt` from a plain importer
+fails with `Unknown constant` on all twenty private projections, so an importer cannot
+reopen what these four accessors are the sanctioned way through. See SCRATCHPAD.md
+2026-09-14.
 
 Read-only is the point: a friend import would have let the daemon *forge* a `Vt`,
 which is exactly what the seal exists to prevent, so `Session` gets these instead.

@@ -5,6 +5,7 @@ public import Theorems.Wire
 public import Theorems.Vt
 public import Theorems.Terminal
 public import Theorems.Render
+public import Theorems.Checkpoint
 import all Linger.Core.Session
 import all Linger.Core.Vt
 import all Linger.Core.Terminal
@@ -16,6 +17,12 @@ import all Linger.Core.Render
 import all Theorems.Terminal
 import all Theorems.Render
 import all Theorems.Wire
+-- `Theorems.Checkpoint` is the newest edge, and it is here for one claim:
+-- `Checkpoint.load_live`, which is what makes `LiveVt` provable for a *resumed*
+-- daemon (§Resume at the daemon, below). Both lines are needed — `public import`
+-- for the names in the statements, `import all` because `Theorems/Checkpoint.lean`
+-- has no `public section` either, and no existing edge transits to it.
+import all Theorems.Checkpoint
 
 /-! # §Detach / §Bound(session) — the daemon state machine theorems
 
@@ -999,6 +1006,115 @@ theorem liveVt_init (cols rows : Nat) (cs : List Client) (ls : List (String × S
 /-- …and stated through the one door the runtime actually walks through. -/
 theorem liveVt_boot (cols rows : Nat) (ls mk : List (String × String)) :
     LiveVt (State.boot (Vt.Vt.init cols rows) ls mk) := LiveReachableVt.init cols rows
+
+/-! ## §Resume at the daemon — the other door into `State.boot`
+
+`liveVt_boot` covers a *fresh* boot. `Linger/Runtime/Daemon.lean` has a second
+source for the `vt0` it boots with:
+
+```
+let vt0 := (restore.map (·.1)).getD (Linger.Core.Vt.Vt.init 80 24)
+```
+
+where `restore` is `Runtime.Resume.loadCkpt`'s result — `ck.vt` for a
+`Checkpoint.load bytes = some ck`. Until the `ofDecoded` rung there was no way to
+say `LiveVt` of that half, so a resumed session's `Renderable` had to be assembled
+by the reader out of `renderable_feed`/`renderable_resize` one operation at a time.
+The claims below close that, and the shape to mirror is `boot_wf`/`run_boot_wf`
+in the next section: a door lemma per source, one hypothesised whole-life claim, and
+then the hypothesis-free form over the term the daemon actually computes. -/
+
+/-- **The resume door.** A daemon booting from any byte string that loads at all holds a
+state a live session can hold. `Checkpoint.load_live` is the whole content; what this adds
+is that `State.boot` does not disturb it — the `take maxLabels` `boot` performs touches the
+labels, never the `Vt`. -/
+theorem liveVt_boot_of_load {l : List UInt8} {c : Checkpoint.Ckpt} (h : Checkpoint.load l = some c)
+    (ls mk : List (String × String)) : LiveVt (State.boot c.vt ls mk) := Checkpoint.load_live h
+
+/-- **`Daemon.lean`'s `vt0`, as a pure function of the bytes on disk.** The runtime writes
+
+```
+let vt0 := (restore.map (·.1)).getD (Linger.Core.Vt.Vt.init 80 24)
+```
+
+with `restore` from `Runtime.Resume.loadCkpt`, whose `some` case is `(ck.vt, …)` for a
+`Checkpoint.load bytes = some ck` and whose every failure path — unreadable file, torn
+write, foreign tag, corrupt payload — is `none`. So this is that expression with the `IO`
+peeled off, and `l` ranges over every byte string that could be on disk.
+
+**Named rather than inlined**, for the reason `Vt.decodedOk` and `stripMagic` are named:
+the two claims below repeat it four times between them and were unreadable spelled out. It
+is also the one place where this file's model of the runtime could drift from the runtime,
+which is better as one line to check than four — `Linger/Runtime/*` is `IO`, so no theorem
+can see the call site (AGENTS.md's rule; the same species of gap as `Buf`'s). -/
+def resumeVt (l : List UInt8) : Vt.Vt := ((Checkpoint.load l).map (·.vt)).getD (Vt.Vt.init 80 24)
+
+/-- **Both doors, in one step.** The `getD`'s two branches are exactly the daemon's two
+sources for `vt0`: `none` is a fresh `Vt.init 80 24`, `some` is a decoded checkpoint. This
+is where the `ofDecoded` rung is load-bearing — the `some` branch has no other witness. -/
+theorem liveReachable_resumeVt (l : List UInt8) : Linger.Core.Vt.LiveReachableVt (resumeVt l) := by
+  unfold resumeVt
+  rcases hl : Checkpoint.load l with - | c
+  · exact LiveReachableVt.init 80 24
+  · exact Checkpoint.load_live hl
+
+/-- **§Renderable over the daemon's whole life, from either door.** The `LiveVt` analogue
+of `run_boot_wf`: whatever a session has been through — adversarial clients, hostile pty
+bytes, resizes, any interleaving — its terminal is still one a live session can hold,
+whether it booted fresh (`liveVt_boot`) or resumed (`liveVt_boot_of_load`). -/
+theorem run_boot_vt_live (vt : Vt.Vt) (labels metaKv : List (String × String)) (evs : List Event)
+    (h : Linger.Core.Vt.LiveReachableVt vt) :
+    LiveVt (run (State.boot vt labels metaKv) evs).1 := run_vt_live _ _ h
+
+/-- **The A2 anchor for the screen, made structural.** Every state the daemon can *possess*
+— every state reachable from any boot, which by the `State` seal is all of them — has a
+grid `Render.restore` can express and a tab ruler the width of it.
+
+Stated as one theorem rather than a chain because the chain is what a reader was previously
+left to assemble, and the resumed half of it did not exist: `run_vt_renderable` needed
+`LiveVt s`, and nothing supplied that for a decoded `vt0`. `TabsOk` rides along because it
+is the second hypothesis `Render.restore_tabs_any` and `Resume.resume_tabs` ask for and
+`Renderable` does not carry. -/
+theorem run_boot_vt_shape (vt : Vt.Vt) (labels metaKv : List (String × String)) (evs : List Event)
+    (h : Linger.Core.Vt.LiveReachableVt vt) :
+    Renderable (run (State.boot vt labels metaKv) evs).1.vt ∧
+      Linger.Core.Vt.TabsOk (run (State.boot vt labels metaKv) evs).1.vt :=
+  ⟨Linger.Core.Vt.renderable_of_liveReachable (run_boot_vt_live vt labels metaKv evs h),
+    Linger.Core.Vt.tabsOk_of_liveReachable (run_boot_vt_live vt labels metaKv evs h)⟩
+
+/-- **The same claim with no hypothesis at all, over the term the daemon computes.** `l` is
+an arbitrary `List UInt8` — a corrupt file, a truncated one, a hostile one, or a real
+checkpoint — and `resumeVt l` is `Daemon.lean`'s `vt0`. Both doors are the two branches of
+the `getD`, so this is the whole of "every screen the daemon can possess is one the emitter
+can repaint, and every ruler is the width of its screen", quantified over every byte string
+that could be on disk and every event trace.
+
+Unprovable before the `ofDecoded` rung: the `some` branch had no `LiveVt`. -/
+theorem run_resume_vt_shape (l : List UInt8) (labels metaKv : List (String × String))
+    (evs : List Event) :
+    Renderable (run (State.boot (resumeVt l) labels metaKv) evs).1.vt ∧
+      Linger.Core.Vt.TabsOk (run (State.boot (resumeVt l) labels metaKv) evs).1.vt :=
+  run_boot_vt_shape _ labels metaKv evs (liveReachable_resumeVt l)
+
+/-- **A1 across a *second* reboot.** The checkpoint a resumed session writes loads back
+exactly, for any bytes it was resumed from and any trace it then ran. `load_save_live`'s
+three hypotheses are discharged in one step by the same reachability, which is the point:
+reboot-resume is idempotent rather than one-shot, and before the rung this could only be
+said of a session that had never been resumed.
+
+The `.quiesce` on the right is content, not decoration — the round trip is exact *modulo*
+the parser state a checkpoint deliberately forgets (`Checkpoint.wVt`), and the daemon's own
+checkpoints are already quiescent, being taken between poll rounds. -/
+theorem run_resume_load_save (l : List UInt8) (labels metaKv : List (String × String))
+    (evs : List Event) (cwd : String) :
+    Checkpoint.load
+        (Checkpoint.save
+          { vt := (run (State.boot (resumeVt l) labels metaKv) evs).1.vt, cwd,
+            labels := (run (State.boot (resumeVt l) labels metaKv) evs).1.labels }) =
+      some
+        { vt := (run (State.boot (resumeVt l) labels metaKv) evs).1.vt.quiesce, cwd,
+          labels := (run (State.boot (resumeVt l) labels metaKv) evs).1.labels } :=
+  Checkpoint.load_save_live _ (run_boot_vt_live _ labels metaKv evs (liveReachable_resumeVt l))
 
 /-! ## §Bound at the door — boot is well-formed, so every daemon state is
 

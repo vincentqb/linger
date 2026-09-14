@@ -42,9 +42,21 @@ it rotted in this file already.
    `restore_sb_reachable` / `restore_sb_exact` / `Linger.Core.resume_sb`, plus
    `restore_sb_keeps_of_empty` for the branch the guarded `ED 3` forces. The
    scrollback has left THEOREMS.md's fixture-carried list. **Only Step 5 remains
-   and it is optional and off the critical path** (the `+4` slack made honest,
-   `scrollbackAnsi_le` to retire the byte-budget fixtures, and the decision about
-   `Render.history`'s dead `withAnsi` branch). Read the Step 4 record before
+   and it is optional and off the critical path** (the `+4` slack made honest, and
+   `scrollbackAnsi_le` to retire the byte-budget fixtures). Its third item —
+   the decision about `Render.history`'s dead `withAnsi` branch — **is discharged
+   (2026-09-14): the argument is deleted.** The branch was dead *and* unproved, and
+   mutation proved nothing observed it (its body replaced by four junk bytes left
+   `./lake build` and `./lake build Theorems Tests` green), so there was nothing to
+   preserve. Not wired up as `linger history --color`, and the reason is a cost worth
+   not re-deriving: `Msg.history` carries no payload and the tag assignment is frozen,
+   so a flag means a new wire tag plus a case in each of `Theorems/Wire.lean`'s four
+   exhaustive tag case-bashes — and a *new, weaker* framing claim, because `rowAnsi`
+   emits `ESC` and `history_framing`'s "every byte is `LF` or printable" is false of a
+   coloured stream. `Render.history` now takes a `Vt` alone; all four of its claims
+   (`history_framing`/`history_lines`/`history_records`/`history_screenText_suffix`)
+   lost the `false` and the `rw [ite_eq_right …]` that discharged the `if`.
+   Read the Step 4 record before
    touching the ring: it names six findings, of which the two most expensive to
    rediscover are that `Fixes` **cannot** state the `ED 3` (it is an invariance
    predicate; the byte walk is by hand) and that `Good` says nothing whatever
@@ -54,8 +66,27 @@ it rotted in this file already.
    the fit and the order — and the twelve mode bytes ending `scrollbackAnsi` are
    behaviourally inert but proof-load-bearing **twice over** now.
    **`specs/archive/vt-toolkit.md` is CLOSED** (2026-09-11, all four steps): `Vt`'s
-   twenty fields are `private` so no importer can read, write or forge one; the
-   checkpoint decoder validates `Good` **and** `Renderable` and refuses the rest;
+   twenty fields are `private` so no importer can write or forge one — **write-hiding
+   plus no-forge, and NOT read-hiding**, which is the audit's finding R6 and corrects
+   both this line and the Step 1 record's "25 files paid for read-hiding". `deriving
+   Repr` on `Vt` is a public, total reader of all twenty: `repr (Vt.init 3 2)` from a
+   plain import prints every one (measured 2026-09-14, from a `module` importer and a
+   legacy one alike). No-forge survives it because there is no way back from the
+   printout — `DecidableEq`/`BEq`/`FromJson` all fail to synthesize — so what the 25
+   files bought is real, just narrower than the word used for it. **Removing `deriving
+   Repr` would actually obtain read-hiding, it is free, and it holds against a
+   re-derive** — all measured 2026-09-14. Free: the cascade is exactly two dependent
+   derives, `Terminal.Result` and `Session.State` (both hold a `Vt`; `Checkpoint.Ckpt`
+   holds one but derives nothing), each a `Repr`-only clause that goes with it, and
+   nothing whatever consumes any of the three instances — with all three dropped,
+   `./lake build`, `./lake build Theorems Tests`, `./lake build e2e`, `gates.sh` and
+   `e2e coverage` are all green. Holds: an importer cannot put it back, because
+   `deriving instance Repr for Vt` from outside fails with `Unknown constant` on all
+   twenty private projections — so Lean's own "adding `deriving instance` may allow"
+   hint is misleading here, and this is the fact that makes the removal worth doing
+   rather than merely worth wanting. Left undone only because `Vt.lean` and
+   `Terminal.lean` were another writer's files this round.
+   The checkpoint decoder validates `Good` **and** `Renderable` and refuses the rest;
    `lean_lib LingerVt` plus an exact-set import grep pin the toolkit's closure; and
    the friend set is computed transitively rather than grepped, because
    **`import all` transits**. Two mechanism facts worth not re-deriving are in its
@@ -228,13 +259,12 @@ fresh pair of eyes.
   any path. Never interpolate raw names into socket/checkpoint paths.
 - `./tests/e2e.sh` is the gate before any commit that touches the
   runtime; it must stay green and warning-free. **Run it in the
-  foreground.** A job started with `&` gets SIGINT and SIGQUIT *blocked*
-  (measured: `SigBlk 0x6`), the mask survives `execve`, and every
-  descendant inherits it — including the session shell the daemon spawns.
-  The agent suite's `^C` assertion then fails for a reason that has
-  nothing to do with linger, and it looks exactly like a flake: it passes
-  standalone every time. `setsid` and `nohup` alone are harmless; the `&`
-  is what does it. Cost an hour on 2026-09-11 before the mask was measured.
+  foreground** — a `&` job inherits SIGINT disabled, the agent suite's
+  `^C` assertion then fails for a reason that is not linger's, and it
+  looks exactly like a flake. The script now probes for this and refuses
+  to run; the measurement, the reason the probe is behavioural rather
+  than `/proc`-based, and the `setsid`/`nohup` nuance all live on that
+  check in `tests/e2e.sh` and nowhere else.
 - **`Tests/` and `tests/` are two tracked directories** (Lean unit tests
   vs. the e2e orchestrator). On a case-insensitive filesystem they are
   one directory on disk and git will silently record a new `tests/x` as

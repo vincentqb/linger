@@ -280,6 +280,30 @@ theorem rVt_shape {l : List UInt8} {v : Vt} {rest : List UInt8} (h : rVt l = som
   simp only [Option.some.injEq, Prod.mk.injEq] at he
   exact ⟨he.1 ▸ ofDecoded_renderable hw, he.1 ▸ ofDecoded_tabsOk hw⟩
 
+/-- **…and it is a state a live session can hold** — the third and strongest reading of
+"nothing bad is ever decoded", from an arbitrary `List UInt8`. Not merely `Good` (Step 2),
+not merely `Good ∧ Renderable ∧ TabsOk` (finding R2): a member of the *closure* the replay
+theorems are stated over, so a decoded screen is admissible wherever a fed-and-resized one
+is.
+
+This is `LiveReachableVt`'s `ofDecoded` rung reached through the readers, and it is the
+claim the rung exists for. Before it, `Theorems/Session.lean` could lift the shape
+invariant to the daemon only for a session booted from `Vt.init`; `load_live` below carries
+it to the resume path, where `Session.liveVt_boot_of_load` closes the gap in one step.
+
+The rung is sound only because the *door* decides all four components — R2 is what made
+this provable, and a rung premised on `Good v` instead was measured unsound (§LiveReachable
+in `Theorems/Vt.lean`). -/
+theorem rVt_live {l : List UInt8} {v : Vt} {rest : List UInt8} (h : rVt l = some (v, rest)) :
+    LiveReachableVt v := by
+  simp only [rVt, Option.bind_eq_bind, Option.bind_eq_some_iff] at h
+  obtain
+    ⟨_, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -,
+      _, -, w, hw, he⟩ :=
+    h
+  simp only [Option.some.injEq, Prod.mk.injEq] at he
+  exact he.1 ▸ LiveReachableVt.ofDecoded hw
+
 /-! ### The format tag, as a named stage
 
 `stripMagic` is the tag check, named rather than inlined; `load_save` and `save_tag` both
@@ -336,6 +360,30 @@ theorem load_renderable {l : List UInt8} {c : Ckpt} (h : load l = some c) : Rend
 at all. -/
 theorem load_tabsOk {l : List UInt8} {c : Ckpt} (h : load l = some c) : TabsOk c.vt :=
   (load_shape h).2
+
+/-- **The top-level reachability claim: a checkpoint that loads loads to a state a live
+session can hold.** Strictly stronger than `load_good`, `load_renderable` and `load_tabsOk`
+together — those three are its projections (`good_of_liveReachable` and siblings), and it
+additionally puts the decoded screen inside the closure every `Render.restore_*_reachable`
+theorem quantifies over.
+
+The one-line consequence worth naming: `Theorems/Session.lean`'s `LiveVt` is now provable
+for a **resumed** daemon (`Session.liveVt_boot_of_load`), so `Session.run_vt_renderable` and
+the shape claims beneath it stop being about fresh boots only. That is the whole reason the
+`ofDecoded` rung was added; this theorem is the bridge.
+
+`load_save_live` below still asks for `LiveReachableVt c.vt` rather than `load l = some c`
+on purpose: its subject is `save`'s **input**, the state the daemon holds, which reaches
+the decoder only through `load_save`'s own conclusion (the circularity SCRATCHPAD.md
+measured). `load_live` is the tool for the other direction — `load`'s output. -/
+theorem load_live {l : List UInt8} {c : Ckpt} (h : load l = some c) : LiveReachableVt c.vt := by
+  simp only [load, Option.bind_eq_bind, Option.bind_eq_some_iff] at h
+  obtain ⟨_, -, ⟨vt, _⟩, hvt, _, -, _, -, h⟩ := h
+  split at h
+  · simp only [Option.some.injEq] at h
+    subst h
+    exact rVt_live hvt
+  · exact absurd h (by simp)
 
 /-- §Restore, top level: a checkpoint written by `save` loads back to
 exactly what was saved (parser state quiesced — which the daemon's
