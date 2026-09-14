@@ -165,8 +165,7 @@ back after a reattach depends on whether the application redraws.
 
 Kitty graphics (`APC`), sixel (`DCS`) and iTerm2 inline images
 (`OSC 1337`) pass through **byte for byte**: the daemon forwards every raw
-pty chunk to attached clients as it arrives. There is no switch to turn on
-— tmux needs `allow-passthrough`, linger does not.
+pty chunk to attached clients as it arrives. There is no switch to turn on.
 
 The emulator itself *ignores* the payload: an image sequence parks the
 parser in its string state until the terminator and accumulates nothing.

@@ -7,7 +7,7 @@ public section
 
 /-! # Linger.Runtime.Paths — where sockets, checkpoints and logs live
 
-Same resolution order as zmx:
+Resolution order:
 * sockets: `$LINGER_DIR` > `$XDG_RUNTIME_DIR/linger` > `/tmp/linger-$UID`
 * state (checkpoints, logs): `$LINGER_DIR` > `$XDG_STATE_HOME/linger` >
   `~/.local/state/linger`

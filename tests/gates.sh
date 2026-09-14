@@ -73,7 +73,7 @@ code_count() { code_grep "$@" | awk 'END { print NR + 0 }'; }   # -> a number
 for p in Linger/Core Linger/Core/Vt.lean Linger/Core/Checkpoint.lean \
          Linger/Runtime Linger/Runtime/Client.lean Linger/Runtime/Daemon.lean \
          Theorems Theorems/Session.lean Tests E2E \
-         LingerTest.lean c/shim.c lakefile.lean lake-manifest.json; do
+         LingerTest.lean c/shim.c lakefile.lean lake-manifest.json README.md; do
   [ -e "$p" ] || fail "$p is gone — a gate below would pass by matching nothing"
 done
 
@@ -141,6 +141,65 @@ done
   || fail "external Lean dependency in lakefile.lean (README promises none)"
 [ "$(tr -d ' \n' < lake-manifest.json | grep -o '\"packages\":\[[^]]*\]')" = '"packages":[]' ] \
   || fail "lake-manifest has packages (README promises no external Lean deps)"
+
+# README's prior-art list stays BARE — names and links, nothing else. AGENTS.md's
+# "do not editorialize about other codebases" rule sanctions exactly one place to
+# name a peer project, and this is it; 4551a5b cut the list back to that shape after
+# it had grown "(the gold standard)", "(the attach/detach decoupling linger mirrors,
+# down to the verb surface)" and "(the interface bar — its crashes under load are why
+# §Bound and §Total are theorems here)". The 2026-09-14 sweep removed the same species
+# of clause from 30 other sites. Nothing stops it growing back, so: SHAPE, not a
+# wordlist.
+#
+# The block is `Prior art:` to the next blank line. Strip the lead-in, every
+# `[name](url)` span and the list separators; anything LEFT is a characterization.
+# That is the rule stated as an assertion — a bare pointer has no residue.
+#
+# WHY SHAPE AND NOT A WORDLIST, measured, because the wordlist is the obvious design
+# and it is the wrong one:
+#   * `screen` is one of the five projects the list names, and it CANNOT be in a
+#     wordlist: as a standalone word it has 463 hits over tracked `.lean`/`.md`
+#     (`screenText`, `screensAnsi`, "the screen", …), exactly ONE of which is the
+#     project. So a wordlist gate is structurally blind to a fifth of its own subject.
+#   * a wordlist must let the sanctioned links through, and once it does it goes
+#     silent on the motivating violation: every characterization above sits OUTSIDE
+#     its link span and contains no project name at all. Measured on the real text —
+#     with `[name](url)` spans stripped (needed so the list itself passes), a
+#     {tmux,abduco,zellij,zmx,dtach} grep does not fire on pre-4551a5b README. A gate
+#     that passes clean on the tree that motivated it is the spec-citation gate's
+#     `code_grep` trap in a new costume.
+#   * and it is a denylist of names someone thought of — the objection the friend-set
+#     gate above records against gating edges instead of the closure.
+# What this gate buys instead is narrow and real: the ONE sanctioned location cannot
+# silently stop being a bare pointer. The rest of the standard is prose discipline
+# under AGENTS.md §Rules, declined deliberately rather than faked.
+#
+# Break-verified six ways: pre-4551a5b README (fires, 5 lines), 4551a5b (silent),
+# this tree (silent), `Prior art:` renamed (exit 2, the vacuous-pass probe — a gate
+# whose block went missing must not pass), a new BARE entry appended (silent: the
+# list may grow), and one characterization re-added to an existing link (fires).
+#
+# POSIX awk: bracket expressions, no backslash escapes, per `code_grep`'s rules. Not
+# `code_grep` itself — the sanctioned form is a markdown link, not a backtick span,
+# and stripping backticks would neither admit it nor find the residue.
+awk '
+  /^Prior art:/ { inblock = 1 }
+  inblock && /^[[:space:]]*$/ { inblock = 0 }
+  inblock {
+    seen++
+    s = $0
+    sub(/^Prior art:/, "", s)
+    gsub(/[[][^]]*[]][(][^)]*[)]/, "", s)
+    gsub(/and/, "", s)
+    gsub(/[,.[:space:]]/, "", s)
+    if (s != "") { printf "  %s:%d:%s\n", FILENAME, FNR, $0; bad++ } }
+  END {
+    if (seen == 0) {
+      print "  no `Prior art:` block found in README.md — renamed or removed, and this"
+      print "  gate would then pass by checking nothing"
+      exit 2 }
+    exit (bad > 0 ? 1 : 0) }' README.md >&2 \
+  || fail "README's prior-art list is not a bare pointer any more (see the lines above): name and link only, no characterization of another project — AGENTS.md, 'do not editorialize about other codebases'"
 
 # The vt-toolkit's import closure (`specs/archive/vt-toolkit.md` Step 4). The toolkit is
 # Linger/Core/{Vt,Render,Terminal}.lean, and the claim worth having is that its
@@ -387,15 +446,39 @@ FORGE='(^|[^`[:alnum:]_])(cols|rows|grid|bot|tabs|pstate|u8need|u8acc) *:='
 # deleted 18 of 20, and the control run showed six of those were already
 # deletable BEFORE the file split — budget added when the proofs were rougher and
 # never re-measured once the surrounding lemmas were factored. So the sweep is
-# cheap and the number only goes DOWN: after a refactor, try deleting them. The
-# one that remains is real: `Vt.renderable_stepGround` (re-measured 2026-09-11 on
-# v4.34.0-rc2 — still fails without it; `Checkpoint.load_save` shed its raise when
-# `stripMagic` became a named stage). A new one means a proof got harder, which is
-# the signal design-for-provability says to read, not silence.
-HEARTBEAT_CAP=1
+# cheap and the number only goes DOWN: after a refactor, try deleting them.
+# **The cap is now ZERO** (2026-09-14): the last raise was
+# `Vt.renderable_stepGround`, and it did not need a bigger budget — it needed a
+# better closer. Re-measured in tree: the `first | ...` script genuinely still
+# timed out at the default 200000 (confirmed, not assumed), but `grind` with the
+# four `renderable_*` lemmas closes every branch inside it, retiring that raise
+# AND the `maxRecDepth 4096` above it, and cutting `./lake build Theorems` from
+# 115.9s to 78.2s. Break-verified twice: drop `renderable_congr` from the lemma
+# set, or drop the `Renderable v` hypothesis, and `grind` fails.
+# Like `statementCap`, zero flips this from a budget to spend into an invariant to
+# keep: a new raise means a proof got harder, which is the signal
+# design-for-provability says to read, not silence.
+HEARTBEAT_CAP=0
 hb_n="$(code_count 'set_option maxHeartbeats' 'Theorems/*')"
 [ "$hb_n" -le "$HEARTBEAT_CAP" ] \
   || fail "maxHeartbeats raises grew to $hb_n (cap $HEARTBEAT_CAP); a proof got harder — read that, or re-measure and delete a stale one"
+
+# recursion-depth ratchet — the sibling the heartbeat one lacked for a year, added
+# 2026-09-14 because the same rot was found by the same argument. `maxRecDepth` is a
+# MEASUREMENT with the same expiry as `maxHeartbeats` and had no gate, so nobody
+# re-measured: of the three raises in `Theorems/Vt.lean`, TWO were stale — `8000` on
+# `uaz_stepGround` and `2000` on `stick_stepGround` both deleted with the proofs
+# untouched and the build green. The third (`4096` on `stepGround`'s `Good` proof) is
+# real: line 730 hits the recursion limit without it, and `grind` cannot retire it
+# either — measured, not assumed. The `4096` on `renderable_stepGround` went with that
+# proof's `grind` rewrite, so 3 became 1 in one round.
+# Same direction-of-travel rule as above: DOWN without discussion, up only as a signal
+# to read. A raise here means a term got deeper, which is usually a dispatch that grew
+# arms — the thing design-for-provability says to restructure rather than budget for.
+RECDEPTH_CAP=1
+rd_n="$(code_count 'set_option maxRecDepth' 'Theorems/*')"
+[ "$rd_n" -le "$RECDEPTH_CAP" ] \
+  || fail "maxRecDepth raises grew to $rd_n (cap $RECDEPTH_CAP); a term got deeper — read that, or re-measure and delete a stale one"
 
 # runtime `partial def` ratchet. Five of the seven shed the keyword on 2026-08-18
 # once someone checked: `while`/`for` in a `do` block never needed it, and none of
@@ -498,4 +581,4 @@ ep_n="$(code_count 'partial def' 'E2E/*' 'LingerTest.lean')"
 [ "$ep_n" -le "$E2E_PARTIAL_CAP" ] \
   || fail "E2E/ grew to $ep_n partial defs (cap $E2E_PARTIAL_CAP); a do-block loop does not need the keyword"
 
-printf 'gates OK — purity, the OS and unsafe surfaces, the Vt friend set, the runtime ties, spec citations, and five ratchets\n'
+printf 'gates OK — purity, the OS and unsafe surfaces, the Vt friend set, the runtime ties, spec citations, the prior-art shape, and the ratchets\n'

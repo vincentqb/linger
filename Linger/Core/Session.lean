@@ -40,10 +40,9 @@ structure Client where
   rows : UInt32 := 24
   attached : Bool := false
   /-- attached with a real size (read-only observers attach 0×0 and
-  never influence the pty size — abduco's `-r`). -/
+  never influence the pty size). -/
   sizer : Bool := false
-  /-- attach order; the highest attached sizer owns the size
-  (abduco's better-resize-handling rule). -/
+  /-- attach order; the highest attached sizer owns the size. -/
   seq : Nat := 0
   /-- `linger wait` parked here until the child exits. -/
   waiting : Bool := false
@@ -227,8 +226,8 @@ def infoText (s : State) : List UInt8 :=
     (fun (k, v) => Render.utf8s k.toList ++ [0x09] ++ Render.utf8s v.toList ++ [0x0A])
 
 /-- Resize the pty only on behalf of the size owner: the most recently
-attached client with a real terminal (abduco's rule — a read-only
-observer or an older mirror must not fight the active user's size). -/
+attached client with a real terminal (a read-only observer or an older
+mirror must not fight the active user's size). -/
 def sizeOwner (s : State) : Option Client :=
   (s.clients.filter (fun c => c.attached && c.sizer)).foldl
     (fun best c =>
@@ -238,7 +237,7 @@ def sizeOwner (s : State) : Option Client :=
     none
 
 /-- The control-resize decision (`linger resize`, from a NON-attached
-connection — agent-cli Decision 3). The abduco rule extends rather than
+connection — agent-cli Decision 3). The size-owner rule extends rather than
 bends: while an attached sizer exists it always wins (refuse, loudly — a
 silent drop would let an agent believe a size it never got); with nobody
 attached there is nobody to fight, and the requested size applies. The
@@ -282,7 +281,7 @@ def broadcast (s : State) (bytes : List UInt8) : List Effect :=
 def onMsg (s : State) (c : Client) (m : Msg) : State × List Effect :=
   match m with
   | .attach cols rows =>
-    -- 0×0 marks a read-only observer (abduco `-r`): it mirrors output
+    -- 0×0 marks a read-only observer: it mirrors output
     -- but never owns the size and its input is dropped
     let sizer := cols != 0 && rows != 0
     let c :=

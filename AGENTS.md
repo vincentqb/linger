@@ -24,11 +24,16 @@ tree, the shim's `linger_*` symbols, the `lingertest` smoke exe. The old
 * The checkout directory is still `lean-zmx` (renaming it is the user's call, since
   it changes everyone's paths).
 
-Separately, **`zmx` still appears as a citation of the upstream project** of that name
-— "verb surface mirrors zmx" (`Linger/Runtime/Cli.lean`), "same resolution order as
-zmx" (`Paths.lean`), "the zmx decoupling" (§Detach in THEOREMS.md), the prior-art
-note in `README.md` §Design. Those name *someone else's* project, which is prior
-art worth crediting; they are not stale branding and should not be renamed.
+Separately, **do not editorialize about other codebases** — the rule is under
+§Rules and it is binding. Describe what linger does and why; never characterize,
+rank, or make a factual claim about what another project does. `README.md`
+§Design's prior-art list — bare names and links, nothing else — is the one
+sanctioned place a peer project is named; `4551a5b` cut it back to that shape and
+the 2026-09-14 sweep removed the same species of clause from thirty-four other
+sites, including four this paragraph used to *instruct you to keep*. That
+instruction was the reason the citations kept coming back, which is why it is gone
+rather than softened. `tests/gates.sh` now holds the sanctioned list to its bare
+shape.
 `README.md` is the user-facing overview. `specs/archive/` holds the
 closed build plans with their completion records. Read `specs/archive/`
 itself rather than trusting a list here to stay current — two counts of
@@ -132,10 +137,11 @@ are all "optional" is finished; archive it saying so.
 Each was decided with a reason; re-opening one needs a new reason, not a
 fresh pair of eyes.
 
-- **Windows, tabs, splits.** "Feature-complete multiplexer" is read as
-  feature-complete *zmx*, not tmux: the OS window manager (or your
-  terminal's tabs) owns composition. Recorded in
-  `specs/archive/lean-zmx.md`.
+- **Windows, tabs, splits.** linger multiplexes sessions *over time* —
+  attach, detach, survive reboots — not panes inside one terminal: the OS
+  window manager (or your terminal's tabs) owns composition. So
+  "feature-complete" means every verb of the attach/detach surface, not a
+  pane layout engine. Recorded in `specs/archive/lean-zmx.md`.
 - **An interactive picker.** One was built and shipped (step 8, with a
   passing pty test), then removed: a first-time user ran bare `linger`,
   got a full-screen picker and typed at it as if it were a shell. Bare
@@ -151,8 +157,10 @@ fresh pair of eyes.
   sixel/iTerm2, and puts payloads in a periodic on-disk write. See README
   "Graphics" and `E2E/Graphics.lean`.
 - **Restoring the process tree.** Reboot-resume restores the screen,
-  scrollback, modes, labels and cwd — not the programs. The
-  tmux-continuum trade, taken deliberately.
+  scrollback, modes, labels and cwd — not the programs. Restarting them
+  would mean guessing which commands are safe to re-run, and a wrong guess
+  is worse than an empty prompt, so the trade is deliberate: the work
+  resumes, the programs do not.
 - **A pure poll plan / `revents` classifier.** The premise that made the
   one historical desync a desync — `revents[i]` belongs to `fds[i]` — is
   established by the C loop in `c/shim.c` and is not a Lean-visible fact,
@@ -193,12 +201,15 @@ fresh pair of eyes.
 ## Gates, hooks and CI
 
 - **`tests/gates.sh` is the only place a ratchet number lives.** The
-  purity greps, the OS-surface checks and all five ratchets
-  (`SHIM_CAP`, `HEARTBEAT_CAP`, `RUNTIME_PARTIAL_CAP`,
+  purity greps, the OS-surface checks and every ratchet
+  (`SHIM_CAP`, `HEARTBEAT_CAP`, `RECDEPTH_CAP`, `RUNTIME_PARTIAL_CAP`,
   `E2E_PARTIAL_CAP`, plus the zero-Python and `Tests/`-vs-`tests/`
   invariants) live there. `tests/e2e.sh` calls it, `pre-commit` calls it,
   CI calls it. Never copy a number out of it — the markdowns did exactly
-  that and every copy rotted.
+  that and every copy rotted. **That includes the number of ratchets**,
+  which is why the summary line, the hook name and the CI step name all
+  say "the ratchets" rather than counting them: "five" was wrong within a
+  day of `RECDEPTH_CAP` landing.
 - **Two tiers, and the split is by cost.** Commit time is
   `.pre-commit-config.yaml`: whitespace, YAML, and `gates.sh` — about a
   second, and **nothing there compiles Lean**. Everything slow is CI
@@ -249,6 +260,20 @@ fresh pair of eyes.
   already expose this?" before adding a syscall. A source-tree property
   like this can't be a theorem; the grep gate is the right oracle
   (`verifier-in-the-loop`).
+  **All 22 were re-audited against v4.34.0-rc2 on 2026-09-14 and none is
+  removable** — the per-wrapper evidence is in SCRATCHPAD.md so nobody
+  re-runs it. The load-bearing negative: core has no `IO.FS.Handle.ofFd`,
+  so `Handle.read/write/close/tryLock` cannot reach a raw pty or socket fd;
+  no `poll`, no termios, no ioctl, no sockets, no signals, no `getuid`, no
+  exec-that-replaces-the-image; and `Child.kill`/`tryWait` exist only on a
+  `Child` from `IO.Process.spawn`, with no pid→`Child`, while our
+  `childPid` comes from forkpty. Two traps recorded there: `alive` is *not*
+  `kill` with signal 0 (composing it would surface the ESRCH distinction
+  into Lean), and `flock` is *not* `Handle.tryLock` (that needs an open
+  wrapper back, gives no `O_CLOEXEC`, and ties a kernel-released lock to a
+  GC-managed handle). **Fewer exports is not automatically more minimal**:
+  merging the termios/winsize wrappers costs a mode argument and a branch,
+  which is logic in the shim. The count is not the metric; the rule is.
 - Theorems resolve tensions: when two requirements collide, state the
   invariant in THEOREMS.md and prove it, then code to it.
 - A theorem or test that cannot fail is worthless: break the code once
@@ -288,13 +313,19 @@ fresh pair of eyes.
   `all_goals first | …`) so a new branch doesn't break the proof.
 - Any poll loop must freeze its fd set before polling (a mid-round
   accept desynced `revents` once and panicked the daemon).
-- **A `maxHeartbeats` raise is a measurement, and it expires.** Nothing
-  else expires it: a 2026-08-18 sweep deleted 18 of 20, and the control
-  showed six were already deletable *before* the file split that
-  prompted the sweep — they were budget added when the proofs were
-  rougher and never re-measured. After any refactor, try deleting them.
-  Ratcheted (`HEARTBEAT_CAP`); a new raise means a proof got harder,
-  which is a signal to read, not to silence.
+- **A `maxHeartbeats` or `maxRecDepth` raise is a measurement, and it
+  expires.** Nothing else expires it: a 2026-08-18 sweep deleted 18 of 20
+  heartbeat raises, and the control showed six were already deletable
+  *before* the file split that prompted the sweep — they were budget added
+  when the proofs were rougher and never re-measured. After any refactor,
+  try deleting them. **`HEARTBEAT_CAP` is now 0**: the last raise wanted a
+  better closer, not a bigger budget, and `grind` with the four
+  `renderable_*` lemmas retired it (and cut `./lake build Theorems` from
+  115.9s to 78.2s). `maxRecDepth` had no gate for a year and rotted the
+  same way — two of its three raises deleted with the proofs untouched —
+  so it is ratcheted too (`RECDEPTH_CAP`, at 1; the survivor is real and
+  `grind` cannot retire it either, measured). A new raise means a proof got
+  harder or a term got deeper, which is a signal to read, not to silence.
 - **A `while`/`for` loop in a `do` block does not need `partial def`.**
   Five of the runtime's seven had it by habit. Two are honest (`pump`,
   `parseLs`) and named in THEOREMS.md §Total; ratcheted
@@ -320,6 +351,23 @@ fresh pair of eyes.
   are semantic no-ops (the daemon drops a non-sizer's input and resize
   regardless), so they are held by greps and **not** by a pty assertion
   pretending to see them — see `specs/archive/pin-the-gaps.md`.
+- **"No theorem can see `IO`" still holds at v4.34.0-rc2, and now for a
+  named reason rather than an assumption.** Every grep gate above exists
+  because of it, so it was re-tested on 2026-09-14 against core's Hoare
+  framework: `Std.Do`, `mvcgen`, `mspec` and the `⦃P⦄ prog ⦃Q⦄` notation all
+  ship and work — an `Id`-monad triple closes green. But `#synth WP IO`
+  **fails**: `IO` unfolds to `EIO` to `EST ε IO.RealWorld`, `EST` is not
+  `EStateM` (`rfl` refuses), and core ships `WP` instances for
+  `Id`/`StateT`/`ReaderT`/`ExceptT`/`OptionT`/`EStateM`/`StateM`/`ReaderM`/
+  `Except`/`Option` and **nothing for `EST`** — zero hits toolchain-wide. A
+  runtime-shaped triple does not even elaborate; the wall is structural, not
+  tactic immaturity. The only route is a generic-monad rewrite with an
+  assumed `@[spec]` on each OS primitive, which axiomatizes the kernel
+  instead of proving anything. And note: **even a working `WP IO` would not
+  retire these gates** — they assert *syntactic* facts about call sites
+  ("the daemon calls `Buf`", "the fallback expression is this one"), which
+  is not a Hoare triple's shape. Do not re-derive this; it is in
+  SCRATCHPAD.md with the probes.
 - **`FAILURES: 0` does not mean anything ran.** Every pty suite carries a
   check-count floor in `tests/e2e.sh` (`suite <name> <floor>`), because a
   suite whose assertions sit in a `for` over a list that went empty still
@@ -334,12 +382,51 @@ fresh pair of eyes.
   *docstring* under `Theorems/` fails `./tests/e2e.sh` step 2 exactly as
   it would in a proof. This has cost a full e2e run twice (`fb6a0e6`, and
   again on 2026-08-29). Say "compiled evaluation" in prose.
+- **Do not editorialize about other codebases.** Describe what linger does and
+  why; do not describe, characterize, rank, or make factual claims about what
+  another project does. The sanctioned exception is a **bare pointer**:
+  `README.md` §Design's prior-art list is names and links and nothing else, and
+  `tests/gates.sh` holds it to that shape. The line that decides the hard cases
+  is **peer vs. environment**:
+  * a **peer** mention compares, ranks or validates us against them — "the gold
+    standard", "crashes under load", "X needs a switch, linger does not", "still
+    more than X's default 2000", "X does the same", "two keystrokes fewer than
+    X's prefix+s". Every one of those decorates a claim that is *already stated
+    in our own terms beside it*, so the edit is: delete the clause, keep the
+    claim. Never delete the claim — restate it if the prose was carrying it.
+  * an **environment** mention names something on the wire or on the box that
+    linger's own correctness is defined against, and it **stays**: a wire format
+    (kitty graphics `APC`, sixel `DCS`, iTerm2's `OSC 1337`), a control sequence
+    (`xterm`'s `ED 3`, the title stack `CSI 22 ; 0 t`), a terminfo value
+    (`TERM=xterm-256color`, an inherited `xterm-kitty` or `screen`), or a tool a
+    recipe drives (`kitty @` in `recipes/lzo.fish`). A format has to be named to
+    be supported. And conformance entry 11's receiver list is the *reason* for a
+    byte order that `E2E/Attach.lean` step 11 and `Tests/Render.lean` pin —
+    delete it and a tested behaviour loses its provenance.
+  Borrowing another project's *rule* is fine; **attributing** it is the
+  editorial. Name the rule for what it constrains: `Tests/Session.lean`'s
+  fixtures are `namespace ObserverAndSizeOwner`, and
+  `Theorems/Session.lean`'s `resizeEffects_owner_only` states the size-owner
+  invariant without crediting anyone for it. Our own pre-rename name is not in
+  scope — see the `"LZMX"`/`lean-zmx` note at the top of this file.
+  **Only the prior-art shape is gated**, and the rest is declined on a
+  measurement rather than forgotten: a peer wordlist cannot include `screen`
+  (463 standalone-word hits, one of them the project) and goes silent on the
+  motivating violation once it lets the sanctioned links through. The
+  measurement is on the gate in `tests/gates.sh`; read it before building the
+  obvious grep.
 - **One writer at a time on this tree.** Two agents editing
   concurrently raced the coverage ratchet: untracked files are invisible
   to `git diff -- Linger/`, so an out-of-band `E2E/Coverage.lean` read caught a
   half-written state and reported 28 unclaimed defs. Both also compile
   the same tree, so each sees the other's partial files as errors.
-  Serialize, or give each writer a worktree.
+  Serialize, or give each writer a worktree. **`cp -a <tree> /tmp/<name>-wt`
+  is the isolation recipe, and it is not idempotent**: if the destination
+  already exists, `cp -a` copies *into* it rather than replacing it, so a
+  second agent reusing a `/tmp` name inherits the first one's half-finished
+  state. That happened on 2026-09-14 and cost a real diagnosis — an agent
+  reported "another writer is mid-edit" about work that was only ever in
+  its own scratch directory. Use a fresh name, or `rm -r` first.
 
 ## Scratchpad
 

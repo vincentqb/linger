@@ -349,10 +349,10 @@ example :
 
 end Linger.Core.Session.Tests
 
-namespace Abduco
+namespace ObserverAndSizeOwner
 
-/-! Borrowed-from-abduco semantics: read-only
-observers and newest-attacher-owns-the-size. -/
+/-! The read-only observer and size-owner rules: an observer mirrors
+output but never owns the size, and the newest attached sizer wins. -/
 
 open Linger.Core.Session
 open Linger.Core.Wire (Msg encode)
@@ -483,8 +483,8 @@ example :
       true := by
   native_decide
 
-/-- `info` reports the attached-client count (abduco's session list
-marker, as data). -/
+/-- `info` reports the attached-client count (the `ls` row's `+N` marker,
+as data). -/
 example :
     (let (_, effs) :=
         Tests.run
@@ -499,7 +499,7 @@ example :
       true := by
   native_decide
 
-end Abduco
+end ObserverAndSizeOwner
 
 namespace Linger.Core.Session.Tests
 

@@ -9,8 +9,8 @@ public section
 
 THEOREMS.md rows: §Frame (round-trip; unknown tags are data),
 §Chunk (re-chunking cannot change what a peer sees), §Bound (a decoder
-holds at most `4 + maxPayload` bytes whatever a peer sends — the
-anti-zellij invariant at the wire layer).
+holds at most `4 + maxPayload` bytes whatever a peer sends — the bound
+at the wire layer).
 
 All statements are schema-level (∀ messages, ∀ chunkings), not
 fixtures: the codec is `List UInt8`-based precisely so these inductions

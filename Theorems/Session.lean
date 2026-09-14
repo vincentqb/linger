@@ -36,7 +36,7 @@ them, which is their job), and module-private is what keeps the `:= rfl`
 proofs elaborating in the private scope.
 
 THEOREMS.md rows:
-* §Detach — the zmx decoupling. A session with zero clients still
+* §Detach — sessions outlive clients. A session with zero clients still
   advances (output is never gated on attachment); a client detaching
   (or `detach-all`) cannot change the screen; attach touches only the
   dimensions, never the scrollback.
@@ -279,7 +279,7 @@ theorem onMsg_input (s : State) (c : Client) (bs : List UInt8)
   unfold onMsg
   simp [h]
 
-/-- A read-only observer's keyboard goes nowhere (abduco's `-r`):
+/-- A read-only observer's keyboard goes nowhere:
 neither state nor pty sees it. -/
 theorem onMsg_input_readonly (s : State) (c : Client) (bs : List UInt8)
     (h : (c.attached && !c.sizer) = true) : onMsg s c (.input bs) = (s, []) := by
@@ -1149,8 +1149,8 @@ theorem run_boot_wf (vt : Vt.Vt) (labels metaKv : List (String × String)) (evs 
     (h : Linger.Core.Vt.Good vt) :
     WF (run (State.boot vt labels metaKv) evs).1 := run_wf _ _ (boot_wf vt labels metaKv h)
 
-/-- **Only the size owner resizes the pty** (abduco's rule, as a theorem rather than
-a comment). `resizeEffects` emits a `resizePty` only for the client the size-ownership
+/-- **Only the size owner resizes the pty** — as a theorem rather than a
+convention. `resizeEffects` emits a `resizePty` only for the client the size-ownership
 cascade (`sizeOwner`: newest attached real-terminal attacher) actually selected — a
 read-only observer or an older mirror never moves the pty out from under the active
 user. -/
@@ -1176,7 +1176,7 @@ theorem resizeEffects_atMostOne (s : State) (c : Client) :
 /-! ## §Size — a control resize never overrides an attached sizer
 
 `linger resize` (agent-cli Decision 3) lets an agent size a *detached* session
-so wrap is deterministic before a capture. The abduco rule extends rather than
+so wrap is deterministic before a capture. The size-owner rule extends rather than
 bends: an attached sizer always wins, and the refusal is loud — an agent must
 not believe a size it never got. -/
 

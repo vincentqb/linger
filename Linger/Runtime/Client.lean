@@ -181,8 +181,7 @@ inductive Outcome where
   deriving Repr, Inhabited
 
 /-- Interactive attach. `readOnly` attaches as a 0×0 observer: output
-mirrors, keyboard is not forwarded (abduco's `-r`), detach key still
-works. -/
+mirrors, keyboard is not forwarded, detach key still works. -/
 def attach (fd : UInt32) (readOnly : Bool := false) : IO Outcome := do
   let detachEnabled := (← IO.getEnv "LINGER_NO_DETACH_KEY").isNone
   let (cols, rows) ← winsizeGet stdinFd

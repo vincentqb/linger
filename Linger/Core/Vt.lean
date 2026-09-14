@@ -4,9 +4,9 @@ public section
 
 /-! # Linger.Core.Vt — restore-grade terminal emulation, pure
 
-The daemon feeds every pty byte here (a passive observer, zmx-style:
-clients get the raw bytes; this state exists so a *re*-attaching client
-can be shown what it missed, and so `linger history` can dump it).
+The daemon feeds every pty byte here (a passive observer: clients get
+the raw bytes; this state exists so a *re*-attaching client can be shown
+what it missed, and so `linger history` can dump it).
 
 Design for the theorems (see THEOREMS.md):
 * §Total — everything is one byte-at-a-time `step : Vt → UInt8 → Vt`
@@ -20,7 +20,7 @@ Design for the theorems (see THEOREMS.md):
   resize, clamped to 1000). Nothing grows with uptime.
 
 Deliberate simplifications (restore-grade, not vt520-certified), each
-chosen because zmx delegates live rendering to the real terminal:
+chosen because linger delegates live rendering to the real terminal:
 * no reply channel: DA/DSR/CPR queries are ignored (when a client is
   attached the real terminal answers; detached, nobody should).
 * resize truncates/pads rather than reflowing.
@@ -195,10 +195,10 @@ def Ring.toList (r : Ring) : List Row :=
 
 /-! ## Parser state -/
 
-/-- CSI collection: params are clamped (≤ 16 of them, each ≤ 65535 —
-tmux does the same). Each param carries whether it began with ':'
-(sub-parameter, for SGR 38:2:… syntax) — one array by construction, so
-the two facts cannot drift apart. -/
+/-- CSI collection: params are clamped (≤ 16 of them, each ≤ 65535).
+Each param carries whether it began with ':' (sub-parameter, for
+SGR 38:2:… syntax) — one array by construction, so the two facts cannot
+drift apart. -/
 structure CsiState where
   priv : UInt8 := 0 -- leading '?' '<' '=' '>' byte, 0 = none
   params : Array (Nat × Bool) := #[] -- ≤ 16 of (value ≤ 65535, startedWithColon)

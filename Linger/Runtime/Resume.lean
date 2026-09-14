@@ -7,7 +7,7 @@ public import Linger.Runtime.Cli
 
 public section
 
-/-! # Linger.Runtime.Resume — checkpoint hooks (the continuum shape)
+/-! # Linger.Runtime.Resume — checkpoint hooks
 
 The daemon decides *when* (60s cadence while dirty, last-detach,
 drop-on-clean-exit — all in the pure machine); this module is the

@@ -310,11 +310,10 @@ ring is therefore 32–46 MB at 80 columns and ~86 MB at 150 — against an
 `outbufCap` of 4 MiB that **disconnects** the client (`Linger/Runtime/Daemon.lean`).
 Without a byte budget, attach becomes attach-then-instant-drop.
 
-262144 admits 3,048 blank 80-column rows, or 2,383 of a realistic mixed row —
-still more than tmux's default 2000-line history. The binding constraint is time
-on a slow link (256 KiB over 1 MB/s ssh is a quarter-second stall on every
-attach); that has not been measured over a real ssh path, and 131072 is the
-safer number if attach latency wins. -/
+262144 admits 3,048 blank 80-column rows, or 2,383 of a realistic mixed
+row. The binding constraint is time on a slow link (256 KiB over 1 MB/s ssh is
+a quarter-second stall on every attach); that has not been measured over a real
+ssh path, and 131072 is the safer number if attach latency wins. -/
 def sbReplayBytes : Nat := 262144
 
 /-- What one replayed row costs the budget: its paint from the **default** pen,

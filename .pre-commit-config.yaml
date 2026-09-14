@@ -20,7 +20,7 @@ repos:
   - repo: local
     hooks:
       - id: gates
-        name: source-tree gates (purity, OS + unsafe surfaces, Vt friend set, runtime ties, spec citations, five ratchets)
+        name: source-tree gates (purity, OS + unsafe surfaces, Vt friend set, runtime ties, spec citations, the ratchets)
         entry: tests/gates.sh
         language: script
         pass_filenames: false

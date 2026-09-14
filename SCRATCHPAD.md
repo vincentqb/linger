@@ -10053,3 +10053,541 @@ recognise "Ported from", "was", "retired" and whatever the next lead-in turns ou
 whose exemption list is a list of English phrasings rots faster than the citations it guards.
 The `specs/….md` form has no provenance idiom — a spec path is cited to be *read* — which is
 what makes that one gateable and this one not.
+
+## The editorial sweep: peer vs. environment — 2026-09-14
+
+`4551a5b` ("prior art") cut README's prior-art list from characterizations —
+"tmux (the gold standard)", "abduco (the attach/detach decoupling linger mirrors,
+down to the verb surface)", "zellij (the interface bar — its crashes under load
+are why §Bound and §Total are theorems here)" — down to bare names and links.
+This is that standard applied to the rest of the tree, plus the rule written
+where the next agent will read it, plus one gate and one declined gate.
+
+### The rule
+
+**Describe what linger does and why; do not describe, characterize, rank, or make
+factual claims about what another project does.** One sanctioned exception: a bare
+pointer in README §Design's prior-art list.
+
+The starting grep (`zmx|tmux|screen|abduco|zellij|dtach|continuum|ncurses|xterm|
+alacritty|kitty|foot|vte|iterm`) returns **850 lines** over the tree minus
+`SCRATCHPAD.md` and `specs/archive/`. Word-boundarying it to standalone project
+names drops that to **115**, and the 735 it sheds are `screenText`, `screensAnsi`,
+`footer`, `altGrid` and friends. Of the 115, **33 were violations**; a
+thirty-fourth (`E2E/Graphics.lean`'s borrowed `allow-passthrough`) names no
+project and so appears in neither count. So the grep over-matches 6:1 and the
+reading is the work, not the grep.
+
+### The line that decided the 85 non-violations: peer vs. environment
+
+Presence of a name is not the test. The test is **what role the other project
+plays in the sentence**.
+
+* A **peer** mention compares, ranks or validates us against them. All 34
+  violations are this: "still more than tmux's default 2000-line history"
+  (`Render.lean:314`, and twice in `specs/scrollback-fidelity.md`), "tmux does the
+  same" as validation for our 16-param CSI cap (`Vt.lean:199`), "tmux needs
+  `allow-passthrough`, linger does not" (`README:169`), "Two keystrokes fewer than
+  tmux's prefix+s … which a tmux session list structurally can't do"
+  (`recipes/lzh.fish`), "zellij crashes under cpu/mem load (unbounded actor
+  queues)" as §Bound's Tension (`THEOREMS.md:281`), "the anti-zellij row/theorem/
+  invariant" ×3, "the zmx decoupling" ×2, "verb surface mirrors zmx", "same
+  resolution order as zmx", "zmx-style", "because zmx delegates live rendering",
+  "the continuum shape" ×3, and eight `abduco` citations.
+* An **environment** mention names something on the wire or on the box that
+  linger's own correctness is defined against, and it **stays**: a wire format
+  (kitty graphics `APC`, sixel `DCS`, iTerm2 `OSC 1337`), a control sequence
+  (xterm's `ED 3`, the title stack `CSI 22 ; 0 t`), a terminfo value
+  (`TERM=xterm-256color`, the inherited `xterm-kitty`/`screen` the terminal suite
+  feeds as data), or a tool a recipe drives (`kitty @` in `recipes/lzo.fish`).
+  **55 mentions across 16 files.** A format has to be named to be supported.
+
+The two calls worth recording, because both could have gone the other way:
+
+1. **THEOREMS.md:630's receiver list** — "`E3=\E[3J` is declared by xterm, tmux,
+   alacritty, foot, vte and the linux console, and ncurses' `clear(1)` sends
+   `CSI H CSI 2 J CSI 3 J` — our order." KEPT. It is conformance entry 11's
+   evidence for two claims of *ours*: that emitting `ED 3` is safe because a
+   terminal that does not implement it ignores it, and that our byte **order** is
+   what it is. That order is pinned by `E2E/Attach.lean` step 11 and
+   `Tests/Render.lean`'s guard fixtures — delete the list and a tested behaviour
+   loses its provenance, and there is no way to restate it "in our own terms"
+   because the content *is* the external fact. Note that `tmux` appears there as a
+   terminfo entry that may be on the far end of our output, not as a peer product.
+2. **"xterm's title stack (`CSI 22 ; 0 t` / `CSI 23 ; 0 t`) would do it and is not
+   universal"** (`Render.lean:665`, `THEOREMS.md:291`). KEPT, same species: it is
+   the reason the window title is a recorded limit rather than a silent one, and
+   it names the sequence. Consistency demanded this — a vendor-origin name for a
+   control sequence is not different in kind from "kitty graphics".
+
+Two contrasts that show the line is not "is it a protocol?":
+`E2E/Graphics.lean`'s "no **allow-passthrough** switch is needed" → "no **opt-in**
+switch": the borrowed config-option name carried no information about our bytes,
+only a pointer at whose config it is. And the same sentence in README was an
+explicit "X needs it, we don't", so the clause went and "There is no switch to
+turn on." stayed.
+
+### Load-bearing citations: restate, never delete
+
+Eight of the 34 were `abduco` attributions on docstrings that state real
+invariants. `Theorems/Session.lean:1152` is the sharp case — "**Only the size
+owner resizes the pty** (abduco's rule, as a theorem rather than a comment)".
+Deleting the docstring would delete the claim; deleting only "(abduco's rule," and
+keeping "as a theorem rather than a **convention**" keeps the whole point, which
+was never about abduco but about this being *proved*. Same shape at
+`Session.lean:230/241`, `Theorems/Session.lean:1179`: "The abduco rule extends
+rather than bends" → "The size-owner rule extends rather than bends" — our own
+vocabulary already had a name for it (`sizeOwner`, `Client.sizer`, §Size).
+
+`Tests/Session.lean`'s `namespace Abduco` (352–502) is the strongest form of the
+thing, since it puts another project's name in an identifier. Renamed
+`ObserverAndSizeOwner` after reading what it holds: an observer's keys going
+nowhere, the newest attached sizer winning, a control resize refused, a zero
+dimension refused, `info`'s client count. `git grep Abduco` first: **two hits**,
+the `namespace` and its `end` — everything inside is `example`, which is
+anonymous, so nothing outside could reference it and no ratchet or suite named it.
+
+### Gate: shipped one, declined one, both measured
+
+**SHIPPED** — a **shape** gate on the one sanctioned location (`tests/gates.sh`,
+after the two README-promise gates). The block is `Prior art:` to the next blank
+line; strip the lead-in, every `[name](url)` span and the separators, and anything
+left is a characterization. That is the rule as an assertion: a bare pointer has
+no residue. Break-verified six ways — pre-`4551a5b` README (fires, 5 lines),
+`4551a5b` (silent), this tree (silent), `Prior art:` renamed (exit 2, so it cannot
+pass by checking nothing), a new **bare** entry appended (silent — the list may
+grow), one characterization re-added to an existing link (fires). Mutation
+confirmed landed by `grep` before each result was trusted. `README.md` added to
+the existence-check loop at the top of the file.
+
+**DECLINED** — the obvious tree-wide peer wordlist. Three measurements, and the
+first two are each sufficient:
+
+* **It cannot include `screen`,** which is one of the five projects the sanctioned
+  list names. As a standalone word `screen` has **463 hits** over tracked
+  `.lean`/`.md` (minus the two exempt paths); exactly **one** is the project. So
+  the gate would be structurally blind to a fifth of its own subject.
+* **Once it lets the sanctioned links through it goes silent on the motivating
+  violation.** Measured on the real text: strip `[name](url)` spans (required, or
+  the gate fires on README's own list — measured, 4 lines) and a
+  `{tmux,abduco,zellij,zmx,dtach}` grep does **not** fire on pre-`4551a5b`
+  README. Every characterization there sits *outside* its link span and contains
+  no project name at all. A gate that passes clean on the tree that motivated it
+  is the spec-citation gate's `code_grep` trap wearing a new costume.
+* **It is a denylist of names someone thought of** — the objection the friend-set
+  gate already records against gating edges instead of the closure. "wezterm does
+  X" or "byobu's Y" would sail through.
+
+For the record, the exemption set would have been *small* — 6 lines in 3 files
+(README's 4 link lines, THEOREMS.md:630, `lake-manifest.json`'s `"name": "zmx"`),
+because the `[^[:alnum:]_-]` boundary already rules in every `specs/archive/lean-zmx.md`
+citation, `c/shim.c`'s header and `lake`'s `~/lean-tmux/…` path for free. Small
+exemptions were not the problem; blindness was.
+
+### Ruled out of scope, deliberately
+
+* **`"LZMX"`** (`Tests/Checkpoint.lean:100,106`, `Theorems/Checkpoint.lean:424`) —
+  our own pre-rename magic, not another project. Untouched, as is
+  `lake-manifest.json`'s `"name": "zmx"` and `c/shim.c`'s header.
+* **Paths**: `specs/archive/lean-zmx.md` and its ~20 citations, the checkout
+  directory. Renaming the archive would break `gates.sh`'s spec-citation gate and
+  falsify a closed record.
+* **`SCRATCHPAD.md`, `specs/archive/**`** — append-only and closed. The live
+  `specs/scrollback-fidelity.md` **was** edited: both tmux yardsticks sit in live
+  prose (the Step 1 constants list and the still-open budget question), not in a
+  completion record.
+* **`lake:9`'s "(Recipe proven in ~/lean-tmux/env/lean_env.sh.)"** — a filesystem
+  path, and paths are not comments.
+
+### AGENTS.md: the half that makes it stick
+
+The block at lines 27–31 *instructed future agents to keep* four of the citations
+this sweep removed ("prior art worth crediting; they are not stale branding and
+should not be renamed"). That instruction is why they kept coming back, so it is
+replaced rather than softened, and the full rule — peer vs. environment, with
+examples on both sides and the restate-don't-delete clause — is now a bullet under
+§Rules, where the binding rules live. Two "settled non-goals" that defined our
+scope by another project's feature set were rewritten to state the decision
+directly: "feature-complete multiplexer is read as feature-complete zmx, not
+tmux" → sessions over time, not panes inside one terminal; "the tmux-continuum
+trade" → the trade plus the reason it is one (restarting programs means guessing
+what is safe to re-run).
+
+### Verification
+
+`./lake build`, `./lake build Theorems Tests`, `./lake build e2e` all green;
+`./lake exe e2e coverage` still `0 (cap 0)`; `sh tests/gates.sh` green; full
+`./tests/e2e.sh` green in the foreground — 10 suites, every check floor met
+exactly (attach 35, watch 17, graphics 9, agent 25, …); `lean-fmt check` 71 files
+no findings and `lean-fmt format --check` 71 files all formatted. No ratchet
+moved. Every `.lean` change is a comment or docstring except the two
+`namespace`/`end` lines — verified by filtering the diff for non-comment content:
+empty.
+
+## Re-audit of the C surface against v4.34.0-rc2 — is SHIM_CAP=22 minimal? — 2026-09-14
+
+Worktree `/tmp/shim-wt` (`cp -a`), one-writer rule honoured — no writes to the live tree.
+Probe harness `./lake env lean /tmp/probeN.lean`. **Result: nothing removable. 22 is
+minimal. No diff produced.** This entry is the evidence so the next person does not
+re-run it from scratch.
+
+### Method
+- Enumerated the 22 `LEAN_EXPORT` in `c/shim.c` and the 22 `@[extern]` in `Linger/Posix.lean`;
+  cross-checked the symbol sets both directions (`/tmp/xcheck.sh`): **1:1, zero orphans** —
+  no extern without a C export, no C export without an extern.
+- Enumerated real call sites (comments and backtick-quoted prose stripped) across
+  `Linger/Runtime`, `E2E`, `LingerTest.lean`, `Tests`, `Main.lean` (`/tmp/callsites.sh`).
+  **Every one of the 22 has ≥1 live call site.** Nothing is dead.
+- Probed the current toolchain's `IO`/`Std` surface for each candidate the task named,
+  rather than reasoning from memory. Negatives below are `Unknown constant/identifier`
+  from `lean`, positives are the printed signature.
+
+### What the toolchain DOES expose (probe1/probe2)
+- `IO.Process.spawn : SpawnArgs → IO (Child …)`, `Child.wait : … → IO UInt32`,
+  `Child.tryWait : … → IO (Option UInt32)`, `Child.kill : … → IO Unit`,
+  `Child.pid : … → UInt32`. **All keyed on a `Child`** produced by `spawn`.
+- `SpawnArgs` has fields `cwd`, `env`, `inheritEnv`, and — notably — `setsid : Bool := false`.
+  `StdioConfig` stdio is `Stdio = piped | inherit | null` **only**.
+- `IO.FS.Handle.mk : FilePath → Mode → IO Handle` (path only), `Handle.read/write/close`,
+  and real advisory locking: `Handle.lock (exclusive := true)`, `Handle.tryLock … : IO Bool`,
+  `Handle.unlock`. `tryLock` is non-blocking, returns `Bool` (no errno at the boundary).
+- `IO.getEnv`, `IO.currentDir`, `IO.FS.realPath`, `IO.Process.getPID`.
+
+### What it does NOT expose — the dispositive negatives (probe3/probe4)
+Each is `Unknown constant`/`Unknown identifier` on v4.34.0-rc2:
+- `IO.FS.Handle.ofFd` / `.fromFd` / `.mkFromFd` — **no way to wrap a raw fd as a Handle.**
+  The daemon's fds are a forkpty master, a bound unix-listen fd, and accepted conn fds,
+  all raw `UInt32` from the shim. So `Handle.read/write/close/tryLock` cannot reach them.
+- `IO.Process.exec` — **no exec-that-replaces-the-image.** `spawn` forks a child; it never
+  becomes ssh. `Cli`'s `exec "ssh" …` must replace the process so ssh owns the tty.
+- `IO.Process.kill` / `IO.Process.wait` (by pid) — absent. Kill/wait exist **only** on a
+  `Child`. `Child.pid` goes Child→pid; there is **no** pid→Child. The daemon's `childPid`
+  comes from `spawnPty` (forkpty in the shim), never from `IO.Process.spawn`, so no `Child`
+  object exists to call `tryWait`/`kill` on.
+- `IO.Process.getUID` / `System.Platform.getuid` — absent. `getuid` is the only source for
+  the `/tmp/linger-<uid>` runtime dir.
+- `IO.poll` / `IO.FS.poll` — absent. The whole daemon is a poll loop.
+- `IO.setNonblock` / `Handle.setNonblock` — absent (fcntl O_NONBLOCK).
+- `IO.Signal` / `IO.setSignalHandler` — absent (SIGHUP ignore).
+- Sockets: `Std.Net.Addr`, `Std.Net.TCP.Socket`, `Std.Internal.UV.TCP`, `Std.Internal.UV.Pipe`
+  all **unknown**. No socket surface of any kind under the probed names; and the daemon is
+  raw-fd + poll + unix-domain anyway, which a libuv async handle would not fit without
+  rewriting the loop.
+
+### Per-wrapper disposition (all KEEP)
+- `read`,`write`,`close`,`set_nonblock`: operate on raw pty/socket fds; no `Handle.ofFd`, so
+  core's `Handle` API cannot reach them. `read`/`write` also carry the daemon's nonblocking
+  contract (EAGAIN→`some #[]`/`0`, peer-gone→`none`/`-1`) with the errno kept in C.
+- `poll`,`spawn_pty`,`winsize_get`,`winsize_set`,`term_raw`,`term_restore`,`ignore_sighup`:
+  no core equivalent (poll/forkpty/ioctl-TIOC?WINSZ/termios/signal all absent).
+- `unix_listen`,`unix_connect`,`accept`: no socket surface in core.
+- `spawn_detached`: `spawn` has `setsid` but `Stdio` is only piped/inherit/null — it **cannot
+  redirect stdout/stderr to the append-log at 0600**, and gives a `Child` to reap rather than
+  a double-forked, init-reparented grandchild. The log redirection is the hard blocker.
+- `exec`: no exec-replace in core.
+- `getuid`,`getcwd_of`: no uid in core; `getcwd_of` reads **another pid's** cwd
+  (`/proc/<pid>/cwd`, or libproc on macOS), which `IO.currentDir`/`realPath` (our own cwd)
+  cannot do.
+
+### The three traps the task flagged, resolved by measurement
+1. **`alive` vs `kill` with signal 0.** *Not* composable from the current `kill`.
+   `linger_kill` returns `IO Unit` and swallows ESRCH — it deliberately reports nothing —
+   so `kill pid 0` through it tells you nothing. Composing `alive` would force `kill` to
+   surface success/ESRCH, i.e. move the alive/dead **errno distinction into Lean**, which
+   AGENTS.md forbids. `linger_alive` returns `Bool` with the errno kept in C. Two zero-logic
+   syscalls beat one that leaks a comparison. KEEP both.
+2. **One parameterised wrapper for `set_nonblock` / `term_raw` / `term_restore` / the two
+   winsize ioctls.** Rejected: fewer exports here means a wrapper that takes a mode and
+   **branches**, and AGENTS.md bans logic in the shim. `term_raw` (tcgetattr+cfmakeraw+
+   tcsetattr, returns prior blob) and `term_restore` (tcsetattr from blob) are different
+   operations; merging needs an if. Splitting `cfmakeraw` out instead would put termios
+   bit-twiddling and the platform struct layout **into Lean**, which is worse than a syscall.
+   The count is not the metric; the rule is.
+3. **`flock` vs `IO.FS.Handle.tryLock` — the only candidate that both exists and fits the
+   shape.** Still KEEP, and here is exactly why, because this is the one worth not
+   re-opening:
+   - `tryLock` needs an `IO.FS.Handle`. To get one you call `Handle.mk path <mode>` — an
+     **open wrapper you'd add back** — and Lean's `Mode` gives no `O_CLOEXEC`. The shim opens
+     `O_RDWR|O_CREAT|O_CLOEXEC,0600`; the CLOEXEC is load-bearing — without it the forkpty
+     child would inherit the lock fd and hold the name lock until the child died.
+   - The daemon and `E2E/Robust` hold the lock as a **bare fd** (`Int64`/`UInt32`) for the
+     whole process and rely on **kernel release at death**. `tryLock` ties the lock to a
+     **GC-managed `Handle`**; if that object is finalised the lock releases. Adopting it
+     converts a deterministic fd-lifetime contract into a GC-lifetime one, in the
+     concurrency-critical name-claim path (`Daemon.serve`).
+   - flock(2) (open-file-description release, which AGENTS.md's design depends on) vs
+     fcntl F_SETLK (per-process, releases on ANY close of the inode) is a **behavioural**
+     difference. The C runtime that implements `lean_io_prim_handle_try_lock` is **not
+     shipped in this toolchain** (only `src/lean/` is present; `grep` for `flock(`/`F_SETLK`
+     found nothing), so which one Lean uses **cannot be confirmed on this host**, and the
+     macOS branch cannot be typechecked here anyway. Trading a 12-line, errno-free,
+     both-platforms-verified wrapper for a lock whose release semantics we cannot verify and
+     that couples us to an rc toolchain's implementation choice is the wrong trade. The shim
+     `flock` already returns `-1`/held-fd with the errno kept in C.
+
+### Reverse check (Posix.lean side)
+Every `@[extern]` is used (call-site sweep). The non-extern helpers are all live too:
+`writeAll` (11), `writeBuf` (2, over `linger_write`), `spawnPty`/`winsizeGet` (unpack the
+packed `UInt64` over the private `…Raw` externs), and the core-backed `chmod`/`getpid`/
+`gethostname`/`monotonicMs`/`realtimeS`/`stdinIsTty` (each ≥1). No Lean wrapper is dead and
+none adds anything beyond the call except the honest unpacking/looping noted.
+
+### Declined
+- Producing a diff. Nothing is removable; a manufactured change to have a deliverable would
+  be the anti-pattern the task warns against.
+- Touching either `#ifdef __APPLE__` branch (CLOEXEC fallback; `getcwd_of` via libproc).
+  Not compiled on this Linux host, so unverifiable locally regardless.
+- `sh tests/gates.sh` → OK at SHIM_CAP=22 on the untouched worktree; no runtime change, so
+  `./tests/e2e.sh` was not required.
+
+## Feature-currency audit against v4.34.0-rc2 — 2026-09-14
+
+Question: are we using the toolchain's most recent features? Every claim below
+is a probe I ran against `./lake env lean` on this exact pin, not a changelog
+line. Worktree was `cp -a` of the repo at HEAD `4551a5b`; probes in `/tmp/probe*.lean`.
+
+### The headline negative: `Std.Do` / `mvcgen` CANNOT see `IO` at this toolchain. AGENTS.md's premise holds.
+
+`Std.Do.Triple`, `⦃P⦄ prog ⦃Q⦄`, `mvcgen`, `mspec`, `mleave` all ship in
+`v4.34.0-rc2` (`Std/Tactic/Do/Syntax.lean:436` declares the `mvcgen` syntax).
+The tactic is real and works — but only over monads carrying a `WP` instance,
+and `IO` is not one of them. Measured, in order:
+
+* **probeA** — the docstring `mySum` example (`Id.run do` + `for` loop),
+  `mvcgen invariants · ⇓⟨xs,acc⟩ => ⌜acc = xs.prefix.sum⌝ ; all_goals mleave <;> grind`:
+  **closes green.** So the machinery is present and functional here. It prints
+  `warning: The mvcgen tactic is experimental and still under development. Avoid
+  using it in production projects.` — an upstream self-label, not our policy.
+* **probeB** — `#synth WP IO` → **`failed to synthesize WP IO`.**
+* **probeB2/B3** — why: `IO` is `@[reducible] EIO IO.Error`; `EIO ε` is
+  `@[expose] EST ε IO.RealWorld` — **`EST`, not `EStateM`.** `EST` is
+  `fun ε σ α => Void σ → EST.Out ε σ α`, and `example : EST .. = EStateM .. := by rfl`
+  **fails** ("not definitionally equal"). `Std.Do` ships `WP` instances for
+  `Id / StateT / ReaderT / ExceptT / OptionT / EStateM / StateM / ReaderM /
+  Except / Option` and for **nothing built on `EST`**. Grep of the whole
+  toolchain `src/lean` for a `WP`/`WPMonad`/`WPSound` instance naming
+  `EST|EIO|IO|RealWorld`: **zero hits.**
+* **probeC** — the honest test: an `IO` function shaped exactly like
+  `Daemon.flushConn` (a `while` over a mutable `Nat` cursor calling an opaque
+  `writeChunk : … → IO Int`, then a clamp). Attempt to *state* the triple
+  `⦃⌜True⌝⦄ flushLike fd buf ⦃⇓ w => ⌜w ≤ buf.size⌝⦄`:
+  **`failed to synthesize WP IO`** at the notation itself. You cannot even write
+  the Hoare triple about `IO` code, let alone run `mvcgen`. The wall is not
+  `partial def`, not `@[extern]`, not tactic immaturity — it is that the monad
+  the runtime actually runs on (`EST ε RealWorld`) has no weakest-precondition
+  interpretation in `Std.Do`.
+* **probeD** — the one escape hatch, measured so it can be ruled out fairly:
+  write the loop **monad-polymorphically** (`{m} [Monad m] [WPMonad m ps]`) with
+  the primitive supplied as an *assumed* spec `hspec : ∀ k, ⦃…⦄ writeChunk k ⦃…⦄`.
+  This **does elaborate**, `mvcgen [flushGen, hspec] invariants …` runs and
+  produces a genuine VC (my probe's VC was a real inductive-step gap because my
+  invariant was too weak — the tactic did its job). So the *only* route to
+  mvcgen-reasoning about linger's runtime control flow is: (1) rewrite each IO
+  routine generically over a `WPMonad`, and (2) hand each genuine OS primitive
+  (`writeBuf`, `poll`, `read`, `waitpidNohang`) an **assumed** `@[spec]` triple.
+  Step 2 is axiomatizing the kernel — decoration by this repo's own standard
+  (the poll-plan kill, `specs/archive/runtime-invariants.md`), and the runtime
+  still runs in real `IO` regardless. Not adoptable.
+
+**Verdict:** the "no theorem can see `IO`" premise that `Linger/Core` purity,
+the effects-as-data split, and the five grep gates (`SHIM_CAP`, the three `Buf`
+greps, `Client.attach`'s guards, the `resumeVt`↔`vt0` tie, the friend-set
+closure) rest on is **still true at v4.34.0-rc2, and now for a sharper reason
+than the prose gives**: it is not that IO is hard to reason about, it is that
+`Std.Do` has no `WP EST` instance, so the triple does not typecheck. **Which
+grep gate becomes a theorem first if this ever changes:** none of them, and
+that is worth recording — the gates guard *call-site* facts ("the daemon calls
+`Buf` / `resumeVt` rather than re-implementing them"), which are syntactic, not
+Hoare triples; even a working `WP IO` would not turn them into theorems. The
+gate mvcgen *could* eventually retire is a different thing that has no gate
+today: a proof that `flushConn`'s loop maintains `owedLen ≤ cap` end to end.
+That needs `WP EST` upstream first. Re-test when a `WP` instance for `EST`/`EIO`
+appears; until then this section is the wall, measured.
+
+### grind — the concurrent-writer collision, and the boundary I mapped
+
+The `cp -a` caught the **other writer mid-edit** (AGENTS.md's one-writer warning,
+live): the copied tree had uncommitted work saved to `/tmp/concurrent-writer.diff`
+— they replaced `renderable_stepGround`'s `all_goals first | …` with
+`grind [renderable_congr, renderable_ctl, renderable_acceptChar,
+renderable_acceptChar_congr]`, which retires the tree's **only** `maxHeartbeats
+2000000` raise *and* the `maxRecDepth 4096` above it, drops `HEARTBEAT_CAP` 1→0,
+and (their note) cuts `./lake build Theorems` 115.9s→78.2s. I reset my copy to
+clean HEAD so my diff is mine alone, then **independently reproduced** their
+flagship: applied the same `grind`, deleted both `set_option`s, `./lake build
+Theorems` → **green under the default 200000 heartbeats** (a green build with no
+`maxHeartbeats` set is the proof it stays under default). Their call is correct.
+
+Then I mapped **where grind stops**, which tells them how far to push the sweep:
+
+| proof | predicate | grind result |
+|---|---|---|
+| `renderable_stepGround` | `Renderable` (2 fields) | **closes** (their change) |
+| `printMark` | `Good`, 2-way split, uniform closers | **closes** `grind [mendRow, putCell]` (5 body lines → 2) |
+| `ctl` | `Good`, many-arm `UInt8` dispatch | **fails**, even `split <;> grind [backspace,tab,lineFeed,carriageReturn]` |
+| `printAdvance` | rebuilds `Good` with `by omega` fields | **fails** `grind [Good]` |
+| `stepGround` (Good) | many-arm dispatch **and** `Good`+omega closers | **fails** `grind [set_pstate_esc, ctl, acceptChar, set_u8]` |
+
+Boundary: grind closes case-bashes whose closer is uniform over a small
+predicate; it fails when the closer must (a) select a *different* helper per
+match arm, or (b) rebuild the 15-field `Good` conjunction with per-field
+`by omega`. So the concurrent writer's sweep should stop at the `Renderable`
+family; the `Good` `stepGround`/`ctl`/`printAdvance` family keeps its
+order-robust scripts and the real `maxRecDepth 4096` at line 723 stays.
+Wholesale grind adoption is a wide mechanical rewrite for a stylistic gain on
+the proofs where it *does* work (`printMark`, 5→2) — declined on the lean-fmt
+precedent (66-file reformat rejected, `.lean-fmt.toml`). grind pays for itself
+only where it retires a ratcheted raise, which is the one instance the other
+writer already took.
+
+### What I landed (independent, non-colliding): two STALE maxRecDepth raises deleted
+
+`Theorems/Vt.lean` carried four `maxRecDepth` raises + one `maxHeartbeats`. Two
+of the `maxRecDepth` raises are **stale** — the AGENTS.md "budget added when the
+proofs were rougher, never re-measured" case, the same species as the 18-of-20
+heartbeat sweep. Measured by deleting the `set_option … in` line and rebuilding
+`Theorems.Vt`, proof unchanged:
+
+* **1791 `uaz_stepGround`** (`maxRecDepth 8000`) — builds green without it.
+* **6006 `stick_stepGround`** (`maxRecDepth 2000`) — builds green without it.
+* **723 `stepGround` (Good)** (`maxRecDepth 4096`) — **genuinely still needed**:
+  without it, `Theorems/Vt.lean:730:12: maximum recursion depth has been reached`.
+  Kept. (grind can't retire it either — see the table.)
+* 4975/4976 (`renderable_stepGround`) — the concurrent writer's; untouched.
+
+Deleting stale, undocumented `maxRecDepth` budget is zero proof churn, zero
+order-robustness impact, and `maxRecDepth` is not ratcheted, so no gate moves.
+Lines 1791 and 6006 are nowhere near the concurrent writer's diff — no conflict.
+
+Verification (my two-line diff, `/tmp/feature.diff`): `./lake build` ✓,
+`./lake build Theorems Tests` ✓ (115s), `./lake build e2e` ✓,
+`sh tests/gates.sh` ✓ ("five ratchets" line — `HEARTBEAT_CAP=1` still satisfied,
+1 raise ≤ 1), `lean-fmt check Theorems/Vt.lean` ✓ (no findings).
+
+### Vector / Std.HashMap / Std.Iterators — feasible, not worth it
+
+`Vt.grid : Array Row` (`private`), and `Renderable.main : GridOk v.cols v.rows
+v.grid` where `GridOk cols rows g := g.size = rows ∧ ∀ y, RowOk cols (g.getD …)`.
+probeVec confirms `Vector` is **core** (no Std/Mathlib), `Vector.setIfInBounds`
+is size-preserving with **no** proof obligation, a dependent field
+`grid : Vector Row rows` on a sibling `rows : Nat` compiles, and
+`g.grid.toArray.size = g.rows` is `by simp`. So the refactor is *possible*. It is
+not *worth it*: `GridOk` is also applied to the **alt grid** (`altGrid : Option
+(Array Row × …)`, a runtime `Array`) and to the **decoder's** runtime array
+(`decodedGridOk_iff`, `gridOk_replicate`), so the `.size = rows` conjunct cannot
+be deleted from `GridOk` — a `Vector` main field only makes the *main*
+conjunct `rfl`-discharge, relocating the obligation into the alt/decoder
+constructions rather than deleting it. Cost to get there: `Renderable` is
+referenced **238×** (223 in `Vt.lean`), plus every grid-mutating def
+(`setIfInBounds`, `Array.replicate`, `fit`, the scroll eviction) rewritten to
+`Vector` ops. Wide mechanical churn, structural relocation, **no soundness gain**
+(the seal + `Renderable` already pin the size). Spec-worthy at most; recommend
+against — same ground the lean-fmt formatter was declined on.
+
+### Other v4.33/v4.34 surface, probed
+
+* **`fun_induction`** exists (`Init/Tactics.lean:1049`). Not pursued to a landing:
+  `Linger/Core`'s recursion is `feed = foldl step` (structural `List` induction
+  already) and the two honest `partial def`s are in the runtime; no Core proof
+  visibly mirrors a function's own recursion tightly enough to shorten. Candidate
+  for a future look, not this audit.
+* **`#guard`** (kernel-reduced): the concurrent writer is probing one in
+  `Tests/Render.lean`. `Tests/` uses compiled evaluation for the golden-byte
+  round-trips *because* kernel reduction is too slow for them; `#guard` would be
+  slower there, not a win. (Not mine to land; noted for coordination.)
+* **`cbv` / `decide_cbv`** (`Init/Tactics.lean`) are new and interesting but
+  target `decide`-shaped goals; the Vt proofs are structural case-bashes, not
+  `Decidable` evaluations, so no obvious application.
+* Release notes are **not on disk** in the toolchain tree (only `src`/`lib`); the
+  above is all by in-tree probe against the shipped `.olean`s, which is the
+  stronger evidence anyway.
+
+### Negative results to stop this being redone
+* `WP IO` / `WP (EIO _)` / `WP (EStateM IO.Error IO.RealWorld)` all fail to
+  synthesize. `EIO` is on `EST`, not `EStateM`; `EST ≠ EStateM` by `rfl`. No
+  `WP EST` instance anywhere in the toolchain. mvcgen is unusable on `IO` here.
+* grind fails on `Good`-preserving `stepGround`/`ctl`/`printAdvance` (many-arm
+  dispatch and/or 15-field `by omega` rebuild), so it is not a drop-in for the
+  order-robust style; it only wins where it retires the one ratcheted raise.
+* `maxRecDepth 4096` at `Vt.lean:723` (`stepGround` Good) is **real** at this
+  pin — do not delete it (confirmed: line 730 hits the recursion limit without).
+* Vector-grid is feasible but relocates rather than deletes the size obligation,
+  at 238-reference churn; declined.
+
+
+### Integration note — four audits, two ratchets to zero-and-one, and a `cp -a` ghost
+
+Four questions were asked at once and fanned out: strip editorializing about other
+codebases; is the C surface minimal; are we current with Lean 4; how does the factorization
+compare to the prior art. Two agents were throttled or errored on the first attempt and were
+re-dispatched. What landed:
+
+**The editorial sweep.** 34 violations removed across 20 files, 55 environment-class mentions
+kept, on a rule the sweep had to sharpen before it could apply: **peer vs. environment**. A
+peer mention compares or validates us against them and goes; an environment mention names a
+wire format, a control sequence, a terminfo value or a tool a recipe drives, and stays,
+because a format has to be named to be supported. The full rule is now a bullet under
+AGENTS.md §Rules, which matters more than the sweep: the paragraph it replaced *instructed
+future agents to keep four of the citations this sweep removed*, which is why they persisted.
+A gate holds the one sanctioned location (README's prior-art list) to a bare pointer, by
+**shape** — strip the link spans and any residue is a characterization. The tree-wide peer
+wordlist was declined on two sufficient measurements, both worth not re-deriving: it cannot
+include `screen` (463 standalone hits, one of them the project), and once it lets the
+sanctioned links through it goes silent on the very README that motivated it, because every
+characterization there sat outside its link span and named no project at all.
+
+**The C surface is minimal — 22, and nothing removable.** The value here is the negative
+evidence, in the entry above: no `Handle.ofFd` in core, so no `Handle` API reaches a raw pty
+or socket fd; no poll, termios, ioctl, sockets, signals, `getuid`, or exec-replace; and
+`Child.kill`/`tryWait` only on a `Child` from `IO.Process.spawn`, with no pid→`Child`, while
+`childPid` comes from forkpty. Two traps resolved rather than assumed: `alive` is not `kill 0`
+(composing it surfaces the ESRCH distinction into Lean, which the no-errno rule forbids), and
+`flock` is not `Handle.tryLock` (needs an open wrapper back, no `O_CLOEXEC`, and ties a
+kernel-released lock to a GC-managed handle — and which of flock/F_SETLK Lean uses cannot even
+be confirmed, since that C runtime is not shipped in this toolchain). The agent declined to
+produce a diff, correctly: **"22 is minimal, here is why each is load-bearing" is the
+deliverable**, and manufacturing a change to have one would have been the anti-pattern.
+
+**Lean currency: one architectural premise re-confirmed, two ratchets improved.** The headline
+is a negative and it is in AGENTS.md now: `mvcgen`/`Std.Do` ship and work, but `#synth WP IO`
+fails because `IO` is `EST ε IO.RealWorld` and there is no `WP EST` instance anywhere in the
+toolchain. So "no theorem can see `IO`" holds — structurally, not for want of tactic maturity
+— and the five grep gates keep their justification. The sharper observation is that **even a
+working `WP IO` would not retire them**: they assert syntactic facts about call sites, which is
+not a triple's shape. Meanwhile `grind` did real work: it retired the tree's last
+`maxHeartbeats` raise on `renderable_stepGround` (which wanted a better closer, not a bigger
+budget) and the `maxRecDepth 4096` above it, cutting `./lake build Theorems` 115.9s → 78.2s.
+`HEARTBEAT_CAP` is now **0**. Its boundary was mapped, which is the part worth keeping: `grind`
+closes the `Renderable` family and `printMark`, and **fails** on `ctl`, `printAdvance` and
+`Good`-`stepGround` (many-arm dispatch, and a fifteen-field by-`omega` rebuild).
+
+**The compound-engineering move this round earned: `RECDEPTH_CAP`.** `maxHeartbeats` was
+ratcheted and `maxRecDepth` was not, for a year, and it rotted in exactly the way the heartbeat
+rule predicts — two of three raises deleted with the proofs untouched and the build green. Now
+gated at 1, break-verified (a fourth raise added to `Theorems/Wire.lean` fires it; mutation
+confirmed present by `grep` before the result was trusted). The survivor is real: line 730 hits
+the recursion limit without it and `grind` cannot retire it either, measured.
+
+**And the count that rotted within a day.** Adding a sixth ratchet made "five ratchets" wrong
+in the summary line, the `pre-commit` hook name and the CI step name. AGENTS.md already
+records that two hardcoded counts rotted, so all three now say "the ratchets" — the fix is to
+stop counting, not to increment. That is the same lesson as `specs/archive/`'s "read the
+directory rather than trusting a list here".
+
+**A ghost worth recording: `cp -a` is not idempotent.** The re-dispatched Lean agent reported
+"another writer is mid-edit" and preserved a diff of grind work it had not done. Nobody was
+editing: `cp -a <tree> /tmp/feature-wt` with `/tmp/feature-wt` already present from the
+throttled first attempt copies *into* it, so the second agent inherited the first's
+half-finished state and correctly diagnosed it as somebody else's. The live tree was verified
+untouched (only comment/docstring lines, `HEARTBEAT_CAP` still 1) before anything was
+committed. The finding was real and got landed after independent reproduction — but the
+isolation recipe now says use a fresh name or `rm -r` first, in AGENTS.md beside the
+one-writer rule.
+
+**The factorization comparison stays out of the tree, deliberately.** It is the one deliverable
+that is *about* other codebases, which is exactly what this round removed from the repo. It
+lives in `/tmp/factorization-report.md` and in the conversation. Two of its recommendations
+touch no settled non-goal and would close named gaps rather than widen scope — the window-title
+push/pop (`CSI 22 ; 0 t` / `CSI 23 ; 0 t`), which THEOREMS.md §Handback currently records as
+the one thing not put back, and a `LINGER_SESSION` guard so an attach from inside a session
+does not nest. Neither is started; both are cheap, and the first *improves* the proof surface.

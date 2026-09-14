@@ -17,7 +17,7 @@ import all Linger.Core.Vt
 THEOREMS.md rows for `Vt`:
 * §Chunk — `feed` is invariant under re-chunking (definitional, from
   `feed = foldl step`, but stated so a rewrite cannot silently lose it).
-* §Bound — the anti-zellij row: no field of `Vt` grows with input
+* §Bound — no field of `Vt` grows with input
   volume. Scrollback ≤ `sbCap`, OSC accumulator ≤ 2048, CSI params
   ≤ 16, UTF-8 pending ≤ 3 — preserved by `step` for ANY byte, hence by
   `feed` for ANY byte stream.
@@ -827,7 +827,7 @@ theorem stepStr {v : Vt} (e : Bool) (b : UInt8) (h : Good v) : Good (v.stepStr e
 
 /-- `step` preserves the composite invariant for ANY byte: the cursor
 and every stashed cursor stay in bounds, and no buffer exceeds its cap.
-This is the anti-zellij theorem at the emulator layer. -/
+This is the §Bound theorem at the emulator layer. -/
 theorem step {v : Vt} (b : UInt8) (h : Good v) : Good (v.step b) := by
   unfold Vt.step Vt.abortUtf8
   dsimp only
@@ -1788,7 +1788,6 @@ theorem u8pair_stepEsc (v : Vt) (b : UInt8) :
           ⟨(un_lineFeed _).trans (un_carriageReturn _), (ua_lineFeed _).trans (ua_carriageReturn _)⟩
     | exact Or.inl ⟨un_reverseIndex _, ua_reverseIndex _⟩
 
-set_option maxRecDepth 8000 in
 /-- `stepGround` keeps `u8acc` at zero for any byte that is not a
 multi-byte UTF-8 lead (≥ 0xC0): a lead byte is exactly what *starts* a
 pending sequence. -/
@@ -4973,18 +4972,13 @@ theorem renderable_acceptChar_congr {v w : Vt} (h : Renderable v)
     (ha : w.altGrid = v.altGrid) (n : Nat) : Renderable (w.acceptChar n) :=
   renderable_acceptChar (renderable_congr h hg hc hr ha) n
 
-set_option maxRecDepth 4096 in
-set_option maxHeartbeats 2000000 in
 theorem renderable_stepGround {v : Vt} (h : Renderable v) (b : UInt8) :
     Renderable (v.stepGround b) := by
   unfold Vt.stepGround
   repeat' split
-  all_goals first
-    | exact h
-    | exact renderable_congr h rfl rfl rfl rfl
-    | exact renderable_ctl h _
-    | exact renderable_acceptChar h _
-    | (refine renderable_acceptChar_congr h ?_ ?_ ?_ ?_ _ <;> rfl)
+  all_goals
+    grind [renderable_congr, renderable_ctl, renderable_acceptChar,
+      renderable_acceptChar_congr]
 
 theorem renderable_stepEsc {v : Vt} (h : Renderable v) (b : UInt8) :
     Renderable (v.stepEsc b) := by
@@ -6003,7 +5997,6 @@ theorem stick_ctl (v : Vt) (b : UInt8) (h1 : b ≠ 0x0E) (h2 : b ≠ 0x0F) :
     | exact absurd rfl h1
     | exact absurd rfl h2
 
-set_option maxRecDepth 2000 in
 theorem stick_stepGround (v : Vt) (b : UInt8) (h1 : b ≠ 0x0E) (h2 : b ≠ 0x0F) :
     stick (v.stepGround b) = stick v := by
   unfold Vt.stepGround

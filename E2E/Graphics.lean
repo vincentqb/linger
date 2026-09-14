@@ -13,7 +13,7 @@ not:
 * live, while attached: image bytes reach the client's terminal VERBATIM. The
   bounded terminal mediator recognizes only its owned query profile and emits every
   unowned APC/DCS byte unchanged; kitty/sixel enter payload-free passthrough
-  states, so no allow-passthrough switch is needed.
+  states, so no opt-in switch is needed.
 * the emulator IGNORES the payload (parser state `.str` until ST) and accumulates
   nothing, so a megabyte of base64 cannot grow the session or reach the checkpoint
   (§Bound).

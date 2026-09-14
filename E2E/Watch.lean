@@ -4,7 +4,7 @@ public import E2E.Harness
 
 public section
 
-/-! # E2E.Watch — `linger watch`, the read-only mirror (abduco's `-r`)
+/-! # E2E.Watch — `linger watch`, the read-only mirror
 
 pin-the-gaps item 1. The verb had ZERO coverage of any kind before this suite:
 no pty test, no fixture, no theorem naming it. `tests/e2e.sh` step 4's "mirror" is

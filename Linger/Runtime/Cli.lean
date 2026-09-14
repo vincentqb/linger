@@ -9,8 +9,8 @@ public section
 
 /-! # Linger.Runtime.Cli — argv dispatch
 
-Verb surface mirrors zmx (attach is an upsert; one-shot verbs talk to a
-live daemon or say so). Bare `linger` — and `linger ls` — print a session
+Verb surface: attach is an upsert; one-shot verbs talk to a
+live daemon or say so. Bare `linger` — and `linger ls` — print a session
 overview and exit; there is no full-screen picker (pick with the `fzf`
 recipe in the README, or just `attach`). `__daemon` is the internal
 re-exec target of the detached spawn.
@@ -427,7 +427,7 @@ def main (hooks : Hooks) (args : List String) : IO UInt32 := do
   | "attach" :: name :: cmd | "a" :: name :: cmd =>
     cmdAttach hooks name cmd
   | ["watch", name] =>
-    -- read-only mirror (abduco -r): output only, detach key works
+    -- read-only mirror: output only, detach key works
     match ← Client.connect name with
     | none =>
       IO.eprintln s!"linger: no session '{name}'"

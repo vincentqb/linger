@@ -153,8 +153,8 @@ New in `Linger/Core/Render.lean`, after `gridAnsi`:
   (measured 262153 for an 80×24-shaped ring whose rows each end in a truecolour
   cell). A blank 80-column row costs **86 counted** (82 emitted — `rowAnsi` does not
   trim trailing blanks, so it is 80 spaces plus the `+2` CRLF and `+4` slack), so the
-  budget admits **3,048** of them, not ≈3200; a realistic mixed row gives 2,383,
-  still above tmux's default 2000. Per-cell truecolour costs **40 B/column** (57 with
+  budget admits **3,048** of them, not ≈3200; a realistic mixed row gives 2,383.
+  Per-cell truecolour costs **40 B/column** (57 with
   all seven attributes), so a full `sbCap = 10000` ring is **32–46 MB at 80 columns**
   and ~86 MB at 150 — against a 4 MiB `outbufCap` that *disconnects*. A row cap
   bounds nothing that matters.
@@ -664,7 +664,7 @@ state `E2E/Coverage.lean` exists to prevent.
    rejected as the primary answer: a destructive default with an opt-out still
    surprises the first user, which is what the opt-out is for.
 2. **Is 262144 the right budget?** Derived (**3,048** blank 80-column rows
-   *[corrected]*, more than tmux's default 2000-line history, one sixteenth of
+   *[corrected]*, one sixteenth of
    `outbufCap`), but the binding constraint is time on a slow link: 256 KiB over
    1 MB/s ssh is a quarter-second stall on every attach. Measure one real reattach
    over the actual ssh path before freezing it; 131072 is the safer number if
