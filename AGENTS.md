@@ -161,9 +161,76 @@ fresh pair of eyes.
   would mean guessing which commands are safe to re-run, and a wrong guess
   is worse than an empty prompt, so the trade is deliberate: the work
   resumes, the programs do not.
+- **A shared multi-session server.** One daemon per session is not an
+  accident of implementation, and the argument is a *guarantee* argument, so
+  it belongs here rather than in a design note. `Session.State`
+  (`Linger/Core/Session.lean`) models exactly one session — one `vt`, one
+  `scan`, one `clients` list, no session map anywhere in the pure core — so
+  §Isolate's `step_bytes_isolates`/`run_bytes_isolates` quantify over
+  *clients within one roster*. **Cross-session isolation is therefore not a
+  theorem with a narrow scope; it is the absence of a shared object to state
+  one about.** A shared server converts that structural containment into a
+  proof obligation over a session map, and A2 (`run_wf`) would have to be
+  re-derived with the map as its subject. The caps compound it — `maxClients`,
+  `maxLabels`, `outbufCap`/`ptyInCap` are per-*process*, so one session's
+  client flood cannot deny another a roster slot; inside one heap a cap is
+  bookkeeping and exhausting the heap is still global. §Claim gets the same
+  benefit: the `flock` *is* the ownership, so a crashed owner releases its
+  claim with zero reconciliation, where a shared server must reconcile a
+  table. And per-session checkpoints bound a corrupt file's **scope** to one
+  session, where `load`'s totality alone only bounds its *kind*.
+  Cross-session work goes through the CLI by name — that is the mechanism,
+  and `recipes/` uses it (parsing `ls --porcelain`). What this genuinely
+  costs is written down rather than denied: N × (process + pty + resident
+  `Vt`), a serial `ls` fan-out, no cross-session atomicity (currently
+  unexercised — it becomes load-bearing the day a `rename` or `merge` verb
+  appears), and **no listing snapshot**: row identity and per-row status are
+  sound (§Row), but the *set* is a smear over the fan-out window rather than
+  an instant.
+- **Terminfo / capability negotiation.** `Render`'s repertoire is fixed and
+  linger consults no capability database for its own output, and that is what
+  makes the fidelity theorems statable: `restore : Vt → Bytes` and
+  `leaveAnsi : Bytes` (a constant with no argument) are pure functions of
+  state, so ~40 named fidelity claims conclude `(w.feed (restore v)).X = v.X`
+  over an **arbitrary receiver with no hypothesis on it**. A
+  `Caps → Vt → Bytes` signature gives every one of them a `caps` binder *and*
+  turns the conclusion conditional — "the grid equals `v.grid` **if** `caps`
+  declares …" — which re-introduces exactly the receiver preconditions the
+  project spent effort removing (`restore_grid_any` shed `u8need` and
+  `rows ≥ 2`), and forfeits three properties a capability-typed emitter cannot
+  state at all: determinism given state (the oracle behind `replayEq` and the
+  golden fixtures), host-independent repaints, and no `TERM`-shaped input to
+  our own output. Note the distinction: linger *sets*
+  `TERM=xterm-256color` for the child as a literal (`Daemon.serve`) and
+  *consults* nothing — `E2E/Terminal.lean` pins parent-`TERM` independence.
+  What this costs is graceful degradation, not breakage: conformance entries
+  11–12 are inert-on-absence by their own semantics, 8–10 inert or universal,
+  1–7 the declared xterm baseline. Exactly two things are user-observable and
+  both are already recorded — the window **title** is not restored on detach,
+  and attaching a session with history erases the borrowed terminal's saved
+  scrollback (`CSI 3 J`), which follows from sharing the user's scrollback
+  rather than from this decision. **Do not "fix" the title with the xterm
+  title stack**: `Render.lean` already declines it because the sequence is not
+  universal, and adding it would make `leave_canonical_all` conditional — a
+  weaker theorem bought with a scope increase.
+- **Making `attach` switch instead of nest when run inside a session.**
+  `LINGER_SESSION` is already exported to the child (`Daemon.serve`) and
+  documented, so a user or a recipe can already branch on it; the proposal
+  only ever added implicit behaviour on top. Two reasons not to: nesting
+  **works**, dully — the inner client intercepts `ctrl-\` first
+  (`Client.attach`'s `splitDetach`), so a detach pops you to the outer
+  session, which is what you would want anyway — and `attach` doing something
+  other than what the user typed, conditional on invisible environment state,
+  is the interactive picker's mistake in a new costume. `Linger/Runtime/Cli.lean`
+  is `IO`, so no theorem could constrain the new behaviour either. If a real
+  wedge ever turns up, the house pattern is to **refuse loudly** (as the
+  control-resize refusal does), not to silently switch.
 - **A pure poll plan / `revents` classifier.** The premise that made the
   one historical desync a desync — `revents[i]` belongs to `fds[i]` — is
   established by the C loop in `c/shim.c` and is not a Lean-visible fact,
+  so the theorem's canonical break (permute the slots) does not catch its
+  canonical bug. Killed in `specs/archive/runtime-invariants.md`; the
+  negative result is also in SCRATCHPAD 2026-08-18.
   so the theorem's canonical break (permute the slots) does not catch its
   canonical bug. Killed in `specs/archive/runtime-invariants.md`; the
   negative result is also in SCRATCHPAD 2026-08-18.

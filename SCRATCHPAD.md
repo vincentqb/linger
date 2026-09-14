@@ -10591,3 +10591,128 @@ touch no settled non-goal and would close named gaps rather than widen scope —
 push/pop (`CSI 22 ; 0 t` / `CSI 23 ; 0 t`), which THEOREMS.md §Handback currently records as
 the one thing not put back, and a `LINGER_SESSION` guard so an attach from inside a session
 does not nest. Neither is started; both are cheap, and the first *improves* the proof surface.
+
+
+## Three "worse than the prior art" claims, re-measured against guarantees — 2026-09-14
+
+The factorization comparison called three things worse than tmux/screen. The owner rejected the
+metric: **"are we worse, or did we go for a different design choice? I'd measure worse in terms
+of guarantees we can provide."** Re-audited on that metric by three agents. Two claims invert
+completely, one narrows to something sharper than it was, and both "cheap adoptions" are
+withdrawn. Four new §Settled non-goals record the results, because each is a thing a future
+reader would otherwise propose as an improvement.
+
+### No terminfo: the enabling condition, not a gap
+
+`restore : Vt → Bytes` (`Render.lean:615`) and `leaveAnsi : Bytes` — **a constant with no
+argument** (`:671`) — are pure functions of state, and that is why ~40 named fidelity theorems
+conclude `(w.feed (restore v)).X = v.X` over an arbitrary receiver **with no hypothesis on it**:
+the `restore_*_any`/`_reachable`, `leave_*` and `resume_*` families across `Theorems/Render/*`
+and `Resume.lean`, plus anchors A1/A5 and the supporting chains beneath them.
+
+A `Caps → Vt → Bytes` signature does two things to each: adds a `caps` binder, and — the part
+that matters — makes the *conclusion conditional*. `restore_grid_any` stops being "the grid
+equals `v.grid`" and becomes "…**if** `caps` declares absolute CUP, deferred wrap, ED 2, DECSTBM,
+charset re-designation and the alt switch". That is not a weaker fidelity theorem, it is a
+different kind of claim, keyed on a host-varying value linger does not possess. And note the
+direction of travel it reverses: the project spent real effort *removing* receiver hypotheses
+(`restore_grid_any` shed `u8need` and `rows ≥ 2`, `Grid.lean:2284-2288`). `replayEq` and the
+golden fixtures degrade too — parameterised on `caps`, "same state → same bytes" stops holding.
+
+The portability gap I claimed is mostly **graceful degradation**, classified over the twelve
+conformance entries (`THEOREMS.md:588-651`): 11 and 12 are inert-on-absence *by their own
+documented semantics* ("a terminal that does not implement it ignores it"); 8–10 are inert,
+resynchronising, or universal; 1–7 are the `xterm-256color` baseline linger declares, so failure
+needs a terminal that *claims* xterm compatibility and violates it. **Nothing silently corrupts.**
+
+Two things are genuinely user-observable, and both were already written down rather than masked:
+the window title is not restored (`Render.lean:663-668`), and attaching a session with history
+erases the borrowed terminal's saved scrollback via `CSI 3 J` (`THEOREMS.md:23`, README §Notes) —
+and the second follows from sharing the user's scrollback (never entering the alt screen), not
+from the capability decision at all.
+
+What the choice buys that a capability-typed emitter **cannot state by construction**:
+determinism given state, host-independent repaints (`resume_grid_of_load` feeds a fresh
+`Vt.init` of the session's own dims, `Resume.lean:284`), and no `TERM`-shaped input to our own
+output — `leaveAnsi` already refuses `DECSTR` on exactly that ground, "bytes we do not parse"
+(`:669`). The `TERM` distinction, precisely: linger **sets** `TERM=xterm-256color` for the child
+as a literal (`Daemon.lean:362`) and **consults** nothing; `E2E/Terminal.lean:40-43` pins that
+the child's profile is identical whether the launching terminal is absent, `xterm-kitty` or
+`screen`.
+
+Surviving form of the original claim, non-pejorative and already stated verbatim by the repo
+(`THEOREMS.md:580-585`): the proofs are faithful to linger's *model* receiver, not to an
+arbitrary real terminal. That is a stated boundary. It is not an argument that linger is worse.
+
+### Daemon-per-session: the containment is structural, which beats proved
+
+The load-bearing finding, and it is stronger than the owner put it. `Session.State`
+(`Core/Session.lean:61-95`) holds **one** session — one `vt`, one `scan`, one `clients` list, no
+session map anywhere in the pure core — so §Isolate's `step_bytes_isolates` (`:811`) and
+`run_bytes_isolates` (`:901`) quantify over *client ids in one roster*. **Cross-session isolation
+is not a theorem with a narrow scope; it is the absence of a shared object to state one about.**
+A shared server converts that into a proof obligation over a session map, and A2 (`run_wf`,
+`:893`) would need re-deriving with the map as subject.
+
+The caps compound it because they are per-*process*: `maxClients = 16` (`:31`),
+`maxLabels = 64` (`:33`), `outbufCap`/`ptyInCap` = 4 MiB (`Daemon.lean:38,48`). Sixteen clients
+of A cannot deny B a roster slot; inside one heap a cap is bookkeeping and exhausting the heap is
+still global. Demonstrated, not argued: `E2E/Robust.lean` §1 SIGSTOPs one daemon while other
+sessions keep working, §3 fills one daemon's pty queue to the cap and the session stays
+reachable. §Claim gets the same shape — the `flock` *is* the ownership (`Daemon.lean:291-294`),
+so a crashed owner releases its claim with zero reconciliation where a shared server must
+reconcile a table. Per-session checkpoints bound a corrupt file's **scope** to one session, where
+`load`'s totality alone bounds only its *kind*.
+
+Yes, CLI-by-name is the cross-session mechanism, and the repo proves it by using it:
+`recipes/lzo.fish` parses `ls --porcelain` and attaches per name, `recipes/lzs.fish` polls
+`ls -r`. `ls` itself fans out over `Paths.listSocketNames` (`Paths.lean:74`) with a 2000 ms
+silence window per name (`Cli.lean:157`); a dead daemon's row is omitted *and its stale socket
+unlinked* (`:260`), a hung one is still listed as `unknown`/`(busy)` with its socket untouched —
+pinned live by `E2E/Robust.lean` §1 against `Listing.humanListing`.
+
+**Withdrawn.** "No shared config reload": there is no daemon-side config. Every read except
+`SHELL` is client-side per invocation (`Paths.lean:24,26,38,41,43`; `Cli.lean:202`;
+`Client.lean:186`), so a change takes effect on the next command; and a shared server freezes
+`SHELL` at session creation too. "Move/link a window across sessions": windows are a settled
+non-goal, so there is no window to move. Also withdrawn as a criticism: "no shared state" — that
+is the mechanism that makes containment structural.
+
+**What survives, as costs rather than weaker guarantees:** N × (process + child + 6 fds + pty +
+resident `Vt`); a serial `ls` whose worst case is 2 s per wedged daemon, trivially parallelisable
+and simply not parallelised, with one acknowledged unbounded-time hole (`Cli.lean:145-152` — a
+peer streaming `infoReply` *steadily* never trips a silence-only timeout). **And two genuinely
+weaker guarantees:** nothing atomic across two sessions (real, unexercised — it becomes
+load-bearing the day a `rename` or `merge` verb appears), and **no listing snapshot** — row
+identity and per-row status are sound by §Row, but the *set* is a smear over the fan-out window.
+That last is the defensible form of the claim I actually made, and it was not what I said.
+
+### Both "cheap adoptions" withdrawn
+
+**The window title.** `Render.lean:663-668` had already considered and declined exactly the
+suggestion — "xterm's title stack (`CSI 22 ; 0 t` / `CSI 23 ; 0 t`) would do it **and is not
+universal**; recorded as a known limit rather than a silent one." So my claim that it would
+*improve* the proof surface was backwards: `leave_canonical_all` is currently unconditional over
+any receiver, and gating it on XTPUSHTITLE support makes it conditional — trading an
+unconditional theorem for a scope increase. `leaveAnsi`'s bytes are also pinned in seven files
+(`Tests/Render.lean`, `Theorems/Render/{Modes,Sticky}.lean`, `E2E/{Attach,Watch,Harness,Coverage}.lean`).
+
+**The nesting guard.** `LINGER_SESSION` is **already exported** to the child
+(`Daemon.lean:362`) and documented (`Cli.lean:60`), so the mechanism exists and a recipe can
+already branch on it; the proposal only ever added implicit behaviour on top. And nesting
+*works*, dully: the detach key is intercepted client-side (`Client.lean:212`, `splitDetach`), so
+the inner client takes `ctrl-\` first and detaching pops you to the outer session — which is what
+you would want. So the guard prevents nothing and costs a surprise of exactly the kind that got
+the interactive picker deleted: `attach` doing something other than what was typed, conditional
+on invisible environment state, in a file (`Cli.lean`) that is `IO` and so beyond any theorem's
+reach. If a real wedge ever appears the house pattern is refuse-loudly, as the control-resize
+refusal already does — not silently switch.
+
+### Process note
+
+The third agent reported writing `/tmp/rethink-adoptions.md` and the file did not exist; its two
+load-bearing facts (`LINGER_SESSION` already exported; the title already declined for
+non-universality) were checked by hand instead, and both inverted the recommendation. **A
+subagent's claim to have written a file is not evidence that it did** — `ls` it before trusting a
+report built on it. Second sighting of the general shape this session, after the `printf --` false
+negative: verify the artefact, not the assertion.
