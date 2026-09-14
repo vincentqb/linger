@@ -71,7 +71,8 @@ code_count() { code_grep "$@" | awk 'END { print NR + 0 }'; }   # -> a number
 # cannot live inside `code_grep`, because `code_count` runs it down a pipe and an
 # `exit` there would only leave the subshell.)
 for p in Linger/Core Linger/Core/Vt.lean Linger/Core/Checkpoint.lean \
-         Linger/Runtime Linger/Runtime/Client.lean Theorems Tests E2E \
+         Linger/Runtime Linger/Runtime/Client.lean Linger/Runtime/Daemon.lean \
+         Theorems Theorems/Session.lean Tests E2E \
          LingerTest.lean c/shim.c lakefile.lean lake-manifest.json; do
   [ -e "$p" ] || fail "$p is gone — a gate below would pass by matching nothing"
 done
@@ -141,7 +142,7 @@ done
 [ "$(tr -d ' \n' < lake-manifest.json | grep -o '\"packages\":\[[^]]*\]')" = '"packages":[]' ] \
   || fail "lake-manifest has packages (README promises no external Lean deps)"
 
-# The vt-toolkit's import closure (`specs/vt-toolkit.md` Step 4). The toolkit is
+# The vt-toolkit's import closure (`specs/archive/vt-toolkit.md` Step 4). The toolkit is
 # Linger/Core/{Vt,Render,Terminal}.lean, and the claim worth having is that its
 # closure contains NOTHING else -- no Posix, no Runtime, no Checkpoint, no Session.
 # `lean_lib LingerVt` in lakefile.lean is the positive half: it elaborates the
@@ -300,6 +301,47 @@ shim_n="$(code_count 'LEAN_EXPORT' 'c/shim.c')"
 ! code_grep '[.]extract([^[:alnum:]_]|$)' 'Linger/Runtime/*' \
   || fail "buffer arithmetic in Linger/Runtime (Buf.bufAdvance owns it, and is proved)"
 
+# `Session.resumeVt` ↔ `Daemon.lean`'s `vt0` — the resume door's model/runtime tie, and
+# the direct sibling of the three Buf greps above: same gap, same species of oracle.
+# `Theorems/Session.lean`'s `resumeVt` IS the daemon's fallback expression with the `IO`
+# peeled off, and it is load-bearing — `liveReachable_resumeVt`, `run_resume_vt_shape`
+# and `run_resume_load_save` are claims about the daemon ONLY through that
+# correspondence, which was prose next to the def until this gate. `Linger/Runtime/*` is
+# `IO`, so no theorem can see the call site (AGENTS.md's rule): change the daemon's
+# fallback to, say, `Vt.init 24 80` and all three theorems stay true — of a term the
+# daemon no longer computes. Evadeable by deliberately editing both ends, which is
+# exactly the review this buys.
+#
+# TWO-SIDED, deliberately. A gate watching only `Daemon.lean` passes by vacuous truth
+# the moment the model is deleted, and it is the correspondence being gated, not either
+# end of it. Same argument as the toolkit closure lists and the friend set below, where
+# a RECORDED friend that stops reaching `Vt` also fails: exact means both directions.
+#
+# Through `code_grep`, so a comment QUOTING the call site cannot satisfy a gate about
+# the call site — the inverse of the decoder-forge gate's problem and the more dangerous
+# half, since it fails open. `Theorems/Session.lean` quotes this exact line twice
+# (:1016, :1037, inside docstring fences) and `Daemon.lean` names `Vt.init 80 24` in
+# prose at :348; measured, each regex matches exactly one line.
+#
+# One known false-positive mode, and it is the right one: if either line grows past the
+# formatter's width and wraps, the gate fires. That is a loud failure on precisely the
+# edit that should be reviewed, not a silent pass. A lockstep change of the fallback
+# dimensions fires too, and deliberately — both literals are recorded, in the same style
+# as the toolkit closure lists, so re-deciding what a checkpointless resume looks like is
+# a reviewable edit here rather than a silent one.
+#
+# And the BOUND, which is what this gate does not buy: it pins the modelled EXPRESSION,
+# not the value the daemon ends up booting from. A later line reassigning `vt0` — say a
+# conditional override further down `serve` — leaves both greps green while `resumeVt`
+# stops modelling anything the daemon computes. That is semantic and no grep reaches it;
+# it is the same limitation every gate in this file carries, stated here rather than
+# discovered. What this catches is an EDIT to the modelled line, which is the way the
+# correspondence has actually been at risk.
+code_grep '[.]getD [(]Linger[.]Core[.]Vt[.]Vt[.]init 80 24[)]' 'Linger/Runtime/Daemon.lean' > /dev/null \
+  || fail "Daemon.serve's vt0 no longer falls back to Vt.init 80 24 via getD — Theorems/Session.lean's resumeVt models THAT expression, so re-derive it and its three claims, or restore the line"
+code_grep '^def resumeVt .*[.]getD [(]Vt[.]Vt[.]init 80 24[)]' 'Theorems/Session.lean' > /dev/null \
+  || fail "Theorems/Session.lean lost resumeVt, or its fallback changed — the resume claims no longer model Daemon.lean's vt0, and the gate above would then pass vacuously"
+
 # `linger watch`'s client-side read-only guards (pin-the-gaps item 1). Read-only
 # is enforced DAEMON-side: the 0x0 attach geometry sets `sizer := false` and
 # `onMsg .input`/`onMsg .resize` then drop a non-sizer's traffic
@@ -315,7 +357,7 @@ code_grep 'if !out.isEmpty && !readOnly' 'Linger/Runtime/Client.lean' > /dev/nul
 code_grep 'sendMsg fd [(][.]attach 0 0[)]' 'Linger/Runtime/Client.lean' > /dev/null \
   || fail "Client.attach no longer marks a read-only client with a 0x0 attach (the wire's only read-only bit)"
 
-# The checkpoint decoder must not grow its forge back (`specs/vt-toolkit.md` Step 2).
+# The checkpoint decoder must not grow its forge back (`specs/archive/vt-toolkit.md` Step 2).
 # `Linger/Core/Checkpoint.lean` keeps a PERMANENT `import all Linger.Core.Vt`: `wVt` reads
 # 17 sealed fields, and dropping the import would force `Vt.ofDecoded` to be public — a
 # second public door admitting any `Good` state, for every module forever, which is a
@@ -381,6 +423,68 @@ git ls-files 'Tests/*' | grep -qvE '\.lean$' \
 git ls-files 'tests/*' | grep -qE '\.lean$' \
   && fail "a .lean file under tests/ (it belongs in Tests/ or E2E/ — the case trap)" || true
 
+# Every `specs/….md` path cited in the tree must EXIST. Archiving a spec silently
+# orphans every citation of it, and it has happened repeatedly — most recently when the
+# vt-toolkit spec moved from its old top-level path to `specs/archive/vt-toolkit.md` at
+# 051b2b4, leaving 31 tracked files pointing at a path that is not there:
+# `Linger/Core/*`, fourteen `Theorems/` files, `Tests/*`, `lakefile.lean`, and this file.
+# No count of the archive is written here on purpose; AGENTS.md records that two such
+# counts already rotted, and `specs/archive/` can be listed. The rot is invisible because
+# a citation is prose: it compiles, it formats, and no reader chases it until one does and
+# finds nothing. With this gate the NEXT archive fails at archive time, when the move is
+# one `sed` away, instead of at the moment someone needs the document.
+#
+# PLAIN `git grep`, NOT `code_grep`, and this is the one gate in the file where that is
+# correct. Measured, because the difference IS the gate: citations are written in prose
+# inside backticks, which is exactly the span `code_grep` deletes by design. Over this
+# tree `code_grep` sees 29 citation lines and NOT ONE of the 31 stale ones — a
+# `code_grep` version of this gate passes clean on the very tree that motivated it. So do
+# not "fix" this to match the rest of the file; the helper's rule is right for code and
+# wrong here, where the citation IS the prose.
+#
+# One consequence, and it is by construction rather than an oversight: a live file cannot
+# spell a spec path that does not exist, INCLUDING this comment. That is why the move
+# above is described by its destination instead of quoted from its source. The decoder
+# forge gate below had the mirror-image problem — it needed to quote what it forbade —
+# and `code_grep` solved that one; nothing can solve this one, because the forbidden
+# string is the citation itself.
+#
+# `SCRATCHPAD.md` and `specs/archive/**` are EXCLUDED, and not for convenience.
+# AGENTS.md makes the worklog append-only and the archived specs closed records: an
+# entry citing a spec's old path was TRUE when it was written, and editing it would
+# falsify the record. Those files legitimately name paths that no longer exist, so a
+# gate over them would demand a lie. Measured consequence, worth knowing: with the two
+# exclusions applied, the vt-toolkit spec's old path is the ONLY stale one in the tree —
+# every other archived spec is cited by its old path in the worklog and the archive
+# alone. The exclusions hide nothing a live reader would follow.
+#
+# Existence means TRACKED (`git ls-files`), not present (`-e`): an untracked local file
+# would pass here and fail in CI, which is the same failure one commit later.
+#
+# `specs/<slug>.md` in AGENTS.md is the one deliberate placeholder and needs no
+# exemption — `<` is outside the character class, so it never matches. Measured too:
+# no occurrence anywhere is preceded by a path character, so the unanchored match
+# cannot currently be satisfied by a longer word ending in `specs/`.
+spec_cites="$(git grep -h -o -E 'specs/[A-Za-z0-9._/-]*[.]md' \
+  -- ':!SCRATCHPAD.md' ':!specs/archive' | sort -u)"
+# A matcher that stops matching makes this gate pass by finding nothing — the exact
+# failure mode the existence-check loop at the top of this file guards against for
+# PATHS, and that loop cannot guard a regex. AGENTS.md, THEOREMS.md and this file all
+# cite specs, so an empty result means the extraction broke, not that the tree is clean.
+[ -n "$spec_cites" ] \
+  || fail "no specs/*.md citation found in the tree — the extraction regex broke, and this gate is now passing vacuously"
+spec_bad=0
+# Deliberate word split, as with `code_grep`'s file list: no path here has a space.
+# shellcheck disable=SC2086
+for sc in $spec_cites; do
+  if [ -n "$(git ls-files -- "$sc")" ]; then continue; fi
+  spec_bad=1
+  printf '  %s is cited but does not exist:\n' "$sc" >&2
+  git grep -n -F "$sc" -- ':!SCRATCHPAD.md' ':!specs/archive' >&2 || true
+done
+[ "$spec_bad" -eq 0 ] \
+  || fail "a cited specs/*.md path does not exist — archiving a spec orphans its citations, so move the citations in the same commit as the file (SCRATCHPAD.md and specs/archive/ are exempt: their entries were true when written)"
+
 # E2E `partial def` ratchet: the sibling of RUNTIME_PARTIAL_CAP above, for the same
 # reason (the keyword creeps back by habit) and covering the files its glob misses.
 # All five are honest, and two were MEASURED not assumed: rewriting `stripCsi` and
@@ -394,4 +498,4 @@ ep_n="$(code_count 'partial def' 'E2E/*' 'LingerTest.lean')"
 [ "$ep_n" -le "$E2E_PARTIAL_CAP" ] \
   || fail "E2E/ grew to $ep_n partial defs (cap $E2E_PARTIAL_CAP); a do-block loop does not need the keyword"
 
-printf 'gates OK — purity, the OS and unsafe surfaces, the Vt friend set, and five ratchets\n'
+printf 'gates OK — purity, the OS and unsafe surfaces, the Vt friend set, the runtime ties, spec citations, and five ratchets\n'

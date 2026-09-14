@@ -6,7 +6,7 @@ import all Linger.Core.Vt
 import all Theorems.Render.Grid
 
 -- No `public section`: a **public** declaration's type may not mention a private
--- field, and `Vt`'s are private now (the seal, `specs/vt-toolkit.md` Step 1).
+-- field, and `Vt`'s are private now (the seal, `specs/archive/vt-toolkit.md` Step 1).
 -- Module-private is the default, so consumers reach in with `import all`. See the
 -- longer note in `Theorems/Vt.lean`.
 
@@ -786,7 +786,7 @@ was `v.cols < 65535`, and `Good w` plus `hcols` already give it.
 
 `hvtabs` stays **here** on purpose, and it is now a choice rather than a gap: `Good`
 and `Renderable` still say nothing about the ruler's length, but `Vt.tabsOk_of_liveReachable`
-(`specs/vt-toolkit.md` Step 3) proves it of every reachable state, so a caller with
+(`specs/archive/vt-toolkit.md` Step 3) proves it of every reachable state, so a caller with
 reachability discharges it and `restore_tabs_live` below is that caller. Keeping this
 form is what makes the two claims different rather than redundant: a session whose ruler
 is the right length gets the ruler restored **whether or not it is reachable**, which

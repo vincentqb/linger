@@ -266,7 +266,7 @@ SCRATCHPAD.md.
 
 ## Every door, and why the list is prose and not a theorem
 
-`specs/vt-toolkit.md` Step 3. Outside the friend set there are exactly **two** ways a
+`specs/archive/vt-toolkit.md` Step 3. Outside the friend set there are exactly **two** ways a
 `Vt` comes into existence and **one** family of ways it changes:
 
 * `Vt.init` — the fresh session. `Good`, `Renderable` and `TabsOk` all hold of it
@@ -401,7 +401,7 @@ def Vt.inAlt (v : Vt) : Bool := v.altGrid.isSome
 `Vt.init` is the door for a *fresh* session; this is the door for a *restored* one,
 and it is the only other way a `Vt` comes into existence. It exists because
 `Linger/Core/Checkpoint.lean` used to build one field-by-field out of decoded bytes
-(`specs/vt-toolkit.md` Step 2): every length in that format is an arbitrary-precision
+(`specs/archive/vt-toolkit.md` Step 2): every length in that format is an arbitrary-precision
 `Nat`, so a corrupt or hostile file could name `cols := 0`, a cursor outside the
 screen, or a scroll region inverted — states no `init`/`resize`/`feed` path can
 produce, and states `Good` is false of. The seal stopped an *importer* forging one;

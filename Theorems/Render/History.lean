@@ -6,7 +6,7 @@ import all Linger.Core.Vt
 import all Theorems.Render.Sticky
 
 -- No `public section`: a **public** declaration's type may not mention a private
--- field, and `Vt`'s are private now (the seal, `specs/vt-toolkit.md` Step 1).
+-- field, and `Vt`'s are private now (the seal, `specs/archive/vt-toolkit.md` Step 1).
 -- Module-private is the default, so consumers reach in with `import all`. See the
 -- longer note in `Theorems/Vt.lean`.
 
@@ -23,7 +23,7 @@ open Linger.Core.Vt
 /-! ## §Row integrity for `linger history` — a cell cannot inject a line break
 
 The last of the runtime's byte streams to acquire a theorem, and the reason it was last
-is recorded in `tests/coverage.py`: `history` was assembled through `String`, and a
+is recorded in `E2E/Coverage.lean` (ported from the retired `tests/coverage.py`): `history` was assembled through `String`, and a
 `String` does not reduce in the kernel, so nothing could be said about the bytes it
 writes to a terminal. `rowText` now builds `List UInt8` (the same restructure
 `Session.infoText` needed), which makes both claims below available.

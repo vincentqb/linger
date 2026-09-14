@@ -5,7 +5,7 @@ public import Theorems.Render
 public import Linger.Core.Listing
 import all Linger.Core.Listing
 import all Linger.Core.Status
--- Converted from legacy by the `Vt` seal (`specs/vt-toolkit.md` Step 1): the proof
+-- Converted from legacy by the `Vt` seal (`specs/archive/vt-toolkit.md` Step 1): the proof
 -- layer is module-private now, so `utf8s_no_ctl` arrives via `import all`.
 import all Theorems.Render
 import all Theorems.Status

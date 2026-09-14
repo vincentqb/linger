@@ -7,12 +7,12 @@ import all Linger.Core.Vt
 -- `Theorems.Vt` for `Good`, and for the three claims about the decoder's door
 -- (`ofDecoded_good`, `ofDecoded_of_good`, `ofDecoded_none_of_cols_zero`) — the codec's
 -- theorems are stated in terms of it now that `rVt` validates rather than forges
--- (`specs/vt-toolkit.md` Step 2). `import all` because those declarations are
+-- (`specs/archive/vt-toolkit.md` Step 2). `import all` because those declarations are
 -- module-private, as the `Vt` seal forces.
 import all Theorems.Vt
 
 -- Converted from a legacy (non-`module`) file by the `Vt` seal
--- (`specs/vt-toolkit.md` Step 1). Legacy files make every declaration public, and
+-- (`specs/archive/vt-toolkit.md` Step 1). Legacy files make every declaration public, and
 -- a public statement may not mention a private field — `load_save_exact` mentions
 -- three (`pstate`, `u8need`, `u8acc`) and `cases vt` needs the constructor. As a
 -- `module` with no `public section`, the declarations are module-private and both
@@ -32,7 +32,7 @@ there is no "fits in N bits" side condition anywhere in the format.
 
 **The `Vt` round trip is not.** `rVt` hands its decoded fields to
 `Vt.ofDecoded`, which returns `none` unless they describe a `Good` **and** `Renderable`
-state with a ruler the width of the screen (`specs/vt-toolkit.md` Step 2 for the first,
+state with a ruler the width of the screen (`specs/archive/vt-toolkit.md` Step 2 for the first,
 finding R2 for the other two), so `rt_vt` and everything above it carries those three
 hypotheses — satisfied by every live session (`load_save_live`), and false of exactly the
 records the validation exists to refuse. The two directions are `rVt_good`/`rVt_shape` and
@@ -447,7 +447,7 @@ theorem load_save_exact (c : Ckpt) (hg : Good c.vt) (hren : Renderable c.vt) (ht
     simp_all [Vt.quiesce]
 
 /-- **Junk dimensions are refused, not clamped** — the behaviour change of
-`specs/vt-toolkit.md` Step 2, stated at the top level rather than only fixtured.
+`specs/archive/vt-toolkit.md` Step 2, stated at the top level rather than only fixtured.
 `cols = 0` is the canonical corrupt value: no live session can hold it, `Good` is false
 of it, and a decoder that accepted it would hand `Render.restore` a screen every one of
 its theorems is vacuous at.

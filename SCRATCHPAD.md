@@ -9766,3 +9766,290 @@ call site. The correspondence is prose next to the def. A grep gate (`getD` besi
 `Linger.Core.Vt.Vt.init 80 24` in `Daemon.lean`) is the right oracle — the `SHIM_CAP` species,
 same as the `Buf` greps — and it was not added only because `tests/gates.sh` belonged to a
 different agent this round. That is the next thing worth doing, and it is three lines.
+
+## two prose hazards become gates — the `resumeVt` tie and every spec citation — 2026-09-14
+
+Closes the structural gap left open at the end of the resume-rung round ("`Session.resumeVt`
+models `Daemon.lean`'s `vt0` … it was not added only because `tests/gates.sh` belonged to a
+different agent") plus the third recorded chore (the archived spec's orphaned citations), and
+retires two stale restatements. Four items, three files: `tests/gates.sh` (+108/−4),
+`.pre-commit-config.yaml` (+1/−1), `E2E/Agent.lean` (+4/−4).
+
+### 1. `resumeVt` ↔ `vt0` — the tie, and why it is two-sided
+
+The gate is two `code_grep`s beside the `Buf` greps, which are its siblings: same gap
+(`Linger/Runtime/*` is `IO`, so no theorem sees the call site), same species of oracle.
+
+**The two-sidedness is not symmetry for its own sake, and it was measured.** Exhibit: rename
+`def resumeVt` to `def resumeVtOld` in `Theorems/Session.lean` and leave `Daemon.lean` alone.
+The daemon-side grep still finds its 1 hit — so a gate watching only the runtime would have
+gone green on a tree where the model of that runtime no longer exists, and the three claims it
+carries (`liveReachable_resumeVt`, `run_resume_vt_shape`, `run_resume_load_save`) would have
+vanished unremarked. Same argument the friend set and the toolkit closure lists already make
+under a different name: exact means both directions, and a recorded end that stops existing
+must fail too.
+
+**The interesting break is the behaviour-preserving one.** Rewriting line 337 from
+`.getD (Vt.init 80 24)` to `match … with | some v => v | none => Vt.init 80 24` changes nothing
+observable — no pty test can see it, `./lake build` is green, the fallback value is identical —
+and it is exactly the edit that silently decouples the model from the code. It fires.
+
+`code_grep` rather than plain `git grep`, and here that is the right way round: a comment
+QUOTING the call site must not satisfy a gate ABOUT the call site. This is the decoder-forge
+gate's problem inverted and it is the more dangerous half, because it fails OPEN.
+`Theorems/Session.lean` quotes line 337 verbatim twice (:1016, :1037, inside docstring
+fences) and `Daemon.lean` names `Vt.init 80 24` in prose at :348. Measured: each regex matches
+exactly one line.
+
+**Bound, recorded rather than discovered later.** The gate pins the modelled EXPRESSION, not
+the value the daemon boots from. A later line reassigning `vt0` — a conditional override
+further down `serve` — leaves both greps green while `resumeVt` models nothing the daemon
+computes. That is semantic and no grep reaches it. What it catches is an EDIT to the modelled
+line, which is the way the correspondence has actually been at risk.
+
+**Declined:** extracting the two dimension pairs and comparing them instead of recording
+`80 24` literally. It would pass a lockstep change of the fallback and fire only on divergence,
+which sounds stronger. Rejected because the house style here is to record the literal and treat
+any change as the review (the closure lists fire when an import merely GOES), and because
+re-deciding what a checkpointless resume looks like is itself worth a second look. The cost is
+one false positive whose resolution is a one-line gate edit — the SHIM_CAP bargain, taken
+knowingly.
+
+### 2. every cited `specs/….md` must exist — and why this one gate must NOT use `code_grep`
+
+**The measurement that IS the gate.** Over this tree, `code_grep` sees **29** citation lines
+across 16 files; plain `git grep -l` sees **46** files. Of those 29 `code_grep` survivors,
+**zero** mention the vt-toolkit spec — that is, not one of the 31 stale citations is visible to
+it. Every citation is written inside backticks, which is precisely the span `code_grep` deletes
+by design, so a `code_grep` version of this gate passes clean on the very tree that motivated
+it. This is the one gate in the file where the helper is wrong, and the comment says so at
+length because the rest of the file now goes through it and a reader would otherwise "fix" it.
+
+**A gate that cannot describe its own subject.** A live file cannot spell a spec path that does
+not exist — including the gate's own comment. First draft cited the old top-level path four
+times to explain the bug and the gate flagged itself, along with two pre-existing citations
+elsewhere in `tests/gates.sh` (:145, :349, both fixed here since the file is this parcel's).
+The resolution is to name the move by its destination. Note the asymmetry with the decoder
+forge gate, which needed to QUOTE what it forbade and got `code_grep` for it: nothing can do
+the same here, because the forbidden string is the citation itself.
+
+**The exclusions hide nothing.** `SCRATCHPAD.md` and `specs/archive/**` are exempt because
+AGENTS.md makes the worklog append-only and the archived specs closed records — an entry citing
+a spec's old path was true when written. Measured consequence: with the two exclusions applied,
+the vt-toolkit spec's old path is the **only** stale one in the whole tree. Every other
+archived spec is cited by its old path in the worklog and the archive alone — ten of them
+(`grid-fidelity`, `restore-conformance`, `bigger-theorems`, `terminal-contract`,
+`lean-modules`, `runtime-invariants`, `ledger-cleanup`, `pin-the-gaps`, `lean-zmx`,
+`agent-cli`), and every one drops to zero live hits under the exclusions. So the rule that
+protects the record costs no coverage a reader would notice.
+
+**Existence is TRACKED-ness, not `-e`.** An untracked local file would pass the gate and fail
+in CI — the same failure one commit later, discovered somewhere less convenient.
+
+**The vacuous-pass guard, and why the existence-check loop cannot supply it.** This gate's
+failure mode is "found nothing": break the extraction regex and every citation disappears and
+it reports clean. The `for p in …` loop at the top of the file guards exactly that mode for
+PATHS and cannot guard a regex, so the gate asserts its own extraction found something.
+Break-verified by mutating `specs/` to `speXcs/` in the matcher: `GATE FAIL: no specs/*.md
+citation found in the tree — the extraction regex broke, and this gate is now passing
+vacuously`.
+
+**Two false-positive modes measured to be absent.** `specs/<slug>.md` (AGENTS.md:127, the one
+deliberate placeholder) does not match, because `<` is outside the character class — so it
+needs no exemption. And no occurrence anywhere in the tree is preceded by a path character, so
+the unanchored match cannot currently be satisfied by a longer word ending in `specs/`; a
+`foospecs/x.md` would be a false positive, and it would be loud and self-diagnosing since the
+gate prints the citing lines.
+
+### 3–4. two restatements retired
+
+`.pre-commit-config.yaml`'s hook name said "purity, OS surface, five ratchets" while
+`gates.sh`'s own summary line already said "purity, the OS and unsafe surfaces, the Vt friend
+set, and five ratchets". Both are now rewritten from the same category list, adding the two
+this round introduces: **purity, the OS and unsafe surfaces, the Vt friend set, the runtime
+ties, spec citations, five ratchets**. "Runtime ties" is not new machinery — the `Buf` greps
+and `Client.attach`'s guards were always there and the old summary simply did not name them;
+`resumeVt` joins them.
+
+`E2E/Agent.lean`:188–194 still explained the SIGINT mask (survives `execve`, every descendant
+inherits, run in the foreground) that `tests/e2e.sh` now **refuses** rather than warns about.
+The delegation stays, the mechanism goes, and the comment names the check — "SIGINT must be
+deliverable" — so the probe, the measurement and the reasoning have one home next to the code
+that enforces them. `e2e.sh`'s own header already claimed this ("the two surviving mentions …
+now point here"); it is true now. Comment-only: `suite agent 25` untouched, and the floor
+cannot move because no assertion was touched.
+
+### Numbers
+
+`sh tests/gates.sh` green; `./lake build` 43 jobs, `./lake build Theorems Tests` 50, `./lake
+build e2e` 61 — all "Build completed successfully". `lean-fmt check` 71 files, no findings.
+`./lake exe e2e coverage`: 271 core defs, 0 unclaimed (cap 0), FAILURES: 0. **No ratchet
+moved** — SHIM 22, HEARTBEAT 1, RUNTIME_PARTIAL 2, E2E_PARTIAL 5, statementCap 0. `gates.sh`
+grows 501 lines from 397, of which the two new gates are 8 executable lines and the rest is the
+reasoning above. `shellcheck tests/gates.sh` reports one finding and it is pre-existing (SC2012
+on the `ls c/` check at :136); the added lines are clean.
+
+### Left for someone else
+
+- **This parcel's citation gate is RED on the real tree until the citation-rewrite parcel
+  lands.** 30 live files still carry the old path (`tests/gates.sh` is no longer among them).
+  The two are a matched pair and must land together or the gate must land second.
+- `.github/workflows/ci.yml`:49 names its step "source-tree gates (purity, the OS surface,
+  every ratchet)" — the same drift item 3 fixed in the hook, one file out of allocation. It
+  should be rewritten from the same category list.
+- `Theorems/Session.lean`:1155 is still three facts behind (`Render.history` is proved, and
+  `tests/coverage.py` is `E2E/Coverage.lean`), as recorded last round.
+
+### Negative results worth not re-deriving
+
+- `code_grep` on this citation class is not merely weaker, it is **null**: 0 of 31. A gate
+  built on it would have shipped green and bought nothing.
+- A one-sided version of the `resumeVt` gate is not "most of" the tie. The model can be
+  deleted with the runtime untouched, so it buys the half that was never at risk.
+- Reverting another agent's file from a `/tmp` backup rather than `git checkout --` cost a
+  confused break-verify: a first script died before its revert, the next captured the mutated
+  file as its baseline, and two exhibits then "fired" for the wrong reason. Restore from git;
+  the backup is only safe for files this parcel owns.
+- The purity greps read prose, so a worklog entry must say "compiled evaluation" rather than
+  the option name. Unchanged from previous rounds, and it still catches people.
+
+## Citation sweep: `specs/vt-toolkit.md` → `specs/archive/vt-toolkit.md`, plus two dead `.py` guards — 2026-09-14
+
+**What was measured.** `git grep -c 'specs/vt-toolkit\.md'` found 32 files (49 lines).
+The spec archived to `specs/archive/vt-toolkit.md` at `051b2b4`; every citation still
+pointed at the pre-archive path. Of the 32, 30 are in my allocation (42 lines); the
+other two are `SCRATCHPAD.md` (5 lines) and `tests/gates.sh` (lines 144, 318) — both
+out of scope this round. A coordinated single-sweep path fix landed on all 30 mine.
+
+**What was ruled, and why.**
+- **`SCRATCHPAD.md` (5 hits) and `specs/archive/**` stay untouched.** AGENTS.md is
+  explicit: the worklog is append-only and archived specs are closed records —
+  rewriting a path inside them falsifies what was true when written (same ruling it
+  makes for the pre-rename `Zmx/…` paths). `git grep` confirmed `specs/archive/**` has
+  **zero** old-path hits anyway, so the archive question was moot in practice; stated
+  for the record regardless.
+- **`tests/gates.sh` (2 hits) left for the other agent**, as instructed. Reported, not
+  touched.
+- **"Ported from `tests/<x>_test.py`" and `procs.py` mentions in `E2E/**` stay.** These
+  credit the Python suite each Lean E2E suite was ported *from* (the 2026-08-29 port) —
+  provenance, exactly the `zmx`-upstream-citation case AGENTS.md says to keep. Present
+  in `E2E/Coverage.lean:9` and `E2ETest.lean:36` ("was tests/coverage.py") too; both
+  already passed the zero-Python gate, which greps `git ls-files '*.py'` (files, not the
+  token in prose), so a retired-path mention in prose is safe.
+
+**Claims fixed, not just paths (a citation pointing at the right file but saying
+something false is not fixed):**
+- **`Theorems/Session.lean` ~1271 (item 2).** Said `Render.history` "is still only
+  *bounded* rather than proved (`tests/coverage.py`)." All three sub-facts were stale,
+  verified against the tree: (1) `history` is proved — `history_framing` (History.lean:80),
+  `history_lines` (:101), `history_records` (:169) are theorems; (2) `tests/coverage.py`
+  is gone, the gate is `E2E/Coverage.lean` (`ls specs/`, `git ls-files '*.py'` empty,
+  AGENTS.md); (3) the "unproved" framing is stale. Rewrote to keep the load-bearing
+  point intact — a `String` does not reduce in the kernel, so ending in `String.toUTF8`
+  blocks the proof and building `List UInt8` directly is what enables it — with
+  `history` now the *confirming* example (rebuilt on `List UInt8` → earned its theorems)
+  rather than a stale counterexample.
+- **`Theorems/Render/History.lean:26`** and **`Theorems/Buf.lean:16`** cited
+  `tests/coverage.py` in the present tense as the *current* census gate → repointed to
+  `E2E/Coverage.lean` (both claims — "the reason is recorded there", "its census is
+  textual over `Theorems/**`" — hold of the port).
+- **`Theorems/Claim.lean:32,91`** cited `tests/robust_test.py` in the present tense as
+  the *current* external pin ("pinned from the outside by", "reordering the code is
+  caught by") → repointed to `E2E/Robust.lean`, confirmed to still race eight daemons
+  over a stale socket (`E2E/Robust.lean:180-198`).
+
+**Declined / reported, not fixed:** `Linger/Core/Checkpoint.lean:10,14` and
+`Linger/Core/Vt.lean:368` assert the seal is **read-hiding** ("the seal blocks reads as
+well as writes"). AGENTS.md's finding R6 corrects this to *write-hiding + no-forge, NOT
+read-hiding*, because `deriving Repr` is a public total reader. Left unchanged: (a) the
+citations faithfully match the **closed** archive they now point at — `specs/archive/
+vt-toolkit.md:162,182,275` still say "read-hiding"/"blocks reads as well as writes", so
+the citation+claim are internally consistent with the cited source; (b) the R6
+reconciliation is a tree-wide edit spanning AGENTS.md, the archive, and the
+`deriving Repr` removal in `Vt.lean`/`Terminal.lean`, which AGENTS.md flags as another
+writer's files this round; (c) at the field-projection level this paragraph operates on,
+direct reads *do* refuse — the leak is only `repr`. Rewriting it here would half-do a
+correction that needs those files reconciled together. Flagged for the main agent.
+
+**Durable lesson — could a gate have caught this class of rot?** Partly. A cheap
+`git grep` gate in `tests/gates.sh` could assert **no live tree file cites a path that
+does not exist** — for every `` `specs/…\.md` ``, `` `tests/…\.py` ``, `` `E2E/….lean` ``
+backtick-quoted path in `Linger/**`, `Theorems/**`, `Tests/**`, `E2E/**`, `lakefile.lean`,
+fail if the target is absent from the worktree. That alone kills the whole
+`specs/vt-toolkit.md` (31-file) and dead-`.py`-path (4-line) class. Two exclusions it
+**must** carve out, or it becomes noise: (1) `SCRATCHPAD.md` and `specs/archive/**` —
+closed/append-only records legitimately cite paths that have since moved or been deleted;
+(2) **provenance phrasings** — "Ported from `X`", "was `X`", "retired `X`", "(ported from
+`X`)" name a file that deliberately no longer exists, so the gate must skip a quoted path
+when it sits behind one of those lead-ins (or accept a trailing `(ported from …)` /
+`(retired …)` marker). What such a gate can **never** catch is the second half of this
+task: a citation whose *path* resolves but whose *claim* is false (`history` "still only
+bounded", the read-hiding R6 nuance). Path-existence is greppable; claim-truth is not —
+that stays a reader's job, which is why the coverage gate itself (`E2E/Coverage.lean`)
+had to move from "is the name mentioned" to "is it inside a theorem *statement*."
+
+
+### Integration note — the two parcels landed together, and R6 got its second revision
+
+The citation gate and the citation sweep are a matched pair: the gate is RED on any tree
+where the sweep has not landed, which is why they were fanned out as two allocations with
+disjoint file sets (`tests/gates.sh` + `.pre-commit-config.yaml` + `E2E/Agent.lean` against
+everything else) and applied sweep-first. `patch -p1` both, no fuzz, and the gate went green
+on the first run — the two agents' independent measurements of *which* files carry the stale
+path agreed to the file, which is the check that mattered.
+
+**A false negative in my own break-verify, and the cause is fish.** The citation gate looked
+like it could not fail: appending `-- see specs/does-not-exist.md` to `Theorems/Buf.lean` and
+running `sh tests/gates.sh` printed `gates OK`. The gate was fine; the *mutation* never
+landed. `printf -- '%s\n' 'x'` in fish consumes the `--` as the format string and writes
+nothing, so the file was unchanged and the gate correctly reported a clean tree. Rerun with
+`printf '%s\n' '…'` and the append is visible to `git grep`, and the gate fires with the
+citing line printed. **Verify the mutation, not just the gate's verdict** — this is the same
+lesson as the other agent's `/tmp`-backup confusion this round, in the other direction: there,
+a revert that did not happen made two exhibits fire for the wrong reason; here, a mutation
+that did not happen made one exhibit *pass* for the wrong reason. The passing direction is
+worse, because "the gate is worthless" is the conclusion it invites. Re-verified all three of
+this round's gates on the real tree afterwards: the `Daemon.lean` fallback (`80 24` → `24
+80`), the model side (`def resumeVt` → `def resumeVtOld`), and the bogus citation. All three
+fire; the tree restores to `gates OK`.
+
+**R6 is closed, so AGENTS.md's R6 paragraph was rewritten a second time — as the worklog
+predicted it would have to be.** The round that dropped `deriving Repr` corrected the *claim*
+in `Linger/Core/Vt.lean` but left AGENTS.md saying "write-hiding plus no-forge, and NOT
+read-hiding … Left undone only because `Vt.lean` and `Terminal.lean` were another writer's
+files this round" — describing as pending a removal that had landed in the same commit. It now
+states the strong claim, dates it (`25b9dde`), and keeps the three facts worth not re-measuring
+(no-forge survived `Repr` regardless; the removal's whole cascade was two `Repr`-only clauses
+with no consumer; `deriving instance Repr for Vt` from outside fails with `Unknown constant` on
+all twenty projections).
+
+**`specs/archive/vt-toolkit.md` is deliberately NOT edited, and the reason is nicer than the
+usual one.** Its three "read-hiding" / "the seal blocks reads as well as writes" statements
+(:162, :182, :275) were false when R6 found them and are **true again** now that the derive is
+gone. A closed record whose claim came true needs no correction — so the append-only rule and
+the accuracy of the record want the same thing for once, and the intermediate weaker state
+lives here rather than in the archive. Same ruling for the citation sweep, from the other
+direction: the sweep skipped `SCRATCHPAD.md` and `specs/archive/**` because an entry citing a
+spec's pre-archive path was true when written, and the citation gate carves out exactly those
+two paths for exactly that reason. Measured by the gate agent: with the two exclusions applied,
+the vt-toolkit spec's old path was the *only* stale one in the tree — ten other archived specs
+are cited by their old paths in the worklog and the archive alone. The rule that protects the
+record costs no coverage a live reader would notice.
+
+**One more drift, found by the gate agent and outside both allocations:**
+`.github/workflows/ci.yml`'s gate step was still named "purity, the OS surface, every ratchet"
+while `gates.sh`'s own summary line had grown twice past it. All three names — the CI step, the
+`pre-commit` hook, and the summary line — are now written from one category list: purity, the OS
+and unsafe surfaces, the `Vt` friend set, the runtime ties, spec citations, five ratchets. Three
+copies of a list is still three copies; what makes this one survivable is that the summary line
+is *printed by the thing itself*, so a reader who runs it sees the truth even if a label rots.
+
+**Declined, and worth recording so it is not re-proposed.** The cite agent proposed widening the
+citation gate to every backtick-quoted path (`tests/…py`, `E2E/….lean`, …), not just
+`specs/….md`. Not taken: the provenance phrasings are the problem — `E2E/` and `E2ETest.lean`
+deliberately cite the retired `tests/*_test.py` files they were ported *from* (the same
+prior-art courtesy AGENTS.md extends to the upstream `zmx` name), so the gate would need to
+recognise "Ported from", "was", "retired" and whatever the next lead-in turns out to be. A gate
+whose exemption list is a list of English phrasings rots faster than the citations it guards.
+The `specs/….md` form has no provenance idiom — a spec path is cited to be *read* — which is
+what makes that one gateable and this one not.

@@ -29,7 +29,7 @@ that the two together give at most one owner of a session name.
 Scope: this is a model of the claim sequence in `Linger.Runtime.Daemon.serve`,
 not an extraction of it. The correspondence is by inspection (four
 lines of `serve`), and it is pinned from the outside by
-`tests/robust_test.py`, which races eight daemons over a stale socket
+`E2E/Robust.lean` (ported from `tests/robust_test.py`), which races eight daemons over a stale socket
 and requires exactly one survivor. §Claim's value is that it makes the
 trust boundary explicit and would catch a reordering — not that it
 verifies the runtime.
@@ -88,7 +88,7 @@ theorem owner_holds_lock {t : Trace} (hg : Guarded t) :
 
 `serve` runs exactly this, in this order. Both facts below are checked
 by `decide`, so reordering the description fails the build; reordering
-the *code* is caught by `tests/robust_test.py`. -/
+the *code* is caught by `E2E/Robust.lean` (ported from `tests/robust_test.py`). -/
 
 def ourClaim : List Act := [.lock, .probe, .unlinkStale, .bind]
 

@@ -13,7 +13,7 @@ or forge it — specs/archive/lean-modules.md Step 2). There is deliberately no 
 lemmas (checked; they appear elsewhere only in prose) — and being CHECKED at
 build is their whole job, so module-private is their honest visibility, and it
 is also what lets the `rfl` proofs elaborate in the private scope where the
-sealed definitions still reduce. `tests/coverage.py`'s census is textual over
+sealed definitions still reduce. `E2E/Coverage.lean`'s census is textual over
 `Theorems/**` and counts them regardless.
 
 `Session.run_wf` bounds the *machine*: no event trace grows a client roster, a

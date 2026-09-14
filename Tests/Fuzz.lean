@@ -1,7 +1,7 @@
 module
 
 public import Tests.Render
--- Converted from legacy by the `Vt` seal (`specs/vt-toolkit.md` Step 1). Nothing
+-- Converted from legacy by the `Vt` seal (`specs/archive/vt-toolkit.md` Step 1). Nothing
 -- here mentions a `Vt` field directly, but `Tests/Render.lean` had to become a
 -- module and its `roundtrips`/`roundtripsFrom` are module-private now, so they
 -- arrive via `import all` — and `native_decide` needs them compiled, hence the

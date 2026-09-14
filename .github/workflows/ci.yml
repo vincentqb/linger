@@ -46,7 +46,7 @@ jobs:
       # The fastest possible failure for a `sorry`, a raised ratchet, or a stray .py.
       # pre-commit runs this same script again later; that is deliberate duplication of
       # a millisecond check, so the cheap signal does not wait on the expensive setup.
-      - name: source-tree gates (purity, the OS surface, every ratchet)
+      - name: source-tree gates (purity, the OS + unsafe surfaces, the Vt friend set, the runtime ties, spec citations, every ratchet)
         run: sh tests/gates.sh
 
       # WHY `./lake` AND NOT BARE `lake`, ON A RUNNER THE WRAPPER WAS NOT WRITTEN

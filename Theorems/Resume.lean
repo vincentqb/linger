@@ -3,7 +3,7 @@ module
 public import Theorems.Checkpoint
 public import Theorems.Render
 import all Linger.Core.Vt
--- Converted from legacy by the `Vt` seal (`specs/vt-toolkit.md` Step 1). The
+-- Converted from legacy by the `Vt` seal (`specs/archive/vt-toolkit.md` Step 1). The
 -- end-to-end claim quantifies over a quiescent `Vt`, so its statement names three
 -- now-private fields; module-private declarations may, public ones may not. The
 -- rungs it composes are module-private too, hence `import all` on both.
@@ -73,7 +73,7 @@ in `ground` with no pending UTF-8 sequence. The reattaching client is always lef
 ready for the application's next byte.
 
 `hgood` is the hypothesis that arrived with the checkpoint validation
-(`specs/vt-toolkit.md` Step 2): `load` refuses a record that does not describe a
+(`specs/archive/vt-toolkit.md` Step 2): `load` refuses a record that does not describe a
 `Good` screen, so `load (save c)` is `none` for a `c` no live session could hold. This
 claim used to have no hypotheses and was, for exactly that reason, also true of
 `cols := 0`. `Vt.good_init` and the `Pres` machinery give it for every real session.

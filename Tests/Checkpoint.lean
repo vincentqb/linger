@@ -1,7 +1,7 @@
 module
 
 public import Linger.Core.Checkpoint
--- Converted from legacy by the `Vt` seal (`specs/vt-toolkit.md` Step 1): the codec
+-- Converted from legacy by the `Vt` seal (`specs/archive/vt-toolkit.md` Step 1): the codec
 -- fixtures compare the decoded screen field-by-field, so they are a friend of the
 -- emulator.
 import all Linger.Core.Vt
@@ -110,7 +110,7 @@ example :
 
 /-! ### The corrupt record
 
-`specs/vt-toolkit.md` Step 2. `rVt` hands its seventeen decoded values to
+`specs/archive/vt-toolkit.md` Step 2. `rVt` hands its seventeen decoded values to
 `Vt.ofDecoded`, which returns `none` unless they describe a `Good` screen, so a hostile
 file cannot put `cols := 0` — or a cursor off the screen, or an inverted scroll region —
 into the emulator. `Theorems/Checkpoint.lean`'s `load_good` states it for *any* byte

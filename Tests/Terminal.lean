@@ -1,7 +1,7 @@
 module
 
 public import Linger.Core.Terminal
--- Converted from legacy by the `Vt` seal (`specs/vt-toolkit.md` Step 1): the
+-- Converted from legacy by the `Vt` seal (`specs/archive/vt-toolkit.md` Step 1): the
 -- mediator fixtures read cursor and mode state, so they are a friend of the
 -- emulator.
 import all Linger.Core.Vt

@@ -1,7 +1,7 @@
 module
 
 public import Linger.Core.Render
--- `Vt`'s fields are `private` (the seal, `specs/vt-toolkit.md` Step 1). Terminal is
+-- `Vt`'s fields are `private` (the seal, `specs/archive/vt-toolkit.md` Step 1). Terminal is
 -- the toolkit's third module and reads cursor/mode state to answer owned queries,
 -- so it is a friend by construction, not an escape hatch.
 import all Linger.Core.Vt

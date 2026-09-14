@@ -66,26 +66,24 @@ it rotted in this file already.
    the fit and the order — and the twelve mode bytes ending `scrollbackAnsi` are
    behaviourally inert but proof-load-bearing **twice over** now.
    **`specs/archive/vt-toolkit.md` is CLOSED** (2026-09-11, all four steps): `Vt`'s
-   twenty fields are `private` so no importer can write or forge one — **write-hiding
-   plus no-forge, and NOT read-hiding**, which is the audit's finding R6 and corrects
-   both this line and the Step 1 record's "25 files paid for read-hiding". `deriving
-   Repr` on `Vt` is a public, total reader of all twenty: `repr (Vt.init 3 2)` from a
-   plain import prints every one (measured 2026-09-14, from a `module` importer and a
-   legacy one alike). No-forge survives it because there is no way back from the
-   printout — `DecidableEq`/`BEq`/`FromJson` all fail to synthesize — so what the 25
-   files bought is real, just narrower than the word used for it. **Removing `deriving
-   Repr` would actually obtain read-hiding, it is free, and it holds against a
-   re-derive** — all measured 2026-09-14. Free: the cascade is exactly two dependent
-   derives, `Terminal.Result` and `Session.State` (both hold a `Vt`; `Checkpoint.Ckpt`
-   holds one but derives nothing), each a `Repr`-only clause that goes with it, and
-   nothing whatever consumes any of the three instances — with all three dropped,
-   `./lake build`, `./lake build Theorems Tests`, `./lake build e2e`, `gates.sh` and
-   `e2e coverage` are all green. Holds: an importer cannot put it back, because
-   `deriving instance Repr for Vt` from outside fails with `Unknown constant` on all
-   twenty private projections — so Lean's own "adding `deriving instance` may allow"
-   hint is misleading here, and this is the fact that makes the removal worth doing
-   rather than merely worth wanting. Left undone only because `Vt.lean` and
-   `Terminal.lean` were another writer's files this round.
+   twenty fields are `private`, so no importer can write, forge or **read** one. The
+   read half was not free when the spec closed and is the audit's finding R6:
+   `deriving Repr` was a public, total reader of all twenty (`repr (Vt.init 3 2)` from
+   a plain import printed every one, from a `module` importer and a legacy one alike),
+   so for three days the seal was write-hiding plus no-forge only. **`deriving Repr` is
+   gone as of `25b9dde`** and the record's original wording is true again — which is
+   why the archive is *not* edited: a closed record whose claim came true needs no
+   correction, and the intermediate weaker state lives in SCRATCHPAD.md where it
+   belongs. Three facts worth not re-measuring: no-forge survived `Repr` regardless
+   (there is no way back from a printout — `DecidableEq`/`BEq`/`FromJson` all fail to
+   synthesize); the removal was **free**, its whole cascade being two `Repr`-only
+   clauses on `Terminal.Result` and `Session.State` with no consumer anywhere; and it
+   **holds against a re-derive**, because `deriving instance Repr for Vt` from outside
+   the seal fails with `Unknown constant` on all twenty private projections — so Lean's
+   own "adding `deriving instance` may allow" hint is misleading here, and that is what
+   made removal worth doing rather than merely worth wanting. Reach the state through
+   the read-only window (`Vt.colCount`/`rowCount`/`cursorPos`/`inAlt`) or a friend
+   import; do not re-add a derive to make a `#eval` print.
    The checkpoint decoder validates `Good` **and** `Renderable` and refuses the rest;
    `lean_lib LingerVt` plus an exact-set import grep pin the toolkit's closure; and
    the friend set is computed transitively rather than grepped, because

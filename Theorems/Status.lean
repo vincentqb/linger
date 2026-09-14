@@ -3,7 +3,7 @@ module
 public import Linger.Core.Status
 import all Linger.Core.Status
 
--- Converted from legacy by the `Vt` seal (`specs/vt-toolkit.md` Step 1) — not for
+-- Converted from legacy by the `Vt` seal (`specs/archive/vt-toolkit.md` Step 1) — not for
 -- anything in this file, which never mentions a `Vt`, but because a `module` cannot
 -- import a non-`module`, and `Theorems/Listing.lean` had to become one to reach
 -- `Render.utf8s_no_ctl` through `import all`. The conversion is transitive

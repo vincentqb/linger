@@ -1,7 +1,7 @@
 module
 
 public import Linger.Core.Render
--- Converted from legacy by the `Vt` seal (`specs/vt-toolkit.md` Step 1): these
+-- Converted from legacy by the `Vt` seal (`specs/archive/vt-toolkit.md` Step 1): these
 -- fixtures read the fields they assert about, so they are a friend of the emulator.
 import all Linger.Core.Vt
 import all Linger.Core.Render

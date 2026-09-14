@@ -188,10 +188,10 @@ def run : IO UInt32 := do
   -- fixed second, so a slow host cannot make this look like a broken `^C`. The
   -- extra check is a discriminator: "the child never started" and "^C did not reach
   -- it" are different bugs, and separating them is what identified the one
-  -- environment that breaks this assertion — a `&`-launched `./tests/e2e.sh`, whose
-  -- whole process tree has SIGINT BLOCKED (see the header of tests/e2e.sh). The
-  -- signal mask survives execve, so the session's shell and this child inherit it
-  -- and no `^C` can ever kill anything. Run the gate in the FOREGROUND.
+  -- environment that breaks this assertion — a `&`-launched `./tests/e2e.sh`. That
+  -- environment is now refused rather than described: see the "SIGINT must be
+  -- deliverable" check in `tests/e2e.sh`, which holds the probe, the measurement and
+  -- the reasoning, and is the only copy of them.
   let _ ← e.cli #["run", "ag", "sh -c 'echo RUN\"\"NING-NOW; sleep 100'"]
   f :=
     f +

@@ -4,7 +4,7 @@ public import Linger.Core.Vt
 import all Linger.Core.Vt
 
 -- No `public section`, and that is forced by the `Vt` seal
--- (`specs/vt-toolkit.md` Step 1). `import all` grants *access* to a private
+-- (`specs/archive/vt-toolkit.md` Step 1). `import all` grants *access* to a private
 -- field, but a **public** declaration's type may still not mention one — so
 -- `structure Good` and every theorem stating `v.cols`/`v.cursor`/… must be
 -- module-private. Default visibility in a `module` file is exactly that, so the
@@ -125,7 +125,7 @@ if `Vt.ofDecoded` returns a `Vt` at all then that `Vt` is `Good`: the dimensions
 `[1,1000]`, both cursors and every stashed cursor are inside the screen, the scroll
 region is non-empty and on-screen, and the scrollback is within `sbCap`.
 
-This is the claim `specs/vt-toolkit.md` Step 2 exists for. Before it, `rVt` built a
+This is the claim `specs/archive/vt-toolkit.md` Step 2 exists for. Before it, `rVt` built a
 `Vt` field-by-field, so `cols := 0` — a state no `init`/`resize`/`feed` path can reach,
 and one the emulator's own theorems are all false of — was one hostile byte away. -/
 theorem ofDecoded_good {cols rows : Nat} {grid : Array Row} {cursor : Cursor} {pen : Pen}
@@ -2237,7 +2237,7 @@ above set up, and the one `Theorems/Render/Tabs.lean` asked for by name: its
 `restore_tabs_reachable` says "proving `tabs.size = cols` an invariant of every
 reachable state is a `tabs_*` frame family of its own — worth doing, not needed
 here". Here it is, because the harvest is what it is for
-(`specs/vt-toolkit.md` Step 3).
+(`specs/archive/vt-toolkit.md` Step 3).
 
 `tabs` is written in exactly five places in the whole emulator — `Vt.init` and
 `Vt.resize` install `defaultTabs`, `TBC 0`/`HTS` poke one stop with
@@ -5343,7 +5343,7 @@ theorem u8Ok_of_liveReachable {v : Vt} (h : LiveReachableVt v) : U8Ok v := by
   | quiesce _ _ => intro _; rfl
   | ofDecoded hd => exact ofDecoded_u8Ok hd
 
-/-- **…and the ruler, which is `specs/vt-toolkit.md` Step 3's harvest.** The one
+/-- **…and the ruler, which is `specs/archive/vt-toolkit.md` Step 3's harvest.** The one
 hypothesis `Render.restore_tabs_reachable` still had to ask for —
 `v.tabs.size = v.cols` — is a fact about every state a live session can hold, so a
 caller with reachability no longer has to supply it. Neither `Good` nor

@@ -11,7 +11,7 @@ import all Linger.Core.Vt
 import all Linger.Core.Terminal
 import all Linger.Core.Wire
 import all Linger.Core.Render
--- The `Vt` seal (`specs/vt-toolkit.md` Step 1) made the proof layer
+-- The `Vt` seal (`specs/archive/vt-toolkit.md` Step 1) made the proof layer
 -- module-private, so the rungs this file composes need `import all` too, not just
 -- `public import`.
 import all Theorems.Terminal
@@ -1268,9 +1268,12 @@ below need no hypothesis about where a field came from.
 
 The fix is also what makes them provable at all: the old shape ended in
 `String.toUTF8`, and a `String` does not reduce in the kernel — the same argument
-`Linger/Core/Render.lean`'s header makes, and the reason `Render.history` is still only
-*bounded* rather than proved (`tests/coverage.py`). `infoText` now builds
-`List UInt8` directly. -/
+`Linger/Core/Render.lean`'s header makes, and the same reason `Render.history` was the
+last byte stream to acquire a proof rather than merely a *bound*: it too was assembled
+through `String` until `rowText` was rebuilt on `List UInt8`, which is what earned it
+`history_framing`/`history_lines`. The gate that recorded it as the holdout is now
+`E2E/Coverage.lean`, not the retired `tests/coverage.py`. `infoText` now builds
+`List UInt8` directly for the same reason. -/
 
 /-- Scrubbed glyph bytes are ≥ 0x20, so neither framing byte can come out of a key or
 a value. `Render.utf8s` maps a C0 control — tab and newline included — to U+FFFD. -/

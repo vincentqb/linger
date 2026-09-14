@@ -2,7 +2,7 @@ module
 
 public import Linger.Core.Vt
 -- A **permanent** friend import, and the one in the tree that needs its reason
--- written down. `specs/vt-toolkit.md` Step 2 held it open for one step to remove
+-- written down. `specs/archive/vt-toolkit.md` Step 2 held it open for one step to remove
 -- `rVt`'s forge; the forge is gone (`rVt` goes through `Vt.ofDecoded`, which validates)
 -- and this line stayed. Two things it buys, and the difference between them is the
 -- whole design decision:
@@ -340,7 +340,7 @@ def rVt : R Vt := fun l => do
 
 /-! ## The checkpoint record -/
 
-/-- **No `deriving Inhabited`**, and that is deliberate (`specs/vt-toolkit.md` Step 3):
+/-- **No `deriving Inhabited`**, and that is deliberate (`specs/archive/vt-toolkit.md` Step 3):
 it would need `Inhabited Vt`, which is the third public door out of the `Vt` seal — a
 `cols = 0` screen any importer could name as `default` with no friend import. Nothing in
 the tree used either instance. If a canonical checkpoint is ever wanted, write it out
