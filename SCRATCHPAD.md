@@ -10716,3 +10716,20 @@ non-universality) were checked by hand instead, and both inverted the recommenda
 subagent's claim to have written a file is not evidence that it did** — `ls` it before trusting a
 report built on it. Second sighting of the general shape this session, after the `printf --` false
 negative: verify the artefact, not the assertion.
+
+
+## Documentation reduced to minimum — 2026-09-14
+
+On request, `README.md`, `AGENTS.md`, `THEOREMS.md` and `recipes/README.md` were cut
+to their minimum: normative content (rules, invariant statements, theorem names,
+non-goals, caveats) kept; narrative, history and duplicated rationale removed. The
+full pre-reduction text is at commit `75c801f`. Kept deliberately: README's `Prior
+art:` block (gated shape), README §Notes' `CSI 3 J` caveat and the "Graphics"
+heading (cited from `Linger/Core/Render.lean` and `E2E/Graphics.lean`), every §
+rung name and the A1–A5 anchors (cited from ~20 docstrings), conformance entry 11's
+receiver list (provenance for a tested byte order), "Reading a row" (cited by
+`tests/gates.sh`), the frames two-rejected-ideas note (cited by
+`Theorems/Vt.lean`), and A5's fixture-carried list (title, DECSC slot). This file
+and `specs/archive/` were not touched: the worklog is append-only and the archives
+are closed records — they are where the removed nuance still lives, alongside git
+history.

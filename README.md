@@ -1,33 +1,27 @@
 # linger
 
-Terminal sessions that stay — attach, detach, survive reboots. Lean
-sessions: one binary, pure functions, machine-checked invariants
-(Lean 4).
-
-## The model
+Terminal sessions that stay — attach, detach, survive reboots. One
+binary, pure-function Lean 4, machine-checked invariants.
 
 `linger attach <name>` gives you a shell that keeps running after you
 detach or disconnect; reattach later with the screen intact. Bare
-`linger` (or `linger ls`) prints an overview of your sessions and exits — a
-listing, not a picker.
+`linger` (or `linger ls`) prints an overview of your sessions and
+exits — a listing, not a picker.
 
 ## Build
 
 ```
-./lake build          # always the wrapper, not bare `lake` (it derives the
-                      # toolchain path and fails loudly if it is missing)
+./lake build          # always the wrapper, not bare `lake`
 ln -sf "$PWD/.lake/build/bin/linger" ~/.local/bin/linger
 ```
 
-Lean 4.34.0-rc2 via elan (an RC on purpose — it is what `lean-fmt` requires; see
-AGENTS.md); no external Lean dependencies. Everything here is Lean
-except the POSIX shim and small shell/Fish orchestration around builds,
-tests, hooks and recipes.
+Lean 4.34.0-rc2 via elan (an RC on purpose — see AGENTS.md); no
+external Lean dependencies.
 
 ### Tests
 
 ```
-./lake build Theorems Tests      # the proofs and the unit fixtures — building is running
+./lake build Theorems Tests      # the proofs and the unit fixtures
 ./lake exe lingertest            # POSIX shim smoke tests
 ./lake exe e2e <suite>           # one pty suite: attach resume overview remote robust
                                  #   graphics terminal status agent watch
@@ -36,16 +30,8 @@ sh tests/gates.sh                # the fast source-tree gates (seconds)
 ./tests/e2e.sh                   # everything, in order (minutes)
 ```
 
-The pty suites are Lean programs, not theorems: they drive the real binary through
-real terminals, so they are `IO`. `Theorems/` is where the proofs are.
-
-Commit-time hygiene is `uvx pre-commit install` — whitespace, YAML, the source-tree
-gates and `lean-fmt check`, under three seconds, nothing compiled. The build and the
-suites run in CI, not in a hook.
-
-`lean-fmt` is optional and installed standalone, so the hook skips it with a note if
-it is absent. Its linter and formatter are both adopted — `.lean-fmt.toml` records
-the settings and the history, with numbers.
+Commit-time hygiene is `uvx pre-commit install`. `lean-fmt` is optional
+and installed standalone; `.lean-fmt.toml` records the settings.
 
 ### Layout
 
@@ -64,7 +50,6 @@ the settings and the history, with numbers.
 linger attach work      # attach, creating "work" if absent
 Ctrl-\                # detach — session keeps running
 linger                  # overview: names, pids, labels; then exits
-linger attach           # attach the default session ("main")
 ```
 
 | command | |
@@ -74,8 +59,7 @@ linger attach           # attach the default session ("main")
 | `watch <name>` | attach read-only |
 | `run <name> <cmd>` | run a command in a session, don't attach |
 | `send <name> <text>` | send raw input to its pty (`send <name> -`: stdin, byte-exact) |
-| `ls` / (no args) `[-r [h,..]]` | overview; `-r` also lists remote hosts |
-| `ls --porcelain` | machine-readable listing |
+| `ls` / (no args) `[-r [h,..]]` | overview; `-r` adds remote hosts; `--porcelain` is machine-readable |
 | `info <name>` | one session's records: size, cursor, `outseq`, labels… |
 | `capture <name>` | the current screen as text, one line per row (marks it seen) |
 | `resize <name> <cols> <rows>` | size a detached session (refused while a client is attached) |
@@ -87,168 +71,68 @@ linger attach           # attach the default session ("main")
 ## Agents
 
 Everything above the attach line is one-shot and scriptable, so another
-program — an AI agent, a monitor, a bot — can see and drive a session without
-owning a terminal:
-
-```
-linger run work 'make test'        # upsert + type the command
-linger resize work 120 40          # deterministic wrap (nobody attached)
-linger capture work                # the screen, one line per row
-printf 'y\n' | linger send work -  # exact bytes: Enter, ^C, escapes…
-linger wait work                   # block until the program exits
-```
-
-Poll cheaply: `info` reports `outseq`, a counter that moves once per burst of
-output — capture again only when it moved, and treat two equal reads as
-quiescence. A `capture` **marks the session seen** (it is a look, so the
-`ls` glyph stops saying unread and `behind` counts from your capture);
-`history` is an export and deliberately does not. While an agent drives,
-`watch <name>` gives a human a read-only view of the same screen. A resize is
-refused — loudly, exit 1 — while an attached client owns the size; captures
-are plain text (one line per grid row, controls scrubbed), so parse them
-positionally with `rows` from `info`.
-
-## Recipes
-
-`linger` never drives fzf, your terminal, or your transport; one-file
-recipes in [`recipes/`](recipes/) do the composing (fish functions —
-`cp` them into `~/.config/fish/functions/`):
-
-| | |
-|---|---|
-| `lz.fish` | fuzzy-pick a session (fzf) and attach, local or remote |
-| `lzo.fish` | every session on a host as kitty tabs, one shot |
-| `lza.fish` | attach that auto-reconnects while a link flaps |
-| `lzs.fish` | live status board for sessions you have no tab open on |
-| `lzh.fish` | detach (ctrl-\\) pops a picker, so it acts as a switch key |
-| `ssh_config` | dead links declared in ~15 s — no more `Enter ~ .` |
-
-Transport is yours: `attach name@host` execs ssh, and mosh composes as
-`mosh host -- linger attach name` (roaming, instant resume) — the wire
-protocol never crosses the network, so any carrier works. Details in
-`recipes/README.md`.
+program can see and drive a session without owning a terminal. Poll
+cheaply: `info` reports `outseq`, a counter that moves once per burst of
+output. A `capture` marks the session seen; `history` is an export and
+does not. `watch <name>` gives a human a read-only view while an agent
+drives. A `resize` is refused — loudly, exit 1 — while an attached
+client owns the size. Captures are plain text (one line per grid row,
+controls scrubbed), so parse them positionally with `rows` from `info`.
 
 ## Session status
 
 Each row in `linger ls` carries one glyph — the most specific state that
-applies — plus `+N` when N clients are attached.
-
-| | |
-|---|---|
-| `⣷` | working — output right now |
-| `⣿` | unread — output arrived while nobody was watching |
-| `⡀` | idle — nothing since it was last watched |
-| `✓` | exited 0 |
-| `!` | exited nonzero, or killed by a signal |
-| `~` | resumable — no daemon, but a checkpoint is on disk |
-| `?` | unknown — the daemon did not answer, or the checkpoint will not load |
-
-Two states share a glyph only when they call for the same action, which is why
-a bell folds into unread and a busy daemon folds into unknown. `--porcelain`
-carries the same seven as a `status` field (`working`, `wants-you`, `idle`,
-`exited-ok`, `exited-bad`, `resumable`, `unknown`), and `behind` counts how
-many output events arrived unseen.
-
-Two things worth knowing. Unread means "since anyone last looked", not since
-*you* did: it is a property of the session, so if a colleague watched it a
-moment ago the output is no longer news to the row. And working is only as
-responsive as the daemon's poll round, because freshness is a counter
-comparison across polls rather than a stored timestamp.
-
-The column earns its keep for sessions with no tab open — those are the ones
-you cannot see. `recipes/lzs.fish` parks it in a tab as a live board.
+applies — plus `+N` when N clients are attached: `⣷` working, `⣿`
+unread (output while nobody watched), `⡀` idle, `✓` exited 0, `!`
+exited nonzero or killed, `~` resumable (checkpoint on disk), `?`
+unknown. `--porcelain` carries the same seven as a `status` field, and
+`behind` counts output events that arrived unseen. Unread means "since
+anyone last looked", a property of the session, not of you.
 
 ## Graphics
 
-Images reach your terminal while you are attached, and whether they come
-back after a reattach depends on whether the application redraws.
-
 Kitty graphics (`APC`), sixel (`DCS`) and iTerm2 inline images
-(`OSC 1337`) pass through **byte for byte**: the daemon forwards every raw
-pty chunk to attached clients as it arrives. There is no switch to turn on.
+(`OSC 1337`) pass through byte for byte while attached; the emulator
+ignores the payloads, so a program streaming megabytes of base64 cannot
+grow a session, reach a checkpoint, or wedge the parser (§Bound, §Total
+in `THEOREMS.md`). Nothing is stored, so what brings an image back after
+reattach is the application redrawing: a changed terminal size delivers
+`SIGWINCH`; at an unchanged size the kernel suppresses it — press the
+app's refresh key (`Ctrl-L` for most). An image from an exited command
+is gone. Both halves are pinned by `E2E/Graphics.lean`; storing images
+is a settled non-goal (AGENTS.md).
 
-The emulator itself *ignores* the payload: an image sequence parks the
-parser in its string state until the terminator and accumulates nothing.
-So a program streaming megabytes of base64 cannot grow a session or reach
-a checkpoint, and cannot wedge the parser — the same bound that covers any
-other hostile output (§Bound, §Total in `THEOREMS.md`).
+## Recipes
 
-### On reattach
-
-`restore` repaints from the cell grid, and a cell holds a character, its
-combining marks, a width and a pen — there is no image plane. Kitty
-placements are overlays anchored to cell coordinates, out of band from
-cell content, so a grid repaint cannot carry them. What brings an image
-back is the *application* redrawing:
-
-| on reattach | what happens |
-|---|---|
-| terminal size **changed** | the pty is resized, the program gets `SIGWINCH`, a full-screen app redraws — and re-emits its own images |
-| terminal size **unchanged** | the kernel suppresses `SIGWINCH` (it compares the winsize first), so nothing redraws; press the app's refresh key (`Ctrl-L` for most) |
-| the image came from a command that has **exited** | nothing will re-emit it — e.g. a `kitten icat` left in scrollback is gone |
-
-An app's own redraw is strictly better than any replay we could do, since
-it also refreshes anything the emulator models imperfectly. Both halves of
-the size rule are pinned by `E2E/Graphics.lean`.
-
-### Why linger doesn't store images
-
-It could be made to work — cap the stored bytes, or remember only kitty
-*placements* (an id and a position, which re-place with a payload-free
-`a=p` sequence). Neither is free:
-
-- placements only replay into the *same* terminal process that still holds
-  the image, so a reattach from elsewhere, or after a reboot, gets
-  nothing — and reboot-resume is the whole point of the checkpoint;
-- replaying them correctly means implementing kitty's placement model
-  (ids, z-index, cropping, whether a placement scrolls with content); an
-  image in the wrong place is worse than no image;
-- sixel and iTerm2 have no re-place concept at all, so those need the full
-  payload or nothing;
-- payloads would land in the periodic on-disk checkpoint, turning a small
-  timed write into a multi-megabyte one.
-
-So the scope is passthrough plus the application's own redraw. If you want
-a picture to survive independently of the program that drew it, give it its
-own kitty tab — `recipes/lzo.fish` makes one per session.
+`linger` never drives fzf, your terminal, or your transport; one-file
+fish recipes in [`recipes/`](recipes/) do the composing — see
+`recipes/README.md`. Transport is yours: `attach name@host` execs ssh,
+and any carrier that can run a remote command with a tty works.
 
 ## Notes
 
 - Reboot-resume is automatic (periodic checkpoint + restore on attach).
-- Images (kitty graphics, sixel, iTerm2) work while attached and vanish
-  on reattach — see [Graphics](#graphics).
+  The screen, scrollback, modes, labels and cwd come back — not the
+  process tree.
 - Reattach paints the session's scrollback into your terminal's own
-  scrollback, so wheel-scroll, search and selection find it. That is one
-  buffer shared with your shell — linger never uses the alt screen — so
-  attaching a session **that has history erases whatever history that
-  window held** (`CSI 3 J`, the sequence `clear` sends) and then pushes up
-  to about three thousand lines of the session's own. Attaching a session
-  with no history leaves your window alone. `linger history` prints a
-  session's scrollback without touching the terminal.
-- `attach` needs a terminal; bare `linger`/`ls`, `run`, `send`, `info`,
-  `capture`, `resize` are scriptable (see §Agents).
-- An unreachable or mid-reboot host drops out of `ls -r` after a few
-  seconds; `attach name@host` fails with ssh's own error. Once the host
-  is back its sessions list as `resumable` and attach restores them.
-- A dropped link cannot hurt a session — it detaches; reattach restores
-  the screen (see `recipes/` for the client-side comfort).
+  scrollback (linger never uses the alt screen), so attaching a session
+  **that has history erases whatever history that window held**
+  (`CSI 3 J`); a session with no history leaves your window alone.
+  `linger history` prints a session's scrollback without touching the
+  terminal.
 - Detach key `Ctrl-\`; `LINGER_NO_DETACH_KEY=1` disables it.
-- Detaching hands the terminal back: leaving a full-screen program does
-  not leave your shell on the alt screen, with mouse reporting on, no
-  cursor, a stale scroll region or line-drawing glyphs. Every exit path
-  does it (detach, session exit, dropped link). The window title is the
-  one thing not put back — we never read yours.
+- Detaching hands the terminal back usable, on every exit path. The
+  window title is the one thing not put back — we never read yours.
+- A dropped link cannot hurt a session — it detaches; reattach restores
+  the screen.
 - Remotes: `-r host,host` for one run, `~/.config/linger/remotes` to
-  persist (duplicates are an error). Hosts need `linger` on their `$PATH`.
+  persist. Hosts need `linger` on their `$PATH`.
 - `LINGER_DIR=<dir>` isolates sockets + state on local storage.
 
 ## Design
 
-`THEOREMS.md` — the invariants (bounded under load, no crash on any
-input, sessions outlive clients, checkpoint round-trips, one session
-can't leak into another, a row's identity is its socket name).
-`tests/e2e.sh` — the whole-deliverable gate. `specs/archive/lean-zmx.md`
-— the build record.
+`THEOREMS.md` — the invariants. `tests/e2e.sh` — the whole-deliverable
+gate. `specs/archive/lean-zmx.md` — the build record.
 
 Prior art: [screen](https://www.gnu.org/software/screen/),
 [tmux](https://github.com/tmux/tmux/),
