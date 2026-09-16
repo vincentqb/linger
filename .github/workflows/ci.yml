@@ -11,11 +11,9 @@
 # only place the macOS half of AGENTS.md's "builds and passes on Linux and macOS"
 # is ever checked.
 #
-# NO RATCHET NUMBER APPEARS IN THIS FILE. SHIM_CAP, HEARTBEAT_CAP,
-# RUNTIME_PARTIAL_CAP, E2E_PARTIAL_CAP and the ten per-suite check-count floors
-# live in tests/gates.sh and tests/e2e.sh, and this workflow calls those scripts.
-# A cap that can disagree between CI and the hook is worse than no CI, which is
-# the reason tests/gates.sh was split out in the first place (see its header).
+# NO RATCHET NUMBER APPEARS IN THIS FILE. Source ratchets live in
+# tests/gates.sh; exact suite check counts live in tests/e2e.sh. This workflow
+# calls those scripts so CI cannot disagree with their numbers.
 
 name: ci
 
@@ -217,6 +215,18 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
+
+      # E2E.Terminal carries a required interactive-fish regression. Missing the
+      # subject is a failed environment, never a counted test pass.
+      - name: install fish for the required terminal regression
+        run: |
+          if command -v fish >/dev/null; then exit 0; fi
+          if [ "$RUNNER_OS" = Linux ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq fish
+          else
+            brew install fish
+          fi
 
       - name: preflight — the ./lake wrapper's Linux-branch preconditions
         if: runner.os == 'Linux'   # ./lake is a pass-through on Darwin, on

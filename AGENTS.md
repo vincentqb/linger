@@ -114,8 +114,9 @@ deliberately no pre-push hook.
   `git ls-files --stage` after adding a file. Pty suites live in `E2E/`
   (`./lake exe e2e <suite>`), are `IO` — never theorems — and assert
   against the code's own definitions, not copies.
-- `FAILURES: 0` does not mean anything ran: every pty suite carries a
-  check-count floor in `tests/e2e.sh`; floors only go UP.
+- `FAILURES: 0` does not mean anything ran: every pty suite carries
+  an exact check count in `tests/e2e.sh`; any addition or deletion is a
+  reviewable edit.
 - `tests/e2e.sh` and `tests/gates.sh` are the deliberate non-Lean
   files; everything else is Lean. No Python, ever.
 - The purity greps read prose as well as code: never write the

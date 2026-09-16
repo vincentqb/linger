@@ -490,6 +490,18 @@ rp_n="$(code_count 'partial def' 'Linger/Runtime/*')"
 [ "$rp_n" -le "$RUNTIME_PARTIAL_CAP" ] \
   || fail "Linger/Runtime grew to $rp_n partial defs (cap $RUNTIME_PARTIAL_CAP); a do-block loop does not need the keyword"
 
+# Test-orchestrator safety. The pty suites isolate themselves by LINGER_DIR; an
+# unscoped process-name kill reaches real sessions outside that directory. A skipped
+# required regression is not a pass, and an executable Python snippet is still a
+# second-language dependency even when embedded in a Lean string rather than tracked
+# as a .py file. These are syntactic runtime ties, so the source gate is the oracle.
+! code_grep '(^|[^[:alnum:]_])(pkill|killall)[[:space:]].*linger' 'tests/e2e.sh' \
+  || fail "tests/e2e.sh kills by process name — suites may terminate only processes they created"
+! code_grep '["]python([0-9.]*)' 'E2E/*' \
+  || fail "an E2E suite executes embedded Python — use the e2e binary as the child probe"
+! code_grep 'IO[.]println[[:space:]]+"PASS[[:space:]].*skip' 'E2E/*' \
+  || fail "an E2E suite counts a skipped required check as PASS"
+
 # Zero-Python invariant. The pty suites and the coverage gate are Lean (`E2E/`, run
 # as `./lake exe e2e <suite>`); `tests/` holds this file and the orchestrator. A `.py`
 # creeping back is how a two-language split returns, one convenience at a time.

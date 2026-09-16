@@ -10763,3 +10763,27 @@ loops (their policies differ); do not remove named proof seams, private state se
 `Listing.Row.broken`, the scrollback mode tail/guard/fit/reversals, either honest
 `partial` merely for style, or any C export solely to lower a count. All current C
 exports have live callers and no equivalent v4.34 API preserving the contract.
+
+
+## Step 1 notes — 2026-09-14 — make the test gate safe
+
+RED 1: after adding the source guard, `sh tests/gates.sh` printed all three
+`pkill -x linger` sites and exited 1. Running the old whole gate was deliberately
+refused: demonstrating the behavioral break would have killed real sessions, which is
+the defect. The replacement behavioral oracle starts one session in a distinct
+`LINGER_DIR`, runs every suite, then requires `info` still to answer; cleanup addresses
+that name+directory only. GREEN: it survived the foreground full gate.
+
+RED 2: `E2E.Resume` invoked the existing e2e binary as `--winsize-probe` before the
+mode existed; the suite's final check failed with `got []`. Adding the two-argument
+dispatch and a five-line `Posix.winsizeGet stdinFd` child made it pass with `[100, 40]`.
+This captures the reusable test shape: a fact about the far side of a pty is measured by
+the suite binary re-entering as the pty child, not by an embedded second language.
+`tests/gates.sh` now rejects quoted Python executables in `E2E/`.
+
+Check counts are exact, not floors: all current suite counts and all 12 Posix smoke
+checks were observed under the complete run. Missing fish now aborts the required
+terminal regression; CI installs it on both matrix legs. Final evidence before the
+step commit: source gates green; resume 9/9; terminal 12/12; shim 12/12; all ten pty
+suites at exact count; coverage and fuzz gates green; full build warning-free; sentinel
+alive at the end.

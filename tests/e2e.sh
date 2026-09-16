@@ -18,8 +18,8 @@
 #  12. agent verbs (info geometry/outseq, capture, send - , resize)
 #  13. watch: the read-only mirror (geometry, keyboard, hand-back, marks seen)
 #  (1) also covers Tests/Fuzz.lean: randomized §Replay round-trip search
-#  every pty suite also carries a CHECK-COUNT FLOOR (see `suite` below): green
-#  means "no failures AND at least N assertions actually ran".
+#  every pty suite also carries an EXACT CHECK COUNT (see `suite` below): green
+#  means "no failures AND every recorded assertion ran".
 #
 # RUN THIS IN THE FOREGROUND. Enforced, not requested: see "SIGINT must be
 # deliverable" below, which carries the measurement and the reasoning.
@@ -75,34 +75,23 @@ if [ "$sigint" -ne 9 ]; then
   fail "SIGINT is not deliverable (probe exited $sigint, want 9) — run in the foreground, not with '&'"
 fi
 
-# Run one pty suite: no failures AND a floor on how many checks actually ran
-# (pin-the-gaps item 7). `FAILURES: 0` says nothing went wrong; it does not say
-# anything HAPPENED. Several suites nest assertions in a `for` over a list, and a
-# list that silently became empty still prints `FAILURES: 0` — so the gate would
-# stay green on a suite that had stopped checking. The floors are the measured
-# live counts; they only ever go UP without discussion, and a drop is a
-# deliberate, reviewable edit, exactly like SHIM_CAP in tests/gates.sh.
-suite() {                                   # suite <name> <check floor>
-  pkill -x linger 2>/dev/null || true
-  sleep 0.2
+# Run one pty suite: no failures and exactly the recorded number of checks.
+# Exactness removes headroom: adding a check requires updating the number now,
+# instead of silently allowing a later assertion to disappear.
+suite() {                                   # suite <name> <exact checks>
   out="/tmp/linger-$1.out"
   ./.lake/build/bin/e2e "$1" > "$out" 2>&1 \
     || { tail -25 "$out"; fail "$1 suite"; }
   tail -1 "$out" | grep -q '^FAILURES: 0$' \
     || { tail -25 "$out"; fail "$1 suite"; }
-  # `^(PASS|FAIL) ` with the space: `FAILURES: 0` also starts with FAIL.
-  n="$(grep -cE '^(PASS|FAIL) ' "$out")"
-  [ "$n" -ge "$2" ] \
-    || fail "$1 suite ran $n checks (floor $2) — an assertion stopped executing; a loop's list probably went empty"
-  printf '  %s: %s checks (floor %s)\n' "$1" "$n" "$2"
+  n="$(grep -c '^PASS ' "$out")"
+  [ "$n" -eq "$2" ] \
+    || fail "$1 suite ran $n checks (expected exactly $2) — update the expectation for an intentional addition; a deletion is a regression"
+  printf '  %s: %s checks\n' "$1" "$n"
 }
 
-# no stray daemons from a previous run may influence the checks
-pkill -x linger 2>/dev/null || true
-sleep 0.2
-
 say "1. build (program + theorems + tests)"
-rm -rf .lake/build
+[ ! -e .lake/build ] || rm -r .lake/build
 ./lake build Linger Theorems Tests linger lingertest e2e > /tmp/linger-build.log 2>&1 \
   || { tail -30 /tmp/linger-build.log; fail "build"; }
 if grep -qE '^(warning|error)' /tmp/linger-build.log; then
@@ -112,7 +101,7 @@ fi
 grep -c 'Build completed successfully' /tmp/linger-build.log > /dev/null \
   || fail "build did not report success"
 
-say "2. source-tree gates (purity, the OS surface, five ratchets)"
+say "2. source-tree gates (purity, boundaries, and the ratchets)"
 # Extracted to tests/gates.sh so the `pre-commit` hook and CI run the SAME numbers.
 # A hook with its own copy of a cap is worse than no hook.
 sh tests/gates.sh || fail "source-tree gates"
@@ -142,7 +131,27 @@ grep -qE 'example : failingDeep 150 = \[\]' Tests/Fuzz.lean \
   || fail "fuzz: 'failingDeep 150 = []' assertion missing or weakened"
 
 say "3. posix shim smoke tests"
-./lake exe lingertest | tail -1 | grep -q '^ALL PASS$' || fail "lingertest"
+shim_out=/tmp/linger-shim.out
+./.lake/build/bin/lingertest > "$shim_out" 2>&1 \
+  || { tail -25 "$shim_out"; fail "lingertest"; }
+tail -1 "$shim_out" | grep -q '^ALL PASS$' || fail "lingertest"
+shim_n="$(grep -c '^PASS ' "$shim_out")"
+[ "$shim_n" -eq 12 ] \
+  || fail "lingertest ran $shim_n checks (expected exactly 12)"
+
+# Keep one real session in another state directory through every suite. A suite
+# may clean up its own Env, never the user's process namespace.
+sentinel_dir="/tmp/linger-e2e-sentinel-$$"
+sentinel_name="sentinel-$$"
+cleanup_sentinel() {
+  LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger kill "$sentinel_name" >/dev/null 2>&1 || true
+  [ ! -e "$sentinel_dir" ] || rm -r "$sentinel_dir"
+}
+trap cleanup_sentinel EXIT HUP TERM
+LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger run "$sentinel_name" sleep 600
+sleep 1
+LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger info "$sentinel_name" >/dev/null \
+  || fail "sentinel session did not start"
 
 say "4. attach / detach / reattach / mirror / wait"
 suite attach 35
@@ -174,5 +183,8 @@ suite agent 25
 say "13. watch (read-only mirror: geometry, keyboard, hand-back, seen)"
 suite watch 17
 
-pkill -x linger 2>/dev/null || true
+LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger info "$sentinel_name" >/dev/null \
+  || fail "a suite terminated the unrelated sentinel session"
+cleanup_sentinel
+trap - EXIT HUP TERM
 printf '\nE2E OK — linger builds clean, core is pure, 10 live suites green.\n'

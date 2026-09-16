@@ -17,14 +17,13 @@ public section
 
 /-! # e2e — the pty suites, dispatched by name
 
-One executable, one `lean_exe`, one argv dispatch: `./lake exe e2e watch`. Ten
-`lean_exe` blocks would be ten copies of the same lakefile stanza, and the suites
-share a harness anyway.
+One executable, one `lean_exe`, one argv dispatch: `./lake exe e2e watch`.
+The suites share a harness; separate executable blocks would duplicate the same
+lakefile stanza.
 
 Each suite prints `PASS <name>` / `FAIL <name>` per check and `FAILURES: <n>` last;
-`tests/e2e.sh` reads the verdict from the last line and the check count against a
-per-suite floor. An unknown name is an error, not a silent success — a typo in
-`tests/e2e.sh` must not look like a passing suite. -/
+`tests/e2e.sh` reads the verdict and requires the exact recorded check count. An
+unknown name is an error, not a silent success. -/
 
 def suites : List (String × IO UInt32) :=
   [("watch", E2E.Watch.run), ("status", E2E.Status.run), ("overview", E2E.Overview.run),
@@ -45,6 +44,8 @@ def main (args : List String) : IO UInt32 := do
   -- with a one-element suite name.
   | ["--probe", result, ready, trigger] =>
     E2E.Terminal.probe result ready trigger
+  | ["--winsize-probe", result] =>
+    E2E.Resume.winsizeProbe result
   | [name] =>
     match suites.find? (·.1 == name) with
     | some (_, run) =>

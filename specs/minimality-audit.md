@@ -2,7 +2,7 @@
 
 Status: active
 Updated: 2026-09-14
-Next: Step 1 — make the test gate safe
+Next: Step 2 — make coverage semantic
 Predecessor: `specs/archive/scrollback-fidelity.md` (complete)
 
 ## Goal
@@ -109,12 +109,18 @@ every deletion survives the complete verifier stack.
 
 ## Steps
 
-### Step 1 — make the test gate safe
+### Step 1 — make the test gate safe — done ✓ (2026-09-14)
 
-Remove unscoped `pkill -x linger`; add a deterministic guard and sentinel regression.
-Make suite and shim-smoke check counts exact, and make required environment-dependent
-checks fail/skip honestly rather than print a counted pass. Replace the embedded Python
-winsize probe with the existing E2E binary's own Lean/Posix probe.
+Removed every unscoped process-name kill. The full gate now keeps a real session in
+another `LINGER_DIR` alive through all suites, and `tests/gates.sh` rejects future
+`pkill`/`killall` regressions. Suite and shim checks require exact counts; fish is a
+required CI prerequisite rather than a counted skip. The resume winsize probe is a
+child mode of the existing Lean e2e binary, so no embedded Python executes.
+
+RED: the new source gate found all three `pkill` sites; the resume suite failed its
+geometry assertion when `--winsize-probe` had no dispatcher. GREEN: source gates,
+resume (9), terminal (12), shim smoke (12), and foreground `./tests/e2e.sh` all passed;
+the sentinel survived all ten suites.
 
 ### Step 2 — make coverage semantic
 

@@ -37,6 +37,13 @@ namespace E2E.Resume
 open E2E.Harness
 open Linger.Core.Status (Status)
 
+/-- Child-side winsize probe. It must execute inside the resumed session's pty;
+reading the parent process's tty would test the harness instead. -/
+def winsizeProbe (resultPath : String) : IO UInt32 := do
+  let (cols, rows) ← Linger.Posix.winsizeGet Linger.Posix.stdinFd
+  IO.FS.writeFile resultPath s!"{cols} {rows}"
+  return 0
+
 def run : IO UInt32 := do
   let e ← Env.make "resume"
   let mut f := 0
@@ -157,19 +164,11 @@ def run : IO UInt32 := do
   geom.bye (sendDetach := false)
   let _ ← e.crashDaemon "geom" -- simulated reboot; tolerated if already gone
   let sizePath := s!"{e.dir}/geom.size"
-  -- `run` types its argv (space-joined) as keystrokes into the resumed shell, so
-  -- a quoted `sh -c '...'` would lose its quoting; run a probe *script file*
-  -- instead. It reads the pty's own winsize via TIOCGWINSZ (this host's `stty
-  -- size` prints a mode dump, and `tput` needs terminfo) and writes "cols rows".
-  -- Still python3, and `Posix.winsizeGet` is no substitute: the winsize under
-  -- test is the CHILD's, which only a program on the far side of the pty can
-  -- read — from here we would measure this process's terminal instead.
-  let probe := s!"{e.dir}/probe.sh"
-  IO.FS.writeFile probe
-      ("python3 -c \"import fcntl,termios,struct;" ++
-        "w=struct.unpack('HHHH',fcntl.ioctl(0,termios.TIOCGWINSZ,bytes(8)));" ++
-        s!"open('{sizePath}','w').write('%d %d'%(w[1],w[0]))\"\n")
-  let _ ← e.cli #["run", "geom", "sh", probe]
+  -- The probe must run on the far side of the resumed pty; this e2e binary is
+  -- already a Lean child probe for the terminal suite, so reuse it rather than
+  -- embedding a second-language ioctl script.
+  let probe ← IO.appPath
+  let _ ← e.cli #["run", "geom", probe.toString, "--winsize-probe", sizePath]
   IO.sleep 1500
   let got ←
     if (← System.FilePath.pathExists sizePath) then

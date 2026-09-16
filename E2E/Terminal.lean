@@ -16,15 +16,12 @@ reply stream ROSTER-INDEPENDENT the thing under test: the mediator answers the
 child, and a query is never a broadcast.
 
 THE PROBE IS THIS BINARY. `e2e --probe <result> <ready> <trigger>` is dispatched by
-`E2ETest.main` into `probe` below — the Python's `sys.argv[1] == "--probe"`
-re-entry, the same file being both the harness and the program under the pty. It
-has to be a program on the FAR side of the pty: the query leaves the session's own
-tty and the reply arrives on it, and nothing on this side can see either. That is
-the same reason `E2E.Resume`'s winsize probe is a separate program — but unlike
-that one it needs no python3, because `termRaw`, `writeAll`, `poll` and `read` are
-already in `Linger.Posix`. The result file is `k<TAB>v` records read back by the
-harness's own `records`, and the reply is hex, encoded and decoded by the one pair
-of functions below, so the file format cannot drift between the two sides.
+`E2ETest.main` into `probe` below, so the same executable is both harness and pty
+program. It has to run on the FAR side: the query leaves the session's own tty and
+the reply arrives there; nothing outside the pty can observe either. `E2E.Resume`
+reuses the same child-mode pattern for its winsize probe. The result file is
+`k<TAB>v` records read by the harness's own parser, and the reply is encoded and
+decoded by one pair of functions, so the two sides cannot drift.
 
 WHAT IS DERIVED, AND WHAT CANNOT BE:
 
@@ -348,25 +345,20 @@ def run : IO UInt32 := do
       (←
         expect (ir.take evilExpected.length == evilExpected)
             "XTGETTCAP still answered (filtered negative reply reached the child)")
-  -- The original regression, and only that: an interactive fish must consume a
-  -- command before any client attaches. The marker is a FILE, not echoed terminal
-  -- output, so startup echo cannot make this pass accidentally.
-  match ← whichBin "fish" with
-  | some fish =>
-    let marker := ((System.FilePath.mk e.dir) / "fish-command-ran").toString
-    let fishEnv : Array (String × Option String) :=
-      #[("SHELL", some fish), ("TERM", some "inherited-fish-term")]
-    let _ ← e.cliEnv fishEnv #["run", "fish-regression", "printf", "ok", ">", marker]
-    f :=
-      f +
-        (←
-          expect (← waitFor marker 6000) "fish regression: detached command executes before attach")
-    let _ ← e.cliEnv fishEnv #["kill", "fish-regression"]
-  | none =>
-    -- a bare PASS line, not a silent skip: `tests/e2e.sh` counts `PASS `/`FAIL `
-    -- lines against a floor of 12, and a skip that printed nothing would drop the
-    -- suite under it on a host without fish
-    IO.println "PASS fish regression skipped (fish not installed)"
+  -- The original regression: an interactive fish must consume a command before
+  -- any client attaches. This is required coverage, so an environment without
+  -- fish fails instead of converting the missing check into a counted pass.
+  let some fish ← whichBin "fish"
+    | throw (IO.userError "fish is required for the detached-command regression")
+  let marker := ((System.FilePath.mk e.dir) / "fish-command-ran").toString
+  let fishEnv : Array (String × Option String) :=
+    #[("SHELL", some fish), ("TERM", some "inherited-fish-term")]
+  let _ ← e.cliEnv fishEnv #["run", "fish-regression", "printf", "ok", ">", marker]
+  f :=
+    f +
+      (←
+        expect (← waitFor marker 6000) "fish regression: detached command executes before attach")
+  let _ ← e.cliEnv fishEnv #["kill", "fish-regression"]
   verdict f
 
 end E2E.Terminal
