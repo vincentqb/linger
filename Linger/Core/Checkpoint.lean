@@ -52,22 +52,15 @@ namespace Linger.Core.Checkpoint
 open Linger.Core.Vt
 
 /-- Readers: consume a prefix, return the value and the rest.
-`@[expose]`: a type-level def must be visible across module boundaries or the
-compiler cannot agree on the compiled representation of anything typed by it
-("locally inferred compilation type differs…", a stated current limitation of
-`module`s). A type alias has no implementation to hide, so this costs
-nothing. -/
-@[expose]
-public def R (α : Type) : Type := List UInt8 → Option (α × List UInt8)
+
+`abbrev`, not `def`: a type-level definition has to be visible across a `module`
+boundary or the compiler cannot agree on the compiled representation of anything
+typed by it ("locally inferred compilation type differs…"). This was a `def` with
+`@[expose]`, which says the same thing in two more lines — an alias has no
+implementation to hide, so reducible-and-exposed is simply what it is. -/
+public abbrev R (α : Type) : Type := List UInt8 → Option (α × List UInt8)
 
 /-! ## Primitive writers/readers -/
-
-def wU8 (b : UInt8) : List UInt8 := [b]
-
-def rU8 : R UInt8 := fun l =>
-  match l with
-  | [] => none
-  | b :: rest => some (b, rest)
 
 /-- Arbitrary-precision Nat, LEB128: 7 bits per byte, high bit =
 "more follows". Total in both directions and round-trips with no

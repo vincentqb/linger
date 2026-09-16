@@ -218,7 +218,7 @@ theorem offRow_mark {cols : Nat} {w : Vt} {Q : PaintState} {g : Row} {wcol kf : 
         rw [hx1, hyk]; exact hwk0
       have hcapp : (w.getCell (w.cursor.x - 1) w.cursor.y).marks.length < 8 := by
         rw [hx1, hyk]; exact hcapk
-      rw [print_mark_eq hpc hcw hpd (by omega) hnw hcapp, hx1, hyk]
+      rw [print_mark_eq hpc hcw hpd hnw hcapp, hx1, hyk]
     · have hx : w.cursor.x = wcol := by rw [hm.curX, hQx]
       have hpd : w.cursor.pending = true := by rw [hm.pend, hQp]
       have hnw : (w.getCell w.cursor.x w.cursor.y).width ≠ 0 := by

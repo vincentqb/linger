@@ -11076,3 +11076,62 @@ inert, but it is what makes the step-left total without reading the pair
 invariant, and its docstring is the only statement of that. Break-verified:
 `v.cursor.x - 1` → `v.cursor.x` in `printMark` fails seven checks across
 `Tests/Vt.lean` and `Tests/Render.lean`.
+
+
+## Step 7 notes — 2026-09-15
+
+The `printMark`/`print_mark_eq` half is recorded in the incident entry above,
+since that is where it was measured. The rest:
+
+**Two dead remote fields, and a comment that was worse than the fields.**
+`RemoteRow.clients` and `.labels` were parsed, scrubbed and unit-tested; the one
+consumer (`Cli.listRemote`) projects `name`/`live`/`cmd`/`status` and builds a
+fresh four-field row, so both were discarded at the only place they could have
+been used. What made it worth writing down is the comment beside that row: "the
+peer's porcelain does not forward them". It does — `Listing.rowFields` emits
+`clients` and `label.*`, `Remote.parse` reads both, and `Tests/Remote.lean`
+asserted the parse. That is exactly the failure mode SCRATCHPAD 2026-08-12
+already named, where a doc comment labelled a known gap and the label felt like
+diligence: a known-wrong behaviour with a comment explaining it is still
+known-wrong.
+
+Deleted rather than forwarded, and the choice is worth stating because the
+2026-08-12 precedent went the other way (it forwarded `status` rather than
+relabel the glyph). The difference: this spec's charter is to tighten without
+adding features, and forwarding changes what `linger ls -r` prints. **If remote
+label and watcher columns are ever wanted, the shape is the `status` one** —
+re-add the two field initializers (four lines, they were correct) and build the
+remote row through `Listing.rowFields` like a local one, which also deletes the
+hand-built four-tuple. The comment now says what is true: the peer emits them,
+we drop them, the columns are blank.
+
+**A closed island in the codec.** `Checkpoint.wU8`/`rU8` had exactly one
+reference between them — `theorem rt_u8 : RT wU8 rU8` — and nothing referenced
+that. No writer or reader composes them (`wBool`, `wChar`, `wColor` emit bytes
+directly), so the triple existed to satisfy nothing. This is the coverage
+gate's blind spot worth naming: a def is "covered" by a theorem written only to
+cover it, and the gate cannot tell that from a def a proof needs. Deleted all
+three; 276 → 273 pure-core defs, still all in theorem types.
+
+**`Checkpoint.R` is an `abbrev`.** That retires `@[expose]` and the three lines
+explaining why a type-level `def` needed it. Both builds green.
+
+**Ratchets re-measured.** `SHIM_CAP` 22, `RUNTIME_PARTIAL_CAP` 2, `RECDEPTH_CAP`
+1 are all exact. The surviving `set_option maxRecDepth 4096` on `stepGround` was
+re-tested by deleting it — still "maximum recursion depth has been reached", so
+it is real, as the rule requires checking after a refactor.
+`E2E_PARTIAL_CAP` was 5 with 3 declarations present: `leanFiles` and
+`stripComments` belonged to the text-based coverage scanner deleted in step 2,
+and their slots survived it. Now 3, break-verified at 4. A cap holding slots for
+deleted code is a cap that has stopped biting — the same rot the markdown
+copies of these numbers used to have, which is why they live only in
+`tests/gates.sh`.
+
+**Modern Lean, two negative results.** `String.contains` replaces
+`entry.any (· == '=')`. But v4.34.0-rc2 has **no** `String.containsSubstr`
+(probed: `Unknown constant`), so `E2E.Harness.has` and `LingerTest.contains`
+keep their `(splitOn needle).length ≥ 2` bodies and there is no delegation to
+make; and `String.split` is now pattern-based, returning
+`Std.Iter String.Slice`, so `lines` through it needs `.toList` and
+`.map (·.toString)` — strictly more code than `splitOn "\n"`. Do not re-attempt
+either.

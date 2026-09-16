@@ -789,7 +789,7 @@ reachable state holds, but `cx0 - 1` on `Nat` would silently park the mark back
 on column 0 and the repair would then blank it away. `renderable_step` does not
 yet prove that state unreachable, so the guard carries it. -/
 def Vt.printMark (v : Vt) (ch : Char) : Vt :=
-  let cx0 := if v.cursor.pending then v.cursor.x else if v.cursor.x == 0 then 0 else v.cursor.x - 1
+  let cx0 := if v.cursor.pending then v.cursor.x else v.cursor.x - 1
   let cx := if (v.getCell cx0 v.cursor.y).width == 0 && cx0 != 0 then cx0 - 1 else cx0
   let cell := v.getCell cx v.cursor.y
   if cell.marks.length ≥ 8 then v

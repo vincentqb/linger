@@ -2,7 +2,7 @@
 
 Status: active
 Updated: 2026-09-15
-Next: Step 7 — delete and modernize
+Next: Step 8 — minimize and align documentation
 Predecessor: `specs/archive/scrollback-fidelity.md` (complete)
 
 ## Goal
@@ -221,13 +221,38 @@ ran nowhere but CI, so a locally-passing `lean-fmt check` (the linter) looked li
 formatter passing too: the tree is reformatted and `tests/e2e.sh` now runs the layout gate
 next to the source-tree gates.
 
-### Step 7 — delete and modernize
+### Step 7 — delete and modernize — done ✓ (2026-09-15)
 
-Apply only break-verified simplifications: redundant `Nat` zero guards in `printMark`;
-confirmed orphan definitions/proofs/fields; direct delegation for duplicate one-line
-semantics; unused defaults; discarded remote fields; modern `String.split`/`contains`;
-`Checkpoint.R` as `abbrev` if the complete proof build accepts it. Re-measure all
-ratchets. Keep proof seams and distinct-policy loops rejected by the audit.
+Apply only break-verified simplifications; re-measure all ratchets; keep proof seams
+and distinct-policy loops rejected by the audit.
+
+`Vt.printMark`'s `if v.cursor.x == 0 then 0 else v.cursor.x - 1` is `v.cursor.x - 1`
+on `Nat`, so the guard is gone — and with it `hx0 : v.cursor.x ≠ 0`, which was then
+unused in `print_mark_eq` and not needed for its truth (at `x = 0` both sides read
+column `0`). Dropped from `print_mark_eq`, `cursor_print_mark` and
+`Render/Pen.print_mark`, with four call sites losing a `(by omega)`. The second
+guard, `&& cx0 != 0`, stays: also behaviourally inert, but it is what makes the
+step-left total without reading the pair invariant.
+
+`RemoteRow.clients` and `.labels` were parsed, scrubbed and unit-tested with no
+consumer: the one caller builds a fresh four-field row. Deleted, along with the
+comment claiming the peer "does not forward them" — it does, and a false label on a
+known gap is the failure mode SCRATCHPAD 2026-08-12 already recorded. `Checkpoint.wU8`
+/`rU8` and their `rt_u8` formed a closed island — no writer or reader composes them,
+and nothing uses the theorem. `Checkpoint.R` is an `abbrev`, which retires `@[expose]`
+and its justification. Pure-core defs: 276 → 273, all still in theorem types.
+
+Ratchets re-measured, not assumed. `SHIM_CAP` 22, `RUNTIME_PARTIAL_CAP` 2 and
+`RECDEPTH_CAP` 1 are exact — the surviving `maxRecDepth 4096` on `stepGround` was
+re-tested by deletion and still fails at depth. `E2E_PARTIAL_CAP` drops 5 → 3: two of
+its slots belonged to the text-based coverage scanner deleted in step 2, so the cap
+had stopped biting (break-verified at 4).
+
+Modern Lean, with two negative results so they are not re-attempted: `String.contains`
+replaces `entry.any (· == '=')`, but v4.34.0-rc2 has **no** `String.containsSubstr`, so
+`has`/`contains` keep their `splitOn` bodies; and `String.split` returns a
+`Std.Iter String.Slice`, so routing `lines` through it costs a `.toList` and a
+`.map (·.toString)` — more code, not less.
 
 ### Step 8 — minimize and align documentation
 

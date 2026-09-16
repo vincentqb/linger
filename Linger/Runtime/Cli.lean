@@ -293,8 +293,10 @@ def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
   -- remotes last (per host), so a slow ssh can't reorder local rows
   for host in remotes do
     for (rname, rlive, rcmd, rstatus) in ← listRemote host do
-      -- a remote row carries no activity fields (the peer's porcelain does
-      -- not forward them), so it reports liveness only
+      -- a remote row is built from what the peer's porcelain says about identity
+      -- and liveness. It also emits `clients` and `label.*`; those are dropped
+      -- rather than rendered, so a remote row's label and watcher columns are
+      -- blank whatever the peer reports — see SCRATCHPAD 2026-09-15.
       rows :=
         rows ++
           [[("name", s!"{rname}@{host}"), ("cmd", rcmd),

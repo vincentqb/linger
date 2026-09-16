@@ -904,8 +904,7 @@ grow a cell without limit, so past eight the mark is dropped.
 on a *wide* base survive too — its shadow is untouched by the write — but that
 case reads the row's pair fact, so it is stated with `Renderable`. -/
 theorem print_mark {v : Vt} (m : Char) (hpc : v.printChar m = m) (hw : charWidth m = 0)
-    (hpend : v.cursor.pending = false) (hx0 : v.cursor.x ≠ 0)
-    (hnw : (v.getCell (v.cursor.x - 1) v.cursor.y).width ≠ 0)
+    (hpend : v.cursor.pending = false) (hnw : (v.getCell (v.cursor.x - 1) v.cursor.y).width ≠ 0)
     (hnarrow : (v.getCell (v.cursor.x - 1) v.cursor.y).width = 1)
     (hcap : (v.getCell (v.cursor.x - 1) v.cursor.y).marks.length < 8)
     (hrow : (v.getRow v.cursor.y).size = v.cols) (hgrid : v.grid.size = v.rows)
@@ -913,7 +912,7 @@ theorem print_mark {v : Vt} (m : Char) (hpc : v.printChar m = m) (hw : charWidth
     (v.print m).getCell (v.cursor.x - 1) v.cursor.y =
       { v.getCell (v.cursor.x - 1) v.cursor.y with
         marks := (v.getCell (v.cursor.x - 1) v.cursor.y).marks ++ [m] } := by
-  rw [print_mark_eq hpc hw hpend hx0 hnw hcap]
+  rw [print_mark_eq hpc hw hpend hnw hcap]
   exact
     getCell_write_mendRow_narrow _ _ _ _ hnarrow
       (by

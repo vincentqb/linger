@@ -105,7 +105,7 @@ pid: the C side reports them over a close-on-exec pipe. -/
 def spawnPty (cols rows : UInt32) (cwd prog : String) (args : Array String)
     (extraEnv : Array String) : IO (UInt32 × UInt32) := do
   for entry in extraEnv do
-    unless entry.any (· == '=') do
+    unless entry.contains '=' do
       throw (IO.userError s!"spawnPty: environment entry '{entry}' is not K=V")
   let packed ← spawnPtyRaw cols rows cwd prog args extraEnv
   return ((packed >>> 32).toUInt32, packed.toUInt32)

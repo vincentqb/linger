@@ -3718,8 +3718,7 @@ theorem print_wide_eq {v : Vt} {ch : Char} (hpc : v.printChar ch = ch) (hw : cha
   rfl
 
 theorem print_mark_eq {v : Vt} {m : Char} (hpc : v.printChar m = m) (hw : charWidth m = 0)
-    (hpend : v.cursor.pending = false) (hx0 : v.cursor.x ≠ 0)
-    (hnw : (v.getCell (v.cursor.x - 1) v.cursor.y).width ≠ 0)
+    (hpend : v.cursor.pending = false) (hnw : (v.getCell (v.cursor.x - 1) v.cursor.y).width ≠ 0)
     (hcap : (v.getCell (v.cursor.x - 1) v.cursor.y).marks.length < 8) :
     v.print m =
       (v.putCell (v.cursor.x - 1) v.cursor.y
@@ -3731,9 +3730,6 @@ theorem print_mark_eq {v : Vt} {m : Char} (hpc : v.printChar m = m) (hw : charWi
   rw [ite_eq_left (by decide)]
   unfold Vt.printMark
   simp only [hpend, ite_false, Bool.false_eq_true]
-  rw [ite_eq_right
-      (show ¬((v.cursor.x == 0) = true) from by
-        simp only [beq_iff_eq]; exact hx0)]
   rw [ite_eq_right
       (show ¬(((v.getCell (v.cursor.x - 1) v.cursor.y).width == 0 && v.cursor.x - 1 != 0) = true)
         from by
@@ -5930,10 +5926,10 @@ theorem cursor_print_wide_margin {v : Vt} {ch : Char}
 /-- A combining mark moves nothing: `print_mark_eq` is a write and a mend. -/
 theorem cursor_print_mark {v : Vt} {m : Char}
     (hpc : v.printChar m = m) (hw : charWidth m = 0) (hpend : v.cursor.pending = false)
-    (hx0 : v.cursor.x ≠ 0) (hnw : (v.getCell (v.cursor.x - 1) v.cursor.y).width ≠ 0)
+    (hnw : (v.getCell (v.cursor.x - 1) v.cursor.y).width ≠ 0)
     (hcap : (v.getCell (v.cursor.x - 1) v.cursor.y).marks.length < 8) :
     (v.print m).cursor = v.cursor := by
-  rw [print_mark_eq hpc hw hpend hx0 hnw hcap, cursor_mendRow, cursor_putCell]
+  rw [print_mark_eq hpc hw hpend hnw hcap, cursor_mendRow, cursor_putCell]
 
 /-- …and it does not *disarm* wrap-pending either, which is what lets a run of marks on
 a final-column glyph all land on the same cell. -/

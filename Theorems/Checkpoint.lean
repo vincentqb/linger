@@ -49,8 +49,6 @@ open Linger.Core.Vt
 abbrev RT {α : Type} (w : α → List UInt8) (r : R α) : Prop :=
   ∀ (a : α) (rest : List UInt8), r (w a ++ rest) = some (a, rest)
 
-theorem rt_u8 : RT wU8 rU8 := fun _ _ => rfl
-
 theorem rt_nat : RT wNat rNat := by
   intro n rest
   induction n using wNat.induct with

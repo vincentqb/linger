@@ -595,13 +595,15 @@ done
 
 # E2E `partial def` ratchet: the sibling of RUNTIME_PARTIAL_CAP above, for the same
 # reason (the keyword creeps back by habit) and covering the files its glob misses.
-# All five are honest, and two were MEASURED not assumed: rewriting `stripCsi` and
-# `stripComments` around `List.dropWhile` STILL fails the termination check, because
-# the recursion is on a dropWhile-then-drop of a tail, not a structural sub-term.
-# Shedding them needs a real `decreasing_by` — proof work, not cleanup, and AGENTS.md
-# rules out a fuel parameter. The rest: `leanFiles` (filesystem depth), two `drain`s
-# (wall-clock deadline), `stripComments` (a two-token delimiter scan).
-E2E_PARTIAL_CAP=5
+# All three are honest. `E2E/Harness.drain` and `LingerTest.drain` recur on a
+# wall-clock deadline, and `RemoteLive.stripCsi` was MEASURED not assumed: rewriting
+# it around `List.dropWhile` STILL fails the termination check, because the recursion
+# is on a dropWhile-then-drop of a tail, not a structural sub-term. Shedding it needs
+# a real `decreasing_by` — proof work, not cleanup, and AGENTS.md rules out a fuel
+# parameter. The cap was 5 while only 3 existed: `leanFiles` and `stripComments` were
+# the text-based coverage scanner's, deleted with it in step 2, and a cap holding
+# slots for deleted code is a cap that has stopped biting.
+E2E_PARTIAL_CAP=3
 ep_n="$(code_count 'partial def' 'E2E/*' 'LingerTest.lean')"
 [ "$ep_n" -le "$E2E_PARTIAL_CAP" ] \
   || fail "E2E/ grew to $ep_n partial defs (cap $E2E_PARTIAL_CAP); a do-block loop does not need the keyword"
