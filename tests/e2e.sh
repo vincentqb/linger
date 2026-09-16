@@ -127,7 +127,20 @@ say "2b. semantic coverage of pure code + runtime emitter classification"
 ./.lake/build/bin/e2e coverage | tee /tmp/linger-coverage.log
 tail -1 /tmp/linger-coverage.log | grep -q '^FAILURES: 0$' || fail "coverage gate"
 
-say "2c. fuzz corpus: no held-out mutations, failure lists asserted empty"
+say "2c. CI runner selection (tests/ci-runners.sh, driven not copied)"
+# Which runners CI asks for decides the bill: macOS is 10x a Linux minute, so asking
+# for it on every push cost 66-97 minutes instead of ~10, and never asking means
+# AGENTS.md's macOS claim goes unchecked. `E2E.Ci` runs the real script, including
+# its `git log --since` against throwaway repositories with real commit dates.
+ci_out=/tmp/linger-ci.out
+./.lake/build/bin/e2e ci > "$ci_out" 2>&1 || { cat "$ci_out"; fail "ci runner selection"; }
+cat "$ci_out"
+tail -1 "$ci_out" | grep -q '^FAILURES: 0$' || fail "ci runner selection"
+ci_n="$(grep -c '^PASS ' "$ci_out")"
+[ "$ci_n" -eq 7 ] \
+  || fail "e2e ci ran $ci_n checks (expected exactly 7)"
+
+say "2d. fuzz corpus: no held-out mutations, failure lists asserted empty"
 # The §Replay fuzzer is only a guarantee if nothing is excluded and the
 # empty-failure assertions are not quietly shrunk. The Tests build already
 # proves `failing/failingDeep = []` (the examples fail to compile otherwise);

@@ -26,6 +26,7 @@ external Lean dependencies.
 ./lake exe e2e <suite>           # one pty suite: attach resume overview remote robust
                                  #   graphics terminal status agent watch
 ./lake exe e2e coverage          # semantic coverage + emitted-stream classification
+./lake exe e2e ci                # which runners CI asks for (tests/ci-runners.sh)
 sh tests/gates.sh                # the fast source-tree gates (seconds)
 ./tests/e2e.sh                   # everything, in order (minutes)
 ```

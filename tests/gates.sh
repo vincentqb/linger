@@ -628,17 +628,35 @@ done
 # macOS is never checked again, or drops the schedule and it never runs. Neither is
 # a Lean property, so this is the same species of oracle as SHIM_CAP.
 ci_yml='.github/workflows/ci.yml'
+# The runtime tie, and the load-bearing one: `E2E/Ci.lean` tests
+# `tests/ci-runners.sh`, and no Lean can see whether the workflow actually CALLS it.
+# Re-inline the decision as a `case` in the YAML and the suite would keep passing
+# against a script nothing runs. Same species as the `Buf` gate below.
+#
+# Match the INVOCATION, not the path: the first version of this grep looked for
+# `ci-runners.sh` anywhere in the file, and the workflow's own comment names the
+# script — so it passed with the call replaced by an inline `echo`. Break-verified
+# after the fix.
+grep -qE '(^|[^[:alnum:]_])sh[[:space:]]+tests/ci-runners[.]sh' "$ci_yml" \
+  || fail "$ci_yml: the runner decision is not a call to tests/ci-runners.sh — E2E/Ci.lean would then be testing a script CI does not use"
+[ -n "$(git ls-files -- tests/ci-runners.sh)" ] \
+  || fail "tests/ci-runners.sh is not tracked — the workflow calls it, so a local-only copy passes here and fails in CI"
 grep -q "fromJSON" "$ci_yml" \
   || fail "$ci_yml: the e2e matrix no longer uses fromJSON — a plain list bills macOS on every push"
-grep -q 'ubuntu-latest' "$ci_yml" \
-  || fail "$ci_yml: no ubuntu runner in the matrix — every push must still get the full gate"
-grep -q 'macos-latest' "$ci_yml" \
-  || fail "$ci_yml: no macos runner — AGENTS.md claims the tree passes on macOS, and CI is the only thing that checks it"
 grep -qE '^ +- cron:' "$ci_yml" \
   || fail "$ci_yml: no schedule — with macOS off the per-push path, the cron IS when macOS runs"
 grep -q 'workflow_dispatch' "$ci_yml" \
   || fail "$ci_yml: no workflow_dispatch — a commit touching c/shim.c needs a way to ask for macOS without waiting a week"
-
+# …and the decision's own shape, in the script that now holds it. `E2E/Ci.lean`
+# checks the BEHAVIOUR of all of this; these three only catch a wholesale deletion,
+# which is what a suite cannot see (a deleted branch is a check that stops applying).
+ci_sh='tests/ci-runners.sh'
+grep -q 'ubuntu-latest' "$ci_sh" \
+  || fail "$ci_sh: no ubuntu runner — every push must still get the full gate"
+grep -q 'macos-latest' "$ci_sh" \
+  || fail "$ci_sh: no macos runner — AGENTS.md claims the tree passes on macOS, and CI is the only thing that checks it"
+grep -q -- "--since=" "$ci_sh" \
+  || fail "$ci_sh: the scheduled run no longer checks for commits — a weekly macOS build of an unchanged tree bills 50-70 minutes to re-learn last week's answer"
 # E2E `partial def` ratchet: the sibling of RUNTIME_PARTIAL_CAP above, for the same
 # reason (the keyword creeps back by habit) and covering the files its glob misses.
 # All three are honest. `E2E/Harness.drain` and `LingerTest.drain` recur on a

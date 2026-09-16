@@ -130,8 +130,13 @@ wrapper. There is deliberately no pre-push hook.
 - `FAILURES: 0` does not mean anything ran: every pty suite carries
   an exact check count in `tests/e2e.sh`; any addition or deletion is a
   reviewable edit.
-- `tests/e2e.sh` and `tests/gates.sh` are the deliberate non-Lean
-  files; everything else is Lean. No Python, ever.
+- `tests/e2e.sh`, `tests/gates.sh` and `tests/ci-runners.sh` are the
+  deliberate non-Lean files; everything else is Lean. No Python, ever.
+  The third one is the CI runner decision: the `gates` job compiles
+  nothing (that is what makes it cheap), so its decision cannot be a
+  Lean exe — but it lives in a script rather than inline in the YAML so
+  `E2E/Ci.lean` can drive the real thing instead of a copy, and a gate
+  ties the workflow to calling it.
 - The purity greps read prose as well as code: never write the
   compiled-evaluation tactic's name in a docstring under `Theorems/` —
   say "compiled evaluation".

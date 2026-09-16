@@ -11259,3 +11259,58 @@ cannot be a theorem.
 
 Expected: a typical push drops from 66-97 billed minutes to roughly 5-10, and
 the weekly macOS run costs ~50-70 a month instead of ~1,800-2,500.
+
+
+## The CI runner decision gets a Lean suite — 2026-09-15
+
+Caught by the standing rule rather than by a failure: the runner-selection logic
+had been verified with two throwaway shell scripts in `/tmp`, which is wrong
+twice over. They were not committed, so the verification evaporated; and they
+were *copies* of the logic, which was inlined in `.github/workflows/ci.yml` —
+and this repo's rule is that a suite asserts against the code's own definitions,
+never a copy. A test that reimplements its subject agrees with itself by
+construction.
+
+The fix has two halves. The decision moved out of the YAML into
+`tests/ci-runners.sh`, which is the **third** deliberate non-Lean file. That
+needs justifying, because AGENTS.md said two: the `gates` job compiles nothing —
+that is the whole reason it is cheap now — so its decision cannot be
+`./lake exe e2e …` without putting a Lean build back into the cheap job. Shell is
+what a workflow step can call for free. And `E2E/Ci.lean` drives it: seven checks
+over the five event paths, with the scheduled arm run against **real temporary
+git repositories** carrying real commit dates.
+
+Why real repos rather than a fake: the bug that actually happened while writing
+this was a quoting bug. `--since=8 days ago` unquoted makes git read `days` as a
+revision; git fails, output is empty, and empty means "no commits" — so macOS
+would silently never run again. Only a real `git log` catches that, which is why
+one check exists solely to assert the `git log` *succeeded* rather than failed
+into a false negative. Both dangerous mutations are break-verified:
+`macos=yes` unconditionally fails 3 checks, the unquoted `--since` fails 1.
+
+Two things learned in the process, both worth not rediscovering:
+
+* **`git log --since` filters on the COMMITTER date**, while `--date=` sets only
+  the author date. The first version of `repoWithCommit` set only the author
+  date, so a "45 days old" repo still looked fresh and the negative check passed
+  for the wrong reason. `GIT_COMMITTER_DATE` will not take approxidate ("45 days
+  ago" is rejected outright), so the fixture commits once with approxidate, reads
+  the ISO value back with `%aI`, and amends with both set — portable, no GNU
+  `date -d`.
+* **A grep that matches a comment is not a gate.** The runtime tie (does the
+  workflow actually CALL the script?) first grepped for `ci-runners.sh` anywhere
+  in the YAML — and passed with the call replaced by an inline `echo`, because
+  the workflow's own comment names the script. It now matches the invocation
+  (`sh tests/ci-runners.sh`), and that version break-verifies. This is the
+  `FAILURES: 0 does not mean anything ran` rule wearing a different hat.
+
+Also: `E2E/Ci.lean` uses no `Env`, following `E2E/Coverage.lean` — a non-pty
+suite has no sockets, logs or checkpoints, and making a state dir anyway left an
+empty `/tmp/linger-ci-<pid>` behind on every failing run.
+
+Inventory at this point, since the question "is everything in Lean and
+committed?" deserves a number: 1,691 theorems in `Theorems/`, 283 `example`
+fixtures in `Tests/`, 13 dispatchable suites in `E2E/`, 24 `lingertest` checks,
+no `sorry`/`admit`/`axiom` anywhere, and nothing untracked in the tree. The only
+non-Lean files are the three sanctioned shell scripts, `c/shim.c`, the fish
+recipes and the configs.

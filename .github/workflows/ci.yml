@@ -62,10 +62,21 @@ jobs:
     name: gates + format (ubuntu)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Which runners the full gate needs. Computed HERE and nowhere else, for a
+    # measured reason: `e2e` already has `needs: gates`, so this costs no extra job
+    # and no extra billed minute. A separate `plan` job would cost 1 ubuntu minute
+    # on every push — ~36 a month at this repo's rate — to save an occasional macOS
+    # run, and 6 of the last 8 weeks had commits, so it would have cost more than it
+    # saved. It also replaces an inline `fromJSON` ternary with a shell script that
+    # can be run locally.
+    outputs:
+      os: ${{ steps.runners.outputs.os }}
     steps:
       - uses: actions/checkout@v4
-        # fetch-depth 1 is enough: tests/gates.sh uses `git grep` (working tree,
-        # no rev) and `git ls-files` (the index). Neither reads history.
+        with:
+          # `git log --since` below needs history; the source gates do not (they use
+          # `git grep` on the working tree and `git ls-files` on the index).
+          fetch-depth: 0
 
       # FIRST, because it needs nothing but git: no toolchain, no python, no network.
       # The fastest possible failure for a `sorry`, a raised ratchet, or a stray .py.
@@ -73,6 +84,20 @@ jobs:
       # a millisecond check, so the cheap signal does not wait on the expensive setup.
       - name: source-tree gates (purity, the OS + unsafe surfaces, the Vt friend set, the runtime ties, spec citations, the status glyphs, the ratchets)
         run: sh tests/gates.sh
+
+      # macOS is the expensive runner (10x, rounded up per job), so the full gate
+      # asks for it only when there is something new for it to learn. The decision
+      # is `tests/ci-runners.sh`, not an inline `case`, so that `E2E/Ci.lean` can
+      # drive the real thing instead of a copy of it — including the `git log`
+      # invocation, whose failure mode is empty output and therefore a silent
+      # "macOS never runs again". Shell rather than a Lean exe because this job
+      # compiles nothing, which is what makes it cheap.
+      - name: which runners the full gate needs
+        id: runners
+        run: |
+          os="$(sh tests/ci-runners.sh '${{ github.event_name }}' '${{ github.ref }}')"
+          printf 'runners: %s\n' "$os"
+          printf 'os=%s\n' "$os" >> "$GITHUB_OUTPUT"
 
       # The toolchain is the one big download, and `lean-fmt`'s own build needs
       # `lake` on a cache miss. Keyed on lean-toolchain: a version bump is a new
@@ -200,19 +225,14 @@ jobs:
       fail-fast: false      # a Linux failure must not hide a macOS-only one:
                             # the platform splits are the reason macos is here.
       matrix:
-        # ubuntu always; macOS only on the schedule, a tag, or a manual run — see
-        # the header for the measurement behind that.
-        #
-        # `cond && A || B` is GitHub's ternary, and the operands here are non-empty
-        # STRINGS with one `fromJSON` around the whole thing, deliberately: the
-        # array-valued form (`cond && fromJSON(A) || fromJSON(B)`) leans on a
-        # non-empty array being truthy, which is a coercion worth not betting the
-        # only compiling job on. A non-empty string is unambiguously truthy.
-        # Do not try to build the JSON by concatenation — that is where this idiom
-        # actually breaks. actionlint does NOT check this (verified: it exits 0 on a
-        # deliberately mistyped version), so the shape is held by a grep in
-        # tests/gates.sh instead.
-        os: ${{ fromJSON((github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')) && '["ubuntu-latest", "macos-latest"]' || '["ubuntu-latest"]') }}
+        # Decided by the `gates` job, which is already a dependency — see the note
+        # there. `fromJSON` of a job output, not an inline ternary: the branch logic
+        # is then a shell `case` that can be run locally, and the popular
+        # `cond && fromJSON(A) || fromJSON(B)` form leans on a non-empty array being
+        # truthy, a coercion not worth betting the only compiling job on. Nothing
+        # checks this shape — actionlint exits 0 on a mistyped version (verified) —
+        # so `tests/gates.sh` greps for it.
+        os: ${{ fromJSON(needs.gates.outputs.os) }}
     steps:
       - uses: actions/checkout@v4
 
