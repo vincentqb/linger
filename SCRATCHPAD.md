@@ -10891,3 +10891,36 @@ failed it. The first mutation run hung because the fixture's accepted fd was blo
 real daemon fds are nonblocking. Setting the fixture fd nonblocking made the mutation
 fail at the assertion rather than hang — a test must reproduce the boundary conditions
 of the code it claims to check.
+
+
+## Step 5 notes — 2026-09-14 — explicit checkpoint failures
+
+Four tests failed before implementation: HOME-less `version` reported the shared
+`/tmp/.local/state/...`; making `<name>.ckpt.tmp` a directory killed the daemon on
+last-detach save; making `<name>.ckpt` a directory was treated as no checkpoint and
+started a fresh session; making the deletion target a directory left it silently with
+no log. The recovery suite first crashed while arranging delete failure because a
+headless `run` connection's close had already written a real checkpoint — the correct
+fixture removes that file, then puts the directory in its place. Test setup must account
+for the same checkpoint cadence it is testing.
+
+The policy line is now explicit. `loadCkpt` checks absence first; an existing file that
+cannot be read is an error, while bytes read successfully but rejected by the proven
+codec remain a cache miss and start fresh. The existence check intentionally fails closed
+on a delete-between-check-and-read race. `dropCkpt` ignores absence only; other removal
+errors propagate. `runEffect` catches save/delete hook errors at the IO effect boundary,
+logs operation-specific context, and continues to later effects (including `.exit`).
+The pure machine still owns when to save/drop; no state or protocol change was needed.
+
+The daemon's established `Rt` lifetime is now under `finally`: stop listening, close all
+client fds, terminate/reap the child, close the pty, remove the socket while still holding
+the name lock, then release the lock. This is structural containment for unexpected
+poll/effect exceptions; ordinary checkpoint errors are handled earlier and do not invoke
+it. The finalizer cannot be a theorem (`IO`); the recovery tests cover the two hook
+failures that previously escaped the loop.
+
+The HOME-less fallback reuses the socket namespace: `/tmp/linger-$UID/state/<host>`, so
+users cannot collide while hostname still prevents cross-host checkpoint sharing. RED →
+GREEN: Overview 8/8 and Resume 12/12. One save test needed a 5 s positive wait rather
+than 3 s after one loaded run delayed the detached checkpoint; it still fails immediately
+on a dead daemon and does not weaken the asserted state.

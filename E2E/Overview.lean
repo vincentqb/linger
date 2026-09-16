@@ -43,6 +43,16 @@ def forms : List (Array String) := [#[], #["ls"]]
 def run : IO UInt32 := do
   let e ← Env.make "overview"
   let mut f := 0
+  -- With every state override absent, fallback storage is still per-user.
+  let uid ← Linger.Posix.getuid
+  let (vrc, vout, _) ←
+    e.cliEnv
+      #[("LINGER_DIR", none), ("XDG_STATE_HOME", none), ("HOME", none)] #["version"]
+  f :=
+    f +
+      (←
+        expect (vrc == 0 && has vout s!"state:   /tmp/linger-{uid}/state/")
+            "HOME-less state fallback is namespaced by uid")
   -- empty state: both forms say so and exit 0, within the deadline
   let emptyLine := humanListing []
   for args in forms do

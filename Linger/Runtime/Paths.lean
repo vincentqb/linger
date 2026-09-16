@@ -9,8 +9,8 @@ public section
 
 Resolution order:
 * sockets: `$LINGER_DIR` > `$XDG_RUNTIME_DIR/linger` > `/tmp/linger-$UID`
-* state (checkpoints, logs): `$LINGER_DIR` > `$XDG_STATE_HOME/linger` >
-  `~/.local/state/linger`
+* state: `$LINGER_DIR` > `$XDG_STATE_HOME/linger/<host>` >
+  `$HOME/.local/state/linger/<host>` > `/tmp/linger-$UID/state/<host>`
 
 Every name passes `Name.sanitize` before touching a path (AGENTS.md
 rule; §Name is the theorem that makes it sufficient).
@@ -40,8 +40,11 @@ def stateDir : IO String := do
   let host := sanitize (← Linger.Posix.gethostname)
   if let some d← IO.getEnv "XDG_STATE_HOME" then
     return s!"{d}/linger/{host}"
-  let home := (← IO.getEnv "HOME").getD "/tmp"
-  return s!"{home}/.local/state/linger/{host}"
+  match ← IO.getEnv "HOME" with
+  | some home =>
+    return s!"{home}/.local/state/linger/{host}"
+  | none =>
+    return s!"/tmp/linger-{← Linger.Posix.getuid}/state/{host}"
 
 def ensureDir (d : String) : IO Unit := do
   IO.FS.createDirAll d

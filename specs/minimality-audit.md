@@ -2,7 +2,7 @@
 
 Status: active
 Updated: 2026-09-14
-Next: Step 5 — make checkpoint failures explicit
+Next: Step 6 — harden and re-audit the C boundary
 Predecessor: `specs/archive/scrollback-fidelity.md` (complete)
 
 ## Goal
@@ -167,11 +167,19 @@ info deadline, and bounded accept count. GREEN: Resume 9/9 and Robust 18/18. A n
 runtime oracle also covers the existing `outbufCap` cut; disabling the cut fails that
 check. No parallel buffer, connection state, or policy layer was added.
 
-### Step 5 — make checkpoint failures explicit
+### Step 5 — make checkpoint failures explicit — done ✓ (2026-09-14)
 
-Keep save errors from unwinding the daemon; distinguish no file/corrupt bytes/read I/O;
-report failed deletion; put established daemon resources under cleanup finalization. Make
-the HOME-less fallback state directory per-user. Add deterministic E2E failures.
+Save/delete hook errors are caught and logged at the daemon effect boundary, so state
+serialization failure cannot unwind the service and cleanup failure cannot disappear.
+`loadCkpt` returns `none` only for absence or successfully-read corrupt/foreign bytes;
+an existing unreadable path throws a contextual error before any fresh daemon starts.
+The established daemon loop now owns listener, clients, pty, child, socket path, and name
+lock under one `finally`, removing the socket before releasing ownership. HOME-less state
+falls back under `/tmp/linger-$UID/state/<host>`.
+
+RED: Overview failed the per-user path check; Resume failed save containment, unreadable
+state refusal, and delete reporting. GREEN: Overview 8/8, Resume 12/12. The existing corrupt
+checkpoint case still starts fresh, preserving the cache-not-contract policy.
 
 ### Step 6 — harden and re-audit the C boundary
 

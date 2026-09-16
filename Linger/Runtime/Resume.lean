@@ -9,11 +9,9 @@ public section
 
 /-! # Linger.Runtime.Resume — checkpoint hooks
 
-The daemon decides *when* (60s cadence while dirty, last-detach,
-drop-on-clean-exit — all in the pure machine); this module is the
-*what*: serialize `Ckpt` via the proven codec, write atomically
-(tmp + rename — a torn write is unloadable by §Restore's totality and
-simply ignored), read it back on resume.
+The daemon decides *when*; this module serializes with the proven codec,
+writes by tmp+rename, distinguishes corrupt bytes from read failure, and
+surfaces save/delete errors for the daemon to log without exiting.
 -/
 
 namespace Linger.Runtime.Resume
@@ -41,24 +39,25 @@ def saveCkpt (name : String) (st : State) : IO Unit := do
   IO.FS.rename tmp path
 
 def dropCkpt (name : String) : IO Unit := do
-  try
-    IO.FS.removeFile (← Paths.ckptPath name)
-  catch _ =>
-    pure ()
+  let path ← Paths.ckptPath name
+  if ← System.FilePath.pathExists path then
+    IO.FS.removeFile path
 
 def loadCkpt (name : String) : IO (Option (Linger.Core.Vt.Vt × String × List (String × String))) :=
   do
   let path ← Paths.ckptPath name
+  if !(← System.FilePath.pathExists path) then
+    return none
   let bytes ←
     try
       IO.FS.readBinFile path
-    catch _ =>
-      return none
+    catch err =>
+      throw (IO.userError s!"checkpoint read failed for '{name}': {err}")
   match load bytes.toList with
   | some ck =>
     return some (ck.vt, ck.cwd, ck.labels)
   | none =>
-    return none -- torn/corrupt/foreign: start fresh (§Restore totality)
+    return none -- corrupt/foreign bytes are a cache miss; I/O failure is not
 
 def hooks : Cli.Hooks := { save := saveCkpt, drop := dropCkpt, load := loadCkpt }
 

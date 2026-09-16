@@ -181,10 +181,16 @@ def runEffect (rt : Rt) (eff : Effect) : IO (Rt × List Event) := do
     kill rt.childPid 15 -- SIGTERM
     return (rt, [])
   | .checkpoint =>
-    rt.saveCkpt rt.st
+    try
+      rt.saveCkpt rt.st
+    catch err =>
+      IO.eprintln s!"linger: checkpoint save failed: {err}"
     return (rt, [])
   | .dropCheckpoint =>
-    rt.dropCkpt
+    try
+      rt.dropCkpt
+    catch err =>
+      IO.eprintln s!"linger: checkpoint delete failed: {err}"
     return (rt, [])
   | .exit =>
     return ({ rt with exiting := true }, [])
@@ -368,24 +374,32 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
       [("name", name), ("pid", toString pid), ("created", toString created),
         ("cmd", String.intercalate " " (prog :: args.toList)), ("start_dir", cwd)]
   let mut rt : Rt := { st, listenFd, ptyFd, childPid := pid, sockPath, saveCkpt, dropCkpt }
-  while !rt.exiting do
-    let (rt', events) ← pollRound rt
-    let now ← monotonicMs
-    rt ← pump rt' (events ++ [.tick now])
-  -- shutdown: make sure the child is gone, drop the socket
-  if ← alive rt.childPid then
-    kill rt.childPid 15
-    IO.sleep 150
-    if ← alive rt.childPid then
-      kill rt.childPid 9
-  let _ ← waitpidNohang rt.childPid
   try
-    IO.FS.removeFile sockPath
-  catch _ =>
-    pure ()
-  -- the lock file stays; the kernel drops the lock as this process exits
-  -- (unlinking it would let a newcomer lock a fresh inode while ours
-  -- still held the old one)
-  let _ := lockFd
+    while !rt.exiting do
+      let (rt', events) ← pollRound rt
+      let now ← monotonicMs
+      rt ← pump rt' (events ++ [.tick now])
+  finally
+    -- Stop admitting work, close every owned transport, kill/reap the child,
+    -- then unlink while the name lock is still held. This runs on normal exit
+    -- and on an unexpected poll/effect exception.
+    close rt.listenFd
+    for c in rt.conns do
+      close c.fd
+    try
+      if ← alive rt.childPid then
+        kill rt.childPid 15
+        IO.sleep 150
+        if ← alive rt.childPid then
+          kill rt.childPid 9
+    catch err =>
+      IO.eprintln s!"linger: child cleanup failed: {err}"
+    let _ ← waitpidNohang rt.childPid
+    close rt.ptyFd
+    try
+      IO.FS.removeFile sockPath
+    catch _ =>
+      pure ()
+    close lockFd.toUInt64.toUInt32
 
 end Linger.Runtime.Daemon

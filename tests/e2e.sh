@@ -152,10 +152,10 @@ say "4. attach / detach / reattach / mirror / wait"
 suite attach 38
 
 say "5. reboot resume"
-suite resume 9
+suite resume 12
 
 say "6. overview listing (bare linger / ls)"
-suite overview 7
+suite overview 8
 
 say "7. remote sessions over ssh"
 suite remote 11

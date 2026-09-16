@@ -44,6 +44,12 @@ def winsizeProbe (resultPath : String) : IO UInt32 := do
   IO.FS.writeFile resultPath s!"{cols} {rows}"
   return 0
 
+def daemonLog (e : Env) (name : String) : IO String := do
+  try
+    IO.FS.readFile s!"{e.dir}/logs/{name}.log"
+  catch _ =>
+    pure ""
+
 def run : IO UInt32 := do
   let e ← Env.make "resume"
   let mut f := 0
@@ -181,6 +187,61 @@ def run : IO UInt32 := do
         expect (got == [toString gCols, toString gRows])
             s!"resumed pty is born at the checkpoint size, not 80x24 ({got})")
   e.killAll #["geom"]
+  -- Save failure: a bad tmp path is reported, but the daemon keeps serving.
+  let saveFail ← e.spawn #["attach", "save-fail"] cols rows
+  IO.sleep 800
+  let _ ← drain saveFail.fd 300
+  let saveTmp := s!"{e.dir}/save-fail.ckpt.tmp"
+  IO.FS.createDirAll saveTmp
+  saveFail.detach
+  IO.sleep 800
+  saveFail.bye (sendDetach := false)
+  let saveReported ←
+    waitFor 5000 (do return has (← daemonLog e "save-fail") "checkpoint save failed")
+  let saveLog ← daemonLog e "save-fail"
+  let savePid ← e.info "save-fail" "pid"
+  f :=
+    f +
+      (←
+        expect (saveReported && savePid.isSome)
+            s!"checkpoint save failure is reported without killing the daemon (pid={savePid}, log='{saveLog}')")
+  IO.FS.removeDirAll saveTmp
+  e.killAll #["save-fail"]
+  IO.sleep 500
+  -- Existing but unreadable recovery state is not equivalent to no checkpoint.
+  let readPath := s!"{e.dir}/read-fail.ckpt"
+  IO.FS.createDirAll readPath
+  let (readRc, _, readErr) ← e.cli #["run", "read-fail", "echo", "must-not-start"]
+  let readSockets ← e.dirNames ".sock"
+  f :=
+    f +
+      (←
+        expect
+            (readRc == 1 && has readErr "checkpoint read failed" &&
+              !readSockets.contains "read-fail.sock")
+            "checkpoint read failure is visible and does not start fresh")
+  e.killAll #["read-fail"]
+  IO.sleep 300
+  IO.FS.removeDirAll readPath
+  -- Delete failure is observable in the daemon log instead of silently leaving
+  -- recovery state behind.
+  let _ ← e.cli #["run", "drop-fail", "sleep", "600"]
+  IO.sleep 800
+  let dropPath := s!"{e.dir}/drop-fail.ckpt"
+  try
+    IO.FS.removeFile dropPath
+  catch _ =>
+    pure ()
+  IO.FS.createDirAll dropPath
+  let _ ← e.cli #["kill", "drop-fail"]
+  let dropReported ←
+    waitFor 3000 (do return has (← daemonLog e "drop-fail") "checkpoint delete failed")
+  f :=
+    f +
+      (←
+        expect (dropReported && (← System.FilePath.pathExists dropPath))
+            "checkpoint delete failure is reported")
+  IO.FS.removeDirAll dropPath
   verdict f
 
 end E2E.Resume
