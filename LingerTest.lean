@@ -136,6 +136,8 @@ def testProcessSelectors : IO Nat := do
   let overflow : UInt32 := 0x80000000
   fails := fails + (← check "kill rejects out-of-range pid" (← throws (kill overflow 15)))
   fails := fails + (← check "alive rejects out-of-range pid" (← throws (alive overflow)))
+  fails :=
+    fails + (← check "waitpidNohang rejects out-of-range pid" (← throws (waitpidNohang overflow)))
   -- A live child of our own is still answered normally.
   let (pid, master) ← spawnPty 80 24 "" "sh" #["-c", "exit 3"] #[]
   let _ ← drain master ((← monotonicMs) + 5000) .empty
@@ -144,23 +146,16 @@ def testProcessSelectors : IO Nat := do
   return fails
 
 /-- A zero-length read is not EOF: `read(fd, buf, 0)` returns 0 without testing
-for end of file, and `none` publicly means EOF. -/
+for end of file, and `none` publicly means EOF.
+
+No socket is set up, and that is the honest shape: `read` throws on `max == 0` before
+it looks at the fd, so the eight lines of `unixListen`/`accept`/`write "ping"` that
+used to precede this proved nothing — `read 999999 0` satisfies it identically. What
+is pinned is the Lean guard. The shim carries the same refusal, but `readRaw` is
+`private opaque` with no caller but the guarded wrapper, so that branch is
+defence-in-depth against a future caller and no test can reach it today. -/
 def testZeroLengthRead : IO Nat := do
-  let dir ← IO.FS.createTempDir
-  let path := s!"{dir}/t.sock"
-  let lfd ← unixListen path
-  setNonblock lfd
-  let cfd := (← unixConnect path).toUInt64.toUInt32
-  let _ ← poll #[lfd] #[POLLIN] 2000
-  let afd := (← accept lfd).toUInt64.toUInt32
-  let _ ← write cfd "ping".toUTF8 0
-  let _ ← poll #[afd] #[POLLIN] 2000
-  let fails ← check "read of 0 bytes is refused, not reported as EOF" (← throws (read afd 0))
-  Linger.Posix.close cfd
-  Linger.Posix.close afd
-  Linger.Posix.close lfd
-  IO.FS.removeDirAll dir
-  return fails
+  check "read of 0 bytes is refused, not reported as EOF" (← throws (read stdinFd 0))
 
 /-- Child-side spawn failures must reach the parent. A missing program and a
 malformed environment entry are both setup failures the caller has to see. -/
@@ -182,6 +177,27 @@ def testSpawnFailures : IO Nat := do
       (←
         check "spawnDetached reports a failed exec"
             (← throws (spawnDetached "linger-no-such-program-42" #[] s!"{dir}/log")))
+  -- `execvp`'s ENOEXEC fallback: an executable file that is not an executable image
+  -- (no shebang) is handed to the shell. The rewrite from `execvp` to `execve` dropped
+  -- it, silently narrowing `linger attach <name> <cmd>` for exactly those files, and
+  -- nothing caught the narrowing — this is the check that would have.
+  --
+  -- Wrapped, because without the fallback `spawnPty` THROWS: an uncaught exception
+  -- would abort the binary and lose the `ALL PASS`/failure count entirely, which is a
+  -- crash reported as nothing rather than a check reported as failed.
+  let script := s!"{dir}/noshebang"
+  IO.FS.writeFile script "echo shebangless-ran\n"
+  chmod script 0o755
+  let ran ←
+    try
+      let (pid, master) ← spawnPty 80 24 "" script #[] #[]
+      let out ← drain master ((← monotonicMs) + 5000) .empty
+      Linger.Posix.close master
+      let _ ← reap pid
+      pure (contains (String.fromUTF8! out) "shebangless-ran")
+    catch _ =>
+      pure false
+  fails := fails + (← check "a shebang-less executable still runs (execvp's ENOEXEC fallback)" ran)
   IO.FS.removeDirAll dir
   return fails
 
@@ -197,6 +213,12 @@ def testDeepCwd : IO Nat := do
   let out ← drain master ((← monotonicMs) + 5000) .empty
   let walked := contains (String.fromUTF8! out) "deep"
   let cwd ← getcwdOf pid
+  -- Judged BEFORE the tree is removed. Evaluated after, `isDir` fails for *any*
+  -- non-empty answer — a correctly reported full path included — so the check
+  -- silently degraded to "the answer was empty" and could not distinguish a good
+  -- non-empty path from a truncated one. That matters on macOS, where the sibling
+  -- `#ifdef __APPLE__` branch NUL-terminates a libproc path rather than refusing it.
+  let usable ← orFalse (if cwd == "" then pure true else System.FilePath.isDir cwd)
   kill pid 9
   Linger.Posix.close master
   let _ ← reap pid
@@ -204,7 +226,6 @@ def testDeepCwd : IO Nat := do
   -- walks it with directory-relative openat.
   let _ ← IO.Process.run { cmd := "rm", args := #["-r", dir.toString] }
   let mut fails ← check "child walked past PATH_MAX" walked
-  let usable ← orFalse (if cwd == "" then pure true else System.FilePath.isDir cwd)
   fails := fails + (← check "getcwdOf reports a usable directory or nothing" usable)
   return fails
 

@@ -41,8 +41,8 @@ recipes, break records, measurements, the audits — lives in
 
 ## Reading a row
 
-Each § is proved for *all* inputs, not sampled. Proofs use
-`native_decide` nowhere; the unit tests in `Tests/` do, because they pin
+Each § is proved for *all* inputs, not sampled. Proofs use compiled
+evaluation nowhere; the unit tests in `Tests/` do, because they pin
 concrete behavior where evaluation is the point. Each row was
 **break-verified** — the code deliberately broken once to watch the
 theorem catch — with the break recorded in `SCRATCHPAD.md`. The
@@ -200,7 +200,9 @@ real terminals.
   Scrollback replays to the byte budget (`sbReplayBytes = 262144`, about
   three thousand plain 80-column lines); the counted-cost bounds are
   proved (`sbRows_budget`, `rowAnsi_len_le_cost`), the whole-stream
-  bound is fixture-carried until `scrollbackAnsi_le`.
+  bound is carried by fixtures alone: no theorem states it, and none is planned — the
+  whole-stream claim was the optional last step of
+  `specs/archive/scrollback-fidelity.md`, which was archived without it.
 - **The screen paint is the unbudgeted term**: worst-case pens at
   400×100 emit ~4.5 MB, past `outbufCap` before any scrollback.
   Pre-existing, open; wants a budget on the paint.

@@ -325,15 +325,29 @@ LEAN_EXPORT lean_obj_res linger_spawn_pty(uint32_t cols, uint32_t rows,
     const char *dir = lean_string_cstr(cwd);
     const char *home = getenv("HOME");
 
+    /* execvp's ENOEXEC fallback, pre-allocated: a file that is executable but not a
+     * valid executable image (a script with no shebang) is handed to the shell. The
+     * rewrite to execve dropped that silently, which narrowed `linger attach <name>
+     * <cmd>` for exactly those files. Built here, not in the child, for the same
+     * async-signal-safe reason as argv and envp; the child only fills in slot 1. */
+    char **shargv = calloc(nargs + 3, sizeof(char *));
+    if (!shargv) {
+        int e = errno;
+        close(master); free(argv); free(envp);
+        return io_err_code("calloc", e);
+    }
+    shargv[0] = (char *)"/bin/sh";
+    for (size_t i = 0; i < nargs; i++) shargv[i + 2] = argv[i + 1];
+
     int errPipe[2];
     if (pipe(errPipe) < 0) {
         int e = errno;
-        close(master); free(argv); free(envp);
+        close(master); free(argv); free(envp); free(shargv);
         return io_err_code("pipe", e);
     }
     if (fcntl(errPipe[1], F_SETFD, FD_CLOEXEC) < 0) {
         int e = errno;
-        close(errPipe[0]); close(errPipe[1]); close(master); free(argv); free(envp);
+        close(errPipe[0]); close(errPipe[1]); close(master); free(argv); free(envp); free(shargv);
         return io_err_code("fcntl(errpipe CLOEXEC)", e);
     }
 
@@ -341,7 +355,7 @@ LEAN_EXPORT lean_obj_res linger_spawn_pty(uint32_t cols, uint32_t rows,
     if (pid < 0) {
         int e = errno;
         close(errPipe[0]); close(errPipe[1]);
-        close(master); free(argv); free(envp);
+        close(master); free(argv); free(envp); free(shargv);
         return io_err_code("fork", e);
     }
     if (pid == 0) { /* child: make the slave our controlling tty + stdio */
@@ -361,6 +375,10 @@ LEAN_EXPORT lean_obj_res linger_spawn_pty(uint32_t cols, uint32_t rows,
             if (home && chdir(home) != 0) { /* keep inherited cwd */ }
         }
         execve(argv[0], argv, envp);
+        if (errno == ENOEXEC) {           /* executable, but not an executable image */
+            shargv[1] = argv[0];
+            execve("/bin/sh", shargv, envp);
+        }
         if (errno == ENOEXEC || errno == EACCES || errno == ENOENT) {
             /* PATH search, as execvp does, but with our own environment */
             const char *path = NULL;
@@ -379,6 +397,10 @@ LEAN_EXPORT lean_obj_res linger_spawn_pty(uint32_t cols, uint32_t rows,
                         candidate[len] = '/';
                         memcpy(candidate + len + 1, argv[0], strlen(argv[0]) + 1);
                         execve(candidate, argv, envp);
+                        if (errno == ENOEXEC) {   /* same fallback for a PATH hit */
+                            shargv[1] = candidate;
+                            execve("/bin/sh", shargv, envp);
+                        }
                     }
                     if (!end) break;
                     seg = end + 1;
@@ -393,6 +415,7 @@ LEAN_EXPORT lean_obj_res linger_spawn_pty(uint32_t cols, uint32_t rows,
     close(errPipe[0]);
     free(argv);
     free(envp);
+    free(shargv);
     if (failed) {
         int status;
         while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
@@ -719,13 +742,16 @@ LEAN_EXPORT lean_obj_res linger_getcwd_of(uint32_t pid, lean_obj_arg w) {
     vpi.pvi_cdir.vip_path[sizeof vpi.pvi_cdir.vip_path - 1] = '\0';
     return lean_io_result_mk_ok(lean_mk_string(vpi.pvi_cdir.vip_path));
 #else
-    /* No truncation branch, measured rather than assumed: the kernel builds
-     * this link's target in a PATH_MAX buffer, so a cwd at or past PATH_MAX
-     * makes readlink fail with ENAMETOOLONG rather than hand back a cut
-     * path -- checked at exactly 4096 bytes and at ~4500. A shorter target
-     * fits buf whole. So `n < 0 -> ""` already covers the over-long class,
-     * and lingertest's testDeepCwd pins the behaviour: a usable directory
-     * or nothing, never a path naming somewhere else. */
+    /* No truncation branch, and the mechanism is the kernel's, not readlink's:
+     * readlink(2) does NOT signal a short buffer — it truncates and returns the byte
+     * count. What protects us is that the kernel builds this link's target with
+     * d_path into a PATH_MAX buffer and fails the whole call with ENAMETOOLONG when
+     * the cwd does not fit, measured at exactly 4096 bytes and at ~4500. Asking for
+     * sizeof buf - 1 (4095) then means a target that arrives at all arrives whole.
+     * So `n < 0 -> ""` covers the over-long class. THIS IS WHY buf IS PATH_MAX: shrink
+     * it and readlink starts truncating silently, with no error to notice.
+     * lingertest's testDeepCwd pins the behaviour — a usable directory or nothing,
+     * never a path naming somewhere else. */
     char link[64], buf[4096];
     snprintf(link, sizeof link, "/proc/%u/cwd", pid);
     ssize_t n = readlink(link, buf, sizeof buf - 1);

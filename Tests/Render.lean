@@ -690,8 +690,9 @@ reattach and an attach-then-instant-drop.
 
 `sbTake_budget`/`sbRows_budget` bound the **counted** cost `sbRowCost`;
 `rowAnsi_len_le_cost` closes the row-level gap to emitted bytes. The whole-stream
-step is these fixtures, until `scrollbackAnsi_le` lands (Step 5): the emitted stage
-is bounded by `Σ sbRowCost (sbRows v) + 2 * v.rows + 19`, and that bound is
+step is these fixtures and nothing else — no `scrollbackAnsi_le` exists or is
+planned, it being the optional last step of a spec archived without it: the emitted
+stage is bounded by `Σ sbRowCost (sbRows v) + 2 * v.rows + 19`, and that bound is
 **sharp** — attained with zero slack by the adversarial ring below. -/
 
 def ringOf (cols rows : Nat) (mk : Nat → Row) (n : Nat) : Vt :=

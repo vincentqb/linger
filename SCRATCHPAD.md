@@ -11314,3 +11314,107 @@ fixtures in `Tests/`, 13 dispatchable suites in `E2E/`, 24 `lingertest` checks,
 no `sorry`/`admit`/`axiom` anywhere, and nothing untracked in the tree. The only
 non-Lean files are the three sanctioned shell scripts, `c/shim.c`, the fish
 recipes and the configs.
+
+
+## Step 9 notes — 2026-09-15
+
+A fresh read-only reviewer with no session context returned 24 findings. Four were
+checks that could not fail, one was a real behavioural regression, and several
+were claims I had personally "verified". The pattern across almost all of them is
+one thing: **a verification whose own mechanism was never checked.** Worth
+recording in detail, because I made the same class of mistake four times in one
+day without noticing once.
+
+### Corrections to entries above — read these before trusting them
+
+* **The 2026-09-15 glyph-gate entry is wrong where it says "break-verified from
+  each side".** The reverse direction never executed. Its README-side extraction
+  filtered with `grep -vE '^[[:alnum:][:punct:][:space:]]$'` to drop non-glyph
+  noise, but glibc puts `⣀ ⣷ ⣿ ✓` under `[[:punct:]]`, so the filter deleted all
+  seven and the `for` body ran zero times. Both break-verifications I recorded
+  had landed on the *forward* half. The entry even names the vacuous-pass hazard
+  and says the code side is guarded with `[ -n … ]` — the README side got no such
+  guard, in the same paragraph.
+* Fixing it exposed a **second** defect in the half that did run: `for g in
+  $icon_glyphs` unquoted undergoes pathname expansion, and `?` matched the `c/`
+  directory, so the loop saw `c`. "Is `c` in README" is trivially yes, so the `?`
+  glyph was never checked in either direction. Both loops now run under `set -f`;
+  both extractions assert a count of seven; four break directions bite (README
+  loses a glyph, code drops a state, and `?` specifically from each side).
+* **The step-8 entry's "every theorem name cited in THEOREMS resolves" is also
+  wrong.** The check was `git grep -w <name>`, which matches prose and comments,
+  so `scrollbackAnsi_le` — cited by THEOREMS.md and two code comments, declared
+  nowhere — satisfied it. The name is gone from all three sites and resolution is
+  now a gate that looks for `theorem|lemma|def|abbrev` across 85 citations,
+  break-verified. This is why R10 gained "a claim that can be checked
+  mechanically SHALL be gated rather than reviewed": my review of it was the
+  thing that was broken.
+
+### The regression review caught and no test would have
+
+Rewriting `linger_spawn_pty` from `execvp` to `execve` in step 6 dropped
+`execvp`'s **ENOEXEC fallback**: a file that is executable but not an executable
+image (a script with no shebang) is handed to `/bin/sh`. `linger attach <name>
+<cmd>` takes arbitrary commands, so that silently stopped working. Restored with
+`shargv` pre-allocated before the fork — the child may only call
+async-signal-safe operations, which is the same reason `argv` and `envp` are
+built early — plus the fallback after a PATH hit, since a PATH-resolved script
+has the same problem.
+
+Two measurements from the break-verify worth keeping. `execve` on a shebang-less
+file really does fail `ENOEXEC` (errno 8, confirmed with a five-line C probe), so
+the fallback is load-bearing rather than defensive. And **the first two attempts
+to break-verify it lied**: patching the shell path to `/nonexistent/sh` appeared
+to leave the test passing, because the binary had not rebuilt. Comparing
+`md5sum .lake/build/bin/lingertest` before and after made it unambiguous. When a
+break-verify says the test still passes, check that the artefact changed before
+believing the test is weak.
+
+The test also *crashed* rather than failing when broken — an uncaught exception
+from `spawnPty` aborts the binary and takes the `ALL PASS`/count line with it,
+which is the failure `E2E/Attach.lean`'s docstring already records for a
+different suite. Wrapped so a future regression reports FAIL with the count
+intact.
+
+### Checks that could not fail, other three
+
+* `E2E/Ci.lean`'s 7th check ran `git` from Lean with an argv array, where
+  `--since=8 days ago` is one argument by construction — so it could not exhibit
+  the *shell* quoting bug it was written to guard, whatever the script said. Its
+  stated premise ("the two checks above cannot tell those apart") was false too:
+  the recent-commit check already fails when the `git log` fails. Deleted; the
+  suite is 6.
+* `testZeroLengthRead` set up a listening socket, a connection, an accept and a
+  pending `"ping"` — then asserted `throws (read afd 0)`, which `read` decides
+  before it looks at the fd. `read 999999 0` satisfies it identically.
+* `testDeepCwd` evaluated `isDir cwd` *after* `rm -r` had removed the tree, so
+  any non-empty answer failed and the check had quietly become "the answer was
+  empty". That matters on macOS, where the libproc branch NUL-terminates a path
+  rather than refusing it — and macOS now runs weekly, so it would have surfaced
+  up to seven days late.
+
+### Two claims that credited the wrong mechanism
+
+`linger_getcwd_of`'s comment said `readlink` fails with `ENAMETOOLONG` for an
+over-long cwd. It does not: **readlink(2) truncates silently and returns the byte
+count.** What protects us is the kernel building `/proc/<pid>/cwd` with `d_path`
+into a `PATH_MAX` buffer and failing the whole call. The conclusion held, the
+reason did not — and the reason is what a future reader relies on, since shrinking
+`buf` below `PATH_MAX` would start truncating with no error to notice. That is now
+stated as the reason `buf` is the size it is.
+
+`tests/ci-runners.sh` said "push to a v* tag"; the `case` matches any tag, and
+only the workflow's `tags: ['v*']` narrows it. True as composed, false as written.
+
+### Seven copies of one measurement
+
+The macOS billing figures had been copied into seven tracked files. Three of the
+four stale numbers the reviewer found (`Resume 13` vs 14, "four call sites" vs
+three, "thirteen aliases" vs fourteen) are the same disease. Cut to three
+deliberate homes: the `ci.yml` header (where the decision lives), SCRATCHPAD (the
+per-run evidence table), and the spec (the record). Everything else points.
+
+And a method note, since it bit twice: `git show <sha> | grep "^-"` finds nothing
+when git colours its output, because the `-` is preceded by an escape sequence.
+Both of my miscounts came from that. Use `--no-color`, or count from
+`--numstat`.

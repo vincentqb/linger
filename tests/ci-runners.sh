@@ -11,14 +11,16 @@
 # — an inline `case` can only be tested by a copy of itself, and this repo's rule is
 # that a suite asserts against the code's own definitions, never a copy.
 #
-# ubuntu always: every push gets the whole gate. macOS is billed at 10x a Linux
-# minute and rounded up per job, which measured 50-70 of the 66-97 minutes a push
-# used to cost, so it runs only when there is something new for it to learn:
+# ubuntu always: every push gets the whole gate. macOS costs several times more per
+# billed minute (the arithmetic is in the ci.yml header), so it runs only when there is
+# something new for it to learn:
 #
 #   workflow_dispatch  always      — someone asked, e.g. after touching c/shim.c
-#   push to a v* tag   always      — a release is verified on both platforms
+#   push to any tag    always      — the workflow only triggers on `v*`, but this
+#                                    script does not check the shape, so a broadened
+#                                    trigger gets macOS without a change here
 #   schedule           if commits  — rebuilding an unchanged tree re-learns last
-#                                    week's answer at 50-70 minutes a time
+#                                    week's answer at the expensive rate
 #   push / PR          never
 #
 # WINDOW=8 days against a 7-day cron on purpose: the overlap means a cron GitHub

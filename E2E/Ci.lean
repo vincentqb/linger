@@ -7,10 +7,10 @@ public section
 /-! # E2E.Ci — which runners CI asks for
 
 `tests/ci-runners.sh` decides the GitHub matrix, and its two failure modes are both
-silent and both expensive. Ask for macOS when nothing changed and a push bills 66-97
-minutes instead of ~10 (macOS is 10x a Linux minute, rounded up per job, measured
-2026-09-15 against this repo's own run history). Never ask for it and AGENTS.md's
-claim that the tree passes on macOS stops being checked by anything.
+silent and both expensive. Ask for macOS when nothing changed and a push bills several
+times what it needs to; never ask for it and AGENTS.md's claim that the tree passes on
+macOS stops being checked by anything. The billing arithmetic is in the `ci.yml` header
+and SCRATCHPAD, not here.
 
 `tests/gates.sh` greps the workflow for the shape — `fromJSON`, both runner names, a
 `cron`, a `workflow_dispatch`, a `--since` — which catches deletion. It cannot catch
@@ -103,32 +103,31 @@ def run : IO UInt32 := do
             "a manual run asks for both platforms")
   -- The scheduled arm against real history, both ways. A repo whose only commit is
   -- older than the window must NOT pull in macOS; one inside it must.
+  --
+  -- `try`/`finally` because `runners` throws when the script exits non-zero, and a
+  -- suite that leaks its fixtures on failure is exactly what this file's own commit
+  -- fixed elsewhere. There is deliberately no third check on the `git log` itself:
+  -- one was written and deleted, because it ran `git` from Lean with an argv array,
+  -- where `--since=8 days ago` is one argument BY CONSTRUCTION — so it could not
+  -- exhibit the shell quoting bug it claimed to guard, whatever the script said. The
+  -- "recent commit" check above already catches that: an unquoted `--since` makes git
+  -- fail, empty output reads as no commits, and the answer collapses to ubuntu.
   let fresh ← repoWithCommit 1
   let stale ← repoWithCommit 45
-  f :=
-    f +
-      (←
-        expect ((← runners script fresh "schedule" "refs/heads/main") == both)
-            "a scheduled run with a recent commit asks for both platforms")
-  f :=
-    f +
-      (←
-        expect ((← runners script stale "schedule" "refs/heads/main") == ubuntuOnly)
-            "a scheduled run on an unchanged tree asks for ubuntu alone")
-  -- The quoting trap, stated as its own check: if the `git log` fails rather than
-  -- reporting nothing, every scheduled answer collapses to ubuntu and macOS is never
-  -- verified again. The two checks above cannot tell those apart on their own — this
-  -- one pins that the fresh repo's `yes` came from git succeeding.
-  let probe ←
-    IO.Process.output
-        { cmd := "git", args := #["log", "--since=1 days ago", "--format=%H"], cwd := some fresh }
-  f :=
-    f +
-      (←
-        expect (probe.exitCode == 0 && !probe.stdout.trimAscii.isEmpty)
-            "the scheduled arm's `git log --since` succeeds rather than failing into `no commits`")
-  IO.FS.removeDirAll (System.FilePath.mk fresh)
-  IO.FS.removeDirAll (System.FilePath.mk stale)
+  try
+    f :=
+      f +
+        (←
+          expect ((← runners script fresh "schedule" "refs/heads/main") == both)
+              "a scheduled run with a recent commit asks for both platforms")
+    f :=
+      f +
+        (←
+          expect ((← runners script stale "schedule" "refs/heads/main") == ubuntuOnly)
+              "a scheduled run on an unchanged tree asks for ubuntu alone")
+  finally
+    IO.FS.removeDirAll (System.FilePath.mk fresh)
+    IO.FS.removeDirAll (System.FilePath.mk stale)
   IO.println s!"FAILURES: {f}"
   return if f == 0 then 0 else 1
 

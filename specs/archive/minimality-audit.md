@@ -1,8 +1,8 @@
 # 2026-09-14 minimality-audit — smaller code, stronger boundaries
 
-Status: active
+Status: complete (2026-09-15) — all nine steps done, archived
 Updated: 2026-09-15
-Next: Step 9 — final verification and review
+Next: nothing; open a new specs/<slug>.md for the next item
 Predecessor: `specs/archive/scrollback-fidelity.md` (complete)
 
 ## Goal
@@ -220,7 +220,7 @@ in CI. `E2E/Resume.lean`'s save-failure check was flaky 1-in-5: the last-detach 
 only when the session is dirty, and the daemon's first tick is eligible immediately
 (`lastCkptMs` starts at 0), so it could checkpoint the shell's prompt before the test
 planted the bad tmp path. The test now produces output *after* planting it and asserts that
-precondition (Resume 13). And eight files had drifted past `lean-fmt format --check`, which
+precondition (Resume 14, after the daemon-exit check below). And eight files had drifted past `lean-fmt format --check`, which
 ran nowhere but CI, so a locally-passing `lean-fmt check` (the linter) looked like the
 formatter passing too: the tree is reformatted and `tests/e2e.sh` now runs the layout gate
 next to the source-tree gates.
@@ -234,7 +234,7 @@ and distinct-policy loops rejected by the audit.
 on `Nat`, so the guard is gone — and with it `hx0 : v.cursor.x ≠ 0`, which was then
 unused in `print_mark_eq` and not needed for its truth (at `x = 0` both sides read
 column `0`). Dropped from `print_mark_eq`, `cursor_print_mark` and
-`Render/Pen.print_mark`, with four call sites losing a `(by omega)`. The second
+`Render/Pen.print_mark`, with three call sites losing a `(by omega)` (`Grid` once, `Row` twice). The second
 guard, `&& cx0 != 0`, stays: also behaviourally inert, but it is what makes the
 step-left total without reading the pair invariant.
 
@@ -280,12 +280,21 @@ Step-5 theorem", but `scrollbackAnsi_le` was the optional last step of
 already said fixture-carried. **Check-count floors**: two comments still described the
 per-suite counts as floors after step 1 made them exact.
 
-Verified rather than reviewed where possible: every theorem name cited in THEOREMS
-resolves to a declaration (0 missing of the extracted set), every recipe file the
-recipes README lists exists, every command in the README table appears in the CLI
-dispatch, and `watch`'s "marks output seen" holds through `lookSeq := s.outSeq` on
-attach. Aliases stay undocumented in README on purpose — `linger --help` carries them
-in `[a]ttach` form, and thirteen of them would cost more than they inform.
+Verified rather than reviewed where possible: every recipe file the recipes README
+lists exists, every command in the README table appears in the CLI dispatch, and
+`watch`'s "marks output seen" holds through `lookSeq := s.outSeq` on attach. Aliases
+stay undocumented in README on purpose — `linger --help` carries them in `[a]ttach`
+form, and the fourteen in `usage` would cost more than they inform. Note `l`/`list` are
+accepted by the dispatch and appear in neither, which is a real if minor gap.
+
+**This paragraph also recorded a false clean, and step 9 caught it.** It claimed every
+theorem name cited in THEOREMS resolved to a declaration, "0 missing of the extracted
+set". The check behind that claim was `git grep -w <name>`, which matches prose and
+comments — so `scrollbackAnsi_le`, named by THEOREMS.md and two code comments and
+declared nowhere, satisfied it. That is the same shape as the vacuous glyph loop below:
+a verification that cannot fail. The name is now absent from all three sites, and
+resolution is a gate that looks for `theorem|lemma|def|abbrev` over 85 citations,
+break-verified.
 
 Also retired three dangling "Step-N" references to archived spec numbering, now that a
 different step 7 exists, and `Cli.Hooks`' docstring says what the seam is for instead.
@@ -293,7 +302,82 @@ R10 amended in place rather than obeyed silently: the README's layout table is n
 installation, command surface, or semantics, and it stays anyway — the requirement was
 too tight, and the reason is recorded with it.
 
-### Step 9 — verify, review, compound
+### Step 9 — verify, review, compound — done ✓ (2026-09-15)
+
+Full stack green: `./lake build`, `./lake build Theorems Tests`, `sh tests/gates.sh`,
+`lean-fmt check`, `lean-fmt format --check`, and foreground `./tests/e2e.sh`
+warning-free, with zero leaked state directories or daemons after a complete run.
+
+**Three changes landed during this spec without being recorded in it**, which a
+reviewer scoped to this file would not have reviewed. Named here rather than left to
+the worklog:
+
+* `e3c857c` — the process-group signal gate, and two leak fixes. `verdict` takes the
+  `Env` and removes the suite's state directory on a green run (538 had accumulated,
+  ten suites × one per run); `E2E/Resume.lean` gained the check that a *reported*
+  delete failure still lets the daemon exit, after an orphaned `drop-fail` daemon was
+  found alive for 1h48m. So step 6's "two findings outside the C boundary" was an
+  undercount: these are two more.
+* `f1df868` — macOS off the per-push CI path, the `gates` job stopped compiling (the
+  `e2e` job already rebuilds from empty, so one signal was billed twice), and
+  `push: branches: [main]` closed the PR double-billing trap. Measured: 66-97 billed
+  minutes per push, 50-70 of them macOS at 10x; 36 commits exhausted a 2,000-minute
+  quota. A `paths:` filter was measured and rejected.
+* `02c53a3` — `tests/ci-runners.sh` (the third sanctioned non-Lean file, justified by
+  the `gates` job compiling nothing) and `E2E/Ci.lean`, which drives it rather than
+  copying it, against real temporary git repositories.
+
+**A fresh read-only reviewer found 24 items; the load-bearing ones were four checks
+that could not fail.** Every one is now fixed and break-verified:
+
+1. **The reverse status-glyph gate never executed.** Its README-side filter,
+   `grep -vE '^[[:alnum:][:punct:][:space:]]$'`, was meant to drop non-glyph noise, but
+   glibc classifies `⣀ ⣷ ⣿ ✓` as `[[:punct:]]`, so it deleted all seven and the loop
+   body ran zero times. The gate advertised "both directions" while one existed, and
+   both break-verifications recorded for it had landed on the forward half. Fixing it
+   surfaced a second defect in the *forward* half: `for g in $icon_glyphs` unquoted
+   undergoes pathname expansion, and `?` matched the `c/` directory — so the `?` glyph
+   was never checked either. Both loops now run under `set -f`, both extractions assert
+   a count of seven, and four break directions bite (README loses a glyph; code drops a
+   state; and `?` specifically, from each side).
+2. **`E2E/Ci.lean`'s 7th check could not exercise the script.** It ran `git` from Lean
+   with an argv array, where `--since=8 days ago` is one argument by construction, so it
+   could not exhibit the *shell* quoting bug it claimed to guard — and its stated
+   premise was false, since the "recent commit" check already catches that. Deleted; the
+   suite is 6.
+3. **`testZeroLengthRead` was satisfied before touching an fd.** `read` throws on
+   `max == 0` as its first statement, so eight lines of socket setup proved nothing.
+   Reduced to what it pins.
+4. **`testDeepCwd` judged `isDir` after `rm -r`** had removed the tree, so any
+   non-empty answer failed and the check had degraded to "the answer was empty" — which
+   matters on macOS, where the libproc branch NUL-terminates rather than refusing.
+
+Two claims were false and are corrected: `scrollbackAnsi_le` (above), and
+`linger_getcwd_of`'s comment, which credited `readlink` with refusing a short buffer —
+readlink truncates silently; the protection is the kernel's `d_path` failing the call,
+which is why `buf` must stay `PATH_MAX`.
+
+**One real behavioural regression, found by review rather than by test.** Rewriting
+`linger_spawn_pty` from `execvp` to `execve` in step 6 silently dropped `execvp`'s
+`ENOEXEC` fallback, so a shebang-less executable — legal input to
+`linger attach <name> <cmd>` — stopped running. Restored (pre-allocated `shargv`, since
+the child may only call async-signal-safe operations), with a `lingertest` check that
+break-verifies, and made crash-safe so a future regression reports FAIL rather than
+aborting the binary and losing the count. `lingertest` is 26, having also gained the
+waitpidNohang overflow case the review found missing.
+
+Also from the review: `waitpidNohang`'s and `spawnDetached`'s docstrings were behind
+their step-6 behaviour; `E2E/Ci.lean` leaked two fixture repositories on failure (now
+`try`/`finally`); `verdict`'s docstring called itself "the single exit point every suite
+goes through" while two non-pty suites print their own verdict; the process-group gate's
+pathspec is narrower than AGENTS claimed; `testProcessSelectors` omitted the overflow
+case for `waitpidNohang`; and the macOS cost measurement had been copied into seven
+files. Copies cut to pointers, keeping the evidence in SCRATCHPAD and the decision in
+the workflow header — the numbers had *already* started to rot, which is where three of
+the four stale figures above came from.
+
+R10's "a claim that can be checked mechanically SHALL be gated" now holds for two
+claims rather than one: the glyph set and THEOREMS declaration resolution.
 
 Run all builds and foreground E2E. Run a fresh read-only aspect review against this spec;
 fix verified findings only. Record each durable lesson as the narrowest automatic artifact:

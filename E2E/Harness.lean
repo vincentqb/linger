@@ -405,12 +405,16 @@ def Env.killAll (e : Env) (names : Array String) : IO Unit := do
 
 /-- Print the verdict line `tests/e2e.sh` reads, and return the process code.
 
-Takes the `Env` so the single exit point every suite already goes through is also
-where its state directory is retired — a green run leaves nothing behind, a red one
+Takes the `Env` so the exit point the PTY suites already go through is also
+where their state directory is retired — a green run leaves nothing behind, a red one
 keeps its sockets, logs and checkpoints for the post-mortem. Ten suites × one dir
 per run had accumulated 538 of them in `/tmp` before this was here, and a cleanup a
 new suite must remember to call is a cleanup that will be forgotten. A dir supplied
-through `LINGER_TEST_DIR` is the caller's, so it is left alone either way. -/
+through `LINGER_TEST_DIR` is the caller's, so it is left alone either way.
+
+Not every suite: `E2E/Coverage.lean` and `E2E/Ci.lean` print `FAILURES:` themselves,
+having no state directory to retire, so the output contract above lives in three
+places and they must be edited alongside this if it changes. -/
 def verdict (e : Env) (fails : Nat) : IO UInt32 := do
   IO.println s!"FAILURES: {fails}"
   if fails == 0 && (← IO.getEnv "LINGER_TEST_DIR").isNone then

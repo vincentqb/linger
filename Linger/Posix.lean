@@ -153,8 +153,11 @@ unlink the lock file. -/
 @[extern "linger_flock"]
 opaque flock (path : @& String) : IO Int64
 
-/-- Double-fork + setsid + execvp with stdio on `logPath` (append) or
-/dev/null. Returns after the intermediate child is reaped: no zombie. -/
+/-- Double-fork + setsid + exec, with stdio on `logPath` (append) or /dev/null.
+Returns after the intermediate child is reaped: no zombie.
+
+Setup and exec failures in the child reach us as an error rather than a silently dead
+daemon: the C side reports them over the same close-on-exec pipe `spawnPty` uses. -/
 @[extern "linger_spawn_detached"]
 opaque spawnDetached (prog : @& String) (args : @& Array String) (logPath : @& String) : IO Unit
 
@@ -170,8 +173,10 @@ private opaque killRaw (pid sig : UInt32) : IO Unit
 @[extern "linger_alive"]
 private opaque aliveRaw (pid : UInt32) : IO Bool
 
-/-- WNOHANG waitpid. `-1` running; `-2` not our child (use `alive`);
-`≥ 0` exit status (128+sig if signalled), zombie reaped. -/
+/-- WNOHANG waitpid. `-1` the requested child is still running; `-2` it is not
+reapable — `ECHILD` (not our child, or already reaped) and every other non-`EINTR`
+failure alike, so a caller polls `alive` rather than waiting forever; `≥ 0` exit
+status (128+sig if signalled), zombie reaped. -/
 @[extern "linger_waitpid_nohang"]
 private opaque waitpidNohangRaw (pid : UInt32) : IO Int64
 

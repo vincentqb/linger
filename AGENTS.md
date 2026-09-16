@@ -15,11 +15,12 @@ worklog), `specs/archive/` (closed build records), the comments in
 
 ## Where things stand — read this first after any compaction
 
-1. One spec is in flight: `specs/minimality-audit.md`. Execute its
-   steps in order; every behavioral fix starts with a failing check and
-   every deletion survives the full verifier stack. New work opens a new
-   `specs/<slug>.md` only after this one is archived; keep one item in
-   flight at a time.
+1. No spec is in flight. The last one closed on 2026-09-15
+   (`specs/archive/minimality-audit.md`, a nine-step minimality and
+   boundary audit). New work opens a new `specs/<slug>.md`, names itself
+   here, and keeps the live count at one; every behavioral fix starts
+   with a failing check and every deletion survives the full verifier
+   stack.
 2. `SCRATCHPAD.md` — append-only worklog: proof recipes, measurements,
    break-verify records, negative results. Read before writing; append
    after; never delete prior entries.
@@ -81,12 +82,12 @@ nothing either (the same hooks plus `lean-fmt format --check`, the layout
 half, which lives there because CI was its only home and eight files
 drifted past it — `tests/e2e.sh` now runs it too), and `e2e` runs the
 whole gate. **macOS is not on the per-push path**: ubuntu runs every
-push, macOS on a weekly cron, a `v*` tag, or `workflow_dispatch`. That is
-a measured trade — a push billed 66-97 GitHub minutes, 50-70 of them
-macOS at its 10x rate, and 36 commits exhausted a month's quota; a
-`paths:` filter was measured first and rejected. Reach for
-`workflow_dispatch` when a commit touches `c/shim.c` or the `./lake`
-wrapper. There is deliberately no pre-push hook.
+push, macOS on a weekly cron (only when commits landed), a `v*` tag, or
+`workflow_dispatch` — reach for that when a commit touches `c/shim.c` or
+the `./lake` wrapper. The decision is `tests/ci-runners.sh`, driven by
+`E2E/Ci.lean`; the measurement behind it is in the `ci.yml` header and
+SCRATCHPAD, and is deliberately not repeated elsewhere. There is
+deliberately no pre-push hook.
 
 ## Rules
 

@@ -128,17 +128,17 @@ say "2b. semantic coverage of pure code + runtime emitter classification"
 tail -1 /tmp/linger-coverage.log | grep -q '^FAILURES: 0$' || fail "coverage gate"
 
 say "2c. CI runner selection (tests/ci-runners.sh, driven not copied)"
-# Which runners CI asks for decides the bill: macOS is 10x a Linux minute, so asking
-# for it on every push cost 66-97 minutes instead of ~10, and never asking means
-# AGENTS.md's macOS claim goes unchecked. `E2E.Ci` runs the real script, including
-# its `git log --since` against throwaway repositories with real commit dates.
+# Which runners CI asks for decides the bill (numbers in the ci.yml header) and, in the
+# other direction, whether AGENTS.md's macOS claim is checked by anything. `E2E.Ci` runs
+# the real script, including its `git log --since` against throwaway repositories with
+# real commit dates.
 ci_out=/tmp/linger-ci.out
 ./.lake/build/bin/e2e ci > "$ci_out" 2>&1 || { cat "$ci_out"; fail "ci runner selection"; }
 cat "$ci_out"
 tail -1 "$ci_out" | grep -q '^FAILURES: 0$' || fail "ci runner selection"
 ci_n="$(grep -c '^PASS ' "$ci_out")"
-[ "$ci_n" -eq 7 ] \
-  || fail "e2e ci ran $ci_n checks (expected exactly 7)"
+[ "$ci_n" -eq 6 ] \
+  || fail "e2e ci ran $ci_n checks (expected exactly 6)"
 
 say "2d. fuzz corpus: no held-out mutations, failure lists asserted empty"
 # The §Replay fuzzer is only a guarantee if nothing is excluded and the
@@ -159,8 +159,8 @@ shim_out=/tmp/linger-shim.out
   || { tail -25 "$shim_out"; fail "lingertest"; }
 tail -1 "$shim_out" | grep -q '^ALL PASS$' || fail "lingertest"
 shim_n="$(grep -c '^PASS ' "$shim_out")"
-[ "$shim_n" -eq 24 ] \
-  || fail "lingertest ran $shim_n checks (expected exactly 24)"
+[ "$shim_n" -eq 26 ] \
+  || fail "lingertest ran $shim_n checks (expected exactly 26)"
 
 # Keep one real session in another state directory through every suite. A suite
 # may clean up its own Env, never the user's process namespace.

@@ -508,7 +508,7 @@ rp_n="$(code_count 'partial def' 'Linger/Runtime/*')"
 # Lean here would flag the assertion instead of the hazard. `kill -0 $pid` (the
 # liveness probe) is a signal flag, not a target, and is deliberately not matched.
 ! code_grep 'kill([[:space:]]+-[A-Za-z0-9]+)*[[:space:]]+(--[[:space:]]+)?(0|-[0-9]+)([^0-9]|$)' \
-    'tests/*.sh' 'c/shim.c' \
+    'tests/*.sh' 'c/shim.c' 'recipes/*' '.claude/*.sh' \
   || fail "a signal targets process group 0 or a negative pid — name the pid the suite created"
 ! code_grep '["]python([0-9.]*)' 'E2E/*' \
   || fail "an E2E suite executes embedded Python — use the e2e binary as the child probe"
@@ -601,28 +601,77 @@ done
 # README shows no glyph the code cannot emit. The porcelain `Status.name` strings are
 # not checked here because README does not list them; it says only that the same seven
 # states appear as a `status` field, which `icon_injective`/`name_injective` carry.
+#
+# BOTH extractions assert their count, and the reverse one earned that the hard way:
+# it first filtered the README side with `grep -vE '^[[:alnum:][:punct:][:space:]]$'`
+# to drop non-glyph noise, but glibc classifies `⣀ ⣷ ⣿ ✓` as `[[:punct:]]`, so the
+# filter deleted all seven and the loop body never ran. The gate reported "both
+# directions" while only one existed, and the two break-verifications recorded for it
+# had both landed on the forward half. A `for` over an empty list is the same vacuous
+# pass the spec-citation gate above guards against, and it is why nothing here trusts
+# an extraction it has not counted.
 icon_glyphs="$(code_grep "^ *[|] [.][a-zA-Z]+ => '" 'Linger/Core/Status.lean' \
   | sed "s/.*=> '//; s/'.*//")"
-[ -n "$icon_glyphs" ] \
-  || fail "no Status.icon glyphs extracted — the pattern broke, and this gate is now passing vacuously"
-icon_n=0
+icon_n="$(printf '%s\n' "$icon_glyphs" | grep -c .)"
+[ "$icon_n" -eq 7 ] \
+  || fail "extracted $icon_n status glyphs from Status.icon, expected the seven §Status states (a new state lands with its README row)"
+# `set -f` for both loops, and it is load-bearing rather than tidy: two of the seven
+# glyphs are `?` and `!`, and an UNQUOTED `$icon_glyphs` in a `for` undergoes pathname
+# expansion — `?` matches any single-character name in the working directory, which in
+# this repo is the `c/` directory, so the loop saw `c`. Downstream that read as
+# "is `c` in README", which is trivially yes, so the `?` glyph silently went unchecked
+# in the forward direction too. Found only because fixing the reverse loop surfaced it.
+set -f
 for g in $icon_glyphs; do
-  icon_n=$((icon_n + 1))
   grep -qF -- "$g" README.md \
     || fail "Status.icon emits '$g' but README does not show it — the glyph set is what a user reads"
 done
-[ "$icon_n" -eq 7 ] \
-  || fail "extracted $icon_n status glyphs, expected the seven §Status states (a new state lands with its README row)"
-# The reverse direction, over the one paragraph that lists them: a glyph in README that
-# `icon` cannot emit is the drift that actually happened.
-for g in $(grep -oE '`[^`]`' README.md | tr -d '`' | grep -vE '^[[:alnum:][:punct:][:space:]]$'); do
+set +f
+# The reverse direction, scoped to the section that states the contract: a glyph in
+# README that `icon` cannot emit is a state the code dropped and the docs kept.
+readme_glyphs="$(sed -n '/^## Session status/,/^## Graphics/p' README.md \
+  | grep -oE '`[^`]`' | tr -d '`')"
+readme_n="$(printf '%s\n' "$readme_glyphs" | grep -c .)"
+[ "$readme_n" -eq 7 ] \
+  || fail "extracted $readme_n glyphs from README's §Session status, expected 7 (a single-character backtick added there breaks this on purpose — it is a seven-character contract)"
+set -f
+for g in $readme_glyphs; do
   printf '%s\n' "$icon_glyphs" | grep -qF -- "$g" \
     || fail "README shows glyph '$g' but Status.icon cannot emit it"
 done
+set +f
 
-# The CI matrix. macOS came off the per-push path on 2026-09-15 for a measured
-# reason (66-97 billed minutes per push, 50-70 of them macOS at GitHub's 10x rate),
-# but the expression that does it is a `fromJSON` ternary, and actionlint does NOT
+# Every declaration name THEOREMS.md cites must resolve to a declaration. This is
+# gated rather than reviewed because reviewing it produced a FALSE CLEAN: the one-off
+# check run in step 8 grepped each name with `git grep -w`, which matches prose and
+# comments, so `scrollbackAnsi_le` — named by THEOREMS.md and by two code comments, and
+# declared nowhere — satisfied it. A doc that promises a theorem is unfalsifiable until
+# something looks for the declaration, so this looks for `theorem|lemma|def|abbrev`.
+#
+# Basenames, because a citation is written unqualified while the declaration sits in a
+# namespace. CamelCase names (types, structures) and file/section names are skipped:
+# the target here is the `snake_case` claim names, which is what a reader would try to
+# look up. The count is asserted so a broken extraction fails instead of passing empty.
+thm_cites="$(grep -oE '`[a-z][A-Za-z0-9_.]*`' THEOREMS.md | tr -d '`' \
+  | grep '_' | grep -vE '[.](md|lean|sh)$' | sed 's/.*[.]//' | sort -u)"
+thm_n="$(printf '%s\n' "$thm_cites" | grep -c .)"
+[ "$thm_n" -ge 80 ] \
+  || fail "extracted only $thm_n declaration citations from THEOREMS.md (expected ~100+); the pattern broke and this gate is passing vacuously"
+thm_decls="$(git grep -hoE '^ *(public )?(private )?(theorem|lemma|def|abbrev) [A-Za-z][A-Za-z0-9_.]*' \
+  -- '*.lean' | sed 's/.*[[:space:]]//; s/.*[.]//' | sort -u)"
+thm_bad=0
+for name in $thm_cites; do
+  printf '%s\n' "$thm_decls" | grep -qxF -- "$name" && continue
+  thm_bad=1
+  printf '  THEOREMS.md cites `%s`, which is declared nowhere\n' "$name" >&2
+done
+[ "$thm_bad" -eq 0 ] \
+  || fail "THEOREMS.md names a declaration that does not exist — state an absent proof as absent, not as a forward reference"
+
+# The CI matrix. macOS came off the per-push path on 2026-09-15 for a cost reason
+# measured in the ci.yml header — not repeated here, because that figure was copied into
+# seven files and had already started to rot — but the decision reaches the matrix
+# through a `fromJSON` job output, and actionlint does NOT
 # check it — verified by mistyping it deliberately, which actionlint accepted. Two
 # ways that goes wrong silently: someone simplifies the matrix to ubuntu only and
 # macOS is never checked again, or drops the schedule and it never runs. Neither is
@@ -656,7 +705,7 @@ grep -q 'ubuntu-latest' "$ci_sh" \
 grep -q 'macos-latest' "$ci_sh" \
   || fail "$ci_sh: no macos runner — AGENTS.md claims the tree passes on macOS, and CI is the only thing that checks it"
 grep -q -- "--since=" "$ci_sh" \
-  || fail "$ci_sh: the scheduled run no longer checks for commits — a weekly macOS build of an unchanged tree bills 50-70 minutes to re-learn last week's answer"
+  || fail "$ci_sh: the scheduled run no longer checks for commits — a weekly macOS build of an unchanged tree pays the expensive rate to re-learn last week's answer"
 # E2E `partial def` ratchet: the sibling of RUNTIME_PARTIAL_CAP above, for the same
 # reason (the keyword creeps back by habit) and covering the files its glob misses.
 # All three are honest. `E2E/Harness.drain` and `LingerTest.drain` recur on a
