@@ -7,18 +7,11 @@ public import Linger.Runtime.Daemon
 
 public section
 
-/-! # E2E.Robust — three robustness properties that only show up under adverse timing
+/-! # E2E.Robust — runtime boundaries under adverse timing
 
-Ported from `tests/robust_test.py` (whose docstring says "two"; the third section
-was added later and the count was never updated):
-
-  1. §Row — a daemon too busy to answer `info` within the reply window still lists
-     under its real name (SIGSTOP stands in for a burst of pty output on a loaded
-     box), and its socket is not disturbed.
-  2. name-ownership lock — with a stale socket present, concurrent starts of one
-     name produce exactly one daemon and one shell; no daemon is left holding a
-     pty nobody can reach.
-  3. a child that stops reading cannot grow the daemon (runtime §Bound, input half).
+The suite covers busy-daemon listing, name ownership, bounded child input,
+lock-aware stale cleanup, absolute info deadlines, bounded accept rounds, and
+the slow-client output cut.
 
 WHAT THE PORT CHANGED, and why each was not optional:
 
@@ -33,10 +26,9 @@ WHAT THE PORT CHANGED, and why each was not optional:
   `/bin/sh`, the same "one command, both platforms" move `Env.daemonPid` makes with
   `ps -o ppid=`. `Env.crashDaemon`'s `kill dpid 9` needs no such care — 9 is fixed
   by POSIX, as is everything in 1–15;
-* **the SIGKILL in §2 is `Posix.kill … 9`, NOT `Env.crashDaemon`.** `crashDaemon`
-  unlinks the socket on purpose (a SIGKILLed daemon cannot, and `Cli.cmdList` would
-  otherwise hide the row) — and the stale socket left behind is precisely the
-  premise this race needs. Using it here would delete the thing under test;
+* **crash simulation leaves the socket behind.** A SIGKILLed daemon cannot
+  unlink it; `Env.crashDaemon` now preserves that premise so listing and ownership
+  tests exercise production cleanup rather than test-harness cleanup;
 * **the busy row is compared against `Listing.humanListing`**, not against the
   literal `'? busy (busy)'`. That literal had already gone stale once: the
   Python's own comment says "The human row is now space-aligned
@@ -67,7 +59,8 @@ namespace E2E.Robust
 open E2E.Harness
 open Linger.Core.Status (Status)
 open Linger.Core.Listing (humanListing rowFields rowStatus)
-open Linger.Runtime.Daemon (ptyInCap)
+open Linger.Core.Session (maxClients)
+open Linger.Runtime.Daemon (outbufCap ptyInCap)
 
 /-- Python's `str.split()`: on any whitespace, empty fields dropped. `String.split`
 returns a slice iterator on v4.32, so this goes through `splitOn` instead. -/
@@ -125,6 +118,44 @@ def parseFull (log : String) : Option (Nat × Nat) :=
 
 /-- How many times the daemon logged the transition. -/
 def countFull (log : String) : Nat := (log.splitOn fullMarker).length - 1
+
+/-- Fake daemon that continuously emits valid info fragments without a terminator.
+A silence timeout never fires; an absolute request deadline must. -/
+def streamInfoServer (socketPath readyPath : String) : IO UInt32 := do
+  let lfd ← Linger.Posix.unixListen socketPath
+  Linger.Posix.setNonblock lfd
+  IO.FS.writeFile readyPath "ready"
+  let acceptDeadline := (← Linger.Posix.monotonicMs) + 5000
+  let mut peer : Option UInt32 := none
+  while peer.isNone && (← Linger.Posix.monotonicMs) < acceptDeadline do
+    let fd ← Linger.Posix.accept lfd
+    if fd ≥ 0 then
+      peer := some fd.toUInt64.toUInt32
+    else
+      IO.sleep 20
+  match peer with
+  | none =>
+    Linger.Posix.close lfd
+    return 1
+  | some fd =>
+    let frame :=
+      ByteArray.mk
+        (Linger.Core.Wire.encode
+            (.infoReply "pid\t1\ncmd\tstreaming\n".toUTF8.toList)).toArray
+    let deadline := (← Linger.Posix.monotonicMs) + 6000
+    try
+      while (← Linger.Posix.monotonicMs) < deadline do
+        Linger.Posix.writeAll fd frame
+        IO.sleep 5
+    catch _ =>
+      pure ()
+    Linger.Posix.close fd
+    Linger.Posix.close lfd
+    try
+      IO.FS.removeFile socketPath
+    catch _ =>
+      pure ()
+    return 0
 
 def run : IO UInt32 := do
   let e ← Env.make "robust"
@@ -185,14 +216,8 @@ def run : IO UInt32 := do
   let claim := s!"claim-{← Linger.Posix.getpid}"
   let _ ← e.cli #["run", claim, "echo one"]
   IO.sleep 1000
-  let some victim ←
-    e.daemonPid
-        claim | throw (IO.userError s!"no daemon answered for '{claim}' — nothing to SIGKILL")
-  -- SIGKILL directly, NOT `Env.crashDaemon`: that unlinks the socket, and the
-  -- socket left behind stale is the premise of the race below. 9 is safe to spell
-  -- as a number (POSIX fixes 1–15); STOP and CONT above are not.
-  Linger.Posix.kill victim 9
-  IO.sleep 300
+  unless (← e.crashDaemon claim) do
+    throw (IO.userError s!"daemon for '{claim}' did not crash")
   let stale ← e.dirNames ".sock"
   f := f + (← expect (stale == [s!"{claim}.sock"]) s!"stale socket present for the race ({stale})")
   -- eight concurrent `run <name>`, spawned before any is waited on — the Python's
@@ -309,8 +334,132 @@ def run : IO UInt32 := do
           expect ((← e.cli #["send", "stall", "echo x\n"]).1 == 0)
               "the stalled session is still reachable")
     e.killAll #["stall"]
+    IO.sleep 500
   else
     f := f + (← expect false "stall daemon started")
+  -- ── 4. a held ownership lock makes a failed connect non-stale ─────────────
+  let heldName := "lock-held"
+  let heldSocket := s!"{e.dir}/{heldName}.sock"
+  let heldLock ← Linger.Posix.flock s!"{e.dir}/{heldName}.lock"
+  if heldLock < 0 then
+    throw (IO.userError "could not acquire lock-held test lock")
+  IO.FS.writeFile heldSocket "not-a-socket" -- failed connect while the name is owned
+  let (heldRc, heldOut, heldErr) ← e.cli #["list"]
+  let heldSocks ← e.dirNames ".sock"
+  f :=
+    f +
+      (←
+        expect (heldRc == 0 && heldSocks.contains s!"{heldName}.sock" && has heldOut heldName)
+            s!"list preserves a failed-connect owned socket (rc={heldRc}, sockets={heldSocks}, out='{heldOut}', err='{heldErr}')")
+  Linger.Posix.close heldLock.toUInt64.toUInt32
+  try
+    IO.FS.removeFile heldSocket
+  catch _ =>
+    pure ()
+  -- ── 5. info has an absolute deadline, not a silence deadline ──────────────
+  let streamPath := s!"{e.dir}/streaming.sock"
+  let streamReady := s!"{e.dir}/streaming.ready"
+  let self ← IO.appPath
+  let streamServer ←
+    IO.Process.spawn
+        { cmd := self.toString, args := #["--stream-info-server", streamPath, streamReady],
+          stdout := .null, stderr := .null }
+  unless (← waitFor 5000 (System.FilePath.pathExists streamReady)) do
+    throw (IO.userError "streaming info server did not become ready")
+  let t0 ← Linger.Posix.monotonicMs
+  let listing ←
+    IO.Process.spawn
+        { cmd := e.bin, args := #["list"], env := e.procEnv,
+          stdout := .null, stderr := .null }
+  let listCode ← waitProcess listing 3500
+  let elapsed := (← Linger.Posix.monotonicMs) - t0
+  if listCode.isNone then
+    listing.kill
+    let _ ← listing.wait
+  let streamCode ← waitProcess streamServer 3000
+  if streamCode.isNone then
+    streamServer.kill
+    let _ ← streamServer.wait
+  f :=
+    f +
+      (←
+        expect (listCode == some 0 && elapsed < 3500 && streamCode == some 0)
+            s!"continuous info traffic cannot extend the request deadline ({elapsed}ms)")
+  -- ── 6. one listener round accepts at most the pure roster cap ─────────────
+  let acceptPath := s!"{e.dir}/accept-bound.sock"
+  let lfd ← Linger.Posix.unixListen acceptPath
+  Linger.Posix.setNonblock lfd
+  let (sleepPid, ptyFd) ← Linger.Posix.spawnPty 80 24 "" "sleep" #["600"] #[]
+  Linger.Posix.setNonblock ptyFd
+  let mut peers : Array UInt32 := #[]
+  for _ in List.range (2 * maxClients) do
+    let fd ← Linger.Posix.unixConnect acceptPath
+    if fd ≥ 0 then
+      peers := peers.push fd.toUInt64.toUInt32
+  let rt : Linger.Runtime.Daemon.Rt :=
+    { st := Linger.Core.Session.State.boot (Linger.Core.Vt.Vt.init 80 24) [] [],
+      listenFd := lfd, ptyFd, childPid := sleepPid, sockPath := acceptPath,
+      saveCkpt := fun _ => pure (), dropCkpt := pure () }
+  let (bounded, connected) ← Linger.Runtime.Daemon.pollRound rt
+  f :=
+    f +
+      (←
+        expect
+            (peers.size == 2 * maxClients && bounded.conns.length ≤ maxClients &&
+              connected.length ≤ maxClients)
+            s!"one poll round accepts at most maxClients ({bounded.conns.length})")
+  for c in bounded.conns do
+    Linger.Posix.close c.fd
+  for fd in peers do
+    Linger.Posix.close fd
+  Linger.Posix.close lfd
+  Linger.Posix.close ptyFd
+  Linger.Posix.kill sleepPid 9
+  IO.sleep 100
+  let _ ← Linger.Posix.waitpidNohang sleepPid
+  try
+    IO.FS.removeFile acceptPath
+  catch _ =>
+    pure ()
+  -- ── 7. the slow-client output cut is wired into the real runtime ──────────
+  let cutPath := s!"{e.dir}/output-cut.sock"
+  let cutListen ← Linger.Posix.unixListen cutPath
+  let cutPeerRaw ← Linger.Posix.unixConnect cutPath
+  let cutFdRaw ← Linger.Posix.accept cutListen
+  let cutPeer := cutPeerRaw.toUInt64.toUInt32
+  let cutFd := cutFdRaw.toUInt64.toUInt32
+  Linger.Posix.setNonblock cutFd
+  let id := cutFd.toNat
+  let st0 := Linger.Core.Session.State.boot (Linger.Core.Vt.Vt.init 80 24) [] []
+  let st := (Linger.Core.Session.step st0 (.connected id)).1
+  let full := ByteArray.mk (Array.replicate outbufCap (0 : UInt8))
+  let q := (Linger.Core.Buf.bufEnqueue outbufCap .empty full).1
+  let cutRt : Linger.Runtime.Daemon.Rt :=
+    { st, listenFd := cutListen, ptyFd := cutFd, childPid := 1,
+      conns := [{ fd := cutFd, out := q }], sockPath := cutPath,
+      saveCkpt := fun _ => pure (), dropCkpt := pure () }
+  let (cutRt', follow) ← Linger.Runtime.Daemon.runEffect cutRt (.send id .done)
+  let peerEof ← Linger.Posix.read cutPeer 1
+  let pumped ← Linger.Runtime.Daemon.pump cutRt' follow
+  let attached :=
+    (Linger.Core.Session.infoFields pumped.st).find? (·.1 == "clients") |>.map (·.2)
+  let closed :=
+    match follow with
+    | [.closed got] => got == id
+    | _ => false
+  f :=
+    f +
+      (←
+        expect
+            (Linger.Core.Buf.owedLen q == outbufCap && (cutRt'.conn? cutFd).isNone &&
+              closed && peerEof.isNone && attached == some "0")
+            "crossing outbufCap closes the peer and feeds .closed into the session")
+  Linger.Posix.close cutPeer
+  Linger.Posix.close cutListen
+  try
+    IO.FS.removeFile cutPath
+  catch _ =>
+    pure ()
   verdict f
 
 end E2E.Robust

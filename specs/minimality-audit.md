@@ -2,7 +2,7 @@
 
 Status: active
 Updated: 2026-09-14
-Next: Step 4 — bound daemon and listing work
+Next: Step 5 — make checkpoint failures explicit
 Predecessor: `specs/archive/scrollback-fidelity.md` (complete)
 
 ## Goal
@@ -152,13 +152,20 @@ daemon-loss — seven independent failures. GREEN: Agent 28/28, Attach 38/38, Wa
 interactive conversations have different termination policy; only their outcome type
 and text scrubber are shared.
 
-### Step 4 — bound daemon and listing work
+### Step 4 — bound daemon and listing work — done ✓ (2026-09-14)
 
-Bound accepts per poll round and total pending connections using an existing policy cap
-or one named runtime cap. Give `queryInfo` an absolute deadline and decoder-error exit.
-On failed connect, use the ownership lock to distinguish stale from owned before unlink;
-construct listing liveness from confirmed outcomes, not the directory snapshot. Add live
-oracles for slow-client cut and connect flood.
+Each listener round accepts at most `Session.maxClients`; the pure `.connected`
+handler admits or refuses that batch before the next poll. Connected info reads use one
+absolute two-second window, stop on decoder error, close in `finally`, and degrade I/O
+failure to a live/unknown row. A failed initial connect removes its path only while
+holding that name's nonblocking ownership lock; the listing's live set now comes from
+confirmed outcomes, so a stale socket cannot hide a same-name checkpoint on the first
+listing.
+
+RED: Resume failed first-list recovery; Robust failed lock-held preservation, continuous
+info deadline, and bounded accept count. GREEN: Resume 9/9 and Robust 18/18. A new direct
+runtime oracle also covers the existing `outbufCap` cut; disabling the cut fails that
+check. No parallel buffer, connection state, or policy layer was added.
 
 ### Step 5 — make checkpoint failures explicit
 

@@ -161,7 +161,7 @@ say "7. remote sessions over ssh"
 suite remote 11
 
 say "8. adverse timing (busy daemon listing, name-ownership race)"
-suite robust 14
+suite robust 18
 
 say "9. graphics passthrough (kitty / sixel)"
 suite graphics 9

@@ -31,7 +31,7 @@ Checkpoint effects are wired to hooks filled by `Linger.Runtime.Resume`
 namespace Linger.Runtime.Daemon
 
 open Linger.Posix
-open Linger.Core.Session (State Event Effect step)
+open Linger.Core.Session (State Event Effect maxClients step)
 open Linger.Core.Buf (Buf owedLen bufOffer bufEnqueue bufAdvance)
 
 /-- A stopped-reading client is cut here (runtime §Bound). -/
@@ -221,16 +221,16 @@ def pollRound (rt : Rt) : IO (Rt × List Event) := do
   let mut events : List Event := []
   -- listen fd
   if revs[0]! &&& POLLIN != 0 then
-    let mut go := true
-    while go do
+    -- Bound one round by the pure roster cap. The queued `.connected` events
+    -- make the core admit or refuse each fd before the next poll.
+    for _ in List.range maxClients do
       let a ← accept rt.listenFd
       if a < 0 then
-        go := false
-      else
-        let fd := a.toUInt64.toUInt32
-        setNonblock fd
-        rt := { rt with conns := rt.conns ++ [{ fd }] }
-        events := events ++ [.connected fd.toNat]
+        break
+      let fd := a.toUInt64.toUInt32
+      setNonblock fd
+      rt := { rt with conns := rt.conns ++ [{ fd }] }
+      events := events ++ [.connected fd.toNat]
   -- pty
   let ptyRev := revs[1]!
   if ptyRev &&& POLLOUT != 0 then
@@ -310,9 +310,9 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
       -- number: on macOS it is 61, the branch never fired, and the bind
       -- below failed EADDRINUSE for every daemon replacing a stale socket
       -- (the name-ownership race test caught it). No errno needs
-      -- distinguishing here — we hold the name lock, so no live daemon owns
-      -- this path, and ENOENT just makes the removal a no-op. Same reading
-      -- as `cmdList`, which treats any failed connect as a stale file.
+      -- distinguishing here — this daemon already holds the name lock, so no
+      -- live owner can be using the path. Listing cannot assume that: it probes
+      -- the same lock before removing a failed-connect socket.
       try
         IO.FS.removeFile sockPath
       catch _ =>

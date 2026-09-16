@@ -10852,3 +10852,42 @@ The fake malformed daemon reuses the e2e binary as a child mode and builds the b
 header from `Wire.maxPayload`/`writeU32`; no copied framing bytes. `waitProcess` became the
 single deadline helper for `cliTimeout` and the new spawned-process checks. Green targeted
 evidence: Agent 28/28, Attach 38/38, Watch 18/18; program and e2e builds green.
+
+
+## Step 4 notes — 2026-09-14 — bound daemon and listing work
+
+Four failure-first checks failed against `48c6e53`: leaving the real SIGKILL socket
+made Resume's *first* resumable listing disappear; a failed-connect path was removed
+while another process held its name lock; a fake peer's continuous valid info frames
+kept `list` alive past 3.5 s; one `pollRound` accepted all 32 queued peers although
+`maxClients` is 16. The old implementation's exact observations were Resume 1 failure
+and Robust 3 failures (`3506ms`, `32` accepts). All pass now (Resume 9/9, Robust 18/18).
+
+The listing fix is lock-shaped, not errno-shaped. `removeStaleSocket` attempts the same
+nonblocking name lock the daemon owns; only its holder may remove the path, and removal
+happens before releasing the lock. Held lock or probe error preserves the socket and
+lists its filename as live/unknown. The checkpoint exclusion set is `confirmedLive`,
+not the raw directory snapshot, so a genuinely stale path is removed and its checkpoint
+is listed in the same invocation. `Env.crashDaemon` now leaves the socket as SIGKILL
+does; test cleanup no longer manufactures the production precondition.
+
+`readInfo` has one 2000 ms wall-clock deadline. The first lock test used a closed Unix
+listener, and Linux admitted a connect that reset during read; that exposed a second
+real path: once connected, query I/O errors must be an unanswered live row, not an
+exception that aborts the whole listing. `queryInfo` now catches that conversation and
+closes in `finally`. The ownership test itself uses a regular `.sock` path under a held
+lock so its subject is specifically failed initial connect.
+
+The accept loop is a `List.range maxClients` batch. After each round, `pump` applies the
+already-proved `.connected` cap and closes overflow before polling again; from a
+reachable post-pump state the transient runtime list is therefore at most two batches,
+not unbounded under a continuously readable listener. The deterministic oracle queues
+`2 * maxClients` real Unix peers before one call and observes exactly one bounded batch.
+
+The pre-existing slow-output cut gained a direct IO oracle: a real socket connection,
+a queue at exactly `outbufCap`, one additional `.send`, peer EOF, exact `.closed` feedback,
+and the session roster dropping the client after `pump`. Mutation `if cut && false`
+failed it. The first mutation run hung because the fixture's accepted fd was blocking;
+real daemon fds are nonblocking. Setting the fixture fd nonblocking made the mutation
+fail at the assertion rather than hang — a test must reproduce the boundary conditions
+of the code it claims to check.

@@ -139,54 +139,60 @@ def cmdAttach (hooks : Hooks) (name : String) (cmd : List String) : IO UInt32 :=
       IO.eprintln s!"\r\nlinger: {why} for '{name}'"
       return 1
 
-/-- Fetch a session's info key-values. -/
+/-- One connected info conversation, bounded by an absolute request window. -/
+def readInfo (fd : UInt32) : IO (List (String × String)) := do
+  Client.sendMsg fd .info
+  let deadline := (← monotonicMs) + 2000
+  let mut dec : Linger.Core.Wire.Decoder := {}
+  let mut acc : Linger.Core.Buf.Buf := .empty
+  let mut go := true
+  while go && (← monotonicMs) < deadline do
+    let revs ← poll #[fd] #[POLLIN] 100
+    if revs[0]! == 0 then
+      continue
+    match ← read fd 65536 with
+    | none =>
+      go := false
+    | some bs =>
+      if bs.isEmpty then
+        continue
+      let (dec', msgs) := dec.feed bs.toList
+      dec := dec'
+      if dec.errored then
+        go := false
+      else
+        for m in msgs do
+          if !go then
+            continue
+          match m with
+          | .infoReply payload =>
+            acc := (Linger.Core.Buf.bufOffer infoReplyCap acc (ByteArray.mk payload.toArray)).1
+          | .done | .err _ =>
+            go := false
+          | _ =>
+            pure ()
+  let txt := String.fromUTF8? (Linger.Core.Buf.writeFrom acc) |>.getD ""
+  return txt.splitOn "\n" |>.filterMap fun line =>
+    match line.splitOn "\t" with
+    | [k, v] => some (k, v)
+    | _ => none
+
+/-- Fetch a session's info. Once connected, any I/O/framing failure is an
+unanswered live row rather than a reason to unlink its path. -/
 def queryInfo (name : String) : IO (Option (List (String × String))) := do
   match ← Client.connect name with
   | none =>
     return none
   | some fd =>
-    Client.sendMsg fd .info
-    let mut dec : Linger.Core.Wire.Decoder := {}
-    -- Bounded, through the same proved queue the daemon uses. This loop's only
-    -- exits are `.done`/`.err`/EOF/a 2000 ms *silence* timeout, so a peer that
-    -- streams `infoReply` frames steadily never ends it — an unbounded
-    -- accumulation on the client side, the same class as the `ptyIn` one.
-    -- `bufOffer` refuses whole frames past the cap (`Buf.bufOffer_bound`), so a
-    -- hostile or broken daemon costs a truncated listing rather than the client's
-    -- memory. An info reply is a few hundred bytes; 1 MiB is far above any real one.
-    let mut acc : Linger.Core.Buf.Buf := .empty
-    let mut go := true
-    while go do
-      let revs ← poll #[fd] #[POLLIN] 2000
-      if revs[0]! == 0 then
-        go := false -- timeout: treat as dead
-      else
-        match ← read fd 65536 with
-        | none =>
-          go := false
-        | some bs =>
-          if bs.isEmpty then
-            continue
-          let (dec', msgs) := dec.feed bs.toList
-          dec := dec'
-          for m in msgs do
-            match m with
-            | .infoReply payload =>
-              acc := (Linger.Core.Buf.bufOffer infoReplyCap acc (ByteArray.mk payload.toArray)).1
-            | .done =>
-              go := false
-            | .err _ =>
-              go := false
-            | _ =>
-              pure ()
-    close fd
-    let txt := String.fromUTF8? (Linger.Core.Buf.writeFrom acc) |>.getD ""
-    return some <|
-        txt.splitOn "\n" |>.filterMap
-          (fun line =>
-            match line.splitOn "\t" with
-            | [k, v] => some (k, v)
-            | _ => none)
+    try
+      let info ←
+        try
+          readInfo fd
+        catch _ =>
+          pure []
+      return some info
+    finally
+      close fd
 
 def kv (l : List (String × String)) (k : String) : String :=
   (l.find? (·.1 == k)).map (·.2) |>.getD ""
@@ -236,35 +242,46 @@ def listRemote (host : String) : IO (List (String × Bool × String × String)) 
     return []
   return (Linger.Core.Remote.parse out.stdout).map (fun r => (r.name, r.live, r.cmd, r.status))
 
-def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
-  -- sort the local names so the listing order is deterministic (the directory
-  -- read order is not); remotes stay last and per-host.
-  let live := (← Paths.listSocketNames).toArray.qsort (· < ·) |>.toList
-  let ckpts := (← Paths.listCkptNames).toArray.qsort (· < ·) |>.toList
-  let mut rows : List (List (String × String)) := []
-  for name in live do
-    match ← queryInfo name with
-    | some info =>
-      -- the name comes from the socket, not from the reply (the §Row
-      -- rule, proved in Core.Listing.rowFields): a daemon too busy to
-      -- answer still lists with its real name, and a peer can't spoof
-      -- another session's identity
-      -- the status column goes through `Listing.rowStatus`, so the two facts
-      -- that decide whether a row is trustworthy (socket present, daemon
-      -- answered) come from here and not from the reply -- §Row, extended
-      rows :=
-        rows ++
-          [Linger.Core.Listing.rowFields name info ++
-              [("state", "live"),
-                ("status", Linger.Core.Status.name (Linger.Core.Listing.rowStatus (.live info)))]]
-    | none =>
-      -- connect() itself failed: nothing is listening, the file is stale
+/-- Remove a failed-connect socket only while holding its name lock. `false`
+means another owner holds the lock or the probe itself failed; both fail closed. -/
+def removeStaleSocket (name : String) : IO Bool := do
+  try
+    let lockFd ← flock (← Paths.lockPath name)
+    if lockFd < 0 then
+      return false
+    try
       try
         IO.FS.removeFile (← Paths.socketPath name)
       catch _ =>
         pure ()
+      return true
+    finally
+      close lockFd.toUInt64.toUInt32
+  catch _ =>
+    return false
+
+def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
+  let sockets := (← Paths.listSocketNames).toArray.qsort (· < ·) |>.toList
+  let ckpts := (← Paths.listCkptNames).toArray.qsort (· < ·) |>.toList
+  let liveRow := fun name info =>
+    Linger.Core.Listing.rowFields name info ++
+      [("state", "live"),
+        ("status", Linger.Core.Status.name (Linger.Core.Listing.rowStatus (.live info)))]
+  let mut confirmedLive : List String := []
+  let mut rows : List (List (String × String)) := []
+  for name in sockets do
+    match ← queryInfo name with
+    | some info =>
+      confirmedLive := confirmedLive ++ [name]
+      rows := rows ++ [liveRow name info]
+    | none =>
+      if !(← removeStaleSocket name) then
+        -- Failed connect while another process owns (or may own) the name: keep
+        -- the rendezvous path and list the identity as live/unknown.
+        confirmedLive := confirmedLive ++ [name]
+        rows := rows ++ [liveRow name []]
   for name in ckpts do
-    if !live.contains name then
+    if !confirmedLive.contains name then
       -- through `rowFields` like the live rows, so the displayed name is the
       -- sanitized one `attach` accepts and §Row (`rowFields_name`) covers it —
       -- a checkpoint filename is not trusted to name its own row.

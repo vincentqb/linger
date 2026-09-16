@@ -48,6 +48,8 @@ def main (args : List String) : IO UInt32 := do
     E2E.Resume.winsizeProbe result
   | ["--malformed-server", socketPath, readyPath] =>
     E2E.Agent.malformedServer socketPath readyPath
+  | ["--stream-info-server", socketPath, readyPath] =>
+    E2E.Robust.streamInfoServer socketPath readyPath
   | [name] =>
     match suites.find? (·.1 == name) with
     | some (_, run) =>

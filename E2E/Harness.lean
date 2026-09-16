@@ -379,16 +379,9 @@ def Env.daemonPid (e : Env) (name : String) : IO (Option UInt32) := do
       return none
     return (out.stdout.trimAscii.toString.toNat?).map UInt32.ofNat
 
-/-- SIGKILL the daemon behind `name` and unlink its socket: the simulated crash a
-reboot-resume test needs. `true` iff a daemon was found, was alive first, and is
-gone after — the non-vacuity the Python only half had (`assert dpids` proved a pid
-was *found*, never that the kill landed).
-
-Unlinking the socket is load-bearing, not tidiness. `Cli.cmdList` computes its
-`live` set from the socket names it can see and only then prunes the ones that fail
-to connect, and the resumable rows it appends skip any name in that set. A
-SIGKILLed daemon cannot unlink its own socket, so leaving the file behind hides the
-session from the very listing under test. -/
+/-- SIGKILL the daemon behind `name`, leaving its socket as a real crash does.
+`true` iff a daemon was found, was alive first, and is gone after. The listing
+path—not the test harness—must classify and safely clean the stale socket. -/
 def Env.crashDaemon (e : Env) (name : String) : IO Bool := do
   match ← e.daemonPid name with
   | none =>
@@ -398,10 +391,6 @@ def Env.crashDaemon (e : Env) (name : String) : IO Bool := do
       return false
     kill dpid 9 -- SIGKILL: no cleanup, no checkpoint drop — a crash, not an exit
     IO.sleep 300
-    try
-      IO.FS.removeFile (System.FilePath.mk s!"{e.dir}/{name}.sock")
-    catch _ =>
-      pure ()
     -- the daemon is double-forked (init's child, not ours), so a SIGKILLed one is
     -- reaped by init and `kill(pid, 0)` genuinely goes ESRCH — no zombie to make
     -- `alive` lie the way it would for one of our own unreaped children
