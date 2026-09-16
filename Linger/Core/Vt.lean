@@ -1336,8 +1336,7 @@ false — the daemon's pty path is `Terminal.feed s.vt s.scan chunk` on a
 `List UInt8` (`Linger/Core/Session.lean`), and this definition has no caller
 outside `Tests/`. It is kept because five fixtures use it and a convenience with
 five callers is reachable code, not the unproved-and-unreachable state
-`E2E/Coverage.lean` exists to prevent; what was wrong was the claim, not the
-function. -/
+`Theorems/Coverage.lean` rejects; what was wrong was the claim, not the function. -/
 def Vt.feedBytes (v : Vt) (bytes : ByteArray) : Vt := v.feed bytes.toList
 
 end Linger.Core.Vt

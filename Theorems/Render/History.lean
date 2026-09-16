@@ -22,10 +22,8 @@ open Linger.Core.Vt
 
 /-! ## §Row integrity for `linger history` — a cell cannot inject a line break
 
-The last of the runtime's byte streams to acquire a theorem, and the reason it was last
-is recorded in `E2E/Coverage.lean` (ported from the retired `tests/coverage.py`): `history` was assembled through `String`, and a
-`String` does not reduce in the kernel, so nothing could be said about the bytes it
-writes to a terminal. `rowText` now builds `List UInt8` (the same restructure
+The last runtime byte stream to acquire a theorem. `history` used to be assembled
+through `String`, which does not reduce in the kernel; `rowText` now builds `List UInt8` (the same restructure
 `Session.infoText` needed), which makes both claims below available.
 
 They matter for the same reason `infoText`'s do. `linger history` is line-oriented

@@ -32,7 +32,7 @@ def suites : List (String × IO UInt32) :=
     ("terminal", E2E.Terminal.run),
     -- opt-in: needs a real reachable host, so NOT in tests/e2e.sh
     ("remote-live", E2E.RemoteLive.run),
-    -- not a pty suite: the source-tree coverage ratchets (was tests/coverage.py)
+    -- not a pty suite: semantic pure-core coverage + runtime emitter classification
     ("coverage", E2E.Coverage.run)]
 
 def main (args : List String) : IO UInt32 := do

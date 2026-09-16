@@ -6343,9 +6343,9 @@ theorem stick_step_so {v : Vt} (hg : v.pstate = .ground) :
 /-! ## The clamp and the two tables, said out loud
 
 Three pure-core values the tree *used* everywhere and *stated* nowhere: every proof that
-needed them re-derived them inline, which is why `E2E/Coverage.lean` counted them as
-unclaimed surface. Each theorem below is the postcondition its callers were already
-assuming. -/
+needed them re-derived them inline, which is why the old source scanner counted
+them as unclaimed. `Theorems/Coverage.lean` now checks exact constants in theorem
+types. Each theorem below is the postcondition its callers were already assuming. -/
 
 /-- **A clamped dimension is a legal dimension, and above the cap it *is* the cap.** The
 second half is what makes `clampDim n + 1` the smallest value a caller must reject. -/

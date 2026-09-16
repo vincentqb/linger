@@ -2,7 +2,7 @@
 
 Status: active
 Updated: 2026-09-14
-Next: Step 2 — make coverage semantic
+Next: Step 3 — make client cleanup and outcomes honest
 Predecessor: `specs/archive/scrollback-fidelity.md` (complete)
 
 ## Goal
@@ -31,7 +31,7 @@ every deletion survives the complete verifier stack.
   POSIX interprets as process groups; wait status SHALL be read only after a requested
   child is reported complete. Process-spawn setup/exec failures SHALL reach the parent.
 - **R7 — Exact coverage.** The coverage gate SHALL associate every pure-core definition
-  with theorem statements by fully qualified constant, not by a colliding basename.
+  with theorem types by fully qualified constant, not by a colliding basename.
   Suite check counts SHALL be exact, and a skipped required regression SHALL not count
   as a pass.
 - **R8 — Minimal Lean.** A definition, field, parameter, branch, proof, or parsed field
@@ -122,11 +122,20 @@ geometry assertion when `--winsize-probe` had no dispatcher. GREEN: source gates
 resume (9), terminal (12), shim smoke (12), and foreground `./tests/e2e.sh` all passed;
 the sentinel survived all ten suites.
 
-### Step 2 — make coverage semantic
+### Step 2 — make coverage semantic — done ✓ (2026-09-14)
 
-Replace the basename/text theorem census with fully qualified core constants and exact
-occurrences in elaborated theorem types (or the smallest equivalent Lean-environment
-check). Break-verify with a colliding-name claim removal. Retain cap zero.
+`Theorems/Coverage.lean` now discovers every explicit pure-core `def`, resolves its
+actual environment constant (including private declarations), unions exact constants
+from elaborated theorem types, and fails the build on any miss or ambiguous source name.
+The checker lives in the sanctioned theorem friend region; E2E imports only its public
+source scanner and therefore gains no Vt forge access. The three remaining legacy leaf
+proof files moved to the current module form so their declarations enter that environment.
+
+Break: adding unclaimed `Linger.Core.Buf.Probe.feed` left the old gate green (`271`,
+zero misses) because other `feed` theorems satisfied its basename. The new gate failed
+with that exact fully qualified name. The semantic census has 276 definitions: the old
+dedup hid five declarations across `step`, `feed`, and `mendAt`. Builds, source gates,
+coverage runtime classification, and `lean-fmt check` pass with the zero-miss invariant.
 
 ### Step 3 — make client cleanup and outcomes honest
 

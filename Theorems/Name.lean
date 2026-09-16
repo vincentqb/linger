@@ -1,4 +1,9 @@
-import Linger.Core.Name
+module
+
+public import Linger.Core.Name
+import all Linger.Core.Name
+
+public section
 
 /-! # §Name — session names cannot escape the socket directory
 

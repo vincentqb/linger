@@ -10787,3 +10787,37 @@ terminal regression; CI installs it on both matrix legs. Final evidence before t
 step commit: source gates green; resume 9/9; terminal 12/12; shim 12/12; all ten pty
 suites at exact count; coverage and fuzz gates green; full build warning-free; sentinel
 alive at the end.
+
+
+## Step 2 notes — 2026-09-14 — semantic pure-core coverage
+
+The old check's canonical break is now measured: add `def Probe.feed : Nat := 0`
+under `Linger.Core.Buf`. `./lake build e2e && e2e coverage` stayed green and still
+reported 271 definitions, because its basename set already contained `feed` and any one
+of the other feed theorems satisfied it. The exact duplicate groups are `step` (Session,
+Terminal.Scan, Vt), `feed` (Terminal, Vt, Wire.Decoder), and `mendAt` (Row, Vt): five
+source declarations disappeared in the old 271 count. This is why a cap at zero was not
+a zero-hole invariant.
+
+`Theorems/Coverage.lean` is the resulting shared harness. It scans source only to
+enumerate explicit `def`s, then resolves each logical fully qualified name against the
+elaborated environment (private declarations by unique suffix within their declaring
+core module). It folds exact constants from theorem TYPES into one `NameHashSet`; proof
+bodies, comments, formatting and a homonymous declaration cannot contribute. Missing or
+ambiguous source resolution fails too, so changing the current one-top-namespace file
+shape is loud. The optimized one-pass constant union builds in about nine seconds.
+
+The first placement — inside `E2E/Coverage.lean` — was rejected by the module system for
+the right architectural reason: seeing private Vt constants requires `import all`, and
+E2E is deliberately outside the Vt friend set. The checker moved under `Theorems/`, an
+already-sanctioned friend region, and exports only source-scanner helpers; normal E2E
+import does not transitively grant all-access. Converting the last three legacy theorem
+leaves (`Name`, `Remote`, `Claim`) to `module` was necessary for that import graph;
+`Name` also needs `import all Linger.Core.Name` so its reduction proofs still elaborate.
+
+Break after the final one-pass implementation: the synthetic `Probe.feed` makes
+`Theorems.Coverage` fail with exactly
+`Linger.Core.Buf.Probe.feed`. Green evidence: 276/276 exact constants covered;
+runtime streams classified; source gates, program build, proofs, unit fixtures and
+lean-fmt check all pass. The old text scanner was deleted rather than retained beside
+the stronger oracle.

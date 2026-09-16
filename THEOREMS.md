@@ -70,11 +70,11 @@ positive specifications (`scrollUpIn_rows`, `scrollUpIn_sb_push`,
 Every user-facing README promise maps to a theorem, a named test, a
 stated limitation, or a settled non-goal — never to nothing; a new
 promise (or § / anchor) lands with its mapping. That is a review
-discipline; the two halves a grep can judge are automated in
-`E2E/Coverage.lean` and run by `./tests/e2e.sh`: theorem-*statement*
-coverage of the pure core (ratchet at zero — the scan reads only between
-`theorem <name>` and `:=`/`by`, so a mention in a comment counts for
-nothing), and classification of every byte stream the runtime emits:
+discipline. `Theorems/Coverage.lean` resolves every explicit pure-core
+`def` to its fully qualified environment constant and requires that exact
+constant in a theorem type; comments, proof bodies, formatting and colliding
+basenames cannot satisfy it. `E2E/Coverage.lean` independently classifies
+every byte stream the runtime emits:
 
 | stream | backing |
 |---|---|

@@ -95,8 +95,9 @@ deliberately no pre-push hook.
   order-robust proof scripts.
 - A theorem or test that cannot fail is worthless: break the code once
   to see it catch, and record the break in SCRATCHPAD.md.
-- Every `Linger/Core` def lands WITH a theorem statement naming it, in
-  the same commit (`E2E/Coverage.lean`, ratchet at zero).
+- Every `Linger/Core` `def` lands with a theorem type containing that
+  exact fully qualified constant, in the same commit
+  (`Theorems/Coverage.lean`).
 - A proved pure value the runtime consumes needs a grep gate to bite:
   `Linger/Runtime/*` is `IO` and no theorem can see a call site —
   re-measured against v4.34's Hoare framework (no `WP IO` instance

@@ -1,5 +1,10 @@
-import Linger.Core.Remote
+module
+
+public import Linger.Core.Remote
+import all Linger.Core.Remote
 import Theorems.Name
+
+public section
 
 /-! # §Remote — trusting a remote listing without trusting the remote
 

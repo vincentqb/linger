@@ -31,8 +31,8 @@ once when it stops. Same single copy per flush as before, and the leak is now
 **The field is `private` (2026-08-19, the module system).** The 2026-08-18
 measurement said "not adoptable yet" for two reasons, and the module system
 retired both: proofs no longer have to move here — `Theorems/Buf.lean` is a
-`module` with `import all Linger.Core.Buf`, the friend import, so
-`E2E/Coverage.lean`'s Theorems-only census keeps counting its statements — and
+`module` with `import all Linger.Core.Buf`, the friend import, so the semantic
+census in `Theorems/Coverage.lean` sees its private theorem types — and
 the write hole is closed, because a private field makes the *constructor*
 private, so structure-instance notation can no longer write or forge where it
 cannot read (all three refuse from `Linger/Runtime/`, break-verified). The

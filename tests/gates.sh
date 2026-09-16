@@ -455,8 +455,8 @@ FORGE='(^|[^`[:alnum:]_])(cols|rows|grid|bot|tabs|pstate|u8need|u8acc) *:='
 # AND the `maxRecDepth 4096` above it, and cutting `./lake build Theorems` from
 # 115.9s to 78.2s. Break-verified twice: drop `renderable_congr` from the lemma
 # set, or drop the `Renderable v` hypothesis, and `grind` fails.
-# Like `statementCap`, zero flips this from a budget to spend into an invariant to
-# keep: a new raise means a proof got harder, which is the signal
+# Like the semantic pure-core coverage gate, zero flips this from a budget to
+# spend into an invariant to keep: a new raise means a proof got harder, which is the signal
 # design-for-provability says to read, not silence.
 HEARTBEAT_CAP=0
 hb_n="$(code_count 'set_option maxHeartbeats' 'Theorems/*')"

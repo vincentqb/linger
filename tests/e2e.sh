@@ -4,8 +4,8 @@
 #
 #   1. clean build of program + proofs + unit tests, zero warnings
 #   2. no `sorry` / `partial` in the pure core or the proofs
-#  2b. coverage: defs named by no theorem STATEMENT (ratchet), and every byte
-#      stream the runtime emits classified as proved or bounded
+#  2b. coverage: every fully qualified pure-core definition occurs in a theorem
+#      type, and every runtime-emitted byte stream is classified
 #   3. posix shim smoke tests (lingertest)
 #   4. attach/detach/reattach/mirror/wait e2e (real ptys)
 #   5. reboot-resume e2e (SIGKILL + restore + corrupt tolerance)
@@ -106,14 +106,9 @@ say "2. source-tree gates (purity, boundaries, and the ratchets)"
 # A hook with its own copy of a cap is worse than no hook.
 sh tests/gates.sh || fail "source-tree gates"
 
-say "2b. coverage of the code by the theorems (two ratchets)"
-# Every bug this project found by PROVING was an assumption nobody wrote down, so
-# the shape to watch is a definition no theorem says anything about. This used to
-# be a grep over all of Theorems/, which could not tell a claim from a word:
-# `Render.history` — a stream the binary writes to the user's terminal — passed it
-# because "history" occurs in a doc comment. `E2E/Coverage.lean` measures theorem
-# *statements* with comments stripped, and separately requires every byte stream
-# the runtime emits to be classified as proved or bounded. See its header.
+say "2b. semantic coverage of pure code + runtime emitter classification"
+# `Theorems.Coverage` resolves exact environment constants in theorem types;
+# E2E.Coverage handles the source-tree property of which streams runtime emits.
 ./.lake/build/bin/e2e coverage | tee /tmp/linger-coverage.log
 tail -1 /tmp/linger-coverage.log | grep -q '^FAILURES: 0$' || fail "coverage gate"
 

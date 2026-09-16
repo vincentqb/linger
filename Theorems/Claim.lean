@@ -1,4 +1,8 @@
-import Linger.Core.Name
+module
+
+public import Linger.Core.Name
+
+public section
 
 /-! # §Claim — mutual exclusion, relative to exactly one assumption
 
