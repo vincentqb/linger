@@ -358,6 +358,6 @@ def run : IO UInt32 := do
     f +
       (← expect (← waitFor marker 6000) "fish regression: detached command executes before attach")
   let _ ← e.cliEnv fishEnv #["kill", "fish-regression"]
-  verdict f
+  verdict e f
 
 end E2E.Terminal

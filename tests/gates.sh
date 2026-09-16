@@ -497,6 +497,19 @@ rp_n="$(code_count 'partial def' 'Linger/Runtime/*')"
 # as a .py file. These are syntactic runtime ties, so the source gate is the oracle.
 ! code_grep '(^|[^[:alnum:]_])(pkill|killall)[[:space:]].*linger' 'tests/e2e.sh' \
   || fail "tests/e2e.sh kills by process name — suites may terminate only processes they created"
+# A process-GROUP selector is the same hazard wearing a pid. POSIX reads `kill 0` as
+# "every process in my group" and `kill -N` as group N, so one of these in a test
+# script signals the harness, the agent running it, and whatever shell shares that
+# group — which is exactly what happened on 2026-09-15, from `kill 0 15` inside
+# `lingertest`. Scoped to the shell and the shim, because that is where nothing else
+# stops it: from Lean the call goes through `Linger.Posix.checkPid`, which rejects 0
+# and every value that casts to a negative `pid_t` — a mechanism, not a grep — and
+# `LingerTest.lean`'s `kill 0 15` is that mechanism's regression test, so including
+# Lean here would flag the assertion instead of the hazard. `kill -0 $pid` (the
+# liveness probe) is a signal flag, not a target, and is deliberately not matched.
+! code_grep 'kill([[:space:]]+-[A-Za-z0-9]+)*[[:space:]]+(--[[:space:]]+)?(0|-[0-9]+)([^0-9]|$)' \
+    'tests/*.sh' 'c/shim.c' \
+  || fail "a signal targets process group 0 or a negative pid — name the pid the suite created"
 ! code_grep '["]python([0-9.]*)' 'E2E/*' \
   || fail "an E2E suite executes embedded Python — use the e2e binary as the child probe"
 ! code_grep 'IO[.]println[[:space:]]+"PASS[[:space:]].*skip' 'E2E/*' \

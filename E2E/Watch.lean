@@ -155,6 +155,6 @@ def run : IO UInt32 := do
             "watch exits 1 when its daemon disappears")
   lost.bye (sendDetach := false)
   e.killAll #["w"]
-  verdict f
+  verdict e f
 
 end E2E.Watch

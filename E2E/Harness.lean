@@ -402,9 +402,21 @@ def Env.killAll (e : Env) (names : Array String) : IO Unit := do
     let _ ← e.cli #["kill", n]
     pure ()
 
-/-- Print the verdict line `tests/e2e.sh` reads, and return the process code. -/
-def verdict (fails : Nat) : IO UInt32 := do
+/-- Print the verdict line `tests/e2e.sh` reads, and return the process code.
+
+Takes the `Env` so the single exit point every suite already goes through is also
+where its state directory is retired — a green run leaves nothing behind, a red one
+keeps its sockets, logs and checkpoints for the post-mortem. Ten suites × one dir
+per run had accumulated 538 of them in `/tmp` before this was here, and a cleanup a
+new suite must remember to call is a cleanup that will be forgotten. A dir supplied
+through `LINGER_TEST_DIR` is the caller's, so it is left alone either way. -/
+def verdict (e : Env) (fails : Nat) : IO UInt32 := do
   IO.println s!"FAILURES: {fails}"
+  if fails == 0 && (← IO.getEnv "LINGER_TEST_DIR").isNone then
+    try
+      IO.FS.removeDirAll (System.FilePath.mk e.dir)
+    catch _ =>
+      pure ()
   return if fails == 0 then 0 else 1
 
 end E2E.Harness

@@ -115,6 +115,6 @@ def run : IO UInt32 := do
             (has out "resumable" &&
               has out (String.singleton (Linger.Core.Status.icon (rowStatus .stale))))
             "the hostile checkpoint still lists (as resumable)")
-  verdict f
+  verdict e f
 
 end E2E.Overview

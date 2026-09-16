@@ -258,7 +258,20 @@ def run : IO UInt32 := do
       (←
         expect (dropReported && (← System.FilePath.pathExists dropPath))
             "checkpoint delete failure is reported")
+  -- …and reporting it is not the same as surviving it. A logged cleanup failure
+  -- must still let `.exit` run: this suite leaked a `drop-fail` daemon that
+  -- outlived its run by two hours, because nothing here asked.
+  f :=
+    f +
+      (←
+        expect
+            (←
+              waitFor 5000
+                  (do
+                    return (← e.daemonPid "drop-fail").isNone))
+            "a reported delete failure still lets the daemon exit")
   IO.FS.removeDirAll dropPath
-  verdict f
+  e.killAll #["drop-fail"]
+  verdict e f
 
 end E2E.Resume

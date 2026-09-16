@@ -11005,3 +11005,74 @@ commit hook stays cheap) while putting the gate somewhere a local run can see
 it. Break-verified by appending a badly laid out `def` to `E2E/Status.lean`.
 A skip when the binary is absent, as in the hook, so a fresh clone can still
 run the script.
+
+
+## The 2026-09-15 `kill 0` incident, and what the suites leaked
+
+Reported symptom: interactive ssh sessions to this box wedging repeatedly, the
+user forced to type `Enter ~ .` to kill the client. Asked whether a theorem had
+been weakened. It had not — the only proof-statement change that day *removed*
+a hypothesis (`print_mark_eq`, below), which strengthens three theorems, and
+every ratchet and gate was green and unmoved. What the investigation did find
+is worth keeping, because two of the four findings are real and mine.
+
+Measured, so nobody re-derives it:
+
+* **192 cores, 369 GB RAM, no swap, 293 GB available, load average 25.** The
+  repeated cold rebuilds (`rm -r .lake/build` + a full `Theorems` build is
+  ~320 s of CPU) are ~13% of this box. Not the cause of a stalled ssh, and the
+  yesterday-21:14 OOM kill in `dmesg` (a 313 GB `leanchecker`) is not today.
+* **/tmp is 123 GB on a 9.7 T filesystem at 73%, 6% inodes.** Not exhaustion,
+  so the leak below did not break `ssh`'s `ControlPath` socket either — worth
+  checking because this user's `~/.ssh/config` is `ControlMaster auto` +
+  `ControlPath /tmp/cm-%C` + `ControlPersist 1m`, where one wedged master
+  hangs every session over it and `~.` is the only way out.
+* **`E2E/Remote.lean` never runs a real `ssh`** — a `/bin/sh` fake goes first
+  on `PATH`. So the remote suite cannot have touched a real control socket.
+* **No linger daemon of the user's was running at all**, before or during. The
+  only one on the box was a leaked test daemon (below).
+
+### Finding 1 — `kill 0 15` reached the agent's own process group
+
+This is the one event that could have killed something outside the suite, and
+it is already recorded above as step 6's RED. Worth stating plainly here: for
+the minutes before `checkPid` existed, running `lingertest` sent SIGTERM to
+*every process in its process group*. It is now unreachable from Lean, and
+`tests/gates.sh` gained a gate for the shell, where no mechanism stops it:
+a signal whose target is `0` or a negative pid, scoped to `tests/*.sh` and
+`c/shim.c`. Not scoped to Lean on purpose — `LingerTest.lean`'s `kill 0 15` is
+the guard's regression test, so including it would flag the assertion rather
+than the hazard. `kill -0 $pid` is a signal flag, not a target, and is not
+matched. Break-verified by appending `kill 0 15` to `tests/e2e.sh`.
+
+### Finding 2 — every suite run leaked its state directory, and one leaked a daemon
+
+538 `/tmp/linger-<slug>-<pid>` directories had accumulated: ten suites, one dir
+per run, never removed. `verdict` now takes the `Env` and removes the dir when
+`fails == 0`, which puts the cleanup at the single exit point all ten suites
+already go through — a red run still keeps its sockets, logs and checkpoints
+for the post-mortem, and a `LINGER_TEST_DIR` supplied by the caller is left
+alone. A cleanup a new suite has to remember to call is one that will be
+forgotten; this one cannot be.
+
+Separately, an orphaned `linger __daemon drop-fail` had been alive for 1h48m
+(idle, 0% CPU). `E2E/Resume.lean`'s last block was the only one that never
+called `killAll`, and — the more useful half — nothing asked whether the
+daemon *exited*. It does: the new check confirms that a reported delete
+failure still lets `.exit` run, which is the property step 5 claimed and only
+half-tested (it tested that the failure was *reported*). Resume is 14. After a
+full run the tree now leaves zero state dirs and zero daemons, verified.
+
+### `print_mark_eq` lost a hypothesis
+
+Step 7's first item. `Vt.printMark`'s `if v.cursor.x == 0 then 0 else
+v.cursor.x - 1` is `v.cursor.x - 1` on `Nat`, so the guard was decoration; with
+it gone, `hx0 : v.cursor.x ≠ 0` is unused in `print_mark_eq`, and the statement
+is true without it (at `x = 0` both sides read column `0`). Dropped there and
+from `cursor_print_mark` and `Render/Pen.print_mark`, with the four call sites
+in `Grid`/`Row` losing a `(by omega)` each. The second guard, `&& cx0 != 0`,
+**stays**: `cx0 - 1` at `cx0 = 0` is `0 = cx0`, so it is also behaviourally
+inert, but it is what makes the step-left total without reading the pair
+invariant, and its docstring is the only statement of that. Break-verified:
+`v.cursor.x - 1` → `v.cursor.x` in `printMark` fails seven checks across
+`Tests/Vt.lean` and `Tests/Render.lean`.

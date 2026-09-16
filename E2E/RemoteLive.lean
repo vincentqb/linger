@@ -83,6 +83,6 @@ def run : IO UInt32 := do
       (←
         expect (rows.any (fun r => r.name == "alpha" && r.live))
             "remote session survived detach (still listed live, via Remote.parse)")
-  verdict f
+  verdict e f
 
 end E2E.RemoteLive

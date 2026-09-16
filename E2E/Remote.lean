@@ -233,6 +233,6 @@ def run : IO UInt32 := do
   kill c3.pid 9
   c3.bye (sendDetach := false)
   e.killAll #["localsess"]
-  verdict f
+  verdict e f
 
 end E2E.Remote

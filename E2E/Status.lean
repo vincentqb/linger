@@ -62,6 +62,6 @@ def run : IO UInt32 := do
         expect (has human (String.singleton (Linger.Core.Status.icon Status.wantsYou)))
             "human listing shows the wants-you glyph")
   e.killAll #["st"]
-  verdict f
+  verdict e f
 
 end E2E.Status

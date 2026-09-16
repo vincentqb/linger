@@ -364,6 +364,6 @@ def run : IO UInt32 := do
         expect ((← e.cli #["resize", "nosuch", "80", "24"]).1 == 1)
             "resize on a missing session exits 1")
   e.killAll #["rz"]
-  verdict f
+  verdict e f
 
 end E2E.Agent

@@ -418,6 +418,6 @@ def run : IO UInt32 := do
             "scrollback: the client survives the truecolour burst")
   s3.bye (sendDetach := false)
   e.killAll #["sb", "w2"]
-  verdict f
+  verdict e f
 
 end E2E.Attach

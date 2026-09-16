@@ -158,6 +158,6 @@ def run : IO UInt32 := do
   f := f + (← expect (grown > same) "reattach at a new size nudges the program (SIGWINCH)")
   w3.bye
   e.killAll #["winch"]
-  verdict f
+  verdict e f
 
 end E2E.Graphics

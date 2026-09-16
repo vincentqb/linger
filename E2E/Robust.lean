@@ -458,6 +458,6 @@ def run : IO UInt32 := do
     IO.FS.removeFile cutPath
   catch _ =>
     pure ()
-  verdict f
+  verdict e f
 
 end E2E.Robust
