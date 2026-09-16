@@ -66,6 +66,16 @@ def waitFor (ms : UInt64) (p : IO Bool) : IO Bool := do
     ok ← p
   return ok
 
+/-- Wait for a spawned process without letting a regression hang the suite. -/
+def waitProcess {cfg : IO.Process.StdioConfig} (child : IO.Process.Child cfg) (ms : UInt64) :
+    IO (Option UInt32) := do
+  let deadline := (← monotonicMs) + ms
+  let mut code ← child.tryWait
+  while code.isNone && (← monotonicMs) < deadline do
+    IO.sleep 50
+    code ← child.tryWait
+  return code
+
 /-- First index of `needle` in `hay`, walking the haystack once.
 
 The primitive the other three are built on, and the reason it is `Option Nat`
@@ -276,12 +286,7 @@ def Env.cliTimeout (e : Env) (args : Array String) (ms : UInt64) :
   let child ←
     IO.Process.spawn
         { cmd := e.bin, args, env := e.procEnv, stdin := .null, stdout := .piped, stderr := .piped }
-  let deadline := (← monotonicMs) + ms
-  let mut code : Option UInt32 := none
-  while code.isNone && (← monotonicMs) < deadline do
-    code ← child.tryWait
-    if code.isNone then
-      IO.sleep 50
+  let code ← waitProcess child ms
   match code with
   | none =>
     return none -- still running: the caller reports it as a fail

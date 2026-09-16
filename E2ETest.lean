@@ -46,6 +46,8 @@ def main (args : List String) : IO UInt32 := do
     E2E.Terminal.probe result ready trigger
   | ["--winsize-probe", result] =>
     E2E.Resume.winsizeProbe result
+  | ["--malformed-server", socketPath, readyPath] =>
+    E2E.Agent.malformedServer socketPath readyPath
   | [name] =>
     match suites.find? (·.1 == name) with
     | some (_, run) =>

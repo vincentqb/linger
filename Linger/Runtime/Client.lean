@@ -12,9 +12,8 @@ public section
 
 The attach client is deliberately dumb: raw mode, forward stdin bytes
 as `input` frames (watching for the detach key), write `output` frames
-to stdout, resize on terminal size change (checked each poll round —
-no signal handling needed), leave on `exited`/EOF. The daemon's
-restore blob arrives as ordinary output.
+to stdout, resize on terminal size change (checked each poll round), and
+report detach, child exit, daemon refusal, or transport loss distinctly.
 
 Detach key: `ctrl-\` (0x1C), disabled by `LINGER_NO_DETACH_KEY`.
 -/
@@ -36,12 +35,24 @@ def connect (name : String) : IO (Option UInt32) := do
 
 def sendMsg (fd : UInt32) (m : Msg) : IO Unit := writeAll fd (encodeBA m)
 
-/-- Read frames until the daemon closes or a terminator arrives.
-Output payloads stream to stdout as they come. Returns the exit status
-if the session reported one. -/
-def drainReplies (fd : UInt32) (untilDone : Bool) : IO (Option UInt32) := do
+/-- How a request/reply conversation ended. Messages stay data until the CLI
+chooses an exit status and diagnostic; a refusal or transport loss cannot collapse
+into ordinary completion. -/
+inductive Drained where
+  | done
+  | exited (status : UInt32)
+  | refused (why : String)
+  | lost (why : String)
+  | silent
+
+/-- Untrusted daemon text made safe for stderr. -/
+def replyText (fallback : String) (bytes : List UInt8) : String :=
+  Linger.Core.Remote.scrub (String.fromUTF8? (ByteArray.mk bytes.toArray) |>.getD fallback)
+
+/-- Read frames until the daemon closes or the requested terminator arrives. -/
+def drainReplies (fd : UInt32) (untilDone : Bool) : IO Drained := do
   let mut dec : Decoder := {}
-  let mut result : Option UInt32 := none
+  let mut result : Drained := .lost "connection lost"
   let mut go := true
   while go do
     let revs ← poll #[fd] #[POLLIN] (-1)
@@ -56,25 +67,27 @@ def drainReplies (fd : UInt32) (untilDone : Bool) : IO (Option UInt32) := do
       let (dec', msgs) := dec.feed bs.toList
       dec := dec'
       if dec.errored then
+        result := .lost "invalid response from daemon"
         go := false
-      for m in msgs do
-        match m with
-        | .output payload =>
-          writeAll stdoutFd (ByteArray.mk payload.toArray)
-        | .infoReply payload =>
-          writeAll stdoutFd (ByteArray.mk payload.toArray)
-        | .exited status =>
-          result := some status
-          go := false
-        | .done =>
-          if untilDone then
+      else
+        for m in msgs do
+          if !go then
+            continue
+          match m with
+          | .output payload | .infoReply payload =>
+            writeAll stdoutFd (ByteArray.mk payload.toArray)
+          | .exited status =>
+            result := .exited status
             go := false
-        | .err msg =>
-          let msgTxt := String.fromUTF8? (ByteArray.mk msg.toArray) |>.getD "error"
-          IO.eprintln s!"linger: {msgTxt}"
-          go := false
-        | _ =>
-          pure ()
+          | .done =>
+            if untilDone then
+              result := .done
+              go := false
+          | .err msg =>
+            result := .refused (replyText "request refused" msg)
+            go := false
+          | _ =>
+            pure ()
   return result
 
 /-- Fire-and-forget: deliver one message, no reply expected. -/
@@ -83,30 +96,24 @@ def sendOnly (name : String) (m : Msg) : IO Bool := do
   | none =>
     return false
   | some fd =>
-    sendMsg fd m
-    close fd
-    return true
+    try
+      sendMsg fd m
+      return true
+    finally
+      close fd
 
-/-- One-shot request/reply against a session. Returns false if there is
-no live daemon. -/
-def oneShot (name : String) (m : Msg) : IO Bool := do
+/-- One-shot request/reply. `none` means no live daemon; every connected
+conversation preserves its actual outcome. -/
+def oneShot (name : String) (m : Msg) : IO (Option Drained) := do
   match ← connect name with
   | none =>
-    return false
+    return none
   | some fd =>
-    sendMsg fd m
-    let _ ← drainReplies fd true
-    close fd
-    return true
-
-/-- How a bounded request/reply drain ended: `.done` arrived, the daemon
-answered `.err` (message already printed), or it went silent/EOF'd without
-either. -/
-inductive Drained where
-  | done
-  | refused
-  | silent
-  deriving Repr, DecidableEq
+    try
+      sendMsg fd m
+      return some (← drainReplies fd true)
+    finally
+      close fd
 
 /-- Like `drainReplies untilDone := true`, but gives up after `silenceMs` of
 *silence*. For the one-shot verbs a pre-upgrade daemon does not know: an
@@ -122,10 +129,11 @@ def drainBounded (fd : UInt32) (silenceMs : Int32 := 2000) : IO Drained := do
   while go do
     let revs ← poll #[fd] #[POLLIN] silenceMs
     if revs[0]! &&& (POLLIN ||| POLLHUP ||| POLLERR) == 0 then
-      go := false -- a full window of silence: no daemon is going to answer
+      go := false
     else
       match ← read fd 65536 with
       | none =>
+        result := .lost "connection lost"
         go := false
       | some bs =>
         if bs.isEmpty then
@@ -133,23 +141,26 @@ def drainBounded (fd : UInt32) (silenceMs : Int32 := 2000) : IO Drained := do
         let (dec', msgs) := dec.feed bs.toList
         dec := dec'
         if dec.errored then
+          result := .lost "invalid response from daemon"
           go := false
-        for m in msgs do
-          match m with
-          | .output payload =>
-            writeAll stdoutFd (ByteArray.mk payload.toArray)
-          | .infoReply payload =>
-            writeAll stdoutFd (ByteArray.mk payload.toArray)
-          | .done =>
-            result := .done
-            go := false
-          | .err msg =>
-            let msgTxt := String.fromUTF8? (ByteArray.mk msg.toArray) |>.getD "error"
-            IO.eprintln s!"linger: {msgTxt}"
-            result := .refused
-            go := false
-          | _ =>
-            pure ()
+        else
+          for m in msgs do
+            if !go then
+              continue
+            match m with
+            | .output payload | .infoReply payload =>
+              writeAll stdoutFd (ByteArray.mk payload.toArray)
+            | .done =>
+              result := .done
+              go := false
+            | .exited status =>
+              result := .exited status
+              go := false
+            | .err msg =>
+              result := .refused (replyText "request refused" msg)
+              go := false
+            | _ =>
+              pure ()
   return result
 
 /-- Split stdin bytes at the detach key. Returns (bytes-to-send,
@@ -161,16 +172,8 @@ def splitDetach (bs : ByteArray) (enabled : Bool) : ByteArray × Bool :=
     | none => (bs, false)
     | some i => (ByteArray.mk (bs.toList.take i).toArray, true)
 
-/-- How an interactive attach ended.
-
-**A sum type rather than an `Option UInt32`**, for the reason
-`Core.Listing.Row` gives: each constructor carries exactly the facts its case
-has, so no caller can report one case as another. The `Option` could not say
-"refused" — a daemon that answers `.err` (a `too many clients` roster refusal)
-closed the connection immediately after, so the loop saw a clean EOF and
-returned `none`, and `Cli` printed `detached from '<name>'` for an attach that
-never happened. The refusal message was dropped on the floor: only
-`drainReplies` (the one-shot path) ever printed `.err`. -/
+/-- How an interactive attach ended. Each constructor carries exactly the facts
+its case has, so a refusal or lost daemon cannot be reported as a detach. -/
 inductive Outcome where
   /-- The session's child exited with this status. -/
   | ended (status : UInt32)
@@ -178,83 +181,79 @@ inductive Outcome where
   | detached
   /-- The daemon refused the attach and said why. -/
   | refused (msg : String)
+  /-- The socket closed or its framing became invalid before an outcome. -/
+  | lost (why : String)
   deriving Repr, Inhabited
 
 /-- Interactive attach. `readOnly` attaches as a 0×0 observer: output
 mirrors, keyboard is not forwarded, detach key still works. -/
 def attach (fd : UInt32) (readOnly : Bool := false) : IO Outcome := do
-  let detachEnabled := (← IO.getEnv "LINGER_NO_DETACH_KEY").isNone
-  let (cols, rows) ← winsizeGet stdinFd
-  if readOnly then
-    sendMsg fd (.attach 0 0)
-  else
-    sendMsg fd (.attach cols rows)
-  let saved ← termRaw stdinFd
-  let mut lastSize := (cols, rows)
-  let mut dec : Decoder := {}
-  let mut result : Outcome := .detached
-  let mut leaving := false
   try
-    while !leaving do
-      let revs ← poll #[stdinFd, fd] #[POLLIN, POLLIN] 200
-      -- terminal resized? (polled: no signal machinery)
-      let size ← winsizeGet stdinFd
-      if size != lastSize && !readOnly then
-        lastSize := size
-        sendMsg fd (.resize size.1 size.2)
-      -- stdin → daemon (read-only: only the detach key is honored)
-      if revs[0]! &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
-        match ← read stdinFd 65536 with
-        | none =>
-          leaving := true
-        | some bs =>
-          if !bs.isEmpty then
-            let (out, detach) := splitDetach bs detachEnabled
-            if !out.isEmpty && !readOnly then
-              sendMsg fd (.input out.toList)
-            if detach then
-              leaving := true
-      -- daemon → stdout
-      if revs[1]! &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
-        match ← read fd 65536 with
-        | none =>
-          leaving := true
-          IO.eprintln "\r\nlinger: session closed"
-        | some bs =>
-          if !bs.isEmpty then
-            let (dec', msgs) := dec.feed bs.toList
-            dec := dec'
-            if dec.errored then
-              leaving := true
-            for m in msgs do
-              match m with
-              | .output payload =>
-                writeAll stdoutFd (ByteArray.mk payload.toArray)
-              | .exited status =>
-                result := .ended status
+    let detachEnabled := (← IO.getEnv "LINGER_NO_DETACH_KEY").isNone
+    let (cols, rows) ← winsizeGet stdinFd
+    if readOnly then
+      sendMsg fd (.attach 0 0)
+    else
+      sendMsg fd (.attach cols rows)
+    let saved ← termRaw stdinFd
+    let mut lastSize := (cols, rows)
+    let mut dec : Decoder := {}
+    let mut result : Outcome := .detached
+    let mut leaving := false
+    try
+      while !leaving do
+        let revs ← poll #[stdinFd, fd] #[POLLIN, POLLIN] 200
+        let size ← winsizeGet stdinFd
+        if size != lastSize && !readOnly then
+          lastSize := size
+          sendMsg fd (.resize size.1 size.2)
+        if revs[0]! &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
+          match ← read stdinFd 65536 with
+          | none =>
+            leaving := true
+          | some bs =>
+            if !bs.isEmpty then
+              let (out, detach) := splitDetach bs detachEnabled
+              if !out.isEmpty && !readOnly then
+                sendMsg fd (.input out.toList)
+              if detach then
                 leaving := true
-              | .err msg =>
-                -- a roster refusal ("too many clients") or other daemon error:
-                -- carry the message out so `Cli` reports the refusal instead of
-                -- a phantom detach. Scrubbed like any byte stream reaching a
-                -- terminal — the message is our daemon's, but the socket is not
-                -- a trusted channel. The daemon closes right after, so leaving.
-                result :=
-                  .refused
-                    (Linger.Core.Remote.scrub
-                      (String.fromUTF8? (ByteArray.mk msg.toArray) |>.getD "refused"))
+        if revs[1]! &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
+          match ← read fd 65536 with
+          | none =>
+            result := .lost "connection lost"
+            leaving := true
+          | some bs =>
+            if !bs.isEmpty then
+              let (dec', msgs) := dec.feed bs.toList
+              dec := dec'
+              if dec.errored then
+                result := .lost "invalid response from daemon"
                 leaving := true
-              | _ =>
-                pure ()
+              else
+                for m in msgs do
+                  if leaving then
+                    continue
+                  match m with
+                  | .output payload =>
+                    writeAll stdoutFd (ByteArray.mk payload.toArray)
+                  | .exited status =>
+                    result := .ended status
+                    leaving := true
+                  | .err msg =>
+                    result := .refused (replyText "attach refused" msg)
+                    leaving := true
+                  | _ =>
+                    pure ()
+    finally
+      -- These cleanups are nested, not sequential: a broken stdout must not
+      -- prevent termios restoration, and neither failure may leak the socket.
+      try
+        writeAll stdoutFd (ByteArray.mk Linger.Core.Render.leaveAnsi.toArray)
+      finally
+        termRestore stdinFd saved
+    return result
   finally
-    -- hand the terminal back before the line discipline: the session's last
-    -- program may have left the alt screen, mouse reporting, a scroll region or
-    -- a line-drawing charset on, and termios restores none of that
-    -- (`Render.leaveAnsi`). In `finally`, so every way out of the loop — detach
-    -- key, session exit, EOF, a decoder error, an exception — goes through it.
-    writeAll stdoutFd (ByteArray.mk Linger.Core.Render.leaveAnsi.toArray)
-    termRestore stdinFd saved
-  close fd
-  return result
+    close fd
 
 end Linger.Runtime.Client

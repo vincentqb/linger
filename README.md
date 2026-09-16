@@ -56,7 +56,7 @@ linger                  # overview: names, pids, labels; then exits
 |---|---|
 | `attach [name] [cmd]` | attach, creating if absent (name defaults to `main`) |
 | `attach <name>@<host>` | attach a session on a remote host over ssh |
-| `watch <name>` | attach read-only |
+| `watch <name>` | input/resize-read-only attach; viewing marks output seen |
 | `run <name> <cmd>` | run a command in a session, don't attach |
 | `send <name> <text>` | send raw input to its pty (`send <name> -`: stdin, byte-exact) |
 | `ls` / (no args) `[-r [h,..]]` | overview; `-r` adds remote hosts; `--porcelain` is machine-readable |

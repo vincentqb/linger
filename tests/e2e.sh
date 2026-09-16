@@ -149,7 +149,7 @@ LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger info "$sentinel_name" >/dev/
   || fail "sentinel session did not start"
 
 say "4. attach / detach / reattach / mirror / wait"
-suite attach 35
+suite attach 38
 
 say "5. reboot resume"
 suite resume 9
@@ -173,10 +173,10 @@ say "11. status column (unread / seen transitions)"
 suite status 5
 
 say "12. agent verbs (info / capture / send - / resize)"
-suite agent 25
+suite agent 28
 
 say "13. watch (read-only mirror: geometry, keyboard, hand-back, seen)"
-suite watch 17
+suite watch 18
 
 LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger info "$sentinel_name" >/dev/null \
   || fail "a suite terminated the unrelated sentinel session"

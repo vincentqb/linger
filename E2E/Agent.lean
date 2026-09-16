@@ -1,6 +1,7 @@
 module
 
 public import E2E.Harness
+public import Linger.Core.Wire
 
 public section
 
@@ -66,6 +67,37 @@ def sendStdin (e : Env) (name payload : String) : IO UInt32 := do
         (some payload)
   return out.exitCode
 
+/-- One fake daemon: accept a connection, send an over-cap frame header, close.
+The CLI must report protocol loss rather than a successful request. -/
+def malformedServer (socketPath readyPath : String) : IO UInt32 := do
+  let lfd ← Linger.Posix.unixListen socketPath
+  Linger.Posix.setNonblock lfd
+  IO.FS.writeFile readyPath "ready"
+  let deadline := (← Linger.Posix.monotonicMs) + 5000
+  let mut client : Option UInt32 := none
+  while client.isNone && (← Linger.Posix.monotonicMs) < deadline do
+    let fd ← Linger.Posix.accept lfd
+    if fd ≥ 0 then
+      client := some fd.toUInt64.toUInt32
+    else
+      IO.sleep 20
+  let rc ←
+    match client with
+    | none =>
+      pure 1
+    | some fd =>
+      let tooLarge := UInt32.ofNat (Linger.Core.Wire.maxPayload + 1)
+      Linger.Posix.writeAll fd
+        (ByteArray.mk ((0 : UInt8) :: Linger.Core.Wire.writeU32 tooLarge).toArray)
+      Linger.Posix.close fd
+      pure 0
+  Linger.Posix.close lfd
+  try
+    IO.FS.removeFile socketPath
+  catch _ =>
+    pure ()
+  return rc
+
 def run : IO UInt32 := do
   let e ← Env.make "agent"
   let mut f := 0
@@ -119,6 +151,31 @@ def run : IO UInt32 := do
       (←
         expect (irc == 1 && has ierr "no session 'nosuch'")
             "info on a missing session exits 1 with a message")
+  -- A daemon-level rejection is a failed command, not merely text on stderr.
+  let (lrc, _, lerr) ← e.cli #["set", "ag", "=value"]
+  f :=
+    f +
+      (←
+        expect (lrc == 1 && has lerr "empty label key")
+            "a rejected label exits 1 with the daemon's reason")
+  -- A malformed daemon response must also fail. The fake server is this e2e
+  -- binary in a child mode, so the wire bytes and maxPayload come from Core.
+  let badPath := s!"{e.dir}/malformed.sock"
+  let badReady := s!"{e.dir}/malformed.ready"
+  let self ← IO.appPath
+  let badServer ←
+    IO.Process.spawn
+        { cmd := self.toString, args := #["--malformed-server", badPath, badReady],
+          stdout := .null, stderr := .piped }
+  unless (← waitFor 5000 (System.FilePath.pathExists badReady)) do
+    throw (IO.userError "malformed-frame server did not become ready")
+  let (mrc, _, merr) ← e.cli #["set", "malformed", "k=v"]
+  let serverRc ← badServer.wait
+  f :=
+    f +
+      (←
+        expect (serverRc == 0 && mrc == 1 && has merr "invalid response")
+            "a malformed daemon response exits 1")
   -- ── Step 2: capture ───────────────────────────────────────────────────────
   let _ ← e.cli #["run", "ag", "echo", "CAPTURED-MARKER"]
   IO.sleep 1200
@@ -216,6 +273,32 @@ def run : IO UInt32 := do
             "send - carries ^C (the foreground child died, the shell came back)")
   f := f + (← expect ((← sendStdin e "ag" "") == 0) "send - with empty stdin exits 0")
   f := f + (← expect ((← sendStdin e "nosuch" "x") == 1) "send - on a missing session exits 1")
+  -- Keep stdin open and idle, then crash the daemon. The sender must observe the
+  -- socket, not wait forever for producer EOF.
+  let _ ← e.cli #["run", "send-lost", "sleep", "600"]
+  IO.sleep 800
+  let sender0 ←
+    IO.Process.spawn
+        { cmd := e.bin, args := #["send", "send-lost", "-"], env := e.procEnv,
+          stdin := .piped, stdout := .null, stderr := .piped }
+  let (senderIn, sender) ← sender0.takeStdin
+  IO.sleep 400
+  unless (← e.crashDaemon "send-lost") do
+    throw (IO.userError "send-lost daemon did not crash")
+  let senderCode ← waitProcess sender 3000
+  try
+    senderIn.flush
+  catch _ =>
+    pure ()
+  if senderCode.isNone then
+    sender.kill
+    let _ ← sender.wait
+  let senderErr ← sender.stderr.readToEnd
+  f :=
+    f +
+      (←
+        expect (senderCode == some 1 && has senderErr "connection lost")
+            "send - exits 1 when the daemon dies while stdin is idle")
   e.killAll #["ag"]
   -- ── Step 4: resize ────────────────────────────────────────────────────────
   let _ ← e.cli #["run", "rz", "true"]

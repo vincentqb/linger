@@ -176,6 +176,39 @@ def run : IO UInt32 := do
       (←
         expect (rc == 7 && took ≥ 200)
             s!"wait blocks until exit and returns status (rc={rc}, took={took}ms)")
+  -- A transport loss is neither a detach nor a successful wait.
+  let lost ← e.spawn #["attach", "attach-lost"] cols rows
+  IO.sleep 800
+  let _ ← drain lost.fd 300
+  unless (← e.crashDaemon "attach-lost") do
+    throw (IO.userError "attach-lost daemon did not crash")
+  let lostOut ← drainStr lost.fd 2000
+  let lostCode ← lost.reap 3000
+  f :=
+    f +
+      (←
+        expect (lostCode == 1 && has lostOut "connection lost")
+            "attach exits 1 when its daemon disappears")
+  lost.bye (sendDetach := false)
+  let _ ← e.cli #["run", "wait-lost", "sleep", "600"]
+  IO.sleep 800
+  let waiter ←
+    IO.Process.spawn
+        { cmd := e.bin, args := #["wait", "wait-lost"], env := e.procEnv,
+          stdout := .null, stderr := .piped }
+  IO.sleep 800
+  unless (← e.crashDaemon "wait-lost") do
+    throw (IO.userError "wait-lost daemon did not crash")
+  let waitCode ← waitProcess waiter 3000
+  if waitCode.isNone then
+    waiter.kill
+    let _ ← waiter.wait
+  let waitErr ← waiter.stderr.readToEnd
+  f :=
+    f +
+      (←
+        expect (waitCode == some 1 && has waitErr "connection lost")
+            "wait exits 1 when the daemon disappears")
   -- 8. bare `attach` (no name) attaches the default session `Cli.defaultName`
   let m ← e.spawn #["attach"] cols rows
   IO.sleep 800
@@ -227,6 +260,34 @@ def run : IO UInt32 := do
             "detach leads with ST (a program that died mid-OSC/DCS would eat the rest)")
   h.bye (sendDetach := false)
   e.killAll #["hyg"]
+  -- If the hand-back write fails, termios restoration must still run. Command-local
+  -- stdout closure leaves the shell's stdin attached to the pty and makes the
+  -- first cleanup action fail deterministically.
+  let _ ← e.cli #["run", "raw-cleanup", "sleep", "600"]
+  IO.sleep 800
+  let modesPath := s!"{e.dir}/raw-cleanup.modes"
+  let cleanupScript :=
+    s!"before=$(stty -g); {e.bin} attach raw-cleanup 1>&- 2>/dev/null || true; \
+       after=$(stty -g); printf '%s\\n%s\\n' \"$before\" \"$after\" > {modesPath}"
+  let (rawPid, rawFd) ←
+    Linger.Posix.spawnPty cols rows "" "sh" #["-c", cleanupScript] e.ptyEnv
+  let rawProbe : Client := { pid := rawPid, fd := rawFd }
+  let modesReady ← waitFor 5000 (System.FilePath.pathExists modesPath)
+  let modes ←
+    if modesReady then
+      pure ((← IO.FS.readFile modesPath).splitOn "\n")
+    else
+      pure []
+  f :=
+    f +
+      (←
+        expect
+            (match modes with
+            | before :: after :: _ => !before.isEmpty && before == after
+            | _ => false)
+            "attach restores tty mode even when leaveAnsi cannot be written")
+  rawProbe.bye (sendDetach := false)
+  e.killAll #["raw-cleanup"]
   -- 10. LINGER_NO_DETACH_KEY=1 disables the ctrl-\ detach key (README promise, and
   --     the mirror of check 2). With the env var set, ctrl-\ is ordinary input: the
   --     client stays attached and the byte reaches the session's pty.

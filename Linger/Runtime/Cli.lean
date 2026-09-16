@@ -40,7 +40,7 @@ def usage : String :=
   (no args) | ls [-r [h,..]]  List sessions; -r also lists remote hosts
                               (from --remote arg, else ~/.config/linger/remotes)
   [a]ttach [name] [command]   Attach, creating if needed (name defaults to 'main')
-  watch <name>                Attach read-only (view without touching)
+  watch <name>                Input/resize-read-only attach (marks output seen)
   [r]un <name> <command...>   Run a command in a session without attaching
   [s]end <name> <text...>     Send raw input to session pty ('linger send <name> -'
                               sends stdin verbatim: newlines, ^C, escapes...)
@@ -134,6 +134,9 @@ def cmdAttach (hooks : Hooks) (name : String) (cmd : List String) : IO UInt32 :=
       return 0
     | .refused msg =>
       IO.eprintln s!"\r\nlinger: {msg}"
+      return 1
+    | .lost why =>
+      IO.eprintln s!"\r\nlinger: {why} for '{name}'"
       return 1
 
 /-- Fetch a session's info key-values. -/
@@ -311,11 +314,27 @@ partial def parseLs : List String → Option (Bool × Option (List String))
     | [] => some (false, some [])
   | _ => none
 
-def requireLive (name : String) (m : Msg) : IO UInt32 := do
-  if ← Client.oneShot name m then
+def requestStatus (name : String) (result : Client.Drained) : IO UInt32 := do
+  match result with
+  | .done =>
     return 0
-  IO.eprintln s!"linger: no session '{name}'"
+  | .refused why =>
+    IO.eprintln s!"linger: {why}"
+  | .lost why =>
+    IO.eprintln s!"linger: {why} for '{name}'"
+  | .exited status =>
+    IO.eprintln s!"linger: session '{name}' ended before the request completed (status {status})"
+  | .silent =>
+    IO.eprintln s!"linger: no reply from '{name}'"
   return 1
+
+def requireLive (name : String) (m : Msg) : IO UInt32 := do
+  match ← Client.oneShot name m with
+  | none =>
+    IO.eprintln s!"linger: no session '{name}'"
+    return 1
+  | some result =>
+    requestStatus name result
 
 /-- Like `requireLive` but expects no reply (input/labels-fire-and-forget). -/
 def requireLiveSend (name : String) (m : Msg) : IO UInt32 := do
@@ -334,17 +353,13 @@ def requireLiveBounded (name : String) (m : Msg) : IO UInt32 := do
     IO.eprintln s!"linger: no session '{name}'"
     return 1
   | some fd =>
-    Client.sendMsg fd m
-    let r ← Client.drainBounded fd
-    close fd
-    match r with
-    | .done =>
-      return 0
-    | .refused =>
-      return 1 -- the daemon's .err text was already printed
-    | .silent =>
-      IO.eprintln s!"linger: no reply from '{name}' (daemon predates this command?)"
-      return 1
+    let r ←
+      try
+        Client.sendMsg fd m
+        Client.drainBounded fd
+      finally
+        close fd
+    requestStatus name r
 
 /-- `send <name> -`: stdin to the session's pty, byte-exact, one `.input`
 frame per read (≤ 64 KiB, so every frame is Wire-wf). The agent's raw input
@@ -360,18 +375,43 @@ def cmdSendStdin (name : String) : IO UInt32 := do
     IO.eprintln s!"linger: no session '{name}'"
     return 1
   | some fd =>
-    let mut go := true
-    while go do
-      let revs ← poll #[stdinFd] #[POLLIN] 200
-      if revs[0]! &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
-        match ← read stdinFd 65536 with
-        | none =>
-          go := false
-        | some bs =>
-          if !bs.isEmpty then
-            Client.sendMsg fd (.input bs.toList)
-    close fd
-    return 0
+    try
+      let mut dec : Linger.Core.Wire.Decoder := {}
+      let mut go := true
+      while go do
+        let revs ← poll #[stdinFd, fd] #[POLLIN, POLLIN] 200
+        if revs[1]! &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
+          match ← read fd 65536 with
+          | none =>
+            IO.eprintln s!"linger: connection lost for '{name}'"
+            return 1
+          | some bs =>
+            if !bs.isEmpty then
+              let (dec', msgs) := dec.feed bs.toList
+              dec := dec'
+              if dec.errored then
+                IO.eprintln s!"linger: invalid response from daemon for '{name}'"
+                return 1
+              for m in msgs do
+                match m with
+                | .err msg =>
+                  IO.eprintln s!"linger: {Client.replyText "request refused" msg}"
+                  return 1
+                | .exited status =>
+                  IO.eprintln s!"linger: session '{name}' ended while sending (status {status})"
+                  return 1
+                | _ =>
+                  pure ()
+        if revs[0]! &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
+          match ← read stdinFd 65536 with
+          | none =>
+            go := false
+          | some bs =>
+            if !bs.isEmpty then
+              Client.sendMsg fd (.input bs.toList)
+      return 0
+    finally
+      close fd
 
 def cmdWait (names : List String) : IO UInt32 := do
   let mut rc : UInt32 := 0
@@ -380,12 +420,25 @@ def cmdWait (names : List String) : IO UInt32 := do
     | none =>
       pure () -- no session = nothing to wait for
     | some fd =>
-      Client.sendMsg fd .wait
-      let status ← Client.drainReplies fd false
-      close fd
-      if let some s := status then
-        if s != 0 then
-          rc := s
+      let result ←
+        try
+          Client.sendMsg fd .wait
+          Client.drainReplies fd false
+        finally
+          close fd
+      match result with
+      | .exited status =>
+        if status != 0 then
+          rc := max rc status
+      | .refused why =>
+        IO.eprintln s!"linger: {why}"
+        rc := max rc 1
+      | .lost why =>
+        IO.eprintln s!"linger: {why} while waiting for '{name}'"
+        rc := max rc 1
+      | .done | .silent =>
+        IO.eprintln s!"linger: no exit status from '{name}'"
+        rc := max rc 1
   return rc
 
 def cmdGet (name : String) : IO UInt32 := do
@@ -434,12 +487,18 @@ def main (hooks : Hooks) (args : List String) : IO UInt32 := do
       return 1
     | some fd =>
       match ← Client.attach fd true with
+      | .detached =>
+        IO.eprintln s!"\r\nlinger: stopped watching '{name}'"
+        return 0
+      | .ended status =>
+        IO.eprintln s!"\r\nlinger: session '{name}' ended (status {status})"
+        return status &&& 0xFF
       | .refused msg =>
         IO.eprintln s!"\r\nlinger: {msg}"
         return 1
-      | _ =>
-        IO.eprintln s!"\r\nlinger: stopped watching '{name}'"
-        return 0
+      | .lost why =>
+        IO.eprintln s!"\r\nlinger: {why} for '{name}'"
+        return 1
   | "run" :: name :: cmd | "r" :: name :: cmd =>
     if cmd.isEmpty then
       IO.eprintln "usage: linger run <name> <command...>"

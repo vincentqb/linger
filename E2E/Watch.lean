@@ -139,6 +139,21 @@ def run : IO UInt32 := do
       (←
         expect ((← e.status "w") != Status.wantsYou)
             "watching marks the session seen (a read-only verb that writes)")
+  let _ ← e.cli #["run", "watch-lost", "sleep", "600"]
+  IO.sleep 800
+  let lost ← e.spawn #["watch", "watch-lost"] 80 24
+  IO.sleep 800
+  let _ ← drain lost.fd 300
+  unless (← e.crashDaemon "watch-lost") do
+    throw (IO.userError "watch-lost daemon did not crash")
+  let lostOut ← drainStr lost.fd 2000
+  let lostCode ← lost.reap 3000
+  f :=
+    f +
+      (←
+        expect (lostCode == 1 && has lostOut "connection lost")
+            "watch exits 1 when its daemon disappears")
+  lost.bye (sendDetach := false)
   e.killAll #["w"]
   verdict f
 

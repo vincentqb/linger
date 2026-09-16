@@ -10821,3 +10821,34 @@ Break after the final one-pass implementation: the synthetic `Probe.feed` makes
 runtime streams classified; source gates, program build, proofs, unit fixtures and
 lean-fmt check all pass. The old text scanner was deleted rather than retained beside
 the stronger oracle.
+
+
+## Step 3 notes — 2026-09-14 — honest client cleanup and outcomes
+
+Seven failure-first checks all failed against `519819e`, for the intended reasons:
+Agent: daemon `.err` printed but `set =value` exited 0; an over-cap fake frame silently
+exited 0; `send -` stayed alive while its stdin pipe was open after the daemon died.
+Attach: daemon EOF became an ordinary detach/0; wait EOF returned no status and left rc
+0; closing stdout made `leaveAnsi` throw before `termRestore`, and the shell's before/
+after `stty -g` values differed. Watch: daemon EOF matched the wildcard success arm.
+All seven passed after the implementation; no assertion or timeout was weakened.
+
+The smallest shared representation is `Client.Drained`: `done | exited status |
+refused why | lost why | silent`. The blocking and silence-bounded drain loops remain
+separate — merging them would turn policy into flags — but both return data instead of
+printing and discarding the distinction. The CLI alone maps outcomes to diagnostics and
+status. A first terminal frame wins within one decoded batch (`if !go then continue`),
+so an `.err` cannot be overwritten by a later `.done`. Daemon text goes through one
+scrubber before stderr.
+
+Attach now has its own `lost why` outcome. Its resource shape is nested deliberately:
+outer `finally` closes the daemon fd; after raw mode is acquired, inner `finally` tries
+the terminal hand-back, whose own `finally` restores termios. The broken-stdout pty test
+is the behavioral oracle for that nesting. `send -` polls `[stdinFd, fd]`, checking the
+daemon first, so an idle producer remains legitimate but a dead destination terminates.
+`wait` records loss as rc 1 while continuing to later names.
+
+The fake malformed daemon reuses the e2e binary as a child mode and builds the bad frame
+header from `Wire.maxPayload`/`writeU32`; no copied framing bytes. `waitProcess` became the
+single deadline helper for `cliTimeout` and the new spawned-process checks. Green targeted
+evidence: Agent 28/28, Attach 38/38, Watch 18/18; program and e2e builds green.

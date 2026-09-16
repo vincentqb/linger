@@ -2,7 +2,7 @@
 
 Status: active
 Updated: 2026-09-14
-Next: Step 3 — make client cleanup and outcomes honest
+Next: Step 4 — bound daemon and listing work
 Predecessor: `specs/archive/scrollback-fidelity.md` (complete)
 
 ## Goal
@@ -137,12 +137,20 @@ with that exact fully qualified name. The semantic census has 276 definitions: t
 dedup hid five declarations across `step`, `feed`, and `mendAt`. Builds, source gates,
 coverage runtime classification, and `lean-fmt check` pass with the zero-miss invariant.
 
-### Step 3 — make client cleanup and outcomes honest
+### Step 3 — make client cleanup and outcomes honest — done ✓ (2026-09-14)
 
-Write failure-first pty cases, nest attach finalizers so termios and fd cleanup always
-run, and replace Boolean/`Option` reply results with the smallest sum that distinguishes
-completion, exit, refusal, loss, and silence. Map CLI statuses accordingly; include
-rejected labels, daemon loss during attach/wait, and idle-stdin daemon loss for `send -`.
+`Client.Drained` now distinguishes completion, child exit, refusal, transport/protocol
+loss, and bounded silence; callers map only observed completion to success. Attach has
+a separate lost outcome, nested finalizers guarantee termios restoration and socket
+close even when hand-back output fails, and `send -` polls the daemon while stdin is
+idle. All daemon text is scrubbed before stderr.
+
+RED: Agent failed rejected-label, malformed-response, and idle-sender-loss checks;
+Attach failed daemon-loss, wait-loss, and broken-stdout termios checks; Watch failed
+daemon-loss — seven independent failures. GREEN: Agent 28/28, Attach 38/38, Watch
+18/18. Existing drain loops remain separate because blocking, silence-bounded, and
+interactive conversations have different termination policy; only their outcome type
+and text scrubber are shared.
 
 ### Step 4 — bound daemon and listing work
 
