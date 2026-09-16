@@ -522,9 +522,8 @@ directly; with `u8need` positive the leading ESC's `abortUtf8` makes the state
 *literally equal* to the quiesced one (it touches `u8need`/`u8acc` and nothing
 else), and the quiesced one has the same `modes`. Both branches land on `h`.
 
-This is the lemma the design review's Step-1 sketch was missing, and it delivers
-four of `scrollback_entry`'s sixteen conjuncts at once (`u8need`, `insert`,
-`wrap`, `origin`) — the fifth, `u8acc`, follows by `u8Ok_feed`. -/
+This delivers four of `scrollback_entry`'s sixteen conjuncts at once (`u8need`,
+`insert`, `wrap`, `origin`) — the fifth, `u8acc`, follows by `u8Ok_feed`. -/
 theorem mmap_of_esc_lead {f : Modes → Modes} {rest : Bytes} (h : MMap f ((0x1B : UInt8) :: rest))
     {v : Vt} (hg : v.pstate = .ground) :
     (v.feed ((0x1B : UInt8) :: rest)).pstate = .ground ∧

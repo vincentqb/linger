@@ -60,7 +60,10 @@ def usage : String :=
 Inside a session, $LINGER_SESSION holds the session name.
 Detach key: ctrl-\\ (set LINGER_NO_DETACH_KEY to disable)."
 
-/-- Step-7 seam: the daemon's checkpoint behavior. -/
+/-- The daemon's checkpoint behaviour, injected: the CLI dispatch takes save/drop/load
+as arguments so `Main` supplies the real ones and a test can supply none. Defaults are
+no-ops, which is what makes a daemon without recovery a valid configuration rather than
+a special case. -/
 structure Hooks where
   save : String → State → IO Unit := fun _ _ => pure ()
   drop : String → IO Unit := fun _ => pure ()

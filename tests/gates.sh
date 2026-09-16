@@ -593,6 +593,33 @@ done
 [ "$spec_bad" -eq 0 ] \
   || fail "a cited specs/*.md path does not exist — archiving a spec orphans its citations, so move the citations in the same commit as the file (SCRATCHPAD.md and specs/archive/ are exempt: their entries were true when written)"
 
+# The status glyphs are a user-facing contract of exactly seven characters, and README
+# is where a user reads them. They drifted silently: `Status.icon` emitted `⣀` for idle
+# while README printed `⡀` (one dot, not four), which no test could see — the suites
+# compare against `Status.icon` itself, which is right for them and blind to this.
+# So the gate is both directions: every glyph the code emits appears in README, and
+# README shows no glyph the code cannot emit. The porcelain `Status.name` strings are
+# not checked here because README does not list them; it says only that the same seven
+# states appear as a `status` field, which `icon_injective`/`name_injective` carry.
+icon_glyphs="$(code_grep "^ *[|] [.][a-zA-Z]+ => '" 'Linger/Core/Status.lean' \
+  | sed "s/.*=> '//; s/'.*//")"
+[ -n "$icon_glyphs" ] \
+  || fail "no Status.icon glyphs extracted — the pattern broke, and this gate is now passing vacuously"
+icon_n=0
+for g in $icon_glyphs; do
+  icon_n=$((icon_n + 1))
+  grep -qF -- "$g" README.md \
+    || fail "Status.icon emits '$g' but README does not show it — the glyph set is what a user reads"
+done
+[ "$icon_n" -eq 7 ] \
+  || fail "extracted $icon_n status glyphs, expected the seven §Status states (a new state lands with its README row)"
+# The reverse direction, over the one paragraph that lists them: a glyph in README that
+# `icon` cannot emit is the drift that actually happened.
+for g in $(grep -oE '`[^`]`' README.md | tr -d '`' | grep -vE '^[[:alnum:][:punct:][:space:]]$'); do
+  printf '%s\n' "$icon_glyphs" | grep -qF -- "$g" \
+    || fail "README shows glyph '$g' but Status.icon cannot emit it"
+done
+
 # E2E `partial def` ratchet: the sibling of RUNTIME_PARTIAL_CAP above, for the same
 # reason (the keyword creeps back by habit) and covering the files its glob misses.
 # All three are honest. `E2E/Harness.drain` and `LingerTest.drain` recur on a
@@ -608,4 +635,4 @@ ep_n="$(code_count 'partial def' 'E2E/*' 'LingerTest.lean')"
 [ "$ep_n" -le "$E2E_PARTIAL_CAP" ] \
   || fail "E2E/ grew to $ep_n partial defs (cap $E2E_PARTIAL_CAP); a do-block loop does not need the keyword"
 
-printf 'gates OK — purity, the OS and unsafe surfaces, the Vt friend set, the runtime ties, spec citations, the prior-art shape, and the ratchets\n'
+printf 'gates OK — purity, the OS and unsafe surfaces, the Vt friend set, the runtime ties, spec citations, the status glyphs, the prior-art shape, and the ratchets\n'

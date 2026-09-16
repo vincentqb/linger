@@ -2,7 +2,7 @@
 
 Status: active
 Updated: 2026-09-15
-Next: Step 8 — minimize and align documentation
+Next: Step 9 — final verification and review
 Predecessor: `specs/archive/scrollback-fidelity.md` (complete)
 
 ## Goal
@@ -41,9 +41,13 @@ every deletion survives the complete verifier stack.
   net simplification. The toolchain SHALL move from rc2 to stable only when the matching
   standalone `lean-fmt` tag exists; the exact-tag CI guard SHALL not be weakened.
 - **R10 — Minimal truthful docs.** README SHALL contain only installation, command
-  surface, and user-visible semantics/caveats. AGENTS SHALL contain only active state
-  and rules. THEOREMS SHALL contain only anchors, rungs, conformance assumptions, and
-  open proof boundaries. All claims and names SHALL match code/theorem types.
+  surface, user-visible semantics/caveats, and a tree-orientation table — the last
+  kept deliberately: it is the one place the pure/impure split is visible to someone
+  browsing the repo, and seven lines is cheaper than the question. AGENTS SHALL
+  contain only active state and rules. THEOREMS SHALL contain only anchors, rungs,
+  conformance assumptions, and open proof boundaries. All claims and names SHALL
+  match code/theorem types, and a claim that can be checked mechanically SHALL be
+  gated rather than reviewed.
 - **R11 — Verification.** Every step SHALL pass its targeted checks, `./lake build`,
   `./lake build Theorems Tests`, source/coverage gates, and any affected pty suites.
   The final step SHALL pass foreground `./tests/e2e.sh` warning-free.
@@ -254,13 +258,40 @@ replaces `entry.any (· == '=')`, but v4.34.0-rc2 has **no** `String.containsSub
 `Std.Iter String.Slice`, so routing `lines` through it costs a `.toList` and a
 `.map (·.toString)` — more code, not less.
 
-### Step 8 — minimize and align documentation
+### Step 8 — minimize and align documentation — done ✓ (2026-09-15)
 
-Correct theorem hypotheses/names, status glyph/remote/watch/command semantics, raw-boundary
-scope, ratchet wording, and stale comments. Reduce README/AGENTS/THEOREMS/recipes README to
+Correct theorem hypotheses/names, status glyph/remote/watch/command semantics,
+raw-boundary scope, ratchet wording, and stale comments. Reduce the four documents to
 the minimum load-bearing content; preserve the gated prior-art shape, §Reading promise,
 A5 projection names, Graphics/scrollback caveats, conformance entry 11, and open paint
 budget. Update code comments in the same change as the behavior they describe.
+
+Four claims were false, not merely stale. **The idle glyph**: `Status.icon` emits `⣀`
+and README printed `⡀` — one dot, not four — which no test could see, because the
+suites compare against `Status.icon` itself. That is now a gate in both directions
+(every emitted glyph appears in README; README shows none the code cannot emit; the
+count is seven), break-verified from each side. **The raw-boundary scope**: AGENTS
+said only `Linger/Posix.lean` and `c/shim.c` "touch the OS", which is not what is
+gated or true — the runtime reaches the OS through Lean core's `IO` throughout; what
+is gated is that every `@[extern]` lives in `Linger/Posix.lean`. **A theorem that does
+not exist**: `Theorems/Render/Scrollback.lean` called the whole-stream byte bound "a
+Step-5 theorem", but `scrollbackAnsi_le` was the optional last step of
+`specs/archive/scrollback-fidelity.md` and the spec was archived without it; THEOREMS
+already said fixture-carried. **Check-count floors**: two comments still described the
+per-suite counts as floors after step 1 made them exact.
+
+Verified rather than reviewed where possible: every theorem name cited in THEOREMS
+resolves to a declaration (0 missing of the extracted set), every recipe file the
+recipes README lists exists, every command in the README table appears in the CLI
+dispatch, and `watch`'s "marks output seen" holds through `lookSeq := s.outSeq` on
+attach. Aliases stay undocumented in README on purpose — `linger --help` carries them
+in `[a]ttach` form, and thirteen of them would cost more than they inform.
+
+Also retired three dangling "Step-N" references to archived spec numbering, now that a
+different step 7 exists, and `Cli.Hooks`' docstring says what the seam is for instead.
+R10 amended in place rather than obeyed silently: the README's layout table is not
+installation, command surface, or semantics, and it stays anyway — the requirement was
+too tight, and the reason is recorded with it.
 
 ### Step 9 — verify, review, compound
 

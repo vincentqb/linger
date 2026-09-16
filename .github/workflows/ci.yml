@@ -44,7 +44,7 @@ jobs:
       # The fastest possible failure for a `sorry`, a raised ratchet, or a stray .py.
       # pre-commit runs this same script again later; that is deliberate duplication of
       # a millisecond check, so the cheap signal does not wait on the expensive setup.
-      - name: source-tree gates (purity, the OS + unsafe surfaces, the Vt friend set, the runtime ties, spec citations, every ratchet)
+      - name: source-tree gates (purity, the OS + unsafe surfaces, the Vt friend set, the runtime ties, spec citations, the status glyphs, the ratchets)
         run: sh tests/gates.sh
 
       # WHY `./lake` AND NOT BARE `lake`, ON A RUNNER THE WRAPPER WAS NOT WRITTEN
@@ -132,8 +132,26 @@ jobs:
       # The tag must equal lean-toolchain: lean-fmt ships one release per toolchain.
       # Read it rather than hardcoding it, so a future bump fails loudly at the clone
       # instead of building a mismatched formatter.
+      # `~/.local/bin/lean-fmt` cached, keyed on lean-toolchain: lean-fmt ships one
+      # release per toolchain, so the toolchain string identifies the binary exactly.
+      # Without this, every run did `make -C /tmp/lean-fmt install` — a full Lake build
+      # of the formatter, which is most of why this job ranges 10-20 min. Restoring a
+      # binary cannot weaken a check: it is the same tag the clone below would fetch,
+      # and the `--version` assertion still runs.
+      - name: cache lean-fmt (one release per toolchain)
+        id: fmt-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/bin/lean-fmt
+          key: lean-fmt-${{ runner.os }}-${{ hashFiles('lean-toolchain') }}
+
       - name: install lean-fmt (standalone, tag == lean-toolchain)
         run: |
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          if [ -x "$HOME/.local/bin/lean-fmt" ]; then
+            "$HOME/.local/bin/lean-fmt" --version
+            exit 0
+          fi
           # The tag is the toolchain string after the `leanprover/lean4:` prefix, and
           # it ALREADY carries the leading `v` — lean-toolchain reads
           # `leanprover/lean4:v4.34.0-rc2`. Prefixing another `v` here asked for
@@ -150,7 +168,6 @@ jobs:
             || { echo "::error::lean-fmt has no tag $tag; it ships one release per toolchain, so a bump needs a matching lean-fmt release"; exit 1; }
           make -C /tmp/lean-fmt install
           # PREFIX defaults to $HOME/.local, which is not on a runner's PATH.
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           "$HOME/.local/bin/lean-fmt" --version
 
       - name: pre-commit (hygiene, source-tree gates, lean-fmt check)

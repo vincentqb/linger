@@ -311,7 +311,7 @@ def run : IO UInt32 := do
               s!"stable child terminal profile with {clients} client(s)")
     if clients != 0 then
       -- nested a level deeper on purpose: with nobody attached there is no client
-      -- stream to make a claim about. `tests/e2e.sh`'s check-count floor is what
+      -- stream to make a claim about. `tests/e2e.sh`'s exact check count is what
       -- stops this arm silently going empty and still printing `FAILURES: 0`.
       let outs := data.clientOut
       f :=

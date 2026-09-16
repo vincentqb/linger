@@ -1,7 +1,6 @@
 # Recipes
 
-`linger` never drives fzf, your terminal, or your transport; these
-one-file recipes do the composing. Fish autoloads one function per file:
+Fish autoloads one function per file:
 
 ```fish
 cp recipes/lz*.fish ~/.config/fish/functions/

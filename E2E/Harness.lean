@@ -28,7 +28,8 @@ worth doing at all.
 OUTPUT CONTRACT — load-bearing, do not reformat. Every check prints `PASS <name>`
 or `FAIL <name>`, and each suite ends with `FAILURES: <n>`. `tests/e2e.sh` reads
 both: the last line for the verdict, and the count of `PASS `/`FAIL ` lines
-against a per-suite floor, so a suite that stops checking fails the gate. -/
+against an exact per-suite count, so a suite that stops checking fails the gate
+and so does one that quietly grows — either way it is a reviewable edit. -/
 
 namespace E2E.Harness
 

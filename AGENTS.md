@@ -77,18 +77,24 @@ git history); re-opening one needs a new reason.
 one out (copies rot). Install once per clone: `uvx pre-commit install`;
 commit time runs whitespace, YAML, the gates and `lean-fmt check` in
 seconds — nothing there compiles Lean. Everything slow (build, proofs,
-all pty suites) runs in CI as a ubuntu+macos matrix. There is
+all pty suites) runs in CI as a ubuntu+macos matrix. `tests/e2e.sh` runs
+`lean-fmt format --check` too: the layout half is CI-tier by cost, but
+CI was its only home and eight files drifted past it. There is
 deliberately no pre-push hook.
 
 ## Rules
 
 - `Linger/Core/*` is pure: no `IO`, no `partial def`, no `sorry`.
   Effects are data; the runtime executes them.
-- Only `Linger/Posix.lean` and `c/shim.c` touch the OS. Keep the shim
-  logic-free (syscall + errno only); its wrapper count is ratcheted
-  (`SHIM_CAP`), and all 22 were re-audited 2026-09-14 as not removable —
-  evidence in SCRATCHPAD.md. The shim returns `-errno`; never write
-  errno numbers in Lean.
+- Only `Linger/Posix.lean` and `c/shim.c` reach the OS *raw*: every
+  `@[extern]` lives in `Linger/Posix.lean` (gated), and the runtime
+  otherwise goes through Lean core's `IO`. Keep the shim logic-free
+  (syscall + errno only); its wrapper count is ratcheted (`SHIM_CAP`),
+  and all 22 were re-audited 2026-09-14 as not removable — evidence in
+  SCRATCHPAD.md. The shim returns `-errno`; never write errno numbers in
+  Lean, and never let a pid selector (`0`, a negative `pid_t`) reach a
+  signal — `Linger.Posix.checkPid` refuses them, and a gate covers the
+  shell.
 - Theorems resolve tensions: state the invariant in THEOREMS.md, prove
   it, then code to it. Restructure code for provability rather than
   weakening a theorem: name the stages, clamp bounds locally, prefer

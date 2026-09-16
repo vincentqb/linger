@@ -132,8 +132,8 @@ example :
   native_decide
 
 /-- One byte flipped so the record claims **zero columns** — a screen no
-`init`/`resize`/`feed` path can produce, and the state the pre-Step-2 decoder built
-without complaint. Refused. -/
+`init`/`resize`/`feed` path can produce, and the state the decoder built without
+complaint before it validated `Good`. Refused. -/
 example :
     (let c : Ckpt := { vt := Vt.init 4 2, cwd := "/tmp", labels := [("k", "v")] }
      let bytes := save c

@@ -29,8 +29,10 @@ that gap one row at a time — the emitted paint of a row from **any** incoming 
 is within its counted cost — which is what makes `sbRowCost`'s `+ 6` a claim
 rather than a convention. The whole-stream form
 `(scrollbackAnsi v).length ≤ Σ sbRowCost (sbRows v) + 2 * v.rows + 19` is a
-fixture in `Tests/Render.lean` and a Step-5 theorem; it is *sharp*, attained with
-zero slack by a ring whose rows each end in a truecolour cell. -/
+fixture in `Tests/Render.lean` and **not** a theorem: `scrollbackAnsi_le` was the
+optional last step of `specs/archive/scrollback-fidelity.md` and the spec was
+archived without it. The bound is *sharp*, attained with zero slack by a ring
+whose rows each end in a truecolour cell. -/
 
 namespace Linger.Core.Render
 

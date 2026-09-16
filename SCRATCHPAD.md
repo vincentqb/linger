@@ -11135,3 +11135,59 @@ make; and `String.split` is now pattern-based, returning
 `Std.Iter String.Slice`, so `lines` through it needs `.toList` and
 `.map (·.toString)` — strictly more code than `splitOn "\n"`. Do not re-attempt
 either.
+
+
+## Step 8 notes — 2026-09-15
+
+Documentation *alignment* was where the value was; the four documents were
+already cut to ~360 lines earlier today, and four of their claims turned out to
+be false rather than merely wordy.
+
+**The idle glyph had drifted, and nothing could see it.** `Status.icon` emits
+`⣀` (U+28C0, four dots) and README printed `⡀` (U+2840, one dot). No test could
+catch this: `E2E/Status.lean` and the listing fixtures compare against
+`Status.icon` itself, which is correct for them and structurally blind to what
+the README says. So the lesson became a gate, in both directions — every glyph
+`icon` emits must appear in README, README may show no glyph `icon` cannot emit,
+and the count must be seven. Break-verified from each side: reverting README to
+`⡀` fails it, and changing `icon` to `⢀` fails it. The reverse direction is the
+one that matters, because it is the drift that actually happened.
+
+Extraction detail worth keeping: the glyphs come out of the `icon` match arms
+with `code_grep "^ *[|] [.][a-zA-Z]+ => '"`, and the gate asserts the count is 7
+so a broken pattern reads as a failure rather than as a clean tree — the same
+vacuous-pass hazard the spec-citation gate above it guards with `[ -n … ]`.
+
+**AGENTS claimed a boundary the tree does not have.** "Only `Linger/Posix.lean`
+and `c/shim.c` touch the OS" is false: `Linger/Runtime/*` opens files, spawns
+processes and sleeps through Lean core's `IO` everywhere. What `tests/gates.sh`
+actually proves is narrower and worth stating precisely — every `@[extern]`
+declaration lives in `Linger/Posix.lean`. Fixed to say raw syscalls, not the OS.
+
+**A docstring claimed a theorem that was never written.**
+`Theorems/Render/Scrollback.lean` described the whole-stream byte bound as "a
+fixture in `Tests/Render.lean` and a Step-5 theorem". `scrollbackAnsi_le` does
+not exist — it was the optional last step of the scrollback spec, which was
+archived without it. THEOREMS.md had it right ("fixture-carried until
+`scrollbackAnsi_le`"), so the two documents disagreed and the code comment was
+the wrong one. This is the argument for THEOREMS being the single place a proof
+boundary is stated: a docstring that promises a theorem is unfalsifiable until
+someone greps for it.
+
+**Three dangling "Step-N" references.** `Cli.Hooks`' "Step-7 seam", a
+"design review's Step-1 sketch" in `Render/Modes.lean`, and a "pre-Step-2
+decoder" in `Tests/Checkpoint.lean` all pointed at numbering in archived specs —
+harmless until this spec grew its own step 7, at which point they read as
+current. Replaced with what they mean. Rule of thumb: a step number is a
+coordinate in a document that will be archived, so it does not belong in a
+docstring that will not.
+
+**What was checked mechanically rather than read.** Every theorem name cited in
+THEOREMS.md resolves to a declaration (extracted and grepped, 0 missing); every
+file the recipes README lists exists; every command in the README table appears
+in `Cli.lean`'s dispatch; `watch`'s "marks output seen" holds because attaching
+sets `lookSeq := s.outSeq`, read-only or not. Two things deliberately left
+alone: the short aliases (`[a]ttach` etc.) stay out of README because
+`linger --help` carries them, and README's layout table stays even though R10's
+own wording excludes it — the requirement was too tight, so it was amended in
+place with the reason rather than obeyed silently.

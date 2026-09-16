@@ -30,6 +30,9 @@ sh tests/gates.sh                # the fast source-tree gates (seconds)
 ./tests/e2e.sh                   # everything, in order (minutes)
 ```
 
+`LINGER_REMOTE=<host> ./lake exe e2e remote-live` exercises the remote
+path against a real second machine; opt-in, so it is not in the gate.
+
 Commit-time hygiene is `uvx pre-commit install`. `lean-fmt` is optional
 and installed standalone; `.lean-fmt.toml` records the settings.
 
@@ -83,7 +86,7 @@ controls scrubbed), so parse them positionally with `rows` from `info`.
 
 Each row in `linger ls` carries one glyph — the most specific state that
 applies — plus `+N` when N clients are attached: `⣷` working, `⣿`
-unread (output while nobody watched), `⡀` idle, `✓` exited 0, `!`
+unread (output while nobody watched), `⣀` idle, `✓` exited 0, `!`
 exited nonzero or killed, `~` resumable (checkpoint on disk), `?`
 unknown. `--porcelain` carries the same seven as a `status` field, and
 `behind` counts output events that arrived unseen. Unread means "since
