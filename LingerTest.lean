@@ -19,6 +19,21 @@ def check (name : String) (cond : Bool) : IO Nat := do
 
 def contains (haystack needle : String) : Bool := (haystack.splitOn needle).length ≥ 2
 
+def throws {α : Type} (action : IO α) : IO Bool := do
+  try
+    let _ ← action
+    return false
+  catch _ =>
+    return true
+
+/-- `action`'s answer, or `false` if asking threw — a path too long even to
+stat is not a usable path. -/
+def orFalse (action : IO Bool) : IO Bool := do
+  try
+    action
+  catch _ =>
+    return false
+
 /-- Drain a pty until EOF or deadline, via poll — the daemon's read shape. -/
 partial def drain (fd : UInt32) (deadlineMs : UInt64) (acc : ByteArray) : IO ByteArray := do
   let now ← monotonicMs
@@ -108,11 +123,100 @@ def testWinsize : IO Nat := do
   -- stty prints "rows cols"
   check "pty spawned with requested winsize" (contains (String.fromUTF8! out) "43 121")
 
+/-- The process wrappers must reject values POSIX reads as process-group or
+"any child" selectors, and a wait status must only be read for a completed
+requested child. Without this boundary, `waitpid(0, …, WNOHANG)` can report
+another child of this process group and its status is inspected uninitialized. -/
+def testProcessSelectors : IO Nat := do
+  let mut fails := 0
+  fails := fails + (← check "kill rejects pid 0" (← throws (kill 0 15)))
+  fails := fails + (← check "alive rejects pid 0" (← throws (alive 0)))
+  fails := fails + (← check "waitpidNohang rejects pid 0" (← throws (waitpidNohang 0)))
+  -- Out-of-range for `pid_t`: these become negative selectors after the cast.
+  let overflow : UInt32 := 0x80000000
+  fails := fails + (← check "kill rejects out-of-range pid" (← throws (kill overflow 15)))
+  fails := fails + (← check "alive rejects out-of-range pid" (← throws (alive overflow)))
+  -- A live child of our own is still answered normally.
+  let (pid, master) ← spawnPty 80 24 "" "sh" #["-c", "exit 3"] #[]
+  let _ ← drain master ((← monotonicMs) + 5000) .empty
+  Linger.Posix.close master
+  fails := fails + (← check "waitpidNohang reports a real child's status" ((← reap pid) == 3))
+  return fails
+
+/-- A zero-length read is not EOF: `read(fd, buf, 0)` returns 0 without testing
+for end of file, and `none` publicly means EOF. -/
+def testZeroLengthRead : IO Nat := do
+  let dir ← IO.FS.createTempDir
+  let path := s!"{dir}/t.sock"
+  let lfd ← unixListen path
+  setNonblock lfd
+  let cfd := (← unixConnect path).toUInt64.toUInt32
+  let _ ← poll #[lfd] #[POLLIN] 2000
+  let afd := (← accept lfd).toUInt64.toUInt32
+  let _ ← write cfd "ping".toUTF8 0
+  let _ ← poll #[afd] #[POLLIN] 2000
+  let fails ← check "read of 0 bytes is refused, not reported as EOF" (← throws (read afd 0))
+  Linger.Posix.close cfd
+  Linger.Posix.close afd
+  Linger.Posix.close lfd
+  IO.FS.removeDirAll dir
+  return fails
+
+/-- Child-side spawn failures must reach the parent. A missing program and a
+malformed environment entry are both setup failures the caller has to see. -/
+def testSpawnFailures : IO Nat := do
+  let mut fails := 0
+  fails :=
+    fails +
+      (←
+        check "spawnPty reports a failed exec"
+            (← throws (spawnPty 80 24 "" "linger-no-such-program-42" #[] #[])))
+  fails :=
+    fails +
+      (←
+        check "spawnPty rejects a malformed environment entry"
+            (← throws (spawnPty 80 24 "" "sh" #["-c", "exit 0"] #["NOEQUALS"])))
+  let dir ← IO.FS.createTempDir
+  fails :=
+    fails +
+      (←
+        check "spawnDetached reports a failed exec"
+            (← throws (spawnDetached "linger-no-such-program-42" #[] s!"{dir}/log")))
+  IO.FS.removeDirAll dir
+  return fails
+
+/-- `getcwdOf` feeds the checkpoint's `cwd`, which a resume hands to `chdir`, so a
+path it cannot report in full has to come back empty rather than cut: a truncated
+path names a different directory, or none. The child walks past `PATH_MAX`
+relatively, which is the only way to get a cwd longer than the buffer. -/
+def testDeepCwd : IO Nat := do
+  let seg := String.ofList (List.replicate 49 'd')
+  let dir ← IO.FS.createTempDir
+  let deep := s!"for i in $(seq 90); do mkdir -p {seg} && cd {seg} || exit 1; done; echo deep; cat"
+  let (pid, master) ← spawnPty 80 24 dir.toString "sh" #["-c", deep] #[]
+  let out ← drain master ((← monotonicMs) + 5000) .empty
+  let walked := contains (String.fromUTF8! out) "deep"
+  let cwd ← getcwdOf pid
+  kill pid 9
+  Linger.Posix.close master
+  let _ ← reap pid
+  -- `removeDirAll` builds full paths, which this tree is too deep for; `rm -r`
+  -- walks it with directory-relative openat.
+  let _ ← IO.Process.run { cmd := "rm", args := #["-r", dir.toString] }
+  let mut fails ← check "child walked past PATH_MAX" walked
+  let usable ← orFalse (if cwd == "" then pure true else System.FilePath.isDir cwd)
+  fails := fails + (← check "getcwdOf reports a usable directory or nothing" usable)
+  return fails
+
 def main : IO UInt32 := do
   let mut fails := 0
   fails := fails + (← testPtyEcho)
   fails := fails + (← testPtyEnvAndInput)
   fails := fails + (← testUnixSocket)
   fails := fails + (← testWinsize)
+  fails := fails + (← testProcessSelectors)
+  fails := fails + (← testZeroLengthRead)
+  fails := fails + (← testSpawnFailures)
+  fails := fails + (← testDeepCwd)
   IO.println (if fails == 0 then "ALL PASS" else s!"{fails} FAILURES")
   return fails.toUInt32

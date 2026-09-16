@@ -88,7 +88,7 @@ def malformedServer (socketPath readyPath : String) : IO UInt32 := do
     | some fd =>
       let tooLarge := UInt32.ofNat (Linger.Core.Wire.maxPayload + 1)
       Linger.Posix.writeAll fd
-        (ByteArray.mk ((0 : UInt8) :: Linger.Core.Wire.writeU32 tooLarge).toArray)
+          (ByteArray.mk ((0 : UInt8) :: Linger.Core.Wire.writeU32 tooLarge).toArray)
       Linger.Posix.close fd
       pure 0
   Linger.Posix.close lfd
@@ -165,8 +165,8 @@ def run : IO UInt32 := do
   let self ← IO.appPath
   let badServer ←
     IO.Process.spawn
-        { cmd := self.toString, args := #["--malformed-server", badPath, badReady],
-          stdout := .null, stderr := .piped }
+        { cmd := self.toString, args := #["--malformed-server", badPath, badReady], stdout := .null,
+          stderr := .piped }
   unless (← waitFor 5000 (System.FilePath.pathExists badReady)) do
     throw (IO.userError "malformed-frame server did not become ready")
   let (mrc, _, merr) ← e.cli #["set", "malformed", "k=v"]
@@ -279,8 +279,8 @@ def run : IO UInt32 := do
   IO.sleep 800
   let sender0 ←
     IO.Process.spawn
-        { cmd := e.bin, args := #["send", "send-lost", "-"], env := e.procEnv,
-          stdin := .piped, stdout := .null, stderr := .piped }
+        { cmd := e.bin, args := #["send", "send-lost", "-"], env := e.procEnv, stdin := .piped,
+          stdout := .null, stderr := .piped }
   let (senderIn, sender) ← sender0.takeStdin
   IO.sleep 400
   unless (← e.crashDaemon "send-lost") do

@@ -140,8 +140,7 @@ def streamInfoServer (socketPath readyPath : String) : IO UInt32 := do
   | some fd =>
     let frame :=
       ByteArray.mk
-        (Linger.Core.Wire.encode
-            (.infoReply "pid\t1\ncmd\tstreaming\n".toUTF8.toList)).toArray
+        (Linger.Core.Wire.encode (.infoReply "pid\t1\ncmd\tstreaming\n".toUTF8.toList)).toArray
     let deadline := (← Linger.Posix.monotonicMs) + 6000
     try
       while (← Linger.Posix.monotonicMs) < deadline do
@@ -369,8 +368,7 @@ def run : IO UInt32 := do
   let t0 ← Linger.Posix.monotonicMs
   let listing ←
     IO.Process.spawn
-        { cmd := e.bin, args := #["list"], env := e.procEnv,
-          stdout := .null, stderr := .null }
+        { cmd := e.bin, args := #["list"], env := e.procEnv, stdout := .null, stderr := .null }
   let listCode ← waitProcess listing 3500
   let elapsed := (← Linger.Posix.monotonicMs) - t0
   if listCode.isNone then
@@ -397,9 +395,9 @@ def run : IO UInt32 := do
     if fd ≥ 0 then
       peers := peers.push fd.toUInt64.toUInt32
   let rt : Linger.Runtime.Daemon.Rt :=
-    { st := Linger.Core.Session.State.boot (Linger.Core.Vt.Vt.init 80 24) [] [],
-      listenFd := lfd, ptyFd, childPid := sleepPid, sockPath := acceptPath,
-      saveCkpt := fun _ => pure (), dropCkpt := pure () }
+    { st := Linger.Core.Session.State.boot (Linger.Core.Vt.Vt.init 80 24) [] [], listenFd := lfd,
+      ptyFd, childPid := sleepPid, sockPath := acceptPath, saveCkpt := fun _ => pure (),
+      dropCkpt := pure () }
   let (bounded, connected) ← Linger.Runtime.Daemon.pollRound rt
   f :=
     f +
@@ -436,13 +434,12 @@ def run : IO UInt32 := do
   let q := (Linger.Core.Buf.bufEnqueue outbufCap .empty full).1
   let cutRt : Linger.Runtime.Daemon.Rt :=
     { st, listenFd := cutListen, ptyFd := cutFd, childPid := 1,
-      conns := [{ fd := cutFd, out := q }], sockPath := cutPath,
-      saveCkpt := fun _ => pure (), dropCkpt := pure () }
+      conns := [{ fd := cutFd, out := q }], sockPath := cutPath, saveCkpt := fun _ => pure (),
+      dropCkpt := pure () }
   let (cutRt', follow) ← Linger.Runtime.Daemon.runEffect cutRt (.send id .done)
   let peerEof ← Linger.Posix.read cutPeer 1
   let pumped ← Linger.Runtime.Daemon.pump cutRt' follow
-  let attached :=
-    (Linger.Core.Session.infoFields pumped.st).find? (·.1 == "clients") |>.map (·.2)
+  let attached := (Linger.Core.Session.infoFields pumped.st).find? (·.1 == "clients") |>.map (·.2)
   let closed :=
     match follow with
     | [.closed got] => got == id
@@ -451,8 +448,9 @@ def run : IO UInt32 := do
     f +
       (←
         expect
-            (Linger.Core.Buf.owedLen q == outbufCap && (cutRt'.conn? cutFd).isNone &&
-              closed && peerEof.isNone && attached == some "0")
+            (Linger.Core.Buf.owedLen q == outbufCap && (cutRt'.conn? cutFd).isNone && closed &&
+              peerEof.isNone &&
+              attached == some "0")
             "crossing outbufCap closes the peer and feeds .closed into the session")
   Linger.Posix.close cutPeer
   Linger.Posix.close cutListen

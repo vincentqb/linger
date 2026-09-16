@@ -69,8 +69,7 @@ public def dropModifiers (line : String) : String :=
   if l.startsWith "private " then (l.drop 8).toString
   else if l.startsWith "public " then (l.drop 7).toString else l
 
-public def declChar (c : Char) : Bool :=
-  identChar c || c == '.' || c == '?' || c == '!'
+public def declChar (c : Char) : Bool := identChar c || c == '.' || c == '?' || c == '!'
 
 public def declToken (afterKeyword : String) : String :=
   ((afterKeyword.dropWhile (· == ' ')).toString.takeWhile declChar).toString
@@ -107,12 +106,13 @@ meta def coreCandidates (env : Environment) (logical : Lean.Name) : Array Lean.N
   match env.find? logical with
   | some ci => if ci.isTheorem then #[] else #[logical]
   | none =>
-    env.constants.toList.filterMap (fun (n, ci) =>
-        if !ci.isTheorem && moduleUnder env `Linger.Core n &&
-            n.toString.endsWith logical.toString then
-          some n
-        else none)
-      |>.toArray
+    env.constants.toList.filterMap
+        (fun (n, ci) =>
+          if
+              !ci.isTheorem && moduleUnder env `Linger.Core n &&
+                n.toString.endsWith logical.toString then
+            some n
+          else none) |>.toArray
 
 meta def exprConsts (acc : NameHashSet) : Expr → NameHashSet
   | .bvar _ | .fvar _ | .mvar _ | .sort _ | .lit _ => acc

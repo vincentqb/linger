@@ -348,16 +348,15 @@ def run : IO UInt32 := do
   -- The original regression: an interactive fish must consume a command before
   -- any client attaches. This is required coverage, so an environment without
   -- fish fails instead of converting the missing check into a counted pass.
-  let some fish ← whichBin "fish"
-    | throw (IO.userError "fish is required for the detached-command regression")
+  let some fish ←
+    whichBin "fish" | throw (IO.userError "fish is required for the detached-command regression")
   let marker := ((System.FilePath.mk e.dir) / "fish-command-ran").toString
   let fishEnv : Array (String × Option String) :=
     #[("SHELL", some fish), ("TERM", some "inherited-fish-term")]
   let _ ← e.cliEnv fishEnv #["run", "fish-regression", "printf", "ok", ">", marker]
   f :=
     f +
-      (←
-        expect (← waitFor marker 6000) "fish regression: detached command executes before attach")
+      (← expect (← waitFor marker 6000) "fish regression: detached command executes before attach")
   let _ ← e.cliEnv fishEnv #["kill", "fish-regression"]
   verdict f
 

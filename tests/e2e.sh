@@ -106,6 +106,21 @@ say "2. source-tree gates (purity, boundaries, and the ratchets)"
 # A hook with its own copy of a cap is worse than no hook.
 sh tests/gates.sh || fail "source-tree gates"
 
+# The layout half of lean-fmt. The `pre-commit` hook runs `lean-fmt check` (the
+# linter); `format --check` re-renders every file it visits and is CI-tier by the
+# two-tier split, which is why it is here and not in the hook — but it belongs
+# SOMEWHERE local: eight files drifted past it because the only enforcement was
+# in CI, and the linter passing locally looked like the formatter passing too.
+# ~22 s warm inside a run that already costs minutes. Absent binary is a skip,
+# as in the hook: a fresh clone must still be able to run this script.
+if command -v lean-fmt > /dev/null; then
+  lean-fmt format --check > /tmp/linger-fmt.log 2>&1 \
+    || { grep 'would-format' /tmp/linger-fmt.log; fail "lean-fmt format --check (layout drift)"; }
+  printf '  layout: %s\n' "$(head -1 /tmp/linger-fmt.log)"
+else
+  say "   (lean-fmt absent; layout drift unchecked — see specs/archive/toolchain-and-fmt.md)"
+fi
+
 say "2b. semantic coverage of pure code + runtime emitter classification"
 # `Theorems.Coverage` resolves exact environment constants in theorem types;
 # E2E.Coverage handles the source-tree property of which streams runtime emits.
@@ -131,8 +146,8 @@ shim_out=/tmp/linger-shim.out
   || { tail -25 "$shim_out"; fail "lingertest"; }
 tail -1 "$shim_out" | grep -q '^ALL PASS$' || fail "lingertest"
 shim_n="$(grep -c '^PASS ' "$shim_out")"
-[ "$shim_n" -eq 12 ] \
-  || fail "lingertest ran $shim_n checks (expected exactly 12)"
+[ "$shim_n" -eq 24 ] \
+  || fail "lingertest ran $shim_n checks (expected exactly 24)"
 
 # Keep one real session in another state directory through every suite. A suite
 # may clean up its own Env, never the user's process namespace.
@@ -152,7 +167,7 @@ say "4. attach / detach / reattach / mirror / wait"
 suite attach 38
 
 say "5. reboot resume"
-suite resume 12
+suite resume 13
 
 say "6. overview listing (bare linger / ls)"
 suite overview 8

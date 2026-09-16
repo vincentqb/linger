@@ -194,8 +194,8 @@ def run : IO UInt32 := do
   IO.sleep 800
   let waiter ←
     IO.Process.spawn
-        { cmd := e.bin, args := #["wait", "wait-lost"], env := e.procEnv,
-          stdout := .null, stderr := .piped }
+        { cmd := e.bin, args := #["wait", "wait-lost"], env := e.procEnv, stdout := .null,
+          stderr := .piped }
   IO.sleep 800
   unless (← e.crashDaemon "wait-lost") do
     throw (IO.userError "wait-lost daemon did not crash")
@@ -269,8 +269,7 @@ def run : IO UInt32 := do
   let cleanupScript :=
     s!"before=$(stty -g); {e.bin} attach raw-cleanup 1>&- 2>/dev/null || true; \
        after=$(stty -g); printf '%s\\n%s\\n' \"$before\" \"$after\" > {modesPath}"
-  let (rawPid, rawFd) ←
-    Linger.Posix.spawnPty cols rows "" "sh" #["-c", cleanupScript] e.ptyEnv
+  let (rawPid, rawFd) ← Linger.Posix.spawnPty cols rows "" "sh" #["-c", cleanupScript] e.ptyEnv
   let rawProbe : Client := { pid := rawPid, fd := rawFd }
   let modesReady ← waitFor 5000 (System.FilePath.pathExists modesPath)
   let modes ←

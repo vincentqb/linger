@@ -173,9 +173,9 @@ def readInfo (fd : UInt32) : IO (List (String × String)) := do
             pure ()
   let txt := String.fromUTF8? (Linger.Core.Buf.writeFrom acc) |>.getD ""
   return txt.splitOn "\n" |>.filterMap fun line =>
-    match line.splitOn "\t" with
-    | [k, v] => some (k, v)
-    | _ => none
+      match line.splitOn "\t" with
+      | [k, v] => some (k, v)
+      | _ => none
 
 /-- Fetch a session's info. Once connected, any I/O/framing failure is an
 unanswered live row rather than a reason to unlink its path. -/

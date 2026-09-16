@@ -46,8 +46,7 @@ def run : IO UInt32 := do
   -- With every state override absent, fallback storage is still per-user.
   let uid ← Linger.Posix.getuid
   let (vrc, vout, _) ←
-    e.cliEnv
-      #[("LINGER_DIR", none), ("XDG_STATE_HOME", none), ("HOME", none)] #["version"]
+    e.cliEnv #[("LINGER_DIR", none), ("XDG_STATE_HOME", none), ("HOME", none)] #["version"]
   f :=
     f +
       (←

@@ -10924,3 +10924,84 @@ users cannot collide while hostname still prevents cross-host checkpoint sharing
 GREEN: Overview 8/8 and Resume 12/12. One save test needed a 5 s positive wait rather
 than 3 s after one loaded run delayed the detached checkpoint; it still fails immediately
 on a dead daemon and does not weaken the asserted state.
+
+
+## Step 6 notes — 2026-09-15
+
+RED came for free and cost a shell: running `lingertest` with the new
+`kill 0 15` check killed its own process group, so the harness returned exit
+-1 with no output. That is the defect the step exists to fix — POSIX reads
+`0` as "every process in my group" and a negative `pid_t` as a process group,
+and nothing between the daemon and `kill(2)` said otherwise. `Linger.Posix
+.checkPid` now rejects `0` and anything above `0x7FFFFFFF` (which casts
+negative) ahead of `kill`/`alive`/`waitpidNohang`. **Break-verify a process
+wrapper under `setsid`**, not in the agent's own group.
+
+`read` refuses `max = 0`. `read(fd, buf, 0)` returns `0` *without testing for
+end of file*, and `none` from this wrapper publicly means EOF, so a zero
+request is the one argument that can forge the sentinel.
+
+Spawn failures now reach the parent. Both `linger_spawn_pty` and
+`linger_spawn_detached` write a `struct spawn_err {stage, code}` down a
+close-on-exec pipe; a successful `execve` closes the write end, so the parent
+reads EOF and reports a pid. Before this, a missing program produced a live pid
+and a session that was already dead. `linger_spawn_pty` builds `envp` and does
+its own PATH search before the fork, because after `fork` the child may only
+call async-signal-safe functions and `execvp` reads the environment.
+
+### Two audit items closed as no-change, measured
+
+`linger_getcwd_of` needs no truncation branch on Linux. The kernel renders
+`/proc/<pid>/cwd` into a `PATH_MAX` buffer, so an over-long cwd makes
+`readlink` fail with `ENAMETOOLONG` rather than hand back a cut path — probed
+at exactly 4096 bytes (built by walking relatively, since `chdir` to such a
+path fails) and again at ~4500. Both failed the call, so the existing
+`n < 0 -> ""` already covers the whole class, and a 4095-byte target fits the
+buffer whole. `lingertest`'s `testDeepCwd` pins the property instead of the
+branch — a usable directory or nothing — and break-verifies: returning
+`/nonexistent-break-<pid>` when `readlink` fails makes it FAIL.
+
+`linger_waitpid_nohang` has no fourth outcome to report. With a constant
+`WNOHANG` and selectors rejected in Lean, the reachable errno set is
+`{EINTR, ECHILD}`, so an error return would be unreachable code. What was
+wrong was the *conflation*: a non-`ECHILD` failure answered `-1` ("still
+running"), which a caller waits on forever. It now answers `-2` ("ask
+liveness"), and `r == 0` is its own branch rather than a fall-through. Also:
+`bind`/`listen`/`execvp` capture errno before `close`/`free`, matching what
+`linger_unix_connect` already did.
+
+### The step-5 timeout raise was a wrong diagnosis
+
+The step-5 entry above says a save test "needed a 5 s positive wait rather
+than 3 s after one loaded run delayed the detached checkpoint". That was
+wrong, and raising the budget hid it: the check was flaky 1-in-5 *standalone*
+(measured, five runs), with an empty daemon log rather than a late one.
+
+The cause is in the core, and it is correct behaviour. The last-detach
+checkpoint fires only `if s.dirty` (`Session.step`, `.closed`), and a tick
+checkpoint clears `dirty`. `lastCkptMs` starts at `0` while `now` is
+CLOCK_MONOTONIC ms, so the *first* tick with `dirty` set is eligible
+immediately — it can save the shell's prompt before the test plants the bad
+tmp path, after which the detach has nothing to save and logs nothing. The
+test now types after planting the path and asserts that precondition as its
+own check (Resume 13); with the typing removed both that check and the
+save-report check fail deterministically, which is the break-verify.
+
+Lesson worth generalizing: an empty log and a late log look identical through
+a `waitFor`, and a timeout raise cannot tell them apart. Assert the
+precondition instead of widening the window.
+
+### Eight files had drifted past a gate that only ran in CI
+
+`lean-fmt format --check` (the layout half) ran nowhere but CI, while the
+`pre-commit` hook runs `lean-fmt check` (the linter). Every step in this spec
+verified with the linter, so eight files — `E2E/{Agent,Attach,Overview,
+Resume,Robust,Terminal}.lean`, `Linger/Runtime/Cli.lean`,
+`Theorems/Coverage.lean`, all touched in steps 1–5 — accumulated layout drift
+and CI's format step was red. The tree is reformatted, and `tests/e2e.sh` now
+runs `lean-fmt format --check` beside the source-tree gates: ~22 s warm inside
+a run that already costs minutes, which respects the two-tier split (the
+commit hook stays cheap) while putting the gate somewhere a local run can see
+it. Break-verified by appending a badly laid out `def` to `E2E/Status.lean`.
+A skip when the binary is absent, as in the hook, so a fresh clone can still
+run the script.

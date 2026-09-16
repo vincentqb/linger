@@ -41,7 +41,14 @@ opaque setNonblock (fd : UInt32) : IO Unit
 /-- One read. `none` = EOF (incl. pty-master EIO after the child dies);
 `some #[]` = would block; EINTR retried in C. Reads at most 64 KiB. -/
 @[extern "linger_read"]
-opaque read (fd : UInt32) (max : USize) : IO (Option ByteArray)
+private opaque readRaw (fd : UInt32) (max : USize) : IO (Option ByteArray)
+
+/-- `max = 0` is refused: `read(fd, buf, 0)` returns 0 without testing for end
+of file, and `none` here publicly means EOF. -/
+def read (fd : UInt32) (max : USize) : IO (Option ByteArray) := do
+  if max == 0 then
+    throw (IO.userError "read: max must be positive (0 cannot distinguish EOF)")
+  readRaw fd max
 
 /-- One write attempt from `off`. `≥ 0` bytes written (0 = would block);
 `-1` = peer gone (EPIPE/ECONNRESET/EIO), a normal event for a daemon. -/
@@ -78,7 +85,9 @@ def writeBuf (fd : UInt32) (b : Linger.Core.Buf.Buf) (sent : Nat) : IO Int64 :=
   write fd (Linger.Core.Buf.writeFrom b) (USize.ofNat sent)
 
 /-- poll(2). `fds` and `events` are parallel arrays; returns `revents`
-per fd (all zero on timeout or EINTR). `timeoutMs < 0` waits forever. -/
+per fd (all zero on timeout or EINTR). `timeoutMs < 0` waits forever.
+Fails if the arrays differ in length or exceed 4096 fds — the daemon polls
+one pty plus `maxClients` sockets, well under it. -/
 @[extern "linger_poll"]
 opaque poll (fds : @& Array UInt32) (events : @& Array UInt32) (timeoutMs : Int32) :
     IO (Array UInt32)
@@ -87,11 +96,17 @@ opaque poll (fds : @& Array UInt32) (events : @& Array UInt32) (timeoutMs : Int3
 private opaque spawnPtyRaw (cols rows : UInt32) (cwd : @& String) (prog : @& String)
     (args : @& Array String) (extraEnv : @& Array String) : IO UInt64
 
-/-- forkpty + execvp. `extraEnv` entries are `"K=V"`. `cwd = ""`
+/-- posix_openpt + execve. `extraEnv` entries are `"K=V"`. `cwd = ""`
 inherits; a vanished cwd falls back to `$HOME` rather than failing
-(reboot-resume may restore a deleted directory). -/
+(reboot-resume may restore a deleted directory).
+
+Setup and exec failures in the child reach us as an error rather than a live
+pid: the C side reports them over a close-on-exec pipe. -/
 def spawnPty (cols rows : UInt32) (cwd prog : String) (args : Array String)
     (extraEnv : Array String) : IO (UInt32 × UInt32) := do
+  for entry in extraEnv do
+    unless entry.any (· == '=') do
+      throw (IO.userError s!"spawnPty: environment entry '{entry}' is not K=V")
   let packed ← spawnPtyRaw cols rows cwd prog args extraEnv
   return ((packed >>> 32).toUInt32, packed.toUInt32)
 
@@ -115,7 +130,8 @@ opaque termRaw (fd : UInt32) : IO ByteArray
 opaque termRestore (fd : UInt32) (saved : @& ByteArray) : IO Unit
 
 /-- Bind + listen on a unix socket path. Caller unlinks stale paths
-first (`connect` distinguishes stale from live). -/
+first (`connect` distinguishes stale from live). Backlog 64 — well past
+`maxClients`, so a client is never refused for queue depth. -/
 @[extern "linger_unix_listen"]
 opaque unixListen (path : @& String) : IO UInt32
 
@@ -148,16 +164,35 @@ opaque exec (prog : @& String) (args : @& Array String) : IO Unit
 
 /-- kill(2); ESRCH (already gone) is not an error. -/
 @[extern "linger_kill"]
-opaque kill (pid sig : UInt32) : IO Unit
+private opaque killRaw (pid sig : UInt32) : IO Unit
 
 /-- kill(pid, 0): is the process alive (and visible to us)? -/
 @[extern "linger_alive"]
-opaque alive (pid : UInt32) : IO Bool
+private opaque aliveRaw (pid : UInt32) : IO Bool
 
 /-- WNOHANG waitpid. `-1` running; `-2` not our child (use `alive`);
 `≥ 0` exit status (128+sig if signalled), zombie reaped. -/
 @[extern "linger_waitpid_nohang"]
-opaque waitpidNohang (pid : UInt32) : IO Int64
+private opaque waitpidNohangRaw (pid : UInt32) : IO Int64
+
+/-- POSIX reads `0` as "every process in my group" and a negative `pid_t` as a
+process group, so the process wrappers below accept only a real pid. An
+out-of-range `UInt32` becomes negative in the C cast, which is the same hazard. -/
+def checkPid (what : String) (pid : UInt32) : IO Unit := do
+  if pid == 0 || pid > 0x7FFFFFFF then
+    throw (IO.userError s!"{what}: {pid} is not a process id (0 and negative values are selectors)")
+
+def kill (pid sig : UInt32) : IO Unit := do
+  checkPid "kill" pid
+  killRaw pid sig
+
+def alive (pid : UInt32) : IO Bool := do
+  checkPid "alive" pid
+  aliveRaw pid
+
+def waitpidNohang (pid : UInt32) : IO Int64 := do
+  checkPid "waitpidNohang" pid
+  waitpidNohangRaw pid
 
 @[extern "linger_getuid"]
 opaque getuid : IO UInt32

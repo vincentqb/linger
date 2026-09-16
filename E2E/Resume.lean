@@ -193,11 +193,26 @@ def run : IO UInt32 := do
   let _ ← drain saveFail.fd 300
   let saveTmp := s!"{e.dir}/save-fail.ckpt.tmp"
   IO.FS.createDirAll saveTmp
+  -- Produce output *after* the bad tmp path exists. The last-detach save fires
+  -- only when there is something new to save, and the daemon's first tick is
+  -- eligible immediately (`lastCkptMs` starts at 0), so it can checkpoint the
+  -- shell's prompt — clearing `dirty` — before this point in the test. Asserted
+  -- rather than slept on: a silent miss here used to look like a save-report bug.
+  saveFail.type "echo save-fail-dirty\n"
+  let seen ← IO.mkRef ""
+  let dirtied ←
+    waitFor 3000 do
+        let chunk ← drainStr saveFail.fd 200
+        seen.modify (· ++ chunk)
+        return has (← seen.get) "save-fail-dirty"
+  f := f + (← expect dirtied "session has unsaved output once the bad tmp path exists")
   saveFail.detach
   IO.sleep 800
   saveFail.bye (sendDetach := false)
   let saveReported ←
-    waitFor 5000 (do return has (← daemonLog e "save-fail") "checkpoint save failed")
+    waitFor 5000
+        (do
+          return has (← daemonLog e "save-fail") "checkpoint save failed")
   let saveLog ← daemonLog e "save-fail"
   let savePid ← e.info "save-fail" "pid"
   f :=
@@ -235,7 +250,9 @@ def run : IO UInt32 := do
   IO.FS.createDirAll dropPath
   let _ ← e.cli #["kill", "drop-fail"]
   let dropReported ←
-    waitFor 3000 (do return has (← daemonLog e "drop-fail") "checkpoint delete failed")
+    waitFor 3000
+        (do
+          return has (← daemonLog e "drop-fail") "checkpoint delete failed")
   f :=
     f +
       (←

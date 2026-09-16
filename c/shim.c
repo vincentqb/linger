@@ -38,19 +38,57 @@ _Static_assert(POLLERR == 0x008, "POLLERR");
 _Static_assert(POLLHUP == 0x010, "POLLHUP");
 _Static_assert(POLLNVAL == 0x020, "POLLNVAL");
 
-static lean_obj_res io_err(const char *what) {
+static lean_obj_res io_err_code(const char *what, int code) {
     char buf[256];
-    snprintf(buf, sizeof buf, "%s: %s (errno %d)", what, strerror(errno), errno);
+    snprintf(buf, sizeof buf, "%s: %s (errno %d)", what, strerror(code), code);
     return lean_io_result_mk_error(lean_mk_io_user_error(lean_mk_string(buf)));
+}
+
+static lean_obj_res io_err(const char *what) { return io_err_code(what, errno); }
+
+static lean_obj_res io_msg(const char *msg) {
+    return lean_io_result_mk_error(lean_mk_io_user_error(lean_mk_string(msg)));
 }
 
 static lean_obj_res io_ok_unit(void) { return lean_io_result_mk_ok(lean_box(0)); }
 
+/* Child-side setup/exec failure reporting. The child writes one record to a
+ * CLOEXEC pipe and _exits; a successful exec closes the pipe, so the parent
+ * reads EOF. Without this, a failed setsid/dup2/chdir/execvp is invisible: the
+ * parent holds a pid that never became the requested program. */
+struct spawn_err { char stage[24]; int code; };
+
+static void spawn_fail(int fd, const char *stage, int code) {
+    struct spawn_err rec;
+    memset(&rec, 0, sizeof rec);
+    snprintf(rec.stage, sizeof rec.stage, "%s", stage);
+    rec.code = code;
+    ssize_t n;
+    do { n = write(fd, &rec, sizeof rec); } while (n < 0 && errno == EINTR);
+    _exit(127);
+}
+
+/* 1 = the child reported a failure (record filled in); 0 = clean EOF. */
+static int spawn_report(int fd, struct spawn_err *out) {
+    size_t got = 0;
+    while (got < sizeof *out) {
+        ssize_t n = read(fd, (char *)out + got, sizeof *out - got);
+        if (n == 0) break;
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        got += (size_t)n;
+    }
+    return got == sizeof *out;
+}
+
 /* SOCK_CLOEXEC and accept4 are Linux/FreeBSD extensions; macOS has
  * neither, so there the flag goes on after the fact. The window between
  * socket()/accept() and the fcntl is only a leak if another thread forks
- * inside it, and the only fork in this project is linger_spawn, called
- * from the same single-threaded Lean runtime -- so the fallback is safe
+ * inside it, and the forks in this project are linger_spawn_pty and
+ * linger_spawn_detached, both called from the same single-threaded Lean
+ * runtime -- so the fallback is safe
  * here without being safe in general. Where the atomic form exists we
  * still take it. Not exported: no new syscall surface (SHIM_CAP). */
 #ifdef SOCK_CLOEXEC
@@ -124,6 +162,7 @@ LEAN_EXPORT lean_obj_res linger_set_nonblock(uint32_t fd, lean_obj_arg w) {
  * some bytes    = data. EINTR is retried. */
 LEAN_EXPORT lean_obj_res linger_read(uint32_t fd, size_t max, lean_obj_arg w) {
     (void)w;
+    if (max == 0) return io_msg("read: zero-length read cannot distinguish EOF");
     if (max > 65536) max = 65536;
     unsigned char buf[65536];
     ssize_t n;
@@ -234,54 +273,134 @@ LEAN_EXPORT lean_obj_res linger_spawn_pty(uint32_t cols, uint32_t rows,
 
     /* master pty, set up before fork so the slave name is known to the child */
     int master = posix_openpt(O_RDWR | O_NOCTTY);
-    if (master < 0) { free(argv); return io_err("posix_openpt"); }
+    if (master < 0) { int e = errno; free(argv); return io_err_code("posix_openpt", e); }
     if (grantpt(master) < 0 || unlockpt(master) < 0) {
-        int e = errno; close(master); free(argv); errno = e;
-        return io_err("grantpt/unlockpt");
+        int e = errno;
+        close(master); free(argv);
+        return io_err_code("grantpt/unlockpt", e);
     }
     /* ptsname's static buffer must be read before fork (async-signal-safe
      * territory after); copy it out. */
     char slavePath[128];
     const char *pn = ptsname(master);
-    if (!pn || strlen(pn) >= sizeof slavePath) {
+    if (!pn) {
+        int e = errno;
         close(master); free(argv);
-        return io_err("ptsname");
+        return io_err_code("ptsname", e);
+    }
+    if (strlen(pn) >= sizeof slavePath) {
+        close(master); free(argv);
+        return io_msg("spawn_pty: pty slave path too long");
     }
     memcpy(slavePath, pn, strlen(pn) + 1);
-    fcntl(master, F_SETFD, FD_CLOEXEC);  /* child must not inherit the master */
+    if (fcntl(master, F_SETFD, FD_CLOEXEC) < 0) { /* child must not inherit the master */
+        int e = errno;
+        close(master); free(argv);
+        return io_err_code("fcntl(master CLOEXEC)", e);
+    }
+
+    /* Pre-resolve everything the child would otherwise have to allocate for:
+     * after fork it may only call async-signal-safe operations. */
+    size_t nenv = lean_array_size(extra_env);
+    char **envp = NULL;
+    size_t envc = 0;
+    {
+        extern char **environ;
+        size_t inherited = 0;
+        while (environ[inherited]) inherited++;
+        envp = calloc(inherited + nenv + 1, sizeof(char *));
+        if (!envp) { int e = errno; close(master); free(argv); return io_err_code("calloc", e); }
+        for (size_t i = 0; i < inherited; i++) envp[envc++] = environ[i];
+        for (size_t i = 0; i < nenv; i++) {
+            char *entry = (char *)lean_string_cstr(lean_array_get_core(extra_env, i));
+            const char *eq = strchr(entry, '=');
+            if (!eq) { close(master); free(argv); free(envp); return io_msg("spawn_pty: env entry is not K=V"); }
+            size_t keylen = (size_t)(eq - entry) + 1;             /* include '=' */
+            for (size_t j = 0; j < envc; j++)
+                if (strncmp(envp[j], entry, keylen) == 0) { envp[j] = envp[--envc]; break; }
+            envp[envc++] = entry;
+        }
+        envp[envc] = NULL;
+    }
+    const char *dir = lean_string_cstr(cwd);
+    const char *home = getenv("HOME");
+
+    int errPipe[2];
+    if (pipe(errPipe) < 0) {
+        int e = errno;
+        close(master); free(argv); free(envp);
+        return io_err_code("pipe", e);
+    }
+    if (fcntl(errPipe[1], F_SETFD, FD_CLOEXEC) < 0) {
+        int e = errno;
+        close(errPipe[0]); close(errPipe[1]); close(master); free(argv); free(envp);
+        return io_err_code("fcntl(errpipe CLOEXEC)", e);
+    }
 
     pid_t pid = fork();
     if (pid < 0) {
-        int e = errno; close(master); free(argv); errno = e;
-        return io_err("fork");
+        int e = errno;
+        close(errPipe[0]); close(errPipe[1]);
+        close(master); free(argv); free(envp);
+        return io_err_code("fork", e);
     }
     if (pid == 0) { /* child: make the slave our controlling tty + stdio */
+        close(errPipe[0]);
         signal(SIGPIPE, SIG_DFL);
         signal(SIGHUP, SIG_DFL);
-        setsid();                        /* new session; drop any old ctty */
+        if (setsid() < 0) spawn_fail(errPipe[1], "setsid", errno);
         int slave = open(slavePath, O_RDWR);
-        if (slave < 0) _exit(127);
-        ioctl(slave, TIOCSCTTY, 0);      /* slave becomes the controlling tty */
-        ioctl(slave, TIOCSWINSZ, &ws);   /* forkpty sets this on the master; either works */
-        dup2(slave, 0);
-        dup2(slave, 1);
-        dup2(slave, 2);
+        if (slave < 0) spawn_fail(errPipe[1], "open(pty slave)", errno);
+        if (ioctl(slave, TIOCSCTTY, 0) < 0) spawn_fail(errPipe[1], "TIOCSCTTY", errno);
+        if (ioctl(slave, TIOCSWINSZ, &ws) < 0) spawn_fail(errPipe[1], "TIOCSWINSZ", errno);
+        if (dup2(slave, 0) < 0 || dup2(slave, 1) < 0 || dup2(slave, 2) < 0)
+            spawn_fail(errPipe[1], "dup2", errno);
         if (slave > 2) close(slave);
-        for (size_t i = 0; i < lean_array_size(extra_env); i++) {
-            /* putenv keeps the pointer; the string outlives us via exec or _exit */
-            putenv(strdup(lean_string_cstr(lean_array_get_core(extra_env, i))));
-        }
-        const char *dir = lean_string_cstr(cwd);
         if (dir[0] != '\0' && chdir(dir) != 0) {
             /* saved cwd may be gone after reboot; HOME beats dying */
-            const char *home = getenv("HOME");
-            if (home) { if (chdir(home) != 0) { /* keep inherited cwd */ } }
+            if (home && chdir(home) != 0) { /* keep inherited cwd */ }
         }
-        execvp(lean_string_cstr(prog), argv);
-        dprintf(2, "linger: exec %s: %s\r\n", lean_string_cstr(prog), strerror(errno));
-        _exit(127);
+        execve(argv[0], argv, envp);
+        if (errno == ENOEXEC || errno == EACCES || errno == ENOENT) {
+            /* PATH search, as execvp does, but with our own environment */
+            const char *path = NULL;
+            for (size_t i = 0; envp[i]; i++)
+                if (strncmp(envp[i], "PATH=", 5) == 0) { path = envp[i] + 5; break; }
+            if (!path) path = "/usr/bin:/bin";
+            if (!strchr(argv[0], '/')) {
+                char candidate[4096];
+                const char *seg = path;
+                while (*seg) {
+                    const char *end = strchr(seg, ':');
+                    size_t len = end ? (size_t)(end - seg) : strlen(seg);
+                    if (len == 0) { len = 1; seg = "."; }
+                    if (len + 1 + strlen(argv[0]) + 1 <= sizeof candidate) {
+                        memcpy(candidate, seg, len);
+                        candidate[len] = '/';
+                        memcpy(candidate + len + 1, argv[0], strlen(argv[0]) + 1);
+                        execve(candidate, argv, envp);
+                    }
+                    if (!end) break;
+                    seg = end + 1;
+                }
+            }
+        }
+        spawn_fail(errPipe[1], "execve", errno);
     }
+    close(errPipe[1]);
+    struct spawn_err rec;
+    int failed = spawn_report(errPipe[0], &rec);
+    close(errPipe[0]);
     free(argv);
+    free(envp);
+    if (failed) {
+        int status;
+        while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+        close(master);
+        char buf[128];
+        snprintf(buf, sizeof buf, "spawn_pty: %s", rec.stage);
+        return io_err_code(buf, rec.code);
+    }
     return lean_io_result_mk_ok(
         lean_box_uint64(((uint64_t)(uint32_t)pid << 32) | (uint32_t)master));
 }
@@ -362,12 +481,14 @@ LEAN_EXPORT lean_obj_res linger_unix_listen(b_lean_obj_arg path, lean_obj_arg w)
     int fd = unix_socket_cloexec();
     if (fd < 0) return io_err("socket");
     if (bind(fd, (struct sockaddr *)&sa, sizeof sa) < 0) {
+        int e = errno;
         close(fd);
-        return io_err("bind");
+        return io_err_code("bind", e);
     }
     if (listen(fd, 64) < 0) {
+        int e = errno;
         close(fd);
-        return io_err("listen");
+        return io_err_code("listen", e);
     }
     return lean_io_result_mk_ok(lean_box_uint32((uint32_t)fd));
 }
@@ -453,32 +574,53 @@ LEAN_EXPORT lean_obj_res linger_spawn_detached(b_lean_obj_arg prog, b_lean_obj_a
         argv[i + 1] = (char *)lean_string_cstr(lean_array_get_core(args, i));
     const char *logp = lean_string_cstr(log_path);
 
+    int errPipe[2];
+    if (pipe(errPipe) < 0) { int e = errno; free(argv); return io_err_code("pipe", e); }
+    if (fcntl(errPipe[1], F_SETFD, FD_CLOEXEC) < 0) {
+        int e = errno;
+        close(errPipe[0]); close(errPipe[1]); free(argv);
+        return io_err_code("fcntl(errpipe CLOEXEC)", e);
+    }
+
     pid_t pid = fork();
     if (pid < 0) {
-        free(argv);
-        return io_err("fork");
+        int e = errno;
+        close(errPipe[0]); close(errPipe[1]); free(argv);
+        return io_err_code("fork", e);
     }
     if (pid == 0) { /* child */
-        if (setsid() < 0) _exit(126);
+        close(errPipe[0]);
+        if (setsid() < 0) spawn_fail(errPipe[1], "setsid", errno);
         pid_t pid2 = fork();
-        if (pid2 != 0) _exit(pid2 < 0 ? 126 : 0);
-        /* grandchild: no ctty, own session */
-        int fd = logp[0] ? open(logp, O_WRONLY | O_CREAT | O_APPEND, 0600)
-                         : open("/dev/null", O_RDWR);
+        if (pid2 < 0) spawn_fail(errPipe[1], "fork", errno);
+        if (pid2 != 0) _exit(0);
+        /* grandchild: no ctty, own session. stdin first, so a closed fd 0
+         * cannot alias the log descriptor. */
         int devnull = open("/dev/null", O_RDONLY);
-        if (devnull >= 0) { dup2(devnull, 0); if (devnull > 0) close(devnull); }
-        if (fd >= 0) {
-            dup2(fd, 1);
-            dup2(fd, 2);
-            if (fd > 2) close(fd);
-        }
+        if (devnull < 0) spawn_fail(errPipe[1], "open(/dev/null)", errno);
+        if (dup2(devnull, 0) < 0) spawn_fail(errPipe[1], "dup2(stdin)", errno);
+        if (devnull > 0) close(devnull);
+        int fd = logp[0] ? open(logp, O_WRONLY | O_CREAT | O_APPEND, 0600)
+                         : open("/dev/null", O_WRONLY);
+        if (fd < 0) spawn_fail(errPipe[1], "open(log)", errno);
+        if (dup2(fd, 1) < 0 || dup2(fd, 2) < 0) spawn_fail(errPipe[1], "dup2(stdout)", errno);
+        if (fd > 2) close(fd);
         signal(SIGHUP, SIG_IGN);
-        execvp(lean_string_cstr(prog), argv);
-        _exit(127);
+        execvp(argv[0], argv);
+        spawn_fail(errPipe[1], "execvp", errno);
     }
-    free(argv);
+    close(errPipe[1]);
+    struct spawn_err rec;
+    int failed = spawn_report(errPipe[0], &rec);
+    close(errPipe[0]);
     int status;
     while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+    free(argv);
+    if (failed) {
+        char buf[128];
+        snprintf(buf, sizeof buf, "spawn_detached: %s", rec.stage);
+        return io_err_code(buf, rec.code);
+    }
     return io_ok_unit();
 }
 
@@ -493,8 +635,11 @@ LEAN_EXPORT lean_obj_res linger_exec(b_lean_obj_arg prog, b_lean_obj_arg args,
     for (size_t i = 0; i < nargs; i++)
         argv[i + 1] = (char *)lean_string_cstr(lean_array_get_core(args, i));
     execvp(lean_string_cstr(prog), argv);
-    free(argv);
-    return io_err("execvp");
+    {
+        int e = errno;
+        free(argv);
+        return io_err_code("execvp", e);
+    }
 }
 
 /* linger_kill : UInt32 -> UInt32 -> IO Unit  (ESRCH is not an error) */
@@ -512,21 +657,31 @@ LEAN_EXPORT lean_obj_res linger_alive(uint32_t pid, lean_obj_arg w) {
 }
 
 /* linger_waitpid_nohang : UInt32 -> IO Int64
- * -1: still running (or not our child). >=0: exit status byte
- * (128+sig if signalled), reaping the zombie. */
+ * -1: the requested child is still running. -2: not our child or already
+ * reaped (ECHILD -- the caller then asks linger_alive). >=0: exit status
+ * byte (128+sig if signalled), reaping the zombie.
+ *
+ * There is no fourth outcome to report: the only other errno waitpid can
+ * set here is EINVAL for bad options, and the options are the constant
+ * WNOHANG. Selectors (pid 0, negative pid_t) never arrive -- Linger.Posix
+ * .checkPid rejects them -- so a failure that is not ECHILD is answered
+ * -2 rather than "running", which degrades to a liveness probe instead of
+ * waiting forever on a child that cannot be reaped. */
 LEAN_EXPORT lean_obj_res linger_waitpid_nohang(uint32_t pid, lean_obj_arg w) {
     (void)w;
     int status;
     pid_t r;
     do { r = waitpid((pid_t)pid, &status, WNOHANG); }
     while (r < 0 && errno == EINTR);
-    int64_t out = -1;
-    if (r == (pid_t)pid) {
+    int64_t out;
+    if (r == 0) {
+        out = -1;
+    } else if (r == (pid_t)pid) {
         if (WIFEXITED(status)) out = WEXITSTATUS(status);
         else if (WIFSIGNALED(status)) out = 128 + WTERMSIG(status);
-        else out = -1;
-    } else if (r < 0 && errno == ECHILD) {
-        out = -2; /* not our child / already reaped: caller checks linger_alive */
+        else out = -1; /* WNOHANG without WUNTRACED: not exited, so running */
+    } else {
+        out = -2;
     }
     return lean_io_result_mk_ok(lean_box_uint64((uint64_t)out));
 }
@@ -564,6 +719,13 @@ LEAN_EXPORT lean_obj_res linger_getcwd_of(uint32_t pid, lean_obj_arg w) {
     vpi.pvi_cdir.vip_path[sizeof vpi.pvi_cdir.vip_path - 1] = '\0';
     return lean_io_result_mk_ok(lean_mk_string(vpi.pvi_cdir.vip_path));
 #else
+    /* No truncation branch, measured rather than assumed: the kernel builds
+     * this link's target in a PATH_MAX buffer, so a cwd at or past PATH_MAX
+     * makes readlink fail with ENAMETOOLONG rather than hand back a cut
+     * path -- checked at exactly 4096 bytes and at ~4500. A shorter target
+     * fits buf whole. So `n < 0 -> ""` already covers the over-long class,
+     * and lingertest's testDeepCwd pins the behaviour: a usable directory
+     * or nothing, never a path naming somewhere else. */
     char link[64], buf[4096];
     snprintf(link, sizeof link, "/proc/%u/cwd", pid);
     ssize_t n = readlink(link, buf, sizeof buf - 1);

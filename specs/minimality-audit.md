@@ -1,8 +1,8 @@
 # 2026-09-14 minimality-audit — smaller code, stronger boundaries
 
 Status: active
-Updated: 2026-09-14
-Next: Step 6 — harden and re-audit the C boundary
+Updated: 2026-09-15
+Next: Step 7 — delete and modernize
 Predecessor: `specs/archive/scrollback-fidelity.md` (complete)
 
 ## Goal
@@ -181,13 +181,45 @@ RED: Overview failed the per-user path check; Resume failed save containment, un
 state refusal, and delete reporting. GREEN: Overview 8/8, Resume 12/12. The existing corrupt
 checkpoint case still starts fresh, preserving the cache-not-contract policy.
 
-### Step 6 — harden and re-audit the C boundary
+### Step 6 — harden and re-audit the C boundary — done ✓ (2026-09-15)
 
 Reject pid selectors/range overflow, fix `waitpid(..., WNOHANG)` result handling, preserve
-errno, reject zero-byte reads, detect cwd truncation, and accurately document sentinels.
-Make detached and PTY spawn setup/exec failure observable to the parent with one shared,
-close-on-exec error mechanism; keep child-after-fork work minimal and checked. Re-run the
-exact export/caller/core-replacement audit; do not raise the shim ratchet.
+errno, reject zero-byte reads, and accurately document sentinels. Make detached and PTY
+spawn setup/exec failure observable to the parent with one shared, close-on-exec error
+mechanism; keep child-after-fork work minimal and checked. Re-run the exact
+export/caller/core-replacement audit; do not raise the shim ratchet.
+
+`Linger.Posix.checkPid` rejects `0` and values that cast to a negative `pid_t` before
+`kill`/`alive`/`waitpidNohang`; `read` refuses `max = 0`, which `read(2)` answers `0` for
+without testing for end of file — the one value that would forge this wrapper's EOF.
+`linger_spawn_pty` and `linger_spawn_detached` report child-side failure over a shared
+close-on-exec pipe, so a missing program is an error rather than a live pid and a dead
+session. `waitpid` now branches on `r == 0` explicitly and answers a non-`ECHILD` failure
+`-2` (ask liveness) rather than `-1` (still running), which cannot hang a caller.
+`bind`/`listen`/`execvp` capture errno before `close`/`free`, matching `connect`'s existing
+shape. Exports unchanged at 22; every wrapper's 2026-09-14 audit conclusion holds.
+
+Two audit items resolved as no-change, measured rather than assumed. `linger_getcwd_of`
+needs no truncation branch: the kernel builds `/proc/<pid>/cwd` in a `PATH_MAX` buffer, so
+an over-long cwd fails `readlink` with `ENAMETOOLONG` — checked at exactly 4096 bytes and
+at ~4500 — and the existing `n < 0 -> ""` already covers the class. And there is no fourth
+`waitpid` outcome to report: with a constant `WNOHANG` and selectors rejected in Lean, the
+reachable errno set is `{EINTR, ECHILD}`.
+
+RED: `lingertest` self-terminated, because `kill 0 15` reached its own process group — the
+defect, demonstrated. GREEN: 24/24, including a child that walks past `PATH_MAX` and a
+`getcwdOf` that answers with a usable directory or nothing (break-verified: returning any
+unusable non-empty path fails it).
+
+Two findings outside the C boundary, both from the same root cause — a gate that only ran
+in CI. `E2E/Resume.lean`'s save-failure check was flaky 1-in-5: the last-detach save fires
+only when the session is dirty, and the daemon's first tick is eligible immediately
+(`lastCkptMs` starts at 0), so it could checkpoint the shell's prompt before the test
+planted the bad tmp path. The test now produces output *after* planting it and asserts that
+precondition (Resume 13). And eight files had drifted past `lean-fmt format --check`, which
+ran nowhere but CI, so a locally-passing `lean-fmt check` (the linter) looked like the
+formatter passing too: the tree is reformatted and `tests/e2e.sh` now runs the layout gate
+next to the source-tree gates.
 
 ### Step 7 — delete and modernize
 
