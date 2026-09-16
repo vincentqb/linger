@@ -11191,3 +11191,71 @@ alone: the short aliases (`[a]ttach` etc.) stay out of README because
 `linger --help` carries them, and README's layout table stays even though R10's
 own wording excludes it — the requirement was too tight, so it was amended in
 place with the reason rather than obeyed silently.
+
+
+## CI cost: macOS off the per-push path — 2026-09-15
+
+The GitHub Actions quota ran out mid-afternoon. Symptom worth recognising: every
+run from 14:25 on "failed" in **4-7 seconds with no failing step** — the job
+never started. That is the spending-limit rejection, not a test failure, and
+`gh api .../jobs` shows it as a failed job with an empty `steps` array.
+
+Measured before changing anything, from this repo's own run history (per-job
+timestamps via `gh api repos/…/actions/runs/<id>/jobs`; the `/timing` endpoint
+returns `duration_ms: 0` on this plan, so it is useless here):
+
+| run | gates (ubuntu) | e2e ubuntu | e2e macOS | billed |
+|---|---|---|---|---|
+| 09-14 23:00 | 10 | 6 | 5 x 10 = 50 | 66 |
+| 09-14 18:06 | 12 | 7 | 5 x 10 = 50 | 69 |
+| 09-14 17:36 | 18 | 7 | 5 x 10 = 50 | 75 |
+| 09-14 15:54 | 20 | 7 | 7 x 10 = 70 | 97 |
+| 09-13 17:24 | 17 | 8 | 7 x 10 = 70 | 95 |
+
+GitHub bills each job's wall clock rounded UP to the minute, and a macOS minute
+at 10x a Linux one. So the wall clock was ~20 minutes and the bill ~80. 36
+commits this month x ~80 = ~2,880 against a 2,000-minute private-repo quota.
+
+**A `paths:` filter was measured first and rejected**, which is the part worth
+not re-deriving. The intuition is that macOS only matters when the platform
+surface changes, so filter on it — but 7 of 9 commits that day touched
+`Linger/Posix.lean` or `E2E/Harness.lean`, so a filter over the honest surface
+would still have run macOS seven times. Only **1 of 37 commits this month
+touched `c/shim.c`**, where the `#ifdef __APPLE__` split actually lives. Paths
+are the wrong axis for this repo's commit pattern; cadence is the right one.
+
+What changed:
+
+1. **macOS moved to a weekly cron + `v*` tags + `workflow_dispatch`.** ubuntu
+   still runs the full gate on every push. A macOS-only regression now surfaces
+   within a week or on demand rather than within a push — proportionate to
+   `c/shim.c` changing once in 37 commits.
+2. **The `gates` job compiles nothing.** It used to run
+   `./lake build Linger Theorems Tests` and cache `.lake/build`; the `e2e` job
+   then rebuilt the same thing from empty inside `tests/e2e.sh` step 1, because
+   that clean rebuild is what makes "warning-clean" mean every declaration. So
+   the compile was billed twice for one signal — and the cache key hashed every
+   `.lean` file, so any Lean commit missed it and paid a cold build there too.
+   What it uniquely bought was catching a `sorry` ~10 minutes earlier;
+   `tests/gates.sh` already greps for `sorry` in milliseconds.
+3. **`push: branches: [main]` + `tags: ['v*']`.** `on: push` with no filter plus
+   `on: pull_request` bills a same-repo PR branch twice. Zero saving today (work
+   lands on main); it closes the trap.
+4. **`lean-fmt` is cached**, keyed on `lean-toolchain`. It was rebuilt from
+   source with `make install` on every run — a full Lake build of the formatter,
+   and most of why the gates job ranged 10-20 minutes.
+
+Two things about the matrix expression, both learned the hard way in ten
+minutes. **actionlint does not check it**: a deliberately mistyped version
+(dropping `fromJSON` so the branch is a string where an array is required) was
+accepted with exit 0. And the common array-valued idiom
+`cond && fromJSON(A) || fromJSON(B)` leans on *a non-empty array being truthy*;
+the form now in the file wraps one `fromJSON` around a ternary over non-empty
+**strings**, whose truthiness is not a coercion anyone has to trust. Since no
+tool checks the shape, `tests/gates.sh` holds it: `fromJSON` present, both
+runners named, a `cron`, and `workflow_dispatch` — each break-verified. Same
+species of oracle as `SHIM_CAP`; a workflow file is a source-tree property and
+cannot be a theorem.
+
+Expected: a typical push drops from 66-97 billed minutes to roughly 5-10, and
+the weekly macOS run costs ~50-70 a month instead of ~1,800-2,500.

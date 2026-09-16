@@ -620,6 +620,25 @@ for g in $(grep -oE '`[^`]`' README.md | tr -d '`' | grep -vE '^[[:alnum:][:punc
     || fail "README shows glyph '$g' but Status.icon cannot emit it"
 done
 
+# The CI matrix. macOS came off the per-push path on 2026-09-15 for a measured
+# reason (66-97 billed minutes per push, 50-70 of them macOS at GitHub's 10x rate),
+# but the expression that does it is a `fromJSON` ternary, and actionlint does NOT
+# check it — verified by mistyping it deliberately, which actionlint accepted. Two
+# ways that goes wrong silently: someone simplifies the matrix to ubuntu only and
+# macOS is never checked again, or drops the schedule and it never runs. Neither is
+# a Lean property, so this is the same species of oracle as SHIM_CAP.
+ci_yml='.github/workflows/ci.yml'
+grep -q "fromJSON" "$ci_yml" \
+  || fail "$ci_yml: the e2e matrix no longer uses fromJSON — a plain list bills macOS on every push"
+grep -q 'ubuntu-latest' "$ci_yml" \
+  || fail "$ci_yml: no ubuntu runner in the matrix — every push must still get the full gate"
+grep -q 'macos-latest' "$ci_yml" \
+  || fail "$ci_yml: no macos runner — AGENTS.md claims the tree passes on macOS, and CI is the only thing that checks it"
+grep -qE '^ +- cron:' "$ci_yml" \
+  || fail "$ci_yml: no schedule — with macOS off the per-push path, the cron IS when macOS runs"
+grep -q 'workflow_dispatch' "$ci_yml" \
+  || fail "$ci_yml: no workflow_dispatch — a commit touching c/shim.c needs a way to ask for macOS without waiting a week"
+
 # E2E `partial def` ratchet: the sibling of RUNTIME_PARTIAL_CAP above, for the same
 # reason (the keyword creeps back by habit) and covering the files its glob misses.
 # All three are honest. `E2E/Harness.drain` and `LingerTest.drain` recur on a

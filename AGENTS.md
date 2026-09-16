@@ -76,11 +76,17 @@ git history); re-opening one needs a new reason.
 `tests/gates.sh` is the ONLY place a ratchet number lives — never copy
 one out (copies rot). Install once per clone: `uvx pre-commit install`;
 commit time runs whitespace, YAML, the gates and `lean-fmt check` in
-seconds — nothing there compiles Lean. Everything slow (build, proofs,
-all pty suites) runs in CI as a ubuntu+macos matrix. `tests/e2e.sh` runs
-`lean-fmt format --check` too: the layout half is CI-tier by cost, but
-CI was its only home and eight files drifted past it. There is
-deliberately no pre-push hook.
+seconds — nothing there compiles Lean. CI is two jobs: `gates` compiles
+nothing either (the same hooks plus `lean-fmt format --check`, the layout
+half, which lives there because CI was its only home and eight files
+drifted past it — `tests/e2e.sh` now runs it too), and `e2e` runs the
+whole gate. **macOS is not on the per-push path**: ubuntu runs every
+push, macOS on a weekly cron, a `v*` tag, or `workflow_dispatch`. That is
+a measured trade — a push billed 66-97 GitHub minutes, 50-70 of them
+macOS at its 10x rate, and 36 commits exhausted a month's quota; a
+`paths:` filter was measured first and rejected. Reach for
+`workflow_dispatch` when a commit touches `c/shim.c` or the `./lake`
+wrapper. There is deliberately no pre-push hook.
 
 ## Rules
 
