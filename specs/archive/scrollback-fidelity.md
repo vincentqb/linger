@@ -1,13 +1,22 @@
 # scrollback-fidelity — the ring reaches the terminal, and the scroll gets its positive spec
 
-Status: active
-Updated: 2026-08-18
+Status: complete — archived 2026-09-14
+Updated: 2026-09-14
 Predecessors: `specs/archive/restore-conformance.md` (complete — the screen, on both
 screens at every height), `specs/archive/ledger-cleanup.md` (complete). This opened the
 successor both parked: `restore` repainted the screen and dropped the history above
 it. **Step 1 has since closed that** — the ring is emitted and the fixtures pin it
 cell-for-cell; what Steps 2-4 add is the *proof* (`restore_sb_any`), so the field is
 still on the fixtures in `THEOREMS.md`'s A5 row.
+
+## Completion record — 2026-09-14
+
+Steps 1–4 shipped and closed the goal. Step 5 was optional and is omitted: its
+`rowAnsi_len_seed` item already landed in Step 1, the dead `Render.history` argument
+was deleted after mutation showed nothing observed it, and `scrollbackAnsi_le` remains
+an explicitly fixture-carried whole-stream bound. The optional residue does not keep a
+spec active. Baseline at closure: `./lake build` and `./lake build Theorems Tests`
+green; the full capability was already validated by the Step 1–4 completion records.
 
 ## Where this stands — read this first
 

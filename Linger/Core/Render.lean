@@ -741,7 +741,7 @@ same anti-forgery claim: a cell cannot inject a line break, and the line count
 is exactly the row count — which is what lets an agent that knows `rows` (from
 `info`) parse the screen positionally. Plain text on purpose: the receiver is
 a parser, not a terminal (colored capture is a non-goal there, and the ANSI
-ladder belongs to specs/scrollback-fidelity.md). -/
+ladder belongs to specs/archive/scrollback-fidelity.md). -/
 def screenText (v : Vt) : Bytes := v.grid.toList.flatMap (fun row => rowText row ++ [0x0A])
 
 /-- LF-terminated records, as a consumer's parser reads them — the

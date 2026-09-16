@@ -260,7 +260,7 @@ def run : IO UInt32 := do
   IO.sleep 400
   nd.bye (sendDetach := false)
   -- 11. the scrollback reaches the client's own scrollback
-  --     (specs/scrollback-fidelity.md). `restore` used to repaint the screen and
+  --     (specs/archive/scrollback-fidelity.md). `restore` used to repaint the screen and
   --     drop everything above it. It now paints the session's ring first and
   --     scrolls it off, so the reattach burst carries lines that are no longer on
   --     the screen at all — and the client's wheel-scroll, search and selection

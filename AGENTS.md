@@ -15,10 +15,11 @@ worklog), `specs/archive/` (closed build records), the comments in
 
 ## Where things stand — read this first after any compaction
 
-1. One spec is in flight: `specs/scrollback-fidelity.md` (steps 1–4
-   done; only optional step 5 remains). Read its records before touching
-   the scrollback ring. New work opens a new `specs/<slug>.md` and is
-   named here; keep the live count at one, one item in flight at a time.
+1. One spec is in flight: `specs/minimality-audit.md`. Execute its
+   steps in order; every behavioral fix starts with a failing check and
+   every deletion survives the full verifier stack. New work opens a new
+   `specs/<slug>.md` only after this one is archived; keep one item in
+   flight at a time.
 2. `SCRATCHPAD.md` — append-only worklog: proof recipes, measurements,
    break-verify records, negative results. Read before writing; append
    after; never delete prior entries.

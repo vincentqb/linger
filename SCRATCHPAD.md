@@ -10733,3 +10733,33 @@ receiver list (provenance for a tested byte order), "Reading a row" (cited by
 and `specs/archive/` were not touched: the worklog is append-only and the archives
 are closed records — they are where the removed nuance still lives, alongside git
 history.
+
+
+## Step 0 notes — 2026-09-14 — minimality/robustness audit plan
+
+Six independent read-only lanes (Lean minimality, Lean v4.34, C/Posix, proof/test,
+runtime, docs) converged into `specs/minimality-audit.md`; Pippin review copy:
+`eiuD38rreISK` / `ZfNGcUUZgyAV`. Taskei was available but searches for linger,
+Lean, Kiro, personal and open-source rooms found none, so no unrelated team room was
+written.
+
+Verified before planning: both builds green at `c42433b`; `tests/e2e.sh` carries
+unscoped `pkill -x linger`; `Client.attach` can skip `termRestore` when its preceding
+hand-back write throws; `oneShot` discards daemon refusal; the accept drain and
+`queryInfo` deadline are unbounded under continuous traffic; failed listing connects
+unlink without consulting the ownership lock; checkpoint I/O errors are conflated or
+can unwind the daemon; `waitpidNohang 0` can inspect uninitialized status and process
+wrappers admit POSIX selectors; the theorem-coverage scanner deduplicates basenames;
+and the reduced docs contain wrong theorem namespaces/hypotheses plus a wrong idle
+glyph. These are implementation items, not prose-only findings.
+
+Lean `v4.34.0` stable released today, but `lean-fmt` still has only
+`v4.34.0-rc2`; the exact-tag CI guard correctly blocks a pin-only move. Stable and rc2
+Init/Std are reported source-identical by the language lane, so modern v4.34 API cleanup
+can proceed on rc2 and the pin moves only when the formatter tag exists.
+
+Rejected rather than rediscovered: do not merge the two flush loops or the two drain
+loops (their policies differ); do not remove named proof seams, private state seals,
+`Listing.Row.broken`, the scrollback mode tail/guard/fit/reversals, either honest
+`partial` merely for style, or any C export solely to lower a count. All current C
+exports have live callers and no equivalent v4.34 API preserving the contract.
