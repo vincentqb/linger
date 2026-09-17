@@ -10,6 +10,7 @@ public import E2E.Attach
 public import E2E.Robust
 public import E2E.Remote
 public import E2E.Terminal
+public import E2E.Recipes
 public import E2E.RemoteLive
 public import E2E.Coverage
 public import E2E.Ci
@@ -30,7 +31,7 @@ def suites : List (String × IO UInt32) :=
   [("watch", E2E.Watch.run), ("status", E2E.Status.run), ("overview", E2E.Overview.run),
     ("graphics", E2E.Graphics.run), ("agent", E2E.Agent.run), ("resume", E2E.Resume.run),
     ("attach", E2E.Attach.run), ("robust", E2E.Robust.run), ("remote", E2E.Remote.run),
-    ("terminal", E2E.Terminal.run),
+    ("terminal", E2E.Terminal.run), ("recipes", E2E.Recipes.run),
     -- opt-in: needs a real reachable host, so NOT in tests/e2e.sh
     ("remote-live", E2E.RemoteLive.run),
     -- not a pty suite: semantic pure-core coverage + runtime emitter classification

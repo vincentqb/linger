@@ -15,9 +15,9 @@ worklog), `specs/archive/` (closed build records), the comments in
 
 ## Where things stand — read this first after any compaction
 
-1. No spec is in flight. The last one closed on 2026-09-15
-   (`specs/archive/minimality-audit.md`, a nine-step minimality and
-   boundary audit). New work opens a new `specs/<slug>.md`, names itself
+1. No spec is in flight. The last one closed on 2026-09-17
+   (`specs/archive/tmux-resurrect-recipe.md`, a one-step local fish
+   recipe import). New work opens a new `specs/<slug>.md`, names itself
    here, and keeps the live count at one; every behavioral fix starts
    with a failing check and every deletion survives the full verifier
    stack.

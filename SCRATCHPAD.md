@@ -11418,3 +11418,70 @@ And a method note, since it bit twice: `git show <sha> | grep "^-"` finds nothin
 when git colours its output, because the `-` is preceded by an escape sequence.
 Both of my miscounts came from that. Use `--no-color`, or count from
 `--numstat`.
+
+## Step 1 notes — 2026-09-17 (tmux-resurrect recipe)
+
+Added `recipes/lzr.fish`; the foreign parser stays outside `Linger/`. The input
+shape was checked against the save/restore scripts on 2026-09-17: a `pane` row
+has eleven tab-separated fields, with `:` sentinels on the directory and full
+command and `\ ` for a space in the directory. The recipe ignores every other
+row, maps a pane to `<session>-w<window>-p<pane>`, and restores the saved cwd by
+entering it before the existing `linger run` upsert.
+
+Policy is deliberately asymmetric. A plain import never executes saved command
+text. `--restore-processes` selects only a short fixed first-word list, but the
+complete matching line is still shell input; README tells the user to inspect the
+save. The recipe validates the whole pane set before the first linger call:
+record shape, enterable cwd, name already canonical and <=80 characters, and no
+duplicate projection. This rejects rather than trying to duplicate
+`Name.sanitize` in fish. Empty `XDG_DATA_HOME` has shell `:-` fallback semantics.
+
+Existing identity comes from one `linger ls --porcelain` snapshot, not `info`:
+that includes checkpoint-only rows and fail-closed unknown rows, so a sequential
+rerun cannot revive or replay into them. The honest limit is atomicity. The
+snapshot and `linger run` are separate; a concurrent importer or same-name
+creator can win between them because run is an upsert. Fixing that needs a generic
+create-only binary verb, which would violate this recipe-only scope. README and
+the archived requirement therefore promise sequential idempotence only.
+
+RED: with `lzr.fish` absent, all ten initial checks ran and eight failed; the two
+no-command negatives passed by absence. The first version then crashed while
+reading a side-effect file after its absence, so the oracle was made total before
+implementation. A second test error queried `cwd`; a live fixture showed the
+actual record is `start_dir`, and correcting that made the cwd checks describe
+the real interface.
+
+The final E2E recipe suite has 15 exact checks: both default save locations,
+empty-XDG fallback, escaped cwd, command-off default, pane projection, empty
+command alignment, allowlisted and denied restart, sequential live rerun,
+resumable checkpoint, full-set cwd validation, canonical names, directory search
+permission, malformed/no-pane files, and missing input. Break verification was
+one mechanism at a time: default-on restart failed 1; adding `printf` to the list
+failed 1; dropping empty command entries failed 1; disabling listing-name capture
+failed the live and resumable checks; disabling name rejection failed 1; removing
+the preflight directory entry failed 1; and accepting empty XDG failed 1. A
+suspected fish issue was false: direct `set -a ... (string sub ...)` preserves an
+empty element, and stays as the one-line implementation.
+
+Three fresh read-only reviews found the fail-open `info` probe, sanitizer/truncate
+collisions, unchecked `pushd`, external `seq`, empty-XDG drift, the non-atomic
+claim, and stale CI prose. The first five were fixed and covered; the atomic claim
+was narrowed; the CI header no longer copies a suite count and its fish setup now
+names both consumers. No runtime, core, theorem, unit-test, checkpoint, shim, or
+wire-format file changed.
+
+Validation: fish parse check, `lean-fmt check`, canonical layout, source gates,
+`./lake build`, `./lake build Theorems Tests`, and the foreground
+`./tests/e2e.sh` all pass; the whole gate reports recipe 15/15 and 11 live suites.
+The spec is archived at `specs/archive/tmux-resurrect-recipe.md`. Work stayed
+local: no Pippin, Taskei, CR, or push.
+
+
+### Step 1 final-gate correction — 2026-09-17
+
+The first final whole-gate run stopped at the source scan because the E2E fixture
+called a local variable `unsafeNameSave`; the token is banned in Lean even when it
+is only an identifier in test code. Renamed it `invalidNameSave`, reran the source
+checks, then reran the complete foreground gate: recipe 15/15 and all 11 live
+suites green. The gate caught the naming slip before commit, which is the intended
+failure mode.

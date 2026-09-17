@@ -4,7 +4,7 @@
 #                           layout half of lean-fmt. Compiles NOTHING. Blocks the
 #                           rest.
 #   e2e    (slow)           ./tests/e2e.sh, the whole gate — clean rebuild, shim
-#                           smoke tests, ten pty suites. THIS is where the slow
+#                           smoke tests, all live suites. THIS is where the slow
 #                           work lives; no local hook runs it. ubuntu on every
 #                           push; macOS on a schedule, a tag, or by hand.
 #
@@ -236,9 +236,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # E2E.Terminal carries a required interactive-fish regression. Missing the
-      # subject is a failed environment, never a counted test pass.
-      - name: install fish for the required terminal regression
+      # E2E.Terminal and E2E.Recipes require fish. Missing the subject is a
+      # failed environment, never a counted test pass.
+      - name: install fish for required e2e coverage
         run: |
           if command -v fish >/dev/null; then exit 0; fi
           if [ "$RUNNER_OS" = Linux ]; then
