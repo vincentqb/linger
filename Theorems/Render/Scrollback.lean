@@ -23,16 +23,13 @@ The receiver-state piece — `scrollback_entry`, that feeding the stage preserve
 every conjunct the screen paint needs — is in `Theorems/Render/Grid.lean` beside
 `paint_entry`, because it re-establishes exactly `paint_entry`'s outputs.
 
-**The asymmetry to keep in view.** `sbTake_budget`/`sbRows_budget` bound the
-*counted* cost `sbRowCost`, not the emitted bytes. `rowAnsi_len_le_cost` closes
-that gap one row at a time — the emitted paint of a row from **any** incoming pen
-is within its counted cost — which is what makes `sbRowCost`'s `+ 6` a claim
-rather than a convention. The whole-stream form
-`(scrollbackAnsi v).length ≤ Σ sbRowCost (sbRows v) + 2 * v.rows + 19` is a
-fixture in `Tests/Render.lean` and **not** a theorem: `scrollbackAnsi_le` was the
-optional last step of `specs/archive/scrollback-fidelity.md` and the spec was
-archived without it. The bound is *sharp*, attained with zero slack by a ring
-whose rows each end in a truecolour cell. -/
+`sbTake_budget`/`sbRows_budget` bound the *counted* cost `sbRowCost`.
+`scrollbackAnsi_le_cost` connects that cost to the complete emitted stage:
+`(scrollbackAnsi v).length ≤ Σ sbRowCost (sbRows v) + 2 * v.rows + 19`.
+It accounts for the incoming pen, row separators, screen flush, and control
+sequences. `scrollbackAnsi_le` then substitutes the budget. The bound is *sharp*:
+the fixture whose rows each end in a truecolour cell attains it with zero slack.
+This bounds the history stage; the visible screen paints remain unbudgeted. -/
 
 namespace Linger.Core.Render
 
@@ -130,6 +127,15 @@ theorem penSgr_default_len : (penSgr ({} : Pen)).length = 4 := by
     rw [digits]; simp
   simp [penSgr, sgrColorSeq, colorCodes, penAttrCodes, sgrOf, joinSemi, csiB, hd]
 
+/-- A row's cost pays for both its paint from any incoming pen and a CRLF.
+Keeping the separator credit is necessary when summing the complete stage. -/
+theorem rowAnsi_len_add_crlf_le_cost (row : Row) (p : Pen) :
+    (rowAnsi row p).1.length + 2 ≤ sbRowCost row := by
+  have h := rowAnsi_len_seed row p ({} : Pen)
+  rw [penSgr_default_len] at h
+  unfold sbRowCost
+  omega
+
 /-- **The `+ 6` made a claim.** Whatever pen is in effect when a replayed row is
 painted, its emitted bytes are within that row's counted `sbRowCost` — so the
 budget's arithmetic is about the same rows the stage emits.
@@ -139,10 +145,52 @@ The bound is tight at the row level: `penSgr {}` = 4 is attained (a blank
 the slack is not trimmable, and the remaining `+ 2` is the pushing CRLF the
 emitted paint does not contain. -/
 theorem rowAnsi_len_le_cost (row : Row) (p : Pen) : (rowAnsi row p).1.length ≤ sbRowCost row := by
-  have h := rowAnsi_len_seed row p ({} : Pen)
-  rw [penSgr_default_len] at h
-  unfold sbRowCost
+  have h := rowAnsi_len_add_crlf_le_cost row p
   omega
+
+/-- A nonempty row walk leaves the last row's CRLF credit unused. The pen is
+threaded through the same `rowsAnsi` walk as the emitter. -/
+theorem joinCRLF_rowsAnsi_len :
+    ∀ (r : Row) (rs : List Row) (p : Pen),
+      (joinCRLF (rowsAnsi (r :: rs) p)).length + 2 ≤ ((r :: rs).map sbRowCost).sum
+  | r, [], p => by simpa [rowsAnsi, joinCRLF] using rowAnsi_len_add_crlf_le_cost r p
+  | r, s :: rs, p => by
+    have hh := rowAnsi_len_add_crlf_le_cost r p
+    have ht := joinCRLF_rowsAnsi_len s rs (rowAnsi r p).2
+    change
+      ((rowAnsi r p).1 ++ [0x0D, 0x0A] ++ joinCRLF (rowsAnsi (s :: rs) (rowAnsi r p).2)).length +
+          2 ≤
+        sbRowCost r + ((s :: rs).map sbRowCost).sum
+    simp only [List.length_append, List.length_cons, List.length_nil]
+    omega
+
+/-- A nonempty grid starts in the default pen, saving four bytes of seed
+credit, and has no final CRLF, saving two more. Its seven-byte header therefore
+costs only one byte beyond the sum of row costs. -/
+theorem gridAnsi_len_le_cost (grid : Array Row) (hne : grid.toList ≠ []) :
+    (gridAnsi grid).length ≤ (grid.toList.map sbRowCost).sum + 1 := by
+  rw [gridAnsi_eq]
+  have hd : digits 0 = [0x30] := by
+    rw [digits]; simp
+  cases hrows : grid.toList with
+  | nil => exact (hne hrows).elim
+  | cons r rs =>
+    have hh : (rowAnsi r {}).1.length + 6 = sbRowCost r := rfl
+    cases rs with
+    | nil =>
+      simp only [csiNum, csiB, hd, rowsAnsi, joinCRLF, List.length_append, List.length_cons,
+        List.length_nil, List.map_cons, List.map_nil, List.sum_cons, List.sum_nil]
+      omega
+    | cons s rs =>
+      have ht := joinCRLF_rowsAnsi_len s rs (rowAnsi r {}).2
+      change
+        (csiNum 0 0x6D ++
+              (csiB ++ [0x48] ++
+                ((rowAnsi r {}).1 ++ [0x0D, 0x0A] ++
+                  joinCRLF (rowsAnsi (s :: rs) (rowAnsi r {}).2)))).length ≤
+          sbRowCost r + ((s :: rs).map sbRowCost).sum + 1
+      simp only [csiNum, csiB, hd, List.length_append, List.length_cons, List.length_nil]
+      omega
 
 /-! ## The fit — reproducible rows with no hypothesis
 
@@ -279,6 +327,37 @@ theorem sbRows_budget (v : Vt) : ((sbRows v).toList.map sbRowCost).sum ≤ sbRep
   unfold sbRows
   rw [List.toList_toArray, List.map_reverse, List.sum_reverse]
   exact sbTake_budget v.cols sbReplayBytes v.sb.toList.reverse
+
+/-- The whole history stage fits the counted rows plus the screen-height flush
+and nineteen control bytes. No well-formedness hypothesis on the source or its
+history is needed. -/
+theorem scrollbackAnsi_le_cost (v : Vt) :
+    (scrollbackAnsi v).length ≤ ((sbRows v).toList.map sbRowCost).sum + 2 * v.rows + 19 := by
+  have hd3 : digits 3 = [0x33] := by
+    rw [digits]; simp
+  have hd4 : digits 4 = [0x34] := by
+    rw [digits]; simp
+  have hd6 : digits 6 = [0x36] := by
+    rw [digits]; simp
+  have hd7 : digits 7 = [0x37] := by
+    rw [digits]; simp
+  unfold scrollbackAnsi
+  split
+  · simp [csiNum, csiPriv, csiB, modeSet, hd4, hd6, hd7]
+  · rename_i hne
+    have hg := gridAnsi_len_le_cost (sbRows v) (by simpa using hne)
+    simp only [List.length_append]
+    have hf : (List.replicate v.rows crlfB).flatten.length = 2 * v.rows := by
+      simp [crlfB, Nat.mul_comm]
+    simp only [hf, csiNum, csiPriv, csiB, modeSet, hd3, hd4, hd6, hd7, Bool.false_eq_true,
+      ↓reduceIte, List.length_append, List.length_cons, List.length_nil]
+    omega
+
+/-- The complete emitted history stage is bounded independently of ring size
+and cell contents. Screen paints in `screensAnsi` are a separate term. -/
+theorem scrollbackAnsi_le (v : Vt) : (scrollbackAnsi v).length ≤ sbReplayBytes + 2 * v.rows + 19 :=
+  Nat.le_trans (scrollbackAnsi_le_cost v)
+    (Nat.add_le_add_right (Nat.add_le_add_right (sbRows_budget v) _) _)
 
 /-- **The budget keeps a prefix, so it can never keep more rows than the ring holds.**
 

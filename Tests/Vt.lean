@@ -64,12 +64,86 @@ example : (let v := screen 10 4 "xxxx\x1b[2J\x1b[3;2Hok"
            rowStr v 0 == "" && rowStr v 2 == " ok"
              && v.cursor.y == 2 && v.cursor.x == 3) = true := by native_decide
 
+/-- VPA uses the scroll-region origin just as CUP does. The first row is `top`. -/
+example :
+    (let v := screen 10 6 "\x1b[2;5r\x1b[?6h\x1b[1d"
+     v.modes.origin && v.top == 1 && v.bot == 4 && v.cursor.y == 1) = true := by
+  native_decide
+
+/-- VPA preserves the column, clears pending wrap, defaults omitted/zero to row
+one, and clamps to the active origin's bottom. Without DECOM it uses the screen. -/
+example :
+    (let v := screen 10 6 "\x1b[2;5r\x1b[?6h0123456789"
+     let omitted := feedStr v "\x1b[d"
+      let zero := feedStr v "\x1b[0d"
+      let clamped := feedStr v "\x1b[999d"
+      let absolute := feedStr v "\x1b[?6l\x1b[4G\x1b[999d"
+      v.cursor.pending && omitted.cursor.x == 9 && omitted.cursor.y == 1 &&
+        !omitted.cursor.pending &&
+        zero.cursor == omitted.cursor &&
+        clamped.cursor.x == 9 &&
+        clamped.cursor.y == 4 &&
+        !clamped.cursor.pending &&
+        absolute.cursor.x == 3 &&
+        absolute.cursor.y == 5) =
+      true := by
+  native_decide
+
 /-- SGR survives into cells: fg color + bold recorded, reset clears. -/
 example :
           (let v := screen 10 2 "\x1b[1;31mA\x1b[0mB"
            let a := v.getCell 0 0
            let b := v.getCell 1 0
            a.pen.bold && a.pen.fg == .idx 1 && !b.pen.bold && b.pen.fg == .default) =
+      true := by
+  native_decide
+
+/-- An omitted first CUP parameter keeps its position and uses the row default. -/
+example :
+    (let v := screen 10 6 "\x1b[;5HX"
+     v.cursor.y == 0 && v.cursor.x == 5 && (v.getCell 4 0).base == 'X') = true := by
+  native_decide
+
+/-- An empty first SGR parameter resets the pen before the following color. -/
+example :
+    (let v := screen 10 2 "\x1b[1m\x1b[;31mA"
+     let a := v.getCell 0 0
+     !a.pen.bold && a.pen.fg == .idx 1) = true := by
+  native_decide
+
+/-- A trailing empty SGR parameter resets the pen too. -/
+example :
+    (let v := screen 10 2 "\x1b[31;mA"
+     (v.getCell 0 0).pen == ({} : Pen)) =
+      true := by
+  native_decide
+
+/-- Empty parameters consume slots too. Overflow ignores the whole SGR sequence;
+the next sequence starts with a fresh accumulator. -/
+example :
+    (let v := screen 10 2 "\x1b[1m\x1b[;;;;;;;;;;;;;;;;mA\x1b[;31mB"
+     let a := v.getCell 0 0
+      let b := v.getCell 1 0
+      a.pen.bold && !b.pen.bold && b.pen.fg == .idx 1) =
+      true := by
+  native_decide
+
+/-- The sixteenth field still dispatches; only a seventeenth field overflows. -/
+example :
+    (let v := screen 10 2 "\x1b[1m\x1b[;;;;;;;;;;;;;;;mA"
+     (v.getCell 0 0).pen == ({} : Pen)) =
+      true := by
+  native_decide
+
+/-- Numeric saturation is observable while collecting, before the final-byte
+dispatch discards the parser state. A separator clears the accumulated digits. -/
+example :
+    (let v := screen 10 2 "\x1b[999999999999999999999999"
+     let w := feedStr v ";"
+      match v.pstate, w.pstate with
+      | .csi s, .csi t =>
+        s.cur == 65535 && s.haveCur && t.params == #[(65535, false)] && t.cur == 0 && !t.haveCur
+      | _, _ => false) =
       true := by
   native_decide
 

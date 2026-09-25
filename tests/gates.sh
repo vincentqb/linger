@@ -502,14 +502,15 @@ hb_n="$(code_count 'set_option maxHeartbeats' 'Theorems/*')"
 # MEASUREMENT with the same expiry as `maxHeartbeats` and had no gate, so nobody
 # re-measured: of the three raises in `Theorems/Vt.lean`, TWO were stale — `8000` on
 # `uaz_stepGround` and `2000` on `stick_stepGround` both deleted with the proofs
-# untouched and the build green. The third (`4096` on `stepGround`'s `Good` proof) is
-# real: line 730 hits the recursion limit without it, and `grind` cannot retire it
-# either — measured, not assumed. The `4096` on `renderable_stepGround` went with that
-# proof's `grind` rewrite, so 3 became 1 in one round.
+# untouched and the build green. The third (`4096` on `stepGround`'s `Good` proof)
+# was real at that revision: line 730 hit the recursion limit without it.
+# The audit's explicit Good.stepGround dispatch now proves each branch under
+# the default limit. The last raise is gone. The `4096` on
+# `renderable_stepGround` went with that proof's earlier `grind` rewrite.
 # Same direction-of-travel rule as above: DOWN without discussion, up only as a signal
 # to read. A raise here means a term got deeper, which is usually a dispatch that grew
 # arms — the thing design-for-provability says to restructure rather than budget for.
-RECDEPTH_CAP=1
+RECDEPTH_CAP=0
 rd_n="$(code_count 'set_option maxRecDepth' 'Theorems/*')"
 [ "$rd_n" -le "$RECDEPTH_CAP" ] \
   || fail "maxRecDepth raises grew to $rd_n (cap $RECDEPTH_CAP); a term got deeper — read that, or re-measure and delete a stale one"

@@ -1,6 +1,7 @@
 import Tests.Buf
 import Tests.Wire
 import Tests.Vt
+import Tests.VtApi
 import Tests.Terminal
 import Tests.Render
 import Tests.Session

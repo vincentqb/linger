@@ -30,17 +30,18 @@ public section
 
 /-! # Linger.Core.Checkpoint — the reboot-resume codec
 
-Serializes the resumable part of a session — the full `Vt` (grid,
-scrollback, cursor, pen, modes, title, parser state), the labels, and
-the working directory — to bytes and back.
+Serializes the resumable part of a session — screen, scrollback,
+cursor, pen, modes, title, labels, and working directory — to bytes
+and back. The parser state is reset on load.
 
 §Restore (THEOREMS.md):
 * `read* ∘ write*` round-trips **unconditionally** — every length is
   encoded as an arbitrary-precision little-endian `Nat`, so there is
   no "fits in u32" side condition anywhere.
-* Readers are total by type: `R α = List UInt8 → Option (α × rest)` —
-  a corrupt or truncated checkpoint yields `none`, never a panic, and
-  the daemon just starts fresh.
+* Readers are total by type: `R α = List UInt8 → Option (α × rest)`.
+  Invalid encodings and shapes yield `none`; accepted records satisfy
+  the decoder's invariants. Totality does not bound allocation or
+  decoding time for arbitrary length and run-count fields.
 
 Format: `magic "LNGR" ++ version 1 ++ payload`. Bump the version on
 any layout change; old daemons refuse newer files (load = none) and
@@ -272,11 +273,10 @@ def rAlt : R (Option (Array Row × Cursor × Pen)) :=
       let (p, l) ← rPen l
       some ((rows.toArray, c, p), l))
 
-/-- The parser state is deliberately NOT persisted: a checkpoint lands
-between escape sequences almost surely, and resuming into `.ground`
-loses at most one partial sequence from a torn write. What must
-survive is what the *user sees* plus what applications *depend on*
-(modes). -/
+/-- The parser state is deliberately not persisted. A poll boundary can bisect
+an escape sequence or a UTF-8 character; loading discards that partial parser
+state while retaining the screen and modes. This is a format choice, separate
+from the runtime's atomic file replacement. -/
 def wVt (v : Vt) : List UInt8 :=
   wNat v.cols ++ wNat v.rows ++ wList wRow v.grid.toList ++ wCursor v.cursor ++ wPen v.pen ++
     wModes v.modes ++
@@ -298,9 +298,9 @@ hand the emulator `cols := 0` — a state no `Vt.init`/`resize`/`feed` path can 
 Nothing validated: `rNat` accepts whatever the file says.
 
 Every field still comes off the wire unchecked; what changed is that they are handed
-to `Vt.ofDecoded` (`Linger/Core/Vt.lean`) rather than to the constructor, and that
-returns `none` unless they describe a `Good` state. So a junk record now fails to
-parse, which `load` already means "start fresh" for.
+to `Vt.ofDecoded` (`Linger/Core/Vt.lean`) rather than to the constructor. That door
+checks geometry, both screen grids, and tab ruler length before accepting the
+state. A record that fails validation yields `none`.
 
 `Vt.ofDecoded` is `private`, reached through this module's friend import — which is
 therefore **permanent, and for reads plus that one checked door**. What must not come

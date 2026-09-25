@@ -17,11 +17,12 @@ The target theorem (specs/archive/grid-fidelity.md):
 
     (Vt.init v.cols v.rows).feed (Render.restore v) ≃ v
 
-Until the proofs land (stages 3b–3d), this suite IS the fidelity
-oracle: `replayEq` is the decidable `≃`, and every fixture exercises
-one feature a reattaching client depends on. Each was verified to FAIL
-against the pre-fix `Render.restore` (see SCRATCHPAD) — this is what
-"the emitter forgot X" looks like when it can be caught at build time.
+The grid, tab ruler, scrollback, pen, and mode proofs generalize beyond
+these fixtures. Cursor restoration still has an origin-mode qualification,
+and title and saved-state fidelity still depend on fixtures. `replayEq`
+compares the listed observations; it is not equivalence under arbitrary
+future input. The fixtures complement the proofs with concrete regressions
+and literal checks on the emitter's choices.
 -/
 
 namespace Linger.Core.Render.Tests
@@ -35,9 +36,9 @@ budget-trimmed history the emitter promises — not `v.sb`, since a
 session's ring may have wrapped and the receiver's is built from index
 zero, so the two agree as histories and differ as records), and that
 the replay ends parser-ground. Deliberately excluded: `bell` (a runtime
-signal) and every wrap-`pending` flag (cursor addressing clears it on
-any terminal — unrepresentable in a replay, harmless: the next glyph
-decides).
+signal) and every wrap-`pending` flag. Clearing a pending wrap can change where
+the next glyph is printed, so this exclusion is a limit of the oracle, not a
+claim that pending wrap is observationally irrelevant.
 
 **One honest caveat on the `sb` conjunct.** `scrollbackAnsi` emits its
 `ED 3` only when it has history to put there, so a receiver with a ring
@@ -689,11 +690,11 @@ truecolour rows is 32–46 MB at 80 columns. So the trim is what stands between 
 reattach and an attach-then-instant-drop.
 
 `sbTake_budget`/`sbRows_budget` bound the **counted** cost `sbRowCost`;
-`rowAnsi_len_le_cost` closes the row-level gap to emitted bytes. The whole-stream
-step is these fixtures and nothing else — no `scrollbackAnsi_le` exists or is
-planned, it being the optional last step of a spec archived without it: the emitted
-stage is bounded by `Σ sbRowCost (sbRows v) + 2 * v.rows + 19`, and that bound is
-**sharp** — attained with zero slack by the adversarial ring below. -/
+`scrollbackAnsi_le_cost` now proves the whole emitted stage is bounded by
+`Σ sbRowCost (sbRows v) + 2 * v.rows + 19`, and `scrollbackAnsi_le` substitutes
+`sbReplayBytes` for the sum. These fixtures additionally show the bound is
+**sharp** — attained with zero slack by the adversarial ring below. They do not
+bound the separate visible screen paints. -/
 
 def ringOf (cols rows : Nat) (mk : Nat → Row) (n : Nat) : Vt :=
   { screen cols rows "" with sb := { data := (Array.range n).map mk, start := 0 } }

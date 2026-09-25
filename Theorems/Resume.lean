@@ -17,9 +17,9 @@ program is *for*, by composing them:
 
 > Kill a session's daemon. Reboot the machine. Reattach. The bytes the
 > new client's terminal receives are derived from a checkpoint that
-> round-trips exactly, and they leave that terminal quiesced — parser in
-> `ground`, no half-decoded character — so the session's own next output
-> is interpreted correctly.
+> round-trips exactly modulo parser quiescence, and replay restores the
+> proved screen, ruler and history observations while leaving the receiver's
+> parser in `ground` with no half-decoded character.
 
 The two halves:
 
@@ -30,12 +30,11 @@ The two halves:
   parser state does not have to be assumed, which is what `restore_quiesced`
   (fresh `Vt.init` only) had to do.
 
-`resume_quiesced` is their composition, `resume_cursor` adds the cursor —
-the first *value* fidelity claim to reach the end-to-end statement — and
-what remains carried by tests rather than proof is the replayed **cells**
-equalling the saved cells (§Replay stage 3d). Keeping that gap named in
-the same file as the claim is deliberate; a reader should not have to hunt
-THEOREMS.md to learn what is not yet proved.
+`resume_grid`, `resume_tabs`, and `resume_sb` prove value fidelity.
+`resume_cursor` covers cursor position with origin mode off. Title and saved
+cursor/pen fidelity still rely on fixtures; wrap-pending flags are excluded
+from the fixture equivalence and can affect the next printed glyph. Parser
+quiescence alone does not imply equivalence under arbitrary future input.
 
 The last section is the same statement with the subject swapped: `load`'s **output**
 instead of `save`'s input, i.e. an arbitrary byte string off disk. Those three claims
@@ -116,9 +115,9 @@ theorem resume_quiesced_any (c : Ckpt) (w : Vt.Vt) (hgood : Vt.Good c.vt)
   ⟨{ c with vt := c.vt.quiesce }, Checkpoint.load_save c hgood hren htabs,
     (Render.restore_quiesced_any _ w).1, (Render.restore_quiesced_any _ w).2⟩
 
-/-- The same, in the form the runtime uses it: a *quiescent* checkpoint
-(which is what the daemon writes, being taken between poll rounds) comes
-back byte-identical, and its replay is quiesced. `hren`/`htabs`: see `resume_quiesced`. -/
+/-- A checkpoint whose parser is already quiescent comes back as the same
+record, and its replay is quiesced. A poll boundary does not itself establish
+these parser hypotheses. `hren`/`htabs`: see `resume_quiesced`. -/
 theorem resume_exact (c : Ckpt) (cols rows : Nat) (hgood : Vt.Good c.vt) (hren : Vt.Renderable c.vt)
     (htabs : Vt.TabsOk c.vt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0)
     (ha : c.vt.u8acc = 0) :
@@ -129,7 +128,7 @@ theorem resume_exact (c : Ckpt) (cols rows : Nat) (hgood : Vt.Good c.vt) (hren :
     (Render.restore_quiesced c.vt cols rows).1, (Render.restore_quiesced c.vt cols rows).2⟩
 
 /-- **§Resume (cursor).** The end-to-end cursor claim: a quiescent
-checkpoint comes back byte-identical, and replaying it into a fresh
+checkpoint comes back as the same record, and replaying it into a fresh
 emulator of the session's size puts the cursor exactly where the session
 had it. `Vt.Good` is the §Bound invariant every live session satisfies;
 `origin = false` is the documented DECOM gap (`Render.restore_cursor`).
@@ -162,7 +161,7 @@ theorem resume_cursor_any (c : Ckpt) (w : Vt.Vt) (h : c.vt.pstate = .ground) (h8
     (Render.restore_cursor_any c.vt w hgood hgw hcols hrows ho hmouse).2⟩
 
 /-- **§Resume (grid) — Definition-of-done item 5, end to end.** A quiescent checkpoint comes
-back byte-identical, and replaying it into a fresh emulator of the session's size reproduces
+back as the same record, and replaying it into a fresh emulator of the session's size reproduces
 the session's screen exactly, cell for cell — on either screen (`Render.restore_grid_any`
 dispatches on the alt flag) and for **any** height, the one-row screen included. `Good`/
 `Renderable` are the §Bound invariants every live session satisfies.
@@ -190,7 +189,7 @@ example :
   ⟨{ vt := Vt.Vt.init 80 24, cwd := "", labels := [] }, rfl, rfl, rfl, Vt.good_init 80 24,
     Vt.renderable_init 80 24, Vt.tabsOk_init 80 24⟩
 
-/-- **§Resume (tab ruler).** A quiescent checkpoint comes back byte-identical, and
+/-- **§Resume (tab ruler).** A quiescent checkpoint comes back as the same record, and
 replaying it into a fresh emulator of the session's width installs the session's tab
 ruler. `hvtabs` is the ruler-length hypothesis `Render.restore_tabs_any` explains:
 `Good`/`Renderable` do not carry it. It is no longer *unreachable* from disk, though —
@@ -217,7 +216,7 @@ example :
   (resume_grid { vt := Vt.Vt.init 80 1, cwd := "", labels := [] } rfl rfl rfl (Vt.good_init 80 1)
       (Vt.renderable_init 80 1) (Vt.tabsOk_init 80 1)).2
 
-/-- **§Resume (scrollback).** A quiescent checkpoint comes back byte-identical, and replaying it
+/-- **§Resume (scrollback).** A quiescent checkpoint comes back as the same record, and replaying it
 into a fresh emulator of the session's size installs the session's history above the screen —
 oldest first, each row at the session's width, trimmed from the oldest end to the byte budget.
 

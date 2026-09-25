@@ -21,13 +21,13 @@ Design for the theorems (see THEOREMS.md):
 
 Deliberate simplifications (restore-grade, not vt520-certified), each
 chosen because linger delegates live rendering to the real terminal:
-* no reply channel: DA/DSR/CPR queries are ignored (when a client is
-  attached the real terminal answers; detached, nobody should).
+* no reply channel in this model: `Terminal` handles the owned query
+  profile and supplies replies to the child.
 * resize truncates/pads rather than reflowing.
 * OSC 8 hyperlinks, sixel, kitty graphics: skipped as strings, not
   stored.
 * modes stored but not interpreted beyond the emulator's needs
-  (bracketed paste, mouse, kitty keyboard flags) — the runtime replays
+  (bracketed paste, mouse, focus events) — the runtime replays
   them to a re-attaching client so applications keep working.
 -/
 
@@ -248,8 +248,12 @@ structure Modes where
 
 /-- The emulator state. **The representation is sealed**: every field is
 `private`, which also makes the constructor private, so an importer can neither
-read a field nor write one nor forge a `Vt` — `Vt.init` is the one door in and
-`resize`/`step`/`feed` the only ways on. Same move as `Buf`, one layer up, and
+read a field nor write one nor forge a `Vt`. Internal mutators are private too:
+`putCell` accepts arbitrary cells, `printPut` and `printMark` expect already
+classified glyphs, and parser stages expect bounded parser states. Publishing
+those operations would let an ordinary importer bypass the invariants without
+ever naming a private field. `Vt.init` is the fresh door in; the complete
+transformer list is below. Same move as `Buf`, one layer up, and
 for the same reason: with a public constructor an importer could hold a `Vt` with
 `cols := 0`, so `Good`/`Renderable`/`LiveReachableVt` would describe a subset of
 what a client can actually have and would prove nothing about the rest. The seal
@@ -266,8 +270,8 @@ SCRATCHPAD.md.
 
 ## Every door, and why the list is prose and not a theorem
 
-`specs/archive/vt-toolkit.md` Step 3. Outside the friend set there are exactly **two** ways a
-`Vt` comes into existence and **one** family of ways it changes:
+`specs/archive/vt-toolkit.md` Step 3. The toolkit has two ways a `Vt` comes into
+existence and one public family of ways it changes:
 
 * `Vt.init` — the fresh session. `Good`, `Renderable` and `TabsOk` all hold of it
   (`Vt.good_init`, `Vt.renderable_init`, `Vt.tabsOk_init`).
@@ -276,17 +280,20 @@ SCRATCHPAD.md.
   screen, decodes to `none` (`Vt.ofDecoded_good`, `Vt.ofDecoded_renderable`,
   `Vt.ofDecoded_tabsOk`, and `Checkpoint.load_good`/`load_renderable`/`load_tabsOk` on
   the real path, for *arbitrary bytes*).
-* `Vt.resize`, `Vt.step`, `Vt.feed`, `Vt.quiesce` — the transformers, each of which
-  preserves `Good`, `Renderable`, `U8Ok` and `TabsOk`. `LiveReachableVt` is that closure
-  written as an inductive, and the four `*_of_liveReachable` lemmas are the payoff.
+* `Vt.resize`, `Vt.step`, `Vt.feed`, `Vt.feedBytes`, `Vt.quiesce` — the transformers,
+  each of which preserves `Good`, `Renderable`, `U8Ok`, `TabsOk` and `CsiOk`.
+  `LiveReachableVt` is that closure written as an inductive (`step` is a singleton
+  feed and `feedBytes` converts to a list). The `*_of_liveReachable` lemmas are
+  the payoff. `colCount`, `rowCount`, `cursorPos`, `inAlt`, `getRow` and `getCell`
+  form the public read-only surface.
 
 There is deliberately **no `Inhabited Vt`**, and its absence is part of this list rather
 than an oversight: `deriving Inhabited` produced `cols = 0, rows = 0, grid = #[]`, which
 `(default : Vt)` handed to *any* importer with no `import all` and no forge — provably not
 `Good` and provably not `LiveReachableVt`. It was a third public door, it admitted a state
 the emulator cannot reach, and the Step 1 break-verify did not think to try it. `Repr` is
-untouched; nothing in the tree needed a canonical inhabitant (two proof-scratch sites used
-`default` as an arbitrary carrier and now say `Vt.init 1 1`).
+absent too, as explained below; nothing in the tree needed a canonical inhabitant (two
+proof-scratch sites used `default` as an arbitrary carrier and now say `Vt.init 1 1`).
 
 **Why this is prose.** `∀ v : Vt, Good v` is not provable and would not mean what it looks
 like if it were: this module and its friends can `cases v` and name any twenty field values
@@ -565,26 +572,26 @@ private def Vt.ofDecoded (cols rows : Nat) (grid : Array Row) (cursor : Cursor) 
 
 def Vt.getRow (v : Vt) (y : Nat) : Row := v.grid.getD y (blankRow v.cols v.pen)
 
-def Vt.putCell (v : Vt) (x y : Nat) (c : Cell) : Vt :=
+private def Vt.putCell (v : Vt) (x y : Nat) (c : Cell) : Vt :=
   let row := (v.getRow y).setIfInBounds x c
   { v with grid := v.grid.setIfInBounds y row }
 
 def Vt.getCell (v : Vt) (x y : Nat) : Cell := (v.getRow y).getD x default
 
 /-- Repair a half wide pair at one column. Grid only. -/
-def Vt.mendAt (v : Vt) (x y : Nat) : Vt :=
+private def Vt.mendAt (v : Vt) (x y : Nat) : Vt :=
   { v with grid := v.grid.setIfInBounds y ((v.getRow y).mendAt x) }
 
 /-- Repair every pair in one row. Every cell-writing operation ends here, so
 the pair invariant holds by construction rather than per operation. -/
-def Vt.mendRow (v : Vt) (y : Nat) : Vt :=
+private def Vt.mendRow (v : Vt) (y : Nat) : Vt :=
   { v with grid := v.grid.setIfInBounds y (v.getRow y).mend }
 
 /-- Scroll rows [top, bot] up by one, no questions asked about the
 current region. Grid + (optionally) scrollback only — never the
 cursor. `allowSb`: evicted top line may go to scrollback (LF at screen
 bottom yes, delete-lines no). -/
-def Vt.scrollUpIn (v : Vt) (top bot : Nat) (allowSb : Bool) : Vt :=
+private def Vt.scrollUpIn (v : Vt) (top bot : Nat) (allowSb : Bool) : Vt :=
   let evicted := v.getRow top
   let g :=
     (List.range (bot - top)).foldl (fun g i => g.setIfInBounds (top + i) (v.getRow (top + i + 1)))
@@ -596,7 +603,7 @@ def Vt.scrollUpIn (v : Vt) (top bot : Nat) (allowSb : Bool) : Vt :=
   else { v with grid := g }
 
 /-- Scroll rows [top, bot] down by one. Grid only. -/
-def Vt.scrollDownIn (v : Vt) (top bot : Nat) : Vt :=
+private def Vt.scrollDownIn (v : Vt) (top bot : Nat) : Vt :=
   let g :=
     (List.range (bot - top)).foldl (fun g i => g.setIfInBounds (bot - i) (v.getRow (bot - i - 1)))
       v.grid
@@ -605,20 +612,20 @@ def Vt.scrollDownIn (v : Vt) (top bot : Nat) : Vt :=
 
 /-- Scroll the active region up; the evicted line goes to scrollback
 iff the region is the full screen and we're not in alt. -/
-def Vt.scrollUp (v : Vt) : Vt := v.scrollUpIn v.top v.bot true
+private def Vt.scrollUp (v : Vt) : Vt := v.scrollUpIn v.top v.bot true
 
-def Vt.scrollDown (v : Vt) : Vt := v.scrollDownIn v.top v.bot
+private def Vt.scrollDown (v : Vt) : Vt := v.scrollDownIn v.top v.bot
 
 /-! ## Cursor motion -/
 
-def Vt.clearPending (v : Vt) : Vt := { v with cursor := { v.cursor with pending := false } }
+private def Vt.clearPending (v : Vt) : Vt := { v with cursor := { v.cursor with pending := false } }
 
-def Vt.moveTo (v : Vt) (x y : Nat) : Vt :=
+private def Vt.moveTo (v : Vt) (x y : Nat) : Vt :=
   let lo := if v.modes.origin then v.top else 0
   let hi := if v.modes.origin then v.bot else v.rows - 1
   { v with cursor := { x := min x (v.cols - 1), y := min (lo + y) hi, pending := false } }
 
-def Vt.moveRel (v : Vt) (dx dy : Int) : Vt :=
+private def Vt.moveRel (v : Vt) (dx dy : Int) : Vt :=
   let nx := (Int.ofNat v.cursor.x + dx).toNat -- Int.toNat clamps at 0
   let ny := (Int.ofNat v.cursor.y + dy).toNat
   -- vertical motion is confined to the scroll region when starting inside it
@@ -628,7 +635,7 @@ def Vt.moveRel (v : Vt) (dx dy : Int) : Vt :=
   { v with cursor := { x := min nx (v.cols - 1), y := min (max ny lo) hi, pending := false } }
 
 /-- LF / IND: down one; scrolls when at the region bottom. -/
-def Vt.lineFeed (v : Vt) : Vt :=
+private def Vt.lineFeed (v : Vt) : Vt :=
   let v := v.clearPending
   if v.cursor.y == v.bot then v.scrollUp
   else
@@ -636,34 +643,34 @@ def Vt.lineFeed (v : Vt) : Vt :=
     else v
 
 /-- RI: up one; scrolls down at the region top. -/
-def Vt.reverseIndex (v : Vt) : Vt :=
+private def Vt.reverseIndex (v : Vt) : Vt :=
   let v := v.clearPending
   if v.cursor.y == v.top then v.scrollDown
   else { v with cursor := { v.cursor with y := v.cursor.y - 1 } }
 
-def Vt.carriageReturn (v : Vt) : Vt :=
+private def Vt.carriageReturn (v : Vt) : Vt :=
   { v with
     cursor :=
       { v.cursor with
         x := 0, pending := false } }
 
 /-- Set the column only (CHA/HPA): clamped, row untouched. -/
-def Vt.setCol (v : Vt) (x : Nat) : Vt :=
+private def Vt.setCol (v : Vt) (x : Nat) : Vt :=
   { v with
     cursor :=
       { v.cursor with
         x := min x (v.cols - 1), pending := false } }
 
-def Vt.backspace (v : Vt) : Vt :=
+private def Vt.backspace (v : Vt) : Vt :=
   if v.cursor.pending then v.clearPending
   else { v with cursor := { v.cursor with x := v.cursor.x - 1 } }
 
-def Vt.tab (v : Vt) : Vt :=
+private def Vt.tab (v : Vt) : Vt :=
   let v := v.clearPending
   let next := (List.range v.cols).find? (fun i => i > v.cursor.x && v.tabs.getD i false)
   { v with cursor := { v.cursor with x := min (next.getD (v.cols - 1)) (v.cols - 1) } }
 
-def Vt.backTab (v : Vt) : Vt :=
+private def Vt.backTab (v : Vt) : Vt :=
   let prev :=
     (List.range v.cursor.x).foldl (fun acc i => if v.tabs.getD i false then some i else acc) none
   -- the found stop is < cursor.x < cols already; the clamp makes the
@@ -701,16 +708,16 @@ def decLine (c : Char) : Char :=
 
 /-- Wrap-pending resolution: if a previous print left us hanging at the
 right margin, a new printable wraps to the next line first (DECAWM). -/
-def Vt.printWrap (v : Vt) : Vt :=
+private def Vt.printWrap (v : Vt) : Vt :=
   if v.cursor.pending && v.modes.wrap then (v.carriageReturn).lineFeed else v.clearPending
 
 /-- A wide char that cannot fit in the last column wraps early. -/
-def Vt.printWideWrap (v : Vt) (w : Nat) : Vt :=
+private def Vt.printWideWrap (v : Vt) (w : Nat) : Vt :=
   if w == 2 && v.cursor.x + 1 ≥ v.cols && v.modes.wrap then (v.carriageReturn).lineFeed else v
 
 /-- IRM: shift the rest of the row right by `w`. Grid only. A pair pushed
 off the row end loses its shadow, so the row is mended. -/
-def Vt.printShift (v : Vt) (w : Nat) : Vt :=
+private def Vt.printShift (v : Vt) (w : Nat) : Vt :=
   if v.modes.insert then
     let x := v.cursor.x
     let row := v.getRow v.cursor.y
@@ -739,7 +746,7 @@ redrawing over CJK text — no `ICH`/`DCH` needed, which is what the two pinned
 deep fuzz seeds turned out to be — so the row is mended after every print.
 Keeping the grid free of shapes the painter cannot express is what makes
 `Renderable` an invariant rather than a hypothesis. -/
-def Vt.printPut (v : Vt) (ch : Char) (w : Nat) : Vt :=
+private def Vt.printPut (v : Vt) (ch : Char) (w : Nat) : Vt :=
   let x := v.cursor.x
   let y := v.cursor.y
   if w == 2 && x + 1 ≥ v.cols then
@@ -751,7 +758,7 @@ def Vt.printPut (v : Vt) (ch : Char) (w : Nat) : Vt :=
     else v'.mendRow y
 
 /-- Advance the cursor by `w`, arming wrap-pending at the margin. -/
-def Vt.printAdvance (v : Vt) (w : Nat) : Vt :=
+private def Vt.printAdvance (v : Vt) (w : Nat) : Vt :=
   let nx := v.cursor.x + w
   if nx ≥ v.cols then
     { v with
@@ -768,7 +775,7 @@ def Vt.printAdvance (v : Vt) (w : Nat) : Vt :=
 neutralization. A named stage so a proof never has to peel these two `if`s out
 of `print`'s width scrutinee — `split` picks the first splittable term it
 finds, which would otherwise be the charset test rather than the width test. -/
-def Vt.printChar (v : Vt) (ch : Char) : Char :=
+private def Vt.printChar (v : Vt) (ch : Char) : Char :=
   printableChar (if (v.shiftOut && v.g1Line) || (!v.shiftOut && v.g0Line) then decLine ch else ch)
 
 /-- A combining mark attaches to the cell before the cursor — and to a wide
@@ -788,7 +795,7 @@ invariant: a shadow in column 0 is a broken pair (`Row.halfPair`) that no
 reachable state holds, but `cx0 - 1` on `Nat` would silently park the mark back
 on column 0 and the repair would then blank it away. `renderable_step` does not
 yet prove that state unreachable, so the guard carries it. -/
-def Vt.printMark (v : Vt) (ch : Char) : Vt :=
+private def Vt.printMark (v : Vt) (ch : Char) : Vt :=
   let cx0 := if v.cursor.pending then v.cursor.x else v.cursor.x - 1
   let cx := if (v.getCell cx0 v.cursor.y).width == 0 && cx0 != 0 then cx0 - 1 else cx0
   let cell := v.getCell cx v.cursor.y
@@ -797,7 +804,7 @@ def Vt.printMark (v : Vt) (ch : Char) : Vt :=
 
 /-- Place one printable character at the cursor, handling wrap-pending,
 wide characters, insert mode, and combining marks. -/
-def Vt.print (v : Vt) (ch : Char) : Vt :=
+private def Vt.print (v : Vt) (ch : Char) : Vt :=
   let ch := v.printChar ch
   let w := charWidth ch
   if w == 0 then v.printMark ch
@@ -805,20 +812,20 @@ def Vt.print (v : Vt) (ch : Char) : Vt :=
 
 /-! ## Erase / insert / delete -/
 
-def Vt.eraseRowSpan (v : Vt) (y from_ to_ : Nat) : Vt := -- [from, to)
+private def Vt.eraseRowSpan (v : Vt) (y from_ to_ : Nat) : Vt := -- [from, to)
   let row := v.getRow y
   let row :=
     (List.range (to_ - from_)).foldl
       (fun (r : Row) i => r.setIfInBounds (from_ + i) (Cell.erased v.pen)) row
   { v with grid := v.grid.setIfInBounds y row.mend }
 
-def Vt.eraseLine (v : Vt) (mode : Nat) : Vt :=
+private def Vt.eraseLine (v : Vt) (mode : Nat) : Vt :=
   match mode with
   | 0 => v.eraseRowSpan v.cursor.y v.cursor.x v.cols
   | 1 => v.eraseRowSpan v.cursor.y 0 (v.cursor.x + 1)
   | _ => v.eraseRowSpan v.cursor.y 0 v.cols
 
-def Vt.eraseScreen (v : Vt) (mode : Nat) : Vt :=
+private def Vt.eraseScreen (v : Vt) (mode : Nat) : Vt :=
   match mode with
   | 0 =>
     let v := v.eraseLine 0
@@ -832,19 +839,19 @@ def Vt.eraseScreen (v : Vt) (mode : Nat) : Vt :=
     { v with sb := {} }
   | _ => (List.range v.rows).foldl (fun v' y => v'.eraseRowSpan y 0 v'.cols) v
 
-def Vt.insertLines (v : Vt) (n : Nat) : Vt :=
+private def Vt.insertLines (v : Vt) (n : Nat) : Vt :=
   if v.cursor.y < v.top || v.cursor.y > v.bot then v
   else
     let n := min n (v.bot - v.cursor.y + 1)
     (List.range n).foldl (fun a _ => a.scrollDownIn v.cursor.y v.bot) v
 
-def Vt.deleteLines (v : Vt) (n : Nat) : Vt :=
+private def Vt.deleteLines (v : Vt) (n : Nat) : Vt :=
   if v.cursor.y < v.top || v.cursor.y > v.bot then v
   else
     let n := min n (v.bot - v.cursor.y + 1)
     (List.range n).foldl (fun a _ => a.scrollUpIn v.cursor.y v.bot false) v
 
-def Vt.deleteChars (v : Vt) (n : Nat) : Vt :=
+private def Vt.deleteChars (v : Vt) (n : Nat) : Vt :=
   let x := v.cursor.x
   let y := v.cursor.y
   let n := min n (v.cols - x)
@@ -857,7 +864,7 @@ def Vt.deleteChars (v : Vt) (n : Nat) : Vt :=
       row
   { v with grid := v.grid.setIfInBounds y row.mend }
 
-def Vt.insertChars (v : Vt) (n : Nat) : Vt :=
+private def Vt.insertChars (v : Vt) (n : Nat) : Vt :=
   let x := v.cursor.x
   let y := v.cursor.y
   let n := min n (v.cols - x)
@@ -870,7 +877,7 @@ def Vt.insertChars (v : Vt) (n : Nat) : Vt :=
       row
   { v with grid := v.grid.setIfInBounds y row.mend }
 
-def Vt.eraseChars (v : Vt) (n : Nat) : Vt :=
+private def Vt.eraseChars (v : Vt) (n : Nat) : Vt :=
   v.eraseRowSpan v.cursor.y v.cursor.x (min (v.cursor.x + n) v.cols)
 
 /-! ## SGR -/
@@ -890,7 +897,7 @@ attribute is redundant — and it is no longer *allowed*: an exposed body may no
 mention a private constructor, and `{ v with pen := … }` below is one now that
 every `Vt` field is `private`. If a legacy importer of `go` ever comes back, give
 it `import all`; do not restore the attribute. -/
-def Vt.applySgr (v : Vt) (params : List (Nat × Bool)) : Vt :=
+private def Vt.applySgr (v : Vt) (params : List (Nat × Bool)) : Vt :=
   -- (value, isSubParam); a lone `m` means reset
   let rec go (p : Pen) (l : List (Nat × Bool)) (fuel : Nat) : Pen :=
     match fuel with
@@ -978,7 +985,7 @@ def Vt.applySgr (v : Vt) (params : List (Nat × Bool)) : Vt :=
 
 /-! ## Alt screen -/
 
-def Vt.enterAlt (v : Vt) (saveCursor : Bool) : Vt :=
+private def Vt.enterAlt (v : Vt) (saveCursor : Bool) : Vt :=
   if v.altGrid.isSome then v -- already there
   else
     let saved := if saveCursor then { cur := v.cursor, pen := v.pen } else v.saved
@@ -987,7 +994,7 @@ def Vt.enterAlt (v : Vt) (saveCursor : Bool) : Vt :=
       grid := Array.replicate v.rows (blankRow v.cols {}), cursor := {}, saved, top := 0,
       bot := v.rows - 1 }
 
-def Vt.leaveAlt (v : Vt) (restoreCursor : Bool) : Vt :=
+private def Vt.leaveAlt (v : Vt) (restoreCursor : Bool) : Vt :=
   match v.altGrid with
   | none => v
   | some (g, cur, pen) =>
@@ -1047,7 +1054,7 @@ def CsiState.arg (s : CsiState) (i default_ : Nat) : Nat :=
 /-- Params paired with their sub-param flags, for SGR. -/
 def CsiState.sgrParams (s : CsiState) : List (Nat × Bool) := s.params.toList
 
-def Vt.setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool) : Vt :=
+private def Vt.setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool) : Vt :=
   if priv then
     match n with
     | 1 => { v with modes := { v.modes with appCursor := on } }
@@ -1071,7 +1078,7 @@ def Vt.setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool) : Vt :=
     | 4 => { v with modes := { v.modes with insert := on } }
     | _ => v
 
-def Vt.csiDispatch (v : Vt) (s : CsiState) (final : UInt8) : Vt :=
+private def Vt.csiDispatch (v : Vt) (s : CsiState) (final : UInt8) : Vt :=
   if s.ignore then v
   else
     let a1 := s.arg 0 1 -- first arg, default 1
@@ -1097,11 +1104,7 @@ def Vt.csiDispatch (v : Vt) (s : CsiState) (final : UInt8) : Vt :=
     | 0x5A => (List.range a1).foldl (fun a _ => a.backTab) v -- Z CBT
     | 0x60 => v.setCol (a1 - 1) -- ` HPA
     | 0x61 => v.moveRel (Int.ofNat a1) 0 -- a HPR
-    | 0x64 => -- d VPA
-      { v with
-        cursor :=
-          { v.cursor with
-            y := min (a1 - 1) (v.rows - 1), pending := false } }
+    | 0x64 => v.moveTo v.cursor.x (a1 - 1) -- d VPA, relative to DECOM's origin
     | 0x65 => v.moveRel 0 (Int.ofNat a1) -- e VPR
     | 0x66 => v.moveTo (s.arg 1 1 - 1) (a1 - 1) -- f HVP
     | 0x67 => -- g TBC
@@ -1132,6 +1135,8 @@ def Vt.csiDispatch (v : Vt) (s : CsiState) (final : UInt8) : Vt :=
 
 /-! ## Byte-at-a-time parser -/
 
+/-- A separator closes a parameter, including an omitted one. The empty-prefix
+case still contributes a slot; otherwise `CSI ;5H` would be read as `CSI 5H`. -/
 def csiPush (s : CsiState) (sub : Bool) : CsiState :=
   if s.haveCur || s.params.size > 0 || sub then
     -- close the current parameter
@@ -1142,19 +1147,25 @@ def csiPush (s : CsiState) (sub : Bool) : CsiState :=
       { s with
         params := s.params.push (min s.cur 65535, s.curSub), cur := 0, curSub := sub,
         haveCur := false }
-  else { s with curSub := sub }
+  else
+    { s with
+      params := #[(min s.cur 65535, s.curSub)], cur := 0, curSub := sub, haveCur := false }
 
-def Vt.csiFinish (v : Vt) (s : CsiState) (final : UInt8) : Vt :=
-  -- close any pending parameter, then dispatch
+private def Vt.csiFinish (v : Vt) (s : CsiState) (final : UInt8) : Vt :=
+  -- A final byte closes digits or a trailing omitted parameter. With no digits
+  -- and no separator there is no explicit parameter to close.
   let s :=
     if s.haveCur then
       (if s.params.size ≥ 16 then { s with ignore := true }
       else { s with params := s.params.push (min s.cur 65535, s.curSub) })
-    else s
+    else
+      match s.params.toList with
+      | [] => s
+      | _ :: _ => csiPush s false
   let v := v.csiDispatch s final
   { v with pstate := .ground }
 
-def Vt.oscFinish (v : Vt) (acc : Array UInt8) : Vt :=
+private def Vt.oscFinish (v : Vt) (acc : Array UInt8) : Vt :=
   let txt := String.fromUTF8? (ByteArray.mk acc) |>.getD ""
   let v := { v with pstate := .ground }
   match txt.splitOn ";" with
@@ -1163,7 +1174,7 @@ def Vt.oscFinish (v : Vt) (acc : Array UInt8) : Vt :=
   | _ => v
 
 /-- Handle a C0 control byte (valid in most parser states). -/
-def Vt.ctl (v : Vt) (b : UInt8) : Vt :=
+private def Vt.ctl (v : Vt) (b : UInt8) : Vt :=
   match b with
   | 0x07 => { v with bell := true }
   | 0x08 => v.backspace
@@ -1176,11 +1187,11 @@ def Vt.ctl (v : Vt) (b : UInt8) : Vt :=
 
 /-- One decoded codepoint reaches the screen. `Char.ofNat` is total;
 invalid codepoints (surrogates, > U+10FFFF) print as U+FFFD. -/
-def Vt.acceptChar (v : Vt) (n : Nat) : Vt :=
+private def Vt.acceptChar (v : Vt) (n : Nat) : Vt :=
   if n.isValidChar then v.print (Char.ofNat n) else v.print '\uFFFD'
 
 /-- Ground state: printables, C0, ESC, and UTF-8 assembly. -/
-def Vt.stepGround (v : Vt) (b : UInt8) : Vt :=
+private def Vt.stepGround (v : Vt) (b : UInt8) : Vt :=
   if b == 0x1B then { v with pstate := .esc }
   else
     if b < 0x20 then v.ctl b
@@ -1215,7 +1226,7 @@ def Vt.stepGround (v : Vt) (b : UInt8) : Vt :=
               else v
 
 /-- After ESC. -/
-def Vt.stepEsc (v : Vt) (b : UInt8) : Vt :=
+private def Vt.stepEsc (v : Vt) (b : UInt8) : Vt :=
   match b with
   | 0x5B => { v with pstate := .csi {} } -- [
   | 0x5D => { v with pstate := .osc #[] false } -- ]
@@ -1250,7 +1261,7 @@ def Vt.stepEsc (v : Vt) (b : UInt8) : Vt :=
     else { v with pstate := .ground }
 
 /-- After ESC + intermediate: charset designation. -/
-def Vt.stepEscInter (v : Vt) (i b : UInt8) : Vt :=
+private def Vt.stepEscInter (v : Vt) (i b : UInt8) : Vt :=
   let v := { v with pstate := .ground }
   if i == 0x28 then { v with g0Line := b == 0x30 } -- ESC ( 0 / B
   else
@@ -1258,7 +1269,7 @@ def Vt.stepEscInter (v : Vt) (i b : UInt8) : Vt :=
     else v
 
 /-- Inside CSI. -/
-def Vt.stepCsi (v : Vt) (s : CsiState) (b : UInt8) : Vt :=
+private def Vt.stepCsi (v : Vt) (s : CsiState) (b : UInt8) : Vt :=
   if b ≥ 0x30 && b ≤ 0x39 then
     { v with
       pstate :=
@@ -1284,7 +1295,7 @@ def Vt.stepCsi (v : Vt) (s : CsiState) (b : UInt8) : Vt :=
                 else { v with pstate := .ground }
 
 /-- Inside OSC: accumulate until BEL or ST, with a hard cap. -/
-def Vt.stepOsc (v : Vt) (acc : Array UInt8) (esc : Bool) (b : UInt8) : Vt :=
+private def Vt.stepOsc (v : Vt) (acc : Array UInt8) (esc : Bool) (b : UInt8) : Vt :=
   if esc && b == 0x5C then v.oscFinish acc -- ESC \\ = ST
   else
     if b == 0x07 then v.oscFinish acc -- BEL
@@ -1295,14 +1306,14 @@ def Vt.stepOsc (v : Vt) (acc : Array UInt8) (esc : Bool) (b : UInt8) : Vt :=
         else { v with pstate := .osc (acc.push b) false }
 
 /-- Inside DCS/SOS/PM/APC: skip to ST. -/
-def Vt.stepStr (v : Vt) (esc : Bool) (b : UInt8) : Vt :=
+private def Vt.stepStr (v : Vt) (esc : Bool) (b : UInt8) : Vt :=
   if esc && b == 0x5C then { v with pstate := .ground }
   else if b == 0x1B then { v with pstate := .str true } else { v with pstate := .str false }
 
 /-- A stray byte aborts a pending UTF-8 sequence. Named (not inlined in
 `step`) so proofs can rewrite `step`'s match scrutinee: it touches only
 `u8need`/`u8acc`, never `pstate` (`ps_abortUtf8`). -/
-def Vt.abortUtf8 (v : Vt) (b : UInt8) : Vt :=
+private def Vt.abortUtf8 (v : Vt) (b : UInt8) : Vt :=
   if v.u8need > 0 && (b < 0x80 || b ≥ 0xC0) then
     { v with
       u8need := 0, u8acc := 0 }

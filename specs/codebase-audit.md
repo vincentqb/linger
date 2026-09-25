@@ -1,8 +1,8 @@
 # 2026-09-25 codebase audit
 
-Status: step 4 verified — POSIX boundary fixes integrated
+Status: step 5 verified — VT boundary and replay proofs integrated
 Updated: 2026-09-25
-Next: integrate the VT factoring and replay-proof improvements
+Next: integrate CLI failure handling and path fallback fixes
 Predecessor: `specs/archive/tmux-resurrect-recipe.md`
 
 ## Goal
@@ -83,3 +83,11 @@ The status and completion record below track the actual integration order.
   post-fork source checks reject their measured mutations. Every existing C
   export still has a distinct required OS operation. Both required builds and
   the full foreground verifier pass.
+- Step 5: ordinary imports can no longer call raw VT mutators; checked
+  operations retain their public surface. CSI omitted parameters retain their
+  positions, overflow is refused, and vertical absolute positioning respects
+  origin mode. General proofs now connect the complete history emitter to its
+  budget and establish accepted checkpoint quiescence and exact resaving.
+  Explicit dispatch removes the last recursion-depth raise. Semantic and
+  public-API mutations fail the new checks. Both required builds and the full
+  foreground verifier pass.

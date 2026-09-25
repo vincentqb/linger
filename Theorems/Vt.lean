@@ -704,7 +704,7 @@ theorem csiPush_le (s : CsiState) (sub : Bool) (hp : s.params.size ≤ 16) :
     · rename_i hlt
       simp only [Array.size_push]
       omega
-  · exact hp
+  · simp
 
 theorem set_u8 {v : Vt} (n a : Nat) (hn : n ≤ 3) (h : Good v) :
     Good
@@ -720,23 +720,30 @@ theorem set_sb {v : Vt} (r : Ring) (hr : r.size ≤ sbCap) (h : Good v) :
 
 /-! ## Per-parser-state steps -/
 
-set_option maxRecDepth 4096 in
 theorem stepGround {v : Vt} (b : UInt8) (h : Good v) : Good (v.stepGround b) := by
+  -- Follow the dispatch instead of trying every lemma on every goal: mismatched
+  -- applications unfold the print chain and used to require a raised recursion limit.
   unfold Vt.stepGround
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := h
-  have h' : Good v := ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
-  repeat' split
-  all_goals
-    first
-    | exact set_pstate_esc h'
-    | exact ctl _ h'
-    | exact acceptChar _ h'
-    | exact acceptChar _ (set_u8 0 0 (by omega) h')
-    | exact set_u8 (v.u8need - 1) _ (by omega) h'
-    | exact set_u8 1 _ (by omega) h'
-    | exact set_u8 2 _ (by omega) h'
-    | exact set_u8 3 _ (by omega) h'
-    | exact h'
+  have u8 := h.u8Le
+  split
+  · exact set_pstate_esc h
+  split
+  · exact ctl _ h
+  split
+  · exact acceptChar _ h
+  split
+  · split
+    · exact h
+    split
+    · exact acceptChar _ (set_u8 0 0 (by omega) h)
+    · exact set_u8 (v.u8need - 1) _ (by omega) h
+  split
+  · exact set_u8 1 _ (by omega) h
+  split
+  · exact set_u8 2 _ (by omega) h
+  split
+  · exact set_u8 3 _ (by omega) h
+  · exact h
 
 theorem stepEsc {v : Vt} (b : UInt8) (h : Good v) : Good (v.stepEsc b) := by
   unfold Vt.stepEsc
@@ -2735,10 +2742,15 @@ theorem org_csiDispatch (v : Vt) (s : CsiState) (final : UInt8)
     | exact org_foldl _ (fun w _ => org_scrollDown w) _ _
     | exact org_foldl _ (fun w _ => org_backTab w) _ _
 
+theorem priv_csiPush (s : CsiState) (sub : Bool) : (csiPush s sub).priv = s.priv := by
+  unfold csiPush
+  repeat' split
+  all_goals rfl
+
 theorem org_csiFinish (v : Vt) (s : CsiState) (final : UInt8) (hp : (s.priv == 0x3F) = false) :
     (v.csiFinish s final).modes.origin = v.modes.origin := by
   -- every record `csiFinish` builds keeps `priv`, so one hypothesis covers
-  -- all three dispatch sites
+  -- every dispatch site
   have hnot : ∀ (t : CsiState), t.priv = s.priv → ¬((t.priv == 0x3F) = true ∧ t.arg 0 0 = 6) := by
     intro t ht hc
     rw [ht, hp] at hc
@@ -2749,7 +2761,9 @@ theorem org_csiFinish (v : Vt) (s : CsiState) (final : UInt8) (hp : (s.priv == 0
   · split
     · exact org_csiDispatch _ _ _ (hnot _ rfl)
     · exact org_csiDispatch _ _ _ (hnot _ rfl)
-  · exact org_csiDispatch _ _ _ (hnot _ rfl)
+  · split
+    · exact org_csiDispatch _ _ _ (hnot _ rfl)
+    · exact org_csiDispatch _ _ _ (hnot _ (priv_csiPush s false))
 
 theorem org_ctl (v : Vt) (b : UInt8) : (v.ctl b).modes.origin = v.modes.origin := by
   unfold Vt.ctl
@@ -2863,11 +2877,6 @@ every mode replay would be excluded. When the pending parameter is known,
 exactly the state `Render`'s private sequences reach: no pushed parameter,
 one pending accumulator, whose value is not 6.
 -/
-
-theorem priv_csiPush (s : CsiState) (sub : Bool) : (csiPush s sub).priv = s.priv := by
-  unfold csiPush
-  repeat' split
-  all_goals rfl
 
 /-- The pending parameter is what `csiFinish` pushes, so it is what
 `arg 0` reads back — and if it is not 6, no `h`/`l` final can be DECOM,
@@ -5354,6 +5363,258 @@ theorem tabsOk_of_liveReachable {v : Vt} (h : LiveReachableVt v) : TabsOk v := b
   | resize _ c r ih => exact tabsOk_resize _ c r
   | quiesce _ ih => exact tabsOk_quiesce ih
   | ofDecoded hd => exact ofDecoded_tabsOk hd
+
+/-! ## Absolute vertical motion
+
+VPA shares CUP's origin and clamp. Screen bounds alone would not catch a cursor
+below `top` under DECOM; the exact result and region bounds below do. -/
+
+theorem csiDispatch_vpa (v : Vt) (s : CsiState) :
+    v.csiDispatch s 0x64 =
+      if s.ignore then v else v.moveTo v.cursor.x (s.arg 0 1 - 1) := by
+  rfl
+
+/-- Only the cursor changes: its column is preserved, the row uses the current
+origin, and pending wrap is cleared. No premise constrains the requested row. -/
+theorem csiDispatch_vpa_exact {v : Vt} (h : Good v) (s : CsiState) (hi : s.ignore = false) :
+    v.csiDispatch s 0x64 =
+      { v with
+        cursor :=
+          { x := v.cursor.x,
+            y := min ((if v.modes.origin then v.top else 0) + (s.arg 0 1 - 1))
+              (if v.modes.origin then v.bot else v.rows - 1),
+            pending := false } } := by
+  rw [csiDispatch_vpa]
+  have hx : min v.cursor.x (v.cols - 1) = v.cursor.x := Nat.min_eq_left (by
+    have hc := h.curX
+    omega)
+  simp [hi, Vt.moveTo, hx]
+
+/-- Even a source cursor outside the region is placed inside it by VPA under
+DECOM. Requiring the source cursor to be inside would conceal the original bug. -/
+theorem csiDispatch_vpa_in_region {v : Vt} (h : Good v) (s : CsiState)
+    (hi : s.ignore = false) (ho : v.modes.origin = true) :
+    v.top ≤ (v.csiDispatch s 0x64).cursor.y ∧
+      (v.csiDispatch s 0x64).cursor.y ≤ v.bot := by
+  rw [csiDispatch_vpa_exact h s hi]
+  simp only [ho, ↓reduceIte]
+  have ht := h.topLe
+  constructor <;> omega
+
+/-! ## CSI collection — bounds and omitted parameters
+
+`Good.csiLe` bounds the parameter count. Numeric bounds and the empty accumulator
+need their own invariant: without the latter, treating an omitted field as zero
+would only be an assumption about the parser's caller. The private parser stages
+and the reachability proof below establish it for every byte stream, including
+after a decoded checkpoint. The exact collection contracts also distinguish a
+missing parameter from a dropped one; a frame alone would not catch that bug. -/
+
+/-- Closing a field below the cap appends exactly one slot, including when no
+digits preceded the separator, and resets the accumulator for the next field. -/
+theorem csiPush_of_lt (s : CsiState) (sub : Bool) (h : s.params.size < 16) :
+    csiPush s sub =
+      { s with
+        params := s.params.push (min s.cur 65535, s.curSub), cur := 0, curSub := sub,
+        haveCur := false } := by
+  unfold csiPush
+  split
+  · rw [ite_eq_right (by omega)]
+  · rename_i he
+    have hs : s.params.size = 0 := by
+      simp only [Bool.or_eq_true, decide_eq_true_eq] at he
+      omega
+    have hz : s.params = #[] := Array.size_eq_zero_iff.mp hs
+    simp [hz]
+
+/-- Overflow retains the collected fields but ignores the entire sequence. -/
+theorem csiPush_of_ge (s : CsiState) (sub : Bool) (h : 16 ≤ s.params.size) :
+    csiPush s sub = { s with ignore := true, cur := 0, haveCur := false } := by
+  unfold csiPush
+  rw [ite_eq_left (by simp; omega), ite_eq_left h]
+
+/-- A trailing separator creates an omitted final field; it cannot silently
+disappear at dispatch. This matters for SGR, whose omitted field is a reset. -/
+theorem csiFinish_omitted (v : Vt) (s : CsiState) (final : UInt8)
+    (hh : s.haveCur = false) (hp : 0 < s.params.size) :
+    v.csiFinish s final = { v.csiDispatch (csiPush s false) final with pstate := .ground } := by
+  unfold Vt.csiFinish
+  rw [ite_eq_right (by simp [hh])]
+  split
+  · rename_i he
+    have hz : s.params.size = 0 := by
+      change s.params.toList.length = 0
+      rw [he]
+      rfl
+    omega
+  · rfl
+
+/-- Sixteen closed fields leave no room for the final field, whether explicit
+or omitted. Dispatching the overflowing sequence changes only the parser state. -/
+theorem csiFinish_overflow (v : Vt) (s : CsiState) (final : UInt8)
+    (hp : 16 ≤ s.params.size) :
+    v.csiFinish s final = { v with pstate := .ground } := by
+  unfold Vt.csiFinish
+  split
+  · simp [Vt.csiDispatch]
+  · split
+    · rename_i he
+      have hz : s.params.size = 0 := by
+        change s.params.toList.length = 0
+        rw [he]
+        rfl
+      omega
+    · simp [csiPush_of_ge s false hp, Vt.csiDispatch]
+
+/-- Numeric and omitted-value invariants; `Good.csiLe` separately bounds the count. -/
+structure CsiValuesOk (s : CsiState) : Prop where
+  curLe : s.cur ≤ 65535
+  paramsLe : ∀ p ∈ s.params.toList, p.1 ≤ 65535
+  emptyCur : s.haveCur = false → s.cur = 0
+
+theorem csiValuesOk_empty : CsiValuesOk {} := by
+  constructor
+  · simp
+  · simp
+  · intro _; rfl
+
+theorem csiValuesOk_push {s : CsiState} (h : CsiValuesOk s) (sub : Bool) :
+    CsiValuesOk (csiPush s sub) := by
+  by_cases hp : s.params.size < 16
+  · rw [csiPush_of_lt s sub hp]
+    constructor
+    · simp
+    · intro p hm
+      simp only [Array.toList_push, List.mem_append, List.mem_cons, List.not_mem_nil,
+        or_false] at hm
+      rcases hm with hm | rfl
+      · exact h.paramsLe p hm
+      · exact Nat.min_le_right _ _
+    · intro _; rfl
+  · rw [csiPush_of_ge s sub (by omega)]
+    exact ⟨by simp, h.paramsLe, fun _ => rfl⟩
+
+def CsiOk (v : Vt) : Prop := ∀ s, v.pstate = .csi s → CsiValuesOk s
+
+theorem csiOk_of_pstate_eq {v w : Vt} (hp : v.pstate = w.pstate) (h : CsiOk w) : CsiOk v :=
+  fun s hs => h s (hp.symm.trans hs)
+
+theorem csiOk_set {v : Vt} {s : CsiState} (h : CsiValuesOk s) :
+    CsiOk { v with pstate := .csi s } := by
+  intro t ht
+  cases ht
+  exact h
+
+theorem csiOk_init (cols rows : Nat) : CsiOk (Vt.init cols rows) := by
+  simp [CsiOk, Vt.init]
+
+theorem csiOk_stepGround {v : Vt} (h : CsiOk v) (b : UInt8) :
+    CsiOk (v.stepGround b) := by
+  by_cases hb : b = 0x1B
+  · simp [CsiOk, Vt.stepGround, hb]
+  · exact csiOk_of_pstate_eq (ps_stepGround v b hb) h
+
+theorem csiOk_stepEsc {v : Vt} (h : CsiOk v) (b : UInt8) : CsiOk (v.stepEsc b) := by
+  unfold Vt.stepEsc
+  repeat' split
+  all_goals
+    first
+    | exact h
+    | exact csiOk_set csiValuesOk_empty
+    | simp [CsiOk, Vt.init]
+
+theorem csiOk_stepEscInter (v : Vt) (i b : UInt8) : CsiOk (v.stepEscInter i b) := by
+  unfold Vt.stepEscInter
+  repeat' split
+  all_goals simp [CsiOk]
+
+theorem csiOk_stepCsi {v : Vt} {s : CsiState} (h : CsiOk v) (hs : CsiValuesOk s) (b : UInt8) :
+    CsiOk (v.stepCsi s b) := by
+  unfold Vt.stepCsi
+  split
+  · exact csiOk_set ⟨Nat.min_le_right _ _, hs.paramsLe, by simp⟩
+  split
+  · exact csiOk_set (csiValuesOk_push hs false)
+  split
+  · exact csiOk_set (csiValuesOk_push hs true)
+  split
+  · exact csiOk_set ⟨hs.curLe, hs.paramsLe, hs.emptyCur⟩
+  split
+  · exact csiOk_set ⟨hs.curLe, hs.paramsLe, hs.emptyCur⟩
+  split
+  · split
+    · simp [CsiOk]
+    · simp [CsiOk, Vt.csiFinish]
+  split
+  · simp [CsiOk]
+  split
+  · exact csiOk_of_pstate_eq (ps_ctl v b) h
+  · simp [CsiOk]
+
+theorem csiOk_stepOsc (v : Vt) (acc : Array UInt8) (esc : Bool) (b : UInt8) :
+    CsiOk (v.stepOsc acc esc b) := by
+  unfold Vt.stepOsc
+  repeat' split
+  all_goals try (unfold Vt.oscFinish; dsimp only; repeat' split)
+  all_goals simp [CsiOk]
+
+theorem csiOk_stepStr (v : Vt) (esc : Bool) (b : UInt8) : CsiOk (v.stepStr esc b) := by
+  unfold Vt.stepStr
+  repeat' split
+  all_goals simp [CsiOk]
+
+theorem csiOk_step {v : Vt} (h : CsiOk v) (b : UInt8) : CsiOk (v.step b) := by
+  have hab : CsiOk (v.abortUtf8 b) := csiOk_of_pstate_eq (ps_abortUtf8 v b) h
+  unfold Vt.step
+  dsimp only
+  split
+  · exact csiOk_stepGround hab b
+  · exact csiOk_stepEsc hab b
+  · exact csiOk_stepEscInter _ _ _
+  · rename_i s hp
+    exact csiOk_stepCsi hab (hab s hp) b
+  · exact csiOk_stepOsc _ _ _ _
+  · exact csiOk_stepStr _ _ _
+
+theorem csiOk_feed : ∀ (bs : List UInt8) {v : Vt}, CsiOk v → CsiOk (v.feed bs)
+  | [], _, h => h
+  | b :: bs, v, h => by
+    rw [show v.feed (b :: bs) = (v.step b).feed bs from rfl]
+    exact csiOk_feed bs (csiOk_step h b)
+
+/-- The decoder starts in ground state, so it needs no new acceptance condition. -/
+theorem ofDecoded_csiOk {cols rows : Nat} {grid : Array Row} {cursor : Cursor} {pen : Pen}
+    {modes : Modes} {top bot : Nat} {tabs : Array Bool} {sb : Ring}
+    {altGrid : Option (Array Row × Cursor × Pen)} {saved : Saved} {title : String}
+    {g0Line g1Line shiftOut bell : Bool} {v : Vt}
+    (h :
+      Vt.ofDecoded cols rows grid cursor pen modes top bot tabs sb altGrid saved title g0Line
+          g1Line shiftOut bell =
+        some v) :
+    CsiOk v := by
+  unfold Vt.ofDecoded at h
+  split at h
+  · cases h
+    simp [CsiOk]
+  · exact absurd h (by simp)
+
+/-- Every reachable CSI state has bounded values and a zero accumulator whenever
+the current field is omitted. Arbitrary feeds, resize, quiesce and resume are covered. -/
+theorem csiOk_of_liveReachable {v : Vt} (h : LiveReachableVt v) : CsiOk v := by
+  induction h with
+  | init c r => exact csiOk_init c r
+  | feed _ bytes ih => exact csiOk_feed bytes ih
+  | resize _ _ _ ih => exact ih
+  | quiesce _ _ => simp [CsiOk, Vt.quiesce]
+  | ofDecoded hd => exact ofDecoded_csiOk hd
+
+/-- Omitted fields in a live parser contribute zero, rather than losing their
+position or reusing the previous field's digits. -/
+theorem csiPush_omitted_of_liveReachable {v : Vt} (h : LiveReachableVt v) {s : CsiState}
+    (hp : v.pstate = .csi s) (hh : s.haveCur = false) (hs : s.params.size < 16) (sub : Bool) :
+    (csiPush s sub).params = s.params.push (0, s.curSub) := by
+  rw [csiPush_of_lt s sub hs]
+  simp only [(csiOk_of_liveReachable h s hp).emptyCur hh, Nat.zero_min]
 
 end Linger.Core.Vt
 

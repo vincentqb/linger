@@ -39,6 +39,29 @@ recipes, break records, measurements, the audits — lives in
 | §Status | one glyph per listing row vs seven conditions | the seven states partition the observation space: `cover`, `disjoint`, `classify_sound` + `classify_unique`, `reachable`, `icon_injective` / `name_injective`, `name_clean` | Theorems/Status.lean |
 | §Resume | the product's own promise: crash, reboot, reattach | §Restore ∘ §Replay, stated twice — over `save`'s input and over `load`'s output (`resume_grid_of_load`, `resume_tabs_of_load`, `resume_sb_of_load`: any byte string that loads, no other hypothesis) — and lifted to the daemon over its own `vt0` (`Session.run_resume_vt_shape`, `run_resume_load_save`) | Theorems/Resume.lean, Theorems/Session.lean |
 
+The CSI collector preserves omitted parameters, saturates numeric parameters
+and rejects overflow at the existing parameter cap. `csiPush_of_lt`,
+`csiPush_of_ge`, `csiFinish_omitted` and `csiFinish_overflow` state those
+transitions; `csiOk_of_liveReachable` connects their numeric preconditions to
+every live or decoded terminal. Vertical absolute positioning shares the
+origin-aware cursor operation (`csiDispatch_vpa_exact`,
+`csiDispatch_vpa_in_region`). Ordinary importers can only use checked terminal
+operations; `Tests.VtApi` checks that raw cell and parser mutators are hidden.
+
+Checkpoint acceptance also establishes parser quiescence (`load_accepted`,
+`load_quiescent`). `load_save_append` rejects every nonempty suffix, and
+`load_resave` gives exact state and metadata equality after resaving any
+accepted input. These claims do not imply that decoding hostile lengths uses
+bounded memory or time.
+
+The grid theorems cover the active grid with either main or alternate screen
+selected. They do not state equality of both buffers and every saved field at
+once. Cursor equality currently assumes origin mode off. The title and saved
+cursor slot have fixture coverage; accepted checkpoint titles may contain
+controls that replay deliberately sanitizes. Matching the active grid alone
+does not establish that the next glyph behaves identically: pending wrap needs
+its own continuation check.
+
 ## Reading a row
 
 Each § is proved for *all* inputs, not sampled. Proofs use compiled
@@ -214,13 +237,14 @@ real terminals.
   screen, scrollback, modes, labels, cwd — not the process tree.
   Scrollback replays to the byte budget (`sbReplayBytes = 262144`, about
   three thousand plain 80-column lines); the counted-cost bounds are
-  proved (`sbRows_budget`, `rowAnsi_len_le_cost`), the whole-stream
-  bound is carried by fixtures alone: no theorem states it, and none is planned — the
-  whole-stream claim was the optional last step of
-  `specs/archive/scrollback-fidelity.md`, which was archived without it.
+  proved (`sbRows_budget`, `rowAnsi_len_le_cost`). The complete emitted history
+  stage is bounded by `sbReplayBytes + 2 * rows + 19`
+  (`scrollbackAnsi_le_cost`, `scrollbackAnsi_le`), including its framing and
+  control sequences. The screen paint is a separate term.
 - **The screen paint is the unbudgeted term**: worst-case pens at
   400×100 emit ~4.5 MB, past `outbufCap` before any scrollback.
-  Pre-existing, open; wants a budget on the paint.
+  Delivery must advance under backpressure while retaining the complete
+  screen; dropping paint bytes would give up replay fidelity.
 - **Images are passed through, not modelled**: the emulator parks in
   the string state and accumulates nothing, so §Bound holds for
   megabytes of base64; nothing is stored, so `restore` cannot replay

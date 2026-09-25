@@ -72,12 +72,42 @@ example :
       true := by
   native_decide
 
-/-- A checkpoint with scrollback round-trips the history too. -/
+/-- History content and order survive the codec. Comparing only row widths
+would accept reversed, blanked, or otherwise corrupted rows. -/
 example :
     (let v := (Vt.init 10 2).feedBytes "1\r\n2\r\n3\r\n4\r\n5".toUTF8
      match load (save { vt := v, cwd := "", labels := [] }) with
-      | some ck' => ck'.vt.sb.toList.map (·.size) == v.sb.toList.map (·.size)
+      | some ck' =>
+        ck'.vt.sb.toList == v.sb.toList &&
+          ck'.vt.sb.toList.map (fun r => (r.at 0).base) == ['1', '2', '3']
       | none => false) =
+      true := by
+  native_decide
+
+/-- Poll boundaries can bisect either an escape sequence or a UTF-8 character.
+Saving either state retains the visible cells and cursor, but the decoder starts
+with a completely empty parser. The source checks make both cases non-vacuous. -/
+example :
+    ([[0x78, 0x1B, 0x5B, 0x33, 0x31], [0x78, 0xE2, 0x82]] : List (List UInt8)).all
+        (fun bytes =>
+          let v := (Vt.init 4 2).feed bytes
+          !(v.pstate == .ground && v.u8need == 0) &&
+            (match load (save { vt := v, cwd := "/tmp/checkpoint", labels := [("k", "v")] }) with
+            | some c =>
+              c.vt.pstate == .ground && c.vt.u8need == 0 && c.vt.u8acc == 0 &&
+                c.vt.grid == v.grid &&
+                c.vt.cursor == v.cursor &&
+                c.cwd == "/tmp/checkpoint" &&
+                c.labels == [("k", "v")]
+            | none => false)) =
+      true := by
+  native_decide
+
+/-- The top-level format is one complete record: even one extra byte, a format
+tag, or a second complete checkpoint must be refused. -/
+example :
+    (let c : Ckpt := { vt := Vt.init 4 2, cwd := "", labels := [] }
+     [[0], [0xFF], magic, save c].all (fun rest => (load (save c ++ rest)).isNone)) =
       true := by
   native_decide
 

@@ -11652,3 +11652,63 @@ refactor adds a small amount of C to implement the observed syscall contracts,
 while sharing the two spawn paths; the export ratchet is unchanged. The smoke
 test's deadline loop is now an ordinary `while`, removing another partial
 definition. Canonical counts were updated only in their owning scripts.
+
+## Step 5 notes — 2026-09-25
+
+The VT's private fields did not seal its behavior: ordinary importers could
+still call raw cell writers, glyph stages and parser dispatch with invalid
+inputs. Those internal mutators are now private. The checked init/feed/step/
+resize/quiesce surface and read-only observations remain available.
+`Tests.VtApi` uses Lean's `#check_failure` on ordinary imports, separately from
+friend-import fixtures. All four negative API checks unexpectedly succeeded
+against the original surface; they now fail to elaborate as intended, while
+the positive operation chain checks. The receipt is
+`step5-public-api-red.log`. An earlier evaluation probe failed for module
+metaprogramming visibility, so it is not counted as red evidence.
+
+CSI collection discarded a leading omitted parameter and did not close a
+trailing omitted parameter. CUP and SGR consequently changed meaning; omitted
+fields also failed to consume the parameter budget. They now retain their
+positions, the existing numeric saturation is proved through the collector,
+and a seventeenth field refuses the entire sequence. VPA now shares `moveTo`,
+so origin mode positions relative to the scroll region and clamps there.
+The tracked regressions were red on the old implementations. Mutations cover
+leading/trailing omissions, the cap boundary, stored and accumulated numeric
+values, origin handling and public mutator visibility. Every mutation was
+restored. The CSI invariants cover live and decoded terminals, not only the
+sample inputs.
+
+The renderer's row-cost accounting is now connected to the complete emitted
+history stage, including CRLFs, clearing and mode controls. Five generalized
+bounds replace the previously fixture-only whole-stage claim. Five checkpoint
+theorems establish accepted live reachability plus parser quiescence, strict
+suffix rejection and exact resaving, including cwd and labels. Existing
+acceptance proofs share one reader traversal. The history roundtrip fixture
+now checks complete cells and their order: reversing rows had passed its old
+width-only assertion. Incomplete CSI and UTF-8 fixtures pin the intentional
+parser reset independently of atomic file replacement.
+
+Break verification: lowering row-cost credit breaks the actual whole-history
+bound; feeding ESC into a decoded result breaks accepted quiescence; accepting
+an unread suffix breaks strict loading; dropping labels breaks exact resaving;
+reversing history breaks the stronger fixture. Worker receipts are in
+`render/.lake/render-audit/REPORT.md` and `vt/.lake/vt-audit/` under the audit
+directory. The unchanged Good.stepGround proof really did require its old
+recursion allowance; replacing its large nested dispatch with explicit branches
+proves the same statement at the default limit. The final raise is removed and
+the ratchet lowered in its canonical file.
+
+Proof limits remain explicit: active-grid equality covers either selected
+screen, not simultaneous equality of both buffers and all saved fields.
+Cursor equality still has its stated origin-mode hypothesis. Titles containing
+controls are sanitized, and pending wrap requires continuation checks. Accepted
+geometry and total decoding do not bound allocation before validation. Two
+accepted-screen constructions also show that a complete repaint can exceed
+the runtime byte-debt cap; reducing SGR bytes cannot resolve the glyph-only
+counterexample. Decoder, continuation and delivery findings remain in this
+audit rather than being hidden by weaker claims.
+
+Validation: `./lake build`, `./lake build Theorems Tests`, formatting, source
+gates, semantic coverage, generated C ABI checks, shim checks and the full
+foreground `./tests/e2e.sh` pass. All live suites retain their canonical counts.
+The parent verifier receipt is `step5-verifier.log`.
