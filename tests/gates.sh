@@ -482,10 +482,10 @@ rd_n="$(code_count 'set_option maxRecDepth' 'Theorems/*')"
 
 # runtime `partial def` ratchet. Five of the seven shed the keyword on 2026-08-18
 # once someone checked: `while`/`for` in a `do` block never needed it, and none of
-# the five self-recursed. Two are honest — `pump` (genuinely unbounded recursion
-# without a two-pass argument) and `parseLs` (wants a `decreasing_by`). Ratcheted
-# so the keyword cannot creep back by habit; §Total in THEOREMS.md names both.
-RUNTIME_PARTIAL_CAP=2
+# the five self-recursed. `pump` became an explicit IO loop when exit acquired
+# a queue-stop condition. `parseLs` still wants a `decreasing_by`. Ratcheted
+# so the keyword cannot creep back by habit; §Total in THEOREMS.md names it.
+RUNTIME_PARTIAL_CAP=1
 rp_n="$(code_count 'partial def' 'Linger/Runtime/*')"
 [ "$rp_n" -le "$RUNTIME_PARTIAL_CAP" ] \
   || fail "Linger/Runtime grew to $rp_n partial defs (cap $RUNTIME_PARTIAL_CAP); a do-block loop does not need the keyword"

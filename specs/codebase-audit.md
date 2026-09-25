@@ -1,8 +1,8 @@
 # 2026-09-25 codebase audit
 
-Status: step 0 verified — independent audits and runtime regressions in progress
+Status: step 1 verified — independent audits and session regressions in progress
 Updated: 2026-09-25
-Next: reproduce runtime close-feedback and geometry findings
+Next: fix effective geometry, repeated resize and quiet-state checkpoint findings
 Predecessor: `specs/archive/tmux-resurrect-recipe.md`
 
 ## Goal
@@ -58,3 +58,8 @@ The status and completion record below track the actual integration order.
   Implementation workers have disjoint write scopes in isolated worktrees.
 - Main audit: runtime/client/session behavior, proof-to-runtime ties, shared
   verification and final integration.
+- Step 1: runtime closes now feed `.closed` into the session machine, and the
+  event pump stops after exit. Two real socket/pump regressions failed before
+  the fixes and pass afterward. The exact roster-removal theorem rejects a
+  reversed client filter. Both required builds and the full foreground verifier
+  pass; the pump also no longer requires a partial definition.

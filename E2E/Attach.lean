@@ -50,6 +50,51 @@ open Linger.Core.Render (leaveAnsi modeSet csiNum csiNum2 csiPlain escSeq escCha
 open Linger.Core.Session (outputChunk)
 open Linger.Runtime.Daemon (outbufCap)
 
+/-- Drive the actual effect interpreter with real sockets and counted checkpoint
+hooks. Keeping the roster in this process prevents a reconnect from reusing the
+closed fd and accidentally hiding a phantom attached client. -/
+def closeFeedback (e : Env) : IO Nat := do
+  let path := s!"{e.dir}/close-feedback.sock"
+  let listener ← Linger.Posix.unixListen path
+  let mut failures := 0
+  try
+    for exiting in [false, true] do
+      let peer ← Linger.Posix.unixConnect path
+      let accepted ← Linger.Posix.accept listener
+      if peer < 0 || accepted < 0 then
+        throw (IO.userError "close-feedback socket was not accepted")
+      let fd := accepted.toUInt64.toUInt32
+      let saved ← IO.mkRef (0 : Nat)
+      let dropped ← IO.mkRef (0 : Nat)
+      let st :=
+        (Linger.Core.Session.run (.boot (Linger.Core.Vt.Vt.init 20 5) [] [])
+            [.connected fd.toNat, .bytes fd.toNat (Linger.Core.Wire.encode (.attach 20 5)),
+              .ptyOut "pending checkpoint".toUTF8.toList]).1
+      let rt : Linger.Runtime.Daemon.Rt :=
+        { st, listenFd := listener, ptyFd := 0, childPid := 0, conns := [{ fd }], sockPath := path,
+          saveCkpt := fun _ => saved.modify (· + 1), dropCkpt := dropped.modify (· + 1) }
+      try
+        let events :=
+          if exiting then [.childExited 0, .tick Linger.Core.Session.ckptIntervalMs]
+          else [.bytes fd.toNat (Linger.Core.Wire.encode .detachAll)]
+        let after ← Linger.Runtime.Daemon.pump rt events
+        let clients := (Linger.Core.Session.infoFields after.st).lookup "clients"
+        failures :=
+          failures +
+            (←
+              if exiting then
+                expect (after.exiting && (← saved.get) == 0 && (← dropped.get) == 1)
+                    "child exit discards queued events without recreating its checkpoint"
+              else
+                expect (clients == some "0" && after.conns.isEmpty && (← saved.get) == 1)
+                    "detach-all removes the size owner and checkpoints the last detach")
+      finally
+        Linger.Posix.close peer.toUInt64.toUInt32
+  finally
+    Linger.Posix.close listener
+    IO.FS.removeFile path
+  return failures
+
 /-- The twelve hazards `leaveAnsi` undoes, each spelled with the emitter's own
 primitive and the same argument `leaveAnsi` passes it — so this list cannot become
 a stale copy of the emitter. Every group must appear in the epilogue.
@@ -98,7 +143,7 @@ def tcScript : String :=
 
 def run : IO UInt32 := do
   let e ← Env.make "attach"
-  let mut f := 0
+  let mut f ← closeFeedback e
   -- one source for the pty geometry and for the off-the-screen window below
   let cols : UInt32 := 80
   let rows : UInt32 := 24

@@ -11500,3 +11500,37 @@ negative result is preferable to speculative abstraction or removing an ABI
 wrapper merely to lower a count. Source and runtime evidence must agree with
 the pure statements; compiling a theorem is not evidence that its IO consumer
 actually feeds every required event back into the machine.
+
+## Step 1 notes — 2026-09-25
+
+The runtime discarded the close event when executing its own `.close` effect.
+After detach-all, the fd was gone but the session still reported an attached
+client and kept its geometry ownership. Returning `.closed id` lets the existing
+pure transition remove the client and checkpoint the last dirty detach. The
+new socket fixture inspects the existing session before another connection can
+reuse the fd and hide the stale roster.
+
+The event pump also executed events queued after `.exit`. A child-exit event
+followed by a periodic tick could save a checkpoint immediately after removing
+it. Replaced its recursive partial definition with a `while !rt.exiting` loop;
+the queue and effect ordering are preserved until shutdown. This removes one
+partial definition without a fuel parameter or a claim of IO termination.
+
+RED: both new checks failed against the original runtime; the existing attach
+checks passed. GREEN: all attach checks pass with the fixes. The exact
+`step_closed_clients` theorem states that the roster is the filter removing the
+closed id. Reversing that filter made this new theorem fail in both branches;
+the original filter was restored before validation. Runtime behavior remains
+covered by executable socket tests, since the pure theorem cannot see IO.
+
+The default execution sandbox rejects Unix socket binding with EPERM. The
+behavioral runs therefore used the normal executable with sandbox escalation;
+that environment failure was not treated as a product regression. An attempted
+Lean interpreter invocation also cannot execute the extern wrappers, so all
+socket checks use the compiled E2E executable.
+
+Validation: `./lake build`, `./lake build Theorems Tests`, the source and
+formatting gates, semantic coverage, the shim checks and the full foreground
+`./tests/e2e.sh` pass. The full verifier cold-built the tree and reported all
+11 live suites green. The canonical attach count and runtime partial ratchet
+were updated in their owning scripts.

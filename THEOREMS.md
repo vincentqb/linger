@@ -25,7 +25,7 @@ recipes, break records, measurements, the audits — lives in
 | §Stream | fragmentation vs one parsed conversation | any re-chunking of a well-formed stream feeds back to exactly that stream (`decode_encode_chunked`; §Frame and §Chunk are its special cases) | Theorems/Wire.lean |
 | §Bound | unbounded queues under load | every buffer has a structural cap preserved by `step`; nothing to fill | Theorems/Wire.lean, Theorems/Vt.lean, Theorems/Session.lean |
 | §Total | adversarial bytes vs no crashes ever | `Vt.step`/`feed` total (no `partial`, grep-checked); `Good` preserved for any byte; dimensions preserved (`dims_feed`) | Theorems/Vt.lean |
-| §Detach | sessions outlive clients | a zero-client session still advances; detach touches nothing but a checkpoint | Theorems/Session.lean |
+| §Detach | sessions outlive clients | a zero-client session still advances; `.closed id` removes every record for that id (`step_closed_clients`) while preserving the screen and labels, and may checkpoint. The runtime feeds intentional closes back too; after exit it consumes no queued events (`E2E.Attach.closeFeedback`) | Theorems/Session.lean, E2E/Attach.lean |
 | §Restore | reboot-resume vs corrupt/stale state files | `load (save s) = some s` for every live state (`load_save_live`); `load` total on arbitrary bytes, and what it accepts is `Good`, `Renderable`, the ruler the width of the screen, and live-reachable (`load_good`, `load_renderable`, `load_tabsOk`, `load_live`) — refusals, not clamps. Scrollback row widths are deliberately unchecked (`Vt.resize` legitimately leaves old-width rows). On-disk tag pinned: `save_tag`, `"LNGR"` v1 only (the pre-rename reader is at `e1ac562`) | Theorems/Checkpoint.lean |
 | §Name | user-chosen names vs filesystem paths | sanitized names can't escape the socket dir (no `/`, `..`-prefix, NUL, empty); `@` reserved for `name@host` | Theorems/Name.lean |
 | §Remote | trusting remote `ls` output vs local listing safety | parser total, garbage-tolerant; §Name carries through; display fields scrubbed of control bytes | Theorems/Remote.lean |
@@ -184,7 +184,8 @@ real terminals.
 ## What these theorems do not settle
 
 - **§Total covers the emulator, not the runtime.** `Linger/Runtime/*`
-  is `IO`; two loops are honestly `partial def` (`pump`, `parseLs`).
+  is `IO`; `parseLs` still uses `partial def`, and the explicit event loop
+  has no termination theorem.
   Runtime correctness rests on the live suites in `E2E/`; the
   pure/impure line is enforced by `tests/gates.sh`.
 - **§Bound bounds our buffers, not the OS's.** Both runtime byte queues

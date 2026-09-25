@@ -167,7 +167,7 @@ def runEffect (rt : Rt) (eff : Effect) : IO (Rt × List Event) := do
     let fd := UInt32.ofNat id
     if (rt.conn? fd).isSome then
       close fd
-      return (rt.dropConn fd, [])
+      return (rt.dropConn fd, [.closed id])
     return (rt, [])
   | .writePty bytes =>
     return (← queuePty rt bytes, [])
@@ -195,21 +195,21 @@ def runEffect (rt : Rt) (eff : Effect) : IO (Rt × List Event) := do
   | .exit =>
     return ({ rt with exiting := true }, [])
 
-/-- Feed events through the machine until quiescent, executing effects
-as they come. -/
-partial def pump (rt : Rt) (evs : List Event) : IO Rt := do
-  match evs with
-  | [] =>
-    return rt
-  | ev :: rest =>
+/-- Feed events through the machine until quiescent or exited. Events queued
+behind exit must not checkpoint a session whose recovery state was deleted. -/
+def pump (rt : Rt) (evs : List Event) : IO Rt := do
+  let mut rt := rt
+  let mut queue := evs
+  while !rt.exiting do
+    let ev :: rest := queue | break
     let (st', effs) := step rt.st ev
-    let mut rt := { rt with st := st' }
-    let mut queue := rest
+    rt := { rt with st := st' }
+    queue := rest
     for eff in effs do
       let (rt', more) ← runEffect rt eff
       rt := rt'
       queue := queue ++ more
-    pump rt queue
+  return rt
 
 /-- One poll round: gather events from fd readiness. -/
 def pollRound (rt : Rt) : IO (Rt × List Event) := do

@@ -178,7 +178,7 @@ LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger info "$sentinel_name" >/dev/
   || fail "sentinel session did not start"
 
 say "4. attach / detach / reattach / mirror / wait"
-suite attach 38
+suite attach 40
 
 say "5. reboot resume"
 suite resume 14

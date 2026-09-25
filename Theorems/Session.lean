@@ -124,6 +124,15 @@ theorem step_closed (s : State) (id : Nat) :
   · exact ⟨rfl, rfl, by simp⟩
   · exact ⟨rfl, rfl, by simp⟩
 
+/-- A delivered close removes the client's entire roster entry, including its
+size ownership. The runtime must deliver this event after intentional closes
+as well as after EOF; the IO consumer is checked in `E2E.Attach`. -/
+theorem step_closed_clients (s : State) (id : Nat) :
+    (step s (.closed id)).1.clients = s.clients.filter (·.id != id) := by
+  unfold step
+  dsimp only
+  split <;> rfl
+
 /-- With zero clients the mediator still advances, and an owned query still
 gets its one child-facing reply; only presentation broadcast disappears. -/
 theorem step_ptyOut_no_clients (s : State) (chunk : List UInt8) (h : s.clients = []) :
