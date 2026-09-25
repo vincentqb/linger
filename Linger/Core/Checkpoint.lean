@@ -35,13 +35,15 @@ cursor, pen, modes, title, labels, and working directory — to bytes
 and back. The parser state is reset on load.
 
 §Restore (THEOREMS.md):
-* `read* ∘ write*` round-trips **unconditionally** — every length is
+* The default `read* ∘ write*` round-trips **unconditionally** — every length is
   encoded as an arbitrary-precision little-endian `Nat`, so there is
   no "fits in u32" side condition anywhere.
 * Readers are total by type: `R α = List UInt8 → Option (α × rest)`.
   Invalid encodings and shapes yield `none`; accepted records satisfy
   the decoder's invariants. Totality does not bound allocation or
-  decoding time for arbitrary length and run-count fields.
+  decoding time for arbitrary length and run-count fields. `rVt` bounds screen
+  expansion using validated dimensions. History row widths remain unrestricted:
+  a resize legitimately preserves rows wider than the current screen.
 
 Format: `magic "LNGR" ++ version 1 ++ payload`. Bump the version on
 any layout change; old daemons refuse newer files (load = none) and
@@ -105,9 +107,15 @@ def rListAux {α : Type} (r : R α) : Nat → R (List α)
     let (xs, rest') ← rListAux r k rest
     some (x :: xs, rest')
 
-def rList {α : Type} (r : R α) : R (List α) := fun l => do
+/-- Check an optional element-count limit before invoking the element reader.
+The unbounded default keeps the format's general list roundtrip. -/
+def rList {α : Type} (r : R α) (l : List UInt8) (maxCount : Option Nat := none) :
+    Option (List α × List UInt8) := do
   let (n, rest) ← rNat l
-  rListAux r n rest
+  if maxCount.all (fun limit => n ≤ limit) then
+    rListAux r n rest
+  else
+    none
 
 def wStr (s : String) : List UInt8 := wList wChar s.toList
 
@@ -204,14 +212,21 @@ def expand {α : Type} : List (Nat × α) → List α
 def wRLE {α : Type} [DecidableEq α] (w : α → List UInt8) (l : List α) : List UInt8 :=
   wList (wPair wNat w) (runs l)
 
-def rRLE {α : Type} (r : R α) : R (List α) := fun bytes => do
+/-- Sum the encoded counts before expanding any run. Bounding each run separately
+would still allow several small runs to exceed the row's width. Zero-length and
+non-maximal runs remain accepted when their total fits. -/
+def rRLE {α : Type} (r : R α) (bytes : List UInt8) (maxLength : Option Nat := none) :
+    Option (List α × List UInt8) := do
   let (groups, rest) ← rList (rPair rNat r) bytes
-  some (expand groups, rest)
+  if maxLength.all (fun limit => (groups.map Prod.fst).sum ≤ limit) then
+    some (expand groups, rest)
+  else
+    none
 
 def wRow (r : Row) : List UInt8 := wRLE wCell r.toList
 
-def rRow : R Row := fun l => do
-  let (cs, l) ← rRLE rCell l
+def rRow (l : List UInt8) (maxLength : Option Nat := none) : Option (Row × List UInt8) := do
+  let (cs, l) ← rRLE rCell l maxLength
   some (cs.toArray, l)
 
 def wCursor (c : Cursor) : List UInt8 := wNat c.x ++ wNat c.y ++ wBool c.pending
@@ -257,21 +272,23 @@ def wRing (r : Ring) : List UInt8 :=
   -- verbatim geometry (data + start) so the round-trip is exact
   wNat r.start ++ wList wRow r.data.toList
 
-def rRing : R Ring := fun l => do
+def rRing (l : List UInt8) (maxRows : Option Nat := none) : Option (Ring × List UInt8) := do
   let (start, l) ← rNat l
-  let (rows, l) ← rList rRow l
+  let (rows, l) ← rList rRow l maxRows
   some ({ data := rows.toArray, start }, l)
 
 def wAlt : Option (Array Row × Cursor × Pen) → List UInt8 :=
   wOpt (fun (g, c, p) => wList wRow g.toList ++ wCursor c ++ wPen p)
 
-def rAlt : R (Option (Array Row × Cursor × Pen)) :=
+def rAlt (l : List UInt8) (maxCols : Option Nat := none) (maxRows : Option Nat := none) :
+    Option (Option (Array Row × Cursor × Pen) × List UInt8) :=
   rOpt
     (fun l => do
-      let (rows, l) ← rList rRow l
+      let (rows, l) ← rList (fun bytes => rRow bytes maxCols) l maxRows
       let (c, l) ← rCursor l
       let (p, l) ← rPen l
       some ((rows.toArray, c, p), l))
+    l
 
 /-- The parser state is deliberately not persisted. A poll boundary can bisect
 an escape sequence or a UTF-8 character; loading discards that partial parser
@@ -297,10 +314,12 @@ out of decoded bytes, which is exactly how a corrupt or hostile on-disk record w
 hand the emulator `cols := 0` — a state no `Vt.init`/`resize`/`feed` path can produce.
 Nothing validated: `rNat` accepts whatever the file says.
 
-Every field still comes off the wire unchecked; what changed is that they are handed
-to `Vt.ofDecoded` (`Linger/Core/Vt.lean`) rather than to the constructor. That door
-checks geometry, both screen grids, and tab ruler length before accepting the
-state. A record that fails validation yields `none`.
+Dimensions must already be in the live range before reading any rows. Both screen
+grids use those dimensions to bound row counts and the sum of encoded cell runs
+before expansion; the tab ruler and history row count are bounded too. The final
+`Vt.ofDecoded` (`Linger/Core/Vt.lean`) check still owns exact shapes and cell validity.
+History row widths are not bounded by the current columns: resize keeps their old
+widths, and the existing decoder contract accepts unrestricted history rows.
 
 `Vt.ofDecoded` is `private`, reached through this module's friend import — which is
 therefore **permanent, and for reads plus that one checked door**. What must not come
@@ -311,25 +330,29 @@ evadeable by deliberately writing something new, not by reverting a fix. -/
 def rVt : R Vt := fun l => do
   let (cols, l) ← rNat l
   let (rows, l) ← rNat l
-  let (grid, l) ← rList rRow l
-  let (cursor, l) ← rCursor l
-  let (pen, l) ← rPen l
-  let (modes, l) ← rModes l
-  let (top, l) ← rNat l
-  let (bot, l) ← rNat l
-  let (tabs, l) ← rList rBool l
-  let (sb, l) ← rRing l
-  let (altGrid, l) ← rAlt l
-  let (saved, l) ← rSaved l
-  let (title, l) ← rStr l
-  let (g0Line, l) ← rBool l
-  let (g1Line, l) ← rBool l
-  let (shiftOut, l) ← rBool l
-  let (bell, l) ← rBool l
-  let v ←
-    Vt.ofDecoded cols rows grid.toArray cursor pen modes top bot tabs.toArray sb altGrid saved title
-        g0Line g1Line shiftOut bell
-  some (v, l)
+  if cols != clampDim cols || rows != clampDim rows then
+    none
+  else
+    do
+      let (grid, l) ← rList (fun bytes => rRow bytes (some cols)) l (some rows)
+      let (cursor, l) ← rCursor l
+      let (pen, l) ← rPen l
+      let (modes, l) ← rModes l
+      let (top, l) ← rNat l
+      let (bot, l) ← rNat l
+      let (tabs, l) ← rList rBool l (some cols)
+      let (sb, l) ← rRing l (some sbCap)
+      let (altGrid, l) ← rAlt l (some cols) (some rows)
+      let (saved, l) ← rSaved l
+      let (title, l) ← rStr l
+      let (g0Line, l) ← rBool l
+      let (g1Line, l) ← rBool l
+      let (shiftOut, l) ← rBool l
+      let (bell, l) ← rBool l
+      let v ←
+        Vt.ofDecoded cols rows grid.toArray cursor pen modes top bot tabs.toArray sb altGrid saved
+            title g0Line g1Line shiftOut bell
+      some (v, l)
 
 /-! ## The checkpoint record -/
 

@@ -62,6 +62,17 @@ Checkpoint acceptance also establishes parser quiescence (`load_accepted`,
 accepted input. These claims do not imply that decoding hostile lengths uses
 bounded memory or time.
 
+The checkpoint reader validates dimensions before reading screen rows.
+Length-prefixed collections check their declared count before decoding elements;
+screen rows check the sum of encoded run counts before expanding them. The
+guarded decoder equals the original reader chain on every byte list, including
+accepted noncanonical encodings and unread suffixes (`rVt_unbounded`).
+`rList_bounded`, `rRLE_bounded` and `ofDecoded_bounds` connect the early guards
+to the existing acceptance contract. Source gates pin rejection before
+allocation, because equal mathematical results alone cannot establish execution
+order. Historical row widths, encoded payload size and overall decoding time
+remain outside these bounds.
+
 The grid theorems cover the active grid with either main or alternate screen
 selected. They do not state equality of both buffers and every saved field at
 once. Cursor equality currently assumes origin mode off. The title and saved

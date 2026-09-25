@@ -1,8 +1,8 @@
 # 2026-09-25 codebase audit
 
-Status: step 8 complete — ordered VT mode batches
+Status: step 9 complete — bounded checkpoint decoding
 Updated: 2026-09-25
-Next: integrate bounded checkpoint decoding and natural-number clocks
+Next: integrate natural-number clocks and finish replay continuation/delivery
 Predecessor: `specs/archive/tmux-resurrect-recipe.md`
 
 ## Goal
@@ -111,3 +111,9 @@ The status and completion record below track the actual integration order.
   conclusions. Six behavioral regressions and three restored mutations exercise
   parameter omission, ordering and unintended state changes. Both required
   builds and the full foreground verifier pass.
+- Step 9: checkpoint dimensions and declared collection sizes are checked before
+  decoding their contents; screen RLE lengths are checked before expansion.
+  The new reader is proved extensionally equal to the old accepted-format
+  reader, including unread suffixes and noncanonical encodings. Source gates
+  catch an expand-before-reject mutation that semantic checks cannot observe.
+  Both required builds and the full foreground verifier pass.

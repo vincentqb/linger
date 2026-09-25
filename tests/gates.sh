@@ -493,6 +493,59 @@ FORGE='(^|[^`[:alnum:]_])(cols|rows|grid|bot|tabs|pstate|u8need|u8acc) *:='
 ! code_grep "$FORGE" 'Linger/Core/Checkpoint.lean' \
   || fail "a Vt field is assigned in Linger/Core/Checkpoint.lean — the decoder forge is back; go through Vt.ofDecoded, which validates"
 
+# Extensional reader theorems cannot distinguish reject-before-expansion from
+# expand-then-reject. The latter passed every semantic check in the audit, and
+# generated C confirmed that it allocated first. Pin these short guarded bodies
+# and rVt's prefix through its first row read; ignore layout, but inventory every
+# region so a missing declaration or terminator cannot pass.
+awk '
+  BEGIN {
+    want["rList"] = "let(n,rest)←rNatlifmaxCount.all(funlimit=>n≤limit)thenrListAuxrnrestelsenone"
+    want["rRLE"] = "let(groups,rest)←rList(rPairrNatr)bytesifmaxLength.all(funlimit=>(groups.mapProd.fst).sum≤limit)thensome(expandgroups,rest)elsenone"
+    want["rVt"] = "let(cols,l)←rNatllet(rows,l)←rNatlifcols!=clampDimcols||rows!=clampDimrowsthennoneelsedolet(grid,l)←rList(funbytes=>rRowbytes(somecols))l(somerows)"
+  }
+  /^def (rList|rRLE|rVt) / {
+    split($0, fields, " "); name = fields[2]
+    seen[name]++; body = ""; collecting = 0
+  }
+  name != "" {
+    line = $0
+    if (!collecting) {
+      if (!sub(/^.*(:= do|:= fun l => do)/, "", line)) next
+      collecting = 1
+    }
+    gsub(/[[:space:]]/, "", line)
+    body = body line
+    if ((name == "rVt" && index(line, "let(grid,l)←") > 0) ||
+        (name != "rVt" && line == "none")) {
+      if (body != want[name]) {
+        print "  " name ": checkpoint rejection must precede counted decoding or expansion"
+        bad = 1
+      }
+      checked[name]++; name = ""
+    }
+  }
+  END {
+    for (region in want)
+      if (seen[region] != 1 || checked[region] != 1) {
+        print "  missing or repeated checkpoint guard region: " region
+        bad = 1
+      }
+    exit bad
+  }' Linger/Core/Checkpoint.lean >&2 || fail "checkpoint allocation guard changed"
+code_grep '^[[:space:]]+let [(]cs, l[)] ← rRLE rCell l maxLength$' 'Linger/Core/Checkpoint.lean' > /dev/null \
+  || fail "the row reader stopped forwarding its expansion bound"
+code_grep '^[[:space:]]+let [(]rows, l[)] ← rList rRow l maxRows$' 'Linger/Core/Checkpoint.lean' > /dev/null \
+  || fail "the history reader stopped forwarding its row bound"
+code_grep '^[[:space:]]+let [(]rows, l[)] ← rList [(]fun bytes => rRow bytes maxCols[)] l maxRows$' 'Linger/Core/Checkpoint.lean' > /dev/null \
+  || fail "the alternate screen reader stopped forwarding its dimensions"
+code_grep '^[[:space:]]+let [(]tabs, l[)] ← rList rBool l [(]some cols[)]$' 'Linger/Core/Checkpoint.lean' > /dev/null \
+  || fail "the checkpoint tab reader stopped using validated columns"
+code_grep '^[[:space:]]+let [(]sb, l[)] ← rRing l [(]some sbCap[)]$' 'Linger/Core/Checkpoint.lean' > /dev/null \
+  || fail "the checkpoint history reader stopped using its row cap"
+code_grep '^[[:space:]]+let [(]altGrid, l[)] ← rAlt l [(]some cols[)] [(]some rows[)]$' 'Linger/Core/Checkpoint.lean' > /dev/null \
+  || fail "the checkpoint alternate screen stopped using validated dimensions"
+
 # heartbeat ratchet. A `set_option maxHeartbeats` raise is a MEASUREMENT, and it
 # has an expiry date that nothing else enforces: the 2026-08-18 factoring audit
 # deleted 18 of 20, and the control run showed six of those were already

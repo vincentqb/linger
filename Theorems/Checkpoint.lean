@@ -27,8 +27,10 @@ round-trips modulo `Vt.quiesce`. Totality of `load` on arbitrary bytes
 is by construction (`R α = List UInt8 → Option _`, structural
 recursion only) — the second half of §Restore needs no theorem.
 
-Every combinator round-trip is unconditional: `wNat` is LEB128, so
+Every default combinator round-trip is unconditional: `wNat` is LEB128, so
 there is no "fits in N bits" side condition anywhere in the format.
+Optional count limits are filters on these same decoded values; `rVt_unbounded`
+proves that the earlier resource guards preserve the complete decoder's result.
 
 **The `Vt` round trip is not.** `rVt` hands its decoded fields to
 `Vt.ofDecoded`, which returns `none` unless they describe a `Good` **and** `Renderable`
@@ -101,6 +103,24 @@ theorem rt_opt {α : Type} {w : α → List UInt8} {r : R α} (h : RT w r) : RT 
     unfold wOpt rOpt
     simp only [List.cons_append, h, Option.bind_eq_bind, Option.bind_some]
 
+theorem rOpt_filter {α : Type} (r : R α) (p : α → Bool) (bytes : List UInt8) :
+    rOpt (fun l => (r l).filter (fun out => p out.1)) bytes =
+      (rOpt r bytes).filter (fun out => out.1.all p) := by
+  cases bytes with
+  | nil => rfl
+  | cons b bytes =>
+    by_cases hz : b = 0
+    · subst b; rfl
+    · by_cases ho : b = 1
+      · subst b
+        simp only [rOpt, Option.bind_eq_bind]
+        cases hr : r bytes with
+        | none => rfl
+        | some pair =>
+          obtain ⟨x, rest⟩ := pair
+          cases hp : p x <;> simp [Option.filter_some, hp]
+      · simp [rOpt, hz, ho]
+
 theorem rt_listAux {α : Type} {w : α → List UInt8} {r : R α} (h : RT w r) :
     ∀ (l : List α) (rest : List UInt8),
       rListAux r l.length (l.flatMap w ++ rest) = some (l, rest) := by
@@ -119,6 +139,71 @@ theorem rt_list {α : Type} {w : α → List UInt8} {r : R α} (h : RT w r) :
   unfold wList rList
   simp only [List.append_assoc, rt_nat, Option.bind_eq_bind, Option.bind_some]
   exact rt_listAux h l rest
+
+/-- A successful counted read returns exactly the declared number of elements. -/
+theorem rListAux_length {α : Type} (r : R α) (n : Nat) {bytes rest : List UInt8} {xs : List α}
+    (h : rListAux r n bytes = some (xs, rest)) : xs.length = n := by
+  induction n generalizing bytes xs with
+  | zero =>
+    cases h
+    rfl
+  | succ n ih =>
+    simp only [rListAux, Option.bind_eq_bind, Option.bind_eq_some_iff] at h
+    obtain ⟨⟨x, tail⟩, _, ⟨ys, tail'⟩, hys, he⟩ := h
+    cases he
+    simp only [List.length_cons, ih hys]
+
+/-- The early count guard changes only acceptance, preserving values and suffixes. -/
+theorem rList_bounded {α : Type} (r : R α) (bytes : List UInt8) (limit : Nat) :
+    rList r bytes (some limit) = (rList r bytes).filter (fun out => out.1.length ≤ limit) := by
+  unfold rList
+  cases hn : rNat bytes with
+  | none => rfl
+  | some p =>
+    obtain ⟨n, rest⟩ := p
+    simp only [Option.bind_eq_bind, Option.bind_some, Option.all_some, Option.all_none, ite_true,
+      decide_eq_true_eq]
+    cases hr : rListAux r n rest with
+    | none => simp
+    | some p =>
+      obtain ⟨xs, tail⟩ := p
+      simp only [Option.filter_some, rListAux_length r n hr, decide_eq_true_eq]
+
+/-- An excessive declared count is refused regardless of the element reader
+or the remaining payload. -/
+theorem rList_over_limit {α : Type} (r : R α) {bytes rest : List UInt8} {n limit : Nat}
+    (hn : rNat bytes = some (n, rest)) (hlimit : limit < n) :
+    rList r bytes (some limit) = none := by simp [rList, hn, Nat.not_le_of_gt hlimit]
+
+/-- Filtering each element reader is equivalent to filtering the decoded list;
+neither route changes the decoded values or unread suffix. -/
+theorem rListAux_filter {α : Type} (r : R α) (p : α → Bool) (n : Nat) (bytes : List UInt8) :
+    rListAux (fun l => (r l).filter (fun out => p out.1)) n bytes =
+      (rListAux r n bytes).filter (fun out => out.1.all p) := by
+  induction n generalizing bytes with
+  | zero => rfl
+  | succ n ih =>
+    simp only [rListAux, Option.bind_eq_bind]
+    cases hr : r bytes with
+    | none => rfl
+    | some pair =>
+      obtain ⟨x, rest⟩ := pair
+      simp only [ih]
+      cases ht : rListAux r n rest with
+      | none => cases hp : p x <;> simp [Option.filter_some, hp, ht]
+      | some pair =>
+        obtain ⟨xs, tail⟩ := pair
+        cases hp : p x <;> cases hps : xs.all p <;> simp [Option.filter_some, hp, hps, ht]
+
+theorem rList_filter {α : Type} (r : R α) (p : α → Bool) (bytes : List UInt8) :
+    rList (fun l => (r l).filter (fun out => p out.1)) bytes =
+      (rList r bytes).filter (fun out => out.1.all p) := by
+  unfold rList
+  cases hn : rNat bytes with
+  | none => rfl
+  | some pair =>
+    obtain ⟨n, rest⟩ := pair
+    exact rListAux_filter r p n rest
 
 theorem rt_str : RT wStr rStr := by
   intro s rest
@@ -165,12 +250,60 @@ theorem rt_rle {α : Type} [DecidableEq α] {w : α → List UInt8} {r : R α} (
     RT (wRLE w) (rRLE r) := by
   intro l rest
   unfold wRLE rRLE
-  simp only [rt_list (rt_pair rt_nat h), Option.bind_eq_bind, Option.bind_some, expand_runs]
+  simp only [rt_list (rt_pair rt_nat h), Option.bind_eq_bind, Option.bind_some, Option.all_none,
+    ite_true, expand_runs]
+
+/-- Encoded run counts give exactly the number of expanded elements. -/
+theorem expand_length {α : Type} (groups : List (Nat × α)) :
+    (expand groups).length = (groups.map Prod.fst).sum := by
+  induction groups with
+  | nil => rfl
+  | cons pair groups ih =>
+    obtain ⟨n, x⟩ := pair
+    simp [expand, ih]
+
+/-- The sum check precedes expansion, but accepts exactly the expansions within
+the limit, including noncanonical and zero-length runs. -/
+theorem rRLE_bounded {α : Type} (r : R α) (bytes : List UInt8) (limit : Nat) :
+    rRLE r bytes (some limit) = (rRLE r bytes).filter (fun out => out.1.length ≤ limit) := by
+  unfold rRLE
+  cases hr : rList (rPair rNat r) bytes with
+  | none => rfl
+  | some pair =>
+    obtain ⟨groups, rest⟩ := pair
+    simp only [Option.bind_eq_bind, Option.bind_some, Option.all_some, Option.all_none, ite_true,
+      Option.filter_some, expand_length]
+
+/-- The combined run count is the rejection boundary; no assumption about
+individual runs being positive or maximal is needed. -/
+theorem rRLE_over_limit {α : Type} (r : R α) {bytes rest : List UInt8} {groups : List (Nat × α)}
+    {limit : Nat} (hg : rList (rPair rNat r) bytes = some (groups, rest))
+    (hlimit : limit < (groups.map Prod.fst).sum) : rRLE r bytes (some limit) = none := by
+  simp [rRLE, hg, Nat.not_le_of_gt hlimit]
 
 theorem rt_row : RT wRow rRow := by
   intro r rest
   unfold wRow rRow
   simp only [rt_rle rt_cell, Option.bind_eq_bind, Option.bind_some]
+
+theorem rRow_bounded (bytes : List UInt8) (limit : Nat) :
+    rRow bytes (some limit) = (rRow bytes).filter (fun out => out.1.size ≤ limit) := by
+  unfold rRow
+  rw [rRLE_bounded]
+  cases hr : rRLE rCell bytes with
+  | none => rfl
+  | some pair =>
+    obtain ⟨cs, rest⟩ := pair
+    by_cases h : cs.length ≤ limit <;> simp [Option.filter_some, h]
+
+/-- Both live screen readers enforce the row count and every row's cell budget. -/
+theorem rRows_bounded (bytes : List UInt8) (cols rows : Nat) :
+    rList (fun l => rRow l (some cols)) bytes (some rows) =
+      (rList rRow bytes).filter
+        (fun out => out.1.all (fun row => row.size ≤ cols) && out.1.length ≤ rows) := by
+  rw [rList_bounded]
+  simp only [rRow_bounded]
+  rw [rList_filter (fun l => rRow l) (fun row => row.size ≤ cols), Option.filter_filter]
 
 theorem rt_cursor : RT wCursor rCursor := by
   intro c rest
@@ -192,6 +325,20 @@ theorem rt_ring : RT wRing rRing := by
   unfold wRing rRing
   simp only [List.append_assoc, rt_nat, rt_list rt_row, Option.bind_eq_bind, Option.bind_some]
 
+theorem rRing_bounded (bytes : List UInt8) (limit : Nat) :
+    rRing bytes (some limit) = (rRing bytes).filter (fun out => out.1.size ≤ limit) := by
+  unfold rRing
+  cases hn : rNat bytes with
+  | none => rfl
+  | some pair =>
+    obtain ⟨start, rest⟩ := pair
+    simp only [Option.bind_eq_bind, Option.bind_some, rList_bounded]
+    cases hr : rList rRow rest with
+    | none => rfl
+    | some pair =>
+      obtain ⟨rows, tail⟩ := pair
+      by_cases h : rows.length ≤ limit <;> simp [Option.filter_some, Ring.size, h]
+
 theorem rt_alt : RT wAlt rAlt := by
   unfold wAlt rAlt
   apply rt_opt
@@ -200,11 +347,145 @@ theorem rt_alt : RT wAlt rAlt := by
   simp only [List.append_assoc, rt_list rt_row, rt_cursor, rt_pen, Option.bind_eq_bind,
     Option.bind_some]
 
+theorem rAlt_bounded (bytes : List UInt8) (cols rows : Nat) :
+    rAlt bytes (some cols) (some rows) =
+      (rAlt bytes).filter
+        (fun out =>
+          out.1.all
+            (fun screen =>
+              screen.1.toList.all (fun row => row.size ≤ cols) && screen.1.size ≤ rows)) := by
+  unfold rAlt
+  rw [← rOpt_filter]
+  apply congrArg (fun reader => rOpt reader bytes)
+  funext l
+  rw [rRows_bounded]
+  cases hg : rList rRow l with
+  | none => rfl
+  | some pair =>
+    obtain ⟨grid, rest⟩ := pair
+    cases h : grid.all (fun row => row.size ≤ cols) && grid.length ≤ rows <;>
+      simp only [Option.filter_some, h, Bool.false_eq_true, ite_false, ite_true,
+        Option.bind_eq_bind, Option.bind_none, Option.bind_some] <;>
+      cases hc : rCursor rest <;>
+      simp only [Option.bind_none, Option.bind_some, Option.filter_none]
+    all_goals
+      rename_i pair
+      obtain ⟨cursor, tail⟩ := pair
+      cases hp : rPen tail <;> simp only [Option.bind_none, Option.bind_some, Option.filter_none]
+      rename_i pair
+      obtain ⟨pen, tail⟩ := pair
+      simp only [Option.filter_some, List.size_toArray, h, Bool.false_eq_true, ite_false, ite_true]
+
+/-- Shape validation already entails the cheaper pre-expansion screen budgets. -/
+theorem gridOk_bounded {cols rows : Nat} {grid : Array Row} (h : GridOk cols rows grid) :
+    (grid.toList.all (fun row => row.size ≤ cols) && grid.size ≤ rows) = true := by
+  simp only [Bool.and_eq_true, decide_eq_true_eq]
+  refine ⟨List.all_eq_true.mpr ?_, by simp [h.1]⟩
+  intro row hr
+  obtain ⟨i, hi, rfl⟩ := Array.getElem_of_mem (Array.mem_toList_iff.mp hr)
+  have hs := (h.2 i).size
+  rw [Array.getD, dite_eq_left hi] at hs
+  simp only [decide_eq_true_eq]
+  exact Nat.le_of_eq hs
+
+/-- Every state accepted by the existing decoder door passes the earlier resource
+guards. In particular, no bound on history row widths is inferred here. -/
+theorem ofDecoded_bounds {cols rows : Nat} {grid : Array Row} {cursor : Cursor} {pen : Pen}
+    {modes : Modes} {top bot : Nat} {tabs : Array Bool} {sb : Ring}
+    {alt : Option (Array Row × Cursor × Pen)} {saved : Saved} {title : String}
+    {g0 g1 shift bell : Bool} {v : Vt}
+    (h :
+      Vt.ofDecoded cols rows grid cursor pen modes top bot tabs sb alt saved title g0 g1 shift
+          bell =
+        some v) :
+    (cols != clampDim cols || rows != clampDim rows) = false ∧
+      (grid.toList.all (fun row => row.size ≤ cols) && grid.size ≤ rows) = true ∧
+      tabs.size ≤ cols ∧
+      sb.size ≤ sbCap ∧
+      alt.all
+          (fun screen => screen.1.toList.all (fun row => row.size ≤ cols) && screen.1.size ≤ rows) =
+        true := by
+  unfold Vt.ofDecoded at h
+  split at h
+  · rename_i hok
+    simp only [Bool.and_eq_true] at hok
+    obtain ⟨hgood, hshape⟩ := hok
+    obtain ⟨hc1, hc2, hr1, hr2, -, -, -, -, -, -, hsb, -⟩ := decodedOk_iff.mp hgood
+    obtain ⟨hgrid, htabs, halt⟩ := decodedRenderable_iff.mp hshape
+    refine ⟨?_, gridOk_bounded hgrid, Nat.le_of_eq htabs, hsb, ?_⟩
+    · simp [clampDim, Nat.max_eq_left hc1, Nat.min_eq_left hc2, Nat.max_eq_left hr1,
+        Nat.min_eq_left hr2]
+    · cases alt with
+      | none => rfl
+      | some screen =>
+        obtain ⟨g, c, p⟩ := screen
+        exact gridOk_bounded (halt g c p rfl)
+  · contradiction
+
+/-- Moving the existing shape and count rejection before allocation preserves
+the result on every byte string, including accepted noncanonical encodings.
+The right-hand side is the original unrestricted reader chain. -/
+theorem rVt_unbounded (bytes : List UInt8) :
+    rVt bytes =
+      (do
+        let (cols, l) ← rNat bytes
+        let (rows, l) ← rNat l
+        let (grid, l) ← rList rRow l
+        let (cursor, l) ← rCursor l
+        let (pen, l) ← rPen l
+        let (modes, l) ← rModes l
+        let (top, l) ← rNat l
+        let (bot, l) ← rNat l
+        let (tabs, l) ← rList rBool l
+        let (sb, l) ← rRing l
+        let (alt, l) ← rAlt l
+        let (saved, l) ← rSaved l
+        let (title, l) ← rStr l
+        let (g0, l) ← rBool l
+        let (g1, l) ← rBool l
+        let (shift, l) ← rBool l
+        let (bell, l) ← rBool l
+        let v ←
+          Vt.ofDecoded cols rows grid.toArray cursor pen modes top bot tabs.toArray sb alt saved
+              title g0 g1 shift bell
+        some (v, l)) := by
+  unfold rVt
+  simp only [rRows_bounded]
+  simp only [rList_bounded, rRing_bounded, rAlt_bounded]
+  apply Option.ext
+  intro out
+  simp only [Option.bind_eq_bind, Option.bind_eq_some_iff]
+  constructor
+  · intro h
+    obtain ⟨cols, hc, rows, hr, h⟩ := h
+    split at h
+    · contradiction
+    simp only [Option.bind_eq_some_iff, Option.filter_eq_some_iff] at h
+    obtain
+      ⟨grid, ⟨hg, -⟩, cursor, hcur, pen, hp, modes, hm, top, ht, bot, hb, tabs, ⟨htab, -⟩, sb,
+        ⟨hsb, -⟩, alt, ⟨halt, -⟩, saved, hsave, title, htitle, g0, hg0, g1, hg1, shift, hshift,
+        bell, hbell, v, hv, he⟩ :=
+      h
+    exact
+      ⟨cols, hc, rows, hr, grid, hg, cursor, hcur, pen, hp, modes, hm, top, ht, bot, hb, tabs, htab,
+        sb, hsb, alt, halt, saved, hsave, title, htitle, g0, hg0, g1, hg1, shift, hshift, bell,
+        hbell, v, hv, he⟩
+  · rintro
+      ⟨cols, hc, rows, hr, grid, hg, cursor, hcur, pen, hp, modes, hm, top, ht, bot, hb, tabs, htab,
+          sb, hsb, alt, halt, saved, hsave, title, htitle, g0, hg0, g1, hg1, shift, hshift, bell,
+          hbell, v, hv, he⟩
+    obtain ⟨hdims, hgrid, htabs, hsbcap, haltcap⟩ := ofDecoded_bounds hv
+    refine ⟨cols, hc, rows, hr, ?_⟩
+    simp only [hdims, Bool.false_eq_true, ite_false]
+    simp only [Option.bind_eq_some_iff, Option.filter_eq_some_iff]
+    exact
+      ⟨grid, ⟨hg, by simpa using hgrid⟩, cursor, hcur, pen, hp, modes, hm, top, ht, bot, hb, tabs,
+        ⟨htab, by simpa using htabs⟩, sb, ⟨hsb, by simpa using hsbcap⟩, alt, ⟨halt, haltcap⟩, saved,
+        hsave, title, htitle, g0, hg0, g1, hg1, shift, hshift, bell, hbell, v, hv, he⟩
+
 /-- **The fields round-trip unconditionally; acceptance is exactly the smart
-constructor's decision.** This is what `rt_vt` used to be, and splitting it out is what
-makes the behaviour change legible: every combinator below is still an unconditional
-inverse, so nothing about the *format* got weaker — what changed is that the seventeen
-decoded values now go through `Vt.ofDecoded`, which is free to refuse them.
+constructor's decision.** The earlier resource guards preserve that decision by
+`rVt_unbounded`; every default combinator remains an unconditional inverse.
 
 Both of the claims above it read off this one: `rt_vt` by `ofDecoded_of_good`, and
 `load_save_none_of_cols_zero` by `ofDecoded_none_of_cols_zero`. -/
@@ -213,10 +494,12 @@ theorem rVt_fields (v : Vt) (rest : List UInt8) :
       (Vt.ofDecoded v.cols v.rows v.grid v.cursor v.pen v.modes v.top v.bot v.tabs v.sb v.altGrid
             v.saved v.title v.g0Line v.g1Line v.shiftOut v.bell).map
         (fun w => (w, rest)) := by
-  unfold wVt rVt
+  rw [rVt_unbounded]
+  unfold wVt
   simp only [List.append_assoc, rt_nat, rt_list rt_row, rt_cursor, rt_pen, rt_modes,
     rt_list rt_bool, rt_ring, rt_alt, rt_saved, rt_str, rt_bool, Option.bind_eq_bind,
-    Option.bind_some, Array.toArray_toList, Option.map_eq_bind, Function.comp_def]
+    Option.bind_some, Array.toArray_toList]
+  exact Option.map_eq_bind.symm
 
 /-- The Vt round trip: exact modulo the deliberately-forgotten parser
 state, for any state the emulator can actually be in.
@@ -243,9 +526,13 @@ reachability below are projections of this acceptance result. -/
 theorem rVt_accepted {l : List UInt8} {v : Vt} {rest : List UInt8} (h : rVt l = some (v, rest)) :
     LiveReachableVt v ∧ v.quiesce = v := by
   simp only [rVt, Option.bind_eq_bind, Option.bind_eq_some_iff] at h
+  obtain ⟨_, -, _, -, h⟩ := h
+  split at h
+  · contradiction
+  simp only [Option.bind_eq_some_iff] at h
   obtain
-    ⟨_, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -,
-      _, -, w, hw, he⟩ :=
+    ⟨_, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, w,
+      hw, he⟩ :=
     h
   simp only [Option.some.injEq, Prod.mk.injEq] at he
   have hlive := LiveReachableVt.ofDecoded hw

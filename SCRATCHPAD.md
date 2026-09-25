@@ -11810,3 +11810,41 @@ Validation: `./lake build`, `./lake build Theorems Tests`, formatting, source
 gates, semantic coverage, generated C ABI and the full foreground verifier
 pass. Parent receipts are `step8-build.log`, `step8-proofs-tests.log` and
 `step8-verifier.log`. No live-suite count changed.
+
+## Step 9 notes — 2026-09-25
+
+The checkpoint reader used to allocate screen rows before validating their
+geometry. It now rejects invalid dimensions before the first grid read, checks
+declared list counts before decoding their elements, and sums screen RLE run
+lengths before expansion. The bounds travel through active and alternate rows,
+the tab ruler and the history row count. Old history rows deliberately retain
+their original widths; resizing the terminal never rewrote that history.
+
+The optional bounds leave generic reader roundtrips intact. Sixteen general
+lemmas connect bounded and unbounded readers, decoded lengths and the existing
+smart-constructor bounds. `rVt_unbounded` proves equality with the entire old
+reader chain for every input, including its unread suffix. Zero-length runs,
+adjacent equal runs and other accepted noncanonical encodings keep their
+behavior. Seven small examples cover rejection and inclusive boundaries
+without attempting a dangerous allocation.
+
+The worker caught and restored nine semantic mutations. A tenth experiment,
+expanding the rows before testing their length, passed every semantic theorem
+and example: returned values are identical. Generated C showed the allocation
+still happened first. The actual source gate now pins the small guarded reader
+bodies and the dimension-check prefix, with an exact region inventory to avoid
+vacuity. Parent probes reject that allocation-order regression, early list
+decoding, late geometry validation, a missing region and six disconnected bound
+arguments. All ten source mutations were restored. Receipts are
+`render/.lake/render-audit/FOLLOWUP.md` and `step9-gate-*-red.log` under
+`/tmp/linger-audit-20260925/`.
+
+This bounds screen expansion, not every allocation or decoding time. Encoded
+groups and cell payloads are read before their summed expansion check; marks,
+metadata, arbitrary-natural encodings, total file size and historical row widths
+retain their existing contracts. THEOREMS.md records that limit explicitly.
+
+Validation: both required builds, formatting, source gates, semantic coverage,
+generated C ABI and the full foreground verifier pass. Parent receipts are
+`step9-build.log`, `step9-proofs-tests.log` and `step9-verifier.log`. No proof
+resource limit, C export count or live-suite count changed.

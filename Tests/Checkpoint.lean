@@ -57,6 +57,79 @@ example :
       true := by
   native_decide
 
+/-- The row budget covers the sum of runs, before they are expanded.
+Both the single-run and multi-run cases exceed four cells by only one. -/
+example :
+    (let single := wRow (blankRow 5 {})
+     let mixed := wList (wPair wNat wCell) [(3, Cell.erased {}), (2, { base := 'x' })]
+     (rRow single (some 4)).isNone && (rRow mixed (some 4)).isNone) =
+      true := by
+  native_decide
+
+/-- A count over the known limit is refused before reading the elements.
+The five-byte payload is intentionally small. -/
+example :
+    ((rList rBool (wList wBool [true, false, true, false, true]) (some 4)).isNone) = true := by
+  native_decide
+
+/-- Limits are inclusive, and successful bounded reads preserve the suffix. -/
+example :
+    (let xs := [true, false, true, false]
+     let rest : List UInt8 := [0xAA, 0xBB]
+     rList rBool (wList wBool xs ++ rest) (some 4) == some (xs, rest)) =
+      true := by
+  native_decide
+
+/-- Zero-length and adjacent equal runs are valid noncanonical encodings.
+The limit counts expanded cells, not the number of encoded groups. -/
+example :
+    (let a : Cell := { base := 'a' }
+     let b : Cell := { base := 'b' }
+      let rest : List UInt8 := [0xAA]
+      let bytes := wList (wPair wNat wCell) [(0, b), (1, a), (1, a), (2, b)]
+      rRow (bytes ++ rest) (some 4) == some (#[a, a, b, b], rest) &&
+        rRow (wList (wPair wNat wCell) [(0, a)] ++ rest) (some 0) == some (#[], rest)) =
+      true := by
+  native_decide
+
+/-- Bounded ring reads enforce the number of rows while retaining their
+different historical widths and the exact ring position. -/
+example :
+    (let ring : Ring := { data := #[blankRow 5 {}, blankRow 3 {}], start := 1 }
+     let rest : List UInt8 := [0xAA]
+      let bytes := wRing ring ++ rest
+      (rRing bytes (some 1)).isNone &&
+        (match rRing bytes (some 2) with
+        | some (decoded, tail) =>
+          decoded.data == ring.data && decoded.start == ring.start && tail == rest
+        | none => false)) =
+      true := by
+  native_decide
+
+/-- Alternate screens use both dimensions, accepting equality and rejecting
+one extra row or cell before returning an alternate screen. -/
+example :
+    (let rest : List UInt8 := [0xAA]
+     let good : Option (Array Row × Cursor × Pen) := some (#[blankRow 2 {}, blankRow 2 {}], {}, {})
+      let tall : Option (Array Row × Cursor × Pen) :=
+        some (#[blankRow 2 {}, blankRow 2 {}, blankRow 2 {}], {}, {})
+      let wide : Option (Array Row × Cursor × Pen) := some (#[blankRow 3 {}, blankRow 2 {}], {}, {})
+      rAlt (wAlt good ++ rest) (some 2) (some 2) == some (good, rest) &&
+        (rAlt (wAlt tall) (some 2) (some 2)).isNone &&
+        (rAlt (wAlt wide) (some 2) (some 2)).isNone) =
+      true := by
+  native_decide
+
+/-- A complete checkpoint may contain history wider than any live screen.
+The existing accepted-state contract has no history-width restriction. -/
+example :
+    (let v := { Vt.init 4 2 with sb := { data := #[blankRow 1001 {}], start := 0 } }
+     match load (save { vt := v, cwd := "", labels := [] }) with
+      | some c => c.vt.sb.data == v.sb.data
+      | none => false) =
+      true := by
+  native_decide
+
 /-- End-to-end: feed a real byte stream, checkpoint it, load it back,
 and the visible screen (and scrollback, cwd, labels) matches modulo the
 parser-state quiesce the format deliberately drops. -/
