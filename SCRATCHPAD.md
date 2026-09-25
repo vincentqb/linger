@@ -11933,3 +11933,29 @@ Worker receipts and the frozen patch are in
 builds pass (`step11-build.log`, `step11-proofs-tests.log`), along with targeted
 formatter/linter checks and the complete source gates. Runtime sources and live
 suite counts are unchanged; the preceding full verifier remains applicable.
+
+## Step 12 notes — 2026-09-25
+
+`Render.cellText_cursor_margin` proves the complete cursor result of feeding a
+canonical cell's emitted UTF-8 bytes at the right margin. Its local mark-fold
+frame needs no receiver grid invariant: a missing cell, wide shadow or
+saturated mark list may affect the grid operation, but cannot change any cursor
+field. No Good, Renderable, grid-equality or source-continuation hypothesis was
+added to the requested statement. The separate complete-state frame from step 11
+continues to own grid preservation.
+
+Narrow and wide glyph witnesses include two combining marks and separately pin
+their bytes, stored marks and wide shadow. A malformed receiver with no grid and
+an out-of-range row still satisfies the cursor claim; separate checks establish
+that it is neither Good nor Renderable. Another witness covers an eight-mark
+saturated receiver. Scratch adapters that append CR, append LF or clear pending
+after the mark fold each fail their theorem, with independent kernel-checked
+counterexamples. These are adapter mutations, not changes to core operations.
+The proof uses only standard Lean axioms and default proof resource limits.
+
+The frozen worker source is byte-identical to the integrated file. Receipts are
+`vt/.lake/pending-position-audit/HANDOFF.md`, `verification.log` and its indexed
+green/red/green logs under `/tmp/linger-audit-20260925/`. Both required parent
+builds pass (`step12-build.log`, `step12-proofs-tests.log`), together with the
+formatter, linter and complete source gates. This is a proof-only checkpoint;
+runtime sources and live-suite counts remain unchanged.

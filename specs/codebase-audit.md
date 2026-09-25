@@ -1,8 +1,8 @@
 # 2026-09-25 codebase audit
 
-Status: step 11 complete — complete-state margin-reprint proof
+Status: step 12 complete — byte-level margin cursor proof
 Updated: 2026-09-25
-Next: connect margin reprinting to restoration bytes and finish bounded replay delivery
+Next: finish restoration composition and bounded replay delivery
 Predecessor: `specs/archive/tmux-resurrect-recipe.md`
 
 ## Goal
@@ -132,3 +132,9 @@ The status and completion record below track the actual integration order.
   integration, and its anchor summaries now reflect the existing cursor and
   selected-grid proof scope. Both required builds and source/formatter checks
   pass; this step changes no runtime behavior.
+- Step 12: the actual cell-byte emitter now has a margin-cursor theorem that
+  needs no receiver grid invariant. Missing cells and saturated combining-mark
+  lists preserve the cursor frame, allowing the restoration composition to
+  retain its existing receiver scope. Narrow/wide and malformed-grid witnesses,
+  together with three rejected adapter mutations, check the statement. Both
+  required builds and source/formatter checks pass.

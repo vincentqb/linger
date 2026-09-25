@@ -91,6 +91,15 @@ single- and double-width glyphs. Connecting the emitted restoration bytes to thi
 frame is a separate obligation; this helper alone does not prove end-to-end
 continuation.
 
+`Render.cellText_cursor_margin` connects a cell's actual UTF-8 bytes to the
+pending cursor. For a positive-width canonical cell ending at the margin,
+feeding its base and marks sets the last-column cursor with pending wrap,
+preserving its other fields. The receiver needs a quiesced parser and the
+painting modes, but no grid invariant: missing cells and saturated mark lists
+cannot invalidate this cursor claim. This allows the existing cursor guarantees
+to retain their original receiver scope while grid preservation uses the
+stronger frame above.
+
 ## Reading a row
 
 Each § is proved for *all* inputs, not sampled. Proofs use compiled
