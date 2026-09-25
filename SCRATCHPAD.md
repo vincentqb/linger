@@ -11959,3 +11959,64 @@ green/red/green logs under `/tmp/linger-audit-20260925/`. Both required parent
 builds pass (`step12-build.log`, `step12-proofs-tests.log`), together with the
 formatter, linter and complete source gates. This is a proof-only checkpoint;
 runtime sources and live-suite counts remain unchanged.
+
+## Step 13 notes — 2026-09-25
+
+An accepted screen can render beyond the socket output allowance. The eager
+attach effect consequently cut large repaints; immediate close also lost
+queued child output and exit status. `Replay.start` now captures the immutable
+screen at the attach event, and `Replay.next` advances through shared rows,
+literal setup stages and a title slice. The runtime materializes one row or
+bounded title chunk at a time. A repeated attach refuses without changing
+state, and an invalid duplicate replay effect closes only its peer.
+
+Seventeen general replay theorems establish exact agreement with `Render.restore`,
+prefix/suffix conservation, per-step byte bounds, strictly decreasing work for
+positive budgets, complete draining and serialized-storage bounds. The runtime
+keeps preceding replies before the cursor and later live output or exit status
+after it. Both socket byte buffers share one allowance, reserving a replay frame
+using the actual encoder's overhead. The snapshot and allocator capacity are
+outside the serialized-byte measure; `Buf` and the ledger now say retained
+logical byte length rather than claiming a physical memory bound.
+
+Logical close immediately feeds `.closed` into the session machine. A retained
+transport receives one fixed Nat deadline; another close cannot extend it.
+Ordinary polling expires retired transports and clamps its timeout to their
+deadlines. Physical admission counts both active and retired connections.
+Shutdown attempts a final bounded drain and releases leftovers. A peer must
+finish draining within its applicable grace and stay within the live-output
+allowance to preserve all bytes. These are cooperative IO loops, without a
+hard real-time or unconditional network-liveness theorem.
+
+Worker baseline checks reproduced truncated large repaints, direct-interpreter
+and real-process exit tails, repeated attach, missing close expiry and excess
+retired admission. The restored suite delivers both accepted multi-megabyte
+paints and subsequent live bytes exactly, and preserves a megabyte of child
+output followed by status 7 and EOF. Two pure mutations drop an extra byte or
+remove progress; four runtime mutations use a later snapshot, reorder the
+preceding backlog, enlarge following debt or reverse replay payloads. All fail
+their intended checks and are restored. The frozen patch and receipts are in
+`delivery/.audit/HANDOFF.md` under `/tmp/linger-audit-20260925/`.
+
+The emitter gate formerly recognized return types on a single source line.
+A disposable multiline emitter was missed by the old gate and rejected by the
+new one. `E2E.Coverage` now reuses the semantic definition census and classifies
+renderer and replay references, including intermediate containers. Component
+entries cite the proved replay composition without inventing separate receiver
+claims. This is a source-checker experiment; the scratch emitter was not an
+additional compiled or proved core definition. Receipts are
+`coverage-multiline-{before,after}.log`.
+
+Parent source correspondences tie snapshot capture, effect consumption, chunk
+size, actual frame overhead, shared front/following debt, fixed deadlines,
+ordinary expiry, physical admission, both frozen poll sets and final draining
+to their real consumers. Fifteen isolated gate mutations fail their intended
+diagnostics, followed by a restored green fixture. Receipts are
+`step13-gate-*-red.log` and `step13-gate-restored-green.log`.
+
+Validation: both required builds, the E2E executable build, formatter, linter,
+semantic coverage, generated C ABI and the complete foreground verifier pass.
+Parent receipts are `step13-build.log`, `step13-proofs-tests-e2e.log`,
+`step13-coverage.log` and `step13-verifier.log`. The delivery suite's exact count
+is recorded in `tests/e2e.sh`; existing live-suite counts are unchanged. No C
+export or proof resource allowance changed.

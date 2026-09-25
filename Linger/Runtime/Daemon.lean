@@ -8,21 +8,23 @@ public section
 
 /-! # Linger.Runtime.Daemon — the poll loop around `Session.step`
 
-All decisions live in the pure machine; this file only:
-* turns fd readiness into `Session.Event`s,
-* executes `Session.Effect`s as syscalls,
-* drives the runtime's two byte queues, both bounded at 4 MiB so no buffer can
-  grow the daemon. A client that stops reading is disconnected at `outbufCap`;
-  a child that stops reading has its input dropped at `ptyInCap` (there is
-  nothing to disconnect — the child is the session).
+`Session.step` owns protocol and session decisions. This file schedules fd
+readiness, executes effects, and drains accepted streams. Each client owns one
+immutable replay cursor and two `Buf` byte buffers sharing `outbufCap` in
+retained logical byte length: the front buffer precedes the cursor, and the
+following buffer holds later output and exit notifications. Replay advances by
+at most one new frame per flush. A client is cut if subsequent output exceeds
+the shared allowance. The child's separate input buffer drops new input at
+`ptyInCap`.
 
-The queues themselves are **not** this file's: they are `Linger.Core.Buf`, whose
-`Theorems/Buf.lean` proves the caps and that nothing written is retained. That is
-the runtime half of §Bound, and it used to be a paragraph saying "not proved".
-What this file still owns is *when* to enqueue and how to react to a short write,
-which is `IO` and therefore gated rather than proved: `tests/gates.sh` checks that
-`Linger/Runtime/*` declares no byte buffer of its own, because no theorem can see
-that this file calls those functions instead of open-coding the same sums.
+Active and retired client transports share `maxClients`. Logical close reports
+`.closed` immediately; accepted bytes may drain until the connection's fixed
+deadline. Final shutdown also has a finite drain grace period.
+
+`Theorems/Buf.lean` proves the byte-buffer caps and removal of written prefixes.
+`Theorems/Replay.lean` proves the cursor's exact stream, progress, storage bound,
+and shared-buffer allowance. Runtime scheduling and short-write handling are
+`IO`, so source gates tie these proved operations to their actual consumers.
 
 Checkpoint effects are wired to hooks filled by `Linger.Runtime.Resume`
 (spec step 7): the daemon knows *when*, that module knows *what*.
@@ -33,9 +35,16 @@ namespace Linger.Runtime.Daemon
 open Linger.Posix
 open Linger.Core.Session (State Event Effect maxClients step)
 open Linger.Core.Buf (Buf owedLen bufOffer bufEnqueue bufAdvance)
+open Linger.Core
 
 /-- A stopped-reading client is cut here (runtime §Bound). -/
 def outbufCap : Nat := 4194304
+
+/-- Payload plus the wire encoder's own frame overhead. -/
+def replayFrameCap : Nat := Linger.Core.Session.outputChunk + (Wire.encode (.output [])).length
+
+/-- Ordinary close and final shutdown share one finite drain grace period. -/
+def drainTimeoutMs : Nat := 3000
 
 /-- And a stopped-reading *child* cannot grow the daemon either: past this
 many unwritten bytes the newest input is dropped. Same number as `outbufCap`,
@@ -53,7 +62,18 @@ structure Conn where
   can reach is covered by `Buf.reachableOut_bound` — within `outbufCap` for the
   connection's whole life, given the cut discipline below. -/
   out : Buf := .empty
+  /-- One immutable snapshot cursor, never a queue of rendered effects. -/
+  replay : Option Replay.Plan := none
+  /-- Bytes accepted after the replay. Shares `outbufCap` with `out`. -/
+  after : Buf := .empty
+  /-- Logical removal has already been reported. Finish accepted bytes before
+  this deadline; repeating a close never extends it. -/
+  closeBy : Option Nat := none
   deriving Inhabited
+
+def Conn.closing (c : Conn) : Bool := c.closeBy.isSome
+
+def Conn.pending (c : Conn) : Bool := owedLen c.out != 0 || c.replay.isSome || owedLen c.after != 0
 
 structure Rt where
   st : State
@@ -82,26 +102,70 @@ def Rt.setConn (rt : Rt) (c : Conn) : Rt :=
 
 def Rt.dropConn (rt : Rt) (fd : UInt32) : Rt := { rt with conns := rt.conns.filter (·.fd != fd) }
 
+/-- Retired transports still own buffers and a snapshot. Their deadline
+releases that ownership even while the rest of the session stays alive. -/
+def expireConns (rt : Rt) (now : Nat) : IO Rt := do
+  let mut rt := rt
+  for c in rt.conns do
+    if c.closeBy.any (now ≥ ·) then
+      close c.fd
+      rt := rt.dropConn c.fd
+  return rt
+
 /-- Try to flush one connection's queue; `none` = peer gone.
 
-The cursor is a **local** `Nat`, and `bufAdvance` is called once when the loop
-stops: a `Buf` holds exactly what is still owed, so the written prefix is never
-retained and the cap therefore measures memory rather than a counter
-(`Buf.bufNoRetain`, `Buf.bufAdvance_owed`). The two write reactions are the
+The write offset is a **local** `Nat`, and `bufAdvance` is called once when the
+write loop stops: `Buf.bufSize` is the retained logical byte length and equals
+what is still owed (`Buf.bufNoRetain`, `Buf.bufAdvance_owed`). Allocator capacity
+and physical heap footprint are outside that bound. The two write reactions are the
 reason this is not shared with `flushPty`: here `n < 0` means the peer is gone and
 the caller must close the fd and feed `.closed` back into the machine, while
 `n == 0` is EAGAIN and POLLOUT resumes. -/
 def flushConn (c : Conn) : IO (Option Conn) := do
-  let mut wrote := 0
-  let owed := owedLen c.out
-  while wrote < owed do
-    let n ← writeBuf c.fd c.out wrote
-    if n < 0 then
-      return none
-    if n == 0 then
-      break -- would block; POLLOUT will resume
-    wrote := wrote + n.toNatClampNeg
-  return some { c with out := bufAdvance c.out wrote }
+  let mut c := c
+  let mut filled := false
+  while true do
+    if owedLen c.out == 0 then
+      if filled then
+        break
+      match c.replay with
+      | some plan =>
+        match Replay.next Linger.Core.Session.outputChunk plan with
+        | none =>
+          c := { c with replay := none }
+          continue
+        | some (bytes, plan) =>
+          c := { c with replay := some plan }
+          if bytes.isEmpty then
+            continue
+          let (q, cut) :=
+            bufEnqueue (outbufCap - owedLen c.after) .empty
+              (ByteArray.mk (Wire.encode (.output bytes)).toArray)
+          if cut then
+            return none
+          c := { c with out := q }
+      | none =>
+        if owedLen c.after == 0 then
+          break
+        c :=
+          { c with
+            out := c.after, after := .empty }
+      -- At most one new frame per call, so a writable replay cannot monopolize
+      -- the poll loop. Empty cursor transitions have a proved progress measure.
+      filled := true
+    let mut wrote := 0
+    let owed := owedLen c.out
+    while wrote < owed do
+      let n ← writeBuf c.fd c.out wrote
+      if n < 0 then
+        return none
+      if n == 0 then
+        break
+      wrote := wrote + n.toNatClampNeg
+    c := { c with out := bufAdvance c.out wrote }
+    if wrote < owed then
+      break
+  return some c
 
 /-- The same bookkeeping for the child's input queue, with the *other* reaction:
 both `n ≤ 0` cases collapse to `break`, because a dead child surfaces as `read`
@@ -150,9 +214,17 @@ def runEffect (rt : Rt) (eff : Effect) : IO (Rt × List Event) := do
     | none =>
       return (rt, [])
     | some c =>
+      if c.closing then
+        return (rt, [])
       let bytes := ByteArray.mk (Linger.Core.Wire.encode m).toArray
-      let (q, cut) := bufEnqueue outbufCap c.out bytes
-      let c := { c with out := q }
+      let (c, cut) :=
+        if c.replay.isSome || owedLen c.after != 0 then
+          let cap := Replay.followingCap outbufCap replayFrameCap (owedLen c.out)
+          let (q, cut) := bufEnqueue cap c.after bytes
+          ({ c with after := q }, cut)
+        else
+          let (q, cut) := bufEnqueue outbufCap c.out bytes
+          ({ c with out := q }, cut)
       if cut then
         -- runtime §Bound: cut the slow client rather than grow
         close c.fd
@@ -163,12 +235,35 @@ def runEffect (rt : Rt) (eff : Effect) : IO (Rt × List Event) := do
         return (rt.dropConn c.fd, [.closed c.fd.toNat])
       | some c =>
         return (rt.setConn c, [])
+  | .replay id plan =>
+    match rt.conn? (UInt32.ofNat id) with
+    | none =>
+      return (rt, [])
+    | some c =>
+      if c.closing then
+        return (rt, [])
+      if c.replay.isSome then
+        close c.fd
+        return (rt.dropConn c.fd, [.closed c.fd.toNat])
+      match ← flushConn { c with replay := some plan } with
+      | none =>
+        close c.fd
+        return (rt.dropConn c.fd, [.closed c.fd.toNat])
+      | some c =>
+        return (rt.setConn c, [])
   | .close id =>
     let fd := UInt32.ofNat id
-    if (rt.conn? fd).isSome then
+    match rt.conn? fd with
+    | none =>
+      return (rt, [])
+    | some c =>
+      if c.closing then
+        return (rt, [])
+      if c.pending then
+        let deadline := (← IO.monoMsNow) + drainTimeoutMs
+        return (rt.setConn { c with closeBy := some deadline }, [.closed id])
       close fd
       return (rt.dropConn fd, [.closed id])
-    return (rt, [])
   | .writePty bytes =>
     return (← queuePty rt bytes, [])
   | .resizePty cols rows =>
@@ -214,23 +309,31 @@ def pump (rt : Rt) (evs : List Event) : IO Rt := do
 
 /-- One poll round: gather events from fd readiness. -/
 def pollRound (rt : Rt) : IO (Rt × List Event) := do
+  let now ← IO.monoMsNow
+  let rt ← expireConns rt now
+  let mut timeout := 1000
+  for c in rt.conns do
+    if let some deadline := c.closeBy then
+      timeout := min timeout (deadline - now)
   -- snapshot: only these conns are in the poll set; accepts during
   -- this round join the NEXT one (revs stays index-aligned)
   let polled := rt.conns
   let mut fds : Array UInt32 := #[rt.listenFd, rt.ptyFd]
   let mut evts : Array UInt32 :=
-    #[POLLIN, POLLIN ||| (if owedLen rt.ptyIn != 0 then POLLOUT else 0)]
+    #[(if rt.conns.length < maxClients then POLLIN else 0),
+      POLLIN ||| (if owedLen rt.ptyIn != 0 then POLLOUT else 0)]
   for c in polled do
     fds := fds.push c.fd
-    evts := evts.push (POLLIN ||| (if owedLen c.out != 0 then POLLOUT else 0))
-  let revs ← poll fds evts 1000
+    evts := evts.push ((if c.closing then 0 else POLLIN) ||| (if c.pending then POLLOUT else 0))
+  let revs ← poll fds evts (Int32.ofNat timeout)
   let mut rt := rt
   let mut events : List Event := []
   -- listen fd
   if revs[0]! &&& POLLIN != 0 then
-    -- Bound one round by the pure roster cap. The queued `.connected` events
-    -- make the core admit or refuse each fd before the next poll.
-    for _ in List.range maxClients do
+    -- The same cap covers every owned transport, including logical closes
+    -- whose accepted stream is still draining. Connections beyond it wait in
+    -- the kernel backlog until a slot is released.
+    for _ in List.range (maxClients - rt.conns.length) do
       let a ← accept rt.listenFd
       if a < 0 then
         break
@@ -269,11 +372,21 @@ def pollRound (rt : Rt) : IO (Rt × List Event) := do
       | none =>
         close c.fd
         rt := rt.dropConn c.fd
-        events := events ++ [.closed c.fd.toNat]
+        if !c.closing then
+          events := events ++ [.closed c.fd.toNat]
       | some c' =>
-        rt := rt.setConn c'
+        if c'.closing && !c'.pending then
+          close c'.fd
+          rt := rt.dropConn c'.fd
+        else
+          rt := rt.setConn c'
     if r &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
-      if (rt.conn? c.fd).isSome then
+      if let some current := rt.conn? c.fd then
+        if current.closing then
+          if r &&& (POLLHUP ||| POLLERR) != 0 then
+            close c.fd
+            rt := rt.dropConn c.fd
+          continue
         match ← read c.fd 65536 with
         | some bs =>
           if bs.size > 0 then
@@ -283,6 +396,37 @@ def pollRound (rt : Rt) : IO (Rt × List Event) := do
           rt := rt.dropConn c.fd
           events := events ++ [.closed c.fd.toNat]
   return (rt, events)
+
+/-- Stop admitting work and drain accepted bytes, with a finite grace period.
+Every poll freezes its fd list; no session events execute after `.exit`. -/
+def drainConns (rt : Rt) : IO Rt := do
+  let mut rt := rt
+  let deadline := (← IO.monoMsNow) + drainTimeoutMs
+  while !rt.conns.isEmpty do
+    let now ← IO.monoMsNow
+    rt ← expireConns rt now
+    if rt.conns.isEmpty then
+      break
+    if now ≥ deadline then
+      break
+    let polled := rt.conns
+    let fds := (polled.map (·.fd)).toArray
+    let revs ← poll fds (Array.replicate fds.size POLLOUT) (Int32.ofNat (min 100 (deadline - now)))
+    for (c, i) in polled.zipIdx do
+      if revs[i]! &&& (POLLOUT ||| POLLHUP ||| POLLERR) != 0 then
+        match ← flushConn c with
+        | some c =>
+          if c.pending then
+            rt := rt.setConn c
+          else
+            close c.fd
+            rt := rt.dropConn c.fd
+        | none =>
+          close c.fd
+          rt := rt.dropConn c.fd
+  for c in rt.conns do
+    close c.fd
+  return { rt with conns := [] }
 
 /-- Daemon main. Blocks until the session ends. `restore` is a loaded
 checkpoint: prior screen + labels (cwd was already consumed by the
@@ -380,6 +524,7 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
       let (rt', events) ← pollRound rt
       let now ← monotonicMs
       rt ← pump rt' (events ++ [.tick now])
+    rt ← drainConns rt
   finally
     -- Stop admitting work, close every owned transport, kill/reap the child,
     -- then unlink while the name lock is still held. This runs on normal exit

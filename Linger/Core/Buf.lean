@@ -4,10 +4,9 @@ public section
 
 /-! # Linger.Core.Buf — a bounded byte queue, as a value
 
-The daemon owns two long-lived byte queues: the per-client output backlog and the
-pty input backlog. Both are the same shape, and both carry *decisions*, not
-plumbing: a cap, what to do when it is reached, and the discipline that keeps the
-cap measuring **memory** rather than a counter. Those decisions lived in
+The daemon's socket output buffers and pty input backlog share this value type.
+It carries the cap, the policy when it is reached, and the discipline that keeps
+the stored byte sequence equal to the unwritten debt. Those decisions lived in
 `Linger/Runtime/Daemon.lean`, where nothing could prove them; the runtime half of
 §Bound was a paragraph in THEOREMS.md ending "not proved".
 
@@ -76,9 +75,8 @@ def owed (b : Buf) : ByteArray := b.bytes
 `owed`. -/
 def owedLen (b : Buf) : Nat := b.bytes.size
 
-/-- The queue's **memory** footprint. It coincides with the debt by construction —
-that equation is `bufNoRetain`, and it is the property the write-cursor shape
-could only promise. -/
+/-- Retained logical byte length. It coincides with the debt by construction
+(`bufNoRetain`); allocator capacity and object overhead are not measured. -/
 def bufSize (b : Buf) : Nat := b.bytes.size
 
 /-- Offer bytes, dropping the whole frame if it would breach the cap — the

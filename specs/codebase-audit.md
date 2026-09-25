@@ -1,8 +1,8 @@
 # 2026-09-25 codebase audit
 
-Status: step 12 complete — byte-level margin cursor proof
+Status: step 13 complete — bounded replay and transport draining
 Updated: 2026-09-25
-Next: finish restoration composition and bounded replay delivery
+Next: finish pending-wrap restoration without weakening existing receiver claims
 Predecessor: `specs/archive/tmux-resurrect-recipe.md`
 
 ## Goal
@@ -138,3 +138,14 @@ The status and completion record below track the actual integration order.
   retain its existing receiver scope. Narrow/wide and malformed-grid witnesses,
   together with three rejected adapter mutations, check the statement. Both
   required builds and source/formatter checks pass.
+- Step 13: attach captures a bounded replay cursor whose complete walk equals
+  the original renderer stream. Exact prefix/suffix, positive-budget progress
+  and serialized-storage proofs support incremental delivery. Prior replies,
+  replay, live output and exit status retain their order; buffers share one
+  allowance, and retired transports have fixed deadlines and count toward
+  physical admission. Real regressions and restored mutations exercise large
+  paints, exit tails, snapshot capture, ordering, bounds and cleanup. The
+  runtime coverage census now catches multiline declarations. Both required
+  builds and the full foreground verifier pass, including the new delivery
+  suite; the ledger distinguishes logical byte bounds from physical memory
+  and conditional draining from network liveness.

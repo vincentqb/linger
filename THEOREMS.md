@@ -33,6 +33,7 @@ recipes, break records, measurements, the audits — lives in
 | §Row | a list row's identity vs an unreliable `info` reply | a row's name is the sanitized socket filename alone; the reply can neither change it nor smuggle a second one in | Theorems/Listing.lean |
 | §Claim | one session name vs many daemons racing for it | *given* the kernel grants ≤1 `flock` holder, ≤1 daemon ever unlinks or binds that name | Theorems/Claim.lean |
 | §Replay | one saved byte stream must recreate the live screen | parser quiesced for any receiver (`restore_quiesced`, `restore_u8_zero`); cursor exact end to end (`restore_cursor`, given `Good` and DECOM off); the byte layer (`utf8_feed`, `cellText_feed`, `crlf_feed`); the pen (`penSgr_feed`, every sequence under the parser's 16-parameter cap, `penSgr_under_cap`); the cells closed via §Renderable plus the grid walk | Theorems/Render.lean, Tests/Render.lean |
+| §Delivery | a complete repaint can exceed a client's output buffer | a cursor captured at attach denotes exactly `Render.restore`; each advance emits a bounded prefix and retains its exact suffix, with a strictly decreasing work measure for positive budgets. The complete walk preserves every byte in order while retaining shared rows and at most one rendered row or title chunk | Theorems/Replay.lean, Theorems/Session.lean, E2E/Delivery.lean |
 | §Handback | the program owned the terminal vs the shell gets it back | `Render.leaveAnsi` is a **constant**, written in `Client.attach`'s `finally` so every exit path emits it. `leave_canonical_all`: any receiver at least two rows tall ends parser-ground, default modes, whole scroll region, ASCII charsets with G0 shifted in, main screen current, pen reset (`leave_canonical` is the hypothesis-free parser+modes half). The cursor position is the receiver's business (clamped park), pinned by `E2E/Attach.lean`. Still leaked outbound: the window title | Linger/Core/Render.lean, Linger/Runtime/Client.lean, E2E/Attach.lean |
 | §Terminal | a child needs a terminal that answers, linger owns none | one bounded pure transducer owns a documented query profile: the VT projection, scanner and ordered reply stream are roster-independent (`Terminal.feed_vt`, `Session.ptyOut_reply_roster_independent`); an owned query is answered exactly once, everything else is byte-for-byte passthrough (`apc_passthrough`, `sixel_passthrough`); the scanner is capped and over-cap becomes passthrough (`feed_bounded`); no reply can commit a line into the child (`feed_replies_noNl` — terminal-reply command injection, closed); chunking-invariant (`feed_append`) | Theorems/Terminal.lean, Theorems/Session.lean |
 | §Renderable | the painter expresses fewer grids than the emulator reaches | the emulator never stores a shape a repaint cannot reproduce (`renderable_step`/`renderable_feed`/`renderable_resize`/`renderable_quiesce`, from `renderable_init`); `LiveReachableVt` is the least predicate closed under those and containing every screen the decoder's door accepts (`LiveReachableVt.ofDecoded` — a `Good` premise is provably unsound, counterexample in SCRATCHPAD.md); the decoder establishes it from disk too (`Vt.ofDecoded_renderable`, `Checkpoint.load_renderable`); lifted to the daemon by `Session.run_vt_renderable` and `run_resume_vt_shape` | Linger/Core/Vt.lean, Theorems/Vt.lean |
@@ -135,18 +136,45 @@ discipline. `Theorems/Coverage.lean` resolves every explicit pure-core
 `def` to its fully qualified environment constant and requires that exact
 constant in a theorem type; comments, proof bodies, formatting and colliding
 basenames cannot satisfy it. `E2E/Coverage.lean` independently classifies
-every byte stream the runtime emits:
+renderer and replay definitions referenced outside their own module by
+runtime-reachable code. It reuses the definition census rather than inspecting
+one line of each return type, so multiline signatures and intermediate byte
+containers remain covered:
 
 | stream | backing |
 |---|---|
-| `Render.restore` | proved receiver-quantified (see A5) — not the title or the DECSC slot |
+| `Replay.start`, `Replay.next` | `start_faithful`, `next_faithful`, `next_bounded`, `next_progress`, `drain_start`: exactly the renderer stream (see A5 for receiver scope) |
+| `Replay.followingCap` | `followingCap_front`, `followingCap_frame`: a shared allowance reserving one frame |
+| renderer stages used by `Replay.start` | components of `start_faithful` / `drain_start`; no additional standalone receiver claim |
+| `Render.rowAnsi`, `Render.scrollbackAnsi` | `rowAnsi_len_add_crlf_le_cost`, `scrollbackAnsi_le`; cursor storage is bounded by `next_storage` / `steps_storage` |
 | `Render.leaveAnsi` | `leave_canonical`, `leave_canonical_all` |
 | `Render.history` | `history_framing`, `history_lines`, `history_records`, `history_screenText_suffix` |
 | `Render.screenText` | `screenText_framing`, `screenText_lines`, `screenText_records` |
 | `Render.utf8s` | `utf8s_no_ctl`, `utf8s_no_esc`, `utf8s_no_esc_bel`, `Session.utf8s_no_frame` |
 
-A new emitter fails the gate until classified; an entry for a stream the
-runtime no longer emits fails too.
+A newly referenced definition fails the gate until classified; an entry for a
+definition no longer referenced fails too.
+
+`Session.onMsg_attach_snapshot` captures the immutable snapshot at the pure attach
+event. `Replay.start_faithful` and `drain_start` equate the cursor's full
+denotation to `Render.restore` for every snapshot. `next_faithful` gives an exact
+prefix/suffix equality; `next_progress` proves termination for positive budgets,
+including empty stage transitions. `steps_storage` bounds serialized literal
+and pending bytes after any finite prefix, without summing the rendered sizes of
+the screen grids. The shared snapshot, allocator capacity and object overhead
+are outside that serialized-byte measure.
+
+The runtime holds one optional cursor per connection. Previously queued bytes
+precede it; subsequent live output and exit notifications follow it. Its two
+socket buffers share `outbufCap`, reserving a frame using the actual wire
+encoder's overhead. Active and retired transports together use `maxClients`.
+Logical close feeds `.closed` immediately and gives any retained transport a
+fixed Nat deadline that repeated closes cannot extend. Polling expires retired
+transports; shutdown makes a final bounded drain attempt and releases leftovers.
+Source gates and real socket/PTY regressions connect these IO operations to the
+pure claims. Delivery requires the peer to finish draining before its applicable
+deadline and remain within the live-output allowance. The deadline is enforced
+by a cooperative poll loop, without a hard real-time guarantee.
 
 ## Concurrency
 
@@ -288,14 +316,15 @@ real terminals.
   event loop has no termination theorem.
   Runtime correctness rests on the live suites in `E2E/`; the
   pure/impure line is enforced by `tests/gates.sh`.
-- **§Bound bounds our buffers, not the OS's.** Both runtime byte queues
-  are `Linger.Core.Buf`, capped at 4 MiB: `outbufCap` disconnects a slow
-  client, `ptyInCap` drops the newest whole frame. `Theorems/Buf.lean`
-  proves the arithmetic — caps bound what is owed, memory equals the
-  debt (`bufNoRetain`), each bound paired with a content claim, and
-  whole-lifetime via `reachableIn_bound`/`reachableOut_bound`. That the
-  daemon *uses* `Buf` is the `private` seal plus a grep gate, not a
-  theorem.
+- **§Bound measures retained logical bytes.** The socket output buffers share
+  `outbufCap`, and the child's input queue has `ptyInCap`. Each allowance is
+  4 MiB; excessive live output disconnects that client, while excessive input
+  drops the newest whole frame. `Theorems/Buf.lean` proves that the stored byte
+  sequence is exactly the debt (`bufNoRetain`), with content claims and
+  whole-lifetime bounds via `reachableIn_bound`/`reachableOut_bound`. This does
+  not measure ByteArray allocator capacity, list/object overhead, the shared
+  terminal snapshot or OS buffers. Private representations and source gates
+  connect the proved operations to their IO consumers.
 - **§Restore restores the codec's state, not the shell's world**:
   screen, scrollback, modes, labels, cwd — not the process tree.
   Scrollback replays to the byte budget (`sbReplayBytes = 262144`, about
@@ -304,10 +333,11 @@ real terminals.
   stage is bounded by `sbReplayBytes + 2 * rows + 19`
   (`scrollbackAnsi_le_cost`, `scrollbackAnsi_le`), including its framing and
   control sequences. The screen paint is a separate term.
-- **The screen paint is the unbudgeted term**: worst-case pens at
-  400×100 emit ~4.5 MB, past `outbufCap` before any scrollback.
-  Delivery must advance under backpressure while retaining the complete
-  screen; dropping paint bytes would give up replay fidelity.
+- **A screen paint can exceed the output allowance.** Replay advances under
+  backpressure from shared screen rows, retaining one rendered row or bounded
+  title chunk at a time. `E2E.Delivery` exercises accepted paints exceeding the
+  allowance, FIFO live output and child-exit tails. A closing peer that does not
+  finish within its drain grace can lose its remaining transport tail.
 - **Images are passed through, not modelled**: the emulator parks in
   the string state and accumulates nothing, so §Bound holds for
   megabytes of base64; nothing is stored, so `restore` cannot replay

@@ -71,8 +71,9 @@ code_count() { code_grep "$@" | awk 'END { print NR + 0 }'; }   # -> a number
 # cannot live inside `code_grep`, because `code_count` runs it down a pipe and an
 # `exit` there would only leave the subshell.)
 for p in Linger/Core Linger/Core/Vt.lean Linger/Core/Checkpoint.lean \
+         Linger/Core/Session.lean Linger/Core/Replay.lean \
          Linger/Runtime Linger/Runtime/Client.lean Linger/Runtime/Daemon.lean \
-         Theorems Theorems/Session.lean Tests E2E \
+         Theorems Theorems/Session.lean Theorems/Replay.lean Tests E2E \
          LingerTest.lean c/shim.c lakefile.lean lake-manifest.json README.md; do
   [ -e "$p" ] || fail "$p is gone — a gate below would pass by matching nothing"
 done
@@ -286,17 +287,18 @@ toolkit_closure Linger/Core/Terminal.lean \
 # would fire on every legitimate rewire of the `Theorems/Render/*` chain — noise on the
 # common change, which is how a gate stops being read.
 #
-# The permitted region is an EXACT four-file list plus two directories, and that split
+# The permitted region is an EXACT file list plus two directories, and that split
 # is by edit frequency, measured: of 192 commits, 36 added a `.lean` under `Theorems/`
 # or `Tests/` — about one commit in five — against 11 under `Linger/Core/`, only four of
 # which are in the closure. So a per-file list over `Theorems/**` would be edited
-# reflexively, while these four are edited essentially never, which is what makes them a
+# reflexively, while the core list changes rarely, which is what makes it a
 # checkpoint. `Theorems/**` and `Tests/**` are friends BY DECLARATION (see
 # `Linger/Core/Vt.lean`, "## Every door"), and `Tests/` deliberately forges invalid
 # states in its negative fixtures, so listing its files one by one would gate a
 # non-property. Everything else is outside and fail-closed — `E2E/**`,
 # `LingerTest.lean`, `Main.lean`, `Linger/Posix.lean`, all of `Linger/Runtime/` and the
-# other seven `Linger/Core/` modules. `E2E/**` is outside deliberately: a pty suite
+# other `Linger/Core/` modules. Replay joins only to read shared immutable rows.
+# `E2E/**` is outside deliberately: a pty suite
 # asserts on bytes the real binary emitted, so a forged `Vt` there would be an assertion
 # about a state the binary cannot reach — the very bug the seal exists to prevent.
 #
@@ -315,7 +317,7 @@ toolkit_closure Linger/Core/Terminal.lean \
 # docstring is invisible to it. What survives is narrower and still worth writing down:
 # do not begin a docstring line with a BARE, unbackticked `import all`.
 VT_ALL_RE='^[[:space:]]*(meta[[:space:]]+)*import[[:space:]]+all[[:space:]]+'
-VT_FRIEND_EXACT='Linger/Core/Vt.lean Linger/Core/Render.lean Linger/Core/Terminal.lean Linger/Core/Checkpoint.lean'
+VT_FRIEND_EXACT='Linger/Core/Vt.lean Linger/Core/Render.lean Linger/Core/Terminal.lean Linger/Core/Checkpoint.lean Linger/Core/Replay.lean'
 VT_FRIEND_DIRS='Theorems/ Tests/'
 code_grep "$VT_ALL_RE" '*.lean' \
 | awk -F: -v seed='Linger/Core/Vt.lean' -v exact="$VT_FRIEND_EXACT" -v dirs="$VT_FRIEND_DIRS" '
@@ -365,8 +367,8 @@ shim_n="$(code_count 'LEAN_EXPORT' 'c/shim.c')"
   || fail "shim grew to $shim_n wrappers (cap $SHIM_CAP); justify the new syscall and bump the cap"
 
 # The runtime keeps no byte queue of its own. `Linger/Core/Buf.lean` owns the two
-# long-lived queues -- their caps, their drop and cut policies, and the fact that
-# nothing written is retained (`Theorems/Buf.lean`) -- and `Linger/Runtime/*` is `IO`,
+# kinds of long-lived queue -- their caps, their drop and cut policies, and the
+# removal of written prefixes (`Theorems/Buf.lean`) -- and `Linger/Runtime/*` is `IO`,
 # so NO theorem can see that the daemon calls those functions rather than
 # open-coding the same sums. Without this grep the Buf theorems are arithmetic
 # about a value nothing forces the runtime to use. A source-tree property cannot
@@ -382,6 +384,80 @@ shim_n="$(code_count 'LEAN_EXPORT' 'c/shim.c')"
   || fail "an accumulating ByteArray local in Linger/Runtime (use Linger.Core.Buf: it is capped)"
 ! code_grep '[.]extract([^[:alnum:]_]|$)' 'Linger/Runtime/*' \
   || fail "buffer arithmetic in Linger/Runtime (Buf.bufAdvance owns it, and is proved)"
+
+# The cursor proofs describe pure values. These ties keep the runtime on the
+# captured snapshot, bounded advances and shared byte allowance. The delivery
+# suite separately observes framing, prior/replay/live ordering and exit tails.
+for claim in start_faithful next_faithful next_bounded next_progress steps_storage \
+             drain_start followingCap_front followingCap_frame; do
+  code_grep "^theorem $claim " 'Theorems/Replay.lean' > /dev/null \
+    || fail "replay claim $claim disappeared"
+done
+code_grep '^theorem onMsg_attach_snapshot ' 'Theorems/Session.lean' > /dev/null \
+  || fail "the attach snapshot theorem disappeared"
+code_grep '^theorem onMsg_attach_already ' 'Theorems/Session.lean' > /dev/null \
+  || fail "the repeated-attach refusal theorem disappeared"
+code_grep '^[[:space:]]+effs [+][+] [[][.]replay c[.]id [(]Replay[.]start s[.]vt[)][]] [+][+]$' 'Linger/Core/Session.lean' > /dev/null \
+  || fail "attach no longer captures its resulting snapshot"
+code_grep '^[[:space:]]+replay : Option Replay[.]Plan := none$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+  || fail "each connection must retain one optional replay cursor"
+code_grep '^[[:space:]]+after : Buf := [.]empty$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+  || fail "following output bypasses the proved byte buffer"
+code_grep '^[[:space:]]+[|] [.]replay id plan =>$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+  || fail "the runtime no longer receives the captured replay plan"
+code_grep '^[[:space:]]+match ← flushConn [{] c with replay := some plan [}] with$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+  || fail "the runtime no longer executes the captured replay plan"
+! code_grep 'Replay[.]start|Render[.]restore' 'Linger/Runtime/Daemon.lean' \
+  || fail "the daemon must consume the captured cursor without constructing another repaint"
+code_grep '^[[:space:]]+match Replay[.]next Linger[.]Core[.]Session[.]outputChunk plan with$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+  || fail "replay advancement no longer uses the proved output chunk"
+code_grep '^def replayFrameCap : Nat := Linger[.]Core[.]Session[.]outputChunk [+] [(]Wire[.]encode [(][.]output [[][]][)][)][.]length$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+  || fail "replay reservation no longer includes the wire encoder's frame overhead"
+code_grep '^[[:space:]]+let cap := Replay[.]followingCap outbufCap replayFrameCap [(]owedLen c[.]out[)]$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+  || fail "following output no longer shares the front buffer allowance"
+code_grep '^[[:space:]]+bufEnqueue [(]outbufCap - owedLen c[.]after[)] [.]empty$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+  || fail "replay frames no longer account for following output debt"
+
+# A logically closed peer still owns its transport until it drains or expires.
+# It therefore counts towards admission, and ordinary polls must retire it
+# before taking the fd snapshot. Deadlines use Nat and the same grace constant
+# as shutdown. A repeated close cannot buy another grace period.
+code_grep '^[[:space:]]+closeBy : Option Nat := none$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+  || fail "transport close deadlines no longer use Nat"
+[ "$(code_count '^[[:space:]]+let deadline := [(]← IO[.]monoMsNow[)] [+] drainTimeoutMs$' 'Linger/Runtime/Daemon.lean')" -eq 2 ] \
+  || fail "ordinary close and shutdown must share the Nat drain deadline"
+code_grep '^[[:space:]]+if c[.]closeBy[.]any [(]now ≥ ·[)] then$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+  || fail "retired transport expiry no longer checks its fixed deadline"
+code_grep '^[[:space:]]+return [(]rt[.]setConn [{] c with closeBy := some deadline [}], [[][.]closed id[]][)]$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+  || fail "logical close no longer reports removal while retaining accepted bytes"
+awk '
+  /^  [|] [.]close id =>/ { inclose = 1 }
+  inclose && /if c[.]closing then/ { guarded = 1 }
+  inclose && /if c[.]pending then/ { checked++; if (!guarded) bad = 1 }
+  /^  [|] [.]writePty / { inclose = 0 }
+  /^def pollRound / { inpoll = 1 }
+  inpoll && /let rt ← expireConns rt now/ { expired = 1 }
+  inpoll && /let polled := rt[.]conns/ { frozen++; if (!expired) bad = 1 }
+  /^def drainConns / { inpoll = 0 }
+  END { exit (checked != 1 || frozen != 1 || bad) }
+' Linger/Runtime/Daemon.lean \
+  || fail "repeated-close guard or expire-before-poll-snapshot ordering changed"
+code_grep '^[[:space:]]+timeout := min timeout [(]deadline - now[)]$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+  || fail "ordinary polling ignores close deadlines"
+code_grep '^[[:space:]]+#[[][(]if rt[.]conns[.]length < maxClients then POLLIN else 0[)],$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+  || fail "listener admission no longer counts every owned transport"
+code_grep '^[[:space:]]+for _ in List[.]range [(]maxClients - rt[.]conns[.]length[)] do$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+  || fail "accept budget no longer includes retired transports"
+[ "$(code_count '^[[:space:]]+let polled := rt[.]conns$' 'Linger/Runtime/Daemon.lean')" -eq 2 ] \
+  || fail "ordinary and shutdown polling must each freeze their fd set"
+[ "$(code_count '^[[:space:]]+for c in polled do$' 'Linger/Runtime/Daemon.lean')" -eq 2 ] \
+  || fail "ordinary fd construction and readiness must use the same frozen connections"
+code_grep '^[[:space:]]+let fds := [(]polled[.]map [(]·[.]fd[)][)][.]toArray$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+  || fail "shutdown fd list diverged from its frozen connections"
+code_grep '^[[:space:]]+for [(]c, i[)] in polled[.]zipIdx do$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+  || fail "shutdown readiness no longer indexes the frozen connection list"
+code_grep '^[[:space:]]+rt ← drainConns rt$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+  || fail "serve no longer drains accepted bytes after exit"
 
 # An info answer can span several frames. The pure producer proves the bound;
 # keep the IO accumulator on that same policy rather than a copied number.

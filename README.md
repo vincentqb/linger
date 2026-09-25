@@ -24,8 +24,8 @@ external Lean dependencies.
 ./lake build Theorems Tests      # the proofs and the unit fixtures
 ./lake exe lingertest            # POSIX shim smoke tests
 ./lake exe e2e <suite>           # one pty suite: attach resume overview remote robust
-                                 #   graphics terminal status agent watch
-./lake exe e2e coverage          # semantic coverage + emitted-stream classification
+                                 #   graphics terminal status agent watch recipes delivery
+./lake exe e2e coverage          # semantic coverage + renderer/replay classification
 ./lake exe e2e ci                # which runners CI asks for (tests/ci-runners.sh)
 sh tests/gates.sh                # the fast source-tree gates (seconds)
 ./tests/e2e.sh                   # everything, in order (minutes)

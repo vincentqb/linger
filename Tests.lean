@@ -5,6 +5,7 @@ import Tests.VtApi
 import Tests.Terminal
 import Tests.Render
 import Tests.Session
+import Tests.Delivery
 import Tests.Remote
 import Tests.Listing
 import Tests.Checkpoint

@@ -3,6 +3,7 @@ module
 public import Linger.Core.Wire
 public import Linger.Core.Vt
 public import Linger.Core.Render
+public import Linger.Core.Replay
 public import Linger.Core.Terminal
 public import Linger.Core.Name
 
@@ -128,6 +129,7 @@ inductive Event where
 /-- What the runtime executes. -/
 inductive Effect where
   | send (id : Nat) (m : Msg)
+  | replay (id : Nat) (plan : Replay.Plan)
   | close (id : Nat)
   | writePty (bytes : List UInt8)
   | resizePty (cols rows : UInt32)
@@ -319,21 +321,24 @@ def broadcast (s : State) (bytes : List UInt8) : List Effect :=
 def onMsg (s : State) (c : Client) (m : Msg) : State × List Effect :=
   match m with
   | .attach cols rows =>
-    -- 0×0 marks a read-only observer: it mirrors output
-    -- but never owns the size and its input is dropped
-    let sizer := cols != 0 && rows != 0
-    let c :=
-      { c with
-        attached := true, sizer, seq := s.attachSeq, cols, rows }
-    let s :=
-      { s.setClient c with
-        attachSeq := s.attachSeq + 1, lookSeq := s.outSeq }
-    let (s, effs) := resizeOwned s c
-    (s,
-      effs ++ outputMsgs c.id (Render.restore s.vt) ++
-        (match s.exited with
-        | some st => [.send c.id (.exited st)]
-        | none => []))
+    if c.attached then (s, [.send c.id (.err "already attached".toUTF8.toList)])
+    else
+      -- 0×0 marks a read-only observer: it mirrors output
+      -- but never owns the size and its input is dropped.
+      let sizer := cols != 0 && rows != 0
+      let c :=
+        { c with
+          attached := true, sizer, seq := s.attachSeq, cols, rows }
+      let s :=
+        { s.setClient c with
+          attachSeq := s.attachSeq + 1, lookSeq := s.outSeq }
+      let (s, effs) := resizeOwned s c
+      -- Capture here: feedMsgs can change the VT again before effects run.
+      (s,
+        effs ++ [.replay c.id (Replay.start s.vt)] ++
+          (match s.exited with
+          | some st => [.send c.id (.exited st)]
+          | none => []))
   | .input bytes =>
     -- attached observers are read-only; control connections (not
     -- attached, e.g. `linger send`) keep their input rights

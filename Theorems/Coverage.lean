@@ -11,6 +11,7 @@ import all Theorems.Remote
 import all Theorems.Claim
 import all Theorems.Listing
 import all Theorems.Render
+import all Theorems.Replay
 import all Theorems.Resume
 import all Theorems.Status
 public meta import Lean.Elab.Command

@@ -43,7 +43,7 @@ example :
     (let (s, effs) := run [.connected 1, .bytes 1 (encode (.attach 100 30))]
      (s.client? 1).any (·.attached)
        && hasEffect effs (fun e => match e with | .resizePty 100 30 => true | _ => false)
-       && hasEffect effs (fun e => match e with | .send 1 (.output _) => true | _ => false)
+       && hasEffect effs (fun e => match e with | .replay 1 _ => true | _ => false)
        && s.vt.cols == 100 && s.vt.rows == 30) = true := by native_decide
 
 /-- Keystrokes are forwarded to the pty verbatim, not interpreted. -/

@@ -311,8 +311,33 @@ theorem onMsg_attach_same_size_vt (s : State) (c : Client) (cols rows : UInt32)
   unfold onMsg resizeOwned resize
   dsimp only
   split
-  · simp [State.setClient, hc, hr]
-  · simp [State.setClient]
+  · rfl
+  · split
+    · simp [State.setClient, hc, hr]
+    · simp [State.setClient]
+
+/-- A connection gets one replay. Refusing a second attach keeps a decoded
+message batch from building a backlog of immutable snapshots. -/
+theorem onMsg_attach_already (s : State) (c : Client) (cols rows : UInt32) (h : c.attached = true) :
+    onMsg s c (.attach cols rows) = (s, [.send c.id (.err "already attached".toUTF8.toList)]) := by
+  simp [onMsg, h]
+
+/-- Capture exactly the resulting attach snapshot, after any owned resize.
+Later messages may change the runtime's state before it executes this plan. -/
+theorem onMsg_attach_snapshot (s : State) (c : Client) (cols rows : UInt32)
+    (h : c.attached = false) :
+    ((onMsg s c (.attach cols rows)).2.filterMap
+        (fun e =>
+          match e with
+          | .replay id plan => some (id, plan)
+          | _ => none)) =
+      [(c.id, Replay.start (onMsg s c (.attach cols rows)).1.vt)] := by
+  unfold onMsg
+  simp only [h, Bool.false_eq_true, ↓reduceIte]
+  unfold resizeOwned resize
+  dsimp only
+  repeat' split
+  all_goals simp
 
 /-- Keystrokes from a full client go to the pty, not the emulator:
 echo is the shell's job, so the machine's screen cannot drift. -/
@@ -1594,8 +1619,8 @@ theorem outputMsgs_payloads (id : Nat) (bs : List UInt8) :
     rw [List.map_cons, List.filterMap_cons]; simpa using ih
 
 /-- **The session's framing loses nothing.** Concatenating the payloads of the frames
-`outputMsgs` produces gives back exactly the bytes it was handed — so the repaint a
-reattaching client receives is the whole of `Render.restore`, not a prefix of it. -/
+`outputMsgs` produces gives back exactly the ordinary output bytes it was handed.
+Replay has its own incremental cursor with the same exact concatenation promise. -/
 theorem outputMsgs_faithful (id : Nat) (bs : List UInt8) :
     ((outputMsgs id bs).filterMap
           (fun e =>

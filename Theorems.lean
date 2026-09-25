@@ -11,6 +11,7 @@ import Theorems.Listing
 import Theorems.Render
 import Theorems.Render.PendingGlyph
 import Theorems.Render.PendingPosition
+import Theorems.Replay
 import Theorems.Resume
 import Theorems.Status
 import Theorems.Coverage
