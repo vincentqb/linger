@@ -948,12 +948,11 @@ had it. `Good v` supplies the bounds (a real session always satisfies it —
 `good_init` plus §Bound's induction); `origin = false` is the documented
 gap, since under DECOM a region-relative address cannot reproduce a cursor
 parked outside the scroll region. -/
-theorem restore_cursor (v : Vt) (hgood : Good v) (ho : v.modes.origin = false) :
-    (((Vt.init v.cols v.rows).feed (restore v)).cursor.x = v.cursor.x) ∧
-      (((Vt.init v.cols v.rows).feed (restore v)).cursor.y = v.cursor.y) := by
+theorem restore_cursor_placed (v : Vt) (hgood : Good v) (ho : v.modes.origin = false) :
+    (((Vt.init v.cols v.rows).feed (restoreBody v ++ cursorAnsi v)).cursor.x = v.cursor.x) ∧
+      (((Vt.init v.cols v.rows).feed (restoreBody v ++ cursorAnsi v)).cursor.y = v.cursor.y) := by
   obtain ⟨hic, hir⟩ := init_dims v hgood
   -- the stream splits at the final cursor address
-  rw [show restore v = restoreBody v ++ cursorAnsi v from rfl]
   rw [show
       ∀ (w : Vt),
         w.feed (restoreBody v ++ cursorAnsi v) = (w.feed (restoreBody v)).feed (cursorAnsi v)

@@ -236,31 +236,39 @@ theorem prologue_grounds (v w : Vt) : (w.feed (prologueAnsi v)).pstate = .ground
 `restore_quiesced`: no assumption on the client's parser state at all, which is what
 the `ESC \` lead-in buys. The `u8need` half needs the same treatment for every chunk
 and is left to `specs/archive/restore-conformance.md` Step 2. -/
-theorem restore_grounds (v w : Vt) : (w.feed (restore v)).pstate = .ground := by
+theorem restore_placed_grounds (v w : Vt) :
+    (w.feed (restoreBody v ++ cursorAnsi v)).pstate = .ground := by
   rw [show
-      restore v =
+      restoreBody v ++ cursorAnsi v =
         prologueAnsi v ++
           (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++ regionAnsi v ++ tabsAnsi v ++
             savedAnsi v ++
+            savedPendingAnsi v ++
             titleAnsi v ++
             modesAnsi v ++
             charsetAnsi v ++
             penSgr v.pen ++
             cursorAnsi v)
       from by
-      unfold restore restoreBody; simp]
+      unfold restoreBody; simp]
   rw [feed_append]
   refine Ends.append ?_ (ends_cursorAnsi v) _ (prologue_grounds v w)
   refine Ends.append ?_ (ends_penSgr v.pen)
   refine Ends.append ?_ (ends_charsetAnsi v)
   refine Ends.append ?_ (ends_modesAnsi v)
   refine Ends.append ?_ (ends_titleAnsi v)
+  refine Ends.append ?_ (ends_savedPendingAnsi v)
   refine Ends.append ?_ (ends_savedAnsi v)
   refine Ends.append ?_ (ends_tabsAnsi v)
   refine Ends.append ?_ (ends_regionAnsi v)
   refine Ends.append ?_ (ends_screensAnsi v)
   exact
     (ends_csiNum 0 0x6D (by decide) (by decide)).append (ends_csiNum 2 0x4A (by decide) (by decide))
+
+theorem restore_grounds (v w : Vt) : (w.feed (restore v)).pstate = .ground := by
+  unfold restore
+  rw [feed_append]
+  exact ends_cursorPendingAnsi v _ (restore_placed_grounds v w)
 
 /-! ### …and so does the hand-back
 
@@ -992,6 +1000,93 @@ theorem mmap_id_cursorAnsi (v : Vt) : MMap id (cursorAnsi v) := by
   unfold cursorAnsi
   split <;> exact mmap_id_cup _ _
 
+/-- Glyph bytes leave modes alone even when the receiver has a partial decoder. -/
+theorem modes_glyph_step {v : Vt} (b : UInt8) (hg : v.pstate = .ground) (hb : 0x20 ≤ b) :
+    (v.step b).modes = v.modes := by
+  have hac (w : Vt) (n : Nat) : (w.acceptChar n).modes = w.modes := by
+    unfold Vt.acceptChar
+    split <;> exact modes_print' _ _
+  have hs (w : Vt) : (w.stepGround b).modes = w.modes := by
+    unfold Vt.stepGround
+    split
+    · rfl
+    rw [ite_eq_right
+        (show ¬b < (0x20 : UInt8) from by
+          simp only [UInt8.lt_iff_toNat_lt]
+          have := UInt8.le_iff_toNat_le.mp hb
+          omega)]
+    split
+    · exact hac _ _
+    split
+    · split
+      · rfl
+      split
+      · exact hac _ _
+      · rfl
+    repeat' split
+    all_goals rfl
+  have hp : (v.abortUtf8 b).pstate = .ground := (ps_abortUtf8 _ _).trans hg
+  unfold Vt.step
+  dsimp only
+  rw [hp, hs]
+  unfold Vt.abortUtf8
+  split <;> rfl
+
+theorem modes_glyph_run :
+    ∀ (bs : Bytes) (v : Vt), v.pstate = .ground → (∀ b ∈ bs, 0x20 ≤ b) → (v.feed bs).modes = v.modes
+  | [], _, _, _ => rfl
+  | b :: bs, v, hg, hb => by
+    have h := hb b (by simp)
+    rw [feed_cons]
+    exact
+      (modes_glyph_run bs _
+            (ground_step b hg
+              (by
+                intro he
+                subst b
+                exact (by decide : ¬(0x20 : UInt8) ≤ 0x1B) h))
+            (fun c hc => hb c (by simp [hc]))).trans
+        (modes_glyph_step b hg h)
+
+theorem modes_cellText (c : Cell) {v : Vt} (hg : v.pstate = .ground) :
+    (v.feed (cellText c)).modes = v.modes := by
+  apply modes_glyph_run _ _ hg
+  intro b hb
+  rcases List.mem_append.mp hb with hb | hb
+  · exact (utf8_no_ctl _ (safeChar_ge c.base).1 (safeChar_ge c.base).2 b hb).1
+  · exact (utf8s_no_ctl _ b hb).1
+
+theorem mmap_penSgr_of_ground (p : Pen) {v : Vt} (hg : v.pstate = .ground) :
+    (v.feed (penSgr p)).pstate = .ground ∧
+      (v.feed (penSgr p)).u8need = 0 ∧ (v.feed (penSgr p)).modes = v.modes := by
+  have hm := mmap_id_penSgr p
+  have he : penSgr p = 0x1B :: (penSgr p).drop 1 := by simp [penSgr, sgrOf, csiB]
+  rw [he] at hm ⊢
+  exact mmap_of_esc_lead hm hg
+
+theorem mmap_id_pendingAnsi (cols : Nat) (grid : Array Row) (cur : Cursor) (row : Nat) (pen : Pen) :
+    MMap id (pendingAnsi cols grid cur row pen) := by
+  let cells := grid.getD cur.y #[]
+  let x := if (cells.at cur.x).width == 0 then cur.x - 1 else cur.x
+  let cell := cellFit (cells.at x)
+  change
+    MMap id
+      (if
+          cur.pending && cur.y < grid.size && cur.x < cells.size && cur.x + 1 == cols &&
+            charWidth cell.base != 0 &&
+            x + charWidth cell.base == cols then
+        csiNum2 row (x + 1) 0x48 ++ penSgr cell.pen ++ cellText cell ++ penSgr pen
+      else [])
+  split
+  · intro v hg hu
+    rw [feed_append, feed_append, feed_append]
+    have hc := mmap_id_cup row (x + 1) v hg hu
+    have hp := mmap_id_penSgr cell.pen _ hc.1 hc.2.1
+    have ht := modes_cellText cell hp.1
+    have hq := mmap_penSgr_of_ground pen (ends_cellText cell _ hp.1)
+    exact ⟨hq.1, hq.2.1, hq.2.2.trans (ht.trans (hp.2.2.trans hc.2.2))⟩
+  · exact MMap.nil
+
 /-! ### The window title leaves nothing half-decoded -/
 
 /-- Feeding an OSC body from `.osc acc false` with nothing pending keeps `u8need` 0. -/
@@ -1078,6 +1173,26 @@ theorem mmap_focus (b : Bool) : MMap (fun m => { m with focusEvents := b }) (mod
 
 theorem mmap_origin (b : Bool) : MMap (fun m => { m with origin := b }) (modeSet 6 b) :=
   (mmap_modeSet 6 b (by decide) (by decide)).congr (fun m => by simp [smMod, Vt.setMode, Vt.moveTo])
+
+theorem modes_cursorPendingAnsi (v w : Vt) (hg : w.pstate = .ground) (hu : w.u8need = 0)
+    (hm : w.modes = v.modes) : (w.feed (cursorPendingAnsi v)).modes = v.modes := by
+  unfold cursorPendingAnsi
+  split
+  · have hstart :=
+      ((((mmap_wrap true).comp (mmap_irm false)).comp (mmap_id_charset 0x28 0x42 (Or.inl rfl))).comp
+            (mmap_id_charset 0x29 0x42 (Or.inr rfl))).comp
+        mmap_id_si
+    have hpaint :=
+      hstart.comp
+        (mmap_id_pendingAnsi v.cols v.grid v.cursor
+          (if v.modes.origin then v.cursor.y - v.top + 1 else v.cursor.y + 1) v.pen)
+    have htail :=
+      (((hpaint.comp (mmap_wrap v.modes.wrap)).comp (mmap_irm v.modes.insert)).comp
+            (mmap_id_charsetAnsi v)).comp
+        (mmap_id_penSgr v.pen)
+    have h := (htail w hg hu).2.2
+    simpa [hm] using h
+  · exact hm
 
 /-- **The scrollback stage's mode tail, from a receiver whose decoder may be
 mid-sequence.** `scrollbackAnsi` ends with `4l ?6l ?7h`, contiguous and
@@ -1173,45 +1288,52 @@ theorem mmap_modesAnsi (v : Vt)
 
 /-! ### The inbound value claim (A5 inbound) -/
 
-theorem restore_modes_any (v w : Vt)
+theorem restore_modes_placed (v w : Vt)
     (hmouse :
       v.modes.mouse = 0 ∨ v.modes.mouse = 1000 ∨ v.modes.mouse = 1002 ∨ v.modes.mouse = 1003) :
-    (w.feed (restore v)).modes = v.modes := by
+    (w.feed (restoreBody v ++ cursorAnsi v)).modes = v.modes := by
   -- MID2 = prologue .. saved (before the title); it grounds any receiver
   have hEndsRest :
     Ends
       (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++ regionAnsi v ++ tabsAnsi v ++
-        savedAnsi v) :=
-    (((((ends_csiNum 0 0x6D (by decide) (by decide)).append
-                      (ends_csiNum 2 0x4A (by decide) (by decide))).append
-                  (ends_screensAnsi v)).append
-              (ends_regionAnsi v)).append
-          (ends_tabsAnsi v)).append
-      (ends_savedAnsi v)
+        savedAnsi v ++
+        savedPendingAnsi v) := by
+    refine Ends.append ?_ (ends_savedPendingAnsi v)
+    refine Ends.append ?_ (ends_savedAnsi v)
+    refine Ends.append ?_ (ends_tabsAnsi v)
+    refine Ends.append ?_ (ends_regionAnsi v)
+    refine Ends.append ?_ (ends_screensAnsi v)
+    exact
+      (ends_csiNum 0 0x6D (by decide) (by decide)).append
+        (ends_csiNum 2 0x4A (by decide) (by decide))
   have hg2 :
     (w.feed
           (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++ regionAnsi v ++
             tabsAnsi v ++
-            savedAnsi v)).pstate =
+            savedAnsi v ++
+            savedPendingAnsi v)).pstate =
       .ground := by
     rw [show
         prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++ regionAnsi v ++
             tabsAnsi v ++
-            savedAnsi v =
+            savedAnsi v ++
+            savedPendingAnsi v =
           prologueAnsi v ++
             (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++ regionAnsi v ++ tabsAnsi v ++
-              savedAnsi v)
+              savedAnsi v ++
+              savedPendingAnsi v)
         from by simp only [List.append_assoc],
       feed_append]
     exact hEndsRest _ (prologue_grounds v w)
   -- g1 = w.feed (MID2 ++ title): ground, u8need 0
   have hsplitMID :
-    restore v =
+    restoreBody v ++ cursorAnsi v =
       (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++ regionAnsi v ++
           tabsAnsi v ++
-          savedAnsi v) ++
+          savedAnsi v ++
+          savedPendingAnsi v) ++
         (titleAnsi v ++ (modesAnsi v ++ charsetAnsi v ++ penSgr v.pen ++ cursorAnsi v)) := by
-    simp only [restore, restoreBody, List.append_assoc]
+    simp only [restoreBody, List.append_assoc]
   rw [hsplitMID, feed_append, feed_append]
   -- after the title the parser is ground with nothing pending (`ends_titleAnsi`,
   -- `uz_titleAnsi`); the suffix chain `modesAnsi ++ charset ++ pen ++ cursor` is the
@@ -1220,6 +1342,27 @@ theorem restore_modes_any (v w : Vt)
     (((mmap_modesAnsi v hmouse).comp (mmap_id_charsetAnsi v)).comp (mmap_id_penSgr v.pen)).comp
       (mmap_id_cursorAnsi v)
   exact (htail _ (ends_titleAnsi v _ hg2) (uz_titleAnsi v hg2)).2.2
+
+theorem restore_modes_any (v w : Vt)
+    (hmouse :
+      v.modes.mouse = 0 ∨ v.modes.mouse = 1000 ∨ v.modes.mouse = 1002 ∨ v.modes.mouse = 1003) :
+    (w.feed (restore v)).modes = v.modes := by
+  unfold restore
+  rw [feed_append]
+  apply modes_cursorPendingAnsi
+  · exact restore_placed_grounds v w
+  · rw [feed_append]
+    unfold cursorAnsi csiNum2
+    split <;>
+      exact
+        u8_zero_after_csi _ _
+          (by
+            exact
+              ((paramBytes_digits _).append
+                    (ParamBytes.cons (by decide) (by decide) ParamBytes.nil)).append
+                (paramBytes_digits _))
+          (by decide) _
+  · exact restore_modes_placed v w hmouse
 
 /-! ### A5 inbound, continued: the pen (a non-modes restored field)
 
@@ -1298,21 +1441,23 @@ theorem un_modesAnsi (v : Vt) (g : Vt) : (g.feed (modesAnsi v)).u8need = 0 := by
 the body ends `… charsetAnsi ++ penSgr v.pen`, `penSgr_feed` sets the pen to exactly
 `v.pen` from the grounded prefix, and the trailing `cursorAnsi` (a `CUP`, i.e.
 `moveTo`) preserves it. -/
-theorem restore_pen_any (v w : Vt) : (w.feed (restore v)).pen = v.pen := by
+theorem restore_pen_placed (v w : Vt) : (w.feed (restoreBody v ++ cursorAnsi v)).pen = v.pen := by
   -- C = everything up to (not including) penSgr; it grounds `w` with nothing pending
   have hEndsC :
     Ends
       (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++ regionAnsi v ++ tabsAnsi v ++
         savedAnsi v ++
+        savedPendingAnsi v ++
         titleAnsi v ++
         modesAnsi v ++
         charsetAnsi v) :=
-    ((((((((ends_csiNum 0 0x6D (by decide) (by decide)).append
-                                  (ends_csiNum 2 0x4A (by decide) (by decide))).append
-                              (ends_screensAnsi v)).append
-                          (ends_regionAnsi v)).append
-                      (ends_tabsAnsi v)).append
-                  (ends_savedAnsi v)).append
+    (((((((((ends_csiNum 0 0x6D (by decide) (by decide)).append
+                                      (ends_csiNum 2 0x4A (by decide) (by decide))).append
+                                  (ends_screensAnsi v)).append
+                              (ends_regionAnsi v)).append
+                          (ends_tabsAnsi v)).append
+                      (ends_savedAnsi v)).append
+                  (ends_savedPendingAnsi v)).append
               (ends_titleAnsi v)).append
           (ends_modesAnsi v)).append
       (ends_charsetAnsi v)
@@ -1321,6 +1466,7 @@ theorem restore_pen_any (v w : Vt) : (w.feed (restore v)).pen = v.pen := by
           (prologueAnsi v ++
             (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++ regionAnsi v ++ tabsAnsi v ++
               savedAnsi v ++
+              savedPendingAnsi v ++
               titleAnsi v ++
               modesAnsi v ++
               charsetAnsi v))).pstate =
@@ -1332,17 +1478,19 @@ theorem restore_pen_any (v w : Vt) : (w.feed (restore v)).pen = v.pen := by
           (prologueAnsi v ++
             (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++ regionAnsi v ++ tabsAnsi v ++
               savedAnsi v ++
+              savedPendingAnsi v ++
               titleAnsi v ++
               modesAnsi v))).pstate =
       .ground := by
     rw [feed_append]
     exact
-      (((((((ends_csiNum 0 0x6D (by decide) (by decide)).append
-                                (ends_csiNum 2 0x4A (by decide) (by decide))).append
-                            (ends_screensAnsi v)).append
-                        (ends_regionAnsi v)).append
-                    (ends_tabsAnsi v)).append
-                (ends_savedAnsi v)).append
+      ((((((((ends_csiNum 0 0x6D (by decide) (by decide)).append
+                                    (ends_csiNum 2 0x4A (by decide) (by decide))).append
+                                (ends_screensAnsi v)).append
+                            (ends_regionAnsi v)).append
+                        (ends_tabsAnsi v)).append
+                    (ends_savedAnsi v)).append
+                (ends_savedPendingAnsi v)).append
             (ends_titleAnsi v)).append
         (ends_modesAnsi v) _ (prologue_grounds v w)
   have hMu :
@@ -1350,6 +1498,7 @@ theorem restore_pen_any (v w : Vt) : (w.feed (restore v)).pen = v.pen := by
           (prologueAnsi v ++
             (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++ regionAnsi v ++ tabsAnsi v ++
               savedAnsi v ++
+              savedPendingAnsi v ++
               titleAnsi v ++
               modesAnsi v))).u8need =
       0 := by
@@ -1357,11 +1506,13 @@ theorem restore_pen_any (v w : Vt) : (w.feed (restore v)).pen = v.pen := by
         (prologueAnsi v ++
             (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++ regionAnsi v ++ tabsAnsi v ++
               savedAnsi v ++
+              savedPendingAnsi v ++
               titleAnsi v ++
               modesAnsi v)) =
           (prologueAnsi v ++
               (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++ regionAnsi v ++ tabsAnsi v ++
                 savedAnsi v ++
+                savedPendingAnsi v ++
                 titleAnsi v)) ++
             modesAnsi v
         from by simp only [List.append_assoc],
@@ -1372,6 +1523,7 @@ theorem restore_pen_any (v w : Vt) : (w.feed (restore v)).pen = v.pen := by
           (prologueAnsi v ++
             (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++ regionAnsi v ++ tabsAnsi v ++
               savedAnsi v ++
+              savedPendingAnsi v ++
               titleAnsi v ++
               modesAnsi v ++
               charsetAnsi v))).u8need =
@@ -1380,12 +1532,14 @@ theorem restore_pen_any (v w : Vt) : (w.feed (restore v)).pen = v.pen := by
         (prologueAnsi v ++
             (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++ regionAnsi v ++ tabsAnsi v ++
               savedAnsi v ++
+              savedPendingAnsi v ++
               titleAnsi v ++
               modesAnsi v ++
               charsetAnsi v)) =
           (prologueAnsi v ++
               (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++ regionAnsi v ++ tabsAnsi v ++
                 savedAnsi v ++
+                savedPendingAnsi v ++
                 titleAnsi v ++
                 modesAnsi v)) ++
             charsetAnsi v
@@ -1394,17 +1548,56 @@ theorem restore_pen_any (v w : Vt) : (w.feed (restore v)).pen = v.pen := by
     exact (mmap_id_charsetAnsi v _ hMground hMu).2.1
   -- assemble
   rw [show
-      restore v =
+      restoreBody v ++ cursorAnsi v =
         (prologueAnsi v ++
             (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++ regionAnsi v ++ tabsAnsi v ++
               savedAnsi v ++
+              savedPendingAnsi v ++
               titleAnsi v ++
               modesAnsi v ++
               charsetAnsi v)) ++
           penSgr v.pen ++
           cursorAnsi v
-      from by simp only [restore, restoreBody, List.append_assoc]]
+      from by simp only [restoreBody, List.append_assoc]]
   rw [feed_append, feed_append, penSgr_feed v.pen hCground hCu]
   rw [pen_cursorAnsi v (by simpa using hCground) (by simpa using hCu)]
+
+theorem pen_cursorPendingAnsi (v w : Vt) (hg : w.pstate = .ground) (hu : w.u8need = 0)
+    (hp : w.pen = v.pen) : (w.feed (cursorPendingAnsi v)).pen = v.pen := by
+  unfold cursorPendingAnsi
+  split
+  · have hstart :=
+      ((((mmap_wrap true).comp (mmap_irm false)).comp (mmap_id_charset 0x28 0x42 (Or.inl rfl))).comp
+            (mmap_id_charset 0x29 0x42 (Or.inr rfl))).comp
+        mmap_id_si
+    have hpaint :=
+      hstart.comp
+        (mmap_id_pendingAnsi v.cols v.grid v.cursor
+          (if v.modes.origin then v.cursor.y - v.top + 1 else v.cursor.y + 1) v.pen)
+    have h :=
+      (((hpaint.comp (mmap_wrap v.modes.wrap)).comp (mmap_irm v.modes.insert)).comp
+          (mmap_id_charsetAnsi v))
+        w hg hu
+    rw [feed_append]
+    simpa using congrArg Vt.pen (penSgr_feed v.pen h.1 h.2.1)
+  · exact hp
+
+theorem restore_pen_any (v w : Vt) : (w.feed (restore v)).pen = v.pen := by
+  unfold restore
+  rw [feed_append]
+  apply pen_cursorPendingAnsi
+  · exact restore_placed_grounds v w
+  · rw [feed_append]
+    unfold cursorAnsi csiNum2
+    split <;>
+      exact
+        u8_zero_after_csi _ _
+          (by
+            exact
+              ((paramBytes_digits _).append
+                    (ParamBytes.cons (by decide) (by decide) ParamBytes.nil)).append
+                (paramBytes_digits _))
+          (by decide) _
+  · exact restore_pen_placed v w
 
 end Linger.Core.Render

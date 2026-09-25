@@ -17,32 +17,39 @@ this ladder proves what it does to that terminal. The proof is one file per rung
 imported in dependency order; this module is the name the rest of `Theorems/`
 imports, so splitting the ladder changed no downstream import.
 
-The rungs, in the order they are built (each imports the one above):
+The rungs, in dependency order:
 
 * `Theorems.Render.Ends` — §Replay stage 3b: the parser half. `Ends bs` ("from
   ground, `bs` returns to ground with no pending UTF-8") plus one lemma per emitted
   construct, and the byte facts of the emitters that make them provable.
 * `Theorems.Render.Quiet` — stage 3c: the emitted numbers survive the round trip,
-  the cursor lands where the session had it, and DECOM stays off.
+  `Quiet bs` keeps DECOM off, and `cup_roundtrip` proves the primitive cursor address.
 * `Theorems.Render.Pen` — stage 3d begins: the pen round trip (semantic and parser
   halves) and one glyph placed in one cell.
-* `Theorems.Render.Keeps` — the restore tail leaves the screen alone, so the paint
-  is the only writer; and `Row.mend`'s fixed points.
+* `Theorems.Render.Keeps` — the nonprinting control stages leave the screen
+  alone; and `Row.mend`'s fixed points.
 * `Theorems.Render.Modes` — anchor A5, both directions for the modes: the lead-in
   grounds any receiver, `leave_canonical` on the way out, `MMap` and the inbound
   modes and pen on the way in.
 * `Theorems.Render.Sticky` — A5 inbound for the sticky bundle (region, charsets,
-  shift state, screen) via `SMap`, and the cursor for any receiver.
+  shift state, screen) via `SMap`.
 * `Theorems.Render.History` — §Row: `linger history`'s framing cannot be forged by
   a cell's contents.
 * `Theorems.Render.Row` — the row painter: `Matches` and `rowAnsi_writes_row`.
+* `Theorems.Render.PendingGlyph`, `PendingPosition` and `PendingAccumulator` —
+  reprinting a canonical margin cell preserves the rest of the terminal;
+  separate byte-level cursor frames also cover malformed receiver grids and
+  stale UTF-8 accumulators.
+* `Theorems.Render.PendingWrap` — complete state equations for the deferred-wrap
+  stages, their post-paint frames, the unconditional cell fit, and the original
+  cursor guarantees.
 * `Theorems.Render.Grid` — the grid: `paint_rows`, `gridAnsi_writes_grid`, and
   `restore_grid_any` on both screens at every height.
 * `Theorems.Render.Tabs` — `Fixes π` (the projection-generic stream predicate that
   `Keeps` and `MMap id` are instances of) and `restore_tabs_any`.
-* `Theorems.Render.Scrollback` — the history stage's row half: the unconditional fit
-  (`cellOk_cellFit`, `rowOk_fitRow`, `fitRow_id_of_rowOk`) and the byte budget
-  (`sbTake_budget`, `sbRows_budget`, `sbTake_prefix`, `rowAnsi_len_le_cost`). Its
+* `Theorems.Render.Scrollback` — the history stage's row half: the unconditional row
+  fit (`rowOk_fitRow`, `fitRow_id_of_rowOk`) and the complete byte budget
+  (`sbTake_budget`, `sbRows_budget`, `sbTake_prefix`, `scrollbackAnsi_le`). Its
   receiver half, `scrollback_entry`, is in `Grid` beside `paint_entry`.
 
 Why it is split: at ~9,900 lines the single file was accretion from

@@ -1032,7 +1032,7 @@ def Vt.resize (v : Vt) (cols rows : Nat) : Vt :=
         (fun (g, cur, pen) =>
           (fit g,
             { cur with
-              x := min cur.x (c - 1), y := min cur.y (r - 1) },
+              x := min cur.x (c - 1), y := min cur.y (r - 1), pending := false },
             pen)),
     cursor :=
       { v.cursor with

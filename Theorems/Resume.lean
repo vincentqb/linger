@@ -32,9 +32,11 @@ The two halves:
 
 `resume_grid`, `resume_tabs`, and `resume_sb` prove value fidelity.
 `resume_cursor` covers cursor position with origin mode off. Title and saved
-cursor/pen fidelity still rely on fixtures; wrap-pending flags are excluded
-from the fixture equivalence and can affect the next printed glyph. Parser
-quiescence alone does not imply equivalence under arbitrary future input.
+cursor/pen fidelity still rely on fixtures. The fixture equivalence also
+compares all three deferred-wrap flags, and socket checks exercise the next
+glyph after replay. Decoded flags without a representable margin cell remain
+outside that equivalence. Parser quiescence alone does not imply equivalence
+under arbitrary future input.
 
 The last section is the same statement with the subject swapped: `load`'s **output**
 instead of `save`'s input, i.e. an arbitrary byte string off disk. Those three claims
@@ -99,10 +101,11 @@ reattaching client is left ready for the application's next byte whatever state 
 terminal was in — mid-escape, mid-OSC, mid-DCS, or holding a half-decoded character.
 That is the state a real client is in, and `resume_quiesced` above assumed it away.
 
-It rests on two properties of the stream's ends and nothing in between: `restore`
+It composes the stream's grounding prefix and stage guarantees: `restore`
 **leads** with `ESC \` so a receiver in a string state resynchronises
-(`Render.restore_grounds`), and **ends** with a `CSI … H` whose final byte cannot
-leave a character half-decoded (`Render.restore_u8_zero`).
+(`Render.restore_grounds`). Cursor addressing clears partial UTF-8, and the
+optional deferred-wrap stage finishes with complete SGR sequences
+(`Render.restore_u8_zero`).
 
 `hren`/`htabs` are `resume_quiesced`'s — the round-trip conjunct's, not the replay's; see
 there. -/

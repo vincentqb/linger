@@ -611,6 +611,20 @@ theorem smap_id_savedAnsi (v : Vt) : SMap id (savedAnsi v) := by
   unfold savedAnsi
   exact ((smap_id_penSgr _).append (smap_id_cup _ _)).append (smap_id_escSeq 0x37 (by decide))
 
+theorem smap_id_pendingAnsi (cols : Nat) (grid : Array Row) (cur : Cursor) (row : Nat) (pen : Pen) :
+    SMap id (pendingAnsi cols grid cur row pen) := by
+  unfold pendingAnsi
+  dsimp only
+  refine SMap.streamPred.ite (fun _ => ?_) (fun _ => SMap.nil)
+  exact
+    (((smap_id_cup _ _).append (smap_id_penSgr _)).append (smap_cellText _)).append
+      (smap_id_penSgr _)
+
+theorem smap_id_savedPendingAnsi (v : Vt) : SMap id (savedPendingAnsi v) := by
+  unfold savedPendingAnsi
+  refine SMap.streamPred.ite (fun _ => ?_) (fun _ => SMap.nil)
+  exact (smap_id_pendingAnsi _ _ _ _ _).append (smap_id_escSeq 0x37 (by decide))
+
 theorem smap_id_tabsAnsi (v : Vt) : SMap id (tabsAnsi v) := by
   unfold tabsAnsi
   refine (smap_id_tbc 3).append ?_
@@ -723,6 +737,30 @@ theorem smap_charsetAnsi (v : Vt) :
   unfold charsetAnsi
   exact ((h0.comp h1).comp h2).congr (fun s => rfl)
 
+theorem stick_cursorPendingAnsi (v w : Vt) (hg : w.pstate = .ground) (hs : stick w = stick v) :
+    stick (w.feed (cursorPendingAnsi v)) = stick v := by
+  unfold cursorPendingAnsi
+  split
+  · have hwrap (on : Bool) :=
+      smap_id_modeSet_safe 7 on (by decide) (by decide) (by decide) (by decide) (by decide)
+    have hstart :=
+      ((((hwrap true).append smap_id_irm_reset).comp (smap_charset 0x28 0x42 (Or.inl rfl))).comp
+            (smap_charset 0x29 0x42 (Or.inr rfl))).comp
+        smap_si
+    have hpaint :=
+      hstart.comp
+        (smap_id_pendingAnsi v.cols v.grid v.cursor
+          (if v.modes.origin then v.cursor.y - v.top + 1 else v.cursor.y + 1) v.pen)
+    have htail :=
+      (((hpaint.comp (hwrap v.modes.wrap)).comp (smap_id_irm v.modes.insert)).comp
+            (smap_charsetAnsi v)).comp
+        (smap_id_penSgr v.pen)
+    have h := (htail w hg).2
+    dsimp only [stCharset] at h
+    rw [h, hs]
+    cases hso : v.shiftOut <;> simp [stick, hso]
+  · exact hs
+
 /-- The flush run moves no sticky field: no ESC, no SO, no SI. -/
 theorem smap_id_crlfRun (n : Nat) : SMap id ((List.replicate n crlfB).flatten) :=
   SMap.text (crlfRun_no_esc n)
@@ -776,7 +814,8 @@ theorem smap_screensAnsi (v : Vt) :
   · obtain ⟨mg, mc, mp⟩ := x
     rw [ite_eq_left (by simp)]
     exact
-      ((((((smap_id_gridAnsi mg).append (smap_id_penSgr mp)).append (smap_id_cup _ _)).comp
+      (((((((smap_id_gridAnsi mg).append (smap_id_penSgr mp)).append (smap_id_cup _ _)).append
+                    (smap_id_pendingAnsi _ _ _ _ _)).comp
                 h1049).comp
             (smap_id_gridAnsi v.grid)).congr
         (fun s => rfl))
@@ -842,11 +881,12 @@ directly: `Good` also asserts things about the cursor, the saved slot, the
 scrollback and the CSI accumulator that this proof never reads, and a hypothesis a
 proof does not use makes the theorem weaker than it is. `restore_sticky_good` is the
 `Good`-flavoured entry point for callers that have it. -/
-theorem restore_sticky_any (v w : Vt) (hrows : w.rows = v.rows) (hlt : v.top < v.bot)
-    (hbot : v.bot < v.rows) (hfits : v.rows < 65535) : stick (w.feed (restore v)) = stick v := by
+theorem restore_sticky_placed (v w : Vt) (hrows : w.rows = v.rows) (hlt : v.top < v.bot)
+    (hbot : v.bot < v.rows) (hfits : v.rows < 65535) :
+    stick (w.feed (restoreBody v ++ cursorAnsi v)) = stick v := by
   have hpos : 1 ≤ v.rows := by omega
   rw [show
-      restore v =
+      restoreBody v ++ cursorAnsi v =
         escSeq 0x5C ++ modeSet 1049 false ++ csiNum 4 0x6C ++ modeSet 6 false ++ modeSet 7 true ++
           csiNum2 1 v.rows 0x72 ++
           escCharset 0x28 0x42 ++
@@ -858,12 +898,13 @@ theorem restore_sticky_any (v w : Vt) (hrows : w.rows = v.rows) (hlt : v.top < v
           regionAnsi v ++
           tabsAnsi v ++
           savedAnsi v ++
+          savedPendingAnsi v ++
           titleAnsi v ++
           modesAnsi v ++
           charsetAnsi v ++
           penSgr v.pen ++
           cursorAnsi v
-      from by simp only [restore, restoreBody, prologueAnsi]]
+      from by simp only [restoreBody, prologueAnsi]]
   -- every mode set but the three screen-switch numbers is transparent to `stick`
   have eid :
     ∀ (n : Nat) (on : Bool) (Y : Sticky),
@@ -975,7 +1016,8 @@ theorem restore_sticky_any (v w : Vt) (hrows : w.rows = v.rows) (hlt : v.top < v
                 simp only; omega)])
   have h13 := sput_congr (sput_step h12 (smap_id_tabsAnsi v)) (id_eq _)
   have h14 := sput_congr (sput_step h13 (smap_id_savedAnsi v)) (id_eq _)
-  have h15 := sput_congr (sput_step h14 (smap_id_titleAnsi v)) (id_eq _)
+  have h14p := sput_congr (sput_step h14 (smap_id_savedPendingAnsi v)) (id_eq _)
+  have h15 := sput_congr (sput_step h14p (smap_id_titleAnsi v)) (id_eq _)
   have h16 := sput_congr (sput_step h15 (smap_id_modesAnsi v)) (id_eq _)
   -- the charsets and the shift state
   have h17 :=
@@ -993,6 +1035,14 @@ theorem restore_sticky_any (v w : Vt) (hrows : w.rows = v.rows) (hlt : v.top < v
   refine h19.2.trans ?_
   show (⟨v.rows, v.top, v.bot, v.g0Line, v.g1Line, v.shiftOut, v.altGrid.isSome⟩ : Sticky) = stick v
   rfl
+
+theorem restore_sticky_any (v w : Vt) (hrows : w.rows = v.rows) (hlt : v.top < v.bot)
+    (hbot : v.bot < v.rows) (hfits : v.rows < 65535) : stick (w.feed (restore v)) = stick v := by
+  unfold restore
+  rw [feed_append]
+  exact
+    stick_cursorPendingAnsi v _ (restore_placed_grounds v w)
+      (restore_sticky_placed v w hrows hlt hbot hfits)
 
 /-! ### The three field claims the spec asks for, as projections of the bundle
 
@@ -1054,6 +1104,8 @@ half-decoded. So the whole stream in front of it is irrelevant to this half, whe
 
 theorem restore_u8_zero (v w : Vt) : (w.feed (restore v)).u8need = 0 := by
   unfold restore
+  rw [feed_append]
+  apply u8_zero_after_cursorPendingAnsi
   rw [show
       ∀ (u : Vt),
         u.feed (restoreBody v ++ cursorAnsi v) = (u.feed (restoreBody v)).feed (cursorAnsi v)
@@ -1561,24 +1613,24 @@ theorem restoreBody_grounds (v w : Vt) : (w.feed (restoreBody v)).pstate = .grou
         prologueAnsi v ++
           (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++ regionAnsi v ++ tabsAnsi v ++
             savedAnsi v ++
+            savedPendingAnsi v ++
             titleAnsi v ++
             modesAnsi v ++
             charsetAnsi v ++
             penSgr v.pen)
       from by simp only [restoreBody, List.append_assoc],
     feed_append]
+  refine Ends.append ?_ (ends_penSgr v.pen) _ (prologue_grounds v w)
+  refine Ends.append ?_ (ends_charsetAnsi v)
+  refine Ends.append ?_ (ends_modesAnsi v)
+  refine Ends.append ?_ (ends_titleAnsi v)
+  refine Ends.append ?_ (ends_savedPendingAnsi v)
+  refine Ends.append ?_ (ends_savedAnsi v)
+  refine Ends.append ?_ (ends_tabsAnsi v)
+  refine Ends.append ?_ (ends_regionAnsi v)
+  refine Ends.append ?_ (ends_screensAnsi v)
   exact
-    ((((((((((ends_csiNum 0 0x6D (by decide) (by decide)).append
-                                        (ends_csiNum 2 0x4A (by decide) (by decide))).append
-                                    (ends_screensAnsi v)).append
-                                (ends_regionAnsi v)).append
-                            (ends_tabsAnsi v)).append
-                        (ends_savedAnsi v)).append
-                    (ends_titleAnsi v)).append
-                (ends_modesAnsi v)).append
-            (ends_charsetAnsi v)).append
-        (ends_penSgr v.pen))
-      _ (prologue_grounds v w)
+    (ends_csiNum 0 0x6D (by decide) (by decide)).append (ends_csiNum 2 0x4A (by decide) (by decide))
 
 /-- The modes at the end of `restoreBody` — `restore_modes_any` one chunk earlier, so
 the final `CUP` can be told whether DECOM is on before it is read. -/
@@ -1586,53 +1638,24 @@ theorem restoreBody_modes_any (v w : Vt)
     (hmouse :
       v.modes.mouse = 0 ∨ v.modes.mouse = 1000 ∨ v.modes.mouse = 1002 ∨ v.modes.mouse = 1003) :
     (w.feed (restoreBody v)).modes = v.modes := by
-  have hEndsRest :
-    Ends
-      (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++ regionAnsi v ++ tabsAnsi v ++
-        savedAnsi v) :=
-    (((((ends_csiNum 0 0x6D (by decide) (by decide)).append
-                      (ends_csiNum 2 0x4A (by decide) (by decide))).append
-                  (ends_screensAnsi v)).append
-              (ends_regionAnsi v)).append
-          (ends_tabsAnsi v)).append
-      (ends_savedAnsi v)
-  have hg2 :
-    (w.feed
-          (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++ regionAnsi v ++
-            tabsAnsi v ++
-            savedAnsi v)).pstate =
-      .ground := by
-    rw [show
-        prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++ regionAnsi v ++
-            tabsAnsi v ++
-            savedAnsi v =
-          prologueAnsi v ++
-            (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++ regionAnsi v ++ tabsAnsi v ++
-              savedAnsi v)
-        from by simp only [List.append_assoc],
-      feed_append]
-    exact hEndsRest _ (prologue_grounds v w)
-  rw [show
-      restoreBody v =
-        (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++ regionAnsi v ++
-            tabsAnsi v ++
-            savedAnsi v) ++
-          (titleAnsi v ++ (modesAnsi v ++ charsetAnsi v ++ penSgr v.pen))
-      from by simp only [restoreBody, List.append_assoc],
-    feed_append, feed_append]
-  exact
-    ((((mmap_modesAnsi v hmouse).comp (mmap_id_charsetAnsi v)).comp (mmap_id_penSgr v.pen)) _
-        (ends_titleAnsi v _ hg2) (uz_titleAnsi v hg2)).2.2
+  have hu : (w.feed (restoreBody v)).u8need = 0 := by
+    unfold restoreBody
+    rw [feed_append]
+    exact u8_zero_after_penSgr _ _
+  have hcup := mmap_id_cursorAnsi v _ (restoreBody_grounds v w) hu
+  have h := restore_modes_placed v w hmouse
+  rw [feed_append] at h
+  exact hcup.2.2.symm.trans h
 
 /-- **§Replay (cursor), receiver-quantified.** The final `CUP` lands where the session
 had it in *any* client's emulator of the session's size, not only a fresh one. -/
-theorem restore_cursor_any (v w : Vt) (hgood : Good v) (hgw : Good w) (hcols : w.cols = v.cols)
-    (hrows : w.rows = v.rows) (ho : v.modes.origin = false)
+theorem restore_cursor_placed_any (v w : Vt) (hgood : Good v) (hgw : Good w)
+    (hcols : w.cols = v.cols) (hrows : w.rows = v.rows) (ho : v.modes.origin = false)
     (hmouse :
       v.modes.mouse = 0 ∨ v.modes.mouse = 1000 ∨ v.modes.mouse = 1002 ∨ v.modes.mouse = 1003) :
-    ((w.feed (restore v)).cursor.x = v.cursor.x) ∧
-      ((w.feed (restore v)).cursor.y = v.cursor.y) := by
-  rw [show restore v = restoreBody v ++ cursorAnsi v from rfl, feed_append]
+    ((w.feed (restoreBody v ++ cursorAnsi v)).cursor.x = v.cursor.x) ∧
+      ((w.feed (restoreBody v ++ cursorAnsi v)).cursor.y = v.cursor.y) := by
+  rw [feed_append]
   rw [show cursorAnsi v = csiNum2 (v.cursor.y + 1) (v.cursor.x + 1) 0x48 from by
       simp only [cursorAnsi, ho]; rfl]
   have hpg : (w.feed (restoreBody v)).pstate = .ground := restoreBody_grounds v w

@@ -18,7 +18,7 @@
 #  12. agent verbs (info geometry/outseq, capture, send - , resize)
 #  13. watch: the read-only mirror (geometry, keyboard, hand-back, marks seen)
 #  14. recipes: tmux-resurrect pane projection, cwd, opt-in process restart
-#  15. delivery: bounded large replay, byte order, exit tails and close deadlines
+#  15. delivery: bounded replay, margin continuation, byte order and close deadlines
 #  (1) also covers Tests/Fuzz.lean: randomized §Replay round-trip search
 #  every pty suite also carries an EXACT CHECK COUNT (see `suite` below): green
 #  means "no failures AND every recorded assertion ran".
@@ -251,7 +251,7 @@ say "14. recipes (tmux-resurrect panes -> linger sessions)"
 suite recipes 15
 
 say "15. delivery (large replay, ordering, exit tails and retired transports)"
-suite delivery 28
+suite delivery 34
 
 LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger info "$sentinel_name" >/dev/null \
   || fail "a suite terminated the unrelated sentinel session"

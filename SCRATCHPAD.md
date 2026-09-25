@@ -12097,3 +12097,85 @@ are `step15-build.log`, `step15-proofs-tests.log`, `step15-lint.log` and
 `step15-layout.log` under the audit directory. Both required builds, formatting,
 linting and source gates pass. Runtime sources and live-suite counts are
 unchanged; step 14's full foreground verifier remains applicable.
+
+## Step 16 notes — 2026-09-25
+
+Painting the rightmost cell restored its appearance but lost deferred wrap:
+the next glyph overwrote the margin instead of wrapping. The same defect
+affected the DECSC saved cursor and the main cursor stashed by alternate
+screen entry. The new stages repaint the existing margin glyph, including its
+combining marks, and restore the pen. A wide shadow selects its preceding
+base. The active stage temporarily establishes ASCII, autowrap and replacement
+mode, then restores source modes and charsets without moving the cursor again.
+The saved stage recaptures DECSC; the stashed stage runs before alternate
+screen entry. Captured Replay includes these stages in the same order.
+
+`pendingAnsi_feed_eq`, `savedPendingAnsi_feed_eq` and
+`cursorPendingAnsi_feed_eq` describe complete byte effects under their explicit
+canonical receiver and address premises. `pending_tail_frames` composes the
+printable tail while preserving the painted grid and history. The character,
+byte-position and arbitrary-accumulator helpers from earlier checkpoints
+serve distinct obligations. In particular, the cursor-position endpoint still
+needs no new Renderable or accumulator premise. Shared cell-fitting lemmas
+now live with the repaint composition; the full history cost bounds from
+step 5 remain intact.
+
+An independent worker froze 46 explicit endpoint types from `f2680e9`.
+The unchanged probe compiles against the integrated implementation with empty
+diagnostics. It covers cursor, selected grid, modes, pen, sticky state, tabs,
+history, grounding, hand-back and accepted-load Resume guarantees. Adding an
+accumulator premise or dropping a cursor conclusion makes that probe fail.
+This is a selected endpoint audit, not an assertion that every helper kept its
+type. `restore_grid_of_paint` and `restore_sb_of_paint` now require canonical
+paint context; their callers establish it from the original endpoint premises.
+The ledger and module prose name this distinction.
+
+The stronger continuation behavior has a representability boundary. A decoded
+pending cursor away from the margin cannot be reconstructed by these bytes;
+malformed cells are outside the complete-state repaint premises. Under origin
+mode, the active stage requires an installable region containing the cursor.
+A red invalid-region fixture caught repainting a different row before that
+guard was added. Source flags are not discarded to satisfy the oracle, which
+now compares all three slots. Arbitrary future-input equivalence remains
+outside the proved contracts.
+
+Raw resize already cleared active and saved pending flags but retained the
+stashed flag after changing its geometry. It now clears that flag too.
+`Vt.resize_clears_pending` states all three results without premises.
+The theorem fails against the original resize hunk and compiles after the fix;
+the session still skips repeated effective geometry.
+
+The parent delivery checks use real Unix sockets and the actual effect pump:
+capture at attach, stream the replay, then send a live glyph. Original code
+fails the active, saved and stashed cases for narrow and marked wide margin
+cells. The fixed cases assert exact delivered bytes and literal next-glyph
+screens against uninterrupted output. Worker mutations put the final CUP
+after the repaint or erase its combining marks; tracked tests and independent
+witnesses reject them. An isolated unchanged complete-state theorem also
+rejects the mark-erased repaint equality after only local byte normalization
+is adapted. Earlier elaboration timeouts are not counted as semantic evidence.
+Restored fixtures build again; frozen worker sources remain byte-identical.
+The inspected composition theorems use only standard Lean axioms.
+
+Parent mutations remove the saved, active and stashed stage from actual
+`Replay.start`, one at a time. Each compiles the modified core and then fails
+`Replay.start_faithful` at the omitted byte equality. The original source hash
+and green proof build are restored afterward. No new C operation, dependency,
+capability negotiation or proof resource allowance was needed.
+
+Receipts under `/tmp/linger-audit-20260925/` include the final
+`pending-wrap/.lake/pending-wrap-audit/HANDOFF.md`, its immutable patch/source
+manifests and `mutation-verification.md`; `contract-audit/Contracts.lean`;
+`step16-contracts-green.log`; `step16-delivery-{red,green}.log`;
+`step16-resize-theorem-{red,green}.log`; and
+`step16-replay-break-verify.json` with its indexed green/red/green logs.
+The contract worker's handoff predates parent compiled validation; the parent
+green receipt is the completion evidence.
+
+Validation: both required builds and the E2E executable build pass
+(`step16-build.log`, `step16-proofs-tests-e2e.log`). The complete foreground
+verifier also passes (`step16-verifier.log`): clean rebuild, generated C ABI,
+source and layout gates, semantic core coverage, fuzz corpus, CI runner
+selection, POSIX smoke tests and every live suite. The delivery roster changes
+only in its canonical `tests/e2e.sh` count. `git ls-files --stage` confirms
+the distinct test directory names and the new proof module.

@@ -327,6 +327,16 @@ theorem fixes_tabs_shiftOut : Fixes (fun v : Vt => v.tabs) [0x0E] := by
   unfold Vt.ctl
   exact ⟨hg, by simpa using hu, rfl⟩
 
+theorem fixes_tabs_shiftIn : Fixes (fun v : Vt => v.tabs) [0x0F] := by
+  intro v hg hu
+  rw [show ∀ (w : Vt), w.feed [(0x0F : UInt8)] = w.step 0x0F from fun _ => rfl]
+  rw [step_of_ground_quiet (0x0F : UInt8) hg hu]
+  show _ ∧ _ ∧ _
+  unfold Vt.stepGround
+  rw [ite_eq_right (by decide), ite_eq_left (by decide)]
+  unfold Vt.ctl
+  exact ⟨hg, by simpa using hu, rfl⟩
+
 /-- A mode set (`CSI ? n h/l`) leaves the ruler alone for **any** `n`. Contrast
 `keeps_modeSet`, which needs the digit bridge to know `n ∉ {47, 1047, 1049}`. -/
 theorem fixes_tabs_modeSet (n : Nat) (on : Bool) : Fixes (fun v : Vt => v.tabs) (modeSet n on) := by
@@ -393,9 +403,9 @@ theorem fixes_tabs_cursorAnsi (v : Vt) : Fixes (fun v : Vt => v.tabs) (cursorAns
       (fun _ => fixes_csiNum2 psBlind_tabs _ _ 0x48 (by decide) (by decide) tabs_csiDispatch_cup)
       (fun _ => fixes_csiNum2 psBlind_tabs _ _ 0x48 (by decide) (by decide) tabs_csiDispatch_cup)
 
-/-- **The ruler survives everything `restore` emits after it.** The stages between
-`tabsAnsi` and the end of the stream: the DECSC slot, the title, the mode replay,
-the charset designations, the trailing pen and the final cursor address. -/
+/-- The six original tail stages preserve the ruler: the DECSC slot, title, modes,
+charsets, pen and cursor address. `fixes_tabs_pending_tail` includes the pending-wrap
+repairs interleaved with these stages. -/
 theorem fixes_tabs_tail (v : Vt) :
     Fixes (fun v : Vt => v.tabs)
       (savedAnsi v ++ titleAnsi v ++ modesAnsi v ++ charsetAnsi v ++ penSgr v.pen ++
@@ -538,6 +548,138 @@ theorem feed_esc_of_abort (u : Vt) (rest : Bytes) :
     u.feed (0x1B :: rest) = (u.abortUtf8 0x1B).feed (0x1B :: rest) := by
   simp only [feed_cons]
   rw [step_esc_of_abort u]
+
+/-- Glyph bytes preserve tabs regardless of the decoder's pending count or accumulator. -/
+theorem tabs_glyph_step {v : Vt} (b : UInt8) (hg : v.pstate = .ground) (hb : 0x20 ≤ b) :
+    (v.step b).tabs = v.tabs := by
+  have hac (w : Vt) (n : Nat) : (w.acceptChar n).tabs = w.tabs := by
+    unfold Vt.acceptChar
+    split <;> exact congrArg OffScreen.tabs (off_print _ _)
+  have hs (w : Vt) : (w.stepGround b).tabs = w.tabs := by
+    unfold Vt.stepGround
+    split
+    · rfl
+    rw [ite_eq_right
+        (show ¬b < (0x20 : UInt8) from by
+          simp only [UInt8.lt_iff_toNat_lt]
+          have := UInt8.le_iff_toNat_le.mp hb
+          omega)]
+    split
+    · exact hac _ _
+    split
+    · split
+      · rfl
+      split
+      · exact hac _ _
+      · rfl
+    repeat' split
+    all_goals rfl
+  have hp : (v.abortUtf8 b).pstate = .ground := (ps_abortUtf8 _ _).trans hg
+  unfold Vt.step
+  dsimp only
+  rw [hp, hs, tabs_abortUtf8]
+
+theorem tabs_glyph_run :
+    ∀ (bs : Bytes) (v : Vt), v.pstate = .ground → (∀ b ∈ bs, 0x20 ≤ b) → (v.feed bs).tabs = v.tabs
+  | [], _, _, _ => rfl
+  | b :: bs, v, hg, hb => by
+    have h := hb b (by simp)
+    rw [feed_cons]
+    exact
+      (tabs_glyph_run bs _
+            (ground_step b hg
+              (by
+                intro he
+                subst b
+                exact (by decide : ¬(0x20 : UInt8) ≤ 0x1B) h))
+            (fun c hc => hb c (by simp [hc]))).trans
+        (tabs_glyph_step b hg h)
+
+theorem tabs_cellText (c : Cell) {v : Vt} (hg : v.pstate = .ground) :
+    (v.feed (cellText c)).tabs = v.tabs := by
+  apply tabs_glyph_run _ _ hg
+  intro b hb
+  rcases List.mem_append.mp hb with hb | hb
+  · exact (utf8_no_ctl _ (safeChar_ge c.base).1 (safeChar_ge c.base).2 b hb).1
+  · exact (utf8s_no_ctl _ b hb).1
+
+/-- The leading ESC aborts any partial glyph before the pen replay preserves tabs. -/
+theorem tabs_penSgr_of_ground (p : Pen) {v : Vt} (hg : v.pstate = .ground) :
+    (v.feed (penSgr p)).pstate = .ground ∧
+      (v.feed (penSgr p)).u8need = 0 ∧ (v.feed (penSgr p)).tabs = v.tabs := by
+  have he : penSgr p = 0x1B :: (penSgr p).drop 1 := by simp [penSgr, sgrOf, csiB]
+  have hf : v.feed (penSgr p) = (v.abortUtf8 0x1B).feed (penSgr p) := by
+    rw [he]
+    exact feed_esc_of_abort v _
+  rw [hf]
+  have h :=
+    fixes_penSgr psBlind_tabs p tabs_csiDispatch_sgr (v.abortUtf8 0x1B)
+      ((ps_abortUtf8 _ _).trans hg) (un_abortUtf8_esc v)
+  exact ⟨h.1, h.2.1, h.2.2.trans (tabs_abortUtf8 _ _)⟩
+
+/-- Reprinting the pending glyph preserves tabs without a grid or decoder invariant. -/
+theorem fixes_tabs_pendingAnsi (cols : Nat) (grid : Array Row) (cur : Cursor) (row : Nat)
+    (pen : Pen) : Fixes (fun v : Vt => v.tabs) (pendingAnsi cols grid cur row pen) := by
+  let cells := grid.getD cur.y #[]
+  let x := if (cells.at cur.x).width == 0 then cur.x - 1 else cur.x
+  let cell := cellFit (cells.at x)
+  change
+    Fixes (fun v : Vt => v.tabs)
+      (if
+          cur.pending && cur.y < grid.size && cur.x < cells.size && cur.x + 1 == cols &&
+            charWidth cell.base != 0 &&
+            x + charWidth cell.base == cols then
+        csiNum2 row (x + 1) 0x48 ++ penSgr cell.pen ++ cellText cell ++ penSgr pen
+      else [])
+  split
+  · intro v hg hu
+    rw [feed_append, feed_append, feed_append]
+    have hc :=
+      fixes_csiNum2 psBlind_tabs row (x + 1) 0x48 (by decide) (by decide) tabs_csiDispatch_cup v hg
+        hu
+    have hp := fixes_penSgr psBlind_tabs cell.pen tabs_csiDispatch_sgr _ hc.1 hc.2.1
+    have ht := tabs_cellText cell hp.1
+    have hq := tabs_penSgr_of_ground pen (ends_cellText cell _ hp.1)
+    exact ⟨hq.1, hq.2.1, hq.2.2.trans (ht.trans (hp.2.2.trans hc.2.2))⟩
+  · exact Fixes.nil _
+
+theorem fixes_tabs_savedPendingAnsi (v : Vt) :
+    Fixes (fun v : Vt => v.tabs) (savedPendingAnsi v) := by
+  unfold savedPendingAnsi
+  exact
+    (Fixes.streamPred _).ite
+      (fun _ => (fixes_tabs_pendingAnsi _ _ _ _ _).append (fixes_tabs_escSeq 0x37 (by decide)))
+      (fun _ => Fixes.nil _)
+
+theorem fixes_tabs_cursorPendingAnsi (v : Vt) :
+    Fixes (fun v : Vt => v.tabs) (cursorPendingAnsi v) := by
+  unfold cursorPendingAnsi
+  split
+  · refine Fixes.append ?_ (fixes_penSgr psBlind_tabs _ tabs_csiDispatch_sgr)
+    refine Fixes.append ?_ (fixes_tabs_charsetAnsi v)
+    refine Fixes.append ?_ (fixes_tabs_irm _)
+    refine Fixes.append ?_ (fixes_tabs_modeSet 7 _)
+    refine Fixes.append ?_ (fixes_tabs_pendingAnsi _ _ _ _ _)
+    refine Fixes.append ?_ fixes_tabs_shiftIn
+    refine Fixes.append ?_ (fixes_tabs_escCharset 0x29 0x42 (by decide))
+    refine Fixes.append ?_ (fixes_tabs_escCharset 0x28 0x42 (by decide))
+    exact (fixes_tabs_modeSet 7 true).append (fixes_tabs_irm false)
+  · exact Fixes.nil _
+
+/-- Every stage after the tab ruler, including both pending-wrap repairs, preserves it. -/
+theorem fixes_tabs_pending_tail (v : Vt) :
+    Fixes (fun v : Vt => v.tabs)
+      (savedAnsi v ++ savedPendingAnsi v ++ titleAnsi v ++ modesAnsi v ++ charsetAnsi v ++
+        penSgr v.pen ++
+        cursorAnsi v ++
+        cursorPendingAnsi v) := by
+  refine Fixes.append ?_ (fixes_tabs_cursorPendingAnsi v)
+  refine Fixes.append ?_ (fixes_tabs_cursorAnsi v)
+  refine Fixes.append ?_ (fixes_penSgr psBlind_tabs v.pen tabs_csiDispatch_sgr)
+  refine Fixes.append ?_ (fixes_tabs_charsetAnsi v)
+  refine Fixes.append ?_ (fixes_tabs_modesAnsi v)
+  refine Fixes.append ?_ (fixes_tabs_titleAnsi v)
+  exact (fixes_tabs_savedAnsi v).append (fixes_tabs_savedPendingAnsi v)
 
 /-- `CSI 3 g` (TBC 3) as a state equation: it clears every stop and touches nothing
 else. -/
@@ -715,8 +857,10 @@ theorem restore_tabs_split (v : Vt) :
         (csiNum 3 0x67 ++
           ((((List.range v.cols).filter (fun i => v.tabs.getD i false)).flatMap
               (fun i => csiNum (i + 1) 0x47 ++ escSeq 0x48)) ++
-            (savedAnsi v ++ titleAnsi v ++ modesAnsi v ++ charsetAnsi v ++ penSgr v.pen ++
-              cursorAnsi v))) := by
+            (savedAnsi v ++ savedPendingAnsi v ++ titleAnsi v ++ modesAnsi v ++ charsetAnsi v ++
+              penSgr v.pen ++
+              cursorAnsi v ++
+              cursorPendingAnsi v))) := by
   unfold restore restoreBody tabsAnsi
   simp only [List.append_assoc]
 
@@ -769,7 +913,7 @@ theorem restore_tabs_any (v w : Vt) (hgood : Good w) (hcols : w.cols = v.cols)
         rw [hcc, hhc]
         exact List.mem_range.mp (List.mem_filter.mp hi).1)
   -- the tail leaves the ruler alone, so the fold's value is the answer
-  obtain ⟨-, -, htl⟩ := fixes_tabs_tail v _ hrg hru
+  obtain ⟨-, -, htl⟩ := fixes_tabs_pending_tail v _ hrg hru
   -- `Fixes` is parameterised by the projection, so destructuring it leaves a
   -- beta-redex where the goal has the field applied; `dsimp` lines them up.
   dsimp only at htl

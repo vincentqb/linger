@@ -797,6 +797,15 @@ theorem ends_cellText (c : Cell) : Ends (cellText c) := by
       (safeChar_ge c.base).2 b hb
     intro he; rw [he] at hge; exact absurd hge (by decide))).append (ends_utf8s c.marks)
 
+theorem ends_pendingAnsi (cols : Nat) (grid : Array Row) (cur : Cursor)
+    (row : Nat) (pen : Pen) : Ends (Linger.Core.Render.pendingAnsi cols grid cur row pen) := by
+  unfold pendingAnsi
+  dsimp only
+  apply Ends.ite
+  · exact (((ends_csiNum2 _ _ 0x48 (by decide) (by decide)).append
+      (ends_penSgr _)).append (ends_cellText _)).append (ends_penSgr _)
+  · exact Ends.nil
+
 theorem ends_rowAnsi (row : Row) (p : Pen) : Ends (rowAnsi row p).1 := by
   unfold rowAnsi
   rw [← Array.foldl_toList]
@@ -911,8 +920,9 @@ theorem ends_screensAnsi (v : Vt) : Ends (screensAnsi v) := by
   refine (ends_scrollbackAnsi v).append ?_
   split
   · exact ends_gridAnsi _
-  · exact ((((ends_gridAnsi _).append (ends_penSgr _)).append
+  · exact (((((ends_gridAnsi _).append (ends_penSgr _)).append
       (ends_csiNum2 _ _ 0x48 (by decide) (by decide))).append
+      (ends_pendingAnsi _ _ _ _ _)).append
       (ends_csiPriv 1049 0x68 (by decide) (by decide))).append (ends_gridAnsi _)
 
 theorem ends_regionAnsi (v : Vt) : Ends (regionAnsi v) := by
@@ -930,6 +940,10 @@ theorem ends_savedAnsi (v : Vt) : Ends (savedAnsi v) := by
   unfold savedAnsi
   exact ((ends_penSgr _).append (ends_csiNum2 _ _ 0x48 (by decide) (by decide))).append
     (ends_escSeq 0x37 (by decide))
+
+theorem ends_savedPendingAnsi (v : Vt) : Ends (Linger.Core.Render.savedPendingAnsi v) := by
+  unfold savedPendingAnsi
+  exact Ends.ite ((ends_pendingAnsi _ _ _ _ _).append (ends_escSeq 0x37 (by decide))) Ends.nil
 
 theorem ends_charsetAnsi (v : Vt) : Ends (charsetAnsi v) := by
   unfold charsetAnsi
@@ -983,12 +997,27 @@ theorem ends_cursorAnsi (v : Vt) : Ends (cursorAnsi v) := by
   exact Ends.ite (ends_csiNum2 _ _ 0x48 (by decide) (by decide))
     (ends_csiNum2 _ _ 0x48 (by decide) (by decide))
 
+theorem ends_cursorPendingAnsi (v : Vt) : Ends (Linger.Core.Render.cursorPendingAnsi v) := by
+  unfold cursorPendingAnsi
+  apply Ends.ite
+  · refine Ends.append ?_ (ends_penSgr _)
+    refine Ends.append ?_ (ends_charsetAnsi _)
+    refine Ends.append ?_ (ends_irm _)
+    refine Ends.append ?_ (ends_modeSet 7 _)
+    refine Ends.append ?_ (ends_pendingAnsi _ _ _ _ _)
+    refine Ends.append ?_ (Ends.text (bs := [0x0F]) (by decide))
+    refine Ends.append ?_ (ends_escCharset 0x29 0x42 (by decide))
+    refine Ends.append ?_ (ends_escCharset 0x28 0x42 (by decide))
+    exact (ends_modeSet 7 true).append (ends_irm false)
+  · exact Ends.nil
+
 theorem ends_restoreBody (v : Vt) : Ends (restoreBody v) := by
   unfold restoreBody
   refine Ends.append ?_ (ends_penSgr v.pen)
   refine Ends.append ?_ (ends_charsetAnsi v)
   refine Ends.append ?_ (ends_modesAnsi v)
   refine Ends.append ?_ (ends_titleAnsi v)
+  refine Ends.append ?_ (ends_savedPendingAnsi v)
   refine Ends.append ?_ (ends_savedAnsi v)
   refine Ends.append ?_ (ends_tabsAnsi v)
   refine Ends.append ?_ (ends_regionAnsi v)
@@ -1002,7 +1031,7 @@ client mid-sequence, whatever the session's screen, pen, modes, title or
 charset state. Proved for every `Vt`, with no hypotheses. -/
 theorem ends_restore (v : Vt) : Ends (restore v) := by
   unfold restore
-  exact (ends_restoreBody v).append (ends_cursorAnsi v)
+  exact ((ends_restoreBody v).append (ends_cursorAnsi v)).append (ends_cursorPendingAnsi v)
 
 /-- The operational form: a fresh emulator fed `restore v` is ready for
 the application's next byte. -/
@@ -1012,11 +1041,11 @@ theorem restore_leaves_ground (v : Vt) (cols rows : Nat) :
 
 /-! ### No half-decoded character either
 
-`restore` ends with the cursor's `CSI … H`. Its leading ESC clears any
-pending UTF-8 sequence whatever came before, and every byte after it is
-below 0xC0 — so none can re-arm one. That is why this needs no reasoning
-about the grid repaint's multi-byte encodings: the tail sequence
-re-establishes the property regardless of the prefix.
+The cursor's `CSI … H` clears any pending UTF-8 sequence. If the optional
+deferred-wrap stage runs afterward, its final `penSgr` clears the decoder
+again after reprinting the margin cell and marks. Both complete CSI tails
+start with ESC and contain no UTF-8 lead bytes, so the result is independent
+of the preceding repaint's encodings.
 -/
 
 theorem paramBytes_lt_C0 {bs : Bytes} (h : ParamBytes bs) : ∀ b ∈ bs, b < 0xC0 := by
@@ -1044,6 +1073,27 @@ theorem u8_zero_after_csi (params : Bytes) (final : UInt8) (hp : ParamBytes para
     simp only [UInt8.lt_iff_toNat_lt, show ((0xC0 : UInt8)).toNat = 192 from rfl]
     omega
 
+theorem u8_zero_after_penSgr (p : Pen) (w : Vt) : (w.feed (penSgr p)).u8need = 0 := by
+  have hs (codes : List Nat) (w : Vt) : (w.feed (sgrOf codes)).u8need = 0 :=
+    u8_zero_after_csi _ _ (paramBytes_joinSemi codes) (by decide) w
+  have hc (c : Color) (fg : Bool) (w : Vt) (hu : w.u8need = 0) :
+      (w.feed (sgrColorSeq c fg)).u8need = 0 := by
+    unfold sgrColorSeq
+    split
+    · exact hu
+    · exact hs _ _
+  unfold penSgr
+  rw [Good.feed_append, Good.feed_append]
+  exact hc _ _ _ (hc _ _ _ (hs _ _))
+
+theorem u8_zero_after_cursorPendingAnsi (v w : Vt) (hu : w.u8need = 0) :
+    (w.feed (cursorPendingAnsi v)).u8need = 0 := by
+  unfold cursorPendingAnsi
+  split
+  · rw [Good.feed_append]
+    exact u8_zero_after_penSgr _ _
+  · exact hu
+
 /-- **§Replay (parser half, complete).** A fresh emulator fed a whole
 restore stream is *quiesced*: parser in `ground`, no half-decoded
 character. So a reattaching client is left ready for the application's
@@ -1052,11 +1102,10 @@ theorem restore_quiesced (v : Vt) (cols rows : Nat) :
     (((Vt.init cols rows).feed (restore v)).pstate = .ground)
       ∧ (((Vt.init cols rows).feed (restore v)).u8need = 0) := by
   refine ⟨restore_leaves_ground v cols rows, ?_⟩
-  -- `restore = restoreBody ++ cursorAnsi`, and `cursorAnsi` is one CSI
   unfold restore
-  rw [show ∀ (w : Vt), w.feed (restoreBody v ++ cursorAnsi v)
-        = (w.feed (restoreBody v)).feed (cursorAnsi v) from
-      fun w => by simp [Vt.feed, List.foldl_append]]
+  rw [Good.feed_append]
+  apply u8_zero_after_cursorPendingAnsi
+  rw [Good.feed_append]
   unfold cursorAnsi
   split
   all_goals

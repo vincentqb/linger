@@ -792,13 +792,24 @@ theorem quiet_scrollbackAnsi (v : Vt) : Quiet (scrollbackAnsi v) := by
     (fun _ => (((quiet_csiNum 3 0x4A (by decide) (by decide)).append
       (quiet_gridAnsi (sbRows v))).append (quiet_crlfRun v.rows)))
 
+theorem quiet_pendingAnsi (cols : Nat) (grid : Array Row) (cur : Cursor)
+    (row : Nat) (pen : Pen) : Quiet (pendingAnsi cols grid cur row pen) := by
+  unfold pendingAnsi
+  dsimp only
+  apply Quiet.ite
+  · intro _
+    exact (((quiet_csiNum2 _ _ 0x48 (by decide) (by decide)).append
+      (quiet_penSgr _)).append (quiet_cellText _)).append (quiet_penSgr _)
+  · intro _; exact Quiet.nil
+
 theorem quiet_screensAnsi (v : Vt) : Quiet (screensAnsi v) := by
   unfold screensAnsi
   refine (quiet_scrollbackAnsi v).append ?_
   split
   · exact quiet_gridAnsi _
-  · exact ((((quiet_gridAnsi _).append (quiet_penSgr _)).append
+  · exact (((((quiet_gridAnsi _).append (quiet_penSgr _)).append
       (quiet_csiNum2 _ _ 0x48 (by decide) (by decide))).append
+      (quiet_pendingAnsi _ _ _ _ _)).append
       (quiet_csiPriv 1049 0x68 (by decide) (by decide) (by decide))).append
       (quiet_gridAnsi _)
 
@@ -818,6 +829,12 @@ theorem quiet_savedAnsi (v : Vt) : Quiet (savedAnsi v) := by
   unfold savedAnsi
   exact ((quiet_penSgr _).append (quiet_csiNum2 _ _ 0x48 (by decide) (by decide))).append
     (quiet_escSeq 0x37 (by decide))
+
+theorem quiet_savedPendingAnsi (v : Vt) : Quiet (savedPendingAnsi v) := by
+  unfold savedPendingAnsi
+  exact Quiet.ite
+    (fun _ => (quiet_pendingAnsi _ _ _ _ _).append (quiet_escSeq 0x37 (by decide)))
+    (fun _ => Quiet.nil)
 
 theorem quiet_charsetAnsi (v : Vt) : Quiet (charsetAnsi v) := by
   unfold charsetAnsi
@@ -878,6 +895,7 @@ theorem quiet_restoreBody (v : Vt) (ho : v.modes.origin = false) : Quiet (restor
   refine Quiet.append ?_ (quiet_charsetAnsi v)
   refine Quiet.append ?_ (quiet_modesAnsi v ho)
   refine Quiet.append ?_ (quiet_titleAnsi v)
+  refine Quiet.append ?_ (quiet_savedPendingAnsi v)
   refine Quiet.append ?_ (quiet_savedAnsi v)
   refine Quiet.append ?_ (quiet_tabsAnsi v)
   refine Quiet.append ?_ (quiet_regionAnsi v)

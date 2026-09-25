@@ -1,8 +1,8 @@
 # 2026-09-25 codebase audit
 
-Status: step 15 complete — margin replay accepts a stale UTF-8 accumulator
+Status: step 16 complete — deferred wrap restored through delivered bytes
 Updated: 2026-09-25
-Next: integrate pending-wrap restoration and finish the audit
+Next: record the final audit assessment, archive this spec and check remote CI
 Predecessor: `specs/archive/tmux-resurrect-recipe.md`
 
 ## Goal
@@ -163,3 +163,16 @@ The status and completion record below track the actual integration order.
   partial decoder state. Stale-accumulator and malformed-grid witnesses, plus
   four rejected adapter mutations, check the broader contract without changing
   terminal behavior. Both required builds and source/formatter checks pass.
+- Step 16: replay reconstructs deferred wrap in the active, saved and stashed
+  cursor slots by reprinting the existing margin glyph and its marks. Complete
+  byte-effect equations preserve the remaining state under their explicit
+  premises; the old public fidelity endpoints retain their scope, checked by
+  an independent frozen probe of 46 contracts. The two internal paint helpers
+  now receive canonical repaint context from those unchanged endpoints.
+  Resizing clears all three pending flags. Baseline next-glyph checks fail in
+  all three slots for narrow and marked wide glyphs; delivered replay now
+  matches uninterrupted output. Stage-order, lost-mark and three actual replay
+  omission mutations fail their intended checks and pass after restoration.
+  Both required builds and the full foreground verifier pass. The ledger
+  records decoded-state representability limits and does not claim equivalence
+  under arbitrary future terminal input.

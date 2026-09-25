@@ -194,6 +194,33 @@ def snapshotOrder (dir : String) : IO Nat := do
       expect (got.bytes == expected && rt.st.vt.colCount == 21 && rt.st.vt.rowCount == 6)
           "delivery/snapshot/attach-event-point"
 
+/-- A correct-looking repaint must leave the next glyph on the same row as
+uninterrupted output. Drive the captured replay and following bytes through
+real sockets, covering each cursor slot and a marked wide margin cell. -/
+def pendingWrap (dir : String) : IO Nat := do
+  let mut failures := 0
+  for (glyph, text) in [("narrow", "abcd"), ("wide", "ab漢\u0301")] do
+    for (slot, before, after) in
+      [("active", "", "X"), ("saved", "\x1b7\r", "\x1b8X"),
+        ("stash", "\x1b[?1049h", "\x1b[?1049lX")] do
+      let vt := (Vt.Vt.init 4 2).feed (text ++ before).toUTF8.toList
+      let live := after.toUTF8
+      let expected := ByteArray.mk (Render.restore vt).toArray ++ live
+      failures :=
+        failures +
+          (←
+            withPair dir s!"pending-{slot}-{glyph}" vt fun rt peer fd => do
+                let rt ← pump rt [.bytes fd.toNat (Wire.encode (.attach 0 0)), .ptyOut live.toList]
+                let (_, got) ← collect rt peer expected.size
+                let received := (Vt.Vt.init 4 2).feed got.bytes.toList
+                let continued := vt.feed live.toList
+                expect
+                    (got.bytes == expected && !got.eof && !got.decoder.errored && got.bounded &&
+                      Render.screenText received == Render.screenText continued &&
+                      Render.screenText continued == (text ++ "\nX\n").toUTF8.toList)
+                    s!"delivery/pending/{slot}-{glyph}")
+  return failures
+
 def repeatedAttach (dir : String) : IO Nat := do
   let vt := Linger.Core.Vt.Vt.init 20 5
   let expected := ByteArray.mk (Render.restore vt).toArray
@@ -454,9 +481,10 @@ def closeOrder (dir : String) : IO Nat := do
 def run (only : Option String := none) : IO UInt32 := do
   let checks : List (String × (String → IO Nat)) :=
     [("colours", fun dir => largeReplay dir false), ("marks", fun dir => largeReplay dir true),
-      ("exit", exitTail), ("snapshot", snapshotOrder), ("repeat", repeatedAttach),
-      ("duplicate", duplicateEffect), ("prefix", prefixOrder), ("title", titleChunks),
-      ("live-bound", liveBound), ("close-grace", fun dir => closeGrace dir false),
+      ("exit", exitTail), ("snapshot", snapshotOrder), ("pending-wrap", pendingWrap),
+      ("repeat", repeatedAttach), ("duplicate", duplicateEffect), ("prefix", prefixOrder),
+      ("title", titleChunks), ("live-bound", liveBound),
+      ("close-grace", fun dir => closeGrace dir false),
       ("shutdown-grace", fun dir => closeGrace dir true), ("closing-bound", closingBound),
       ("close-order", closeOrder), ("serve", serveTail)]
   if let some name := only then

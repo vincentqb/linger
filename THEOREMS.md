@@ -14,7 +14,7 @@ recipes, break records, measurements, the audits — lives in
 | **A2. The daemon cannot be broken by traffic** | no event trace of any length — adversarial clients, hostile pty bytes, any interleaving — breaks a buffer cap, the screen invariant, or one client's isolation from another; structural since the `State` seal (private constructor, capped boot), and covering a resumed daemon's screen from either `vt0` source | `Session.run_wf`, `Session.run_bytes_isolates`, `Session.boot_wf` / `run_boot_wf`, `Session.run_resume_vt_shape` |
 | **A3. The transport is invisible** | any re-chunking of any well-formed encoded stream decodes to exactly that stream: same messages, same order, nothing retained, no error | `Wire.decode_encode_chunked` |
 | **A4. A session name has one owner** | given the kernel grants at most one `flock` holder, at most one daemon ever unlinks or binds a given name | `Claim.at_most_one_owner` |
-| **A5. linger is invisible to the terminal it borrows** | both directions receiver-quantified, no hypothesis on the receiver. Inbound (`restore`): modes `restore_modes_any`; pen `restore_pen_any`; sticky fields `restore_sticky_any` (`restore_region_any`, `restore_charset_any`, `restore_alt_any` are its projections); screen cells `restore_grid_any` / `restore_grid_reachable` / `Resume.resume_grid` — the selected grid (main or alternate), every height, mid-character receivers included; tab ruler `restore_tabs_any` / `Resume.resume_tabs`; scrollback `restore_sb_any` / `restore_sb_reachable` / `Linger.Core.resume_sb` (as `.toList` — same history, different ring records; `restore_sb_exact` when the budget kept everything, `restore_sb_keeps_of_empty` for the no-history branch, a user-facing decision). Outbound (hand-back): `leave_canonical_all`. Still fixture-carried, named so the list is not "just the cells": the window **title** and the **DECSC slot**. The one thing linger does that it cannot undo: attaching a session that has history erases the borrowed window's saved lines (`ED 3` — linger shares the user's scrollback and never enters the alt screen; conformance entry 11, README §Notes) | see row |
+| **A5. linger is invisible to the terminal it borrows** | both directions receiver-quantified, under each theorem's stated premises. Inbound (`restore`): modes `restore_modes_any`; pen `restore_pen_any`; sticky fields `restore_sticky_any` (`restore_region_any`, `restore_charset_any`, `restore_alt_any` are its projections); screen cells `restore_grid_any` / `restore_grid_reachable` / `Resume.resume_grid` — the selected grid (main or alternate), every height, mid-character receivers included through the reachable wrapper; tab ruler `restore_tabs_any` / `Resume.resume_tabs`; scrollback `restore_sb_any` / `restore_sb_reachable` / `Linger.Core.resume_sb` (as `.toList` — same history, different ring records; `restore_sb_exact` when the budget kept everything, `restore_sb_keeps_of_empty` for the no-history branch, a user-facing decision). Outbound (hand-back): `leave_canonical_all`. Still fixture-carried, named so the list is not "just the cells": the window **title** and the **DECSC slot**. The one thing linger does that it cannot undo: attaching a session that has history erases the borrowed window's saved lines (`ED 3` — linger shares the user's scrollback and never enters the alt screen; conformance entry 11, README §Notes) | see row |
 
 ## The rungs
 
@@ -76,11 +76,30 @@ remain outside these bounds.
 
 The grid theorems cover the active grid with either main or alternate screen
 selected. They do not state equality of both buffers and every saved field at
-once. Cursor equality currently assumes origin mode off. The title and saved
+once. The cursor-position guarantee assumes origin mode off. The title and saved
 cursor slot have fixture coverage; accepted checkpoint titles may contain
 controls that replay deliberately sanitizes. Matching the active grid alone
 does not establish that the next glyph behaves identically: pending wrap needs
 its own continuation check.
+
+Deferred wrap is reconstructed at the active, DECSC-saved and
+alternate-screen-stashed positions by reprinting a representable margin glyph.
+`pendingAnsi_feed_eq`, `savedPendingAnsi_feed_eq` and
+`cursorPendingAnsi_feed_eq` give the complete state effects of those bytes;
+`pending_tail_frames` proves that the reprints preserve painted cells and
+history. `Replay.start_faithful` includes all three stages in the captured
+stream before following application bytes. Socket checks compare the next-glyph
+screen with uninterrupted output for narrow and wide cells with combining marks.
+Decoded pending cursors away from the margin remain a representability limit.
+Resizing clears deferred wrap in all three cursor slots
+(`Vt.resize_clears_pending`), so leaving the alternate screen cannot resurrect
+a wrap associated with the old geometry.
+
+The existing receiver-quantified endpoint guarantees retain their original
+premises and conclusions. The internal `restore_grid_of_paint` and
+`restore_sb_of_paint` helpers now require the canonical paint context needed
+for existing-cell reprints; their callers establish it from the original
+endpoint assumptions.
 
 `Render.reprint_margin` supplies the character-level frame for restoring pending
 wrap. On a Good, Renderable receiver with ASCII charsets, wrapping enabled,
@@ -88,9 +107,9 @@ insertion disabled and no wrap already pending, reprinting the canonical margin
 glyph with its own pen and all stored marks changes only the cursor to the last
 column with wrap pending. The equality preserves the entire remaining state,
 including both grids, saved fields, parser state and scrollback. It covers
-single- and double-width glyphs. Connecting the emitted restoration bytes to this
-frame is a separate obligation; this helper alone does not prove end-to-end
-continuation.
+single- and double-width glyphs. `Render.reprintAnsi_feed_eq` connects the
+complete CUP/SGR/glyph/SGR byte sequence to that frame. Equivalence under
+arbitrary future input remains outside these contracts.
 
 `Render.cellText_cursor_margin_any_acc` connects a cell's actual UTF-8 bytes to the
 pending cursor. For a positive-width canonical cell ending at the margin,

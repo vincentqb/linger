@@ -40,11 +40,13 @@ def start (v : Vt) : Plan :=
       Render.scrollbackAnsi v ++
       header
   let title :=
-    Render.regionAnsi v ++ Render.tabsAnsi v ++ Render.savedAnsi v ++ Render.escB ++
+    Render.regionAnsi v ++ Render.tabsAnsi v ++ Render.savedAnsi v ++ Render.savedPendingAnsi v ++
+      Render.escB ++
       [0x5D, 0x32, 0x3B]
   let after :=
     [0x07] ++ Render.modesAnsi v ++ Render.charsetAnsi v ++ Render.penSgr v.pen ++
-      Render.cursorAnsi v
+      Render.cursorAnsi v ++
+      Render.cursorPendingAnsi v
   let screens :=
     match v.altGrid with
     | none => [Part.rows v.grid.toList {}]
@@ -52,6 +54,7 @@ def start (v : Vt) : Plan :=
       [Part.rows mainGrid.toList {},
         .bytes
           (Render.penSgr pen ++ Render.csiNum2 (cur.y + 1) (cur.x + 1) 0x48 ++
+            Render.pendingAnsi v.cols mainGrid cur (cur.y + 1) pen ++
             Render.csiPriv 1049 0x68 ++
             header),
         .rows v.grid.toList {}]

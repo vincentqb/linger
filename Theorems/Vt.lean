@@ -6724,6 +6724,22 @@ theorem init_shape (cols rows : Nat) :
       (Vt.init cols rows).grid.size = clampDim rows :=
   ⟨rfl, rfl, by simp [Vt.init]⟩
 
+/-- A resize clears deferred wrap in every cursor slot, including the main
+screen cursor stashed while the alternate screen is active. -/
+theorem resize_clears_pending (v : Vt) (cols rows : Nat) :
+    (v.resize cols rows).cursor.pending = false ∧
+      (v.resize cols rows).saved.cur.pending = false ∧
+      ∀ g cur pen, (v.resize cols rows).altGrid = some (g, cur, pen) → cur.pending = false := by
+  refine ⟨rfl, rfl, ?_⟩
+  intro g cur pen h
+  cases hAlt : v.altGrid with
+  | none => simp [Vt.resize, hAlt] at h
+  | some value =>
+    obtain ⟨oldGrid, oldCur, oldPen⟩ := value
+    simp only [Vt.resize, hAlt, Option.map_some, Option.some.injEq, Prod.mk.injEq] at h
+    rcases h with ⟨_, hcur, _⟩
+    rw [← hcur]
+
 /-- **A 256-colour parameter cannot escape the palette.** -/
 theorem color256_idx (n : Nat) : color256 n = Color.idx (UInt8.ofNat (min n 255)) := by rfl
 

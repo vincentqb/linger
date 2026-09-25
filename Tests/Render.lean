@@ -20,9 +20,9 @@ The target theorem (specs/archive/grid-fidelity.md):
 The grid, tab ruler, scrollback, pen, and mode proofs generalize beyond
 these fixtures. Cursor restoration still has an origin-mode qualification,
 and title and saved-state fidelity still depend on fixtures. `replayEq`
-compares the listed observations; it is not equivalence under arbitrary
-future input. The fixtures complement the proofs with concrete regressions
-and literal checks on the emitter's choices.
+compares the listed observations, including all three deferred-wrap flags;
+it is not equivalence under arbitrary future input. The fixtures complement
+the proofs with concrete regressions and literal checks on the emitter's choices.
 -/
 
 namespace Linger.Core.Render.Tests
@@ -31,14 +31,14 @@ open Linger.Core.Vt Linger.Core.Render
 
 /-- The §Replay equivalence. Compared: grid, cursor position, pen,
 scroll region, modes, title, tabs, charset, saved cursor/pen, the alt
-stash, the **scrollback** (against `sbRows v`, the fitted and
+stash, all three deferred-wrap flags, the **scrollback** (against `sbRows v`, the fitted and
 budget-trimmed history the emitter promises — not `v.sb`, since a
 session's ring may have wrapped and the receiver's is built from index
 zero, so the two agree as histories and differ as records), and that
 the replay ends parser-ground. Deliberately excluded: `bell` (a runtime
-signal) and every wrap-`pending` flag. Clearing a pending wrap can change where
-the next glyph is printed, so this exclusion is a limit of the oracle, not a
-claim that pending wrap is observationally irrelevant.
+signal). Deferred wrap is restored by reprinting the existing margin cell.
+A pathological decoded flag without a representable margin cell can make
+this comparison false; the oracle still compares the flag.
 
 **One honest caveat on the `sb` conjunct.** `scrollbackAnsi` emits its
 `ED 3` only when it has history to put there, so a receiver with a ring
@@ -49,6 +49,7 @@ below. -/
 def replayEq (r v : Vt) : Bool :=
   r.cols == v.cols && r.rows == v.rows && r.grid == v.grid && r.cursor.x == v.cursor.x &&
     r.cursor.y == v.cursor.y &&
+    r.cursor.pending == v.cursor.pending &&
     r.pen == v.pen &&
     r.top == v.top &&
     r.bot == v.bot &&
@@ -60,10 +61,12 @@ def replayEq (r v : Vt) : Bool :=
     r.shiftOut == v.shiftOut &&
     r.saved.cur.x == v.saved.cur.x &&
     r.saved.cur.y == v.saved.cur.y &&
+    r.saved.cur.pending == v.saved.cur.pending &&
     r.saved.pen == v.saved.pen &&
     (match r.altGrid, v.altGrid with
     | none, none => true
-    | some (g1, c1, p1), some (g2, c2, p2) => g1 == g2 && c1.x == c2.x && c1.y == c2.y && p1 == p2
+    | some (g1, c1, p1), some (g2, c2, p2) =>
+      g1 == g2 && c1.x == c2.x && c1.y == c2.y && c1.pending == c2.pending && p1 == p2
     | _, _ => false) &&
     r.pstate == PState.ground &&
     v.pstate == PState.ground &&
@@ -83,6 +86,46 @@ def screen (cols rows : Nat) (s : String) : Vt := feedStr (Vt.init cols rows) s
 
 /-- The round trip under test. -/
 def roundtrips (v : Vt) : Bool := replayEq ((Vt.init v.cols v.rows).feed (restore v)) v
+
+/-- Geometry changes clear all three deferred-wrap slots. The main stash must
+not resurrect an old margin after leaving the alternate screen. -/
+example :
+    let v := (screen 4 2 "abcd\x1b[?1049h").resize 6 2
+    !v.cursor.pending && !v.saved.cur.pending &&
+      !(feedStr v "\x1b[?1049l").cursor.pending = true := by
+  native_decide
+
+/-- A margin write is deferred until the next printable character. Address-only
+replay loses that continuation even when every visible cell still agrees. -/
+example :
+    let v := screen 4 2 "abcd"
+    let r := (Vt.init 4 2).feed (restore v)
+    r.cursor.pending == v.cursor.pending &&
+      (feedStr r "X").grid == (feedStr v "X").grid = true := by
+  native_decide
+
+/-- DECRC must recover the saved deferred wrap before printing. -/
+example :
+    let v := screen 4 2 "abcd\x1b7\r"
+    let r := (Vt.init 4 2).feed (restore v)
+    r.saved.cur.pending == v.saved.cur.pending &&
+      (feedStr r "\x1b8X").grid == (feedStr v "\x1b8X").grid = true := by
+  native_decide
+
+/-- Leaving 1049 must recover the main screen's deferred wrap. -/
+example :
+    let v := screen 4 2 "abcd\x1b[?1049h"
+    let r := (Vt.init 4 2).feed (restore v)
+    (feedStr r "\x1b[?1049lX").grid == (feedStr v "\x1b[?1049lX").grid = true := by
+  native_decide
+
+/-- An invalid decoded origin region cannot redirect the extra repaint onto
+another row. The existing grid guarantee does not require a live source. -/
+example :
+    let w := screen 4 2 "\r\nabcd"
+    let v := { w with top := 1, bot := 1, modes := { w.modes with origin := true } }
+    ((Vt.init 4 2).feed (restore v)).grid == v.grid = true := by
+  native_decide
 
 /-- Text, 16-color SGR, attributes, cursor parked mid-screen. -/
 example :

@@ -877,35 +877,20 @@ namespace Linger.Core.Render
 
 open Linger.Core.Vt
 
-/-! ### `restore_grid`, reduced to the paint
+/-! ### The paint and its continuation tail
 
-The tail is done, so the remaining obligation can be stated as a theorem rather than
-left as a note: **if the clear-and-paint prefix gets the grid right and leaves the
-parser quiesced, the whole of `restore` gets it right.** Everything after the paint is
-`keeps_restoreTail`. What is left for the repaint half is exactly the three
-hypotheses below, about a prefix that is three constructs long. -/
+`keeps_restoreTail` frames the control sequences. The saved and active
+deferred-wrap stages also print an existing cell, so `Grid.lean` composes those
+frames with the complete-state equations in `PendingWrap.lean`. -/
 
-/-- The one re-association `restore_grid` needs: the clear-and-paint prefix, then the
-eight tail stages. `++` is right-associative, so this is not free. -/
+/-- Re-associate the clear-and-paint prefix and the ten tail stages, including
+the saved and active deferred-wrap repairs. -/
 theorem restore_split (v : Vt) :
     restore v = (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v)
-      ++ (regionAnsi v ++ tabsAnsi v ++ savedAnsi v ++ titleAnsi v ++ modesAnsi v
-          ++ charsetAnsi v ++ penSgr v.pen ++ cursorAnsi v) := by
+      ++ (regionAnsi v ++ tabsAnsi v ++ savedAnsi v ++ savedPendingAnsi v ++ titleAnsi v ++ modesAnsi v
+          ++ charsetAnsi v ++ penSgr v.pen ++ cursorAnsi v ++ cursorPendingAnsi v) := by
   unfold restore restoreBody
   simp
-
-/-- **`restore_grid`, reduced to the paint.** The three hypotheses are the whole of
-what the repaint half still owes: that `SGR 0`, `ED 2` and `screensAnsi` together
-leave the grid equal to `v`'s, the parser in ground, and no UTF-8 half-decoded. The
-eight stages that follow are proved to preserve all three. -/
-theorem restore_grid_of_paint {v w : Vt}
-    (hps : (w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v)).pstate = .ground)
-    (hun : (w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v)).u8need = 0)
-    (hpaint : (w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v)).grid = v.grid) :
-    (w.feed (restore v)).grid = v.grid := by
-  rw [restore_split, feed_append]
-  obtain ⟨-, -, hg⟩ := keeps_restoreTail v _ hps hun
-  rw [hg, hpaint]
 
 end Linger.Core.Render
 

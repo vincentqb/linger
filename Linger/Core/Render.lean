@@ -448,6 +448,8 @@ Every mode is emitted **both ways**. A mode that is only ever *set* leaks the
 client's previous state: attaching a session with the mouse off to a terminal that
 a crashed program left reporting leaves the mouse on, and the same held for IRM,
 DECOM, bracketed paste, focus events, SGR mouse, application cursor and keypad.
+The three mouse modes are mutually exclusive, so all three are cleared before the
+live one is set.
 `prologueAnsi` already neutralizes the subset that would corrupt the *paint*; this
 is the same discipline for the ones that only affect what happens afterwards.
 
@@ -463,16 +465,7 @@ the very grid the restore is rebuilding. Naming the three modes the emulator can
 legitimately hold closes both holes at once and cannot grow a third.
 
 The alternative was a reachability invariant on `Vt`; one guarded emit is still
-cheaper than a field every constructor must maintain.
-
-Every mode is emitted **both ways**. A mode that is only ever *set* leaks the
-client's previous state: attaching a session with the mouse off to a terminal that
-a crashed program left reporting leaves the mouse on, and the same held for IRM,
-DECOM, bracketed paste, focus events, SGR mouse, application cursor and keypad.
-The three mouse modes are mutually exclusive, so all three are cleared before the
-live one is set. `prologueAnsi` already neutralizes the subset that would corrupt
-the *paint*; this is the same discipline for the ones that only affect what the
-application does afterwards. -/
+cheaper than a field every constructor must maintain. -/
 def modesAnsi (v : Vt) : Bytes :=
   modeSet 7 v.modes.wrap ++ modeSet 1 v.modes.appCursor ++
     (if v.modes.appKeypad then escSeq 0x3D else escSeq 0x3E) ++
@@ -495,6 +488,25 @@ Named stages throughout, so §Replay can discharge one at a time and the
 top theorem is their composition (`Theorems/Render.lean`).
 -/
 
+/-- Re-arm deferred wrap by repainting the glyph already at the margin.
+Start at the base of a wide pair and emit its marks without a cursor move:
+at the margin `printMark` follows the shadow back to that base.
+
+The caller supplies an absolute or region-relative row and establishes ASCII,
+autowrap and replacement mode. The pen is restored after the repaint. Cell
+fitting bounds and sanitizes decoded marks; it is the identity on a live cell.
+An armed cursor away from the margin is not representable by these bytes. -/
+def pendingAnsi (cols : Nat) (grid : Array Row) (cur : Cursor) (row : Nat) (pen : Pen) : Bytes :=
+  let cells := grid.getD cur.y #[]
+  let x := if (cells.at cur.x).width == 0 then cur.x - 1 else cur.x
+  let cell := cellFit (cells.at x)
+  if
+      cur.pending && cur.y < grid.size && cur.x < cells.size && cur.x + 1 == cols &&
+        charWidth cell.base != 0 &&
+        x + charWidth cell.base == cols then
+    csiNum2 row (x + 1) 0x48 ++ penSgr cell.pen ++ cellText cell ++ penSgr pen
+  else []
+
 /-- The history, then the two screens: in alt, paint main, park the stashed
 cursor/pen, switch, then paint alt (§Replay fix 7).
 
@@ -516,6 +528,7 @@ def screensAnsi (v : Vt) : Bytes :=
     | none => gridAnsi v.grid
     | some (mainGrid, mcur, mpen) =>
       gridAnsi mainGrid ++ penSgr mpen ++ csiNum2 (mcur.y + 1) (mcur.x + 1) 0x48 ++
+        pendingAnsi v.cols mainGrid mcur (mcur.y + 1) mpen ++
         csiPriv 1049 0x68 ++
         gridAnsi v.grid
 
@@ -553,6 +566,12 @@ def tabsAnsi (v : Vt) : Bytes :=
 def savedAnsi (v : Vt) : Bytes :=
   penSgr v.saved.pen ++ csiNum2 (v.saved.cur.y + 1) (v.saved.cur.x + 1) 0x48 ++ escSeq 0x37
 
+/-- DECSC copies the pending flag as well as the position and pen. -/
+def savedPendingAnsi (v : Vt) : Bytes :=
+  if v.saved.cur.pending then
+    pendingAnsi v.cols v.grid v.saved.cur (v.saved.cur.y + 1) v.saved.pen ++ escSeq 0x37
+  else []
+
 /-- Charset designations and the shift state (§Replay fix 2). -/
 def charsetAnsi (v : Vt) : Bytes :=
   (if v.g0Line then escCharset 0x28 0x30 else escCharset 0x28 0x42) ++
@@ -569,11 +588,30 @@ its previous occupant set. An empty OSC 2 clears it. -/
 def titleAnsi (v : Vt) : Bytes := escB ++ [0x5D, 0x32, 0x3B] ++ utf8s v.title.toList ++ [0x07]
 
 /-- Final cursor placement — region-relative under DECOM (§Replay fix 5).
-`restore` ends with this, which is also what makes the parser provably
-quiesced: it is ESC-initiated, and ESC clears any pending UTF-8. -/
+It precedes deferred-wrap preparation and clears any partial UTF-8. -/
 def cursorAnsi (v : Vt) : Bytes :=
   if v.modes.origin then csiNum2 (v.cursor.y - v.top + 1) (v.cursor.x + 1) 0x48
   else csiNum2 (v.cursor.y + 1) (v.cursor.x + 1) 0x48
+
+/-- The final repaint runs after all cursor-moving modes and rulers. Only
+non-positioning state is changed afterwards, so the deferred wrap survives.
+Under origin mode the source region must be installable, or the same address
+could repaint a different receiver row. -/
+def cursorPendingAnsi (v : Vt) : Bytes :=
+  if
+      v.cursor.pending &&
+        (!v.modes.origin ||
+          (((v.top == 0 && v.bot == v.rows - 1) || (v.top < v.bot && v.bot < v.rows)) &&
+            v.top ≤ v.cursor.y &&
+            v.cursor.y ≤ v.bot)) then
+    modeSet 7 true ++ csiNum 4 0x6C ++ escCharset 0x28 0x42 ++ escCharset 0x29 0x42 ++ [0x0F] ++
+      pendingAnsi v.cols v.grid v.cursor
+        (if v.modes.origin then v.cursor.y - v.top + 1 else v.cursor.y + 1) v.pen ++
+      modeSet 7 v.modes.wrap ++
+      csiNum 4 (if v.modes.insert then 0x68 else 0x6C) ++
+      charsetAnsi v ++
+      penSgr v.pen
+  else []
 
 /-- Everything a re-attaching client's terminal needs except the final
 cursor placement. Emission order is load-bearing — each comment names
@@ -606,13 +644,14 @@ def restoreBody (v : Vt) : Bytes :=
     regionAnsi v ++
     tabsAnsi v ++
     savedAnsi v ++
+    savedPendingAnsi v ++
     titleAnsi v ++
     modesAnsi v ++
     charsetAnsi v ++
     penSgr v.pen
 
 /-- The reattach byte stream. -/
-def restore (v : Vt) : Bytes := restoreBody v ++ cursorAnsi v
+def restore (v : Vt) : Bytes := restoreBody v ++ cursorAnsi v ++ cursorPendingAnsi v
 
 /-! ## Leave -/
 
