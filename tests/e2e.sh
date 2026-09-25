@@ -251,7 +251,7 @@ say "14. recipes (tmux-resurrect panes -> linger sessions)"
 suite recipes 15
 
 say "15. delivery (large replay, ordering, exit tails and retired transports)"
-suite delivery 25
+suite delivery 28
 
 LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger info "$sentinel_name" >/dev/null \
   || fail "a suite terminated the unrelated sentinel session"

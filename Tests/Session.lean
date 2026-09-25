@@ -247,6 +247,38 @@ example :
        && !hasEffect effs (· == .close 3)
        && hasEffect effs (· == .send 3 .done)) = true := by native_decide
 
+/-- A close requested by an attached sender stops the rest of its decoded
+packet before it can change labels, write input or resize the child. -/
+example :
+    (let s := (run [.connected 1, .bytes 1 (encode (.attach 20 5))]).1
+     let packet :=
+        encode .detachAll ++ encode (.labelSet "after=detach".toUTF8.toList) ++
+          encode (.input [0x78]) ++
+          encode (.resize 21 6)
+      let r := step s (.bytes 1 packet)
+      r.1.labels.isEmpty && r.1.vt.colCount == 20 && r.1.vt.rowCount == 5 &&
+        r.2 == [.close 1, .send 1 .done]) =
+      true := by
+  native_decide
+
+/-- Detaching someone else does not stop a control connection's next command. -/
+example :
+    (let s := (run [.connected 1, .bytes 1 (encode (.attach 20 5)), .connected 2]).1
+     let r := step s (.bytes 2 (encode .detachAll ++ encode (.labelSet "after=control".toUTF8.toList)))
+     r.1.labels == [("after", "control")] &&
+       r.2 == [.close 1, .send 2 .done, .send 2 .done]) = true := by
+  native_decide
+
+/-- Exit also stops the decoded packet; later input must not follow kill. -/
+example :
+    (let s := (run [.connected 1]).1
+     let packet :=
+        encode .kill ++ encode (.labelSet "after=kill".toUTF8.toList) ++ encode (.input [0x78])
+      let r := step s (.bytes 1 packet)
+      r.1.labels.isEmpty && r.2 == [.killChild, .dropCheckpoint, .exit]) =
+      true := by
+  native_decide
+
 /-- **`unset` removes exactly the named key**: `env` goes, `role` stays. A whole-
 store clear would satisfy "env is gone" too, which is why `role` is here. -/
 example :

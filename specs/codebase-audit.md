@@ -1,8 +1,8 @@
 # 2026-09-25 codebase audit
 
-Status: step 13 complete — bounded replay and transport draining
+Status: step 14 complete — close requests stop later client commands
 Updated: 2026-09-25
-Next: finish pending-wrap restoration without weakening existing receiver claims
+Next: integrate the accumulator-independent proof, then pending-wrap restoration
 Predecessor: `specs/archive/tmux-resurrect-recipe.md`
 
 ## Goal
@@ -149,3 +149,11 @@ The status and completion record below track the actual integration order.
   builds and the full foreground verifier pass, including the new delivery
   suite; the ledger distinguishes logical byte bounds from physical memory
   and conditional draining from network liveness.
+- Step 14: a close for the sender or an exit stops the rest of its decoded
+  packet. The runtime consumes effect feedback in order before processing the
+  next queued event, so transport draining does not extend a detached client's
+  authority. The control connection can still detach someone else and continue.
+  Original pure and real-socket regressions fail before the fixes; removing
+  either guard breaks its theorem, and reversing queue order breaks exactly the
+  queued-client cases. Both required builds and the full foreground verifier
+  pass.

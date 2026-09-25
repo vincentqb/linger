@@ -459,6 +459,23 @@ code_grep '^[[:space:]]+for [(]c, i[)] in polled[.]zipIdx do$' 'Linger/Runtime/D
 code_grep '^[[:space:]]+rt ← drainConns rt$' 'Linger/Runtime/Daemon.lean' > /dev/null \
   || fail "serve no longer drains accepted bytes after exit"
 
+# A decoded close/exit stops its packet in the proved fold. Runtime feedback
+# then retires the client before the next queued event, preserving effect order.
+# The delivery suite distinguishes same-packet, queued and other-client closes.
+for claim in feedMsgs_after_close feedMsgs_after_exit; do
+  code_grep "^theorem $claim " 'Theorems/Session.lean' > /dev/null \
+    || fail "decoded command stopping claim $claim disappeared"
+done
+awk '
+  /^def pump / { inpump = 1 }
+  inpump && /let mut feedback := \[\]/ { init++ }
+  inpump && /feedback := feedback [+][+] more/ { collect++ }
+  inpump && /queue := feedback [+][+] rest/ { consume++ }
+  /^def pollRound / { inpump = 0 }
+  END { exit (init != 1 || collect != 1 || consume != 1) }
+' Linger/Runtime/Daemon.lean \
+  || fail "effect feedback must precede queued events in effect order"
+
 # An info answer can span several frames. The pure producer proves the bound;
 # keep the IO accumulator on that same policy rather than a copied number.
 code_grep '^theorem onMsg_info_bounded ' 'Theorems/Session.lean' > /dev/null \

@@ -415,6 +415,42 @@ def serveTail (dir : String) : IO Nat := do
         let _ ← server.wait
     IO.FS.removeDirAll dir
 
+/-- A retained transport is already logically closed. Exercise both decoded
+commands in one packet and bytes already waiting in the event queue. -/
+def closeOrder (dir : String) : IO Nat := do
+  let mut failures := 0
+  for variant in ["packet", "queued", "other-client"] do
+    failures :=
+      failures +
+        (←
+          withPair dir s!"close-order-{variant}" (Vt.Vt.init 20 5) fun rt _ fd => do
+              let id := fd.toNat
+              let control := id + 1
+              let attached := (Session.step rt.st (.bytes id (Wire.encode (.attach 20 5)))).1
+              let dirty := (Session.step attached (.ptyOut [0x41])).1
+              let st :=
+                if variant == "other-client" then (Session.step dirty (.connected control)).1
+                else dirty
+              let saved ← IO.mkRef ([] : List (List (String × String)))
+              let rt :=
+                { rt with
+                  st
+                  conns := [{ fd, replay := some (Replay.start st.vt) }]
+                  saveCkpt := fun s => saved.modify (· ++ [s.labels]) }
+              let detach := Wire.encode .detachAll
+              let later := Wire.encode (.labelSet "after=detach".toUTF8.toList)
+              let events :=
+                if variant == "packet" then [.bytes id (detach ++ later)]
+                else
+                  [.bytes (if variant == "other-client" then control else id) detach,
+                    .bytes id later]
+              let rt ← pump rt events
+              expect
+                  (rt.st.labels.isEmpty && (← saved.get) == [[]] && (rt.st.client? id).isNone &&
+                    (rt.conn? fd).any (·.closing))
+                  s!"delivery/close-order/{variant}")
+  return failures
+
 def run (only : Option String := none) : IO UInt32 := do
   let checks : List (String × (String → IO Nat)) :=
     [("colours", fun dir => largeReplay dir false), ("marks", fun dir => largeReplay dir true),
@@ -422,7 +458,7 @@ def run (only : Option String := none) : IO UInt32 := do
       ("duplicate", duplicateEffect), ("prefix", prefixOrder), ("title", titleChunks),
       ("live-bound", liveBound), ("close-grace", fun dir => closeGrace dir false),
       ("shutdown-grace", fun dir => closeGrace dir true), ("closing-bound", closingBound),
-      ("serve", serveTail)]
+      ("close-order", closeOrder), ("serve", serveTail)]
   if let some name := only then
     if !(checks.any (·.1 == name)) then
       throw (IO.userError s!"unknown delivery check '{name}'")

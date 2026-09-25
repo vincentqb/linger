@@ -402,16 +402,19 @@ def onMsg (s : State) (c : Client) (m : Msg) : State × List Effect :=
 
 /-- Fold decoded messages through `onMsg`, threading state + effects.
 The client record is re-read each round (attach mutates it); a message
-that closed the client stops affecting state. Named (not inline) so
-the preservation theorems can target it. -/
+after a close for this sender or an exit stops affecting state, even before
+the runtime executes those effects. Named so the preservation and stopping
+theorems can target it. -/
 def feedMsgs (id : Nat) (msgs : List Msg) (acc : State × List Effect) : State × List Effect :=
   msgs.foldl
     (fun (acc : State × List Effect) m =>
-      match acc.1.client? id with
-      | none => acc
-      | some c' =>
-        let r := onMsg acc.1 c' m
-        (r.1, acc.2 ++ r.2))
+      if acc.2.contains (.close id) || acc.2.contains .exit then acc
+      else
+        match acc.1.client? id with
+        | none => acc
+        | some c' =>
+          let r := onMsg acc.1 c' m
+          (r.1, acc.2 ++ r.2))
     acc
 
 def step (s : State) (ev : Event) : State × List Effect :=

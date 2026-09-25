@@ -292,7 +292,9 @@ def runEffect (rt : Rt) (eff : Effect) : IO (Rt × List Event) := do
     return ({ rt with exiting := true }, [])
 
 /-- Feed events through the machine until quiescent or exited. Events queued
-behind exit must not checkpoint a session whose recovery state was deleted. -/
+behind exit must not checkpoint a session whose recovery state was deleted.
+Effect feedback precedes the next queued event, in effect order: a close must
+remove its client before already-read bytes from that client are considered. -/
 def pump (rt : Rt) (evs : List Event) : IO Rt := do
   let mut rt := rt
   let mut queue := evs
@@ -300,11 +302,12 @@ def pump (rt : Rt) (evs : List Event) : IO Rt := do
     let ev :: rest := queue | break
     let (st', effs) := step rt.st ev
     rt := { rt with st := st' }
-    queue := rest
+    let mut feedback := []
     for eff in effs do
       let (rt', more) ← runEffect rt eff
       rt := rt'
-      queue := queue ++ more
+      feedback := feedback ++ more
+    queue := feedback ++ rest
   return rt
 
 /-- One poll round: gather events from fd readiness. -/

@@ -12020,3 +12020,47 @@ Parent receipts are `step13-build.log`, `step13-proofs-tests-e2e.log`,
 `step13-coverage.log` and `step13-verifier.log`. The delivery suite's exact count
 is recorded in `tests/e2e.sh`; existing live-suite counts are unchanged. No C
 export or proof resource allowance changed.
+
+## Step 14 notes — 2026-09-25
+
+Reviewing retained transports exposed two gaps in the step 13 claim that a
+logical close takes effect immediately. `feedMsgs` could process a label,
+input or resize command after the same packet had requested this sender's
+close or session exit. The runtime also appended `.closed` feedback behind
+already queued bytes, allowing a detached client to change labels before its
+roster entry disappeared.
+
+The pure fold now stops when its accumulated effects contain a close for that
+sender or an exit. `feedMsgs_after_close` and `feedMsgs_after_exit` prove exact
+equality of the remaining state and effects for every suffix of messages.
+The existing bounds, VT preservation, sequence and isolation theorem statements
+remain unchanged. A control client detaching someone else keeps processing
+its own commands.
+
+The pump collects feedback in effect order and places it before the next
+queued event. This also handles a close caused by another connection. It
+does not retroactively undo commands decoded in an event before a later IO
+failure becomes known. The source gate pins collection and consumption order;
+the delivery suite exercises same-packet, queued and other-client closes with
+a real retained socket and captured replay.
+
+The original code fails the packet-close and packet-exit unit checks and all
+three socket cases. Removing either pure guard makes its new theorem and
+corresponding unit check fail. A compiled runtime mutation that puts feedback
+after queued events leaves the same-packet check green but fails exactly the
+queued and other-client cases. Both missing theorem names and both feedback
+ordering mutations fail the source gates. Every mutation was restored, with
+source hashes checked afterward.
+
+Receipts live under `/tmp/linger-audit-20260925/`:
+`step14-session-red.log`, `step14-close-order-red.log`,
+`step14-pure-break-verify.log`, `step14-runtime-break-verify.log` and their
+indexed green/red/green logs. An earlier nonexistent `E2E` build target was a
+command error, not behavioral evidence; the actual `e2e` target was built
+successfully before running the red socket checks.
+
+Validation: both required builds, targeted formatter/linter checks, semantic
+coverage, generated C ABI and the complete foreground verifier pass.
+Parent receipts are `step14-build.log`, `step14-proofs-tests.log` and
+`step14-verifier.log`. The delivery suite's exact count changes only in
+`tests/e2e.sh`. No C export or proof resource allowance changed.

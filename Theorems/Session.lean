@@ -534,6 +534,21 @@ theorem onMsg_bounded {s : State} {c : Client} (m : Msg)
 theorem client?_mem {s : State} {id : Nat} {c : Client} (h : s.client? id = some c) :
     c ∈ s.clients := List.mem_of_find?_eq_some h
 
+/-- Once this sender has a close pending, no remaining decoded message changes
+the state or adds an effect. Transport draining does not extend its authority. -/
+theorem feedMsgs_after_close (id : Nat) (msgs : List Msg) (acc : State × List Effect)
+    (h : Effect.close id ∈ acc.2) : feedMsgs id msgs acc = acc := by
+  induction msgs with
+  | nil => rfl
+  | cons m ms ih => simpa [feedMsgs, List.foldl_cons, h] using ih
+
+/-- Exit stops every remaining decoded command, regardless of sender. -/
+theorem feedMsgs_after_exit (id : Nat) (msgs : List Msg) (acc : State × List Effect)
+    (h : Effect.exit ∈ acc.2) : feedMsgs id msgs acc = acc := by
+  induction msgs with
+  | nil => rfl
+  | cons m ms ih => simpa [feedMsgs, List.foldl_cons, h] using ih
+
 theorem feedMsgs_bounded (id : Nat) (msgs : List Msg) (acc : State × List Effect)
     (h : Bounded acc.1) : Bounded (feedMsgs id msgs acc).1 := by
   induction msgs generalizing acc with
@@ -541,11 +556,13 @@ theorem feedMsgs_bounded (id : Nat) (msgs : List Msg) (acc : State × List Effec
   | cons m ms ih =>
     unfold feedMsgs
     rw [List.foldl_cons]
-    rcases hc : acc.1.client? id with - | c'
-    · dsimp only [hc]
-      exact ih acc h
-    · dsimp only [hc]
-      exact ih _ (onMsg_bounded m (h.decOk c' (client?_mem hc)) h)
+    split
+    · exact ih acc h
+    · rcases hc : acc.1.client? id with - | c'
+      · dsimp only [hc]
+        exact ih acc h
+      · dsimp only [hc]
+        exact ih _ (onMsg_bounded m (h.decOk c' (client?_mem hc)) h)
 
 /-- §Bound at the daemon level: no event stream can grow the client
 list, label table, client decoders, or terminal scanner past their caps. -/
@@ -627,11 +644,13 @@ theorem feedMsgs_vt_good (id : Nat) (msgs : List Msg) (acc : State × List Effec
   | cons m ms ih =>
     unfold feedMsgs
     rw [List.foldl_cons]
-    rcases hc : acc.1.client? id with - | c'
-    · dsimp only [hc]
-      exact ih acc h
-    · dsimp only [hc]
-      exact ih _ (onMsg_vt_good m h)
+    split
+    · exact ih acc h
+    · rcases hc : acc.1.client? id with - | c'
+      · dsimp only [hc]
+        exact ih acc h
+      · dsimp only [hc]
+        exact ih _ (onMsg_vt_good m h)
 
 open Linger.Core.Vt (Good) in
 /-- §Total end-to-end: the screen state a daemon holds stays Good
@@ -760,11 +779,13 @@ theorem feedMsgs_lookSeq_le (id : Nat) (msgs : List Msg) (acc : State × List Ef
   | cons m ms ih =>
     unfold feedMsgs
     rw [List.foldl_cons]
-    rcases hc : acc.1.client? id with - | c'
-    · dsimp only [hc]
-      exact ih acc h
-    · dsimp only [hc]
-      exact ih _ (onMsg_lookSeq_le _ _ _ h)
+    split
+    · exact ih acc h
+    · rcases hc : acc.1.client? id with - | c'
+      · dsimp only [hc]
+        exact ih acc h
+      · dsimp only [hc]
+        exact ih _ (onMsg_lookSeq_le _ _ _ h)
 
 /-- One event keeps `behind` honest, whatever it is. -/
 theorem step_lookSeq_le (s : State) (ev : Event) (h : s.lookSeq ≤ s.outSeq) :
@@ -883,17 +904,19 @@ theorem feedMsgs_other (id : Nat) (msgs : List Msg) (acc : State × List Effect)
   | cons m ms ih =>
     unfold feedMsgs
     rw [List.foldl_cons]
-    rcases hc : acc.1.client? id with - | c'
-    · dsimp only [hc]
-      exact ih acc
-    · dsimp only [hc]
-      have hstep := ih ((onMsg acc.1 c' m).1, acc.2 ++ (onMsg acc.1 c' m).2)
-      unfold feedMsgs at hstep
-      rw [hstep]
-      exact
-        onMsg_other _ _ _
-          (by
-            rw [client?_id hc]; exact h)
+    split
+    · exact ih acc
+    · rcases hc : acc.1.client? id with - | c'
+      · dsimp only [hc]
+        exact ih acc
+      · dsimp only [hc]
+        have hstep := ih ((onMsg acc.1 c' m).1, acc.2 ++ (onMsg acc.1 c' m).2)
+        unfold feedMsgs at hstep
+        rw [hstep]
+        exact
+          onMsg_other _ _ _
+            (by
+              rw [client?_id hc]; exact h)
 
 /-- §Isolate: bytes from one client cannot alter another client's
 record — including its wire decoder, so a peer stuck mid-frame stays
@@ -1041,11 +1064,13 @@ theorem feedMsgs_vt_live (id : Nat) (msgs : List Msg) (acc : State × List Effec
   | cons m ms ih =>
     unfold feedMsgs
     rw [List.foldl_cons]
-    rcases hc : acc.1.client? id with - | c'
-    · dsimp only [hc]
-      exact ih acc h
-    · dsimp only [hc]
-      exact ih _ (onMsg_vt_live m h)
+    split
+    · exact ih acc h
+    · rcases hc : acc.1.client? id with - | c'
+      · dsimp only [hc]
+        exact ih acc h
+      · dsimp only [hc]
+        exact ih _ (onMsg_vt_live m h)
 
 /-- One event keeps the terminal reachable. -/
 theorem step_vt_live (s : State) (ev : Event) (h : LiveVt s) : LiveVt (step s ev).1 := by
