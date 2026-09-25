@@ -11848,3 +11848,52 @@ Validation: both required builds, formatting, source gates, semantic coverage,
 generated C ABI and the full foreground verifier pass. Parent receipts are
 `step9-build.log`, `step9-proofs-tests.log` and `step9-verifier.log`. No proof
 resource limit, C export count or live-suite count changed.
+
+## Step 10 notes — 2026-09-25
+
+The integer audit found no general C++ compatibility requirement. Fixed-width
+wire fields, OS carriers and packed pairs have distinct representation
+contracts. Internal monotonic time had no such requirement: Lean already returns
+Nat milliseconds, which were unnecessarily narrowed to UInt64. Checkpoint
+deadline addition could then wrap. Two regressions construct actual session
+events with an injected clock near that boundary; the old implementation saves
+after one millisecond and wraps the later attempt clock. This is a boundary
+counterexample, not an observed production uptime failure.
+
+Monotonic time, checkpoint clocks and E2E durations now stay Nat. The existing
+tick logic gains two general elapsed-time proofs: an early tick preserves dirty
+state and the attempt clock without saving, and any periodic save implies that
+the full interval elapsed. Both include backward and arbitrarily large clocks.
+Explicit saves and detach saves keep their separate behavior. The source gates
+tie the direct Lean clock and the actual daemon event argument to those proofs.
+Wire integers, fd/pid carriers, packed return values and epoch timestamps retain
+their existing formats.
+
+E2E drain now uses a do-block loop with the same deadline check, EOF handling and
+byte order. CSI stripping replaces its private skip traversal with dropWhile
+and tail; the library's sublist length bound proves input decrease. No fuel or
+proof-resource raise is needed. Generated C retains loops and adds no runtime
+length scans. The E2E partial-definition ratchet was lowered in its canonical
+file.
+
+Break verification: wrapped deadline addition, truncated attempt clocks and
+discarded drain chunks each fail their new checks; all were restored. Five
+parent source mutations reject clock narrowing, the wrong clock, a truncated
+tick argument and either missing elapsed-time theorem. CSI comparison covers
+111,111 strings of length zero through five over ten control/ASCII/Unicode
+characters, twenty directed cases and two long inputs. A compiled mutant that
+keeps the CSI final byte fails the comparisons; its restoration passes.
+The initial mutant's unused-lemma error and an unsuccessful optional reduction
+experiment are not counted as semantic evidence.
+
+Worker receipts are `nat-clocks-HANDOFF.md`, `nat-clocks-evidence/`,
+`remote-csi-HANDOFF.md` and `remote-csi-evidence/` under
+`/tmp/linger-audit-20260925/`; parent source receipts are
+`step10-gate-*-red.log`. No general CSI equivalence theorem or actual remote-host
+test is claimed; the latter needs a configured SSH host.
+
+Validation: both required builds, the E2E executable build, formatting, source
+gates, semantic coverage, generated C ABI and the complete foreground verifier
+pass. Parent receipts are `step10-build.log`, `step10-proofs-tests.log`,
+`step10-e2e-build.log` and `step10-verifier.log`. No C export or live-suite
+check count changed.

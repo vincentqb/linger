@@ -29,20 +29,20 @@ namespace E2E.RemoteLive
 
 open E2E.Harness
 
-/-- Strip CSI sequences so a real remote shell's prompt painting does not hide the
-marker. The Python's `plain()`, without a regex: CSI is `ESC [`, parameter and
-intermediate bytes, then one final in `@`–`~`. -/
-partial def stripCsi (s : String) : String :=
+/-- Strip `ESC [` through the first final character in `@`–`~` so remote prompt
+painting does not hide markers. An incomplete CSI consumes the rest of the string. -/
+def stripCsi (s : String) : String :=
   let rec go (cs : List Char) (acc : List Char) : List Char :=
     match cs with
     | [] => acc.reverse
-    | '\x1b' :: '[' :: rest =>
-      let rec skip (r : List Char) : List Char :=
-        match r with
-        | [] => []
-        | c :: t => if c ≥ '@' && c ≤ '~' then t else skip t
-      go (skip rest) acc
+    | '\x1b' :: '[' :: rest => go (rest.dropWhile (fun c => !(c ≥ '@' && c ≤ '~'))).tail acc
     | c :: rest => go rest (c :: acc)
+  termination_by cs.length
+  decreasing_by
+    · have := (List.dropWhile_sublist (l := rest) (fun c => !(c ≥ '@' && c ≤ '~'))).length_le
+      simp only [List.length_cons, List.length_tail]
+      omega
+    · simp_wf
   String.ofList (go s.toList [])
 
 def run : IO UInt32 := do

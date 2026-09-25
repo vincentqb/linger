@@ -113,7 +113,7 @@ def fromHex (s : String) : Option (List UInt8) := fromHexChars s.toList
 
 /-- Poll-wait for a file to appear. Both sides use it: the probe waits for its
 trigger, the parent for `ready` and `result`. -/
-def waitFor (path : String) (ms : UInt64 := 8000) : IO Bool := do
+def waitFor (path : String) (ms : Nat := 8000) : IO Bool := do
   let deadline := (← monotonicMs) + ms
   let mut ok ← System.FilePath.pathExists (System.FilePath.mk path)
   while !ok && (← monotonicMs) < deadline do

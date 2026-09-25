@@ -72,7 +72,7 @@ structure State where
   private exited : Option UInt32 := none
   /-- Persistent screen or label changes since the last checkpoint? -/
   private dirty : Bool := false
-  private lastCkptMs : UInt64 := 0
+  private lastCkptMs : Nat := 0
   /-- monotone attach counter, for size ownership. -/
   private attachSeq : Nat := 0
   /-- Monotone output counter: bumped once per pty-output event. A counter
@@ -121,7 +121,7 @@ inductive Event where
   | closed (id : Nat)
   | ptyOut (chunk : List UInt8)
   | childExited (status : UInt32)
-  | tick (nowMs : UInt64)
+  | tick (nowMs : Nat)
   | checkpointFailed
   deriving Repr
 
@@ -137,8 +137,9 @@ inductive Effect where
   | exit
   deriving Repr, DecidableEq
 
-/-- Checkpoint cadence (§ reboot-resume): at most one per minute. -/
-def ckptIntervalMs : UInt64 := 60000
+/-- Checkpoint cadence (§ reboot-resume): at most one periodic save per minute.
+Natural-number milliseconds keep deadline addition from wrapping. -/
+def ckptIntervalMs : Nat := 60000
 
 /-- A label payload decoded as text: a bare key for `.labelUnset`, a `k=v` pair
 for `.labelSet`. Invalid UTF-8 becomes `""`, which is the safe direction —

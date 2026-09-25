@@ -59,7 +59,7 @@ it stops as soon as the marker lands instead of always sleeping the worst case.
 Only for positive waits. An assertion that something did **not** happen must keep
 its fixed settle time: polling for a change that should never arrive would return
 early on the very first look and prove nothing. -/
-def waitFor (ms : UInt64) (p : IO Bool) : IO Bool := do
+def waitFor (ms : Nat) (p : IO Bool) : IO Bool := do
   let deadline := (← monotonicMs) + ms
   let mut ok ← p
   while !ok && (← monotonicMs) < deadline do
@@ -68,7 +68,7 @@ def waitFor (ms : UInt64) (p : IO Bool) : IO Bool := do
   return ok
 
 /-- Wait for a spawned process without letting a regression hang the suite. -/
-def waitProcess {cfg : IO.Process.StdioConfig} (child : IO.Process.Child cfg) (ms : UInt64) :
+def waitProcess {cfg : IO.Process.StdioConfig} (child : IO.Process.Child cfg) (ms : Nat) :
     IO (Option UInt32) := do
   let deadline := (← monotonicMs) + ms
   let mut code ← child.tryWait
@@ -165,30 +165,27 @@ def Env.spawn (e : Env) (args : Array String) (cols : UInt32 := 80) (rows : UInt
   let (pid, fd) ← spawnPty cols rows "" e.bin args e.ptyEnv
   return { pid, fd }
 
-/-- Everything readable within a wall-clock window; returns early on EOF. -/
-partial def drain (fd : UInt32) (ms : UInt64) : IO ByteArray := do
+/-- Everything readable within a monotonic deadline; returns early on EOF. -/
+def drain (fd : UInt32) (ms : Nat) : IO ByteArray := do
   let deadline := (← monotonicMs) + ms
-  let rec go (acc : ByteArray) : IO ByteArray := do
-    if (← monotonicMs) ≥ deadline then
-      return acc
+  let mut acc := ByteArray.empty
+  while (← monotonicMs) < deadline do
     let revs ← poll #[fd] #[POLLIN] 100
     if revs[0]! &&& (POLLIN ||| POLLHUP ||| POLLERR) == 0 then
-      go acc
-    else
-      match ← read fd 65536 with
-      | none =>
+      continue
+    match ← read fd 65536 with
+    | none =>
+      return acc
+    | some bs =>
+      if bs.isEmpty then
         return acc
-      | some bs =>
-        if bs.isEmpty then
-          return acc
-        else
-          go (acc ++ bs)
-  go .empty
+      acc := acc ++ bs
+  return acc
 
 /-- Drain and decode. Lossy on purpose: a pty carries escape sequences and a
 suite asserts on the printable parts, so an invalid split mid-sequence must not
 throw. -/
-def drainStr (fd : UInt32) (ms : UInt64) : IO String := do
+def drainStr (fd : UInt32) (ms : Nat) : IO String := do
   return String.fromUTF8? (← drain fd ms) |>.getD ""
 
 /-- Type at a client. -/
@@ -207,7 +204,7 @@ def Client.resize (c : Client) (cols rows : UInt32) : IO Unit := winsizeSet c.fd
 Tolerant of ECHILD: a child already reaped (or never ours) is a child that is
 gone, which is the answer the caller wants — and `bye` below promises never to
 raise, so a cleanup path cannot be allowed to mask the failure that got it here. -/
-def Client.reap (c : Client) (ms : UInt64 := 5000) : IO Int64 := do
+def Client.reap (c : Client) (ms : Nat := 5000) : IO Int64 := do
   let deadline := (← monotonicMs) + ms
   let mut status : Int64 := -1
   while status == -1 && (← monotonicMs) < deadline do
@@ -282,7 +279,7 @@ of failing it, which is the difference between a test and a liability.
 
 Deliberately a piped spawn, not a pty one: the picker was tty-gated, so putting
 the verb on a tty would change the premise being tested. -/
-def Env.cliTimeout (e : Env) (args : Array String) (ms : UInt64) :
+def Env.cliTimeout (e : Env) (args : Array String) (ms : Nat) :
     IO (Option (UInt32 × String × String)) := do
   let child ←
     IO.Process.spawn

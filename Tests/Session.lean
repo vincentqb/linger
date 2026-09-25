@@ -413,6 +413,29 @@ example :
      let (_, e2) := step s1 (.tick 70001)
      hasEffect e1 (· == .checkpoint) && e2.isEmpty) = true := by native_decide
 
+/-- A checkpoint thirty seconds below the UInt64 boundary must not make the
+next dirty tick eligible after only one millisecond. -/
+example :
+    (let (saved, initial) := run [.ptyOut [65], .tick 18446744073709521616]
+     let last := saved.lastCkptMs
+      let dirty := (step saved (.ptyOut [66])).1
+      let (early, effs) := step dirty (.tick (last + 1))
+      initial == [.checkpoint] && effs.isEmpty && early.dirty && early.lastCkptMs == last) =
+      true := by
+  native_decide
+
+/-- At the exact cadence across the UInt64 boundary, save once and advance the
+attempt clock without wrapping it into the past. -/
+example :
+    (let (saved, _) := run [.ptyOut [65], .tick 18446744073709521616]
+     let last := saved.lastCkptMs
+      let dirty := (step saved (.ptyOut [66])).1
+      let (due, effs) := step dirty (.tick (last + ckptIntervalMs))
+      effs == [.checkpoint] && !due.dirty && due.lastCkptMs > last &&
+        due.lastCkptMs == last + ckptIntervalMs) =
+      true := by
+  native_decide
+
 /-- A malformed final attacher still reaches the last-detach save point.
 The decoder must be removed immediately, before runtime close feedback. -/
 example :

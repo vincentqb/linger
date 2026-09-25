@@ -412,6 +412,19 @@ code_grep '^[[:space:]]+[|] [.]resizePty cols rows =>' 'Linger/Runtime/Daemon.le
 code_grep '^[[:space:]]+winsizeSet rt[.]ptyFd cols rows$' 'Linger/Runtime/Daemon.lean' > /dev/null \
   || fail "the pty interpreter no longer forwards the proved dimensions in order"
 
+# The elapsed-time theorems use Nat. Keep the actual monotonic source and the
+# daemon tick on that representation; narrowing here is invisible to the proofs.
+code_grep '^theorem step_tick_before_interval ' 'Theorems/Session.lean' > /dev/null \
+  || fail "the no-early-checkpoint theorem disappeared"
+code_grep '^theorem step_tick_checkpoint_elapsed ' 'Theorems/Session.lean' > /dev/null \
+  || fail "the checkpoint elapsed-time theorem disappeared"
+code_grep '^def monotonicMs : IO Nat := IO[.]monoMsNow$' 'Linger/Posix.lean' > /dev/null \
+  || fail "the monotonic clock no longer forwards Lean's Nat clock directly"
+code_grep '^[[:space:]]+let now ← monotonicMs$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+  || fail "the daemon tick no longer reads the monotonic clock"
+code_grep "^[[:space:]]+rt ← pump rt' [(]events [+][+] [[][.]tick now[]][)]$" 'Linger/Runtime/Daemon.lean' > /dev/null \
+  || fail "the daemon no longer forwards the monotonic value to the proved tick"
+
 # `Session.resumeVt` ↔ `Daemon.lean`'s `vt0` — the resume door's model/runtime tie, and
 # the direct sibling of the three Buf greps above: same gap, same species of oracle.
 # `Theorems/Session.lean`'s `resumeVt` IS the daemon's fallback expression with the `IO`
@@ -814,15 +827,10 @@ grep -q -- "--since=" "$ci_sh" \
   || fail "$ci_sh: the scheduled run no longer checks for commits — a weekly macOS build of an unchanged tree pays the expensive rate to re-learn last week's answer"
 # E2E `partial def` ratchet: the sibling of RUNTIME_PARTIAL_CAP above, for the same
 # reason (the keyword creeps back by habit) and covering the files its glob misses.
-# `LingerTest.drain` now uses a total do-block loop. `E2E/Harness.drain` still
-# recurs on a monotonic deadline, and `RemoteLive.stripCsi` was measured: rewriting
-# it around `List.dropWhile` STILL fails the termination check, because the recursion
-# is on a dropWhile-then-drop of a tail, not a structural sub-term. Shedding it needs
-# a real `decreasing_by` — proof work, not cleanup, and AGENTS.md rules out a fuel
-# parameter. The cap was 5 while only 3 existed: `leanFiles` and `stripComments` were
-# the text-based coverage scanner's, deleted with it in step 2, and a cap holding
-# slots for deleted code is a cap that has stopped biting.
-E2E_PARTIAL_CAP=2
+# `LingerTest.drain` and `E2E/Harness.drain` now use total do-block loops.
+# `RemoteLive.stripCsi` uses the library's dropWhile sublist bound to prove that
+# each recursive call shortens its input. No helper needs fuel or partiality.
+E2E_PARTIAL_CAP=0
 ep_n="$(code_count 'partial def' 'E2E/*' 'LingerTest.lean')"
 [ "$ep_n" -le "$E2E_PARTIAL_CAP" ] \
   || fail "E2E/ grew to $ep_n partial defs (cap $E2E_PARTIAL_CAP); a do-block loop does not need the keyword"

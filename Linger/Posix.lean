@@ -278,9 +278,8 @@ def gethostname : IO String := do
     pure ""
 
 /-- CLOCK_MONOTONIC in ms — checkpoint cadence, poll deadlines. Lean
-core's `IO.monoMsNow` is exactly this clock, so no shim needed. -/
-def monotonicMs : IO UInt64 := do
-  return UInt64.ofNat (← IO.monoMsNow)
+core's `IO.monoMsNow` supplies natural-number milliseconds directly. -/
+def monotonicMs : IO Nat := IO.monoMsNow
 
 /-- Unix epoch seconds — `created` timestamps in listings. -/
 def realtimeS : IO UInt64 := do

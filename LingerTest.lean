@@ -35,7 +35,7 @@ def orFalse (action : IO Bool) : IO Bool := do
     return false
 
 /-- Drain a pty until EOF or deadline, via poll — the daemon's read shape. -/
-def drain (fd : UInt32) (deadlineMs : UInt64) (acc : ByteArray) : IO ByteArray := do
+def drain (fd : UInt32) (deadlineMs : Nat) (acc : ByteArray) : IO ByteArray := do
   let mut out := acc
   while (← monotonicMs) < deadlineMs do
     let revs ← poll #[fd] #[POLLIN] 200

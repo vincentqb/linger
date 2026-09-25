@@ -159,6 +159,14 @@ retry (`step_checkpointFailed`); the next periodic attempt still obeys the
 checkpoint cadence. `E2E.Resume.checkpointRetry` exercises that feedback through
 the real effect interpreter with no intervening output.
 
+Periodic checkpoint time uses natural-number milliseconds from Lean's monotonic
+clock. Less than one interval of elapsed time emits no save and preserves dirty
+state and the previous attempt clock (`step_tick_before_interval`); any periodic
+save implies at least that interval elapsed (`step_tick_checkpoint_elapsed`).
+Both claims quantify over arbitrary clocks, including a tick older than the
+previous attempt. Source gates tie the direct Nat clock and daemon tick to these
+proofs. Detach and explicit-save events retain their separate behavior.
+
 ## The agent verbs
 
 A capture cannot be forged and parses positionally: `screenText_framing`

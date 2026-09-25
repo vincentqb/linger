@@ -1,8 +1,8 @@
 # 2026-09-25 codebase audit
 
-Status: step 9 complete — bounded checkpoint decoding
+Status: step 10 complete — natural-number clocks and total E2E helpers
 Updated: 2026-09-25
-Next: integrate natural-number clocks and finish replay continuation/delivery
+Next: integrate the margin-reprint proof, then finish replay continuation/delivery
 Predecessor: `specs/archive/tmux-resurrect-recipe.md`
 
 ## Goal
@@ -117,3 +117,10 @@ The status and completion record below track the actual integration order.
   reader, including unread suffixes and noncanonical encodings. Source gates
   catch an expand-before-reject mutation that semantic checks cannot observe.
   Both required builds and the full foreground verifier pass.
+- Step 10: monotonic clocks and checkpoint timing use Nat directly. Injected
+  UInt64-boundary regressions fail on the old arithmetic; general elapsed-time
+  proofs cover early, backward and arbitrarily large ticks. E2E drain uses a
+  total loop, and CSI stripping proves input decrease using a library bound.
+  Behavioral comparisons and restored mutations preserve helper behavior.
+  Source gates tie the Nat clock to the daemon tick. Both required builds and
+  the full foreground verifier pass.

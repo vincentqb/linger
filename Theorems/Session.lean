@@ -368,7 +368,7 @@ theorem step_connected_admitted (s : State) (id : Nat) (h : s.clients.length < m
 pure, so what the constant buys is statable here. -/
 
 /-- Below the cadence, or with nothing dirty, a tick checkpoints nothing. -/
-theorem step_tick_quiet (s : State) (now : UInt64)
+theorem step_tick_quiet (s : State) (now : Nat)
     (h : (s.dirty && decide (now ≥ s.lastCkptMs + ckptIntervalMs)) = false) :
     (step s (.tick now)).2 = [] := by
   unfold step
@@ -380,7 +380,7 @@ theorem step_tick_quiet (s : State) (now : UInt64)
 
 /-- When it does fire: exactly one checkpoint, and **the clock re-arms to `now`** — which is
 what makes the cadence a rate rather than a one-time threshold. -/
-theorem step_tick_checkpoint (s : State) (now : UInt64)
+theorem step_tick_checkpoint (s : State) (now : Nat)
     (h : (s.dirty && decide (now ≥ s.lastCkptMs + ckptIntervalMs)) = true) :
     (step s (.tick now)).2 = [Effect.checkpoint] ∧ (step s (.tick now)).1.lastCkptMs = now := by
   unfold step
@@ -389,6 +389,25 @@ theorem step_tick_checkpoint (s : State) (now : UInt64)
       (by
         simp only [Bool.and_eq_true, decide_eq_true_eq] at h ⊢; simp [h])]
   exact ⟨rfl, rfl⟩
+
+/-- Less than one interval of elapsed time preserves dirty state and the attempt
+clock, with no save. This also covers a tick older than the previous attempt. -/
+theorem step_tick_before_interval (s : State) (now : Nat)
+    (h : now - s.lastCkptMs < ckptIntervalMs) :
+    (step s (.tick now)).2 = [] ∧
+      (step s (.tick now)).1.lastCkptMs = s.lastCkptMs ∧
+      (step s (.tick now)).1.dirty = s.dirty := by
+  have htime : ¬now ≥ s.lastCkptMs + ckptIntervalMs := by omega
+  simp [step, htime]
+
+/-- Every periodic save has at least one full interval since its previous
+attempt, for arbitrary natural-number clocks. -/
+theorem step_tick_checkpoint_elapsed (s : State) (now : Nat)
+    (h : Effect.checkpoint ∈ (step s (.tick now)).2) : ckptIntervalMs ≤ now - s.lastCkptMs := by
+  by_cases early : now - s.lastCkptMs < ckptIntervalMs
+  · have quiet := (step_tick_before_interval s now early).1
+    simp [quiet] at h
+  · omega
 
 /-- A failed save preserves the complete session and attempt clock while
 making it retryable. No effect is emitted, so a storage failure cannot spin. -/
