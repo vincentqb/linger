@@ -183,9 +183,10 @@ def runEffect (rt : Rt) (eff : Effect) : IO (Rt × List Event) := do
   | .checkpoint =>
     try
       rt.saveCkpt rt.st
+      return (rt, [])
     catch err =>
       IO.eprintln s!"linger: checkpoint save failed: {err}"
-    return (rt, [])
+      return (rt, [.checkpointFailed])
   | .dropCheckpoint =>
     try
       rt.dropCkpt

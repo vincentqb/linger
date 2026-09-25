@@ -114,6 +114,27 @@ theorem onMsg_labelClear_empty (s : State) (c : Client) :
 
 /-! ## §Detach -/
 
+/-- Last-attacher detection uses the old roster; dirty state is saved exactly
+once even when the bytes handler removes a malformed peer immediately. -/
+theorem closeClient_last_dirty (s : State) (id : Nat) (hd : s.dirty = true)
+    (ha : s.clients.any (fun c => c.id == id && c.attached) = true)
+    (hl : (s.dropClient id).clients.all (fun c => !c.attached) = true) :
+    closeClient s id = ({ s.dropClient id with dirty := false }, [.checkpoint]) := by
+  simp [closeClient, hd, ha, hl]
+
+@[simp]
+theorem closeClient_vt (s : State) (id : Nat) : (closeClient s id).1.vt = s.vt := by
+  unfold closeClient
+  dsimp only
+  split <;> rfl
+
+/-- A malformed peer takes the same persistence transition as EOF, then asks
+the runtime to close its fd. No buffered malformed decoder survives. -/
+theorem step_bytes_malformed_close (s : State) (id : Nat) (chunk : List UInt8) (c : Client)
+    (hc : s.client? id = some c) (he : (c.decoder.feed chunk).1.errored = true) :
+    step s (.bytes id chunk) = ((closeClient s id).1, .close id :: (closeClient s id).2) := by
+  simp [step, hc, he]
+
 /-- A client vanishing changes nothing but the client list — screen,
 scrollback, labels exactly as before — and cannot signal anyone: the
 only effect detach may produce is a checkpoint (reboot-resume's save
@@ -122,7 +143,7 @@ theorem step_closed (s : State) (id : Nat) :
     (step s (.closed id)).1.vt = s.vt ∧
       (step s (.closed id)).1.labels = s.labels ∧
       (step s (.closed id)).2.all (· == .checkpoint) := by
-  unfold step
+  unfold step closeClient
   dsimp only
   split
   · exact ⟨rfl, rfl, by simp⟩
@@ -133,7 +154,7 @@ size ownership. The runtime must deliver this event after intentional closes
 as well as after EOF; the IO consumer is checked in `E2E.Attach`. -/
 theorem step_closed_clients (s : State) (id : Nat) :
     (step s (.closed id)).1.clients = s.clients.filter (·.id != id) := by
-  unfold step
+  unfold step closeClient
   dsimp only
   split <;> rfl
 
@@ -359,6 +380,11 @@ theorem step_tick_checkpoint (s : State) (now : UInt64)
         simp only [Bool.and_eq_true, decide_eq_true_eq] at h ⊢; simp [h])]
   exact ⟨rfl, rfl⟩
 
+/-- A failed save preserves the complete session and attempt clock while
+making it retryable. No effect is emitted, so a storage failure cannot spin. -/
+theorem step_checkpointFailed (s : State) :
+    step s .checkpointFailed = ({ s with dirty := true }, []) := rfl
+
 theorem setClient_length (s : State) (c : Client) :
     (s.setClient c).clients.length = s.clients.length := by simp [State.setClient]
 
@@ -366,6 +392,16 @@ theorem dropClient_length_le (s : State) (id : Nat) :
     (s.dropClient id).clients.length ≤ s.clients.length := by
   simp [State.dropClient]
   exact List.length_filter_le _ _
+
+theorem closeClient_bounded (s : State) (id : Nat) (h : Bounded s) :
+    Bounded (closeClient s id).1 := by
+  unfold closeClient
+  dsimp only
+  split
+  all_goals
+    refine ⟨Nat.le_trans (dropClient_length_le s id) h.clientsLe, h.labelsLe, ?_, h.scanOk⟩
+    intro c hmem
+    exact h.decOk c (List.mem_filter.mp hmem).1
 
 /-- `onMsg` never grows the client list. -/
 theorem onMsg_clients_length_le (s : State) (c : Client) (m : Msg) :
@@ -485,9 +521,7 @@ theorem step_bounded (s : State) (ev : Event) (h : Bounded s) : Bounded (step s 
       dsimp only
       split
       · -- decoder errored: client dropped
-        refine ⟨Nat.le_trans (dropClient_length_le s _) hcl, hlb, ?_, hscan⟩
-        intro c' hmem
-        exact hdec c' ((List.mem_filter.mp hmem).1)
+        exact closeClient_bounded s id h'
       · rename_i herr
         apply feedMsgs_bounded
         dsimp only
@@ -505,14 +539,7 @@ theorem step_bounded (s : State) (ev : Event) (h : Bounded s) : Bounded (step s 
             rw [hsplit] at this
             simpa [hsplit] using this
   · -- closed (may checkpoint; state shape identical either way)
-    dsimp only
-    split
-    · refine ⟨Nat.le_trans (dropClient_length_le s _) hcl, hlb, ?_, hscan⟩
-      intro c' hmem
-      exact hdec c' ((List.mem_filter.mp hmem).1)
-    · refine ⟨Nat.le_trans (dropClient_length_le s _) hcl, hlb, ?_, hscan⟩
-      intro c' hmem
-      exact hdec c' ((List.mem_filter.mp hmem).1)
+    exact closeClient_bounded s _ h'
   · -- ptyOut
     exact ⟨hcl, hlb, hdec, Terminal.feed_bounded _ _ _ hscan⟩
   · -- childExited: finish always returns ground
@@ -521,6 +548,8 @@ theorem step_bounded (s : State) (ev : Event) (h : Bounded s) : Bounded (step s 
     split
     · exact ⟨hcl, hlb, hdec, hscan⟩
     · exact ⟨hcl, hlb, hdec, hscan⟩
+  · -- failed checkpoint changes only persistence bookkeeping
+    exact ⟨hcl, hlb, hdec, hscan⟩
 
 /-! ## The emulator stays Good through the daemon -/
 
@@ -563,13 +592,10 @@ theorem step_vt_good (s : State) (ev : Event) (h : Good s.vt) : Good (step s ev)
     · exact h
     · dsimp only
       split
-      · exact h
+      · simpa only [closeClient_vt] using h
       · apply feedMsgs_vt_good
         simpa [State.setClient] using h
-  · dsimp only
-    split
-    · exact h
-    · exact h
+  · simpa only [closeClient_vt] using h
   · -- ptyOut
     dsimp only
     rw [Terminal.feed_vt]
@@ -578,6 +604,7 @@ theorem step_vt_good (s : State) (ev : Event) (h : Good s.vt) : Good (step s ev)
   · split
     · exact h
     · exact h
+  · exact h
 
 end Linger.Core.Session
 
@@ -688,7 +715,7 @@ theorem feedMsgs_lookSeq_le (id : Nat) (msgs : List Msg) (acc : State × List Ef
 /-- One event keeps `behind` honest, whatever it is. -/
 theorem step_lookSeq_le (s : State) (ev : Event) (h : s.lookSeq ≤ s.outSeq) :
     (step s ev).1.lookSeq ≤ (step s ev).1.outSeq := by
-  unfold step
+  unfold step closeClient
   dsimp only
   repeat' split
   all_goals
@@ -827,7 +854,8 @@ theorem step_bytes_isolates (s : State) (id : Nat) (chunk : List UInt8) {other :
   · rfl
   · rename_i c hfind
     split
-    · exact dropClient_other h
+    · dsimp only [closeClient]
+      split <;> exact dropClient_other h
     · rw [feedMsgs_other id _ _ h]
       exact
         setClient_other
@@ -977,14 +1005,11 @@ theorem step_vt_live (s : State) (ev : Event) (h : LiveVt s) : LiveVt (step s ev
     · exact h
     · dsimp only
       split
-      · exact h
+      · simpa only [closeClient_vt] using h
       · refine feedMsgs_vt_live _ _ _ ?_
         show LiveReachableVt _
         simpa [State.setClient] using h
-  · dsimp only
-    split
-    · exact h
-    · exact h
+  · simpa only [closeClient_vt] using h
   · -- pty output: the mediator's VT projection is exactly `Vt.feed`
     dsimp only
     rw [Terminal.feed_vt]
@@ -993,6 +1018,7 @@ theorem step_vt_live (s : State) (ev : Event) (h : LiveVt s) : LiveVt (step s ev
   · split
     · exact h
     · exact h
+  · exact h
 
 /-- …and so does a trace of any length. -/
 theorem run_vt_live (s : State) (evs : List Event) (h : LiveVt s) : LiveVt (run s evs).1 := by

@@ -181,7 +181,7 @@ say "4. attach / detach / reattach / mirror / wait"
 suite attach 40
 
 say "5. reboot resume"
-suite resume 14
+suite resume 15
 
 say "6. overview listing (bare linger / ls)"
 suite overview 8

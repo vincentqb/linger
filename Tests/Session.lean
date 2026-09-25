@@ -340,6 +340,15 @@ example :
      let (_, e2) := step s1 (.tick 70001)
      hasEffect e1 (· == .checkpoint) && e2.isEmpty) = true := by native_decide
 
+/-- A malformed final attacher still reaches the last-detach save point.
+The decoder must be removed immediately, before runtime close feedback. -/
+example :
+    (let (s, _) := run [.connected 1, .bytes 1 (encode (.attach 20 5)), .ptyOut [65]]
+     let (s, effs) := step s (.bytes 1 [255, 255, 255, 255, 255])
+     s.clients.isEmpty && effs == [.close 1, .checkpoint] &&
+       (step s (.closed 1)).2.isEmpty) = true := by
+  native_decide
+
 /-- Attach after exit tells the client immediately. -/
 example :
     (let (s1, _) := run [.childExited 3]

@@ -11569,3 +11569,33 @@ Validation: both required builds, formatting, semantic coverage, shim checks and
 the complete foreground verifier pass; all live suites are green. No heartbeat
 or recursion allowance was added. Evidence is in the `step2-*` logs under the
 session's temporary audit directory.
+
+## Step 3 notes — 2026-09-25
+
+Malformed traffic removed the client before the runtime could report its close.
+That lost the last-attacher save point. The shared `closeClient` transition now
+uses the old roster to make the save decision for both malformed traffic and
+EOF; later close feedback sees an already removed client and does not duplicate
+the checkpoint. Its exact effects, emulator preservation and client bound are
+proved, and the event preservation proofs cover the shared stage.
+
+The save effect previously printed an error and forgot the dirty state. A quiet
+session then had no reason to retry. The runtime now feeds `checkpointFailed`
+back into the machine; the new event marks the state dirty without moving the
+periodic attempt time or producing effects. A real effect-interpreter fixture
+fails its first save, waits through an early tick, and saves the retained labels
+on the next cadence without additional output.
+
+RED: the malformed-disconnect semantic check and the injected save-failure
+fixture both fail against their original implementations. The first malformed
+fixture supplied only four bytes, which was an incomplete header rather than
+malformed input; the recorded valid red uses five bytes and was rerun against
+the old branch. The valid receipt is `step3-malformed-valid-red.log`. Clearing
+the dirty bit in `checkpointFailed` makes its exact state/effect theorem fail;
+the mutation was restored.
+
+Validation: `./lake build`, `./lake build Theorems Tests`, formatting, source
+gates, semantic coverage and the entire foreground `./tests/e2e.sh` pass. The
+new runtime assertion is included in the canonical resume suite count. No
+proof allowance was raised. Receipts are the `step3-*` logs in the audit
+directory.

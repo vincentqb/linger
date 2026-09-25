@@ -1,8 +1,8 @@
 # 2026-09-25 codebase audit
 
-Status: step 2 verified — persistence fixes and independent audits in progress
+Status: step 3 verified — independent audit fixes ready for integration
 Updated: 2026-09-25
-Next: checkpoint malformed disconnects and retry failed saves
+Next: integrate the POSIX boundary fixes and generated ABI checks
 Predecessor: `specs/archive/tmux-resurrect-recipe.md`
 
 ## Goal
@@ -70,3 +70,9 @@ The status and completion record below track the actual integration order.
   regressions failed before the fixes; raw-size, lost-dirty and swapped-runtime-
   dimensions mutations fail the new checks. Both required builds and the full
   foreground verifier pass.
+- Step 3: malformed traffic and EOF share the last-attacher checkpoint
+  transition. Save failure feeds back into the pure machine, retaining dirty
+  state for the next periodic attempt. A semantic regression and an injected
+  effect-interpreter failure were red before the changes; a lost-dirty mutation
+  breaks the new theorem. Both required builds and the full foreground verifier
+  pass.

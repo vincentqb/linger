@@ -2,6 +2,7 @@ module
 
 public import E2E.Harness
 public import Linger.Core.Checkpoint
+public import Linger.Runtime.Daemon
 
 public section
 
@@ -50,9 +51,32 @@ def daemonLog (e : Env) (name : String) : IO String := do
   catch _ =>
     pure ""
 
+/-- Exercise the real effect interpreter with one failed save and no further
+output. The injected clock checks retry cadence without waiting a minute. -/
+def checkpointRetry : IO Nat := do
+  let attempts ← IO.mkRef (0 : Nat)
+  let saved ← IO.mkRef ([] : List (String × String))
+  let labels := [("quiet", "kept")]
+  let rt : Linger.Runtime.Daemon.Rt :=
+    { st := Linger.Core.Session.State.boot (Linger.Core.Vt.Vt.init 20 5) labels [], listenFd := 0,
+      ptyFd := 0, childPid := 0, sockPath := "",
+      saveCkpt := fun st => do
+        attempts.modify (· + 1)
+        if (← attempts.get) == 1 then
+          throw (IO.userError "injected save failure")
+        saved.set st.labels,
+      dropCkpt := pure () }
+  let interval := Linger.Core.Session.ckptIntervalMs
+  let rt ← Linger.Runtime.Daemon.pump rt [.ptyOut [65], .tick interval]
+  let rt ← Linger.Runtime.Daemon.pump rt [.tick (interval + 1)]
+  let before ← attempts.get
+  let _ ← Linger.Runtime.Daemon.pump rt [.tick (interval + interval)]
+  expect (before == 1 && (← attempts.get) == 2 && (← saved.get) == labels)
+      "a failed quiet checkpoint retries at the next cadence with its state intact"
+
 def run : IO UInt32 := do
   let e ← Env.make "resume"
-  let mut f := 0
+  let mut f ← checkpointRetry
   -- one source for the pty geometry and for the off-the-screen window below
   let cols : UInt32 := 80
   let rows : UInt32 := 24

@@ -119,6 +119,7 @@ inductive Event where
   | ptyOut (chunk : List UInt8)
   | childExited (status : UInt32)
   | tick (nowMs : UInt64)
+  | checkpointFailed
   deriving Repr
 
 /-- What the runtime executes. -/
@@ -166,6 +167,15 @@ def State.setClient (s : State) (c : Client) : State :=
 
 def State.dropClient (s : State) (id : Nat) : State :=
   { s with clients := s.clients.filter (·.id != id) }
+
+/-- One disconnect transition for EOF and malformed traffic. Decide whether
+the last attacher needs a checkpoint before removing its record. -/
+def closeClient (s : State) (id : Nat) : State × List Effect :=
+  let hadAttached := s.clients.any (fun c => c.id == id && c.attached)
+  let s' := s.dropClient id
+  if s.dirty && hadAttached && s'.clients.all (fun c => !c.attached) then
+    ({ s' with dirty := false }, [.checkpoint])
+  else (s', [])
 
 /-- Unread: output arrived while nobody was watching. What
 `Status.wantsYou` is derived from — a property of the **session**, since
@@ -397,17 +407,11 @@ def step (s : State) (ev : Event) : State × List Effect :=
     | none => (s, []) -- late bytes from a dropped client
     | some c =>
       let (dec, msgs) := c.decoder.feed chunk
-      if dec.errored then (s.dropClient id, [.close id])
+      if dec.errored then
+        let (s, effs) := closeClient s id
+        (s, .close id :: effs)
       else feedMsgs id msgs (s.setClient { c with decoder := dec }, [])
-  | .closed id =>
-    -- checkpoint when the last attached client leaves (reboot-resume's
-    -- main save point; detach itself must stay side-effect-free
-    -- otherwise — §Detach allows only this)
-    let hadAttached := s.clients.any (fun c => c.id == id && c.attached)
-    let s' := s.dropClient id
-    if s.dirty && hadAttached && s'.clients.all (fun c => !c.attached) then
-      ({ s' with dirty := false }, [.checkpoint])
-    else (s', [])
+  | .closed id => closeClient s id
   | .ptyOut chunk =>
     let r := Terminal.feed s.vt s.scan chunk
     ({ s with
@@ -438,6 +442,10 @@ def step (s : State) (ev : Event) : State × List Effect :=
       ({ s with
           freshFlag := s.tickOutSeq < s.outSeq, tickOutSeq := s.outSeq },
         [])
+  | .checkpointFailed =>
+    -- Keep the attempt time: retry at the next cadence, without needing more
+    -- output and without spinning while storage remains unavailable.
+    ({ s with dirty := true }, [])
 
 /-- A whole event trace folded through `step`, effects in arrival
 order — the specification of the runtime's poll loop (which feeds one

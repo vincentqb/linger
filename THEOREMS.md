@@ -107,6 +107,14 @@ the complete emulator (`resize_same_effective`). The shared resize transition
 and successful label edits mark persistent state dirty, so quiet edits reach
 the periodic checkpoint (`resize_changed_dirty`, `onMsg_labels_changed_dirty`).
 
+Disconnects caused by malformed input use the same save decision as EOF:
+the old roster determines whether removing a client needs a checkpoint
+(`closeClient_last_dirty`, `step_bytes_malformed_close`).
+A failed save marks that state dirty again without producing an immediate
+retry (`step_checkpointFailed`); the next periodic attempt still obeys the
+checkpoint cadence. `E2E.Resume.checkpointRetry` exercises that feedback through
+the real effect interpreter with no intervening output.
+
 ## The agent verbs
 
 A capture cannot be forged and parses positionally: `screenText_framing`
