@@ -7,9 +7,14 @@
 # Using mosh? You don't need this — mosh IS the reconnect layer:
 #     mosh HOST -- linger attach NAME
 function lza --description 'attach, reconnecting while the link flaps'
+    if test (count $argv) -ne 1; or test -z "$argv[1]"
+        printf 'usage: lza NAME[@HOST]\n' >&2
+        return 2
+    end
     while true
-        linger attach $argv[1]              # name@host
-        test $status -eq 255; or break    # 255 = ssh transport error
-        sleep 2
+        linger attach "$argv[1]"            # name@host
+        set -l attached $status
+        test $attached -eq 255; or return $attached
+        sleep 2; or return $status
     end
 end

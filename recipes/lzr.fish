@@ -27,9 +27,21 @@ function lzr --description 'import tmux-resurrect panes as linger sessions'
         printf 'lzr: save not found: %s\n' "$save" >&2
         return 1
     end
-    if not command -q linger
+    set -l linger_bin (command -s linger)
+    if test -z "$linger_bin"
         printf 'lzr: linger is not on PATH\n' >&2
         return 1
+    end
+    set linger_bin (path resolve -- "$linger_bin")
+
+    # Entering a saved cwd must not select another binary or state directory.
+    # Empty XDG/HOME values keep their fallback; empty LINGER_DIR means cwd.
+    for key in LINGER_DIR XDG_RUNTIME_DIR XDG_STATE_HOME HOME
+        if set -qx $key; and not string match -q '/*' -- "$$key"
+            if test "$key" = LINGER_DIR; or test -n "$$key"
+                set -fx $key (path resolve -- "$PWD/$$key")
+            end
+        end
     end
 
     set -l names
@@ -94,7 +106,7 @@ function lzr --description 'import tmux-resurrect panes as linger sessions'
     # failed listing is ambiguous, so fail closed rather than replay a command.
     # This is sequential only: run is an upsert, not an atomic create claim.
     set -l existing
-    set -l listing (command linger ls --porcelain)
+    set -l listing (command "$linger_bin" ls --porcelain)
     if test $status -ne 0
         printf 'lzr: could not list existing linger sessions\n' >&2
         return 1
@@ -120,7 +132,7 @@ function lzr --description 'import tmux-resurrect panes as linger sessions'
             printf 'lzr: working directory became inaccessible: %s\n' "$dirs[$i]" >&2
             return 1
         end
-        command linger run "$name" true
+        command "$linger_bin" run "$name" true
         set -l create_status $status
         popd >/dev/null
         if test $create_status -ne 0
@@ -131,7 +143,7 @@ function lzr --description 'import tmux-resurrect panes as linger sessions'
         if test "$restore_processes" = true; and test -n "$commands[$i]"
             set -l words (string split -n ' ' -- "$commands[$i]")
             if test (count $words) -gt 0; and contains -- "$words[1]" $allowed
-                command linger run "$name" "$commands[$i]"
+                command "$linger_bin" run "$name" "$commands[$i]"
                 if test $status -ne 0
                     printf 'lzr: could not restore process in session: %s\n' "$name" >&2
                     return 1

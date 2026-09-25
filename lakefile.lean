@@ -42,7 +42,7 @@ honest. The half that BITES is therefore the import grep in `tests/gates.sh`,
 and this target is what that grep is a gate on. -/
 lean_lib LingerVt where roots := #[`Linger.Core.Vt, `Linger.Core.Render, `Linger.Core.Terminal]
 
-/-- The C shim — the project's entire non-Lean surface (see AGENTS.md).
+/-- The C shim — the program's native OS boundary (see AGENTS.md).
 Compiled with clang (the ./lake wrapper puts Homebrew clang on PATH;
 the toolchain's bundled one cannot run on this host's glibc 2.26). -/
 target shim.o pkg : System.FilePath := do

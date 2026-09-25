@@ -1,6 +1,7 @@
 module
 
 public import E2E.Harness
+public import Linger.Core.Name
 
 public section
 
@@ -9,11 +10,195 @@ public section
 `lzr` projects tmux-resurrect pane records into independent linger sessions.
 This suite drives the fish function against real daemons and synthetic save
 files: the foreign parser is exercised here, not admitted into `Linger/`.
+The smaller helpers run against command recorders to check error propagation
+and argument boundaries without contacting hosts or opening GUI windows.
 -/
 
 namespace E2E.Recipes
 
 open E2E.Harness
+
+private def call (args : List String) : String :=
+  "CALL\x00" ++ String.intercalate "\x00" args ++ "\x00\n"
+
+/-- Run the actual recipe with bounded, process-local command recorders.
+The call budget makes a broken retry loop fail instead of hanging the suite. -/
+private def probe (recipe : String) (args : Array String := #[])
+    (settings : Array (String × String) := #[]) : IO (UInt32 × String) := do
+  let setup :=
+    r#"
+set -g recipe_calls 0
+set -g recipe_attaches 0
+set -g recipe_picks 0
+function recipe_record
+    set -g recipe_calls (math $recipe_calls + 1)
+    test $recipe_calls -le 12; or exit 99
+    printf 'CALL\0' >&2
+    printf '%s\0' $argv >&2
+    printf '\n' >&2
+end
+function linger
+    recipe_record linger $argv
+    if test "$argv[1]" = ls
+        printf '%s' "$RECIPE_LISTING"
+        return $RECIPE_LIST_RC
+    end
+    set -g recipe_attaches (math $recipe_attaches + 1)
+    test $recipe_attaches -eq 1; or return 5
+    return $RECIPE_ATTACH_RC
+end
+function ssh
+    recipe_record ssh $argv
+    printf '%s' "$RECIPE_LISTING"
+    return $RECIPE_LIST_RC
+end
+function kitten
+    recipe_record kitten $argv
+    return $RECIPE_LAUNCH_RC
+end
+function fzf
+    recipe_record fzf $argv
+    string collect >/dev/null
+    set -g recipe_picks (math $recipe_picks + 1)
+    test $recipe_picks -eq 1; or return 130
+    printf '%s' "$RECIPE_PICK"
+    return $RECIPE_PICK_RC
+end
+function clear
+    recipe_record clear $argv
+end
+function sleep
+    recipe_record sleep $argv
+    return $RECIPE_SLEEP_RC
+end
+"#
+  let defaults :=
+    #[("RECIPE_LISTING", "name\twork\n"), ("RECIPE_LIST_RC", "0"), ("RECIPE_PICK", "work\n"),
+      ("RECIPE_PICK_RC", "0"), ("RECIPE_ATTACH_RC", "7"), ("RECIPE_SLEEP_RC", "7"),
+      ("RECIPE_LAUNCH_RC", "0")]
+  let out ←
+    IO.Process.output
+        { cmd := "fish",
+          args :=
+            #["--no-config", "-c", setup ++ s!"\nsource recipes/{recipe}.fish\n{recipe} $argv",
+                "--"] ++
+              args,
+          env := (defaults ++ settings).map fun (key, value) => (key, some value) }
+  let calls := (out.stderr.splitOn "\n").filter (·.startsWith "CALL\x00")
+  return (out.exitCode, String.join (calls.map (· ++ "\n")))
+
+private def helperChecks : IO Nat := do
+  let mut f := 0
+  let listingCall := call ["linger", "ls", "-r", "--porcelain"]
+  for recipe in ["lz", "lzh"] do
+    let (rc, calls) ← probe recipe #[] #[("RECIPE_LIST_RC", "7")]
+    f :=
+      f +
+        (←
+          expect (rc == 7 && calls == listingCall)
+              s!"{recipe} stops before the picker when listing fails with partial output")
+    let (cancelRc, cancelCalls) ← probe recipe #[] #[("RECIPE_PICK_RC", "130")]
+    f :=
+      f +
+        (←
+          expect (cancelRc == 130 && !has cancelCalls (call ["linger", "attach", "work"]))
+              s!"{recipe} preserves picker cancellation without attaching")
+    let mut selectionOk := true
+    for picked in ["", "one\ntwo\n"] do
+      let (pickRc, pickCalls) ← probe recipe #[] #[("RECIPE_PICK", picked)]
+      selectionOk := selectionOk && pickRc != 99 && !has pickCalls "attach\x00"
+    f := f + (← expect selectionOk s!"{recipe} rejects empty or multiple picker selections")
+  let target := "work@me@dev-a"
+  let (pickRc, pickCalls) ← probe "lz" #[] #[("RECIPE_PICK", target ++ "\n")]
+  f :=
+    f +
+      (←
+        expect
+            (pickRc == 7 && has pickCalls (call ["linger", "attach", target]) &&
+              has pickCalls "--no-multi\x00")
+            "lz attaches exactly one remote target and returns its status")
+  let attachCall := call ["linger", "attach", target]
+  let (attachRc, attachCalls) ← probe "lza" #[target]
+  f :=
+    f +
+      (←
+        expect (attachRc == 7 && attachCalls == attachCall)
+            "lza returns a non-transport attach failure without retrying")
+  for pauseRc in ["0", "7"] do
+    let (rc, calls) ←
+      probe "lza" #[target] #[("RECIPE_ATTACH_RC", "255"), ("RECIPE_SLEEP_RC", pauseRc)]
+    let expected := attachCall ++ call ["sleep", "2"] ++ (if pauseRc == "0" then attachCall else "")
+    f :=
+      f +
+        (←
+          expect (rc == (if pauseRc == "0" then 5 else 7) && calls == expected)
+              s!"lza retries transport failure only after a successful pause ({pauseRc})")
+  for recipe in ["lza", "lzo"] do
+    let mut usageOk := true
+    for args in [#[], #[""], #["one", "two"]] do
+      let (rc, calls) ← probe recipe args
+      usageOk := usageOk && rc == 2 && calls.isEmpty
+    f := f + (← expect usageOk s!"{recipe} requires exactly one nonempty target")
+  let (switchRc, switchCalls) ← probe "lzh" #["one", "two"]
+  f := f + (← expect (switchRc == 2 && switchCalls.isEmpty) "lzh rejects extra initial targets")
+  let (boardRc, boardCalls) ← probe "lzs" #["", "2"]
+  f :=
+    f +
+      (←
+        expect
+            (boardRc == 7 &&
+              boardCalls == call ["linger", "ls", "-r"] ++ call ["clear"] ++ call ["sleep", "2"])
+            "lzs uses configured remotes for an empty host and stops on pause failure")
+  let (listRc, listCalls) ← probe "lzs" #[] #[("RECIPE_LIST_RC", "7")]
+  f :=
+    f +
+      (←
+        expect (listRc == 7 && listCalls == call ["linger", "ls", "-r"])
+            "lzs reports listing failure before clearing the screen")
+  let mut intervalOk := true
+  for args in [#["", "0"], #["", "-1"], #["", "bogus"], #["a", "2", "extra"]] do
+    let (rc, calls) ← probe "lzs" args
+    intervalOk := intervalOk && rc == 2 && calls.isEmpty
+  f := f + (← expect intervalOk "lzs rejects invalid intervals and extra arguments")
+  let host := "me@dev-a"
+  let sshCall :=
+    call
+      ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=3", "--", host, "linger", "ls",
+        "--porcelain"]
+  for listing in ["", "name\twork\n"] do
+    let (rc, calls) ← probe "lzo" #[host] #[("RECIPE_LISTING", listing), ("RECIPE_LIST_RC", "255")]
+    f :=
+      f +
+        (←
+          expect (rc == 255 && calls == sshCall)
+              s!"lzo preserves failed SSH status before launching (empty output: {listing.isEmpty})")
+  let names := ["-live+1", "+saved"].map Linger.Core.Name.sanitize
+  let listing := String.join (names.map fun name => s!"name\t{name}\nstate\tlive\n\n")
+  let launch := fun name =>
+    call
+      ["kitten", "@", "launch", "--type=tab", "--tab-title", s!"{name}@{host}", "--", "ssh", "-t",
+        "--", host, "linger", "attach", name]
+  let (tabsRc, tabsCalls) ← probe "lzo" #[host] #[("RECIPE_LISTING", listing)]
+  f :=
+    f +
+      (←
+        expect (tabsRc == 0 && tabsCalls == sshCall ++ String.join (names.map launch))
+            "lzo launches each canonical session with exact SSH destination and name")
+  let (launchRc, launchCalls) ←
+    probe "lzo" #[host] #[("RECIPE_LISTING", listing), ("RECIPE_LAUNCH_RC", "9")]
+  f :=
+    f +
+      (←
+        expect (launchRc == 9 && launchCalls == sshCall ++ launch names[0]!)
+            "lzo stops after the first failed tab launch")
+  let mut namesOk := true
+  for name in
+    ["bad/name", ".hidden", "a;touch SENTINEL", "", "extra\tfield",
+      String.ofList (List.replicate (Linger.Core.Name.maxLen + 1) 's')] do
+    let (rc, calls) ← probe "lzo" #[host] #[("RECIPE_LISTING", listing ++ s!"name\t{name}\n")]
+    namesOk := namesOk && rc != 0 && calls == sshCall
+  f := f + (← expect namesOk "lzo validates every name before opening the first tab")
+  return f
 
 /-- tmux-resurrect prefixes the saved directory and full command with `:` and
 escapes spaces in the directory field. The other fields are present only to
@@ -34,10 +219,54 @@ def runLzr (e : Env) (home data : String) (args : Array String) : IO (UInt32 × 
   let path := s!"{(cwd / ".lake" / "build" / "bin").toString}:{(← IO.getEnv "PATH").getD ""}"
   let out ←
     IO.Process.output
-        { cmd := "fish", args := #["-c", "source recipes/lzr.fish; lzr $argv", "--"] ++ args,
+        { cmd := "fish",
+          args := #["--no-config", "-c", "source recipes/lzr.fish; lzr $argv", "--"] ++ args,
           env :=
             e.procEnv ++ #[("HOME", some home), ("XDG_DATA_HOME", some data), ("PATH", some path)] }
   return (out.exitCode, out.stdout, out.stderr)
+
+private def relativePathChecks (e : Env) : IO Nat := do
+  let root := System.FilePath.mk e.dir
+  let origin := root / "relative" / "from"
+  let pane := root / "relative" / "to" / "inner"
+  let binDir := origin / "bin"
+  IO.FS.createDirAll binDir
+  IO.FS.createDirAll pane
+  IO.FS.writeBinFile (binDir / "linger") (← IO.FS.readBinFile e.bin)
+  Linger.Posix.chmod (binDir / "linger").toString 0o700
+  discard <|
+      IO.Process.run
+        { cmd := "ln", args := #["-s", (root / "relative").toString, (origin / "link").toString] }
+  let fish ← IO.Process.output { cmd := "fish", args := #["--no-config", "-c", "status fish-path"] }
+  let recipe := ((← IO.currentDir) / "recipes" / "lzr.fish").toString
+  let wrongDir := { e with dir := (root / "relative").toString }
+  let wrongSymlinkDir := { e with dir := origin.toString }
+  let mut f := 0
+  for (label, path, state) in
+    [("binary", "bin:/usr/bin:/bin", e.dir), ("state", s!"{binDir}:/usr/bin:/bin", "../.."),
+      ("symlink-state", s!"{binDir}:/usr/bin:/bin", "link/..")] do
+    let name := s!"relative-{label}-w1-p0"
+    let save := root / s!"relative-{label}-save"
+    IO.FS.writeFile save (paneLine s!"relative-{label}" "1" "0" pane.toString "")
+    try
+      let out ←
+        IO.Process.output
+            { cmd := fish.stdout.trimAscii.toString,
+              args :=
+                #["--no-config", "-c", "source $argv[1]; lzr $argv[2..]", "--", recipe,
+                  save.toString],
+              cwd := some origin.toString,
+              env := e.procEnv ++ #[("PATH", some path), ("LINGER_DIR", some state)] }
+      f :=
+        f +
+          (←
+            expect (out.exitCode == 0 && (← e.info name "start_dir") == some pane.toString)
+                s!"lzr keeps a relative {label} path anchored to the invocation directory")
+    finally
+      e.killAll #[name]
+      wrongDir.killAll #[name]
+      wrongSymlinkDir.killAll #[name]
+  return f
 
 def run : IO UInt32 := do
   let e ← Env.make "recipes"
@@ -46,7 +275,8 @@ def run : IO UInt32 := do
   let data := root / "data"
   IO.FS.createDirAll home
   IO.FS.createDirAll data
-  let mut f := 0
+  let mut f ← helperChecks
+  f := f + (← relativePathChecks e)
   -- Default path, escaped cwd, and no-command default.
   let defaultDir := root / "work space"
   let defaultSource := root / "default-source"

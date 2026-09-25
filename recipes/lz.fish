@@ -4,6 +4,10 @@
 # empty list offers nothing to pick (no stray "no sessions" row).
 # Drop the -r for a faster, local-only picker.
 function lz --description 'pick a session and attach'
-    set -l name (linger ls -r --porcelain | awk -F '\t' '$1=="name"{print $2}' | fzf)
-    and linger attach $name
+    set -l listing (linger ls -r --porcelain)
+    or return $status
+    set -l name (printf '%s\n' $listing | string replace -rf '^name\t([^\t]+)$' '$1' | fzf --no-multi)
+    or return $status
+    test (count $name) -eq 1; and test -n "$name"; or return 1
+    linger attach "$name"
 end

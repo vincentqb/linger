@@ -12279,3 +12279,63 @@ directory. Uncached lint and layout still pass across the project, so the
 workflow needs to cache only `lean-fmt`. The worker is closed and its CI
 change is integrated on main. The live spec is archived as
 `specs/archive/lean-4.34.1.md`.
+
+## Step 1 notes — 2026-09-25
+
+Opened `specs/ghostty-recipe.md` for the user's Ghostty request and subsequent
+per-recipe language audit, starting from `bd71ce1`. The recorded split is fish
+and native configuration for editable composition, Lean for the program, proofs
+and automated suites. The explicit fish choice is in
+`specs/archive/tmux-resurrect-recipe.md`; the September 15 inventory also includes
+fish recipes. The earlier Lean-suite migration concerned test implementations.
+Corrected AGENTS.md's contradictory "everything else is Lean" wording and the
+lakefile comment describing the shim as the entire non-Lean surface. No archived
+decision or earlier worklog entry is changed.
+
+Audited all six fish helpers and the SSH configuration. `lz` and `lzh` now stop
+on a failed listing even if it printed partial output, enforce one picker
+selection, and retain cancellation/failure status. Fish builtins replace their
+awk extraction. `lzh` rejects extra initial targets. `lza` requires one target,
+returns non-transport attach status, and stops if the retry pause fails. `lzs`
+uses the configured remote list for an empty host argument, validates a positive
+interval, and propagates listing/clear/output/pause failures. `lzo` requires a
+host, retains SSH status, preflights canonical and distinct names before opening
+tabs, and stops at the first failed launch. The SSH configuration parses with
+`ssh -G`; its policy is retained.
+
+The helper worker used `/tmp/linger-recipe-fixes-20260925` and a separate branch.
+Its five-file patch was inspected and copied into main; the worker is closed.
+Its independent command probes finish with all checks passing in
+`/tmp/linger-recipe-fix-receipts-20260925/after-summary.json`. No worker has a
+remaining write assignment on the main tree.
+
+The parent found that `lzr` could resolve a relative PATH or state directory
+against a pane's saved cwd after its initial listing used the invocation cwd.
+It now resolves the executable once and anchors exported relative LINGER_DIR,
+XDG runtime/state and HOME values before entering pane directories. Empty
+fallback values retain their previous meaning. A final review rejected lexical
+normalization: `link/..` must follow the symlink before applying the parent step.
+The live regression fails with that first fix and passes with filesystem path
+resolution. The importer requires fish 3.5 or later for its path builtin.
+
+Shared Lean recipe checks exercise the actual helpers with bounded, process-local
+command recorders. The importer checks continue to use real daemons and add
+relative executable, relative state, and symlink/parent cases. The original
+helpers fail the newly added status/argument checks; the original importer fails
+the relative-path checks. All final recipe assertions pass, with the canonical
+roster maintained only in tests/e2e.sh. Receipts include
+`/tmp/linger-recipe-audit-red.log`, `/tmp/linger-recipe-path-red.log`, and
+`/tmp/linger-recipe-symlink-{red,green}.log`.
+
+The uncommitted E2E/Ghostty.lean draft was withdrawn: it added a separate module
+for command recording without proving a GUI launch. Its original red receipt is
+retained in `/tmp/linger-ghostty-red.log`. The Ghostty addition will use a native
+command setting and the existing `lzh` helper.
+
+Final verification passes on Linux: clean build, generated C ABI, source and
+layout gates, semantic core coverage, CI runner selection, fuzz corpus, POSIX
+smoke tests, and every live suite. The final receipt is
+`/tmp/linger-recipe-audit-final-verifier.log`; both required warm builds are in
+`/tmp/linger-recipe-step1-{build,proofs-tests}.log`. Fish syntax, SSH configuration
+parsing and diff whitespace also pass. Program, proof and C sources are
+unchanged; these IO checks do not claim to prove fish or validate a live GUI.

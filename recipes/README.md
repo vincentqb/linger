@@ -1,6 +1,10 @@
 # Recipes
 
-Fish autoloads one function per file:
+Recipes are editable fish functions and native SSH configuration. They compose
+linger with other tools and do not require a Lean toolchain to install or edit.
+The program, proofs, and automated test suites are written in Lean.
+
+Fish autoloads one function per file (`lzr` needs fish 3.5 or later):
 
 ```fish
 cp recipes/lz*.fish ~/.config/fish/functions/
@@ -28,6 +32,17 @@ mosh host -- linger attach work
 `ls -r` queries hosts over ssh. To route a recipe over mosh, swap its
 one ssh line (`lzo.fish` shows the variant).
 
+`lz` and `lzh` select one session even when `FZF_DEFAULT_OPTS` enables multiple
+selection. A failed listing or cancelled picker ends the recipe. `lzh` returns
+to the picker after attach exits; `lza NAME[@HOST]` returns the attach status
+unless it is 255, which triggers another attempt after two seconds. SSH uses
+255 for transport errors, but a remote command can return it too.
+
+`lzs '' 2` refreshes local sessions and configured remotes every two seconds;
+`lzs host-a,host-b 2` replaces that remote list. The interval must be positive.
+`lzo HOST` checks the complete listing before launching and stops if a tab
+launch fails; any tabs already opened remain open.
+
 ## tmux-resurrect import
 
 ```fish
@@ -40,7 +55,9 @@ Each `pane` record becomes `<session>-w<window>-p<pane>` in its saved
 working directory. A projected name that linger would rewrite or truncate is
 rejected instead of being allowed to collide. Identities present in the initial
 listing—live or resumable—are skipped, so sequential reruns do not resend
-commands. Do not run imports concurrently or create a projected name while an
+commands. The executable and relative state paths remain anchored to the directory
+where `lzr` was invoked while each session starts in its saved directory.
+Do not run imports concurrently or create a projected name while an
 import is running: `linger run` is an upsert, and the recipe cannot claim a name
 atomically without a new binary verb. The default save is `$HOME/.tmux/resurrect/last` when that directory exists;
 otherwise `${XDG_DATA_HOME:-$HOME/.local/share}/tmux/resurrect/last`.

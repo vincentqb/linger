@@ -15,12 +15,12 @@ worklog), `specs/archive/` (closed build records), the comments in
 
 ## Where things stand — read this first after any compaction
 
-1. No spec is in flight. The last one closed on 2026-09-25
-   (`specs/archive/lean-4.34.1.md`: Lean upgrade and standalone formatter;
-   local full verification green, hosted platform checks pending).
-   New work opens a new `specs/<slug>.md`, names itself here, and keeps
-   the live count at one; every behavioral fix starts with a failing
-   check and every deletion survives the full verifier stack.
+1. `specs/ghostty-recipe.md` is in flight (2026-09-25): audit every
+   recipe's language and behavior, and add Ghostty configuration.
+   The preceding spec is `specs/archive/lean-4.34.1.md` (local full
+   verification green, hosted platform checks pending). Keep the live
+   count at one; every behavioral fix starts with a failing check and
+   every deletion survives the full verifier stack.
 2. `SCRATCHPAD.md` — append-only worklog: proof recipes, measurements,
    break-verify records, negative results. Read before writing; append
    after; never delete prior entries.
@@ -133,8 +133,12 @@ deliberately no pre-push hook.
 - `FAILURES: 0` does not mean anything ran: every pty suite carries
   an exact check count in `tests/e2e.sh`; any addition or deletion is a
   reviewable edit.
-- `tests/e2e.sh`, `tests/gates.sh` and `tests/ci-runners.sh` are the
-  deliberate non-Lean files; everything else is Lean. No Python, ever.
+- Program logic, proofs and automated test suites are Lean. Optional
+  user-editable recipes deliberately use fish and native configuration
+  (`recipes/README.md`); keep their composition policy outside `Linger/`.
+  The C shim, build wrapper, configuration hooks and verifier scripts are
+  deliberate non-Lean boundaries. No Python, ever.
+  `tests/e2e.sh`, `tests/gates.sh` and `tests/ci-runners.sh` stay shell.
   The third one is the CI runner decision: the `gates` job compiles
   nothing (that is what makes it cheap), so its decision cannot be a
   Lean exe — but it lives in a script rather than inline in the YAML so
