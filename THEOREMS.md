@@ -92,14 +92,17 @@ single- and double-width glyphs. Connecting the emitted restoration bytes to thi
 frame is a separate obligation; this helper alone does not prove end-to-end
 continuation.
 
-`Render.cellText_cursor_margin` connects a cell's actual UTF-8 bytes to the
+`Render.cellText_cursor_margin_any_acc` connects a cell's actual UTF-8 bytes to the
 pending cursor. For a positive-width canonical cell ending at the margin,
 feeding its base and marks sets the last-column cursor with pending wrap,
-preserving its other fields. The receiver needs a quiesced parser and the
-painting modes, but no grid invariant: missing cells and saturated mark lists
-cannot invalidate this cursor claim. This allows the existing cursor guarantees
-to retain their original receiver scope while grid preservation uses the
-stronger frame above.
+preserving its other fields. The receiver needs a ground parser, no pending
+UTF-8 bytes and the painting modes, but no grid invariant or initial accumulator
+value: missing cells, saturated mark lists and stale accumulators cannot
+invalidate this cursor claim. `Render.cellText_ground_need_any_acc` separately
+proves that every cell's emitted bytes finish in ground with no pending bytes.
+ASCII retains a stale accumulator; a fresh multibyte lead overwrites it.
+These statements let the existing cursor guarantees retain their original
+receiver scope while grid preservation uses the stronger frame above.
 
 ## Reading a row
 

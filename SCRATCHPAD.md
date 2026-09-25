@@ -12064,3 +12064,36 @@ coverage, generated C ABI and the complete foreground verifier pass.
 Parent receipts are `step14-build.log`, `step14-proofs-tests.log` and
 `step14-verifier.log`. The delivery suite's exact count changes only in
 `tests/e2e.sh`. No C export or proof resource allowance changed.
+
+## Step 15 notes — 2026-09-25
+
+The original receiver cursor theorem permits a stale UTF-8 accumulator when
+the parser is in ground and no continuation bytes are pending. An ASCII
+restoration prefix can retain that accumulator. Requiring zero in the new
+margin helper would therefore narrow the old receiver scope despite correct
+terminal behavior.
+
+`Render.cellText_cursor_margin_any_acc` removes only that accumulator premise
+from step 12's helper. Every other argument and the complete Cursor equality
+remain unchanged; there is no replacement grid or canonicality premise.
+`cellText_ground_need_any_acc` separately proves parser and decoder completion
+for any cell. The byte equation distinguishes ASCII, which retains the old
+accumulator, from multibyte leads, which overwrite it. Existing UTF-8 and
+narrow/wide printing lemmas carry the argument without a resource raise.
+
+The old helper cannot prove the valid nonzero-accumulator witness without a
+false premise. New narrow, three-byte wide and four-byte wide witnesses include
+combining marks, with separate checks for the actual bytes, marks, wide shadow
+and accumulator behavior. An empty-grid receiver at an out-of-range row still
+satisfies the cursor result. Scratch byte adapters that drop the lead, append
+an unfinished UTF-8 lead, append ESC or append CR are each rejected. Independent
+kernel counterexamples distinguish the decoder and parser claims from cursor
+position alone. All mutations were restored; no core behavior was changed.
+
+The helper is byte-identical to the frozen worker source. Its handoff, signature
+comparison, standard-axiom inspection, witnesses and green/red/green receipts
+are in `/tmp/linger-audit-20260925/vt/.lake/pending-acc-audit/`. Parent receipts
+are `step15-build.log`, `step15-proofs-tests.log`, `step15-lint.log` and
+`step15-layout.log` under the audit directory. Both required builds, formatting,
+linting and source gates pass. Runtime sources and live-suite counts are
+unchanged; step 14's full foreground verifier remains applicable.

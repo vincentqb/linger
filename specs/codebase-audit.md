@@ -1,8 +1,8 @@
 # 2026-09-25 codebase audit
 
-Status: step 14 complete — close requests stop later client commands
+Status: step 15 complete — margin replay accepts a stale UTF-8 accumulator
 Updated: 2026-09-25
-Next: integrate the accumulator-independent proof, then pending-wrap restoration
+Next: integrate pending-wrap restoration and finish the audit
 Predecessor: `specs/archive/tmux-resurrect-recipe.md`
 
 ## Goal
@@ -157,3 +157,9 @@ The status and completion record below track the actual integration order.
   either guard breaks its theorem, and reversing queue order breaks exactly the
   queued-client cases. Both required builds and the full foreground verifier
   pass.
+- Step 15: the cell-byte margin theorem now accepts any initial UTF-8
+  accumulator, preserving every other premise and the complete cursor
+  conclusion. A separate theorem proves that emitted cell bytes leave no
+  partial decoder state. Stale-accumulator and malformed-grid witnesses, plus
+  four rejected adapter mutations, check the broader contract without changing
+  terminal behavior. Both required builds and source/formatter checks pass.
