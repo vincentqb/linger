@@ -12339,3 +12339,31 @@ smoke tests, and every live suite. The final receipt is
 `/tmp/linger-recipe-step1-{build,proofs-tests}.log`. Fish syntax, SSH configuration
 parsing and diff whitespace also pass. Program, proof and C sources are
 unchanged; these IO checks do not claim to prove fish or validate a live GUI.
+
+## Step 2 notes — 2026-09-25
+
+Committed the recipe audit checkpoint on main as `377490a`. Added
+`recipes/ghostty_config`: a native `command = direct:fish -c lzh` setting and
+installation comments. It reuses the existing picker and attach loop instead
+of creating another helper. The README now covers fish autoload installation,
+Ghostty's PATH requirements, reload/new-window usage, detach-to-picker behavior,
+and the first-window `initial-command` override.
+
+Checked the setting against Ghostty's published command reference at
+`https://ghostty.org/docs/config/reference#command`. The documented `direct:`
+prefix is available since 1.2.0; it avoids shell expansion of Ghostty's command
+line. The local source receipt is `/tmp/linger-ghostty-config.html`. The recipe
+does not forward dynamic session names through another command-string layer:
+the tested `lzh` function supplies linger's attach arguments.
+
+Both required closing builds pass, recorded in
+`/tmp/linger-recipe-step2-build.log` and
+`/tmp/linger-recipe-step2-proofs-tests.log`; diff whitespace also passes. This
+step changes documentation and native configuration only. Step 1's full
+foreground verifier covers the unchanged implementation, and the closing
+commit retains its source-gate and formatter hooks.
+
+Archived the completed live spec as `specs/archive/ghostty-recipe.md` and left
+no spec in flight. These are local Linux results; the native setting was
+checked against documentation, and no Ghostty GUI or hosted macOS run is
+claimed. The earlier upgrade record retains its hosted-CI completion nuance.

@@ -1,0 +1,4 @@
+# Merge into Ghostty 1.2+ configuration after installing lzh.fish.
+# Requires fish, linger and fzf on PATH.
+# New windows start the session picker; detaching returns to it.
+command = direct:fish -c lzh

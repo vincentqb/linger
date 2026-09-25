@@ -1,8 +1,8 @@
 # Recipe language audit and Ghostty configuration
 
-Status: in progress (2026-09-25)
+Status: complete (2026-09-25; local Linux verification green; Ghostty GUI unverified)
 Updated: 2026-09-25
-Next: commit the audit checkpoint, then document Ghostty configuration and close
+Next: none — archived with the completion record below
 Predecessor: `specs/archive/lean-4.34.1.md`
 
 ## Goal
@@ -73,8 +73,32 @@ relative-path runs remain in `/tmp/linger-recipe-audit-red.log` and
 
 ### Step 2 — add a proportionate Ghostty recipe and close
 
-Reuse `lzh` through Ghostty's native `command = direct:fish -c lzh` setting
+Complete (2026-09-25). `recipes/ghostty_config` reuses
+`lzh` through Ghostty's native `command = direct:fish -c lzh` setting
 (documented since Ghostty 1.2). This gives new windows the existing picker and
 detach-to-switch loop without a second launcher or picker implementation.
-The platform-specific launcher research is unnecessary for this configuration
-recipe. No GUI execution is available on this host.
+The README includes installation, PATH requirements, reload/new-window usage,
+and the first-window `initial-command` override.
+
+The setting was checked against
+`https://ghostty.org/docs/config/reference#command`; the local source receipt is
+`/tmp/linger-ghostty-config.html`. The platform-specific launcher research is
+unnecessary for this configuration recipe. No GUI execution is available on
+this host. The shared Lean suite covers the actual `lzh` helper; there is no
+separate Ghostty suite and no claim to test Ghostty's own parser or a live window.
+
+## Completion record
+
+The recipe audit and helper fixes are committed on main as `377490a`. All worker
+changes accepted for this spec are integrated. The native Ghostty setting and
+its instructions complete the remaining recipe request. The recorded fish and
+native-configuration policy is now explicit in current guidance.
+
+Both closing builds pass, recorded in `/tmp/linger-recipe-step2-build.log` and
+`/tmp/linger-recipe-step2-proofs-tests.log`; diff whitespace also passes. Step 1's
+full foreground verifier covers the unchanged helper and test implementation.
+The closing commit retains the source-gate and formatter hooks. The program,
+proof sources, C shim, compiler pin, and verifier ratchets are unchanged.
+
+These results are local Linux checks. Ghostty's setting was checked against its
+documentation, not by launching a GUI. Hosted macOS checks are not claimed.

@@ -1,12 +1,13 @@
 # Recipes
 
-Recipes are editable fish functions and native SSH configuration. They compose
+Recipes are editable fish functions and native configuration. They compose
 linger with other tools and do not require a Lean toolchain to install or edit.
 The program, proofs, and automated test suites are written in Lean.
 
 Fish autoloads one function per file (`lzr` needs fish 3.5 or later):
 
 ```fish
+mkdir -p ~/.config/fish/functions
 cp recipes/lz*.fish ~/.config/fish/functions/
 ```
 
@@ -18,6 +19,7 @@ cp recipes/lz*.fish ~/.config/fish/functions/
 | `lzs.fish` | live status board for sessions you have no tab open on | — |
 | `lzh.fish` | detach (ctrl-\\) pops a picker, so it acts as a switch key | fzf |
 | `lzr.fish` | import tmux-resurrect panes as linger sessions | a tmux-resurrect save |
+| `ghostty_config` | new Ghostty windows start the `lzh` picker | Ghostty 1.2+, fish, fzf |
 | `ssh_config` | dead links declared in ~15 s | paste into `~/.ssh/config` |
 
 Client and daemon always talk over a local unix socket on the host;
@@ -42,6 +44,25 @@ unless it is 255, which triggers another attempt after two seconds. SSH uses
 `lzs host-a,host-b 2` replaces that remote list. The interval must be positive.
 `lzo HOST` checks the complete listing before launching and stops if a tab
 launch fails; any tabs already opened remain open.
+
+## Ghostty
+
+After installing `lzh.fish` above, merge [`ghostty_config`](ghostty_config) into
+your Ghostty configuration:
+
+```ini
+command = direct:fish -c lzh
+```
+
+This uses the documented [`command`](https://ghostty.org/docs/config/reference#command)
+setting with the `direct:` prefix, available since Ghostty 1.2. Reload the
+configuration and open a new window. Pick a local or configured remote session;
+detaching with ctrl-\\ returns to the picker. Esc or ctrl-c ends the picker.
+
+Ghostty must be able to find fish, linger and fzf on PATH. If needed, replace
+`fish` in the setting with its absolute executable path. An existing
+`initial-command` overrides `command` for the first window; update or remove
+that override to start the picker there too.
 
 ## tmux-resurrect import
 
