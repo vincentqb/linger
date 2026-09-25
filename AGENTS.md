@@ -16,11 +16,11 @@ worklog), `specs/archive/` (closed build records), the comments in
 ## Where things stand — read this first after any compaction
 
 1. No spec is in flight. The last one closed on 2026-09-25
-   (`specs/archive/codebase-audit.md`: runtime, proof, VT and POSIX audit;
-   local full verification green, remote platform checks blocked by CI
-   billing). New work opens a new `specs/<slug>.md`, names itself here,
-   and keeps the live count at one; every behavioral fix starts with a
-   failing check and every deletion survives the full verifier stack.
+   (`specs/archive/lean-4.34.1.md`: Lean upgrade and standalone formatter;
+   local full verification green, hosted platform checks pending).
+   New work opens a new `specs/<slug>.md`, names itself here, and keeps
+   the live count at one; every behavioral fix starts with a failing
+   check and every deletion survives the full verifier stack.
 2. `SCRATCHPAD.md` — append-only worklog: proof recipes, measurements,
    break-verify records, negative results. Read before writing; append
    after; never delete prior entries.
@@ -66,11 +66,11 @@ git history); re-opening one needs a new reason.
   `./lake build Theorems Tests`; for commits touching the runtime, also
   `./tests/e2e.sh` — run it in the FOREGROUND (a `&` job breaks the
   `^C` assertion; the script probes for this and refuses).
-- The toolchain pin `v4.34.0-rc2` is deliberate (`lean-fmt` requires an
-  rc of v4.34); move it when v4.34.0 stable exists and lean-fmt tags it.
-- `lean-fmt` installs standalone (`make -C <clone> install` at the tag
-  matching `lean-toolchain`), never as a Lake `require`; settings and
-  history in `.lean-fmt.toml`.
+- The toolchain pin is `v4.34.1`. Compiler upgrades must pass the full
+  verifier, including generated C ABI and standalone formatter checks.
+- `lean-fmt` installs standalone, never as a Lake `require`; the CI
+  workflow pins its source independently of the compiler. Settings and
+  history live in `.lean-fmt.toml` and `SCRATCHPAD.md`.
 
 ## Gates, hooks and CI
 

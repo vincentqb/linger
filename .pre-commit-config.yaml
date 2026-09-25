@@ -30,7 +30,7 @@ repos:
       # clone may skip locally without weakening the authoritative check.
       - id: lean-fmt
         name: lean-fmt check (import hygiene, unused bindings, stray set_options)
-        entry: bash -c 'command -v lean-fmt >/dev/null || { echo "lean-fmt not installed; see specs/archive/toolchain-and-fmt.md"; exit 0; }; exec lean-fmt check'
+        entry: bash -c 'command -v lean-fmt >/dev/null || { echo "lean-fmt not installed; see README.md"; exit 0; }; exec lean-fmt check'
         language: system
         pass_filenames: false
         always_run: true

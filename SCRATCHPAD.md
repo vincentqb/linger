@@ -12229,3 +12229,53 @@ records. Both required builds and source gates pass, recorded in
 `/tmp/linger-audit-20260925/`. Step 16's complete foreground verifier covers
 the unchanged implementation. Earlier scratchpad and archived records remain
 untouched.
+
+## Step 1 notes — 2026-09-25
+
+The explicit request to use Lean `v4.34.1` supersedes the earlier rule to wait
+for a matching formatter release tag. The compiler version assertion fails
+at the starting `3cf3cff` pin and passes after the upgrade. Both required
+builds pass without changes to the program or proof sources, additional Lean
+dependencies, resource raises, or ratchet changes.
+
+The existing standalone formatter rejects the new compiler, as expected for
+its version-specific Lean ABI. Rebuilding source commit
+`9e8704afb1ed88a935cbdbf10d735e826b0034b8` with the project's compiler pin
+and wrapper succeeds without changing formatter source. Its release label
+remains `4.34.0-rc2`; the parenthesized compiler version is `Lean 4.34.1`.
+Both built executables are installed in the existing local tool directory.
+The workflow fetches that exact commit and builds it with the project
+toolchain; the cache key includes source, compiler, OS and architecture.
+The compiler assertion rejects an old cached binary and accepts the rebuilt
+one. Lint and layout gates remain enabled.
+
+The first complete verifier attempt reached the formatter after a clean
+build, generated C ABI check and source gates. Its failure handler grepped
+only for layout drift; with `set -e`, a compiler mismatch exited without
+displaying the diagnostic or the verifier's failure message. Printing the
+captured log before failing fixes that. An extracted copy of the actual
+formatter stage rejects the incompatible binary both before and after the
+fix: assertions on the displayed diagnostic fail before and pass after.
+The current setup links point to README and the workflow's installation
+steps. Historical formatter records are unchanged.
+
+The complete foreground verifier then passes with the rebuilt formatter:
+clean rebuild, generated C ABI, source and layout gates, semantic theorem
+coverage, CI runner selection, fuzz corpus, POSIX smoke tests and every live
+suite. Final warm program and proof/test builds, source gates, shell syntax
+and diff whitespace checks also pass. Receipts are under
+`/tmp/linger-lean-4.34.1-20260925/`; formatter provisioning, uncached checks
+and compiler-cache rejection evidence are under
+`/tmp/linger-lean-fmt-4.34.1.mAVGFd/`.
+
+These are Linux results. Hosted platform checks have not run for the upgrade
+at this checkpoint; the preceding audit's workflow was blocked before any
+steps by GitHub's billing/spending limit. A manual platform workflow will
+be requested after the upgrade is pushed.
+
+The final formatter cache review excludes the helper executable from both
+the cached binary's directory and PATH, including the normal local tool
+directory. Uncached lint and layout still pass across the project, so the
+workflow needs to cache only `lean-fmt`. The worker is closed and its CI
+change is integrated on main. The live spec is archived as
+`specs/archive/lean-4.34.1.md`.

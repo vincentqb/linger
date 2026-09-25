@@ -156,10 +156,10 @@ sh tests/gates.sh || fail "source-tree gates"
 # as in the hook: a fresh clone must still be able to run this script.
 if command -v lean-fmt > /dev/null; then
   lean-fmt format --check > /tmp/linger-fmt.log 2>&1 \
-    || { grep 'would-format' /tmp/linger-fmt.log; fail "lean-fmt format --check (layout drift)"; }
+    || { cat /tmp/linger-fmt.log >&2; fail "lean-fmt format --check"; }
   printf '  layout: %s\n' "$(head -1 /tmp/linger-fmt.log)"
 else
-  say "   (lean-fmt absent; layout drift unchecked — see specs/archive/toolchain-and-fmt.md)"
+  say "   (lean-fmt absent; layout drift unchecked — see README.md)"
 fi
 
 say "2b. semantic coverage of pure code + runtime emitter classification"

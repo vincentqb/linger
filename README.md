@@ -15,8 +15,7 @@ exits — a listing, not a picker.
 ln -sf "$PWD/.lake/build/bin/linger" ~/.local/bin/linger
 ```
 
-Lean 4.34.0-rc2 via elan (an RC on purpose — see AGENTS.md); no
-external Lean dependencies.
+Lean 4.34.1 via elan; no external Lean dependencies.
 
 ### Tests
 
@@ -35,7 +34,9 @@ sh tests/gates.sh                # the fast source-tree gates (seconds)
 path against a real second machine; opt-in, so it is not in the gate.
 
 Commit-time hygiene is `uvx pre-commit install`. `lean-fmt` is optional
-and installed standalone; `.lean-fmt.toml` records the settings.
+and installed standalone; `.lean-fmt.toml` records the settings. The
+[CI installation steps](.github/workflows/ci.yml) pin the formatter source
+separately and build it with the project toolchain.
 
 ### Layout
 

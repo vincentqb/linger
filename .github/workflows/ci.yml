@@ -52,6 +52,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # v4.34.0-rc2 formatter source, verified with Lean v4.34.1. Pin source
+  # independently of the compiler: every build uses this project's lean-toolchain.
+  LEAN_FMT_REV: 9e8704afb1ed88a935cbdbf10d735e826b0034b8
+
 jobs:
   # ───────────────────────────────────────────────────────────────────────────
   # Tier 1 — the millisecond checks plus the layout gate. Mirrors pre-commit.
@@ -127,9 +132,8 @@ jobs:
           elan toolchain install "$(tr -d '[:space:]' < lean-toolchain)"
           elan show
 
-      # AFTER elan, and that ordering is the whole point: `make install` builds lean-fmt
-      # with `lake`, so a lean-fmt step placed before the toolchain fails with a missing
-      # `lake`. It was placed before, and it did.
+      # AFTER elan: the standalone formatter build needs the project's toolchain
+      # and Lake available before it runs.
       # Commit-time hygiene, for a clone that never ran `pre-commit install`. Same
       # config, same `tests/gates.sh`, so CI and the hook cannot disagree. First
       # because it is the cheapest thing that can fail.
@@ -141,50 +145,53 @@ jobs:
       # for CI, where a silent skip is exactly the thing that lets a finding through.
       # Installing it here means the hook's step actually runs.
       #
-      # Standalone `make install`, never a Lake `require`: the require-free lakefile
+      # Standalone build + `make install`, never a Lake `require`: the require-free lakefile
       # and the empty lake-manifest are gates in tests/gates.sh, and README promises
       # no external Lean dependencies. lean-fmt supports this explicitly.
       #
-      # The tag must equal lean-toolchain: lean-fmt ships one release per toolchain.
-      # Read it rather than hardcoding it, so a future bump fails loudly at the clone
-      # instead of building a mismatched formatter.
-      # `~/.local/bin/lean-fmt` cached, keyed on lean-toolchain: lean-fmt ships one
-      # release per toolchain, so the toolchain string identifies the binary exactly.
-      # Without this, every run did `make -C /tmp/lean-fmt install` — a full Lake build
-      # of the formatter, which is most of why this job ranges 10-20 min. Restoring a
-      # binary cannot weaken a check: it is the same tag the clone below would fetch,
-      # and the `--version` assertion still runs.
-      - name: cache lean-fmt (one release per toolchain)
+      # Source and compiler are separate cache inputs. A change to either requires
+      # a fresh build; no fallback key may restore a binary from another pair.
+      # The compiler assertion below runs on both cache hits and misses.
+      - name: cache lean-fmt (pinned source + project toolchain)
         id: fmt-cache
         uses: actions/cache@v4
         with:
           path: ~/.local/bin/lean-fmt
-          key: lean-fmt-${{ runner.os }}-${{ hashFiles('lean-toolchain') }}
+          key: lean-fmt-${{ runner.os }}-${{ runner.arch }}-${{ env.LEAN_FMT_REV }}-${{ hashFiles('lean-toolchain') }}
 
-      - name: install lean-fmt (standalone, tag == lean-toolchain)
+      - name: install lean-fmt (standalone, pinned source + project toolchain)
+        env:
+          FMT_CACHE_HIT: ${{ steps.fmt-cache.outputs.cache-hit }}
         run: |
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          if [ -x "$HOME/.local/bin/lean-fmt" ]; then
-            "$HOME/.local/bin/lean-fmt" --version
-            exit 0
-          fi
-          # The tag is the toolchain string after the `leanprover/lean4:` prefix, and
-          # it ALREADY carries the leading `v` — lean-toolchain reads
-          # `leanprover/lean4:v4.34.0-rc2`. Prefixing another `v` here asked for
-          # `vv4.34.0-rc2` and failed two runs; the tag is used verbatim now, and the
-          # assertion below is what makes a mistake like that loud rather than a
-          # confusing clone error.
-          tag="$(sed -n 's|^leanprover/lean4:||p' lean-toolchain | tr -d '[:space:]')"
-          case "$tag" in
-            v*) ;;
-            *)  echo "::error::lean-toolchain gave '$tag', which does not start with v; lean-fmt tags are the toolchain string verbatim"; exit 1 ;;
+          toolchain="$(tr -d '[:space:]' < lean-toolchain)"
+          case "$toolchain" in
+            leanprover/lean4:v*) ;;
+            *) echo "::error::unexpected Lean toolchain: $toolchain"; exit 1 ;;
           esac
-          git clone --quiet --branch "$tag" --depth 1 \
-            https://github.com/jcreinhold/lean-fmt.git /tmp/lean-fmt \
-            || { echo "::error::lean-fmt has no tag $tag; it ships one release per toolchain, so a bump needs a matching lean-fmt release"; exit 1; }
-          make -C /tmp/lean-fmt install
+          if [ "$FMT_CACHE_HIT" != true ]; then
+            fmt_src="$(mktemp -d "$RUNNER_TEMP/lean-fmt.XXXXXX")"
+            git -C "$fmt_src" init --quiet
+            git -C "$fmt_src" fetch --quiet --depth 1 \
+              https://github.com/jcreinhold/lean-fmt.git "$LEAN_FMT_REV"
+            git -C "$fmt_src" checkout --quiet --detach FETCH_HEAD
+            test "$(git -C "$fmt_src" rev-parse HEAD)" = "$LEAN_FMT_REV"
+            # Replace the source checkout's compiler pin and use our host wrapper.
+            cp lean-toolchain lake "$fmt_src/"
+            (
+              cd "$fmt_src" || exit 1
+              ELAN_TOOLCHAIN="$toolchain" ./lake build lean-fmt artifactExtractor
+            )
+            # Both install targets were built through ./lake; make only places them.
+            make -C "$fmt_src" -o build install
+          fi
           # PREFIX defaults to $HOME/.local, which is not on a runner's PATH.
-          "$HOME/.local/bin/lean-fmt" --version
+          fmt_version="$("$HOME/.local/bin/lean-fmt" --version)"
+          printf '%s\n' "$fmt_version"
+          case "$fmt_version" in
+            "lean-fmt "*" (Lean ${toolchain#leanprover/lean4:v})") ;;
+            *) echo "::error::lean-fmt compiler mismatch: $fmt_version; expected $toolchain"; exit 1 ;;
+          esac
 
       - name: pre-commit (hygiene, source-tree gates, lean-fmt check)
         run: |
