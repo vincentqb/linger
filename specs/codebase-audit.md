@@ -1,8 +1,8 @@
 # 2026-09-25 codebase audit
 
-Status: step 1 verified — independent audits and session regressions in progress
+Status: step 2 verified — persistence fixes and independent audits in progress
 Updated: 2026-09-25
-Next: fix effective geometry, repeated resize and quiet-state checkpoint findings
+Next: checkpoint malformed disconnects and retry failed saves
 Predecessor: `specs/archive/tmux-resurrect-recipe.md`
 
 ## Goal
@@ -63,3 +63,10 @@ The status and completion record below track the actual integration order.
   the fixes and pass afterward. The exact roster-removal theorem rejects a
   reversed client filter. Both required builds and the full foreground verifier
   pass; the pump also no longer requires a partial definition.
+- Step 2: one geometry transition now serves attach, attached resize and control
+  resize. It emits clamped dimensions that agree with the resulting emulator,
+  preserves the full state on repeated effective sizes, and marks real changes
+  for persistence. Label edits also mark the checkpoint dirty. Four new
+  regressions failed before the fixes; raw-size, lost-dirty and swapped-runtime-
+  dimensions mutations fail the new checks. Both required builds and the full
+  foreground verifier pass.

@@ -67,7 +67,7 @@ structure State where
   /-- name/pid/created/cwd…, set once by the runtime at boot. -/
   metaKv : List (String × String) := []
   private exited : Option UInt32 := none
-  /-- pty output since the last checkpoint? -/
+  /-- Persistent screen or label changes since the last checkpoint? -/
   private dirty : Bool := false
   private lastCkptMs : UInt64 := 0
   /-- monotone attach counter, for size ownership. -/
@@ -236,6 +236,26 @@ def sizeOwner (s : State) : Option Client :=
       | some b => if c.seq ≥ b.seq then some c else some b)
     none
 
+/-- One geometry transition for attach, attached resize and control resize.
+An exact or clamped same size preserves the whole emulator: resetting its
+region and tabs without a winsize change would leave the child unaware.
+A genuine change marks the screen dirty and sends the pty the emulator's
+effective dimensions, never an unclamped wire value. -/
+def resize (s : State) (cols rows : UInt32) : State × List Effect :=
+  if
+      (s.vt.colCount == cols.toNat && s.vt.rowCount == rows.toNat) ||
+        (s.vt.colCount == Vt.clampDim cols.toNat && s.vt.rowCount == Vt.clampDim rows.toNat) then
+    (s, [])
+  else
+    let vt := s.vt.resize cols.toNat rows.toNat
+    ({ s with
+        vt, dirty := true },
+      [.resizePty (UInt32.ofNat vt.colCount) (UInt32.ofNat vt.rowCount)])
+
+/-- Only the newest attached sizer can apply a client resize. -/
+def resizeOwned (s : State) (c : Client) : State × List Effect :=
+  if c.sizer && (sizeOwner s).any (·.id == c.id) then resize s c.cols c.rows else (s, [])
+
 /-- The control-resize decision (`linger resize`, from a NON-attached
 connection — agent-cli Decision 3). The size-owner rule extends rather than
 bends: while an attached sizer exists it always wins (refuse, loudly — a
@@ -252,13 +272,8 @@ def controlResize (s : State) (c : Client) (cols rows : UInt32) : State × List 
   else
     if cols == 0 || rows == 0 then (s, [.send c.id (.err "size must be nonzero".toUTF8.toList)])
     else
-      if s.vt.colCount == cols.toNat && s.vt.rowCount == rows.toNat then (s, [.send c.id .done])
-      else
-        ({ s with vt := s.vt.resize cols.toNat rows.toNat },
-          [.resizePty cols rows, .send c.id .done])
-
-def resizeEffects (s : State) (c : Client) : List Effect :=
-  if (sizeOwner s).any (·.id == c.id) then [.resizePty c.cols c.rows] else []
+      let r := resize s cols rows
+      (r.1, r.2 ++ [.send c.id .done])
 
 /-- Send a byte payload as ≤ 64 KiB `output` frames (Wire §Bound wf). -/
 def outputMsgs (id : Nat) (bytes : List UInt8) : List Effect :=
@@ -290,19 +305,9 @@ def onMsg (s : State) (c : Client) (m : Msg) : State × List Effect :=
     let s :=
       { s.setClient c with
         attachSeq := s.attachSeq + 1, lookSeq := s.outSeq }
-    -- resize only on a genuine size change. `Vt.resize` resets the scroll
-    -- region and tab ruler (top/bot/tabs) unconditionally, so resizing at an
-    -- unchanged size wiped a child's DECSTBM and custom tab stops from the
-    -- model — and, since the winsize did not change, the kernel sends no
-    -- SIGWINCH, so the child is never nudged to re-establish them. A same-size
-    -- reattach must therefore leave the emulator alone (restore-conformance
-    -- Step 0 ledger item 1).
-    let s :=
-      if sizer && (s.vt.colCount != cols.toNat || s.vt.rowCount != rows.toNat) then
-        { s with vt := s.vt.resize cols.toNat rows.toNat }
-      else s
+    let (s, effs) := resizeOwned s c
     (s,
-      resizeEffects s c ++ outputMsgs c.id (Render.restore s.vt) ++
+      effs ++ outputMsgs c.id (Render.restore s.vt) ++
         (match s.exited with
         | some st => [.send c.id (.exited st)]
         | none => []))
@@ -315,11 +320,7 @@ def onMsg (s : State) (c : Client) (m : Msg) : State × List Effect :=
       { c with
         cols, rows }
     let s := s.setClient c
-    if c.attached then
-      -- only the newest real-terminal attacher owns the pty size
-      if c.sizer && (sizeOwner s).any (·.id == c.id) then
-        ({ s with vt := s.vt.resize cols.toNat rows.toNat }, [.resizePty cols rows])
-      else (s, [])
+    if c.attached then resizeOwned s c
     else
       -- a control connection (`linger resize`): the named stage above owns
       -- the decision, and `controlResize_never_overrides` the invariant
@@ -350,12 +351,20 @@ def onMsg (s : State) (c : Client) (m : Msg) : State × List Effect :=
         let v := String.intercalate "=" rest
         let labels := (s.labels.filter (·.1 != k)) ++ [(k, v)]
         if labels.length > maxLabels then (s, [.send c.id (.err "too many labels".toUTF8.toList)])
-        else ({ s with labels }, [.send c.id .done])
+        else
+          ({ s with
+              labels, dirty := true },
+            [.send c.id .done])
     | [] => (s, [.send c.id (.err "empty label".toUTF8.toList)])
   | .labelUnset k =>
     let txt := labelText k
-    ({ s with labels := s.labels.filter (·.1 != txt) }, [.send c.id .done])
-  | .labelClear => ({ s with labels := [] }, [.send c.id .done])
+    ({ s with
+        labels := s.labels.filter (·.1 != txt), dirty := true },
+      [.send c.id .done])
+  | .labelClear =>
+    ({ s with
+        labels := [], dirty := true },
+      [.send c.id .done])
   -- daemon-to-client vocabulary arriving at the daemon, and unknown
   -- tags: dropped without a trace (§Frame, machine half)
   | .output _ | .exited _ | .infoReply _ | .done | .err _ => (s, [])

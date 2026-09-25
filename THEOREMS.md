@@ -97,11 +97,15 @@ tmp+`rename` writes and a `load` that is total and accepts only `Good ∧
 Renderable` screens, so a racing reader sees the old file or the new
 one. Two clients typing at once interleave into the pty — inherent, and
 no theorem claims otherwise. The pty size is owned by the newest
-attached real terminal (`resizeEffects_owner_only`); a control `linger
+attached real terminal (`resizeOwned_owner_only`); a control `linger
 resize` never overrides an attached sizer (`controlResize_never_overrides`),
 applies exactly once with nobody attached (`controlResize_applies`), is
 inert at the same size (`controlResize_same_size`), and always answers
-(`controlResize_replies`).
+(`controlResize_replies`). Every emitted pty resize uses the resulting emulator
+dimensions (`onMsg_resizePty_agrees`), and a repeated effective size preserves
+the complete emulator (`resize_same_effective`). The shared resize transition
+and successful label edits mark persistent state dirty, so quiet edits reach
+the periodic checkpoint (`resize_changed_dirty`, `onMsg_labels_changed_dirty`).
 
 ## The agent verbs
 

@@ -424,6 +424,50 @@ example :
 session, is refused — loudly — while an attached sizer exists, and leaves the
 emulator alone at an unchanged size. -/
 
+/-- Every resize path sends the model's effective dimensions, even when a wire
+dimension exceeds both the emulator cap and the kernel's winsize field. -/
+example :
+    ([[Event.connected 1, .bytes 1 (encode (.attach 65536 5))],
+            [.connected 1, .bytes 1 (encode (.resize 65536 5))],
+            [.connected 1, .bytes 1 (encode (.attach 20 5)),
+              .bytes 1 (encode (.resize 65536 5))]].all
+        fun evs =>
+        let (s, effs) := Tests.run evs
+        s.vt.colCount == Linger.Core.Vt.clampDim 65536 &&
+          (effs.filterMap fun
+                | .resizePty c r => some (c.toNat, r.toNat)
+                | _ => none).getLast? ==
+            some (s.vt.colCount, s.vt.rowCount)) =
+      true := by
+  native_decide
+
+/-- An attached resize with no effective change preserves the child's scroll
+region and tab ruler too, including a repeated oversized request. -/
+example :
+    ([20, 65536].all fun width =>
+        let (s, _) :=
+          Tests.run
+            [.connected 1, .bytes 1 (encode (.attach width 5)),
+              .ptyOut "\x1b[2;4r\x1b[3g".toUTF8.toList, .bytes 1 (encode (.resize width 5))]
+        s.vt.top == 1 && s.vt.bot == 3 && s.vt.tabs == Array.replicate s.vt.colCount false) =
+      true := by
+  native_decide
+
+/-- Quiet label edits are persistent changes even without any new pty output. -/
+example :
+    ([Msg.labelSet "a=new".toUTF8.toList, .labelUnset "a".toUTF8.toList, .labelClear].all fun msg =>
+        let s := { Tests.s0 with labels := [("a", "old")] }
+        let changed := (onMsg s { id := 1 } msg).1
+        (step changed (.tick ckptIntervalMs)).2.contains .checkpoint) =
+      true := by
+  native_decide
+
+/-- A geometry-only change also reaches the periodic save point. -/
+example :
+    (let (s, _) := Tests.run [.connected 1, .bytes 1 (encode (.resize 40 10))]
+     (step s (.tick ckptIntervalMs)).2.contains .checkpoint) = true := by
+  native_decide
+
 /-- Detached session: the control resize applies (one resizePty, then done)
 and the emulator follows. -/
 example :

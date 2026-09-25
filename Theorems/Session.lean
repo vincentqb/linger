@@ -80,7 +80,8 @@ the only effect is `.done`. `rfl`, so a smuggled side effect — a vt touch, a
 `.err`, an append — breaks it. -/
 theorem onMsg_labelUnset (s : State) (c : Client) (k : List UInt8) :
     onMsg s c (.labelUnset k) =
-      ({ s with labels := s.labels.filter (fun kv => kv.1 != labelText k) },
+      ({ s with
+          labels := s.labels.filter (fun kv => kv.1 != labelText k), dirty := true },
         [.send c.id .done]) := rfl
 
 /-- …and the consequence, stated where a reader looks for it: after an unset, no
@@ -100,9 +101,12 @@ theorem onMsg_labelUnset_keeps (s : State) (c : Client) (k : List UInt8) (kv : S
   simp only [onMsg, List.mem_filter, bne_iff_ne]
   exact ⟨hmem, hne⟩
 
-/-- **`linger clear` empties the store, and does nothing else.** -/
+/-- **`linger clear` empties the store and marks it for checkpointing.** -/
 theorem onMsg_labelClear (s : State) (c : Client) :
-    onMsg s c .labelClear = ({ s with labels := [] }, [.send c.id .done]) := rfl
+    onMsg s c .labelClear =
+      ({ s with
+          labels := [], dirty := true },
+        [.send c.id .done]) := rfl
 
 /-- …the consequence, so the name a reader greps for states the fact. -/
 theorem onMsg_labelClear_empty (s : State) (c : Client) :
@@ -258,11 +262,10 @@ theorem onMsg_detachAll_vt (s : State) (c : Client) :
 untouched by any attach/detach cycle (observer or not). -/
 theorem onMsg_attach_sb (s : State) (c : Client) (cols rows : UInt32) :
     (onMsg s c (.attach cols rows)).1.vt.sb = s.vt.sb := by
-  unfold onMsg
+  unfold onMsg resizeOwned resize
   dsimp only
-  split
-  · simp [State.setClient, Vt.Vt.resize]
-  · simp [State.setClient]
+  repeat' split
+  all_goals simp [State.setClient, Vt.Vt.resize]
 
 /-- **A same-size reattach leaves the emulator untouched.** `Vt.resize` resets the
 scroll region and tab ruler (`top`/`bot`/`tabs`) unconditionally, so resizing at an
@@ -274,11 +277,10 @@ Step 0 ledger 1). -/
 theorem onMsg_attach_same_size_vt (s : State) (c : Client) (cols rows : UInt32)
     (hc : s.vt.cols = cols.toNat) (hr : s.vt.rows = rows.toNat) :
     (onMsg s c (.attach cols rows)).1.vt = s.vt := by
-  unfold onMsg
+  unfold onMsg resizeOwned resize
   dsimp only
   split
-  · rename_i h
-    exfalso; revert h; simp [State.setClient, hc, hr]
+  · simp [State.setClient, hc, hr]
   · simp [State.setClient]
 
 /-- Keystrokes from a full client go to the pty, not the emulator:
@@ -368,7 +370,7 @@ theorem dropClient_length_le (s : State) (id : Nat) :
 /-- `onMsg` never grows the client list. -/
 theorem onMsg_clients_length_le (s : State) (c : Client) (m : Msg) :
     (onMsg s c m).1.clients.length ≤ s.clients.length := by
-  unfold onMsg controlResize
+  unfold onMsg controlResize resizeOwned resize
   dsimp only
   repeat' split
   all_goals simp_all [State.setClient]
@@ -376,7 +378,7 @@ theorem onMsg_clients_length_le (s : State) (c : Client) (m : Msg) :
 /-- `onMsg` keeps labels within the cap. -/
 theorem onMsg_labels_le (s : State) (c : Client) (m : Msg) (h : s.labels.length ≤ maxLabels) :
     (onMsg s c m).1.labels.length ≤ maxLabels := by
-  unfold onMsg controlResize
+  unfold onMsg controlResize resizeOwned resize
   dsimp only
   repeat' split
   all_goals
@@ -416,7 +418,7 @@ theorem onMsg_decOk (s : State) (c : Client) (m : Msg)
       ∀ c' ∈ s.clients, c'.decoder.errored = false ∧ c'.decoder.buf.length ≤ 4 + Wire.maxPayload) :
     ∀ c' ∈ (onMsg s c m).1.clients,
       c'.decoder.errored = false ∧ c'.decoder.buf.length ≤ 4 + Wire.maxPayload := by
-  unfold onMsg controlResize
+  unfold onMsg controlResize resizeOwned resize
   dsimp only
   repeat' split
   all_goals
@@ -426,7 +428,7 @@ theorem onMsg_decOk (s : State) (c : Client) (m : Msg)
     | (intro c' hmem; exact h c' hmem)
 
 theorem onMsg_scan (s : State) (c : Client) (m : Msg) : (onMsg s c m).1.scan = s.scan := by
-  unfold onMsg controlResize
+  unfold onMsg controlResize resizeOwned resize
   dsimp only
   repeat' split
   all_goals simp_all [State.setClient]
@@ -525,7 +527,7 @@ theorem step_bounded (s : State) (ev : Event) (h : Bounded s) : Bounded (step s 
 open Linger.Core.Vt (Good) in
 theorem onMsg_vt_good {s : State} {c : Client} (m : Msg) (h : Good s.vt) :
     Good (onMsg s c m).1.vt := by
-  unfold onMsg controlResize
+  unfold onMsg controlResize resizeOwned resize
   dsimp only
   repeat' split
   all_goals
@@ -598,7 +600,7 @@ read mark never overtakes the counter (`run_lookSeq_le`), so
 `behind = outSeq - lookSeq` is a real count over the daemon's whole life,
 never a Nat-subtraction lie. The general form was parked when this section
 was written ("the `.bytes` case makes it opaque to arithmetic"); the same
-`unfold onMsg controlResize` + `repeat' split` script the preservation
+`unfold onMsg controlResize resizeOwned resize` + `repeat' split` script the preservation
 theorems use turned out to carry it.
 -/
 
@@ -651,7 +653,7 @@ theorem screen_behind_zero (s : State) (c : Client) : behind (onMsg s c .screen)
 forge activity: `unseen`, `fresh` and `behind` can be *caught up* by a look
 (attach, capture) but never inflated by traffic. -/
 theorem onMsg_outSeq (s : State) (c : Client) (m : Msg) : (onMsg s c m).1.outSeq = s.outSeq := by
-  unfold onMsg controlResize
+  unfold onMsg controlResize resizeOwned resize
   dsimp only
   repeat' split
   all_goals simp_all [State.setClient]
@@ -661,7 +663,7 @@ leaves `lookSeq` alone or catches it up to `outSeq` (attach and capture — the
 looks), and none touches `outSeq`. -/
 theorem onMsg_lookSeq_le (s : State) (c : Client) (m : Msg) (h : s.lookSeq ≤ s.outSeq) :
     (onMsg s c m).1.lookSeq ≤ (onMsg s c m).1.outSeq := by
-  unfold onMsg controlResize
+  unfold onMsg controlResize resizeOwned resize
   dsimp only
   repeat' split
   all_goals
@@ -784,7 +786,7 @@ theorem dropClient_other {s : State} {id other : Nat} (h : other ≠ id) :
 /-- One message from `c` leaves every other client's record alone. -/
 theorem onMsg_other (s : State) (c : Client) (m : Msg) {other : Nat} (h : other ≠ c.id) :
     (onMsg s c m).1.client? other = s.client? other := by
-  unfold onMsg controlResize
+  unfold onMsg controlResize resizeOwned resize
   dsimp only
   repeat' split
   all_goals
@@ -941,7 +943,7 @@ def LiveVt (s : State) : Prop := LiveReachableVt s.vt
 theorem onMsg_vt_live {s : State} {c : Client} (m : Msg) (h : LiveVt s) :
     LiveVt (onMsg s c m).1 := by
   unfold LiveVt at h ⊢
-  unfold onMsg controlResize
+  unfold onMsg controlResize resizeOwned resize
   dsimp only
   repeat' split
   all_goals
@@ -1159,28 +1161,90 @@ theorem run_boot_wf (vt : Vt.Vt) (labels metaKv : List (String × String)) (evs 
     WF (run (State.boot vt labels metaKv) evs).1 := run_wf _ _ (boot_wf vt labels metaKv h)
 
 /-- **Only the size owner resizes the pty** — as a theorem rather than a
-convention. `resizeEffects` emits a `resizePty` only for the client the size-ownership
+convention. `resizeOwned` emits a `resizePty` only for the client the size-ownership
 cascade (`sizeOwner`: newest attached real-terminal attacher) actually selected — a
 read-only observer or an older mirror never moves the pty out from under the active
 user. -/
-theorem resizeEffects_owner_only (s : State) (c : Client) :
-    resizeEffects s c ≠ [] → (sizeOwner s).any (·.id == c.id) = true := by
+theorem resizeOwned_owner_only (s : State) (c : Client) :
+    (resizeOwned s c).2 ≠ [] → (sizeOwner s).any (·.id == c.id) = true := by
   intro hne
-  by_cases hc : (sizeOwner s).any (·.id == c.id) = true
-  · exact hc
-  · exact
-      absurd
-        (by
-          unfold resizeEffects; rw [ite_eq_right hc])
-        hne
+  unfold resizeOwned at hne
+  split at hne
+  · rename_i h
+    simp only [Bool.and_eq_true] at h
+    exact h.2
+  · exact (hne rfl).elim
 
-/-- …and when it does resize, it is exactly one `resizePty` at the client's size —
-never a burst, never a stale size. -/
-theorem resizeEffects_atMostOne (s : State) (c : Client) :
-    resizeEffects s c = [] ∨ resizeEffects s c = [Effect.resizePty c.cols c.rows] := by
-  unfold resizeEffects; split
-  · exact Or.inr rfl
+/-- A resize emits at most one effect, using the resulting emulator dimensions. -/
+theorem resize_atMostOne (s : State) (cols rows : UInt32) :
+    (resize s cols rows).2 = [] ∨
+      (resize s cols rows).2 =
+        [.resizePty (UInt32.ofNat (resize s cols rows).1.vt.colCount)
+            (UInt32.ofNat (resize s cols rows).1.vt.rowCount)] := by
+  unfold resize
+  split
   · exact Or.inl rfl
+  · exact Or.inr rfl
+
+/-- The conversion to the syscall's integer representation loses no geometry:
+the effective dimensions are clamped before they become a pty effect. -/
+theorem resize_agrees (s : State) (cols rows ec er : UInt32)
+    (h : Effect.resizePty ec er ∈ (resize s cols rows).2) :
+    ec.toNat = (resize s cols rows).1.vt.colCount ∧
+      er.toNat = (resize s cols rows).1.vt.rowCount := by
+  revert h
+  unfold resize
+  split
+  · simp
+  · intro h
+    simp only [List.mem_singleton, Effect.resizePty.injEq] at h
+    obtain ⟨rfl, rfl⟩ := h
+    change
+      (UInt32.ofNat (Vt.clampDim cols.toNat)).toNat = Vt.clampDim cols.toNat ∧
+        (UInt32.ofNat (Vt.clampDim rows.toNat)).toNat = Vt.clampDim rows.toNat
+    have hc := (Vt.clampDim_range cols.toNat).2.1
+    have hr := (Vt.clampDim_range rows.toNat).2.1
+    constructor <;> apply UInt32.toNat_ofNat_of_lt' <;> simp only [UInt32.size] <;> omega
+
+/-- The actual message handler preserves the geometry correspondence on every
+path; restoration bytes and replies cannot introduce another resize effect. -/
+theorem onMsg_resizePty_agrees (s : State) (c : Client) (m : Msg) (ec er : UInt32)
+    (h : Effect.resizePty ec er ∈ (onMsg s c m).2) :
+    ec.toNat = (onMsg s c m).1.vt.colCount ∧ er.toNat = (onMsg s c m).1.vt.rowCount := by
+  revert h
+  unfold onMsg controlResize resizeOwned
+  dsimp only
+  repeat' split
+  all_goals intro h
+  all_goals try simp [outputMsgs] at h
+  all_goals exact resize_agrees _ _ _ _ _ h
+
+/-- Equal effective dimensions preserve the entire state, including region,
+tabs and the checkpoint's dirty bit. -/
+theorem resize_same_effective (s : State) (cols rows : UInt32)
+    (hsame :
+      (s.vt.colCount == Vt.clampDim cols.toNat && s.vt.rowCount == Vt.clampDim rows.toNat) = true) :
+    resize s cols rows = (s, []) := by simp only [resize, hsame, Bool.or_true, ite_true]
+
+/-- Every actual geometry change schedules persistence, even in a quiet session. -/
+theorem resize_changed_dirty (s : State) (cols rows : UInt32)
+    (h : (resize s cols rows).1.vt ≠ s.vt) : (resize s cols rows).1.dirty = true := by
+  unfold resize at *
+  split <;> simp_all
+
+/-- All successful label changes schedule persistence; rejected messages leave
+the store alone and cannot satisfy the premise. -/
+theorem onMsg_labels_changed_dirty (s : State) (c : Client) (m : Msg)
+    (h : (onMsg s c m).1.labels ≠ s.labels) : (onMsg s c m).1.dirty = true := by
+  have hd : (onMsg s c m).1.labels = s.labels ∨ (onMsg s c m).1.dirty = true := by
+    unfold onMsg controlResize resizeOwned resize
+    dsimp only
+    repeat' split
+    all_goals
+      first
+      | exact Or.inl rfl
+      | exact Or.inr rfl
+  exact hd.resolve_left h
 
 /-! ## §Size — a control resize never overrides an attached sizer
 
@@ -1199,15 +1263,23 @@ theorem controlResize_never_overrides (s : State) (c : Client) (cols rows : UInt
   rw [ite_eq_left h]
 
 /-- With nobody to fight, a genuine new size applies: exactly one `resizePty`
-at the requested size, the emulator resized with it, then `.done`. -/
+at the effective size, the emulator resized with it, then `.done`. -/
 theorem controlResize_applies (s : State) (c : Client) (cols rows : UInt32)
     (hown : (sizeOwner s).isSome = false) (hnz : (cols == 0 || rows == 0) = false)
-    (hdiff : (s.vt.cols == cols.toNat && s.vt.rows == rows.toNat) = false) :
+    (hdiff :
+      ((s.vt.colCount == cols.toNat && s.vt.rowCount == rows.toNat) ||
+          (s.vt.colCount == Vt.clampDim cols.toNat && s.vt.rowCount == Vt.clampDim rows.toNat)) =
+        false) :
     controlResize s c cols rows =
-      ({ s with vt := s.vt.resize cols.toNat rows.toNat },
-        [.resizePty cols rows, .send c.id .done]) := by
+      ({ s with
+          vt := s.vt.resize cols.toNat rows.toNat, dirty := true },
+        [.resizePty (UInt32.ofNat (s.vt.resize cols.toNat rows.toNat).colCount)
+            (UInt32.ofNat (s.vt.resize cols.toNat rows.toNat).rowCount),
+          .send c.id .done]) := by
   unfold controlResize
-  rw [ite_eq_right (by simp [hown]), ite_eq_right (by simp [hnz]), ite_eq_right (by simp [hdiff])]
+  rw [ite_eq_right (by simp [hown]), ite_eq_right (by simp [hnz])]
+  simp only [resize, hdiff, Bool.false_eq_true, ite_false]
+  rfl
 
 /-- The same-size branch is inert on purpose: the emulator — scroll region and
 tab ruler included — is untouched (`Vt.resize` would wipe both and no SIGWINCH
@@ -1218,7 +1290,9 @@ theorem controlResize_same_size (s : State) (c : Client) (cols rows : UInt32)
     (hsame : (s.vt.colCount == cols.toNat && s.vt.rowCount == rows.toNat) = true) :
     controlResize s c cols rows = (s, [.send c.id .done]) := by
   unfold controlResize
-  rw [ite_eq_right (by simp [hown]), ite_eq_right (by simp [hnz]), ite_eq_left hsame]
+  rw [ite_eq_right (by simp [hown]), ite_eq_right (by simp [hnz])]
+  simp only [resize, hsame, Bool.true_or, ite_true]
+  rfl
 
 /-- The `.resize` arm routes every non-attached connection to the stage above
 (after the cols/rows bookkeeping on the client record), so the three claims
@@ -1251,7 +1325,7 @@ theorem controlResize_replies (s : State) (c : Client) (cols rows : UInt32) :
           | .send i (.err _) => i == c.id
           | _ => false) =
       true := by
-  unfold controlResize
+  unfold controlResize resize
   repeat' split
   all_goals simp
 

@@ -11534,3 +11534,38 @@ formatting gates, semantic coverage, the shim checks and the full foreground
 `./tests/e2e.sh` pass. The full verifier cold-built the tree and reported all
 11 live suites green. The canonical attach count and runtime partial ratchet
 were updated in their owning scripts.
+
+## Step 2 notes — 2026-09-25
+
+Attach, attached resize and control resize used different geometry paths. An
+oversized wire value was clamped inside the emulator but forwarded unchanged to
+the pty, where the terminal's narrower field could wrap. The shared `resize`
+stage emits the resulting emulator dimensions instead. `resize_agrees` proves
+the Nat-to-UInt32 conversion loses nothing, and `onMsg_resizePty_agrees` carries
+that guarantee through the actual message handler. A two-sided source gate
+ties the theorem to the runtime's ordered `winsizeSet` arguments.
+
+The old attached-resize path also reset scroll regions and tabs when the size
+had not changed. All three paths now preserve the entire emulator at the same
+effective size, including when an oversized request clamps to its current
+dimensions. The exact-size fast path retains the existing unconditional
+same-size attach theorem, including its arbitrary-state domain.
+
+Geometry and label edits previously left the checkpoint clean. A quiet session
+could acknowledge those edits without ever saving them. Actual geometry changes
+and successful label operations now mark persistent state dirty. The new
+`resize_changed_dirty` and `onMsg_labels_changed_dirty` claims pin that link to
+the periodic checkpoint.
+
+RED: four tracked session regressions failed against the original code:
+effective pty geometry, repeated-size preservation, quiet label persistence,
+and quiet geometry persistence. All pass after the change. Mutating the shared
+stage back to raw dimensions breaks the geometry regression and correspondence
+proofs. Clearing the dirty bit on label-clear breaks both the quiet-label
+regression and the changed-label theorem. Swapping the runtime's columns and rows
+breaks the new source gate. All mutations were restored.
+
+Validation: both required builds, formatting, semantic coverage, shim checks and
+the complete foreground verifier pass; all live suites are green. No heartbeat
+or recursion allowance was added. Evidence is in the `step2-*` logs under the
+session's temporary audit directory.

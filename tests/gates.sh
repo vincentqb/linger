@@ -360,6 +360,17 @@ shim_n="$(code_count 'LEAN_EXPORT' 'c/shim.c')"
 ! code_grep '[.]extract([^[:alnum:]_]|$)' 'Linger/Runtime/*' \
   || fail "buffer arithmetic in Linger/Runtime (Buf.bufAdvance owns it, and is proved)"
 
+# `onMsg_resizePty_agrees` connects every emitted pty size to the resulting
+# emulator's effective dimensions. IO is outside the theorem: keep the effect
+# interpreter forwarding those exact dimensions, in order. Both ends are
+# checked so deleting the claim cannot silently leave a decorative runtime tie.
+code_grep '^theorem onMsg_resizePty_agrees ' 'Theorems/Session.lean' > /dev/null \
+  || fail "the session-to-pty geometry correspondence theorem disappeared"
+code_grep '^[[:space:]]+[|] [.]resizePty cols rows =>' 'Linger/Runtime/Daemon.lean' > /dev/null \
+  || fail "review the pty effect interpreter against onMsg_resizePty_agrees"
+code_grep '^[[:space:]]+winsizeSet rt[.]ptyFd cols rows$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+  || fail "the pty interpreter no longer forwards the proved dimensions in order"
+
 # `Session.resumeVt` ↔ `Daemon.lean`'s `vt0` — the resume door's model/runtime tie, and
 # the direct sibling of the three Buf greps above: same gap, same species of oracle.
 # `Theorems/Session.lean`'s `resumeVt` IS the daemon's fallback expression with the `IO`
