@@ -21,7 +21,7 @@ recipes, break records, measurements, the audits — lives in
 | § | Tension | Invariant | Where |
 |---|---------|-----------|-------|
 | §Frame | evolvable protocol vs simple daemon | `decode (encode m) = ([m], ∅)`; unknown tag skips exactly its frame | Theorems/Wire.lean |
-| §Chunk | arbitrary TCP/pty chunking vs stateful parsers | `feed (a ++ b) = feed b ∘ feed a`; the session's own framing is faithful and bounded (`outputMsgs_faithful`, `outputMsgs_bounded`, `outputMsgs_payloads`) | Theorems/Wire.lean, Theorems/Vt.lean, Theorems/Session.lean |
+| §Chunk | arbitrary TCP/pty chunking vs stateful parsers | `feed (a ++ b) = feed b ∘ feed a`; output framing is faithful and bounded (`outputMsgs_faithful`, `outputMsgs_bounded`, `outputMsgs_payloads`); accepted info replies preserve every byte in bounded frames, with overflow refused before any prefix (`infoMsgs_faithful`, `infoMsgs_bounded`, `infoMsgs_refused`) | Theorems/Wire.lean, Theorems/Vt.lean, Theorems/Session.lean |
 | §Stream | fragmentation vs one parsed conversation | any re-chunking of a well-formed stream feeds back to exactly that stream (`decode_encode_chunked`; §Frame and §Chunk are its special cases) | Theorems/Wire.lean |
 | §Bound | unbounded queues under load | every buffer has a structural cap preserved by `step`; nothing to fill | Theorems/Wire.lean, Theorems/Vt.lean, Theorems/Session.lean |
 | §Total | adversarial bytes vs no crashes ever | `Vt.step`/`feed` total (no `partial`, grep-checked); `Good` preserved for any byte; dimensions preserved (`dims_feed`) | Theorems/Vt.lean |
@@ -160,6 +160,15 @@ a failed answer still has a live listing row, so querying it cannot unlink its
 socket. These IO contracts are checked by `E2E.Agent`, separately from the pure
 listing identity theorem. Remote attach sanitizes the session name before SSH
 joins the remote command for shell execution (`E2E.Remote`).
+
+The info producer and CLI share the whole-answer byte policy. An accepted
+answer emits bounded frames followed by exactly one `done`; concatenating
+their payloads recovers every serialized field and label
+(`onMsg_info_faithful`, `onMsg_info_bounded`). Exceeding the policy emits only
+a bounded refusal, without a partial answer or completion (`infoMsgs_refused`).
+A source gate ties the CLI accumulator to the proved producer's cap. Individual
+records and UTF-8 characters may span frames, so text decoding follows payload
+concatenation.
 
 ## Session identity: the kernel plus a proof
 

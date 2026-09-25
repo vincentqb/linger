@@ -34,6 +34,9 @@ def maxLabels : Nat := 64
 
 def outputChunk : Nat := 65536
 
+/-- Maximum encoded info answer, shared by the producer and the CLI accumulator. -/
+def infoReplyCap : Nat := 1048576
+
 structure Client where
   id : Nat
   cols : UInt32 := 80
@@ -289,6 +292,15 @@ def controlResize (s : State) (c : Client) (cols rows : UInt32) : State × List 
 def outputMsgs (id : Nat) (bytes : List UInt8) : List Effect :=
   (chunksOf outputChunk bytes).map (fun c => .send id (.output c))
 
+/-- Preflight the whole info answer before emitting any bytes. Accepted answers
+are a stream of bounded byte chunks followed by `done`; records and UTF-8 may
+cross frames, so consumers decode text only after joining the payloads.
+Refusals carry no prefix or `done`, and the diagnostic is bounded too. -/
+def infoMsgs (id : Nat) (bytes : List UInt8) : List Effect :=
+  if bytes.length > infoReplyCap then
+    [.send id (.err ("info reply exceeds the byte limit".toUTF8.toList.take outputChunk))]
+  else (chunksOf outputChunk bytes).map (fun c => .send id (.infoReply c)) ++ [.send id .done]
+
 /-- Broadcast presentation bytes to the attached clients.
 
 The empty guard is load-bearing, not defensive tidiness: `chunksOf n [] = [[]]`,
@@ -338,7 +350,7 @@ def onMsg (s : State) (c : Client) (m : Msg) : State × List Effect :=
   | .detachAll =>
     (s, (s.clients.filter (·.attached) |>.map (fun c' => Effect.close c'.id)) ++ [.send c.id .done])
   | .kill => (s, [.killChild, .dropCheckpoint, .exit])
-  | .info => (s, [.send c.id (.infoReply (infoText s)), .send c.id .done])
+  | .info => (s, infoMsgs c.id (infoText s))
   | .history => (s, outputMsgs c.id (Render.history s.vt) ++ [.send c.id .done])
   | .screen =>
     -- `linger capture`: the grid only, plain text. Delivering the current

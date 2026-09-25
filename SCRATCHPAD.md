@@ -11756,3 +11756,29 @@ gates, semantic coverage, generated C ABI and the full foreground verifier pass.
 The integrated receipt is `step6-verifier.log`. Exact live check counts were
 updated only in their canonical script. The separate producer finding remains:
 valid labels can combine into an info answer too large for one wire frame.
+
+## Step 7 notes — 2026-09-25
+
+Two individually legal large labels could make one info frame exceed the wire
+limit. The producer now divides an accepted answer into the existing output
+chunk size, preserving all bytes and ending in exactly one done message. The
+CLI already joins these payloads before decoding UTF-8 and records, so splitting
+inside a character or label does not change the answer. A shared total reply
+limit bounds that join; an excessive answer sends only a bounded error.
+
+The new `infoMsgs` helper has exact accepted/refused equations, payload fidelity
+and bounded-frame proofs, lifted to `onMsg`. The new limit is named in theorem
+types too. The large-label and combined-overflow regressions were red against
+the original producer. Four restored mutations exercise the original single
+frame, missing refusal, truncated success and strict rather than inclusive
+boundary. Worker receipts are `info-framing-*` in the audit directory.
+
+The CLI uses an abbreviation of the pure limit and supplies that value directly
+to `Buf.bufOffer`. Three actual source-gate mutations fail when the limit is
+copied, the call site changes its bound, or the producer theorem disappears.
+These ran in a disposable tracked fixture; receipts are
+`step7-gate-{cap,use,theorem}-red.log`.
+
+Validation: both required builds, formatting, source gates, semantic coverage,
+generated C ABI and the full foreground verifier pass. The integrated receipt
+is `step7-verifier.log`. No live-suite count changed in this step.

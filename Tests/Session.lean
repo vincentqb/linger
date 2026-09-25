@@ -155,6 +155,79 @@ example :
       true := by
   native_decide
 
+/-- Each label fits an incoming wire frame; their combined info need not. -/
+private def largeInfoLabels (count : Nat) : List (String × String) :=
+  let value := String.ofList (List.replicate (Wire.maxPayload / 2) 'x')
+  (List.range count).map (fun i => (toString i, value))
+
+private def storeInfoLabels (labels : List (String × String)) : State × List Effect :=
+  run
+    (.connected 1 ::
+      labels.map (fun (k, v) => .bytes 1 (encode (.labelSet s!"{k}={v}".toUTF8.toList))))
+    (State.boot (Vt.Vt.init 20 5) [] [("name", "t")])
+
+private def infoReplies (effs : List Effect) : List Msg :=
+  effs.filterMap
+    (fun e =>
+      match e with
+      | .send 1 m => some m
+      | _ => none)
+
+/-- Two legal labels used to produce one illegal outgoing frame. The real
+wire decoder must accept the entire reply, including every byte of both labels. -/
+example :
+    (let labels := largeInfoLabels 2
+     let (s, acks) := storeInfoLabels labels
+      let (after, effs) := step s (.bytes 1 (encode .info))
+      let msgs := infoReplies effs
+      let (dec, received) := Wire.decode (msgs.flatMap encode)
+      labels.all (fun (k, v) => s!"{k}={v}".toUTF8.size ≤ Wire.maxPayload) && s.labels == labels &&
+        acks == List.replicate labels.length (.send 1 .done) &&
+        after.labels == labels &&
+        Wire.maxPayload < (infoText s).length &&
+        (infoText s).length < infoReplyCap &&
+        msgs.length > 2 &&
+        msgs.all (fun m => m.payload.length ≤ outputChunk) &&
+        !dec.errored &&
+        dec.buf.isEmpty &&
+        received.getLast? == some .done &&
+        (received.filterMap
+              (fun m =>
+                match m with
+                | .infoReply bs => some bs
+                | _ => none)).flatten ==
+          infoText s) =
+      true := by
+  native_decide
+
+/-- Many independently accepted labels can exceed the whole-answer policy.
+Refuse that request without sending a prefix, reporting done, or losing labels. -/
+example :
+    (let labels := largeInfoLabels 9
+     let (s, acks) := storeInfoLabels labels
+      let (after, effs) := step s (.bytes 1 (encode .info))
+      labels.all (fun (k, v) => s!"{k}={v}".toUTF8.size ≤ Wire.maxPayload) && s.labels == labels &&
+        acks == List.replicate labels.length (.send 1 .done) &&
+        after.labels == labels &&
+        infoReplyCap < (infoText s).length &&
+        (match infoReplies effs with
+        | [.err bs] =>
+          String.fromUTF8? (ByteArray.mk bs.toArray) == some "info reply exceeds the byte limit"
+        | _ => false)) =
+      true := by
+  native_decide
+
+/-- Exactly the byte cap completes; one byte beyond it is refused. -/
+example :
+    (let atCap := infoMsgs 1 (List.replicate infoReplyCap 0x78)
+     let over := infoMsgs 1 (List.replicate (infoReplyCap + 1) 0x78)
+     atCap.getLast? == some (.send 1 .done) &&
+       (match over with
+       | [.send 1 (.err _)] => true
+       | _ => false)) =
+      true := by
+  native_decide
+
 /-! ### `detach-all` and label removal (pin-the-gaps items 2 and 3)
 
 `onMsg_detachAll` / `onMsg_labelUnset` / `onMsg_labelClear` pin the effect lists

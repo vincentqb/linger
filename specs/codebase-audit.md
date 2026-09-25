@@ -1,8 +1,8 @@
 # 2026-09-25 codebase audit
 
-Status: step 6 verified — CLI replies, remote names and path fallbacks integrated
+Status: step 7 verified — bounded info production
 Updated: 2026-09-25
-Next: integrate bounded info framing and remaining VT/decoder/clock findings
+Next: integrate ordered VT mode batches, then decoder and clock findings
 Predecessor: `specs/archive/tmux-resurrect-recipe.md`
 
 ## Goal
@@ -98,3 +98,9 @@ The status and completion record below track the actual integration order.
   removing the runtime's last partial definition. Behavioral and source-gate
   mutations fail the new checks. Both required builds and the full foreground
   verifier pass.
+- Step 7: info production and consumption now share one total reply limit.
+  Accepted answers preserve every byte across bounded wire frames and end in
+  one completion message; an excessive answer emits only a bounded refusal.
+  Boundary, truncation and ordering mutations fail the new checks, and source
+  gates tie the CLI accumulator to the proved limit. Both required builds and
+  the full foreground verifier pass.

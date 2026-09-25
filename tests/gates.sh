@@ -383,6 +383,15 @@ shim_n="$(code_count 'LEAN_EXPORT' 'c/shim.c')"
 ! code_grep '[.]extract([^[:alnum:]_]|$)' 'Linger/Runtime/*' \
   || fail "buffer arithmetic in Linger/Runtime (Buf.bufAdvance owns it, and is proved)"
 
+# An info answer can span several frames. The pure producer proves the bound;
+# keep the IO accumulator on that same policy rather than a copied number.
+code_grep '^theorem onMsg_info_bounded ' 'Theorems/Session.lean' > /dev/null \
+  || fail "the info producer's framing theorem disappeared"
+code_grep '^abbrev infoReplyCap : Nat := Linger[.]Core[.]Session[.]infoReplyCap$' 'Linger/Runtime/Cli.lean' > /dev/null \
+  || fail "the CLI info policy diverged from the proved producer"
+code_grep '^[[:space:]]+Linger[.]Core[.]Buf[.]bufOffer infoReplyCap acc [(]ByteArray[.]mk payload[.]toArray[)]$' 'Linger/Runtime/Cli.lean' > /dev/null \
+  || fail "the info accumulator no longer uses the shared byte policy"
+
 # The remote command crosses SSH's shell join. Keep the proved name alphabet
 # on that actual argument, not only on local paths or a displayed listing row.
 code_grep '^theorem sanitize_valid ' 'Theorems/Name.lean' > /dev/null \

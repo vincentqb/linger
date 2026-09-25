@@ -64,6 +64,16 @@ theorem onMsg_wrong_direction (s : State) (c : Client) (bs : List UInt8) :
       onMsg s c (.infoReply bs) = (s, []) ∧
       onMsg s c (.err bs) = (s, []) ∧ onMsg s c .done = (s, []) := ⟨rfl, rfl, rfl, rfl⟩
 
+/-- Info leaves the entire state alone and uses the bounded reply producer. -/
+theorem onMsg_info (s : State) (c : Client) :
+    onMsg s c .info = (s, infoMsgs c.id (infoText s)) := rfl
+
+@[simp]
+theorem infoMsgs_no_resize (id : Nat) (bs : List UInt8) (cols rows : UInt32) :
+    Effect.resizePty cols rows ∉ infoMsgs id bs := by
+  unfold infoMsgs
+  split <;> simp
+
 /-! ## Label removal (pin-the-gaps item 3)
 
 `.labelSet` was pinned four ways — the cap (`onMsg_labels_le`), the round trip
@@ -1590,5 +1600,74 @@ theorem outputMsgs_bounded (id : Nat) (bs : List UInt8) :
       c.length ≤ outputChunk := by
   rw [outputMsgs_payloads id bs]
   exact chunksOf_le outputChunk (by decide) bs
+
+/-- The cap is inclusive, with exactly one completion after all info chunks. -/
+theorem infoMsgs_accepted (id : Nat) (bs : List UInt8) (h : bs.length ≤ infoReplyCap) :
+    infoMsgs id bs =
+      (chunksOf outputChunk bs).map (fun c => .send id (.infoReply c)) ++ [.send id .done] := by
+  simp only [infoMsgs, Nat.not_lt.mpr h, ite_false]
+
+/-- Overflow is refused before any prefix or completion can escape. -/
+theorem infoMsgs_refused (id : Nat) (bs : List UInt8) (h : infoReplyCap < bs.length) :
+    infoMsgs id bs =
+      [.send id (.err ("info reply exceeds the byte limit".toUTF8.toList.take outputChunk))] := by
+  simp only [infoMsgs, h, ite_true]
+
+theorem infoMsgs_payloads (id : Nat) (bs : List UInt8) (h : bs.length ≤ infoReplyCap) :
+    (infoMsgs id bs).filterMap
+        (fun e =>
+          match e with
+          | .send _ (.infoReply c) => some c
+          | _ => none) =
+      chunksOf outputChunk bs := by
+  rw [infoMsgs_accepted id bs h]
+  simp [List.filterMap_map, Function.comp_def]
+
+/-- Concatenation preserves every encoded byte, including records spanning frames. -/
+theorem infoMsgs_faithful (id : Nat) (bs : List UInt8) (h : bs.length ≤ infoReplyCap) :
+    ((infoMsgs id bs).filterMap
+          (fun e =>
+            match e with
+            | .send _ (.infoReply c) => some c
+            | _ => none)).flatten =
+      bs := by
+  rw [infoMsgs_payloads id bs h]
+  exact chunksOf_flatten outputChunk bs
+
+/-- Every emitted frame, including an error, fits both the chunk and wire bounds. -/
+theorem infoMsgs_bounded (id : Nat) (bs : List UInt8) (dest : Nat) (m : Msg)
+    (h : Effect.send dest m ∈ infoMsgs id bs) :
+    dest = id ∧ m.payload.length ≤ outputChunk ∧ m.wf := by
+  have hcap : outputChunk ≤ Wire.maxPayload := by decide
+  unfold infoMsgs at h
+  split at h
+  · simp only [List.mem_singleton, Effect.send.injEq] at h
+    obtain ⟨rfl, rfl⟩ := h
+    have hc := List.length_take_le outputChunk "info reply exceeds the byte limit".toUTF8.toList
+    exact ⟨rfl, hc, Nat.le_trans hc hcap, trivial⟩
+  · rcases List.mem_append.mp h with h | h
+    · obtain ⟨chunk, hc, he⟩ := List.mem_map.mp h
+      simp only [Effect.send.injEq] at he
+      obtain ⟨rfl, rfl⟩ := he
+      have hc := chunksOf_le outputChunk (by decide) bs chunk hc
+      exact ⟨rfl, hc, Nat.le_trans hc hcap, trivial⟩
+    · simp only [List.mem_singleton, Effect.send.injEq] at h
+      obtain ⟨rfl, rfl⟩ := h
+      exact ⟨rfl, Nat.zero_le _, Nat.zero_le _, trivial⟩
+
+/-- Carry the bounds through the actual info arm that the daemon executes. -/
+theorem onMsg_info_bounded (s : State) (c : Client) (dest : Nat) (m : Msg)
+    (h : Effect.send dest m ∈ (onMsg s c .info).2) :
+    dest = c.id ∧ m.payload.length ≤ outputChunk ∧ m.wf :=
+  infoMsgs_bounded c.id (infoText s) dest m h
+
+/-- An accepted info request delivers the complete serialized fields and labels. -/
+theorem onMsg_info_faithful (s : State) (c : Client) (h : (infoText s).length ≤ infoReplyCap) :
+    (((onMsg s c .info).2).filterMap
+          (fun e =>
+            match e with
+            | .send _ (.infoReply chunk) => some chunk
+            | _ => none)).flatten =
+      infoText s := infoMsgs_faithful c.id (infoText s) h
 
 end Linger.Core.Session

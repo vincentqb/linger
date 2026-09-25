@@ -30,8 +30,8 @@ session" without having to invent a name. -/
 def defaultName : String := "main"
 
 /-- Bound on accumulated `infoReply` bytes, independent of the request deadline.
-A peer exceeding it has not supplied a usable answer. -/
-def infoReplyCap : Nat := 1048576
+A peer exceeding the producer's policy has not supplied a usable answer. -/
+abbrev infoReplyCap : Nat := Linger.Core.Session.infoReplyCap
 
 def usage : String :=
   "Usage: linger [command] [args...]
