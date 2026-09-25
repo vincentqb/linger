@@ -29,9 +29,8 @@ def version : String := "linger 0.1.0"
 session" without having to invent a name. -/
 def defaultName : String := "main"
 
-/-- Cap on an `info` reply we will accumulate. A real reply is a few hundred bytes
-(`Session.infoText`); this bounds a peer that streams `infoReply` frames forever,
-which the silence-only timeout below cannot. -/
+/-- Bound on accumulated `infoReply` bytes, independent of the request deadline.
+A peer exceeding it has not supplied a usable answer. -/
 def infoReplyCap : Nat := 1048576
 
 def usage : String :=
@@ -117,6 +116,9 @@ def cmdAttach (hooks : Hooks) (name : String) (cmd : List String) : IO UInt32 :=
     let host := String.intercalate "@" rest
     if sess.isEmpty || host.isEmpty then
       throw (IO.userError s!"malformed remote target '{name}' (expected name@host)")
+    -- SSH joins the remote command arguments for a shell. Use the same name
+    -- alphabet as local paths before crossing that boundary.
+    let sess := Linger.Core.Name.sanitize sess
     -- Deliberately NO transport policy here (keepalives, timeouts):
     -- `-o` on the command line would silently override the user's
     -- ~/.ssh/config, and how fast a link is declared dead is the
@@ -142,7 +144,8 @@ def cmdAttach (hooks : Hooks) (name : String) (cmd : List String) : IO UInt32 :=
       IO.eprintln s!"\r\nlinger: {why} for '{name}'"
       return 1
 
-/-- One connected info conversation, bounded by an absolute request window. -/
+/-- One connected info conversation, bounded by an absolute request window.
+Only `done` completes an answer; a failed prefix is never returned as info. -/
 def readInfo (fd : UInt32) : IO (List (String × String)) := do
   Client.sendMsg fd .info
   let deadline := (← monotonicMs) + 2000
@@ -155,44 +158,52 @@ def readInfo (fd : UInt32) : IO (List (String × String)) := do
       continue
     match ← read fd 65536 with
     | none =>
-      go := false
+      throw (IO.userError "connection lost before info completed")
     | some bs =>
       if bs.isEmpty then
         continue
       let (dec', msgs) := dec.feed bs.toList
       dec := dec'
       if dec.errored then
-        go := false
+        throw (IO.userError "invalid response from daemon")
       else
         for m in msgs do
           if !go then
             continue
           match m with
           | .infoReply payload =>
-            acc := (Linger.Core.Buf.bufOffer infoReplyCap acc (ByteArray.mk payload.toArray)).1
-          | .done | .err _ =>
+            let (next, dropped) :=
+              Linger.Core.Buf.bufOffer infoReplyCap acc (ByteArray.mk payload.toArray)
+            if dropped then
+              throw (IO.userError "info reply exceeds the byte limit")
+            acc := next
+          | .done =>
             go := false
+          | .err payload =>
+            throw (IO.userError (Client.replyText "info request refused" payload))
+          | .exited status =>
+            throw (IO.userError s!"session ended before info completed (status {status})")
           | _ =>
-            pure ()
-  let txt := String.fromUTF8? (Linger.Core.Buf.writeFrom acc) |>.getD ""
-  return txt.splitOn "\n" |>.filterMap fun line =>
+            throw (IO.userError "unexpected response to info")
+  if go then
+    throw (IO.userError "no reply completed within the info deadline")
+  let some txt :=
+    String.fromUTF8?
+      (Linger.Core.Buf.writeFrom acc) | throw (IO.userError "invalid UTF-8 in info reply")
+  (txt.splitOn "\n").filter (· != "") |>.mapM fun line =>
       match line.splitOn "\t" with
-      | [k, v] => some (k, v)
-      | _ => none
+      | [k, v] => pure (k, v)
+      | _ => throw (IO.userError "invalid info record")
 
-/-- Fetch a session's info. Once connected, any I/O/framing failure is an
-unanswered live row rather than a reason to unlink its path. -/
-def queryInfo (name : String) : IO (Option (List (String × String))) := do
+/-- Keep connection absence separate from an info failure: listing must retain
+a connected peer, while `get` must report its unanswered request. -/
+def queryInfo (name : String) : IO (Option (Except IO.Error (List (String × String)))) := do
   match ← Client.connect name with
   | none =>
     return none
   | some fd =>
     try
-      let info ←
-        try
-          readInfo fd
-        catch _ =>
-          pure []
+      let info ← (readInfo fd).toBaseIO
       return some info
     finally
       close fd
@@ -276,7 +287,7 @@ def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
     match ← queryInfo name with
     | some info =>
       confirmedLive := confirmedLive ++ [name]
-      rows := rows ++ [liveRow name info]
+      rows := rows ++ [liveRow name (info.toOption.getD [])]
     | none =>
       if !(← removeStaleSocket name) then
         -- Failed connect while another process owns (or may own) the name: keep
@@ -325,13 +336,13 @@ def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
 optional `-r`/`--remote [hosts]`, in any order. `-r` followed by a
 `-`-prefixed token (or nothing) means "use the file"; `-r hosts` is an
 explicit comma list. Returns `none` on any unrecognized token. -/
-partial def parseLs : List String → Option (Bool × Option (List String))
+def parseLs : List String → Option (Bool × Option (List String))
   | [] => some (false, none)
   | "--porcelain" :: rest => (parseLs rest).map (fun (_, r) => (true, r))
   | "-r" :: rest | "--remote" :: rest =>
     match rest with
     | h :: more =>
-      if h.startsWith "-" then (parseLs rest).map (fun (p, _) => (p, some []))
+      if h.startsWith "-" then (parseLs (h :: more)).map (fun (p, _) => (p, some []))
       else (parseLs more).map (fun (p, _) => (p, some (h.splitOn ",")))
     | [] => some (false, some [])
   | _ => none
@@ -468,7 +479,10 @@ def cmdGet (name : String) : IO UInt32 := do
   | none =>
     IO.eprintln s!"linger: no session '{name}'"
     return 1
-  | some info =>
+  | some (.error err) =>
+    IO.eprintln s!"linger: {err} for '{name}'"
+    return 1
+  | some (.ok info) =>
     for (k, v) in info do
       if k.startsWith "label." then
         IO.println s!"{(k.drop 6).toString}={v}"

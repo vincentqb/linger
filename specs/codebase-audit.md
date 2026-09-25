@@ -1,8 +1,8 @@
 # 2026-09-25 codebase audit
 
-Status: step 5 verified — VT boundary and replay proofs integrated
+Status: step 6 verified — CLI replies, remote names and path fallbacks integrated
 Updated: 2026-09-25
-Next: integrate CLI failure handling and path fallback fixes
+Next: integrate bounded info framing and remaining VT/decoder/clock findings
 Predecessor: `specs/archive/tmux-resurrect-recipe.md`
 
 ## Goal
@@ -91,3 +91,10 @@ The status and completion record below track the actual integration order.
   Explicit dispatch removes the last recursion-depth raise. Semantic and
   public-API mutations fail the new checks. Both required builds and the full
   foreground verifier pass.
+- Step 6: the CLI rejects incomplete or malformed info answers without printing
+  partial labels or unlinking a connected peer. Remote session names pass the
+  proved sanitizer before SSH's shell join. Empty XDG and HOME values use their
+  fallback; an explicit LINGER_DIR remains verbatim. The option parser is total,
+  removing the runtime's last partial definition. Behavioral and source-gate
+  mutations fail the new checks. Both required builds and the full foreground
+  verifier pass.

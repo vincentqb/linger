@@ -11712,3 +11712,47 @@ Validation: `./lake build`, `./lake build Theorems Tests`, formatting, source
 gates, semantic coverage, generated C ABI checks, shim checks and the full
 foreground `./tests/e2e.sh` pass. All live suites retain their canonical counts.
 The parent verifier receipt is `step5-verifier.log`.
+
+## Step 6 notes — 2026-09-25
+
+An info prefix used to look successful after EOF, timeout or refusal. `get`
+could print partial labels, while listing could present incomplete fields as
+healthy. The CLI now requires `done`, valid framing, UTF-8 and records, and an
+unexceeded accumulation bound. Connection absence and failure after connecting
+are separate results: the latter remains live/unknown in listing and never
+authorizes unlinking that peer's socket. Complete multi-frame and empty replies
+retain their behavior. The reply fixtures send plausible fields before the
+failure so discarding only a broken tail cannot pass.
+
+Remote attach now sanitizes its session argument before SSH joins the command
+for the remote shell. The fake transport executes that join and records the
+arguments that survive it; inspecting SSH's own argv alone had missed shell
+separators, substitution, quotes and newlines. A two-sided source gate ties the
+actual command argument to `sanitize_valid`. Removing the sanitizer and changing
+the transmitted variable each fail the actual gate in a disposable checkout.
+The parent receipts are `step6-gate-*-red.log`.
+
+The option parser now exposes its structurally smaller recursive tail directly
+and compiles without `partial def`. Repeated `-r` and option order retain their
+behavior. No runtime definition needs that keyword now; the canonical ratchet
+was lowered. The kernel dependency inspection confirms a total definition; its
+initial attempted simplification examples did not close, and are not claimed
+as proof evidence.
+
+Empty XDG runtime/state directories and HOME now fall through in the documented
+order. LINGER_DIR stays an explicit verbatim override, even when empty. Fresh
+subprocess probes control all directory variables and only resolve paths, so
+the original empty-path bug cannot create a directory at the filesystem root.
+Removing each fallback guard or dropping the empty override fails its check.
+
+RED/GREEN: the original CLI fails the incomplete-reply and remote-shell
+fixtures; the original path resolver fails the empty fallback cases. Restoring
+the info cap omission, swallowed error or option-tail bug fails the new checks.
+Worker receipts are `cli-*-red.log`, `cli-*-mutant-*.log` and
+`paths-HANDOFF.md` in `/tmp/linger-audit-20260925/`. Every mutation was restored.
+
+Validation: `./lake build`, `./lake build Theorems Tests`, formatting, source
+gates, semantic coverage, generated C ABI and the full foreground verifier pass.
+The integrated receipt is `step6-verifier.log`. Exact live check counts were
+updated only in their canonical script. The separate producer finding remains:
+valid labels can combine into an info answer too large for one wire frame.

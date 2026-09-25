@@ -3,6 +3,7 @@ module
 public import E2E.Harness
 public import Linger.Core.Remote
 public import Linger.Core.Name
+public import Linger.Runtime.Cli
 
 public section
 
@@ -112,9 +113,15 @@ def fakeSsh (log : String) : String :=
     s!"    printf 'name\\t{hostileName}\\nstate\\tresumable\\n\\n'\n" ++
     "    printf 'garbage line with no tabs\\n\\n'\n" ++
     "    ;;\n" ++
-    s!"  attach)  printf '{attachMark}\\n'; sleep 5 ;;\n" ++
+    "  attach) /bin/sh -c \"$*\"; sleep 5 ;;\n" ++
     "esac\n" ++
     "exit 0\n"
+
+/-- SSH joins its remote argv into shell input. This stub records the arguments
+that survive that shell, so logging SSH's own argv cannot hide an injection. -/
+def fakeLinger : String :=
+  "#!/bin/sh\n" ++ "printf '%s\\n' \"$@\" > \"$LINGER_REMOTE_ARGS\"\n" ++
+    s!"printf '{attachMark}\\n'\n"
 
 /-- Drop `-o value` pairs and the end-of-options `--`: the `(-o \S+ )*(--\s+)?`
 half of the Python's regex. `--` terminates the strip, because that is what it
@@ -149,9 +156,13 @@ def run : IO UInt32 := do
   let fakebin := (System.FilePath.mk e.dir) / "fakebin"
   IO.FS.createDirAll fakebin
   let log := ((System.FilePath.mk e.dir) / "ssh.log").toString
+  let remoteArgs := (System.FilePath.mk e.dir) / "remote-args"
   let sshPath := fakebin / "ssh"
   IO.FS.writeFile sshPath (fakeSsh log)
   chmod sshPath.toString 0o755
+  let lingerPath := fakebin / "linger"
+  IO.FS.writeFile lingerPath fakeLinger
+  chmod lingerPath.toString 0o755
   -- `:` is `os.pathsep`; fakebin FIRST so it shadows any real ssh. Both spellings
   -- are needed: the `-r` path spawns ssh from inside `linger`, inheriting the
   -- one-shot verb's environment, and the attach path `execvp`s ssh from the pty
@@ -159,7 +170,7 @@ def run : IO UInt32 := do
   let path0 := (← IO.getEnv "PATH").getD "/usr/bin:/bin"
   let newPath := s!"{fakebin.toString}:{path0}"
   let procPath : Array (String × Option String) := #[("PATH", some newPath)]
-  let ptyPath : Array String := #[s!"PATH={newPath}"]
+  let ptyPath : Array String := #[s!"PATH={newPath}", s!"LINGER_REMOTE_ARGS={remoteArgs}"]
   let _ ← e.cliEnv procPath #["run", "localsess", "echo local-content"]
   IO.sleep 1000
   -- 1. a duplicate host is a hard error, reported before anything runs (no tty
@@ -232,6 +243,41 @@ def run : IO UInt32 := do
             "trailing @ errors loudly instead of creating a local session")
   kill c3.pid 9
   c3.bye (sendDetach := false)
+  for (kind, name) in
+    [("path", hostileName), ("separator", "work;printf REMOTE-INJECTED"),
+      ("substitution", "work$(printf REMOTE-INJECTED)"), ("quotes", "work 'two words'"),
+      ("newline", "work\nprintf REMOTE-INJECTED")] do
+    IO.FS.writeFile remoteArgs ""
+    let c ← e.spawnEnv ptyPath #["attach", s!"{name}@{devHost}"] 100 24
+    let reply ← drain c.fd 2000
+    let argv := lines (← IO.FS.readFile remoteArgs)
+    f :=
+      f +
+        (←
+          expect
+              (argv == ["attach", Linger.Core.Name.sanitize name] && hasText reply attachMark &&
+                !hasText reply "REMOTE-INJECTED")
+              s!"remote attach sanitizes {kind} before shell interpretation")
+    kill c.pid 9
+    c.bye (sendDetach := false)
+  f :=
+    f +
+      (←
+        expect
+            ([["--porcelain", "-r", s!"{devHost},{deadHost}"],
+                  ["-r", s!"{devHost},{deadHost}", "--porcelain"],
+                  ["--remote", s!"{devHost},{deadHost}", "--porcelain"]].all
+              (fun args =>
+                Linger.Runtime.Cli.parseLs args == some (true, some [devHost, deadHost])))
+            "ls parses explicit hosts in either option order")
+  f :=
+    f +
+      (←
+        expect
+            (Linger.Runtime.Cli.parseLs ["-r", "--porcelain"] == some (true, some []) &&
+              Linger.Runtime.Cli.parseLs ["--porcelain", "--remote"] == some (true, some []) &&
+              Linger.Runtime.Cli.parseLs ["-r", "--typo"] == none)
+            "ls preserves an option after -r and rejects an unknown option")
   e.killAll #["localsess"]
   verdict e f
 

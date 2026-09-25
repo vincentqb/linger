@@ -383,6 +383,15 @@ shim_n="$(code_count 'LEAN_EXPORT' 'c/shim.c')"
 ! code_grep '[.]extract([^[:alnum:]_]|$)' 'Linger/Runtime/*' \
   || fail "buffer arithmetic in Linger/Runtime (Buf.bufAdvance owns it, and is proved)"
 
+# The remote command crosses SSH's shell join. Keep the proved name alphabet
+# on that actual argument, not only on local paths or a displayed listing row.
+code_grep '^theorem sanitize_valid ' 'Theorems/Name.lean' > /dev/null \
+  || fail "the sanitized-name alphabet theorem disappeared"
+code_grep '^[[:space:]]+let sess := Linger[.]Core[.]Name[.]sanitize sess$' 'Linger/Runtime/Cli.lean' > /dev/null \
+  || fail "remote attach no longer sanitizes its session argument"
+code_grep '^[[:space:]]+exec "ssh" #[[]"-t", "--", host, "linger", "attach", sess[]]' 'Linger/Runtime/Cli.lean' > /dev/null \
+  || fail "review the remote command argument against sanitize_valid"
+
 # `onMsg_resizePty_agrees` connects every emitted pty size to the resulting
 # emulator's effective dimensions. IO is outside the theorem: keep the effect
 # interpreter forwarding those exact dimensions, in order. Both ends are
@@ -518,9 +527,9 @@ rd_n="$(code_count 'set_option maxRecDepth' 'Theorems/*')"
 # runtime `partial def` ratchet. Five of the seven shed the keyword on 2026-08-18
 # once someone checked: `while`/`for` in a `do` block never needed it, and none of
 # the five self-recursed. `pump` became an explicit IO loop when exit acquired
-# a queue-stop condition. `parseLs` still wants a `decreasing_by`. Ratcheted
-# so the keyword cannot creep back by habit; §Total in THEOREMS.md names it.
-RUNTIME_PARTIAL_CAP=1
+# a queue-stop condition. `parseLs` now exposes its structurally smaller tail.
+# Ratcheted so the keyword cannot creep back by habit.
+RUNTIME_PARTIAL_CAP=0
 rp_n="$(code_count 'partial def' 'Linger/Runtime/*')"
 [ "$rp_n" -le "$RUNTIME_PARTIAL_CAP" ] \
   || fail "Linger/Runtime grew to $rp_n partial defs (cap $RUNTIME_PARTIAL_CAP); a do-block loop does not need the keyword"

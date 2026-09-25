@@ -12,6 +12,9 @@ Resolution order:
 * state: `$LINGER_DIR` > `$XDG_STATE_HOME/linger/<host>` >
   `$HOME/.local/state/linger/<host>` > `/tmp/linger-$UID/state/<host>`
 
+Empty XDG and HOME values fall through to the next fallback. `LINGER_DIR`
+is an explicit override even when empty.
+
 Every name passes `Name.sanitize` before touching a path (AGENTS.md
 rule; §Name is the theorem that makes it sufficient).
 -/
@@ -24,7 +27,8 @@ def socketDir : IO String := do
   if let some d← IO.getEnv "LINGER_DIR" then
     return d
   if let some d← IO.getEnv "XDG_RUNTIME_DIR" then
-    return s!"{d}/linger"
+    unless d.isEmpty do
+      return s!"{d}/linger"
   return s!"/tmp/linger-{← Linger.Posix.getuid}"
 
 /-- Checkpoints and logs. The default is namespaced by hostname: a
@@ -39,12 +43,12 @@ def stateDir : IO String := do
     return d
   let host := sanitize (← Linger.Posix.gethostname)
   if let some d← IO.getEnv "XDG_STATE_HOME" then
-    return s!"{d}/linger/{host}"
-  match ← IO.getEnv "HOME" with
-  | some home =>
-    return s!"{home}/.local/state/linger/{host}"
-  | none =>
-    return s!"/tmp/linger-{← Linger.Posix.getuid}/state/{host}"
+    unless d.isEmpty do
+      return s!"{d}/linger/{host}"
+  if let some home← IO.getEnv "HOME" then
+    unless home.isEmpty do
+      return s!"{home}/.local/state/linger/{host}"
+  return s!"/tmp/linger-{← Linger.Posix.getuid}/state/{host}"
 
 def ensureDir (d : String) : IO Unit := do
   IO.FS.createDirAll d

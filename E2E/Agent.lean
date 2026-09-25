@@ -2,6 +2,7 @@ module
 
 public import E2E.Harness
 public import Linger.Core.Wire
+public import Linger.Runtime.Cli
 
 public section
 
@@ -98,9 +99,138 @@ def malformedServer (socketPath readyPath : String) : IO UInt32 := do
     pure ()
   return rc
 
+/-- Two info conversations, one for `get` and one for listing. Failure modes
+first send plausible fields: neither a partial label nor a healthy-looking
+prefix may be mistaken for a completed answer. The socket path stays for the
+caller to check that listing did not unlink a connected peer. -/
+def infoServer (socketPath readyPath mode : String) : IO UInt32 := do
+  let lfd ← Linger.Posix.unixListen socketPath
+  Linger.Posix.setNonblock lfd
+  try
+    IO.FS.writeFile readyPath "ready"
+    for _ in [:2] do
+      let deadline := (← Linger.Posix.monotonicMs) + 5000
+      let mut peer : Option UInt32 := none
+      while peer.isNone && (← Linger.Posix.monotonicMs) < deadline do
+        let fd ← Linger.Posix.accept lfd
+        if fd ≥ 0 then
+          peer := some fd.toUInt64.toUInt32
+        else
+          IO.sleep 20
+      let some fd := peer | return 1
+      try
+        let ready ← Linger.Posix.poll #[fd] #[Linger.Posix.POLLIN] 2000
+        if ready[0]! == 0 then
+          return 1
+        let _ ← Linger.Posix.read fd 65536
+        let _ ←
+          try
+            if mode != "empty" then
+              Linger.Runtime.Client.sendMsg fd
+                  (.infoReply "pid\t1\ncmd\tfixture\nlabel.partial\tvalue\n".toUTF8.toList)
+            match mode with
+            | "eof" =>
+              pure ()
+            | "timeout" =>
+              IO.sleep 2400
+            | "refused" =>
+              Linger.Runtime.Client.sendMsg fd (.err "info refused\x1b[31m".toUTF8.toList)
+            | "malformed" =>
+              Linger.Posix.writeAll fd
+                  (ByteArray.mk
+                    ((0 : UInt8) ::
+                        Linger.Core.Wire.writeU32
+                          (UInt32.ofNat (Linger.Core.Wire.maxPayload + 1))).toArray)
+            | "exited" =>
+              Linger.Runtime.Client.sendMsg fd (.exited 17)
+            | "utf8" =>
+              Linger.Runtime.Client.sendMsg fd (.infoReply [0xFF])
+              Linger.Runtime.Client.sendMsg fd .done
+            | "record" =>
+              Linger.Runtime.Client.sendMsg fd (.infoReply "broken record\n".toUTF8.toList)
+              Linger.Runtime.Client.sendMsg fd .done
+            | "cap" =>
+              let fieldStart := "padding\t".toUTF8.toList
+              let payload :=
+                fieldStart ++
+                  List.replicate (Linger.Core.Wire.maxPayload - fieldStart.length - 1)
+                    (UInt8.ofNat 120) ++
+                  [10]
+              for _ in [:Linger.Runtime.Cli.infoReplyCap / Linger.Core.Wire.maxPayload + 1] do
+                Linger.Runtime.Client.sendMsg fd (.infoReply payload)
+              Linger.Runtime.Client.sendMsg fd .done
+            | "complete" =>
+              Linger.Runtime.Client.sendMsg fd (.infoReply "label.second\tanother\n".toUTF8.toList)
+              Linger.Runtime.Client.sendMsg fd .done
+            | "empty" =>
+              Linger.Runtime.Client.sendMsg fd .done
+            | _ =>
+              return 1
+          catch _ =>
+            -- A client may reject the frame and close before the last write.
+            pure ()
+        pure ()
+      finally
+        Linger.Posix.close fd
+    return 0
+  finally
+    Linger.Posix.close lfd
+
+def checkInfo (e : Env) (mode : String) (error : Option String) : IO Nat := do
+  let name := s!"info-{mode}"
+  let socketPath := s!"{e.dir}/{name}.sock"
+  let readyPath := s!"{e.dir}/{name}.ready"
+  let self ← IO.appPath
+  let server ←
+    IO.Process.spawn
+        { cmd := self.toString, args := #["--info-server", socketPath, readyPath, mode],
+          stdout := .null, stderr := .piped }
+  try
+    unless (← waitFor 5000 (System.FilePath.pathExists readyPath)) do
+      throw (IO.userError s!"{mode} info server did not become ready")
+    let (rc, out, err) ← e.cli #["get", name]
+    let (lrc, listing, _) ← e.cli #["ls", "--porcelain"]
+    let serverRc ← waitProcess server 5000
+    let recs := records listing
+    let pathKept ← System.FilePath.pathExists socketPath
+    match error with
+    | some why =>
+      let getCheck ←
+        expect (rc == 1 && out.isEmpty && has err why && !has err "\x1b")
+            s!"get rejects {mode} info without printing partial labels"
+      let listCheck ←
+        expect
+            (serverRc == some 0 && lrc == 0 && pathKept && recs.contains ("name", name) &&
+              recs.contains ("state", "live") &&
+              recs.contains ("status", Linger.Core.Status.name .unknown) &&
+              !recs.any (fun kv => kv.1 == "cmd" || kv.1.startsWith "label."))
+            s!"listing retains {mode} info peer as live/unknown without partial fields"
+      return getCheck + listCheck
+    | none =>
+      let expected := if mode == "empty" then "" else "partial=value\nsecond=another\n"
+      return ←
+          expect (serverRc == some 0 && rc == 0 && out == expected && err.isEmpty)
+              s!"get accepts {mode} info terminated by done"
+  finally
+    try
+      if (← server.tryWait).isNone then
+        server.kill
+        let _ ← server.wait
+    catch _ =>
+      pure () -- waitProcess already reaped it.
+    IO.FS.removeFile socketPath
+    IO.FS.removeFile readyPath
+
 def run : IO UInt32 := do
   let e ← Env.make "agent"
   let mut f := 0
+  for (mode, why) in
+    [("eof", "connection lost"), ("timeout", "no reply"), ("refused", "info refused"),
+      ("malformed", "invalid response"), ("exited", "ended before"), ("utf8", "invalid UTF-8"),
+      ("record", "invalid info record"), ("cap", "info reply exceeds")] do
+    f := f + (← checkInfo e mode (some why))
+  f := f + (← checkInfo e "complete" none)
+  f := f + (← checkInfo e "empty" none)
   -- ── Step 1: info ──────────────────────────────────────────────────────────
   let _ ← e.cli #["run", "ag", "true"] -- upsert a headless session (default shell)
   IO.sleep 1500

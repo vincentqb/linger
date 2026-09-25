@@ -223,10 +223,10 @@ say "5. reboot resume"
 suite resume 15
 
 say "6. overview listing (bare linger / ls)"
-suite overview 8
+suite overview 18
 
 say "7. remote sessions over ssh"
-suite remote 11
+suite remote 18
 
 say "8. adverse timing (busy daemon listing, name-ownership race)"
 suite robust 18
@@ -241,7 +241,7 @@ say "11. status column (unread / seen transitions)"
 suite status 5
 
 say "12. agent verbs (info / capture / send - / resize)"
-suite agent 28
+suite agent 46
 
 say "13. watch (read-only mirror: geometry, keyboard, hand-back, seen)"
 suite watch 18

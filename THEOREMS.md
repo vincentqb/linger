@@ -153,6 +153,14 @@ over the daemon's whole life: `onMsg_outSeq` (traffic cannot forge
 activity) and `run_lookSeq_le` (the read mark never overtakes). The
 runtime half is pinned by `E2E/Agent.lean`.
 
+An `info` prefix is not a completed answer. The CLI accepts fields only after
+`done`; disconnects, timeouts, malformed frames or records, invalid UTF-8,
+explicit refusal and excess reply bytes return an error. A connected peer with
+a failed answer still has a live listing row, so querying it cannot unlink its
+socket. These IO contracts are checked by `E2E.Agent`, separately from the pure
+listing identity theorem. Remote attach sanitizes the session name before SSH
+joins the remote command for shell execution (`E2E.Remote`).
+
 ## Session identity: the kernel plus a proof
 
 `Daemon.serve` takes an exclusive `flock` on `<name>.lock` *before*
@@ -221,8 +229,8 @@ real terminals.
 ## What these theorems do not settle
 
 - **§Total covers the emulator, not the runtime.** `Linger/Runtime/*`
-  is `IO`; `parseLs` still uses `partial def`, and the explicit event loop
-  has no termination theorem.
+  is `IO`; its definitions no longer need `partial def`, but the explicit
+  event loop has no termination theorem.
   Runtime correctness rests on the live suites in `E2E/`; the
   pure/impure line is enforced by `tests/gates.sh`.
 - **§Bound bounds our buffers, not the OS's.** Both runtime byte queues

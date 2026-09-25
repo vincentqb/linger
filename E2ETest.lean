@@ -2,7 +2,7 @@ module
 
 public import E2E.Watch
 public import E2E.Status
-public import E2E.Overview
+public import E2E.Paths
 public import E2E.Graphics
 public import E2E.Agent
 public import E2E.Resume
@@ -28,7 +28,7 @@ Each suite prints `PASS <name>` / `FAIL <name>` per check and `FAILURES: <n>` la
 unknown name is an error, not a silent success. -/
 
 def suites : List (String × IO UInt32) :=
-  [("watch", E2E.Watch.run), ("status", E2E.Status.run), ("overview", E2E.Overview.run),
+  [("watch", E2E.Watch.run), ("status", E2E.Status.run), ("overview", E2E.Paths.run),
     ("graphics", E2E.Graphics.run), ("agent", E2E.Agent.run), ("resume", E2E.Resume.run),
     ("attach", E2E.Attach.run), ("robust", E2E.Robust.run), ("remote", E2E.Remote.run),
     ("terminal", E2E.Terminal.run), ("recipes", E2E.Recipes.run),
@@ -50,8 +50,12 @@ def main (args : List String) : IO UInt32 := do
     E2E.Terminal.probe result ready trigger
   | ["--winsize-probe", result] =>
     E2E.Resume.winsizeProbe result
+  | ["--paths-probe"] =>
+    E2E.Paths.probe
   | ["--malformed-server", socketPath, readyPath] =>
     E2E.Agent.malformedServer socketPath readyPath
+  | ["--info-server", socketPath, readyPath, mode] =>
+    E2E.Agent.infoServer socketPath readyPath mode
   | ["--stream-info-server", socketPath, readyPath] =>
     E2E.Robust.streamInfoServer socketPath readyPath
   | [name] =>
