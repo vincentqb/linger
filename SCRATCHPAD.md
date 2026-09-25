@@ -11485,3 +11485,18 @@ is only an identifier in test code. Renamed it `invalidNameSave`, reran the sour
 checks, then reran the complete foreground gate: recipe 15/15 and all 11 live
 suites green. The gate caught the naming slip before commit, which is the intended
 failure mode.
+
+## Step 0 notes — 2026-09-25
+
+Opened `specs/codebase-audit.md` for the requested whole-codebase audit. The
+starting `main` tree was clean at `3ddfb4b`; `./lake build` and
+`./lake build Theorems Tests` both pass. Three implementation audits have
+separate worktrees under `/tmp/linger-audit-20260925` (POSIX/C, VT, and
+renderer/checkpoint); a fourth reader checks Lean and formatter currency.
+The main writer owns runtime/session findings and all shared records and gates.
+
+The audit keeps the existing product contracts and settled non-goals. A useful
+negative result is preferable to speculative abstraction or removing an ABI
+wrapper merely to lower a count. Source and runtime evidence must agree with
+the pure statements; compiling a theorem is not evidence that its IO consumer
+actually feeds every required event back into the machine.

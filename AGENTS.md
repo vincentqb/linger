@@ -15,10 +15,10 @@ worklog), `specs/archive/` (closed build records), the comments in
 
 ## Where things stand — read this first after any compaction
 
-1. No spec is in flight. The last one closed on 2026-09-17
-   (`specs/archive/tmux-resurrect-recipe.md`, a one-step local fish
-   recipe import). New work opens a new `specs/<slug>.md`, names itself
-   here, and keeps the live count at one; every behavioral fix starts
+1. `specs/codebase-audit.md` is in flight (2026-09-25): audit the
+   product contracts, proof coverage, VT factoring, POSIX boundary and
+   compatible Lean features; fix verified findings and integrate on
+   `main`. Keep the live spec count at one; every behavioral fix starts
    with a failing check and every deletion survives the full verifier
    stack.
 2. `SCRATCHPAD.md` — append-only worklog: proof recipes, measurements,
