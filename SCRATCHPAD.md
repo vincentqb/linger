@@ -11782,3 +11782,31 @@ These ran in a disposable tracked fixture; receipts are
 Validation: both required builds, formatting, source gates, semantic coverage,
 generated C ABI and the full foreground verifier pass. The integrated receipt
 is `step7-verifier.log`. No live-suite count changed in this step.
+
+## Step 8 notes — 2026-09-25
+
+SM/RM mode dispatch previously used only the first collected parameter. It now
+folds the existing single-mode transition over the entire list, in wire order.
+This matters for ordinary insertion mode, DEC modes, competing mouse modes,
+saved state and repeated alternate-screen transitions. Six small regressions
+failed before the change. The new helper remains private to the checked VT
+surface.
+
+`setModes_append`, its empty/cons/singleton equations and its invariants name the
+actual fold. Footprint theorems now exclude every origin/alternate selector in
+the batch rather than inspecting its first entry. Fixed emitted sequences use
+single-mode compatibility lemmas. All existing receiver-quantified grid, modes,
+pen, cursor, history, tabs and parser guarantees retain their stated assumptions
+and conclusions; no proof budget was raised.
+
+Break verification: restoring first-parameter-only dispatch fails the six
+regressions and the fold equation. Reversing the parameter list fails ordering
+fixtures and batch composition. Clearing pending state outside the fold leaves
+the examples green but fails the empty/singleton state guarantees. Every mutant
+was restored; the receipts are `vt/.lake/vt-audit/modes-{red,break-first-only,
+break-order,break-single-state}.log` under the audit directory.
+
+Validation: `./lake build`, `./lake build Theorems Tests`, formatting, source
+gates, semantic coverage, generated C ABI and the full foreground verifier
+pass. Parent receipts are `step8-build.log`, `step8-proofs-tests.log` and
+`step8-verifier.log`. No live-suite count changed.

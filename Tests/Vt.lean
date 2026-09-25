@@ -59,6 +59,53 @@ example :
       true := by
   native_decide
 
+/-- RM applies both DECCKM and DECAWM, including the visible no-wrap effect. -/
+example :
+    (let v := screen 3 2 "\x1b[?1h\x1b[?1;7labcd"
+     !v.modes.appCursor && !v.modes.wrap && rowStr v 0 == "abd" && v.cursor.y == 0) =
+      true := by
+  native_decide
+
+/-- SM applies every private mode, even after an unknown or omitted parameter. -/
+example :
+    (let v := screen 10 6 "\x1b[2;5r\x1b[?7;25l\x1b[?9999;;1;7;25;1004;1006;2004;6h"
+     v.modes.appCursor && v.modes.wrap && v.modes.cursorVisible &&
+       v.modes.focusEvents && v.modes.mouseSgr && v.modes.bracketedPaste &&
+       v.modes.origin && v.cursor.y == 1) = true := by
+  native_decide
+
+/-- Standard SM reaches IRM after an unknown parameter; insertion moves cells. -/
+example :
+    (let v := screen 5 2 "abc\r\x1b[9999;4hX"
+     v.modes.insert && rowStr v 0 == "Xabc") =
+      true := by
+  native_decide
+
+/-- Standard RM reaches IRM too, returning printing to replacement. -/
+example :
+    (let v := screen 5 2 "abc\r\x1b[4h\x1b[9999;4lX"
+     !v.modes.insert && rowStr v 0 == "Xbc") =
+      true := by
+  native_decide
+
+/-- Mode order is observable: the last requested mouse mode wins, and DECOM
+homes the cursor before a following DECSC saves it. -/
+example :
+    (let v := screen 10 6 "\x1b[2;5r\x1b[4;4H\x1b[?1000;1003;1002;6;1048h"
+     v.modes.mouse == 1002 && v.modes.origin &&
+       v.cursor.x == 0 && v.cursor.y == 1 &&
+       v.saved.cur.x == 0 && v.saved.cur.y == 1) = true := by
+  native_decide
+
+/-- A later screen switch takes effect; repeated 1049 still uses the existing
+idempotent enter/leave behavior and preserves the original main screen. -/
+example :
+    (let v := screen 10 3 "main\x1b[?1;1049;1049halt"
+     let w := feedStr v "\x1b[?1;1049;1049l"
+     v.inAlt && rowStr v 0 == "alt" && !w.inAlt &&
+       !w.modes.appCursor && rowStr w 0 == "main" && w.cursor.x == 4) = true := by
+  native_decide
+
 /-- CUP is 1-based; ED 2 clears. -/
 example : (let v := screen 10 4 "xxxx\x1b[2J\x1b[3;2Hok"
            rowStr v 0 == "" && rowStr v 2 == " ok"

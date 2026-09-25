@@ -343,9 +343,8 @@ claim true, so the hypothesis is discharged where the bytes are chosen rather th
 assumed about the parser.
 
 Turning this into `Keeps (modesAnsi v)` needs one more bridge — that the digits
-the emitter writes are the number the parser accumulates (`csi_digits_value`) — so
-that `s.arg 0 0` can be identified with the emitted mode. That bridge exists for
-the pen and cursor rungs and is the next step here. -/
+the emitter writes are the number the parser accumulates (`csi_digits_value`) —
+and that its final collector contains exactly that one parameter. -/
 theorem grid_setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool)
     (h47 : n ≠ 47) (h1047 : n ≠ 1047) (h1049 : n ≠ 1049) :
     (v.setMode priv n on).grid = v.grid := by
@@ -361,6 +360,15 @@ theorem grid_setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool)
       | (split <;> rfl)
   · split
     all_goals rfl
+
+/-- Every requested mode must preserve the grid; a later screen switch matters
+just as much as the first parameter. -/
+theorem grid_setModes (v : Vt) (priv : Bool) (ps : List (Nat × Bool)) (on : Bool)
+    (h : ∀ p ∈ ps, p.1 ≠ 47 ∧ p.1 ≠ 1047 ∧ p.1 ≠ 1049) :
+    (v.setModes priv ps on).grid = v.grid :=
+  setModes_invariant (fun w => w.grid = v.grid) priv on ps
+    (fun w p hp hw =>
+      (grid_setMode w priv p.1 on (h p hp).1 (h p hp).2.1 (h p hp).2.2).trans hw) v rfl
 
 end Linger.Core.Render
 
@@ -607,10 +615,9 @@ open Linger.Core.Vt
 
 `modesAnsi` is the one construct whose grid claim depends on *which number* it
 emitted: `grid_setMode` holds for every mode except the three that switch screens.
-The emitter never emits those (its allowlist), but the dispatch reads
-`s.arg 0 0` — the number the **parser** accumulated — so the two have to be
-identified. `accDigits_digits` already says the accumulator inverts `digits`; what
-is added here is carrying that through the record equation the grid layer needs. -/
+The emitter never emits those (its allowlist), and its collector contains exactly
+one parameter. `accDigits_digits` already says the accumulator inverts `digits`;
+the record equation carries both the value and singleton shape to the grid layer. -/
 
 /-- A digit run, as a record equation *and* with its accumulated value — the two
 halves that `csi_param_run_inter` and `csi_digits_value` each give separately. -/
@@ -627,25 +634,23 @@ theorem csi_digits_run_eq (n : Nat) {v : Vt} {s : CsiState} (hg : v.pstate = .cs
   exact ⟨s1, heq, by rw [hid]; exact hcur2, by rw [hid]; exact hhave,
     by rw [hid]; exact hpar, by rw [hid]; exact hint, by rw [hid]; exact hsub⟩
 
-theorem grid_csiDispatch_sm (v : Vt) (s : CsiState) (h47 : s.arg 0 0 ≠ 47)
-    (h1047 : s.arg 0 0 ≠ 1047) (h1049 : s.arg 0 0 ≠ 1049) :
+theorem grid_csiDispatch_sm (v : Vt) (s : CsiState)
+    (h : ∀ p ∈ s.params.toList, p.1 ≠ 47 ∧ p.1 ≠ 1047 ∧ p.1 ≠ 1049) :
     (v.csiDispatch s 0x68).grid = v.grid := by
   by_cases hi : s.ignore = true
   · simp [Vt.csiDispatch, hi]
   · unfold Vt.csiDispatch
     rw [ite_eq_right hi]
-    show (v.setMode (s.priv == 0x3F) (s.arg 0 0) true).grid = v.grid
-    exact grid_setMode v _ _ _ h47 h1047 h1049
+    exact grid_setModes v _ _ true h
 
-theorem grid_csiDispatch_rm (v : Vt) (s : CsiState) (h47 : s.arg 0 0 ≠ 47)
-    (h1047 : s.arg 0 0 ≠ 1047) (h1049 : s.arg 0 0 ≠ 1049) :
+theorem grid_csiDispatch_rm (v : Vt) (s : CsiState)
+    (h : ∀ p ∈ s.params.toList, p.1 ≠ 47 ∧ p.1 ≠ 1047 ∧ p.1 ≠ 1049) :
     (v.csiDispatch s 0x6C).grid = v.grid := by
   by_cases hi : s.ignore = true
   · simp [Vt.csiDispatch, hi]
   · unfold Vt.csiDispatch
     rw [ite_eq_right hi]
-    show (v.setMode (s.priv == 0x3F) (s.arg 0 0) false).grid = v.grid
-    exact grid_setMode v _ _ _ h47 h1047 h1049
+    exact grid_setModes v _ _ false h
 
 /-- The shared tail for a **single-parameter** sequence, carrying the accumulated
 number out so a caller can discharge a hypothesis about it. The digit run is done
@@ -654,7 +659,7 @@ means writing it the way the elaborator happened to build it, and `{}` and
 `default` are not the same term. -/
 theorem keeps_csi_digits_tail (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
     (h2 : final ≤ 0x7E) (hn : 0 < n) (hlt : n < 65535)
-    (hgrid : ∀ (w : Vt) (t : CsiState), t.arg 0 0 = n →
+    (hgrid : ∀ (w : Vt) (t : CsiState) (sub : Bool), t.params = #[(n, sub)] →
       (w.csiDispatch t final).grid = w.grid)
     {v : Vt} {s : CsiState} (hg : v.pstate = .csi s) (hu : v.u8need = 0)
     (hi : s.inter = 0) (hcur : s.cur = 0) (hpar : s.params = #[]) :
@@ -670,18 +675,15 @@ theorem keeps_csi_digits_tail (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
   rw [ite_eq_left (by simpa using hhave), ite_eq_right (by rw [hpar', hpar]; simp)]
   dsimp only
   refine ⟨rfl, by rw [un_csiDispatch]; simpa using hu, ?_⟩
-  refine hgrid _ _ ?_
-  rw [show ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState)
-      = { s' with params := #[(n, s'.curSub)] } from by
-    rw [hpar', hpar, hcur']
-    rw [show min (min n 65535) 65535 = n from by omega]
-    rfl]
-  rw [arg_of_one, ite_eq_right (by omega)]
+  apply hgrid _ _ s'.curSub
+  dsimp only
+  rw [hpar', hpar, hcur', show min (min n 65535) 65535 = n from by omega]
+  rfl
 
 /-- `CSI ? n <final>` with a grid fact that may depend on `n`. -/
 theorem keeps_csiPriv_arg (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
     (h2 : final ≤ 0x7E) (hn : 0 < n) (hlt : n < 65535)
-    (hgrid : ∀ (w : Vt) (t : CsiState), t.arg 0 0 = n →
+    (hgrid : ∀ (w : Vt) (t : CsiState) (sub : Bool), t.params = #[(n, sub)] →
       (w.csiDispatch t final).grid = w.grid) :
     Keeps (csiPriv n final) := by
   intro v hg hu
@@ -702,7 +704,7 @@ theorem keeps_csiPriv_arg (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
 /-- …and the non-private form, for `modesAnsi`'s one ANSI emit (`CSI 4 h`, IRM). -/
 theorem keeps_csiNum_arg (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
     (h2 : final ≤ 0x7E) (hn : 0 < n) (hlt : n < 65535)
-    (hgrid : ∀ (w : Vt) (t : CsiState), t.arg 0 0 = n →
+    (hgrid : ∀ (w : Vt) (t : CsiState) (sub : Bool), t.params = #[(n, sub)] →
       (w.csiDispatch t final).grid = w.grid) :
     Keeps (csiNum n final) := by
   intro v hg hu
@@ -719,20 +721,18 @@ theorem keeps_modeSet (n : Nat) (on : Bool) (hn : 0 < n) (hlt : n < 65535)
   unfold modeSet
   cases on
   · exact keeps_csiPriv_arg n 0x6C (by decide) (by decide) hn hlt
-      (fun w t ha => grid_csiDispatch_rm w t (by rw [ha]; exact h47)
-        (by rw [ha]; exact h1047) (by rw [ha]; exact h1049))
+      (fun w t sub ha => grid_csiDispatch_rm w t
+        (by simpa [ha] using And.intro h47 (And.intro h1047 h1049)))
   · exact keeps_csiPriv_arg n 0x68 (by decide) (by decide) hn hlt
-      (fun w t ha => grid_csiDispatch_sm w t (by rw [ha]; exact h47)
-        (by rw [ha]; exact h1047) (by rw [ha]; exact h1049))
+      (fun w t sub ha => grid_csiDispatch_sm w t
+        (by simpa [ha] using And.intro h47 (And.intro h1047 h1049)))
 
 theorem keeps_irm (on : Bool) : Keeps (csiNum 4 (if on then 0x68 else 0x6C)) := by
   cases on
   · exact keeps_csiNum_arg 4 0x6C (by decide) (by decide) (by omega) (by omega)
-      (fun w t ha => grid_csiDispatch_rm w t (by rw [ha]; omega) (by rw [ha]; omega)
-        (by rw [ha]; omega))
+      (fun w t sub ha => grid_csiDispatch_rm w t (by simp [ha]))
   · exact keeps_csiNum_arg 4 0x68 (by decide) (by decide) (by omega) (by omega)
-      (fun w t ha => grid_csiDispatch_sm w t (by rw [ha]; omega) (by rw [ha]; omega)
-        (by rw [ha]; omega))
+      (fun w t sub ha => grid_csiDispatch_sm w t (by simp [ha]))
 
 /-- **The mode replay writes no cell.** `modesAnsi`'s allowlist is what discharges
 the screen-switch hypotheses: every number it emits is either a literal in the

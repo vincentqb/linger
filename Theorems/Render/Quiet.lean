@@ -171,15 +171,9 @@ theorem org_setMode_decom_off (v : Vt) : (v.setMode true 6 false).modes.origin =
   rw [Linger.Core.Vt.org_moveTo]
 
 theorem org_csiDispatch_decom_off (v : Vt) (s : CsiState) (hi : s.ignore = false)
-    (hpriv : (s.priv == 0x3F) = true) (h6 : s.arg 0 0 = 6) :
+    (hpriv : (s.priv == 0x3F) = true) (h6 : s.params.toList.any (fun p => p.1 == 6) = true) :
     (v.csiDispatch s 0x6C).modes.origin = false := by
-  unfold Vt.csiDispatch
-  rw [ite_eq_right
-      (by
-        rw [hi]; simp)]
-  show (v.setMode (s.priv == 0x3F) (s.arg 0 0) false).modes.origin = false
-  rw [hpriv, h6]
-  exact org_setMode_decom_off v
+  rw [csiDispatch_rm _ _ hi, org_setModes_eq, ite_eq_left ⟨hpriv, h6⟩]
 
 theorem org_csiFinish_decom_off (v : Vt) (s : CsiState) (hi : s.ignore = false)
     (hpriv : (s.priv == 0x3F) = true) (hparams : s.params = #[]) (hhave : s.haveCur = true)
@@ -195,7 +189,7 @@ theorem org_csiFinish_decom_off (v : Vt) (s : CsiState) (hi : s.ignore = false)
         { s with params := #[(6, s.curSub)] }
       from by
       rw [hparams, hcur]; rfl]
-  rw [arg_of_one, ite_eq_right (by decide)]
+  rfl
 
 theorem org_step_of_csi_decom_off {v : Vt} {s : CsiState} (hg : v.pstate = .csi s)
     (hi : s.ignore = false) (hpriv : (s.priv == 0x3F) = true) (hparams : s.params = #[])

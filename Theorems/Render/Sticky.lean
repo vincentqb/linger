@@ -290,9 +290,9 @@ theorem stick_csi_arg_tail (n : Nat) (final : UInt8) (f : Sticky → Sticky) (hn
 theorem smap_csi_one_arg (n : Nat) (final : UInt8) (priv : Bool) (f : Sticky → Sticky) (hn : 0 < n)
     (hlt : n < 65535) (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E)
     (hst :
-      ∀ (w : Vt) (t : CsiState),
+      ∀ (w : Vt) (t : CsiState) (sub : Bool),
         t.priv = (if priv then (0x3F : UInt8) else 0) →
-          t.ignore = false → t.arg 0 0 = n → stick (w.csiDispatch t final) = f (stick w)) :
+          t.ignore = false → t.params = #[(n, sub)] → stick (w.csiDispatch t final) = f (stick w)) :
     SMap f (if priv then csiPriv n final else csiNum n final) := by
   intro v hg
   cases priv
@@ -303,10 +303,10 @@ theorem smap_csi_one_arg (n : Nat) (final : UInt8) (priv : Bool) (f : Sticky →
     obtain ⟨ht, hp⟩ :=
       stick_csi_arg_tail n final f hn hlt h1 h2 (s0 := ({} : CsiState)) rfl rfl (by decide) rfl rfl
         (fun u t hpv hig hpar =>
-          hst u t
+          hst u t false
             (by
               rw [hpv]; rfl)
-            hig (by rw [arg_of_one_of 0 hpar, ite_eq_right (by omega)]))
+            hig (by simpa using hpar))
         hc hcu
     exact ⟨hp, by rw [ht, hcs]⟩
   · rw [ite_eq_left rfl,
@@ -318,10 +318,10 @@ theorem smap_csi_one_arg (n : Nat) (final : UInt8) (priv : Bool) (f : Sticky →
       stick_csi_arg_tail n final f hn hlt h1 h2 (s0 := ({ priv := 0x3F } : CsiState)) rfl rfl
         (by decide) rfl rfl
         (fun u t hpv hig hpar =>
-          hst u t
+          hst u t false
             (by
               rw [hpv]; rfl)
-            hig (by rw [arg_of_one_of 0 hpar, ite_eq_right (by omega)]))
+            hig (by simpa using hpar))
         hc hcu
     exact ⟨hp, by rw [ht, hcs]⟩
 
@@ -330,25 +330,25 @@ field**, and `stSetMode` says which. -/
 theorem smap_modeSet (n : Nat) (on : Bool) (hn : 0 < n) (hlt : n < 65535) :
     SMap (stSetMode n on) (modeSet n on) := by
   have key :
-    ∀ (w : Vt) (t : CsiState),
+    ∀ (w : Vt) (t : CsiState) (sub : Bool),
       t.priv = (0x3F : UInt8) →
         t.ignore = false →
-        t.arg 0 0 = n →
+        t.params = #[(n, sub)] →
         stick (w.csiDispatch t (if on then 0x68 else 0x6C)) = stSetMode n on (stick w) := by
-    intro w t hpv hig harg
+    intro w t sub hpv hig hpar
     have hpb : (t.priv == 0x3F) = true := by
       rw [hpv]; rfl
     cases on
     · rw [show (if (false : Bool) then (0x68 : UInt8) else 0x6C) = 0x6C from rfl,
-        csiDispatch_rm w t hig, harg, hpb]
+        csiDispatch_rm_one w t n sub hig hpar, hpb]
       exact stick_setMode w n false
     · rw [show (if (true : Bool) then (0x68 : UInt8) else 0x6C) = 0x68 from rfl,
-        csiDispatch_sm w t hig, harg, hpb]
+        csiDispatch_sm_one w t n sub hig hpar, hpb]
       exact stick_setMode w n true
   have h :=
     smap_csi_one_arg n (if on then 0x68 else 0x6C) true (stSetMode n on) hn hlt
       (by cases on <;> decide) (by cases on <;> decide)
-      (fun w t hpv hig harg => key w t (by simpa using hpv) hig harg)
+      (fun w t sub hpv hig hpar => key w t sub (by simpa using hpv) hig hpar)
   rw [ite_eq_left rfl] at h
   exact h
 
@@ -358,15 +358,15 @@ theorem smap_id_irm (on : Bool) : SMap id (csiNum 4 (if on then 0x68 else 0x6C))
   have h :=
     smap_csi_one_arg 4 (if on then 0x68 else 0x6C) false id (by decide) (by decide)
       (by cases on <;> decide) (by cases on <;> decide)
-      (fun w t hpv hig harg => by
+      (fun w t sub hpv hig hpar => by
         cases on
         · rw [show (if (false : Bool) then (0x68 : UInt8) else 0x6C) = 0x6C from rfl,
-            csiDispatch_rm w t hig,
+            csiDispatch_rm_one w t 4 sub hig hpar,
             show (t.priv == 0x3F) = false from by
               rw [show t.priv = 0 from by simpa using hpv]; rfl]
           exact stick_setMode_plain w _ _
         · rw [show (if (true : Bool) then (0x68 : UInt8) else 0x6C) = 0x68 from rfl,
-            csiDispatch_sm w t hig,
+            csiDispatch_sm_one w t 4 sub hig hpar,
             show (t.priv == 0x3F) = false from by
               rw [show t.priv = 0 from by simpa using hpv]; rfl]
           exact stick_setMode_plain w _ _)

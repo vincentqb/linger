@@ -194,6 +194,33 @@ theorem invariant_foldl {α β : Type} (P : β → Prop) (f : β → α → β)
   | [], _, h => h
   | a :: as, acc, h => invariant_foldl P f hf as (f acc a) (hf acc a h)
 
+/-- Ordered mode batches compose as whole states, including cursor saves and
+screen switches. Splitting a batch never changes which mode sees which state. -/
+theorem setModes_append (v : Vt) (priv : Bool) (xs ys : List (Nat × Bool)) (on : Bool) :
+    v.setModes priv (xs ++ ys) on = (v.setModes priv xs on).setModes priv ys on := by
+  simp only [Vt.setModes, List.foldl_append]
+
+theorem setModes_nil (v : Vt) (priv on : Bool) : v.setModes priv [] on = v := rfl
+
+theorem setModes_cons (v : Vt) (priv : Bool) (p : Nat × Bool) (ps : List (Nat × Bool)) (on : Bool) :
+    v.setModes priv (p :: ps) on = (v.setMode priv p.1 on).setModes priv ps on := rfl
+
+/-- A singleton batch retains the full single-mode behavior, without a
+restriction on the mode number or on the incoming emulator state. -/
+theorem setModes_one (v : Vt) (priv : Bool) (n : Nat) (sub on : Bool) :
+    v.setModes priv [(n, sub)] on = v.setMode priv n on := rfl
+
+/-- A batch preserves any invariant preserved by every requested mode. Membership
+matters for conditional frames such as excluding screen-switch parameters. -/
+theorem setModes_invariant (P : Vt → Prop) (priv on : Bool) (ps : List (Nat × Bool))
+    (hstep : ∀ w p, p ∈ ps → P w → P (w.setMode priv p.1 on)) (v : Vt) (h : P v) :
+    P (v.setModes priv ps on) := by
+  induction ps generalizing v with
+  | nil => exact h
+  | cons p ps ih =>
+    rw [setModes_cons]
+    exact ih (fun w q hq => hstep w q (List.mem_cons_of_mem p hq)) _ (hstep v p (by simp) h)
+
 end Linger.Core.Vt
 
 namespace Linger.Core.Vt.Good
@@ -476,6 +503,10 @@ theorem setMode {v : Vt} (priv : Bool) (n : Nat) (on : Bool) (h : Good v) :
           | exact ⟨cp, rp, cl, rl, cx, cy, cx, cy, ac, tl, bl, sb, u8, hcsi, hosc⟩
           | exact ⟨cp, rp, cl, rl, sx, sy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩)
 
+theorem setModes {v : Vt} (priv : Bool) (ps : List (Nat × Bool)) (on : Bool) (h : Good v) :
+    Good (v.setModes priv ps on) :=
+  setModes_invariant Good priv on ps (fun _ p _ hh => setMode priv p.1 on hh) v h
+
 /-! ## CSI dispatch -/
 
 theorem csiDispatch {v : Vt} (s : CsiState) (final : UInt8) (h : Good v) :
@@ -500,7 +531,7 @@ theorem csiDispatch {v : Vt} (s : CsiState) (final : UInt8) (h : Good v) :
       | exact deleteLines _ h'
       | exact deleteChars _ h'
       | exact eraseChars _ h'
-      | exact setMode _ _ _ h'
+      | exact setModes _ _ _ h'
       | exact good_foldl (fun v' i hh => tab hh) _ h'
       | exact good_foldl (fun v' i hh => scrollUp hh) _ h'
       | exact good_foldl (fun v' i hh => scrollDown hh) _ h'
@@ -1454,6 +1485,11 @@ theorem un_setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool) :
   all_goals try simp only [un_moveTo, un_enterAlt, un_leaveAlt]
   all_goals rfl
 
+theorem un_setModes (v : Vt) (priv : Bool) (ps : List (Nat × Bool)) (on : Bool) :
+    (v.setModes priv ps on).u8need = v.u8need :=
+  un_foldl (fun w (p : Nat × Bool) => w.setMode priv p.1 on) (fun w p => un_setMode w priv p.1 on)
+    ps v
+
 theorem un_printWrap (v : Vt) : v.printWrap.u8need = v.u8need := by rw [frame_printWrap]
 
 theorem un_printWideWrap (v : Vt) (w : Nat) : (v.printWideWrap w).u8need = v.u8need := by
@@ -1509,7 +1545,7 @@ theorem un_csiDispatch (v : Vt) (s : CsiState) (final : UInt8) :
     try
       simp only [un_insertChars, un_moveRel, un_carriageReturn, un_setCol, un_moveTo,
         un_eraseScreen, un_eraseLine, un_insertLines, un_deleteLines, un_deleteChars, un_eraseChars,
-        un_setMode, un_applySgr]
+        un_setModes, un_applySgr]
   all_goals
     first
     | rfl
@@ -1678,6 +1714,11 @@ theorem ua_setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool) :
   all_goals try simp only [ua_moveTo, ua_enterAlt, ua_leaveAlt]
   all_goals rfl
 
+theorem ua_setModes (v : Vt) (priv : Bool) (ps : List (Nat × Bool)) (on : Bool) :
+    (v.setModes priv ps on).u8acc = v.u8acc :=
+  ua_foldl (fun w (p : Nat × Bool) => w.setMode priv p.1 on) (fun w p => ua_setMode w priv p.1 on)
+    ps v
+
 theorem ua_printWrap (v : Vt) : v.printWrap.u8acc = v.u8acc := by rw [frame_printWrap]
 
 theorem ua_printWideWrap (v : Vt) (w : Nat) : (v.printWideWrap w).u8acc = v.u8acc := by
@@ -1720,7 +1761,7 @@ theorem ua_csiDispatch (v : Vt) (s : CsiState) (final : UInt8) :
     try
       simp only [ua_insertChars, ua_moveRel, ua_carriageReturn, ua_setCol, ua_moveTo,
         ua_eraseScreen, ua_eraseLine, ua_insertLines, ua_deleteLines, ua_deleteChars, ua_eraseChars,
-        ua_setMode, ua_applySgr]
+        ua_setModes, ua_applySgr]
   all_goals
     first
     | rfl
@@ -2030,6 +2071,11 @@ theorem dims_setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool) :
   all_goals try simp only [dims_moveTo, dims_enterAlt, dims_leaveAlt]
   all_goals rfl
 
+theorem dims_setModes (v : Vt) (priv : Bool) (ps : List (Nat × Bool)) (on : Bool) :
+    dims (v.setModes priv ps on) = dims v :=
+  dims_foldl (fun w (p : Nat × Bool) => w.setMode priv p.1 on)
+    (fun w p => dims_setMode w priv p.1 on) ps v
+
 theorem dims_printWrap (v : Vt) : dims v.printWrap = dims v := by
   rw [frame_printWrap]
   rfl
@@ -2089,7 +2135,7 @@ theorem dims_csiDispatch (v : Vt) (s : CsiState) (final : UInt8) :
     try
       simp only [dims_insertChars, dims_moveRel, dims_carriageReturn, dims_setCol, dims_moveTo,
         dims_eraseScreen, dims_eraseLine, dims_insertLines, dims_deleteLines, dims_deleteChars,
-        dims_eraseChars, dims_setMode, dims_applySgr]
+        dims_eraseChars, dims_setModes, dims_applySgr]
   all_goals
     first
     | rfl
@@ -2375,6 +2421,11 @@ theorem tsz_setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool) :
   all_goals try simp only [tsz_moveTo, tsz_enterAlt, tsz_leaveAlt]
   all_goals rfl
 
+theorem tsz_setModes (v : Vt) (priv : Bool) (ps : List (Nat × Bool)) (on : Bool) :
+    tsz (v.setModes priv ps on) = tsz v :=
+  tsz_foldl (fun w (p : Nat × Bool) => w.setMode priv p.1 on) (fun w p => tsz_setMode w priv p.1 on)
+    ps v
+
 theorem tsz_printWrap (v : Vt) : tsz v.printWrap = tsz v := by
   rw [frame_printWrap]
   rfl
@@ -2470,7 +2521,7 @@ theorem tsz_csiDispatch_ne_tbc {v : Vt} (s : CsiState) (final : UInt8) (h : fina
     try
       simp only [tsz_insertChars, tsz_moveRel, tsz_carriageReturn, tsz_setCol, tsz_moveTo,
         tsz_eraseScreen, tsz_eraseLine, tsz_insertLines, tsz_deleteLines, tsz_deleteChars,
-        tsz_eraseChars, tsz_setMode, tsz_applySgr]
+        tsz_eraseChars, tsz_setModes, tsz_applySgr]
   all_goals
     first
     | rfl
@@ -2720,10 +2771,41 @@ theorem org_setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool) (h : ¬(priv = 
     repeat' split
     all_goals rfl
 
-/-- `csiDispatch` preserves `origin` unless the sequence *is* a DECOM
-set/reset — i.e. private, with first parameter 6. -/
+/-- A mode batch preserves origin when none of its requested modes is DECOM. -/
+theorem org_setModes (v : Vt) (priv : Bool) (ps : List (Nat × Bool)) (on : Bool)
+    (h : ∀ p ∈ ps, ¬(priv = true ∧ p.1 = 6)) :
+    (v.setModes priv ps on).modes.origin = v.modes.origin :=
+  setModes_invariant (fun w => w.modes.origin = v.modes.origin) priv on ps
+    (fun w p hp hw => (org_setMode w priv p.1 on (h p hp)).trans hw) v rfl
+
+theorem org_setMode_eq (v : Vt) (priv : Bool) (n : Nat) (on : Bool) :
+    (v.setMode priv n on).modes.origin = if priv = true ∧ n = 6 then on else v.modes.origin := by
+  by_cases h : priv = true ∧ n = 6
+  · obtain ⟨hp, hn⟩ := h
+    subst priv; subst n
+    rw [ite_eq_left ⟨rfl, rfl⟩]
+    exact org_moveTo _ _ _
+  · rw [ite_eq_right h]
+    exact org_setMode v priv n on h
+
+/-- Any occurrence of private mode 6 sets origin to the batch's requested value.
+This covers repeated DECOM and DECOM after other modes, without a frame premise. -/
+theorem org_setModes_eq (v : Vt) (priv : Bool) (ps : List (Nat × Bool)) (on : Bool) :
+    (v.setModes priv ps on).modes.origin =
+      if priv = true ∧ ps.any (fun p => p.1 == 6) = true then on else v.modes.origin := by
+  induction ps generalizing v with
+  | nil => simp [setModes_nil]
+  | cons p ps ih =>
+    rw [setModes_cons, ih, org_setMode_eq, List.any_cons]
+    simp only [Bool.or_eq_true, beq_iff_eq]
+    by_cases hp : priv = true <;> by_cases hn : p.1 = 6 <;>
+      by_cases ht : ps.any (fun p => p.1 == 6) = true <;>
+      simp [hp, hn, ht]
+
+/-- `csiDispatch` preserves `origin` unless a private sequence requests DECOM
+somewhere in its parameters. The first parameter alone cannot establish this. -/
 theorem org_csiDispatch (v : Vt) (s : CsiState) (final : UInt8)
-    (h : ¬((s.priv == 0x3F) = true ∧ s.arg 0 0 = 6)) :
+    (h : ∀ p ∈ s.params.toList, ¬((s.priv == 0x3F) = true ∧ p.1 = 6)) :
     (v.csiDispatch s final).modes.origin = v.modes.origin := by
   unfold Vt.csiDispatch
   dsimp only
@@ -2736,7 +2818,7 @@ theorem org_csiDispatch (v : Vt) (s : CsiState) (final : UInt8)
   all_goals
     first
     | rfl
-    | exact org_setMode _ _ _ _ (fun hc => h ⟨hc.1, hc.2⟩)
+    | exact org_setModes _ _ _ _ h
     | exact org_foldl _ (fun w _ => org_tab w) _ _
     | exact org_foldl _ (fun w _ => org_scrollUp w) _ _
     | exact org_foldl _ (fun w _ => org_scrollDown w) _ _
@@ -2751,8 +2833,10 @@ theorem org_csiFinish (v : Vt) (s : CsiState) (final : UInt8) (hp : (s.priv == 0
     (v.csiFinish s final).modes.origin = v.modes.origin := by
   -- every record `csiFinish` builds keeps `priv`, so one hypothesis covers
   -- every dispatch site
-  have hnot : ∀ (t : CsiState), t.priv = s.priv → ¬((t.priv == 0x3F) = true ∧ t.arg 0 0 = 6) := by
-    intro t ht hc
+  have hnot :
+    ∀ (t : CsiState),
+      t.priv = s.priv → ∀ p ∈ t.params.toList, ¬((t.priv == 0x3F) = true ∧ p.1 = 6) := by
+    intro t ht p _ hc
     rw [ht, hp] at hc
     exact absurd hc.1 (by simp)
   unfold Vt.csiFinish
@@ -2878,9 +2962,8 @@ exactly the state `Render`'s private sequences reach: no pushed parameter,
 one pending accumulator, whose value is not 6.
 -/
 
-/-- The pending parameter is what `csiFinish` pushes, so it is what
-`arg 0` reads back — and if it is not 6, no `h`/`l` final can be DECOM,
-marker or no marker. -/
+/-- With no previously pushed parameters, the pending parameter is the only
+mode `csiFinish` can request. If it is not 6, no `h`/`l` final can be DECOM. -/
 theorem org_csiFinish_pending (v : Vt) (s : CsiState) (final : UInt8) (hparams : s.params = #[])
     (hhave : s.haveCur = true) (hne : min s.cur 65535 ≠ 6) :
     (v.csiFinish s final).modes.origin = v.modes.origin := by
@@ -2890,13 +2973,10 @@ theorem org_csiFinish_pending (v : Vt) (s : CsiState) (final : UInt8) (hparams :
   dsimp only
   rw [ite_eq_left hhave, ite_eq_right hsize]
   refine org_csiDispatch _ _ _ ?_
-  rintro ⟨-, h6⟩
-  apply hne
-  rw [← h6]
-  unfold CsiState.arg
-  rw [hparams]
-  simp only [Array.push, Array.getD]
-  split <;> simp_all
+  intro p hp ⟨_, h6⟩
+  simp only [hparams, Array.toList_push, List.nil_append, List.mem_singleton] at hp
+  subst p
+  exact hne h6
 
 /-- `stepCsi` under the same knowledge: no branch can turn `origin` on. -/
 theorem org_stepCsi_pending (v : Vt) (s : CsiState) (b : UInt8) (hparams : s.params = #[])
@@ -4904,6 +4984,11 @@ theorem renderable_setMode {v : Vt} (h : Renderable v) (priv : Bool) (n : Nat) (
         | exact renderable_leaveAlt h _
         | exact renderable_congr h rfl rfl rfl rfl)
 
+theorem renderable_setModes {v : Vt} (h : Renderable v) (priv : Bool)
+    (ps : List (Nat × Bool)) (on : Bool) : Renderable (v.setModes priv ps on) :=
+  setModes_invariant Renderable priv on ps
+    (fun _ p _ hh => renderable_setMode hh priv p.1 on) v h
+
 /-! #### Dispatch, and the parser -/
 
 theorem renderable_csiDispatch {v : Vt} (h : Renderable v) (s : CsiState) (final : UInt8) :
@@ -4926,7 +5011,7 @@ theorem renderable_csiDispatch {v : Vt} (h : Renderable v) (s : CsiState) (final
       | exact renderable_deleteLines h _
       | exact renderable_deleteChars h _
       | exact renderable_eraseChars h _
-      | exact renderable_setMode h _ _ _
+      | exact renderable_setModes h _ _ _
       | exact renderable_foldl (fun u i hu => renderable_tab hu) _ _ h
       | exact renderable_foldl (fun u i hu => renderable_scrollUp hu) _ _ h
       | exact renderable_foldl (fun u i hu => renderable_scrollDown hu) _ _ h
@@ -6419,16 +6504,29 @@ One case-bash over every final byte, so that a new sequence in the emitter canno
 quietly acquire a sticky effect: the three finals that *can* have one are
 hypotheses, not omissions. -/
 
-/-- `SM` **is** `setMode`, as a state equation rather than a per-field one — which
-is what lets one walk serve every projection (`modes_csiDispatch_sm` is this at
-`modes`). -/
+/-- `SM` applies all parameters in order, as a state equation including every
+mode's side effects. A first-parameter equation would discard requested modes. -/
 theorem csiDispatch_sm (v : Vt) (s : CsiState) (hi : s.ignore = false) :
-    v.csiDispatch s 0x68 = v.setMode (s.priv == 0x3F) (s.arg 0 0) true := by
+    v.csiDispatch s 0x68 = v.setModes (s.priv == 0x3F) s.params.toList true := by
   unfold Vt.csiDispatch; rw [ite_eq_right (by rw [hi]; simp)]; rfl
 
 theorem csiDispatch_rm (v : Vt) (s : CsiState) (hi : s.ignore = false) :
-    v.csiDispatch s 0x6C = v.setMode (s.priv == 0x3F) (s.arg 0 0) false := by
+    v.csiDispatch s 0x6C = v.setModes (s.priv == 0x3F) s.params.toList false := by
   unfold Vt.csiDispatch; rw [ite_eq_right (by rw [hi]; simp)]; rfl
+
+/-- Single-mode emitters recover their exact old state equation from the full
+parameter list, not just from a fact about its first element. -/
+theorem csiDispatch_sm_one (v : Vt) (s : CsiState) (n : Nat) (sub : Bool)
+    (hi : s.ignore = false) (hp : s.params = #[(n, sub)]) :
+    v.csiDispatch s 0x68 = v.setMode (s.priv == 0x3F) n true := by
+  rw [csiDispatch_sm v s hi, hp]
+  exact setModes_one v _ n sub true
+
+theorem csiDispatch_rm_one (v : Vt) (s : CsiState) (n : Nat) (sub : Bool)
+    (hi : s.ignore = false) (hp : s.params = #[(n, sub)]) :
+    v.csiDispatch s 0x6C = v.setMode (s.priv == 0x3F) n false := by
+  rw [csiDispatch_rm v s hi, hp]
+  exact setModes_one v _ n sub false
 
 /-- `DECSTBM`, likewise as a state equation. -/
 theorem csiDispatch_stbm (v : Vt) (s : CsiState) (hi : s.ignore = false) (hp : s.priv = 0) :

@@ -453,6 +453,11 @@ theorem sb_setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool) :
   all_goals try simp only [sb_moveTo, sb_enterAlt, sb_leaveAlt]
   all_goals rfl
 
+theorem sb_setModes (v : Vt) (priv : Bool) (ps : List (Nat × Bool)) (on : Bool) :
+    (v.setModes priv ps on).sb = v.sb :=
+  setModes_invariant (fun w => w.sb = v.sb) priv on ps
+    (fun w p _ h => (sb_setMode w priv p.1 on).trans h) v rfl
+
 theorem sb_csiDispatch_cup (v : Vt) (s : CsiState) : (v.csiDispatch s 0x48).sb = v.sb := by
   by_cases hi : s.ignore = true
   · simp [Vt.csiDispatch, hi]
@@ -476,16 +481,14 @@ theorem sb_csiDispatch_sm (v : Vt) (s : CsiState) : (v.csiDispatch s 0x68).sb = 
   · simp [Vt.csiDispatch, hi]
   · unfold Vt.csiDispatch
     rw [ite_eq_right hi]
-    show (v.setMode (s.priv == 0x3F) (s.arg 0 0) true).sb = v.sb
-    rw [sb_setMode]
+    exact sb_setModes v _ _ true
 
 theorem sb_csiDispatch_rm (v : Vt) (s : CsiState) : (v.csiDispatch s 0x6C).sb = v.sb := by
   by_cases hi : s.ignore = true
   · simp [Vt.csiDispatch, hi]
   · unfold Vt.csiDispatch
     rw [ite_eq_right hi]
-    show (v.setMode (s.priv == 0x3F) (s.arg 0 0) false).sb = v.sb
-    rw [sb_setMode]
+    exact sb_setModes v _ _ false
 
 theorem sb_oscFinish (v : Vt) (acc : Array UInt8) : (v.oscFinish acc).sb = v.sb := by
   rw [frame_oscFinish]

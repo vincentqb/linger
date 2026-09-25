@@ -48,6 +48,14 @@ origin-aware cursor operation (`csiDispatch_vpa_exact`,
 `csiDispatch_vpa_in_region`). Ordinary importers can only use checked terminal
 operations; `Tests.VtApi` checks that raw cell and parser mutators are hidden.
 
+Mode-setting and mode-resetting sequences apply every collected parameter in
+order. `setModes_append` specifies composition of batches; `setModes_one`
+preserves each existing single-mode transition, and the mode-batch invariants
+preserve `Good`, grid shape and tab shape. Footprint claims about origin and
+screen selection inspect the whole parameter list, since a later parameter can
+change either one. Receiver-quantified replay guarantees keep their existing
+assumptions and conclusions.
+
 Checkpoint acceptance also establishes parser quiescence (`load_accepted`,
 `load_quiescent`). `load_save_append` rejects every nonempty suffix, and
 `load_resave` gives exact state and metadata equality after resaving any

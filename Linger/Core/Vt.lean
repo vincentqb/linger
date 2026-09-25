@@ -1078,6 +1078,11 @@ private def Vt.setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool) : Vt :=
     | 4 => { v with modes := { v.modes with insert := on } }
     | _ => v
 
+/-- SM/RM apply collected mode numbers in order, retaining each mode's existing
+side effects. Unknown numbers (including omitted zero parameters) are no-ops. -/
+private def Vt.setModes (v : Vt) (priv : Bool) (ps : List (Nat × Bool)) (on : Bool) : Vt :=
+  ps.foldl (fun w p => w.setMode priv p.1 on) v
+
 private def Vt.csiDispatch (v : Vt) (s : CsiState) (final : UInt8) : Vt :=
   if s.ignore then v
   else
@@ -1112,8 +1117,8 @@ private def Vt.csiDispatch (v : Vt) (s : CsiState) (final : UInt8) : Vt :=
       | 0 => { v with tabs := v.tabs.setIfInBounds v.cursor.x false }
       | 3 => { v with tabs := Array.replicate v.cols false }
       | _ => v
-    | 0x68 => v.setMode (s.priv == 0x3F) (s.arg 0 0) true -- h SM
-    | 0x6C => v.setMode (s.priv == 0x3F) (s.arg 0 0) false -- l RM
+    | 0x68 => v.setModes (s.priv == 0x3F) s.params.toList true -- h SM
+    | 0x6C => v.setModes (s.priv == 0x3F) s.params.toList false -- l RM
     | 0x6D => if s.priv == 0 then v.applySgr s.sgrParams else v -- m SGR
     | 0x72 => -- r DECSTBM
       if s.priv != 0 then v

@@ -366,23 +366,14 @@ theorem modes_setMode {w1 w2 : Vt} (p : Bool) (n : Nat) (on : Bool) (h : w1.mode
   unfold Vt.setMode
   split <;> (repeat' split) <;> simp_all [modes_moveTo, modes_leaveAlt, modes_enterAlt]
 
-/-- The dispatch of `CSI ? … h`/`l` is `setMode`, on its `modes`. The `match`
-on the concrete final byte reduces, so this is `rfl` after the ignore guard. -/
+/-- SM/RM project the whole ordered mode batch onto `modes`. -/
 theorem modes_csiDispatch_sm (v : Vt) (s : CsiState) (hi : s.ignore = false) :
-    (v.csiDispatch s 0x68).modes = (v.setMode (s.priv == 0x3F) (s.arg 0 0) true).modes := by
-  unfold Vt.csiDispatch;
-  rw [ite_eq_right
-      (by
-        rw [hi]; simp)];
-  rfl
+    (v.csiDispatch s 0x68).modes = (v.setModes (s.priv == 0x3F) s.params.toList true).modes := by
+  rw [csiDispatch_sm _ _ hi]
 
 theorem modes_csiDispatch_rm (v : Vt) (s : CsiState) (hi : s.ignore = false) :
-    (v.csiDispatch s 0x6C).modes = (v.setMode (s.priv == 0x3F) (s.arg 0 0) false).modes := by
-  unfold Vt.csiDispatch;
-  rw [ite_eq_right
-      (by
-        rw [hi]; simp)];
-  rfl
+    (v.csiDispatch s 0x6C).modes = (v.setModes (s.priv == 0x3F) s.params.toList false).modes := by
+  rw [csiDispatch_rm _ _ hi]
 
 /-- One step: `ESC [ ?` sets the private marker without touching the frame. -/
 theorem frame_csi_marker_step {v : Vt} {s : CsiState} (hg : v.pstate = .csi s) :
@@ -446,8 +437,6 @@ theorem modeSet_tail (n : Nat) (on : Bool) (hn : 0 < n) (hlt : n < 65535) {w : V
     ({ sa with params := sa.params.push (min sa.cur 65535, sa.curSub) } : CsiState) =
       { sa with params := #[(n, sa.curSub)] } := by
     rw [hsab, hpar', hcur', hmin]; rfl
-  have harg : ({ sa with params := #[(n, sa.curSub)] } : CsiState).arg 0 0 = n := by
-    rw [arg_of_one, ite_eq_right (by omega)]
   have hpriv2 : ({ sa with params := #[(n, sa.curSub)] } : CsiState).priv = 0x3F := by
     show sa.priv = 0x3F; rw [hsab]; exact hpriv'
   have hign2 : ({ sa with params := #[(n, sa.curSub)] } : CsiState).ignore = false := by
@@ -461,10 +450,10 @@ theorem modeSet_tail (n : Nat) (on : Bool) (hn : 0 < n) (hlt : n < 65535) {w : V
   rw [hstate]
   cases on
   · show (({ w with pstate := .csi sa }).csiDispatch _ 0x6C).modes = (w.setMode true n false).modes
-    rw [modes_csiDispatch_rm _ _ hign2, harg, hpriv2]
+    rw [csiDispatch_rm_one _ _ n sa.curSub hign2 rfl, hpriv2]
     exact modes_setMode true n false hopmodes
   · show (({ w with pstate := .csi sa }).csiDispatch _ 0x68).modes = (w.setMode true n true).modes
-    rw [modes_csiDispatch_sm _ _ hign2, harg, hpriv2]
+    rw [csiDispatch_sm_one _ _ n sa.curSub hign2 rfl, hpriv2]
     exact modes_setMode true n true hopmodes
 
 theorem modeSet_modes (n : Nat) (on : Bool) (hn : 0 < n) (hlt : n < 65535) {v : Vt}
@@ -747,8 +736,6 @@ theorem mmap_irm (on : Bool) :
     ({ sa with params := sa.params.push (min sa.cur 65535, sa.curSub) } : CsiState) =
       { sa with params := #[(4, sa.curSub)] } := by
     rw [hsab, hpar', hcur']; rfl
-  have harg : ({ sa with params := #[(4, sa.curSub)] } : CsiState).arg 0 0 = 4 := by
-    rw [arg_of_one, ite_eq_right (by decide)]
   have hpriv2 : ({ sa with params := #[(4, sa.curSub)] } : CsiState).priv = 0 := by
     show sa.priv = 0; rw [hsab]; exact hpriv'
   have hign2 : ({ sa with params := #[(4, sa.curSub)] } : CsiState).ignore = false := by
@@ -762,9 +749,9 @@ theorem mmap_irm (on : Bool) :
   rw [hstate]
   cases on
   · show (({ v with pstate := .csi sa }).csiDispatch _ 0x6C).modes = _
-    rw [modes_csiDispatch_rm _ _ hign2, harg, hpriv2]; rfl
+    rw [csiDispatch_rm_one _ _ 4 sa.curSub hign2 rfl, hpriv2]; rfl
   · show (({ v with pstate := .csi sa }).csiDispatch _ 0x68).modes = _
-    rw [modes_csiDispatch_sm _ _ hign2, harg, hpriv2]; rfl
+    rw [csiDispatch_sm_one _ _ 4 sa.curSub hign2 rfl, hpriv2]; rfl
 
 -- Application keypad: `ESC =` (on) / `ESC >` (off)
 theorem mmap_keypad (on : Bool) :

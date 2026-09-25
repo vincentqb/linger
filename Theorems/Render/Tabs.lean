@@ -261,21 +261,24 @@ theorem tabs_setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool) :
   all_goals try simp only [tabs_moveTo, tabs_enterAlt, tabs_leaveAlt]
   all_goals rfl
 
+theorem tabs_setModes (v : Vt) (priv : Bool) (ps : List (Nat × Bool)) (on : Bool) :
+    (v.setModes priv ps on).tabs = v.tabs :=
+  setModes_invariant (fun w => w.tabs = v.tabs) priv on ps
+    (fun w p _ h => (tabs_setMode w priv p.1 on).trans h) v rfl
+
 theorem tabs_csiDispatch_sm (v : Vt) (s : CsiState) : (v.csiDispatch s 0x68).tabs = v.tabs := by
   by_cases hi : s.ignore = true
   · simp [Vt.csiDispatch, hi]
   · unfold Vt.csiDispatch
     rw [ite_eq_right hi]
-    show (v.setMode (s.priv == 0x3F) (s.arg 0 0) true).tabs = v.tabs
-    rw [tabs_setMode]
+    exact tabs_setModes v _ _ true
 
 theorem tabs_csiDispatch_rm (v : Vt) (s : CsiState) : (v.csiDispatch s 0x6C).tabs = v.tabs := by
   by_cases hi : s.ignore = true
   · simp [Vt.csiDispatch, hi]
   · unfold Vt.csiDispatch
     rw [ite_eq_right hi]
-    show (v.setMode (s.priv == 0x3F) (s.arg 0 0) false).tabs = v.tabs
-    rw [tabs_setMode]
+    exact tabs_setModes v _ _ false
 
 theorem tabs_oscFinish (v : Vt) (acc : Array UInt8) : (v.oscFinish acc).tabs = v.tabs := by
   rw [frame_oscFinish]

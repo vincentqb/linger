@@ -1,8 +1,8 @@
 # 2026-09-25 codebase audit
 
-Status: step 7 verified — bounded info production
+Status: step 8 complete — ordered VT mode batches
 Updated: 2026-09-25
-Next: integrate ordered VT mode batches, then decoder and clock findings
+Next: integrate bounded checkpoint decoding and natural-number clocks
 Predecessor: `specs/archive/tmux-resurrect-recipe.md`
 
 ## Goal
@@ -104,3 +104,10 @@ The status and completion record below track the actual integration order.
   Boundary, truncation and ordering mutations fail the new checks, and source
   gates tie the CLI accumulator to the proved limit. Both required builds and
   the full foreground verifier pass.
+- Step 8: VT mode sequences now apply all collected parameters in order.
+  Batch composition, single-mode compatibility and structural invariants
+  replace proofs that implicitly depended on dropping later parameters.
+  Existing receiver-quantified replay guarantees retain their assumptions and
+  conclusions. Six behavioral regressions and three restored mutations exercise
+  parameter omission, ordering and unintended state changes. Both required
+  builds and the full foreground verifier pass.

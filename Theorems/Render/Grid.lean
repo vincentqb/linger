@@ -1913,10 +1913,10 @@ theorem modeSet_feed_eq (n : Nat) (on : Bool) (hn : 0 < n) (hlt : n < 65535) {v 
     ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState) =
       { s' with params := #[(n, s'.curSub)] } := by
     rw [hpar, hcur', show min (min n 65535) 65535 = n from by omega]; rfl
-  have harg :
-    ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState).arg 0 0 =
-      n := by
-    rw [hnorm, arg_of_one, ite_eq_right (by omega)]
+  have hparams :
+    ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState).params =
+      #[(n, s'.curSub)] := by
+    rw [hnorm]
   have hpriv :
     ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState).priv =
       0x3F := by
@@ -1956,7 +1956,7 @@ theorem modeSet_feed_eq (n : Nat) (on : Bool) (hn : 0 < n) (hlt : n < 65535) {v 
             u.setMode true n false
         from by
         intro u
-        rw [csiDispatch_rm _ _ hign, harg, hpriv]
+        rw [csiDispatch_rm_one _ _ n s'.curSub hign hparams, hpriv]
         rfl]
     show
       ({ (({ v with pstate := .csi s' } : Vt)).setMode true n false with pstate := .ground } : Vt) =
@@ -1969,7 +1969,7 @@ theorem modeSet_feed_eq (n : Nat) (on : Bool) (hn : 0 < n) (hlt : n < 65535) {v 
             u.setMode true n true
         from by
         intro u
-        rw [csiDispatch_sm _ _ hign, harg, hpriv]
+        rw [csiDispatch_sm_one _ _ n s'.curSub hign hparams, hpriv]
         rfl]
     show
       ({ (({ v with pstate := .csi s' } : Vt)).setMode true n true with pstate := .ground } : Vt) =
