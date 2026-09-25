@@ -1,8 +1,8 @@
 # 2026-09-25 codebase audit
 
-Status: step 10 complete — natural-number clocks and total E2E helpers
+Status: step 11 complete — complete-state margin-reprint proof
 Updated: 2026-09-25
-Next: integrate the margin-reprint proof, then finish replay continuation/delivery
+Next: connect margin reprinting to restoration bytes and finish bounded replay delivery
 Predecessor: `specs/archive/tmux-resurrect-recipe.md`
 
 ## Goal
@@ -124,3 +124,11 @@ The status and completion record below track the actual integration order.
   Behavioral comparisons and restored mutations preserve helper behavior.
   Source gates tie the Nat clock to the daemon tick. Both required builds and
   the full foreground verifier pass.
+- Step 11: reprinting a canonical margin glyph and all its marks is proved to
+  change only cursor position and pending wrap, preserving the complete
+  remaining terminal state. Reachable narrow/wide witnesses and four rejected
+  replay-adapter mutations check that the premises are useful. The ledger
+  distinguishes this character-level frame from the pending byte-level
+  integration, and its anchor summaries now reflect the existing cursor and
+  selected-grid proof scope. Both required builds and source/formatter checks
+  pass; this step changes no runtime behavior.

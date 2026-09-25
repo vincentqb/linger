@@ -10,11 +10,11 @@ recipes, break records, measurements, the audits — lives in
 
 | Anchor | Statement | Theorem |
 |---|---|---|
-| **A1. A session survives a crash** | a checkpoint round-trips exactly for any state a live session can hold (`Good ∧ Renderable ∧ TabsOk`; the decoder refuses the rest), and the rebuilt byte stream leaves **any** receiver quiesced with the cursor where the session had it. A decoded screen is itself live-reachable, so the round trip holds across a second reboot, hypothesis-free, for arbitrary bytes on disk and an arbitrary event trace after | `Resume.resume_quiesced_any`, `Resume.resume_cursor`, `Session.run_resume_load_save` |
+| **A1. A session survives a crash** | a checkpoint round-trips exactly for any state a live session can hold (`Good ∧ Renderable ∧ TabsOk`; the decoder refuses the rest), and the rebuilt byte stream leaves **any** receiver quiesced; cursor position is restored when origin mode is off. A decoded screen is itself live-reachable, so the round trip holds across a second reboot, hypothesis-free, for arbitrary bytes on disk and an arbitrary event trace after | `Resume.resume_quiesced_any`, `Resume.resume_cursor`, `Session.run_resume_load_save` |
 | **A2. The daemon cannot be broken by traffic** | no event trace of any length — adversarial clients, hostile pty bytes, any interleaving — breaks a buffer cap, the screen invariant, or one client's isolation from another; structural since the `State` seal (private constructor, capped boot), and covering a resumed daemon's screen from either `vt0` source | `Session.run_wf`, `Session.run_bytes_isolates`, `Session.boot_wf` / `run_boot_wf`, `Session.run_resume_vt_shape` |
 | **A3. The transport is invisible** | any re-chunking of any well-formed encoded stream decodes to exactly that stream: same messages, same order, nothing retained, no error | `Wire.decode_encode_chunked` |
 | **A4. A session name has one owner** | given the kernel grants at most one `flock` holder, at most one daemon ever unlinks or binds a given name | `Claim.at_most_one_owner` |
-| **A5. linger is invisible to the terminal it borrows** | both directions receiver-quantified, no hypothesis on the receiver. Inbound (`restore`): modes `restore_modes_any`; pen `restore_pen_any`; sticky fields `restore_sticky_any` (`restore_region_any`, `restore_charset_any`, `restore_alt_any` are its projections); screen cells `restore_grid_any` / `restore_grid_reachable` / `Resume.resume_grid` — both screens, every height, mid-character receivers included; tab ruler `restore_tabs_any` / `Resume.resume_tabs`; scrollback `restore_sb_any` / `restore_sb_reachable` / `Linger.Core.resume_sb` (as `.toList` — same history, different ring records; `restore_sb_exact` when the budget kept everything, `restore_sb_keeps_of_empty` for the no-history branch, a user-facing decision). Outbound (hand-back): `leave_canonical_all`. Still fixture-carried, named so the list is not "just the cells": the window **title** and the **DECSC slot**. The one thing linger does that it cannot undo: attaching a session that has history erases the borrowed window's saved lines (`ED 3` — linger shares the user's scrollback and never enters the alt screen; conformance entry 11, README §Notes) | see row |
+| **A5. linger is invisible to the terminal it borrows** | both directions receiver-quantified, no hypothesis on the receiver. Inbound (`restore`): modes `restore_modes_any`; pen `restore_pen_any`; sticky fields `restore_sticky_any` (`restore_region_any`, `restore_charset_any`, `restore_alt_any` are its projections); screen cells `restore_grid_any` / `restore_grid_reachable` / `Resume.resume_grid` — the selected grid (main or alternate), every height, mid-character receivers included; tab ruler `restore_tabs_any` / `Resume.resume_tabs`; scrollback `restore_sb_any` / `restore_sb_reachable` / `Linger.Core.resume_sb` (as `.toList` — same history, different ring records; `restore_sb_exact` when the budget kept everything, `restore_sb_keeps_of_empty` for the no-history branch, a user-facing decision). Outbound (hand-back): `leave_canonical_all`. Still fixture-carried, named so the list is not "just the cells": the window **title** and the **DECSC slot**. The one thing linger does that it cannot undo: attaching a session that has history erases the borrowed window's saved lines (`ED 3` — linger shares the user's scrollback and never enters the alt screen; conformance entry 11, README §Notes) | see row |
 
 ## The rungs
 
@@ -80,6 +80,16 @@ cursor slot have fixture coverage; accepted checkpoint titles may contain
 controls that replay deliberately sanitizes. Matching the active grid alone
 does not establish that the next glyph behaves identically: pending wrap needs
 its own continuation check.
+
+`Render.reprint_margin` supplies the character-level frame for restoring pending
+wrap. On a Good, Renderable receiver with ASCII charsets, wrapping enabled,
+insertion disabled and no wrap already pending, reprinting the canonical margin
+glyph with its own pen and all stored marks changes only the cursor to the last
+column with wrap pending. The equality preserves the entire remaining state,
+including both grids, saved fields, parser state and scrollback. It covers
+single- and double-width glyphs. Connecting the emitted restoration bytes to this
+frame is a separate obligation; this helper alone does not prove end-to-end
+continuation.
 
 ## Reading a row
 

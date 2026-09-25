@@ -11897,3 +11897,39 @@ gates, semantic coverage, generated C ABI and the complete foreground verifier
 pass. Parent receipts are `step10-build.log`, `step10-proofs-tests.log`,
 `step10-e2e-build.log` and `step10-verifier.log`. No C export or live-suite
 check count changed.
+
+## Step 11 notes — 2026-09-25
+
+The pending-wrap repair needs more than a statement about cursor coordinates.
+`Render.reprint_margin` now proves a complete-state frame: given a canonical
+margin glyph, matching pen, ASCII charsets, wrapping enabled, insertion disabled
+and no wrap already pending, printing its base and every stored mark changes
+only the cursor's last-column and pending fields. Both grids, saved state,
+parser state, history and unrelated flags remain equal. Width-one and width-two
+glyphs share the statement.
+
+The helper lives in `Theorems/Render/PendingGlyph.lean`, below the byte-emitter
+ladder. Its row-repair fixed points establish that reprinting a canonical cell
+does not repair an unrelated pair or erase its marks. It uses existing Good and
+Renderable contracts without adding a source-specific continuation premise.
+No core operation, proof resource limit or runtime path changes in this step.
+Connecting the actual restore bytes to this frame remains the renderer worker's
+separate obligation; this checkpoint does not claim that end-to-end guarantee.
+The ledger's headline cursor and selected-grid claims were also corrected to
+match their already stated hypotheses and conclusions.
+
+Six actual reachable-state witnesses cover narrow and wide glyphs with zero,
+two and eight marks; extra checks establish that the long fixtures really store
+all their marks. Four bad replay adapters omit marks, reverse them, clear pending
+or erase an unrelated bell flag. Each is rejected by the complete-state adapter
+theorem, with a separately kernel-checked closed counterexample. These experiments
+mutate the scratch adapter, not the core implementation. All were restored, and
+the frozen helper is byte-identical to the checked worker file. Axiom inspection
+contains only Lean's standard propositional extensionality, choice and quotient
+soundness. No evaluation axiom or new trust assumption is introduced.
+
+Worker receipts and the frozen patch are in
+`/tmp/linger-audit-20260925/vt/.lake/pending-glyph-audit/`. Both required parent
+builds pass (`step11-build.log`, `step11-proofs-tests.log`), along with targeted
+formatter/linter checks and the complete source gates. Runtime sources and live
+suite counts are unchanged; the preceding full verifier remains applicable.

@@ -9,6 +9,7 @@ import Theorems.Remote
 import Theorems.Claim
 import Theorems.Listing
 import Theorems.Render
+import Theorems.Render.PendingGlyph
 import Theorems.Resume
 import Theorems.Status
 import Theorems.Coverage
