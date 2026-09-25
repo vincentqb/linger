@@ -11599,3 +11599,56 @@ gates, semantic coverage and the entire foreground `./tests/e2e.sh` pass. The
 new runtime assertion is included in the canonical resume suite count. No
 proof allowance was raised. Receipts are the `step3-*` logs in the audit
 directory.
+
+## Step 4 notes — 2026-09-25
+
+Re-audited the isolated `Linger.Posix` / `c/shim.c` boundary against the pinned
+compiler and core library. All existing C exports remain necessary; no generic
+operation selector or new export was added. Raw string bindings are private,
+and shared Lean guards reject embedded NUL, empty environment keys and terminal
+dimensions that cannot fit the kernel field. Empty arguments and values, UTF-8,
+zero geometry and the largest representable geometry retain their behavior.
+
+Every old C export accepted an IO-world argument that the pinned compiler does
+not pass. Poll's Lean `Int32` also uses an unsigned C carrier. The exports now
+match generated declarations, with the signed conversion at `poll(2)`. The
+full verifier compiles those declarations and the shim together and compares
+the complete generated, extern and export symbol inventories. Restoring a
+world argument or a signed poll carrier fails this check; a zero extraction
+cannot pass.
+
+The spawn paths share argument preparation, error reporting and PATH execution.
+Missing standard descriptors are reserved through fork, avoiding report-pipe
+collisions and a measured libuv atfork failure. Bare programs follow PATH
+order, including empty components; slash paths bypass search. Error precedence,
+ENOEXEC shell fallback and the child's merged HOME are preserved. Child-side
+formatting and detached `execvp` were removed. A source guard inventories both
+child blocks and their execution helpers and refuses known allocator, stdio,
+environment and Lean-runtime calls there. It is a regression guard, not a proof
+of every libc implementation. Session state still has one application owner,
+but Lean and libuv can have internal worker threads; THEOREMS.md now says so.
+
+Corrections to the September 14 minimality evidence: Linux core Handle opening
+already sets O_CLOEXEC, and its try-lock implementation calls flock. The
+remaining reasons for the raw lock are atomic creation at mode 0600 and the
+existing explicit descriptor lease lifetime. The async socket API exists but
+does not provide AF_UNIX here; an async signal watcher does not implement
+SIG_IGN. Async current-user lookup uses effective UID plus passwd lookup, not
+the real-UID operation needed by the path fallback. These are Linux
+implementation measurements; macOS execution remains a final CI check.
+
+RED/GREEN: closed-stdio, PATH/HOME and representability fixtures failed before
+their fixes and pass afterward. Detached execution also has preservation checks
+and a separate shell-fallback mutation. The worker caught and restored every
+recorded behavioral mutation; the parent independently broke the actual ABI
+and fork gates in a disposable source fixture, including a missing-region
+vacuity probe. Receipts and the per-export rationale are in
+`/tmp/linger-audit-20260925/posix/.audit/HANDOFF.md`; parent gate receipts are
+the `step4-abi-*` and `step4-fork-*` logs in the audit directory.
+
+Validation: both required builds, formatting, source gates, semantic coverage,
+the expanded shim suite and the full foreground verifier pass. The source
+refactor adds a small amount of C to implement the observed syscall contracts,
+while sharing the two spawn paths; the export ratchet is unchanged. The smoke
+test's deadline loop is now an ordinary `while`, removing another partial
+definition. Canonical counts were updated only in their owning scripts.

@@ -1,4 +1,4 @@
-/* lean-zmx C shim -- the entire non-Lean surface of the project.
+/* linger C shim -- the raw POSIX operations missing from Lean's IO surface.
  *
  * Contract (AGENTS.md): syscall + errno only. No buffering, no retry
  * policy beyond EINTR, no session logic. Every function is a thin
@@ -6,6 +6,10 @@
  * binding. All Lean object parameters are borrowed (@& on the Lean
  * side), so nothing here inc/decs references except allocations we
  * hand back.
+ *
+ * The pinned Lean compiler erases IO's world parameter and represents
+ * Int32 arguments as uint32_t bits. Keep these signatures aligned with
+ * the declarations generated from Linger/Posix.lean.
  */
 /* accept4 needs _GNU_SOURCE on glibc */
 #define _GNU_SOURCE
@@ -31,7 +35,7 @@
 #include <libproc.h>   /* PROC_PIDVNODEPATHINFO: the /proc-less cwd read */
 #endif
 
-/* The Lean side hardcodes Linux poll bits; hold it to the ABI. */
+/* Hold the Lean poll bits to the ABI on each supported platform. */
 _Static_assert(POLLIN == 0x001, "POLLIN");
 _Static_assert(POLLOUT == 0x004, "POLLOUT");
 _Static_assert(POLLERR == 0x008, "POLLERR");
@@ -54,15 +58,48 @@ static lean_obj_res io_ok_unit(void) { return lean_io_result_mk_ok(lean_box(0));
 
 /* Child-side setup/exec failure reporting. The child writes one record to a
  * CLOEXEC pipe and _exits; a successful exec closes the pipe, so the parent
- * reads EOF. Without this, a failed setsid/dup2/chdir/execvp is invisible: the
+ * reads EOF. Without this, a failed setsid/dup2/execve is invisible: the
  * parent holds a pid that never became the requested program. */
 struct spawn_err { char stage[24]; int code; };
 
+static void release_stdio(unsigned held) {
+    int e = errno;
+    for (int fd = 0; fd <= STDERR_FILENO; fd++)
+        if (held & (1u << fd)) close(fd);
+    errno = e;
+}
+
+/* Reserve missing stdio slots until fork returns in the parent. Besides keeping
+ * the report writer clear of dup2, this keeps libuv's pthread_atfork handler from
+ * allocating its internal pipes below 3: its next fork aborts on such a pipe.
+ * Returns the reserved-fd mask; the child replaces these with its own stdio. */
+static int spawn_pipe(int fds[2]) {
+    unsigned held = 0;
+    for (int fd = 0; fd <= STDERR_FILENO; fd++) {
+        if (fcntl(fd, F_GETFD) >= 0) continue;
+        if (errno != EBADF) goto fail;
+        int spare = open("/dev/null", O_RDWR | O_CLOEXEC);
+        if (spare < 0) goto fail;
+        if (spare != fd) { close(spare); errno = EBUSY; goto fail; }
+        held |= 1u << fd;
+    }
+    if (pipe(fds) < 0) goto fail;
+    if (fcntl(fds[1], F_SETFD, FD_CLOEXEC) < 0) {
+        int e = errno;
+        close(fds[0]); close(fds[1]);
+        errno = e;
+        goto fail;
+    }
+    return (int)held;
+fail:
+    release_stdio(held);
+    return -1;
+}
+
 static void spawn_fail(int fd, const char *stage, int code) {
-    struct spawn_err rec;
-    memset(&rec, 0, sizeof rec);
-    snprintf(rec.stage, sizeof rec.stage, "%s", stage);
-    rec.code = code;
+    struct spawn_err rec = { .code = code };
+    /* No stdio formatting after fork; the last byte remains NUL. */
+    strncpy(rec.stage, stage, sizeof rec.stage - 1);
     ssize_t n;
     do { n = write(fd, &rec, sizeof rec); } while (n < 0 && errno == EINTR);
     _exit(127);
@@ -83,13 +120,87 @@ static int spawn_report(int fd, struct spawn_err *out) {
     return got == sizeof *out;
 }
 
+/* All argument vectors are built before fork; their strings remain borrowed. */
+static char **exec_argv(b_lean_obj_arg prog, b_lean_obj_arg args) {
+    size_t nargs = lean_array_size(args);
+    char **argv = calloc(nargs + 2, sizeof(char *));
+    if (!argv) return NULL;
+    argv[0] = (char *)lean_string_cstr(prog);
+    for (size_t i = 0; i < nargs; i++)
+        argv[i + 1] = (char *)lean_string_cstr(lean_array_get_core(args, i));
+    return argv;
+}
+
+static char **shell_argv(char **argv, size_t nargs) {
+    char **out = calloc(nargs + 3, sizeof(char *));
+    if (!out) return NULL;
+    out[0] = (char *)"/bin/sh";
+    for (size_t i = 0; i < nargs; i++) out[i + 2] = argv[i + 1];
+    return out;
+}
+
+/* `key` includes '='. Resolve against the environment actually given to exec. */
+static const char *env_value(char **envp, const char *key) {
+    size_t n = strlen(key);
+    for (size_t i = 0; envp[i]; i++)
+        if (strncmp(envp[i], key, n) == 0) return envp[i] + n;
+    return NULL;
+}
+
+/* execvp's PATH lookup and ENOEXEC shell fallback using only async-signal-safe
+ * operations. In particular, a bare program is never tried outside PATH.
+ * A failed shell fallback is final; only search misses and EACCES try another
+ * candidate, with EACCES retained if no candidate succeeds. */
+static void exec_search(char **argv, char **shargv, char **envp, const char *path) {
+    const char *file = argv[0];
+    if (!file[0]) { errno = ENOENT; return; }
+    if (strchr(file, '/')) {
+        execve(file, argv, envp);
+        if (errno == ENOEXEC) {
+            shargv[1] = argv[0];
+            execve("/bin/sh", shargv, envp);
+        }
+        return;
+    }
+    char candidate[4096];
+    size_t filelen = strlen(file);
+    if (filelen >= sizeof candidate) { errno = ENAMETOOLONG; return; }
+    int denied = 0;
+    const char *seg = path ? path : "/usr/bin:/bin";
+    for (;;) {
+        const char *end = strchr(seg, ':');
+        size_t len = end ? (size_t)(end - seg) : strlen(seg);
+        if (len == 0 || len < sizeof candidate - filelen - 1) {
+            size_t start = 0;
+            if (len) {
+                memcpy(candidate, seg, len);
+                candidate[len] = '/';
+                start = len + 1;
+            }
+            memcpy(candidate + start, file, filelen + 1);
+            execve(candidate, argv, envp);
+            if (errno == ENOEXEC) {
+                shargv[1] = candidate;
+                execve("/bin/sh", shargv, envp);
+                return;
+            }
+            if (errno == EACCES) denied = 1;
+            else if (errno != ENOENT && errno != ENOTDIR) return;
+        }
+        if (!end) break;
+        seg = end + 1;  /* includes a final empty component */
+    }
+    errno = denied ? EACCES : ENOENT;
+}
+
 /* SOCK_CLOEXEC and accept4 are Linux/FreeBSD extensions; macOS has
  * neither, so there the flag goes on after the fact. The window between
  * socket()/accept() and the fcntl is only a leak if another thread forks
  * inside it, and the forks in this project are linger_spawn_pty and
- * linger_spawn_detached, both called from the same single-threaded Lean
- * runtime -- so the fallback is safe
- * here without being safe in general. Where the atomic form exists we
+ * linger_spawn_detached. Socket creation and spawning are serialized by the
+ * application's IO loop; this relies on that calling discipline, not on Lean
+ * being single-threaded (its runtime and libuv also have worker threads).
+ * Where the atomic form exists we
  * still take it. Not exported: no new syscall surface (SHIM_CAP). */
 #ifdef SOCK_CLOEXEC
 #define LINGER_HAVE_SOCK_CLOEXEC 1
@@ -131,8 +242,7 @@ static int accept_cloexec(int fd) {
 /* process-wide init                                                     */
 
 /* linger_ignore_sighup : IO Unit  (daemon: survive controlling-tty death) */
-LEAN_EXPORT lean_obj_res linger_ignore_sighup(lean_obj_arg w) {
-    (void)w;
+LEAN_EXPORT lean_obj_res linger_ignore_sighup(void) {
     signal(SIGHUP, SIG_IGN);
     return io_ok_unit();
 }
@@ -141,15 +251,13 @@ LEAN_EXPORT lean_obj_res linger_ignore_sighup(lean_obj_arg w) {
 /* fds                                                                   */
 
 /* linger_close : UInt32 -> IO Unit */
-LEAN_EXPORT lean_obj_res linger_close(uint32_t fd, lean_obj_arg w) {
-    (void)w;
+LEAN_EXPORT lean_obj_res linger_close(uint32_t fd) {
     close((int)fd); /* errors on close are not actionable */
     return io_ok_unit();
 }
 
 /* linger_set_nonblock : UInt32 -> IO Unit */
-LEAN_EXPORT lean_obj_res linger_set_nonblock(uint32_t fd, lean_obj_arg w) {
-    (void)w;
+LEAN_EXPORT lean_obj_res linger_set_nonblock(uint32_t fd) {
     int fl = fcntl((int)fd, F_GETFL, 0);
     if (fl < 0 || fcntl((int)fd, F_SETFL, fl | O_NONBLOCK) < 0)
         return io_err("fcntl(O_NONBLOCK)");
@@ -160,8 +268,7 @@ LEAN_EXPORT lean_obj_res linger_set_nonblock(uint32_t fd, lean_obj_arg w) {
  * none          = EOF (incl. EIO from a pty master whose child died)
  * some #[]      = nothing available right now (EAGAIN on nonblocking fd)
  * some bytes    = data. EINTR is retried. */
-LEAN_EXPORT lean_obj_res linger_read(uint32_t fd, size_t max, lean_obj_arg w) {
-    (void)w;
+LEAN_EXPORT lean_obj_res linger_read(uint32_t fd, size_t max) {
     if (max == 0) return io_msg("read: zero-length read cannot distinguish EOF");
     if (max > 65536) max = 65536;
     unsigned char buf[65536];
@@ -189,9 +296,7 @@ LEAN_EXPORT lean_obj_res linger_read(uint32_t fd, size_t max, lean_obj_arg w) {
  * One write(2) attempt from offset `off`. >=0: bytes written (0 on
  * EAGAIN). -1: peer gone (EPIPE/ECONNRESET/EIO) -- a normal event for
  * daemons, not an exception. EINTR retried. */
-LEAN_EXPORT lean_obj_res linger_write(uint32_t fd, b_lean_obj_arg bytes, size_t off,
-                                   lean_obj_arg w) {
-    (void)w;
+LEAN_EXPORT lean_obj_res linger_write(uint32_t fd, b_lean_obj_arg bytes, size_t off) {
     size_t len = lean_sarray_size(bytes);
     if (off >= len) return lean_io_result_mk_ok(lean_box_uint64(0));
     ssize_t n;
@@ -215,22 +320,19 @@ LEAN_EXPORT lean_obj_res linger_write(uint32_t fd, b_lean_obj_arg bytes, size_t 
  * fds and requested-events arrays (same length), timeout in ms (<0 =
  * infinite). Returns revents per fd; all-zero on EINTR or timeout. */
 LEAN_EXPORT lean_obj_res linger_poll(b_lean_obj_arg fds, b_lean_obj_arg events,
-                                  int32_t timeout_ms, lean_obj_arg w) {
-    (void)w;
+                                  uint32_t timeout_ms) {
     size_t n = lean_array_size(fds);
     if (n != lean_array_size(events))
-        return lean_io_result_mk_error(
-            lean_mk_io_user_error(lean_mk_string("poll: fds/events length mismatch")));
+        return io_msg("poll: fds/events length mismatch");
     if (n > 4096)
-        return lean_io_result_mk_error(
-            lean_mk_io_user_error(lean_mk_string("poll: too many fds")));
+        return io_msg("poll: too many fds");
     struct pollfd pfds[4096];
     for (size_t i = 0; i < n; i++) {
         pfds[i].fd = (int)lean_unbox_uint32(lean_array_get_core(fds, i));
         pfds[i].events = (short)lean_unbox_uint32(lean_array_get_core(events, i));
         pfds[i].revents = 0;
     }
-    int r = poll(pfds, (nfds_t)n, (int)timeout_ms);
+    int r = poll(pfds, (nfds_t)n, (int32_t)timeout_ms);
     if (r < 0 && errno != EINTR) return io_err("poll");
     lean_object *out = lean_alloc_array(n, n);
     for (size_t i = 0; i < n; i++)
@@ -244,7 +346,7 @@ LEAN_EXPORT lean_obj_res linger_poll(b_lean_obj_arg fds, b_lean_obj_arg events,
 
 /* linger_spawn_pty : UInt32 -> UInt32 -> @& String -> @& String
  *                 -> @& Array String -> @& Array String -> IO UInt64
- * open a pty and fork+execvp a child on its slave. Returns
+ * open a pty and fork+execve a child on its slave, with PATH lookup. Returns
  * pid<<32 | masterFd. cwd "" = inherit. extraEnv entries are "K=V".
  * Child resets SIGPIPE/SIGHUP to default before exec; _exit(127) on fail.
  *
@@ -255,9 +357,7 @@ LEAN_EXPORT lean_obj_res linger_poll(b_lean_obj_arg fds, b_lean_obj_arg events,
  * TIOCSCTTY are all plain libc and do exactly what forkpty wraps. */
 LEAN_EXPORT lean_obj_res linger_spawn_pty(uint32_t cols, uint32_t rows,
                                        b_lean_obj_arg cwd, b_lean_obj_arg prog,
-                                       b_lean_obj_arg args, b_lean_obj_arg extra_env,
-                                       lean_obj_arg w) {
-    (void)w;
+                                       b_lean_obj_arg args, b_lean_obj_arg extra_env) {
     struct winsize ws;
     memset(&ws, 0, sizeof ws);
     ws.ws_col = (unsigned short)cols;
@@ -265,11 +365,8 @@ LEAN_EXPORT lean_obj_res linger_spawn_pty(uint32_t cols, uint32_t rows,
 
     /* argv/env must be materialized before fork: no allocation after. */
     size_t nargs = lean_array_size(args);
-    char **argv = calloc(nargs + 2, sizeof(char *));
+    char **argv = exec_argv(prog, args);
     if (!argv) return io_err("calloc");
-    argv[0] = (char *)lean_string_cstr(prog);
-    for (size_t i = 0; i < nargs; i++)
-        argv[i + 1] = (char *)lean_string_cstr(lean_array_get_core(args, i));
 
     /* master pty, set up before fork so the slave name is known to the child */
     int master = posix_openpt(O_RDWR | O_NOCTTY);
@@ -323,35 +420,31 @@ LEAN_EXPORT lean_obj_res linger_spawn_pty(uint32_t cols, uint32_t rows,
         envp[envc] = NULL;
     }
     const char *dir = lean_string_cstr(cwd);
-    const char *home = getenv("HOME");
+    const char *home = env_value(envp, "HOME=");
+    const char *path = env_value(envp, "PATH=");
 
     /* execvp's ENOEXEC fallback, pre-allocated: a file that is executable but not a
      * valid executable image (a script with no shebang) is handed to the shell. The
      * rewrite to execve dropped that silently, which narrowed `linger attach <name>
      * <cmd>` for exactly those files. Built here, not in the child, for the same
      * async-signal-safe reason as argv and envp; the child only fills in slot 1. */
-    char **shargv = calloc(nargs + 3, sizeof(char *));
+    char **shargv = shell_argv(argv, nargs);
     if (!shargv) {
         int e = errno;
         close(master); free(argv); free(envp);
         return io_err_code("calloc", e);
     }
-    shargv[0] = (char *)"/bin/sh";
-    for (size_t i = 0; i < nargs; i++) shargv[i + 2] = argv[i + 1];
 
     int errPipe[2];
-    if (pipe(errPipe) < 0) {
+    int held = spawn_pipe(errPipe);
+    if (held < 0) {
         int e = errno;
         close(master); free(argv); free(envp); free(shargv);
-        return io_err_code("pipe", e);
-    }
-    if (fcntl(errPipe[1], F_SETFD, FD_CLOEXEC) < 0) {
-        int e = errno;
-        close(errPipe[0]); close(errPipe[1]); close(master); free(argv); free(envp); free(shargv);
-        return io_err_code("fcntl(errpipe CLOEXEC)", e);
+        return io_err_code("spawn_pipe", e);
     }
 
     pid_t pid = fork();
+    if (pid != 0) release_stdio((unsigned)held);
     if (pid < 0) {
         int e = errno;
         close(errPipe[0]); close(errPipe[1]);
@@ -374,39 +467,7 @@ LEAN_EXPORT lean_obj_res linger_spawn_pty(uint32_t cols, uint32_t rows,
             /* saved cwd may be gone after reboot; HOME beats dying */
             if (home && chdir(home) != 0) { /* keep inherited cwd */ }
         }
-        execve(argv[0], argv, envp);
-        if (errno == ENOEXEC) {           /* executable, but not an executable image */
-            shargv[1] = argv[0];
-            execve("/bin/sh", shargv, envp);
-        }
-        if (errno == ENOEXEC || errno == EACCES || errno == ENOENT) {
-            /* PATH search, as execvp does, but with our own environment */
-            const char *path = NULL;
-            for (size_t i = 0; envp[i]; i++)
-                if (strncmp(envp[i], "PATH=", 5) == 0) { path = envp[i] + 5; break; }
-            if (!path) path = "/usr/bin:/bin";
-            if (!strchr(argv[0], '/')) {
-                char candidate[4096];
-                const char *seg = path;
-                while (*seg) {
-                    const char *end = strchr(seg, ':');
-                    size_t len = end ? (size_t)(end - seg) : strlen(seg);
-                    if (len == 0) { len = 1; seg = "."; }
-                    if (len + 1 + strlen(argv[0]) + 1 <= sizeof candidate) {
-                        memcpy(candidate, seg, len);
-                        candidate[len] = '/';
-                        memcpy(candidate + len + 1, argv[0], strlen(argv[0]) + 1);
-                        execve(candidate, argv, envp);
-                        if (errno == ENOEXEC) {   /* same fallback for a PATH hit */
-                            shargv[1] = candidate;
-                            execve("/bin/sh", shargv, envp);
-                        }
-                    }
-                    if (!end) break;
-                    seg = end + 1;
-                }
-            }
-        }
+        exec_search(argv, shargv, envp, path);
         spawn_fail(errPipe[1], "execve", errno);
     }
     close(errPipe[1]);
@@ -429,8 +490,7 @@ LEAN_EXPORT lean_obj_res linger_spawn_pty(uint32_t cols, uint32_t rows,
 }
 
 /* linger_winsize_get : UInt32 -> IO UInt64   (cols<<32 | rows) */
-LEAN_EXPORT lean_obj_res linger_winsize_get(uint32_t fd, lean_obj_arg w) {
-    (void)w;
+LEAN_EXPORT lean_obj_res linger_winsize_get(uint32_t fd) {
     struct winsize ws;
     if (ioctl((int)fd, TIOCGWINSZ, &ws) < 0) return io_err("TIOCGWINSZ");
     return lean_io_result_mk_ok(
@@ -439,9 +499,7 @@ LEAN_EXPORT lean_obj_res linger_winsize_get(uint32_t fd, lean_obj_arg w) {
 
 /* linger_winsize_set : UInt32 -> UInt32 -> UInt32 -> IO Unit
  * On a pty master this also delivers SIGWINCH to the foreground pgrp. */
-LEAN_EXPORT lean_obj_res linger_winsize_set(uint32_t fd, uint32_t cols, uint32_t rows,
-                                         lean_obj_arg w) {
-    (void)w;
+LEAN_EXPORT lean_obj_res linger_winsize_set(uint32_t fd, uint32_t cols, uint32_t rows) {
     struct winsize ws;
     memset(&ws, 0, sizeof ws);
     ws.ws_col = (unsigned short)cols;
@@ -455,8 +513,7 @@ LEAN_EXPORT lean_obj_res linger_winsize_set(uint32_t fd, uint32_t cols, uint32_t
 
 /* linger_term_raw : UInt32 -> IO ByteArray
  * cfmakeraw the fd; returns the prior termios as opaque bytes. */
-LEAN_EXPORT lean_obj_res linger_term_raw(uint32_t fd, lean_obj_arg w) {
-    (void)w;
+LEAN_EXPORT lean_obj_res linger_term_raw(uint32_t fd) {
     struct termios old, raw;
     if (tcgetattr((int)fd, &old) < 0) return io_err("tcgetattr");
     raw = old;
@@ -470,12 +527,9 @@ LEAN_EXPORT lean_obj_res linger_term_raw(uint32_t fd, lean_obj_arg w) {
 }
 
 /* linger_term_restore : UInt32 -> @& ByteArray -> IO Unit */
-LEAN_EXPORT lean_obj_res linger_term_restore(uint32_t fd, b_lean_obj_arg saved,
-                                          lean_obj_arg w) {
-    (void)w;
+LEAN_EXPORT lean_obj_res linger_term_restore(uint32_t fd, b_lean_obj_arg saved) {
     if (lean_sarray_size(saved) != sizeof(struct termios))
-        return lean_io_result_mk_error(
-            lean_mk_io_user_error(lean_mk_string("term_restore: bad termios blob")));
+        return io_msg("term_restore: bad termios blob");
     struct termios t;
     memcpy(&t, lean_sarray_cptr(saved), sizeof t);
     if (tcsetattr((int)fd, TCSANOW, &t) < 0) return io_err("tcsetattr(restore)");
@@ -495,12 +549,10 @@ static int fill_sockaddr(const char *path, struct sockaddr_un *sa) {
 }
 
 /* linger_unix_listen : @& String -> IO UInt32  (caller unlinks stale paths) */
-LEAN_EXPORT lean_obj_res linger_unix_listen(b_lean_obj_arg path, lean_obj_arg w) {
-    (void)w;
+LEAN_EXPORT lean_obj_res linger_unix_listen(b_lean_obj_arg path) {
     struct sockaddr_un sa;
     if (fill_sockaddr(lean_string_cstr(path), &sa) < 0)
-        return lean_io_result_mk_error(
-            lean_mk_io_user_error(lean_mk_string("listen: socket path empty or too long")));
+        return io_msg("listen: socket path empty or too long");
     int fd = unix_socket_cloexec();
     if (fd < 0) return io_err("socket");
     if (bind(fd, (struct sockaddr *)&sa, sizeof sa) < 0) {
@@ -519,8 +571,7 @@ LEAN_EXPORT lean_obj_res linger_unix_listen(b_lean_obj_arg path, lean_obj_arg w)
 /* linger_unix_connect : @& String -> IO Int64
  * >=0: fd. <0: -errno (ENOENT / ECONNREFUSED are normal: no daemon /
  * stale socket; the caller decides). */
-LEAN_EXPORT lean_obj_res linger_unix_connect(b_lean_obj_arg path, lean_obj_arg w) {
-    (void)w;
+LEAN_EXPORT lean_obj_res linger_unix_connect(b_lean_obj_arg path) {
     struct sockaddr_un sa;
     if (fill_sockaddr(lean_string_cstr(path), &sa) < 0)
         return lean_io_result_mk_ok(lean_box_uint64((uint64_t)(int64_t)-ENAMETOOLONG));
@@ -540,8 +591,7 @@ LEAN_EXPORT lean_obj_res linger_unix_connect(b_lean_obj_arg path, lean_obj_arg w
 /* linger_accept : UInt32 -> IO Int64
  * >=0: connection fd. -1: nothing to accept (EAGAIN -- listen fd is
  * nonblocking to close the poll/accept race). EINTR retried. */
-LEAN_EXPORT lean_obj_res linger_accept(uint32_t fd, lean_obj_arg w) {
-    (void)w;
+LEAN_EXPORT lean_obj_res linger_accept(uint32_t fd) {
     int c;
     do { c = accept_cloexec((int)fd); }
     while (c < 0 && errno == EINTR);
@@ -564,8 +614,7 @@ LEAN_EXPORT lean_obj_res linger_accept(uint32_t fd, lean_obj_arg w) {
  * the lock, and must NOT unlink the lock file -- unlinking would let a
  * second process create a fresh inode and lock that while we still hold
  * the old one. */
-LEAN_EXPORT lean_obj_res linger_flock(b_lean_obj_arg path, lean_obj_arg w) {
-    (void)w;
+LEAN_EXPORT lean_obj_res linger_flock(b_lean_obj_arg path) {
     int fd = open(lean_string_cstr(path), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
     if (fd < 0) return io_err("open(lockfile)");
     int r;
@@ -574,8 +623,7 @@ LEAN_EXPORT lean_obj_res linger_flock(b_lean_obj_arg path, lean_obj_arg w) {
         int e = errno;
         close(fd);
         if (e == EWOULDBLOCK) return lean_io_result_mk_ok(lean_box_uint64((uint64_t)(int64_t)-1));
-        errno = e;
-        return io_err("flock");
+        return io_err_code("flock", e);
     }
     return lean_io_result_mk_ok(lean_box_uint64((uint64_t)(int64_t)fd));
 }
@@ -584,31 +632,32 @@ LEAN_EXPORT lean_obj_res linger_flock(b_lean_obj_arg path, lean_obj_arg w) {
 /* processes                                                             */
 
 /* linger_spawn_detached : @& String -> @& Array String -> @& String -> IO Unit
- * Double-fork + setsid; grandchild execvp's with stdio on logPath
+ * Double-fork + setsid; grandchild execve's with PATH lookup and stdio on logPath
  * (append, 0600; /dev/null if logPath == ""). No zombie remains. */
 LEAN_EXPORT lean_obj_res linger_spawn_detached(b_lean_obj_arg prog, b_lean_obj_arg args,
-                                            b_lean_obj_arg log_path, lean_obj_arg w) {
-    (void)w;
+                                            b_lean_obj_arg log_path) {
     size_t nargs = lean_array_size(args);
-    char **argv = calloc(nargs + 2, sizeof(char *));
+    char **argv = exec_argv(prog, args);
     if (!argv) return io_err("calloc");
-    argv[0] = (char *)lean_string_cstr(prog);
-    for (size_t i = 0; i < nargs; i++)
-        argv[i + 1] = (char *)lean_string_cstr(lean_array_get_core(args, i));
+    char **shargv = shell_argv(argv, nargs);
+    if (!shargv) { int e = errno; free(argv); return io_err_code("calloc", e); }
     const char *logp = lean_string_cstr(log_path);
+    extern char **environ;
+    const char *path = env_value(environ, "PATH=");
 
     int errPipe[2];
-    if (pipe(errPipe) < 0) { int e = errno; free(argv); return io_err_code("pipe", e); }
-    if (fcntl(errPipe[1], F_SETFD, FD_CLOEXEC) < 0) {
+    int held = spawn_pipe(errPipe);
+    if (held < 0) {
         int e = errno;
-        close(errPipe[0]); close(errPipe[1]); free(argv);
-        return io_err_code("fcntl(errpipe CLOEXEC)", e);
+        free(argv); free(shargv);
+        return io_err_code("spawn_pipe", e);
     }
 
     pid_t pid = fork();
+    if (pid != 0) release_stdio((unsigned)held);
     if (pid < 0) {
         int e = errno;
-        close(errPipe[0]); close(errPipe[1]); free(argv);
+        close(errPipe[0]); close(errPipe[1]); free(argv); free(shargv);
         return io_err_code("fork", e);
     }
     if (pid == 0) { /* child */
@@ -629,8 +678,8 @@ LEAN_EXPORT lean_obj_res linger_spawn_detached(b_lean_obj_arg prog, b_lean_obj_a
         if (dup2(fd, 1) < 0 || dup2(fd, 2) < 0) spawn_fail(errPipe[1], "dup2(stdout)", errno);
         if (fd > 2) close(fd);
         signal(SIGHUP, SIG_IGN);
-        execvp(argv[0], argv);
-        spawn_fail(errPipe[1], "execvp", errno);
+        exec_search(argv, shargv, environ, path);
+        spawn_fail(errPipe[1], "execve", errno);
     }
     close(errPipe[1]);
     struct spawn_err rec;
@@ -639,6 +688,7 @@ LEAN_EXPORT lean_obj_res linger_spawn_detached(b_lean_obj_arg prog, b_lean_obj_a
     int status;
     while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
     free(argv);
+    free(shargv);
     if (failed) {
         char buf[128];
         snprintf(buf, sizeof buf, "spawn_detached: %s", rec.stage);
@@ -648,16 +698,10 @@ LEAN_EXPORT lean_obj_res linger_spawn_detached(b_lean_obj_arg prog, b_lean_obj_a
 }
 
 /* linger_exec : @& String -> @& Array String -> IO Unit  (replaces the process) */
-LEAN_EXPORT lean_obj_res linger_exec(b_lean_obj_arg prog, b_lean_obj_arg args,
-                                  lean_obj_arg w) {
-    (void)w;
-    size_t nargs = lean_array_size(args);
-    char **argv = calloc(nargs + 2, sizeof(char *));
+LEAN_EXPORT lean_obj_res linger_exec(b_lean_obj_arg prog, b_lean_obj_arg args) {
+    char **argv = exec_argv(prog, args);
     if (!argv) return io_err("calloc");
-    argv[0] = (char *)lean_string_cstr(prog);
-    for (size_t i = 0; i < nargs; i++)
-        argv[i + 1] = (char *)lean_string_cstr(lean_array_get_core(args, i));
-    execvp(lean_string_cstr(prog), argv);
+    execvp(argv[0], argv);
     {
         int e = errno;
         free(argv);
@@ -666,15 +710,13 @@ LEAN_EXPORT lean_obj_res linger_exec(b_lean_obj_arg prog, b_lean_obj_arg args,
 }
 
 /* linger_kill : UInt32 -> UInt32 -> IO Unit  (ESRCH is not an error) */
-LEAN_EXPORT lean_obj_res linger_kill(uint32_t pid, uint32_t sig, lean_obj_arg w) {
-    (void)w;
+LEAN_EXPORT lean_obj_res linger_kill(uint32_t pid, uint32_t sig) {
     if (kill((pid_t)pid, (int)sig) < 0 && errno != ESRCH) return io_err("kill");
     return io_ok_unit();
 }
 
 /* linger_alive : UInt32 -> IO Bool  (kill(pid, 0)) */
-LEAN_EXPORT lean_obj_res linger_alive(uint32_t pid, lean_obj_arg w) {
-    (void)w;
+LEAN_EXPORT lean_obj_res linger_alive(uint32_t pid) {
     int r = kill((pid_t)pid, 0);
     return lean_io_result_mk_ok(lean_box(r == 0 ? 1 : 0));
 }
@@ -690,8 +732,7 @@ LEAN_EXPORT lean_obj_res linger_alive(uint32_t pid, lean_obj_arg w) {
  * .checkPid rejects them -- so a failure that is not ECHILD is answered
  * -2 rather than "running", which degrades to a liveness probe instead of
  * waiting forever on a child that cannot be reaped. */
-LEAN_EXPORT lean_obj_res linger_waitpid_nohang(uint32_t pid, lean_obj_arg w) {
-    (void)w;
+LEAN_EXPORT lean_obj_res linger_waitpid_nohang(uint32_t pid) {
     int status;
     pid_t r;
     do { r = waitpid((pid_t)pid, &status, WNOHANG); }
@@ -716,8 +757,7 @@ LEAN_EXPORT lean_obj_res linger_waitpid_nohang(uint32_t pid, lean_obj_arg w) {
  * full-write loop are Lean/core; see Linger/Posix.lean. */
 
 /* linger_getuid : IO UInt32 */
-LEAN_EXPORT lean_obj_res linger_getuid(lean_obj_arg w) {
-    (void)w;
+LEAN_EXPORT lean_obj_res linger_getuid(void) {
     return lean_io_result_mk_ok(lean_box_uint32((uint32_t)getuid()));
 }
 
@@ -733,8 +773,7 @@ LEAN_EXPORT lean_obj_res linger_getuid(lean_obj_arg w) {
  * rather than where the user had cd'd to. libproc gives the resolved
  * vnode path (/private/tmp for /tmp) -- the point is the directory, and
  * the caller stores whatever string chdir will accept. */
-LEAN_EXPORT lean_obj_res linger_getcwd_of(uint32_t pid, lean_obj_arg w) {
-    (void)w;
+LEAN_EXPORT lean_obj_res linger_getcwd_of(uint32_t pid) {
 #ifdef __APPLE__
     struct proc_vnodepathinfo vpi;
     int n = proc_pidinfo((int)pid, PROC_PIDVNODEPATHINFO, 0, &vpi, sizeof vpi);

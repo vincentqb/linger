@@ -1,8 +1,8 @@
 # 2026-09-25 codebase audit
 
-Status: step 3 verified — independent audit fixes ready for integration
+Status: step 4 verified — POSIX boundary fixes integrated
 Updated: 2026-09-25
-Next: integrate the POSIX boundary fixes and generated ABI checks
+Next: integrate the VT factoring and replay-proof improvements
 Predecessor: `specs/archive/tmux-resurrect-recipe.md`
 
 ## Goal
@@ -76,3 +76,10 @@ The status and completion record below track the actual integration order.
   effect-interpreter failure were red before the changes; a lost-dirty mutation
   breaks the new theorem. Both required builds and the full foreground verifier
   pass.
+- Step 4: the C signatures now match declarations emitted by the pinned Lean
+  compiler. Shared spawn preparation and execution fix closed standard
+  descriptors, command lookup and child-environment handling; private raw
+  bindings keep NUL and narrowing validation in Lean. Generated-ABI and
+  post-fork source checks reject their measured mutations. Every existing C
+  export still has a distinct required OS operation. Both required builds and
+  the full foreground verifier pass.

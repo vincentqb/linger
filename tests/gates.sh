@@ -134,6 +134,29 @@ done
 ! code_grep '(^|[^[:alnum:]_])(unsafe|implemented_by)' '*.lean' \
   || fail "unsafe / @[implemented_by] in Lean — the compiled program may then disagree with every theorem about it (R4; see the comment on this gate)"
 [ "$(ls c/ | tr -d ' \n')" = "shim.c" ] || fail "more than one C file"
+# Lean/libuv may have worker threads when the application forks. The child
+# paths and their two execution helpers must not allocate, format through
+# stdio, mutate the environment, or use execvp's libc internals. Inventory the
+# regions as well: deleting a marker must fail rather than checking nothing.
+# This is a source guard for the listed calls, not a whole-program safety proof.
+awk '
+  /^static void (spawn_fail|exec_search)\(/ { helper = 1; helpers++ }
+  /^    if \(pid == 0\) \{/ { child = 1; children++ }
+  helper || child {
+    if ($0 ~ /(^|[^[:alnum:]_])(malloc|calloc|realloc|free|getenv|setenv|putenv|execvp|snprintf|printf|strerror|lean_[[:alnum:]_]+)[[:space:]]*\(/) {
+      print "  forbidden call after fork at " FNR ": " $0
+      failed = 1
+    }
+  }
+  helper && /^}/ { helper = 0 }
+  child && /^    }/ { child = 0 }
+  END {
+    if (helpers != 2 || children != 2) {
+      print "  fork guard expected two helpers and two child blocks, saw " helpers ", " children
+      failed = 1
+    }
+    exit failed
+  }' c/shim.c >&2 || fail "fork child call boundary changed"
 # README promises "no external Lean dependencies"; make it fail-closed rather
 # than rest on inspection (README-promise coverage audit, the unbacked-promise
 # class). A `require` in the lakefile would pull in a package.
@@ -719,15 +742,15 @@ grep -q -- "--since=" "$ci_sh" \
   || fail "$ci_sh: the scheduled run no longer checks for commits — a weekly macOS build of an unchanged tree pays the expensive rate to re-learn last week's answer"
 # E2E `partial def` ratchet: the sibling of RUNTIME_PARTIAL_CAP above, for the same
 # reason (the keyword creeps back by habit) and covering the files its glob misses.
-# All three are honest. `E2E/Harness.drain` and `LingerTest.drain` recur on a
-# wall-clock deadline, and `RemoteLive.stripCsi` was MEASURED not assumed: rewriting
+# `LingerTest.drain` now uses a total do-block loop. `E2E/Harness.drain` still
+# recurs on a monotonic deadline, and `RemoteLive.stripCsi` was measured: rewriting
 # it around `List.dropWhile` STILL fails the termination check, because the recursion
 # is on a dropWhile-then-drop of a tail, not a structural sub-term. Shedding it needs
 # a real `decreasing_by` — proof work, not cleanup, and AGENTS.md rules out a fuel
 # parameter. The cap was 5 while only 3 existed: `leanFiles` and `stripComments` were
 # the text-based coverage scanner's, deleted with it in step 2, and a cap holding
 # slots for deleted code is a cap that has stopped biting.
-E2E_PARTIAL_CAP=3
+E2E_PARTIAL_CAP=2
 ep_n="$(code_count 'partial def' 'E2E/*' 'LingerTest.lean')"
 [ "$ep_n" -le "$E2E_PARTIAL_CAP" ] \
   || fail "E2E/ grew to $ep_n partial defs (cap $E2E_PARTIAL_CAP); a do-block loop does not need the keyword"

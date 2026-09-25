@@ -89,9 +89,11 @@ runtime no longer emits fails too.
 
 ## Concurrency
 
-No data races by construction: one process, one `poll` loop, no threads,
-no shared mutable state, no signal handler that touches state. What
-remains is interleaving — §Chunk per connection, §Isolate across
+The daemon's session state has one application-level owner: its `poll` loop.
+No signal handler mutates that state. Lean and libuv may still run worker
+threads, so the post-fork shim paths avoid allocation and stdio formatting;
+a source gate checks their call boundary. What remains in the session machine
+is interleaving — §Chunk per connection, §Isolate across
 clients — and two processes meeting at a file: §Restore, with atomic
 tmp+`rename` writes and a `load` that is total and accepts only `Good ∧
 Renderable` screens, so a racing reader sees the old file or the new

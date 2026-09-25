@@ -5,7 +5,7 @@ import Std.Async.System
 
 public section
 
-/-! # Linger.Posix — the only module that touches the OS
+/-! # Linger.Posix — the raw POSIX boundary
 
 Most bindings map 1:1 onto `c/shim.c` (syscall + errno only; object
 arguments are borrowed `@&`, so the shim never manages refcounts). A
@@ -13,11 +13,15 @@ few are thin wrappers over Lean core's own primitives rather than our
 shim — `getpid`, `chmod`, `monotonicMs`, `realtimeS`, `stdinIsTty`,
 `gethostname` — kept here so call sites see one uniform `Linger.Posix`
 surface; the shim is smaller for it.
+
+Strings passed to the shim are checked for NUL before conversion to C strings.
+Rejecting an unrepresentable value prevents a path or argument from silently
+becoming its prefix. Empty strings retain each operation's documented meaning.
 -/
 
 namespace Linger.Posix
 
-/-- Linux poll(2) bits. `c/shim.c` `_Static_assert`s these against the ABI. -/
+/-- poll(2) bits. `c/shim.c` `_Static_assert`s these against each platform's ABI. -/
 def POLLIN : UInt32 := 0x001
 
 def POLLOUT : UInt32 := 0x004
@@ -27,6 +31,19 @@ def POLLERR : UInt32 := 0x008
 def POLLHUP : UInt32 := 0x010
 
 def POLLNVAL : UInt32 := 0x020
+
+private def checkCString (what : String) (value : String) : IO Unit := do
+  if value.contains '\x00' then
+    throw (IO.userError s!"{what}: NUL cannot be represented in a POSIX string")
+
+private def checkCommand (what prog : String) (args : Array String) : IO Unit := do
+  checkCString s!"{what} program" prog
+  for arg in args do
+    checkCString s!"{what} argument" arg
+
+private def checkWinsize (cols rows : UInt32) : IO Unit := do
+  if cols > 0xFFFF || rows > 0xFFFF then
+    throw (IO.userError "winsize: columns and rows must fit unsigned 16-bit fields")
 
 /-- Daemon-side: survive controlling-terminal death. -/
 @[extern "linger_ignore_sighup"]
@@ -96,16 +113,23 @@ opaque poll (fds : @& Array UInt32) (events : @& Array UInt32) (timeoutMs : Int3
 private opaque spawnPtyRaw (cols rows : UInt32) (cwd : @& String) (prog : @& String)
     (args : @& Array String) (extraEnv : @& Array String) : IO UInt64
 
-/-- posix_openpt + execve. `extraEnv` entries are `"K=V"`. `cwd = ""`
-inherits; a vanished cwd falls back to `$HOME` rather than failing
-(reboot-resume may restore a deleted directory).
+/-- posix_openpt + execve. A bare program is searched in the child's PATH;
+slash-qualified programs run directly. Executable text without a shebang runs
+through `/bin/sh`, preserving execvp's fallback.
+`extraEnv` entries are `"K=V"` with a nonempty key. `cwd = ""` inherits;
+a vanished cwd falls back to the child's `$HOME`, then the inherited cwd
+(reboot-resume may restore a deleted directory). Dimensions must fit 16 bits.
 
 Setup and exec failures in the child reach us as an error rather than a live
 pid: the C side reports them over a close-on-exec pipe. -/
 def spawnPty (cols rows : UInt32) (cwd prog : String) (args : Array String)
     (extraEnv : Array String) : IO (UInt32 × UInt32) := do
+  checkWinsize cols rows
+  checkCString "spawnPty cwd" cwd
+  checkCommand "spawnPty" prog args
   for entry in extraEnv do
-    unless entry.contains '=' do
+    checkCString "spawnPty environment" entry
+    unless entry.contains '=' && !entry.startsWith "=" do
       throw (IO.userError s!"spawnPty: environment entry '{entry}' is not K=V")
   let packed ← spawnPtyRaw cols rows cwd prog args extraEnv
   return ((packed >>> 32).toUInt32, packed.toUInt32)
@@ -118,9 +142,15 @@ def winsizeGet (fd : UInt32) : IO (UInt32 × UInt32) := do
   let packed ← winsizeGetRaw fd
   return ((packed >>> 32).toUInt32, packed.toUInt32)
 
-/-- Set (cols, rows); on a pty master the kernel SIGWINCHes the child. -/
 @[extern "linger_winsize_set"]
-opaque winsizeSet (fd cols rows : UInt32) : IO Unit
+private opaque winsizeSetRaw (fd cols rows : UInt32) : IO Unit
+
+/-- Set (cols, rows); on a pty master the kernel SIGWINCHes the child.
+Refuses dimensions that would wrap the kernel's unsigned 16-bit fields;
+zero remains representable and means unspecified to POSIX. -/
+def winsizeSet (fd cols rows : UInt32) : IO Unit := do
+  checkWinsize cols rows
+  winsizeSetRaw fd cols rows
 
 /-- Put `fd` in raw mode; returns the prior termios as an opaque blob. -/
 @[extern "linger_term_raw"]
@@ -129,20 +159,32 @@ opaque termRaw (fd : UInt32) : IO ByteArray
 @[extern "linger_term_restore"]
 opaque termRestore (fd : UInt32) (saved : @& ByteArray) : IO Unit
 
-/-- Bind + listen on a unix socket path. Caller unlinks stale paths
-first (`connect` distinguishes stale from live). Backlog 64 — well past
-`maxClients`, so a client is never refused for queue depth. -/
 @[extern "linger_unix_listen"]
-opaque unixListen (path : @& String) : IO UInt32
+private opaque unixListenRaw (path : @& String) : IO UInt32
+
+/-- Bind + listen on a unix socket path. Caller unlinks stale paths
+first (`connect` distinguishes stale from live). The kernel's pending-connection
+backlog is separate from the daemon's admitted-client bound. -/
+def unixListen (path : String) : IO UInt32 := do
+  checkCString "unixListen path" path
+  unixListenRaw path
+
+@[extern "linger_unix_connect"]
+private opaque unixConnectRaw (path : @& String) : IO Int64
 
 /-- `≥ 0` connected fd; `< 0` is `-errno` — ENOENT (no socket) and
-ECONNREFUSED (stale socket, daemon dead) are expected outcomes. -/
-@[extern "linger_unix_connect"]
-opaque unixConnect (path : @& String) : IO Int64
+ECONNREFUSED (stale socket, daemon dead) are expected outcomes.
+An unrepresentable NUL path throws before reaching the OS. -/
+def unixConnect (path : String) : IO Int64 := do
+  checkCString "unixConnect path" path
+  unixConnectRaw path
 
 /-- Accept on a nonblocking listen fd. `-1` = nothing to accept. -/
 @[extern "linger_accept"]
 opaque accept (fd : UInt32) : IO Int64
+
+@[extern "linger_flock"]
+private opaque flockRaw (path : @& String) : IO Int64
 
 /-- Exclusive non-blocking `flock` on a lock file; `≥ 0` is the held
 fd, `-1` means another process holds it. Chosen over an `O_EXCL`/
@@ -150,20 +192,31 @@ fd, `-1` means another process holds it. Chosen over an `O_EXCL`/
 staleness timeout to invent, nothing left behind by a SIGKILL or a
 power cut. Keep the fd open for the lifetime of the lock, and never
 unlink the lock file. -/
-@[extern "linger_flock"]
-opaque flock (path : @& String) : IO Int64
+def flock (path : String) : IO Int64 := do
+  checkCString "flock path" path
+  flockRaw path
+
+@[extern "linger_spawn_detached"]
+private opaque spawnDetachedRaw (prog : @& String) (args : @& Array String) (logPath : @& String) :
+    IO Unit
 
 /-- Double-fork + setsid + exec, with stdio on `logPath` (append) or /dev/null.
 Returns after the intermediate child is reaped: no zombie.
 
 Setup and exec failures in the child reach us as an error rather than a silently dead
 daemon: the C side reports them over the same close-on-exec pipe `spawnPty` uses. -/
-@[extern "linger_spawn_detached"]
-opaque spawnDetached (prog : @& String) (args : @& Array String) (logPath : @& String) : IO Unit
+def spawnDetached (prog : String) (args : Array String) (logPath : String) : IO Unit := do
+  checkCommand "spawnDetached" prog args
+  checkCString "spawnDetached log path" logPath
+  spawnDetachedRaw prog args logPath
+
+@[extern "linger_exec"]
+private opaque execRaw (prog : @& String) (args : @& Array String) : IO Unit
 
 /-- execvp — replaces this process on success. -/
-@[extern "linger_exec"]
-opaque exec (prog : @& String) (args : @& Array String) : IO Unit
+def exec (prog : String) (args : Array String) : IO Unit := do
+  checkCommand "exec" prog args
+  execRaw prog args
 
 /-- kill(2); ESRCH (already gone) is not an error. -/
 @[extern "linger_kill"]

@@ -102,6 +102,45 @@ fi
 grep -c 'Build completed successfully' /tmp/linger-build.log > /dev/null \
   || fail "build did not report success"
 
+say "1b. generated Lean / C shim ABI"
+# Compile declarations emitted by THIS pinned Lean together with the shim.
+# Source-looking FFI types are insufficient: Int32 is emitted as uint32_t bits,
+# and this toolchain erases IO's world argument. Compare all three symbol sets
+# so an empty extraction or an unused/missing export cannot pass.
+abi_dir="$(mktemp -d /tmp/linger-abi.XXXXXX)"
+trap 'rm -r "$abi_dir"' EXIT HUP TERM
+awk '/^lean_object\* linger_[[:alnum:]_]+\([^;]*\);$/ {
+  sub(/\(\);$/, "(void);"); print; count++
+} END { if (!count) exit 1 }' .lake/build/ir/Linger/Posix.c > "$abi_dir/prototypes" \
+  || fail "no generated shim prototypes"
+sed 's/^lean_object\* //; s/(.*//' "$abi_dir/prototypes" | sort > "$abi_dir/generated"
+sed -n 's/^LEAN_EXPORT lean_obj_res \(linger_[[:alnum:]_]*\)(.*/\1/p' c/shim.c \
+  | sort > "$abi_dir/exports"
+sed -n 's/^@\[extern "\(linger_[[:alnum:]_]*\)"\].*/\1/p' Linger/Posix.lean \
+  | sort > "$abi_dir/externs"
+cmp -s "$abi_dir/generated" "$abi_dir/exports" \
+  || fail "generated ABI and C export inventories differ"
+cmp -s "$abi_dir/generated" "$abi_dir/externs" \
+  || fail "generated ABI and Lean extern inventories differ"
+{
+  printf '%s\n' '#define _GNU_SOURCE' '#include <lean/lean.h>'
+  cat "$abi_dir/prototypes"
+  printf '%s\n' '#include "shim.c"'
+} > "$abi_dir/check.c"
+# Resolve before `lake env` prepends its bundled compiler. On this Linux host
+# only Homebrew clang can run; elsewhere the installed compiler is sufficient.
+if [ "$(uname -s)" = Linux ] && [ -x /home/linuxbrew/.linuxbrew/bin/clang ]; then
+  abi_cc=/home/linuxbrew/.linuxbrew/bin/clang
+else
+  abi_cc="$(command -v clang)" || fail "clang missing for ABI check"
+fi
+abi_prefix="$(./lake env lean --print-prefix)"
+"$abi_cc" -fsyntax-only -Wall -Werror -Wstrict-prototypes \
+  -isystem "$abi_prefix/include" -I "$PWD/c" "$abi_dir/check.c" \
+  || fail "C shim conflicts with the generated Lean ABI"
+rm -r "$abi_dir"
+trap - EXIT HUP TERM
+
 say "2. source-tree gates (purity, boundaries, and the ratchets)"
 # Extracted to tests/gates.sh so the `pre-commit` hook and CI run the SAME numbers.
 # A hook with its own copy of a cap is worse than no hook.
@@ -160,8 +199,8 @@ shim_out=/tmp/linger-shim.out
   || { tail -25 "$shim_out"; fail "lingertest"; }
 tail -1 "$shim_out" | grep -q '^ALL PASS$' || fail "lingertest"
 shim_n="$(grep -c '^PASS ' "$shim_out")"
-[ "$shim_n" -eq 26 ] \
-  || fail "lingertest ran $shim_n checks (expected exactly 26)"
+[ "$shim_n" -eq 63 ] \
+  || fail "lingertest ran $shim_n checks (expected exactly 63)"
 
 # Keep one real session in another state directory through every suite. A suite
 # may clean up its own Env, never the user's process namespace.

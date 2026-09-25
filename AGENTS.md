@@ -97,8 +97,10 @@ deliberately no pre-push hook.
   `@[extern]` lives in `Linger/Posix.lean` (gated), and the runtime
   otherwise goes through Lean core's `IO`. Keep the shim logic-free
   (syscall + errno only); its wrapper count is ratcheted (`SHIM_CAP`),
-  and all 22 were re-audited 2026-09-14 as not removable — evidence in
-  SCRATCHPAD.md. The shim returns `-errno`; never write errno numbers in
+  and every export was re-audited 2026-09-25 as not removable — evidence in
+  SCRATCHPAD.md. The full verifier checks the generated Lean ABI against C;
+  the source gate inventories post-fork call regions. The shim returns
+  `-errno`; never write errno numbers in
   Lean, and never let a pid selector (`0`, a negative `pid_t`) reach a
   signal — `Linger.Posix.checkPid` refuses them, and a gate covers the
   shell.
