@@ -12179,3 +12179,53 @@ source and layout gates, semantic core coverage, fuzz corpus, CI runner
 selection, POSIX smoke tests and every live suite. The delivery roster changes
 only in its canonical `tests/e2e.sh` count. `git ls-files --stage` confirms
 the distinct test directory names and the new proof module.
+
+## Step 17 notes — 2026-09-25
+
+Closed `specs/codebase-audit.md` into `specs/archive/codebase-audit.md` with
+its final assessment and validation limits. Every accepted worker change is
+integrated on main through implementation checkpoint `f9308ad`; the separate
+worktrees retain frozen sources and experiment receipts. No behavioral step
+remains in flight.
+
+The audit supports the existing separation: pure VT/session/replay transitions,
+an effect interpreter, and one raw POSIX module plus its syscall shim. Private
+VT mutators and shared dispatch improve the public contract. The C audit found
+no removable export with equivalent existing Lean semantics; shared spawn
+preparation removes duplication while the ABI and closed-stdio corrections
+add necessary handling. Measured against `3ddfb4b`, production Lean is 428
+lines larger and C 39 lines larger, including comments/layout. Most net growth
+is proof and regression coverage. `step17-diff-accounting.json` records the
+classification; this is not a claim of globally minimal source code.
+
+The integer answer is representation-specific, with no general C++ constraint.
+Internal monotonic timing now remains Nat; fixed-width wire and OS values keep
+their boundary contracts. A replacement with Nat everywhere would merely move
+the required bounds checks and conversions. The full pure-core coverage census
+passes, and the new byte-effect, accepted-checkpoint and replay progress
+theorems have their own falsification evidence. Source gates and actual socket
+checks cover the IO connections that these pure statements cannot inspect.
+
+Fresh GitHub API reads confirm Lean `v4.34.1` (published 2026-09-24) is the
+latest stable release. lean-fmt still lists only the v4.34 release-candidate
+tags, so the repository's paired-upgrade rule retains `v4.34.0-rc2`.
+Receipts are `step17-lean-latest.json` and `step17-formatter-tags.json`.
+The current module privacy, String.Slice, total loops and library termination
+lemmas were used where they resolved concrete issues; no new dependency or
+proof resource raise was introduced.
+
+The latest implementation push is present on origin. GitHub run `36174812390`
+for `f9308ad` failed with no executed gate steps; its annotation explicitly
+reports failed recent payments or a spending-limit block, and the full matrix
+was skipped. Receipts are `step17-ci-recent.json`,
+`step17-ci-push-jobs.json` and `step17-ci-push-annotations.json`. The local Linux
+full verifier is green; macOS execution remains unverified. A manual platform
+workflow will be requested after the closing push. No billing setting is part
+of this task.
+
+The closing checkpoint changes only AGENTS.md and the append-only audit
+records. Both required builds and source gates pass, recorded in
+`step17-build.log`, `step17-proofs-tests.log` and `step17-gates.log` under
+`/tmp/linger-audit-20260925/`. Step 16's complete foreground verifier covers
+the unchanged implementation. Earlier scratchpad and archived records remain
+untouched.

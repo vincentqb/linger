@@ -15,12 +15,12 @@ worklog), `specs/archive/` (closed build records), the comments in
 
 ## Where things stand — read this first after any compaction
 
-1. `specs/codebase-audit.md` is in flight (2026-09-25): audit the
-   product contracts, proof coverage, VT factoring, POSIX boundary and
-   compatible Lean features; fix verified findings and integrate on
-   `main`. Keep the live spec count at one; every behavioral fix starts
-   with a failing check and every deletion survives the full verifier
-   stack.
+1. No spec is in flight. The last one closed on 2026-09-25
+   (`specs/archive/codebase-audit.md`: runtime, proof, VT and POSIX audit;
+   local full verification green, remote platform checks blocked by CI
+   billing). New work opens a new `specs/<slug>.md`, names itself here,
+   and keeps the live count at one; every behavioral fix starts with a
+   failing check and every deletion survives the full verifier stack.
 2. `SCRATCHPAD.md` — append-only worklog: proof recipes, measurements,
    break-verify records, negative results. Read before writing; append
    after; never delete prior entries.

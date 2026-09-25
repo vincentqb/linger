@@ -1,8 +1,8 @@
 # 2026-09-25 codebase audit
 
-Status: step 16 complete — deferred wrap restored through delivered bytes
+Status: closed — verified implementation; remote validation blocked by CI billing
 Updated: 2026-09-25
-Next: record the final audit assessment, archive this spec and check remote CI
+Next: no code step remains; request the platform CI run after the closing push
 Predecessor: `specs/archive/tmux-resurrect-recipe.md`
 
 ## Goal
@@ -176,3 +176,72 @@ The status and completion record below track the actual integration order.
   Both required builds and the full foreground verifier pass. The ledger
   records decoded-state representability limits and does not claim equivalence
   under arbitrary future terminal input.
+- Step 17: final assessment and evidence recorded below, this spec archived,
+  and AGENTS.md returned to no live spec. The closing change is documentation
+  only; both required builds and source gates pass. Step 16's clean full
+  verifier covers the unchanged implementation.
+
+## Final assessment
+
+The architecture still fits the product: one daemon owns one session, a pure
+state machine produces effects, and the runtime interprets them. Terminal
+composition, an interactive picker and process-tree resurrection remain
+outside the product. The audit fixed concrete failures in this architecture
+rather than introducing another server or terminal-capability layer.
+
+The theorems support substantive invariants, beyond the exact-constant coverage
+census. New results connect accepted checkpoint parsing to exact resaving,
+complete history emission to its budget, incremental replay to the complete
+captured stream, and real restoration bytes to their cursor and state effects.
+Existing receiver-quantified endpoints retain their original scope. Runtime
+ordering, cleanup and actual socket delivery have executable checks and source
+correspondences because those IO call sites are outside the pure proofs.
+The ledger now states the remaining limits instead of treating partial state
+equality, logical byte bounds or a passing fixture as a stronger guarantee.
+
+VT factoring is tighter: raw mutators are private, checked transitions form the
+public surface, mode parameters share ordered dispatch, and proof stages follow
+the emitter's actual dependencies. The isolated `Linger.Posix` / `c/shim.c`
+boundary is already the appropriate OS interface. Shared spawn preparation,
+Lean validation and a generated-ABI check improve it without another abstraction.
+Every retained C export has a measured capability or semantic reason; removing
+one would require replacing a distinct required operation.
+
+This is not a net code-size reduction. Between `3ddfb4b` and implementation
+checkpoint `f9308ad`, production Lean grew by 428 lines and C by 39 lines,
+including comments and layout. The larger growth is in proofs and regression
+checks. These changes cover captured streaming, transport retirement, boundary
+validation and observed fidelity failures; duplicated paths and unnecessary
+partial definitions were removed where they did not carry distinct semantics.
+No new C export or external Lean dependency was introduced.
+
+The integer investigation found no general C++ compatibility requirement.
+Monotonic timing and internal deadline arithmetic now use Nat directly.
+Fixed-width wire values, fd/pid ABI carriers, packed return values and persisted
+epoch timestamps keep their representation contracts. Replacing those with Nat
+everywhere would still require explicit bounded encoding and OS conversion.
+
+Upstream was rechecked on 2026-09-25: Lean's latest stable release is
+`v4.34.1`, but lean-fmt has no matching stable toolchain tag. The repository's
+documented paired-upgrade condition therefore retains `v4.34.0-rc2`. The audit
+uses that version's module privacy, total do-block loops, String.Slice and
+library termination lemmas without raising proof resource allowances.
+
+All accepted worker changes have been integrated on main. Worktrees under
+`/tmp/linger-audit-20260925/` retain their frozen handoffs and disposable
+evidence; they are not pending feature branches.
+
+## Validation boundary
+
+The local Linux full verifier passes: clean program/proof/test build, source
+and layout gates, exact core coverage, generated C ABI, fuzz corpus, POSIX
+checks and every live suite. New guarantees have recorded failing baselines
+or restored mutation checks. The frozen independent endpoint probe also passes.
+
+GitHub push run
+[36174812390](https://github.com/vincentqb/linger/actions/runs/36174812390)
+for `f9308ad` failed before any job step ran. Its annotation says recent account
+payments failed or the spending limit needs increasing; the platform matrix
+was skipped. This is an external validation block, not a test failure or a
+macOS pass. The requested manual platform run is the final post-push action.
+Billing changes are outside this code audit.
