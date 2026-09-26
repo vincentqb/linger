@@ -9,7 +9,7 @@
 #   3. posix shim smoke tests (lingertest)
 #   4. attach/detach/reattach/mirror/wait e2e (real ptys)
 #   5. reboot-resume e2e (SIGKILL + restore + corrupt tolerance)
-#   6. overview e2e (bare `linger`/`ls` print a list and exit, not a picker)
+#   6. overview e2e (redirected bare `linger`/`ls` print a list and exit)
 #   7. remote-over-ssh e2e (fake ssh: `-r` listing, attach name@host argv)
 #   8. adverse timing: busy-daemon listing (§Row) + name-ownership race
 #   9. graphics passthrough (kitty APC / sixel DCS reach the client raw)
@@ -17,7 +17,7 @@
 #  11. status column: attach marks seen, output while away marks unread
 #  12. agent verbs (info geometry/outseq, capture, send - , resize)
 #  13. watch: the read-only mirror (geometry, keyboard, hand-back, marks seen)
-#  14. recipes: POSIX sh status/argv checks; Lean import subcommand against daemons
+#  14. recipes: native terminal launch settings; Lean import against daemons
 #  15. delivery: bounded replay, margin continuation, byte order and close deadlines
 #  16. manager: terminal selector, exact targets, paste, resize, cleanup and return
 #  (1) also covers Tests/Fuzz.lean: randomized §Replay round-trip search
@@ -93,9 +93,9 @@ suite() {                                   # suite <name> <exact checks>
   printf '  %s: %s checks\n' "$1" "$n"
 }
 
-say "1. build (program + optional manager + theorems + tests)"
+say "1. build (program + theorems + tests)"
 [ ! -e .lake/build ] || rm -r .lake/build
-./lake build Linger Theorems Tests linger lz lingertest e2e > /tmp/linger-build.log 2>&1 \
+./lake build Linger Theorems Tests linger lingertest e2e > /tmp/linger-build.log 2>&1 \
   || { tail -30 /tmp/linger-build.log; fail "build"; }
 if grep -qE '^(warning|error)' /tmp/linger-build.log; then
   grep -E '^(warning|error)' /tmp/linger-build.log
@@ -248,14 +248,14 @@ suite agent 46
 say "13. watch (read-only mirror: geometry, keyboard, hand-back, seen)"
 suite watch 18
 
-say "14. recipes (POSIX helpers and tmux-resurrect import)"
-suite recipes 56
+say "14. recipes (native terminal settings and tmux-resurrect import)"
+suite recipes 43
 
 say "15. delivery (large replay, ordering, exit tails and retired transports)"
 suite delivery 34
 
-say "16. optional manager (selection, input and terminal handoff)"
-suite manager 54
+say "16. manager (entry dispatch, selection, input and terminal handoff)"
+suite manager 58
 
 LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger info "$sentinel_name" >/dev/null \
   || fail "a suite terminated the unrelated sentinel session"

@@ -2,7 +2,7 @@ module
 
 public section
 
-/-! Input events shared by the optional manager's decoder and selection model.
+/-! Input events shared by the selector's decoder and selection model.
 The decoder cannot request a session creation or execute a command. -/
 
 namespace Tools

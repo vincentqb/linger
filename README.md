@@ -4,14 +4,15 @@ Terminal sessions that stay — attach, detach, survive reboots.
 Pure-function Lean 4, machine-checked invariants.
 
 `linger attach <name>` gives you a shell that keeps running after you
-detach or disconnect; reattach later with the screen intact. Bare
-`linger` (or `linger ls`) prints an overview of your sessions and
-exits — a listing, not a picker.
+detach or disconnect; reattach later with the screen intact. Bare `linger`
+selects a session and returns to selection after detach. Redirect input or
+output and it prints a listing instead. `linger ls` always lists and exits.
 
 ## Build
 
 ```
 ./lake build          # always the wrapper, not bare `lake`
+mkdir -p ~/.local/bin
 ln -sf "$PWD/.lake/build/bin/linger" ~/.local/bin/linger
 ```
 
@@ -26,7 +27,6 @@ Lean 4.34.1 via elan; no external Lean dependencies.
                                  #   graphics terminal status agent watch recipes delivery manager
 ./lake exe e2e coverage          # semantic coverage + renderer/replay classification
 ./lake exe e2e ci                # which runners CI asks for (tests/ci-runners.sh)
-./lake build lz                  # optional manager; needed by manager/recipes suites
 sh tests/gates.sh                # the fast source-tree gates (seconds)
 ./tests/e2e.sh                   # everything, in order (minutes)
 ```
@@ -46,10 +46,11 @@ separately and build it with the project toolchain.
 | `Linger/Core/` | pure: no `IO`, no `partial def`, no `sorry`. Effects are data. |
 | `Linger/Runtime/` | executes the session core's effects through Lean IO and Posix |
 | `Linger/Posix.lean`, `c/shim.c` | raw OS bindings, kept behind one interface |
-| `Tools/`, `Manager/`, `Lz.lean` | optional manager: pure matching/input/import policies and their Lean IO executor |
+| `Main.lean` | one executable composing session commands, selection and save import |
+| `Tools/`, `Manager/` | pure routing/matching/input/import policies and Lean IO executors, outside the session and VT libraries |
 | `Theorems/` | the proofs — what `THEOREMS.md` narrates |
 | `Tests/` | Lean fixtures, checked at elaboration time |
-| `E2E/` | the pty suites, `IO`, run against the real binary |
+| `E2E/` | IO suites against the real binary, with isolated executor probes for failure checks |
 | `specs/` | live build plans; `specs/archive/` the closed ones |
 
 ## Use
@@ -57,17 +58,20 @@ separately and build it with the project toolchain.
 ```
 linger attach work      # attach, creating "work" if absent
 Ctrl-\                # detach — session keeps running
-linger                  # overview: names, pids, labels; then exits
+linger                 # select a session; return after detach
+linger ls              # overview: names, pids, labels; then exit
 ```
 
 | command | |
 |---|---|
+| (no args) | select with terminal input and output; list once if either is redirected |
 | `attach [name] [cmd]` | attach, creating if absent (name defaults to `main`) |
 | `attach <name>@<host>` | attach a session on a remote host over ssh |
 | `watch <name>` | input/resize-read-only attach; viewing marks output seen |
 | `run <name> <cmd>` | run a command in a session, don't attach |
 | `send <name> <text>` | send raw input to its pty (`send <name> -`: stdin, byte-exact) |
-| `ls` / (no args) `[-r [h,..]]` | overview; `-r` adds remote hosts; `--porcelain` is machine-readable |
+| `ls [-r [h,..]]` | overview; `-r` adds remote hosts; `--porcelain` is machine-readable |
+| `import [SAVE]` | create shells in directories from a tmux-resurrect save; never replay commands |
 | `info <name>` | one session's records: size, cursor, `outseq`, labels… |
 | `capture <name>` | the current screen as text, one line per row (marks it seen) |
 | `resize <name> <cols> <rows>` | size a detached session (refused while a client is attached) |
@@ -78,9 +82,10 @@ linger                  # overview: names, pids, labels; then exits
 
 ## Agents
 
-Everything above the attach line is one-shot and scriptable, so another
-program can see and drive a session without owning a terminal. Poll
-cheaply: `info` reports `outseq`, a counter that moves once per burst of
+Use `linger ls --porcelain`, `info`, `capture` and `send` to inspect and drive
+sessions without owning a terminal. Bare `linger` also lists and exits when
+its input or output is redirected. Poll cheaply: `info` reports `outseq`,
+a counter that moves once per burst of
 output. A `capture` marks the session seen; `history` is an export and
 does not. `watch <name>` gives a human a read-only view while an agent
 drives. A `resize` is refused — loudly, exit 1 — while an attached
@@ -112,17 +117,15 @@ is a settled non-goal (AGENTS.md).
 
 ## Recipes
 
-The optional `lz` Lean manager selects sessions without a shell or picker
-dependency and returns to selection after detach. Its `import-resurrect`
-subcommand creates shells in the directories from tmux-resurrect saves.
-Matching, input decoding and import planning stay outside the session and VT
-libraries.
+Ghostty, kitty, WezTerm and other terminals can use `linger` as their startup
+program. [`recipes/README.md`](recipes/README.md) contains native configuration
+examples, selection keys and save-import instructions. Create your first
+session with `linger attach work` before setting a terminal startup command.
 
-Three portable shell recipes compose reconnect, status refresh and kitty
-launching. Native Ghostty and SSH settings complete the examples in
-[`recipes/README.md`](recipes/README.md). Transport is yours:
-`attach name@host` execs ssh, and any carrier that can run a remote command
-with a tty works.
+Selection and `linger import [SAVE]` are Lean code and need no external picker
+or shell functions. Their policies and executors stay outside the session and
+VT libraries. `attach name@host` execs ssh; any carrier that can run a remote
+command with a tty works.
 
 ## Notes
 
@@ -130,11 +133,12 @@ with a tty works.
   The screen, scrollback, modes, labels and cwd come back — not the
   process tree.
 - Reattach paints the session's scrollback into your terminal's own
-  scrollback (linger never uses the alt screen), so attaching a session
+  main screen and scrollback, so attaching a session
   **that has history erases whatever history that window held**
   (`CSI 3 J`); a session with no history leaves your window alone.
   `linger history` prints a session's scrollback without touching the
-  terminal.
+  terminal. Selection temporarily uses the alternate screen and restores it
+  before attach.
 - Detach key `Ctrl-\`; `LINGER_NO_DETACH_KEY=1` disables it.
 - Detaching hands the terminal back usable, on every exit path. The
   window title is the one thing not put back — we never read yours.

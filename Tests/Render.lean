@@ -618,7 +618,7 @@ example :
 
 /-- **The guard, stated as a promise.** `ED 3` erases the saved lines of the
 window the client is running in, and that window's scrollback belongs to the
-*user*, shared with their shell — linger never enters the alt screen. So it is
+*user*, shared with their shell — session attachment uses the main screen. So it is
 emitted only when there is history to put there: attaching a session that never
 scrolled leaves the user's own history alone. (Unguarded, this is `[]`.) -/
 example :

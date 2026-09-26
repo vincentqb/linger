@@ -5,9 +5,9 @@ public import Linger.Core.Remote
 
 public section
 
-/-! Optional tmux-resurrect importer. The main linger executable never imports
-this module. Parsing and policy live in `Tools.Resurrect`; this executor
-preflights directories, obtains a successful listing, and executes that plan. -/
+/-! tmux-resurrect importer for `linger import`. Parsing and policy live in
+`Tools.Resurrect`; this executor preflights directories, obtains a successful
+listing, and executes that plan using the entry point's absolute executable. -/
 
 namespace Manager.Resurrect
 
@@ -33,7 +33,7 @@ private def resolveRelative (origin : System.FilePath) (path : String) : IO Stri
   return resolved.toString
 
 /-- Check every directory before the first session creation. Core IO provides
-the access check; the standalone tool has no concurrent cwd-changing tasks. -/
+the access check; the import command has no concurrent cwd-changing tasks. -/
 private def preflight (origin : System.FilePath) (panes : List Pane) : IO Unit := do
   for pane in panes do
     unless ← (System.FilePath.mk pane.dir).isDir do
@@ -45,7 +45,7 @@ private def preflight (origin : System.FilePath) (panes : List Pane) : IO Unit :
     finally
       IO.Process.setCurrentDir origin
 
-private def importSave (file : Option String) : IO Unit := do
+private def importSave (executable : String) (file : Option String) : IO Unit := do
   let origin ← IO.currentDir
   let home ←
     match (← IO.getEnv "HOME").filter (!·.isEmpty) with
@@ -85,36 +85,29 @@ private def importSave (file : Option String) : IO Unit := do
     throw (IO.userError s!"save not found: {save}")
   let panes ← IO.ofExcept (parseSave home (← IO.FS.readFile save))
   preflight origin panes
-  -- Lean's process API searches PATH but does not return the resolved path.
-  -- This fixed POSIX lookup freezes it before children enter their saved cwd.
-  let located ←
-    IO.Process.output
-        { cmd := "/bin/sh", args := #["-c", "command -v linger"], inheritEnv := false,
-          env := #[("PATH", ← IO.getEnv "PATH")] }
-  unless located.exitCode == 0 && !located.stdout.isEmpty do
-    throw (IO.userError "linger is not on PATH")
-  let bin ← IO.FS.realPath (located.stdout.dropEnd 1).toString
-  let listing ← IO.Process.output { cmd := bin.toString, args := #["ls", "--porcelain"], env }
+  -- The entry point freezes its absolute appPath before any child changes cwd.
+  let listing ← IO.Process.output { cmd := executable, args := #["ls", "--porcelain"], env }
   unless listing.exitCode == 0 do
     throw (IO.userError "could not list existing linger sessions")
   let existing := (Linger.Core.Remote.parse listing.stdout).map (·.name)
   for pane in plan existing panes do
     let child ←
       IO.Process.spawn
-          { cmd := bin.toString, args := #["run", pane.name, "true"],
+          { cmd := executable, args := #["run", pane.name, "true"],
             cwd := some (System.FilePath.mk (absolute pane.dir)), env }
     unless (← child.wait) == 0 do
       throw (IO.userError s!"could not create session: {pane.name}")
 
-def run (args : List String) : IO UInt32 := do
+/-- The caller supplies its absolute executable path for every listing and run. -/
+def run (executable : String) (args : List String) : IO UInt32 := do
   if args.length > 1 || args.any (fun path => path.isEmpty || path.startsWith "-") then
-    IO.eprintln "usage: lz import-resurrect [SAVE]"
+    IO.eprintln "usage: linger import [SAVE]"
     return 2
   try
-    importSave args.head?
+    importSave executable args.head?
     return 0
   catch e =>
-    IO.eprintln s!"lz import-resurrect: {e}"
+    IO.eprintln s!"linger import: {e}"
     return 1
 
 end Manager.Resurrect

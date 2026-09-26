@@ -7,13 +7,13 @@ public import Linger.Core.Listing
 
 public section
 
-/-! # Linger.Runtime.Cli — argv dispatch
+/-! # Linger.Runtime.Cli — session argv dispatch
 
 Verb surface: attach is an upsert; one-shot verbs talk to a
-live daemon or say so. Bare `linger` — and `linger ls` — print a session
-overview and exit; there is no full-screen picker (pick with the optional `lz`
-manager in the README, or just `attach`). `__daemon` is the internal
-re-exec target of the detached spawn.
+live daemon or say so. `Main` routes terminal selection and import before
+entering this session backend. Redirected bare invocation and explicit `ls`
+print an overview and exit. `__daemon` is the internal re-exec target of the
+detached spawn.
 -/
 
 namespace Linger.Runtime.Cli
@@ -35,27 +35,33 @@ abbrev infoReplyCap : Nat := Linger.Core.Session.infoReplyCap
 
 def usage : String :=
   "Usage: linger [command] [args...]
+       linger import [SAVE]
 
-  (no args) | ls [-r [h,..]]  List sessions; -r also lists remote hosts
-                              (from --remote arg, else ~/.config/linger/remotes)
-  [a]ttach [name] [command]   Attach, creating if needed (name defaults to 'main')
-  watch <name>                Input/resize-read-only attach (marks output seen)
-  [r]un <name> <command...>   Run a command in a session without attaching
-  [s]end <name> <text...>     Send raw input to session pty ('linger send <name> -'
+  (no args)                Select a session; return after attach exits
+                              (list and exit if input or output is redirected)
+  ls [-r [hosts]]           List once; -r includes configured remote hosts
+                              (or pass a comma-separated host list)
+  attach [name] [command]    Attach, creating if needed (name defaults to 'main')
+  import [SAVE]             Start shells in saved tmux-resurrect directories
+                              (default: last save; saved commands never run)
+  watch <name>              Input/resize-read-only attach (marks output seen)
+  run <name> <command...>    Run a command in a session without attaching
+  send <name> <text...>      Send raw input to session pty ('linger send <name> -'
                               sends stdin verbatim: newlines, ^C, escapes...)
-  [d]etach <name>             Detach all clients from a session
-  [k]ill <name>               Kill session and all attached clients
-  [i]nfo <name>               Print one session's k<TAB>v records (size, cursor,
-                              outseq, labels...; the porcelain, for scripts/agents)
-  [c]apture <name>            Print the current screen as plain text (one line
+  detach <name>             Detach all clients from a session
+  kill <name>               Kill session and all attached clients
+  info <name>               Print one session's k<TAB>v records (size, cursor,
+                              outseq, labels...); ls --porcelain lists all
+  capture <name>            Print the current screen as plain text (one line
                               per row; marks the session seen)
   resize <name> <cols> <rows> Set a detached session's size (refused while an
                               attached client owns it)
-  [hi]story <name>            Print session scrollback as plain text
-  [w]ait <name>...            Wait for sessions' programs to exit
-  [g]et / set / [un]set / [cl]ear <name>   Session labels (k=v)
-  [v]ersion | [h]elp
+  history <name>            Print session scrollback as plain text
+  wait <name>...            Wait for sessions' programs to exit
+  get / set / unset / clear <name>   Session labels (k=v)
+  version | help
 
+Selection: type to filter, arrows to move, Enter to attach, Esc to cancel.
 Inside a session, $LINGER_SESSION holds the session name.
 Detach key: ctrl-\\ (set LINGER_NO_DETACH_KEY to disable)."
 
@@ -109,7 +115,7 @@ def cmdAttach (hooks : Hooks) (name : String) (cmd : List String) : IO UInt32 :=
   -- attach name`. Session names never contain `@` (Name.sanitize
   -- reserves it — theorem sanitize_no_at), so any `@` here means remote.
   -- The host is everything after the FIRST `@`, so it may itself be a
-  -- `user@host` ssh target. Lets the optional manager feed a listed row
+  -- `user@host` ssh target. Lets the selector feed a listed row
   -- (`name@host`) verbatim to `attach`, local or remote.
   match name.splitOn "@" with
   | sess :: rest@(_ :: _) =>
@@ -125,7 +131,7 @@ def cmdAttach (hooks : Hooks) (name : String) (cmd : List String) : IO UInt32 :=
     -- transport's call, not the session manager's. linger's contribution
     -- to flaky links is making death cheap — the session detaches and
     -- restores — which composes with ANY transport policy (ssh config,
-    -- an autossh-style loop, mosh). See README "Flaky links".
+    -- an autossh-style loop, mosh). See recipes/README "Remote sessions".
     exec "ssh" #["-t", "--", host, "linger", "attach", sess] -- replaces us on success
     return 1 -- only reached if exec fails
   | _ =>
@@ -494,7 +500,7 @@ def cmdVersion : IO UInt32 := do
   IO.println s!"state:   {← Paths.stateDir}"
   return 0
 
-/-- Bare `linger` and `linger ls [...]` share this overview path. -/
+/-- Redirected bare `linger` and explicit `linger ls [...]` share this path. -/
 def overview (args : List String) : IO UInt32 := do
   match parseLs args with
   | some (porcelain, remoteFlag) =>
@@ -604,10 +610,10 @@ def main (hooks : Hooks) (args : List String) : IO UInt32 := do
     requireLive name .labelClear
   | ["version"] | ["v"] =>
     cmdVersion
-  | ["help"] | ["h"] | ["--help"] =>
+  | ["help"] | ["h"] | ["--help"] | ["-h"] =>
     IO.println usage
     return 0
-  -- bare `linger`, `linger ls ...`, `linger -r ...` → the overview
+  -- Redirected bare invocation and explicit listing forms reach this backend.
   | "ls" :: rest | "list" :: rest | "l" :: rest =>
     overview rest
   | other =>

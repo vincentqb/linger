@@ -1,20 +1,23 @@
 module
 
 public import E2E.Harness
+public import Manager.Picker
 
 public section
 
-/-! # E2E.Manager — the optional selector's process and terminal boundary
+/-! # E2E.Manager — public entry point and shared picker executor
 
 The helper mode of this same test binary records exact argument vectors and
 observes the terminal before the manager, in each listing/attach child, and
 after the manager returns. `stty -g` is a test observer, resolved before giving
-the manager a PATH containing only our `linger` recorder. Comparing that
-portable representation avoids inspecting the opaque termios blob's padding.
+the manager a restricted PATH. Comparing that portable representation avoids
+inspecting the opaque termios blob's padding.
 
-The tests drive the compiled `lz`, not a second selector. Their synthetic
-listings require no remote host, shell configuration, or external picker. The
-last case also attaches to and detaches from a real privately owned session.
+Synthetic failure, argv and terminal cases call `Manager.Picker.run` through
+the test probe with a fixture-owned absolute recorder path. These test the
+shared executor; public CLI checks and source gates cover entry-point wiring.
+Help, argument validation, terminal dispatch and live attach/detach drive the
+actual `linger` binary with no `linger` on the fixture PATH.
 `E2ETest.main` dispatches `--manager-probe <args>` to `probe` below.
 -/
 
@@ -74,9 +77,6 @@ private def recordCommand (root : System.FilePath) (args : List String) : IO UIn
   let ttyIn ← (← IO.getStdin).isTty
   let ttyOut ← (← IO.getStdout).isTty
   IO.FS.writeFile (root / s!"ttys-{count + 1}") s!"{ttyIn},{ttyOut}"
-  if let some real := (← IO.getEnv "MANAGER_TEST_REAL").filter (!·.isEmpty) then
-    let child ← IO.Process.spawn { cmd := real, args := args.toArray }
-    return ← waitChild child
   match args with
   | ["ls", "-r", "--porcelain"] =>
     let output ← IO.getStdout
@@ -97,13 +97,17 @@ private def launch (root : System.FilePath) (manager mode : String) (args : List
   let (cmd, args) :=
     if mode == "readonly-output" then
       ("/bin/sh", #["-c", "exec \"$@\" 1</dev/tty", "--", manager] ++ args.toArray)
-    else (manager, args.toArray)
+    else
+      if mode == "stdin-only" then
+        ("/bin/sh",
+          #["-c", s!"exec \"$@\" >{quote (root / "stdout").toString}", "--", manager] ++
+            args.toArray)
+      else (manager, args.toArray)
   -- spawnPty accepts K=V entries; remove presence-sensitive flags at this boundary.
   let child ←
     IO.Process.spawn
         { cmd, args, env := #[("LINGER_SESSION", none), ("LINGER_NO_DETACH_KEY", none)],
-          stdin := if mode == "stdout-only" then .null else .inherit,
-          stdout := if mode == "stdin-only" then .null else .inherit }
+          stdin := if mode == "stdout-only" then .null else .inherit }
   IO.FS.writeFile (root / "manager-pid") (toString child.pid)
   let rc ← waitChild child
   IO.FS.writeFile (root / "after") (← snapshot)
@@ -111,7 +115,7 @@ private def launch (root : System.FilePath) (manager mode : String) (args : List
   writeAll stdoutFd s!"\r\nMANAGER-EXIT:{rc}\r\n".toUTF8
   return rc
 
-/-- Child dispatch shared by the terminal wrapper and the PATH recorder. -/
+/-- Test-only child dispatch for the terminal wrapper, shared picker and recorder. -/
 def probe (args : List String) : IO UInt32 := do
   let some dir ← IO.getEnv "MANAGER_TEST_CASE" |
     IO.eprintln "manager probe has no private case directory";
@@ -123,10 +127,15 @@ def probe (args : List String) : IO UInt32 := do
       recordCommand root rest
     | "launch" :: manager :: mode :: rest =>
       launch root manager mode rest
+    | ["picker", executable] =>
+      Manager.Picker.run executable
     | _ =>
       pure 98
   catch err =>
     appendText (root / "probe-errors") s!"{err}\n"
+    if args.head? == some "picker" then
+      IO.eprintln s!"picker probe: {err}"
+      return 1
     if args.head? == some "launch" then
       IO.FS.writeFile (root / "result") "98"
       writeAll stdoutFd "\r\nMANAGER-EXIT:98\r\n".toUTF8
@@ -138,6 +147,8 @@ private structure Fixture where
   root : System.FilePath
   manager : String
   self : String
+  executable : String
+  managerArgs : Array String := #[]
   env : Array (String × Option String)
 
 private def Fixture.make (e : Env) (slug : String) : IO Fixture := do
@@ -145,12 +156,12 @@ private def Fixture.make (e : Env) (slug : String) : IO Fixture := do
   let bin := root / "bin"
   IO.FS.createDirAll bin
   let self := (← IO.appPath).toString
-  let manager := ((← IO.currentDir) / ".lake" / "build" / "bin" / "lz").toString
+  let executable := ((← IO.FS.realPath root) / "record command").toString
   let observer ← IO.Process.output { cmd := "/bin/sh", args := #["-c", "command -v stty"] }
   if observer.exitCode != 0 || observer.stdout.trimAscii.isEmpty then
     throw (IO.userError "stty is required to observe manager terminal restoration")
-  IO.FS.writeFile (bin / "linger") s!"#!/bin/sh\nexec {quote self} --manager-probe command \"$@\"\n"
-  let chmod ← IO.Process.output { cmd := "chmod", args := #["+x", (bin / "linger").toString] }
+  IO.FS.writeFile executable s!"#!/bin/sh\nexec {quote self} --manager-probe command \"$@\"\n"
+  let chmod ← IO.Process.output { cmd := "chmod", args := #["+x", executable] }
   if chmod.exitCode != 0 then
     throw (IO.userError s!"manager recorder chmod failed: {chmod.stderr}")
   IO.FS.writeFile (root / "listing") "name\tAlpha\nname\tBeta\nname\tGamma\n"
@@ -159,10 +170,14 @@ private def Fixture.make (e : Env) (slug : String) : IO Fixture := do
   let env :=
     e.procEnv ++
       #[("PATH", some bin.toString), ("HOME", some root.toString), ("TERM", some "xterm-256color"),
-        ("LINGER_SESSION", none), ("LINGER_NO_DETACH_KEY", none), ("MANAGER_TEST_REAL", none),
+        ("LINGER_SESSION", none), ("LINGER_NO_DETACH_KEY", none),
         ("MANAGER_TEST_CASE", some root.toString),
         ("MANAGER_TEST_STTY", some observer.stdout.trimAscii.toString)]
-  return { root, manager, self, env }
+  return { root, manager := e.bin, self, executable, env }
+
+private def Fixture.picker (f : Fixture) : Fixture :=
+  { f with
+    manager := f.self, managerArgs := #["--manager-probe", "picker", f.executable] }
 
 private def Fixture.calls (f : Fixture) : IO String := readText (f.root / "calls")
 
@@ -173,7 +188,8 @@ private def Fixture.listing (f : Fixture) (text : String) (rc : Nat := 0) : IO U
 private def Fixture.piped (f : Fixture) (args : Array String) : IO (UInt32 × String × String) := do
   let child ←
     IO.Process.spawn
-        { cmd := f.manager, args, env := f.env, stdin := .null, stdout := .piped, stderr := .piped }
+        { cmd := f.manager, args := f.managerArgs ++ args, env := f.env, stdin := .null,
+          stdout := .piped, stderr := .piped }
   let rc ← waitChild child 4000
   return (rc, ← child.stdout.readToEnd, ← child.stderr.readToEnd)
 
@@ -186,7 +202,8 @@ private def Fixture.start (f : Fixture) (args : Array String := #[]) (mode : Str
     (cols : UInt32 := 80) (rows : UInt32 := 12) : IO Session := do
   let env := f.env.map fun (key, value) => s!"{key}={value.getD ""}"
   let (pid, fd) ←
-    spawnPty cols rows "" f.self (#["--manager-probe", "launch", f.manager, mode] ++ args) env
+    spawnPty cols rows "" f.self
+        (#["--manager-probe", "launch", f.manager, mode] ++ f.managerArgs ++ args) env
   return { fixture := f, client := { pid, fd }, output := ← IO.mkRef ByteArray.empty }
 
 private def Session.mark (s : Session) : IO Nat := return (← s.output.get).size
@@ -233,7 +250,7 @@ private def Session.send (s : Session) (bytes : ByteArray) : IO Unit := writeAll
 private def Session.text (s : Session) (text : String) : IO Unit := s.send text.toUTF8
 
 private def Session.prompt (s : Session) (query : String := "") (start : Nat := 0) :
-    IO Bool := s.until ("lz> " ++ query) start
+    IO Bool := s.until ("linger> " ++ query) start
 
 private def Session.typeQuery (s : Session) (text query : String) : IO Bool := do
   let start ← s.mark
@@ -325,7 +342,7 @@ private def returned (s : Session) (target : String) (count : Nat := 1) : IO Boo
     return false
   let some position := findText (← s.output.get) marker | return false
   let start := position + marker.utf8ByteSize
-  unless ← s.until "lz> \r\n" start do
+  unless ← s.until "linger> \r\n" start do
     return false
   return ← s.until ("> " ++ target) start
 
@@ -348,42 +365,47 @@ private def usageChecks (e : Env) : IO Nat := do
   failures :=
     failures +
       (←
-        check e "help" "manager help works without a terminal or commands" fun f => do
+        check e "help" "linger help aliases agree without a terminal or linger on PATH" fun f => do
             let (rc, out, _) ← f.piped #["--help"]
             let (shortRc, shortOut, _) ← f.piped #["-h"]
-            return rc == 0 && shortRc == 0 && shortOut == out && has out "Usage: lz\n" &&
-                has out "lz import-resurrect [SAVE]" &&
+            let (helpRc, helpOut, _) ← f.piped #["help"]
+            let (hRc, hOut, _) ← f.piped #["h"]
+            IO.FS.writeFile (f.root / "help.txt") out
+            return rc == 0 && shortRc == 0 && helpRc == 0 && hRc == 0 && shortOut == out &&
+                helpOut == out &&
+                hOut == out &&
+                has out "Usage: linger" &&
+                has out "linger import [SAVE]" &&
                 !has out "--loop" &&
                 !has out "--restore-processes" &&
-                (← f.calls).isEmpty)
+                !has out "lz")
   failures :=
     failures +
       (←
-        check e "usage" "manager invalid arguments fail before any command" fun f => do
+        check e "usage" "linger rejects malformed arguments and import operands" fun f => do
             let mut ok := true
             for args in
-              [#["work"], #["--unknown"], #["--help", "extra"], #["-h", "extra"], #["--loop", ""],
-                #["--loop", "one", "two"], #["import-resurrect", ""],
-                #["import-resurrect", "--unknown"], #["import-resurrect", "-save"],
-                #["import-resurrect", "one", "two"]] do
+              [#["work"], #["--unknown"], #["--help", "extra"], #["-h", "extra"],
+                #["help", "extra"], #["ls", "--unknown"], #["--loop", ""],
+                #["--loop", "one", "two"], #["import-resurrect"], #["import", ""],
+                #["import", "--unknown"], #["import", "--help"], #["import", "-h"],
+                #["import", "-save"], #["import", "one", "two"]] do
               let (rc, _, _) ← f.piped args
               appendText (f.root / "usage-results") s!"{repr args}: {rc}\n"
-              ok := ok && rc == 2 && (← f.calls).isEmpty
+              ok := ok && rc == 2
             return ok)
   for (slug, args) in [("loop", #["--loop"]), ("loop-target", #["--loop", "-work@me@dev-a"])] do
     failures :=
       failures +
         (←
           check e s!"removed-{slug}"
-              s!"manager rejects removed loop arguments before commands ({slug})" fun f =>
+              s!"linger rejects removed loop arguments in a terminal ({slug})" fun f =>
               withSession f args fun s => do
-                let rc ← s.result
-                return rc == some 2 && (← f.calls).isEmpty &&
-                    !hasBytes (← s.output.get) (modeSet 1049 true))
+                return (← termiosRestored s 2) && !hasBytes (← s.output.get) (modeSet 1049 true))
   failures :=
     failures +
       (←
-        check e "restore-option" "manager rejects removed process replay arguments before commands"
+        check e "restore-option" "linger rejects process replay options without creating sessions"
             fun f => do
             let saves := f.root / ".tmux" / "resurrect"
             IO.FS.createDirAll saves
@@ -393,32 +415,59 @@ private def usageChecks (e : Env) : IO Nat := do
                     ["pane", "work", "1", "0", ":", "0", "title", ":" ++ f.root.toString, "1", "sh",
                       ":vim"] ++
                   "\n")
+            let before ← e.out #["ls", "--porcelain"]
             let mut ok := true
             for args in
-              [#["import-resurrect", "--restore-processes"],
-                #["import-resurrect", "--restore-processes", save.toString],
-                #["import-resurrect", save.toString, "--restore-processes"]] do
+              [#["import", "--restore-processes"],
+                #["import", "--restore-processes", save.toString],
+                #["import", save.toString, "--restore-processes"]] do
               let (rc, _, _) ← f.piped args
               appendText (f.root / "usage-results") s!"{repr args}: {rc}\n"
-              ok := ok && rc == 2 && (← f.calls).isEmpty
-            return ok)
+              ok := ok && rc == 2
+            return ok && (← e.out #["ls", "--porcelain"]) == before)
   failures :=
     failures +
       (←
-        check e "pipes" "manager refuses piped input and output before listing" fun f => do
-            let (rc, _, _) ← f.piped #[]
-            return rc != 0 && (← f.calls).isEmpty)
-  for mode in ["stdin-only", "stdout-only"] do
+        check e "pipes" "bare linger with neither stream a terminal lists and exits" fun f => do
+            let (listRc, expected, listErr) ← f.piped #["ls"]
+            let (rc, out, err) ← f.piped #[]
+            IO.FS.writeFile (f.root / "stdout") out
+            return listRc == 0 && !expected.isEmpty && rc == 0 && out == expected &&
+                err == listErr &&
+                !has out "linger>")
+  for (mode, args) in [("stdin-only", #[]), ("stdout-only", #[]), ("both", #["ls"])] do
     failures :=
       failures +
         (←
-          check e mode s!"manager requires both terminal streams ({mode})" fun f =>
-              withSession f #[]
-                (fun s => do
-                  let rc ← s.result
-                  return rc.isSome && rc != some 0 && (← f.calls).isEmpty &&
-                      !hasBytes (← s.output.get) (modeSet 1049 true))
-                mode)
+          check e s!"listing-{mode}"
+              s!"linger lists and exits with unchanged terminal modes ({mode}, {repr args})"
+              fun f => do
+              let (listRc, expected, _) ← f.piped #["ls"]
+              withSession f args
+                  (fun s => do
+                    let clean ← termiosRestored s 0
+                    let output ← s.output.get
+                    let listing ←
+                      if mode == "stdin-only" then
+                        pure ((← readText (f.root / "stdout")) == expected)
+                      else
+                        pure (hasText output (expected.replace "\n" "\r\n"))
+                    return listRc == 0 && !expected.isEmpty && clean && listing &&
+                        !hasText output "linger>" &&
+                        !hasBytes output (modeSet 1049 true))
+                  mode)
+  failures :=
+    failures +
+      (←
+        check e "tty-default" "bare linger selects with both terminal streams and no linger on PATH"
+            fun f =>
+            withSession f #[] fun s => do
+              unless ← s.prompt do
+                return false
+              s.observe 250
+              let waiting := !(← (f.root / "result").pathExists)
+              s.text "\x03"
+              return waiting && (← restored s 130))
   return failures
 
 private def failureChecks (e : Env) : IO Nat := do
@@ -427,12 +476,13 @@ private def failureChecks (e : Env) : IO Nat := do
     failures :=
       failures +
         (←
-          check e s!"listing-{slug}" s!"manager preserves failed listing status before UI ({slug})"
-              fun f => do
+          check e s!"listing-{slug}"
+              s!"picker probe preserves failed listing status before UI ({slug})" fun f => do
               f.listing listing 7
-              withSession f #[] fun s => do
+              withSession f.picker #[] fun s => do
                   let rc ← s.result
                   return rc == some 7 && (← f.calls) == call ["ls", "-r", "--porcelain"] &&
+                      hasText (← s.output.get) "linger: could not list sessions (exit 7)" &&
                       !hasBytes (← s.output.get) (modeSet 1049 true) &&
                       (← childNormal f 1))
   let invalid :=
@@ -443,10 +493,10 @@ private def failureChecks (e : Env) : IO Nat := do
     failures :=
       failures +
         (←
-          check e s!"bad-{slug}" s!"manager rejects the whole malformed listing ({slug})" fun f =>
-              do
+          check e s!"bad-{slug}" s!"picker probe rejects the whole malformed listing ({slug})"
+              fun f => do
               f.listing ("name\tAlpha\n" ++ bad)
-              withSession f #[] fun s => do
+              withSession f.picker #[] fun s => do
                   let rc ← s.result
                   return rc == some 1 && (← f.calls) == call ["ls", "-r", "--porcelain"] &&
                       !hasBytes (← s.output.get) (modeSet 1049 true))
@@ -454,9 +504,9 @@ private def failureChecks (e : Env) : IO Nat := do
     failures +
       (←
         check e "missing-command"
-            "manager reports a missing listing executable without entering the UI" fun f => do
-            IO.FS.removeFile (f.root / "bin" / "linger")
-            withSession f #[] fun s => do
+            "picker probe reports a missing listing executable without entering the UI" fun f => do
+            IO.FS.removeFile f.executable
+            withSession f.picker #[] fun s => do
                 let rc ← s.result
                 return rc.isSome && rc != some 0 && (← f.calls).isEmpty &&
                     !hasBytes (← s.output.get) (modeSet 1049 true))
@@ -464,11 +514,11 @@ private def failureChecks (e : Env) : IO Nat := do
     failures +
       (←
         check e "missing-attach"
-            "manager restores the terminal when the attach executable disappears" fun f =>
-            withSession f #[] fun s => do
+            "picker probe restores the terminal when the attach executable disappears" fun f =>
+            withSession f.picker #[] fun s => do
               unless ← s.prompt do
                 return false
-              IO.FS.removeFile (f.root / "bin" / "linger")
+              IO.FS.removeFile f.executable
               s.text "\r"
               let rc ← s.result
               let before ← readText (f.root / "before")
@@ -480,8 +530,9 @@ private def failureChecks (e : Env) : IO Nat := do
     failures +
       (←
         check e "readonly-output"
-            "manager restores termios when opening and closing screen writes both fail" fun f =>
-            withSession f #[]
+            "picker probe restores termios when opening and closing screen writes both fail"
+            fun f =>
+            withSession f.picker #[]
               (fun s => do
                 let clean ← termiosRestored s 1
                 return clean && (← childNormal f 1) &&
@@ -499,9 +550,9 @@ private def selectionChecks (e : Env) : IO Nat := do
       failures +
         (←
           check e s!"exact-{slug}"
-              s!"manager attaches the original target as one argument ({target})" fun f => do
+              s!"picker probe attaches the original target as one argument ({target})" fun f => do
               f.listing s!"name\t{target}\n"
-              withSession f #[] fun s => do
+              withSession f.picker #[] fun s => do
                   unless ← s.prompt do
                     return false
                   let shown ← s.until target
@@ -518,8 +569,8 @@ private def selectionChecks (e : Env) : IO Nat := do
     failures :=
       failures +
         (←
-          check e slug s!"manager navigation selects the expected row ({slug})" fun f =>
-              withSession f #[] fun s => do
+          check e slug s!"picker probe navigation selects the expected row ({slug})" fun f =>
+              withSession f.picker #[] fun s => do
                 unless ← s.prompt do
                   return false
                 return (← acceptThenCancel s (keys ++ "\r")) &&
@@ -529,10 +580,10 @@ private def selectionChecks (e : Env) : IO Nat := do
   failures :=
     failures +
       (←
-        check e "subsequence" "manager filtering is case-insensitive, subsequence-based and stable"
-            fun f => do
+        check e "subsequence"
+            "picker probe filtering is case-insensitive, subsequence-based and stable" fun f => do
             f.listing "name\tPrefix\nname\tWork\nname\tweak\n"
-            withSession f #[] fun s => do
+            withSession f.picker #[] fun s => do
                 unless ← s.prompt do
                   return false
                 unless ← s.typeQuery "WK" "WK" do
@@ -545,8 +596,8 @@ private def selectionChecks (e : Env) : IO Nat := do
     failures :=
       failures +
         (←
-          check e slug s!"manager query deletion works ({slug})" fun f =>
-              withSession f #[] fun s => do
+          check e slug s!"picker probe query deletion works ({slug})" fun f =>
+              withSession f.picker #[] fun s => do
                 unless ← s.prompt do
                   return false
                 unless ← s.typeQuery "Bx" "Bx" do
@@ -560,8 +611,8 @@ private def selectionChecks (e : Env) : IO Nat := do
   failures :=
     failures +
       (←
-        check e "clear" "manager Ctrl-U clears the whole query" fun f =>
-            withSession f #[] fun s => do
+        check e "clear" "picker probe Ctrl-U clears the whole query" fun f =>
+            withSession f.picker #[] fun s => do
               unless ← s.prompt do
                 return false
               unless ← s.typeQuery "unmatched" "unmatched" do
@@ -577,10 +628,11 @@ private def selectionChecks (e : Env) : IO Nat := do
     failures :=
       failures +
         (←
-          check e slug s!"manager Enter with no match stays editable and creates nothing ({slug})"
+          check e slug
+              s!"picker probe Enter with no match stays editable and creates nothing ({slug})"
               fun f => do
               f.listing listing
-              withSession f #[] fun s => do
+              withSession f.picker #[] fun s => do
                   unless ← s.prompt do
                     return false
                   if !query.isEmpty then
@@ -600,8 +652,9 @@ private def inputChecks (e : Env) : IO Nat := do
     failures :=
       failures +
         (←
-          check e slug s!"manager cancellation restores termios and display modes ({slug})" fun f =>
-              withSession f #[] fun s => do
+          check e slug s!"picker probe cancellation restores termios and display modes ({slug})"
+              fun f =>
+              withSession f.picker #[] fun s => do
                 unless ← s.prompt do
                   return false
                 s.text key
@@ -609,8 +662,8 @@ private def inputChecks (e : Env) : IO Nat := do
   failures :=
     failures +
       (←
-        check e "split-arrow" "manager decodes an arrow split between reads" fun f =>
-            withSession f #[] fun s => do
+        check e "split-arrow" "picker probe decodes an arrow split between reads" fun f =>
+            withSession f.picker #[] fun s => do
               unless ← s.prompt do
                 return false
               s.text "\x1b["
@@ -622,10 +675,10 @@ private def inputChecks (e : Env) : IO Nat := do
   failures :=
     failures +
       (←
-        check e "split-utf8" "manager retains split UTF-8 query characters" fun f => do
+        check e "split-utf8" "picker probe retains split UTF-8 query characters" fun f => do
             let target := "work@界é"
             f.listing s!"name\tother\nname\t{target}\n"
-            withSession f #[] fun s => do
+            withSession f.picker #[] fun s => do
                 unless ← s.prompt do
                   return false
                 s.send (ByteArray.mk #[0xE7])
@@ -646,10 +699,10 @@ private def inputChecks (e : Env) : IO Nat := do
     failures +
       (←
         check e "paste"
-            "manager paste survives idle, suppresses newlines and handles a split end marker"
+            "picker probe paste survives idle, suppresses newlines and handles a split end marker"
             fun f => do
             f.listing "name\talphabeta\nname\tother\n"
-            withSession f #[] fun s => do
+            withSession f.picker #[] fun s => do
                 unless ← s.prompt do
                   return false
                 unless ← s.typeQuery "\x1b[200~alpha" "alpha" do
@@ -676,8 +729,9 @@ private def refreshChecks (e : Env) : IO Nat := do
   failures :=
     failures +
       (←
-        check e "snapshot" "manager keeps its listing snapshot while idle and resizing" fun f =>
-            withSession f #[] fun s => do
+        check e "snapshot" "picker probe keeps its listing snapshot while idle and resizing"
+            fun f =>
+            withSession f.picker #[] fun s => do
               unless ← s.prompt do
                 return false
               f.listing "name\tReplacement\n"
@@ -694,10 +748,10 @@ private def refreshChecks (e : Env) : IO Nat := do
   failures :=
     failures +
       (←
-        check e "refresh" "manager Ctrl-R lists in normal mode and resets query and selection"
+        check e "refresh" "picker probe Ctrl-R lists in normal mode and resets query and selection"
             fun f => do
             f.listing "name\tBeta\nname\tBravo\n"
-            withSession f #[] fun s => do
+            withSession f.picker #[] fun s => do
                 unless ← s.prompt do
                   return false
                 unless ← s.typeQuery "B" "B" do
@@ -717,8 +771,9 @@ private def refreshChecks (e : Env) : IO Nat := do
     failures +
       (←
         check e "refresh-failure"
-            "manager failed refresh restores the terminal and preserves listing status" fun f =>
-            withSession f #[] fun s => do
+            "picker probe failed refresh restores the terminal and preserves listing status"
+            fun f =>
+            withSession f.picker #[] fun s => do
               unless ← s.prompt do
                 return false
               f.listing "name\tPartial\n" 9
@@ -730,11 +785,11 @@ private def refreshChecks (e : Env) : IO Nat := do
     failures +
       (←
         check e "resize"
-            "manager redraw fits a resized terminal and clips wide text without changing its target"
+            "picker probe redraw fits a resized terminal and clips wide text without changing its target"
             fun f => do
             let target := "wide@界界界界Z"
             f.listing s!"name\t{target}\nname\tsecond\nname\tthird\nname\tfourth\n"
-            withSession f #[]
+            withSession f.picker #[]
                 (fun s => do
                   unless ← s.prompt do
                     return false
@@ -753,7 +808,8 @@ private def refreshChecks (e : Env) : IO Nat := do
                   let screen := ByteArray.mk (screenText vt).toArray
                   IO.FS.writeBinFile (f.root / "resized-frame.bin") frame
                   IO.FS.writeBinFile (f.root / "screen.txt") screen
-                  let fits := hasText screen "lz>" && hasText screen "wide@" && !hasText screen "Z"
+                  let fits :=
+                    hasText screen "linger>" && hasText screen "wide@" && !hasText screen "Z"
                   return fits && (← acceptThenCancel s) &&
                       (← f.calls) ==
                         call ["ls", "-r", "--porcelain"] ++ call ["attach", target] ++
@@ -763,9 +819,10 @@ private def refreshChecks (e : Env) : IO Nat := do
     failures :=
       failures +
         (←
-          check e slug s!"manager keeps its current candidate visible in a {description} terminal"
+          check e slug
+              s!"picker probe keeps its current candidate visible in a {description} terminal"
               fun f =>
-              withSession f #[]
+              withSession f.picker #[]
                 (fun s => do
                   let shown ← s.until "Alpha"
                   s.observe 150
@@ -773,7 +830,8 @@ private def refreshChecks (e : Env) : IO Nat := do
                   let screen := ByteArray.mk (screenText vt).toArray
                   IO.FS.writeBinFile (f.root / "screen.txt") screen
                   let visible :=
-                    shown && hasText screen "Alpha" && hasText screen "lz>" == decide (rows > 1) &&
+                    shown && hasText screen "Alpha" &&
+                      hasText screen "linger>" == decide (rows > 1) &&
                       !hasText screen "sessions"
                   s.text "\x03"
                   return visible && (← restored s 130) &&
@@ -783,14 +841,36 @@ private def refreshChecks (e : Env) : IO Nat := do
 
 private def defaultChecks (e : Env) : IO Nat := do
   let mut failures := 0
+  for empty in [true, false] do
+    let slug := if empty then "empty-path" else "impostor-path"
+    failures :=
+      failures +
+        (←
+          check e slug s!"picker probe uses its absolute executable for ls and attach ({slug})"
+              fun f => do
+              let impostor := f.root / "bin" / "linger"
+              IO.FS.writeFile impostor
+                  s!"#!/bin/sh\nprintf hit >{quote (f.root / "impostor-hit").toString}\nexit 97\n"
+              let chmod ← IO.Process.output { cmd := "chmod", args := #["+x", impostor.toString] }
+              if chmod.exitCode != 0 then
+                throw (IO.userError s!"manager impostor chmod failed: {chmod.stderr}")
+              let path := if empty then "" else (f.root / "bin").toString
+              let f := { f with env := f.env.push ("PATH", some path) }
+              withSession f.picker #[] fun s => do
+                  unless ← s.prompt do
+                    return false
+                  return (← acceptThenCancel s) && !(← (f.root / "impostor-hit").pathExists) &&
+                      (← f.calls) ==
+                        call ["ls", "-r", "--porcelain"] ++ call ["attach", "Alpha"] ++
+                          call ["ls", "-r", "--porcelain"])
   for rc in [0, 7, 255] do
     failures :=
       failures +
         (←
-          check e s!"default-{rc}" s!"manager returns to a fresh picker after attach status {rc}"
-              fun f => do
+          check e s!"default-{rc}"
+              s!"picker probe returns to a fresh picker after attach status {rc}" fun f => do
               IO.FS.writeFile (f.root / "attach-rc") (toString rc)
-              withSession f #[] fun s => do
+              withSession f.picker #[] fun s => do
                   unless ← s.prompt do
                     return false
                   return (← acceptThenCancel s) &&
@@ -801,8 +881,9 @@ private def defaultChecks (e : Env) : IO Nat := do
     failures +
       (←
         check e "successive"
-            "manager repeatedly attaches from fresh snapshots after statuses 0, 7 and 255" fun f =>
-            withSession f #[] fun s => do
+            "picker probe repeatedly attaches from fresh snapshots after statuses 0, 7 and 255"
+            fun f =>
+            withSession f.picker #[] fun s => do
               unless ← s.prompt do
                 return false
               let remote := "-work@me@dev-a"
@@ -832,9 +913,9 @@ private def defaultChecks (e : Env) : IO Nat := do
     failures +
       (←
         check e "return-listing-failure"
-            "manager preserves a failed listing status after attach and restores the terminal"
+            "picker probe preserves a failed listing status after attach and restores the terminal"
             fun f =>
-            withSession f #[] fun s => do
+            withSession f.picker #[] fun s => do
               unless ← s.prompt do
                 return false
               f.listing "name\tPartial\n" 9
@@ -850,8 +931,9 @@ private def defaultChecks (e : Env) : IO Nat := do
     failures +
       (←
         check e "return-malformed"
-            "manager rejects a malformed listing after attach before another picker visit" fun f =>
-            withSession f #[] fun s => do
+            "picker probe rejects a malformed listing after attach before another picker visit"
+            fun f =>
+            withSession f.picker #[] fun s => do
               unless ← s.prompt do
                 return false
               f.listing "name\tNext\nname\tNext\n"
@@ -866,14 +948,13 @@ private def defaultChecks (e : Env) : IO Nat := do
   return failures
 
 private def realCheck (e : Env) : IO Nat :=
-  check e "real" "manager detaches from a real linger session and returns to selection" fun f => do
+  check e "real" "linger attaches, detaches and returns to selection with no linger on PATH"
+    fun f => do
     let name := "manager-live"
-    let env := e.procEnv ++ #[("HOME", some f.root.toString)]
-    let create ← IO.Process.output { cmd := e.bin, args := #["run", name, "true"], env }
+    let create ← IO.Process.output { cmd := e.bin, args := #["run", name, "true"], env := f.env }
     if create.exitCode != 0 then
       throw (IO.userError s!"manager live fixture failed: {create.stderr}")
     try
-      let f := { f with env := f.env.push ("MANAGER_TEST_REAL", some e.bin) }
       withSession f #[] fun s => do
           unless ← s.prompt do
             return false
@@ -897,12 +978,8 @@ private def realCheck (e : Env) : IO Nat :=
             waitFor 5000 do
                 return (← e.info name "clients") == some "0"
           s.text "\x03"
-          return detached && (← termiosRestored s 130) && (← childNormal f 1) &&
-              (← childNormal f 2 true) &&
-              (← childNormal f 3) &&
-              (← f.calls) ==
-                call ["ls", "-r", "--porcelain"] ++ call ["attach", name] ++
-                  call ["ls", "-r", "--porcelain"]
+          return detached && (← termiosRestored s 130) &&
+              sequenceCount (← s.output.get) (modeSet 1049 true) ≥ 2
     finally
       e.killAll #[name]
 

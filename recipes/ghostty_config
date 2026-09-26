@@ -1,5 +1,5 @@
-# Merge into Ghostty 1.2+ configuration after installing lz.
-# Requires lz and linger on PATH.
-# New windows start the session picker; detaching returns to it.
-# direct: launches the manager without a shell command string.
-command = direct:lz
+# Merge into Ghostty 1.2+ configuration after installing linger.
+# Create a session with `linger attach work` before using this startup command.
+# Use linger's absolute path if it is not on the terminal's PATH.
+# An existing initial-command overrides command for the first window.
+command = direct:linger

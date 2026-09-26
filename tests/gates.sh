@@ -78,7 +78,7 @@ for p in Linger/Core Linger/Core/Vt.lean Linger/Core/Checkpoint.lean \
          Tools/Key.lean Tools/Picker.lean Tools/Input.lean \
          Tools/Entry.lean Theorems/Entry.lean \
          Theorems/Picker.lean Theorems/Input.lean \
-         Lz.lean Manager/Picker.lean E2E/Manager.lean \
+         Main.lean Manager/Picker.lean E2E/Manager.lean \
          LingerTest.lean c/shim.c lakefile.lean lake-manifest.json README.md; do
   [ -e "$p" ] || fail "$p is gone — a gate below would pass by matching nothing"
 done
@@ -252,14 +252,22 @@ awk '
 # inside the boundary by construction. Because Vt is a leaf, an exact check on
 # these three files IS the closure.
 import_re='^[[:space:]]*((public|private|meta)[[:space:]]+)*import[[:space:]]+'
+module_imports() {
+  # Imports precede the module body. Stop at `public section` so a later
+  # multiline help string such as "import [SAVE]" is not a module dependency.
+  code_grep "$import_re|^[[:space:]]*public[[:space:]]+section([[:space:]]|$)" "$@" \
+  | awk -F: '
+      $3 ~ /^[[:space:]]*public[[:space:]]+section([[:space:]]|$)/ { body[$1] = 1; next }
+      !body[$1] { print }'
+}
 import_closure() {
   # Read through `code_grep`: a backticked quotation cannot satisfy the gate.
   # Include leading whitespace, because an indented import still compiles.
   # ';'-joined to keep the diagnostic one line.
-  tk_got="$(code_grep "$import_re" "$1" | sed 's/^[^:]*:[0-9]*://' | tr '\n' ';')"
+  tk_got="$(module_imports "$1" | sed 's/^[^:]*:[0-9]*://' | tr '\n' ';')"
   [ "$tk_got" = "$2" ] || { \
     printf '  %s import lines:\n' "$1" >&2; \
-    { code_grep "$import_re" "$1" >&2 || printf '    (none)\n' >&2; }; \
+    { module_imports "$1" >&2 || printf '    (none)\n' >&2; }; \
     printf '  want: %s\n   got: %s\n' "${2:-(no imports)}" "${tk_got:-(no imports)}" >&2; \
     fail "$1 left its declared import closure — review the library boundary"; }
 }
@@ -269,10 +277,10 @@ import_closure Linger/Core/Render.lean \
 import_closure Linger/Core/Terminal.lean \
   'public import Linger.Core.Render;import all Linger.Core.Vt;'
 
-# Optional manager policies have explicit, small import closures. They never
-# enter the session program, even through an intermediate project module:
-# every import in the program must stay in Linger or use the one
-# standard-library dependency already owned by Posix.
+# Entry and manager policies have explicit, small import closures. Main
+# composes their executors with the session backend. The session library never
+# imports them, even through an intermediate module: every library import
+# stays in Linger or the one standard-library dependency owned by Posix.
 import_closure Tools/Resurrect.lean 'public import Linger.Core.Name;'
 import_closure Tools/Key.lean ''
 import_closure Tools/Picker.lean 'public import Tools.Key;public import Linger.Core.Name;'
@@ -283,8 +291,9 @@ import_closure Linger/Core/Remote.lean 'public import Linger.Core.Name;'
 import_closure Manager/Resurrect.lean 'public import Tools.Resurrect;public import Linger.Core.Remote;'
 import_closure Manager/Picker.lean \
   'public import Tools.Picker;public import Tools.Input;public import Linger.Posix;public import Linger.Core.Vt;'
-import_closure Lz.lean 'public import Manager.Picker;public import Manager.Resurrect;'
-code_grep "$import_re" 'Linger/*' Linger.lean Main.lean \
+import_closure Main.lean \
+  'public import Linger.Runtime.Cli;public import Linger.Runtime.Resume;public import Tools.Entry;public import Manager.Picker;public import Manager.Resurrect;'
+module_imports 'Linger/*' Linger.lean \
 | awk -F: '
   { mod = $3
     sub(/^[[:space:]]*((public|private|meta)[[:space:]]+)*import[[:space:]]+(all[[:space:]]+)?/, "", mod)
@@ -293,7 +302,30 @@ code_grep "$import_re" 'Linger/*' Linger.lean Main.lean \
       print "  " $0; bad = 1
     }
   }
-  END { exit bad }' >&2 || fail "the session program imports outside its declared closure"
+  END { exit bad }' >&2 || fail "the session library imports outside its declared closure"
+
+# Pure route proofs do not observe terminal IO or inspect Main's call sites.
+# Pin both stream observations, exact argv forwarding and executable identity;
+# E2E.Manager and E2E.Recipes exercise these same boundaries in subprocesses.
+for claim in route_selector_iff route_bare_noninteractive route_session_argv \
+             route_session_streams route_daemon_argv route_ls_argv \
+             route_import_argv route_import_streams; do
+  code_grep "^theorem $claim " Theorems/Entry.lean >/dev/null \
+    || fail "entry-point contract disappeared: $claim"
+done
+# Fold layout whitespace for Main's small dispatch. Reuse the backtick-aware
+# matcher below, so quoted prose cannot stand in for these call sites.
+entry_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Main.lean)"
+for tie in \
+  'let stdinTty ← if args[.]isEmpty then [(]← IO[.]getStdin[)][.]isTty else pure false' \
+  'let stdoutTty ← if args[.]isEmpty then [(]← IO[.]getStdout[)][.]isTty else pure false' \
+  'match Tools[.]Entry[.]route args stdinTty stdoutTty with' \
+  '[|] [.]selector => Manager[.]Picker[.]run [(]← IO[.]appPath[)][.]toString' \
+  '[|] [.]importSave rest => Manager[.]Resurrect[.]run [(]← IO[.]appPath[)][.]toString rest' \
+  '[|] [.]session argv => Linger[.]Runtime[.]Cli[.]main Linger[.]Runtime[.]Resume[.]hooks argv'; do
+  printf '%s\n' "$entry_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+    || fail "entry point bypassed its proved route or fixed IO boundary: $tie"
+done
 
 # The proof covers the returned parser/plan values. These call-site gates make
 # bypassing them a reviewable change; IO tests check preflight/failure ordering
@@ -307,10 +339,14 @@ code_grep '^[[:space:]]+let panes ← IO[.]ofExcept [(]parseSave home [(]← IO[
   || fail "importer no longer consumes the proved whole-save parser"
 code_grep '^[[:space:]]+for pane in plan existing panes do$' Manager/Resurrect.lean >/dev/null \
   || fail "importer no longer iterates the proved import plan"
-code_grep 'args := #[[]"run", pane[.]name, "true"[]],' Manager/Resurrect.lean >/dev/null \
-  || fail "importer no longer creates only a shell for the planned name"
 code_grep '^[[:space:]]+cwd := some [(]System[.]FilePath[.]mk [(]absolute pane[.]dir[)][)], env [}]$' Manager/Resurrect.lean >/dev/null \
   || fail "importer no longer uses the planned directory as the child cwd"
+code_grep '^[[:space:]]+importSave executable args[.]head[?]$' Manager/Resurrect.lean >/dev/null \
+  || fail "importer no longer forwards the entry point executable"
+code_grep '^[[:space:]]+let listing ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"ls", "--porcelain"[]], env [}]$' Manager/Resurrect.lean >/dev/null \
+  || fail "importer no longer lists with the supplied executable"
+code_grep '^[[:space:]]+[{] cmd := executable, args := #[[]"run", pane[.]name, "true"[]],$' Manager/Resurrect.lean >/dev/null \
+  || fail "importer no longer creates only a shell for the planned name with the supplied executable"
 
 # Selector and decoder proofs concern pure values. Tie each IO consumer to the
 # proved function and retain exact attach argv and an immutable poll snapshot.
@@ -335,7 +371,10 @@ for tie in \
   'let fds := #[[]stdinFd[]]' \
   'let events := #[[]POLLIN[]]' \
   'let ready ← poll fds events 50' \
-  'let child ← IO[.]Process[.]spawn [{] cmd := "linger", args := #[[]"attach", target[]] [}]'; do
+  'let out ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"ls", "-r", "--porcelain"[]] [}]' \
+  'let snapshot ← listing executable' \
+  'discard <[|] attach executable target' \
+  'let child ← IO[.]Process[.]spawn [{] cmd := executable, args := #[[]"attach", target[]] [}]'; do
   code_grep "^[[:space:]]+$tie$" Manager/Picker.lean >/dev/null \
     || fail "manager bypassed a proved value or fixed IO boundary: $tie"
 done

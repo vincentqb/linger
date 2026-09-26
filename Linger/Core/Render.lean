@@ -374,8 +374,8 @@ pen the ring paint left in effect (`scrollUpIn` vacates with
 
 `ED 3` (erase-saved-lines) is what stops a second attach stacking a second copy
 of the ring. It is **guarded by the same emptiness test as the paint**, and that
-guard is a user-facing decision, not an optimization: linger never enters the alt
-screen, so the session shares the user's own terminal scrollback — an
+guard is a user-facing decision, not an optimization: session attachment uses
+the main screen, so the session shares the user's own terminal scrollback — an
 unconditional `ED 3` would discard the history of any window a session is
 attached in, including the common case of a session with no history to put there.
 Guarded, the anti-stacking property is untouched (nothing is pushed when the ring

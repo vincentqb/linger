@@ -7,7 +7,7 @@ public import Linger.Core.Vt
 
 public section
 
-/-! Terminal executor for the optional session selector. Selection and decoding
+/-! Terminal executor for the session selector. Selection and decoding
 are pure tool modules; this module owns terminal lifetime and subprocesses. -/
 
 namespace Manager.Picker
@@ -20,10 +20,10 @@ private inductive Choice where
   | refresh
 
 /-- Read one complete snapshot. A failed subprocess cannot supply candidates. -/
-private def listing : IO (Except UInt32 (List String)) := do
-  let out ← IO.Process.output { cmd := "linger", args := #["ls", "-r", "--porcelain"] }
+private def listing (executable : String) : IO (Except UInt32 (List String)) := do
+  let out ← IO.Process.output { cmd := executable, args := #["ls", "-r", "--porcelain"] }
   if out.exitCode != 0 then
-    IO.eprintln s!"lz: could not list sessions (exit {out.exitCode})"
+    IO.eprintln s!"linger: could not list sessions (exit {out.exitCode})"
     if !out.stderr.isEmpty then
       IO.eprint out.stderr
     return .error out.exitCode
@@ -38,7 +38,7 @@ private def draw (state : Tools.Picker.State) (cols rows : UInt32) : IO Unit := 
   let names := Tools.Picker.visible state.candidates state.query
   let slots := max 1 (height - 2)
   let start := state.cursor + 1 - slots
-  let mut lines := if height > 1 then #[(s!"lz> {state.query}", false)] else #[]
+  let mut lines := if height > 1 then #[(s!"linger> {state.query}", false)] else #[]
   let mut index := start
   for target in (names.drop start).take slots do
     let chosen := index == state.cursor
@@ -124,17 +124,18 @@ private def choose (candidates : List String) : IO Choice := do
     finally
       termRestore stdinFd saved
 
-private def attach (target : String) : IO UInt32 := do
-  let child ← IO.Process.spawn { cmd := "linger", args := #["attach", target] }
+private def attach (executable target : String) : IO UInt32 := do
+  let child ← IO.Process.spawn { cmd := executable, args := #["attach", target] }
   child.wait
 
 /-- Attach only a proved selection, after terminal restoration. Every attach
-exit returns to a fresh listing; cancellation ends the manager. -/
-def run : IO UInt32 := do
+exit returns to a fresh listing; cancellation ends the manager. The caller
+supplies one frozen absolute executable for all listing and attach children. -/
+def run (executable : String) : IO UInt32 := do
   unless (← stdinIsTty) && (← (← IO.getStdout).isTty) do
     throw (IO.userError "the picker needs terminal input and output")
   while true do
-    let snapshot ← listing
+    let snapshot ← listing executable
     match snapshot with
     | .error status =>
       return status
@@ -145,7 +146,7 @@ def run : IO UInt32 := do
       | .refresh =>
         continue
       | .attach target =>
-        discard <| attach target
+        discard <| attach executable target
   return 0
 
 end Manager.Picker

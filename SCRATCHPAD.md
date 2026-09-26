@@ -12722,3 +12722,87 @@ builds passes. The runtime still uses the predecessor entry point here; Step 2
 will connect the proved route, source-gate its IO consumers, remove the extra
 executable and helpers, and run the full verifier after those deletions. No C,
 raw binding, dependency, partial definition or proof-limit raise was added.
+
+## Step 2 notes — 2026-09-26
+
+Unified the public executable for `specs/single-entry-point.md`. `Main` consumes
+the proved route: bare invocation selects only with two terminal streams;
+redirected invocation lists once; explicit session argv, including `__daemon`,
+reach the existing backend unchanged. `linger import [SAVE]` owns the existing
+directory-only importer. Explicit commands do not inspect terminal streams.
+Help, installation and examples now use `linger`; removed `Lz.lean`, its Lake
+target and the retry, status-board and kitty-tab helper scripts. No replacement
+shortcut, startup option or terminal backend was added.
+
+Both manager executors take the entry point's absolute `IO.appPath` for local
+children. The importer no longer needs a POSIX shell lookup of `linger`.
+Selection and import work when PATH has no `linger` or contains an impostor,
+and changing into a saved directory does not change executable identity.
+Only `Main` composes the managers with the session backend; the session library
+and VT toolkit retain their declared import closures.
+
+The native Ghostty, kitty and WezTerm examples each launch bare `linger` using
+their documented command setting. Ghostty's `direct:` version requirement and
+first-window override, WezTerm's returned configuration table, absolute paths,
+first-session creation and migration from old launchers are documented.
+Reference captures are the three `*-reference.*` files under
+`/tmp/linger-entry-20260926/`. The configuration checks inspect those settings;
+they do not launch GUI terminals. SSH keepalives remain native configuration.
+
+The selector and importer workers used fresh independent worktrees
+`/tmp/linger-entry-picker-20260926` and `/tmp/linger-entry-import-20260926`.
+Their reviewed changes are integrated and both workers are closed. The
+selector predecessor fails the new checks; its final worker baseline has only
+the three actual entry-point/help failures awaiting parent integration. Four
+compiling selector mutations add failures for PATH-based listing, PATH-based
+attach, changed target argv and missing nested cleanup. Parent integration
+passes the complete actual suite, including all shared-executor checks and
+real no-PATH attach/detach/return.
+
+Importer checks retain complete preflight, existing identities, physical paths,
+home fallback, failure ordering, reruns and nonexecution of saved commands.
+Four compiling worker mutations fail the isolated executor checks: basename
+lookup, preflight after listing, a changed creation command and reversed
+creation order. The restored recorder checks pass. Parent runs pass the
+complete suite against the actual integrated executable and native examples.
+Worker receipts are `/tmp/linger-entry-picker-receipts-20260926/handoff.md`
+and `/tmp/linger-entry-import-receipts-20260926/`, including `mutations.json`.
+Parent focused green runs are `step2-manager-green.log` and
+`step2-recipes-green.log` under `/tmp/linger-entry-20260926/`.
+
+The new help line `import [SAVE]` exposed a false module-dependency match.
+Import inventory now stops at `public section`; a compiler probe confirms that
+an import after this boundary is rejected. Formatted `Main` requires layout
+whitespace folding in its IO ties; the matcher still ignores backtick-quoted
+prose. Four independent parent mutations compile before source gates reject
+them: observing stdin for stdout, selector PATH lookup with a quoted canonical
+call as a decoy, importer PATH lookup, and a real Tools import in the session
+module header. The first three also fail live suites with one, two and seven
+failures respectively. Restored builds and gates pass, and both source hashes
+match the baseline. Receipts are `step2-gate-mutations/`.
+
+The runtime-emitter inventory previously visited only `Linger` and `Main`;
+composition now includes `Tools` and `Manager`, so the inventory must too.
+A temporary fixture puts valid, compiled renderer calls in each previously
+unvisited root. The old scanner misses both and fails both assertions; the
+new scanner passes both. `coverage-boundary-red.log`,
+`coverage-boundary-green.log` and the fixture preserve that break record.
+This inventories source roots, not a proved import graph. Exact-constant
+semantic coverage and runtime stream classification pass in
+`step2-coverage.log`.
+
+Final Linux verification passes on Lean v4.34.1. The complete foreground
+verifier rebuilt from empty and passed generated C ABI, source gates,
+standalone layout, semantic coverage, CI runner selection, fuzz fixtures,
+POSIX smoke tests, all thirteen live suites and the unrelated-session
+sentinel. Receipts are `step2-full-verifier.log`, `step2-clean-build.log`,
+`step2-full-layout.log`, `step2-full-coverage.log`,
+`step2-full-ci-runner.log`, `step2-full-shim.log` and `full-suites/` under
+`/tmp/linger-entry-20260926/`. Both required final builds and standalone lint
+pass in `step2-final-build.log`, `step2-final-proofs-tests.log` and
+`step2-final-lint.log`.
+
+No C, raw binding, dependency, partial definition, fuel or proof-limit increase
+was added. Archived the completed spec as `specs/archive/single-entry-point.md`;
+no spec remains in flight. Hosted checks are pending at this checkpoint.
+No macOS, live GUI terminal or real remote-host result is claimed.

@@ -47,11 +47,13 @@ def emitters : List (String × String) :=
     ("Render.history", "history_framing / history_lines / history_records"),
     ("Render.screenText", "screenText_framing / screenText_lines / screenText_records")]
 
-/-- Renderer and replay operations referenced anywhere runtime-reachable,
+/-- Renderer and replay operations referenced in the program's source roots,
 outside their defining module. Return types and line wrapping are irrelevant. -/
 def runtimeEmitters (defs : Array Lean.Name) : IO (Array String) := do
   let mut refs : Array String := #[]
   let mut files ← leanFiles (System.FilePath.mk "Linger")
+  for root in ["Tools", "Manager"] do
+    files := files ++ (← leanFiles (System.FilePath.mk root))
   files := files.push (System.FilePath.mk "Main.lean")
   for f in files do
     if !(← f.pathExists) then

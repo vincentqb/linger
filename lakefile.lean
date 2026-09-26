@@ -18,7 +18,7 @@ package linger where leanOptions :=
     -- grep still covers prose, the log scan still covers non-declaration warnings.
     ⟨`warningAsError, true⟩]
 
-/-- The program. Zero external Lean dependencies (core only): the whole
+/-- The session library. Zero external Lean dependencies (core only): the whole
 point is that the state machines are ours to prove things about. -/
 @[default_target] lean_lib Linger where
 
@@ -42,15 +42,12 @@ honest. The half that BITES is therefore the import grep in `tests/gates.sh`,
 and this target is what that grep is a gate on. -/
 lean_lib LingerVt where roots := #[`Linger.Core.Vt, `Linger.Core.Render, `Linger.Core.Terminal]
 
-/-- Optional pure manager policies, outside the session and VT libraries. -/
+/-- Pure entry, selection and import policies, outside the session and VT libraries. -/
 lean_lib Tools where roots :=
   #[`Tools.Entry, `Tools.Resurrect, `Tools.Key, `Tools.Picker, `Tools.Input]
 
-/-- Optional terminal selector and save-import executor. -/
+/-- Terminal selector and save-import executor, composed by Main. -/
 lean_lib Manager where roots := #[`Manager.Picker, `Manager.Resurrect]
-
-/-- Optional session manager. Build explicitly with `./lake build lz`. -/
-lean_exe lz where root := `Lz
 
 /-- The C shim — the program's native OS boundary (see AGENTS.md).
 Compiled with clang (the ./lake wrapper puts Homebrew clang on PATH;
@@ -81,8 +78,9 @@ lean_lib Tests where
 
 /-- The pty suites, as Lean rather than Python: `./lake exe e2e <suite>`.
 
-These drive the real binary through real ptys, so they are `IO` and can never be
-theorems — `Theorems`/`Tests` above are what covers the pure core. They are Lean
+These drive the real binary through real ptys and test executors with isolated
+recorders, so they are `IO` and can never be theorems — `Theorems`/`Tests` above
+cover the pure core. They are Lean
 because a test in the implementation's own language cannot drift from it (a suite
 reads `Status.ofName`, not the string `"wants-you"`), and because it cost no new
 syscall: `Linger.Posix` already had `spawnPty`, `winsizeSet`, `kill`,

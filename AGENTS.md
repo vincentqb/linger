@@ -15,9 +15,10 @@ worklog), `specs/archive/` (closed build records), the comments in
 
 ## Where things stand — read this first after any compaction
 
-1. `specs/single-entry-point.md` is in flight: compose the selector, importer
-   and session commands behind one `linger` executable, with generic terminal
-   launch configuration. Its status block identifies the current step.
+1. No spec is in flight. The last one closed on 2026-09-26
+   (`specs/archive/single-entry-point.md`: one `linger` executable and native
+   terminal launch configuration; local Linux verification green, hosted checks
+   pending).
    New work opens a new `specs/<slug>.md`, names itself here, and keeps
    the live count at one; every behavioral fix starts with a failing
    check and every deletion survives the full verifier stack.
@@ -42,7 +43,7 @@ git history); re-opening one needs a new reason.
 - Creating sessions from a selector query — selection attaches only an
   original listed target (`Theorems/Picker.lean`). The user's 2026-09-26 request
   for one public entry point reopens the earlier separate-executable decision;
-  `specs/single-entry-point.md` records terminal selection versus piped listing.
+  `specs/archive/single-entry-point.md` records terminal selection versus piped listing.
 - Storing images across reattach — passthrough plus the application's
   own redraw only (`E2E/Graphics.lean`, README Graphics).
 - Restoring the process tree on resume — screen and state yes, programs
@@ -136,12 +137,13 @@ deliberately no pre-push hook.
   an exact check count in `tests/e2e.sh`; any addition or deletion is a
   reviewable edit.
 - Program logic, proofs and automated test suites are Lean. Optional
-  user-editable recipes deliberately use POSIX sh and native configuration
-  (`recipes/README.md`); keep their composition policy outside `Linger/`.
-  The optional `lz` manager owns session selection and foreign-save import.
+  user-editable recipes contain native terminal and SSH configuration
+  (`recipes/README.md`).
+  `linger` is the sole public executable; `Main` composes session commands,
+  terminal selection and foreign-save import.
   `Tools/` holds pure policies and `Manager/` their IO executors, with the same
   theorem census and IO call-site gates. Their import closures stay outside
-  the session program and VT toolkit.
+  the session library and VT toolkit.
   The C shim, build wrapper, configuration hooks and verifier scripts are
   deliberate non-Lean boundaries. No Python, ever.
   `tests/e2e.sh`, `tests/gates.sh` and `tests/ci-runners.sh` stay shell.

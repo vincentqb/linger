@@ -1,8 +1,8 @@
 # One public entry point
 
-Status: in progress — step 1 complete; step 2, executable integration
+Status: complete — both steps verified locally on Linux; hosted checks pending
 Updated: 2026-09-26
-Next: compose the existing executors in `Main`, then verify the complete CLI
+Next: inspect hosted checks after pushing the integrated commits
 Predecessor: `specs/archive/manager-defaults.md`
 
 ## Goal
@@ -75,20 +75,38 @@ The runtime still uses the predecessor entry point at this checkpoint.
 
 ### Step 2 — compose one executable and simplify terminal integration
 
-In progress. Route `Main` through the proved decision, reuse the existing selector
-and importer, remove the separate executable, and update help, documentation,
-native configuration examples and IO call-site gates. Adapt synthetic probes
-without introducing production test options, and retain actual CLI checks.
-Run the complete foreground verifier after deletions, then both required
-builds, close this spec, commit and push the integrated mainline.
+Complete. `Main` consumes the proved route and supplies its absolute executable
+to the existing selector and importer. Removed the separate executable and
+three shell helpers. Help and installation use `linger`; native Ghostty, kitty
+and WezTerm settings launch the same command. Synthetic failure probes invoke
+the shared executors, while actual CLI checks cover dispatch, no-PATH invocation,
+an impostor on PATH, import, attach, detach and return.
+
+Four compiling parent mutations fail the IO gates; the three behavior changes
+also fail their live suites. The fourth proves that the import-closure gate
+rejects a real Tools dependency in the session library. Worker mutations cover
+subprocess identity, unchanged target argv, cleanup, import preflight, the
+constant creation command and creation order. Restored sources match the
+verified hashes.
+
+The runtime-emitter inventory now visits Tools and Manager as well as Linger
+and Main. Compiling renderer-call fixtures in the two added roots fail the
+predecessor inventory and pass the revised scanner.
+
+The complete foreground verifier rebuilt from empty and passed generated C
+ABI, source gates, standalone layout, semantic coverage, CI runner selection,
+fuzz fixtures, POSIX smoke tests, all thirteen live suites and the unrelated
+session sentinel. Both required final builds and standalone lint pass. No C,
+raw binding, dependency, partial definition, fuel or proof-limit increase was
+added. See the Step 2 worklog entry for receipts and verification boundaries.
 
 ## Work and verification
 
-Workers own disjoint paths in fresh worktrees: routing/proofs/fixtures,
-selector/PTY checks, and importer/import checks. The main writer owns the entry
-point, help, build/gate wiring, native examples, documentation and integration.
-No C, raw binding, dependency, proof-limit raise or new configuration channel is
-planned. Receipts live in `/tmp/linger-entry-20260926/`.
+Workers used disjoint paths in fresh worktrees: routing/proofs/fixtures,
+selector/PTY checks, and importer/import checks. The main writer integrated the
+entry point, help, build/gate wiring, native examples and documentation. All
+workers are integrated and closed. Receipts live in
+`/tmp/linger-entry-20260926/`.
 
 Exact suite counts and source ratchets remain in the verifier scripts. Hosted
 CI was last blocked before starting by GitHub billing/spending limits; inspect

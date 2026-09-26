@@ -5,17 +5,14 @@ public import Linger.Core.Listing
 
 public section
 
-/-! # E2E.Overview — bare `linger` and `linger ls` print a list and EXIT
+/-! # E2E.Overview — redirected `linger` and `linger ls` print a list and exit
 
-Ported from `tests/overview_test.py`. They are NOT an interactive full-screen
-picker.
-
-Regression guard: a first-time user once ran bare `linger`, got a full-screen TUI,
-typed `ls` at it, and that created a session literally named `ls`.
-`specs/archive/lean-zmx.md` records the removal; this suite is what keeps it
-removed. So the overview must be a plain, pipeable, self-terminating listing that
-never blocks on stdin — which is why every form runs through `Env.cliTimeout`: a
-picker that sat on stdin would FAIL here, not hang the gate.
+The overview must be a plain, pipeable, self-terminating listing that never
+blocks on stdin. Every form runs through `Env.cliTimeout`: a picker that waited
+on redirected stdin would fail here, not hang the gate. `E2E.Manager` separately
+checks terminal selection and explicit `ls` with both streams on a terminal.
+Selector queries only filter listed candidates; they never create sessions
+from arbitrary input (`Theorems/Picker.lean`).
 
 WHAT THE PORT STRENGTHENS. The empty-state check compared against the literal
 `'no sessions'`; `Cli.cmdList` writes `ByteArray.mk (humanListing rows).toArray`

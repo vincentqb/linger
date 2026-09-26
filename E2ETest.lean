@@ -67,6 +67,8 @@ def main (args : List String) : IO UInt32 := do
     E2E.Delivery.serveProbe dir
   | "--manager-probe" :: rest =>
     E2E.Manager.probe rest
+  | "--import-probe" :: rest =>
+    E2E.Recipes.importProbe rest
   | ["delivery", check] =>
     E2E.Delivery.run (some check)
   | [name] =>

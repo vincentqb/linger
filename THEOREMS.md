@@ -14,7 +14,7 @@ recipes, break records, measurements, the audits — lives in
 | **A2. The daemon cannot be broken by traffic** | no event trace of any length — adversarial clients, hostile pty bytes, any interleaving — breaks a buffer cap, the screen invariant, or one client's isolation from another; structural since the `State` seal (private constructor, capped boot), and covering a resumed daemon's screen from either `vt0` source | `Session.run_wf`, `Session.run_bytes_isolates`, `Session.boot_wf` / `run_boot_wf`, `Session.run_resume_vt_shape` |
 | **A3. The transport is invisible** | any re-chunking of any well-formed encoded stream decodes to exactly that stream: same messages, same order, nothing retained, no error | `Wire.decode_encode_chunked` |
 | **A4. A session name has one owner** | given the kernel grants at most one `flock` holder, at most one daemon ever unlinks or binds a given name | `Claim.at_most_one_owner` |
-| **A5. linger is invisible to the terminal it borrows** | both directions receiver-quantified, under each theorem's stated premises. Inbound (`restore`): modes `restore_modes_any`; pen `restore_pen_any`; sticky fields `restore_sticky_any` (`restore_region_any`, `restore_charset_any`, `restore_alt_any` are its projections); screen cells `restore_grid_any` / `restore_grid_reachable` / `Resume.resume_grid` — the selected grid (main or alternate), every height, mid-character receivers included through the reachable wrapper; tab ruler `restore_tabs_any` / `Resume.resume_tabs`; scrollback `restore_sb_any` / `restore_sb_reachable` / `Linger.Core.resume_sb` (as `.toList` — same history, different ring records; `restore_sb_exact` when the budget kept everything, `restore_sb_keeps_of_empty` for the no-history branch, a user-facing decision). Outbound (hand-back): `leave_canonical_all`. Still fixture-carried, named so the list is not "just the cells": the window **title** and the **DECSC slot**. The one thing linger does that it cannot undo: attaching a session that has history erases the borrowed window's saved lines (`ED 3` — linger shares the user's scrollback and never enters the alt screen; conformance entry 11, README §Notes) | see row |
+| **A5. session attachment is invisible to the terminal it borrows** | both directions receiver-quantified, under each theorem's stated premises. Inbound (`restore`): modes `restore_modes_any`; pen `restore_pen_any`; sticky fields `restore_sticky_any` (`restore_region_any`, `restore_charset_any`, `restore_alt_any` are its projections); screen cells `restore_grid_any` / `restore_grid_reachable` / `Resume.resume_grid` — the selected grid (main or alternate), every height, mid-character receivers included through the reachable wrapper; tab ruler `restore_tabs_any` / `Resume.resume_tabs`; scrollback `restore_sb_any` / `restore_sb_reachable` / `Linger.Core.resume_sb` (as `.toList` — same history, different ring records; `restore_sb_exact` when the budget kept everything, `restore_sb_keeps_of_empty` for the no-history branch, a user-facing decision). Outbound (hand-back): `leave_canonical_all`. Still fixture-carried, named so the list is not "just the cells": the window **title** and the **DECSC slot**. The one thing attachment does that it cannot undo: attaching a session that has history erases the borrowed window's saved lines (`ED 3` — attachment uses the main screen and shares the user's scrollback; conformance entry 11, README §Notes) | see row |
 
 ## The rungs
 
@@ -204,20 +204,23 @@ pure claims. Delivery requires the peer to finish draining before its applicable
 deadline and remain within the live-output allowance. The deadline is enforced
 by a cooperative poll loop, without a hard real-time guarantee.
 
-## Recipe boundaries
+## Entry-point boundaries
 
-§Entry defines the dispatch contract for the unified executable being composed
-in `specs/single-entry-point.md`. `route_selector_iff` requires both streams to
+§Entry defines the dispatch contract for the unified executable.
+`route_selector_iff` requires both streams to
 be terminals and no command arguments. `route_bare_noninteractive` keeps the
 bare listing when either stream is redirected. `route_session_argv` preserves
 every explicit non-import command and operand; `route_ls_argv` and
 `route_daemon_argv` state the listing and internal re-exec cases. Import keeps
 all trailing arguments for its executor to validate (`route_import_argv`).
 `route_session_streams` and `route_import_streams` make stream independence
-explicit. These are contracts on the pure decision; Step 2 connects the IO
-entry point and checks to that value.
+explicit. `Main` consumes this pure decision; source gates pin the stream
+observations, all three dispatch branches and the running executable's path.
+`E2E.Manager` checks the real binary with all four stream combinations,
+explicit listing in a terminal, help and invalid operands. Both manager suites
+exercise absolute invocation with no `linger` on PATH and with a PATH impostor.
 
-§Select supports the optional manager's pure selection model.
+§Select supports the manager's pure selection model.
 `matches_iff_sublist` specifies ASCII-case-insensitive subsequence matching;
 other Unicode characters remain exact. `visible_order` and `mem_visible`
 retain the listing's order and original targets. `parseListing_valid` rejects
@@ -245,26 +248,21 @@ subprocess handoff, paste, exact selection and refresh scheduling through real
 ptys. A cleanup exception still restores termios; attachment begins after
 leaving the picker screen. These are IO observations, not theorem statements.
 
-The POSIX sh helpers compose operations whose state guarantees already have proofs.
 §Detach preserves a session when its client leaves; §Handback specifies the
-terminal state returned to the caller. These support the optional `lz` manager
-and `lza` reconnect helper. The manager returns to selection after every attach
+terminal state returned to the caller. The selector temporarily uses an alternate
+screen, restoring it before session attachment. It returns to selection after every attach
 exit. `E2E.Manager` checks that default across successful attachment, failure
 and real detach, with terminal restoration before the next subprocess.
-`E2E.Recipes` drives the actual shell helpers and checks retry status.
-No parallel Lean model of shell execution is claimed.
+Synthetic failure and handoff checks invoke the same executor through an
+isolated recorder; public dispatch and live attach/detach use the actual binary.
 
-`lzs` displays observations backed by `Status.classify_sound`,
-`Status.classify_unique` and `Listing.rowFields_name`. Its IO checks require
-configured remotes, a five-second pause and a complete listing before clearing.
-`lzo` uses names backed by `Name.sanitize_valid` and `Remote.parse_names_valid`;
-its complete-list validation and terminal-launch arguments have separate IO
-checks. Their short composition policies remain editable shell scripts.
-Ghostty's command setting and SSH's keepalive setting use the tools' native
-formats; configuration parsing and documented launch syntax support those
-choices, without claiming a theorem about GUI behavior or network recovery time.
+The native configurations for Ghostty, kitty and WezTerm each launch bare
+`linger`. `E2E.Recipes` inspects the three native configuration
+settings; documented launch syntax supports them. SSH keepalives remain native
+transport configuration. These observations do not prove GUI behavior, network
+recovery time or a preference for a configuration format.
 
-§Import supports `lz import-resurrect`. `parseSave_valid` gives
+§Import supports `linger import`. `parseSave_valid` gives
 nonempty, distinct names that already satisfy `Name.Valid`, plus NUL-free
 decoded directories. `parseRow_command_valid` requires the saved command's
 sentinel and absence of NUL. `parseRow_command_irrelevant` proves that replacing
@@ -278,15 +276,16 @@ parsing's distinctness through filtering.
 all planned names produces no actions. It does not prove atomic name claiming,
 concurrent imports or successful IO. `Manager.Resurrect` preflights every saved
 directory and obtains a successful listing before executing the plan.
-Source gates pin its parser, plan and constant shell-creation argv,
+Source gates pin its parser, plan, supplied executable and constant shell-creation argv,
 `linger run NAME true`; the saved directory supplies the child's cwd.
 `E2E.Recipes` checks those actual arguments, ignored saved commands, failure
-ordering, executable lookup, home fallback, relative paths, and untouched
+ordering, executable identity, home fallback, relative paths, and untouched
 existing shells on reruns against real daemons.
 
 The source gates constrain the manager's imports to its pure policies, core
 name/listing modules, public VT width function and existing POSIX interface.
-They keep the manager out of the session program and VT toolkit.
+They keep the manager out of the session library and VT toolkit; only `Main`
+composes those library commands with the selector and importer.
 Theorems cannot inspect IO call sites or prove a preference for
 a source language; each decision is supported by its semantic contract and the
 checks at the boundary where that contract is used.
