@@ -40,12 +40,11 @@ case "$event" in
     macos=yes
     ;;
   schedule)
-    # `git log --since` in the current repository. Quoting matters and has bitten:
-    # an unquoted `--since=8 days ago` makes git read `days` as a revision and fail,
-    # which — because the failure is empty output — would silently mean "no commits"
-    # and macOS would never run again. `E2E/Ci.lean` drives this path against real
-    # temporary repositories for exactly that reason.
-    if [ -n "$(git log --since="$WINDOW" --format=%H)" ]; then
+    # Keep the assignment outside `if`: set -e must propagate a failed history
+    # lookup, rather than treating its empty output as "no commits".
+    # E2E.Ci drives recent, stale and unreadable histories against this script.
+    commits="$(git log --since="$WINDOW" --format=%H)"
+    if [ -n "$commits" ]; then
       macos=yes
     fi
     ;;

@@ -12806,3 +12806,32 @@ No C, raw binding, dependency, partial definition, fuel or proof-limit increase
 was added. Archived the completed spec as `specs/archive/single-entry-point.md`;
 no spec remains in flight. Hosted checks are pending at this checkpoint.
 No macOS, live GUI terminal or real remote-host result is claimed.
+
+## Step 1 notes — 2026-09-26
+
+Opened `specs/minimal-compounding.md` for the full-tree audit. Applied the local
+code-minimalism, compound-engineering, design-for-provability,
+verifier-in-the-loop, subagent-orchestration and git-workflow skills. Three
+independent worktrees audit VT/rendering, the remaining pure core, and the
+manager/entry/recipes; this tree owns runtime, POSIX/C and verification.
+Prior rejected loop unifications remain rejected: timeout and completion
+policies differ, so a generic loop with policy flags would hide the distinction.
+
+Confirmed a script error rather than a hypothetical concern: in the scheduled
+runner decision, `git log` failed inside an `if` command substitution, where
+`set -e` did not propagate the failure. Empty stdout selected Ubuntu alone and
+the script exited successfully, silently skipping macOS. The new `E2E.Ci`
+check first creates and exercises real recent/stale histories, then removes
+the throwaway repository's Git metadata and requires nonzero exit with no
+matrix. The old script compiles with the new suite and fails that check;
+moving the history lookup to a standalone assignment makes all checks pass.
+The exact check count in `tests/e2e.sh` changes with the added check.
+
+Receipts are `/tmp/linger-minimal-20260926/ci-red-build.log`, `ci-red.log`,
+`ci-green.log`, `ci-gates.log`, `step1-build.log`, `step1-proofs-tests.log`,
+`step1-layout.log` and `step1-format.log`. Both required builds, source gates,
+shellcheck and standalone lint pass; the formatter identified and corrected
+the added check's layout. This checkpoint changes only the CI script, its
+Lean check, orchestration count and explanatory comments. It claims no new
+proof of shell IO and adds no session runtime, C, dependency or proof limit.
+The complete Linux verifier remains scheduled after the source audit changes.

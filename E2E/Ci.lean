@@ -104,14 +104,8 @@ def run : IO UInt32 := do
   -- The scheduled arm against real history, both ways. A repo whose only commit is
   -- older than the window must NOT pull in macOS; one inside it must.
   --
-  -- `try`/`finally` because `runners` throws when the script exits non-zero, and a
-  -- suite that leaks its fixtures on failure is exactly what this file's own commit
-  -- fixed elsewhere. There is deliberately no third check on the `git log` itself:
-  -- one was written and deleted, because it ran `git` from Lean with an argv array,
-  -- where `--since=8 days ago` is one argument BY CONSTRUCTION — so it could not
-  -- exhibit the shell quoting bug it claimed to guard, whatever the script said. The
-  -- "recent commit" check above already catches that: an unquoted `--since` makes git
-  -- fail, empty output reads as no commits, and the answer collapses to ubuntu.
+  -- Drive the real script for both valid histories and an unreadable one.
+  -- Failure to inspect history must fail the job, not silently skip a platform.
   let fresh ← repoWithCommit 1
   let stale ← repoWithCommit 45
   try
@@ -125,6 +119,15 @@ def run : IO UInt32 := do
         (←
           expect ((← runners script stale "schedule" "refs/heads/main") == ubuntuOnly)
               "a scheduled run on an unchanged tree asks for ubuntu alone")
+    IO.FS.removeDirAll (System.FilePath.mk fresh / ".git")
+    let failed ←
+      IO.Process.output
+          { cmd := "sh", args := #[script, "schedule", "refs/heads/main"], cwd := some fresh }
+    f :=
+      f +
+        (←
+          expect (failed.exitCode != 0 && failed.stdout.trimAscii.isEmpty)
+              "unreadable history fails without emitting a runner matrix")
   finally
     IO.FS.removeDirAll (System.FilePath.mk fresh)
     IO.FS.removeDirAll (System.FilePath.mk stale)

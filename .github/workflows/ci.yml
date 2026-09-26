@@ -93,9 +93,9 @@ jobs:
       # macOS is the expensive runner (10x, rounded up per job), so the full gate
       # asks for it only when there is something new for it to learn. The decision
       # is `tests/ci-runners.sh`, not an inline `case`, so that `E2E/Ci.lean` can
-      # drive the real thing instead of a copy of it — including the `git log`
-      # invocation, whose failure mode is empty output and therefore a silent
-      # "macOS never runs again". Shell rather than a Lean exe because this job
+      # drive the real thing, including failure of the `git log` invocation:
+      # unreadable history must stop the job instead of skipping macOS.
+      # Shell rather than a Lean exe because this job
       # compiles nothing, which is what makes it cheap.
       - name: which runners the full gate needs
         id: runners

@@ -179,8 +179,8 @@ ci_out=/tmp/linger-ci.out
 cat "$ci_out"
 tail -1 "$ci_out" | grep -q '^FAILURES: 0$' || fail "ci runner selection"
 ci_n="$(grep -c '^PASS ' "$ci_out")"
-[ "$ci_n" -eq 6 ] \
-  || fail "e2e ci ran $ci_n checks (expected exactly 6)"
+[ "$ci_n" -eq 7 ] \
+  || fail "e2e ci ran $ci_n checks (expected exactly 7)"
 
 say "2d. fuzz corpus: no held-out mutations, failure lists asserted empty"
 # The §Replay fuzzer is only a guarantee if nothing is excluded and the
