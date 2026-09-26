@@ -75,15 +75,17 @@ for p in Linger/Core Linger/Core/Vt.lean Linger/Core/Checkpoint.lean \
          Linger/Runtime Linger/Runtime/Client.lean Linger/Runtime/Daemon.lean \
          Theorems Theorems/Session.lean Theorems/Replay.lean Tests E2E \
          Tools/Resurrect.lean Theorems/Resurrect.lean Lzr.lean \
+         Tools/Key.lean Tools/Picker.lean Tools/Input.lean \
+         Theorems/Picker.lean Theorems/Input.lean \
          LingerTest.lean c/shim.c lakefile.lean lake-manifest.json README.md; do
   [ -e "$p" ] || fail "$p is gone — a gate below would pass by matching nothing"
 done
 
-! code_grep 'sorry' 'Linger/Core/*' 'Tools/Resurrect.lean' 'Theorems/*' || fail "sorry found"
-! code_grep 'sorryAx' 'Linger/Core/*' 'Tools/Resurrect.lean' 'Theorems/*' || fail "sorryAx found"
-! code_grep '(^|[^[:alnum:]_])partial def([^[:alnum:]_]|$)' 'Linger/Core/*' 'Tools/Resurrect.lean' \
+! code_grep 'sorry' 'Linger/Core/*' 'Tools/*' 'Theorems/*' || fail "sorry found"
+! code_grep 'sorryAx' 'Linger/Core/*' 'Tools/*' 'Theorems/*' || fail "sorryAx found"
+! code_grep '(^|[^[:alnum:]_])partial def([^[:alnum:]_]|$)' 'Linger/Core/*' 'Tools/*' \
   || fail "partial def in pure core"
-! code_grep ': *IO ' 'Linger/Core/*' 'Tools/Resurrect.lean' || fail "IO in pure core"
+! code_grep ': *IO ' 'Linger/Core/*' 'Tools/*' || fail "IO in pure core"
 # Proofs must reduce in the kernel, never by compiled evaluation: a
 # `native_decide` in Theorems/ would trust the compiler + `Decidable`
 # instance instead of the kernel, and (unlike the tests, where evaluating
@@ -265,11 +267,14 @@ import_closure Linger/Core/Render.lean \
 import_closure Linger/Core/Terminal.lean \
   'public import Linger.Core.Render;import all Linger.Core.Vt;'
 
-# The optional importer reaches only the pure name/listing modules and Lean's
-# standard IO. Its policy never enters the session program, even through an
-# intermediate project module: every import in the program must stay in Linger
-# or use the one standard-library dependency already owned by Posix.
+# Optional manager policies have explicit, small import closures. They never
+# enter the session program, even through an intermediate project module:
+# every import in the program must stay in Linger or use the one
+# standard-library dependency already owned by Posix.
 import_closure Tools/Resurrect.lean 'public import Linger.Core.Name;'
+import_closure Tools/Key.lean ''
+import_closure Tools/Picker.lean 'public import Tools.Key;public import Linger.Core.Name;'
+import_closure Tools/Input.lean 'public import Tools.Key;'
 import_closure Linger/Core/Name.lean ''
 import_closure Linger/Core/Remote.lean 'public import Linger.Core.Name;'
 import_closure Lzr.lean 'public import Tools.Resurrect;public import Linger.Core.Remote;'

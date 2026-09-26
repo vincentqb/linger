@@ -10,4 +10,6 @@ import Tests.Remote
 import Tests.Listing
 import Tests.Checkpoint
 import Tests.Resurrect
+import Tests.Picker
+import Tests.Input
 import Tests.Fuzz

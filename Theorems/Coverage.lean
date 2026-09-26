@@ -15,11 +15,13 @@ import all Theorems.Replay
 import all Theorems.Resume
 import all Theorems.Status
 import all Theorems.Resurrect
+import all Theorems.Picker
+import all Theorems.Input
 public meta import Lean.Elab.Command
 
 /-! # Semantic coverage gate
 
-Every explicit `def` under `Linger/Core` or in `Tools.Resurrect` must occur as
+Every explicit `def` under `Linger/Core` or `Tools` must occur as
 its exact environment constant in a theorem type from `Theorems`. This module
 is under the sanctioned friend region so it can resolve private definitions and
 theorem declarations without granting that access to E2E or runtime code. -/
@@ -74,7 +76,18 @@ public def dropModifiers (line : String) : String :=
 public def declChar (c : Char) : Bool := identChar c || c == '.' || c == '?' || c == '!'
 
 public def declToken (afterKeyword : String) : String :=
-  ((afterKeyword.dropWhile (· == ' ')).toString.takeWhile declChar).toString
+  let src := (afterKeyword.dropWhile (· == ' ')).toString
+  if src.startsWith "«" then
+    match (src.drop 1).toString.splitOn "»" with
+    | name :: _ :: _ => name
+    | _ => ""
+  else (src.takeWhile declChar).toString
+
+#guard declToken "«matches» (query : String)" == "matches"
+
+#guard declToken "State.Valid (s : State)" == "State.Valid"
+
+#guard declToken "«unterminated" == ""
 
 public def declName (afterKeyword : String) : String :=
   (declToken afterKeyword |>.splitOn ".").getLast!
@@ -85,7 +98,8 @@ Every inventoried file has one top-level namespace. A layout change makes names
 fail to resolve below, so the census fails closed. -/
 public def pureDefNames : IO (Array Lean.Name) := do
   let mut names : Array Lean.Name := #[]
-  let files := (← leanFiles (System.FilePath.mk "Linger/Core")).push "Tools/Resurrect.lean"
+  let files :=
+    (← leanFiles (System.FilePath.mk "Linger/Core")) ++ (← leanFiles (System.FilePath.mk "Tools"))
   for f in files do
     let src := stripComments (← IO.FS.readFile f)
     let some nsLine := src.splitOn "\n" |>.find? (·.startsWith "namespace ")
@@ -95,8 +109,10 @@ public def pureDefNames : IO (Array Lean.Name) := do
       let l := dropModifiers line
       if l.startsWith "def " then
         let token := declToken (l.drop 4).toString
+        if token.isEmpty then
+          throw (IO.userError s!"{f}: unrecognized definition name: {l}")
         let n := s!"{ns}.{token}".toName
-        if !token.isEmpty && !names.contains n then
+        if !names.contains n then
           names := names.push n
   return names.qsort (·.toString < ·.toString)
 
@@ -112,8 +128,7 @@ meta def pureCandidates (env : Environment) (logical : Lean.Name) : Array Lean.N
     env.constants.toList.filterMap
         (fun (n, ci) =>
           if
-              !ci.isTheorem &&
-                (moduleUnder env `Linger.Core n || moduleUnder env `Tools.Resurrect n) &&
+              !ci.isTheorem && (moduleUnder env `Linger.Core n || moduleUnder env `Tools n) &&
                 n.toString.endsWith logical.toString then
             some n
           else none) |>.toArray

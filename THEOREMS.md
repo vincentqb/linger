@@ -40,6 +40,8 @@ recipes, break records, measurements, the audits — lives in
 | §Status | one glyph per listing row vs seven conditions | the seven states partition the observation space: `cover`, `disjoint`, `classify_sound` + `classify_unique`, `reachable`, `icon_injective` / `name_injective`, `name_clean` | Theorems/Status.lean |
 | §Resume | the product's own promise: crash, reboot, reattach | §Restore ∘ §Replay, stated twice — over `save`'s input and over `load`'s output (`resume_grid_of_load`, `resume_tabs_of_load`, `resume_sb_of_load`: any byte string that loads, no other hypothesis) — and lifted to the daemon over its own `vt0` (`Session.run_resume_vt_shape`, `run_resume_load_save`) | Theorems/Resume.lean, Theorems/Session.lean |
 | §Import | foreign save records vs distinct session identities and deliberate command execution | successful parsing gives a nonempty list with canonical, distinct names and NUL-free directories/commands (`parseSave_valid`); planning preserves records and order, skips existing names and selects only unchanged, explicitly enabled, eligible commands (`mem_plan`, `plan_order`, `plan_command_policy`); adding planned names to the snapshot makes a sequential rerun empty (`plan_sequential_idempotent`) | Theorems/Resurrect.lean, E2E/Recipes.lean |
+| §Select | fuzzy query vs an exact session identity | matching is ASCII-folded subsequence matching (`matches_iff_sublist`); filtering preserves order (`visible_order`); successful listing parsing preserves complete original name records (`parseListing_records`); continuing transitions preserve query/cursor bounds (`step_stay_valid`); only acceptance can attach an unchanged snapshot member (`step_attach_iff`, `step_attach_mem`) | Theorems/Picker.lean |
+| §Input | split keyboard bytes and pasted commands vs deliberate selection | one byte produces at most one key (`feed_length`); UTF-8 prefixes retain at most three bytes (`stored_bound`, `feed_storage_bound`); delivered text excludes controls (`feed_text_valid`); paste emits only text and survives incomplete input (`feed_paste_only_text`, `feed_paste_sticky`, `flush_paste`); a timeout never accepts (`flush_no_accept`) | Theorems/Input.lean |
 
 The CSI collector preserves omitted parameters, saturates numeric parameters
 and rejects overflow at the existing parameter cap. `csiPush_of_lt`,
@@ -156,9 +158,10 @@ Every user-facing README promise maps to a theorem, a named test, a
 stated limitation, or a settled non-goal — never to nothing; a new
 promise (or § / anchor) lands with its mapping. That is a review
 discipline. `Theorems/Coverage.lean` resolves every explicit `def` in
-`Linger/Core/` and `Tools/Resurrect.lean` to its fully qualified environment
-constant and requires that exact
-constant in a theorem type; comments, proof bodies, formatting and colliding
+`Linger/Core/` and `Tools/` to its fully qualified environment
+constant and requires that exact constant in a theorem type. Escaped names
+such as `«matches»` resolve to the same environment name as qualified uses;
+an unrecognized declaration name fails the census. Comments, proof bodies and colliding
 basenames cannot satisfy it. `E2E/Coverage.lean` independently classifies
 renderer and replay definitions referenced outside their own module by
 runtime-reachable code. It reuses the definition census rather than inspecting
@@ -201,6 +204,30 @@ deadline and remain within the live-output allowance. The deadline is enforced
 by a cooperative poll loop, without a hard real-time guarantee.
 
 ## Recipe boundaries
+
+§Select supports the optional manager's pure selection model.
+`matches_iff_sublist` specifies ASCII-case-insensitive subsequence matching;
+other Unicode characters remain exact. `visible_order` and `mem_visible`
+retain the listing's order and original targets. `parseListing_valid` rejects
+noncanonical names, duplicate targets and control characters across the entire
+snapshot; `parseListing_records` preserves every complete original name record.
+`init_valid` and `step_stay_valid` bound the cursor and query through every
+continuing transition. `step_attach_iff` and `step_attach_mem` require Enter
+and an original candidate even for a forged out-of-range state. Empty Enter
+stays editable, and cancel/refresh have separate outcomes. A listed session
+can still disappear before attach.
+
+§Input supports the finite keyboard decoder. Its modes store only bounded
+UTF-8 prefixes and a finite CSI parameter recognizer. `feed_text_valid`
+restricts text to printable scalar characters; `feed_ascii` and
+`feed_controls` specify ordinary keys. `feed_paste_only_text` suppresses
+command keys in bracketed paste, while `feed_paste_sticky` and `flush_paste`
+preserve paste suppression across malformed or incomplete sequences.
+`flush_emits` limits timeout output to cancellation after a lone escape
+outside paste. UTF-8 decoding is connected to Lean's native `String.fromUTF8?`
+validator and a single-scalar result; the validator itself is not proved here.
+Terminal restoration, resize, subprocess handoff and refresh
+scheduling remain IO checks in Step 2 of `specs/optional-manager.md`.
 
 The fish helpers compose operations whose state guarantees already have proofs.
 §Detach preserves a session when its client leaves; §Handback specifies the

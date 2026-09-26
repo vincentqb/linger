@@ -42,8 +42,8 @@ honest. The half that BITES is therefore the import grep in `tests/gates.sh`,
 and this target is what that grep is a gate on. -/
 lean_lib LingerVt where roots := #[`Linger.Core.Vt, `Linger.Core.Render, `Linger.Core.Terminal]
 
-/-- Optional pure import policy, outside the session and VT libraries. -/
-lean_lib Tools where roots := #[`Tools.Resurrect]
+/-- Optional pure manager policies, outside the session and VT libraries. -/
+lean_lib Tools where roots := #[`Tools.Resurrect, `Tools.Key, `Tools.Picker, `Tools.Input]
 
 /-- Standalone save importer. Build explicitly with `./lake build lzr`. -/
 lean_exe lzr where root := `Lzr

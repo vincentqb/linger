@@ -15,9 +15,9 @@ worklog), `specs/archive/` (closed build records), the comments in
 
 ## Where things stand — read this first after any compaction
 
-1. No spec is in flight. The last one closed on 2026-09-26
-   (`specs/archive/recipe-boundaries.md`: picker consolidation and a proved
-   standalone importer; local full verification green, hosted checks pending).
+1. `specs/optional-manager.md` is in flight: the approved optional Lean
+   selector/import manager and portable POSIX recipes. Step 1 proves the pure
+   selector and input model; Step 2 integrates their IO executor and recipes.
    New work opens a new `specs/<slug>.md`, names itself here, and keeps
    the live count at one; every behavioral fix starts with a failing
    check and every deletion survives the full verifier stack.
@@ -39,8 +39,10 @@ Each was decided with a recorded reason (specs/archive/, SCRATCHPAD.md,
 git history); re-opening one needs a new reason.
 
 - Windows, tabs, splits — the OS window manager owns composition.
-- An interactive picker — shipped once, removed; pickers live in
-  `recipes/`. Bare `linger` lists and exits (`E2E/Overview.lean`).
+- An interactive picker in `linger` — bare `linger` lists and exits
+  (`E2E/Overview.lean`). The user's 2026-09-26 preference for a shell-independent
+  selector without an external picker reopens an optional `lz` front end,
+  recorded in `specs/optional-manager.md`.
 - Storing images across reattach — passthrough plus the application's
   own redraw only (`E2E/Graphics.lean`, README Graphics).
 - Restoring the process tree on resume — screen and state yes, programs
@@ -91,7 +93,7 @@ deliberately no pre-push hook.
 
 ## Rules
 
-- `Linger/Core/*` and `Tools/Resurrect.lean` are pure: no `IO`,
+- `Linger/Core/*` and `Tools/*` are pure: no `IO`,
   no `partial def`, no `sorry`. Effects are data; IO executes them.
 - Only `Linger/Posix.lean` and `c/shim.c` reach the OS *raw*: every
   `@[extern]` lives in `Linger/Posix.lean` (gated), and the runtime
@@ -110,7 +112,7 @@ deliberately no pre-push hook.
   order-robust proof scripts.
 - A theorem or test that cannot fail is worthless: break the code once
   to see it catch, and record the break in SCRATCHPAD.md.
-- Every `Linger/Core` or `Tools/Resurrect.lean` `def` lands with a
+- Every `Linger/Core` or `Tools` `def` lands with a
   theorem type containing that exact fully qualified constant, in the same commit
   (`Theorems/Coverage.lean`).
 - A proved pure value consumed by runtime or tool IO needs a grep gate to bite:

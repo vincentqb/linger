@@ -12494,3 +12494,58 @@ and its limits. Archived the completed spec as
 `specs/archive/recipe-boundaries.md`; no spec remains in flight. Hosted platform
 checks are pending at this checkpoint, and no live Ghostty GUI or macOS result
 is claimed.
+
+## Step 1 notes — 2026-09-26
+
+Opened `specs/optional-manager.md` for the approved optional Lean selector and
+unified import manager. The reason for reopening the earlier picker boundary is
+the user's preference for a shell-independent front end without an external
+picker. Bare `linger` continues to list and exit. The manager stays outside the
+session and VT libraries; portable shell helpers retain editable composition.
+Step 1 adds the pure models only, leaving the existing executable and recipes
+in place until the independently verified Step 2 checkpoint.
+
+The policy worker used `/tmp/linger-manager-policy-20260926`; the input worker
+used `/tmp/linger-manager-input-20260926`. Their reviewed modules add twenty-four
+explicit definitions, sixty-six authored semantic theorems, and seventy-five
+unit guards. Selection is ASCII-folded subsequence filtering in original listing
+order. The complete listing is validated before presentation. Cursor/query
+bounds hold through every continuing transition; acceptance can return only an
+unchanged snapshot member, even from a forged cursor state. Query text cannot
+create a session. The decoder stores finite escape states and bounded UTF-8
+prefixes, emits at most one key per byte, and suppresses command keys in paste
+across chunks and timeouts. UTF-8 conversion relies on Lean's native validator;
+the proofs connect to its result without claiming to prove that validator.
+
+The policy fixtures first fail before its module exists; the input fixtures
+first fail against a compiling ASCII-only baseline. Thirteen independent
+policy mutations and ten input mutations compile, then fail both their semantic
+proofs and evaluated unit guards. They cover order/provenance, canonical and
+distinct names, control characters, bounds, exact targets, cancellation, empty
+acceptance, paste suppression, timeout behavior, unsupported CSI, UTF-8
+validation and storage bounds. Restored sources match their recorded hashes.
+The complete receipts are under `/tmp/linger-manager-20260926/policy/` and
+`/tmp/linger-manager-20260926/input/`, including their handoff reports and
+`mutations/summary.tsv` files.
+
+Extended purity/import gates and the exact-constant theorem census to all
+`Tools/` modules. Lean v4.34.1 reserves `matches`, whose declaration therefore
+uses `«matches»`. The old census silently skipped that spelling. A failing
+tokenization guard reproduced the gap; the corrected census unescapes it and
+refuses an unrecognized definition name. A compiling extra escaped definition
+now fails the combined census with its exact `Tools.unclaimedProbe` name.
+Compiling an IO definition in `Tools.Key` and adding an unexpected import to
+`Tools.Input` also fail their source gates. These receipts are in `census/` and
+`gate-mutations/` under the same directory. The worker used a private Git index
+and object directory after the initial intent-to-add attempt hit worktree
+metadata permissions; that environment failure is not counted as a gate result.
+
+Integrated `./lake build` and `./lake build Theorems Tests` pass, including the
+combined census, in `step1-final-build.log` and `step1-final-proofs-tests.log`.
+The source gates pass in `step1-gates.log`; standalone lint reports no findings
+in the eleven touched Lean files. Layout initially identified Coverage formatting
+drift, which was applied before the final builds; `step1-format-final.log`
+confirms every touched file is formatted. Diff whitespace passes. This checkpoint
+adds no C, raw binding, dependency, partial definition, fuel or proof-limit
+increase. The optional terminal executor, recipe migration, PTY checks and full
+foreground verifier remain Step 2 work.
