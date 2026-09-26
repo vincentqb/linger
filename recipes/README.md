@@ -13,13 +13,12 @@ cp recipes/lz*.fish ~/.config/fish/functions/
 
 | file | gives you | needs |
 |---|---|---|
-| `lz.fish` | fuzzy-pick a session (local + remote) and attach | fzf |
+| `lz.fish` | fuzzy-pick and attach; `--loop` returns to the picker after detach | fzf |
 | `lzo.fish` | every session on a host as kitty tabs, one shot | kitty remote control |
 | `lza.fish` | attach that auto-reconnects while a link flaps | — |
 | `lzs.fish` | live status board for sessions you have no tab open on | — |
-| `lzh.fish` | detach (ctrl-\\) pops a picker, so it acts as a switch key | fzf |
 | `lzr.fish` | import tmux-resurrect panes as linger sessions | a tmux-resurrect save |
-| `ghostty_config` | new Ghostty windows start the `lzh` picker | Ghostty 1.2+, fish, fzf |
+| `ghostty_config` | new Ghostty windows start `lz --loop` | Ghostty 1.2+, fish, fzf |
 | `ssh_config` | dead links declared in ~15 s | paste into `~/.ssh/config` |
 
 Client and daemon always talk over a local unix socket on the host;
@@ -34,9 +33,13 @@ mosh host -- linger attach work
 `ls -r` queries hosts over ssh. To route a recipe over mosh, swap its
 one ssh line (`lzo.fish` shows the variant).
 
-`lz` and `lzh` select one session even when `FZF_DEFAULT_OPTS` enables multiple
-selection. A failed listing or cancelled picker ends the recipe. `lzh` returns
-to the picker after attach exits; `lza NAME[@HOST]` returns the attach status
+`lz` selects one session even when `FZF_DEFAULT_OPTS` enables multiple selection
+and returns the attach status. `lz --loop` returns to the same picker whenever
+attach exits; `lz --loop work@host` attaches that target first. A failed listing
+or cancelled picker ends either mode. This replaces `lzh`: update existing
+shortcuts and remove its old autoload file.
+
+`lza NAME[@HOST]` returns the attach status
 unless it is 255, which triggers another attempt after two seconds. SSH uses
 255 for transport errors, but a remote command can return it too.
 
@@ -47,15 +50,16 @@ launch fails; any tabs already opened remain open.
 
 ## Ghostty
 
-After installing `lzh.fish` above, merge [`ghostty_config`](ghostty_config) into
+After installing `lz.fish` above, merge [`ghostty_config`](ghostty_config) into
 your Ghostty configuration:
 
 ```ini
-command = direct:fish -c lzh
+command = shell:fish -c 'lz --loop'
 ```
 
 This uses the documented [`command`](https://ghostty.org/docs/config/reference#command)
-setting with the `direct:` prefix, available since Ghostty 1.2. Reload the
+setting with the `shell:` prefix, available since Ghostty 1.2. The quotes keep
+`lz --loop` together as fish's command argument. Reload the
 configuration and open a new window. Pick a local or configured remote session;
 detaching with ctrl-\\ returns to the picker. Esc or ctrl-c ends the picker.
 

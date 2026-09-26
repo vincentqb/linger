@@ -1,4 +1,5 @@
-# Merge into Ghostty 1.2+ configuration after installing lzh.fish.
+# Merge into Ghostty 1.2+ configuration after installing lz.fish.
 # Requires fish, linger and fzf on PATH.
 # New windows start the session picker; detaching returns to it.
-command = direct:fish -c lzh
+# shell: lets /bin/sh pass 'lz --loop' as one argument to fish -c.
+command = shell:fish -c 'lz --loop'

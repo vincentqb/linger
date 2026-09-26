@@ -248,7 +248,7 @@ say "13. watch (read-only mirror: geometry, keyboard, hand-back, seen)"
 suite watch 18
 
 say "14. recipes (fish helpers and tmux-resurrect import)"
-suite recipes 39
+suite recipes 41
 
 say "15. delivery (large replay, ordering, exit tails and retired transports)"
 suite delivery 34

@@ -15,13 +15,11 @@ worklog), `specs/archive/` (closed build records), the comments in
 
 ## Where things stand — read this first after any compaction
 
-1. No spec is in flight. The last one closed on 2026-09-25
-   (`specs/archive/ghostty-recipe.md`: recipe language audit, helper fixes
-   and native Ghostty configuration; local Linux full verification green,
-   Ghostty GUI unverified). New work opens a new `specs/<slug>.md`, names
-   itself here, and keeps the live count at one; every behavioral fix
-   starts with a failing check and every deletion survives the full
-   verifier stack.
+1. `specs/recipe-boundaries.md` is in flight: consolidate the pickers and
+   migrate the foreign-save importer to an optional Lean executable with
+   a proved pure plan. The predecessor is `specs/archive/ghostty-recipe.md`.
+   Keep one live spec; every behavioral fix starts with a failing check
+   and every deletion survives the full verifier stack.
 2. `SCRATCHPAD.md` — append-only worklog: proof recipes, measurements,
    break-verify records, negative results. Read before writing; append
    after; never delete prior entries.

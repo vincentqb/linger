@@ -39,6 +39,7 @@ recipes, break records, measurements, the audits — lives in
 | §Renderable | the painter expresses fewer grids than the emulator reaches | the emulator never stores a shape a repaint cannot reproduce (`renderable_step`/`renderable_feed`/`renderable_resize`/`renderable_quiesce`, from `renderable_init`); `LiveReachableVt` is the least predicate closed under those and containing every screen the decoder's door accepts (`LiveReachableVt.ofDecoded` — a `Good` premise is provably unsound, counterexample in SCRATCHPAD.md); the decoder establishes it from disk too (`Vt.ofDecoded_renderable`, `Checkpoint.load_renderable`); lifted to the daemon by `Session.run_vt_renderable` and `run_resume_vt_shape` | Linger/Core/Vt.lean, Theorems/Vt.lean |
 | §Status | one glyph per listing row vs seven conditions | the seven states partition the observation space: `cover`, `disjoint`, `classify_sound` + `classify_unique`, `reachable`, `icon_injective` / `name_injective`, `name_clean` | Theorems/Status.lean |
 | §Resume | the product's own promise: crash, reboot, reattach | §Restore ∘ §Replay, stated twice — over `save`'s input and over `load`'s output (`resume_grid_of_load`, `resume_tabs_of_load`, `resume_sb_of_load`: any byte string that loads, no other hypothesis) — and lifted to the daemon over its own `vt0` (`Session.run_resume_vt_shape`, `run_resume_load_save`) | Theorems/Resume.lean, Theorems/Session.lean |
+| §Import (in progress) | foreign save records vs distinct session identities and deliberate command execution | successful parsing must establish nonempty, canonical, distinct names and NUL-free directory/command fields; the plan must skip existing identities and send only unchanged, explicitly enabled, eligible saved commands; adding planned names to the snapshot must make a sequential rerun empty | `specs/recipe-boundaries.md`, Step 2 |
 
 The CSI collector preserves omitted parameters, saturates numeric parameters
 and rejects overflow at the existing parameter cap. `csiPush_of_lt`,
@@ -197,6 +198,30 @@ Source gates and real socket/PTY regressions connect these IO operations to the
 pure claims. Delivery requires the peer to finish draining before its applicable
 deadline and remain within the live-output allowance. The deadline is enforced
 by a cooperative poll loop, without a hard real-time guarantee.
+
+## Recipe boundaries
+
+The fish helpers compose operations whose state guarantees already have proofs.
+§Detach preserves a session when its client leaves; §Handback specifies the
+terminal state returned to the caller. These support the shared `lz` picker loop
+and `lza` reconnect helper. Their actual loop order, selected argv, cancellation
+and retry status are checked against the real fish functions by `E2E.Recipes`;
+no parallel Lean model of fish execution is claimed.
+
+`lzs` displays observations backed by `Status.classify_sound`,
+`Status.classify_unique` and `Listing.rowFields_name`. `lzo` uses names backed by
+`Name.sanitize_valid` and `Remote.parse_names_valid`; its complete-list validation
+and terminal-launch arguments have separate IO checks. Their short composition
+policies remain editable shell functions. Ghostty's command setting and SSH's
+keepalive setting use the tools' native formats; configuration parsing and
+documented launch syntax support those choices, without claiming a theorem
+about GUI behavior or network recovery time.
+
+§Import is the separate proof obligation for moving the larger importer into
+Lean. A typed pure plan can state properties of the code actually executed.
+Theorems cannot inspect its IO call sites or prove a language-selection
+preference, so source gates and real process checks must connect that plan to
+the standalone executable.
 
 ## Concurrency
 

@@ -12367,3 +12367,45 @@ Archived the completed live spec as `specs/archive/ghostty-recipe.md` and left
 no spec in flight. These are local Linux results; the native setting was
 checked against documentation, and no Ghostty GUI or hosted macOS run is
 claimed. The earlier upgrade record retains its hosted-CI completion nuance.
+
+## Step 1 notes — 2026-09-26
+
+Opened `specs/recipe-boundaries.md` for the user's approved consolidation and
+standalone Lean importer. The new reason for reopening the earlier fish importer
+decision is its parsing, validation and import planning: those operations now
+deserve typed records and semantic proofs. Shell composition and native tool
+configuration keep their existing boundary. THEOREMS.md records what the
+existing detach, handback, status, row, name and remote guarantees support;
+neither a choice of source language nor external shell/GUI behavior is proved.
+The importer contract is explicitly pending until Step 2.
+
+The picker worker used `/tmp/linger-recipe-picker-20260926`. Its reviewed patch
+consolidates one-shot attach and the repeated picker in `lz.fish`, removes
+`lzh.fish`, and updates Ghostty to `command = shell:fish -c 'lz --loop'`.
+The optional initial target is positional after `--loop`, including a
+leading-dash name; empty targets and extra arguments fail before commands run.
+Both modes retain failed-listing, failed-picker and single-selection checks.
+Recipe instructions cover replacing the old autoload function and shortcuts.
+
+The worker's final disposable probes pass 62/62. They first fail on the old
+implementation, then catch the intermediate rejection of leading-dash names
+and acceptance of an empty initial target. They also read the actual Ghostty
+setting and check its `/bin/sh` to fish argument vector and real fish autoload
+execution. Receipts and the published command-reference excerpt live under
+`/tmp/linger-picker-probes-20260926.QNGrmn/`. No live Ghostty GUI is claimed.
+
+The shared Lean recipe suite first fails exactly the three new loop/interface
+assertions on the predecessor with real sockets permitted. The first sandboxed
+run also failed unrelated daemon checks because socket binding was denied;
+`picker-red-unsandboxed.log` is the authoritative red run. The final recipe
+suite passes, and its exact assertion roster is updated in tests/e2e.sh.
+
+The complete foreground verifier passes on Linux: clean program, proof and
+unit-test build; generated C ABI; source, formatter and semantic coverage gates;
+CI runner checks; fuzz corpus; POSIX smoke tests; all twelve live suites; and
+the unrelated-session sentinel. The receipt is
+`/tmp/linger-recipe-boundaries-20260926/picker-full-verifier.log`.
+Fish syntax and diff whitespace also pass. Step 2 remains open in its isolated
+worktree; no runtime, pure-core or C implementation changed in this checkpoint.
+Both required warm builds pass in the same receipt directory as
+`step1-build.log` and `step1-proofs-tests.log`.

@@ -90,24 +90,25 @@ end
 private def helperChecks : IO Nat := do
   let mut f := 0
   let listingCall := call ["linger", "ls", "-r", "--porcelain"]
-  for recipe in ["lz", "lzh"] do
-    let (rc, calls) ← probe recipe #[] #[("RECIPE_LIST_RC", "7")]
+  for args in [#[], #["--loop"]] do
+    let label := if args.isEmpty then "lz" else "lz --loop"
+    let (rc, calls) ← probe "lz" args #[("RECIPE_LIST_RC", "7")]
     f :=
       f +
         (←
           expect (rc == 7 && calls == listingCall)
-              s!"{recipe} stops before the picker when listing fails with partial output")
-    let (cancelRc, cancelCalls) ← probe recipe #[] #[("RECIPE_PICK_RC", "130")]
+              s!"{label} stops before the picker when listing fails with partial output")
+    let (cancelRc, cancelCalls) ← probe "lz" args #[("RECIPE_PICK_RC", "130")]
     f :=
       f +
         (←
           expect (cancelRc == 130 && !has cancelCalls (call ["linger", "attach", "work"]))
-              s!"{recipe} preserves picker cancellation without attaching")
+              s!"{label} preserves picker cancellation without attaching")
     let mut selectionOk := true
     for picked in ["", "one\ntwo\n"] do
-      let (pickRc, pickCalls) ← probe recipe #[] #[("RECIPE_PICK", picked)]
+      let (pickRc, pickCalls) ← probe "lz" args #[("RECIPE_PICK", picked)]
       selectionOk := selectionOk && pickRc != 99 && !has pickCalls "attach\x00"
-    f := f + (← expect selectionOk s!"{recipe} rejects empty or multiple picker selections")
+    f := f + (← expect selectionOk s!"{label} rejects empty or multiple picker selections")
   let target := "work@me@dev-a"
   let (pickRc, pickCalls) ← probe "lz" #[] #[("RECIPE_PICK", target ++ "\n")]
   f :=
@@ -117,6 +118,27 @@ private def helperChecks : IO Nat := do
             (pickRc == 7 && has pickCalls (call ["linger", "attach", target]) &&
               has pickCalls "--no-multi\x00")
             "lz attaches exactly one remote target and returns its status")
+  for initial in [none, some target] do
+    let args := #["--loop"] ++ initial.toArray
+    let mut loopOk := true
+    for attachStatus in ["0", "7", "255"] do
+      let (rc, calls) ← probe "lz" args #[("RECIPE_ATTACH_RC", attachStatus)]
+      let lines := (calls.splitOn "\n").filter (!·.isEmpty)
+      let picks := lines.filter (·.startsWith "CALL\x00fzf\x00")
+      let otherCalls :=
+        String.join ((lines.filter (!·.startsWith "CALL\x00fzf\x00")).map (· ++ "\n"))
+      let expected :=
+        (initial.map (fun name => call ["linger", "attach", name])).getD "" ++ listingCall ++
+          call ["linger", "attach", "work"] ++
+          listingCall
+      loopOk :=
+        loopOk && rc == 130 && otherCalls == expected && picks.length == 2 &&
+          picks.all (fun line => has line "--no-multi\x00")
+    f :=
+      f +
+        (←
+          expect loopOk
+              s!"lz --loop returns to the picker after any attach status (initial target: {initial.isSome})")
   let attachCall := call ["linger", "attach", target]
   let (attachRc, attachCalls) ← probe "lza" #[target]
   f :=
@@ -139,8 +161,11 @@ private def helperChecks : IO Nat := do
       let (rc, calls) ← probe recipe args
       usageOk := usageOk && rc == 2 && calls.isEmpty
     f := f + (← expect usageOk s!"{recipe} requires exactly one nonempty target")
-  let (switchRc, switchCalls) ← probe "lzh" #["one", "two"]
-  f := f + (← expect (switchRc == 2 && switchCalls.isEmpty) "lzh rejects extra initial targets")
+  let mut pickerUsageOk := true
+  for args in [#["work"], #["--unknown"], #["--loop", ""], #["--loop", "one", "two"]] do
+    let (rc, calls) ← probe "lz" args
+    pickerUsageOk := pickerUsageOk && rc == 2 && calls.isEmpty
+  f := f + (← expect pickerUsageOk "lz rejects invalid options and initial targets before listing")
   let (boardRc, boardCalls) ← probe "lzs" #["", "2"]
   f :=
     f +
