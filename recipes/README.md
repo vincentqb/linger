@@ -1,25 +1,60 @@
 # Recipes
 
-Recipes are editable fish functions and native configuration. They compose
-linger with other tools and do not require a Lean toolchain to install or edit.
-The larger save importer is an optional Lean executable with a proved parser
-and import plan. The program, proofs, and automated test suites are also Lean.
+The optional `lz` manager provides session selection and save import in Lean.
+It runs from any shell and needs no external picker. The three editable shell
+recipes compose existing commands; they run with `/bin/sh`. Ghostty and SSH
+examples use those tools' native configuration.
 
-Fish autoloads one function per file:
+Build and install `lz` separately from `linger`, then install whichever recipes
+you want:
 
-```fish
-mkdir -p ~/.config/fish/functions
-cp recipes/lz*.fish ~/.config/fish/functions/
+```sh
+./lake build lz
+mkdir -p ~/.local/bin
+install -m 755 .lake/build/bin/lz ~/.local/bin/lz
+install -m 755 recipes/lza.sh ~/.local/bin/lza
+install -m 755 recipes/lzs.sh ~/.local/bin/lzs
+install -m 755 recipes/lzo.sh ~/.local/bin/lzo
 ```
+
+Put `~/.local/bin` and `linger` on PATH. Building `lz` needs the pinned Lean
+toolchain; running the installed binary or editing the shell recipes does not.
+If you installed earlier fish functions, remove their `lz`, `lzh`, `lzr`, `lza`,
+`lzs` and `lzo` autoload files and erase those functions in open fish sessions.
+Remove the old standalone `lzr` launcher and update its callers to
+`lz import-resurrect`.
 
 | file | gives you | needs |
 |---|---|---|
-| `lz.fish` | fuzzy-pick and attach; `--loop` returns to the picker after detach | fzf |
-| `lzo.fish` | every session on a host as kitty tabs, one shot | kitty remote control |
-| `lza.fish` | attach that auto-reconnects while a link flaps | — |
-| `lzs.fish` | live status board for sessions you have no tab open on | — |
-| `ghostty_config` | new Ghostty windows start `lz --loop` | Ghostty 1.2+, fish, fzf |
+| `lzo.sh` | every session on a host as kitty tabs, one shot | kitty remote control, SSH |
+| `lza.sh` | attach that auto-reconnects while a link flaps | linger |
+| `lzs.sh` | live status board for sessions you have no tab open on | linger, clear |
+| `ghostty_config` | new Ghostty windows start `lz --loop` | Ghostty 1.2+, lz, linger |
 | `ssh_config` | dead links declared in ~15 s | paste into `~/.ssh/config` |
+
+## Session selection
+
+```sh
+lz                          # select once; return the attach exit status
+lz --loop                   # return to selection after each attach exit
+lz --loop work@host         # attach this target first
+lz --help
+```
+
+Type a subsequence of the target, such as `wkdh` for
+`work@dev-host`. Matches retain listing order; the selected target is passed to
+`linger attach` unchanged. ASCII letter case is ignored; other Unicode
+characters match exactly. Up/down or ctrl-p/ctrl-n move, Home/End select
+first/last, backspace edits, and ctrl-u clears the query. Enter attaches;
+Esc, ctrl-c and ctrl-d cancel with status 130. Pasted newlines cannot attach.
+An empty result stays editable and never turns the query into a new name.
+
+The listing refreshes on entry, after attach returns in loop mode, or on ctrl-r.
+Ctrl-r also clears the query. There is no timed remote polling. A failed or
+malformed listing ends the manager; the snapshot can become stale before
+attach, which retains linger's normal behavior. Selection needs terminal input
+and output; help and save import do not. Terminal modes and the picker screen
+are restored before attach, refresh or exit.
 
 Client and daemon always talk over a local unix socket on the host;
 nothing is tunnelled, so any carrier that can run a remote command with
@@ -30,14 +65,9 @@ ssh -t host linger attach work      # what `linger attach work@host` execs
 mosh host -- linger attach work
 ```
 
-`ls -r` queries hosts over ssh. To route a recipe over mosh, swap its
-one ssh line (`lzo.fish` shows the variant).
-
-`lz` selects one session even when `FZF_DEFAULT_OPTS` enables multiple selection
-and returns the attach status. `lz --loop` returns to the same picker whenever
-attach exits; `lz --loop work@host` attaches that target first. A failed listing
-or cancelled picker ends either mode. This replaces `lzh`: update existing
-shortcuts and remove its old autoload file.
+`ls -r` queries hosts over ssh. To use mosh for a tab's interactive connection,
+change the final `ssh -t -- "$host" linger attach "$name"` in `lzo.sh` to
+`mosh "$host" -- linger attach "$name"`.
 
 `lza NAME[@HOST]` returns the attach status
 unless it is 255, which triggers another attempt after two seconds. SSH uses
@@ -50,45 +80,35 @@ launch fails; any tabs already opened remain open.
 
 ## Ghostty
 
-After installing `lz.fish` above, merge [`ghostty_config`](ghostty_config) into
+After installing `lz` above, merge [`ghostty_config`](ghostty_config) into
 your Ghostty configuration:
 
 ```ini
-command = shell:fish -c 'lz --loop'
+command = direct:lz --loop
 ```
 
 This uses the documented [`command`](https://ghostty.org/docs/config/reference#command)
-setting with the `shell:` prefix, available since Ghostty 1.2. The quotes keep
-`lz --loop` together as fish's command argument. Reload the
+setting with the `direct:` prefix, available since Ghostty 1.2. Reload the
 configuration and open a new window. Pick a local or configured remote session;
 detaching with ctrl-\\ returns to the picker. Esc or ctrl-c ends the picker.
 
-Ghostty must be able to find fish, linger and fzf on PATH. If needed, replace
-`fish` in the setting with its absolute executable path. An existing
+Ghostty must be able to find `lz` and `linger` on PATH. If needed, replace `lz`
+in the setting with its absolute executable path. An existing
 `initial-command` overrides `command` for the first window; update or remove
 that override to start the picker there too.
 
 ## tmux-resurrect import
 
-Build and install the optional `lzr` executable separately:
+The same `lz` executable exposes the noninteractive importer:
 
 ```sh
-./lake build lzr
-mkdir -p ~/.local/bin
-ln -sf "$PWD/.lake/build/bin/lzr" ~/.local/bin/lzr
+lz import-resurrect                             # default last save
+lz import-resurrect ~/.tmux/resurrect/last       # explicit save
+lz import-resurrect --restore-processes         # opt in to saved commands
 ```
 
-Its entry point is [`Lzr.lean`](../Lzr.lean); parsing and planning live in
-[`Tools/Resurrect.lean`](../Tools/Resurrect.lean). It runs from any shell and
-requires `linger` on PATH. If you installed the old fish function, remove
-`~/.config/fish/functions/lzr.fish` and run `functions --erase lzr` in open
-fish sessions so the executable is used.
-
-```fish
-lzr                                      # default `last` save
-lzr ~/.tmux/resurrect/last                 # explicit save
-lzr --restore-processes                   # opt in to saved commands
-```
+Its executor is [`Manager/Resurrect.lean`](../Manager/Resurrect.lean); parsing
+and planning live in [`Tools/Resurrect.lean`](../Tools/Resurrect.lean).
 
 Each `pane` record becomes `<session>-w<window>-p<pane>` in its saved
 working directory. A projected name that linger would rewrite or truncate is
@@ -110,7 +130,7 @@ HOME uses the account home for defaults, saved `~` directories and child process
 
 Saved commands do not run by default. `--restore-processes` sends a command only
 when its first ASCII-space-delimited word is in `Tools.Resurrect.allowed`.
-Review that fixed list before opting in; changing it requires rebuilding `lzr`
+Review that fixed list before opting in; changing it requires rebuilding `lz`
 and updating its exact-membership proof. The complete matching command is sent
 unchanged to the session's shell, so inspect the save too. This imports saved
 identities and directories, with optional command restart; it does not transfer
@@ -118,6 +138,6 @@ running processes. Window layouts, active state, grouped sessions and captured
 pane contents are not imported.
 
 [`THEOREMS.md`](../THEOREMS.md#recipe-boundaries) maps each boundary to its
-semantic guarantees and IO checks. The four fish helpers keep picker, reconnect,
-refresh and terminal-launch policy editable; the standalone importer's typed
-records keep parsing and command alignment out of shell bookkeeping.
+semantic guarantees and IO checks. Matching, input decoding and import planning
+have separate pure modules. The shell helpers keep retry timing, status refresh
+and terminal launch commands editable without rebuilding the manager.

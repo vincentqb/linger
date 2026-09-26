@@ -1,7 +1,7 @@
 # linger
 
-Terminal sessions that stay — attach, detach, survive reboots. One
-binary, pure-function Lean 4, machine-checked invariants.
+Terminal sessions that stay — attach, detach, survive reboots.
+Pure-function Lean 4, machine-checked invariants.
 
 `linger attach <name>` gives you a shell that keeps running after you
 detach or disconnect; reattach later with the screen intact. Bare
@@ -23,10 +23,10 @@ Lean 4.34.1 via elan; no external Lean dependencies.
 ./lake build Theorems Tests      # the proofs and the unit fixtures
 ./lake exe lingertest            # POSIX shim smoke tests
 ./lake exe e2e <suite>           # one pty suite: attach resume overview remote robust
-                                 #   graphics terminal status agent watch recipes delivery
+                                 #   graphics terminal status agent watch recipes delivery manager
 ./lake exe e2e coverage          # semantic coverage + renderer/replay classification
 ./lake exe e2e ci                # which runners CI asks for (tests/ci-runners.sh)
-./lake build lzr                 # optional importer; needed by the recipes suite
+./lake build lz                  # optional manager; needed by manager/recipes suites
 sh tests/gates.sh                # the fast source-tree gates (seconds)
 ./tests/e2e.sh                   # everything, in order (minutes)
 ```
@@ -46,7 +46,7 @@ separately and build it with the project toolchain.
 | `Linger/Core/` | pure: no `IO`, no `partial def`, no `sorry`. Effects are data. |
 | `Linger/Runtime/` | executes the session core's effects through Lean IO and Posix |
 | `Linger/Posix.lean`, `c/shim.c` | raw OS bindings, kept behind one interface |
-| `Tools/Resurrect.lean`, `Lzr.lean` | optional save importer: pure parser/plan and a Lean IO entry point |
+| `Tools/`, `Manager/`, `Lz.lean` | optional manager: pure matching/input/import policies and their Lean IO executor |
 | `Theorems/` | the proofs — what `THEOREMS.md` narrates |
 | `Tests/` | Lean fixtures, checked at elaboration time |
 | `E2E/` | the pty suites, `IO`, run against the real binary |
@@ -112,12 +112,16 @@ is a settled non-goal (AGENTS.md).
 
 ## Recipes
 
-`linger` never drives fzf, your terminal, or your transport; one-file
-fish recipes in [`recipes/`](recipes/) do the composing — see
-`recipes/README.md`. Transport is yours: `attach name@host` execs ssh,
-and any carrier that can run a remote command with a tty works.
-The optional `lzr` Lean executable imports tmux-resurrect saves; its parser
-and plan stay outside the session and VT libraries.
+The optional `lz` Lean manager selects sessions without a shell or picker
+dependency; `lz --loop` returns to selection after detach. Its
+`import-resurrect` subcommand imports tmux-resurrect saves. Matching, input
+decoding and import planning stay outside the session and VT libraries.
+
+Three portable shell recipes compose reconnect, status refresh and kitty
+launching. Native Ghostty and SSH settings complete the examples in
+[`recipes/README.md`](recipes/README.md). Transport is yours:
+`attach name@host` execs ssh, and any carrier that can run a remote command
+with a tty works.
 
 ## Notes
 

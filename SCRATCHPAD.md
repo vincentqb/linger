@@ -12549,3 +12549,73 @@ confirms every touched file is formatted. Diff whitespace passes. This checkpoin
 adds no C, raw binding, dependency, partial definition, fuel or proof-limit
 increase. The optional terminal executor, recipe migration, PTY checks and full
 foreground verifier remain Step 2 work.
+
+## Step 2 notes — 2026-09-26
+
+Integrated the optional `lz` executable: a one-shot selector, `--loop [target]`
+for returning after detach, and the noninteractive `import-resurrect` subcommand.
+The existing import IO moved to `Manager.Resurrect` without changing its
+preflight, path, plan or failure behavior. Removed the superseded fish picker
+and standalone `lzr` entry point. The session program and VT toolkit remain
+outside the manager's import closure; its renderer uses the public VT character
+width function and its executor uses the existing POSIX boundary.
+
+The recipe worker ported reconnect, status refresh and terminal launch to three
+small executable POSIX sh scripts. Its new composition checks fail before the
+scripts exist; seven semantic mutations catch incorrect retry status, partial
+listing use, failed output, incomplete preflight, duplicate names, altered argv
+and continuing after a failed launch. All thirty importer regression labels
+survive the migration to `lz import-resurrect`. The worker's temporary importer
+wrapper was not integrated: the parent ran all fifty-five recipe checks against
+the actual new executable. Evidence is under
+`/tmp/linger-manager-20260926/recipes/`, including `handoff.md`, mutation results
+and the preserved-assertion comparison. The three helpers also pass shellcheck.
+This host's `/bin/sh` resolves to Bash; no separate dash or macOS result is
+claimed. Ghostty now uses its native `command = direct:lz --loop` configuration.
+
+The terminal worker's draft run exposed a hidden candidate in a two-row
+terminal. A second check reproduced the same defect at one row before the
+renderer changed. The fix gives the selected row priority over prompt and help.
+Both regressions pass in the final suite. Compiling mutations of terminal
+restoration, exact target forwarding, pasted newline handling and timed listing
+refresh each produce additional failures beyond the known draft height defect;
+the handoff distinguishes those mutation runs from the later final suite.
+Receipts and captured screens are under `/tmp/linger-manager-20260926/pty/`.
+
+Independent IO review also forced opening and closing screen writes to fail
+while stdout still reported a tty. The nested `finally` restores termios even
+when screen cleanup fails. A compiling mutation that removed that protection
+fails exactly the corresponding observation in the review's twelve-check
+driver; an extra attach argument also fails that driver. Restoring the executor
+returns twelve passes. That cleanup observation is now permanent in
+`E2E.Manager`, whose final fifty-one checks pass against the integrated manager,
+including split UTF-8/escape input, paste, resize, snapshot refresh, attach exit
+statuses and a real attach/detach/return-to-selection cycle. Review receipts are
+under `recipes/manager-review/` in the same receipt directory. Ctrl-D is tested;
+physical PTY EOF/hangup is not separately asserted.
+
+Source gates pin the manager's pure parser, filter, initial states, transition,
+decoder feed/flush, width function, frozen poll descriptors and exact attach
+argv. Six independent compiling mutations bypass the parser, selector,
+decoder feed or flush, add an attach argument, or import manager policy into
+the session executable. Each fails the intended gate; baseline and restored
+builds/gates pass, and the parent checked all seventy-nine restored snapshot
+hashes. Receipts are in `step2-gate-mutations/`. This is evidence about IO call
+sites, separate from the semantic proofs recorded in Step 1. THEOREMS.md records
+those boundaries without claiming proofs of terminal IO or a language choice.
+
+Final Linux verification is green on Lean v4.34.1. The complete foreground
+verifier rebuilt from empty and passed generated C ABI, source gates,
+standalone layout checks, semantic coverage, CI runner decisions, the fuzz
+corpus, POSIX smoke tests, all thirteen live suites and the unrelated-session
+sentinel. `step2-full-verifier.log`, `step2-clean-build.log`,
+`step2-full-layout.log` and `full-suites/` preserve those results under
+`/tmp/linger-manager-20260926/`. Both required final builds pass in
+`step2-build.log` and `step2-proofs-tests.log`; focused actual-executable runs
+also pass in `step2-recipes-green.log` and `step2-manager-green.log`.
+
+All workers are integrated and closed. No C, raw binding, dependency, partial
+definition, fuel or proof-limit increase was added. Archived the completed spec
+as `specs/archive/optional-manager.md`; no spec remains in flight. Hosted checks
+are pending at this checkpoint, with no live Ghostty GUI, real remote-host or
+macOS result claimed.

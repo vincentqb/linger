@@ -6,10 +6,10 @@ public import Linger.Core.Remote
 public section
 
 /-! Optional tmux-resurrect importer. The main linger executable never imports
-this module. Parsing and policy live in `Tools.Resurrect`; this entry point
+this module. Parsing and policy live in `Tools.Resurrect`; this executor
 preflights directories, obtains a successful listing, and executes that plan. -/
 
-namespace Lzr
+namespace Manager.Resurrect
 
 open Tools.Resurrect
 
@@ -111,21 +111,19 @@ private def importSave (restore : Bool) (file : Option String) : IO Unit := do
       unless (← child.wait) == 0 do
         throw (IO.userError s!"could not restore process in session: {action.pane.name}")
 
-def main (args : List String) : IO UInt32 := do
+def run (args : List String) : IO UInt32 := do
   let (restore, files) :=
     match args with
     | "--restore-processes" :: rest => (true, rest)
     | _ => (false, args)
   if files.length > 1 then
-    IO.eprintln "usage: lzr [--restore-processes] [SAVE]"
+    IO.eprintln "usage: lz import-resurrect [--restore-processes] [SAVE]"
     return 2
   try
     importSave restore files.head?
     return 0
   catch e =>
-    IO.eprintln s!"lzr: {e}"
+    IO.eprintln s!"lz import-resurrect: {e}"
     return 1
 
-end Lzr
-
-def main := Lzr.main
+end Manager.Resurrect

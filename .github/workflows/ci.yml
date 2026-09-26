@@ -243,7 +243,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # E2E.Terminal and E2E.Recipes require fish. Missing the subject is a
+      # Terminal and environment regressions exercise fish. Missing it is a
       # failed environment, never a counted test pass.
       - name: install fish for required e2e coverage
         run: |

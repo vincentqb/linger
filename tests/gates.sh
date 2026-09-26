@@ -74,9 +74,10 @@ for p in Linger/Core Linger/Core/Vt.lean Linger/Core/Checkpoint.lean \
          Linger/Core/Session.lean Linger/Core/Replay.lean \
          Linger/Runtime Linger/Runtime/Client.lean Linger/Runtime/Daemon.lean \
          Theorems Theorems/Session.lean Theorems/Replay.lean Tests E2E \
-         Tools/Resurrect.lean Theorems/Resurrect.lean Lzr.lean \
+         Tools/Resurrect.lean Theorems/Resurrect.lean Manager/Resurrect.lean \
          Tools/Key.lean Tools/Picker.lean Tools/Input.lean \
          Theorems/Picker.lean Theorems/Input.lean \
+         Lz.lean Manager/Picker.lean E2E/Manager.lean \
          LingerTest.lean c/shim.c lakefile.lean lake-manifest.json README.md; do
   [ -e "$p" ] || fail "$p is gone — a gate below would pass by matching nothing"
 done
@@ -277,7 +278,10 @@ import_closure Tools/Picker.lean 'public import Tools.Key;public import Linger.C
 import_closure Tools/Input.lean 'public import Tools.Key;'
 import_closure Linger/Core/Name.lean ''
 import_closure Linger/Core/Remote.lean 'public import Linger.Core.Name;'
-import_closure Lzr.lean 'public import Tools.Resurrect;public import Linger.Core.Remote;'
+import_closure Manager/Resurrect.lean 'public import Tools.Resurrect;public import Linger.Core.Remote;'
+import_closure Manager/Picker.lean \
+  'public import Tools.Picker;public import Tools.Input;public import Linger.Posix;public import Linger.Core.Vt;'
+import_closure Lz.lean 'public import Manager.Picker;public import Manager.Resurrect;'
 code_grep "$import_re" 'Linger/*' Linger.lean Main.lean \
 | awk -F: '
   { mod = $3
@@ -296,14 +300,44 @@ for claim in parseSave_valid plan_command_policy plan_sequential_idempotent; do
   code_grep "^theorem $claim " Theorems/Resurrect.lean >/dev/null \
     || fail "importer contract disappeared: $claim"
 done
-code_grep '^[[:space:]]+let panes ← IO[.]ofExcept [(]parseSave home [(]← IO[.]FS[.]readFile save[)][)]$' Lzr.lean >/dev/null \
-  || fail "lzr no longer consumes the proved whole-save parser"
-code_grep '^[[:space:]]+for action in plan restore existing panes do$' Lzr.lean >/dev/null \
-  || fail "lzr no longer iterates the proved import plan"
-code_grep '^[[:space:]]+if let some command := action[.]command then$' Lzr.lean >/dev/null \
-  || fail "lzr no longer uses the plan command choice"
-code_grep 'args := #[[]"run", action[.]pane[.]name, command[]]' Lzr.lean >/dev/null \
-  || fail "lzr no longer forwards the original planned command as one argument"
+code_grep '^[[:space:]]+let panes ← IO[.]ofExcept [(]parseSave home [(]← IO[.]FS[.]readFile save[)][)]$' Manager/Resurrect.lean >/dev/null \
+  || fail "importer no longer consumes the proved whole-save parser"
+code_grep '^[[:space:]]+for action in plan restore existing panes do$' Manager/Resurrect.lean >/dev/null \
+  || fail "importer no longer iterates the proved import plan"
+code_grep '^[[:space:]]+if let some command := action[.]command then$' Manager/Resurrect.lean >/dev/null \
+  || fail "importer no longer uses the plan command choice"
+code_grep 'args := #[[]"run", action[.]pane[.]name, command[]]' Manager/Resurrect.lean >/dev/null \
+  || fail "importer no longer forwards the original planned command as one argument"
+
+# Selector and decoder proofs concern pure values. Tie each IO consumer to the
+# proved function and retain exact attach argv and an immutable poll snapshot.
+# E2E.Manager drives the terminal lifetime, failure paths and handoff itself.
+for claim in matches_iff_sublist visible_order parseListing_valid step_stay_valid step_attach_mem; do
+  code_grep "^theorem $claim " Theorems/Picker.lean >/dev/null \
+    || fail "selector contract disappeared: $claim"
+done
+for claim in feed_storage_bound feed_paste_only_text flush_no_accept; do
+  code_grep "^(private )?theorem $claim " Theorems/Input.lean >/dev/null \
+    || fail "input contract disappeared: $claim"
+done
+for tie in \
+  'return [.]ok [(]← IO[.]ofExcept [(]Tools[.]Picker[.]parseListing out[.]stdout[)][)]' \
+  'let names := Tools[.]Picker[.]visible state[.]candidates state[.]query' \
+  'let mut state := Tools[.]Picker[.]init candidates' \
+  'let mut decoder := Tools[.]Input[.]init' \
+  'let [(]next, emitted[)] := Tools[.]Input[.]feed decoder byte' \
+  'let [(]next, emitted[)] := Tools[.]Input[.]flush decoder' \
+  'match Tools[.]Picker[.]step state key with' \
+  'let cells := Linger[.]Core[.]Vt[.]charWidth c' \
+  'let fds := #[[]stdinFd[]]' \
+  'let events := #[[]POLLIN[]]' \
+  'let ready ← poll fds events 50' \
+  'let child ← IO[.]Process[.]spawn [{] cmd := "linger", args := #[[]"attach", target[]] [}]'; do
+  code_grep "^[[:space:]]+$tie$" Manager/Picker.lean >/dev/null \
+    || fail "manager bypassed a proved value or fixed IO boundary: $tie"
+done
+code_grep 'else if Tools[.]Input[.]pending decoder &&' Manager/Picker.lean >/dev/null \
+  || fail "manager stopped checking decoder state before an input timeout"
 
 # The `Vt` friend set — who may forge a `Vt` (SCRATCHPAD.md, "the adversarial audit of
 # the seal", finding R1). `import all M` grants M's OWN all-access set, including

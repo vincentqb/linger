@@ -15,9 +15,10 @@ worklog), `specs/archive/` (closed build records), the comments in
 
 ## Where things stand — read this first after any compaction
 
-1. `specs/optional-manager.md` is in flight: the approved optional Lean
-   selector/import manager and portable POSIX recipes. Step 1 proves the pure
-   selector and input model; Step 2 integrates their IO executor and recipes.
+1. No spec is in flight. The last one closed on 2026-09-26
+   (`specs/archive/optional-manager.md`: optional Lean selector/import manager
+   and portable POSIX recipes; local Linux verification green, hosted checks
+   pending).
    New work opens a new `specs/<slug>.md`, names itself here, and keeps
    the live count at one; every behavioral fix starts with a failing
    check and every deletion survives the full verifier stack.
@@ -41,8 +42,8 @@ git history); re-opening one needs a new reason.
 - Windows, tabs, splits — the OS window manager owns composition.
 - An interactive picker in `linger` — bare `linger` lists and exits
   (`E2E/Overview.lean`). The user's 2026-09-26 preference for a shell-independent
-  selector without an external picker reopens an optional `lz` front end,
-  recorded in `specs/optional-manager.md`.
+  selector without an external picker led to the optional `lz` front end,
+  recorded in `specs/archive/optional-manager.md`.
 - Storing images across reattach — passthrough plus the application's
   own redraw only (`E2E/Graphics.lean`, README Graphics).
 - Restoring the process tree on resume — screen and state yes, programs
@@ -116,7 +117,7 @@ deliberately no pre-push hook.
   theorem type containing that exact fully qualified constant, in the same commit
   (`Theorems/Coverage.lean`).
 - A proved pure value consumed by runtime or tool IO needs a grep gate to bite:
-  `Linger/Runtime/*` and `Lzr.lean` use `IO` and no theorem can see a call site —
+  `Linger/Runtime/*` and `Manager/*` use `IO` and no theorem can see a call site —
   re-measured against v4.34's Hoare framework (no `WP IO` instance
   exists; probes in SCRATCHPAD.md). Same for guards no test can observe.
 - A `maxHeartbeats` or `maxRecDepth` raise is a measurement and it
@@ -136,11 +137,12 @@ deliberately no pre-push hook.
   an exact check count in `tests/e2e.sh`; any addition or deletion is a
   reviewable edit.
 - Program logic, proofs and automated test suites are Lean. Optional
-  user-editable recipes deliberately use fish and native configuration
+  user-editable recipes deliberately use POSIX sh and native configuration
   (`recipes/README.md`); keep their composition policy outside `Linger/`.
-  The optional `lzr` executable owns foreign-save import in `Lzr.lean` and
-  `Tools/Resurrect.lean`, with the same theorem census and IO call-site gates.
-  Its import closure stays outside the session program and VT toolkit.
+  The optional `lz` manager owns session selection and foreign-save import.
+  `Tools/` holds pure policies and `Manager/` their IO executors, with the same
+  theorem census and IO call-site gates. Their import closures stay outside
+  the session program and VT toolkit.
   The C shim, build wrapper, configuration hooks and verifier scripts are
   deliberate non-Lean boundaries. No Python, ever.
   `tests/e2e.sh`, `tests/gates.sh` and `tests/ci-runners.sh` stay shell.

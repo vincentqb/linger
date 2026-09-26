@@ -12,6 +12,7 @@ public import E2E.Robust
 public import E2E.Remote
 public import E2E.Terminal
 public import E2E.Recipes
+public import E2E.Manager
 public import E2E.RemoteLive
 public import E2E.Coverage
 public import E2E.Ci
@@ -33,6 +34,7 @@ def suites : List (String × IO UInt32) :=
     ("graphics", E2E.Graphics.run), ("agent", E2E.Agent.run), ("resume", E2E.Resume.run),
     ("attach", E2E.Attach.run), ("delivery", E2E.Delivery.run), ("robust", E2E.Robust.run),
     ("remote", E2E.Remote.run), ("terminal", E2E.Terminal.run), ("recipes", E2E.Recipes.run),
+    ("manager", E2E.Manager.run),
     -- opt-in: needs a real reachable host, so NOT in tests/e2e.sh
     ("remote-live", E2E.RemoteLive.run),
     -- not a pty suite: semantic pure-core coverage + runtime emitter classification
@@ -63,6 +65,8 @@ def main (args : List String) : IO UInt32 := do
     E2E.Delivery.childProbe trigger
   | ["--delivery-server", dir] =>
     E2E.Delivery.serveProbe dir
+  | "--manager-probe" :: rest =>
+    E2E.Manager.probe rest
   | ["delivery", check] =>
     E2E.Delivery.run (some check)
   | [name] =>

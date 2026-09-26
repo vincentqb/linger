@@ -45,8 +45,11 @@ lean_lib LingerVt where roots := #[`Linger.Core.Vt, `Linger.Core.Render, `Linger
 /-- Optional pure manager policies, outside the session and VT libraries. -/
 lean_lib Tools where roots := #[`Tools.Resurrect, `Tools.Key, `Tools.Picker, `Tools.Input]
 
-/-- Standalone save importer. Build explicitly with `./lake build lzr`. -/
-lean_exe lzr where root := `Lzr
+/-- Optional terminal selector and save-import executor. -/
+lean_lib Manager where roots := #[`Manager.Picker, `Manager.Resurrect]
+
+/-- Optional session manager. Build explicitly with `./lake build lz`. -/
+lean_exe lz where root := `Lz
 
 /-- The C shim — the program's native OS boundary (see AGENTS.md).
 Compiled with clang (the ./lake wrapper puts Homebrew clang on PATH;

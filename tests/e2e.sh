@@ -17,8 +17,9 @@
 #  11. status column: attach marks seen, output while away marks unread
 #  12. agent verbs (info geometry/outseq, capture, send - , resize)
 #  13. watch: the read-only mirror (geometry, keyboard, hand-back, marks seen)
-#  14. recipes: fish status/argv checks; standalone Lean importer against daemons
+#  14. recipes: POSIX sh status/argv checks; Lean import subcommand against daemons
 #  15. delivery: bounded replay, margin continuation, byte order and close deadlines
+#  16. manager: terminal selector, exact targets, paste, resize, cleanup and loop
 #  (1) also covers Tests/Fuzz.lean: randomized §Replay round-trip search
 #  every pty suite also carries an EXACT CHECK COUNT (see `suite` below): green
 #  means "no failures AND every recorded assertion ran".
@@ -92,9 +93,9 @@ suite() {                                   # suite <name> <exact checks>
   printf '  %s: %s checks\n' "$1" "$n"
 }
 
-say "1. build (program + optional importer + theorems + tests)"
+say "1. build (program + optional manager + theorems + tests)"
 [ ! -e .lake/build ] || rm -r .lake/build
-./lake build Linger Theorems Tests linger lzr lingertest e2e > /tmp/linger-build.log 2>&1 \
+./lake build Linger Theorems Tests linger lz lingertest e2e > /tmp/linger-build.log 2>&1 \
   || { tail -30 /tmp/linger-build.log; fail "build"; }
 if grep -qE '^(warning|error)' /tmp/linger-build.log; then
   grep -E '^(warning|error)' /tmp/linger-build.log
@@ -247,14 +248,17 @@ suite agent 46
 say "13. watch (read-only mirror: geometry, keyboard, hand-back, seen)"
 suite watch 18
 
-say "14. recipes (fish helpers and tmux-resurrect import)"
-suite recipes 53
+say "14. recipes (POSIX helpers and tmux-resurrect import)"
+suite recipes 55
 
 say "15. delivery (large replay, ordering, exit tails and retired transports)"
 suite delivery 34
+
+say "16. optional manager (selection, input and terminal handoff)"
+suite manager 51
 
 LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger info "$sentinel_name" >/dev/null \
   || fail "a suite terminated the unrelated sentinel session"
 cleanup_sentinel
 trap - EXIT HUP TERM
-printf '\nE2E OK — linger builds clean, core is pure, 12 live suites green.\n'
+printf '\nE2E OK — linger builds clean, core is pure, 13 live suites green.\n'

@@ -1,8 +1,8 @@
 # Optional Lean manager and portable recipes
 
-Status: in progress — Step 1 verified; Step 2 terminal integration pending
+Status: complete — local Linux verifier green; hosted checks pending
 Updated: 2026-09-26
-Next: Step 2, optional executable, portable recipes and full verification
+Next: none
 Predecessor: `specs/archive/recipe-boundaries.md`
 
 ## Goal
@@ -71,12 +71,18 @@ the checkpoint detail are in SCRATCHPAD.md.
 
 ### Step 2 — execute the manager and port the recipes
 
-Pending. Add the terminal executor and unified entry point, relocate importer
-IO, remove the superseded fish picker and standalone importer entry point, and
-port the three composition helpers. Update installation and Ghostty guidance.
-Integrate the new manager PTY suite and preserve importer coverage. Every
-behavior change begins with a failing check; all deletions survive the full
-foreground verifier. Commit a green checkpoint, archive this spec and push.
+Complete. Integrated the terminal executor and unified entry point, relocated importer
+IO, removed the superseded fish picker and standalone importer entry point, and
+ported the three composition helpers. Updated installation and Ghostty guidance.
+The combined build passes every manager and recipe assertion, including all
+previous importer regressions. The tiny-terminal regression now keeps the
+selection visible with one or two rows; terminal restoration survives a failed
+screen-cleanup write. Source gates, standalone lint and layout checks pass.
+
+The complete foreground verifier passes from an empty build directory, followed
+by both required warm builds. All six independent compiling executor/boundary
+mutations fail the intended source gates. The recipe port and terminal executor
+also have deliberate mutation receipts, with restored sources verified.
 
 ## Work and verification
 
@@ -90,3 +96,28 @@ in `tests/e2e.sh`, and append break/verify and completion notes to SCRATCHPAD.md
 Run `./lake build` and `./lake build Theorems Tests` before each commit. Run the
 complete verifier in the foreground for the runtime/deletion checkpoint, then
 push ordinary commits to main without rewriting history.
+
+## Completion
+
+The optional manager is implemented on Lean v4.34.1 with no new C, raw binding,
+dependency, partial definition or proof-limit raise. Its selector and decoder
+have twenty-four explicit definitions, sixty-six authored semantic theorems and
+seventy-five unit guards. The relocated importer retains its existing parser,
+plan and preflight behavior. Three portable POSIX shell helpers and two native
+configuration examples remain.
+
+The final Linux verifier passes the clean build, generated C ABI, purity and
+boundary gates, standalone formatter, semantic census, CI runner checks, fuzz
+corpus, POSIX smoke tests, all thirteen live suites and unrelated-session
+sentinel. The actual manager passes fifty-one PTY assertions; the recipe suite
+passes fifty-five assertions, including all thirty previous importer regressions.
+Compiling mutations verify the pure contracts, executor ties, terminal lifetime,
+exact attach arguments, paste suppression and snapshot policy.
+
+Receipts are retained in `/tmp/linger-manager-20260926/`, including
+`step2-full-verifier.log`, `step2-clean-build.log`, `step2-build.log`,
+`step2-proofs-tests.log` and `full-suites/`. SCRATCHPAD.md records the independent
+mutation and review evidence. All workers were reviewed, integrated and closed.
+Hosted checks remain pending at closure. No macOS, live Ghostty GUI or real
+remote-host result is claimed. Ctrl-D cancellation is exercised; physical PTY
+EOF/hangup is not a separate assertion.

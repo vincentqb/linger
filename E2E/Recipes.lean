@@ -7,7 +7,7 @@ public section
 
 /-! # E2E.Recipes — composition kept outside the linger binary
 
-`lzr` projects tmux-resurrect pane records into independent linger sessions.
+`lz import-resurrect` projects pane records into independent linger sessions.
 This suite drives the optional Lean executable against real daemons and
 synthetic saves, and records commands to check its IO boundary.
 The smaller helpers run against command recorders to check error propagation
@@ -21,134 +21,96 @@ open E2E.Harness
 private def call (args : List String) : String :=
   "CALL\x00" ++ String.intercalate "\x00" args ++ "\x00\n"
 
-/-- Run the actual recipe with bounded, process-local command recorders.
-The call budget makes a broken retry loop fail instead of hanging the suite. -/
-private def probe (recipe : String) (args : Array String := #[])
-    (settings : Array (String × String) := #[]) : IO (UInt32 × String) := do
-  let setup :=
-    r#"
-set -g recipe_calls 0
-set -g recipe_attaches 0
-set -g recipe_picks 0
-function recipe_record
-    set -g recipe_calls (math $recipe_calls + 1)
-    test $recipe_calls -le 12; or exit 99
-    printf 'CALL\0' >&2
-    printf '%s\0' $argv >&2
-    printf '\n' >&2
-end
-function linger
-    recipe_record linger $argv
-    if test "$argv[1]" = ls
-        printf '%s' "$RECIPE_LISTING"
-        return $RECIPE_LIST_RC
-    end
-    set -g recipe_attaches (math $recipe_attaches + 1)
-    test $recipe_attaches -eq 1; or return 5
-    return $RECIPE_ATTACH_RC
-end
-function ssh
-    recipe_record ssh $argv
-    printf '%s' "$RECIPE_LISTING"
-    return $RECIPE_LIST_RC
-end
-function kitten
-    recipe_record kitten $argv
-    return $RECIPE_LAUNCH_RC
-end
-function fzf
-    recipe_record fzf $argv
-    string collect >/dev/null
-    set -g recipe_picks (math $recipe_picks + 1)
-    test $recipe_picks -eq 1; or return 130
-    printf '%s' "$RECIPE_PICK"
-    return $RECIPE_PICK_RC
-end
-function clear
-    recipe_record clear $argv
-end
-function sleep
-    recipe_record sleep $argv
-    return $RECIPE_SLEEP_RC
-end
+/-- Run the actual script under `/bin/sh`, or execute its shebang directly.
+External command recorders share a fixture-owned counter; a process deadline
+also catches a broken loop that ignores the recorder's call-budget failure. -/
+private def probe (e : Env) (recipe : String) (args : Array String := #[])
+    (settings : Array (String × String) := #[]) (direct : Bool := false)
+    (closeOutput : Bool := false) : IO (UInt32 × String × String) := do
+  let root := System.FilePath.mk e.dir / "probe"
+  let counter := root / "counter"
+  IO.FS.createDirAll root
+  IO.FS.writeFile counter "0 0\n"
+  let recorder :=
+    r#"#!/bin/sh
+read -r calls attaches < "$RECIPE_COUNTER" || exit 98
+calls=$((calls + 1))
+[ "$calls" -le 12 ] || exit 99
+tool=${0##*/}
+if [ "$tool" = linger ] && [ "$1" = attach ]; then
+    attaches=$((attaches + 1))
+fi
+printf '%s %s\n' "$calls" "$attaches" > "$RECIPE_COUNTER" || exit 98
+printf 'CALL\000%s\000' "$tool" >&2
+if [ "$#" -gt 0 ]; then printf '%s\000' "$@" >&2; fi
+printf '\n' >&2
+case "$tool" in
+    linger)
+        if [ "$1" = ls ]; then
+            printf '%s' "$RECIPE_LISTING"
+            exit "$RECIPE_LIST_RC"
+        fi
+        [ "$attaches" -eq 1 ] || exit 5
+        exit "$RECIPE_ATTACH_RC"
+        ;;
+    ssh) printf '%s' "$RECIPE_LISTING"; exit "$RECIPE_LIST_RC" ;;
+    kitten) exit "$RECIPE_LAUNCH_RC" ;;
+    clear)
+        if [ -n "$RECIPE_CLEAR_OUT" ]; then printf '%s' "$RECIPE_CLEAR_OUT"; fi
+        exit "$RECIPE_CLEAR_RC"
+        ;;
+    sleep) exit "$RECIPE_SLEEP_RC" ;;
+esac
 "#
+  for name in ["linger", "ssh", "kitten", "clear", "sleep"] do
+    let file := root / name
+    IO.FS.writeFile file recorder
+    Linger.Posix.chmod file.toString 0o700
   let defaults :=
-    #[("RECIPE_LISTING", "name\twork\n"), ("RECIPE_LIST_RC", "0"), ("RECIPE_PICK", "work\n"),
-      ("RECIPE_PICK_RC", "0"), ("RECIPE_ATTACH_RC", "7"), ("RECIPE_SLEEP_RC", "7"),
-      ("RECIPE_LAUNCH_RC", "0")]
-  let out ←
-    IO.Process.output
-        { cmd := "fish",
-          args :=
-            #["--no-config", "-c", setup ++ s!"\nsource recipes/{recipe}.fish\n{recipe} $argv",
-                "--"] ++
-              args,
-          env := (defaults ++ settings).map fun (key, value) => (key, some value) }
-  let calls := (out.stderr.splitOn "\n").filter (·.startsWith "CALL\x00")
-  return (out.exitCode, String.join (calls.map (· ++ "\n")))
+    #[("RECIPE_LISTING", "name\twork\n"), ("RECIPE_LIST_RC", "0"), ("RECIPE_ATTACH_RC", "7"),
+      ("RECIPE_SLEEP_RC", "7"), ("RECIPE_LAUNCH_RC", "0"), ("RECIPE_CLEAR_RC", "0"),
+      ("RECIPE_CLEAR_OUT", "")]
+  let script := ((← IO.currentDir) / "recipes" / s!"{recipe}.sh").toString
+  let command := if direct then script else "/bin/sh"
+  let arguments := if direct then args else #[script] ++ args
+  let path := s!"{root}:{(← IO.getEnv "PATH").getD ""}"
+  let child? ←
+    try
+      some <$>
+          IO.Process.spawn
+            { cmd := if closeOutput then "/bin/sh" else command,
+              args :=
+                if closeOutput then #["-c", "exec \"$@\" >&-", "--", command] ++ arguments
+                else arguments,
+              env :=
+                (defaults ++ settings).map (fun (key, value) => (key, some value)) ++
+                  #[("PATH", some path), ("RECIPE_COUNTER", some counter.toString)],
+              stdin := .null, stdout := .piped, stderr := .piped }
+    catch _ =>
+      pure none
+  let some child := child? | return (127, "", "")
+  let code ← waitProcess child 5000
+  if code.isNone then
+    child.kill
+    discard child.wait
+  let stdout ← child.stdout.readToEnd
+  let stderr ← child.stderr.readToEnd
+  let calls := (stderr.splitOn "\n").filter (·.startsWith "CALL\x00")
+  return (code.getD 99, stdout, String.join (calls.map (· ++ "\n")))
 
-private def helperChecks : IO Nat := do
+private def helperChecks (e : Env) : IO Nat := do
   let mut f := 0
-  let listingCall := call ["linger", "ls", "-r", "--porcelain"]
-  for args in [#[], #["--loop"]] do
-    let label := if args.isEmpty then "lz" else "lz --loop"
-    let (rc, calls) ← probe "lz" args #[("RECIPE_LIST_RC", "7")]
-    f :=
-      f +
-        (←
-          expect (rc == 7 && calls == listingCall)
-              s!"{label} stops before the picker when listing fails with partial output")
-    let (cancelRc, cancelCalls) ← probe "lz" args #[("RECIPE_PICK_RC", "130")]
-    f :=
-      f +
-        (←
-          expect (cancelRc == 130 && !has cancelCalls (call ["linger", "attach", "work"]))
-              s!"{label} preserves picker cancellation without attaching")
-    let mut selectionOk := true
-    for picked in ["", "one\ntwo\n"] do
-      let (pickRc, pickCalls) ← probe "lz" args #[("RECIPE_PICK", picked)]
-      selectionOk := selectionOk && pickRc != 99 && !has pickCalls "attach\x00"
-    f := f + (← expect selectionOk s!"{label} rejects empty or multiple picker selections")
   let target := "work@me@dev-a"
-  let (pickRc, pickCalls) ← probe "lz" #[] #[("RECIPE_PICK", target ++ "\n")]
-  f :=
-    f +
-      (←
-        expect
-            (pickRc == 7 && has pickCalls (call ["linger", "attach", target]) &&
-              has pickCalls "--no-multi\x00")
-            "lz attaches exactly one remote target and returns its status")
-  for initial in [none, some target] do
-    let args := #["--loop"] ++ initial.toArray
-    let mut loopOk := true
-    for attachStatus in ["0", "7", "255"] do
-      let (rc, calls) ← probe "lz" args #[("RECIPE_ATTACH_RC", attachStatus)]
-      let lines := (calls.splitOn "\n").filter (!·.isEmpty)
-      let picks := lines.filter (·.startsWith "CALL\x00fzf\x00")
-      let otherCalls :=
-        String.join ((lines.filter (!·.startsWith "CALL\x00fzf\x00")).map (· ++ "\n"))
-      let expected :=
-        (initial.map (fun name => call ["linger", "attach", name])).getD "" ++ listingCall ++
-          call ["linger", "attach", "work"] ++
-          listingCall
-      loopOk :=
-        loopOk && rc == 130 && otherCalls == expected && picks.length == 2 &&
-          picks.all (fun line => has line "--no-multi\x00")
-    f :=
-      f +
-        (←
-          expect loopOk
-              s!"lz --loop returns to the picker after any attach status (initial target: {initial.isSome})")
   let attachCall := call ["linger", "attach", target]
-  let (attachRc, attachCalls) ← probe "lza" #[target]
+  let (attachRc, _, attachCalls) ← probe e "lza" #[target]
   f :=
     f +
       (←
         expect (attachRc == 7 && attachCalls == attachCall)
             "lza returns a non-transport attach failure without retrying")
   for pauseRc in ["0", "7"] do
-    let (rc, calls) ←
-      probe "lza" #[target] #[("RECIPE_ATTACH_RC", "255"), ("RECIPE_SLEEP_RC", pauseRc)]
+    let (rc, _, calls) ←
+      probe e "lza" #[target] #[("RECIPE_ATTACH_RC", "255"), ("RECIPE_SLEEP_RC", pauseRc)]
     let expected := attachCall ++ call ["sleep", "2"] ++ (if pauseRc == "0" then attachCall else "")
     f :=
       f +
@@ -158,15 +120,15 @@ private def helperChecks : IO Nat := do
   for recipe in ["lza", "lzo"] do
     let mut usageOk := true
     for args in [#[], #[""], #["one", "two"]] do
-      let (rc, calls) ← probe recipe args
+      let (rc, _, calls) ← probe e recipe args
       usageOk := usageOk && rc == 2 && calls.isEmpty
     f := f + (← expect usageOk s!"{recipe} requires exactly one nonempty target")
-  let mut pickerUsageOk := true
-  for args in [#["work"], #["--unknown"], #["--loop", ""], #["--loop", "one", "two"]] do
-    let (rc, calls) ← probe "lz" args
-    pickerUsageOk := pickerUsageOk && rc == 2 && calls.isEmpty
-  f := f + (← expect pickerUsageOk "lz rejects invalid options and initial targets before listing")
-  let (boardRc, boardCalls) ← probe "lzs" #["", "2"]
+  let mut attachStatusOk := true
+  for status in [0, 1, 9, 130] do
+    let (rc, _, calls) ← probe e "lza" #[target] #[("RECIPE_ATTACH_RC", toString status)]
+    attachStatusOk := attachStatusOk && rc == status && calls == attachCall
+  f := f + (← expect attachStatusOk "lza preserves every tested non-255 status without a pause")
+  let (boardRc, _, boardCalls) ← probe e "lzs" #["", "2"]
   f :=
     f +
       (←
@@ -174,15 +136,60 @@ private def helperChecks : IO Nat := do
             (boardRc == 7 &&
               boardCalls == call ["linger", "ls", "-r"] ++ call ["clear"] ++ call ["sleep", "2"])
             "lzs uses configured remotes for an empty host and stops on pause failure")
-  let (listRc, listCalls) ← probe "lzs" #[] #[("RECIPE_LIST_RC", "7")]
+  let (listRc, listOut, listCalls) ← probe e "lzs" #[] #[("RECIPE_LIST_RC", "7")]
   f :=
     f +
       (←
-        expect (listRc == 7 && listCalls == call ["linger", "ls", "-r"])
+        expect (listRc == 7 && listOut.isEmpty && listCalls == call ["linger", "ls", "-r"])
             "lzs reports listing failure before clearing the screen")
+  let (clearRc, clearOut, clearCalls) ← probe e "lzs" #[] #[("RECIPE_CLEAR_RC", "11")]
+  f :=
+    f +
+      (←
+        expect
+            (clearRc == 11 && clearOut.isEmpty &&
+              clearCalls == call ["linger", "ls", "-r"] ++ call ["clear"])
+            "lzs stops on clear failure before printing or pausing")
+  let (printRc, _, printCalls) ← probe e "lzs" #[] #[] false true
+  f :=
+    f +
+      (←
+        expect
+            (printRc != 0 && printRc != 99 &&
+              printCalls == call ["linger", "ls", "-r"] ++ call ["clear"])
+            "lzs stops on output failure before pausing")
+  let board := "NAME\tSTATUS\n  a * literal row\nsecond\twaiting\n"
+  let (wholeRc, wholeOut, wholeCalls) ←
+    probe e "lzs" #["me@one,me@two", ".25"]
+        #[("RECIPE_LISTING", board), ("RECIPE_CLEAR_OUT", "CLEARED\n")]
+  f :=
+    f +
+      (←
+        expect
+            (wholeRc == 7 && wholeOut == "CLEARED\n" ++ board &&
+              wholeCalls ==
+                call ["linger", "ls", "-r", "me@one,me@two"] ++ call ["clear"] ++
+                  call ["sleep", ".25"])
+            "lzs clears then prints the complete listing without splitting its rows")
+  let mut positiveOk := true
+  for seconds in ["1", "0001", "0.25", ".5", "5.", ""] do
+    let (rc, _, calls) ← probe e "lzs" #["", seconds]
+    positiveOk :=
+      positiveOk && rc == 7 &&
+        calls ==
+          call ["linger", "ls", "-r"] ++ call ["clear"] ++
+            call ["sleep", if seconds.isEmpty then "5" else seconds]
+  let (defaultRc, _, defaultCalls) ← probe e "lzs"
+  positiveOk :=
+    positiveOk && defaultRc == 7 &&
+      defaultCalls == call ["linger", "ls", "-r"] ++ call ["clear"] ++ call ["sleep", "5"]
+  f :=
+    f + (← expect positiveOk "lzs accepts positive integer and fractional intervals and defaults")
   let mut intervalOk := true
-  for args in [#["", "0"], #["", "-1"], #["", "bogus"], #["a", "2", "extra"]] do
-    let (rc, calls) ← probe "lzs" args
+  for args in
+    [#["", "0"], #["", "-1"], #["", "bogus"], #["a", "2", "extra"], #["", "."], #["", "00.000"],
+      #["", "1..2"], #["", "..1"], #["", "1e2"], #["", " 2"], #["", "2\n3"]] do
+    let (rc, _, calls) ← probe e "lzs" args
     intervalOk := intervalOk && rc == 2 && calls.isEmpty
   f := f + (← expect intervalOk "lzs rejects invalid intervals and extra arguments")
   let host := "me@dev-a"
@@ -191,7 +198,8 @@ private def helperChecks : IO Nat := do
       ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=3", "--", host, "linger", "ls",
         "--porcelain"]
   for listing in ["", "name\twork\n"] do
-    let (rc, calls) ← probe "lzo" #[host] #[("RECIPE_LISTING", listing), ("RECIPE_LIST_RC", "255")]
+    let (rc, _, calls) ←
+      probe e "lzo" #[host] #[("RECIPE_LISTING", listing), ("RECIPE_LIST_RC", "255")]
     f :=
       f +
         (←
@@ -203,14 +211,14 @@ private def helperChecks : IO Nat := do
     call
       ["kitten", "@", "launch", "--type=tab", "--tab-title", s!"{name}@{host}", "--", "ssh", "-t",
         "--", host, "linger", "attach", name]
-  let (tabsRc, tabsCalls) ← probe "lzo" #[host] #[("RECIPE_LISTING", listing)]
+  let (tabsRc, _, tabsCalls) ← probe e "lzo" #[host] #[("RECIPE_LISTING", listing)]
   f :=
     f +
       (←
         expect (tabsRc == 0 && tabsCalls == sshCall ++ String.join (names.map launch))
             "lzo launches each canonical session with exact SSH destination and name")
-  let (launchRc, launchCalls) ←
-    probe "lzo" #[host] #[("RECIPE_LISTING", listing), ("RECIPE_LAUNCH_RC", "9")]
+  let (launchRc, _, launchCalls) ←
+    probe e "lzo" #[host] #[("RECIPE_LISTING", listing), ("RECIPE_LAUNCH_RC", "9")]
   f :=
     f +
       (←
@@ -218,11 +226,61 @@ private def helperChecks : IO Nat := do
             "lzo stops after the first failed tab launch")
   let mut namesOk := true
   for name in
-    ["bad/name", ".hidden", "a;touch SENTINEL", "", "extra\tfield",
-      String.ofList (List.replicate (Linger.Core.Name.maxLen + 1) 's')] do
-    let (rc, calls) ← probe "lzo" #[host] #[("RECIPE_LISTING", listing ++ s!"name\t{name}\n")]
+    ["bad/name", ".hidden", "a;touch SENTINEL", "", "extra\tfield", "with space", "with\rreturn",
+      "nonascii-é", String.ofList (List.replicate (Linger.Core.Name.maxLen + 1) 's')] do
+    let (rc, _, calls) ← probe e "lzo" #[host] #[("RECIPE_LISTING", listing ++ s!"name\t{name}\n")]
     namesOk := namesOk && rc != 0 && calls == sshCall
   f := f + (← expect namesOk "lzo validates every name before opening the first tab")
+  let mut recordsOk := true
+  for invalid in ["name\n", s!"name\t{names[0]!}\n"] do
+    let (rc, _, calls) ← probe e "lzo" #[host] #[("RECIPE_LISTING", listing ++ invalid)]
+    recordsOk := recordsOk && rc == 1 && calls == sshCall
+  f := f + (← expect recordsOk "lzo rejects missing and duplicate name fields before all launches")
+  let (emptyRc, _, emptyCalls) ← probe e "lzo" #[host] #[("RECIPE_LISTING", "")]
+  f :=
+    f +
+      (←
+        expect (emptyRc == 0 && emptyCalls == sshCall)
+            "lzo accepts an empty successful listing without opening an empty tab")
+  let boundaryNames := ["-", "+", String.ofList (List.replicate Linger.Core.Name.maxLen 's')]
+  let boundaryListing := String.join (boundaryNames.map fun name => s!"name\t{name}\n")
+  let (boundaryRc, _, boundaryCalls) ← probe e "lzo" #[host] #[("RECIPE_LISTING", boundaryListing)]
+  f :=
+    f +
+      (←
+        expect
+            (boundaryRc == 0 && boundaryCalls == sshCall ++ String.join (boundaryNames.map launch))
+            "lzo accepts one-character punctuation and the canonical maximum name length")
+  let literal := "-work@me@host [ab]*; '$HOME' \\ literal"
+  let (literalRc, _, literalCalls) ← probe e "lza" #[literal]
+  let (hostsRc, _, hostsCalls) ← probe e "lzs" #[literal, "2"]
+  let (hostRc, _, hostCalls) ← probe e "lzo" #[literal]
+  f :=
+    f +
+      (←
+        expect
+            (literalRc == 7 && literalCalls == call ["linger", "attach", literal] && hostsRc == 7 &&
+              hostsCalls ==
+                call ["linger", "ls", "-r", literal] ++ call ["clear"] ++ call ["sleep", "2"] &&
+              hostRc == 0 &&
+              hostCalls ==
+                call
+                    ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=3", "--", literal,
+                      "linger", "ls", "--porcelain"] ++
+                  call
+                    ["kitten", "@", "launch", "--type=tab", "--tab-title", s!"work@{literal}", "--",
+                      "ssh", "-t", "--", literal, "linger", "attach", "work"])
+            "POSIX recipes preserve spaces, glob characters and shell punctuation as literal arguments")
+  for (recipe, args, expectedRc, expectedCalls) in
+    [("lza", #[target], 7, attachCall),
+      ("lzs", #[], 7, call ["linger", "ls", "-r"] ++ call ["clear"] ++ call ["sleep", "5"]),
+      ("lzo", #[host], 0, sshCall ++ launch "work")] do
+    let (rc, _, calls) ← probe e recipe args #[] true
+    f :=
+      f +
+        (←
+          expect (rc == expectedRc && calls == expectedCalls)
+              s!"{recipe} executes directly with its portable shebang")
   return f
 
 /-- tmux-resurrect prefixes the saved directory and full command with `:` and
@@ -237,13 +295,13 @@ def paneLine (session window pane dir command : String) : String :=
 
 /-- Invoke the optional Lean executable. The built linger binary leads PATH;
 HOME and XDG data are fixture-owned so defaults cannot read user saves. -/
-def runLzr (e : Env) (home data : String) (args : Array String)
+def runImport (e : Env) (home data : String) (args : Array String)
     (extra : Array (String × Option String) := #[]) : IO (UInt32 × String × String) := do
   let cwd ← IO.currentDir
   let path := s!"{(cwd / ".lake" / "build" / "bin").toString}:{(← IO.getEnv "PATH").getD ""}"
   let out ←
     IO.Process.output
-        { cmd := (cwd / ".lake/build/bin/lzr").toString, args,
+        { cmd := (cwd / ".lake/build/bin/lz").toString, args := #["import-resurrect"] ++ args,
           env :=
             e.procEnv ++
               #[("HOME", some home), ("XDG_DATA_HOME", some data), ("PATH", some path)] ++
@@ -262,7 +320,7 @@ private def relativePathChecks (e : Env) : IO Nat := do
   discard <|
       IO.Process.run
         { cmd := "ln", args := #["-s", (root / "relative").toString, (origin / "link").toString] }
-  let importer := ((← IO.currentDir) / ".lake/build/bin/lzr").toString
+  let importer := ((← IO.currentDir) / ".lake/build/bin/lz").toString
   let wrongDir := { e with dir := (root / "relative").toString }
   let wrongSymlinkDir := { e with dir := origin.toString }
   let mut f := 0
@@ -275,13 +333,14 @@ private def relativePathChecks (e : Env) : IO Nat := do
     try
       let out ←
         IO.Process.output
-            { cmd := importer, args := #[save.toString], cwd := some origin.toString,
+            { cmd := importer, args := #["import-resurrect", save.toString],
+              cwd := some origin.toString,
               env := e.procEnv ++ #[("PATH", some path), ("LINGER_DIR", some state)] }
       f :=
         f +
           (←
             expect (out.exitCode == 0 && (← e.info name "start_dir") == some pane.toString)
-                s!"lzr keeps a relative {label} path anchored to the invocation directory")
+                s!"lz import-resurrect keeps a relative {label} path anchored to the invocation directory")
     finally
       e.killAll #[name]
       wrongDir.killAll #[name]
@@ -307,7 +366,7 @@ private def relativePathChecks (e : Env) : IO Nat := do
     try
       let out ←
         IO.Process.output
-            { cmd := importer, args := #[save.toString], cwd := some deepOrigin,
+            { cmd := importer, args := #["import-resurrect", save.toString], cwd := some deepOrigin,
               env :=
                 e.procEnv ++
                   #[("PATH", some s!"{binDir}:/usr/bin:/bin"),
@@ -318,7 +377,7 @@ private def relativePathChecks (e : Env) : IO Nat := do
             expect
                 (present == preexisting && out.exitCode == 0 &&
                   (← owned.info name "start_dir") == some physicalPane.toString)
-                s!"lzr resolves a long relative state path before spawning (already exists: {preexisting})")
+                s!"lz import-resurrect resolves a long relative state path before spawning (already exists: {preexisting})")
     finally
       owned.killAll #[name]
   return f
@@ -353,7 +412,7 @@ exit 0
     IO.FS.writeFile save text
     IO.FS.writeFile callsFile ""
     let (rc, _, err) ←
-      runLzr e home data args
+      runImport e home data args
           #[("PATH", some root.toString), ("LZR_CALLS", some callsFile.toString),
             ("LZR_LISTING", some listing), ("LZR_LIST_RC", some listRc), ("LZR_FAIL", some failure)]
     return (rc, err, ← IO.FS.readFile callsFile)
@@ -367,19 +426,19 @@ exit 0
         (rc == 0 &&
           calls ==
             listCall ++ createCall ++ restoreCall ++ call ["linger", "run", "second-w2-p1", "true"])
-        "lzr skips every existing identity and sends an unchanged saved command as one argument"
+        "lz import-resurrect skips every existing identity and sends an unchanged saved command as one argument"
   let (rc, err, calls) ← invoke panes "" "7" args
   f :=
     f +
       (←
         expect (rc == 1 && has err "could not list" && calls == listCall)
-            "lzr rejects a failed listing even when it contains existing names")
+            "lz import-resurrect rejects a failed listing even when it contains existing names")
   let (rc, err, calls) ← invoke panes "create" "0" args
   f :=
     f +
       (←
         expect (rc == 1 && has err "could not create" && calls == listCall ++ createCall)
-            "lzr stops on the first creation failure before restoring or creating another pane")
+            "lz import-resurrect stops on the first creation failure before restoring or creating another pane")
   let (rc, err, calls) ← invoke panes "restore" "0" args
   f :=
     f +
@@ -387,7 +446,7 @@ exit 0
         expect
             (rc == 1 && has err "could not restore" &&
               calls == listCall ++ createCall ++ restoreCall)
-            "lzr stops on the first command failure before creating another pane")
+            "lz import-resurrect stops on the first command failure before creating another pane")
   let mut preflightOk := true
   let valid := paneLine "valid" "3" "0" home ""
   for invalid in
@@ -399,10 +458,13 @@ exit 0
     f +
       (←
         expect preflightOk
-            "lzr rejects malformed, duplicate and NUL-bearing saves before invoking linger")
+            "lz import-resurrect rejects malformed, duplicate and NUL-bearing saves before invoking linger")
   let (rc, _, calls) ← invoke panes "" "0" #[save.toString, "extra"]
   f :=
-    f + (← expect (rc == 2 && calls.isEmpty) "lzr rejects extra arguments before invoking linger")
+    f +
+      (←
+        expect (rc == 2 && calls.isEmpty)
+            "lz import-resurrect rejects extra arguments before invoking linger")
   return f
 
 private def importEnvironmentChecks (e : Env) (home data : String) : IO Nat := do
@@ -430,7 +492,7 @@ if [ "$LZR_CHECK_HOME" = 1 ]; then
 fi
 "#
   Linger.Posix.chmod executable.toString 0o700
-  let importer := ((← IO.currentDir) / ".lake/build/bin/lzr").toString
+  let importer := ((← IO.currentDir) / ".lake/build/bin/lz").toString
   let env :=
     e.procEnv ++
       #[("PATH", some "bin:/usr/bin:/bin"), ("HOME", some home), ("XDG_DATA_HOME", some data),
@@ -453,7 +515,7 @@ fi
             args :=
               #["--noprofile", "--norc", "-c",
                 "linger() { printf 'FUNCTION\\n' >> \"$LZR_CALLS\"; }; export -f linger || exit 98; exec \"$@\"",
-                "--", importer, save.toString],
+                "--", importer, "import-resurrect", save.toString],
             cwd := some origin, env }
     f :=
       f +
@@ -463,7 +525,7 @@ fi
                 (← IO.FS.readFile callsFile) ==
                   listCalls ++ call ["linger", "run", "lookup-w1-p0", "true"] ++
                     call ["cwd", paneDir.toString])
-              s!"lzr resolves PATH past an exported Bash function (cwd impostor: {impostor})")
+              s!"lz import-resurrect resolves PATH past an exported Bash function (cwd impostor: {impostor})")
   IO.FS.removeFile (origin / "linger")
   -- Fish supplies the account-home baseline without reading any save. Explicit
   -- SAVE and the recorder keep these checks from touching the user's files.
@@ -483,8 +545,8 @@ fi
     IO.FS.writeFile callsFile ""
     let out ←
       IO.Process.output
-          { cmd := importer, args := #["--restore-processes", save.toString], cwd := some origin,
-            env := env ++ #[("HOME", value), ("LZR_CHECK_HOME", some "1")] }
+          { cmd := importer, args := #["import-resurrect", "--restore-processes", save.toString],
+            cwd := some origin, env := env ++ #[("HOME", value), ("LZR_CHECK_HOME", some "1")] }
     let lines := (← IO.FS.readFile callsFile).splitOn "\n"
     let homes :=
       lines.filterMap fun line =>
@@ -519,7 +581,7 @@ fi
                     call ["cwd", accountHome.toString] ++
                     call ["linger", "run", "fallback-w1-p0", command] ++
                     call ["cwd", origin.toString])
-              s!"lzr uses account home for saved tilde and every child (HOME {label})")
+              s!"lz import-resurrect uses account home for saved tilde and every child (HOME {label})")
   return f
 
 def run : IO UInt32 := do
@@ -529,7 +591,7 @@ def run : IO UInt32 := do
   let data := root / "data"
   IO.FS.createDirAll home
   IO.FS.createDirAll data
-  let mut f ← helperChecks
+  let mut f ← helperChecks e
   f := f + (← importBoundaryChecks e home.toString data.toString)
   f := f + (← importEnvironmentChecks e home.toString data.toString)
   f := f + (← relativePathChecks e)
@@ -544,18 +606,18 @@ def run : IO UInt32 := do
   IO.FS.writeFile (resurrectDir / "last")
       (paneLine "desk" "1" "0" defaultDir.toString s!"tail -n 1 {defaultSource} >> {defaultSink}" ++
         "window\tdesk\t1\t:ignored\nstate\tdesk\t\n")
-  let (drc, _, _) ← runLzr e home.toString data.toString #[]
+  let (drc, _, _) ← runImport e home.toString data.toString #[]
   f :=
     f +
       (←
         expect (drc == 0 && (← e.info "desk-w1-p0" "start_dir") == some defaultDir.toString)
-            "lzr reads the default XDG save and restores an escaped cwd")
+            "lz import-resurrect reads the default XDG save and restores an escaped cwd")
   IO.sleep 700 -- negative assertion: give a wrongly-started command time to run
   f :=
     f +
       (←
         expect (!(← System.FilePath.pathExists defaultSink))
-            "lzr does not execute a saved command by default")
+            "lz import-resurrect does not execute a saved command by default")
   -- An explicitly empty XDG value has the documented shell `:-` semantics.
   let emptyXdgDir := root / "empty-xdg"
   let fallbackResurrectDir := home / ".local" / "share" / "tmux" / "resurrect"
@@ -563,24 +625,24 @@ def run : IO UInt32 := do
   IO.FS.createDirAll fallbackResurrectDir
   IO.FS.writeFile (fallbackResurrectDir / "last")
       (paneLine "emptyxdg" "3" "0" emptyXdgDir.toString "")
-  let (xrc, _, _) ← runLzr e home.toString "" #[]
+  let (xrc, _, _) ← runImport e home.toString "" #[]
   f :=
     f +
       (←
         expect (xrc == 0 && (← e.info "emptyxdg-w3-p0" "start_dir") == some emptyXdgDir.toString)
-            "lzr treats an empty XDG data home as unset")
+            "lz import-resurrect treats an empty XDG data home as unset")
   -- Once the legacy directory exists, it takes precedence over the XDG path.
   let legacyDir := root / "legacy"
   let legacyResurrectDir := home / ".tmux" / "resurrect"
   IO.FS.createDirAll legacyDir
   IO.FS.createDirAll legacyResurrectDir
   IO.FS.writeFile (legacyResurrectDir / "last") (paneLine "legacy" "2" "0" legacyDir.toString "")
-  let (lrc, _, _) ← runLzr e home.toString data.toString #[]
+  let (lrc, _, _) ← runImport e home.toString data.toString #[]
   f :=
     f +
       (←
         expect (lrc == 0 && (← e.info "legacy-w2-p0" "start_dir") == some legacyDir.toString)
-            "lzr prefers the legacy default save directory when it exists")
+            "lz import-resurrect prefers the legacy default save directory when it exists")
   -- Explicit process restart: an empty command, one default-allowlisted
   -- command, and one outsider. The leading empty entry pins pane/command array
   -- alignment instead of merely proving that some pane ran the command.
@@ -597,7 +659,7 @@ def run : IO UInt32 := do
           s!"tail -n 1 {processSource} | tee -a {processSink}" ++
         paneLine "dev" "1" "2" processDir.toString s!"printf BLOCKED > {blockedSink}")
   let (prc, _, _) ←
-    runLzr e home.toString data.toString #["--restore-processes", processSave.toString]
+    runImport e home.toString data.toString #["--restore-processes", processSave.toString]
   f :=
     f +
       (←
@@ -605,7 +667,7 @@ def run : IO UInt32 := do
             (prc == 0 && (← e.info "dev-w1-p0" "start_dir") == some processDir.toString &&
               (← e.info "dev-w1-p1" "start_dir") == some processDir.toString &&
               (← e.info "dev-w1-p2" "start_dir") == some processDir.toString)
-            "lzr projects every pane into a named linger session")
+            "lz import-resurrect projects every pane into a named linger session")
   let restored ← waitFor 5000 (System.FilePath.pathExists processSink)
   let restoredText ←
     if restored then
@@ -620,15 +682,15 @@ def run : IO UInt32 := do
         expect
             (restored && restoredText == "RESTORED-ONCE\n" && has allowedScreen "RESTORED-ONCE" &&
               !has emptyScreen "RESTORED-ONCE")
-            "lzr --restore-processes keeps commands aligned and runs an allowlisted one")
+            "lz import-resurrect --restore-processes keeps commands aligned and runs an allowlisted one")
   IO.sleep 700 -- negative assertion after the import process itself has exited
   f :=
     f +
       (←
         expect (!(← System.FilePath.pathExists blockedSink))
-            "lzr --restore-processes skips a command outside the allowlist")
+            "lz import-resurrect --restore-processes skips a command outside the allowlist")
   let (rrc, _, _) ←
-    runLzr e home.toString data.toString #["--restore-processes", processSave.toString]
+    runImport e home.toString data.toString #["--restore-processes", processSave.toString]
   IO.sleep 700
   let rerunExists ← System.FilePath.pathExists processSink
   let rerunText ←
@@ -640,7 +702,7 @@ def run : IO UInt32 := do
     f +
       (←
         expect (rrc == 0 && rerunText == "RESTORED-ONCE\n")
-            "lzr skips existing sessions on a sequential rerun")
+            "lz import-resurrect skips existing sessions on a sequential rerun")
   -- A checkpoint-only identity is also existing state: importing must neither
   -- revive it nor send the saved process command.
   let resumableSource := root / "resumable-source"
@@ -665,7 +727,7 @@ def run : IO UInt32 := do
       (paneLine "resumable" "1" "0" processDir.toString
         s!"tail -n 1 {resumableSource} >> {resumableSink}")
   let (src, _, _) ←
-    runLzr e home.toString data.toString #["--restore-processes", resumableSave.toString]
+    runImport e home.toString data.toString #["--restore-processes", resumableSave.toString]
   IO.sleep 700
   let resumableState ← e.status "resumable-w1-p0"
   f :=
@@ -674,28 +736,28 @@ def run : IO UInt32 := do
         expect
             (checkpointed && crashed && src == 0 && resumableState == .resumable &&
               !(← System.FilePath.pathExists resumableSink))
-            "lzr skips a resumable checkpoint instead of reviving and replaying it")
+            "lz import-resurrect skips a resumable checkpoint instead of reviving and replaying it")
   -- Validate the complete pane set before the first daemon can be created.
   let absentDir := root / "absent"
   let invalidSave := root / "invalid-save"
   IO.FS.writeFile invalidSave
       (paneLine "prevalid" "1" "0" processDir.toString "" ++
         paneLine "prevalid" "1" "1" absentDir.toString "")
-  let (irc, _, ierr) ← runLzr e home.toString data.toString #[invalidSave.toString]
+  let (irc, _, ierr) ← runImport e home.toString data.toString #[invalidSave.toString]
   f :=
     f +
       (←
         expect
             (irc == 1 && has ierr "working directory not found" &&
               (← e.cli #["info", "prevalid-w1-p0"]).1 == 1)
-            "lzr validates every cwd before creating any session")
+            "lz import-resurrect validates every cwd before creating any session")
   let invalidNameSave := root / "invalid-name-save"
   let longNameSave := root / "long-name-save"
   IO.FS.writeFile invalidNameSave (paneLine "bad/name" "1" "0" processDir.toString "")
   let longName := String.ofList (List.replicate 80 'a')
   IO.FS.writeFile longNameSave (paneLine longName "1" "0" processDir.toString "")
-  let (urc, _, uerr) ← runLzr e home.toString data.toString #[invalidNameSave.toString]
-  let (longRc, _, longErr) ← runLzr e home.toString data.toString #[longNameSave.toString]
+  let (urc, _, uerr) ← runImport e home.toString data.toString #[invalidNameSave.toString]
+  let (longRc, _, longErr) ← runImport e home.toString data.toString #[longNameSave.toString]
   f :=
     f +
       (←
@@ -703,7 +765,7 @@ def run : IO UInt32 := do
             (urc == 1 && longRc == 1 && has uerr "not a valid linger name" &&
               has longErr "not a valid linger name" &&
               (← e.cli #["info", "bad_name-w1-p0"]).1 == 1)
-            "lzr rejects names that linger would rewrite or truncate")
+            "lz import-resurrect rejects names that linger would rewrite or truncate")
   let inaccessibleDir := root / "inaccessible"
   let inaccessibleSave := root / "inaccessible-save"
   IO.FS.createDirAll inaccessibleDir
@@ -713,7 +775,7 @@ def run : IO UInt32 := do
   Linger.Posix.chmod inaccessibleDir.toString 0
   let (accessRc, _, accessErr) ←
     try
-      runLzr e home.toString data.toString #[inaccessibleSave.toString]
+      runImport e home.toString data.toString #[inaccessibleSave.toString]
     finally
       Linger.Posix.chmod inaccessibleDir.toString 0o700
   f :=
@@ -722,22 +784,28 @@ def run : IO UInt32 := do
         expect
             (accessRc == 1 && has accessErr "working directory not accessible" &&
               (← e.cli #["info", "accessvalid-w1-p0"]).1 == 1)
-            "lzr validates directory access before creating any session")
+            "lz import-resurrect validates directory access before creating any session")
   let malformedSave := root / "malformed-save"
   IO.FS.writeFile malformedSave "pane\tshort\n"
-  let (mrc, _, merr) ← runLzr e home.toString data.toString #[malformedSave.toString]
+  let (mrc, _, merr) ← runImport e home.toString data.toString #[malformedSave.toString]
   f :=
     f +
       (←
-        expect (mrc == 1 && has merr "malformed pane record") "lzr rejects a malformed pane record")
+        expect (mrc == 1 && has merr "malformed pane record")
+            "lz import-resurrect rejects a malformed pane record")
   let emptySave := root / "empty-save"
   IO.FS.writeFile emptySave "window\tignored\nstate\tignored\t\n"
-  let (erc, _, eerr) ← runLzr e home.toString data.toString #[emptySave.toString]
+  let (erc, _, eerr) ← runImport e home.toString data.toString #[emptySave.toString]
   f :=
     f +
-      (← expect (erc == 1 && has eerr "no pane records") "lzr rejects a save with no pane records")
-  let (nrc, _, nerr) ← runLzr e home.toString data.toString #[s!"{e.dir}/missing-save"]
-  f := f + (← expect (nrc == 1 && has nerr "save not found") "lzr reports a missing save")
+      (←
+        expect (erc == 1 && has eerr "no pane records")
+            "lz import-resurrect rejects a save with no pane records")
+  let (nrc, _, nerr) ← runImport e home.toString data.toString #[s!"{e.dir}/missing-save"]
+  f :=
+    f +
+      (←
+        expect (nrc == 1 && has nerr "save not found") "lz import-resurrect reports a missing save")
   e.killAll
       #["desk-w1-p0", "emptyxdg-w3-p0", "legacy-w2-p0", "dev-w1-p0", "dev-w1-p1", "dev-w1-p2",
         "resumable-w1-p0", "prevalid-w1-p0", "prevalid-w1-p1", "bad_name-w1-p0",

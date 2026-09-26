@@ -40,8 +40,8 @@ recipes, break records, measurements, the audits — lives in
 | §Status | one glyph per listing row vs seven conditions | the seven states partition the observation space: `cover`, `disjoint`, `classify_sound` + `classify_unique`, `reachable`, `icon_injective` / `name_injective`, `name_clean` | Theorems/Status.lean |
 | §Resume | the product's own promise: crash, reboot, reattach | §Restore ∘ §Replay, stated twice — over `save`'s input and over `load`'s output (`resume_grid_of_load`, `resume_tabs_of_load`, `resume_sb_of_load`: any byte string that loads, no other hypothesis) — and lifted to the daemon over its own `vt0` (`Session.run_resume_vt_shape`, `run_resume_load_save`) | Theorems/Resume.lean, Theorems/Session.lean |
 | §Import | foreign save records vs distinct session identities and deliberate command execution | successful parsing gives a nonempty list with canonical, distinct names and NUL-free directories/commands (`parseSave_valid`); planning preserves records and order, skips existing names and selects only unchanged, explicitly enabled, eligible commands (`mem_plan`, `plan_order`, `plan_command_policy`); adding planned names to the snapshot makes a sequential rerun empty (`plan_sequential_idempotent`) | Theorems/Resurrect.lean, E2E/Recipes.lean |
-| §Select | fuzzy query vs an exact session identity | matching is ASCII-folded subsequence matching (`matches_iff_sublist`); filtering preserves order (`visible_order`); successful listing parsing preserves complete original name records (`parseListing_records`); continuing transitions preserve query/cursor bounds (`step_stay_valid`); only acceptance can attach an unchanged snapshot member (`step_attach_iff`, `step_attach_mem`) | Theorems/Picker.lean |
-| §Input | split keyboard bytes and pasted commands vs deliberate selection | one byte produces at most one key (`feed_length`); UTF-8 prefixes retain at most three bytes (`stored_bound`, `feed_storage_bound`); delivered text excludes controls (`feed_text_valid`); paste emits only text and survives incomplete input (`feed_paste_only_text`, `feed_paste_sticky`, `flush_paste`); a timeout never accepts (`flush_no_accept`) | Theorems/Input.lean |
+| §Select | fuzzy query vs an exact session identity | matching is ASCII-folded subsequence matching (`matches_iff_sublist`); filtering preserves order (`visible_order`); successful listing parsing preserves complete original name records (`parseListing_records`); continuing transitions preserve query/cursor bounds (`step_stay_valid`); only acceptance can attach an unchanged snapshot member (`step_attach_iff`, `step_attach_mem`) | Theorems/Picker.lean, E2E/Manager.lean |
+| §Input | split keyboard bytes and pasted commands vs deliberate selection | one byte produces at most one key (`feed_length`); UTF-8 prefixes retain at most three bytes (`stored_bound`, `feed_storage_bound`); delivered text excludes controls (`feed_text_valid`); paste emits only text and survives incomplete input (`feed_paste_only_text`, `feed_paste_sticky`, `flush_paste`); a timeout never accepts (`flush_no_accept`) | Theorems/Input.lean, E2E/Manager.lean |
 
 The CSI collector preserves omitted parameters, saturates numeric parameters
 and rejects overflow at the existing parameter cap. `csiPush_of_lt`,
@@ -226,26 +226,30 @@ preserve paste suppression across malformed or incomplete sequences.
 `flush_emits` limits timeout output to cancellation after a lone escape
 outside paste. UTF-8 decoding is connected to Lean's native `String.fromUTF8?`
 validator and a single-scalar result; the validator itself is not proved here.
-Terminal restoration, resize, subprocess handoff and refresh
-scheduling remain IO checks in Step 2 of `specs/optional-manager.md`.
+`Manager.Picker` consumes these models. Source gates pin the parser, filtering,
+initial states, transitions, decoder, character widths, fixed poll descriptors
+and unchanged attach argv. `E2E.Manager` checks terminal restoration, resize,
+subprocess handoff, paste, exact selection and refresh scheduling through real
+ptys. A cleanup exception still restores termios; attachment begins after
+leaving the picker screen. These are IO observations, not theorem statements.
 
-The fish helpers compose operations whose state guarantees already have proofs.
+The POSIX sh helpers compose operations whose state guarantees already have proofs.
 §Detach preserves a session when its client leaves; §Handback specifies the
-terminal state returned to the caller. These support the shared `lz` picker loop
-and `lza` reconnect helper. Their actual loop order, selected argv, cancellation
-and retry status are checked against the real fish functions by `E2E.Recipes`;
-no parallel Lean model of fish execution is claimed.
+terminal state returned to the caller. These support the optional `lz` manager
+loop and `lza` reconnect helper. `E2E.Manager` checks loop order, selected argv
+and cancellation; `E2E.Recipes` drives the actual shell helpers and checks retry
+status. No parallel Lean model of shell execution is claimed.
 
 `lzs` displays observations backed by `Status.classify_sound`,
 `Status.classify_unique` and `Listing.rowFields_name`. `lzo` uses names backed by
 `Name.sanitize_valid` and `Remote.parse_names_valid`; its complete-list validation
 and terminal-launch arguments have separate IO checks. Their short composition
-policies remain editable shell functions. Ghostty's command setting and SSH's
+policies remain editable shell scripts. Ghostty's command setting and SSH's
 keepalive setting use the tools' native formats; configuration parsing and
 documented launch syntax support those choices, without claiming a theorem
 about GUI behavior or network recovery time.
 
-§Import supports the standalone Lean importer. `parseSave_valid` gives
+§Import supports `lz import-resurrect`. `parseSave_valid` gives
 nonempty, distinct names that already satisfy `Name.Valid`, plus NUL-free
 decoded directories and full commands. `mem_plan` preserves whole records,
 preventing skipped panes from shifting commands onto another name.
@@ -258,14 +262,15 @@ pins the eligible words. These are selection guarantees, not a shell-safety clai
 `plan_sequential_idempotent` says a later snapshot containing the old names and
 all planned names produces no actions, even if restore opt-in changes. It does
 not prove atomic name claiming, concurrent imports or successful IO.
-`Lzr.lean` preflights every saved directory and obtains a successful listing
+`Manager.Resurrect` preflights every saved directory and obtains a successful listing
 before executing the plan. Source gates pin its parser, plan and unchanged
 command call sites; `E2E.Recipes` checks their actual argv, failure ordering,
 executable lookup, home fallback, relative paths, and reruns against real daemons.
 
-The source gates also keep the optional tool's imports confined to its pure
-policy and the core name/listing modules, and keep it out of the session program
-and VT toolkit. Theorems cannot inspect IO call sites or prove a preference for
+The source gates constrain the manager's imports to its pure policies, core
+name/listing modules, public VT width function and existing POSIX interface.
+They keep the manager out of the session program and VT toolkit.
+Theorems cannot inspect IO call sites or prove a preference for
 a source language; each decision is supported by its semantic contract and the
 checks at the boundary where that contract is used.
 

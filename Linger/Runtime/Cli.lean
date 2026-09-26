@@ -11,8 +11,8 @@ public section
 
 Verb surface: attach is an upsert; one-shot verbs talk to a
 live daemon or say so. Bare `linger` — and `linger ls` — print a session
-overview and exit; there is no full-screen picker (pick with the `fzf`
-recipe in the README, or just `attach`). `__daemon` is the internal
+overview and exit; there is no full-screen picker (pick with the optional `lz`
+manager in the README, or just `attach`). `__daemon` is the internal
 re-exec target of the detached spawn.
 -/
 
@@ -109,7 +109,7 @@ def cmdAttach (hooks : Hooks) (name : String) (cmd : List String) : IO UInt32 :=
   -- attach name`. Session names never contain `@` (Name.sanitize
   -- reserves it — theorem sanitize_no_at), so any `@` here means remote.
   -- The host is everything after the FIRST `@`, so it may itself be a
-  -- `user@host` ssh target. Lets the fzf recipe feed a listed row
+  -- `user@host` ssh target. Lets the optional manager feed a listed row
   -- (`name@host`) verbatim to `attach`, local or remote.
   match name.splitOn "@" with
   | sess :: rest@(_ :: _) =>
