@@ -12,4 +12,5 @@ import Tests.Checkpoint
 import Tests.Resurrect
 import Tests.Picker
 import Tests.Input
+import Tests.Entry
 import Tests.Fuzz

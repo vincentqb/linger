@@ -43,7 +43,8 @@ and this target is what that grep is a gate on. -/
 lean_lib LingerVt where roots := #[`Linger.Core.Vt, `Linger.Core.Render, `Linger.Core.Terminal]
 
 /-- Optional pure manager policies, outside the session and VT libraries. -/
-lean_lib Tools where roots := #[`Tools.Resurrect, `Tools.Key, `Tools.Picker, `Tools.Input]
+lean_lib Tools where roots :=
+  #[`Tools.Entry, `Tools.Resurrect, `Tools.Key, `Tools.Picker, `Tools.Input]
 
 /-- Optional terminal selector and save-import executor. -/
 lean_lib Manager where roots := #[`Manager.Picker, `Manager.Resurrect]

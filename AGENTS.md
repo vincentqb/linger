@@ -15,10 +15,9 @@ worklog), `specs/archive/` (closed build records), the comments in
 
 ## Where things stand — read this first after any compaction
 
-1. No spec is in flight. The last one closed on 2026-09-26
-   (`specs/archive/manager-defaults.md`: default return to selection,
-   directory-only import and an argument-free status recipe; local Linux
-   verification green, hosted checks pending).
+1. `specs/single-entry-point.md` is in flight: compose the selector, importer
+   and session commands behind one `linger` executable, with generic terminal
+   launch configuration. Its status block identifies the current step.
    New work opens a new `specs/<slug>.md`, names itself here, and keeps
    the live count at one; every behavioral fix starts with a failing
    check and every deletion survives the full verifier stack.
@@ -40,10 +39,10 @@ Each was decided with a recorded reason (specs/archive/, SCRATCHPAD.md,
 git history); re-opening one needs a new reason.
 
 - Windows, tabs, splits — the OS window manager owns composition.
-- An interactive picker in `linger` — bare `linger` lists and exits
-  (`E2E/Overview.lean`). The user's 2026-09-26 preference for a shell-independent
-  selector without an external picker led to the optional `lz` front end,
-  recorded in `specs/archive/optional-manager.md`.
+- Creating sessions from a selector query — selection attaches only an
+  original listed target (`Theorems/Picker.lean`). The user's 2026-09-26 request
+  for one public entry point reopens the earlier separate-executable decision;
+  `specs/single-entry-point.md` records terminal selection versus piped listing.
 - Storing images across reattach — passthrough plus the application's
   own redraw only (`E2E/Graphics.lean`, README Graphics).
 - Restoring the process tree on resume — screen and state yes, programs

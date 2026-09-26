@@ -12684,3 +12684,41 @@ No C, raw binding, dependency, partial definition, fuel or proof-limit increase
 was added. Archived the completed spec as `specs/archive/manager-defaults.md`;
 no spec remains in flight. Hosted checks are pending at this checkpoint; no
 macOS, live Ghostty GUI or real remote-host result is claimed.
+
+## Step 1 notes — 2026-09-26
+
+Opened `specs/single-entry-point.md` for the user's request to make `linger`
+the public entry point and use a common launch interface across terminals.
+This reopens the separate optional executable decision while keeping the
+session and VT libraries independent of the manager. Bare invocation selects
+only when both standard streams are terminals; redirected invocation lists.
+Explicit session commands preserve every argument regardless of stream mode.
+`linger import` forwards its trailing arguments unchanged to the existing
+directory-only importer.
+
+`Tools.Entry.route` is one pure definition with an empty import closure. Eight
+proofs establish selector equivalence, redirected listing, complete session
+argv preservation, stream independence, internal daemon and explicit listing
+dispatch, and complete import argv preservation. Six fixture guards cover
+eighty-four cases, including malformed operands, spaces, Unicode and all four
+stream combinations. The exact-constant theorem census and source closure gate
+include the new module. THEOREMS.md states this contract without claiming a
+proof of the preference for a particular interface.
+
+The policy worker used `/tmp/linger-entry-policy-20260926`. A compiling model
+of the predecessor dispatch fails the selector and import fixtures. Four
+independent mutations also compile before both proofs and fixtures reject
+them: accepting either terminal stream, selecting on explicit commands,
+reversing import arguments and making import depend on terminal state.
+Restored source hashes match. Receipts are in
+`/tmp/linger-entry-policy-receipts-20260926/`, including `validation.tsv` and
+`mutations/summary.tsv`; the reviewed worker is integrated and closed.
+
+Both required builds pass in `/tmp/linger-entry-20260926/step1-build-final.log`
+and `step1-proofs-tests-final.log`. Source gates and standalone lint pass. The
+complete layout check reported only the changed Lake roots declaration;
+formatting that declaration and repeating its layout/lint checks and both
+builds passes. The runtime still uses the predecessor entry point here; Step 2
+will connect the proved route, source-gate its IO consumers, remove the extra
+executable and helpers, and run the full verifier after those deletions. No C,
+raw binding, dependency, partial definition or proof-limit raise was added.

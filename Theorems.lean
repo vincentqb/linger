@@ -19,4 +19,5 @@ import Theorems.Status
 import Theorems.Resurrect
 import Theorems.Picker
 import Theorems.Input
+import Theorems.Entry
 import Theorems.Coverage

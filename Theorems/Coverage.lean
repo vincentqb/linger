@@ -17,6 +17,7 @@ import all Theorems.Status
 import all Theorems.Resurrect
 import all Theorems.Picker
 import all Theorems.Input
+import all Theorems.Entry
 public meta import Lean.Elab.Command
 
 /-! # Semantic coverage gate

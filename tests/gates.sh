@@ -76,6 +76,7 @@ for p in Linger/Core Linger/Core/Vt.lean Linger/Core/Checkpoint.lean \
          Theorems Theorems/Session.lean Theorems/Replay.lean Tests E2E \
          Tools/Resurrect.lean Theorems/Resurrect.lean Manager/Resurrect.lean \
          Tools/Key.lean Tools/Picker.lean Tools/Input.lean \
+         Tools/Entry.lean Theorems/Entry.lean \
          Theorems/Picker.lean Theorems/Input.lean \
          Lz.lean Manager/Picker.lean E2E/Manager.lean \
          LingerTest.lean c/shim.c lakefile.lean lake-manifest.json README.md; do
@@ -276,6 +277,7 @@ import_closure Tools/Resurrect.lean 'public import Linger.Core.Name;'
 import_closure Tools/Key.lean ''
 import_closure Tools/Picker.lean 'public import Tools.Key;public import Linger.Core.Name;'
 import_closure Tools/Input.lean 'public import Tools.Key;'
+import_closure Tools/Entry.lean ''
 import_closure Linger/Core/Name.lean ''
 import_closure Linger/Core/Remote.lean 'public import Linger.Core.Name;'
 import_closure Manager/Resurrect.lean 'public import Tools.Resurrect;public import Linger.Core.Remote;'
