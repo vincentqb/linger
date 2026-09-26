@@ -16,4 +16,5 @@ import Theorems.Render.PendingWrap
 import Theorems.Replay
 import Theorems.Resume
 import Theorems.Status
+import Theorems.Resurrect
 import Theorems.Coverage

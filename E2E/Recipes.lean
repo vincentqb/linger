@@ -8,8 +8,8 @@ public section
 /-! # E2E.Recipes — composition kept outside the linger binary
 
 `lzr` projects tmux-resurrect pane records into independent linger sessions.
-This suite drives the fish function against real daemons and synthetic save
-files: the foreign parser is exercised here, not admitted into `Linger/`.
+This suite drives the optional Lean executable against real daemons and
+synthetic saves, and records commands to check its IO boundary.
 The smaller helpers run against command recorders to check error propagation
 and argument boundaries without contacting hosts or opening GUI windows.
 -/
@@ -235,19 +235,19 @@ def paneLine (session window pane dir command : String) : String :=
         ":" ++ command] ++
     "\n"
 
-/-- Source the autoload file in a fresh fish and invoke its function. The built
-linger binary leads PATH; HOME and XDG data are fixture-owned so the default
-resurrect path cannot read the developer's files. -/
-def runLzr (e : Env) (home data : String) (args : Array String) : IO (UInt32 × String × String) :=
-  do
+/-- Invoke the optional Lean executable. The built linger binary leads PATH;
+HOME and XDG data are fixture-owned so defaults cannot read user saves. -/
+def runLzr (e : Env) (home data : String) (args : Array String)
+    (extra : Array (String × Option String) := #[]) : IO (UInt32 × String × String) := do
   let cwd ← IO.currentDir
   let path := s!"{(cwd / ".lake" / "build" / "bin").toString}:{(← IO.getEnv "PATH").getD ""}"
   let out ←
     IO.Process.output
-        { cmd := "fish",
-          args := #["--no-config", "-c", "source recipes/lzr.fish; lzr $argv", "--"] ++ args,
+        { cmd := (cwd / ".lake/build/bin/lzr").toString, args,
           env :=
-            e.procEnv ++ #[("HOME", some home), ("XDG_DATA_HOME", some data), ("PATH", some path)] }
+            e.procEnv ++
+              #[("HOME", some home), ("XDG_DATA_HOME", some data), ("PATH", some path)] ++
+              extra }
   return (out.exitCode, out.stdout, out.stderr)
 
 private def relativePathChecks (e : Env) : IO Nat := do
@@ -262,8 +262,7 @@ private def relativePathChecks (e : Env) : IO Nat := do
   discard <|
       IO.Process.run
         { cmd := "ln", args := #["-s", (root / "relative").toString, (origin / "link").toString] }
-  let fish ← IO.Process.output { cmd := "fish", args := #["--no-config", "-c", "status fish-path"] }
-  let recipe := ((← IO.currentDir) / "recipes" / "lzr.fish").toString
+  let importer := ((← IO.currentDir) / ".lake/build/bin/lzr").toString
   let wrongDir := { e with dir := (root / "relative").toString }
   let wrongSymlinkDir := { e with dir := origin.toString }
   let mut f := 0
@@ -276,11 +275,7 @@ private def relativePathChecks (e : Env) : IO Nat := do
     try
       let out ←
         IO.Process.output
-            { cmd := fish.stdout.trimAscii.toString,
-              args :=
-                #["--no-config", "-c", "source $argv[1]; lzr $argv[2..]", "--", recipe,
-                  save.toString],
-              cwd := some origin.toString,
+            { cmd := importer, args := #[save.toString], cwd := some origin.toString,
               env := e.procEnv ++ #[("PATH", some path), ("LINGER_DIR", some state)] }
       f :=
         f +
@@ -291,6 +286,240 @@ private def relativePathChecks (e : Env) : IO Nat := do
       e.killAll #[name]
       wrongDir.killAll #[name]
       wrongSymlinkDir.killAll #[name]
+  -- The physical state path is short even when the invocation spelling is too
+  -- long for a Unix socket. Exercise resolution before either an existing or
+  -- a not-yet-created state directory; the symlink case above must still pass.
+  let physicalRoot ← IO.FS.realPath root
+  let deepOrigin :=
+    physicalRoot / String.ofList (List.replicate 64 'a') / String.ofList (List.replicate 64 'b')
+  IO.FS.createDirAll deepOrigin
+  let physicalPane ← IO.FS.realPath pane
+  for preexisting in [true, false] do
+    let stateName := if preexisting then "len-e" else "len-m"
+    let state := physicalRoot / stateName
+    if preexisting then
+      IO.FS.createDirAll state
+    let present ← state.pathExists
+    let owned := { e with dir := state.toString }
+    let name := "long-w1-p0"
+    let save := physicalRoot / s!"{stateName}-save"
+    IO.FS.writeFile save (paneLine "long" "1" "0" physicalPane.toString "")
+    try
+      let out ←
+        IO.Process.output
+            { cmd := importer, args := #[save.toString], cwd := some deepOrigin,
+              env :=
+                e.procEnv ++
+                  #[("PATH", some s!"{binDir}:/usr/bin:/bin"),
+                    ("LINGER_DIR", some s!"../../{stateName}")] }
+      f :=
+        f +
+          (←
+            expect
+                (present == preexisting && out.exitCode == 0 &&
+                  (← owned.info name "start_dir") == some physicalPane.toString)
+                s!"lzr resolves a long relative state path before spawning (already exists: {preexisting})")
+    finally
+      owned.killAll #[name]
+  return f
+
+private def importBoundaryChecks (e : Env) (home data : String) : IO Nat := do
+  let root := System.FilePath.mk e.dir / "import-boundary"
+  IO.FS.createDirAll root
+  let save := root / "save"
+  let callsFile := root / "calls"
+  let executable := root / "linger"
+  IO.FS.writeFile executable
+      r#"#!/bin/sh
+printf 'CALL\000linger\000' >> "$LZR_CALLS"
+printf '%s\000' "$@" >> "$LZR_CALLS"
+printf '\n' >> "$LZR_CALLS"
+if [ "$1" = ls ]; then
+    printf '%s' "$LZR_LISTING"
+    exit "$LZR_LIST_RC"
+fi
+if [ "$LZR_FAIL" = create ] && [ "$3" = true ]; then exit 7; fi
+if [ "$LZR_FAIL" = restore ] && [ "$3" != true ]; then exit 9; fi
+exit 0
+"#
+  Linger.Posix.chmod executable.toString 0o700
+  let command := "tail -n 1 'a b' | tee -a 'c d'"
+  let panes :=
+    paneLine "live" "1" "0" home command ++ paneLine "resume" "1" "0" home command ++
+      paneLine "first" "2" "0" home command ++
+      paneLine "second" "2" "1" home ""
+  let listing := "name\tlive-w1-p0\nstate\tlive\n\nname\tresume-w1-p0\nstate\tresumable\n\n"
+  let invoke := fun (text failure listRc : String) (args : Array String) => do
+    IO.FS.writeFile save text
+    IO.FS.writeFile callsFile ""
+    let (rc, _, err) ←
+      runLzr e home data args
+          #[("PATH", some root.toString), ("LZR_CALLS", some callsFile.toString),
+            ("LZR_LISTING", some listing), ("LZR_LIST_RC", some listRc), ("LZR_FAIL", some failure)]
+    return (rc, err, ← IO.FS.readFile callsFile)
+  let args := #["--restore-processes", save.toString]
+  let listCall := call ["linger", "ls", "--porcelain"]
+  let createCall := call ["linger", "run", "first-w2-p0", "true"]
+  let restoreCall := call ["linger", "run", "first-w2-p0", command]
+  let (rc, _, calls) ← invoke panes "" "0" args
+  let mut f ←
+    expect
+        (rc == 0 &&
+          calls ==
+            listCall ++ createCall ++ restoreCall ++ call ["linger", "run", "second-w2-p1", "true"])
+        "lzr skips every existing identity and sends an unchanged saved command as one argument"
+  let (rc, err, calls) ← invoke panes "" "7" args
+  f :=
+    f +
+      (←
+        expect (rc == 1 && has err "could not list" && calls == listCall)
+            "lzr rejects a failed listing even when it contains existing names")
+  let (rc, err, calls) ← invoke panes "create" "0" args
+  f :=
+    f +
+      (←
+        expect (rc == 1 && has err "could not create" && calls == listCall ++ createCall)
+            "lzr stops on the first creation failure before restoring or creating another pane")
+  let (rc, err, calls) ← invoke panes "restore" "0" args
+  f :=
+    f +
+      (←
+        expect
+            (rc == 1 && has err "could not restore" &&
+              calls == listCall ++ createCall ++ restoreCall)
+            "lzr stops on the first command failure before creating another pane")
+  let mut preflightOk := true
+  let valid := paneLine "valid" "3" "0" home ""
+  for invalid in
+    ["pane\tshort\n", valid, paneLine "nul" "1" "0" home "tail\x00 -f log",
+      paneLine "nul" "1" "0" (home ++ "\x00ignored") ""] do
+    let (rc, _, calls) ← invoke (valid ++ invalid) "" "0" args
+    preflightOk := preflightOk && rc == 1 && calls.isEmpty
+  f :=
+    f +
+      (←
+        expect preflightOk
+            "lzr rejects malformed, duplicate and NUL-bearing saves before invoking linger")
+  let (rc, _, calls) ← invoke panes "" "0" #[save.toString, "extra"]
+  f :=
+    f + (← expect (rc == 2 && calls.isEmpty) "lzr rejects extra arguments before invoking linger")
+  return f
+
+private def importEnvironmentChecks (e : Env) (home data : String) : IO Nat := do
+  let root := System.FilePath.mk e.dir / "import-env"
+  let bin := root / "bin"
+  let pane := root / "pane"
+  IO.FS.createDirAll bin
+  IO.FS.createDirAll (pane / "inner")
+  let origin ← IO.FS.realPath root
+  let paneDir ← IO.FS.realPath pane
+  discard <|
+      IO.Process.run
+        { cmd := "ln",
+          args := #["-s", (paneDir / "inner").toString, (origin / "saved-link").toString] }
+  let save := origin / "save"
+  let callsFile := origin / "calls"
+  let executable := bin / "linger"
+  IO.FS.writeFile executable
+      r#"#!/bin/sh
+printf 'CALL\000linger\000' >> "$LZR_CALLS"
+printf '%s\000' "$@" >> "$LZR_CALLS"
+printf '\nCALL\000cwd\000%s\000\n' "$(pwd -P)" >> "$LZR_CALLS"
+if [ "$LZR_CHECK_HOME" = 1 ]; then
+    printf 'CALL\000home\000%s\000\n' "${HOME-}" >> "$LZR_CALLS"
+fi
+"#
+  Linger.Posix.chmod executable.toString 0o700
+  let importer := ((← IO.currentDir) / ".lake/build/bin/lzr").toString
+  let env :=
+    e.procEnv ++
+      #[("PATH", some "bin:/usr/bin:/bin"), ("HOME", some home), ("XDG_DATA_HOME", some data),
+        ("LZR_CALLS", some callsFile.toString), ("LZR_CHECK_HOME", some "0")]
+  let listCalls := call ["linger", "ls", "--porcelain"] ++ call ["cwd", origin.toString]
+  -- Parent traversal follows the saved symlink physically, so the pane starts
+  -- in paneDir rather than the lexical parent of saved-link.
+  IO.FS.writeFile save (paneLine "lookup" "1" "0" "saved-link/.." "")
+  let mut f := 0
+  for impostor in [false, true] do
+    if impostor then
+      IO.FS.writeFile (origin / "linger")
+          "#!/bin/sh\nprintf 'CALL\\000impostor\\000\\n' >> \"$LZR_CALLS\"\n"
+      Linger.Posix.chmod (origin / "linger").toString 0o700
+    let present ← (origin / "linger").pathExists
+    IO.FS.writeFile callsFile ""
+    let out ←
+      IO.Process.output
+          { cmd := "/bin/bash",
+            args :=
+              #["--noprofile", "--norc", "-c",
+                "linger() { printf 'FUNCTION\\n' >> \"$LZR_CALLS\"; }; export -f linger || exit 98; exec \"$@\"",
+                "--", importer, save.toString],
+            cwd := some origin, env }
+    f :=
+      f +
+        (←
+          expect
+              (present == impostor && out.exitCode == 0 &&
+                (← IO.FS.readFile callsFile) ==
+                  listCalls ++ call ["linger", "run", "lookup-w1-p0", "true"] ++
+                    call ["cwd", paneDir.toString])
+              s!"lzr resolves PATH past an exported Bash function (cwd impostor: {impostor})")
+  IO.FS.removeFile (origin / "linger")
+  -- Fish supplies the account-home baseline without reading any save. Explicit
+  -- SAVE and the recorder keep these checks from touching the user's files.
+  let fallback ←
+    IO.Process.output
+        { cmd := "fish", args := #["--no-config", "-c", "printf '%s' \"$HOME\""],
+          env :=
+            e.procEnv ++
+              #[("HOME", none), ("XDG_CONFIG_HOME", some (origin / "config").toString),
+                ("XDG_DATA_HOME", some data)] }
+  unless fallback.exitCode == 0 && !fallback.stdout.isEmpty do
+    throw (IO.userError "could not obtain fish's account-home baseline")
+  let accountHome ← IO.FS.realPath fallback.stdout
+  let command := "tail -n 1 'home probe'"
+  IO.FS.writeFile save (paneLine "fallback" "1" "0" "~" command)
+  for (label, value) in [("unset", none), ("empty", some "")] do
+    IO.FS.writeFile callsFile ""
+    let out ←
+      IO.Process.output
+          { cmd := importer, args := #["--restore-processes", save.toString], cwd := some origin,
+            env := env ++ #[("HOME", value), ("LZR_CHECK_HOME", some "1")] }
+    let lines := (← IO.FS.readFile callsFile).splitOn "\n"
+    let homes :=
+      lines.filterMap fun line =>
+        match line.splitOn "\x00" with
+        | ["CALL", "home", value, ""] => some value
+        | _ => none
+    let homeOk ←
+      match homes with
+      | [listed, created, restored] =>
+        if
+            listed.isEmpty || listed != created || listed != restored ||
+              !(System.FilePath.mk listed).isAbsolute then
+          pure false
+        else
+          try
+            pure ((← IO.FS.realPath listed) == accountHome)
+          catch _ =>
+            pure false
+      | _ =>
+        pure false
+    let calls :=
+      String.join
+        ((lines.filter fun line => !line.isEmpty && !line.startsWith "CALL\x00home\x00").map
+          (· ++ "\n"))
+    f :=
+      f +
+        (←
+          expect
+              (out.exitCode == 0 && homeOk &&
+                calls ==
+                  listCalls ++ call ["linger", "run", "fallback-w1-p0", "true"] ++
+                    call ["cwd", accountHome.toString] ++
+                    call ["linger", "run", "fallback-w1-p0", command] ++
+                    call ["cwd", origin.toString])
+              s!"lzr uses account home for saved tilde and every child (HOME {label})")
   return f
 
 def run : IO UInt32 := do
@@ -301,6 +530,8 @@ def run : IO UInt32 := do
   IO.FS.createDirAll home
   IO.FS.createDirAll data
   let mut f ← helperChecks
+  f := f + (← importBoundaryChecks e home.toString data.toString)
+  f := f + (← importEnvironmentChecks e home.toString data.toString)
   f := f + (← relativePathChecks e)
   -- Default path, escaped cwd, and no-command default.
   let defaultDir := root / "work space"

@@ -74,15 +74,16 @@ for p in Linger/Core Linger/Core/Vt.lean Linger/Core/Checkpoint.lean \
          Linger/Core/Session.lean Linger/Core/Replay.lean \
          Linger/Runtime Linger/Runtime/Client.lean Linger/Runtime/Daemon.lean \
          Theorems Theorems/Session.lean Theorems/Replay.lean Tests E2E \
+         Tools/Resurrect.lean Theorems/Resurrect.lean Lzr.lean \
          LingerTest.lean c/shim.c lakefile.lean lake-manifest.json README.md; do
   [ -e "$p" ] || fail "$p is gone — a gate below would pass by matching nothing"
 done
 
-! code_grep 'sorry' 'Linger/Core/*' 'Theorems/*' || fail "sorry found"
-! code_grep 'sorryAx' 'Linger/Core/*' 'Theorems/*' || fail "sorryAx found"
-! code_grep '(^|[^[:alnum:]_])partial def([^[:alnum:]_]|$)' 'Linger/Core/*' \
+! code_grep 'sorry' 'Linger/Core/*' 'Tools/Resurrect.lean' 'Theorems/*' || fail "sorry found"
+! code_grep 'sorryAx' 'Linger/Core/*' 'Tools/Resurrect.lean' 'Theorems/*' || fail "sorryAx found"
+! code_grep '(^|[^[:alnum:]_])partial def([^[:alnum:]_]|$)' 'Linger/Core/*' 'Tools/Resurrect.lean' \
   || fail "partial def in pure core"
-! code_grep ': *IO ' 'Linger/Core/*' || fail "IO in pure core"
+! code_grep ': *IO ' 'Linger/Core/*' 'Tools/Resurrect.lean' || fail "IO in pure core"
 # Proofs must reduce in the kernel, never by compiled evaluation: a
 # `native_decide` in Theorems/ would trust the compiler + `Decidable`
 # instance instead of the kernel, and (unlike the tests, where evaluating
@@ -91,7 +92,7 @@ done
 ! code_grep '(^|[^[:alnum:]_])native_decide([^[:alnum:]_]|$)' 'Theorems/*' \
   || fail "native_decide in a proof (Theorems/)"
 # the OS surface stays where AGENTS.md says it is
-[ "$(code_grep '@[[]extern' 'Linger/*' | awk -F: '!seen[$1]++ { print $1 }' | tr -d ' ')" = "Linger/Posix.lean" ] \
+[ "$(code_grep '@[[]extern' '*.lean' | awk -F: '!seen[$1]++ { print $1 }' | tr -d ' ')" = "Linger/Posix.lean" ] \
   || fail "extern declarations outside Linger/Posix.lean"
 # `unsafe` and `@[implemented_by]` — the Lean-side twin of the `@[extern` gate just
 # above, and the only route that makes the theorems false OF THE SHIPPED BINARY rather
@@ -246,23 +247,58 @@ awk '
 # two `import all Linger.Core.Vt` are the seal's friend imports (Step 1) and are
 # inside the boundary by construction. Because Vt is a leaf, an exact check on
 # these three files IS the closure.
-toolkit_import_re='^(public |private |meta )*import '
-toolkit_closure() {
-  # Anchored at column 0 AND read through `code_grep`, so neither a `--` comment,
-  # nor an inline `import all` inside backticks, nor a docstring line that happens
-  # to begin with the word counts. ';'-joined to keep the diagnostic one line.
-  tk_got="$(code_grep "$toolkit_import_re" "$1" | sed 's/^[^:]*:[0-9]*://' | tr '\n' ';')"
+import_re='^[[:space:]]*((public|private|meta)[[:space:]]+)*import[[:space:]]+'
+import_closure() {
+  # Read through `code_grep`: a backticked quotation cannot satisfy the gate.
+  # Include leading whitespace, because an indented import still compiles.
+  # ';'-joined to keep the diagnostic one line.
+  tk_got="$(code_grep "$import_re" "$1" | sed 's/^[^:]*:[0-9]*://' | tr '\n' ';')"
   [ "$tk_got" = "$2" ] || { \
     printf '  %s import lines:\n' "$1" >&2; \
-    { code_grep "$toolkit_import_re" "$1" >&2 || printf '    (none)\n' >&2; }; \
+    { code_grep "$import_re" "$1" >&2 || printf '    (none)\n' >&2; }; \
     printf '  want: %s\n   got: %s\n' "${2:-(no imports)}" "${tk_got:-(no imports)}" >&2; \
-    fail "$1 left the vt-toolkit import closure (lakefile.lean's lean_lib LingerVt)"; }
+    fail "$1 left its declared import closure — review the library boundary"; }
 }
-toolkit_closure Linger/Core/Vt.lean ''
-toolkit_closure Linger/Core/Render.lean \
+import_closure Linger/Core/Vt.lean ''
+import_closure Linger/Core/Render.lean \
   'public import Linger.Core.Vt;import all Linger.Core.Vt;'
-toolkit_closure Linger/Core/Terminal.lean \
+import_closure Linger/Core/Terminal.lean \
   'public import Linger.Core.Render;import all Linger.Core.Vt;'
+
+# The optional importer reaches only the pure name/listing modules and Lean's
+# standard IO. Its policy never enters the session program, even through an
+# intermediate project module: every import in the program must stay in Linger
+# or use the one standard-library dependency already owned by Posix.
+import_closure Tools/Resurrect.lean 'public import Linger.Core.Name;'
+import_closure Linger/Core/Name.lean ''
+import_closure Linger/Core/Remote.lean 'public import Linger.Core.Name;'
+import_closure Lzr.lean 'public import Tools.Resurrect;public import Linger.Core.Remote;'
+code_grep "$import_re" 'Linger/*' Linger.lean Main.lean \
+| awk -F: '
+  { mod = $3
+    sub(/^[[:space:]]*((public|private|meta)[[:space:]]+)*import[[:space:]]+(all[[:space:]]+)?/, "", mod)
+    sub(/[[:space:]]+--.*/, "", mod); sub(/[[:space:]]+$/, "", mod)
+    if (mod !~ /^(Linger([.][[:alnum:]_]+)*|Std[.]Async[.]System)$/) {
+      print "  " $0; bad = 1
+    }
+  }
+  END { exit bad }' >&2 || fail "the session program imports outside its declared closure"
+
+# The proof covers the returned parser/plan values. These call-site gates make
+# bypassing them a reviewable change; IO tests check preflight/failure ordering
+# and actual argv. As with the runtime ties below, this is not an IO theorem.
+for claim in parseSave_valid plan_command_policy plan_sequential_idempotent; do
+  code_grep "^theorem $claim " Theorems/Resurrect.lean >/dev/null \
+    || fail "importer contract disappeared: $claim"
+done
+code_grep '^[[:space:]]+let panes ← IO[.]ofExcept [(]parseSave home [(]← IO[.]FS[.]readFile save[)][)]$' Lzr.lean >/dev/null \
+  || fail "lzr no longer consumes the proved whole-save parser"
+code_grep '^[[:space:]]+for action in plan restore existing panes do$' Lzr.lean >/dev/null \
+  || fail "lzr no longer iterates the proved import plan"
+code_grep '^[[:space:]]+if let some command := action[.]command then$' Lzr.lean >/dev/null \
+  || fail "lzr no longer uses the plan command choice"
+code_grep 'args := #[[]"run", action[.]pane[.]name, command[]]' Lzr.lean >/dev/null \
+  || fail "lzr no longer forwards the original planned command as one argument"
 
 # The `Vt` friend set — who may forge a `Vt` (SCRATCHPAD.md, "the adversarial audit of
 # the seal", finding R1). `import all M` grants M's OWN all-access set, including

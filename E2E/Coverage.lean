@@ -7,7 +7,7 @@ public section
 
 /-! # E2E.Coverage — coverage of code by claims
 
-`Theorems.Coverage` makes the build fail unless every explicit pure-core `def`
+`Theorems.Coverage` makes the build fail unless every inventoried pure `def`
 occurs as its exact fully qualified constant in a theorem type. This runtime half
 discovers renderer and replay definitions referenced outside their own module
 by runtime-reachable code, and requires an explicit backing entry below. It uses
@@ -69,8 +69,8 @@ def runtimeEmitters (defs : Array Lean.Name) : IO (Array String) := do
 
 public def run : IO UInt32 := do
   let mut fails : Array String := #[]
-  let defs ← coreDefNames
-  IO.println s!"pure-core semantic coverage: {defs.size} explicit definitions, all in theorem types"
+  let defs ← pureDefNames
+  IO.println s!"pure semantic coverage: {defs.size} explicit definitions, all in theorem types"
   let found ← runtimeEmitters defs
   IO.println s!"runtime renderer/replay operations: {String.intercalate " " found.toList}"
   for name in found do

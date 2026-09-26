@@ -9,4 +9,5 @@ import Tests.Delivery
 import Tests.Remote
 import Tests.Listing
 import Tests.Checkpoint
+import Tests.Resurrect
 import Tests.Fuzz

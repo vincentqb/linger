@@ -14,14 +14,15 @@ import all Theorems.Render
 import all Theorems.Replay
 import all Theorems.Resume
 import all Theorems.Status
+import all Theorems.Resurrect
 public meta import Lean.Elab.Command
 
 /-! # Semantic coverage gate
 
-Every explicit `def` under `Linger/Core` must occur as its exact environment
-constant in a theorem type from `Theorems`. This module is under the sanctioned
-friend region so it can resolve private definitions and theorem declarations
-without granting that access to E2E or runtime code. -/
+Every explicit `def` under `Linger/Core` or in `Tools.Resurrect` must occur as
+its exact environment constant in a theorem type from `Theorems`. This module
+is under the sanctioned friend region so it can resolve private definitions and
+theorem declarations without granting that access to E2E or runtime code. -/
 
 namespace Theorems.Coverage
 
@@ -78,13 +79,14 @@ public def declToken (afterKeyword : String) : String :=
 public def declName (afterKeyword : String) : String :=
   (declToken afterKeyword |>.splitOn ".").getLast!
 
-/-- Logical fully qualified names of explicit pure-core definitions.
+/-- Logical fully qualified names of explicit pure definitions.
 
-Every current core file has one top-level namespace. A layout change makes names
+Every inventoried file has one top-level namespace. A layout change makes names
 fail to resolve below, so the census fails closed. -/
-public def coreDefNames : IO (Array Lean.Name) := do
+public def pureDefNames : IO (Array Lean.Name) := do
   let mut names : Array Lean.Name := #[]
-  for f in ← leanFiles (System.FilePath.mk "Linger/Core") do
+  let files := (← leanFiles (System.FilePath.mk "Linger/Core")).push "Tools/Resurrect.lean"
+  for f in files do
     let src := stripComments (← IO.FS.readFile f)
     let some nsLine := src.splitOn "\n" |>.find? (·.startsWith "namespace ")
       | throw (IO.userError s!"{f}: no top-level namespace")
@@ -103,14 +105,15 @@ meta def moduleUnder (env : Environment) (root decl : Lean.Name) : Bool :=
   | none => false
   | some idx => root.isPrefixOf env.header.moduleNames[idx.toNat]!
 
-meta def coreCandidates (env : Environment) (logical : Lean.Name) : Array Lean.Name :=
+meta def pureCandidates (env : Environment) (logical : Lean.Name) : Array Lean.Name :=
   match env.find? logical with
   | some ci => if ci.isTheorem then #[] else #[logical]
   | none =>
     env.constants.toList.filterMap
         (fun (n, ci) =>
           if
-              !ci.isTheorem && moduleUnder env `Linger.Core n &&
+              !ci.isTheorem &&
+                (moduleUnder env `Linger.Core n || moduleUnder env `Tools.Resurrect n) &&
                 n.toString.endsWith logical.toString then
             some n
           else none) |>.toArray
@@ -125,7 +128,7 @@ meta def exprConsts (acc : NameHashSet) : Expr → NameHashSet
   | .proj _ _ body => exprConsts acc body
 
 run_cmd
-  let logical ← liftIO coreDefNames
+  let logical ← liftIO pureDefNames
   let env ← getEnv
   let theoremConsts :=
     env.constants.toList.foldl
@@ -134,13 +137,13 @@ run_cmd
       NameHashSet.empty
   let mut resolved : Array (Lean.Name × Lean.Name) := #[]
   for n in logical do
-    let candidates := coreCandidates env n
+    let candidates := pureCandidates env n
     unless candidates.size == 1 do
       throwError m!"coverage: `{n}` resolved to {candidates.size} constants: {candidates}"
     resolved := resolved.push (n, candidates[0]!)
   let unclaimed := resolved.filter fun (_, actual) => !theoremConsts.contains actual
   unless unclaimed.isEmpty do
-    throwError m!"coverage: pure-core definitions absent from every theorem type: \
+    throwError m!"coverage: pure definitions absent from every theorem type: \
       {unclaimed.map (·.1)}"
 
 end Theorems.Coverage

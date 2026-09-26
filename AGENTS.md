@@ -15,11 +15,12 @@ worklog), `specs/archive/` (closed build records), the comments in
 
 ## Where things stand — read this first after any compaction
 
-1. `specs/recipe-boundaries.md` is in flight: consolidate the pickers and
-   migrate the foreign-save importer to an optional Lean executable with
-   a proved pure plan. The predecessor is `specs/archive/ghostty-recipe.md`.
-   Keep one live spec; every behavioral fix starts with a failing check
-   and every deletion survives the full verifier stack.
+1. No spec is in flight. The last one closed on 2026-09-26
+   (`specs/archive/recipe-boundaries.md`: picker consolidation and a proved
+   standalone importer; local full verification green, hosted checks pending).
+   New work opens a new `specs/<slug>.md`, names itself here, and keeps
+   the live count at one; every behavioral fix starts with a failing
+   check and every deletion survives the full verifier stack.
 2. `SCRATCHPAD.md` — append-only worklog: proof recipes, measurements,
    break-verify records, negative results. Read before writing; append
    after; never delete prior entries.
@@ -90,8 +91,8 @@ deliberately no pre-push hook.
 
 ## Rules
 
-- `Linger/Core/*` is pure: no `IO`, no `partial def`, no `sorry`.
-  Effects are data; the runtime executes them.
+- `Linger/Core/*` and `Tools/Resurrect.lean` are pure: no `IO`,
+  no `partial def`, no `sorry`. Effects are data; IO executes them.
 - Only `Linger/Posix.lean` and `c/shim.c` reach the OS *raw*: every
   `@[extern]` lives in `Linger/Posix.lean` (gated), and the runtime
   otherwise goes through Lean core's `IO`. Keep the shim logic-free
@@ -109,11 +110,11 @@ deliberately no pre-push hook.
   order-robust proof scripts.
 - A theorem or test that cannot fail is worthless: break the code once
   to see it catch, and record the break in SCRATCHPAD.md.
-- Every `Linger/Core` `def` lands with a theorem type containing that
-  exact fully qualified constant, in the same commit
+- Every `Linger/Core` or `Tools/Resurrect.lean` `def` lands with a
+  theorem type containing that exact fully qualified constant, in the same commit
   (`Theorems/Coverage.lean`).
-- A proved pure value the runtime consumes needs a grep gate to bite:
-  `Linger/Runtime/*` is `IO` and no theorem can see a call site —
+- A proved pure value consumed by runtime or tool IO needs a grep gate to bite:
+  `Linger/Runtime/*` and `Lzr.lean` use `IO` and no theorem can see a call site —
   re-measured against v4.34's Hoare framework (no `WP IO` instance
   exists; probes in SCRATCHPAD.md). Same for guards no test can observe.
 - A `maxHeartbeats` or `maxRecDepth` raise is a measurement and it
@@ -135,6 +136,9 @@ deliberately no pre-push hook.
 - Program logic, proofs and automated test suites are Lean. Optional
   user-editable recipes deliberately use fish and native configuration
   (`recipes/README.md`); keep their composition policy outside `Linger/`.
+  The optional `lzr` executable owns foreign-save import in `Lzr.lean` and
+  `Tools/Resurrect.lean`, with the same theorem census and IO call-site gates.
+  Its import closure stays outside the session program and VT toolkit.
   The C shim, build wrapper, configuration hooks and verifier scripts are
   deliberate non-Lean boundaries. No Python, ever.
   `tests/e2e.sh`, `tests/gates.sh` and `tests/ci-runners.sh` stay shell.

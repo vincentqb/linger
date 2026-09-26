@@ -4,7 +4,7 @@
 #
 #   1. clean build of program + proofs + unit tests, zero warnings
 #   2. no `sorry` / `partial` in the pure core or the proofs
-#  2b. coverage: every fully qualified pure-core definition occurs in a theorem
+#  2b. coverage: every inventoried pure definition occurs in a theorem
 #      type, and every runtime-emitted byte stream is classified
 #   3. posix shim smoke tests (lingertest)
 #   4. attach/detach/reattach/mirror/wait e2e (real ptys)
@@ -17,7 +17,7 @@
 #  11. status column: attach marks seen, output while away marks unread
 #  12. agent verbs (info geometry/outseq, capture, send - , resize)
 #  13. watch: the read-only mirror (geometry, keyboard, hand-back, marks seen)
-#  14. recipes: helper status/argv checks; tmux-resurrect import against daemons
+#  14. recipes: fish status/argv checks; standalone Lean importer against daemons
 #  15. delivery: bounded replay, margin continuation, byte order and close deadlines
 #  (1) also covers Tests/Fuzz.lean: randomized §Replay round-trip search
 #  every pty suite also carries an EXACT CHECK COUNT (see `suite` below): green
@@ -92,9 +92,9 @@ suite() {                                   # suite <name> <exact checks>
   printf '  %s: %s checks\n' "$1" "$n"
 }
 
-say "1. build (program + theorems + tests)"
+say "1. build (program + optional importer + theorems + tests)"
 [ ! -e .lake/build ] || rm -r .lake/build
-./lake build Linger Theorems Tests linger lingertest e2e > /tmp/linger-build.log 2>&1 \
+./lake build Linger Theorems Tests linger lzr lingertest e2e > /tmp/linger-build.log 2>&1 \
   || { tail -30 /tmp/linger-build.log; fail "build"; }
 if grep -qE '^(warning|error)' /tmp/linger-build.log; then
   grep -E '^(warning|error)' /tmp/linger-build.log
@@ -248,7 +248,7 @@ say "13. watch (read-only mirror: geometry, keyboard, hand-back, seen)"
 suite watch 18
 
 say "14. recipes (fish helpers and tmux-resurrect import)"
-suite recipes 41
+suite recipes 53
 
 say "15. delivery (large replay, ordering, exit tails and retired transports)"
 suite delivery 34

@@ -26,6 +26,7 @@ Lean 4.34.1 via elan; no external Lean dependencies.
                                  #   graphics terminal status agent watch recipes delivery
 ./lake exe e2e coverage          # semantic coverage + renderer/replay classification
 ./lake exe e2e ci                # which runners CI asks for (tests/ci-runners.sh)
+./lake build lzr                 # optional importer; needed by the recipes suite
 sh tests/gates.sh                # the fast source-tree gates (seconds)
 ./tests/e2e.sh                   # everything, in order (minutes)
 ```
@@ -43,7 +44,9 @@ separately and build it with the project toolchain.
 | | |
 |---|---|
 | `Linger/Core/` | pure: no `IO`, no `partial def`, no `sorry`. Effects are data. |
-| `Linger/Runtime/`, `Linger/Posix.lean`, `c/shim.c` | the only code that touches the OS |
+| `Linger/Runtime/` | executes the session core's effects through Lean IO and Posix |
+| `Linger/Posix.lean`, `c/shim.c` | raw OS bindings, kept behind one interface |
+| `Tools/Resurrect.lean`, `Lzr.lean` | optional save importer: pure parser/plan and a Lean IO entry point |
 | `Theorems/` | the proofs — what `THEOREMS.md` narrates |
 | `Tests/` | Lean fixtures, checked at elaboration time |
 | `E2E/` | the pty suites, `IO`, run against the real binary |
@@ -113,6 +116,8 @@ is a settled non-goal (AGENTS.md).
 fish recipes in [`recipes/`](recipes/) do the composing — see
 `recipes/README.md`. Transport is yours: `attach name@host` execs ssh,
 and any carrier that can run a remote command with a tty works.
+The optional `lzr` Lean executable imports tmux-resurrect saves; its parser
+and plan stay outside the session and VT libraries.
 
 ## Notes
 

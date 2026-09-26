@@ -42,6 +42,12 @@ honest. The half that BITES is therefore the import grep in `tests/gates.sh`,
 and this target is what that grep is a gate on. -/
 lean_lib LingerVt where roots := #[`Linger.Core.Vt, `Linger.Core.Render, `Linger.Core.Terminal]
 
+/-- Optional pure import policy, outside the session and VT libraries. -/
+lean_lib Tools where roots := #[`Tools.Resurrect]
+
+/-- Standalone save importer. Build explicitly with `./lake build lzr`. -/
+lean_exe lzr where root := `Lzr
+
 /-- The C shim — the program's native OS boundary (see AGENTS.md).
 Compiled with clang (the ./lake wrapper puts Homebrew clang on PATH;
 the toolchain's bundled one cannot run on this host's glibc 2.26). -/

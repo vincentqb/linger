@@ -1,8 +1,8 @@
 # Smaller recipes and a proved import plan
 
-Status: in progress
+Status: complete — local Linux verifier green; hosted checks pending
 Updated: 2026-09-26
-Next: Step 2 — type and prove the standalone importer
+Next: none
 Predecessor: `specs/archive/ghostty-recipe.md`
 
 ## Goal
@@ -36,9 +36,12 @@ Sequential idempotence does not imply an atomic create-only operation or safe
 concurrent imports: `linger run` remains an upsert.
 
 Preserve the save-path defaults, directory decoding, command text, skipped
-live/resumable names, and fail-before-creation preflight. Freeze relative state
-paths and the executable in the invocation directory without collapsing
-symlink/parent components. Reject NUL before strings cross a POSIX boundary.
+live/resumable names, and fail-before-creation preflight. Resolve the executable
+and relative state paths from the invocation directory, following symlinks
+before parent components and retaining a missing state-directory suffix.
+Saved directory paths use physical OS traversal. Use one effective home for
+save defaults, tilde expansion and child environments, including the account
+home when HOME is absent or empty. Reject NUL before strings cross a POSIX boundary.
 
 ## Steps
 
@@ -52,11 +55,20 @@ verifier passes, including the existing importer and all other live suites.
 
 ### Step 2 — type and prove the importer
 
-Pending. Add the pure parser/planner, theorem and unit-test modules, optional
-`lzr` executable, and direct executable checks against real daemons. Delete the
-fish importer only after equivalent behavior passes. Extend semantic coverage
-and source gates to the new pure module and executor. Document the per-decision
-proof/test boundary and finish with a full verified checkpoint.
+Complete. The optional `lzr`
+executable consumes the pure parser and plan. All seven pure definitions have
+substantive theorem coverage; six compiled implementation mutations fail both
+proofs and fixtures. Nine compiled call-site or boundary mutations fail source
+gates, and an unclaimed pure definition fails the theorem census.
+
+The executable passes the existing importer behavior checks, including the new
+NUL preflight rejection that fails against the fish predecessor. The fish
+importer is removed. An independent IO review found exported-function lookup,
+missing-home and long-relative-state-path regressions in the initial Lean draft.
+The fixes pass all comparison probes. Six permanent Lean regressions fail on
+the initial draft and pass on the final executable. The complete foreground
+verifier passes with the final recipe assertion roster, followed by both
+required warm builds.
 
 ## Verification
 
@@ -71,3 +83,25 @@ Workers use separate worktrees with disjoint file ownership. Integrate their
 reviewed changes into main and push ordinary commits; do not rewrite history.
 Append verification and completion evidence to SCRATCHPAD.md and archive this
 spec when the approved changes are complete.
+
+## Completion
+
+Both approved steps are implemented and verified on Linux with Lean v4.34.1.
+There are four fish helpers and two native configuration examples. The optional
+importer is built separately; it adds no C, raw OS bindings, Lean dependencies
+or changes to the session program or VT toolkit.
+
+The new pure module has seven definitions, sixteen authored proofs and twenty
+unit fixtures. Six compiled policy mutations fail both proofs and fixtures;
+nine compiled executor or import-boundary mutations fail the source gates.
+A compiled unclaimed definition also fails the expanded theorem census.
+The final verifier includes the clean build, generated C ABI, purity and
+boundary gates, formatter, theorem census, CI runner checks, fuzz corpus, POSIX
+smoke tests, all twelve live suites and the unrelated-session sentinel.
+
+Receipts are retained in `/tmp/linger-recipe-boundaries-20260926/`, particularly
+`importer-full-verifier.log`, `importer-clean-build.log`, `step2-build.log` and
+`step2-proofs-tests.log`. Detailed mutation and review receipts are recorded in
+SCRATCHPAD.md. Workers were reviewed, integrated and closed before this
+checkpoint. Hosted platform checks remain pending at closure; no macOS or
+live Ghostty GUI result is claimed.

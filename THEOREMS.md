@@ -39,7 +39,7 @@ recipes, break records, measurements, the audits — lives in
 | §Renderable | the painter expresses fewer grids than the emulator reaches | the emulator never stores a shape a repaint cannot reproduce (`renderable_step`/`renderable_feed`/`renderable_resize`/`renderable_quiesce`, from `renderable_init`); `LiveReachableVt` is the least predicate closed under those and containing every screen the decoder's door accepts (`LiveReachableVt.ofDecoded` — a `Good` premise is provably unsound, counterexample in SCRATCHPAD.md); the decoder establishes it from disk too (`Vt.ofDecoded_renderable`, `Checkpoint.load_renderable`); lifted to the daemon by `Session.run_vt_renderable` and `run_resume_vt_shape` | Linger/Core/Vt.lean, Theorems/Vt.lean |
 | §Status | one glyph per listing row vs seven conditions | the seven states partition the observation space: `cover`, `disjoint`, `classify_sound` + `classify_unique`, `reachable`, `icon_injective` / `name_injective`, `name_clean` | Theorems/Status.lean |
 | §Resume | the product's own promise: crash, reboot, reattach | §Restore ∘ §Replay, stated twice — over `save`'s input and over `load`'s output (`resume_grid_of_load`, `resume_tabs_of_load`, `resume_sb_of_load`: any byte string that loads, no other hypothesis) — and lifted to the daemon over its own `vt0` (`Session.run_resume_vt_shape`, `run_resume_load_save`) | Theorems/Resume.lean, Theorems/Session.lean |
-| §Import (in progress) | foreign save records vs distinct session identities and deliberate command execution | successful parsing must establish nonempty, canonical, distinct names and NUL-free directory/command fields; the plan must skip existing identities and send only unchanged, explicitly enabled, eligible saved commands; adding planned names to the snapshot must make a sequential rerun empty | `specs/recipe-boundaries.md`, Step 2 |
+| §Import | foreign save records vs distinct session identities and deliberate command execution | successful parsing gives a nonempty list with canonical, distinct names and NUL-free directories/commands (`parseSave_valid`); planning preserves records and order, skips existing names and selects only unchanged, explicitly enabled, eligible commands (`mem_plan`, `plan_order`, `plan_command_policy`); adding planned names to the snapshot makes a sequential rerun empty (`plan_sequential_idempotent`) | Theorems/Resurrect.lean, E2E/Recipes.lean |
 
 The CSI collector preserves omitted parameters, saturates numeric parameters
 and rejects overflow at the existing parameter cap. `csiPush_of_lt`,
@@ -155,8 +155,9 @@ positive specifications (`scrollUpIn_rows`, `scrollUpIn_sb_push`,
 Every user-facing README promise maps to a theorem, a named test, a
 stated limitation, or a settled non-goal — never to nothing; a new
 promise (or § / anchor) lands with its mapping. That is a review
-discipline. `Theorems/Coverage.lean` resolves every explicit pure-core
-`def` to its fully qualified environment constant and requires that exact
+discipline. `Theorems/Coverage.lean` resolves every explicit `def` in
+`Linger/Core/` and `Tools/Resurrect.lean` to its fully qualified environment
+constant and requires that exact
 constant in a theorem type; comments, proof bodies, formatting and colliding
 basenames cannot satisfy it. `E2E/Coverage.lean` independently classifies
 renderer and replay definitions referenced outside their own module by
@@ -217,11 +218,29 @@ keepalive setting use the tools' native formats; configuration parsing and
 documented launch syntax support those choices, without claiming a theorem
 about GUI behavior or network recovery time.
 
-§Import is the separate proof obligation for moving the larger importer into
-Lean. A typed pure plan can state properties of the code actually executed.
-Theorems cannot inspect its IO call sites or prove a language-selection
-preference, so source gates and real process checks must connect that plan to
-the standalone executable.
+§Import supports the standalone Lean importer. `parseSave_valid` gives
+nonempty, distinct names that already satisfy `Name.Valid`, plus NUL-free
+decoded directories and full commands. `mem_plan` preserves whole records,
+preventing skipped panes from shifting commands onto another name.
+`plan_names_unique` carries parsing's distinctness through filtering.
+`restoreCommand_eq_some` requires opt-in and the exact first-word allowlist;
+it returns the original command, including its shell syntax. `firstWord_eq_iff`
+specifies the first nonempty ASCII-space-delimited piece, and `mem_allowed`
+pins the eligible words. These are selection guarantees, not a shell-safety claim.
+
+`plan_sequential_idempotent` says a later snapshot containing the old names and
+all planned names produces no actions, even if restore opt-in changes. It does
+not prove atomic name claiming, concurrent imports or successful IO.
+`Lzr.lean` preflights every saved directory and obtains a successful listing
+before executing the plan. Source gates pin its parser, plan and unchanged
+command call sites; `E2E.Recipes` checks their actual argv, failure ordering,
+executable lookup, home fallback, relative paths, and reruns against real daemons.
+
+The source gates also keep the optional tool's imports confined to its pure
+policy and the core name/listing modules, and keep it out of the session program
+and VT toolkit. Theorems cannot inspect IO call sites or prove a preference for
+a source language; each decision is supported by its semantic contract and the
+checks at the boundary where that contract is used.
 
 ## Concurrency
 

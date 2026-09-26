@@ -12409,3 +12409,88 @@ Fish syntax and diff whitespace also pass. Step 2 remains open in its isolated
 worktree; no runtime, pure-core or C implementation changed in this checkpoint.
 Both required warm builds pass in the same receipt directory as
 `step1-build.log` and `step1-proofs-tests.log`.
+
+## Step 2 notes — 2026-09-26
+
+Step 1 is committed on main as `1a22cea`. Completed the optional standalone
+Lean importer in `Lzr.lean` and `Tools/Resurrect.lean`, replacing `recipes/lzr.fish`.
+The default session executable does not acquire the foreign format. Source
+gates keep the tool outside the session program and VT toolkit and constrain
+its imports to the pure policy, canonical names and listing parser. No C
+wrapper, raw OS binding, external Lean dependency or proof-limit raise is added.
+Recipe installation instructions remove the old autoload function before
+installing the separate executable. Four fish helpers and the native Ghostty
+and SSH configuration examples remain.
+
+The pure worker used `/tmp/linger-recipe-import-plan-20260926`. Its reviewed
+three-file patch adds typed pane records, whole-save parsing and a pure import
+plan, with seven definitions, sixteen authored proofs and twenty unit fixtures.
+Successful parsing produces a nonempty collection of canonical, distinct
+session names and NUL-free decoded directories and commands. Planning preserves
+whole records and their order, excludes existing identities, and selects an
+unchanged command only after explicit opt-in and first-word eligibility.
+The exact allowlist and ASCII-space first-word operation have their own proofs.
+A sequential rerun with all planned names in the next listing has no actions,
+even if command opt-in changes. This does not prove atomic name claiming,
+concurrent imports, shell safety or IO success.
+
+The worker deliberately changed accepted-name validation, duplicate projection,
+existing-name exclusion, command opt-in, command eligibility and NUL validation.
+All six mutants compile, then fail both the relevant proof and unit fixtures;
+restored sources compile and match their recorded hashes. Receipts are under
+`/tmp/linger-resurrect-receipts-20260926/`, including
+`mutations/summary.tsv` and `final/status.tsv`. The parent also compiled nine
+mutations that bypassed the parser, plan, command choice or unchanged argument,
+violated either import closure, introduced an indented session-program import,
+put IO in the pure tool, or added a raw executor binding. Each was rejected by
+the source gates; the restored gate passes. A compiled unclaimed tool definition
+fails the theorem census, and the restored theorem build passes. Those receipts
+are `gate-mutations/` and `census-mutation/` under
+`/tmp/linger-recipe-boundaries-20260926/`.
+
+The fish predecessor fails the new NUL preflight check, demonstrating that it
+could create a session before discovering an unrepresentable command. The Lean
+executor validates the complete save and every saved directory before the
+initial listing and any creation. It consumes the proved plan directly and
+stops at the first create or restore failure; previously created sessions
+remain. The existing live/resumable skip and command-alignment checks pass.
+The authoritative predecessor and replacement receipts are
+`importer-predecessor-red.log` and `importer-live-green.log` in the same directory.
+
+Independent IO review in `/tmp/linger-lzr-io-review-20260926.Rbh9xq/` exposed
+three regressions in the initial Lean draft: exported shell functions could
+interfere with executable lookup, absent or empty HOME lost the account-home
+fallback, and long relative state paths could exceed the socket path limit.
+The executor now resolves the executable once using a clean lookup environment
+with the invocation PATH, uses one effective home for defaults, tilde decoding
+and child environments, and resolves relative state paths component by
+component. It follows symlinks before parent components and permits missing
+state-directory suffixes. Saved directories use physical OS traversal; this
+intentional path spelling rule is documented. All twenty-five comparison
+observations match, and all four existing/missing-state comparison cases pass,
+recorded in `importer-io-comparison-green.log` and `importer-io-socket-green.log`.
+
+The picker worker added six permanent Lean regressions for those IO findings
+in its separate worktree. With the frozen initial draft, the other forty-seven
+recipe checks pass and exactly those six fail; with the final executor all
+fifty-three pass. The red receipt and reviewed patch are under
+`/tmp/linger-lzr-e2e-20260926.t5zTmR/`; the parent receipt is
+`/tmp/linger-recipe-boundaries-20260926/importer-final-suite-green.log`.
+The exact live-suite roster is maintained in tests/e2e.sh. Both workers are
+integrated and closed.
+
+Final Linux verification passes with Lean v4.34.1: the complete foreground
+verifier rebuilds the program, optional importer, proofs and unit tests from
+empty, then checks generated C ABI, source and formatter gates, semantic
+coverage, CI runner selection, fuzz corpus, POSIX smoke tests, all twelve live
+suites and the unrelated-session sentinel. Receipts are
+`importer-full-verifier.log` and `importer-clean-build.log` under
+`/tmp/linger-recipe-boundaries-20260926/`. Both required warm builds also pass
+there as `step2-build.log` and `step2-proofs-tests.log`.
+
+THEOREMS.md maps each retained recipe boundary to existing semantic guarantees
+and the IO checks at its call sites, and records the importer's proved contract
+and its limits. Archived the completed spec as
+`specs/archive/recipe-boundaries.md`; no spec remains in flight. Hosted platform
+checks are pending at this checkpoint, and no live Ghostty GUI or macOS result
+is claimed.
