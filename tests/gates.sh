@@ -296,18 +296,19 @@ code_grep "$import_re" 'Linger/*' Linger.lean Main.lean \
 # The proof covers the returned parser/plan values. These call-site gates make
 # bypassing them a reviewable change; IO tests check preflight/failure ordering
 # and actual argv. As with the runtime ties below, this is not an IO theorem.
-for claim in parseSave_valid plan_command_policy plan_sequential_idempotent; do
-  code_grep "^theorem $claim " Theorems/Resurrect.lean >/dev/null \
+for claim in parseSave_valid parseRow_command_valid parseRow_command_irrelevant \
+             mem_plan plan_order plan_sequential_idempotent; do
+  code_grep "^(private )?theorem $claim " Theorems/Resurrect.lean >/dev/null \
     || fail "importer contract disappeared: $claim"
 done
 code_grep '^[[:space:]]+let panes ← IO[.]ofExcept [(]parseSave home [(]← IO[.]FS[.]readFile save[)][)]$' Manager/Resurrect.lean >/dev/null \
   || fail "importer no longer consumes the proved whole-save parser"
-code_grep '^[[:space:]]+for action in plan restore existing panes do$' Manager/Resurrect.lean >/dev/null \
+code_grep '^[[:space:]]+for pane in plan existing panes do$' Manager/Resurrect.lean >/dev/null \
   || fail "importer no longer iterates the proved import plan"
-code_grep '^[[:space:]]+if let some command := action[.]command then$' Manager/Resurrect.lean >/dev/null \
-  || fail "importer no longer uses the plan command choice"
-code_grep 'args := #[[]"run", action[.]pane[.]name, command[]]' Manager/Resurrect.lean >/dev/null \
-  || fail "importer no longer forwards the original planned command as one argument"
+code_grep 'args := #[[]"run", pane[.]name, "true"[]],' Manager/Resurrect.lean >/dev/null \
+  || fail "importer no longer creates only a shell for the planned name"
+code_grep '^[[:space:]]+cwd := some [(]System[.]FilePath[.]mk [(]absolute pane[.]dir[)][)], env [}]$' Manager/Resurrect.lean >/dev/null \
+  || fail "importer no longer uses the planned directory as the child cwd"
 
 # Selector and decoder proofs concern pure values. Tie each IO consumer to the
 # proved function and retain exact attach argv and an immutable poll snapshot.

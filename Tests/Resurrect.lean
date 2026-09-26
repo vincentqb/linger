@@ -10,8 +10,18 @@ namespace Tools.Resurrect.Tests
 
 open Tools.Resurrect
 
+-- Saved commands validate as input but never affect the parsed pane.
+#guard
+  ["vi 'a b'; tail x", "printf '%s' \"$HOME\" && custom-tool --anything",
+        "  λ ./unlisted\\ path 'quoted'  ", ":~/command\\ directory"].all
+    fun command =>
+    match parseSave "/home/me" "pane\td\t0\t\t\t0\t\t:~/work\\ space\t\t\t:",
+      parseSave "/home/me" ("pane\td\t0\t\t\t0\t\t:~/work\\ space\t\t\t:" ++ command) with
+    | .ok before, .ok after => before == after
+    | _, _ => false
+
 -- Non-pane rows are ignored, including blanks and unknown record shapes.
--- Empty commands occupy their own record; neither commands nor paths are trimmed.
+-- Empty and nonempty saved commands are discarded; directories are not trimmed.
 #guard
   match
     parseSave "/home/me"
@@ -19,33 +29,31 @@ open Tools.Resurrect
         "state\tignored\npane\tdesk\t1\t:\t0\t1\t0\t:/tmp\t0\tvi\t:  vi 'a b'; tail x  ") with
   | .ok panes =>
     panes ==
-      [{ name := "desk-w1-p0", dir := "/home/me/work space", command := "", line := 3 },
-        { name := "desk-w1-p1", dir := "/tmp", command := "  vi 'a b'; tail x  ", line := 5 }]
+      [{ name := "desk-w1-p0", dir := "/home/me/work space", line := 3 },
+        { name := "desk-w1-p1", dir := "/tmp", line := 5 }]
   | .error _ => false
 
 #guard
   match parseSave "/home/me" "pane\td\t0\t\t\t0\t\t:~\t\t\t:" with
-  | .ok panes => panes == [{ name := "d-w0-p0", dir := "/home/me", command := "", line := 1 }]
+  | .ok panes => panes == [{ name := "d-w0-p0", dir := "/home/me", line := 1 }]
   | .error _ => false
 
 -- Preserve filesystem traversal spelling; there is no lexical normalization.
 #guard
   match parseSave "/home/me" "pane\td\t0\t\t\t0\t\t:~/link/../work//.\t\t\t:vi" with
-  | .ok panes =>
-    panes == [{ name := "d-w0-p0", dir := "/home/me/link/../work//.", command := "vi", line := 1 }]
+  | .ok panes => panes == [{ name := "d-w0-p0", dir := "/home/me/link/../work//.", line := 1 }]
   | .error _ => false
 
 -- Only literal backslash-space is unescaped; other backslashes and ~user remain.
 #guard
   match parseSave "/home/me" "pane\td\t0\t\t\t0\t\t:~user/é\\ x\\q\t\t\t:vi é\\ x" with
-  | .ok panes =>
-    panes == [{ name := "d-w0-p0", dir := "~user/é x\\q", command := "vi é\\ x", line := 1 }]
+  | .ok panes => panes == [{ name := "d-w0-p0", dir := "~user/é x\\q", line := 1 }]
   | .error _ => false
 
 -- Nonexistent/empty directories are the caller's preflight responsibility.
 #guard
   match parseSave "/home/me" "pane\td\t0\t\t\t0\t\t:\t\t\t:" with
-  | .ok panes => panes == [{ name := "d-w0-p0", dir := "", command := "", line := 1 }]
+  | .ok panes => panes == [{ name := "d-w0-p0", dir := "", line := 1 }]
   | .error _ => false
 
 #guard
@@ -113,28 +121,25 @@ open Tools.Resurrect
     | .error error => error == "malformed pane record at line 1"
     | .ok _ => false
 
--- Only ASCII spaces separate words; there is no shell tokenization.
+-- A later malformed command rejects the complete save, even though it is discarded.
 #guard
-  [firstWord "", firstWord "   ", firstWord "  vi  x ", firstWord "\tvi x", firstWord "vi\tx",
-      firstWord "'vi' x", firstWord "/bin/vi x", firstWord "vi\nx"] ==
-    ["", "", "vi", "\tvi", "vi\tx", "'vi'", "/bin/vi", "vi\nx"]
+  match
+    parseSave "/home/me"
+      ("pane\td\t0\t\t\t0\t\t:~/work\t\t\t:arbitrary command\n" ++
+        "pane\td\t0\t\t\t1\t\t:/tmp\t\t\t:ignored\x00command") with
+  | .error error => error == "malformed pane record at line 2"
+  | .ok _ => false
 
-#guard restoreCommand false { name := "a", dir := "/", command := "vi x", line := 1 } == none
-
-#guard restoreCommand true { name := "a", dir := "/", command := "printf x", line := 1 } == none
+-- Skipping a middle record preserves the directories, line numbers and order.
+#guard
+  plan ["b"]
+      [{ name := "a", dir := "/a", line := 1 }, { name := "b", dir := "/b", line := 2 },
+        { name := "c", dir := "/c", line := 3 }] ==
+    [{ name := "a", dir := "/a", line := 1 }, { name := "c", dir := "/c", line := 3 }]
 
 #guard
-  restoreCommand true { name := "a", dir := "/", command := "  vi 'x y'; tail z  ", line := 1 } ==
-    some "  vi 'x y'; tail z  "
-
--- The skipped middle record never shifts the last command onto another pane.
-#guard
-  plan true ["b"]
-      [{ name := "a", dir := "/a", command := "", line := 1 },
-        { name := "b", dir := "/b", command := "vi b", line := 2 },
-        { name := "c", dir := "/c", command := "tail c", line := 3 }] ==
-    [{ pane := { name := "a", dir := "/a", command := "", line := 1 }, command := none },
-      { pane := { name := "c", dir := "/c", command := "tail c", line := 3 },
-        command := some "tail c" }]
+  plan ["a", "b"]
+      [{ name := "a", dir := "/a", line := 1 }, { name := "b", dir := "/b", line := 2 }] ==
+    []
 
 end Tools.Resurrect.Tests

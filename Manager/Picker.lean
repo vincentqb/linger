@@ -128,13 +128,11 @@ private def attach (target : String) : IO UInt32 := do
   let child ← IO.Process.spawn { cmd := "linger", args := #["attach", target] }
   child.wait
 
-/-- The manager delegates to ordinary linger argv after terminal restoration.
-Only an explicit initial target or a proved selection can reach attach. -/
-def run (loop : Bool) (initial : Option String) : IO UInt32 := do
+/-- Attach only a proved selection, after terminal restoration. Every attach
+exit returns to a fresh listing; cancellation ends the manager. -/
+def run : IO UInt32 := do
   unless (← stdinIsTty) && (← (← IO.getStdout).isTty) do
     throw (IO.userError "the picker needs terminal input and output")
-  if let some target := initial then
-    let _ ← attach target
   while true do
     let snapshot ← listing
     match snapshot with
@@ -147,9 +145,7 @@ def run (loop : Bool) (initial : Option String) : IO UInt32 := do
       | .refresh =>
         continue
       | .attach target =>
-        let status ← attach target
-        if !loop then
-          return status
+        discard <| attach target
   return 0
 
 end Manager.Picker

@@ -39,7 +39,7 @@ recipes, break records, measurements, the audits — lives in
 | §Renderable | the painter expresses fewer grids than the emulator reaches | the emulator never stores a shape a repaint cannot reproduce (`renderable_step`/`renderable_feed`/`renderable_resize`/`renderable_quiesce`, from `renderable_init`); `LiveReachableVt` is the least predicate closed under those and containing every screen the decoder's door accepts (`LiveReachableVt.ofDecoded` — a `Good` premise is provably unsound, counterexample in SCRATCHPAD.md); the decoder establishes it from disk too (`Vt.ofDecoded_renderable`, `Checkpoint.load_renderable`); lifted to the daemon by `Session.run_vt_renderable` and `run_resume_vt_shape` | Linger/Core/Vt.lean, Theorems/Vt.lean |
 | §Status | one glyph per listing row vs seven conditions | the seven states partition the observation space: `cover`, `disjoint`, `classify_sound` + `classify_unique`, `reachable`, `icon_injective` / `name_injective`, `name_clean` | Theorems/Status.lean |
 | §Resume | the product's own promise: crash, reboot, reattach | §Restore ∘ §Replay, stated twice — over `save`'s input and over `load`'s output (`resume_grid_of_load`, `resume_tabs_of_load`, `resume_sb_of_load`: any byte string that loads, no other hypothesis) — and lifted to the daemon over its own `vt0` (`Session.run_resume_vt_shape`, `run_resume_load_save`) | Theorems/Resume.lean, Theorems/Session.lean |
-| §Import | foreign save records vs distinct session identities and deliberate command execution | successful parsing gives a nonempty list with canonical, distinct names and NUL-free directories/commands (`parseSave_valid`); planning preserves records and order, skips existing names and selects only unchanged, explicitly enabled, eligible commands (`mem_plan`, `plan_order`, `plan_command_policy`); adding planned names to the snapshot makes a sequential rerun empty (`plan_sequential_idempotent`) | Theorems/Resurrect.lean, E2E/Recipes.lean |
+| §Import | foreign save records vs distinct session identities and directory-only restoration | successful parsing gives a nonempty list with canonical, distinct names and NUL-free directories (`parseSave_valid`); valid saved commands cannot affect parsed panes (`parseRow_command_irrelevant`); planning preserves records and order and skips existing names (`mem_plan`, `plan_order`); adding planned names to the snapshot makes a sequential rerun empty (`plan_sequential_idempotent`) | Theorems/Resurrect.lean, E2E/Recipes.lean |
 | §Select | fuzzy query vs an exact session identity | matching is ASCII-folded subsequence matching (`matches_iff_sublist`); filtering preserves order (`visible_order`); successful listing parsing preserves complete original name records (`parseListing_records`); continuing transitions preserve query/cursor bounds (`step_stay_valid`); only acceptance can attach an unchanged snapshot member (`step_attach_iff`, `step_attach_mem`) | Theorems/Picker.lean, E2E/Manager.lean |
 | §Input | split keyboard bytes and pasted commands vs deliberate selection | one byte produces at most one key (`feed_length`); UTF-8 prefixes retain at most three bytes (`stored_bound`, `feed_storage_bound`); delivered text excludes controls (`feed_text_valid`); paste emits only text and survives incomplete input (`feed_paste_only_text`, `feed_paste_sticky`, `flush_paste`); a timeout never accepts (`flush_no_accept`) | Theorems/Input.lean, E2E/Manager.lean |
 
@@ -236,36 +236,41 @@ leaving the picker screen. These are IO observations, not theorem statements.
 The POSIX sh helpers compose operations whose state guarantees already have proofs.
 §Detach preserves a session when its client leaves; §Handback specifies the
 terminal state returned to the caller. These support the optional `lz` manager
-loop and `lza` reconnect helper. `E2E.Manager` checks loop order, selected argv
-and cancellation; `E2E.Recipes` drives the actual shell helpers and checks retry
-status. No parallel Lean model of shell execution is claimed.
+and `lza` reconnect helper. The manager returns to selection after every attach
+exit. `E2E.Manager` checks that default across successful attachment, failure
+and real detach, with terminal restoration before the next subprocess.
+`E2E.Recipes` drives the actual shell helpers and checks retry status.
+No parallel Lean model of shell execution is claimed.
 
 `lzs` displays observations backed by `Status.classify_sound`,
-`Status.classify_unique` and `Listing.rowFields_name`. `lzo` uses names backed by
-`Name.sanitize_valid` and `Remote.parse_names_valid`; its complete-list validation
-and terminal-launch arguments have separate IO checks. Their short composition
-policies remain editable shell scripts. Ghostty's command setting and SSH's
-keepalive setting use the tools' native formats; configuration parsing and
-documented launch syntax support those choices, without claiming a theorem
-about GUI behavior or network recovery time.
+`Status.classify_unique` and `Listing.rowFields_name`. Its IO checks require
+configured remotes, a five-second pause and a complete listing before clearing.
+`lzo` uses names backed by `Name.sanitize_valid` and `Remote.parse_names_valid`;
+its complete-list validation and terminal-launch arguments have separate IO
+checks. Their short composition policies remain editable shell scripts.
+Ghostty's command setting and SSH's keepalive setting use the tools' native
+formats; configuration parsing and documented launch syntax support those
+choices, without claiming a theorem about GUI behavior or network recovery time.
 
 §Import supports `lz import-resurrect`. `parseSave_valid` gives
 nonempty, distinct names that already satisfy `Name.Valid`, plus NUL-free
-decoded directories and full commands. `mem_plan` preserves whole records,
-preventing skipped panes from shifting commands onto another name.
-`plan_names_unique` carries parsing's distinctness through filtering.
-`restoreCommand_eq_some` requires opt-in and the exact first-word allowlist;
-it returns the original command, including its shell syntax. `firstWord_eq_iff`
-specifies the first nonempty ASCII-space-delimited piece, and `mem_allowed`
-pins the eligible words. These are selection guarantees, not a shell-safety claim.
+decoded directories. `parseRow_command_valid` requires the saved command's
+sentinel and absence of NUL. `parseRow_command_irrelevant` proves that replacing
+any valid command leaves the complete row result unchanged. The parser discards
+that field: neither `Pane` nor the plan retains a command to execute.
+`mem_plan` preserves each original pane and requires its name to be absent from
+the snapshot. `plan_order` preserves their order, and `plan_names_unique` carries
+parsing's distinctness through filtering.
 
 `plan_sequential_idempotent` says a later snapshot containing the old names and
-all planned names produces no actions, even if restore opt-in changes. It does
-not prove atomic name claiming, concurrent imports or successful IO.
-`Manager.Resurrect` preflights every saved directory and obtains a successful listing
-before executing the plan. Source gates pin its parser, plan and unchanged
-command call sites; `E2E.Recipes` checks their actual argv, failure ordering,
-executable lookup, home fallback, relative paths, and reruns against real daemons.
+all planned names produces no actions. It does not prove atomic name claiming,
+concurrent imports or successful IO. `Manager.Resurrect` preflights every saved
+directory and obtains a successful listing before executing the plan.
+Source gates pin its parser, plan and constant shell-creation argv,
+`linger run NAME true`; the saved directory supplies the child's cwd.
+`E2E.Recipes` checks those actual arguments, ignored saved commands, failure
+ordering, executable lookup, home fallback, relative paths, and untouched
+existing shells on reruns against real daemons.
 
 The source gates constrain the manager's imports to its pure policies, core
 name/listing modules, public VT width function and existing POSIX interface.

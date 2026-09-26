@@ -45,7 +45,7 @@ private def preflight (origin : System.FilePath) (panes : List Pane) : IO Unit :
     finally
       IO.Process.setCurrentDir origin
 
-private def importSave (restore : Bool) (file : Option String) : IO Unit := do
+private def importSave (file : Option String) : IO Unit := do
   let origin ← IO.currentDir
   let home ←
     match (← IO.getEnv "HOME").filter (!·.isEmpty) with
@@ -98,29 +98,20 @@ private def importSave (restore : Bool) (file : Option String) : IO Unit := do
   unless listing.exitCode == 0 do
     throw (IO.userError "could not list existing linger sessions")
   let existing := (Linger.Core.Remote.parse listing.stdout).map (·.name)
-  for action in plan restore existing panes do
+  for pane in plan existing panes do
     let child ←
       IO.Process.spawn
-          { cmd := bin.toString, args := #["run", action.pane.name, "true"],
-            cwd := some (System.FilePath.mk (absolute action.pane.dir)), env }
+          { cmd := bin.toString, args := #["run", pane.name, "true"],
+            cwd := some (System.FilePath.mk (absolute pane.dir)), env }
     unless (← child.wait) == 0 do
-      throw (IO.userError s!"could not create session: {action.pane.name}")
-    if let some command := action.command then
-      let child ←
-        IO.Process.spawn { cmd := bin.toString, args := #["run", action.pane.name, command], env }
-      unless (← child.wait) == 0 do
-        throw (IO.userError s!"could not restore process in session: {action.pane.name}")
+      throw (IO.userError s!"could not create session: {pane.name}")
 
 def run (args : List String) : IO UInt32 := do
-  let (restore, files) :=
-    match args with
-    | "--restore-processes" :: rest => (true, rest)
-    | _ => (false, args)
-  if files.length > 1 then
-    IO.eprintln "usage: lz import-resurrect [--restore-processes] [SAVE]"
+  if args.length > 1 || args.any (fun path => path.isEmpty || path.startsWith "-") then
+    IO.eprintln "usage: lz import-resurrect [SAVE]"
     return 2
   try
-    importSave restore files.head?
+    importSave args.head?
     return 0
   catch e =>
     IO.eprintln s!"lz import-resurrect: {e}"

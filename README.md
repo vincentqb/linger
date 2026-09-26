@@ -113,9 +113,10 @@ is a settled non-goal (AGENTS.md).
 ## Recipes
 
 The optional `lz` Lean manager selects sessions without a shell or picker
-dependency; `lz --loop` returns to selection after detach. Its
-`import-resurrect` subcommand imports tmux-resurrect saves. Matching, input
-decoding and import planning stay outside the session and VT libraries.
+dependency and returns to selection after detach. Its `import-resurrect`
+subcommand creates shells in the directories from tmux-resurrect saves.
+Matching, input decoding and import planning stay outside the session and VT
+libraries.
 
 Three portable shell recipes compose reconnect, status refresh and kitty
 launching. Native Ghostty and SSH settings complete the examples in

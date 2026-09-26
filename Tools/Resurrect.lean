@@ -16,16 +16,10 @@ namespace Tools.Resurrect
 structure Pane where
   name : String
   dir : String
-  command : String
   line : Nat
   deriving BEq, Repr
 
-structure PlannedPane where
-  pane : Pane
-  command : Option String
-  deriving BEq, Repr
-
-/-- Parse one tab-split row, retaining the full command after its format sentinel. -/
+/-- Parse one tab-split row, validating and discarding its saved command. -/
 private def parseRow (home : String) (line : Nat) (fields : List String) :
     Except String (Option Pane) :=
   if fields.head? != some "pane" then .ok none
@@ -42,13 +36,12 @@ private def parseRow (home : String) (line : Nat) (fields : List String) :
         let dir :=
           if decoded == "~" then home
           else if decoded.startsWith "~/" then home ++ (decoded.drop 1).toString else decoded
-        let command := (savedCommand.drop 1).toString
-        if dir.contains '\x00' || command.contains '\x00' then
+        if dir.contains '\x00' || savedCommand.contains '\x00' then
           .error s!"malformed pane record at line {line}"
         else
           if Linger.Core.Name.sanitize name != name then
             .error s!"projected session is not a valid linger name at line {line}: {name}"
-          else .ok (some { name, dir, command, line })
+          else .ok (some { name, dir, line })
     | _ => .error s!"malformed pane record at line {line}"
 
 /-- Validate left to right so a duplicate reports its second occurrence. -/
@@ -72,21 +65,8 @@ def parseSave (home content : String) : Except String (List Pane) :=
   | .ok [] => .error "no pane records in save"
   | .ok (pane :: panes) => .ok (pane :: panes)
 
-/-- Fixed first-word process policy, shared by planning and the caller's presentation. -/
-def allowed : List String :=
-  ["vi", "vim", "view", "nvim", "emacs", "man", "less", "more", "tail", "top", "htop", "irssi",
-    "weechat", "mutt"]
-
-/-- Split only on ASCII spaces and discard empty words, as in the fish recipe. -/
-def firstWord (command : String) : String := ((command.splitOn " ").find? (· != "")).getD ""
-
-/-- Opt-in permits the original whole command; it does not interpret shell syntax. -/
-def restoreCommand (restore : Bool) (pane : Pane) : Option String :=
-  if restore && allowed.contains (firstWord pane.command) then some pane.command else none
-
-/-- Filter whole records before assigning commands, preserving alignment and order. -/
-def plan (restore : Bool) (existing : List String) (panes : List Pane) : List PlannedPane :=
-  (panes.filter (fun pane => !existing.contains pane.name)).map
-    (fun pane => { pane, command := restoreCommand restore pane })
+/-- Skip existing names, preserving whole records and their order. -/
+def plan (existing : List String) (panes : List Pane) : List Pane :=
+  panes.filter (fun pane => !existing.contains pane.name)
 
 end Tools.Resurrect

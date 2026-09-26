@@ -1,5 +1,5 @@
 # Merge into Ghostty 1.2+ configuration after installing lz.
 # Requires lz and linger on PATH.
 # New windows start the session picker; detaching returns to it.
-# direct: passes --loop to the manager without a shell command string.
-command = direct:lz --loop
+# direct: launches the manager without a shell command string.
+command = direct:lz

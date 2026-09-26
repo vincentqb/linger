@@ -12619,3 +12619,68 @@ definition, fuel or proof-limit increase was added. Archived the completed spec
 as `specs/archive/optional-manager.md`; no spec remains in flight. Hosted checks
 are pending at this checkpoint, with no live Ghostty GUI, real remote-host or
 macOS result claimed.
+
+## Step 1 notes — 2026-09-26
+
+Closed `specs/manager-defaults.md` for the user's request for good defaults
+without maintaining CLI options. Bare `lz` returns to a fresh listing after
+every attach exit. Removed the one-shot branch, `--loop` and its initial-target
+shortcut. The importer now creates shells in saved directories without
+replaying saved commands; removed `--restore-processes`, the allowlist,
+first-word parser, replay plan and replay executor. `Pane` retains only the
+name, directory and source line. `lzs` takes no arguments and lists local plus
+configured remote sessions every five seconds. Ghostty starts `direct:lz`.
+Required target/host operands, optional save paths and help remain. Removed
+options, empty import operands and excess operands return status 2 before
+subprocesses; dash-leading save names use an explicit path such as `./-save`.
+
+The pure importer worker used `/tmp/linger-defaults-import-proof`; the manager
+terminal worker used `/tmp/linger-defaults-manager-checks`. Their reviewed
+changes are integrated and both workers are closed. The parser still validates
+the complete save, field sentinels, NUL rejection, canonical projected names
+and distinctness. New private theorems prove saved-command validity and that
+replacing any valid command leaves the entire parsed row unchanged.
+The simplified planner retains whole-record provenance, order, existing-name
+exclusion, distinctness and sequential idempotence. The exact-constant census
+covers all four remaining explicit importer definitions. THEOREMS.md records
+these guarantees separately from IO behavior and the preference for defaults.
+
+The new command-irrelevance fixture failed the compiling predecessor before
+implementation changes. Four recipe failures against the predecessor isolate
+status arguments, the Ghostty default and rejected import options. The updated
+manager suite against the old runtime records twenty-three passes and
+thirty-one intended failures, including missing return after real detach.
+The final actual recipe and manager suites pass. The manager checks fresh
+snapshots after statuses 0, 7 and 255, successive selections, cancellation,
+terminal restoration before every child and failed/malformed return listings.
+Import checks retain executable lookup, home fallback, physical directory
+resolution, preflight/failure ordering and untouched existing shells on reruns.
+Receipts are `import-proof/`, `manager-checks/`, `recipes-red.log`,
+`recipes-green.log` and `manager-green.log` under
+`/tmp/linger-defaults-20260926/`. Sandbox socket failures are recorded separately
+and excluded from behavioral evidence.
+
+Four pure-policy mutations compile, then fail both semantic proofs and unit
+fixtures: removing the existing-name filter, reversing retained order,
+deriving a directory from command text and accepting a command NUL. Three IO
+mutations compile, then fail both their source gate and actual recipe checks:
+bypassing the proved plan, changing the constant shell-creation argument and
+ignoring the saved directory. Every restored build passes and the restored
+sources match their verified hashes. The summaries and patches live in
+`import-proof/mutations/` and `io-gate-mutations/` under the same receipt root.
+A preliminary unused-binding compiler rejection is retained separately and
+does not count as mutation evidence.
+
+Final Linux verification passes on Lean v4.34.1. The complete foreground
+verifier rebuilt from empty and passed generated C ABI, source gates,
+standalone layout, semantic coverage, CI runner selection, the fuzz corpus,
+POSIX smoke tests, all thirteen live suites and the unrelated-session sentinel.
+`full-verifier.log`, `clean-build.log`, `full-layout.log`, `full-coverage.log`,
+`full-ci-runner.log`, `full-shim.log` and `full-suites/` preserve those results.
+Both required final builds pass in `step1-build.log` and
+`step1-proofs-tests.log`. The three shell helpers also pass shellcheck.
+
+No C, raw binding, dependency, partial definition, fuel or proof-limit increase
+was added. Archived the completed spec as `specs/archive/manager-defaults.md`;
+no spec remains in flight. Hosted checks are pending at this checkpoint; no
+macOS, live Ghostty GUI or real remote-host result is claimed.

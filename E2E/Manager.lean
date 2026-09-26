@@ -312,11 +312,36 @@ private def childNormal (f : Fixture) (index : Nat) (attach : Bool := false) : I
   return !before.isEmpty && (← readText (f.root / s!"termios-{index}")) == before &&
       (!attach || (← readText (f.root / s!"ttys-{index}")) == "true,true")
 
-private def beforeAttach (s : Session) : IO Bool := do
+private def beforeAttach (s : Session) (count : Nat := 1) (entries : Nat := 1) : IO Bool := do
   let out ← s.output.get
-  let marker := "MANAGER-ATTACH-1".toUTF8.toList
-  return [modeSet 1049 false, modeSet 25 true, modeSet 2004 false].all
-      (fun leave => ordered out leave marker)
+  let some position := findText out s!"MANAGER-ATTACH-{count}" | return false
+  return modesRestored (out.extract 0 position) entries
+
+/-- The next prompt must follow this attach, with an empty query and the new
+snapshot's first row selected. An earlier prompt cannot satisfy the wait. -/
+private def returned (s : Session) (target : String) (count : Nat := 1) : IO Bool := do
+  let marker := s!"MANAGER-ATTACH-{count}"
+  unless ← s.until marker do
+    return false
+  let some position := findText (← s.output.get) marker | return false
+  let start := position + marker.utf8ByteSize
+  unless ← s.until "lz> \r\n" start do
+    return false
+  return ← s.until ("> " ++ target) start
+
+/-- Accept from the current snapshot, observe a different listing after attach,
+then cancel explicitly. Count every visit, including any preceding refresh. -/
+private def acceptThenCancel (s : Session) (keys : String := "\r") (visits : Nat := 2) : IO Bool :=
+  do
+  s.fixture.listing "name\tFresh\nname\tOther\n"
+  s.text keys
+  unless ← returned s "Fresh" do
+    return false
+  s.text "\x03"
+  let clean ← restored s 130 visits
+  return clean && (← beforeAttach s 1 (visits - 1)) && (← childNormal s.fixture 1) &&
+      (← childNormal s.fixture visits true) &&
+      (← childNormal s.fixture (visits + 1))
 
 private def usageChecks (e : Env) : IO Nat := do
   let mut failures := 0
@@ -325,16 +350,56 @@ private def usageChecks (e : Env) : IO Nat := do
       (←
         check e "help" "manager help works without a terminal or commands" fun f => do
             let (rc, out, _) ← f.piped #["--help"]
-            return rc == 0 && has out "--loop" && has out "import-resurrect" && (← f.calls).isEmpty)
+            let (shortRc, shortOut, _) ← f.piped #["-h"]
+            return rc == 0 && shortRc == 0 && shortOut == out && has out "Usage: lz\n" &&
+                has out "lz import-resurrect [SAVE]" &&
+                !has out "--loop" &&
+                !has out "--restore-processes" &&
+                (← f.calls).isEmpty)
   failures :=
     failures +
       (←
         check e "usage" "manager invalid arguments fail before any command" fun f => do
             let mut ok := true
             for args in
-              [#["work"], #["--unknown"], #["--help", "extra"], #["--loop", ""],
-                #["--loop", "one", "two"], #["import-resurrect", "one", "two"]] do
+              [#["work"], #["--unknown"], #["--help", "extra"], #["-h", "extra"], #["--loop", ""],
+                #["--loop", "one", "two"], #["import-resurrect", ""],
+                #["import-resurrect", "--unknown"], #["import-resurrect", "-save"],
+                #["import-resurrect", "one", "two"]] do
               let (rc, _, _) ← f.piped args
+              appendText (f.root / "usage-results") s!"{repr args}: {rc}\n"
+              ok := ok && rc == 2 && (← f.calls).isEmpty
+            return ok)
+  for (slug, args) in [("loop", #["--loop"]), ("loop-target", #["--loop", "-work@me@dev-a"])] do
+    failures :=
+      failures +
+        (←
+          check e s!"removed-{slug}"
+              s!"manager rejects removed loop arguments before commands ({slug})" fun f =>
+              withSession f args fun s => do
+                let rc ← s.result
+                return rc == some 2 && (← f.calls).isEmpty &&
+                    !hasBytes (← s.output.get) (modeSet 1049 true))
+  failures :=
+    failures +
+      (←
+        check e "restore-option" "manager rejects removed process replay arguments before commands"
+            fun f => do
+            let saves := f.root / ".tmux" / "resurrect"
+            IO.FS.createDirAll saves
+            let save := saves / "last"
+            IO.FS.writeFile save
+                (String.intercalate "\t"
+                    ["pane", "work", "1", "0", ":", "0", "title", ":" ++ f.root.toString, "1", "sh",
+                      ":vim"] ++
+                  "\n")
+            let mut ok := true
+            for args in
+              [#["import-resurrect", "--restore-processes"],
+                #["import-resurrect", "--restore-processes", save.toString],
+                #["import-resurrect", save.toString, "--restore-processes"]] do
+              let (rc, _, _) ← f.piped args
+              appendText (f.root / "usage-results") s!"{repr args}: {rc}\n"
               ok := ok && rc == 2 && (← f.calls).isEmpty
             return ok)
   failures :=
@@ -440,10 +505,11 @@ private def selectionChecks (e : Env) : IO Nat := do
                   unless ← s.prompt do
                     return false
                   let shown ← s.until target
-                  s.text "\r"
-                  let clean ← restored s 7
-                  return shown && clean && (← beforeAttach s) && (← childNormal f 2 true) &&
-                      (← f.calls) == call ["ls", "-r", "--porcelain"] ++ call ["attach", target])
+                  let clean ← acceptThenCancel s
+                  return shown && clean &&
+                      (← f.calls) ==
+                        call ["ls", "-r", "--porcelain"] ++ call ["attach", target] ++
+                          call ["ls", "-r", "--porcelain"])
   let moves :=
     [("down", "\x1b[B", "Beta"), ("up", "\x1b[B\x1b[B\x1b[A", "Beta"), ("ctrl-n", "\x0e", "Beta"),
       ("ctrl-p", "\x0e\x0e\x10", "Beta"), ("end", "\x1b[F", "Gamma"),
@@ -456,9 +522,10 @@ private def selectionChecks (e : Env) : IO Nat := do
               withSession f #[] fun s => do
                 unless ← s.prompt do
                   return false
-                s.text (keys ++ "\r")
-                return (← restored s 7) &&
-                    (← f.calls) == call ["ls", "-r", "--porcelain"] ++ call ["attach", target])
+                return (← acceptThenCancel s (keys ++ "\r")) &&
+                    (← f.calls) ==
+                      call ["ls", "-r", "--porcelain"] ++ call ["attach", target] ++
+                        call ["ls", "-r", "--porcelain"])
   failures :=
     failures +
       (←
@@ -470,9 +537,10 @@ private def selectionChecks (e : Env) : IO Nat := do
                   return false
                 unless ← s.typeQuery "WK" "WK" do
                   return false
-                s.text "\x0e\r"
-                return (← restored s 7) &&
-                    (← f.calls) == call ["ls", "-r", "--porcelain"] ++ call ["attach", "weak"])
+                return (← acceptThenCancel s "\x0e\r") &&
+                    (← f.calls) ==
+                      call ["ls", "-r", "--porcelain"] ++ call ["attach", "weak"] ++
+                        call ["ls", "-r", "--porcelain"])
   for (slug, erase) in [("del", "\x7f"), ("backspace", "\x08")] do
     failures :=
       failures +
@@ -485,9 +553,10 @@ private def selectionChecks (e : Env) : IO Nat := do
                   return false
                 unless ← s.typeQuery erase "B" do
                   return false
-                s.text "\r"
-                return (← restored s 7) &&
-                    (← f.calls) == call ["ls", "-r", "--porcelain"] ++ call ["attach", "Beta"])
+                return (← acceptThenCancel s) &&
+                    (← f.calls) ==
+                      call ["ls", "-r", "--porcelain"] ++ call ["attach", "Beta"] ++
+                        call ["ls", "-r", "--porcelain"])
   failures :=
     failures +
       (←
@@ -499,9 +568,10 @@ private def selectionChecks (e : Env) : IO Nat := do
                 return false
               unless ← s.typeQuery "\x15Gamma" "Gamma" do
                 return false
-              s.text "\r"
-              return (← restored s 7) &&
-                  (← f.calls) == call ["ls", "-r", "--porcelain"] ++ call ["attach", "Gamma"])
+              return (← acceptThenCancel s) &&
+                  (← f.calls) ==
+                    call ["ls", "-r", "--porcelain"] ++ call ["attach", "Gamma"] ++
+                      call ["ls", "-r", "--porcelain"])
   for (slug, listing, query) in
     [("no-match", "name\tAlpha\n", "new-session"), ("empty-list", "", "")] do
     failures :=
@@ -545,9 +615,10 @@ private def inputChecks (e : Env) : IO Nat := do
                 return false
               s.text "\x1b["
               s.observe 50
-              s.text "B\r"
-              return (← restored s 7) &&
-                  (← f.calls) == call ["ls", "-r", "--porcelain"] ++ call ["attach", "Beta"])
+              return (← acceptThenCancel s "B\r") &&
+                  (← f.calls) ==
+                    call ["ls", "-r", "--porcelain"] ++ call ["attach", "Beta"] ++
+                      call ["ls", "-r", "--porcelain"])
   failures :=
     failures +
       (←
@@ -567,9 +638,10 @@ private def inputChecks (e : Env) : IO Nat := do
                 s.send (ByteArray.mk #[0xA9])
                 unless ← s.prompt "界é" next do
                   return false
-                s.text "\r"
-                return (← restored s 7) &&
-                    (← f.calls) == call ["ls", "-r", "--porcelain"] ++ call ["attach", target])
+                return (← acceptThenCancel s) &&
+                    (← f.calls) ==
+                      call ["ls", "-r", "--porcelain"] ++ call ["attach", target] ++
+                        call ["ls", "-r", "--porcelain"])
   failures :=
     failures +
       (←
@@ -593,9 +665,10 @@ private def inputChecks (e : Env) : IO Nat := do
                 s.text "1~"
                 unless ← s.typeQuery "\x15BETA" "BETA" do
                   return false
-                s.text "\r"
-                return waiting && noAttach && (← restored s 7) &&
-                    (← f.calls) == call ["ls", "-r", "--porcelain"] ++ call ["attach", "alphabeta"])
+                return waiting && noAttach && (← acceptThenCancel s) &&
+                    (← f.calls) ==
+                      call ["ls", "-r", "--porcelain"] ++ call ["attach", "alphabeta"] ++
+                        call ["ls", "-r", "--porcelain"])
   return failures
 
 private def refreshChecks (e : Env) : IO Nat := do
@@ -614,9 +687,10 @@ private def refreshChecks (e : Env) : IO Nat := do
                 return false
               s.observe 1200
               let once := (← f.calls) == call ["ls", "-r", "--porcelain"]
-              s.text "\r"
-              return once && (← restored s 7) &&
-                  (← f.calls) == call ["ls", "-r", "--porcelain"] ++ call ["attach", "Alpha"])
+              return once && (← acceptThenCancel s) &&
+                  (← f.calls) ==
+                    call ["ls", "-r", "--porcelain"] ++ call ["attach", "Alpha"] ++
+                      call ["ls", "-r", "--porcelain"])
   failures :=
     failures +
       (←
@@ -634,11 +708,11 @@ private def refreshChecks (e : Env) : IO Nat := do
                 s.text "\x12"
                 unless ← s.until "Replacement" start do
                   return false
-                s.text "\r"
-                return (← restored s 7 2) && (← childNormal f 2) && (← childNormal f 3 true) &&
+                return (← acceptThenCancel s "\r" 3) && (← childNormal f 2) &&
                     (← f.calls) ==
                       call ["ls", "-r", "--porcelain"] ++ call ["ls", "-r", "--porcelain"] ++
-                        call ["attach", "Replacement"])
+                        call ["attach", "Replacement"] ++
+                        call ["ls", "-r", "--porcelain"])
   failures :=
     failures +
       (←
@@ -680,9 +754,10 @@ private def refreshChecks (e : Env) : IO Nat := do
                   IO.FS.writeBinFile (f.root / "resized-frame.bin") frame
                   IO.FS.writeBinFile (f.root / "screen.txt") screen
                   let fits := hasText screen "lz>" && hasText screen "wide@" && !hasText screen "Z"
-                  s.text "\r"
-                  return fits && (← restored s 7) &&
-                      (← f.calls) == call ["ls", "-r", "--porcelain"] ++ call ["attach", target])
+                  return fits && (← acceptThenCancel s) &&
+                      (← f.calls) ==
+                        call ["ls", "-r", "--porcelain"] ++ call ["attach", target] ++
+                          call ["ls", "-r", "--porcelain"])
                 "both" 80 12)
   for (slug, description, rows) in [("one-row", "one-row", 1), ("two-rows", "two-row", 2)] do
     failures :=
@@ -706,45 +781,88 @@ private def refreshChecks (e : Env) : IO Nat := do
                 "both" 40 (UInt32.ofNat rows))
   return failures
 
-private def loopChecks (e : Env) : IO Nat := do
+private def defaultChecks (e : Env) : IO Nat := do
   let mut failures := 0
-  for initial in [false, true] do
-    for rc in [0, 7, 255] do
-      failures :=
-        failures +
-          (←
-            check e s!"loop-{initial}-{rc}"
-                s!"manager loop returns after attach status {rc} (initial target: {initial})"
-                fun f => do
+  for rc in [0, 7, 255] do
+    failures :=
+      failures +
+        (←
+          check e s!"default-{rc}" s!"manager returns to a fresh picker after attach status {rc}"
+              fun f => do
+              IO.FS.writeFile (f.root / "attach-rc") (toString rc)
+              withSession f #[] fun s => do
+                  unless ← s.prompt do
+                    return false
+                  return (← acceptThenCancel s) &&
+                      (← f.calls) ==
+                        call ["ls", "-r", "--porcelain"] ++ call ["attach", "Alpha"] ++
+                          call ["ls", "-r", "--porcelain"])
+  failures :=
+    failures +
+      (←
+        check e "successive"
+            "manager repeatedly attaches from fresh snapshots after statuses 0, 7 and 255" fun f =>
+            withSession f #[] fun s => do
+              unless ← s.prompt do
+                return false
+              let remote := "-work@me@dev-a"
+              let shellText := "work@host with 'spaces' $TERM"
+              let mut expected := call ["ls", "-r", "--porcelain"]
+              let mut count := 0
+              let mut normal ← childNormal f 1
+              for (target, query, rc, next) in
+                [("Beta", "B", 0, remote), (remote, "wrk", 7, shellText),
+                  (shellText, "host", 255, "Fresh")] do
+                unless ← s.typeQuery query query do
+                  return false
+                f.listing s!"name\t{next}\nname\tOther\n"
                 IO.FS.writeFile (f.root / "attach-rc") (toString rc)
-                let target := if initial then "-work@me@dev-a" else "Alpha"
-                let args := if initial then #["--loop", target] else #["--loop"]
-                withSession f args fun s => do
-                    if !initial then
-                      unless ← s.prompt do
-                        return false
-                      s.text "\r"
-                    unless ← s.until "MANAGER-ATTACH-1" do
-                      return false
-                    let out ← s.output.get
-                    let some position := findText out "MANAGER-ATTACH-1" | return false
-                    unless ← s.prompt "" (position + "MANAGER-ATTACH-1".utf8ByteSize) do
-                      return false
-                    s.text "\x03"
-                    let clean ← restored s 130 (if initial then 1 else 2)
-                    let expected :=
-                      (if initial then "" else call ["ls", "-r", "--porcelain"]) ++
-                        call ["attach", target] ++
-                        call ["ls", "-r", "--porcelain"]
-                    let finalOut ← s.output.get
-                    let ordering ←
-                      if initial then
-                        pure (ordered finalOut "MANAGER-ATTACH-1".toUTF8.toList (modeSet 1049 true))
-                      else
-                        beforeAttach s
-                    return clean && ordering && (← childNormal f (if initial then 1 else 2) true) &&
-                        (← childNormal f (if initial then 2 else 3)) &&
-                        (← f.calls) == expected)
+                s.text "\r"
+                count := count + 1
+                unless ← returned s next count do
+                  return false
+                expected := expected ++ call ["attach", target] ++ call ["ls", "-r", "--porcelain"]
+                normal :=
+                  normal && (← beforeAttach s count count) && (← childNormal f (2 * count) true) &&
+                    (← childNormal f (2 * count + 1)) &&
+                    (← f.calls) == expected
+              s.text "\x03"
+              return normal && (← restored s 130 4) && (← f.calls) == expected)
+  failures :=
+    failures +
+      (←
+        check e "return-listing-failure"
+            "manager preserves a failed listing status after attach and restores the terminal"
+            fun f =>
+            withSession f #[] fun s => do
+              unless ← s.prompt do
+                return false
+              f.listing "name\tPartial\n" 9
+              s.text "\r"
+              let clean ← restored s 9
+              return clean && (← beforeAttach s) && (← childNormal f 1) &&
+                  (← childNormal f 2 true) &&
+                  (← childNormal f 3) &&
+                  (← f.calls) ==
+                    call ["ls", "-r", "--porcelain"] ++ call ["attach", "Alpha"] ++
+                      call ["ls", "-r", "--porcelain"])
+  failures :=
+    failures +
+      (←
+        check e "return-malformed"
+            "manager rejects a malformed listing after attach before another picker visit" fun f =>
+            withSession f #[] fun s => do
+              unless ← s.prompt do
+                return false
+              f.listing "name\tNext\nname\tNext\n"
+              s.text "\r"
+              let clean ← restored s 1
+              return clean && (← beforeAttach s) && (← childNormal f 1) &&
+                  (← childNormal f 2 true) &&
+                  (← childNormal f 3) &&
+                  (← f.calls) ==
+                    call ["ls", "-r", "--porcelain"] ++ call ["attach", "Alpha"] ++
+                      call ["ls", "-r", "--porcelain"])
   return failures
 
 private def realCheck (e : Env) : IO Nat :=
@@ -756,7 +874,7 @@ private def realCheck (e : Env) : IO Nat :=
       throw (IO.userError s!"manager live fixture failed: {create.stderr}")
     try
       let f := { f with env := f.env.push ("MANAGER_TEST_REAL", some e.bin) }
-      withSession f #["--loop"] fun s => do
+      withSession f #[] fun s => do
           unless ← s.prompt do
             return false
           unless ← s.until name do
@@ -779,7 +897,9 @@ private def realCheck (e : Env) : IO Nat :=
             waitFor 5000 do
                 return (← e.info name "clients") == some "0"
           s.text "\x03"
-          return detached && (← termiosRestored s 130) &&
+          return detached && (← termiosRestored s 130) && (← childNormal f 1) &&
+              (← childNormal f 2 true) &&
+              (← childNormal f 3) &&
               (← f.calls) ==
                 call ["ls", "-r", "--porcelain"] ++ call ["attach", name] ++
                   call ["ls", "-r", "--porcelain"]
@@ -793,7 +913,7 @@ def run : IO UInt32 := do
   failures := failures + (← selectionChecks e)
   failures := failures + (← inputChecks e)
   failures := failures + (← refreshChecks e)
-  failures := failures + (← loopChecks e)
+  failures := failures + (← defaultChecks e)
   failures := failures + (← realCheck e)
   verdict e failures
 

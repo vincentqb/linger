@@ -29,15 +29,13 @@ Remove the old standalone `lzr` launcher and update its callers to
 | `lzo.sh` | every session on a host as kitty tabs, one shot | kitty remote control, SSH |
 | `lza.sh` | attach that auto-reconnects while a link flaps | linger |
 | `lzs.sh` | live status board for sessions you have no tab open on | linger, clear |
-| `ghostty_config` | new Ghostty windows start `lz --loop` | Ghostty 1.2+, lz, linger |
+| `ghostty_config` | new Ghostty windows start `lz` | Ghostty 1.2+, lz, linger |
 | `ssh_config` | dead links declared in ~15 s | paste into `~/.ssh/config` |
 
 ## Session selection
 
 ```sh
-lz                          # select once; return the attach exit status
-lz --loop                   # return to selection after each attach exit
-lz --loop work@host         # attach this target first
+lz                          # select; return to selection after attach exits
 lz --help
 ```
 
@@ -48,8 +46,10 @@ characters match exactly. Up/down or ctrl-p/ctrl-n move, Home/End select
 first/last, backspace edits, and ctrl-u clears the query. Enter attaches;
 Esc, ctrl-c and ctrl-d cancel with status 130. Pasted newlines cannot attach.
 An empty result stays editable and never turns the query into a new name.
+Create your first session with `linger attach work`, then detach with ctrl-\\
+and run `lz`.
 
-The listing refreshes on entry, after attach returns in loop mode, or on ctrl-r.
+The listing refreshes on entry, after attach returns, or on ctrl-r.
 Ctrl-r also clears the query. There is no timed remote polling. A failed or
 malformed listing ends the manager; the snapshot can become stale before
 attach, which retains linger's normal behavior. Selection needs terminal input
@@ -73,8 +73,8 @@ change the final `ssh -t -- "$host" linger attach "$name"` in `lzo.sh` to
 unless it is 255, which triggers another attempt after two seconds. SSH uses
 255 for transport errors, but a remote command can return it too.
 
-`lzs '' 2` refreshes local sessions and configured remotes every two seconds;
-`lzs host-a,host-b 2` replaces that remote list. The interval must be positive.
+`lzs` refreshes local sessions and configured remotes every five seconds.
+It takes no arguments; edit the recipe if you want different refresh timing.
 `lzo HOST` checks the complete listing before launching and stops if a tab
 launch fails; any tabs already opened remain open.
 
@@ -84,7 +84,7 @@ After installing `lz` above, merge [`ghostty_config`](ghostty_config) into
 your Ghostty configuration:
 
 ```ini
-command = direct:lz --loop
+command = direct:lz
 ```
 
 This uses the documented [`command`](https://ghostty.org/docs/config/reference#command)
@@ -102,9 +102,8 @@ that override to start the picker there too.
 The same `lz` executable exposes the noninteractive importer:
 
 ```sh
-lz import-resurrect                             # default last save
-lz import-resurrect ~/.tmux/resurrect/last       # explicit save
-lz import-resurrect --restore-processes         # opt in to saved commands
+lz import-resurrect                           # default last save
+lz import-resurrect ~/.tmux/resurrect/last      # explicit save
 ```
 
 Its executor is [`Manager/Resurrect.lean`](../Manager/Resurrect.lean); parsing
@@ -115,27 +114,23 @@ working directory. A projected name that linger would rewrite or truncate is
 rejected. The complete save is checked for malformed records, duplicate names
 and NUL-bearing directory or command fields; all saved directories must be
 accessible before any session is created. Identities present in the successful
-initial listing—live or resumable—are skipped, so sequential reruns do not resend
-commands. The executable and relative state paths are resolved from the
+initial listing—live or resumable—are skipped, so sequential reruns leave them
+untouched. The executable and relative state paths are resolved from the
 invocation directory while each session starts in its saved directory.
 Path resolution follows symlinks before `..`; a state directory may be created
 during import. Saved directories also use physical OS traversal.
 Do not run imports concurrently or create a projected name while an
 import is running: `linger run` is an upsert, and the importer cannot claim a name
-atomically. A creation or restore failure stops the import; sessions already
+atomically. A creation failure stops the import; sessions already
 created remain. The default save is `$HOME/.tmux/resurrect/last` when that
 directory exists; otherwise
 `${XDG_DATA_HOME:-$HOME/.local/share}/tmux/resurrect/last`. An absent or empty
 HOME uses the account home for defaults, saved `~` directories and child processes.
 
-Saved commands do not run by default. `--restore-processes` sends a command only
-when its first ASCII-space-delimited word is in `Tools.Resurrect.allowed`.
-Review that fixed list before opting in; changing it requires rebuilding `lz`
-and updating its exact-membership proof. The complete matching command is sent
-unchanged to the session's shell, so inspect the save too. This imports saved
-identities and directories, with optional command restart; it does not transfer
-running processes. Window layouts, active state, grouped sessions and captured
-pane contents are not imported.
+Saved commands never run. Each imported session starts a shell in its saved
+directory; start the programs you want after attaching. Running processes,
+window layouts, active state, grouped sessions and captured pane contents are
+not imported. A save filename beginning with `-` needs a path such as `./-save`.
 
 [`THEOREMS.md`](../THEOREMS.md#recipe-boundaries) maps each boundary to its
 semantic guarantees and IO checks. Matching, input decoding and import planning

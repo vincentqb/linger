@@ -128,14 +128,14 @@ private def helperChecks (e : Env) : IO Nat := do
     let (rc, _, calls) ← probe e "lza" #[target] #[("RECIPE_ATTACH_RC", toString status)]
     attachStatusOk := attachStatusOk && rc == status && calls == attachCall
   f := f + (← expect attachStatusOk "lza preserves every tested non-255 status without a pause")
-  let (boardRc, _, boardCalls) ← probe e "lzs" #["", "2"]
+  let (boardRc, _, boardCalls) ← probe e "lzs"
   f :=
     f +
       (←
         expect
             (boardRc == 7 &&
-              boardCalls == call ["linger", "ls", "-r"] ++ call ["clear"] ++ call ["sleep", "2"])
-            "lzs uses configured remotes for an empty host and stops on pause failure")
+              boardCalls == call ["linger", "ls", "-r"] ++ call ["clear"] ++ call ["sleep", "5"])
+            "lzs uses configured remotes and a five-second pause, stopping on pause failure")
   let (listRc, listOut, listCalls) ← probe e "lzs" #[] #[("RECIPE_LIST_RC", "7")]
   f :=
     f +
@@ -160,38 +160,29 @@ private def helperChecks (e : Env) : IO Nat := do
             "lzs stops on output failure before pausing")
   let board := "NAME\tSTATUS\n  a * literal row\nsecond\twaiting\n"
   let (wholeRc, wholeOut, wholeCalls) ←
-    probe e "lzs" #["me@one,me@two", ".25"]
-        #[("RECIPE_LISTING", board), ("RECIPE_CLEAR_OUT", "CLEARED\n")]
+    probe e "lzs" #[] #[("RECIPE_LISTING", board), ("RECIPE_CLEAR_OUT", "CLEARED\n")]
   f :=
     f +
       (←
         expect
             (wholeRc == 7 && wholeOut == "CLEARED\n" ++ board &&
-              wholeCalls ==
-                call ["linger", "ls", "-r", "me@one,me@two"] ++ call ["clear"] ++
-                  call ["sleep", ".25"])
+              wholeCalls == call ["linger", "ls", "-r"] ++ call ["clear"] ++ call ["sleep", "5"])
             "lzs clears then prints the complete listing without splitting its rows")
-  let mut positiveOk := true
-  for seconds in ["1", "0001", "0.25", ".5", "5.", ""] do
-    let (rc, _, calls) ← probe e "lzs" #["", seconds]
-    positiveOk :=
-      positiveOk && rc == 7 &&
-        calls ==
-          call ["linger", "ls", "-r"] ++ call ["clear"] ++
-            call ["sleep", if seconds.isEmpty then "5" else seconds]
-  let (defaultRc, _, defaultCalls) ← probe e "lzs"
-  positiveOk :=
-    positiveOk && defaultRc == 7 &&
-      defaultCalls == call ["linger", "ls", "-r"] ++ call ["clear"] ++ call ["sleep", "5"]
+  let (refreshRc, refreshOut, refreshCalls) ←
+    probe e "lzs" #[] #[("RECIPE_SLEEP_RC", "0"), ("RECIPE_LISTING", board)]
+  let cycle := call ["linger", "ls", "-r"] ++ call ["clear"] ++ call ["sleep", "5"]
   f :=
-    f + (← expect positiveOk "lzs accepts positive integer and fractional intervals and defaults")
-  let mut intervalOk := true
-  for args in
-    [#["", "0"], #["", "-1"], #["", "bogus"], #["a", "2", "extra"], #["", "."], #["", "00.000"],
-      #["", "1..2"], #["", "..1"], #["", "1e2"], #["", " 2"], #["", "2\n3"]] do
+    f +
+      (←
+        expect
+            (refreshRc == 99 && refreshOut == String.join (List.replicate 4 board) &&
+              refreshCalls == String.join (List.replicate 4 cycle))
+            "lzs repeats the complete collect-display-pause cycle with its defaults")
+  let mut usageOk := true
+  for args in [#[""], #["host"], #["", "2"], #["host", ".25"], #["--help"], #["a", "2", "extra"]] do
     let (rc, _, calls) ← probe e "lzs" args
-    intervalOk := intervalOk && rc == 2 && calls.isEmpty
-  f := f + (← expect intervalOk "lzs rejects invalid intervals and extra arguments")
+    usageOk := usageOk && rc == 2 && calls.isEmpty
+  f := f + (← expect usageOk "lzs rejects arguments before running a command")
   let host := "me@dev-a"
   let sshCall :=
     call
@@ -253,16 +244,12 @@ private def helperChecks (e : Env) : IO Nat := do
             "lzo accepts one-character punctuation and the canonical maximum name length")
   let literal := "-work@me@host [ab]*; '$HOME' \\ literal"
   let (literalRc, _, literalCalls) ← probe e "lza" #[literal]
-  let (hostsRc, _, hostsCalls) ← probe e "lzs" #[literal, "2"]
   let (hostRc, _, hostCalls) ← probe e "lzo" #[literal]
   f :=
     f +
       (←
         expect
-            (literalRc == 7 && literalCalls == call ["linger", "attach", literal] && hostsRc == 7 &&
-              hostsCalls ==
-                call ["linger", "ls", "-r", literal] ++ call ["clear"] ++ call ["sleep", "2"] &&
-              hostRc == 0 &&
+            (literalRc == 7 && literalCalls == call ["linger", "attach", literal] && hostRc == 0 &&
               hostCalls ==
                 call
                     ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=3", "--", literal,
@@ -281,6 +268,15 @@ private def helperChecks (e : Env) : IO Nat := do
         (←
           expect (rc == expectedRc && calls == expectedCalls)
               s!"{recipe} executes directly with its portable shebang")
+  let ghostty ← IO.FS.readFile ((← IO.currentDir) / "recipes" / "ghostty_config")
+  let settings :=
+    (ghostty.splitOn "\n").map (·.trimAscii.toString) |>.filter fun line =>
+      !line.isEmpty && !line.startsWith "#"
+  f :=
+    f +
+      (←
+        expect (settings == ["command = direct:lz"])
+            "Ghostty starts the manager with its defaults and no shell command string")
   return f
 
 /-- tmux-resurrect prefixes the saved directory and full command with `:` and
@@ -398,7 +394,6 @@ if [ "$1" = ls ]; then
     exit "$LZR_LIST_RC"
 fi
 if [ "$LZR_FAIL" = create ] && [ "$3" = true ]; then exit 7; fi
-if [ "$LZR_FAIL" = restore ] && [ "$3" != true ]; then exit 9; fi
 exit 0
 "#
   Linger.Posix.chmod executable.toString 0o700
@@ -416,17 +411,15 @@ exit 0
           #[("PATH", some root.toString), ("LZR_CALLS", some callsFile.toString),
             ("LZR_LISTING", some listing), ("LZR_LIST_RC", some listRc), ("LZR_FAIL", some failure)]
     return (rc, err, ← IO.FS.readFile callsFile)
-  let args := #["--restore-processes", save.toString]
+  let args := #[save.toString]
   let listCall := call ["linger", "ls", "--porcelain"]
   let createCall := call ["linger", "run", "first-w2-p0", "true"]
-  let restoreCall := call ["linger", "run", "first-w2-p0", command]
   let (rc, _, calls) ← invoke panes "" "0" args
   let mut f ←
     expect
         (rc == 0 &&
-          calls ==
-            listCall ++ createCall ++ restoreCall ++ call ["linger", "run", "second-w2-p1", "true"])
-        "lz import-resurrect skips every existing identity and sends an unchanged saved command as one argument"
+          calls == listCall ++ createCall ++ call ["linger", "run", "second-w2-p1", "true"])
+        "lz import-resurrect skips every existing identity and creates shells without saved commands"
   let (rc, err, calls) ← invoke panes "" "7" args
   f :=
     f +
@@ -438,15 +431,13 @@ exit 0
     f +
       (←
         expect (rc == 1 && has err "could not create" && calls == listCall ++ createCall)
-            "lz import-resurrect stops on the first creation failure before restoring or creating another pane")
-  let (rc, err, calls) ← invoke panes "restore" "0" args
+            "lz import-resurrect stops on the first creation failure before creating another pane")
+  let (rc, _, calls) ← invoke panes "" "0" #["--restore-processes", save.toString]
   f :=
     f +
       (←
-        expect
-            (rc == 1 && has err "could not restore" &&
-              calls == listCall ++ createCall ++ restoreCall)
-            "lz import-resurrect stops on the first command failure before creating another pane")
+        expect (rc == 2 && calls.isEmpty)
+            "lz import-resurrect rejects the retired replay option before invoking linger")
   let mut preflightOk := true
   let valid := paneLine "valid" "3" "0" home ""
   for invalid in
@@ -459,12 +450,15 @@ exit 0
       (←
         expect preflightOk
             "lz import-resurrect rejects malformed, duplicate and NUL-bearing saves before invoking linger")
-  let (rc, _, calls) ← invoke panes "" "0" #[save.toString, "extra"]
+  let mut usageOk := true
+  for args in [#[""], #["--restore-processes"], #["--unknown"], #[save.toString, "extra"]] do
+    let (rc, _, calls) ← invoke panes "" "0" args
+    usageOk := usageOk && rc == 2 && calls.isEmpty
   f :=
     f +
       (←
-        expect (rc == 2 && calls.isEmpty)
-            "lz import-resurrect rejects extra arguments before invoking linger")
+        expect usageOk
+            "lz import-resurrect rejects empty paths, options and extra arguments before invoking linger")
   return f
 
 private def importEnvironmentChecks (e : Env) (home data : String) : IO Nat := do
@@ -545,8 +539,8 @@ fi
     IO.FS.writeFile callsFile ""
     let out ←
       IO.Process.output
-          { cmd := importer, args := #["import-resurrect", "--restore-processes", save.toString],
-            cwd := some origin, env := env ++ #[("HOME", value), ("LZR_CHECK_HOME", some "1")] }
+          { cmd := importer, args := #["import-resurrect", save.toString], cwd := some origin,
+            env := env ++ #[("HOME", value), ("LZR_CHECK_HOME", some "1")] }
     let lines := (← IO.FS.readFile callsFile).splitOn "\n"
     let homes :=
       lines.filterMap fun line =>
@@ -555,10 +549,8 @@ fi
         | _ => none
     let homeOk ←
       match homes with
-      | [listed, created, restored] =>
-        if
-            listed.isEmpty || listed != created || listed != restored ||
-              !(System.FilePath.mk listed).isAbsolute then
+      | [listed, created] =>
+        if listed.isEmpty || listed != created || !(System.FilePath.mk listed).isAbsolute then
           pure false
         else
           try
@@ -578,9 +570,7 @@ fi
               (out.exitCode == 0 && homeOk &&
                 calls ==
                   listCalls ++ call ["linger", "run", "fallback-w1-p0", "true"] ++
-                    call ["cwd", accountHome.toString] ++
-                    call ["linger", "run", "fallback-w1-p0", command] ++
-                    call ["cwd", origin.toString])
+                    call ["cwd", accountHome.toString])
               s!"lz import-resurrect uses account home for saved tilde and every child (HOME {label})")
   return f
 
@@ -595,7 +585,7 @@ def run : IO UInt32 := do
   f := f + (← importBoundaryChecks e home.toString data.toString)
   f := f + (← importEnvironmentChecks e home.toString data.toString)
   f := f + (← relativePathChecks e)
-  -- Default path, escaped cwd, and no-command default.
+  -- Default path, escaped cwd, and ignored saved command.
   let defaultDir := root / "work space"
   let defaultSource := root / "default-source"
   let defaultSink := root / "default-sink"
@@ -617,7 +607,7 @@ def run : IO UInt32 := do
     f +
       (←
         expect (!(← System.FilePath.pathExists defaultSink))
-            "lz import-resurrect does not execute a saved command by default")
+            "lz import-resurrect never executes the default save's command")
   -- An explicitly empty XDG value has the documented shell `:-` semantics.
   let emptyXdgDir := root / "empty-xdg"
   let fallbackResurrectDir := home / ".local" / "share" / "tmux" / "resurrect"
@@ -643,9 +633,7 @@ def run : IO UInt32 := do
       (←
         expect (lrc == 0 && (← e.info "legacy-w2-p0" "start_dir") == some legacyDir.toString)
             "lz import-resurrect prefers the legacy default save directory when it exists")
-  -- Explicit process restart: an empty command, one default-allowlisted
-  -- command, and one outsider. The leading empty entry pins pane/command array
-  -- alignment instead of merely proving that some pane ran the command.
+  -- Empty commands, pipelines and other shell syntax all leave ordinary shells.
   let processDir := root / "processes"
   let processSource := root / "process-source"
   let processSink := root / "process-sink"
@@ -658,8 +646,7 @@ def run : IO UInt32 := do
         paneLine "dev" "1" "1" processDir.toString
           s!"tail -n 1 {processSource} | tee -a {processSink}" ++
         paneLine "dev" "1" "2" processDir.toString s!"printf BLOCKED > {blockedSink}")
-  let (prc, _, _) ←
-    runImport e home.toString data.toString #["--restore-processes", processSave.toString]
+  let (prc, _, _) ← runImport e home.toString data.toString #[processSave.toString]
   f :=
     f +
       (←
@@ -668,41 +655,27 @@ def run : IO UInt32 := do
               (← e.info "dev-w1-p1" "start_dir") == some processDir.toString &&
               (← e.info "dev-w1-p2" "start_dir") == some processDir.toString)
             "lz import-resurrect projects every pane into a named linger session")
-  let restored ← waitFor 5000 (System.FilePath.pathExists processSink)
-  let restoredText ←
-    if restored then
-      IO.FS.readFile processSink
-    else
-      pure ""
-  let allowedScreen ← e.out #["capture", "dev-w1-p1"]
-  let emptyScreen ← e.out #["capture", "dev-w1-p0"]
-  f :=
-    f +
-      (←
-        expect
-            (restored && restoredText == "RESTORED-ONCE\n" && has allowedScreen "RESTORED-ONCE" &&
-              !has emptyScreen "RESTORED-ONCE")
-            "lz import-resurrect --restore-processes keeps commands aligned and runs an allowlisted one")
   IO.sleep 700 -- negative assertion after the import process itself has exited
   f :=
     f +
       (←
-        expect (!(← System.FilePath.pathExists blockedSink))
-            "lz import-resurrect --restore-processes skips a command outside the allowlist")
-  let (rrc, _, _) ←
-    runImport e home.toString data.toString #["--restore-processes", processSave.toString]
-  IO.sleep 700
-  let rerunExists ← System.FilePath.pathExists processSink
-  let rerunText ←
-    if rerunExists then
-      IO.FS.readFile processSink
-    else
-      pure ""
+        expect (!(← System.FilePath.pathExists processSink))
+            "lz import-resurrect ignores a saved pipeline")
   f :=
     f +
       (←
-        expect (rrc == 0 && rerunText == "RESTORED-ONCE\n")
-            "lz import-resurrect skips existing sessions on a sequential rerun")
+        expect (!(← System.FilePath.pathExists blockedSink))
+            "lz import-resurrect ignores arbitrary saved shell syntax")
+  let names := #["dev-w1-p0", "dev-w1-p1", "dev-w1-p2"]
+  let before ← names.mapM (fun name => e.info name "outseq")
+  let (rrc, _, _) ← runImport e home.toString data.toString #[processSave.toString]
+  IO.sleep 700
+  let after ← names.mapM (fun name => e.info name "outseq")
+  f :=
+    f +
+      (←
+        expect (rrc == 0 && before.all (·.isSome) && after == before)
+            "lz import-resurrect leaves existing shells untouched on a sequential rerun")
   -- A checkpoint-only identity is also existing state: importing must neither
   -- revive it nor send the saved process command.
   let resumableSource := root / "resumable-source"
@@ -726,8 +699,7 @@ def run : IO UInt32 := do
   IO.FS.writeFile resumableSave
       (paneLine "resumable" "1" "0" processDir.toString
         s!"tail -n 1 {resumableSource} >> {resumableSink}")
-  let (src, _, _) ←
-    runImport e home.toString data.toString #["--restore-processes", resumableSave.toString]
+  let (src, _, _) ← runImport e home.toString data.toString #[resumableSave.toString]
   IO.sleep 700
   let resumableState ← e.status "resumable-w1-p0"
   f :=
