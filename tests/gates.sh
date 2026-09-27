@@ -350,8 +350,10 @@ code_grep '^[[:space:]]+let listing ← IO[.]Process[.]output [{] cmd := executa
 # Selector and decoder proofs concern pure values. Tie each IO consumer to the
 # proved function and retain exact attach argv and an immutable poll snapshot.
 # E2E.Manager drives the terminal lifetime, failure paths and handoff itself.
-for claim in matches_iff_sublist visible_order parseListing_valid step_stay_valid step_attach_mem; do
-  code_grep "^theorem $claim " Theorems/Picker.lean >/dev/null \
+for claim in matches_iff_sublist visible_order parseListing_valid items_existing_prefix \
+             mem_items_create step_stay_valid step_attach_mem step_create_iff \
+             step_create_valid step_init_empty; do
+  code_grep "^(private )?theorem $claim([[:space:]]|:)" Theorems/Picker.lean >/dev/null \
     || fail "selector contract disappeared: $claim"
 done
 for claim in feed_storage_bound feed_paste_only_text flush_no_accept; do
@@ -360,7 +362,7 @@ for claim in feed_storage_bound feed_paste_only_text flush_no_accept; do
 done
 for tie in \
   'return [.]ok [(]← IO[.]ofExcept [(]Tools[.]Picker[.]parseListing out[.]stdout[)][)]' \
-  'let names := Tools[.]Picker[.]visible state[.]candidates state[.]query' \
+  'let items := Tools[.]Picker[.]items state[.]candidates state[.]query' \
   'let mut state := Tools[.]Picker[.]init candidates' \
   'let mut decoder := Tools[.]Input[.]init' \
   'let [(]next, emitted[)] := Tools[.]Input[.]feed decoder byte' \
@@ -377,6 +379,17 @@ for tie in \
   code_grep "^[[:space:]]+$tie$" Manager/Picker.lean >/dev/null \
     || fail "manager bypassed a proved value or fixed IO boundary: $tie"
 done
+picker_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Manager/Picker.lean)"
+# Pin traversal through frame insertion: computing the proved rows or labels
+# alone does not display them or keep the highlighted row aligned with selection.
+for tie in \
+  'let mut index := start for item in [(]items[.]drop start[)][.]take slots do let label := match item with [|] [.]existing target => target [|] [.]create target => s!"Create [{]target[}]" let chosen := index == state[.]cursor lines := lines[.]push [(][(]if chosen then "> " else " "[)] [+][+] label, chosen[)] index := index [+] 1' \
+  '[|] [.]attach target [|] [.]create target => return [.]attach target'; do
+  printf '%s\n' "$picker_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+    || fail "manager lost the rendered selection contract or shared attach handoff: $tie"
+done
+code_grep '^[[:space:]]+cmdAttach hooks Linger[.]Core[.]Name[.]defaultName [[]]$' Linger/Runtime/Cli.lean >/dev/null \
+  || fail "attach no longer shares the proved default session name with selection"
 code_grep 'else if Tools[.]Input[.]pending decoder &&' Manager/Picker.lean >/dev/null \
   || fail "manager stopped checking decoder state before an input timeout"
 

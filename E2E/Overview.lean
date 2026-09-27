@@ -12,8 +12,8 @@ blocks on stdin. Every form runs through `Env.cliTimeout`: a picker that waited
 on redirected stdin would fail here, not hang the gate. `E2E.Manager` separately
 checks bare help in every stream mode, explicit terminal selection and `ls`
 with both streams on a terminal.
-Selector queries only filter listed candidates; they never create sessions
-from arbitrary input (`Theorems/Picker.lean`).
+Selector acceptance chooses either an existing target or an explicit creation
+row (`Theorems/Picker.lean`).
 
 WHAT THE PORT STRENGTHENS. The empty-state check compared against the literal
 `'no sessions'`; `Cli.cmdList` writes `ByteArray.mk (humanListing rows).toArray`

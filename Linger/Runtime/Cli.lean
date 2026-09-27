@@ -25,10 +25,6 @@ open Linger.Core.Session (State)
 
 def version : String := "linger 0.1.0"
 
-/-- Session name used when `attach` is given none — "just give me my
-session" without having to invent a name. -/
-def defaultName : String := "main"
-
 /-- Bound on accumulated `infoReply` bytes, independent of the request deadline.
 A peer exceeding the producer's policy has not supplied a usable answer. -/
 abbrev infoReplyCap : Nat := Linger.Core.Session.infoReplyCap
@@ -38,7 +34,7 @@ def usage : String :=
        linger import [SAVE]
 
   (no args)                 Show this help
-  select                    Select a session; return after attach exits
+  select                    Create or attach to a session; return after detach
                               (requires terminal input and output)
   ls [-r [hosts]]           List once; -r includes configured remote hosts
                               (or pass a comma-separated host list)
@@ -62,7 +58,8 @@ def usage : String :=
   get / set / unset / clear <name>   Session labels (k=v)
   version | help
 
-Selection: type to filter, arrows to move, Enter to attach, Esc to cancel.
+Selection: type to filter or name a new session, arrows to move, Enter to choose.
+The Create row names the session to create; Esc cancels.
 Inside a session, $LINGER_SESSION holds the session name.
 Detach key: ctrl-\\ (set LINGER_NO_DETACH_KEY to disable)."
 
@@ -517,7 +514,7 @@ def main (hooks : Hooks) (args : List String) : IO UInt32 := do
     Daemon.serve name cwd cmd (hooks.save name) (hooks.drop name) restore
     return 0
   | ["attach"] | ["a"] =>
-    cmdAttach hooks defaultName []
+    cmdAttach hooks Linger.Core.Name.defaultName []
   | ["attach", name] | ["a", name] =>
     cmdAttach hooks name []
   | "attach" :: name :: cmd | "a" :: name :: cmd =>

@@ -9,7 +9,8 @@ public section
 
 Matching folds ASCII capitals with `Char.toLower`; it performs neither Unicode
 case folding nor normalization. Results retain listing order and original target
-strings. Selection never interprets a query as a new session name.
+strings. A separate labelled row offers creation of the exact valid query,
+or the shared attach default when the query is empty.
 -/
 
 namespace Tools.Picker
@@ -54,6 +55,17 @@ def parseListing (text : String) : Except String (List String) := parseRows [] (
 def visible (candidates : List String) (query : String) : List String :=
   candidates.filter (Tools.Picker.matches query)
 
+inductive Item where
+  | existing (target : String)
+  | create (target : String)
+  deriving BEq, Repr
+
+/-- Existing matches come first. Creation is explicit and never rewrites the query. -/
+def items (candidates : List String) (query : String) : List Item :=
+  let target := if query.isEmpty then Linger.Core.Name.defaultName else query
+  (visible candidates query).map Item.existing ++
+    if validTarget target && !candidates.contains target then [.create target] else []
+
 structure State where
   candidates : List String
   query : String := ""
@@ -62,23 +74,24 @@ structure State where
 
 def maxQueryLength : Nat := 256
 
-/-- A zero cursor represents an empty result; otherwise it indexes a visible target. -/
+/-- A zero cursor represents an empty result; otherwise it indexes a selectable row. -/
 def State.Valid (s : State) : Prop :=
-  s.cursor ≤ (visible s.candidates s.query).length - 1 ∧ s.query.length ≤ maxQueryLength
+  s.cursor ≤ (items s.candidates s.query).length - 1 ∧ s.query.length ≤ maxQueryLength
 
 def init (candidates : List String) : State := { candidates }
 
-def selected (s : State) : Option String := (visible s.candidates s.query)[s.cursor]?
+def selected (s : State) : Option Item := (items s.candidates s.query)[s.cursor]?
 
 inductive Outcome where
   | stay (state : State)
   | attach (target : String)
+  | create (target : String)
   | cancel
   | refresh
   deriving BEq, Repr
 
-/-- Editing resets the cursor. Navigation clamps, and empty acceptance stays editable.
-Only a selected original target can request attachment; effects remain the caller's job. -/
+/-- Editing resets the cursor. Navigation clamps; acceptance acts on the selected
+row. No selectable row stays editable. Effects remain the caller's job. -/
 def step (s : State) (key : Tools.Key) : Outcome :=
   match key with
   | .text char =>
@@ -96,13 +109,13 @@ def step (s : State) (key : Tools.Key) : Outcome :=
       { s with
         query := "", cursor := 0 }
   | .up => .stay { s with cursor := s.cursor - 1 }
-  | .down =>
-    .stay { s with cursor := min (s.cursor + 1) ((visible s.candidates s.query).length - 1) }
+  | .down => .stay { s with cursor := min (s.cursor + 1) ((items s.candidates s.query).length - 1) }
   | .first => .stay { s with cursor := 0 }
-  | .last => .stay { s with cursor := (visible s.candidates s.query).length - 1 }
+  | .last => .stay { s with cursor := (items s.candidates s.query).length - 1 }
   | .accept =>
     match selected s with
-    | some target => .attach target
+    | some (.existing target) => .attach target
+    | some (.create target) => .create target
     | none => .stay s
   | .cancel => .cancel
   | .refresh => .refresh

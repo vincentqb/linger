@@ -16,9 +16,9 @@ worklog), `specs/archive/` (closed build records), the comments in
 ## Where things stand — read this first after any compaction
 
 1. No spec is in flight. The last one closed on 2026-09-27
-   (`specs/archive/explicit-selection.md`: bare `linger` prints help;
-   `linger select` opens the existing selector; assembled Linux verifier green,
-   hosted checks pending at closure). The preceding checkpoint's hosted checks
+   (`specs/archive/selector-creation.md`: `linger select` offers labelled
+   creation through attach; assembled Linux verifier green, hosted checks
+   pending at closure). The preceding checkpoint's hosted checks
    could not start because of the repository owner's GitHub billing/spending limit.
    New work opens a new `specs/<slug>.md`, names itself here, and keeps
    the live count at one; every behavioral fix starts with a failing
@@ -41,10 +41,10 @@ Each was decided with a recorded reason (specs/archive/, SCRATCHPAD.md,
 git history); re-opening one needs a new reason.
 
 - Windows, tabs, splits — the OS window manager owns composition.
-- Creating sessions from a selector query — selection attaches only an
-  original listed target (`Theorems/Picker.lean`). `linger attach [name]`
-  creates explicitly; `linger select` selects; bare `linger` shows help
-  (`specs/archive/explicit-selection.md`).
+- Silent creation from a selector query — creation must be a labelled,
+  highlighted choice (`specs/archive/selector-creation.md`); existing selections keep
+  their original listed targets. The user's 2026-09-27 clarification permits
+  `linger select` to create through the same attach path.
 - Storing images across reattach — passthrough plus the application's
   own redraw only (`E2E/Graphics.lean`, README Graphics).
 - Restoring the process tree on resume — screen and state yes, programs

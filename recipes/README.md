@@ -5,19 +5,19 @@ import are Lean code and work from any shell; recipes only configure the termina
 or transport.
 
 Build and install `linger` as described in the [README](../README.md#build).
-Before making it your terminal's startup command, create a session:
+Choose a session interactively, or create one by name:
 
 ```sh
-linger attach work
+linger attach work          # create or attach directly
 # Detach with ctrl-\.
-linger select               # select; return here after each attach exits
+linger select               # create or attach; return here after each attach exits
 linger ls                   # list once, including in a terminal
 linger                      # show CLI help
 ```
 
-`linger select` requires terminal input and output. Bare `linger` shows help
-in every stream mode. A selector query only filters existing targets; it never
-creates a new session.
+`linger select` requires terminal input and output. With no sessions it offers
+`Create main`; type a name to create a different one. Bare `linger` shows help
+in every stream mode.
 
 ## Native terminal settings
 
@@ -49,19 +49,24 @@ Window, tab and split configuration remains with the terminal.
 ## Selection
 
 Type a subsequence of the target, such as `wkdh` for `work@dev-host`.
-Matches retain listing order; the selected target is passed to
-`linger attach` unchanged. ASCII letter case is ignored; other Unicode
-characters match exactly.
+Matches retain listing order. ASCII letter case is ignored; other Unicode
+characters match exactly. A `Create <name>` row follows the matches when the
+typed name is valid and not already listed. The creation row uses the name
+exactly as typed; an empty query offers `Create main` if `main` is absent.
+An exact existing target has no duplicate creation row.
 
 - Up/down or ctrl-p/ctrl-n move; Home/End select first/last.
-- Backspace edits, ctrl-u clears, and Enter attaches.
+- Backspace edits, ctrl-u clears, and Enter chooses the highlighted row.
 - Esc, ctrl-c and ctrl-d cancel with status 130.
 - Ctrl-r reloads the listing and clears the query.
 
-Pasted newlines cannot attach. An empty result stays editable. The listing
+Both existing and creation choices call `linger attach` with the target unchanged.
+Use `name@host` or `name@user@host` to create remotely. Invalid names, including
+spaces or slashes in the local name and an empty host suffix, cannot be created;
+they stay editable. Pasted newlines cannot choose a row. The listing
 refreshes on entry, after attach returns, or on ctrl-r; there is no timed remote
 polling. A failed or malformed listing ends selection. The snapshot can become
-stale before attach, which retains linger's normal behavior.
+stale before attach, which creates or attaches according to the session's state then.
 
 Terminal modes and the selector's alternate screen are restored before attach,
 refresh or exit. Detaching with ctrl-\ returns to a fresh selection.

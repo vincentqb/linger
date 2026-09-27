@@ -5,7 +5,7 @@ Pure-function Lean 4, machine-checked invariants.
 
 `linger attach <name>` gives you a shell that keeps running after you
 detach or disconnect; reattach later with the screen intact. Bare `linger`
-explains the CLI. `linger select` selects a session and returns to selection
+explains the CLI. `linger select` creates or attaches to a session and returns to selection
 after detach. `linger ls` lists and exits.
 
 ## Build
@@ -58,14 +58,14 @@ separately and build it with the project toolchain.
 ```
 linger attach work      # attach, creating "work" if absent
 Ctrl-\                # detach — session keeps running
-linger select          # select a session; return after detach
+linger select          # create or attach; return after detach
 linger ls              # overview: names, pids, labels; then exit
 ```
 
 | command | |
 |---|---|
 | (no args) | show help |
-| `select` | select an existing session; requires terminal input and output |
+| `select` | choose an existing session or create one; requires terminal input and output |
 | `attach [name] [cmd]` | attach, creating if absent (name defaults to `main`) |
 | `attach <name>@<host>` | attach a session on a remote host over ssh |
 | `watch <name>` | input/resize-read-only attach; viewing marks output seen |
@@ -119,8 +119,8 @@ is a settled non-goal (AGENTS.md).
 
 Ghostty, kitty, WezTerm and other terminals can run `linger select` at startup.
 [`recipes/README.md`](recipes/README.md) contains native configuration
-examples, selection keys and save-import instructions. Create your first
-session with `linger attach work` before setting a terminal startup command.
+examples, selection keys and save-import instructions. Selection offers
+`Create main` when there are no sessions; type a name to create a different one.
 
 Selection and `linger import [SAVE]` are Lean code and need no external picker
 or shell functions. Their policies and executors stay outside the session and

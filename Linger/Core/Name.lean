@@ -13,6 +13,9 @@ or arriving from a remote listing.
 
 namespace Linger.Core.Name
 
+/-- Shared session name for attachment or selection without an explicit name. -/
+def defaultName : String := "main"
+
 /-- Characters a name may contain: ASCII alphanumerics plus `-_.+`.
 `@` is deliberately excluded — it is reserved as the `name@host`
 remote-attach delimiter, so a name never collides with that syntax.

@@ -35,18 +35,22 @@ In short terminals the selected row takes priority over the prompt and help. -/
 private def draw (state : Tools.Picker.State) (cols rows : UInt32) : IO Unit := do
   let width := cols.toNat - 1
   let height := max 1 rows.toNat
-  let names := Tools.Picker.visible state.candidates state.query
+  let items := Tools.Picker.items state.candidates state.query
   let slots := max 1 (height - 2)
   let start := state.cursor + 1 - slots
   let mut lines := if height > 1 then #[(s!"linger> {state.query}", false)] else #[]
   let mut index := start
-  for target in (names.drop start).take slots do
+  for item in (items.drop start).take slots do
+    let label :=
+      match item with
+      | .existing target => target
+      | .create target => s!"Create {target}"
     let chosen := index == state.cursor
-    lines := lines.push ((if chosen then "> " else "  ") ++ target, chosen)
+    lines := lines.push ((if chosen then "> " else "  ") ++ label, chosen)
     index := index + 1
   if height > 2 then
-    let count := if names.isEmpty then "No matches" else s!"{names.length} sessions"
-    lines := lines.push (s!"{count} | enter attach | esc quit | ctrl-r refresh", false)
+    let count := if items.isEmpty then "No valid target" else s!"{items.length} choices"
+    lines := lines.push (s!"{count} | enter choose | esc quit | ctrl-r refresh", false)
   let mut frame := "\x1b[H\x1b[2J"
   let mut first := true
   for (text, chosen) in lines do
@@ -111,7 +115,7 @@ private def choose (candidates : List String) : IO Choice := do
         | .stay next =>
           state := next
           dirty := true
-        | .attach target =>
+        | .attach target | .create target =>
           return .attach target
         | .cancel =>
           return .cancel
@@ -124,7 +128,7 @@ private def choose (candidates : List String) : IO Choice := do
     finally
       termRestore stdinFd saved
 
-/-- Attach only a proved selection, after terminal restoration. Every attach
+/-- Execute either selected row through attach, after terminal restoration. Every attach
 exit returns to a fresh listing; cancellation ends the manager. The caller
 supplies one frozen absolute executable for all listing and attach children. -/
 def run (executable : String) : IO UInt32 := do

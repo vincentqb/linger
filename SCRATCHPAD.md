@@ -13059,3 +13059,99 @@ Archived the completed spec and restored the no-live-spec pointer. Hosted
 checks are pending at closure; the preceding checkpoint's jobs could not start
 because of GitHub billing/spending limits. No macOS, live GUI-terminal or real
 remote-host verification is claimed.
+
+## Step 1 notes — 2026-09-27
+
+Closed `specs/archive/selector-creation.md`. The user clarified that
+`linger select` should be able to create or attach just like `linger attach`.
+This explicitly reopens the earlier creation non-goal. Existing matches stay
+first in snapshot order; a labelled creation row follows when the exact query
+is valid and absent. An empty query uses the shared attach default `main`.
+Exact existing targets have no duplicate creation row. Invalid input remains
+editable, and no query is silently rewritten into another name.
+
+`Tools.Picker.Item` distinguishes an existing target from a creation target.
+`items_existing_prefix` and `mem_items_existing` preserve match order and
+provenance. `mem_items_create` characterizes exact query/default, validity and
+snapshot absence; `step_create_valid` exposes nonempty canonical local names,
+printable targets and nonempty remote suffixes. `step_attach_mem` retains the
+original listed-target claim for existing rows, without a validity premise.
+`step_create_iff` permits creation only when Enter selects its row; navigation
+and query bounds now account for both row kinds. Snapshot absence is not a
+claim about the later upsert: the session may change before attachment.
+
+Moved the attach default from runtime CLI code into `Linger.Core.Name`.
+Its canonical-value theorem and CLI consumer gate keep selection and direct
+attachment on one value. The positive `step_init_empty` theorem proves that
+an empty selector actually creates that default, so the creation contract
+cannot be satisfied by suppressing every creation result. Lean v4.34.1's
+`cbv` closes this concrete goal with all-access imports for the picker,
+`Linger.Core.Name` and `Init.Data.String.Legacy`. `decide` first encountered
+hidden string splitting and then recursion limits; the minimal successful
+import probe needs Name and Legacy, not String.Basic. The checked axiom list
+is just `propext`, `Classical.choice` and `Quot.sound`. No heartbeat or recursion
+limit was raised. `default-proof-final-cbv.log` records the successful probe;
+failed import/decision probes remain separate diagnostics.
+
+The executor renders the two row kinds and forwards either through its
+existing attach path after terminal restoration. Both listing and child
+attachment use the supplied executable and exact argv. There is no second
+creation backend, new dependency, CLI option, timer, C code or raw binding.
+The four production files change by seventeen net lines against `f95105f`.
+Help, README and recipe instructions now describe creation through selection.
+The native terminal settings already invoke `linger select` and need no edit.
+
+Two desired-value guards fail against the predecessor before implementation.
+A worker in a separate worktree adds executable observations to the existing
+manager harness. The authoritative predecessor run builds successfully and
+executes all eighty-six assertions: seventy-one pass, fifteen fail. The
+identical E2E source then passes all eighty-six against the changed program.
+Coverage includes creation labels and exact argv, existing rows first, exact
+target suppression, case distinctions, local-name boundaries, remote suffixes,
+invalid input, editing, refresh and paste. Public CLI fixtures create both a
+named session and default `main`, execute a command, detach, observe the fresh
+listing, and cancel with restored termios. No session exists before acceptance.
+The existing 5.5-second idle observation still catches a timed listing reload.
+Each fixture owns its state directory and retires only its own sessions.
+
+Independent review found an IO-gate gap: correctly computing a creation label
+did not prove that the renderer displayed it or kept its row aligned with the
+chosen target. Compiling variants which reverse rendered items or explicitly
+discard the computed label both pass the original gate. Pinning the contiguous
+loop from index initialization through traversal, label, cursor and frame
+insertion rejects both. A simple unused-label variant failed compilation
+first and is excluded from the compiling-mutation evidence.
+
+Six compiling mutations are rejected: reversed displayed rows, discarded
+display labels, bypassed creation validation, duplicate creation rows,
+suppressed creation acceptance and a rewritten creation target at handoff.
+The last includes a backtick-quoted canonical branch decoy; it still fails.
+All source hashes are restored, and the restored targeted builds and gates
+pass. `mutations.json` and `mutations-restored.json` contain commands, timestamps,
+compiler/verifier exits, logs and restoration hashes. The final independent
+review found no remaining correctness issue.
+
+Final assembled Linux verification passes on Lean v4.34.1. The foreground
+verifier rebuilds 154 jobs from empty and passes generated C ABI, source gates,
+standalone layout, exact-constant and resolved-reference coverage, CI runner
+checks, fuzz corpus, POSIX smoke tests, all thirteen live suites and the
+unrelated-session sentinel. There are 364 live assertions, including 86 manager
+checks, with no failures. Both required final builds, standalone lint and
+warning-level shellcheck also pass.
+
+The full receipt is
+`/tmp/linger-select-create-20260927/assembled-full-verifier.log`;
+`final-verifier/` holds copied suite/build/format/coverage logs and tested source
+and executable hashes. `final-build.log`, `final-proofs-tests.log` and
+`final-static-checks.json` record the remaining checks. The worker's
+`/tmp/linger-select-create-test-receipts-20260927/handoff.md` identifies the
+authoritative red and green runs. Earlier denied socket setup, ANSI-bearing
+patch delivery and receipt hash-format diagnostics are distinguished there
+from behavioral results. A nested git subprocess failed during final manifest
+collection; direct read-only inventory completed the manifest without rerunning
+tests or changing code. No diagnostic failure is counted as a passing check.
+
+Archived the completed spec and restored the no-live-spec pointer. Hosted
+checks are pending at closure; the preceding checkpoint's jobs could not start
+because of GitHub billing/spending limits. No macOS, live GUI-terminal or real
+remote-host verification is claimed.

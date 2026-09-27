@@ -17,6 +17,10 @@ because `/` is simply not in the alphabet.
 
 namespace Linger.Core.Name
 
+/-- Both interactive entry paths share a default that path sanitization preserves. -/
+theorem defaultName_canonical : defaultName = "main" ∧ sanitize defaultName = defaultName := by
+  decide
+
 theorem okChar_no_slash (c : Char) (h : okChar c = true) : c ≠ '/' := by
   intro he
   subst he

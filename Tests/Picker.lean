@@ -97,23 +97,53 @@ open Tools.Picker
 
 #guard maxQueryLength == 256
 
+#guard items [] "" == [.create "main"]
+
+#guard items ["main", "work"] "" == [.existing "main", .existing "work"]
+
+#guard items ["work", "other"] "w" == [.existing "work", .create "w"]
+
+#guard items ["work", "other"] "work" == [.existing "work"]
+
+-- Fuzzy matching folds ASCII case; creating retains the exact typed name.
+#guard items ["work", "other"] "WK" == [.existing "work", .create "WK"]
+
+#guard items ["work@host"] "work" == [.existing "work@host", .create "work"]
+
+#guard
+  ["work@host", "work@me@host", "work@世界", "-work", "+work"].all fun target =>
+    items [] target == [.create target] &&
+      step { candidates := [], query := target } .accept == .create target
+
+-- Invalid creation targets remain editable; no sanitizer rewrite is hidden.
+#guard
+  ["bad/name", ".hidden", "@host", "work@", "a b", "work@\u009b",
+        String.ofList (List.replicate 81 'a')].all
+    fun query =>
+    items [] query == [] &&
+      step { candidates := [], query } .accept == .stay { candidates := [], query }
+
 #guard (init ["work", "other"]) == { candidates := ["work", "other"], query := "", cursor := 0 }
 
-#guard selected (init ["work@me@dev-a", "other"]) == some "work@me@dev-a"
+#guard selected (init ["work@me@dev-a", "other"]) == some (.existing "work@me@dev-a")
 
-#guard selected (init []) == none
+#guard selected (init []) == some (.create "main")
 
 #guard selected { candidates := ["work"], cursor := 99 } == none
 
-#guard selected { candidates := ["work"], query := "unknown" } == none
+#guard selected { candidates := ["work"], query := "unknown" } == some (.create "unknown")
 
 #guard step (init ["work@me@dev-a"]) .accept == .attach "work@me@dev-a"
 
-#guard step (init []) .accept == .stay (init [])
+#guard step (init []) .accept == .create "main"
+
+#guard step { candidates := ["work"], query := "new-name" } .accept == .create "new-name"
+
+#guard step { candidates := ["work"], query := "w", cursor := 1 } .accept == .create "w"
 
 #guard
-  step { candidates := ["work"], query := "new-name" } .accept ==
-    .stay { candidates := ["work"], query := "new-name" }
+  step { candidates := ["work"], query := "work", cursor := 1 } .accept ==
+    .stay { candidates := ["work"], query := "work", cursor := 1 }
 
 #guard step (init ["work"]) .cancel == .cancel
 
@@ -152,13 +182,17 @@ open Tools.Picker
 
 #guard
   step { candidates := ["a", "b"], cursor := 1 } .down ==
-    .stay { candidates := ["a", "b"], cursor := 1 }
+    .stay { candidates := ["a", "b"], cursor := 2 }
+
+#guard
+  step { candidates := ["a", "b"], cursor := 2 } .down ==
+    .stay { candidates := ["a", "b"], cursor := 2 }
 
 #guard step (init ["a", "b"]) .down == .stay { candidates := ["a", "b"], cursor := 1 }
 
 #guard step { candidates := ["a", "b"], cursor := 1 } .first == .stay (init ["a", "b"])
 
-#guard step (init ["a", "b", "c"]) .last == .stay { candidates := ["a", "b", "c"], cursor := 2 }
+#guard step (init ["a", "b", "c"]) .last == .stay { candidates := ["a", "b", "c"], cursor := 3 }
 
 #guard [Tools.Key.up, .down, .first, .last].all fun key => step (init []) key == .stay (init [])
 

@@ -254,7 +254,7 @@ def run : IO UInt32 := do
       (←
         expect (waitCode == some 1 && has waitErr "connection lost")
             "wait exits 1 when the daemon disappears")
-  -- 8. bare `attach` (no name) attaches the default session `Cli.defaultName`
+  -- 8. bare `attach` (no name) attaches the shared `Name.defaultName` session.
   let m ← e.spawn #["attach"] cols rows
   IO.sleep 800
   f :=
