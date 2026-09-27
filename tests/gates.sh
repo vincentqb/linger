@@ -330,23 +330,25 @@ done
 # The proof covers the returned parser/plan values. These call-site gates make
 # bypassing them a reviewable change; IO tests check preflight/failure ordering
 # and actual argv. As with the runtime ties below, this is not an IO theorem.
-for claim in parseSave_valid parseRow_command_valid parseRow_command_irrelevant \
+for claim in diagnostic_printable diagnostic_eq_self \
+             parseSave_valid parseRow_command_valid parseRow_command_irrelevant \
              mem_plan plan_order plan_sequential_idempotent; do
   code_grep "^(private )?theorem $claim " Theorems/Resurrect.lean >/dev/null \
     || fail "importer contract disappeared: $claim"
 done
+code_grep '^[[:space:]]+IO[.]eprintln s!"linger import: [{]diagnostic [(]toString e[)][}]"$' Manager/Resurrect.lean >/dev/null \
+  || fail "importer no longer displays the proved control-free diagnostic"
 code_grep '^[[:space:]]+let panes ← IO[.]ofExcept [(]parseSave home [(]← IO[.]FS[.]readFile save[)][)]$' Manager/Resurrect.lean >/dev/null \
   || fail "importer no longer consumes the proved whole-save parser"
 code_grep '^[[:space:]]+for pane in plan existing panes do$' Manager/Resurrect.lean >/dev/null \
   || fail "importer no longer iterates the proved import plan"
-code_grep '^[[:space:]]+cwd := some [(]System[.]FilePath[.]mk [(]absolute pane[.]dir[)][)], env [}]$' Manager/Resurrect.lean >/dev/null \
-  || fail "importer no longer uses the planned directory as the child cwd"
+import_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Manager/Resurrect.lean)"
+printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])let created ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"run", pane[.]name, "true"[]], cwd := some [(]System[.]FilePath[.]mk [(]absolute pane[.]dir[)][)], env [}] unless created[.]exitCode == 0 do throw [(]IO[.]userError s!"could not create session: [{]pane[.]name[}]: [{]created[.]stdout[}][{]created[.]stderr[}]"[)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+  || fail "importer bypasses planned creation argv/cwd, captured output or its diagnostic catch"
 code_grep '^[[:space:]]+importSave executable args[.]head[?]$' Manager/Resurrect.lean >/dev/null \
   || fail "importer no longer forwards the entry point executable"
 code_grep '^[[:space:]]+let listing ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"ls", "--porcelain"[]], env [}]$' Manager/Resurrect.lean >/dev/null \
   || fail "importer no longer lists with the supplied executable"
-code_grep '^[[:space:]]+[{] cmd := executable, args := #[[]"run", pane[.]name, "true"[]],$' Manager/Resurrect.lean >/dev/null \
-  || fail "importer no longer creates only a shell for the planned name with the supplied executable"
 
 # Selector and decoder proofs concern pure values. Tie each IO consumer to the
 # proved function and retain exact attach argv and an immutable poll snapshot.
@@ -373,7 +375,7 @@ for tie in \
   'let ready ← poll fds events 50' \
   'let out ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"ls", "-r", "--porcelain"[]] [}]' \
   'let snapshot ← listing executable' \
-  'discard <[|] attach executable target' \
+  'discard child[.]wait' \
   'let child ← IO[.]Process[.]spawn [{] cmd := executable, args := #[[]"attach", target[]] [}]'; do
   code_grep "^[[:space:]]+$tie$" Manager/Picker.lean >/dev/null \
     || fail "manager bypassed a proved value or fixed IO boundary: $tie"

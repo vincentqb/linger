@@ -20,20 +20,27 @@ namespace Linger.Core.Remote
 
 open Linger.Core.Name
 
+/-- **§Name at the record level.** Whatever a remote host sent, a parsed row's name has been
+through `sanitize` — so it is safe to interpolate into a socket path. `parse_names_valid` is
+this plus `mem_filterMap`; stating it here is what makes the guarantee a property of the
+record parser rather than of the listing walk. -/
+theorem parseRecord_name_valid {lines : List String} {r : RemoteRow}
+    (h : parseRecord lines = some r) : Valid r.name := by
+  unfold parseRecord at h
+  dsimp only at h
+  split at h
+  · exact absurd h (by simp)
+  · rename_i kv heq
+    simp only [Option.some.injEq] at h
+    subst h
+    exact sanitize_valid _
+
 /-- Every parsed row's name is sanitized-valid, whatever the remote
 sent. -/
 theorem parse_names_valid (out : String) : ∀ r ∈ parse out, Valid r.name := by
   intro r hr
-  unfold parse at hr
   obtain ⟨rec, -, hparse⟩ := List.mem_filterMap.mp hr
-  unfold parseRecord at hparse
-  dsimp only at hparse
-  split at hparse
-  · exact absurd hparse (by simp)
-  · rename_i kv heq
-    simp only [Option.some.injEq] at hparse
-    subst hparse
-    exact sanitize_valid _
+  exact parseRecord_name_valid hparse
 
 /-- Scrubbed strings carry no control bytes (C0, DEL — the ANSI
 introducers). -/
@@ -59,6 +66,42 @@ theorem parse_cmd_scrubbed (out : String) :
     subst hparse
     exact scrub_no_ctl _
 
+/-! ## The duplicate report
+
+The diagnostic walk is also the validation gate. Its agreement with `Nodup`
+establishes both refusal of duplicates and acceptance of duplicate-free lists. -/
+
+/-- The walk finds nothing only on a duplicate-free list. -/
+theorem firstDupHost_none {hosts : List String} (h : firstDupHost hosts = none) : hosts.Nodup := by
+  induction hosts with
+  | nil => exact List.nodup_nil
+  | cons a t ih =>
+    unfold firstDupHost at h
+    split at h
+    · exact absurd h (by simp)
+    · rename_i hc
+      exact List.nodup_cons.mpr ⟨fun hm => hc (List.contains_iff_mem.mpr hm), ih h⟩
+
+/-- …and it finds nothing on every duplicate-free list. -/
+theorem firstDupHost_none_of_nodup {hosts : List String} (h : hosts.Nodup) :
+    firstDupHost hosts = none := by
+  induction hosts with
+  | nil => rfl
+  | cons a t ih =>
+    obtain ⟨ha, ht⟩ := List.nodup_cons.mp h
+    show (if t.contains a then some a else firstDupHost t) = none
+    split
+    · rename_i hc
+      exact absurd (List.contains_iff_mem.mp hc) ha
+    · exact ih ht
+
+/-- Every duplicate list produces an offender for the refusal message. -/
+theorem firstDupHost_isSome_of_not_nodup {hosts : List String} (h : ¬hosts.Nodup) :
+    (firstDupHost hosts).isSome := by
+  cases hd : firstDupHost hosts with
+  | none => exact absurd (firstDupHost_none hd) h
+  | some _ => rfl
+
 /-- §Remote (dup guard): a validated host list is duplicate-free, so no
 host is ever queried twice and no duplicate row can reach the listing.
 This is the enforcement the `-r` flag / remotes file rely on. -/
@@ -71,7 +114,7 @@ theorem checkHosts_ok_nodup {hosts l : List String} (h : checkHosts hosts = .ok 
     · simp at h
     · simp only [Except.ok.injEq] at h
       subst h
-      simpa using hnd
+      exact firstDupHost_none hnd
 
 /-- A list with no dirty host is one where `hostClean` holds of every entry. The
 walk and the predicate agree, which is what lets the theorem below be about the
@@ -165,59 +208,5 @@ theorem records_ne_nil (lines : List String) : ∀ g ∈ records lines, g ≠ []
       rw [List.mem_singleton] at h2
       subst h2
       simpa using hne
-
-/-- **§Name at the record level.** Whatever a remote host sent, a parsed row's name has been
-through `sanitize` — so it is safe to interpolate into a socket path. `parse_names_valid` is
-this plus `mem_filterMap`; stating it here is what makes the guarantee a property of the
-record parser rather than of the listing walk. -/
-theorem parseRecord_name_valid {lines : List String} {r : RemoteRow}
-    (h : parseRecord lines = some r) : Valid r.name := by
-  unfold parseRecord at h
-  dsimp only at h
-  split at h
-  · exact absurd h (by simp)
-  · rename_i kv heq
-    simp only [Option.some.injEq] at h
-    subst h
-    exact sanitize_valid _
-
-/-! ## The duplicate report
-
-`checkHosts` rejects on `¬hosts.Nodup` but fills its message from `firstDupHost`. If the two
-could disagree the refusal would read `remote host '' listed more than once`, so what needs
-proving is that the walk and `Nodup` agree exactly — not that the walk is the gate. -/
-
-/-- The walk finds nothing only on a duplicate-free list. -/
-theorem firstDupHost_none {hosts : List String} (h : firstDupHost hosts = none) : hosts.Nodup := by
-  induction hosts with
-  | nil => exact List.nodup_nil
-  | cons a t ih =>
-    unfold firstDupHost at h
-    split at h
-    · exact absurd h (by simp)
-    · rename_i hc
-      exact List.nodup_cons.mpr ⟨fun hm => hc (List.contains_iff_mem.mpr hm), ih h⟩
-
-/-- …and it finds nothing on every duplicate-free list. -/
-theorem firstDupHost_none_of_nodup {hosts : List String} (h : hosts.Nodup) :
-    firstDupHost hosts = none := by
-  induction hosts with
-  | nil => rfl
-  | cons a t ih =>
-    obtain ⟨ha, ht⟩ := List.nodup_cons.mp h
-    show (if t.contains a then some a else firstDupHost t) = none
-    split
-    · rename_i hc
-      exact absurd (List.contains_iff_mem.mp hc) ha
-    · exact ih ht
-
-/-- **So the refusal always names an offender.** This is the claim the message depends on:
-`checkHosts` decided on `Nodup`, and this says `firstDupHost` cannot come back empty once
-that decision has gone against the caller. -/
-theorem firstDupHost_isSome_of_not_nodup {hosts : List String} (h : ¬hosts.Nodup) :
-    (firstDupHost hosts).isSome := by
-  cases hd : firstDupHost hosts with
-  | none => exact absurd (firstDupHost_none hd) h
-  | some _ => rfl
 
 end Linger.Core.Remote

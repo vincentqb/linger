@@ -462,13 +462,10 @@ theorem stick_csi_semi_open (a : Nat) (halt : a < 65535) {g : Vt}
       { sa with
         params := sa.params.push (min sa.cur 65535, sa.curSub), cur := 0, curSub := false,
         haveCur := false } := by
-    unfold csiPush
-    rw [ite_eq_left
+    exact
+      csiPush_of_lt sa false
         (by
-          rw [hsA, hhaveA]; simp),
-      ite_eq_right
-        (by
-          rw [hsA, hparA]; decide)]
+          rw [hsA, hparA]; decide)
   refine
     ⟨csiPush sa false, by rw [hfeed], by rw [hpush], by rw [hpush], ?_, by rw [hpush], ?_, ?_, ?_,
       by

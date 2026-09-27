@@ -12835,3 +12835,149 @@ the added check's layout. This checkpoint changes only the CI script, its
 Lean check, orchestration count and explanatory comments. It claims no new
 proof of shell IO and adds no session runtime, C, dependency or proof limit.
 The complete Linux verifier remains scheduled after the source audit changes.
+
+## Step 2 notes — 2026-09-27
+
+Completed the source audit for `specs/minimal-compounding.md` across three
+independent writer worktrees and this tree's runtime, POSIX/C, build and
+verification slice. A separate reviewer checked the assembled census and
+importer changes. The source price against `49f48c0`, including both audit
+steps, is 25 fewer production lines, 197 fewer proof/census lines and 147
+additional verification lines: 75 fewer source lines overall. Counts include
+source comments and formatting; append-only work records and documentation
+are excluded. `source-cost.json` and `source-numstat.tsv` under
+`/tmp/linger-minimal-20260926/` preserve the measurement.
+
+The VT worker removed `csiPush`'s redundant empty-prefix branch while retaining
+the exact full-state collector equations for omitted parameters and overflow.
+Moving the existing `Fixes`/`PsBlind` and CSI/SGR/OSC preservation lemmas into
+the earlier `Keeps` module resolves the previously recorded file-order obstacle.
+Grid and mode proofs now reuse those instances. This saves 168 maintained lines
+across production and proofs without changing receiver-law statements,
+preconditions or import edges. Transformed projections and field-specific ESC
+cases remain separate. The worker inspected VT, Render, Terminal and their
+proof/test ladders; the retained representation and collector bounds have no
+new evidence against them.
+
+Remote validation uses its duplicate-reporting walk once, eliminating a
+separate `Nodup` decision and unreachable fallback. The temporary
+`RemoteEquivalence.lean` certificate proves equality to the exact predecessor
+expression for every host list. A private batch-preservation theorem replaces
+five Session inductions; Wire proofs reuse unknown-tag payload and leftover
+facts. This slice saves 51 lines including the stronger duplicate-selection,
+refusal-precedence and scrubbed-error fixtures. The remaining buffer,
+checkpoint, name, listing, replay, status, session and wire contracts were
+inspected. Different buffer contracts, decoder refinement stages and
+receiver domains remain distinct.
+
+The client drain loops use direct returns instead of mutable result/continuation
+flags, saving 22 lines. Timed and untimed drains remain separate because their
+silence and completion policies differ. A native thirteen-case probe drives
+actual owned Unix sockets and wire frames: completion, wait ignoring completion,
+exit status, refusal, EOF, bounded silence and malformed-frame precedence all
+pass. The selector's single-use attach wrapper is inlined; its blocking child
+wait still follows terminal restoration.
+
+Importer errors could echo C0, DEL and C1 from rejected names or filesystem
+paths. A four-line pure `diagnostic` map replaces those characters with `?`.
+`diagnostic_printable` proves their exclusion and `diagnostic_eq_self` preserves
+already printable text, including spaces and Unicode. The transformation is
+applied at display; paths, pane identities and argv retain their original values.
+Three actual executor regressions compiled before the fix and failed on the
+predecessor, then passed. Unit fixtures exercise all 65 C0/DEL/C1 characters.
+
+Independent review found a second route around that boundary: creation children
+inherited stderr, and stdout could carry controls too. The importer now uses
+Lean core's concurrent `IO.Process.output` capture and includes both failed-child
+streams in the exception handled by the proved diagnostic boundary. Successful
+creation remains silent. The fixed `run name true` command reads no stdin,
+sends input to the daemon and returns without printing; detached daemons
+redirect their standard streams before execution. The new actual executor
+check covers a successful first creation, failed second creation, controls in
+both streams, preserved Unicode cause, empty importer stdout and no third
+creation. The existing actual-daemon check also requires silent success.
+Recipes now runs 47 checks. One capture/throw consumer gate replaces two
+separate creation argv/cwd gates; parser, plan, listing and catch ties remain.
+
+The census uses Lean 4.34.1's parser, standard private-name normalization,
+`Expr.foldConsts` and resolved environment references instead of source-name
+guessing and a custom expression walk. One environment/theorem index resolves
+the source inventory. An intermediate per-name environment scan took 138.7 s;
+the indexed Coverage build takes about 4–5 s, including 4.3 s in the final clean
+build. This is a measured implementation experiment, not a runtime benchmark.
+Exact-constant coverage includes 314 explicit Core/Tools definitions.
+
+Compiled fixtures expose the cases the source scanner missed: multiline and
+escaped declarations, compound namespaces/sections, strings, nested comments,
+opened/renamed/relative/rooted references and local names. Follow-up review
+found quoted namespace commands changing the scanner's scope and a private
+helper impersonating a renderer after logical-name normalization. Scope
+traversal now prunes `Syntax.isQuot`; reference classification checks the
+target's actual module as well as its logical family and excludes that owning
+module. Both findings have compiled red and green fixtures. The classifier
+records 27 backed renderer/replay operations, adding `Render.digits` and
+`Render.dropTrailingBlanks` to the explicit table.
+
+The standalone census runs after the built program and outside the native
+live-test executable. Source-only changes therefore cannot reuse a cached
+inventory result. It inventories definition bodies in the compiled module
+closure, not whether every call executes. Fixture modules use `ModuleSetup`
+with their actual module names and import artifacts; `.ir.sig` precedes `.ir`
+in `ImportArtifacts`. An earlier incorrect artifact mapping crashed the
+experiment, and defining a private shadow in the same module as the public
+constant was rejected by the compiler. Those setup failures are retained as
+negative results, not behavioral reds. A quoted-scope receipt initially had
+an incorrect expected-error matcher; the underlying compiled mismatch was
+verified separately.
+
+All deliberate semantic mutations compiled before rejection and were restored.
+VT checks reject omitted CSI fields, lost overflow ignore and printing during
+pen replay. Core checks reject reversed duplicate selection, raw duplicate
+diagnostics, changed refusal precedence, a batch clock beyond its output and
+dropped unknown-tag payloads. Manager checks reject sanitizer bypass with a
+quoted canonical-call decoy, C1 leakage, replacing spaces, a nonblocking attach
+wait and raw printing of captured child streams. Five native client mutants
+fail the thirteen-case probe for changed completion handling, exit status,
+silence, post-completion processing and malformed-frame acceptance. Restored
+source hashes and green builds are in each receipt set.
+
+Rejected reductions are recorded with their actual status. `String.quote`
+leaves C1 unchanged in a Lean probe. Stderr-only capture compiled and passed
+its initial check but failed the expanded stdout check; standard both-stream
+capture removes that bypass without a custom pipe reader. Generic client loops,
+new decoder/picker character abstractions, reverse-accumulator parsers and
+another POSIX interface have no demonstrated total-code benefit. All raw
+exports remain necessary at the existing isolated boundary. No C, dependency,
+production abstraction, partial definition, fuel or proof-limit raise was added.
+
+Worker evidence is indexed by `handoff.md` in
+`/tmp/linger-minimal-vt-20260926/.lake/minimal-vt-audit/`,
+`/tmp/linger-minimal-core-20260926-receipts/`,
+`/tmp/linger-minimal-manager-receipts-20260926/` and its
+`child-diagnostic-20260927/` subdirectory. Parent native-client and census
+receipts are in `/tmp/linger-minimal-20260926/client/` and `census/`.
+The earlier assembled verifier passed compilation and ABI checks but rejected
+late Coverage layout drift; formatting fixed that failure before the final run.
+Worker baseline results and rejected sandbox socket attempts are kept separate
+from final assembled verification.
+
+Final assembled Linux verification passes on Lean v4.34.1. The complete
+foreground verifier rebuilds from empty and passes generated C ABI, source
+gates, standalone layout, exact-constant and resolved-reference coverage,
+CI runner checks, fuzz fixtures, POSIX smoke tests, all thirteen live suites
+with exact counts, and the unrelated-session sentinel. The full run is
+`/tmp/linger-minimal-20260926/assembled-full-verifier-final.log`; copied
+build, formatting, coverage and individual suite logs are in `final-verifier/`.
+Both required final builds pass in `final-build.log` and
+`final-proofs-tests.log`; standalone lint passes in `final-lint.log`.
+Warning-level shellcheck passes in `final-shellcheck-warning.log`.
+The default shellcheck level reports the same four informational suggestions
+as the baseline: literal backticks and the deliberate fixed C filename
+inventory. `baseline-shellcheck.log` records the comparison; no semantic
+failure is suppressed or counted as a pass.
+
+Archived the completed spec as `specs/archive/minimal-compounding.md` and
+restored the no-live-spec pointer. Repository hooks run with the verified
+checkpoint commit. Hosted checks are pending here; the preceding checkpoint's
+GitHub jobs did not start because of billing/spending limits. No macOS,
+live GUI-terminal or real remote-host verification is claimed.

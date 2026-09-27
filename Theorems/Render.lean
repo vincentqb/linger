@@ -26,8 +26,9 @@ The rungs, in dependency order:
   `Quiet bs` keeps DECOM off, and `cup_roundtrip` proves the primitive cursor address.
 * `Theorems.Render.Pen` — stage 3d begins: the pen round trip (semantic and parser
   halves) and one glyph placed in one cell.
-* `Theorems.Render.Keeps` — the nonprinting control stages leave the screen
-  alone; and `Row.mend`'s fixed points.
+* `Theorems.Render.Keeps` — `Fixes π` shares nonprinting control-stage proofs
+  across projections; `Keeps` specializes it to the screen. Also `Row.mend`'s
+  fixed points.
 * `Theorems.Render.Modes` — anchor A5, both directions for the modes: the lead-in
   grounds any receiver, `leave_canonical` on the way out, `MMap` and the inbound
   modes and pen on the way in.
@@ -45,8 +46,7 @@ The rungs, in dependency order:
   cursor guarantees.
 * `Theorems.Render.Grid` — the grid: `paint_rows`, `gridAnsi_writes_grid`, and
   `restore_grid_any` on both screens at every height.
-* `Theorems.Render.Tabs` — `Fixes π` (the projection-generic stream predicate that
-  `Keeps` and `MMap id` are instances of) and `restore_tabs_any`.
+* `Theorems.Render.Tabs` — the tab-stop projection and `restore_tabs_any`.
 * `Theorems.Render.Scrollback` — the history stage's row half: the unconditional row
   fit (`rowOk_fitRow`, `fitRow_id_of_rowOk`) and the complete byte budget
   (`sbTake_budget`, `sbRows_budget`, `sbTake_prefix`, `scrollbackAnsi_le`). Its

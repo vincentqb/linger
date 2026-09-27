@@ -5,7 +5,7 @@
 #   1. clean build of program + proofs + unit tests, zero warnings
 #   2. no `sorry` / `partial` in the pure core or the proofs
 #  2b. coverage: every inventoried pure definition occurs in a theorem
-#      type, and every runtime-emitted byte stream is classified
+#      type, and compiled renderer/replay references are classified
 #   3. posix shim smoke tests (lingertest)
 #   4. attach/detach/reattach/mirror/wait e2e (real ptys)
 #   5. reboot-resume e2e (SIGKILL + restore + corrupt tolerance)
@@ -165,8 +165,12 @@ fi
 
 say "2b. semantic coverage of pure code + runtime emitter classification"
 # `Theorems.Coverage` resolves exact environment constants in theorem types;
-# E2E.Coverage handles the source-tree property of which streams runtime emits.
-./.lake/build/bin/e2e coverage | tee /tmp/linger-coverage.log
+# E2E.Coverage reads resolved references from the program just built above.
+# Invoke Lean directly so source-only changes cannot reuse a cached census.
+./lake env lean Theorems/Coverage.lean || fail "semantic coverage gate"
+./lake env lean E2E/Coverage.lean > /tmp/linger-coverage.log 2>&1 \
+  || { cat /tmp/linger-coverage.log; fail "runtime emitter classification"; }
+cat /tmp/linger-coverage.log
 tail -1 /tmp/linger-coverage.log | grep -q '^FAILURES: 0$' || fail "coverage gate"
 
 say "2c. CI runner selection (tests/ci-runners.sh, driven not copied)"
@@ -249,7 +253,7 @@ say "13. watch (read-only mirror: geometry, keyboard, hand-back, seen)"
 suite watch 18
 
 say "14. recipes (native terminal settings and tmux-resurrect import)"
-suite recipes 43
+suite recipes 47
 
 say "15. delivery (large replay, ordering, exit tails and retired transports)"
 suite delivery 34

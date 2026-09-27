@@ -52,10 +52,20 @@ example :
       true := by
   native_decide
 
+/-- The first repeated host wins, even if a different duplicate completes
+earlier or a dirty host precedes it. Refusal precedence is stable. -/
 example :
-    (match checkHosts ["gpu2", "gpu3", "gpu2"] with
-      | .ok _ => false
-      | .error _ => true) =
+    (match checkHosts ["bad\x1b", "gpu2", "gpu3", "gpu3", "gpu2", "gpu3"] with
+      | .error e => e == "remote host 'gpu2' listed more than once"
+      | .ok _ => false) =
+      true := by
+  native_decide
+
+/-- A duplicate diagnostic scrubs its host just like a control-byte refusal. -/
+example :
+    (match checkHosts ["ev\x1b[31mil", "ev\x1b[31mil"] with
+      | .error e => e == "remote host 'ev[31mil' listed more than once"
+      | .ok _ => false) =
       true := by
   native_decide
 

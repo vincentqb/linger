@@ -47,19 +47,24 @@ theorem drop4_writeU32_append (n : UInt32) (rest : List UInt8) :
 
 /-! ## Single-message round-trip (§Frame) -/
 
+/-- An unassigned tag decodes to `unknown`, carrying its bytes forward untouched:
+the skip-don't-fail half of §Frame, naming the predicate that defines it. -/
+theorem decodeMsg_unknown_of_not_knownTag (t : UInt8) (p : List UInt8) (h : knownTag t = false) :
+    decodeMsg t p = .unknown t p := by
+  have ht : ¬t ≤ 16 := by simpa [knownTag] using h
+  have ne : ∀ i : UInt8, i ≤ 16 → t ≠ i := fun i hi hEq => ht (hEq ▸ hi)
+  simp [decodeMsg, ne 0 (by decide), ne 1 (by decide), ne 2 (by decide), ne 3 (by decide),
+    ne 4 (by decide), ne 5 (by decide), ne 6 (by decide), ne 7 (by decide), ne 8 (by decide),
+    ne 9 (by decide), ne 10 (by decide), ne 11 (by decide), ne 12 (by decide), ne 13 (by decide),
+    ne 14 (by decide), ne 15 (by decide), ne 16 (by decide)]
+
 /-- Re-interpreting a well-formed message's own tag and payload yields
 the message back. `wf` is load-bearing in the `unknown` case: an
 `unknown` wearing a known tag would decode as the known message, which
 is why `wf` forbids constructing one. -/
 theorem decodeMsg_roundtrip (m : Msg) (hm : m.wf) : decodeMsg m.tag m.payload = m := by
   cases m with
-  | unknown t p =>
-    have ht : ¬t ≤ 16 := by simpa [knownTag] using hm.2
-    have ne : ∀ (i : UInt8), i ≤ 16 → t ≠ i := fun i hi h => ht (h ▸ hi)
-    simp [decodeMsg, Msg.tag, Msg.payload, ne 0 (by decide), ne 1 (by decide), ne 2 (by decide),
-      ne 3 (by decide), ne 4 (by decide), ne 5 (by decide), ne 6 (by decide), ne 7 (by decide),
-      ne 8 (by decide), ne 9 (by decide), ne 10 (by decide), ne 11 (by decide), ne 12 (by decide),
-      ne 13 (by decide), ne 14 (by decide), ne 15 (by decide), ne 16 (by decide)]
+  | unknown t p => exact decodeMsg_unknown_of_not_knownTag t p hm.2
   | _ => simp [decodeMsg, Msg.tag, Msg.payload]
 
 /-! ## takeFrames, frame by frame -/
@@ -504,17 +509,9 @@ theorem Decoder.feedAll_flatten (d : Decoder) (chunks : List (List UInt8))
       · rcases hres : takeFrames (d.buf ++ c) with ⟨buf1, err1, msgs1⟩
         have hb : (d.feed c).1.buf = buf1 := by simp [Decoder.feed, he, hres]
         rw [hb]
-        by_cases he1 : err1 = true
-        · have hb1 :=
-            takeFrames_errored_buf (d.buf ++ c)
-              (by
-                rw [hres]; simpa using he1)
-          rw [hres] at hb1
-          simp only at hb1
-          simp [hb1]
-        · have hst := takeFrames_leftover_stable (d.buf ++ c)
-          rw [hres] at hst
-          simpa using hst
+        have hst := takeFrames_leftover_stable (d.buf ++ c)
+        rw [hres] at hst
+        simpa using hst
     show
       (((d.feed c).1.feedAll cs).1, (d.feed c).2 ++ ((d.feed c).1.feedAll cs).2) =
         d.feed ((c :: cs).flatten)
@@ -539,16 +536,5 @@ theorem knownTag_tag_of_assigned (m : Msg) (h : ∀ t p, m ≠ .unknown t p) :
   cases m with
   | unknown t p => exact absurd rfl (h t p)
   | _ => rfl
-
-/-- …and an unassigned tag decodes to `unknown`, carrying its bytes forward untouched: the
-skip-don't-fail half of §Frame, now naming the predicate that defines it. -/
-theorem decodeMsg_unknown_of_not_knownTag (t : UInt8) (p : List UInt8) (h : knownTag t = false) :
-    decodeMsg t p = .unknown t p := by
-  have ht : ¬t ≤ 16 := by simpa [knownTag] using h
-  have ne : ∀ i : UInt8, i ≤ 16 → t ≠ i := fun i hi hEq => ht (hEq ▸ hi)
-  simp [decodeMsg, ne 0 (by decide), ne 1 (by decide), ne 2 (by decide), ne 3 (by decide),
-    ne 4 (by decide), ne 5 (by decide), ne 6 (by decide), ne 7 (by decide), ne 8 (by decide),
-    ne 9 (by decide), ne 10 (by decide), ne 11 (by decide), ne 12 (by decide), ne 13 (by decide),
-    ne 14 (by decide), ne 15 (by decide), ne 16 (by decide)]
 
 end Linger.Core.Wire

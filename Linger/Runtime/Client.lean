@@ -52,43 +52,33 @@ def replyText (fallback : String) (bytes : List UInt8) : String :=
 /-- Read frames until the daemon closes or the requested terminator arrives. -/
 def drainReplies (fd : UInt32) (untilDone : Bool) : IO Drained := do
   let mut dec : Decoder := {}
-  let mut result : Drained := .lost "connection lost"
-  let mut go := true
-  while go do
+  repeat
     let revs ← poll #[fd] #[POLLIN] (-1)
     if revs[0]! &&& (POLLIN ||| POLLHUP ||| POLLERR) == 0 then
       continue
     match ← read fd 65536 with
     | none =>
-      go := false
+      return .lost "connection lost"
     | some bs =>
       if bs.isEmpty then
         continue
       let (dec', msgs) := dec.feed bs.toList
       dec := dec'
       if dec.errored then
-        result := .lost "invalid response from daemon"
-        go := false
-      else
-        for m in msgs do
-          if !go then
-            continue
-          match m with
-          | .output payload | .infoReply payload =>
-            writeAll stdoutFd (ByteArray.mk payload.toArray)
-          | .exited status =>
-            result := .exited status
-            go := false
-          | .done =>
-            if untilDone then
-              result := .done
-              go := false
-          | .err msg =>
-            result := .refused (replyText "request refused" msg)
-            go := false
-          | _ =>
-            pure ()
-  return result
+        return .lost "invalid response from daemon"
+      for m in msgs do
+        match m with
+        | .output payload | .infoReply payload =>
+          writeAll stdoutFd (ByteArray.mk payload.toArray)
+        | .exited status =>
+          return .exited status
+        | .done =>
+          if untilDone then
+            return .done
+        | .err msg =>
+          return .refused (replyText "request refused" msg)
+        | _ =>
+          pure ()
 
 /-- Fire-and-forget: deliver one message, no reply expected. -/
 def sendOnly (name : String) (m : Msg) : IO Bool := do
@@ -124,44 +114,32 @@ stdout as they come (`capture` is such a stream); the timeout is per poll
 round, so a long reply that keeps arriving never trips it. -/
 def drainBounded (fd : UInt32) (silenceMs : Int32 := 2000) : IO Drained := do
   let mut dec : Decoder := {}
-  let mut result : Drained := .silent
-  let mut go := true
-  while go do
+  repeat
     let revs ← poll #[fd] #[POLLIN] silenceMs
     if revs[0]! &&& (POLLIN ||| POLLHUP ||| POLLERR) == 0 then
-      go := false
-    else
-      match ← read fd 65536 with
-      | none =>
-        result := .lost "connection lost"
-        go := false
-      | some bs =>
-        if bs.isEmpty then
-          continue
-        let (dec', msgs) := dec.feed bs.toList
-        dec := dec'
-        if dec.errored then
-          result := .lost "invalid response from daemon"
-          go := false
-        else
-          for m in msgs do
-            if !go then
-              continue
-            match m with
-            | .output payload | .infoReply payload =>
-              writeAll stdoutFd (ByteArray.mk payload.toArray)
-            | .done =>
-              result := .done
-              go := false
-            | .exited status =>
-              result := .exited status
-              go := false
-            | .err msg =>
-              result := .refused (replyText "request refused" msg)
-              go := false
-            | _ =>
-              pure ()
-  return result
+      return .silent
+    match ← read fd 65536 with
+    | none =>
+      return .lost "connection lost"
+    | some bs =>
+      if bs.isEmpty then
+        continue
+      let (dec', msgs) := dec.feed bs.toList
+      dec := dec'
+      if dec.errored then
+        return .lost "invalid response from daemon"
+      for m in msgs do
+        match m with
+        | .output payload | .infoReply payload =>
+          writeAll stdoutFd (ByteArray.mk payload.toArray)
+        | .done =>
+          return .done
+        | .exited status =>
+          return .exited status
+        | .err msg =>
+          return .refused (replyText "request refused" msg)
+        | _ =>
+          pure ()
 
 /-- Split stdin bytes at the detach key. Returns (bytes-to-send,
 detach?). Bytes after the key are dropped — we're leaving. -/

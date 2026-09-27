@@ -562,51 +562,11 @@ theorem mmap_of_esc_lead {f : Modes → Modes} {rest : Bytes} (h : MMap f ((0x1B
         from by rw [feed_cons, feed_cons, hstep]]
     exact h _ hg rfl
 
-/-- **A projection blind to the parser state.** Every field accessor but `pstate`
-is one, by `rfl`. It is the one thing the CSI walk needs of a projection, because
-the walk to the final byte is a chain of `pstate` updates and nothing else. -/
-def PsBlind {α : Type} (π : Vt → α) : Prop :=
-  ∀ (v : Vt) (p : PState), π { v with pstate := p } = π v
-
 theorem psBlind_modes : PsBlind (fun v : Vt => v.modes) := fun _ _ => rfl
 
 theorem psBlind_pen : PsBlind (fun v : Vt => v.pen) := fun _ _ => rfl
 
 theorem psBlind_stick : PsBlind stick := fun _ _ => rfl
-
-/-- **The CSI tail walk, once, for any projection.** `keeps_csi_tail` (the grid),
-`csi_tail_modes` and `csi_tail_pen` were this proof three times with a different
-field in the hole; the projection is now a parameter and the latter two are
-one-line instances. `keeps_csi_tail` *is* the `π = (·.grid)` instance too — the grid
-is `PsBlind` by `rfl` and its `hgrid` is exactly `hπ` — but it lives 1200 lines
-above this lemma, so collapsing it means hoisting `PsBlind`/`csi_tail_proj` above
-the `Keeps` section. Feasible (this proof depends only on `csi_param_run_inter`,
-`csi_final_step_eq` and `un_csiDispatch`, all of which precede `Keeps`); not done,
-so file order is the reason the third copy survives, not the shape of its
-hypothesis.
-
-Read: a parameter run followed by a final byte whose dispatch does not move `π`
-leaves `π` alone and returns the parser to ground with nothing half-decoded. -/
-theorem csi_tail_proj {α : Type} {π : Vt → α} (hb : PsBlind π) (params : Bytes) (final : UInt8)
-    (hp : ParamBytes params) (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E)
-    (hπ : ∀ (w : Vt) (t : CsiState), π (w.csiDispatch t final) = π w) {v : Vt} {s : CsiState}
-    (hg : v.pstate = .csi s) (hu : v.u8need = 0) (hi : s.inter = 0) :
-    π (v.feed (params ++ [final])) = π v ∧
-      (v.feed (params ++ [final])).pstate = .ground ∧ (v.feed (params ++ [final])).u8need = 0 := by
-  obtain ⟨s', hs', hsi⟩ := csi_param_run_inter params hg hu hp
-  rw [show ∀ (w : Vt), w.feed (params ++ [final]) = (w.feed params).feed [final] from fun w => by
-      simp [Vt.feed, List.foldl_append]]
-  rw [hs', show ∀ (w : Vt), w.feed [final] = w.step final from fun _ => rfl]
-  rw [csi_final_step_eq final (v := { v with pstate := .csi s' }) (s := s') rfl (by simpa using hu)
-      (by
-        rw [hsi]; exact hi)
-      h1 h2]
-  unfold Vt.csiFinish
-  dsimp only
-  refine
-    ⟨?_, rfl, by
-      rw [un_csiDispatch]; simpa using hu⟩
-  rw [hb _ PState.ground, hπ, hb v (PState.csi s')]
 
 /-- modes-analog of `keeps_csi_tail`: a parameter run and a final byte whose dispatch
 preserves modes leaves modes alone and returns to ground. -/
@@ -621,20 +581,7 @@ theorem csi_tail_modes (params : Bytes) (final : UInt8) (hp : ParamBytes params)
 theorem mmap_id_csi_seq (params : Bytes) (final : UInt8) (hp : ParamBytes params)
     (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E)
     (hmodes : ∀ (w : Vt) (t : CsiState), (w.csiDispatch t final).modes = w.modes) :
-    MMap id (csiB ++ params ++ [final]) := by
-  intro v hg hu
-  rw [show (csiB ++ params ++ [final] : Bytes) = [0x1B, 0x5B] ++ (params ++ [final]) from by
-      unfold csiB; simp]
-  rw [show
-      ∀ (w : Vt),
-        w.feed ([0x1B, 0x5B] ++ (params ++ [final])) =
-          (w.feed [0x1B, 0x5B]).feed (params ++ [final])
-      from fun w => by simp [Vt.feed, List.foldl_append]]
-  rw [keeps_csi_open hg hu]
-  obtain ⟨hmod, hp', hu'⟩ :=
-    csi_tail_modes params final hp h1 h2 hmodes (v := { v with pstate := .csi {} }) rfl
-      (by simpa using hu) rfl
-  exact ⟨hp', hu', hmod⟩
+    MMap id (csiB ++ params ++ [final]) := fixes_csi_seq psBlind_modes params final hp h1 h2 hmodes
 
 /-! ### per-final dispatch-modes facts for the preservers -/
 
@@ -951,23 +898,14 @@ theorem mmap_id_ed (n : Nat) : MMap id (csiNum n 0x4A) := by
   · rfl
   · exact modes_eraseScreen w _
 
-theorem mmap_id_sgrOf (codes : List Nat) : MMap id (sgrOf codes) := by
-  rw [show sgrOf codes = csiB ++ joinSemi codes ++ [0x6D] from rfl]
-  exact
-    mmap_id_csi_seq _ 0x6D (paramBytes_joinSemi codes) (by decide) (by decide)
-      (fun w t => modes_csiDispatch_sgr w t)
+theorem mmap_id_sgrOf (codes : List Nat) : MMap id (sgrOf codes) :=
+  fixes_sgrOf psBlind_modes codes modes_csiDispatch_sgr
 
-theorem mmap_id_sgrColorSeq (c : Color) (isFg : Bool) : MMap id (sgrColorSeq c isFg) := by
-  unfold sgrColorSeq
-  split
-  · exact MMap.nil
-  · exact mmap_id_sgrOf _
+theorem mmap_id_sgrColorSeq (c : Color) (isFg : Bool) : MMap id (sgrColorSeq c isFg) :=
+  fixes_sgrColorSeq psBlind_modes c isFg modes_csiDispatch_sgr
 
-theorem mmap_id_penSgr (p : Pen) : MMap id (penSgr p) := by
-  unfold penSgr
-  exact
-    mmap_id_append (mmap_id_append (mmap_id_sgrOf _) (mmap_id_sgrColorSeq _ _))
-      (mmap_id_sgrColorSeq _ _)
+theorem mmap_id_penSgr (p : Pen) : MMap id (penSgr p) :=
+  fixes_penSgr psBlind_modes p modes_csiDispatch_sgr
 
 theorem mmap_id_so : MMap id [0x0E] := by
   intro v hg hu

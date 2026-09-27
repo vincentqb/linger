@@ -15,10 +15,10 @@ worklog), `specs/archive/` (closed build records), the comments in
 
 ## Where things stand — read this first after any compaction
 
-1. `specs/minimal-compounding.md` is in flight: full-tree minimal-code and
-   compound-engineering audit, preserving the established behavior and proofs.
-   The preceding `specs/archive/single-entry-point.md` closed on 2026-09-26
-   with local Linux verification green; hosted checks did not start because of
+1. No spec is in flight. The last one closed on 2026-09-27
+   (`specs/archive/minimal-compounding.md`: full-tree minimal-code and
+   compound-engineering audit; assembled Linux verifier green, hosted checks
+   pending). The preceding checkpoint's hosted checks did not start because of
    the repository owner's GitHub billing/spending limit.
    New work opens a new `specs/<slug>.md`, names itself here, and keeps
    the live count at one; every behavioral fix starts with a failing

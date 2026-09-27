@@ -40,7 +40,7 @@ recipes, break records, measurements, the audits — lives in
 | §Renderable | the painter expresses fewer grids than the emulator reaches | the emulator never stores a shape a repaint cannot reproduce (`renderable_step`/`renderable_feed`/`renderable_resize`/`renderable_quiesce`, from `renderable_init`); `LiveReachableVt` is the least predicate closed under those and containing every screen the decoder's door accepts (`LiveReachableVt.ofDecoded` — a `Good` premise is provably unsound, counterexample in SCRATCHPAD.md); the decoder establishes it from disk too (`Vt.ofDecoded_renderable`, `Checkpoint.load_renderable`); lifted to the daemon by `Session.run_vt_renderable` and `run_resume_vt_shape` | Linger/Core/Vt.lean, Theorems/Vt.lean |
 | §Status | one glyph per listing row vs seven conditions | the seven states partition the observation space: `cover`, `disjoint`, `classify_sound` + `classify_unique`, `reachable`, `icon_injective` / `name_injective`, `name_clean` | Theorems/Status.lean |
 | §Resume | the product's own promise: crash, reboot, reattach | §Restore ∘ §Replay, stated twice — over `save`'s input and over `load`'s output (`resume_grid_of_load`, `resume_tabs_of_load`, `resume_sb_of_load`: any byte string that loads, no other hypothesis) — and lifted to the daemon over its own `vt0` (`Session.run_resume_vt_shape`, `run_resume_load_save`) | Theorems/Resume.lean, Theorems/Session.lean |
-| §Import | foreign save records vs distinct session identities and directory-only restoration | successful parsing gives a nonempty list with canonical, distinct names and NUL-free directories (`parseSave_valid`); valid saved commands cannot affect parsed panes (`parseRow_command_irrelevant`); planning preserves records and order and skips existing names (`mem_plan`, `plan_order`); adding planned names to the snapshot makes a sequential rerun empty (`plan_sequential_idempotent`) | Theorems/Resurrect.lean, E2E/Recipes.lean |
+| §Import | foreign save records vs distinct session identities, directory-only restoration and safe error display | successful parsing gives a nonempty list with canonical, distinct names and NUL-free directories (`parseSave_valid`); valid saved commands cannot affect parsed panes (`parseRow_command_irrelevant`); planning preserves records and order and skips existing names (`mem_plan`, `plan_order`); adding planned names to the snapshot makes a sequential rerun empty (`plan_sequential_idempotent`); diagnostics exclude C0, DEL and C1 and preserve already printable text (`diagnostic_printable`, `diagnostic_eq_self`) | Theorems/Resurrect.lean, E2E/Recipes.lean |
 | §Select | fuzzy query vs an exact session identity | matching is ASCII-folded subsequence matching (`matches_iff_sublist`); filtering preserves order (`visible_order`); successful listing parsing preserves complete original name records (`parseListing_records`); continuing transitions preserve query/cursor bounds (`step_stay_valid`); only acceptance can attach an unchanged snapshot member (`step_attach_iff`, `step_attach_mem`) | Theorems/Picker.lean, E2E/Manager.lean |
 | §Input | split keyboard bytes and pasted commands vs deliberate selection | one byte produces at most one key (`feed_length`); UTF-8 prefixes retain at most three bytes (`stored_bound`, `feed_storage_bound`); delivered text excludes controls (`feed_text_valid`); paste emits only text and survives incomplete input (`feed_paste_only_text`, `feed_paste_sticky`, `flush_paste`); a timeout never accepts (`flush_no_accept`) | Theorems/Input.lean, E2E/Manager.lean |
 
@@ -160,14 +160,22 @@ stated limitation, or a settled non-goal — never to nothing; a new
 promise (or § / anchor) lands with its mapping. That is a review
 discipline. `Theorems/Coverage.lean` resolves every explicit `def` in
 `Linger/Core/` and `Tools/` to its fully qualified environment
-constant and requires that exact constant in a theorem type. Escaped names
-such as `«matches»` resolve to the same environment name as qualified uses;
-an unrecognized declaration name fails the census. Comments, proof bodies and colliding
-basenames cannot satisfy it. `E2E/Coverage.lean` independently classifies
-renderer and replay definitions referenced outside their own module by
-runtime-reachable code. It reuses the definition census rather than inspecting
-one line of each return type, so multiline signatures and intermediate byte
-containers remain covered:
+constant and requires that exact constant in a theorem type. Lean's parser
+handles layout, escaped names, strings and nested comments; the census tracks
+namespace and section scopes and rejects unsupported scope commands. Standard
+private-name resolution and expression traversal connect source definitions
+to theorem types. Quoted commands do not change its scope or declare names.
+Comments, proof bodies and colliding basenames cannot satisfy it.
+
+After the program builds, `E2E/Coverage.lean` classifies renderer and replay
+definitions referenced outside their own module in the compiled `Main`
+module closure. Resolved references cover qualified, relative, opened and
+renamed names without mistaking strings, quotations or local names for calls.
+Target module provenance excludes private helpers with a renderer's logical
+name. Compiled fixtures check these cases and the declaration census.
+This inventories definition bodies in the program's modules; it does not
+claim every inventoried call executes. Each referenced operation has an
+explicit backing entry:
 
 | stream | backing |
 |---|---|
@@ -179,6 +187,8 @@ containers remain covered:
 | `Render.history` | `history_framing`, `history_lines`, `history_records`, `history_screenText_suffix` |
 | `Render.screenText` | `screenText_framing`, `screenText_lines`, `screenText_records` |
 | `Render.utf8s` | `utf8s_no_ctl`, `utf8s_no_esc`, `utf8s_no_esc_bel`, `Session.utf8s_no_frame` |
+| `Render.digits` | `digits_range`, `Terminal.noNl_digits` |
+| `Render.dropTrailingBlanks` | `dropTrailingBlanks_subset`, used by `Listing.humanRow_printable` |
 
 A newly referenced definition fails the gate until classified; an entry for a
 definition no longer referenced fails too.
@@ -281,6 +291,17 @@ Source gates pin its parser, plan, supplied executable and constant shell-creati
 `E2E.Recipes` checks those actual arguments, ignored saved commands, failure
 ordering, executable identity, home fallback, relative paths, and untouched
 existing shells on reruns against real daemons.
+
+`diagnostic_printable` excludes C0, DEL and C1 from displayed importer errors;
+`diagnostic_eq_self` preserves already printable text, including spaces and
+Unicode. `Manager.Resurrect` applies that function only when displaying an
+error, leaving the original names, paths and arguments intact. It captures both
+creation-child streams and includes their failure text in that same diagnostic.
+Source gates tie the executor to these boundaries; `E2E.Recipes` checks controls
+in rejected names, missing directories, missing save paths and failed child
+output, along with silent successful imports and stop-on-failure ordering.
+These laws do not claim visual unambiguity for arbitrary Unicode or prove
+filesystem IO.
 
 The source gates constrain the manager's imports to its pure policies, core
 name/listing modules, public VT width function and existing POSIX interface.

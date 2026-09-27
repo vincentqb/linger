@@ -730,12 +730,9 @@ theorem csiPush_le (s : CsiState) (sub : Bool) (hp : s.params.size ≤ 16) :
     (csiPush s sub).params.size ≤ 16 := by
   unfold csiPush
   split
-  · split
-    · exact hp
-    · rename_i hlt
-      simp only [Array.size_push]
-      omega
-  · simp
+  · exact hp
+  · simp only [Array.size_push]
+    omega
 
 theorem set_u8 {v : Vt} (n a : Nat) (hn : n ≤ 3) (h : Good v) :
     Good
@@ -5503,20 +5500,13 @@ theorem csiPush_of_lt (s : CsiState) (sub : Bool) (h : s.params.size < 16) :
         params := s.params.push (min s.cur 65535, s.curSub), cur := 0, curSub := sub,
         haveCur := false } := by
   unfold csiPush
-  split
-  · rw [ite_eq_right (by omega)]
-  · rename_i he
-    have hs : s.params.size = 0 := by
-      simp only [Bool.or_eq_true, decide_eq_true_eq] at he
-      omega
-    have hz : s.params = #[] := Array.size_eq_zero_iff.mp hs
-    simp [hz]
+  rw [ite_eq_right (by omega)]
 
 /-- Overflow retains the collected fields but ignores the entire sequence. -/
 theorem csiPush_of_ge (s : CsiState) (sub : Bool) (h : 16 ≤ s.params.size) :
     csiPush s sub = { s with ignore := true, cur := 0, haveCur := false } := by
   unfold csiPush
-  rw [ite_eq_left (by simp; omega), ite_eq_left h]
+  rw [ite_eq_left h]
 
 /-- A trailing separator creates an omitted final field; it cannot silently
 disappear at dispatch. This matters for SGR, whose omitted field is a reset. -/

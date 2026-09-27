@@ -1143,18 +1143,13 @@ private def Vt.csiDispatch (v : Vt) (s : CsiState) (final : UInt8) : Vt :=
 /-- A separator closes a parameter, including an omitted one. The empty-prefix
 case still contributes a slot; otherwise `CSI ;5H` would be read as `CSI 5H`. -/
 def csiPush (s : CsiState) (sub : Bool) : CsiState :=
-  if s.haveCur || s.params.size > 0 || sub then
-    -- close the current parameter
-    if s.params.size ≥ 16 then
-      { s with
-        ignore := true, cur := 0, haveCur := false }
-    else
-      { s with
-        params := s.params.push (min s.cur 65535, s.curSub), cur := 0, curSub := sub,
-        haveCur := false }
+  if s.params.size ≥ 16 then
+    { s with
+      ignore := true, cur := 0, haveCur := false }
   else
     { s with
-      params := #[(min s.cur 65535, s.curSub)], cur := 0, curSub := sub, haveCur := false }
+      params := s.params.push (min s.cur 65535, s.curSub), cur := 0, curSub := sub,
+      haveCur := false }
 
 private def Vt.csiFinish (v : Vt) (s : CsiState) (final : UInt8) : Vt :=
   -- A final byte closes digits or a trailing omitted parameter. With no digits

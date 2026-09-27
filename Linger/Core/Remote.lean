@@ -111,9 +111,9 @@ and echoing the raw bytes back is how a hostile remotes file would inject an esc
 sequence through the error path rather than the listing (`humanListing` covers the
 listing; this covers here). -/
 def checkHosts (hosts : List String) : Except String (List String) :=
-  if !hosts.Nodup then
-    .error s!"remote host '{scrub ((firstDupHost hosts).getD "")}' listed more than once"
-  else
+  match firstDupHost hosts with
+  | some h => .error s!"remote host '{scrub h}' listed more than once"
+  | none =>
     match firstDirtyHost hosts with
     | some h => .error s!"remote host '{scrub h}' contains a control character"
     | none => .ok hosts

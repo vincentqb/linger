@@ -198,7 +198,11 @@ if [ "$1" = ls ]; then
     printf '%s' "$IMPORT_PROBE_LISTING"
     exit "$IMPORT_PROBE_LIST_RC"
 fi
-if [ "$IMPORT_PROBE_FAIL" = "$2" ]; then exit 7; fi
+printf '%s' "$IMPORT_PROBE_STDOUT"
+if [ "$IMPORT_PROBE_FAIL" = "$2" ]; then
+    printf '%s' "$IMPORT_PROBE_STDERR" >&2
+    exit 7
+fi
 exit 0
 "#
   Linger.Posix.chmod executable.toString 0o700
@@ -256,6 +260,29 @@ exit 0
                 has err s!"could not create session: {failed}" &&
                 calls == expected)
               s!"linger import preserves order and stops at the failed creation ({failed})")
+  let controls := "\x07\x1b[2J\r\x7f\u0080\u0085\u009b\u009d\u009f"
+  IO.FS.writeFile save panes
+  IO.FS.writeFile callsFile ""
+  let (rc, out, err) ←
+    runImportProbe e home data executable.toString args
+        #[("PATH", some root.toString), ("IMPORT_PROBE_CALLS", some callsFile.toString),
+          ("IMPORT_PROBE_LISTING", some listing), ("IMPORT_PROBE_LIST_RC", some "0"),
+          ("IMPORT_PROBE_FAIL", some "second-w2-p1"),
+          ("IMPORT_PROBE_STDOUT", some ("child stdout" ++ controls ++ "\n")),
+          ("IMPORT_PROBE_STDERR", some ("permission denied: é path" ++ controls ++ "\n"))]
+  f :=
+    f +
+      (←
+        expect
+            (rc == 1 && out.isEmpty && err.startsWith "linger import: " &&
+              has err "could not create session: second-w2-p1" &&
+              has err "child stdout" &&
+              has err "permission denied: é path" &&
+              err.endsWith "\n" &&
+              (err.dropEnd 1).toString.toList.all
+                (fun c => 32 ≤ c.toNat && (c.toNat < 127 || 160 ≤ c.toNat)) &&
+              (← IO.FS.readFile callsFile) == listCall ++ createCall ++ secondCall)
+            "linger import sanitizes both child streams and preserves a failed creation's cause")
   let (rc, err, calls) ← invoke panes "" "0" #["--restore-processes", save.toString]
   f :=
     f +
@@ -274,6 +301,21 @@ exit 0
       (←
         expect preflightOk
             "linger import rejects malformed, duplicate and NUL-bearing saves before invoking linger")
+  let missing := (root / ("missing" ++ controls)).toString
+  for (text, path, cause) in
+    [(paneLine ("bad" ++ controls) "1" "0" home "", save.toString, "projected session"),
+      (paneLine "control" "1" "0" missing "", save.toString, "working directory not found"),
+      (valid, missing, "save not found")] do
+    let (rc, err, calls) ← invoke text "" "0" #[path]
+    f :=
+      f +
+        (←
+          expect
+              (rc == 1 && err.startsWith "linger import: " && has err cause && err.endsWith "\n" &&
+                (err.dropEnd 1).toString.toList.all
+                  (fun c => 32 ≤ c.toNat && (c.toNat < 127 || 160 ≤ c.toNat)) &&
+                calls.isEmpty)
+              s!"linger import renders {cause} errors without terminal controls")
   let regular := root / "regular-file"
   IO.FS.writeFile regular ""
   for dir in [root / "missing", regular] do
@@ -484,11 +526,13 @@ def run : IO UInt32 := do
   IO.FS.writeFile (resurrectDir / "last")
       (paneLine "desk" "1" "0" defaultDir.toString s!"tail -n 1 {defaultSource} >> {defaultSink}" ++
         "window\tdesk\t1\t:ignored\nstate\tdesk\t\n")
-  let (drc, _, _) ← runImport e home.toString data.toString #[]
+  let (drc, dout, derr) ← runImport e home.toString data.toString #[]
   f :=
     f +
       (←
-        expect (drc == 0 && (← e.info "desk-w1-p0" "start_dir") == some defaultDir.toString)
+        expect
+            (drc == 0 && dout.isEmpty && derr.isEmpty &&
+              (← e.info "desk-w1-p0" "start_dir") == some defaultDir.toString)
             "linger import reads the default XDG save and restores an escaped cwd")
   IO.sleep 700 -- negative assertion: give a wrongly-started command time to run
   f :=

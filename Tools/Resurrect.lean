@@ -13,6 +13,10 @@ not claim atomic creation or protection from concurrent same-name creators.
 
 namespace Tools.Resurrect
 
+/-- Replace terminal controls only when displaying an error, preserving its other text. -/
+def diagnostic (message : String) : String :=
+  message.map fun c => if 32 ≤ c.toNat && (c.toNat < 127 || 160 ≤ c.toNat) then c else '?'
+
 structure Pane where
   name : String
   dir : String

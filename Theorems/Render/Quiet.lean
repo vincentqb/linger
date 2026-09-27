@@ -366,8 +366,7 @@ theorem cup_places_cursor {v : Vt} (row col : Nat) (hg : v.pstate = .ground) (hr
       { s1 with
         params := s1.params.push (min s1.cur 65535, s1.curSub), cur := 0, curSub := false,
         haveCur := false } := by
-    unfold csiPush
-    rw [ite_eq_left (by simp [hhave1]), ite_eq_right (by simp [hpar1])]
+    exact csiPush_of_lt s1 false (by simp [hpar1])
   rw [hpush] at hs2
   obtain ⟨s3, hs3, hcur3, hhave3, hpar3, hint3, hign3, hsub3, hpv3⟩ := csi_digits_value col hs2 rfl
   -- the frame survives the prefix, so `v`'s bounds transport to it

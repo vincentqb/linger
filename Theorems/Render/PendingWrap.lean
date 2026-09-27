@@ -57,22 +57,6 @@ theorem cup_feed_eq (row col : Nat) (hr : 0 < row) (hc : 0 < col) (hrcap : row �
   unfold Vt.moveTo
   rw [← hg]
 
-/-- `ESC [ ?` opens a private CSI: the full state equation, not just the parser state. -/
-theorem csi_priv_open_eq {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) :
-    v.feed [0x1B, 0x5B, 0x3F] = { v with pstate := .csi ({ priv := 0x3F } : CsiState) } := by
-  rw [show v.feed [(0x1B : UInt8), 0x5B, 0x3F] = (v.feed [0x1B, 0x5B]).step 0x3F from by
-      simp [Vt.feed],
-    keeps_csi_open hg hu]
-  unfold Vt.step Vt.abortUtf8
-  dsimp only
-  rw [ite_eq_right (by simp [hu])]
-  show
-    (({ v with pstate := .csi ({} : CsiState) } : Vt).stepCsi ({} : CsiState) 0x3F) =
-      { v with pstate := .csi ({ priv := 0x3F } : CsiState) }
-  unfold Vt.stepCsi
-  rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide),
-    ite_eq_left (by decide)]
-
 /-- **A private mode set, as a state equation.** `?<n>h` / `?<n>l` *is* `setMode true n on`,
 with the parser back in ground. `modeSet_modes` gave only the `Modes` field, which cannot see
 `?1049h`'s real work — stashing the grid and blanking the screen. -/

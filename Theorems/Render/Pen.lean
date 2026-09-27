@@ -638,11 +638,9 @@ theorem csi_group_step {v : Vt} {s : CsiState} (n : Nat) (hg : v.pstate = .csi s
   obtain ⟨s1, hs1, hcur1, hhave1, hpar1, hint1, hign1, hsub1, hpv1⟩ := csi_digits_value n hg hcur
   rw [show ∀ (w : Vt), w.feed [(0x3B : UInt8)] = w.step 0x3B from fun _ => rfl]
   rw [csi_semi_step hs1]
-  unfold csiPush
-  rw [ite_eq_left (by simp [hhave1]),
-    ite_eq_right
+  rw [csiPush_of_lt s1 false
       (by
-        rw [hpar1]; omega)]
+        rw [hpar1]; exact hsize)]
   obtain ⟨p, ps, c, cs, hc, it, ig⟩ := s1
   simp_all
 

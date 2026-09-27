@@ -25,7 +25,7 @@ Lean 4.34.1 via elan; no external Lean dependencies.
 ./lake exe lingertest            # POSIX shim smoke tests
 ./lake exe e2e <suite>           # one pty suite: attach resume overview remote robust
                                  #   graphics terminal status agent watch recipes delivery manager
-./lake exe e2e coverage          # semantic coverage + renderer/replay classification
+./lake env lean E2E/Coverage.lean # resolved renderer/replay references; build the program first
 ./lake exe e2e ci                # which runners CI asks for (tests/ci-runners.sh)
 sh tests/gates.sh                # the fast source-tree gates (seconds)
 ./tests/e2e.sh                   # everything, in order (minutes)

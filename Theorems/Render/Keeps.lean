@@ -51,20 +51,43 @@ theorem csi_final_step_eq {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .
     ite_eq_right (by simp [g4]), ite_eq_right (by simp [g5]), ite_eq_left g6]
   rw [ite_eq_right (by simp [hi])]
 
-def Keeps (bs : Bytes) : Prop :=
+/-- **A projection blind to the parser state.** Every field accessor but `pstate`
+is one, by `rfl`. It is the one thing the CSI walk needs of a projection, because
+the walk to the final byte is a chain of `pstate` updates and nothing else. -/
+def PsBlind {α : Type} (π : Vt → α) : Prop :=
+  ∀ (v : Vt) (p : PState), π { v with pstate := p } = π v
+
+/-! ## Stream preservation for any projection -/
+
+def Fixes {α : Type} (π : Vt → α) (bs : Bytes) : Prop :=
   ∀ v : Vt,
     v.pstate = .ground →
-      v.u8need = 0 →
-      ((v.feed bs).pstate = .ground ∧ (v.feed bs).u8need = 0 ∧ (v.feed bs).grid = v.grid)
+      v.u8need = 0 → ((v.feed bs).pstate = .ground ∧ (v.feed bs).u8need = 0 ∧ π (v.feed bs) = π v)
 
-theorem Keeps.nil : Keeps [] := fun _ hg hu => ⟨hg, hu, rfl⟩
+theorem Fixes.nil {α : Type} (π : Vt → α) : Fixes π [] := fun _ hg hu => ⟨hg, hu, rfl⟩
 
-theorem Keeps.append {a b : Bytes} (ha : Keeps a) (hb : Keeps b) : Keeps (a ++ b) := by
+theorem Fixes.append {α : Type} {π : Vt → α} {a b : Bytes} (ha : Fixes π a) (hb : Fixes π b) :
+    Fixes π (a ++ b) := by
   intro v hg hu
   rw [show v.feed (a ++ b) = (v.feed a).feed b from by simp [Vt.feed, List.foldl_append]]
   obtain ⟨h1, h2, h3⟩ := ha v hg hu
   obtain ⟨h4, h5, h6⟩ := hb _ h1 h2
   exact ⟨h4, h5, h6.trans h3⟩
+
+theorem Fixes.streamPred {α : Type} (π : Vt → α) : StreamPred (Fixes π) :=
+  ⟨Fixes.nil π, fun ha hb => Fixes.append ha hb⟩
+
+def Keeps (bs : Bytes) : Prop := Fixes (fun v : Vt => v.grid) bs
+
+/-- Grid preservation is the grid instance of the shared stream predicate. -/
+theorem keeps_eq_fixes (bs : Bytes) : Keeps bs ↔ Fixes (fun v : Vt => v.grid) bs := Iff.rfl
+
+theorem psBlind_grid : PsBlind (fun v : Vt => v.grid) := fun _ _ => rfl
+
+theorem Keeps.nil : Keeps [] := fun _ hg hu => ⟨hg, hu, rfl⟩
+
+theorem Keeps.append {a b : Bytes} (ha : Keeps a) (hb : Keeps b) : Keeps (a ++ b) :=
+  Fixes.append ha hb
 
 theorem Keeps.streamPred : StreamPred Keeps := ⟨Keeps.nil, fun ha hb => Keeps.append ha hb⟩
 
@@ -166,6 +189,133 @@ theorem keeps_csi_open {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) :
   unfold Vt.stepEsc
   rfl
 
+/-- `ESC [ ?` opens a private CSI: the full state equation, not just the parser state. -/
+theorem csi_priv_open_eq {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) :
+    v.feed [0x1B, 0x5B, 0x3F] = { v with pstate := .csi ({ priv := 0x3F } : CsiState) } := by
+  rw [show v.feed [(0x1B : UInt8), 0x5B, 0x3F] = (v.feed [0x1B, 0x5B]).step 0x3F from by
+      simp [Vt.feed],
+    keeps_csi_open hg hu]
+  unfold Vt.step Vt.abortUtf8
+  dsimp only
+  rw [ite_eq_right (by simp [hu])]
+  show
+    (({ v with pstate := .csi ({} : CsiState) } : Vt).stepCsi ({} : CsiState) 0x3F) =
+      { v with pstate := .csi ({ priv := 0x3F } : CsiState) }
+  unfold Vt.stepCsi
+  rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide),
+    ite_eq_left (by decide)]
+
+/-- A parameter run and a final byte whose dispatch preserves `π` return to
+ground with no pending UTF-8 and leave `π` unchanged. -/
+theorem csi_tail_proj {α : Type} {π : Vt → α} (hb : PsBlind π) (params : Bytes) (final : UInt8)
+    (hp : ParamBytes params) (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E)
+    (hπ : ∀ (w : Vt) (t : CsiState), π (w.csiDispatch t final) = π w) {v : Vt} {s : CsiState}
+    (hg : v.pstate = .csi s) (hu : v.u8need = 0) (hi : s.inter = 0) :
+    π (v.feed (params ++ [final])) = π v ∧
+      (v.feed (params ++ [final])).pstate = .ground ∧ (v.feed (params ++ [final])).u8need = 0 := by
+  obtain ⟨s', hs', hsi⟩ := csi_param_run_inter params hg hu hp
+  rw [show ∀ (w : Vt), w.feed (params ++ [final]) = (w.feed params).feed [final] from fun w => by
+      simp [Vt.feed, List.foldl_append]]
+  rw [hs', show ∀ (w : Vt), w.feed [final] = w.step final from fun _ => rfl]
+  rw [csi_final_step_eq final (v := { v with pstate := .csi s' }) (s := s') rfl (by simpa using hu)
+      (by
+        rw [hsi]; exact hi)
+      h1 h2]
+  unfold Vt.csiFinish
+  dsimp only
+  refine
+    ⟨?_, rfl, by
+      rw [un_csiDispatch]; simpa using hu⟩
+  rw [hb _ PState.ground, hπ, hb v (PState.csi s')]
+
+/-- The CSI walk, for any projection: `csi_tail_proj` does the work, this adds the
+`ESC [` opener. -/
+theorem fixes_csi_seq {α : Type} {π : Vt → α} (hb : PsBlind π) (params : Bytes) (final : UInt8)
+    (hp : ParamBytes params) (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E)
+    (hπ : ∀ (w : Vt) (t : CsiState), π (w.csiDispatch t final) = π w) :
+    Fixes π (csiB ++ params ++ [final]) := by
+  intro v hg hu
+  rw [show (csiB ++ params ++ [final] : Bytes) = [0x1B, 0x5B] ++ (params ++ [final]) from by
+      unfold csiB; simp]
+  rw [show
+      ∀ (w : Vt),
+        w.feed ([0x1B, 0x5B] ++ (params ++ [final])) =
+          (w.feed [0x1B, 0x5B]).feed (params ++ [final])
+      from fun w => by simp [Vt.feed, List.foldl_append]]
+  rw [keeps_csi_open hg hu]
+  obtain ⟨hπ', hp', hu'⟩ :=
+    csi_tail_proj hb params final hp h1 h2 hπ (v := { v with pstate := .csi {} }) rfl
+      (by simpa using hu) rfl
+  exact ⟨hp', hu', by rw [hπ', hb v (PState.csi {})]⟩
+
+/-- The private form (`CSI ? n h/l`), which is what a mode replay is made of. -/
+theorem fixes_csi_priv_seq {α : Type} {π : Vt → α} (hb : PsBlind π) (params : Bytes) (final : UInt8)
+    (hp : ParamBytes params) (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E)
+    (hπ : ∀ (w : Vt) (t : CsiState), π (w.csiDispatch t final) = π w) :
+    Fixes π (csiB ++ ([0x3F] ++ params) ++ [final]) := by
+  intro v hg hu
+  rw [show
+      (csiB ++ ([0x3F] ++ params) ++ [final] : Bytes) = [0x1B, 0x5B, 0x3F] ++ (params ++ [final])
+      from by
+      unfold csiB; simp]
+  rw [show
+      ∀ (w : Vt),
+        w.feed ([0x1B, 0x5B, 0x3F] ++ (params ++ [final])) =
+          (w.feed [0x1B, 0x5B, 0x3F]).feed (params ++ [final])
+      from fun w => by simp [Vt.feed, List.foldl_append]]
+  rw [csi_priv_open_eq hg hu]
+  obtain ⟨hπ', hp', hu'⟩ :=
+    csi_tail_proj hb params final hp h1 h2 hπ (v :=
+      { v with pstate := .csi ({ priv := 0x3F } : CsiState) }) rfl (by simpa using hu) rfl
+  exact ⟨hp', hu', by rw [hπ', hb v (PState.csi ({ priv := 0x3F } : CsiState))]⟩
+
+theorem fixes_csiNum {α : Type} {π : Vt → α} (hb : PsBlind π) (n : Nat) (final : UInt8)
+    (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E)
+    (hπ : ∀ (w : Vt) (t : CsiState), π (w.csiDispatch t final) = π w) :
+    Fixes π (csiNum n final) := fixes_csi_seq hb _ _ (paramBytes_digits n) h1 h2 hπ
+
+theorem fixes_csiNum2 {α : Type} {π : Vt → α} (hb : PsBlind π) (a b : Nat) (final : UInt8)
+    (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E)
+    (hπ : ∀ (w : Vt) (t : CsiState), π (w.csiDispatch t final) = π w) :
+    Fixes π (csiNum2 a b final) := by
+  rw [show csiNum2 a b final = csiB ++ (digits a ++ [0x3B] ++ digits b) ++ [final] from by
+      unfold csiNum2; simp]
+  refine fixes_csi_seq hb _ _ (fun x hx => ?_) h1 h2 hπ
+  rcases List.mem_append.mp hx with hx' | hx'
+  · rcases List.mem_append.mp hx' with hx'' | hx''
+    · exact paramBytes_digits a x hx''
+    · rw [show x = 0x3B from by simpa using hx'']
+      exact ⟨by decide, by decide⟩
+  · exact paramBytes_digits b x hx'
+
+theorem fixes_csiPriv {α : Type} {π : Vt → α} (hb : PsBlind π) (n : Nat) (final : UInt8)
+    (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E)
+    (hπ : ∀ (w : Vt) (t : CsiState), π (w.csiDispatch t final) = π w) :
+    Fixes π (csiPriv n final) := by
+  rw [show csiPriv n final = csiB ++ ([0x3F] ++ digits n) ++ [final] from by
+      unfold csiPriv; simp]
+  exact fixes_csi_priv_seq hb _ _ (paramBytes_digits n) h1 h2 hπ
+
+theorem fixes_sgrOf {α : Type} {π : Vt → α} (hb : PsBlind π) (codes : List Nat)
+    (hπ : ∀ (w : Vt) (t : CsiState), π (w.csiDispatch t 0x6D) = π w) : Fixes π (sgrOf codes) := by
+  unfold sgrOf
+  exact fixes_csi_seq hb _ _ (paramBytes_joinSemi codes) (by decide) (by decide) hπ
+
+theorem fixes_sgrColorSeq {α : Type} {π : Vt → α} (hb : PsBlind π) (c : Color) (isFg : Bool)
+    (hπ : ∀ (w : Vt) (t : CsiState), π (w.csiDispatch t 0x6D) = π w) :
+    Fixes π (sgrColorSeq c isFg) := by
+  unfold sgrColorSeq
+  split
+  · exact Fixes.nil π
+  · exact fixes_sgrOf hb _ hπ
+
+theorem fixes_penSgr {α : Type} {π : Vt → α} (hb : PsBlind π) (p : Pen)
+    (hπ : ∀ (w : Vt) (t : CsiState), π (w.csiDispatch t 0x6D) = π w) : Fixes π (penSgr p) := by
+  unfold penSgr
+  exact
+    ((fixes_sgrOf hb _ hπ).append (fixes_sgrColorSeq hb _ _ hπ)).append
+      (fixes_sgrColorSeq hb _ _ hπ)
+
 /-- The shared tail: from a collector with no intermediate, a parameter run and a
 final byte return to ground and touch the grid only as the dispatch does. -/
 theorem keeps_csi_tail (params : Bytes) (final : UInt8) (hp : ParamBytes params)
@@ -176,31 +326,13 @@ theorem keeps_csi_tail (params : Bytes) (final : UInt8) (hp : ParamBytes params)
     ((v.feed (params ++ [final])).pstate = .ground
       ∧ (v.feed (params ++ [final])).u8need = 0
       ∧ (v.feed (params ++ [final])).grid = v.grid) := by
-  obtain ⟨s', hs', hsi⟩ := csi_param_run_inter params hg hu hp
-  rw [show ∀ (w : Vt), w.feed (params ++ [final]) = (w.feed params).feed [final] from
-    fun w => by simp [Vt.feed, List.foldl_append]]
-  rw [hs', show ∀ (w : Vt), w.feed [final] = w.step final from fun _ => rfl]
-  rw [csi_final_step_eq final (v := { v with pstate := .csi s' }) (s := s') rfl
-    (by simpa using hu) (by rw [hsi]; exact hi) h1 h2]
-  unfold Vt.csiFinish
-  dsimp only
-  refine ⟨rfl, ?_, ?_⟩
-  · rw [un_csiDispatch]
-    simpa using hu
-  · rw [hgrid]
+  obtain ⟨hgrid', hg', hu'⟩ := csi_tail_proj psBlind_grid params final hp h1 h2 hgrid hg hu hi
+  exact ⟨hg', hu', hgrid'⟩
 
 theorem keeps_csi_seq (params : Bytes) (final : UInt8) (hp : ParamBytes params)
     (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E)
     (hgrid : ∀ (w : Vt) (t : CsiState), (w.csiDispatch t final).grid = w.grid) :
-    Keeps (csiB ++ params ++ [final]) := by
-  intro v hg hu
-  rw [show (csiB ++ params ++ [final] : Bytes) = [0x1B, 0x5B] ++ (params ++ [final]) from by
-    unfold csiB; simp]
-  rw [show ∀ (w : Vt), w.feed ([0x1B, 0x5B] ++ (params ++ [final]))
-      = (w.feed [0x1B, 0x5B]).feed (params ++ [final]) from
-    fun w => by simp [Vt.feed, List.foldl_append]]
-  rw [keeps_csi_open hg hu]
-  exact keeps_csi_tail params final hp h1 h2 hgrid rfl (by simpa using hu) rfl
+    Keeps (csiB ++ params ++ [final]) := fixes_csi_seq psBlind_grid params final hp h1 h2 hgrid
 
 /-- The private form (`CSI ? n h/l`), which is what a mode replay is made of. The
 marker byte sits outside `ParamBytes` — deliberately, since a marker is what
@@ -208,20 +340,7 @@ decides whether a sequence can be DECOM — so it takes one explicit step. -/
 theorem keeps_csi_priv_seq (params : Bytes) (final : UInt8) (hp : ParamBytes params)
     (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E)
     (hgrid : ∀ (w : Vt) (t : CsiState), (w.csiDispatch t final).grid = w.grid) :
-    Keeps (csiB ++ ([0x3F] ++ params) ++ [final]) := by
-  intro v hg hu
-  rw [show (csiB ++ ([0x3F] ++ params) ++ [final] : Bytes)
-      = [0x1B, 0x5B] ++ ([(0x3F : UInt8)] ++ (params ++ [final])) from by unfold csiB; simp]
-  rw [show ∀ (w : Vt), w.feed ([0x1B, 0x5B] ++ ([(0x3F : UInt8)] ++ (params ++ [final])))
-      = ((w.feed [0x1B, 0x5B]).feed [(0x3F : UInt8)]).feed (params ++ [final]) from
-    fun w => by simp [Vt.feed, List.foldl_append]]
-  rw [keeps_csi_open hg hu]
-  rw [show ∀ (w : Vt), w.feed [(0x3F : UInt8)] = w.step 0x3F from fun _ => rfl]
-  rw [step_of_csi_quiet (0x3F : UInt8) (v := { v with pstate := .csi {} }) (s := {}) rfl
-    (by simpa using hu)]
-  unfold Vt.stepCsi
-  rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_left (by decide)]
-  exact keeps_csi_tail params final hp h1 h2 hgrid rfl (by simpa using hu) rfl
+    Keeps (csiB ++ ([0x3F] ++ params) ++ [final]) := fixes_csi_priv_seq psBlind_grid params final hp h1 h2 hgrid
 
 /-! ### One fact per final byte the tail uses -/
 
@@ -291,23 +410,11 @@ theorem keeps_csiNum (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final) (h2 : final
 
 theorem keeps_csiNum2 (a b : Nat) (final : UInt8) (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E)
     (hgrid : ∀ (w : Vt) (t : CsiState), (w.csiDispatch t final).grid = w.grid) :
-    Keeps (csiNum2 a b final) := by
-  rw [show csiNum2 a b final = csiB ++ (digits a ++ [0x3B] ++ digits b) ++ [final] from by
-    unfold csiNum2; simp]
-  refine keeps_csi_seq _ _ (fun x hx => ?_) h1 h2 hgrid
-  rcases List.mem_append.mp hx with hx' | hx'
-  · rcases List.mem_append.mp hx' with hx'' | hx''
-    · exact paramBytes_digits a x hx''
-    · rw [show x = 0x3B from by simpa using hx'']
-      exact ⟨by decide, by decide⟩
-  · exact paramBytes_digits b x hx'
+    Keeps (csiNum2 a b final) := fixes_csiNum2 psBlind_grid a b final h1 h2 hgrid
 
 theorem keeps_csiPriv (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E)
     (hgrid : ∀ (w : Vt) (t : CsiState), (w.csiDispatch t final).grid = w.grid) :
-    Keeps (csiPriv n final) := by
-  rw [show csiPriv n final = csiB ++ ([0x3F] ++ digits n) ++ [final] from by
-    unfold csiPriv; simp]
-  exact keeps_csi_priv_seq _ _ (paramBytes_digits n) h1 h2 hgrid
+    Keeps (csiPriv n final) := fixes_csiPriv psBlind_grid n final h1 h2 hgrid
 
 end Linger.Core.Render
 
@@ -317,23 +424,14 @@ open Linger.Core.Vt
 
 /-! ### The SGR pen, and the one mode fact the replay turns on -/
 
-theorem keeps_sgrOf (codes : List Nat) : Keeps (sgrOf codes) := by
-  unfold sgrOf
-  exact keeps_csi_seq _ _ (paramBytes_joinSemi codes) (by decide) (by decide)
-    grid_csiDispatch_sgr
+theorem keeps_sgrOf (codes : List Nat) : Keeps (sgrOf codes) := fixes_sgrOf psBlind_grid codes grid_csiDispatch_sgr
 
-theorem keeps_sgrColorSeq (c : Color) (isFg : Bool) : Keeps (sgrColorSeq c isFg) := by
-  unfold sgrColorSeq
-  split
-  · exact Keeps.nil
-  · exact keeps_sgrOf _
+theorem keeps_sgrColorSeq (c : Color) (isFg : Bool) : Keeps (sgrColorSeq c isFg) := fixes_sgrColorSeq psBlind_grid c isFg grid_csiDispatch_sgr
 
 /-- **An SGR pen writes no cell**, for any pen — 16-colour, 256-colour or
 truecolour, and however `penSgr` splits it across sequences. This is the piece
 `savedAnsi` and `restoreBody`'s trailing pen both rest on. -/
-theorem keeps_penSgr (p : Pen) : Keeps (penSgr p) := by
-  unfold penSgr
-  exact ((keeps_sgrOf _).append (keeps_sgrColorSeq _ _)).append (keeps_sgrColorSeq _ _)
+theorem keeps_penSgr (p : Pen) : Keeps (penSgr p) := fixes_penSgr psBlind_grid p grid_csiDispatch_sgr
 
 /-- **A mode set writes no cell — unless it switches screens.** `47`, `1047` and
 `1049` swap the grid for the alternate one, and nothing else in `setMode` touches
@@ -559,47 +657,58 @@ theorem osc_accum_run : ∀ (bs : Bytes) {v : Vt} {acc : Array UInt8},
       (acc := acc1) rfl (by simpa using hu) (fun b hb => h b (by simp [hb]))
     exact ⟨acc2, by rw [hrest]⟩
 
-/-- **The title writes no cell.** The payload cannot terminate its own sequence:
-`utf8s` puts every byte at or above `0x20`, so neither `ESC` nor `BEL` can appear
-in it — the same fact that makes `ends_osc` work. -/
-theorem keeps_osc (payload : List Char) :
-    Keeps (escB ++ [0x5D, 0x32, 0x3B] ++ utf8s payload ++ [0x07]) := by
+/-- The OSC walk, for any projection: `ESC ] 2 ;` opens the string, the scrubbed
+payload accumulates without dispatching, `BEL` finishes. The only field-dependent
+step is what `oscFinish` does, and `frame_oscFinish` says it moves `pstate` and
+`title` and nothing else. -/
+theorem fixes_osc {α : Type} {π : Vt → α} (hb : PsBlind π) (payload : List Char)
+    (hπ : ∀ (w : Vt) (acc : Array UInt8), π (w.oscFinish acc) = π w) :
+    Fixes π (escB ++ [0x5D, 0x32, 0x3B] ++ utf8s payload ++ [0x07]) := by
   intro v hg hu
-  rw [show (escB ++ [0x5D, 0x32, 0x3B] ++ utf8s payload ++ [0x07] : Bytes)
-      = [0x1B] ++ ([0x5D] ++ ([0x32, 0x3B] ++ (utf8s payload ++ [0x07]))) from by
-    simp [escB]]
-  rw [show ∀ (w : Vt), w.feed ([0x1B] ++ ([0x5D] ++ ([0x32, 0x3B]
-        ++ (utf8s payload ++ [0x07]))))
-      = ((((w.step 0x1B).step 0x5D).feed [0x32, 0x3B]).feed (utf8s payload)).step 0x07 from
-    fun w => by simp [Vt.feed, List.foldl_append]]
+  rw [show
+      (escB ++ [0x5D, 0x32, 0x3B] ++ utf8s payload ++ [0x07] : Bytes) =
+        [0x1B] ++ ([0x5D] ++ ([0x32, 0x3B] ++ (utf8s payload ++ [0x07])))
+      from by simp [escB]]
+  rw [show
+      ∀ (w : Vt),
+        w.feed ([0x1B] ++ ([0x5D] ++ ([0x32, 0x3B] ++ (utf8s payload ++ [0x07])))) =
+          ((((w.step 0x1B).step 0x5D).feed [0x32, 0x3B]).feed (utf8s payload)).step 0x07
+      from fun w => by simp [Vt.feed, List.foldl_append]]
   rw [esc_step_eq hg hu]
-  -- `ESC ]` opens the string
-  rw [show ({ v with pstate := .esc } : Vt).step 0x5D
-      = { v with pstate := .osc #[] false } from by
-    rw [step_of_esc_quiet 0x5D rfl (by simpa using hu)]
-    unfold Vt.stepEsc
-    rfl]
-  -- the code and its separator, then the payload
-  obtain ⟨acc1, h1⟩ := osc_accum_run [0x32, 0x3B]
-    (v := { v with pstate := .osc #[] false }) (acc := #[]) rfl (by simpa using hu)
-    (by intro b hb; rcases List.mem_cons.mp hb with h | h
+  rw [show ({ v with pstate := .esc } : Vt).step 0x5D = { v with pstate := .osc #[] false } from by
+      rw [step_of_esc_quiet 0x5D rfl (by simpa using hu)]
+      unfold Vt.stepEsc
+      rfl]
+  obtain ⟨acc1, h1⟩ :=
+    osc_accum_run [0x32, 0x3B] (v := { v with pstate := .osc #[] false }) (acc := #[]) rfl
+      (by simpa using hu)
+      (by
+        intro b hb; rcases List.mem_cons.mp hb with h | h
         · subst h; exact ⟨by decide, by decide⟩
         · rw [show b = 0x3B from by simpa using h]; exact ⟨by decide, by decide⟩)
   rw [h1]
-  obtain ⟨acc2, h2⟩ := osc_accum_run (utf8s payload)
-    (v := { v with pstate := .osc acc1 false }) (acc := acc1) rfl (by simpa using hu)
-    (by intro b hb
+  obtain ⟨acc2, h2⟩ :=
+    osc_accum_run (utf8s payload) (v := { v with pstate := .osc acc1 false }) (acc := acc1) rfl
+      (by simpa using hu)
+      (by
+        intro b hb
         obtain ⟨hge, hne⟩ := utf8s_no_ctl payload b hb
         refine ⟨?_, ?_⟩
         · intro he; rw [he] at hge; exact absurd hge (by decide)
         · intro he; rw [he] at hge; exact absurd hge (by decide))
   rw [h2]
-  -- BEL finishes it
   rw [step_of_osc_quiet (0x07 : UInt8) rfl (by simpa using hu)]
   unfold Vt.stepOsc
   rw [ite_eq_right (by decide), ite_eq_left (by decide)]
-  exact ⟨ps_oscFinish' _ _, by rw [un_oscFinish']; simpa using hu,
-    by rw [grid_oscFinish]⟩
+  exact
+    ⟨ps_oscFinish' _ _, by
+      rw [un_oscFinish']; simpa using hu, by rw [hπ, hb v (PState.osc acc2 false)]⟩
+
+/-- **The title writes no cell.** The payload cannot terminate its own sequence:
+`utf8s` puts every byte at or above `0x20`, so neither `ESC` nor `BEL` can appear
+in it — the same fact that makes `ends_osc` work. -/
+theorem keeps_osc (payload : List Char) :
+    Keeps (escB ++ [0x5D, 0x32, 0x3B] ++ utf8s payload ++ [0x07]) := fixes_osc psBlind_grid payload grid_oscFinish
 
 theorem keeps_titleAnsi (v : Vt) : Keeps (titleAnsi v) := by
   unfold titleAnsi

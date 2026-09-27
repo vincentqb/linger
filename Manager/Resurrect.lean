@@ -91,12 +91,13 @@ private def importSave (executable : String) (file : Option String) : IO Unit :=
     throw (IO.userError "could not list existing linger sessions")
   let existing := (Linger.Core.Remote.parse listing.stdout).map (·.name)
   for pane in plan existing panes do
-    let child ←
-      IO.Process.spawn
+    let created ←
+      IO.Process.output
           { cmd := executable, args := #["run", pane.name, "true"],
             cwd := some (System.FilePath.mk (absolute pane.dir)), env }
-    unless (← child.wait) == 0 do
-      throw (IO.userError s!"could not create session: {pane.name}")
+    unless created.exitCode == 0 do
+      throw
+          (IO.userError s!"could not create session: {pane.name}: {created.stdout}{created.stderr}")
 
 /-- The caller supplies its absolute executable path for every listing and run. -/
 def run (executable : String) (args : List String) : IO UInt32 := do
@@ -107,7 +108,7 @@ def run (executable : String) (args : List String) : IO UInt32 := do
     importSave executable args.head?
     return 0
   catch e =>
-    IO.eprintln s!"linger import: {e}"
+    IO.eprintln s!"linger import: {diagnostic (toString e)}"
     return 1
 
 end Manager.Resurrect

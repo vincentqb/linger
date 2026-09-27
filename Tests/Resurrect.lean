@@ -10,6 +10,15 @@ namespace Tools.Resurrect.Tests
 
 open Tools.Resurrect
 
+-- Every C0, DEL and C1 code point is replaced, not just ESC and newlines.
+#guard
+  diagnostic (String.ofList ((List.range 32 ++ List.range' 127 33).map Char.ofNat)) ==
+    String.ofList (List.replicate 65 '?')
+
+#guard
+  ["", "/tmp/é λ😀\u00a0x !~\"\\", " \x1b[2J\u009b31m z"].map diagnostic ==
+    ["", "/tmp/é λ😀\u00a0x !~\"\\", " ?[2J?31m z"]
+
 -- Saved commands validate as input but never affect the parsed pane.
 #guard
   ["vi 'a b'; tail x", "printf '%s' \"$HOME\" && custom-tool --anything",

@@ -15,6 +15,30 @@ creation or whether a caller successfully creates sessions or enters directories
 
 namespace Tools.Resurrect
 
+/-- Error text excludes C0, DEL and C1, including controls from filesystem errors. -/
+theorem diagnostic_printable (message : String) (c : Char) (hc : c ∈ (diagnostic message).toList) :
+    32 ≤ c.toNat ∧ (c.toNat < 127 ∨ 160 ≤ c.toNat) := by
+  rw [diagnostic, String.toList_map] at hc
+  obtain ⟨original, _, rfl⟩ := List.mem_map.mp hc
+  split
+  · rename_i h
+    simpa using h
+  · decide
+
+/-- Already printable diagnostics retain every character, including Unicode and spaces. -/
+theorem diagnostic_eq_self (message : String)
+    (h : ∀ c ∈ message.toList, 32 ≤ c.toNat ∧ (c.toNat < 127 ∨ 160 ≤ c.toNat)) :
+    diagnostic message = message := by
+  apply String.toList_injective
+  simp only [diagnostic, String.toList_map]
+  calc
+    _ = message.toList.map id :=
+      List.map_congr_left
+        (by
+          intro c hc
+          simp [h c hc])
+    _ = _ := List.map_id _
+
 private theorem parseRow_sound (home : String) (line : Nat) (fields : List String) (pane : Pane)
     (h : parseRow home line fields = .ok (some pane)) :
     Linger.Core.Name.sanitize pane.name = pane.name ∧

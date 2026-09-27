@@ -14,7 +14,6 @@ public import E2E.Terminal
 public import E2E.Recipes
 public import E2E.Manager
 public import E2E.RemoteLive
-public import E2E.Coverage
 public import E2E.Ci
 
 public section
@@ -37,8 +36,6 @@ def suites : List (String × IO UInt32) :=
     ("manager", E2E.Manager.run),
     -- opt-in: needs a real reachable host, so NOT in tests/e2e.sh
     ("remote-live", E2E.RemoteLive.run),
-    -- not a pty suite: semantic pure-core coverage + runtime emitter classification
-    ("coverage", E2E.Coverage.run),
     -- not a pty suite: which runners CI asks for (tests/ci-runners.sh)
     ("ci", E2E.Ci.run)]
 

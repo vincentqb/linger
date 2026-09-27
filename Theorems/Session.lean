@@ -549,8 +549,11 @@ theorem feedMsgs_after_exit (id : Nat) (msgs : List Msg) (acc : State × List Ef
   | nil => rfl
   | cons m ms ih => simpa [feedMsgs, List.foldl_cons, h] using ih
 
-theorem feedMsgs_bounded (id : Nat) (msgs : List Msg) (acc : State × List Effect)
-    (h : Bounded acc.1) : Bounded (feedMsgs id msgs acc).1 := by
+/-- Lift a state invariant through the actual message batch. The lookup witness
+lets each invariant use the sender's membership and identity when needed. -/
+private theorem feedMsgs_preserves (id : Nat) (msgs : List Msg) (acc : State × List Effect)
+    {P : State → Prop} (pres : ∀ s c m, s.client? id = some c → P s → P (onMsg s c m).1)
+    (h : P acc.1) : P (feedMsgs id msgs acc).1 := by
   induction msgs generalizing acc with
   | nil => exact h
   | cons m ms ih =>
@@ -562,7 +565,12 @@ theorem feedMsgs_bounded (id : Nat) (msgs : List Msg) (acc : State × List Effec
       · dsimp only [hc]
         exact ih acc h
       · dsimp only [hc]
-        exact ih _ (onMsg_bounded m (h.decOk c' (client?_mem hc)) h)
+        exact ih _ (pres _ _ m hc h)
+
+theorem feedMsgs_bounded (id : Nat) (msgs : List Msg) (acc : State × List Effect)
+    (h : Bounded acc.1) : Bounded (feedMsgs id msgs acc).1 :=
+  feedMsgs_preserves id msgs acc
+    (fun _ _ m hc hs => onMsg_bounded m (hs.decOk _ (client?_mem hc)) hs) h
 
 /-- §Bound at the daemon level: no event stream can grow the client
 list, label table, client decoders, or terminal scanner past their caps. -/
@@ -638,19 +646,8 @@ theorem onMsg_vt_good {s : State} {c : Client} (m : Msg) (h : Good s.vt) :
 
 open Linger.Core.Vt (Good) in
 theorem feedMsgs_vt_good (id : Nat) (msgs : List Msg) (acc : State × List Effect)
-    (h : Good acc.1.vt) : Good (feedMsgs id msgs acc).1.vt := by
-  induction msgs generalizing acc with
-  | nil => exact h
-  | cons m ms ih =>
-    unfold feedMsgs
-    rw [List.foldl_cons]
-    split
-    · exact ih acc h
-    · rcases hc : acc.1.client? id with - | c'
-      · dsimp only [hc]
-        exact ih acc h
-      · dsimp only [hc]
-        exact ih _ (onMsg_vt_good m h)
+    (h : Good acc.1.vt) : Good (feedMsgs id msgs acc).1.vt :=
+  feedMsgs_preserves id msgs acc (P := fun s => Good s.vt) (fun _ _ m _ hs => onMsg_vt_good m hs) h
 
 open Linger.Core.Vt (Good) in
 /-- §Total end-to-end: the screen state a daemon holds stays Good
@@ -773,19 +770,9 @@ theorem onMsg_lookSeq_le (s : State) (c : Client) (m : Msg) (h : s.lookSeq ≤ s
 
 theorem feedMsgs_lookSeq_le (id : Nat) (msgs : List Msg) (acc : State × List Effect)
     (h : acc.1.lookSeq ≤ acc.1.outSeq) :
-    (feedMsgs id msgs acc).1.lookSeq ≤ (feedMsgs id msgs acc).1.outSeq := by
-  induction msgs generalizing acc with
-  | nil => exact h
-  | cons m ms ih =>
-    unfold feedMsgs
-    rw [List.foldl_cons]
-    split
-    · exact ih acc h
-    · rcases hc : acc.1.client? id with - | c'
-      · dsimp only [hc]
-        exact ih acc h
-      · dsimp only [hc]
-        exact ih _ (onMsg_lookSeq_le _ _ _ h)
+    (feedMsgs id msgs acc).1.lookSeq ≤ (feedMsgs id msgs acc).1.outSeq :=
+  feedMsgs_preserves id msgs acc (P := fun s => s.lookSeq ≤ s.outSeq)
+    (fun _ _ _ _ hs => onMsg_lookSeq_le _ _ _ hs) h
 
 /-- One event keeps `behind` honest, whatever it is. -/
 theorem step_lookSeq_le (s : State) (ev : Event) (h : s.lookSeq ≤ s.outSeq) :
@@ -899,24 +886,12 @@ theorem onMsg_other (s : State) (c : Client) (m : Msg) {other : Nat} (h : other 
 /-- …and so does a whole batch of them. -/
 theorem feedMsgs_other (id : Nat) (msgs : List Msg) (acc : State × List Effect) {other : Nat}
     (h : other ≠ id) : (feedMsgs id msgs acc).1.client? other = acc.1.client? other := by
-  induction msgs generalizing acc with
-  | nil => rfl
-  | cons m ms ih =>
-    unfold feedMsgs
-    rw [List.foldl_cons]
-    split
-    · exact ih acc
-    · rcases hc : acc.1.client? id with - | c'
-      · dsimp only [hc]
-        exact ih acc
-      · dsimp only [hc]
-        have hstep := ih ((onMsg acc.1 c' m).1, acc.2 ++ (onMsg acc.1 c' m).2)
-        unfold feedMsgs at hstep
-        rw [hstep]
-        exact
-          onMsg_other _ _ _
-            (by
-              rw [client?_id hc]; exact h)
+  apply feedMsgs_preserves id msgs acc (P := fun s => s.client? other = acc.1.client? other) ?_ rfl
+  intro s c m hc hs
+  rw [onMsg_other s c m
+      (by
+        rw [client?_id hc]; exact h)]
+  exact hs
 
 /-- §Isolate: bytes from one client cannot alter another client's
 record — including its wire decoder, so a peer stuck mid-frame stays
@@ -1058,19 +1033,8 @@ theorem onMsg_vt_live {s : State} {c : Client} (m : Msg) (h : LiveVt s) :
     | simpa [State.setClient] using h
 
 theorem feedMsgs_vt_live (id : Nat) (msgs : List Msg) (acc : State × List Effect)
-    (h : LiveVt acc.1) : LiveVt (feedMsgs id msgs acc).1 := by
-  induction msgs generalizing acc with
-  | nil => exact h
-  | cons m ms ih =>
-    unfold feedMsgs
-    rw [List.foldl_cons]
-    split
-    · exact ih acc h
-    · rcases hc : acc.1.client? id with - | c'
-      · dsimp only [hc]
-        exact ih acc h
-      · dsimp only [hc]
-        exact ih _ (onMsg_vt_live m h)
+    (h : LiveVt acc.1) : LiveVt (feedMsgs id msgs acc).1 :=
+  feedMsgs_preserves id msgs acc (fun _ _ m _ hs => onMsg_vt_live m hs) h
 
 /-- One event keeps the terminal reachable. -/
 theorem step_vt_live (s : State) (ev : Event) (h : LiveVt s) : LiveVt (step s ev).1 := by
@@ -1219,8 +1183,8 @@ reboot-resume is idempotent rather than one-shot, and before the rung this could
 said of a session that had never been resumed.
 
 The `.quiesce` on the right is content, not decoration — the round trip is exact *modulo*
-the parser state a checkpoint deliberately forgets (`Checkpoint.wVt`), and the daemon's own
-checkpoints are already quiescent, being taken between poll rounds. -/
+the parser state a checkpoint deliberately forgets (`Checkpoint.wVt`). A poll boundary
+can split an escape or UTF-8 sequence, so it does not establish parser quiescence. -/
 theorem run_resume_load_save (l : List UInt8) (labels metaKv : List (String × String))
     (evs : List Event) (cwd : String) :
     Checkpoint.load

@@ -124,10 +124,6 @@ private def choose (candidates : List String) : IO Choice := do
     finally
       termRestore stdinFd saved
 
-private def attach (executable target : String) : IO UInt32 := do
-  let child ← IO.Process.spawn { cmd := executable, args := #["attach", target] }
-  child.wait
-
 /-- Attach only a proved selection, after terminal restoration. Every attach
 exit returns to a fresh listing; cancellation ends the manager. The caller
 supplies one frozen absolute executable for all listing and attach children. -/
@@ -146,7 +142,8 @@ def run (executable : String) : IO UInt32 := do
       | .refresh =>
         continue
       | .attach target =>
-        discard <| attach executable target
+        let child ← IO.Process.spawn { cmd := executable, args := #["attach", target] }
+        discard child.wait
   return 0
 
 end Manager.Picker
