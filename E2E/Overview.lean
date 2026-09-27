@@ -5,12 +5,13 @@ public import Linger.Core.Listing
 
 public section
 
-/-! # E2E.Overview — redirected `linger` and `linger ls` print a list and exit
+/-! # E2E.Overview — explicit `linger ls` prints a list and exits
 
 The overview must be a plain, pipeable, self-terminating listing that never
 blocks on stdin. Every form runs through `Env.cliTimeout`: a picker that waited
 on redirected stdin would fail here, not hang the gate. `E2E.Manager` separately
-checks terminal selection and explicit `ls` with both streams on a terminal.
+checks bare help in every stream mode, explicit terminal selection and `ls`
+with both streams on a terminal.
 Selector queries only filter listed candidates; they never create sessions
 from arbitrary input (`Theorems/Picker.lean`).
 
@@ -28,15 +29,6 @@ open E2E.Harness
 open Linger.Core.Status (Status)
 open Linger.Core.Listing (humanListing rowStatus)
 
-/-- Name the form under test inside the check's own label, so a failure says which
-of the two spellings broke. -/
-def label (args : Array String) : String :=
-  if args.isEmpty then "linger (bare)" else "linger " ++ String.intercalate " " args.toList
-
-/-- The two spellings of the overview. The bug was in the bare form and only the
-bare form, which is why every listing claim is made twice. -/
-def forms : List (Array String) := [#[], #["ls"]]
-
 def run : IO UInt32 := do
   let e ← Env.make "overview"
   let mut f := 0
@@ -49,32 +41,30 @@ def run : IO UInt32 := do
       (←
         expect (vrc == 0 && has vout s!"state:   /tmp/linger-{uid}/state/")
             "HOME-less state fallback is namespaced by uid")
-  -- empty state: both forms say so and exit 0, within the deadline
+  -- empty state: the explicit listing says so and exits 0 within the deadline
   let emptyLine := humanListing []
-  for args in forms do
-    match ← e.cliTimeout args 15000 with
-    | none =>
-      f := f + (← expect false s!"{label args} exits (it hung — a picker?)")
-    | some (rc, out, _) =>
-      f :=
-        f +
-          (←
-            expect (rc == 0 && hasBytes out.toUTF8 emptyLine)
-                s!"{label args} prints overview and exits")
-  -- two live sessions: listed by name in both forms
+  match ← e.cliTimeout #["ls"] 15000 with
+  | none =>
+    f := f + (← expect false "linger ls exits (it hung — a picker?)")
+  | some (rc, out, err) =>
+    f :=
+      f +
+        (←
+          expect (rc == 0 && out.toUTF8 == ByteArray.mk emptyLine.toArray && err.isEmpty)
+              "linger ls prints exactly the empty overview and exits")
+  -- two live sessions: both names survive in the explicit listing
   let _ ← e.cli #["run", "alpha", "true"]
   let _ ← e.cli #["run", "beta", "true"]
   IO.sleep 1200
-  for args in forms do
-    match ← e.cliTimeout args 15000 with
-    | none =>
-      f := f + (← expect false s!"{label args} exits (it hung — a picker?)")
-    | some (rc, out, _) =>
-      f :=
-        f +
-          (←
-            expect (rc == 0 && has out "alpha" && has out "beta")
-                s!"{label args} lists both live sessions")
+  match ← e.cliTimeout #["ls"] 15000 with
+  | none =>
+    f := f + (← expect false "linger ls exits (it hung — a picker?)")
+  | some (rc, out, err) =>
+    f :=
+      f +
+        (←
+          expect (rc == 0 && has out "alpha" && has out "beta" && err.isEmpty)
+              "linger ls lists both live sessions")
   -- the porcelain is what a peer's `-r` parses, so assert that it PARSES as
   -- records rather than that the bytes appear
   let recs := records (← e.out #["ls", "--porcelain"])

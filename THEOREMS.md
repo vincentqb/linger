@@ -20,7 +20,7 @@ recipes, break records, measurements, the audits — lives in
 
 | § | Tension | Invariant | Where |
 |---|---------|-----------|-------|
-| §Entry | one command vs predictable scripts | `route_selector_iff` selects exactly for empty argv with two terminal streams; `route_bare_noninteractive` preserves piped listing; `route_session_argv` forwards every explicit non-import argv unchanged; `route_import_argv` gives import its complete trailing argv, independent of streams | Theorems/Entry.lean |
+| §Entry | discoverable commands vs implicit terminal behavior | `route_bare_help` sends empty argv to help; `route_selector_iff` selects exactly for `["select"]`; `route_session_argv` preserves other session commands and operands; `route_import_argv` gives import its complete trailing argv | Theorems/Entry.lean |
 | §Frame | evolvable protocol vs simple daemon | `decode (encode m) = ([m], ∅)`; unknown tag skips exactly its frame | Theorems/Wire.lean |
 | §Chunk | arbitrary TCP/pty chunking vs stateful parsers | `feed (a ++ b) = feed b ∘ feed a`; output framing is faithful and bounded (`outputMsgs_faithful`, `outputMsgs_bounded`, `outputMsgs_payloads`); accepted info replies preserve every byte in bounded frames, with overflow refused before any prefix (`infoMsgs_faithful`, `infoMsgs_bounded`, `infoMsgs_refused`) | Theorems/Wire.lean, Theorems/Vt.lean, Theorems/Session.lean |
 | §Stream | fragmentation vs one parsed conversation | any re-chunking of a well-formed stream feeds back to exactly that stream (`decode_encode_chunked`; §Frame and §Chunk are its special cases) | Theorems/Wire.lean |
@@ -217,18 +217,19 @@ by a cooperative poll loop, without a hard real-time guarantee.
 ## Entry-point boundaries
 
 §Entry defines the dispatch contract for the unified executable.
-`route_selector_iff` requires both streams to
-be terminals and no command arguments. `route_bare_noninteractive` keeps the
-bare listing when either stream is redirected. `route_session_argv` preserves
-every explicit non-import command and operand; `route_ls_argv` and
+`route_bare_help` sends empty argv to help. `route_selector_iff` selects exactly
+for `["select"]`; `route_select_operands` forwards extra operands to the session
+backend, which rejects them. `route_session_argv` preserves every other
+non-import command and operand; `route_ls_argv` and
 `route_daemon_argv` state the listing and internal re-exec cases. Import keeps
 all trailing arguments for its executor to validate (`route_import_argv`).
-`route_session_streams` and `route_import_streams` make stream independence
-explicit. `Main` consumes this pure decision; source gates pin the stream
-observations, all three dispatch branches and the running executable's path.
-`E2E.Manager` checks the real binary with all four stream combinations,
-explicit listing in a terminal, help and invalid operands. Both manager suites
-exercise absolute invocation with no `linger` on PATH and with a PATH impostor.
+Routing takes only argv; `Main` consumes this pure decision without inspecting
+terminal streams. Source gates pin all three dispatch branches and the running
+executable's path. The selector's executor requires terminal input and output.
+`E2E.Manager` checks bare help and explicit selection with all four stream
+combinations, explicit listing in a terminal, help and invalid operands. Both
+manager suites exercise absolute invocation with no `linger` on PATH and with
+a PATH impostor. These contracts state behavior, not a proof of a UI preference.
 
 §Select supports the manager's pure selection model.
 `matches_iff_sublist` specifies ASCII-case-insensitive subsequence matching;
@@ -266,8 +267,8 @@ and real detach, with terminal restoration before the next subprocess.
 Synthetic failure and handoff checks invoke the same executor through an
 isolated recorder; public dispatch and live attach/detach use the actual binary.
 
-The native configurations for Ghostty, kitty and WezTerm each launch bare
-`linger`. `E2E.Recipes` inspects the three native configuration
+The native configurations for Ghostty, kitty and WezTerm each launch
+`linger select`. `E2E.Recipes` inspects the three native configuration
 settings; documented launch syntax supports them. SSH keepalives remain native
 transport configuration. These observations do not prove GUI behavior, network
 recovery time or a preference for a configuration format.

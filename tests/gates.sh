@@ -305,11 +305,10 @@ module_imports 'Linger/*' Linger.lean \
   END { exit bad }' >&2 || fail "the session library imports outside its declared closure"
 
 # Pure route proofs do not observe terminal IO or inspect Main's call sites.
-# Pin both stream observations, exact argv forwarding and executable identity;
+# Pin dispatch before terminal observations, exact argv and executable identity;
 # E2E.Manager and E2E.Recipes exercise these same boundaries in subprocesses.
-for claim in route_selector_iff route_bare_noninteractive route_session_argv \
-             route_session_streams route_daemon_argv route_ls_argv \
-             route_import_argv route_import_streams; do
+for claim in route_bare_help route_selector_iff route_session_argv \
+             route_select_operands route_daemon_argv route_ls_argv route_import_argv; do
   code_grep "^theorem $claim " Theorems/Entry.lean >/dev/null \
     || fail "entry-point contract disappeared: $claim"
 done
@@ -317,9 +316,7 @@ done
 # matcher below, so quoted prose cannot stand in for these call sites.
 entry_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Main.lean)"
 for tie in \
-  'let stdinTty ← if args[.]isEmpty then [(]← IO[.]getStdin[)][.]isTty else pure false' \
-  'let stdoutTty ← if args[.]isEmpty then [(]← IO[.]getStdout[)][.]isTty else pure false' \
-  'match Tools[.]Entry[.]route args stdinTty stdoutTty with' \
+  'def main [(]args : List String[)] : IO UInt32 := do try match Tools[.]Entry[.]route args with' \
   '[|] [.]selector => Manager[.]Picker[.]run [(]← IO[.]appPath[)][.]toString' \
   '[|] [.]importSave rest => Manager[.]Resurrect[.]run [(]← IO[.]appPath[)][.]toString rest' \
   '[|] [.]session argv => Linger[.]Runtime[.]Cli[.]main Linger[.]Runtime[.]Resume[.]hooks argv'; do

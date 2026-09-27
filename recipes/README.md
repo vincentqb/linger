@@ -10,14 +10,14 @@ Before making it your terminal's startup command, create a session:
 ```sh
 linger attach work
 # Detach with ctrl-\.
-linger                      # select; return here after each attach exits
+linger select               # select; return here after each attach exits
 linger ls                   # list once, including in a terminal
-linger --help
+linger                      # show CLI help
 ```
 
-Bare `linger` selects only when both input and output are terminals. Redirect
-either stream and it lists once instead. A selector query only filters existing
-targets; it never creates a new session.
+`linger select` requires terminal input and output. Bare `linger` shows help
+in every stream mode. A selector query only filters existing targets; it never
+creates a new session.
 
 ## Native terminal settings
 
@@ -25,9 +25,9 @@ Merge the setting for your terminal into its existing configuration:
 
 | Terminal | File | Setting |
 |---|---|---|
-| Ghostty 1.2+ | [`ghostty_config`](ghostty_config) | `command = direct:linger` |
-| kitty | [`kitty.conf`](kitty.conf) | `shell linger` |
-| WezTerm | [`wezterm.lua`](wezterm.lua) | `default_prog = { 'linger' }` |
+| Ghostty 1.2+ | [`ghostty_config`](ghostty_config) | `command = direct:linger select` |
+| kitty | [`kitty.conf`](kitty.conf) | `shell linger select` |
+| WezTerm | [`wezterm.lua`](wezterm.lua) | `default_prog = { 'linger', 'select' }` |
 
 Ghostty's [`command`](https://ghostty.org/docs/config/reference#command) with
 `direct:` launches an executable without a shell command string. An existing
@@ -38,9 +38,9 @@ kitty's [`shell`](https://sw.kovidgoyal.net/kitty/conf/#opt-kitty.shell) names t
 program to start. WezTerm's
 [`default_prog`](https://wezterm.org/config/lua/config/default_prog.html) is an
 argument array in the returned configuration. If you already return a config
-table, set `config.default_prog = { 'linger' }` before returning it.
+table, set `config.default_prog = { 'linger', 'select' }` before returning it.
 
-Use the same approach in another terminal: set its startup program to `linger`.
+Use the same approach in another terminal: set its startup command to `linger select`.
 Open a new window after loading the configuration. The terminal must find
 `linger` on PATH, or the setting can name its absolute executable path. The
 selector and importer reuse the running executable for local child commands.
@@ -68,7 +68,7 @@ refresh or exit. Detaching with ctrl-\ returns to a fresh selection.
 
 ## Remote sessions
 
-`linger` includes hosts from `~/.config/linger/remotes` in selection.
+`linger select` includes hosts from `~/.config/linger/remotes`.
 `linger ls -r` lists those hosts once; `linger ls -r host,host` chooses hosts
 for one listing. Each host needs `linger` on PATH.
 
@@ -127,6 +127,7 @@ terminals.
 
 ## Earlier installations
 
-Replace `lz` startup commands with `linger`, and `lz import-resurrect` with
-`linger import`. Remove previously installed `lz`, `lzh`, `lzr`, `lza`, `lzs`
-and `lzo` launchers or shell functions. Those shortcuts are no longer shipped.
+Replace `lz` or bare `linger` startup commands with `linger select`, and
+`lz import-resurrect` with `linger import`. Remove previously installed `lz`,
+`lzh`, `lzr`, `lza`, `lzs` and `lzo` launchers or shell functions. Those shortcuts
+are no longer shipped.

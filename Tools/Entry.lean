@@ -10,10 +10,11 @@ inductive Route where
   | session (args : List String)
   deriving BEq, Repr
 
-/-- Choose an executor without interpreting or changing its arguments. -/
-def route (args : List String) (stdinTty stdoutTty : Bool) : Route :=
+/-- Bare invocation explains the CLI; named commands choose their executor. -/
+def route (args : List String) : Route :=
   match args with
-  | [] => if stdinTty && stdoutTty then .selector else .session []
+  | [] => .session ["help"]
+  | ["select"] => .selector
   | "import" :: rest => .importSave rest
   | _ => .session args
 

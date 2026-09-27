@@ -13,17 +13,7 @@ The session library and VT toolkit do not import the manager. -/
 
 def main (args : List String) : IO UInt32 := do
   try
-    let stdinTty ←
-      if args.isEmpty then
-        (← IO.getStdin).isTty
-      else
-        pure false
-    let stdoutTty ←
-      if args.isEmpty then
-        (← IO.getStdout).isTty
-      else
-        pure false
-    match Tools.Entry.route args stdinTty stdoutTty with
+    match Tools.Entry.route args with
     | .selector =>
       Manager.Picker.run (← IO.appPath).toString
     | .importSave rest =>

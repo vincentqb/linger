@@ -324,6 +324,17 @@ private def termiosRestored (s : Session) (rc : Nat) : IO Bool := do
 private def restored (s : Session) (rc : Nat) (entries : Nat := 1) : IO Bool := do
   return (← termiosRestored s rc) && modesRestored (← s.output.get) entries
 
+/-- Compare only the command's output, before the launcher's completion marker.
+The pty expands each newline; redirected stdout retains the original bytes. -/
+private def Session.printed (s : Session) (expected : String) (mode : String := "both") : IO Bool :=
+  do
+  let output ← s.output.get
+  let some stop := findText output "\r\r\nMANAGER-EXIT:" | return false
+  let commandOutput := output.extract 0 stop
+  if mode == "stdin-only" then
+    return commandOutput.isEmpty && (← readText (s.fixture.root / "stdout")) == expected
+  return commandOutput == (expected.replace "\n" "\r\n").toUTF8
+
 private def childNormal (f : Fixture) (index : Nat) (attach : Bool := false) : IO Bool := do
   let before ← readText (f.root / "before")
   return !before.isEmpty && (← readText (f.root / s!"termios-{index}")) == before &&
@@ -366,15 +377,17 @@ private def usageChecks (e : Env) : IO Nat := do
     failures +
       (←
         check e "help" "linger help aliases agree without a terminal or linger on PATH" fun f => do
-            let (rc, out, _) ← f.piped #["--help"]
-            let (shortRc, shortOut, _) ← f.piped #["-h"]
-            let (helpRc, helpOut, _) ← f.piped #["help"]
-            let (hRc, hOut, _) ← f.piped #["h"]
+            let (rc, out, err) ← f.piped #["--help"]
+            let (shortRc, shortOut, shortErr) ← f.piped #["-h"]
+            let (helpRc, helpOut, helpErr) ← f.piped #["help"]
+            let (hRc, hOut, hErr) ← f.piped #["h"]
             IO.FS.writeFile (f.root / "help.txt") out
             return rc == 0 && shortRc == 0 && helpRc == 0 && hRc == 0 && shortOut == out &&
                 helpOut == out &&
                 hOut == out &&
+                [err, shortErr, helpErr, hErr].all String.isEmpty &&
                 has out "Usage: linger" &&
+                (out.splitOn "\n").any (fun line => line.trimAscii.toString.startsWith "select ") &&
                 has out "linger import [SAVE]" &&
                 !has out "--loop" &&
                 !has out "--restore-processes" &&
@@ -382,12 +395,13 @@ private def usageChecks (e : Env) : IO Nat := do
   failures :=
     failures +
       (←
-        check e "usage" "linger rejects malformed arguments and import operands" fun f => do
+        check e "usage" "linger rejects malformed arguments and select/import operands" fun f => do
             let mut ok := true
             for args in
               [#["work"], #["--unknown"], #["--help", "extra"], #["-h", "extra"],
-                #["help", "extra"], #["ls", "--unknown"], #["--loop", ""],
-                #["--loop", "one", "two"], #["import-resurrect"], #["import", ""],
+                #["help", "extra"], #["ls", "--unknown"], #["select", ""], #["select", "work"],
+                #["select", "--help"], #["select", "-h"], #["select", "one", "two"],
+                #["--loop", ""], #["--loop", "one", "two"], #["import-resurrect"], #["import", ""],
                 #["import", "--unknown"], #["import", "--help"], #["import", "-h"],
                 #["import", "-save"], #["import", "one", "two"]] do
               let (rc, _, _) ← f.piped args
@@ -402,6 +416,13 @@ private def usageChecks (e : Env) : IO Nat := do
               s!"linger rejects removed loop arguments in a terminal ({slug})" fun f =>
               withSession f args fun s => do
                 return (← termiosRestored s 2) && !hasBytes (← s.output.get) (modeSet 1049 true))
+  failures :=
+    failures +
+      (←
+        check e "select-extra" "linger select rejects extra operands before terminal entry" fun f =>
+            withSession f #["select", "extra"] fun s => do
+              return (← termiosRestored s 2) && !hasBytes (← s.output.get) (modeSet 1049 true) &&
+                  !hasText (← s.output.get) "linger>")
   failures :=
     failures +
       (←
@@ -428,46 +449,118 @@ private def usageChecks (e : Env) : IO Nat := do
   failures :=
     failures +
       (←
-        check e "pipes" "bare linger with neither stream a terminal lists and exits" fun f => do
-            let (listRc, expected, listErr) ← f.piped #["ls"]
+        check e "help-neither"
+            "bare linger prints exactly help without creating state (neither tty)" fun f => do
+            let state := f.root / "absent"
+            let f := { f with env := f.env.push ("LINGER_DIR", some state.toString) }
+            let (helpRc, expected, helpErr) ← f.piped #["help"]
             let (rc, out, err) ← f.piped #[]
             IO.FS.writeFile (f.root / "stdout") out
-            return listRc == 0 && !expected.isEmpty && rc == 0 && out == expected &&
-                err == listErr &&
-                !has out "linger>")
-  for (mode, args) in [("stdin-only", #[]), ("stdout-only", #[]), ("both", #["ls"])] do
+            return helpRc == 0 && !expected.isEmpty && helpErr.isEmpty && rc == 0 &&
+                out == expected &&
+                err.isEmpty &&
+                !(← state.pathExists))
+  for mode in ["stdin-only", "stdout-only", "both"] do
     failures :=
       failures +
         (←
-          check e s!"listing-{mode}"
-              s!"linger lists and exits with unchanged terminal modes ({mode}, {repr args})"
+          check e s!"help-{mode}"
+              s!"bare linger prints exactly help without creating state or changing terminal modes ({mode})"
               fun f => do
-              let (listRc, expected, _) ← f.piped #["ls"]
-              withSession f args
+              let state := f.root / "absent"
+              let f := { f with env := f.env.push ("LINGER_DIR", some state.toString) }
+              let (helpRc, expected, helpErr) ← f.piped #["help"]
+              withSession f #[]
                   (fun s => do
                     let clean ← termiosRestored s 0
-                    let output ← s.output.get
-                    let listing ←
-                      if mode == "stdin-only" then
-                        pure ((← readText (f.root / "stdout")) == expected)
-                      else
-                        pure (hasText output (expected.replace "\n" "\r\n"))
-                    return listRc == 0 && !expected.isEmpty && clean && listing &&
-                        !hasText output "linger>" &&
-                        !hasBytes output (modeSet 1049 true))
+                    return helpRc == 0 && !expected.isEmpty && helpErr.isEmpty && clean &&
+                        (← s.printed expected mode) &&
+                        !(← state.pathExists))
                   mode)
   failures :=
     failures +
       (←
-        check e "tty-default" "bare linger selects with both terminal streams and no linger on PATH"
-            fun f =>
-            withSession f #[] fun s => do
-              unless ← s.prompt do
-                return false
-              s.observe 250
-              let waiting := !(← (f.root / "result").pathExists)
-              s.text "\x03"
-              return waiting && (← restored s 130))
+        check e "help-sockets"
+            "bare linger help neither probes live sockets nor cleans stale sockets" fun f => do
+            let f := { f with env := f.env.push ("LINGER_DIR", some f.root.toString) }
+            let (helpRc, expected, helpErr) ← f.piped #["help"]
+            let stale := f.root / "stale.sock"
+            close (← unixListen stale.toString)
+            let listener ← unixListen (f.root / "unread.sock").toString
+            try
+              let (rc, out, err) ← f.piped #[]
+              let events ← poll #[listener] #[POLLIN] 0
+              let untouched ← stale.pathExists
+              IO.FS.writeFile (f.root / "stdout") out
+              IO.FS.writeFile (f.root / "socket-observation")
+                  s!"exit={rc}\nlistener-events={events[0]!}\nstale-preserved={untouched}\n"
+              return helpRc == 0 && !expected.isEmpty && helpErr.isEmpty && rc == 0 &&
+                  out == expected &&
+                  err.isEmpty &&
+                  events[0]! == 0 &&
+                  untouched
+            finally
+              close listener)
+  failures :=
+    failures +
+      (←
+        check e "listing-both" "linger ls prints exactly one listing and exits in a terminal"
+            fun f => do
+            let (listRc, expected, listErr) ← f.piped #["ls"]
+            withSession f #["ls"] fun s => do
+                return listRc == 0 && !expected.isEmpty && listErr.isEmpty &&
+                    (← termiosRestored s 0) &&
+                    (← s.printed expected))
+  failures :=
+    failures +
+      (←
+        check e "select-neither" "linger select requires both terminal streams (neither tty)"
+            fun f => do
+            let state := f.root / "absent"
+            let f := { f with env := f.env.push ("LINGER_DIR", some state.toString) }
+            let (rc, out, err) ← f.piped #["select"]
+            IO.FS.writeFile (f.root / "stderr") err
+            return rc == 1 && out.isEmpty && has err "terminal input and output" &&
+                !has err "\x1b" &&
+                !(← state.pathExists))
+  for mode in ["stdin-only", "stdout-only"] do
+    failures :=
+      failures +
+        (←
+          check e s!"select-{mode}"
+              s!"linger select rejects redirection before listing or terminal entry ({mode})"
+              fun f => do
+              let state := f.root / "absent"
+              let f := { f with env := f.env.push ("LINGER_DIR", some state.toString) }
+              withSession f #["select"]
+                  (fun s => do
+                    let clean ← termiosRestored s 1
+                    let output ← s.output.get
+                    return clean && hasText output "terminal input and output" &&
+                        !hasText output "linger>" &&
+                        !hasText output "\x1b" &&
+                        (← readText (f.root / "stdout")).isEmpty &&
+                        !(← state.pathExists))
+                  mode)
+  failures :=
+    failures +
+      (←
+        check e "tty-select"
+            "linger select waits in a terminal and unmatched Enter creates nothing with no linger on PATH"
+            fun f => do
+            let state := f.root / "state"
+            let f := { f with env := f.env.push ("LINGER_DIR", some state.toString) }
+            withSession f #["select"] fun s => do
+                unless ← s.prompt do
+                  return false
+                unless ← s.typeQuery "new-session" "new-session" do
+                  return false
+                s.text "\r"
+                s.observe 350
+                let waiting := !(← (f.root / "result").pathExists)
+                let noSession := (← state.readDir).isEmpty
+                s.text "\x03"
+                return waiting && noSession && (← restored s 130))
   return failures
 
 private def failureChecks (e : Env) : IO Nat := do
@@ -739,7 +832,8 @@ private def refreshChecks (e : Env) : IO Nat := do
               s.client.resize 40 6
               unless ← s.prompt "" start do
                 return false
-              s.observe 1200
+              -- Observe past five seconds so a periodic refresh would change the call record.
+              s.observe 5500
               let once := (← f.calls) == call ["ls", "-r", "--porcelain"]
               return once && (← acceptThenCancel s) &&
                   (← f.calls) ==
@@ -948,14 +1042,14 @@ private def defaultChecks (e : Env) : IO Nat := do
   return failures
 
 private def realCheck (e : Env) : IO Nat :=
-  check e "real" "linger attaches, detaches and returns to selection with no linger on PATH"
+  check e "real" "linger select attaches, detaches and returns to selection with no linger on PATH"
     fun f => do
     let name := "manager-live"
     let create ← IO.Process.output { cmd := e.bin, args := #["run", name, "true"], env := f.env }
     if create.exitCode != 0 then
       throw (IO.userError s!"manager live fixture failed: {create.stderr}")
     try
-      withSession f #[] fun s => do
+      withSession f #["select"] fun s => do
           unless ← s.prompt do
             return false
           unless ← s.until name do

@@ -11,9 +11,9 @@ public section
 
 Verb surface: attach is an upsert; one-shot verbs talk to a
 live daemon or say so. `Main` routes terminal selection and import before
-entering this session backend. Redirected bare invocation and explicit `ls`
-print an overview and exit. `__daemon` is the internal re-exec target of the
-detached spawn.
+entering this session backend. Bare invocation reaches help; `ls` prints an
+overview and exits. `__daemon` is the internal re-exec target of the detached
+spawn.
 -/
 
 namespace Linger.Runtime.Cli
@@ -37,8 +37,9 @@ def usage : String :=
   "Usage: linger [command] [args...]
        linger import [SAVE]
 
-  (no args)                Select a session; return after attach exits
-                              (list and exit if input or output is redirected)
+  (no args)                 Show this help
+  select                    Select a session; return after attach exits
+                              (requires terminal input and output)
   ls [-r [hosts]]           List once; -r includes configured remote hosts
                               (or pass a comma-separated host list)
   attach [name] [command]    Attach, creating if needed (name defaults to 'main')
@@ -500,7 +501,7 @@ def cmdVersion : IO UInt32 := do
   IO.println s!"state:   {← Paths.stateDir}"
   return 0
 
-/-- Redirected bare `linger` and explicit `linger ls [...]` share this path. -/
+/-- Execute a validated listing request. -/
 def overview (args : List String) : IO UInt32 := do
   match parseLs args with
   | some (porcelain, remoteFlag) =>
@@ -613,7 +614,7 @@ def main (hooks : Hooks) (args : List String) : IO UInt32 := do
   | ["help"] | ["h"] | ["--help"] | ["-h"] =>
     IO.println usage
     return 0
-  -- Redirected bare invocation and explicit listing forms reach this backend.
+  -- Explicit listing forms reach this backend.
   | "ls" :: rest | "list" :: rest | "l" :: rest =>
     overview rest
   | other =>

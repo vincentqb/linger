@@ -2,4 +2,4 @@
 # Create a session with `linger attach work` before using this startup command.
 # Use linger's absolute path if it is not on the terminal's PATH.
 # An existing initial-command overrides command for the first window.
-command = direct:linger
+command = direct:linger select

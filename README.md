@@ -5,8 +5,8 @@ Pure-function Lean 4, machine-checked invariants.
 
 `linger attach <name>` gives you a shell that keeps running after you
 detach or disconnect; reattach later with the screen intact. Bare `linger`
-selects a session and returns to selection after detach. Redirect input or
-output and it prints a listing instead. `linger ls` always lists and exits.
+explains the CLI. `linger select` selects a session and returns to selection
+after detach. `linger ls` lists and exits.
 
 ## Build
 
@@ -58,13 +58,14 @@ separately and build it with the project toolchain.
 ```
 linger attach work      # attach, creating "work" if absent
 Ctrl-\                # detach — session keeps running
-linger                 # select a session; return after detach
+linger select          # select a session; return after detach
 linger ls              # overview: names, pids, labels; then exit
 ```
 
 | command | |
 |---|---|
-| (no args) | select with terminal input and output; list once if either is redirected |
+| (no args) | show help |
+| `select` | select an existing session; requires terminal input and output |
 | `attach [name] [cmd]` | attach, creating if absent (name defaults to `main`) |
 | `attach <name>@<host>` | attach a session on a remote host over ssh |
 | `watch <name>` | input/resize-read-only attach; viewing marks output seen |
@@ -83,8 +84,7 @@ linger ls              # overview: names, pids, labels; then exit
 ## Agents
 
 Use `linger ls --porcelain`, `info`, `capture` and `send` to inspect and drive
-sessions without owning a terminal. Bare `linger` also lists and exits when
-its input or output is redirected. Poll cheaply: `info` reports `outseq`,
+sessions without owning a terminal. Poll cheaply: `info` reports `outseq`,
 a counter that moves once per burst of
 output. A `capture` marks the session seen; `history` is an export and
 does not. `watch <name>` gives a human a read-only view while an agent
@@ -117,8 +117,8 @@ is a settled non-goal (AGENTS.md).
 
 ## Recipes
 
-Ghostty, kitty, WezTerm and other terminals can use `linger` as their startup
-program. [`recipes/README.md`](recipes/README.md) contains native configuration
+Ghostty, kitty, WezTerm and other terminals can run `linger select` at startup.
+[`recipes/README.md`](recipes/README.md) contains native configuration
 examples, selection keys and save-import instructions. Create your first
 session with `linger attach work` before setting a terminal startup command.
 

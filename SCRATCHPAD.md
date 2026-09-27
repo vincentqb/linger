@@ -12981,3 +12981,81 @@ restored the no-live-spec pointer. Repository hooks run with the verified
 checkpoint commit. Hosted checks are pending here; the preceding checkpoint's
 GitHub jobs did not start because of billing/spending limits. No macOS,
 live GUI-terminal or real remote-host verification is claimed.
+
+## Step 1 notes — 2026-09-27
+
+Closed `specs/archive/explicit-selection.md`. The user asked for bare `linger`
+to explain the CLI and explicit `linger select` to open selection. Started from
+`f7dac9a`, preserving its executable before edits. Bare invocation now routes
+to exactly the existing help command in every stream mode. Only `["select"]`
+routes to the selector; its existing executor checks terminal input and output.
+Extra selector operands reach normal usage rejection. Session and import
+arguments retain their original bytes and order.
+
+The route now takes only argv. Removing the two terminal observations from
+`Main` also removes two Boolean parameters and redundant stream proof cases.
+`route_bare_help` and `route_selector_iff` state the new contract; forwarding
+theorems cover the session, daemon, listing, import and extra-selector cases.
+Unfolding the route and using `split <;> simp_all` proves the selector iff
+without enumerating string equalities. These theorems establish behavior, not
+the desirability of a UI preference.
+
+Two desired-value guards failed against the old route before implementation.
+A worker in its own worktree supplied actual executable checks: eleven manager
+assertions fail against the preserved predecessor, then all sixty-four pass
+against the new binary. Bare help is byte-exact in all four terminal/redirected
+stream combinations, leaves a missing state directory missing and restores
+termios. Owned live and stale sockets make accidental listing observable:
+the predecessor connects and cleans the stale socket; help does neither.
+Explicit selection refuses redirected streams before listing, uses the running
+executable with no `linger` on PATH and returns after actual attach/detach.
+An unmatched Enter creates no state. Explicit `ls` remains byte-exact and
+one-shot in a terminal. Overview drops two obsolete bare-listing duplicates;
+the revised suite counts are reviewed in `tests/e2e.sh`.
+
+Four regressions compiled before rejection and were restored: returning a bare
+listing, accepting selector operands, reversing argv before dispatch and
+discarding a terminal probe before dispatch. The latter two carry quoted
+canonical-call decoys. Independent review found that the original route call
+gate could not catch a discarded probe, which output tests cannot observe.
+Pinning the contiguous main/try/dispatch prefix closes that gap without another
+gate or runtime helper. `terminal-probe-mutation.json` and `mutations.json`
+record compiler success, verifier rejection and restored source hashes.
+
+Creation stays explicit through `linger attach [name]`. The previously recorded
+accidental session named `ls` remains evidence against creating from a search
+query; the existing picker provenance theorems still apply. The five-second
+loop found in `49f48c0^:recipes/lzs.sh` belongs to a retired status recipe.
+The current selector reads a snapshot on entry, Ctrl-R and return from attach.
+Its input poll is not a listing refresh. The idle executable observation now
+runs for 5.5 seconds to catch an accidental five-second reload. No timer or
+refresh option was added.
+
+Ghostty, kitty and WezTerm retain native startup configuration and now pass
+the explicit `select` argument. Their Lean checks inspect the actual files;
+this does not claim GUI verification. README, CLI help, theorem boundaries
+and migration instructions describe the same public behavior.
+
+Final assembled Linux verification passes on Lean v4.34.1. The complete
+foreground verifier rebuilds 154 jobs from empty and passes generated C ABI,
+source gates, standalone formatting, exact-constant and resolved-reference
+coverage, CI runner checks, fuzz fixtures, POSIX smoke tests, all thirteen live
+suites and the unrelated-session sentinel. There are 342 live assertions,
+including 64 manager checks and 16 overview checks; no failures. Changed-file
+lint and layout checks and warning-level shellcheck also pass.
+
+The full receipt is
+`/tmp/linger-explicit-selection-20260927/assembled-full-verifier.log`;
+`final-verifier/` holds copied suite/build/coverage logs and tested source
+hashes. The worker's `handoff.md` in
+`/tmp/linger-explicit-selection-test-receipts-20260927/` identifies the
+authoritative baseline and green runs, including executable hashes. Earlier
+worker diagnostics are retained separately: one overly specific help assertion
+was corrected, and a failed copy over an open executable was followed by atomic
+replacement and hash verification. Neither is counted as a production failure
+or a passing run.
+
+Archived the completed spec and restored the no-live-spec pointer. Hosted
+checks are pending at closure; the preceding checkpoint's jobs could not start
+because of GitHub billing/spending limits. No macOS, live GUI-terminal or real
+remote-host verification is claimed.

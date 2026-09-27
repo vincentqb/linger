@@ -16,10 +16,10 @@ worklog), `specs/archive/` (closed build records), the comments in
 ## Where things stand — read this first after any compaction
 
 1. No spec is in flight. The last one closed on 2026-09-27
-   (`specs/archive/minimal-compounding.md`: full-tree minimal-code and
-   compound-engineering audit; assembled Linux verifier green, hosted checks
-   pending). The preceding checkpoint's hosted checks did not start because of
-   the repository owner's GitHub billing/spending limit.
+   (`specs/archive/explicit-selection.md`: bare `linger` prints help;
+   `linger select` opens the existing selector; assembled Linux verifier green,
+   hosted checks pending at closure). The preceding checkpoint's hosted checks
+   could not start because of the repository owner's GitHub billing/spending limit.
    New work opens a new `specs/<slug>.md`, names itself here, and keeps
    the live count at one; every behavioral fix starts with a failing
    check and every deletion survives the full verifier stack.
@@ -42,9 +42,9 @@ git history); re-opening one needs a new reason.
 
 - Windows, tabs, splits — the OS window manager owns composition.
 - Creating sessions from a selector query — selection attaches only an
-  original listed target (`Theorems/Picker.lean`). The user's 2026-09-26 request
-  for one public entry point reopens the earlier separate-executable decision;
-  `specs/archive/single-entry-point.md` records terminal selection versus piped listing.
+  original listed target (`Theorems/Picker.lean`). `linger attach [name]`
+  creates explicitly; `linger select` selects; bare `linger` shows help
+  (`specs/archive/explicit-selection.md`).
 - Storing images across reattach — passthrough plus the application's
   own redraw only (`E2E/Graphics.lean`, README Graphics).
 - Restoring the process tree on resume — screen and state yes, programs

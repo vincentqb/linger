@@ -9,7 +9,7 @@
 #   3. posix shim smoke tests (lingertest)
 #   4. attach/detach/reattach/mirror/wait e2e (real ptys)
 #   5. reboot-resume e2e (SIGKILL + restore + corrupt tolerance)
-#   6. overview e2e (redirected bare `linger`/`ls` print a list and exit)
+#   6. overview e2e (`linger ls` prints a list and exits)
 #   7. remote-over-ssh e2e (fake ssh: `-r` listing, attach name@host argv)
 #   8. adverse timing: busy-daemon listing (§Row) + name-ownership race
 #   9. graphics passthrough (kitty APC / sixel DCS reach the client raw)
@@ -228,8 +228,8 @@ suite attach 40
 say "5. reboot resume"
 suite resume 15
 
-say "6. overview listing (bare linger / ls)"
-suite overview 18
+say "6. overview listing (linger ls)"
+suite overview 16
 
 say "7. remote sessions over ssh"
 suite remote 18
@@ -259,7 +259,7 @@ say "15. delivery (large replay, ordering, exit tails and retired transports)"
 suite delivery 34
 
 say "16. manager (entry dispatch, selection, input and terminal handoff)"
-suite manager 58
+suite manager 64
 
 LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger info "$sentinel_name" >/dev/null \
   || fail "a suite terminated the unrelated sentinel session"

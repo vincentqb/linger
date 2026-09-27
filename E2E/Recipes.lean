@@ -36,9 +36,9 @@ private def configChecks : IO Nat := do
   let root := (← IO.currentDir) / "recipes"
   let mut f := 0
   for (file, comment, setting, label) in
-    [("ghostty_config", "#", "command = direct:linger", "Ghostty"),
-      ("kitty.conf", "#", "shell linger", "Kitty"),
-      ("wezterm.lua", "--", "return { default_prog = { 'linger' } }", "WezTerm")] do
+    [("ghostty_config", "#", "command = direct:linger select", "Ghostty"),
+      ("kitty.conf", "#", "shell linger select", "Kitty"),
+      ("wezterm.lua", "--", "return { default_prog = { 'linger', 'select' } }", "WezTerm")] do
     let content ←
       try
         IO.FS.readFile (root / file)
@@ -48,7 +48,7 @@ private def configChecks : IO Nat := do
       (content.splitOn "\n").map (·.trimAscii.toString) |>.filter fun line =>
         !line.isEmpty && !line.startsWith comment
     f :=
-      f + (← expect (settings == [setting]) s!"{label} native configuration launches bare linger")
+      f + (← expect (settings == [setting]) s!"{label} native configuration launches linger select")
   return f
 
 /-- tmux-resurrect prefixes the saved directory and full command with `:` and
