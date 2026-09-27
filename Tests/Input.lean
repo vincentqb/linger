@@ -22,11 +22,12 @@ private def input (text : String) : State × List Key := walk init text.toUTF8.t
 #guard (input "a Z!").2 == [.text 'a', .text ' ', .text 'Z', .text '!']
 
 #guard
-  (walk init [8, 127, 21, 16, 14, 9, 13, 10, 3, 4, 18]).2 ==
-    [.backspace, .backspace, .clear, .up, .down, .down, .accept, .accept, .cancel, .cancel,
-      .refresh]
+  (walk init [8, 127, 21, 16, 14, 9, 13, 10, 3, 4]).2 ==
+    [.backspace, .backspace, .clear, .up, .down, .down, .accept, .accept, .cancel, .cancel]
 
-#guard (walk init [0, 1, 2, 7, 11, 12, 17, 19, 20, 22, 26, 28, 31]).2.isEmpty
+#guard (walk init [0, 1, 2, 7, 11, 12, 17, 18, 19, 20, 22, 26, 28, 31]).2.isEmpty
+
+#guard feed init 18 == (init, [])
 
 #guard
   let (state, keys) := feed init 27

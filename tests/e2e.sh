@@ -259,7 +259,7 @@ say "15. delivery (large replay, ordering, exit tails and retired transports)"
 suite delivery 34
 
 say "16. manager (entry dispatch, selection, creation, input and terminal handoff)"
-suite manager 86
+suite manager 103
 
 LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger info "$sentinel_name" >/dev/null \
   || fail "a suite terminated the unrelated sentinel session"

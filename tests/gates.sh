@@ -352,18 +352,19 @@ code_grep '^[[:space:]]+let listing ← IO[.]Process[.]output [{] cmd := executa
 # E2E.Manager drives the terminal lifetime, failure paths and handoff itself.
 for claim in matches_iff_sublist visible_order parseListing_valid items_existing_prefix \
              mem_items_create step_stay_valid step_attach_mem step_create_iff \
-             step_create_valid step_init_empty; do
+             step_create_valid step_init_empty step_cancel refresh_query refresh_candidates \
+             refresh_valid refresh_selected refresh_missing; do
   code_grep "^(private )?theorem $claim([[:space:]]|:)" Theorems/Picker.lean >/dev/null \
     || fail "selector contract disappeared: $claim"
 done
-for claim in feed_storage_bound feed_paste_only_text flush_no_accept; do
+for claim in feed_storage_bound feed_paste_only_text feed_ctrl_r flush_no_accept; do
   code_grep "^(private )?theorem $claim " Theorems/Input.lean >/dev/null \
     || fail "input contract disappeared: $claim"
 done
 for tie in \
-  'return [.]ok [(]← IO[.]ofExcept [(]Tools[.]Picker[.]parseListing out[.]stdout[)][)]' \
+  'let candidates ← IO[.]ofExcept [(]Tools[.]Picker[.]parseListing stdout[)]' \
   'let items := Tools[.]Picker[.]items state[.]candidates state[.]query' \
-  'let mut state := Tools[.]Picker[.]init candidates' \
+  'let mut state := Tools[.]Picker[.]init [[]]' \
   'let mut decoder := Tools[.]Input[.]init' \
   'let [(]next, emitted[)] := Tools[.]Input[.]feed decoder byte' \
   'let [(]next, emitted[)] := Tools[.]Input[.]flush decoder' \
@@ -372,21 +373,36 @@ for tie in \
   'let fds := #[[]stdinFd[]]' \
   'let events := #[[]POLLIN[]]' \
   'let ready ← poll fds events 50' \
-  'let out ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"ls", "-r", "--porcelain"[]] [}]' \
-  'let snapshot ← listing executable' \
+  'let stdout ← IO[.]asTask child[.]stdout[.]readToEnd Task[.]Priority[.]dedicated' \
+  'let stderr ← IO[.]asTask child[.]stderr[.]readToEnd Task[.]Priority[.]dedicated' \
+  'let frame := draw state loaded current[.]1 current[.]2' \
+  'writeAll stdoutFd frame[.]toUTF8' \
   'discard child[.]wait' \
   'let child ← IO[.]Process[.]spawn [{] cmd := executable, args := #[[]"attach", target[]] [}]'; do
   code_grep "^[[:space:]]+$tie$" Manager/Picker.lean >/dev/null \
     || fail "manager bypassed a proved value or fixed IO boundary: $tie"
 done
 picker_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Manager/Picker.lean)"
-# Pin traversal through frame insertion: computing the proved rows or labels
-# alone does not display them or keep the highlighted row aligned with selection.
+# Pin traversal through frame insertion, refresh assignment and listing ownership.
+# Computing rows, labels or refreshed state without consuming them is insufficient.
+# Reap only after both pipes close; cancellation retires the group before reaping
+# its leader, whose PID must remain reserved while descendants can hold the pipes.
+# The three loop seams also fix ordering: draw, poll/decode/step, then refresh.
+# A completed snapshot must not replace the target underneath an unread key.
 for tie in \
-  'let mut index := start for item in [(]items[.]drop start[)][.]take slots do let label := match item with [|] [.]existing target => target [|] [.]create target => s!"Create [{]target[}]" let chosen := index == state[.]cursor lines := lines[.]push [(][(]if chosen then "> " else " "[)] [+][+] label, chosen[)] index := index [+] 1' \
+  'let mut index := start for item in [(]items[.]drop start[)][.]take slots do let label := match item with [|] [.]existing target => target [|] [.]create target => s!"[+] Create [{]target[}]" let chosen := index == state[.]cursor let text := [(]if chosen then " ▸ " else " "[)] [+][+] label lines := lines[.]push #[[][(]text, if chosen then "\\x1b[[]7m" else ""[)][]] index := index [+] 1' \
+  'let next := if loaded then Tools[.]Picker[.]refresh state candidates else [{] [(]Tools[.]Picker[.]init candidates[)] with query := state[.]query [}] dirty := dirty [|][|] !loaded [|][|] next != state state := next loaded := true nextListing := [(]← monotonicMs[)] [+] 1000' \
+  'if [(]← pending[.]get[)][.]isNone && [(]← monotonicMs[)] ≥ nextListing then pending[.]set [(]some [(]← listing executable[)][)]' \
+  'IO[.]Process[.]spawn [{] cmd := executable, args := #[[]"ls", "-r", "--porcelain"[]], stdin := [.]null, stdout := [.]piped, stderr := [.]piped, setsid := true [}]' \
+  'try try job[.]child[.]kill finally discard job[.]child[.]wait finally discard <[|] IO[.]wait job[.]stdout discard <[|] IO[.]wait job[.]stderr' \
+  'if [(]← IO[.]hasFinished job[.]stdout[)] && [(]← IO[.]hasFinished job[.]stderr[)] then if let some status[[:space:]]*← job[.]child[.]tryWait then pending[.]set none' \
+  'while true do let current ← winsizeGet stdoutFd if dirty [|][|] current != size then let frame := draw state loaded current[.]1 current[.]2 if frame != lastFrame [|][|] current != size then writeAll stdoutFd frame[.]toUTF8 lastFrame := frame size := current dirty := false let ready ← poll fds events 50' \
+  'for key in keys do if !loaded && key == [.]accept then continue match Tools[.]Picker[.]step state key with [|] [.]stay next => dirty := dirty [|][|] next != state state := next [|] [.]attach target [|] [.]create target => return [.]attach target [|] [.]cancel => return [.]cancel if let some job[[:space:]]*← pending[.]get then if [(]← IO[.]hasFinished job[.]stdout[)] && [(]← IO[.]hasFinished job[.]stderr[)] then' \
+  'nextListing := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]← monotonicMs[)] ≥ nextListing then pending[.]set [(]some [(]← listing executable[)][)] return [.]cancel finally' \
+  'finally if let some job[[:space:]]*← pending[.]get then job[.]stop' \
   '[|] [.]attach target [|] [.]create target => return [.]attach target'; do
   printf '%s\n' "$picker_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
-    || fail "manager lost the rendered selection contract or shared attach handoff: $tie"
+    || fail "manager lost its selection, refresh, process ownership or attach contract: $tie"
 done
 code_grep '^[[:space:]]+cmdAttach hooks Linger[.]Core[.]Name[.]defaultName [[]]$' Linger/Runtime/Cli.lean >/dev/null \
   || fail "attach no longer shares the proved default session name with selection"

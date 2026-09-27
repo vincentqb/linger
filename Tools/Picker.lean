@@ -5,7 +5,7 @@ public import Linger.Core.Name
 
 public section
 
-/-! Pure selection over one successful listing snapshot.
+/-! Pure selection over validated listing snapshots.
 
 Matching folds ASCII capitals with `Char.toLower`; it performs neither Unicode
 case folding nor normalization. Results retain listing order and original target
@@ -60,6 +60,9 @@ inductive Item where
   | create (target : String)
   deriving BEq, Repr
 
+def Item.target : Item → String
+  | .existing target | .create target => target
+
 /-- Existing matches come first. Creation is explicit and never rewrites the query. -/
 def items (candidates : List String) (query : String) : List Item :=
   let target := if query.isEmpty then Linger.Core.Name.defaultName else query
@@ -82,12 +85,22 @@ def init (candidates : List String) : State := { candidates }
 
 def selected (s : State) : Option Item := (items s.candidates s.query)[s.cursor]?
 
+/-- Keep the selected target across snapshots, even when its creation row becomes
+an existing session. A vanished target leaves the cursor clamped in place. -/
+def refresh (s : State) (candidates : List String) : State :=
+  let choices := items candidates s.query
+  let target := (selected s).map Item.target
+  let cursor :=
+    (choices.findIdx? (fun item => some item.target == target)).getD
+      (min s.cursor (choices.length - 1))
+  { s with
+    candidates, cursor }
+
 inductive Outcome where
   | stay (state : State)
   | attach (target : String)
   | create (target : String)
   | cancel
-  | refresh
   deriving BEq, Repr
 
 /-- Editing resets the cursor. Navigation clamps; acceptance acts on the selected
@@ -118,6 +131,5 @@ def step (s : State) (key : Tools.Key) : Outcome :=
     | some (.create target) => .create target
     | none => .stay s
   | .cancel => .cancel
-  | .refresh => .refresh
 
 end Tools.Picker

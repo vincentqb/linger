@@ -17,7 +17,6 @@ inductive Key where
   | last
   | accept
   | cancel
-  | refresh
   deriving BEq, Repr
 
 end Tools

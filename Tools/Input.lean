@@ -99,7 +99,6 @@ private def idle (paste : Bool) (byte : UInt8) : State × Option Key :=
         | 14 | 9 => some .down
         | 13 | 10 => some .accept
         | 3 | 4 => some .cancel
-        | 18 => some .refresh
         | _ => if byte ≥ 32 then some (.text (Char.ofUInt8 byte)) else none)
     else
       if 0xc2 ≤ byte && byte ≤ 0xdf then ({ paste, mode := .utf2 byte }, none)

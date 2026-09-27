@@ -16,7 +16,7 @@ linger                      # show CLI help
 ```
 
 `linger select` requires terminal input and output. With no sessions it offers
-`Create main`; type a name to create a different one. Bare `linger` shows help
+`+ Create main`; type a name to create a different one. Bare `linger` shows help
 in every stream mode.
 
 ## Native terminal settings
@@ -50,26 +50,32 @@ Window, tab and split configuration remains with the terminal.
 
 Type a subsequence of the target, such as `wkdh` for `work@dev-host`.
 Matches retain listing order. ASCII letter case is ignored; other Unicode
-characters match exactly. A `Create <name>` row follows the matches when the
+characters match exactly. A `+ Create <name>` row follows the matches when the
 typed name is valid and not already listed. The creation row uses the name
-exactly as typed; an empty query offers `Create main` if `main` is absent.
+exactly as typed; an empty query offers `+ Create main` if `main` is absent.
 An exact existing target has no duplicate creation row.
 
 - Up/down or ctrl-p/ctrl-n move; Home/End select first/last.
 - Backspace edits, ctrl-u clears, and Enter chooses the highlighted row.
-- Esc, ctrl-c and ctrl-d cancel with status 130.
-- Ctrl-r reloads the listing and clears the query.
+- Esc, ctrl-c and ctrl-d quit the selector with status 130, leaving session
+  programs running. While attached, ctrl-c keeps its normal meaning for the
+  foreground program.
 
 Both existing and creation choices call `linger attach` with the target unchanged.
 Use `name@host` or `name@user@host` to create remotely. Invalid names, including
 spaces or slashes in the local name and an empty host suffix, cannot be created;
-they stay editable. Pasted newlines cannot choose a row. The listing
-refreshes on entry, after attach returns, or on ctrl-r; there is no timed remote
-polling. A failed or malformed listing ends selection. The snapshot can become
-stale before attach, which creates or attaches according to the session's state then.
+they stay editable. Pasted newlines cannot choose a row. The listing refreshes
+automatically, starting the next attempt one second after the previous one
+completes. Slow remote listings do not block typing or quitting, and only one
+refresh runs at a time. Your query and highlighted target survive updates while
+that target remains available; otherwise the highlighted row is clamped to the
+new list. An unchanged display
+is not repainted. A failed or malformed listing ends selection. The snapshot can
+become stale before attach, which creates or attaches according to the session's
+state then.
 
-Terminal modes and the selector's alternate screen are restored before attach,
-refresh or exit. Detaching with ctrl-\ returns to a fresh selection.
+Terminal modes and the selector's alternate screen are restored before attach
+or exit. Detaching with ctrl-\ returns to a fresh selection.
 
 ## Remote sessions
 

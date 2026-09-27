@@ -160,7 +160,6 @@ theorem feed_paste_only_text (state : State) (byte : UInt8) (key : Key)
 theorem feed_paste_no_commands (state : State) (byte : UInt8) (hpaste : state.paste = true) :
     .accept ∉ (feed state byte).2 ∧
       .cancel ∉ (feed state byte).2 ∧
-      .refresh ∉ (feed state byte).2 ∧
       .up ∉ (feed state byte).2 ∧
       .down ∉ (feed state byte).2 ∧
       .first ∉ (feed state byte).2 ∧
@@ -189,11 +188,14 @@ theorem feed_controls (byte : UInt8) (key : Key)
     (h :
       (byte, key) ∈
         [(8, .backspace), (127, .backspace), (21, .clear), (16, .up), (14, .down), (9, .down),
-          (13, .accept), (10, .accept), (3, .cancel), (4, .cancel), (18, .refresh)]) :
+          (13, .accept), (10, .accept), (3, .cancel), (4, .cancel)]) :
     feed init byte = (init, [key]) := by
   simp only [List.mem_cons, List.not_mem_nil, or_false, Prod.mk.injEq] at h
-  rcases h with h | h | h | h | h | h | h | h | h | h | h
+  rcases h with h | h | h | h | h | h | h | h | h | h
   all_goals rcases h with ⟨rfl, rfl⟩; rfl
+
+/-- Automatic listing refresh has no keyboard event or manual refresh shortcut. -/
+theorem feed_ctrl_r : feed init 18 = (init, []) := by rfl
 
 theorem feed_ascii (paste : Bool) (byte : UInt8) (h : 32 ≤ byte ∧ byte < 127) :
     feed { paste } byte = ({ paste }, [.text (Char.ofUInt8 byte)]) := by

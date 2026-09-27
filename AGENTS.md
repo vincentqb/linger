@@ -16,10 +16,10 @@ worklog), `specs/archive/` (closed build records), the comments in
 ## Where things stand — read this first after any compaction
 
 1. No spec is in flight. The last one closed on 2026-09-27
-   (`specs/archive/selector-creation.md`: `linger select` offers labelled
-   creation through attach; assembled Linux verifier green, hosted checks
-   pending at closure). The preceding checkpoint's hosted checks
-   could not start because of the repository owner's GitHub billing/spending limit.
+   (`specs/archive/selector-polish.md`: a roomier live selector and audited
+   branch/worktree cleanup; assembled Linux verifier green, hosted checks
+   pending at closure). The preceding checkpoint's hosted checks did not start
+   because of the repository owner's GitHub billing/spending limit.
    New work opens a new `specs/<slug>.md`, names itself here, and keeps
    the live count at one; every behavioral fix starts with a failing
    check and every deletion survives the full verifier stack.

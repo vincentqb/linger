@@ -13155,3 +13155,111 @@ Archived the completed spec and restored the no-live-spec pointer. Hosted
 checks are pending at closure; the preceding checkpoint's jobs could not start
 because of GitHub billing/spending limits. No macOS, live GUI-terminal or real
 remote-host verification is claimed.
+
+## Step 1 notes — 2026-09-27
+
+Closed `specs/archive/selector-polish.md`. The approved selector uses a quiet
+title, separate query and dim placeholder, Unicode selection and key glyphs,
+breathing room and contextual Enter help. A labelled creation choice remains
+explicit. Small terminals prioritize the selected row; clipping uses terminal
+cell widths and leaves the last column unused. The terminal's colors remain
+the only palette.
+
+Automatic listing starts the next attempt one second after the preceding
+attempt completes, with at most one attempt in flight. Pure `refresh` preserves
+the query and exact selected target when it survives, including a creation
+choice becoming an existing session. If that target disappears, it clamps the
+former cursor. `refresh_query`, `refresh_candidates`, `refresh_selected`,
+`refresh_missing` and `refresh_valid` establish those contracts; the validity
+theorem carries the unchanged query-bound premise and repairs even a forged
+cursor. `item_target` covers the common identity projection. Every new pure
+definition participates in the exact-constant theorem census.
+
+Removed the manual refresh event from the key, decoder and selector models.
+`feed_ctrl_r` proves Ctrl-R inert in ordinary input; existing cancellation and
+paste theorems retain their scope. These proofs establish behavior, not the
+desirability of a visual preference.
+
+The executor owns one listing process and two pipe readers, using Lean core
+process/task APIs. It keeps input responsive while the initial or periodic
+listing runs, applies input to the displayed state before publishing a complete
+new snapshot, and draws before the next input poll. Query edits survive the
+initial load; acceptance waits for the first listing. Unchanged frames are not
+written. Listing errors surface after terminal restoration. Cleanup signals
+only the listing's own process group before reaping its reserved leader PID,
+then joins its readers. Lean core termination still uses SIGTERM; there is no
+bounded-reaping claim for a helper that ignores it. No C, raw binding,
+dependency or CLI option was added.
+
+Four policy mutations compile before the corresponding proof or fixture
+rejects them: forgetting the selected target, clearing the query, omitting the
+cursor clamp and treating Ctrl-R as cancellation. Independent review exposed
+two compiling runtime order mutations that the original source gates accepted:
+refresh before displayed-state keys and polling before drawing. Strengthened
+contiguous-order gates reject both. Five other compiling runtime mutations
+are rejected: reversing displayed rows, discarding the creation label,
+bypassing pure refresh, dropping process-group isolation and reaping before
+group termination. An earlier unused-label variant failed compilation and is
+excluded from this evidence. All mutated sources were restored; the restored
+builds and gates pass. The second and final review found no remaining blocker.
+
+The corrected manager harness uses public VT projections. An initial clean
+full verifier caught the worker's private all-access VT import at the friend-set
+gate. Replacing field reads with existing `getRow`, `getCell`, `rowCount` and
+`colCount` preserves every coordinate and assertion without expanding that
+boundary. The identical final source and driver execute all 103 manager
+assertions against both programs: the compiled predecessor has 83 PASS and
+20 FAIL, while the assembled implementation has 103 PASS and no failures.
+The predecessor and assembled runs overlapped in isolated trees; this is a
+behavioral comparison, not a claim that the final runs were serial.
+
+The live checks cover display and cell clipping, tiny terminals, resize, quiet
+repainting, query and target retention, creation becoming attachment, complete
+snapshot publication, cadence, malformed/failed refresh, held initial and
+periodic listings, responsive editing, one in-flight process and cancellation.
+Actual session programs survive both selector Ctrl-C and Esc and answer a
+subsequent challenge; attached Ctrl-C still interrupts the foreground program
+while its session shell remains responsive. Listing disappearance is checked
+before fixture cleanup. The captured normal and creation frames were inspected.
+
+The assembled foreground Linux verifier passed from 20:47:07Z to 20:54:21Z
+on Lean v4.34.1: a clean 154-job build, generated C ABI, source gates,
+standalone layout, exact-constant and resolved-reference coverage, CI runner
+checks, fuzz corpus, POSIX smoke, all thirteen live suites and the
+unrelated-session sentinel. There are 381 live assertions, including 103
+manager checks, with no failures. Both required final builds, standalone lint,
+changed-file layout, warning-level shellcheck, shell syntax and whitespace
+checks also pass. All 151 tested tracked files are unchanged across the full
+verifier; the final source and executable identities were independently checked.
+
+The user's additional cleanup request was handled by read-only agents across
+disjoint branch groups. All thirty side branches have zero unique commits
+relative to main. Each worktree's staged, unstaged, untracked and meaningful
+ignored files was compared with main and preserved or otherwise accounted for.
+Current selector changes were integrated and verified before their trees were
+retired. Older experiments and diagnostic evidence remain archived outside
+the deleted trees. Fresh parent checks verified the sealed evidence and exact
+worktree/index state before removal. All thirty side worktrees and branches
+are removed; the only local worktree and branch are main. The remote branch
+inventory also contains only main.
+
+Receipts: `/tmp/linger-selector-polish-20260927/` contains the assembled
+verifier, copied `final-verifier/` logs and source/executable manifests, policy
+and runtime mutation records, and both independent reviews.
+`/tmp/linger-selector-polish-test-receipts-20260927/final-public-vt/handoff.md`
+identifies the authoritative identical-driver comparison and its copied green
+receipts. Earlier private-observer and fixture runs remain explicitly
+diagnostic. The worker's last receipt-only re-seal was unfinished when its
+completed source work was closed. The branch auditor preserved that state and
+independently checked and sealed the primary green receipts; missing secondary
+receipt files are recorded and are not counted as executed checks.
+A receipt-capture helper initially parsed an ISO timestamp with its
+trailing newline as an invalid date; trimming and validating the timestamp
+fixed that check without changing production or repeating the verifier.
+`/tmp/linger-branch-audit-20260927/` holds the per-branch dispositions, sealed
+files, binary diffs, fresh preflights and completed cleanup records.
+
+Archived the completed spec and restored the no-live-spec pointer. Hosted
+checks are pending at closure; the preceding checkpoint's jobs could not start
+because of GitHub billing/spending limits. No macOS, live GUI-terminal or real
+remote-host verification is claimed.

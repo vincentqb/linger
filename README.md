@@ -8,6 +8,9 @@ detach or disconnect; reattach later with the screen intact. Bare `linger`
 explains the CLI. `linger select` creates or attaches to a session and returns to selection
 after detach. `linger ls` lists and exits.
 
+Selection refreshes automatically while preserving your query and highlighted
+target. Esc or Ctrl-C quits the selector and leaves session programs running.
+
 ## Build
 
 ```

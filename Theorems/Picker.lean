@@ -8,7 +8,7 @@ import Theorems.Name
 
 public section
 
-/-! Selection contracts for one immutable listing snapshot.
+/-! Selection contracts within and between listing snapshots.
 
 These proofs do not assert that a listed session remains available until the
 executor attaches it. They constrain the exact target and permitted outcomes.
@@ -231,6 +231,66 @@ theorem selected_mem (s : State) (target : String) (h : selected s = some (.exis
 theorem selected_empty (s : State) (h : items s.candidates s.query = []) : selected s = none := by
   simp [selected, h]
 
+/-- Identity is the exact target, independent of whether Enter creates or attaches. -/
+theorem item_target (target : String) :
+    Item.target (.existing target) = target ∧ Item.target (.create target) = target := ⟨rfl, rfl⟩
+
+theorem refresh_query (s : State) (candidates : List String) :
+    (refresh s candidates).query = s.query := by simp [refresh]
+
+theorem refresh_candidates (s : State) (candidates : List String) :
+    (refresh s candidates).candidates = candidates := by simp [refresh]
+
+/-- Refresh clamps even a forged cursor; it never changes query length. -/
+theorem refresh_valid (s : State) (candidates : List String)
+    (hquery : s.query.length ≤ maxQueryLength) : (refresh s candidates).Valid := by
+  simp only [refresh, State.Valid]
+  refine ⟨?_, hquery⟩
+  cases hf :
+    (items candidates s.query).findIdx?
+      (fun item => some item.target == (selected s).map Item.target) with
+  | none => exact Nat.min_le_right _ _
+  | some index =>
+    have bound := (List.findIdx?_eq_some_iff_findIdx_eq.mp hf).1
+    simpa using (show index ≤ (items candidates s.query).length - 1 by omega)
+
+/-- A surviving target stays selected even after reordering or changing row kind. -/
+theorem refresh_selected (s : State) (candidates : List String) (item : Item)
+    (hselected : selected s = some item)
+    (hpresent : ∃ next ∈ items candidates s.query, next.target = item.target) :
+    (selected (refresh s candidates)).map Item.target = some item.target := by
+  let choices := items candidates s.query
+  let predicate := fun next : Item => some next.target == (selected s).map Item.target
+  have found : ∃ next, next ∈ choices ∧ predicate next = true := by
+    obtain ⟨next, member, target⟩ := hpresent
+    exact ⟨next, member, by simp [predicate, hselected, target]⟩
+  have hf := List.findIdx?_eq_some_of_exists found
+  have bound := List.findIdx_lt_length_of_exists found
+  have target := List.findIdx_getElem (xs := choices) (p := predicate) (w := bound)
+  change
+    (some choices[choices.findIdx predicate].target == (selected s).map Item.target) =
+      true at target
+  simp only [hselected, Option.map_some, beq_iff_eq, Option.some.injEq] at target
+  change
+    (choices[(choices.findIdx? predicate).getD (min s.cursor (choices.length - 1))]?).map
+        Item.target =
+      some item.target
+  rw [hf]
+  simpa only [Option.getD_some, List.getElem?_eq_getElem bound, Option.map_some] using
+    congrArg some target
+
+/-- When the former target is gone, refresh keeps its row when possible. -/
+theorem refresh_missing (s : State) (candidates : List String)
+    (hmissing :
+      ∀ item ∈ items candidates s.query, some item.target ≠ (selected s).map Item.target) :
+    (refresh s candidates).cursor = min s.cursor ((items candidates s.query).length - 1) := by
+  have hf :
+    (items candidates s.query).findIdx?
+        (fun item => some item.target == (selected s).map Item.target) =
+      none :=
+    List.findIdx?_eq_none_iff.mpr (by simpa using hmissing)
+  simp [refresh, hf]
+
 theorem init_valid (candidates : List String) : (init candidates).Valid := by
   simp [init, State.Valid, maxQueryLength]
 
@@ -294,7 +354,6 @@ theorem step_stay_valid (s next : State) (key : Tools.Key) (hs : s.Valid)
       exact ⟨cursor, query⟩
     | some item => cases item <;> simp [he] at h
   | cancel => cases h
-  | refresh => cases h
 
 theorem step_query_bound (s next : State) (key : Tools.Key) (hs : s.Valid)
     (h : step s key = .stay next) : next.query.length ≤ maxQueryLength :=
@@ -351,8 +410,6 @@ theorem step_empty_accept (s : State) (h : items s.candidates s.query = []) :
 theorem step_init_empty : step (init []) .accept = .create Linger.Core.Name.defaultName := by cbv
 
 theorem step_cancel (s : State) : step s .cancel = .cancel := by simp [step]
-
-theorem step_refresh (s : State) : step s .refresh = .refresh := by simp [step]
 
 theorem step_control_ignored (s : State) (char : Char)
     (h : char.toNat < 32 ∨ (127 ≤ char.toNat ∧ char.toNat < 160)) :

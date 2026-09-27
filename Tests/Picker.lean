@@ -133,6 +133,34 @@ open Tools.Picker
 
 #guard selected { candidates := ["work"], query := "unknown" } == some (.create "unknown")
 
+-- Refresh preserves target identity, not its former row number.
+#guard
+  refresh { candidates := ["work", "web"], query := "w", cursor := 1 } ["web", "other", "work"] ==
+    { candidates := ["web", "other", "work"], query := "w", cursor := 0 }
+
+-- A creation offer can become an attachment, or the reverse, without jumping.
+#guard
+  selected (refresh { candidates := ["work"], query := "w", cursor := 1 } ["web", "w", "work"]) ==
+    some (.existing "w")
+
+#guard
+  selected
+      (refresh { candidates := ["web", "w", "work"], query := "w", cursor := 1 } ["web", "work"]) ==
+    some (.create "w")
+
+-- Missing targets clamp the old cursor; empty choices and forged cursors stay safe.
+#guard
+  refresh { candidates := ["work", "web", "west"], query := "w", cursor := 2 } ["work"] ==
+    { candidates := ["work"], query := "w", cursor := 1 }
+
+#guard
+  refresh { candidates := ["work@host"], query := "@", cursor := 0 } [] ==
+    { candidates := [], query := "@", cursor := 0 }
+
+#guard
+  refresh { candidates := ["work"], cursor := 999 } ["main"] ==
+    { candidates := ["main"], cursor := 0 }
+
 #guard step (init ["work@me@dev-a"]) .accept == .attach "work@me@dev-a"
 
 #guard step (init []) .accept == .create "main"
@@ -146,8 +174,6 @@ open Tools.Picker
     .stay { candidates := ["work"], query := "work", cursor := 1 }
 
 #guard step (init ["work"]) .cancel == .cancel
-
-#guard step (init ["work"]) .refresh == .refresh
 
 #guard
   step { candidates := ["alpha", "beta"], cursor := 1 } (.text 'a') ==

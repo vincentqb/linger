@@ -41,7 +41,7 @@ recipes, break records, measurements, the audits — lives in
 | §Status | one glyph per listing row vs seven conditions | the seven states partition the observation space: `cover`, `disjoint`, `classify_sound` + `classify_unique`, `reachable`, `icon_injective` / `name_injective`, `name_clean` | Theorems/Status.lean |
 | §Resume | the product's own promise: crash, reboot, reattach | §Restore ∘ §Replay, stated twice — over `save`'s input and over `load`'s output (`resume_grid_of_load`, `resume_tabs_of_load`, `resume_sb_of_load`: any byte string that loads, no other hypothesis) — and lifted to the daemon over its own `vt0` (`Session.run_resume_vt_shape`, `run_resume_load_save`) | Theorems/Resume.lean, Theorems/Session.lean |
 | §Import | foreign save records vs distinct session identities, directory-only restoration and safe error display | successful parsing gives a nonempty list with canonical, distinct names and NUL-free directories (`parseSave_valid`); valid saved commands cannot affect parsed panes (`parseRow_command_irrelevant`); planning preserves records and order and skips existing names (`mem_plan`, `plan_order`); adding planned names to the snapshot makes a sequential rerun empty (`plan_sequential_idempotent`); diagnostics exclude C0, DEL and C1 and preserve already printable text (`diagnostic_printable`, `diagnostic_eq_self`) | Theorems/Resurrect.lean, E2E/Recipes.lean |
-| §Select | fuzzy search and explicit creation vs an exact session identity | matching preserves snapshot order (`visible_order`, `items_existing_prefix`); existing selections retain original targets (`step_attach_mem`); a creation row uses an exact valid target absent from the snapshot (`mem_items_create`, `step_create_valid`); only acceptance acts on the highlighted row (`step_attach_iff`, `step_create_iff`); continuing transitions preserve query/cursor bounds (`step_stay_valid`) | Theorems/Picker.lean, E2E/Manager.lean |
+| §Select | fuzzy search and explicit creation vs an exact session identity | matching preserves snapshot order (`visible_order`, `items_existing_prefix`); existing selections retain original targets (`step_attach_mem`); a creation row uses an exact valid target absent from the snapshot (`mem_items_create`, `step_create_valid`); only acceptance acts on the highlighted row (`step_attach_iff`, `step_create_iff`); refresh retains query and surviving targets (`refresh_query`, `refresh_selected`); continuing transitions and refresh bound the cursor (`step_stay_valid`, `refresh_valid`) | Theorems/Picker.lean, E2E/Manager.lean |
 | §Input | split keyboard bytes and pasted commands vs deliberate selection | one byte produces at most one key (`feed_length`); UTF-8 prefixes retain at most three bytes (`stored_bound`, `feed_storage_bound`); delivered text excludes controls (`feed_text_valid`); paste emits only text and survives incomplete input (`feed_paste_only_text`, `feed_paste_sticky`, `flush_paste`); a timeout never accepts (`flush_no_accept`) | Theorems/Input.lean, E2E/Manager.lean |
 
 The CSI collector preserves omitted parameters, saturates numeric parameters
@@ -247,19 +247,26 @@ carries name safety and the unchanged target through acceptance;
 `step_init_empty` positively establishes creation of the default session from
 an empty listing.
 
-`init_valid` and `step_stay_valid` bound the cursor and query through every
-continuing transition. `step_attach_iff`, `step_create_iff` and `step_attach_mem`
+`init_valid` and `step_stay_valid` bound the cursor and query through keyboard
+transitions. `refresh_query` and `refresh_candidates` keep the query while
+replacing the validated snapshot. `refresh_selected` preserves the exact target
+when it remains available, even if rows move or a creation choice becomes an
+existing session. `refresh_missing` clamps the former row when the target
+vanishes; `refresh_valid` establishes cursor bounds even from a forged cursor.
+`step_attach_iff`, `step_create_iff` and `step_attach_mem`
 require Enter on the corresponding highlighted row; existing attachment still
 requires an original candidate, even for a forged out-of-range state. When
-there are no selectable rows, Enter stays editable. Cancel and refresh have
-separate outcomes. Snapshot absence is not an atomic creation claim: a session
+there are no selectable rows, Enter stays editable. `step_cancel` produces only
+cancellation. Snapshot absence is not an atomic creation claim: a session
 can appear or disappear before the existing attach upsert runs. These theorems
 specify the choices; they do not prove that a UI preference is desirable.
 
 §Input supports the finite keyboard decoder. Its modes store only bounded
 UTF-8 prefixes and a finite CSI parameter recognizer. `feed_text_valid`
 restricts text to printable scalar characters; `feed_ascii` and
-`feed_controls` specify ordinary keys. `feed_paste_only_text` suppresses
+`feed_controls` specify ordinary keys, including Ctrl-C cancellation.
+`feed_ctrl_r` makes Ctrl-R inert in the ordinary input state.
+`feed_paste_only_text` suppresses
 command keys in bracketed paste, while `feed_paste_sticky` and `flush_paste`
 preserve paste suppression across malformed or incomplete sequences.
 `flush_emits` limits timeout output to cancellation after a lone escape
@@ -267,18 +274,21 @@ outside paste. UTF-8 decoding is connected to Lean's native `String.fromUTF8?`
 validator and a single-scalar result; the validator itself is not proved here.
 `Manager.Picker` consumes these models. Source gates pin the parser, selectable
 rows, their displayed order, labels and cursor positions, initial states,
-transitions, decoder, character widths, fixed poll descriptors and unchanged
-attach argv for both row kinds. The CLI consumes the same pure default session
-name as the picker. `E2E.Manager` checks the creation label, terminal restoration,
-resize, subprocess handoff, paste, exact selection, creation and refresh
-scheduling through real ptys. A cleanup exception still restores termios; attachment begins after
-leaving the picker screen. These are IO observations, not theorem statements.
+keyboard and refresh transitions, decoder, character widths, fixed poll
+descriptors and unchanged attach argv for both row kinds. They also pin input
+handling before snapshot replacement, drawing before the next poll, and the
+listing's process and reader ownership. The CLI consumes the same pure default
+session name as the picker. `E2E.Manager` checks the creation
+label, terminal restoration, resize, subprocess handoff, paste, exact selection,
+creation and refresh scheduling through real ptys. A cleanup exception still
+restores termios; attachment begins after leaving the picker screen.
+These are IO observations, not theorem statements.
 
 §Detach preserves a session when its client leaves; §Handback specifies the
 terminal state returned to the caller. The selector temporarily uses an alternate
 screen, restoring it before session attachment. It returns to selection after every attach
 exit. `E2E.Manager` checks that default across successful attachment, failure
-and real detach, with terminal restoration before the next subprocess.
+and real detach, with terminal restoration before each attachment.
 Synthetic failure and handoff checks invoke the same executor through an
 isolated recorder; public dispatch and live attach/detach use the actual binary.
 
