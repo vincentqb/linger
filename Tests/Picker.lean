@@ -95,6 +95,59 @@ open Tools.Picker
     | .error error => error.toList.all fun char => char.toNat ≥ 32 && char.toNat < 127
     | .ok _ => false
 
+#guard
+  match
+    parseSnapshot
+      "name\twork@host\nstatus\tworking\ncmd\tvim\npid\t42\nlabel.project\tdemo\nclients\t2\nname\tother\n" with
+  | .ok snapshot =>
+    snapshot.candidates == ["work@host", "other"] &&
+      snapshot.row "work@host" ==
+        [("name", "work@host"), ("status", "working"), ("cmd", "vim"), ("pid", "42"),
+          ("label.project", "demo"), ("clients", "2")] &&
+      snapshot.row "other" == [("name", "other")]
+  | .error _ => false
+
+#guard
+  match parseSnapshot "name\twork\ncmd\tvim\n\ncmd\toutside\nname\tother\npid\t5\n" with
+  | .ok snapshot =>
+    snapshot.row "work" == [("name", "work"), ("cmd", "vim")] &&
+      snapshot.row "other" == [("name", "other"), ("pid", "5")]
+  | .error _ => false
+
+#guard
+  ["name\twork\nstatus\tidle\nname\tbad/name", "name\twork\ncmd\tvim\nname\twork",
+        "name\twork\nstatus\tworking\nname\tother\textra"].all
+    fun text =>
+    match parseSnapshot text with
+    | .error _ => true
+    | .ok _ => false
+
+#guard
+  ["status", "cmd", "pid", "label.project", "clients"].all fun key =>
+    match parseSnapshot s!"name\twork\n{key}\tbefore\n",
+      parseSnapshot s!"name\twork\n{key}\tafter\n" with
+    | .ok old, .ok fresh =>
+      old.candidates == fresh.candidates && old != fresh &&
+        (fresh.row "work").lookup key == some "after"
+    | _, _ => false
+
+#guard
+  match parseSnapshot "name\twork\ncmd\tvi\x1b[31m\u009b31m\n" with
+  | .ok snapshot =>
+    let pieces := presentation snapshot 4 (.existing "work")
+    pieces == Linger.Core.Listing.rowPieces 4 (snapshot.row "work") &&
+      String.ofList (pieces.flatMap (·.text)) == "? work vi�[31m�31m"
+  | .error _ => false
+
+#guard
+  match parseSnapshot "name\twork\nname\tother\n" with
+  | .ok snapshot =>
+    String.ofList ((presentation snapshot 5 (.existing "work")).flatMap (·.text)) ==
+        "? work  (busy)" &&
+      String.ofList ((presentation snapshot 5 (.create "work@host")).flatMap (·.text)) ==
+        "+ Create work@host"
+  | .error _ => false
+
 #guard maxQueryLength == 256
 
 #guard items [] "" == [.create "main"]

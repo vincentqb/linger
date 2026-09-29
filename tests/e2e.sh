@@ -20,6 +20,7 @@
 #  14. recipes: native terminal launch settings; Lean import against daemons
 #  15. delivery: bounded replay, margin continuation, byte order and close deadlines
 #  16. manager: terminal selector, exact targets, paste, resize, cleanup and return
+#  17. titles: attention refresh, split output, pipe-error recovery and handback
 #  (1) also covers Tests/Fuzz.lean: randomized §Replay round-trip search
 #  every pty suite also carries an EXACT CHECK COUNT (see `suite` below): green
 #  means "no failures AND every recorded assertion ran".
@@ -223,7 +224,7 @@ LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger info "$sentinel_name" >/dev/
   || fail "sentinel session did not start"
 
 say "4. attach / detach / reattach / mirror / wait"
-suite attach 40
+suite attach 47
 
 say "5. reboot resume"
 suite resume 15
@@ -232,7 +233,7 @@ say "6. overview listing (linger ls)"
 suite overview 16
 
 say "7. remote sessions over ssh"
-suite remote 18
+suite remote 21
 
 say "8. adverse timing (busy daemon listing, name-ownership race)"
 suite robust 18
@@ -244,7 +245,7 @@ say "10. terminal ownership (queries + stable child profile)"
 suite terminal 12
 
 say "11. status column (unread / seen transitions)"
-suite status 5
+suite status 17
 
 say "12. agent verbs (info / capture / send - / resize)"
 suite agent 46
@@ -253,16 +254,19 @@ say "13. watch (read-only mirror: geometry, keyboard, hand-back, seen)"
 suite watch 18
 
 say "14. recipes (native terminal settings and tmux-resurrect import)"
-suite recipes 47
+suite recipes 55
 
 say "15. delivery (large replay, ordering, exit tails and retired transports)"
 suite delivery 34
 
 say "16. manager (entry dispatch, selection, creation, input and terminal handoff)"
-suite manager 103
+suite manager 108
+
+say "17. attached titles (attention, complete boundaries and default handback)"
+suite title 18
 
 LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger info "$sentinel_name" >/dev/null \
   || fail "a suite terminated the unrelated sentinel session"
 cleanup_sentinel
 trap - EXIT HUP TERM
-printf '\nE2E OK — linger builds clean, core is pure, 13 live suites green.\n'
+printf '\nE2E OK — linger builds clean, core is pure, 14 live suites green.\n'

@@ -119,8 +119,8 @@ theorem fixes_tabs_escSeq (b : UInt8) (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x3E �
   rcases hb with h | h | h | h <;> subst h <;> show _ ∧ _ ∧ _ <;> unfold Vt.stepEsc <;>
     exact ⟨rfl, by simpa using hu, rfl⟩
 
-theorem fixes_tabs_escCharset (i x : UInt8) (hi : i = 0x28 ∨ i = 0x29) :
-    Fixes (fun v : Vt => v.tabs) (escCharset i x) := by
+theorem fixes_tabs_escCharset (i x : UInt8) (hi : i = 0x28 ∨ i = 0x29) (hlo : 0x30 ≤ x)
+    (hhi : x ≤ 0x7E) : Fixes (fun v : Vt => v.tabs) (escCharset i x) := by
   intro v hg hu
   rw [show escCharset i x = [0x1B] ++ [i, x] from rfl]
   rw [show ∀ (w : Vt), w.feed ([0x1B] ++ [i, x]) = ((w.step 0x1B).step i).step x from fun w => by
@@ -134,8 +134,7 @@ theorem fixes_tabs_escCharset (i x : UInt8) (hi : i = 0x28 ∨ i = 0x29) :
     · subst h; rfl
   rw [hinter, step_of_escInter_quiet x rfl (by simpa using hu)]
   show _ ∧ _ ∧ _
-  unfold Vt.stepEscInter
-  dsimp only
+  rw [stepEscInter_final _ i x hlo hhi]
   repeat' split
   all_goals exact ⟨rfl, by simpa using hu, rfl⟩
 
@@ -211,10 +210,12 @@ theorem fixes_tabs_titleAnsi (v : Vt) : Fixes (fun v : Vt => v.tabs) (titleAnsi 
 theorem fixes_tabs_charsetAnsi (v : Vt) : Fixes (fun v : Vt => v.tabs) (charsetAnsi v) := by
   unfold charsetAnsi
   refine
-    (((Fixes.streamPred _).ite (fun _ => fixes_tabs_escCharset 0x28 0x30 (by decide))
-              (fun _ => fixes_tabs_escCharset 0x28 0x42 (by decide))).append
-          ((Fixes.streamPred _).ite (fun _ => fixes_tabs_escCharset 0x29 0x30 (by decide))
-            (fun _ => fixes_tabs_escCharset 0x29 0x42 (by decide)))).append
+    (((Fixes.streamPred _).ite
+              (fun _ => fixes_tabs_escCharset 0x28 0x30 (by decide) (by decide) (by decide))
+              (fun _ => fixes_tabs_escCharset 0x28 0x42 (by decide) (by decide) (by decide))).append
+          ((Fixes.streamPred _).ite
+            (fun _ => fixes_tabs_escCharset 0x29 0x30 (by decide) (by decide) (by decide))
+            (fun _ => fixes_tabs_escCharset 0x29 0x42 (by decide) (by decide) (by decide)))).append
       ?_
   exact (Fixes.streamPred _).ite (fun _ => fixes_tabs_shiftOut) (fun _ => Fixes.nil _)
 
@@ -483,8 +484,8 @@ theorem fixes_tabs_cursorPendingAnsi (v : Vt) :
     refine Fixes.append ?_ (fixes_tabs_modeSet 7 _)
     refine Fixes.append ?_ (fixes_tabs_pendingAnsi _ _ _ _ _)
     refine Fixes.append ?_ fixes_tabs_shiftIn
-    refine Fixes.append ?_ (fixes_tabs_escCharset 0x29 0x42 (by decide))
-    refine Fixes.append ?_ (fixes_tabs_escCharset 0x28 0x42 (by decide))
+    refine Fixes.append ?_ (fixes_tabs_escCharset 0x29 0x42 (by decide) (by decide) (by decide))
+    refine Fixes.append ?_ (fixes_tabs_escCharset 0x28 0x42 (by decide) (by decide) (by decide))
     exact (fixes_tabs_modeSet 7 true).append (fixes_tabs_irm false)
   · exact Fixes.nil _
 

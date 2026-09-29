@@ -4,6 +4,7 @@ public import Theorems.Render.Keeps
 import all Linger.Core.Render
 import all Linger.Core.Vt
 import all Theorems.Render.Keeps
+import all Init.Data.String.Legacy
 
 -- No `public section`: a **public** declaration's type may not mention a private
 -- field, and `Vt`'s are private now (the seal, `specs/archive/vt-toolkit.md` Step 1).
@@ -86,13 +87,11 @@ theorem un_abortUtf8_esc (w : Vt) : (w.abortUtf8 0x1B).u8need = 0 := by
   · rw [ite_eq_right (by simp [h])]
     omega
 
-/-- Where `ESC` lands, from anywhere. The four reachable states are the ones `\` can
-finish: `.esc` (from `ground`, `esc`, `csi`), `ground` (from `escInter`, whose
-designation `ED 2` and `charsetAnsi` both undo), and the two string states with their
-ST check armed. -/
+/-- Where `ESC` lands, from anywhere: `.esc` (including an interrupted
+intermediate sequence), or one of the two string states with its ST check armed.
+The following `\` finishes each of these states. -/
 theorem esc_lands (w : Vt) :
     ((w.step 0x1B).pstate = .esc ∨
-        (w.step 0x1B).pstate = .ground ∨
         (∃ acc, (w.step 0x1B).pstate = .osc acc true) ∨ (w.step 0x1B).pstate = .str true) ∧
       (w.step 0x1B).u8need = 0 := by
   have hun := un_abortUtf8_esc w
@@ -116,18 +115,7 @@ theorem esc_lands (w : Vt) :
     · show ((w.abortUtf8 0x1B).stepEsc 0x1B).u8need = 0
       unfold Vt.stepEsc
       exact hun
-  | .escInter i =>
-    refine ⟨Or.inr (Or.inl ?_), ?_⟩
-    · show ((w.abortUtf8 0x1B).stepEscInter i 0x1B).pstate = PState.ground
-      unfold Vt.stepEscInter
-      dsimp only
-      repeat' split
-      all_goals rfl
-    · show ((w.abortUtf8 0x1B).stepEscInter i 0x1B).u8need = 0
-      unfold Vt.stepEscInter
-      dsimp only
-      repeat' split
-      all_goals exact hun
+  | .escInter i => exact ⟨Or.inl rfl, hun⟩
   | .csi s =>
     refine ⟨Or.inl ?_, ?_⟩
     · show ((w.abortUtf8 0x1B).stepCsi s 0x1B).pstate = PState.esc
@@ -142,7 +130,7 @@ theorem esc_lands (w : Vt) :
         ite_eq_left (by decide)]
       exact hun
   | .osc acc e =>
-    refine ⟨Or.inr (Or.inr (Or.inl ⟨acc, ?_⟩)), ?_⟩
+    refine ⟨Or.inr (Or.inl ⟨acc, ?_⟩), ?_⟩
     · show ((w.abortUtf8 0x1B).stepOsc acc e 0x1B).pstate = PState.osc acc true
       unfold Vt.stepOsc
       rw [ite_eq_right (by simp), ite_eq_right (by decide), ite_eq_left (by decide)]
@@ -151,7 +139,7 @@ theorem esc_lands (w : Vt) :
       rw [ite_eq_right (by simp), ite_eq_right (by decide), ite_eq_left (by decide)]
       exact hun
   | .str e =>
-    refine ⟨Or.inr (Or.inr (Or.inr ?_)), ?_⟩
+    refine ⟨Or.inr (Or.inr ?_), ?_⟩
     · show ((w.abortUtf8 0x1B).stepStr e 0x1B).pstate = PState.str true
       unfold Vt.stepStr
       rw [ite_eq_right (by simp), ite_eq_left (by decide)]
@@ -199,7 +187,7 @@ theorem st_grounds (w : Vt) :
   rw [show escSeq 0x5C = [0x1B, 0x5C] from by simp [escSeq, escB],
     show w.feed [(0x1B : UInt8), 0x5C] = (w.step 0x1B).step 0x5C from by simp [Vt.feed]]
   obtain ⟨hstate, hun⟩ := esc_lands w
-  exact st_finish _ hun hstate
+  exact st_finish _ hun (hstate.elim Or.inl (fun h => Or.inr (Or.inr h)))
 
 /-- **The prologue grounds any receiver**, since `Ends` carries the rest. This is what
 lets a `Sets`-shaped claim — one with no hypothesis on the receiver at all — be
@@ -213,8 +201,8 @@ theorem prologue_grounds (v w : Vt) : (w.feed (prologueAnsi v)).pstate = .ground
         escCharset 0x29 0x42 ++
         [0x0F]) := by
     refine Ends.append ?_ (Ends.text (bs := [0x0F]) (by decide))
-    refine Ends.append ?_ (ends_escCharset 0x29 0x42 (by decide))
-    refine Ends.append ?_ (ends_escCharset 0x28 0x42 (by decide))
+    refine Ends.append ?_ (ends_escCharset 0x29 0x42 (by decide) (by decide) (by decide))
+    refine Ends.append ?_ (ends_escCharset 0x28 0x42 (by decide) (by decide) (by decide))
     refine Ends.append ?_ (ends_csiNum2 1 v.rows 0x72 (by decide) (by decide))
     refine Ends.append ?_ (ends_modeSet 7 true)
     refine Ends.append ?_ (ends_modeSet 6 false)
@@ -286,11 +274,73 @@ easiest instance of: no `ite`, no dependence on a `Vt`. -/
 theorem ends_csiPlain (final : UInt8) (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E) :
     Ends (csiPlain final) := by simpa [csiPlain] using ends_csi_seq [] final ParamBytes.nil h1 h2
 
-/-- **The hand-back grounds any receiver.** No hypothesis on `w`: not `ground`, not
-`Vt.init`. The receiver here is a real terminal whose last occupant was an
-application, so every state it could be in is reachable — which is exactly why the
-claim has to be stated this way. -/
-theorem leave_grounds (w : Vt) : (w.feed leaveAnsi).pstate = .ground := by
+-- Unfold one character at a time: reducing the recursive legacy splitter in one
+-- step spends the default recursion budget on its termination proof.
+private theorem split_empty_title : "2;".splitOn ";" = ["2", ""] := by
+  unfold String.splitOn
+  rw [ite_eq_right (by decide), String.splitOnAux]
+  rw [ite_eq_right (by decide), ite_eq_right (by decide)]
+  change String.splitOnAux "2;" ";" ⟨0⟩ ⟨1⟩ ⟨0⟩ [] = _
+  rw [String.splitOnAux, ite_eq_right (by decide), ite_eq_left (by decide)]
+  change (if true then String.splitOnAux "2;" ";" ⟨2⟩ ⟨2⟩ ⟨0⟩ ["2"] else _) = _
+  rw [ite_eq_left (by decide), String.splitOnAux, ite_eq_left (by decide)]
+  rfl
+
+private theorem finish_empty_title (v : Vt) :
+    v.oscFinish #[0x32, 0x3B] =
+      { v with
+        pstate := .ground, title := "" } := by
+  have hdecode : String.fromUTF8? (ByteArray.mk #[0x32, 0x3B]) = some "2;" := by decide
+  simp [Vt.oscFinish, hdecode, split_empty_title, String.intercalate_singleton]
+
+/-- Empty OSC 2 sets the title absolutely. Its leading ESC aborts even a pending
+UTF-8 character; every other field is preserved. No title bound or prior value is
+assumed. The hand-back supplies the ground premise with its ST lead-in. -/
+theorem defaultTitleAnsi_feed {v : Vt} (hg : v.pstate = .ground) :
+    v.feed defaultTitleAnsi =
+      { v.abortUtf8 0x1B with
+        pstate := .ground, title := "" } := by
+  let u := v.abortUtf8 0x1B
+  have hu : u.u8need = 0 := un_abortUtf8_esc v
+  have he : v.step 0x1B = { u with pstate := .esc } := by
+    unfold Vt.step
+    dsimp only
+    rw [ps_abortUtf8, hg]
+    rfl
+  rw [show v.feed defaultTitleAnsi = ((((v.step 0x1B).step 0x5D).step 0x32).step 0x3B).step 0x07
+      from by simp [defaultTitleAnsi, escB, Vt.feed]]
+  rw [he]
+  rw [show ({ u with pstate := .esc } : Vt).step 0x5D = { u with pstate := .osc #[] false } from by
+      rw [step_of_esc_quiet 0x5D rfl (by simpa using hu)]
+      rfl]
+  rw [show
+      ({ u with pstate := .osc #[] false } : Vt).step 0x32 = { u with pstate := .osc #[0x32] false }
+      from by
+      rw [step_of_osc_quiet 0x32 rfl (by simpa using hu)]
+      rfl]
+  rw [show
+      ({ u with pstate := .osc #[0x32] false } : Vt).step 0x3B =
+        { u with pstate := .osc #[0x32, 0x3B] false }
+      from by
+      rw [step_of_osc_quiet 0x3B rfl (by simpa using hu)]
+      rfl]
+  rw [step_of_osc_quiet 0x07 rfl (by simpa using hu)]
+  change ({ u with pstate := .osc #[0x32, 0x3B] false } : Vt).oscFinish #[0x32, 0x3B] = _
+  rw [finish_empty_title]
+
+theorem defaultTitleAnsi_pen {v : Vt} (hg : v.pstate = .ground) :
+    (v.feed defaultTitleAnsi).pen = v.pen := by
+  rw [defaultTitleAnsi_feed hg]
+  show (v.abortUtf8 0x1B).pen = v.pen
+  unfold Vt.abortUtf8
+  split <;> rfl
+
+/-- **Hand-back establishes a parser boundary and an empty title for every
+receiver.** Pending OSC, DCS, CSI, escapes, UTF-8 and alternate-screen state are
+all admitted, with no restriction on the old title. -/
+theorem leave_boundary_title (w : Vt) :
+    (w.feed leaveAnsi).pstate = .ground ∧
+      (w.feed leaveAnsi).u8need = 0 ∧ (w.feed leaveAnsi).title = "" := by
   have hrest :
     Ends
       (modeSet 1049 false ++ csiNum 4 0x6C ++ modeSet 25 true ++ modeSet 2004 false ++
@@ -312,8 +362,8 @@ theorem leave_grounds (w : Vt) : (w.feed leaveAnsi).pstate = .ground := by
     refine Ends.append ?_ (ends_csiNum 0 0x6D (by decide) (by decide))
     refine Ends.append ?_ (ends_csiNum2 999 1 0x48 (by decide) (by decide))
     refine Ends.append ?_ (Ends.text (bs := [0x0F]) (by decide))
-    refine Ends.append ?_ (ends_escCharset 0x29 0x42 (by decide))
-    refine Ends.append ?_ (ends_escCharset 0x28 0x42 (by decide))
+    refine Ends.append ?_ (ends_escCharset 0x29 0x42 (by decide) (by decide) (by decide))
+    refine Ends.append ?_ (ends_escCharset 0x28 0x42 (by decide) (by decide) (by decide))
     refine Ends.append ?_ (ends_csiPlain 0x72 (by decide) (by decide))
     refine Ends.append ?_ (ends_modeSet 7 true)
     refine Ends.append ?_ (ends_modeSet 6 false)
@@ -345,11 +395,16 @@ theorem leave_grounds (w : Vt) : (w.feed leaveAnsi).pstate = .ground := by
             escCharset 0x29 0x42 ++
             [0x0F] ++
             csiNum2 999 1 0x48 ++
-            csiNum 0 0x6D)
+            csiNum 0 0x6D ++
+            defaultTitleAnsi)
       from by
       unfold leaveAnsi; simp]
-  rw [feed_append]
-  exact hrest _ (st_grounds w).1
+  rw [feed_append, feed_append, defaultTitleAnsi_feed (hrest _ (st_grounds w).1)]
+  exact ⟨rfl, un_abortUtf8_esc _, rfl⟩
+
+/-- **The hand-back grounds any receiver.** No hypothesis on its parser,
+UTF-8 decoder, screen or title. -/
+theorem leave_grounds (w : Vt) : (w.feed leaveAnsi).pstate = .ground := (leave_boundary_title w).1
 
 /-! ## §Handback / anchor A5 — the hand-back leaves the modes canonical
 
@@ -728,7 +783,8 @@ theorem mmap_keypad (on : Bool) :
   · simpa using step 0x3D (Or.inl rfl)
 
 -- Charset designations `ESC ( B` / `ESC ) B` and Shift-In `SI`: modes untouched
-theorem mmap_id_charset (i x : UInt8) (hi : i = 0x28 ∨ i = 0x29) : MMap id (escCharset i x) := by
+theorem mmap_id_charset (i x : UInt8) (hi : i = 0x28 ∨ i = 0x29) (hlo : 0x30 ≤ x) (hhi : x ≤ 0x7E) :
+    MMap id (escCharset i x) := by
   intro v hg hu
   rw [show escCharset i x = [0x1B] ++ [i, x] from rfl,
     show ∀ (w : Vt), w.feed ([0x1B] ++ [i, x]) = ((w.step 0x1B).step i).step x from fun w => by
@@ -742,7 +798,7 @@ theorem mmap_id_charset (i x : UInt8) (hi : i = 0x28 ∨ i = 0x29) : MMap id (es
       ({ v with pstate := .escInter i } : Vt).step x =
         ({ v with pstate := .escInter i }).stepEscInter i x
       from by rw [step_of_escInter_quiet x rfl (by simpa using hu)]]
-  unfold Vt.stepEscInter
+  rw [stepEscInter_final _ i x hlo hhi]
   rcases hi with h | h <;> subst h <;> dsimp only <;> exact ⟨rfl, by simpa using hu, rfl⟩
 
 theorem mmap_id_si : MMap id [0x0F] := by
@@ -780,6 +836,13 @@ theorem mmap_id_sgr : MMap id (csiNum 0 0x6D) := by
   exact
     mmap_id_csi_seq (digits 0) 0x6D (paramBytes_digits 0) (by decide) (by decide)
       (fun w t => modes_csiDispatch_sgr w t)
+
+theorem mmap_id_defaultTitleAnsi : MMap id defaultTitleAnsi := by
+  intro v hg hu
+  rw [defaultTitleAnsi_feed hg]
+  unfold Vt.abortUtf8
+  rw [ite_eq_right (by simp [hu])]
+  exact ⟨rfl, hu, rfl⟩
 
 theorem MMap.id_of {f : Modes → Modes} {bs : Bytes} (h : MMap f bs) (hf : ∀ m, f m = m) :
     MMap id bs := h.congr hf
@@ -829,8 +892,10 @@ theorem leave_modes (w : Vt) : (w.feed leaveAnsi).modes = ({} : Modes) := by
                             ((mmap_modeSet 6 false (by decide) (by decide)).comp
                               ((mmap_modeSet 7 true (by decide) (by decide)).comp
                                 ((mmap_id_stbm).comp
-                                  ((mmap_id_charset 0x28 0x42 (Or.inl rfl)).comp
-                                    ((mmap_id_charset 0x29 0x42 (Or.inr rfl)).comp
+                                  ((mmap_id_charset 0x28 0x42 (Or.inl rfl) (by decide)
+                                        (by decide)).comp
+                                    ((mmap_id_charset 0x29 0x42 (Or.inr rfl) (by decide)
+                                          (by decide)).comp
                                       ((mmap_id_si).comp
                                         ((mmap_id_cup 999 1).comp mmap_id_sgr)))))))))))))))))
   have hlead := st_grounds w
@@ -854,10 +919,13 @@ theorem leave_modes (w : Vt) : (w.feed leaveAnsi).modes = ({} : Modes) := by
                                       (escCharset 0x28 0x42 ++
                                         (escCharset 0x29 0x42 ++
                                           ([0x0F] ++
-                                            (csiNum2 999 1 0x48 ++ csiNum 0 0x6D))))))))))))))))))
+                                            (csiNum2 999 1 0x48 ++
+                                              csiNum 0 0x6D)))))))))))))))))) ++
+          defaultTitleAnsi
       from by simp only [leaveAnsi, List.append_assoc]]
-  rw [feed_append]
-  exact (htail _ hlead.1 hlead.2).2.2
+  rw [feed_append, feed_append]
+  obtain ⟨hg, hu, hm⟩ := htail _ hlead.1 hlead.2
+  exact ((mmap_id_defaultTitleAnsi _ hg hu).2.2).trans hm
 
 /-- **A5, outbound.** The hand-back returns the parser to ground with nothing
 half-decoded and the modes to the default, for any receiver — the value companion
@@ -925,11 +993,11 @@ theorem mmap_id_charsetAnsi (v : Vt) : MMap id (charsetAnsi v) := by
   unfold charsetAnsi
   refine mmap_id_append (mmap_id_append ?_ ?_) ?_
   · split
-    · exact mmap_id_charset 0x28 0x30 (Or.inl rfl)
-    · exact mmap_id_charset 0x28 0x42 (Or.inl rfl)
+    · exact mmap_id_charset 0x28 0x30 (Or.inl rfl) (by decide) (by decide)
+    · exact mmap_id_charset 0x28 0x42 (Or.inl rfl) (by decide) (by decide)
   · split
-    · exact mmap_id_charset 0x29 0x30 (Or.inr rfl)
-    · exact mmap_id_charset 0x29 0x42 (Or.inr rfl)
+    · exact mmap_id_charset 0x29 0x30 (Or.inr rfl) (by decide) (by decide)
+    · exact mmap_id_charset 0x29 0x42 (Or.inr rfl) (by decide) (by decide)
   · split
     · exact mmap_id_so
     · exact MMap.nil
@@ -1117,8 +1185,9 @@ theorem modes_cursorPendingAnsi (v w : Vt) (hg : w.pstate = .ground) (hu : w.u8n
   unfold cursorPendingAnsi
   split
   · have hstart :=
-      ((((mmap_wrap true).comp (mmap_irm false)).comp (mmap_id_charset 0x28 0x42 (Or.inl rfl))).comp
-            (mmap_id_charset 0x29 0x42 (Or.inr rfl))).comp
+      ((((mmap_wrap true).comp (mmap_irm false)).comp
+                (mmap_id_charset 0x28 0x42 (Or.inl rfl) (by decide) (by decide))).comp
+            (mmap_id_charset 0x29 0x42 (Or.inr rfl) (by decide) (by decide))).comp
         mmap_id_si
     have hpaint :=
       hstart.comp
@@ -1505,8 +1574,9 @@ theorem pen_cursorPendingAnsi (v w : Vt) (hg : w.pstate = .ground) (hu : w.u8nee
   unfold cursorPendingAnsi
   split
   · have hstart :=
-      ((((mmap_wrap true).comp (mmap_irm false)).comp (mmap_id_charset 0x28 0x42 (Or.inl rfl))).comp
-            (mmap_id_charset 0x29 0x42 (Or.inr rfl))).comp
+      ((((mmap_wrap true).comp (mmap_irm false)).comp
+                (mmap_id_charset 0x28 0x42 (Or.inl rfl) (by decide) (by decide))).comp
+            (mmap_id_charset 0x29 0x42 (Or.inr rfl) (by decide) (by decide))).comp
         mmap_id_si
     have hpaint :=
       hstart.comp

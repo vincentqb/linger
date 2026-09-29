@@ -8,6 +8,7 @@ import Tests.Session
 import Tests.Delivery
 import Tests.Remote
 import Tests.Listing
+import Tests.Title
 import Tests.Checkpoint
 import Tests.Resurrect
 import Tests.Picker

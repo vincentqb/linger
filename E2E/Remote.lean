@@ -11,9 +11,9 @@ public section
 
 Ported from `tests/remote_test.py`. `linger -r <hosts>` folds each host's sessions
 into the local overview (by running `ssh <host> linger ls --porcelain`), tolerates
-an unreachable host, and refuses a duplicate host. `linger attach name@host` execs
-`ssh -t -- <host> linger attach <name>`. Hostile remote output must not inject a
-path or escape bytes into the local listing.
+an unreachable host, and refuses a duplicate host. `linger attach name@host` runs
+`ssh -t -- <host> linger attach <name>` and hands the terminal back when SSH ends.
+Hostile remote output must not inject a path or escape bytes into the local listing.
 
 WHY A FAKE `ssh`, AND HOW. The suite is hermetic — no network, no second machine,
 no keys. A short `/bin/sh` script named `ssh` goes FIRST on `PATH`, logs its argv,
@@ -53,7 +53,7 @@ bounded by `listRemote`'s own `-o ConnectTimeout=3` rather than by this suite. -
 namespace E2E.Remote
 
 open E2E.Harness
-open Linger.Posix (chmod kill)
+open Linger.Posix (chmod)
 
 /-! ## The fixture -/
 
@@ -106,14 +106,17 @@ def fakeSsh (log : String) : String :=
     "  esac\n" ++
     "done\n" ++
     "host=\"$1\"; shift\n" ++
-    s!"[ \"$host\" = \"{deadHost}\" ] && exit 255\n" ++
+    s!"if [ \"$host\" = \"{deadHost}\" ]; then\n" ++
+    "  printf '\\033]2;remote-lost\\007\\033]2;partial'\n" ++
+    "  exit 255\n" ++
+    "fi\n" ++
     "case \"$2\" in\n" ++
     "  ls)\n" ++
     s!"    printf 'name\\t{goodName}\\nstate\\tlive\\nclients\\t1\\ncmd\\tvim\\033[31mINJECT\\nlabel.env\\tprod\\n\\n'\n" ++
     s!"    printf 'name\\t{hostileName}\\nstate\\tresumable\\n\\n'\n" ++
     "    printf 'garbage line with no tabs\\n\\n'\n" ++
     "    ;;\n" ++
-    "  attach) /bin/sh -c \"$*\"; sleep 5 ;;\n" ++
+    "  attach) /bin/sh -c \"$*\" ;;\n" ++
     "esac\n" ++
     "exit 0\n"
 
@@ -121,7 +124,7 @@ def fakeSsh (log : String) : String :=
 that survive that shell, so logging SSH's own argv cannot hide an injection. -/
 def fakeLinger : String :=
   "#!/bin/sh\n" ++ "printf '%s\\n' \"$@\" > \"$LINGER_REMOTE_ARGS\"\n" ++
-    s!"printf '{attachMark}\\n'\n"
+    s!"printf '\\033]2;remote-editor\\007{attachMark}\\n'\n"
 
 /-- Drop `-o value` pairs and the end-of-options `--`: the `(-o \S+ )*(--\s+)?`
 half of the Python's regex. `--` terminates the strip, because that is what it
@@ -165,8 +168,8 @@ def run : IO UInt32 := do
   chmod lingerPath.toString 0o755
   -- `:` is `os.pathsep`; fakebin FIRST so it shadows any real ssh. Both spellings
   -- are needed: the `-r` path spawns ssh from inside `linger`, inheriting the
-  -- one-shot verb's environment, and the attach path `execvp`s ssh from the pty
-  -- child, whose environment the fork carries.
+  -- one-shot verb's environment, and the attach path starts ssh from the pty
+  -- child, whose environment the subprocess inherits.
   let path0 := (← IO.getEnv "PATH").getD "/usr/bin:/bin"
   let newPath := s!"{fakebin.toString}:{path0}"
   let procPath : Array (String × Option String) := #[("PATH", some newPath)]
@@ -204,7 +207,7 @@ def run : IO UInt32 := do
             (!has out s!"@{deadHost}" &&
               !recs.any (fun kv => kv.1 == "name" && kv.2.endsWith s!"@{deadHost}"))
             "unreachable host contributes no rows")
-  -- 8+9. `attach name@host` execs `ssh -t -- host linger attach name`. Needs a
+  -- 8+9. `attach name@host` starts `ssh -t -- host linger attach name`. Needs a
   -- tty, so this one is a pty spawn and not `cliEnv`.
   let c1 ← e.spawnEnv ptyPath #["attach", tag] 100 24
   let attached ← drain c1.fd 2000
@@ -215,10 +218,17 @@ def run : IO UInt32 := do
       (←
         expect (tails.contains [devHost, "linger", "attach", goodName])
             s!"remote attach ssh argv correct ({tails.filter (·.contains "attach")})")
-  kill c1.pid 9
+  f :=
+    f +
+      (←
+        expect
+            ((← c1.reap 1500) == 0 && hasText attached "remote-editor" &&
+              hasBytes attached Linger.Core.Render.leaveAnsi &&
+              ((Linger.Core.Vt.Vt.init 100 24).feed attached.toList).windowTitle.isEmpty)
+            "normal SSH handback clears the application title")
   c1.bye (sendDetach := false)
   -- 10. a `user@host` remote (multi-@) round-trips: the host is everything after
-  -- the FIRST @, so `attach work@me@dev-a` execs ssh to `me@dev-a` and attaches
+  -- the FIRST @, so `attach work@me@dev-a` starts ssh to `me@dev-a` and attaches
   -- `work` (session names never contain @ — sanitize reserves it, and
   -- `sanitize_no_at` is why that is safe to rely on)
   let c2 ← e.spawnEnv ptyPath #["attach", s!"{goodName}@{userHost}"] 100 24
@@ -229,8 +239,18 @@ def run : IO UInt32 := do
       (←
         expect (tails2.contains [userHost, "linger", "attach", goodName])
             s!"user@host remote round-trips via first-@ split ({tails2.filter (·.contains userHost)})")
-  kill c2.pid 9
   c2.bye (sendDetach := false)
+  let lost ← e.spawnEnv ptyPath #["attach", s!"{goodName}@{deadHost}"] 100 24
+  let lostBytes ← drain lost.fd 2000
+  f := f + (← expect ((← lost.reap 1500) == 255) "lost SSH connection preserves its exit status")
+  f :=
+    f +
+      (←
+        expect
+            (hasText lostBytes "remote-lost" && hasBytes lostBytes Linger.Core.Render.leaveAnsi &&
+              ((Linger.Core.Vt.Vt.init 100 24).feed lostBytes.toList).windowTitle.isEmpty)
+            "lost SSH connection clears the title through a partial OSC")
+  lost.bye (sendDetach := false)
   -- 11. a malformed target (empty host) is a loud error, not a silent local
   -- session. `Main` prints a caught `IO.userError` to stderr, which on a pty is
   -- the same terminal, so the message arrives in the drained bytes.
@@ -241,7 +261,6 @@ def run : IO UInt32 := do
       (←
         expect (hasText bad "malformed")
             "trailing @ errors loudly instead of creating a local session")
-  kill c3.pid 9
   c3.bye (sendDetach := false)
   for (kind, name) in
     [("path", hostileName), ("separator", "work;printf REMOTE-INJECTED"),
@@ -258,7 +277,6 @@ def run : IO UInt32 := do
               (argv == ["attach", Linger.Core.Name.sanitize name] && hasText reply attachMark &&
                 !hasText reply "REMOTE-INJECTED")
               s!"remote attach sanitizes {kind} before shell interpretation")
-    kill c.pid 9
     c.bye (sendDetach := false)
   f :=
     f +

@@ -446,4 +446,113 @@ example :
       true := by
   native_decide
 
+/-- Every ESC intermediate keeps both the session and observer away from a
+title-write boundary. The final is consumed without printing it. -/
+example :
+    ((List.range 16).all fun n =>
+        let v := screen 10 2 "\x1b]2;application\x07"
+        let bytes := [0x1B, UInt8.ofNat (0x20 + n)]
+        let pending := v.feed bytes
+        let observer := v.observe bytes
+        let done := pending.feed [0x47, 0x6F, 0x6B]
+        !pending.atBoundary && !observer.atBoundary && done.atBoundary &&
+          done.windowTitle == "application" &&
+          rowStr done 0 == "ok") =
+      true := by
+  native_decide
+
+/-- The actual split ESC % G remains pending until G, including when observed
+one chunk at a time. A following title is still parsed as an OSC. -/
+example :
+    (let v := Vt.init 10 2
+     let pending := v.observe [0x1B, 0x25]
+      let done := pending.observe [0x47]
+      let titled := done.observe "\x1b]2;linger\x07".toUTF8.toList
+      !pending.atBoundary && done.atBoundary && titled.atBoundary &&
+        titled.windowTitle == "linger" &&
+        rowStr titled 0 == "") =
+      true := by
+  native_decide
+
+/-- Unknown compound ESC sequences must consume all intermediates and the
+final without treating a trailing '(' or ')' as a single-byte designation. -/
+example :
+    ((List.range 16).all fun a =>
+        (List.range 16).all fun b =>
+          let v := screen 10 2 "\x1b(0\x1b)0"
+          let pending := v.feed [0x1B, UInt8.ofNat (0x20 + a), UInt8.ofNat (0x20 + b)]
+          let done := pending.feed [0x47]
+          !pending.atBoundary && done.atBoundary && done.g0Line && done.g1Line &&
+            rowStr done 0 == "") =
+      true := by
+  native_decide
+
+/-- DEL does not finish CSI or discard its accumulated SGR parameters. -/
+example :
+    (let pending := screen 10 2 "\x1b[31"
+     let ignored := pending.feed [0x7F]
+      let done := feedStr ignored ";1mX"
+      !ignored.atBoundary && done.atBoundary && done.pen.fg == .idx 1 && done.pen.bold &&
+        rowStr done 0 == "X") =
+      true := by
+  native_decide
+
+/-- DEL after a CSI intermediate remains inside that ignored control sequence;
+its final must not leak onto the screen. -/
+example :
+    (let pending := screen 10 2 "\x1b[1 "
+     let ignored := pending.observe [0x7F]
+      let done := ignored.observe [0x71]
+      !ignored.atBoundary && done.atBoundary && rowStr done 0 == "") =
+      true := by
+  native_decide
+
+/-- DEL after ESC is ignored, so the next '[' still opens CSI. -/
+example :
+    (let pending := (Vt.init 10 2).feed [0x1B, 0x7F]
+     let done := feedStr pending "[31mX"
+     !pending.atBoundary && done.atBoundary && done.pen.fg == .idx 1 &&
+       rowStr done 0 == "X") = true := by
+  native_decide
+
+/-- DEL within either charset designation preserves the pending bank and
+allows its eventual final to select line drawing. -/
+example :
+    ([0x28, 0x29].all fun i =>
+        let pending := (Vt.init 10 2).feed [0x1B, i, 0x7F]
+        let done := pending.feed [0x30, if i == 0x29 then 0x0E else 0x0F, 0x71]
+        !pending.atBoundary && done.atBoundary && rowStr done 0 == "─") =
+      true := by
+  native_decide
+
+/-- A new ESC abandons an incomplete designation and starts a fresh OSC;
+the boundary stays closed until that OSC's terminator. -/
+example :
+    (let pending := (Vt.init 10 2).observe "\x1b(\x1b]2;new".toUTF8.toList
+     let done := pending.observe [0x07]
+     !pending.atBoundary && done.atBoundary && done.windowTitle == "new" &&
+       rowStr done 0 == "") = true := by
+  native_decide
+
+/-- Long runs of intermediates and DEL remain pending without a growing
+accumulator; a final completes them even after thousands of chunks. -/
+example :
+    (let start := (Vt.init 1 1).observe [0x1B, 0x23]
+     let result := (List.replicate 4096 [0x20, 0x7F, 0x2F]).foldl
+       (fun (ok, v) bytes =>
+         let w := v.observe bytes
+         (ok && !w.atBoundary, w)) (true, start)
+     result.1 && (result.2.observe [0x38]).atBoundary &&
+       rowStr result.2 0 == "" && result.2.sb.size == 0) = true := by
+  native_decide
+
+/-- Every ESC final byte completes an intermediate sequence; nonfinal bytes
+cannot publish a false boundary before it. -/
+example :
+    ((List.range (0x7F - 0x30)).all fun n =>
+        let pending := (Vt.init 1 1).observe [0x1B, 0x25, 0x00, 0x7F, 0x80]
+        !pending.atBoundary && (pending.observe [UInt8.ofNat (0x30 + n)]).atBoundary) =
+      true := by
+  native_decide
+
 end Linger.Core.Vt.Tests

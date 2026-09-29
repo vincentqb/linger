@@ -256,10 +256,14 @@ LEAN_EXPORT lean_obj_res linger_close(uint32_t fd) {
     return io_ok_unit();
 }
 
+static int set_nonblock(int fd) {
+    int fl = fcntl(fd, F_GETFL, 0);
+    return fl < 0 ? -1 : fcntl(fd, F_SETFL, fl | O_NONBLOCK);
+}
+
 /* linger_set_nonblock : UInt32 -> IO Unit */
 LEAN_EXPORT lean_obj_res linger_set_nonblock(uint32_t fd) {
-    int fl = fcntl((int)fd, F_GETFL, 0);
-    if (fl < 0 || fcntl((int)fd, F_SETFL, fl | O_NONBLOCK) < 0)
+    if (set_nonblock((int)fd) < 0)
         return io_err("fcntl(O_NONBLOCK)");
     return io_ok_unit();
 }
@@ -568,15 +572,20 @@ LEAN_EXPORT lean_obj_res linger_unix_listen(b_lean_obj_arg path) {
     return lean_io_result_mk_ok(lean_box_uint32((uint32_t)fd));
 }
 
-/* linger_unix_connect : @& String -> IO Int64
+/* linger_unix_connect : @& String -> Bool -> IO Int64
  * >=0: fd. <0: -errno (ENOENT / ECONNREFUSED are normal: no daemon /
  * stale socket; the caller decides). */
-LEAN_EXPORT lean_obj_res linger_unix_connect(b_lean_obj_arg path) {
+LEAN_EXPORT lean_obj_res linger_unix_connect(b_lean_obj_arg path, uint8_t nonblocking) {
     struct sockaddr_un sa;
     if (fill_sockaddr(lean_string_cstr(path), &sa) < 0)
         return lean_io_result_mk_ok(lean_box_uint64((uint64_t)(int64_t)-ENAMETOOLONG));
     int fd = unix_socket_cloexec();
     if (fd < 0) return io_err("socket");
+    if (nonblocking && set_nonblock(fd) < 0) {
+        int e = errno;
+        close(fd);
+        return io_err_code("fcntl(O_NONBLOCK)", e);
+    }
     int r;
     do { r = connect(fd, (struct sockaddr *)&sa, sizeof sa); }
     while (r < 0 && errno == EINTR);

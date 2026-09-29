@@ -505,10 +505,10 @@ theorem smap_stbm (a b : Nat) (ha : 0 < a) (hb : 0 < b) (halt : a < 65535) (hblt
 
 /-! ### The charset designations and the shift state -/
 
-theorem smap_charset (i x : UInt8) (hi : i = 0x28 ∨ i = 0x29) :
+theorem smap_charset (i x : UInt8) (hi : i = 0x28 ∨ i = 0x29) (hlo : 0x30 ≤ x) (hhi : x ≤ 0x7E) :
     SMap (stCharset i x) (escCharset i x) := by
   intro v hg
-  refine ⟨ends_escCharset i x hi v hg, ?_⟩
+  refine ⟨ends_escCharset i x hi hlo hhi v hg, ?_⟩
   rw [show escCharset i x = [0x1B] ++ [i, x] from rfl,
     show ∀ (w : Vt), w.feed ([0x1B] ++ [i, x]) = ((w.step 0x1B).step i).step x from fun w => by
       simp [Vt.feed]]
@@ -518,7 +518,7 @@ theorem smap_charset (i x : UInt8) (hi : i = 0x28 ∨ i = 0x29) :
     rw [step_of_esc_quiet i he hu1]
     unfold Vt.stepEsc
     rcases hi with h | h <;> subst h <;> rfl
-  rw [stick_step_of_escInter x hint,
+  rw [stick_step_of_escInter x hint hlo hhi,
     stick_step_of_esc i he (by rcases hi with h | h <;> rw [h] <;> decide),
     stick_step_of_ground 0x1B hg (by decide) (by decide)]
 
@@ -708,20 +708,24 @@ theorem smap_charsetAnsi (v : Vt) :
       (if v.g0Line then escCharset 0x28 0x30 else escCharset 0x28 0x42) := by
     by_cases hc : v.g0Line = true
     · rw [ite_eq_left hc]
-      exact (smap_charset 0x28 0x30 (Or.inl rfl)).congr (fun s => by simp [stCharset, hc])
+      exact
+        (smap_charset 0x28 0x30 (Or.inl rfl) (by decide) (by decide)).congr
+          (fun s => by simp [stCharset, hc])
     · rw [ite_eq_right hc]
       exact
-        (smap_charset 0x28 0x42 (Or.inl rfl)).congr
+        (smap_charset 0x28 0x42 (Or.inl rfl) (by decide) (by decide)).congr
           (fun s => by simp [stCharset, show v.g0Line = false from by simpa using hc])
   have h1 :
     SMap (fun s => { s with g1 := v.g1Line })
       (if v.g1Line then escCharset 0x29 0x30 else escCharset 0x29 0x42) := by
     by_cases hc : v.g1Line = true
     · rw [ite_eq_left hc]
-      exact (smap_charset 0x29 0x30 (Or.inr rfl)).congr (fun s => by simp [stCharset, hc])
+      exact
+        (smap_charset 0x29 0x30 (Or.inr rfl) (by decide) (by decide)).congr
+          (fun s => by simp [stCharset, hc])
     · rw [ite_eq_right hc]
       exact
-        (smap_charset 0x29 0x42 (Or.inr rfl)).congr
+        (smap_charset 0x29 0x42 (Or.inr rfl) (by decide) (by decide)).congr
           (fun s => by simp [stCharset, show v.g1Line = false from by simpa using hc])
   have h2 :
     SMap (fun s => { s with so := if v.shiftOut then true else s.so })
@@ -741,8 +745,9 @@ theorem stick_cursorPendingAnsi (v w : Vt) (hg : w.pstate = .ground) (hs : stick
   · have hwrap (on : Bool) :=
       smap_id_modeSet_safe 7 on (by decide) (by decide) (by decide) (by decide) (by decide)
     have hstart :=
-      ((((hwrap true).append smap_id_irm_reset).comp (smap_charset 0x28 0x42 (Or.inl rfl))).comp
-            (smap_charset 0x29 0x42 (Or.inr rfl))).comp
+      ((((hwrap true).append smap_id_irm_reset).comp
+                (smap_charset 0x28 0x42 (Or.inl rfl) (by decide) (by decide))).comp
+            (smap_charset 0x29 0x42 (Or.inr rfl) (by decide) (by decide))).comp
         smap_si
     have hpaint :=
       hstart.comp
@@ -955,14 +960,14 @@ theorem restore_sticky_placed (v w : Vt) (hrows : w.rows = v.rows) (hlt : v.top 
             (show v.rows - 1 < (⟨v.rows, At, Ab, Ag0, Ag1, Aso, false⟩ : Sticky).rows from by
               simp only; omega)])
   have h6 :=
-    sput_congr (sput_step h5 (smap_charset 0x28 0x42 (Or.inl rfl)))
+    sput_congr (sput_step h5 (smap_charset 0x28 0x42 (Or.inl rfl) (by decide) (by decide)))
       (show
         stCharset 0x28 0x42 (⟨v.rows, 0, v.rows - 1, Ag0, Ag1, Aso, false⟩ : Sticky) =
           ⟨v.rows, 0, v.rows - 1, false, Ag1, Aso, false⟩
         from by
         unfold stCharset; rw [ite_eq_left (by decide)]; rfl)
   have h7 :=
-    sput_congr (sput_step h6 (smap_charset 0x29 0x42 (Or.inr rfl)))
+    sput_congr (sput_step h6 (smap_charset 0x29 0x42 (Or.inr rfl) (by decide) (by decide)))
       (show
         stCharset 0x29 0x42 (⟨v.rows, 0, v.rows - 1, false, Ag1, Aso, false⟩ : Sticky) =
           ⟨v.rows, 0, v.rows - 1, false, false, Aso, false⟩
@@ -1182,17 +1187,25 @@ theorem smap_stbm_plain : SMap (fun s => stStbm 0 (s.rows - 1) s) (csiPlain 0x72
       from rfl,
     show (v.feed [(0x1B : UInt8), 0x5B]).rows = (stick (v.feed [0x1B, 0x5B])).rows from rfl, hcs]
 
+theorem smap_id_defaultTitleAnsi : SMap id defaultTitleAnsi := by
+  intro v hg
+  rw [defaultTitleAnsi_feed hg]
+  refine ⟨rfl, ?_⟩
+  change stick (v.abortUtf8 0x1B) = stick v
+  exact stick_abortUtf8 v 0x1B
+
 /-- **A5 outbound, in full.** For any receiver at least two rows tall, the
 hand-back leaves the parser `ground`, the modes at the default record, the scroll
 region whole, both charsets ASCII with G0 shifted in, the main screen current, and
-the pen reset. Two rows is the one exclusion, and it is the same one as inbound:
-`DECSTBM` refuses a one-row region here and on every real terminal, so there is
-nothing to establish. -/
+the pen reset and window title empty. Two rows is the one exclusion, and it is
+the same one as inbound: `DECSTBM` refuses a one-row region here and on every real
+terminal, so there is nothing to establish. The title and parser-boundary claims
+also hold without that height premise (`leave_boundary_title`). -/
 theorem leave_canonical_all (w : Vt) (h2 : 2 ≤ w.rows) :
     (w.feed leaveAnsi).pstate = .ground ∧
       (w.feed leaveAnsi).modes = ({} : Modes) ∧
       stick (w.feed leaveAnsi) = ⟨w.rows, 0, w.rows - 1, false, false, false, false⟩ ∧
-      (w.feed leaveAnsi).pen = ({} : Pen) := by
+      (w.feed leaveAnsi).pen = ({} : Pen) ∧ (w.feed leaveAnsi).title = "" := by
   have eid :
     ∀ (n : Nat) (on : Bool) (Y : Sticky),
       (n == 47 || n == 1047 || n == 1049) = false → stSetMode n on Y = Y := by
@@ -1269,14 +1282,14 @@ theorem leave_canonical_all (w : Vt) (h2 : 2 ≤ w.rows) :
             (by
               simp only; omega)])
   have l15 :=
-    sput_congr (sput_step l14 (smap_charset 0x28 0x42 (Or.inl rfl)))
+    sput_congr (sput_step l14 (smap_charset 0x28 0x42 (Or.inl rfl) (by decide) (by decide)))
       (show
         stCharset 0x28 0x42 (⟨w.rows, 0, w.rows - 1, Bg0, Bg1, Bso, false⟩ : Sticky) =
           ⟨w.rows, 0, w.rows - 1, false, Bg1, Bso, false⟩
         from by
         unfold stCharset; rw [ite_eq_left (by decide)]; rfl)
   have l16 :=
-    sput_congr (sput_step l15 (smap_charset 0x29 0x42 (Or.inr rfl)))
+    sput_congr (sput_step l15 (smap_charset 0x29 0x42 (Or.inr rfl) (by decide) (by decide)))
       (show
         stCharset 0x29 0x42 (⟨w.rows, 0, w.rows - 1, false, Bg1, Bso, false⟩ : Sticky) =
           ⟨w.rows, 0, w.rows - 1, false, false, Bso, false⟩
@@ -1290,7 +1303,8 @@ theorem leave_canonical_all (w : Vt) (h2 : 2 ≤ w.rows) :
         from rfl)
   have l18 := sput_congr (sput_step l17 (smap_id_cup 999 1)) (id_eq _)
   have l19 := sput_congr (sput_step l18 (smap_id_sgrNum 0)) (id_eq _)
-  -- the pen: the trailing `SGR 0` **is** `penSgr {}`, fed from the grounded prefix
+  have l20 := sput_congr (sput_step l19 smap_id_defaultTitleAnsi) (id_eq _)
+  -- The pen reset is `penSgr {}`; the final title leaves that pen untouched.
   have hps : penSgr ({} : Pen) = csiNum 0 0x6D := by
     show csiNum 0 0x6D ++ [] ++ [] = csiNum 0 0x6D
     simp
@@ -1373,11 +1387,13 @@ theorem leave_canonical_all (w : Vt) (h2 : 2 ≤ w.rows) :
               escCharset 0x29 0x42 ++
               [0x0F] ++
               csiNum2 999 1 0x48) ++
-            penSgr ({} : Pen)
+            penSgr ({} : Pen) ++
+            defaultTitleAnsi
         from by
         rw [hps]; simp only [leaveAnsi]]
+    rw [feed_append, defaultTitleAnsi_pen (by simpa only [hps] using l19.1)]
     rw [feed_append, penSgr_feed ({} : Pen) l18.1 hu18]
-  exact ⟨leave_grounds w, leave_modes w, l19.2, hpen⟩
+  exact ⟨leave_grounds w, leave_modes w, l20.2, hpen, (leave_boundary_title w).2.2⟩
 
 /-! ## §Replay stage 3d — the two byte→cursor bridges the paint needs
 

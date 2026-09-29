@@ -55,6 +55,20 @@ theorem cursorPos_eq (v : Vt) : v.cursorPos = (v.cursor.x, v.cursor.y) := rfl
 @[simp]
 theorem inAlt_eq (v : Vt) : v.inAlt = v.altGrid.isSome := rfl
 
+/-- A final byte ends an ESC intermediate sequence. Only single G0/G1
+designations change a charset; unsupported intermediates are consumed. -/
+theorem stepEscInter_final (v : Vt) (i b : UInt8) (hlo : 0x30 ≤ b) (hhi : b ≤ 0x7E) :
+    v.stepEscInter i b =
+      if i == 0x28 then
+        { v with
+          pstate := .ground, g0Line := b == 0x30 }
+      else
+        if i == 0x29 then
+          { v with
+            pstate := .ground, g1Line := b == 0x30 }
+        else { v with pstate := .ground } := by
+  simp [Vt.stepEscInter, hlo, hhi]
+
 /-- Everything §Total and §Bound need, as one induction hypothesis. -/
 structure Good (v : Vt) : Prop where
   colsPos : 1 ≤ v.cols
@@ -806,20 +820,22 @@ theorem stepEsc {v : Vt} (b : UInt8) (h : Good v) : Good (v.stepEsc b) := by
         split
         · exact set_sb _ sb (good_init v.cols v.rows)
         · exact set_sb _ (by simp [Ring.size]) (good_init v.cols v.rows))
-    | ( split
-        · exact set_pstate_escInter _ h'
-        · exact set_ground h')
+    | ( repeat' split
+        all_goals
+          first
+          | exact set_pstate_escInter _ h'
+          | exact set_ground h'
+          | exact h')
 
 theorem stepEscInter {v : Vt} (i b : UInt8) (h : Good v) : Good (v.stepEscInter i b) := by
   unfold Vt.stepEscInter
-  have hg := set_ground h
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := hg
+  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, -, -⟩ := h
   dsimp only
-  split
-  · exact ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
-  · split
-    · exact ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
-    · exact ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
+  repeat' split
+  all_goals
+    exact
+      ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, (fun _ heq => nomatch heq),
+        (fun _ _ heq => nomatch heq)⟩
 
 theorem stepCsi {v : Vt} (s : CsiState) (b : UInt8) (hs : s.params.size ≤ 16) (h : Good v) :
     Good (v.stepCsi s b) := by
@@ -827,6 +843,7 @@ theorem stepCsi {v : Vt} (s : CsiState) (b : UInt8) (hs : s.params.size ≤ 16) 
   repeat' split
   all_goals
     first
+    | exact h
     | exact set_pstate_csi _ hs h
     | exact set_pstate_csi _ (csiPush_le s _ hs) h
     | exact csiFinish _ _ h
@@ -5080,7 +5097,8 @@ theorem renderable_stepEsc {v : Vt} (h : Renderable v) (b : UInt8) :
     | -- RIS: a fresh screen of the same dimensions
       (dsimp only
        split <;> exact renderable_congr (renderable_init v.cols v.rows) rfl rfl rfl rfl)
-    | (split <;> exact renderable_congr h rfl rfl rfl rfl)
+    | (repeat' split
+       all_goals exact renderable_congr h rfl rfl rfl rfl)
 
 theorem renderable_stepEscInter {v : Vt} (h : Renderable v) (i b : UInt8) :
     Renderable (v.stepEscInter i b) := by
@@ -5622,6 +5640,8 @@ theorem csiOk_stepCsi {v : Vt} {s : CsiState} (h : CsiOk v) (hs : CsiValuesOk s)
     · simp [CsiOk, Vt.csiFinish]
   split
   · simp [CsiOk]
+  split
+  · exact h
   split
   · exact csiOk_of_pstate_eq (ps_ctl v b) h
   · simp [CsiOk]
@@ -6423,10 +6443,10 @@ theorem stick_leaveAlt (v : Vt) (b : Bool) : stick (v.leaveAlt b) = stAlt false 
       show v.altGrid.isSome = true; rw [hv]; simp)]
     rfl
 
-theorem stick_stepEscInter (v : Vt) (i x : UInt8) :
+theorem stick_stepEscInter (v : Vt) (i x : UInt8) (hlo : 0x30 ≤ x) (hhi : x ≤ 0x7E) :
     stick (v.stepEscInter i x) = stCharset i x (stick v) := by
-  unfold Vt.stepEscInter stCharset
-  dsimp only
+  rw [stepEscInter_final v i x hlo hhi]
+  unfold stCharset
   by_cases h28 : (i == 0x28) = true
   · rw [ite_eq_left h28, ite_eq_left h28]; rfl
   · rw [ite_eq_right h28, ite_eq_right h28]
@@ -6610,7 +6630,8 @@ theorem stick_stepEsc (v : Vt) (b : UInt8) (h : b ≠ 0x63) :
     | exact (stick_lineFeed _).trans (stick_carriageReturn _)
     | exact stick_reverseIndex _
     | exact absurd rfl h
-    | (split <;> rfl)
+    | (repeat' split
+       all_goals rfl)
 
 /-! ### `step`, one lemma per incoming parser state
 
@@ -6650,13 +6671,14 @@ theorem stick_step_of_str {v : Vt} {e : Bool} (b : UInt8) (hg : v.pstate = .str 
   rw [hw]
   exact (stick_stepStr _ e b).trans (stick_abortUtf8 v b)
 
-theorem stick_step_of_escInter {v : Vt} {i : UInt8} (x : UInt8) (hg : v.pstate = .escInter i) :
+theorem stick_step_of_escInter {v : Vt} {i : UInt8} (x : UInt8) (hg : v.pstate = .escInter i)
+    (hlo : 0x30 ≤ x) (hhi : x ≤ 0x7E) :
     stick (v.step x) = stCharset i x (stick v) := by
   have hw : (v.abortUtf8 x).pstate = PState.escInter i := by rw [ps_abortUtf8]; exact hg
   unfold Vt.step
   dsimp only
   rw [hw]
-  rw [stick_stepEscInter, stick_abortUtf8]
+  rw [stick_stepEscInter _ i x hlo hhi, stick_abortUtf8]
 
 /-- `SO` and `SI` from ground, the two bytes `stick_ctl` excludes. -/
 theorem stick_step_si {v : Vt} (hg : v.pstate = .ground) :
@@ -6761,5 +6783,160 @@ theorem feedBytes_eq (v : Vt) (bytes : ByteArray) : v.feedBytes bytes = v.feed b
 CSI parameter cap across into the pen. -/
 theorem sgrParams_length (s : CsiState) : s.sgrParams.length = s.params.size := by
   rfl
+
+/-! ## Boundaries for injected titles
+
+An ESC intermediate is pending until a final byte, even for sequences the emulator
+does not interpret. DEL cannot publish a boundary in CSI, ESC or an intermediate
+sequence. These claims allow any receiver title, screen, CSI parameters and UTF-8
+state; only the parser state and the byte class select the transition.
+-/
+
+/-- Every byte in the full ESC intermediate range opens a pending sequence. -/
+theorem stepEsc_intermediate (v : Vt) (b : UInt8)
+    (hlo : 0x20 ≤ b) (hhi : b ≤ 0x2F) :
+    v.stepEsc b = { v with pstate := .escInter b } := by
+  unfold Vt.stepEsc
+  split
+  all_goals first
+    | exact False.elim ((of_decide_eq_false rfl) hhi)
+    | exact False.elim ((of_decide_eq_false rfl) hlo)
+    | simp [hlo, hhi]
+
+/-- The shared parser uses that transition even with a pending UTF-8 decoder. -/
+theorem step_esc_intermediate {v : Vt} (b : UInt8) (hp : v.pstate = .esc)
+    (hlo : 0x20 ≤ b) (hhi : b ≤ 0x2F) :
+    v.step b = { (v.abortUtf8 b) with pstate := .escInter b } := by
+  simp only [Vt.step, ps_abortUtf8, hp]
+  exact stepEsc_intermediate _ b hlo hhi
+
+/-- Further intermediates and ignored nonfinal bytes retain a pending parser
+and the receiver's title. A new ESC has its own restart transition below. -/
+theorem step_escInter_pending {v : Vt} {i : UInt8} (b : UInt8)
+    (hp : v.pstate = .escInter i) (hf : ¬ (0x30 ≤ b ∧ b ≤ 0x7E))
+    (he : b ≠ 0x1B) :
+    (∃ j, (v.step b).pstate = .escInter j) ∧
+      (v.step b).windowTitle = v.windowTitle := by
+  simp only [Vt.step, ps_abortUtf8, hp]
+  simp only [Vt.stepEscInter, Bool.and_eq_true, decide_eq_true_eq, hf, ite_false,
+    beq_eq_false_iff_ne.mpr he, Bool.false_eq_true]
+  split
+  all_goals refine ⟨⟨_, rfl⟩, ?_⟩
+  all_goals unfold Vt.windowTitle Vt.abortUtf8
+  all_goals split <;> rfl
+
+/-- An arbitrarily long unfinished sequence stays closed to injected output.
+There is no length bound or assumption on the stored title. -/
+theorem feed_escInter_pending (bytes : List UInt8) {v : Vt} {i : UInt8}
+    (hp : v.pstate = .escInter i)
+    (hb : ∀ b ∈ bytes, ¬ (0x30 ≤ b ∧ b ≤ 0x7E) ∧ b ≠ 0x1B) :
+    (∃ j, (v.feed bytes).pstate = .escInter j) ∧
+      (v.feed bytes).atBoundary = false ∧
+      (v.feed bytes).windowTitle = v.windowTitle := by
+  induction bytes generalizing v i with
+  | nil => exact ⟨⟨i, hp⟩, by simp [Vt.feed, Vt.atBoundary, hp], rfl⟩
+  | cons b bs ih =>
+    obtain ⟨⟨j, hj⟩, ht⟩ := step_escInter_pending b hp (hb b (by simp)).1 (hb b (by simp)).2
+    have hi := ih hj (fun c hc => hb c (by simp [hc]))
+    exact ⟨hi.1, hi.2.1, hi.2.2.trans ht⟩
+
+/-- Discarding scrollback after each byte cannot introduce a false boundary.
+The observer waits through the whole unfinished sequence, preserving its title. -/
+theorem observe_escInter_pending (bytes : List UInt8) {v : Vt} {i : UInt8}
+    (hp : v.pstate = .escInter i)
+    (hb : ∀ b ∈ bytes, ¬ (0x30 ≤ b ∧ b ≤ 0x7E) ∧ b ≠ 0x1B) :
+    (∃ j, (v.observe bytes).pstate = .escInter j) ∧
+      (v.observe bytes).atBoundary = false ∧
+      (v.observe bytes).windowTitle = v.windowTitle := by
+  induction bytes generalizing v i with
+  | nil => exact ⟨⟨i, hp⟩, by simp [Vt.observe, Vt.atBoundary, hp], rfl⟩
+  | cons b bs ih =>
+    obtain ⟨⟨j, hj⟩, ht⟩ := step_escInter_pending b hp (hb b (by simp)).1 (hb b (by simp)).2
+    have hi := ih (v := { (v.step b) with sb := {} }) hj (fun c hc => hb c (by simp [hc]))
+    exact ⟨hi.1, hi.2.1, hi.2.2.trans ht⟩
+
+/-- Starting after ESC, any intermediate followed by any unfinished suffix
+keeps the public title observer away from a write boundary. -/
+theorem observe_esc_intermediates (i : UInt8) (bytes : List UInt8) {v : Vt}
+    (hp : v.pstate = .esc) (hlo : 0x20 ≤ i) (hhi : i ≤ 0x2F)
+    (hb : ∀ b ∈ bytes, ¬ (0x30 ≤ b ∧ b ≤ 0x7E) ∧ b ≠ 0x1B) :
+    (v.observe (i :: bytes)).atBoundary = false ∧
+      (v.observe (i :: bytes)).windowTitle = v.windowTitle := by
+  change ({ (v.step i) with sb := {} }.observe bytes).atBoundary = false ∧
+    ({ (v.step i) with sb := {} }.observe bytes).windowTitle = _
+  rw [step_esc_intermediate i hp hlo hhi]
+  have h := observe_escInter_pending bytes
+    (v := { (v.abortUtf8 i) with pstate := .escInter i, sb := {} }) rfl hb
+  refine ⟨h.2.1, h.2.2.trans ?_⟩
+  unfold Vt.windowTitle Vt.abortUtf8
+  split <;> rfl
+
+/-- A final completes both the control sequence and any stray partial UTF-8
+decoder, so waiting for an intermediate sequence does not block forever. -/
+theorem step_escInter_final_boundary {v : Vt} {i : UInt8} (b : UInt8)
+    (hp : v.pstate = .escInter i) (hlo : 0x30 ≤ b) (hhi : b ≤ 0x7E) :
+    (v.step b).atBoundary = true ∧ (v.step b).windowTitle = v.windowTitle := by
+  have ha : b < 0x80 := by
+    rw [UInt8.lt_iff_toNat_lt]
+    rw [UInt8.le_iff_toNat_le] at hhi
+    change b.toNat ≤ 126 at hhi
+    change b.toNat < 128
+    omega
+  have hu : (v.abortUtf8 b).u8need = 0 := by
+    unfold Vt.abortUtf8
+    split
+    · rfl
+    · rename_i h
+      simp [ha] at h
+      omega
+  simp only [Vt.step, ps_abortUtf8, hp]
+  rw [stepEscInter_final _ i b hlo hhi]
+  repeat' split
+  all_goals constructor
+  all_goals first
+    | simpa [Vt.atBoundary] using hu
+    | (unfold Vt.windowTitle Vt.abortUtf8
+       split <;> rfl)
+
+/-- ESC abandons an intermediate sequence by starting a new ESC sequence,
+never by briefly reporting a boundary where an OSC title could be injected. -/
+theorem step_escInter_restart {v : Vt} {i : UInt8} (hp : v.pstate = .escInter i) :
+    (v.step 0x1B).pstate = .esc ∧ (v.step 0x1B).atBoundary = false ∧
+      (v.step 0x1B).windowTitle = v.windowTitle := by
+  simp only [Vt.step, ps_abortUtf8, hp]
+  refine ⟨rfl, rfl, ?_⟩
+  change (v.abortUtf8 0x1B).title = v.title
+  unfold Vt.abortUtf8
+  split <;> rfl
+
+/-- DEL leaves the entire parser state intact, including every CSI parameter
+and the selected charset bank. Its only possible effect is UTF-8 neutralization. -/
+theorem step_del_preserves_parser {v : Vt}
+    (hp : v.pstate = .esc ∨ (∃ i, v.pstate = .escInter i) ∨ (∃ s, v.pstate = .csi s)) :
+    v.step 0x7F = v.abortUtf8 0x7F := by
+  rcases hp with hp | ⟨i, hp⟩ | ⟨s, hp⟩
+  · simp only [Vt.step, ps_abortUtf8, hp]
+    rfl
+  · simp only [Vt.step, ps_abortUtf8, hp]
+    change { (v.abortUtf8 0x7F) with pstate := .escInter i } = _
+    rw [← hp, ← ps_abortUtf8 v 0x7F]
+  · simp only [Vt.step, ps_abortUtf8, hp]
+    rfl
+
+/-- The public observer cannot permit title output after DEL in an incomplete
+CSI, ESC or intermediate sequence; the application title remains unchanged. -/
+theorem observe_del_boundary {v : Vt}
+    (hp : v.pstate = .esc ∨ (∃ i, v.pstate = .escInter i) ∨ (∃ s, v.pstate = .csi s)) :
+    (v.observe [0x7F]).pstate = v.pstate ∧
+      (v.observe [0x7F]).atBoundary = false ∧
+      (v.observe [0x7F]).windowTitle = v.windowTitle := by
+  change (v.step 0x7F).pstate = _ ∧ (v.step 0x7F).atBoundary = false ∧
+    (v.step 0x7F).windowTitle = _
+  rw [step_del_preserves_parser hp]
+  refine ⟨ps_abortUtf8 _ _, ?_, ?_⟩
+  · rcases hp with hp | ⟨i, hp⟩ | ⟨s, hp⟩ <;>
+      simp [Vt.atBoundary, ps_abortUtf8, hp]
+  · unfold Vt.windowTitle Vt.abortUtf8
+    split <;> rfl
 
 end Linger.Core.Vt

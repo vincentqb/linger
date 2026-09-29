@@ -105,16 +105,19 @@ the daemon's reply, one layer out.
 Rendering here also lets the column alignment be a property of the whole row *set* (the name
 column is as wide as the widest name), which a per-`IO.println` call site cannot express. -/
 
-open Linger.Core.Render (utf8s dropTrailingBlanks)
+open Linger.Core.Render (utf8s dropTrailingBlanks safeChar)
 
-/-- One human-readable listing row, as bytes. Every reply-supplied value flows
-through `utf8s`, so the printable-content guarantee (`Theorems/Listing.lean`)
-needs no hypothesis about where the value came from. The status glyph, a space,
-the name padded to `nameCol` so the detail columns line up, then the
-detail/labels/watcher tail — trailing blanks trimmed so an empty tail leaves no
-ragged whitespace. Names are sanitized (`sanitize` admits only ASCII), so a
-character is one column and padding by length aligns them. -/
-def humanRow (nameCol : Nat) (info : List (String × String)) : List UInt8 :=
+/-- Text and optional badge style stay separate until a terminal renderer has
+clipped the text. Names and detail text never carry a status style. -/
+structure RowPiece where
+  text : List Char
+  status : Option Status := none
+  deriving BEq, Repr
+
+/-- One shared row: status badge, aligned name, command/pid, labels and watchers.
+Every untrusted value is made printable before a renderer sees it, including C1
+controls that can otherwise be interpreted as terminal commands. -/
+def rowPieces (nameCol : Nat) (info : List (String × String)) : List RowPiece :=
   let f := fun k => (info.lookup k).getD ""
   let st := Status.ofName (f "status")
   let labels :=
@@ -130,18 +133,43 @@ def humanRow (nameCol : Nat) (info : List (String × String)) : List UInt8 :=
       else if (f "pid").isEmpty then f "cmd" else s!"pid {f "pid"}  {f "cmd"}"
   let watch := if (f "clients").isEmpty || f "clients" == "0" then "" else s!"  +{f "clients"}"
   let name := (f "name").toList
-  utf8s
+  let text :=
     (dropTrailingBlanks
-      ([Status.icon st, ' '] ++ name ++ List.replicate (nameCol - name.length) ' ' ++ [' '] ++
-        (detail ++ labelStr ++ watch).toList))
+          ([' '] ++ name ++ List.replicate (nameCol - name.length) ' ' ++ [' '] ++
+            (detail ++ labelStr ++ watch).toList)).map
+      fun c => if c.toNat ≥ 0x7F && c.toNat < 0xA0 then '�' else safeChar c
+  [{ text := [Status.icon st], status := some st }, { text }]
+
+/-- Plain bytes, including when redirected: styles are deliberately absent. -/
+def humanRow (nameCol : Nat) (info : List (String × String)) : List UInt8 :=
+  utf8s ((rowPieces nameCol info).flatMap (·.text))
+
+/-- Shared name column width over the complete listing snapshot. -/
+def nameWidth (rows : List (List (String × String))) : Nat :=
+  rows.foldl (fun m r => max m ((r.lookup "name").getD "").toList.length) 0
+
+/-- Render already-separated row pieces. Styling surrounds only the badge and
+resets immediately, so names and details retain the default foreground. -/
+def renderPieces (withColor : Bool) (pieces : List RowPiece) : List UInt8 :=
+  pieces.flatMap fun piece =>
+    let text := utf8s piece.text
+    match piece.status with
+    | some status =>
+      if withColor then (Status.style status).toUTF8.toList ++ text ++ "\x1b[0m".toUTF8.toList
+      else text
+    | none => text
 
 /-- The whole human-readable listing, one LF-terminated row per session (or the
 empty-state line). The name column is as wide as the widest name in the set, so
 the detail columns align. -/
 def humanListing (rows : List (List (String × String))) : List UInt8 :=
   if rows.isEmpty then utf8s "no sessions".toList ++ [0x0A]
-  else
-    let nameCol := rows.foldl (fun m r => max m ((r.lookup "name").getD "").toList.length) 0
-    rows.flatMap (fun r => humanRow nameCol r ++ [0x0A])
+  else rows.flatMap (fun r => humanRow (nameWidth rows) r ++ [0x0A])
+
+/-- Terminal listing with the same row pieces as the picker. Callers choose
+whether color is enabled from terminal detection and `NO_COLOR`. -/
+def terminalListing (withColor : Bool) (rows : List (List (String × String))) : List UInt8 :=
+  if rows.isEmpty then utf8s "no sessions".toList ++ [0x0A]
+  else rows.flatMap (fun r => renderPieces withColor (rowPieces (nameWidth rows) r) ++ [0x0A])
 
 end Linger.Core.Listing

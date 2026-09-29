@@ -2,6 +2,7 @@ module
 
 public import E2E.Harness
 public import Manager.Picker
+public import Linger.Core.Listing
 
 public section
 
@@ -30,6 +31,9 @@ open E2E.Harness
 open Linger.Posix
 open Linger.Core.Render (modeSet csiNum screenText)
 open Linger.Core.Vt (Vt)
+
+private def rowText (vt : Vt) (row : Nat) : String :=
+  String.fromUTF8! (ByteArray.mk (Linger.Core.Render.rowText (vt.getRow row)).toArray)
 
 private def call (args : List String) : String :=
   "CALL\x00linger\x00" ++ String.intercalate "\x00" args ++ "\x00\n"
@@ -167,9 +171,15 @@ private def launch (root : System.FilePath) (manager mode : String) (args : List
             args.toArray)
       else (manager, args.toArray)
   -- spawnPty accepts K=V entries; remove presence-sensitive flags at this boundary.
+  let noColor ←
+    if ← (root / "no-color").pathExists then
+      some <$> IO.FS.readFile (root / "no-color")
+    else
+      pure none
   let child ←
     IO.Process.spawn
-        { cmd, args, env := #[("LINGER_SESSION", none), ("LINGER_NO_DETACH_KEY", none)],
+        { cmd, args,
+          env := #[("LINGER_SESSION", none), ("LINGER_NO_DETACH_KEY", none), ("NO_COLOR", noColor)],
           stdin := if mode == "stdout-only" then .null else .inherit }
   IO.FS.writeFile (root / "manager-pid") (toString child.pid)
   let rc ← waitChild child
@@ -368,7 +378,8 @@ frame checks below require the approved glyphs, spacing and terminal attributes.
 private def Session.selected (s : Session) (label : String) (start : Nat := 0) : IO Bool :=
   s.untilAny
     ["\x1b[7m  ▸ " ++ label ++ "\x1b[0m",
-      "\x1b[7m> " ++ label.replace "+ Create " "Create " ++ "\x1b[0m"]
+      "\x1b[7m> " ++ label.replace "+ Create " "Create " ++ "\x1b[0m", "\x1b[7m " ++ label ++ " ",
+      "\x1b[7m " ++ label ++ "\x1b[0m", "\x1b[7m" ++ label ++ "\x1b[0m"]
     start
 
 private def Session.typeQuery (s : Session) (text query : String) : IO Bool := do
@@ -922,14 +933,14 @@ private def selectionChecks (e : Env) : IO Nat := do
               withSession f.picker #[] fun s => do
                   unless ← s.prompt do
                     return false
-                  let start ← s.mark
                   unless ← s.typeQuery "work" "work" do
                     return false
-                  let orderedRows ←
-                    s.untilAny
-                        ["\x1b[7m  ▸ workshop\x1b[0m\r\n    workbench\r\n    + Create work\r\n",
-                          "\x1b[7m> workshop\x1b[0m\r\n  workbench\r\n  Create work\r\n"]
-                        start
+                  s.observe 100
+                  let vt := (Vt.init 80 12).feedBytes (← s.output.get)
+                  let orderedRows :=
+                    rowText vt 4 == "  ▸ ? workshop  (busy)" &&
+                      rowText vt 5 == "    ? workbench (busy)" &&
+                      rowText vt 6 == "    + Create work"
                   if create then
                     let next ← s.mark
                     s.text "\x1b[F"
@@ -979,14 +990,12 @@ private def selectionChecks (e : Env) : IO Nat := do
             withSession f.picker #[] fun s => do
                 unless ← s.prompt do
                   return false
-                let start ← s.mark
                 unless ← s.typeQuery "alpha" "alpha" do
                   return false
-                let shown ←
-                  s.untilAny
-                      ["\x1b[7m  ▸ Alpha\x1b[0m\r\n    + Create alpha\r\n",
-                        "\x1b[7m> Alpha\x1b[0m\r\n  Create alpha\r\n"]
-                      start
+                s.observe 100
+                let vt := (Vt.init 80 12).feedBytes (← s.output.get)
+                let shown :=
+                  rowText vt 4 == "  ▸ ? Alpha (busy)" && rowText vt 5 == "    + Create alpha"
                 let clean ← acceptThenCancel s "\x1b[F\r"
                 return shown && clean &&
                     (← f.visits) ==
@@ -1163,9 +1172,6 @@ private def inputChecks (e : Env) : IO Nat := do
                       call ["ls", "-r", "--porcelain"])
   return failures
 
-private def rowText (vt : Vt) (row : Nat) : String :=
-  String.fromUTF8! (ByteArray.mk (Linger.Core.Render.rowText (vt.getRow row)).toArray)
-
 private def lastColumnBlank (vt : Vt) : Bool :=
   (List.range vt.rowCount).all fun row =>
     let cell := vt.getCell (vt.colCount - 1) row
@@ -1179,6 +1185,113 @@ private def Session.capture (s : Session) (name : String) (cols : Nat := 80) (ro
   IO.FS.writeBinFile (s.fixture.root / s!"{name}.bin") output
   IO.FS.writeBinFile (s.fixture.root / s!"{name}.txt") (ByteArray.mk (screenText vt).toArray)
   return vt
+
+private def statusChecks (e : Env) : IO Nat := do
+  let mut failures := 0
+  for (slug, noColor) in
+    [("status-colors", none), ("status-no-color-empty", some ""),
+      ("status-no-color-set", some "1")] do
+    failures :=
+      failures +
+        (←
+          check e slug
+              s!"picker shares complete listing rows, themes only badges, and keeps selection ({slug})"
+              fun f => do
+              let statuses : List Linger.Core.Status.Status :=
+                [.working, .wantsYou, .exitedOk, .exitedBad, .idle, .resumable, .unknown]
+              let fields :=
+                statuses.zipIdx |>.map fun (status, index) =>
+                  [("name", s!"case{index}"), ("status", Linger.Core.Status.name status),
+                    ("cmd", "editor"), ("pid", "123"), ("label.project", "demo"), ("clients", "2")]
+              f.listing
+                  (String.intercalate "\n"
+                    (fields.map fun row =>
+                      String.join (row.map fun (key, value) => s!"{key}\t{value}\n")))
+              if let some value := noColor then
+                IO.FS.writeFile (f.root / "no-color") value
+              withSession f.picker #[]
+                  (fun s => do
+                    unless ← s.prompt do
+                      return false
+                    let vt ← s.capture slug 100 20
+                    let expectedColors : List Linger.Core.Vt.Color :=
+                      [.idx 6, .idx 3, .idx 2, .idx 1, .default, .default, .idx 3]
+                    let good :=
+                      fields.zipIdx |>.all fun (info, index) =>
+                        let badge := vt.getCell 4 (4 + index)
+                        let name := vt.getCell 6 (4 + index)
+                        let expected :=
+                          String.fromUTF8!
+                            (ByteArray.mk (Linger.Core.Listing.humanRow 5 info).toArray)
+                        rowText vt (4 + index) ==
+                            (if index == 0 then "  ▸ " else "    ") ++ expected &&
+                          badge.pen.fg ==
+                            (if noColor.isSome then .default else expectedColors[index]!) &&
+                          badge.pen.dim == (!noColor.isSome && (index == 4 || index == 5)) &&
+                          badge.pen.reverse == (index == 0) &&
+                          name.pen.reverse == (index == 0) &&
+                          name.pen.fg == .default &&
+                          !name.pen.dim
+                    let output ← s.output.get
+                    let onlyAnsi := !hasText output "[38;" && !hasText output "[48;"
+                    s.text "\x03"
+                    let clean ← restored s 130
+                    return good && onlyAnsi && clean &&
+                        hasBytes output (Linger.Core.Title.ansi "linger") &&
+                        hasBytes (← s.output.get) (Linger.Core.Title.ansi ""))
+                  "both" 100 20)
+  failures :=
+    failures +
+      (←
+        check e "status-metadata-refresh"
+            "picker redraws changed metadata with unchanged names and preserves query, target and all details"
+            fun f => do
+            f.listing
+                "name\talpha\nstatus\tidle\ncmd\told\npid\t1\nlabel.project\tbefore\nclients\t1\nname\tbeta\nstatus\tworking\ncmd\tother\n"
+            withSession f.picker #[] fun s => do
+                unless ← s.prompt do
+                  return false
+                unless ← s.typeQuery "a" "a" do
+                  return false
+                let before ← s.capture "metadata-before"
+                let start ← s.mark
+                f.listing
+                    "name\talpha\nstatus\texited-bad\ncmd\tnew\npid\t2\nlabel.project\tafter\nclients\t3\nname\tbeta\nstatus\tworking\ncmd\tother\n"
+                unless ← s.until "pid 2  new" start do
+                  return false
+                let after ← s.capture "metadata-after"
+                let changed :=
+                  has (rowText before 4) "old  [project=before]  +1" &&
+                    rowText after 4 == "  ▸ ! alpha pid 2  new  [project=after]  +3" &&
+                    rowText after 2 == "  › a" &&
+                    (after.getCell 4 4).pen.fg == .idx 1 &&
+                    (after.getCell 6 4).pen.reverse
+                return changed && (← acceptThenCancel s) &&
+                    (← f.visits) ==
+                      call ["ls", "-r", "--porcelain"] ++ call ["attach", "alpha"] ++
+                        call ["ls", "-r", "--porcelain"])
+  failures :=
+    failures +
+      (←
+        check e "status-control-text"
+            "picker keeps hostile metadata out of terminal controls while retaining ordinary details"
+            fun f => do
+            f.listing
+                "name\talpha\nstatus\tworking\ncmd\tvi\x1b[31m\u009b31m\nlabel.project\tok\x07\nclients\t2\nname\tbeta\n"
+            withSession f.picker #[] fun s => do
+                unless ← s.prompt do
+                  return false
+                let vt ← s.capture "metadata-controls"
+                let row := rowText vt 4
+                let output ← s.output.get
+                let safe :=
+                  has row "vi�[31m�31m" && has row "[project=ok�]" && !hasText output "\u009b" &&
+                    !hasText output "vi\x1b" &&
+                    (vt.getCell 6 4).pen.fg == .default &&
+                    rowText vt 5 == "    ? beta  (busy)"
+                s.text "\x03"
+                return safe && (← restored s 130))
+  return failures
 
 private def displayChecks (e : Env) : IO Nat := do
   let mut failures := 0
@@ -1198,9 +1311,9 @@ private def displayChecks (e : Env) : IO Nat := do
                 (rowText vt 0).trimAscii.toString == "linger" && rowText vt 1 == "" &&
                   rowText vt 2 == "  › Find or create a session" &&
                   rowText vt 3 == "" &&
-                  rowText vt 4 == "  ▸ Alpha" &&
-                  rowText vt 5 == "    Beta" &&
-                  rowText vt 6 == "    Gamma" &&
+                  rowText vt 4 == "  ▸ ? Alpha (busy)" &&
+                  rowText vt 5 == "    ? Beta  (busy)" &&
+                  rowText vt 6 == "    ? Gamma (busy)" &&
                   rowText vt 7 == "    + Create main" &&
                   (vt.getCell 4 2).pen.dim &&
                   (vt.getCell 2 4).pen.reverse &&
@@ -1297,7 +1410,7 @@ private def refreshChecks (e : Env) : IO Nat := do
                 return false
               let vt ← s.capture "reordered-frame"
               let screen := String.fromUTF8! (ByteArray.mk (screenText vt).toArray)
-              let retained := has screen "  › a" && has screen "  ▸ Beta"
+              let retained := has screen "  › a" && has screen "  ▸ ? Beta  (busy)"
               return retained && (← acceptThenCancel s) &&
                   (← f.visits) ==
                     call ["ls", "-r", "--porcelain"] ++ call ["attach", "Beta"] ++
@@ -1350,7 +1463,7 @@ private def refreshChecks (e : Env) : IO Nat := do
                   return false
                 let vt ← s.capture "created-frame"
                 let screen := String.fromUTF8! (ByteArray.mk (screenText vt).toArray)
-                return has screen "  › work" && has screen "  ▸ work\n" &&
+                return has screen "  › work" && has screen "  ▸ ? work      (busy)\n" &&
                     !has screen "Create work" &&
                     has screen "↵ attach" &&
                     (← acceptThenCancel s) &&
@@ -1492,7 +1605,7 @@ private def refreshChecks (e : Env) : IO Nat := do
                 unless ← s.until "delta@host" start do
                   return false
                 let vt ← s.capture "ready-frame"
-                let displayed := rowText vt 4 == "  ▸ beta@host"
+                let displayed := rowText vt 4 == "  ▸ ? beta@host  (busy)"
                 IO.FS.removeFile (f.root / "hold-listing-from")
                 let start ← s.mark
                 s.text "\x0e"
@@ -1557,18 +1670,18 @@ private def refreshChecks (e : Env) : IO Nat := do
                   unless ← s.until target do
                     return false
                   let start ← s.mark
-                  s.client.resize 12 4
+                  s.client.resize 14 4
                   unless ← s.until "wide@" start do
                     return false
                   s.observe 150
                   let out ← s.output.get
                   let frame := out.extract start out.size
-                  let vt := (Vt.init 12 4).feedBytes frame
+                  let vt := (Vt.init 14 4).feedBytes frame
                   let screen := ByteArray.mk (screenText vt).toArray
                   IO.FS.writeBinFile (f.root / "resized-frame.bin") frame
                   IO.FS.writeBinFile (f.root / "screen.txt") screen
                   let fits :=
-                    hasText screen "  ▸ wide@界" && !hasText screen "Z" && lastColumnBlank vt
+                    hasText screen "  ▸ ? wide@界" && !hasText screen "Z" && lastColumnBlank vt
                   s.client.resize 80 12
                   unless ← s.prompt "" (← s.mark) do
                     return false
@@ -1592,7 +1705,8 @@ private def refreshChecks (e : Env) : IO Nat := do
                   let screen := ByteArray.mk (screenText vt).toArray
                   IO.FS.writeBinFile (f.root / "screen.txt") screen
                   let visible :=
-                    shown && rowText vt (rows - 1) == "  ▸ Alpha" && !hasText screen "linger" &&
+                    shown && rowText vt (rows - 1) == "  ▸ ? Alpha (busy)" &&
+                      !hasText screen "linger" &&
                       !hasText screen "↵" &&
                       lastColumnBlank vt
                   s.text "\x03"
@@ -1880,6 +1994,7 @@ def run : IO UInt32 := do
   failures := failures + (← selectionChecks e)
   failures := failures + (← inputChecks e)
   failures := failures + (← displayChecks e)
+  failures := failures + (← statusChecks e)
   failures := failures + (← refreshChecks e)
   failures := failures + (← defaultChecks e)
   failures := failures + (← realCheck e)

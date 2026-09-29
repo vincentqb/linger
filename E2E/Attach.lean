@@ -19,7 +19,7 @@ WHAT THE PORT TIGHTENED — read before adding or changing a check:
   `escSeq` / `escCharset` of the same argument `leaveAnsi` passes, so the loop
   cannot drift from what the implementation emits — and the ST check additionally
   requires `leaveAnsi` **verbatim** (`hasBytes back leaveAnsi`, the `E2E.Watch`
-  move). The per-sequence loop is kept for failure localisation: twelve green
+  move). The per-sequence loop is kept for failure localisation: green sequence
   lines plus a red `verbatim` line means the right sequences in the wrong order or
   spacing, which one whole-blob comparison could not tell you;
 * `back.index(b'\x1b\\') == 0` **raised** `ValueError` when the ST was absent —
@@ -46,7 +46,8 @@ emitter, and it should not be read as one. -/
 namespace E2E.Attach
 
 open E2E.Harness
-open Linger.Core.Render (leaveAnsi modeSet csiNum csiNum2 csiPlain escSeq escCharset)
+open Linger.Core.Render (leaveAnsi modeSet csiNum csiNum2 csiPlain escSeq escCharset titleAnsi)
+open Linger.Core.Vt (Vt)
 open Linger.Core.Session (outputChunk)
 open Linger.Runtime.Daemon (outbufCap)
 
@@ -95,7 +96,7 @@ def closeFeedback (e : Env) : IO Nat := do
     IO.FS.removeFile path
   return failures
 
-/-- The twelve hazards `leaveAnsi` undoes, each spelled with the emitter's own
+/-- The thirteen hazards `leaveAnsi` undoes, each spelled with the emitter's own
 primitive and the same argument `leaveAnsi` passes it — so this list cannot become
 a stale copy of the emitter. Every group must appear in the epilogue.
 
@@ -106,8 +107,8 @@ cannot see, pastes arriving wrapped in `ESC [ 200 ~`, clicks or focus changes
 arriving as garbage on the command line (`?25h`, `?2004l`, the mouse modes,
 `?1004l`); arrow and keypad keys sending application forms the line editor does
 not bind (`?1l`, `ESC >`); line-drawing ASCII (`( B`, `) B`, `SI`); a coloured
-prompt (`SGR 0`). termios restores none of it — that is the kernel's line
-discipline, not the terminal's state. -/
+prompt (`SGR 0`); the session's window title (empty `OSC 2 BEL`). termios restores
+none of it — that is the kernel's line discipline, not the terminal's state. -/
 def leaveCases : List (List (List UInt8) × String) :=
   [([modeSet 1049 false], "leaves the alt screen"), ([csiNum 4 0x6C], "clears insert mode"),
     ([modeSet 25 true], "shows the cursor"), ([modeSet 2004 false], "clears bracketed paste"),
@@ -118,16 +119,20 @@ def leaveCases : List (List (List UInt8) × String) :=
     ([modeSet 6 false], "clears origin mode"), ([modeSet 7 true], "restores autowrap"),
     ([csiPlain 0x72], "restores the full scroll region"),
     ([escCharset 0x28 0x42, escCharset 0x29 0x42, [0x0F]], "restores the ASCII charset"),
-    ([csiNum 0 0x6D], "resets the pen")]
+    ([csiNum 0 0x6D], "resets the pen"), ([titleAnsi (Vt.init 1 1)], "clears the window title")]
 
 /-- A full-screen application's opening sequences, as the shell's `printf` writes
 them: alt screen, mouse reporting (1000 + SGR 1006), cursor hidden, bracketed
 paste, autowrap off, a six-line scroll region, DEC line drawing, a bold red pen,
-application cursor keys, application keypad. Literal `\033` for `printf` to
-interpret, exactly as the Python's raw string had it. -/
+application cursor keys, application keypad, a nonempty title followed by a
+truncated title. The unfinished title exceeds the mediator's candidate cap so
+it reaches the client before detach. Literal `\033` for `printf` to interpret. -/
 def appStateCmd : String :=
   "printf '\\033[?1049h\\033[?1000h\\033[?1006h\\033[?25l\\033[?2004h" ++
-    "\\033[?7l\\033[5;10r\\033(0\\033[1;31;4m\\033[?1h\\033=X'\r"
+    "\\033[?7l\\033[5;10r\\033(0\\033[1;31;4m\\033[?1h\\033=X" ++
+    "\\033]2;hostile-detach\\007\\033]2;truncated-detach" ++
+    String.ofList (List.replicate Linger.Core.Terminal.oscCap 'x') ++
+    "'; exec sleep 600\r"
 
 /-- A ring of per-cell truecolour rows — the shape whose bytes the scrollback
 budget exists for: ~40 B per column instead of one. -/
@@ -147,6 +152,10 @@ def run : IO UInt32 := do
   -- one source for the pty geometry and for the off-the-screen window below
   let cols : UInt32 := 80
   let rows : UInt32 := 24
+  let receiver := Vt.init cols.toNat rows.toNat
+  -- The emitter supplies the expected default bytes; public VT observers check
+  -- the terminal state reached by the actual output stream.
+  let emptyTitle := titleAnsi receiver
   -- 1. attach creates a live shell. Assert on the EXPANSION, not the typed text:
   -- the tty echoes what was typed, so `marker-$((21+21))` would appear on screen
   -- even if nothing ran; only `marker-42` says the shell executed it.
@@ -186,18 +195,38 @@ def run : IO UInt32 := do
             "reattach: restore replays prior screen")
   -- 5. two clients mirror output
   let c3 ← e.spawn #["attach", "demo"] cols rows
-  let _ ← drain c3.fd 1000
-  c2.type "echo both-$((2+1))\r"
+  let out3 ← drain c3.fd 1000
+  c2.type "printf '\\033]2;hostile-exit\\007'; echo both-$((2+1))\r"
   IO.sleep 800
   let o2 ← drain c2.fd 1000
   let o3 ← drain c3.fd 1000
   f := f + (← expect (hasText o2 "both-3" && hasText o3 "both-3") "two clients mirror the session")
+  let receiver2 := (receiver.feed out2.toList).feed o2.toList
+  let receiver3 := (receiver.feed out3.toList).feed o3.toList
+  f :=
+    f +
+      (←
+        expect
+            (has receiver2.windowTitle "hostile-exit" && has receiver3.windowTitle "hostile-exit")
+            "shell exit: both receivers hold the application's nonempty title")
   -- 6. exit inside the shell ends the session and notifies clients
   c2.type "exit\r"
   IO.sleep 1000
   f := f + (← expect (!has (← e.out #["list"]) "demo") "shell exit ends the session")
-  let _ ← drain c2.fd 1000
-  let _ ← drain c3.fd 500
+  let exit2 ← drain c2.fd 1000
+  let exit3 ← drain c3.fd 500
+  let handed2 := receiver2.feed exit2.toList
+  let handed3 := receiver3.feed exit3.toList
+  f :=
+    f +
+      (←
+        expect
+            (hasBytes exit2 emptyTitle && hasBytes exit3 emptyTitle &&
+              handed2.windowTitle.isEmpty &&
+              handed2.atBoundary &&
+              handed3.windowTitle.isEmpty &&
+              handed3.atBoundary)
+            "shell exit clears the title on both attached terminals")
   c2.bye (sendDetach := false)
   c3.bye (sendDetach := false)
   -- 7. wait returns the exit status.
@@ -224,16 +253,38 @@ def run : IO UInt32 := do
   -- A transport loss is neither a detach nor a successful wait.
   let lost ← e.spawn #["attach", "attach-lost"] cols rows
   IO.sleep 800
-  let _ ← drain lost.fd 300
+  let lostInitial ← drain lost.fd 300
+  -- Exceed the mediator's buffer so the unfinished OSC reaches the terminal;
+  -- keep the child quiet afterwards so nothing completes it before handback.
+  lost.type
+      ("printf '\\033]2;hostile-lost\\007\\033]2;truncated-lost" ++
+        String.ofList (List.replicate Linger.Core.Terminal.oscCap 'x') ++
+        "'; exec sleep 600\r")
+  let lostDirty ← drain lost.fd 800
+  let lostReceiver := (receiver.feed lostInitial.toList).feed lostDirty.toList
+  f :=
+    f +
+      (←
+        expect (has lostReceiver.windowTitle "hostile-lost" && !lostReceiver.atBoundary)
+            "connection loss: the receiver holds a nonempty title before a truncated OSC")
   unless (← e.crashDaemon "attach-lost") do
     throw (IO.userError "attach-lost daemon did not crash")
-  let lostOut ← drainStr lost.fd 2000
+  let lostBytes ← drain lost.fd 2000
+  let lostHanded := lostReceiver.feed lostBytes.toList
+  let lostOut := String.fromUTF8? lostBytes |>.getD ""
   let lostCode ← lost.reap 3000
   f :=
     f +
       (←
         expect (lostCode == 1 && has lostOut "connection lost")
             "attach exits 1 when its daemon disappears")
+  f :=
+    f +
+      (←
+        expect
+            (hasBytes lostBytes emptyTitle && lostHanded.windowTitle.isEmpty &&
+              lostHanded.atBoundary)
+            "connection loss clears the title after a truncated OSC")
   lost.bye (sendDetach := false)
   let _ ← e.cli #["run", "wait-lost", "sleep", "600"]
   IO.sleep 800
@@ -273,11 +324,11 @@ def run : IO UInt32 := do
   --    ASCII character rendered as a box glyph. termios restores none of this.
   let h ← e.spawn #["attach", "hyg"] cols rows
   IO.sleep 800
-  let _ ← drain h.fd 300
+  let initial ← drain h.fd 300
   h.type appStateCmd
   IO.sleep 600
   let dirty ← drain h.fd 800
-  -- non-vacuity for the twelve checks below: the app state really got out to the
+  -- non-vacuity for the checks below: the app state really got out to the
   -- client's terminal, so there is something to undo. These two needles are the
   -- APPLICATION's bytes — `modeSet`/`csiNum2` are used here only to spell two
   -- standard sequences, not as a tie to an emitter.
@@ -286,15 +337,29 @@ def run : IO UInt32 := do
       (←
         expect (hasBytes dirty (modeSet 1049 true) && hasBytes dirty (csiNum2 5 10 0x72))
             "hygiene: the app state really reached the client terminal")
+  let dirtyReceiver := (receiver.feed initial.toList).feed dirty.toList
+  f :=
+    f +
+      (←
+        expect
+            (dirtyReceiver.inAlt && has dirtyReceiver.windowTitle "hostile-detach" &&
+              !dirtyReceiver.atBoundary)
+            "detach: the alternate-screen receiver holds a nonempty title before a truncated OSC")
   h.detach
   let back ← drain h.fd 1500
+  let handedBack := dirtyReceiver.feed back.toList
   for (seqs, what) in leaveCases do
     f := f + (← expect (seqs.all (fun s => hasBytes back s)) ("detach " ++ what))
+  f :=
+    f +
+      (←
+        expect (!handedBack.inAlt && handedBack.windowTitle.isEmpty && handedBack.atBoundary)
+            "detach clears the title after neutralizing a truncated OSC")
   -- ST first, and the whole constant verbatim. The leading `ESC \` is not
   -- decoration: a program that died mid-OSC/DCS (a crashed sixel writer, a
   -- truncated title) leaves the receiver's parser in a string state that would
   -- swallow this entire stream, exactly as it swallowed `restore` before cd7c17b.
-  -- The `hasBytes … leaveAnsi` conjunct is the port's addition: the twelve groups
+  -- The `hasBytes … leaveAnsi` conjunct is the port's addition: the groups
   -- above can all be present in the wrong order or with bytes wedged between
   -- them, and `leave_canonical_all` proves the CONTENTS while no theorem can see
   -- that the client actually writes them.

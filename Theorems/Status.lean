@@ -2,6 +2,9 @@ module
 
 public import Linger.Core.Status
 import all Linger.Core.Status
+import Init.Data.Nat.ToString
+import Init.Data.String.Lemmas.Intercalate
+import Init.Data.Char.Lemmas
 
 -- Converted from legacy by the `Vt` seal (`specs/archive/vt-toolkit.md` Step 1) — not for
 -- anything in this file, which never mentions a `Vt`, but because a `module` cannot
@@ -139,5 +142,111 @@ theorem name_clean (s : Status) : ∀ c ∈ (name s).toList, c ≠ '\t' ∧ c �
 /-- `ofName` is a left inverse of `name`, so the human column and the
 porcelain column can never disagree about a row. -/
 theorem ofName_name (s : Status) : ofName (name s) = s := by cases s <;> rfl
+
+/-- The complete style vocabulary contains standard foreground SGRs only; its
+quiet style adds dim and explicitly selects the default foreground. -/
+theorem style_palette (s : Status) :
+    Linger.Core.Status.style s ∈
+      ["\x1b[36m", "\x1b[33m", "\x1b[32m", "\x1b[31m", "\x1b[2;39m"] := by
+  cases s <;> decide
+
+/-- Positive counts appear once in attention order, independent of input order. -/
+theorem attentionCounts_exact (statuses : List Status) :
+    Linger.Core.Status.attentionCounts statuses =
+      (if statuses.count .wantsYou = 0 then [] else [(.wantsYou, statuses.count .wantsYou)]) ++
+        (if statuses.count .exitedBad = 0 then [] else [(.exitedBad, statuses.count .exitedBad)]) ++
+        (if statuses.count .unknown = 0 then [] else [(.unknown, statuses.count .unknown)]) := by
+  simp only [attentionCounts, List.filterMap_cons, List.filterMap_nil]
+  split <;> split <;> split <;> simp_all
+
+/-- Neither zero counts nor ordinary activity can occur in an attention group. -/
+theorem attentionCounts_mem (statuses : List Status) (s : Status) (n : Nat) :
+    (s, n) ∈ Linger.Core.Status.attentionCounts statuses ↔
+      s ∈ [.wantsYou, .exitedBad, .unknown] ∧ n = statuses.count s ∧ n ≠ 0 := by
+  simp only [attentionCounts, List.mem_filterMap]
+  constructor
+  · rintro ⟨st, hm, he⟩
+    split at he
+    · contradiction
+    · simp only [Option.some.injEq, Prod.mk.injEq] at he
+      rcases he with ⟨rfl, rfl⟩
+      exact ⟨hm, rfl, by simpa using ‹¬(statuses.count st == 0) = true›⟩
+  · rintro ⟨hm, rfl, hn⟩
+    exact ⟨s, hm, by simp [hn]⟩
+
+/-- The public string is precisely the three positive-count groups with their
+canonical icons, separated by one space. -/
+theorem summary_exact (statuses : List Status) :
+    Linger.Core.Status.summary statuses =
+      String.intercalate " "
+        ((if statuses.count .wantsYou = 0 then []
+          else [(toString (statuses.count .wantsYou)).push (icon .wantsYou)]) ++
+          (if statuses.count .exitedBad = 0 then []
+          else [(toString (statuses.count .exitedBad)).push (icon .exitedBad)]) ++
+          (if statuses.count .unknown = 0 then []
+          else [(toString (statuses.count .unknown)).push (icon .unknown)])) := by
+  rw [summary, attentionCounts_exact]
+  split <;> split <;> split <;> simp_all
+
+/-- With no attention counts, the summary has no placeholder or separator. -/
+theorem summary_omits_zero (statuses : List Status) (hw : statuses.count .wantsYou = 0)
+    (hb : statuses.count .exitedBad = 0) (hu : statuses.count .unknown = 0) :
+    Linger.Core.Status.summary statuses = "" := by simp [summary_exact, hw, hb, hu]
+
+private theorem summary_token_clean (statuses : List Status) (s : Status) (n : Nat)
+    (h : (s, n) ∈ attentionCounts statuses) :
+    ∀ c ∈ ((toString n).push (icon s)).toList, c.isDigit = true ∨ c ∈ ['⣿', '!', '?'] := by
+  intro c hc
+  simp only [String.toList_push, List.mem_append, List.mem_singleton] at hc
+  rcases hc with hc | rfl
+  · left
+    rw [Nat.toString_eq_repr, Nat.toList_repr] at hc
+    exact Nat.isDigit_of_mem_toDigits (by decide) (by decide) hc
+  · right
+    have hs := ((attentionCounts_mem statuses s n).mp h).1
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hs
+    rcases hs with rfl | rfl | rfl <;> decide
+
+/-- Summary text contains only decimal digits, spaces and attention glyphs.
+This is stronger than absence of newline or terminal escapes. -/
+theorem summary_alphabet (statuses : List Status) :
+    ∀ c ∈ (Linger.Core.Status.summary statuses).toList,
+      c.isDigit = true ∨ c ∈ [' ', '⣿', '!', '?'] := by
+  have joinClean (strings : List String)
+    (hs : ∀ text ∈ strings, ∀ c ∈ text.toList, c.isDigit = true ∨ c ∈ [' ', '⣿', '!', '?']) :
+    ∀ c ∈ (String.intercalate " " strings).toList, c.isDigit = true ∨ c ∈ [' ', '⣿', '!', '?'] := by
+    induction strings with
+    | nil => simp
+    | cons text rest ih =>
+      cases rest with
+      | nil => simpa using hs text (by simp)
+      | cons next tail =>
+        intro c hc
+        simp only [String.intercalate_cons_cons, String.toList_append, List.mem_append] at hc
+        rcases hc with (hc | hc) | hc
+        · exact hs text (by simp) c hc
+        · have space : (" " : String).toList = [' '] := by decide
+          rw [space, List.mem_singleton] at hc
+          subst c
+          exact Or.inr (by simp)
+        · exact ih (fun value hm => hs value (by simp [hm])) c hc
+  apply joinClean
+  intro text ht c hc
+  obtain ⟨⟨s, n⟩, hm, rfl⟩ := List.mem_map.mp ht
+  rcases summary_token_clean statuses s n hm c hc with hd | hi
+  · exact Or.inl hd
+  · exact Or.inr (by simp_all)
+
+/-- A prompt or title can embed the summary verbatim: no controls, DEL or C1. -/
+theorem summary_printable (statuses : List Status) :
+    ∀ c ∈ (Linger.Core.Status.summary statuses).toList,
+      32 ≤ c.toNat ∧ (c.toNat < 127 ∨ 160 ≤ c.toNat) := by
+  intro c hc
+  rcases summary_alphabet statuses c hc with hd | hi
+  · have := Char.isDigit_iff_toNat.mp hd
+    change 48 ≤ c.toNat ∧ c.toNat ≤ 57 at this
+    omega
+  · simp only [List.mem_cons, List.not_mem_nil, or_false] at hi
+    rcases hi with rfl | rfl | rfl | rfl <;> decide
 
 end Linger.Core.Status

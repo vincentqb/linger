@@ -127,4 +127,65 @@ theorem humanListing_printable (rows : List (List (String × String))) :
     · exact Or.inl (humanRow_printable _ r b h)
     · exact Or.inr (by simpa using h)
 
+/-- Pieces remove controls before width calculation or styling. A terminal
+renderer therefore never clips inside an untrusted escape sequence. -/
+theorem rowPieces_printable (nameCol : Nat) (info : List (String × String)) :
+    ∀ piece ∈ Linger.Core.Listing.rowPieces nameCol info,
+      ∀ c ∈ piece.text, 32 ≤ c.toNat ∧ (c.toNat < 127 ∨ 160 ≤ c.toNat) := by
+  intro piece hp c hc
+  simp only [rowPieces, List.mem_cons, List.not_mem_nil, or_false] at hp
+  rcases hp with rfl | rfl
+  · simp only [List.mem_singleton] at hc
+    subst c
+    cases Status.ofName ((info.lookup "status").getD "") <;> decide
+  · obtain ⟨raw, _, rfl⟩ := List.mem_map.mp hc
+    split
+    · decide
+    · unfold Linger.Core.Render.safeChar
+      split
+      · decide
+      · simp_all <;> omega
+
+/-- Exactly the badge is styled; the name, details, labels and watchers are plain. -/
+theorem rowPieces_styles (nameCol : Nat) (info : List (String × String)) :
+    (Linger.Core.Listing.rowPieces nameCol info).map (·.status) =
+      [some (Status.ofName ((info.lookup "status").getD "")), none] := rfl
+
+theorem nameWidth_empty : Linger.Core.Listing.nameWidth [] = 0 := rfl
+
+/-- Every row's name fits the column calculated for the entire snapshot. -/
+theorem nameWidth_covers (rows : List (List (String × String))) (row : List (String × String))
+    (h : row ∈ rows) :
+    ((row.lookup "name").getD "").toList.length ≤ Linger.Core.Listing.nameWidth rows := by
+  have grows (rs : List (List (String × String))) (n : Nat) :
+    n ≤ rs.foldl (fun m r => max m ((r.lookup "name").getD "").toList.length) n := by
+    induction rs generalizing n with
+    | nil => exact Nat.le_refl _
+    | cons r rs ih => exact Nat.le_trans (Nat.le_max_left _ _) (ih _)
+  have covers (rs : List (List (String × String))) (n : Nat) (hr : row ∈ rs) :
+    ((row.lookup "name").getD "").toList.length ≤
+      rs.foldl (fun m r => max m ((r.lookup "name").getD "").toList.length) n := by
+    induction rs generalizing n with
+    | nil => simp at hr
+    | cons r rs ih =>
+      rcases List.mem_cons.mp hr with rfl | ht
+      · exact Nat.le_trans (Nat.le_max_right _ _) (grows rs _)
+      · exact ih _ ht
+  exact covers rows 0 h
+
+/-- Removing style produces exactly the bytes of the same plain row pieces. -/
+theorem renderPieces_plain (pieces : List RowPiece) :
+    Linger.Core.Listing.renderPieces false pieces =
+      Linger.Core.Render.utf8s (pieces.flatMap (·.text)) := by
+  induction pieces with
+  | nil => rfl
+  | cons piece pieces ih =>
+    cases hs : piece.status <;>
+      simp_all [renderPieces, Linger.Core.Render.utf8s, List.flatMap_append]
+
+/-- Plain terminal output and the human API coincide for all metadata. -/
+theorem terminalListing_plain (rows : List (List (String × String))) :
+    Linger.Core.Listing.terminalListing false rows = Linger.Core.Listing.humanListing rows := by
+  simp [terminalListing, humanListing, renderPieces_plain, humanRow]
+
 end Linger.Core.Listing

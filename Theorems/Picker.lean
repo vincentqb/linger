@@ -3,6 +3,7 @@ module
 public import Tools.Picker
 import all Tools.Picker
 import all Linger.Core.Name
+import all Linger.Core.Listing
 import all Init.Data.String.Legacy
 import Theorems.Name
 
@@ -184,6 +185,50 @@ theorem parseListing_provenance (text : String) (targets : List String)
 theorem parseListing_error_safe (text error : String) (h : parseListing text = .error error) :
     ∀ char ∈ error.toList, 32 ≤ char.toNat ∧ char.toNat < 127 := by
   rcases parseRows_error [] _ error h with rfl | rfl | rfl <;> decide
+
+/-- Metadata publication is conditional on complete exact-target validation, and
+retains every original record rather than synthesizing missing observations. -/
+theorem parseSnapshot_complete (text : String) (snapshot : Snapshot)
+    (h : Tools.Picker.parseSnapshot text = .ok snapshot) :
+    parseListing text = .ok snapshot.candidates ∧
+      snapshot.records = (text.splitOn "\n").map (·.splitOn "\t") := by
+  unfold parseSnapshot at h
+  cases hp : parseListing text with
+  | error error => simp [hp, Except.map] at h
+  | ok candidates =>
+    simp only [hp, Except.map, Except.ok.injEq] at h
+    cases h
+    exact ⟨rfl, rfl⟩
+
+/-- Any malformed target anywhere rejects the metadata snapshot too. -/
+theorem parseSnapshot_rejects (text error : String) (h : parseListing text = .error error) :
+    Tools.Picker.parseSnapshot text = .error error := by simp [parseSnapshot, h, Except.map]
+
+/-- The identity comes from the validated selection; metadata cannot rename it. -/
+theorem snapshot_row_name (snapshot : Snapshot) (target : String) :
+    (Tools.Picker.Snapshot.row snapshot target).lookup "name" = some target := by
+  simp [Snapshot.row]
+
+/-- The selected existing row has precisely the listing's badge, aligned name,
+details, labels and watchers, with the same style boundaries. -/
+theorem presentation_existing (snapshot : Snapshot) (nameCol : Nat) (target : String) :
+    Tools.Picker.presentation snapshot nameCol (.existing target) =
+      Linger.Core.Listing.rowPieces nameCol (snapshot.row target) := by
+  simp [presentation]
+
+/-- Equivalence includes all rendered plain bytes, beyond status glyphs. Clipping
+and selection reverse are applied by the terminal executor after this shared row. -/
+theorem presentation_existing_humanRow (snapshot : Snapshot) (nameCol : Nat) (target : String) :
+    Linger.Core.Render.utf8s
+        ((Tools.Picker.presentation snapshot nameCol (.existing target)).flatMap (·.text)) =
+      Linger.Core.Listing.humanRow nameCol (snapshot.row target) := by
+  simp [presentation, Linger.Core.Listing.humanRow]
+
+/-- Creation never masquerades as a listed session status. -/
+theorem presentation_creation (snapshot : Snapshot) (nameCol : Nat) (target : String) :
+    Tools.Picker.presentation snapshot nameCol (.create target) =
+      [{ text := s!"+ Create {target}".toList }] := by
+  simp [presentation]
 
 theorem mem_visible (candidates : List String) (query target : String) :
     target ∈ visible candidates query ↔

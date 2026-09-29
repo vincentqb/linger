@@ -13263,3 +13263,119 @@ Archived the completed spec and restored the no-live-spec pointer. Hosted
 checks are pending at closure; the preceding checkpoint's jobs could not start
 because of GitHub billing/spending limits. No macOS, live GUI-terminal or real
 remote-host verification is claimed.
+
+## Step 1 notes — 2026-09-29
+
+Implemented the shared presentation and attached-title steps of
+`specs/status-presentation.md`. They share runtime ownership and are committed
+as one verified checkpoint; publication and worker cleanup remain in step 3.
+The palette uses standard ANSI foreground entries and dim default text.
+Only status glyphs are colored; selected rows have independent emphasis.
+`linger ls` and `linger select` consume the same human row representation,
+including metadata that can change while the selected target stays fixed.
+Redirected listing is plain, and a present `NO_COLOR`, including an empty
+value, disables status colors.
+
+`linger status` is the shell-independent attention summary: positive unread,
+failed-exit and unknown counts, in that order, with no output when quiet.
+It only observes local sessions and does not clear unread state. The eight-line
+fish right-prompt recipe delegates to it, preserves the preceding command's
+status and stays quiet when the executable is absent or fails. The recipe
+suite executes the actual fish file; terminal configuration checks still
+inspect native settings without claiming to launch a GUI.
+
+The shared presentation contracts include `presentation_existing_humanRow`,
+`parseSnapshot_complete`, `rowPieces_styles`, `style_palette` and
+`terminalListing_plain`. `attentionCounts_mem`, `summary_exact`,
+`summary_omits_zero` and `summary_alphabet` protect count membership, ordering,
+quiet output and the plain summary alphabet. These prove the chosen behavior;
+they do not prove that a color or UI preference is uniquely desirable.
+
+Attached titles compose session, attention summary and application title,
+omitting empty parts. A 1-by-1 observer reuses the existing VT parser and drops
+history. `compose_parts`, `payload_safe`, `ansi_payload_bound`, `ansi_ends`,
+`observe_append`, `observe_no_history`, `observe_dims`, `observe_invariants`,
+`update_waits` and `update_requires_boundary` protect composition, bounded
+control-free payloads, chunking and insertion at a complete parser/UTF-8
+boundary. The payload limit counts Unicode scalars, not graphemes.
+`leave_canonical_all` now establishes an empty title for every receiver;
+`leave_boundary_title` covers the title independently of screen height.
+Detach, exit and connection loss emit the clear only after neutralization.
+The remote attach wrapper waits for SSH and performs the same final handback.
+No title stack, capability negotiation or second parser was introduced.
+
+The selector and attached client share one owned command executor. It publishes
+a result only after both pipe readers and the child have completed; cleanup
+signals its isolated group before reaping the reserved leader PID and joining
+the readers. The next sample starts one second after completion. Independent
+review caught malformed stdout/stderr escaping the client's error handler.
+The handler now covers sampler polling and spawning only, retains ownership
+of any still-pending child and schedules a retry. Socket, terminal and rendering
+errors keep their normal failure behavior. There is still no bounded-reaping
+claim for a helper that ignores SIGTERM.
+
+The hang investigation exposed a second deadline boundary: a full Unix connection
+queue blocked inside connect before reply polling could enforce its deadline.
+The status sampling path now requests a nonblocking connection and shares its
+reply deadline across peers. Unavailable peers remain unknown and retain their
+sockets. The small C change adds only syscall/error handling to the existing
+connect export; no export or dependency was added. Kernel proofs cover summary
+and parser behavior, while an IO call-site gate and real socket regression
+cover this OS boundary. A deadline value alone is not a wall-clock proof.
+
+The shared parser also prematurely completed ESC sequences with more than one
+intermediate, and DEL could discard a pending sequence. It now retains all
+intermediates until a final byte and ignores DEL in pending CSI/ESC states.
+Eleven transition/observer theorems include `observe_esc_intermediates`,
+`observe_escInter_pending`, `observe_del_boundary` and
+`step_escInter_final_boundary`. Ten new VT fixtures fail against the former
+parser. Two compiling parser mutations are rejected by the proofs/fixtures.
+There is no new parser state, C binding, fuel or proof-limit raise.
+
+Break-verify evidence is retained rather than inferred from green tests.
+The manager predecessor fails five new presentation assertions; the changed
+program passes all 108. Palette, count order, zero omission, metadata loss
+and suppressed redraw mutations compile before rejection. Handback changes
+pass all 47 attach assertions; the predecessor fails five, and a compiling
+wrong-title mutation fails those assertions and the proof. The original
+twelve-case title fixture rejects the predecessor with seven failures and
+passes the changed program. The final eighteen-case fixture separately
+reproduces malformed stdout and stderr: the old handler has twelve passes
+and six failures; the corrected client passes eighteen. Both paths then
+recover a valid sample, respond to fresh input and detach with no helper left.
+The driver is rebuilt against each linked client, so this last comparison is
+not described as using one identical executable.
+
+The parent blocking-connect mutation compiles, reproduces two failures in the
+seventeen-case status suite and fails the call-site gate. Restoring the exact
+source passes both. Gate review strengthened the contiguous deadline path,
+rendered metadata consumption, command readiness/cleanup ordering and sampler
+catch scope. Lean's formatter removes spaces before some binding arrows;
+the gates now accept that valid layout, and compiling ordering mutations still
+fail. Concurrent build and archive-command diagnostics remain separate from
+behavioral results.
+
+The final foreground Linux verifier passed from 15:32:14Z to 15:39:20Z on
+Lean v4.34.1: clean 162-job build, generated C ABI, proofs, source gates,
+standalone formatting, exact-constant and resolved-reference coverage,
+CI runner checks, POSIX smoke, all fourteen live suites and the unrelated
+session sentinel. There are 434 live assertions with no failures. All 158
+tracked source identities were unchanged across the run. Both required
+pre-verifier builds, standalone lint, shell/fish syntax, warning-level
+shellcheck and whitespace checks also pass.
+
+`/tmp/linger-status-20260929/final-verifier/` preserves the full run, copied
+suite/build/format/coverage logs and source/executable identities.
+`blocking-mutation.json` in its parent directory records the socket regression.
+The independent reviews are in `/tmp/linger-status-final-review-20260929/`.
+Presentation and gate evidence is in
+`/tmp/linger-status-display-receipts-20260929/` and
+`/tmp/linger-status-gate-review-20260929/`; the latter includes the
+`strengthened.Q18tEU/` and `arrow-whitespace.CNdnmA/` mutation receipts.
+`/tmp/linger-title-pipe-20260929.qx62aB/GREEN-HANDOFF.md` indexes the final
+malformed-pipe red/green comparison. Original title evidence is indexed by
+`/tmp/linger-title-20260929-receipts/handoff-final.md`.
+`/tmp/linger-vt-boundary-20260929/` retains the parser and handback evidence.
+All workers have stopped; their frozen source and meaningful ignored evidence
+are preserved outside their worktrees. Fresh removal checks and hosted CI
+outcomes will be recorded in the closure step.

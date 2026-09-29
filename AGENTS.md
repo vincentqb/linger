@@ -15,14 +15,13 @@ worklog), `specs/archive/` (closed build records), the comments in
 
 ## Where things stand — read this first after any compaction
 
-1. No spec is in flight. The last one closed on 2026-09-27
-   (`specs/archive/selector-polish.md`: a roomier live selector and audited
-   branch/worktree cleanup; assembled Linux verifier green, hosted checks
-   pending at closure). The preceding checkpoint's hosted checks did not start
-   because of the repository owner's GitHub billing/spending limit.
-   New work opens a new `specs/<slug>.md`, names itself here, and keeps
-   the live count at one; every behavioral fix starts with a failing
-   check and every deletion survives the full verifier stack.
+1. `specs/status-presentation.md` is in flight: shared themed status rows,
+   a compact prompt summary, and attached titles with explicit default
+   handback. The preceding selector-polish checkpoint is archived; its hosted
+   checks were pending at closure and earlier jobs could not start because
+   of the repository owner's GitHub billing/spending limit.
+   Keep the live spec count at one; every behavioral fix starts with a
+   failing check and every deletion survives the full verifier stack.
 2. `SCRATCHPAD.md` — append-only worklog: proof recipes, measurements,
    break-verify records, negative results. Read before writing; append
    after; never delete prior entries.

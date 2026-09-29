@@ -162,6 +162,9 @@ def infoServer (socketPath readyPath mode : String) : IO UInt32 := do
             | "complete" =>
               Linger.Runtime.Client.sendMsg fd (.infoReply "label.second\tanother\n".toUTF8.toList)
               Linger.Runtime.Client.sendMsg fd .done
+            | "failed-info" =>
+              Linger.Runtime.Client.sendMsg fd (.infoReply "exit\t7\n".toUTF8.toList)
+              Linger.Runtime.Client.sendMsg fd .done
             | "empty" =>
               Linger.Runtime.Client.sendMsg fd .done
             | _ =>

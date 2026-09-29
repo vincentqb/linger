@@ -637,10 +637,11 @@ theorem quiet_escSeq (b : UInt8) (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x48 ∨ b 
   rw [feed_cons, show ∀ (w : Vt), w.feed [b] = w.step b from fun _ => rfl]
   exact org_step_of_esc b (esc_step hg) (by rw [org_step_of_ground 0x1B hg]; exact ho)
 
-theorem quiet_escCharset (i x : UInt8) (hi : i = 0x28 ∨ i = 0x29) :
+theorem quiet_escCharset (i x : UInt8) (hi : i = 0x28 ∨ i = 0x29)
+    (hlo : 0x30 ≤ x) (hhi : x ≤ 0x7E) :
     Quiet (escCharset i x) := by
   intro v hg ho
-  refine ⟨ends_escCharset i x hi v hg, ?_⟩
+  refine ⟨ends_escCharset i x hi hlo hhi v hg, ?_⟩
   rw [show escCharset i x = 0x1B :: i :: [x] from by simp [escCharset, escB]]
   rw [feed_cons, feed_cons, show ∀ (w : Vt), w.feed [x] = w.step x from fun _ => rfl]
   rw [org_step_of_escInter x (esc_inter_step i (esc_step hg) hi)]
@@ -837,10 +838,10 @@ theorem quiet_savedPendingAnsi (v : Vt) : Quiet (savedPendingAnsi v) := by
 
 theorem quiet_charsetAnsi (v : Vt) : Quiet (charsetAnsi v) := by
   unfold charsetAnsi
-  refine ((Quiet.ite (fun _ => quiet_escCharset 0x28 0x30 (by decide))
-    (fun _ => quiet_escCharset 0x28 0x42 (by decide))).append
-    (Quiet.ite (fun _ => quiet_escCharset 0x29 0x30 (by decide))
-      (fun _ => quiet_escCharset 0x29 0x42 (by decide)))).append ?_
+  refine ((Quiet.ite (fun _ => quiet_escCharset 0x28 0x30 (by decide) (by decide) (by decide))
+    (fun _ => quiet_escCharset 0x28 0x42 (by decide) (by decide) (by decide))).append
+    (Quiet.ite (fun _ => quiet_escCharset 0x29 0x30 (by decide) (by decide) (by decide))
+      (fun _ => quiet_escCharset 0x29 0x42 (by decide) (by decide) (by decide)))).append ?_
   exact Quiet.ite (fun _ => Quiet.text (by decide)) (fun _ => Quiet.nil)
 
 theorem quiet_titleAnsi (v : Vt) : Quiet (titleAnsi v) := by
@@ -880,8 +881,8 @@ theorem quiet_modesAnsi (v : Vt) (ho : v.modes.origin = false) : Quiet (modesAns
 theorem quiet_prologueAnsi (v : Vt) : Quiet (prologueAnsi v) := by
   unfold prologueAnsi
   refine Quiet.append ?_ (Quiet.text (bs := [0x0F]) (by decide))
-  refine Quiet.append ?_ (quiet_escCharset 0x29 0x42 (by decide))
-  refine Quiet.append ?_ (quiet_escCharset 0x28 0x42 (by decide))
+  refine Quiet.append ?_ (quiet_escCharset 0x29 0x42 (by decide) (by decide) (by decide))
+  refine Quiet.append ?_ (quiet_escCharset 0x28 0x42 (by decide) (by decide) (by decide))
   refine Quiet.append ?_ (quiet_csiNum2 1 v.rows 0x72 (by decide) (by decide))
   refine Quiet.append ?_ (quiet_modeSet 7 true (by decide))
   refine Quiet.append ?_ quiet_modeSet_decom_off

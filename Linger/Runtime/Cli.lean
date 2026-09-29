@@ -38,6 +38,7 @@ def usage : String :=
                               (requires terminal input and output)
   ls [-r [hosts]]           List once; -r includes configured remote hosts
                               (or pass a comma-separated host list)
+  status                    Print compact local attention counts for a prompt
   attach [name] [command]    Attach, creating if needed (name defaults to 'main')
   import [SAVE]             Start shells in saved tmux-resurrect directories
                               (default: last save; saved commands never run)
@@ -109,8 +110,8 @@ def connectUpsert (hooks : Hooks) (name : String) (cmd : List String) : IO UInt3
 def cmdAttach (hooks : Hooks) (name : String) (cmd : List String) : IO UInt32 := do
   if !(← stdinIsTty) then
     throw (IO.userError "attach needs a terminal (use `run`/`send` for scripting)")
-  -- `name@host` attaches to a remote session: become `ssh -t host linger
-  -- attach name`. Session names never contain `@` (Name.sanitize
+  -- `name@host` attaches through `ssh -t host linger attach name`.
+  -- Session names never contain `@` (Name.sanitize
   -- reserves it — theorem sanitize_no_at), so any `@` here means remote.
   -- The host is everything after the FIRST `@`, so it may itself be a
   -- `user@host` ssh target. Lets the selector feed a listed row
@@ -130,11 +131,17 @@ def cmdAttach (hooks : Hooks) (name : String) (cmd : List String) : IO UInt32 :=
     -- to flaky links is making death cheap — the session detaches and
     -- restores — which composes with ANY transport policy (ssh config,
     -- an autossh-style loop, mosh). See recipes/README "Remote sessions".
-    exec "ssh" #["-t", "--", host, "linger", "attach", sess] -- replaces us on success
-    return 1 -- only reached if exec fails
+    let child ←
+      IO.Process.spawn { cmd := "ssh", args := #["-t", "--", host, "linger", "attach", sess] }
+    try
+      child.wait
+    finally
+      -- SSH restores termios; we own the title/mode handback even if the link
+      -- disappeared before the remote attach client could send its cleanup.
+      writeAll stdoutFd (ByteArray.mk Linger.Core.Render.leaveAnsi.toArray)
   | _ =>
     let fd ← connectUpsert hooks name cmd
-    match ← Client.attach fd with
+    match ← Client.attach name fd with
     | .ended status =>
       IO.eprintln s!"\r\nlinger: session '{name}' ended (status {status})"
       return status &&& 0xFF
@@ -150,14 +157,15 @@ def cmdAttach (hooks : Hooks) (name : String) (cmd : List String) : IO UInt32 :=
 
 /-- One connected info conversation, bounded by an absolute request window.
 Only `done` completes an answer; a failed prefix is never returned as info. -/
-def readInfo (fd : UInt32) : IO (List (String × String)) := do
+def readInfo (fd : UInt32) (stopAt : Option Nat := none) : IO (List (String × String)) := do
   Client.sendMsg fd .info
-  let deadline := (← monotonicMs) + 2000
+  let deadline := stopAt.getD ((← monotonicMs) + 2000)
   let mut dec : Linger.Core.Wire.Decoder := {}
   let mut acc : Linger.Core.Buf.Buf := .empty
   let mut go := true
   while go && (← monotonicMs) < deadline do
-    let revs ← poll #[fd] #[POLLIN] 100
+    let remaining := deadline - (← monotonicMs)
+    let revs ← poll #[fd] #[POLLIN] (Int32.ofNat (min 100 remaining))
     if revs[0]! == 0 then
       continue
     match ← read fd 65536 with
@@ -201,13 +209,19 @@ def readInfo (fd : UInt32) : IO (List (String × String)) := do
 
 /-- Keep connection absence separate from an info failure: listing must retain
 a connected peer, while `get` must report its unanswered request. -/
-def queryInfo (name : String) : IO (Option (Except IO.Error (List (String × String)))) := do
-  match ← Client.connect name with
+def queryInfo (name : String) (stopAt : Option Nat := none) :
+    IO (Option (Except IO.Error (List (String × String)))) := do
+  if let some deadline := stopAt then
+    if (← monotonicMs) ≥ deadline then
+      return some (.error (IO.userError "overview deadline reached"))
+  match ← Client.connect name stopAt.isSome with
   | none =>
+    if stopAt.isSome then
+      return some (.error (IO.userError "overview connection unavailable"))
     return none
   | some fd =>
     try
-      let info ← (readInfo fd).toBaseIO
+      let info ← (readInfo fd stopAt).toBaseIO
       return some info
     finally
       close fd
@@ -278,7 +292,9 @@ def removeStaleSocket (name : String) : IO Bool := do
   catch _ =>
     return false
 
-def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
+/-- Common local snapshot for the listing and prompt. An optional shared deadline
+keeps a prompt from waiting once per stalled daemon; unqueried peers stay unknown. -/
+def localRows (stopAt : Option Nat := none) : IO (List (List (String × String))) := do
   let sockets := (← Paths.listSocketNames).toArray.qsort (· < ·) |>.toList
   let ckpts := (← Paths.listCkptNames).toArray.qsort (· < ·) |>.toList
   let liveRow := fun name info =>
@@ -288,7 +304,7 @@ def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
   let mut confirmedLive : List String := []
   let mut rows : List (List (String × String)) := []
   for name in sockets do
-    match ← queryInfo name with
+    match ← queryInfo name stopAt with
     | some info =>
       confirmedLive := confirmedLive ++ [name]
       rows := rows ++ [liveRow name (info.toOption.getD [])]
@@ -308,6 +324,19 @@ def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
           [Linger.Core.Listing.rowFields name
               [("state", "resumable"),
                 ("status", Linger.Core.Status.name (Linger.Core.Listing.rowStatus .stale))]]
+  return rows
+
+def cmdStatus : IO UInt32 := do
+  let rows ← localRows (some ((← monotonicMs) + 250))
+  let summary :=
+    Linger.Core.Status.summary
+      (rows.map fun info => Linger.Core.Status.ofName ((info.lookup "status").getD "unknown"))
+  if !summary.isEmpty then
+    IO.println summary
+  return 0
+
+def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
+  let mut rows ← localRows
   -- remotes last (per host), so a slow ssh can't reorder local rows
   for host in remotes do
     for (rname, rlive, rcmd, rstatus) in ← listRemote host do
@@ -327,13 +356,10 @@ def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
         IO.println s!"{k}\t{v}"
       IO.println ""
   else
-    -- the human listing is rendered in the pure core (`Listing.humanListing`):
-    -- every displayed value passes through `utf8s`, so a control byte in a
-    -- `cmd`, a label, a checkpoint filename or a `-r` host cannot reach the
-    -- terminal as an escape sequence (`Theorems/Listing.lean`
-    -- `humanListing_printable`), the columns align, and there is no trailing
-    -- whitespace. The empty-state line is part of it.
-    writeAll stdoutFd (ByteArray.mk (Linger.Core.Listing.humanListing rows).toArray)
+    -- The selector consumes these same row pieces. Only the status badge has
+    -- a palette style; redirected output and NO_COLOR retain the plain row.
+    let withColor := (← (← IO.getStdout).isTty) && (← IO.getEnv "NO_COLOR").isNone
+    writeAll stdoutFd (ByteArray.mk (Linger.Core.Listing.terminalListing withColor rows).toArray)
   return 0
 
 /-- Parse the `ls` argument set: an optional `--porcelain` and an
@@ -526,7 +552,7 @@ def main (hooks : Hooks) (args : List String) : IO UInt32 := do
       IO.eprintln s!"linger: no session '{name}'"
       return 1
     | some fd =>
-      match ← Client.attach fd true with
+      match ← Client.attach name fd true with
       | .detached =>
         IO.eprintln s!"\r\nlinger: stopped watching '{name}'"
         return 0
@@ -606,6 +632,8 @@ def main (hooks : Hooks) (args : List String) : IO UInt32 := do
     return rc
   | ["clear", name] | ["cl", name] =>
     requireLive name .labelClear
+  | ["status"] =>
+    cmdStatus
   | ["version"] | ["v"] =>
     cmdVersion
   | ["help"] | ["h"] | ["--help"] | ["-h"] =>

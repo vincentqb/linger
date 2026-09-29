@@ -200,18 +200,6 @@ def largestPaint (parts : List Part) : Nat :=
       | .text _ => max 16384 n)
     0
 
-theorem utf8s_length_le (cs : List Char) : (Render.utf8s cs).length ≤ 4 * cs.length := by
-  induction cs with
-  | nil => simp [Render.utf8s]
-  | cons c cs
-    ih =>
-    have scalar : (Render.utf8 (Render.safeChar c)).length ≤ 4 := by
-      unfold Render.utf8
-      dsimp only
-      split <;> (try split) <;> (try split) <;> simp
-    simp only [Render.utf8s, List.flatMap_cons, List.length_append, List.length_cons] at *
-    omega
-
 /-- A cursor's serialized storage is paid for by its literal stages plus just
 the larger of the current pending piece and the largest remaining row. -/
 def storageBudget (p : Plan) : Nat :=
@@ -245,7 +233,7 @@ theorem next_storage {budget : Nat} {p q : Plan} {bytes : Render.Bytes}
           omega
         next =>
           cases h
-          have bound := utf8s_length_le (text.take 4096).copy.toList
+          have bound := Render.utf8s_length_le (text.take 4096).copy.toList
           simp only [String.Slice.toList_copy_take, List.length_take] at bound
           simp [storageBudget, literalBytes, largestPaint]
           omega

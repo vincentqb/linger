@@ -1421,14 +1421,14 @@ theorem prologue_sticky (v w : Vt) (hgood : Good w) (hrows : w.rows = v.rows) :
           obtain ⟨hat0, hab0⟩ := hAtb hr1
           rw [hr1, hat0, hab0]; rfl)
   have h6 :=
-    sput_congr (sput_step h5 (smap_charset 0x28 0x42 (Or.inl rfl)))
+    sput_congr (sput_step h5 (smap_charset 0x28 0x42 (Or.inl rfl) (by decide) (by decide)))
       (show
         stCharset 0x28 0x42 (⟨v.rows, 0, v.rows - 1, Ag0, Ag1, Aso, false⟩ : Sticky) =
           ⟨v.rows, 0, v.rows - 1, false, Ag1, Aso, false⟩
         from by
         unfold stCharset; rw [ite_eq_left (by decide)]; rfl)
   have h7 :=
-    sput_congr (sput_step h6 (smap_charset 0x29 0x42 (Or.inr rfl)))
+    sput_congr (sput_step h6 (smap_charset 0x29 0x42 (Or.inr rfl) (by decide) (by decide)))
       (show
         stCharset 0x29 0x42 (⟨v.rows, 0, v.rows - 1, false, Ag1, Aso, false⟩ : Sticky) =
           ⟨v.rows, 0, v.rows - 1, false, false, Aso, false⟩
@@ -1497,8 +1497,8 @@ theorem prologue_modes (v w : Vt) :
                             (mmap_modeSet 6 false (by decide) (by decide))).comp
                         (mmap_modeSet 7 true (by decide) (by decide))).comp
                     (mmap_id_stbm2 1 v.rows)).comp
-                (mmap_id_charset 0x28 0x42 (Or.inl rfl))).comp
-            (mmap_id_charset 0x29 0x42 (Or.inr rfl))).comp
+                (mmap_id_charset 0x28 0x42 (Or.inl rfl) (by decide) (by decide))).comp
+            (mmap_id_charset 0x29 0x42 (Or.inr rfl) (by decide) (by decide))).comp
         mmap_id_si
     refine this.congr (fun m => ?_)
     simp only [id_eq]

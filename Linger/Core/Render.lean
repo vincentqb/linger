@@ -655,6 +655,10 @@ def restore (v : Vt) : Bytes := restoreBody v ++ cursorAnsi v ++ cursorPendingAn
 
 /-! ## Leave -/
 
+/-- Establish the default window title with an empty, BEL-terminated OSC 2.
+The caller must first neutralize any pending control sequence. -/
+def defaultTitleAnsi : Bytes := escB ++ [0x5D, 0x32, 0x3B, 0x07]
+
 /-- **Hand the terminal back.** The bytes a detaching client writes to the
 user's terminal before it goes.
 
@@ -688,21 +692,18 @@ doing. Each line is a hazard for the next program to use the terminal:
 * `?1l` (DECCKM), `ESC >` (DECKPNM) — arrow and keypad keys sending application
   forms the shell's line editor does not bind;
 * `( B`, `) B`, `SI` — line-drawing ASCII;
-* `SGR 0` — a coloured prompt.
+* `SGR 0` — a coloured prompt;
+* empty `OSC 2 BEL` — the session's title still labelling the detached terminal.
 
 Two positions are deliberate. `DECOM` reset and `DECSTBM` both home the cursor
 (here and on real terminals), so the cursor **must** be placed afterwards rather
 than preserved: `CSI 999 ; 1 H` parks it at the bottom-left — clamped by the
 receiver, so it needs no size — which is where a program that painted the screen
-and exited leaves the next prompt. And `SGR 0` comes last, since `DECSTBM` and
-the mode resets do not touch the pen but a receiver's `DECRC`-like bundling
-might.
-
-What is **not** here, deliberately: the window title. `titleAnsi` set it on
-attach, so linger is not fully invisible until it is put back, but we never read
-the user's title and the emitter does not guess. xterm's title stack
-(`CSI 22 ; 0 t` / `CSI 23 ; 0 t`) would do it and is not universal; recorded as a
-known limit rather than a silent one.
+and exited leaves the next prompt. And `SGR 0` follows the screen, cursor and
+mode resets, since a receiver's `DECRC`-like bundling might restore a saved pen.
+The final empty title establishes an explicit default after parser
+neutralization and the other resets. It preserves those terminal-state
+guarantees, and the next shell prompt can supply its usual title.
 
 Not `DECSTR` (`CSI ! p`), for the reason already recorded in
 `specs/archive/restore-conformance.md`: its reset list varies by terminal, and we would
@@ -723,7 +724,8 @@ def leaveAnsi : Bytes :=
     escCharset 0x29 0x42 ++
     [0x0F] ++
     csiNum2 999 1 0x48 ++
-    csiNum 0 0x6D
+    csiNum 0 0x6D ++
+    defaultTitleAnsi
 
 /-! ## History (text) -/
 

@@ -212,7 +212,7 @@ structure CsiState where
 inductive PState where
   | ground
   | esc -- after ESC
-  | escInter (b : UInt8) -- after ESC + intermediate (e.g. '(' )
+  | escInter (b : UInt8) -- first intermediate; 0 marks an unsupported compound sequence
   | csi (s : CsiState)
   | osc (acc : Array UInt8) (esc : Bool) -- collecting OSC, BEL/ST terminated
   | str (esc : Bool) -- DCS/SOS/PM/APC: skip to ST
@@ -280,12 +280,19 @@ existence and one public family of ways it changes:
   screen, decodes to `none` (`Vt.ofDecoded_good`, `Vt.ofDecoded_renderable`,
   `Vt.ofDecoded_tabsOk`, and `Checkpoint.load_good`/`load_renderable`/`load_tabsOk` on
   the real path, for *arbitrary bytes*).
-* `Vt.resize`, `Vt.step`, `Vt.feed`, `Vt.feedBytes`, `Vt.quiesce` — the transformers,
+* `Vt.resize`, `Vt.step`, `Vt.feed`, `Vt.feedBytes`, `Vt.quiesce` — the session transformers,
   each of which preserves `Good`, `Renderable`, `U8Ok`, `TabsOk` and `CsiOk`.
   `LiveReachableVt` is that closure written as an inductive (`step` is a singleton
   feed and `feedBytes` converts to a list). The `*_of_liveReachable` lemmas are
-  the payoff. `colCount`, `rowCount`, `cursorPos`, `inAlt`, `getRow` and `getCell`
-  form the public read-only surface.
+  the payoff.
+* `Vt.observe` — the attach client's history-free observer. It uses the same
+  parser step and discards scrollback after each byte. `observe_good` and
+  `observe_invariants` preserve those same five invariants, while `observe_dims`
+  and `observe_no_history` bound its storage at the client's initial geometry.
+  It is not a session restoration path.
+
+`colCount`, `rowCount`, `cursorPos`, `inAlt`, `getRow`, `getCell`, `windowTitle`
+and `atBoundary` form the public read-only surface.
 
 There is deliberately **no `Inhabited Vt`**, and its absence is part of this list rather
 than an oversight: `deriving Inhabited` produced `cols = 0, rows = 0, grid = #[]`, which
@@ -402,6 +409,13 @@ def Vt.cursorPos (v : Vt) : Nat × Nat := (v.cursor.x, v.cursor.y)
 /-- Is the alternate screen live? True exactly when MAIN state is stashed, which is
 what "a full-screen app is running" means to `linger info`. -/
 def Vt.inAlt (v : Vt) : Bool := v.altGrid.isSome
+
+/-- The most recent application window title, as received through OSC 0 or 2. -/
+def Vt.windowTitle (v : Vt) : String := v.title
+
+/-- Injected terminal output is safe only between complete control sequences and
+UTF-8 characters. Ground parser state alone does not imply the latter. -/
+def Vt.atBoundary (v : Vt) : Bool := v.pstate == .ground && v.u8need == 0
 
 /-! ## The decoder's door
 
@@ -1255,18 +1269,26 @@ private def Vt.stepEsc (v : Vt) (b : UInt8) : Vt :=
   | 0x3E =>
     { v with
       modes := { v.modes with appKeypad := false }, pstate := .ground }
-  | 0x1B => v -- ESC ESC: stay
+  | 0x1B | 0x7F => v -- ESC ESC and DEL: stay
   | _ =>
-    if b == 0x28 || b == 0x29 || b == 0x2A || b == 0x2B then { v with pstate := .escInter b }
-    else { v with pstate := .ground }
+    if b ≥ 0x20 && b ≤ 0x2F then { v with pstate := .escInter b }
+    else if b ≥ 0x30 && b ≤ 0x7E then { v with pstate := .ground } else v
 
-/-- After ESC + intermediate: charset designation. -/
+/-- Consume ESC intermediates until a final byte. Only single '(' / ')'
+designations are interpreted; a second intermediate marks the sequence unsupported
+without accumulating bytes. DEL and other nonfinal bytes keep it pending. -/
 private def Vt.stepEscInter (v : Vt) (i b : UInt8) : Vt :=
-  let v := { v with pstate := .ground }
-  if i == 0x28 then { v with g0Line := b == 0x30 } -- ESC ( 0 / B
+  if b ≥ 0x30 && b ≤ 0x7E then
+    let v := { v with pstate := .ground }
+    if i == 0x28 then { v with g0Line := b == 0x30 } -- ESC ( 0 / B
+    else
+      if i == 0x29 then { v with g1Line := b == 0x30 } -- ESC ) 0 / B
+      else v
   else
-    if i == 0x29 then { v with g1Line := b == 0x30 } -- ESC ) 0 / B
-    else v
+    if b == 0x1B then { v with pstate := .esc }
+    else
+      if b ≥ 0x20 && b ≤ 0x2F then { v with pstate := .escInter 0 }
+      else { v with pstate := .escInter i }
 
 /-- Inside CSI. -/
 private def Vt.stepCsi (v : Vt) (s : CsiState) (b : UInt8) : Vt :=
@@ -1291,8 +1313,10 @@ private def Vt.stepCsi (v : Vt) (s : CsiState) (b : UInt8) : Vt :=
             else
               if b == 0x1B then { v with pstate := .esc }
               else
-                if b < 0x20 then (v.ctl b) -- C0 inside CSI executes, sequence continues
-                else { v with pstate := .ground }
+                if b == 0x7F then v -- DEL is ignored without dropping parameters
+                else
+                  if b < 0x20 then (v.ctl b) -- C0 inside CSI executes, sequence continues
+                  else { v with pstate := .ground }
 
 /-- Inside OSC: accumulate until BEL or ST, with a hard cap. -/
 private def Vt.stepOsc (v : Vt) (acc : Array UInt8) (esc : Bool) (b : UInt8) : Vt :=
@@ -1332,6 +1356,13 @@ def Vt.step (v : Vt) (b : UInt8) : Vt :=
 
 /-- Feed a chunk. §Chunk holds definitionally: `List.foldl_append`. -/
 def Vt.feed (v : Vt) (bytes : List UInt8) : Vt := bytes.foldl Vt.step v
+
+/-- Observe output with the same parser while discarding history after every byte.
+The attach client's one-cell observer needs the title and parser boundary, not
+scrollback. Keeping the existing parser also keeps OSC, DCS and UTF-8 chunking
+semantics in one place. -/
+def Vt.observe (v : Vt) (bytes : List UInt8) : Vt :=
+  bytes.foldl (fun w b => { (w.step b) with sb := {} }) v
 
 /-- Forget partial parser state (what a checkpoint deliberately does
 not persist — see `Linger.Core.Checkpoint`). -/

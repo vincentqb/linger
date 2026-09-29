@@ -104,4 +104,26 @@ def ofName : String → Status
   | "idle" => .idle
   | _ => .unknown
 
+/-- Foreground styles use the terminal's standard palette. Quiet states dim the
+default foreground; no background or selection attribute belongs to a status. -/
+def style : Status → String
+  | .working => "\x1b[36m"
+  | .wantsYou | .unknown => "\x1b[33m"
+  | .exitedOk => "\x1b[32m"
+  | .exitedBad => "\x1b[31m"
+  | .idle | .resumable => "\x1b[2;39m"
+
+/-- Attention groups in display order, retaining only positive exact counts.
+Ordinary activity and successful completion do not ask for attention. -/
+def attentionCounts (statuses : List Status) : List (Status × Nat) :=
+  ([.wantsYou, .exitedBad, .unknown] : List Status).filterMap fun status =>
+    let count := statuses.count status
+    if count == 0 then none else some (status, count)
+
+/-- Compact plain text for prompts and titles: a decimal count and the canonical
+icon for each attention group, separated by one space with no trailing newline. -/
+def summary (statuses : List Status) : String :=
+  String.intercalate " "
+    ((attentionCounts statuses).map fun (status, count) => (toString count).push (icon status))
+
 end Linger.Core.Status

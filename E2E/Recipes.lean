@@ -5,13 +5,14 @@ public import Manager.Resurrect
 
 public section
 
-/-! # E2E.Recipes — native launch settings and foreign-save import
+/-! # E2E.Recipes — native launch settings, fish prompt and foreign-save import
 
 `linger import` projects pane records into independent linger sessions. This
 suite drives the actual CLI against real daemons and synthetic saves. Recorder
 checks call the same executor through this test binary's `--import-probe` mode.
 Native configuration assertions inspect their effective settings; they do not
-claim to launch or exercise any terminal GUI.
+claim to launch or exercise any terminal GUI. The prompt checks execute the
+native example in fish with recorded command calls.
 -/
 
 namespace E2E.Recipes
@@ -49,6 +50,129 @@ private def configChecks : IO Nat := do
         !line.isEmpty && !line.startsWith comment
     f :=
       f + (← expect (settings == [setting]) s!"{label} native configuration launches linger select")
+  return f
+
+/-- The recipe only wires a native prompt to the CLI. The recorder supplies
+already rendered bytes; all assertions and case selection stay in Lean. -/
+private def fishPromptChecks (e : Env) (home data : String) : IO Nat := do
+  let recipe := (← IO.currentDir) / "recipes" / "fish_prompt.fish"
+  let content ←
+    try
+      IO.FS.readFile recipe
+    catch _ =>
+      pure ""
+  let settings :=
+    (content.splitOn "\n").map (·.trimAscii.toString) |>.filter fun line =>
+      !line.isEmpty && !line.startsWith "#"
+  let mut f ←
+    expect
+        (settings ==
+          ["function fish_right_prompt", "set -l last_status $status", "command -q linger",
+            "and command linger status 2>/dev/null", "return $last_status", "end"])
+        "fish prompt contains only status preservation and the plain status command"
+  let root := System.FilePath.mk e.dir / "fish prompt"
+  let bin := root / "bin"
+  let emptyPath := root / "empty"
+  let callsFile := root / "calls"
+  IO.FS.createDirAll bin
+  IO.FS.createDirAll emptyPath
+  let env :=
+    e.procEnv ++
+      #[("HOME", some home), ("XDG_CONFIG_HOME", some (root / "config").toString),
+        ("XDG_DATA_HOME", some data), ("FISH_PROMPT_CALLS", some callsFile.toString)]
+  -- Resolve fish before restricting PATH. The recipe suite already requires
+  -- fish for its account-home regression; none of this adds a runtime dependency.
+  let found ←
+    IO.Process.output { cmd := "fish", args := #["--no-config", "-c", "status fish-path"], env }
+  let fish := found.stdout.trimAscii.toString
+  unless found.exitCode == 0 && !fish.isEmpty do
+    throw (IO.userError "could not resolve fish for the native prompt checks")
+  IO.FS.writeFile (bin / "linger")
+      r#"#!/bin/sh
+printf 'CALL\000' >> "$FISH_PROMPT_CALLS"
+printf '%s\000' "$@" >> "$FISH_PROMPT_CALLS"
+printf '\n' >> "$FISH_PROMPT_CALLS"
+printf '%s' "$FISH_PROMPT_STDOUT"
+printf '%s' "$FISH_PROMPT_STDERR" >&2
+exit "$FISH_PROMPT_RC"
+"#
+  Linger.Posix.chmod (bin / "linger").toString 0o700
+  let setup :=
+    r#"function fish_prompt
+    printf 'LEFT'
+end
+function linger
+    printf 'SHADOW'
+    return 97
+end
+function prompt_probe_previous
+    return $FISH_PROMPT_PREVIOUS
+end
+source "$argv[1]"; or exit 98
+"#
+  let draw := "prompt_probe_previous\nfish_right_prompt\nexit $status\n"
+  let invoke := fun (path : System.FilePath) (body text err rc previous : String) => do
+    IO.FS.writeFile callsFile ""
+    let out ←
+      IO.Process.output
+          { cmd := fish, args := #["--no-config", "-c", setup ++ body, "--", recipe.toString],
+            env :=
+              env ++
+                #[("PATH", some path.toString), ("FISH_PROMPT_STDOUT", some text),
+                  ("FISH_PROMPT_STDERR", some err), ("FISH_PROMPT_RC", some rc),
+                  ("FISH_PROMPT_PREVIOUS", some previous)] }
+    return (out, ← IO.FS.readFile callsFile)
+  let (loaded, calls) ← invoke bin "fish_prompt\n" "" "" "0" "0"
+  f :=
+    f +
+      (←
+        expect
+            (loaded.exitCode == 0 && loaded.stdout == "LEFT" && loaded.stderr.isEmpty &&
+              calls.isEmpty)
+            "fish recipe preserves the left prompt and samples nothing when sourced")
+  for (label, text, err, rc, previous) in
+    [("attention", "2⣿ 1! 1?\n", "hidden diagnostic\n", "0", "23"), ("empty", "", "", "0", "0"),
+      ("failure", "", "status unavailable\n", "7", "42")] do
+    let (out, calls) ← invoke bin draw text err rc previous
+    f :=
+      f +
+        (←
+          expect
+              (out.exitCode.toNat == previous.toNat?.getD 99 && out.stdout == text &&
+                out.stderr.isEmpty &&
+                calls == call ["status"])
+              s!"fish prompt calls the executable once, preserves status and emits exact bytes ({label})")
+  let (missing, calls) ← invoke emptyPath draw "" "" "0" "19"
+  f :=
+    f +
+      (←
+        expect
+            (missing.exitCode == 19 && missing.stdout.isEmpty && missing.stderr.isEmpty &&
+              calls.isEmpty)
+            "fish prompt is quiet and preserves status when linger is absent from PATH")
+  let redraw :=
+    "prompt_probe_previous\nfish_right_prompt\nset -gx FISH_PROMPT_STDOUT '1?\n'\n" ++ draw
+  let (out, calls) ← invoke bin redraw "2⣿ 1! 1?\n" "" "0" "23"
+  f :=
+    f +
+      (←
+        expect
+            (out.exitCode == 23 && out.stdout == "2⣿ 1! 1?\n1?\n" && out.stderr.isEmpty &&
+              calls == call ["status"] ++ call ["status"])
+            "fish prompt samples again on each redraw without retaining old counts")
+  -- Check the real command as well as the prompt, since prompt stderr suppression
+  -- must not conceal a missing CLI route.
+  let actual ← IO.Process.output { cmd := e.bin, args := #["status"], env }
+  let (prompt, _) ← invoke ((System.FilePath.mk e.bin).parent.getD root) draw "" "" "0" "23"
+  f :=
+    f +
+      (←
+        expect
+            (actual.exitCode == 0 && actual.stdout.isEmpty && actual.stderr.isEmpty &&
+              prompt.exitCode == 23 &&
+              prompt.stdout.isEmpty &&
+              prompt.stderr.isEmpty)
+            "fish prompt composes with real linger status in an empty session directory")
   return f
 
 /-- tmux-resurrect prefixes the saved directory and full command with `:` and
@@ -511,6 +635,7 @@ def run : IO UInt32 := do
   IO.FS.createDirAll home
   IO.FS.createDirAll data
   let mut f ← configChecks
+  f := f + (← fishPromptChecks e home.toString data.toString)
   f := f + (← absoluteExecutableChecks e home.toString data.toString)
   f := f + (← importBoundaryChecks e home.toString data.toString)
   f := f + (← importEnvironmentChecks e home.toString data.toString)

@@ -4,6 +4,8 @@ public import Tools.Picker
 public import Tools.Input
 public import Linger.Posix
 public import Linger.Core.Vt
+public import Linger.Core.Title
+public import Linger.Runtime.Command
 
 public section
 
@@ -19,45 +21,18 @@ private inductive Choice where
   | cancel
   | failed (status : UInt32) (stderr : String)
 
-/-- The selector owns the listing group and both pipe readers until completion or
-retirement. Only the input loop reaps its leader, keeping its PID reserved until
-the group is retired. -/
-private structure Listing where
-  child : IO.Process.Child { stdin := .null, stdout := .piped, stderr := .piped }
-  stdout : Task (Except IO.Error String)
-  stderr : Task (Except IO.Error String)
-
-private def listing (executable : String) : IO Listing := do
-  let child ←
-    IO.Process.spawn
-        { cmd := executable, args := #["ls", "-r", "--porcelain"], stdin := .null, stdout := .piped,
-          stderr := .piped, setsid := true }
-  let stdout ← IO.asTask child.stdout.readToEnd Task.Priority.dedicated
-  let stderr ← IO.asTask child.stderr.readToEnd Task.Priority.dedicated
-  return { child, stdout, stderr }
-
-/-- Retire the isolated listing group before reaping its leader: a remote-listing
-helper may still hold the pipes after the leader exits. Join both readers so no
-task or reaper escapes selection. -/
-private def Listing.stop (job : Listing) : IO Unit := do
-  try
-    try
-      job.child.kill
-    finally
-      discard job.child.wait
-  finally
-    discard <| IO.wait job.stdout
-    discard <| IO.wait job.stderr
-
 /-- The viewport follows the bounded selection. Keep the final column unused
 so neither a full-width name nor a resize induces an automatic line wrap.
 In short terminals the selected row takes priority over decoration and help.
 Before the first snapshot the query is editable, but there is no selectable row. -/
-private def draw (state : Tools.Picker.State) (loaded : Bool) (cols rows : UInt32) : String :=
+private def draw (state : Tools.Picker.State) (snapshot : Tools.Picker.Snapshot)
+    (loaded withColor : Bool) (cols rows : UInt32) : String :=
   Id.run do
     let width := cols.toNat - 1
     let height := max 1 rows.toNat
     let items := Tools.Picker.items state.candidates state.query
+    let nameCol :=
+      Linger.Core.Listing.nameWidth (snapshot.candidates.map fun target => [("name", target)])
     let mut lines : Array (Array (String × String)) := #[]
     if height ≥ 7 then
       lines := lines.push #[("  linger", "")] |>.push #[]
@@ -77,13 +52,14 @@ private def draw (state : Tools.Picker.State) (loaded : Bool) (cols rows : UInt3
     else
       let mut index := start
       for item in (items.drop start).take slots do
-        let label :=
-          match item with
-          | .existing target => target
-          | .create target => s!"+ Create {target}"
         let chosen := index == state.cursor
-        let text := (if chosen then "  ▸ " else "    ") ++ label
-        lines := lines.push #[(text, if chosen then "\x1b[7m" else "")]
+        let selection := if chosen then "\x1b[7m" else ""
+        let mut pieces := #[(if chosen then "  ▸ " else "    ", selection)]
+        for piece in Tools.Picker.presentation snapshot nameCol item do
+          let statusStyle :=
+            if withColor then (piece.status.map Linger.Core.Status.style).getD "" else ""
+          pieces := pieces.push (String.ofList piece.text, selection ++ statusStyle)
+        lines := lines.push pieces
         index := index + 1
     if height > 2 then
       if height ≥ 6 then
@@ -124,13 +100,16 @@ private def draw (state : Tools.Picker.State) (loaded : Bool) (cols rows : UInt3
 act on the displayed snapshot; a completed replacement is applied afterward
 and rendered before polling again. The first listing is cancellable too. -/
 private def choose (executable : String) : IO Choice := do
-  let pending ← IO.mkRef (none : Option Listing)
+  let pending ← IO.mkRef (none : Option Linger.Runtime.Command.Job)
+  let withColor := (← IO.getEnv "NO_COLOR").isNone
   let saved ← termRaw stdinFd
   try
     writeAll stdoutFd "\x1b[?1049h\x1b[?25l\x1b[?2004h".toUTF8
+    writeAll stdoutFd (ByteArray.mk (Linger.Core.Title.ansi "linger").toArray)
     let fds := #[stdinFd]
     let events := #[POLLIN]
     let mut state := Tools.Picker.init []
+    let mut snapshot : Tools.Picker.Snapshot := {}
     let mut loaded := false
     let mut decoder := Tools.Input.init
     let mut lastInput ← monotonicMs
@@ -141,7 +120,7 @@ private def choose (executable : String) : IO Choice := do
     while true do
       let current ← winsizeGet stdoutFd
       if dirty || current != size then
-        let frame := draw state loaded current.1 current.2
+        let frame := draw state snapshot loaded withColor current.1 current.2
         if frame != lastFrame || current != size then
           writeAll stdoutFd frame.toUTF8
           lastFrame := frame
@@ -178,34 +157,30 @@ private def choose (executable : String) : IO Choice := do
           return .attach target
         | .cancel =>
           return .cancel
-      if let some job← pending.get then
-        if (← IO.hasFinished job.stdout) && (← IO.hasFinished job.stderr) then
-          if let some status← job.child.tryWait then
-            pending.set none
-            let stdout ← IO.ofExcept (← IO.wait job.stdout)
-            let stderr ← IO.ofExcept (← IO.wait job.stderr)
-            if status != 0 then
-              return .failed status stderr
-            let candidates ← IO.ofExcept (Tools.Picker.parseListing stdout)
-            let next :=
-              if loaded then Tools.Picker.refresh state candidates
-              else { (Tools.Picker.init candidates) with query := state.query }
-            dirty := dirty || !loaded || next != state
-            state := next
-            loaded := true
-            nextListing := (← monotonicMs) + 1000
+      if let some result← Linger.Runtime.Command.poll pending then
+        if result.exitCode != 0 then
+          return .failed result.exitCode result.stderr
+        let incoming ← IO.ofExcept (Tools.Picker.parseSnapshot result.stdout)
+        let next :=
+          if loaded then Tools.Picker.refresh state incoming.candidates
+          else { (Tools.Picker.init incoming.candidates) with query := state.query }
+        dirty := dirty || !loaded || next != state || incoming != snapshot
+        state := next
+        snapshot := incoming
+        loaded := true
+        nextListing := (← monotonicMs) + 1000
       if (← pending.get).isNone && (← monotonicMs) ≥ nextListing then
-        pending.set (some (← listing executable))
+        pending.set (some (← Linger.Runtime.Command.start executable #["ls", "-r", "--porcelain"]))
     return .cancel
   finally
     try
       try
         writeAll stdoutFd "\x1b[0m\x1b[?2004l\x1b[?25h\x1b[?1049l".toUTF8
+        writeAll stdoutFd (ByteArray.mk (Linger.Core.Title.ansi "").toArray)
       finally
         termRestore stdinFd saved
     finally
-      if let some job← pending.get then
-        job.stop
+      Linger.Runtime.Command.stop pending
 
 /-- Execute either selected row through attach, after terminal restoration. Every attach
 exit returns to a fresh listing; cancellation ends the manager. The caller

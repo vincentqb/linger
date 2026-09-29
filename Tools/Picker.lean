@@ -2,6 +2,7 @@ module
 
 public import Tools.Key
 public import Linger.Core.Name
+public import Linger.Core.Listing
 
 public section
 
@@ -52,6 +53,30 @@ private def parseRows (seen rows : List String) : Except String (List String) :=
 Metadata is ignored; malformed name records or duplicates reject the whole snapshot. -/
 def parseListing (text : String) : Except String (List String) := parseRows [] (text.splitOn "\n")
 
+/-- Exact targets plus the complete metadata records that produced them. Equality
+includes metadata, so a status-only change still invalidates the displayed frame. -/
+structure Snapshot where
+  candidates : List String := []
+  records : List (List String) := []
+  deriving BEq, Repr, Inhabited
+
+/-- The target parser validates the whole output before metadata is published.
+Consecutive name records and blank-separated records both delimit sessions. -/
+def parseSnapshot (text : String) : Except String Snapshot :=
+  (parseListing text).map fun candidates =>
+    { candidates, records := (text.splitOn "\n").map (·.splitOn "\t") }
+
+/-- Locate one validated identity without reinterpreting or normalizing its host.
+The next name or blank record ends its metadata; missing status remains unknown. -/
+def Snapshot.row (snapshot : Snapshot) (target : String) : List (String × String) :=
+  let records := snapshot.records.dropWhile (· != ["name", target])
+  ("name", target) ::
+    (records.tail.takeWhile fun fields => fields != [""] && fields.head? != some "name").filterMap
+      fun fields =>
+      match fields with
+      | [key, value] => some (key, value)
+      | _ => none
+
 def visible (candidates : List String) (query : String) : List String :=
   candidates.filter (Tools.Picker.matches query)
 
@@ -62,6 +87,12 @@ inductive Item where
 
 def Item.target : Item → String
   | .existing target | .create target => target
+
+/-- Existing rows use the listing's entire presentation. Creation keeps its
+explicit label and exact target, and has no invented session status. -/
+def presentation (snapshot : Snapshot) (nameCol : Nat) : Item → List Linger.Core.Listing.RowPiece
+  | .existing target => Linger.Core.Listing.rowPieces nameCol (snapshot.row target)
+  | .create target => [{ text := s!"+ Create {target}".toList }]
 
 /-- Existing matches come first. Creation is explicit and never rewrites the query. -/
 def items (candidates : List String) (query : String) : List Item :=

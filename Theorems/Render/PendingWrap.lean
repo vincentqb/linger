@@ -437,8 +437,8 @@ theorem wrap_feed_eq (on : Bool) {w : Vt} (hg : w.pstate = .ground) (hu : w.u8ne
   simp [Vt.setMode, ← hg]
 
 /-- A charset designation changes only the designated bank. -/
-theorem charset_feed_eq (i b : UInt8) (hi : i = 0x28 ∨ i = 0x29) {w : Vt} (hg : w.pstate = .ground)
-    (hu : w.u8need = 0) :
+theorem charset_feed_eq (i b : UInt8) (hi : i = 0x28 ∨ i = 0x29) (hlo : 0x30 ≤ b) (hhi : b ≤ 0x7E)
+    {w : Vt} (hg : w.pstate = .ground) (hu : w.u8need = 0) :
     w.feed (escCharset i b) =
       if i == 0x28 then { w with g0Line := b == 0x30 } else { w with g1Line := b == 0x30 } := by
   rw [show escCharset i b = [0x1B] ++ [i, b] from rfl,
@@ -449,7 +449,8 @@ theorem charset_feed_eq (i b : UInt8) (hi : i = 0x28 ∨ i = 0x29) {w : Vt} (hg 
     rw [step_of_esc_quiet (v := { w with pstate := .esc }) _ rfl hu]
     rcases hi with h | h <;> subst h <;> rfl
   rw [hinter, step_of_escInter_quiet (v := { w with pstate := .escInter i }) b rfl hu]
-  rcases hi with h | h <;> subst h <;> simp [Vt.stepEscInter, ← hg]
+  rw [stepEscInter_final _ i b hlo hhi]
+  rcases hi with h | h <;> subst h <;> simp [← hg]
 
 /-- SI and SO do not touch the cursor or its pending bit. -/
 theorem shift_feed_eq (on : Bool) {w : Vt} (hg : w.pstate = .ground) (hu : w.u8need = 0) :
@@ -468,7 +469,7 @@ theorem charsetAnsi_feed_eq (v w : Vt) (hs : w.shiftOut = false) (hg : w.pstate 
     w.feed (if v.g0Line then escCharset 0x28 0x30 else escCharset 0x28 0x42) =
       { w with g0Line := v.g0Line } := by
     cases v.g0Line <;> simp only [Bool.false_eq_true, ↓reduceIte] <;>
-      rw [charset_feed_eq _ _ (Or.inl rfl) hg hu] <;>
+      rw [charset_feed_eq _ _ (Or.inl rfl) (by decide) (by decide) hg hu] <;>
       rfl
   have h1 :
     ({ w with g0Line := v.g0Line } : Vt).feed
@@ -476,7 +477,8 @@ theorem charsetAnsi_feed_eq (v w : Vt) (hs : w.shiftOut = false) (hg : w.pstate 
       { w with
         g0Line := v.g0Line, g1Line := v.g1Line } := by
     cases v.g1Line <;> simp only [Bool.false_eq_true, ↓reduceIte] <;>
-      rw [charset_feed_eq (w := { w with g0Line := v.g0Line }) _ _ (Or.inr rfl) hg hu] <;>
+      rw [charset_feed_eq (w := { w with g0Line := v.g0Line }) _ _ (Or.inr rfl) (by decide)
+          (by decide) hg hu] <;>
       rfl
   unfold charsetAnsi
   rw [feed_append, feed_append, h0, h1]
@@ -508,7 +510,7 @@ theorem pending_prepare_feed (w : Vt) (hg : w.pstate = .ground) (hu : w.u8need =
         modes :=
           { w.modes with
             wrap := true, insert := false } })
-      0x28 0x42 (Or.inl rfl) hg hu]
+      0x28 0x42 (Or.inl rfl) (by decide) (by decide) hg hu]
   simp only [beq_self_eq_true, show ((0x42 : UInt8) == 0x30) = false from rfl, ↓reduceIte]
   rw [charset_feed_eq (w :=
       { w with
@@ -516,7 +518,7 @@ theorem pending_prepare_feed (w : Vt) (hg : w.pstate = .ground) (hu : w.u8need =
           { w.modes with
             wrap := true, insert := false },
         g0Line := false })
-      0x29 0x42 (Or.inr rfl) hg hu]
+      0x29 0x42 (Or.inr rfl) (by decide) (by decide) hg hu]
   simp only [show ((0x29 : UInt8) == 0x28) = false from rfl,
     show ((0x42 : UInt8) == 0x30) = false from rfl, Bool.false_eq_true, ↓reduceIte]
   exact

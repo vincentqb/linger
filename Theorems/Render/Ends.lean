@@ -141,6 +141,19 @@ theorem utf8s_no_esc (cs : List Char) : ∀ b ∈ utf8s cs, b ≠ 0x1B := by
   rw [he] at hge
   exact absurd hge (by decide)
 
+/-- Each scrubbed Unicode scalar occupies at most four bytes. -/
+theorem utf8s_length_le (cs : List Char) : (utf8s cs).length ≤ 4 * cs.length := by
+  induction cs with
+  | nil => simp [utf8s]
+  | cons c cs
+    ih =>
+    have scalar : (utf8 (safeChar c)).length ≤ 4 := by
+      unfold utf8
+      dsimp only
+      split <;> (try split) <;> (try split) <;> simp
+    simp only [utf8s, List.flatMap_cons, List.length_append, List.length_cons] at *
+    omega
+
 /-! ## `Ends`: the compositional core
 
 `Ends bs` is exactly the property that composes over `++`, which is what
@@ -624,7 +637,7 @@ theorem ends_penSgr (p : Pen) : Ends (penSgr p) := by
 /-! ### `ESC`-single and charset sequences
 
 `stepEsc` assigns `.ground` for every final it honours; `ESC (`/`ESC )`
-go to `.escInter`, whose every branch is `.ground`. -/
+go to `.escInter`, which waits for a final in `0x30..0x7E`. -/
 
 /-- An `ESC <final>` whose final is one of the single-byte sequences
 `restore` emits — `7` (DECSC), `=` (app keypad), `H` (HTS) — lands back
@@ -651,16 +664,17 @@ theorem esc_inter_step {v : Vt} (b : UInt8) (hg : v.pstate = .esc)
   unfold Vt.stepEsc
   rcases hb with h | h <;> subst h <;> rfl
 
-/-- …and the byte after it always returns to ground. -/
-theorem esc_inter_finish {v : Vt} {i : UInt8} (b : UInt8) (hg : v.pstate = .escInter i) :
+/-- A final byte returns the intermediate sequence to ground. -/
+theorem esc_inter_finish {v : Vt} {i : UInt8} (b : UInt8) (hg : v.pstate = .escInter i)
+    (hlo : 0x30 ≤ b) (hhi : b ≤ 0x7E) :
     (v.step b).pstate = .ground := by
   have hw : (v.abortUtf8 b).pstate = PState.escInter i := by
     rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
   unfold Vt.step
   dsimp only
   rw [hw]
-  unfold Vt.stepEscInter
   dsimp only
+  rw [Linger.Core.Vt.stepEscInter_final _ i b hlo hhi]
   repeat' split
   all_goals rfl
 
@@ -674,13 +688,14 @@ theorem ends_escSeq (b : UInt8) (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x48 ∨ b =
   exact esc_single_step b (esc_step hg) hb
 
 /-- `ESC ( x` / `ESC ) x` (charset designation) are `Ends`. -/
-theorem ends_escCharset (i x : UInt8) (hi : i = 0x28 ∨ i = 0x29) :
+theorem ends_escCharset (i x : UInt8) (hi : i = 0x28 ∨ i = 0x29)
+    (hlo : 0x30 ≤ x) (hhi : x ≤ 0x7E) :
     Ends (escCharset i x) := by
   intro v hg
   show (v.feed ([0x1B] ++ [i, x])).pstate = .ground
   rw [show ([0x1B] ++ [i, x] : Bytes) = 0x1B :: i :: [x] from rfl, feed_cons, feed_cons]
   show (((v.step 0x1B).step i).step x).pstate = .ground
-  exact esc_inter_finish x (esc_inter_step i (esc_step hg) hi)
+  exact esc_inter_finish x (esc_inter_step i (esc_step hg) hi) hlo hhi
 
 /-! ### OSC (the window title)
 
@@ -947,10 +962,10 @@ theorem ends_savedPendingAnsi (v : Vt) : Ends (Linger.Core.Render.savedPendingAn
 
 theorem ends_charsetAnsi (v : Vt) : Ends (charsetAnsi v) := by
   unfold charsetAnsi
-  refine ((Ends.ite (ends_escCharset 0x28 0x30 (by decide))
-    (ends_escCharset 0x28 0x42 (by decide))).append
-    (Ends.ite (ends_escCharset 0x29 0x30 (by decide))
-      (ends_escCharset 0x29 0x42 (by decide)))).append ?_
+  refine ((Ends.ite (ends_escCharset 0x28 0x30 (by decide) (by decide) (by decide))
+    (ends_escCharset 0x28 0x42 (by decide) (by decide) (by decide))).append
+    (Ends.ite (ends_escCharset 0x29 0x30 (by decide) (by decide) (by decide))
+      (ends_escCharset 0x29 0x42 (by decide) (by decide) (by decide)))).append ?_
   exact Ends.ite (Ends.text (by decide)) Ends.nil
 
 theorem ends_titleAnsi (v : Vt) : Ends (titleAnsi v) := by
@@ -984,8 +999,8 @@ theorem ends_modesAnsi (v : Vt) : Ends (modesAnsi v) := by
 theorem ends_prologueAnsi (v : Vt) : Ends (prologueAnsi v) := by
   unfold prologueAnsi
   refine Ends.append ?_ (Ends.text (bs := [0x0F]) (by decide))
-  refine Ends.append ?_ (ends_escCharset 0x29 0x42 (by decide))
-  refine Ends.append ?_ (ends_escCharset 0x28 0x42 (by decide))
+  refine Ends.append ?_ (ends_escCharset 0x29 0x42 (by decide) (by decide) (by decide))
+  refine Ends.append ?_ (ends_escCharset 0x28 0x42 (by decide) (by decide) (by decide))
   refine Ends.append ?_ (ends_csiNum2 1 v.rows 0x72 (by decide) (by decide))
   refine Ends.append ?_ (ends_modeSet 7 true)
   refine Ends.append ?_ (ends_modeSet 6 false)
@@ -1006,8 +1021,8 @@ theorem ends_cursorPendingAnsi (v : Vt) : Ends (Linger.Core.Render.cursorPending
     refine Ends.append ?_ (ends_modeSet 7 _)
     refine Ends.append ?_ (ends_pendingAnsi _ _ _ _ _)
     refine Ends.append ?_ (Ends.text (bs := [0x0F]) (by decide))
-    refine Ends.append ?_ (ends_escCharset 0x29 0x42 (by decide))
-    refine Ends.append ?_ (ends_escCharset 0x28 0x42 (by decide))
+    refine Ends.append ?_ (ends_escCharset 0x29 0x42 (by decide) (by decide) (by decide))
+    refine Ends.append ?_ (ends_escCharset 0x28 0x42 (by decide) (by decide) (by decide))
     exact (ends_modeSet 7 true).append (ends_irm false)
   · exact Ends.nil
 

@@ -27,7 +27,7 @@ Lean 4.34.1 via elan; no external Lean dependencies.
 ./lake build Theorems Tests      # the proofs and the unit fixtures
 ./lake exe lingertest            # POSIX shim smoke tests
 ./lake exe e2e <suite>           # one pty suite: attach resume overview remote robust
-                                 #   graphics terminal status agent watch recipes delivery manager
+                                 #   graphics terminal status agent watch recipes delivery manager title
 ./lake env lean E2E/Coverage.lean # resolved renderer/replay references; build the program first
 ./lake exe e2e ci                # which runners CI asks for (tests/ci-runners.sh)
 sh tests/gates.sh                # the fast source-tree gates (seconds)
@@ -63,6 +63,7 @@ linger attach work      # attach, creating "work" if absent
 Ctrl-\                # detach — session keeps running
 linger select          # create or attach; return after detach
 linger ls              # overview: names, pids, labels; then exit
+linger status          # compact local attention counts; empty when quiet
 ```
 
 | command | |
@@ -75,6 +76,7 @@ linger ls              # overview: names, pids, labels; then exit
 | `run <name> <cmd>` | run a command in a session, don't attach |
 | `send <name> <text>` | send raw input to its pty (`send <name> -`: stdin, byte-exact) |
 | `ls [-r [h,..]]` | overview; `-r` adds remote hosts; `--porcelain` is machine-readable |
+| `status` | local unread, failed and unknown counts for shell prompts; omits zero counts |
 | `import [SAVE]` | create shells in directories from a tmux-resurrect save; never replay commands |
 | `info <name>` | one session's records: size, cursor, `outseq`, labels… |
 | `capture <name>` | the current screen as text, one line per row (marks it seen) |
@@ -97,13 +99,35 @@ controls scrubbed), so parse them positionally with `rows` from `info`.
 
 ## Session status
 
-Each row in `linger ls` carries one glyph — the most specific state that
+Each row in `linger ls` and `linger select` carries one glyph — the most specific state that
 applies — plus `+N` when N clients are attached: `⣷` working, `⣿`
 unread (output while nobody watched), `⣀` idle, `✓` exited 0, `!`
 exited nonzero or killed, `~` resumable (checkpoint on disk), `?`
 unknown. `--porcelain` carries the same seven as a `status` field, and
 `behind` counts output events that arrived unseen. Unread means "since
 anyone last looked", a property of the session, not of you.
+
+Both views use the same row renderer and status palette. Working is cyan,
+unread and unknown are yellow, successful exits are green, failed exits are red,
+and idle/resumable are dim default text. These are the terminal's standard ANSI
+colors, so your theme chooses the shades. Only the status glyph is colored;
+names stay ordinary text. Redirected listings are plain, and `NO_COLOR`
+disables colors.
+
+`linger status` prints compact attention counts, for example `2⣿ 1!`: two
+unread sessions and one failed exit. Zero counts and other states are omitted;
+an all-quiet snapshot prints nothing. Sampling does not mark output seen.
+The [fish prompt recipe](recipes/fish_prompt.fish) adds this to the right prompt
+and preserves the preceding command's exit status. Other shells can call the
+same command.
+
+While attached, the window title shows `work · 2⣿ 1! · application title`.
+Empty parts are omitted. Local attention counts refresh while programs run,
+with the next sample starting one second after the previous one finishes.
+The title uses plain glyphs; terminal titles have no ANSI styling. Updates wait
+for complete terminal sequences and UTF-8 characters. Detach, session exit and
+connection loss clear the title; the next shell prompt can set its usual title.
+The selector uses `linger` as its title and clears it when it exits.
 
 ## Graphics
 
@@ -122,12 +146,12 @@ is a settled non-goal (AGENTS.md).
 
 Ghostty, kitty, WezTerm and other terminals can run `linger select` at startup.
 [`recipes/README.md`](recipes/README.md) contains native configuration
-examples, selection keys and save-import instructions. Selection offers
+examples, a fish prompt, selection keys and save-import instructions. Selection offers
 `Create main` when there are no sessions; type a name to create a different one.
 
 Selection and `linger import [SAVE]` are Lean code and need no external picker
 or shell functions. Their policies and executors stay outside the session and
-VT libraries. `attach name@host` execs ssh; any carrier that can run a remote
+VT libraries. `attach name@host` runs ssh; any carrier that can run a remote
 command with a tty works.
 
 ## Notes
@@ -143,8 +167,8 @@ command with a tty works.
   terminal. Selection temporarily uses the alternate screen and restores it
   before attach.
 - Detach key `Ctrl-\`; `LINGER_NO_DETACH_KEY=1` disables it.
-- Detaching hands the terminal back usable, on every exit path. The
-  window title is the one thing not put back — we never read yours.
+- Detaching hands the terminal back usable, on every exit path, with an empty
+  title ready for the shell to name again.
 - A dropped link cannot hurt a session — it detaches; reattach restores
   the screen.
 - Remotes: `-r host,host` for one run, `~/.config/linger/remotes` to

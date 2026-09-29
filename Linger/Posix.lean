@@ -170,14 +170,16 @@ def unixListen (path : String) : IO UInt32 := do
   unixListenRaw path
 
 @[extern "linger_unix_connect"]
-private opaque unixConnectRaw (path : @& String) : IO Int64
+private opaque unixConnectRaw (path : @& String) (nonblocking : Bool) : IO Int64
 
 /-- `≥ 0` connected fd; `< 0` is `-errno` — ENOENT (no socket) and
 ECONNREFUSED (stale socket, daemon dead) are expected outcomes.
+With `nonblocking`, a busy listener fails immediately and a connected fd
+stays nonblocking; the caller owns its reply deadline.
 An unrepresentable NUL path throws before reaching the OS. -/
-def unixConnect (path : String) : IO Int64 := do
+def unixConnect (path : String) (nonblocking : Bool := false) : IO Int64 := do
   checkCString "unixConnect path" path
-  unixConnectRaw path
+  unixConnectRaw path nonblocking
 
 /-- Accept on a nonblocking listen fd. `-1` = nothing to accept. -/
 @[extern "linger_accept"]

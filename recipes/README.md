@@ -1,8 +1,8 @@
-# Terminal and SSH configuration
+# Terminal, prompt and SSH configuration
 
-Every example starts the same `linger` executable. Session selection and save
-import are Lean code and work from any shell; recipes only configure the terminal
-or transport.
+Every example invokes the same `linger` executable. Session selection, status
+counts and save import are Lean code and work from any shell; recipes only
+configure the terminal, prompt or transport.
 
 Build and install `linger` as described in the [README](../README.md#build).
 Choose a session interactively, or create one by name:
@@ -46,6 +46,35 @@ Open a new window after loading the configuration. The terminal must find
 selector and importer reuse the running executable for local child commands.
 Window, tab and split configuration remains with the terminal.
 
+## Fish prompt
+
+[`fish_prompt.fish`](fish_prompt.fish) is an optional `fish_right_prompt` example.
+If you have no right prompt, place its contents in
+`~/.config/fish/functions/fish_right_prompt.fish`. If you already have one, merge
+these calls as its last displayed segment, keeping your existing formatting:
+
+```fish
+command -q linger
+and command linger status 2>/dev/null
+```
+
+The example saves `$status` before running the command and returns it afterward.
+Keep your prompt's existing status handling when merging. Your `fish_prompt`
+stays as it is. The quiet builtin lookup avoids fish's diagnostic when `linger`
+is absent from PATH; the invocation suppresses command errors and adds no padding.
+
+`2⣿ 1! 1?` means two sessions with unread output, one reporting an unsuccessful
+session exit, and one whose status is unknown. `linger status` takes no flags.
+It shows local attention counts only, omitting working, idle, resumable and
+successful exits; no attention produces no output. Lean owns counting and the
+info sampling without marking output seen. Local connections are nonblocking
+and all replies share a 250 ms waiting budget. Busy or unanswered peers count as
+unknown and keep their sockets. The command never contacts remote hosts.
+This is a current snapshot; retired sessions do not become a failure history.
+
+Status is sampled when fish redraws the prompt. It does not update while a
+foreground program runs; attached window titles provide live visibility.
+
 ## Selection
 
 Type a subsequence of the target, such as `wkdh` for `work@dev-host`.
@@ -87,7 +116,7 @@ Client and daemon talk over a local Unix socket on the session's host.
 Any carrier that can run a remote command with a tty works interactively:
 
 ```sh
-ssh -t host linger attach work      # what `linger attach work@host` execs
+ssh -t host linger attach work      # what `linger attach work@host` invokes
 mosh host -- linger attach work
 ```
 
@@ -134,7 +163,7 @@ not imported. A save filename beginning with `-` needs a path such as `./-save`.
 [`THEOREMS.md`](../THEOREMS.md#entry-point-boundaries) maps routing, matching,
 input decoding and import planning to their semantic guarantees and IO checks.
 Native configuration checks inspect the settings; they do not launch GUI
-terminals.
+terminals. The recipe suite also runs the prompt example in fish.
 
 ## Earlier installations
 

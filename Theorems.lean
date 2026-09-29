@@ -16,6 +16,7 @@ import Theorems.Render.PendingWrap
 import Theorems.Replay
 import Theorems.Resume
 import Theorems.Status
+import Theorems.Title
 import Theorems.Resurrect
 import Theorems.Picker
 import Theorems.Input

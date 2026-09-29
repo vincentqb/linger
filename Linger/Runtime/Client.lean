@@ -4,7 +4,10 @@ public import Linger.Posix
 public import Linger.Core.Wire
 public import Linger.Core.Render
 public import Linger.Core.Remote
+public import Linger.Core.Title
+public import Linger.Core.Status
 public import Linger.Runtime.Paths
+public import Linger.Runtime.Command
 
 public section
 
@@ -25,10 +28,11 @@ open Linger.Core.Wire (Msg Decoder encode)
 
 def encodeBA (m : Msg) : ByteArray := ByteArray.mk (Linger.Core.Wire.encode m).toArray
 
-/-- Blocking connect to a session socket. `none` = no live daemon. -/
-def connect (name : String) : IO (Option UInt32) := do
+/-- Connect to a session socket. A nonblocking attempt can fail while a live
+listener is busy, so callers must not treat that failure as proof of absence. -/
+def connect (name : String) (nonblocking : Bool := false) : IO (Option UInt32) := do
   let path ← Paths.socketPath name
-  let r ← unixConnect path
+  let r ← unixConnect path nonblocking
   if r ≥ 0 then
     return some r.toUInt64.toUInt32
   return none
@@ -165,9 +169,11 @@ inductive Outcome where
 
 /-- Interactive attach. `readOnly` attaches as a 0×0 observer: output
 mirrors, keyboard is not forwarded, detach key still works. -/
-def attach (fd : UInt32) (readOnly : Bool := false) : IO Outcome := do
+def attach (name : String) (fd : UInt32) (readOnly : Bool := false) : IO Outcome := do
   try
     let detachEnabled := (← IO.getEnv "LINGER_NO_DETACH_KEY").isNone
+    let self ← IO.appPath
+    let pending ← IO.mkRef (none : Option Command.Job)
     let (cols, rows) ← winsizeGet stdinFd
     if readOnly then
       sendMsg fd (.attach 0 0)
@@ -178,8 +184,27 @@ def attach (fd : UInt32) (readOnly : Bool := false) : IO Outcome := do
     let mut dec : Decoder := {}
     let mut result : Outcome := .detached
     let mut leaving := false
+    let mut nextSummary : Nat := 0
+    let mut summary := ""
+    let mut observer := Linger.Core.Vt.Vt.init 1 1
+    let mut receivedOutput := false
+    let mut titleDirty := false
     try
       while !leaving do
+        try
+          if let some output← Command.poll pending then
+            let fresh :=
+              if output.exitCode == 0 then output.stdout.trimAscii.toString
+              else String.singleton (Linger.Core.Status.icon .unknown)
+            titleDirty := titleDirty || fresh != summary
+            summary := fresh
+            nextSummary := (← monotonicMs) + 1000
+          if (← pending.get).isNone && (← monotonicMs) ≥ nextSummary then
+            pending.set (some (← Command.start self.toString #["status"]))
+        catch _ =>
+          summary := String.singleton (Linger.Core.Status.icon .unknown)
+          titleDirty := true
+          nextSummary := (← monotonicMs) + 1000
         let revs ← poll #[stdinFd, fd] #[POLLIN, POLLIN] 200
         let size ← winsizeGet stdinFd
         if size != lastSize && !readOnly then
@@ -215,6 +240,10 @@ def attach (fd : UInt32) (readOnly : Bool := false) : IO Outcome := do
                   match m with
                   | .output payload =>
                     writeAll stdoutFd (ByteArray.mk payload.toArray)
+                    observer := observer.observe payload
+                    receivedOutput := true
+                    -- Reassert even if the application repeats the same OSC title.
+                    titleDirty := true
                   | .exited status =>
                     result := .ended status
                     leaving := true
@@ -223,13 +252,22 @@ def attach (fd : UInt32) (readOnly : Bool := false) : IO Outcome := do
                     leaving := true
                   | _ =>
                     pure ()
+        if receivedOutput && titleDirty && !leaving then
+          let title := Linger.Core.Title.compose name summary observer.windowTitle
+          let bytes := Linger.Core.Title.update observer title
+          if !bytes.isEmpty then
+            writeAll stdoutFd (ByteArray.mk bytes.toArray)
+            titleDirty := false
     finally
       -- These cleanups are nested, not sequential: a broken stdout must not
       -- prevent termios restoration, and neither failure may leak the socket.
       try
-        writeAll stdoutFd (ByteArray.mk Linger.Core.Render.leaveAnsi.toArray)
+        try
+          writeAll stdoutFd (ByteArray.mk Linger.Core.Render.leaveAnsi.toArray)
+        finally
+          termRestore stdinFd saved
       finally
-        termRestore stdinFd saved
+        Command.stop pending
     return result
   finally
     close fd

@@ -14,6 +14,7 @@ import all Theorems.Render
 import all Theorems.Replay
 import all Theorems.Resume
 import all Theorems.Status
+import all Theorems.Title
 import all Theorems.Resurrect
 import all Theorems.Picker
 import all Theorems.Input
