@@ -15,12 +15,12 @@ worklog), `specs/archive/` (closed build records), the comments in
 
 ## Where things stand — read this first after any compaction
 
-1. `specs/proof-factorization.md` is in flight: audit the proof shapes across
-   the codebase, replace repeated reasoning with useful general contracts, and
-   simplify their consumers without weakening existing guarantees. The previous
-   round (`specs/archive/status-presentation.md`) passed the assembled Linux
-   verifier; its hosted checks did not start because of the repository owner's
-   GitHub billing/spending limit.
+1. No spec is in flight. The last one closed on 2026-09-29
+   (`specs/archive/proof-factorization.md`: generalized VT frames, renderer
+   stream/CSI contracts, session trace invariants and CLI validation; assembled
+   Linux verifier green, worker branches/worktrees removed). The implementation
+   checkpoint's hosted checks did not start because of the repository owner's
+   GitHub payments/spending limit.
    New work opens a new `specs/<slug>.md`, names itself here, and keeps
    the live count at one; every behavioral fix starts with a failing
    check and every deletion survives the full verifier stack.

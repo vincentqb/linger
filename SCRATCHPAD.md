@@ -13624,3 +13624,32 @@ sources, all byte-identical to main, and generated caches. Their complete
 uncolored patches, baseline/final sources, hashes and inventories are sealed
 outside the trees in `/tmp/linger-proof-cleanup-20260929/`.
 Publication, fresh deletion preflight and hosted outcomes belong to closure.
+
+## Step 6 notes — 2026-09-29
+
+Proof-factorization checkpoints `329ccfd` and `c002f00` are committed and
+pushed to main. Both required builds and the complete commit hooks pass.
+The assembled foreground verifier and its frozen source hashes remain the
+verification for the implementation; this closure changes documentation only.
+
+All agents are closed. A fresh removal preflight compares each worker's
+branch, head, changed-file inventory, status, index, untracked/ignored files,
+source modes and hashes with the sealed evidence. Every changed file is
+byte-identical to committed main at `c002f00`, also published to origin/main.
+All five branches have zero unique commits. The only omitted material is
+the generated `.lake/` and `.lean-fmt-cache/` content; baseline/final sources,
+complete uncolored patches and inventories remain outside the worktrees.
+All five worktrees and branches are removed; only main remains.
+Receipts: `/tmp/linger-proof-cleanup-final-20260929/preflight.json` and
+`completed.json`; recovery evidence: `/tmp/linger-proof-cleanup-20260929/`.
+
+Hosted run `36605725740` reports failure before any steps ran. The GitHub
+annotation names failed recent account payments or a spending limit requiring
+an increase; the full-gate job was skipped. This is an unexecuted hosted
+check. `/tmp/linger-proof-hosted-20260929/checkpoint/` retains the actual
+run/job/annotation responses. Local Linux verification is green; no hosted
+Linux or macOS pass is claimed.
+
+`specs/archive/proof-factorization.md` closes the round, with the useful
+contracts, bounded negative results, independent reviews, semantic mutations
+and publication limits recorded. AGENTS.md again has no spec in flight.

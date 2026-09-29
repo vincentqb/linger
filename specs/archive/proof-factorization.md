@@ -1,6 +1,6 @@
 # Proof-guided factorization
 
-Status: verified — steps 1–5 integrated; publication and cleanup pending
+Status: closed — Linux verification passed; hosted CI blocked before execution
 Updated: 2026-09-29
 
 ## Intent
@@ -118,5 +118,29 @@ Evidence is in `/tmp/linger-proof-assembled-verifier-20260929/`.
 
 Steps 2–5 share this assembled checkpoint. All five worker trees are frozen,
 their changed sources match main, and their complete patches and source
-copies are sealed in `/tmp/linger-proof-cleanup-20260929/`. Checkpoint
-publication, fresh removal checks and archival closure remain.
+copies are sealed in `/tmp/linger-proof-cleanup-20260929/`.
+
+## Completion record
+
+Checkpoints `329ccfd` and `c002f00` are committed and pushed to main.
+Both required builds and all commit hooks passed before each checkpoint.
+The assembled implementation remains the one that passed the complete
+foreground Linux verifier above.
+
+All agents are closed. Fresh removal checks verify the five worker branch
+identities, zero unique commits, empty indexes/untracked inventories, and
+only generated caches among ignored files. Every changed source and its
+mode match the published checkpoint and the sealed recovery evidence.
+All five worktrees and branches are removed; only main remains locally.
+The fresh checks and completed removals are recorded in
+`/tmp/linger-proof-cleanup-final-20260929/preflight.json` and `completed.json`.
+
+The checkpoint's automatic push run `36605725740` failed before any job steps
+ran. GitHub's annotation says recent account payments have failed or the
+spending limit needs to be increased. The full-gate job was skipped.
+These hosted checks did not execute. The actual run, jobs and annotations
+are preserved in `/tmp/linger-proof-hosted-20260929/checkpoint/`.
+No hosted Linux or macOS pass is claimed.
+
+The closure checkpoint changes documentation only, archives this record,
+and restores the no-live-spec pointer.
