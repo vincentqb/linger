@@ -141,9 +141,7 @@ theorem parseSave_valid (home content : String) (panes : List Pane)
     refine ⟨by simp, distinct, ?_⟩
     intro pane hp
     obtain ⟨canonical, dir⟩ := valid pane hp
-    refine ⟨canonical, ?_, dir⟩
-    rw [← canonical]
-    exact Linger.Core.Name.sanitize_valid pane.name
+    exact ⟨canonical, (Linger.Core.Name.sanitize_eq_self_iff _).mp canonical, dir⟩
 
 /-- Includes NUL introduced by home expansion, not just NUL in the raw save. -/
 theorem parseSave_no_nul (home content : String) (panes : List Pane)

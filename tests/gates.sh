@@ -371,8 +371,6 @@ for tie in \
   'let items := Tools[.]Picker[.]items state[.]candidates state[.]query' \
   'let mut state := Tools[.]Picker[.]init [[]]' \
   'let mut decoder := Tools[.]Input[.]init' \
-  'let [(]next, emitted[)] := Tools[.]Input[.]feed decoder byte' \
-  'let [(]next, emitted[)] := Tools[.]Input[.]flush decoder' \
   'match Tools[.]Picker[.]step state key with' \
   'let cells := Linger[.]Core[.]Vt[.]charWidth c' \
   'let fds := #[[]stdinFd[]]' \
@@ -393,7 +391,9 @@ picker_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Manager/Picker.lean)"
 # replacement. Computing rows or refreshed state without consuming them is
 # insufficient. The loop seams fix draw, poll/decode/step, then refresh ordering.
 # A completed snapshot must not replace the target underneath an unread key.
+# Preserve byte order and consume both decoder results through key dispatch.
 for tie in \
+  'for byte in bytes[.]toList do let [(]next, emitted[)] := Tools[.]Input[.]feed decoder byte decoder := next keys := keys [+][+] emitted[.]toArray else if Tools[.]Input[.]pending decoder && [(]← monotonicMs[)] - lastInput ≥ 150 then let [(]next, emitted[)] := Tools[.]Input[.]flush decoder decoder := next keys := emitted[.]toArray for key in keys do' \
   'let nameCol := Linger[.]Core[.]Listing[.]nameWidth [(]snapshot[.]candidates[.]map fun target => [[][(]"name", target[)][]][)]' \
   'let mut index := start for item in [(]items[.]drop start[)][.]take slots do let chosen := index == state[.]cursor let selection := if chosen then "\\x1b[[]7m" else "" let mut pieces := #[[][(]if chosen then " ▸ " else " ", selection[)][]] for piece in Tools[.]Picker[.]presentation snapshot nameCol item do let statusStyle := if withColor then [(]piece[.]status[.]map Linger[.]Core[.]Status[.]style[)][.]getD "" else "" pieces := pieces[.]push [(]String[.]ofList piece[.]text, selection [+][+] statusStyle[)] lines := lines[.]push pieces index := index [+] 1' \
   'let mut frame := "\\x1b[[]0m\\x1b[[]H\\x1b[[]2J" let mut first := true for line in lines do if !first then frame := frame [+][+] "\\r\\n" first := false let mut used := 0 let mut clipped := false for [(]text, style[)] in line do if clipped then break frame := frame [+][+] style for raw in text[.]toList do let c := if raw[.]toNat < 0x20 [|][|] [(]raw[.]toNat ≥ 0x7F && raw[.]toNat < 0xA0[)] then '"'"'[?]'"'"' else raw let cells := Linger[.]Core[.]Vt[.]charWidth c if used [+] cells > width then clipped := true break frame := frame[.]push c used := used [+] cells if !style[.]isEmpty then frame := frame [+][+] "\\x1b[[]0m" return frame' \
@@ -408,8 +408,6 @@ for tie in \
 done
 code_grep '^[[:space:]]+cmdAttach hooks Linger[.]Core[.]Name[.]defaultName [[]]$' Linger/Runtime/Cli.lean >/dev/null \
   || fail "attach no longer shares the proved default session name with selection"
-code_grep 'else if Tools[.]Input[.]pending decoder &&' Manager/Picker.lean >/dev/null \
-  || fail "manager stopped checking decoder state before an input timeout"
 
 # Both terminal loops own their helper through this one executor. Reap only
 # after both pipes close; clear ownership before a reader error can throw.
@@ -425,8 +423,8 @@ for tie in \
 done
 
 # Pure rendering and summary claims cannot see CLI/terminal IO. Pin the actual
-# consumers: one shared row, palette-only badge styling, and plain redirected
-# or NO_COLOR output. Prompt sampling shares one reply deadline; a busy
+# consumers: validated host order, one shared row, palette-only badge styling,
+# and plain redirected or NO_COLOR output. Prompt sampling shares one reply deadline; a busy
 # nonblocking connect remains unknown and cannot authorize stale-socket removal.
 for claim in style_palette attentionCounts_exact attentionCounts_mem summary_exact \
              summary_omits_zero summary_alphabet summary_printable; do
@@ -440,6 +438,9 @@ for claim in rowPieces_printable rowPieces_styles nameWidth_covers \
 done
 cli_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Runtime/Cli.lean)"
 for tie in \
+  'match Linger[.]Core[.]Remote[.]checkHosts hosts with [|] [.]ok l => return l [|] [.]error e => throw [(]IO[.]userError e[)]' \
+  'for host in remotes do for [(]rname, rlive, rcmd, rstatus[)] in ← listRemote host do' \
+  '[|] some [(]porcelain, remoteFlag[)] => cmdList porcelain [(]← resolveRemotes remoteFlag[)]' \
   'let withColor := [(]← [(]← IO[.]getStdout[)][.]isTty[)] && [(]← IO[.]getEnv "NO_COLOR"[)][.]isNone writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Core[.]Listing[.]terminalListing withColor rows[)][.]toArray[)]' \
   'let rows ← localRows [(]some [(][(]← monotonicMs[)] [+] 250[)][)] let summary := Linger[.]Core[.]Status[.]summary [(]rows[.]map fun info => Linger[.]Core[.]Status[.]ofName [(][(]info[.]lookup "status"[)][.]getD "unknown"[)][)] if !summary[.]isEmpty then IO[.]println summary return 0' \
   'if let some deadline := stopAt then if [(]← monotonicMs[)] ≥ deadline then return some [(][.]error [(]IO[.]userError "overview deadline reached"[)][)] match ← Client[.]connect name stopAt[.]isSome with [|] none => if stopAt[.]isSome then return some [(][.]error [(]IO[.]userError "overview connection unavailable"[)][)] return none [|] some fd => try let info ← [(]readInfo fd stopAt[)][.]toBaseIO return some info finally close fd' \

@@ -1,6 +1,6 @@
 # Proof-guided factorization
 
-Status: in progress — step 1 verified; integrating independent workstreams
+Status: verified — steps 1–5 integrated; publication and cleanup pending
 Updated: 2026-09-29
 
 ## Intent
@@ -86,7 +86,37 @@ restricted-sandbox attempt stopped at a refused socket bind; it is recorded
 as an environment diagnostic, not a product failure or a live-test pass.
 Evidence is in `/tmp/linger-proof-checkpoint-live-20260929/`.
 
-VT, session and CLI workers have frozen their changes; the render worker is
-finishing verification. Two independently identified CLI executor gate gaps
-have eight compiling mutations that pass the old gates and fail the proposed
-ones. Their integration and assembled verification remain outstanding.
+Steps 2–5 are integrated from frozen worktrees. VT operations now expose exact
+frames for grid-only folds and insert/delete/erase operations. Renderer proofs
+share stream traversals and exact CSI digit/tail equations. Session proofs
+share guarded state/effect induction and terminal-predicate lifts. CLI proofs
+characterize classification and validation in both directions, exact decoded
+key identity, and least sufficient name-column width.
+
+The only production refactors replace host search with `List.find?` and key
+delivery with `Option.filter.toList`; worker certificates establish equivalence
+to their predecessors for all inputs. The combined worker patch removes 762
+Lean lines, including proof code. Its assembled theorem/test build passes.
+
+Independent review identified two existing CLI executor gate gaps. The final
+ties cover normalized host validation through traversal, and ordered keyboard
+bytes through decoder state/key propagation to dispatch. Ten compiling
+mutations exercise those boundaries; the byte-order and final-key-discard
+cases also exposed an incomplete first version of the guard. Independent
+review closes both executor findings. The renderer review preserves every
+original statement and identifies an ANSI-colored handoff patch; a regenerated
+uncolored patch passes Git parsing and retains identical source changes.
+
+The assembled foreground Linux verifier passed from 17:18:57Z to 17:26:21Z:
+clean build, generated C ABI, formatting, source gates, semantic coverage,
+CI runner checks, POSIX smoke, all fourteen live suites and the sentinel.
+All 434 live assertions pass, and all 159 tracked source identities remained
+fixed. The elaborated theorem-type comparison preserves every retained
+explicit statement; only three private helpers are replaced. Overall, the
+round removes 739 Lean lines, with unchanged tests, C code and proof limits.
+Evidence is in `/tmp/linger-proof-assembled-verifier-20260929/`.
+
+Steps 2–5 share this assembled checkpoint. All five worker trees are frozen,
+their changed sources match main, and their complete patches and source
+copies are sealed in `/tmp/linger-proof-cleanup-20260929/`. Checkpoint
+publication, fresh removal checks and archival closure remain.

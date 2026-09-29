@@ -693,62 +693,19 @@ theorem quiet_utf8_safe (ch : Char) : Quiet (utf8 (safeChar ch)) :=
 
 theorem quiet_cellText (c : Cell) : Quiet (cellText c) := by
   unfold cellText
-  exact (Quiet.text (fun b hb => by
-    obtain ⟨hge, -⟩ := utf8_no_ctl (safeChar c.base) (safeChar_ge c.base).1
-      (safeChar_ge c.base).2 b hb
-    intro he; rw [he] at hge; exact absurd hge (by decide))).append (quiet_utf8s c.marks)
+  exact (quiet_utf8_safe c.base).append (quiet_utf8s c.marks)
 
-theorem quiet_rowAnsi (row : Row) (p : Pen) : Quiet (rowAnsi row p).1 := by
-  unfold rowAnsi
-  rw [← Array.foldl_toList]
-  refine invariant_foldl (fun acc => Quiet acc.1) _ ?_ row.toList ([], p, 0) Quiet.nil
-  intro acc c hacc
-  unfold rowSlot
-  dsimp only
-  repeat' split
-  all_goals first
-    | exact hacc.append (quiet_utf8s c.marks)
-    | exact hacc.append (quiet_cellText c)
-    | exact (hacc.append (quiet_penSgr c.pen)).append (quiet_cellText c)
-    | exact hacc.append ((((quiet_utf8_safe c.base).append
-        (quiet_csiNum _ 0x47 (by decide) (by decide))).append
-        (quiet_utf8s c.marks)).append (quiet_csiNum _ 0x47 (by decide) (by decide)))
-    | exact (hacc.append (quiet_penSgr c.pen)).append ((((quiet_utf8_safe c.base).append
-        (quiet_csiNum _ 0x47 (by decide) (by decide))).append
-        (quiet_utf8s c.marks)).append (quiet_csiNum _ 0x47 (by decide) (by decide)))
+theorem quiet_rowAnsi (row : Row) (p : Pen) : Quiet (rowAnsi row p).1 :=
+  Quiet.streamPred.rowAnsi quiet_penSgr quiet_utf8_safe quiet_utf8s
+    (fun n => quiet_csiNum n 0x47 (by decide) (by decide)) row p
 
-theorem quiet_joinCRLF : ∀ (l : List Bytes), (∀ bs ∈ l, Quiet bs) → Quiet (joinCRLF l)
-  | [], _ => Quiet.nil
-  | [b], h => by
-    unfold joinCRLF
-    exact h b (by simp)
-  | b :: c :: bs, h => by
-    unfold joinCRLF
-    refine ((h b (by simp)).append (Quiet.text (by decide))).append ?_
-    exact quiet_joinCRLF (c :: bs) (fun x hx => h x (by simp [hx]))
+theorem quiet_joinCRLF : ∀ (l : List Bytes), (∀ bs ∈ l, Quiet bs) → Quiet (joinCRLF l) :=
+  Quiet.streamPred.joinCRLF (Quiet.text (by decide))
 
 theorem quiet_gridAnsi (grid : Array Row) : Quiet (gridAnsi grid) := by
-  unfold gridAnsi
-  dsimp only
-  have hrows : ∀ bs ∈ (grid.foldl
-      (fun (acc : List Bytes × Pen) row =>
-        (acc.1 ++ [(rowAnsi row acc.2).1], (rowAnsi row acc.2).2))
-      (([], ({} : Pen)))).1, Quiet bs := by
-    rw [← Array.foldl_toList]
-    refine invariant_foldl (fun acc => ∀ bs ∈ acc.1, Quiet bs) _ ?_ grid.toList
-      (([], ({} : Pen))) (by intro bs hbs; simp at hbs)
-    intro acc row hacc bs hbs
-    dsimp only at hbs
-    rcases List.mem_append.mp hbs with h | h
-    · exact hacc bs h
-    · simp only [List.mem_singleton] at h
-      subst h
-      exact quiet_rowAnsi row acc.2
-  have hhome : Quiet (csiB ++ [0x48] : Bytes) := by
-    rw [show (csiB ++ [0x48] : Bytes) = csiB ++ [] ++ [0x48] from by simp]
-    exact quiet_csi_seq [] 0x48 ParamBytes.nil (by decide) (by decide)
-  exact (quiet_csiNum 0 0x6D (by decide) (by decide)).append
-    (hhome.append (quiet_joinCRLF _ hrows))
+  refine Quiet.streamPred.gridAnsi (quiet_csiNum 0 0x6D (by decide) (by decide))
+    ?_ (Quiet.text (by decide)) quiet_rowAnsi grid
+  exact quiet_csi_seq [] 0x48 ParamBytes.nil (by decide) (by decide)
 
 theorem quiet_modeSet (n : Nat) (on : Bool) (hn : n ≠ 6) : Quiet (modeSet n on) := by
   unfold modeSet

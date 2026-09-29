@@ -71,29 +71,21 @@ theorem parse_cmd_scrubbed (out : String) :
 The diagnostic walk is also the validation gate. Its agreement with `Nodup`
 establishes both refusal of duplicates and acceptance of duplicate-free lists. -/
 
-/-- The walk finds nothing only on a duplicate-free list. -/
-theorem firstDupHost_none {hosts : List String} (h : firstDupHost hosts = none) : hosts.Nodup := by
+/-- The diagnostic walk is a complete decision for duplicate freedom. -/
+theorem firstDupHost_none_iff (hosts : List String) : firstDupHost hosts = none ↔ hosts.Nodup := by
   induction hosts with
-  | nil => exact List.nodup_nil
+  | nil => simp [firstDupHost]
   | cons a t ih =>
-    unfold firstDupHost at h
-    split at h
-    · exact absurd h (by simp)
-    · rename_i hc
-      exact List.nodup_cons.mpr ⟨fun hm => hc (List.contains_iff_mem.mpr hm), ih h⟩
+    simp only [firstDupHost, List.nodup_cons]
+    split <;> simp_all
+
+/-- The walk finds nothing only on a duplicate-free list. -/
+theorem firstDupHost_none {hosts : List String} (h : firstDupHost hosts = none) : hosts.Nodup :=
+  (firstDupHost_none_iff hosts).mp h
 
 /-- …and it finds nothing on every duplicate-free list. -/
 theorem firstDupHost_none_of_nodup {hosts : List String} (h : hosts.Nodup) :
-    firstDupHost hosts = none := by
-  induction hosts with
-  | nil => rfl
-  | cons a t ih =>
-    obtain ⟨ha, ht⟩ := List.nodup_cons.mp h
-    show (if t.contains a then some a else firstDupHost t) = none
-    split
-    · rename_i hc
-      exact absurd (List.contains_iff_mem.mp hc) ha
-    · exact ih ht
+    firstDupHost hosts = none := (firstDupHost_none_iff hosts).mpr h
 
 /-- Every duplicate list produces an offender for the refusal message. -/
 theorem firstDupHost_isSome_of_not_nodup {hosts : List String} (h : ¬hosts.Nodup) :
@@ -102,37 +94,32 @@ theorem firstDupHost_isSome_of_not_nodup {hosts : List String} (h : ¬hosts.Nodu
   | none => exact absurd (firstDupHost_none hd) h
   | some _ => rfl
 
-/-- §Remote (dup guard): a validated host list is duplicate-free, so no
-host is ever queried twice and no duplicate row can reach the listing.
-This is the enforcement the `-r` flag / remotes file rely on. -/
-theorem checkHosts_ok_nodup {hosts l : List String} (h : checkHosts hosts = .ok l) : l.Nodup := by
-  unfold checkHosts at h
-  split at h
-  · simp at h
-  · rename_i hnd
-    split at h
-    · simp at h
-    · simp only [Except.ok.injEq] at h
-      subst h
-      exact firstDupHost_none hnd
+/-- The first-offender search succeeds exactly when every host is clean. -/
+theorem firstDirtyHost_none_iff (hosts : List String) :
+    firstDirtyHost hosts = none ↔ ∀ x ∈ hosts, hostClean x = true := by
+  simp [firstDirtyHost, List.find?_eq_none]
 
 /-- A list with no dirty host is one where `hostClean` holds of every entry. The
 walk and the predicate agree, which is what lets the theorem below be about the
 *bytes* rather than about `firstDirtyHost`. -/
 theorem firstDirtyHost_none {hosts : List String} (h : firstDirtyHost hosts = none) :
-    ∀ x ∈ hosts, hostClean x = true := by
-  induction hosts with
-  | nil =>
-    intro x hx; exact absurd hx (by simp)
-  | cons a t ih =>
-    unfold firstDirtyHost at h
-    split at h
-    · rename_i hc
-      intro x hx
-      rcases List.mem_cons.mp hx with he | ht
-      · subst he; exact hc
-      · exact ih h x ht
-    · exact absurd h (by simp)
+    ∀ x ∈ hosts, hostClean x = true := (firstDirtyHost_none_iff hosts).mp h
+
+/-- Validation accepts every clean, unique host list and returns it unchanged,
+including its order. It cannot silently rewrite, drop or duplicate a host. -/
+theorem checkHosts_ok_iff (hosts result : List String) :
+    checkHosts hosts = .ok result ↔
+      result = hosts ∧ hosts.Nodup ∧ ∀ x ∈ hosts, hostClean x = true := by
+  rw [← firstDupHost_none_iff, ← firstDirtyHost_none_iff]
+  cases hd : firstDupHost hosts <;> cases hc : firstDirtyHost hosts <;>
+    simp [checkHosts, hd, hc, eq_comm]
+
+/-- §Remote (dup guard): a validated host list is duplicate-free, so no
+host is ever queried twice and no duplicate row can reach the listing.
+This is the enforcement the `-r` flag / remotes file rely on. -/
+theorem checkHosts_ok_nodup {hosts l : List String} (h : checkHosts hosts = .ok l) : l.Nodup := by
+  obtain ⟨rfl, unique, _⟩ := (checkHosts_ok_iff hosts l).mp h
+  exact unique
 
 /-- **§Remote (argv guard): a validated host carries no control byte.** The host
 string is handed to `ssh` as argv *and* printed into the listing, so a C0 control or
@@ -141,20 +128,8 @@ would silently connect somewhere the user did not name. With
 `checkHosts_ok_nodup` this is the whole contract `-r` and the remotes file rely on. -/
 theorem checkHosts_ok_clean {hosts l : List String} (h : checkHosts hosts = .ok l) :
     ∀ x ∈ l, ∀ c ∈ x.toList, c.toNat ≥ 0x20 ∧ c.toNat ≠ 0x7F := by
-  unfold checkHosts at h
-  split at h
-  · simp at h
-  · split at h
-    · simp at h
-    · rename_i hdirty
-      simp only [Except.ok.injEq] at h
-      subst h
-      intro x hx c hc
-      have hcl : hostClean x = true := firstDirtyHost_none hdirty x hx
-      unfold hostClean at hcl
-      have := List.all_eq_true.mp hcl c hc
-      simp only [Bool.and_eq_true, decide_eq_true_eq] at this
-      exact this
+  obtain ⟨rfl, _, clean⟩ := (checkHosts_ok_iff hosts l).mp h
+  simpa [hostClean] using clean
 
 /-! ## Records: every group the splitter emits is a real record
 

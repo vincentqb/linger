@@ -728,20 +728,49 @@ The emitter never emits those (its allowlist), and its collector contains exactl
 one parameter. `accDigits_digits` already says the accumulator inverts `digits`;
 the record equation carries both the value and singleton shape to the grid layer. -/
 
-/-- A digit run, as a record equation *and* with its accumulated value — the two
-halves that `csi_param_run_inter` and `csi_digits_value` each give separately. -/
+/-- Digits update exactly the collector's number and presence flag. The complete
+state equation preserves every receiver field, including parser metadata that
+later dispatches inspect. The number is clamped for every `Nat`, including zero. -/
+theorem csi_digits_feed_eq (n : Nat) {v : Vt} {s : CsiState} (hg : v.pstate = .csi s)
+    (hu : v.u8need = 0) (hcur : s.cur = 0) :
+    v.feed (digits n) =
+      { v with pstate := .csi { s with cur := min n 65535, haveCur := true } } := by
+  obtain ⟨s', heq⟩ := csi_param_run_frame (digits n) hg hu (paramBytes_digits n)
+  have hne : digits n ≠ [] := by
+    unfold digits
+    split <;> simp
+  have hp := csi_digits_feed (digits n) hg (digits_are_digits n) hne
+  rw [heq] at hp
+  simp only [hcur, accDigits_digits] at hp
+  rw [heq, PState.csi.inj hp]
+
+/-- A digit run, as a record equation *and* with its accumulated value. -/
 theorem csi_digits_run_eq (n : Nat) {v : Vt} {s : CsiState} (hg : v.pstate = .csi s)
     (hu : v.u8need = 0) (hcur : s.cur = 0) :
     ∃ s', v.feed (digits n) = { v with pstate := .csi s' }
       ∧ s'.cur = min n 65535 ∧ s'.haveCur = true ∧ s'.params = s.params
       ∧ s'.inter = s.inter ∧ s'.curSub = s.curSub := by
-  obtain ⟨s1, heq, -⟩ := csi_param_run_inter (digits n) hg hu (paramBytes_digits n)
-  obtain ⟨s2, hps, hcur2, hhave, hpar, hint, -, hsub, -⟩ := csi_digits_value n hg hcur
-  have hid : s1 = s2 := by
-    have h1 : (v.feed (digits n)).pstate = PState.csi s1 := by rw [heq]
-    exact PState.csi.inj (h1.symm.trans hps)
-  exact ⟨s1, heq, by rw [hid]; exact hcur2, by rw [hid]; exact hhave,
-    by rw [hid]; exact hpar, by rw [hid]; exact hint, by rw [hid]; exact hsub⟩
+  exact ⟨_, csi_digits_feed_eq n hg hu hcur, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- A decimal tail extends the collector by one clamped parameter, then dispatches.
+Its full state equation supports both preservation and state changes, retaining
+the private marker and ignore flag. The parameter prefix need only have room for
+one more entry; no positivity or upper-bound premise is needed for the number. -/
+theorem csi_digits_tail_eq (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
+    (h2 : final ≤ 0x7E) {v : Vt} {s : CsiState} (hg : v.pstate = .csi s)
+    (hu : v.u8need = 0) (hi : s.inter = 0) (hcur : s.cur = 0) (hsize : s.params.size < 16) :
+    let t : CsiState := { s with cur := min n 65535, haveCur := true }
+    v.feed (digits n ++ [final]) =
+      { ({ v with pstate := .csi t } : Vt).csiDispatch
+          { t with params := s.params.push (min n 65535, s.curSub) } final with
+        pstate := .ground } := by
+  dsimp only
+  rw [feed_append, csi_digits_feed_eq n hg hu hcur]
+  rw [show ∀ w : Vt, w.feed [final] = w.step final from fun _ => rfl]
+  rw [csi_final_step_eq final
+      (v := { v with pstate := .csi { s with cur := min n 65535, haveCur := true } })
+      rfl hu hi h1 h2]
+  simp [Vt.csiFinish, Nat.not_le.mpr hsize, Nat.min_assoc]
 
 theorem grid_csiDispatch_sm (v : Vt) (s : CsiState)
     (h : ∀ p ∈ s.params.toList, p.1 ≠ 47 ∧ p.1 ≠ 1047 ∧ p.1 ≠ 1049) :
@@ -775,19 +804,11 @@ theorem keeps_csi_digits_tail (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
     ((v.feed (digits n ++ [final])).pstate = .ground
       ∧ (v.feed (digits n ++ [final])).u8need = 0
       ∧ (v.feed (digits n ++ [final])).grid = v.grid) := by
-  obtain ⟨s', heq, hcur', hhave, hpar', hint, -⟩ := csi_digits_run_eq n hg hu hcur
-  rw [show ∀ (w : Vt), w.feed (digits n ++ [final]) = (w.feed (digits n)).feed [final] from
-    fun w => by simp [Vt.feed, List.foldl_append]]
-  rw [heq, show ∀ (w : Vt), w.feed [final] = w.step final from fun _ => rfl]
-  rw [csi_final_step_eq final rfl (by simpa using hu) (by rw [hint]; exact hi) h1 h2]
-  unfold Vt.csiFinish
-  rw [ite_eq_left (by simpa using hhave), ite_eq_right (by rw [hpar', hpar]; simp)]
+  rw [csi_digits_tail_eq n final h1 h2 hg hu hi hcur (by simp [hpar])]
+  rw [show min n 65535 = n from by omega]
   dsimp only
   refine ⟨rfl, by rw [un_csiDispatch]; simpa using hu, ?_⟩
-  apply hgrid _ _ s'.curSub
-  dsimp only
-  rw [hpar', hpar, hcur', show min (min n 65535) 65535 = n from by omega]
-  rfl
+  exact hgrid _ _ s.curSub (by simp [hpar])
 
 /-- `CSI ? n <final>` with a grid fact that may depend on `n`. -/
 theorem keeps_csiPriv_arg (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final)

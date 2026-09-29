@@ -997,13 +997,12 @@ cells) needs the positive specification, which is real content, not
 bookkeeping. Frames retire the sprawl; they do not shorten the road to
 3d.
 
-Below: the pattern demonstrated on four operations of increasing shape,
-with the four existing layers re-derived from one of them to show the
-collapse is real. The conversion of the leaf operations is **done** (step 4
-of specs/archive/bigger-theorems.md): 30 frames, 28 collapsed layer
-proofs. What stays per-field is `print`, `csiDispatch` and the fold-based
-operations — precisely the part that was never mechanical, and where the
-conditional cases (`RIS`, `setMode`) live.
+The leaf frames also supply the step hypothesis for `frame_grid_foldl`:
+an exact frame is itself an invariant, preserved by overwriting the grid.
+This extends the frame to line edits and screen erasure without changing
+the state representation or introducing a field-set calculus. Printing uses
+the existing `offScreen` observation to compose its stages; dispatch retains
+conditional claims for operations such as `RIS` and `setMode`.
 -/
 
 /-- Pure record update: `rfl` suffices. -/
@@ -1069,12 +1068,9 @@ One frame per operation, replacing what was four single-field lemmas
 each. Every field invariance — including fields no layer covers — is one
 `rw` away, so a new field costs nothing here.
 
-Not covered, by measurement rather than omission: `print`,
-`csiDispatch`, and the fold-based operations (`eraseScreen`,
-`insertLines`, `deleteLines`). A frame proves by `rfl` only when the
-result is a *syntactic* record update; a composed chain times out and a
-`List.foldl` is not an update at all. Those keep their per-field lemmas
-(see THEOREMS.md).
+Leaf updates prove directly by reduction. The folds below instead use the
+same step frames as hypotheses of `invariant_foldl`; their final values do
+not need to reduce to syntactic record updates.
 -/
 
 theorem frame_clearPending (v : Vt) :
@@ -1116,6 +1112,54 @@ theorem frame_eraseLine (v : Vt) (m : Nat) :
     v.eraseLine m = { v with grid := (v.eraseLine m).grid } := by
   unfold Vt.eraseLine; repeat' split
   all_goals rfl
+
+/-- Iterating grid-only updates preserves the exact complement of the grid.
+The invariant is a record equation; successive grid replacements compose. -/
+theorem frame_grid_foldl {α : Type} (f : Vt → α → Vt)
+    (hf : ∀ w a, f w a = { w with grid := (f w a).grid }) (l : List α) (v : Vt) :
+    l.foldl f v = { v with grid := (l.foldl f v).grid } := by
+  refine invariant_foldl (fun w => w = { v with grid := w.grid }) f ?_ l v rfl
+  intro w a hw
+  exact (hf w a).trans (congrArg (fun u => { u with grid := (f w a).grid }) hw)
+
+/-- Inserting lines leaves the cursor, history and all metadata unchanged,
+even for an arbitrary incoming record. -/
+theorem frame_insertLines (v : Vt) (n : Nat) :
+    v.insertLines n = { v with grid := (v.insertLines n).grid } := by
+  unfold Vt.insertLines
+  dsimp only
+  split
+  · rfl
+  · exact frame_grid_foldl _ (fun w _ => frame_scrollDownIn w _ _) _ _
+
+/-- Deleting lines never adds history, including at the full-screen region. -/
+theorem frame_deleteLines (v : Vt) (n : Nat) :
+    v.deleteLines n = { v with grid := (v.deleteLines n).grid } := by
+  unfold Vt.deleteLines
+  dsimp only
+  split
+  · rfl
+  · exact frame_grid_foldl _ (fun _ _ => rfl) _ _
+
+/-- Screen erasure writes only cells and, in mode 3, clears the history.
+Every other field, including complete tab contents and saved state, is exact. -/
+theorem frame_eraseScreen (v : Vt) (m : Nat) :
+    v.eraseScreen m =
+      { v with
+        grid := (v.eraseScreen m).grid, sb := if m = 3 then {} else v.sb } := by
+  unfold Vt.eraseScreen
+  split
+  · exact
+      (frame_grid_foldl _ (fun w _ => frame_eraseRowSpan w _ _ _) _ _).trans
+        (congrArg (fun (w : Vt) => { w with grid := (v.eraseScreen 0).grid }) (frame_eraseLine v 0))
+  · exact
+      (frame_grid_foldl _ (fun w _ => frame_eraseRowSpan w _ _ _) _ _).trans
+        (congrArg (fun (w : Vt) => { w with grid := (v.eraseScreen 1).grid }) (frame_eraseLine v 1))
+  · exact
+      congrArg (fun w => { w with sb := {} })
+        (frame_grid_foldl _ (fun w _ => frame_eraseRowSpan w _ _ _) _ _)
+  · simpa only [ite_eq_right (by assumption : m ≠ 3)] using
+      (frame_grid_foldl _ (fun w _ => frame_eraseRowSpan w _ _ _) _ v)
 
 theorem frame_reverseIndex (v : Vt) :
     v.reverseIndex =
@@ -1218,6 +1262,104 @@ end Linger.Core.Vt
 
 namespace Linger.Core.Vt
 
+/-! ### The cut `print` induces — everything it does not write
+
+Each print stage writes only `grid`, `cursor` or `sb`. The existing `offScreen`
+observation contains their exact complement, so its stage equalities compose
+by transitivity. All printing layers below project this one contract, including
+the row painter's pen and mode claims and the byte decoder's accumulator.
+Neither a monolithic unfold nor another state partition is needed. -/
+
+structure OffScreen where
+  cols : Nat
+  rows : Nat
+  pen : Pen
+  modes : Modes
+  top : Nat
+  bot : Nat
+  tabs : Array Bool
+  saved : Saved
+  title : String
+  g0 : Bool
+  g1 : Bool
+  so : Bool
+  alt : Option (Array Row × Cursor × Pen)
+  pstate : PState
+  u8need : Nat
+  u8acc : Nat
+  bell : Bool
+
+def offScreen (v : Vt) : OffScreen :=
+  { cols := v.cols, rows := v.rows, pen := v.pen, modes := v.modes, top := v.top, bot := v.bot,
+    tabs := v.tabs, saved := v.saved, title := v.title, g0 := v.g0Line, g1 := v.g1Line,
+    so := v.shiftOut, alt := v.altGrid, pstate := v.pstate, u8need := v.u8need, u8acc := v.u8acc,
+    bell := v.bell }
+
+/-! The stages, one `rw` each — the payoff of the frames pass. -/
+
+theorem off_printWrap (v : Vt) : offScreen v.printWrap = offScreen v := by
+  rw [frame_printWrap]; rfl
+
+theorem off_printWideWrap (v : Vt) (w : Nat) : offScreen (v.printWideWrap w) = offScreen v := by
+  rw [frame_printWideWrap]; rfl
+
+theorem off_printShift (v : Vt) (w : Nat) : offScreen (v.printShift w) = offScreen v := by
+  rw [frame_printShift]; rfl
+
+theorem off_printPut (v : Vt) (ch : Char) (w : Nat) :
+    offScreen (v.printPut ch w) = offScreen v := by
+  rw [frame_printPut]; rfl
+
+theorem off_printAdvance (v : Vt) (w : Nat) : offScreen (v.printAdvance w) = offScreen v := by
+  rw [frame_printAdvance]; rfl
+
+theorem off_printMark (v : Vt) (ch : Char) : offScreen (v.printMark ch) = offScreen v := by
+  rw [frame_printMark]; rfl
+
+/-- Printing preserves every field outside the grid, cursor and history. -/
+theorem off_print (v : Vt) (ch : Char) : offScreen (v.print ch) = offScreen v := by
+  unfold Vt.print
+  dsimp only
+  split
+  · exact off_printMark _ _
+  · exact
+      ((((off_printAdvance _ _).trans (off_printPut _ _ _)).trans (off_printShift _ _)).trans
+            (off_printWideWrap _ _)).trans
+        (off_printWrap _)
+
+/-! The corollaries the row induction asks for. Each is a `congrArg`, so a field the
+next layer wants costs one line rather than a proof. -/
+
+theorem pen_print (v : Vt) (ch : Char) : (v.print ch).pen = v.pen :=
+  congrArg OffScreen.pen (off_print v ch)
+
+theorem modes_print' (v : Vt) (ch : Char) : (v.print ch).modes = v.modes :=
+  congrArg OffScreen.modes (off_print v ch)
+
+theorem ins_print (v : Vt) (ch : Char) : (v.print ch).modes.insert = v.modes.insert :=
+  congrArg Modes.insert (modes_print' v ch)
+
+theorem wrap_print (v : Vt) (ch : Char) : (v.print ch).modes.wrap = v.modes.wrap :=
+  congrArg Modes.wrap (modes_print' v ch)
+
+theorem cols_print (v : Vt) (ch : Char) : (v.print ch).cols = v.cols :=
+  congrArg OffScreen.cols (off_print v ch)
+
+theorem rows_print (v : Vt) (ch : Char) : (v.print ch).rows = v.rows :=
+  congrArg OffScreen.rows (off_print v ch)
+
+theorem g0_print (v : Vt) (ch : Char) : (v.print ch).g0Line = v.g0Line :=
+  congrArg OffScreen.g0 (off_print v ch)
+
+theorem g1_print (v : Vt) (ch : Char) : (v.print ch).g1Line = v.g1Line :=
+  congrArg OffScreen.g1 (off_print v ch)
+
+theorem so_print (v : Vt) (ch : Char) : (v.print ch).shiftOut = v.shiftOut :=
+  congrArg OffScreen.so (off_print v ch)
+
+theorem ua_print' (v : Vt) (ch : Char) : (v.print ch).u8acc = v.u8acc :=
+  congrArg OffScreen.u8acc (off_print v ch)
+
 /-! ## Parser-state invariance of the printing path
 
 Feeding a *printable* byte must not disturb the parser: only ESC (and
@@ -1230,11 +1372,8 @@ They are the missing rung under §Replay stage 3b
 of printable bytes, and the theorem that a restore leaves the parser
 quiesced needs each of them to be parser-neutral.
 
-Cheap because they are staged: every operation is a record update that
-leaves `pstate` untouched, so each proof is `rfl` under enough `split`s.
-(This also closes, for `pstate`, the same gap the step-4 notes recorded
-as open for `cols`/`rows` — the shape of proof is identical, ~15 small
-lemmas, and it turned out to be worth writing after all.)
+Leaf frames and `off_print` supply the printing path's invariance;
+the byte parser then combines it with its control-byte cases.
 -/
 
 theorem ps_clearPending (v : Vt) : v.clearPending.pstate = v.pstate := by rfl
@@ -1293,38 +1432,16 @@ theorem ps_printAdvance (v : Vt) (w : Nat) : (v.printAdvance w).pstate = v.pstat
 theorem ps_printMark (v : Vt) (ch : Char) : (v.printMark ch).pstate = v.pstate := by
   rw [frame_printMark]
 
-theorem ps_print (v : Vt) (c : Char) : (v.print c).pstate = v.pstate := by
-  unfold Vt.print
-  dsimp only
-  repeat' split
-  all_goals
-    first
-    | rfl
-    | rw [ps_printMark]
-    | rw [ps_printAdvance, ps_printPut, ps_printShift, ps_printWideWrap, ps_printWrap]
+theorem ps_print (v : Vt) (c : Char) : (v.print c).pstate = v.pstate :=
+  congrArg OffScreen.pstate (off_print v c)
 
 theorem ps_acceptChar (v : Vt) (n : Nat) : (v.acceptChar n).pstate = v.pstate := by
   unfold Vt.acceptChar; split <;> exact ps_print _ _
 
-/-- Printing never touches the UTF-8 decoder's accumulator — it writes the
-grid, the cursor and (on scroll) the scrollback, which is exactly what the
-frames say. This is what lets a whole run of glyphs be fed without
-re-establishing the decoder's precondition between them, and it is proved by
-*peeling* the frames one stage at a time: as a single `rfl` over the composite
-it times out at `whnf` (see SCRATCHPAD). The `u8need` twin is `un_print`,
-further down with the rest of that layer. -/
-theorem ua_print (v : Vt) (c : Char) : (v.print c).u8acc = v.u8acc := by
-  unfold Vt.print
-  dsimp only
-  repeat' split
-  all_goals
-    first
-    | rfl
-    | rw [frame_printMark]
-    | rw [frame_putCell]
-    |
-      rw [frame_printAdvance, frame_printPut, frame_printShift, frame_printWideWrap,
-        frame_printWrap]
+/-- Printing preserves the UTF-8 accumulator, so a run of glyphs retains the
+decoder's precondition between cells. The `u8need` twin is `un_print`. -/
+theorem ua_print (v : Vt) (c : Char) : (v.print c).u8acc = v.u8acc :=
+  congrArg OffScreen.u8acc (off_print v c)
 
 theorem ua_acceptChar (v : Vt) (n : Nat) : (v.acceptChar n).u8acc = v.u8acc := by
   unfold Vt.acceptChar; split <;> exact ua_print _ _
@@ -1433,15 +1550,9 @@ theorem un_eraseLine (v : Vt) (m : Nat) : (v.eraseLine m).u8need = v.u8need := b
   rw [frame_eraseLine]
 
 theorem un_eraseScreen (v : Vt) (m : Nat) : (v.eraseScreen m).u8need = v.u8need := by
-  unfold Vt.eraseScreen
-  repeat' split
-  all_goals
-    first
-    | exact (un_foldl _ (fun w i => un_eraseRowSpan w _ _ _) _ _).trans (un_eraseLine _ _)
-    | exact un_foldl _ (fun w i => un_eraseRowSpan w _ _ _) _ _
+  rw [frame_eraseScreen]
 
-/-- `ED` writes cells and nothing else, so it writes no mode — what the `MMap` for the
-clear needs. The fold mirrors `un_eraseScreen`. -/
+/-- Mode-preserving operations remain mode-preserving over any fold. -/
 theorem modes_foldl {α : Type} (f : Vt → α → Vt) (hf : ∀ v a, (f v a).modes = v.modes) :
     ∀ (l : List α) (v : Vt), (l.foldl f v).modes = v.modes
   | [], _ => rfl
@@ -1454,26 +1565,13 @@ theorem modes_eraseLine (v : Vt) (m : Nat) : (v.eraseLine m).modes = v.modes := 
   rw [frame_eraseLine]
 
 theorem modes_eraseScreen (v : Vt) (m : Nat) : (v.eraseScreen m).modes = v.modes := by
-  unfold Vt.eraseScreen
-  repeat' split
-  all_goals
-    first
-    | exact (modes_foldl _ (fun w i => modes_eraseRowSpan w _ _ _) _ _).trans (modes_eraseLine _ _)
-    | exact modes_foldl _ (fun w i => modes_eraseRowSpan w _ _ _) _ _
+  rw [frame_eraseScreen]
 
 theorem un_insertLines (v : Vt) (n : Nat) : (v.insertLines n).u8need = v.u8need := by
-  unfold Vt.insertLines
-  dsimp only
-  split
-  · rfl
-  · exact un_foldl _ (fun w _ => un_scrollDownIn w _ _) _ _
+  rw [frame_insertLines]
 
 theorem un_deleteLines (v : Vt) (n : Nat) : (v.deleteLines n).u8need = v.u8need := by
-  unfold Vt.deleteLines
-  dsimp only
-  split
-  · rfl
-  · exact un_foldl _ (fun w _ => un_scrollUpIn w _ _ _) _ _
+  rw [frame_deleteLines]
 
 theorem un_enterAlt (v : Vt) (s : Bool) : (v.enterAlt s).u8need = v.u8need := by
   unfold Vt.enterAlt; dsimp only; split <;> rfl
@@ -1526,15 +1624,8 @@ theorem un_printAdvance (v : Vt) (w : Nat) : (v.printAdvance w).u8need = v.u8nee
 theorem un_printMark (v : Vt) (ch : Char) : (v.printMark ch).u8need = v.u8need := by
   rw [frame_printMark]
 
-theorem un_print (v : Vt) (c : Char) : (v.print c).u8need = v.u8need := by
-  unfold Vt.print
-  dsimp only
-  repeat' split
-  all_goals
-    first
-    | rfl
-    | rw [un_printMark]
-    | rw [un_printAdvance, un_printPut, un_printShift, un_printWideWrap, un_printWrap]
+theorem un_print (v : Vt) (c : Char) : (v.print c).u8need = v.u8need :=
+  congrArg OffScreen.u8need (off_print v c)
 
 theorem un_acceptChar (v : Vt) (n : Nat) : (v.acceptChar n).u8need = v.u8need := by
   unfold Vt.acceptChar; split <;> exact un_print _ _
@@ -1694,26 +1785,13 @@ theorem ua_eraseChars (v : Vt) (n : Nat) : (v.eraseChars n).u8acc = v.u8acc :=
 theorem ua_eraseLine (v : Vt) (m : Nat) : (v.eraseLine m).u8acc = v.u8acc := by rw [frame_eraseLine]
 
 theorem ua_eraseScreen (v : Vt) (m : Nat) : (v.eraseScreen m).u8acc = v.u8acc := by
-  unfold Vt.eraseScreen
-  repeat' split
-  all_goals
-    first
-    | exact (ua_foldl _ (fun w i => ua_eraseRowSpan w _ _ _) _ _).trans (ua_eraseLine _ _)
-    | exact ua_foldl _ (fun w i => ua_eraseRowSpan w _ _ _) _ _
+  rw [frame_eraseScreen]
 
 theorem ua_insertLines (v : Vt) (n : Nat) : (v.insertLines n).u8acc = v.u8acc := by
-  unfold Vt.insertLines
-  dsimp only
-  split
-  · rfl
-  · exact ua_foldl _ (fun w _ => ua_scrollDownIn w _ _) _ _
+  rw [frame_insertLines]
 
 theorem ua_deleteLines (v : Vt) (n : Nat) : (v.deleteLines n).u8acc = v.u8acc := by
-  unfold Vt.deleteLines
-  dsimp only
-  split
-  · rfl
-  · exact ua_foldl _ (fun w _ => ua_scrollUpIn w _ _ _) _ _
+  rw [frame_deleteLines]
 
 theorem ua_enterAlt (v : Vt) (s : Bool) : (v.enterAlt s).u8acc = v.u8acc := by
   unfold Vt.enterAlt; dsimp only; split <;> rfl
@@ -2051,26 +2129,16 @@ theorem dims_eraseLine (v : Vt) (m : Nat) : dims (v.eraseLine m) = dims v := by
   rfl
 
 theorem dims_eraseScreen (v : Vt) (m : Nat) : dims (v.eraseScreen m) = dims v := by
-  unfold Vt.eraseScreen
-  repeat' split
-  all_goals
-    first
-    | exact (dims_foldl _ (fun w i => dims_eraseRowSpan w _ _ _) _ _).trans (dims_eraseLine _ _)
-    | exact dims_foldl _ (fun w i => dims_eraseRowSpan w _ _ _) _ _
+  rw [frame_eraseScreen]
+  rfl
 
 theorem dims_insertLines (v : Vt) (n : Nat) : dims (v.insertLines n) = dims v := by
-  unfold Vt.insertLines
-  dsimp only
-  split
-  · rfl
-  · exact dims_foldl _ (fun w _ => dims_scrollDownIn w _ _) _ _
+  rw [frame_insertLines]
+  rfl
 
 theorem dims_deleteLines (v : Vt) (n : Nat) : dims (v.deleteLines n) = dims v := by
-  unfold Vt.deleteLines
-  dsimp only
-  split
-  · rfl
-  · exact dims_foldl _ (fun w _ => dims_scrollUpIn w _ _ _) _ _
+  rw [frame_deleteLines]
+  rfl
 
 theorem dims_enterAlt (v : Vt) (s : Bool) : dims (v.enterAlt s) = dims v := by
   unfold Vt.enterAlt; dsimp only; split <;> rfl
@@ -2116,15 +2184,8 @@ theorem dims_printAdvance (v : Vt) (w : Nat) : dims (v.printAdvance w) = dims v 
 theorem dims_printMark (v : Vt) (ch : Char) : dims (v.printMark ch) = dims v := by
   rw [frame_printMark]; rfl
 
-theorem dims_print (v : Vt) (c : Char) : dims (v.print c) = dims v := by
-  unfold Vt.print
-  dsimp only
-  repeat' split
-  all_goals
-    first
-    | rfl
-    | rw [dims_printMark]
-    | rw [dims_printAdvance, dims_printPut, dims_printShift, dims_printWideWrap, dims_printWrap]
+theorem dims_print (v : Vt) (c : Char) : dims (v.print c) = dims v :=
+  congrArg (fun s => (s.cols, s.rows)) (off_print v c)
 
 theorem dims_acceptChar (v : Vt) (n : Nat) : dims (v.acceptChar n) = dims v := by
   unfold Vt.acceptChar; split <;> exact dims_print _ _
@@ -2401,26 +2462,16 @@ theorem tsz_eraseLine (v : Vt) (m : Nat) : tsz (v.eraseLine m) = tsz v := by
   rfl
 
 theorem tsz_eraseScreen (v : Vt) (m : Nat) : tsz (v.eraseScreen m) = tsz v := by
-  unfold Vt.eraseScreen
-  repeat' split
-  all_goals
-    first
-    | exact (tsz_foldl _ (fun w i => tsz_eraseRowSpan w _ _ _) _ _).trans (tsz_eraseLine _ _)
-    | exact tsz_foldl _ (fun w i => tsz_eraseRowSpan w _ _ _) _ _
+  rw [frame_eraseScreen]
+  rfl
 
 theorem tsz_insertLines (v : Vt) (n : Nat) : tsz (v.insertLines n) = tsz v := by
-  unfold Vt.insertLines
-  dsimp only
-  split
-  · rfl
-  · exact tsz_foldl _ (fun w _ => tsz_scrollDownIn w _ _) _ _
+  rw [frame_insertLines]
+  rfl
 
 theorem tsz_deleteLines (v : Vt) (n : Nat) : tsz (v.deleteLines n) = tsz v := by
-  unfold Vt.deleteLines
-  dsimp only
-  split
-  · rfl
-  · exact tsz_foldl _ (fun w _ => tsz_scrollUpIn w _ _ _) _ _
+  rw [frame_deleteLines]
+  rfl
 
 theorem tsz_enterAlt (v : Vt) (s : Bool) : tsz (v.enterAlt s) = tsz v := by
   unfold Vt.enterAlt; dsimp only; split <;> rfl
@@ -2466,15 +2517,8 @@ theorem tsz_printAdvance (v : Vt) (w : Nat) : tsz (v.printAdvance w) = tsz v := 
 theorem tsz_printMark (v : Vt) (ch : Char) : tsz (v.printMark ch) = tsz v := by
   rw [frame_printMark]; rfl
 
-theorem tsz_print (v : Vt) (c : Char) : tsz (v.print c) = tsz v := by
-  unfold Vt.print
-  dsimp only
-  repeat' split
-  all_goals
-    first
-    | rfl
-    | rw [tsz_printMark]
-    | rw [tsz_printAdvance, tsz_printPut, tsz_printShift, tsz_printWideWrap, tsz_printWrap]
+theorem tsz_print (v : Vt) (c : Char) : tsz (v.print c) = tsz v :=
+  congrArg (fun s => s.tabs.size) (off_print v c)
 
 theorem tsz_acceptChar (v : Vt) (n : Nat) : tsz (v.acceptChar n) = tsz v := by
   unfold Vt.acceptChar; split <;> exact tsz_print _ _
@@ -2733,26 +2777,13 @@ theorem org_eraseLine (v : Vt) (m : Nat) : (v.eraseLine m).modes.origin = v.mode
   rw [frame_eraseLine]
 
 theorem org_eraseScreen (v : Vt) (m : Nat) : (v.eraseScreen m).modes.origin = v.modes.origin := by
-  unfold Vt.eraseScreen
-  repeat' split
-  all_goals
-    first
-    | exact (org_foldl _ (fun w i => org_eraseRowSpan w _ _ _) _ _).trans (org_eraseLine _ _)
-    | exact org_foldl _ (fun w i => org_eraseRowSpan w _ _ _) _ _
+  rw [frame_eraseScreen]
 
 theorem org_insertLines (v : Vt) (n : Nat) : (v.insertLines n).modes.origin = v.modes.origin := by
-  unfold Vt.insertLines
-  dsimp only
-  split
-  · rfl
-  · exact org_foldl _ (fun w _ => org_scrollDownIn w _ _) _ _
+  rw [frame_insertLines]
 
 theorem org_deleteLines (v : Vt) (n : Nat) : (v.deleteLines n).modes.origin = v.modes.origin := by
-  unfold Vt.deleteLines
-  dsimp only
-  split
-  · rfl
-  · exact org_foldl _ (fun w _ => org_scrollUpIn w _ _ _) _ _
+  rw [frame_deleteLines]
 
 theorem org_enterAlt (v : Vt) (s : Bool) : (v.enterAlt s).modes.origin = v.modes.origin := by
   unfold Vt.enterAlt; dsimp only; split <;> rfl
@@ -2911,15 +2942,8 @@ theorem org_printAdvance (v : Vt) (w : Nat) : (v.printAdvance w).modes.origin = 
 theorem org_printMark (v : Vt) (ch : Char) : (v.printMark ch).modes.origin = v.modes.origin := by
   rw [frame_printMark]
 
-theorem org_print (v : Vt) (c : Char) : (v.print c).modes.origin = v.modes.origin := by
-  unfold Vt.print
-  dsimp only
-  repeat' split
-  all_goals
-    first
-    | rfl
-    | rw [org_printMark]
-    | rw [org_printAdvance, org_printPut, org_printShift, org_printWideWrap, org_printWrap]
+theorem org_print (v : Vt) (c : Char) : (v.print c).modes.origin = v.modes.origin :=
+  congrArg (fun s => s.modes.origin) (off_print v c)
 
 theorem org_acceptChar (v : Vt) (n : Nat) : (v.acceptChar n).modes.origin = v.modes.origin := by
   unfold Vt.acceptChar; split <;> exact org_print _ _
@@ -5717,17 +5741,11 @@ namespace Linger.Core.Vt
 
 /-! ## §Restore — the sticky receiver state, as one bundled projection
 
-The frames pass above retired four single-field invariance layers (`ps_`, `un_`,
-`dims_`, `org_`) for every operation whose result is a *syntactic* record update.
-It named the two it could not: `print` (a five-stage chain) and `csiDispatch` (a
-thirty-arm match), plus the fold-based erases. Those still cost one lemma per
-field per operation.
-
-A fifth layer is wanted here, for `Render.restore`'s receiver-quantified value
+This layer supplies `Render.restore`'s receiver-quantified value
 claims: the state the stream **establishes and must then leave alone** outside
 the grid, cursor, pen, modes and parser — the scroll region, the two charset
-designations, the shift state, and which screen is current. Four more families
-over the un-framed operations would be ~40 lemmas; one **bundle** is ~10.
+designations, the shift state, and which screen is current. Its preservation
+claims use the frames and `off_print` above.
 
 Bundling was the idea the frames note rejected ("fixes only the fields we
 happened to need"), and the objection is answered rather than ignored: this
@@ -6020,133 +6038,24 @@ theorem stick_stepStr (v : Vt) (e : Bool) (b : UInt8) : stick (v.stepStr e b) = 
 theorem stick_abortUtf8 (v : Vt) (b : UInt8) : stick (v.abortUtf8 b) = stick v := by
   unfold Vt.abortUtf8; split <;> rfl
 
-/-- **Fold invariance for the bundle**, so the three fold-based erases and the
-repeat-count dispatches (`CHT`, `SU`, `SD`, `CBT`) cost one line each. -/
+/-- Fold invariance for the bundle, used by repeat-count dispatches
+(`CHT`, `SU`, `SD`, `CBT`). -/
 theorem stick_foldl {α : Type} (f : Vt → α → Vt) (hf : ∀ (w : Vt) (a : α), stick (f w a) = stick w) :
     ∀ (l : List α) (v : Vt), stick (l.foldl f v) = stick v
   | [], _ => rfl
   | a :: as, v => (stick_foldl f hf as (f v a)).trans (hf v a)
 
 theorem stick_eraseScreen (v : Vt) (m : Nat) : stick (v.eraseScreen m) = stick v := by
-  unfold Vt.eraseScreen
-  split
-  all_goals first
-    | exact (stick_foldl _ (fun w _ => stick_eraseRowSpan w _ _ _) _ _).trans (stick_eraseLine _ _)
-    | exact (stick_foldl _ (fun w _ => stick_eraseRowSpan w _ _ _) _ _)
-    | exact (stick_foldl _ (fun w _ => stick_eraseRowSpan w _ _ _) _ _)
+  rw [frame_eraseScreen]
+  rfl
 
 theorem stick_insertLines (v : Vt) (n : Nat) : stick (v.insertLines n) = stick v := by
-  unfold Vt.insertLines
-  split
-  · rfl
-  · exact stick_foldl _ (fun w _ => stick_scrollDownIn w _ _) _ _
+  rw [frame_insertLines]
+  rfl
 
 theorem stick_deleteLines (v : Vt) (n : Nat) : stick (v.deleteLines n) = stick v := by
-  unfold Vt.deleteLines
-  split
-  · rfl
-  · exact stick_foldl _ (fun w _ => stick_scrollUpIn w _ _ _) _ _
-
-/-! ### The cut `print` induces — everything it does not write
-
-`print` is the first of the two operations a frame *equation* cannot cover: five
-composed stages, and a frame is `rfl` only for a syntactic record update. The
-`stick` bundle above solved that for the sticky fields; this solves it for `print`
-in general, by bundling **everything outside the screen** — the cut `print` actually
-induces, since each of its stages writes only `grid`, `cursor` or `sb`.
-
-One bundle, and the composition is by transitivity, which a frame equation is not.
-Every field invariance across a print is then one `congrArg`, including the two the
-row induction needs and nobody had named (`pen`, `modes.insert`) and the one the
-byte layer needs (`u8acc`, which `Render.cellText_feed` carries as a hypothesis and
-must therefore re-establish per cell). -/
-
-structure OffScreen where
-  cols : Nat
-  rows : Nat
-  pen : Pen
-  modes : Modes
-  top : Nat
-  bot : Nat
-  tabs : Array Bool
-  saved : Saved
-  title : String
-  g0 : Bool
-  g1 : Bool
-  so : Bool
-  alt : Option (Array Row × Cursor × Pen)
-  pstate : PState
-  u8need : Nat
-  u8acc : Nat
-  bell : Bool
-
-def offScreen (v : Vt) : OffScreen :=
-  { cols := v.cols, rows := v.rows, pen := v.pen, modes := v.modes, top := v.top,
-    bot := v.bot, tabs := v.tabs, saved := v.saved, title := v.title, g0 := v.g0Line,
-    g1 := v.g1Line, so := v.shiftOut, alt := v.altGrid, pstate := v.pstate,
-    u8need := v.u8need, u8acc := v.u8acc, bell := v.bell }
-
-/-! The stages, one `rw` each — the payoff of the frames pass. -/
-
-theorem off_printWrap (v : Vt) : offScreen v.printWrap = offScreen v := by
-  rw [frame_printWrap]; rfl
-
-theorem off_printWideWrap (v : Vt) (w : Nat) :
-    offScreen (v.printWideWrap w) = offScreen v := by rw [frame_printWideWrap]; rfl
-
-theorem off_printShift (v : Vt) (w : Nat) : offScreen (v.printShift w) = offScreen v := by
-  rw [frame_printShift]; rfl
-
-theorem off_printPut (v : Vt) (ch : Char) (w : Nat) :
-    offScreen (v.printPut ch w) = offScreen v := by rw [frame_printPut]; rfl
-
-theorem off_printAdvance (v : Vt) (w : Nat) :
-    offScreen (v.printAdvance w) = offScreen v := by rw [frame_printAdvance]; rfl
-
-theorem off_printMark (v : Vt) (ch : Char) : offScreen (v.printMark ch) = offScreen v := by
-  rw [frame_printMark]; rfl
-
-/-- **A print writes only the screen.** The composition `frames` could not state. -/
-theorem off_print (v : Vt) (ch : Char) : offScreen (v.print ch) = offScreen v := by
-  unfold Vt.print
-  dsimp only
-  split
-  · exact off_printMark _ _
-  · exact ((((off_printAdvance _ _).trans (off_printPut _ _ _)).trans
-      (off_printShift _ _)).trans (off_printWideWrap _ _)).trans (off_printWrap _)
-
-/-! The corollaries the row induction asks for. Each is a `congrArg`, so a field the
-next layer wants costs one line rather than a proof. -/
-
-theorem pen_print (v : Vt) (ch : Char) : (v.print ch).pen = v.pen :=
-  congrArg OffScreen.pen (off_print v ch)
-
-theorem modes_print' (v : Vt) (ch : Char) : (v.print ch).modes = v.modes :=
-  congrArg OffScreen.modes (off_print v ch)
-
-theorem ins_print (v : Vt) (ch : Char) : (v.print ch).modes.insert = v.modes.insert :=
-  congrArg Modes.insert (modes_print' v ch)
-
-theorem wrap_print (v : Vt) (ch : Char) : (v.print ch).modes.wrap = v.modes.wrap :=
-  congrArg Modes.wrap (modes_print' v ch)
-
-theorem cols_print (v : Vt) (ch : Char) : (v.print ch).cols = v.cols :=
-  congrArg OffScreen.cols (off_print v ch)
-
-theorem rows_print (v : Vt) (ch : Char) : (v.print ch).rows = v.rows :=
-  congrArg OffScreen.rows (off_print v ch)
-
-theorem g0_print (v : Vt) (ch : Char) : (v.print ch).g0Line = v.g0Line :=
-  congrArg OffScreen.g0 (off_print v ch)
-
-theorem g1_print (v : Vt) (ch : Char) : (v.print ch).g1Line = v.g1Line :=
-  congrArg OffScreen.g1 (off_print v ch)
-
-theorem so_print (v : Vt) (ch : Char) : (v.print ch).shiftOut = v.shiftOut :=
-  congrArg OffScreen.so (off_print v ch)
-
-theorem ua_print' (v : Vt) (ch : Char) : (v.print ch).u8acc = v.u8acc :=
-  congrArg OffScreen.u8acc (off_print v ch)
+  rw [frame_deleteLines]
+  rfl
 
 /-- **The charset translation is stable across a print**, so a row induction proves
 `printChar ch = ch` once instead of per column. `print_narrow_eq` and its siblings
@@ -6296,10 +6205,9 @@ theorem cursor_print_mark_pending {v : Vt} {m : Char}
     (v.print m).cursor = v.cursor := by
   rw [print_mark_pending_eq hpc hw hpend hnw hcap, cursor_mendRow, cursor_putCell]
 
-/-! ### `print`: the first operation frames could not cover
+/-! ### Sticky projections of the print stages
 
-Each of its five stages *is* framed, so the bundle costs one composition instead
-of a family per field. -/
+The stage claims follow their frames; the complete print projects `off_print`. -/
 
 theorem stick_printWrap (v : Vt) : stick v.printWrap = stick v := by rw [frame_printWrap]; rfl
 
@@ -6322,13 +6230,8 @@ theorem stick_printMark (v : Vt) (ch : Char) : stick (v.printMark ch) = stick v 
 screen selection — it *reads* the charsets (`printChar` translates) and reads the
 screen selection (a full-screen scroll goes to scrollback only on main), and
 writes neither. -/
-theorem stick_print (v : Vt) (ch : Char) : stick (v.print ch) = stick v := by
-  unfold Vt.print
-  dsimp only
-  split
-  · exact stick_printMark _ _
-  · exact ((((stick_printAdvance _ _).trans (stick_printPut _ _ _)).trans
-      (stick_printShift _ _)).trans (stick_printWideWrap _ _)).trans (stick_printWrap _)
+theorem stick_print (v : Vt) (ch : Char) : stick (v.print ch) = stick v :=
+  congrArg (fun s => Sticky.mk s.rows s.top s.bot s.g0 s.g1 s.so s.alt.isSome) (off_print v ch)
 
 theorem stick_acceptChar (v : Vt) (n : Nat) : stick (v.acceptChar n) = stick v := by
   unfold Vt.acceptChar; split <;> exact stick_print _ _
@@ -6508,7 +6411,7 @@ theorem stick_setMode_plain (v : Vt) (n : Nat) (on : Bool) :
   · exact absurd hpv (by decide)
   · split <;> rfl
 
-/-! ### `csiDispatch`: the second operation frames could not cover
+/-! ### Conditional sticky preservation through `csiDispatch`
 
 One case-bash over every final byte, so that a new sequence in the emitter cannot
 quietly acquire a sticky effect: the three finals that *can* have one are

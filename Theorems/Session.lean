@@ -534,38 +534,78 @@ theorem onMsg_bounded {s : State} {c : Client} (m : Msg)
 theorem client?_mem {s : State} {id : Nat} {c : Client} (h : s.client? id = some c) :
     c ∈ s.clients := List.mem_of_find?_eq_some h
 
+/-- Induct over the actual batch accumulator, including its effects. A handler
+needs to preserve the predicate only for messages in this batch, after the stop
+guards and sender lookup succeed. Skipped messages keep the entire accumulator. -/
+theorem feedMsgs_induct (id : Nat) (msgs : List Msg) (acc : State × List Effect)
+    {P : State × List Effect → Prop}
+    (pres :
+      ∀ acc c m,
+        m ∈ msgs →
+          Effect.close id ∉ acc.2 →
+          Effect.exit ∉ acc.2 →
+          acc.1.client? id = some c → P acc → P ((onMsg acc.1 c m).1, acc.2 ++ (onMsg acc.1 c m).2))
+    (h : P acc) : P (feedMsgs id msgs acc) := by
+  unfold feedMsgs
+  apply List.foldlRecOn
+  · exact h
+  · intro current hc m hm
+    split
+    · exact hc
+    · rename_i hstop
+      simp only [Bool.or_eq_true, List.contains_iff_mem, not_or] at hstop
+      split
+      · exact hc
+      · rename_i c hfind
+        exact pres current c m hm hstop.1 hstop.2 hfind hc
+
+/-- Batch boundaries preserve the exact state and ordered effects, including
+pending stops. Splitting decoded messages never grants a sender new authority. -/
+theorem feedMsgs_append (id : Nat) (before after : List Msg) (acc : State × List Effect) :
+    feedMsgs id (before ++ after) acc = feedMsgs id after (feedMsgs id before acc) :=
+  List.foldl_append
+
+/-- Once any prefix requests this sender's close or exit, every suffix is
+inert: the result is exactly the prefix's state and effects. -/
+theorem feedMsgs_stopped_suffix (id : Nat) (before after : List Msg) (acc : State × List Effect)
+    (h : Effect.close id ∈ (feedMsgs id before acc).2 ∨ Effect.exit ∈ (feedMsgs id before acc).2) :
+    feedMsgs id (before ++ after) acc = feedMsgs id before acc := by
+  rw [feedMsgs_append]
+  apply feedMsgs_induct id after (feedMsgs id before acc) (P := (· = feedMsgs id before acc)) ?_ rfl
+  intro current _ _ _ hclose hexit _ heq
+  subst current
+  exact (h.elim hclose hexit).elim
+
 /-- Once this sender has a close pending, no remaining decoded message changes
 the state or adds an effect. Transport draining does not extend its authority. -/
 theorem feedMsgs_after_close (id : Nat) (msgs : List Msg) (acc : State × List Effect)
-    (h : Effect.close id ∈ acc.2) : feedMsgs id msgs acc = acc := by
-  induction msgs with
-  | nil => rfl
-  | cons m ms ih => simpa [feedMsgs, List.foldl_cons, h] using ih
+    (h : Effect.close id ∈ acc.2) : feedMsgs id msgs acc = acc :=
+  feedMsgs_stopped_suffix id [] msgs acc (Or.inl h)
 
 /-- Exit stops every remaining decoded command, regardless of sender. -/
 theorem feedMsgs_after_exit (id : Nat) (msgs : List Msg) (acc : State × List Effect)
-    (h : Effect.exit ∈ acc.2) : feedMsgs id msgs acc = acc := by
-  induction msgs with
-  | nil => rfl
-  | cons m ms ih => simpa [feedMsgs, List.foldl_cons, h] using ih
+    (h : Effect.exit ∈ acc.2) : feedMsgs id msgs acc = acc :=
+  feedMsgs_stopped_suffix id [] msgs acc (Or.inr h)
 
 /-- Lift a state invariant through the actual message batch. The lookup witness
 lets each invariant use the sender's membership and identity when needed. -/
 private theorem feedMsgs_preserves (id : Nat) (msgs : List Msg) (acc : State × List Effect)
     {P : State → Prop} (pres : ∀ s c m, s.client? id = some c → P s → P (onMsg s c m).1)
-    (h : P acc.1) : P (feedMsgs id msgs acc).1 := by
-  induction msgs generalizing acc with
+    (h : P acc.1) : P (feedMsgs id msgs acc).1 :=
+  feedMsgs_induct id msgs acc (P := fun r => P r.1)
+    (fun current c m _ _ _ hc hs => pres current.1 c m hc hs) h
+
+/-- Any state invariant preserved by the supplied events holds after their
+trace. Membership permits restricted alphabets, such as one client's bytes.
+The runtime instance uses its consumed trace, ending at exit. -/
+theorem run_preserves (s : State) (evs : List Event) {P : State → Prop}
+    (pres : ∀ s ev, ev ∈ evs → P s → P (step s ev).1) (h : P s) : P (run s evs).1 := by
+  induction evs generalizing s with
   | nil => exact h
-  | cons m ms ih =>
-    unfold feedMsgs
-    rw [List.foldl_cons]
-    split
-    · exact ih acc h
-    · rcases hc : acc.1.client? id with - | c'
-      · dsimp only [hc]
-        exact ih acc h
-      · dsimp only [hc]
-        exact ih _ (pres _ _ m hc h)
+  | cons ev evs ih =>
+    exact
+      ih (step s ev).1 (fun s e he hs => pres s e (List.mem_cons_of_mem ev he) hs)
+        (pres s ev List.mem_cons_self h)
 
 theorem feedMsgs_bounded (id : Nat) (msgs : List Msg) (acc : State × List Effect)
     (h : Bounded acc.1) : Bounded (feedMsgs id msgs acc).1 :=
@@ -630,29 +670,39 @@ theorem step_bounded (s : State) (ev : Event) (h : Bounded s) : Bounded (step s 
   · -- failed checkpoint changes only persistence bookkeeping
     exact ⟨hcl, hlb, hdec, hscan⟩
 
-/-! ## The emulator stays Good through the daemon -/
+/-! ## VT preservation through the daemon -/
 
-open Linger.Core.Vt (Good) in
-theorem onMsg_vt_good {s : State} {c : Client} (m : Msg) (h : Good s.vt) :
-    Good (onMsg s c m).1.vt := by
+/-- Every message either retains the terminal or resizes it. Any predicate
+closed under resize therefore survives, without restrictions on the message. -/
+theorem onMsg_vt_preserves {P : Vt.Vt → Prop}
+    (hresize : ∀ vt cols rows, P vt → P (vt.resize cols rows)) {s : State} {c : Client} (m : Msg)
+    (h : P s.vt) : P (onMsg s c m).1.vt := by
   unfold onMsg controlResize resizeOwned resize
   dsimp only
   repeat' split
   all_goals
     first
     | exact h
-    | exact Linger.Core.Vt.Good.resize _ _ (by simpa [State.setClient] using h)
+    | exact hresize _ _ _ (by simpa [State.setClient] using h)
     | simpa [State.setClient] using h
+
+open Linger.Core.Vt (Good) in
+theorem onMsg_vt_good {s : State} {c : Client} (m : Msg) (h : Good s.vt) :
+    Good (onMsg s c m).1.vt :=
+  onMsg_vt_preserves (fun _ cols rows hv => Linger.Core.Vt.Good.resize cols rows hv) m h
 
 open Linger.Core.Vt (Good) in
 theorem feedMsgs_vt_good (id : Nat) (msgs : List Msg) (acc : State × List Effect)
     (h : Good acc.1.vt) : Good (feedMsgs id msgs acc).1.vt :=
   feedMsgs_preserves id msgs acc (P := fun s => Good s.vt) (fun _ _ m _ hs => onMsg_vt_good m hs) h
 
-open Linger.Core.Vt (Good) in
-/-- §Total end-to-end: the screen state a daemon holds stays Good
-whatever events arrive — adversarial clients and pty output included. -/
-theorem step_vt_good (s : State) (ev : Event) (h : Good s.vt) : Good (step s ev).1.vt := by
+/-- Resize and feed are the only terminal transitions a session performs.
+This lifts either kind of terminal invariant through the actual message batch
+and mediator, retaining their stop behavior and VT projection. -/
+theorem step_vt_preserves {P : Vt.Vt → Prop}
+    (hresize : ∀ vt cols rows, P vt → P (vt.resize cols rows))
+    (hfeed : ∀ vt bytes, P vt → P (vt.feed bytes)) (s : State) (ev : Event) (h : P s.vt) :
+    P (step s ev).1.vt := by
   unfold step
   split
   · split
@@ -663,18 +713,27 @@ theorem step_vt_good (s : State) (ev : Event) (h : Good s.vt) : Good (step s ev)
     · dsimp only
       split
       · simpa only [closeClient_vt] using h
-      · apply feedMsgs_vt_good
+      · apply
+          feedMsgs_preserves _ _ _ (P := fun s => P s.vt)
+            (fun _ _ m _ hs => onMsg_vt_preserves hresize m hs)
         simpa [State.setClient] using h
   · simpa only [closeClient_vt] using h
   · -- ptyOut
     dsimp only
     rw [Terminal.feed_vt]
-    exact Linger.Core.Vt.Good.feed _ h
+    exact hfeed _ _ h
   · exact h
   · split
     · exact h
     · exact h
   · exact h
+
+open Linger.Core.Vt (Good) in
+/-- §Total end-to-end: the screen state a daemon holds stays Good
+whatever events arrive — adversarial clients and pty output included. -/
+theorem step_vt_good (s : State) (ev : Event) (h : Good s.vt) : Good (step s ev).1.vt :=
+  step_vt_preserves (fun _ cols rows hv => Linger.Core.Vt.Good.resize cols rows hv)
+    (fun _ bytes hv => Linger.Core.Vt.Good.feed bytes hv) s ev h
 
 end Linger.Core.Session
 
@@ -793,10 +852,9 @@ is therefore a real count forever (a fresh daemon starts at `0 ≤ 0`), and the
 agent loop "capture, then poll `behind`/`outseq`" rests on this rather than on
 Nat subtraction clamping a lie to zero. -/
 theorem run_lookSeq_le (s : State) (evs : List Event) (h : s.lookSeq ≤ s.outSeq) :
-    (run s evs).1.lookSeq ≤ (run s evs).1.outSeq := by
-  induction evs generalizing s with
-  | nil => exact h
-  | cons ev evs ih => exact ih (step s ev).1 (step_lookSeq_le s ev h)
+    (run s evs).1.lookSeq ≤ (run s evs).1.outSeq :=
+  run_preserves s evs (P := fun s => s.lookSeq ≤ s.outSeq)
+    (fun s ev _ hs => step_lookSeq_le s ev hs) h
 
 /-! ## §Isolate — one client cannot reach another client's state
 
@@ -828,43 +886,24 @@ theorem find?_map_set (c : Client) (other : Nat) (hne : other ≠ c.id) :
         l.find? (·.id == other)
   | [] => rfl
   | a :: l => by
-    have hc : (c.id == other) = false := beq_eq_false_iff_ne.mpr (fun hh => hne hh.symm)
-    rw [List.map_cons, List.find?_cons, List.find?_cons]
-    by_cases hid : (a.id == c.id) = true
-    · have ha : (a.id == other) = false := by
-        have : a.id = c.id := by simpa using hid
-        exact
-          beq_eq_false_iff_ne.mpr
-            (by
-              rw [this]; exact fun hh => hne hh.symm)
-      simp only [hid, ite_true, hc, ha]
-      exact find?_map_set c other hne l
-    · simp only [hid, Bool.false_eq_true, ite_false]
-      cases (a.id == other)
-      · exact find?_map_set c other hne l
-      · rfl
+    rw [List.map_cons, List.find?_cons, List.find?_cons, find?_map_set c other hne l]
+    by_cases hid : a.id = c.id
+    · have hc : (c.id == other) = false := beq_eq_false_iff_ne.mpr (Ne.symm hne)
+      simp only [hid, beq_self_eq_true, ↓reduceIte, hc]
+    · simp only [beq_iff_eq, hid, ↓reduceIte]
 
 /-- Dropping one client cannot change what a lookup for a different id
 finds. -/
 theorem find?_filter_drop (id other : Nat) (hne : other ≠ id) :
-    ∀ (l : List Client), (l.filter (·.id != id)).find? (·.id == other) = l.find? (·.id == other)
-  | [] => rfl
-  | a :: l => by
-    rw [List.filter_cons, List.find?_cons]
-    by_cases hid : (a.id != id) = true
-    · rw [ite_eq_left hid, List.find?_cons]
-      cases (a.id == other)
-      · exact find?_filter_drop id other hne l
-      · rfl
-    · have ha : (a.id == other) = false := by
-        have : a.id = id := by simpa using hid
-        exact
-          beq_eq_false_iff_ne.mpr
-            (by
-              rw [this]; exact fun hh => hne hh.symm)
-      rw [ite_eq_right hid]
-      simp only [ha]
-      exact find?_filter_drop id other hne l
+    ∀ (l : List Client),
+      (l.filter (·.id != id)).find? (·.id == other) = l.find? (·.id == other) := by
+  intro l
+  rw [List.find?_filter]
+  congr 1
+  funext c
+  apply Bool.eq_iff_iff.mpr
+  simp only [decide_eq_true_eq, bne_iff_ne, beq_iff_eq]
+  exact ⟨And.right, fun h => ⟨fun hid => hne (h.symm.trans hid), h⟩⟩
 
 theorem setClient_other {s : State} {c : Client} {other : Nat} (h : other ≠ c.id) :
     (s.setClient c).client? other = s.client? other := find?_map_set c other h s.clients
@@ -920,13 +959,11 @@ namespace Linger.Core.Session
 
 /-! ## Trace lift — the per-step theorems over the daemon's whole life
 
-`step`-level preservation says one event is safe; the daemon lives
-through millions. `run` names the fold the runtime performs, and these
-theorems close the gap: no event *trace* of any length can break the
-bounds, corrupt the screen invariant, or let one client's byte stream
-touch another's record. Mostly mechanical inductions — the value is the
-statement, so the ledger's strongest rows quantify over lifetimes, not
-single events.
+`run` folds the events actually consumed, including effect feedback; the runtime
+pump chooses that trace and stops at exit. These theorems cover every such trace,
+without asserting that queued events after exit are consumed. `run_preserves`
+supplies the common induction; the exact fold law also pins state threading and
+effect order.
 -/
 
 /-- `run` is exactly the effect-accumulating fold of `step` — state
@@ -937,39 +974,19 @@ theorem run_eq_foldl (s : State) (evs : List Event) :
       evs.foldl
         (fun (acc : State × List Effect) ev => ((step acc.1 ev).1, acc.2 ++ (step acc.1 ev).2))
         (s, []) := by
-  suffices hgen :
-    ∀ evs (s : State) (fx : List Effect),
-      (fx ++ (run s evs).2 =
-          (evs.foldl
-              (fun (acc : State × List Effect) ev =>
-                ((step acc.1 ev).1, acc.2 ++ (step acc.1 ev).2))
-              (s, fx)).2) ∧
-        (run s evs).1 =
-          (evs.foldl
-              (fun (acc : State × List Effect) ev =>
-                ((step acc.1 ev).1, acc.2 ++ (step acc.1 ev).2))
-              (s, fx)).1
-    by
-    have h := hgen evs s []
-    rcases hr : run s evs with ⟨s', fx'⟩
-    rw [hr] at h
-    simp only [List.nil_append] at h
-    rw [Prod.ext_iff]
-    exact ⟨h.2, h.1.symm ▸ rfl⟩
-  intro evs
-  induction evs with
-  | nil =>
-    intro s fx; simp [run]
-  | cons ev evs ih =>
-    intro s fx
-    have h := ih (step s ev).1 (fx ++ (step s ev).2)
-    constructor
-    · show fx ++ ((step s ev).2 ++ (run (step s ev).1 evs).2) = _
-      rw [List.foldl_cons, ← List.append_assoc]
-      exact h.1
-    · show (run (step s ev).1 evs).1 = _
-      rw [List.foldl_cons]
-      exact h.2
+  have hfold :
+    ∀ evs s fx,
+      evs.foldl
+          (fun (acc : State × List Effect) ev => ((step acc.1 ev).1, acc.2 ++ (step acc.1 ev).2))
+          (s, fx) =
+        ((run s evs).1, fx ++ (run s evs).2) := by
+    intro evs
+    induction evs with
+    | nil =>
+      intros; simp [run]
+    | cons ev evs ih =>
+      intros; simp [run, List.foldl_cons, ih, List.append_assoc]
+  simpa using (hfold evs s []).symm
 
 /-- The daemon's composite invariant: everything the per-step theorems
 preserve, as one predicate. -/
@@ -981,23 +998,19 @@ theorem step_wf (s : State) (ev : Event) (h : WF s) : WF (step s ev).1 :=
 /-- §Bound + §Total over the daemon's whole life: no event trace of any
 length — adversarial clients, hostile pty bytes, any interleaving — can
 break the bounds or the screen invariant. -/
-theorem run_wf (s : State) (evs : List Event) (h : WF s) : WF (run s evs).1 := by
-  induction evs generalizing s with
-  | nil => exact h
-  | cons ev evs ih => exact ih (step s ev).1 (step_wf s ev h)
+theorem run_wf (s : State) (evs : List Event) (h : WF s) : WF (run s evs).1 :=
+  run_preserves s evs (fun s ev _ hs => step_wf s ev hs) h
 
 /-- §Isolate over a whole trace: one client's entire byte stream,
 however chunked, leaves every other client's record — decoder included
 — bit-identical. -/
 theorem run_bytes_isolates (s : State) (id : Nat) (chunks : List (List UInt8)) {other : Nat}
     (h : other ≠ id) : (run s (chunks.map (Event.bytes id))).1.client? other = s.client? other := by
-  induction chunks generalizing s with
-  | nil => rfl
-  | cons c cs
-    ih =>
-    show (run (step s (.bytes id c)).1 (cs.map (Event.bytes id))).1.client? other = _
-    rw [ih (step s (.bytes id c)).1]
-    exact step_bytes_isolates s id c h
+  apply run_preserves _ _ (P := fun t => t.client? other = s.client? other) ?_ rfl
+  intro t ev hev ht
+  obtain ⟨chunk, _, rfl⟩ := List.mem_map.mp hev
+  rw [step_bytes_isolates t id chunk h]
+  exact ht
 
 end Linger.Core.Session
 
@@ -1020,56 +1033,21 @@ open Linger.Core.Vt (LiveReachableVt Renderable)
 /-- The daemon's terminal is one a live session can hold. -/
 def LiveVt (s : State) : Prop := LiveReachableVt s.vt
 
-theorem onMsg_vt_live {s : State} {c : Client} (m : Msg) (h : LiveVt s) :
-    LiveVt (onMsg s c m).1 := by
-  unfold LiveVt at h ⊢
-  unfold onMsg controlResize resizeOwned resize
-  dsimp only
-  repeat' split
-  all_goals
-    first
-    | exact h
-    | exact LiveReachableVt.resize (by simpa [State.setClient] using h) _ _
-    | simpa [State.setClient] using h
+theorem onMsg_vt_live {s : State} {c : Client} (m : Msg) (h : LiveVt s) : LiveVt (onMsg s c m).1 :=
+  onMsg_vt_preserves (P := LiveReachableVt) (fun _ cols rows hv => hv.resize cols rows) m h
 
 theorem feedMsgs_vt_live (id : Nat) (msgs : List Msg) (acc : State × List Effect)
     (h : LiveVt acc.1) : LiveVt (feedMsgs id msgs acc).1 :=
   feedMsgs_preserves id msgs acc (fun _ _ m _ hs => onMsg_vt_live m hs) h
 
 /-- One event keeps the terminal reachable. -/
-theorem step_vt_live (s : State) (ev : Event) (h : LiveVt s) : LiveVt (step s ev).1 := by
-  unfold LiveVt at h ⊢
-  unfold step
-  split
-  · split
-    · exact h
-    · exact h
-  · split
-    · exact h
-    · dsimp only
-      split
-      · simpa only [closeClient_vt] using h
-      · refine feedMsgs_vt_live _ _ _ ?_
-        show LiveReachableVt _
-        simpa [State.setClient] using h
-  · simpa only [closeClient_vt] using h
-  · -- pty output: the mediator's VT projection is exactly `Vt.feed`
-    dsimp only
-    rw [Terminal.feed_vt]
-    exact LiveReachableVt.feed h _
-  · exact h
-  · split
-    · exact h
-    · exact h
-  · exact h
+theorem step_vt_live (s : State) (ev : Event) (h : LiveVt s) : LiveVt (step s ev).1 :=
+  step_vt_preserves (P := LiveReachableVt) (fun _ cols rows hv => hv.resize cols rows)
+    (fun _ bytes hv => hv.feed bytes) s ev h
 
 /-- …and so does a trace of any length. -/
-theorem run_vt_live (s : State) (evs : List Event) (h : LiveVt s) : LiveVt (run s evs).1 := by
-  induction evs generalizing s with
-  | nil => exact h
-  | cons ev evs ih =>
-    show LiveVt (run (step s ev).1 evs).1
-    exact ih _ (step_vt_live s ev h)
+theorem run_vt_live (s : State) (evs : List Event) (h : LiveVt s) : LiveVt (run s evs).1 :=
+  run_preserves s evs (fun s ev _ hs => step_vt_live s ev hs) h
 
 /-- **The shape hypothesis, discharged at the daemon level.** Whatever a session
 has been through — adversarial clients, hostile pty bytes, resizes, any
@@ -1507,85 +1485,26 @@ Two claims, and they are the two properties the runtime depends on: the split lo
 nothing (so a reattaching client's repaint is complete) and no frame exceeds the cap
 (so `Wire`'s §Bound well-formedness holds of what the daemon actually sends). -/
 
-/-! `chunksOf` recurses on `l.drop n` under a well-founded measure. Rather than
-re-supply its `decreasing_by`, both proofs below induct on a length *bound* — the
-standard trick, and it keeps them Mathlib-free. -/
-
-private theorem chunksOf_flatten_aux {α : Type} (n : Nat) :
-    ∀ (k : Nat) (l : List α), l.length ≤ k → (chunksOf n l).flatten = l := by
-  intro k
-  induction k with
-  | zero =>
-    intro l hl
-    cases l with
-    | nil =>
-      unfold chunksOf
-      split
-      · simp
-      · rename_i h
-        exact absurd (Or.inl (by simp : ([] : List α).length ≤ n)) h
-    | cons a t => simp at hl
-  | succ k ih =>
-    intro l hl
-    unfold chunksOf
-    split
-    · simp
-    · rename_i h
-      have hn0 : n ≠ 0 := fun hz => h (Or.inr hz)
-      have hgt : n < l.length := Nat.lt_of_not_le (fun hle => h (Or.inl hle))
-      simp only [List.flatten_cons]
-      rw [ih (l.drop n)
-          (by
-            simp only [List.length_drop]; omega)]
-      exact List.take_append_drop n l
-
-theorem chunksOf_flatten {α : Type} (n : Nat) (l : List α) : (chunksOf n l).flatten = l :=
-  chunksOf_flatten_aux n l.length l (Nat.le_refl _)
-
-private theorem chunksOf_le_aux {α : Type} (n : Nat) (hn : 0 < n) :
-    ∀ (k : Nat) (l : List α), l.length ≤ k → ∀ c ∈ chunksOf n l, c.length ≤ n := by
-  intro k
-  induction k with
-  | zero =>
-    intro l hl
-    cases l with
-    | nil =>
-      unfold chunksOf
-      split
-      · intro c hc
-        simp only [List.mem_singleton] at hc
-        subst hc
-        simp
-      · rename_i h
-        exact absurd (Or.inl (by simp : ([] : List α).length ≤ n)) h
-    | cons a t => simp at hl
-  | succ k ih =>
-    intro l hl
-    unfold chunksOf
-    split
-    · rename_i h
-      intro c hc
-      simp only [List.mem_singleton] at hc
-      subst hc
-      rcases h with h | h
-      · exact h
-      · omega
-    · rename_i h
-      have hn0 : n ≠ 0 := fun hz => h (Or.inr hz)
-      have hgt : n < l.length := Nat.lt_of_not_le (fun hle => h (Or.inl hle))
-      intro c hc
-      rcases List.mem_cons.mp hc with hh | hh
-      · subst hh
-        simp only [List.length_take]
-        omega
-      · exact
-          ih (l.drop n)
-            (by
-              simp only [List.length_drop]; omega)
-            c hh
+theorem chunksOf_flatten {α : Type} (n : Nat) (l : List α) : (chunksOf n l).flatten = l := by
+  induction l using chunksOf.induct n with
+  | case1 l h =>
+    rw [chunksOf]; simp [h]
+  | case2 l h ih =>
+    rw [chunksOf]; simp [h, ih, List.take_append_drop]
 
 theorem chunksOf_le {α : Type} (n : Nat) (hn : 0 < n) (l : List α) :
-    ∀ c ∈ chunksOf n l, c.length ≤ n := chunksOf_le_aux n hn l.length l (Nat.le_refl _)
+    ∀ c ∈ chunksOf n l, c.length ≤ n := by
+  induction l using chunksOf.induct n with
+  | case1 l h =>
+    rw [chunksOf]
+    simpa [h] using (h.resolve_right (by omega) : l.length ≤ n)
+  | case2 l h ih =>
+    rw [chunksOf]
+    simp only [h, ↓reduceDIte, List.mem_cons]
+    intro c hc
+    rcases hc with rfl | hc
+    · simpa only [List.length_take] using Nat.min_le_left n l.length
+    · exact ih c hc
 
 /-- The payloads of the frames `outputMsgs` produces are exactly its chunks.
 
@@ -1601,11 +1520,7 @@ theorem outputMsgs_payloads (id : Nat) (bs : List UInt8) :
           | .send _ (.output c) => some c
           | _ => none) =
       chunksOf outputChunk bs := by
-  unfold outputMsgs
-  induction chunksOf outputChunk bs with
-  | nil => rfl
-  | cons a t ih =>
-    rw [List.map_cons, List.filterMap_cons]; simpa using ih
+  simp [outputMsgs, List.filterMap_map, Function.comp_def]
 
 /-- **The session's framing loses nothing.** Concatenating the payloads of the frames
 `outputMsgs` produces gives back exactly the ordinary output bytes it was handed.

@@ -252,39 +252,9 @@ theorem stick_csi_arg_tail (n : Nat) (final : UInt8) (f : Sticky → Sticky) (hn
     {w : Vt} (hm : w.pstate = .csi s0) (hwu : w.u8need = 0) :
     stick (w.feed (digits n ++ [final])) = f (stick w) ∧
       (w.feed (digits n ++ [final])).pstate = .ground := by
-  obtain ⟨sa, hfeed, -⟩ := csi_param_run_inter (digits n) hm hwu (paramBytes_digits n)
-  obtain ⟨sb, hpsb, hcur', hhave', hpar', hint', hign', hsub', hpriv'⟩ :=
-    csi_digits_value n hm hs0cur
-  have hsab : sa = sb :=
-    PState.csi.inj ((by rw [hfeed] : (w.feed (digits n)).pstate = .csi sa).symm.trans hpsb)
-  rw [show ∀ (u : Vt), u.feed (digits n ++ [final]) = (u.feed (digits n)).feed [final] from fun u =>
-      by simp [Vt.feed, List.foldl_append]]
-  rw [show ∀ (u : Vt), u.feed [final] = u.step final from fun _ => rfl, hfeed]
-  rw [csi_final_step_eq final rfl (by rw [hwu])
-      (by
-        rw [hsab, hint']; exact hs0int)
-      h1 h2]
-  unfold Vt.csiFinish
-  rw [ite_eq_left
-      (by
-        rw [hsab]; simpa using hhave'),
-    ite_eq_right
-      (by
-        rw [hsab, hpar']; omega)]
-  dsimp only
-  refine ⟨?_, rfl⟩
-  have hstate :
-    ({ sa with params := sa.params.push (min sa.cur 65535, sa.curSub) } : CsiState) =
-      { sa with params := s0.params.push (n, s0.curSub) } := by
-    rw [hsab, hpar', hcur', hsub', show min (min n 65535) 65535 = n from by omega]
-  rw [hstate]
-  exact
-    hst _ _
-      (by
-        show sa.priv = s0.priv; rw [hsab]; exact hpriv')
-      (by
-        show sa.ignore = false; rw [hsab, hign']; exact hs0ign)
-      rfl
+  rw [csi_digits_tail_eq n final h1 h2 hm hwu hs0int hs0cur hs0size,
+    show min n 65535 = n from by omega]
+  exact ⟨hst _ _ rfl hs0ign rfl, rfl⟩
 
 /-- The walk, both markers. `priv` picks `CSI ? <n> <final>` or `CSI <n> <final>`. -/
 theorem smap_csi_one_arg (n : Nat) (final : UInt8) (priv : Bool) (f : Sticky → Sticky) (hn : 0 < n)
@@ -540,63 +510,14 @@ so these claims have to walk through `gridAnsi` rather than step over it. Printi
 reads the charsets (translation) and the screen selection (scrollback eligibility)
 and writes neither, which is `stick_print`. -/
 
-theorem smap_id_rowAnsi (row : Row) (p : Pen) : SMap id (rowAnsi row p).1 := by
-  unfold rowAnsi
-  rw [← Array.foldl_toList]
-  refine invariant_foldl (fun acc => SMap id acc.1) _ ?_ row.toList ([], p, 0) SMap.nil
-  intro acc c hacc
-  unfold rowSlot
-  dsimp only
-  repeat' split
-  all_goals
-    first
-    | exact hacc.append (smap_utf8s c.marks)
-    | exact hacc.append (smap_cellText c)
-    | exact (hacc.append (smap_id_penSgr c.pen)).append (smap_cellText c)
-    |
-      exact
-        hacc.append
-          ((((smap_utf8_safe c.base).append (smap_id_cha _)).append (smap_utf8s c.marks)).append
-            (smap_id_cha _))
-    |
-      exact
-        (hacc.append (smap_id_penSgr c.pen)).append
-          ((((smap_utf8_safe c.base).append (smap_id_cha _)).append (smap_utf8s c.marks)).append
-            (smap_id_cha _))
+theorem smap_id_rowAnsi (row : Row) (p : Pen) : SMap id (rowAnsi row p).1 :=
+  SMap.streamPred.rowAnsi smap_id_penSgr smap_utf8_safe smap_utf8s smap_id_cha row p
 
-theorem smap_id_joinCRLF : ∀ (l : List Bytes), (∀ bs ∈ l, SMap id bs) → SMap id (joinCRLF l)
-  | [], _ => SMap.nil
-  | [b], h => by
-    unfold joinCRLF; exact h b (by simp)
-  | b :: c :: bs, h => by
-    unfold joinCRLF
-    refine ((h b (by simp)).append smap_crlf).append ?_
-    exact smap_id_joinCRLF (c :: bs) (fun x hx => h x (by simp [hx]))
+theorem smap_id_joinCRLF : ∀ (l : List Bytes), (∀ bs ∈ l, SMap id bs) → SMap id (joinCRLF l) :=
+  SMap.streamPred.joinCRLF smap_crlf
 
-theorem smap_id_gridAnsi (grid : Array Row) : SMap id (gridAnsi grid) := by
-  unfold gridAnsi
-  dsimp only
-  have hrows :
-    ∀
-      bs ∈
-        (grid.foldl
-            (fun (acc : List Bytes × Pen) row =>
-              (acc.1 ++ [(rowAnsi row acc.2).1], (rowAnsi row acc.2).2))
-            (([], ({} : Pen)))).1,
-      SMap id bs := by
-    rw [← Array.foldl_toList]
-    refine
-      invariant_foldl (fun acc => ∀ bs ∈ acc.1, SMap id bs) _ ?_ grid.toList (([], ({} : Pen)))
-        (by
-          intro bs hbs; simp at hbs)
-    intro acc row hacc bs hbs
-    dsimp only at hbs
-    rcases List.mem_append.mp hbs with h | h
-    · exact hacc bs h
-    · simp only [List.mem_singleton] at h
-      subst h
-      exact smap_id_rowAnsi row acc.2
-  exact (smap_id_sgrNum 0).append (smap_id_home.append (smap_id_joinCRLF _ hrows))
+theorem smap_id_gridAnsi (grid : Array Row) : SMap id (gridAnsi grid) :=
+  SMap.streamPred.gridAnsi (smap_id_sgrNum 0) smap_id_home smap_crlf smap_id_rowAnsi grid
 
 /-! ### The remaining constructs -/
 
@@ -1447,6 +1368,28 @@ theorem home_places_cursor {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0
         show ¬(v.modes.origin = true); rw [ho]; simp)]
   refine ⟨?_, ?_, rfl⟩ <;> simp
 
+/-- **`CHA` as a state equation**: feeding it *is* `setCol (n-1)`. `csiFinish` returns to
+ground and `setCol` keeps the ground `pstate` a `Matches` receiver already has, so every
+non-cursor field frames through `setCol` at once — which is what a `Matches`-across-`CHA`
+step needs, rather than one preservation lemma per field. -/
+theorem cha_feed_eq {v : Vt} (n : Nat) (hg : v.pstate = .ground) (hu : v.u8need = 0) (hn : 0 < n)
+    (hlt : n < 65535) : v.feed (csiNum n 0x47) = v.setCol (n - 1) := by
+  rw [show csiNum n 0x47 = [0x1B, 0x5B] ++ (digits n ++ [(0x47 : UInt8)]) from by
+      simp [csiNum, csiB],
+    feed_append, keeps_csi_open hg hu,
+    csi_digits_tail_eq n 0x47 (by decide) (by decide) (v := { v with pstate := .csi {} }) rfl hu rfl
+      rfl (by decide),
+    show min n 65535 = n from by omega]
+  change
+    {
+        ({ v with pstate := .csi { cur := n, haveCur := true } } : Vt).setCol
+          (({ params := #[(n, false)] } : CsiState).arg 0 1 - 1) with
+        pstate := .ground } =
+      _
+  rw [arg_of_one_of 1 rfl, ite_eq_right (by omega)]
+  unfold Vt.setCol
+  rw [hg]
+
 /-- **`CHA` places the column.** `CSI n G` is `setCol (n-1)`: the row is untouched and
 wrap-pending is cleared, which is exactly what the wide-with-marks branch needs of
 it — the mark must attach to the base at `n-2`, and `printMark` steps one left from
@@ -1462,147 +1405,8 @@ theorem cha_places_cursor {v : Vt} (n : Nat) (hg : v.pstate = .ground) (hu : v.u
     (v.feed (csiNum n 0x47)).cursor.x = min (n - 1) (v.cols - 1) ∧
       (v.feed (csiNum n 0x47)).cursor.y = v.cursor.y ∧
       (v.feed (csiNum n 0x47)).cursor.pending = false := by
-  rw [show csiNum n 0x47 = [0x1B, 0x5B] ++ (digits n ++ [(0x47 : UInt8)]) from by
-      simp [csiNum, csiB]]
-  rw [feed_append, keeps_csi_open hg hu]
-  obtain ⟨s', heq, hcur', hhave, hpar, hint, hsub⟩ :=
-    csi_digits_run_eq n (v := { v with pstate := .csi ({} : CsiState) }) (s := ({} : CsiState)) rfl
-      (by simpa using hu) rfl
-  rw [show
-      ∀ (u : Vt), u.feed (digits n ++ [(0x47 : UInt8)]) = (u.feed (digits n)).feed [(0x47 : UInt8)]
-      from fun u => by simp [Vt.feed, List.foldl_append]]
-  rw [heq, show ∀ (u : Vt), u.feed [(0x47 : UInt8)] = u.step 0x47 from fun _ => rfl]
-  rw [csi_final_step_eq 0x47 rfl (by simpa using hu) (by rw [hint]) (by decide) (by decide)]
-  unfold Vt.csiFinish
-  rw [ite_eq_left (by simpa using hhave),
-    ite_eq_right
-      (by
-        rw [hpar]; decide)]
-  dsimp only
-  have harg :
-    ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState).arg 0 1 =
-      n := by
-    rw [arg_of_one_of 1
-        (show
-          ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState).params =
-            (#[] : Array (Nat × Bool)).push (n, s'.curSub)
-          from by rw [hpar, hcur', show min (min n 65535) 65535 = n from by omega]),
-      ite_eq_right (by omega)]
-  rw [show
-      ∀ (u : Vt),
-        u.csiDispatch
-            ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState) 0x47 =
-          u.setCol (n - 1)
-      from by
-      intro u
-      unfold Vt.csiDispatch
-      rw [ite_eq_right
-          (show
-            ¬(({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } :
-                    CsiState)).ignore =
-                true
-            from by
-            show ¬(s'.ignore = true)
-            rw [show s'.ignore = ({} : CsiState).ignore from by
-                have :=
-                  csi_digits_value n (v := { v with pstate := .csi ({} : CsiState) }) (s :=
-                    ({} : CsiState)) rfl rfl
-                obtain ⟨s2, hps2, -, -, -, -, hign2, -, -⟩ := this
-                have : s' = s2 :=
-                  PState.csi.inj
-                    ((by rw [heq] :
-                          ((({ v with pstate := .csi ({} : CsiState) } : Vt)).feed
-                                (digits n)).pstate =
-                            PState.csi s').symm.trans
-                      hps2)
-                rw [this]; exact hign2]
-            simp)]
-      show
-        u.setCol
-            (({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState).arg 0
-                1 -
-              1) =
-          u.setCol (n - 1)
-      rw [harg]]
-  unfold Vt.setCol
+  rw [cha_feed_eq n hg hu hn hlt]
   exact ⟨rfl, rfl, rfl⟩
-
-/-- **`CHA` as a state equation**: feeding it *is* `setCol (n-1)`. `csiFinish` returns to
-ground and `setCol` keeps the ground `pstate` a `Matches` receiver already has, so every
-non-cursor field frames through `setCol` at once — which is what a `Matches`-across-`CHA`
-step needs, rather than one preservation lemma per field. -/
-theorem cha_feed_eq {v : Vt} (n : Nat) (hg : v.pstate = .ground) (hu : v.u8need = 0) (hn : 0 < n)
-    (hlt : n < 65535) : v.feed (csiNum n 0x47) = v.setCol (n - 1) := by
-  rw [show csiNum n 0x47 = [0x1B, 0x5B] ++ (digits n ++ [(0x47 : UInt8)]) from by
-      simp [csiNum, csiB]]
-  rw [feed_append, keeps_csi_open hg hu]
-  obtain ⟨s', heq, hcur', hhave, hpar, hint, hsub⟩ :=
-    csi_digits_run_eq n (v := { v with pstate := .csi ({} : CsiState) }) (s := ({} : CsiState)) rfl
-      (by simpa using hu) rfl
-  rw [show
-      ∀ (u : Vt), u.feed (digits n ++ [(0x47 : UInt8)]) = (u.feed (digits n)).feed [(0x47 : UInt8)]
-      from fun u => by simp [Vt.feed, List.foldl_append]]
-  rw [heq, show ∀ (u : Vt), u.feed [(0x47 : UInt8)] = u.step 0x47 from fun _ => rfl]
-  rw [csi_final_step_eq 0x47 rfl (by simpa using hu) (by rw [hint]) (by decide) (by decide)]
-  unfold Vt.csiFinish
-  rw [ite_eq_left (by simpa using hhave),
-    ite_eq_right
-      (by
-        rw [hpar]; decide)]
-  dsimp only
-  have harg :
-    ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState).arg 0 1 =
-      n := by
-    rw [arg_of_one_of 1
-        (show
-          ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState).params =
-            (#[] : Array (Nat × Bool)).push (n, s'.curSub)
-          from by rw [hpar, hcur', show min (min n 65535) 65535 = n from by omega]),
-      ite_eq_right (by omega)]
-  rw [show
-      ∀ (u : Vt),
-        u.csiDispatch
-            ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState) 0x47 =
-          u.setCol (n - 1)
-      from by
-      intro u
-      unfold Vt.csiDispatch
-      rw [ite_eq_right
-          (show
-            ¬(({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } :
-                    CsiState)).ignore =
-                true
-            from by
-            show ¬(s'.ignore = true)
-            rw [show s'.ignore = ({} : CsiState).ignore from by
-                have :=
-                  csi_digits_value n (v := { v with pstate := .csi ({} : CsiState) }) (s :=
-                    ({} : CsiState)) rfl rfl
-                obtain ⟨s2, hps2, -, -, -, -, hign2, -, -⟩ := this
-                have : s' = s2 :=
-                  PState.csi.inj
-                    ((by rw [heq] :
-                          ((({ v with pstate := .csi ({} : CsiState) } : Vt)).feed
-                                (digits n)).pstate =
-                            PState.csi s').symm.trans
-                      hps2)
-                rw [this]; exact hign2]
-            simp)]
-      show
-        u.setCol
-            (({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState).arg 0
-                1 -
-              1) =
-          u.setCol (n - 1)
-      rw [harg]]
-  -- the residue is `{ (…).setCol (n-1) with pstate := .ground }`; `setCol` already keeps
-  -- the ground pstate the receiver had, so the wrapper is the identity
-  show
-    ({ ({ v with pstate := .csi ({} : CsiState) } : Vt).setCol (n - 1) with pstate := .ground } :
-        Vt) =
-      v.setCol (n - 1)
-  unfold Vt.setCol
-  rw [hg]
 
 /-! ## §Replay — the cursor, for any receiver
 

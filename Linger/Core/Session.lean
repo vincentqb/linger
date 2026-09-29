@@ -468,12 +468,11 @@ def step (s : State) (ev : Event) : State × List Effect :=
     -- output and without spinning while storage remains unavailable.
     ({ s with dirty := true }, [])
 
-/-- A whole event trace folded through `step`, effects in arrival
-order — the specification of the runtime's poll loop (which feeds one
-event at a time). Structural recursion, and projection-shaped so
-`(run s (e :: es)).1 = (run (step s e).1 es).1` is definitional: the
-trace-level theorems (`run_wf`, `run_bytes_isolates`) step through it
-directly. -/
+/-- Fold the supplied event trace through `step`, preserving effect order.
+For the runtime this trace consists of the events actually consumed, including
+effect feedback: `pump` stops before consuming any event after exit. `run` does
+not model that queue or choose its stopping prefix. The state projection is
+recursive, so preservation lifts directly from `step`. -/
 def run (s : State) : List Event → State × List Effect
   | [] => (s, [])
   | ev :: evs =>

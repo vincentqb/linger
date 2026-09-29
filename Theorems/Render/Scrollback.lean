@@ -732,35 +732,17 @@ theorem fixes_csi_digits_tail {α : Type} {π : Vt → α} (hb : PsBlind π) (n 
     (hcur : s.cur = 0) (hpar : s.params = #[]) :
     (v.feed (digits n ++ [final])).pstate = .ground ∧
       (v.feed (digits n ++ [final])).u8need = 0 ∧ π (v.feed (digits n ++ [final])) = π v := by
-  obtain ⟨s', heq, hcur', hhave, hpar', hint, -⟩ := csi_digits_run_eq n hg hu hcur
-  rw [show ∀ (w : Vt), w.feed (digits n ++ [final]) = (w.feed (digits n)).feed [final] from fun w =>
-      by simp [Vt.feed, List.foldl_append]]
-  rw [heq, show ∀ (w : Vt), w.feed [final] = w.step final from fun _ => rfl]
-  rw [csi_final_step_eq final rfl (by simpa using hu)
-      (by
-        rw [hint]; exact hi)
-      h1 h2]
-  unfold Vt.csiFinish
-  rw [ite_eq_left (by simpa using hhave),
-    ite_eq_right
-      (by
-        rw [hpar', hpar]; simp)]
+  rw [csi_digits_tail_eq n final h1 h2 hg hu hi hcur (by simp [hpar]),
+    show min n 65535 = n from by omega]
   dsimp only
   refine
     ⟨rfl, by
-      rw [un_csiDispatch]; simpa using hu, ?_⟩
-  have harg :
-    ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState).arg 0 0 =
-      n := by
-    rw [show
-        ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState) =
-          { s' with params := #[(n, s'.curSub)] }
-        from by
-        rw [hpar', hpar, hcur']
-        rw [show min (min n 65535) 65535 = n from by omega]
-        rfl]
-    rw [arg_of_one, ite_eq_right (by omega)]
-  rw [hb _ PState.ground, hπ _ _ harg, hb v (PState.csi s')]
+      rw [un_csiDispatch]; exact hu, ?_⟩
+  rw [hb _ PState.ground,
+    hπ _ _
+      (by
+        rw [arg_of_one_of (n := n) (sub := s.curSub) 0 (by simp [hpar]), ite_eq_right (by omega)])]
+  exact hb _ _
 
 theorem fixes_csiNum_arg {α : Type} {π : Vt → α} (hb : PsBlind π) (n : Nat) (final : UInt8)
     (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E) (hn : 0 < n) (hlt : n < 65535)
@@ -795,11 +777,9 @@ theorem fixes_sb_ed2 : Fixes (fun v : Vt => v.sb) (csiNum 2 0x4A) :=
 
 /-! ### `ED 3` — the erase that is not a `Fixes` lemma because it is not invariance
 
-`ED 3` is the one byte in `restore` that *empties* the receiver's ring, which is what stops a
-second attach stacking a second copy of the history. `Fixes` cannot say this: it is
-definitionally `π (v.feed bs) = π v`, so both `fixes_csiNum_arg` and `fixes_csi_digits_tail`
-hard-wire invariance into their conclusions and neither can be borrowed. The walk is done by
-hand instead, once. -/
+`ED 3` empties the receiver's ring, preventing a second attach from stacking another copy
+of the history. This is a state change, so it uses the exact `csi_digits_tail_eq` rather
+than the preservation-only `Fixes` contract. The same parser equation serves both. -/
 
 /-- **`ED 3` empties the ring** — the one erase that discards history. The mode-3 arm ends in a
 record update naming `sb`, so the row fold it wraps cannot reach the projection and the whole
@@ -820,65 +800,19 @@ theorem sb_csiDispatch_ed3 (v : Vt) (s : CsiState) (hi : s.ignore = false) (ha :
   rw [ha]
   exact sb_eraseScreen_three v
 
-/-- **The byte-level form: `CSI 3 J` empties the ring.** `keeps_csi_open` lands in a fresh
-collector, `csi_param_run_inter` carries the digit run as a record equation while
-`csi_digits_value` supplies the fields — it is the one of the two that exposes `ignore`,
-exactly the field `sb_csiDispatch_ed3` needs and the one `csi_digits_run_eq` drops — and
-`csi_final_step_eq` closes the pending parameter so `arg_of_one` hands back the `3` that was
-emitted. The `pstate` and `u8need` conjuncts ride along because a stage must not leave the
-parser mid-sequence or a half-decoded character armed for the next one. -/
+/-- `CSI 3 J` empties the ring and leaves a quiescent parser. The exact collector
+state retains `ignore = false`, which distinguishes this reset from preservation
+on an ignored dispatch. No shape or content premise is imposed on the receiver. -/
 theorem ed3_empties (w : Vt) (hg : w.pstate = .ground) (hu : w.u8need = 0) :
     (w.feed (csiNum 3 0x4A)).sb = ({} : Ring) ∧
       (w.feed (csiNum 3 0x4A)).pstate = .ground ∧ (w.feed (csiNum 3 0x4A)).u8need = 0 := by
-  rw [show csiNum 3 0x4A = [0x1B, 0x5B] ++ (digits 3 ++ [0x4A]) from by
-      unfold csiNum csiB; simp]
-  rw [show
-      ∀ (u : Vt),
-        u.feed ([0x1B, 0x5B] ++ (digits 3 ++ [0x4A])) =
-          (u.feed [0x1B, 0x5B]).feed (digits 3 ++ [0x4A])
-      from fun u => by simp [Vt.feed, List.foldl_append]]
-  rw [keeps_csi_open hg hu]
-  obtain ⟨sa, hfeed, -⟩ :=
-    csi_param_run_inter (digits 3) (v := { w with pstate := .csi ({} : CsiState) }) rfl
-      (by simpa using hu) (paramBytes_digits 3)
-  obtain ⟨sb, hpsb, hcur', hhave', hpar', hint', hign', -, -⟩ :=
-    csi_digits_value 3 (v := { w with pstate := .csi ({} : CsiState) }) rfl rfl
-  have hsab : sa = sb :=
-    PState.csi.inj
-      ((by rw [hfeed] :
-            (({ w with pstate := .csi ({} : CsiState) } : Vt).feed (digits 3)).pstate =
-              PState.csi sa).symm.trans
-        hpsb)
-  rw [show ∀ (u : Vt), u.feed (digits 3 ++ [0x4A]) = (u.feed (digits 3)).feed [0x4A] from fun u =>
-      by simp [Vt.feed, List.foldl_append]]
-  rw [hfeed, show ∀ (u : Vt), u.feed [(0x4A : UInt8)] = u.step 0x4A from fun _ => rfl]
-  rw [csi_final_step_eq (0x4A : UInt8) rfl (by simpa using hu) (by rw [hsab, hint']) (by decide)
-      (by decide)]
-  unfold Vt.csiFinish
-  rw [ite_eq_left
-      (by
-        rw [hsab]; simpa using hhave'),
-    ite_eq_right
-      (by
-        rw [hsab, hpar']; simp)]
-  dsimp only
-  refine
-    ⟨?_, rfl, by
-      rw [un_csiDispatch]; simpa using hu⟩
-  refine
-    sb_csiDispatch_ed3 _ _
-      (by
-        show sa.ignore = false
-        rw [hsab, hign'])
-      ?_
-  rw [show
-      ({ sa with params := sa.params.push (min sa.cur 65535, sa.curSub) } : CsiState) =
-        { sa with params := #[(3, sa.curSub)] }
-      from by
-      rw [hsab, hpar', hcur']
-      rw [show min (min 3 65535) 65535 = 3 from by omega]
-      rfl]
-  rw [arg_of_one, ite_eq_right (by omega)]
+  rw [show csiNum 3 0x4A = [0x1B, 0x5B] ++ (digits 3 ++ [0x4A]) from by simp [csiNum, csiB],
+    feed_append, keeps_csi_open hg hu,
+    csi_digits_tail_eq 3 0x4A (by decide) (by decide) (v := { w with pstate := .csi {} }) rfl hu rfl
+      rfl (by decide)]
+  exact
+    ⟨sb_csiDispatch_ed3 _ _ rfl rfl, rfl, by
+      rw [un_csiDispatch]; exact hu⟩
 
 /-- `SI` (shift in). `fixes_sb_shiftOut` is `SO` (`0x0E`), which `charsetAnsi` emits; the
 prologue emits this one, and the near-miss is a real gap rather than a rename. -/

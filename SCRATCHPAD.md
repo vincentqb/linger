@@ -13469,3 +13469,158 @@ an asynchronous-recorder setup error, and a restricted-sandbox socket bind
 refusal stopped their respective runs. Their diagnostic limits are recorded
 in the earlier checkpoint directories. The successful full run had local
 socket permission. Hosted execution is not claimed by this checkpoint.
+
+## Step 2 notes — 2026-09-29
+
+The VT audit replaces repeated field preservation proofs with exact record
+frames. `frame_grid_foldl` lifts any grid-only transition through a list fold.
+`frame_insertLines`, `frame_deleteLines` and `frame_eraseScreen` state the
+complete operation footprints without a `Good` or reachability premise.
+Erase mode 3 additionally clears history; every other mode retains it.
+Nineteen existing field endpoints now project those records. Seven printing
+endpoints project the existing `off_print` observation instead of repeating
+the printing transition analysis. All 754 original theorem headers remain.
+The proof module loses 97 lines.
+
+The grid projected on the frame's right side is the operation's own output;
+the equation specifies what else stays fixed, not the new grid's contents.
+Existing positive row/history specifications remain necessary. A universal
+dispatch footprint would be false across reset and screen/mode transitions.
+`Good` still does not imply `Renderable`, and old-width history is legal.
+No record split, field-set language or resource override was needed.
+
+Three compiling mutations change insert's tabs, delete's history and erase's
+history. Each has a passing kernel counterexample, a failing contract check
+and theorem build, and passing restored source/proofs. The parent checked
+the frozen sources and these receipts. Evidence and review:
+`/tmp/linger-proof-vt-evidence-20260929/HANDOFF.md` and `parent-review.json`.
+
+## Step 3 notes — 2026-09-29
+
+Renderer proofs now lift the existing `StreamPred` through `rowAnsi`,
+`joinCRLF` and `gridAnsi`. Their fragment premises cover the actual emitted
+bytes, including combining marks, wide-cell cursor moves, reset/home and
+CRLF. Nine parser-boundary, mode and quiescence proofs share these traversals.
+`csi_digits_feed_eq` gives an exact collector equation for every `Nat`,
+including zero and saturation, preserving private/ignore/subparameter flags.
+`csi_digits_tail_eq` appends the clamped parameter and dispatches a final byte
+under the parser's actual intermediate and parameter-count conditions.
+Nine existing consumers share that equation for modes, cursor placement,
+tab clearing and history clearing. No endpoint gains a shape premise.
+
+The eight changed proof files lose 520 lines. Independent source review
+checks all 806 original theorem statements and their contexts unchanged,
+with five useful additions. No production code or proof limit changes.
+Painted/Pushing, a frontier broken-pair suffix, stale ASCII accumulators and
+different mode footprints still require distinct premises. A compiled
+counterexample shows that CRLF can append history even in a one-row terminal;
+there is no unconditional history-preserving stream abstraction to introduce.
+
+A compiling mutation sets the CSI ignore flag during digit collection.
+The kernel witness establishes false exact collector equality, ED3 retaining
+history, and the older existential collector conclusion still holding for
+that concrete receiver. The new semantic checks and the existing
+`Quiet.csi_digit_step` reject it; this is not claimed as a uniquely new gate.
+Restored sources pass. An earlier nonreducing full-grid probe and a concurrent
+formatter/build setup error remain diagnostics, not successful witnesses.
+Evidence: `/tmp/linger-proof-render-evidence-20260929/HANDOFF.md`,
+`semantic-mutation.json`, `CRLFHistoryBoundary.lean` and
+`independent-review.md`.
+
+The review also caught ANSI escapes in `final.patch`. Its original bytes and
+manifest remain preserved; `final-uncolored.patch` is the byte-identical
+uncolored Git diff and passes `git apply --numstat`.
+`patch-format-correction.json` records both hashes. Machine-consumed patch
+capture must explicitly use `--no-color`, even when stdout is redirected.
+
+## Step 4 notes — 2026-09-29
+
+`feedMsgs_induct` now covers predicates of the full state/effect accumulator.
+Handler obligations apply only to a message in the batch, after sender lookup
+and the close/exit guards succeed. `feedMsgs_append` preserves ordered effects
+across batch boundaries; `feedMsgs_stopped_suffix` makes an arbitrary suffix
+exactly inert once the prefix closes its sender or exits. Existing state-only
+and stopped-batch endpoints instantiate these contracts.
+
+`run_preserves` lifts invariants over the actual event alphabet.
+`onMsg_vt_preserves` and `step_vt_preserves` factor the resize/feed closure
+obligations used by both `Good` and live reachability. `run_eq_foldl` retains
+the exact state/effect accumulator. Runtime correspondence is to the consumed
+trace, including effect feedback, rather than all queued events after exit.
+These pure statements establish no OS scheduling or wall-clock deadline.
+Only the production `run` docstring changes.
+
+Lean v4.34.1's generated `chunksOf.induct` replaces two private length
+induction helpers, while library find/filter facts replace local case work.
+This workstream loses 86 lines. Five compiling mutations omit close or exit
+guards, reverse effect order, clear labels on an empty trace or reset the pen
+on a client message. Each has a kernel counterexample, rejected semantic
+check and theorem build, and passing restored builds. Four also fail the
+existing unit tests; the pen mutation passes those tests but an old theorem
+already rejects it. Evidence and final source hashes:
+`/tmp/linger-proof-session-evidence-20260929/HANDOFF.md`.
+
+## Step 5 notes — 2026-09-29
+
+The CLI audit uses iff contracts to connect implementation and independent
+meaning. `Status.classify_iff` derives coverage, disjointness, soundness and
+uniqueness from the unchanged `Is` predicates. `Listing.nameWidth_le_iff`
+proves the least sufficient name-column width in Unicode scalar counts.
+Remote's search characterizations yield `checkHosts_ok_iff`: success returns
+exactly the input list, with no duplicates and only clean hosts, and every
+such list succeeds. Input's private `deliver_mem` preserves recognized key
+identity under the existing text/paste filter. Picker's private validation
+iff and imported save-name proofs consume the sanitization retraction.
+
+The only production function refactors are `firstDirtyHost` to `List.find?`
+and `deliver` to `Option.filter.toList`. Kernel certificates compare them
+with their exact previous bodies for every input, including complete
+`checkHosts` results and decoder state/key pairs. The eight-file patch loses
+59 lines; the borrowed Name proof is already in Step 1 and is not duplicated.
+Six compiling mutations cover status priority, inflated width, reversed hosts,
+refused clean hosts, rewritten keys and refused valid targets. Each has a
+kernel counterexample, rejection and restored-green evidence. The incomplete
+first key witness remains excluded.
+`/tmp/linger-proof-cli-evidence-20260929/HANDOFF.md`, `Equivalence.lean` and
+`independent-review.md` record the certificates and independent review.
+
+Review identified existing IO consumption gaps. Normalized source gates now
+pin the complete host-validation result/error match, resolver forwarding and
+ordered traversal into remote listing. A contiguous decoder tie spans byte
+order, feed/flush state and key propagation, timeout handling and the dispatch
+loop header; it overlaps the existing dispatch-to-step check. This protects
+consumption of the proved values without claiming general IO verification.
+
+Ten compiling executor mutations now fail the final guard. The first eight
+compiled and passed the previous gate before rejection by the stronger ties.
+Review then found reversed byte traversal and discarded keys between the
+disconnected ties; both compiled and passed that intermediate gate, then
+failed the complete boundary guard. The final guard also rejects all eight
+preserved, byte-identical earlier mutants; that recheck does not claim a
+recompilation. Restored builds and gates pass. Independent review closes both
+findings. Receipts are in `/tmp/linger-proof-gate-evidence-20260929-v2/` and
+`/tmp/linger-proof-gate-evidence-20260929-v3/`; the earlier linter-failure
+attempt is separately marked diagnostic.
+
+Steps 2–5 share the assembled checkpoint. Every retained explicit elaborated
+theorem type is unchanged. The removed source declarations are only the two
+private chunking helpers and private `validTarget_sound`, replaced by the
+stronger iff. Compiler-generated equations and proof auxiliaries are counted
+separately in `/tmp/linger-proof-integration-20260929/`.
+The whole round removes 739 Lean lines. No test, C code, dependency or proof
+resource override changes; current theorem sources have no such overrides.
+
+Both required builds and the full foreground Linux verifier pass. The
+assembled full run was 17:18:57Z–17:26:21Z: clean 162-job build, generated
+Lean/C ABI, source gates, standalone formatting, exact-constant and renderer
+reference coverage, CI runner checks, POSIX smoke, all fourteen live suites
+and the unrelated-session sentinel. All 434 live assertions actually ran and
+passed; all 159 tracked source identities remained fixed. Logs, source hashes
+and the independently counted live results are preserved in
+`/tmp/linger-proof-assembled-verifier-20260929/`.
+
+All agents are closed. Five worker trees contain only accepted changed
+sources, all byte-identical to main, and generated caches. Their complete
+uncolored patches, baseline/final sources, hashes and inventories are sealed
+outside the trees in `/tmp/linger-proof-cleanup-20260929/`.
+Publication, fresh deletion preflight and hosted outcomes belong to closure.

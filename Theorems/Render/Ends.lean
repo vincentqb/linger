@@ -246,6 +246,62 @@ theorem flatMap {P : Bytes → Prop} (hP : StreamPred P) {α : Type} {f : α →
     rw [List.flatMap_cons]
     exact hP.append (h a) ih
 
+/-- The painter's traversal preserves any stream predicate supported by its
+primitive emissions. Text safety stays a premise: preserving the grid, for
+example, cannot supply it. The pen and column accumulators remain unrestricted. -/
+theorem rowAnsi {P : Bytes → Prop} (hP : StreamPred P)
+    (hpen : ∀ p, P (penSgr p)) (hbase : ∀ ch, P (utf8 (safeChar ch)))
+    (hmarks : ∀ cs, P (utf8s cs)) (hcha : ∀ n, P (csiNum n 0x47))
+    (row : Row) (p : Pen) : P (Linger.Core.Render.rowAnsi row p).1 := by
+  unfold Linger.Core.Render.rowAnsi
+  rw [← Array.foldl_toList]
+  refine invariant_foldl (fun acc => P acc.1) _ ?_ row.toList ([], p, 0) hP.nil
+  intro acc c hacc
+  unfold rowSlot
+  dsimp only
+  split
+  · exact hP.append hacc (hmarks c.marks)
+  · apply hP.append
+    · split
+      · exact hacc
+      · exact hP.append hacc (hpen c.pen)
+    · split
+      · exact hP.append4 (hbase c.base) (hcha _) (hmarks c.marks) (hcha _)
+      · exact hP.append (hbase c.base) (hmarks c.marks)
+
+theorem joinCRLF {P : Bytes → Prop} (hP : StreamPred P) (hcrlf : P [0x0D, 0x0A]) :
+    ∀ (l : List Bytes), (∀ bs ∈ l, P bs) → P (Linger.Core.Render.joinCRLF l)
+  | [], _ => hP.nil
+  | [b], h => by
+    unfold Linger.Core.Render.joinCRLF
+    exact h b (by simp)
+  | b :: c :: bs, h => by
+    unfold Linger.Core.Render.joinCRLF
+    exact hP.append (hP.append (h b (by simp)) hcrlf)
+      (hP.joinCRLF hcrlf (c :: bs) (fun x hx => h x (by simp [hx])))
+
+/-- Row predicates lift through the grid painter, including its reset, home and
+separators. No receiver invariant or bound on the source grid is introduced. -/
+theorem gridAnsi {P : Bytes → Prop} (hP : StreamPred P)
+    (hreset : P (csiNum 0 0x6D)) (hhome : P (csiB ++ [0x48]))
+    (hcrlf : P [0x0D, 0x0A]) (hrow : ∀ row p, P (Linger.Core.Render.rowAnsi row p).1)
+    (grid : Array Row) : P (Linger.Core.Render.gridAnsi grid) := by
+  unfold Linger.Core.Render.gridAnsi
+  dsimp only
+  apply hP.append hreset
+  apply hP.append hhome
+  apply hP.joinCRLF hcrlf
+  rw [← Array.foldl_toList]
+  refine invariant_foldl (fun acc => ∀ bs ∈ acc.1, P bs) _ ?_ grid.toList
+    (([], ({} : Pen))) (by intro bs hbs; simp at hbs)
+  intro acc row hacc bs hbs
+  dsimp only at hbs
+  rcases List.mem_append.mp hbs with h | h
+  · exact hacc bs h
+  · simp only [List.mem_singleton] at h
+    subst h
+    exact hrow row acc.2
+
 end StreamPred
 
 theorem Ends.streamPred : StreamPred Ends := ⟨Ends.nil, fun ha hb => Ends.append ha hb⟩
@@ -807,10 +863,7 @@ theorem ends_utf8_safe (ch : Char) : Ends (utf8 (safeChar ch)) :=
 
 theorem ends_cellText (c : Cell) : Ends (cellText c) := by
   unfold cellText
-  exact (Ends.text (fun b hb => by
-    obtain ⟨hge, -⟩ := utf8_no_ctl (safeChar c.base) (safeChar_ge c.base).1
-      (safeChar_ge c.base).2 b hb
-    intro he; rw [he] at hge; exact absurd hge (by decide))).append (ends_utf8s c.marks)
+  exact (ends_utf8_safe c.base).append (ends_utf8s c.marks)
 
 theorem ends_pendingAnsi (cols : Nat) (grid : Array Row) (cur : Cursor)
     (row : Nat) (pen : Pen) : Ends (Linger.Core.Render.pendingAnsi cols grid cur row pen) := by
@@ -821,62 +874,19 @@ theorem ends_pendingAnsi (cols : Nat) (grid : Array Row) (cur : Cursor)
       (ends_penSgr _)).append (ends_cellText _)).append (ends_penSgr _)
   · exact Ends.nil
 
-theorem ends_rowAnsi (row : Row) (p : Pen) : Ends (rowAnsi row p).1 := by
-  unfold rowAnsi
-  rw [← Array.foldl_toList]
-  refine invariant_foldl (fun acc => Ends acc.1) _ ?_ row.toList ([], p, 0) Ends.nil
-  intro acc c hacc
-  unfold rowSlot
-  dsimp only
-  -- the marked-wide branch is `glyph CHA marks CHA`, four pieces
-  repeat' split
-  all_goals first
-    | exact hacc.append (ends_utf8s c.marks)
-    | exact hacc.append (ends_cellText c)
-    | exact (hacc.append (ends_penSgr c.pen)).append (ends_cellText c)
-    | exact hacc.append ((((ends_utf8_safe c.base).append
-        (ends_csiNum _ 0x47 (by decide) (by decide))).append
-        (ends_utf8s c.marks)).append (ends_csiNum _ 0x47 (by decide) (by decide)))
-    | exact (hacc.append (ends_penSgr c.pen)).append ((((ends_utf8_safe c.base).append
-        (ends_csiNum _ 0x47 (by decide) (by decide))).append
-        (ends_utf8s c.marks)).append (ends_csiNum _ 0x47 (by decide) (by decide)))
+theorem ends_rowAnsi (row : Row) (p : Pen) : Ends (rowAnsi row p).1 :=
+  Ends.streamPred.rowAnsi ends_penSgr ends_utf8_safe ends_utf8s
+    (fun n => ends_csiNum n 0x47 (by decide) (by decide)) row p
 
 theorem ends_crlf : Ends [0x0D, 0x0A] := Ends.text (by decide)
 
-theorem ends_joinCRLF : ∀ (l : List Bytes), (∀ bs ∈ l, Ends bs) → Ends (joinCRLF l)
-  | [], _ => Ends.nil
-  | [b], h => by
-    unfold joinCRLF
-    exact h b (by simp)
-  | b :: c :: bs, h => by
-    unfold joinCRLF
-    refine ((h b (by simp)).append ends_crlf).append ?_
-    exact ends_joinCRLF (c :: bs) (fun x hx => h x (by simp [hx]))
+theorem ends_joinCRLF : ∀ (l : List Bytes), (∀ bs ∈ l, Ends bs) → Ends (joinCRLF l) :=
+  Ends.streamPred.joinCRLF ends_crlf
 
 theorem ends_gridAnsi (grid : Array Row) : Ends (gridAnsi grid) := by
-  unfold gridAnsi
-  dsimp only
-  have hrows : ∀ bs ∈ (grid.foldl
-      (fun (acc : List Bytes × Pen) row =>
-        (acc.1 ++ [(rowAnsi row acc.2).1], (rowAnsi row acc.2).2))
-      (([], ({} : Pen)))).1, Ends bs := by
-    rw [← Array.foldl_toList]
-    refine invariant_foldl (fun acc => ∀ bs ∈ acc.1, Ends bs) _ ?_ grid.toList
-      (([], ({} : Pen))) (by intro bs hbs; simp at hbs)
-    intro acc row hacc bs hbs
-    dsimp only at hbs
-    rcases List.mem_append.mp hbs with h | h
-    · exact hacc bs h
-    · simp only [List.mem_singleton] at h
-      subst h
-      exact ends_rowAnsi row acc.2
-  -- `ESC [ H` is a CSI sequence with no parameters
-  have hhome : Ends (csiB ++ [0x48] : Bytes) := by
-    have : (csiB ++ [0x48] : Bytes) = csiB ++ [] ++ [0x48] := by simp
-    rw [this]
-    exact ends_csi_seq [] 0x48 ParamBytes.nil (by decide) (by decide)
-  exact (ends_csiNum 0 0x6D (by decide) (by decide)).append
-    (hhome.append (ends_joinCRLF _ hrows))
+  refine Ends.streamPred.gridAnsi (ends_csiNum 0 0x6D (by decide) (by decide))
+    ?_ ends_crlf ends_rowAnsi grid
+  exact ends_csi_seq [] 0x48 ParamBytes.nil (by decide) (by decide)
 
 /-- One both-ways mode emit. `modeSet` is a definition rather than a local lambda
 precisely so this matches structurally. -/

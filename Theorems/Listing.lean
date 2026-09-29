@@ -153,25 +153,24 @@ theorem rowPieces_styles (nameCol : Nat) (info : List (String × String)) :
 
 theorem nameWidth_empty : Linger.Core.Listing.nameWidth [] = 0 := rfl
 
+/-- A width fits the complete snapshot exactly when it fits every name.
+The computed column is therefore the least sufficient width. -/
+theorem nameWidth_le_iff (rows : List (List (String × String))) (width : Nat) :
+    Linger.Core.Listing.nameWidth rows ≤ width ↔
+      ∀ row ∈ rows, ((row.lookup "name").getD "").toList.length ≤ width := by
+  have fold_le (rs : List (List (String × String))) (n : Nat) :
+    rs.foldl (fun m r => max m ((r.lookup "name").getD "").toList.length) n ≤ width ↔
+      n ≤ width ∧ ∀ row ∈ rs, ((row.lookup "name").getD "").toList.length ≤ width := by
+    induction rs generalizing n with
+    | nil => simp
+    | cons r rs ih => simp [List.foldl_cons, ih, Nat.max_le, and_assoc]
+  simpa [nameWidth] using fold_le rows 0
+
 /-- Every row's name fits the column calculated for the entire snapshot. -/
 theorem nameWidth_covers (rows : List (List (String × String))) (row : List (String × String))
     (h : row ∈ rows) :
-    ((row.lookup "name").getD "").toList.length ≤ Linger.Core.Listing.nameWidth rows := by
-  have grows (rs : List (List (String × String))) (n : Nat) :
-    n ≤ rs.foldl (fun m r => max m ((r.lookup "name").getD "").toList.length) n := by
-    induction rs generalizing n with
-    | nil => exact Nat.le_refl _
-    | cons r rs ih => exact Nat.le_trans (Nat.le_max_left _ _) (ih _)
-  have covers (rs : List (List (String × String))) (n : Nat) (hr : row ∈ rs) :
-    ((row.lookup "name").getD "").toList.length ≤
-      rs.foldl (fun m r => max m ((r.lookup "name").getD "").toList.length) n := by
-    induction rs generalizing n with
-    | nil => simp at hr
-    | cons r rs ih =>
-      rcases List.mem_cons.mp hr with rfl | ht
-      · exact Nat.le_trans (Nat.le_max_right _ _) (grows rs _)
-      · exact ih _ ht
-  exact covers rows 0 h
+    ((row.lookup "name").getD "").toList.length ≤ Linger.Core.Listing.nameWidth rows :=
+  (nameWidth_le_iff rows _).mp (Nat.le_refl _) row h
 
 /-- Removing style produces exactly the bytes of the same plain row pieces. -/
 theorem renderPieces_plain (pieces : List RowPiece) :

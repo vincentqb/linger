@@ -509,75 +509,14 @@ else. -/
 theorem tbc3_feed_eq {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) :
     v.feed (csiNum 3 0x67) = { v with tabs := Array.replicate v.cols false } := by
   rw [show csiNum 3 0x67 = [0x1B, 0x5B] ++ (digits 3 ++ [(0x67 : UInt8)]) from by
-      simp [csiNum, csiB]]
-  rw [feed_append, keeps_csi_open hg hu]
-  obtain ⟨s', heq, hcur', hhave, hpar, hint, hsub⟩ :=
-    csi_digits_run_eq 3 (v := { v with pstate := .csi ({} : CsiState) }) (s := ({} : CsiState)) rfl
-      (by simpa using hu) rfl
-  rw [show
-      ∀ (u : Vt), u.feed (digits 3 ++ [(0x67 : UInt8)]) = (u.feed (digits 3)).feed [(0x67 : UInt8)]
-      from fun u => by simp [Vt.feed, List.foldl_append]]
-  rw [heq, show ∀ (u : Vt), u.feed [(0x67 : UInt8)] = u.step 0x67 from fun _ => rfl]
-  rw [csi_final_step_eq 0x67 rfl (by simpa using hu) (by rw [hint]) (by decide) (by decide)]
-  unfold Vt.csiFinish
-  rw [ite_eq_left (by simpa using hhave),
-    ite_eq_right
-      (by
-        rw [hpar]; decide)]
-  dsimp only
-  have harg :
-    ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState).arg 0 0 =
-      3 := by
-    rw [arg_of_one_of 0
-        (show
-          ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState).params =
-            (#[] : Array (Nat × Bool)).push (3, s'.curSub)
-          from by simp [hpar, hcur'])]
-    simp
-  rw [show
-      ∀ (u : Vt),
-        u.csiDispatch
-            ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState) 0x67 =
-          { u with tabs := Array.replicate u.cols false }
-      from by
-      intro u
-      unfold Vt.csiDispatch
-      rw [ite_eq_right
-          (show
-            ¬(({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } :
-                    CsiState)).ignore =
-                true
-            from by
-            show ¬(s'.ignore = true)
-            rw [show s'.ignore = ({} : CsiState).ignore from by
-                obtain ⟨s2, hps2, -, -, -, -, hign2, -, -⟩ :=
-                  csi_digits_value 3 (v := { v with pstate := .csi ({} : CsiState) }) (s :=
-                    ({} : CsiState)) rfl rfl
-                have : s' = s2 :=
-                  PState.csi.inj
-                    ((by rw [heq] :
-                          ((({ v with pstate := .csi ({} : CsiState) } : Vt)).feed
-                                (digits 3)).pstate =
-                            PState.csi s').symm.trans
-                      hps2)
-                rw [this]; exact hign2]
-            simp)]
-      show
-        (match
-            ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState).arg 0
-              0 with
-          | 0 => { u with tabs := u.tabs.setIfInBounds u.cursor.x false }
-          | 3 => { u with tabs := Array.replicate u.cols false }
-          | _ => u) =
-          { u with tabs := Array.replicate u.cols false }
-      rw [harg]
-      rfl]
-  show
-    ({ ({ v with pstate := .csi s' } : Vt) with
-          tabs := Array.replicate ({ v with pstate := .csi s' } : Vt).cols false,
-          pstate := .ground } :
-        Vt) =
-      { v with tabs := Array.replicate v.cols false }
+      simp [csiNum, csiB],
+    feed_append, keeps_csi_open hg hu,
+    csi_digits_tail_eq 3 0x67 (by decide) (by decide) (v := { v with pstate := .csi {} }) rfl hu rfl
+      rfl (by decide)]
+  change
+    { v with
+        tabs := Array.replicate v.cols false, pstate := .ground } =
+      _
   rw [hg]
 
 /-- **The clear grounds the ruler from any receiver**, whatever its decoder was

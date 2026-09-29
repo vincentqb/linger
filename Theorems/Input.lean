@@ -113,26 +113,28 @@ private theorem step_paste (state : State) (byte : UInt8) :
       cases parameter <;> repeat' (split <;> simp_all)
     all_goals by_cases final : byte = 0x7e <;> simp_all
 
+/-- Delivery preserves the decoded key exactly and drops precisely the forbidden
+events. Printable text remains available in either paste mode. -/
+private theorem deliver_mem (paste : Bool) (event : Option Key) (key : Key) :
+    key ∈ deliver paste event ↔
+      event = some key ∧
+        match key with
+        | .text char => 32 ≤ char.toNat ∧ (char.toNat < 127 ∨ 160 ≤ char.toNat)
+        | _ => paste = false := by
+  cases key <;> simp [deliver]
+
 private theorem deliver_length (paste : Bool) (event : Option Key) :
-    (deliver paste event).length ≤ 1 := by
-  cases event with
-  | none => simp [deliver]
-  | some key => cases key <;> simp only [deliver] <;> split <;> simp
+    (deliver paste event).length ≤ 1 := Option.length_toList_le
 
 private theorem deliver_text (paste : Bool) (event : Option Key) (char : Char)
     (h : .text char ∈ deliver paste event) :
-    32 ≤ char.toNat ∧ (char.toNat < 127 ∨ 160 ≤ char.toNat) := by
-  cases event with
-  | none => simp [deliver] at h
-  | some key => cases key <;> simp only [deliver] at h <;> split at h <;> simp_all
+    32 ≤ char.toNat ∧ (char.toNat < 127 ∨ 160 ≤ char.toNat) :=
+  ((deliver_mem paste event (.text char)).mp h).2
 
 private theorem deliver_paste (event : Option Key) (key : Key) (h : key ∈ deliver true event) :
     ∃ char, key = .text char := by
-  cases event with
-  | none => simp [deliver] at h
-  | some value =>
-    cases value <;> simp [deliver] at h
-    exact ⟨_, h.2⟩
+  have allowed := ((deliver_mem true event key).mp h).2
+  cases key <;> simp_all
 
 /-- At most one key is emitted per byte, including malformed input. -/
 theorem feed_length (state : State) (byte : UInt8) : (feed state byte).2.length ≤ 1 := by
@@ -201,7 +203,7 @@ theorem feed_ascii (paste : Bool) (byte : UInt8) (h : 32 ≤ byte ∧ byte < 127
     feed { paste } byte = ({ paste }, [.text (Char.ofUInt8 byte)]) := by
   have lo : 32 ≤ byte.toNat := by simpa [UInt8.le_iff_toNat_le] using h.1
   have hi : byte.toNat < 127 := by simpa [UInt8.lt_iff_toNat_lt] using h.2
-  simp [feed, step, idle_ascii paste byte h, deliver, Char.ofUInt8, Char.toNat, lo, hi]
+  simp [feed, step, idle_ascii paste byte h, deliver, Char.ofUInt8, lo, hi]
 
 /-- A CSI parameter that has become unsupported stays in discard mode until a
 final byte arrives, including when a command byte occurs inside it. -/

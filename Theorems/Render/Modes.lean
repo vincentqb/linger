@@ -466,83 +466,28 @@ theorem modeSet_tail (n : Nat) (on : Bool) (hn : 0 < n) (hlt : n < 65535) {w : V
     (0x40 : UInt8) ≤ (if on then 0x68 else 0x6C) ∧
       (if on then (0x68 : UInt8) else 0x6C) ≤ 0x7E := by
     cases on <;> exact ⟨by decide, by decide⟩
-  obtain ⟨sa, hfeed, -⟩ := csi_param_run_inter (digits n) hm hwu (paramBytes_digits n)
-  obtain ⟨sb, hpsb, hcur', hhave', hpar', hint', hign', -, hpriv'⟩ := csi_digits_value n hm rfl
-  have hsab : sa = sb :=
-    PState.csi.inj ((by rw [hfeed] : (w.feed (digits n)).pstate = .csi sa).symm.trans hpsb)
-  rw [show
-      ∀ (u : Vt),
-        u.feed (digits n ++ [(if on then 0x68 else 0x6C : UInt8)]) =
-          (u.feed (digits n)).feed [(if on then 0x68 else 0x6C : UInt8)]
-      from fun u => by simp [Vt.feed, List.foldl_append]]
-  rw [show
-      ∀ (u : Vt), u.feed [(if on then 0x68 else 0x6C : UInt8)] = u.step (if on then 0x68 else 0x6C)
-      from fun _ => rfl,
-    hfeed]
-  rw [csi_final_step_eq (if on then 0x68 else 0x6C) rfl (by rw [hwu])
-      (by
-        rw [hsab]; exact hint')
-      hfinal.1 hfinal.2]
-  unfold Vt.csiFinish
-  rw [ite_eq_left
-      (by
-        rw [hsab]; simpa using hhave'),
-    ite_eq_right
-      (by
-        rw [hsab, hpar']; decide)]
+  rw [csi_digits_tail_eq n (if on then 0x68 else 0x6C) hfinal.1 hfinal.2 hm hwu rfl rfl (by decide),
+    show min n 65535 = n from by omega]
   dsimp only
   refine
     ⟨?_, rfl, by
       rw [un_csiDispatch]; exact hwu⟩
-  have hmin : min (min n 65535) 65535 = n := by omega
-  -- normalize the closed collector: single parameter `n`, marker set, ignore clear
-  have hstate :
-    ({ sa with params := sa.params.push (min sa.cur 65535, sa.curSub) } : CsiState) =
-      { sa with params := #[(n, sa.curSub)] } := by
-    rw [hsab, hpar', hcur', hmin]; rfl
-  have hpriv2 : ({ sa with params := #[(n, sa.curSub)] } : CsiState).priv = 0x3F := by
-    show sa.priv = 0x3F; rw [hsab]; exact hpriv'
-  have hign2 : ({ sa with params := #[(n, sa.curSub)] } : CsiState).ignore = false := by
-    show sa.ignore = false; rw [hsab]; exact hign'
-  have hopmodes : ({ w with pstate := .csi sa } : Vt).modes = w.modes := by rfl
-  show
-    (({ w with pstate := .csi sa }).csiDispatch
-          { sa with params := sa.params.push (min sa.cur 65535, sa.curSub) }
-          (if on then 0x68 else 0x6C)).modes =
-      (w.setMode true n on).modes
-  rw [hstate]
-  cases on
-  · show (({ w with pstate := .csi sa }).csiDispatch _ 0x6C).modes = (w.setMode true n false).modes
-    rw [csiDispatch_rm_one _ _ n sa.curSub hign2 rfl, hpriv2]
-    exact modes_setMode true n false hopmodes
-  · show (({ w with pstate := .csi sa }).csiDispatch _ 0x68).modes = (w.setMode true n true).modes
-    rw [csiDispatch_sm_one _ _ n sa.curSub hign2 rfl, hpriv2]
-    exact modes_setMode true n true hopmodes
+  cases on <;> simp only [Bool.false_eq_true, ite_false, ite_true]
+  · rw [csiDispatch_rm_one _ _ n false rfl rfl]
+    exact modes_setMode true n false rfl
+  · rw [csiDispatch_sm_one _ _ n false rfl rfl]
+    exact modes_setMode true n true rfl
 
 theorem modeSet_modes (n : Nat) (on : Bool) (hn : 0 < n) (hlt : n < 65535) {v : Vt}
     (hg : v.pstate = .ground) (hu : v.u8need = 0) :
     (v.feed (modeSet n on)).modes = (v.setMode true n on).modes ∧
       (v.feed (modeSet n on)).pstate = .ground ∧ (v.feed (modeSet n on)).u8need = 0 := by
   rw [show modeSet n on = [0x1B, 0x5B, 0x3F] ++ (digits n ++ [(if on then 0x68 else 0x6C : UInt8)])
-      from by simp [modeSet, csiPriv, csiB]]
-  rw [show
-      ∀ (w : Vt),
-        w.feed ([0x1B, 0x5B, 0x3F] ++ (digits n ++ [(if on then 0x68 else 0x6C : UInt8)])) =
-          (((w.step 0x1B).step 0x5B).step 0x3F).feed
-            (digits n ++ [(if on then 0x68 else 0x6C : UInt8)])
-      from fun w => by simp [Vt.feed]]
-  -- the `ESC [ ?` prologue: reaches the marked collector, preserving frame + u8need
-  have he : (v.step 0x1B) = { v with pstate := .esc } := esc_step_eq hg hu
-  have hb : ((v.step 0x1B).step 0x5B).pstate = .csi {} := csi_open_step (by rw [he])
-  obtain ⟨hm, -⟩ := csi_marker_step hb (by decide)
-  have hframe : Frame (((v.step 0x1B).step 0x5B).step 0x3F) = Frame v :=
-    (frame_csi_marker_step hb).trans ((frame_csi_open_step (by rw [he])).trans (frame_esc_step hg))
-  have hmodes : (((v.step 0x1B).step 0x5B).step 0x3F).modes = v.modes := congrArg (·.2.2) hframe
-  have hun : (((v.step 0x1B).step 0x5B).step 0x3F).u8need = 0 :=
-    uz_step 0x3F (by decide) (uz_step 0x5B (by decide) (uz_step_esc v))
-  obtain ⟨ht, hp, hu'⟩ := modeSet_tail n on hn hlt hm hun
-  refine ⟨?_, hp, hu'⟩
-  rw [ht, modes_setMode true n on hmodes]
+      from by simp [modeSet, csiPriv, csiB],
+    feed_append, csi_priv_open_eq hg hu]
+  obtain ⟨ht, hp, hu'⟩ :=
+    modeSet_tail n on hn hlt (w := { v with pstate := .csi { priv := 0x3F } }) rfl hu
+  exact ⟨ht.trans (modes_setMode true n on rfl), hp, hu'⟩
 
 /-! ## MMap — modes-from-ground, and per-chunk transforms -/
 
@@ -701,67 +646,17 @@ theorem mmap_irm (on : Bool) :
   rw [show
       csiNum 4 (if on then 0x68 else 0x6C) =
         [0x1B, 0x5B] ++ (digits 4 ++ [(if on then 0x68 else 0x6C : UInt8)])
-      from by simp [csiNum, csiB]]
-  rw [show
-      ∀ (w : Vt),
-        w.feed ([0x1B, 0x5B] ++ (digits 4 ++ [(if on then 0x68 else 0x6C : UInt8)])) =
-          (w.feed [0x1B, 0x5B]).feed (digits 4 ++ [(if on then 0x68 else 0x6C : UInt8)])
-      from fun w => by simp [Vt.feed, List.foldl_append]]
-  rw [keeps_csi_open hg hu]
-  obtain ⟨sa, hfeed, -⟩ :=
-    csi_param_run_inter (digits 4) (v := { v with pstate := .csi {} }) rfl (by simpa using hu)
-      (paramBytes_digits 4)
-  obtain ⟨sb, hpsb, hcur', hhave', hpar', hint', hign', -, hpriv'⟩ :=
-    csi_digits_value 4 (v := { v with pstate := .csi {} }) rfl rfl
-  have hsab : sa = sb :=
-    PState.csi.inj
-      ((by rw [hfeed] :
-            (({ v with pstate := .csi {} } : Vt).feed (digits 4)).pstate = .csi sa).symm.trans
-        hpsb)
-  rw [show
-      ∀ (u : Vt),
-        u.feed (digits 4 ++ [(if on then 0x68 else 0x6C : UInt8)]) =
-          (u.feed (digits 4)).feed [(if on then 0x68 else 0x6C : UInt8)]
-      from fun u => by simp [Vt.feed, List.foldl_append]]
-  rw [show
-      ∀ (u : Vt), u.feed [(if on then 0x68 else 0x6C : UInt8)] = u.step (if on then 0x68 else 0x6C)
-      from fun _ => rfl,
-    hfeed]
-  rw [csi_final_step_eq (if on then 0x68 else 0x6C) rfl (by rw [hu])
-      (by
-        rw [hsab]; exact hint')
-      hfinal.1 hfinal.2]
-  unfold Vt.csiFinish
-  rw [ite_eq_left
-      (by
-        rw [hsab]; simpa using hhave'),
-    ite_eq_right
-      (by
-        rw [hsab, hpar']; decide)]
+      from by simp [csiNum, csiB],
+    feed_append, keeps_csi_open hg hu,
+    csi_digits_tail_eq 4 (if on then 0x68 else 0x6C) hfinal.1 hfinal.2 (v :=
+      { v with pstate := .csi {} }) rfl hu rfl rfl (by decide)]
   dsimp only
   refine
     ⟨rfl, by
       rw [un_csiDispatch]; exact hu, ?_⟩
-  have hstate :
-    ({ sa with params := sa.params.push (min sa.cur 65535, sa.curSub) } : CsiState) =
-      { sa with params := #[(4, sa.curSub)] } := by
-    rw [hsab, hpar', hcur']; rfl
-  have hpriv2 : ({ sa with params := #[(4, sa.curSub)] } : CsiState).priv = 0 := by
-    show sa.priv = 0; rw [hsab]; exact hpriv'
-  have hign2 : ({ sa with params := #[(4, sa.curSub)] } : CsiState).ignore = false := by
-    show sa.ignore = false; rw [hsab]; exact hign'
-  have hop : ({ v with pstate := .csi sa } : Vt).modes = v.modes := by rfl
-  show
-    (({ v with pstate := .csi sa }).csiDispatch
-          { sa with params := sa.params.push (min sa.cur 65535, sa.curSub) }
-          (if on then 0x68 else 0x6C)).modes =
-      { v.modes with insert := on }
-  rw [hstate]
-  cases on
-  · show (({ v with pstate := .csi sa }).csiDispatch _ 0x6C).modes = _
-    rw [csiDispatch_rm_one _ _ 4 sa.curSub hign2 rfl, hpriv2]; rfl
-  · show (({ v with pstate := .csi sa }).csiDispatch _ 0x68).modes = _
-    rw [csiDispatch_sm_one _ _ 4 sa.curSub hign2 rfl, hpriv2]; rfl
+  cases on <;> simp only [Bool.false_eq_true, ite_false, ite_true]
+  · rw [csiDispatch_rm_one _ _ 4 false rfl rfl]; rfl
+  · rw [csiDispatch_sm_one _ _ 4 false rfl rfl]; rfl
 
 -- Application keypad: `ESC =` (on) / `ESC >` (off)
 theorem mmap_keypad (on : Bool) :

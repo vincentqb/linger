@@ -94,9 +94,7 @@ def hostClean (h : String) : Bool :=
   h.toList.all (fun c => decide (c.toNat ≥ 0x20) && decide (c.toNat ≠ 0x7F))
 
 /-- The first host carrying a control byte, for the error message. -/
-def firstDirtyHost : List String → Option String
-  | [] => none
-  | h :: t => if hostClean h then firstDirtyHost t else some h
+def firstDirtyHost (hosts : List String) : Option String := hosts.find? (!hostClean ·)
 
 /-- Validate the `-r` host list. Two rejections, both **loud**, because each is a
 configuration mistake with no valid meaning: a repeated host would double-query and

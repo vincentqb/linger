@@ -148,11 +148,9 @@ private def step (state : State) (byte : UInt8) : State × Option Key :=
 /-- Text excludes C0, DEL and C1 controls. Paste admits only text, even when a
 decoder branch recognizes a navigation key or a command byte. -/
 private def deliver (paste : Bool) (event : Option Key) : List Key :=
-  match event with
-  | some (.text char) =>
-    if 32 ≤ char.toNat && (char.toNat < 127 || 160 ≤ char.toNat) then [.text char] else []
-  | some key => if paste then [] else [key]
-  | none => []
+  (event.filter fun
+      | .text char => 32 ≤ char.toNat && (char.toNat < 127 || 160 ≤ char.toNat)
+      | _ => !paste).toList
 
 def feed (state : State) (byte : UInt8) : State × List Key :=
   let (next, event) := step state byte

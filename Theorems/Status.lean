@@ -46,65 +46,34 @@ def all : List Status := [.unknown, .exitedBad, .exitedOk, .resumable, .wantsYou
 
 theorem mem_all (s : Status) : s ∈ all := by cases s <;> simp [all]
 
+/-- The cascade agrees exactly with the independent legend predicates. -/
+theorem classify_iff (o : Obs) (s : Status) : classify o = s ↔ Is s o := by
+  cases o with
+  | mk known daemonUp exit fresh unseen =>
+    cases known <;> cases daemonUp <;> cases fresh <;> cases unseen <;>
+      cases exit with
+      | none => cases s <;> simp [classify, Is]
+      | some n => cases n <;> cases s <;> simp [classify, Is]
+
 /-- **Cover.** Every observation is in some state — no row can fail to be
 described. -/
-theorem cover (o : Obs) : ∃ s, Is s o := by
-  by_cases hk : o.known = true
-  · match hex : o.exit with
-    | some 0 => exact ⟨.exitedOk, hk, hex⟩
-    | some (n + 1) => exact ⟨.exitedBad, hk, ⟨n + 1, hex, by omega⟩⟩
-    | none =>
-      by_cases hd : o.daemonUp = true
-      · by_cases hf : o.fresh = true
-        · exact ⟨.working, hk, hex, hd, hf⟩
-        · by_cases hu : o.unseen = true
-          · exact ⟨.wantsYou, hk, hex, hd, by simpa using hf, hu⟩
-          · exact ⟨.idle, hk, hex, hd, by simpa using hf, by simpa using hu⟩
-      · exact ⟨.resumable, hk, hex, by simpa using hd⟩
-  · exact ⟨.unknown, show o.known = false from by simpa using hk⟩
+theorem cover (o : Obs) : ∃ s, Is s o := ⟨classify o, (classify_iff o _).mp rfl⟩
 
 /-- **Disjoint.** No observation is in two states — two rows showing the
 same glyph really are in the same state. -/
-theorem disjoint (o : Obs) (s t : Status) (hs : Is s o) (ht : Is t o) : s = t := by
-  cases s <;> cases t <;> simp only [Is] at hs ht <;>
-    first
-    | rfl
-    | ( exfalso
-        obtain _ := hs
-        obtain _ := ht
-        simp_all)
+theorem disjoint (o : Obs) (s t : Status) (hs : Is s o) (ht : Is t o) : s = t :=
+  ((classify_iff o s).mpr hs).symm.trans ((classify_iff o t).mpr ht)
 
 /-- **Sound.** The cascade computes the legend: what `classify` returns is
 the state the row is actually in. This is the claim that would break if a
 guard were mis-ordered. -/
-theorem classify_sound (o : Obs) : Is (classify o) o := by
-  unfold classify
-  by_cases hk : o.known = true
-  · rw [ite_eq_right (by simp [hk])]
-    match hex : o.exit with
-    | some 0 => exact ⟨hk, hex⟩
-    | some (n + 1) => exact ⟨hk, ⟨n + 1, hex, by omega⟩⟩
-    | none =>
-      by_cases hd : o.daemonUp = true
-      · rw [ite_eq_right (by simp [hd])]
-        by_cases hf : o.fresh = true
-        · rw [ite_eq_left hf]; exact ⟨hk, hex, hd, hf⟩
-        · rw [ite_eq_right (by simpa using hf)]
-          by_cases hu : o.unseen = true
-          · rw [ite_eq_left hu]; exact ⟨hk, hex, hd, by simpa using hf, hu⟩
-          · rw [ite_eq_right (by simpa using hu)]
-            exact ⟨hk, hex, hd, by simpa using hf, by simpa using hu⟩
-      · rw [ite_eq_left (by simpa using hd)]
-        exact ⟨hk, hex, by simpa using hd⟩
-  · rw [ite_eq_left (by simpa using hk)]
-    show o.known = false
-    simpa using hk
+theorem classify_sound (o : Obs) : Is (classify o) o := (classify_iff o _).mp rfl
 
 /-- **Complete.** `classify` is the *only* function agreeing with the
 legend, so the cascade is not one choice among several. Cover + disjoint +
 sound, combined. -/
 theorem classify_unique (o : Obs) (s : Status) (h : Is s o) : classify o = s :=
-  disjoint o _ _ (classify_sound o) h
+  (classify_iff o s).mpr h
 
 /-! ## Every glyph is reachable, and no two states share one -/
 
@@ -129,10 +98,6 @@ theorem that rejects it.) -/
 theorem icon_injective (s t : Status) (h : icon s = icon t) : s = t := by
   cases s <;> cases t <;> simp_all [icon]
 
-/-- The same for the porcelain names, which recipes parse. -/
-theorem name_injective (s t : Status) (h : name s = name t) : s = t := by
-  cases s <;> cases t <;> simp_all [name]
-
 /-- Porcelain names carry no separator or newline, so a row stays one
 unambiguous record — the invariant that makes tab-separated output safe
 without an escaping pass. -/
@@ -142,6 +107,10 @@ theorem name_clean (s : Status) : ∀ c ∈ (name s).toList, c ≠ '\t' ∧ c �
 /-- `ofName` is a left inverse of `name`, so the human column and the
 porcelain column can never disagree about a row. -/
 theorem ofName_name (s : Status) : ofName (name s) = s := by cases s <;> rfl
+
+/-- The same for the porcelain names, which recipes parse. -/
+theorem name_injective (s t : Status) (h : name s = name t) : s = t := by
+  simpa only [ofName_name] using congrArg ofName h
 
 /-- The complete style vocabulary contains standard foreground SGRs only; its
 quiet style adds dim and explicitly selects the default foreground. -/

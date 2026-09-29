@@ -36,12 +36,16 @@ private theorem printable_iff (char : Char) :
     printable char = true ↔ 32 ≤ char.toNat ∧ (char.toNat < 127 ∨ 160 ≤ char.toNat) := by
   simp [printable]
 
-private theorem validTarget_sound (target : String) (h : validTarget target = true) :
-    target ≠ "" ∧
-      Linger.Core.Name.sanitize ((target.splitOn "@").headD "") = (target.splitOn "@").headD "" ∧
-      (∀ char ∈ target.toList, 32 ≤ char.toNat ∧ (char.toNat < 127 ∨ 160 ≤ char.toNat)) ∧
-      ((target.splitOn "@").tail = [] ∨ String.intercalate "@" (target.splitOn "@").tail ≠ "") := by
-  simpa [validTarget, printable_iff, and_assoc] using h
+/-- Validation accepts exactly canonical local names with printable targets and
+nonempty remote suffixes. It never repairs a target on its way to acceptance. -/
+private theorem validTarget_iff (target : String) :
+    validTarget target = true ↔
+      target ≠ "" ∧
+        Linger.Core.Name.Valid ((target.splitOn "@").headD "") ∧
+        (∀ char ∈ target.toList, 32 ≤ char.toNat ∧ (char.toNat < 127 ∨ 160 ≤ char.toNat)) ∧
+        ((target.splitOn "@").tail = [] ∨
+          String.intercalate "@" (target.splitOn "@").tail ≠ "") := by
+  simp [validTarget, printable_iff, Linger.Core.Name.sanitize_eq_self_iff, and_assoc]
 
 private theorem parseRow_some (fields : List String) (target : String)
     (h : parseRow fields = .ok (some target)) :
@@ -168,10 +172,8 @@ theorem parseListing_valid (text : String) (targets : List String)
   obtain ⟨valid, distinct, -⟩ := parseRows_sound [] _ targets h
   refine ⟨distinct, ?_⟩
   intro target ht
-  obtain ⟨nonempty, canonical, clean, host⟩ := validTarget_sound target (valid target ht)
-  refine ⟨nonempty, canonical, ?_, clean, host⟩
-  rw [← canonical]
-  exact Linger.Core.Name.sanitize_valid _
+  obtain ⟨nonempty, nameValid, clean, host⟩ := (validTarget_iff target).mp (valid target ht)
+  exact ⟨nonempty, (Linger.Core.Name.sanitize_eq_self_iff _).mpr nameValid, nameValid, clean, host⟩
 
 theorem parseListing_provenance (text : String) (targets : List String)
     (h : parseListing text = .ok targets) (target : String) (ht : target ∈ targets) :
@@ -443,10 +445,10 @@ theorem step_create_valid (s : State) (key : Tools.Key) (target : String)
       ((target.splitOn "@").tail = [] ∨ String.intercalate "@" (target.splitOn "@").tail ≠ "") := by
   have selected := ((step_create_iff s key target).mp h).2
   obtain ⟨exactTarget, valid, absent⟩ := (mem_items_create _ _ _).mp (List.mem_of_getElem? selected)
-  obtain ⟨nonempty, canonical, printable, suffix⟩ := validTarget_sound target valid
-  refine ⟨exactTarget, absent, nonempty, canonical, ?_, printable, suffix⟩
-  rw [← canonical]
-  exact Linger.Core.Name.sanitize_valid _
+  obtain ⟨nonempty, nameValid, printable, suffix⟩ := (validTarget_iff target).mp valid
+  exact
+    ⟨exactTarget, absent, nonempty, (Linger.Core.Name.sanitize_eq_self_iff _).mpr nameValid,
+      nameValid, printable, suffix⟩
 
 theorem step_empty_accept (s : State) (h : items s.candidates s.query = []) :
     step s .accept = .stay s := by simp [step, selected_empty s h]

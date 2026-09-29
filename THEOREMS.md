@@ -26,10 +26,10 @@ recipes, break records, measurements, the audits — lives in
 | §Stream | fragmentation vs one parsed conversation | any re-chunking of a well-formed stream feeds back to exactly that stream (`decode_encode_chunked`; §Frame and §Chunk are its special cases) | Theorems/Wire.lean |
 | §Bound | unbounded queues under load | every buffer has a structural cap preserved by `step`; nothing to fill | Theorems/Wire.lean, Theorems/Vt.lean, Theorems/Session.lean |
 | §Total | adversarial bytes vs no crashes ever | `Vt.step`/`feed` total (no `partial`, grep-checked); `Good` preserved for any byte; dimensions preserved (`dims_feed`) | Theorems/Vt.lean |
-| §Detach | sessions outlive clients | a zero-client session still advances; `.closed id` removes every record for that id (`step_closed_clients`) while preserving the screen and labels, and may checkpoint. A close for the sender or an exit in the accumulated effects stops later decoded commands (`feedMsgs_after_close`, `feedMsgs_after_exit`). The runtime handles an event's effect feedback before already queued events; after exit it consumes no queued events | Theorems/Session.lean, E2E/Attach.lean, E2E/Delivery.lean |
+| §Detach | sessions outlive clients | a zero-client session still advances; `.closed id` removes every record for that id (`step_closed_clients`) while preserving the screen and labels, and may checkpoint. Once any decoded prefix requests the sender's close or exit, every suffix preserves its exact state and effects (`feedMsgs_stopped_suffix`; `feedMsgs_after_close` and `feedMsgs_after_exit` are instances). The runtime handles an event's effect feedback before already queued events; after exit it consumes no queued events | Theorems/Session.lean, E2E/Attach.lean, E2E/Delivery.lean |
 | §Restore | reboot-resume vs corrupt/stale state files | `load (save s) = some s` for every live state (`load_save_live`); `load` total on arbitrary bytes, and what it accepts is `Good`, `Renderable`, the ruler the width of the screen, and live-reachable (`load_good`, `load_renderable`, `load_tabsOk`, `load_live`) — refusals, not clamps. Scrollback row widths are deliberately unchecked (`Vt.resize` legitimately leaves old-width rows). On-disk tag pinned: `save_tag`, `"LNGR"` v1 only (the pre-rename reader is at `e1ac562`) | Theorems/Checkpoint.lean |
 | §Name | user-chosen names vs filesystem paths | sanitized names can't escape the socket dir (no `/`, `..`-prefix, NUL, empty); `@` reserved for `name@host`; sanitization preserves exactly the valid names and is idempotent | Theorems/Name.lean |
-| §Remote | trusting remote `ls` output vs local listing safety | parser total, garbage-tolerant; §Name carries through; display fields scrubbed of control bytes | Theorems/Remote.lean |
+| §Remote | trusting remote `ls` output vs local listing safety | parser total, garbage-tolerant; §Name carries through; display fields scrubbed of control bytes. Host validation accepts exactly clean, duplicate-free lists and returns them unchanged (`checkHosts_ok_iff`) | Theorems/Remote.lean |
 | §Isolate | many clients on one session vs per-client framing | `.bytes id` leaves every *other* client's record (and decoder) bit-identical | Theorems/Session.lean |
 | §Row | a list row's identity vs an unreliable `info` reply | a row's name is the sanitized socket filename alone; the reply can neither change it nor smuggle a second one in | Theorems/Listing.lean |
 | §Claim | one session name vs many daemons racing for it | *given* the kernel grants ≤1 `flock` holder, ≤1 daemon ever unlinks or binds that name | Theorems/Claim.lean |
@@ -38,7 +38,7 @@ recipes, break records, measurements, the audits — lives in
 | §Handback | the program owned the terminal vs the shell gets it back | `Render.leaveAnsi` is a **constant**, written in interactive cleanup. `leave_canonical_all`: any receiver at least two rows tall ends parser-ground, default modes, whole scroll region, ASCII charsets with G0 shifted in, main screen current, pen reset and title empty (`leave_canonical` is the hypothesis-free parser+modes half). The cursor position is the receiver's business (clamped park), pinned by `E2E/Attach.lean`. Clearing the title establishes a default without querying or stacking the borrowed title | Linger/Core/Render.lean, Linger/Runtime/Client.lean, E2E/Attach.lean |
 | §Terminal | a child needs a terminal that answers, linger owns none | one bounded pure transducer owns a documented query profile: the VT projection, scanner and ordered reply stream are roster-independent (`Terminal.feed_vt`, `Session.ptyOut_reply_roster_independent`); an owned query is answered exactly once, everything else is byte-for-byte passthrough (`apc_passthrough`, `sixel_passthrough`); the scanner is capped and over-cap becomes passthrough (`feed_bounded`); no reply can commit a line into the child (`feed_replies_noNl` — terminal-reply command injection, closed); chunking-invariant (`feed_append`) | Theorems/Terminal.lean, Theorems/Session.lean |
 | §Renderable | the painter expresses fewer grids than the emulator reaches | the emulator never stores a shape a repaint cannot reproduce (`renderable_step`/`renderable_feed`/`renderable_resize`/`renderable_quiesce`, from `renderable_init`); `LiveReachableVt` is the least predicate closed under those and containing every screen the decoder's door accepts (`LiveReachableVt.ofDecoded` — a `Good` premise is provably unsound, counterexample in SCRATCHPAD.md); the decoder establishes it from disk too (`Vt.ofDecoded_renderable`, `Checkpoint.load_renderable`); lifted to the daemon by `Session.run_vt_renderable` and `run_resume_vt_shape` | Linger/Core/Vt.lean, Theorems/Vt.lean |
-| §Status | one glyph per listing row vs seven conditions | the seven states partition the observation space: `cover`, `disjoint`, `classify_sound` + `classify_unique`, `reachable`, `icon_injective` / `name_injective`, `name_clean` | Theorems/Status.lean |
+| §Status | one glyph per listing row vs seven conditions | `classify_iff` equates classification with the independent legend predicates; `cover`, `disjoint`, `classify_sound` and `classify_unique` derive the partition. Every state is reachable; icons and names are injective and names are clean | Theorems/Status.lean |
 | §Title | visible cross-session attention vs an uninterrupted terminal stream | composition omits empty parts; the title payload excludes terminal controls and fits the OSC parser cap (`compose_parts`, `payload_safe`, `ansi_payload_bound`, `ansi_ends`). Updates wait for parser-ground and complete UTF-8 (`update_waits`, `update_requires_boundary`). The existing VT observer is chunking-invariant, keeps no history, and preserves its dimensions and parser/screen invariants (`observe_append`, `observe_no_history`, `observe_dims`, `observe_invariants`) | Theorems/Title.lean, E2E/Title.lean |
 | §Resume | the product's own promise: crash, reboot, reattach | §Restore ∘ §Replay, stated twice — over `save`'s input and over `load`'s output (`resume_grid_of_load`, `resume_tabs_of_load`, `resume_sb_of_load`: any byte string that loads, no other hypothesis) — and lifted to the daemon over its own `vt0` (`Session.run_resume_vt_shape`, `run_resume_load_save`) | Theorems/Resume.lean, Theorems/Session.lean |
 | §Import | foreign save records vs distinct session identities, directory-only restoration and safe error display | successful parsing gives a nonempty list with canonical, distinct names and NUL-free directories (`parseSave_valid`); valid saved commands cannot affect parsed panes (`parseRow_command_irrelevant`); planning preserves records and order and skips existing names (`mem_plan`, `plan_order`); adding planned names to the snapshot makes a sequential rerun empty (`plan_sequential_idempotent`); diagnostics exclude C0, DEL and C1 and preserve already printable text (`diagnostic_printable`, `diagnostic_eq_self`) | Theorems/Resurrect.lean, E2E/Recipes.lean |
@@ -61,6 +61,19 @@ preserve `Good`, grid shape and tab shape. Footprint claims about origin and
 screen selection inspect the whole parameter list, since a later parameter can
 change either one. Receiver-quantified replay guarantees keep their existing
 assumptions and conclusions.
+
+Renderer stream predicates lift from fragments through rows, CRLF joining and
+grids (`StreamPred.rowAnsi`, `StreamPred.joinCRLF`, `StreamPred.gridAnsi`).
+The existing parser-boundary, mode-preservation and quiescence proofs share
+these traversals without adding receiver-shape premises.
+`csi_digits_feed_eq` gives the exact collector state after any natural-number
+digit stream, starting in CSI with a zero current parameter and no pending
+UTF-8 continuation: only that parameter and its presence flag change, with
+saturation at 65535. `csi_digits_tail_eq` carries that equation through a final
+byte in 0x40–0x7E, with no intermediate byte and fewer than 16 prior parameters.
+Private, ignore and subparameter flags remain explicit. Mode changes, cursor
+placement, tab clearing and history clearing use the same contract, while
+their original endpoint assumptions remain unchanged.
 
 Checkpoint acceptance also establishes parser quiescence (`load_accepted`,
 `load_quiescent`). `load_save_append` rejects every nonempty suffix, and
@@ -135,24 +148,38 @@ evaluation nowhere; the unit tests in `Tests/` do, because they pin
 concrete behavior where evaluation is the point. Each row was
 **break-verified** — the code deliberately broken once to watch the
 theorem catch — with the break recorded in `SCRATCHPAD.md`. The
-machine-layer rows hold over whole event *traces*: `run` names the fold
-the runtime's poll loop performs (`run_eq_foldl` pins it exactly), and
+machine-layer rows hold over whole event *traces*: `run_eq_foldl` identifies the
+state/effect fold over the events the runtime actually consumes, and
 `run_wf` / `run_bytes_isolates` lift §Bound + §Total + §Isolate to the
-daemon's whole life.
+daemon's whole life. `run_preserves` supplies the general state-invariant
+lift. This trace algebra does not imply that the runtime processes queued
+events after exit or meets a wall-clock deadline.
+
+`feedMsgs_induct` lifts predicates of the entire state/effect accumulator,
+with handler obligations only after the sender lookup and stop guards
+succeed. `feedMsgs_append` preserves the exact accumulator across batch
+boundaries, including ordered effects and pending stops.
+`onMsg_vt_preserves` and `step_vt_preserves` lift terminal predicates closed
+under the resize and feed operations the session actually performs. Existing
+`Good` and live-reachability proofs instantiate these contracts.
 
 ## Frames
 
 `frame_X : v.op = { v with field := … }` states an operation's whole
-footprint once, so any field invariance is one rewrite — in force for
-the thirty leaf operations whose result is a syntactic record update.
-Compositions (`print`) and folds (`csiDispatch`, the erase/insert/delete
-family) keep per-field lemmas; both limits were measured, not assumed.
-Two rejected alternatives, recorded: *bundling* fields fixes only the
-fields we happened to need where a frame is complete, and *splitting*
-`Vt` cannot capture invariance that is per-operation. A frame says what
-an operation leaves alone, never what the written fields become — the
-positive specifications (`scrollUpIn_rows`, `scrollUpIn_sb_push`,
-`lineFeed_scroll`) are separate content.
+footprint once, so field invariance follows by projection. `frame_grid_foldl`
+lifts exact grid-only updates through a fold; `frame_insertLines` and
+`frame_deleteLines` cover the complete operations without shape premises.
+`frame_eraseScreen` also specifies that mode 3 clears history and all other
+modes retain it. Printing's existing `off_print` observation supplies its
+unchanged-field projections. Conditional dispatch retains operation-specific
+claims because reset, mode and screen transitions have different footprints.
+
+Bundling selected fields would omit the rest of the state; splitting `Vt`
+would not express these per-operation footprints. Those bounded negative
+results remain recorded in the worklog. A frame whose right-hand side projects
+the operation's own updated grid does not specify that grid's contents.
+Positive specifications such as `scrollUpIn_rows`, `scrollUpIn_sb_push` and
+`lineFeed_scroll` remain separate.
 
 ## Coverage
 
@@ -262,6 +289,12 @@ carries name safety and the unchanged target through acceptance;
 `step_init_empty` positively establishes creation of the default session from
 an empty listing.
 
+`validTarget_iff` connects the internal target check to `Name.Valid`,
+printable characters and the optional nonempty remote suffix in both
+directions. `Listing.nameWidth_le_iff` makes the shared name column the least
+width sufficient for every name in the snapshot. It measures Unicode scalar
+count; terminal-cell clipping remains the executor's separate width operation.
+
 `init_valid` and `step_stay_valid` bound the cursor and query through keyboard
 transitions. `refresh_query` and `refresh_candidates` keep the query while
 replacing the validated snapshot. `refresh_selected` preserves the exact target
@@ -287,17 +320,28 @@ preserve paste suppression across malformed or incomplete sequences.
 `flush_emits` limits timeout output to cancellation after a lone escape
 outside paste. UTF-8 decoding is connected to Lean's native `String.fromUTF8?`
 validator and a single-scalar result; the validator itself is not proved here.
+The internal `deliver_mem` contract preserves the recognized key's identity
+and characterizes exactly which keys the paste/printability filter permits.
 `Manager.Picker` consumes these models. Source gates pin the parser, selectable
 rows, their displayed order, labels and cursor positions, initial states,
 keyboard and refresh transitions, decoder, character widths, fixed poll
 descriptors and unchanged attach argv for both row kinds. They also pin input
 handling before snapshot replacement, drawing before the next poll, and the
-listing's process and reader ownership. The CLI consumes the same pure default
+listing's process and reader ownership. Decoder ties preserve byte traversal
+order and carry both returned state and emitted keys through timeout handling
+to dispatch. The CLI consumes the same pure default
 session name as the picker. `E2E.Manager` checks the creation
 label, terminal restoration, resize, subprocess handoff, paste, exact selection,
 creation and refresh scheduling through real ptys. A cleanup exception still
 restores termios; attachment begins after leaving the picker screen.
 These are IO observations, not theorem statements.
+
+`Remote.checkHosts_ok_iff` specifies validation after the CLI's intended
+trimming and comment filtering. It preserves the complete normalized list,
+including order, and accepts every duplicate-free list whose hosts exclude
+C0 and DEL. Source gates tie its success/error result to `resolveRemotes`,
+the overview command and ordered `listRemote` traversal. These contracts do
+not establish hostname resolution or SSH liveness.
 
 The same status vocabulary drives prompt and title summaries.
 `attentionCounts_mem` characterizes each displayed group as its exact positive
@@ -540,32 +584,3 @@ real terminals.
   megabytes of base64; nothing is stored, so `restore` cannot replay
   them — the application's redraw does (pinned by `E2E/Graphics.lean`;
   reasons in README Graphics and the AGENTS.md non-goal).
-
-## Proof factorization audit — candidate contracts
-
-The live `specs/proof-factorization.md` evaluates these generalizations.
-These are proof obligations, not newly established guarantees:
-
-- A state predicate preserved by one transition remains true over any finite
-  input trace, with the trace's actual stop and effect semantics preserved.
-  Existing VT and session lifetime guarantees should become instances of
-  this statement where it removes duplicate induction.
-- Stream preservation composes for arbitrary observations of receiver state,
-  including simultaneous observations, without imposing additional premises
-  on terminal restoration endpoints. Reuse the existing `StreamPred` and
-  `Fixes` contracts before introducing another proof vocabulary.
-- Byte codecs and bounded queues preserve exact content through composition
-  and chunk boundaries. Bounds accompany that content statement rather than
-  replacing it, and replay progress remains independent of chunk layout.
-  A refused input offer must preserve the entire existing queue, not merely
-  its length.
-- CLI policy composition preserves listed targets, ordering, explicit
-  creation and presentation semantics for all inputs. Prefer a general
-  equivalence or construction invariant over another fixture of one input.
-- Name sanitization is a retraction onto `Name.Valid`: it leaves exactly the
-  valid names unchanged, and sanitizing twice equals sanitizing once. Selector
-  and import checks can use that contract at the boundary to attachment.
-
-Keep only generalizations with real simplifying consumers. Any candidate that
-needs weaker premises, extra runtime machinery or more proof code without a
-stronger useful conclusion is recorded as a bounded negative result instead.

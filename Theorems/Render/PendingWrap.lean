@@ -64,99 +64,19 @@ theorem modeSet_feed_eq (n : Nat) (on : Bool) (hn : 0 < n) (hlt : n < 65535) {v 
     (hg : v.pstate = .ground) (hu : v.u8need = 0) :
     v.feed (modeSet n on) = { v.setMode true n on with pstate := .ground } := by
   rw [show modeSet n on = [0x1B, 0x5B, 0x3F] ++ (digits n ++ [(if on then 0x68 else 0x6C : UInt8)])
-      from by simp [modeSet, csiPriv, csiB]]
-  rw [feed_append, csi_priv_open_eq hg hu]
-  obtain ⟨s', heq, hcur', hhave, hpar, hint, hsub⟩ :=
-    csi_digits_run_eq n (v := { v with pstate := .csi ({ priv := 0x3F } : CsiState) }) (s :=
-      ({ priv := 0x3F } : CsiState)) rfl (by simpa using hu) rfl
+      from by simp [modeSet, csiPriv, csiB],
+    feed_append, csi_priv_open_eq hg hu]
   have hfinal :
     (0x40 : UInt8) ≤ (if on then 0x68 else 0x6C) ∧
       (if on then (0x68 : UInt8) else 0x6C) ≤ 0x7E := by
     cases on <;> exact ⟨by decide, by decide⟩
-  rw [show
-      ∀ (u : Vt),
-        u.feed (digits n ++ [(if on then 0x68 else 0x6C : UInt8)]) =
-          (u.feed (digits n)).feed [(if on then 0x68 else 0x6C : UInt8)]
-      from fun u => by simp [Vt.feed, List.foldl_append]]
-  rw [heq,
-    show
-      ∀ (u : Vt), u.feed [(if on then 0x68 else 0x6C : UInt8)] = u.step (if on then 0x68 else 0x6C)
-      from fun _ => rfl]
-  rw [csi_final_step_eq (if on then 0x68 else 0x6C) rfl (by simpa using hu) (by rw [hint]) hfinal.1
-      hfinal.2]
-  unfold Vt.csiFinish
-  rw [ite_eq_left (by simpa using hhave),
-    ite_eq_right
-      (by
-        rw [hpar]; decide)]
+  rw [csi_digits_tail_eq n (if on then 0x68 else 0x6C) hfinal.1 hfinal.2 (v :=
+      { v with pstate := .csi { priv := 0x3F } }) rfl hu rfl rfl (by decide),
+    show min n 65535 = n from by omega]
   dsimp only
-  -- the closed collector: one parameter `n`, the private marker set, ignore clear
-  have hnorm :
-    ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState) =
-      { s' with params := #[(n, s'.curSub)] } := by
-    rw [hpar, hcur', show min (min n 65535) 65535 = n from by omega]; rfl
-  have hparams :
-    ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState).params =
-      #[(n, s'.curSub)] := by
-    rw [hnorm]
-  have hpriv :
-    ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState).priv =
-      0x3F := by
-    show s'.priv = 0x3F
-    obtain ⟨s2, hps2, -, -, -, -, -, -, hpriv2⟩ :=
-      csi_digits_value n (v := { v with pstate := .csi ({ priv := 0x3F } : CsiState) }) (s :=
-        ({ priv := 0x3F } : CsiState)) rfl rfl
-    have : s' = s2 :=
-      PState.csi.inj
-        ((by rw [heq] :
-              ((({ v with pstate := .csi ({ priv := 0x3F } : CsiState) } : Vt)).feed
-                    (digits n)).pstate =
-                PState.csi s').symm.trans
-          hps2)
-    rw [this]; exact hpriv2
-  have hign :
-    ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState).ignore =
-      false := by
-    show s'.ignore = false
-    obtain ⟨s2, hps2, -, -, -, -, hign2, -, -⟩ :=
-      csi_digits_value n (v := { v with pstate := .csi ({ priv := 0x3F } : CsiState) }) (s :=
-        ({ priv := 0x3F } : CsiState)) rfl rfl
-    have : s' = s2 :=
-      PState.csi.inj
-        ((by rw [heq] :
-              ((({ v with pstate := .csi ({ priv := 0x3F } : CsiState) } : Vt)).feed
-                    (digits n)).pstate =
-                PState.csi s').symm.trans
-          hps2)
-    rw [this]; exact hign2
-  cases on
-  all_goals simp only [Bool.false_eq_true, ite_false, ite_true]
-  · rw [show
-        ∀ (u : Vt),
-          u.csiDispatch
-              ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState) 0x6C =
-            u.setMode true n false
-        from by
-        intro u
-        rw [csiDispatch_rm_one _ _ n s'.curSub hign hparams, hpriv]
-        rfl]
-    show
-      ({ (({ v with pstate := .csi s' } : Vt)).setMode true n false with pstate := .ground } : Vt) =
-        { v.setMode true n false with pstate := .ground }
-    rw [setMode_pstate v (.csi s') true n false]
-  · rw [show
-        ∀ (u : Vt),
-          u.csiDispatch
-              ({ s' with params := s'.params.push (min s'.cur 65535, s'.curSub) } : CsiState) 0x68 =
-            u.setMode true n true
-        from by
-        intro u
-        rw [csiDispatch_sm_one _ _ n s'.curSub hign hparams, hpriv]
-        rfl]
-    show
-      ({ (({ v with pstate := .csi s' } : Vt)).setMode true n true with pstate := .ground } : Vt) =
-        { v.setMode true n true with pstate := .ground }
-    rw [setMode_pstate v (.csi s') true n true]
+  cases on <;> simp only [Bool.false_eq_true, ite_false, ite_true]
+  · rw [csiDispatch_rm_one _ _ n false rfl rfl, setMode_pstate]; rfl
+  · rw [csiDispatch_sm_one _ _ n false rfl rfl, setMode_pstate]; rfl
 
 /-- A codepoint a repaint may emit is stored as itself. -/
 theorem printableChar_id_of_emittable {c : Char} (h : Emittable c) : printableChar c = c := by
