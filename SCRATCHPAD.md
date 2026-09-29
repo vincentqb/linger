@@ -13379,3 +13379,35 @@ malformed-pipe red/green comparison. Original title evidence is indexed by
 All workers have stopped; their frozen source and meaningful ignored evidence
 are preserved outside their worktrees. Fresh removal checks and hosted CI
 outcomes will be recorded in the closure step.
+
+## Step 3 notes — 2026-09-29
+
+Closed `specs/archive/status-presentation.md` after publishing the integrated
+implementation as `c5b2ed4`. Steps 1–2 share that verified checkpoint; this
+closure changes only documentation. The no-live-spec pointer is restored.
+
+The three workers' final audits account for modified, untracked and meaningful
+ignored files, not just branch ancestry. Their exact source and diagnostic
+evidence is preserved outside the removed trees. The parent independently
+verified the sealed archives, then checked every live source/ignored hash and
+inventory, empty staged diff, frozen status, branch identity and absence of
+unique commits against the now-published main. All three worktrees and branches
+are removed. Only main remains locally.
+`/tmp/linger-status-20260929/cleanup/preflight.json` and `completed.json`
+record the fresh preflight and confirmed result. The original per-worker
+dispositions and independently verified archive manifests remain in the
+receipt directories indexed in Step 1.
+
+Automatic push run `36592325746` and manual Linux/macOS run `36592371628`
+both failed before job steps started. Both gate-job annotations say recent
+account payments failed or the spending limit needs increasing; the full-gate
+jobs were skipped. The manual request was made because the connect boundary
+changes C. Raw run/job/annotation responses are preserved in
+`/tmp/linger-status-20260929/hosted-checkpoint.json` and
+`hosted-push-checkpoint.json`. This records hosted checks as unexecuted.
+The full local Linux verifier remains green; no macOS, GUI-terminal or real
+remote-host pass is claimed.
+
+Both required closure builds pass with unchanged Lean/runtime sources.
+`closure-build.log` and `closure-proofs-tests.log` in the parent receipt
+directory record the runs; their JSON companions carry commands and times.

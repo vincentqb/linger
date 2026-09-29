@@ -1,6 +1,6 @@
 # Consistent status and terminal titles
 
-Status: Linux verified — steps 1–2 complete; publication and cleanup in progress
+Status: complete — Linux verified; hosted checks blocked by GitHub billing
 Updated: 2026-09-29
 
 ## Intent
@@ -72,8 +72,8 @@ Run both required Lean builds and the complete foreground Linux verifier,
 including generated C ABI, formatting, purity/import boundaries, exact
 theorem coverage and reviewed live suite counts. Inspect a rendered selector
 frame. A fresh reviewer checks the assembled change. Record actual hosted CI
-outcome and any platform limitations, archive this spec, and remove only
-integrated clean worker branches/worktrees.
+outcome and any platform limitations, archive this spec, and remove worker
+branches/worktrees only after their contents are integrated or preserved.
 
 ## Verified checkpoint
 
@@ -93,4 +93,27 @@ formatter-normalized command-binding cases.
 Receipts are indexed in `SCRATCHPAD.md` and
 `/tmp/linger-status-20260929/final-verifier/results.json`.
 The implementation and dependent proof changes form one verified checkpoint.
-Hosted CI and the final worker removal audit remain to be recorded at closure.
+
+## Completion record
+
+Implementation checkpoint `c5b2ed4` is committed and pushed to main.
+All three worker branches have zero unique commits. Their modified, untracked
+and meaningful ignored material is integrated or preserved outside the trees.
+The parent independently verified the archived evidence, then rechecked every
+source/ignored hash, source inventory, index state, status and branch identity
+before removal. All three worker worktrees and branches are removed; only
+main remains locally. The final records are
+`/tmp/linger-status-20260929/cleanup/preflight.json` and `completed.json`.
+
+The checkpoint's automatic push run `36592325746` and manually requested
+Linux/macOS run `36592371628` both failed before any job steps ran. GitHub's
+failure annotation says recent account payments have failed or the spending
+limit needs to be increased. The full-gate jobs were skipped. These are
+unexecuted hosted checks, not passing verification.
+`hosted-checkpoint.json` and `hosted-push-checkpoint.json` in the parent receipt
+directory preserve the actual run, job and annotation responses.
+No macOS, live GUI-terminal or real remote-host verification is claimed.
+
+The closure checkpoint changes documentation only, archives this record and
+restores the no-live-spec pointer. The assembled implementation remains the
+one that passed the full Linux verifier.
