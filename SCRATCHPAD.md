@@ -13411,3 +13411,61 @@ remote-host pass is claimed.
 Both required closure builds pass with unchanged Lean/runtime sources.
 `closure-build.log` and `closure-proofs-tests.log` in the parent receipt
 directory record the runs; their JSON companions carry commands and times.
+
+## Step 1 notes — 2026-09-29
+
+Opened `specs/proof-factorization.md` from `a29819d` with four independent
+worktree writers for VT, renderer, session and CLI policy proofs. Applied
+the compound-engineering and code-simplifier skills. The acceptance rule is
+an unchanged endpoint or a stronger useful contract with simplifying consumers,
+not a new vocabulary that merely bundles the old facts. Historical negative
+results in the bigger-theorems record remain constraints.
+
+The main audit proves `Name.sanitize_eq_self_of_valid`,
+`sanitize_eq_self_iff` and `sanitize_idempotent`: sanitization leaves exactly
+the structurally valid names unchanged. This connects independent name checks
+to a stable attachment identity. The CLI worker uses the equivalence for
+selector targets and imported save names. `bufOffer_rejected` preserves the
+whole existing queue on refusal; a byte-count bound alone allowed reordered
+contents. No production definition changes were needed for these contracts.
+
+Four existing title-observer endpoints now instantiate `Vt.invariant_foldl`,
+including a combined invariant and a fixed-dimensions predicate. The wire
+standalone round trip instantiates its existing arbitrary-suffix theorem.
+All previous statements and hypotheses remain unchanged. There is no new
+helper framework, dependency, proof resource override, C code or runtime path.
+
+The codec, checkpoint, replay and terminal families already expose their
+useful generality: suffix round trips, exact chunk composition, sealed replay
+plans, bounded output and progress for positive budgets. An extra codec
+framework or variable-budget replay interface had no simplifying consumer.
+The claim/lock proof still assumes the kernel's exclusive lock and proves
+the pure consequences; it does not prove OS scheduling or real-time liveness.
+These are bounded negative results, not missing work hidden by a weaker theorem.
+
+Both new contracts have compiling semantic break checks. A sanitizer mutation
+maps the head of the valid name `quiet` to `_`, retaining validity but changing
+identity; its kernel witness compiles and the new preservation proof fails.
+A buffer mutation reverses the retained bytes on refusal, keeping the refusal
+flag and length; the semantic witness compiles and whole-queue identity fails.
+The exact restored sources and proofs pass. Setup diagnostics are separate
+from the completed receipts. Evidence:
+`/tmp/linger-proof-name-retraction-20260929-SkNB8i/` and
+`/tmp/linger-proof-buf-refusal-20260929-oPKNQ0/`.
+Independent read-only review found no proof, premise or receipt defect;
+`/tmp/linger-proof-checkpoint-retry-20260929-I9oLvd/review.md` records its scope.
+
+Both required builds and the complete foreground Linux verifier pass. The full
+run was 16:58:09Z–17:05:18Z: clean 162-job build, generated Lean/C ABI, source
+gates, standalone formatter, exact-constant and emitter-reference coverage,
+CI runner checks, POSIX smoke, all fourteen live suites and the unrelated
+sentinel. All 434 live assertions ran and passed; all 159 tracked source
+identities stayed fixed. Logs, patch, commands, times and source hashes are
+in `/tmp/linger-proof-checkpoint-live-20260929/`. Its supplemental log receipt
+records copying the fresh robustness log after correcting a recorder filename.
+
+Earlier attempts are not live-test passes: an untracked-spec citation gate,
+an asynchronous-recorder setup error, and a restricted-sandbox socket bind
+refusal stopped their respective runs. Their diagnostic limits are recorded
+in the earlier checkpoint directories. The successful full run had local
+socket permission. Hosted execution is not claimed by this checkpoint.

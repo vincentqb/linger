@@ -25,13 +25,6 @@ namespace Linger.Core.Wire
 @[simp]
 theorem writeU32_length (n : UInt32) : (writeU32 n).length = 4 := by simp [writeU32]
 
-@[simp]
-theorem readU32_writeU32 (n : UInt32) : readU32 (writeU32 n) = n := by
-  have h := n.toNat_lt
-  apply UInt32.toNat_inj.mp
-  simp [readU32, writeU32, UInt8.toNat_ofNat', UInt32.toNat_ofNat']
-  omega
-
 /-- Reading a u32 sees only the first 4 bytes. -/
 @[simp]
 theorem readU32_writeU32_append (n : UInt32) (rest : List UInt8) :
@@ -40,6 +33,10 @@ theorem readU32_writeU32_append (n : UInt32) (rest : List UInt8) :
   apply UInt32.toNat_inj.mp
   simp [readU32, writeU32, UInt8.toNat_ofNat', UInt32.toNat_ofNat']
   omega
+
+@[simp]
+theorem readU32_writeU32 (n : UInt32) : readU32 (writeU32 n) = n := by
+  simpa only [List.append_nil] using readU32_writeU32_append n []
 
 @[simp]
 theorem drop4_writeU32_append (n : UInt32) (rest : List UInt8) :

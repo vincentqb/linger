@@ -21,43 +21,34 @@ history. In particular its title, parser state and partial UTF-8 agree exactly. 
 theorem observe_singleton (v : Vt) (b : UInt8) : v.observe [b] = { (v.step b) with sb := {} } := rfl
 
 theorem observe_no_history (v : Vt) (bytes : List UInt8) (h : v.sb = {}) :
-    (v.observe bytes).sb = {} := by
-  induction bytes generalizing v with
-  | nil => exact h
-  | cons b bs ih => exact ih _ rfl
+    (v.observe bytes).sb = {} := invariant_foldl (·.sb = {}) _ (fun _ _ _ => rfl) bytes v h
 
-theorem observe_good (v : Vt) (bytes : List UInt8) (h : Good v) : Good (v.observe bytes) := by
-  induction bytes generalizing v with
-  | nil => exact h
-  | cons b bs ih =>
-    apply ih
-    exact { Good.step b h with sbLe := by simp [Ring.size, sbCap] }
+theorem observe_good (v : Vt) (bytes : List UInt8) (h : Good v) : Good (v.observe bytes) :=
+  invariant_foldl Good (fun w b => { (w.step b) with sb := {} })
+    (fun _ b hw => { Good.step b hw with sbLe := by simp [Ring.size, sbCap] }) bytes v h
 
 /-- Discarding history preserves every invariant required of a public VT
 transformer; screen shape and parser state still come from the usual step. -/
 theorem observe_invariants (v : Vt) (bytes : List UInt8) (hr : Renderable v) (hu : U8Ok v)
     (ht : TabsOk v) (hc : CsiOk v) :
     Renderable (v.observe bytes) ∧
-      U8Ok (v.observe bytes) ∧ TabsOk (v.observe bytes) ∧ CsiOk (v.observe bytes) := by
-  induction bytes generalizing v with
-  | nil => exact ⟨hr, hu, ht, hc⟩
-  | cons b bs ih =>
-    exact
-      ih _ (renderable_congr (renderable_step hr b) rfl rfl rfl rfl) (u8Ok_step b hu)
-        (tabsOk_step b ht) (csiOk_step hc b)
+      U8Ok (v.observe bytes) ∧ TabsOk (v.observe bytes) ∧ CsiOk (v.observe bytes) :=
+  invariant_foldl (fun w => Renderable w ∧ U8Ok w ∧ TabsOk w ∧ CsiOk w)
+    (fun w b => { (w.step b) with sb := {} })
+    (fun _ b hw =>
+      ⟨renderable_congr (renderable_step hw.1 b) rfl rfl rfl rfl, u8Ok_step b hw.2.1,
+        tabsOk_step b hw.2.2.1, csiOk_step hw.2.2.2 b⟩)
+    bytes v ⟨hr, hu, ht, hc⟩
 
 theorem observe_dims (v : Vt) (bytes : List UInt8) (h : Good v) :
     (v.observe bytes).colCount = v.colCount ∧ (v.observe bytes).rowCount = v.rowCount := by
-  induction bytes generalizing v with
-  | nil => exact ⟨rfl, rfl⟩
-  | cons b bs
-    ih =>
-    have hg : Good { (v.step b) with sb := {} } :=
-      { Good.step b h with sbLe := by simp [Ring.size, sbCap] }
-    have hd := dims_step b h
-    have hi := ih _ hg
-    simp only [dims, Prod.mk.injEq] at hd
-    exact ⟨hi.1.trans hd.1, hi.2.trans hd.2⟩
+  have hi :=
+    invariant_foldl (fun w => Good w ∧ dims w = dims v) (fun w b => { (w.step b) with sb := {} })
+      (fun w b hw =>
+        ⟨{ Good.step b hw.1 with sbLe := by simp [Ring.size, sbCap] },
+          (dims_step b hw.1).trans hw.2⟩)
+      bytes v ⟨h, rfl⟩
+  exact Prod.mk.inj hi.2
 
 end Linger.Core.Vt
 

@@ -112,6 +112,13 @@ theorem bufOffer_owed (cap : Nat) (b : Buf) (more : ByteArray)
   · rw [ite_eq_left hc] at h; exact absurd h (by simp)
   · rw [ite_eq_right hc]; rfl
 
+/-- Refusing a whole input frame leaves all previously queued input unchanged.
+The bound alone would also allow discarding or rearranging that input. -/
+theorem bufOffer_rejected (cap : Nat) (b : Buf) (more : ByteArray)
+    (h : (bufOffer cap b more).2 = true) : (bufOffer cap b more).1 = b := by
+  unfold bufOffer at h ⊢
+  split at h <;> simp_all
+
 /-- **The client-output cap, guarded.** If the peer was not cut, its backlog is
 within the cap. The guard is not a weakening: `.send` appends and *then* decides,
 so at the moment of the decision the frame that crossed the cap is queued, and the

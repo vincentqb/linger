@@ -28,7 +28,7 @@ recipes, break records, measurements, the audits — lives in
 | §Total | adversarial bytes vs no crashes ever | `Vt.step`/`feed` total (no `partial`, grep-checked); `Good` preserved for any byte; dimensions preserved (`dims_feed`) | Theorems/Vt.lean |
 | §Detach | sessions outlive clients | a zero-client session still advances; `.closed id` removes every record for that id (`step_closed_clients`) while preserving the screen and labels, and may checkpoint. A close for the sender or an exit in the accumulated effects stops later decoded commands (`feedMsgs_after_close`, `feedMsgs_after_exit`). The runtime handles an event's effect feedback before already queued events; after exit it consumes no queued events | Theorems/Session.lean, E2E/Attach.lean, E2E/Delivery.lean |
 | §Restore | reboot-resume vs corrupt/stale state files | `load (save s) = some s` for every live state (`load_save_live`); `load` total on arbitrary bytes, and what it accepts is `Good`, `Renderable`, the ruler the width of the screen, and live-reachable (`load_good`, `load_renderable`, `load_tabsOk`, `load_live`) — refusals, not clamps. Scrollback row widths are deliberately unchecked (`Vt.resize` legitimately leaves old-width rows). On-disk tag pinned: `save_tag`, `"LNGR"` v1 only (the pre-rename reader is at `e1ac562`) | Theorems/Checkpoint.lean |
-| §Name | user-chosen names vs filesystem paths | sanitized names can't escape the socket dir (no `/`, `..`-prefix, NUL, empty); `@` reserved for `name@host` | Theorems/Name.lean |
+| §Name | user-chosen names vs filesystem paths | sanitized names can't escape the socket dir (no `/`, `..`-prefix, NUL, empty); `@` reserved for `name@host`; sanitization preserves exactly the valid names and is idempotent | Theorems/Name.lean |
 | §Remote | trusting remote `ls` output vs local listing safety | parser total, garbage-tolerant; §Name carries through; display fields scrubbed of control bytes | Theorems/Remote.lean |
 | §Isolate | many clients on one session vs per-client framing | `.bytes id` leaves every *other* client's record (and decoder) bit-identical | Theorems/Session.lean |
 | §Row | a list row's identity vs an unreliable `info` reply | a row's name is the sanitized socket filename alone; the reply can neither change it nor smuggle a second one in | Theorems/Listing.lean |
@@ -216,6 +216,12 @@ deadline and remain within the live-output allowance. The deadline is enforced
 by a cooperative poll loop, without a hard real-time guarantee.
 
 ## Entry-point boundaries
+
+`Name.sanitize_eq_self_iff` identifies the canonical names with `Name.Valid`.
+`sanitize_eq_self_of_valid` preserves every valid name, and
+`sanitize_idempotent` means separate entry paths can sanitize independently
+without changing the target on a second pass. Output safety alone would permit
+renaming an already-valid session.
 
 §Entry defines the dispatch contract for the unified executable.
 `route_bare_help` sends empty argv to help. `route_selector_iff` selects exactly
@@ -510,8 +516,10 @@ real terminals.
   4 MiB; excessive live output disconnects that client, while excessive input
   drops the newest whole frame. `Theorems/Buf.lean` proves that the stored byte
   sequence is exactly the debt (`bufNoRetain`), with content claims and
-  whole-lifetime bounds via `reachableIn_bound`/`reachableOut_bound`. This does
-  not measure ByteArray allocator capacity, list/object overhead, the shared
+  whole-lifetime bounds via `reachableIn_bound`/`reachableOut_bound`.
+  `bufOffer_rejected` preserves the entire queue on refusal, so keeping its
+  size while discarding or reordering its contents cannot satisfy the contract.
+  This does not measure ByteArray allocator capacity, list/object overhead, the shared
   terminal snapshot or OS buffers. Private representations and source gates
   connect the proved operations to their IO consumers.
 - **§Restore restores the codec's state, not the shell's world**:
@@ -532,3 +540,32 @@ real terminals.
   megabytes of base64; nothing is stored, so `restore` cannot replay
   them — the application's redraw does (pinned by `E2E/Graphics.lean`;
   reasons in README Graphics and the AGENTS.md non-goal).
+
+## Proof factorization audit — candidate contracts
+
+The live `specs/proof-factorization.md` evaluates these generalizations.
+These are proof obligations, not newly established guarantees:
+
+- A state predicate preserved by one transition remains true over any finite
+  input trace, with the trace's actual stop and effect semantics preserved.
+  Existing VT and session lifetime guarantees should become instances of
+  this statement where it removes duplicate induction.
+- Stream preservation composes for arbitrary observations of receiver state,
+  including simultaneous observations, without imposing additional premises
+  on terminal restoration endpoints. Reuse the existing `StreamPred` and
+  `Fixes` contracts before introducing another proof vocabulary.
+- Byte codecs and bounded queues preserve exact content through composition
+  and chunk boundaries. Bounds accompany that content statement rather than
+  replacing it, and replay progress remains independent of chunk layout.
+  A refused input offer must preserve the entire existing queue, not merely
+  its length.
+- CLI policy composition preserves listed targets, ordering, explicit
+  creation and presentation semantics for all inputs. Prefer a general
+  equivalence or construction invariant over another fixture of one input.
+- Name sanitization is a retraction onto `Name.Valid`: it leaves exactly the
+  valid names unchanged, and sanitizing twice equals sanitizing once. Selector
+  and import checks can use that contract at the boundary to attachment.
+
+Keep only generalizations with real simplifying consumers. Any candidate that
+needs weaker premises, extra runtime machinery or more proof code without a
+stronger useful conclusion is recorded as a bounded negative result instead.

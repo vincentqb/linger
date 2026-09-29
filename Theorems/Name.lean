@@ -84,6 +84,34 @@ theorem sanitize_valid (s : String) : Valid (sanitize s) := by
         subst he
         simp at hdot
 
+/-- Sanitization preserves every valid name, so independently checked entry
+paths retain the same session identity when attachment sanitizes it again. -/
+theorem sanitize_eq_self_of_valid (s : String) (h : Valid s) : sanitize s = s := by
+  obtain ⟨hne, hlen, hok, hhead⟩ := h
+  have hm : s.toList.map (fun c => if okChar c then c else '_') = s.toList := by
+    calc
+      _ = s.toList.map id := List.map_congr_left (fun c hc => by simp [hok c hc])
+      _ = _ := List.map_id s.toList
+  unfold sanitize
+  rw [List.take_of_length_le hlen, hm]
+  cases hs : s.toList with
+  | nil => simp [hs] at hne
+  | cons c cs =>
+    have hdot : c ≠ '.' := by simpa [hs] using hhead
+    simp [hdot, ← hs]
+
+/-- Canonical-name checks and the structural validity predicate agree. -/
+theorem sanitize_eq_self_iff (s : String) : sanitize s = s ↔ Valid s := by
+  constructor
+  · intro h
+    rw [← h]
+    exact sanitize_valid s
+  · exact sanitize_eq_self_of_valid s
+
+/-- Every entry path may sanitize independently without changing its target. -/
+theorem sanitize_idempotent (s : String) : sanitize (sanitize s) = sanitize s :=
+  sanitize_eq_self_of_valid _ (sanitize_valid s)
+
 /-- The §Name corollary the runtime actually leans on: no character of
 a sanitized name is a path separator or NUL. -/
 theorem sanitize_no_escape (s : String) : ∀ c ∈ (sanitize s).toList, c ≠ '/' ∧ c ≠ '\x00' := by

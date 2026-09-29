@@ -15,11 +15,11 @@ worklog), `specs/archive/` (closed build records), the comments in
 
 ## Where things stand — read this first after any compaction
 
-1. No spec is in flight. The last one closed on 2026-09-29
-   (`specs/archive/status-presentation.md`: shared themed status rows, prompt
-   counts, attached titles with default handback, and protected hang/parser
-   fixes). The assembled Linux verifier is green. The checkpoint's automatic
-   and manual hosted checks did not start because of the repository owner's
+1. `specs/proof-factorization.md` is in flight: audit the proof shapes across
+   the codebase, replace repeated reasoning with useful general contracts, and
+   simplify their consumers without weakening existing guarantees. The previous
+   round (`specs/archive/status-presentation.md`) passed the assembled Linux
+   verifier; its hosted checks did not start because of the repository owner's
    GitHub billing/spending limit.
    New work opens a new `specs/<slug>.md`, names itself here, and keeps
    the live count at one; every behavioral fix starts with a failing
