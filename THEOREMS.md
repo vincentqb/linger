@@ -54,7 +54,7 @@ belongs to `Terminal.Title`; `update_nonempty_iff` permits emission exactly
 at a complete parser and UTF-8 boundary. Sanitized session composition stays
 in `Title`. Independent library and proof targets have no session or OS
 imports, with source gates enforcing their complete import boundaries.
-Verification record: `specs/terminal-libraries.md`.
+Verification record: `specs/archive/terminal-libraries.md`.
 
 The reusable fuzzy library admits separate case and scoring policies.
 `alignWith_isSome_iff_sublist`, `alignWith_marks_length` and `alignWith_spells`

@@ -15,11 +15,12 @@ worklog), `specs/archive/` (closed build records), the comments in
 
 ## Where things stand — read this first after any compaction
 
-1. `specs/terminal-libraries.md` is in flight: reusable terminal input,
-   streaming repaint and safe title emission in the VT toolkit, with picker
-   bindings and session policies outside those library boundaries.
-   The preceding fuzzy-library checkpoint's hosted checks did not start
-   because of the repository owner's GitHub payments/spending limit.
+1. No spec is in flight. The last one closed on 2026-09-30
+   (`specs/archive/terminal-libraries.md`: reusable terminal input, streaming
+   repaint and safe titles in the VT toolkit, with independent proof targets;
+   assembled Linux verifier green, worker branches/worktrees removed).
+   The implementation checkpoint's hosted checks did not start because of the
+   repository owner's GitHub payments/spending limit.
    New work opens a new `specs/<slug>.md`, names itself here, and keeps
    the live count at one; every behavioral fix starts with a failing
    check and every deletion survives the full verifier stack.

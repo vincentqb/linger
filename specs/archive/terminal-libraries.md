@@ -1,6 +1,6 @@
 # Reusable terminal libraries
 
-Status: step 1 verified — checkpoint publication and worker cleanup pending
+Status: complete — local Linux verification green; hosted checks did not start
 Updated: 2026-09-30
 
 ## Intent
@@ -69,5 +69,29 @@ rejects its mutant; exact restoration and rebuild pass after each experiment.
 The handoff and original receipts are in
 `/tmp/linger-terminal-libraries-review-aNmyIW/evidence/HANDOFF.md`.
 
-Both agents are closed. Publication, fresh worker cleanup preflight and actual
-hosted execution remain for step 2; no hosted pass is claimed.
+## Completion
+
+Implementation checkpoint `bed2141` is committed and pushed to origin/main.
+Both agents are closed. Their branches have zero unique commits, and every
+authored change is integrated into that checkpoint. Fresh cleanup checks match
+source hashes and modes, staged entries, status and untracked/ignored
+inventories against sealed recovery copies. The input worker's original
+Manager file and the reviewer's earlier spec status are preserved alongside
+the exact parent integration deltas. No authored source was discarded.
+
+Both worker branches and worktrees are removed; main is the only remaining
+branch and worktree. Recovery sources, uncolored patches, integration records,
+preflight and completion receipts remain in
+`/tmp/linger-terminal-libraries-cleanup-20260930-f2PXB8/`.
+
+Hosted run `36748116875` completed without executing any steps. Its gate job
+reports failed recent account payments or a spending limit requiring an
+increase; the full-gate job was skipped. Original run, job and annotation
+responses are preserved in
+`/tmp/linger-terminal-libraries-hosted-checkpoint-20260930-u3lywJ/`.
+This is an unexecuted hosted check, not a hosted pass. Local Linux verification
+is green; no hosted Linux or macOS pass is claimed.
+
+The round closes with independent library boundaries, public contracts,
+explicit binding compatibility, compiling mutation evidence and a verified
+runtime checkpoint. AGENTS.md again has no spec in flight.

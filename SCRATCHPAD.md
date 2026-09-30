@@ -13971,3 +13971,46 @@ in `/tmp/linger-terminal-libraries-full-20260930-LZgiLX/`.
 
 Both agents are closed. Publication, fresh worker cleanup preflight and actual
 hosted results belong to closure.
+
+## Step 2 notes — 2026-09-30
+
+Checkpoint `bed2141` commits the terminal library refactor and is published to
+origin/main. Both required builds passed again immediately before the commit;
+commit hooks passed too. All 32 unchanged review-snapshot files matched their
+accepted hashes and modes. Only the spec's completed verification status
+changed afterward, and the worklog addition was checked as append-only.
+
+Both worker branches had zero unique commits. Fresh cleanup preflights checked
+branch/head, staged path/mode/object entries, status, changed files,
+untracked/ignored inventories, and every authored source hash and mode.
+All seven input-worker files and all 33 review-snapshot files are preserved.
+The input worker's Manager file differs from main only by the integrated title
+boundary changes; the reviewer's spec differs only by its later verification
+status. Original files, exact integration deltas and committed counterparts
+remain in the recovery record.
+
+The first cleanup pass stopped on an extra raw-index comparison with the
+reviewer's earlier hash. Git index bytes include bookkeeping; parent status
+reads had occurred since that capture. All 165 staged path/mode/object entries
+equal the base commit, the staged diff is empty, and the fresh sealed parent
+index bytes are unchanged. This semantic comparison and the raw parent index
+are preserved in `review/index-guard-resolution.json` and
+`review/parent-real-index`. Every source and inventory check was repeated
+before removal.
+
+Both worker worktrees and branches are removed; main is the only remaining
+branch and worktree. Only generated `.lake/` and `.lean-fmt-cache/` content
+is omitted from recovery. Uncolored patches, baseline/final sources, exact
+integration records, fresh preflights and completion receipts remain in
+`/tmp/linger-terminal-libraries-cleanup-20260930-f2PXB8/`.
+
+Hosted run `36748116875` reports failure before any steps ran. Its annotation
+names failed recent account payments or a spending limit requiring an increase;
+the full-gate job was skipped. Original run/job/annotation responses remain in
+`/tmp/linger-terminal-libraries-hosted-checkpoint-20260930-u3lywJ/`.
+Local Linux verification is green; no hosted Linux or macOS pass is claimed.
+
+`specs/archive/terminal-libraries.md` closes the round with independent input
+and VT proof targets, explicit default-binding compatibility, stronger buffer
+and title contracts, compiling mutations and independently accepted review.
+AGENTS.md again has no spec in flight.
