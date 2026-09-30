@@ -13751,3 +13751,37 @@ patches, baseline/final sources, index/status records and ignored-file
 inventories are preserved outside the trees in
 `/tmp/linger-fuzzy-cleanup-20260930/`. The next checkpoint records publication,
 fresh cleanup preflight and the actual hosted outcome.
+
+## Step 2 notes — 2026-09-30
+
+Fuzzy alignment checkpoint `4e3e84d` is committed and pushed to main.
+Both required builds and every commit hook pass. The assembled foreground
+verifier and its frozen source hashes remain the implementation verification;
+this closure changes documentation only.
+
+The first automatic push review refused an unverified destination. Read-only
+GitHub checks confirmed the established private `vincentqb/linger` repository,
+its authenticated owner and push permission, and that published main exactly
+matched the checkpoint's parent. Retrying the same direct push then succeeded.
+The destination and visibility were unchanged. Verification responses are
+preserved in `/tmp/linger-fuzzy-publication-check-20260930/`.
+
+All agents are closed. Fresh cleanup preflight compared both workers' branch,
+head, changed-file sets, status, index, untracked/ignored inventories, source
+modes and hashes with the sealed evidence. Every changed source equals
+committed main at `4e3e84d`, confirmed on origin/main. Both branches have zero
+unique commits; only generated `.lake/` and `.lean-fmt-cache/` material is
+omitted from source recovery. Both worktrees and branches are removed; main
+is the only remaining branch and worktree. Complete patches, baseline/final
+sources and inventories remain in `/tmp/linger-fuzzy-cleanup-20260930/`;
+fresh receipts are in `/tmp/linger-fuzzy-cleanup-final-20260930/`.
+
+Hosted run `36673432814` reports failure before any steps ran. Its annotation
+names failed recent account payments or a spending limit requiring an
+increase; the full-gate job was skipped. This is an unexecuted hosted check.
+Raw responses are in `/tmp/linger-fuzzy-hosted-20260930/`. Local Linux
+verification is green; no hosted Linux or macOS pass is claimed.
+
+`specs/archive/fuzzy-alignment.md` closes the round with the contracts,
+compiling semantic mutations, independent review, original/fixed live
+receipts and publication limits. AGENTS.md again has no spec in flight.

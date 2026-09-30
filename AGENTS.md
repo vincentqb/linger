@@ -15,12 +15,10 @@ worklog), `specs/archive/` (closed build records), the comments in
 
 ## Where things stand — read this first after any compaction
 
-1. `specs/fuzzy-alignment.md` is in flight: scored query alignment and
-   matching-character emphasis in the selector, preserving listing order.
-   The preceding round closed on 2026-09-29
-   (`specs/archive/proof-factorization.md`: generalized VT frames, renderer
-   stream/CSI contracts, session trace invariants and CLI validation; assembled
-   Linux verifier green, worker branches/worktrees removed). The implementation
+1. No spec is in flight. The last one closed on 2026-09-30
+   (`specs/archive/fuzzy-alignment.md`: optimal fuzzy alignment, earliest ties,
+   scalar-to-cell emphasis and live selector regressions; assembled Linux
+   verifier green, worker branches/worktrees removed). The implementation
    checkpoint's hosted checks did not start because of the repository owner's
    GitHub payments/spending limit.
    New work opens a new `specs/<slug>.md`, names itself here, and keeps

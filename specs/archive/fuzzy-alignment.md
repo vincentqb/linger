@@ -1,6 +1,6 @@
 # Fuzzy alignment in the selector
 
-Status: step 1 verified; step 2 publication and cleanup in progress
+Status: complete — implementation pushed, workers removed; hosted checks blocked before execution
 Updated: 2026-09-30
 
 ## Intent
@@ -109,3 +109,36 @@ accepted source changes, byte-identical to main, plus generated caches.
 Complete uncolored patches, baseline/final sources, hashes and inventories
 are sealed in `/tmp/linger-fuzzy-cleanup-20260930/`. Publication, a fresh
 cleanup preflight and hosted outcomes are recorded at closure.
+
+## Step 2 completion — 2026-09-30
+
+Implementation checkpoint `4e3e84d` is committed and pushed to `origin/main`.
+Both required builds and every commit hook pass. The full foreground Linux
+verification above applies to the unchanged implementation; the closure
+checkpoint changes documentation only.
+
+A fresh cleanup preflight verifies each worker's branch/head, complete
+changed-file set, status/index, ignored inventory and source modes/hashes.
+Every changed source is byte-identical to committed main at `4e3e84d`,
+also confirmed on the remote. Both branches have zero unique commits.
+Both worktrees and branches are removed; only main remains.
+Recovery patches and source snapshots remain outside the removed trees.
+Receipts: `/tmp/linger-fuzzy-cleanup-final-20260930/preflight.json` and
+`completed.json`.
+
+Hosted run `36673432814` fails before any steps execute. Its GitHub annotation
+states that recent account payments failed or the spending limit needs an
+increase. The full-gate job is skipped. This is an unexecuted hosted check;
+the local Linux pass is not a hosted or macOS pass. Raw run, job, check and
+annotation responses are retained in `/tmp/linger-fuzzy-hosted-20260930/`.
+
+The initial automatic push review refused an unverified destination.
+Read-only GitHub checks confirmed the existing private repository belongs to
+the authenticated owner and its published main equals the checkpoint's
+parent. The same direct push then succeeded; no destination or visibility
+changed. `/tmp/linger-fuzzy-publication-check-20260930/` records those checks.
+
+This record is archived and AGENTS.md again names no live spec. The retained
+lessons are the all-suffix optimality certificate, a public bridge from the
+actual query to display marks, and a separate proved projection from scalar
+matches to terminal-cell emphasis.
