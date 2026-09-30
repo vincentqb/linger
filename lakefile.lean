@@ -44,7 +44,7 @@ lean_lib LingerVt where roots := #[`Linger.Core.Vt, `Linger.Core.Render, `Linger
 
 /-- Pure entry, selection and import policies, outside the session and VT libraries. -/
 lean_lib Tools where roots :=
-  #[`Tools.Entry, `Tools.Resurrect, `Tools.Key, `Tools.Picker, `Tools.Input]
+  #[`Tools.Entry, `Tools.Resurrect, `Tools.Key, `Tools.Fuzzy, `Tools.Picker, `Tools.Input]
 
 /-- Terminal selector and save-import executor, composed by Main. -/
 lean_lib Manager where roots := #[`Manager.Picker, `Manager.Resurrect]

@@ -42,7 +42,7 @@ recipes, break records, measurements, the audits — lives in
 | §Title | visible cross-session attention vs an uninterrupted terminal stream | composition omits empty parts; the title payload excludes terminal controls and fits the OSC parser cap (`compose_parts`, `payload_safe`, `ansi_payload_bound`, `ansi_ends`). Updates wait for parser-ground and complete UTF-8 (`update_waits`, `update_requires_boundary`). The existing VT observer is chunking-invariant, keeps no history, and preserves its dimensions and parser/screen invariants (`observe_append`, `observe_no_history`, `observe_dims`, `observe_invariants`) | Theorems/Title.lean, E2E/Title.lean |
 | §Resume | the product's own promise: crash, reboot, reattach | §Restore ∘ §Replay, stated twice — over `save`'s input and over `load`'s output (`resume_grid_of_load`, `resume_tabs_of_load`, `resume_sb_of_load`: any byte string that loads, no other hypothesis) — and lifted to the daemon over its own `vt0` (`Session.run_resume_vt_shape`, `run_resume_load_save`) | Theorems/Resume.lean, Theorems/Session.lean |
 | §Import | foreign save records vs distinct session identities, directory-only restoration and safe error display | successful parsing gives a nonempty list with canonical, distinct names and NUL-free directories (`parseSave_valid`); valid saved commands cannot affect parsed panes (`parseRow_command_irrelevant`); planning preserves records and order and skips existing names (`mem_plan`, `plan_order`); adding planned names to the snapshot makes a sequential rerun empty (`plan_sequential_idempotent`); diagnostics exclude C0, DEL and C1 and preserve already printable text (`diagnostic_printable`, `diagnostic_eq_self`) | Theorems/Resurrect.lean, E2E/Recipes.lean |
-| §Select | fuzzy search and explicit creation vs an exact session identity | matching preserves snapshot order (`visible_order`, `items_existing_prefix`); existing selections retain original targets (`step_attach_mem`); a creation row uses an exact valid target absent from the snapshot (`mem_items_create`, `step_create_valid`); only acceptance acts on the highlighted row (`step_attach_iff`, `step_create_iff`); refresh retains query and surviving targets (`refresh_query`, `refresh_selected`); continuing transitions and refresh bound the cursor (`step_stay_valid`, `refresh_valid`) | Theorems/Picker.lean, E2E/Manager.lean |
+| §Select | fuzzy emphasis and explicit creation vs an exact session identity | alignment accepts exactly the filter language, maximizes score and chooses earliest ties (`align_isSome_iff_matches`, `align_score_max`, `align_earliest`); emphasis preserves shared text/status and marks the chosen target positions (`highlightedPresentation_projection`, `highlightedPresentation_existing_marked_iff`); matching preserves snapshot order (`visible_order`, `items_existing_prefix`); existing selections retain original targets (`step_attach_mem`); creation uses an exact valid target absent from the snapshot (`step_create_valid`); only acceptance acts on the highlighted row (`step_attach_iff`, `step_create_iff`); refresh retains query and surviving targets (`refresh_query`, `refresh_selected`) and bounds the cursor (`refresh_valid`) | Theorems/Fuzzy.lean, Theorems/Picker.lean, E2E/Manager.lean |
 | §Input | split keyboard bytes and pasted commands vs deliberate selection | one byte produces at most one key (`feed_length`); UTF-8 prefixes retain at most three bytes (`stored_bound`, `feed_storage_bound`); delivered text excludes controls (`feed_text_valid`); paste emits only text and survives incomplete input (`feed_paste_only_text`, `feed_paste_sticky`, `flush_paste`); a timeout never accepts (`flush_no_accept`) | Theorems/Input.lean, E2E/Manager.lean |
 
 The CSI collector preserves omitted parameters, saturates numeric parameters
@@ -266,6 +266,31 @@ manager suites exercise absolute invocation with no `linger` on PATH and with
 a PATH impostor. These contracts state behavior, not a proof of a UI preference.
 
 §Select supports the manager's pure selection model.
+`align_isSome_iff_matches` proves that an alignment exists exactly for a query
+accepted by the filter. `align_marks_length` gives one mark per original Unicode
+scalar; `align_spells` proves that the marked characters spell the folded query.
+The independent `Walk` semantics assigns four points at a word boundary,
+eight for adjacency and minus one for each skipped character before completion.
+`align_score_max` bounds every legal alignment's score, and `align_earliest`
+chooses the true-first lexicographically earliest mask among every equally
+scoring legal alignment. One suffix-table certificate proves both adjacency
+contexts, including completeness on failure. These are semantic guarantees;
+the work bound is established by the recurrence and performance checks.
+
+`rowPieces_nameSpan` locates the name inside the shared row.
+`highlightedPresentation_existing_marked_iff` connects each displayed scalar
+to the chosen alignment for the actual query and exact target, excluding badge,
+padding and metadata. `highlightedPresentation_projection` preserves every
+plain character and status; `highlightedPresentation_existing_humanRow` retains
+the listing's bytes. `highlightedPresentation_creation` leaves the creation
+choice unmarked. `emphasizeCells_at` sets each scalar's emphasis from its own
+match or any following zero-width mark attached to its cell. This propagates
+an accent-only match back to the base before the terminal prints it;
+`emphasizeCells_projection` preserves all characters and status styles.
+Source gates tie the executor to these stages, the query, displayed rows,
+ANSI underline, selection reverse, status palette and viewport clipping.
+Live terminal checks inspect the resulting cells. Scores never enter the
+list-order or attachment paths.
 `matches_iff_sublist` specifies ASCII-case-insensitive subsequence matching;
 other Unicode characters remain exact. `visible_order` and `mem_visible`
 retain the listing's order and original targets. `parseListing_valid` rejects

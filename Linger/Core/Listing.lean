@@ -108,10 +108,13 @@ column is as wide as the widest name), which a per-`IO.println` call site cannot
 open Linger.Core.Render (utf8s dropTrailingBlanks safeChar)
 
 /-- Text and optional badge style stay separate until a terminal renderer has
-clipped the text. Names and detail text never carry a status style. -/
+clipped the text. The name span is a Unicode-scalar offset and length within
+the piece, so a selector can emphasize the name without parsing rendered text.
+Names and detail text never carry a status style. -/
 structure RowPiece where
   text : List Char
   status : Option Status := none
+  nameSpan : Option (Nat × Nat) := none
   deriving BEq, Repr
 
 /-- One shared row: status badge, aligned name, command/pid, labels and watchers.
@@ -138,7 +141,7 @@ def rowPieces (nameCol : Nat) (info : List (String × String)) : List RowPiece :
           ([' '] ++ name ++ List.replicate (nameCol - name.length) ' ' ++ [' '] ++
             (detail ++ labelStr ++ watch).toList)).map
       fun c => if c.toNat ≥ 0x7F && c.toNat < 0xA0 then '�' else safeChar c
-  [{ text := [Status.icon st], status := some st }, { text }]
+  [{ text := [Status.icon st], status := some st }, { text, nameSpan := some (1, name.length) }]
 
 /-- Plain bytes, including when redirected: styles are deliberately absent. -/
 def humanRow (nameCol : Nat) (info : List (String × String)) : List UInt8 :=

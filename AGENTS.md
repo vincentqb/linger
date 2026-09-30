@@ -15,7 +15,9 @@ worklog), `specs/archive/` (closed build records), the comments in
 
 ## Where things stand — read this first after any compaction
 
-1. No spec is in flight. The last one closed on 2026-09-29
+1. `specs/fuzzy-alignment.md` is in flight: scored query alignment and
+   matching-character emphasis in the selector, preserving listing order.
+   The preceding round closed on 2026-09-29
    (`specs/archive/proof-factorization.md`: generalized VT frames, renderer
    stream/CSI contracts, session trace invariants and CLI validation; assembled
    Linux verifier green, worker branches/worktrees removed). The implementation

@@ -260,7 +260,7 @@ say "15. delivery (large replay, ordering, exit tails and retired transports)"
 suite delivery 34
 
 say "16. manager (entry dispatch, selection, creation, input and terminal handoff)"
-suite manager 108
+suite manager 111
 
 say "17. attached titles (attention, complete boundaries and default handback)"
 suite title 18

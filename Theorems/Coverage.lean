@@ -16,6 +16,7 @@ import all Theorems.Resume
 import all Theorems.Status
 import all Theorems.Title
 import all Theorems.Resurrect
+import all Theorems.Fuzzy
 import all Theorems.Picker
 import all Theorems.Input
 import all Theorems.Entry

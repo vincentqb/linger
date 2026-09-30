@@ -151,6 +151,12 @@ theorem rowPieces_styles (nameCol : Nat) (info : List (String × String)) :
     (Linger.Core.Listing.rowPieces nameCol info).map (·.status) =
       [some (Status.ofName ((info.lookup "status").getD "")), none] := rfl
 
+/-- Query emphasis addresses only the name after the body's leading space.
+Its length comes from the actual name, independently of padding or metadata. -/
+theorem rowPieces_nameSpan (nameCol : Nat) (info : List (String × String)) :
+    (Linger.Core.Listing.rowPieces nameCol info).map (·.nameSpan) =
+      [none, some (1, ((info.lookup "name").getD "").toList.length)] := rfl
+
 theorem nameWidth_empty : Linger.Core.Listing.nameWidth [] = 0 := rfl
 
 /-- A width fits the complete snapshot exactly when it fits every name.

@@ -76,7 +76,7 @@ for p in Linger/Core Linger/Core/Vt.lean Linger/Core/Checkpoint.lean \
          Linger/Runtime/Command.lean Theorems/Title.lean \
          Theorems Theorems/Session.lean Theorems/Replay.lean Tests E2E \
          Tools/Resurrect.lean Theorems/Resurrect.lean Manager/Resurrect.lean \
-         Tools/Key.lean Tools/Picker.lean Tools/Input.lean \
+         Tools/Key.lean Tools/Fuzzy.lean Tools/Picker.lean Tools/Input.lean \
          Tools/Entry.lean Theorems/Entry.lean \
          Theorems/Picker.lean Theorems/Input.lean \
          Main.lean Manager/Picker.lean E2E/Manager.lean \
@@ -284,7 +284,8 @@ import_closure Linger/Core/Terminal.lean \
 # stays in Linger or the one standard-library dependency owned by Posix.
 import_closure Tools/Resurrect.lean 'public import Linger.Core.Name;'
 import_closure Tools/Key.lean ''
-import_closure Tools/Picker.lean 'public import Tools.Key;public import Linger.Core.Name;public import Linger.Core.Listing;'
+import_closure Tools/Fuzzy.lean ''
+import_closure Tools/Picker.lean 'public import Tools.Key;public import Tools.Fuzzy;public import Linger.Core.Name;public import Linger.Core.Listing;'
 import_closure Tools/Input.lean 'public import Tools.Key;'
 import_closure Tools/Entry.lean ''
 import_closure Linger/Core/Name.lean ''
@@ -353,9 +354,17 @@ code_grep '^[[:space:]]+let listing ← IO[.]Process[.]output [{] cmd := executa
 # Selector and decoder proofs concern pure values. Tie each IO consumer to the
 # proved function and retain exact attach argv and an immutable poll snapshot.
 # E2E.Manager drives the terminal lifetime, failure paths and handoff itself.
-for claim in matches_iff_sublist visible_order parseListing_valid parseSnapshot_complete \
+for claim in align_optimal align_isSome_iff_sublist align_marks_length align_spells \
+             align_score_max align_earliest; do
+  code_grep "^theorem $claim " Theorems/Fuzzy.lean >/dev/null \
+    || fail "fuzzy alignment contract disappeared: $claim"
+done
+for claim in matches_iff_sublist align_isSome_iff_matches visible_order parseListing_valid parseSnapshot_complete \
              parseSnapshot_rejects presentation_existing presentation_existing_humanRow \
-             presentation_creation items_existing_prefix \
+             presentation_creation highlightedPresentation_projection \
+             highlightedPresentation_existing_humanRow highlightedPresentation_creation \
+             highlightedPresentation_existing_marked_iff emphasizeCells_at emphasizeCells_projection \
+             markPiece_marked_iff items_existing_prefix \
              mem_items_create step_stay_valid step_attach_mem step_create_iff \
              step_create_valid step_init_empty step_cancel refresh_query refresh_candidates \
              refresh_valid refresh_selected refresh_missing; do
@@ -395,8 +404,8 @@ picker_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Manager/Picker.lean)"
 for tie in \
   'for byte in bytes[.]toList do let [(]next, emitted[)] := Tools[.]Input[.]feed decoder byte decoder := next keys := keys [+][+] emitted[.]toArray else if Tools[.]Input[.]pending decoder && [(]← monotonicMs[)] - lastInput ≥ 150 then let [(]next, emitted[)] := Tools[.]Input[.]flush decoder decoder := next keys := emitted[.]toArray for key in keys do' \
   'let nameCol := Linger[.]Core[.]Listing[.]nameWidth [(]snapshot[.]candidates[.]map fun target => [[][(]"name", target[)][]][)]' \
-  'let mut index := start for item in [(]items[.]drop start[)][.]take slots do let chosen := index == state[.]cursor let selection := if chosen then "\\x1b[[]7m" else "" let mut pieces := #[[][(]if chosen then " ▸ " else " ", selection[)][]] for piece in Tools[.]Picker[.]presentation snapshot nameCol item do let statusStyle := if withColor then [(]piece[.]status[.]map Linger[.]Core[.]Status[.]style[)][.]getD "" else "" pieces := pieces[.]push [(]String[.]ofList piece[.]text, selection [+][+] statusStyle[)] lines := lines[.]push pieces index := index [+] 1' \
-  'let mut frame := "\\x1b[[]0m\\x1b[[]H\\x1b[[]2J" let mut first := true for line in lines do if !first then frame := frame [+][+] "\\r\\n" first := false let mut used := 0 let mut clipped := false for [(]text, style[)] in line do if clipped then break frame := frame [+][+] style for raw in text[.]toList do let c := if raw[.]toNat < 0x20 [|][|] [(]raw[.]toNat ≥ 0x7F && raw[.]toNat < 0xA0[)] then '"'"'[?]'"'"' else raw let cells := Linger[.]Core[.]Vt[.]charWidth c if used [+] cells > width then clipped := true break frame := frame[.]push c used := used [+] cells if !style[.]isEmpty then frame := frame [+][+] "\\x1b[[]0m" return frame' \
+  'let mut index := start for item in [(]items[.]drop start[)][.]take slots do let chosen := index == state[.]cursor let selection := if chosen then "\\x1b[[]7m" else "" let mut pieces := #[[][(]if chosen then " ▸ " else " ", selection[)][]] let chars := Tools[.]Picker[.]highlightedPresentation snapshot nameCol state[.]query item for char in Tools[.]Picker[.]emphasizeCells chars do let statusStyle := if withColor then [(]char[.]status[.]map Linger[.]Core[.]Status[.]style[)][.]getD "" else "" let emphasis := if char[.]matched then "\\x1b[[]4m" else "" pieces := pieces[.]push [(]String[.]singleton char[.]char, selection [+][+] statusStyle [+][+] emphasis[)] lines := lines[.]push pieces index := index [+] 1' \
+  'let mut frame := "\\x1b[[]0m\\x1b[[]H\\x1b[[]2J" let mut first := true for line in lines do if !first then frame := frame [+][+] "\\r\\n" first := false let mut used := 0 let mut clipped := false let mut activeStyle := "" for [(]text, style[)] in line do if clipped then break if style != activeStyle then frame := frame [+][+] "\\x1b[[]0m" [+][+] style activeStyle := style for raw in text[.]toList do let c := if raw[.]toNat < 0x20 [|][|] [(]raw[.]toNat ≥ 0x7F && raw[.]toNat < 0xA0[)] then '"'"'[?]'"'"' else raw let cells := Linger[.]Core[.]Vt[.]charWidth c if used [+] cells > width then clipped := true break frame := frame[.]push c used := used [+] cells if !activeStyle[.]isEmpty then frame := frame [+][+] "\\x1b[[]0m" return frame' \
   'let next := if loaded then Tools[.]Picker[.]refresh state incoming[.]candidates else [{] [(]Tools[.]Picker[.]init incoming[.]candidates[)] with query := state[.]query [}] dirty := dirty [|][|] !loaded [|][|] next != state [|][|] incoming != snapshot state := next snapshot := incoming loaded := true nextListing := [(]← monotonicMs[)] [+] 1000' \
   'while true do let current ← winsizeGet stdoutFd if dirty [|][|] current != size then let frame := draw state snapshot loaded withColor current[.]1 current[.]2 if frame != lastFrame [|][|] current != size then writeAll stdoutFd frame[.]toUTF8 lastFrame := frame size := current dirty := false let ready ← poll fds events 50' \
   'for key in keys do if !loaded && key == [.]accept then continue match Tools[.]Picker[.]step state key with [|] [.]stay next => dirty := dirty [|][|] next != state state := next [|] [.]attach target [|] [.]create target => return [.]attach target [|] [.]cancel => return [.]cancel if let some result[[:space:]]*← Linger[.]Runtime[.]Command[.]poll pending then' \
@@ -431,7 +440,7 @@ for claim in style_palette attentionCounts_exact attentionCounts_mem summary_exa
   code_grep "^theorem $claim " Theorems/Status.lean >/dev/null \
     || fail "status presentation contract disappeared: $claim"
 done
-for claim in rowPieces_printable rowPieces_styles nameWidth_covers \
+for claim in rowPieces_printable rowPieces_styles rowPieces_nameSpan nameWidth_covers \
              renderPieces_plain terminalListing_plain; do
   code_grep "^theorem $claim " Theorems/Listing.lean >/dev/null \
     || fail "shared listing contract disappeared: $claim"

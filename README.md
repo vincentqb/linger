@@ -10,6 +10,10 @@ after detach. `linger ls` lists and exits.
 
 Selection refreshes automatically while preserving your query and highlighted
 target. Esc or Ctrl-C quits the selector and leaves session programs running.
+Type a subsequence of a name to filter it: `wk` finds `work`. Matches ignore
+ASCII case; other characters stay exact. The best matching characters are
+underlined, favoring consecutive letters and word starts. Results keep their
+listing order as you type.
 
 ## Build
 

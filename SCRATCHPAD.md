@@ -13653,3 +13653,101 @@ Linux or macOS pass is claimed.
 `specs/archive/proof-factorization.md` closes the round, with the useful
 contracts, bounded negative results, independent reviews, semantic mutations
 and publication limits recorded. AGENTS.md again has no spec in flight.
+
+## Step 1 notes — 2026-09-30
+
+The fuzzy-alignment round preserves the selector's existing subsequence
+eligibility and listing order. An 81-line pure Lean dynamic program chooses
+the characters to underline inside each displayed target. Word boundaries
+earn four points, adjacent matches eight, and skipped positions before the
+last match cost one. Empty queries mark nothing; trailing gaps cost nothing.
+The implementation folds ASCII capitals, with exact non-ASCII scalar matching,
+and uses the original characters to recognize boundaries. There is no new
+dependency, C code, CLI option or executable.
+
+The proof worker's independent weighted `Walk` models legal alignments and
+their scores. One `Optimal` certificate covers soundness, completeness,
+maximum score and globally earliest equal-score masks. Certifying every
+target suffix in both adjacency contexts makes the dynamic-program proof
+compose; proving only its head would lose the suffix premise needed by the
+next row. The stronger generic union lemma orders every left candidate before
+every right candidate, so global ties follow from take/skip mask heads.
+Comparing only the two selected representatives would not prove that result.
+`align_isSome_iff_sublist`, mask length/spelling, `align_score_max` and
+`align_earliest` are public through ordinary imports. No proof resource
+override or additional axiom is introduced; no formal time-bound theorem is
+claimed. The production recurrence visits each query/target cell and shares
+mask suffixes. Evidence:
+`/tmp/linger-fuzzy-proof-evidence-20260930/HANDOFF.md`.
+
+The shared listing representation now names the original target span.
+Picker's annotated presentation preserves every plain character and status,
+and its public marked-position iff connects the actual query and exact target
+to the selected alignment. Review exposed why projection alone is insufficient:
+it discards the mark field, so it cannot reject consuming the wrong query.
+The additional iff does reject that compiling mutation. Original order,
+attachment identity and explicit creation contracts remain unchanged.
+Evidence: `/tmp/linger-fuzzy-ui-evidence-20260930/HANDOFF.md`.
+
+Review also found a valid target `s@e` followed by U+0301 whose accent-only
+query selected the correct scalar but produced no visible underline. A
+combining scalar joins the preceding terminal cell without replacing its pen.
+Keep the exact scalar mask, then project emphasis to cells before emission:
+`emphasizeCells` propagates a following matched zero-width run backward to
+its base. `emphasizeCells_at` states the pointwise rule using the original
+input's `drop`/`takeWhile`; `emphasizeCells_projection` preserves characters
+and status. This linear pass stops at the next nonzero-width character.
+The executor uses it before emitting ANSI underline, retaining selected-row
+reverse video and the terminal's status palette. The contiguous source gate
+protects actual consumption; it does not establish a theorem about terminal IO.
+Evidence: `/tmp/linger-fuzzy-cell-evidence-20260930/HANDOFF.md`.
+
+Seven alignment mutation experiments cover local/global ties, word and
+adjacency scores, skipped positions, folding and empty-mask length. Each
+mutant compiles, has a kernel-confirmed wrong result, fails the intended
+contract and unchanged semantic proofs, and is restored to green. Presentation
+mutations cover offsets and discarded queries. A zero-width-to-one mutation
+likewise has a compiling V2 witness and rejected pointwise contract; the first
+ordinary-import attempt could not reduce opaque bodies and is retained only
+as a diagnostic. Runtime mutations replacing underline with bold or bypassing
+the cell pass compile and fail consumption gates; the latter also fails the
+actual renderer/VT accent-only regression. All final source hashes match the
+restored versions.
+
+The unit oracle independently enumerates masks for 341 targets and 40 queries,
+scores selected positions as a whole and checks the entire chosen answer.
+The repeated-character maximum-query case exercises exponentially many legal
+alignments without production enumeration. Live checks parse received VT cells
+because escape sequences can split a target's bytes. They cover all status
+styles and NO_COLOR modes, score-independent order, exact attachment, query
+clearing and whole wide/combining-cell clipping.
+
+The final predecessor run actually executes 111 selector assertions: 106 pass
+and five expected missing-emphasis checks fail. An earlier unrelated
+connection-reset failure and a too-long fixture socket path remain separate
+diagnostics. Review's accent-only regression runs 110 passing assertions and
+one failure against the initial implementation; the final fixed run is
+111/111 with empty stderr and unchanged frozen inputs. The permanent Unicode
+assertion covers the accent alone at normal and clipped widths.
+`/tmp/linger-fuzzy-e2e-evidence-20260930/combining-regression/GREEN.md`
+retains the final live receipt and points to the earlier failures.
+
+The independent final review accepts all source changes, including the
+global tie contract, actual-query presentation bridge and accent fix.
+Its seventeen-file acceptance manifest matches main byte-for-byte:
+`/tmp/linger-fuzzy-cell-review-20260930/FINAL.md`.
+
+Both required builds and the full foreground Linux verifier pass. The
+assembled run was 05:15:00Z–05:22:30Z: clean 166-job build, generated Lean/C
+ABI, source gates, standalone layout, exact-constant and emitter coverage,
+CI runner and POSIX checks, all fourteen live suites and the unrelated-session
+sentinel. All 437 live assertions ran and passed; all 163 source identities
+remained fixed. Original outputs, independently counted results and hashes
+are sealed in `/tmp/linger-fuzzy-final-verifier-20260930/`.
+
+All agents are closed. The two worker branches have zero unique commits;
+their accepted source changes are byte-identical to main. Complete uncolored
+patches, baseline/final sources, index/status records and ignored-file
+inventories are preserved outside the trees in
+`/tmp/linger-fuzzy-cleanup-20260930/`. The next checkpoint records publication,
+fresh cleanup preflight and the actual hosted outcome.

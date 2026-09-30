@@ -18,6 +18,7 @@ import Theorems.Resume
 import Theorems.Status
 import Theorems.Title
 import Theorems.Resurrect
+import Theorems.Fuzzy
 import Theorems.Picker
 import Theorems.Input
 import Theorems.Entry

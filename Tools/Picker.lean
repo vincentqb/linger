@@ -1,6 +1,7 @@
 module
 
 public import Tools.Key
+public import Tools.Fuzzy
 public import Linger.Core.Name
 public import Linger.Core.Listing
 
@@ -93,6 +94,46 @@ explicit label and exact target, and has no invented session status. -/
 def presentation (snapshot : Snapshot) (nameCol : Nat) : Item → List Linger.Core.Listing.RowPiece
   | .existing target => Linger.Core.Listing.rowPieces nameCol (snapshot.row target)
   | .create target => [{ text := s!"+ Create {target}".toList }]
+
+/-- A displayed scalar keeps its shared row style independently of query emphasis. -/
+structure HighlightedChar where
+  char : Char
+  status : Option Linger.Core.Status.Status
+  matched : Bool
+  deriving BEq, Repr
+
+private def markPiece (marks : Array Bool) (piece : Linger.Core.Listing.RowPiece) :
+    List HighlightedChar :=
+  piece.text.zipIdx.map fun (char, index) =>
+    { char, status := piece.status,
+      matched :=
+        match piece.nameSpan with
+        | none => false
+        | some (start, count) =>
+          index ≥ start && index - start < count && marks[index - start]?.getD false }
+
+/-- Align only existing names. The shared presentation supplies the name span;
+every character and status survives, including on the unmarked creation row. -/
+def highlightedPresentation (snapshot : Snapshot) (nameCol : Nat) (query : String) (item : Item) :
+    List HighlightedChar :=
+  let marks : List Bool :=
+    match item with
+    | .existing target => ((Tools.Fuzzy.align query target).map (·.marks)).getD []
+    | .create _ => []
+  (presentation snapshot nameCol item).flatMap (markPiece marks.toArray)
+
+/-- A zero-width mark shares the preceding cell's pen. Carry its match back to
+the base before printing; a backward pass visits every scalar once. -/
+def emphasizeCells : List HighlightedChar → List HighlightedChar
+  | [] => []
+  | char :: chars =>
+    let tail := emphasizeCells chars
+    { char with
+        matched :=
+          char.matched ||
+            tail.head?.any
+              (fun next => Linger.Core.Vt.charWidth next.char == 0 && next.matched) } ::
+      tail
 
 /-- Existing matches come first. Creation is explicit and never rewrites the query. -/
 def items (candidates : List String) (query : String) : List Item :=

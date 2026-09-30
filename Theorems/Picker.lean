@@ -6,6 +6,7 @@ import all Linger.Core.Name
 import all Linger.Core.Listing
 import all Init.Data.String.Legacy
 import Theorems.Name
+import Theorems.Fuzzy
 
 public section
 
@@ -22,6 +23,11 @@ theorem matches_iff_sublist (query target : String) :
     Tools.Picker.matches query target = true ↔
       (query.toList.map Char.toLower).Sublist (target.toList.map Char.toLower) := by
   exact List.isSublist_iff_sublist
+
+/-- Scoring changes emphasis without changing which targets the filter accepts. -/
+theorem align_isSome_iff_matches (query target : String) :
+    (Tools.Fuzzy.align query target).isSome = true ↔ Tools.Picker.matches query target = true :=
+  (Tools.Fuzzy.align_isSome_iff_sublist query target).trans (matches_iff_sublist query target).symm
 
 theorem matches_empty (target : String) : Tools.Picker.matches "" target = true := by
   simp [Tools.Picker.matches]
@@ -231,6 +237,160 @@ theorem presentation_creation (snapshot : Snapshot) (nameCol : Nat) (target : St
     Tools.Picker.presentation snapshot nameCol (.create target) =
       [{ text := s!"+ Create {target}".toList }] := by
   simp [presentation]
+
+/-- Annotation preserves each scalar and its status, in the original order. -/
+private theorem markPiece_projection (marks : Array Bool) (piece : Linger.Core.Listing.RowPiece) :
+    (markPiece marks piece).map (fun char => (char.char, char.status)) =
+      piece.text.map (fun char => (char, piece.status)) := by
+  simpa only [markPiece, List.map_map, Function.comp_def] using
+    congrArg (List.map (fun char => (char, piece.status))) (List.zipIdx_map_fst 0 piece.text)
+
+/-- The scalar index is measured within the piece, not in UTF-8 bytes or cells. -/
+private theorem markPiece_at (marks : Array Bool) (piece : Linger.Core.Listing.RowPiece)
+    (index : Nat) :
+    (markPiece marks piece)[index]? =
+      piece.text[index]?.map fun char =>
+        { char, status := piece.status,
+          matched :=
+            match piece.nameSpan with
+            | none => false
+            | some (start, count) =>
+              index ≥ start && index - start < count && marks[index - start]?.getD false } := by
+  simp [markPiece, List.getElem?_zipIdx, Option.map_map, Function.comp_def]
+  rfl
+
+/-- Every emphasized scalar lies inside the declared name span and corresponds
+to a true alignment mark; absent or out-of-range marks never emphasize text. -/
+private theorem markPiece_marked_iff (marks : Array Bool) (piece : Linger.Core.Listing.RowPiece)
+    (index : Nat) (char : HighlightedChar) (h : (markPiece marks piece)[index]? = some char) :
+    char.matched = true ↔
+      ∃ start count,
+        piece.nameSpan = some (start, count) ∧
+          start ≤ index ∧ index < start + count ∧ marks[index - start]? = some true := by
+  rw [markPiece_at] at h
+  obtain ⟨raw, _, rfl⟩ := Option.map_eq_some_iff.mp h
+  cases hs : piece.nameSpan with
+  | none => simp
+  | some span =>
+    obtain ⟨start, count⟩ := span
+    cases hm : marks[index - start]? with
+    | none => simp [hm]
+    | some mark =>
+      cases mark <;> simp_all
+      constructor
+      · rintro ⟨lower, upper⟩
+        exact ⟨start, count, ⟨rfl, rfl⟩, lower, by omega, hm⟩
+      · rintro ⟨_, _, ⟨rfl, rfl⟩, lower, upper, _⟩
+        exact ⟨lower, by omega⟩
+
+/-- Query emphasis preserves the shared text and status for every row, including
+creation. Scores cannot change a character, badge, or attachment target. -/
+theorem highlightedPresentation_projection (snapshot : Snapshot) (nameCol : Nat) (query : String)
+    (item : Item) :
+    (highlightedPresentation snapshot nameCol query item).map
+        (fun char => (char.char, char.status)) =
+      (presentation snapshot nameCol item).flatMap fun piece =>
+        piece.text.map (fun char => (char, piece.status)) := by
+  simp [highlightedPresentation, List.map_flatMap, markPiece_projection]
+
+theorem highlightedPresentation_text (snapshot : Snapshot) (nameCol : Nat) (query : String)
+    (item : Item) :
+    (highlightedPresentation snapshot nameCol query item).map (·.char) =
+      (presentation snapshot nameCol item).flatMap (·.text) := by
+  simpa [List.map_map, List.map_flatMap, Function.comp_def] using
+    congrArg (List.map Prod.fst) (highlightedPresentation_projection snapshot nameCol query item)
+
+/-- Removing emphasis yields exactly the same human row that `linger ls` uses. -/
+theorem highlightedPresentation_existing_humanRow (snapshot : Snapshot) (nameCol : Nat)
+    (query target : String) :
+    Linger.Core.Render.utf8s
+        ((highlightedPresentation snapshot nameCol query (.existing target)).map (·.char)) =
+      Linger.Core.Listing.humanRow nameCol (snapshot.row target) := by
+  rw [highlightedPresentation_text]
+  exact presentation_existing_humanRow snapshot nameCol target
+
+/-- A displayed scalar is emphasized exactly when the chosen alignment marks
+that position in the original target. The badge and separator occupy two
+scalars; padding and metadata are outside the name span. -/
+theorem highlightedPresentation_existing_marked_iff (snapshot : Snapshot) (nameCol : Nat)
+    (query target : String) (index : Nat) (char : HighlightedChar)
+    (h : (highlightedPresentation snapshot nameCol query (.existing target))[index]? = some char) :
+    char.matched = true ↔
+      ∃ alignment,
+        Tools.Fuzzy.align query target = some alignment ∧
+          2 ≤ index ∧ index < 2 + target.length ∧ alignment.marks[index - 2]? = some true := by
+  let marks := ((Tools.Fuzzy.align query target).map (·.marks)).getD []
+  let body :=
+    ((Linger.Core.Listing.rowPieces nameCol (snapshot.row target))[1]?).getD { text := [] }
+  have span : body.nameSpan = some (1, target.length) := by
+    simp [body, Linger.Core.Listing.rowPieces, snapshot_row_name, String.length_toList]
+  cases index with
+  | zero =>
+    simp [highlightedPresentation, presentation, Linger.Core.Listing.rowPieces, markPiece] at h
+    subst char
+    simp
+  | succ
+    index =>
+    have row :
+      (highlightedPresentation snapshot nameCol query (.existing target))[index + 1]? =
+        (markPiece marks.toArray body)[index]? := by
+      simp [highlightedPresentation, presentation, body, Linger.Core.Listing.rowPieces, markPiece,
+        marks]
+    rw [row] at h
+    rw [markPiece_marked_iff marks.toArray body index char h]
+    simp only [span, Option.some.injEq, Prod.mk.injEq]
+    cases ha : Tools.Fuzzy.align query target with
+    | none => simp [marks, ha]
+    | some a =>
+      simp [marks, ha]
+      constructor
+      · rintro ⟨_, _, ⟨rfl, rfl⟩, lower, upper, marked⟩
+        exact ⟨lower, by omega, marked⟩
+      · rintro ⟨lower, upper, marked⟩
+        exact ⟨1, target.length, ⟨rfl, rfl⟩, lower, by omega, marked⟩
+
+/-- Creation is a labelled action with neither matching emphasis nor a status badge. -/
+theorem highlightedPresentation_creation (snapshot : Snapshot) (nameCol : Nat)
+    (query target : String) :
+    (highlightedPresentation snapshot nameCol query (.create target)).all
+        (fun char => !char.matched && char.status.isNone) =
+      true := by
+  simp [highlightedPresentation, presentation, markPiece]
+
+private theorem emphasizeCells_zeroWidthPrefix (chars : List HighlightedChar) :
+    (emphasizeCells chars).head?.any
+        (fun char => Linger.Core.Vt.charWidth char.char == 0 && char.matched) =
+      (chars.takeWhile (fun char => Linger.Core.Vt.charWidth char.char == 0)).any (·.matched) := by
+  induction chars with
+  | nil => rfl
+  | cons char chars ih =>
+    cases hz : (Linger.Core.Vt.charWidth char.char == 0) <;> simp [emphasizeCells, hz, ih]
+
+/-- Cell emphasis is exactly the union of a scalar's match and the following
+zero-width matches. It stops at the next cell, including a wide character. -/
+theorem emphasizeCells_at (chars : List HighlightedChar) (index : Nat) :
+    (emphasizeCells chars)[index]? =
+      chars[index]?.map fun char =>
+        { char with
+          matched :=
+            char.matched ||
+              ((chars.drop (index + 1)).takeWhile
+                    (fun next => Linger.Core.Vt.charWidth next.char == 0)).any
+                (·.matched) } := by
+  induction chars generalizing index with
+  | nil => simp [emphasizeCells]
+  | cons char chars ih =>
+    cases index with
+    | zero => simp [emphasizeCells, emphasizeCells_zeroWidthPrefix]
+    | succ index => simpa [emphasizeCells] using ih index
+
+/-- Sharing emphasis across a cell never changes its text or status palette. -/
+theorem emphasizeCells_projection (chars : List HighlightedChar) :
+    (emphasizeCells chars).map (fun char => (char.char, char.status)) =
+      chars.map (fun char => (char.char, char.status)) := by
+  induction chars with
+  | nil => rfl
+  | cons char chars ih => simp [emphasizeCells, ih]
 
 theorem mem_visible (candidates : List String) (query target : String) :
     target ∈ visible candidates query ↔

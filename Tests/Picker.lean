@@ -148,6 +148,41 @@ open Tools.Picker
         "+ Create work@host"
   | .error _ => false
 
+-- The better consecutive alignment is emphasized in the name only, even when
+-- command and label text repeat the query.
+#guard
+  match parseSnapshot "name\taxab\nstatus\tworking\ncmd\tab\nlabel.project\tab\nclients\t2\n" with
+  | .ok snapshot =>
+    let chars := highlightedPresentation snapshot 8 "ab" (.existing "axab")
+    (chars.zipIdx.filterMap fun (char, index) => if char.matched then some index else none) ==
+        [4, 5] &&
+      String.ofList (chars.map (·.char)) == "⣷ axab     ab  [project=ab]  +2" &&
+      chars.head?.map (·.status) == some (some .working) &&
+      (chars.filter (·.matched)).all (fun char => char.status.isNone)
+  | .error _ => false
+
+#guard
+  (highlightedPresentation {} 0 "work" (.create "work")).all (fun char => !char.matched) &&
+    (highlightedPresentation {} 0 "" (.existing "work")).all (fun char => !char.matched)
+
+-- Scalar positions survive wide and combining characters without byte indexing.
+#guard
+  let chars := highlightedPresentation {} 0 "é界" (.existing "café@世界")
+  (chars.zipIdx.filterMap fun (char, index) => if char.matched then some index else none) == [5, 8]
+
+-- An accent-only match underlines the base cell, even through another mark.
+-- A following wide character starts its own cell and cannot carry emphasis back.
+#guard
+  let chars := highlightedPresentation {} 0 "\u0301" (.existing "s@e\u0300\u0301界")
+  (chars.zipIdx.filterMap fun (char, index) => if char.matched then some index else none) == [6] &&
+    ((emphasizeCells chars).zipIdx.filterMap fun (char, index) =>
+        if char.matched then some index else none) ==
+      [4, 5, 6] &&
+    ((emphasizeCells
+            (highlightedPresentation {} 0 "界" (.existing "s@e\u0300\u0301界"))).zipIdx.filterMap
+        fun (char, index) => if char.matched then some index else none) ==
+      [7]
+
 #guard maxQueryLength == 256
 
 #guard items [] "" == [.create "main"]

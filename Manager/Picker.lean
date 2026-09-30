@@ -55,10 +55,12 @@ private def draw (state : Tools.Picker.State) (snapshot : Tools.Picker.Snapshot)
         let chosen := index == state.cursor
         let selection := if chosen then "\x1b[7m" else ""
         let mut pieces := #[(if chosen then "  ▸ " else "    ", selection)]
-        for piece in Tools.Picker.presentation snapshot nameCol item do
+        let chars := Tools.Picker.highlightedPresentation snapshot nameCol state.query item
+        for char in Tools.Picker.emphasizeCells chars do
           let statusStyle :=
-            if withColor then (piece.status.map Linger.Core.Status.style).getD "" else ""
-          pieces := pieces.push (String.ofList piece.text, selection ++ statusStyle)
+            if withColor then (char.status.map Linger.Core.Status.style).getD "" else ""
+          let emphasis := if char.matched then "\x1b[4m" else ""
+          pieces := pieces.push (String.singleton char.char, selection ++ statusStyle ++ emphasis)
         lines := lines.push pieces
         index := index + 1
     if height > 2 then
@@ -80,10 +82,13 @@ private def draw (state : Tools.Picker.State) (snapshot : Tools.Picker.Snapshot)
       first := false
       let mut used := 0
       let mut clipped := false
+      let mut activeStyle := ""
       for (text, style) in line do
         if clipped then
           break
-        frame := frame ++ style
+        if style != activeStyle then
+          frame := frame ++ "\x1b[0m" ++ style
+          activeStyle := style
         for raw in text.toList do
           let c := if raw.toNat < 0x20 || (raw.toNat ≥ 0x7F && raw.toNat < 0xA0) then '?' else raw
           let cells := Linger.Core.Vt.charWidth c
@@ -92,8 +97,8 @@ private def draw (state : Tools.Picker.State) (snapshot : Tools.Picker.Snapshot)
             break
           frame := frame.push c
           used := used + cells
-        if !style.isEmpty then
-          frame := frame ++ "\x1b[0m"
+      if !activeStyle.isEmpty then
+        frame := frame ++ "\x1b[0m"
     return frame
 
 /-- Own raw mode and at most one listing for one selection visit. Keys always
