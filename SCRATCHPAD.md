@@ -13785,3 +13785,75 @@ verification is green; no hosted Linux or macOS pass is claimed.
 `specs/archive/fuzzy-alignment.md` closes the round with the contracts,
 compiling semantic mutations, independent review, original/fixed live
 receipts and publication limits. AGENTS.md again has no spec in flight.
+
+## Step 1 notes — 2026-09-30
+
+The reusable fuzzy-library round adds `CaseMode`, `Scoring`, `Config` and
+`alignWith`, with one dynamic program and one configuration-quantified
+optimality certificate. Sensitive, ASCII-insensitive and smart matching share
+scalar positions; smart case resolves once from ASCII capitals in the query.
+Word, adjacency and gap scores are arbitrary Lean integers, including negative
+bonuses and positive gap rewards. The finite alignment search needs no sign
+restriction. Empty queries and trailing positions still earn zero.
+
+The public contracts establish exact subsequence acceptance, mask length,
+spelling, maximum score and globally earliest equal-score masks for every
+configuration. Changing only scores preserves acceptance; smart case equals
+its selected sensitive or insensitive policy exactly. The original `align`
+entry point remains the selector's only matching entry, with its case policy,
+weights and listing order unchanged. No C, dependency, CLI option or public
+executable is added. `./lake build LingerFuzzy` builds the library independently;
+an empty import-closure gate and a tested target-root gate enforce that boundary.
+
+Default preservation needs an independent anchor. A theorem equating `align`
+with `alignWith {}` would let both sides follow an accidental record-default
+change. `align_default` therefore names insensitive matching and all three
+original weights explicitly. Keep generalized laws parameterized; state a
+compatibility promise against concrete agreed defaults.
+
+The test worker preserves the default grid and the large repetition case,
+and expands an independent whole-mask oracle across twenty-one configurations.
+Its case matcher uses explicit ASCII letter pairs; its scorer counts original
+boundaries, adjacent index pairs and skipped positions as a whole. The oracle
+checks 46,358 query/target/configuration pairs, plus 13,640 default-wrapper and
+23,205 scoring-independence comparisons. Thirteen ordinary-import checks
+exercise the public API without exposing implementation bodies.
+
+The predecessor adapter delegates every configuration to the old `align`.
+Eight directed value mismatches and twenty-eight permanent semantic guard
+failures show the new cases are observable. Missing declarations, the first
+record-layout error and earlier setup failures are preserved separately;
+they are not semantic mutation evidence. Test receipts and exact inputs:
+`/tmp/linger-fuzzy-library-test-evidence-20260930/HANDOFF.md`.
+
+Independent review accepts the eleven-file snapshot. Eight deliberate
+production mutations cover both smart-case branches, all three score fields,
+ignored configuration, rejection of negative successful scores and drift in
+the default adjacency weight. Every mutant compiles with warnings treated as
+errors, has a kernel-confirmed wrong concrete result, and fails both its
+intended public contract and the unchanged complete proofs. The maximum-score
+probes construct a legal comparison alignment separately, so a false premise
+cannot explain the rejection. Each exact restoration passes before the next
+experiment. Ordinary-import API and public theorem probes pass; the only
+reported axiom dependencies are standard Lean logical axioms.
+`/tmp/linger-fuzzy-library-review-evidence-20260930/HANDOFF.md` preserves the
+accepted hashes, precise witnesses and original mutation/restoration outputs.
+
+A separate build-boundary mutation changes the named library root to
+`Tools.Key`. That wrong target builds, the intended source gate rejects it,
+and exact restoration passes both build and gate. Its receipt is
+`/tmp/linger-fuzzy-library-evidence-20260930/target-gate-mutation/result.json`.
+The initial unknown-target failure records packaging absence, not a semantic
+counterexample. No proof resource limit or production dependency was added.
+
+Both required builds and the full foreground Linux verifier pass. The
+assembled run was 13:08:05Z–13:15:41Z: clean build, generated Lean/C ABI,
+source gates, standalone layout, exact-constant and emitter coverage, CI runner
+and POSIX checks, all fourteen live suites and the unrelated-session sentinel.
+All 437 live assertions ran and passed; all 165 source identities remained
+fixed. Original outputs, hashes and independently counted results are sealed
+in `/tmp/linger-fuzzy-library-full-20260930-3XECV9/`.
+
+Both agents are closed. The two worker branches have zero unique commits;
+their accepted changed sources match main. Publication, fresh cleanup
+preflight and actual hosted results belong to closure.

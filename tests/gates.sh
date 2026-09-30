@@ -285,6 +285,8 @@ import_closure Linger/Core/Terminal.lean \
 import_closure Tools/Resurrect.lean 'public import Linger.Core.Name;'
 import_closure Tools/Key.lean ''
 import_closure Tools/Fuzzy.lean ''
+code_grep '^lean_lib LingerFuzzy where roots := #[[]`Tools[.]Fuzzy[]]$' lakefile.lean >/dev/null \
+  || fail "the reusable matcher lost its independent library target"
 import_closure Tools/Picker.lean 'public import Tools.Key;public import Tools.Fuzzy;public import Linger.Core.Name;public import Linger.Core.Listing;'
 import_closure Tools/Input.lean 'public import Tools.Key;'
 import_closure Tools/Entry.lean ''
@@ -355,7 +357,10 @@ code_grep '^[[:space:]]+let listing ← IO[.]Process[.]output [{] cmd := executa
 # proved function and retain exact attach argv and an immutable poll snapshot.
 # E2E.Manager drives the terminal lifetime, failure paths and handoff itself.
 for claim in align_optimal align_isSome_iff_sublist align_marks_length align_spells \
-             align_score_max align_earliest; do
+             align_score_max align_earliest align_default \
+             alignWith_optimal alignWith_isSome_iff_sublist alignWith_marks_length \
+             alignWith_spells alignWith_score_max alignWith_earliest \
+             alignWith_scoring_irrelevant alignWith_smart_sensitive alignWith_smart_insensitive; do
   code_grep "^theorem $claim " Theorems/Fuzzy.lean >/dev/null \
     || fail "fuzzy alignment contract disappeared: $claim"
 done

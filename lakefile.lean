@@ -42,6 +42,11 @@ honest. The half that BITES is therefore the import grep in `tests/gates.sh`,
 and this target is what that grep is a gate on. -/
 lean_lib LingerVt where roots := #[`Linger.Core.Vt, `Linger.Core.Render, `Linger.Core.Terminal]
 
+/-- Reusable fuzzy alignment, with no session or terminal imports.
+Build independently with `./lake build LingerFuzzy`; the import gate enforces
+its source boundary just as it does for `LingerVt`. -/
+lean_lib LingerFuzzy where roots := #[`Tools.Fuzzy]
+
 /-- Pure entry, selection and import policies, outside the session and VT libraries. -/
 lean_lib Tools where roots :=
   #[`Tools.Entry, `Tools.Resurrect, `Tools.Key, `Tools.Fuzzy, `Tools.Picker, `Tools.Input]

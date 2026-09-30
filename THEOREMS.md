@@ -45,6 +45,19 @@ recipes, break records, measurements, the audits — lives in
 | §Select | fuzzy emphasis and explicit creation vs an exact session identity | alignment accepts exactly the filter language, maximizes score and chooses earliest ties (`align_isSome_iff_matches`, `align_score_max`, `align_earliest`); emphasis preserves shared text/status and marks the chosen target positions (`highlightedPresentation_projection`, `highlightedPresentation_existing_marked_iff`); matching preserves snapshot order (`visible_order`, `items_existing_prefix`); existing selections retain original targets (`step_attach_mem`); creation uses an exact valid target absent from the snapshot (`step_create_valid`); only acceptance acts on the highlighted row (`step_attach_iff`, `step_create_iff`); refresh retains query and surviving targets (`refresh_query`, `refresh_selected`) and bounds the cursor (`refresh_valid`) | Theorems/Fuzzy.lean, Theorems/Picker.lean, E2E/Manager.lean |
 | §Input | split keyboard bytes and pasted commands vs deliberate selection | one byte produces at most one key (`feed_length`); UTF-8 prefixes retain at most three bytes (`stored_bound`, `feed_storage_bound`); delivered text excludes controls (`feed_text_valid`); paste emits only text and survives incomplete input (`feed_paste_only_text`, `feed_paste_sticky`, `flush_paste`); a timeout never accepts (`flush_no_accept`) | Theorems/Input.lean, E2E/Manager.lean |
 
+The reusable fuzzy library admits separate case and scoring policies.
+`alignWith_isSome_iff_sublist`, `alignWith_marks_length` and `alignWith_spells`
+characterize the language and original scalar positions for every
+configuration. `alignWith_score_max` and `alignWith_earliest` quantify
+over arbitrary integer weights, including zero and negative bonuses.
+`alignWith_scoring_irrelevant` makes acceptance independent of scoring.
+`alignWith_smart_sensitive` and `alignWith_smart_insensitive` establish exact
+result equality with the selected case policy, chosen by ASCII capitals in
+the query. `align_default` fixes the original insensitive policy and all
+three weights explicitly, so changing record defaults cannot silently move
+that contract. The existing default alignment contracts remain in force.
+Verification and publication record: `specs/fuzzy-library.md`.
+
 The CSI collector preserves omitted parameters, saturates numeric parameters
 and rejects overflow at the existing parameter cap. `csiPush_of_lt`,
 `csiPush_of_ge`, `csiFinish_omitted` and `csiFinish_overflow` state those

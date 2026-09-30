@@ -60,6 +60,33 @@ separately and build it with the project toolchain.
 | `E2E/` | IO suites against the real binary, with isolated executor probes for failure checks |
 | `specs/` | live build plans; `specs/archive/` the closed ones |
 
+### Fuzzy matching library
+
+`./lake build LingerFuzzy` builds the reusable matcher independently. Import
+`Tools.Fuzzy` to use it without session or terminal code:
+
+```lean
+import Tools.Fuzzy
+
+open Tools.Fuzzy
+
+-- ASCII capitals in the query make smart matching case-sensitive.
+#eval alignWith { caseMode := .smart } "wK" "workKit"
+
+-- Integer weights for word starts, adjacency and gaps before the last match.
+#eval alignWith { scoring := { word := 6, adjacent := 10, gap := -2 } } "wk" "work"
+```
+
+Case modes are `sensitive`, `insensitive` and `smart`. Folding affects ASCII
+capitals only; non-ASCII scalars remain exact. Every successful result contains
+the score and one Boolean mark per original target scalar. Scores may be any
+integers: they choose the best alignment without changing match eligibility.
+Equal scores choose the earliest positions; empty queries mark nothing and
+score zero, and trailing gaps cost nothing. Theorems establish these contracts
+for every configuration. `align` uses insensitive matching with word/adjacency/gap
+weights `4`, `8`, `-1`; linger continues to use those defaults and its existing
+listing order.
+
 ## Use
 
 ```

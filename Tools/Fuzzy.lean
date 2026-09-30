@@ -4,10 +4,10 @@ public section
 
 /-! Scored subsequence alignment over Unicode scalar positions.
 
-Matching folds ASCII capitals, as `Char.toLower` does. A word start earns four
-points, adjacency earns eight, and each skipped character before the final
-match costs one. Trailing characters cost nothing. Equal scores choose the
-earlier match. Scores choose emphasis, not candidate order.
+Case policy and scoring are independent. Defaults fold ASCII capitals, reward
+word starts by four and adjacency by eight, and charge one point per skipped
+character before the final match. Trailing characters cost nothing. Equal
+scores choose the earlier match.
 
 The dynamic program builds each query row from the remaining query suffix's
 row. Each cell stores answers for a preceding match and a preceding gap;
@@ -16,6 +16,33 @@ length, with a linear base row.
 -/
 
 namespace Tools.Fuzzy
+
+inductive CaseMode where
+  | sensitive
+  | insensitive
+  | smart
+  deriving BEq, Repr
+
+/-- Resolve smart case once per query. Folding affects ASCII capitals only;
+non-ASCII characters remain exact in every mode. -/
+def CaseMode.fold (mode : CaseMode) (query : String) : Char → Char :=
+  match mode with
+  | .sensitive => id
+  | .insensitive => Char.toLower
+  | .smart => if query.toList.any Char.isUpper then id else Char.toLower
+
+/-- Additive scores may be any integers. Positive gaps reward skipped positions;
+they still cannot change whether a subsequence exists. -/
+structure Scoring where
+  word : Int := 4
+  adjacent : Int := 8
+  gap : Int := -1
+  deriving BEq, Repr
+
+structure Config where
+  caseMode : CaseMode := .insensitive
+  scoring : Scoring := {}
+  deriving BEq, Repr
 
 structure Alignment where
   score : Int
@@ -45,37 +72,44 @@ private def emptyRow : Nat → List Cell
     { gap := answer, adjacent := answer } :: tail
 
 /-- Word boundaries use the original characters; matching uses their folded form. -/
-private def letters (previous : Char) : List Char → List (Char × Int)
+private def letters (word : Int) (fold : Char → Char) (previous : Char) :
+    List Char → List (Char × Int)
   | [] => []
   | c :: cs =>
     let bonus :=
       if
           [' ', '-', '_', '.', '/', '@', ':'].contains previous ||
             (previous.isLower && c.isUpper) then
-        4
+        word
       else 0
-    (c.toLower, bonus) :: letters c cs
+    (fold c, bonus) :: letters word fold c cs
 
 /-- One query row. The previous row's next cell handles a match; this row's
 next cell handles a gap, so each target position is visited just once. -/
-private def row (q : Char) : List (Char × Int) → List Cell → List Cell
+private def row (scoring : Scoring) (q : Char) : List (Char × Int) → List Cell → List Cell
   | [], _ => [default]
   | (c, bonus) :: target, next =>
     let suffix := next.tail
-    let tail := row q target suffix
-    let skipped := prepend false (-1) (tail.headD default).gap
+    let tail := row scoring q target suffix
+    let skipped := prepend false scoring.gap (tail.headD default).gap
     let taken := if q == c then (suffix.headD default).adjacent else none
     { gap := best (prepend true bonus taken) skipped,
-      adjacent := best (prepend true (bonus + 8) taken) skipped } ::
+      adjacent := best (prepend true (bonus + scoring.adjacent) taken) skipped } ::
       tail
 
-private def table : List Char → List (Char × Int) → List Cell
+private def table (scoring : Scoring) : List Char → List (Char × Int) → List Cell
   | [], target => emptyRow target.length
-  | q :: qs, target => row q target (table qs target)
+  | q :: qs, target => row scoring q target (table scoring qs target)
 
-/-- The best alignment, with one mark per original target character, or no
-answer exactly when the query is not a subsequence. -/
-def align (query target : String) : Option Alignment :=
-  ((table (query.toList.map Char.toLower) (letters ' ' target.toList)).headD default).gap
+/-- The best alignment under the chosen policy, with one mark per original
+target character, or no answer exactly when the query is not a subsequence. -/
+def alignWith (config : Config) (query target : String) : Option Alignment :=
+  let fold := config.caseMode.fold query
+  ((table config.scoring (query.toList.map fold)
+          (letters config.scoring.word fold ' ' target.toList)).headD
+      default).gap
+
+/-- Default ASCII-insensitive alignment, as used by the linger selector. -/
+def align (query target : String) : Option Alignment := alignWith {} query target
 
 end Tools.Fuzzy

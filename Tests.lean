@@ -12,6 +12,7 @@ import Tests.Title
 import Tests.Checkpoint
 import Tests.Resurrect
 import Tests.Fuzzy
+import Tests.FuzzyApi
 import Tests.Picker
 import Tests.Input
 import Tests.Entry

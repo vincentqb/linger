@@ -7,28 +7,29 @@ public section
 
 /-! A declarative weighted subsequence semantics, independent of the table.
 
-Every legal path consumes one original target position at a time. A gap costs
-one point while a query remains; completing the query leaves the trailing
-positions unmarked and free. Taking a character earns its word-boundary bonus
-and, precisely when the previous position was taken, eight adjacency points.
+Every legal path consumes one original target position at a time. A gap earns
+the configured score while a query remains; completing the query leaves the
+trailing positions unmarked and free. Taking a character earns its word bonus
+and the configured adjacency score when the previous position was taken.
+The certificate covers every integer scoring policy.
 -/
 
 namespace Tools.Fuzzy
 
 /-- Legal alignments over folded characters carrying their original word bonuses. -/
-inductive Walk : List Char → List (Char × Int) → Bool → Alignment → Prop where
+inductive Walk (scoring : Scoring) : List Char → List (Char × Int) → Bool → Alignment → Prop where
   |
   empty (target : List (Char × Int)) (adjacent : Bool) :
-    Walk [] target adjacent ⟨0, List.replicate target.length false⟩
+    Walk scoring [] target adjacent ⟨0, List.replicate target.length false⟩
   |
   gap {q : Char} {qs : List Char} {c : Char} {bonus : Int} {target : List (Char × Int)}
-    {adjacent : Bool} {a : Alignment} (rest : Walk (q :: qs) target false a) :
-    Walk (q :: qs) ((c, bonus) :: target) adjacent ⟨a.score + (-1), false :: a.marks⟩
+    {adjacent : Bool} {a : Alignment} (rest : Walk scoring (q :: qs) target false a) :
+    Walk scoring (q :: qs) ((c, bonus) :: target) adjacent ⟨a.score + scoring.gap, false :: a.marks⟩
   |
   take {q : Char} {qs : List Char} {bonus : Int} {target : List (Char × Int)} {adjacent : Bool}
-    {a : Alignment} (rest : Walk qs target true a) :
-    Walk (q :: qs) ((q, bonus) :: target) adjacent
-      ⟨a.score + (bonus + if adjacent then 8 else 0), true :: a.marks⟩
+    {a : Alignment} (rest : Walk scoring qs target true a) :
+    Walk scoring (q :: qs) ((q, bonus) :: target) adjacent
+      ⟨a.score + (bonus + if adjacent then scoring.adjacent else 0), true :: a.marks⟩
 
 /-- True-first lexicographic order on masks, including equality. -/
 private def MaskLE (left right : List Bool) : Prop :=
@@ -82,16 +83,17 @@ private theorem prepend_optimal (mark : Bool) (score : Int) (answer : Option Ali
     · rintro b ⟨c, hc, rfl⟩ heq
       exact (h.2.2 c hc (by simpa using heq)).cons mark
 
-theorem Walk.sublist {query : List Char} {target : List (Char × Int)} {adjacent : Bool}
-    {a : Alignment} (h : Walk query target adjacent a) : query.Sublist (target.map Prod.fst) := by
+theorem Walk.sublist {scoring : Scoring} {query : List Char} {target : List (Char × Int)}
+    {adjacent : Bool} {a : Alignment} (h : Walk scoring query target adjacent a) :
+    query.Sublist (target.map Prod.fst) := by
   induction h with
   | empty => exact List.nil_sublist _
   | gap _ ih => exact ih.cons _
   | take _ ih => exact ih.cons_cons _
 
-theorem Walk.length {query : List Char} {target : List (Char × Int)} {adjacent : Bool}
-    {a : Alignment} (h : Walk query target adjacent a) : a.marks.length = target.length := by
-  induction h <;> simp_all
+theorem Walk.length {scoring : Scoring} {query : List Char} {target : List (Char × Int)}
+    {adjacent : Bool} {a : Alignment} (h : Walk scoring query target adjacent a) :
+    a.marks.length = target.length := by induction h <;> simp_all
 
 private theorem unmarked {α β : Type} (target : List α) (f : α → β) :
     ((target.zip (List.replicate target.length false)).filterMap fun (c, marked) =>
@@ -104,8 +106,8 @@ private theorem unmarked {α β : Type} (target : List α) (f : α → β) :
       Bool.false_eq_true, ↓reduceIte] using ih
 
 /-- True mask positions spell the query in order, with no duplication or omission. -/
-theorem Walk.spells {query : List Char} {target : List (Char × Int)} {adjacent : Bool}
-    {a : Alignment} (h : Walk query target adjacent a) :
+theorem Walk.spells {scoring : Scoring} {query : List Char} {target : List (Char × Int)}
+    {adjacent : Bool} {a : Alignment} (h : Walk scoring query target adjacent a) :
     ((target.zip a.marks).filterMap fun (c, marked) => if marked then some c.1 else none) =
       query := by
   induction h with
@@ -113,8 +115,9 @@ theorem Walk.spells {query : List Char} {target : List (Char × Int)} {adjacent 
   | gap _ ih => simpa using ih
   | take _ ih => simpa using ih
 
-private theorem walk_empty_iff (target : List (Char × Int)) (adjacent : Bool) (a : Alignment) :
-    Walk [] target adjacent a ↔ a = ⟨0, List.replicate target.length false⟩ := by
+private theorem walk_empty_iff (scoring : Scoring) (target : List (Char × Int)) (adjacent : Bool)
+    (a : Alignment) :
+    Walk scoring [] target adjacent a ↔ a = ⟨0, List.replicate target.length false⟩ := by
   constructor
   · intro h
     cases h
@@ -122,8 +125,9 @@ private theorem walk_empty_iff (target : List (Char × Int)) (adjacent : Bool) (
   · rintro rfl
     exact .empty _ _
 
-private theorem walk_exists (query : List Char) (target : List (Char × Int)) (adjacent : Bool)
-    (h : query.Sublist (target.map Prod.fst)) : ∃ a, Walk query target adjacent a := by
+private theorem walk_exists (scoring : Scoring) (query : List Char) (target : List (Char × Int))
+    (adjacent : Bool) (h : query.Sublist (target.map Prod.fst)) :
+    ∃ a, Walk scoring query target adjacent a := by
   induction target generalizing query adjacent with
   | nil =>
     have : query = [] := List.sublist_nil.mp h
@@ -142,14 +146,16 @@ private theorem walk_exists (query : List Char) (target : List (Char × Int)) (a
           obtain ⟨a, ha⟩ := ih _ true htake
           exact ⟨_, .take ha⟩
 
-private theorem walk_cons_iff (q c : Char) (qs : List Char) (bonus : Int)
+private theorem walk_cons_iff (scoring : Scoring) (q c : Char) (qs : List Char) (bonus : Int)
     (target : List (Char × Int)) (adjacent : Bool) (a : Alignment) :
-    Walk (q :: qs) ((c, bonus) :: target) adjacent a ↔
+    Walk scoring (q :: qs) ((c, bonus) :: target) adjacent a ↔
       (q = c ∧
           ∃ b,
-            Walk qs target true b ∧
-              a = ⟨b.score + (bonus + if adjacent then 8 else 0), true :: b.marks⟩) ∨
-        (∃ b, Walk (q :: qs) target false b ∧ a = ⟨b.score + (-1), false :: b.marks⟩) := by
+            Walk scoring qs target true b ∧
+              a = ⟨b.score + (bonus + if adjacent then scoring.adjacent else 0), true :: b.marks⟩) ∨
+        (∃ b,
+          Walk scoring (q :: qs) target false b ∧
+            a = ⟨b.score + scoring.gap, false :: b.marks⟩) := by
   constructor
   · intro h
     cases h with
@@ -163,37 +169,44 @@ private theorem optimal_congr (p q : Alignment → Prop) (answer : Option Alignm
     (h : ∀ a, p a ↔ q a) : Optimal p answer ↔ Optimal q answer := by
   cases answer <;> simp only [Optimal] <;> grind
 
-private theorem advance_optimal (q c : Char) (qs : List Char) (bonus : Int)
+private theorem advance_optimal (scoring : Scoring) (q c : Char) (qs : List Char) (bonus : Int)
     (target : List (Char × Int)) (adjacent : Bool) (taken skipped : Option Alignment)
-    (ht : Optimal (Walk qs target true) taken)
-    (hs : Optimal (Walk (q :: qs) target false) skipped) :
-    Optimal (Walk (q :: qs) ((c, bonus) :: target) adjacent)
-      (best (prepend true (bonus + if adjacent then 8 else 0) (if q == c then taken else none))
-        (prepend false (-1) skipped)) := by
-  apply (optimal_congr _ _ _ (walk_cons_iff q c qs bonus target adjacent)).mpr
+    (ht : Optimal (Walk scoring qs target true) taken)
+    (hs : Optimal (Walk scoring (q :: qs) target false) skipped) :
+    Optimal (Walk scoring (q :: qs) ((c, bonus) :: target) adjacent)
+      (best
+        (prepend true (bonus + if adjacent then scoring.adjacent else 0)
+          (if q == c then taken else none))
+        (prepend false scoring.gap skipped)) := by
+  apply (optimal_congr _ _ _ (walk_cons_iff scoring q c qs bonus target adjacent)).mpr
   apply best_optimal
   · by_cases h : q = c
     · simpa [h] using
-        prepend_optimal true (bonus + if adjacent then 8 else 0) taken (Walk qs target true) ht
+        prepend_optimal true (bonus + if adjacent then scoring.adjacent else 0) taken
+          (Walk scoring qs target true) ht
     · simp [h, prepend, Optimal]
-  · exact prepend_optimal false (-1) skipped (Walk (q :: qs) target false) hs
+  · exact prepend_optimal false scoring.gap skipped (Walk scoring (q :: qs) target false) hs
   · rintro a ⟨_, x, _, rfl⟩ b ⟨y, _, rfl⟩
     exact .inr (.rel ⟨rfl, rfl⟩)
 
-private def CellOptimal (query : List Char) (target : List (Char × Int)) (cell : Cell) : Prop :=
-  Optimal (Walk query target false) cell.gap ∧ Optimal (Walk query target true) cell.adjacent
+private def CellOptimal (scoring : Scoring) (query : List Char) (target : List (Char × Int))
+    (cell : Cell) : Prop :=
+  Optimal (Walk scoring query target false) cell.gap ∧
+    Optimal (Walk scoring query target true) cell.adjacent
 
 /-- The row has exactly one certified answer pair for each target suffix. -/
-private inductive TableOptimal (query : List Char) : List (Char × Int) → List Cell → Prop where
-  | nil {cell : Cell} : CellOptimal query [] cell → TableOptimal query [] [cell]
+private inductive TableOptimal (scoring : Scoring) (query : List Char) :
+    List (Char × Int) → List Cell → Prop where
+  | nil {cell : Cell} : CellOptimal scoring query [] cell → TableOptimal scoring query [] [cell]
   |
   cons {c : Char × Int} {target : List (Char × Int)} {cell : Cell} {tail : List Cell} :
-    CellOptimal query (c :: target) cell →
-      TableOptimal query target tail → TableOptimal query (c :: target) (cell :: tail)
+    CellOptimal scoring query (c :: target) cell →
+      TableOptimal scoring query target tail →
+      TableOptimal scoring query (c :: target) (cell :: tail)
 
-private theorem TableOptimal.head {query : List Char} {target : List (Char × Int)}
-    {cells : List Cell} (h : TableOptimal query target cells) :
-    CellOptimal query target (cells.headD default) := by cases h <;> assumption
+private theorem TableOptimal.head {scoring : Scoring} {query : List Char}
+    {target : List (Char × Int)} {cells : List Cell} (h : TableOptimal scoring query target cells) :
+    CellOptimal scoring query target (cells.headD default) := by cases h <;> assumption
 
 private theorem emptyRow_head (n : Nat) :
     (emptyRow n).headD default =
@@ -210,8 +223,8 @@ private theorem emptyRow_head (n : Nat) :
     rw [ih]
     rfl
 
-private theorem emptyRow_optimal (target : List (Char × Int)) :
-    TableOptimal [] target (emptyRow target.length) := by
+private theorem emptyRow_optimal (scoring : Scoring) (target : List (Char × Int)) :
+    TableOptimal scoring [] target (emptyRow target.length) := by
   induction target with
   | nil =>
     apply TableOptimal.nil
@@ -222,9 +235,9 @@ private theorem emptyRow_optimal (target : List (Char × Int)) :
     rw [emptyRow_head]
     simp [prepend, CellOptimal, Optimal, walk_empty_iff, List.replicate_succ, MaskLE]
 
-private theorem row_optimal (q : Char) (qs : List Char) (target : List (Char × Int))
-    (next : List Cell) (h : TableOptimal qs target next) :
-    TableOptimal (q :: qs) target (row q target next) := by
+private theorem row_optimal (scoring : Scoring) (q : Char) (qs : List Char)
+    (target : List (Char × Int)) (next : List Cell) (h : TableOptimal scoring qs target next) :
+    TableOptimal scoring (q :: qs) target (row scoring q target next) := by
   induction target generalizing next with
   | nil =>
     apply TableOptimal.nil
@@ -237,25 +250,27 @@ private theorem row_optimal (q : Char) (qs : List Char) (target : List (Char × 
         have rest := ih _ tail
         refine TableOptimal.cons ?_ rest
         constructor
-        · simpa using advance_optimal q c qs bonus target false _ _ tail.head.2 rest.head.1
-        · simpa using advance_optimal q c qs bonus target true _ _ tail.head.2 rest.head.1
+        · simpa using advance_optimal scoring q c qs bonus target false _ _ tail.head.2 rest.head.1
+        · simpa using advance_optimal scoring q c qs bonus target true _ _ tail.head.2 rest.head.1
 
-private theorem table_optimal (query : List Char) (target : List (Char × Int)) :
-    TableOptimal query target (table query target) := by
+private theorem table_optimal (scoring : Scoring) (query : List Char) (target : List (Char × Int)) :
+    TableOptimal scoring query target (table scoring query target) := by
   induction query with
-  | nil => exact emptyRow_optimal target
-  | cons q qs ih => exact row_optimal q qs target _ ih
+  | nil => exact emptyRow_optimal scoring target
+  | cons q qs ih => exact row_optimal scoring q qs target _ ih
 
-/-- The scoring specification labels original positions using their original
-predecessors. It is a zip of the input, independent of the recursive tokenizer. -/
-def weighted (previous : Char) (target : List Char) : List (Char × Int) :=
+/-- Original characters and their original predecessors define word bonuses.
+The independent specification zips the input rather than recursively tokenizing it. -/
+def weighted (word : Int) (fold : Char → Char) (previous : Char) (target : List Char) :
+    List (Char × Int) :=
   ((previous :: target).zip target).map fun (p, c) =>
-    (c.toLower,
-      if p ∈ [' ', '-', '_', '.', '/', '@', ':'] ∨ (p.isLower = true ∧ c.isUpper = true) then 4
+    (fold c,
+      if p ∈ [' ', '-', '_', '.', '/', '@', ':'] ∨ (p.isLower = true ∧ c.isUpper = true) then word
       else 0)
 
-private theorem letters_weighted (previous : Char) (target : List Char) :
-    letters previous target = weighted previous target := by
+private theorem letters_weighted (word : Int) (fold : Char → Char) (previous : Char)
+    (target : List Char) :
+    letters word fold previous target = weighted word fold previous target := by
   induction target generalizing previous with
   | nil => rfl
   | cons c target ih =>
@@ -263,107 +278,186 @@ private theorem letters_weighted (previous : Char) (target : List Char) :
     rw [ih]
     simp [weighted]
 
-theorem weighted_chars (previous : Char) (target : List Char) :
-    (weighted previous target).map Prod.fst = target.map Char.toLower := by
+theorem weighted_chars (word : Int) (fold : Char → Char) (previous : Char) (target : List Char) :
+    (weighted word fold previous target).map Prod.fst = target.map fold := by
   calc
-    _ = (((previous :: target).zip target).map Prod.snd).map Char.toLower := by
+    _ = (((previous :: target).zip target).map Prod.snd).map fold := by
       simp [weighted, List.map_map]
     _ = _ := by rw [List.map_snd_zip (by simp)]
 
-private theorem weighted_length (previous : Char) (target : List Char) :
-    (weighted previous target).length = target.length := by
-  simpa using congrArg List.length (weighted_chars previous target)
+private theorem weighted_length (word : Int) (fold : Char → Char) (previous : Char)
+    (target : List Char) : (weighted word fold previous target).length = target.length := by
+  simpa using congrArg List.length (weighted_chars word fold previous target)
 
-private theorem align_certificate (query target : String) :
-    Optimal (Walk (query.toList.map Char.toLower) (weighted ' ' target.toList) false)
-      (align query target) := by
-  have h :
-    Optimal (Walk (query.toList.map Char.toLower) (letters ' ' target.toList) false)
-      (align query target) :=
-    (table_optimal _ _).head.1
-  rw [letters_weighted] at h
-  exact h
+private theorem alignWith_certificate (config : Config) (query target : String) :
+    Optimal
+      (Walk config.scoring (query.toList.map (config.caseMode.fold query))
+        (weighted config.scoring.word (config.caseMode.fold query) ' ' target.toList) false)
+      (alignWith config query target) := by
+  simpa only [alignWith, letters_weighted] using
+    (table_optimal config.scoring (query.toList.map (config.caseMode.fold query))
+        (letters config.scoring.word (config.caseMode.fold query) ' ' target.toList)).head.1
 
-/-- Failure excludes every legal path. Success witnesses a legal path whose
-score is at least that of every legal alignment under the declared bonuses. -/
-theorem align_optimal (query target : String) :
-    match align query target with
-    | none => ∀ a, ¬Walk (query.toList.map Char.toLower) (weighted ' ' target.toList) false a
+/-- Failure excludes every legal path. Success maximizes score over all legal
+alignments for the chosen case and scoring policy. -/
+theorem alignWith_optimal (config : Config) (query target : String) :
+    match alignWith config query target with
+    | none =>
+      ∀ a,
+        ¬Walk config.scoring (query.toList.map (config.caseMode.fold query))
+            (weighted config.scoring.word (config.caseMode.fold query) ' ' target.toList) false a
     | some a =>
-      Walk (query.toList.map Char.toLower) (weighted ' ' target.toList) false a ∧
+      Walk config.scoring (query.toList.map (config.caseMode.fold query))
+          (weighted config.scoring.word (config.caseMode.fold query) ' ' target.toList) false a ∧
         ∀ b,
-          Walk (query.toList.map Char.toLower) (weighted ' ' target.toList) false b →
+          Walk config.scoring (query.toList.map (config.caseMode.fold query))
+              (weighted config.scoring.word (config.caseMode.fold query) ' ' target.toList) false
+              b →
             b.score ≤ a.score := by
-  have h := align_certificate query target
-  cases he : align query target with
+  have h := alignWith_certificate config query target
+  cases he : alignWith config query target with
   | none => simpa only [he, Optimal] using h
   | some a =>
     rw [he] at h
     exact ⟨h.1, h.2.1⟩
 
-/-- The alignment algorithm accepts exactly the existing folded subsequence
-language, independent of the scoring choices and the number of competing paths. -/
-theorem align_isSome_iff_sublist (query target : String) :
-    (align query target).isSome = true ↔
-      (query.toList.map Char.toLower).Sublist (target.toList.map Char.toLower) := by
-  have h :
-    Optimal (Walk (query.toList.map Char.toLower) (weighted ' ' target.toList) false)
-      (align query target) :=
-    align_certificate query target
+/-- Acceptance depends on case policy alone, regardless of the scoring weights. -/
+theorem alignWith_isSome_iff_sublist (config : Config) (query target : String) :
+    (alignWith config query target).isSome = true ↔
+      (query.toList.map (config.caseMode.fold query)).Sublist
+        (target.toList.map (config.caseMode.fold query)) := by
+  have h := alignWith_certificate config query target
   constructor
   · intro hs
-    cases ha : align query target with
+    cases ha : alignWith config query target with
     | none => simp [ha] at hs
     | some a => simpa only [weighted_chars] using (optimal_sound h ha).sublist
   · intro hs
     obtain ⟨a, ha⟩ :=
-      walk_exists _ (weighted ' ' target.toList) false (by simpa only [weighted_chars] using hs)
+      walk_exists config.scoring _
+        (weighted config.scoring.word (config.caseMode.fold query) ' ' target.toList) false
+        (by simpa only [weighted_chars] using hs)
     obtain ⟨b, hb, _⟩ := optimal_complete h ha
     simp [hb]
 
-/-- One Boolean per Unicode scalar in the original target. -/
-theorem align_marks_length (query target : String) (a : Alignment)
-    (h : align query target = some a) : a.marks.length = target.length := by
-  have ho :
-    Optimal (Walk (query.toList.map Char.toLower) (weighted ' ' target.toList) false)
-      (align query target) :=
-    align_certificate query target
-  simpa only [weighted_length, String.length_toList] using (optimal_sound ho h).length
+/-- Every mode returns one Boolean per original Unicode scalar. -/
+theorem alignWith_marks_length (config : Config) (query target : String) (a : Alignment)
+    (h : alignWith config query target = some a) : a.marks.length = target.length := by
+  simpa only [weighted_length, String.length_toList] using
+    (optimal_sound (alignWith_certificate config query target) h).length
 
-/-- Filtering the original target with the returned mask spells exactly the
-folded query. Positions are never UTF-8 byte offsets. -/
-theorem align_spells (query target : String) (a : Alignment) (h : align query target = some a) :
+/-- The original marked characters spell exactly the normalized query. -/
+theorem alignWith_spells (config : Config) (query target : String) (a : Alignment)
+    (h : alignWith config query target = some a) :
     ((target.toList.zip a.marks).filterMap fun (c, marked) =>
-        if marked then some c.toLower else none) =
-      query.toList.map Char.toLower := by
-  have ho :
-    Optimal (Walk (query.toList.map Char.toLower) (weighted ' ' target.toList) false)
-      (align query target) :=
-    align_certificate query target
-  have hs := (optimal_sound ho h).spells
+        if marked then some (config.caseMode.fold query c) else none) =
+      query.toList.map (config.caseMode.fold query) := by
+  have hs := (optimal_sound (alignWith_certificate config query target) h).spells
   have hm :
-    (((weighted ' ' target.toList).map Prod.fst).zip a.marks).filterMap
+    (((weighted config.scoring.word (config.caseMode.fold query) ' ' target.toList).map
+                Prod.fst).zip
+            a.marks).filterMap
         (fun (c, marked) => if marked then some c else none) =
-      query.toList.map Char.toLower := by
+      query.toList.map (config.caseMode.fold query) := by
     simpa only [List.zip_map_left, List.filterMap_map, Function.comp_def, Prod.map, id] using hs
   rw [weighted_chars] at hm
   simpa only [List.zip_map_left, List.filterMap_map, Function.comp_def, Prod.map, id] using hm
 
-theorem align_score_max (query target : String) (a b : Alignment) (h : align query target = some a)
-    (hb : Walk (query.toList.map Char.toLower) (weighted ' ' target.toList) false b) :
+theorem alignWith_score_max (config : Config) (query target : String) (a b : Alignment)
+    (h : alignWith config query target = some a)
+    (hb :
+      Walk config.scoring (query.toList.map (config.caseMode.fold query))
+        (weighted config.scoring.word (config.caseMode.fold query) ' ' target.toList) false b) :
     b.score ≤ a.score := by
-  have ho := align_optimal query target
+  have ho := alignWith_optimal config query target
   rw [h] at ho
   exact ho.2 b hb
 
-/-- Among all equally scoring legal alignments, the returned mask is globally
-earliest: at the first differing target position it selects the character. -/
-theorem align_earliest (query target : String) (a b : Alignment) (h : align query target = some a)
-    (hb : Walk (query.toList.map Char.toLower) (weighted ' ' target.toList) false b)
+/-- The chosen mask is globally earliest among every equally scoring legal path. -/
+theorem alignWith_earliest (config : Config) (query target : String) (a b : Alignment)
+    (h : alignWith config query target = some a)
+    (hb :
+      Walk config.scoring (query.toList.map (config.caseMode.fold query))
+        (weighted config.scoring.word (config.caseMode.fold query) ' ' target.toList) false b)
     (tie : b.score = a.score) :
     a.marks = b.marks ∨ List.Lex (fun x y => x = true ∧ y = false) a.marks b.marks := by
-  have ho := align_certificate query target
+  have ho := alignWith_certificate config query target
   rw [h] at ho
   exact ho.2.2 b hb tie
+
+theorem CaseMode.fold_sensitive (query : String) : CaseMode.fold .sensitive query = id := by rfl
+
+theorem CaseMode.fold_insensitive (query : String) :
+    CaseMode.fold .insensitive query = Char.toLower := by rfl
+
+theorem CaseMode.fold_smart_upper (query : String) (h : query.toList.any Char.isUpper = true) :
+    CaseMode.fold .smart query = id := by simp [CaseMode.fold, h]
+
+theorem CaseMode.fold_smart_no_upper (query : String) (h : query.toList.any Char.isUpper = false) :
+    CaseMode.fold .smart query = Char.toLower := by simp [CaseMode.fold, h]
+
+theorem alignWith_smart_sensitive (scoring : Scoring) (query target : String)
+    (h : query.toList.any Char.isUpper = true) :
+    alignWith { caseMode := .smart, scoring } query target =
+      alignWith { caseMode := .sensitive, scoring } query target := by
+  simp only [alignWith, CaseMode.fold_smart_upper query h, CaseMode.fold_sensitive]
+
+theorem alignWith_smart_insensitive (scoring : Scoring) (query target : String)
+    (h : query.toList.any Char.isUpper = false) :
+    alignWith { caseMode := .smart, scoring } query target =
+      alignWith { caseMode := .insensitive, scoring } query target := by
+  simp only [alignWith, CaseMode.fold_smart_no_upper query h, CaseMode.fold_insensitive]
+
+theorem alignWith_scoring_irrelevant (caseMode : CaseMode) (left right : Scoring)
+    (query target : String) :
+    (alignWith { caseMode, scoring := left } query target).isSome =
+      (alignWith { caseMode, scoring := right } query target).isSome := by
+  apply Bool.eq_iff_iff.mpr
+  rw [alignWith_isSome_iff_sublist, alignWith_isSome_iff_sublist]
+
+/-- The selector retains its original case policy and all three scoring weights. -/
+theorem align_default (query target : String) :
+    align query target =
+      alignWith { caseMode := .insensitive, scoring := { word := 4, adjacent := 8, gap := -1 } }
+        query target := by
+  rfl
+
+/-- Existing default semantic contracts are instances of the general certificate. -/
+theorem align_optimal (query target : String) :
+    match align query target with
+    | none =>
+      ∀ a,
+        ¬Walk {} (query.toList.map Char.toLower) (weighted 4 Char.toLower ' ' target.toList) false a
+    | some a =>
+      Walk {} (query.toList.map Char.toLower) (weighted 4 Char.toLower ' ' target.toList) false a ∧
+        ∀ b,
+          Walk {} (query.toList.map Char.toLower) (weighted 4 Char.toLower ' ' target.toList) false
+              b →
+            b.score ≤ a.score := by
+  simpa only [align, CaseMode.fold] using alignWith_optimal {} query target
+
+theorem align_isSome_iff_sublist (query target : String) :
+    (align query target).isSome = true ↔
+      (query.toList.map Char.toLower).Sublist (target.toList.map Char.toLower) :=
+  alignWith_isSome_iff_sublist {} query target
+
+theorem align_marks_length (query target : String) (a : Alignment)
+    (h : align query target = some a) : a.marks.length = target.length :=
+  alignWith_marks_length {} query target a h
+
+theorem align_spells (query target : String) (a : Alignment) (h : align query target = some a) :
+    ((target.toList.zip a.marks).filterMap fun (c, marked) =>
+        if marked then some c.toLower else none) = query.toList.map Char.toLower :=
+  alignWith_spells {} query target a h
+
+theorem align_score_max (query target : String) (a b : Alignment) (h : align query target = some a)
+    (hb : Walk {} (query.toList.map Char.toLower) (weighted 4 Char.toLower ' ' target.toList) false b) :
+    b.score ≤ a.score := alignWith_score_max {} query target a b h hb
+
+theorem align_earliest (query target : String) (a b : Alignment) (h : align query target = some a)
+    (hb : Walk {} (query.toList.map Char.toLower) (weighted 4 Char.toLower ' ' target.toList) false b)
+    (tie : b.score = a.score) :
+    a.marks = b.marks ∨ List.Lex (fun x y => x = true ∧ y = false) a.marks b.marks :=
+  alignWith_earliest {} query target a b h hb tie
 
 end Tools.Fuzzy
