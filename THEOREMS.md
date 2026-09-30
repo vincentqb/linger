@@ -56,7 +56,7 @@ result equality with the selected case policy, chosen by ASCII capitals in
 the query. `align_default` fixes the original insensitive policy and all
 three weights explicitly, so changing record defaults cannot silently move
 that contract. The existing default alignment contracts remain in force.
-Verification and publication record: `specs/fuzzy-library.md`.
+Verification and publication record: `specs/archive/fuzzy-library.md`.
 
 The CSI collector preserves omitted parameters, saturates numeric parameters
 and rejects overflow at the existing parameter cap. `csiPush_of_lt`,

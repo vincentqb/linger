@@ -13857,3 +13857,38 @@ in `/tmp/linger-fuzzy-library-full-20260930-3XECV9/`.
 Both agents are closed. The two worker branches have zero unique commits;
 their accepted changed sources match main. Publication, fresh cleanup
 preflight and actual hosted results belong to closure.
+
+## Step 2 notes — 2026-09-30
+
+Reusable fuzzy-library checkpoint `14f213d` is committed and pushed to main.
+Both required builds and every commit hook pass. The assembled foreground
+verifier and its frozen source hashes remain the implementation verification;
+this closure changes documentation only.
+
+Both agents are closed. Fresh cleanup preflight compares each worker's branch,
+head, changed-file set, status, index, untracked/ignored inventories, source
+modes and hashes with the sealed recovery evidence. Every changed file equals
+committed main at `14f213d`, also published to origin/main. Both branches have
+zero unique commits. Before sealing, the reviewer's two copied status documents
+were refreshed from committed main; their original reviewed versions and exact
+before/after hashes remain in the review evidence and
+`/tmp/linger-fuzzy-library-review-doc-refresh-20260930-LOYcCr/`.
+No authored source was discarded.
+
+Both worker worktrees and branches are removed; main is the only remaining
+branch and worktree. Only generated `.lake/` and `.lean-fmt-cache/` content
+is omitted from recovery. Complete uncolored patches, baseline/final sources
+and inventories, plus fresh `preflight.json` and `completed.json`, remain in
+`/tmp/linger-fuzzy-library-cleanup-20260930-8HDKwG/`.
+
+Hosted run `36720594609` reports failure before any steps ran. Its annotation
+names failed recent account payments or a spending limit requiring an increase;
+the full-gate job was skipped. This is an unexecuted hosted check, with original
+run/job/annotation responses preserved in
+`/tmp/linger-fuzzy-library-hosted-checkpoint-20260930-Fr5g3m/`.
+Local Linux verification is green; no hosted Linux or macOS pass is claimed.
+
+`specs/archive/fuzzy-library.md` closes the round with generalized contracts,
+an explicit default-compatibility anchor, independent oracle and import checks,
+compiling semantic mutations, independent review and publication limits.
+AGENTS.md again has no spec in flight.

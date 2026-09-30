@@ -1,6 +1,6 @@
 # Reusable fuzzy matching policies
 
-Status: step 1 complete; step 2 verified — publication and cleanup pending
+Status: complete — local Linux verification green; hosted checks could not start
 Updated: 2026-09-30
 
 ## Intent
@@ -79,5 +79,29 @@ Evidence:
 - Frozen assembled verifier, original outputs and independently counted checks:
   `/tmp/linger-fuzzy-library-full-20260930-3XECV9/receipt.json`.
 
-Publication, worker cleanup and the actual hosted outcome remain for closure.
-No hosted or macOS pass is claimed by the local verification.
+## Completion
+
+Implementation checkpoint `14f213d` is committed and pushed to main. Both
+required builds and every commit hook pass. The frozen assembled verifier
+above remains the implementation verification; closure changes documentation.
+
+Both agents are closed. Fresh cleanup preflight confirms zero unique commits
+on both worker branches and byte-identical integration of every changed file
+in committed, published main. Complete uncolored patches, baseline/final
+sources and status/index/ignored inventories are preserved in
+`/tmp/linger-fuzzy-library-cleanup-20260930-8HDKwG/`. Both worker trees and
+branches are removed; only main remains. The reviewer's original accepted
+documentation snapshot remains in its review evidence, separately from the
+refreshed checkpoint-status copies recorded in
+`/tmp/linger-fuzzy-library-review-doc-refresh-20260930-LOYcCr/`.
+
+Hosted run `36720594609` failed before any steps ran. The GitHub annotation
+names failed recent account payments or a spending limit requiring an
+increase; the full-gate job was skipped. Actual run/job/annotation responses
+are preserved in
+`/tmp/linger-fuzzy-library-hosted-checkpoint-20260930-Fr5g3m/`.
+No hosted or macOS pass is claimed.
+
+The reusable API can evolve independently of linger's CLI. Its compatibility
+contract pins concrete defaults, while its general laws quantify over every
+configuration. Keep that separation when extending the library again.
