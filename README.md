@@ -60,6 +60,34 @@ separately and build it with the project toolchain.
 | `E2E/` | IO suites against the real binary, with isolated executor probes for failure checks |
 | `specs/` | live build plans; `specs/archive/` the closed ones |
 
+### Terminal libraries
+
+These pure libraries and their proofs build independently:
+
+| Build | Imports and purpose |
+|---|---|
+| `./lake build LingerVt` | `Linger.Core.Vt`, `.Render`, `.Terminal`, `.Replay`: emulator, rendering, query mediation, safe titles and streaming repaint |
+| `./lake build LingerVtTheorems` | `Theorems.Terminal`, `.TerminalTitle`, `.Replay`: terminal contracts and replay fidelity |
+| `./lake build LingerInput` | `Tools.Input`: bounded UTF-8 and terminal-key decoding |
+| `./lake build LingerInputTheorems` | `Theorems.Input`: decoding, paste and timeout contracts |
+
+The VT toolkit has no session or OS imports. `Replay.start` captures an
+immutable snapshot; `Replay.next` returns at most the requested byte budget
+and a new cursor. Empty output can advance a stage; keep stepping until `none`.
+A positive budget guarantees termination, and the complete stream equals
+`Render.restore`.
+
+`Terminal.Title.ansi` safely encodes arbitrary title text; `Terminal.Title.update`
+waits until a `Vt.observe` observer is at a complete parser and UTF-8 boundary.
+Session identity and attention-summary composition stay in `Linger.Core.Title`.
+Buffer caps stay in `Linger.Core.Buf`.
+
+`Tools.Input.feed` consumes one byte, returning the next decoder state and
+decoded keys. `flush` handles an input timeout; bracketed paste suppresses
+non-text keys. Applications choose their own bindings. Linger's adapter,
+`Tools.Key.ofInput`, retains the selector's Enter, Escape, Ctrl-C, Ctrl-D,
+Ctrl-U, Ctrl-P/Ctrl-N, Tab and navigation behavior.
+
 ### Fuzzy matching library
 
 `./lake build LingerFuzzy` builds the reusable matcher independently. Import

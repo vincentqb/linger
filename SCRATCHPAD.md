@@ -13892,3 +13892,82 @@ Local Linux verification is green; no hosted Linux or macOS pass is claimed.
 an explicit default-compatibility anchor, independent oracle and import checks,
 compiling semantic mutations, independent review and publication limits.
 AGENTS.md again has no spec in flight.
+
+## Step 1 notes — 2026-09-30
+
+Terminal input now reports physical events through `Tools.Input.Key`.
+`Tools.Key.ofInput` owns the selector's action bindings, and Manager.Picker
+applies it to both ordinary input and timeout output. The decoder has no
+imports; another application can handle controls without inheriting picker
+actions. The original selector expectations remain unchanged through the
+adapter. No C, dependency, CLI option or public executable is added; the
+production-file delta is 31 net lines.
+
+The VT target now includes streaming Replay and generic title emission in
+`Terminal.Title`. Queue allowance moves from Replay to Buf; session-name
+sanitization and attention-summary composition remain in Core.Title.
+Existing title bytes and replay behavior are preserved. The public replay
+contract connects a complete positive-budget drain to `Render.restore`
+without exposing the cursor constructor. The observation concatenation lemma
+now lives with Vt and is public; representation-dependent facts remain private.
+
+`LingerInput`, `LingerInputTheorems`, `LingerVt` and `LingerVtTheorems` build
+independently. Target-root and import-closure gates enforce isolation despite
+Lake's package-wide module path. Ordinary-import fixtures exercise operations
+and contracts, reject picker dependencies through input, and reject access to
+the VT parser representation and Replay constructor. The exact-constant census
+covers the extracted definitions. No proof resource override was added.
+
+Binding contracts name the original byte defaults explicitly. They cover every
+UInt8, constructed control events, navigation, paste suppression, printable
+UTF-8 and Escape timeouts. `Buf.followingCap_iff` identifies the maximum safe
+allowance, strengthening the former upper-bound-only claims.
+`Terminal.Title.update_nonempty_iff` permits emission exactly at a complete
+parser and UTF-8 boundary.
+
+The input worker retained all 29 original expectation guards byte-for-byte in
+a standalone adapter regression probe. Permanent tests contain 47 guards,
+including complete idle-byte and control-adapter checks. Six concrete
+predecessor values fail on the old decoder and pass on the new physical API.
+Inputs, outputs and accepted hashes are preserved in
+`/tmp/linger-terminal-input-evidence-kv0vVc/`.
+
+Independent review accepts the 33-file assembled snapshot. Five deliberate
+production mutations compile into native objects, produce a concrete wrong
+result, satisfy a positive kernel counterexample and fail the intended
+concrete claim and unchanged proof module. They cover an allowance one unit
+too small, title emission after incomplete ESC, unsanitized U+009C, Replay
+taking one byte beyond its budget and Ctrl-C accepting instead of cancelling.
+The allowance mutation still satisfies both old universal safety bounds;
+maximality is what rejects the lost capacity. The binding mutation also fails
+the unchanged input fixtures.
+
+Three further mutations compile but fail their intended source gates: a wrong
+VT target root, an indirect session-name import in the VT proof closure, and
+bypassing both picker input adapters. Exact restoration and relevant production,
+proof, API and gate checks pass after every experiment. The first four semantic
+experiments used the initial VT snapshot; their mutated production files match
+the final snapshot byte-for-byte. Final restoration checks all 171 source
+identities, all 33 changed files and the actual worktree index.
+`/tmp/linger-terminal-libraries-review-aNmyIW/evidence/HANDOFF.md` retains the
+review decision, original logs, native witnesses and restoration records.
+
+The initial Buf harness's diagnostic matcher was too specific; the corrected
+experiment is recorded separately. Probe setup failures are not semantic
+evidence. In particular, the C1 generic proof's tactic failure alone is
+insufficient: its native wrong value, positive kernel counterexample and
+decidably false concrete exclusion establish the regression. Integration also
+caught a missing selective Buf open after moving `followingCap`, followed by
+the formatter's canonical layout correction. Those ordinary diagnostics are
+preserved separately from deliberate mutations.
+
+Both required builds and the full foreground Linux verifier pass. The
+assembled run was 16:37:43Z–16:44:54Z: clean 172-job build, generated Lean/C ABI,
+source gates, standalone layout, exact-constant and emitter coverage, CI runner
+and POSIX checks, all fourteen live suites and the unrelated-session sentinel.
+All 437 live assertions ran and passed; all 171 source identities remained
+fixed. Original outputs, independently counted results and hashes are sealed
+in `/tmp/linger-terminal-libraries-full-20260930-LZgiLX/`.
+
+Both agents are closed. Publication, fresh worker cleanup preflight and actual
+hosted results belong to closure.

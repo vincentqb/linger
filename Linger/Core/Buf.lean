@@ -79,6 +79,11 @@ def owedLen (b : Buf) : Nat := b.bytes.size
 (`bufNoRetain`); allocator capacity and object overhead are not measured. -/
 def bufSize (b : Buf) : Nat := b.bytes.size
 
+/-- Allowance for a following queue that shares a cap with the front queue.
+Reserve at least one complete frame, so a full following queue cannot prevent
+the front queue from accepting that frame. -/
+def followingCap (cap frame front : Nat) : Nat := cap - max frame front
+
 /-- Offer bytes, dropping the whole frame if it would breach the cap — the
 **child-input** discipline (`.writePty`). Measures *before* appending, so the bound
 is unconditional and no partial frame is ever queued: one `.input` frame is one

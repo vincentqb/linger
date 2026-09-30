@@ -21,9 +21,9 @@ Active and retired client transports share `maxClients`. Logical close reports
 `.closed` immediately; accepted bytes may drain until the connection's fixed
 deadline. Final shutdown also has a finite drain grace period.
 
-`Theorems/Buf.lean` proves the byte-buffer caps and removal of written prefixes.
-`Theorems/Replay.lean` proves the cursor's exact stream, progress, storage bound,
-and shared-buffer allowance. Runtime scheduling and short-write handling are
+`Theorems/Buf.lean` proves the byte-buffer caps, shared allowance and removal of
+written prefixes. `Theorems/Replay.lean` proves the cursor's exact stream,
+progress and storage bound. Runtime scheduling and short-write handling are
 `IO`, so source gates tie these proved operations to their actual consumers.
 
 Checkpoint effects are wired to hooks filled by `Linger.Runtime.Resume`
@@ -34,7 +34,7 @@ namespace Linger.Runtime.Daemon
 
 open Linger.Posix
 open Linger.Core.Session (State Event Effect maxClients step)
-open Linger.Core.Buf (Buf owedLen bufOffer bufEnqueue bufAdvance)
+open Linger.Core.Buf (Buf owedLen bufOffer bufEnqueue bufAdvance followingCap)
 open Linger.Core
 
 /-- A stopped-reading client is cut here (runtime §Bound). -/
@@ -219,7 +219,7 @@ def runEffect (rt : Rt) (eff : Effect) : IO (Rt × List Event) := do
       let bytes := ByteArray.mk (Linger.Core.Wire.encode m).toArray
       let (c, cut) :=
         if c.replay.isSome || owedLen c.after != 0 then
-          let cap := Replay.followingCap outbufCap replayFrameCap (owedLen c.out)
+          let cap := followingCap outbufCap replayFrameCap (owedLen c.out)
           let (q, cut) := bufEnqueue cap c.after bytes
           ({ c with after := q }, cut)
         else

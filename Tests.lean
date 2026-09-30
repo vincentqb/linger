@@ -3,6 +3,8 @@ import Tests.Wire
 import Tests.Vt
 import Tests.VtApi
 import Tests.Terminal
+import Tests.TerminalTitle
+import Tests.TerminalApi
 import Tests.Render
 import Tests.Session
 import Tests.Delivery
@@ -15,5 +17,6 @@ import Tests.Fuzzy
 import Tests.FuzzyApi
 import Tests.Picker
 import Tests.Input
+import Tests.InputApi
 import Tests.Entry
 import Tests.Fuzz

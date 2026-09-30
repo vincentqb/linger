@@ -93,7 +93,7 @@ theorem next_faithful {budget : Nat} {p q : Plan} {bytes : Render.Bytes}
           rw [rows_uncons]
           simp [List.append_assoc]
 
-theorem next_bounded {budget : Nat} {p q : Plan} {bytes : Render.Bytes}
+public theorem next_bounded {budget : Nat} {p q : Plan} {bytes : Render.Bytes}
     (h : next budget p = some (bytes, q)) : bytes.length ≤ budget := by
   rcases p with ⟨parts, pending⟩
   cases pending with
@@ -308,7 +308,7 @@ theorem start_parts (v : Vt) : (start v).parts.length ≤ 7 := by
 
 /-- A mathematical complete walk. The runtime never constructs this list;
 termination proves that positive-budget advances always finish. -/
-def drain (budget : Nat) (positive : 0 < budget) (p : Plan) : Render.Bytes :=
+public def drain (budget : Nat) (positive : 0 < budget) (p : Plan) : Render.Bytes :=
   match _h : next budget p with
   | none => []
   | some (bytes, q) => bytes ++ drain budget positive q
@@ -327,17 +327,7 @@ termination_by work p
 decreasing_by exact next_progress positive (by assumption)
 
 /-- End-to-end exactness without any assumption on the snapshot's contents. -/
-theorem drain_start (budget : Nat) (positive : 0 < budget) (v : Vt) :
+public theorem drain_start (budget : Nat) (positive : 0 < budget) (v : Vt) :
     drain budget positive (start v) = Render.restore v := by rw [drain_faithful, start_faithful]
-
-theorem followingCap_front {cap frame front : Nat} (h : front ≤ cap) :
-    front + followingCap cap frame front ≤ cap := by
-  unfold followingCap
-  omega
-
-theorem followingCap_frame {cap frame front : Nat} (h : frame ≤ cap) :
-    frame + followingCap cap frame front ≤ cap := by
-  unfold followingCap
-  omega
 
 end Linger.Core.Replay

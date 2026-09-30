@@ -2,6 +2,7 @@ import Theorems.Buf
 import Theorems.Wire
 import Theorems.Vt
 import Theorems.Terminal
+import Theorems.TerminalTitle
 import Theorems.Session
 import Theorems.Name
 import Theorems.Checkpoint
@@ -21,5 +22,6 @@ import Theorems.Resurrect
 import Theorems.Fuzzy
 import Theorems.Picker
 import Theorems.Input
+import Theorems.Key
 import Theorems.Entry
 import Theorems.Coverage

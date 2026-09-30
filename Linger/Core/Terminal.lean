@@ -2,18 +2,21 @@ module
 
 public import Linger.Core.Render
 -- `Vt`'s fields are `private` (the seal, `specs/archive/vt-toolkit.md` Step 1). Terminal is
--- the toolkit's third module and reads cursor/mode state to answer owned queries,
+-- a toolkit module and reads cursor/mode state to answer owned queries,
 -- so it is a friend by construction, not an escape hatch.
 import all Linger.Core.Vt
 
 public section
 
-/-! # Linger.Core.Terminal — bounded child-facing terminal mediation
+/-! # Linger.Core.Terminal — terminal mediation and safe title updates
 
 `Vt` remains the screen model. This module adds the other half of owning a
 PTY: recognizing the small documented query profile, replying to the child,
 and withholding only those owned requests from presentation clients.
 Everything else is emitted byte-for-byte.
+
+`Title` emits bounded OSC 2 updates at complete parser boundaries. It accepts
+arbitrary text; application-specific title composition stays with its caller.
 
 Potential CSI/OSC/DCS requests are bounded. Once a sequence is known to be
 unowned, passthrough states emit each subsequent byte immediately, so kitty
@@ -279,5 +282,23 @@ def feed (v : Vt) (scan : Scan) : Bytes → Result
       let rest := feed v' out.scan bs
       { vt := rest.vt, scan := rest.scan, visible := out.visible ++ rest.visible,
         replies := out.replies ++ rest.replies }
+
+namespace Title
+
+/-- Bound an OSC payload without splitting a Unicode scalar. Five hundred
+characters occupy at most 2000 UTF-8 bytes, below the parser's OSC limit even
+with its `2;` prefix. C1 controls are replaced as well as C0 and DEL. -/
+def payload (title : String) : List Char :=
+  title.toList.take 500 |>.map fun c =>
+    if 0x80 ≤ c.toNat && c.toNat < 0xA0 then '\uFFFD' else Render.safeChar c
+
+/-- Set the title, with all externally supplied content confined to the payload. -/
+def ansi (title : String) : Bytes := [0x1B, 0x5D, 0x32, 0x3B] ++ utf8s (payload title) ++ [0x07]
+
+/-- A refresh must not interrupt an application's OSC, DCS or UTF-8 character. -/
+def update (observer : Vt) (title : String) : Bytes :=
+  if observer.atBoundary then ansi title else []
+
+end Title
 
 end Linger.Core.Terminal

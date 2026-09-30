@@ -3,8 +3,7 @@ module
 public import Tools.Picker
 public import Tools.Input
 public import Linger.Posix
-public import Linger.Core.Vt
-public import Linger.Core.Title
+public import Linger.Core.Terminal
 public import Linger.Runtime.Command
 
 public section
@@ -110,7 +109,7 @@ private def choose (executable : String) : IO Choice := do
   let saved ← termRaw stdinFd
   try
     writeAll stdoutFd "\x1b[?1049h\x1b[?25l\x1b[?2004h".toUTF8
-    writeAll stdoutFd (ByteArray.mk (Linger.Core.Title.ansi "linger").toArray)
+    writeAll stdoutFd (ByteArray.mk (Linger.Core.Terminal.Title.ansi "linger").toArray)
     let fds := #[stdinFd]
     let events := #[POLLIN]
     let mut state := Tools.Picker.init []
@@ -146,11 +145,11 @@ private def choose (executable : String) : IO Choice := do
           for byte in bytes.toList do
             let (next, emitted) := Tools.Input.feed decoder byte
             decoder := next
-            keys := keys ++ emitted.toArray
+            keys := keys ++ (emitted.filterMap Tools.Key.ofInput).toArray
       else if Tools.Input.pending decoder && (← monotonicMs) - lastInput ≥ 150 then
         let (next, emitted) := Tools.Input.flush decoder
         decoder := next
-        keys := emitted.toArray
+        keys := (emitted.filterMap Tools.Key.ofInput).toArray
       for key in keys do
         if !loaded && key == .accept then
           continue
@@ -181,7 +180,7 @@ private def choose (executable : String) : IO Choice := do
     try
       try
         writeAll stdoutFd "\x1b[0m\x1b[?2004l\x1b[?25h\x1b[?1049l".toUTF8
-        writeAll stdoutFd (ByteArray.mk (Linger.Core.Title.ansi "").toArray)
+        writeAll stdoutFd (ByteArray.mk (Linger.Core.Terminal.Title.ansi "").toArray)
       finally
         termRestore stdinFd saved
     finally

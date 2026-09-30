@@ -1,10 +1,8 @@
 module
 
-public import Tools.Key
-
 public section
 
-/-! Incremental input for the optional session selector.
+/-! Incremental terminal input, independent of application bindings.
 
 There is no growing control-sequence buffer. CSI parameters have a finite
 recognizer, and UTF-8 prefixes retain at most three bytes. Completed scalars use
@@ -12,6 +10,21 @@ Lean's UTF-8 validator on at most four bytes. Paste suppression belongs to the
 outer state so a timeout or malformed sequence cannot turn it off. -/
 
 namespace Tools.Input
+
+/-- Physical input events. C0 bytes without a dedicated key retain their byte
+identity; consumers decide which of them have an application binding. -/
+inductive Key where
+  | text (char : Char)
+  | control (byte : UInt8)
+  | backspace
+  | tab
+  | enter
+  | escape
+  | up
+  | down
+  | home
+  | end
+  deriving BEq, Repr, DecidableEq
 
 inductive Parameter where
   | empty
@@ -75,8 +88,8 @@ private def cursor (byte : UInt8) : Option Key :=
   match byte with
   | 0x41 => some .up
   | 0x42 => some .down
-  | 0x48 => some .first
-  | 0x46 => some .last
+  | 0x48 => some .home
+  | 0x46 => some .end
   | _ => none
 
 private def decode (bytes : Array UInt8) : Option Char :=
@@ -94,12 +107,9 @@ private def idle (paste : Bool) (byte : UInt8) : State × Option Key :=
       ({ paste },
         match byte with
         | 8 | 127 => some .backspace
-        | 21 => some .clear
-        | 16 => some .up
-        | 14 | 9 => some .down
-        | 13 | 10 => some .accept
-        | 3 | 4 => some .cancel
-        | _ => if byte ≥ 32 then some (.text (Char.ofUInt8 byte)) else none)
+        | 9 => some .tab
+        | 13 | 10 => some .enter
+        | _ => if byte ≥ 32 then some (.text (Char.ofUInt8 byte)) else some (.control byte))
     else
       if 0xc2 ≤ byte && byte ≤ 0xdf then ({ paste, mode := .utf2 byte }, none)
       else
@@ -139,14 +149,14 @@ private def step (state : State) (byte : UInt8) : State × Option Key :=
         | .pasteStart, 0x7e => ({ paste := true }, none)
         | .pasteEnd, 0x7e => (init, none)
         | .empty, _ => ({ paste := state.paste }, cursor byte)
-        | .one, 0x7e | .seven, 0x7e => ({ paste := state.paste }, some .first)
-        | .four, 0x7e | .eight, 0x7e => ({ paste := state.paste }, some .last)
+        | .one, 0x7e | .seven, 0x7e => ({ paste := state.paste }, some .home)
+        | .four, 0x7e | .eight, 0x7e => ({ paste := state.paste }, some .end)
         | _, _ => ({ paste := state.paste }, none)
       else ({ state with mode := .csi (advance parameter byte) }, none)
   | _ => utf8Step state byte
 
 /-- Text excludes C0, DEL and C1 controls. Paste admits only text, even when a
-decoder branch recognizes a navigation key or a command byte. -/
+decoder branch recognizes a navigation key or a control byte. -/
 private def deliver (paste : Bool) (event : Option Key) : List Key :=
   (event.filter fun
       | .text char => 32 ≤ char.toNat && (char.toNat < 127 || 160 ≤ char.toNat)
@@ -156,9 +166,9 @@ def feed (state : State) (byte : UInt8) : State × List Key :=
   let (next, event) := step state byte
   (next, deliver state.paste event)
 
-/-- A lone escape cancels outside paste. All other incomplete sequences are
-discarded; in particular, a timeout cannot disable paste suppression. -/
+/-- A lone escape emits its physical key outside paste. All other incomplete
+sequences are discarded; a timeout cannot disable paste suppression. -/
 def flush (state : State) : State × List Key :=
-  ({ paste := state.paste }, if state.mode = .escape ∧ state.paste = false then [.cancel] else [])
+  ({ paste := state.paste }, if state.mode = .escape ∧ state.paste = false then [.escape] else [])
 
 end Tools.Input

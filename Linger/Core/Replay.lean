@@ -87,9 +87,4 @@ def next (budget : Nat) (p : Plan) : Option (Render.Bytes × Plan) :=
           { parts := .rows rows pen' :: parts
             pending := bytes ++ (if rows.isEmpty then [] else [0x0D, 0x0A]) })
 
-/-- The following byte buffer shares a cap with the existing front buffer.
-Reserving one whole frame lets replay progress even when following output is
-full; increasing the front buffer is never needed to append a replay frame. -/
-def followingCap (cap frame front : Nat) : Nat := cap - max frame front
-
 end Linger.Core.Replay

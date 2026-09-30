@@ -322,7 +322,7 @@ def run (binary : Option String := none) : IO UInt32 := do
       let repeated ←
         awaitOutput c seen fun s =>
             titleIs (expectedTitle true) s && hasBytes (since s repeatStart) editor.toList &&
-              hasBytes (since s repeatStart) (Linger.Core.Title.ansi (expectedTitle true))
+              hasBytes (since s repeatStart) (Linger.Core.Terminal.Title.ansi (expectedTitle true))
       failures :=
         failures +
           (←

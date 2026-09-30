@@ -22,10 +22,9 @@ package linger where leanOptions :=
 point is that the state machines are ours to prove things about. -/
 @[default_target] lean_lib Linger where
 
-/-- The VT toolkit as a library in its own right: the emulator, its emitter, and
-the child-facing mediation — `Linger.Core.Vt`, `.Render`, `.Terminal` — with an
-import closure that contains nothing else (no `Posix`, no `Runtime`, no
-`Checkpoint`, no `Session`). `specs/archive/vt-toolkit.md` Step 4.
+/-- The VT toolkit: the emulator, renderer, streaming replay, child-facing
+mediation and safe title emission. Its import closure is exactly
+`Linger.Core.Vt`, `.Render`, `.Terminal`, `.Replay`, with no session or OS code.
 
 Deliberately NOT a `@[default_target]`: `./lake build` is what every other
 command in this repo pays for, and its job count is a number people read. Build
@@ -40,7 +39,17 @@ needs a sub-package with its own `srcDir` and a path `require`, which
 `tests/gates.sh` forbids to keep README's "no external Lean dependencies"
 honest. The half that BITES is therefore the import grep in `tests/gates.sh`,
 and this target is what that grep is a gate on. -/
-lean_lib LingerVt where roots := #[`Linger.Core.Vt, `Linger.Core.Render, `Linger.Core.Terminal]
+lean_lib LingerVt where roots := #[`Linger.Core.Terminal, `Linger.Core.Replay]
+
+/-- VT contracts build independently, including replay fidelity and title safety. -/
+lean_lib LingerVtTheorems where roots :=
+  #[`Theorems.Terminal, `Theorems.TerminalTitle, `Theorems.Replay]
+
+/-- Bounded terminal-key decoding, independent of any application's bindings. -/
+lean_lib LingerInput where roots := #[`Tools.Input]
+
+/-- Decoder contracts build without the picker action adapter or session code. -/
+lean_lib LingerInputTheorems where roots := #[`Theorems.Input]
 
 /-- Reusable fuzzy alignment, with no session or terminal imports.
 Build independently with `./lake build LingerFuzzy`; the import gate enforces

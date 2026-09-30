@@ -2,7 +2,7 @@ module
 
 public import Linger.Posix
 public import Linger.Core.Wire
-public import Linger.Core.Render
+public import Linger.Core.Terminal
 public import Linger.Core.Remote
 public import Linger.Core.Title
 public import Linger.Core.Status
@@ -254,7 +254,7 @@ def attach (name : String) (fd : UInt32) (readOnly : Bool := false) : IO Outcome
                     pure ()
         if receivedOutput && titleDirty && !leaving then
           let title := Linger.Core.Title.compose name summary observer.windowTitle
-          let bytes := Linger.Core.Title.update observer title
+          let bytes := Linger.Core.Terminal.Title.update observer title
           if !bytes.isEmpty then
             writeAll stdoutFd (ByteArray.mk bytes.toArray)
             titleDirty := false

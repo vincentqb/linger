@@ -140,6 +140,24 @@ sanctioned read of the representation, so it is the one place a mismatch between
 "what we think is queued" and "what goes out" could hide. -/
 theorem writeFrom_owed (b : Buf) : writeFrom b = owed b := rfl
 
+/-- Both queues share the cap even when the front exceeds one frame. -/
+theorem followingCap_front {cap frame front : Nat} (h : front ≤ cap) :
+    front + followingCap cap frame front ≤ cap := by
+  unfold followingCap
+  omega
+
+/-- Reserving a complete frame prevents following output from starving it. -/
+theorem followingCap_frame {cap frame front : Nat} (h : frame ≤ cap) :
+    frame + followingCap cap frame front ≤ cap := by
+  unfold followingCap
+  omega
+
+/-- The allowance is exactly the largest debt satisfying both reservations. -/
+theorem followingCap_iff {cap frame front debt : Nat} (hf : frame ≤ cap) (hp : front ≤ cap) :
+    debt ≤ followingCap cap frame front ↔ frame + debt ≤ cap ∧ front + debt ≤ cap := by
+  unfold followingCap
+  omega
+
 /-! ## §Bound over the queue's whole life
 
 The per-step bounds above compose into lifetime invariants of the reachability

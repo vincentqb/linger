@@ -4,6 +4,7 @@ import all Theorems.Buf
 import all Theorems.Wire
 import all Theorems.Vt
 import all Theorems.Terminal
+import all Theorems.TerminalTitle
 import all Theorems.Session
 import all Theorems.Name
 import all Theorems.Checkpoint
@@ -19,6 +20,7 @@ import all Theorems.Resurrect
 import all Theorems.Fuzzy
 import all Theorems.Picker
 import all Theorems.Input
+import all Theorems.Key
 import all Theorems.Entry
 public meta import Lean.Elab.Command
 

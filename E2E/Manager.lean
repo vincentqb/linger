@@ -1272,8 +1272,8 @@ private def statusChecks (e : Env) : IO Nat := do
                     let clean ← restored s 130
                     return rowsMatch vt && plain && rowsMatch matched && emphasis && onlyAnsi &&
                         clean &&
-                        hasBytes output (Linger.Core.Title.ansi "linger") &&
-                        hasBytes (← s.output.get) (Linger.Core.Title.ansi ""))
+                        hasBytes output (Linger.Core.Terminal.Title.ansi "linger") &&
+                        hasBytes (← s.output.get) (Linger.Core.Terminal.Title.ansi ""))
                   "both" 100 20)
   failures :=
     failures +

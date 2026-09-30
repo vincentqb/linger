@@ -73,12 +73,12 @@ code_count() { code_grep "$@" | awk 'END { print NR + 0 }'; }   # -> a number
 for p in Linger/Core Linger/Core/Vt.lean Linger/Core/Checkpoint.lean \
          Linger/Core/Session.lean Linger/Core/Replay.lean Linger/Core/Title.lean \
          Linger/Runtime Linger/Runtime/Client.lean Linger/Runtime/Daemon.lean \
-         Linger/Runtime/Command.lean Theorems/Title.lean \
+         Linger/Runtime/Command.lean Theorems/Title.lean Theorems/TerminalTitle.lean \
          Theorems Theorems/Session.lean Theorems/Replay.lean Tests E2E \
          Tools/Resurrect.lean Theorems/Resurrect.lean Manager/Resurrect.lean \
          Tools/Key.lean Tools/Fuzzy.lean Tools/Picker.lean Tools/Input.lean \
          Tools/Entry.lean Theorems/Entry.lean \
-         Theorems/Picker.lean Theorems/Input.lean \
+         Theorems/Picker.lean Theorems/Input.lean Theorems/Key.lean \
          Main.lean Manager/Picker.lean E2E/Manager.lean \
          LingerTest.lean c/shim.c lakefile.lean lake-manifest.json README.md; do
   [ -e "$p" ] || fail "$p is gone — a gate below would pass by matching nothing"
@@ -232,7 +232,7 @@ awk '
   || fail "README's prior-art list is not a bare pointer any more (see the lines above): name and link only, no characterization of another project — AGENTS.md, 'do not editorialize about other codebases'"
 
 # The vt-toolkit's import closure (`specs/archive/vt-toolkit.md` Step 4). The toolkit is
-# Linger/Core/{Vt,Render,Terminal}.lean, and the claim worth having is that its
+# Linger/Core/{Vt,Render,Terminal,Replay}.lean, and the claim worth having is that its
 # closure contains NOTHING else -- no Posix, no Runtime, no Checkpoint, no Session.
 # `lean_lib LingerVt` in lakefile.lean is the positive half: it elaborates the
 # closure. It cannot be the whole claim, because Lake resolves imports through one
@@ -248,10 +248,9 @@ awk '
 # imports someone thought of is not a closure gate. And exact means it also fires
 # when an import GOES, which is right -- the list below is the recorded header, so
 # Step 2/3 taking a friend import out is a reviewable edit here rather than a
-# silent one. Vt imports nothing; Render imports Vt; Terminal imports Render; the
-# two `import all Linger.Core.Vt` are the seal's friend imports (Step 1) and are
-# inside the boundary by construction. Because Vt is a leaf, an exact check on
-# these three files IS the closure.
+# silent one. Vt imports nothing; Render imports Vt; Terminal and Replay import
+# Render. The `import all Linger.Core.Vt` lines grant access within the sealed
+# toolkit. Because Vt is a leaf, these four headers define the whole closure.
 import_re='^[[:space:]]*((public|private|meta)[[:space:]]+)*import[[:space:]]+'
 module_imports() {
   # Imports precede the module body. Stop at `public section` so a later
@@ -277,26 +276,59 @@ import_closure Linger/Core/Render.lean \
   'public import Linger.Core.Vt;import all Linger.Core.Vt;'
 import_closure Linger/Core/Terminal.lean \
   'public import Linger.Core.Render;import all Linger.Core.Vt;'
+import_closure Linger/Core/Replay.lean \
+  'public import Linger.Core.Render;import all Linger.Core.Vt;'
+
+# Named targets must build the promised roots, not just happen to succeed.
+# Read declaration lines through code_grep, then compare their verbatim Name
+# literals: multiple backticks on a roots line are Lean syntax, not prose.
+library_roots() {
+  lr_got="$(code_grep '^lean_lib |^[[:space:]]+#[[]' lakefile.lean \
+    | sed 's/^[^:]*:[0-9]*://' \
+    | awk -v lib="$1" '
+        $1 == "lean_lib" { active = ($2 == lib) }
+        active { $1 = $1; printf "%s ", $0 }')"
+  [ "$lr_got" = "lean_lib $1 where roots := $2 " ] \
+    || fail "$1 lost its independent library roots: $lr_got"
+}
+library_roots LingerVt '#[`Linger.Core.Terminal, `Linger.Core.Replay]'
+library_roots LingerVtTheorems '#[`Theorems.Terminal, `Theorems.TerminalTitle, `Theorems.Replay]'
+library_roots LingerInput '#[`Tools.Input]'
+library_roots LingerInputTheorems '#[`Theorems.Input]'
+library_roots LingerFuzzy '#[`Tools.Fuzzy]'
+
+# Check every member of the proof family, not only the root headers: an
+# intermediate renderer lemma must not pull session policy into the VT target.
+module_imports Theorems/Vt.lean Theorems/Terminal.lean Theorems/TerminalTitle.lean \
+  Theorems/Replay.lean Theorems/Render.lean 'Theorems/Render/*' \
+| awk -F: '
+  { mod = $3
+    sub(/^[[:space:]]*((public|private|meta)[[:space:]]+)*import[[:space:]]+(all[[:space:]]+)?/, "", mod)
+    sub(/[[:space:]]+--.*/, "", mod); sub(/[[:space:]]+$/, "", mod)
+    if (mod !~ /^(Linger[.]Core[.](Vt|Render|Terminal|Replay)|Theorems[.](Vt|Terminal|TerminalTitle|Replay|Render([.][[:alnum:]_]+)*)|Init[.]Data[.]String[.](Legacy|Lemmas[.](TakeDrop|IsEmpty)))$/) {
+      print "  " $0; bad = 1
+    }
+  }
+  END { exit bad }' >&2 || fail "the VT proofs import outside the standalone library boundary"
 
 # Entry and manager policies have explicit, small import closures. Main
 # composes their executors with the session backend. The session library never
 # imports them, even through an intermediate module: every library import
 # stays in Linger or the one standard-library dependency owned by Posix.
 import_closure Tools/Resurrect.lean 'public import Linger.Core.Name;'
-import_closure Tools/Key.lean ''
+import_closure Tools/Key.lean 'public import Tools.Input;'
 import_closure Tools/Fuzzy.lean ''
-code_grep '^lean_lib LingerFuzzy where roots := #[[]`Tools[.]Fuzzy[]]$' lakefile.lean >/dev/null \
-  || fail "the reusable matcher lost its independent library target"
 import_closure Tools/Picker.lean 'public import Tools.Key;public import Tools.Fuzzy;public import Linger.Core.Name;public import Linger.Core.Listing;'
-import_closure Tools/Input.lean 'public import Tools.Key;'
+import_closure Tools/Input.lean ''
+import_closure Theorems/Input.lean 'public import Tools.Input;import all Tools.Input;'
 import_closure Tools/Entry.lean ''
 import_closure Linger/Core/Name.lean ''
 import_closure Linger/Core/Remote.lean 'public import Linger.Core.Name;'
-import_closure Linger/Core/Title.lean 'public import Linger.Core.Name;public import Linger.Core.Render;'
+import_closure Linger/Core/Title.lean 'public import Linger.Core.Name;'
 import_closure Linger/Runtime/Command.lean ''
 import_closure Manager/Resurrect.lean 'public import Tools.Resurrect;public import Linger.Core.Remote;'
 import_closure Manager/Picker.lean \
-  'public import Tools.Picker;public import Tools.Input;public import Linger.Posix;public import Linger.Core.Vt;public import Linger.Core.Title;public import Linger.Runtime.Command;'
+  'public import Tools.Picker;public import Tools.Input;public import Linger.Posix;public import Linger.Core.Terminal;public import Linger.Runtime.Command;'
 import_closure Main.lean \
   'public import Linger.Runtime.Cli;public import Linger.Runtime.Resume;public import Tools.Entry;public import Manager.Picker;public import Manager.Resurrect;'
 module_imports 'Linger/*' Linger.lean \
@@ -376,9 +408,13 @@ for claim in matches_iff_sublist align_isSome_iff_matches visible_order parseLis
   code_grep "^(private )?theorem $claim([[:space:]]|:)" Theorems/Picker.lean >/dev/null \
     || fail "selector contract disappeared: $claim"
 done
-for claim in feed_storage_bound feed_paste_only_text feed_ctrl_r flush_no_accept; do
+for claim in feed_storage_bound feed_text_valid feed_paste_only_text feed_control flush_no_enter; do
   code_grep "^(private )?theorem $claim " Theorems/Input.lean >/dev/null \
     || fail "input contract disappeared: $claim"
+done
+for claim in ofInput_control_iff feed_byte_bindings feed_paste_no_commands feed_ctrl_r flush_no_accept; do
+  code_grep "^theorem $claim " Theorems/Key.lean >/dev/null \
+    || fail "selector binding contract disappeared: $claim"
 done
 for tie in \
   'let incoming ← IO[.]ofExcept [(]Tools[.]Picker[.]parseSnapshot result[.]stdout[)]' \
@@ -392,8 +428,8 @@ for tie in \
   'let ready ← poll fds events 50' \
   'let frame := draw state snapshot loaded withColor current[.]1 current[.]2' \
   'let withColor := [(]← IO[.]getEnv "NO_COLOR"[)][.]isNone' \
-  'writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Core[.]Title[.]ansi "linger"[)][.]toArray[)]' \
-  'writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Core[.]Title[.]ansi ""[)][.]toArray[)]' \
+  'writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Core[.]Terminal[.]Title[.]ansi "linger"[)][.]toArray[)]' \
+  'writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Core[.]Terminal[.]Title[.]ansi ""[)][.]toArray[)]' \
   'writeAll stdoutFd frame[.]toUTF8' \
   'discard child[.]wait' \
   'let child ← IO[.]Process[.]spawn [{] cmd := executable, args := #[[]"attach", target[]] [}]'; do
@@ -405,9 +441,10 @@ picker_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Manager/Picker.lean)"
 # replacement. Computing rows or refreshed state without consuming them is
 # insufficient. The loop seams fix draw, poll/decode/step, then refresh ordering.
 # A completed snapshot must not replace the target underneath an unread key.
-# Preserve byte order and consume both decoder results through key dispatch.
+# Preserve byte order and consume both decoder results through the proved
+# application binding before dispatch.
 for tie in \
-  'for byte in bytes[.]toList do let [(]next, emitted[)] := Tools[.]Input[.]feed decoder byte decoder := next keys := keys [+][+] emitted[.]toArray else if Tools[.]Input[.]pending decoder && [(]← monotonicMs[)] - lastInput ≥ 150 then let [(]next, emitted[)] := Tools[.]Input[.]flush decoder decoder := next keys := emitted[.]toArray for key in keys do' \
+  'for byte in bytes[.]toList do let [(]next, emitted[)] := Tools[.]Input[.]feed decoder byte decoder := next keys := keys [+][+] [(]emitted[.]filterMap Tools[.]Key[.]ofInput[)][.]toArray else if Tools[.]Input[.]pending decoder && [(]← monotonicMs[)] - lastInput ≥ 150 then let [(]next, emitted[)] := Tools[.]Input[.]flush decoder decoder := next keys := [(]emitted[.]filterMap Tools[.]Key[.]ofInput[)][.]toArray for key in keys do' \
   'let nameCol := Linger[.]Core[.]Listing[.]nameWidth [(]snapshot[.]candidates[.]map fun target => [[][(]"name", target[)][]][)]' \
   'let mut index := start for item in [(]items[.]drop start[)][.]take slots do let chosen := index == state[.]cursor let selection := if chosen then "\\x1b[[]7m" else "" let mut pieces := #[[][(]if chosen then " ▸ " else " ", selection[)][]] let chars := Tools[.]Picker[.]highlightedPresentation snapshot nameCol state[.]query item for char in Tools[.]Picker[.]emphasizeCells chars do let statusStyle := if withColor then [(]char[.]status[.]map Linger[.]Core[.]Status[.]style[)][.]getD "" else "" let emphasis := if char[.]matched then "\\x1b[[]4m" else "" pieces := pieces[.]push [(]String[.]singleton char[.]char, selection [+][+] statusStyle [+][+] emphasis[)] lines := lines[.]push pieces index := index [+] 1' \
   'let mut frame := "\\x1b[[]0m\\x1b[[]H\\x1b[[]2J" let mut first := true for line in lines do if !first then frame := frame [+][+] "\\r\\n" first := false let mut used := 0 let mut clipped := false let mut activeStyle := "" for [(]text, style[)] in line do if clipped then break if style != activeStyle then frame := frame [+][+] "\\x1b[[]0m" [+][+] style activeStyle := style for raw in text[.]toList do let c := if raw[.]toNat < 0x20 [|][|] [(]raw[.]toNat ≥ 0x7F && raw[.]toNat < 0xA0[)] then '"'"'[?]'"'"' else raw let cells := Linger[.]Core[.]Vt[.]charWidth c if used [+] cells > width then clipped := true break frame := frame[.]push c used := used [+] cells if !activeStyle[.]isEmpty then frame := frame [+][+] "\\x1b[[]0m" return frame' \
@@ -470,15 +507,17 @@ code_grep '^[[:space:]]+let r ← unixConnect path nonblocking$' Linger/Runtime/
 # Title writes use the bounded, control-free encoder and the existing VT
 # observer. Observe raw application bytes only, reassert repeated OSC titles,
 # and defer every injected title until the parser and UTF-8 decoder are idle.
-for claim in compose_parts payload_safe ansi_payload_bound ansi_ends update_waits \
-             update_requires_boundary observe_append observe_no_history observe_dims \
-             observe_invariants; do
-  code_grep "^theorem $claim " Theorems/Title.lean >/dev/null \
+code_grep '^theorem compose_parts ' Theorems/Title.lean >/dev/null \
+  || fail "session title composition contract disappeared"
+for claim in payload_safe ansi_payload_bound ansi_ends update_waits \
+             update_nonempty_iff update_requires_boundary; do
+  code_grep "^(public )?theorem $claim " Theorems/TerminalTitle.lean >/dev/null \
     || fail "title contract disappeared: $claim"
 done
-for claim in observe_esc_intermediates observe_escInter_pending observe_del_boundary \
+for claim in observe_append observe_no_history observe_dims observe_invariants \
+             observe_esc_intermediates observe_escInter_pending observe_del_boundary \
              step_escInter_final_boundary; do
-  code_grep "^theorem $claim " Theorems/Vt.lean >/dev/null \
+  code_grep "^(public )?theorem $claim " Theorems/Vt.lean >/dev/null \
     || fail "pending terminal sequence contract disappeared: $claim"
 done
 code_grep '^theorem leave_boundary_title ' Theorems/Render/Modes.lean >/dev/null \
@@ -488,7 +527,7 @@ for tie in \
   'let mut observer := Linger[.]Core[.]Vt[.]Vt[.]init 1 1' \
   'while !leaving do try if let some output[[:space:]]*← Command[.]poll pending then let fresh := if output[.]exitCode == 0 then output[.]stdout[.]trimAscii[.]toString else String[.]singleton [(]Linger[.]Core[.]Status[.]icon [.]unknown[)] titleDirty := titleDirty [|][|] fresh != summary summary := fresh nextSummary := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]← monotonicMs[)] ≥ nextSummary then pending[.]set [(]some [(]← Command[.]start self[.]toString #[[]"status"[]][)][)] catch _ => summary := String[.]singleton [(]Linger[.]Core[.]Status[.]icon [.]unknown[)] titleDirty := true nextSummary := [(]← monotonicMs[)] [+] 1000 let revs ← poll #[[]stdinFd, fd[]] #[[]POLLIN, POLLIN[]] 200' \
   'writeAll stdoutFd [(]ByteArray[.]mk payload[.]toArray[)] observer := observer[.]observe payload receivedOutput := true' \
-  'if receivedOutput && titleDirty && !leaving then let title := Linger[.]Core[.]Title[.]compose name summary observer[.]windowTitle let bytes := Linger[.]Core[.]Title[.]update observer title if !bytes[.]isEmpty then writeAll stdoutFd [(]ByteArray[.]mk bytes[.]toArray[)] titleDirty := false' \
+  'if receivedOutput && titleDirty && !leaving then let title := Linger[.]Core[.]Title[.]compose name summary observer[.]windowTitle let bytes := Linger[.]Core[.]Terminal[.]Title[.]update observer title if !bytes[.]isEmpty then writeAll stdoutFd [(]ByteArray[.]mk bytes[.]toArray[)] titleDirty := false' \
   'try try writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Core[.]Render[.]leaveAnsi[.]toArray[)] finally termRestore stdinFd saved finally Command[.]stop pending'; do
   printf '%s\n' "$client_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "attached title lost its observer, sampler or handback contract: $tie"
@@ -630,9 +669,13 @@ shim_n="$(code_count 'LEAN_EXPORT' 'c/shim.c')"
 # captured snapshot, bounded advances and shared byte allowance. The delivery
 # suite separately observes framing, prior/replay/live ordering and exit tails.
 for claim in start_faithful next_faithful next_bounded next_progress steps_storage \
-             drain_start followingCap_front followingCap_frame; do
-  code_grep "^theorem $claim " 'Theorems/Replay.lean' > /dev/null \
+             drain_start; do
+  code_grep "^(public )?theorem $claim " 'Theorems/Replay.lean' > /dev/null \
     || fail "replay claim $claim disappeared"
+done
+for claim in followingCap_front followingCap_frame followingCap_iff; do
+  code_grep "^theorem $claim " Theorems/Buf.lean >/dev/null \
+    || fail "shared buffer allowance claim $claim disappeared"
 done
 code_grep '^theorem onMsg_attach_snapshot ' 'Theorems/Session.lean' > /dev/null \
   || fail "the attach snapshot theorem disappeared"
@@ -654,7 +697,7 @@ code_grep '^[[:space:]]+match Replay[.]next Linger[.]Core[.]Session[.]outputChun
   || fail "replay advancement no longer uses the proved output chunk"
 code_grep '^def replayFrameCap : Nat := Linger[.]Core[.]Session[.]outputChunk [+] [(]Wire[.]encode [(][.]output [[][]][)][)][.]length$' 'Linger/Runtime/Daemon.lean' > /dev/null \
   || fail "replay reservation no longer includes the wire encoder's frame overhead"
-code_grep '^[[:space:]]+let cap := Replay[.]followingCap outbufCap replayFrameCap [(]owedLen c[.]out[)]$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+let cap := followingCap outbufCap replayFrameCap [(]owedLen c[.]out[)]$' 'Linger/Runtime/Daemon.lean' > /dev/null \
   || fail "following output no longer shares the front buffer allowance"
 code_grep '^[[:space:]]+bufEnqueue [(]outbufCap - owedLen c[.]after[)] [.]empty$' 'Linger/Runtime/Daemon.lean' > /dev/null \
   || fail "replay frames no longer account for following output debt"
