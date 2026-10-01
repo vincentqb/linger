@@ -23,7 +23,7 @@
 #  17. titles: attention refresh, split output, pipe-error recovery and handback
 #  18. interchange: discarded foreign metadata, current fields and exclusive export
 #  (1) also covers Tests/Fuzz.lean: randomized §Replay round-trip search
-#  every pty suite also carries an EXACT CHECK COUNT (see `suite` below): green
+#  every pty suite also carries an EXACT CHECK COUNT (see `--suites` below): green
 #  means "no failures AND every recorded assertion ran".
 #
 # RUN THIS IN THE FOREGROUND. Enforced, not requested: see "SIGINT must be
@@ -79,21 +79,6 @@ if [ "$sigint" -ne 9 ]; then
   printf 'that survives execve. setsid and nohup are fine alone; the & is what does it.\n' >&2
   fail "SIGINT is not deliverable (probe exited $sigint, want 9) — run in the foreground, not with '&'"
 fi
-
-# Run one pty suite: no failures and exactly the recorded number of checks.
-# Exactness removes headroom: adding a check requires updating the number now,
-# instead of silently allowing a later assertion to disappear.
-suite() {                                   # suite <name> <exact checks>
-  out="/tmp/linger-$1.out"
-  ./.lake/build/bin/e2e "$1" > "$out" 2>&1 \
-    || { tail -25 "$out"; fail "$1 suite"; }
-  tail -1 "$out" | grep -q '^FAILURES: 0$' \
-    || { tail -25 "$out"; fail "$1 suite"; }
-  n="$(grep -c '^PASS ' "$out")"
-  [ "$n" -eq "$2" ] \
-    || fail "$1 suite ran $n checks (expected exactly $2) — update the expectation for an intentional addition; a deletion is a regression"
-  printf '  %s: %s checks\n' "$1" "$n"
-}
 
 say "1. build (program + theorems + tests)"
 # Lake checks source/dependency content and replays cached diagnostics. Rehash
@@ -177,7 +162,7 @@ say "2b. semantic coverage of pure code + runtime emitter classification"
 cat /tmp/linger-coverage.log
 tail -1 /tmp/linger-coverage.log | grep -q '^FAILURES: 0$' || fail "coverage gate"
 
-say "2c. CI runner selection and Lake build reuse"
+say "2c. CI runner selection, Lake build reuse and suite isolation"
 # Which runners CI asks for decides the bill (measurements in SCRATCHPAD.md) and, in the
 # other direction, whether AGENTS.md's macOS claim is checked by anything. `E2E.Ci` runs
 # the real script, including its `git log --since` against throwaway repositories with
@@ -187,8 +172,8 @@ ci_out=/tmp/linger-ci.out
 cat "$ci_out"
 tail -1 "$ci_out" | grep -q '^FAILURES: 0$' || fail "CI checks"
 ci_n="$(grep -c '^PASS ' "$ci_out")"
-[ "$ci_n" -eq 12 ] \
-  || fail "e2e ci ran $ci_n checks (expected exactly 12)"
+[ "$ci_n" -eq 21 ] \
+  || fail "e2e ci ran $ci_n checks (expected exactly 21)"
 
 say "2d. fuzz corpus: no held-out mutations, failure lists asserted empty"
 # The §Replay fuzzer is only a guarantee if nothing is excluded and the
@@ -226,50 +211,16 @@ sleep 1
 LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger info "$sentinel_name" >/dev/null \
   || fail "sentinel session did not start"
 
-say "4. attach / detach / reattach / mirror / wait"
-suite attach 47
-
-say "5. reboot resume"
-suite resume 15
-
-say "6. overview listing (linger ls)"
-suite overview 16
-
-say "7. remote sessions over ssh"
-suite remote 21
-
-say "8. adverse timing (busy daemon listing, name-ownership race)"
-suite robust 18
-
-say "9. graphics passthrough (kitty / sixel)"
-suite graphics 9
-
-say "10. terminal ownership (queries + stable child profile)"
-suite terminal 12
-
-say "11. status column (unread / seen transitions)"
-suite status 17
-
-say "12. agent verbs (info / capture / send - / resize)"
-suite agent 46
-
-say "13. watch (read-only mirror: geometry, keyboard, hand-back, seen)"
-suite watch 18
-
-say "14. recipes (native terminal settings and tmux-resurrect import)"
-suite recipes 55
-
-say "15. delivery (large replay, ordering, exit tails and retired transports)"
-suite delivery 34
-
-say "16. manager (entry dispatch, selection, creation, input and terminal handoff)"
-suite manager 111
-
-say "17. attached titles (attention, complete boundaries and default handback)"
-suite title 18
-
-say "18. save interchange (current fields, discarded metadata and exclusive publication)"
-suite interop 33
+say "4–18. live suites (four isolated processes, longer suites first)"
+# One assertion inventory, consumed by the tested Lean runner. Each child keeps
+# /tmp/linger-<suite>.out; zero exit, final verdict and exact count must all agree.
+# Ordinary child spawning preserves SIGINT, unlike a shell's asynchronous list.
+# No suite shares an Env directory, and the runner waits for all of them on failure.
+./.lake/build/bin/e2e --suites \
+  manager:111 delivery:34 attach:47 agent:46 \
+  resume:15 watch:18 title:18 graphics:9 robust:18 \
+  interop:33 recipes:55 status:17 terminal:12 overview:16 remote:21 \
+  || fail "live suites (see /tmp/linger-*.out)"
 
 LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger info "$sentinel_name" >/dev/null \
   || fail "a suite terminated the unrelated sentinel session"

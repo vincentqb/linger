@@ -106,10 +106,23 @@ public meta def pureDefNames (env : Environment) : IO (Array Lean.Name) := do
         names := names.push name
   return names.qsort (·.toString < ·.toString)
 
-meta def moduleUnder (env : Environment) (root decl : Lean.Name) : Bool :=
-  match env.getModuleIdxFor? decl with
-  | none => false
-  | some idx => root.isPrefixOf env.header.moduleNames[idx.toNat]!
+/-- Enumerate selected imported modules, retaining canonical ownership and visibility.
+
+An imported theorem can be refined by another module; look up its current
+constant information and keep only the module that owns its name. -/
+meta def moduleConsts (env : Environment) (keep : Lean.Name → Bool) :
+    Array (Lean.Name × ConstantInfo) :=
+  Id.run do
+    let mut found := #[]
+    for idx in [:env.header.modules.size] do
+      unless keep env.header.modules[idx]!.module do
+        continue
+      for name in env.header.moduleData[idx]!.constNames do
+        unless env.getModuleIdxFor? name == some idx do
+          continue
+        if let some ci := env.find? name (skipRealize := true) then
+          found := found.push (name, ci)
+    return found
 
 /-- Resolved renderer/replay references in the built program's module closure.
 
@@ -120,17 +133,17 @@ public meta def runtimeEmitters (defs : Array Lean.Name) (main : Lean.Name := `M
     (arts : NameMap ImportArtifacts := {}) : IO (Array String) := do
   let env ← importModules #[{ module := main }] {} (arts := arts)
   let mut refs : NameHashSet := {}
-  for (name, ci) in env.constants.toList do
+  for (name, ci) in
+    moduleConsts env
+      (fun mod => mod == main || [`Linger, `Tools, `Manager].any (·.isPrefixOf mod)) do
     let some idx := env.getModuleIdxFor? name | continue
-    let mod := env.header.moduleNames[idx.toNat]!
-    unless mod == main || [`Linger, `Tools, `Manager].any (·.isPrefixOf mod) do
-      continue
+    let mod := env.header.modules[idx.toNat]!.module
     if ci.isTheorem then
       continue
     let some value := ci.value? (allowOpaque := true) | continue
     for target in value.getUsedConstants do
       let some targetIdx := env.getModuleIdxFor? target | continue
-      let targetMod := env.header.moduleNames[targetIdx.toNat]!
+      let targetMod := env.header.modules[targetIdx.toNat]!.module
       let logical := privateToUserName target
       if
           defs.contains logical && mod != targetMod &&
@@ -144,18 +157,13 @@ public meta def runtimeEmitters (defs : Array Lean.Name) (main : Lean.Name := `M
 run_cmd
   let env ← getEnv
   let logical ← liftIO (pureDefNames env)
-  let constants := env.constants.toList
   let pureConsts :=
-    constants.filterMap fun (n, ci) =>
-      if !ci.isTheorem && (moduleUnder env `Linger.Core n || moduleUnder env `Tools n) then
-        some (privateToUserName n, n)
-      else none
+    (moduleConsts env (fun mod => [`Linger.Core, `Tools].any (·.isPrefixOf mod))).toList.filterMap
+      fun (n, ci) => if !ci.isTheorem then some (privateToUserName n, n) else none
   let theoremConsts :=
-    constants.foldl
-      (fun acc (n, ci) =>
-        if ci.isTheorem && moduleUnder env `Theorems n then
-          ci.type.foldConsts acc fun name seen => seen.insert name
-        else acc)
+    (moduleConsts env ((`Theorems : Lean.Name).isPrefixOf ·)).foldl
+      (fun acc (_, ci) =>
+        if ci.isTheorem then ci.type.foldConsts acc fun name seen => seen.insert name else acc)
       NameHashSet.empty
   let mut resolved : Array (Lean.Name × Lean.Name) := #[]
   for n in logical do

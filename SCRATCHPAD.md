@@ -14563,3 +14563,128 @@ verifier and the accepted independent review. The spec is archived as
 `specs/archive/active-import-data.md`; the closure checkpoint changes records
 only and its publication/check status will be reported separately.
 macOS was not executed this round.
+
+## Step 1 notes — 2026-10-01
+
+The new `specs/ci-latency.md` audits compilation and CI separately.
+Baseline hosted run `36908212054`, on `f6a5583`, passes and takes
+535 seconds for the full Linux job. Its verifier takes 412.5 seconds:
+29.8 seconds for the content-checked build, 33.0 for gates and layout,
+19.5 for semantic coverage, and 315.9 for serial live suites. Dependency
+installation takes 62 seconds. The build cache comes from `a929765`,
+so that build includes intervening source changes; it is not a no-change
+compiler measurement. The local no-change full-target build takes 0.67
+seconds. Original hosted logs, stage arithmetic and warm-build receipt are
+in `/tmp/linger-ci-latency-20261001-Ah7wOc/evidence/`.
+
+The verifier now gives its one live-suite/count inventory to a small Lean
+runner. It keeps at most four independent child processes alive, redirects
+each child's combined output into the existing suite log, and waits for all
+work after a suite failure. Every result still needs zero exit, a final
+successful verdict and the exact assertion count. Ordinary child spawning
+preserves SIGINT. The runner refuses the shared test-directory override;
+the default harness directories already carry each process's identity.
+Production code, C, dependencies and pure proof statements are unchanged.
+
+Nine new CI assertions exercise the actual runner and the actual workflow
+dependency step. The old binary rejects the new runner command. Six temporary
+runner mutations compile and fail their intended checks: serial execution,
+a fifth concurrent child, ignoring exit status, ignoring the final verdict,
+ignoring assertion counts, and inherited ignored SIGINT. Byte-exact restoration
+rebuilds and passes all 21 CI assertions. A source-gate mutation replacing the
+verifier's real runner invocation also fails, then restores exactly. These
+receipts live under `evidence/runner-mutations/` and
+`evidence/runner-tie-mutation.json` in the task directory.
+
+Dependency installation tries the image's existing package index without
+recommended packages, then refreshes and retries only after failure. The
+three workflow fixtures fail against the previous unconditional refresh and
+pass after this change. They also verify that a failed retry is fatal.
+Their isolated PATH contains package-tool stubs, so they never install packages.
+The macOS dependency branch is unchanged.
+
+The first foreground runner-only verifier passes in 121.6 seconds,
+19:01:07Z–19:03:08Z. All 470 live assertions across fifteen suites, 21 CI
+assertions, 63 shim assertions, the complete theorem census, compiled-emitter
+classification, ABI, layout, fuzz checks and unrelated-session sentinel pass.
+Source identities remain fixed throughout. Fresh suite logs are copied only
+after successful completion; each count is audited against the actual script.
+The preceding full local verifier took 383.2 seconds. This is a local comparison;
+new hosted timing awaits publication. Receipt: `evidence/runner-only-full/`.
+
+Initial independent review finds no runtime blocker, but the new logging
+fixture originally only wrote large stdout/stderr payloads: it did not assert
+they reached the logs. The existing assertion now reads every completed fixture
+log and checks both complete payloads. Discarding stderr compiles but fails that
+assertion; byte-exact runner restoration passes all 21 CI checks. The review,
+source hashes and new mutation receipt are in `review/` and
+`evidence/stderr-retention/`. Worker integration and final assembled review
+remain; this first result does not certify those later changes.
+
+The coverage worker removes full-environment enumeration and repeated
+module-name array construction. It enumerates only relevant imported modules,
+checks each constant's canonical owner and uses its currently visible metadata.
+Fresh source parsing and exact theorem-type attribution remain unchanged.
+The runtime fixture imports its actual elaboration API and now also checks a
+private canonical reference. The backing inventory is unchanged. Three fresh
+elaborations per variant, with warm imported artifacts, give combined medians
+of 17.453 seconds before and 9.004 after (48.4% less). All 354 definitions and
+27 renderer/replay references remain covered. Sixteen deliberately broken
+cases fail and eight controls pass, including private declarations, namespace
+versus module ownership, stale artifacts and new unclassified runtime calls.
+Aborted fixture setup attempts are recorded separately, not counted as kills.
+Both accepted files match the worker's SHA256 identities in
+`evidence/coverage-integration.json`; report and reproducible probes are in
+`evidence-coverage/`. A clean compiler profile is still pending.
+
+The wait worker makes a one-line cleanup change: Client.bye reuses its existing
+bounded child-reap helper instead of sleeping unconditionally for the full
+detach grace. The same deadline remains for a child that has not exited.
+An external native Lean probe linked to the actual harness fails before the
+change and passes after: immediate completion falls from 601 to 20 ms;
+a 250 ms completion finishes in 262 ms; a nonresponsive child retains its
+622 ms observed grace and is reaped. A compiled 100 ms grace mutation loses the
+delayed completion receipt and fails the grace check; exact restoration passes.
+Six unchanged live suites pass all 273 assertions under four concurrent
+processes. No negative observation interval, fixture size or assertion was
+removed. This is a cleanup-probe saving, not a claimed whole-suite saving.
+The accepted Harness identity and all evidence are under `evidence-waits/`
+and `evidence/wait-integration.json`.
+
+The assembled foreground Linux verifier passes in 118.443 seconds,
+19:13:35Z–19:15:33Z, with unchanged source bytes and modes throughout.
+All fifteen live suites execute the same 470 assertions; the 21 CI and 63 shim
+assertions, full proof and unit build, both semantic inventories, generated C
+ABI, layout, fuzz checks and unrelated-session sentinel pass. The live batch
+takes about 79.5 seconds. The receipt and fresh logs are in
+`evidence/integrated-full/`. This includes the logging-assertion fix and both
+accepted worker patches; no rendering optimization is present.
+
+The isolated coverage worktree also measures an actual clean full-target
+build: `./lake clean` removes `.lake/build`, then
+`./lake --rehash --wfail build Linger Theorems Tests linger lingertest e2e`
+passes in 88.528 seconds. Its identical warm rerun passes in 0.595 seconds
+without new Built records. The longest reported jobs are Theorems.Vt (33s),
+Theorems.Render.Grid (19s) and Tests.Render (17s); these overlap and cannot be
+added to wall time. All 175 source identities remain fixed. This one run uses
+the baseline plus accepted coverage patch on the shared 192-logical-CPU host;
+the installed compiler and OS page cache remain warm, and concurrent work is
+recorded. It is not a hosted measurement or a before/after compiler claim.
+The commands, load observations, per-module times and source receipts are in
+`evidence-coverage/cold-build/`.
+
+Before checkpointing, both required build commands pass again in about
+0.6 seconds each and all-file commit hooks pass in 11.2 seconds. The source
+manifest remains unchanged during these checks, including the updated
+measurement records. Logs and exit statuses are in
+`evidence/step1-precommit/`.
+
+Final independent review accepts all nine changed code/configuration files
+without blockers at 19:21:54Z. It reconciles the source identities, all
+assertion counts, seven compiled runner mutations, coverage mutations and
+controls, the native detach probe, and the full verifier/precommit receipts.
+Only the two measurement records change after the full run. Review and
+accepted SHA256 values are in `review/final-ci-review.md`. Step 1 is ready
+for its verified commit. The measured rendering hotspot and largest theorem
+module remain separate follow-up investigations, not unverified additions
+to this checkpoint.

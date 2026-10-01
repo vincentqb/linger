@@ -1219,6 +1219,10 @@ awk '
 # must use the same flags; otherwise those checks protect only their fixture.
 grep -qE '^[.]/lake --rehash --wfail build[[:space:]]' tests/e2e.sh \
   || fail "tests/e2e.sh: the build must use the cache-checking flags exercised by E2E.Ci (--rehash --wfail)"
+# The real suites must use the same isolated runner whose failure, signal and
+# assertion-count contracts E2E.Ci exercises.
+grep -qE '^[.]/[.]lake/build/bin/e2e --suites[[:space:]]' tests/e2e.sh \
+  || fail "tests/e2e.sh: run live suites through the tested --suites entry point"
 grep -qE '^ +- cron:' "$ci_yml" \
   || fail "$ci_yml: no schedule — with macOS off the per-push path, the cron IS when macOS runs"
 grep -q 'workflow_dispatch' "$ci_yml" \

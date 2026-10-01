@@ -15,11 +15,10 @@ worklog), `specs/archive/` (closed build records), the comments in
 
 ## Where things stand — read this first after any compaction
 
-1. No spec is in flight. The last one closed on 2026-10-01
-   (`specs/archive/active-import-data.md`: keep useful imported names and
-   directories, discard foreign provenance, and generalize metadata irrelevance).
-   The assembled Linux verifier and independent review pass; hosted source
-   gates pass and the full hosted check is pending at closure.
+1. `specs/ci-latency.md` is in flight: measure compilation and hosted CI,
+   remove avoidable waits and repeated work, and preserve every verifier.
+   The preceding round closed on 2026-10-01
+   (`specs/archive/active-import-data.md`).
    New work opens a new `specs/<slug>.md`, names itself here, and keeps the
    live count at one; every behavioral fix starts with a failing check and
    every deletion survives the full verifier stack.
@@ -88,6 +87,10 @@ runs the whole verifier, then the same hooks on Linux. Layout is checked
 once by `tests/e2e.sh`. Branches and PRs reuse content-checked build and
 formatter caches; scheduled, manual and tag runs start clean. A compiler
 or build-configuration change invalidates the build cache.
+Live suites run as isolated processes through `E2E.Runner`, with a bounded
+concurrency limit and the sole assertion inventory in `tests/e2e.sh`.
+Use the default per-process state directories for the full verifier;
+`LINGER_TEST_DIR` is reserved for focused single-suite runs.
 **macOS is not on the per-push path**: ubuntu runs every
 push, macOS on a weekly cron (only when commits landed), a `v*` tag, or
 `workflow_dispatch` — reach for that when a commit touches `c/shim.c` or

@@ -52,7 +52,7 @@ run_cmd
   -- This exact fixture must compile before its two inventories can pass.
   let fixture :=
     r#"module
-public import Lean
+public import Lean.Elab.Command
 public import Linger.Runtime.CoverageShadow
 public import Linger.Core.Render
 public section
@@ -82,7 +82,7 @@ namespace Probe.Inner
   #check `(command| end Decoy)
 end Probe
 namespace Linger.ReferenceProbe
-def canonical := Linger.Core.Render.titleAnsi
+private def canonical := Linger.Core.Render.titleAnsi
 def relative := Core.Render.gridAnsi
 def rooted := _root_.Linger.Core.Render.restore
 open Linger.Core

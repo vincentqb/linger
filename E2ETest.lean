@@ -17,6 +17,7 @@ public import E2E.Interop
 public import E2E.Manager
 public import E2E.RemoteLive
 public import E2E.Ci
+public import E2E.Runner
 
 public section
 
@@ -27,7 +28,7 @@ The suites share a harness; separate executable blocks would duplicate the same
 lakefile stanza.
 
 Each suite prints `PASS <name>` / `FAIL <name>` per check and `FAILURES: <n>` last;
-`tests/e2e.sh` reads the verdict and requires the exact recorded check count. An
+`tests/e2e.sh` supplies the exact recorded check counts to the batch runner. An
 unknown name is an error, not a silent success. -/
 
 def suites : List (String × IO UInt32) :=
@@ -72,6 +73,20 @@ def main (args : List String) : IO UInt32 := do
     E2E.Manager.probe rest
   | "--import-probe" :: rest =>
     E2E.Recipes.importProbe rest
+  | ["--runner-probe", dir, name] =>
+    E2E.Ci.runnerProbe dir name
+  | "--suites" :: entries =>
+    let specs :=
+      entries.filterMap fun entry => do
+        let [name, count] := entry.splitOn ":" | none
+        if !(suites.any (·.1 == name)) then
+          none
+        else
+          some (name, ← count.toNat?)
+    if specs.length != entries.length then
+      IO.eprintln "e2e: expected known-suite:assertion-count"
+      return 2
+    E2E.Runner.run (← IO.appPath).toString #[] "/tmp" specs
   | ["delivery", check] =>
     E2E.Delivery.run (some check)
   | ["title", binary] =>

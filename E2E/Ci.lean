@@ -1,6 +1,7 @@
 module
 
 public import E2E.Harness
+public import E2E.Runner
 
 public section
 
@@ -76,6 +77,135 @@ def repoRoot : IO String := do
 def ubuntuOnly : String := "[\"ubuntu-latest\"]"
 
 def both : String := "[\"ubuntu-latest\", \"macos-latest\"]"
+
+/-- Child fixtures for the actual suite runner, including its signal and log contract. -/
+def runnerProbe (dir name : String) : IO UInt32 := do
+  if name.startsWith "job-" then
+    IO.FS.writeFile s!"{dir}/{name}" ""
+    unless ← waitFor 5000 (System.FilePath.pathExists s!"{dir}/release") do
+      IO.println "FAILURES: 1"
+      return 1
+    let signal ←
+      IO.Process.output
+          { cmd := "sh", args := #["-c", "trap 'exit 9' INT; kill -s INT $$; exit 7"] }
+    if signal.exitCode != 9 then
+      IO.println "FAILURES: 1"
+      return 1
+    -- More than a pipe buffer on each stream: redirection must not deadlock.
+    IO.eprint (String.ofList (List.replicate 70000 'e') ++ "\n")
+    IO.print (String.ofList (List.replicate 70000 'o') ++ "\n")
+  if name == "after-error" then
+    IO.sleep 200
+  IO.println "PASS fixture"
+  IO.println (if name == "bad-verdict" then "FAILURES: 1" else "FAILURES: 0")
+  return if name == "bad-exit" then 1 else 0
+
+def suiteRunner : IO Nat := do
+  let dir ← IO.FS.createTempDir
+  try
+    let binary := (← IO.appPath).toString
+    let run := E2E.Runner.run binary #["--runner-probe", dir.toString] dir
+    let jobs := (List.range 5).map fun n => (s!"job-{n}", 1)
+    let batch ← (run jobs).asTask .dedicated
+    let ready ←
+      waitFor 5000 do
+          return ((← dir.readDir).filter (·.fileName.startsWith "job-")).size == 4
+    -- A negative assertion: keep the observation window before releasing them.
+    IO.sleep 200
+    let held ← dir.readDir
+    IO.FS.writeFile (dir / "release") ""
+    let code ← IO.ofExcept (← IO.wait batch)
+    let logs ← jobs.mapM fun (name, _) => IO.FS.readFile (dir / s!"linger-{name}.out")
+    let streams :=
+      logs.all fun text =>
+        ['e', 'o'].all fun c => (lines text).contains (String.ofList (List.replicate 70000 c))
+    let mut f ←
+      expect (ready && (held.filter (·.fileName.startsWith "job-")).size == 4)
+          "suite runner overlaps four children and holds the fifth until a slot opens"
+    f :=
+      f +
+        (←
+          expect (code == 0 && streams && (← System.FilePath.pathExists (dir / "job-4")))
+              "suite runner captures both streams, preserves SIGINT and waits for every child")
+    let bad ← run [("bad-exit", 1), ("after-error", 1)]
+    let peer ← IO.FS.readFile (dir / "linger-after-error.out")
+    f :=
+      f +
+        (←
+          expect (bad == 1 && peer.endsWith "FAILURES: 0\n")
+              "suite runner rejects a nonzero exit and still waits for the other children")
+    f :=
+      f +
+        (←
+          expect ((← run [("bad-verdict", 1)]) == 1)
+              "suite runner rejects an unsuccessful final verdict")
+    f :=
+      f + (← expect ((← run [("wrong-count", 2)]) == 1) "suite runner rejects missing assertions")
+    f :=
+      f +
+        (←
+          expect ((← run [("same", 1), ("same", 1)]) == 2)
+              "suite runner rejects duplicate log identities before starting children")
+    return f
+  finally
+    IO.FS.removeDirAll dir
+
+/-- Execute the workflow's actual dependency step with controlled package tools. -/
+def dependencyInstall (root : String) : IO Nat := do
+  let workflow ← IO.FS.readFile s!"{root}/.github/workflows/ci.yml"
+  let [_, rest] := workflow.splitOn "      - name: install test dependencies\n        run: |\n"
+    | throw (IO.userError "missing or ambiguous dependency installation step")
+  let script :=
+    String.intercalate "\n"
+      (((rest.splitOn "\n      - ").head!).splitOn "\n" |>.map (fun s => (s.drop 10).toString))
+  let dir ← IO.FS.createTempDir
+  try
+    -- A private PATH makes fish absent and clang present, independently of the host.
+    let clang := dir / "clang"
+    let sudo := dir / "sudo"
+    IO.FS.writeFile clang "#!/bin/sh\nexit 0\n"
+    IO.FS.writeFile sudo
+        "#!/bin/sh\n\
+       test \"$1\" = apt-get || exit 90\n\
+       shift\n\
+       printf '%s\\n' \"$1\" >> \"$INSTALL_LOG\"\n\
+       if [ \"$1\" = update ]; then\n\
+       \x20 : > \"$INSTALL_READY\"\n\
+       elif [ \"$INSTALL_MODE\" = fail ]; then\n\
+       \x20 exit 91\n\
+       elif [ \"$INSTALL_MODE\" = stale ] && [ ! -e \"$INSTALL_READY\" ]; then\n\
+       \x20 exit 92\n\
+       fi\n"
+    for file in [clang, sudo] do
+      Linger.Posix.chmod file.toString 0o700
+    let probe := fun (mode : String) => do
+      let log := dir / s!"{mode}.log"
+      let out ←
+        IO.Process.output
+            { cmd := "/bin/bash", args := #["--noprofile", "--norc", "-e", "-c", script]
+              env :=
+                #[("RUNNER_OS", some "Linux"), ("PATH", some dir.toString),
+                  ("INSTALL_LOG", some log.toString),
+                  ("INSTALL_READY", some (dir / s!"{mode}.ready").toString),
+                  ("INSTALL_MODE", some mode)] }
+      return (out.exitCode, ← IO.FS.readFile log)
+    let mut f ←
+      expect ((← probe "fresh") == (0, "install\n"))
+          "CI uses the runner's package index when installation succeeds"
+    f :=
+      f +
+        (←
+          expect ((← probe "stale") == (0, "install\nupdate\ninstall\n"))
+              "CI refreshes stale package indexes and retries installation")
+    let bad ← probe "fail"
+    f :=
+      f +
+        (←
+          expect (bad.1 != 0 && bad.2 == "install\nupdate\ninstall\n")
+              "CI fails when dependency installation still fails after refreshing")
+    return f
+  finally
+    IO.FS.removeDirAll dir
 
 /-- Exercise Lake's actual traces and diagnostic replay without a clean rebuild. -/
 def lakeBuilds (root : String) : IO Nat := do
@@ -209,6 +339,8 @@ def run : IO UInt32 := do
     IO.FS.removeDirAll (System.FilePath.mk fresh)
     IO.FS.removeDirAll (System.FilePath.mk stale)
   f := f + (← lakeBuilds root)
+  f := f + (← suiteRunner)
+  f := f + (← dependencyInstall root)
   IO.println s!"FAILURES: {f}"
   return if f == 0 then 0 else 1
 

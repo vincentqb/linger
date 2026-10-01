@@ -225,7 +225,7 @@ def Client.bye (c : Client) (sendDetach : Bool := true) : IO Unit := do
       let _ ← write c.fd detachKey 0
     catch _ =>
       pure ()
-    IO.sleep 600
+    let _ ← c.reap 600
   try
     Linger.Posix.close c.fd
   catch _ =>
