@@ -2,25 +2,25 @@
 
 ## Status
 
-In progress, 2026-10-01. Baseline is `f6a5583` on main; its hosted run
-`36908212054` passed. The bounded suite runner passes a full foreground Linux
-run with every existing live assertion. Initial independent review's logging
-fixture gap is fixed and mutation-checked. Coverage and wait changes are
-integrated with exact source identities; the assembled verifier passes in
-118.4 seconds. Clean compilation is measured separately at 88.5 seconds,
-with an identical warm rerun at 0.6 seconds. Final independent review accepts
-the assembled checkpoint without blockers. Step 1 is committed and pushed as
-`8427d80`; hosted run `36913950661` passes in 237 seconds for the full Linux
-job, including a 157.1-second verifier. Step 2 integrates the measured row
-painter optimization and three simpler VT proof bodies. Independent review
-accepts the renderer; its theorem/unit build also passes in main. The proof
-worker's builds, fresh censuses and formatting pass with identical declaration
-types. Independent source review also accepts the VT proof changes. The
-assembled foreground verifier passes in 210.6 seconds, including 84.4 seconds
-of affected recompilation and 66.6 seconds of live suites. All 470 live
-assertions and the complete verifier stack pass with fixed source identities.
-Final independent review accepts the assembled checkpoint without blockers.
-Step 2 is ready for commit, push and its hosted verification.
+Complete, 2026-10-01. Both independently reviewed implementation checkpoints
+are committed and pushed to main: `8427d80` and `81e1cc0`. Their full foreground
+local verifiers and hosted Linux runs pass with every existing assertion.
+The latest run executes all 470 live, 21 CI and 63 shim assertions, both
+semantic inventories, proofs, unit tests, generated C ABI, formatting, fuzz
+checks and unrelated-session isolation.
+
+The hosted live batch falls from 315.9 to 65.3 seconds. Step 1's whole job
+falls from 535 to 237 seconds. Step 2's whole job takes 487 seconds, including
+142.2 seconds of affected recompilation, 74.6 seconds of source/layout checks
+and 150 seconds restoring caches. This source-changing run is not a warm-build
+comparison. The recorded clean local full-target build takes 88.5 seconds;
+an identical warm rerun takes 0.6 seconds. These are measurements on different
+hosts and cache states, not a promise that every future run takes one time.
+
+Both worker trees and branches are retired after checking accepted files
+against the published commit and complete source recovery copies. Main is
+the only remaining local branch/worktree. This final record closes the round;
+its publication changes no compiled source.
 
 ## Request and constraints
 
@@ -107,3 +107,35 @@ The assembled optimized tree retains all fixtures and assertions. Delivery
 takes 14.7 seconds in its full run. The 210.6-second total includes affected
 proof/test recompilation, unlike the earlier 118.4-second warm run; comparing
 those totals would not measure an optimization regression.
+
+Hosted Step 2, run `36917279911`, passes at 19:59:06Z. Its verifier takes
+302.016 seconds; the live batch takes 65.341 seconds and Delivery 15.554
+seconds, retaining all 34 Delivery assertions. Fresh semantic coverage takes
+6.518 seconds. The toolchain cache is the identical 759,014,725-byte artifact
+used by Step 1: download time changes from 4.028 to 96.654 seconds, extraction
+from 13.145 to 22.134. Build and formatter downloads also stall. This explains
+the setup variation without attributing it to compiler work or a cache miss.
+The original logs and arithmetic live in `evidence/hosted-36917279911/` and
+`evidence/hosted-cache-comparison.json`.
+
+## Completion record
+
+Bounded process isolation replaces serialized live execution. Early child
+exit ends cleanup polling while preserving the full grace period. Coverage
+looks up relevant declarations instead of scanning the entire environment.
+Three VT proof bodies use their existing preservation lemmas; all 1,148
+serialized declaration types remain byte-identical. A kernel-checked
+`@[csimp]` equality substitutes a linear row painter with exactly the same
+bytes and final pen. No C code, dependency or resource-limit increase is added.
+
+Meaningful mutations exercise the runner, coverage checks, cleanup grace and
+renderer equality. Independent final reviews accept both assembled checkpoints.
+No fixture, negative observation window, assertion or proof contract is removed.
+The full verifier and normal commit hooks pass before publication. Worker
+source recovery copies remain outside the retired trees; no unique work is lost.
+
+Source-changing proof/layout checks and remote cache transfer still have real
+costs. Their measured intervals remain separate from live-test improvements.
+Further changes should start from fresh phase measurements, not shorten test
+observation windows or weaken the preserved contracts. No macOS result is
+claimed for this round; neither the shim nor build wrapper changes.

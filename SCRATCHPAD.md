@@ -14813,3 +14813,67 @@ and support-log counts, compiler substitution, unchanged theorem types and
 the required precommit checks. Its timing interpretation explicitly separates
 affected recompilation from warm runs. Record: `review/final-step2-review.md`.
 Both implementers and the reviewer are now closed; no worker is still writing.
+
+## Step 3 notes — 2026-10-01
+
+Step 2 is committed and pushed as
+`81e1cc007f9c08824f072251370890ed71bbdd01`. Every non-record source still
+matches the successful assembled verifier; the six intended paths are
+committed with normal hooks passing and a clean tree afterward.
+Receipt: `evidence/step2-commit.json`. Hosted run
+`https://github.com/vincentqb/linger/actions/runs/36917279911` starts at
+19:50:46Z and is in progress.
+
+The two worker branches have no commits absent from main. Before retirement,
+every accepted worker file matches its blob in the published Step 2 commit,
+and both the worktree and its fresh recovery copy match the complete
+176-file source receipt, including ignored non-derived files and symlink
+identities. Only administrative/build artifacts are excluded. Clean main
+matches the remote before removal. Both worktrees are removed and their
+branches deleted with the ordinary merged-branch check; main is now the only
+local branch and worktree. Receipts: `evidence/worker-retirement-ready.json`
+and `evidence/worker-retirement.json`. Recovery copies remain in
+`recovery-coverage-0WGpA4/source/` and `recovery-waits-imcfEE/source/` under
+the task evidence directory. No unique work is discarded.
+
+Hosted Step 2 passes at 19:59:06Z. Run `36917279911` takes 487 seconds for
+the Linux job and 302.016 seconds for its verifier. Affected compilation
+takes 142.199 seconds and source gates/layout 74.629; fresh semantic coverage
+takes 6.518. All fifteen live suites pass in 65.341 seconds, compared with
+the baseline's 315.862 and Step 1's 83.889. Delivery passes its unchanged
+34 assertions in 15.554 seconds, compared with Step 1's 81.659. The complete
+470-live/21-CI/63-shim inventory, proof/unit checks, semantic coverage, C ABI,
+formatter checks, fuzz and unrelated-session sentinel remain green.
+Logs and exact stage arithmetic: `evidence/hosted-36917279911/`.
+
+This job's slower total must not be hidden behind Step 1's 237-second result.
+It recompiles shared dependencies and spends 150 seconds restoring caches.
+The identical 759,014,725-byte Lean cache downloads in 96.654 seconds,
+versus 4.028 in Step 1; extraction takes 22.134 versus 13.145. The build
+and standalone formatter caches also pause during download, while their
+extraction takes less than a second. These are cache hits with observed
+transfer stalls, not an unexplained Lean rebuild. The comparison is saved in
+`evidence/hosted-cache-comparison.json`. It does not establish a permanent
+network cause or justify changing toolchain contents.
+
+The live spec is closed as `specs/archive/ci-latency.md`, preserving a
+completion record and the source-changing CI timing nuance. AGENTS.md again
+records no live spec. Both accepted implementation commits are already
+published and hosted-green. The closure changes only records; required
+precommit checks follow, and its hosted run will measure unchanged compiled
+sources without claiming that cached proofs were re-elaborated.
+
+The first closure check passes both required builds in 0.66 seconds each.
+The all-file hook correctly rejects AGENTS.md's new archive citation before
+that new path is added to Git's index: the citation gate inventories tracked
+paths. The archive exists on disk; the complete record move must be staged
+together before rechecking. No source gate is weakened to accept an untracked
+target. The initial output remains in `evidence/closure-precommit/`; checks
+are repeated after staging the four record paths.
+
+With the archive and citation staged together, both required builds pass
+again in 0.65 seconds each, all-file hooks pass in 5.10 seconds and whitespace
+checking passes. Every non-record source still matches the successful
+foreground verifier in bytes and modes. Receipt:
+`evidence/closure-precommit-staged/receipt.json`. Only this check result is
+appended afterward; the closure commit uses the normal hooks.
