@@ -326,7 +326,7 @@ import_closure Linger/Core/Name.lean ''
 import_closure Linger/Core/Remote.lean 'public import Linger.Core.Name;'
 import_closure Linger/Core/Title.lean 'public import Linger.Core.Name;'
 import_closure Linger/Runtime/Command.lean ''
-import_closure Manager/Resurrect.lean 'public import Tools.Resurrect;public import Linger.Core.Remote;'
+import_closure Manager/Resurrect.lean 'public import Tools.Resurrect;public import Linger.Core.Remote;public import Std.Async.System;'
 import_closure Manager/Picker.lean \
   'public import Tools.Picker;public import Tools.Input;public import Linger.Posix;public import Linger.Core.Terminal;public import Linger.Runtime.Command;'
 import_closure Main.lean \

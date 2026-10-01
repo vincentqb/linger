@@ -11,8 +11,9 @@ The official Lean release API currently identifies v4.34.1 as the latest stable
 release, matching this repository; v4.35.0-rc3 is explicitly a prerelease.
 Recheck before publication rather than inventing a version bump.
 
-Out of scope: runtime behavior, new public CLI options, new Lean dependencies,
-changes to the established macOS cadence, or rewriting historical records.
+Out of scope: new public CLI options, new Lean dependencies, changes to the
+established macOS cadence, or rewriting historical records. Runtime changes
+are limited to fixing concrete failures exposed by hosted verification.
 
 ## Decisions to verify
 
@@ -68,7 +69,27 @@ Exit: the original failure is reproduced, the fixed fixture passes on both
 shell implementations, all required builds and the full foreground verifier
 pass, and the hosted result is inspected before closure.
 
-## Step 3 — publication and closure
+## Step 3 — portable account-home lookup
+
+Checkpoint `fff4c58` is published. Hosted run `36861077691` passes the shim
+and the first ten live suites, then fails the two existing import assertions
+for missing and empty HOME. Its `/bin/sh` is Dash, which leaves bare `~`
+unexpanded in an empty environment. The importer must use the standard
+library's account-information API instead of relying on shell expansion.
+
+Writes: `Manager/Resurrect.lean`, its import boundary in `tests/gates.sh`,
+`E2E/Delivery.lean`, this spec and append-only `SCRATCHPAD.md`. A separate
+reviewer checks the native API choice and the remaining live suites in its
+own worktree. That review also exposes delivery fixture socket paths that
+overflow in long checkouts; move their temporary root outside the checkout
+without changing assertions or cleanup.
+
+Exit: retain explicit HOME resolution and the absolute-path guard, remove the
+fallback subprocess without adding C or dependencies, pass the existing
+account-home assertions, reproduce and repair the long-worktree fixture,
+pass the full foreground verifier, and inspect the next hosted result.
+
+## Step 4 — publication and closure
 
 Publish the verified checkpoint to main, inspect hosted results, preserve and
 remove accepted worker worktrees/branches, append the final verification record
@@ -121,4 +142,25 @@ stopped at a formatter layout correction; its original failure is preserved
 separately from the successful run.
 
 Evidence is sealed in `/tmp/linger-ci-portability-full-20261001-ourcZX/`.
-Publication and the next hosted result remain before closure.
+Checkpoint `fff4c58` is published and the action worker is removed after a
+fresh guarded preflight. Hosted run `36861077691` reaches the recipes suite
+and exposes the account-home failure described in step 3; it is not green.
+
+Step 3 local verification and independent review are complete. The native
+account API preserves explicit HOME resolution and absolute-path validation.
+A compiled substitution of the environment-aware `getHomeDir` fails exactly
+the existing HOME-empty assertion; exact restoration passes all 55 import
+checks. The delivery fixture's original path overflow is reproduced in a
+long worktree, and its corrected temporary root passes the same case and
+all 34 existing delivery assertions.
+
+The final assembled foreground verifier passes at 12:47:39Z–12:53:17Z
+(338 seconds), followed by passing hooks in five seconds. All 172 source
+identities remain fixed, and all 437 live assertions, twelve CI checks,
+63 shim checks, proofs, ABI, layout, coverage and fuzz checks pass.
+The complete receipt is `/tmp/linger-ci-assembled-20261001-SQphwv/`;
+the independent review is
+`/tmp/linger-ci-home-review-20261001-w5aoIT/evidence/HANDOFF.md`.
+The reviewer is closed and its source is integrated. Publication, fresh
+worker cleanup and the next hosted run remain. The latest stable Lean
+release is still v4.34.1 at the 12:48:49Z recheck.

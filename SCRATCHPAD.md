@@ -14135,3 +14135,61 @@ The action worker is closed and its patch is integrated. Exact recovery copies
 are prepared outside its worktree; removal will follow a fresh preflight after
 the accepted workflow is committed and pushed. Hosted verification and final
 closure remain.
+
+## Step 3 notes — 2026-10-01
+
+Checkpoint `fff4c58` is published and its action worker was removed after a
+fresh guarded preflight. Exact recovery copies and removal receipts are in
+`/tmp/linger-ci-actions-20261001-ZSrspy/evidence/recovery/`.
+
+Hosted run `36861077691` passes its source job in nine seconds, the build,
+ABI, layout, coverage, twelve CI checks, all 63 shim checks and the first ten
+live suites. Recipes executes all 55 assertions but fails the two account-home
+cases, so the last three suites and cache saves do not run. Original job
+metadata and logs remain in `/tmp/linger-ci-portability-full-20261001-ourcZX/`.
+This is a runtime portability bug: with an empty environment, the old
+`/bin/sh -c "printf '%s\n' ~"` fallback returns a literal tilde under Dash.
+
+The importer now reads `Std.Async.System.getCurrentUser.homeDir`. This public
+Lean API reads the account record without consulting HOME; no caller-created
+async loop, C change or new dependency is required. Explicit nonempty HOME
+still uses the existing relative-path resolution, and the fallback still
+refuses missing or nonabsolute account paths. The exact import-closure gate
+allows the additional standard-library module only at the manager boundary.
+
+Both existing account-home assertions pass. A native compiled mutation using
+`getHomeDir` instead fails exactly the HOME-empty assertion: 54 passes and one
+failure. That API observes an empty HOME instead of falling back to the account.
+Exact restoration passes all 55 checks. Sources, shell/API probes, original
+outputs and mutation receipts are in `/tmp/linger-ci-home-20261001-WvdbJQ/`.
+No mathematical claim about IO is invented; the existing pure import theorems
+remain, and the actual import executions observe the account lookup.
+
+The independent reviewer traces the public API through Lean's native wrapper
+and libuv's shared Unix account implementation. Linux is exercised and macOS
+support is reviewed in source, not executed. Manager and Title pass their
+111 and 18 existing assertions. Delivery exposes another fixture bug: socket
+paths under a long worktree can exceed the Unix socket limit, with the initial
+run stopping after 29 passes. A deeper directory reproduces the exception
+deterministically. Moving only the temporary root to `/tmp` passes the same
+deeper-directory case and all 34 Delivery assertions; tags, counts and cleanup
+are unchanged. The observed hosted default checkout is short enough not to
+trigger this particular bug. The accepted review, exact sources and red/green
+receipts are in `/tmp/linger-ci-home-review-20261001-w5aoIT/evidence/`.
+
+The native-home patch first passes the full foreground verifier in 337 seconds,
+12:41:10Z–12:46:46Z, with hooks passing afterward. The assembled source including
+the Delivery fix passes again in 338 seconds, 12:47:39Z–12:53:17Z, followed by
+passing hooks in five seconds. Both runs execute all 437 live assertions,
+twelve CI checks, 63 shim checks, generated ABI, layout, both coverage checks,
+fuzz and the unrelated-session sentinel. Each run preserves all 172 source
+identities. Dash is selected for child `sh` commands; the host's absolute
+`/bin/sh` remains Bash. Evidence is sealed in
+`/tmp/linger-ci-home-full-20261001-fyo0t1/` and
+`/tmp/linger-ci-assembled-20261001-SQphwv/`.
+
+The official release API still identifies v4.34.1 as the latest stable Lean
+at 12:48:49Z. The worker is closed and its accepted fixture is integrated.
+All its tracked sources have exact recovery copies in
+`/tmp/linger-ci-home-recovery-20261001-W2YgaP/`; removal follows publication
+and another fresh preflight. Hosted verification and closure remain.

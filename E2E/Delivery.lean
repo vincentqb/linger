@@ -490,7 +490,8 @@ def run (only : Option String := none) : IO UInt32 := do
   if let some name := only then
     if !(checks.any (·.1 == name)) then
       throw (IO.userError s!"unknown delivery check '{name}'")
-  let dir := (← IO.currentDir) / ".lake" / s!"delivery-{← getpid}"
+  -- Keep Unix socket paths independent of the checkout's length.
+  let dir := System.FilePath.mk s!"/tmp/linger-delivery-{← getpid}"
   IO.FS.createDirAll dir
   let mut failures := 0
   try

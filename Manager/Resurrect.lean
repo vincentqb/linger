@@ -2,6 +2,7 @@ module
 
 public import Tools.Resurrect
 public import Linger.Core.Remote
+public import Std.Async.System
 
 public section
 
@@ -52,15 +53,13 @@ private def importSave (executable : String) (file : Option String) : IO Unit :=
     | some value =>
       resolveRelative origin value
     | none =>
-      -- With HOME absent, the platform shell expands ~ from the account record.
-      -- An empty environment also excludes exported functions and startup hooks.
-      let found ←
-        IO.Process.output
-            { cmd := "/bin/sh", args := #["-c", "printf '%s\\n' ~"], inheritEnv := false }
-      let home := (found.stdout.dropEnd 1).toString
-      unless found.exitCode == 0 && (System.FilePath.mk home).isAbsolute do
+      -- Read the account record directly: shell expansion of ~ with HOME absent
+      -- is not portable, and getHomeDir may still observe an empty HOME.
+      match (← Std.Async.System.getCurrentUser).homeDir.filter (·.isAbsolute) with
+      | some home =>
+        pure home.toString
+      | none =>
         throw (IO.userError "could not determine the account home directory")
-      pure home
   let mut env : Array (String × Option String) := #[("HOME", some home)]
   for key in ["LINGER_DIR", "XDG_RUNTIME_DIR", "XDG_STATE_HOME"] do
     if let some value← IO.getEnv key then
