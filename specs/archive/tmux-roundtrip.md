@@ -1,6 +1,6 @@
 # tmux save round trips
 
-Status: Step 1 complete; Step 2 in progress
+Status: Complete
 Updated: 2026-10-01
 
 ## Intent
@@ -91,5 +91,33 @@ checks native identity and the supported directory repertoire. The second
 independent review accepts the final assembled source with no remaining blocker.
 Full evidence and limitations are recorded in `SCRATCHPAD.md`.
 
-Hosted checks and worker cleanup are pending publication. macOS was not
-executed in this round; the C shim, build wrapper and toolchain are unchanged.
+Hosted checks and worker cleanup were pending at the Step 1 checkpoint.
+macOS was not executed in this round; the C shim, build wrapper and toolchain
+are unchanged.
+
+## Step 2 completion — 2026-10-01
+
+Implementation commit `b0a8c69383e0d5a4f9f2a3419272a1f03eef80d7` is published
+to main. [Hosted run 36884703338](https://github.com/vincentqb/linger/actions/runs/36884703338)
+passes both jobs. Its log confirms all 15 live suites and 470 assertions,
+the twelve CI checks, enforced 63 shim checks, pure coverage, and final
+verifier success. All commit hygiene and semantic lint hooks pass.
+
+Source gates take eight seconds. The full Linux job takes 584 seconds,
+including 490 seconds in the verifier: compilation takes 50 seconds,
+source gates and layout 38 seconds, semantic coverage 20 seconds, and
+live suites 366 seconds. The new interchange suite takes 17 seconds.
+The toolchain, build, formatter and hook caches restore successfully.
+
+Both worker worktrees and branches are removed after exact source/mode
+recovery and a fresh check for unique commits or unintegrated edits. Accepted
+source matches the published implementation, allowing only the recorded
+policy docstring normalization. Only main and the primary worktree remain.
+Recovery and cleanup receipts are retained under
+`/tmp/linger-tmux-recovery-20261001-YsiwYQ/`.
+
+The completion checkpoint changes records only; its hosted checks will start
+after publication and are pending as this record is written. No native
+metadata companion, input recording or process restoration was implemented.
+Full logs and count/timing audits are retained under
+`/tmp/linger-tmux-main-20261001-bMcetC/`. This spec is archived.

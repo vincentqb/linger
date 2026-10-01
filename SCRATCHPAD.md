@@ -14378,3 +14378,50 @@ in 0.6 seconds and theorem/unit build in 0.7 seconds. All-file commit hooks
 pass in 19 seconds, including standalone semantic lint. The code still matches
 the final verifier and accepted review. Their receipts are in
 `/tmp/linger-tmux-main-20261001-bMcetC/step1-checks.json`.
+
+## Step 2 notes — 2026-10-01
+
+The implementation is committed and pushed to main as
+`b0a8c69383e0d5a4f9f2a3419272a1f03eef80d7`. Hosted run
+`https://github.com/vincentqb/linger/actions/runs/36884703338` passes both
+jobs. A separate audit reads the committed runner, verifies every live-suite
+count confirmation in the hosted log, and finds all 15 suites and 470 live
+assertions, twelve CI assertions, the successful verifier's enforced 63 shim
+assertions, all 356 pure definitions in theorem types, and final verifier
+success. All commit hygiene and semantic lint hooks pass.
+
+The source-gates job takes eight seconds and the full Linux job takes
+584 seconds. Its verifier takes 490 seconds: compilation takes 50.1 seconds,
+source gates and layout 37.5 seconds, semantic coverage 20.5 seconds,
+and live suites 366.3 seconds. The new interchange suite takes 17.4 seconds;
+the manager suite takes 86.5 seconds and delivery 69.9 seconds.
+Toolchain restoration takes 24 seconds, test dependency installation
+22 seconds, and post-build hygiene/lint 27 seconds. Toolchain, prior build,
+formatter and hook caches all restore successfully. These are measured
+hosted timings, not estimates of later runs.
+The complete log, job metadata and per-stage/count audit are in
+`/tmp/linger-tmux-main-20261001-bMcetC/step1-hosted.log`,
+`step1-hosted-status.json` and `step1-hosted-audit.json`.
+
+Worker cleanup verifies main equals the remote implementation commit, checks
+fresh branch/status/index/untracked inventories for unique work, and compares
+every tracked or untracked source's bytes and file mode with recovery copies.
+The policy inventory has 172 source files and the finalized IO inventory 173.
+Accepted source matches working main, HEAD and origin/main, except for the
+explicitly recorded policy docstring normalization. Both worktrees and their
+branches are then removed; main and the primary worktree are the sole
+remaining entries. Exact source archives, patches, manifests, preflights and
+removal receipts remain in `/tmp/linger-tmux-recovery-20261001-YsiwYQ/`,
+including the finalized IO recovery in `io-tests-final-tvOWyR/`.
+
+The completed spec is archived as `specs/archive/tmux-roundtrip.md`.
+The closure checkpoint changes records only; its hosted checks are pending
+publication as this entry is written. macOS was not executed this round.
+The optional future native companion remains an explanation, not implemented
+functionality: existing LNGR snapshots and an identity mapping could travel
+beside the foreign save, with explicit treatment of stale terminal state.
+
+Before the closure commit, the required program and theorem/unit builds pass
+again in 0.7 seconds each. All-file hooks pass in 18.1 seconds. Their logs and
+exit-status receipt are in
+`/tmp/linger-tmux-main-20261001-bMcetC/closure-checks.json`.
