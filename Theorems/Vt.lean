@@ -2896,12 +2896,7 @@ mode-6 set/reset — and a private-marker byte only *records* the marker. -/
 theorem org_stepCsi (v : Vt) (s : CsiState) (b : UInt8) (hp : (s.priv == 0x3F) = false) :
     (v.stepCsi s b).modes.origin = v.modes.origin := by
   unfold Vt.stepCsi
-  repeat' split
-  all_goals
-    first
-    | rfl
-    | exact org_csiFinish _ _ _ hp
-    | exact org_ctl _ _
+  simp only [apply_ite (fun w : Vt => w.modes.origin), org_csiFinish _ _ _ hp, org_ctl, ite_self]
 
 theorem org_printWrap (v : Vt) : v.printWrap.modes.origin = v.modes.origin := by
   rw [frame_printWrap]
@@ -3007,12 +3002,8 @@ theorem org_stepCsi_pending (v : Vt) (s : CsiState) (b : UInt8) (hparams : s.par
     (hhave : s.haveCur = true) (hne : min s.cur 65535 ≠ 6) :
     (v.stepCsi s b).modes.origin = v.modes.origin := by
   unfold Vt.stepCsi
-  repeat' split
-  all_goals
-    first
-    | rfl
-    | exact org_csiFinish_pending _ _ _ hparams hhave hne
-    | exact org_ctl _ _
+  simp only [apply_ite (fun w : Vt => w.modes.origin),
+    org_csiFinish_pending _ _ _ hparams hhave hne, org_ctl, ite_self]
 
 /-! ### The dispatcher: `origin` across one whole `Vt.step`
 

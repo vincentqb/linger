@@ -96,6 +96,8 @@ def runnerProbe (dir name : String) : IO UInt32 := do
     IO.print (String.ofList (List.replicate 70000 'o') ++ "\n")
   if name == "after-error" then
     IO.sleep 200
+  if name == "reported-failure" then
+    IO.println "FAIL extra fixture"
   IO.println "PASS fixture"
   IO.println (if name == "bad-verdict" then "FAILURES: 1" else "FAILURES: 0")
   return if name == "bad-exit" then 1 else 0
@@ -141,6 +143,13 @@ def suiteRunner : IO Nat := do
               "suite runner rejects an unsuccessful final verdict")
     f :=
       f + (← expect ((← run [("wrong-count", 2)]) == 1) "suite runner rejects missing assertions")
+    let reported ← run [("reported-failure", 1)]
+    let report ← IO.FS.readFile (dir / "linger-reported-failure.out")
+    f :=
+      f +
+        (←
+          expect (reported == 1 && report == "FAIL extra fixture\nPASS fixture\nFAILURES: 0\n")
+              "suite runner rejects a reported failure despite a successful summary and keeps its log")
     f :=
       f +
         (←
@@ -158,54 +167,102 @@ def dependencyInstall (root : String) : IO Nat := do
   let script :=
     String.intercalate "\n"
       (((rest.splitOn "\n      - ").head!).splitOn "\n" |>.map (fun s => (s.drop 10).toString))
-  let dir ← IO.FS.createTempDir
-  try
-    -- A private PATH makes fish absent and clang present, independently of the host.
-    let clang := dir / "clang"
-    let sudo := dir / "sudo"
-    IO.FS.writeFile clang "#!/bin/sh\nexit 0\n"
-    IO.FS.writeFile sudo
-        "#!/bin/sh\n\
-       test \"$1\" = apt-get || exit 90\n\
-       shift\n\
-       printf '%s\\n' \"$1\" >> \"$INSTALL_LOG\"\n\
-       if [ \"$1\" = update ]; then\n\
-       \x20 : > \"$INSTALL_READY\"\n\
-       elif [ \"$INSTALL_MODE\" = fail ]; then\n\
-       \x20 exit 91\n\
-       elif [ \"$INSTALL_MODE\" = stale ] && [ ! -e \"$INSTALL_READY\" ]; then\n\
-       \x20 exit 92\n\
-       fi\n"
-    for file in [clang, sudo] do
-      Linger.Posix.chmod file.toString 0o700
-    let probe := fun (mode : String) => do
-      let log := dir / s!"{mode}.log"
+  let probe := fun (os mode : String) (present : List String) => do
+    let dir ← IO.FS.createTempDir
+    try
+      -- Private tools and fresh state isolate each availability/index case.
+      let sudo := dir / "sudo"
+      let brew := dir / "brew"
+      IO.FS.writeFile sudo
+          "#!/bin/sh\n\
+         test \"$1\" = apt-get || exit 90\n\
+         shift\n\
+         printf '%s\\0' apt-get \"$@\" >> \"$INSTALL_LOG\"\n\
+         if [ \"$1\" = update ]; then\n\
+         \x20 [ \"$INSTALL_MODE\" != update-fail ] || exit 93\n\
+         \x20 : > \"$INSTALL_READY\"\n\
+         elif [ \"$INSTALL_MODE\" = fail ]; then\n\
+         \x20 exit 91\n\
+         elif [ \"$INSTALL_MODE\" != fresh ] && [ ! -e \"$INSTALL_READY\" ]; then\n\
+         \x20 exit 92\n\
+         fi\n"
+      IO.FS.writeFile brew
+          "#!/bin/sh\n\
+         printf '%s\\0' brew \"$@\" >> \"$INSTALL_LOG\"\n\
+         [ \"$INSTALL_MODE\" != fail ]\n"
+      for tool in present do
+        IO.FS.writeFile (dir / tool) "#!/bin/sh\nexit 0\n"
+      for file in [sudo, brew] ++ present.map (fun tool => dir / System.FilePath.mk tool) do
+        Linger.Posix.chmod file.toString 0o700
+      let log := dir / "install.log"
+      IO.FS.writeFile log ""
       let out ←
         IO.Process.output
             { cmd := "/bin/bash", args := #["--noprofile", "--norc", "-e", "-c", script]
               env :=
-                #[("RUNNER_OS", some "Linux"), ("PATH", some dir.toString),
+                #[("RUNNER_OS", some os), ("PATH", some dir.toString),
                   ("INSTALL_LOG", some log.toString),
-                  ("INSTALL_READY", some (dir / s!"{mode}.ready").toString),
+                  ("INSTALL_READY", some (dir / "install.ready").toString),
                   ("INSTALL_MODE", some mode)] }
       return (out.exitCode, ← IO.FS.readFile log)
-    let mut f ←
-      expect ((← probe "fresh") == (0, "install\n"))
-          "CI uses the runner's package index when installation succeeds"
-    f :=
-      f +
-        (←
-          expect ((← probe "stale") == (0, "install\nupdate\ninstall\n"))
-              "CI refreshes stale package indexes and retries installation")
-    let bad ← probe "fail"
-    f :=
-      f +
-        (←
-          expect (bad.1 != 0 && bad.2 == "install\nupdate\ninstall\n")
-              "CI fails when dependency installation still fails after refreshing")
-    return f
-  finally
-    IO.FS.removeDirAll dir
+    finally
+      IO.FS.removeDirAll dir
+  -- NUL separators distinguish separate package arguments from one quoted string.
+  let install := "apt-get\x00install\x00-y\x00-qq\x00--no-install-recommends\x00"
+  let fish := install ++ "fish\x00"
+  let retry := fish ++ "apt-get\x00update\x00-qq\x00" ++ fish
+  let mut f ←
+    expect ((← probe "Linux" "fresh" ["clang"]) == (0, fish))
+        "CI uses the runner's package index when installation succeeds"
+  f :=
+    f +
+      (←
+        expect ((← probe "Linux" "stale" ["clang"]) == (0, retry))
+            "CI refreshes stale package indexes and retries installation")
+  let bad ← probe "Linux" "fail" ["clang"]
+  f :=
+    f +
+      (←
+        expect (bad.1 != 0 && bad.2 == retry)
+            "CI fails when dependency installation still fails after refreshing")
+  let update ← probe "Linux" "update-fail" ["clang"]
+  f :=
+    f +
+      (←
+        expect (update.1 != 0 && update.2 == fish ++ "apt-get\x00update\x00-qq\x00")
+            "CI stops when refreshing package indexes fails")
+  f :=
+    f +
+      (←
+        expect ((← probe "Linux" "fresh" ["fish", "clang"]) == (0, ""))
+            "CI skips package tools when Linux dependencies are present")
+  f :=
+    f +
+      (←
+        expect ((← probe "Linux" "fresh" ["fish"]) == (0, install ++ "clang\x00"))
+            "CI installs only clang when fish is present")
+  f :=
+    f +
+      (←
+        expect ((← probe "Linux" "fresh" []) == (0, install ++ "fish\x00clang\x00"))
+            "CI installs both missing Linux dependencies in one invocation")
+  f :=
+    f +
+      (←
+        expect ((← probe "macOS" "fresh" ["fish"]) == (0, ""))
+            "CI skips package tools when macOS fish is present")
+  f :=
+    f +
+      (←
+        expect ((← probe "macOS" "fresh" []) == (0, "brew\x00install\x00fish\x00"))
+            "CI installs missing macOS fish through Homebrew")
+  let mac ← probe "macOS" "fail" []
+  f :=
+    f +
+      (←
+        expect (mac.1 != 0 && mac.2 == "brew\x00install\x00fish\x00")
+            "CI fails when macOS dependency installation fails")
+  return f
 
 /-- Exercise Lake's actual traces and diagnostic replay without a clean rebuild. -/
 def lakeBuilds (root : String) : IO Nat := do

@@ -268,9 +268,9 @@ def gridAnsi (grid : Array Row) : Bytes :=
     grid.foldl
       (fun (acc : List Bytes × Pen) row =>
         let (line, pen') := rowAnsi row acc.2
-        (acc.1 ++ [line], pen'))
+        (line :: acc.1, pen'))
       (([], ({} : Pen)))
-  csiNum 0 0x6D ++ (csiB ++ [0x48] ++ joinCRLF rows)
+  csiNum 0 0x6D ++ (csiB ++ [0x48] ++ joinCRLF rows.reverse)
 
 /-! ## Modes -/
 

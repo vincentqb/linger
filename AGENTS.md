@@ -15,11 +15,12 @@ worklog), `specs/archive/` (closed build records), the comments in
 
 ## Where things stand — read this first after any compaction
 
-1. No spec is in flight. The last one closed on 2026-10-01
-   (`specs/archive/ci-latency.md`: bounded parallel live suites, faster
-   coverage checks, proved linear repainting and simpler VT proofs).
-   Both implementation checkpoints passed hosted Linux CI; timings
-   distinguish affected compilation from cache restoration and live tests.
+1. One spec is in flight: `specs/ci-refinement.md` (2026-10-01), a
+   four-agent audit of test scheduling and teardown, coverage and proof cost,
+   repainting, and CI dependency setup. The preceding latency audit closed
+   in `specs/archive/ci-latency.md`; its final published checkpoint passed
+   hosted Linux CI. Timings distinguish compilation, cache restoration and
+   live tests.
    New work opens a new `specs/<slug>.md`, names itself here, and keeps the
    live count at one; every behavioral fix starts with a failing check and
    every deletion survives the full verifier stack.

@@ -291,16 +291,16 @@ theorem gridAnsi {P : Bytes → Prop} (hP : StreamPred P)
   apply hP.append hreset
   apply hP.append hhome
   apply hP.joinCRLF hcrlf
+  simp only [List.mem_reverse]
   rw [← Array.foldl_toList]
   refine invariant_foldl (fun acc => ∀ bs ∈ acc.1, P bs) _ ?_ grid.toList
     (([], ({} : Pen))) (by intro bs hbs; simp at hbs)
   intro acc row hacc bs hbs
   dsimp only at hbs
-  rcases List.mem_append.mp hbs with h | h
-  · exact hacc bs h
-  · simp only [List.mem_singleton] at h
-    subst h
+  rcases List.mem_cons.mp hbs with h | h
+  · subst h
     exact hrow row acc.2
+  · exact hacc bs h
 
 end StreamPred
 

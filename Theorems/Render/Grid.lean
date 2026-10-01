@@ -865,12 +865,12 @@ theorem crlf_step {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) (hy : v
   rfl
 
 /-- The per-row byte list `gridAnsi` builds, with the pen threaded — head-first, so the row
-walk can peel it. `gridAnsi`'s fold appends left-to-right and produces this same list. -/
+walk can peel it. Reversing `gridAnsi`'s accumulated rows produces this same list. -/
 def rowsAnsi : List Row → Pen → List Bytes
   | [], _ => []
   | r :: rs, p => (rowAnsi r p).1 :: rowsAnsi rs (rowAnsi r p).2
 
-/-- `gridAnsi`'s left-appending fold produces exactly `rowsAnsi`. -/
+/-- The reference left-appending fold produces exactly `rowsAnsi`. -/
 theorem gridFold_eq_rowsAnsi :
     ∀ (rs : List Row) (pre : List Bytes) (p : Pen),
       (rs.foldl
@@ -886,8 +886,19 @@ theorem gridFold_eq_rowsAnsi :
 
 theorem gridAnsi_eq (grid : Array Row) :
     gridAnsi grid = csiNum 0 0x6D ++ (csiB ++ [0x48] ++ joinCRLF (rowsAnsi grid.toList {})) := by
+  let rev := fun (acc : List Bytes × Pen) => (acc.1.reverse, acc.2)
+  have h :=
+    Array.foldl_hom rev (g₁ := fun acc row =>
+      (acc.1 ++ [(rowAnsi row acc.2).1], (rowAnsi row acc.2).2)) (g₂ := fun acc row =>
+      ((rowAnsi row acc.2).1 :: acc.1, (rowAnsi row acc.2).2)) (xs := grid) (init :=
+      ([], ({} : Pen)))
+      (by
+        rintro ⟨bs, p⟩ row; simp [rev, List.reverse_append])
+  have hr := congrArg (fun acc : List Bytes × Pen => acc.1.reverse) h
+  simp only [rev, List.reverse_nil, List.reverse_reverse] at hr
   unfold gridAnsi
   dsimp only
+  rw [hr]
   rw [show
       (grid.foldl
             (fun (acc : List Bytes × Pen) row =>

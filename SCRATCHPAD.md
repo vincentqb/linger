@@ -14877,3 +14877,160 @@ checking passes. Every non-record source still matches the successful
 foreground verifier in bytes and modes. Receipt:
 `evidence/closure-precommit-staged/receipt.json`. Only this check result is
 appended afterward; the closure commit uses the normal hooks.
+
+## Step 1 notes — 2026-10-01
+
+The user requests a separate agent for each delivered CI improvement. Opened
+`specs/ci-refinement.md` from clean published `b837d56`. The final prior
+hosted run `36918917011` passed: 173-second Linux job, 99.198-second
+verifier and 65.807-second live batch, with compiled artifacts reused.
+Four independent worktrees are created at the same baseline under
+`/tmp/linger-ci-refinement-20261001-YqqzCT`. Each has fresh private build/cache copies; no
+worker shares writable build artifacts. The coordinator owns shared
+inventory, integration and records. Worker handoffs and measurements go
+under this directory's `evidence/`; timed probes serialize on `perf.lock`.
+
+The execution worker reproduces a false success in the concurrent suite
+runner: an explicit `FAIL` line was accepted when the process exited zero,
+printed the expected number of `PASS` lines, and ended with `FAILURES: 0`.
+The runner now rejects that contradiction. The new fixture fails before the
+fix, passes afterward, and fails again when the guard is removed from
+otherwise compiling code. Its private checks pass all 22 CI assertions and
+the 35 status/title smoke assertions; their timing is a smoke measurement,
+not evidence of another speedup. Teardown and concurrency stay unchanged.
+Report, fixed hashes and logs: `evidence/execution/REPORT.md`.
+
+The execution worker is closed before integration. Both changed files match
+the frozen handoff hashes, and both main-tree destinations match the baseline
+before copying. The coordinator updates the central CI count from 21 to 22;
+dependency-specific additions may raise it further. Independent review and
+assembled verification are still pending. Receipt:
+`evidence/execution-integration.json`.
+
+The dependency worker establishes a test-coverage gap, not a production
+installation defect. The real workflow passes ten isolated stub cases;
+seven deliberate workflow mutations survive the old three checks and fail
+the expanded checks through their intended assertions. The fixture now
+checks exact package arguments, every fish/clang availability combination,
+failed index refresh, and the macOS skip/install/failure branches. It adds
+seven assertions in the existing function, with no new module or wiring.
+No workflow, compiler pin, formatter pin, cache policy or host dependency
+is changed. Native macOS and real package installation are not claimed.
+Report and fixed fragment: `evidence/dependencies/REPORT.md`.
+
+Nine interleaved pairs under the timing lock put the expanded native fixture
+at a local median 87.711 ms versus 48.382 ms, including process creation and
+temporary stub cleanup. The 39.329 ms increase is test cost, not a CI speedup.
+After closing the worker, the coordinator verifies both patch and fragment
+hashes and applies only the dependency function to the already integrated
+CI file. All surrounding text is preserved. The central count becomes 29
+(baseline 21, runner +1, dependency checks +7).
+Receipt: `evidence/dependencies-integration.json`.
+
+The combined main-tree `./lake build e2e` passes in 3.424 seconds. Its actual
+CI suite passes exactly 29 assertions in 8.849 seconds, including both
+workers' changes; `git diff --check` passes. These correctness checks may
+overlap other workers' activity and are not controlled performance samples.
+Logs and receipt: `evidence/combined-ci/`.
+
+The coverage worker keeps the narrowed census unchanged: differential checks
+against full-environment enumeration agree on declarations, kinds, universe
+parameters, types and values. Two origin-mode preservation proofs replace
+conditional splitting with projection-specific simplification. All 1,373
+serialized VT declaration types and universe parameters, including all 1,148
+theorems, remain byte-identical; the affected axiom sets stay unchanged.
+Two interleaved pairs under the timing lock average 163.520 to 149.119 CPU
+seconds, but wall time changes only 29.894 to 29.451 seconds. The CPU result
+supports the smaller proof bodies; it does not establish a wall-time or
+whole-CI speedup. An additional tab-proof rewrite is rejected after its
+second interleaved pair erases the apparent improvement. No limit is raised.
+Report, complete type comparison and negative experiments:
+`evidence/coverage/REPORT.md`. The worker is closed before the fixed
+`Theorems/Vt.lean` integration; both census files stay unchanged.
+
+The repaint worker verifies that the existing compiled substitution really
+reaches row consumers, then finds repeated list append in `gridAnsi`'s row
+accumulator. The two-line runtime change prepends rows and reverses once.
+`Array.foldl_hom` connects it to the existing reference fold; `gridAnsi_eq`
+keeps its exact statement. The stream-predicate proof follows membership
+through reversal. No definitions, theorem statements, test counts, C,
+dependencies or resource overrides are added. The existing universal
+row-byte/final-pen equality still applies, without validity premises.
+THEOREMS.md §Paint now records the grid guarantee too.
+
+Three interleaved forced-output samples per variant compare native binaries
+with compilation outside the clock and byte conversion plus local-file
+write inside it. The admitted 10,000-row, one-column grid changes from a
+median 321.220 to 1.646 ms; complete restoration changes 333.241 to 6.571 ms.
+For an admitted 3,048-row, 80-column grid the medians are 44.452 to 13.365 ms,
+and complete restoration 84.127 to 49.337 ms. Every corresponding output
+compares byte-identically. The ordinary color and combining-row probes show
+no further speedup (629.669 to 635.937 ms and 1,643.095 to 1,730.892 ms);
+shared-host contention prevents treating their small differences as a clean
+regression measurement. The claimed improvement is the growing whole-grid
+accumulator, not every repaint or the whole CI job.
+
+Kernel checks reject both a well-typed dropped-byte row implementation and
+a grid implementation missing its final reversal. Independent controls
+establish unequal outputs without counting setup or elaboration mistakes
+as mutation kills. Builds, proof/unit checks, formatting and all 34 unchanged
+foreground Delivery assertions pass in the worker tree. Report, forced
+samples, generated-C inspection and mutation controls:
+`evidence/repaint/REPORT.md`. Main checks the original 19-file manifests
+and Git baseline before copying the three changed files. An initial
+manually transcribed hash is rejected before any copy; the original
+manifest and Git agree. Receipt: `evidence/repaint-integration.json`.
+
+## Step 2 notes — 2026-10-01
+
+Independent review accepts the runner and dependency integration without
+blockers. It identifies one additional test limitation: rendering `$*`
+flattens argument boundaries, so separate fish/clang arguments and one
+quoted `fish clang` argument look identical. Before changing the fixture,
+the coordinator runs its frozen native binary against a private copy of
+the real workflow with the initial array expansion changed from `[@]`
+to `[*]`. Both control and mutant pass all ten assertions, demonstrating
+the gap. The fixture now logs `"$@"` with NUL separators and compares
+NUL-delimited expected arguments. This changes no workflow behavior and
+adds no assertion or helper.
+
+The exact revised function compiles and links as a native probe. Its control
+passes ten assertions, the joined-argument mutation fails the intended
+both-missing-package assertion, and all seven preceding workflow mutations
+still fail through their intended assertions. Each run completes ten checks;
+the final restored control passes. Sources, commands, binary identities and
+individual logs are in `evidence/argv-review/`. The overall CI count remains
+29. Focused second review and independent proof/renderer review are in
+progress; the assembled foreground verifier follows with sources frozen.
+
+Both final independent reviews accept the frozen source identities without
+blockers. The dependency review checks both escape layers, Lean's binary
+read/string comparison path, all eight assertion-failing mutations, and
+the unchanged fixture isolation and count. The proof/renderer review checks
+all serialized VT statements, the universal row and grid equalities, actual
+compiled callers, admitted history shapes, mutation counterexamples and
+the timing limitations. Neither review substitutes for assembled verification.
+Reports: `review/dependency-argv-review.md` and
+`review/proofs-render-review.md`; both reviewers are now closed.
+
+## Step 3 notes — 2026-10-01
+
+The complete foreground `./tests/e2e.sh` passes on the integrated tree in
+208.057 seconds. Its build stage takes 82.392 seconds, recompiling changed
+modules and dependent proofs; the live batch plus final checks takes
+66.593 seconds. This supersedes the approximate build duration in the
+progress message. All fifteen live logs are fresh, contain exactly their
+declared counts (470 total), and finish without failure. All 29 CI assertions,
+63 shim checks, 355 pure-definition and 27 runtime-emitter classifications,
+116 layout checks, fuzz, generated Lean/C ABI and unrelated-session sentinel
+pass. Before/after source manifests are identical. Exact stage timestamps,
+full output and supporting logs: `evidence/assembled-full/`.
+
+The current source-changing local verifier is not a controlled comparison
+with the preceding hosted cached run. No further whole-CI or ordinary-row
+speedup is claimed. The unchanged coverage enumeration and dependency
+workflow are retained; stronger guards and tests protect their decisions.
+All four worker trees also have verified fresh recovery copies, source
+manifests and binary diffs under this task directory; they remain in place
+until the accepted changes are published. Recovery receipt:
+`evidence/worker-recovery.json`.

@@ -47,7 +47,9 @@ def run (binary : String) (args : Array String) (logDir : System.FilePath)
           let text ← IO.FS.readFile log
           let lines := E2E.Harness.lines text
           let count := (lines.filter (·.startsWith "PASS ")).length
-          let ok := code == 0 && lines.getLast? == some "FAILURES: 0" && count == expected
+          let ok :=
+            code == 0 && lines.getLast? == some "FAILURES: 0" && count == expected &&
+              !lines.any (·.startsWith "FAIL ")
           if !ok then
             IO.eprintln s!"e2e: {name} failed (exit {code}, {count}/{expected} checks); see {log}"
           return (name, ok, (← IO.monoMsNow) - start)
