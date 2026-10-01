@@ -1,6 +1,6 @@
 # Keep only useful imported data
 
-Status: Active — implementation verified; publication and closure pending
+Status: Closed — implementation published; hosted full check pending
 Updated: 2026-10-01
 
 ## Intent
@@ -61,3 +61,18 @@ Append the completion record, archive this spec, and commit/push closure.
 
 Exit: intended changes are committed and pushed, the checkout is clean, and
 the report distinguishes proved guarantees, exercised behavior and limitations.
+
+## Completion record — 2026-10-01
+
+Implementation `937668e731c41fe1dfb0da90976f01d0c85940c9` is committed and
+pushed to main. Both required builds and all-file hooks pass in addition to
+the full verifier above. The accepted worker changes match working main,
+HEAD and origin/main. A fresh audit checks all 175 worker source files
+against recovery copies, including modes, finds no unique commits or new
+edits, and removes its worktree and branch. Only main remains.
+
+Hosted run `https://github.com/vincentqb/linger/actions/runs/36907756254`
+passes source gates; its full Linux job is running as this record closes.
+The closure changes records only and its publication/check status is reported
+separately. macOS was not executed this round. No checkpoint-format revision
+or new metadata consumer was introduced.

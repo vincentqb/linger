@@ -14535,3 +14535,31 @@ including semantic lint; no source changes during those checks. Their logs
 and exit-status receipt are in `evidence/step1-checks.json` under the task
 directory. The full verifier's supporting CI, shim and classification logs
 are also copied and checked against this run's start time.
+
+## Step 2 notes — 2026-10-01
+
+The implementation is committed and pushed as
+`937668e731c41fe1dfb0da90976f01d0c85940c9`. Automatic approval review initially
+rejects publication to an unverified destination. Read-only checks establish
+that origin is the authenticated owner's private repository, main tracks it,
+and the reviewed commit is the sole fast-forward from its current main.
+Retrying the same push succeeds. Destination verification and publication
+receipts are in `evidence/` under the task directory.
+
+Fresh cleanup preflight confirms the implementation is identical in working
+main, HEAD, origin/main and the actual remote branch. Every accepted pure file
+matches the worker hash, all 175 worker sources match exact recovery copies
+with their file modes, and the branch has no unique commits. The copied
+context files are retained in recovery, not mistaken for additional patches.
+The closed worker's worktree and branch are removed. Main is now the only
+local branch and worktree. Recovery, fresh inventories and removal receipts
+remain in
+`/tmp/linger-active-import-20261001-jk5cy3/recovery-DznXFm/`.
+
+Hosted run `https://github.com/vincentqb/linger/actions/runs/36907756254`
+passes its source-gates job; the full Linux job is in progress at closure.
+That pending hosted result is distinct from the successful full local
+verifier and the accepted independent review. The spec is archived as
+`specs/archive/active-import-data.md`; the closure checkpoint changes records
+only and its publication/check status will be reported separately.
+macOS was not executed this round.
