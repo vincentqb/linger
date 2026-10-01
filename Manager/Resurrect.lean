@@ -4,24 +4,17 @@ public import Tools.Resurrect
 public import Linger.Core.Remote
 public import Linger.Runtime.Resume
 public import Std.Async.System
-public import Lean.Data.Json
 
 public section
 
 /-! tmux-resurrect interchange. Pure parsing and export policy live in
-`Tools.Resurrect`. This boundary observes directories and sessions, retains the
-latest successful import, and publishes files atomically. -/
+`Tools.Resurrect`. This boundary creates sessions in imported directories and
+publishes current native names and directories atomically. -/
 
 namespace Manager.Resurrect
 
 open Tools.Resurrect
 open Linger.Runtime
-
-private structure Provenance where
-  version : Nat
-  source : String
-  fields : List (String × String)
-  deriving Lean.FromJson, Lean.ToJson
 
 /-- Resolve existing relative path components physically, retaining a missing
 suffix for directories linger will create. Resolve symlinks before `..`. -/
@@ -55,9 +48,9 @@ private def preflight (origin : System.FilePath) (panes : List Pane) : IO Unit :
     finally
       IO.Process.setCurrentDir origin
 
-/-- Freeze physical home and state paths for import children and provenance IO.
+/-- Freeze physical home and state paths for import children.
 These commands have no concurrent environment users.
-Restore the caller's environment even when a subprocess or publication fails. -/
+Restore the caller's environment even when a subprocess fails. -/
 private def inContext
     (action : System.FilePath → String → Array (String × Option String) → IO Unit) : IO Unit := do
   let origin ← IO.currentDir
@@ -91,9 +84,8 @@ private def inContext
 
 /-- Exclusive temporary creation protects a previous file even if a stale
 temporary exists. Linking publishes a complete new export without overwriting
-any destination; renaming replaces only our retained import record. -/
-private def publish (path : System.FilePath) (content : String) (replace : Bool := false) :
-    IO Unit := do
+any destination. -/
+private def publish (path : System.FilePath) (content : String) : IO Unit := do
   let tmp :=
     System.FilePath.mk s!"{path}.linger-{← Linger.Posix.getpid}-{← IO.rand 0 0xFFFFFFFF}.tmp"
   let handle ← IO.FS.Handle.mk tmp .writeNew
@@ -101,10 +93,7 @@ private def publish (path : System.FilePath) (content : String) (replace : Bool 
     Linger.Posix.chmod tmp.toString 0o600
     handle.putStr content
     handle.flush
-    if replace then
-      IO.FS.rename tmp path
-    else
-      IO.FS.hardLink tmp path
+    IO.FS.hardLink tmp path
   finally
     try
       IO.FS.removeFile tmp
@@ -136,10 +125,6 @@ private def importSave (executable : String) (file : Option String) : IO Unit :=
     let source ← IO.FS.readFile save
     let panes ← IO.ofExcept (parseSave home source)
     preflight origin panes
-    let resolved ←
-      panes.mapM fun pane => do
-          let dir ← IO.FS.realPath (absolute pane.dir)
-          return { pane with dir := dir.toString }
     -- The entry point freezes its absolute appPath before any child changes cwd.
     let listing ← IO.Process.output { cmd := executable, args := #["ls", "--porcelain"], env }
     unless listing.exitCode == 0 do
@@ -154,10 +139,6 @@ private def importSave (executable : String) (file : Option String) : IO Unit :=
         throw
             (IO.userError
               s!"could not create session: {pane.name}: {created.stdout}{created.stderr}")
-    let dir ← Paths.stateDir
-    Paths.ensureDir dir
-    let retained : Provenance := { version := 1, source, fields := common resolved }
-    publish (System.FilePath.mk dir / "tmux-import.json") (Lean.toJson retained).compress true
 
 /-- A failed live observation must not export a stale startup directory.
 Checkpoint decoding supplies the cwd for resumable sessions. -/
@@ -184,29 +165,13 @@ private def snapshot : IO (List (String × String)) := do
         throw (IO.userError s!"could not read working directory for session: {name}")
       return (name, (← IO.FS.realPath dir).toString)
 
-/-- Native checkpoints use the caller's environment, including its no-HOME
-fallback. Only provenance lookup uses the importer's normalized home. -/
+/-- Observe the same native namespace as listing, including its no-HOME fallback,
+and export only the current names and directories. -/
 private def writeSave (path : String) (capture : IO (List (String × String)) := snapshot) :
     IO Unit := do
   let fields ← capture
-  inContext fun _ _ _ => do
-      let source ←
-        try
-          pure
-              (some (← IO.FS.readFile (System.FilePath.mk (← Paths.stateDir) / "tmux-import.json")))
-        catch
-        | .noFileOrDirectory .. =>
-          pure none
-        | error =>
-          throw error
-      let retained ←
-        source.mapM fun text => do
-            let parsed : Provenance ← IO.ofExcept (Lean.Json.parse text >>= Lean.fromJson?)
-            unless parsed.version == 1 do
-              throw (IO.userError "unsupported retained tmux import version")
-            return (parsed.source, parsed.fields)
-      let content ← IO.ofExcept (exportSave fields retained)
-      publish path content
+  let content ← IO.ofExcept (renderSave fields)
+  publish path content
 
 /-- The caller supplies its absolute executable path for every listing and run. -/
 def run (executable : String) (args : List String) : IO UInt32 := do

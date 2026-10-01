@@ -41,8 +41,8 @@ recipes, break records, measurements, the audits — lives in
 | §Status | one glyph per listing row vs seven conditions | `classify_iff` equates classification with the independent legend predicates; `cover`, `disjoint`, `classify_sound` and `classify_unique` derive the partition. Every state is reachable; icons and names are injective and names are clean | Theorems/Status.lean |
 | §Title | visible cross-session attention vs an uninterrupted terminal stream | composition omits empty parts; the title payload excludes terminal controls and fits the OSC parser cap (`compose_parts`, `payload_safe`, `ansi_payload_bound`, `ansi_ends`). Updates wait for parser-ground and complete UTF-8 (`update_waits`, `update_requires_boundary`). The existing VT observer is chunking-invariant, keeps no history, and preserves its dimensions and parser/screen invariants (`observe_append`, `observe_no_history`, `observe_dims`, `observe_invariants`) | Theorems/Title.lean, Theorems/TerminalTitle.lean, Theorems/Vt.lean, E2E/Title.lean |
 | §Resume | the product's own promise: crash, reboot, reattach | §Restore ∘ §Replay, stated twice — over `save`'s input and over `load`'s output (`resume_grid_of_load`, `resume_tabs_of_load`, `resume_sb_of_load`: any byte string that loads, no other hypothesis) — and lifted to the daemon over its own `vt0` (`Session.run_resume_vt_shape`, `run_resume_load_save`) | Theorems/Resume.lean, Theorems/Session.lean |
-| §Import | foreign save records vs distinct session identities, directory-only restoration and safe error display | successful parsing gives a nonempty list with canonical, distinct names and NUL-free directories (`parseSave_valid`); valid saved commands cannot affect parsed panes (`parseRow_command_irrelevant`); planning preserves records and order and skips existing names (`mem_plan`, `plan_order`); adding planned names to the snapshot makes a sequential rerun empty (`plan_sequential_idempotent`); diagnostics exclude C0, DEL and C1 and preserve already printable text (`diagnostic_printable`, `diagnostic_eq_self`) | Theorems/Resurrect.lean, E2E/Recipes.lean |
-| §Interchange | exact foreign source preservation vs a fresh export of common fields | valid native names have reversible encoding (`encodeName_reversible`); every successful generated save parses back to exactly its names and directories for any home (`renderSave_roundtrip`); retained source is selected exactly when the complete common fields match as multisets (`exportSave_policy`); success is either that original source or a certified fresh save (`exportSave_roundtrip_or_retained`) | Theorems/Resurrect.lean, E2E/Interop.lean |
+| §Import | foreign save records vs distinct session identities, directory-only restoration and safe error display | successful parsing gives a nonempty list with canonical, distinct names and NUL-free directories (`parseSave_valid`); ignored pane metadata and valid saved commands cannot affect parsed panes (`parseRow_metadata_irrelevant`); planning preserves records and order and skips existing names (`mem_plan`, `plan_order`); adding planned names to the snapshot makes a sequential rerun empty (`plan_sequential_idempotent`); diagnostics exclude C0, DEL and C1 and preserve already printable text (`diagnostic_printable`, `diagnostic_eq_self`) | Theorems/Resurrect.lean, E2E/Recipes.lean |
+| §Interchange | current native state vs discarded foreign metadata | valid native names have reversible encoding (`encodeName_reversible`); every successful generated save parses back to exactly its names and directories for any home (`renderSave_roundtrip`); the executor exports current native fields without retained foreign source | Theorems/Resurrect.lean, E2E/Interop.lean |
 | §Select | fuzzy emphasis and explicit creation vs an exact session identity | alignment accepts exactly the filter language, maximizes score and chooses earliest ties (`align_isSome_iff_matches`, `align_score_max`, `align_earliest`); emphasis preserves shared text/status and marks the chosen target positions (`highlightedPresentation_projection`, `highlightedPresentation_existing_marked_iff`); matching preserves snapshot order (`visible_order`, `items_existing_prefix`); existing selections retain original targets (`step_attach_mem`); creation uses an exact valid target absent from the snapshot (`step_create_valid`); only acceptance acts on the highlighted row (`step_attach_iff`, `step_create_iff`); refresh retains query and surviving targets (`refresh_query`, `refresh_selected`) and bounds the cursor (`refresh_valid`) | Theorems/Fuzzy.lean, Theorems/Picker.lean, E2E/Manager.lean |
 | §Input | split keyboard bytes and pasted commands vs deliberate selection | one byte produces at most one physical key (`feed_length`); UTF-8 prefixes retain at most three bytes (`stored_bound`, `feed_storage_bound`); delivered text excludes controls (`feed_text_valid`); paste emits only text and survives incomplete input (`feed_paste_only_text`, `feed_paste_sticky`, `flush_paste`); the separate binding preserves every byte's selector meaning (`Key.feed_byte_bindings`), and a timeout never accepts (`Key.flush_no_accept`) | Theorems/Input.lean, Theorems/Key.lean, E2E/Manager.lean |
 
@@ -444,9 +444,11 @@ recovery time or a preference for a configuration format.
 §Import supports `linger import`. `parseSave_valid` gives
 nonempty, distinct names that already satisfy `Name.Valid`, plus NUL-free
 decoded directories. `parseRow_command_valid` requires the saved command's
-sentinel and absence of NUL. `parseRow_command_irrelevant` proves that replacing
-any valid command leaves the complete row result unchanged. The parser discards
-that field: neither `Pane` nor the plan retains a command to execute.
+sentinel and absence of NUL. `parseRow_metadata_irrelevant` proves that replacing
+the ignored pane metadata and any valid saved command leaves the complete row
+result unchanged. The parser discards those fields: neither `Pane` nor the plan
+retains them. `parseRow_other` proves that non-pane records contribute no pane,
+regardless of their remaining fields.
 `mem_plan` preserves each original pane and requires its name to be absent from
 the snapshot. `plan_order` preserves their order, and `plan_names_unique` carries
 parsing's distinctness through filtering.
@@ -481,22 +483,18 @@ repertoire. These are guarantees about successful results, not a claim that
 every input is encodable. Executable acceptance fixtures and an isolated
 tmux-resurrect restore/save exercise useful successful cases.
 
-`exportSave_policy` chooses retained source if and only if the current common
-fields are a permutation of the recorded baseline, preserving multiplicity.
-`exportSave_unchanged` gives exact original text, independent of listing order;
-`exportSave_changed` and `exportSave_without_source` require fresh generation.
-`exportSave_roundtrip_or_retained` combines these two outcomes. Retention
-precedes generation, so an unchanged foreign save can still be returned when
-its directory spelling is outside the generated repertoire.
+Only names and directories cross the import boundary into
+native session creation; discarded titles, window state and valid saved
+commands cannot affect that projection. The import record's line number is
+used only for diagnostics. Native terminal state remains in its existing codec.
 
-The manager persists the original UTF-8 text and the complete physical-directory
-baseline after a successful import. It observes live process directories and
-decodes resumable checkpoints in the caller's native path context, before
-account-home fallback is applied for provenance lookup. Source gates tie this
-ordering and both operations to the proved projection and export policy.
-`E2E.Interop` checks exact persisted
-bytes, fresh common-field round trips, stale provenance, incomplete observations,
-failed imports, home/path resolution and exclusive file publication. These
+The manager observes live process directories and decodes resumable checkpoints
+in the caller's native path context. It exports only those current fields through
+`renderSave`. Export does not normalize home or consult a foreign source file.
+Source gates and `E2E.Interop` bind the IO implementation to this policy.
+The suite checks the absence of persisted source, independence from obsolete
+provenance, common-field round trips, incomplete observations, failed imports,
+home/path resolution and exclusive file publication. These
 checks cover IO behavior; the pure theorems do not establish filesystem
 durability, an atomic snapshot across daemons, or the behavior of another
 program. Native checkpoint data and companion pane-content archives are outside
@@ -514,8 +512,8 @@ These laws do not claim visual unambiguity for arbitrary Unicode or prove
 filesystem IO.
 
 The source gates constrain each manager executor's imports. Interchange uses
-the session listing and checkpoint reader, standard account/environment IO and
-JSON serialization; the selector uses its pure policies and terminal interface.
+the session listing and checkpoint reader plus standard account/environment IO;
+the selector uses its pure policies and terminal interface.
 They keep the manager out of the session library and VT toolkit; only `Main`
 composes those library commands with selection and interchange.
 Theorems cannot inspect IO call sites or prove a preference for

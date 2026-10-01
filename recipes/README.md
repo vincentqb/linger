@@ -166,17 +166,15 @@ directory; start the programs you want after attaching. Running processes,
 window layouts, active state, grouped sessions and captured pane contents are
 not imported. A save filename beginning with `-` needs a path such as `./-save`.
 
-The latest successful import retains its original UTF-8 save text beside native
-checkpoints in `tmux-import.json`, together with the complete set of resolved
-names and working directories. Export reuses that text exactly when all local
-sessions match that baseline, regardless of listing order. Unknown records,
-saved commands, layout fields, CRLF and a missing final newline are preserved.
-The original source file may be moved or deleted. A failed import leaves the
-previous record intact. Importing another save replaces it.
+Only the projected session name and directory become native session state.
+Foreign titles, commands, layouts, focus, grouping and unknown records are
+discarded. No copy of the source save is stored; the original file may be moved
+or deleted after import. Old `tmux-import.json` files are ignored and left
+untouched.
 
-Adding or removing a session, renaming it, or changing a working directory makes
-export generate a fresh save. It includes both live sessions and resumable
-checkpoints; an unreadable session or checkpoint fails the export. Existing
+Export always generates a save from current names and physical working
+directories. It includes both live sessions and resumable checkpoints;
+an unreadable session or checkpoint fails the export. Existing
 destinations, including symlinks, are refused. A complete file is published
 atomically with owner-only permissions.
 
@@ -191,9 +189,8 @@ The shared fields are session identity and the physical working directory.
 Generated saves require absolute directories and reject spellings the supported
 save cycle cannot preserve: control separators, literal backslashes, repeated or
 trailing spaces, and expansion characters (`*`, `?`, `[` and `#`). Single spaces,
-quotes, dollar signs and backticks are supported. An unchanged imported save
-can still reuse its original bytes. Exact-file preservation covers the save
-text; a companion pane-content archive must be kept separately.
+quotes, dollar signs and backticks are supported. Export does not reconstruct
+the original grouping, layouts or save text.
 
 Native `LNGR` checkpoints continue to hold screens, scrollback, terminal modes
 and labels. This interchange does not carry those fields or record typed input.

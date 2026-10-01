@@ -326,7 +326,7 @@ import_closure Linger/Core/Name.lean ''
 import_closure Linger/Core/Remote.lean 'public import Linger.Core.Name;'
 import_closure Linger/Core/Title.lean 'public import Linger.Core.Name;'
 import_closure Linger/Runtime/Command.lean ''
-import_closure Manager/Resurrect.lean 'public import Tools.Resurrect;public import Linger.Core.Remote;public import Linger.Runtime.Resume;public import Std.Async.System;public import Lean.Data.Json;'
+import_closure Manager/Resurrect.lean 'public import Tools.Resurrect;public import Linger.Core.Remote;public import Linger.Runtime.Resume;public import Std.Async.System;'
 import_closure Manager/Picker.lean \
   'public import Tools.Picker;public import Tools.Input;public import Linger.Posix;public import Linger.Core.Terminal;public import Linger.Runtime.Command;'
 import_closure Main.lean \
@@ -368,21 +368,19 @@ done
 # bypassing them a reviewable change; IO tests check preflight/failure ordering
 # and actual argv. As with the runtime ties below, this is not an IO theorem.
 for claim in diagnostic_printable diagnostic_eq_self \
-             parseSave_valid parseRow_command_valid parseRow_command_irrelevant \
+             parseSave_valid parseRow_command_valid parseRow_metadata_irrelevant parseRow_other \
              mem_plan plan_order plan_sequential_idempotent \
              common_cons encodeName_reversible projectName_native \
              projectName_reserved_topology projectName_foreign \
              parseSave_home_independent renderSave_directories renderSave_valid \
-             renderSave_empty renderSave_roundtrip exportSave_policy \
-             exportSave_unchanged exportSave_changed exportSave_without_source \
-             exportSave_roundtrip_or_retained; do
+             renderSave_empty renderSave_roundtrip; do
   code_grep "^(private )?theorem $claim " Theorems/Resurrect.lean >/dev/null \
     || fail "interchange contract disappeared: $claim"
 done
 code_grep '^[[:space:]]+IO[.]eprintln s!"linger import: [{]diagnostic [(]toString e[)][}]"$' Manager/Resurrect.lean >/dev/null \
   || fail "importer no longer displays the proved control-free diagnostic"
 code_grep '^[[:space:]]+let source ← IO[.]FS[.]readFile save$' Manager/Resurrect.lean >/dev/null \
-  || fail "importer no longer retains the unmodified source text"
+  || fail "importer no longer reads the complete save before parsing"
 code_grep '^[[:space:]]+let panes ← IO[.]ofExcept [(]parseSave home source[)]$' Manager/Resurrect.lean >/dev/null \
   || fail "importer no longer consumes the proved whole-save parser"
 code_grep '^[[:space:]]+for pane in plan existing panes do$' Manager/Resurrect.lean >/dev/null \
@@ -394,14 +392,10 @@ code_grep '^[[:space:]]+importSave executable args[.]head[?]$' Manager/Resurrect
   || fail "importer no longer forwards the entry point executable"
 code_grep '^[[:space:]]+let listing ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"ls", "--porcelain"[]], env [}]$' Manager/Resurrect.lean >/dev/null \
   || fail "importer no longer lists with the supplied executable"
-code_grep '^[[:space:]]+let retained : Provenance := [{] version := 1, source, fields := common resolved [}]$' Manager/Resurrect.lean >/dev/null \
-  || fail "import provenance no longer pairs source with the whole resolved common projection"
-code_grep '^[[:space:]]+let content ← IO[.]ofExcept [(]exportSave fields retained[)]$' Manager/Resurrect.lean >/dev/null \
-  || fail "exporter no longer consumes the proved preservation policy"
-# HOME fallback is for import/provenance. Native listing must observe the caller's
-# checkpoint namespace first, including the no-HOME /tmp fallback.
-printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])private def writeSave [(]path : String[)] [(]capture : IO [(]List [(]String × String[)][)] := snapshot[)] : IO Unit := do let fields ← capture inContext fun _ _ _ => do([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
-  || fail "exporter changes the native checkpoint context before its snapshot"
+# Native listing observes the caller's checkpoint namespace, including its
+# no-HOME /tmp fallback. Only those fields reach the checked serializer.
+printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])private def writeSave [(]path : String[)] [(]capture : IO [(]List [(]String × String[)][)] := snapshot[)] : IO Unit := do let fields ← capture let content ← IO[.]ofExcept [(]renderSave fields[)] publish path content([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+  || fail "exporter bypasses the current native snapshot, checked serializer or exclusive publication"
 code_grep '^[[:space:]]+writeSave path$' Manager/Resurrect.lean >/dev/null \
   || fail "export command bypasses its native snapshot"
 code_grep '^[[:space:]]+IO[.]eprintln s!"linger export: [{]diagnostic [(]toString e[)][}]"$' Manager/Resurrect.lean >/dev/null \

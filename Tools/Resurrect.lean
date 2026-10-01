@@ -6,10 +6,10 @@ public section
 
 /-! Pure tmux-resurrect interchange and import planning.
 
-Pane records supply session identity and directory; retained source preserves
-the remaining records verbatim. The caller must preflight every saved directory
-before performing effects. Planning uses an explicit snapshot of existing names;
-it does not claim atomic creation or protection from concurrent same-name creators.
+Pane records supply session identity and directory; unused metadata is discarded.
+The caller must preflight every saved directory before performing effects.
+Planning uses an explicit snapshot of existing names; it does not claim atomic
+creation or protection from concurrent same-name creators.
 -/
 
 namespace Tools.Resurrect
@@ -42,7 +42,7 @@ private def projectName (session window pane : String) : Option String :=
     else none
   else some (session ++ "-w" ++ window ++ "-p" ++ pane)
 
-/-- Parse one tab-split row, validating and discarding its saved command. -/
+/-- Parse one tab-split row, validating the command and discarding unused metadata. -/
 private def parseRow (home : String) (line : Nat) (fields : List String) :
     Except String (Option Pane) :=
   if fields.head? != some "pane" then .ok none
@@ -115,20 +115,6 @@ def renderSave (fields : List (String × String)) : Except String String :=
     | .ok panes =>
       if common panes == fields then .ok content
       else .error "generated tmux save changed session identity or cwd"
-
-private def retainedSource? (current : List (String × String))
-    (retained : Option (String × List (String × String))) : Option String :=
-  match retained with
-  | none => none
-  | some (original, baseline) => if current.Perm baseline then some original else none
-
-/-- Reuse retained bytes exactly when the complete resolved common fields match
-as multisets. A changed snapshot must pass the native serializer. -/
-def exportSave (current : List (String × String))
-    (retained : Option (String × List (String × String))) : Except String String :=
-  match retainedSource? current retained with
-  | some original => .ok original
-  | none => renderSave current
 
 /-- Skip existing names, preserving whole records and their order. -/
 def plan (existing : List String) (panes : List Pane) : List Pane :=

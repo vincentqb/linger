@@ -107,82 +107,36 @@ open Tools.Resurrect
     | .error error => error == s!"unrepresentable cwd in tmux save: {dir}"
     | .ok _ => false
 
--- Keep all original bytes, even metadata and directory spellings native export rejects.
+-- Export the imported name/cwd view without carrying its source metadata.
 #guard
-  let original :=
-    "# original\npane\tdesk\t0\t:\t1\t0\t0\t:/tmp/has#hash\t1\tvi\t:vi file\nwindow\topaque\n\n"
-  let baseline := [("desk-w0-p0", "/tmp/has#hash")]
-  match exportSave baseline (some (original, baseline)) with
-  | .ok text => text == original
+  let source :=
+    "window\tdesk\t0\t:original title\r\n" ++
+      "pane\tdesk\t0\t1\t:*-Z\t0\toriginal title\t:~/work\\ space\t1\tvi\t:vi 'private draft'\r\n" ++
+      "unknown\tfuture metadata"
+  match parseSave "/home/me" source with
   | .error _ => false
-
-#guard
-  ["/tmp/back\\slash", "/tmp/two  spaces", "/tmp/trailing ", "/tmp/*literal", "/tmp/[literal]"].all
-    fun dir =>
-    let baseline := [("desk-w0-p0", dir)]
-    let original := s!"pane\tdesk\t0\t:\t1\t0\t0\t:{dir}\t1\tsh\t:\nunknown\tuntouched\n"
-    match renderSave baseline, exportSave baseline (some (original, baseline)) with
-    | .error _, .ok text => text == original
-    | _, _ => false
-
-#guard
-  let baseline := [("a", "/one"), ("b", "/two"), ("c", "/three")]
-  match
-    exportSave [("c", "/three"), ("a", "/one"), ("b", "/two")]
-      (some ("retained\nunknown\tfields\n", baseline)) with
-  | .ok text => text == "retained\nunknown\tfields\n"
-  | .error _ => false
-
--- Multiset equality counts duplicates; equal membership alone is insufficient.
-#guard
-  let baseline := [("a", "/one"), ("a", "/one"), ("b", "/two")]
-  match exportSave [("b", "/two"), ("a", "/one"), ("a", "/one")] (some ("original", baseline)) with
-  | .ok text => text == "original"
-  | .error _ => false
-
-#guard
-  let baseline := [("a", "/one"), ("b", "/two")]
-  match exportSave [("a", "/one"), ("a", "/one"), ("b", "/two")] (some ("original", baseline)) with
-  | .error error => error == "duplicate projected session at line 3: a"
-  | .ok _ => false
-
-#guard
-  let current := [("a", "/one"), ("b", "/two")]
-  match exportSave current (some ("original", [("a", "/one"), ("a", "/one"), ("b", "/two")])),
-    renderSave current with
-  | .ok exported, .ok generated => exported == generated && exported != "original"
-  | _, _ => false
-
--- Name, cwd, membership and name/cwd pairing all participate in the comparison.
-#guard
-  let baseline := [("a", "/one"), ("b", "/two")]
-  [[("renamed", "/one"), ("b", "/two")], [("a", "/changed"), ("b", "/two")], [("a", "/one")],
-        baseline ++ [("c", "/three")], [("a", "/two"), ("b", "/one")]].all
-    fun current =>
-    match exportSave current (some ("original", baseline)) with
+  | .ok imported =>
+    let fields := common imported
+    match renderSave fields with
     | .error _ => false
     | .ok text =>
-      text != "original" &&
-        match parseSave "/unused" text with
-        | .ok panes => common panes == current
+      fields == [("desk-w0-p0", "/home/me/work space")] && !text.contains "original title" &&
+        !text.contains "private draft" &&
+        !text.contains "future metadata" &&
+        match parseSave "/other/home" text with
+        | .ok panes => common panes == fields
         | .error _ => false
 
+-- Import acceptance cannot bypass the serializer's directory guard.
 #guard
-  match exportSave [] (some ("original", [("a", "/one")])) with
-  | .error error => error == "no pane records in save"
-  | .ok _ => false
-
-#guard
-  match exportSave [("a", "/not  representable")] (some ("original", [("a", "/one")])) with
-  | .error error => error.startsWith "unrepresentable cwd"
-  | .ok _ => false
-
-#guard
-  [[], [("main", "/tmp")], [("a", "/one"), ("b", "/two")]].all fun fields =>
-    match exportSave fields none, renderSave fields with
-    | .ok exported, .ok generated => exported == generated
-    | .error exported, .error generated => exported == generated
-    | _, _ => false
+  let source := "pane\tdesk\t0\t1\t:*\t0\ttitle\t:/tmp/#literal\t1\tsh\t:\n"
+  match parseSave "" source with
+  | .error _ => false
+  | .ok imported =>
+    let fields := common imported
+    match renderSave fields with
+    | .error error => error == "unrepresentable cwd in tmux save: /tmp/#literal"
+    | .ok _ => false
 
 #guard
   common [{ name := "a", dir := "/one", line := 99 }, { name := "a", dir := "/one", line := 1 }] ==
@@ -197,14 +151,32 @@ open Tools.Resurrect
   ["", "/tmp/é λ😀\u00a0x !~\"\\", " \x1b[2J\u009b31m z"].map diagnostic ==
     ["", "/tmp/é λ😀\u00a0x !~\"\\", " ?[2J?31m z"]
 
--- Saved commands validate as input but never affect the parsed pane.
+-- Flags, titles, active/current-command fields and valid saved commands have no effect.
 #guard
-  ["vi 'a b'; tail x", "printf '%s' \"$HOME\" && custom-tool --anything",
-        "  λ ./unlisted\\ path 'quoted'  ", ":~/command\\ directory"].all
-    fun command =>
-    match parseSave "/home/me" "pane\td\t0\t\t\t0\t\t:~/work\\ space\t\t\t:",
-      parseSave "/home/me" ("pane\td\t0\t\t\t0\t\t:~/work\\ space\t\t\t:" ++ command) with
-    | .ok before, .ok after => before == after
+  [("d", "d-w0-p0"), ("linger=d~api", "d.api")].all fun (session, name) =>
+    [("", "", "", "", "", ":"), ("1", ":*-Z", "a title", "0", "vi", ":vi 'a b'; tail x"),
+          ("0", "arbitrary flags", "another title", "1", "sh",
+            ":printf '%s' \"$HOME\" && custom-tool --anything"),
+          ("not active", "\x00?", "\x1b]0;λ title\x07", "unknown", "anything",
+            ":  λ ./unlisted\\ path 'quoted'  ")].all
+      fun (windowActive, flags, title, paneActive, currentCommand, savedCommand) =>
+      match
+        parseSave "/home/me"
+          (s!"window\tignored\npane\t{session}\t0\t{windowActive}\t{flags}\t0\t{title}" ++
+            s!"\t:~/work\\ space\t{paneActive}\t{currentCommand}\t{savedCommand}") with
+      | .ok panes => panes == [{ name, dir := "/home/me/work space", line := 2 }]
+      | .error _ => false
+
+-- Discarding metadata does not hide failures in the identity or directory.
+#guard
+  [("bad/name", ":/tmp", "projected session is not a valid linger name at line 1: bad/name-w0-p0"),
+        ("linger=raw.dot", ":/tmp", "malformed native session at line 1: linger=raw.dot"),
+        ("d", "/tmp", "malformed pane record at line 1"),
+        ("d", ":/tmp/\x00bad", "malformed pane record at line 1")].all
+    fun (session, cwd, expected) =>
+    match parseSave "" s!"pane\t{session}\t0\t\t\t0\t\t{cwd}\t\t\t:",
+      parseSave "" s!"pane\t{session}\t0\t1\t:*\t0\tλ title\t{cwd}\t1\tvi\t:arbitrary command" with
+    | .error before, .error after => before == expected && after == expected
     | _, _ => false
 
 -- Non-pane rows are ignored, including blanks and unknown record shapes.

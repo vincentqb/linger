@@ -21,7 +21,7 @@
 #  15. delivery: bounded replay, margin continuation, byte order and close deadlines
 #  16. manager: terminal selector, exact targets, paste, resize, cleanup and return
 #  17. titles: attention refresh, split output, pipe-error recovery and handback
-#  18. interchange: exact retained source, common fields, current cwd and exclusive export
+#  18. interchange: discarded foreign metadata, current fields and exclusive export
 #  (1) also covers Tests/Fuzz.lean: randomized §Replay round-trip search
 #  every pty suite also carries an EXACT CHECK COUNT (see `suite` below): green
 #  means "no failures AND every recorded assertion ran".
@@ -268,7 +268,7 @@ suite manager 111
 say "17. attached titles (attention, complete boundaries and default handback)"
 suite title 18
 
-say "18. save interchange (retained bytes, current fields and exclusive publication)"
+say "18. save interchange (current fields, discarded metadata and exclusive publication)"
 suite interop 33
 
 LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger info "$sentinel_name" >/dev/null \

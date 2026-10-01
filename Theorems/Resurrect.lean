@@ -113,18 +113,27 @@ private theorem parseRow_command_valid (home : String) (line : Nat)
   unfold parseRow at h
   repeat' (split at h <;> (try simp_all))
 
-/-- Replacing a well-formed, NUL-free saved command changes neither the parsed pane
-nor any error caused by another field. The ignored fields are arbitrary. -/
-private theorem parseRow_command_irrelevant (home : String) (line : Nat)
-    (session window field3 field4 pane field6 cwd field8 field9 savedCommand replacement : String)
+/-- Changing ignored pane fields and well-formed, NUL-free saved commands changes
+neither the parsed pane nor errors from the fixed identity and directory fields. -/
+private theorem parseRow_metadata_irrelevant (home : String) (line : Nat)
+    (session window pane cwd : String)
+    (windowActive windowFlags paneTitle paneActive currentCommand savedCommand : String)
+    (otherWindowActive otherWindowFlags otherPaneTitle otherPaneActive otherCurrentCommand
+      replacement : String)
     (hs : savedCommand.startsWith ":" = true) (hr : replacement.startsWith ":" = true)
     (hns : savedCommand.contains '\x00' = false) (hnr : replacement.contains '\x00' = false) :
     parseRow home line
-        ["pane", session, window, field3, field4, pane, field6, cwd, field8, field9, savedCommand] =
+        ["pane", session, window, windowActive, windowFlags, pane, paneTitle, cwd, paneActive,
+          currentCommand, savedCommand] =
       parseRow home line
-        ["pane", session, window, field3, field4, pane, field6, cwd, field8, field9,
-          replacement] := by
+        ["pane", session, window, otherWindowActive, otherWindowFlags, pane, otherPaneTitle, cwd,
+          otherPaneActive, otherCurrentCommand, replacement] := by
   simp [parseRow, hs, hr, hns, hnr]
+
+/-- A non-pane row contributes no pane, whatever its remaining fields contain. -/
+private theorem parseRow_other (home : String) (line : Nat) (fields : List String)
+    (ignored : fields.head? ≠ some "pane") : parseRow home line fields = .ok none := by
+  simp [parseRow, ignored]
 
 private theorem parseRows_sound (home : String) (line : Nat) (seen rows : List String)
     (panes : List Pane) (h : parseRows home line seen rows = .ok panes) :
@@ -312,69 +321,6 @@ theorem renderSave_roundtrip (home : String) (fields : List (String × String)) 
     ∃ panes, parseSave home content = .ok panes ∧ common panes = fields := by
   obtain ⟨panes, parsed, same⟩ := renderSave_checked fields content h
   exact ⟨panes, parseSave_home_independent home content panes parsed, same⟩
-
-/-- Selecting retained bytes is equivalent to exact multiset equality of the
-complete common fields. This speaks about selection even when fresh generation
-could coincidentally produce the same text. -/
-private theorem retainedSource?_iff (current : List (String × String))
-    (retained : Option (String × List (String × String))) (original : String) :
-    retainedSource? current retained = some original ↔
-      ∃ baseline, retained = some (original, baseline) ∧ current.Perm baseline := by
-  rcases retained with _ | ⟨source, baseline⟩
-  · simp [retainedSource?]
-  · by_cases same : current.Perm baseline
-    · constructor
-      · intro h
-        have hs : source = original := by simpa [retainedSource?, same] using h
-        subst source
-        exact ⟨baseline, rfl, same⟩
-      · rintro ⟨_, h, _⟩
-        cases h
-        simp [retainedSource?, same]
-    · simp [retainedSource?, same]
-
-/-- The export decision is exactly the multiset comparison; generation runs
-only when there is no matching retained source. -/
-theorem exportSave_policy (current : List (String × String))
-    (retained : Option (String × List (String × String))) :
-    exportSave current retained =
-      match retained with
-      | none => renderSave current
-      | some (original, baseline) =>
-        if current.Perm baseline then .ok original else renderSave current := by
-  rcases retained with _ | ⟨original, baseline⟩
-  · rfl
-  · by_cases same : current.Perm baseline <;> simp [exportSave, retainedSource?, same]
-
-theorem exportSave_unchanged (current baseline : List (String × String)) (original : String)
-    (same : current.Perm baseline) :
-    exportSave current (some (original, baseline)) = .ok original := by
-  simp [exportSave, retainedSource?, same]
-
-theorem exportSave_changed (current baseline : List (String × String)) (original : String)
-    (changed : ¬current.Perm baseline) :
-    exportSave current (some (original, baseline)) = renderSave current := by
-  simp [exportSave, retainedSource?, changed]
-
-theorem exportSave_without_source (current : List (String × String)) :
-    exportSave current none = renderSave current := by rfl
-
-/-- Every successful export either selects an unchanged retained source or
-parses back to precisely the current common fields. -/
-theorem exportSave_roundtrip_or_retained (home : String) (current : List (String × String))
-    (retained : Option (String × List (String × String))) (content : String)
-    (h : exportSave current retained = .ok content) :
-    (∃ baseline, retained = some (content, baseline) ∧ current.Perm baseline) ∨
-      ∃ panes, parseSave home content = .ok panes ∧ common panes = current := by
-  unfold exportSave at h
-  cases hs : retainedSource? current retained with
-  | none =>
-    simp only [hs] at h
-    exact .inr (renderSave_roundtrip home current content h)
-  | some original =>
-    simp only [hs, Except.ok.injEq] at h
-    subst content
-    exact .inl ((retainedSource?_iff current retained original).mp hs)
 
 /-- Membership pins every output field to one unmodified source record. -/
 theorem mem_plan (existing : List String) (panes : List Pane) (pane : Pane) :

@@ -14425,3 +14425,113 @@ Before the closure commit, the required program and theorem/unit builds pass
 again in 0.7 seconds each. All-file hooks pass in 18.1 seconds. Their logs and
 exit-status receipt are in
 `/tmp/linger-tmux-main-20261001-bMcetC/closure-checks.json`.
+
+## Step 1 notes — 2026-10-01
+
+The new `specs/active-import-data.md` follows the user's changed interchange
+requirement: keep only fields Linger uses, even when discarding the rest
+prevents reconstruction. Imported identities name native sessions; directories
+start their shells. Foreign layouts, grouping, focus, titles, saved commands,
+comments and unknown records gain no native consumer merely to justify their
+storage. Exact foreign-source reconstruction is deliberately retired. The
+native LNGR v1 codec and its terminal state are unchanged.
+
+The coordinator first replaces retention-dependent interchange assertions with
+current-field and discarded-metadata assertions, preserving all 33 suite
+checks. The original executable is copied before rebuilding; its SHA-256 is
+`c7c96aaf124514e961bd6e4170baf1aa87ebd6c7c990cc098d411c82ae5d387a`.
+The new suite against that binary has eight expected failures and 25 passes:
+imports still persist source, exports still depend on obsolete source, and
+relative or missing HOME cases still return the original foreign bytes.
+The failing run checks the executable's identity before and after. Logs,
+exit status and the original executable are retained under
+`/tmp/linger-active-import-20261001-jk5cy3/evidence/`.
+
+The manager deletion removes JSON serialization, retained source lookup,
+the physical-directory baseline used only for retention, and publication's
+replace-file branch. Import still parses and preflights the complete input
+before starting sessions with a fixed command. Export captures the caller's
+native namespace, checks its current names and directories with `renderSave`,
+then publishes privately and exclusively. Existing `tmux-import.json` files
+are ignored and left untouched. No input recording, process restoration,
+new checkpoint metadata, C code or dependency is introduced.
+
+After the deletion, `./lake build linger e2e` passes and the focused
+interchange suite passes all 33 checks. New checks cover source replacement
+and removal, metadata-only reimport, no sidecar creation, and corrupt or
+matching obsolete sidecars that cannot block or replace current exports.
+The suite retains live/resumable cwd, missing HOME namespace, complete
+observation, command nonexecution, private publication and existing-file
+refusal checks. Standalone formatting then normalizes `E2E/Interop.lean`;
+the assembled verifier will check that final source again.
+
+An in-memory mutation check runs the actual `CODE_AWK` and export-chain
+expression from `tests/gates.sh`. The baseline passes. Replacing the default
+snapshot with an empty result, serializing an empty field list, or moving
+capture into the importer's normalized HOME context each fails the gate.
+These are source-gate checks, not executions of the mutated runtime.
+`io-gate-mutations.json` records the expression, source hashes and all four
+results in the same evidence directory. The isolated pure-policy worker
+and independent reviewer are still running at this point.
+
+The pure worker removes `retainedSource?` and `exportSave` and their
+reconstruction-only proofs. `parseRow_metadata_irrelevant` now permits
+independent changes to every ignored pane field and both valid saved commands,
+preserving the complete success or error result. Its command assumptions are
+the existing colon sentinel and NUL guard. `parseRow_other` covers every
+already-split non-pane row. Neither claims that changing raw record delimiters
+or inserting lines preserves diagnostic positions. The checked native-name
+and directory serialization certificates remain unchanged.
+
+All 38 importer unit guards and the worker's full theorem/unit build pass.
+A well-typed mutation rejects empty pane titles; it compiles, but fails the
+generalized theorem and ten unit guards. Byte-exact restoration passes again.
+Two optional ad-hoc census probes fail, first on syntax and then on an
+interpreter unknown-declaration error; neither is counted as coverage.
+The production census below passes. Original sources, mutation and restoration
+receipts are in
+`/tmp/linger-active-import-20261001-jk5cy3/evidence-policy/`.
+The three accepted files match their recorded worker hashes at integration.
+
+The independent assembled review finds no blockers. It checks the generalized
+proof, acceptance fixtures, preserved environment namespace, complete export
+observation, command nonexecution and exclusive private publication. It
+independently compares the worker and main files and inspects both runtime
+and mutation receipts. This is source and evidence review, not a second
+execution of the runtime suites. Reports are in
+`/tmp/linger-active-import-20261001-jk5cy3/review/`.
+
+The first assembled verifier passes the build and ABI check but stops at a
+documentation gate: the new live spec exists but is not yet in Git's index.
+Staging it fixes the inventory without weakening the gate. The initial
+evidence collector incorrectly copied pre-existing suite logs after that
+early stop. Those logs and counts are explicitly excluded from this attempt's
+evidence. Its preserved record says so; the corrected collector requires both
+a completion marker in the current run and a fresh suite-log timestamp.
+The failed attempt remains in `evidence/first-full-attempt/` under the task
+directory rather than being overwritten.
+
+The final foreground Linux verifier passes in 383 seconds,
+18:23:26Z–18:29:49Z. It executes all 470 assertions across fifteen live suites,
+including all 33 interchange assertions, twelve CI checks, 63 shim checks,
+generated ABI, standalone layout of all 115 Lean files, both coverage checks,
+fuzz assertions and the unrelated-session sentinel. The production census
+finds all 354 pure definitions in theorem types. All 175 source identities
+remain fixed during the run. Exact outputs, per-suite count audit and source
+manifests are in
+`/tmp/linger-active-import-20261001-jk5cy3/evidence/`.
+
+The deletion reduces production code by 49 lines overall, with no added
+checkpoint fields, C code or dependency. Both agents are closed. Every worker
+source, including its copied context and untracked live spec, has a verified
+recovery copy with matching bytes and modes in
+`/tmp/linger-active-import-20261001-jk5cy3/recovery-DznXFm/`.
+Removal awaits publication and a fresh inventory check; hosted verification
+and closure remain.
+
+Before the implementation commit, both required build commands pass again
+in less than one second each. All-file commit hooks pass in 17.3 seconds,
+including semantic lint; no source changes during those checks. Their logs
+and exit-status receipt are in `evidence/step1-checks.json` under the task
+directory. The full verifier's supporting CI, shim and classification logs
+are also copied and checked against this run's start time.

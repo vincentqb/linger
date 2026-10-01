@@ -153,7 +153,7 @@ private def rawText (f : Fixture) (revision : String := "first") : String :=
         "future-record\tkeep\tall\tthese\tfields\n").replace
     "\n" "\r\n"
 
-private def setupRaw (f : Fixture) : IO String := do
+private def setupRaw (f : Fixture) : IO Unit := do
   let dir := f.root / "pane 'quoted' $cash a b"
   IO.FS.createDirAll (dir / "child")
   link (dir / "child") (f.root / "alias")
@@ -161,45 +161,46 @@ private def setupRaw (f : Fixture) : IO String := do
   let (code, _, err) ← f.importText text
   unless code == 0 && (← f.cwdIs "foreign-w7-p2" dir) do
     throw (IO.userError s!"foreign import did not start its physical cwd: {err}")
-  return text
 
-private def rawRoundtrip (f : Fixture) : IO Bool := do
-  let original ← setupRaw f
+private def sourceIndependent (f : Fixture) : IO Bool := do
+  setupRaw f
+  let expected := [("foreign-w7-p2", (f.root / "pane 'quoted' $cash a b").toString)]
   IO.FS.writeFile (f.root / "source") "source replaced after import\n"
-  let first := f.root / "out" / "replaced"
-  let (firstCode, _, _) ← f.cli #["export", first.toString]
+  let first ← f.exportFields "replaced" expected
   IO.FS.removeFile (f.root / "source")
-  let second := f.root / "out" / "removed"
-  let (secondCode, _, _) ← f.cli #["export", second.toString]
-  return firstCode == 0 && secondCode == 0 && (← readBytes first) == some original.toUTF8 &&
-      (← readBytes second) == some original.toUTF8 &&
+  let second ← f.exportFields "removed" expected
+  return first && second && !(← (System.FilePath.mk f.env.dir / "tmux-import.json").pathExists) &&
       (← namesIn (f.root / "out")) == ["removed", "replaced"]
 
-private def latestImport (f : Fixture) : IO Bool := do
-  let _ ← setupRaw f
+private def metadataOnlyImport (f : Fixture) : IO Bool := do
+  setupRaw f
+  let before ← f.pid "foreign-w7-p2"
+  let expected := [("foreign-w7-p2", (f.root / "pane 'quoted' $cash a b").toString)]
+  let first ← f.exportFields "first" expected
   let latest := rawText f "latest successful import" ++ "last-record\tno trailing newline"
   let (importCode, _, _) ← f.importText latest
-  let target := f.root / "out" / "latest"
-  let (exportCode, _, _) ← f.cli #["export", target.toString]
-  return importCode == 0 && exportCode == 0 && (← readBytes target) == some latest.toUTF8
+  let second ← f.exportFields "second" expected
+  return importCode == 0 && before.isSome && (← f.pid "foreign-w7-p2") == before && first &&
+      second &&
+      (← readBytes (f.root / "out" / "first")) == (← readBytes (f.root / "out" / "second")) &&
+      !(← (System.FilePath.mk f.env.dir / "tmux-import.json").pathExists)
 
 private def failedImport (f : Fixture) : IO Bool := do
-  let original ← setupRaw f
-  let provenance := System.FilePath.mk f.env.dir / "tmux-import.json"
-  let before ← readBytes provenance
+  setupRaw f
+  let before ← f.pid "foreign-w7-p2"
   f.own "must-not-start-w0-p0"
   let malformed :=
     paneLine "must-not-start" "0" "0" (f.root / "home").toString "" ++ "pane\tbroken\n"
   let (importCode, _, _) ← f.importText malformed
-  let after ← readBytes provenance
-  let target := f.root / "out" / "previous"
-  let (exportCode, _, _) ← f.cli #["export", target.toString]
-  return importCode == 1 && before.isSome && before == after && exportCode == 0 &&
-      (← readBytes target) == some original.toUTF8 &&
+  return importCode == 1 && before.isSome && (← f.pid "foreign-w7-p2") == before &&
+      (←
+        f.exportFields "previous"
+            [("foreign-w7-p2", (f.root / "pane 'quoted' $cash a b").toString)]) &&
+      !(← (System.FilePath.mk f.env.dir / "tmux-import.json").pathExists) &&
       !(← (System.FilePath.mk f.env.dir / "must-not-start-w0-p0.sock").pathExists)
 
 private def topologyChange (f : Fixture) (remove : Bool) : IO Bool := do
-  let original ← setupRaw f
+  setupRaw f
   let dir := f.root / "home"
   f.start "added.name+" dir
   if remove then
@@ -213,11 +214,10 @@ private def topologyChange (f : Fixture) (remove : Bool) : IO Bool := do
   let expected :=
     [("added.name+", dir.toString)] ++
       if remove then [] else [("foreign-w7-p2", (f.root / "pane 'quoted' $cash a b").toString)]
-  let ok ← f.exportFields "changed" expected
-  return ok && (← readBytes (f.root / "out" / "changed")) != some original.toUTF8
+  f.exportFields "changed" expected
 
 private def liveCwd (f : Fixture) : IO Bool := do
-  let _ ← setupRaw f
+  setupRaw f
   let changed := f.root / "home"
   let (code, _, _) ← f.cli #["run", "foreign-w7-p2", "cd", changed.toString]
   return code == 0 && (← f.cwdIs "foreign-w7-p2" changed) &&
@@ -317,12 +317,10 @@ private def publication (f : Fixture) (kind : String) : IO Bool := do
   return code == 1 && intact && (← namesIn (f.root / "out")) == before
 
 private def privatePublication (f : Fixture) : IO Bool := do
-  let _ ← setupRaw f
+  setupRaw f
   let target := f.root / "out" / "private"
   let (code, _, _) ← f.cli #["export", target.toString]
-  return code == 0 && (← privateFile target) &&
-      (← privateFile (System.FilePath.mk f.env.dir / "tmux-import.json")) &&
-      (← namesIn (f.root / "out")) == ["private"] &&
+  return code == 0 && (← privateFile target) && (← namesIn (f.root / "out")) == ["private"] &&
       (← namesIn (System.FilePath.mk f.env.dir)).all
         (fun name => !name.contains '~' && !name.endsWith ".tmp")
 
@@ -335,11 +333,17 @@ private def corruptCheckpoint (f : Fixture) (unreadable : Bool) : IO Bool := do
     IO.FS.writeBinFile checkpoint (ByteArray.mk (magic ++ [80, 24, 0xFF]).toArray)
   f.refused
 
-private def corruptProvenance (f : Fixture) (text : String) : IO Bool := do
-  f.seed "valid" (f.root / "home").toString
+private def obsoleteProvenance (f : Fixture) (matching : Bool) : IO Bool := do
+  let cwd := (f.root / "home").toString
+  f.seed "valid" cwd
+  let text :=
+    if matching then
+      "{\"version\":1,\"source\":\"obsolete foreign source\",\"fields\":[[\"valid\",\"" ++ cwd ++
+        "\"]]}"
+    else "{not-json"
   let path := System.FilePath.mk f.env.dir / "tmux-import.json"
   IO.FS.writeFile path text
-  return (← f.refused) && (← readBytes path) == some text.toUTF8
+  return (← f.exportFields "current" [("valid", cwd)]) && (← readBytes path) == some text.toUTF8
 
 private def incompleteSnapshot (f : Fixture) : IO Bool := do
   f.seed "valid" (f.root / "home").toString
@@ -366,8 +370,8 @@ private def unrepresentableCwd (f : Fixture) : IO Bool := do
       throw (IO.userError s!"unsupported cwd was not refused without output: {label}")
   return true
 
-private def inertCommands (f : Fixture) : IO Bool := do
-  let _ ← setupRaw f
+private def discardedCommands (f : Fixture) : IO Bool := do
+  setupRaw f
   let barrier := f.root / "barrier"
   let (code, _, _) ← f.cli #["run", "foreign-w7-p2", s!"printf ready > '{barrier}'"]
   let ready ←
@@ -386,9 +390,9 @@ private def relativeEnvironment (f : Fixture) : IO Bool := do
       ("XDG_RUNTIME_DIR", some "../runtime"), ("XDG_STATE_HOME", some "../persistent")]
   let (importCode, _, _) ← f.cli #["import", "save"] extra (some origin)
   let (exportCode, _, _) ← f.cli #["export", "../out/relative"] extra (some origin)
+  let exported ← IO.FS.readFile (f.root / "out" / "relative")
   return importCode == 0 && exportCode == 0 && (← f.cwdIs "relative-w0-p0" (f.root / "home")) &&
-      (← readBytes (f.root / "out" / "relative")) == some text.toUTF8 &&
-      (← privateFile (System.FilePath.mk f.env.dir / "tmux-import.json"))
+      commonFields "" exported == some [("relative-w0-p0", (f.root / "home").toString)]
 
 private def fallbackHome (f : Fixture) (home : Option String) : IO Bool := do
   let text := paneLine "fallback" "0" "0" "~" ""
@@ -397,7 +401,11 @@ private def fallbackHome (f : Fixture) (home : Option String) : IO Bool := do
   let (importCode, _, _) ← f.cli #["import", (f.root / "source").toString] #[("HOME", home)]
   let target := f.root / "out" / "fallback"
   let (exportCode, _, _) ← f.cli #["export", target.toString] #[("HOME", home)]
-  return importCode == 0 && exportCode == 0 && (← readBytes target) == some text.toUTF8
+  let some accountHome := (← Std.Async.System.getCurrentUser).homeDir | return false
+  let cwd ← IO.FS.realPath accountHome
+  let exported ← IO.FS.readFile target
+  return importCode == 0 && exportCode == 0 && (← f.cwdIs "fallback-w0-p0" cwd) &&
+      commonFields "" exported == some [("fallback-w0-p0", cwd.toString)]
 
 private def withVariables {α : Type} (values : Array (String × Option String)) (action : IO α) :
     IO α := do
@@ -516,11 +524,12 @@ def runWith (binary : String) : IO UInt32 := do
           f.seed "native" (f.root / "home").toString
           let (code, _, _) ← f.cli #["export", "./-save"] (cwd := some (f.root / "out"))
           return code == 0 && (← readBytes (f.root / "out" / "-save")).isSome),
-        ("unchanged import preserves UTF8, CRLF and unknown rows after source replacement and deletion",
-          rawRoundtrip),
-        ("the latest successful import replaces retained source even when every session exists",
-          latestImport),
-        ("a malformed import preserves provenance and creates no partial session", failedImport),
+        ("import retains no foreign source and exports current fields after source replacement and deletion",
+          sourceIndependent),
+        ("reimporting changed foreign metadata preserves the existing session and current export",
+          metadataOnlyImport),
+        ("a malformed import preserves existing sessions and creates no partial session",
+          failedImport),
         ("adding a session generates complete current common fields", fun f =>
           topologyChange f false),
         ("removing an imported session generates complete current common fields", fun f =>
@@ -536,17 +545,17 @@ def runWith (binary : String) : IO UInt32 := do
           publication f "symlink"),
         ("export preserves a dangling symlink with no temporary leak", fun f =>
           publication f "dangling"),
-        ("provenance and exported saves are private 0600 files with no temporary leak",
-          privatePublication),
+        ("exported saves are private 0600 files with no temporary leak", privatePublication),
         ("a corrupt checkpoint refuses the entire export", fun f => corruptCheckpoint f false),
         ("an unreadable checkpoint refuses the entire export", fun f => corruptCheckpoint f true),
-        ("corrupt provenance refuses export without changing provenance", fun f =>
-          corruptProvenance f "{not-json"),
-        ("incomplete provenance refuses export without changing provenance", fun f =>
-          corruptProvenance f "{}"),
+        ("corrupt obsolete provenance cannot block export and stays untouched", fun f =>
+          obsoleteProvenance f false),
+        ("matching obsolete provenance cannot replace current fields and stays untouched", fun f =>
+          obsoleteProvenance f true),
         ("an unresponsive live socket refuses a partial export", incompleteSnapshot),
         ("unrepresentable cwd fields are refused without a partial export", unrepresentableCwd),
-        ("saved commands remain inert after a shell completion barrier", inertCommands),
+        ("discarded saved commands are never executed after a shell completion barrier",
+          discardedCommands),
         ("import and export share relative HOME and state overrides", relativeEnvironment),
         ("import and export share account-home fallback when HOME is unset", fun f =>
           fallbackHome f none),

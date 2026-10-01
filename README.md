@@ -153,9 +153,9 @@ linger status          # compact local attention counts; empty when quiet
 | `kill` / `detach <name>` | end / disconnect |
 | `get` `set` `unset` `clear <name>` | labels (`k=v`) |
 
-An unchanged import can export the original save byte for byte. Generated saves
-preserve Linger names and working directories through tmux; screens, scrollback
-and labels stay in native checkpoints. See the
+Imports use saved identities and directories without retaining foreign metadata.
+Exports preserve current Linger names and working directories through tmux;
+screens, scrollback and labels stay in native checkpoints. See the
 [interchange details](recipes/README.md#tmux-resurrect-interchange) for the
 preservation rules and supported paths.
 
