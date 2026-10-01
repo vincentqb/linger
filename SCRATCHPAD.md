@@ -14087,3 +14087,51 @@ are sealed in `/tmp/linger-ci-full-20261001-Z4QaxC/`.
 Both agents are closed and the worker's two source files are integrated.
 Publication, fresh cleanup preflight and the new hosted results belong to
 closure.
+
+## Step 2 notes — 2026-10-01
+
+Checkpoint `f0e3a14` is published. Hosted run `36858109059` passes its cheap
+source job, compilation, generated ABI, standalone layout, coverage and all
+twelve CI checks, then fails the existing deep-directory shim fixture.
+No live suite runs and the unsuccessful job saves no caches. The full gate
+therefore remains unverified on GitHub at this checkpoint. Original job
+metadata, annotations and log are in `/tmp/linger-ci-full-20261001-Z4QaxC/`.
+
+The fixture's logical `cd` depends on the shell: Dash reconstructs an absolute
+path and stops before the child reaches the intended depth, while local Bash
+gets through. Official Dash v0.5.12 at commit
+`4bbf8721a3ac6401ced6a0454956801f6ba37256` reproduces exactly one failure among
+the existing 63 shim checks. Changing the fixture to physical `cd -P` keeps
+all 90 relative descents through 49-character components and both assertions.
+All 63 checks then pass under Dash and under Bash. The original failure,
+small logical/physical probes, fixed executions and exact sources are retained
+in `/tmp/linger-ci-deep-cwd-20261001-liQYAa/`. No runtime or C change is needed.
+
+The hosted annotations also identify deprecated action runtimes. A separate
+worker checks current stable release metadata, inputs, outputs and supported
+runner versions, then changes seven workflow lines: checkout v7, cache v6
+and setup-python v7. Every other workflow byte is unchanged. The existing
+hosted runner meets their Node 24 requirement. The worker independently reviews
+the fixture and counts its supplied failure/pass logs without weakening either
+assertion. Official upstream sources, version-only comparison, actionlint,
+source gates and the accepted handoff are in
+`/tmp/linger-ci-actions-20261001-ZSrspy/evidence/`.
+
+The first assembled verifier stops on the formatter's canonical line wrap for
+the longer fixture command. Formatting changes only that wrap; a byte comparison
+against the independently reviewed source verifies the exact command and all
+other content are preserved. Its failed run remains separate from the rerun.
+
+The corrected full foreground Linux verifier passes in 341 seconds,
+12:12:18Z–12:17:59Z, with Dash used for child `sh` commands. The orchestrator
+itself still uses this host's `/bin/sh`; no claim of a second top-level shell
+run is made. Post-build hooks pass in five seconds. Generated ABI, layout,
+both coverage checks, fuzz, twelve CI checks, all 63 shim checks, all 437 live
+assertions and the unrelated-session sentinel pass. All 172 source identities
+remain fixed. Original logs, independent counts and source manifests are in
+`/tmp/linger-ci-portability-full-20261001-ourcZX/formatted/`.
+
+The action worker is closed and its patch is integrated. Exact recovery copies
+are prepared outside its worktree; removal will follow a fresh preflight after
+the accepted workflow is committed and pushed. Hosted verification and final
+closure remain.

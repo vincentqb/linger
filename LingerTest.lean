@@ -523,11 +523,13 @@ def testWinsizeBounds : IO Nat := do
 /-- `getcwdOf` feeds the checkpoint's `cwd`, which a resume hands to `chdir`, so a
 path it cannot report in full has to come back empty rather than cut: a truncated
 path names a different directory, or none. The child walks past `PATH_MAX`
-relatively, which is the only way to get a cwd longer than the buffer. -/
+relatively with physical `cd`: a shell's logical `cd` may rebuild an absolute
+path and reject it before the child reaches the length under test. -/
 def testDeepCwd : IO Nat := do
   let seg := String.ofList (List.replicate 49 'd')
   let dir ← IO.FS.createTempDir
-  let deep := s!"for i in $(seq 90); do mkdir -p {seg} && cd {seg} || exit 1; done; echo deep; cat"
+  let deep :=
+    s!"for i in $(seq 90); do mkdir -p {seg} && cd -P {seg} || exit 1; done; echo deep; cat"
   let (pid, master) ← spawnPty 80 24 dir.toString "sh" #["-c", deep] #[]
   let out ← drain master ((← monotonicMs) + 5000) .empty
   let walked := contains (String.fromUTF8! out) "deep"

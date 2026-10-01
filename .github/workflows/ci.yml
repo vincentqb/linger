@@ -30,7 +30,7 @@ jobs:
     outputs:
       os: ${{ steps.runners.outputs.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0  # The scheduled runner decision reads recent history.
       - run: sh tests/gates.sh
@@ -53,7 +53,7 @@ jobs:
       matrix:
         os: ${{ fromJSON(needs.gates.outputs.os) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: install test dependencies
         run: |
@@ -71,7 +71,7 @@ jobs:
           fi
 
       - name: cache Lean toolchain
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.elan
           key: elan-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lean-toolchain') }}
@@ -91,7 +91,7 @@ jobs:
       # No restore on schedule/dispatch/tags keeps a regular clean verification.
       - name: cache build and formatter analysis
         if: github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/'))
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             .lake/build
@@ -104,7 +104,7 @@ jobs:
       - name: cache standalone formatter
         if: runner.os == 'Linux'
         id: fmt-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.local/bin/lean-fmt
           key: lean-fmt-${{ runner.os }}-${{ runner.arch }}-${{ env.LEAN_FMT_REV }}-${{ hashFiles('lean-toolchain') }}
@@ -145,14 +145,14 @@ jobs:
 
       # Lint after the build: semantic checks can use its existing Lean artifacts.
       # Layout is already checked by tests/e2e.sh, so it needs no second invocation.
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         if: runner.os == 'Linux'
         id: python
         with:
           python-version: '3.x'
       - name: cache pre-commit environments
         if: runner.os == 'Linux'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/pre-commit
           key: pre-commit-${{ runner.os }}-${{ runner.arch }}-${{ steps.python.outputs.python-version }}-${{ hashFiles('.pre-commit-config.yaml') }}

@@ -50,7 +50,25 @@ workflow syntax and source gates pass. Record cold/warm times, exact toolchain
 and actual hosted outcomes. At most two review/revision rounds before revisiting
 any unresolved implementation choice.
 
-## Step 2 — publication and closure
+## Step 2 — hosted portability checks
+
+Implementation checkpoint `f0e3a14` is published. Hosted run `36858109059`
+passes source gates, compilation, ABI, layout, coverage and all twelve CI
+checks, then fails the existing deep-directory POSIX fixture before the live
+suites run. Reproduce the runner's shell behavior and fix the fixture without
+weakening its long-path or usable-directory assertions. Also replace the
+deprecated action versions identified by that run after checking current
+upstream compatibility.
+
+Writes: `LingerTest.lean`, action versions in `.github/workflows/ci.yml`,
+this spec and append-only `SCRATCHPAD.md`. The action-version worker owns
+only the workflow in its separate worktree.
+
+Exit: the original failure is reproduced, the fixed fixture passes on both
+shell implementations, all required builds and the full foreground verifier
+pass, and the hosted result is inspected before closure.
+
+## Step 3 — publication and closure
 
 Publish the verified checkpoint to main, inspect hosted results, preserve and
 remove accepted worker worktrees/branches, append the final verification record
@@ -85,4 +103,22 @@ review are sealed in `/tmp/linger-ci-full-20261001-Z4QaxC/`; worker and mutation
 evidence paths are recorded in SCRATCHPAD.md.
 
 Both required builds, actionlint, shell syntax and source gates also pass.
-Publication, hosted validation and worker cleanup remain.
+Checkpoint `f0e3a14` is committed and pushed, and its original worker branch
+and worktree are removed with exact accepted-source recovery copies.
+The hosted fixture failure and action deprecations above extend verification
+through step 2 before final publication and closure.
+
+Step 2 local verification is complete. The original deep-directory fixture
+fails exactly one of 63 shim checks under Dash v0.5.12. Physical `cd -P`
+preserves both assertions and passes all 63 checks under Dash and Bash.
+An independent review accepts the fixture and the seven action-version updates.
+
+The full foreground Linux verifier passes with Dash used for child `sh`
+commands, 12:12:18Z–12:17:59Z (341 seconds), followed by passing hooks in
+five seconds. All 172 source identities remain unchanged, and all 437 live
+assertions, twelve CI checks and 63 shim checks execute. The first attempt
+stopped at a formatter layout correction; its original failure is preserved
+separately from the successful run.
+
+Evidence is sealed in `/tmp/linger-ci-portability-full-20261001-ourcZX/`.
+Publication and the next hosted result remain before closure.
