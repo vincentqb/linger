@@ -14193,3 +14193,44 @@ at 12:48:49Z. The worker is closed and its accepted fixture is integrated.
 All its tracked sources have exact recovery copies in
 `/tmp/linger-ci-home-recovery-20261001-W2YgaP/`; removal follows publication
 and another fresh preflight. Hosted verification and closure remain.
+
+## Step 4 notes — 2026-10-01
+
+Checkpoint `6aebbc4` is committed and pushed. Hosted Linux run `36865170087`
+passes completely: source gates in eight seconds and the full job in
+17 minutes 31 seconds, 12:56:41Z–13:14:12Z. The full verifier step takes
+13 minutes 36 seconds. Every one of the fourteen suite counts is present in
+the log, totaling 437 live assertions; all twelve CI checks and 63 enforced
+shim checks pass. Generated ABI, standalone layout, semantic coverage,
+renderer/replay classification and fuzz checks pass. The census still finds
+all 349 pure definitions in theorem types. Commit hygiene and semantic lint
+pass afterward.
+
+The cold run misses all four caches and saves each successfully. Compilation
+takes 327.3 seconds; source gates plus layout take 150.1 seconds. Formatter
+installation takes 148 seconds and post-build hygiene/lint takes 28 seconds.
+These are hosted observations, distinct from the local clean/reuse timings in
+Step 1. The completion push changes records only and will measure actual hosted
+reuse after publication; its result is pending as this entry is written.
+
+The final committed workflow is 172 lines against the original 306. The
+175-line figure in Step 1 was incorrect; this recount reads both committed
+files directly. The executable CI checks, cache mutation evidence and source
+gates remain unchanged.
+
+After publication, fresh preflight compares every worker inventory field and
+rehashes all 172 tracked files against exact recovery copies, including file
+modes. It confirms the sole dirty file is the accepted Delivery fix, already
+identical in main and origin/main, with no staged or untracked files and no
+unique commits. The only ignored paths are generated build/formatter files.
+The closed worker's worktree and branch are removed; main is the only remaining
+branch and worktree. Recovery, preflight and removal receipts remain in
+`/tmp/linger-ci-home-recovery-20261001-W2YgaP/`.
+
+The hosted audit also rejects the preserved earlier failed run: it recognizes
+only ten completed live suites there, without treating the missing final
+counts as success. Complete logs, job/cache metadata and per-stage/count
+audits are in `/tmp/linger-ci-portability-full-20261001-ourcZX/` and
+`/tmp/linger-ci-assembled-20261001-SQphwv/`. The latest stable Lean is still
+v4.34.1. macOS support was reviewed in source but not executed in this round.
+The completed spec is archived as `specs/archive/lean-ci-refresh.md`.

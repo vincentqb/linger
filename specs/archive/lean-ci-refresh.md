@@ -1,6 +1,6 @@
 # Lean release and faster CI
 
-Status: active
+Status: complete
 Updated: 2026-10-01
 
 ## Intent
@@ -164,3 +164,37 @@ the independent review is
 The reviewer is closed and its source is integrated. Publication, fresh
 worker cleanup and the next hosted run remain. The latest stable Lean
 release is still v4.34.1 at the 12:48:49Z recheck.
+
+## Completion record — 2026-10-01
+
+All implementation steps are committed and pushed to main: `f0e3a14`,
+`fff4c58` and `6aebbc4`. The latest official stable Lean release remains
+v4.34.1, so the existing pin is retained. The final workflow has 172 lines,
+compared with 306 before this round.
+
+Hosted Linux run [36865170087](https://github.com/vincentqb/linger/actions/runs/36865170087)
+passes on `6aebbc4`. Source gates take eight seconds; the cold full job takes
+17 minutes 31 seconds, including tool installation and cache publication.
+Its full verifier takes 13 minutes 36 seconds. The log confirms all fourteen
+live suites and 437 assertions, all twelve CI checks, 63 enforced shim checks,
+the generated ABI, standalone layout, both coverage checks and fuzz assertions.
+The pure-definition census still covers all 349 definitions. Commit hygiene
+and semantic lint pass afterward.
+
+All four caches miss on that cold run and save successfully. The build itself
+takes 327.3 seconds and source gates plus layout take 150.1 seconds, identifying
+the work that reuse can avoid. This completion commit changes only records;
+its subsequent hosted run will provide the cache-reuse measurement. That run
+is pending at the time this record is closed; local clean/reuse measurements
+and mutation checks are already recorded above.
+
+All workers are closed. After confirming the exact accepted fixture is pushed,
+a fresh preflight verifies all 172 worker source copies, their modes and hashes,
+the unchanged index and inventory, and zero unique commits. The last worker
+worktree and branch are removed. Only main remains, with recovery and removal
+receipts in `/tmp/linger-ci-home-recovery-20261001-W2YgaP/`.
+
+Hosted logs, complete job metadata, cache-save receipts and the assertion audit
+are in `/tmp/linger-ci-portability-full-20261001-ourcZX/` and
+`/tmp/linger-ci-assembled-20261001-SQphwv/`. The existing macOS cadence is
+unchanged; macOS was not executed in this round.

@@ -15,10 +15,11 @@ worklog), `specs/archive/` (closed build records), the comments in
 
 ## Where things stand — read this first after any compaction
 
-1. `specs/lean-ci-refresh.md` is active: verify the latest stable Lean release
-   and simplify CI with measured build reuse and unchanged verification coverage.
-   The previous record is `specs/archive/terminal-libraries.md`.
-   Keep the live count at one; every behavioral fix starts with a failing
+1. No spec is in flight. The last one closed on 2026-10-01
+   (`specs/archive/lean-ci-refresh.md`: simplified CI with checked build reuse
+   and portable fixtures; full local and hosted Linux verification green).
+   New work opens a new `specs/<slug>.md`, names itself here, and keeps
+   the live count at one; every behavioral fix starts with a failing
    check and every deletion survives the full verifier stack.
 2. `SCRATCHPAD.md` — append-only worklog: proof recipes, measurements,
    break-verify records, negative results. Read before writing; append
