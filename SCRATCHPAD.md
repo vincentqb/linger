@@ -14234,3 +14234,147 @@ audits are in `/tmp/linger-ci-portability-full-20261001-ourcZX/` and
 `/tmp/linger-ci-assembled-20261001-SQphwv/`. The latest stable Lean is still
 v4.34.1. macOS support was reviewed in source but not executed in this round.
 The completed spec is archived as `specs/archive/lean-ci-refresh.md`.
+## Step 1 notes — 2026-10-01
+
+The new `specs/tmux-roundtrip.md` implements the two approved save-file
+interchange guarantees. `linger import` retains the latest successful source
+and its complete resolved name/directory projection in versioned
+`tmux-import.json`, beside native checkpoints. `linger export SAVE` observes
+all local live and resumable sessions, reuses that source exactly when the
+whole projection still matches, and otherwise generates a new save. Listing
+order is irrelevant; multiplicity is not. Failed imports leave the previous
+provenance intact. This does not roll back shells already created before an IO
+failure.
+
+The reserved `linger=` identity encoding maps dots to tildes, recovers every
+valid native name and rejects damaged encoding or nonzero window/pane indices.
+Ordinary imported names retain their established projection. Fresh generation
+checks its actual serialized text with the production parser and certifies
+the common fields for every home directory. Theorems also characterize the
+retained-source branch, including changed and missing provenance. This
+certificate concerns successful generation; acceptance fixtures are needed
+to catch a renderer that instead refuses everything.
+
+The pure worker's new native-identity assertion fails against the old parser.
+A membership-only provenance mutation fails four unit fixtures and the
+retention policy proofs. A wrong serialized-directory mutation fails five
+acceptance fixtures while the conditional successful-result certificate
+remains sound. Exact restoration and the full theorem/unit build pass.
+The worker adds 24 fixtures to the existing 21. Its original sources,
+mutations and logs are in
+`/tmp/linger-tmux-policy-20261001-tHZhXg/evidence/`.
+
+The manager normalizes relative paths for import and retained-source lookup,
+reads live process directories and decodes resumable checkpoints. Export
+observes native sessions in the caller's path context before normalizing home
+for provenance lookup. Incomplete observations fail the whole export.
+Publication uses an exclusive adjacent temporary file, private permissions,
+flush and a hard link that refuses every existing destination, including
+symlinks. Only provenance replacement uses rename. There is no new C,
+external Lean dependency, checkpoint revision, input recording or process
+resurrection. Atomic file visibility does not claim power-loss durability
+or an atomic snapshot across independent daemons.
+
+The initial Lean `E2E.Interop` suite executes 29 assertions. Against the old binary,
+23 fail and six pass; the new binary passes all 29. It covers persisted
+UTF-8/CRLF/unknown records, latest-source replacement, changed live and saved
+directories, native identity, incomplete observations, inert saved commands,
+home/path resolution, owner-only permissions and existing/dangling symlink
+refusal. Initial worker fixture mistakes concerning Unicode name sanitization
+and shell quoting were corrected before the final comparison. The integrated
+suite additionally exercises an unknown final row with no trailing newline
+and still passes all 29. Evidence is in
+`/tmp/linger-tmux-io-tests-20261001-HDqwdn/evidence/` and
+`/tmp/linger-tmux-main-20261001-bMcetC/interop-integrated.log`.
+The relative-environment fixture directly covers HOME and LINGER_DIR; its
+explicit LINGER_DIR shadows the XDG overrides. Publication is not tested by
+crashing halfway through a write.
+
+An independent worker uses tmux 3.7c and the installed tmux-resurrect scripts
+with an isolated server and save directory. Identity survives all 13 tested
+restore/save cycles, including a name with dots and plus. Single spaces,
+quotes, dollar signs, backticks and their combination preserve directories.
+Format expansions beginning with `#`, repeated/trailing spaces and a
+backslash-space spelling lose directory fidelity in the exercised cycle,
+sometimes with exit zero. Fresh generation refuses that repertoire; unchanged
+imports may still return their original text. Companion pane-content archives
+remain separate from the exact-save-file guarantee. All 15 recorded fixture
+processes exit and the owned stale socket is removed. Original scripts,
+receipts and cleanup are in `/tmp/linger-resurrect-verify.hulP80/evidence/`.
+
+Source gates bind persisted provenance to the complete resolved `common`
+projection and export to `exportSave`. Two isolated snapshot mutations remove
+those bindings in turn; each fails its intended gate, and byte-exact restoration
+passes. Main's source is untouched during these checks. Evidence is in
+`/tmp/linger-tmux-gate-mutation-20261001-gFPDzw/`.
+
+The first full foreground Linux verifier passes all 466 live assertions across
+15 suites, the twelve CI assertions, 63 shim checks, generated ABI, standalone
+layout, both semantic coverage checks, fuzz and the unrelated-session sentinel.
+All 356 pure definitions appear in theorem types. It takes 384 seconds,
+14:58:51Z–15:05:15Z, with identical source manifests before and after. Its
+receipts remain in `/tmp/linger-tmux-full-20261001-wXkD1Y/`.
+
+Independent review nevertheless finds a missing environment case: with HOME
+absent or empty and no state override, normalizing home before the export
+snapshot switches from the native temporary checkpoint directory to the
+account-home directory. A mixed live/resumable set can then produce a
+successful partial export. The earlier fallback assertions supplied
+LINGER_DIR, masking that distinction. The fix captures native fields before
+entering the provenance context. Its source-order gate first rejects the old
+ordering, then passes the corrected one. This is an IO ordering invariant,
+not a new claim about the pure codec.
+
+Four permanent regression checks cover absent/empty HOME crossed with saved-only
+and mixed live/saved collections, without a state override at the observation
+point. They observe the actual native namespace, then redirect filesystem access
+into owned fixtures before calling the real snapshot. A private callback in
+`writeSave` supplies this seam; production defaults to `snapshot`, and gates bind
+both that default and the public command's invocation. Neither the tests nor the
+mutation need to open the user's default checkpoint or provenance directories.
+The wrong ordering produces 29 passes and four failures, including successful
+partial mixed exports; exact restoration passes all 33 checks with the same
+formatted source. Successful fixture roots disappear and the final audit finds
+no owned processes, sockets or temporary files. Evidence and source identities
+are in `/tmp/linger-interop-context-tGZBgr/`.
+
+The importer already used account-home paths when HOME is absent or empty;
+ordinary native commands use a temporary fallback in that environment. The
+recipe now describes that existing distinction and the consistent HOME or
+explicit LINGER_DIR needed for later discovery. Export's native snapshot
+continues to agree with the ordinary listing; it does not merge two namespaces.
+
+The same reviewer independently checks pinned Lean's UTF-8 reader and JSON
+serialization. Invalid UTF-8 is rejected; a 135-byte source containing control
+characters in uninterpreted data, CRLF, non-BMP and combining characters,
+quotes, backslashes and no final newline survives the persistence path exactly.
+The review and both probe locations are recorded in
+`/tmp/linger-tmux-main-20261001-bMcetC/independent-review.txt`.
+
+The final assembled foreground Linux verifier passes all 470 live assertions
+across 15 suites, including the 33 interchange checks. The twelve CI checks,
+63 shim checks, generated ABI, layout of all 115 files, both semantic coverage
+checks, fuzz and unrelated-session sentinel also pass. The census finds all
+356 pure definitions in theorem types. It takes 413 seconds,
+15:20:14Z–15:27:07Z, and preserves all 174 source identities. An independent
+count audit reads every suite's output against the actual runner expectations.
+Original outputs, source manifests and the audit are in
+`/tmp/linger-tmux-final-20261001-NuQQsr/`.
+
+The second and final independent review accepts the assembled fix with no
+remaining blocker. It checks snapshot completeness, environment restoration,
+private fixture isolation, the documented import namespace distinction and
+the finalized regression receipts. In-memory probes independently confirm
+that the source gates reject moving capture into the normalized context,
+replacing the default snapshot with an empty result, and bypassing it at the
+public command. The receipt binds the reviewed source hashes in
+`/tmp/linger-tmux-main-20261001-bMcetC/independent-review-round2.txt`.
+No further implementation round is needed. Native metadata extensions remain
+an explanation of possible future work, not part of this implementation.
+Publication and worker cleanup remain.
+
+Both required build commands pass again before publication: the program build
+in 0.6 seconds and theorem/unit build in 0.7 seconds. All-file commit hooks
+pass in 19 seconds, including standalone semantic lint. The code still matches
+the final verifier and accepted review. Their receipts are in
+`/tmp/linger-tmux-main-20261001-bMcetC/step1-checks.json`.

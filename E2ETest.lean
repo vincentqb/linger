@@ -13,6 +13,7 @@ public import E2E.Remote
 public import E2E.Terminal
 public import E2E.Title
 public import E2E.Recipes
+public import E2E.Interop
 public import E2E.Manager
 public import E2E.RemoteLive
 public import E2E.Ci
@@ -34,7 +35,7 @@ def suites : List (String × IO UInt32) :=
     ("graphics", E2E.Graphics.run), ("agent", E2E.Agent.run), ("resume", E2E.Resume.run),
     ("attach", E2E.Attach.run), ("delivery", E2E.Delivery.run), ("robust", E2E.Robust.run),
     ("remote", E2E.Remote.run), ("terminal", E2E.Terminal.run), ("title", E2E.Title.run),
-    ("recipes", E2E.Recipes.run), ("manager", E2E.Manager.run),
+    ("recipes", E2E.Recipes.run), ("interop", E2E.Interop.run), ("manager", E2E.Manager.run),
     -- opt-in: needs a real reachable host, so NOT in tests/e2e.sh
     ("remote-live", E2E.RemoteLive.run),
     -- not a pty suite: which runners CI asks for (tests/ci-runners.sh)

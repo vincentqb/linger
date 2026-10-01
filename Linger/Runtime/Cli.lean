@@ -42,6 +42,8 @@ def usage : String :=
   attach [name] [command]    Attach, creating if needed (name defaults to 'main')
   import [SAVE]             Start shells in saved tmux-resurrect directories
                               (default: last save; saved commands never run)
+  export SAVE               Save local sessions in tmux-resurrect format
+                              (requires a new destination file)
   watch <name>              Input/resize-read-only attach (marks output seen)
   run <name> <command...>    Run a command in a session without attaching
   send <name> <text...>      Send raw input to session pty ('linger send <name> -'

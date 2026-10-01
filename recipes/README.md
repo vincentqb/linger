@@ -1,7 +1,7 @@
 # Terminal, prompt and SSH configuration
 
 Every example invokes the same `linger` executable. Session selection, status
-counts and save import are Lean code and work from any shell; recipes only
+counts and save interchange are Lean code and work from any shell; recipes only
 configure the terminal, prompt or transport.
 
 Build and install `linger` as described in the [README](../README.md#build).
@@ -124,17 +124,18 @@ mosh host -- linger attach work
 `~/.ssh/config`, preferably scoped to your session hosts. Transport settings
 remain in SSH configuration.
 
-## tmux-resurrect import
+## tmux-resurrect interchange
 
 The same executable imports saved directories:
 
 ```sh
 linger import                           # default last save
 linger import ~/.tmux/resurrect/last     # explicit save
+linger export ~/sessions.tmux           # new destination; never overwritten
 ```
 
-Its executor is [`Manager/Resurrect.lean`](../Manager/Resurrect.lean); parsing
-and planning live in [`Tools/Resurrect.lean`](../Tools/Resurrect.lean).
+Its executor is [`Manager/Resurrect.lean`](../Manager/Resurrect.lean); parsing,
+planning and export policy live in [`Tools/Resurrect.lean`](../Tools/Resurrect.lean).
 
 Each `pane` record becomes `<session>-w<window>-p<pane>` in its saved working
 directory. A projected name that linger would rewrite or truncate is rejected.
@@ -155,13 +156,51 @@ otherwise `${XDG_DATA_HOME:-$HOME/.local/share}/tmux/resurrect/last`. An absent
 or empty HOME uses the account home for defaults, saved `~` directories and
 child processes.
 
+Without a state override, those imported checkpoints use the account home;
+ordinary session commands use a temporary fallback while HOME remains absent
+or empty. Set HOME to the account home for later listing, export and resume,
+or use the same explicit LINGER_DIR for the whole import/export cycle.
+
 Saved commands never run. Each imported session starts a shell in its saved
 directory; start the programs you want after attaching. Running processes,
 window layouts, active state, grouped sessions and captured pane contents are
 not imported. A save filename beginning with `-` needs a path such as `./-save`.
 
+The latest successful import retains its original UTF-8 save text beside native
+checkpoints in `tmux-import.json`, together with the complete set of resolved
+names and working directories. Export reuses that text exactly when all local
+sessions match that baseline, regardless of listing order. Unknown records,
+saved commands, layout fields, CRLF and a missing final newline are preserved.
+The original source file may be moved or deleted. A failed import leaves the
+previous record intact. Importing another save replaces it.
+
+Adding or removing a session, renaming it, or changing a working directory makes
+export generate a fresh save. It includes both live sessions and resumable
+checkpoints; an unreadable session or checkpoint fails the export. Existing
+destinations, including symlinks, are refused. A complete file is published
+atomically with owner-only permissions.
+
+Generated saves contain one window and pane per session. Their tmux session
+names use the reserved `linger=` prefix, with `~` encoding `.`; importing these
+records recovers the original Linger name. The window name remains readable.
+Keep tmux's pane base index at zero for these saves. Changing this reserved
+topology or damaging its encoding is rejected instead of silently renaming a
+session. Ordinary foreign session names keep the projection described above.
+
+The shared fields are session identity and the physical working directory.
+Generated saves require absolute directories and reject spellings the supported
+save cycle cannot preserve: control separators, literal backslashes, repeated or
+trailing spaces, and expansion characters (`*`, `?`, `[` and `#`). Single spaces,
+quotes, dollar signs and backticks are supported. An unchanged imported save
+can still reuse its original bytes. Exact-file preservation covers the save
+text; a companion pane-content archive must be kept separately.
+
+Native `LNGR` checkpoints continue to hold screens, scrollback, terminal modes
+and labels. This interchange does not carry those fields or record typed input.
+It creates fresh shells; it does not transfer running processes.
+
 [`THEOREMS.md`](../THEOREMS.md#entry-point-boundaries) maps routing, matching,
-input decoding and import planning to their semantic guarantees and IO checks.
+input decoding and interchange to their semantic guarantees and IO checks.
 Native configuration checks inspect the settings; they do not launch GUI
 terminals. The recipe suite also runs the prompt example in fish.
 

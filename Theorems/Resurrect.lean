@@ -2,6 +2,7 @@ module
 
 public import Tools.Resurrect
 import all Tools.Resurrect
+import all Linger.Core.Name
 import Theorems.Name
 
 public section
@@ -38,6 +39,56 @@ theorem diagnostic_eq_self (message : String)
           intro c hc
           simp [h c hc])
     _ = _ := List.map_id _
+
+/-- Common fields retain multiplicity and order while discarding line numbers. -/
+theorem common_cons (pane : Pane) (panes : List Pane) :
+    common (pane :: panes) = (pane.name, pane.dir) :: common panes := by rfl
+
+/-- Native identity encoding reverses on the entire valid name alphabet. -/
+theorem encodeName_reversible (name : String) (valid : Linger.Core.Name.Valid name) :
+    ((encodeName name).drop 7).toString.map (fun c => if c == '~' then '.' else c) = name := by
+  obtain ⟨-, -, alphabet, -⟩ := valid
+  have htilde : ∀ c ∈ name.toList, c ≠ '~' := by
+    intro c hc he
+    subst c
+    have := alphabet '~' hc
+    simp [Linger.Core.Name.okChar] at this
+  apply String.toList_injective
+  simp only [String.Slice.toString_eq, String.toList_map, String.toList_copy_drop, encodeName,
+    String.toList_append]
+  change
+    ((['l', 'i', 'n', 'g', 'e', 'r', '='] ++
+                name.toList.map (fun c => if c == '.' then '~' else c)).drop
+            7).map
+        (fun c => if c == '~' then '.' else c) =
+      name.toList
+  simp only [List.cons_append, List.nil_append, List.drop_succ_cons, List.drop_zero, List.map_map]
+  calc
+    _ = name.toList.map id :=
+      List.map_congr_left
+        (by
+          intro c hc
+          by_cases hd : c = '.' <;> simp [hd, htilde c hc])
+    _ = _ := List.map_id _
+
+private theorem projectName_native (name : String) (valid : Linger.Core.Name.Valid name) :
+    projectName (encodeName name) "0" "0" = some name := by
+  have hprefix : (encodeName name).startsWith "linger=" = true := by
+    simp [encodeName, String.startsWith_string_iff, String.toList_append]
+  unfold projectName
+  rw [ite_eq_left hprefix, encodeName_reversible name valid]
+  simp [Linger.Core.Name.sanitize_eq_self_of_valid name valid]
+
+/-- Reserved names cannot be silently projected after a topology change. -/
+private theorem projectName_reserved_topology (session window pane : String)
+    (reserved : session.startsWith "linger=" = true) (changed : window ≠ "0" ∨ pane ≠ "0") :
+    projectName session window pane = none := by
+  rcases changed with changed | changed <;> simp [projectName, reserved, changed]
+
+private theorem projectName_foreign (session window pane : String)
+    (foreign : session.startsWith "linger=" = false) :
+    projectName session window pane = some (session ++ "-w" ++ window ++ "-p" ++ pane) := by
+  simp [projectName, foreign]
 
 private theorem parseRow_sound (home : String) (line : Nat) (fields : List String) (pane : Pane)
     (h : parseRow home line fields = .ok (some pane)) :
@@ -147,6 +198,183 @@ theorem parseSave_valid (home content : String) (panes : List Pane)
 theorem parseSave_no_nul (home content : String) (panes : List Pane)
     (h : parseSave home content = .ok panes) (pane : Pane) (hp : pane ∈ panes) :
     pane.dir.contains '\x00' = false := ((parseSave_valid home content panes h).2.2 pane hp).2.2
+
+private theorem parseRow_home_independent (home : String) (line : Nat) (fields : List String)
+    (parsed : Option Pane) (h : parseRow "\x00" line fields = .ok parsed) :
+    parseRow home line fields = .ok parsed := by
+  unfold parseRow at h ⊢
+  repeat' (split at h <;> (try simp_all [String.contains_char_eq, String.toList_append]))
+
+private theorem parseRows_home_independent (home : String) (line : Nat) (seen rows : List String)
+    (panes : List Pane) (h : parseRows "\x00" line seen rows = .ok panes) :
+    parseRows home line seen rows = .ok panes := by
+  induction rows generalizing line seen panes with
+  | nil => simpa [parseRows] using h
+  | cons row rows ih =>
+    simp only [parseRows] at h ⊢
+    cases hrow : parseRow "\x00" line (row.splitOn "\t") with
+    | error error => simp [hrow] at h
+    | ok result =>
+      rw [parseRow_home_independent home line _ result hrow]
+      cases result with
+      | none => exact ih (line + 1) seen panes (by simpa [hrow] using h)
+      | some pane =>
+        simp only [hrow] at h
+        split at h
+        · cases h
+        · rename_i fresh
+          simp only [fresh]
+          cases hrest : parseRows "\x00" (line + 1) (pane.name :: seen) rows with
+          | error error => simp [hrest, Except.map] at h
+          | ok rest =>
+            rw [ih (line + 1) (pane.name :: seen) rest hrest]
+            simpa [hrest, Except.map] using h
+
+/-- A successful parse with a NUL home performed no home expansion, so it
+produces exactly the same panes for any actual home. -/
+theorem parseSave_home_independent (home content : String) (panes : List Pane)
+    (h : parseSave "\x00" content = .ok panes) : parseSave home content = .ok panes := by
+  unfold parseSave at h ⊢
+  split at h
+  · cases h
+  · cases h
+  · rename_i pane rest parsed
+    cases h
+    rw [parseRows_home_independent home 1 [] _ _ parsed]
+
+private theorem representableDir_iff (dir : String) :
+    representableDir dir = true ↔
+      dir.startsWith "/" = true ∧
+        dir.endsWith " " = false ∧
+        dir.contains "  " = false ∧
+        ∀ c ∈ dir.toList,
+          c ≠ '\\' ∧
+            c ≠ '\x00' ∧
+            c ≠ '\t' ∧ c ≠ '\n' ∧ c ≠ '\r' ∧ c ≠ '*' ∧ c ≠ '?' ∧ c ≠ '[' ∧ c ≠ '#' := by
+  simp [representableDir, List.any_eq_false, and_assoc]
+
+private theorem renderSave_checked (fields : List (String × String)) (content : String)
+    (h : renderSave fields = .ok content) :
+    ∃ panes, parseSave "\x00" content = .ok panes ∧ common panes = fields := by
+  unfold renderSave at h
+  split at h
+  · cases h
+  · dsimp only at h
+    generalize text_eq : String.join (fields.map _) ++ _ = text at h
+    cases parsed : parseSave "\x00" text with
+    | error error => simp [parsed] at h
+    | ok panes =>
+      simp only [parsed] at h
+      split at h
+      · rename_i same
+        cases h
+        exact ⟨panes, parsed, by simpa using same⟩
+      · cases h
+
+/-- Generation cannot hide an unsupported cwd behind the parse certificate. -/
+private theorem renderSave_directories (fields : List (String × String)) (content : String)
+    (h : renderSave fields = .ok content) : ∀ field ∈ fields, representableDir field.2 = true := by
+  unfold renderSave at h
+  split at h
+  · cases h
+  · rename_i checked
+    intro field member
+    simpa using (List.find?_eq_none.mp checked) field member
+
+/-- The generated common fields inherit the parser's complete validity contract. -/
+theorem renderSave_valid (fields : List (String × String)) (content : String)
+    (h : renderSave fields = .ok content) :
+    fields ≠ [] ∧
+      (fields.map Prod.fst).Nodup ∧
+      ∀ field ∈ fields,
+        Linger.Core.Name.sanitize field.1 = field.1 ∧
+          Linger.Core.Name.Valid field.1 ∧ field.2.contains '\x00' = false := by
+  obtain ⟨panes, parsed, same⟩ := renderSave_checked fields content h
+  obtain ⟨nonempty, distinct, valid⟩ := parseSave_valid "\x00" content panes parsed
+  rw [← same]
+  refine ⟨?_, ?_, ?_⟩
+  · simpa [common] using nonempty
+  · simpa [common, List.map_map, Function.comp_def] using distinct
+  · intro field member
+    change field ∈ panes.map (fun pane => (pane.name, pane.dir)) at member
+    obtain ⟨pane, hp, equal⟩ := List.mem_map.mp member
+    subst field
+    exact valid pane hp
+
+theorem renderSave_empty (content : String) : renderSave [] ≠ .ok content := by
+  intro h
+  exact (renderSave_valid [] content h).1 rfl
+
+/-- Successful generation certifies the actual serialized text, including its
+delimiters, row layout, names and directories, for any import home. -/
+theorem renderSave_roundtrip (home : String) (fields : List (String × String)) (content : String)
+    (h : renderSave fields = .ok content) :
+    ∃ panes, parseSave home content = .ok panes ∧ common panes = fields := by
+  obtain ⟨panes, parsed, same⟩ := renderSave_checked fields content h
+  exact ⟨panes, parseSave_home_independent home content panes parsed, same⟩
+
+/-- Selecting retained bytes is equivalent to exact multiset equality of the
+complete common fields. This speaks about selection even when fresh generation
+could coincidentally produce the same text. -/
+private theorem retainedSource?_iff (current : List (String × String))
+    (retained : Option (String × List (String × String))) (original : String) :
+    retainedSource? current retained = some original ↔
+      ∃ baseline, retained = some (original, baseline) ∧ current.Perm baseline := by
+  rcases retained with _ | ⟨source, baseline⟩
+  · simp [retainedSource?]
+  · by_cases same : current.Perm baseline
+    · constructor
+      · intro h
+        have hs : source = original := by simpa [retainedSource?, same] using h
+        subst source
+        exact ⟨baseline, rfl, same⟩
+      · rintro ⟨_, h, _⟩
+        cases h
+        simp [retainedSource?, same]
+    · simp [retainedSource?, same]
+
+/-- The export decision is exactly the multiset comparison; generation runs
+only when there is no matching retained source. -/
+theorem exportSave_policy (current : List (String × String))
+    (retained : Option (String × List (String × String))) :
+    exportSave current retained =
+      match retained with
+      | none => renderSave current
+      | some (original, baseline) =>
+        if current.Perm baseline then .ok original else renderSave current := by
+  rcases retained with _ | ⟨original, baseline⟩
+  · rfl
+  · by_cases same : current.Perm baseline <;> simp [exportSave, retainedSource?, same]
+
+theorem exportSave_unchanged (current baseline : List (String × String)) (original : String)
+    (same : current.Perm baseline) :
+    exportSave current (some (original, baseline)) = .ok original := by
+  simp [exportSave, retainedSource?, same]
+
+theorem exportSave_changed (current baseline : List (String × String)) (original : String)
+    (changed : ¬current.Perm baseline) :
+    exportSave current (some (original, baseline)) = renderSave current := by
+  simp [exportSave, retainedSource?, changed]
+
+theorem exportSave_without_source (current : List (String × String)) :
+    exportSave current none = renderSave current := by rfl
+
+/-- Every successful export either selects an unchanged retained source or
+parses back to precisely the current common fields. -/
+theorem exportSave_roundtrip_or_retained (home : String) (current : List (String × String))
+    (retained : Option (String × List (String × String))) (content : String)
+    (h : exportSave current retained = .ok content) :
+    (∃ baseline, retained = some (content, baseline) ∧ current.Perm baseline) ∨
+      ∃ panes, parseSave home content = .ok panes ∧ common panes = current := by
+  unfold exportSave at h
+  cases hs : retainedSource? current retained with
+  | none =>
+    simp only [hs] at h
+    exact .inr (renderSave_roundtrip home current content h)
+  | some original =>
+    simp only [hs, Except.ok.injEq] at h
+    subst content
+    exact .inl ((retainedSource?_iff current retained original).mp hs)
 
 /-- Membership pins every output field to one unmodified source record. -/
 theorem mem_plan (existing : List String) (panes : List Pane) (pane : Pane) :

@@ -20,7 +20,7 @@ recipes, break records, measurements, the audits — lives in
 
 | § | Tension | Invariant | Where |
 |---|---------|-----------|-------|
-| §Entry | discoverable commands vs implicit terminal behavior | `route_bare_help` sends empty argv to help; `route_selector_iff` selects exactly for `["select"]`; `route_session_argv` preserves other session commands and operands; `route_import_argv` gives import its complete trailing argv | Theorems/Entry.lean |
+| §Entry | discoverable commands vs implicit terminal behavior | `route_bare_help` sends empty argv to help; `route_selector_iff` selects exactly for `["select"]`; `route_session_argv` preserves other session commands and operands; `route_import_argv` and `route_export_argv` give interchange commands their complete trailing argv | Theorems/Entry.lean |
 | §Frame | evolvable protocol vs simple daemon | `decode (encode m) = ([m], ∅)`; unknown tag skips exactly its frame | Theorems/Wire.lean |
 | §Chunk | arbitrary TCP/pty chunking vs stateful parsers | `feed (a ++ b) = feed b ∘ feed a`; output framing is faithful and bounded (`outputMsgs_faithful`, `outputMsgs_bounded`, `outputMsgs_payloads`); accepted info replies preserve every byte in bounded frames, with overflow refused before any prefix (`infoMsgs_faithful`, `infoMsgs_bounded`, `infoMsgs_refused`) | Theorems/Wire.lean, Theorems/Vt.lean, Theorems/Session.lean |
 | §Stream | fragmentation vs one parsed conversation | any re-chunking of a well-formed stream feeds back to exactly that stream (`decode_encode_chunked`; §Frame and §Chunk are its special cases) | Theorems/Wire.lean |
@@ -42,6 +42,7 @@ recipes, break records, measurements, the audits — lives in
 | §Title | visible cross-session attention vs an uninterrupted terminal stream | composition omits empty parts; the title payload excludes terminal controls and fits the OSC parser cap (`compose_parts`, `payload_safe`, `ansi_payload_bound`, `ansi_ends`). Updates wait for parser-ground and complete UTF-8 (`update_waits`, `update_requires_boundary`). The existing VT observer is chunking-invariant, keeps no history, and preserves its dimensions and parser/screen invariants (`observe_append`, `observe_no_history`, `observe_dims`, `observe_invariants`) | Theorems/Title.lean, Theorems/TerminalTitle.lean, Theorems/Vt.lean, E2E/Title.lean |
 | §Resume | the product's own promise: crash, reboot, reattach | §Restore ∘ §Replay, stated twice — over `save`'s input and over `load`'s output (`resume_grid_of_load`, `resume_tabs_of_load`, `resume_sb_of_load`: any byte string that loads, no other hypothesis) — and lifted to the daemon over its own `vt0` (`Session.run_resume_vt_shape`, `run_resume_load_save`) | Theorems/Resume.lean, Theorems/Session.lean |
 | §Import | foreign save records vs distinct session identities, directory-only restoration and safe error display | successful parsing gives a nonempty list with canonical, distinct names and NUL-free directories (`parseSave_valid`); valid saved commands cannot affect parsed panes (`parseRow_command_irrelevant`); planning preserves records and order and skips existing names (`mem_plan`, `plan_order`); adding planned names to the snapshot makes a sequential rerun empty (`plan_sequential_idempotent`); diagnostics exclude C0, DEL and C1 and preserve already printable text (`diagnostic_printable`, `diagnostic_eq_self`) | Theorems/Resurrect.lean, E2E/Recipes.lean |
+| §Interchange | exact foreign source preservation vs a fresh export of common fields | valid native names have reversible encoding (`encodeName_reversible`); every successful generated save parses back to exactly its names and directories for any home (`renderSave_roundtrip`); retained source is selected exactly when the complete common fields match as multisets (`exportSave_policy`); success is either that original source or a certified fresh save (`exportSave_roundtrip_or_retained`) | Theorems/Resurrect.lean, E2E/Interop.lean |
 | §Select | fuzzy emphasis and explicit creation vs an exact session identity | alignment accepts exactly the filter language, maximizes score and chooses earliest ties (`align_isSome_iff_matches`, `align_score_max`, `align_earliest`); emphasis preserves shared text/status and marks the chosen target positions (`highlightedPresentation_projection`, `highlightedPresentation_existing_marked_iff`); matching preserves snapshot order (`visible_order`, `items_existing_prefix`); existing selections retain original targets (`step_attach_mem`); creation uses an exact valid target absent from the snapshot (`step_create_valid`); only acceptance acts on the highlighted row (`step_attach_iff`, `step_create_iff`); refresh retains query and surviving targets (`refresh_query`, `refresh_selected`) and bounds the cursor (`refresh_valid`) | Theorems/Fuzzy.lean, Theorems/Picker.lean, E2E/Manager.lean |
 | §Input | split keyboard bytes and pasted commands vs deliberate selection | one byte produces at most one physical key (`feed_length`); UTF-8 prefixes retain at most three bytes (`stored_bound`, `feed_storage_bound`); delivered text excludes controls (`feed_text_valid`); paste emits only text and survives incomplete input (`feed_paste_only_text`, `feed_paste_sticky`, `flush_paste`); the separate binding preserves every byte's selector meaning (`Key.feed_byte_bindings`), and a timeout never accepts (`Key.flush_no_accept`) | Theorems/Input.lean, Theorems/Key.lean, E2E/Manager.lean |
 
@@ -283,11 +284,12 @@ renaming an already-valid session.
 `route_bare_help` sends empty argv to help. `route_selector_iff` selects exactly
 for `["select"]`; `route_select_operands` forwards extra operands to the session
 backend, which rejects them. `route_session_argv` preserves every other
-non-import command and operand; `route_ls_argv` and
+session command and operand; `route_ls_argv` and
 `route_daemon_argv` state the listing and internal re-exec cases. Import keeps
-all trailing arguments for its executor to validate (`route_import_argv`).
+all trailing arguments for its executor to validate (`route_import_argv`);
+export does the same (`route_export_argv`).
 Routing takes only argv; `Main` consumes this pure decision without inspecting
-terminal streams. Source gates pin all three dispatch branches and the running
+terminal streams. Source gates pin all four dispatch branches and the running
 executable's path. The selector's executor requires terminal input and output.
 `E2E.Manager` checks bare help and explicit selection with all four stream
 combinations, explicit listing in a terminal, help and invalid operands. Both
@@ -459,6 +461,47 @@ Source gates pin its parser, plan, supplied executable and constant shell-creati
 ordering, executable identity, home fallback, relative paths, and untouched
 existing shells on reruns against real daemons.
 
+§Interchange supports `linger export SAVE`. `common` projects panes to session
+names and directories. Source line numbers, commands, window composition and
+native terminal state are outside this projection. `encodeName_reversible`
+covers the complete valid native name alphabet. The reserved `linger=` prefix
+and dot-to-tilde encoding survive tmux session naming; `projectName_native`
+recovers the name at window zero, pane zero. `projectName_reserved_topology`
+rejects other indices in this namespace, while `projectName_foreign` preserves
+the established projection for ordinary imported names.
+
+`renderSave_roundtrip` concerns the actual serialized text returned by
+`renderSave`, including its delimiters and fields. Successful generation
+reparses that text and checks the resulting common fields. A NUL home in that
+check prevents home expansion; `parseSave_home_independent` then supplies the
+same result for every real home. `renderSave_valid` carries nonemptiness,
+distinct names, name validity and NUL-free directories through this certificate.
+`renderSave_directories` separately enforces the supported literal-directory
+repertoire. These are guarantees about successful results, not a claim that
+every input is encodable. Executable acceptance fixtures and an isolated
+tmux-resurrect restore/save exercise useful successful cases.
+
+`exportSave_policy` chooses retained source if and only if the current common
+fields are a permutation of the recorded baseline, preserving multiplicity.
+`exportSave_unchanged` gives exact original text, independent of listing order;
+`exportSave_changed` and `exportSave_without_source` require fresh generation.
+`exportSave_roundtrip_or_retained` combines these two outcomes. Retention
+precedes generation, so an unchanged foreign save can still be returned when
+its directory spelling is outside the generated repertoire.
+
+The manager persists the original UTF-8 text and the complete physical-directory
+baseline after a successful import. It observes live process directories and
+decodes resumable checkpoints in the caller's native path context, before
+account-home fallback is applied for provenance lookup. Source gates tie this
+ordering and both operations to the proved projection and export policy.
+`E2E.Interop` checks exact persisted
+bytes, fresh common-field round trips, stale provenance, incomplete observations,
+failed imports, home/path resolution and exclusive file publication. These
+checks cover IO behavior; the pure theorems do not establish filesystem
+durability, an atomic snapshot across daemons, or the behavior of another
+program. Native checkpoint data and companion pane-content archives are outside
+the interchange guarantee.
+
 `diagnostic_printable` excludes C0, DEL and C1 from displayed importer errors;
 `diagnostic_eq_self` preserves already printable text, including spaces and
 Unicode. `Manager.Resurrect` applies that function only when displaying an
@@ -470,10 +513,11 @@ output, along with silent successful imports and stop-on-failure ordering.
 These laws do not claim visual unambiguity for arbitrary Unicode or prove
 filesystem IO.
 
-The source gates constrain the manager's imports to its pure policies, core
-name/listing modules, public VT width function and existing POSIX interface.
+The source gates constrain each manager executor's imports. Interchange uses
+the session listing and checkpoint reader, standard account/environment IO and
+JSON serialization; the selector uses its pure policies and terminal interface.
 They keep the manager out of the session library and VT toolkit; only `Main`
-composes those library commands with the selector and importer.
+composes those library commands with selection and interchange.
 Theorems cannot inspect IO call sites or prove a preference for
 a source language; each decision is supported by its semantic contract and the
 checks at the boundary where that contract is used.

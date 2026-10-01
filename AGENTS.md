@@ -15,7 +15,9 @@ worklog), `specs/archive/` (closed build records), the comments in
 
 ## Where things stand — read this first after any compaction
 
-1. No spec is in flight. The last one closed on 2026-10-01
+1. `specs/tmux-roundtrip.md` is in flight: proved tmux save interchange
+   with retained original data and native common-field export.
+   The last completed spec closed on 2026-10-01
    (`specs/archive/lean-ci-refresh.md`: simplified CI with checked build reuse
    and portable fixtures; full local and hosted Linux verification green).
    New work opens a new `specs/<slug>.md`, names itself here, and keeps

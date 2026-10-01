@@ -20,6 +20,11 @@ open Tools.Entry
         ["import", "__daemon", "", "世界"]].all
     fun rest => route ("import" :: rest) == .importSave rest
 
+#guard
+  [[], ["/tmp/save"], ["/tmp/save with spaces"], ["./-save"], [""], ["--help"],
+        ["first", "second"]].all
+    fun rest => route ("export" :: rest) == .exportSave rest
+
 -- Explicit commands, internal commands and malformed arguments remain untouched.
 #guard
   [["ls"], ["ls", "--porcelain", "-r", "alice@host"], ["list"],

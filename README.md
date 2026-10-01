@@ -31,7 +31,7 @@ Lean 4.34.1 via elan; no external Lean dependencies.
 ./lake build Theorems Tests      # the proofs and the unit fixtures
 ./lake exe lingertest            # POSIX shim smoke tests
 ./lake exe e2e <suite>           # one pty suite: attach resume overview remote robust
-                                 #   graphics terminal status agent watch recipes delivery manager title
+                                 #   graphics terminal status agent watch recipes delivery manager title interop
 ./lake env lean E2E/Coverage.lean # resolved renderer/replay references; build the program first
 ./lake exe e2e ci                # runner selection and build-cache regressions
 sh tests/gates.sh                # the fast source-tree gates (seconds)
@@ -60,8 +60,8 @@ CI runs lint after the build so semantic checks can reuse compiled imports.
 | `Linger/Core/` | pure: no `IO`, no `partial def`, no `sorry`. Effects are data. |
 | `Linger/Runtime/` | executes the session core's effects through Lean IO and Posix |
 | `Linger/Posix.lean`, `c/shim.c` | raw OS bindings, kept behind one interface |
-| `Main.lean` | one executable composing session commands, selection and save import |
-| `Tools/`, `Manager/` | pure routing/matching/input/import policies and Lean IO executors, outside the session and VT libraries |
+| `Main.lean` | one executable composing session commands, selection and save interchange |
+| `Tools/`, `Manager/` | pure routing/matching/input/interchange policies and Lean IO executors, outside the session and VT libraries |
 | `Theorems/` | the proofs — what `THEOREMS.md` narrates |
 | `Tests/` | Lean fixtures, checked at elaboration time |
 | `E2E/` | IO suites against the real binary, with isolated executor probes for failure checks |
@@ -144,6 +144,7 @@ linger status          # compact local attention counts; empty when quiet
 | `ls [-r [h,..]]` | overview; `-r` adds remote hosts; `--porcelain` is machine-readable |
 | `status` | local unread, failed and unknown counts for shell prompts; omits zero counts |
 | `import [SAVE]` | create shells in directories from a tmux-resurrect save; never replay commands |
+| `export SAVE` | write local session names and directories to a new tmux-resurrect save file |
 | `info <name>` | one session's records: size, cursor, `outseq`, labels… |
 | `capture <name>` | the current screen as text, one line per row (marks it seen) |
 | `resize <name> <cols> <rows>` | size a detached session (refused while a client is attached) |
@@ -151,6 +152,12 @@ linger status          # compact local attention counts; empty when quiet
 | `wait <name>` | block until its program exits (exit code follows) |
 | `kill` / `detach <name>` | end / disconnect |
 | `get` `set` `unset` `clear <name>` | labels (`k=v`) |
+
+An unchanged import can export the original save byte for byte. Generated saves
+preserve Linger names and working directories through tmux; screens, scrollback
+and labels stay in native checkpoints. See the
+[interchange details](recipes/README.md#tmux-resurrect-interchange) for the
+preservation rules and supported paths.
 
 ## Agents
 
