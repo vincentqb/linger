@@ -58,3 +58,12 @@ already named — so the split is a move, not a rewrite (no statement, proof or
 docstring changed). It was done to make the elaborator cost legible: see
 `FINDINGS-2026-08-18-factoring-audit.md` for which `maxHeartbeats` raises were
 paying for file size and which are the record-width tax `THEOREMS.md` describes. -/
+
+namespace Linger.Core.Render
+
+/-- The compiled row painter emits exactly the logical painter's bytes and final
+pen, including arbitrary decoded rows and nondefault starting pens. -/
+theorem rowAnsiLinear_exact (row : Vt.Row) (pen : Vt.Pen) :
+    rowAnsiLinear row pen = rowAnsi row pen := by rw [rowAnsi_eq_rowAnsiLinear]
+
+end Linger.Core.Render

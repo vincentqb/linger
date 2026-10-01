@@ -214,6 +214,37 @@ def rowAnsi (row : Row) (startPen : Pen) : Bytes × Pen :=
   let (bs, pen, _) := row.foldl rowSlot ([], startPen, 0)
   (bs, pen)
 
+/-- Accumulate each `rowSlot` emission in reverse, avoiding a copy of the growing
+row prefix per cell. The compiler substitution below preserves bytes and pen. -/
+def rowAnsiLinear (row : Row) (startPen : Pen) : Bytes × Pen :=
+  let (bs, pen, _) :=
+    row.foldl
+      (fun (acc : Bytes × Pen × Nat) c =>
+        let (chunk, pen, x) := rowSlot ([], acc.2.1, acc.2.2) c
+        (chunk.reverseAux acc.1, pen, x))
+      ([], startPen, 0)
+  (bs.reverse, pen)
+
+@[csimp]
+theorem rowAnsi_eq_rowAnsiLinear : rowAnsi = rowAnsiLinear := by
+  funext row startPen
+  let rev := fun (acc : Bytes × Pen × Nat) => (acc.1.reverse, acc.2)
+  let step := fun (acc : Bytes × Pen × Nat) c =>
+    let (chunk, pen, x) := rowSlot ([], acc.2.1, acc.2.2) c
+    (chunk.reverseAux acc.1, pen, x)
+  have h :=
+    Array.foldl_hom rev (g₁ := rowSlot) (g₂ := step) (xs := row) (init := ([], startPen, 0))
+      (by
+        rintro ⟨bs, pen, x⟩ c
+        by_cases hw : c.width = 0 <;> by_cases hp : c.pen = pen <;>
+          simp [rev, step, rowSlot, hw, hp, List.reverse_append, List.append_assoc])
+  simp only [rev, List.reverse_nil] at h
+  change
+    ((row.foldl rowSlot ([], startPen, 0)).1, (row.foldl rowSlot ([], startPen, 0)).2.1) =
+      ((row.foldl step ([], startPen, 0)).1.reverse, (row.foldl step ([], startPen, 0)).2.1)
+  rw [h]
+  simp
+
 /-- Join painted rows with CR+LF, no trailing separator (a trailing
 CRLF on the last row would scroll the screen). -/
 def joinCRLF : List Bytes → Bytes

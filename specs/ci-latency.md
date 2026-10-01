@@ -9,9 +9,18 @@ fixture gap is fixed and mutation-checked. Coverage and wait changes are
 integrated with exact source identities; the assembled verifier passes in
 118.4 seconds. Clean compilation is measured separately at 88.5 seconds,
 with an identical warm rerun at 0.6 seconds. Final independent review accepts
-the assembled checkpoint without blockers. Step 1 is complete and ready to
-commit; publication remains. Rendering and the slowest theorem module are
-being investigated separately and are not part of this verified checkpoint.
+the assembled checkpoint without blockers. Step 1 is committed and pushed as
+`8427d80`; hosted run `36913950661` passes in 237 seconds for the full Linux
+job, including a 157.1-second verifier. Step 2 integrates the measured row
+painter optimization and three simpler VT proof bodies. Independent review
+accepts the renderer; its theorem/unit build also passes in main. The proof
+worker's builds, fresh censuses and formatting pass with identical declaration
+types. Independent source review also accepts the VT proof changes. The
+assembled foreground verifier passes in 210.6 seconds, including 84.4 seconds
+of affected recompilation and 66.6 seconds of live suites. All 470 live
+assertions and the complete verifier stack pass with fixed source identities.
+Final independent review accepts the assembled checkpoint without blockers.
+Step 2 is ready for commit, push and its hosted verification.
 
 ## Request and constraints
 
@@ -85,5 +94,16 @@ local verifier takes 118.4 seconds, still executing all 470 live assertions.
 A separate clean full-target build takes 88.5 seconds and its identical warm
 rerun takes 0.6 seconds; the longest jobs are proof/test checking. The clean
 measurement uses the isolated coverage worktree and retains the installed
-compiler and OS page cache. Hosted timing for the new implementation remains
-pending.
+compiler and OS page cache. The new hosted full job takes 237 seconds, its
+verifier 157.1 seconds, and its concurrent live batch 83.9 seconds. It restores
+the preceding commit's build cache; that compiler interval includes the CI,
+coverage and harness changes. Source gates and final hygiene also pass.
+The separate VT proof experiment checks the same module three times per
+variant with warm imports: median wall time falls from 32.403 to 29.138 seconds
+and total CPU from 213.581 to 152.020. Original runs precede optimized runs
+on the shared host; this is not an interleaved or whole-build comparison.
+All 1,148 serialized declaration types match exactly.
+The assembled optimized tree retains all fixtures and assertions. Delivery
+takes 14.7 seconds in its full run. The 210.6-second total includes affected
+proof/test recompilation, unlike the earlier 118.4-second warm run; comparing
+those totals would not measure an optimization regression.

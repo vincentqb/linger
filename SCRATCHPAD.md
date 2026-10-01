@@ -14688,3 +14688,128 @@ accepted SHA256 values are in `review/final-ci-review.md`. Step 1 is ready
 for its verified commit. The measured rendering hotspot and largest theorem
 module remain separate follow-up investigations, not unverified additions
 to this checkpoint.
+
+## Step 2 notes — 2026-10-01
+
+Step 1 is committed and pushed as
+`8427d80fe011f505cc2a381bddf1cede47accf0d`. Before staging, every source except
+the two evolving measurement records matches the successful full-verifier
+manifest in bytes and modes. The expected twelve changed paths are staged;
+commit-time hooks pass. The push is a fast-forward to the authenticated
+owner's private `vincentqb/linger` repository. Publication preflight and
+commit receipts are in `evidence/step1-publication-preflight.json` and
+`evidence/step1-commit.json`. Hosted run
+`https://github.com/vincentqb/linger/actions/runs/36913950661` starts at
+19:23:40Z; source gates pass and the full Linux job is running.
+
+That hosted run completes successfully. The full Linux job takes 237 seconds
+(3m57s), compared with 535 seconds (8m55s) at the baseline. Its verifier takes
+157.071 seconds versus 412.485; the live batch takes 83.889 versus 315.862.
+Dependency installation falls from 62 to 25 seconds and semantic coverage
+from 19.5 to 10.1. The content-checked build takes 15.8 seconds after restoring
+the preceding commit's artifacts; this includes changed sources and is not a
+clean or no-change measurement. Source gates and final hygiene pass too.
+Original logs, job metadata and stage arithmetic are in
+`evidence/hosted-36913950661/`. The collector's first report mixed expected
+failing CI probe subprocesses into its suite list; its corrected report uses
+the actual stage headers to separate those nine probes from the fifteen
+passing live suites. The original report is retained alongside the correction.
+
+The rendering worker finds growing-prefix list append in `Render.rowAnsi`.
+The accepted forty-line patch retains its logical definition and adds
+`rowAnsiLinear`, which reuses `rowSlot` for each emission, accumulates bytes
+in reverse and reverses the result once. `Array.foldl_hom` establishes the
+accumulator relation. A kernel-checked function equality registers the compiler
+substitution with `@[csimp]`; the theorem facade also states exact bytes and
+final-pen equality for every row and starting pen, without validity premises.
+`THEOREMS.md` records §Paint. Existing fidelity proofs and size bounds remain
+about the unchanged logical painter. No C, dependency or resource raise is added.
+
+An isolated forced-output repaint probe falls from 6.353 to 0.623 seconds
+for colours and 10.441 to 1.611 for combining marks. Its unchanged fixtures
+produce exactly the original 4,560,980 and 5,001,580 bytes. The first baseline
+probe timed an unforced pure value and falsely reported zero milliseconds;
+that latency result is explicitly excluded in favour of the corrected probe.
+The unchanged live Delivery suite passes all 34 assertions in 14.580 seconds,
+versus the preceding 56.409-second same-Harness run. These are shared-host
+observations with different concurrent work, not a controlled hosted comparison.
+A well-typed mutation drops the first byte of each emitted chunk; the function
+equality proof rejects it. Exact restoration passes builds, both existing
+censuses and formatting. All evidence and accepted source identities are in
+`evidence-waits/render-sidecar/`.
+
+Main integrates the two renderer files only after checking its baseline,
+the worker source and the accepted copies against their recorded hashes.
+The program build then passes in 6.232 seconds with fixed source identities.
+Integration and build receipts are in `evidence/render-integration.json` and
+`evidence/step2-render-build.json`. Independent review and the assembled
+full verifier are still pending at this point.
+
+Independent renderer review accepts the two implementation files and §Paint
+without blockers at 19:32:26Z. It verifies the exact compiler substitution
+in generated C, preserves the logical replay/storage guarantees and checks
+the byte, mutation and unchanged-Delivery evidence. Main's theorem/unit build
+passes in 53.957 seconds with fixed renderer and VT source identities.
+Receipts: `review/renderer-review.md` and
+`evidence/step2-render-proof-build.json`.
+
+The separate VT experiment replaces repeated conditional splitting in
+`un_stepCsi`, `ua_stepCsi` and `dims_stepCsi` with restricted simplification
+through their existing preservation lemmas. Specializing `apply_ite` to the
+actual projection avoids traversing unrelated applications. The dimensions
+proof first preserves its abstraction, then unfolds that projection locally.
+Only those three proof bodies change, removing fourteen lines. All 1,148
+serialized declaration types are byte-identical before and after; there are
+no new assumptions, declarations, imports or resource overrides.
+
+Three fresh, uninstrumented module checks per variant use identical compiler
+options and warm imports. Median wall time falls from 32.403 to 29.138 seconds
+(10.1%); total CPU falls from 213.581 to 152.020 (28.8%). These are three
+original runs followed by three optimized runs on the shared host, not
+interleaved pairs or a claimed full clean-build improvement. The worker's
+full theorem/unit build, fresh pure/runtime censuses and both formatter checks
+pass. Main verifies the exact baseline and accepted hashes and reconstructs
+the original file by restoring only those three bodies before integration.
+Evidence: `evidence-coverage/vt-profile/experiment/` and
+`evidence/vt-proof-integration.json`. The assembled verifier follows.
+
+The VT experiment retains two unsuccessful candidates. Combining unfolding
+with generic `apply_ite` reaches the existing recursion limit; explicit
+unfolding and projection-specific rewrites work for the UTF-8 fields, while
+the dimensions proof also needs a separate projection reduction. These are
+excluded from the successful timing samples. No limit is raised. The final
+worker handoff is `evidence-coverage/vt-profile/experiment/REPORT.md`.
+Independent source review accepts the three proof replacements without
+blockers in `review/vt-proof-review.md`; its first record predates completion
+of the assembled verifier and does not claim that run had finished.
+
+The assembled foreground Linux verifier now passes in 210.592 seconds,
+19:38:05Z–19:41:36Z, with all 177 source identities fixed throughout.
+All 470 live assertions, 21 CI assertions, 63 shim assertions, complete
+proof/unit build, 355-definition pure census, 27-reference runtime census,
+generated C ABI, 116-file layout check, fuzz checks and unrelated-session
+sentinel pass. The live batch takes 66.611 seconds, including Delivery's
+unchanged 34 assertions in 14.692 seconds. This run spends 84.382 seconds
+recompiling affected proofs and tests; its total cannot be compared directly
+with the previous warm 118.443-second run. Source gates/layout take 33.442
+seconds, fresh semantic coverage 9.521, CI checks 9.089 and shim/sentinel
+6.795. Fresh logs, exact stage boundaries and source manifests are in
+`evidence/optimized-full/`. No accepted source changes after this run.
+
+Step 2's required precommit builds pass again in 0.676 and 0.664 seconds;
+all-file hooks pass in 11.276 seconds and whitespace checking passes.
+All 177 source identities remain fixed during these checks. Only this
+worklog and the live spec differ from the assembled verifier's manifest.
+Receipt: `evidence/step2-precommit/`. Publication preflight confirms exactly
+the six intended paths, an empty index, and main and the remote both at
+`8427d80`; the checkpoint will be a fast-forward. Both completed worker
+trees have fresh, hash-verified source recovery copies outside their trees;
+cleanup awaits the accepted changes reaching the remote.
+
+Final independent Step 2 review accepts the assembled checkpoint at
+19:47:58Z, with no blocker or requested change. It independently reconciles
+both fixed source manifests, the exact accepted renderer/VT hashes, all live
+and support-log counts, compiler substitution, unchanged theorem types and
+the required precommit checks. Its timing interpretation explicitly separates
+affected recompilation from warm runs. Record: `review/final-step2-review.md`.
+Both implementers and the reviewer are now closed; no worker is still writing.

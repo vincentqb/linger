@@ -1667,12 +1667,7 @@ theorem un_csiFinish (v : Vt) (s : CsiState) (final : UInt8) :
 
 theorem un_stepCsi (v : Vt) (s : CsiState) (b : UInt8) : (v.stepCsi s b).u8need = v.u8need := by
   unfold Vt.stepCsi
-  repeat' split
-  all_goals
-    first
-    | rfl
-    | exact un_csiFinish _ _ _
-    | exact un_ctl _ _
+  simp only [apply_ite Vt.u8need, un_csiFinish, un_ctl, ite_self]
 
 theorem un_stepEscInter (v : Vt) (i b : UInt8) : (v.stepEscInter i b).u8need = v.u8need := by
   rw [frame_stepEscInter]
@@ -1870,12 +1865,7 @@ theorem ua_csiFinish (v : Vt) (s : CsiState) (final : UInt8) :
 
 theorem ua_stepCsi (v : Vt) (s : CsiState) (b : UInt8) : (v.stepCsi s b).u8acc = v.u8acc := by
   unfold Vt.stepCsi
-  repeat' split
-  all_goals
-    first
-    | rfl
-    | exact ua_csiFinish _ _ _
-    | exact ua_ctl _ _
+  simp only [apply_ite Vt.u8acc, ua_csiFinish, ua_ctl, ite_self]
 
 theorem ua_stepEscInter (v : Vt) (i b : UInt8) : (v.stepEscInter i b).u8acc = v.u8acc := by
   rw [frame_stepEscInter]
@@ -2227,12 +2217,8 @@ theorem dims_csiFinish (v : Vt) (s : CsiState) (final : UInt8) :
 
 theorem dims_stepCsi (v : Vt) (s : CsiState) (b : UInt8) : dims (v.stepCsi s b) = dims v := by
   unfold Vt.stepCsi
-  repeat' split
-  all_goals
-    first
-    | rfl
-    | exact dims_csiFinish _ _ _
-    | exact dims_ctl _ _
+  simp only [apply_ite dims, dims_csiFinish, dims_ctl]
+  simp only [dims, ite_self]
 
 theorem dims_stepEscInter (v : Vt) (i b : UInt8) : dims (v.stepEscInter i b) = dims v := by
   rw [frame_stepEscInter]
