@@ -15,14 +15,10 @@ worklog), `specs/archive/` (closed build records), the comments in
 
 ## Where things stand — read this first after any compaction
 
-1. No spec is in flight. The last one closed on 2026-09-30
-   (`specs/archive/terminal-libraries.md`: reusable terminal input, streaming
-   repaint and safe titles in the VT toolkit, with independent proof targets;
-   assembled Linux verifier green, worker branches/worktrees removed).
-   The implementation checkpoint's hosted checks did not start because of the
-   repository owner's GitHub payments/spending limit.
-   New work opens a new `specs/<slug>.md`, names itself here, and keeps
-   the live count at one; every behavioral fix starts with a failing
+1. `specs/lean-ci-refresh.md` is active: verify the latest stable Lean release
+   and simplify CI with measured build reuse and unchanged verification coverage.
+   The previous record is `specs/archive/terminal-libraries.md`.
+   Keep the live count at one; every behavioral fix starts with a failing
    check and every deletion survives the full verifier stack.
 2. `SCRATCHPAD.md` — append-only worklog: proof recipes, measurements,
    break-verify records, negative results. Read before writing; append
@@ -72,7 +68,8 @@ git history); re-opening one needs a new reason.
   `./tests/e2e.sh` — run it in the FOREGROUND (a `&` job breaks the
   `^C` assertion; the script probes for this and refuses).
 - The toolchain pin is `v4.34.1`. Compiler upgrades must pass the full
-  verifier, including generated C ABI and standalone formatter checks.
+  verifier from `./lake clean`, including generated C ABI and standalone
+  formatter checks.
 - `lean-fmt` installs standalone, never as a Lake `require`; the CI
   workflow pins its source independently of the compiler. Settings and
   history live in `.lean-fmt.toml` and `SCRATCHPAD.md`.
@@ -81,17 +78,19 @@ git history); re-opening one needs a new reason.
 
 `tests/gates.sh` is the ONLY place a ratchet number lives — never copy
 one out (copies rot). Install once per clone: `uvx pre-commit install`;
-commit time runs whitespace, YAML, the gates and `lean-fmt check` in
-seconds — nothing there compiles Lean. CI is two jobs: `gates` compiles
-nothing either (the same hooks plus `lean-fmt format --check`, the layout
-half, which lives there because CI was its only home and eight files
-drifted past it — `tests/e2e.sh` now runs it too), and `e2e` runs the
-whole gate. **macOS is not on the per-push path**: ubuntu runs every
+commit time runs whitespace, YAML, the gates and `lean-fmt check`.
+Semantic lint can build missing imports; run the required builds first.
+CI is two jobs: `gates` installs nothing and selects runners; `e2e`
+runs the whole verifier, then the same hooks on Linux. Layout is checked
+once by `tests/e2e.sh`. Branches and PRs reuse content-checked build and
+formatter caches; scheduled, manual and tag runs start clean. A compiler
+or build-configuration change invalidates the build cache.
+**macOS is not on the per-push path**: ubuntu runs every
 push, macOS on a weekly cron (only when commits landed), a `v*` tag, or
 `workflow_dispatch` — reach for that when a commit touches `c/shim.c` or
 the `./lake` wrapper. The decision is `tests/ci-runners.sh`, driven by
-`E2E/Ci.lean`; the measurement behind it is in the `ci.yml` header and
-SCRATCHPAD, and is deliberately not repeated elsewhere. There is
+`E2E/Ci.lean`; the measurement behind it is in SCRATCHPAD and is
+deliberately not repeated elsewhere. There is
 deliberately no pre-push hook.
 
 ## Rules

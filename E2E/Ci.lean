@@ -4,13 +4,13 @@ public import E2E.Harness
 
 public section
 
-/-! # E2E.Ci — which runners CI asks for
+/-! # E2E.Ci — runner selection and Lake build reuse
 
 `tests/ci-runners.sh` decides the GitHub matrix, and its two failure modes are both
 silent and both expensive. Ask for macOS when nothing changed and a push bills several
 times what it needs to; never ask for it and AGENTS.md's claim that the tree passes on
-macOS stops being checked by anything. The billing arithmetic is in the `ci.yml` header
-and SCRATCHPAD, not here.
+macOS stops being checked by anything. The billing arithmetic is recorded in
+SCRATCHPAD.md.
 
 `tests/gates.sh` greps the workflow for the shape — `fromJSON`, both runner names, a
 `cron`, a `workflow_dispatch`, a `--since` — which catches deletion. It cannot catch
@@ -26,6 +26,11 @@ real commit dates, because the bug that actually happened while writing it was a
 QUOTING bug — an unquoted `--since=8 days ago` makes git read `days` as a revision,
 git fails, the output is empty, and empty means "no commits", so macOS silently never
 runs again. Only a real `git log` can catch that; a reimplementation cannot.
+
+Build reuse is tested against the pinned Lake through this repository's wrapper,
+in one temporary project. Source and dependency changes must invalidate artifacts,
+`--rehash` must ignore stale artifact hashes, and `--wfail` must reject replayed
+warnings even when a source file locally disables `warningAsError`.
 -/
 
 open E2E.Harness
@@ -71,6 +76,78 @@ def repoRoot : IO String := do
 def ubuntuOnly : String := "[\"ubuntu-latest\"]"
 
 def both : String := "[\"ubuntu-latest\", \"macos-latest\"]"
+
+/-- Exercise Lake's actual traces and diagnostic replay without a clean rebuild. -/
+def lakeBuilds (root : String) : IO Nat := do
+  let dir ← IO.FS.createTempDir
+  try
+    IO.FS.createDirAll (dir / "Probe")
+    IO.FS.writeFile (dir / "lean-toolchain") (← IO.FS.readFile s!"{root}/lean-toolchain")
+    IO.FS.writeFile (dir / "lakefile.lean")
+        "import Lake\nopen Lake DSL\npackage cacheProbe where\n\
+       \x20 leanOptions := #[⟨`warningAsError, true⟩]\nlean_lib Probe\n"
+    let source := dir / "Probe.lean"
+    let dep := dir / "Probe" / "Dep.lean"
+    let good := "import Probe.Dep\nexample : dependency = 1 := rfl\n"
+    IO.FS.writeFile source good
+    IO.FS.writeFile dep "def dependency : Nat := 1\n"
+    let build := fun (flags : Array String) =>
+      IO.Process.output
+        { cmd := s!"{root}/lake"
+          args := #["--dir", dir.toString, "--no-ansi", "--rehash"] ++ flags ++ #["build", "Probe"]
+          cwd := some root }
+    let seed : IO Unit := do
+      let out ← build #["--wfail"]
+      if out.exitCode != 0 then
+        throw (IO.userError s!"Lake probe setup failed:\n{out.stdout}{out.stderr}")
+    let check := fun (out : IO.Process.Output) (code : UInt32) (detail label : String) => do
+      let ok := out.exitCode == code && has out.stdout detail
+      if !ok then
+        IO.eprintln s!"Lake probe exited {out.exitCode}:\n{out.stdout}{out.stderr}"
+      expect ok label
+    seed
+    let mut f ←
+      check (← build #["--wfail", "--no-build"]) 0 "All targets up-to-date"
+          "unchanged Lake artifacts are reused without compilation"
+    -- Keep the original .hash: trusting it would silently accept corrupt content.
+    let artifact := dir / ".lake" / "build" / "lib" / "lean" / "Probe" / "Dep.olean"
+    let compiled ← IO.FS.readBinFile artifact
+    IO.FS.writeFile artifact "invalid cached dependency\n"
+    f :=
+      f +
+        (←
+          check (← build #["--wfail"]) 1 "invalid header"
+              "a changed dependency artifact cannot hide behind its cached hash")
+    IO.FS.writeBinFile artifact compiled
+    seed
+    IO.FS.writeFile dep "def dependency : Nat := 2\n"
+    f :=
+      f +
+        (←
+          check (← build #["--wfail"]) 1 "dependency = 1"
+              "a changed dependency rechecks its cached importer")
+    IO.FS.writeFile dep "def dependency : Nat := 1\n"
+    seed
+    IO.FS.writeFile source "import Probe.Dep\nexample : dependency = 2 := rfl\n"
+    f :=
+      f +
+        (←
+          check (← build #["--wfail"]) 1 "dependency = 2"
+              "changed source cannot reuse a previously valid artifact")
+    IO.FS.writeFile source
+        "import Probe.Dep\nset_option warningAsError false\n\
+       def warningProbe (unused : Nat) : Nat := dependency\n"
+    let warning ← build #[]
+    if warning.exitCode != 0 || !has warning.stdout "warning:" then
+      throw (IO.userError s!"Lake warning setup failed:\n{warning.stdout}{warning.stderr}")
+    f :=
+      f +
+        (←
+          check (← build #["--wfail", "--no-build"]) 1 "warning:"
+              "cached warnings fail even when warningAsError is locally disabled")
+    return f
+  finally
+    IO.FS.removeDirAll dir
 
 def run : IO UInt32 := do
   -- No `Env`, following `E2E/Coverage.lean`: this is not a pty suite, so it has no
@@ -131,6 +208,7 @@ def run : IO UInt32 := do
   finally
     IO.FS.removeDirAll (System.FilePath.mk fresh)
     IO.FS.removeDirAll (System.FilePath.mk stale)
+  f := f + (← lakeBuilds root)
   IO.println s!"FAILURES: {f}"
   return if f == 0 then 0 else 1
 

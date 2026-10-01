@@ -1,127 +1,81 @@
-# CI — two tiers, on someone else's machine.
-#
-#   gates  (fast, ubuntu)   what .pre-commit-config.yaml runs locally, plus the
-#                           layout half of lean-fmt. Compiles NOTHING. Blocks the
-#                           rest.
-#   e2e    (slow)           ./tests/e2e.sh, the whole gate — clean rebuild, shim
-#                           smoke tests, all live suites. THIS is where the slow
-#                           work lives; no local hook runs it. ubuntu on every
-#                           push; macOS on a schedule, a tag, or by hand.
-#
-# The local hook is deliberately cheap (about a second, no Lean compiled), so CI is
-# not a net here — it is where the build and the suites actually run. It is also the
-# only place the macOS half of AGENTS.md's "builds and passes on Linux and macOS"
-# is ever checked.
-#
-# WHY macOS IS NOT ON THE PER-PUSH PATH. Measured 2026-09-15, from this repo's own
-# run history: a push billed 66-97 minutes, of which macOS was 50-70 — GitHub bills
-# a macOS minute at 10x a Linux one and rounds each job up. 36 commits in a month
-# exhausted a 2,000-minute private-repo quota. A `paths:` filter was measured first
-# and rejected: 7 of 9 commits that day touched `Linger/Posix.lean` or
-# `E2E/Harness.lean`, so it would have run macOS seven times anyway, while only 1 of
-# 37 commits that month touched `c/shim.c` — where the `#ifdef __APPLE__` split
-# actually lives. So the honest lever is cadence, not paths. A macOS-only regression
-# now surfaces within a week, on a tag, or on demand, instead of within a push.
-#
-# NO RATCHET NUMBER APPEARS IN THIS FILE. Source ratchets live in
-# tests/gates.sh; exact suite check counts live in tests/e2e.sh. This workflow
-# calls those scripts so CI cannot disagree with their numbers.
-
+# Source gates decide the runner matrix without installing anything. The full
+# job shares one Lean build with the formatter and always executes every suite.
+# Branches/PRs reuse content-checked artifacts; scheduled, manual and tag runs
+# start clean. macOS cadence and its measured cost are recorded in SCRATCHPAD.md.
+# Ratchets live only in tests/gates.sh; suite counts only in tests/e2e.sh.
 name: ci
 
 on:
-  # Branch-scoped on purpose: `push` with no filter plus `pull_request` bills a
-  # same-repo PR branch TWICE, once for each event. Work here lands on main, so
-  # this costs nothing today and closes the trap.
   push:
     branches: [main]
     tags: ['v*']
   pull_request:
-  # The macOS half's regular home. Monday 06:17 UTC — off the hour, which GitHub
-  # throttles. Note a scheduled workflow is disabled after 60 days of repository
-  # inactivity, and only ever runs on the default branch.
   schedule:
     - cron: '17 6 * * 1'
-  # …and its on-demand home, for a commit that touches the platform surface
-  # (`c/shim.c`, the `./lake` wrapper) before waiting a week to find out.
   workflow_dispatch:
 
-# Two pushes to the same branch: the older run is wasted work. Built-in, not an
-# action.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
-  # v4.34.0-rc2 formatter source, verified with Lean v4.34.1. Pin source
-  # independently of the compiler: every build uses this project's lean-toolchain.
+  # Formatter source is independent of Lean; compile it with our toolchain.
   LEAN_FMT_REV: 9e8704afb1ed88a935cbdbf10d735e826b0034b8
 
 jobs:
-  # ───────────────────────────────────────────────────────────────────────────
-  # Tier 1 — the millisecond checks plus the layout gate. Mirrors pre-commit.
-  # Compiles nothing: the build lives in the e2e job, which rebuilds from empty
-  # anyway, so having it here too was paying twice for one signal.
-  # ───────────────────────────────────────────────────────────────────────────
   gates:
-    name: gates + format (ubuntu)
+    name: source gates
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    # Which runners the full gate needs. Computed HERE and nowhere else, for a
-    # measured reason: `e2e` already has `needs: gates`, so this costs no extra job
-    # and no extra billed minute. A separate `plan` job would cost 1 ubuntu minute
-    # on every push — ~36 a month at this repo's rate — to save an occasional macOS
-    # run, and 6 of the last 8 weeks had commits, so it would have cost more than it
-    # saved. It also replaces an inline `fromJSON` ternary with a shell script that
-    # can be run locally.
+    timeout-minutes: 5
     outputs:
       os: ${{ steps.runners.outputs.os }}
     steps:
       - uses: actions/checkout@v4
         with:
-          # `git log --since` below needs history; the source gates do not (they use
-          # `git grep` on the working tree and `git ls-files` on the index).
-          fetch-depth: 0
-
-      # FIRST, because it needs nothing but git: no toolchain, no python, no network.
-      # The fastest possible failure for a `sorry`, a raised ratchet, or a stray .py.
-      # pre-commit runs this same script again later; that is deliberate duplication of
-      # a millisecond check, so the cheap signal does not wait on the expensive setup.
-      - name: source-tree gates (purity, the OS + unsafe surfaces, the Vt friend set, the runtime ties, spec citations, the status glyphs, the ratchets)
-        run: sh tests/gates.sh
-
-      # macOS is the expensive runner (10x, rounded up per job), so the full gate
-      # asks for it only when there is something new for it to learn. The decision
-      # is `tests/ci-runners.sh`, not an inline `case`, so that `E2E/Ci.lean` can
-      # drive the real thing, including failure of the `git log` invocation:
-      # unreadable history must stop the job instead of skipping macOS.
-      # Shell rather than a Lean exe because this job
-      # compiles nothing, which is what makes it cheap.
-      - name: which runners the full gate needs
+          fetch-depth: 0  # The scheduled runner decision reads recent history.
+      - run: sh tests/gates.sh
+      - name: select runners
         id: runners
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
         run: |
-          os="$(sh tests/ci-runners.sh '${{ github.event_name }}' '${{ github.ref }}')"
-          printf 'runners: %s\n' "$os"
+          os="$(sh tests/ci-runners.sh "$EVENT" "$REF")"
           printf 'os=%s\n' "$os" >> "$GITHUB_OUTPUT"
 
-      # The toolchain is the one big download, and `lean-fmt`'s own build needs
-      # `lake` on a cache miss. Keyed on lean-toolchain: a version bump is a new
-      # key, which is exactly right.
-      - name: cache elan + toolchain
+  e2e:
+    name: full gate (${{ matrix.os }})
+    needs: gates
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(needs.gates.outputs.os) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: install test dependencies
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            packages=()
+            command -v fish >/dev/null || packages+=(fish)
+            command -v clang >/dev/null || packages+=(clang)
+            if [ "${#packages[@]}" -gt 0 ]; then
+              sudo apt-get update -qq
+              sudo apt-get install -y -qq "${packages[@]}"
+            fi
+            test -x /usr/bin/ar
+          elif ! command -v fish >/dev/null; then
+            brew install fish
+          fi
+
+      - name: cache Lean toolchain
         uses: actions/cache@v4
         with:
           path: ~/.elan
-          key: elan-${{ runner.os }}-${{ hashFiles('lean-toolchain') }}
-
-      # Plain curl over a third-party action for two reasons. (1) A marketplace
-      # Lean action wraps `lake` — this repo's build command is deliberately
-      # `./lake`, the wrapper, so an action that called `lake` for us would
-      # bypass the thing AGENTS.md names as the invariant. (2) One less
-      # unreviewed dependency in the trust path. The toolchain VERSION is pinned
-      # by lean-toolchain and elan reads it, so elan's own version only affects
-      # the installer; downloaded to a file rather than curl|sh so a fetch
-      # failure is distinguishable from a script failure.
-      - name: install elan (pinned toolchain from lean-toolchain)
+          key: elan-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lean-toolchain') }}
+      - name: install pinned Lean
         run: |
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
           if [ ! -x "$HOME/.elan/bin/elan" ]; then
@@ -132,34 +86,30 @@ jobs:
           elan toolchain install "$(tr -d '[:space:]' < lean-toolchain)"
           elan show
 
-      # AFTER elan: the standalone formatter build needs the project's toolchain
-      # and Lake available before it runs.
-      # Commit-time hygiene, for a clone that never ran `pre-commit install`. Same
-      # config, same `tests/gates.sh`, so CI and the hook cannot disagree. First
-      # because it is the cheapest thing that can fail.
-      - uses: actions/setup-python@v5
+      # Reuse across source edits, never across compilers or build configurations.
+      # Lake rehashes inputs; the formatter checks source and dependency identity.
+      # No restore on schedule/dispatch/tags keeps a regular clean verification.
+      - name: cache build and formatter analysis
+        if: github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/'))
+        uses: actions/cache@v4
         with:
-          python-version: '3.x'
-      # lean-fmt BEFORE pre-commit, because the pre-commit hook skips its lean-fmt
-      # step with a note when the binary is absent — right for a fresh clone, wrong
-      # for CI, where a silent skip is exactly the thing that lets a finding through.
-      # Installing it here means the hook's step actually runs.
-      #
-      # Standalone build + `make install`, never a Lake `require`: the require-free lakefile
-      # and the empty lake-manifest are gates in tests/gates.sh, and README promises
-      # no external Lean dependencies. lean-fmt supports this explicitly.
-      #
-      # Source and compiler are separate cache inputs. A change to either requires
-      # a fresh build; no fallback key may restore a binary from another pair.
-      # The compiler assertion below runs on both cache hits and misses.
-      - name: cache lean-fmt (pinned source + project toolchain)
+          path: |
+            .lake/build
+            .lean-fmt-cache
+          key: verify-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lean-toolchain', 'lake', 'lakefile.lean', 'lake-manifest.json') }}-${{ github.sha }}
+          restore-keys: |
+            verify-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lean-toolchain', 'lake', 'lakefile.lean', 'lake-manifest.json') }}-
+
+      # Hygiene runs once on Linux; macOS covers the platform-dependent verifier.
+      - name: cache standalone formatter
+        if: runner.os == 'Linux'
         id: fmt-cache
         uses: actions/cache@v4
         with:
           path: ~/.local/bin/lean-fmt
           key: lean-fmt-${{ runner.os }}-${{ runner.arch }}-${{ env.LEAN_FMT_REV }}-${{ hashFiles('lean-toolchain') }}
-
-      - name: install lean-fmt (standalone, pinned source + project toolchain)
+      - name: install and verify standalone formatter
+        if: runner.os == 'Linux'
         env:
           FMT_CACHE_HIT: ${{ steps.fmt-cache.outputs.cache-hit }}
         run: |
@@ -176,16 +126,13 @@ jobs:
               https://github.com/jcreinhold/lean-fmt.git "$LEAN_FMT_REV"
             git -C "$fmt_src" checkout --quiet --detach FETCH_HEAD
             test "$(git -C "$fmt_src" rev-parse HEAD)" = "$LEAN_FMT_REV"
-            # Replace the source checkout's compiler pin and use our host wrapper.
             cp lean-toolchain lake "$fmt_src/"
             (
               cd "$fmt_src" || exit 1
               ELAN_TOOLCHAIN="$toolchain" ./lake build lean-fmt artifactExtractor
             )
-            # Both install targets were built through ./lake; make only places them.
             make -C "$fmt_src" -o build install
           fi
-          # PREFIX defaults to $HOME/.local, which is not on a runner's PATH.
           fmt_version="$("$HOME/.local/bin/lean-fmt" --version)"
           printf '%s\n' "$fmt_version"
           case "$fmt_version" in
@@ -193,113 +140,32 @@ jobs:
             *) echo "::error::lean-fmt compiler mismatch: $fmt_version; expected $toolchain"; exit 1 ;;
           esac
 
-      - name: pre-commit (hygiene, source-tree gates, lean-fmt check)
+      - name: full gate
+        run: ./tests/e2e.sh
+
+      # Lint after the build: semantic checks can use its existing Lean artifacts.
+      # Layout is already checked by tests/e2e.sh, so it needs no second invocation.
+      - uses: actions/setup-python@v5
+        if: runner.os == 'Linux'
+        id: python
+        with:
+          python-version: '3.x'
+      - name: cache pre-commit environments
+        if: runner.os == 'Linux'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ runner.arch }}-${{ steps.python.outputs.python-version }}-${{ hashFiles('.pre-commit-config.yaml') }}
+      - name: commit hygiene and semantic lint
+        if: runner.os == 'Linux'
         run: |
           python -m pip install --quiet pre-commit
           pre-commit run --all-files --show-diff-on-failure
 
-      # The formatter's drift gate — the layout half of lean-fmt; the linter half ran
-      # inside pre-commit above. Not in the commit hook: `format --check` re-renders
-      # every file it visits (~22 s warm over the tree), which is CI-tier cost by the
-      # two-tier split this file's header describes. Purely syntactic, so it needs no
-      # build — which is what lets this whole job compile nothing.
-      - name: lean-fmt format --check (layout drift)
-        run: lean-fmt format --check
-
-      # NO BUILD STEP, AND NO .lake/build CACHE, ON PURPOSE. This job used to run
-      # `./lake build Linger Theorems Tests` and cache the result; the e2e job then
-      # rebuilt the same thing from empty inside tests/e2e.sh step 1, because that
-      # clean rebuild is what makes "warning-clean" mean every declaration rather
-      # than the stale ones. So the compile was billed twice for one signal, and the
-      # cache key hashed every .lean file — meaning any Lean commit missed it and
-      # paid a cold build here as well. What that step uniquely caught was a `sorry`
-      # or a warning ~10 minutes sooner; `tests/gates.sh` above already greps for
-      # `sorry` in milliseconds, and with macOS off the per-push path there is no
-      # expensive matrix left to protect from a bad tree.
-
-  # ───────────────────────────────────────────────────────────────────────────
-  # Tier 2 — the whole gate, and the only place anything compiles.
-  # ───────────────────────────────────────────────────────────────────────────
-  e2e:
-    name: full gate (${{ matrix.os }})
-    needs: gates            # don't spend the suites on a tree with a `sorry`
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 45     # a pty regression can hang: `pump` is unbounded by
-                            # design (THEOREMS.md §Total). Fail, don't idle.
-                            # Also the blast radius of a hang: 45 macOS minutes
-                            # bill as 450.
-    strategy:
-      fail-fast: false      # a Linux failure must not hide a macOS-only one:
-                            # the platform splits are the reason macos is here.
-      matrix:
-        # Decided by the `gates` job, which is already a dependency — see the note
-        # there. `fromJSON` of a job output, not an inline ternary: the branch logic
-        # is then a shell `case` that can be run locally, and the popular
-        # `cond && fromJSON(A) || fromJSON(B)` form leans on a non-empty array being
-        # truthy, a coercion not worth betting the only compiling job on. Nothing
-        # checks this shape — actionlint exits 0 on a mistyped version (verified) —
-        # so `tests/gates.sh` greps for it.
-        os: ${{ fromJSON(needs.gates.outputs.os) }}
-    steps:
-      - uses: actions/checkout@v4
-
-      # Terminal and environment regressions exercise fish. Missing it is a
-      # failed environment, never a counted test pass.
-      - name: install fish for required e2e coverage
-        run: |
-          if command -v fish >/dev/null; then exit 0; fi
-          if [ "$RUNNER_OS" = Linux ]; then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq fish
-          else
-            brew install fish
-          fi
-
-      - name: preflight — the ./lake wrapper's Linux-branch preconditions
-        if: runner.os == 'Linux'   # ./lake is a pass-through on Darwin, on
-                                   # purpose: /usr/bin/ar is Apple's ar and
-                                   # cannot read lake's @rsp file. Nothing to
-                                   # check there.
-        run: |
-          if ! command -v clang >/dev/null; then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq clang
-          fi
-          test -x /usr/bin/ar || { echo "::error::/usr/bin/ar missing"; exit 1; }
-
-      - name: cache elan + toolchain
-        uses: actions/cache@v4
-        with:
-          path: ~/.elan
-          key: elan-${{ runner.os }}-${{ hashFiles('lean-toolchain') }}
-
-      - name: install elan (pinned toolchain from lean-toolchain)
-        run: |
-          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
-          if [ ! -x "$HOME/.elan/bin/elan" ]; then
-            curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -o /tmp/elan-init.sh
-            sh /tmp/elan-init.sh -y --default-toolchain none
-          fi
-          export PATH="$HOME/.elan/bin:$PATH"
-          elan toolchain install "$(tr -d '[:space:]' < lean-toolchain)"
-
-      # DELIBERATELY NO .lake/build CACHE ON THIS JOB. tests/e2e.sh step 1 opens
-      # with `rm -rf .lake/build` — a restored cache would be deleted before the
-      # first compile, so it would cost a download and save nothing. That clean
-      # rebuild is the point of the gate (it is what makes "warning-clean" mean
-      # every declaration, not just the ones that happened to be stale), so the
-      # honest handling is to not pretend to cache it. ~/.elan above is cached;
-      # that is the part e2e.sh does not delete.
-      - name: full gate — ./tests/e2e.sh
-        run: ./tests/e2e.sh
-
-      # e2e.sh tails 25 lines of the failing suite; the rest sits in /tmp. Dump
-      # it into the job log rather than adding an artifact-upload action — a pty
-      # failure on a machine nobody can attach to is only debuggable from the log.
-      - name: logs (on failure)
+      - name: logs on failure
         if: failure()
         run: |
-          for f in /tmp/linger-build.log /tmp/linger-coverage.log /tmp/linger-*.out; do
+          for f in /tmp/linger-*.log /tmp/linger-*.out; do
             [ -f "$f" ] || continue
             printf '\n===== %s =====\n' "$f"
             tail -100 "$f"

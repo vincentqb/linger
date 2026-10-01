@@ -1167,7 +1167,7 @@ done
   || fail "THEOREMS.md names a declaration that does not exist — state an absent proof as absent, not as a forward reference"
 
 # The CI matrix. macOS came off the per-push path on 2026-09-15 for a cost reason
-# measured in the ci.yml header — not repeated here, because that figure was copied into
+# measured in SCRATCHPAD.md — not repeated here, because that figure was copied into
 # seven files and had already started to rot — but the decision reaches the matrix
 # through a `fromJSON` job output, and actionlint does NOT
 # check it — verified by mistyping it deliberately, which actionlint accepted. Two
@@ -1188,8 +1188,21 @@ grep -qE '(^|[^[:alnum:]_])sh[[:space:]]+tests/ci-runners[.]sh' "$ci_yml" \
   || fail "$ci_yml: the runner decision is not a call to tests/ci-runners.sh — E2E/Ci.lean would then be testing a script CI does not use"
 [ -n "$(git ls-files -- tests/ci-runners.sh)" ] \
   || fail "tests/ci-runners.sh is not tracked — the workflow calls it, so a local-only copy passes here and fails in CI"
-grep -q "fromJSON" "$ci_yml" \
-  || fail "$ci_yml: the e2e matrix no longer uses fromJSON — a plain list bills macOS on every push"
+grep -qE '^ *os: [$][{][{] fromJSON[(]needs[.]gates[.]outputs[.]os[)] [}][}]$' "$ci_yml" \
+  || fail "$ci_yml: the e2e matrix must use the tested runner decision through needs.gates.outputs.os"
+# Semantic lint can build ordinary imports, but E2E.Coverage loads Main
+# dynamically. On a cold checkout, lint before the full build misses Main and
+# fails. Bind the ordering to the real commands rather than their step names.
+awk '
+  /^[[:space:]]+run: [.][/]tests[/]e2e[.]sh$/ { build = NR }
+  /^[[:space:]]+pre-commit run --all-files/ { lint = NR }
+  END { exit !(build && lint > build) }
+' "$ci_yml" \
+  || fail "$ci_yml: run ./tests/e2e.sh before pre-commit so semantic lint sees every compiled import"
+# E2E.Ci exercises Lake's invalidation and cached warnings. The real verifier
+# must use the same flags; otherwise those checks protect only their fixture.
+grep -qE '^[.]/lake --rehash --wfail build[[:space:]]' tests/e2e.sh \
+  || fail "tests/e2e.sh: the build must use the cache-checking flags exercised by E2E.Ci (--rehash --wfail)"
 grep -qE '^ +- cron:' "$ci_yml" \
   || fail "$ci_yml: no schedule — with macOS off the per-push path, the cron IS when macOS runs"
 grep -q 'workflow_dispatch' "$ci_yml" \

@@ -1,4 +1,5 @@
-# Fast commit-time checks only. Builds and format drift run in CI.
+# Commit hygiene and semantic lint. Run the build first to reuse compiled imports;
+# CI also checks layout and runs the full verifier.
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks

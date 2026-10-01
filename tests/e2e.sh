@@ -2,7 +2,7 @@
 # Whole-deliverable check (specs/archive/lean-zmx.md Step 10). Exits 0 only if
 # everything below holds. Run from the repo root: ./tests/e2e.sh
 #
-#   1. clean build of program + proofs + unit tests, zero warnings
+#   1. content-checked build of program + proofs + unit tests, zero warnings
 #   2. no `sorry` / `partial` in the pure core or the proofs
 #  2b. coverage: every inventoried pure definition occurs in a theorem
 #      type, and compiled renderer/replay references are classified
@@ -95,8 +95,10 @@ suite() {                                   # suite <name> <exact checks>
 }
 
 say "1. build (program + theorems + tests)"
-[ ! -e .lake/build ] || rm -r .lake/build
-./lake build Linger Theorems Tests linger lingertest e2e > /tmp/linger-build.log 2>&1 \
+# Lake checks source/dependency content and replays cached diagnostics. Rehash
+# artifacts too, and fail on warnings even after a local warningAsError override.
+# Run `./lake clean` first for clean release/compiler validation.
+./lake --rehash --wfail build Linger Theorems Tests linger lingertest e2e > /tmp/linger-build.log 2>&1 \
   || { tail -30 /tmp/linger-build.log; fail "build"; }
 if grep -qE '^(warning|error)' /tmp/linger-build.log; then
   grep -E '^(warning|error)' /tmp/linger-build.log
@@ -174,18 +176,18 @@ say "2b. semantic coverage of pure code + runtime emitter classification"
 cat /tmp/linger-coverage.log
 tail -1 /tmp/linger-coverage.log | grep -q '^FAILURES: 0$' || fail "coverage gate"
 
-say "2c. CI runner selection (tests/ci-runners.sh, driven not copied)"
-# Which runners CI asks for decides the bill (numbers in the ci.yml header) and, in the
+say "2c. CI runner selection and Lake build reuse"
+# Which runners CI asks for decides the bill (measurements in SCRATCHPAD.md) and, in the
 # other direction, whether AGENTS.md's macOS claim is checked by anything. `E2E.Ci` runs
 # the real script, including its `git log --since` against throwaway repositories with
-# real commit dates.
+# real commit dates, and the pinned Lake against a temporary project.
 ci_out=/tmp/linger-ci.out
-./.lake/build/bin/e2e ci > "$ci_out" 2>&1 || { cat "$ci_out"; fail "ci runner selection"; }
+./.lake/build/bin/e2e ci > "$ci_out" 2>&1 || { cat "$ci_out"; fail "CI checks"; }
 cat "$ci_out"
-tail -1 "$ci_out" | grep -q '^FAILURES: 0$' || fail "ci runner selection"
+tail -1 "$ci_out" | grep -q '^FAILURES: 0$' || fail "CI checks"
 ci_n="$(grep -c '^PASS ' "$ci_out")"
-[ "$ci_n" -eq 7 ] \
-  || fail "e2e ci ran $ci_n checks (expected exactly 7)"
+[ "$ci_n" -eq 12 ] \
+  || fail "e2e ci ran $ci_n checks (expected exactly 12)"
 
 say "2d. fuzz corpus: no held-out mutations, failure lists asserted empty"
 # The §Replay fuzzer is only a guarantee if nothing is excluded and the

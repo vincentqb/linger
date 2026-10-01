@@ -33,7 +33,7 @@ Lean 4.34.1 via elan; no external Lean dependencies.
 ./lake exe e2e <suite>           # one pty suite: attach resume overview remote robust
                                  #   graphics terminal status agent watch recipes delivery manager title
 ./lake env lean E2E/Coverage.lean # resolved renderer/replay references; build the program first
-./lake exe e2e ci                # which runners CI asks for (tests/ci-runners.sh)
+./lake exe e2e ci                # runner selection and build-cache regressions
 sh tests/gates.sh                # the fast source-tree gates (seconds)
 ./tests/e2e.sh                   # everything, in order (minutes)
 ```
@@ -41,10 +41,17 @@ sh tests/gates.sh                # the fast source-tree gates (seconds)
 `LINGER_REMOTE=<host> ./lake exe e2e remote-live` exercises the remote
 path against a real second machine; opt-in, so it is not in the gate.
 
+The full verifier reuses valid build artifacts, checks all proof and test
+targets, and runs every live suite.
+Run `./lake clean` first to verify from scratch. CI reuses build and formatter
+caches on branch pushes and pull requests; scheduled, manual and release-tag
+runs start clean. Compiler or build-configuration changes also start a new cache.
+
 Commit-time hygiene is `uvx pre-commit install`. `lean-fmt` is optional
 and installed standalone; `.lean-fmt.toml` records the settings. The
 [CI installation steps](.github/workflows/ci.yml) pin the formatter source
 separately and build it with the project toolchain.
+CI runs lint after the build so semantic checks can reuse compiled imports.
 
 ### Layout
 

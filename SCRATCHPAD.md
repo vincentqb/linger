@@ -14014,3 +14014,76 @@ Local Linux verification is green; no hosted Linux or macOS pass is claimed.
 and VT proof targets, explicit default-binding compatibility, stronger buffer
 and title contracts, compiling mutations and independently accepted review.
 AGENTS.md again has no spec in flight.
+
+## Step 1 notes — 2026-10-01
+
+The official Lean release API identifies v4.34.1 as the latest stable release,
+last rechecked at 11:49:50Z. The existing pin is correct; v4.35.0-rc3 is a
+prerelease. No compiler, C ABI, dependency or public CLI change is needed.
+
+The CI workflow shrinks from 306 to 175 lines. The source job installs nothing
+and selects the tested runner matrix. The full job builds once, runs the entire
+verifier, then runs commit hygiene and semantic lint on Linux. Layout remains
+in the verifier and loses its duplicate workflow invocation. The formatter
+source pin remains independent of Lean, with compiler identity checked after
+both installation and cache restoration.
+
+Branches and PRs reuse Lake artifacts and formatter analysis. The build cache
+is separated by OS, architecture, toolchain and build configuration; each
+commit can seed the next. Scheduled, manual and tag runs omit this cache, so
+they start clean. macOS keeps its existing cadence. Local clean verification
+starts with `./lake clean`; no extra public option or cache planner is added.
+
+This is also a real cold-checkout fix. Hosted baseline run `36748604757` now
+executes, so the earlier billing block is no longer the current diagnosis.
+Its source/format job spends 12m08s before failing: semantic lint takes about
+8m51s, then cannot resolve the dynamically imported Main in E2E.Coverage.
+The full-gate job never starts. Building before lint fixes this locally.
+Original hosted job metadata and the failure log are in
+`/tmp/linger-ci-hosted-baseline-20261001-9goh8r/`.
+
+Lake hashes source/dependency inputs and replays cached diagnostics. Its
+artifact-hash memoization needs `--rehash`; warning replay needs `--wfail`,
+including when source locally disables warningAsError. E2E.Ci retains all seven
+runner assertions and adds five checks against the pinned Lake in a temporary
+two-module project: unchanged reuse, artifact corruption, changed dependency,
+changed source, and cached warning rejection. The real verifier uses both
+flags, bound by a source gate. Mathematical claims remain in the existing
+theorem targets; tests of actual IO protect this orchestration.
+
+Both permanent-check mutations compile successfully. Removing rehashing makes
+exactly the corrupt-artifact assertion fail; removing warning rejection makes
+exactly the cached-warning assertion fail. Restoration passes. The worker's
+original probes, mutations, restoration hashes and accepted patch are in
+`/tmp/linger-ci-verifier-20261001-LGrSW3/evidence/`.
+Separate formatter-cache probes reject both a changed proof and an unchanged
+importer with a changed dependency, then pass after restoration:
+`/tmp/linger-ci-formatter-cache-20261001-tC6Ido/`.
+
+Workflow mutations fail the real gates for the wrong matrix output and lint
+before the build; restoration passes. Their receipts are in
+`/tmp/linger-ci-order-gates-20261001-n7HKCf/`. The new verifier-flags gate also
+fails on the predecessor command and passes after integration, preserved in
+`/tmp/linger-ci-verifier-binding-20261001-QJacXV/`. An earlier untracked-spec
+citation failure was a harness setup problem, not semantic evidence.
+
+Independent review accepts the assembled change. No check is removed.
+Compile-time tests are deterministic and may reuse validated artifacts;
+every live suite still executes. Both required builds, actionlint, shell
+syntax, source gates and hooks pass. The clean foreground verifier takes
+458 seconds (11:34:24Z–11:42:02Z); the identical cached run takes 350 seconds
+(11:44:08Z–11:49:58Z). Post-build hooks take five and six seconds respectively,
+for 463 versus 356 seconds of local verification. The main build's log is
+complete about 92 seconds after the clean start and under a second after
+the cached start; these are local measurements, not hosted timing claims.
+
+Each full run passes generated Lean/C ABI, standalone layout, both semantic
+coverage checks, twelve CI checks, all shim assertions, fuzz checks, all 437
+live assertions across fourteen suites, and the unrelated-session sentinel.
+All 172 source identities remain fixed through both runs. Original logs,
+independently counted checks, source hashes, timings and the review receipt
+are sealed in `/tmp/linger-ci-full-20261001-Z4QaxC/`.
+
+Both agents are closed and the worker's two source files are integrated.
+Publication, fresh cleanup preflight and the new hosted results belong to
+closure.
