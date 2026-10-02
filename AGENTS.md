@@ -15,11 +15,11 @@ worklog), `specs/archive/` (closed build records), the comments in
 
 ## Where things stand — read this first after any compaction
 
-1. `specs/ci-redesign.md` is active, opened 2026-10-02: remove duplicate
-   verification and the Python hook framework, preserve the checks, and measure
-   the resulting CI path. The preceding build/format audit is archived in
-   `specs/archive/build-format-latency.md`; its source checkpoints and final
-   records checkpoint pass hosted Linux CI.
+1. No spec is in flight. The last one closed on 2026-10-02
+   (`specs/archive/ci-redesign.md`: native hooks, one full verification path,
+   exact successful-verification reuse and concurrent Manager fixtures).
+   Its final source checkpoint passes assembled and hosted Linux verification;
+   all worker changes are integrated and their branches/worktrees retired.
    New work opens a new `specs/<slug>.md`, names itself here, and keeps the
    live count at one; every behavioral fix starts with a failing check and
    every deletion survives the full verifier stack.

@@ -15491,3 +15491,43 @@ seconds and pass. The full verifier includes a 12-second rebuild of the
 changed test executable, so its total is not a controlled warm comparison.
 Evidence: `assembled-full/receipt.json`, `commands.json` and raw logs.
 Commit this verified checkpoint, then check the exact published SHA on CI.
+
+Publish the final source as `419f2df`. Hosted run 37008938692 passes for
+that SHA: hygiene 9 seconds, Linux 154, full verifier 117. Phase times are
+build 22, ABI 1, gates 3, formatting/lint 8, coverage 5, verifier regressions
+8, shim 7 and live suites 62 seconds. Manager takes 32.542 seconds.
+The successful-verification receipt is created and saved. Toolchain cache
+restoration takes 19 seconds. Logs and exact run metadata are retained in
+`hosted-37008938692/`. These are source-changing hosted observations,
+not a controlled comparison with the user's warm records-only checkpoint.
+
+## Step 4 notes — 2026-10-02
+
+The final independent reviews and full verifier are green, and main equals
+the published `419f2df`. Preserve each complete worker tree in a fresh recovery
+directory, excluding only `.git`, `.lake` and `.lean-fmt-cache`; save source
+manifests, Git state and patches as well. Recompare originals and recoveries
+before removing anything. All three worker branches have zero unique commits.
+Four source files match published main byte-for-byte, and the original hygiene
+fixture file retains every line with three additional staged-content cases.
+The recovery manifests preserve 201, 203 and 201 entries respectively.
+
+Retire only `work/ci-coverage`, `work/ci-native-hygiene` and
+`work/ci-selector-timing` and their worktrees. All workers are closed.
+Only main remains. Evidence: `worker-recovery/retirement.json`,
+`assembled-containment.json`, recovery snapshots and patches. No source
+changes during cleanup.
+
+Close the spec with the actual measurements, proof/test preservation,
+rejected race and remaining build/setup costs, then move it to
+`specs/archive/ci-redesign.md`. Closure changes only work records; its
+non-record source inventory matches `assembled-full/source-after.json`.
+Run both required builds and native hooks, publish the closure, and observe
+the exact successful-verification reuse path on that final records commit.
+
+Closure validation confirms that all 144 non-record files still match the
+assembled full verifier by contents, modes and inventory. The required
+program build passes in 0.598 seconds and the proof/test build in 0.607
+seconds. Only AGENTS, SCRATCHPAD and the spec's archive move are staged.
+Evidence: `closure/validation.json`. Leave the native commit hook enabled;
+the publication receipt will record its result and the hosted reuse result.
