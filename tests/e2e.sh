@@ -31,8 +31,34 @@
 set -e
 cd "$(dirname "$0")/.."
 
-say() { printf '\n=== %s ===\n' "$1"; }
-fail() { printf 'E2E FAIL: %s\n' "$1" >&2; exit 1; }
+verifier_phase=''
+finish_phase() {
+  [ -n "$verifier_phase" ] || return 0
+  verifier_elapsed=$(( $(date +%s) - verifier_started ))
+  [ "${GITHUB_ACTIONS-}" != true ] || printf '::endgroup::\n'
+  printf '  %s: OK (%ss)\n' "$verifier_phase" "$verifier_elapsed"
+  if [ -n "${GITHUB_STEP_SUMMARY-}" ]; then
+    printf '| %s | %s s |\n' "$verifier_phase" "$verifier_elapsed" >> "$GITHUB_STEP_SUMMARY"
+  fi
+}
+say() {
+  finish_phase
+  verifier_phase=$1
+  verifier_started=$(date +%s)
+  if [ "${GITHUB_ACTIONS-}" = true ]; then
+    printf '::group::%s\n' "$1"
+  else
+    printf '\n=== %s ===\n' "$1"
+  fi
+}
+fail() {
+  [ "${GITHUB_ACTIONS-}" != true ] || printf '::endgroup::\n'
+  printf 'E2E FAIL: %s\n' "$1" >&2
+  exit 1
+}
+if [ -n "${GITHUB_STEP_SUMMARY-}" ]; then
+  printf '| Verification phase | Elapsed |\n| --- | ---: |\n' >> "$GITHUB_STEP_SUMMARY"
+fi
 
 # --- SIGINT must be deliverable ---------------------------------------------
 # A shell without job control starts a `&` job with SIGINT and SIGQUIT disabled,
@@ -137,43 +163,42 @@ say "2. source-tree gates (purity, boundaries, and the ratchets)"
 # A hook with its own copy of a cap is worse than no hook.
 sh tests/gates.sh || fail "source-tree gates"
 
-# The layout half of lean-fmt. The `pre-commit` hook runs `lean-fmt check` (the
-# linter); `format --check` re-renders every file it visits and is CI-tier by the
-# two-tier split, which is why it is here and not in the hook — but it belongs
-# SOMEWHERE local: eight files drifted past it because the only enforcement was
-# in CI, and the linter passing locally looked like the formatter passing too.
-# ~22 s warm inside a run that already costs minutes. Absent binary is a skip,
-# as in the hook: a fresh clone must still be able to run this script.
+say "2a. formatting and semantic lint"
+# Both obligations run once here, after imports have been built. A local commit
+# hook needs only semantic lint; the full verifier also validates rendered layout.
+# Linux CI installs the pinned formatter and must never silently skip it.
 if command -v lean-fmt > /dev/null; then
   lean-fmt format --check > /tmp/linger-fmt.log 2>&1 \
     || { cat /tmp/linger-fmt.log >&2; fail "lean-fmt format --check"; }
   printf '  layout: %s\n' "$(head -1 /tmp/linger-fmt.log)"
+  lean-fmt check > /tmp/linger-lint.log 2>&1 \
+    || { cat /tmp/linger-lint.log >&2; fail "lean-fmt check"; }
+  printf '  semantic lint: OK\n'
+elif [ "${GITHUB_ACTIONS-}" = true ] && [ "${RUNNER_OS-}" = Linux ]; then
+  fail "the pinned formatter is missing from Linux CI"
 else
-  say "   (lean-fmt absent; layout drift unchecked — see README.md)"
+  printf '  lean-fmt absent; layout and semantic lint unchecked — see README.md\n'
 fi
 
 say "2b. semantic coverage of pure code + runtime emitter classification"
-# `Theorems.Coverage` resolves exact environment constants in theorem types;
-# E2E.Coverage reads resolved references from the program just built above.
-# Invoke Lean directly so source-only changes cannot reuse a cached census.
-./lake env lean Theorems/Coverage.lean || fail "semantic coverage gate"
+# E2E.Coverage calls the shared exact-constant theorem census, then classifies
+# resolved references from the program just built above. Invoke Lean directly
+# so source-only changes cannot reuse a cached census.
 ./lake env lean E2E/Coverage.lean > /tmp/linger-coverage.log 2>&1 \
-  || { cat /tmp/linger-coverage.log; fail "runtime emitter classification"; }
-cat /tmp/linger-coverage.log
+  || { cat /tmp/linger-coverage.log; fail "semantic coverage and emitter classification"; }
+grep '^pure semantic coverage:' /tmp/linger-coverage.log || true
 tail -1 /tmp/linger-coverage.log | grep -q '^FAILURES: 0$' || fail "coverage gate"
+printf '  coverage and emitter checks: OK (details: /tmp/linger-coverage.log)\n'
 
-say "2c. CI runner selection, Lake build reuse and suite isolation"
+say "2c. verifier regression tests (CI policy, caches and suite isolation)"
 # Which runners CI asks for decides the bill (measurements in SCRATCHPAD.md) and, in the
 # other direction, whether AGENTS.md's macOS claim is checked by anything. `E2E.Ci` runs
 # the real script, including its `git log --since` against throwaway repositories with
 # real commit dates, and the pinned Lake against a temporary project.
-ci_out=/tmp/linger-ci.out
-./.lake/build/bin/e2e ci > "$ci_out" 2>&1 || { cat "$ci_out"; fail "CI checks"; }
-cat "$ci_out"
-tail -1 "$ci_out" | grep -q '^FAILURES: 0$' || fail "CI checks"
-ci_n="$(grep -c '^PASS ' "$ci_out")"
-[ "$ci_n" -eq 29 ] \
-  || fail "e2e ci ran $ci_n checks (expected exactly 29)"
+# The same runner checks exit status, final verdict, every assertion and both
+# streams. Intentional failures inside these tests stay in their captured logs.
+./.lake/build/bin/e2e --suites ci:45 hygiene:48 \
+  || fail "verifier regression checks (see /tmp/linger-{ci,hygiene}.out)"
 
 say "2d. fuzz corpus: no held-out mutations, failure lists asserted empty"
 # The §Replay fuzzer is only a guarantee if nothing is excluded and the
@@ -227,4 +252,5 @@ LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger info "$sentinel_name" >/dev/
   || fail "a suite terminated the unrelated sentinel session"
 cleanup_sentinel
 trap - EXIT HUP TERM
+finish_phase
 printf '\nE2E OK — linger builds clean, core is pure, 15 live suites green.\n'

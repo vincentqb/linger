@@ -1,8 +1,8 @@
-# Source gates decide the runner matrix without installing anything. The full
-# job shares one Lean build with the formatter and always executes every suite.
-# Branches/PRs reuse content-checked artifacts; scheduled, manual and tag runs
-# start clean. macOS cadence and its measured cost are recorded in SCRATCHPAD.md.
-# Ratchets live only in tests/gates.sh; suite counts only in tests/e2e.sh.
+# Hygiene runs once without a compiler or Python. The full verifier retains every
+# check; only a prior successful verification of identical inputs may replace it.
+# tests/ci-inputs.sh hashes paths, modes, content AND runner OS/arch/image version.
+# Work records always get current source gates, even when verification is reused.
+# Schedule, dispatch and tags verify cleanly; tests/ci-runners.sh chooses macOS.
 name: ci
 
 on:
@@ -19,35 +19,58 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Formatter source is independent of Lean; compile it with our toolchain.
   LEAN_FMT_REV: 9e8704afb1ed88a935cbdbf10d735e826b0034b8
 
 jobs:
   gates:
-    name: source gates
+    name: hygiene and verification inputs
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      os: ${{ steps.runners.outputs.os }}
+      os: ${{ steps.inputs.outputs.os }}
+      key: ${{ steps.inputs.outputs.key }}
+      verified: ${{ steps.verified.outputs.cache-hit }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0  # The scheduled runner decision reads recent history.
-      - run: sh tests/gates.sh
-      - name: select runners
-        id: runners
+      - name: source hygiene
+        run: sh tests/hygiene.sh
+      - name: validate workflow
+        run: |
+          curl -sSfL --retry 3 https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz -o "$RUNNER_TEMP/actionlint.tar.gz"
+          printf '%s  %s\n' 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 "$RUNNER_TEMP/actionlint.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -shellcheck='' -pyflakes=''
+      - name: identify verification inputs and runners
+        id: inputs
         env:
           EVENT: ${{ github.event_name }}
           REF: ${{ github.ref }}
         run: |
+          test -n "$ImageVersion"
+          key="$(sh tests/ci-inputs.sh)"
           os="$(sh tests/ci-runners.sh "$EVENT" "$REF")"
-          printf 'os=%s\n' "$os" >> "$GITHUB_OUTPUT"
+          printf 'key=%s\nos=%s\n' "$key" "$os" >> "$GITHUB_OUTPUT"
+      - name: look up successful verification
+        if: github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/'))
+        id: verified
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}/linger-verified
+          key: passed-v1-${{ steps.inputs.outputs.key }}
+      - name: check work records and report reused verification
+        if: steps.verified.outputs.cache-hit == 'true'
+        run: |
+          sh tests/gates.sh
+          cat "$RUNNER_TEMP/linger-verified" >> "$GITHUB_STEP_SUMMARY"
 
   e2e:
-    name: full gate (${{ matrix.os }})
+    name: verify (${{ matrix.os }})
     needs: gates
+    if: needs.gates.outputs.verified != 'true'
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -89,21 +112,17 @@ jobs:
           elan toolchain install "$(tr -d '[:space:]' < lean-toolchain)"
           elan show
 
-      # Reuse across source edits, never across compilers or build configurations.
-      # Lake rehashes inputs; the formatter checks source and dependency identity.
-      # No restore on schedule/dispatch/tags keeps a regular clean verification.
-      - name: cache build and formatter analysis
+      - name: cache checked build artifacts
         if: github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/'))
         uses: actions/cache@v6
         with:
           path: |
             .lake/build
             .lean-fmt-cache
-          key: verify-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lean-toolchain', 'lake', 'lakefile.lean', 'lake-manifest.json') }}-${{ github.sha }}
+          key: verify-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lean-toolchain', 'lake', 'lakefile.lean', 'lake-manifest.json') }}-${{ needs.gates.outputs.key }}
           restore-keys: |
             verify-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lean-toolchain', 'lake', 'lakefile.lean', 'lake-manifest.json') }}-
 
-      # Hygiene runs once on Linux; macOS covers the platform-dependent verifier.
       - name: cache standalone formatter
         if: runner.os == 'Linux'
         id: fmt-cache
@@ -143,27 +162,26 @@ jobs:
             *) echo "::error::lean-fmt compiler mismatch: $fmt_version; expected $toolchain"; exit 1 ;;
           esac
 
-      - name: full gate
+      - name: full verification
         run: ./tests/e2e.sh
 
-      # Lint after the build: semantic checks can use its existing Lean artifacts.
-      # Layout is already checked by tests/e2e.sh, so it needs no second invocation.
-      - uses: actions/setup-python@v7
-        if: runner.os == 'Linux'
-        id: python
-        with:
-          python-version: '3.x'
-      - name: cache pre-commit environments
-        if: runner.os == 'Linux'
-        uses: actions/cache@v6
-        with:
-          path: ~/.cache/pre-commit
-          key: pre-commit-${{ runner.os }}-${{ runner.arch }}-${{ steps.python.outputs.python-version }}-${{ hashFiles('.pre-commit-config.yaml') }}
-      - name: commit hygiene and semantic lint
-        if: runner.os == 'Linux'
+      # No always() or failure() here: a receipt exists only after the complete
+      # verifier succeeds. Recompute its image-aware key on this actual runner.
+      - name: record successful verification
+        if: success() && runner.os == 'Linux' && (github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')))
+        id: receipt
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          python -m pip install --quiet pre-commit
-          pre-commit run --all-files --show-diff-on-failure
+          key="$(sh tests/ci-inputs.sh)"
+          printf 'key=%s\n' "$key" >> "$GITHUB_OUTPUT"
+          printf 'Reused [successful verification](%s) for unchanged inputs `%s`. Source gates and hygiene ran again.\n' "$RUN_URL" "$key" > "$RUNNER_TEMP/linger-verified"
+      - name: save successful verification
+        if: success() && steps.receipt.outputs.key != ''
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}/linger-verified
+          key: passed-v1-${{ steps.receipt.outputs.key }}
 
       - name: logs on failure
         if: failure()

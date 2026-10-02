@@ -1206,22 +1206,57 @@ grep -qE '(^|[^[:alnum:]_])sh[[:space:]]+tests/ci-runners[.]sh' "$ci_yml" \
   || fail "tests/ci-runners.sh is not tracked — the workflow calls it, so a local-only copy passes here and fails in CI"
 grep -qE '^ *os: [$][{][{] fromJSON[(]needs[.]gates[.]outputs[.]os[)] [}][}]$' "$ci_yml" \
   || fail "$ci_yml: the e2e matrix must use the tested runner decision through needs.gates.outputs.os"
-# Semantic lint can build ordinary imports, but E2E.Coverage loads Main
-# dynamically. On a cold checkout, lint before the full build misses Main and
-# fails. Bind the ordering to the real commands rather than their step names.
+# Semantic lint needs the dynamically imported program too. Keep it after the
+# complete build in the shared verifier, rather than running another hook stack.
 awk '
-  /^[[:space:]]+run: [.][/]tests[/]e2e[.]sh$/ { build = NR }
-  /^[[:space:]]+pre-commit run --all-files/ { lint = NR }
+  /^[.]\/lake --rehash --wfail build / { build = NR }
+  /^[[:space:]]+lean-fmt check / { lint = NR }
   END { exit !(build && lint > build) }
+' tests/e2e.sh \
+  || fail "tests/e2e.sh: semantic lint must follow the complete build"
+# E2E.Ci tests the actual input key. Both the lookup and successful receipt must
+# use it; no prefix restore may turn merely similar inputs into verified ones.
+[ -n "$(git ls-files -- tests/ci-inputs.sh)" ] \
+  || fail "tests/ci-inputs.sh is not tracked"
+[ "$(grep -cF 'key="$(sh tests/ci-inputs.sh)"' "$ci_yml")" -eq 2 ] \
+  || fail "$ci_yml: lookup and receipt must both use the tested verification key"
+awk '
+  /uses: actions\/cache\/restore@/ { receipt = 1; next }
+  receipt && /^[[:space:]]+- name:/ { receipt = 0 }
+  receipt && /restore-keys:/ { exit 1 }
+  receipt && /key: passed-v1-/ { exact++ }
+  /^[[:space:]]+run: [.][/]tests[/]e2e[.]sh$/ { full = NR }
+  /^[[:space:]]+id: receipt$/ { record = NR }
+  /uses: actions\/cache\/save@/ { save = NR }
+  END { if (!(exact == 1 && full && record > full && save > record)) exit 1 }
 ' "$ci_yml" \
-  || fail "$ci_yml: run ./tests/e2e.sh before pre-commit so semantic lint sees every compiled import"
+  || fail "$ci_yml: completed verification needs an exact receipt, saved only after the full verifier"
+grep -qF "if: success() && runner.os == 'Linux'" "$ci_yml" \
+  || fail "$ci_yml: record verification only after success"
+grep -qF "if: success() && steps.receipt.outputs.key != ''" "$ci_yml" \
+  || fail "$ci_yml: only a successful receipt may be saved"
+grep -qF "if: needs.gates.outputs.verified != 'true'" "$ci_yml" \
+  || fail "$ci_yml: only a completed verification may replace the full verifier"
+awk '
+  /if: steps.verified.outputs.cache-hit == .true./ { reuse = 1 }
+  reuse && /^[[:space:]]+sh tests\/gates[.]sh$/ { checked = 1 }
+  END { exit !checked }
+' "$ci_yml" \
+  || fail "$ci_yml: reused verification must still check current work records"
+grep -qE '^[[:space:]]+run: sh tests/hygiene[.]sh$' "$ci_yml" \
+  || fail "$ci_yml: source hygiene must use the shared native checks"
+if grep -qE '^[[:space:]]+[^#].*(setup-python|pip install|pre-commit run)' "$ci_yml"; then
+  fail "$ci_yml: native hygiene must not reinstall a Python hook framework"
+fi
 # E2E.Ci exercises Lake's invalidation and cached warnings. The real verifier
 # must use the same flags; otherwise those checks protect only their fixture.
 grep -qE '^[.]/lake --rehash --wfail build[[:space:]]' tests/e2e.sh \
   || fail "tests/e2e.sh: the build must use the cache-checking flags exercised by E2E.Ci (--rehash --wfail)"
 # The real suites must use the same isolated runner whose failure, signal and
 # assertion-count contracts E2E.Ci exercises.
-grep -qE '^[.]/[.]lake/build/bin/e2e --suites[[:space:]]' tests/e2e.sh \
+awk '/^say "4–18[.] / { live=1 }
+  live && /^[.][/][.]lake[/]build[/]bin[/]e2e --suites[[:space:]]/ { found=1 }
+  END { exit !found }' tests/e2e.sh \
   || fail "tests/e2e.sh: run live suites through the tested --suites entry point"
 grep -qE '^ +- cron:' "$ci_yml" \
   || fail "$ci_yml: no schedule — with macOS off the per-push path, the cron IS when macOS runs"
@@ -1232,7 +1267,7 @@ grep -q 'workflow_dispatch' "$ci_yml" \
 # which is what a suite cannot see (a deleted branch is a check that stops applying).
 ci_sh='tests/ci-runners.sh'
 grep -q 'ubuntu-latest' "$ci_sh" \
-  || fail "$ci_sh: no ubuntu runner — every push must still get the full gate"
+  || fail "$ci_sh: no ubuntu runner for source verification"
 grep -q 'macos-latest' "$ci_sh" \
   || fail "$ci_sh: no macos runner — AGENTS.md claims the tree passes on macOS, and CI is the only thing that checks it"
 grep -q -- "--since=" "$ci_sh" \

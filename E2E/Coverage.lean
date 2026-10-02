@@ -6,11 +6,11 @@ meta section
 
 /-! # E2E.Coverage — coverage of code by claims
 
-`Theorems.Coverage` makes the build fail unless every inventoried pure `def`
-occurs as its exact fully qualified constant in a theorem type. This standalone
-check reads the built program's resolved references and requires an explicit
-backing entry for renderer/replay operations used outside their own module.
-Build the program first; `tests/e2e.sh` runs this after its clean build. -/
+`Theorems.Coverage` checks exact theorem-type coverage and its fixed regression
+fixtures at build time. This standalone check repeats the semantic check against
+fresh sources, even with cached imports, then requires an explicit backing entry
+for renderer/replay operations referenced outside their own module.
+Build the program first; `tests/e2e.sh` runs this after its build. -/
 
 namespace E2E.Coverage
 
@@ -47,109 +47,7 @@ def emitters : List (String × String) :=
     ("Render.screenText", "screenText_framing / screenText_lines / screenText_records")]
 
 run_cmd
-  let env ← getEnv
-  let defs ← liftIO (pureDefNames env)
-  -- This exact fixture must compile before its two inventories can pass.
-  let fixture :=
-    r#"module
-public import Lean.Elab.Command
-public import Linger.Runtime.CoverageShadow
-public import Linger.Core.Render
-public section
-namespace Probe
-  def indented : Nat := 0
-  def
-    splitName : Nat := 0
-  namespace Inner
-    private def «matches» : Nat := 0
-  end Probe.Inner
-def rootAfter : Nat := 0
-namespace Probe.Inner
-  def qualifiedScope : Nat := 0
-  end Inner
-  section Checks.Nested
-    def marker : String := "/-"
-    /- outer /- nested -/ comment -/
-    def afterMarker : Nat := 0
-    def quoted : Lean.MacroM (Lean.TSyntax `command) := `(command| def hidden : Nat := 0)
-  end Checks.Nested
-  def afterSection : Nat := 0
-  namespace Decoy
-  def same : Nat := 1
-  end Decoy
-  #check `(command| namespace Decoy)
-  def same : Nat := 2
-  #check `(command| end Decoy)
-end Probe
-namespace Linger.ReferenceProbe
-private def canonical := Linger.Core.Render.titleAnsi
-def relative := Core.Render.gridAnsi
-def rooted := _root_.Linger.Core.Render.restore
-open Linger.Core
-def short := Render.screensAnsi
-open Linger.Core.Render (digits)
-def unqualified := digits
-open Linger.Core.Render renaming dropTrailingBlanks → trimmed
-def renamed := trimmed
-def field := Render.leaveAnsi.toArray
-def localShadow (digits : Nat) := digits
-def stringDecoy : String := "Linger.Core.Render.safeChar"
-def quotedRef : Lean.MacroM (Lean.TSyntax `term) := `(term| Linger.Core.Render.colorCodes)
-end Linger.ReferenceProbe
-"#
-  let expected :=
-    #[`Probe.indented, `Probe.splitName, `Probe.Inner.matches, `rootAfter,
-        `Probe.Inner.qualifiedScope, `Probe.marker, `Probe.afterMarker, `Probe.quoted,
-        `Probe.afterSection, `Probe.Decoy.same, `Probe.same] ++
-      #[`canonical, `relative, `rooted, `short, `unqualified, `renamed, `field, `localShadow,
-            `stringDecoy, `quotedRef].map
-        (`Linger.ReferenceProbe ++ ·)
-  liftIO <|
-      IO.FS.withTempDir fun root => do
-        let shadow :=
-          r#"module
-public section
-namespace Linger.Core.Render
-private def safeChar : List UInt8 := [65]
-end Linger.Core.Render
-namespace Linger.ReferenceProbe
-def privateShadow : List UInt8 := Linger.Core.Render.safeChar
-end Linger.ReferenceProbe
-"#
-        let mut arts : NameMap ImportArtifacts := {}
-        for (mod, content) in
-          #[(`Linger.Runtime.CoverageShadow, shadow), (`CoverageFixture, fixture)] do
-          let source := root / s!"{mod}.lean"
-          let olean := source.withExtension "olean"
-          let setup := source.withExtension "setup.json"
-          IO.FS.writeFile source content
-          IO.FS.writeFile setup
-              (toJson ({ name := mod, importArts := arts } : ModuleSetup)).compress
-          let compiled ←
-            IO.Process.output
-                { cmd := "lean",
-                  args := #[s!"--setup={setup}", "-o", olean.toString, source.toString] }
-          unless compiled.exitCode == 0 do
-            throw
-                (IO.userError
-                  s!"coverage fixture did not compile:\n{compiled.stdout}{compiled.stderr}")
-          arts :=
-            arts.insert mod
-              (.ofArrays
-                #[#[olean, source.withExtension "olean.server",
-                    source.withExtension "olean.private"],
-                  #[source.withExtension "ir.sig", source.withExtension "ir"]])
-        let found ← runtimeEmitters defs `CoverageFixture arts
-        unless
-          found ==
-            #["Render.digits", "Render.dropTrailingBlanks", "Render.gridAnsi", "Render.leaveAnsi",
-              "Render.restore", "Render.screensAnsi", "Render.titleAnsi"] do
-          throw (IO.userError s!"resolved reference census mismatch: {found}")
-  let parsed ← liftIO (Parser.testParseModule env "coverage fixture" fixture)
-  let .ok names := sourceDefNames parsed
-    | throwError "definition census rejected the regression fixture"
-  unless names == expected do
-    throwError m!"definition census mismatch: {names}"
+  let defs ← checkPureCoverage
   let mut fails : Array String := #[]
   IO.println s!"pure semantic coverage: {defs.size} explicit definitions, all in theorem types"
   let found ← liftIO (runtimeEmitters defs)

@@ -34,6 +34,7 @@ Lean 4.34.1 via elan; no external Lean dependencies.
                                  #   graphics terminal status agent watch recipes delivery manager title interop
 ./lake env lean E2E/Coverage.lean # resolved renderer/replay references; build the program first
 ./lake exe e2e ci                # runner selection and build-cache regressions
+sh tests/hygiene.sh              # native whitespace, file and executable checks
 sh tests/gates.sh                # the fast source-tree gates (seconds)
 ./tests/e2e.sh                   # everything, in order (minutes)
 ```
@@ -41,17 +42,24 @@ sh tests/gates.sh                # the fast source-tree gates (seconds)
 `LINGER_REMOTE=<host> ./lake exe e2e remote-live` exercises the remote
 path against a real second machine; opt-in, so it is not in the gate.
 
-The full verifier reuses valid build artifacts, checks all proof and test
-targets, and runs every live suite.
-Run `./lake clean` first to verify from scratch. CI reuses build and formatter
-caches on branch pushes and pull requests; scheduled, manual and release-tag
-runs start clean. Compiler or build-configuration changes also start a new cache.
+The full verifier checks every proof, fixture and live suite, reusing valid
+build artifacts. Run `./lake clean` first to verify from scratch.
+CI runs hygiene once, then the full verifier with phase timings. On branch
+pushes and pull requests it can reuse a successful verification of identical
+file contents, paths, modes and runner image. Work records (`AGENTS.md`,
+`SCRATCHPAD.md`, `specs/**/*.md`) still receive fresh hygiene and source gates.
+A missing success receipt runs the full verifier. Scheduled, manual and
+release-tag runs always verify with clean build and formatter-result caches.
 
-Commit-time hygiene is `uvx pre-commit install`. `lean-fmt` is optional
-and installed standalone; `.lean-fmt.toml` records the settings. The
-[CI installation steps](.github/workflows/ci.yml) pin the formatter source
-separately and build it with the project toolchain.
-CI runs lint after the build so semantic checks can reuse compiled imports.
+Install the native commit hook with `git config core.hooksPath .githooks`.
+It runs hygiene and source gates, plus `actionlint` and `lean-fmt check` when
+installed. Stage or restore tracked edits first: the hook checks that the files
+it inspects match what Git will commit. Neither the hook nor CI needs Python.
+CI requires both tools on
+Linux; workflow validation uses standalone `actionlint`, and semantic lint
+runs after compilation so it can reuse imports. The
+[CI installation steps](.github/workflows/ci.yml) pin both tools and build
+`lean-fmt` with the project toolchain. `.lean-fmt.toml` records its settings.
 
 ### Layout
 

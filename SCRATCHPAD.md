@@ -15325,3 +15325,107 @@ build 0.659 and all-file hooks 5.092. Whitespace checking passes, and every
 non-record source matches the assembled verifier before and after.
 Receipt: `evidence/closure-precommit/receipt.json`. The archived completion
 record is now immutable; commit and push this verified records-only closure.
+
+## Step 1 notes — 2026-10-02
+
+Open `specs/ci-redesign.md` at published `de310f4`. The user's quoted run
+is the final records-only checkpoint, hosted run 36954511812: Linux takes
+168 seconds, although compilation takes only 1.393. The full verifier takes
+101.511, including live suites 66.682, coverage 10.332, CI self-tests 7.299,
+ABI 6.147 and shim tests 6.280. Setup/tool caches and final hooks account
+for much of the rest. Source gates run three times across the preliminary
+job, verifier and hook framework. Python is used only to install and run
+that framework. These are orchestration costs, distinct from the compiler
+and formatter improvements in the preceding archived spec.
+
+Use native checks shared by local hooks and CI; retain distinct layout and
+semantic lint obligations. Investigate consolidating the coverage execution
+and reducing selector fixture waits in separate worktrees. A records-only
+diff alone cannot justify skipping tests: its parent might have failed.
+Any reuse of a completed verification must identify all relevant input
+bytes and come from a successful run; scheduled/manual/tag runs still
+verify cleanly. Evidence lives in
+`/tmp/linger-ci-redesign-20261002-nuJuA0/`.
+
+## Step 2 notes — 2026-10-02
+
+Replace the hook framework with `tests/hygiene.sh`, a native commit hook,
+and pinned standalone actionlint for the workflow. Local hooks and CI call
+the same checks; there is no Python installation or final duplicate hook
+pass in CI. Hygiene checks tracked paths and indexed modes, text endings,
+whitespace, conflict markers, shebangs and size. The existing root worklog
+size exception retains its text checks. Real Git fixtures cover hostile
+paths, binary files, links, malformed and conflicted indexes, and failures
+of inventory discovery. The worker's four mutations are detected; evidence
+is in `hygiene-evidence/`.
+
+The two jobs now have distinct obligations. The first checks hygiene and
+workflow syntax and selects runners. On a cache miss, the second performs
+one indivisible full verification; layout and semantic lint each run once
+after the build. Expected failures from verifier regression fixtures stay
+in their captured logs. Grouped output and phase timings distinguish these
+checks from compilation and live suites. All existing live counts, fuzz
+assertions, generated C ABI checks, foreground signal probe, shim checks and
+sentinel-session observations remain.
+
+Successful verification is cached separately from build artifacts. Its key
+includes every non-record tracked content ID, path, mode and runner
+OS/architecture/image identity. Unknown file types participate. Unstaged
+or untracked inputs and an empty inventory refuse a key. Only AGENTS,
+SCRATCHPAD and Markdown under specs are excluded, and current hygiene and
+source gates still check these records. Lookup requires an exact receipt;
+there is no prefix fallback. Receipt creation and saving explicitly require
+success after the full verifier; the key is recomputed on that actual
+runner. Scheduled, manual and tag runs bypass reuse and restore no build
+or formatter-result cache. The existing content-checked Lake cache remains
+independent. Sixteen new real-Git checks exercise the key, including each
+image field. Removing ImageVersion is detected. Nine workflow/gate mutants
+are rejected, and an additional mutation of the live runner is rejected
+despite the earlier CI-fixture runner still being present. See
+`gate-controls/` and the CI-input evidence.
+
+Consolidate coverage through `checkPureCoverage`, shared by the compiled
+theorem module and the direct post-build emitter check. It rereads current
+source on every invocation; cached imports cannot conceal new definitions.
+The fixed parser/reference fixtures move unchanged into the theorem module,
+where Lake recompiles them when their inputs change. Remove the redundant
+direct theorem-module invocation. All 355 explicit pure definitions and
+27 runtime backing entries remain checked. Independent review accepts the
+change and verifies fresh-source, private-name, quotation and proof-body
+negative controls. Interleaved local measurements fall from 9.373 to 5.033
+seconds on warm fixed inputs, a 46.3% reduction for coverage alone. This is
+not a hosted or full-build speedup. Evidence: `evidence-coverage/REPORT.md`
+and `reviews/coverage-review.md`.
+
+The first independent coordinator review finds one hook parity bug: checks
+read working bytes, which may differ from staged bytes. The hook now requires
+tracked working content to match the index before running the shared checks.
+Three added Lean fixtures exercise the actual hook: reject a staged error
+hidden by an unstaged correction, reach subsequent checks when aligned, and
+reject invalid staged content. With the real guard present all 48 hygiene
+checks pass; removing it yields precisely 47 passes and the hidden-staged-error
+failure; restoring it passes all 48. The first draft of the new assertion
+used an empty substring as a diagnostic and falsely failed after the fix;
+use the nonempty hook prefix, then repeat the complete control above.
+Evidence: `hook-controls/receipt.json`. Final independent review and the
+assembled verifier follow before publication.
+
+The final independent coordinator review accepts the staged-content fix and
+all shared-path changes without remaining blockers; it inspects the actual
+guard-removal failure and restored 48-check success. The complete foreground
+verifier then passes in 103.822 seconds with original sequential Manager
+tests: all fifteen live suites retain their exact counts, as do the 45 CI,
+48 hygiene and 63 shim checks. Compilation, layout, semantic coverage,
+fuzz, generated ABI and sentinel checks pass. Non-record source bytes,
+modes and inventory are identical before and after. Logs and receipt:
+`shared-full/receipt.json`; review: `reviews/coordinator-final-review.md`.
+An initial timing launcher tried an unavailable external time executable;
+the retained `time-launch-error.log` contains no verification run. The
+successful foreground run uses a monotonic Node clock and the measurement lock.
+
+Independent Manager review finds a blocker before integration: concurrent
+fixtures can race through `ptsname`'s process-wide buffer. Require serialization
+of complete PTY acquisition within the test boundary and a second review.
+The earlier 65-to-33-second experiment remains provisional; it does not
+justify merging the racy scheduler. The worker corrects this in its isolated
+tree while the verified shared-path checkpoint proceeds to publication.

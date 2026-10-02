@@ -1,0 +1,278 @@
+module
+
+public import E2E.Harness
+
+public section
+
+/-! # E2E.Hygiene — the native source check, exercised against real Git indexes
+
+Fixtures run the repository's actual script from temporary repositories. A failed
+fixture must name the offending path and check; an arbitrary subprocess error is
+not evidence that hygiene worked. The script must leave source bytes unchanged.
+-/
+
+namespace E2E.Hygiene
+
+open E2E.Harness
+
+private def fixtureEnv : Array (String × Option String) :=
+  #[("GIT_DIR", none), ("GIT_WORK_TREE", none), ("GIT_INDEX_FILE", none),
+    ("GIT_CONFIG_GLOBAL", some "/dev/null"), ("GIT_CONFIG_SYSTEM", some "/dev/null")]
+
+private def command (cwd : System.FilePath) (cmd : String) (args : Array String) : IO String := do
+  let out ← IO.Process.output { cmd, args, cwd := some cwd.toString, env := fixtureEnv }
+  unless out.exitCode == 0 do
+    throw (IO.userError s!"hygiene fixture setup ({cmd}): {out.stdout}{out.stderr}")
+  return out.stdout
+
+private def git (cwd : System.FilePath) (args : Array String) : IO String :=
+  command cwd "git" (#["-c", "core.autocrlf=false", "-c", "core.safecrlf=false"] ++ args)
+
+private def check (script : String) (cwd : System.FilePath) (path diagnostic label : String) :
+    IO Nat := do
+  let out ←
+    IO.Process.output
+        { cmd := "sh", args := #[script], cwd := some cwd.toString, env := fixtureEnv }
+  let ok :=
+    if diagnostic.isEmpty then out.exitCode == 0
+    else out.exitCode == 1 && has out.stderr path && has out.stderr diagnostic
+  unless ok do
+    IO.eprintln s!"hygiene fixture exited {out.exitCode}:\n{out.stdout}{out.stderr}"
+  expect ok label
+
+private def fixture (script path content : String) (executable : Bool) (diagnostic label : String) :
+    IO Nat :=
+  IO.FS.withTempDir fun dir => do
+    let repo := dir / "repo with spaces"
+    IO.FS.createDirAll repo
+    let _ ← git repo #["init", "-q"]
+    let file := repo / path
+    IO.FS.createDirAll file.parent.get!
+    IO.FS.writeFile file content
+    let _ ← command repo "chmod" #[if executable then "755" else "644", "./" ++ path]
+    let _ ← git repo #["add", "--", path]
+    let out ←
+      IO.Process.output
+          { cmd := "sh", args := #[script], cwd := some repo.toString, env := fixtureEnv }
+    let verdict :=
+      if diagnostic.isEmpty then out.exitCode == 0
+      else out.exitCode == 1 && has out.stderr path && has out.stderr diagnostic
+    let unchanged := (← IO.FS.readFile file) == content
+    unless verdict && unchanged do
+      IO.eprintln s!"hygiene fixture exited {out.exitCode}:\n{out.stdout}{out.stderr}"
+    expect (verdict && unchanged) label
+
+def run : IO UInt32 := do
+  let root ← command (← IO.currentDir) "git" #["rev-parse", "--show-toplevel"]
+  let script := s!"{root.trimAscii}/tests/hygiene.sh"
+  let mut f := 0
+  for (path, content, executable, diagnostic, label) in
+    [("empty.txt", "", false, "", "hygiene accepts an empty file"),
+      ("newline.txt", "\n", false, "", "hygiene accepts a single newline"),
+      ("nested/a file.lean", "def café := \"λ\"\n\n-- end\n", false, "",
+        "hygiene accepts Unicode, interior blank lines and paths with spaces"),
+      ("line breaks.md", "first  \nsecond\n", false, "", "hygiene preserves Markdown hard breaks"),
+      ("line breaks.Md", "first  \nsecond\n", false, "",
+        "hygiene recognizes Markdown extensions case insensitively"),
+      ("-odd=name\\with\ttab.txt", "clean\n", false, "",
+        "hygiene handles option-like paths, backslashes and tabs"),
+      ("script with spaces.sh", "#!/bin/sh\nexit 0\n", true, "",
+        "hygiene accepts an executable with a shebang"),
+      ("markers.txt", "text <<<<<<< main\ntext =======\ntext >>>>>>> branch\n", false, "",
+        "hygiene accepts inline marker text"),
+      ("history.md", "||||||| parent of a historical change\n", false, "",
+        "hygiene preserves standalone base labels in the immutable history"),
+      ("heading.md", "Heading\n========\n", false, "",
+        "hygiene accepts Markdown heading underlines"),
+      ("newline\nname.txt", "clean\n", false, "", "hygiene handles newlines in tracked paths"),
+      ("source with spaces.lean", "def x := 0 \n", false, "trailing whitespace",
+        "hygiene rejects trailing spaces"),
+      ("tab.txt", "text\t\n", false, "trailing whitespace", "hygiene rejects trailing tabs"),
+      ("one.md", "text \n", false, "trailing whitespace",
+        "hygiene rejects one trailing Markdown space"),
+      ("three.md", "text   \n", false, "trailing whitespace",
+        "hygiene rejects extra Markdown spaces"),
+      ("blank.md", "text\n  \nend\n", false, "trailing whitespace",
+        "hygiene rejects whitespace-only Markdown lines"),
+      ("tab.md", "text\t  \n", false, "trailing whitespace",
+        "hygiene rejects tabs before Markdown hard breaks"),
+      ("missing.txt", "text", false, "final newline", "hygiene rejects a missing final newline"),
+      ("blank.txt", "text\n\n", false, "trailing blank",
+        "hygiene rejects extra trailing blank lines"),
+      ("blank-only.txt", "\n\n", false, "trailing blank",
+        "hygiene rejects multiple newline-only lines"),
+      ("crlf.txt", "text\r\n", false, "carriage return", "hygiene rejects CRLF"),
+      ("mixed.txt", "first\nsecond\r\n", false, "carriage return",
+        "hygiene rejects mixed line endings"),
+      ("cr.txt", "first\rsecond\n", false, "carriage return",
+        "hygiene rejects bare carriage returns"),
+      ("ours.txt", "<<<<<<< main\n", false, "conflict marker",
+        "hygiene rejects opening conflict markers"),
+      ("separator.txt", "=======\n", false, "conflict marker",
+        "hygiene rejects conflict separators"),
+      ("theirs.txt", ">>>>>>> branch\n", false, "conflict marker",
+        "hygiene rejects closing conflict markers"),
+      ("bare.txt", "<<<<<<<\n", false, "conflict marker", "hygiene rejects bare conflict markers"),
+      ("executable.txt", "text\n", true, "executable without shebang",
+        "hygiene rejects executable text without a shebang"),
+      ("script.sh", "#!/bin/sh\nexit 0\n", false, "shebang without executable",
+        "hygiene rejects nonexecutable scripts"),
+      ("empty-executable", "", true, "executable without shebang",
+        "hygiene rejects empty executables")] do
+    f := f + (← fixture script path content executable diagnostic label)
+  let atLimit := String.ofList (List.replicate (256 * 1024 - 1) 'x') ++ "\n"
+  f := f + (← fixture script "limit.txt" atLimit false "" "hygiene accepts exactly 256 KiB")
+  f :=
+    f +
+      (←
+        fixture script "too big.txt" ("x" ++ atLimit) false "256 KiB"
+            "hygiene rejects one byte over 256 KiB")
+  f :=
+    f +
+      (←
+        fixture script "SCRATCHPAD.md" ("x" ++ atLimit) false ""
+            "hygiene preserves the existing append-only log size exception")
+  f :=
+    f +
+      (←
+        fixture script "nested/SCRATCHPAD.md" ("x" ++ atLimit) false "256 KiB"
+            "hygiene limits the log size exception to the repository root")
+  f :=
+    f +
+      (←
+        fixture script "SCRATCHPAD.md" "bad \n" false "trailing whitespace"
+            "hygiene still checks the append-only log text")
+  f :=
+    f +
+      (←
+        IO.FS.withTempDir fun repo => do
+            let _ ← git repo #["init", "-q"]
+            IO.FS.writeFile (repo / "untracked file.txt") "bad \r\n\n"
+            check script repo "" "" "hygiene ignores untracked files in an empty index")
+  f :=
+    f +
+      (←
+        IO.FS.withTempDir fun repo => do
+            let _ ← git repo #["init", "-q"]
+            IO.FS.writeFile (repo / "target with spaces") "bad \r\n\n"
+            let _ ← command repo "ln" #["-s", "target with spaces", "tracked link"]
+            let _ ← git repo #["add", "--", "tracked link"]
+            check script repo "" "" "hygiene does not follow tracked symbolic links")
+  f :=
+    f +
+      (←
+        IO.FS.withTempDir fun repo => do
+            let _ ← git repo #["init", "-q"]
+            IO.FS.writeBinFile (repo / "binary fixture") (ByteArray.mk #[0, 13, 10, 32, 32, 255])
+            let _ ← git repo #["add", "--", "binary fixture"]
+            check script repo "" "" "hygiene skips binary text checks")
+  f :=
+    f +
+      (←
+        IO.FS.withTempDir fun repo => do
+            let _ ← git repo #["init", "-q"]
+            IO.FS.writeBinFile (repo / "large binary") ((ByteArray.mk #[0]) ++ atLimit.toUTF8)
+            let _ ← git repo #["add", "--", "large binary"]
+            check script repo "large binary" "256 KiB" "hygiene still limits binary file size")
+  f :=
+    f +
+      (←
+        IO.FS.withTempDir fun repo => do
+            let _ ← git repo #["init", "-q"]
+            IO.FS.writeFile (repo / "tracked.txt") "clean\n"
+            let _ ← git repo #["add", "--", "tracked.txt"]
+            IO.FS.writeFile (repo / "tracked.txt") "dirty \n"
+            IO.FS.createDirAll (repo / "nested")
+            check script (repo / "nested") "tracked.txt" "trailing whitespace"
+                "hygiene checks working bytes and resolves the root from a subdirectory")
+  f :=
+    f +
+      (←
+        IO.FS.withTempDir fun repo => do
+            let _ ← git repo #["init", "-q"]
+            IO.FS.writeFile (repo / "script.sh") "#!/bin/sh\nexit 0\n"
+            let _ ← command repo "chmod" #["755", "script.sh"]
+            let _ ← git repo #["add", "--", "script.sh"]
+            let _ ← git repo #["update-index", "--chmod=-x", "--", "script.sh"]
+            check script repo "script.sh" "shebang without executable"
+                "hygiene checks the executable mode that Git will publish")
+  f :=
+    f +
+      (←
+        IO.FS.withTempDir fun repo => do
+            let _ ← git repo #["init", "-q"]
+            IO.FS.writeFile (repo / "missing.txt") "clean\n"
+            let _ ← git repo #["add", "--", "missing.txt"]
+            IO.FS.removeFile (repo / "missing.txt")
+            check script repo "missing.txt" "not a regular file"
+                "hygiene fails closed on a missing tracked file")
+  f :=
+    f +
+      (←
+        IO.FS.withTempDir fun repo => do
+            let _ ← git repo #["init", "-q"]
+            IO.FS.writeFile (repo / "conflicted.txt") "clean\n"
+            let _ ← git repo #["add", "--", "conflicted.txt"]
+            let blob ← git repo #["rev-parse", ":conflicted.txt"]
+            let _ ← git repo #["update-index", "--force-remove", "--", "conflicted.txt"]
+            IO.FS.writeFile (repo / "index entries") s!"100644 {blob.trimAscii} 1\tconflicted.txt\n"
+            let _ ← command repo "sh" #["-c", "git update-index --index-info < 'index entries'"]
+            check script repo "conflicted.txt" "unmerged index entry"
+                "hygiene rejects an unmerged index even with clean working bytes")
+  f :=
+    f +
+      (←
+        IO.FS.withTempDir fun repo => do
+            let _ ← git repo #["init", "-q"]
+            IO.FS.writeFile (repo / ".git" / "index") "broken index\n"
+            let out ←
+              IO.Process.output
+                  { cmd := "sh", args := #[script], cwd := some repo.toString, env := fixtureEnv }
+            expect (out.exitCode != 0 && has out.stderr "index")
+                "hygiene propagates a failed Git inventory")
+  f :=
+    f +
+      (←
+        IO.FS.withTempDir fun dir => do
+            let out ←
+              IO.Process.output
+                  { cmd := "sh", args := #[script], cwd := some dir.toString, env := fixtureEnv }
+            expect (out.exitCode != 0 && has out.stderr "not a git repository")
+                "hygiene fails when Git cannot provide the source inventory")
+  f :=
+    f +
+      (←
+        IO.FS.withTempDir fun repo => do
+            let _ ← git repo #["init", "-q"]
+            IO.FS.createDirAll (repo / "tests")
+            IO.FS.writeFile (repo / "tests" / "hygiene.sh") (← IO.FS.readFile script)
+            -- Stop at the next boundary instead of recursively running all gates.
+            IO.FS.writeFile (repo / "tests" / "gates.sh") "exit 42\n"
+            let hook := s!"{root.trimAscii}/.githooks/pre-commit"
+            IO.FS.writeFile (repo / "staged.txt") "bad \n"
+            let _ ← git repo #["add", "--", "staged.txt"]
+            IO.FS.writeFile (repo / "staged.txt") "clean\n"
+            let mut failures ←
+              check hook repo "hook:" "stage or restore"
+                  "hook rejects invalid staged bytes hidden by an unstaged correction"
+            let _ ← git repo #["add", "--", "staged.txt"]
+            let aligned ←
+              IO.Process.output
+                  { cmd := "sh", args := #[hook], cwd := some repo.toString, env := fixtureEnv }
+            failures :=
+              failures +
+                (←
+                  expect (aligned.exitCode == 42)
+                      "hook reaches the shared checks when working bytes match the index")
+            IO.FS.writeFile (repo / "staged.txt") "bad \n"
+            let _ ← git repo #["add", "--", "staged.txt"]
+            failures :=
+              failures +
+                (←
+                  check hook repo "staged.txt" "trailing whitespace"
+                      "hook rejects invalid content after it is staged")
+            return failures)
+  IO.println s!"FAILURES: {f}"
+  return if f == 0 then 0 else 1
+
+end E2E.Hygiene

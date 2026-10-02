@@ -264,6 +264,115 @@ def dependencyInstall (root : String) : IO Nat := do
             "CI fails when macOS dependency installation fails")
   return f
 
+/-- Verification reuse keys the tracked inputs, including names and modes.
+Unstaged or untracked inputs cannot accidentally borrow an indexed receipt. -/
+def verificationInputs (root : String) : IO Nat := do
+  let dir ← IO.FS.createTempDir
+  try
+    let git := fun (args : Array String) => do
+      let out ← IO.Process.output { cmd := "git", args, cwd := some dir.toString }
+      unless out.exitCode == 0 do
+        throw (IO.userError s!"verification fixture git failed: {out.stderr}")
+    git #["init", "--quiet"]
+    git #["config", "core.fileMode", "true"]
+    IO.FS.createDirAll (dir / "specs" / "archive")
+    let input := dir / "source with spaces.lean"
+    IO.FS.writeFile input "def value := 1\n"
+    IO.FS.writeFile (dir / "AGENTS.md") "Active work.\n"
+    IO.FS.writeFile (dir / "SCRATCHPAD.md") "Earlier evidence.\n"
+    IO.FS.writeFile (dir / "specs" / "active.md") "Active record.\n"
+    git #["add", "."]
+    let probe :=
+      IO.Process.output
+        { cmd := "sh", args := #[s!"{root}/tests/ci-inputs.sh"], cwd := some dir.toString }
+    let original ← probe
+    let key := original.stdout.trimAscii.toString
+    let mut f ←
+      expect (original.exitCode == 0 && key.length == 40)
+          "verification inputs produce a content key"
+    let checkKey := fun (same : Bool) => do
+      let next ← probe
+      return next.exitCode == 0 && next.stdout.trimAscii.toString.length == 40 &&
+          ((next.stdout == original.stdout) == same)
+    f := f + (← expect (← checkKey true) "unchanged inputs keep their verification key")
+    for name in ["RUNNER_OS", "RUNNER_ARCH", "ImageOS", "ImageVersion"] do
+      let value := (← IO.getEnv name).getD "" ++ "-changed"
+      let image ←
+        IO.Process.output
+            { cmd := "sh", args := #[s!"{root}/tests/ci-inputs.sh"], cwd := some dir.toString,
+              env := #[(name, some value)] }
+      f :=
+        f +
+          (←
+            expect (image.exitCode == 0 && image.stdout != original.stdout)
+                s!"changed {name} invalidates completed verification")
+    IO.FS.writeFile input "def value := 2\n"
+    let dirty ← probe
+    f :=
+      f +
+        (←
+          expect (dirty.exitCode != 0 && dirty.stdout.isEmpty)
+              "unstaged input changes cannot reuse an indexed verification")
+    git #["add", "."]
+    let changed ← probe
+    f :=
+      f +
+        (←
+          expect (changed.exitCode == 0 && changed.stdout != original.stdout)
+              "changed source invalidates completed verification")
+    IO.FS.writeFile input "def value := 1\n"
+    git #["add", "."]
+    let unknown := dir / "new-input.data"
+    IO.FS.writeFile unknown "new input\n"
+    let untracked ← probe
+    f :=
+      f +
+        (←
+          expect (untracked.exitCode != 0 && untracked.stdout.isEmpty)
+              "untracked inputs fail closed before a verification key is emitted")
+    git #["add", "."]
+    f := f + (← expect (← checkKey false) "new input kinds invalidate completed verification")
+    git #["rm", "--quiet", "-f", "new-input.data"]
+    IO.FS.writeFile (dir / "AGENTS.md") "Completed work.\n"
+    IO.FS.writeFile (dir / "SCRATCHPAD.md") "Earlier evidence.\nNew evidence.\n"
+    git
+        #["mv", (System.FilePath.mk "specs" / "active.md").toString,
+          (System.FilePath.mk "specs" / "archive" / "active.md").toString]
+    git #["add", "."]
+    f := f + (← expect (← checkKey true) "work records and archiving preserve the verification key")
+    IO.FS.writeFile (dir / "specs" / "new-script.sh") "#!/bin/sh\nexit 1\n"
+    git #["add", "."]
+    f := f + (← expect (← checkKey false) "a non-record input under specs invalidates verification")
+    git #["rm", "--quiet", "-f", "specs/new-script.sh"]
+    Linger.Posix.chmod input.toString 0o755
+    git #["add", "."]
+    f := f + (← expect (← checkKey false) "file mode changes invalidate verification")
+    Linger.Posix.chmod input.toString 0o644
+    git #["add", "."]
+    git #["mv", "source with spaces.lean", "renamed.lean"]
+    f :=
+      f +
+        (←
+          expect (← checkKey false)
+              "renamed input paths invalidate verification despite identical bytes")
+    git #["rm", "--quiet", "-f", "renamed.lean"]
+    let empty ← probe
+    f :=
+      f +
+        (←
+          expect (empty.exitCode != 0 && empty.stdout.isEmpty)
+              "an empty verification inventory is rejected")
+    IO.FS.removeDirAll (dir / ".git")
+    let missing ← probe
+    f :=
+      f +
+        (←
+          expect (missing.exitCode != 0 && missing.stdout.isEmpty)
+              "unreadable source inventory cannot emit a verification key")
+    return f
+  finally
+    IO.FS.removeDirAll dir
+
 /-- Exercise Lake's actual traces and diagnostic replay without a clean rebuild. -/
 def lakeBuilds (root : String) : IO Nat := do
   let dir ← IO.FS.createTempDir
@@ -398,6 +507,7 @@ def run : IO UInt32 := do
   f := f + (← lakeBuilds root)
   f := f + (← suiteRunner)
   f := f + (← dependencyInstall root)
+  f := f + (← verificationInputs root)
   IO.println s!"FAILURES: {f}"
   return if f == 0 then 0 else 1
 

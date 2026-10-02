@@ -226,6 +226,9 @@ namespace and section scopes and rejects unsupported scope commands. Standard
 private-name resolution and expression traversal connect source definitions
 to theorem types. Quoted commands do not change its scope or declare names.
 Comments, proof bodies and colliding basenames cannot satisfy it.
+The post-build coverage check calls the same source census against current
+files, so cached proofs cannot hide a new definition. Fixed parser and reference
+fixtures run when their theorem module builds.
 
 After the program builds, `E2E/Coverage.lean` classifies renderer and replay
 definitions referenced outside their own module in the compiled `Main`

@@ -15,11 +15,11 @@ worklog), `specs/archive/` (closed build records), the comments in
 
 ## Where things stand — read this first after any compaction
 
-1. No spec is in flight. The last one closed on 2026-10-02
-   (`specs/archive/build-format-latency.md`): measured formatting and proof
-   compilation improvements, with every original VT theorem contract retained.
-   Both source checkpoints pass the full local verifier and hosted Linux CI;
-   the worker branches and worktrees are retired with verified recovery copies.
+1. `specs/ci-redesign.md` is active, opened 2026-10-02: remove duplicate
+   verification and the Python hook framework, preserve the checks, and measure
+   the resulting CI path. The preceding build/format audit is archived in
+   `specs/archive/build-format-latency.md`; its source checkpoints and final
+   records checkpoint pass hosted Linux CI.
    New work opens a new `specs/<slug>.md`, names itself here, and keeps the
    live count at one; every behavioral fix starts with a failing check and
    every deletion survives the full verifier stack.
@@ -80,14 +80,20 @@ git history); re-opening one needs a new reason.
 ## Gates, hooks and CI
 
 `tests/gates.sh` is the ONLY place a ratchet number lives — never copy
-one out (copies rot). Install once per clone: `uvx pre-commit install`;
-commit time runs whitespace, YAML, the gates and `lean-fmt check`.
+one out (copies rot). Install once per clone:
+`git config core.hooksPath .githooks`. The native hook runs
+`tests/hygiene.sh`, the gates and installed `actionlint`/`lean-fmt` tools.
+CI requires both tools on Linux; no Python hook framework is involved.
 Semantic lint can build missing imports; run the required builds first.
-CI is two jobs: `gates` installs nothing and selects runners; `e2e`
-runs the whole verifier, then the same hooks on Linux. Layout is checked
-once by `tests/e2e.sh`. Branches and PRs reuse content-checked build and
-formatter caches; scheduled, manual and tag runs start clean. A compiler
-or build-configuration change invalidates the build cache.
+CI is two jobs: `gates` runs hygiene, validates the workflow and selects
+runners; `e2e` runs the complete verifier, including layout and semantic
+lint once after compilation. Branches and PRs can reuse a successful full
+verification keyed by all non-record file contents, paths, modes and runner
+OS/architecture/image. The lookup has no fallback prefix. On reuse, source
+gates still check current records. `tests/ci-inputs.sh` defines the key and
+`E2E/Ci.lean` exercises it. Build artifacts remain a separate, content-checked
+cache; scheduled, manual and tag runs always verify with clean build and
+formatter-result caches.
 Live suites run as isolated processes through `E2E.Runner`, with a bounded
 concurrency limit and the sole assertion inventory in `tests/e2e.sh`.
 Use the default per-process state directories for the full verifier;
