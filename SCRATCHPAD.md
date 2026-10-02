@@ -15072,3 +15072,97 @@ run and reruns required builds and all-file hooks before committing.
 Closure checks pass: program build 0.603 seconds, proof/test build 0.600,
 all-file hooks 11.654, and whitespace validation. The source manifest agrees
 before and after. Receipt: `evidence/closure-precommit-20261002/receipt.json`.
+
+## Step 1 notes — 2026-10-02
+
+Open `specs/build-format-latency.md` for the user's request to improve slow
+formatting and compilation. Baseline `a8c40c0` publishes the prior audit's
+closure. Its source-changing hosted receipt identifies compilation and
+source gates plus layout as the dominant remaining stages; measure them
+separately rather than treating every build as cold or every formatting
+command as text-only.
+
+The installed standalone formatter reports Lean 4.34.1 and offers cached
+batch frontend execution with configurable workers. Its exact pinned
+source is available locally for inspection. The largest proof module is
+`Theorems/Vt.lean`; determine its actual cost and dependency structure
+before moving declarations. The coordinator profiles build scheduling and
+cache reuse while isolated workers investigate formatting and proof
+factorization. Task directory: `/tmp/linger-build-format-20261002-iLuMec/`.
+
+The unchanged-source hosted run at `a8c40c0` passes in 155 seconds for the
+Linux job and 99.421 seconds for the complete verifier. Its content-checked
+build takes 1.346 seconds and source gates/layout 3.351. The live batch still
+takes 66.221 seconds. This confirms warm reuse; it is not a source-changing
+speedup. Exact logs and stage arithmetic are in
+`evidence/hosted-36949600362/` under this spec's task directory.
+
+The formatter worker finds no justified pin or configuration change. With
+identical sources, binary and validation, cold layout takes 31.077 seconds
+locally and the warmed result cache takes 1.172. A paired eight-worker trial
+is slower than the default (41.706 versus 29.635 seconds), so it is rejected.
+The VT file alone takes 28.669 seconds. Compiled-source skeleton evidence
+already skips proof re-elaboration; its costly child analysis includes
+parsing, projection, rendering and exact candidate validation. Do not call
+this repeated proof compilation or bypass its validation. The next published
+formatter commits change no relevant implementation. The worker changes no
+tracked code; `evidence/formatter-report.md` records all inputs, validation
+counts, timing limits and negative results.
+
+Coordinator profiling isolates a separate compiler cost: `restore_cons`
+spends about 11.6 instrumented seconds reducing a large left-associated
+renderer expression to expose its first byte. A standalone kernel probe
+accepts explicit list rewrites for the identical theorem statement. Renderer
+unit checks also repeatedly compute the adversarial scrollback length.
+Candidates for both costs are measured before acceptance, retaining every
+original fixture and assertion. The first comparison harness finds this
+host lacks `/usr/bin/time`; its setup failure is retained and the corrected
+harness uses bash's clock. That failure is not a rejected proof or a timing
+sample.
+
+## Step 2 notes — 2026-10-02
+
+Accept two measured renderer compilation changes. The same uninstrumented
+module commands, compiler options, imports and host were checked in the
+order baseline/candidate/candidate/baseline under the experiment lock.
+`Theorems/Render/Grid.lean` takes 19.382/13.851/13.855/19.296 seconds:
+the mean falls from 19.339 to 13.853. Explicit list rewrites in
+`restore_cons` avoid reducing the rest of the renderer stream. All original
+253 declaration names, universe parameters and serialized types match;
+the original 211 theorem statements remain. Simplification materializes
+four private equation lemmas, so whole-dump byte comparison differs while
+the name-keyed contract comparison passes. The changed proof's axiom set
+is identical. Receipt: `evidence/coordinator/restore-cons/contract-receipt.json`.
+
+`Tests/Render.lean` takes 16.990/10.046/10.218/17.120 seconds in the same
+order: the mean falls from 17.055 to 10.132. Consolidating the adversarial
+history assertions lets compiled evaluation reuse its lengths and counted
+cost. The exact overshoot, literal lengths, sharp-bound equality, both
+budget comparisons and every fixture remain. The heavy-ring budget
+assertion already exists beside its exact lengths; its duplicate is removed.
+These are local module measurements, not whole-build or hosted speedups.
+
+Independent review finds no correctness blocker and checks every removed
+assertion against its surviving location. It also confirms immutable
+computation sharing and unchanged imports, fixtures and theorem consumers.
+Review: `reviews/coordinator-review.md`. Two temporary mutations of the
+real core implementation then verify the consolidated assertion fails:
+append one output byte, and undercount each replay row by four bytes.
+Both mutated cores compile; both test builds fail at the consolidated
+adversarial check through compiled evaluation. Original sources are
+restored byte-for-byte and their test build passes. Receipt:
+`evidence/coordinator/render-mutations/receipt.json`.
+
+The complete foreground verifier passes the renderer checkpoint in
+103.277 seconds. All fifteen live logs are fresh, finish with zero failures
+and match their declared counts; proof coverage, layout, compiler-cache
+checks, fuzz and generated C ABI checks also pass. Source manifests are
+identical before and after. The initial attempt stopped at the tracked-file
+spec-citation gate because the new spec was not staged; staging it corrected
+the bookkeeping without changing code. Both attempts are retained in
+`evidence/renderer-full/` and `evidence/renderer-full-staged/`.
+
+Split publication into a verified renderer checkpoint followed by the VT
+factorization decision so independent improvements need not wait for the
+remaining investigation. No source under verification changed during either
+foreground run. The required checkpoint builds and hooks run before commit.

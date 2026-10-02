@@ -810,26 +810,23 @@ def advRing : Vt := ringOf 85 24 (fun _ => advRow 85) 3000
 /-- **The overshoot, measured.** The stage emits 262153 bytes against a
 `sbReplayBytes` of 262144 — nine bytes over. A bound stated against
 `sbReplayBytes` alone would be false here, and no "budget to `1 <<< 30`" break
-would catch it. -/
+would catch it. The whole-stage bound is attained with **zero** slack.
+Check these facts together to reuse the large fixture's computed lengths. -/
 example :
     (decide ((scrollbackAnsi advRing).length > sbReplayBytes) &&
         (scrollbackAnsi advRing).length == 262153 &&
-        costSum advRing == 262086) =
+        costSum advRing == 262086 &&
+        (scrollbackAnsi advRing).length == costSum advRing + 2 * advRing.rows + 19 &&
+        stageInBudget advRing) =
       true := by
+  unfold stageInBudget
   native_decide
 
-/-- …and the bound is attained with **zero** slack, so it is a sharp oracle rather
-than a loose one. -/
-example : ((scrollbackAnsi advRing).length == costSum advRing + 2 * advRing.rows + 19) = true := by
-  native_decide
-
-/-- The bound holds on every ring shape measured: empty, blank, a realistic mixed
-row, the truecolour heavy ring and the adversarial one. -/
+/-- The remaining ring shapes: empty, blank and a realistic mixed row. The heavy
+and adversarial cases check the same bound beside their exact lengths above. -/
 example :
     (stageInBudget (screen 80 24 "hi") &&
         stageInBudget (ringOf 80 24 (fun _ => blankRow 80 {}) 10000) &&
-        stageInBudget heavyRing &&
-        stageInBudget advRing &&
         stageInBudget scrolled) =
       true := by
   native_decide

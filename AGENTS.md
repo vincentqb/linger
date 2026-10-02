@@ -15,11 +15,11 @@ worklog), `specs/archive/` (closed build records), the comments in
 
 ## Where things stand — read this first after any compaction
 
-1. No spec is in flight. The four-agent refinement audit closed on
-   2026-10-02 in `specs/archive/ci-refinement.md`; its published code
-   checkpoint passed hosted Linux CI, and its worker branches and worktrees
-   are retired with recovery copies preserved. Compilation and formatting
-   remain the dominant costs of a source-changing CI run.
+1. One spec is in flight: `specs/build-format-latency.md` (2026-10-02).
+   It measures and reduces formatting and compilation cost while preserving
+   the verifier's guarantees. The preceding four-agent refinement audit
+   closed in `specs/archive/ci-refinement.md`; its published code passed
+   hosted Linux CI and its worker worktrees are retired.
    New work opens a new `specs/<slug>.md`, names itself here, and keeps the
    live count at one; every behavioral fix starts with a failing check and
    every deletion survives the full verifier stack.

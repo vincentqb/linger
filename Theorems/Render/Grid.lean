@@ -2205,8 +2205,8 @@ free from reachability (`u8Ok_of_liveReachable`), which is the difference betwee
 assumption about a cooperative client and a fact about every client there is. -/
 
 theorem restore_cons (v : Vt) : restore v = 0x1B :: (restore v).tail := by
-  unfold restore restoreBody prologueAnsi escSeq escB
-  rfl
+  simp only [restore, restoreBody, prologueAnsi, escSeq, escB, List.cons_append, List.nil_append,
+    List.tail_cons]
 
 theorem zeroed_eq {w : Vt} (h0 : w.u8need = 0) (ha : w.u8acc = 0) :
     { w with
