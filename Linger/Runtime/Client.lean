@@ -253,7 +253,9 @@ def attach (name : String) (fd : UInt32) (readOnly : Bool := false) : IO Outcome
                   | _ =>
                     pure ()
         if receivedOutput && titleDirty && !leaving then
-          let title := Linger.Core.Title.compose name summary observer.windowTitle
+          let title :=
+            Linger.Core.Title.compose name observer.windowTitle summary
+              Linger.Core.Terminal.Title.maxChars
           let bytes := Linger.Core.Terminal.Title.update observer title
           if !bytes.isEmpty then
             writeAll stdoutFd (ByteArray.mk bytes.toArray)

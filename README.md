@@ -202,8 +202,11 @@ The [fish prompt recipe](recipes/fish_prompt.fish) adds this to the right prompt
 and preserves the preceding command's exit status. Other shells can call the
 same command.
 
-While attached, the window title shows `work · 2⣿ 1! · application title`.
-Empty parts are omitted. Local attention counts refresh while programs run,
+The display convention is `session · application title · attention`.
+While attached, the window title shows `work · application title · 2⣿ 1!`;
+without attention it is `work · application title`. Empty optional parts and
+their separators are omitted. Long application titles shorten to leave room for
+attention. Local attention counts refresh while programs run,
 with the next sample starting one second after the previous one finishes.
 The title uses plain glyphs; terminal titles have no ANSI styling. Updates wait
 for complete terminal sequences and UTF-8 characters. Detach, session exit and

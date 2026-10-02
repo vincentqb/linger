@@ -21,10 +21,14 @@ namespace E2E.Title
 open E2E.Harness
 open Linger.Posix
 open Linger.Core.Status (Status icon)
+open Linger.Core.Terminal.Title (maxChars)
 open Linger.Core.Vt (Vt)
 
 /-- Application bytes, deliberately independent of the title emitter under test. -/
 private def editor : ByteArray := "\x1b]2;editor\x07".toUTF8
+
+/-- At the full title budget, Unicode makes byte-based clipping observable too. -/
+private def longEditor : String := String.ofList (List.replicate maxChars '😀')
 
 /-- A short OSC stays in the daemon's query buffer until completion. Exceed
 that public cap so the client actually receives an unfinished, ignored OSC. -/
@@ -60,6 +64,8 @@ def probe : IO UInt32 := do
             writeAll stdoutFd (ByteArray.mk #[0x82, 0xAC])
           | 114 =>
             writeAll stdoutFd editor
+          | 108 =>
+            writeAll stdoutFd ("\x1b]2;" ++ longEditor ++ "\x07").toUTF8
           | 112 =>
             writeAll stdoutFd "\r\nTITLE-PONG\r\n".toUTF8
           | 113 =>
@@ -159,8 +165,8 @@ private def attention (e : Env) (unread : Bool) : IO Bool := do
 /-- This fixture has exactly one possible unread session; its glyph is shared
 with the listing. Summary classification itself is covered by E2E.Status. -/
 private def expectedTitle (unread : Bool) : String :=
-  let summary := if unread then "1" ++ String.singleton (icon Status.wantsYou) else ""
-  Linger.Core.Title.compose "title-main" summary "editor"
+  let summary := Linger.Core.Status.summary (if unread then [.wantsYou] else [])
+  Linger.Core.Title.compose "title-main" "editor" summary maxChars
 
 private def splitCase (e : Env) (c : Client) (seen : IO.Ref Receiver)
     (label startKey endKey : String) (opening closing : ByteArray) (unread : Bool) : IO Nat := do
@@ -208,11 +214,13 @@ private def pipeCase (base : Env) (pipe : String) : IO Nat := do
     let c ← attaching.spawnEnv #[s!"LINGER_E2E_TITLE_PIPE={pipe}"] #["--title-attach-probe", name]
     let seen ← IO.mkRef ({} : Receiver)
     try
-      let initial ← awaitOutput c seen (titleIs (Linger.Core.Title.compose name "" "editor"))
+      let initial ←
+        awaitOutput c seen (titleIs (Linger.Core.Title.compose name "editor" "" maxChars))
       IO.FS.writeFile s!"{e.dir}/release-invalid" ""
       let unknown ←
         awaitOutput c seen
-            (titleIs (Linger.Core.Title.compose name (String.singleton (icon .unknown)) "editor"))
+            (titleIs
+              (Linger.Core.Title.compose name "editor" (String.singleton (icon .unknown)) maxChars))
       let pingStart := (← seen.get).bytes.size
       c.type "p"
       let responsive ← awaitOutput c seen fun s => hasText (since s pingStart) "TITLE-PONG"
@@ -228,7 +236,8 @@ private def pipeCase (base : Env) (pipe : String) : IO Nat := do
       let recovered ←
         awaitOutput c seen
             (titleIs
-              (Linger.Core.Title.compose name (Linger.Core.Status.summary [.wantsYou]) "editor"))
+              (Linger.Core.Title.compose name "editor" (Linger.Core.Status.summary [.wantsYou])
+                maxChars))
       let recoveryStart := (← seen.get).bytes.size
       c.type "p"
       let answered ← awaitOutput c seen fun s => hasText (since s recoveryStart) "TITLE-PONG"
@@ -327,7 +336,20 @@ def run (binary : Option String := none) : IO UInt32 := do
         failures +
           (←
             expect (unread && prefixed && repeatCode == 0 && repeated)
-                "an identical application OSC title reasserts the attention prefix")
+                "an identical application OSC title reasserts the shared context and attention suffix")
+      let summary := Linger.Core.Status.summary [.wantsYou]
+      let (longCode, _, _) ← e.cli #["send", "title-main", "l"]
+      let clipped ←
+        awaitOutput c seen
+            (titleIs (Linger.Core.Title.compose "title-main" longEditor summary maxChars))
+      let displayed := (← seen.get).vt.windowTitle
+      failures :=
+        failures +
+          (←
+            expect
+                (longCode == 0 && clipped && displayed.length == maxChars &&
+                  displayed.endsWith (" · " ++ summary))
+                "a long Unicode application title preserves attention within the shared title budget")
       -- Detach with an unfinished DCS as well: handback must neutralize the
       -- receiver before clearing its title, without terminating the program.
       let detachStart := (← seen.get).bytes.size

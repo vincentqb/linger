@@ -69,7 +69,7 @@ private def fishPromptChecks (e : Env) (home data : String) : IO Nat := do
         (settings ==
           ["function fish_right_prompt", "set -l last_status $status", "command -q linger",
             "and command linger status 2>/dev/null", "return $last_status", "end"])
-        "fish prompt contains only status preservation and the plain status command"
+        "fish prompt delegates the standard attention suffix to linger status"
   let root := System.FilePath.mk e.dir / "fish prompt"
   let bin := root / "bin"
   let emptyPath := root / "empty"
@@ -101,6 +101,10 @@ exit "$FISH_PROMPT_RC"
     r#"function fish_prompt
     printf 'LEFT'
 end
+function fish_title
+    printf 'TITLE'
+    printf 'TITLE\n' >> "$FISH_PROMPT_CALLS"
+end
 function linger
     printf 'SHADOW'
     return 97
@@ -122,26 +126,31 @@ source "$argv[1]"; or exit 98
                   ("FISH_PROMPT_STDERR", some err), ("FISH_PROMPT_RC", some rc),
                   ("FISH_PROMPT_PREVIOUS", some previous)] }
     return (out, ← IO.FS.readFile callsFile)
-  let (loaded, calls) ← invoke bin "fish_prompt\n" "" "" "0" "0"
+  let (loaded, calls) ← invoke bin "fish_prompt\nfish_title\n" "" "" "0" "0"
   f :=
     f +
       (←
         expect
-            (loaded.exitCode == 0 && loaded.stdout == "LEFT" && loaded.stderr.isEmpty &&
-              calls.isEmpty)
-            "fish recipe preserves the left prompt and samples nothing when sourced")
-  for (label, text, err, rc, previous) in
-    [("attention", "2⣿ 1! 1?\n", "hidden diagnostic\n", "0", "23"), ("empty", "", "", "0", "0"),
-      ("failure", "", "status unavailable\n", "7", "42")] do
-    let (out, calls) ← invoke bin draw text err rc previous
-    f :=
-      f +
-        (←
-          expect
-              (out.exitCode.toNat == previous.toNat?.getD 99 && out.stdout == text &&
-                out.stderr.isEmpty &&
-                calls == call ["status"])
-              s!"fish prompt calls the executable once, preserves status and emits exact bytes ({label})")
+            (loaded.exitCode == 0 && loaded.stdout == "LEFTTITLE" && loaded.stderr.isEmpty &&
+              calls == "TITLE\n")
+            "fish recipe preserves the left prompt and title hook and samples nothing when sourced")
+  let attention :=
+    Linger.Core.Status.summary [.wantsYou, .unknown, .exitedBad, .wantsYou, .working] ++ "\n"
+  let unknown := Linger.Core.Status.summary [.unknown] ++ "\n"
+  for (context, contextSetup) in
+    [("outside", "set -e LINGER_SESSION\n"), ("inside", "set -gx LINGER_SESSION work\n")] do
+    for (label, text, err, rc, previous) in
+      [("attention", attention, "hidden diagnostic\n", "0", "23"), ("empty", "", "", "0", "0"),
+        ("failure", "", "status unavailable\n", "7", "42")] do
+      let (out, calls) ← invoke bin (contextSetup ++ draw) text err rc previous
+      f :=
+        f +
+          (←
+            expect
+                (out.exitCode.toNat == previous.toNat?.getD 99 && out.stdout == text &&
+                  out.stderr.isEmpty &&
+                  calls == call ["status"])
+                s!"fish attention keeps shared bytes and status without calling fish_title ({label}, {context})")
   let (missing, calls) ← invoke emptyPath draw "" "" "0" "19"
   f :=
     f +
@@ -151,13 +160,14 @@ source "$argv[1]"; or exit 98
               calls.isEmpty)
             "fish prompt is quiet and preserves status when linger is absent from PATH")
   let redraw :=
-    "prompt_probe_previous\nfish_right_prompt\nset -gx FISH_PROMPT_STDOUT '1?\n'\n" ++ draw
-  let (out, calls) ← invoke bin redraw "2⣿ 1! 1?\n" "" "0" "23"
+    "prompt_probe_previous\nfish_right_prompt\nset -gx FISH_PROMPT_STDOUT '" ++ unknown ++ "'\n" ++
+      draw
+  let (out, calls) ← invoke bin redraw attention "" "0" "23"
   f :=
     f +
       (←
         expect
-            (out.exitCode == 23 && out.stdout == "2⣿ 1! 1?\n1?\n" && out.stderr.isEmpty &&
+            (out.exitCode == 23 && out.stdout == attention ++ unknown && out.stderr.isEmpty &&
               calls == call ["status"] ++ call ["status"])
             "fish prompt samples again on each redraw without retaining old counts")
   -- Check the real command as well as the prompt, since prompt stderr suppression

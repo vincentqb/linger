@@ -523,9 +523,12 @@ code_grep '^[[:space:]]+let r ← unixConnect path nonblocking$' Linger/Runtime/
 # Title writes use the bounded, control-free encoder and the existing VT
 # observer. Observe raw application bytes only, reassert repeated OSC titles,
 # and defer every injected title until the parser and UTF-8 decoder are idle.
-code_grep '^theorem compose_parts ' Theorems/Title.lean >/dev/null \
-  || fail "session title composition contract disappeared"
-for claim in payload_safe ansi_payload_bound ansi_ends update_waits \
+for claim in compose_parts compose_context compose_attention_last compose_bound \
+             compose_payload_attention_last; do
+  code_grep "^theorem $claim " Theorems/Title.lean >/dev/null \
+    || fail "shared display composition contract disappeared: $claim"
+done
+for claim in payload_safe payload_append ansi_payload_bound ansi_ends update_waits \
              update_nonempty_iff update_requires_boundary; do
   code_grep "^(public )?theorem $claim " Theorems/TerminalTitle.lean >/dev/null \
     || fail "title contract disappeared: $claim"
@@ -543,7 +546,7 @@ for tie in \
   'let mut observer := Linger[.]Core[.]Vt[.]Vt[.]init 1 1' \
   'while !leaving do try if let some output[[:space:]]*← Command[.]poll pending then let fresh := if output[.]exitCode == 0 then output[.]stdout[.]trimAscii[.]toString else String[.]singleton [(]Linger[.]Core[.]Status[.]icon [.]unknown[)] titleDirty := titleDirty [|][|] fresh != summary summary := fresh nextSummary := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]← monotonicMs[)] ≥ nextSummary then pending[.]set [(]some [(]← Command[.]start self[.]toString #[[]"status"[]][)][)] catch _ => summary := String[.]singleton [(]Linger[.]Core[.]Status[.]icon [.]unknown[)] titleDirty := true nextSummary := [(]← monotonicMs[)] [+] 1000 let revs ← poll #[[]stdinFd, fd[]] #[[]POLLIN, POLLIN[]] 200' \
   'writeAll stdoutFd [(]ByteArray[.]mk payload[.]toArray[)] observer := observer[.]observe payload receivedOutput := true' \
-  'if receivedOutput && titleDirty && !leaving then let title := Linger[.]Core[.]Title[.]compose name summary observer[.]windowTitle let bytes := Linger[.]Core[.]Terminal[.]Title[.]update observer title if !bytes[.]isEmpty then writeAll stdoutFd [(]ByteArray[.]mk bytes[.]toArray[)] titleDirty := false' \
+  'if receivedOutput && titleDirty && !leaving then let title := Linger[.]Core[.]Title[.]compose name observer[.]windowTitle summary Linger[.]Core[.]Terminal[.]Title[.]maxChars let bytes := Linger[.]Core[.]Terminal[.]Title[.]update observer title if !bytes[.]isEmpty then writeAll stdoutFd [(]ByteArray[.]mk bytes[.]toArray[)] titleDirty := false' \
   'try try writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Core[.]Render[.]leaveAnsi[.]toArray[)] finally termRestore stdinFd saved finally Command[.]stop pending'; do
   printf '%s\n' "$client_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "attached title lost its observer, sampler or handback contract: $tie"

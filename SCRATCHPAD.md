@@ -15531,3 +15531,111 @@ program build passes in 0.598 seconds and the proof/test build in 0.607
 seconds. Only AGENTS, SCRATCHPAD and the spec's archive move are staged.
 Evidence: `closure/validation.json`. Leave the native commit hook enabled;
 the publication receipt will record its result and the hosted reuse result.
+
+## Step 1 notes — 2026-10-02
+
+Open `specs/display-convention.md` from published `1fe50a5` for the
+user's shared `session · application title · attention` convention. Change
+the existing Lean composer and its runtime argument order. The context
+contract covers an empty or nonempty application title; the attention
+contract quantifies over every title and summary and permits only an
+optional suffix. Empty optional parts add no separator. Keep the existing
+bounded OSC encoder, boundary observer, sampler and detach handback.
+
+A separate read-only design review recommends retaining the fish recipe as
+the attention-only right prompt after user-owned context. It has no reliable
+foreground application context at an idle prompt, and calling or decorating
+`fish_title` risks duplicating the attached title. Preserve that hook and the
+left prompt instead. Document the shared order and conditional separators;
+keep all counting in `Status.summary` and all sampling in `linger status`.
+The native recipe gains comments only, no command, flag, dependency or C.
+
+The new full-title example first fails against the old order. After the fix,
+deliberately reversing the composer's optional parts fails its parts theorem,
+the attention-suffix theorem and the concrete example. Swapping only the
+runtime arguments fails the call-site gate; restoring them passes it. A gate
+probe initially refused the untracked live spec, so index the spec before
+rerunning the actual baseline and mutation.
+
+Native fish assertions now use Lean-rendered counts, cover attention, quiet
+and command failure both with and without LINGER_SESSION, and record calls
+to a sentinel title hook. A deliberate `fish_title >/dev/null` insertion
+fails the behavioral checks despite suppressing its output. Restoring the
+recipe passes all 58 recipe assertions; the focused run also passes all 18
+title assertions. The additional three checks expand session-context coverage
+without adding waits. Evidence is retained in
+`/tmp/linger-display-convention-20261002-CMHm3y/`: original failing example,
+proof mutation, gate controls, focused build and native execution logs.
+Independent final review and the complete foreground verifier follow.
+
+The first independent review finds a suffix visibility bug: the generic
+encoder takes the first 500 characters, so an application title at that limit
+can erase the newly trailing attention. Add an encoded failing example before
+reserving the suffix budget in pure composition; keep session policy out of
+the generic VT encoder. The full foreground run fails after 94.672 seconds
+with unchanged source: concurrent Manager group timing interrupts a PASS line,
+so the strict runner correctly rejects 110/111 despite exit zero and a
+zero-failure verdict. A worker repairs logging in an isolated worktree while
+the coordinator fixes title budgeting. Preserve the assertion inventory and
+all wait, isolation and launch contracts. The original failing run and split
+line are retained in `full/receipt.json` and
+`full/manager-count-failure.log` under the evidence directory above.
+
+The encoded regression fails against the original unbounded composition.
+Expose the existing generic OSC scalar budget as `Terminal.Title.maxChars`;
+pass it into the session composer without introducing a session dependency
+into VT. Reserve the sanitized session and optional attention suffix first,
+then take only the remaining application characters. A generic bounded
+`payload_append` theorem supports `compose_payload_attention_last`; the latter
+proves preservation through the actual encoder whenever session plus suffix
+fits. `compose_bound` also covers a budget that clips the entire application,
+leaving no extra separator. No heartbeat/recursion raise or new C is needed.
+
+The focused actual Runner passes all 19 title checks in 15.064 seconds,
+including a 500-scalar Unicode application title. Deliberately removing the
+suffix reservation fails the encoded/tight-budget unit examples and composition
+proofs. Build that mutated CLI, restore the source and rebuild the correct
+test driver, then run the live suite against the saved mutant binary: exactly
+the new Unicode suffix assertion fails, with the other 18 passing. Source is
+restored exactly. The complete theorem/test build passes; reversing only the
+runtime argument order fails its updated call-site gate, and restoring it
+passes. Evidence: `budget-focused.json`, `budget-mutation.json` and
+`budget-gates.json` under the evidence directory above.
+
+Integrate worker `7ba4424` without changing its eight-line Manager logging fix.
+Collect at most the existing eleven group diagnostics, join every assertion
+writer, flush stdout, then print diagnostics before the existing verdict.
+Assertions, launch serialization, observation windows, deadlines, cleanup,
+two-group concurrency and exact count remain unchanged. Worker focused runs
+pass Manager 111/111 in 32.213 seconds and CI 45/45 in 8.886 seconds. A
+deterministic scheduler probe rejects the original, final-flush deletion and
+early-flush variants; the fixed variant passes, and a throwing group retains
+its complete assertion, exception and failure verdict. The same-stream probe
+checks 64 complete lines through the real Harness and Runner. These are
+installed-Linux observations, not a proof of arbitrary concurrent IO atomicity.
+Copy the complete worker evidence into `manager-log-evidence/` before retiring
+its worktree. Final independent review and assembled verification follow.
+
+The assembled foreground verifier passes in 106.132 seconds. All 474 live
+assertions, 45 CI checks, 48 hygiene checks and 63 shim checks pass; every
+one of the 356 explicit pure definitions occurs in a theorem type.
+Compilation, generated ABI, formatting, semantic lint, fuzz and the unrelated
+sentinel session check pass. Program and theorem/test builds also pass
+separately in 0.912 and 0.715 seconds. The full verifier's build includes
+the changed E2E executable, so its total is not a controlled warm comparison.
+Manager passes 111/111 in 32.259 seconds, and its source is byte-identical
+to the reviewed worker commit. All 144 non-record files, modes and content
+hashes match before and after. Evidence: `final-full/receipt.json`,
+`final-full/assertions.json` and retained suite logs. The worker's fresh
+recovery snapshot also matches all 186 source entries; it is not retired
+until the merge is committed and published.
+
+The second independent review accepts the final sources and negative
+controls with no remaining blockers. It confirms that the encoded-suffix
+theorem resolves the earlier truncation gap, all callers use the shared
+budget and argument order, the recipe preserves shell-owned hooks/status,
+and the logging fix preserves Manager assertions, waits and concurrency.
+The reviewer inspects retained logs and source hashes; no extra execution
+or cross-platform IO guarantee is claimed. Review is retained in
+`reviews/final-review.md`. Commit the verified merge with the native hook
+enabled, then observe the exact published SHA on hosted CI.

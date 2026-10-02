@@ -40,7 +40,7 @@ recipes, break records, measurements, the audits — lives in
 | §Terminal | a child needs a terminal that answers, linger owns none | one bounded pure transducer owns a documented query profile: the VT projection, scanner and ordered reply stream are roster-independent (`Terminal.feed_vt`, `Session.ptyOut_reply_roster_independent`); an owned query is answered exactly once, everything else is byte-for-byte passthrough (`apc_passthrough`, `sixel_passthrough`); the scanner is capped and over-cap becomes passthrough (`feed_bounded`); no reply can commit a line into the child (`feed_replies_noNl` — terminal-reply command injection, closed); chunking-invariant (`feed_append`) | Theorems/Terminal.lean, Theorems/Session.lean |
 | §Renderable | the painter expresses fewer grids than the emulator reaches | the emulator never stores a shape a repaint cannot reproduce (`renderable_step`/`renderable_feed`/`renderable_resize`/`renderable_quiesce`, from `renderable_init`); `LiveReachableVt` is the least predicate closed under those and containing every screen the decoder's door accepts (`LiveReachableVt.ofDecoded` — a `Good` premise is provably unsound, counterexample in SCRATCHPAD.md); the decoder establishes it from disk too (`Vt.ofDecoded_renderable`, `Checkpoint.load_renderable`); lifted to the daemon by `Session.run_vt_renderable` and `run_resume_vt_shape` | Linger/Core/Vt.lean, Theorems/Vt.lean |
 | §Status | one glyph per listing row vs seven conditions | `classify_iff` equates classification with the independent legend predicates; `cover`, `disjoint`, `classify_sound` and `classify_unique` derive the partition. Every state is reachable; icons and names are injective and names are clean | Theorems/Status.lean |
-| §Title | visible cross-session attention vs an uninterrupted terminal stream | composition omits empty parts; the title payload excludes terminal controls and fits the OSC parser cap (`compose_parts`, `payload_safe`, `ansi_payload_bound`, `ansi_ends`). Updates wait for parser-ground and complete UTF-8 (`update_waits`, `update_requires_boundary`). The existing VT observer is chunking-invariant, keeps no history, and preserves its dimensions and parser/screen invariants (`observe_append`, `observe_no_history`, `observe_dims`, `observe_invariants`) | Theorems/Title.lean, Theorems/TerminalTitle.lean, Theorems/Vt.lean, E2E/Title.lean |
+| §Title | visible cross-session attention vs an uninterrupted terminal stream | context is session then application; attention reserves space and appends last, with no separators for empty optional parts (`compose_context`, `compose_attention_last`, `compose_parts`). When the session and attention fit the shared character budget, arbitrary application text cannot hide the encoded suffix (`compose_bound`, `compose_payload_attention_last`). The title payload excludes terminal controls and fits the OSC parser cap (`payload_safe`, `ansi_payload_bound`, `ansi_ends`). Updates wait for parser-ground and complete UTF-8 (`update_waits`, `update_requires_boundary`). The existing VT observer is chunking-invariant, keeps no history, and preserves its dimensions and parser/screen invariants (`observe_append`, `observe_no_history`, `observe_dims`, `observe_invariants`) | Theorems/Title.lean, Theorems/TerminalTitle.lean, Theorems/Vt.lean, E2E/Title.lean |
 | §Resume | the product's own promise: crash, reboot, reattach | §Restore ∘ §Replay, stated twice — over `save`'s input and over `load`'s output (`resume_grid_of_load`, `resume_tabs_of_load`, `resume_sb_of_load`: any byte string that loads, no other hypothesis) — and lifted to the daemon over its own `vt0` (`Session.run_resume_vt_shape`, `run_resume_load_save`) | Theorems/Resume.lean, Theorems/Session.lean |
 | §Import | foreign save records vs distinct session identities, directory-only restoration and safe error display | successful parsing gives a nonempty list with canonical, distinct names and NUL-free directories (`parseSave_valid`); ignored pane metadata and valid saved commands cannot affect parsed panes (`parseRow_metadata_irrelevant`); planning preserves records and order and skips existing names (`mem_plan`, `plan_order`); adding planned names to the snapshot makes a sequential rerun empty (`plan_sequential_idempotent`); diagnostics exclude C0, DEL and C1 and preserve already printable text (`diagnostic_printable`, `diagnostic_eq_self`) | Theorems/Resurrect.lean, E2E/Recipes.lean |
 | §Interchange | current native state vs discarded foreign metadata | valid native names have reversible encoding (`encodeName_reversible`); every successful generated save parses back to exactly its names and directories for any home (`renderSave_roundtrip`); the executor exports current native fields without retained foreign source | Theorems/Resurrect.lean, E2E/Interop.lean |
@@ -427,8 +427,25 @@ spaces. `linger status` observes local info without acknowledging unread output.
 Its IO executor uses nonblocking connection attempts and one shared reply
 deadline; incomplete replies and busy sockets remain unknown. These timing
 and socket-lifetime claims are exercised by `E2E.Status`, not proved by the
-pure counting theorems. The fish recipe delegates to that command and preserves
-the preceding command's exit status.
+pure counting theorems. The fish recipe delegates its final attention segment
+to that command. `E2E.Recipes` executes the recipe with output from
+`Status.summary`, both inside and outside a session: it checks exact bytes,
+omission of empty output, exit status preservation, one sample per redraw,
+and preservation of the user's left prompt and title hook. These are native
+shell observations, not Lean proofs about fish.
+
+`Title.compose_context` fixes the context as session then application title.
+`compose_attention_last` proves that attention reserves space before appending
+to the clipped context: an empty summary leaves the budget unchanged, and a
+nonempty one adds exactly ` · ` followed by the summary. Empty or fully clipped
+application text adds no separator. `compose_bound` and
+`compose_payload_attention_last` connect this policy to the actual encoder:
+whenever the session and attention fit, an arbitrarily long application title
+cannot consume the suffix. The generic `Terminal.Title.payload_append`
+preserves bounded parts while replacing unsafe control characters. A source
+gate pins the runtime's argument order and shared `Terminal.Title.maxChars`
+budget. Unit checks exercise the encoded suffix, and a real PTY check observes
+a full-budget Unicode application title.
 
 The title observer shares the session's VT parser. `observe_esc_intermediates`
 and `observe_escInter_pending` keep every unfinished ESC intermediate sequence

@@ -14,9 +14,21 @@ namespace Linger.Core.Terminal.Title
 open Linger.Core.Vt (Vt)
 open Linger.Core.Render
 
-public theorem payload_bound (title : String) : (payload title).length ≤ 500 := by
+public theorem payload_bound (title : String) : (payload title).length ≤ maxChars := by
   simp only [payload, List.length_map, List.length_take]
   omega
+
+/-- A bounded composition keeps every part through payload encoding. -/
+public theorem payload_append (left right : String) (h : left.length + right.length ≤ maxChars) :
+    payload (left ++ right) = payload left ++ payload right := by
+  have hl : left.toList.length ≤ maxChars := by
+    rw [String.length_toList]; omega
+  have hr : right.toList.length ≤ maxChars := by
+    rw [String.length_toList]; omega
+  have hb : (left.toList ++ right.toList).length ≤ maxChars := by
+    simpa only [List.length_append, String.length_toList] using h
+  simp only [payload, String.toList_append, List.take_of_length_le hb, List.take_of_length_le hl,
+    List.take_of_length_le hr, List.map_append]
 
 public theorem payload_safe (title : String) (c : Char) (h : c ∈ payload title) :
     0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0) := by
@@ -45,6 +57,7 @@ public theorem ansi_payload_safe (title : String) (b : UInt8) (h : b ∈ utf8s (
 public theorem ansi_payload_bound (title : String) : 2 + (utf8s (payload title)).length ≤ 2048 := by
   have := utf8s_length_le (payload title)
   have := payload_bound title
+  simp only [maxChars] at *
   omega
 
 theorem ansi_ends (title : String) : Ends (ansi title) := by

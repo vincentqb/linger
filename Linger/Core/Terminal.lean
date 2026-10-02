@@ -285,11 +285,14 @@ def feed (v : Vt) (scan : Scan) : Bytes → Result
 
 namespace Title
 
+/-- Unicode scalar budget shared with callers that reserve parts of a title. -/
+def maxChars : Nat := 500
+
 /-- Bound an OSC payload without splitting a Unicode scalar. Five hundred
 characters occupy at most 2000 UTF-8 bytes, below the parser's OSC limit even
 with its `2;` prefix. C1 controls are replaced as well as C0 and DEL. -/
 def payload (title : String) : List Char :=
-  title.toList.take 500 |>.map fun c =>
+  title.toList.take maxChars |>.map fun c =>
     if 0x80 ≤ c.toNat && c.toNat < 0xA0 then '\uFFFD' else Render.safeChar c
 
 /-- Set the title, with all externally supplied content confined to the payload. -/

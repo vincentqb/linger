@@ -15,11 +15,9 @@ worklog), `specs/archive/` (closed build records), the comments in
 
 ## Where things stand — read this first after any compaction
 
-1. No spec is in flight. The last one closed on 2026-10-02
-   (`specs/archive/ci-redesign.md`: native hooks, one full verification path,
-   exact successful-verification reuse and concurrent Manager fixtures).
-   Its final source checkpoint passes assembled and hosted Linux verification;
-   all worker changes are integrated and their branches/worktrees retired.
+1. `specs/display-convention.md` is active: standardize
+   `session · application title · attention` in attached titles and the fish
+   prompt recipe, with Lean contracts and executable regression checks.
    New work opens a new `specs/<slug>.md`, names itself here, and keeps the
    live count at one; every behavioral fix starts with a failing check and
    every deletion survives the full verifier stack.
@@ -142,6 +140,13 @@ deliberately no pre-push hook.
 - Session names pass `Linger.Core.Name.sanitize` before touching any
   path.
 - Any poll loop must freeze its fd set before polling.
+- Shared display order is `session · application title · attention`; omit
+  empty optional parts and their separators. `Linger.Core.Title.compose`
+  owns composition, `Status.summary` owns attention counts and glyphs.
+  Reserve space for attention before clipping application titles.
+  Prompt recipes append attention after existing context, preserving shell
+  title hooks and command status. Enforce the order with the title theorems,
+  runtime call-site gate and native prompt checks.
 - `Tests/` (Lean unit tests) and `tests/` (orchestrator) are two
   tracked directories; on a case-insensitive filesystem check
   `git ls-files --stage` after adding a file. Pty suites live in `E2E/`

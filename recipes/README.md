@@ -49,6 +49,12 @@ Window, tab and split configuration remains with the terminal.
 ## Fish prompt
 
 [`fish_prompt.fish`](fish_prompt.fish) is an optional `fish_right_prompt` example.
+The shared convention is `session · application title · attention`, omitting
+empty parts and their separators. Your existing prompt supplies the context;
+this example supplies only the final attention segment. It uses the same
+counts and glyphs as attached window titles. A count-only prompt needs no
+leading separator.
+
 If you have no right prompt, place its contents in
 `~/.config/fish/functions/fish_right_prompt.fish`. If you already have one, merge
 these calls as its last displayed segment, keeping your existing formatting:
@@ -60,7 +66,10 @@ and command linger status 2>/dev/null
 
 The example saves `$status` before running the command and returns it afterward.
 Keep your prompt's existing status handling when merging. Your `fish_prompt`
-stays as it is. The quiet builtin lookup avoids fish's diagnostic when `linger`
+and `fish_title` stay as they are: the recipe neither calls nor replaces the
+title hook, and does not duplicate context from `LINGER_SESSION`.
+If combining context and attention into one text line, put ` · ` only between
+nonempty segments. The quiet builtin lookup avoids fish's diagnostic when `linger`
 is absent from PATH; the invocation suppresses command errors and adds no padding.
 
 `2⣿ 1! 1?` means two sessions with unread output, one reporting an unsuccessful
