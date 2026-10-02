@@ -58,6 +58,12 @@ in `Title`. Independent library and proof targets have no session or OS
 imports, with source gates enforcing their complete import boundaries.
 Verification record: `specs/archive/terminal-libraries.md`.
 
+VT proofs follow their dependencies: `Theorems.Vt.State` supplies shared
+state invariants, while `Theorems.Vt.Parser` and `Theorems.Vt.Renderable`
+develop independent parser and grid guarantees. `Theorems.Vt` combines them
+into reachability and stream-boundary claims. Existing imports and theorem
+statements remain valid; the standalone import gate covers every child module.
+
 The reusable fuzzy library admits separate case and scoring policies.
 `alignWith_isSome_iff_sublist`, `alignWith_marks_length` and `alignWith_spells`
 characterize the language and original scalar positions for every

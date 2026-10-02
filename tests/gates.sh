@@ -298,14 +298,14 @@ library_roots LingerInputTheorems '#[`Theorems.Input]'
 library_roots LingerFuzzy '#[`Tools.Fuzzy]'
 
 # Check every member of the proof family, not only the root headers: an
-# intermediate renderer lemma must not pull session policy into the VT target.
-module_imports Theorems/Vt.lean Theorems/Terminal.lean Theorems/TerminalTitle.lean \
+# intermediate VT or renderer lemma must not pull session policy into the target.
+module_imports Theorems/Vt.lean 'Theorems/Vt/*' Theorems/Terminal.lean Theorems/TerminalTitle.lean \
   Theorems/Replay.lean Theorems/Render.lean 'Theorems/Render/*' \
 | awk -F: '
   { mod = $3
     sub(/^[[:space:]]*((public|private|meta)[[:space:]]+)*import[[:space:]]+(all[[:space:]]+)?/, "", mod)
     sub(/[[:space:]]+--.*/, "", mod); sub(/[[:space:]]+$/, "", mod)
-    if (mod !~ /^(Linger[.]Core[.](Vt|Render|Terminal|Replay)|Theorems[.](Vt|Terminal|TerminalTitle|Replay|Render([.][[:alnum:]_]+)*)|Init[.]Data[.]String[.](Legacy|Lemmas[.](TakeDrop|IsEmpty)))$/) {
+    if (mod !~ /^(Linger[.]Core[.](Vt|Render|Terminal|Replay)|Theorems[.]((Vt|Render)([.][[:alnum:]_]+)*|Terminal|TerminalTitle|Replay)|Init[.]Data[.]String[.](Legacy|Lemmas[.](TakeDrop|IsEmpty)))$/) {
       print "  " $0; bad = 1
     }
   }

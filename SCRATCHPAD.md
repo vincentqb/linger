@@ -15166,3 +15166,110 @@ Split publication into a verified renderer checkpoint followed by the VT
 factorization decision so independent improvements need not wait for the
 remaining investigation. No source under verification changed during either
 foreground run. The required checkpoint builds and hooks run before commit.
+
+Required renderer checkpoint builds and all-file hooks pass with source
+inventory matching the full verifier before and after. Commit
+`9294e980d823bf673d3dc9c26daa940f344334b5` publishes Step 2 to main;
+hosted run 36952028070 is in progress. The worktree remains on this
+verified checkpoint while the independent VT review proceeds.
+
+## Step 3 notes — 2026-10-02
+
+The VT candidate moves sealed-field proofs across Lean modules. Its authored
+qualified names are retained, but Lean encodes the owning module in internal
+private names. Literal equality of those internal names is therefore not a
+reasonable module-movement contract. Require a recorded, exact mapping for
+private constants and generated binder names, with all original types,
+universes and per-declaration axiom sets compared through that mapping.
+No aliases or compiler escape are added. Independent review must check the
+normalization does not conceal a changed theorem before integration.
+
+The renderer checkpoint's hosted run 36952028070 succeeds. The Linux job
+takes 250 seconds, including 177.287 for the full verifier: 54.780 building,
+33.514 source gates plus layout and 65.656 live suites. Toolchain-cache
+restoration takes 35 seconds. These are source-changing CI observations;
+the earlier warm run and broader-change run are not controlled comparisons.
+Receipt: `evidence/hosted-36952028070/report.json`.
+
+Independent VT review reconstructs every authored source section and checks
+all 1,650 compiled declaration instances before grouping generated duplicates.
+All 1,373 original logical declarations, including 1,148 theorems, retain
+their types, universes and individual axiom sets under the recorded private
+name mapping. Additional generated instances are equation lemmas and splitters,
+not additional authored promises. The reviewer checks stricter normalization
+than the worker exporter and finds no hidden differences. Parser and
+Renderable independently depend on State; the umbrella combines them.
+Review: `reviews/vt-review.md`.
+
+The standalone import gate now scans each VT child. Nine controls verify
+the accepted imports and inject a Session import into each child in turn.
+The incomplete root-only scan misses each injected dependency; the final
+gate rejects it and identifies the correct file. Sources are restored
+byte-for-byte. The existing eight title-observer checks remain unchanged.
+Receipt: `evidence/gates-integration/receipt.json`.
+
+The frozen split leaves the formatter requesting layout changes in the
+umbrella. Apply its exact preview, retaining the original and diff in
+`evidence/proofs/split/`. Whitespace comparison alone is insufficient for
+Lean, so the final source must compile, retain its compiled declaration
+contracts and pass formatter validation before acceptance.
+
+The final matched formatter experiment uses the same pinned binary, compiler,
+configuration and non-VT source bytes in both worktrees. Result caching is
+disabled; compiled imports and OS caches are warm. On this 192-CPU EPYC 9R14
+host, baseline/candidate/candidate/baseline wall times are
+30.727/19.463/19.789/30.421 seconds. Means fall from 30.574 to 19.626 seconds
+(35.8%). All four checks exit zero, with no changed, rejected, unbuilt or
+bypassed validations. Each variant's repeated JSON report is identical and
+all source hashes remain stable. The file inventory differs only by the
+three new VT modules. Receipt: `evidence/final-format-comparison/receipt.json`.
+
+The proof worker's earlier fixed-source compile experiment uses the same
+interleaving and already-built core imports, clearing only the owned VT
+build products. Original/split/split/original times are
+30.098/24.626/24.820/30.370 seconds, or means of 30.234 and 24.723
+(18.2%). Those measurements precede the umbrella's final layout-only patch;
+they are module rebuild timings, not complete clean-build or hosted results.
+No extra scheduler setting, dependency, formatter pin or cache bypass is
+introduced. The module split follows State, independent Parser/Renderable
+branches and the existing umbrella API.
+
+Final layout verification rebuilds all consumers with rehash and warnings
+treated as failures, then exports the formatted declarations successfully.
+Every one of the split's 1,650 declaration instances has exactly the frozen
+name, universe list, serialized type, axiom set and dependency list; only
+source line positions are excluded. Both canonical digests are
+`22a6638df7243b667b7bc375411537d654665a7e9826581bf1820158c52c9a1d`.
+All 1,373 original contracts, including 1,148 theorem statements, also match
+through the reviewed private-name mapping. Main and worker sources have the
+same four hashes. Receipt: `evidence/final-vt-contract-verified/receipt.json`.
+
+Two export-harness mistakes are retained separately: a Lake-only flag was
+initially sent directly to Lean, and the successful export's count summary
+appeared on stdout where the first reader expected only JSON. The corrected
+reader accepts exactly that computed summary and validates the existing
+successful export without rerunning or changing source. Neither failure is
+counted as a proof failure or a timing sample. The complete main-tree verifier
+now checks the assembled source, gate and documentation changes.
+
+The bounded second review accepts the final formatter patch and receipts
+without blockers. The reviewer independently compares every exported field
+except source line positions, verifies the raw no-cache formatter reports
+and confirms the dependency paragraph in THEOREMS.md. Review:
+`reviews/vt-layout-review.md`. The reviewer is closed after this acceptance.
+
+The assembled foreground verifier passes in 173.412 seconds. Its changed
+proof build takes 71.645 seconds, including downstream importers; source
+gates plus layout take 9.975 and the live batch 66.620. All fifteen live logs
+are fresh, contain their exact declared counts and end with zero failures.
+Generated C ABI, standalone boundaries, semantic coverage, cache-integrity
+negative controls, dependency-installation checks, shim smoke and fuzz all
+pass. Full source bytes and modes are unchanged during verification.
+Receipt: `evidence/assembled-full/receipt.json`. Required checkpoint builds
+and hooks follow before committing this exact source.
+
+Both required checkpoint builds pass again in 0.731 and 0.695 seconds.
+All-file hooks pass in 10.782 seconds; whitespace checking passes. Before and
+after, every non-record source matches the assembled verifier's bytes, modes
+and inventory. Receipt: `evidence/vt-precommit/receipt.json`. The normal commit
+hooks remain enabled.

@@ -14,9 +14,18 @@ Interleaved local module checks improve from 19.339 to 13.853 seconds and
 17.055 to 10.132 seconds respectively. Both deliberate core mutations are
 rejected by the consolidated assertion. The renderer checkpoint passes the
 complete foreground verifier in 103.277 seconds with unchanged source bytes
-and all fifteen live suites passing their exact counts. Publication follows
-the required checkpoint builds and hooks. VT factorization remains under
-investigation.
+and all fifteen live suites passing their exact counts. Commit `9294e98`
+publishes that checkpoint after required builds and hooks pass; hosted run
+36952028070 succeeds in 250 seconds for the Linux job, including 177.287
+seconds for the full verifier. VT factorization passes independent source,
+declaration and import-boundary review. The final formatted split preserves
+all compiled declaration contracts and passes four matched no-cache formatter
+checks. Cold layout falls from 30.574 to 19.626 seconds, a 35.8% reduction.
+The final bounded review accepts the compiled layout contract without blockers.
+The assembled foreground verifier passes in 173.412 seconds, with all fifteen
+live suites matching their exact counts and unchanged source manifests.
+Required checkpoint builds and all-file hooks pass with the same verified
+source inventory. Publication and hosted CI follow.
 
 ## Intent and constraints
 
@@ -46,8 +55,11 @@ profiling probes live outside the tracked tree at
   a measured, supported invocation/configuration or pin fix. External
   formatter source is evidence; do not publish changes to its repository.
 - **Proof worker:** `Theorems/Vt.lean` and `Theorems/Vt/*.lean`.
-  Factor only along real proof dependencies, preserving declaration names,
-  types, universe parameters and axiom sets. Avoid speculative abstractions.
+  Factor only along real proof dependencies, preserving authored qualified
+  names, types, universe parameters and axiom sets. Record exact mappings
+  for compiler-generated private names when their owning module moves;
+  compare every original declaration through that mapping without aliases
+  or compiler escapes. Avoid speculative abstractions.
 - **Coordinator:** `lakefile.lean`, `tests/e2e.sh`, `tests/gates.sh`,
   `E2E/Ci.lean`, `E2ETest.lean`, `Theorems/Render/Grid.lean`,
   `Tests/Render.lean`, README.md, THEOREMS.md, AGENTS.md, this spec and
