@@ -2,10 +2,16 @@
 
 ## Status
 
-Active, 2026-10-02. Steps 1–2 pass independent review and the complete
-foreground verifier (103.822 s). Shared-path publication and hosted checks
-are pending. Step 3 remains isolated: review requires serializing PTY
-acquisition before accepting concurrent Manager fixture groups.
+Active, 2026-10-02. Steps 1–2 are published at `b0f4bd0` and pass independent
+review, the complete foreground verifier (103.822 s), and hosted run
+37006297697. That run takes 6 seconds for hygiene and 166 for Linux,
+including 128 in the full verifier. Step 3 passes final independent review
+and is integrated: complete PTY acquisition and other parent-side launches
+share a mutex. The corrected local pair passes all 111 assertions in 64.882
+seconds before and 32.835 after.
+The assembled foreground verifier now passes in 101.385 seconds, including
+59 seconds for the live batch and 32.930 for Manager. All exact counts and
+non-record source hashes agree; the Step 3 hosted run remains outstanding.
 Baseline is published, clean `de310f4`.
 The previous warm hosted run, 36954511812, takes 168 seconds for Linux:
 101.511 in the verifier, including 66.682 in live suites; the build is

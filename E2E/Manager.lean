@@ -3,6 +3,7 @@ module
 public import E2E.Harness
 public import Manager.Picker
 public import Linger.Core.Listing
+import Std.Sync.Mutex
 
 public section
 
@@ -31,6 +32,16 @@ open E2E.Harness
 open Linger.Posix
 open Linger.Core.Render (modeSet csiNum screenText)
 open Linger.Core.Vt (Vt)
+
+/-- PTY acquisition uses libc's shared `ptsname` buffer and briefly holds
+descriptors without close-on-exec. Keep every parent launch out of that region,
+including ordinary process launches and the harness's one-shot CLI calls.
+Session observations and waits for explicitly spawned children stay outside. -/
+private initialize launchMutex : Std.Mutex Unit ←
+  Std.Mutex.new ()
+
+private def withLaunchLock {α : Type} (action : IO α) : IO α :=
+  launchMutex.atomically fun _ => action
 
 private def rowText (vt : Vt) (row : Nat) : String :=
   String.fromUTF8! (ByteArray.mk (Linger.Core.Render.rowText (vt.getRow row)).toArray)
@@ -67,8 +78,9 @@ private def snapshot (root : System.FilePath) : IO String := do
   if terminal.isEmpty then
     throw (IO.userError "manager probe has no observed terminal path")
   let result ←
-    IO.Process.output
-        { cmd := "/bin/sh", args := #["-c", s!"exec {quote stty} -g <{quote terminal}"] }
+    withLaunchLock <|
+        IO.Process.output
+          { cmd := "/bin/sh", args := #["-c", s!"exec {quote stty} -g <{quote terminal}"] }
   if result.exitCode != 0 || result.stdout.trimAscii.isEmpty then
     throw (IO.userError s!"manager terminal observation failed: {result.stderr}")
   return result.stdout.trimAscii.toString
@@ -151,7 +163,8 @@ private def launch (root : System.FilePath) (manager mode : String) (args : List
   let some tty ←
     IO.getEnv "MANAGER_TEST_TTY" | throw (IO.userError "manager probe has no tty observer")
   let observer ←
-    IO.Process.spawn { cmd := tty, stdin := .inherit, stdout := .piped, stderr := .piped }
+    withLaunchLock <|
+        IO.Process.spawn { cmd := tty, stdin := .inherit, stdout := .piped, stderr := .piped }
   let rc ← waitChild observer 4000
   let terminal := (← observer.stdout.readToEnd).trimAscii.toString
   let error ← observer.stderr.readToEnd
@@ -177,10 +190,12 @@ private def launch (root : System.FilePath) (manager mode : String) (args : List
     else
       pure none
   let child ←
-    IO.Process.spawn
-        { cmd, args,
-          env := #[("LINGER_SESSION", none), ("LINGER_NO_DETACH_KEY", none), ("NO_COLOR", noColor)],
-          stdin := if mode == "stdout-only" then .null else .inherit }
+    withLaunchLock <|
+        IO.Process.spawn
+          { cmd, args,
+            env :=
+              #[("LINGER_SESSION", none), ("LINGER_NO_DETACH_KEY", none), ("NO_COLOR", noColor)],
+            stdin := if mode == "stdout-only" then .null else .inherit }
   IO.FS.writeFile (root / "manager-pid") (toString child.pid)
   let rc ← waitChild child
   IO.FS.writeFile (root / "after") (← snapshot root)
@@ -248,14 +263,16 @@ private def Fixture.make (e : Env) (slug : String) : IO Fixture := do
   let self := (← IO.appPath).toString
   let pickerExecutable := (← IO.getEnv "MANAGER_TEST_PICKER").getD self
   let executable := ((← IO.FS.realPath root) / "record command").toString
-  let observer ← IO.Process.output { cmd := "/bin/sh", args := #["-c", "command -v stty"] }
+  let observer ←
+    withLaunchLock <| IO.Process.output { cmd := "/bin/sh", args := #["-c", "command -v stty"] }
   if observer.exitCode != 0 || observer.stdout.trimAscii.isEmpty then
     throw (IO.userError "stty is required to observe manager terminal restoration")
-  let tty ← IO.Process.output { cmd := "/bin/sh", args := #["-c", "command -v tty"] }
+  let tty ←
+    withLaunchLock <| IO.Process.output { cmd := "/bin/sh", args := #["-c", "command -v tty"] }
   if tty.exitCode != 0 || tty.stdout.trimAscii.isEmpty then
     throw (IO.userError "tty is required to observe the manager terminal path")
   IO.FS.writeFile executable s!"#!/bin/sh\nexec {quote self} --manager-probe command \"$@\"\n"
-  let chmod ← IO.Process.output { cmd := "chmod", args := #["+x", executable] }
+  let chmod ← withLaunchLock <| IO.Process.output { cmd := "chmod", args := #["+x", executable] }
   if chmod.exitCode != 0 then
     throw (IO.userError s!"manager recorder chmod failed: {chmod.stderr}")
   IO.FS.writeFile (root / "listing") "name\tAlpha\nname\tBeta\nname\tGamma\n"
@@ -298,9 +315,10 @@ private def Fixture.afterAttach (f : Fixture) (text : String) (rc : Nat := 0) : 
 
 private def Fixture.piped (f : Fixture) (args : Array String) : IO (UInt32 × String × String) := do
   let child ←
-    IO.Process.spawn
-        { cmd := f.manager, args := f.managerArgs ++ args, env := f.env, stdin := .null,
-          stdout := .piped, stderr := .piped }
+    withLaunchLock <|
+        IO.Process.spawn
+          { cmd := f.manager, args := f.managerArgs ++ args, env := f.env, stdin := .null,
+            stdout := .piped, stderr := .piped }
   let rc ← waitChild child 4000
   return (rc, ← child.stdout.readToEnd, ← child.stderr.readToEnd)
 
@@ -313,8 +331,9 @@ private def Fixture.start (f : Fixture) (args : Array String := #[]) (mode : Str
     (cols : UInt32 := 80) (rows : UInt32 := 12) : IO Session := do
   let env := f.env.map fun (key, value) => s!"{key}={value.getD ""}"
   let (pid, fd) ←
-    spawnPty cols rows "" f.self
-        (#["--manager-probe", "launch", f.manager, mode] ++ f.managerArgs ++ args) env
+    withLaunchLock <|
+        spawnPty cols rows "" f.self
+          (#["--manager-probe", "launch", f.manager, mode] ++ f.managerArgs ++ args) env
   return { fixture := f, client := { pid, fd }, output := ← IO.mkRef ByteArray.empty }
 
 private def Session.mark (s : Session) : IO Nat := return (← s.output.get).size
@@ -610,7 +629,7 @@ private def usageChecks (e : Env) : IO Nat := do
                     ["pane", "work", "1", "0", ":", "0", "title", ":" ++ f.root.toString, "1", "sh",
                       ":vim"] ++
                   "\n")
-            let before ← e.out #["ls", "--porcelain"]
+            let before ← withLaunchLock (e.out #["ls", "--porcelain"])
             let mut ok := true
             for args in
               [#["import", "--restore-processes"],
@@ -619,7 +638,7 @@ private def usageChecks (e : Env) : IO Nat := do
               let (rc, _, _) ← f.piped args
               appendText (f.root / "usage-results") s!"{repr args}: {rc}\n"
               ok := ok && rc == 2
-            return ok && (← e.out #["ls", "--porcelain"]) == before)
+            return ok && (← withLaunchLock (e.out #["ls", "--porcelain"])) == before)
   failures :=
     failures +
       (←
@@ -1932,7 +1951,9 @@ private def defaultChecks (e : Env) : IO Nat := do
               let impostor := f.root / "bin" / "linger"
               IO.FS.writeFile impostor
                   s!"#!/bin/sh\nprintf hit >{quote (f.root / "impostor-hit").toString}\nexit 97\n"
-              let chmod ← IO.Process.output { cmd := "chmod", args := #["+x", impostor.toString] }
+              let chmod ←
+                withLaunchLock <|
+                    IO.Process.output { cmd := "chmod", args := #["+x", impostor.toString] }
               if chmod.exitCode != 0 then
                 throw (IO.userError s!"manager impostor chmod failed: {chmod.stderr}")
               let path := if empty then "" else (f.root / "bin").toString
@@ -2039,9 +2060,10 @@ private def realCheck (e : Env) : IO Nat := do
               let state := System.FilePath.mk owned.dir
               if existing then
                 let create ←
-                  IO.Process.spawn
-                      { cmd := e.bin, args := #["run", name, "true"], env := f.env, stdin := .null,
-                        stdout := .piped, stderr := .piped }
+                  withLaunchLock <|
+                      IO.Process.spawn
+                        { cmd := e.bin, args := #["run", name, "true"], env := f.env,
+                          stdin := .null, stdout := .piped, stderr := .piped }
                 let rc ← waitChild create 5000
                 if rc != 0 then
                   throw (IO.userError s!"manager live fixture failed: {← create.stderr.readToEnd}")
@@ -2062,8 +2084,8 @@ private def realCheck (e : Env) : IO Nat := do
                     s.text "\r"
                     let attached ←
                       waitFor 5000 do
-                          return (← owned.info name "clients") == some "1"
-                    let listing ← owned.out #["ls", "--porcelain"]
+                          return (← withLaunchLock (owned.info name "clients")) == some "1"
+                    let listing ← withLaunchLock (owned.out #["ls", "--porcelain"])
                     IO.FS.writeFile (f.root / "after-accept") listing
                     let names :=
                       (records listing).filterMap fun (k, v) => if k == "name" then some v else none
@@ -2081,29 +2103,31 @@ private def realCheck (e : Env) : IO Nat := do
                       return false
                     let detached ←
                       waitFor 5000 do
-                          return (← owned.info name "clients") == some "0"
-                    IO.FS.writeFile (f.root / "after-detach") (← owned.out #["info", name])
+                          return (← withLaunchLock (owned.info name "clients")) == some "0"
+                    IO.FS.writeFile (f.root / "after-detach")
+                        (← withLaunchLock (owned.out #["info", name]))
                     s.text "\x03"
                     return shown && untouched && names == [name] && detached &&
                         (← termiosRestored s 130) &&
                         sequenceCount (← s.output.get) (modeSet 1049 true) ≥ 2
               finally
-                owned.killAll #[name])
+                withLaunchLock (owned.killAll #[name]))
   return failures
 
 private def startProgram (f : Fixture) (owned : Env) (name : String) : IO Bool := do
   let child ←
-    IO.Process.spawn
-        { cmd := owned.bin,
-          args := #["run", name, s!"{quote f.self} --manager-probe session-program"], env := f.env,
-          stdin := .null, stdout := .piped, stderr := .piped }
+    withLaunchLock <|
+        IO.Process.spawn
+          { cmd := owned.bin,
+            args := #["run", name, s!"{quote f.self} --manager-probe session-program"],
+            env := f.env, stdin := .null, stdout := .piped, stderr := .piped }
   let rc ← waitChild child 5000
   if rc != 0 then
     throw (IO.userError s!"session program launch failed: {← child.stderr.readToEnd}")
   return ←
       waitFor 5000 do
           return (← numberFile (f.root / "session-program-pid")) > 0 &&
-              has (← owned.out #["capture", name]) "MANAGER-PROGRAM-READY"
+              has (← withLaunchLock (owned.out #["capture", name])) "MANAGER-PROGRAM-READY"
 
 private def programChecks (e : Env) : IO Nat := do
   let mut failures := 0
@@ -2121,7 +2145,7 @@ private def programChecks (e : Env) : IO Nat := do
                 unless ← startProgram f owned name do
                   return false
                 let pid ← numberFile (f.root / "session-program-pid")
-                let before ← owned.out #["info", name]
+                let before ← withLaunchLock (owned.out #["info", name])
                 withSession f #["select"] fun s => do
                     unless ← s.prompt do
                       return false
@@ -2132,19 +2156,20 @@ private def programChecks (e : Env) : IO Nat := do
                     let clean ← restored s 130
                     let survived := pid > 0 && (← alive (UInt32.ofNat pid))
                     let challenge := s!"challenge-after-{slug}"
-                    let (sent, _, _) ← owned.cli #["send", name, challenge ++ "\n"]
+                    let (sent, _, _) ← withLaunchLock (owned.cli #["send", name, challenge ++ "\n"])
                     let answered ←
                       waitFor 2000 do
                           return (← readText (f.root / "session-program-response")) == challenge
-                    let detached := (← owned.info name "clients") == some "0"
+                    let detached := (← withLaunchLock (owned.info name "clients")) == some "0"
                     IO.FS.writeFile (f.root / "program-survival")
                         s!"pid={pid}\nalive-before={live}\nalive-after={survived}\nsend-exit={sent}\nanswered-after-cancel={answered}\nno-client={detached}\n"
                     IO.FS.writeFile (f.root / "before-info") before
-                    IO.FS.writeFile (f.root / "after-info") (← owned.out #["info", name])
+                    IO.FS.writeFile (f.root / "after-info")
+                        (← withLaunchLock (owned.out #["info", name]))
                     return clean && live && survived && sent == 0 && answered && detached
               finally
-                let _ ← owned.cli #["send", name, "stop-program\n"]
-                owned.killAll #[name])
+                let _ ← withLaunchLock (owned.cli #["send", name, "stop-program\n"])
+                withLaunchLock (owned.killAll #[name]))
   failures :=
     failures +
       (←
@@ -2166,7 +2191,7 @@ private def programChecks (e : Env) : IO Nat := do
                   s.text "\r"
                   let attached ←
                     waitFor 5000 do
-                        return (← owned.info name "clients") == some "1"
+                        return (← withLaunchLock (owned.info name "clients")) == some "1"
                   let live := pid > 0 && (← alive (UInt32.ofNat pid))
                   unless attached && live do
                     return false
@@ -2185,26 +2210,52 @@ private def programChecks (e : Env) : IO Nat := do
                   IO.FS.writeFile (f.root / "interrupt-observation")
                       s!"pid={pid}\nattached={attached}\nalive-before={live}\nprogram-gone={interrupted}\nshell-responded={shell}\nselector-returned={returned}\nterminal-restored={clean}\n"
                   return interrupted && shell && returned && clean &&
-                      (← owned.info name "clients") == some "0"
+                      (← withLaunchLock (owned.info name "clients")) == some "0"
             finally
-              let _ ← owned.cli #["send", name, "stop-program\n"]
-              owned.killAll #[name])
+              let _ ← withLaunchLock (owned.cli #["send", name, "stop-program\n"])
+              withLaunchLock (owned.killAll #[name]))
   return failures
 
 def run : IO UInt32 := do
   let e ← Env.make "manager"
   let e := { e with bin := (← IO.getEnv "MANAGER_TEST_LINGER").getD e.bin }
-  let mut failures ← usageChecks e
-  failures := failures + (← failureChecks e)
-  failures := failures + (← selectionChecks e)
-  failures := failures + (← inputChecks e)
-  failures := failures + (← displayChecks e)
-  failures := failures + (← statusChecks e)
-  failures := failures + (← fuzzyChecks e)
-  failures := failures + (← refreshChecks e)
-  failures := failures + (← defaultChecks e)
-  failures := failures + (← realCheck e)
-  failures := failures + (← programChecks e)
+  -- Each check owns a distinct fixture directory, pty and child process tree;
+  -- withLaunchLock serializes the process-wide acquisition state.
+  -- Overlap two independent groups, keeping each group's observation windows
+  -- and deadlines unchanged. Start the long refresh and selection groups first;
+  -- wait for every started group before verdict removes their shared parent.
+  let mut pending : List (String × (Env → IO Nat)) :=
+    [("refresh", refreshChecks), ("selection", selectionChecks), ("usage", usageChecks),
+      ("failure", failureChecks), ("input", inputChecks), ("display", displayChecks),
+      ("status", statusChecks), ("fuzzy", fuzzyChecks), ("default", defaultChecks),
+      ("real", realCheck), ("program", programChecks)]
+  let mut active : List (Task (Except IO.Error (String × Nat × Nat))) := []
+  let mut failures := 0
+  while !pending.isEmpty || !active.isEmpty do
+    while active.length < 2 && !pending.isEmpty do
+      match pending with
+      | [] =>
+        pure ()
+      | (name, checks) :: rest =>
+        pending := rest
+        let work : IO (String × Nat × Nat) := do
+          let start ← monotonicMs
+          let count ← checks e
+          return (name, count, (← monotonicMs) - start)
+        active := (← work.asTask .dedicated) :: active
+    match active with
+    | [] =>
+      pure ()
+    | task :: rest =>
+      let (result, remaining) ← IO.waitAny' (task :: rest)
+      active := remaining
+      match result with
+      | .error err =>
+        failures := failures + 1
+        IO.eprintln s!"note: manager check group: {err}"
+      | .ok (name, count, elapsed) =>
+        failures := failures + count
+        IO.eprintln s!"manager {name}: {elapsed} ms"
   verdict e failures
 
 end E2E.Manager

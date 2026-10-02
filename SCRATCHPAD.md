@@ -15429,3 +15429,65 @@ of complete PTY acquisition within the test boundary and a second review.
 The earlier 65-to-33-second experiment remains provisional; it does not
 justify merging the racy scheduler. The worker corrects this in its isolated
 tree while the verified shared-path checkpoint proceeds to publication.
+
+Publish the shared-path checkpoint as `b0f4bd0`; hosted run 37006297697
+passes for that exact SHA and saves its successful-verification receipt.
+Hygiene takes 6 seconds and Linux 166, including 128 in the full verifier:
+build 14, ABI 1, source gates 3, formatting and semantic lint 22, semantic
+coverage 6, verifier regressions 8, shim smoke 6 and live suites 67.
+Dependency installation takes 9 seconds and toolchain restoration 18.
+The phase timer reports whole seconds. This source-changing run is not a
+controlled comparison with the earlier warm records-only run; retained
+Manager tests still dominate the live batch. Evidence:
+`hosted-37006297697/report.json` and its complete run log.
+
+## Step 3 notes — 2026-10-02
+
+Correct the Manager fixture scheduler before integration. Two check groups
+can overlap, but complete PTY acquisition and every other parent-side process
+launch in that suite share one mutex. This protects the shared `ptsname`
+buffer and transient descriptors during acquisition. Explicit child waits,
+observations and all negative windows remain outside the lock; short helpers
+that hide their launch retain their one-shot completion inside it. Product,
+Harness, Runner, C and the toolchain are unchanged.
+
+The frozen corrected worker passes all 111 assertions. An isolated adjacent
+pair with identical original CLI/picker binaries takes 64.882 seconds before
+and 32.835 after: 32.047 seconds saved, or 49.39%, for this suite locally.
+All eleven groups complete. The 111 assertion labels, 508 numeric tokens,
+1304 string literals before `run`, and complete `Session.observe` definition
+match the original. No observation window, deadline or assertion is shortened.
+This corrected pair supersedes the provisional, racy round-1 timing.
+
+Break checks still detect the intended errors: killing the session program
+on cancellation fails exactly the Ctrl-C and Escape survival assertions;
+ignoring foreground SIGINT fails exactly the foreground interruption and
+shell-usability assertion. The neutral forwarder passes all 111. An external
+eight-check launch probe passes; bypassing the mutex fails three launch
+exclusion checks, and deliberately crossing two live PTY clients fails three
+isolation/routing/restoration checks. Exec failure releases the mutex and a
+subsequent acquisition succeeds. Evidence, hashes and raw logs:
+`selector-evidence/round2/report.md`. The corrected source is frozen at
+`ff2217a123bbffb0a1fece4bac4a02ef44becce11312ca35a21093694352d2e9`
+for the second independent review; main has not integrated it yet.
+
+The final independent review accepts this exact frozen revision. It confirms
+exception-safe lock release, the complete launch inventory, no nested
+acquisition or lock/wait cycle, separate fixture state, preserved assertions
+and deadlines, and complete worker joining before the verdict and cleanup.
+It independently recounts the supplied control logs and checks both source
+and patch hashes; it does not claim new timing runs. Integrate the frozen
+file unchanged and run the combined verifier. Review:
+`reviews/manager-final-review.md`.
+
+The complete assembled foreground verifier passes in 101.385 seconds.
+The Manager suite takes 32.930 seconds within the four-process live batch,
+which takes 59 seconds. All 470 live assertions, 45 CI checks, 48 hygiene
+checks and 63 shim checks pass; all 355 pure definitions retain semantic
+coverage. Builds, ABI, formatting, fuzz, signal and sentinel checks pass.
+Non-record source bytes, modes and inventory agree before and after.
+The required program and proof/test builds separately take 0.705 and 0.677
+seconds and pass. The full verifier includes a 12-second rebuild of the
+changed test executable, so its total is not a controlled warm comparison.
+Evidence: `assembled-full/receipt.json`, `commands.json` and raw logs.
+Commit this verified checkpoint, then check the exact published SHA on CI.
