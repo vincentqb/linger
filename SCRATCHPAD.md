@@ -15639,3 +15639,44 @@ The reviewer inspects retained logs and source hashes; no extra execution
 or cross-platform IO guarantee is claimed. Review is retained in
 `reviews/final-review.md`. Commit the verified merge with the native hook
 enabled, then observe the exact published SHA on hosted CI.
+
+## Step 2 notes — 2026-10-02
+
+Publish the verified merge as `7389cd5`; origin/main matches exactly.
+The native hook passes with no findings. Hosted run 37070731885 starts for
+that SHA, passes hygiene and enters full verification. Keep the spec active
+until its actual outcome is recorded.
+
+The worker commit is an ancestor of published main and has zero unique
+commits. Recompare all 186 recovery entries, including file modes and bytes,
+and verify that its Manager source matches published main before removal.
+Retire only `work/display-manager-log` and its worktree; main is the sole
+remaining worktree, and both review/implementation agents are closed. The
+full worker evidence was copied separately before cleanup. Evidence:
+`worker-recovery/retirement.json`, `state.json`, `manifest.json`, the fresh
+source snapshot and `manager-log-evidence/`.
+
+Hosted run 37070731885 succeeds for exact source SHA
+`7389cd56b6d679f6b8297910ae3b43de6f2815bc`. Hygiene takes eight seconds;
+the complete Linux job takes 284 seconds, including setup, caches and runner
+overhead. Its full verifier takes 193 seconds: build 66, generated ABI one,
+source gates three, formatting/semantic lint 41, semantic coverage five,
+verifier regression checks eight, fuzz zero, shim seven and live suites 62.
+The measured phase seconds need not sum exactly to the step duration.
+All fifteen live suites pass. No macOS run was selected for this push.
+The exact run metadata, full log and timing report are retained under
+`hosted-37070731885/` in the evidence directory above.
+
+The required closure builds pass again in 0.663 and 0.665 seconds; logs and
+receipt are under `closure/`. Close the spec with actual local, hosted,
+negative-control and review results, and archive it without changing any
+program, proof, test, recipe or verifier source. Restore the no-live-spec
+pointer. The closure commit's hosted outcome is pending at archival; its
+verification identity is checked against the already verified source before
+publication.
+
+After staging closure, all 144 non-record entries, modes and content hashes
+still match the assembled verifier. The verification-input key is unchanged.
+The index contains only the worklog, AGENTS pointer and spec archival;
+whitespace and index/worktree consistency checks pass. Evidence:
+`closure/receipt.json` and `closure/source-after.json`.

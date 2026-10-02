@@ -2,11 +2,13 @@
 
 ## Status
 
-Active, 2026-10-02. Starting from clean, published `1fe50a5`.
-Step 1 implementation, negative controls, assembled verification and both
-independent review passes are complete. The corrected title budget and
-isolated Manager log repair have no remaining review blockers. Publication
-is in progress.
+Closed, 2026-10-02. Started from clean, published `1fe50a5`.
+Step 1 is published as `7389cd5`; implementation, negative controls, assembled
+verification and both independent review passes are complete, with no remaining
+review blockers. Hosted run 37070731885 passed for that exact source commit.
+The worker merge is published and its branch/worktree retired. Step 2 closes
+the work record after both required builds pass again. The records-only
+closure commit's hosted check is pending at archival.
 
 ## Intent and constraints
 
@@ -58,7 +60,7 @@ runner rejects 110/111 lines despite a successful suite verdict. Repair this
 in an isolated worktree without relaxing the runner, assertion inventory,
 concurrency, launch serialization, observation windows or child joining.
 
-## Verification so far
+## Verification
 
 The encoded regression fails before the budget fix. The repaired composer
 reserves the session and attention suffix, then clips application text to
@@ -74,8 +76,8 @@ The Manager worker joins all assertion writers and flushes stdout before
 printing collected timing/exception diagnostics. Actual Runner checks pass
 111/111 for Manager and 45/45 for CI. Deterministic controls reject the original
 scheduler, a missing final flush and an early flush; a throwing group retains
-its complete assertion, diagnostic and failure verdict. The complete
-assembled verifier remains required; focused results do not replace it.
+its complete assertion, diagnostic and failure verdict. These focused
+results preceded the complete assembled verifier below.
 
 The assembled foreground verifier passes in 106.132 seconds, including all
 474 live assertions, 45 CI, 48 hygiene and 63 shim checks. All 356 explicit
@@ -91,3 +93,27 @@ negative-control evidence, including the actual encoded-suffix theorem.
 It confirms the fish hook boundaries and unchanged Manager assertions,
 waits and concurrency. Review is source/evidence inspection, not an
 additional execution; observed Manager stream behavior is Linux-specific.
+
+## Completion record
+
+The actual encoded title preserves the attention suffix whenever the sanitized
+session and suffix fit the shared budget; application content uses only the
+remaining capacity. Empty optional parts add no separator. The runtime gate
+ties the call to this policy, its argument order and the shared encoder budget.
+The native fish checks observe attention after shell-owned context, unchanged
+title/left-prompt hooks and preserved command status. Status counts and glyphs
+still come from the existing Lean policy.
+
+[Hosted run 37070731885](https://github.com/vincentqb/linger/actions/runs/37070731885)
+passed hygiene and full Linux verification for
+`7389cd56b6d679f6b8297910ae3b43de6f2815bc`. Full verification took 193 seconds:
+build 66, formatting/semantic lint 41 and the live batch 62. The complete
+Linux job took 284 seconds, including setup, caches and runner overhead.
+macOS was not selected for this push; no new cross-platform result is claimed.
+Raw run metadata, log and phase report are retained in `hosted-37070731885/`
+under the evidence directory above.
+
+Required closure builds pass in 0.663 and 0.665 seconds. The worker commit is
+an ancestor of published main, has no unique commits and has a verified
+186-entry recovery copy plus separately copied test evidence. Main is the
+only remaining worktree; all workers and reviewers are closed.

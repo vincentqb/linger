@@ -15,9 +15,10 @@ worklog), `specs/archive/` (closed build records), the comments in
 
 ## Where things stand — read this first after any compaction
 
-1. `specs/display-convention.md` is active: standardize
-   `session · application title · attention` in attached titles and the fish
-   prompt recipe, with Lean contracts and executable regression checks.
+1. No spec is in flight. The last one closed on 2026-10-02
+   (`specs/archive/display-convention.md`: shared title/prompt convention,
+   attention preserved through title clipping, and reliable suite diagnostics).
+   The assembled local verifier and hosted Linux verification passed.
    New work opens a new `specs/<slug>.md`, names itself here, and keeps the
    live count at one; every behavioral fix starts with a failing check and
    every deletion survives the full verifier stack.
