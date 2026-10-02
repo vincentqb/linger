@@ -15034,3 +15034,41 @@ All four worker trees also have verified fresh recovery copies, source
 manifests and binary diffs under this task directory; they remain in place
 until the accepted changes are published. Recovery receipt:
 `evidence/worker-recovery.json`.
+
+## Step 3 notes — 2026-10-02
+
+Publication and cleanup closeout for the four-area refinement audit:
+`85eab5ff492045576ecf79d14d9ab13c2910459f` is committed and pushed. Required
+program and proof/test builds, all-file hooks and normal commit hooks pass.
+Hosted run 36935165644 passes on that exact commit: the Linux job takes
+522 seconds, its full verifier 440.412 seconds, compilation 225.592,
+source gates plus layout 123.766, and live suites 66.240. All fifteen live
+suites pass their declared assertions. The rejected runner fixtures in the
+CI log are intentional negative checks, not failed suites.
+
+These are source-changing hosted measurements, not a comparison against
+the preceding warm build. Compilation and layout are the next measured
+bottlenecks. Receipts and full logs remain under
+`/tmp/linger-ci-refinement-20261001-YqqzCT/evidence/hosted-36935165644/`;
+pre-commit receipts are in `evidence/implementation-precommit/`.
+
+The retirement audit verifies each worker's 177 non-cache files against
+its fresh recovery copy, preserving bytes, modes and symlink targets.
+Accepted changes are published and no branch has a unique commit.
+All four worker branches and worktrees are removed; implementation workers
+and independent reviewers are closed. Recovery copies, manifests and
+patches remain under the task directory, and the retirement receipt is
+`evidence/retirement-audit.json`. A fresh git inspection on 2026-10-02
+confirms only main remains and matches origin/main.
+
+## Step 4 notes — 2026-10-02
+
+Archive the completed refinement spec and update the active-spec pointer.
+Earlier automatic approval-service timeouts delayed only this record
+closeout; they did not change the published implementation. The closure
+checkpoint verifies the source inventory against the successful assembled
+run and reruns required builds and all-file hooks before committing.
+
+Closure checks pass: program build 0.603 seconds, proof/test build 0.600,
+all-file hooks 11.654, and whitespace validation. The source manifest agrees
+before and after. Receipt: `evidence/closure-precommit-20261002/receipt.json`.

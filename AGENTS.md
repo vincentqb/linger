@@ -15,12 +15,11 @@ worklog), `specs/archive/` (closed build records), the comments in
 
 ## Where things stand — read this first after any compaction
 
-1. One spec is in flight: `specs/ci-refinement.md` (2026-10-01), a
-   four-agent audit of test scheduling and teardown, coverage and proof cost,
-   repainting, and CI dependency setup. The preceding latency audit closed
-   in `specs/archive/ci-latency.md`; its final published checkpoint passed
-   hosted Linux CI. Timings distinguish compilation, cache restoration and
-   live tests.
+1. No spec is in flight. The four-agent refinement audit closed on
+   2026-10-02 in `specs/archive/ci-refinement.md`; its published code
+   checkpoint passed hosted Linux CI, and its worker branches and worktrees
+   are retired with recovery copies preserved. Compilation and formatting
+   remain the dominant costs of a source-changing CI run.
    New work opens a new `specs/<slug>.md`, names itself here, and keeps the
    live count at one; every behavioral fix starts with a failing check and
    every deletion survives the full verifier stack.

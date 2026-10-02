@@ -2,8 +2,10 @@
 
 ## Status
 
-Active, 2026-10-01. Steps 1 and 2 complete; Step 3's full foreground
-verification passes, with commit checks and publication pending.
+Complete, 2026-10-02. All four steps are complete. Code checkpoint
+`85eab5f` is published and passes hosted Linux verification. All workers
+and reviewers are closed; their branches and worktrees are retired after
+verified recovery copies preserve their work.
 Baseline: `b837d56`, clean and published. The preceding
 audit's final hosted run passed: Linux job 173 seconds, full verifier 99.198,
 live suites 65.807, cached build 2.252. These are observed warm timings, not
@@ -93,5 +95,20 @@ sources: the build stage takes 82.392 seconds and the live batch plus final
 checks 66.593 seconds. All 470 live assertions, 29 CI assertions, 63 shim
 checks, both semantic censuses, generated C ABI, formatting and fuzz pass.
 This source-changing local run includes recompilation and is not comparable
-to the preceding hosted warm-cache total as a speedup. Commit checks,
-publication, hosted checks and worktree retirement remain pending.
+to the preceding hosted warm-cache total as a speedup.
+
+Required program and proof/test builds, all-file hooks and normal commit
+hooks pass before publication. Hosted run
+[36935165644](https://github.com/vincentqb/linger/actions/runs/36935165644)
+passes for the exact published commit. Its Linux job takes 522 seconds;
+the full verifier takes 440.412 seconds, including 225.592 for compilation,
+123.766 for source gates and layout, and 66.240 for live suites. These
+measurements identify remaining compilation and formatting costs; they do
+not support another whole-CI speedup claim.
+
+The retirement audit verifies all 177 non-cache files in each worker's
+fresh recovery copy, including modes and symlink targets, and finds zero
+unique commits before removing the four worker branches and worktrees.
+Only the clean main worktree remains. Publication, hosted receipts and
+retirement evidence are recorded in SCRATCHPAD.md. Closing records does
+not alter any source checked by the assembled verifier.
