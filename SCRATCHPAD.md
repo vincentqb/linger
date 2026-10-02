@@ -15273,3 +15273,55 @@ All-file hooks pass in 10.782 seconds; whitespace checking passes. Before and
 after, every non-record source matches the assembled verifier's bytes, modes
 and inventory. Receipt: `evidence/vt-precommit/receipt.json`. The normal commit
 hooks remain enabled.
+
+Commit `74bb34e5593bdfc610355753f69a2377a7461082` publishes Step 3 to
+main with normal hooks passing. Hosted run 36953792910 is queued for
+that exact commit.
+
+## Step 4 notes — 2026-10-02
+
+Before cleanup, copy both worker source trees into fresh recovery directories
+under the task directory and verify bytes, file modes, links and the complete
+source inventory. Preserve their tracked patches, untracked files and status;
+only reproducible build/formatter caches and worktree Git pointers are
+excluded. The retirement audit checks clean main against the actual remote,
+that neither worker branch has unique commits, and that all changed non-record
+worker sources match the published main tree. Seeded worker notes remain in
+their recovery copies rather than replacing the coordinator's records.
+Receipts: `evidence/worker-recovery.json` and
+`evidence/worker-retirement-audit.json`.
+
+Remove only the two audited worktrees and delete their already-contained
+branches. The sole remaining worktree is main at published `74bb34e`;
+the independent agents are closed. Recovery copies and experiment evidence
+remain available under `/tmp/linger-build-format-20261002-iLuMec/`.
+Receipt: `evidence/worker-retirement.json`. Hosted verification remains
+pending before the final archive record.
+
+Hosted run 36953792910 succeeds for exact source commit
+`74bb34e5593bdfc610355753f69a2377a7461082`. The Linux job takes 414
+seconds, including 347.997 for the verifier: 193.457 building, 4.977 checking
+the generated ABI, 58.935 source gates plus layout, 10.514 semantic coverage,
+7.403 CI controls, 6.338 shim smoke and 66.370 live suites. All fifteen live
+suites pass; the failed-looking probe results are the expected CI negative
+controls. Toolchain-cache restoration takes 22 seconds and hooks 18.
+Receipt: `evidence/hosted-36953792910/report.json`.
+
+The source-changing hosted total is not a controlled before/after experiment.
+The recorded local interleaved trials establish cold formatter, renderer proof
+and renderer fixture reductions of 35.8%, 28.4% and 40.6%; the earlier VT
+module rebuild trial, before final layout, measures 18.2%. Broad dependency
+rebuilds and the roughly 66-second live batch remain real costs. Do not turn
+these measurements into a sub-five-minute guarantee for every push.
+
+Close the active spec with those limitations and verified results, then move
+it to `specs/archive/build-format-latency.md` and restore the no-live-spec
+entry in AGENTS.md. Closure changes only records. Compare every non-record
+source against the assembled full-verifier manifest, run both required
+builds and all-file hooks, and preserve normal commit hooks.
+
+Closure checks pass: the program build takes 0.597 seconds, the proof/test
+build 0.659 and all-file hooks 5.092. Whitespace checking passes, and every
+non-record source matches the assembled verifier before and after.
+Receipt: `evidence/closure-precommit/receipt.json`. The archived completion
+record is now immutable; commit and push this verified records-only closure.

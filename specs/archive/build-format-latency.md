@@ -2,10 +2,16 @@
 
 ## Status
 
-Active, 2026-10-02. Baseline `a8c40c0`, clean and published before this
-spec opened. The preceding source-changing hosted run spent 225.592 seconds
-building and 123.766 in source gates plus layout. Its live suites took
-66.240 seconds. Measure the causes before attributing these costs.
+Closed, 2026-10-02. All four steps are complete. The measured renderer
+and VT changes are published in `9294e98` and `74bb34e`; both checkpoints
+pass the full local verifier and hosted Linux CI. Both worker worktrees
+and branches are retired after audited recovery copies.
+
+Baseline `a8c40c0` was clean and published before this spec opened. The
+preceding source-changing hosted run spent 225.592 seconds building and
+123.766 in source gates plus layout. Its live suites took 66.240 seconds.
+These observations motivated measurement; they are not controlled baseline
+comparisons for the changes below.
 
 Step 1 is measured. Step 2 has two independently reviewed renderer changes:
 explicit list rewrites preserve the complete original proof contract, and
@@ -25,7 +31,9 @@ The final bounded review accepts the compiled layout contract without blockers.
 The assembled foreground verifier passes in 173.412 seconds, with all fifteen
 live suites matching their exact counts and unchanged source manifests.
 Required checkpoint builds and all-file hooks pass with the same verified
-source inventory. Publication and hosted CI follow.
+source inventory. Commit `74bb34e` publishes the VT factorization; hosted
+run 36953792910 succeeds. Both worker worktrees and branches are retired
+after publication, with verified recovery copies and no unique commits lost.
 
 ## Intent and constraints
 
@@ -98,3 +106,59 @@ controlled measurements.
 4. **Close.** Preserve unique worker evidence, retire merged branches and
    worktrees, archive this spec, and update AGENTS.md. Exit: clean main
    matches the remote and the completion record states remaining costs.
+
+## Completion record
+
+The formatter's large-file cost is parsing, rendering and exact validation;
+its compiled skeleton already skips most proof bodies. Factoring VT along
+State and independent Parser/Renderable dependencies reduces that cost and
+allows independent module rebuilds. Explicit list rewrites avoid expensive
+definitional reduction in the renderer proof. Consolidating large renderer
+fixtures avoids repeated evaluation while retaining every distinct assertion.
+
+Matched local baseline/candidate/candidate/baseline trials use the same
+compiler, formatter, host and fixed source inputs:
+
+| Operation | Baseline mean | Final mean | Reduction |
+| --- | ---: | ---: | ---: |
+| Cold formatter result cache, warm imports and OS cache | 30.574 s | 19.626 s | 35.8% |
+| Renderer grid proof module | 19.339 s | 13.853 s | 28.4% |
+| Renderer unit-test module | 17.055 s | 10.132 s | 40.6% |
+
+The separate VT rebuild trial improves from 30.234 to 24.723 seconds
+(18.2%); it precedes the final umbrella layout patch. It is not a complete
+clean-build measurement. The warm formatter baseline is 1.172 seconds.
+Increasing formatter concurrency regresses the measured cold check and is
+rejected. No formatter pin or dependency change is justified by the evidence.
+
+Independent review and compiled declaration comparison preserve all 1,373
+original logical VT declarations, including every one of the 1,148 theorem
+statements, their universe parameters and individual axiom sets. Recorded
+private-name mappings account for module ownership. The final layout patch
+also preserves all 1,650 split declaration instances exactly, excluding only
+source line positions. The import-boundary gate now checks every VT child;
+nine controls exercise its accepted imports and deliberately broken boundary.
+Two real renderer mutations are caught by the consolidated assertions.
+
+The assembled foreground verifier passes with unchanged source bytes and
+modes, generated C ABI and standalone checks, semantic coverage, formatter
+validation, CI negative controls, shim smoke, fuzz and all fifteen live suites
+with their exact counts. Required checkpoint builds and hooks pass.
+Hosted run [36953792910](https://github.com/vincentqb/linger/actions/runs/36953792910)
+passes for `74bb34e`, following the successful renderer run
+[36952028070](https://github.com/vincentqb/linger/actions/runs/36952028070).
+
+Remaining cost is explicit: the broad VT refactor's hosted Linux job takes
+414 seconds, including 347.997 for the verifier: 193.457 building,
+58.935 source gates plus layout and 66.370 live suites. Toolchain restoration
+takes 22 seconds and final hooks 18. This run rebuilds changed proof modules
+and their consumers; it is not comparable to the earlier warm CI run or a
+controlled before/after total. The audit establishes the component speedups
+above, not a sub-five-minute bound for all source changes.
+
+Recovery copies preserve worker sources, patches, untracked files, modes and
+links. Both retired branches have no unique commits; worker code matches the
+published tree. All agents are closed and main is the sole worktree. Detailed
+receipts and both bounded independent reviews remain under
+`/tmp/linger-build-format-20261002-iLuMec/`. Closure changes only these records;
+its required builds and hooks are recorded in the append-only worklog.
