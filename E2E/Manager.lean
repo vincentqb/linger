@@ -2231,6 +2231,7 @@ def run : IO UInt32 := do
       ("real", realCheck), ("program", programChecks)]
   let mut active : List (Task (Except IO.Error (String × Nat × Nat))) := []
   let mut failures := 0
+  let mut notes : Array String := #[]
   while !pending.isEmpty || !active.isEmpty do
     while active.length < 2 && !pending.isEmpty do
       match pending with
@@ -2252,10 +2253,15 @@ def run : IO UInt32 := do
       match result with
       | .error err =>
         failures := failures + 1
-        IO.eprintln s!"note: manager check group: {err}"
+        notes := notes.push s!"note: manager check group: {err}"
       | .ok (name, count, elapsed) =>
         failures := failures + count
-        IO.eprintln s!"manager {name}: {elapsed} ms"
+        notes := notes.push s!"manager {name}: {elapsed} ms"
+  -- Runner merges stderr into stdout. Join every writer and flush buffered
+  -- assertions before diagnostics, or a timing can split a PASS line.
+  (← IO.getStdout).flush
+  for note in notes do
+    IO.eprintln note
   verdict e failures
 
 end E2E.Manager
