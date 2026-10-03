@@ -15824,3 +15824,39 @@ and both new race assertions. The review preserves the cooperative cleanup limit
 and claims neither hosted nor macOS verification. Its final acceptance is in
 `reviews/browser-read-only-20261003.md` under the evidence root above. Commit the
 verified source with the native hook enabled, then observe the exact pushed SHA.
+
+## Step 2 notes — 2026-10-03
+
+Publish implementation commit `301bb499914428bf61f9cdaa730eecc2e0f9307d`
+to main without rewriting history. The native commit hook passes its hygiene,
+source gates and installed formatter checks. Remote main resolves to that exact
+SHA; hosted run 37142087854 starts for it. Evidence:
+`/tmp/linger-tmux-evidence/source-publication.json`.
+
+Before retirement, recompare every tracked/nonignored source file, mode and
+symlink in all four worker trees with its fresh recovery copy. Each branch has
+zero unique commits; each owned patch matches the published implementation,
+apart from the already reviewed Interop fixture literal rename. Verify the
+published blob as well as the current main file. Remove only the four audited
+worktrees and their `work/tmux-*` branches. Main is the only remaining worktree
+and local branch; all agents are closed. Source and external test evidence
+remain preserved under `/tmp/linger-tmux-evidence/`; `retirement.json` records
+each exact removal and the final repository state. Hosted verification remains
+in progress at this point.
+
+Hosted run 37142087854 passes for exact source commit
+`301bb499914428bf61f9cdaa730eecc2e0f9307d`. Hygiene takes eight seconds; the
+Linux job takes 331 seconds including setup, caches and runner overhead. The
+full verifier takes 280 seconds: build 97, generated ABI one, source gates
+three, formatting/semantic lint 40, semantic coverage six, verifier regression
+checks nine, fuzz zero, shim six and the live batch 118. All fifteen live
+suites pass. Preserve actual run metadata, the full log and parsed phase/job
+timings in `hosted-37142087854/` under the evidence root above. macOS is not
+selected for this push.
+
+The required closure builds pass in 0.701 and 0.711 seconds. All 144 non-record
+source entries, modes and hashes still match the complete assembled-verifier
+manifest. Close and archive the live spec with the actual local/hosted results,
+review findings, negative controls and cleanup evidence; restore the no-live-spec
+pointer without changing any implementation, proof, test, recipe or verifier
+source. The closure commit's hosted result remains pending at archival.

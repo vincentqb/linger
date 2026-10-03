@@ -2,9 +2,13 @@
 
 ## Status
 
-Active, 2026-10-03. Implementation and full assembled Linux verification pass.
-Independent final review accepts the candidate. Publication and worktree cleanup
-remain pending. One live spec.
+Closed, 2026-10-03. Started from clean, published `81d4776`.
+Step 1 is published as `301bb49`; implementation, negative controls,
+independent final review and full local Linux verification pass. Hosted run
+37142087854 passes for that exact source commit. All four worker branches and
+worktrees are retired after preservation and integration checks. Step 2 closes
+the work record after both required builds pass again. The records-only closure
+commit's hosted check is pending at archival.
 
 ## Intent
 
@@ -108,3 +112,37 @@ actual isolated and assembled logs, negative controls, and current source hashes
 Its report is `/tmp/linger-tmux-evidence/reviews/browser-read-only-20261003.md`.
 All four worker source trees and external test evidence are preserved; their
 owned changes are integrated and their branches have no unique commits.
+
+## Completion record
+
+`linger tmux ls [SAVE]` and `linger tmux select [SAVE]` share one ordered
+catalog and display the actual source path/time. Pure proofs cover the complete
+identity/directory projection, shared status, printable descriptions and exact
+accepted records. The shared picker preserves displayed selection across refresh
+and excludes foreign Create rows. IO gates connect those policies to the real
+list, refresh and attach paths; live checks cover discovery, cancellation and
+the two corrected races. Existing native `ls` and `select` retain their behavior.
+
+Client read errors now use the established close transition. Its whole-state
+frame permits only roster removal and dirty-state change, with no effect or one
+checkpoint; the live unread-reply regression requires the same shell to respond
+after disconnection. No C or dependency was added.
+
+[Hosted run 37142087854](https://github.com/vincentqb/linger/actions/runs/37142087854)
+passes hygiene and the complete Linux verifier for
+`301bb499914428bf61f9cdaa730eecc2e0f9307d`. Full verification takes 280 seconds:
+build 97, formatting/semantic lint 40 and the live batch 118. All fifteen live
+suites pass. The Linux job takes 331 seconds including setup, cache and runner
+overhead; hygiene takes eight seconds. Raw metadata, full log and phase timings
+are retained in `hosted-37142087854/` under the evidence root above. macOS was
+not selected for this push; no new macOS result is claimed.
+
+Both closure builds pass in 0.701 and 0.711 seconds. All 144 non-record source
+entries, modes and hashes still match the assembled verifier, and the
+verification-input key is unchanged. Each retired worktree has a verified
+187-entry source recovery; the Manager and Interop workers' external test
+evidence is copied and verified separately. Published main contains every owned
+patch, including the reviewed fixture literal refinement. Main is the only
+remaining worktree and local branch; all agents are closed. Receipts:
+`closure/receipt.json`, `worker-evidence-preservation.json` and `retirement.json`
+under `/tmp/linger-tmux-evidence/`.

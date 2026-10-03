@@ -15,9 +15,11 @@ worklog), `specs/archive/` (closed build records), the comments in
 
 ## Where things stand — read this first after any compaction
 
-1. `specs/tmux-browser.md` is in flight: a shared saved-tmux catalog for
-   `linger tmux ls` and `linger tmux select`, with explicit save discovery.
-   The preceding display-convention round passed local and hosted Linux verification.
+1. No spec is in flight. The last one closed on 2026-10-03
+   (`specs/archive/tmux-browser.md`: shared saved-tmux listing and selection,
+   verified discovery, and disconnect/race fixes). Source commit `301bb49`
+   passed local and hosted Linux verification; all worker trees are retired.
+   The records-only closure commit's hosted check is pending at archival.
    New work opens a new `specs/<slug>.md`, names itself here, and keeps the
    live count at one; every behavioral fix starts with a failing check and
    every deletion survives the full verifier stack.
