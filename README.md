@@ -138,6 +138,8 @@ Ctrl-\                # detach — session keeps running
 linger select          # create or attach; return after detach
 linger ls              # overview: names, pids, labels; then exit
 linger status          # compact local attention counts; empty when quiet
+linger tmux ls         # inspect the latest saved tmux panes
+linger tmux select     # choose a saved pane to open in linger
 ```
 
 | command | |
@@ -151,8 +153,10 @@ linger status          # compact local attention counts; empty when quiet
 | `send <name> <text>` | send raw input to its pty (`send <name> -`: stdin, byte-exact) |
 | `ls [-r [h,..]]` | overview; `-r` adds remote hosts; `--porcelain` is machine-readable |
 | `status` | local unread, failed and unknown counts for shell prompts; omits zero counts |
-| `import [SAVE]` | create shells in directories from a tmux-resurrect save; never replay commands |
-| `export SAVE` | write local session names and directories to a new tmux-resurrect save file |
+| `tmux ls [SAVE]` | list saved panes, source path and save time; starts no sessions |
+| `tmux select [SAVE]` | choose a saved pane, create its shell if needed, and attach |
+| `tmux import [SAVE]` | import every saved pane, skipping existing identities; never replay commands |
+| `tmux export SAVE` | write local session names and directories to a new tmux-resurrect save file |
 | `info <name>` | one session's records: size, cursor, `outseq`, labels… |
 | `capture <name>` | the current screen as text, one line per row (marks it seen) |
 | `resize <name> <cols> <rows>` | size a detached session (refused while a client is attached) |
@@ -162,6 +166,11 @@ linger status          # compact local attention counts; empty when quiet
 | `get` `set` `unset` `clear <name>` | labels (`k=v`) |
 
 Imports use saved identities and directories without retaining foreign metadata.
+`linger tmux` explains the saved-session commands. Listing and selection use
+the same saved pane order, badges and descriptions; selection adds fuzzy
+filtering. They show the actual save path and time, so an older snapshot is
+visible. Defaults consult tmux's effective resurrect directory, then the
+conventional `last` file; pass a filename to choose another snapshot.
 Exports preserve current Linger names and working directories through tmux;
 screens, scrollback and labels stay in native checkpoints. See the
 [interchange details](recipes/README.md#tmux-resurrect-interchange) for the
@@ -233,7 +242,7 @@ Ghostty, kitty, WezTerm and other terminals can run `linger select` at startup.
 examples, a fish prompt, selection keys and save-import instructions. Selection offers
 `Create main` when there are no sessions; type a name to create a different one.
 
-Selection and `linger import [SAVE]` are Lean code and need no external picker
+Selection and `linger tmux import [SAVE]` are Lean code and need no external picker
 or shell functions. Their policies and executors stay outside the session and
 VT libraries. `attach name@host` runs ssh; any carrier that can run a remote
 command with a tty works.

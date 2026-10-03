@@ -15680,3 +15680,147 @@ still match the assembled verifier. The verification-input key is unchanged.
 The index contains only the worklog, AGENTS pointer and spec archival;
 whitespace and index/worktree consistency checks pass. Evidence:
 `closure/receipt.json` and `closure/source-after.json`.
+
+## Step 1 notes — 2026-10-03
+
+Open `specs/tmux-browser.md` after the accepted saved-session command design.
+Keep native `ls` and `select` separate; group saved-tmux browsing, selection,
+bulk import and export under `linger tmux`. The pre-change executable rejects
+`tmux ls` with status 2; retain that baseline in
+`/tmp/linger-tmux-evidence/baseline.json`. Routing, the shared selector,
+interchange fixtures and terminal selection checks have separate worktrees.
+The coordinator owns catalog/discovery, documentation and source gates.
+
+The catalog preserves parsed pane order, canonical identities, source lines and
+exact directories. Window titles provide display context only. Human descriptions
+use the existing printable diagnostic projection and shared resumable status;
+machine rows JSON-frame the action directory so cleaning display text cannot
+change where a selected shell starts. Selection returns the displayed snapshot
+from the shared picker before installing any completed refresh, validates its
+identity and directory, and passes only that pane to the existing import executor.
+Native selection retains its labelled Create row; saved selection disables it.
+
+Default discovery asks an existing tmux server for its effective resurrect
+directory in a bounded owned subprocess. Explicit files bypass that query.
+Otherwise use the legacy `last` file when it exists, then the XDG `last` file.
+The selector resolves that path once for a visit, and each refreshed catalog
+shows the actual resolved file and modification time. No configuration file is
+evaluated, no historical saves are merged, and no saved command is executed.
+Both bulk and selected creation still preflight before starting any session.
+
+The catalog proofs quantify over the full ordered identity/cwd projection,
+source lines, shared status and printable descriptions. Successful selection
+preserves its exact transported record and implies the existing name/NUL guards.
+The targeted proof and example builds pass. Deliberately replace the catalog's
+directory with its session name: `catalogRows_common` and both catalog examples
+fail. Restore the original bytes and the same build passes. Evidence:
+`/tmp/linger-tmux-evidence/catalog-mutation-uqSp6V/receipt.json` and its logs.
+
+The updated source gates pass before the picker integration. Deliberately apply
+display cleanup to the selected action directory: the selection call-site gate
+fails. Restore the exact source and it passes again. Evidence:
+`/tmp/linger-tmux-evidence/selection-gate-KmrXJg/receipt.json` and its logs.
+Full assembled verification and independent review remain pending.
+
+The terminal fixture exposes a pre-existing session-isolation fault. A real
+peer sends `.info`, waits until the reply is readable, then closes without
+reading it. On the integrated Linux binary the session shell dies and the
+next info request reports no session, in 0.483 seconds. The isolated receipt
+is `/tmp/linger-tmux-selection-evidence/reset-peer-integrated.log` (exit 1).
+Client `read` can raise on a reset; the exception escapes `pollRound` into
+the daemon's finalizer, which terminates the shell. Extend this step with
+a Lean-only client read-error boundary using the existing `.closed` path,
+a whole-state close frame, its IO call-site gate and a live regression.
+The PTY path and C shim retain their existing error semantics.
+
+Add the unread-reply check to `E2E.Robust` before changing the daemon:
+the original binary fails that new assertion while the other 18 pass.
+After routing client read exceptions through the existing EOF close path,
+all 19 pass in 17.818 seconds. The test requires a readable response before
+closing the peer, then verifies that the original shell PID executes a fresh
+output marker; an echoed input cannot satisfy it. Logs are
+`disconnect-before-fix.log` and `disconnect-after-fix-suite.log` under
+`/tmp/linger-tmux-evidence/`.
+
+`step_closed_frame` strengthens the old screen/labels contract to the entire
+state, allowing only removal of the named client and a dirty-flag change.
+Its complete effect list is empty or one checkpoint. Derive the existing
+close projections from this frame without weakening their statements.
+Removing the runtime catch fails the new IO call-site gate. Overwriting
+the pure close result's exit state compiles `Linger.Core.Session` but fails
+both branches of the new frame proof (and the existing attached-checkpoint
+contract). Exact source restoration passes both checks. Evidence:
+`disconnect-controls-ORjzTm/receipt.json` and its logs.
+
+Independent review identifies two additional browser races: the final native
+attach can recreate a vanished session in its caller directory, and resolving
+a relative `last` symlink once prevents later catalog refreshes from following
+new saves. Add focused failing fixtures before correcting either call site.
+The final attach must receive the displayed cwd; save discovery must freeze the
+absolute lookup spelling and leave target resolution to each catalog read.
+
+Correct the new discovery documentation's overly broad bounded-subprocess
+wording. The polling deadline is one second; `Command.stop` still terminates
+the owned group before reaping and joining both readers. The explicit
+2026-09-27 and 2026-09-29 records already exclude a bounded-reaping claim for
+a helper that ignores SIGTERM. The pinned Lean process API still offers only
+that termination operation. Preserve that contract and the existing OS boundary;
+no new C wrapper or external kill executable is justified by this browser work.
+An explicit save skips the query. This is a documentation correction, not a
+new hard cancellation guarantee or a newly executed noncooperative-helper test.
+
+Both browser race assertions fail on the previous binary while all earlier
+120 Manager checks pass: exit 1, 47.719 seconds. After passing the displayed
+directory to final attach and preserving the absolute lookup spelling for
+each catalog refresh, the same 122 checks pass in 47.362 seconds. The fixture
+requires a different live PID after disappearance, the displayed cwd in both
+attach and the responding shell, and restored terminal state. Repointing a
+relative `last` changes both the one-shot catalog and the open picker without
+creating native sessions. Frozen source and before/after binary hashes are in
+`/tmp/linger-tmux-selection-evidence/final-manager122-receipt.json`; the red
+receipt and original 120-check result remain alongside it.
+
+Integrate that frozen Manager source exactly and raise its sole live inventory
+from 111 to 122. In a fresh source copy, remove the final attach cwd and then
+restore the old physical resolution in `savePath`: each mutation fails its
+specific IO gate. Baseline and exact-restored gates pass; main stays unchanged.
+Evidence: `/tmp/linger-tmux-evidence/browser-race-controls-22Nrko/receipt.json`.
+The two fixes add no helper abstraction or OS surface.
+
+The assembled foreground verifier passes in 141.548 seconds on 2026-10-03.
+All fifteen live suites pass all 514 assertions, including Manager 122,
+Interop 61, Recipes 58 and Robust 19. Its program/proof/test build, generated
+C ABI, source gates, standalone layout and semantic lint, semantic coverage,
+verifier regression checks, fuzz and shim checks all pass. Every non-record
+source entry, mode and hash is unchanged during the run. Evidence:
+`/tmp/linger-tmux-evidence/final-full-W9pOfR/receipt.json`, `assertions.json`,
+`full.log` and the retained per-suite outputs. This is local Linux verification;
+no hosted or macOS result is claimed yet.
+
+Recompare the three completed workers' fresh recovery copies against every
+tracked/nonignored file and mode. All match their preserved sources, all
+branches have zero unique commits, and owned patches match main except the
+reviewed Interop fixture rename from `unsafe` to `control` in its two matching
+session fields. That exact rename is the only integration difference and
+satisfies the prose-scanning gate. Preserve the final Manager handoff similarly
+before retiring any worktree. Evidence: `recovery-prepublication-audit.json`
+under the same evidence root. Independent final acceptance and publication
+remain pending.
+
+The final Manager worker is frozen and closed. Its fresh source recovery
+contains all 187 tracked/nonignored files, with modes and hashes checked
+against both the worktree and preserved copy; its owned Manager file matches
+main exactly. `recovery-ready-all.json` now accounts for all four workers.
+Copy the complete external Manager and Interop evidence into fresh directories
+and verify every file's bytes and mode; `worker-evidence-preservation.json`
+records those copies. Worktree removal still waits for source publication.
+
+The independent reviewer accepts the final candidate with no remaining material
+finding. They read the actual red/green logs and negative controls, compare all
+fifteen live outputs against the assertion inventory, and independently hash
+every current non-record source entry against the assembled-verifier manifest.
+The isolated and assembled Manager runs both retain the foreground Ctrl-C check
+and both new race assertions. The review preserves the cooperative cleanup limit
+and claims neither hosted nor macOS verification. Its final acceptance is in
+`reviews/browser-read-only-20261003.md` under the evidence root above. Commit the
+verified source with the native hook enabled, then observe the exact pushed SHA.

@@ -16,27 +16,37 @@ theorem route_selector_iff (args : List String) :
   unfold Tools.Entry.route
   split <;> simp_all
 
-theorem route_session_argv (command : String) (rest : List String) (hImport : command ≠ "import")
-    (hExport : command ≠ "export") (hSelect : command ≠ "select" ∨ rest ≠ []) :
+theorem route_session_argv (command : String) (rest : List String) (hTmux : command ≠ "tmux")
+    (hSelect : command ≠ "select" ∨ rest ≠ []) :
     Tools.Entry.route (command :: rest) = .session (command :: rest) := by
   cases rest <;> simp_all [Tools.Entry.route]
 
 theorem route_select_operands (rest : List String) (h : rest ≠ []) :
     Tools.Entry.route ("select" :: rest) = .session ("select" :: rest) :=
-  route_session_argv "select" rest (by decide) (by decide) (.inr h)
+  route_session_argv "select" rest (by decide) (.inr h)
 
 theorem route_daemon_argv (rest : List String) :
     Tools.Entry.route ("__daemon" :: rest) = .session ("__daemon" :: rest) :=
-  route_session_argv "__daemon" rest (by decide) (by decide) (.inl (by decide))
+  route_session_argv "__daemon" rest (by decide) (.inl (by decide))
 
 theorem route_ls_argv (rest : List String) :
     Tools.Entry.route ("ls" :: rest) = .session ("ls" :: rest) :=
-  route_session_argv "ls" rest (by decide) (by decide) (.inl (by decide))
+  route_session_argv "ls" rest (by decide) (.inl (by decide))
+
+theorem route_tmux_argv (rest : List String) : Tools.Entry.route ("tmux" :: rest) = .tmux rest := by
+  rfl
+
+theorem route_tmux_iff (args rest : List String) :
+    Tools.Entry.route args = .tmux rest ↔ args = "tmux" :: rest := by
+  unfold Tools.Entry.route
+  split <;> simp_all
 
 theorem route_import_argv (rest : List String) :
-    Tools.Entry.route ("import" :: rest) = .importSave rest := by rfl
+    Tools.Entry.route ("import" :: rest) = .session ("import" :: rest) :=
+  route_session_argv "import" rest (by decide) (.inl (by decide))
 
 theorem route_export_argv (rest : List String) :
-    Tools.Entry.route ("export" :: rest) = .exportSave rest := by rfl
+    Tools.Entry.route ("export" :: rest) = .session ("export" :: rest) :=
+  route_session_argv "export" rest (by decide) (.inl (by decide))
 
 end Tools.Entry

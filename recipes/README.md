@@ -135,22 +135,39 @@ remain in SSH configuration.
 
 ## tmux-resurrect interchange
 
-The same executable imports saved directories:
+The same executable browses and imports saved directories:
 
 ```sh
-linger import                           # default last save
-linger import ~/.tmux/resurrect/last     # explicit save
-linger export ~/sessions.tmux           # new destination; never overwritten
+linger tmux ls                         # inspect the default last save
+linger tmux select                     # choose a saved pane to open
+linger tmux ls /path/to/older-save.txt  # inspect a historical snapshot
+linger tmux import                     # import every pane in the last save
+linger tmux export ~/sessions.tmux     # new destination; never overwritten
 ```
 
 Its executor is [`Manager/Resurrect.lean`](../Manager/Resurrect.lean); parsing,
 planning and export policy live in [`Tools/Resurrect.lean`](../Tools/Resurrect.lean).
 
+`ls` shows the resolved save path and modification time, followed by panes in
+save order. Each row uses the shared resumable badge, projected linger name,
+original tmux session/window context and saved directory. It starts no sessions
+and can list directories that no longer exist. `ls --porcelain [SAVE]` exposes
+the same catalog; its `directory` values are JSON strings to preserve exact
+paths without breaking record framing.
+
+`select` uses the native fuzzy picker, with creation from search text disabled.
+Enter opens only the highlighted saved pane. Its displayed identity and directory
+are frozen for that action, even if `last` changes while choosing. A missing
+session starts a fresh shell in that directory; an existing identity is attached.
+Detach returns to the picker; Escape or Ctrl+C leaves it. `linger ls` and
+`linger select` continue to show native sessions.
+
 Each `pane` record becomes `<session>-w<window>-p<pane>` in its saved working
 directory. A projected name that linger would rewrite or truncate is rejected.
 The complete save is checked for malformed records, duplicate names and
-NUL-bearing directory or command fields. All saved directories must be accessible
-before any session is created. Identities in the successful initial listing—live
+NUL-bearing directory or command fields. All directories being imported must be
+accessible before any session is created: the selected pane for `select`, every
+pane for `import`. Identities in the successful initial listing—live
 or resumable—are skipped, so sequential reruns leave them untouched.
 
 Relative state paths resolve from the invocation directory while each session
@@ -160,10 +177,18 @@ physical OS traversal. Do not run imports concurrently or create a projected
 name during import: `linger run` is an upsert, so the importer cannot claim names
 atomically. A creation failure stops import; sessions already created remain.
 
-The default save is `$HOME/.tmux/resurrect/last` when that directory exists;
-otherwise `${XDG_DATA_HOME:-$HOME/.local/share}/tmux/resurrect/last`. An absent
-or empty HOME uses the account home for defaults, saved `~` directories and
-child processes.
+An explicit save path wins. Otherwise a `tmux show-options` query reads
+the running server's effective `@resurrect-dir`; when set, its `last` file is
+used. Without a configured directory or reachable server, the default is
+`$HOME/.tmux/resurrect/last` when that file exists, otherwise
+`${XDG_DATA_HOME:-$HOME/.local/share}/tmux/resurrect/last`. Configuration files
+are not evaluated. An absent or empty HOME uses the account home for defaults,
+saved `~` directories and child processes. History files are not merged; use
+the displayed path's directory to find an older file and pass it explicitly.
+
+Discovery stops waiting for a result after one second, then terminates and
+joins its helper. A custom tmux wrapper that ignores termination can delay
+cleanup; passing a save path explicitly skips discovery.
 
 Without a state override, those imported checkpoints use the account home;
 ordinary session commands use a temporary fallback while HOME remains absent
@@ -176,8 +201,9 @@ window layouts, active state, grouped sessions and captured pane contents are
 not imported. A save filename beginning with `-` needs a path such as `./-save`.
 
 Only the projected session name and directory become native session state.
-Foreign titles, commands, layouts, focus, grouping and unknown records are
-discarded. No copy of the source save is stored; the original file may be moved
+Window titles describe catalog rows without becoming native state. Foreign
+commands, layouts, focus, grouping and unknown records are discarded.
+No copy of the source save is stored; the original file may be moved
 or deleted after import. Old `tmux-import.json` files are ignored and left
 untouched.
 
@@ -213,6 +239,7 @@ terminals. The recipe suite also runs the prompt example in fish.
 ## Earlier installations
 
 Replace `lz` or bare `linger` startup commands with `linger select`, and
-`lz import-resurrect` with `linger import`. Remove previously installed `lz`,
+`lz import-resurrect` or `linger import` with `linger tmux import`, and
+`linger export` with `linger tmux export`. Remove previously installed `lz`,
 `lzh`, `lzr`, `lza`, `lzs` and `lzo` launchers or shell functions. Those shortcuts
 are no longer shipped.

@@ -2,6 +2,7 @@ module
 
 public import E2E.Harness
 public import Manager.Picker
+public import Manager.Resurrect
 public import Linger.Core.Listing
 import Std.Sync.Mutex
 
@@ -16,8 +17,9 @@ the manager a restricted PATH. Comparing that portable representation avoids
 inspecting the opaque termios blob's padding.
 
 Synthetic failure, argv and terminal cases call `Manager.Picker.run` through
-the test probe with a fixture-owned absolute recorder path. These test the
-shared executor; public CLI checks and source gates cover entry-point wiring.
+the test probe with a fixture-owned absolute recorder path. The frozen-save
+case uses that recorder with `Manager.Resurrect.run`. These test the shared
+executors; public CLI checks and source gates cover entry-point wiring.
 Help, argument validation, terminal dispatch and live attach/detach drive the
 actual `linger` binary with no `linger` on the fixture PATH.
 File handshakes hold a listing child open without sleeping in the test driver.
@@ -107,7 +109,7 @@ private def recordCommand (root : System.FilePath) (args : List String) : IO UIn
   let ttyOut ← (← IO.getStdout).isTty
   IO.FS.writeFile (root / s!"ttys-{count + 1}") s!"{ttyIn},{ttyOut}"
   match args with
-  | ["ls", "-r", "--porcelain"] =>
+  | ["ls", "-r", "--porcelain"] | ["tmux", "ls", "--porcelain", _] =>
     let serial := (← numberFile (root / "list-count")) + 1
     let pid ← getpid
     let started ← monotonicMs
@@ -137,6 +139,12 @@ private def recordCommand (root : System.FilePath) (args : List String) : IO UIn
           return 96
       else
         IO.FS.writeFile (root / s!"list-started-{serial}") (toString pid)
+      -- Keep publishing the captured catalog while the actual save changes.
+      -- Even a refresh cannot turn this into a timing-dependent acceptance test.
+      if args.head? == some "tmux" then
+        let save ← readText (root / "rewrite-save")
+        if !save.isEmpty then
+          IO.FS.writeFile save (← readText (root / "replacement-save"))
       output.putStr text
       output.flush
       IO.FS.writeFile (root / s!"list-completed-{serial}") (toString (← monotonicMs))
@@ -145,7 +153,7 @@ private def recordCommand (root : System.FilePath) (args : List String) : IO UIn
       IO.FS.writeFile (root / s!"list-ended-{pid}") (toString (← monotonicMs))
       unless overlap do
         IO.FS.removeDir (root / "listing-active")
-  | ["attach", _] =>
+  | ["attach", target] =>
     let count ← numberFile (root / "attach-count")
     IO.FS.writeFile (root / "attach-count") (toString (count + 1))
     IO.FS.writeFile (root / s!"attach-termios-{count + 1}") (← snapshot root)
@@ -154,8 +162,38 @@ private def recordCommand (root : System.FilePath) (args : List String) : IO UIn
       writeListing root (← readText (root / "after-attach-listing"))
           (← numberFile (root / "after-attach-listing-rc"))
     writeAll stdoutFd s!"\r\nMANAGER-ATTACH-{count + 1}\r\n".toUTF8
+    let previousPid ← numberFile (root / "vanish-before-attach")
+    if previousPid > 0 then
+      -- Planning has already listed the existing session. Remove it here,
+      -- then delegate native upsert with the exact cwd the manager supplied.
+      IO.FS.writeFile (root / "attach-cwd") (← IO.currentDir).toString
+      let executable ← readText (root / "real-executable")
+      let child ←
+        withLaunchLock <| IO.Process.spawn { cmd := executable, args := #["kill", target] }
+      let rc ← waitChild child 5000
+      unless rc == 0 do
+        return rc
+      let socket ← Linger.Runtime.Paths.socketPath target
+      let checkpoint ← Linger.Runtime.Paths.ckptPath target
+      let vanished ←
+        waitFor 3000 do
+            return !(← alive (UInt32.ofNat previousPid)) &&
+                !(← (System.FilePath.mk socket).pathExists) &&
+                !(← (System.FilePath.mk checkpoint).pathExists)
+      IO.FS.writeFile (root / "vanished-before-native-attach") (toString vanished)
+      unless vanished do
+        return 97
+      let child ←
+        withLaunchLock <| IO.Process.spawn { cmd := executable, args := #["attach", target] }
+      return ← waitChild child 10000
     return UInt32.ofNat (← numberFile (root / "attach-rc") 7)
   | _ =>
+    let executable ← readText (root / "real-executable")
+    if !executable.isEmpty && (args == ["ls", "--porcelain"] || args.head? == some "run") then
+      if args.head? == some "run" then
+        IO.FS.writeFile (root / "run-cwd") (← IO.currentDir).toString
+      let child ← withLaunchLock <| IO.Process.spawn { cmd := executable, args := args.toArray }
+      return ← waitChild child 5000
     return 98
 
 private def launch (root : System.FilePath) (manager mode : String) (args : List String) :
@@ -231,6 +269,8 @@ def probe (args : List String) : IO UInt32 := do
       launch root manager mode rest
     | ["picker", executable] =>
       Manager.Picker.run executable
+    | ["tmux-picker", executable, save] =>
+      Manager.Resurrect.run executable ["select", save]
     | ["session-program"] =>
       sessionProgram root
     | _ =>
@@ -254,6 +294,7 @@ private structure Fixture where
   pickerExecutable : String
   executable : String
   managerArgs : Array String := #[]
+  cwd : Option System.FilePath := none
   env : Array (String × Option String)
 
 private def Fixture.make (e : Env) (slug : String) : IO Fixture := do
@@ -317,8 +358,8 @@ private def Fixture.piped (f : Fixture) (args : Array String) : IO (UInt32 × St
   let child ←
     withLaunchLock <|
         IO.Process.spawn
-          { cmd := f.manager, args := f.managerArgs ++ args, env := f.env, stdin := .null,
-            stdout := .piped, stderr := .piped }
+          { cmd := f.manager, args := f.managerArgs ++ args, cwd := f.cwd, env := f.env,
+            stdin := .null, stdout := .piped, stderr := .piped }
   let rc ← waitChild child 4000
   return (rc, ← child.stdout.readToEnd, ← child.stderr.readToEnd)
 
@@ -332,7 +373,7 @@ private def Fixture.start (f : Fixture) (args : Array String := #[]) (mode : Str
   let env := f.env.map fun (key, value) => s!"{key}={value.getD ""}"
   let (pid, fd) ←
     withLaunchLock <|
-        spawnPty cols rows "" f.self
+        spawnPty cols rows (f.cwd.map (·.toString) |>.getD "") f.self
           (#["--manager-probe", "launch", f.manager, mode] ++ f.managerArgs ++ args) env
   return { fixture := f, client := { pid, fd }, output := ← IO.mkRef ByteArray.empty }
 
@@ -581,14 +622,15 @@ private def usageChecks (e : Env) : IO Nat := do
                 [err, shortErr, helpErr, hErr].all String.isEmpty &&
                 has out "Usage: linger" &&
                 (out.splitOn "\n").any (fun line => line.trimAscii.toString.startsWith "select ") &&
-                has out "linger import [SAVE]" &&
+                has out "tmux" &&
+                !has out "linger import [SAVE]" &&
                 !has out "--loop" &&
                 !has out "--restore-processes" &&
                 !has out "lz")
   failures :=
     failures +
       (←
-        check e "usage" "linger rejects malformed arguments and select/import operands" fun f => do
+        check e "usage" "linger rejects malformed arguments and select/tmux operands" fun f => do
             let mut ok := true
             for args in
               [#["work"], #["--unknown"], #["--help", "extra"], #["-h", "extra"],
@@ -596,7 +638,9 @@ private def usageChecks (e : Env) : IO Nat := do
                 #["select", "--help"], #["select", "-h"], #["select", "one", "two"],
                 #["--loop", ""], #["--loop", "one", "two"], #["import-resurrect"], #["import", ""],
                 #["import", "--unknown"], #["import", "--help"], #["import", "-h"],
-                #["import", "-save"], #["import", "one", "two"]] do
+                #["import", "-save"], #["import", "one", "two"], #["import"], #["export", "save"],
+                #["tmux", "select", ""], #["tmux", "select", "-save"],
+                #["tmux", "select", "one", "two"], #["tmux", "select", "--unknown"]] do
               let (rc, _, _) ← f.piped args
               appendText (f.root / "usage-results") s!"{repr args}: {rc}\n"
               ok := ok && rc == 2
@@ -632,9 +676,9 @@ private def usageChecks (e : Env) : IO Nat := do
             let before ← withLaunchLock (e.out #["ls", "--porcelain"])
             let mut ok := true
             for args in
-              [#["import", "--restore-processes"],
-                #["import", "--restore-processes", save.toString],
-                #["import", save.toString, "--restore-processes"]] do
+              [#["tmux", "import", "--restore-processes"],
+                #["tmux", "import", "--restore-processes", save.toString],
+                #["tmux", "import", save.toString, "--restore-processes"]] do
               let (rc, _, _) ← f.piped args
               appendText (f.root / "usage-results") s!"{repr args}: {rc}\n"
               ok := ok && rc == 2
@@ -2114,6 +2158,317 @@ private def realCheck (e : Env) : IO Nat := do
                 withLaunchLock (owned.killAll #[name]))
   return failures
 
+/-- Foreign fixtures use explicit files and private homes/state. The native
+encoding keeps expected identities tied to the save parser's own policy. -/
+private def savedPane (name dir command : String := "") : String :=
+  s!"pane\t{Tools.Resurrect.encodeName name}\t0\t1\t:*\t0\ttitle\t:{dir}\t1\tsh\t:{command}\n"
+
+private def Fixture.nativeNames (f : Fixture) : IO (List String) := do
+  let (rc, out, err) ← f.piped #["ls", "--porcelain"]
+  unless rc == 0 do
+    throw (IO.userError s!"native fixture listing failed: {err}")
+  return (records out).filterMap fun (key, value) => if key == "name" then some value else none
+
+private def checkSaved (e : Env) (slug label : String) (body : Fixture → Env → IO Bool) : IO Nat :=
+  check e s!"tmux-{slug}" label fun f => do
+    let owned : Env := { e with dir := (f.root / "state").toString }
+    let f := { f with env := f.env.push ("LINGER_DIR", some owned.dir) }
+    try
+      body f owned
+    finally
+      withLaunchLock (owned.killAll #["saved-first", "saved-chosen", "never-create"])
+
+private def savedChecks (e : Env) : IO Nat := do
+  let mut failures := 0
+  for (slug, key) in [("ctrl-c", "\x03"), ("ctrl-d", "\x04"), ("escape", "\x1b")] do
+    failures :=
+      failures +
+        (←
+          checkSaved e slug
+              s!"tmux select cancellation leaves all saved panes unimported and restores the terminal ({slug})"
+              fun f _ => do
+              let save := f.root / "saved file"
+              IO.FS.writeFile save
+                  (savedPane "saved-first" f.root.toString ++
+                    savedPane "saved-chosen" f.root.toString)
+              withSession f #["tmux", "select", save.toString] fun s => do
+                  unless ← s.selected "saved-first" do
+                    return false
+                  let header ← s.untilRow "linger · tmux save"
+                  s.observe 150
+                  let before ← f.nativeNames
+                  s.text key
+                  let clean ← restored s 130
+                  return header && before.isEmpty && clean && (← f.nativeNames).isEmpty)
+  failures :=
+    failures +
+      (←
+        checkSaved e "unmatched"
+            "tmux select has no Create row for empty or unmatched queries and Enter starts no session"
+            fun f _ => do
+            let save := f.root / "saved file"
+            IO.FS.writeFile save (savedPane "saved-first" f.root.toString)
+            withSession f #["tmux", "select", save.toString] fun s => do
+                unless ← s.selected "saved-first" do
+                  return false
+                let initial ← s.capture "empty-query"
+                let initialNoCreate :=
+                  !hasText (ByteArray.mk (screenText initial).toArray) "Create "
+                let start ← s.mark
+                s.text "never-create"
+                unless ← s.untilRow "  › never-create" start do
+                  return false
+                s.text "\r"
+                s.observe 350
+                let unmatched ← s.capture "unmatched-query"
+                let noCreate := !hasText (ByteArray.mk (screenText unmatched).toArray) "Create "
+                let waiting := !(← (f.root / "result").pathExists)
+                let names ← f.nativeNames
+                let start ← s.mark
+                s.text "\x15"
+                let editable ← s.selected "saved-first" start
+                s.text "\x03"
+                return initialNoCreate && noCreate && waiting && names.isEmpty && editable &&
+                    (← restored s 130) &&
+                    (← f.nativeNames).isEmpty)
+  failures :=
+    failures +
+      (←
+        checkSaved e "chosen"
+            "tmux select creates only the chosen fresh shell in its exact cwd, ignores saved commands and returns after detach"
+            fun f owned => do
+            let dir := f.root / "cwd 'literal' $HOME \"quoted\" 界"
+            IO.FS.createDirAll dir
+            let dir ← IO.FS.realPath dir
+            let save := f.root / "saved file"
+            let replayed := f.root / "saved-command-ran"
+            let command := s!"printf replay >{quote replayed.toString}"
+            -- A nonexistent unchosen directory must not block the valid selection.
+            IO.FS.writeFile save
+                (savedPane "saved-first" (f.root / "absent").toString command ++
+                  savedPane "saved-chosen" dir.toString command)
+            withSession f #["tmux", "select", save.toString] fun s => do
+                unless ← s.selected "saved-first" do
+                  return false
+                let start ← s.mark
+                s.text "chosen"
+                unless ← s.selected "saved-chosen" start do
+                  return false
+                let untouched := (← f.nativeNames).isEmpty
+                s.text "\r"
+                let attached ←
+                  waitFor 5000 do
+                      return (← withLaunchLock (owned.info "saved-chosen" "clients")) == some "1"
+                unless attached do
+                  return false
+                let cwdFile := f.root / "shell-cwd"
+                let start ← s.mark
+                s.text
+                    s!"pwd -P >{quote cwdFile.toString}; printf 'saved-shell-%s\\n' \"$((20+22))\"\r"
+                let shell ← s.until "saved-shell-42" start
+                let cwd ← readText cwdFile
+                let names ← f.nativeNames
+                let start ← s.mark
+                s.client.detach
+                let returned ← s.selected "saved-first" start
+                let header ← s.untilRow "linger · tmux save" start
+                let detached ←
+                  waitFor 3000 do
+                      return (← withLaunchLock (owned.info "saved-chosen" "clients")) == some "0"
+                s.text "\x03"
+                let clean ← termiosRestored s 130
+                IO.FS.writeFile (f.root / "selection-observation")
+                    s!"no-early-import={untouched}\nshell={shell}\ncwd={repr cwd}\nnames={repr names}\nreturned={returned}\ndetached={detached}\n"
+                return untouched && shell && cwd == dir.toString ++ "\n" &&
+                    names == ["saved-chosen"] &&
+                    returned &&
+                    header &&
+                    detached &&
+                    clean &&
+                    !(← replayed.pathExists))
+  for (slug, content, error) in
+    [("missing", none, "save not found"),
+      ("malformed", some "pane\tbroken\n", "malformed pane record")] do
+    failures :=
+      failures +
+        (←
+          checkSaved e slug
+              s!"tmux select save failure restores terminal state and starts no sessions ({slug})"
+              fun f _ => do
+              let save := f.root / "saved file"
+              if let some text := content then
+                IO.FS.writeFile save text
+              withSession f #["tmux", "select", save.toString] fun s => do
+                  let clean ← failureRestored s 1 error
+                  return clean && (← f.nativeNames).isEmpty)
+  failures :=
+    failures +
+      (←
+        checkSaved e "missing-cwd"
+            "tmux select preflight rejects the chosen missing cwd after restoring the terminal"
+            fun f _ => do
+            let save := f.root / "saved file"
+            IO.FS.writeFile save (savedPane "saved-first" (f.root / "absent").toString)
+            withSession f #["tmux", "select", save.toString] fun s => do
+                unless ← s.selected "saved-first" do
+                  return false
+                s.text "\r"
+                let clean ← failureRestored s 1 "working directory not found at line 1" 1
+                return clean && (← f.nativeNames).isEmpty)
+  failures :=
+    failures +
+      (←
+        checkSaved e "frozen-cwd"
+            "tmux select accepts the displayed cwd after its save has been replaced" fun f owned =>
+            do
+            let original := f.root / "original 'cwd' $HOME"
+            let replacement := f.root / "replacement"
+            IO.FS.createDirAll original
+            IO.FS.createDirAll replacement
+            let original ← IO.FS.realPath original
+            let save := f.root / "saved file"
+            IO.FS.writeFile save ("\n" ++ savedPane "saved-chosen" original.toString)
+            let (rc, catalog, _) ← f.piped #["tmux", "ls", "--porcelain", save.toString]
+            unless rc == 0 do
+              return false
+            f.listing catalog
+            let changed := savedPane "saved-chosen" replacement.toString
+            IO.FS.writeFile (f.root / "replacement-save") changed
+            IO.FS.writeFile (f.root / "rewrite-save") save.toString
+            IO.FS.writeFile (f.root / "real-executable") f.manager
+            let probe :=
+              { f with
+                manager := f.self,
+                managerArgs := #["--manager-probe", "tmux-picker", f.executable, save.toString] }
+            withSession probe #[] fun s => do
+                unless ← s.selected "saved-chosen" do
+                  return false
+                let replaced := (← readText save) == changed
+                s.text "\r"
+                unless ← s.until "MANAGER-ATTACH-1" do
+                  return false
+                let some position := findText (← s.output.get) "MANAGER-ATTACH-1" | return false
+                let returned ←
+                  s.selected "saved-chosen" (position + "MANAGER-ATTACH-1".utf8ByteSize)
+                s.text "\x03"
+                let clean ← restored s 130 2
+                let calls ← f.calls
+                let exact :=
+                  has calls (call ["tmux", "ls", "--porcelain", save.toString]) &&
+                    has calls (call ["run", "saved-chosen", "true"]) &&
+                    has calls (call ["attach", "saved-chosen"])
+                let pid := (← withLaunchLock (owned.info "saved-chosen" "pid")).bind String.toNat?
+                let cwd ←
+                  match pid with
+                  | some pid =>
+                    getcwdOf (UInt32.ofNat pid)
+                  | none =>
+                    pure ""
+                return replaced && returned && clean && exact && (← attachNormal f) &&
+                    (← beforeAttach s) &&
+                    (← readText (f.root / "run-cwd")) == original.toString &&
+                    cwd == original.toString &&
+                    (← f.nativeNames) == ["saved-chosen"])
+  failures :=
+    failures +
+      (←
+        checkSaved e "recreated-cwd"
+            "tmux select final attach recreates a vanished session in the displayed cwd"
+            fun f owned => do
+            let dir := f.root / "displayed 'cwd' $HOME"
+            IO.FS.createDirAll dir
+            let dir ← IO.FS.realPath dir
+            let save := f.root / "saved file"
+            IO.FS.writeFile save (savedPane "saved-chosen" dir.toString)
+            let (rc, catalog, _) ← f.piped #["tmux", "ls", "--porcelain", save.toString]
+            unless rc == 0 do
+              return false
+            f.listing catalog
+            let seeded := { f with cwd := some dir }
+            let (created, _, _) ← seeded.piped #["run", "saved-chosen", "true"]
+            unless created == 0 do
+              return false
+            let some oldPid :=
+              (← withLaunchLock (owned.info "saved-chosen" "pid")).bind String.toNat?
+              | return false
+            IO.FS.writeFile (f.root / "vanish-before-attach") (toString oldPid)
+            IO.FS.writeFile (f.root / "real-executable") f.manager
+            let probe :=
+              { f with
+                manager := f.self,
+                managerArgs := #["--manager-probe", "tmux-picker", f.executable, save.toString] }
+            withSession probe #[] fun s => do
+                unless ← s.selected "saved-chosen" do
+                  return false
+                s.text "\r"
+                let attached ←
+                  waitFor 5000 do
+                      return (← withLaunchLock (owned.info "saved-chosen" "clients")) == some "1"
+                unless attached do
+                  return false
+                let newPid :=
+                  (← withLaunchLock (owned.info "saved-chosen" "pid")).bind String.toNat?
+                let cwdFile := f.root / "recreated-shell-cwd"
+                let start ← s.mark
+                s.text s!"pwd -P >{quote cwdFile.toString}; printf 'recreated-%s\\n' shell-ok\r"
+                let answered ← s.until "recreated-shell-ok" start
+                let actual ← readText cwdFile
+                let attachCwd ← readText (f.root / "attach-cwd")
+                let vanished ← readText (f.root / "vanished-before-native-attach")
+                let start ← s.mark
+                s.client.detach
+                let returned ← s.selected "saved-chosen" start
+                s.text "\x03"
+                let clean ← termiosRestored s 130
+                let calls ← f.calls
+                let skippedCreation :=
+                  has calls (call ["ls", "--porcelain"]) &&
+                    !has calls (call ["run", "saved-chosen", "true"])
+                IO.FS.writeFile (f.root / "recreation-observation")
+                    s!"old-pid={oldPid}\nnew-pid={repr newPid}\nvanished={vanished}\nskipped-creation={skippedCreation}\nexpected-cwd={repr dir.toString}\nattach-cwd={repr attachCwd}\nshell-cwd={repr actual}\nanswered={answered}\nreturned={returned}\nterminal-restored={clean}\n"
+                return vanished == "true" && skippedCreation && newPid.isSome &&
+                    newPid != some oldPid &&
+                    answered &&
+                    attachCwd == dir.toString &&
+                    actual == dir.toString ++ "\n" &&
+                    returned &&
+                    clean &&
+                    (← attachNormal f) &&
+                    (← beforeAttach s) &&
+                    (← f.nativeNames) == ["saved-chosen"])
+  failures :=
+    failures +
+      (←
+        checkSaved e "relative-last" "tmux select refresh follows a repointed relative last symlink"
+            fun f _ => do
+            let f := { f with cwd := some f.root }
+            IO.FS.writeFile (f.root / "first-save") (savedPane "saved-first" f.root.toString)
+            IO.FS.writeFile (f.root / "second-save") (savedPane "saved-chosen" f.root.toString)
+            for (target, name) in [("first-save", "last"), ("second-save", "next-last")] do
+              let link ←
+                withLaunchLock <|
+                    IO.Process.output
+                      { cmd := "ln", args := #["-s", target, (f.root / name).toString] }
+              unless link.exitCode == 0 do
+                throw (IO.userError s!"could not create private save symlink: {link.stderr}")
+            withSession f #["tmux", "select", "last"] fun s => do
+                unless ← s.selected "saved-first" do
+                  return false
+                let start ← s.mark
+                IO.FS.rename (f.root / "next-last") (f.root / "last")
+                let (rc, catalog, _) ← f.piped #["tmux", "ls", "--porcelain", "last"]
+                IO.FS.writeFile (f.root / "repointed-catalog") catalog
+                let changed := rc == 0 && has catalog "name\tsaved-chosen\n"
+                let refreshed ← s.selected "saved-chosen" start
+                let _ ← s.capture "after-repoint"
+                s.text "\x03"
+                let clean ← restored s 130
+                let names ← f.nativeNames
+                IO.FS.writeFile (f.root / "refresh-observation")
+                    s!"repointed-catalog={changed}\nrefreshed={refreshed}\nterminal-restored={clean}\nnames={repr names}\n"
+                return changed && refreshed && clean && names.isEmpty)
+  return failures
+
 private def startProgram (f : Fixture) (owned : Env) (name : String) : IO Bool := do
   let child ←
     withLaunchLock <|
@@ -2228,7 +2583,7 @@ def run : IO UInt32 := do
     [("refresh", refreshChecks), ("selection", selectionChecks), ("usage", usageChecks),
       ("failure", failureChecks), ("input", inputChecks), ("display", displayChecks),
       ("status", statusChecks), ("fuzzy", fuzzyChecks), ("default", defaultChecks),
-      ("real", realCheck), ("program", programChecks)]
+      ("real", realCheck), ("program", programChecks), ("saved", savedChecks)]
   let mut active : List (Task (Except IO.Error (String × Nat × Nat))) := []
   let mut failures := 0
   let mut notes : Array String := #[]

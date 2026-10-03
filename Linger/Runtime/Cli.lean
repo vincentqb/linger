@@ -31,7 +31,7 @@ abbrev infoReplyCap : Nat := Linger.Core.Session.infoReplyCap
 
 def usage : String :=
   "Usage: linger [command] [args...]
-       linger import [SAVE]
+       linger tmux <command> [SAVE]
 
   (no args)                 Show this help
   select                    Create or attach to a session; return after detach
@@ -40,9 +40,11 @@ def usage : String :=
                               (or pass a comma-separated host list)
   status                    Print compact local attention counts for a prompt
   attach [name] [command]    Attach, creating if needed (name defaults to 'main')
-  import [SAVE]             Start shells in saved tmux-resurrect directories
-                              (default: last save; saved commands never run)
-  export SAVE               Save local sessions in tmux-resurrect format
+  tmux ls [SAVE]            List panes in a saved tmux-resurrect snapshot
+  tmux select [SAVE]        Choose a saved pane and attach; fresh shell if needed
+                              (requires terminal input and output)
+  tmux import [SAVE]        Start fresh shells in saved pane directories
+  tmux export SAVE          Save local sessions in tmux-resurrect format
                               (requires a new destination file)
   watch <name>              Input/resize-read-only attach (marks output seen)
   run <name> <command...>    Run a command in a session without attaching
@@ -61,7 +63,9 @@ def usage : String :=
   get / set / unset / clear <name>   Session labels (k=v)
   version | help
 
-Selection: type to filter or name a new session, arrows to move, Enter to choose.
+Saved tmux: ls/select/import default to the last save; pass SAVE for an older snapshot.
+Saved commands never run. Saved selection has no Create row.
+Native selection: type to filter or name a new session, arrows to move, Enter to choose.
 The Create row names the session to create; Esc cancels.
 Inside a session, $LINGER_SESSION holds the session name.
 Detach key: ctrl-\\ (set LINGER_NO_DETACH_KEY to disable)."

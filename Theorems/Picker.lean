@@ -405,38 +405,54 @@ theorem visible_empty_query (candidates : List String) : visible candidates "" =
   simp [visible, matches_empty]
 
 /-- All existing matches precede the optional creation choice. -/
-theorem items_existing_prefix (candidates : List String) (query : String) :
-    ((visible candidates query).map Item.existing).IsPrefix (items candidates query) := by
+theorem items_existing_prefix (candidates : List String) (query : String)
+    (allowCreate : Bool := true) :
+    ((visible candidates query).map Item.existing).IsPrefix
+      (items candidates query allowCreate) := by
   unfold items
   exact List.prefix_append _ _
 
-theorem mem_items_existing (candidates : List String) (query target : String) :
-    Item.existing target ∈ items candidates query ↔
+theorem mem_items_existing (candidates : List String) (query target : String)
+    (allowCreate : Bool := true) :
+    Item.existing target ∈ items candidates query allowCreate ↔
       target ∈ candidates ∧ Tools.Picker.matches query target = true := by
   unfold items
   split <;> simp [mem_visible]
 
-/-- Creation is offered iff the exact target is valid and absent, independently
-of whether the query also matches any existing targets. -/
-private theorem mem_items_create (candidates : List String) (query target : String) :
-    Item.create target ∈ items candidates query ↔
-      target = (if query.isEmpty then Linger.Core.Name.defaultName else query) ∧
+/-- Creation requires the enabled mode and an exact valid, absent target,
+independently of whether the query also matches any existing targets. -/
+private theorem mem_items_create (candidates : List String) (query target : String)
+    (allowCreate : Bool := true) :
+    Item.create target ∈ items candidates query allowCreate ↔
+      allowCreate = true ∧
+        target = (if query.isEmpty then Linger.Core.Name.defaultName else query) ∧
         validTarget target = true ∧ target ∉ candidates := by
   unfold items
   split <;> simp_all
   all_goals
     constructor
-    · rintro ⟨⟨valid, absent⟩, rfl⟩
-      exact ⟨rfl, valid, absent⟩
-    · rintro ⟨rfl, valid, absent⟩
-      exact ⟨⟨valid, absent⟩, rfl⟩
+    · rintro ⟨⟨⟨enabled, valid⟩, absent⟩, rfl⟩
+      exact ⟨enabled, rfl, valid, absent⟩
+    · rintro ⟨enabled, rfl, valid, absent⟩
+      exact ⟨⟨⟨enabled, valid⟩, absent⟩, rfl⟩
+
+/-- Disabling creation leaves exactly the existing matches in their displayed order. -/
+theorem items_disabled (candidates : List String) (query : String) :
+    items candidates query false = (visible candidates query).map Item.existing := by simp [items]
 
 theorem selected_mem (s : State) (target : String) (h : selected s = some (.existing target)) :
     target ∈ s.candidates ∧ Tools.Picker.matches s.query target = true :=
-  (mem_items_existing _ _ _).mp (List.mem_of_getElem? h)
+  (mem_items_existing _ _ _ s.allowCreate).mp (List.mem_of_getElem? h)
 
-theorem selected_empty (s : State) (h : items s.candidates s.query = []) : selected s = none := by
-  simp [selected, h]
+theorem selected_empty (s : State) (h : items s.candidates s.query s.allowCreate = []) :
+    selected s = none := by simp [selected, h]
+
+/-- This holds even for a forged cursor, without a state-validity premise. -/
+theorem selected_no_create (s : State) (target : String) (disabled : s.allowCreate = false) :
+    selected s ≠ some (.create target) := by
+  intro h
+  have enabled := ((mem_items_create _ _ _ s.allowCreate).mp (List.mem_of_getElem? h)).1
+  simp [disabled] at enabled
 
 /-- Identity is the exact target, independent of whether Enter creates or attaches. -/
 theorem item_target (target : String) :
@@ -448,25 +464,28 @@ theorem refresh_query (s : State) (candidates : List String) :
 theorem refresh_candidates (s : State) (candidates : List String) :
     (refresh s candidates).candidates = candidates := by simp [refresh]
 
+theorem refresh_allowCreate (s : State) (candidates : List String) :
+    (refresh s candidates).allowCreate = s.allowCreate := by simp [refresh]
+
 /-- Refresh clamps even a forged cursor; it never changes query length. -/
 theorem refresh_valid (s : State) (candidates : List String)
     (hquery : s.query.length ≤ maxQueryLength) : (refresh s candidates).Valid := by
   simp only [refresh, State.Valid]
   refine ⟨?_, hquery⟩
   cases hf :
-    (items candidates s.query).findIdx?
+    (items candidates s.query s.allowCreate).findIdx?
       (fun item => some item.target == (selected s).map Item.target) with
   | none => exact Nat.min_le_right _ _
   | some index =>
     have bound := (List.findIdx?_eq_some_iff_findIdx_eq.mp hf).1
-    simpa using (show index ≤ (items candidates s.query).length - 1 by omega)
+    simpa using (show index ≤ (items candidates s.query s.allowCreate).length - 1 by omega)
 
 /-- A surviving target stays selected even after reordering or changing row kind. -/
 theorem refresh_selected (s : State) (candidates : List String) (item : Item)
     (hselected : selected s = some item)
-    (hpresent : ∃ next ∈ items candidates s.query, next.target = item.target) :
+    (hpresent : ∃ next ∈ items candidates s.query s.allowCreate, next.target = item.target) :
     (selected (refresh s candidates)).map Item.target = some item.target := by
-  let choices := items candidates s.query
+  let choices := items candidates s.query s.allowCreate
   let predicate := fun next : Item => some next.target == (selected s).map Item.target
   have found : ∃ next, next ∈ choices ∧ predicate next = true := by
     obtain ⟨next, member, target⟩ := hpresent
@@ -489,24 +508,29 @@ theorem refresh_selected (s : State) (candidates : List String) (item : Item)
 /-- When the former target is gone, refresh keeps its row when possible. -/
 theorem refresh_missing (s : State) (candidates : List String)
     (hmissing :
-      ∀ item ∈ items candidates s.query, some item.target ≠ (selected s).map Item.target) :
-    (refresh s candidates).cursor = min s.cursor ((items candidates s.query).length - 1) := by
+      ∀ item ∈ items candidates s.query s.allowCreate,
+        some item.target ≠ (selected s).map Item.target) :
+    (refresh s candidates).cursor =
+      min s.cursor ((items candidates s.query s.allowCreate).length - 1) := by
   have hf :
-    (items candidates s.query).findIdx?
+    (items candidates s.query s.allowCreate).findIdx?
         (fun item => some item.target == (selected s).map Item.target) =
       none :=
     List.findIdx?_eq_none_iff.mpr (by simpa using hmissing)
   simp [refresh, hf]
 
-theorem init_valid (candidates : List String) : (init candidates).Valid := by
-  simp [init, State.Valid, maxQueryLength]
+theorem init_valid (candidates : List String) (allowCreate : Bool := true) :
+    (init candidates allowCreate).Valid := by simp [init, State.Valid, maxQueryLength]
+
+theorem init_allowCreate (candidates : List String) (allowCreate : Bool) :
+    (init candidates allowCreate).allowCreate = allowCreate := by simp [init]
 
 /-- The arithmetic invariant means either an in-range cursor or the unique empty cursor. -/
 theorem valid_cursor (s : State) (h : s.Valid) :
-    s.cursor < (items s.candidates s.query).length ∨
-      (items s.candidates s.query = [] ∧ s.cursor = 0) := by
+    s.cursor < (items s.candidates s.query s.allowCreate).length ∨
+      (items s.candidates s.query s.allowCreate = [] ∧ s.cursor = 0) := by
   obtain ⟨cursor, -⟩ := h
-  cases hs : items s.candidates s.query with
+  cases hs : items s.candidates s.query s.allowCreate with
   | nil =>
     right
     simp only [hs, List.length_nil, Nat.zero_sub] at cursor
@@ -574,6 +598,14 @@ theorem step_stay_candidates (s next : State) (key : Tools.Key) (h : step s key 
     repeat' split at h
     all_goals cases h <;> rfl
 
+/-- Editing and navigation cannot enable creation in a saved catalog. -/
+theorem step_stay_allowCreate (s next : State) (key : Tools.Key) (h : step s key = .stay next) :
+    next.allowCreate = s.allowCreate := by
+  cases key <;> simp only [step] at h
+  all_goals
+    repeat' split at h
+    all_goals cases h <;> rfl
+
 /-- Acceptance is the only attachment-producing event, and its target is selected verbatim. -/
 theorem step_attach_iff (s : State) (key : Tools.Key) (target : String) :
     step s key = .attach target ↔ key = .accept ∧ selected s = some (.existing target) := by
@@ -585,6 +617,22 @@ theorem step_create_iff (s : State) (key : Tools.Key) (target : String) :
     step s key = .create target ↔ key = .accept ∧ selected s = some (.create target) := by
   cases key <;> simp [step]
   all_goals split <;> simp_all
+
+/-- No key can produce creation in disabled mode, including with an invalid cursor. -/
+theorem step_no_create (s : State) (key : Tools.Key) (target : String)
+    (disabled : s.allowCreate = false) : step s key ≠ .create target := by
+  intro h
+  exact selected_no_create s target disabled ((step_create_iff s key target).mp h).2
+
+/-- Acceptance uses the exact existing target at the displayed filtered index.
+An empty result or out-of-range cursor leaves the picker editable. -/
+theorem step_accept_disabled (s : State) (disabled : s.allowCreate = false) :
+    step s .accept =
+      match (visible s.candidates s.query)[s.cursor]? with
+      | some target => .attach target
+      | none => .stay s := by
+  simp only [step, selected, disabled, items_disabled, List.getElem?_map]
+  cases (visible s.candidates s.query)[s.cursor]? <;> rfl
 
 /-- No valid-state premise: even a forged or stale cursor cannot manufacture a target. -/
 theorem step_attach_mem (s : State) (key : Tools.Key) (target : String)
@@ -604,13 +652,14 @@ theorem step_create_valid (s : State) (key : Tools.Key) (target : String)
       (∀ char ∈ target.toList, 32 ≤ char.toNat ∧ (char.toNat < 127 ∨ 160 ≤ char.toNat)) ∧
       ((target.splitOn "@").tail = [] ∨ String.intercalate "@" (target.splitOn "@").tail ≠ "") := by
   have selected := ((step_create_iff s key target).mp h).2
-  obtain ⟨exactTarget, valid, absent⟩ := (mem_items_create _ _ _).mp (List.mem_of_getElem? selected)
+  obtain ⟨_, exactTarget, valid, absent⟩ :=
+    (mem_items_create _ _ _ s.allowCreate).mp (List.mem_of_getElem? selected)
   obtain ⟨nonempty, nameValid, printable, suffix⟩ := (validTarget_iff target).mp valid
   exact
     ⟨exactTarget, absent, nonempty, (Linger.Core.Name.sanitize_eq_self_iff _).mpr nameValid,
       nameValid, printable, suffix⟩
 
-theorem step_empty_accept (s : State) (h : items s.candidates s.query = []) :
+theorem step_empty_accept (s : State) (h : items s.candidates s.query s.allowCreate = []) :
     step s .accept = .stay s := by simp [step, selected_empty s h]
 
 /-- An empty listing has a usable creation choice, using the attach default. -/

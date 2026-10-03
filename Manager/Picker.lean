@@ -15,8 +15,8 @@ namespace Manager.Picker
 
 open Linger.Posix
 
-private inductive Choice where
-  | attach (target : String)
+inductive Choice where
+  | attach (target : String) (snapshot : Tools.Picker.Snapshot)
   | cancel
   | failed (status : UInt32) (stderr : String)
 
@@ -29,14 +29,28 @@ private def draw (state : Tools.Picker.State) (snapshot : Tools.Picker.Snapshot)
   Id.run do
     let width := cols.toNat - 1
     let height := max 1 rows.toNat
-    let items := Tools.Picker.items state.candidates state.query
+    let items := Tools.Picker.items state.candidates state.query state.allowCreate
     let nameCol :=
       Linger.Core.Listing.nameWidth (snapshot.candidates.map fun target => [("name", target)])
     let mut lines : Array (Array (String × String)) := #[]
     if height ≥ 7 then
-      lines := lines.push #[("  linger", "")] |>.push #[]
+      let title := if state.allowCreate then "  linger" else "  linger · tmux save"
+      lines := lines.push #[(title, "")]
+      if !state.allowCreate then
+        let globals := snapshot.records.takeWhile (fun fields => fields.head? != some "name")
+        let metadata :=
+          globals.filterMap fun fields =>
+            match fields with
+            | ["source", value] => some s!"  source  {value}"
+            | ["saved", value] => some s!"  saved   {value}"
+            | _ => none
+        for text in metadata.take (height - 7) do
+          lines := lines.push #[(text, "\x1b[2m")]
+      lines := lines.push #[]
     if height > 1 then
-      let text := if state.query.isEmpty then "Find or create a session" else state.query
+      let placeholder :=
+        if state.allowCreate then "Find or create a session" else "Find a saved pane"
+      let text := if state.query.isEmpty then placeholder else state.query
       let style := if state.query.isEmpty then "\x1b[2m" else ""
       lines := lines.push #[("  › ", ""), (text, style)]
       if height ≥ 6 then
@@ -45,9 +59,11 @@ private def draw (state : Tools.Picker.State) (snapshot : Tools.Picker.Snapshot)
     let slots := max 1 (height - lines.size - footerRows)
     let start := state.cursor + 1 - slots
     if !loaded then
-      lines := lines.push #[("  Loading sessions…", "\x1b[2m")]
+      let text := if state.allowCreate then "  Loading sessions…" else "  Loading saved panes…"
+      lines := lines.push #[(text, "\x1b[2m")]
     else if items.isEmpty then
-      lines := lines.push #[("  No valid target", "\x1b[2m")]
+      let text := if state.allowCreate then "  No valid target" else "  No matching saved panes"
+      lines := lines.push #[(text, "\x1b[2m")]
     else
       let mut index := start
       for item in (items.drop start).take slots do
@@ -69,9 +85,9 @@ private def draw (state : Tools.Picker.State) (snapshot : Tools.Picker.Snapshot)
         if !loaded then "  Type to search"
         else
           match Tools.Picker.selected state with
-          | some (.existing _) => "  ↵ attach"
+          | some (.existing _) => if state.allowCreate then "  ↵ attach" else "  ↵ import / attach"
           | some (.create _) => "  ↵ create"
-          | none => "  Type a valid name"
+          | none => if state.allowCreate then "  Type a valid name" else "  Type to search"
       lines := lines.push #[(s!"{action}  ·  ↑↓ move  ·  esc / ^C quit", "\x1b[2m")]
     let mut frame := "\x1b[0m\x1b[H\x1b[2J"
     let mut first := true
@@ -101,9 +117,16 @@ private def draw (state : Tools.Picker.State) (snapshot : Tools.Picker.Snapshot)
     return frame
 
 /-- Own raw mode and at most one listing for one selection visit. Keys always
-act on the displayed snapshot; a completed replacement is applied afterward
-and rendered before polling again. The first listing is cancellable too. -/
-private def choose (executable : String) : IO Choice := do
+act on the displayed snapshot, which is returned on acceptance; a completed
+replacement is applied afterward and rendered before polling again.
+Saved-tmux visits have no creation choice. The first listing is cancellable too. -/
+def choose (executable : String) (savedTmux : Bool := false) (save : Option String := none) :
+    IO Choice := do
+  unless (← stdinIsTty) && (← (← IO.getStdout).isTty) do
+    throw (IO.userError "the picker needs terminal input and output")
+  let args :=
+    if savedTmux then #["tmux", "ls", "--porcelain"] ++ save.toArray
+    else #["ls", "-r", "--porcelain"]
   let pending ← IO.mkRef (none : Option Linger.Runtime.Command.Job)
   let withColor := (← IO.getEnv "NO_COLOR").isNone
   let saved ← termRaw stdinFd
@@ -112,7 +135,7 @@ private def choose (executable : String) : IO Choice := do
     writeAll stdoutFd (ByteArray.mk (Linger.Core.Terminal.Title.ansi "linger").toArray)
     let fds := #[stdinFd]
     let events := #[POLLIN]
-    let mut state := Tools.Picker.init []
+    let mut state := Tools.Picker.init [] (!savedTmux)
     let mut snapshot : Tools.Picker.Snapshot := {}
     let mut loaded := false
     let mut decoder := Tools.Input.init
@@ -158,7 +181,7 @@ private def choose (executable : String) : IO Choice := do
           dirty := dirty || next != state
           state := next
         | .attach target | .create target =>
-          return .attach target
+          return .attach target snapshot
         | .cancel =>
           return .cancel
       if let some result← Linger.Runtime.Command.poll pending then
@@ -167,14 +190,15 @@ private def choose (executable : String) : IO Choice := do
         let incoming ← IO.ofExcept (Tools.Picker.parseSnapshot result.stdout)
         let next :=
           if loaded then Tools.Picker.refresh state incoming.candidates
-          else { (Tools.Picker.init incoming.candidates) with query := state.query }
+          else
+            { (Tools.Picker.init incoming.candidates state.allowCreate) with query := state.query }
         dirty := dirty || !loaded || next != state || incoming != snapshot
         state := next
         snapshot := incoming
         loaded := true
         nextListing := (← monotonicMs) + 1000
       if (← pending.get).isNone && (← monotonicMs) ≥ nextListing then
-        pending.set (some (← Linger.Runtime.Command.start executable #["ls", "-r", "--porcelain"]))
+        pending.set (some (← Linger.Runtime.Command.start executable args))
     return .cancel
   finally
     try
@@ -190,8 +214,6 @@ private def choose (executable : String) : IO Choice := do
 exit returns to a fresh listing; cancellation ends the manager. The caller
 supplies one frozen absolute executable for all listing and attach children. -/
 def run (executable : String) : IO UInt32 := do
-  unless (← stdinIsTty) && (← (← IO.getStdout).isTty) do
-    throw (IO.userError "the picker needs terminal input and output")
   while true do
     match ← choose executable with
     | .cancel =>
@@ -201,7 +223,7 @@ def run (executable : String) : IO UInt32 := do
       if !stderr.isEmpty then
         IO.eprint stderr
       return status
-    | .attach target =>
+    | .attach target _ =>
       let child ← IO.Process.spawn { cmd := executable, args := #["attach", target] }
       discard child.wait
   return 0

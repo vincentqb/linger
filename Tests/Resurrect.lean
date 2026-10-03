@@ -10,6 +10,37 @@ namespace Tools.Resurrect.Tests
 
 open Tools.Resurrect
 
+-- Browsing uses original window context and pane order. Display text is safe,
+-- while the action fields retain exact paths and source lines.
+#guard
+  let text :=
+    "pane\tdesk\t2\t1\t:*\t1\tunused\t:/tmp/é space\r\x1b\t1\tvi\t:never run this\n" ++
+      "window\tdesk\t2\t:editor\x1b[31m\t1\t:*\n" ++
+      "pane\tdesk\t1\t0\t:\t0\tunused\t:/other\t0\tsh\t:\n" ++
+      "window\tdesk\t1\t:shell"
+  match parseSave "" text with
+  | .error _ => false
+  | .ok panes =>
+    let rows := catalogRows text panes
+    rows.map (fun row => row.lookup "name") == [some "desk-w2-p1", some "desk-w1-p0"] &&
+      rows.map (fun row => row.lookup "directory") == [some "/tmp/é space\r\x1b", some "/other"] &&
+      rows.map (fun row => row.lookup "line") == [some "1", some "3"] &&
+      rows.all (fun row => row.lookup "status" == some (Linger.Core.Status.name .resumable)) &&
+      rows.map (fun row => row.lookup "cmd") ==
+        [some "desk:2 editor?[31m  ·  /tmp/é space??", some "desk:1 shell  ·  /other"]
+
+#guard
+  let pane : Pane := { name := "desk-w0-p0", dir := "/exact path\n\r\x1b", line := 3 }
+  selectedPane pane.name pane.dir pane.line == some pane &&
+    (catalogRows "unrelated display metadata" [pane]).head?.bind (·.lookup "directory") ==
+      some pane.dir
+
+#guard
+  ["", ".hidden", "bad/name", "bad name", String.ofList (List.replicate 81 'x')].all fun name =>
+    (selectedPane name "/tmp" 1).isNone
+
+#guard (selectedPane "valid" "/bad\x00dir" 1).isNone
+
 -- The reserved tmux session name carries native identity without a comment row.
 #guard
   match parseSave "" "pane\tlinger=dev~api+one\t0\t:\t1\t0\t1\t:/tmp\t1\tsh\t:" with

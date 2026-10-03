@@ -2,6 +2,7 @@ module
 
 public import E2E.Recipes
 public import Linger.Core.Checkpoint
+public import Lean.Data.Json
 import all Manager.Resurrect
 
 public section
@@ -19,7 +20,7 @@ production codec, and the crash check also exercises an actual last detach.
 namespace E2E.Interop
 
 open E2E.Harness
-open E2E.Recipes (paneLine)
+open E2E.Recipes (paneLine tmuxFixtureEnv)
 open Linger.Core.Checkpoint
 
 private def process (args : IO.Process.SpawnArgs) (ms : Nat := 10000) :
@@ -43,11 +44,13 @@ private structure Fixture where
   root : System.FilePath
   env : Env
   owned : IO.Ref (List (Env × String))
+  tmuxEnv : Array (String × Option String)
 
 private def Fixture.procEnv (f : Fixture) : Array (String × Option String) :=
   f.env.procEnv ++
     #[("HOME", some (f.root / "home").toString), ("XDG_DATA_HOME", some (f.root / "data").toString),
-      ("LINGER_SESSION", none), ("ENV", none), ("BASH_ENV", none)]
+      ("LINGER_SESSION", none), ("ENV", none), ("BASH_ENV", none)] ++
+    f.tmuxEnv
 
 private def Fixture.cli (f : Fixture) (args : Array String)
     (extra : Array (String × Option String) := #[]) (cwd : Option System.FilePath := none) :
@@ -99,7 +102,7 @@ private def Fixture.importText (f : Fixture) (text : String) : IO (UInt32 × Str
     pure ()
   let path := f.root / "source"
   IO.FS.writeFile path text
-  f.cli #["import", path.toString]
+  f.cli #["tmux", "import", path.toString]
 
 private def readBytes (path : System.FilePath) : IO (Option ByteArray) := do
   try
@@ -120,7 +123,7 @@ private def sameFields (a b : List (String × String)) : Bool :=
 private def Fixture.exportFields (f : Fixture) (file : String) (expected : List (String × String)) :
     IO Bool := do
   let target := f.root / "out" / file
-  let (code, _, _) ← f.cli #["export", target.toString]
+  let (code, _, _) ← f.cli #["tmux", "export", target.toString]
   let some bytes ← readBytes target | return false
   let some text := String.fromUTF8? bytes | return false
   let some fields := commonFields (f.root / "home").toString text | return false
@@ -129,8 +132,8 @@ private def Fixture.exportFields (f : Fixture) (file : String) (expected : List 
 private def Fixture.refused (f : Fixture) (file : String := "refused") : IO Bool := do
   let out := f.root / "out"
   let before ← namesIn out
-  let (code, _, err) ← f.cli #["export", (out / file).toString]
-  return code == 1 && err.startsWith "linger export: " && (← namesIn out) == before
+  let (code, _, err) ← f.cli #["tmux", "export", (out / file).toString]
+  return code == 1 && err.startsWith "linger tmux export: " && (← namesIn out) == before
 
 private def privateFile (path : System.FilePath) : IO Bool := do
   let (code, out, _) ←
@@ -143,6 +146,286 @@ private def link (target path : System.FilePath) : IO Unit := do
   let (code, _, err) ← process { cmd := "ln", args := #["-s", target.toString, path.toString] }
   unless code == 0 do
     throw (IO.userError s!"could not create fixture symlink: {err}")
+
+private def queryCall : String := "CALL\x00show-options\x00-gqv\x00@resurrect-dir\x00\n"
+
+private def Fixture.queries (f : Fixture) : IO String := IO.FS.readFile (f.root / "tmux-calls")
+
+/-- Fix the file's UTC mtime independently of the program's timestamp formatter. -/
+private def Fixture.catalogSave (f : Fixture) (path : System.FilePath) (text : String) : IO Unit :=
+  do
+  IO.FS.createDirAll (path.parent.getD f.root)
+  IO.FS.writeFile path text
+  let (code, _, err) ←
+    process
+        { cmd := "touch", args := #["-t", "200102030405.06", path.toString],
+          env := #[("TZ", some "UTC")] }
+  unless code == 0 do
+    throw (IO.userError s!"could not timestamp fixture save: {err}")
+  for pane in (Tools.Resurrect.parseSave (f.root / "home").toString text).toOption.getD [] do
+    f.own pane.name
+
+private def catalogDate (text : String) : Bool :=
+  text == "2001-02-03T04:05:06Z" || text == "2001-02-03T04:05:06+00:00"
+
+private def field (row : List (String × String)) (key : String) : String := (row.lookup key).getD ""
+
+/-- Check the wire framing as well as the production parser's identities.
+Action directories are decoded as JSON, never compared through display escaping. -/
+private def Fixture.catalogMatches (f : Fixture) (path : System.FilePath) (out : String) :
+    IO Bool := do
+  let text ← IO.FS.readFile path
+  let .ok panes := Tools.Resurrect.parseSave (f.root / "home").toString text | return false
+  let sections := out.splitOn "\n\n"
+  let header := records (sections.headD "")
+  let source ← IO.FS.realPath path
+  unless
+    sections.length == panes.length + 2 && sections.getLast? == some "" &&
+      header.map (·.1) == ["source", "saved"] &&
+      field header "source" == Tools.Resurrect.diagnostic source.toString &&
+      catalogDate (field header "saved") &&
+      ((sections.headD "").splitOn "\n").length == 2 do
+    return false
+  unless sections.tail.dropLast.all (fun row => (row.splitOn "\n").length == 5) do
+    return false
+  let rows := sections.tail.dropLast.map records
+  return (rows.zip panes).all fun (row, pane) =>
+      let dir :=
+        if pane.dir.isEmpty || (System.FilePath.mk pane.dir).isAbsolute then pane.dir
+        else (f.root / pane.dir).toString
+      row.map (·.1) == ["name", "status", "cmd", "directory", "line"] &&
+        field row "name" == pane.name &&
+        field row "status" == Linger.Core.Status.name .resumable &&
+        has (field row "cmd") (Tools.Resurrect.diagnostic dir) &&
+        ((Lean.Json.parse (field row "directory")).toOption.bind
+            (fun json => json.getStr?.toOption)) ==
+          some dir &&
+        field row "line" == toString pane.line
+
+private def catalogOrder (f : Fixture) : IO Bool := do
+  let path := f.root / "snapshot-20010203.txt"
+  let last := f.root / "last"
+  let first := (f.root / "first dir").toString
+  let second := (f.root / "second dir").toString
+  let third := (f.root / "third dir").toString
+  let text :=
+    "# Save order is deliberately neither name nor numeric order.\n" ++
+      "window\tzeta\t12\t:Review window\tlayout\tunused\n" ++
+      paneLine "zeta" "12" "8" first "" ++
+      "state\tzeta\tunused\n" ++
+      paneLine "alpha" "3" "1" second "" ++
+      paneLine "zeta" "12" "2" third "" ++
+      "window\talpha\t3\t:Build window\tignored\n"
+  f.catalogSave path text
+  link path last
+  let (rc, out, err) ← f.cli #["tmux", "ls", "--porcelain", "last"]
+  let (humanRc, human, humanErr) ← f.cli #["tmux", "ls", "last"]
+  let rows := (human.splitOn "\n").filter fun line => has line "-w"
+  return rc == 0 && err.isEmpty && (← f.catalogMatches last out) && humanRc == 0 &&
+      humanErr.isEmpty &&
+      has human path.toString &&
+      has human "2001-02-03T04:05:06" &&
+      rows.length == 3 &&
+      (rows.zip ["zeta-w12-p8", "alpha-w3-p1", "zeta-w12-p2"]).all
+        (fun (row, name) => has row name) &&
+      (rows.zip [first, second, third]).all (fun (row, dir) => has row dir) &&
+      has (rows[0]?.getD "") "zeta:12 Review window" &&
+      has (rows[1]?.getD "") "alpha:3 Build window" &&
+      has (rows[2]?.getD "") "zeta:12 Review window" &&
+      (← f.queries).isEmpty &&
+      (← namesIn (System.FilePath.mk f.env.dir)).isEmpty
+
+private def catalogControls (f : Fixture) : IO Bool := do
+  let controls := "\x07\x1b[2J\r\x7f\u0080\u0085\u009b\u009d\u009f"
+  let path := f.root / ("snapshot" ++ controls)
+  let dir := (f.root / ("quote \" and backslash\\ café 会" ++ controls ++ "  trailing ")).toString
+  let text := "window\tcontrol\t4\t:title" ++ controls ++ "\n" ++ paneLine "control" "4" "0" dir ""
+  f.catalogSave path text
+  let (rc, out, err) ← f.cli #["tmux", "ls", "--porcelain", path.toString]
+  let (humanRc, human, humanErr) ← f.cli #["tmux", "ls", path.toString]
+  let printable := fun c : Char => 32 ≤ c.toNat && (c.toNat < 127 || 160 ≤ c.toNat)
+  return rc == 0 && err.isEmpty && (← f.catalogMatches path out) && humanRc == 0 &&
+      humanErr.isEmpty &&
+      human.toList.all (fun c => c == '\n' || printable c) &&
+      ((out.splitOn "\n").filter (fun row => !row.startsWith "directory\t")).all
+        (fun row => row.toList.all (fun c => c == '\t' || printable c)) &&
+      has human (Tools.Resurrect.diagnostic dir.trimAscii.toString) &&
+      has human (Tools.Resurrect.diagnostic path.toString) &&
+      (← namesIn (System.FilePath.mk f.env.dir)).isEmpty
+
+private def catalogRelativeCwd (f : Fixture) : IO Bool := do
+  let path := f.root / "elsewhere" / "last"
+  IO.FS.createDirAll (f.root / "physical" / "child")
+  link (f.root / "physical" / "child") (f.root / "alias")
+  f.catalogSave path (paneLine "relative" "0" "0" "alias/.." "")
+  let (rc, out, err) ← f.cli #["tmux", "ls", "--porcelain", path.toString]
+  return rc == 0 && err.isEmpty && (← f.catalogMatches path out) &&
+      has out ((Lean.Json.str (f.root / "alias" / "..").toString).compress) &&
+      !has out ((Lean.Json.str (f.root / "physical").toString).compress) &&
+      (← namesIn (System.FilePath.mk f.env.dir)).isEmpty
+
+private def catalogReadOnly (f : Fixture) : IO Bool := do
+  let path := f.root / "save"
+  let marker := f.root / "saved-command-marker"
+  IO.FS.writeFile marker "UNTOUCHED\n"
+  f.seed "native.only" (f.root / "home").toString
+  let before ← f.cli #["ls", "--porcelain"]
+  let checkpoint ← readBytes (System.FilePath.mk f.env.dir / "native.only.ckpt")
+  let entries ← namesIn (System.FilePath.mk f.env.dir)
+  let text :=
+    paneLine "foreign" "2" "0" (f.root / "home").toString s!"printf EXECUTED > '{marker}'" ++
+      "window\tforeign\t2\t:Original title\tlayout\n" ++
+      "state\tforeign\tignored\nfuture-record\tignored\x00metadata\n"
+  f.catalogSave path text
+  let (rc, out, err) ← f.cli #["tmux", "ls", "--porcelain", path.toString]
+  let (humanRc, _, humanErr) ← f.cli #["tmux", "ls", path.toString]
+  IO.sleep 200 -- negative assertion: allow an accidentally started saved command to run
+  let after ← f.cli #["ls", "--porcelain"]
+  return rc == 0 && err.isEmpty && (← f.catalogMatches path out) && humanRc == 0 &&
+      humanErr.isEmpty &&
+      before.1 == 0 &&
+      after == before &&
+      !has before.2.1 "foreign-w2-p0" &&
+      has before.2.1 "native.only" &&
+      !has out "EXECUTED" &&
+      !has out "future-record" &&
+      (← IO.FS.readFile path) == text &&
+      (← IO.FS.readFile marker) == "UNTOUCHED\n" &&
+      (← readBytes (System.FilePath.mk f.env.dir / "native.only.ckpt")) == checkpoint &&
+      (← namesIn (System.FilePath.mk f.env.dir)) == entries &&
+      (← f.queries).isEmpty
+
+private def catalogMissingCwd (f : Fixture) : IO Bool := do
+  let path := f.root / "save"
+  f.catalogSave path
+      (paneLine "first" "1" "0" (f.root / "home").toString "" ++
+        paneLine "missing" "1" "0" (f.root / "missing dir").toString "")
+  let (rc, out, err) ← f.cli #["tmux", "ls", "--porcelain", path.toString]
+  let (importRc, imported, importErr) ← f.cli #["tmux", "import", path.toString]
+  return rc == 0 && err.isEmpty && (← f.catalogMatches path out) && importRc == 1 &&
+      imported.isEmpty &&
+      importErr.startsWith "linger tmux import: " &&
+      has importErr "working directory not found at line 2" &&
+      (← namesIn (System.FilePath.mk f.env.dir)).isEmpty &&
+      (← f.queries).isEmpty
+
+private structure Discovery where
+  directory : System.FilePath → String := fun _ => ""
+  source : String := "data/tmux/resurrect/last"
+  legacy : Bool := false
+  xdg : Option String := some "data"
+  rc : String := "0"
+  missingTmux : Bool := false
+
+private def discovery (f : Fixture) (config : Discovery) : IO Bool := do
+  let legacy := "home/.tmux/resurrect/last"
+  IO.FS.createDirAll (f.root / "home/.tmux/resurrect")
+  let files :=
+    ["data/tmux/resurrect/last", "home/.local/share/tmux/resurrect/last", "configured/last",
+        "home/configured/last", "relative config /last", "home/last"] ++
+      if config.legacy then [legacy] else []
+  for (file, index) in files.zipIdx do
+    f.catalogSave (f.root / file) (paneLine s!"saved{index}" "0" "0" (f.root / "home").toString "")
+  let extra :=
+    #[("LINGER_TMUX_DIRECTORY", some (config.directory f.root)), ("LINGER_TMUX_RC", some config.rc),
+        ("XDG_DATA_HOME", config.xdg)] ++
+      if config.missingTmux then #[("PATH", some (f.root / "tmux-sockets").toString)] else #[]
+  let (rc, out, err) ← f.cli #["tmux", "ls", "--porcelain"] extra
+  let (humanRc, human, humanErr) ← f.cli #["tmux", "ls"] extra
+  return rc == 0 && err.isEmpty && (← f.catalogMatches (f.root / config.source) out) &&
+      humanRc == 0 &&
+      humanErr.isEmpty &&
+      has human (f.root / config.source).toString &&
+      has human "2001-02-03T04:05:06" &&
+      (← f.queries) == (if config.missingTmux then "" else queryCall ++ queryCall) &&
+      (← namesIn (System.FilePath.mk f.env.dir)).isEmpty
+
+private def explicitDiscovery (f : Fixture) : IO Bool := do
+  let chosen := f.root / "older-save"
+  f.catalogSave chosen (paneLine "chosen" "0" "0" (f.root / "home").toString "")
+  for path in ["configured/last", "home/.tmux/resurrect/last", "data/tmux/resurrect/last"] do
+    f.catalogSave (f.root / path) (paneLine "other" "0" "0" (f.root / "home").toString "")
+  let (rc, out, err) ←
+    f.cli #["tmux", "ls", "--porcelain", "older-save"]
+        #[("LINGER_TMUX_DIRECTORY", some (f.root / "configured").toString),
+          ("LINGER_TMUX_WAIT", some "1")]
+  return rc == 0 && err.isEmpty && (← f.catalogMatches chosen out) && (← f.queries).isEmpty &&
+      (← namesIn (System.FilePath.mk f.env.dir)).isEmpty
+
+private def missingDiscovery (f : Fixture) (configured : Bool) : IO Bool := do
+  let dir := if configured then f.root / "configured" else f.root / "data/tmux/resurrect"
+  -- Historical files are never merged or substituted for a missing last.
+  f.catalogSave (dir / "tmux_resurrect_20010203T040506.txt")
+      (paneLine "historical" "0" "0" (f.root / "home").toString "")
+  if configured then
+    f.catalogSave (f.root / "home/.tmux/resurrect/last")
+        (paneLine "fallback" "0" "0" (f.root / "home").toString "")
+  let (rc, out, err) ←
+    f.cli #["tmux", "ls"]
+        #[("LINGER_TMUX_DIRECTORY", some (if configured then dir.toString else ""))]
+  return rc == 1 && out.isEmpty && err.startsWith "linger tmux ls: " && has err "save not found" &&
+      has err (dir / "last").toString &&
+      (← f.queries) == queryCall &&
+      (← namesIn (System.FilePath.mk f.env.dir)).isEmpty
+
+private def discoveryTimeout (f : Fixture) : IO Bool := do
+  f.catalogSave (f.root / "data/tmux/resurrect/last")
+      (paneLine "fallback" "0" "0" (f.root / "home").toString "")
+  let before ← IO.monoMsNow
+  let (rc, out, err) ← f.cli #["tmux", "ls"] #[("LINGER_TMUX_WAIT", some "1")]
+  let elapsed := (← IO.monoMsNow) - before
+  return elapsed < 4500 && rc == 1 && out.isEmpty && has err "tmux configuration query timed out" &&
+      has err "explicitly" &&
+      (← f.queries) == queryCall &&
+      (← namesIn (System.FilePath.mk f.env.dir)).isEmpty
+
+private def catalogInvalid (f : Fixture) (kind : String) : IO Bool := do
+  let path := f.root / "invalid-save"
+  let valid := paneLine "mustnot" "1" "0" (f.root / "home").toString ""
+  let text :=
+    match kind with
+    | "malformed" => valid ++ "pane\tshort\n"
+    | "duplicate" => valid ++ valid
+    | "NUL" => valid ++ paneLine "invalid" "1" "0" (f.root / "home").toString "printf\x00ignored"
+    | "empty" => "window\tignored\nstate\tignored\n"
+    | _ => ""
+  f.own "mustnot-w1-p0"
+  if kind != "absent" then
+    IO.FS.writeFile path text
+  let mut ok := true
+  for args in [#["ls"], #["ls", "--porcelain"], #["import"]] do
+    let (rc, out, err) ← f.cli (#["tmux"] ++ args ++ #[path.toString])
+    ok := ok && rc == 1 && out.isEmpty && err.startsWith s!"linger tmux {args[0]!}: "
+  return ok && (← f.queries).isEmpty && (← namesIn (System.FilePath.mk f.env.dir)).isEmpty
+
+private def groupUsage (f : Fixture) : IO Bool := do
+  let path := f.root / "save"
+  f.catalogSave path (paneLine "mustnot" "0" "0" (f.root / "home").toString "")
+  let mut ok := true
+  for command in ["ls", "select", "import", "export"] do
+    for args in [#[""], #["--unknown"], #[path.toString, "extra"], #["--", path.toString]] do
+      let (rc, out, err) ← f.cli (#["tmux", command] ++ args)
+      ok :=
+        ok && rc == 2 && out.isEmpty &&
+          err ==
+            s!"usage: linger tmux {command} {if command == "export" then "SAVE" else "[SAVE]"}\n"
+  for args in
+    [#["tmux", "unknown"], #["tmux", "ls", "--porcelain", path.toString, "extra"],
+      #["tmux", "ls", path.toString, "--porcelain"], #["tmux", "import", "--porcelain"],
+      #["import", path.toString], #["export", (f.root / "out/save").toString]] do
+    let (rc, out, err) ← f.cli args
+    ok := ok && rc == 2 && out.isEmpty && !err.isEmpty
+  return ok && (← f.queries).isEmpty && (← namesIn (System.FilePath.mk f.env.dir)).isEmpty &&
+      (← namesIn (f.root / "out")).isEmpty
+
+private def groupHelp (f : Fixture) : IO Bool := do
+  let mut ok := true
+  for args in [#["tmux"], #["tmux", "help"], #["tmux", "--help"], #["tmux", "-h"]] do
+    let (rc, out, err) ← f.cli args
+    ok :=
+      ok && rc == 0 && err.isEmpty && has out "Usage: linger tmux" &&
+        (["ls [SAVE]", "select [SAVE]", "import [SAVE]", "export SAVE"].all (has out ·))
+  return ok && (← f.queries).isEmpty && (← namesIn (System.FilePath.mk f.env.dir)).isEmpty
 
 private def rawText (f : Fixture) (revision : String := "first") : String :=
   ("# UTF8 café 会 — " ++ revision ++ "\n" ++
@@ -237,7 +520,7 @@ private def nativeRoundtrip (f : Fixture) : IO Bool := do
   IO.FS.createDirAll second.env.dir
   for name in names do
     second.own name
-  let (code, _, _) ← second.cli #["import", (f.root / "out" / "native").toString]
+  let (code, _, _) ← second.cli #["tmux", "import", (f.root / "out" / "native").toString]
   let mut ready := code == 0
   for name in names do
     let there ← second.cwdIs name dir
@@ -305,7 +588,7 @@ private def publication (f : Fixture) (kind : String) : IO Bool := do
       IO.FS.writeFile victim sentinel
     link victim target
   let before ← namesIn (f.root / "out")
-  let (code, _, _) ← f.cli #["export", target.toString]
+  let (code, _, _) ← f.cli #["tmux", "export", target.toString]
   let intact ←
     if kind == "file" then
       pure ((← readBytes target) == some sentinel.toUTF8)
@@ -319,7 +602,7 @@ private def publication (f : Fixture) (kind : String) : IO Bool := do
 private def privatePublication (f : Fixture) : IO Bool := do
   setupRaw f
   let target := f.root / "out" / "private"
-  let (code, _, _) ← f.cli #["export", target.toString]
+  let (code, _, _) ← f.cli #["tmux", "export", target.toString]
   return code == 0 && (← privateFile target) && (← namesIn (f.root / "out")) == ["private"] &&
       (← namesIn (System.FilePath.mk f.env.dir)).all
         (fun name => !name.contains '~' && !name.endsWith ".tmp")
@@ -388,8 +671,8 @@ private def relativeEnvironment (f : Fixture) : IO Bool := do
   let extra :=
     #[("HOME", some "../home"), ("LINGER_DIR", some "../state"),
       ("XDG_RUNTIME_DIR", some "../runtime"), ("XDG_STATE_HOME", some "../persistent")]
-  let (importCode, _, _) ← f.cli #["import", "save"] extra (some origin)
-  let (exportCode, _, _) ← f.cli #["export", "../out/relative"] extra (some origin)
+  let (importCode, _, _) ← f.cli #["tmux", "import", "save"] extra (some origin)
+  let (exportCode, _, _) ← f.cli #["tmux", "export", "../out/relative"] extra (some origin)
   let exported ← IO.FS.readFile (f.root / "out" / "relative")
   return importCode == 0 && exportCode == 0 && (← f.cwdIs "relative-w0-p0" (f.root / "home")) &&
       commonFields "" exported == some [("relative-w0-p0", (f.root / "home").toString)]
@@ -398,9 +681,9 @@ private def fallbackHome (f : Fixture) (home : Option String) : IO Bool := do
   let text := paneLine "fallback" "0" "0" "~" ""
   IO.FS.writeFile (f.root / "source") text
   f.own "fallback-w0-p0"
-  let (importCode, _, _) ← f.cli #["import", (f.root / "source").toString] #[("HOME", home)]
+  let (importCode, _, _) ← f.cli #["tmux", "import", (f.root / "source").toString] #[("HOME", home)]
   let target := f.root / "out" / "fallback"
-  let (exportCode, _, _) ← f.cli #["export", target.toString] #[("HOME", home)]
+  let (exportCode, _, _) ← f.cli #["tmux", "export", target.toString] #[("HOME", home)]
   let some accountHome := (← Std.Async.System.getCurrentUser).homeDir | return false
   let cwd ← IO.FS.realPath accountHome
   let exported ← IO.FS.readFile target
@@ -480,7 +763,8 @@ private def check (root : System.FilePath) (bin : String) (index : Nat) (label :
   for dir in [root / "state", root / "home", root / "data", root / "out"] do
     IO.FS.createDirAll dir
   let owned ← IO.mkRef []
-  let f : Fixture := { root, env := { bin, dir := (root / "state").toString }, owned }
+  let tmuxEnv ← tmuxFixtureEnv root
+  let f : Fixture := { root, env := { bin, dir := (root / "state").toString }, owned, tmuxEnv }
   let (ok, detail) ←
     try
       pure (← body f, label)
@@ -515,14 +799,14 @@ def runWith (binary : String) : IO UInt32 := do
     cases :=
       cases ++
         [(s!"export rejects {label} arguments with exit 2", fun (f : Fixture) => do
-            let (code, _, _) ← f.cli (#["export"] ++ args)
+            let (code, _, _) ← f.cli (#["tmux", "export"] ++ args)
             return code == 2 && (← namesIn (System.FilePath.mk f.env.dir)).isEmpty)]
   cases :=
     cases ++
       [("export refuses an empty session set without publishing", fun (f : Fixture) => f.refused),
         ("export accepts an explicit ./-save path", fun (f : Fixture) => do
           f.seed "native" (f.root / "home").toString
-          let (code, _, _) ← f.cli #["export", "./-save"] (cwd := some (f.root / "out"))
+          let (code, _, _) ← f.cli #["tmux", "export", "./-save"] (cwd := some (f.root / "out"))
           return code == 0 && (← readBytes (f.root / "out" / "-save")).isSome),
         ("import retains no foreign source and exports current fields after source replacement and deletion",
           sourceIndependent),
@@ -569,6 +853,64 @@ def runWith (binary : String) : IO UInt32 := do
           nativeFallback f none true),
         ("export includes live and resumable sessions with empty HOME and no state overrides",
           fun f => nativeFallback f (some "") true)]
+  cases :=
+    cases ++
+      [("tmux ls preserves parseSave order, original window context, canonical source and save time",
+          catalogOrder),
+        ("tmux ls escapes display controls while directory JSON preserves exact cwd",
+          catalogControls),
+        ("tmux ls freezes relative cwd against invocation without resolving its symlink spelling",
+          catalogRelativeCwd),
+        ("tmux ls leaves native listings, checkpoints, source bytes and saved commands untouched",
+          catalogReadOnly),
+        ("tmux ls displays missing directories but import preflights before any creation",
+          catalogMissingCwd),
+        ("an explicit historical save bypasses configured tmux and both conventional last files",
+          explicitDiscovery),
+        ("a configured directory with no last fails without falling back or scanning history",
+          fun f => missingDiscovery f true),
+        ("a conventional directory with no last fails without scanning history", fun f =>
+          missingDiscovery f false),
+        ("tmux discovery times out with an explicit-save diagnostic before effects",
+          discoveryTimeout),
+        ("tmux group and retired top-level spellings reject invalid arguments before effects",
+          groupUsage),
+        ("bare tmux and every group help spelling explain the saved commands without discovery",
+          groupHelp)]
+  for kind in ["absent", "malformed", "duplicate", "NUL", "empty"] do
+    cases :=
+      cases ++
+        [(s!"tmux ls and import reject an {kind} save before output or session creation", fun f =>
+            catalogInvalid f kind)]
+  let discoveries : List (String × Discovery) :=
+    [("configured absolute directory",
+        { directory := fun root => (root / "configured").toString, source := "configured/last",
+          legacy := true }),
+      ("configured ~/ directory",
+        { directory := fun _ => "~/configured", source := "home/configured/last", legacy := true }),
+      ("configured bare ~ directory",
+        { directory := fun _ => "~", source := "home/last", legacy := true }),
+      ("configured invocation-relative directory with a trailing space",
+        { directory := fun _ => "relative config ", source := "relative config /last",
+          legacy := true }),
+      ("legacy last before XDG", { source := "home/.tmux/resurrect/last", legacy := true }),
+      ("XDG when only the legacy directory exists", {}),
+      ("default data directory with unset XDG",
+        { xdg := none, source := "home/.local/share/tmux/resurrect/last" }),
+      ("default data directory with empty XDG",
+        { xdg := some "", source := "home/.local/share/tmux/resurrect/last" }),
+      ("legacy after a failed tmux query",
+        { directory := fun _ => "configured", rc := "1", legacy := true,
+          source := "home/.tmux/resurrect/last" }),
+      ("XDG after a failed tmux query", { directory := fun _ => "configured", rc := "1" }),
+      ("XDG without tmux on PATH", { missingTmux := true }),
+      ("legacy without tmux on PATH",
+        { missingTmux := true, legacy := true, source := "home/.tmux/resurrect/last" })]
+  for (label, config) in discoveries do
+    cases :=
+      cases ++
+        [(s!"tmux ls discovers {label} using only the read-only current-server query", fun f =>
+            discovery f config)]
   let mut failures := 0
   for (index, (label, body)) in cases.zipIdx |>.map (fun (item, i) => (i, item)) do
     failures := failures + (← check root bin.toString index label body)
@@ -577,6 +919,8 @@ def runWith (binary : String) : IO UInt32 := do
   verdict { bin := bin.toString, dir := root.toString } failures
 
 def run : IO UInt32 := do
-  runWith ((← IO.currentDir) / ".lake/build/bin/linger").toString
+  let binary :=
+    (← IO.getEnv "LINGER_EXE").getD ((← IO.currentDir) / ".lake/build/bin/linger").toString
+  runWith binary
 
 end E2E.Interop

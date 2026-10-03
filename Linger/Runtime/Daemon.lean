@@ -390,7 +390,14 @@ def pollRound (rt : Rt) : IO (Rt × List Event) := do
             close c.fd
             rt := rt.dropConn c.fd
           continue
-        match ← read c.fd 65536 with
+        -- A cancelled request may reset a socket with an unread reply.
+        -- Retire that peer through the same transition as EOF.
+        let received ←
+          try
+            read c.fd 65536
+          catch _ =>
+            pure none
+        match received with
         | some bs =>
           if bs.size > 0 then
             events := events ++ [.bytes c.fd.toNat bs.toList]

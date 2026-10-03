@@ -6,8 +6,7 @@ namespace Tools.Entry
 
 inductive Route where
   | selector
-  | importSave (args : List String)
-  | exportSave (args : List String)
+  | tmux (args : List String)
   | session (args : List String)
   deriving BEq, Repr
 
@@ -16,8 +15,7 @@ def route (args : List String) : Route :=
   match args with
   | [] => .session ["help"]
   | ["select"] => .selector
-  | "import" :: rest => .importSave rest
-  | "export" :: rest => .exportSave rest
+  | "tmux" :: rest => .tmux rest
   | _ => .session args
 
 end Tools.Entry

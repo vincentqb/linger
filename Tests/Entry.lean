@@ -14,16 +14,24 @@ open Tools.Entry
 
 #guard route ["select"] == .selector
 
--- Import owns validation of its remaining arguments, including invalid operands.
+-- The tmux group owns validation, including bare help and malformed operands.
+#guard
+  [[], ["ls"], ["select"], ["import"], ["export"], ["help"], ["--help"],
+        ["ls", "/tmp/save with spaces"], ["select", "../older save"], ["import", "./-save"],
+        ["export", "/tmp/世界"], ["select", ""], ["ls", "first", "second"], ["unknown", "", "世界"],
+        ["tmux", "__daemon", "--"]].all
+    fun rest => route ("tmux" :: rest) == .tmux rest
+
+-- Retired top-level spellings reach the native session error with intact operands.
 #guard
   [[], ["/tmp/save"], ["/tmp/save with spaces"], ["./-save"], [""], ["--help"], ["first", "second"],
         ["import", "__daemon", "", "世界"]].all
-    fun rest => route ("import" :: rest) == .importSave rest
+    fun rest => route ("import" :: rest) == .session ("import" :: rest)
 
 #guard
   [[], ["/tmp/save"], ["/tmp/save with spaces"], ["./-save"], [""], ["--help"],
         ["first", "second"]].all
-    fun rest => route ("export" :: rest) == .exportSave rest
+    fun rest => route ("export" :: rest) == .session ("export" :: rest)
 
 -- Explicit commands, internal commands and malformed arguments remain untouched.
 #guard
@@ -31,8 +39,8 @@ open Tools.Entry
         ["attach", "work@host", "/bin/sh", "-lc", "printf '%s\\n' 'hello world'"],
         ["__daemon", "work", "/tmp/a b", "/bin/sh", "-lc", "printf '%s' 'café 世界'"], ["__daemon"],
         ["--help"], ["-r", "host-a", "host-b"], ["unknown", "", "import", "--", "a b"], [""],
-        ["Import", "save"], ["import-resurrect", "save"], ["select", "work"], ["select", ""],
-        ["select", "世界", "a b"]].all
+        ["Import", "save"], ["import-resurrect", "save"], ["Tmux", "ls"], ["tmux-select"],
+        ["select", "work"], ["select", ""], ["select", "世界", "a b"]].all
     fun args => route args == .session args
 
 end Tools.Entry.Tests

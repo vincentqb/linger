@@ -1,13 +1,15 @@
 module
 
 public import Linger.Core.Name
+public import Linger.Core.Status
 
 public section
 
 /-! Pure tmux-resurrect interchange and import planning.
 
-Pane records supply session identity and directory; unused metadata is discarded.
-The caller must preflight every saved directory before performing effects.
+Pane records supply session identity and directory. Window names are used only
+for browsing; unused metadata is discarded. The caller must preflight every
+directory it will import before performing effects.
 Planning uses an explicit snapshot of existing names; it does not claim atomic
 creation or protection from concurrent same-name creators.
 -/
@@ -89,6 +91,31 @@ def parseSave (home content : String) : Except String (List Pane) :=
   | .error error => .error error
   | .ok [] => .error "no pane records in save"
   | .ok (pane :: panes) => .ok (pane :: panes)
+
+/-- One ordered catalog for human listing and the selector. Display context is
+printable; the directory remains exact until the IO boundary encodes it.
+Window metadata can describe a pane but cannot change its identity or cwd. -/
+def catalogRows (content : String) (panes : List Pane) : List (List (String × String)) :=
+  let rows := (content.splitOn "\n").map (·.splitOn "\t")
+  panes.map fun pane =>
+    let fields := rows[pane.line - 1]?.getD []
+    let session := fields[1]?.getD ""
+    let window := fields[2]?.getD ""
+    let record :=
+      rows.find? fun fields =>
+        fields[0]? == some "window" && fields[1]? == some session && fields[2]? == some window
+    let rawTitle := (record.getD [])[3]?.getD ""
+    let title := if rawTitle.startsWith ":" then (rawTitle.drop 1).toString else rawTitle
+    let context := if title.isEmpty then s!"{session}:{window}" else s!"{session}:{window} {title}"
+    [("name", pane.name), ("status", Linger.Core.Status.name .resumable),
+      ("cmd", diagnostic s!"{context}  ·  {pane.dir}"), ("directory", pane.dir),
+      ("line", toString pane.line)]
+
+/-- Revalidate the exact displayed action data after transport. Never normalize a
+target or execute a command from a save; absent or hostile identities fail closed. -/
+def selectedPane (name dir : String) (line : Nat) : Option Pane :=
+  if Linger.Core.Name.sanitize name == name && !dir.contains '\x00' then some { name, dir, line }
+  else none
 
 /-- Literal absolute directories that survive save/restore field handling. -/
 private def representableDir (dir : String) : Bool :=

@@ -315,7 +315,7 @@ module_imports Theorems/Vt.lean 'Theorems/Vt/*' Theorems/Terminal.lean Theorems/
 # composes their executors with the session backend. The session library never
 # imports them, even through an intermediate module: every library import
 # stays in Linger or the one standard-library dependency owned by Posix.
-import_closure Tools/Resurrect.lean 'public import Linger.Core.Name;'
+import_closure Tools/Resurrect.lean 'public import Linger.Core.Name;public import Linger.Core.Status;'
 import_closure Tools/Key.lean 'public import Tools.Input;'
 import_closure Tools/Fuzzy.lean ''
 import_closure Tools/Picker.lean 'public import Tools.Key;public import Tools.Fuzzy;public import Linger.Core.Name;public import Linger.Core.Listing;'
@@ -326,7 +326,7 @@ import_closure Linger/Core/Name.lean ''
 import_closure Linger/Core/Remote.lean 'public import Linger.Core.Name;'
 import_closure Linger/Core/Title.lean 'public import Linger.Core.Name;'
 import_closure Linger/Runtime/Command.lean ''
-import_closure Manager/Resurrect.lean 'public import Tools.Resurrect;public import Linger.Core.Remote;public import Linger.Runtime.Resume;public import Std.Async.System;'
+import_closure Manager/Resurrect.lean 'public import Tools.Resurrect;public import Linger.Core.Remote;public import Linger.Runtime.Resume;public import Manager.Picker;public import Std.Async.System;public import Lean.Data.Json;'
 import_closure Manager/Picker.lean \
   'public import Tools.Picker;public import Tools.Input;public import Linger.Posix;public import Linger.Core.Terminal;public import Linger.Runtime.Command;'
 import_closure Main.lean \
@@ -347,7 +347,7 @@ module_imports 'Linger/*' Linger.lean \
 # E2E.Manager, E2E.Recipes and E2E.Interop exercise them in subprocesses.
 for claim in route_bare_help route_selector_iff route_session_argv \
              route_select_operands route_daemon_argv route_ls_argv route_import_argv \
-             route_export_argv; do
+             route_export_argv route_tmux_argv route_tmux_iff; do
   code_grep "^theorem $claim " Theorems/Entry.lean >/dev/null \
     || fail "entry-point contract disappeared: $claim"
 done
@@ -357,8 +357,7 @@ entry_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Main.lean)"
 for tie in \
   'def main [(]args : List String[)] : IO UInt32 := do try match Tools[.]Entry[.]route args with' \
   '[|] [.]selector => Manager[.]Picker[.]run [(]← IO[.]appPath[)][.]toString' \
-  '[|] [.]importSave rest => Manager[.]Resurrect[.]run [(]← IO[.]appPath[)][.]toString rest' \
-  '[|] [.]exportSave rest => Manager[.]Resurrect[.]runExport rest' \
+  '[|] [.]tmux rest => Manager[.]Resurrect[.]run [(]← IO[.]appPath[)][.]toString rest' \
   '[|] [.]session argv => Linger[.]Runtime[.]Cli[.]main Linger[.]Runtime[.]Resume[.]hooks argv'; do
   printf '%s\n' "$entry_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "entry point bypassed its proved route or fixed IO boundary: $tie"
@@ -368,6 +367,8 @@ done
 # bypassing them a reviewable change; IO tests check preflight/failure ordering
 # and actual argv. As with the runtime ties below, this is not an IO theorem.
 for claim in diagnostic_printable diagnostic_eq_self \
+             catalogRows_common catalogRows_lines catalogRows_status catalogRows_printable \
+             selectedPane_exact selectedPane_valid \
              parseSave_valid parseRow_command_valid parseRow_metadata_irrelevant parseRow_other \
              mem_plan plan_order plan_sequential_idempotent \
              common_cons encodeName_reversible projectName_native \
@@ -377,18 +378,18 @@ for claim in diagnostic_printable diagnostic_eq_self \
   code_grep "^(private )?theorem $claim " Theorems/Resurrect.lean >/dev/null \
     || fail "interchange contract disappeared: $claim"
 done
-code_grep '^[[:space:]]+IO[.]eprintln s!"linger import: [{]diagnostic [(]toString e[)][}]"$' Manager/Resurrect.lean >/dev/null \
-  || fail "importer no longer displays the proved control-free diagnostic"
-code_grep '^[[:space:]]+let source ← IO[.]FS[.]readFile save$' Manager/Resurrect.lean >/dev/null \
-  || fail "importer no longer reads the complete save before parsing"
-code_grep '^[[:space:]]+let panes ← IO[.]ofExcept [(]parseSave home source[)]$' Manager/Resurrect.lean >/dev/null \
-  || fail "importer no longer consumes the proved whole-save parser"
+code_grep '^[[:space:]]+IO[.]eprintln s!"linger tmux [{]command[}]: [{]diagnostic [(]toString e[)][}]"$' Manager/Resurrect.lean >/dev/null \
+  || fail "tmux commands no longer display the proved control-free diagnostic"
+code_grep '^[[:space:]]+let content ← IO[.]FS[.]readFile path$' Manager/Resurrect.lean >/dev/null \
+  || fail "tmux catalog no longer reads the complete resolved save before parsing"
+code_grep '^[[:space:]]+let panes ← IO[.]ofExcept [(]parseSave home content[)]$' Manager/Resurrect.lean >/dev/null \
+  || fail "tmux catalog no longer consumes the proved whole-save parser"
 code_grep '^[[:space:]]+for pane in plan existing panes do$' Manager/Resurrect.lean >/dev/null \
   || fail "importer no longer iterates the proved import plan"
 import_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Manager/Resurrect.lean)"
-printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])let created ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"run", pane[.]name, "true"[]], cwd := some [(]System[.]FilePath[.]mk [(]absolute pane[.]dir[)][)], env [}] unless created[.]exitCode == 0 do throw [(]IO[.]userError s!"could not create session: [{]pane[.]name[}]: [{]created[.]stdout[}][{]created[.]stderr[}]"[)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])let created ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"run", pane[.]name, "true"[]], cwd := some [(]System[.]FilePath[.]mk pane[.]dir[)], env [}] unless created[.]exitCode == 0 do throw [(]IO[.]userError s!"could not create session: [{]pane[.]name[}]: [{]created[.]stdout[}][{]created[.]stderr[}]"[)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "importer bypasses planned creation argv/cwd, captured output or its diagnostic catch"
-code_grep '^[[:space:]]+importSave executable args[.]head[?]$' Manager/Resurrect.lean >/dev/null \
+printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])[|] "import" => importSave executable paths[.]head[?]; return 0([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "importer no longer forwards the entry point executable"
 code_grep '^[[:space:]]+let listing ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"ls", "--porcelain"[]], env [}]$' Manager/Resurrect.lean >/dev/null \
   || fail "importer no longer lists with the supplied executable"
@@ -396,10 +397,39 @@ code_grep '^[[:space:]]+let listing ← IO[.]Process[.]output [{] cmd := executa
 # no-HOME /tmp fallback. Only those fields reach the checked serializer.
 printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])private def writeSave [(]path : String[)] [(]capture : IO [(]List [(]String × String[)][)] := snapshot[)] : IO Unit := do let fields ← capture let content ← IO[.]ofExcept [(]renderSave fields[)] publish path content([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "exporter bypasses the current native snapshot, checked serializer or exclusive publication"
-code_grep '^[[:space:]]+writeSave path$' Manager/Resurrect.lean >/dev/null \
+printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])[|] _ => writeSave [(]paths[.]headD ""[)]; return 0([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "export command bypasses its native snapshot"
-code_grep '^[[:space:]]+IO[.]eprintln s!"linger export: [{]diagnostic [(]toString e[)][}]"$' Manager/Resurrect.lean >/dev/null \
-  || fail "exporter no longer displays the proved control-free diagnostic"
+# Both views consume the same ordered catalog. Display strings are scrubbed;
+# the action directory has JSON framing so display cleanup cannot retarget it.
+# Acceptance must use the displayed snapshot, then pass its exact validated
+# record to the shared creation executor. E2E checks the save-refresh race.
+for tie in \
+  'let save ← readSave origin home file let rows := catalogRows save[.]content save[.]panes' \
+  'let value := if key == "directory" then [(]Lean[.]Json[.]str value[)][.]compress else diagnostic value' \
+  'Linger[.]Posix[.]writeAll Linger[.]Posix[.]stdoutFd [(]ByteArray[.]mk [(]Linger[.]Core[.]Listing[.]terminalListing withColor rows[)][.]toArray[)]' \
+  'let save ← readSave origin home file createPanes executable origin env save[.]panes' \
+  'let path ← savePath origin home file while true do match ← Manager[.]Picker[.]choose executable true [(]some path[.]toString[)] with' \
+  '[|] [.]attach target displayed => unless displayed[.]candidates[.]contains target do throw [(]IO[.]userError "selected pane was absent from the displayed save"[)] let row := displayed[.]row target' \
+  'let dir ← IO[.]ofExcept do let some value := row[.]lookup "directory" [|] throw "selected pane has no directory" let json ← Lean[.]Json[.]parse value json[.]getStr[?]' \
+  'let some pane := selectedPane target dir line [|] throw [(]IO[.]userError "invalid selected pane"[)] createPanes executable origin env [[]pane[]] let child ← IO[.]Process[.]spawn [{] cmd := executable, args := #[[]"attach", pane[.]name[]], cwd := some [(]System[.]FilePath[.]mk pane[.]dir[)], env [}] discard child[.]wait' \
+  'preflight origin panes let listing ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"ls", "--porcelain"[]], env [}]'; do
+  printf '%s\n' "$import_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+    || fail "tmux browser lost its catalog, displayed selection or preflight contract: $tie"
+done
+# Configuration lookup has one polling deadline and an owned subprocess.
+# Cleanup requires cooperative termination. Explicit files never need tmux,
+# and selection discovers the default only once before refreshing. Preserve
+# its lookup spelling: readSave resolves the current symlink target each time.
+for tie in \
+  'Command[.]start "tmux" #[[]"show-options", "-gqv", "@resurrect-dir"[]]' \
+  'let deadline := [(]← Linger[.]Posix[.]monotonicMs[)] [+] 1000 while [(]← Linger[.]Posix[.]monotonicMs[)] < deadline do' \
+  'finally Command[.]stop pending' \
+  'match file with [|] some path => pure path [|] none => if let some dir[[:space:]]*← configuredDirectory then' \
+  'let path := System[.]FilePath[.]mk path return if path[.]isAbsolute then path else origin / path' \
+  'let path ← IO[.]FS[.]realPath save let metadata ← path[.]metadata let content ← IO[.]FS[.]readFile path'; do
+  printf '%s\n' "$import_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+    || fail "tmux discovery lost its explicit path, polling deadline or child cleanup: $tie"
+done
 
 # Selector and decoder proofs concern pure values. Tie each IO consumer to the
 # proved function and retain exact attach argv and an immutable poll snapshot.
@@ -417,10 +447,11 @@ for claim in matches_iff_sublist align_isSome_iff_matches visible_order parseLis
              presentation_creation highlightedPresentation_projection \
              highlightedPresentation_existing_humanRow highlightedPresentation_creation \
              highlightedPresentation_existing_marked_iff emphasizeCells_at emphasizeCells_projection \
-             markPiece_marked_iff items_existing_prefix \
+             markPiece_marked_iff items_existing_prefix items_disabled selected_no_create \
              mem_items_create step_stay_valid step_attach_mem step_create_iff \
              step_create_valid step_init_empty step_cancel refresh_query refresh_candidates \
-             refresh_valid refresh_selected refresh_missing; do
+             refresh_valid refresh_selected refresh_missing init_allowCreate \
+             refresh_allowCreate step_stay_allowCreate step_no_create step_accept_disabled; do
   code_grep "^(private )?theorem $claim([[:space:]]|:)" Theorems/Picker.lean >/dev/null \
     || fail "selector contract disappeared: $claim"
 done
@@ -434,8 +465,8 @@ for claim in ofInput_control_iff feed_byte_bindings feed_paste_no_commands feed_
 done
 for tie in \
   'let incoming ← IO[.]ofExcept [(]Tools[.]Picker[.]parseSnapshot result[.]stdout[)]' \
-  'let items := Tools[.]Picker[.]items state[.]candidates state[.]query' \
-  'let mut state := Tools[.]Picker[.]init [[]]' \
+  'let items := Tools[.]Picker[.]items state[.]candidates state[.]query state[.]allowCreate' \
+  'let mut state := Tools[.]Picker[.]init [[]] [(]!savedTmux[)]' \
   'let mut decoder := Tools[.]Input[.]init' \
   'match Tools[.]Picker[.]step state key with' \
   'let cells := Linger[.]Core[.]Vt[.]charWidth c' \
@@ -464,12 +495,13 @@ for tie in \
   'let nameCol := Linger[.]Core[.]Listing[.]nameWidth [(]snapshot[.]candidates[.]map fun target => [[][(]"name", target[)][]][)]' \
   'let mut index := start for item in [(]items[.]drop start[)][.]take slots do let chosen := index == state[.]cursor let selection := if chosen then "\\x1b[[]7m" else "" let mut pieces := #[[][(]if chosen then " ▸ " else " ", selection[)][]] let chars := Tools[.]Picker[.]highlightedPresentation snapshot nameCol state[.]query item for char in Tools[.]Picker[.]emphasizeCells chars do let statusStyle := if withColor then [(]char[.]status[.]map Linger[.]Core[.]Status[.]style[)][.]getD "" else "" let emphasis := if char[.]matched then "\\x1b[[]4m" else "" pieces := pieces[.]push [(]String[.]singleton char[.]char, selection [+][+] statusStyle [+][+] emphasis[)] lines := lines[.]push pieces index := index [+] 1' \
   'let mut frame := "\\x1b[[]0m\\x1b[[]H\\x1b[[]2J" let mut first := true for line in lines do if !first then frame := frame [+][+] "\\r\\n" first := false let mut used := 0 let mut clipped := false let mut activeStyle := "" for [(]text, style[)] in line do if clipped then break if style != activeStyle then frame := frame [+][+] "\\x1b[[]0m" [+][+] style activeStyle := style for raw in text[.]toList do let c := if raw[.]toNat < 0x20 [|][|] [(]raw[.]toNat ≥ 0x7F && raw[.]toNat < 0xA0[)] then '"'"'[?]'"'"' else raw let cells := Linger[.]Core[.]Vt[.]charWidth c if used [+] cells > width then clipped := true break frame := frame[.]push c used := used [+] cells if !activeStyle[.]isEmpty then frame := frame [+][+] "\\x1b[[]0m" return frame' \
-  'let next := if loaded then Tools[.]Picker[.]refresh state incoming[.]candidates else [{] [(]Tools[.]Picker[.]init incoming[.]candidates[)] with query := state[.]query [}] dirty := dirty [|][|] !loaded [|][|] next != state [|][|] incoming != snapshot state := next snapshot := incoming loaded := true nextListing := [(]← monotonicMs[)] [+] 1000' \
+  'let next := if loaded then Tools[.]Picker[.]refresh state incoming[.]candidates else [{] [(]Tools[.]Picker[.]init incoming[.]candidates state[.]allowCreate[)] with query := state[.]query [}] dirty := dirty [|][|] !loaded [|][|] next != state [|][|] incoming != snapshot state := next snapshot := incoming loaded := true nextListing := [(]← monotonicMs[)] [+] 1000' \
   'while true do let current ← winsizeGet stdoutFd if dirty [|][|] current != size then let frame := draw state snapshot loaded withColor current[.]1 current[.]2 if frame != lastFrame [|][|] current != size then writeAll stdoutFd frame[.]toUTF8 lastFrame := frame size := current dirty := false let ready ← poll fds events 50' \
-  'for key in keys do if !loaded && key == [.]accept then continue match Tools[.]Picker[.]step state key with [|] [.]stay next => dirty := dirty [|][|] next != state state := next [|] [.]attach target [|] [.]create target => return [.]attach target [|] [.]cancel => return [.]cancel if let some result[[:space:]]*← Linger[.]Runtime[.]Command[.]poll pending then' \
-  'nextListing := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]← monotonicMs[)] ≥ nextListing then pending[.]set [(]some [(]← Linger[.]Runtime[.]Command[.]start executable #[[]"ls", "-r", "--porcelain"[]][)][)] return [.]cancel finally' \
+  'for key in keys do if !loaded && key == [.]accept then continue match Tools[.]Picker[.]step state key with [|] [.]stay next => dirty := dirty [|][|] next != state state := next [|] [.]attach target [|] [.]create target => return [.]attach target snapshot [|] [.]cancel => return [.]cancel if let some result[[:space:]]*← Linger[.]Runtime[.]Command[.]poll pending then' \
+  'nextListing := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]← monotonicMs[)] ≥ nextListing then pending[.]set [(]some [(]← Linger[.]Runtime[.]Command[.]start executable args[)][)] return [.]cancel finally' \
   'finally Linger[.]Runtime[.]Command[.]stop pending' \
-  '[|] [.]attach target [|] [.]create target => return [.]attach target'; do
+  '[|] [.]attach target [|] [.]create target => return [.]attach target snapshot' \
+  'let args := if savedTmux then #[[]"tmux", "ls", "--porcelain"[]] [+][+] save[.]toArray else #[[]"ls", "-r", "--porcelain"[]]'; do
   printf '%s\n' "$picker_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "manager lost its selection, refresh, process ownership or attach contract: $tie"
 done
@@ -761,6 +793,15 @@ code_grep '^[[:space:]]+for [(]c, i[)] in polled[.]zipIdx do$' 'Linger/Runtime/D
   || fail "shutdown readiness no longer indexes the frozen connection list"
 code_grep '^[[:space:]]+rt ← drainConns rt$' 'Linger/Runtime/Daemon.lean' > /dev/null \
   || fail "serve no longer drains accepted bytes after exit"
+
+# A client read failure is local to that peer. The close frame cannot prove an
+# IO catch exists: tie errors and EOF to the same fd retirement and pure event.
+# E2E.Robust closes an unread reply and requires the original shell to run again.
+code_grep '^theorem step_closed_frame ' Theorems/Session.lean >/dev/null \
+  || fail "the complete client-close frame disappeared"
+daemon_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Runtime/Daemon.lean)"
+printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])let received ← try read c[.]fd 65536 catch _ => pure none match received with [|] some bs => if bs[.]size > 0 then events := events [+][+] [[][.]bytes c[.]fd[.]toNat bs[.]toList[]] [|] none => close c[.]fd rt := rt[.]dropConn c[.]fd events := events [+][+] [[][.]closed c[.]fd[.]toNat[]]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+  || fail "client read errors must close only that peer through the proved transition"
 
 # A decoded close/exit stops its packet in the proved fold. Runtime feedback
 # then retires the client before the next queued event, preserving effect order.

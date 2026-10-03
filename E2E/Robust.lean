@@ -458,6 +458,39 @@ def run : IO UInt32 := do
     IO.FS.removeFile cutPath
   catch _ =>
     pure ()
+  -- ── 8. cancelling an unread reply cannot kill the session ────────────────
+  let resetName := "peer-reset"
+  try
+    let _ ← e.cli #["run", resetName, "true"]
+    let initialPid ← e.info resetName "pid"
+    let raw ← Linger.Posix.unixConnect s!"{e.dir}/{resetName}.sock"
+    unless raw ≥ 0 do
+      throw (IO.userError "unread-reply peer could not connect")
+    let fd := raw.toUInt64.toUInt32
+    let ready ←
+      try
+        Linger.Posix.writeAll fd (ByteArray.mk (Linger.Core.Wire.encode .info).toArray)
+        let revs ← Linger.Posix.poll #[fd] #[Linger.Posix.POLLIN] 3000
+        pure (revs[0]! &&& Linger.Posix.POLLIN != 0)
+      finally
+        Linger.Posix.close fd
+    -- The echoed input does not contain the contiguous output marker.
+    let sent ← e.cliTimeout #["send", resetName, "printf 'PEER-%s\\n' 'ALIVE'\n"] 3000
+    let ran ←
+      waitFor 3000 do
+          let captured ← e.cliTimeout #["capture", resetName] 1000
+          return captured.any fun (rc, text, _) => rc == 0 && has text "PEER-ALIVE"
+    let finalPid ← e.info resetName "pid"
+    f :=
+      f +
+        (←
+          expect
+              (ready && initialPid.isSome && finalPid == initialPid &&
+                sent.any (fun (rc, _, _) => rc == 0) &&
+                ran)
+              "closing a peer with an unread reply preserves the same usable session shell")
+  finally
+    e.killAll #[resetName]
   verdict e f
 
 end E2E.Robust

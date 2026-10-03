@@ -145,28 +145,38 @@ theorem step_bytes_malformed_close (s : State) (id : Nat) (chunk : List UInt8) (
     step s (.bytes id chunk) = ((closeClient s id).1, .close id :: (closeClient s id).2) := by
   simp [step, hc, he]
 
-/-- A client vanishing changes nothing but the client list — screen,
-scrollback, labels exactly as before — and cannot signal anyone: the
-only effect detach may produce is a checkpoint (reboot-resume's save
-point when the last attached client leaves). -/
+/-- Closing a client preserves every field except its roster entry and the
+dirty flag. Its complete effect list is empty or one checkpoint. -/
+theorem step_closed_frame (s : State) (id : Nat) :
+    (step s (.closed id)).1 =
+        { s with
+          clients := s.clients.filter (·.id != id), dirty := (step s (.closed id)).1.dirty } ∧
+      ((step s (.closed id)).2 = [] ∨ (step s (.closed id)).2 = [.checkpoint]) := by
+  unfold step closeClient State.dropClient
+  dsimp only
+  split
+  · exact ⟨rfl, Or.inr rfl⟩
+  · exact ⟨rfl, Or.inl rfl⟩
+
+/-- A client vanishing preserves the screen, scrollback and labels and cannot
+signal anyone. The whole-state frame above also preserves shell metadata,
+terminal parsing state and output counters. -/
 theorem step_closed (s : State) (id : Nat) :
     (step s (.closed id)).1.vt = s.vt ∧
       (step s (.closed id)).1.labels = s.labels ∧
       (step s (.closed id)).2.all (· == .checkpoint) := by
-  unfold step closeClient
-  dsimp only
-  split
-  · exact ⟨rfl, rfl, by simp⟩
-  · exact ⟨rfl, rfl, by simp⟩
+  rcases step_closed_frame s id with ⟨frame, effects⟩
+  have vt := congrArg State.vt frame
+  have labels := congrArg State.labels frame
+  refine ⟨vt, labels, ?_⟩
+  rcases effects with h | h <;> simp [h]
 
 /-- A delivered close removes the client's entire roster entry, including its
 size ownership. The runtime must deliver this event after intentional closes
 as well as after EOF; the IO consumer is checked in `E2E.Attach`. -/
 theorem step_closed_clients (s : State) (id : Nat) :
     (step s (.closed id)).1.clients = s.clients.filter (·.id != id) := by
-  unfold step closeClient
-  dsimp only
-  split <;> rfl
+  exact congrArg State.clients (step_closed_frame s id).1
 
 /-- With zero clients the mediator still advances, and an owned query still
 gets its one child-facing reply; only presentation broadcast disappears. -/

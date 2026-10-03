@@ -135,32 +135,36 @@ def emphasizeCells : List HighlightedChar → List HighlightedChar
               (fun next => Linger.Core.Vt.charWidth next.char == 0 && next.matched) } ::
       tail
 
-/-- Existing matches come first. Creation is explicit and never rewrites the query. -/
-def items (candidates : List String) (query : String) : List Item :=
+/-- Existing matches come first. Creation, when enabled, is explicit and never
+rewrites the query. Saved catalogs disable it entirely. -/
+def items (candidates : List String) (query : String) (allowCreate : Bool := true) : List Item :=
   let target := if query.isEmpty then Linger.Core.Name.defaultName else query
   (visible candidates query).map Item.existing ++
-    if validTarget target && !candidates.contains target then [.create target] else []
+    if allowCreate && validTarget target && !candidates.contains target then [.create target]
+    else []
 
 structure State where
   candidates : List String
   query : String := ""
   cursor : Nat := 0
+  allowCreate : Bool := true
   deriving BEq, Repr
 
 def maxQueryLength : Nat := 256
 
 /-- A zero cursor represents an empty result; otherwise it indexes a selectable row. -/
 def State.Valid (s : State) : Prop :=
-  s.cursor ≤ (items s.candidates s.query).length - 1 ∧ s.query.length ≤ maxQueryLength
+  s.cursor ≤ (items s.candidates s.query s.allowCreate).length - 1 ∧ s.query.length ≤ maxQueryLength
 
-def init (candidates : List String) : State := { candidates }
+def init (candidates : List String) (allowCreate : Bool := true) : State :=
+  { candidates, allowCreate }
 
-def selected (s : State) : Option Item := (items s.candidates s.query)[s.cursor]?
+def selected (s : State) : Option Item := (items s.candidates s.query s.allowCreate)[s.cursor]?
 
 /-- Keep the selected target across snapshots, even when its creation row becomes
 an existing session. A vanished target leaves the cursor clamped in place. -/
 def refresh (s : State) (candidates : List String) : State :=
-  let choices := items candidates s.query
+  let choices := items candidates s.query s.allowCreate
   let target := (selected s).map Item.target
   let cursor :=
     (choices.findIdx? (fun item => some item.target == target)).getD
@@ -194,9 +198,12 @@ def step (s : State) (key : Tools.Key) : Outcome :=
       { s with
         query := "", cursor := 0 }
   | .up => .stay { s with cursor := s.cursor - 1 }
-  | .down => .stay { s with cursor := min (s.cursor + 1) ((items s.candidates s.query).length - 1) }
+  | .down =>
+    .stay
+      { s with
+        cursor := min (s.cursor + 1) ((items s.candidates s.query s.allowCreate).length - 1) }
   | .first => .stay { s with cursor := 0 }
-  | .last => .stay { s with cursor := (items s.candidates s.query).length - 1 }
+  | .last => .stay { s with cursor := (items s.candidates s.query s.allowCreate).length - 1 }
   | .accept =>
     match selected s with
     | some (.existing target) => .attach target

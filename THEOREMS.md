@@ -20,13 +20,13 @@ recipes, break records, measurements, the audits — lives in
 
 | § | Tension | Invariant | Where |
 |---|---------|-----------|-------|
-| §Entry | discoverable commands vs implicit terminal behavior | `route_bare_help` sends empty argv to help; `route_selector_iff` selects exactly for `["select"]`; `route_session_argv` preserves other session commands and operands; `route_import_argv` and `route_export_argv` give interchange commands their complete trailing argv | Theorems/Entry.lean |
+| §Entry | discoverable commands vs implicit terminal behavior | `route_bare_help` sends empty argv to help; `route_selector_iff` selects exactly for `["select"]`; `route_session_argv` preserves other session commands and operands; `route_tmux_argv` gives the saved-tmux command group its complete trailing argv | Theorems/Entry.lean |
 | §Frame | evolvable protocol vs simple daemon | `decode (encode m) = ([m], ∅)`; unknown tag skips exactly its frame | Theorems/Wire.lean |
 | §Chunk | arbitrary TCP/pty chunking vs stateful parsers | `feed (a ++ b) = feed b ∘ feed a`; output framing is faithful and bounded (`outputMsgs_faithful`, `outputMsgs_bounded`, `outputMsgs_payloads`); accepted info replies preserve every byte in bounded frames, with overflow refused before any prefix (`infoMsgs_faithful`, `infoMsgs_bounded`, `infoMsgs_refused`) | Theorems/Wire.lean, Theorems/Vt.lean, Theorems/Session.lean |
 | §Stream | fragmentation vs one parsed conversation | any re-chunking of a well-formed stream feeds back to exactly that stream (`decode_encode_chunked`; §Frame and §Chunk are its special cases) | Theorems/Wire.lean |
 | §Bound | unbounded queues under load | every buffer has a structural cap preserved by `step`; nothing to fill | Theorems/Wire.lean, Theorems/Vt.lean, Theorems/Session.lean |
 | §Total | adversarial bytes vs no crashes ever | `Vt.step`/`feed` total (no `partial`, grep-checked); `Good` preserved for any byte; dimensions preserved (`dims_feed`) | Theorems/Vt.lean |
-| §Detach | sessions outlive clients | a zero-client session still advances; `.closed id` removes every record for that id (`step_closed_clients`) while preserving the screen and labels, and may checkpoint. Once any decoded prefix requests the sender's close or exit, every suffix preserves its exact state and effects (`feedMsgs_stopped_suffix`; `feedMsgs_after_close` and `feedMsgs_after_exit` are instances). The runtime handles an event's effect feedback before already queued events; after exit it consumes no queued events | Theorems/Session.lean, E2E/Attach.lean, E2E/Delivery.lean |
+| §Detach | sessions outlive clients | a zero-client session still advances; `.closed id` changes only the client roster and dirty flag, with either no effects or one checkpoint (`step_closed_frame`; `step_closed_clients` removes every record for that id). Client read errors follow that same close path; an unread-reply disconnect leaves the original shell usable, checked in the runtime and tied by a source gate. Once any decoded prefix requests the sender's close or exit, every suffix preserves its exact state and effects (`feedMsgs_stopped_suffix`; `feedMsgs_after_close` and `feedMsgs_after_exit` are instances). The runtime handles an event's effect feedback before already queued events; after exit it consumes no queued events | Theorems/Session.lean, E2E/Attach.lean, E2E/Delivery.lean, E2E/Robust.lean |
 | §Restore | reboot-resume vs corrupt/stale state files | `load (save s) = some s` for every live state (`load_save_live`); `load` total on arbitrary bytes, and what it accepts is `Good`, `Renderable`, the ruler the width of the screen, and live-reachable (`load_good`, `load_renderable`, `load_tabsOk`, `load_live`) — refusals, not clamps. Scrollback row widths are deliberately unchecked (`Vt.resize` legitimately leaves old-width rows). On-disk tag pinned: `save_tag`, `"LNGR"` v1 only (the pre-rename reader is at `e1ac562`) | Theorems/Checkpoint.lean |
 | §Name | user-chosen names vs filesystem paths | sanitized names can't escape the socket dir (no `/`, `..`-prefix, NUL, empty); `@` reserved for `name@host`; sanitization preserves exactly the valid names and is idempotent | Theorems/Name.lean |
 | §Remote | trusting remote `ls` output vs local listing safety | parser total, garbage-tolerant; §Name carries through; display fields scrubbed of control bytes. Host validation accepts exactly clean, duplicate-free lists and returns them unchanged (`checkHosts_ok_iff`) | Theorems/Remote.lean |
@@ -43,6 +43,7 @@ recipes, break records, measurements, the audits — lives in
 | §Title | visible cross-session attention vs an uninterrupted terminal stream | context is session then application; attention reserves space and appends last, with no separators for empty optional parts (`compose_context`, `compose_attention_last`, `compose_parts`). When the session and attention fit the shared character budget, arbitrary application text cannot hide the encoded suffix (`compose_bound`, `compose_payload_attention_last`). The title payload excludes terminal controls and fits the OSC parser cap (`payload_safe`, `ansi_payload_bound`, `ansi_ends`). Updates wait for parser-ground and complete UTF-8 (`update_waits`, `update_requires_boundary`). The existing VT observer is chunking-invariant, keeps no history, and preserves its dimensions and parser/screen invariants (`observe_append`, `observe_no_history`, `observe_dims`, `observe_invariants`) | Theorems/Title.lean, Theorems/TerminalTitle.lean, Theorems/Vt.lean, E2E/Title.lean |
 | §Resume | the product's own promise: crash, reboot, reattach | §Restore ∘ §Replay, stated twice — over `save`'s input and over `load`'s output (`resume_grid_of_load`, `resume_tabs_of_load`, `resume_sb_of_load`: any byte string that loads, no other hypothesis) — and lifted to the daemon over its own `vt0` (`Session.run_resume_vt_shape`, `run_resume_load_save`) | Theorems/Resume.lean, Theorems/Session.lean |
 | §Import | foreign save records vs distinct session identities, directory-only restoration and safe error display | successful parsing gives a nonempty list with canonical, distinct names and NUL-free directories (`parseSave_valid`); ignored pane metadata and valid saved commands cannot affect parsed panes (`parseRow_metadata_irrelevant`); planning preserves records and order and skips existing names (`mem_plan`, `plan_order`); adding planned names to the snapshot makes a sequential rerun empty (`plan_sequential_idempotent`); diagnostics exclude C0, DEL and C1 and preserve already printable text (`diagnostic_printable`, `diagnostic_eq_self`) | Theorems/Resurrect.lean, E2E/Recipes.lean |
+| §Catalog | descriptive foreign metadata vs exact restoration targets | `catalogRows_common` and `catalogRows_lines` preserve the complete ordered action data; `catalogRows_status` uses the shared resumable badge; `catalogRows_printable` excludes terminal controls from descriptions; `selectedPane_exact` and `selectedPane_valid` preserve and revalidate the displayed identity and directory | Theorems/Resurrect.lean, E2E/Interop.lean, E2E/Manager.lean |
 | §Interchange | current native state vs discarded foreign metadata | valid native names have reversible encoding (`encodeName_reversible`); every successful generated save parses back to exactly its names and directories for any home (`renderSave_roundtrip`); the executor exports current native fields without retained foreign source | Theorems/Resurrect.lean, E2E/Interop.lean |
 | §Select | fuzzy emphasis and explicit creation vs an exact session identity | alignment accepts exactly the filter language, maximizes score and chooses earliest ties (`align_isSome_iff_matches`, `align_score_max`, `align_earliest`); emphasis preserves shared text/status and marks the chosen target positions (`highlightedPresentation_projection`, `highlightedPresentation_existing_marked_iff`); matching preserves snapshot order (`visible_order`, `items_existing_prefix`); existing selections retain original targets (`step_attach_mem`); creation uses an exact valid target absent from the snapshot (`step_create_valid`); only acceptance acts on the highlighted row (`step_attach_iff`, `step_create_iff`); refresh retains query and surviving targets (`refresh_query`, `refresh_selected`) and bounds the cursor (`refresh_valid`) | Theorems/Fuzzy.lean, Theorems/Picker.lean, E2E/Manager.lean |
 | §Input | split keyboard bytes and pasted commands vs deliberate selection | one byte produces at most one physical key (`feed_length`); UTF-8 prefixes retain at most three bytes (`stored_bound`, `feed_storage_bound`); delivered text excludes controls (`feed_text_valid`); paste emits only text and survives incomplete input (`feed_paste_only_text`, `feed_paste_sticky`, `flush_paste`); the separate binding preserves every byte's selector meaning (`Key.feed_byte_bindings`), and a timeout never accepts (`Key.flush_no_accept`) | Theorems/Input.lean, Theorems/Key.lean, E2E/Manager.lean |
@@ -295,11 +296,11 @@ renaming an already-valid session.
 for `["select"]`; `route_select_operands` forwards extra operands to the session
 backend, which rejects them. `route_session_argv` preserves every other
 session command and operand; `route_ls_argv` and
-`route_daemon_argv` state the listing and internal re-exec cases. Import keeps
-all trailing arguments for its executor to validate (`route_import_argv`);
-export does the same (`route_export_argv`).
+`route_daemon_argv` state the listing and internal re-exec cases.
+`route_tmux_argv` preserves all trailing arguments for the saved-tmux executor
+to validate.
 Routing takes only argv; `Main` consumes this pure decision without inspecting
-terminal streams. Source gates pin all four dispatch branches and the running
+terminal streams. Source gates pin all three dispatch branches and the running
 executable's path. The selector's executor requires terminal input and output.
 `E2E.Manager` checks bare help and explicit selection with all four stream
 combinations, explicit listing in a terminal, help and invalid operands. Both
@@ -347,13 +348,24 @@ default foreground; `terminalListing_plain` preserves plain listing output.
 Metadata changes cause a repaint even when the target list stays unchanged.
 The selectable `Item` distinguishes an existing target from a labelled creation
 choice. `items_existing_prefix` keeps all matching existing rows first.
-`mem_items_create` characterizes creation exactly: the query (or the shared
-attach default for an empty query) must be canonical and printable, with a
+When creation is enabled, `mem_items_create` characterizes it exactly: the query
+(or the shared attach default for an empty query) must be canonical and printable, with a
 nonempty remote suffix if present, and absent from the snapshot. An exact
 existing target therefore has no duplicate creation row. `step_create_valid`
 carries name safety and the unchanged target through acceptance;
 `step_init_empty` positively establishes creation of the default session from
 an empty listing.
+
+Saved-tmux browsing disables creation in the same model. `items_disabled`
+reduces its choices to the existing fuzzy matches in their original order.
+`selected_no_create` and `step_no_create` exclude creation even from a forged
+cursor; `step_accept_disabled` pins Enter to the selected existing item or an
+unchanged state. `init_allowCreate`, `refresh_allowCreate` and
+`step_stay_allowCreate` preserve that policy through initialization, refresh
+and every continuing keyboard transition. Source gates pin the saved browser
+to this mode and to the returned displayed snapshot before any refresh result
+is installed; terminal tests exercise cancellation and replacement of a save
+between display and acceptance.
 
 `validTarget_iff` connects the internal target check to `Name.Valid`,
 printable characters and the optional nonempty remote suffix in both
@@ -468,7 +480,7 @@ settings; documented launch syntax supports them. SSH keepalives remain native
 transport configuration. These observations do not prove GUI behavior, network
 recovery time or a preference for a configuration format.
 
-§Import supports `linger import`. `parseSave_valid` gives
+§Import supports `linger tmux import`. `parseSave_valid` gives
 nonempty, distinct names that already satisfy `Name.Valid`, plus NUL-free
 decoded directories. `parseRow_command_valid` requires the saved command's
 sentinel and absence of NUL. `parseRow_metadata_irrelevant` proves that replacing
@@ -490,7 +502,25 @@ Source gates pin its parser, plan, supplied executable and constant shell-creati
 ordering, executable identity, home fallback, relative paths, and untouched
 existing shells on reruns against real daemons.
 
-§Interchange supports `linger export SAVE`. `common` projects panes to session
+§Catalog supports `linger tmux ls [SAVE]` and `linger tmux select [SAVE]`.
+One whole-save parse supplies both interfaces. `catalogRows_common` preserves
+every name and directory in pane order, independent of display metadata;
+`catalogRows_lines` preserves each diagnostic source line.
+`catalogRows_status` fixes the shared resumable status, while
+`catalogRows_printable` scrubs terminal controls from window context and directory
+descriptions. The exact action directory is separate from that display text.
+The porcelain boundary encodes it as a JSON string.
+
+`selectedPane_exact` preserves canonical displayed names and NUL-free directories
+without normalization, and `selectedPane_valid` refuses action data that bypasses
+those guards. The selector returns its displayed snapshot with the target; the
+executor imports only that row through the existing preflight and plan.
+It does not reread a newer save during acceptance. Source gates bind both
+listing and selection to these pure values; executable checks cover source
+discovery, framed directory transport, no-effect browsing, no Create choice,
+cancellation and actual single-pane attachment.
+
+§Interchange supports `linger tmux export SAVE`. `common` projects panes to session
 names and directories. Source line numbers, commands, window composition and
 native terminal state are outside this projection. `encodeName_reversible`
 covers the complete valid native name alphabet. The reserved `linger=` prefix
@@ -529,8 +559,8 @@ the interchange guarantee.
 
 `diagnostic_printable` excludes C0, DEL and C1 from displayed importer errors;
 `diagnostic_eq_self` preserves already printable text, including spaces and
-Unicode. `Manager.Resurrect` applies that function only when displaying an
-error, leaving the original names, paths and arguments intact. It captures both
+Unicode. `Manager.Resurrect` applies that function to display text, leaving
+action names, paths and arguments intact. It captures both
 creation-child streams and includes their failure text in that same diagnostic.
 Source gates tie the executor to these boundaries; `E2E.Recipes` checks controls
 in rejected names, missing directories, missing save paths and failed child

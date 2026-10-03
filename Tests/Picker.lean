@@ -314,4 +314,75 @@ open Tools.Picker
   step { candidates := ["a", "b", "a-b"], query := "b" } .last ==
     .stay { candidates := ["a", "b", "a-b"], query := "b", cursor := 1 }
 
+-- Saved panes are existing choices only, including empty and unmatched saves.
+#guard items [] "" false == []
+
+#guard items ["work", "other"] "new-pane" false == []
+
+#guard items ["work@host", "wk", "other"] "WK" false == [.existing "work@host", .existing "wk"]
+
+#guard (init [] false).allowCreate == false && selected (init [] false) == none
+
+#guard step (init [] false) .accept == .stay (init [] false)
+
+#guard
+  let state : State := { candidates := ["work"], query := "new-pane", allowCreate := false }
+  step state .accept == .stay state
+
+-- A cursor beyond the existing rows must not reach a hidden creation offer.
+#guard
+  let state : State :=
+    { candidates := ["work@host"], query := "work", cursor := 1, allowCreate := false }
+  selected state == none && step state .accept == .stay state
+
+#guard
+  let state : State :=
+    { candidates := ["work@me@dev-a", "other"], query := "WK@DV", allowCreate := false }
+  step state .accept == .attach "work@me@dev-a"
+
+#guard
+  let state : State :=
+    { candidates := ["work", "web"], query := "w", cursor := 1, allowCreate := false }
+  refresh state ["web", "work"] ==
+      { candidates := ["web", "work"], query := "w", allowCreate := false } &&
+    refresh state [] == { candidates := [], query := "w", allowCreate := false }
+
+#guard
+  step (init ["a", "b"] false) .last ==
+      .stay { candidates := ["a", "b"], cursor := 1, allowCreate := false } &&
+    step { candidates := ["a", "b"], cursor := 1, allowCreate := false } .down ==
+      .stay { candidates := ["a", "b"], cursor := 1, allowCreate := false }
+
+#guard
+  let state : State := { candidates := ["work"], query := "w", allowCreate := false }
+  [Tools.Key.text 'o', .backspace, .clear, .up, .down, .first, .last].all fun key =>
+    match step state key with
+    | .stay next => !next.allowCreate
+    | _ => false
+
+-- Global save metadata and encoded directories remain exact, inert records.
+#guard
+  match
+    parseSnapshot
+      "source\t/tmp/save file\nsaved\t2026-10-03T10:15:00Z\n\nname\twork\nstatus\tresumable\ncmd\tpane command\ndirectory\t\"/tmp/exact\\tpath\\n\\\"quoted\\\"\"\nline\t4\n" with
+  | .ok snapshot =>
+    snapshot.candidates == ["work"] &&
+      snapshot.records.take 2 ==
+        [["source", "/tmp/save file"], ["saved", "2026-10-03T10:15:00Z"]] &&
+      (snapshot.row "work").lookup "directory" == some "\"/tmp/exact\\tpath\\n\\\"quoted\\\"\"" &&
+      (snapshot.row "work").lookup "line" == some "4" &&
+      String.ofList ((presentation snapshot 4 (.existing "work")).flatMap (·.text)) ==
+        String.singleton (Linger.Core.Status.icon .resumable) ++ " work pane command"
+  | .error _ => false
+
+-- A changed directory changes the snapshot even if its pane identity stays put.
+#guard
+  match parseSnapshot "name\twork\ndirectory\t\"/tmp/old\"\n",
+    parseSnapshot "name\twork\ndirectory\t\"/tmp/new\"\n" with
+  | .ok old, .ok fresh =>
+    old.candidates == fresh.candidates && old != fresh &&
+      (old.row "work").lookup "directory" == some "\"/tmp/old\"" &&
+      (fresh.row "work").lookup "directory" == some "\"/tmp/new\""
+  | _, _ => false
+
 end Tools.Picker.Tests

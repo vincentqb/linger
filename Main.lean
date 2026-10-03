@@ -16,10 +16,8 @@ def main (args : List String) : IO UInt32 := do
     match Tools.Entry.route args with
     | .selector =>
       Manager.Picker.run (← IO.appPath).toString
-    | .importSave rest =>
+    | .tmux rest =>
       Manager.Resurrect.run (← IO.appPath).toString rest
-    | .exportSave rest =>
-      Manager.Resurrect.runExport rest
     | .session argv =>
       Linger.Runtime.Cli.main Linger.Runtime.Resume.hooks argv
   catch e =>

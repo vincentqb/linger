@@ -40,6 +40,63 @@ theorem diagnostic_eq_self (message : String)
           simp [h c hc])
     _ = _ := List.map_id _
 
+/-- Browsing preserves the complete name/cwd projection, including order and
+multiplicity, independently of every display-only source field. -/
+theorem catalogRows_common (content : String) (panes : List Pane) :
+    (catalogRows content panes).map (fun row => (row.lookup "name", row.lookup "directory")) =
+      (common panes).map (fun field => (some field.1, some field.2)) := by
+  simp only [catalogRows, common, List.map_map]
+  rfl
+
+/-- A catalog row retains the source line used to diagnose an import failure. -/
+theorem catalogRows_lines (content : String) (panes : List Pane) :
+    (catalogRows content panes).map (fun row => row.lookup "line") =
+      panes.map (fun pane => some (toString pane.line)) := by
+  simp only [catalogRows, List.map_map]
+  rfl
+
+/-- Saved panes use the shared resumable badge, independently of saved commands
+or whatever state the live tmux server has reached since the save. -/
+theorem catalogRows_status (content : String) (panes : List Pane) (row : List (String × String))
+    (member : row ∈ catalogRows content panes) :
+    row.lookup "status" = some (Linger.Core.Status.name .resumable) := by
+  unfold catalogRows at member
+  obtain ⟨pane, _, rfl⟩ := List.mem_map.mp member
+  rfl
+
+/-- Window titles and directories cannot introduce terminal controls into the
+human description, even though the action directory remains unmodified. -/
+theorem catalogRows_printable (content : String) (panes : List Pane) (row : List (String × String))
+    (member : row ∈ catalogRows content panes) (text : String)
+    (description : row.lookup "cmd" = some text) (c : Char) (character : c ∈ text.toList) :
+    32 ≤ c.toNat ∧ (c.toNat < 127 ∨ 160 ≤ c.toNat) := by
+  unfold catalogRows at member
+  obtain ⟨pane, _, rfl⟩ := List.mem_map.mp member
+  simp only [List.lookup_cons, beq_self_eq_true] at description
+  change some (diagnostic _) = some text at description
+  cases description
+  exact diagnostic_printable _ c character
+
+/-- A successful selection has exactly the displayed identity, directory and
+source line; canonicalization is a guard, never a retargeting operation. -/
+theorem selectedPane_exact (name dir : String) (line : Nat)
+    (canonical : Linger.Core.Name.sanitize name = name) (nulFree : dir.contains '\x00' = false) :
+    selectedPane name dir line = some { name, dir, line } := by
+  simp [selectedPane, canonical, nulFree]
+
+/-- Transported selection data cannot bypass the session-name or NUL guards. -/
+theorem selectedPane_valid (name dir : String) (line : Nat) (pane : Pane)
+    (selected : selectedPane name dir line = some pane) :
+    pane = { name, dir, line } ∧
+      Linger.Core.Name.Valid pane.name ∧ pane.dir.contains '\x00' = false := by
+  unfold selectedPane at selected
+  split at selected
+  · rename_i guard
+    simp only [Bool.and_eq_true, beq_iff_eq, Bool.not_eq_true'] at guard
+    cases selected
+    exact ⟨rfl, (Linger.Core.Name.sanitize_eq_self_iff name).mp guard.1, guard.2⟩
+  · cases selected
+
 /-- Common fields retain multiplicity and order while discarding line numbers. -/
 theorem common_cons (pane : Pane) (panes : List Pane) :
     common (pane :: panes) = (pane.name, pane.dir) :: common panes := by rfl
