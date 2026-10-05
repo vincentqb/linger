@@ -12,7 +12,7 @@
 # that a suite asserts against the code's own definitions, never a copy.
 #
 # ubuntu always: every push gets the whole gate. macOS costs several times more per
-# billed minute (the arithmetic is in SCRATCHPAD.md), so it runs only when there is
+# billed minute (measurements are in git history), so it runs only when there is
 # something new for it to learn:
 #
 #   workflow_dispatch  always      — someone asked, e.g. after touching c/shim.c

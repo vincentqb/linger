@@ -66,10 +66,7 @@ fi
 # the daemon, the session shell the daemon spawns on the pty, and the child that
 # shell runs. `^C` then generates a signal that kills nothing, and step 12's
 # `send - carries ^C` assertion fails — while passing standalone every time, which
-# is why it reads as a flake. It cost an hour on 2026-09-11 (SCRATCHPAD.md, "`&`
-# blocks SIGINT"). The remedy was three copies of a warning in prose; this check
-# is what replaces them, and the two surviving mentions (AGENTS.md's gate rule and
-# the comment on the assertion in E2E/Agent.lean) now point here.
+# is why it reads as a flake. Check inherited signal behavior before any suite runs.
 #
 # The probe is BEHAVIOURAL, so it holds on both halves of the CI matrix: a fresh
 # `sh -c` inherits the state, traps INT and signals itself. Delivered -> the trap
@@ -177,7 +174,7 @@ if command -v lean-fmt > /dev/null; then
 elif [ "${GITHUB_ACTIONS-}" = true ] && [ "${RUNNER_OS-}" = Linux ]; then
   fail "the pinned formatter is missing from Linux CI"
 else
-  printf '  lean-fmt absent; layout and semantic lint unchecked — see README.md\n'
+  printf '  lean-fmt absent; layout and semantic lint unchecked — see AGENTS.md\n'
 fi
 
 say "2b. semantic coverage of pure code + runtime emitter classification"
@@ -191,13 +188,12 @@ tail -1 /tmp/linger-coverage.log | grep -q '^FAILURES: 0$' || fail "coverage gat
 printf '  coverage and emitter checks: OK (details: /tmp/linger-coverage.log)\n'
 
 say "2c. verifier regression tests (CI policy, caches and suite isolation)"
-# Which runners CI asks for decides the bill (measurements in SCRATCHPAD.md) and, in the
-# other direction, whether AGENTS.md's macOS claim is checked by anything. `E2E.Ci` runs
-# the real script, including its `git log --since` against throwaway repositories with
-# real commit dates, and the pinned Lake against a temporary project.
+# E2E.Ci runs the real runner-selection script, including its `git log --since`
+# against throwaway repositories with real commit dates, and the pinned Lake
+# against a temporary project.
 # The same runner checks exit status, final verdict, every assertion and both
 # streams. Intentional failures inside these tests stay in their captured logs.
-./.lake/build/bin/e2e --suites ci:45 hygiene:48 \
+./.lake/build/bin/e2e --suites ci:46 hygiene:48 \
   || fail "verifier regression checks (see /tmp/linger-{ci,hygiene}.out)"
 
 say "2d. fuzz corpus: no held-out mutations, failure lists asserted empty"

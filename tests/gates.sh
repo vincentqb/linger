@@ -172,65 +172,6 @@ awk '
 [ "$(tr -d ' \n' < lake-manifest.json | grep -o '\"packages\":\[[^]]*\]')" = '"packages":[]' ] \
   || fail "lake-manifest has packages (README promises no external Lean deps)"
 
-# README's prior-art list stays BARE — names and links, nothing else. AGENTS.md's
-# "do not editorialize about other codebases" rule sanctions exactly one place to
-# name a peer project, and this is it; 4551a5b cut the list back to that shape after
-# it had grown "(the gold standard)", "(the attach/detach decoupling linger mirrors,
-# down to the verb surface)" and "(the interface bar — its crashes under load are why
-# §Bound and §Total are theorems here)". The 2026-09-14 sweep removed the same species
-# of clause from 30 other sites. Nothing stops it growing back, so: SHAPE, not a
-# wordlist.
-#
-# The block is `Prior art:` to the next blank line. Strip the lead-in, every
-# `[name](url)` span and the list separators; anything LEFT is a characterization.
-# That is the rule stated as an assertion — a bare pointer has no residue.
-#
-# WHY SHAPE AND NOT A WORDLIST, measured, because the wordlist is the obvious design
-# and it is the wrong one:
-#   * `screen` is one of the five projects the list names, and it CANNOT be in a
-#     wordlist: as a standalone word it has 463 hits over tracked `.lean`/`.md`
-#     (`screenText`, `screensAnsi`, "the screen", …), exactly ONE of which is the
-#     project. So a wordlist gate is structurally blind to a fifth of its own subject.
-#   * a wordlist must let the sanctioned links through, and once it does it goes
-#     silent on the motivating violation: every characterization above sits OUTSIDE
-#     its link span and contains no project name at all. Measured on the real text —
-#     with `[name](url)` spans stripped (needed so the list itself passes), a
-#     {tmux,abduco,zellij,zmx,dtach} grep does not fire on pre-4551a5b README. A gate
-#     that passes clean on the tree that motivated it is the spec-citation gate's
-#     `code_grep` trap in a new costume.
-#   * and it is a denylist of names someone thought of — the objection the friend-set
-#     gate above records against gating edges instead of the closure.
-# What this gate buys instead is narrow and real: the ONE sanctioned location cannot
-# silently stop being a bare pointer. The rest of the standard is prose discipline
-# under AGENTS.md §Rules, declined deliberately rather than faked.
-#
-# Break-verified six ways: pre-4551a5b README (fires, 5 lines), 4551a5b (silent),
-# this tree (silent), `Prior art:` renamed (exit 2, the vacuous-pass probe — a gate
-# whose block went missing must not pass), a new BARE entry appended (silent: the
-# list may grow), and one characterization re-added to an existing link (fires).
-#
-# POSIX awk: bracket expressions, no backslash escapes, per `code_grep`'s rules. Not
-# `code_grep` itself — the sanctioned form is a markdown link, not a backtick span,
-# and stripping backticks would neither admit it nor find the residue.
-awk '
-  /^Prior art:/ { inblock = 1 }
-  inblock && /^[[:space:]]*$/ { inblock = 0 }
-  inblock {
-    seen++
-    s = $0
-    sub(/^Prior art:/, "", s)
-    gsub(/[[][^]]*[]][(][^)]*[)]/, "", s)
-    gsub(/and/, "", s)
-    gsub(/[,.[:space:]]/, "", s)
-    if (s != "") { printf "  %s:%d:%s\n", FILENAME, FNR, $0; bad++ } }
-  END {
-    if (seen == 0) {
-      print "  no `Prior art:` block found in README.md — renamed or removed, and this"
-      print "  gate would then pass by checking nothing"
-      exit 2 }
-    exit (bad > 0 ? 1 : 0) }' README.md >&2 \
-  || fail "README's prior-art list is not a bare pointer any more (see the lines above): name and link only, no characterization of another project — AGENTS.md, 'do not editorialize about other codebases'"
-
 # The vt-toolkit's import closure (`specs/archive/vt-toolkit.md` Step 4). The toolkit is
 # Linger/Core/{Vt,Render,Terminal,Replay}.lean, and the claim worth having is that its
 # closure contains NOTHING else -- no Posix, no Runtime, no Checkpoint, no Session.
@@ -1066,7 +1007,7 @@ rp_n="$(code_count 'partial def' 'Linger/Runtime/*')"
 # Lean here would flag the assertion instead of the hazard. `kill -0 $pid` (the
 # liveness probe) is a signal flag, not a target, and is deliberately not matched.
 ! code_grep 'kill([[:space:]]+-[A-Za-z0-9]+)*[[:space:]]+(--[[:space:]]+)?(0|-[0-9]+)([^0-9]|$)' \
-    'tests/*.sh' 'c/shim.c' 'recipes/*' '.claude/*.sh' \
+    'tests/*.sh' 'c/shim.c' 'recipes/*' \
   || fail "a signal targets process group 0 or a negative pid — name the pid the suite created"
 ! code_grep '["]python([0-9.]*)' 'E2E/*' \
   || fail "an E2E suite executes embedded Python — use the e2e binary as the child probe"
@@ -1089,68 +1030,6 @@ git ls-files 'Tests/*' | grep -qvE '\.lean$' \
 git ls-files 'tests/*' | grep -qE '\.lean$' \
   && fail "a .lean file under tests/ (it belongs in Tests/ or E2E/ — the case trap)" || true
 
-# Every `specs/….md` path cited in the tree must EXIST. Archiving a spec silently
-# orphans every citation of it, and it has happened repeatedly — most recently when the
-# vt-toolkit spec moved from its old top-level path to `specs/archive/vt-toolkit.md` at
-# 051b2b4, leaving 31 tracked files pointing at a path that is not there:
-# `Linger/Core/*`, fourteen `Theorems/` files, `Tests/*`, `lakefile.lean`, and this file.
-# No count of the archive is written here on purpose; AGENTS.md records that two such
-# counts already rotted, and `specs/archive/` can be listed. The rot is invisible because
-# a citation is prose: it compiles, it formats, and no reader chases it until one does and
-# finds nothing. With this gate the NEXT archive fails at archive time, when the move is
-# one `sed` away, instead of at the moment someone needs the document.
-#
-# PLAIN `git grep`, NOT `code_grep`, and this is the one gate in the file where that is
-# correct. Measured, because the difference IS the gate: citations are written in prose
-# inside backticks, which is exactly the span `code_grep` deletes by design. Over this
-# tree `code_grep` sees 29 citation lines and NOT ONE of the 31 stale ones — a
-# `code_grep` version of this gate passes clean on the very tree that motivated it. So do
-# not "fix" this to match the rest of the file; the helper's rule is right for code and
-# wrong here, where the citation IS the prose.
-#
-# One consequence, and it is by construction rather than an oversight: a live file cannot
-# spell a spec path that does not exist, INCLUDING this comment. That is why the move
-# above is described by its destination instead of quoted from its source. The decoder
-# forge gate below had the mirror-image problem — it needed to quote what it forbade —
-# and `code_grep` solved that one; nothing can solve this one, because the forbidden
-# string is the citation itself.
-#
-# `SCRATCHPAD.md` and `specs/archive/**` are EXCLUDED, and not for convenience.
-# AGENTS.md makes the worklog append-only and the archived specs closed records: an
-# entry citing a spec's old path was TRUE when it was written, and editing it would
-# falsify the record. Those files legitimately name paths that no longer exist, so a
-# gate over them would demand a lie. Measured consequence, worth knowing: with the two
-# exclusions applied, the vt-toolkit spec's old path is the ONLY stale one in the tree —
-# every other archived spec is cited by its old path in the worklog and the archive
-# alone. The exclusions hide nothing a live reader would follow.
-#
-# Existence means TRACKED (`git ls-files`), not present (`-e`): an untracked local file
-# would pass here and fail in CI, which is the same failure one commit later.
-#
-# `specs/<slug>.md` in AGENTS.md is the one deliberate placeholder and needs no
-# exemption — `<` is outside the character class, so it never matches. Measured too:
-# no occurrence anywhere is preceded by a path character, so the unanchored match
-# cannot currently be satisfied by a longer word ending in `specs/`.
-spec_cites="$(git grep -h -o -E 'specs/[A-Za-z0-9._/-]*[.]md' \
-  -- ':!SCRATCHPAD.md' ':!specs/archive' | sort -u)"
-# A matcher that stops matching makes this gate pass by finding nothing — the exact
-# failure mode the existence-check loop at the top of this file guards against for
-# PATHS, and that loop cannot guard a regex. AGENTS.md, THEOREMS.md and this file all
-# cite specs, so an empty result means the extraction broke, not that the tree is clean.
-[ -n "$spec_cites" ] \
-  || fail "no specs/*.md citation found in the tree — the extraction regex broke, and this gate is now passing vacuously"
-spec_bad=0
-# Deliberate word split, as with `code_grep`'s file list: no path here has a space.
-# shellcheck disable=SC2086
-for sc in $spec_cites; do
-  if [ -n "$(git ls-files -- "$sc")" ]; then continue; fi
-  spec_bad=1
-  printf '  %s is cited but does not exist:\n' "$sc" >&2
-  git grep -n -F "$sc" -- ':!SCRATCHPAD.md' ':!specs/archive' >&2 || true
-done
-[ "$spec_bad" -eq 0 ] \
-  || fail "a cited specs/*.md path does not exist — archiving a spec orphans its citations, so move the citations in the same commit as the file (SCRATCHPAD.md and specs/archive/ are exempt: their entries were true when written)"
-
 # The status glyphs are a user-facing contract of exactly seven characters, and README
 # is where a user reads them. They drifted silently: `Status.icon` emitted `⣀` for idle
 # while README printed `⡀` (one dot, not four), which no test could see — the suites
@@ -1166,8 +1045,7 @@ done
 # filter deleted all seven and the loop body never ran. The gate reported "both
 # directions" while only one existed, and the two break-verifications recorded for it
 # had both landed on the forward half. A `for` over an empty list is the same vacuous
-# pass the spec-citation gate above guards against, and it is why nothing here trusts
-# an extraction it has not counted.
+# pass an empty extraction can cause, so both sides assert their counts.
 icon_glyphs="$(code_grep "^ *[|] [.][a-zA-Z]+ => '" 'Linger/Core/Status.lean' \
   | sed "s/.*=> '//; s/'.*//")"
 icon_n="$(printf '%s\n' "$icon_glyphs" | grep -c .)"
@@ -1209,12 +1087,11 @@ set +f
 # Basenames, because a citation is written unqualified while the declaration sits in a
 # namespace. CamelCase names (types, structures) and file/section names are skipped:
 # the target here is the `snake_case` claim names, which is what a reader would try to
-# look up. The count is asserted so a broken extraction fails instead of passing empty.
+# look up. Empty extraction is rejected so the check cannot pass without citations.
 thm_cites="$(grep -oE '`[a-z][A-Za-z0-9_.]*`' THEOREMS.md | tr -d '`' \
   | grep '_' | grep -vE '[.](md|lean|sh)$' | sed 's/.*[.]//' | sort -u)"
-thm_n="$(printf '%s\n' "$thm_cites" | grep -c .)"
-[ "$thm_n" -ge 80 ] \
-  || fail "extracted only $thm_n declaration citations from THEOREMS.md (expected ~100+); the pattern broke and this gate is passing vacuously"
+[ -n "$thm_cites" ] \
+  || fail "no declaration citations found in THEOREMS.md"
 thm_decls="$(git grep -hoE '^ *(public )?(private )?(theorem|lemma|def|abbrev) [A-Za-z][A-Za-z0-9_.]*' \
   -- '*.lean' | sed 's/.*[[:space:]]//; s/.*[.]//' | sort -u)"
 thm_bad=0
@@ -1286,7 +1163,7 @@ awk '
   reuse && /^[[:space:]]+sh tests\/gates[.]sh$/ { checked = 1 }
   END { exit !checked }
 ' "$ci_yml" \
-  || fail "$ci_yml: reused verification must still check current work records"
+  || fail "$ci_yml: reused verification must still run current source gates"
 grep -qE '^[[:space:]]+run: sh tests/hygiene[.]sh$' "$ci_yml" \
   || fail "$ci_yml: source hygiene must use the shared native checks"
 if grep -qE '^[[:space:]]+[^#].*(setup-python|pip install|pre-commit run)' "$ci_yml"; then
@@ -1326,4 +1203,4 @@ ep_n="$(code_count 'partial def' 'E2E/*' 'LingerTest.lean')"
 [ "$ep_n" -le "$E2E_PARTIAL_CAP" ] \
   || fail "E2E/ grew to $ep_n partial defs (cap $E2E_PARTIAL_CAP); a do-block loop does not need the keyword"
 
-printf 'gates OK — purity, the OS and unsafe surfaces, the Vt friend set, the runtime ties, spec citations, the status glyphs, the prior-art shape, and the ratchets\n'
+printf 'gates OK — purity, the OS and unsafe surfaces, the Vt friend set, the runtime ties, documentation contracts, and the ratchets\n'

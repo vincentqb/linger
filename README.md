@@ -1,280 +1,84 @@
 # linger
 
-Terminal sessions that stay — attach, detach, survive reboots.
-Pure-function Lean 4, machine-checked invariants.
-
-`linger attach <name>` gives you a shell that keeps running after you
-detach or disconnect; reattach later with the screen intact. Bare `linger`
-explains the CLI. `linger select` creates or attaches to a session and returns to selection
-after detach. `linger ls` lists and exits.
-
-Selection refreshes automatically while preserving your query and highlighted
-target. Esc or Ctrl-C quits the selector and leaves session programs running.
-Type a subsequence of a name to filter it: `wk` finds `work`. Matches ignore
-ASCII case; other characters stay exact. The best matching characters are
-underlined, favoring consecutive letters and word starts. Results keep their
-listing order as you type.
+Persistent terminal sessions for Linux and macOS. Detach or disconnect while
+programs keep running, then reattach with the screen intact.
 
 ## Build
 
-```
-./lake build          # always the wrapper, not bare `lake`
+Requires Lean 4.34.1 via [elan](https://github.com/leanprover/elan) and a C
+compiler. There are no external Lean dependencies.
+
+```sh
+./lake build
 mkdir -p ~/.local/bin
 ln -sf "$PWD/.lake/build/bin/linger" ~/.local/bin/linger
 ```
 
-Lean 4.34.1 via elan; no external Lean dependencies.
-
-### Tests
-
-```
-./lake build Theorems Tests      # the proofs and the unit fixtures
-./lake exe lingertest            # POSIX shim smoke tests
-./lake exe e2e <suite>           # one pty suite: attach resume overview remote robust
-                                 #   graphics terminal status agent watch recipes delivery manager title interop
-./lake env lean E2E/Coverage.lean # resolved renderer/replay references; build the program first
-./lake exe e2e ci                # runner selection and build-cache regressions
-sh tests/hygiene.sh              # native whitespace, file and executable checks
-sh tests/gates.sh                # the fast source-tree gates (seconds)
-./tests/e2e.sh                   # everything, in order (minutes)
-```
-
-`LINGER_REMOTE=<host> ./lake exe e2e remote-live` exercises the remote
-path against a real second machine; opt-in, so it is not in the gate.
-
-The full verifier checks every proof, fixture and live suite, reusing valid
-build artifacts. Run `./lake clean` first to verify from scratch.
-CI runs hygiene once, then the full verifier with phase timings. On branch
-pushes and pull requests it can reuse a successful verification of identical
-file contents, paths, modes and runner image. Work records (`AGENTS.md`,
-`SCRATCHPAD.md`, `specs/**/*.md`) still receive fresh hygiene and source gates.
-A missing success receipt runs the full verifier. Scheduled, manual and
-release-tag runs always verify with clean build and formatter-result caches.
-
-Install the native commit hook with `git config core.hooksPath .githooks`.
-It runs hygiene and source gates, plus `actionlint` and `lean-fmt check` when
-installed. Stage or restore tracked edits first: the hook checks that the files
-it inspects match what Git will commit. Neither the hook nor CI needs Python.
-CI requires both tools on
-Linux; workflow validation uses standalone `actionlint`, and semantic lint
-runs after compilation so it can reuse imports. The
-[CI installation steps](.github/workflows/ci.yml) pin both tools and build
-`lean-fmt` with the project toolchain. `.lean-fmt.toml` records its settings.
-
-### Layout
-
-| | |
-|---|---|
-| `Linger/Core/` | pure: no `IO`, no `partial def`, no `sorry`. Effects are data. |
-| `Linger/Runtime/` | executes the session core's effects through Lean IO and Posix |
-| `Linger/Posix.lean`, `c/shim.c` | raw OS bindings, kept behind one interface |
-| `Main.lean` | one executable composing session commands, selection and save interchange |
-| `Tools/`, `Manager/` | pure routing/matching/input/interchange policies and Lean IO executors, outside the session and VT libraries |
-| `Theorems/` | the proofs — what `THEOREMS.md` narrates |
-| `Tests/` | Lean fixtures, checked at elaboration time |
-| `E2E/` | IO suites against the real binary, with isolated executor probes for failure checks |
-| `specs/` | live build plans; `specs/archive/` the closed ones |
-
-### Terminal libraries
-
-These pure libraries and their proofs build independently:
-
-| Build | Imports and purpose |
-|---|---|
-| `./lake build LingerVt` | `Linger.Core.Vt`, `.Render`, `.Terminal`, `.Replay`: emulator, rendering, query mediation, safe titles and streaming repaint |
-| `./lake build LingerVtTheorems` | `Theorems.Terminal`, `.TerminalTitle`, `.Replay`: terminal contracts and replay fidelity |
-| `./lake build LingerInput` | `Tools.Input`: bounded UTF-8 and terminal-key decoding |
-| `./lake build LingerInputTheorems` | `Theorems.Input`: decoding, paste and timeout contracts |
-
-The VT toolkit has no session or OS imports. `Replay.start` captures an
-immutable snapshot; `Replay.next` returns at most the requested byte budget
-and a new cursor. Empty output can advance a stage; keep stepping until `none`.
-A positive budget guarantees termination, and the complete stream equals
-`Render.restore`.
-
-`Terminal.Title.ansi` safely encodes arbitrary title text; `Terminal.Title.update`
-waits until a `Vt.observe` observer is at a complete parser and UTF-8 boundary.
-Session identity and attention-summary composition stay in `Linger.Core.Title`.
-Buffer caps stay in `Linger.Core.Buf`.
-
-`Tools.Input.feed` consumes one byte, returning the next decoder state and
-decoded keys. `flush` handles an input timeout; bracketed paste suppresses
-non-text keys. Applications choose their own bindings. Linger's adapter,
-`Tools.Key.ofInput`, retains the selector's Enter, Escape, Ctrl-C, Ctrl-D,
-Ctrl-U, Ctrl-P/Ctrl-N, Tab and navigation behavior.
-
-### Fuzzy matching library
-
-`./lake build LingerFuzzy` builds the reusable matcher independently. Import
-`Tools.Fuzzy` to use it without session or terminal code:
-
-```lean
-import Tools.Fuzzy
-
-open Tools.Fuzzy
-
--- ASCII capitals in the query make smart matching case-sensitive.
-#eval alignWith { caseMode := .smart } "wK" "workKit"
-
--- Integer weights for word starts, adjacency and gaps before the last match.
-#eval alignWith { scoring := { word := 6, adjacent := 10, gap := -2 } } "wk" "work"
-```
-
-Case modes are `sensitive`, `insensitive` and `smart`. Folding affects ASCII
-capitals only; non-ASCII scalars remain exact. Every successful result contains
-the score and one Boolean mark per original target scalar. Scores may be any
-integers: they choose the best alignment without changing match eligibility.
-Equal scores choose the earliest positions; empty queries mark nothing and
-score zero, and trailing gaps cost nothing. Theorems establish these contracts
-for every configuration. `align` uses insensitive matching with word/adjacency/gap
-weights `4`, `8`, `-1`; linger continues to use those defaults and its existing
-listing order.
+Use the `./lake` wrapper and add `~/.local/bin` to your PATH.
 
 ## Use
 
+```sh
+linger attach work       # create or attach to a session
+linger select            # choose or create a session interactively
+linger ls                # list sessions
+linger status            # show local attention counts
+linger watch work        # view a session without sending input
+linger history work      # print saved scrollback
+linger kill work         # end the session and its program
+linger help              # all commands and options
 ```
-linger attach work      # attach, creating "work" if absent
-Ctrl-\                # detach — session keeps running
-linger select          # create or attach; return after detach
-linger ls              # overview: names, pids, labels; then exit
-linger status          # compact local attention counts; empty when quiet
-linger tmux ls         # inspect the latest saved tmux panes
-linger tmux select     # choose a saved pane to open in linger
-```
 
-| command | |
-|---|---|
-| (no args) | show help |
-| `select` | choose an existing session or create one; requires terminal input and output |
-| `attach [name] [cmd]` | attach, creating if absent (name defaults to `main`) |
-| `attach <name>@<host>` | attach a session on a remote host over ssh |
-| `watch <name>` | input/resize-read-only attach; viewing marks output seen |
-| `run <name> <cmd>` | run a command in a session, don't attach |
-| `send <name> <text>` | send raw input to its pty (`send <name> -`: stdin, byte-exact) |
-| `ls [-r [h,..]]` | overview; `-r` adds remote hosts; `--porcelain` is machine-readable |
-| `status` | local unread, failed and unknown counts for shell prompts; omits zero counts |
-| `tmux ls [SAVE]` | list saved panes, source path and save time; starts no sessions |
-| `tmux select [SAVE]` | choose a saved pane, create its shell if needed, and attach |
-| `tmux import [SAVE]` | import every saved pane, skipping existing identities; never replay commands |
-| `tmux export SAVE` | write local session names and directories to a new tmux-resurrect save file |
-| `info <name>` | one session's records: size, cursor, `outseq`, labels… |
-| `capture <name>` | the current screen as text, one line per row (marks it seen) |
-| `resize <name> <cols> <rows>` | size a detached session (refused while a client is attached) |
-| `history <name>` | scrollback as text |
-| `wait <name>` | block until its program exits (exit code follows) |
-| `kill` / `detach <name>` | end / disconnect |
-| `get` `set` `unset` `clear <name>` | labels (`k=v`) |
+Press **Ctrl-\\** to detach. In `linger select`, type to filter, use the arrow
+keys to move, and press Enter to choose the highlighted session or **Create**
+row. Esc or Ctrl-C exits the selector; detaching returns to it.
 
-Imports use saved identities and directories without retaining foreign metadata.
-`linger tmux` explains the saved-session commands. Listing and selection use
-the same saved pane order, badges and descriptions; selection adds fuzzy
-filtering. They show the actual save path and time, so an older snapshot is
-visible. Defaults consult tmux's effective resurrect directory, then the
-conventional `last` file; pass a filename to choose another snapshot.
-Exports preserve current Linger names and working directories through tmux;
-screens, scrollback and labels stay in native checkpoints. See the
-[interchange details](recipes/README.md#tmux-resurrect-interchange) for the
-preservation rules and supported paths.
+For a remote session, use `linger attach work@host`. The host needs `linger`
+on PATH. Add hosts to `~/.config/linger/remotes` to include them in the selector
+and `linger ls -r`.
 
-## Agents
-
-Use `linger ls --porcelain`, `info`, `capture` and `send` to inspect and drive
-sessions without owning a terminal. Poll cheaply: `info` reports `outseq`,
-a counter that moves once per burst of
-output. A `capture` marks the session seen; `history` is an export and
-does not. `watch <name>` gives a human a read-only view while an agent
-drives. A `resize` is refused — loudly, exit 1 — while an attached
-client owns the size. Captures are plain text (one line per grid row,
-controls scrubbed), so parse them positionally with `rows` from `info`.
+Saved tmux-resurrect sessions can be listed with `linger tmux ls`, opened with
+`linger tmux select`, or imported with `linger tmux import`. Imports start fresh
+shells in saved directories; saved commands are never run.
+See [terminal, prompt and SSH recipes](recipes/README.md) for configuration and
+save interchange.
 
 ## Session status
 
-Each row in `linger ls` and `linger select` carries one glyph — the most specific state that
-applies — plus `+N` when N clients are attached: `⣷` working, `⣿`
-unread (output while nobody watched), `⣀` idle, `✓` exited 0, `!`
-exited nonzero or killed, `~` resumable (checkpoint on disk), `?`
-unknown. `--porcelain` carries the same seven as a `status` field, and
-`behind` counts output events that arrived unseen. Unread means "since
-anyone last looked", a property of the session, not of you.
+Listings show one status glyph and `+N` when clients are attached:
 
-Both views use the same row renderer and status palette. Working is cyan,
-unread and unknown are yellow, successful exits are green, failed exits are red,
-and idle/resumable are dim default text. These are the terminal's standard ANSI
-colors, so your theme chooses the shades. Only the status glyph is colored;
-names stay ordinary text. Redirected listings are plain, and `NO_COLOR`
-disables colors.
+| Glyph | Meaning |
+|---|---|
+| `⣷` | Working |
+| `⣿` | Unread output |
+| `⣀` | Idle |
+| `✓` | Exited successfully |
+| `!` | Failed or killed |
+| `~` | Saved session available to resume |
+| `?` | Status unknown |
 
-`linger status` prints compact attention counts, for example `2⣿ 1!`: two
-unread sessions and one failed exit. Zero counts and other states are omitted;
-an all-quiet snapshot prints nothing. Sampling does not mark output seen.
-The [fish prompt recipe](recipes/fish_prompt.fish) adds this to the right prompt
-and preserves the preceding command's exit status. Other shells can call the
-same command.
-
-The display convention is `session · application title · attention`.
-While attached, the window title shows `work · application title · 2⣿ 1!`;
-without attention it is `work · application title`. Empty optional parts and
-their separators are omitted. Long application titles shorten to leave room for
-attention. Local attention counts refresh while programs run,
-with the next sample starting one second after the previous one finishes.
-The title uses plain glyphs; terminal titles have no ANSI styling. Updates wait
-for complete terminal sequences and UTF-8 characters. Detach, session exit and
-connection loss clear the title; the next shell prompt can set its usual title.
-The selector uses `linger` as its title and clears it when it exits.
+`linger status` prints counts such as `2⣿ 1!` and stays empty when nothing needs
+attention. Reading status does not mark output seen. Set `NO_COLOR` to disable
+listing colors. Attached window titles show the session, application title,
+and attention counts.
 
 ## Graphics
 
-Kitty graphics (`APC`), sixel (`DCS`) and iTerm2 inline images
-(`OSC 1337`) pass through byte for byte while attached; the emulator
-ignores the payloads, so a program streaming megabytes of base64 cannot
-grow a session, reach a checkpoint, or wedge the parser (§Bound, §Total
-in `THEOREMS.md`). Nothing is stored, so what brings an image back after
-reattach is the application redrawing: a changed terminal size delivers
-`SIGWINCH`; at an unchanged size the kernel suppresses it — press the
-app's refresh key (`Ctrl-L` for most). An image from an exited command
-is gone. Both halves are pinned by `E2E/Graphics.lean`; storing images
-is a settled non-goal (AGENTS.md).
+Kitty graphics, sixel and iTerm2 inline images pass through while attached.
+Images are not saved. After reattaching, use the application's redraw command
+(often Ctrl-L); images from exited programs cannot be recovered.
 
-## Recipes
+## Recovery and configuration
 
-Ghostty, kitty, WezTerm and other terminals can run `linger select` at startup.
-[`recipes/README.md`](recipes/README.md) contains native configuration
-examples, a fish prompt, selection keys and save-import instructions. Selection offers
-`Create main` when there are no sessions; type a name to create a different one.
+Checkpoints restore the screen, scrollback, terminal modes, labels and working
+directory after a reboot. Running processes are not restored.
 
-Selection and `linger tmux import [SAVE]` are Lean code and need no external picker
-or shell functions. Their policies and executors stay outside the session and
-VT libraries. `attach name@host` runs ssh; any carrier that can run a remote
-command with a tty works.
+Attaching a session with history **replaces that terminal window's existing
+scrollback**. Use `linger history work` to export session history separately.
 
-## Notes
+- `LINGER_DIR` sets the socket and state directory; use local storage.
+- `LINGER_NO_DETACH_KEY=1` disables the Ctrl-\\ shortcut.
+- `LINGER_SESSION` identifies the session inside its program.
 
-- Reboot-resume is automatic (periodic checkpoint + restore on attach).
-  The screen, scrollback, modes, labels and cwd come back — not the
-  process tree.
-- Reattach paints the session's scrollback into your terminal's own
-  main screen and scrollback, so attaching a session
-  **that has history erases whatever history that window held**
-  (`CSI 3 J`); a session with no history leaves your window alone.
-  `linger history` prints a session's scrollback without touching the
-  terminal. Selection temporarily uses the alternate screen and restores it
-  before attach.
-- Detach key `Ctrl-\`; `LINGER_NO_DETACH_KEY=1` disables it.
-- Detaching hands the terminal back usable, on every exit path, with an empty
-  title ready for the shell to name again.
-- A dropped link cannot hurt a session — it detaches; reattach restores
-  the screen.
-- Remotes: `-r host,host` for one run, `~/.config/linger/remotes` to
-  persist. Hosts need `linger` on their `$PATH`.
-- `LINGER_DIR=<dir>` isolates sockets + state on local storage.
-
-## Design
-
-`THEOREMS.md` — the invariants. `tests/e2e.sh` — the whole-deliverable
-gate. `specs/archive/lean-zmx.md` — the build record.
-
-Prior art: [screen](https://www.gnu.org/software/screen/),
-[tmux](https://github.com/tmux/tmux/),
-[zmx](https://github.com/neurosnap/zmx),
-[abduco](https://github.com/martanne/abduco), and
-[zellij](https://github.com/zellij-org/zellij).
+Contributor guidance: [AGENTS.md](AGENTS.md).
+Verification guarantees: [THEOREMS.md](THEOREMS.md).

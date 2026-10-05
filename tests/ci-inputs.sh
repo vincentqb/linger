@@ -1,12 +1,10 @@
 #!/bin/sh
 # Identity of a completed verification, not a build-artifact cache key.
-# Only work records are excluded; source gates still check their citations.
-# Unknown file kinds are inputs. Paths and modes matter as well as content.
+# Every tracked file is an input. Paths and modes matter as well as content.
 set -eu
 export LC_ALL=C
 
-set -- . ':(exclude)AGENTS.md' ':(exclude)SCRATCHPAD.md' \
-  ':(glob,exclude)specs/**/*.md'
+set -- .
 
 # The index supplies object IDs only after proving it matches the working inputs.
 # Never issue a key for an untracked source, an unstaged edit or an empty census.

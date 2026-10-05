@@ -275,12 +275,12 @@ def verificationInputs (root : String) : IO Nat := do
         throw (IO.userError s!"verification fixture git failed: {out.stderr}")
     git #["init", "--quiet"]
     git #["config", "core.fileMode", "true"]
-    IO.FS.createDirAll (dir / "specs" / "archive")
+    IO.FS.createDirAll (dir / "specs")
     let input := dir / "source with spaces.lean"
     IO.FS.writeFile input "def value := 1\n"
-    IO.FS.writeFile (dir / "AGENTS.md") "Active work.\n"
-    IO.FS.writeFile (dir / "SCRATCHPAD.md") "Earlier evidence.\n"
-    IO.FS.writeFile (dir / "specs" / "active.md") "Active record.\n"
+    let docs := ["AGENTS.md", "SCRATCHPAD.md", "specs/active.md"]
+    for path in docs do
+      IO.FS.writeFile (dir / path) "Documentation.\n"
     git #["add", "."]
     let probe :=
       IO.Process.output
@@ -333,17 +333,13 @@ def verificationInputs (root : String) : IO Nat := do
     git #["add", "."]
     f := f + (← expect (← checkKey false) "new input kinds invalidate completed verification")
     git #["rm", "--quiet", "-f", "new-input.data"]
-    IO.FS.writeFile (dir / "AGENTS.md") "Completed work.\n"
-    IO.FS.writeFile (dir / "SCRATCHPAD.md") "Earlier evidence.\nNew evidence.\n"
-    git
-        #["mv", (System.FilePath.mk "specs" / "active.md").toString,
-          (System.FilePath.mk "specs" / "archive" / "active.md").toString]
-    git #["add", "."]
-    f := f + (← expect (← checkKey true) "work records and archiving preserve the verification key")
-    IO.FS.writeFile (dir / "specs" / "new-script.sh") "#!/bin/sh\nexit 1\n"
-    git #["add", "."]
-    f := f + (← expect (← checkKey false) "a non-record input under specs invalidates verification")
-    git #["rm", "--quiet", "-f", "specs/new-script.sh"]
+    for path in docs do
+      IO.FS.writeFile (dir / path) "Updated documentation.\n"
+      git #["add", "."]
+      f :=
+        f + (← expect (← checkKey false) s!"documentation changes invalidate verification: {path}")
+      IO.FS.writeFile (dir / path) "Documentation.\n"
+      git #["add", "."]
     Linger.Posix.chmod input.toString 0o755
     git #["add", "."]
     f := f + (← expect (← checkKey false) "file mode changes invalidate verification")
@@ -356,6 +352,8 @@ def verificationInputs (root : String) : IO Nat := do
           expect (← checkKey false)
               "renamed input paths invalidate verification despite identical bytes")
     git #["rm", "--quiet", "-f", "renamed.lean"]
+    for path in docs do
+      git #["rm", "--quiet", "-f", "--", path]
     let empty ← probe
     f :=
       f +

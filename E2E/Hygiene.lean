@@ -130,18 +130,18 @@ def run : IO UInt32 := do
   f :=
     f +
       (←
-        fixture script "SCRATCHPAD.md" ("x" ++ atLimit) false ""
-            "hygiene preserves the existing append-only log size exception")
+        fixture script "SCRATCHPAD.md" ("x" ++ atLimit) false "256 KiB"
+            "hygiene applies the size limit to former work logs")
   f :=
     f +
       (←
         fixture script "nested/SCRATCHPAD.md" ("x" ++ atLimit) false "256 KiB"
-            "hygiene limits the log size exception to the repository root")
+            "hygiene applies the size limit to nested work logs")
   f :=
     f +
       (←
         fixture script "SCRATCHPAD.md" "bad \n" false "trailing whitespace"
-            "hygiene still checks the append-only log text")
+            "hygiene checks whitespace in former work logs")
   f :=
     f +
       (←

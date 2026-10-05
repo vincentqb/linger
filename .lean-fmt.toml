@@ -1,5 +1,5 @@
 # Formatter and linter are both adopted. Defaults apply except where the code's
-# proof shape or import contract requires otherwise; history is in SCRATCHPAD.md.
+# proof shape or import contract requires otherwise.
 
 [format]
 # Keep one-line `:= rfl` proofs readable as one-line claims.

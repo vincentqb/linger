@@ -11,10 +11,10 @@ sh tests/gates.sh
 if command -v actionlint >/dev/null; then
   actionlint -shellcheck='' -pyflakes=''
 else
-  printf 'actionlint absent; workflow validation runs in CI — see README.md\n'
+  printf 'actionlint absent; workflow validation runs in CI — see AGENTS.md\n'
 fi
 if command -v lean-fmt >/dev/null; then
   lean-fmt check
 else
-  printf 'lean-fmt absent; semantic lint runs in CI — see README.md\n'
+  printf 'lean-fmt absent; semantic lint runs in CI — see AGENTS.md\n'
 fi

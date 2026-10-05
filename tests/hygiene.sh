@@ -38,9 +38,7 @@ while IFS= read -r -d '' entry; do
   fi
 
   bytes="$(wc -c < "./$file")"
-  # This already-large append-only history passed the former added-files-only
-  # size hook. Preserve that exception, but keep every text check below.
-  if [[ "$file" != SCRATCHPAD.md && "$bytes" -gt $((256 * 1024)) ]]; then
+  if [[ "$bytes" -gt $((256 * 1024)) ]]; then
     fail "file exceeds 256 KiB"
     continue
   fi
@@ -70,7 +68,6 @@ while IFS= read -r -d '' entry; do
       if (!(ENVIRON["HYGIENE_FILE"] ~ /\.[mM][dD]$/ && /[^[:space:]]  $/))
         complain("trailing whitespace")
     }
-    # The immutable history contains standalone diff3 base labels.
     # Check the three conflict-marker forms, regardless of merge state.
     /^(<<<<<<<|=======|>>>>>>>)([[:space:]]|$)/ {
       complain("conflict marker")

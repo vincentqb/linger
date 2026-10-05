@@ -1,7 +1,7 @@
 # Hygiene runs once without a compiler or Python. The full verifier retains every
 # check; only a prior successful verification of identical inputs may replace it.
 # tests/ci-inputs.sh hashes paths, modes, content AND runner OS/arch/image version.
-# Work records always get current source gates, even when verification is reused.
+# Source gates run even when verification is reused.
 # Schedule, dispatch and tags verify cleanly; tests/ci-runners.sh chooses macOS.
 name: ci
 
@@ -59,7 +59,7 @@ jobs:
         with:
           path: ${{ runner.temp }}/linger-verified
           key: passed-v1-${{ steps.inputs.outputs.key }}
-      - name: check work records and report reused verification
+      - name: check source gates and report reused verification
         if: steps.verified.outputs.cache-hit == 'true'
         run: |
           sh tests/gates.sh
