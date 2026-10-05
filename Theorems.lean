@@ -4,6 +4,7 @@ import Theorems.Vt
 import Theorems.Terminal
 import Theorems.TerminalTitle
 import Theorems.Session
+import Theorems.Driver
 import Theorems.Name
 import Theorems.Checkpoint
 import Theorems.Remote

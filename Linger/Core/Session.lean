@@ -468,6 +468,16 @@ def step (s : State) (ev : Event) : State × List Effect :=
     -- output and without spinning while storage remains unavailable.
     ({ s with dirty := true }, [])
 
+/-- Disconnect feedback can request persistence, but cannot create more
+transport work. Used by the driver's termination argument. -/
+theorem closed_effects (s : State) (id : Nat) :
+    ∀ eff ∈ (step s (.closed id)).2, eff = .checkpoint := by
+  simp only [step, closeClient]
+  split <;> simp
+
+/-- A failed checkpoint marks the state dirty without immediately retrying. -/
+theorem checkpointFailed_effects (s : State) : (step s .checkpointFailed).2 = [] := by rfl
+
 /-- Fold the supplied event trace through `step`, preserving effect order.
 For the runtime this trace consists of the events actually consumed, including
 effect feedback: `pump` stops before consuming any event after exit. `run` does

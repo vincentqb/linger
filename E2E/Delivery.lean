@@ -478,6 +478,50 @@ def closeOrder (dir : String) : IO Nat := do
                   s!"delivery/close-order/{variant}")
   return failures
 
+/-- Exercise the compiled monadic driver with a batch large enough to expose
+stack growth, and observe a real command at the end of that batch. -/
+def largeBatch (dir : String) : IO Nat :=
+  withPair dir "large-batch" (Vt.Vt.init 20 5) fun rt _ fd => do
+    let events :=
+      List.replicate 100000 (.tick 0) ++
+        [.bytes fd.toNat (Wire.encode (.labelSet "batch=complete".toUTF8.toList))]
+    let rt ← pump rt events
+    expect (!rt.exiting && rt.st.labels == [("batch", "complete")] && (rt.conn? fd).isSome)
+        "delivery/large-batch/reaches-final-command"
+
+/-- A failed send causes logical disconnect; failure of the resulting save
+must settle before stale client input, leaving persistence eligible to retry. -/
+def failureFeedback (dir : String) : IO Nat :=
+  withPair dir "failure-feedback" (Vt.Vt.init 20 5) fun rt peer fd => do
+    let st := (Session.step rt.st (.bytes fd.toNat (Wire.encode (.attach 20 5)))).1
+    let saved ← IO.mkRef ([] : List (List (String × String)))
+    let rt :=
+      { rt with
+        st,
+        saveCkpt := fun st => do
+          saved.modify (· ++ [Session.infoFields st])
+          throw (IO.userError "injected feedback save failure") }
+    close peer
+    let rt ←
+      pump rt
+          [.ptyOut [0x41], .bytes fd.toNat (Wire.encode (.labelSet "stale=input".toUTF8.toList))]
+    let first ← saved.get
+    let correctState := fun fields : List (String × String) =>
+      fields.contains ("clients", "0") && fields.contains ("outseq", "1")
+    let failures ←
+      expect
+          (!rt.exiting && rt.conns.isEmpty && (rt.st.client? fd.toNat).isNone &&
+            rt.st.labels.isEmpty &&
+            first.length == 1 &&
+            first.all correctState)
+          "delivery/feedback/disconnect-and-save-failure-settle"
+    let rt ← pump rt [.tick Session.ckptIntervalMs]
+    let retry ← saved.get
+    return failures +
+        (←
+          expect (!rt.exiting && retry.length == 2 && retry.all correctState)
+              "delivery/feedback/retry-at-later-cadence")
+
 def run (only : Option String := none) : IO UInt32 := do
   let checks : List (String × (String → IO Nat)) :=
     [("colours", fun dir => largeReplay dir false), ("marks", fun dir => largeReplay dir true),
@@ -486,7 +530,8 @@ def run (only : Option String := none) : IO UInt32 := do
       ("title", titleChunks), ("live-bound", liveBound),
       ("close-grace", fun dir => closeGrace dir false),
       ("shutdown-grace", fun dir => closeGrace dir true), ("closing-bound", closingBound),
-      ("close-order", closeOrder), ("serve", serveTail)]
+      ("close-order", closeOrder), ("large-batch", largeBatch),
+      ("failure-feedback", failureFeedback), ("serve", serveTail)]
   if let some name := only then
     if !(checks.any (·.1 == name)) then
       throw (IO.userError s!"unknown delivery check '{name}'")

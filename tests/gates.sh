@@ -71,10 +71,10 @@ code_count() { code_grep "$@" | awk 'END { print NR + 0 }'; }   # -> a number
 # cannot live inside `code_grep`, because `code_count` runs it down a pipe and an
 # `exit` there would only leave the subshell.)
 for p in Linger/Core Linger/Core/Vt.lean Linger/Core/Checkpoint.lean \
-         Linger/Core/Session.lean Linger/Core/Replay.lean Linger/Core/Title.lean \
+         Linger/Core/Session.lean Linger/Core/Driver.lean Linger/Core/Replay.lean Linger/Core/Title.lean \
          Linger/Runtime Linger/Runtime/Client.lean Linger/Runtime/Daemon.lean \
          Linger/Runtime/Command.lean Theorems/Title.lean Theorems/TerminalTitle.lean \
-         Theorems Theorems/Session.lean Theorems/Replay.lean Tests E2E \
+         Theorems Theorems/Session.lean Theorems/Driver.lean Theorems/Replay.lean Tests E2E \
          Tools/Resurrect.lean Theorems/Resurrect.lean Manager/Resurrect.lean \
          Tools/Key.lean Tools/Fuzzy.lean Tools/Picker.lean Tools/Input.lean \
          Tools/Entry.lean Theorems/Entry.lean \
@@ -679,7 +679,7 @@ code_grep '^[[:space:]]+replay : Option Replay[.]Plan := none$' 'Linger/Runtime/
   || fail "each connection must retain one optional replay cursor"
 code_grep '^[[:space:]]+after : Buf := [.]empty$' 'Linger/Runtime/Daemon.lean' > /dev/null \
   || fail "following output bypasses the proved byte buffer"
-code_grep '^[[:space:]]+[|] [.]replay id plan =>$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+[|] [.]replay id plan => do$' 'Linger/Runtime/Daemon.lean' > /dev/null \
   || fail "the runtime no longer receives the captured replay plan"
 code_grep '^[[:space:]]+match ← flushConn [{] c with replay := some plan [}] with$' 'Linger/Runtime/Daemon.lean' > /dev/null \
   || fail "the runtime no longer executes the captured replay plan"
@@ -704,7 +704,7 @@ code_grep '^[[:space:]]+closeBy : Option Nat := none$' 'Linger/Runtime/Daemon.le
   || fail "ordinary close and shutdown must share the Nat drain deadline"
 code_grep '^[[:space:]]+if c[.]closeBy[.]any [(]now ≥ ·[)] then$' 'Linger/Runtime/Daemon.lean' > /dev/null \
   || fail "retired transport expiry no longer checks its fixed deadline"
-code_grep '^[[:space:]]+return [(]rt[.]setConn [{] c with closeBy := some deadline [}], [[][.]closed id[]][)]$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+return [(]rt[.]setConn [{] c with closeBy := some deadline [}], true[)]$' 'Linger/Runtime/Daemon.lean' > /dev/null \
   || fail "logical close no longer reports removal while retaining accepted bytes"
 awk '
   /^  [|] [.]close id =>/ { inclose = 1 }
@@ -766,22 +766,22 @@ printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])def report [(]message : Str
 [ "$(code_count 'IO[.]eprintln|IO[.]eprint|IO[.]getStderr' 'Linger/Runtime/Daemon.lean')" -eq 1 ] \
   || fail "daemon diagnostics must go through the non-throwing reporter"
 
-# A decoded close/exit stops its packet in the proved fold. Runtime feedback
-# then retires the client before the next queued event, preserving effect order.
-# The delivery suite distinguishes same-packet, queued and other-client closes.
+# The shared driver proves feedback order, termination and invariant preservation.
+# Its IO adapter must forward the actual state and retain the returned state/exit.
 for claim in feedMsgs_after_close feedMsgs_after_exit; do
   code_grep "^theorem $claim " 'Theorems/Session.lean' > /dev/null \
     || fail "decoded command stopping claim $claim disappeared"
 done
-awk '
-  /^def pump / { inpump = 1 }
-  inpump && /let mut feedback := \[\]/ { init++ }
-  inpump && /feedback := feedback [+][+] more/ { collect++ }
-  inpump && /queue := feedback [+][+] rest/ { consume++ }
-  /^def pollRound / { inpump = 0 }
-  END { exit (init != 1 || collect != 1 || consume != 1) }
-' Linger/Runtime/Daemon.lean \
-  || fail "effect feedback must precede queued events in effect order"
+for claim in effects_in_order run_execution run_total_safe handle_feedback_keeps_alive run_exited; do
+  code_grep "^theorem $claim " 'Theorems/Driver.lean' > /dev/null \
+    || fail "shared driver claim $claim disappeared"
+done
+printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])def pump [(]rt : Rt[)] [(]evs : List Event[)] : IO Rt := do let result ← Driver[.]run executeEffect [{] st := rt[.]st, world := rt, exiting := rt[.]exiting [}] evs return [{] result[.]world with st := result[.]st, exiting := result[.]exiting [}]' awk "$CODE_AWK" >/dev/null \
+  || fail "daemon pump must use the proved driver with its actual state and exit flag"
+code_grep '^def executeEffect [(]st : State[)] [(]rt : Rt[)] : [(]eff : Effect[)] → IO [(]Rt × Driver[.]Reply eff[)]$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+  || fail "effect interpreter must implement the driver's dependent reply type"
+code_grep '^[[:space:]]+rt[.]saveCkpt st$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+  || fail "checkpoint interpreter must save the driver's current state"
 
 # An info answer can span several frames. The pure producer proves the bound;
 # keep the IO accumulator on that same policy rather than a copied number.
@@ -1003,8 +1003,8 @@ rd_n="$(code_count 'set_option maxRecDepth' 'Theorems/*')"
 
 # runtime `partial def` ratchet. Five of the seven shed the keyword on 2026-08-18
 # once someone checked: `while`/`for` in a `do` block never needed it, and none of
-# the five self-recursed. `pump` became an explicit IO loop when exit acquired
-# a queue-stop condition. `parseLs` now exposes its structurally smaller tail.
+# the five self-recursed. `pump` uses the total driver with decreasing feedback
+# depth. `parseLs` exposes its structurally smaller tail.
 # Ratcheted so the keyword cannot creep back by habit.
 RUNTIME_PARTIAL_CAP=0
 rp_n="$(code_count 'partial def' 'Linger/Runtime/*')"

@@ -1,6 +1,6 @@
 # Verification guarantees
 
-Lean checks the pure session model, terminal model and command policies.
+Lean checks the session model, shared event driver, terminal model and command policies.
 The statements below are an index; each linked declaration gives its exact
 hypotheses. Runtime behavior is covered by IO suites and source gates.
 
@@ -10,6 +10,8 @@ hypotheses. Runtime behavior is covered by IO suites and source gates.
 |---|---|---|
 | Checkpoints | Saving a live state and loading it restores its quiesced state. Accepted checkpoints can be saved and loaded again exactly. | [Checkpoint](Theorems/Checkpoint.lean): `load_save_live`, `load_resave` |
 | Session events | Arbitrary event traces preserve state invariants; input from one client leaves other clients' records unchanged. | [Session](Theorems/Session.lean): `run_wf`, `run_bytes_isolates` |
+| Event driver | Every finite batch completes with session bounds and renderable terminal structure preserved, assuming each external operation returns a typed result without an uncaught exception. Disconnects and checkpoint failures are permitted outcomes. | [Driver](Theorems/Driver.lean): `run_total_safe` |
+| Failure feedback | Effects execute in order; feedback precedes queued input and strictly decreases in depth. Failure feedback cannot request exit, and no events execute after exit. | [Driver](Theorems/Driver.lean): `effects_in_order`, `run_execution`, `feedback_strictly_decreases`, `handle_feedback_keeps_alive`, `run_exited` |
 | Terminal input | Arbitrary byte streams preserve cursor and parser bounds and renderable grid structure. | [State](Theorems/Vt/State.lean): `Good.feed`; [Renderable](Theorems/Vt/Renderable.lean): `renderable_feed` |
 | Transport | Arbitrary chunking of a well-formed encoded stream preserves messages and order. | [Wire](Theorems/Wire.lean): `decode_encode_chunked` |
 | Ownership | At most one daemon owns a session name, assuming exclusive kernel locking and the guarded claim protocol. | [Claim](Theorems/Claim.lean): `at_most_one_owner` |
@@ -32,13 +34,17 @@ hypotheses. Runtime behavior is covered by IO suites and source gates.
 
 ## Scope
 
-These proofs establish properties of pure functions. They do not prove syscalls,
-filesystem durability, scheduling or the runtime's IO execution. Source gates
-tie runtime consumers to proved policies; [E2E](E2E/) exercises the executable.
-Ownership relies on local kernel locking. Buffer bounds count retained logical
-bytes, not allocator or operating-system memory. No theorem guarantees that the
-whole process cannot crash: allocation failure, OS termination and failures in
-the compiler, runtime or C shim are outside these proofs.
+The daemon uses the proved driver with an IO interpreter. Its total-correctness
+theorem models external operations with `Except`: each must return, honor its
+typed reply and avoid unreported exceptions. No assumption about the frequency
+of disconnects or failed saves is needed. This covers finite event batches,
+not scheduling or filesystem durability.
+
+Source gates tie the IO adapter to the shared driver; [E2E](E2E/) exercises the
+executable. Ownership relies on local kernel locking. Buffer bounds count
+retained logical bytes, not allocator or operating-system memory. Allocation
+failure, OS termination and failures in the compiler, runtime or C shim remain
+outside these proofs.
 
 Terminal fidelity is relative to linger's terminal model and each theorem's
 receiver assumptions. Cursor restoration requires origin mode to be off.

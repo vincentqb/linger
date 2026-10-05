@@ -6,6 +6,7 @@ import all Theorems.Vt
 import all Theorems.Terminal
 import all Theorems.TerminalTitle
 import all Theorems.Session
+import all Theorems.Driver
 import all Theorems.Name
 import all Theorems.Checkpoint
 import all Theorems.Remote

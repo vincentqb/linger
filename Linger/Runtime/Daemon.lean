@@ -1,7 +1,7 @@
 module
 
 public import Linger.Posix
-public import Linger.Core.Session
+public import Linger.Core.Driver
 public import Linger.Runtime.Paths
 
 public section
@@ -33,7 +33,7 @@ Checkpoint effects are wired to hooks filled by `Linger.Runtime.Resume`
 namespace Linger.Runtime.Daemon
 
 open Linger.Posix
-open Linger.Core.Session (State Event Effect maxClients step)
+open Linger.Core.Session (State Event Effect maxClients)
 open Linger.Core.Buf (Buf owedLen bufOffer bufEnqueue bufAdvance followingCap)
 open Linger.Core
 
@@ -218,17 +218,17 @@ def queuePty (rt : Rt) (bytes : List UInt8) : IO Rt := do
     return { rt with ptyInFull := true }
   flushPty { rt with ptyIn := q }
 
-/-- Execute one effect. Returns follow-up events (a close feeds
-`.closed` back so the machine's roster stays true). -/
-def runEffect (rt : Rt) (eff : Effect) : IO (Rt × List Event) := do
-  match eff with
-  | .send id m =>
+/-- Execute one effect against the world. Its result type admits only the
+feedback that the total driver has proved will terminate. Session state is
+read-only here; the driver supplies the state after the current event. -/
+def executeEffect (st : State) (rt : Rt) : (eff : Effect) → IO (Rt × Driver.Reply eff)
+  | .send id m => do
     match rt.conn? (UInt32.ofNat id) with
     | none =>
-      return (rt, [])
+      return (rt, false)
     | some c =>
       if c.closing then
-        return (rt, [])
+        return (rt, false)
       let bytes := ByteArray.mk (Linger.Core.Wire.encode m).toArray
       let (c, cut) :=
         if c.replay.isSome || owedLen c.after != 0 then
@@ -241,87 +241,82 @@ def runEffect (rt : Rt) (eff : Effect) : IO (Rt × List Event) := do
       if cut then
         -- runtime §Bound: cut the slow client rather than grow
         close c.fd
-        return (rt.dropConn c.fd, [.closed c.fd.toNat])
+        return (rt.dropConn c.fd, true)
       match ← flushConn c with
       | none =>
         close c.fd
-        return (rt.dropConn c.fd, [.closed c.fd.toNat])
+        return (rt.dropConn c.fd, true)
       | some c =>
-        return (rt.setConn c, [])
-  | .replay id plan =>
+        return (rt.setConn c, false)
+  | .replay id plan => do
     match rt.conn? (UInt32.ofNat id) with
     | none =>
-      return (rt, [])
+      return (rt, false)
     | some c =>
       if c.closing then
-        return (rt, [])
+        return (rt, false)
       if c.replay.isSome then
         close c.fd
-        return (rt.dropConn c.fd, [.closed c.fd.toNat])
+        return (rt.dropConn c.fd, true)
       match ← flushConn { c with replay := some plan } with
       | none =>
         close c.fd
-        return (rt.dropConn c.fd, [.closed c.fd.toNat])
+        return (rt.dropConn c.fd, true)
       | some c =>
-        return (rt.setConn c, [])
-  | .close id =>
+        return (rt.setConn c, false)
+  | .close id => do
     let fd := UInt32.ofNat id
     match rt.conn? fd with
     | none =>
-      return (rt, [])
+      return (rt, false)
     | some c =>
       if c.closing then
-        return (rt, [])
+        return (rt, false)
       if c.pending then
         let deadline := (← IO.monoMsNow) + drainTimeoutMs
-        return (rt.setConn { c with closeBy := some deadline }, [.closed id])
+        return (rt.setConn { c with closeBy := some deadline }, true)
       close fd
-      return (rt.dropConn fd, [.closed id])
-  | .writePty bytes =>
-    return (← queuePty rt bytes, [])
-  | .resizePty cols rows =>
+      return (rt.dropConn fd, true)
+  | .writePty bytes => do
+    return (← queuePty rt bytes, ())
+  | .resizePty cols rows => do
     try
       winsizeSet rt.ptyFd cols rows
     catch _ =>
       pure ()
-    return (rt, [])
-  | .killChild =>
+    return (rt, ())
+  | .killChild => do
     kill rt.childPid 15 -- SIGTERM
-    return (rt, [])
-  | .checkpoint =>
+    return (rt, ())
+  | .checkpoint => do
     try
-      rt.saveCkpt rt.st
-      return (rt, [])
+      rt.saveCkpt st
+      return (rt, false)
     catch err =>
       report s!"linger: checkpoint save failed: {err}"
-      return (rt, [.checkpointFailed])
-  | .dropCheckpoint =>
+      return (rt, true)
+  | .dropCheckpoint => do
     try
       rt.dropCkpt
     catch err =>
       report s!"linger: checkpoint delete failed: {err}"
-    return (rt, [])
-  | .exit =>
-    return ({ rt with exiting := true }, [])
+    return (rt, ())
+  | .exit => do
+    return (rt, ())
+
+/-- Execute an isolated effect, using the driver's typed feedback policy. -/
+def runEffect (rt : Rt) (eff : Effect) : IO (Rt × List Event) := do
+  let (next, reply) ← executeEffect rt.st rt eff
+  return ({ next with exiting := rt.exiting || eff == .exit }, Driver.feedback eff reply)
 
 /-- Feed events through the machine until quiescent or exited. Events queued
 behind exit must not checkpoint a session whose recovery state was deleted.
 Effect feedback precedes the next queued event, in effect order: a close must
 remove its client before already-read bytes from that client are considered. -/
 def pump (rt : Rt) (evs : List Event) : IO Rt := do
-  let mut rt := rt
-  let mut queue := evs
-  while !rt.exiting do
-    let ev :: rest := queue | break
-    let (st', effs) := step rt.st ev
-    rt := { rt with st := st' }
-    let mut feedback := []
-    for eff in effs do
-      let (rt', more) ← runEffect rt eff
-      rt := rt'
-      feedback := feedback ++ more
-    queue := feedback ++ rest
-  return rt
+  let result ← Driver.run executeEffect { st := rt.st, world := rt, exiting := rt.exiting } evs
+  return { result.world with
+      st := result.st, exiting := result.exiting }
 
 /-- One poll round: gather events from fd readiness. -/
 def pollRound (rt : Rt) : IO (Rt × List Event) := do
