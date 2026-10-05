@@ -4,6 +4,7 @@ public import E2E.Harness
 public import Linger.Core.Wire
 public import Linger.Core.Listing
 public import Linger.Runtime.Daemon
+public import Linger.Runtime.Cli
 
 public section
 
@@ -155,6 +156,134 @@ def streamInfoServer (socketPath readyPath : String) : IO UInt32 := do
     catch _ =>
       pure ()
     return 0
+
+/-- Exhaust only the daemon's descriptors, leaving its existing client and pty
+usable. The actual accept error establishes the premise on each platform. -/
+def admissionPressure (e : Env) : IO Nat := do
+  let pressure : Env := { e with dir := s!"{e.dir}/admission" }
+  IO.FS.createDirAll pressure.dir
+  let socketPath := s!"{pressure.dir}/pressure.sock"
+  let logPath := s!"{pressure.dir}/daemon.log"
+  let marker := s!"{pressure.dir}/alive"
+  let server ←
+    IO.Process.spawn
+        { cmd := "/bin/sh",
+          args :=
+            #["-c", "ulimit -n 24 || exit; pressure_log=$1; shift; exec \"$@\" 2>\"$pressure_log\"",
+              "sh", logPath, e.bin, "__daemon", "pressure", pressure.dir, "/bin/sh"],
+          env := pressure.procEnv, stdin := .null, stdout := .null, stderr := .null }
+  let owned ← IO.mkRef (#[] : Array UInt32)
+  let child ← IO.mkRef (none : Option UInt32)
+  try
+    unless (← waitFor 5000 (System.FilePath.pathExists socketPath)) do
+      throw (IO.userError "descriptor-pressure daemon did not start")
+    let raw ← Linger.Posix.unixConnect socketPath
+    unless raw ≥ 0 do
+      throw (IO.userError "descriptor-pressure control client could not connect")
+    let control := raw.toUInt64.toUInt32
+    owned.modify (·.push control)
+    let initial ← Linger.Runtime.Cli.readInfo control
+    let some pidText :=
+      initial.find? (·.1 == "pid") |>.map
+        (·.2) | throw (IO.userError "descriptor-pressure daemon did not report its child")
+    let some pid := pidText.toNat? | throw (IO.userError "invalid child pid")
+    child.set (some pid.toUInt32)
+    for _ in List.range maxClients do
+      let peer ← Linger.Posix.unixConnect socketPath true
+      if peer ≥ 0 then
+        owned.modify (·.push peer.toUInt64.toUInt32)
+    let exhausted ←
+      waitFor 3000 do
+          let log ← IO.FS.readFile logPath
+          return has log "accept:"
+    let mut f ← expect exhausted "descriptor pressure reaches the daemon's accept syscall"
+    if exhausted then
+      IO.sleep (UInt32.ofNat (2 * Linger.Runtime.Daemon.acceptRetryMs + 100))
+    let log ← IO.FS.readFile logPath
+    f :=
+      f +
+        (←
+          expect
+              (exhausted && (log.splitOn "client admission paused").length == 2 &&
+                (← server.tryWait).isNone)
+              "sustained descriptor pressure reports once and preserves the daemon")
+    let usable ←
+      try
+        let current ← Linger.Runtime.Cli.readInfo control
+        Linger.Runtime.Client.sendMsg control
+            (.input "printf alive > \"$LINGER_DIR/alive\"\n".toUTF8.toList)
+        let ran ← waitFor 3000 (System.FilePath.pathExists marker)
+        pure (ran && current.contains ("pid", pidText) && (← server.tryWait).isNone)
+      catch _ =>
+        pure false
+    f :=
+      f + (← expect usable "descriptor exhaustion preserves the same responsive daemon and shell")
+    -- Release the accepted idle clients and the kernel backlog before probing
+    -- admission again; the original control client remains connected.
+    for peer in (← owned.get).drop 1 do
+      Linger.Posix.close peer
+    owned.set #[control]
+    let recovered ←
+      waitFor 5000 do
+          let reply ← pressure.cliTimeout #["info", "pressure"] 2500
+          return reply.any fun (rc, text, _) => rc == 0 && (records text).contains ("pid", pidText)
+    f := f + (← expect recovered "new connections recover after descriptor pressure clears")
+    return f
+  finally
+    for fd in ← owned.get do
+      Linger.Posix.close fd
+    let _ ← pressure.cliTimeout #["kill", "pressure"] 3000
+    if (← waitProcess server 3000).isNone then
+      server.kill
+      let _ ← server.wait
+    if let some pid← child.get then
+      if ← Linger.Posix.alive pid then
+        Linger.Posix.kill pid 9
+
+/-- Diagnostic output can fail along with the operation it reports, such as
+when checkpoints and logs share a full filesystem. Exercise each recovery path. -/
+def failedDiagnostics : IO Nat := do
+  let rt : Linger.Runtime.Daemon.Rt :=
+    { st := Linger.Core.Session.State.boot (Linger.Core.Vt.Vt.init 80 24) [] [], listenFd := 0,
+      ptyFd := 0, childPid := 0, sockPath := "",
+      saveCkpt := fun _ => throw (IO.userError "injected checkpoint save failure"),
+      dropCkpt := throw (IO.userError "injected checkpoint delete failure") }
+  let full :=
+    (Linger.Core.Buf.bufOffer ptyInCap .empty (ByteArray.mk (Array.replicate ptyInCap 0))).1
+  let cases : List (String × IO Bool) :=
+    [("checkpoint save", do
+        let (_, feedback) ← Linger.Runtime.Daemon.runEffect rt .checkpoint
+        pure
+            (match feedback with
+            | [.checkpointFailed] => true
+            | _ => false)),
+      ("checkpoint delete", do
+        let (_, feedback) ← Linger.Runtime.Daemon.runEffect rt .dropCheckpoint
+        pure feedback.isEmpty),
+      ("input backpressure", do
+        let next ← Linger.Runtime.Daemon.queuePty { rt with ptyIn := full } [0]
+        pure (next.ptyInFull && Linger.Core.Buf.owedLen next.ptyIn == ptyInCap))]
+  let stderr ← IO.getStderr
+  let mut f := 0
+  for (label, check) in cases do
+    let attempts ← IO.mkRef (0 : Nat)
+    let broken : IO.FS.Stream :=
+      { stderr with
+        putStr := fun _ => do
+          attempts.modify (· + 1)
+          throw (IO.userError "injected diagnostic write failure") }
+    let recovered ←
+      IO.withStderr broken do
+          try
+            check
+          catch _ =>
+            pure false
+    f :=
+      f +
+        (←
+          expect (recovered && (← attempts.get) == 1)
+              s!"{label} recovery survives a failed diagnostic write")
+  return f
 
 def run : IO UInt32 := do
   let e ← Env.make "robust"
@@ -491,6 +620,8 @@ def run : IO UInt32 := do
               "closing a peer with an unread reply preserves the same usable session shell")
   finally
     e.killAll #[resetName]
+  f := f + (← failedDiagnostics)
+  f := f + (← admissionPressure e)
   verdict e f
 
 end E2E.Robust

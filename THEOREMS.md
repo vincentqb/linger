@@ -10,6 +10,7 @@ hypotheses. Runtime behavior is covered by IO suites and source gates.
 |---|---|---|
 | Checkpoints | Saving a live state and loading it restores its quiesced state. Accepted checkpoints can be saved and loaded again exactly. | [Checkpoint](Theorems/Checkpoint.lean): `load_save_live`, `load_resave` |
 | Session events | Arbitrary event traces preserve state invariants; input from one client leaves other clients' records unchanged. | [Session](Theorems/Session.lean): `run_wf`, `run_bytes_isolates` |
+| Terminal input | Arbitrary byte streams preserve cursor and parser bounds and renderable grid structure. | [State](Theorems/Vt/State.lean): `Good.feed`; [Renderable](Theorems/Vt/Renderable.lean): `renderable_feed` |
 | Transport | Arbitrary chunking of a well-formed encoded stream preserves messages and order. | [Wire](Theorems/Wire.lean): `decode_encode_chunked` |
 | Ownership | At most one daemon owns a session name, assuming exclusive kernel locking and the guarded claim protocol. | [Claim](Theorems/Claim.lean): `at_most_one_owner` |
 | Buffers | Reachable input and output buffers stay within their retained-byte caps. | [Buf](Theorems/Buf.lean): `reachableIn_bound`, `reachableOut_bound` |
@@ -35,7 +36,9 @@ These proofs establish properties of pure functions. They do not prove syscalls,
 filesystem durability, scheduling or the runtime's IO execution. Source gates
 tie runtime consumers to proved policies; [E2E](E2E/) exercises the executable.
 Ownership relies on local kernel locking. Buffer bounds count retained logical
-bytes, not allocator or operating-system memory.
+bytes, not allocator or operating-system memory. No theorem guarantees that the
+whole process cannot crash: allocation failure, OS termination and failures in
+the compiler, runtime or C shim are outside these proofs.
 
 Terminal fidelity is relative to linger's terminal model and each theorem's
 receiver assumptions. Cursor restoration requires origin mode to be off.

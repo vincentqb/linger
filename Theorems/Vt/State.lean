@@ -24,7 +24,9 @@ THEOREMS.md rows for `Vt`:
 * §Total — `step` preserves the structural sanity of the screen: grid
   dimensions don't change, and the cursor (plus every stashed cursor)
   stays strictly inside them. Together with "no `partial def` in
-  `Linger/Core`" (checked by grep in e2e) this is the no-crash statement.
+  `Linger/Core`" (checked by grep in e2e), this establishes pure totality
+  and state bounds. It does not prove that runtime IO succeeds or memory
+  allocation cannot fail.
 
 The invariant is one structure, `Good`, so each preservation lemma is
 one implication and `step` is a case-bash over the parser states.

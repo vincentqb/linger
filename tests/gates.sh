@@ -720,8 +720,10 @@ awk '
   || fail "repeated-close guard or expire-before-poll-snapshot ordering changed"
 code_grep '^[[:space:]]+timeout := min timeout [(]deadline - now[)]$' 'Linger/Runtime/Daemon.lean' > /dev/null \
   || fail "ordinary polling ignores close deadlines"
-code_grep '^[[:space:]]+#[[][(]if rt[.]conns[.]length < maxClients then POLLIN else 0[)],$' 'Linger/Runtime/Daemon.lean' > /dev/null \
-  || fail "listener admission no longer counts every owned transport"
+code_grep '^[[:space:]]+let accepting := rt[.]conns[.]length < maxClients && rt[.]acceptAfter[.]all [(]now ≥ ·[)]$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+  || fail "listener admission must count every transport and honor its retry deadline"
+code_grep '^[[:space:]]+#[[][(]if accepting then POLLIN else 0[)],' 'Linger/Runtime/Daemon.lean' > /dev/null \
+  || fail "listener polling no longer uses the admission guard"
 code_grep '^[[:space:]]+for _ in List[.]range [(]maxClients - rt[.]conns[.]length[)] do$' 'Linger/Runtime/Daemon.lean' > /dev/null \
   || fail "accept budget no longer includes retired transports"
 [ "$(code_count '^[[:space:]]+let polled := rt[.]conns$' 'Linger/Runtime/Daemon.lean')" -eq 2 ] \
@@ -743,6 +745,26 @@ code_grep '^theorem step_closed_frame ' Theorems/Session.lean >/dev/null \
 daemon_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Runtime/Daemon.lean)"
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])let received ← try read c[.]fd 65536 catch _ => pure none match received with [|] some bs => if bs[.]size > 0 then events := events [+][+] [[][.]bytes c[.]fd[.]toNat bs[.]toList[]] [|] none => close c[.]fd rt := rt[.]dropConn c[.]fd events := events [+][+] [[][.]closed c[.]fd[.]toNat[]]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "client read errors must close only that peer through the proved transition"
+
+# Descriptor exhaustion must suspend admission without stopping existing work.
+# The live fixture exhausts real descriptors; gates pin the retry and fd cleanup.
+code_grep '^def acceptRetryMs : Nat := [1-9][0-9]*$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+  || fail "admission retry must wait a positive duration"
+printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])if let some retryAt := rt[.]acceptAfter then if now < retryAt then timeout := min timeout [(]retryAt - now[)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+  || fail "admission retry no longer bounds the next poll deadline"
+code_grep '^[[:space:]]+rt := [{] rt with acceptAfter := some [(][(]← IO[.]monoMsNow[)] [+] acceptRetryMs[)] [}]$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+  || fail "admission failures must renew their retry deadline"
+printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])try setNonblock fd catch err => close fd throw err([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+  || fail "failed client setup must release its accepted descriptor"
+printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])rt := [{] rt with conns := rt[.]conns [+][+] [[][{] fd [}][]], acceptAfter := none [}]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+  || fail "successful admission must clear the failure latch"
+
+# Recovery diagnostics must not throw a second IO error. The robust suite
+# injects both the operation failure and a failing stderr write.
+printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])def report [(]message : String[)] : IO Unit := do try IO[.]eprintln message catch _ => pure [(][)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+  || fail "daemon diagnostics must contain write failures"
+[ "$(code_count 'IO[.]eprintln|IO[.]eprint|IO[.]getStderr' 'Linger/Runtime/Daemon.lean')" -eq 1 ] \
+  || fail "daemon diagnostics must go through the non-throwing reporter"
 
 # A decoded close/exit stops its packet in the proved fold. Runtime feedback
 # then retires the client before the next queued event, preserving effect order.

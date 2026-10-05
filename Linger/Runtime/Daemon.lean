@@ -46,6 +46,9 @@ def replayFrameCap : Nat := Linger.Core.Session.outputChunk + (Wire.encode (.out
 /-- Ordinary close and final shutdown share one finite drain grace period. -/
 def drainTimeoutMs : Nat := 3000
 
+/-- Retry admission without spinning on a readable listener under resource pressure. -/
+def acceptRetryMs : Nat := 1000
+
 /-- And a stopped-reading *child* cannot grow the daemon either: past this
 many unwritten bytes the newest input is dropped. Same number as `outbufCap`,
 so the runtime half of §Bound is one sentence — no runtime buffer exceeds
@@ -81,6 +84,9 @@ structure Rt where
   ptyFd : UInt32
   childPid : UInt32
   conns : List Conn := []
+  /-- Admission is suspended until this deadline. Keep the failure latched
+  until an accept succeeds so continuing pressure produces one diagnostic. -/
+  acceptAfter : Option Nat := none
   /-- The pty-input backlog. Starts empty and is sealed: every state it can
   reach is `Buf.ReachableIn ptyInCap`, so `reachableIn_bound` bounds it for the
   daemon's whole life — not per call. -/
@@ -94,6 +100,13 @@ structure Rt where
   /-- step-7 hooks -/
   saveCkpt : State → IO Unit
   dropCkpt : IO Unit
+
+/-- A diagnostic write failure must not turn recovery into session loss. -/
+def report (message : String) : IO Unit := do
+  try
+    IO.eprintln message
+  catch _ =>
+    pure ()
 
 def Rt.conn? (rt : Rt) (fd : UInt32) : Option Conn := rt.conns.find? (·.fd == fd)
 
@@ -199,7 +212,7 @@ def queuePty (rt : Rt) (bytes : List UInt8) : IO Rt := do
   let (q, dropped) := bufOffer ptyInCap rt.ptyIn (ByteArray.mk bytes.toArray)
   if dropped then
     if !rt.ptyInFull then
-      IO.eprintln
+      report
           s!"linger: pty input buffer full ({pending} B, cap {ptyInCap}); \
         the child is not reading — dropping input until it does"
     return { rt with ptyInFull := true }
@@ -280,13 +293,13 @@ def runEffect (rt : Rt) (eff : Effect) : IO (Rt × List Event) := do
       rt.saveCkpt rt.st
       return (rt, [])
     catch err =>
-      IO.eprintln s!"linger: checkpoint save failed: {err}"
+      report s!"linger: checkpoint save failed: {err}"
       return (rt, [.checkpointFailed])
   | .dropCheckpoint =>
     try
       rt.dropCkpt
     catch err =>
-      IO.eprintln s!"linger: checkpoint delete failed: {err}"
+      report s!"linger: checkpoint delete failed: {err}"
     return (rt, [])
   | .exit =>
     return ({ rt with exiting := true }, [])
@@ -318,13 +331,16 @@ def pollRound (rt : Rt) : IO (Rt × List Event) := do
   for c in rt.conns do
     if let some deadline := c.closeBy then
       timeout := min timeout (deadline - now)
+  if let some retryAt := rt.acceptAfter then
+    if now < retryAt then
+      timeout := min timeout (retryAt - now)
+  let accepting := rt.conns.length < maxClients && rt.acceptAfter.all (now ≥ ·)
   -- snapshot: only these conns are in the poll set; accepts during
   -- this round join the NEXT one (revs stays index-aligned)
   let polled := rt.conns
   let mut fds : Array UInt32 := #[rt.listenFd, rt.ptyFd]
   let mut evts : Array UInt32 :=
-    #[(if rt.conns.length < maxClients then POLLIN else 0),
-      POLLIN ||| (if owedLen rt.ptyIn != 0 then POLLOUT else 0)]
+    #[(if accepting then POLLIN else 0), POLLIN ||| (if owedLen rt.ptyIn != 0 then POLLOUT else 0)]
   for c in polled do
     fds := fds.push c.fd
     evts := evts.push ((if c.closing then 0 else POLLIN) ||| (if c.pending then POLLOUT else 0))
@@ -337,13 +353,25 @@ def pollRound (rt : Rt) : IO (Rt × List Event) := do
     -- whose accepted stream is still draining. Connections beyond it wait in
     -- the kernel backlog until a slot is released.
     for _ in List.range (maxClients - rt.conns.length) do
-      let a ← accept rt.listenFd
-      if a < 0 then
+      try
+        let a ← accept rt.listenFd
+        if a < 0 then
+          break
+        let fd := a.toUInt64.toUInt32
+        try
+          setNonblock fd
+        catch err =>
+          close fd
+          throw err
+        rt :=
+          { rt with
+            conns := rt.conns ++ [{ fd }], acceptAfter := none }
+        events := events ++ [.connected fd.toNat]
+      catch err =>
+        if rt.acceptAfter.isNone then
+          report s!"linger: client admission paused; retrying: {err}"
+        rt := { rt with acceptAfter := some ((← IO.monoMsNow) + acceptRetryMs) }
         break
-      let fd := a.toUInt64.toUInt32
-      setNonblock fd
-      rt := { rt with conns := rt.conns ++ [{ fd }] }
-      events := events ++ [.connected fd.toNat]
   -- pty
   let ptyRev := revs[1]!
   if ptyRev &&& POLLOUT != 0 then
@@ -549,7 +577,7 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
         if ← alive rt.childPid then
           kill rt.childPid 9
     catch err =>
-      IO.eprintln s!"linger: child cleanup failed: {err}"
+      report s!"linger: child cleanup failed: {err}"
     let _ ← waitpidNohang rt.childPid
     close rt.ptyFd
     try

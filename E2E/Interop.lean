@@ -203,7 +203,7 @@ private def Fixture.catalogMatches (f : Fixture) (path : System.FilePath) (out :
         field row "line" == toString pane.line
 
 private def catalogOrder (f : Fixture) : IO Bool := do
-  let path := f.root / "snapshot-20010203.txt"
+  let path := f.root / "snapshot-with-order-20010203.txt"
   let last := f.root / "last"
   let first := (f.root / "first dir").toString
   let second := (f.root / "second dir").toString
@@ -220,7 +220,8 @@ private def catalogOrder (f : Fixture) : IO Bool := do
   link path last
   let (rc, out, err) ← f.cli #["tmux", "ls", "--porcelain", "last"]
   let (humanRc, human, humanErr) ← f.cli #["tmux", "ls", "last"]
-  let rows := (human.splitOn "\n").filter fun line => has line "-w"
+  -- The source path can also contain "-w"; rows follow the two-line header.
+  let rows := (lines human).drop 3
   return rc == 0 && err.isEmpty && (← f.catalogMatches last out) && humanRc == 0 &&
       humanErr.isEmpty &&
       has human path.toString &&
