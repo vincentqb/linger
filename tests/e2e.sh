@@ -159,6 +159,7 @@ say "2. source-tree gates (purity, boundaries, and the ratchets)"
 # Extracted to tests/gates.sh so the `pre-commit` hook and CI run the SAME numbers.
 # A hook with its own copy of a cap is worse than no hook.
 sh tests/gates.sh || fail "source-tree gates"
+pre-commit validate-config || fail "pre-commit configuration (install pre-commit first)"
 
 say "2a. formatting and semantic lint"
 # Both obligations run once here, after imports have been built. A local commit
@@ -193,7 +194,7 @@ say "2c. verifier regression tests (CI policy, caches and suite isolation)"
 # against a temporary project.
 # The same runner checks exit status, final verdict, every assertion and both
 # streams. Intentional failures inside these tests stay in their captured logs.
-./.lake/build/bin/e2e --suites ci:46 hygiene:48 \
+./.lake/build/bin/e2e --suites ci:46 hygiene:52 \
   || fail "verifier regression checks (see /tmp/linger-{ci,hygiene}.out)"
 
 say "2d. fuzz corpus: no held-out mutations, failure lists asserted empty"

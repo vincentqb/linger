@@ -19,9 +19,13 @@ a background shell job disables signals required by the tests. Use the default
 test state directories; reserve `LINGER_TEST_DIR` for focused single-suite runs.
 Compiler upgrades require the full verifier after `./lake clean`.
 
-Install the hook with `git config core.hooksPath .githooks`. Stage tracked edits
-before committing. The hook runs hygiene, source gates and installed
+Install the hooks with `pip install pre-commit` and `pre-commit install`.
+For a clone previously using `.githooks`, first run
+`git config --local --unset-all core.hooksPath`.
+The configuration runs hygiene, source gates and installed
 `actionlint` / `lean-fmt` checks; CI requires both tools on Linux.
+Pre-commit temporarily shelves unstaged changes while checking the staged content.
+Use `pre-commit run --all-files` to check the working tree.
 Install `lean-fmt` standalone, never as a Lake dependency.
 See [.github/workflows/ci.yml](.github/workflows/ci.yml) for tool installation.
 
@@ -45,8 +49,9 @@ manual dispatch; request a manual run for changes to `c/shim.c` or `./lake`.
 - Sanitize session names before paths and freeze each poll loop's fd set.
   Compose displays through `Title.compose` and `Status.summary` in the order
   `session · application title · attention`, reserving room for attention.
-- Program logic, proofs and automated suites are Lean. No Python. The C shim,
-  build wrapper, shell verifier and native configuration recipes are boundaries.
+- Program logic, proofs and automated suites are Lean. Python is used only by
+  the external `pre-commit` framework. The C shim, build wrapper, shell verifier
+  and native configuration recipes are boundaries.
 - Ratchets live only in `tests/gates.sh`; exact suite counts only in
   `tests/e2e.sh`. Tests assert against the implementation's definitions.
   Keep `Tests/` distinct from `tests/`, including on case-insensitive filesystems.

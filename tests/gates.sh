@@ -80,7 +80,8 @@ for p in Linger/Core Linger/Core/Vt.lean Linger/Core/Checkpoint.lean \
          Tools/Entry.lean Theorems/Entry.lean \
          Theorems/Picker.lean Theorems/Input.lean Theorems/Key.lean \
          Main.lean Manager/Picker.lean E2E/Manager.lean \
-         LingerTest.lean c/shim.c lakefile.lean lake-manifest.json README.md; do
+         LingerTest.lean c/shim.c lakefile.lean lake-manifest.json README.md \
+         .pre-commit-config.yaml; do
   [ -e "$p" ] || fail "$p is gone — a gate below would pass by matching nothing"
 done
 
@@ -1036,9 +1037,8 @@ rp_n="$(code_count 'partial def' 'Linger/Runtime/*')"
 ! code_grep 'IO[.]println[[:space:]]+"PASS[[:space:]].*skip' 'E2E/*' \
   || fail "an E2E suite counts a skipped required check as PASS"
 
-# Zero-Python invariant. The pty suites and the coverage gate are Lean (`E2E/`, run
-# as `./lake exe e2e <suite>`); `tests/` holds this file and the orchestrator. A `.py`
-# creeping back is how a two-language split returns, one convenience at a time.
+# Program and test sources stay Lean; pre-commit is an external framework.
+# `tests/` holds the shell verifier, while `E2E/` holds the executable suites.
 if git ls-files '*.py' | grep -q .; then
   git ls-files '*.py'
   fail "a .py file is tracked; the suites and the coverage gate are Lean (see E2E/)"
@@ -1118,7 +1118,8 @@ thm_decls="$(git grep -hoE '^ *(public )?(private )?(theorem|lemma|def|abbrev) [
   -- '*.lean' | sed 's/.*[[:space:]]//; s/.*[.]//' | sort -u)"
 thm_bad=0
 for name in $thm_cites; do
-  printf '%s\n' "$thm_decls" | grep -qxF -- "$name" && continue
+  # Drain the declaration list: grep -q can close a large pipe before printf ends.
+  printf '%s\n' "$thm_decls" | grep -xF -- "$name" > /dev/null && continue
   thm_bad=1
   printf '  THEOREMS.md cites `%s`, which is declared nowhere\n' "$name" >&2
 done
@@ -1168,7 +1169,7 @@ awk '
   receipt && /^[[:space:]]+- name:/ { receipt = 0 }
   receipt && /restore-keys:/ { exit 1 }
   receipt && /key: passed-v1-/ { exact++ }
-  /^[[:space:]]+run: [.][/]tests[/]e2e[.]sh$/ { full = NR }
+  /^[[:space:]]+run: [.]\/tests\/e2e[.]sh$/ { full = NR }
   /^[[:space:]]+id: receipt$/ { record = NR }
   /uses: actions\/cache\/save@/ { save = NR }
   END { if (!(exact == 1 && full && record > full && save > record)) exit 1 }
@@ -1188,9 +1189,6 @@ awk '
   || fail "$ci_yml: reused verification must still run current source gates"
 grep -qE '^[[:space:]]+run: sh tests/hygiene[.]sh$' "$ci_yml" \
   || fail "$ci_yml: source hygiene must use the shared native checks"
-if grep -qE '^[[:space:]]+[^#].*(setup-python|pip install|pre-commit run)' "$ci_yml"; then
-  fail "$ci_yml: native hygiene must not reinstall a Python hook framework"
-fi
 # E2E.Ci exercises Lake's invalidation and cached warnings. The real verifier
 # must use the same flags; otherwise those checks protect only their fixture.
 grep -qE '^[.]/lake --rehash --wfail build[[:space:]]' tests/e2e.sh \
@@ -1198,7 +1196,7 @@ grep -qE '^[.]/lake --rehash --wfail build[[:space:]]' tests/e2e.sh \
 # The real suites must use the same isolated runner whose failure, signal and
 # assertion-count contracts E2E.Ci exercises.
 awk '/^say "4–18[.] / { live=1 }
-  live && /^[.][/][.]lake[/]build[/]bin[/]e2e --suites[[:space:]]/ { found=1 }
+  live && /^[.]\/[.]lake\/build\/bin\/e2e --suites[[:space:]]/ { found=1 }
   END { exit !found }' tests/e2e.sh \
   || fail "tests/e2e.sh: run live suites through the tested --suites entry point"
 grep -qE '^ +- cron:' "$ci_yml" \

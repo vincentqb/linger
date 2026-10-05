@@ -4,11 +4,12 @@ public import E2E.Harness
 
 public section
 
-/-! # E2E.Hygiene — the native source check, exercised against real Git indexes
+/-! # E2E.Hygiene — source checks and pre-commit against real Git indexes
 
 Fixtures run the repository's actual script from temporary repositories. A failed
 fixture must name the offending path and check; an arbitrary subprocess error is
-not evidence that hygiene worked. The script must leave source bytes unchanged.
+not evidence that hygiene worked. Installed hooks must check the staged snapshot
+and preserve unstaged edits.
 -/
 
 namespace E2E.Hygiene
@@ -242,35 +243,114 @@ def run : IO UInt32 := do
   f :=
     f +
       (←
-        IO.FS.withTempDir fun repo => do
+        IO.FS.withTempDir fun dir => do
+            let repo := dir / "repo with spaces"
+            let tools := dir / "tools"
+            IO.FS.createDirAll repo
+            IO.FS.createDirAll tools
             let _ ← git repo #["init", "-q"]
             IO.FS.createDirAll (repo / "tests")
             IO.FS.writeFile (repo / "tests" / "hygiene.sh") (← IO.FS.readFile script)
-            -- Stop at the next boundary instead of recursively running all gates.
-            IO.FS.writeFile (repo / "tests" / "gates.sh") "exit 42\n"
-            let hook := s!"{root.trimAscii}/.githooks/pre-commit"
+            IO.FS.writeFile (repo / ".pre-commit-config.yaml")
+                (← IO.FS.readFile s!"{root.trimAscii}/.pre-commit-config.yaml")
+            -- Exercise the actual configuration without recursively running gates
+            -- or linting this deliberately incomplete project.
+            IO.FS.writeFile (repo / "tests" / "gates.sh")
+                "#!/bin/sh\nprintf 'source-gates:%s\\n' \"$*\" >> .git/hook-trace\n\
+                 if [ -f .git/reject-gates ]; then\n\
+                 printf '%s\\n' 'fixture: source gates rejected' >&2\nexit 42\nfi\n"
+            for tool in ["actionlint", "lean-fmt"] do
+              IO.FS.writeFile (tools / tool)
+                  s!"#!/bin/sh\nprintf '{tool}:%s\\n' \"$*\" >> .git/hook-trace\n"
+              let _ ← command repo "chmod" #["755", (tools / tool).toString]
+            let _ ← command repo "chmod" #["755", "tests/hygiene.sh", "tests/gates.sh"]
+            IO.FS.writeFile (repo / "staged.txt") "clean\n"
+            let _ ← git repo #["add", "--", ".pre-commit-config.yaml", "tests", "staged.txt"]
+            let commitArgs :=
+              #["-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "-c",
+                "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "fixture"]
+            let _ ← git repo commitArgs
+            let env :=
+              fixtureEnv ++
+                #[("PATH", some s!"{tools}:{(← IO.getEnv "PATH").getD ""}"),
+                  ("PRE_COMMIT_HOME", some (dir / "cache").toString), ("SKIP", none),
+                  ("PRE_COMMIT_ALLOW_NO_CONFIG", none)]
+            let invoke := fun cmd args =>
+              IO.Process.output { cmd, args, cwd := some repo.toString, env }
+            let installed ← invoke "pre-commit" #["install"]
+            unless installed.exitCode == 0 do
+              throw (IO.userError s!"hook installation: {installed.stdout}{installed.stderr}")
+            let trace := repo / ".git" / "hook-trace"
+            let commit := do
+              IO.FS.writeFile trace ""
+              let out ← invoke "git" commitArgs
+              return (out, ← IO.FS.readFile trace)
+            let expected := "source-gates:\nactionlint:-shellcheck= -pyflakes=\nlean-fmt:check\n"
+            let (empty, calls) ← commit
+            let mut failures ←
+              expect (empty.exitCode == 0 && calls == expected)
+                  "pre-commit runs every check once with the intended arguments on an empty commit"
             IO.FS.writeFile (repo / "staged.txt") "bad \n"
             let _ ← git repo #["add", "--", "staged.txt"]
             IO.FS.writeFile (repo / "staged.txt") "clean\n"
-            let mut failures ←
-              check hook repo "hook:" "stage or restore"
-                  "hook rejects invalid staged bytes hidden by an unstaged correction"
-            let _ ← git repo #["add", "--", "staged.txt"]
-            let aligned ←
-              IO.Process.output
-                  { cmd := "sh", args := #[hook], cwd := some repo.toString, env := fixtureEnv }
+            let (hidden, calls) ← commit
             failures :=
               failures +
                 (←
-                  expect (aligned.exitCode == 42)
-                      "hook reaches the shared checks when working bytes match the index")
-            IO.FS.writeFile (repo / "staged.txt") "bad \n"
-            let _ ← git repo #["add", "--", "staged.txt"]
+                  expect
+                      (hidden.exitCode == 1 &&
+                        has (hidden.stdout ++ hidden.stderr) "staged.txt:1: trailing whitespace" &&
+                        calls.isEmpty)
+                      "pre-commit rejects invalid staged bytes hidden by an unstaged correction")
             failures :=
               failures +
                 (←
-                  check hook repo "staged.txt" "trailing whitespace"
-                      "hook rejects invalid content after it is staged")
+                  expect
+                      ((← IO.FS.readFile (repo / "staged.txt")) == "clean\n" &&
+                        (← git repo #["show", ":staged.txt"]) == "bad \n")
+                      "pre-commit restores unstaged edits and preserves the rejected index")
+            let _ ← git repo #["add", "--", "staged.txt"]
+            IO.FS.writeFile (repo / "staged.txt") "unstaged \n"
+            let (stagedOnly, calls) ← commit
+            failures :=
+              failures +
+                (←
+                  expect
+                      (stagedOnly.exitCode == 0 && calls == expected &&
+                        (← IO.FS.readFile (repo / "staged.txt")) == "unstaged \n" &&
+                        (← git repo #["show", "HEAD:staged.txt"]) == "clean\n")
+                      "pre-commit accepts a clean index without committing or changing unstaged bytes")
+            let _ ← git repo #["add", "--", "staged.txt"]
+            let (invalid, calls) ← commit
+            failures :=
+              failures +
+                (←
+                  expect
+                      (invalid.exitCode == 1 &&
+                        has (invalid.stdout ++ invalid.stderr)
+                          "staged.txt:1: trailing whitespace" &&
+                        calls.isEmpty)
+                      "pre-commit rejects fully staged invalid content before later checks")
+            IO.FS.writeFile (repo / "staged.txt") "clean\n"
+            let _ ← git repo #["add", "--", "staged.txt"]
+            IO.FS.writeFile (repo / ".git" / "reject-gates") ""
+            let (rejected, calls) ← commit
+            failures :=
+              failures +
+                (←
+                  expect
+                      (rejected.exitCode == 1 &&
+                        has (rejected.stdout ++ rejected.stderr) "fixture: source gates rejected" &&
+                        calls == "source-gates:\n")
+                      "pre-commit propagates source-gate failure and stops before optional tools")
+            IO.FS.removeFile (repo / ".git" / "reject-gates")
+            let _ ← git repo #["rm", "--", "staged.txt"]
+            let (deleted, calls) ← commit
+            failures :=
+              failures +
+                (←
+                  expect (deleted.exitCode == 0 && calls == expected)
+                      "pre-commit runs every check on a deletion-only commit")
             return failures)
   IO.println s!"FAILURES: {f}"
   return if f == 0 then 0 else 1
