@@ -5,34 +5,9 @@ fail_fast: true
 repos:
   - repo: local
     hooks:
-      - id: hygiene
-        name: source hygiene
-        entry: sh tests/hygiene.sh
-        language: system
-        pass_filenames: false
-        always_run: true
-      - id: source-gates
-        name: source gates
-        entry: sh tests/gates.sh
-        language: system
-        pass_filenames: false
-        always_run: true
-      - id: actionlint
-        name: workflow validation
-        entry: >-
-          sh -c 'if command -v actionlint >/dev/null; then
-          actionlint -shellcheck="" -pyflakes=""; else
-          printf "%s\n" "actionlint absent; workflow validation runs in CI — see AGENTS.md"; fi'
-        language: system
-        pass_filenames: false
-        always_run: true
-        verbose: true
-      - id: lean-fmt
-        name: semantic lint
-        entry: >-
-          sh -c 'if command -v lean-fmt >/dev/null; then
-          lean-fmt check; else
-          printf "%s\n" "lean-fmt absent; semantic lint runs in CI — see AGENTS.md"; fi'
+      - id: lint
+        name: hygiene, gates, formatting and semantic lint
+        entry: sh scripts/lint.sh
         language: system
         pass_filenames: false
         always_run: true

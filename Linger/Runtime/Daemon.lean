@@ -1,8 +1,9 @@
 module
 
-public import Linger.Posix
+import Linger.Posix
+public import Linger.Core.Buf
 public import Linger.Core.Driver
-public import Linger.Runtime.Paths
+import Linger.Runtime.Paths
 
 public section
 

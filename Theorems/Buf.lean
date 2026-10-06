@@ -26,7 +26,7 @@ words. These are that bullet, turned into theorems about `Linger.Core.Buf`.
 same sums. Two things carry that gap: `Buf.bytes` is `private`, so the runtime
 cannot *read* the representation — nor, since the module system sealed the
 constructor, **write or forge** one — and every buffer arithmetic needs to read; and
-`tests/gates.sh` greps that `Linger/Runtime/*` declares no byte buffer of its own — a
+`scripts/gates.sh` greps that `Linger/Runtime/*` declares no byte buffer of its own — a
 source-tree property, and therefore a grep. Anyone who reads this file as "the
 runtime is proved" is overclaiming.
 

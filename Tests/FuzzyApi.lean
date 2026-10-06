@@ -1,11 +1,11 @@
 module
 
-import Tools.Fuzzy
+import Linger.Tools.Fuzzy
 
 /-! Check the reusable fuzzy API through an ordinary import. Evaluation tests
 live in `Tests.Fuzzy`, whose meta import must not hide missing public exports. -/
 
-open Tools.Fuzzy
+open Linger.Tools.Fuzzy
 
 namespace Tests.FuzzyApi
 

@@ -62,5 +62,5 @@ screen state, not running processes or images.
 `./lake build Theorems Tests` checks proofs and unit fixtures. The
 [declaration census](Theorems/Coverage.lean) requires semantic coverage of every
 pure definition; [renderer coverage](E2E/Coverage.lean) checks resolved references.
-Run `./tests/e2e.sh` for the complete verifier, including generated C ABI,
+Run `./scripts/e2e.sh` for the complete verifier, including generated C ABI,
 source gates, formatting, semantic lint, fuzz fixtures and live suites.

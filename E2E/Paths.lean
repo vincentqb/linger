@@ -2,6 +2,7 @@ module
 
 public import E2E.Overview
 public import Linger.Runtime.Paths
+import Linger.Core.Name
 
 public section
 

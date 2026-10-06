@@ -2,10 +2,9 @@ module
 
 public import Linger.Core.Wire
 public import Linger.Core.Vt
-public import Linger.Core.Render
 public import Linger.Core.Replay
 public import Linger.Core.Terminal
-public import Linger.Core.Name
+import Linger.Core.Name
 
 public section
 

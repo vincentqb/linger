@@ -1,7 +1,7 @@
 module
 
-public import Linger.Core.Name
-public import Linger.Core.Status
+import Linger.Core.Name
+import Linger.Core.Status
 
 public section
 
@@ -14,7 +14,7 @@ Planning uses an explicit snapshot of existing names; it does not claim atomic
 creation or protection from concurrent same-name creators.
 -/
 
-namespace Tools.Resurrect
+namespace Linger.Tools.Resurrect
 
 /-- Replace terminal controls only when displaying an error, preserving its other text. -/
 def diagnostic (message : String) : String :=
@@ -147,4 +147,4 @@ def renderSave (fields : List (String × String)) : Except String String :=
 def plan (existing : List String) (panes : List Pane) : List Pane :=
   panes.filter (fun pane => !existing.contains pane.name)
 
-end Tools.Resurrect
+end Linger.Tools.Resurrect

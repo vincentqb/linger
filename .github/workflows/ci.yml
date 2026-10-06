@@ -1,8 +1,8 @@
 # Source hygiene runs before compilation. The full verifier retains every
 # check; only a prior successful verification of identical inputs may replace it.
-# tests/ci-inputs.sh hashes paths, modes, content AND runner OS/arch/image version.
+# scripts/ci-inputs.sh hashes paths, modes, content AND runner OS/arch/image version.
 # Source gates run even when verification is reused.
-# Schedule, dispatch and tags verify cleanly; tests/ci-runners.sh chooses macOS.
+# Schedule, dispatch and tags verify cleanly; scripts/ci-runners.sh chooses macOS.
 name: ci
 
 on:
@@ -36,7 +36,7 @@ jobs:
         with:
           fetch-depth: 0  # The scheduled runner decision reads recent history.
       - name: source hygiene
-        run: sh tests/hygiene.sh
+        run: sh scripts/hygiene.sh
       - name: validate workflow
         run: |
           curl -sSfL --retry 3 https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz -o "$RUNNER_TEMP/actionlint.tar.gz"
@@ -50,8 +50,8 @@ jobs:
           REF: ${{ github.ref }}
         run: |
           test -n "$ImageVersion"
-          key="$(sh tests/ci-inputs.sh)"
-          os="$(sh tests/ci-runners.sh "$EVENT" "$REF")"
+          key="$(sh scripts/ci-inputs.sh)"
+          os="$(sh scripts/ci-runners.sh "$EVENT" "$REF")"
           printf 'key=%s\nos=%s\n' "$key" "$os" >> "$GITHUB_OUTPUT"
       - name: look up successful verification
         if: github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/'))
@@ -63,7 +63,7 @@ jobs:
       - name: check source gates and report reused verification
         if: steps.verified.outputs.cache-hit == 'true'
         run: |
-          sh tests/gates.sh
+          sh scripts/gates.sh
           cat "$RUNNER_TEMP/linger-verified" >> "$GITHUB_STEP_SUMMARY"
 
   e2e:
@@ -170,7 +170,7 @@ jobs:
           esac
 
       - name: full verification
-        run: ./tests/e2e.sh
+        run: ./lake test
 
       # No always() or failure() here: a receipt exists only after the complete
       # verifier succeeds. Recompute its image-aware key on this actual runner.
@@ -180,7 +180,7 @@ jobs:
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          key="$(sh tests/ci-inputs.sh)"
+          key="$(sh scripts/ci-inputs.sh)"
           printf 'key=%s\n' "$key" >> "$GITHUB_OUTPUT"
           printf 'Reused [successful verification](%s) for unchanged inputs `%s`. Source gates and hygiene ran again.\n' "$RUN_URL" "$key" > "$RUNNER_TEMP/linger-verified"
       - name: save successful verification

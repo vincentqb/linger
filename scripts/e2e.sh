@@ -1,6 +1,6 @@
 #!/bin/sh
 # Whole-deliverable check (specs/archive/lean-zmx.md Step 10). Exits 0 only if
-# everything below holds. Run from the repo root: ./tests/e2e.sh
+# everything below holds. Run from the repo root: ./scripts/e2e.sh
 #
 #   1. content-checked build of program + proofs + unit tests, zero warnings
 #   2. no `sorry` / `partial` in the pure core or the proofs
@@ -88,7 +88,7 @@ fi
 # that SIGINT works. And this cannot false-positive, because the probe tests
 # exactly the precondition step 12 already depends on — an environment that fails
 # it is an environment where the suite could not have passed anyway. It is NOT in
-# tests/gates.sh: that file also runs from `pre-commit`, where a backgrounded
+# scripts/gates.sh: that file also runs from `pre-commit`, where a backgrounded
 # commit is nobody's bug.
 sigint=0
 sh -c 'trap "exit 9" INT; kill -s INT $$; exit 7' > /dev/null 2>&1 || sigint=$?
@@ -156,28 +156,9 @@ abi_prefix="$(./lake env lean --print-prefix)"
 rm -r "$abi_dir"
 trap - EXIT HUP TERM
 
-say "2. source-tree gates (purity, boundaries, and the ratchets)"
-# Extracted to tests/gates.sh so the `pre-commit` hook and CI run the SAME numbers.
-# A hook with its own copy of a cap is worse than no hook.
-sh tests/gates.sh || fail "source-tree gates"
-pre-commit validate-config || fail "pre-commit configuration (install pre-commit first)"
-
-say "2a. formatting and semantic lint"
-# Both obligations run once here, after imports have been built. A local commit
-# hook needs only semantic lint; the full verifier also validates rendered layout.
-# Linux CI installs the pinned formatter and must never silently skip it.
-if command -v lean-fmt > /dev/null; then
-  lean-fmt format --check > /tmp/linger-fmt.log 2>&1 \
-    || { cat /tmp/linger-fmt.log >&2; fail "lean-fmt format --check"; }
-  printf '  layout: %s\n' "$(head -1 /tmp/linger-fmt.log)"
-  lean-fmt check > /tmp/linger-lint.log 2>&1 \
-    || { cat /tmp/linger-lint.log >&2; fail "lean-fmt check"; }
-  printf '  semantic lint: OK\n'
-elif [ "${GITHUB_ACTIONS-}" = true ] && [ "${RUNNER_OS-}" = Linux ]; then
-  fail "the pinned formatter is missing from Linux CI"
-else
-  printf '  lean-fmt absent; layout and semantic lint unchecked — see AGENTS.md\n'
-fi
+say "2. hygiene, source gates, formatting and semantic lint"
+# Semantic lint needs compiled imports. Use the same checks as pre-commit.
+./lake lint || fail "lint"
 
 say "2b. semantic coverage of pure code + runtime emitter classification"
 # E2E.Coverage calls the shared exact-constant theorem census, then classifies
@@ -195,7 +176,7 @@ say "2c. verifier regression tests (CI policy, caches and suite isolation)"
 # against a temporary project.
 # The same runner checks exit status, final verdict, every assertion and both
 # streams. Intentional failures inside these tests stay in their captured logs.
-./.lake/build/bin/e2e --suites ci:46 hygiene:52 \
+./.lake/build/bin/e2e --suites ci:52 hygiene:55 \
   || fail "verifier regression checks (see /tmp/linger-{ci,hygiene}.out)"
 
 say "2d. fuzz corpus: no held-out mutations, failure lists asserted empty"

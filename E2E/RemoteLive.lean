@@ -9,7 +9,7 @@ public section
 
 Ported from `tests/remote_live_test.py`. Unlike `E2E.Remote` — which puts a fake
 `ssh` on `PATH`, is hermetic, and is in the gate — this needs an actual reachable
-host running a real `linger`, so it is **deliberately not in `tests/e2e.sh`**:
+host running a real `linger`, so it is **deliberately not in `scripts/e2e.sh`**:
 
     LINGER_REMOTE=gpu2 ./lake exe e2e remote-live
 

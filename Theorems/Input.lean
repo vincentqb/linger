@@ -1,7 +1,7 @@
 module
 
-public import Tools.Input
-import all Tools.Input
+public import Linger.Tools.Input
+import all Linger.Tools.Input
 
 public section
 
@@ -13,7 +13,7 @@ theorems characterize that boundary and prove the subsequent control filter.
 No claim is made about terminal IO, poll timing or a pasted end marker's origin.
 -/
 
-namespace Tools.Input
+namespace Linger.Tools.Input
 
 private theorem stored_bound (mode : Mode) : (stored mode).size ≤ 3 := by
   cases mode <;> simp [stored]
@@ -315,4 +315,4 @@ theorem flush_no_enter (state : State) : .enter ∉ (flush state).2 := by
 theorem flush_idempotent (state : State) : flush (flush state).1 = ((flush state).1, []) := by
   simp [flush]
 
-end Tools.Input
+end Linger.Tools.Input

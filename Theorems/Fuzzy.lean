@@ -1,7 +1,7 @@
 module
 
-public import Tools.Fuzzy
-import all Tools.Fuzzy
+public import Linger.Tools.Fuzzy
+import all Linger.Tools.Fuzzy
 
 public section
 
@@ -14,7 +14,7 @@ and the configured adjacency score when the previous position was taken.
 The certificate covers every integer scoring policy.
 -/
 
-namespace Tools.Fuzzy
+namespace Linger.Tools.Fuzzy
 
 /-- Legal alignments over folded characters carrying their original word bonuses. -/
 inductive Walk (scoring : Scoring) : List Char → List (Char × Int) → Bool → Alignment → Prop where
@@ -460,4 +460,4 @@ theorem align_earliest (query target : String) (a b : Alignment) (h : align quer
     a.marks = b.marks ∨ List.Lex (fun x y => x = true ∧ y = false) a.marks b.marks :=
   alignWith_earliest {} query target a b h hb tie
 
-end Tools.Fuzzy
+end Linger.Tools.Fuzzy

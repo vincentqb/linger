@@ -1,7 +1,7 @@
 module
 
-public import Linger.Posix
-public import Linger.Core.Name
+import Linger.Posix
+import Linger.Core.Name
 
 public section
 

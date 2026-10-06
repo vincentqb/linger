@@ -30,7 +30,7 @@ The suites share a harness; separate executable blocks would duplicate the same
 lakefile stanza.
 
 Each suite prints `PASS <name>` / `FAIL <name>` per check and `FAILURES: <n>` last;
-`tests/e2e.sh` supplies the exact recorded check counts to the batch runner. An
+`scripts/e2e.sh` supplies the exact recorded check counts to the batch runner. An
 unknown name is an error, not a silent success. -/
 
 def suites : List (String × IO UInt32) :=
@@ -39,7 +39,7 @@ def suites : List (String × IO UInt32) :=
     ("attach", E2E.Attach.run), ("delivery", E2E.Delivery.run), ("robust", E2E.Robust.run),
     ("remote", E2E.Remote.run), ("terminal", E2E.Terminal.run), ("title", E2E.Title.run),
     ("recipes", E2E.Recipes.run), ("interop", E2E.Interop.run), ("manager", E2E.Manager.run),
-    -- opt-in: needs a real reachable host, so NOT in tests/e2e.sh
+    -- opt-in: needs a real reachable host, so NOT in scripts/e2e.sh
     ("remote-live", E2E.RemoteLive.run),
     -- Verifier regression checks, separate from the live product suites.
     ("ci", E2E.Ci.run), ("hygiene", E2E.Hygiene.run), ("identity", E2E.Identity.run)]

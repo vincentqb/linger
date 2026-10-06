@@ -1,13 +1,13 @@
 module
 
-public import Linger.Posix
+import Linger.Posix
 public import Linger.Core.Wire
-public import Linger.Core.Terminal
-public import Linger.Core.Remote
-public import Linger.Core.Title
-public import Linger.Core.Status
-public import Linger.Runtime.Paths
-public import Linger.Runtime.Command
+import Linger.Core.Terminal
+import Linger.Core.Remote
+import Linger.Core.Title
+import Linger.Core.Status
+import Linger.Runtime.Paths
+import Linger.Runtime.Command
 
 public section
 

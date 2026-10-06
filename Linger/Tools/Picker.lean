@@ -1,10 +1,11 @@
 module
 
-public import Tools.Key
-public import Tools.Fuzzy
-public import Linger.Core.Name
+public import Linger.Tools.Key
+import Linger.Tools.Fuzzy
+import Linger.Core.Name
 public import Linger.Core.Listing
-public import Linger.Core.Remote
+import Linger.Core.Remote
+import Linger.Core.Vt
 
 public section
 
@@ -16,7 +17,7 @@ strings. A separate labelled row offers creation of the exact valid query,
 or the shared attach default when the query is empty.
 -/
 
-namespace Tools.Picker
+namespace Linger.Tools.Picker
 
 def «matches» (query target : String) : Bool :=
   (query.toList.map Char.toLower).isSublist (target.toList.map Char.toLower)
@@ -76,7 +77,7 @@ def Snapshot.row (snapshot : Snapshot) (target : String) : List (String × Strin
       | _ => none
 
 def visible (candidates : List String) (query : String) : List String :=
-  candidates.filter (Tools.Picker.matches query)
+  candidates.filter (Linger.Tools.Picker.matches query)
 
 inductive Item where
   | existing (target : String)
@@ -115,7 +116,7 @@ def highlightedPresentation (snapshot : Snapshot) (nameCol : Nat) (query : Strin
     List HighlightedChar :=
   let marks : List Bool :=
     match item with
-    | .existing target => ((Tools.Fuzzy.align query target).map (·.marks)).getD []
+    | .existing target => ((Linger.Tools.Fuzzy.align query target).map (·.marks)).getD []
     | .create _ => []
   (presentation snapshot nameCol item).flatMap (markPiece marks.toArray)
 
@@ -178,7 +179,7 @@ inductive Outcome where
 
 /-- Editing resets the cursor. Navigation clamps; acceptance acts on the selected
 row. No selectable row stays editable. Effects remain the caller's job. -/
-def step (s : State) (key : Tools.Key) : Outcome :=
+def step (s : State) (key : Linger.Tools.Key) : Outcome :=
   match key with
   | .text char =>
     if printable char && s.query.length < maxQueryLength then
@@ -208,4 +209,4 @@ def step (s : State) (key : Tools.Key) : Outcome :=
     | none => .stay s
   | .cancel => .cancel
 
-end Tools.Picker
+end Linger.Tools.Picker

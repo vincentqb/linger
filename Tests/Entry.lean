@@ -1,13 +1,13 @@
 module
 
-import Tools.Entry
-public meta import Tools.Entry
+import Linger.Tools.Entry
+public meta import Linger.Tools.Entry
 
 /-! Concrete entry fixtures for help, explicit selection and complete argument lists. -/
 
-namespace Tools.Entry.Tests
+namespace Linger.Tools.Entry.Tests
 
-open Tools.Entry
+open Linger.Tools.Entry
 
 -- Empty argv explains the CLI; selection is an explicit command.
 #guard route [] == .session ["help"]
@@ -43,4 +43,4 @@ open Tools.Entry
         ["select", "work"], ["select", ""], ["select", "世界", "a b"]].all
     fun args => route args == .session args
 
-end Tools.Entry.Tests
+end Linger.Tools.Entry.Tests

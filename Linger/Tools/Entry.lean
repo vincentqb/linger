@@ -2,7 +2,7 @@ module
 
 public section
 
-namespace Tools.Entry
+namespace Linger.Tools.Entry
 
 inductive Route where
   | selector
@@ -18,4 +18,4 @@ def route (args : List String) : Route :=
   | "tmux" :: rest => .tmux rest
   | _ => .session args
 
-end Tools.Entry
+end Linger.Tools.Entry

@@ -1,6 +1,6 @@
 module
 
-public import Linger.Core.Name
+import Linger.Core.Name
 
 public section
 

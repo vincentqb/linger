@@ -10,7 +10,8 @@ Always use `./lake`, including on macOS. The toolchain is pinned to v4.34.1.
 ```sh
 ./lake build
 ./lake build Theorems Tests
-./tests/e2e.sh
+./lake lint
+./lake test
 ```
 
 Both builds must pass before committing. Run the full verifier for runtime
@@ -22,8 +23,9 @@ Compiler upgrades require the full verifier after `./lake clean`.
 Install the hooks with `pip install pre-commit` and `pre-commit install`.
 For a clone previously using `.githooks`, first run
 `git config --local --unset-all core.hooksPath`.
-The configuration runs hygiene, source gates and installed
-`actionlint` / `lean-fmt` checks; CI requires both tools on Linux.
+The configuration and `./lake lint` share `scripts/lint.sh`: hygiene, source
+gates, workflow validation, formatting and semantic lint.
+CI requires `actionlint` and `lean-fmt` on Linux.
 Pre-commit temporarily shelves unstaged changes while checking the staged content.
 Use `pre-commit run --all-files` to check the working tree.
 Install `lean-fmt` standalone, never as a Lake dependency.
@@ -32,10 +34,24 @@ See [.github/workflows/ci.yml](.github/workflows/ci.yml) for tool installation.
 Linux verifies every push. macOS runs on scheduled changes, release tags and
 manual dispatch; request a manual run for changes to `c/shim.c` or `./lake`.
 
+## Layout
+
+- `Linger/Core/`: pure session and terminal models.
+- `Linger/Runtime/` and `Linger/Posix.lean`: session IO and the OS boundary.
+- `Linger/Tools/` and `Linger/Manager/`: CLI policies and their IO executors.
+- `Theorems/`: proofs; `Tests/`: elaboration-time unit tests.
+- `E2E/`: executable suites; `scripts/`: build and verification orchestration.
+
+Keep module paths and namespaces aligned. Use ordinary `import` for implementation
+dependencies; reserve `public import` for types in the public interface and
+deliberate reexports. `Linger.lean` is the session library's umbrella module.
+Keep proofs separate to control imports and verification, not for binary size:
+Lean erases proofs regardless of file placement.
+
 ## Implementation rules
 
-- `Linger/Core/*` and `Tools/*` are pure: no `IO`, `partial def` or `sorry`.
-  Model effects as data; execute them in `Linger/Runtime/*` and `Manager/*`.
+- `Linger/Core/*` and `Linger/Tools/*` are pure: no `IO`, `partial def` or `sorry`.
+  Model effects as data; execute them in `Linger/Runtime/*` and `Linger/Manager/*`.
 - Every pure `def` needs a theorem type containing its exact fully qualified
   constant in the same commit, checked by `Theorems/Coverage.lean`.
   State invariants in `THEOREMS.md` and design code for provability.
@@ -53,9 +69,9 @@ manual dispatch; request a manual run for changes to `c/shim.c` or `./lake`.
 - Program logic, proofs and automated suites are Lean. Python is used only by
   the external `pre-commit` framework. The C shim, build wrapper, shell verifier
   and native configuration recipes are boundaries.
-- Ratchets live only in `tests/gates.sh`; exact suite counts only in
-  `tests/e2e.sh`. Tests assert against the implementation's definitions.
-  Keep `Tests/` distinct from `tests/`, including on case-insensitive filesystems.
+- Ratchets live only in `scripts/gates.sh`; exact suite counts only in
+  `scripts/e2e.sh`. Tests assert against the implementation's definitions.
+  Use `scripts/` for shell orchestration; do not recreate a lowercase `tests/`.
 - Avoid fuel parameters and unnecessary `partial def`. Recheck raised
   heartbeat or recursion limits after refactoring. Under `Theorems/`, refer
   to compiled evaluation without spelling its tactic name in docstrings.

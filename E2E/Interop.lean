@@ -3,7 +3,7 @@ module
 public import E2E.Recipes
 public import Linger.Core.Checkpoint
 public import Lean.Data.Json
-import all Manager.Resurrect
+import all Linger.Manager.Resurrect
 
 public section
 
@@ -94,7 +94,7 @@ private def Fixture.seed (f : Fixture) (name cwd : String) : IO Unit := do
       (ByteArray.mk (save ck).toArray)
 
 private def Fixture.importText (f : Fixture) (text : String) : IO (UInt32 × String × String) := do
-  match Tools.Resurrect.parseSave (f.root / "home").toString text with
+  match Linger.Tools.Resurrect.parseSave (f.root / "home").toString text with
   | .ok panes =>
     for pane in panes do
       f.own pane.name
@@ -114,7 +114,7 @@ private def namesIn (dir : System.FilePath) : IO (List String) := do
   return (← dir.readDir).toList.map (·.fileName) |>.toArray.qsort (· < ·) |>.toList
 
 private def commonFields (home text : String) : Option (List (String × String)) :=
-  (Tools.Resurrect.parseSave home text).toOption.map Tools.Resurrect.common
+  (Linger.Tools.Resurrect.parseSave home text).toOption.map Linger.Tools.Resurrect.common
 
 private def sameFields (a b : List (String × String)) : Bool :=
   a.toArray.qsort (fun x y => x.1 < y.1 || (x.1 == y.1 && x.2 < y.2)) ==
@@ -162,7 +162,7 @@ private def Fixture.catalogSave (f : Fixture) (path : System.FilePath) (text : S
           env := #[("TZ", some "UTC")] }
   unless code == 0 do
     throw (IO.userError s!"could not timestamp fixture save: {err}")
-  for pane in (Tools.Resurrect.parseSave (f.root / "home").toString text).toOption.getD [] do
+  for pane in (Linger.Tools.Resurrect.parseSave (f.root / "home").toString text).toOption.getD [] do
     f.own pane.name
 
 private def catalogDate (text : String) : Bool :=
@@ -175,14 +175,14 @@ Action directories are decoded as JSON, never compared through display escaping.
 private def Fixture.catalogMatches (f : Fixture) (path : System.FilePath) (out : String) :
     IO Bool := do
   let text ← IO.FS.readFile path
-  let .ok panes := Tools.Resurrect.parseSave (f.root / "home").toString text | return false
+  let .ok panes := Linger.Tools.Resurrect.parseSave (f.root / "home").toString text | return false
   let sections := out.splitOn "\n\n"
   let header := records (sections.headD "")
   let source ← IO.FS.realPath path
   unless
     sections.length == panes.length + 2 && sections.getLast? == some "" &&
       header.map (·.1) == ["source", "saved"] &&
-      field header "source" == Tools.Resurrect.diagnostic source.toString &&
+      field header "source" == Linger.Tools.Resurrect.diagnostic source.toString &&
       catalogDate (field header "saved") &&
       ((sections.headD "").splitOn "\n").length == 2 do
     return false
@@ -196,7 +196,7 @@ private def Fixture.catalogMatches (f : Fixture) (path : System.FilePath) (out :
       row.map (·.1) == ["name", "status", "cmd", "directory", "line"] &&
         field row "name" == pane.name &&
         field row "status" == Linger.Core.Status.name .resumable &&
-        has (field row "cmd") (Tools.Resurrect.diagnostic dir) &&
+        has (field row "cmd") (Linger.Tools.Resurrect.diagnostic dir) &&
         ((Lean.Json.parse (field row "directory")).toOption.bind
             (fun json => json.getStr?.toOption)) ==
           some dir &&
@@ -250,8 +250,8 @@ private def catalogControls (f : Fixture) : IO Bool := do
       human.toList.all (fun c => c == '\n' || printable c) &&
       ((out.splitOn "\n").filter (fun row => !row.startsWith "directory\t")).all
         (fun row => row.toList.all (fun c => c == '\t' || printable c)) &&
-      has human (Tools.Resurrect.diagnostic dir.trimAscii.toString) &&
-      has human (Tools.Resurrect.diagnostic path.toString) &&
+      has human (Linger.Tools.Resurrect.diagnostic dir.trimAscii.toString) &&
+      has human (Linger.Tools.Resurrect.diagnostic path.toString) &&
       (← namesIn (System.FilePath.mk f.env.dir)).isEmpty
 
 private def catalogRelativeCwd (f : Fixture) : IO Bool := do
@@ -737,8 +737,8 @@ private def nativeFallback (f : Fixture) (home : Option String) (mixed : Bool) :
         observed.set (some observedDir)
         let selected := if observedDir == native then original else alternate
         Std.Async.System.setEnvVar "XDG_STATE_HOME" selected.toString
-        Manager.Resurrect.snapshot
-      let outcome ← (Manager.Resurrect.writeSave target.toString capture).toBaseIO
+        Linger.Manager.Resurrect.snapshot
+      let outcome ← (Linger.Manager.Resurrect.writeSave target.toString capture).toBaseIO
       let actual :=
         (← readBytes target).bind fun bytes =>
           (String.fromUTF8? bytes).bind (commonFields (f.root / "home").toString)

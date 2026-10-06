@@ -8,7 +8,7 @@ missing public declaration or reintroduce application actions. -/
 
 namespace Tests.InputApi
 
-open Tools.Input
+open Linger.Tools.Input
 
 example : Key := .text '界'
 
@@ -42,8 +42,8 @@ example (state : State) (byte : UInt8) (key : Key) (hpaste : state.paste = true)
 
 example (state : State) : .enter ∉ (flush state).2 := flush_no_enter state
 
-#check_failure Tools.Key
+#check_failure Linger.Tools.Key
 
-#check_failure Tools.Picker.State
+#check_failure Linger.Tools.Picker.State
 
 end Tests.InputApi

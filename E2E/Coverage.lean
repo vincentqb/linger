@@ -10,7 +10,7 @@ meta section
 fixtures at build time. This standalone check repeats the semantic check against
 fresh sources, even with cached imports, then requires an explicit backing entry
 for renderer/replay operations referenced outside their own module.
-Build the program first; `tests/e2e.sh` runs this after its build. -/
+Build the program first; `scripts/e2e.sh` runs this after its build. -/
 
 namespace E2E.Coverage
 

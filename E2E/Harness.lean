@@ -26,7 +26,7 @@ trust boundary is unchanged by this port, which is the condition that made it
 worth doing at all.
 
 OUTPUT CONTRACT — load-bearing, do not reformat. Every check prints `PASS <name>`
-or `FAIL <name>`, and each suite ends with `FAILURES: <n>`. `tests/e2e.sh` reads
+or `FAIL <name>`, and each suite ends with `FAILURES: <n>`. `scripts/e2e.sh` reads
 both: the last line for the verdict, and the count of `PASS `/`FAIL ` lines
 against an exact per-suite count, so a suite that stops checking fails the gate
 and so does one that quietly grows — either way it is a reviewable edit. -/
@@ -400,7 +400,7 @@ def Env.killAll (e : Env) (names : Array String) : IO Unit := do
     let _ ← e.cli #["kill", n]
     pure ()
 
-/-- Print the verdict line `tests/e2e.sh` reads, and return the process code.
+/-- Print the verdict line `scripts/e2e.sh` reads, and return the process code.
 
 Takes the `Env` so the exit point the PTY suites already go through is also
 where their state directory is retired — a green run leaves nothing behind, a red one

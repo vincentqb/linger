@@ -1,6 +1,7 @@
 module
 
 public import Linger.Core.Remote
+public import Linger.Core.Name
 import all Linger.Core.Remote
 import Theorems.Name
 

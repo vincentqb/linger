@@ -1,10 +1,9 @@
 module
 
-public import Linger.Runtime.Cli
-public import Linger.Runtime.Resume
-public import Tools.Entry
-public import Manager.Picker
-public import Manager.Resurrect
+import Linger.Runtime.Resume
+import Linger.Tools.Entry
+import Linger.Manager.Picker
+import Linger.Manager.Resurrect
 
 public section
 
@@ -13,11 +12,11 @@ The session library and VT toolkit do not import the manager. -/
 
 def main (args : List String) : IO UInt32 := do
   try
-    match Tools.Entry.route args with
+    match Linger.Tools.Entry.route args with
     | .selector =>
-      Manager.Picker.run (← IO.appPath).toString
+      Linger.Manager.Picker.run (← IO.appPath).toString
     | .tmux rest =>
-      Manager.Resurrect.run (← IO.appPath).toString rest
+      Linger.Manager.Resurrect.run (← IO.appPath).toString rest
     | .session argv =>
       Linger.Runtime.Cli.main Linger.Runtime.Resume.hooks argv
   catch e =>

@@ -20,7 +20,7 @@ public import Linger.Core.Vt
 --   that power to this file, which is reviewed and grep-gated.
 --
 -- So: reads and one checked constructor, permanently. What must never come back is a
--- `Vt` structure literal here — `tests/gates.sh` asserts `rVt` calls `Vt.ofDecoded`
+-- `Vt` structure literal here — `scripts/gates.sh` asserts `rVt` calls `Vt.ofDecoded`
 -- and that no `Vt` field is assigned anywhere in this file. Do not copy the pattern
 -- to a third module: `Render`/`Terminal` are friends because they *are* the emulator,
 -- and this one is a friend because it is the emulator's only serialiser.
@@ -323,7 +323,7 @@ widths, and the existing decoder contract accepts unrestricted history rows.
 
 `Vt.ofDecoded` is `private`, reached through this module's friend import — which is
 therefore **permanent, and for reads plus that one checked door**. What must not come
-back is the structure literal; `tests/gates.sh` greps for it in both directions (the
+back is the structure literal; `scripts/gates.sh` greps for it in both directions (the
 positive check that this function calls `ofDecoded`, and the negative one that no
 `Vt` field is assigned anywhere in this file). Same species of oracle as `SHIM_CAP`:
 evadeable by deliberately writing something new, not by reverting a fix. -/

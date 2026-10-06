@@ -1,7 +1,7 @@
 module
 
 public import E2E.Harness
-public import Manager.Resurrect
+public import Linger.Manager.Resurrect
 
 public section
 
@@ -28,7 +28,7 @@ starting sessions. `E2ETest.main` dispatches the arguments after the flag here. 
 def importProbe (args : List String) : IO UInt32 := do
   match args with
   | executable :: rest =>
-    Manager.Resurrect.run executable ("import" :: rest)
+    Linger.Manager.Resurrect.run executable ("import" :: rest)
   | [] =>
     IO.eprintln "usage: e2e --import-probe ABSOLUTE_EXECUTABLE [SAVE]"
     return 98

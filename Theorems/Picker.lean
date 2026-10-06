@@ -1,7 +1,10 @@
 module
 
-public import Tools.Picker
-import all Tools.Picker
+public import Linger.Tools.Picker
+public import Linger.Tools.Fuzzy
+public import Linger.Core.Name
+public import Linger.Core.Render
+import all Linger.Tools.Picker
 import all Linger.Core.Name
 import all Linger.Core.Listing
 import all Linger.Core.Remote
@@ -17,25 +20,27 @@ These proofs do not assert that a listed session remains available until the
 executor attaches it. They constrain the exact target and permitted outcomes.
 -/
 
-namespace Tools.Picker
+namespace Linger.Tools.Picker
 
 /-- Complete equivalence to subsequence matching after ASCII lowercase conversion. -/
 theorem matches_iff_sublist (query target : String) :
-    Tools.Picker.matches query target = true ↔
+    Linger.Tools.Picker.matches query target = true ↔
       (query.toList.map Char.toLower).Sublist (target.toList.map Char.toLower) := by
   exact List.isSublist_iff_sublist
 
 /-- Scoring changes emphasis without changing which targets the filter accepts. -/
 theorem align_isSome_iff_matches (query target : String) :
-    (Tools.Fuzzy.align query target).isSome = true ↔ Tools.Picker.matches query target = true :=
-  (Tools.Fuzzy.align_isSome_iff_sublist query target).trans (matches_iff_sublist query target).symm
+    (Linger.Tools.Fuzzy.align query target).isSome = true ↔
+      Linger.Tools.Picker.matches query target = true :=
+  (Linger.Tools.Fuzzy.align_isSome_iff_sublist query target).trans
+    (matches_iff_sublist query target).symm
 
-theorem matches_empty (target : String) : Tools.Picker.matches "" target = true := by
-  simp [Tools.Picker.matches]
+theorem matches_empty (target : String) : Linger.Tools.Picker.matches "" target = true := by
+  simp [Linger.Tools.Picker.matches]
 
 /-- Repeated query characters need separate source positions. -/
-theorem matches_length_le (query target : String) (h : Tools.Picker.matches query target = true) :
-    query.length ≤ target.length := by
+theorem matches_length_le (query target : String)
+    (h : Linger.Tools.Picker.matches query target = true) : query.length ≤ target.length := by
   simpa only [List.length_map, String.length_toList] using
     ((matches_iff_sublist query target).mp h).length_le
 
@@ -199,7 +204,7 @@ theorem parseListing_error_safe (text error : String) (h : parseListing text = .
 /-- Metadata publication is conditional on complete exact-target validation, and
 retains every original record rather than synthesizing missing observations. -/
 theorem parseSnapshot_complete (text : String) (snapshot : Snapshot)
-    (h : Tools.Picker.parseSnapshot text = .ok snapshot) :
+    (h : Linger.Tools.Picker.parseSnapshot text = .ok snapshot) :
     parseListing text = .ok snapshot.candidates ∧
       snapshot.records = (text.splitOn "\n").map (·.splitOn "\t") := by
   unfold parseSnapshot at h
@@ -212,17 +217,17 @@ theorem parseSnapshot_complete (text : String) (snapshot : Snapshot)
 
 /-- Any malformed target anywhere rejects the metadata snapshot too. -/
 theorem parseSnapshot_rejects (text error : String) (h : parseListing text = .error error) :
-    Tools.Picker.parseSnapshot text = .error error := by simp [parseSnapshot, h, Except.map]
+    Linger.Tools.Picker.parseSnapshot text = .error error := by simp [parseSnapshot, h, Except.map]
 
 /-- The identity comes from the validated selection; metadata cannot rename it. -/
 theorem snapshot_row_name (snapshot : Snapshot) (target : String) :
-    (Tools.Picker.Snapshot.row snapshot target).lookup "name" = some target := by
+    (Linger.Tools.Picker.Snapshot.row snapshot target).lookup "name" = some target := by
   simp [Snapshot.row]
 
 /-- The selected existing row has precisely the listing's badge, aligned name,
 details, labels and watchers, with the same style boundaries. -/
 theorem presentation_existing (snapshot : Snapshot) (nameCol : Nat) (target : String) :
-    Tools.Picker.presentation snapshot nameCol (.existing target) =
+    Linger.Tools.Picker.presentation snapshot nameCol (.existing target) =
       Linger.Core.Listing.rowPieces nameCol (snapshot.row target) := by
   simp [presentation]
 
@@ -230,13 +235,13 @@ theorem presentation_existing (snapshot : Snapshot) (nameCol : Nat) (target : St
 and selection reverse are applied by the terminal executor after this shared row. -/
 theorem presentation_existing_humanRow (snapshot : Snapshot) (nameCol : Nat) (target : String) :
     Linger.Core.Render.utf8s
-        ((Tools.Picker.presentation snapshot nameCol (.existing target)).flatMap (·.text)) =
+        ((Linger.Tools.Picker.presentation snapshot nameCol (.existing target)).flatMap (·.text)) =
       Linger.Core.Listing.humanRow nameCol (snapshot.row target) := by
   simp [presentation, Linger.Core.Listing.humanRow]
 
 /-- Creation never masquerades as a listed session status. -/
 theorem presentation_creation (snapshot : Snapshot) (nameCol : Nat) (target : String) :
-    Tools.Picker.presentation snapshot nameCol (.create target) =
+    Linger.Tools.Picker.presentation snapshot nameCol (.create target) =
       [{ text := s!"+ Create {target}".toList }] := by
   simp [presentation]
 
@@ -319,9 +324,9 @@ theorem highlightedPresentation_existing_marked_iff (snapshot : Snapshot) (nameC
     (h : (highlightedPresentation snapshot nameCol query (.existing target))[index]? = some char) :
     char.matched = true ↔
       ∃ alignment,
-        Tools.Fuzzy.align query target = some alignment ∧
+        Linger.Tools.Fuzzy.align query target = some alignment ∧
           2 ≤ index ∧ index < 2 + target.length ∧ alignment.marks[index - 2]? = some true := by
-  let marks := ((Tools.Fuzzy.align query target).map (·.marks)).getD []
+  let marks := ((Linger.Tools.Fuzzy.align query target).map (·.marks)).getD []
   let body :=
     ((Linger.Core.Listing.rowPieces nameCol (snapshot.row target))[1]?).getD { text := [] }
   have span : body.nameSpan = some (1, target.length) := by
@@ -341,7 +346,7 @@ theorem highlightedPresentation_existing_marked_iff (snapshot : Snapshot) (nameC
     rw [row] at h
     rw [markPiece_marked_iff marks.toArray body index char h]
     simp only [span, Option.some.injEq, Prod.mk.injEq]
-    cases ha : Tools.Fuzzy.align query target with
+    cases ha : Linger.Tools.Fuzzy.align query target with
     | none => simp [marks, ha]
     | some a =>
       simp [marks, ha]
@@ -396,7 +401,7 @@ theorem emphasizeCells_projection (chars : List HighlightedChar) :
 
 theorem mem_visible (candidates : List String) (query target : String) :
     target ∈ visible candidates query ↔
-      target ∈ candidates ∧ Tools.Picker.matches query target = true := by
+      target ∈ candidates ∧ Linger.Tools.Picker.matches query target = true := by
   simp [visible]
 
 /-- Sublist preservation states order and multiplicity, not just set membership. -/
@@ -417,7 +422,7 @@ theorem items_existing_prefix (candidates : List String) (query : String)
 theorem mem_items_existing (candidates : List String) (query target : String)
     (allowCreate : Bool := true) :
     Item.existing target ∈ items candidates query allowCreate ↔
-      target ∈ candidates ∧ Tools.Picker.matches query target = true := by
+      target ∈ candidates ∧ Linger.Tools.Picker.matches query target = true := by
   unfold items
   split <;> simp [mem_visible]
 
@@ -443,7 +448,7 @@ theorem items_disabled (candidates : List String) (query : String) :
     items candidates query false = (visible candidates query).map Item.existing := by simp [items]
 
 theorem selected_mem (s : State) (target : String) (h : selected s = some (.existing target)) :
-    target ∈ s.candidates ∧ Tools.Picker.matches s.query target = true :=
+    target ∈ s.candidates ∧ Linger.Tools.Picker.matches s.query target = true :=
   (mem_items_existing _ _ _ s.allowCreate).mp (List.mem_of_getElem? h)
 
 theorem selected_empty (s : State) (h : items s.candidates s.query s.allowCreate = []) :
@@ -543,7 +548,7 @@ theorem valid_cursor (s : State) (h : s.Valid) :
     omega
 
 /-- Every continuing transition preserves bounds established by `init`. -/
-theorem step_stay_valid (s next : State) (key : Tools.Key) (hs : s.Valid)
+theorem step_stay_valid (s next : State) (key : Linger.Tools.Key) (hs : s.Valid)
     (h : step s key = .stay next) : next.Valid := by
   obtain ⟨cursor, query⟩ := hs
   cases key with
@@ -588,40 +593,40 @@ theorem step_stay_valid (s next : State) (key : Tools.Key) (hs : s.Valid)
     | some item => cases item <;> simp [he] at h
   | cancel => cases h
 
-theorem step_query_bound (s next : State) (key : Tools.Key) (hs : s.Valid)
+theorem step_query_bound (s next : State) (key : Linger.Tools.Key) (hs : s.Valid)
     (h : step s key = .stay next) : next.query.length ≤ maxQueryLength :=
   (step_stay_valid s next key hs h).2
 
 /-- Editing and navigation cannot change the listing snapshot. -/
-theorem step_stay_candidates (s next : State) (key : Tools.Key) (h : step s key = .stay next) :
-    next.candidates = s.candidates := by
+theorem step_stay_candidates (s next : State) (key : Linger.Tools.Key)
+    (h : step s key = .stay next) : next.candidates = s.candidates := by
   cases key <;> simp only [step] at h
   all_goals
     repeat' split at h
     all_goals cases h <;> rfl
 
 /-- Editing and navigation cannot enable creation in a saved catalog. -/
-theorem step_stay_allowCreate (s next : State) (key : Tools.Key) (h : step s key = .stay next) :
-    next.allowCreate = s.allowCreate := by
+theorem step_stay_allowCreate (s next : State) (key : Linger.Tools.Key)
+    (h : step s key = .stay next) : next.allowCreate = s.allowCreate := by
   cases key <;> simp only [step] at h
   all_goals
     repeat' split at h
     all_goals cases h <;> rfl
 
 /-- Acceptance is the only attachment-producing event, and its target is selected verbatim. -/
-theorem step_attach_iff (s : State) (key : Tools.Key) (target : String) :
+theorem step_attach_iff (s : State) (key : Linger.Tools.Key) (target : String) :
     step s key = .attach target ↔ key = .accept ∧ selected s = some (.existing target) := by
   cases key <;> simp [step]
   all_goals split <;> simp_all
 
 /-- Creation also requires acceptance of its own highlighted row. -/
-theorem step_create_iff (s : State) (key : Tools.Key) (target : String) :
+theorem step_create_iff (s : State) (key : Linger.Tools.Key) (target : String) :
     step s key = .create target ↔ key = .accept ∧ selected s = some (.create target) := by
   cases key <;> simp [step]
   all_goals split <;> simp_all
 
 /-- No key can produce creation in disabled mode, including with an invalid cursor. -/
-theorem step_no_create (s : State) (key : Tools.Key) (target : String)
+theorem step_no_create (s : State) (key : Linger.Tools.Key) (target : String)
     (disabled : s.allowCreate = false) : step s key ≠ .create target := by
   intro h
   exact selected_no_create s target disabled ((step_create_iff s key target).mp h).2
@@ -637,14 +642,14 @@ theorem step_accept_disabled (s : State) (disabled : s.allowCreate = false) :
   cases (visible s.candidates s.query)[s.cursor]? <;> rfl
 
 /-- No valid-state premise: even a forged or stale cursor cannot manufacture a target. -/
-theorem step_attach_mem (s : State) (key : Tools.Key) (target : String)
+theorem step_attach_mem (s : State) (key : Linger.Tools.Key) (target : String)
     (h : step s key = .attach target) :
-    target ∈ s.candidates ∧ Tools.Picker.matches s.query target = true :=
+    target ∈ s.candidates ∧ Linger.Tools.Picker.matches s.query target = true :=
   selected_mem s target ((step_attach_iff s key target).mp h).2
 
 /-- No state-validity premise: even a forged cursor cannot create a rewritten,
 noncanonical or already listed target. Absence refers to the snapshot only. -/
-theorem step_create_valid (s : State) (key : Tools.Key) (target : String)
+theorem step_create_valid (s : State) (key : Linger.Tools.Key) (target : String)
     (h : step s key = .create target) :
     target = (if s.query.isEmpty then Linger.Core.Name.defaultName else s.query) ∧
       target ∉ s.candidates ∧
@@ -684,4 +689,4 @@ theorem step_full_query (s : State) (char : Char) (h : maxQueryLength ≤ s.quer
   have hn : ¬s.query.length < maxQueryLength := by omega
   simp [step, hn]
 
-end Tools.Picker
+end Linger.Tools.Picker

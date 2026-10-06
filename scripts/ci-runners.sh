@@ -1,7 +1,7 @@
 #!/bin/sh
 # Which runners the full gate needs, as a JSON array for a GitHub matrix.
 #
-#   sh tests/ci-runners.sh <event_name> <ref>   ->   ["ubuntu-latest", ...]
+#   sh scripts/ci-runners.sh <event_name> <ref>   ->   ["ubuntu-latest", ...]
 #
 # THE THIRD DELIBERATE NON-LEAN FILE, and the reason is the cost this exists to
 # control: `.github/workflows/ci.yml`'s `gates` job compiles NOTHING, which is what

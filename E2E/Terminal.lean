@@ -198,7 +198,7 @@ structure Case where
   clientOut : List ByteArray := []
   /-- Why the case produced nothing, if it did. The Python carried this in the
   result dict and then printed it nowhere; here it goes to stderr, which
-  `tests/e2e.sh` folds into the log without counting it as a check. -/
+  `scripts/e2e.sh` folds into the log without counting it as a check. -/
   err : Option String := none
 
 /-- One case: a session whose child IS the probe, `clients` presentation clients
@@ -311,7 +311,7 @@ def run : IO UInt32 := do
               s!"stable child terminal profile with {clients} client(s)")
     if clients != 0 then
       -- nested a level deeper on purpose: with nobody attached there is no client
-      -- stream to make a claim about. `tests/e2e.sh`'s exact check count is what
+      -- stream to make a claim about. `scripts/e2e.sh`'s exact check count is what
       -- stops this arm silently going empty and still printing `FAILURES: 0`.
       let outs := data.clientOut
       f :=

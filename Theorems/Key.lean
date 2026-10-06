@@ -1,9 +1,9 @@
 module
 
-public import Tools.Key
+public import Linger.Tools.Key
 public import Theorems.Input
-import all Tools.Key
-import all Tools.Input
+import all Linger.Tools.Key
+import all Linger.Tools.Input
 
 public section
 
@@ -11,13 +11,13 @@ public section
 The generic decoder owns recognition and paste suppression; this adapter owns
 actions. These contracts do not claim to verify terminal polling or IO. -/
 
-namespace Tools.Key
+namespace Linger.Tools.Key
 
 theorem ofInput_text (char : Char) : ofInput (.text char) = some (.text char) := by rfl
 
 /-- The control bindings are exact even for a constructed event carrying an
 arbitrary byte. Controls not listed here cannot request a selector action. -/
-theorem ofInput_control_iff (byte : UInt8) (key : Tools.Key) :
+theorem ofInput_control_iff (byte : UInt8) (key : Linger.Tools.Key) :
     ofInput (.control byte) = some key ↔
       (byte = 21 ∧ key = .clear) ∨
         (byte = 16 ∧ key = .up) ∨
@@ -30,7 +30,7 @@ theorem ofInput_control_none_iff (byte : UInt8) :
   simp only [ofInput]
   split <;> simp_all
 
-theorem ofInput_special (event : Input.Key) (key : Tools.Key)
+theorem ofInput_special (event : Input.Key) (key : Linger.Tools.Key)
     (h :
       (event, key) ∈
         [(.backspace, .backspace), (.tab, .down), (.enter, .accept), (.escape, .cancel), (.up, .up),
@@ -73,7 +73,7 @@ theorem feed_byte_bindings (byte : UInt8) :
   all_goals omega
 
 /-- The original control-byte shortcuts remain selector policy. -/
-theorem feed_controls (byte : UInt8) (key : Tools.Key)
+theorem feed_controls (byte : UInt8) (key : Linger.Tools.Key)
     (h :
       (byte, key) ∈
         [(8, .backspace), (127, .backspace), (21, .clear), (16, .up), (14, .down), (9, .down),
@@ -91,7 +91,7 @@ theorem feed_ascii (paste : Bool) (byte : UInt8) (h : 32 ≤ byte ∧ byte < 127
   simp [Input.feed_ascii paste byte h, ofInput]
 
 /-- Every bound event from paste is the unchanged decoded character. -/
-theorem feed_paste_only_text (state : Input.State) (byte : UInt8) (key : Tools.Key)
+theorem feed_paste_only_text (state : Input.State) (byte : UInt8) (key : Linger.Tools.Key)
     (hpaste : state.paste = true) (h : key ∈ (Input.feed state byte).2.filterMap ofInput) :
     ∃ char, key = .text char ∧ Input.Key.text char ∈ (Input.feed state byte).2 := by
   obtain ⟨event, member, bound⟩ := List.mem_filterMap.mp h
@@ -120,7 +120,7 @@ theorem flush_binding (state : Input.State) :
   simp only [Input.flush]
   split <;> simp [ofInput]
 
-theorem flush_emits (state : Input.State) (key : Tools.Key)
+theorem flush_emits (state : Input.State) (key : Linger.Tools.Key)
     (h : key ∈ (Input.flush state).2.filterMap ofInput) :
     key = .cancel ∧ state.mode = .escape ∧ state.paste = false := by
   rw [flush_binding] at h
@@ -132,4 +132,4 @@ theorem flush_no_accept (state : Input.State) :
   have hkey := (flush_emits state .accept h).1
   cases hkey
 
-end Tools.Key
+end Linger.Tools.Key

@@ -1,8 +1,9 @@
 module
 
-public import Linger.Core.Checkpoint
+import Linger.Core.Checkpoint
 public import Linger.Core.Session
-public import Linger.Runtime.Paths
+import Linger.Runtime.Paths
+import Linger.Posix
 public import Linger.Runtime.Cli
 
 public section

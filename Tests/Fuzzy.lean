@@ -1,9 +1,9 @@
 module
 
-import Tools.Fuzzy
-public meta import Tools.Fuzzy
+import Linger.Tools.Fuzzy
+public meta import Linger.Tools.Fuzzy
 
-open Tools.Fuzzy
+open Linger.Tools.Fuzzy
 
 #guard align "" "anything" == some ⟨0, List.replicate 8 false⟩
 

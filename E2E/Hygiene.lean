@@ -65,7 +65,7 @@ private def fixture (script path content : String) (executable : Bool) (diagnost
 
 def run : IO UInt32 := do
   let root ← command (← IO.currentDir) "git" #["rev-parse", "--show-toplevel"]
-  let script := s!"{root.trimAscii}/tests/hygiene.sh"
+  let script := s!"{root.trimAscii}/scripts/hygiene.sh"
   let mut f := 0
   for (path, content, executable, diagnostic, label) in
     [("empty.txt", "", false, "", "hygiene accepts an empty file"),
@@ -249,23 +249,29 @@ def run : IO UInt32 := do
             IO.FS.createDirAll repo
             IO.FS.createDirAll tools
             let _ ← git repo #["init", "-q"]
-            IO.FS.createDirAll (repo / "tests")
-            IO.FS.writeFile (repo / "tests" / "hygiene.sh") (← IO.FS.readFile script)
+            IO.FS.createDirAll (repo / "scripts")
+            IO.FS.writeFile (repo / "scripts" / "hygiene.sh") (← IO.FS.readFile script)
+            IO.FS.writeFile (repo / "scripts" / "lint.sh")
+                (← IO.FS.readFile s!"{root.trimAscii}/scripts/lint.sh")
             IO.FS.writeFile (repo / ".pre-commit-config.yaml")
                 (← IO.FS.readFile s!"{root.trimAscii}/.pre-commit-config.yaml")
             -- Exercise the actual configuration without recursively running gates
             -- or linting this deliberately incomplete project.
-            IO.FS.writeFile (repo / "tests" / "gates.sh")
+            IO.FS.writeFile (repo / "scripts" / "gates.sh")
                 "#!/bin/sh\nprintf 'source-gates:%s\\n' \"$*\" >> .git/hook-trace\n\
                  if [ -f .git/reject-gates ]; then\n\
                  printf '%s\\n' 'fixture: source gates rejected' >&2\nexit 42\nfi\n"
             for tool in ["actionlint", "lean-fmt"] do
               IO.FS.writeFile (tools / tool)
-                  s!"#!/bin/sh\nprintf '{tool}:%s\\n' \"$*\" >> .git/hook-trace\n"
+                  s!"#!/bin/sh\nprintf '{tool}:%s\\n' \"$*\" >> .git/hook-trace\n\
+                     if [ -f \".git/reject-{tool}-$1\" ]; then\n\
+                     printf '%s\\n' 'fixture: {tool} rejected' >&2\nexit 43\nfi\n"
               let _ ← command repo "chmod" #["755", (tools / tool).toString]
-            let _ ← command repo "chmod" #["755", "tests/hygiene.sh", "tests/gates.sh"]
+            let _ ←
+              command repo "chmod"
+                  #["755", "scripts/hygiene.sh", "scripts/gates.sh", "scripts/lint.sh"]
             IO.FS.writeFile (repo / "staged.txt") "clean\n"
-            let _ ← git repo #["add", "--", ".pre-commit-config.yaml", "tests", "staged.txt"]
+            let _ ← git repo #["add", "--", ".pre-commit-config.yaml", "scripts", "staged.txt"]
             let commitArgs :=
               #["-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "-c",
                 "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "fixture"]
@@ -285,7 +291,9 @@ def run : IO UInt32 := do
               IO.FS.writeFile trace ""
               let out ← invoke "git" commitArgs
               return (out, ← IO.FS.readFile trace)
-            let expected := "source-gates:\nactionlint:-shellcheck= -pyflakes=\nlean-fmt:check\n"
+            let workflowTrace := "source-gates:\nactionlint:-shellcheck= -pyflakes=\n"
+            let layoutTrace := workflowTrace ++ "lean-fmt:format --check\n"
+            let expected := layoutTrace ++ "lean-fmt:check\n"
             let (empty, calls) ← commit
             let mut failures ←
               expect (empty.exitCode == 0 && calls == expected)
@@ -344,6 +352,21 @@ def run : IO UInt32 := do
                         calls == "source-gates:\n")
                       "pre-commit propagates source-gate failure and stops before optional tools")
             IO.FS.removeFile (repo / ".git" / "reject-gates")
+            for (tool, arg, expectedCalls) in
+              [("actionlint", "-shellcheck=", workflowTrace), ("lean-fmt", "format", layoutTrace),
+                ("lean-fmt", "check", expected)] do
+              let marker := repo / ".git" / s!"reject-{tool}-{arg}"
+              IO.FS.writeFile marker ""
+              let (rejected, calls) ← commit
+              failures :=
+                failures +
+                  (←
+                    expect
+                        (rejected.exitCode == 1 &&
+                          has (rejected.stdout ++ rejected.stderr) s!"fixture: {tool} rejected" &&
+                          calls == expectedCalls)
+                        s!"pre-commit propagates {tool} {arg} failure and stops later checks")
+              IO.FS.removeFile marker
             let _ ← git repo #["rm", "--", "staged.txt"]
             let (deleted, calls) ← commit
             failures :=

@@ -1,8 +1,8 @@
 module
 
-public import Linger.Core.Name
+import Linger.Core.Name
 public import Linger.Core.Status
-public import Linger.Core.Render
+import Linger.Core.Render
 
 public section
 

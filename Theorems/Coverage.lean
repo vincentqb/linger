@@ -27,7 +27,7 @@ public meta import Lean.Elab.Command
 
 /-! # Semantic coverage gate
 
-Every explicit `def` under `Linger/Core` or `Tools` must occur as
+Every explicit `def` under `Linger/Core` or `Linger/Tools` must occur as
 its exact environment constant in a theorem type from `Theorems`. This module
 is under the sanctioned friend region so it can resolve private definitions and
 theorem declarations without granting that access to E2E or runtime code. -/
@@ -94,7 +94,8 @@ the semantic check below resolves each name against the compiled environment. -/
 public meta def pureDefNames (env : Environment) : IO (Array Lean.Name) := do
   let mut names : Array Lean.Name := #[]
   let files :=
-    (← leanFiles (System.FilePath.mk "Linger/Core")) ++ (← leanFiles (System.FilePath.mk "Tools"))
+    (← leanFiles (System.FilePath.mk "Linger/Core")) ++
+      (← leanFiles (System.FilePath.mk "Linger/Tools"))
   for f in files do
     let found ←
       match sourceDefNames (← sourceSyntax env f) with
@@ -134,9 +135,7 @@ public meta def runtimeEmitters (defs : Array Lean.Name) (main : Lean.Name := `M
     (arts : NameMap ImportArtifacts := {}) : IO (Array String) := do
   let env ← importModules #[{ module := main }] {} (arts := arts)
   let mut refs : NameHashSet := {}
-  for (name, ci) in
-    moduleConsts env
-      (fun mod => mod == main || [`Linger, `Tools, `Manager].any (·.isPrefixOf mod)) do
+  for (name, ci) in moduleConsts env (fun mod => mod == main || (`Linger).isPrefixOf mod) do
     let some idx := env.getModuleIdxFor? name | continue
     let mod := env.header.modules[idx.toNat]!.module
     if ci.isTheorem then
@@ -164,7 +163,8 @@ public meta def checkPureCoverage : CommandElabM (Array Lean.Name) := do
   let logical ← liftIO (pureDefNames sourceEnv)
   let env ← liftIO (importModules sourceEnv.header.imports {})
   let pureConsts :=
-    (moduleConsts env (fun mod => [`Linger.Core, `Tools].any (·.isPrefixOf mod))).toList.filterMap
+    (moduleConsts env
+          (fun mod => [`Linger.Core, `Linger.Tools].any (·.isPrefixOf mod))).toList.filterMap
       fun (n, ci) => if !ci.isTheorem then some (privateToUserName n, n) else none
   let theoremConsts :=
     (moduleConsts env ((`Theorems : Lean.Name).isPrefixOf ·)).foldl

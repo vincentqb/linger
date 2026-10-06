@@ -95,7 +95,7 @@ This is a **Lean-level wrapper** over the existing `linger_write` extern, not a 
 syscall: `SHIM_CAP` is untouched. Since the seal (specs/archive/lean-modules.md Step 2) it
 could not read a `Buf`'s representation if it wanted to — `bytes` is `private`, and
 this calls the one API window, `writeFrom`. What was "the one sanctioned read
-outside Core" by convention is now the only one *possible*; `tests/gates.sh`'s greps
+outside Core" by convention is now the only one *possible*; `scripts/gates.sh`'s greps
 still gate `Linger/Runtime/*` against declaring parallel byte buffers of its own,
 the half privacy cannot see. -/
 def writeBuf (fd : UInt32) (b : Linger.Core.Buf.Buf) (sent : Nat) : IO Int64 :=

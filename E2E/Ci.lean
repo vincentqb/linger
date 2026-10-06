@@ -7,19 +7,19 @@ public section
 
 /-! # E2E.Ci — runner selection and Lake build reuse
 
-`tests/ci-runners.sh` decides the GitHub matrix, and its two failure modes are both
+`scripts/ci-runners.sh` decides the GitHub matrix, and its two failure modes are both
 silent and both expensive. Ask for macOS when nothing changed and a push bills several
 times what it needs to; never ask for it and AGENTS.md's claim that the tree passes on
 macOS stops being checked by anything. The billing arithmetic is recorded in
 SCRATCHPAD.md.
 
-`tests/gates.sh` greps the workflow for the shape — `fromJSON`, both runner names, a
+`scripts/gates.sh` greps the workflow for the shape — `fromJSON`, both runner names, a
 `cron`, a `workflow_dispatch`, a `--since` — which catches deletion. It cannot catch
 behaviour: a grep cannot tell you that a push to main yields ubuntu alone.
 
 WHY THIS DRIVES A SHELL SCRIPT. The decision has to be callable by a workflow step
 that compiles nothing (that is what makes the `gates` job cheap), so it is shell. It
-lives in `tests/ci-runners.sh` rather than inline in the YAML precisely so this suite
+lives in `scripts/ci-runners.sh` rather than inline in the YAML precisely so this suite
 can run the real thing: an inline `case` could only be tested by a second copy of
 itself, and a suite asserting against a copy is the failure this repo's rules name
 outright. The `schedule` arm is exercised against real temporary repositories with
@@ -284,7 +284,7 @@ def verificationInputs (root : String) : IO Nat := do
     git #["add", "."]
     let probe :=
       IO.Process.output
-        { cmd := "sh", args := #[s!"{root}/tests/ci-inputs.sh"], cwd := some dir.toString }
+        { cmd := "sh", args := #[s!"{root}/scripts/ci-inputs.sh"], cwd := some dir.toString }
     let original ← probe
     let key := original.stdout.trimAscii.toString
     let mut f ←
@@ -299,7 +299,7 @@ def verificationInputs (root : String) : IO Nat := do
       let value := (← IO.getEnv name).getD "" ++ "-changed"
       let image ←
         IO.Process.output
-            { cmd := "sh", args := #[s!"{root}/tests/ci-inputs.sh"], cwd := some dir.toString,
+            { cmd := "sh", args := #[s!"{root}/scripts/ci-inputs.sh"], cwd := some dir.toString,
               env := #[(name, some value)] }
       f :=
         f +
@@ -443,12 +443,51 @@ def lakeBuilds (root : String) : IO Nat := do
   finally
     IO.FS.removeDirAll dir
 
+/-- Exercise the real Lake drivers from another directory, including failures. -/
+def lakeDrivers (root : String) : IO Nat :=
+  IO.FS.withTempDir fun base => do
+    let project := base / "project with spaces"
+    IO.FS.createDirAll (project / "scripts")
+    for file in ["lakefile.lean", "lean-toolchain"] do
+      IO.FS.writeFile (project / file) (← IO.FS.readFile s!"{root}/{file}")
+    let mut f := 0
+    for (verb, file) in [("test", "e2e.sh"), ("lint", "lint.sh")] do
+      let script := project / "scripts" / file
+      let run :=
+        IO.Process.output
+          { cmd := s!"{root}/lake", args := #["--dir", project.toString, "--no-ansi", verb]
+            cwd := some base.toString }
+      let marker := s!"{verb} driver reached"
+      IO.FS.writeFile script
+          s!"#!/bin/sh\n[ -f lean-toolchain ] || exit 99\nprintf '%s\\n' '{marker}'\n"
+      let passed ← run
+      f :=
+        f +
+          (←
+            expect (passed.exitCode == 0 && has passed.stdout marker)
+                s!"lake {verb} invokes the configured script in its project directory")
+      IO.FS.writeFile script s!"#!/bin/sh\nprintf '%s\\n' '{marker}' >&2\nexit 42\n"
+      let failed ← run
+      f :=
+        f +
+          (←
+            expect (failed.exitCode == 42 && has failed.stderr marker)
+                s!"lake {verb} preserves the verifier's exit status and diagnostics")
+      IO.FS.removeFile script
+      let missing ← run
+      f :=
+        f +
+          (←
+            expect (missing.exitCode != 0 && has (missing.stdout ++ missing.stderr) file)
+                s!"lake {verb} rejects a missing verifier")
+    return f
+
 def run : IO UInt32 := do
   -- No `Env`, following `E2E/Coverage.lean`: this is not a pty suite, so it has no
   -- sockets, logs or checkpoints and needs no state directory. Making one anyway
   -- left an empty `/tmp/linger-ci-<pid>` behind on every failing run.
   let root ← repoRoot
-  let script := s!"{root}/tests/ci-runners.sh"
+  let script := s!"{root}/scripts/ci-runners.sh"
   let mut f := 0
   -- The per-push path: ubuntu alone. This is the one that costs money when wrong.
   f :=
@@ -503,6 +542,7 @@ def run : IO UInt32 := do
     IO.FS.removeDirAll (System.FilePath.mk fresh)
     IO.FS.removeDirAll (System.FilePath.mk stale)
   f := f + (← lakeBuilds root)
+  f := f + (← lakeDrivers root)
   f := f + (← suiteRunner)
   f := f + (← dependencyInstall root)
   f := f + (← verificationInputs root)

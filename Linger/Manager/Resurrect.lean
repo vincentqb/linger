@@ -1,21 +1,23 @@
 module
 
-public import Tools.Resurrect
-public import Linger.Core.Remote
-public import Linger.Runtime.Resume
-public import Manager.Picker
-public import Std.Async.System
-public import Lean.Data.Json
+import Linger.Tools.Resurrect
+import Linger.Posix
+import Linger.Runtime.Paths
+import Linger.Runtime.Resume
+import Linger.Runtime.Command
+import Linger.Manager.Picker
+import Std.Async.System
+import Lean.Data.Json
 
 public section
 
 /-! tmux-resurrect interchange. Pure parsing and export policy live in
-`Tools.Resurrect`. This boundary creates sessions in imported directories and
+`Linger.Tools.Resurrect`. This boundary creates sessions in imported directories and
 publishes current native names and directories atomically. -/
 
-namespace Manager.Resurrect
+namespace Linger.Manager.Resurrect
 
-open Tools.Resurrect
+open Linger.Tools.Resurrect
 open Linger.Runtime
 
 /-- Resolve existing relative path components physically, retaining a missing
@@ -235,7 +237,7 @@ private def selectSave (executable : String) (file : Option String) : IO UInt32 
   inContext fun origin home env => do
     let path ← savePath origin home file
     while true do
-      match ← Manager.Picker.choose executable true (some path.toString) with
+      match ← Linger.Manager.Picker.choose executable true (some path.toString) with
       | .cancel =>
         return 130
       | .failed status stderr =>
@@ -345,4 +347,4 @@ def run (executable : String) (args : List String) : IO UInt32 := do
     IO.eprintln s!"linger tmux {command}: {diagnostic (toString e)}"
     return 1
 
-end Manager.Resurrect
+end Linger.Manager.Resurrect

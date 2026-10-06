@@ -1,32 +1,32 @@
 module
 
-import Tools.Picker
-public meta import Tools.Picker
+import Linger.Tools.Picker
+public meta import Linger.Tools.Picker
 
 /-! Concrete selector fixtures. General contracts live in `Theorems.Picker`. -/
 
-namespace Tools.Picker.Tests
+namespace Linger.Tools.Picker.Tests
 
-open Tools.Picker
+open Linger.Tools.Picker
 
-#guard Tools.Picker.matches "" "" && Tools.Picker.matches "" "work"
+#guard Linger.Tools.Picker.matches "" "" && Linger.Tools.Picker.matches "" "work"
 
-#guard Tools.Picker.matches "WK@DV" "work@dev"
+#guard Linger.Tools.Picker.matches "WK@DV" "work@dev"
 
-#guard Tools.Picker.matches "abc" "a---b---c"
+#guard Linger.Tools.Picker.matches "abc" "a---b---c"
 
-#guard !Tools.Picker.matches "acb" "abc"
+#guard !Linger.Tools.Picker.matches "acb" "abc"
 
-#guard !Tools.Picker.matches "aa" "a"
+#guard !Linger.Tools.Picker.matches "aa" "a"
 
-#guard Tools.Picker.matches "aa" "a-a"
+#guard Linger.Tools.Picker.matches "aa" "a-a"
 
-#guard !Tools.Picker.matches "longer" "long"
+#guard !Linger.Tools.Picker.matches "longer" "long"
 
-#guard Tools.Picker.matches "é界" "café@世界"
+#guard Linger.Tools.Picker.matches "é界" "café@世界"
 
 -- Char.toLower folds ASCII capitals only; no Unicode normalization is implied.
-#guard !Tools.Picker.matches "É" "é" && Tools.Picker.matches "É" "É"
+#guard !Linger.Tools.Picker.matches "É" "é" && Linger.Tools.Picker.matches "É" "É"
 
 #guard
   visible ["work", "wk", "a-w-k", "Work", "other", "work"] "WK" ==
@@ -308,7 +308,8 @@ open Tools.Picker
 
 #guard step (init ["a", "b", "c"]) .last == .stay { candidates := ["a", "b", "c"], cursor := 3 }
 
-#guard [Tools.Key.up, .down, .first, .last].all fun key => step (init []) key == .stay (init [])
+#guard
+  [Linger.Tools.Key.up, .down, .first, .last].all fun key => step (init []) key == .stay (init [])
 
 #guard
   step { candidates := ["a", "b", "a-b"], query := "b" } .last ==
@@ -355,7 +356,7 @@ open Tools.Picker
 
 #guard
   let state : State := { candidates := ["work"], query := "w", allowCreate := false }
-  [Tools.Key.text 'o', .backspace, .clear, .up, .down, .first, .last].all fun key =>
+  [Linger.Tools.Key.text 'o', .backspace, .clear, .up, .down, .first, .last].all fun key =>
     match step state key with
     | .stay next => !next.allowCreate
     | _ => false
@@ -385,4 +386,4 @@ open Tools.Picker
       (fresh.row "work").lookup "directory" == some "\"/tmp/new\""
   | _, _ => false
 
-end Tools.Picker.Tests
+end Linger.Tools.Picker.Tests

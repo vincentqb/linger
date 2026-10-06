@@ -9,7 +9,7 @@ recognizer, and UTF-8 prefixes retain at most three bytes. Completed scalars use
 Lean's UTF-8 validator on at most four bytes. Paste suppression belongs to the
 outer state so a timeout or malformed sequence cannot turn it off. -/
 
-namespace Tools.Input
+namespace Linger.Tools.Input
 
 /-- Physical input events. C0 bytes without a dedicated key retain their byte
 identity; consumers decide which of them have an application binding. -/
@@ -171,4 +171,4 @@ sequences are discarded; a timeout cannot disable paste suppression. -/
 def flush (state : State) : State × List Key :=
   ({ paste := state.paste }, if state.mode = .escape ∧ state.paste = false then [.escape] else [])
 
-end Tools.Input
+end Linger.Tools.Input

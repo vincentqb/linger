@@ -7,7 +7,7 @@ public section
 /-! # E2E.Watch — `linger watch`, the read-only mirror
 
 pin-the-gaps item 1. The verb had ZERO coverage of any kind before this suite:
-no pty test, no fixture, no theorem naming it. `tests/e2e.sh` step 4's "mirror" is
+no pty test, no fixture, no theorem naming it. `scripts/e2e.sh` step 4's "mirror" is
 two-client mirroring, not this.
 
 WHAT THIS CAN AND CANNOT CATCH — read before adding a check. Read-only is enforced
@@ -21,7 +21,7 @@ DAEMON-side, not by `Client.attach`'s three `!readOnly` guards:
   semantic no-ops. `onMsg .resize` drops a non-sizer's resize and `onMsg .input`
   drops a non-sizer's input (`onMsg_input_readonly`), so removing either changes
   no observable byte. They are defence in depth, held by grep gates in
-  `tests/gates.sh` — the `SHIM_CAP` species of oracle.
+  `scripts/gates.sh` — the `SHIM_CAP` species of oracle.
 
 So: do not add a check here claiming to catch B or C. It cannot. -/
 

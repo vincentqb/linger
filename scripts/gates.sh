@@ -1,7 +1,7 @@
 #!/bin/sh
-# tests/gates.sh — the SOURCE-TREE gates, and the only place the ratchet numbers live.
+# scripts/gates.sh — the SOURCE-TREE gates, and the only place the ratchet numbers live.
 #
-# Split out of tests/e2e.sh (2026-08-29) for one reason: these checks are
+# Split out of scripts/e2e.sh (2026-08-29) for one reason: these checks are
 # milliseconds of `git grep` and `awk`, but inside e2e.sh they only fired AFTER a
 # `rm -rf .lake/build`, a full rebuild and ten pty suites. The `pre-commit` hook now
 # runs them at the moment the mistake is made, and e2e.sh runs THIS SAME FILE — so a
@@ -11,7 +11,7 @@
 # Every number here only ever goes DOWN without discussion. Raising one is a
 # deliberate, reviewable edit, and that review is the whole point of the ratchet.
 #
-# Run standalone:  sh tests/gates.sh
+# Run standalone:  sh scripts/gates.sh
 set -e
 cd "$(dirname "$0")/.."
 fail() { printf 'GATE FAIL: %s\n' "$1" >&2; exit 1; }
@@ -76,21 +76,21 @@ for p in Linger/Core Linger/Core/Vt.lean Linger/Core/Checkpoint.lean \
          Linger/Runtime/Command.lean Theorems/Title.lean Theorems/TerminalTitle.lean \
          Theorems Theorems/Session.lean Theorems/Driver.lean Theorems/Replay.lean \
          Theorems/Name.lean Theorems/Remote.lean Theorems/Claim.lean Tests E2E \
-         Tools/Resurrect.lean Theorems/Resurrect.lean Manager/Resurrect.lean \
-         Tools/Key.lean Tools/Fuzzy.lean Tools/Picker.lean Tools/Input.lean \
-         Tools/Entry.lean Theorems/Entry.lean \
+         Linger/Tools/Resurrect.lean Theorems/Resurrect.lean Linger/Manager/Resurrect.lean \
+         Linger/Tools/Key.lean Linger/Tools/Fuzzy.lean Linger/Tools/Picker.lean Linger/Tools/Input.lean \
+         Linger/Tools/Entry.lean Theorems/Entry.lean \
          Theorems/Picker.lean Theorems/Input.lean Theorems/Key.lean \
-         Main.lean Manager/Picker.lean E2E/Manager.lean \
+         Main.lean Linger/Manager/Picker.lean E2E/Manager.lean \
          LingerTest.lean c/shim.c lakefile.lean lake-manifest.json README.md \
          .pre-commit-config.yaml; do
   [ -e "$p" ] || fail "$p is gone — a gate below would pass by matching nothing"
 done
 
-! code_grep 'sorry' 'Linger/Core/*' 'Tools/*' 'Theorems/*' || fail "sorry found"
-! code_grep 'sorryAx' 'Linger/Core/*' 'Tools/*' 'Theorems/*' || fail "sorryAx found"
-! code_grep '(^|[^[:alnum:]_])partial def([^[:alnum:]_]|$)' 'Linger/Core/*' 'Tools/*' \
+! code_grep 'sorry' 'Linger/Core/*' 'Linger/Tools/*' 'Theorems/*' || fail "sorry found"
+! code_grep 'sorryAx' 'Linger/Core/*' 'Linger/Tools/*' 'Theorems/*' || fail "sorryAx found"
+! code_grep '(^|[^[:alnum:]_])partial def([^[:alnum:]_]|$)' 'Linger/Core/*' 'Linger/Tools/*' \
   || fail "partial def in pure core"
-! code_grep ': *IO ' 'Linger/Core/*' 'Tools/*' || fail "IO in pure core"
+! code_grep ': *IO ' 'Linger/Core/*' 'Linger/Tools/*' || fail "IO in pure core"
 # Proofs must reduce in the kernel, never by compiled evaluation: a
 # `native_decide` in Theorems/ would trust the compiler + `Decidable`
 # instance instead of the kernel, and (unlike the tests, where evaluating
@@ -236,9 +236,9 @@ library_roots() {
 }
 library_roots LingerVt '#[`Linger.Core.Terminal, `Linger.Core.Replay]'
 library_roots LingerVtTheorems '#[`Theorems.Terminal, `Theorems.TerminalTitle, `Theorems.Replay]'
-library_roots LingerInput '#[`Tools.Input]'
+library_roots LingerInput '#[`Linger.Tools.Input]'
 library_roots LingerInputTheorems '#[`Theorems.Input]'
-library_roots LingerFuzzy '#[`Tools.Fuzzy]'
+library_roots LingerFuzzy '#[`Linger.Tools.Fuzzy]'
 
 # Check every member of the proof family, not only the root headers: an
 # intermediate VT or renderer lemma must not pull session policy into the target.
@@ -257,29 +257,29 @@ module_imports Theorems/Vt.lean 'Theorems/Vt/*' Theorems/Terminal.lean Theorems/
 # Entry and manager policies have explicit, small import closures. Main
 # composes their executors with the session backend. The session library never
 # imports them, even through an intermediate module: every library import
-# stays in Linger or the one standard-library dependency owned by Posix.
-import_closure Tools/Resurrect.lean 'public import Linger.Core.Name;public import Linger.Core.Status;'
-import_closure Tools/Key.lean 'public import Tools.Input;'
-import_closure Tools/Fuzzy.lean ''
-import_closure Tools/Picker.lean 'public import Tools.Key;public import Tools.Fuzzy;public import Linger.Core.Name;public import Linger.Core.Listing;public import Linger.Core.Remote;'
-import_closure Tools/Input.lean ''
-import_closure Theorems/Input.lean 'public import Tools.Input;import all Tools.Input;'
-import_closure Tools/Entry.lean ''
+# stays in Core, Runtime or the OS boundary.
+import_closure Linger/Tools/Resurrect.lean 'import Linger.Core.Name;import Linger.Core.Status;'
+import_closure Linger/Tools/Key.lean 'public import Linger.Tools.Input;'
+import_closure Linger/Tools/Fuzzy.lean ''
+import_closure Linger/Tools/Picker.lean 'public import Linger.Tools.Key;import Linger.Tools.Fuzzy;import Linger.Core.Name;public import Linger.Core.Listing;import Linger.Core.Remote;import Linger.Core.Vt;'
+import_closure Linger/Tools/Input.lean ''
+import_closure Theorems/Input.lean 'public import Linger.Tools.Input;import all Linger.Tools.Input;'
+import_closure Linger/Tools/Entry.lean ''
 import_closure Linger/Core/Name.lean ''
-import_closure Linger/Core/Remote.lean 'public import Linger.Core.Name;'
-import_closure Linger/Core/Title.lean 'public import Linger.Core.Name;'
+import_closure Linger/Core/Remote.lean 'import Linger.Core.Name;'
+import_closure Linger/Core/Title.lean 'import Linger.Core.Name;'
 import_closure Linger/Runtime/Command.lean ''
-import_closure Manager/Resurrect.lean 'public import Tools.Resurrect;public import Linger.Core.Remote;public import Linger.Runtime.Resume;public import Manager.Picker;public import Std.Async.System;public import Lean.Data.Json;'
-import_closure Manager/Picker.lean \
-  'public import Tools.Picker;public import Tools.Input;public import Linger.Posix;public import Linger.Core.Terminal;public import Linger.Runtime.Command;'
+import_closure Linger/Manager/Resurrect.lean 'import Linger.Tools.Resurrect;import Linger.Posix;import Linger.Runtime.Paths;import Linger.Runtime.Resume;import Linger.Runtime.Command;import Linger.Manager.Picker;import Std.Async.System;import Lean.Data.Json;'
+import_closure Linger/Manager/Picker.lean \
+  'public import Linger.Tools.Picker;import Linger.Posix;import Linger.Core.Terminal;import Linger.Runtime.Command;'
 import_closure Main.lean \
-  'public import Linger.Runtime.Cli;public import Linger.Runtime.Resume;public import Tools.Entry;public import Manager.Picker;public import Manager.Resurrect;'
-module_imports 'Linger/*' Linger.lean \
+  'import Linger.Runtime.Resume;import Linger.Tools.Entry;import Linger.Manager.Picker;import Linger.Manager.Resurrect;'
+module_imports 'Linger/Core/*' 'Linger/Runtime/*' Linger/Posix.lean Linger.lean \
 | awk -F: '
   { mod = $3
     sub(/^[[:space:]]*((public|private|meta)[[:space:]]+)*import[[:space:]]+(all[[:space:]]+)?/, "", mod)
     sub(/[[:space:]]+--.*/, "", mod); sub(/[[:space:]]+$/, "", mod)
-    if (mod !~ /^(Linger([.][[:alnum:]_]+)*|Std[.]Async[.]System)$/) {
+    if (mod !~ /^(Linger[.]((Core|Runtime)[.][[:alnum:]_.]+|Posix)|Std[.]Async[.]System)$/) {
       print "  " $0; bad = 1
     }
   }
@@ -298,9 +298,9 @@ done
 # matcher below, so quoted prose cannot stand in for these call sites.
 entry_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Main.lean)"
 for tie in \
-  'def main [(]args : List String[)] : IO UInt32 := do try match Tools[.]Entry[.]route args with' \
-  '[|] [.]selector => Manager[.]Picker[.]run [(]← IO[.]appPath[)][.]toString' \
-  '[|] [.]tmux rest => Manager[.]Resurrect[.]run [(]← IO[.]appPath[)][.]toString rest' \
+  'def main [(]args : List String[)] : IO UInt32 := do try match Linger[.]Tools[.]Entry[.]route args with' \
+  '[|] [.]selector => Linger[.]Manager[.]Picker[.]run [(]← IO[.]appPath[)][.]toString' \
+  '[|] [.]tmux rest => Linger[.]Manager[.]Resurrect[.]run [(]← IO[.]appPath[)][.]toString rest' \
   '[|] [.]session argv => Linger[.]Runtime[.]Cli[.]main Linger[.]Runtime[.]Resume[.]hooks argv'; do
   printf '%s\n' "$entry_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "entry point bypassed its proved route or fixed IO boundary: $tie"
@@ -321,20 +321,20 @@ for claim in diagnostic_printable diagnostic_eq_self \
   code_grep "^(private )?theorem $claim " Theorems/Resurrect.lean >/dev/null \
     || fail "interchange contract disappeared: $claim"
 done
-code_grep '^[[:space:]]+IO[.]eprintln s!"linger tmux [{]command[}]: [{]diagnostic [(]toString e[)][}]"$' Manager/Resurrect.lean >/dev/null \
+code_grep '^[[:space:]]+IO[.]eprintln s!"linger tmux [{]command[}]: [{]diagnostic [(]toString e[)][}]"$' Linger/Manager/Resurrect.lean >/dev/null \
   || fail "tmux commands no longer display the proved control-free diagnostic"
-code_grep '^[[:space:]]+let content ← IO[.]FS[.]readFile path$' Manager/Resurrect.lean >/dev/null \
+code_grep '^[[:space:]]+let content ← IO[.]FS[.]readFile path$' Linger/Manager/Resurrect.lean >/dev/null \
   || fail "tmux catalog no longer reads the complete resolved save before parsing"
-code_grep '^[[:space:]]+let panes ← IO[.]ofExcept [(]parseSave home content[)]$' Manager/Resurrect.lean >/dev/null \
+code_grep '^[[:space:]]+let panes ← IO[.]ofExcept [(]parseSave home content[)]$' Linger/Manager/Resurrect.lean >/dev/null \
   || fail "tmux catalog no longer consumes the proved whole-save parser"
-code_grep '^[[:space:]]+for pane in plan existing panes do$' Manager/Resurrect.lean >/dev/null \
+code_grep '^[[:space:]]+for pane in plan existing panes do$' Linger/Manager/Resurrect.lean >/dev/null \
   || fail "importer no longer iterates the proved import plan"
-import_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Manager/Resurrect.lean)"
+import_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Manager/Resurrect.lean)"
 printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])let created ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"run", pane[.]name, "true"[]], cwd := some [(]System[.]FilePath[.]mk pane[.]dir[)], env [}] unless created[.]exitCode == 0 do throw [(]IO[.]userError s!"could not create session: [{]pane[.]name[}]: [{]created[.]stdout[}][{]created[.]stderr[}]"[)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "importer bypasses planned creation argv/cwd, captured output or its diagnostic catch"
 printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])[|] "import" => importSave executable paths[.]head[?]; return 0([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "importer no longer forwards the entry point executable"
-code_grep '^[[:space:]]+let listing ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"ls", "--porcelain"[]], env [}]$' Manager/Resurrect.lean >/dev/null \
+code_grep '^[[:space:]]+let listing ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"ls", "--porcelain"[]], env [}]$' Linger/Manager/Resurrect.lean >/dev/null \
   || fail "importer no longer lists with the supplied executable"
 # Native listing observes the caller's checkpoint namespace, including its
 # no-HOME /tmp fallback. Only those fields reach the checked serializer.
@@ -351,7 +351,7 @@ for tie in \
   'let value := if key == "directory" then [(]Lean[.]Json[.]str value[)][.]compress else diagnostic value' \
   'Linger[.]Posix[.]writeAll Linger[.]Posix[.]stdoutFd [(]ByteArray[.]mk [(]Linger[.]Core[.]Listing[.]terminalListing withColor rows[)][.]toArray[)]' \
   'let save ← readSave origin home file createPanes executable origin env save[.]panes' \
-  'let path ← savePath origin home file while true do match ← Manager[.]Picker[.]choose executable true [(]some path[.]toString[)] with' \
+  'let path ← savePath origin home file while true do match ← Linger[.]Manager[.]Picker[.]choose executable true [(]some path[.]toString[)] with' \
   '[|] [.]attach target displayed => unless displayed[.]candidates[.]contains target do throw [(]IO[.]userError "selected pane was absent from the displayed save"[)] let row := displayed[.]row target' \
   'let dir ← IO[.]ofExcept do let some value := row[.]lookup "directory" [|] throw "selected pane has no directory" let json ← Lean[.]Json[.]parse value json[.]getStr[?]' \
   'let some pane := selectedPane target dir line [|] throw [(]IO[.]userError "invalid selected pane"[)] createPanes executable origin env [[]pane[]] let child ← IO[.]Process[.]spawn [{] cmd := executable, args := #[[]"attach", pane[.]name[]], cwd := some [(]System[.]FilePath[.]mk pane[.]dir[)], env [}] discard child[.]wait' \
@@ -407,11 +407,11 @@ for claim in ofInput_control_iff feed_byte_bindings feed_paste_no_commands feed_
     || fail "selector binding contract disappeared: $claim"
 done
 for tie in \
-  'let incoming ← IO[.]ofExcept [(]Tools[.]Picker[.]parseSnapshot result[.]stdout[)]' \
-  'let items := Tools[.]Picker[.]items state[.]candidates state[.]query state[.]allowCreate' \
-  'let mut state := Tools[.]Picker[.]init [[]] [(]!savedTmux[)]' \
-  'let mut decoder := Tools[.]Input[.]init' \
-  'match Tools[.]Picker[.]step state key with' \
+  'let incoming ← IO[.]ofExcept [(]Linger[.]Tools[.]Picker[.]parseSnapshot result[.]stdout[)]' \
+  'let items := Linger[.]Tools[.]Picker[.]items state[.]candidates state[.]query state[.]allowCreate' \
+  'let mut state := Linger[.]Tools[.]Picker[.]init [[]] [(]!savedTmux[)]' \
+  'let mut decoder := Linger[.]Tools[.]Input[.]init' \
+  'match Linger[.]Tools[.]Picker[.]step state key with' \
   'let cells := Linger[.]Core[.]Vt[.]charWidth c' \
   'let fds := #[[]stdinFd[]]' \
   'let events := #[[]POLLIN[]]' \
@@ -423,10 +423,10 @@ for tie in \
   'writeAll stdoutFd frame[.]toUTF8' \
   'discard child[.]wait' \
   'let child ← IO[.]Process[.]spawn [{] cmd := executable, args := #[[]"attach", target[]] [}]'; do
-  code_grep "^[[:space:]]+$tie$" Manager/Picker.lean >/dev/null \
+  code_grep "^[[:space:]]+$tie$" Linger/Manager/Picker.lean >/dev/null \
     || fail "manager bypassed a proved value or fixed IO boundary: $tie"
 done
-picker_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Manager/Picker.lean)"
+picker_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Manager/Picker.lean)"
 # Pin traversal through shared row pieces, frame insertion and complete metadata
 # replacement. Computing rows or refreshed state without consuming them is
 # insufficient. The loop seams fix draw, poll/decode/step, then refresh ordering.
@@ -434,13 +434,13 @@ picker_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Manager/Picker.lean)"
 # Preserve byte order and consume both decoder results through the proved
 # application binding before dispatch.
 for tie in \
-  'for byte in bytes[.]toList do let [(]next, emitted[)] := Tools[.]Input[.]feed decoder byte decoder := next keys := keys [+][+] [(]emitted[.]filterMap Tools[.]Key[.]ofInput[)][.]toArray else if Tools[.]Input[.]pending decoder && [(]← monotonicMs[)] - lastInput ≥ 150 then let [(]next, emitted[)] := Tools[.]Input[.]flush decoder decoder := next keys := [(]emitted[.]filterMap Tools[.]Key[.]ofInput[)][.]toArray for key in keys do' \
+  'for byte in bytes[.]toList do let [(]next, emitted[)] := Linger[.]Tools[.]Input[.]feed decoder byte decoder := next keys := keys [+][+] [(]emitted[.]filterMap Linger[.]Tools[.]Key[.]ofInput[)][.]toArray else if Linger[.]Tools[.]Input[.]pending decoder && [(]← monotonicMs[)] - lastInput ≥ 150 then let [(]next, emitted[)] := Linger[.]Tools[.]Input[.]flush decoder decoder := next keys := [(]emitted[.]filterMap Linger[.]Tools[.]Key[.]ofInput[)][.]toArray for key in keys do' \
   'let nameCol := Linger[.]Core[.]Listing[.]nameWidth [(]snapshot[.]candidates[.]map fun target => [[][(]"name", target[)][]][)]' \
-  'let mut index := start for item in [(]items[.]drop start[)][.]take slots do let chosen := index == state[.]cursor let selection := if chosen then "\\x1b[[]7m" else "" let mut pieces := #[[][(]if chosen then " ▸ " else " ", selection[)][]] let chars := Tools[.]Picker[.]highlightedPresentation snapshot nameCol state[.]query item for char in Tools[.]Picker[.]emphasizeCells chars do let statusStyle := if withColor then [(]char[.]status[.]map Linger[.]Core[.]Status[.]style[)][.]getD "" else "" let emphasis := if char[.]matched then "\\x1b[[]4m" else "" pieces := pieces[.]push [(]String[.]singleton char[.]char, selection [+][+] statusStyle [+][+] emphasis[)] lines := lines[.]push pieces index := index [+] 1' \
+  'let mut index := start for item in [(]items[.]drop start[)][.]take slots do let chosen := index == state[.]cursor let selection := if chosen then "\\x1b[[]7m" else "" let mut pieces := #[[][(]if chosen then " ▸ " else " ", selection[)][]] let chars := Linger[.]Tools[.]Picker[.]highlightedPresentation snapshot nameCol state[.]query item for char in Linger[.]Tools[.]Picker[.]emphasizeCells chars do let statusStyle := if withColor then [(]char[.]status[.]map Linger[.]Core[.]Status[.]style[)][.]getD "" else "" let emphasis := if char[.]matched then "\\x1b[[]4m" else "" pieces := pieces[.]push [(]String[.]singleton char[.]char, selection [+][+] statusStyle [+][+] emphasis[)] lines := lines[.]push pieces index := index [+] 1' \
   'let mut frame := "\\x1b[[]0m\\x1b[[]H\\x1b[[]2J" let mut first := true for line in lines do if !first then frame := frame [+][+] "\\r\\n" first := false let mut used := 0 let mut clipped := false let mut activeStyle := "" for [(]text, style[)] in line do if clipped then break if style != activeStyle then frame := frame [+][+] "\\x1b[[]0m" [+][+] style activeStyle := style for raw in text[.]toList do let c := if raw[.]toNat < 0x20 [|][|] [(]raw[.]toNat ≥ 0x7F && raw[.]toNat < 0xA0[)] then '"'"'[?]'"'"' else raw let cells := Linger[.]Core[.]Vt[.]charWidth c if used [+] cells > width then clipped := true break frame := frame[.]push c used := used [+] cells if !activeStyle[.]isEmpty then frame := frame [+][+] "\\x1b[[]0m" return frame' \
-  'let next := if loaded then Tools[.]Picker[.]refresh state incoming[.]candidates else [{] [(]Tools[.]Picker[.]init incoming[.]candidates state[.]allowCreate[)] with query := state[.]query [}] dirty := dirty [|][|] !loaded [|][|] next != state [|][|] incoming != snapshot state := next snapshot := incoming loaded := true nextListing := [(]← monotonicMs[)] [+] 1000' \
+  'let next := if loaded then Linger[.]Tools[.]Picker[.]refresh state incoming[.]candidates else [{] [(]Linger[.]Tools[.]Picker[.]init incoming[.]candidates state[.]allowCreate[)] with query := state[.]query [}] dirty := dirty [|][|] !loaded [|][|] next != state [|][|] incoming != snapshot state := next snapshot := incoming loaded := true nextListing := [(]← monotonicMs[)] [+] 1000' \
   'while true do let current ← winsizeGet stdoutFd if dirty [|][|] current != size then let frame := draw state snapshot loaded withColor current[.]1 current[.]2 if frame != lastFrame [|][|] current != size then writeAll stdoutFd frame[.]toUTF8 lastFrame := frame size := current dirty := false let ready ← poll fds events 50' \
-  'for key in keys do if !loaded && key == [.]accept then continue match Tools[.]Picker[.]step state key with [|] [.]stay next => dirty := dirty [|][|] next != state state := next [|] [.]attach target [|] [.]create target => return [.]attach target snapshot [|] [.]cancel => return [.]cancel if let some result[[:space:]]*← Linger[.]Runtime[.]Command[.]poll pending then' \
+  'for key in keys do if !loaded && key == [.]accept then continue match Linger[.]Tools[.]Picker[.]step state key with [|] [.]stay next => dirty := dirty [|][|] next != state state := next [|] [.]attach target [|] [.]create target => return [.]attach target snapshot [|] [.]cancel => return [.]cancel if let some result[[:space:]]*← Linger[.]Runtime[.]Command[.]poll pending then' \
   'nextListing := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]← monotonicMs[)] ≥ nextListing then pending[.]set [(]some [(]← Linger[.]Runtime[.]Command[.]start executable args[)][)] return [.]cancel finally' \
   'finally Linger[.]Runtime[.]Command[.]stop pending' \
   '[|] [.]attach target [|] [.]create target => return [.]attach target snapshot' \
@@ -545,7 +545,7 @@ awk '
 # Measured in the real position, not a scratch file: one added
 # `import all Linger.Core.Render` in `Linger/Runtime/Client.lean` (which already
 # `public import`s Render) plus a five-field `{ cols := 0, rows := 0, grid := #[], … }`
-# gives `./lake build linger` exit 0 AND `sh tests/gates.sh` exit 0. Two hops is the
+# gives `./lake build linger` exit 0 AND `sh scripts/gates.sh` exit 0. Two hops is the
 # same: `import all Theorems.Listing` from a file holding neither
 # `import all Linger.Core.Vt` nor `import all Linger.Core.Render` compiles the identical
 # forge. That is the Step 4 situation exactly — the compiler consents, so a grep is the
@@ -805,9 +805,9 @@ for claim in targetValid_iff parseTarget_exact parseTarget_name_valid shellQuote
   code_grep "^theorem $claim " Theorems/Remote.lean >/dev/null \
     || fail "command target or shell quoting contract disappeared: $claim"
 done
-! code_grep 'Tools[.]Fuzzy|Core[.]Name[.]sanitize' Linger/Runtime/Cli.lean Linger/Runtime/Client.lean \
+! code_grep 'Linger[.]Tools[.]Fuzzy|Core[.]Name[.]sanitize' Linger/Runtime/Cli.lean Linger/Runtime/Client.lean \
   || fail "noninteractive command lookup must not fuzzy-match or rewrite a name"
-selector_policy_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Tools/Picker.lean)"
+selector_policy_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Tools/Picker.lean)"
 printf '%s\n' "$selector_policy_code" | CG_RE='(^|[[:space:]])private def validTarget [(]target : String[)] : Bool := Linger[.]Core[.]Remote[.]targetValid target([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "selector creation and command arguments no longer share the target grammar"
 for verb in attach watch run send detach kill info capture resize history get set unset clear; do
@@ -1081,8 +1081,8 @@ rp_n="$(code_count 'partial def' 'Linger/Runtime/*')"
 # required regression is not a pass, and an executable Python snippet is still a
 # second-language dependency even when embedded in a Lean string rather than tracked
 # as a .py file. These are syntactic runtime ties, so the source gate is the oracle.
-! code_grep '(^|[^[:alnum:]_])(pkill|killall)[[:space:]].*linger' 'tests/e2e.sh' \
-  || fail "tests/e2e.sh kills by process name — suites may terminate only processes they created"
+! code_grep '(^|[^[:alnum:]_])(pkill|killall)[[:space:]].*linger' 'scripts/e2e.sh' \
+  || fail "scripts/e2e.sh kills by process name — suites may terminate only processes they created"
 # A process-GROUP selector is the same hazard wearing a pid. POSIX reads `kill 0` as
 # "every process in my group" and `kill -N` as group N, so one of these in a test
 # script signals the harness, the agent running it, and whatever shell shares that
@@ -1094,7 +1094,7 @@ rp_n="$(code_count 'partial def' 'Linger/Runtime/*')"
 # Lean here would flag the assertion instead of the hazard. `kill -0 $pid` (the
 # liveness probe) is a signal flag, not a target, and is deliberately not matched.
 ! code_grep 'kill([[:space:]]+-[A-Za-z0-9]+)*[[:space:]]+(--[[:space:]]+)?(0|-[0-9]+)([^0-9]|$)' \
-    'tests/*.sh' 'c/shim.c' 'recipes/*' \
+    'scripts/*.sh' 'c/shim.c' 'recipes/*' \
   || fail "a signal targets process group 0 or a negative pid — name the pid the suite created"
 ! code_grep '["]python([0-9.]*)' 'E2E/*' \
   || fail "an E2E suite executes embedded Python — use the e2e binary as the child probe"
@@ -1102,19 +1102,20 @@ rp_n="$(code_count 'partial def' 'Linger/Runtime/*')"
   || fail "an E2E suite counts a skipped required check as PASS"
 
 # Program and test sources stay Lean; pre-commit is an external framework.
-# `tests/` holds the shell verifier, while `E2E/` holds the executable suites.
+# `scripts/` holds the shell verifier, while `E2E/` holds the executable suites.
 if git ls-files '*.py' | grep -q .; then
   git ls-files '*.py'
   fail "a .py file is tracked; the suites and the coverage gate are Lean (see E2E/)"
 fi
 
-# `Tests/` and `tests/` are two tracked directories, and on a case-insensitive
-# filesystem git silently records a new `tests/x` as `Tests/x` (AGENTS.md). Assert the
-# split instead of trusting a reader to run `git ls-files --stage` after adding a file.
+# Avoid the Tests/tests collision on case-insensitive filesystems and keep
+# production modules under the project namespace.
 git ls-files 'Tests/*' | grep -qvE '\.lean$' \
-  && fail "a non-Lean file under Tests/ (Lean unit tests only; orchestration lives in tests/)" || true
-git ls-files 'tests/*' | grep -qE '\.lean$' \
-  && fail "a .lean file under tests/ (it belongs in Tests/ or E2E/ — the case trap)" || true
+  && fail "a non-Lean file under Tests/ (orchestration belongs in scripts/)" || true
+git ls-files 'scripts/*' | grep -qvE '\.sh$' \
+  && fail "a non-shell file under scripts/ (Lean suites belong in E2E/)" || true
+git ls-files 'tests/*' 'Tools/*' 'Manager/*' | grep -q . \
+  && fail "legacy top-level directory: use scripts/, Linger/Tools/ or Linger/Manager/" || true
 
 # The status glyphs are a user-facing contract of exactly seven characters, and README
 # is where a user reads them. They drifted silently: `Status.icon` emitted `⣀` for idle
@@ -1200,7 +1201,7 @@ done
 # a Lean property, so this is the same species of oracle as SHIM_CAP.
 ci_yml='.github/workflows/ci.yml'
 # The runtime tie, and the load-bearing one: `E2E/Ci.lean` tests
-# `tests/ci-runners.sh`, and no Lean can see whether the workflow actually CALLS it.
+# `scripts/ci-runners.sh`, and no Lean can see whether the workflow actually CALLS it.
 # Re-inline the decision as a `case` in the YAML and the suite would keep passing
 # against a script nothing runs. Same species as the `Buf` gate below.
 #
@@ -1208,32 +1209,32 @@ ci_yml='.github/workflows/ci.yml'
 # `ci-runners.sh` anywhere in the file, and the workflow's own comment names the
 # script — so it passed with the call replaced by an inline `echo`. Break-verified
 # after the fix.
-grep -qE '(^|[^[:alnum:]_])sh[[:space:]]+tests/ci-runners[.]sh' "$ci_yml" \
-  || fail "$ci_yml: the runner decision is not a call to tests/ci-runners.sh — E2E/Ci.lean would then be testing a script CI does not use"
-[ -n "$(git ls-files -- tests/ci-runners.sh)" ] \
-  || fail "tests/ci-runners.sh is not tracked — the workflow calls it, so a local-only copy passes here and fails in CI"
+grep -qE '(^|[^[:alnum:]_])sh[[:space:]]+scripts/ci-runners[.]sh' "$ci_yml" \
+  || fail "$ci_yml: the runner decision is not a call to scripts/ci-runners.sh — E2E/Ci.lean would then be testing a script CI does not use"
+[ -n "$(git ls-files -- scripts/ci-runners.sh)" ] \
+  || fail "scripts/ci-runners.sh is not tracked — the workflow calls it, so a local-only copy passes here and fails in CI"
 grep -qE '^ *os: [$][{][{] fromJSON[(]needs[.]gates[.]outputs[.]os[)] [}][}]$' "$ci_yml" \
   || fail "$ci_yml: the e2e matrix must use the tested runner decision through needs.gates.outputs.os"
 # Semantic lint needs the dynamically imported program too. Keep it after the
 # complete build in the shared verifier, rather than running another hook stack.
 awk '
   /^[.]\/lake --rehash --wfail build / { build = NR }
-  /^[[:space:]]+lean-fmt check / { lint = NR }
+  /^[.]\/lake lint / { lint = NR }
   END { exit !(build && lint > build) }
-' tests/e2e.sh \
-  || fail "tests/e2e.sh: semantic lint must follow the complete build"
+' scripts/e2e.sh \
+  || fail "scripts/e2e.sh: the shared Lake lint driver must follow the complete build"
 # E2E.Ci tests the actual input key. Both the lookup and successful receipt must
 # use it; no prefix restore may turn merely similar inputs into verified ones.
-[ -n "$(git ls-files -- tests/ci-inputs.sh)" ] \
-  || fail "tests/ci-inputs.sh is not tracked"
-[ "$(grep -cF 'key="$(sh tests/ci-inputs.sh)"' "$ci_yml")" -eq 2 ] \
+[ -n "$(git ls-files -- scripts/ci-inputs.sh)" ] \
+  || fail "scripts/ci-inputs.sh is not tracked"
+[ "$(grep -cF 'key="$(sh scripts/ci-inputs.sh)"' "$ci_yml")" -eq 2 ] \
   || fail "$ci_yml: lookup and receipt must both use the tested verification key"
 awk '
   /uses: actions\/cache\/restore@/ { receipt = 1; next }
   receipt && /^[[:space:]]+- name:/ { receipt = 0 }
   receipt && /restore-keys:/ { exit 1 }
   receipt && /key: passed-v1-/ { exact++ }
-  /^[[:space:]]+run: [.]\/tests\/e2e[.]sh$/ { full = NR }
+  /^[[:space:]]+run: [.]\/lake test$/ { full = NR }
   /^[[:space:]]+id: receipt$/ { record = NR }
   /uses: actions\/cache\/save@/ { save = NR }
   END { if (!(exact == 1 && full && record > full && save > record)) exit 1 }
@@ -1247,22 +1248,24 @@ grep -qF "if: needs.gates.outputs.verified != 'true'" "$ci_yml" \
   || fail "$ci_yml: only a completed verification may replace the full verifier"
 awk '
   /if: steps.verified.outputs.cache-hit == .true./ { reuse = 1 }
-  reuse && /^[[:space:]]+sh tests\/gates[.]sh$/ { checked = 1 }
+  reuse && /^[[:space:]]+sh scripts\/gates[.]sh$/ { checked = 1 }
   END { exit !checked }
 ' "$ci_yml" \
   || fail "$ci_yml: reused verification must still run current source gates"
-grep -qE '^[[:space:]]+run: sh tests/hygiene[.]sh$' "$ci_yml" \
+grep -qE '^[[:space:]]+run: sh scripts/hygiene[.]sh$' "$ci_yml" \
   || fail "$ci_yml: source hygiene must use the shared native checks"
+grep -qE '^[[:space:]]+entry: sh scripts/lint[.]sh$' .pre-commit-config.yaml \
+  || fail ".pre-commit-config.yaml: run the shared lint script exercised by E2E.Hygiene"
 # E2E.Ci exercises Lake's invalidation and cached warnings. The real verifier
 # must use the same flags; otherwise those checks protect only their fixture.
-grep -qE '^[.]/lake --rehash --wfail build[[:space:]]' tests/e2e.sh \
-  || fail "tests/e2e.sh: the build must use the cache-checking flags exercised by E2E.Ci (--rehash --wfail)"
+grep -qE '^[.]/lake --rehash --wfail build[[:space:]]' scripts/e2e.sh \
+  || fail "scripts/e2e.sh: the build must use the cache-checking flags exercised by E2E.Ci (--rehash --wfail)"
 # The real suites must use the same isolated runner whose failure, signal and
 # assertion-count contracts E2E.Ci exercises.
 awk '/^say "[0-9]+–[0-9]+[.] live suites / { live=1 }
   live && /^[.]\/[.]lake\/build\/bin\/e2e --suites[[:space:]]/ { found=1 }
-  END { exit !found }' tests/e2e.sh \
-  || fail "tests/e2e.sh: run live suites through the tested --suites entry point"
+  END { exit !found }' scripts/e2e.sh \
+  || fail "scripts/e2e.sh: run live suites through the tested --suites entry point"
 grep -qE '^ +- cron:' "$ci_yml" \
   || fail "$ci_yml: no schedule — with macOS off the per-push path, the cron IS when macOS runs"
 grep -q 'workflow_dispatch' "$ci_yml" \
@@ -1270,7 +1273,7 @@ grep -q 'workflow_dispatch' "$ci_yml" \
 # …and the decision's own shape, in the script that now holds it. `E2E/Ci.lean`
 # checks the BEHAVIOUR of all of this; these three only catch a wholesale deletion,
 # which is what a suite cannot see (a deleted branch is a check that stops applying).
-ci_sh='tests/ci-runners.sh'
+ci_sh='scripts/ci-runners.sh'
 grep -q 'ubuntu-latest' "$ci_sh" \
   || fail "$ci_sh: no ubuntu runner for source verification"
 grep -q 'macos-latest' "$ci_sh" \

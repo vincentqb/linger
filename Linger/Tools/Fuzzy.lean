@@ -15,7 +15,7 @@ their masks share suffixes. Work is proportional to query length times target
 length, with a linear base row.
 -/
 
-namespace Tools.Fuzzy
+namespace Linger.Tools.Fuzzy
 
 inductive CaseMode where
   | sensitive
@@ -112,4 +112,4 @@ def alignWith (config : Config) (query target : String) : Option Alignment :=
 /-- Default ASCII-insensitive alignment, as used by the linger selector. -/
 def align (query target : String) : Option Alignment := alignWith {} query target
 
-end Tools.Fuzzy
+end Linger.Tools.Fuzzy

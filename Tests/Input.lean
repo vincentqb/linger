@@ -1,34 +1,34 @@
 module
 
-import Tools.Key
-public meta import Tools.Input
-public meta import Tools.Key
+import Linger.Tools.Key
+public meta import Linger.Tools.Input
+public meta import Linger.Tools.Key
 
 /-! Byte-level fixtures exercise incremental state, including paste boundaries.
 The original selector expectations retain their concrete bindings, while raw
 decoder checks distinguish physical events before binding. Unicode validation
 is Lean's bounded UTF-8 conversion, not a second decoder. -/
 
-namespace Tools.Input.Tests
+namespace Linger.Tools.Input.Tests
 
-open Tools.Input
+open Linger.Tools.Input
 
-private def boundFeed (state : State) (byte : UInt8) : State × List Tools.Key :=
+private def boundFeed (state : State) (byte : UInt8) : State × List Linger.Tools.Key :=
   let (next, events) := feed state byte
-  (next, events.filterMap Tools.Key.ofInput)
+  (next, events.filterMap Linger.Tools.Key.ofInput)
 
-private def boundFlush (state : State) : State × List Tools.Key :=
+private def boundFlush (state : State) : State × List Linger.Tools.Key :=
   let (next, events) := flush state
-  (next, events.filterMap Tools.Key.ofInput)
+  (next, events.filterMap Linger.Tools.Key.ofInput)
 
-private def walk (state : State) (bytes : List UInt8) : State × List Tools.Key :=
+private def walk (state : State) (bytes : List UInt8) : State × List Linger.Tools.Key :=
   bytes.foldl
     (fun (state, keys) byte =>
       let (next, emitted) := boundFeed state byte
       (next, keys ++ emitted))
     (state, [])
 
-private def input (text : String) : State × List Tools.Key := walk init text.toUTF8.toList
+private def input (text : String) : State × List Linger.Tools.Key := walk init text.toUTF8.toList
 
 private def decoded (state : State) (bytes : List UInt8) : State × List Key :=
   bytes.foldl
@@ -67,7 +67,7 @@ private def decoded (state : State) (bytes : List UInt8) : State × List Key :=
 -- reused as an expected result.
 #guard
   (List.range 256).all fun n =>
-    let expected : List Tools.Key :=
+    let expected : List Linger.Tools.Key :=
       match n with
       | 8 | 127 => [.backspace]
       | 21 => [.clear]
@@ -81,20 +81,20 @@ private def decoded (state : State) (bytes : List UInt8) : State × List Key :=
 -- The adapter also handles constructed control events outside the C0 range.
 #guard
   (List.range 256).all fun n =>
-    let expected : Option Tools.Key :=
+    let expected : Option Linger.Tools.Key :=
       match n with
       | 21 => some .clear
       | 16 => some .up
       | 14 => some .down
       | 3 | 4 => some .cancel
       | _ => none
-    Tools.Key.ofInput (.control (UInt8.ofNat n)) == expected
+    Linger.Tools.Key.ofInput (.control (UInt8.ofNat n)) == expected
 
 #guard
   [(.backspace, .backspace), (.tab, .down), (.enter, .accept), (.escape, .cancel), (.up, .up),
         (.down, .down), (.home, .first), (.end, .last), (.text 'a', .text 'a'),
         (.text '界', .text '界'), (.text '🙂', .text '🙂')].all
-    fun (event, action) => Tools.Key.ofInput event == some action
+    fun (event, action) => Linger.Tools.Key.ofInput event == some action
 
 #guard
   (decoded init [0, 18, 21, 16, 14, 3, 4, 9, 8, 127, 13, 10]).2 ==
@@ -251,4 +251,4 @@ private def decoded (state : State) (bytes : List UInt8) : State × List Key :=
 
 #guard !pending init && boundFlush init == (init, [])
 
-end Tools.Input.Tests
+end Linger.Tools.Input.Tests

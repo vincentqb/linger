@@ -1,13 +1,13 @@
 module
 
-public import Tools.Input
+public import Linger.Tools.Input
 
 public section
 
 /-! Selector actions and their terminal key bindings. The terminal decoder
 reports physical events without deciding which actions they request. -/
 
-namespace Tools
+namespace Linger.Tools
 
 inductive Key where
   | text (char : Char)
@@ -39,4 +39,4 @@ def Key.ofInput : Input.Key → Option Key
   | .home => some .first
   | .end => some .last
 
-end Tools
+end Linger.Tools

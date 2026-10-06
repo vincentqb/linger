@@ -1,9 +1,13 @@
 module
 
 public import E2E.Harness
-public import Manager.Picker
-public import Manager.Resurrect
+public import Linger.Manager.Picker
+public import Linger.Manager.Resurrect
 public import Linger.Core.Listing
+import Linger.Core.Name
+import Linger.Core.Terminal
+import Linger.Runtime.Paths
+import Linger.Tools.Resurrect
 import Std.Sync.Mutex
 
 public section
@@ -16,9 +20,9 @@ after the manager returns. `stty -g` is a test observer, resolved before giving
 the manager a restricted PATH. Comparing that portable representation avoids
 inspecting the opaque termios blob's padding.
 
-Synthetic failure, argv and terminal cases call `Manager.Picker.run` through
+Synthetic failure, argv and terminal cases call `Linger.Manager.Picker.run` through
 the test probe with a fixture-owned absolute recorder path. The frozen-save
-case uses that recorder with `Manager.Resurrect.run`. These test the shared
+case uses that recorder with `Linger.Manager.Resurrect.run`. These test the shared
 executors; public CLI checks and source gates cover entry-point wiring.
 Help, argument validation, terminal dispatch and live attach/detach drive the
 actual `linger` binary with no `linger` on the fixture PATH.
@@ -268,9 +272,9 @@ def probe (args : List String) : IO UInt32 := do
     | "launch" :: manager :: mode :: rest =>
       launch root manager mode rest
     | ["picker", executable] =>
-      Manager.Picker.run executable
+      Linger.Manager.Picker.run executable
     | ["tmux-picker", executable, save] =>
-      Manager.Resurrect.run executable ["select", save]
+      Linger.Manager.Resurrect.run executable ["select", save]
     | ["session-program"] =>
       sessionProgram root
     | _ =>
@@ -2161,7 +2165,7 @@ private def realCheck (e : Env) : IO Nat := do
 /-- Foreign fixtures use explicit files and private homes/state. The native
 encoding keeps expected identities tied to the save parser's own policy. -/
 private def savedPane (name dir command : String := "") : String :=
-  s!"pane\t{Tools.Resurrect.encodeName name}\t0\t1\t:*\t0\ttitle\t:{dir}\t1\tsh\t:{command}\n"
+  s!"pane\t{Linger.Tools.Resurrect.encodeName name}\t0\t1\t:*\t0\ttitle\t:{dir}\t1\tsh\t:{command}\n"
 
 private def Fixture.nativeNames (f : Fixture) : IO (List String) := do
   let (rc, out, err) ← f.piped #["ls", "--porcelain"]
