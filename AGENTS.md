@@ -20,7 +20,7 @@ a background shell job disables signals required by the tests. Use the default
 test state directories; reserve `LINGER_TEST_DIR` for focused single-suite runs.
 Compiler upgrades require the full verifier after `./lake clean`.
 
-Install the hooks with `pip install pre-commit` and `pre-commit install`.
+Install the hooks with `pip install --upgrade pre-commit` and `pre-commit install`.
 For a clone previously using `.githooks`, first run
 `git config --local --unset-all core.hooksPath`.
 The configuration and `./lake lint` share `scripts/lint.sh`: hygiene, source

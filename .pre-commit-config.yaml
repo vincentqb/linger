@@ -1,4 +1,4 @@
-minimum_pre_commit_version: '3.2.0'
+minimum_pre_commit_version: '4.4.0'
 default_stages: [pre-commit]
 fail_fast: true
 
@@ -8,7 +8,7 @@ repos:
       - id: lint
         name: hygiene, gates, formatting and semantic lint
         entry: sh scripts/lint.sh
-        language: system
+        language: unsupported
         pass_filenames: false
         always_run: true
         verbose: true
