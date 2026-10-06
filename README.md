@@ -19,8 +19,8 @@ Use the `./lake` wrapper and add `~/.local/bin` to your PATH.
 ## Use
 
 ```sh
-linger attach work       # create or attach to a session
-linger select            # choose or create a session interactively
+linger attach work       # create or attach to a named session
+linger select            # create or choose a session interactively
 linger ls                # list sessions
 linger status            # show local attention counts
 linger watch work        # view a session without sending input
