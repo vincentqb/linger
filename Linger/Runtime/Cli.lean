@@ -76,12 +76,30 @@ def usage : String :=
 
 Session commands accept an exact name or name@host (also name@user@host).
 Names: 1–80 ASCII letters, digits, -_.+; no leading dot. Only interactive selection uses fuzzy search.
-Read-only attach and capture prefer a live session; offline reads never start a program.
 For attach/capture, put options before the name; use -- before a name starting with -.
-Saved tmux: ls/select/import default to the last save; pass SAVE for an older snapshot.
-Saved commands never run. Saved selection has no Create row.
+Remote hosts need linger on PATH. List hosts in ~/.config/linger/remotes to include them in selection and ls -r.
+
 Native selection: type to filter or name a new session, arrows to move, Enter to choose.
-The Create row names the session to create; Esc cancels.
+Ctrl-P/Ctrl-N also moves; Home/End selects the first/last row; Ctrl-U clears.
+The Create row names the session to create; Esc, Ctrl-C or Ctrl-D cancels.
+Read-only selection offers existing sessions only. Detaching returns to the chooser.
+Saved tmux selection never runs saved commands; see linger tmux help for details.
+
+Status: ⣷ working; ⣿ unread output; ⣀ idle; ✓ exited successfully; ! failed or killed; ~ saved; ? unknown.
+Listings append +N for attached clients. ls --summary counts local attention.
+Status reads leave attention unchanged; live attachment and screen capture mark output seen.
+
+Read-only attach and capture prefer a live session; offline reads never start a program.
+Saved views are fixed snapshots and leave checkpoint data unchanged.
+Checkpoints retain the screen, scrollback, modes, labels and working directory.
+After a reboot, writable attach starts a fresh program; previous processes are not restored.
+Attaching with saved history replaces the terminal window's scrollback; capture --history exports it.
+Kitty graphics, sixel and iTerm2 images pass through while attached, but are not saved.
+Use the application's redraw command after reattaching to restore images.
+
+LINGER_DIR sets the socket and checkpoint directory; use local storage.
+Separate directories allow independent sessions with the same name.
+Set NO_COLOR to disable listing colors.
 Inside a session, $LINGER_SESSION holds the session name.
 Detach key: ctrl-\\ (set LINGER_NO_DETACH_KEY to disable)."
 

@@ -411,7 +411,7 @@ def run : IO UInt32 := do
             "attach restores tty mode even when leaveAnsi cannot be written")
   rawProbe.bye (sendDetach := false)
   e.killAll #["raw-cleanup"]
-  -- 10. LINGER_NO_DETACH_KEY=1 disables the ctrl-\ detach key (README promise, and
+  -- 10. LINGER_NO_DETACH_KEY=1 disables the ctrl-\ detach key (help promise, and
   --     the mirror of check 2). With the env var set, ctrl-\ is ordinary input: the
   --     client stays attached and the byte reaches the session's pty.
   --

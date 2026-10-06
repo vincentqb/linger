@@ -20,7 +20,7 @@ not:
 * after detach/reattach: images are GONE. `restore` repaints from the cell grid,
   and cells hold no image data. The text screen comes back; the picture does not.
 
-The third is the documented limitation (README "Graphics", and the settled non-goal
+The third is the documented limitation (`linger help`, and the settled non-goal
 in AGENTS.md). This suite exists so the first two cannot regress silently — a
 future "render from the grid instead of broadcasting" optimization would break
 images with no other test noticing.
@@ -103,7 +103,7 @@ def run : IO UInt32 := do
         expect (!has (← e.out #["capture", "--history", "gfx"]) "GFXPAYLOAD")
             "image payload does not land in the text grid")
   -- 5. detach, reattach: the text screen restores and the parser is sane. The
-  -- image is gone — the documented limitation, asserted here so the README and the
+  -- image is gone — the documented limitation, asserted here so the help and the
   -- behaviour cannot drift apart.
   c.bye
   let c2 ← e.spawn #["attach", "gfx"] 80 24

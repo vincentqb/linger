@@ -425,7 +425,8 @@ private def groupHelp (f : Fixture) : IO Bool := do
     let (rc, out, err) ← f.cli args
     ok :=
       ok && rc == 0 && err.isEmpty && has out "Usage: linger tmux" &&
-        (["ls [SAVE]", "select [SAVE]", "import [SAVE]", "export SAVE"].all (has out ·))
+        (["ls [--porcelain] [SAVE]", "select [SAVE]", "import [SAVE]", "export SAVE"].all
+          (has out ·))
   return ok && (← f.queries).isEmpty && (← namesIn (System.FilePath.mk f.env.dir)).isEmpty
 
 private def rawText (f : Fixture) (revision : String := "first") : String :=

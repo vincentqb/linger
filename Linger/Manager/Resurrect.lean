@@ -302,16 +302,24 @@ private def writeSave (path : String) (capture : IO (List (String × String)) :=
 private def usage : String :=
   "Usage: linger tmux <command>
 
-  ls [SAVE]       List saved panes without starting sessions
-  select [SAVE]   Choose a saved pane, create its shell if needed, and attach
-  import [SAVE]   Import every saved pane, skipping existing identities
-  export SAVE     Save native session names and directories to a new file
+  ls [--porcelain] [SAVE]  List saved panes; --porcelain prints tab-separated records
+  select [SAVE]           Choose a saved pane, create its shell if needed, and attach
+  import [SAVE]           Import every saved pane, skipping existing identities
+  export SAVE             Save native session names and directories to a new file
 
 SAVE defaults to last in tmux's configured resurrect directory, then
 ~/.tmux/resurrect or $XDG_DATA_HOME/tmux/resurrect (~/.local/share by default).
 ls shows the resolved path and save time; pass an older file to browse it.
+Use ./-save for a filename starting with -. Selection returns after detach.
+
 These are saved snapshots. Imported sessions start fresh shells; saved
-commands and live tmux processes are never restored.
+commands, running processes, layouts and pane contents are never restored.
+Imported names use <session>-w<window>-p<pane>; live and resumable names are skipped.
+Run one import at a time; a failed batch leaves already-created sessions in place.
+
+Exports contain names and directories only, with one window and pane per session.
+Keep tmux's pane base index at zero when restoring an export.
+Use the same HOME or explicit LINGER_DIR for import, listing and recovery.
 "
 
 /-- The caller supplies its absolute executable path for every listing and run. -/

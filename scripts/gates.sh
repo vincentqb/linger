@@ -166,13 +166,11 @@ awk '
     }
     exit failed
   }' c/shim.c >&2 || fail "fork child call boundary changed"
-# README promises "no external Lean dependencies"; make it fail-closed rather
-# than rest on inspection (README-promise coverage audit, the unbacked-promise
-# class). A `require` in the lakefile would pull in a package.
+# Keep the library free of external Lean dependencies.
 ! code_grep '^[[:space:]]*require ' 'lakefile.lean' \
-  || fail "external Lean dependency in lakefile.lean (README promises none)"
+  || fail "external Lean dependency in lakefile.lean"
 [ "$(tr -d ' \n' < lake-manifest.json | grep -o '\"packages\":\[[^]]*\]')" = '"packages":[]' ] \
-  || fail "lake-manifest has packages (README promises no external Lean deps)"
+  || fail "lake-manifest has external Lean packages"
 
 # The vt-toolkit's import closure (`specs/archive/vt-toolkit.md` Step 4). The toolkit is
 # Linger/Core/{Vt,Render,Terminal,Replay}.lean, and the claim worth having is that its
@@ -1150,52 +1148,21 @@ git ls-files 'scripts/*' | grep -qvE '\.sh$' \
 git ls-files 'tests/*' 'Tools/*' 'Manager/*' | grep -q . \
   && fail "legacy top-level directory: use scripts/, Linger/Tools/ or Linger/Manager/" || true
 
-# The status glyphs are a user-facing contract of exactly seven characters, and README
-# is where a user reads them. They drifted silently: `Status.icon` emitted `⣀` for idle
-# while README printed `⡀` (one dot, not four), which no test could see — the suites
-# compare against `Status.icon` itself, which is right for them and blind to this.
-# So the gate is both directions: every glyph the code emits appears in README, and
-# README shows no glyph the code cannot emit. The porcelain `Status.name` strings are
-# not checked here because README does not list them; it says only that the same seven
-# states appear as a `status` field, which `icon_injective`/`name_injective` carry.
-#
-# BOTH extractions assert their count, and the reverse one earned that the hard way:
-# it first filtered the README side with `grep -vE '^[[:alnum:][:punct:][:space:]]$'`
-# to drop non-glyph noise, but glibc classifies `⣀ ⣷ ⣿ ✓` as `[[:punct:]]`, so the
-# filter deleted all seven and the loop body never ran. The gate reported "both
-# directions" while only one existed, and the two break-verifications recorded for it
-# had both landed on the forward half. A `for` over an empty list is the same vacuous
-# pass an empty extraction can cause, so both sides assert their counts.
+# Keep the help legend equal to the emitted glyphs. Check extraction counts,
+# and compare sorted lines without shell word splitting or pathname expansion.
 icon_glyphs="$(code_grep "^ *[|] [.][a-zA-Z]+ => '" 'Linger/Core/Status.lean' \
   | sed "s/.*=> '//; s/'.*//")"
 icon_n="$(printf '%s\n' "$icon_glyphs" | grep -c .)"
 [ "$icon_n" -eq 7 ] \
-  || fail "extracted $icon_n status glyphs from Status.icon, expected the seven §Status states (a new state lands with its README row)"
-# `set -f` for both loops, and it is load-bearing rather than tidy: two of the seven
-# glyphs are `?` and `!`, and an UNQUOTED `$icon_glyphs` in a `for` undergoes pathname
-# expansion — `?` matches any single-character name in the working directory, which in
-# this repo is the `c/` directory, so the loop saw `c`. Downstream that read as
-# "is `c` in README", which is trivially yes, so the `?` glyph silently went unchecked
-# in the forward direction too. Found only because fixing the reverse loop surfaced it.
-set -f
-for g in $icon_glyphs; do
-  grep -qF -- "$g" README.md \
-    || fail "Status.icon emits '$g' but README does not show it — the glyph set is what a user reads"
-done
-set +f
-# The reverse direction, scoped to the section that states the contract: a glyph in
-# README that `icon` cannot emit is a state the code dropped and the docs kept.
-readme_glyphs="$(sed -n '/^## Session status/,/^## Graphics/p' README.md \
-  | grep -oE '`[^`]`' | tr -d '`')"
-readme_n="$(printf '%s\n' "$readme_glyphs" | grep -c .)"
-[ "$readme_n" -eq 7 ] \
-  || fail "extracted $readme_n glyphs from README's §Session status, expected 7 (a single-character backtick added there breaks this on purpose — it is a seven-character contract)"
-set -f
-for g in $readme_glyphs; do
-  printf '%s\n' "$icon_glyphs" | grep -qF -- "$g" \
-    || fail "README shows glyph '$g' but Status.icon cannot emit it"
-done
-set +f
+  || fail "extracted $icon_n status glyphs from Status.icon, expected 7"
+help_glyphs="$(sed -n '/^def usage : String :=/,/^\/--/s/^Status: //p' Linger/Runtime/Cli.lean \
+  | tr ';' '\n' | awk '{ print $1 }')"
+help_n="$(printf '%s\n' "$help_glyphs" | awk 'NF { n++ } END { print n+0 }')"
+[ "$help_n" -eq "$icon_n" ] \
+  || fail "extracted $help_n status glyphs from linger help, expected $icon_n"
+[ "$(printf '%s\n' "$icon_glyphs" | LC_ALL=C sort)" = \
+  "$(printf '%s\n' "$help_glyphs" | LC_ALL=C sort)" ] \
+  || fail "linger help status legend differs from Status.icon"
 
 # Every declaration name THEOREMS.md cites must resolve to a declaration. This is
 # gated rather than reviewed because reviewing it produced a FALSE CLEAN: the one-off
