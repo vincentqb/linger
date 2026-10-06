@@ -348,7 +348,7 @@ def run : IO UInt32 := do
   let _ ← e.cli #["run", "ag", "seq", "1", "60"]
   IO.sleep 1500
   let cap2 := (← e.out #["capture", "ag"]).splitOn "\n"
-  let hist := (← e.out #["history", "ag"]).splitOn "\n"
+  let hist := (← e.out #["capture", "--history", "ag"]).splitOn "\n"
   f :=
     f +
       (←

@@ -24,7 +24,7 @@ so neither a full-width name nor a resize induces an automatic line wrap.
 In short terminals the selected row takes priority over decoration and help.
 Before the first snapshot the query is editable, but there is no selectable row. -/
 private def draw (state : Linger.Tools.Picker.State) (snapshot : Linger.Tools.Picker.Snapshot)
-    (loaded withColor : Bool) (cols rows : UInt32) : String :=
+    (loaded withColor savedTmux : Bool) (cols rows : UInt32) : String :=
   Id.run do
     let width := cols.toNat - 1
     let height := max 1 rows.toNat
@@ -33,9 +33,11 @@ private def draw (state : Linger.Tools.Picker.State) (snapshot : Linger.Tools.Pi
       Linger.Core.Listing.nameWidth (snapshot.candidates.map fun target => [("name", target)])
     let mut lines : Array (Array (String × String)) := #[]
     if height ≥ 7 then
-      let title := if state.allowCreate then "  linger" else "  linger · tmux save"
+      let title :=
+        if savedTmux then "  linger · tmux save"
+        else if state.allowCreate then "  linger" else "  linger · read-only"
       lines := lines.push #[(title, "")]
-      if !state.allowCreate then
+      if savedTmux then
         let globals := snapshot.records.takeWhile (fun fields => fields.head? != some "name")
         let metadata :=
           globals.filterMap fun fields =>
@@ -48,7 +50,8 @@ private def draw (state : Linger.Tools.Picker.State) (snapshot : Linger.Tools.Pi
       lines := lines.push #[]
     if height > 1 then
       let placeholder :=
-        if state.allowCreate then "Find or create a session" else "Find a saved pane"
+        if savedTmux then "Find a saved pane"
+        else if state.allowCreate then "Find or create a session" else "Find a session"
       let text := if state.query.isEmpty then placeholder else state.query
       let style := if state.query.isEmpty then "\x1b[2m" else ""
       lines := lines.push #[("  › ", ""), (text, style)]
@@ -58,10 +61,12 @@ private def draw (state : Linger.Tools.Picker.State) (snapshot : Linger.Tools.Pi
     let slots := max 1 (height - lines.size - footerRows)
     let start := state.cursor + 1 - slots
     if !loaded then
-      let text := if state.allowCreate then "  Loading sessions…" else "  Loading saved panes…"
+      let text := if savedTmux then "  Loading saved panes…" else "  Loading sessions…"
       lines := lines.push #[(text, "\x1b[2m")]
     else if items.isEmpty then
-      let text := if state.allowCreate then "  No valid target" else "  No matching saved panes"
+      let text :=
+        if savedTmux then "  No matching saved panes"
+        else if state.allowCreate then "  No valid target" else "  No matching sessions"
       lines := lines.push #[(text, "\x1b[2m")]
     else
       let mut index := start
@@ -84,7 +89,9 @@ private def draw (state : Linger.Tools.Picker.State) (snapshot : Linger.Tools.Pi
         if !loaded then "  Type to search"
         else
           match Linger.Tools.Picker.selected state with
-          | some (.existing _) => if state.allowCreate then "  ↵ attach" else "  ↵ import / attach"
+          | some (.existing _) =>
+            if savedTmux then "  ↵ import / attach"
+            else if state.allowCreate then "  ↵ attach" else "  ↵ view"
           | some (.create _) => "  ↵ create"
           | none => if state.allowCreate then "  Type a valid name" else "  Type to search"
       lines := lines.push #[(s!"{action}  ·  ↑↓ move  ·  esc / ^C quit", "\x1b[2m")]
@@ -118,10 +125,10 @@ private def draw (state : Linger.Tools.Picker.State) (snapshot : Linger.Tools.Pi
 /-- Own raw mode and at most one listing for one selection visit. Keys always
 act on the displayed snapshot, which is returned on acceptance; a completed
 replacement is applied afterward and rendered before polling again.
-Saved-tmux visits have no creation choice. The first listing is cancellable too.
+Saved-tmux and read-only visits have no creation choice. The first listing is cancellable too.
 Native listings get a cooperative stop so they can retire isolated SSH groups. -/
-def choose (executable : String) (savedTmux : Bool := false) (save : Option String := none) :
-    IO Choice := do
+def choose (executable : String) (savedTmux : Bool := false) (save : Option String := none)
+    (readOnly : Bool := false) : IO Choice := do
   unless (← stdinIsTty) && (← (← IO.getStdout).isTty) do
     throw (IO.userError "the picker needs terminal input and output")
   let args :=
@@ -135,7 +142,7 @@ def choose (executable : String) (savedTmux : Bool := false) (save : Option Stri
     writeAll stdoutFd (ByteArray.mk (Linger.Core.Terminal.Title.ansi "linger").toArray)
     let fds := #[stdinFd]
     let events := #[POLLIN]
-    let mut state := Linger.Tools.Picker.init [] (!savedTmux)
+    let mut state := Linger.Tools.Picker.init [] (!savedTmux && !readOnly)
     let mut snapshot : Linger.Tools.Picker.Snapshot := {}
     let mut loaded := false
     let mut decoder := Linger.Tools.Input.init
@@ -147,7 +154,7 @@ def choose (executable : String) (savedTmux : Bool := false) (save : Option Stri
     while true do
       let current ← winsizeGet stdoutFd
       if dirty || current != size then
-        let frame := draw state snapshot loaded withColor current.1 current.2
+        let frame := draw state snapshot loaded withColor savedTmux current.1 current.2
         if frame != lastFrame || current != size then
           writeAll stdoutFd frame.toUTF8
           lastFrame := frame
@@ -214,9 +221,9 @@ def choose (executable : String) (savedTmux : Bool := false) (save : Option Stri
 /-- Execute either selected row through attach, after terminal restoration. Every attach
 exit returns to a fresh listing; cancellation ends the manager. The caller
 supplies one frozen absolute executable for all listing and attach children. -/
-def run (executable : String) : IO UInt32 := do
+def run (executable : String) (readOnly : Bool := false) : IO UInt32 := do
   while true do
-    match ← choose executable with
+    match ← choose executable (readOnly := readOnly) with
     | .cancel =>
       return 130
     | .failed status stderr =>
@@ -225,7 +232,10 @@ def run (executable : String) : IO UInt32 := do
         IO.eprint stderr
       return status
     | .attach target _ =>
-      let child ← IO.Process.spawn { cmd := executable, args := #["attach", target] }
+      let args :=
+        #["attach"] ++ (if readOnly then #["--read-only"] else #[]) ++
+          (if target.startsWith "-" then #["--", target] else #[target])
+      let child ← IO.Process.spawn { cmd := executable, args }
       discard child.wait
   return 0
 

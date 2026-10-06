@@ -299,7 +299,7 @@ done
 entry_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Main.lean)"
 for tie in \
   'def main [(]args : List String[)] : IO UInt32 := do try match Linger[.]Tools[.]Entry[.]route args with' \
-  '[|] [.]selector => Linger[.]Manager[.]Picker[.]run [(]← IO[.]appPath[)][.]toString' \
+  '[|] [.]selector readOnly => Linger[.]Manager[.]Picker[.]run [(]← IO[.]appPath[)][.]toString readOnly' \
   '[|] [.]tmux rest => Linger[.]Manager[.]Resurrect[.]run [(]← IO[.]appPath[)][.]toString rest' \
   '[|] [.]session argv => Linger[.]Runtime[.]Cli[.]main Linger[.]Runtime[.]Resume[.]hooks argv'; do
   printf '%s\n' "$entry_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
@@ -409,20 +409,20 @@ done
 for tie in \
   'let incoming ← IO[.]ofExcept [(]Linger[.]Tools[.]Picker[.]parseSnapshot result[.]stdout[)]' \
   'let items := Linger[.]Tools[.]Picker[.]items state[.]candidates state[.]query state[.]allowCreate' \
-  'let mut state := Linger[.]Tools[.]Picker[.]init [[]] [(]!savedTmux[)]' \
+  'let mut state := Linger[.]Tools[.]Picker[.]init [[]] [(]!savedTmux && !readOnly[)]' \
   'let mut decoder := Linger[.]Tools[.]Input[.]init' \
   'match Linger[.]Tools[.]Picker[.]step state key with' \
   'let cells := Linger[.]Core[.]Vt[.]charWidth c' \
   'let fds := #[[]stdinFd[]]' \
   'let events := #[[]POLLIN[]]' \
   'let ready ← poll fds events 50' \
-  'let frame := draw state snapshot loaded withColor current[.]1 current[.]2' \
+  'let frame := draw state snapshot loaded withColor savedTmux current[.]1 current[.]2' \
   'let withColor := [(]← IO[.]getEnv "NO_COLOR"[)][.]isNone' \
   'writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Core[.]Terminal[.]Title[.]ansi "linger"[)][.]toArray[)]' \
   'writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Core[.]Terminal[.]Title[.]ansi ""[)][.]toArray[)]' \
   'writeAll stdoutFd frame[.]toUTF8' \
   'discard child[.]wait' \
-  'let child ← IO[.]Process[.]spawn [{] cmd := executable, args := #[[]"attach", target[]] [}]'; do
+  'let child ← IO[.]Process[.]spawn [{] cmd := executable, args [}]'; do
   code_grep "^[[:space:]]+$tie$" Linger/Manager/Picker.lean >/dev/null \
     || fail "manager bypassed a proved value or fixed IO boundary: $tie"
 done
@@ -439,12 +439,14 @@ for tie in \
   'let mut index := start for item in [(]items[.]drop start[)][.]take slots do let chosen := index == state[.]cursor let selection := if chosen then "\\x1b[[]7m" else "" let mut pieces := #[[][(]if chosen then " ▸ " else " ", selection[)][]] let chars := Linger[.]Tools[.]Picker[.]highlightedPresentation snapshot nameCol state[.]query item for char in Linger[.]Tools[.]Picker[.]emphasizeCells chars do let statusStyle := if withColor then [(]char[.]status[.]map Linger[.]Core[.]Status[.]style[)][.]getD "" else "" let emphasis := if char[.]matched then "\\x1b[[]4m" else "" pieces := pieces[.]push [(]String[.]singleton char[.]char, selection [+][+] statusStyle [+][+] emphasis[)] lines := lines[.]push pieces index := index [+] 1' \
   'let mut frame := "\\x1b[[]0m\\x1b[[]H\\x1b[[]2J" let mut first := true for line in lines do if !first then frame := frame [+][+] "\\r\\n" first := false let mut used := 0 let mut clipped := false let mut activeStyle := "" for [(]text, style[)] in line do if clipped then break if style != activeStyle then frame := frame [+][+] "\\x1b[[]0m" [+][+] style activeStyle := style for raw in text[.]toList do let c := if raw[.]toNat < 0x20 [|][|] [(]raw[.]toNat ≥ 0x7F && raw[.]toNat < 0xA0[)] then '"'"'[?]'"'"' else raw let cells := Linger[.]Core[.]Vt[.]charWidth c if used [+] cells > width then clipped := true break frame := frame[.]push c used := used [+] cells if !activeStyle[.]isEmpty then frame := frame [+][+] "\\x1b[[]0m" return frame' \
   'let next := if loaded then Linger[.]Tools[.]Picker[.]refresh state incoming[.]candidates else [{] [(]Linger[.]Tools[.]Picker[.]init incoming[.]candidates state[.]allowCreate[)] with query := state[.]query [}] dirty := dirty [|][|] !loaded [|][|] next != state [|][|] incoming != snapshot state := next snapshot := incoming loaded := true nextListing := [(]← monotonicMs[)] [+] 1000' \
-  'while true do let current ← winsizeGet stdoutFd if dirty [|][|] current != size then let frame := draw state snapshot loaded withColor current[.]1 current[.]2 if frame != lastFrame [|][|] current != size then writeAll stdoutFd frame[.]toUTF8 lastFrame := frame size := current dirty := false let ready ← poll fds events 50' \
+  'while true do let current ← winsizeGet stdoutFd if dirty [|][|] current != size then let frame := draw state snapshot loaded withColor savedTmux current[.]1 current[.]2 if frame != lastFrame [|][|] current != size then writeAll stdoutFd frame[.]toUTF8 lastFrame := frame size := current dirty := false let ready ← poll fds events 50' \
   'for key in keys do if !loaded && key == [.]accept then continue match Linger[.]Tools[.]Picker[.]step state key with [|] [.]stay next => dirty := dirty [|][|] next != state state := next [|] [.]attach target [|] [.]create target => return [.]attach target snapshot [|] [.]cancel => return [.]cancel if let some result[[:space:]]*← Linger[.]Runtime[.]Command[.]poll pending then' \
   'nextListing := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]← monotonicMs[)] ≥ nextListing then pending[.]set [(]some [(]← Linger[.]Runtime[.]Command[.]start executable args[)][)] return [.]cancel finally' \
   'finally Linger[.]Runtime[.]Command[.]stop pending [(]if savedTmux then 0 else 1000[)]' \
   '[|] [.]attach target [|] [.]create target => return [.]attach target snapshot' \
-  'let args := if savedTmux then #[[]"tmux", "ls", "--porcelain"[]] [+][+] save[.]toArray else #[[]"ls", "-r", "--porcelain"[]]'; do
+  'let args := if savedTmux then #[[]"tmux", "ls", "--porcelain"[]] [+][+] save[.]toArray else #[[]"ls", "-r", "--porcelain"[]]' \
+  'match ← choose executable [(]readOnly := readOnly[)] with' \
+  'let args := #[[]"attach"[]] [+][+] [(]if readOnly then #[[]"--read-only"[]] else #[[][]][)] [+][+] [(]if target[.]startsWith "-" then #[[]"--", target[]] else #[[]target[]][)] let child ← IO[.]Process[.]spawn [{] cmd := executable, args [}]'; do
   printf '%s\n' "$picker_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "manager lost its selection, refresh, process ownership or attach contract: $tie"
 done
@@ -826,15 +828,18 @@ done
 selector_policy_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Tools/Picker.lean)"
 printf '%s\n' "$selector_policy_code" | CG_RE='(^|[[:space:]])private def validTarget [(]target : String[)] : Bool := Linger[.]Core[.]Remote[.]targetValid target([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "selector creation and command arguments no longer share the target grammar"
-for verb in attach watch run send detach kill info capture resize history get set unset clear; do
+for verb in attach run send detach kill info capture resize get set unset clear; do
   code_grep "^[[:space:]]+withTarget \"$verb\" " Linger/Runtime/Cli.lean >/dev/null \
     || fail "session command bypassed the common exact target boundary: $verb"
 done
 for tie in \
-  'match Linger[.]Core[.]Remote[.]parseTarget target with [|] none => invalidTarget [|] some parsed => runTarget verb parsed args localAction' \
+  'match Linger[.]Core[.]Remote[.]parseTarget target with [|] none => invalidTarget [|] some parsed => runTarget verb parsed args localAction options' \
   'let some targets := names[.]mapM Linger[.]Core[.]Remote[.]parseTarget [|] invalidTarget let mut rc : UInt32 := 0 for target in targets do rc := max rc [(]← runTarget "wait" target [[]] [(]fun name => cmdWait [[]name[]][)][)]' \
-  'let interactive := verb == "attach" [|][|] verb == "watch" if interactive && [(]![(]← stdinIsTty[)] [|][|] ![(]← [(]← IO[.]getStdout[)][.]isTty[)][)] then' \
-  'IO[.]Process[.]spawn [{] cmd := "ssh", args := #[[]if interactive then "-t" else "-T", "--", host, Linger[.]Core[.]Remote[.]command verb target[.]name args[]], stdin := [.]inherit [}] try child[.]wait finally if interactive then writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Core[.]Render[.]leaveAnsi[.]toArray[)]'; do
+  'let interactive := verb == "attach" if interactive && [(]![(]← stdinIsTty[)] [|][|] ![(]← [(]← IO[.]getStdout[)][.]isTty[)][)] then' \
+  'let options := options [+][+] [(]if [(]verb == "attach" [|][|] verb == "capture"[)] && target[.]name[.]startsWith "-" then [[]"--"[]] else [[][]][)]' \
+  'IO[.]Process[.]spawn [{] cmd := "ssh", args := #[[]if interactive then "-t" else "-T", "--", host, Linger[.]Core[.]Remote[.]command verb target[.]name args options[]], stdin := [.]inherit [}] try child[.]wait finally if interactive then writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Core[.]Render[.]leaveAnsi[.]toArray[)]' \
+  'withTarget "attach" name cmd [(]cmdAttach hooks · cmd readOnly[)] [(]if readOnly then [[]"--read-only"[]] else [[][]][)]' \
+  'withTarget "capture" name [[][]] [(]cmdRead hooks · [(]if history then [.]history else [.]screen[)] [(]if history then Linger[.]Core[.]Render[.]history else Linger[.]Core[.]Render[.]screenText[)][)] [(]if history then [[]"--history"[]] else [[][]][)]'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "command transport lost exact targets, argv, stdin or terminal ownership: $tie"
 done
@@ -877,9 +882,21 @@ for tie in \
 done
 for tie in \
   'requestStatus name result [|] none => Paths[.]withSessionLock name do match ← hooks[.]load name with [|] some [(]vt, _, _[)] => writeAll stdoutFd [(]ByteArray[.]mk [(]render vt[)][.]toArray[)]' \
+  'if readOnly then match ← Client[.]connect name with [|] some fd => Client[.]attach name fd true [|] none => let checkpoint ← Paths[.]withSessionLock name [(]hooks[.]load name[)] match checkpoint with [|] some [(]vt, _, _[)] => Client[.]viewSaved name vt' \
   'let available ← try Paths[.]withSessionLock name [(]pure true[)] catch _ => pure false'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "offline reading or listing bypassed ownership: $tie"
+done
+# Saved viewing consumes the bounded, faithful replay cursor. The original
+# snapshot survives every resize, and the immutable load precedes terminal IO.
+# E2E.Watch observes input discard, lock release, exact replay and handback.
+for tie in \
+  'let mut lastSize : Option [(]UInt32 × UInt32[)] := none while true do let size ← winsizeGet stdinFd if lastSize != some size then let cols := if size[.]1 == 0 then snapshot[.]colCount else size[.]1[.]toNat let rows := if size[.]2 == 0 then snapshot[.]rowCount else size[.]2[.]toNat' \
+  'let view := if snapshot[.]colCount == cols && snapshot[.]rowCount == rows then snapshot else snapshot[.]resize cols rows let mut repaint := Linger[.]Core[.]Replay[.]start view repeat match Linger[.]Core[.]Replay[.]next 65536 repaint with [|] none => break [|] some [(]bytes, next[)] => if !bytes[.]isEmpty then writeAll stdoutFd [(]ByteArray[.]mk bytes[.]toArray[)] repaint := next' \
+  'let title := Linger[.]Core[.]Title[.]compose name view[.]windowTitle [(]String[.]singleton [(]Linger[.]Core[.]Status[.]icon [.]resumable[)][)] Linger[.]Core[.]Terminal[.]Title[.]maxChars writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Core[.]Terminal[.]Title[.]update view title[)][.]toArray[)]' \
+  'if [(]splitDetach bytes detachEnabled[)][.]2 then return [.]detached return [.]detached finally try writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Core[.]Render[.]leaveAnsi[.]toArray[)] finally termRestore stdinFd saved'; do
+  printf '%s\n' "$client_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+    || fail "saved viewer bypassed bounded replay, snapshot preservation or terminal ownership: $tie"
 done
 printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])if Cli[.]kv row "state" == "resumable" then Paths[.]withSessionLock name do let some [(]_, cwd, _[)] ← Resume[.]loadCkpt name [|] throw' awk "$CODE_AWK" >/dev/null \
   || fail "exporter must establish offline ownership before reading saved state"
@@ -949,7 +966,7 @@ code_grep '[.]getD [(]Linger[.]Core[.]Vt[.]Vt[.]init 80 24[)]' 'Linger/Runtime/D
 code_grep '^def resumeVt .*[.]getD [(]Vt[.]Vt[.]init 80 24[)]' 'Theorems/Session.lean' > /dev/null \
   || fail "Theorems/Session.lean lost resumeVt, or its fallback changed — the resume claims no longer model Daemon.lean's vt0, and the gate above would then pass vacuously"
 
-# `linger watch`'s client-side read-only guards (pin-the-gaps item 1). Read-only
+# Read-only attachment's client-side guards (pin-the-gaps item 1). Read-only
 # is enforced DAEMON-side: the 0x0 attach geometry sets `sizer := false` and
 # `onMsg .input`/`onMsg .resize` then drop a non-sizer's traffic
 # (`onMsg_input_readonly`). So these two `!readOnly` call sites are defence in

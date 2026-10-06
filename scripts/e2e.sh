@@ -16,7 +16,7 @@
 #  10. terminal ownership (query progress with zero/one/two clients + stable env)
 #  11. status column: attach marks seen, output while away marks unread
 #  12. agent verbs (info geometry/outseq, capture, send - , resize)
-#  13. watch: the read-only mirror (geometry, keyboard, hand-back, marks seen)
+#  13. watch: read-only live and checkpoint views (geometry, input, ownership, handback)
 #  14. recipes: native terminal launch settings; Lean import against daemons
 #  15. delivery: bounded replay, margin continuation, byte order and close deadlines
 #  16. manager: terminal selector, exact targets, paste, resize, cleanup and return
@@ -223,8 +223,8 @@ say "4–19. live suites (four isolated processes, longer suites first)"
 # No suite shares an Env directory, and the runner waits for all of them on failure.
 ./.lake/build/bin/e2e --suites \
   manager:122 delivery:37 attach:47 agent:46 \
-  resume:15 watch:18 title:19 graphics:9 robust:26 \
-  interop:61 recipes:58 status:17 terminal:12 overview:16 remote:58 identity:25 \
+  resume:15 watch:39 title:19 graphics:9 robust:26 \
+  interop:61 recipes:58 status:17 terminal:12 overview:16 remote:64 identity:25 \
   || fail "live suites (see /tmp/linger-*.out)"
 
 LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger info "$sentinel_name" >/dev/null \

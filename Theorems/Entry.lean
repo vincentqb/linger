@@ -11,19 +11,23 @@ namespace Linger.Tools.Entry
 
 theorem route_bare_help : Linger.Tools.Entry.route [] = .session ["help"] := by rfl
 
-theorem route_selector_iff (args : List String) :
-    Linger.Tools.Entry.route args = .selector ↔ args = ["attach"] ∨ args = ["a"] := by
+theorem route_selector_iff (args : List String) (readOnly : Bool) :
+    Linger.Tools.Entry.route args = .selector readOnly ↔
+      args = "attach" :: (if readOnly then ["--read-only"] else []) ∨
+        args = "a" :: (if readOnly then ["--read-only"] else []) := by
+  cases readOnly <;> unfold Linger.Tools.Entry.route <;> split <;> simp_all
+
+theorem route_session_argv (command : String) (rest : List String) (hTmux : command ≠ "tmux")
+    (hAttach : command ≠ "attach" ∨ (rest ≠ [] ∧ rest ≠ ["--read-only"]))
+    (hAlias : command ≠ "a" ∨ (rest ≠ [] ∧ rest ≠ ["--read-only"])) :
+    Linger.Tools.Entry.route (command :: rest) = .session (command :: rest) := by
   unfold Linger.Tools.Entry.route
   split <;> simp_all
 
-theorem route_session_argv (command : String) (rest : List String) (hTmux : command ≠ "tmux")
-    (hAttach : command ≠ "attach" ∨ rest ≠ []) (hAlias : command ≠ "a" ∨ rest ≠ []) :
-    Linger.Tools.Entry.route (command :: rest) = .session (command :: rest) := by
-  cases rest <;> simp_all [Linger.Tools.Entry.route]
-
-theorem route_attach_operands (rest : List String) (h : rest ≠ []) :
+theorem route_attach_operands (rest : List String) (h : rest ≠ [])
+    (hReadOnly : rest ≠ ["--read-only"]) :
     Linger.Tools.Entry.route ("attach" :: rest) = .session ("attach" :: rest) :=
-  route_session_argv "attach" rest (by decide) (.inr h) (.inl (by decide))
+  route_session_argv "attach" rest (by decide) (.inr ⟨h, hReadOnly⟩) (.inl (by decide))
 
 theorem route_select_retired (rest : List String) :
     Linger.Tools.Entry.route ("select" :: rest) = .session ("select" :: rest) :=

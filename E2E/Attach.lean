@@ -184,7 +184,7 @@ def run : IO UInt32 := do
   f :=
     f +
       (←
-        expect (has (← e.out #["history", "demo"]) "while-detached-42")
+        expect (has (← e.out #["capture", "--history", "demo"]) "while-detached-42")
             "session advances while nobody attached")
   -- 4. reattach: restore shows the old screen contents
   let c2 ← e.spawn #["attach", "demo"] cols rows
@@ -438,7 +438,7 @@ def run : IO UInt32 := do
   f :=
     f +
       (←
-        expect (has (← e.out #["history", "nd"]) "nd-22")
+        expect (has (← e.out #["capture", "--history", "nd"]) "nd-22")
             "LINGER_NO_DETACH_KEY: input still reaches the session")
   e.killAll #["nd"]
   IO.sleep 400
@@ -461,7 +461,7 @@ def run : IO UInt32 := do
   -- contains `sbline-$i`, and only the shell's output lines are the markers
   -- themselves. That is what Python's `x in <list of lines>` meant, and `has`
   -- would have weakened it.
-  let histS := lines (← e.out #["history", "sb"])
+  let histS := lines (← e.out #["capture", "--history", "sb"])
   f :=
     f +
       (←

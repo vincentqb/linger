@@ -15,8 +15,8 @@ public section
 
 /-! # Linger.Runtime.Cli — session argv dispatch
 
-Verb surface: attach and run create if needed; history and capture also read
-offline checkpoints. Every session verb accepts an exact name or name@host.
+Verb surface: attach and run create if needed; read-only attach and capture also
+read offline checkpoints. Every session verb accepts an exact name or name@host.
 `Main` routes terminal selection and import before
 entering this session backend. Bare invocation reaches help; `ls` prints an
 overview and exits. `__daemon` is the internal re-exec target of the detached
@@ -44,6 +44,8 @@ def usage : String :=
   attach                    Choose or create interactively; return after detach
                               (requires terminal input and output)
   attach <name> [command]    Create or attach by exact name; exit after detach
+  attach --read-only [name]  View a live session or fixed checkpoint; no input
+                              (omit name to choose; marks live output seen)
   ls [-r [hosts]]           List once; -r includes configured remote hosts
                               (or pass a comma-separated host list)
   ls --summary              Print compact local attention counts for a prompt
@@ -53,8 +55,6 @@ def usage : String :=
   tmux import [SAVE]        Start fresh shells in saved pane directories
   tmux export SAVE          Save local sessions in tmux-resurrect format
                               (requires a new destination file)
-  watch <name>              Watch a live session without input or resizing
-                              (marks output seen)
   run <name> <command...>    Send a shell command, creating the session if needed
   send <name> <text...>      Send raw input to session pty ('linger send <name> -'
                               sends stdin verbatim: newlines, ^C, escapes...)
@@ -64,9 +64,9 @@ def usage : String :=
                               outseq, labels...); ls --porcelain lists all
   capture <name>            Print the live or saved screen as plain text
                               (one line per row; marks live output seen)
+  capture --history <name>  Include scrollback; leave attention unchanged
   resize <name> <cols> <rows> Set a detached session's size (refused while an
                               attached client owns it)
-  history <name>            Print live or saved scrollback as plain text
   wait <name>...            Wait for sessions' programs to exit
   get <name>               Print session labels
   set <name> <k=v>...       Set labels
@@ -76,7 +76,8 @@ def usage : String :=
 
 Session commands accept an exact name or name@host (also name@user@host).
 Names: 1–80 ASCII letters, digits, -_.+; no leading dot. Only interactive selection uses fuzzy search.
-History/capture prefer the live session; an offline read never starts a program.
+Read-only attach and capture prefer a live session; offline reads never start a program.
+For attach/capture, put options before the name; use -- before a name starting with -.
 Saved tmux: ls/select/import default to the last save; pass SAVE for an older snapshot.
 Saved commands never run. Saved selection has no Create row.
 Native selection: type to filter or name a new session, arrows to move, Enter to choose.
@@ -130,20 +131,24 @@ def invalidTarget : IO UInt32 := do
 with a shell; `Remote.command` preserves the original argv, including empty words.
 Inherited stdin keeps `send name@host -` byte-exact. -/
 def runTarget (verb : String) (target : Linger.Core.Remote.Target) (args : List String)
-    (localAction : String → IO UInt32) : IO UInt32 := do
-  let interactive := verb == "attach" || verb == "watch"
+    (localAction : String → IO UInt32) (options : List String := []) : IO UInt32 := do
+  let interactive := verb == "attach"
   if interactive && (!(← stdinIsTty) || !(← (← IO.getStdout).isTty)) then
     throw (IO.userError s!"{verb} needs terminal input and output (use `run`/`send` for scripting)")
   match target.host with
   | none =>
     localAction target.name
   | some host =>
+    let options :=
+      options ++
+        (if (verb == "attach" || verb == "capture") && target.name.startsWith "-" then ["--"]
+        else [])
     let child ←
       IO.Process.spawn
           { cmd := "ssh",
             args :=
               #[if interactive then "-t" else "-T", "--", host,
-                Linger.Core.Remote.command verb target.name args],
+                Linger.Core.Remote.command verb target.name args options],
             stdin := .inherit }
     try
       child.wait
@@ -151,15 +156,33 @@ def runTarget (verb : String) (target : Linger.Core.Remote.Target) (args : List 
       if interactive then
         writeAll stdoutFd (ByteArray.mk Linger.Core.Render.leaveAnsi.toArray)
 
-def withTarget (verb target : String) (args : List String) (localAction : String → IO UInt32) :
-    IO UInt32 :=
+def withTarget (verb target : String) (args : List String) (localAction : String → IO UInt32)
+    (options : List String := []) : IO UInt32 :=
   match Linger.Core.Remote.parseTarget target with
   | none => invalidTarget
-  | some parsed => runTarget verb parsed args localAction
+  | some parsed => runTarget verb parsed args localAction options
 
-def cmdAttach (name : String) (cmd : List String) : IO UInt32 := do
-  let fd ← connectUpsert name cmd
-  match ← Client.attach name fd with
+/-- A live connection is authoritative. Only read-only attachment can view an
+offline checkpoint, loaded while owning both resources and displayed after
+releasing them. Writable attachment keeps the create/resume path. -/
+def cmdAttach (hooks : Hooks) (name : String) (cmd : List String) (readOnly : Bool) : IO UInt32 :=
+  do
+  let result ←
+    if readOnly then
+      match ← Client.connect name with
+      | some fd =>
+        Client.attach name fd true
+      | none =>
+        let checkpoint ← Paths.withSessionLock name (hooks.load name)
+        match checkpoint with
+        | some (vt, _, _) =>
+          Client.viewSaved name vt
+        | none =>
+          pure (.refused s!"no live session or readable checkpoint for '{name}'")
+    else
+      let fd ← connectUpsert name cmd
+      Client.attach name fd
+  match result with
   | .ended status =>
     IO.eprintln s!"\r\nlinger: session '{name}' ended (status {status})"
     return status &&& 0xFF
@@ -172,26 +195,6 @@ def cmdAttach (name : String) (cmd : List String) : IO UInt32 := do
   | .lost why =>
     IO.eprintln s!"\r\nlinger: {why} for '{name}'"
     return 1
-
-def cmdWatch (name : String) : IO UInt32 := do
-  match ← Client.connect name with
-  | none =>
-    IO.eprintln s!"linger: no session '{name}'"
-    return 1
-  | some fd =>
-    match ← Client.attach name fd true with
-    | .detached =>
-      IO.eprintln s!"\r\nlinger: stopped watching '{name}'"
-      return 0
-    | .ended status =>
-      IO.eprintln s!"\r\nlinger: session '{name}' ended (status {status})"
-      return status &&& 0xFF
-    | .refused msg =>
-      IO.eprintln s!"\r\nlinger: {msg}"
-      return 1
-    | .lost why =>
-      IO.eprintln s!"\r\nlinger: {why} for '{name}'"
-      return 1
 
 /-- One connected info conversation, bounded by an absolute request window.
 Only `done` completes an answer; a failed prefix is never returned as info. -/
@@ -712,15 +715,46 @@ def overview (args : List String) : IO UInt32 := do
     IO.eprintln usage
     return 2
 
+/-- A positional target after optional flags. `--` preserves option-like names;
+everything after the target belongs to the command, without reinterpretation. -/
+private def targetArgs (args : List String) : Option (String × List String) :=
+  match args with
+  | "--" :: name :: rest => some (name, rest)
+  | name :: rest => if name.startsWith "-" then none else some (name, rest)
+  | [] => none
+
+private def attachArgs (hooks : Hooks) (args : List String) : IO UInt32 := do
+  let readOnly := args.head? == some "--read-only"
+  let args := if readOnly then args.tail else args
+  let some (name, cmd) := targetArgs args |
+    do
+      IO.eprintln "usage: linger attach [--read-only] [--] <name> [command...]"
+      return 2
+  if readOnly && !cmd.isEmpty then
+    IO.eprintln "linger: read-only attach does not accept a command"
+    return 2
+  withTarget "attach" name cmd (cmdAttach hooks · cmd readOnly)
+      (if readOnly then ["--read-only"] else [])
+
+private def captureArgs (hooks : Hooks) (args : List String) : IO UInt32 := do
+  let history := args.head? == some "--history"
+  let args := if history then args.tail else args
+  let some (name, []) := targetArgs args |
+    do
+      IO.eprintln "usage: linger capture [--history] [--] <name>"
+      return 2
+  withTarget "capture" name []
+      (cmdRead hooks · (if history then .history else .screen)
+        (if history then Linger.Core.Render.history else Linger.Core.Render.screenText))
+      (if history then ["--history"] else [])
+
 def main (hooks : Hooks) (args : List String) : IO UInt32 := do
   match args with
   | "__daemon" :: name :: cwd :: cmd =>
     Daemon.serve name cwd cmd (hooks.save name) (hooks.drop name) (hooks.load name)
     return 0
-  | "attach" :: name :: cmd | "a" :: name :: cmd =>
-    withTarget "attach" name cmd (cmdAttach · cmd)
-  | ["watch", name] =>
-    withTarget "watch" name [] cmdWatch
+  | "attach" :: rest | "a" :: rest =>
+    attachArgs hooks rest
   | "run" :: name :: cmd | "r" :: name :: cmd =>
     if cmd.isEmpty then
       IO.eprintln "usage: linger run <name> <command...>"
@@ -745,8 +779,8 @@ def main (hooks : Hooks) (args : List String) : IO UInt32 := do
     withTarget "kill" name [] (requireLiveSend · .kill)
   | ["info", name] | ["i", name] =>
     withTarget "info" name [] (requireLiveBounded · .info)
-  | ["capture", name] | ["c", name] =>
-    withTarget "capture" name [] (cmdRead hooks · .screen Linger.Core.Render.screenText)
+  | "capture" :: rest | "c" :: rest =>
+    captureArgs hooks rest
   | ["resize", name, cs, rs] =>
     match cs.toNat?, rs.toNat? with
     | some cols, some rows =>
@@ -764,8 +798,6 @@ def main (hooks : Hooks) (args : List String) : IO UInt32 := do
       do
         IO.eprintln "usage: linger resize <name> <cols> <rows>"
         return 2
-  | ["history", name] | ["hi", name] =>
-    withTarget "history" name [] (cmdRead hooks · .history Linger.Core.Render.history)
   | "wait" :: names | "w" :: names =>
     if names.isEmpty then
       IO.eprintln "usage: linger wait <name>..."

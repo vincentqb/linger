@@ -157,7 +157,7 @@ private def recordCommand (root : System.FilePath) (args : List String) : IO UIn
       IO.FS.writeFile (root / s!"list-ended-{pid}") (toString (← monotonicMs))
       unless overlap do
         IO.FS.removeDir (root / "listing-active")
-  | ["attach", target] =>
+  | ["attach", target] | ["attach", "--", target] =>
     let count ← numberFile (root / "attach-count")
     IO.FS.writeFile (root / "attach-count") (toString (count + 1))
     IO.FS.writeFile (root / s!"attach-termios-{count + 1}") (← snapshot root)
@@ -187,8 +187,7 @@ private def recordCommand (root : System.FilePath) (args : List String) : IO UIn
       IO.FS.writeFile (root / "vanished-before-native-attach") (toString vanished)
       unless vanished do
         return 97
-      let child ←
-        withLaunchLock <| IO.Process.spawn { cmd := executable, args := #["attach", target] }
+      let child ← withLaunchLock <| IO.Process.spawn { cmd := executable, args := args.toArray }
       return ← waitChild child 10000
     return UInt32.ofNat (← numberFile (root / "attach-rc") 7)
   | _ =>
@@ -629,8 +628,12 @@ private def usageChecks (e : Env) : IO Nat := do
                 !(out.splitOn "\n").any
                     (fun line =>
                       line.trimAscii.toString.startsWith "select " ||
-                        line.trimAscii.toString.startsWith "status ") &&
+                        line.trimAscii.toString.startsWith "status " ||
+                        line.trimAscii.toString.startsWith "watch " ||
+                        line.trimAscii.toString.startsWith "history ") &&
                 has out "ls --summary" &&
+                has out "attach --read-only" &&
+                has out "capture --history" &&
                 has out "tmux" &&
                 !has out "linger import [SAVE]" &&
                 !has out "--loop" &&
@@ -645,6 +648,10 @@ private def usageChecks (e : Env) : IO Nat := do
             for args in
               [#["work"], #["--unknown"], #["--help", "extra"], #["-h", "extra"],
                 #["help", "extra"], #["ls", "--unknown"], #["select"], #["status"], #["--summary"],
+                #["watch", "work"], #["history", "work"], #["hi", "work"], #["attach", "--unknown"],
+                #["attach", "--"], #["attach", "--read-only", "work", "/bin/sh"],
+                #["capture", "--unknown"], #["capture", "--"], #["capture", "--history"],
+                #["capture", "--history", "work", "extra"], #["capture", "work", "--history"],
                 #["ls", "--summary", "--porcelain"], #["ls", "--porcelain", "--summary"],
                 #["ls", "--summary", "-r"], #["ls", "-r", "--summary"],
                 #["ls", "--summary", "extra"], #["select", ""], #["select", "work"],
@@ -906,9 +913,9 @@ private def failureChecks (e : Env) : IO Nat := do
 
 private def selectionChecks (e : Env) : IO Nat := do
   let mut failures := 0
-  for (slug, target) in
-    [("remote", "work@me@dev-a"), ("leading", "-leading+name"),
-      ("shell-text", "work@host with 'spaces' $TERM")] do
+  for (slug, target, separator) in
+    [("remote", "work@me@dev-a", []), ("leading", "-leading+name", ["--"]),
+      ("shell-text", "work@host with 'spaces' $TERM", [])] do
     failures :=
       failures +
         (←
@@ -922,7 +929,8 @@ private def selectionChecks (e : Env) : IO Nat := do
                   let clean ← acceptThenCancel s
                   return shown && clean &&
                       (← f.visits) ==
-                        call ["ls", "-r", "--porcelain"] ++ call ["attach", target] ++
+                        call ["ls", "-r", "--porcelain"] ++
+                          call ("attach" :: separator ++ [target]) ++
                           call ["ls", "-r", "--porcelain"])
   let moves :=
     [("down", "\x1b[B", "Beta"), ("up", "\x1b[B\x1b[B\x1b[A", "Beta"), ("ctrl-n", "\x0e", "Beta"),
@@ -986,14 +994,16 @@ private def selectionChecks (e : Env) : IO Nat := do
                   (← f.visits) ==
                     call ["ls", "-r", "--porcelain"] ++ call ["attach", "Gamma"] ++
                       call ["ls", "-r", "--porcelain"])
-  for (slug, listing, query, target) in
-    [("no-match", "name\tAlpha\n", "new-session", "new-session"), ("empty-list", "", "", "main"),
-      ("create-leading", "", "-leading+name", "-leading+name"),
-      ("create-remote", "", "work@me@dev-a", "work@me@dev-a"),
-      ("create-shell-text", "", "work@host with 'spaces' $TERM", "work@host with 'spaces' $TERM"),
-      ("create-unicode-host", "", "work@界é", "work@界é"),
+  for (slug, listing, query, target, separator) in
+    [("no-match", "name\tAlpha\n", "new-session", "new-session", []),
+      ("empty-list", "", "", "main", []),
+      ("create-leading", "", "-leading+name", "-leading+name", ["--"]),
+      ("create-remote", "", "work@me@dev-a", "work@me@dev-a", []),
+      ("create-shell-text", "", "work@host with 'spaces' $TERM", "work@host with 'spaces' $TERM",
+        []),
+      ("create-unicode-host", "", "work@界é", "work@界é", []),
       ("create-max-name", "", String.ofList (List.replicate Linger.Core.Name.maxLen 'n'),
-        String.ofList (List.replicate Linger.Core.Name.maxLen 'n'))] do
+        String.ofList (List.replicate Linger.Core.Name.maxLen 'n'), [])] do
     failures :=
       failures +
         (←
@@ -1014,7 +1024,8 @@ private def selectionChecks (e : Env) : IO Nat := do
                     let clean ← acceptThenCancel s
                     return shown && clean &&
                         (← f.visits) ==
-                          call ["ls", "-r", "--porcelain"] ++ call ["attach", target] ++
+                          call ["ls", "-r", "--porcelain"] ++
+                            call ("attach" :: separator ++ [target]) ++
                             call ["ls", "-r", "--porcelain"])
                   "both" (UInt32.ofNat (Linger.Core.Name.maxLen + 40)) 12)
   for create in [false, true] do
@@ -2050,9 +2061,9 @@ private def defaultChecks (e : Env) : IO Nat := do
               let mut expected := call ["ls", "-r", "--porcelain"]
               let mut count := 0
               let mut normal := true
-              for (target, query, rc, next) in
-                [("Beta", "B", 0, remote), (remote, "wrk", 7, shellText),
-                  (shellText, "host", 255, "Fresh")] do
+              for (target, query, rc, next, separator) in
+                [("Beta", "B", 0, remote, []), (remote, "wrk", 7, shellText, ["--"]),
+                  (shellText, "host", 255, "Fresh", [])] do
                 unless ← s.typeQuery query query do
                   return false
                 f.afterAttach s!"name\t{next}\nname\tOther\n"
@@ -2061,7 +2072,9 @@ private def defaultChecks (e : Env) : IO Nat := do
                 count := count + 1
                 unless ← returned s next count do
                   return false
-                expected := expected ++ call ["attach", target] ++ call ["ls", "-r", "--porcelain"]
+                expected :=
+                  expected ++ call ("attach" :: separator ++ [target]) ++
+                    call ["ls", "-r", "--porcelain"]
                 normal :=
                   normal && (← beforeAttach s count count) && (← attachNormal f count) &&
                     (← f.visits) == expected

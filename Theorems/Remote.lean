@@ -200,11 +200,12 @@ private theorem quoted_words (words : List String) (nonempty : words ≠ []) :
       · simpa only [String.toList_intercalate, List.map_map, List.map_cons,
           show " ".toList = [' '] from rfl] using ih (by simp)
 
-/-- The remote command parses as exactly `linger`, the verb, the name and all
-supplied arguments, with no additional shell action. -/
-theorem command_argv (verb name : String) (args : List String) :
-    Shell.Words (command verb name args).toList
-      (("linger" :: verb :: name :: args).map String.toList) := quoted_words _ (by simp)
+/-- The remote command parses as exactly `linger`, the verb, options, the name
+and all supplied arguments, with no additional shell action. -/
+theorem command_argv (verb name : String) (args options : List String) :
+    Shell.Words (command verb name args options).toList
+      (("linger" :: verb :: (options ++ name :: args)).map String.toList) :=
+  quoted_words _ (by simp)
 
 /-! ## The duplicate report
 

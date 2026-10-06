@@ -21,7 +21,7 @@ renaming a state would have left the assertions passing against a column that no
 longer exists. Here the comparison is against the `Status` constructors (through
 `Env.status`, which reads `ofName`) and against `Status.icon` itself, so the same
 rename is a compile error. `E2E.Watch` covers the one transition this suite never
-exercised: `linger watch` also marks a session seen. -/
+exercised: `linger attach --read-only` also marks a session seen. -/
 
 namespace E2E.Status
 

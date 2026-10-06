@@ -75,7 +75,7 @@ def replayEq (r v : Vt) : Bool :=
 
 def feedStr (v : Vt) (s : String) : Vt := v.feedBytes s.toUTF8
 
-/-- A row as the text `linger history` would print for it. Used to pin the
+/-- A row as the text `linger capture --history` would print for it. Used to pin the
 emitter's view of the ring against **literals**: `replayEq`'s `sb` conjunct
 compares the receiver's ring against `sbRows v`, i.e. against the emitter's own
 view, so it cannot see a bug *inside* `sbRows` — only a bug in emitting it. The
@@ -150,7 +150,7 @@ example : roundtrips (screen 12 3 "漢字e\u0301x") = true := by native_decide
 /-- A combining mark on a WIDE char. It is stored on the **base**, never on
 the width-0 continuation cell: a shadow is a blank column that a repaint
 re-creates from its base, `Render.rowText` skips it outright (so a mark parked
-there never appeared in `linger history`), and at the right margin only an
+there never appeared in `linger capture --history`), and at the right margin only an
 armed wrap-pending flag could address it — which no absolute cursor move
 reproduces. `Vt.print` redirects there, so the emitter has one case instead of
 a documented inexpressible one. -/

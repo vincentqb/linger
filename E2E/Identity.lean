@@ -54,14 +54,15 @@ def run : IO UInt32 := do
     let bytes := ByteArray.mk (Linger.Core.Checkpoint.save ⟨vt, "/tmp", [("saved", "yes")]⟩).toArray
     let path := s!"{e.dir}/saved.ckpt"
     IO.FS.writeBinFile path bytes
-    for (verb, expected) in
-      [("history", Linger.Core.Render.history vt), ("capture", Linger.Core.Render.screenText vt)] do
-      let (rc, out, _) ← e.cli #[verb, "saved"]
+    for (args, expected) in
+      [(#["capture", "--history", "saved"], Linger.Core.Render.history vt),
+        (#["capture", "saved"], Linger.Core.Render.screenText vt)] do
+      let (rc, out, _) ← e.cli args
       f :=
         f +
           (←
             expect (rc == 0 && out.toUTF8.toList == expected)
-                s!"offline {verb} reads the saved terminal exactly")
+                s!"offline {repr args} reads the saved terminal exactly")
     f :=
       f +
         (←
@@ -70,7 +71,7 @@ def run : IO UInt32 := do
                 !(← System.FilePath.pathExists s!"{e.dir}/saved.sock"))
               "offline reads preserve the checkpoint and do not start a daemon")
     let (caseLiveRc, _, _) ← e.cli #["info", "A_B"]
-    let (caseSavedRc, caseSavedOut, _) ← e.cli #["history", "SAVED"]
+    let (caseSavedRc, caseSavedOut, _) ← e.cli #["capture", "--history", "SAVED"]
     f :=
       f +
         (←
@@ -82,7 +83,7 @@ def run : IO UInt32 := do
       unless fd ≥ 0 do
         throw (IO.userError s!"fixture lock unavailable: {lock}")
       try
-        let (rc, out, _) ← e.cli #["history", "saved"]
+        let (rc, out, _) ← e.cli #["capture", "--history", "saved"]
         f :=
           f + (← expect (rc != 0 && out.isEmpty) s!"offline reads refuse an owned resource: {lock}")
       finally
@@ -104,7 +105,7 @@ def run : IO UInt32 := do
     let (secondRc, _, _) ← e.cliEnv (splitEnv e 2) #["run", "work", "true"]
     f :=
       f + (← expect (secondRc != 0) "another runtime directory cannot claim the same saved session")
-    let (offlineRc, offlineOut, _) ← e.cliEnv (splitEnv e 2) #["history", "work"]
+    let (offlineRc, offlineOut, _) ← e.cliEnv (splitEnv e 2) #["capture", "--history", "work"]
     f :=
       f +
         (←

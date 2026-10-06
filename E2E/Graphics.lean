@@ -100,7 +100,7 @@ def run : IO UInt32 := do
   f :=
     f +
       (←
-        expect (!has (← e.out #["history", "gfx"]) "GFXPAYLOAD")
+        expect (!has (← e.out #["capture", "--history", "gfx"]) "GFXPAYLOAD")
             "image payload does not land in the text grid")
   -- 5. detach, reattach: the text screen restores and the parser is sane. The
   -- image is gone — the documented limitation, asserted here so the README and the

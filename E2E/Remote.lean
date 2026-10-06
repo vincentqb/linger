@@ -56,7 +56,7 @@ def fakeLinger : String :=
     s!"    printf 'name\\t{hostileName}\\nstate\\tresumable\\n\\n'\n" ++
     "    printf 'garbage line with no tabs\\n\\n'\n" ++
     "    ;;\n" ++
-    s!"  attach|watch) printf '\\033]2;remote-editor\\007{attachMark}\\n' ;;\n" ++
+    s!"  attach) printf '\\033]2;remote-editor\\007{attachMark}\\n' ;;\n" ++
     "  send) if [ \"$3\" = - ]; then cat > \"$LINGER_REMOTE_STDIN\"; fi ;;\n" ++
     "esac\n" ++
     "exit 0\n"
@@ -401,34 +401,59 @@ def run : IO UInt32 := do
                 !(← injected.pathExists))
               "remote attach preserves every command argument through the shell")
     commandClient.bye (sendDetach := false)
-    let watcher ← e.spawnEnv ptyPath #["watch", tag] 100 24
+    let watcher ← e.spawnEnv ptyPath #["attach", "--read-only", tag] 100 24
     let watched ← drain watcher.fd 2000
     f :=
       f +
         (←
           expect
-              ((← watcher.reap 1500) == 0 && (← readArgs remoteArgs) == ["watch", goodName] &&
+              ((← watcher.reap 1500) == 0 &&
+                (← readArgs remoteArgs) == ["attach", "--read-only", goodName] &&
                 (← readArgs log).head? == some "-t" &&
                 hasBytes watched Linger.Core.Render.leaveAnsi)
-              "remote watch retains read-only semantics and terminal handback")
+              "remote read-only attach retains its option and terminal handback")
     watcher.bye (sendDetach := false)
-    for (verb, canonical, args) in
-      [("run", "run", words), ("r", "run", ["echo", "yes"]), ("send", "send", words),
-        ("s", "send", ["two words"]), ("detach", "detach", []), ("kill", "kill", []),
-        ("info", "info", []), ("capture", "capture", []), ("c", "capture", []),
-        ("history", "history", []), ("hi", "history", []), ("resize", "resize", ["120", "40"]),
-        ("wait", "wait", []), ("get", "get", []),
-        ("set", "set", ["x=two words", "y='$(printf X)'", "empty="]),
-        ("unset", "unset", ["x", "y"]), ("clear", "clear", [])] do
-      let (rc, _, _) ← e.cliEnv procPath ([verb, tag] ++ args).toArray
+    for options in [[], ["--read-only"]] do
+      let literal ←
+        e.spawnEnv ptyPath (["attach"] ++ options ++ ["--", s!"--read-only@{devHost}"]).toArray 100
+            24
+      let _ ← drain literal.fd 1000
       f :=
         f +
           (←
             expect
-                (rc == 0 && (← readArgs remoteArgs) == [canonical, goodName] ++ args &&
+                ((← literal.reap 1000) == 0 &&
+                  (← readArgs remoteArgs) == ["attach"] ++ options ++ ["--", "--read-only"])
+                "remote attach separates options from an option-like session name")
+      literal.bye (sendDetach := false)
+    for (verb, canonical, options, args) in
+      [("run", "run", [], words), ("r", "run", [], ["echo", "yes"]), ("send", "send", [], words),
+        ("s", "send", [], ["two words"]), ("detach", "detach", [], []), ("kill", "kill", [], []),
+        ("info", "info", [], []), ("capture", "capture", [], []), ("c", "capture", [], []),
+        ("capture", "capture", ["--history"], []), ("c", "capture", ["--history"], []),
+        ("resize", "resize", [], ["120", "40"]), ("wait", "wait", [], []), ("get", "get", [], []),
+        ("set", "set", [], ["x=two words", "y='$(printf X)'", "empty="]),
+        ("unset", "unset", [], ["x", "y"]), ("clear", "clear", [], [])] do
+      let (rc, _, _) ← e.cliEnv procPath ([verb] ++ options ++ [tag] ++ args).toArray
+      f :=
+        f +
+          (←
+            expect
+                (rc == 0 &&
+                  (← readArgs remoteArgs) == [canonical] ++ options ++ [goodName] ++ args &&
                   (← readArgs log).head? == some "-T" &&
                   !(← injected.pathExists))
                 s!"remote {verb} uses the common non-PTY transport with exact arguments")
+    for options in [[], ["--history"]] do
+      let (rc, _, _) ←
+        e.cliEnv procPath (["capture"] ++ options ++ ["--", s!"--history@{devHost}"]).toArray
+      f :=
+        f +
+          (←
+            expect
+                (rc == 0 &&
+                  (← readArgs remoteArgs) == ["capture"] ++ options ++ ["--", "--history"])
+                "remote capture separates options from an option-like session name")
     let payload := ByteArray.mk #[0, 3, 10, 27, 127, 195, 169, 255]
     let sender0 ←
       IO.Process.spawn
@@ -451,7 +476,8 @@ def run : IO UInt32 := do
               "remote send stdin is byte-exact, including NUL and invalid UTF-8")
     for args in
       [#["resize", tag, "0", "40"], #["set", tag, "x=ok", "=bad"], #["unset", tag, ""],
-        #["wait", tag, "bad name"], #["run", tag], #["send", tag]] do
+        #["wait", tag, "bad name"], #["run", tag], #["send", tag],
+        #["attach", "--read-only", tag, "sh"], #["capture", tag, "--history"]] do
       IO.FS.writeFile log ""
       let (rc, _, _) ← e.cliEnv procPath args
       f :=
@@ -459,14 +485,14 @@ def run : IO UInt32 := do
           (←
             expect (rc == 2 && (← readArgs log).isEmpty)
                 s!"invalid arguments have no remote effects: {repr args}")
-    for verb in ["attach", "watch"] do
+    for args in [#["attach", tag], #["attach", "--read-only", tag]] do
       IO.FS.writeFile log ""
-      let (rc, _, _) ← e.cliEnv procPath #[verb, tag]
+      let (rc, _, _) ← e.cliEnv procPath args
       f :=
         f +
           (←
             expect (rc != 0 && (← readArgs log).isEmpty)
-                s!"remote {verb} requires terminal input and output")
+                s!"remote {repr args} requires terminal input and output")
     f :=
       f +
         (←

@@ -98,7 +98,7 @@ def run : IO UInt32 := do
   -- says `echo survives-the-reboot-$((40+2))`, and only the shell's *output*
   -- line is the marker itself. That is what Python's `x in <list of lines>`
   -- meant, and `has` would have weakened it.
-  let hist0 := lines (← e.out #["history", "boot"])
+  let hist0 := lines (← e.out #["capture", "--history", "boot"])
   f :=
     f +
       (←
@@ -172,7 +172,7 @@ def run : IO UInt32 := do
   f :=
     f +
       (←
-        expect (has (← e.out #["history", "corrupt"]) "fresh-start-ok")
+        expect (has (← e.out #["capture", "--history", "corrupt"]) "fresh-start-ok")
             "corrupt checkpoint: daemon starts fresh, no crash")
   e.killAll #["corrupt"]
   -- ── the resumed pty is born at the CHECKPOINT's size, not a fixed 80x24 ────

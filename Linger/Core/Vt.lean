@@ -6,7 +6,7 @@ public section
 
 The daemon feeds every pty byte here (a passive observer: clients get
 the raw bytes; this state exists so a *re*-attaching client can be shown
-what it missed, and so `linger history` can dump it).
+what it missed, and so `linger capture --history` can dump it).
 
 Design for the theorems (see THEOREMS.md):
 * §Total — everything is one byte-at-a-time `step : Vt → UInt8 → Vt`
@@ -800,7 +800,7 @@ Capped at 8: an adversarial mark stream must not grow a cell (§Bound).
 The shadow redirect is what lets a mark on the final column round-trip. A
 shadow is a blank continuation cell that a repaint re-creates from its base, so
 `Render.rowAnsi` cannot carry marks parked there, `Render.rowText` skips them
-outright (they never appeared in `linger history`), and at the right margin the
+outright (they never appeared in `linger capture --history`), and at the right margin the
 cursor sits on the shadow with wrap pending — the one position no absolute
 cursor move can address.
 

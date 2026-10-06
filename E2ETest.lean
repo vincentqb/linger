@@ -101,6 +101,8 @@ def main (args : List String) : IO UInt32 := do
     E2E.Title.run (some binary)
   | ["remote", "discovery"] =>
     E2E.Remote.runDiscovery
+  | ["watch", "checkpoint"] =>
+    E2E.Watch.runCheckpoint
   | ["ls", "--summary"] =>
     match ← IO.getEnv "LINGER_E2E_TITLE_PIPE" with
     | some pipe =>

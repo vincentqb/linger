@@ -5,7 +5,7 @@ public section
 namespace Linger.Tools.Entry
 
 inductive Route where
-  | selector
+  | selector (readOnly : Bool)
   | tmux (args : List String)
   | session (args : List String)
   deriving BEq, Repr
@@ -14,7 +14,8 @@ inductive Route where
 def route (args : List String) : Route :=
   match args with
   | [] => .session ["help"]
-  | ["attach"] | ["a"] => .selector
+  | ["attach"] | ["a"] => .selector false
+  | ["attach", "--read-only"] | ["a", "--read-only"] => .selector true
   | "tmux" :: rest => .tmux rest
   | _ => .session args
 

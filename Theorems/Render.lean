@@ -34,7 +34,7 @@ The rungs, in dependency order:
   modes and pen on the way in.
 * `Theorems.Render.Sticky` — A5 inbound for the sticky bundle (region, charsets,
   shift state, screen) via `SMap`.
-* `Theorems.Render.History` — §Row: `linger history`'s framing cannot be forged by
+* `Theorems.Render.History` — §Row: `linger capture --history`'s framing cannot be forged by
   a cell's contents.
 * `Theorems.Render.Row` — the row painter: `Matches` and `rowAnsi_writes_row`.
 * `Theorems.Render.PendingGlyph`, `PendingPosition` and `PendingAccumulator` —

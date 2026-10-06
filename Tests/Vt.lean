@@ -29,7 +29,7 @@ def screen (cols rows : Nat) (s : String) : Vt := feedStr (Vt.init cols rows) s
 def plain (row : Row) : String := (String.fromUTF8? ⟨(rowText row).toArray⟩).getD ""
 
 /-- `rowText` builds bytes now (it was the last emitter assembled through `String`,
-which is what made `linger history` unprovable — see `Render.history_lines`). The
+which is what made `linger capture --history` unprovable — see `Render.history_lines`). The
 fixtures still read better against string literals, so the decode lives here in the
 harness rather than in the production path. -/
 def rowStr (v : Vt) (y : Nat) : String := plain (v.getRow y)
@@ -252,7 +252,7 @@ example : (let v := screen 10 2 "日x"
 
 /-- A combining mark after a wide char attaches to the **base**, not to the
 width-0 shadow: a shadow is a blank column re-created from its base, so a mark
-parked there is invisible to `linger history` and unaddressable at the right
+parked there is invisible to `linger capture --history` and unaddressable at the right
 margin. -/
 example :
           (let v := screen 10 2 "漢\u0301"

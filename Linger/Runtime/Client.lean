@@ -2,6 +2,8 @@ module
 
 import Linger.Posix
 public import Linger.Core.Wire
+public import Linger.Core.Vt
+import Linger.Core.Replay
 import Linger.Core.Terminal
 import Linger.Core.Remote
 import Linger.Core.Title
@@ -165,13 +167,63 @@ its case has, so a refusal or lost daemon cannot be reported as a detach. -/
 inductive Outcome where
   /-- The session's child exited with this status. -/
   | ended (status : UInt32)
-  /-- We left; the session lives on. -/
+  /-- The viewer left without ending a session. -/
   | detached
   /-- The daemon refused the attach and said why. -/
   | refused (msg : String)
   /-- The socket closed or its framing became invalid before an outcome. -/
   | lost (why : String)
   deriving Repr, Inhabited
+
+/-- A fixed checkpoint view. Redraw from the original snapshot on resize;
+discard input except the detach key. Ownership was released after loading,
+so this viewer cannot block another process from resuming the session. -/
+def viewSaved (name : String) (snapshot : Linger.Core.Vt.Vt) : IO Outcome := do
+  let detachEnabled := (← IO.getEnv "LINGER_NO_DETACH_KEY").isNone
+  let saved ← termRaw stdinFd
+  try
+    let fds := #[stdinFd]
+    let events := #[POLLIN]
+    let mut lastSize : Option (UInt32 × UInt32) := none
+    while true do
+      let size ← winsizeGet stdinFd
+      if lastSize != some size then
+        let cols := if size.1 == 0 then snapshot.colCount else size.1.toNat
+        let rows := if size.2 == 0 then snapshot.rowCount else size.2.toNat
+        let view :=
+          if snapshot.colCount == cols && snapshot.rowCount == rows then snapshot
+          else snapshot.resize cols rows
+        let mut repaint := Linger.Core.Replay.start view
+        repeat
+          match Linger.Core.Replay.next 65536 repaint with
+          | none =>
+            break
+          | some (bytes, next) =>
+            if !bytes.isEmpty then
+              writeAll stdoutFd (ByteArray.mk bytes.toArray)
+            repaint := next
+        let title :=
+          Linger.Core.Title.compose name view.windowTitle
+            (String.singleton (Linger.Core.Status.icon .resumable))
+            Linger.Core.Terminal.Title.maxChars
+        writeAll stdoutFd (ByteArray.mk (Linger.Core.Terminal.Title.update view title).toArray)
+        lastSize := some size
+      let ready ← poll fds events 200
+      if ready[0]! &&& POLLNVAL != 0 then
+        throw (IO.userError "viewer input descriptor became invalid")
+      if ready[0]! &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
+        match ← read stdinFd 65536 with
+        | none =>
+          return .detached
+        | some bytes =>
+          if (splitDetach bytes detachEnabled).2 then
+            return .detached
+    return .detached
+  finally
+    try
+      writeAll stdoutFd (ByteArray.mk Linger.Core.Render.leaveAnsi.toArray)
+    finally
+      termRestore stdinFd saved
 
 /-- Interactive attach. `readOnly` attaches as a 0×0 observer: output
 mirrors, keyboard is not forwarded, detach key still works. -/

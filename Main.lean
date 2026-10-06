@@ -13,8 +13,8 @@ The session library and VT toolkit do not import the manager. -/
 def main (args : List String) : IO UInt32 := do
   try
     match Linger.Tools.Entry.route args with
-    | .selector =>
-      Linger.Manager.Picker.run (← IO.appPath).toString
+    | .selector readOnly =>
+      Linger.Manager.Picker.run (← IO.appPath).toString readOnly
     | .tmux rest =>
       Linger.Manager.Resurrect.run (← IO.appPath).toString rest
     | .session argv =>

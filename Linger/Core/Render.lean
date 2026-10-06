@@ -12,7 +12,7 @@ public section
 
 Pure functions from a `Vt` snapshot to the byte stream that reproduces
 it on a real terminal: `restore` (what a re-attaching client is sent)
-and `history` (scrollback dump for `linger history`).
+and `history` (scrollback dump for `linger capture --history`).
 
 **Bytes, not Strings** (§Replay, specs/archive/bigger-theorems.md). This module
 used to assemble `String`s and UTF-8 them at the end, which made the
@@ -777,12 +777,12 @@ def dropTrailingBlanks (cs : List Char) : List Char := (cs.reverse.dropWhile (·
 This used to build a `String` — `(s.dropEndWhile (· == ' ')).toString` over a fold of
 `String` appends — and it was the last thing in this module that did. That is the shape
 the header above says makes output unprovable: a `String` does not reduce in the kernel,
-so no theorem could see the bytes `linger history` writes to a terminal. Byte-level now,
+so no theorem could see the bytes `linger capture --history` writes to a terminal. Byte-level now,
 so `history_framing` and `history_lines` can say that a cell cannot inject a line
 break. -/
 def rowText (row : Row) : Bytes := utf8s (dropTrailingBlanks (rowChars row))
 
-/-- Scrollback + screen, oldest first; for `linger history`.
+/-- Scrollback + screen, oldest first; for `linger capture --history`.
 
 One `LF`-terminated line per row. It was
 `String.intercalate "\n" (rows.map rowText) ++ "\n"`, which agrees with this for every
@@ -800,7 +800,7 @@ mutation: replacing that branch's body with four junk bytes left `./lake build`
 and `./lake build Theorems Tests` green).
 Deleted rather than wired up, because a colour transcript is not a stated requirement
 and reaching it costs a wire tag: `Msg.history` carries no payload and the tag
-assignment is frozen, so `linger history --color` means a new tag plus a case in each
+assignment is frozen, so adding colour means a new tag plus a case in each
 of `Wire`'s four exhaustive tag case-bashes. It would also need a *weaker* framing
 claim of its own rather than a reuse of `history_framing` — `rowAnsi` emits `ESC`, so
 "every byte is `LF` or printable" is false of a coloured stream. -/

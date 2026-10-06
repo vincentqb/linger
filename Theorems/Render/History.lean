@@ -10,7 +10,7 @@ import all Theorems.Render.Sticky
 -- Module-private is the default, so consumers reach in with `import all`. See the
 -- longer note in `Theorems/Vt.lean`.
 
-/-! # §Row integrity for `linger history` — a cell cannot inject a line break
+/-! # §Row integrity for `linger capture --history` — a cell cannot inject a line break
 
 `history`'s framing: every byte is a line terminator or printable content, and the
 newline count is the row count, so a cell's contents cannot forge a line. Split out
@@ -20,13 +20,13 @@ namespace Linger.Core.Render
 
 open Linger.Core.Vt
 
-/-! ## §Row integrity for `linger history` — a cell cannot inject a line break
+/-! ## §Row integrity for `linger capture --history` — a cell cannot inject a line break
 
 The last runtime byte stream to acquire a theorem. `history` used to be assembled
 through `String`, which does not reduce in the kernel; `rowText` now builds `List UInt8` (the same restructure
 `Session.infoText` needed), which makes both claims below available.
 
-They matter for the same reason `infoText`'s do. `linger history` is line-oriented
+They matter for the same reason `infoText`'s do. `linger capture --history` is line-oriented
 output that a caller may parse, and a *cell* is attacker-influenced — a program running
 in the session writes whatever it likes into the grid. `Render.safeChar` maps a C0
 control to U+FFFD on the way out, so a cell holding a newline cannot forge a line, and

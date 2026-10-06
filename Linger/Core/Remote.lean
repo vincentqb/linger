@@ -147,8 +147,9 @@ def shellQuote (s : String) : String :=
       ['\''])
 
 /-- SSH passes a command string to a shell, so quote every argument, including
-empty arguments and the session name. -/
-def command (verb name : String) (args : List String) : String :=
-  String.intercalate " " (("linger" :: verb :: name :: args).map shellQuote)
+empty arguments and the session name. Options precede the target; command
+arguments after it remain opaque. -/
+def command (verb name : String) (args : List String) (options : List String := []) : String :=
+  String.intercalate " " (("linger" :: verb :: (options ++ name :: args)).map shellQuote)
 
 end Linger.Core.Remote
