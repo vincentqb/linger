@@ -4,6 +4,7 @@ public import Tools.Picker
 import all Tools.Picker
 import all Linger.Core.Name
 import all Linger.Core.Listing
+import all Linger.Core.Remote
 import all Init.Data.String.Legacy
 import Theorems.Name
 import Theorems.Fuzzy
@@ -51,7 +52,8 @@ private theorem validTarget_iff (target : String) :
         (∀ char ∈ target.toList, 32 ≤ char.toNat ∧ (char.toNat < 127 ∨ 160 ≤ char.toNat)) ∧
         ((target.splitOn "@").tail = [] ∨
           String.intercalate "@" (target.splitOn "@").tail ≠ "") := by
-  simp [validTarget, printable_iff, Linger.Core.Name.sanitize_eq_self_iff, and_assoc]
+  simp [validTarget, Linger.Core.Remote.targetValid, Linger.Core.Remote.hostClean,
+    Linger.Core.Name.sanitize_eq_self_iff, and_assoc]
 
 private theorem parseRow_some (fields : List String) (target : String)
     (h : parseRow fields = .ok (some target)) :

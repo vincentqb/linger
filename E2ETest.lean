@@ -18,6 +18,7 @@ public import E2E.Manager
 public import E2E.RemoteLive
 public import E2E.Ci
 public import E2E.Hygiene
+public import E2E.Identity
 public import E2E.Runner
 
 public section
@@ -41,7 +42,7 @@ def suites : List (String × IO UInt32) :=
     -- opt-in: needs a real reachable host, so NOT in tests/e2e.sh
     ("remote-live", E2E.RemoteLive.run),
     -- Verifier regression checks, separate from the live product suites.
-    ("ci", E2E.Ci.run), ("hygiene", E2E.Hygiene.run)]
+    ("ci", E2E.Ci.run), ("hygiene", E2E.Hygiene.run), ("identity", E2E.Identity.run)]
 
 def main (args : List String) : IO UInt32 := do
   match args with

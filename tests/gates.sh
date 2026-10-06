@@ -72,9 +72,10 @@ code_count() { code_grep "$@" | awk 'END { print NR + 0 }'; }   # -> a number
 # `exit` there would only leave the subshell.)
 for p in Linger/Core Linger/Core/Vt.lean Linger/Core/Checkpoint.lean \
          Linger/Core/Session.lean Linger/Core/Driver.lean Linger/Core/Replay.lean Linger/Core/Title.lean \
-         Linger/Runtime Linger/Runtime/Client.lean Linger/Runtime/Daemon.lean \
+         Linger/Runtime Linger/Runtime/Client.lean Linger/Runtime/Daemon.lean Linger/Runtime/Paths.lean \
          Linger/Runtime/Command.lean Theorems/Title.lean Theorems/TerminalTitle.lean \
-         Theorems Theorems/Session.lean Theorems/Driver.lean Theorems/Replay.lean Tests E2E \
+         Theorems Theorems/Session.lean Theorems/Driver.lean Theorems/Replay.lean \
+         Theorems/Name.lean Theorems/Remote.lean Theorems/Claim.lean Tests E2E \
          Tools/Resurrect.lean Theorems/Resurrect.lean Manager/Resurrect.lean \
          Tools/Key.lean Tools/Fuzzy.lean Tools/Picker.lean Tools/Input.lean \
          Tools/Entry.lean Theorems/Entry.lean \
@@ -260,7 +261,7 @@ module_imports Theorems/Vt.lean 'Theorems/Vt/*' Theorems/Terminal.lean Theorems/
 import_closure Tools/Resurrect.lean 'public import Linger.Core.Name;public import Linger.Core.Status;'
 import_closure Tools/Key.lean 'public import Tools.Input;'
 import_closure Tools/Fuzzy.lean ''
-import_closure Tools/Picker.lean 'public import Tools.Key;public import Tools.Fuzzy;public import Linger.Core.Name;public import Linger.Core.Listing;'
+import_closure Tools/Picker.lean 'public import Tools.Key;public import Tools.Fuzzy;public import Linger.Core.Name;public import Linger.Core.Listing;public import Linger.Core.Remote;'
 import_closure Tools/Input.lean ''
 import_closure Theorems/Input.lean 'public import Tools.Input;import all Tools.Input;'
 import_closure Tools/Entry.lean ''
@@ -447,7 +448,7 @@ for tie in \
   printf '%s\n' "$picker_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "manager lost its selection, refresh, process ownership or attach contract: $tie"
 done
-code_grep '^[[:space:]]+cmdAttach hooks Linger[.]Core[.]Name[.]defaultName [[]]$' Linger/Runtime/Cli.lean >/dev/null \
+code_grep '^[[:space:]]+withTarget "attach" Linger[.]Core[.]Name[.]defaultName [[]] [(]cmdAttach · [[]][)]$' Linger/Runtime/Cli.lean >/dev/null \
   || fail "attach no longer shares the proved default session name with selection"
 
 # Both terminal loops own their helper through this one executor. Reap only
@@ -793,16 +794,79 @@ code_grep '^abbrev infoReplyCap : Nat := Linger[.]Core[.]Session[.]infoReplyCap$
 code_grep '^[[:space:]]+Linger[.]Core[.]Buf[.]bufOffer infoReplyCap acc [(]ByteArray[.]mk payload[.]toArray[)]$' 'Linger/Runtime/Cli.lean' > /dev/null \
   || fail "the info accumulator no longer uses the shared byte policy"
 
-# The remote command crosses SSH's shell join. Keep the proved name alphabet
-# on that actual argument, not only on local paths or a displayed listing row.
-code_grep '^theorem sanitize_valid ' 'Theorems/Name.lean' > /dev/null \
-  || fail "the sanitized-name alphabet theorem disappeared"
-code_grep '^[[:space:]]+let sess := Linger[.]Core[.]Name[.]sanitize sess$' 'Linger/Runtime/Cli.lean' > /dev/null \
-  || fail "remote attach no longer sanitizes its session argument"
-printf '%s\n' "$cli_code" | CG_RE='(^|[[:space:]])let child ← IO[.]Process[.]spawn [{] cmd := "ssh", args := #[[]"-t", "--", host, "linger", "attach", sess[]] [}] try child[.]wait finally' awk "$CODE_AWK" >/dev/null \
-  || fail "review the remote command argument and handback against sanitize_valid"
+# All session verbs consume the same exact target parser. Fuzzy matching stays
+# in the interactive picker. SSH joins a command string, so the actual transport
+# must consume the proved quoting function and inherit stdin for binary input.
+for claim in check_eq_some_iff check_no_alias; do
+  code_grep "^theorem $claim " Theorems/Name.lean >/dev/null \
+    || fail "exact-name contract disappeared: $claim"
+done
+for claim in targetValid_iff parseTarget_exact parseTarget_name_valid shellQuote_roundtrip command_argv; do
+  code_grep "^theorem $claim " Theorems/Remote.lean >/dev/null \
+    || fail "command target or shell quoting contract disappeared: $claim"
+done
+! code_grep 'Tools[.]Fuzzy|Core[.]Name[.]sanitize' Linger/Runtime/Cli.lean Linger/Runtime/Client.lean \
+  || fail "noninteractive command lookup must not fuzzy-match or rewrite a name"
+selector_policy_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Tools/Picker.lean)"
+printf '%s\n' "$selector_policy_code" | CG_RE='(^|[[:space:]])private def validTarget [(]target : String[)] : Bool := Linger[.]Core[.]Remote[.]targetValid target([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+  || fail "selector creation and command arguments no longer share the target grammar"
+for verb in attach watch run send detach kill info capture resize history get set unset clear; do
+  code_grep "^[[:space:]]+withTarget \"$verb\" " Linger/Runtime/Cli.lean >/dev/null \
+    || fail "session command bypassed the common exact target boundary: $verb"
+done
+for tie in \
+  'match Linger[.]Core[.]Remote[.]parseTarget target with [|] none => invalidTarget [|] some parsed => runTarget verb parsed args localAction' \
+  'let some targets := names[.]mapM Linger[.]Core[.]Remote[.]parseTarget [|] invalidTarget let mut rc : UInt32 := 0 for target in targets do rc := max rc [(]← runTarget "wait" target [[]] [(]fun name => cmdWait [[]name[]][)][)]' \
+  'let interactive := verb == "attach" [|][|] verb == "watch" if interactive && [(]![(]← stdinIsTty[)] [|][|] ![(]← [(]← IO[.]getStdout[)][.]isTty[)][)] then' \
+  'IO[.]Process[.]spawn [{] cmd := "ssh", args := #[[]if interactive then "-t" else "-T", "--", host, Linger[.]Core[.]Remote[.]command verb target[.]name args[]], stdin := [.]inherit [}] try child[.]wait finally if interactive then writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Core[.]Render[.]leaveAnsi[.]toArray[)]'; do
+  printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+    || fail "command transport lost exact targets, argv, stdin or terminal ownership: $tie"
+done
 [ "$(code_count '^[[:space:]]+writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Core[.]Render[.]leaveAnsi[.]toArray[)]$' Linger/Runtime/Cli.lean)" -eq 1 ] \
   || fail "remote SSH termination no longer establishes canonical handback"
+
+# Lifetime ownership covers two resources: the socket namespace and the saved
+# state namespace. The model assumes stable lock inodes and exclusive flock;
+# these IO ties and E2E.Identity check acquisition before use and release after
+# cleanup. A connected daemon's failure must never fall back to older saved data.
+for claim in reachable_protected owner_holds_lock at_most_one_owner claim_free; do
+  code_grep "^theorem $claim " Theorems/Claim.lean >/dev/null \
+    || fail "resource ownership contract disappeared: $claim"
+done
+paths_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Runtime/Paths.lean)"
+for tie in \
+  'match Linger[.]Core[.]Name[.]check name with [|] some name => return name [|] none => throw' \
+  'let name ← checkName name ensureDir dir let path := s!"[{]dir[}]/[{]name[}][{]suffix[}]" checkSpelling path return path' \
+  'def socketPath [(]name : String[)] : IO String := do namedPath [(]← socketDir[)] name "[.]sock"' \
+  'def ckptPath [(]name : String[)] : IO String := do namedPath [(]← stateDir[)] name "[.]ckpt"' \
+  'def lockPath [(]name : String[)] : IO String := do namedPath [(]← socketDir[)] name "[.]lock"' \
+  'def stateLockPath [(]name : String[)] : IO String := do namedPath [(][(]← stateDir[)] [+][+] "/[.]locks"[)] name "[.]lock"' \
+  'def logPath [(]name : String[)] : IO String := do namedPath [(][(]← stateDir[)] [+][+] "/logs"[)] name "[.]log"' \
+  'let fd ← Linger[.]Posix[.]flock path if fd < 0 then throw [(]IO[.]userError s!"session is owned by another process [(][{]path[}][)]"[)] try checkSpelling path action finally Linger[.]Posix[.]close fd[.]toUInt64[.]toUInt32' \
+  'withLock [(]← lockPath name[)] do withLock [(]← stateLockPath name[)] action'; do
+  printf '%s\n' "$paths_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+    || fail "session paths or lifetime locking bypassed their contract: $tie"
+done
+! code_grep 'removeFile|rename' Linger/Runtime/Paths.lean \
+  || fail "lock path construction and acquisition must never unlink or replace a lock inode"
+printf '%s\n' "$client_code" | CG_RE='(^|[[:space:]])try Paths[.]checkSpelling path return some fd catch err => close fd throw err([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+  || fail "successful connects must reject case-folded aliases and close on failure"
+printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])IO Unit := Paths[.]withSessionLock name do ignoreSighup let saved ← loadCkpt([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+  || fail "daemon recovery and lifetime must execute inside both ownership locks"
+for tie in \
+  'finally close listenFd try IO[.]FS[.]removeFile sockPath catch _ => pure [(][)][[:space:]]+end Linger[.]Runtime[.]Daemon' \
+  'finally for c in rt[.]conns do close c[.]fd try if ← alive rt[.]childPid then'; do
+  printf '%s\n' "$daemon_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+    || fail "daemon resource cleanup escaped its ownership lifetime: $tie"
+done
+for tie in \
+  'requestStatus name result [|] none => Paths[.]withSessionLock name do match ← hooks[.]load name with [|] some [(]vt, _, _[)] => writeAll stdoutFd [(]ByteArray[.]mk [(]render vt[)][.]toArray[)]' \
+  'let available ← try Paths[.]withSessionLock name [(]pure true[)] catch _ => pure false'; do
+  printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+    || fail "offline reading or listing bypassed ownership: $tie"
+done
+printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])if Cli[.]kv row "state" == "resumable" then Paths[.]withSessionLock name do let some [(]_, cwd, _[)] ← Resume[.]loadCkpt name [|] throw' awk "$CODE_AWK" >/dev/null \
+  || fail "exporter must establish offline ownership before reading saved state"
 
 # `onMsg_resizePty_agrees` connects every emitted pty size to the resulting
 # emulator's effective dimensions. IO is outside the theorem: keep the effect
@@ -1195,7 +1259,7 @@ grep -qE '^[.]/lake --rehash --wfail build[[:space:]]' tests/e2e.sh \
   || fail "tests/e2e.sh: the build must use the cache-checking flags exercised by E2E.Ci (--rehash --wfail)"
 # The real suites must use the same isolated runner whose failure, signal and
 # assertion-count contracts E2E.Ci exercises.
-awk '/^say "4–18[.] / { live=1 }
+awk '/^say "[0-9]+–[0-9]+[.] live suites / { live=1 }
   live && /^[.]\/[.]lake\/build\/bin\/e2e --suites[[:space:]]/ { found=1 }
   END { exit !found }' tests/e2e.sh \
   || fail "tests/e2e.sh: run live suites through the tested --suites entry point"

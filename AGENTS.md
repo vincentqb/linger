@@ -46,7 +46,8 @@ manual dispatch; request a manual run for changes to `c/shim.c` or `./lake`.
   declarations stay in the former. Keep the shim to syscalls and errno.
   Return `-errno`, avoid numeric errno values in Lean, and validate signal PIDs
   with `Linger.Posix.checkPid`.
-- Sanitize session names before paths and freeze each poll loop's fd set.
+- Validate session names without rewriting them before paths; fuzzy matching
+  belongs only in interactive selection. Freeze each poll loop's fd set.
   Compose displays through `Title.compose` and `Status.summary` in the order
   `session · application title · attention`, reserving room for attention.
 - Program logic, proofs and automated suites are Lean. Python is used only by

@@ -510,9 +510,8 @@ private def liveCwd (f : Fixture) : IO Bool := do
 private def nativeRoundtrip (f : Fixture) : IO Bool := do
   let dir := f.root / "one two 'three' $four 会é"
   IO.FS.createDirAll dir
-  let inputs := ["a.b", "plus+", "会é"]
-  let names := inputs.map Linger.Core.Name.sanitize
-  for name in inputs do
+  let names := ["a.b", "plus+", "plain"]
+  for name in names do
     f.start name dir
   let fields := names.map fun name => (name, dir.toString)
   unless ← f.exportFields "native" fields do
@@ -820,7 +819,7 @@ def runWith (binary : String) : IO UInt32 := do
         ("removing an imported session generates complete current common fields", fun f =>
           topologyChange f true),
         ("export observes a live cwd change instead of its startup directory", liveCwd),
-        ("native identities follow name sanitization and preserve dot, plus and UTF8 cwd in a second state dir",
+        ("native identities remain exact and preserve dot, plus and UTF8 cwd in a second state dir",
           nativeRoundtrip),
         ("export reads the changed checkpoint cwd after last detach and daemon crash",
           resumableCwd),

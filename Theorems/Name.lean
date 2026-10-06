@@ -7,12 +7,10 @@ public section
 
 /-! # §Name — session names cannot escape the socket directory
 
-`sanitize` output lands in `<dir>/<name>.sock` and `<name>.ckpt`
-paths. The theorem: for ANY input string — including ones arriving
-from a hostile remote listing — the sanitized name is nonempty, short,
-made only of `okChar`s (no `/`, no NUL, no controls), and does not
-begin with a dot (no `.`/`..`/hidden files). Path escape is impossible
-because `/` is simply not in the alphabet.
+`check` accepts exactly names that `sanitize` would leave unchanged.
+Accepted names are nonempty, short, made only of `okChar`s (no `/`,
+NUL or controls), and do not begin with a dot. Invalid names are
+rejected without manufacturing another session's identity.
 -/
 
 namespace Linger.Core.Name
@@ -84,8 +82,8 @@ theorem sanitize_valid (s : String) : Valid (sanitize s) := by
         subst he
         simp at hdot
 
-/-- Sanitization preserves every valid name, so independently checked entry
-paths retain the same session identity when attachment sanitizes it again. -/
+/-- Sanitization preserves every valid name, which lets the validator accept
+exactly the structural validity predicate without rewriting the input. -/
 theorem sanitize_eq_self_of_valid (s : String) (h : Valid s) : sanitize s = s := by
   obtain ⟨hne, hlen, hok, hhead⟩ := h
   have hm : s.toList.map (fun c => if okChar c then c else '_') = s.toList := by
@@ -107,6 +105,22 @@ theorem sanitize_eq_self_iff (s : String) : sanitize s = s ↔ Valid s := by
     rw [← h]
     exact sanitize_valid s
   · exact sanitize_eq_self_of_valid s
+
+/-- Command validation accepts exactly valid names and preserves their spelling. -/
+theorem check_eq_some_iff (s result : String) : check s = some result ↔ result = s ∧ Valid s := by
+  simp only [check]
+  split
+  · rename_i h
+    have valid : Valid s := (sanitize_eq_self_iff s).mp (by simpa using h)
+    simp [valid, eq_comm]
+  · rename_i h
+    have invalid : ¬Valid s := by simpa [sanitize_eq_self_iff] using h
+    simp [invalid]
+
+/-- Distinct accepted names never alias through the validator. -/
+theorem check_no_alias {a b name : String}
+    (ha : check a = some name) (hb : check b = some name) : a = b :=
+  ((check_eq_some_iff a name).mp ha).1.symm.trans ((check_eq_some_iff b name).mp hb).1
 
 /-- Every entry path may sanitize independently without changing its target. -/
 theorem sanitize_idempotent (s : String) : sanitize (sanitize s) = sanitize s :=

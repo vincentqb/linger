@@ -1,133 +1,152 @@
 module
 
-public import Linger.Core.Name
-
 public section
 
-/-! # §Claim — mutual exclusion, relative to exactly one assumption
+/-! Ownership of socket and checkpoint resources across arbitrary interleavings.
 
-Can an *advisory* lock give us a theorem? Yes, but only a conditional
-one — and that is the point rather than a weakness. An OS primitive
-cannot be proved in Lean; what can be done is to state its contract as
-a hypothesis, prove the protocol correct **given** that hypothesis, and
-thereby name precisely what is being trusted. Everything outside the
-hypothesis is proved; everything inside it is a one-line claim about
-the kernel that a reader can check against `flock(2)`.
+A resource identifies a stable lock inode, not a pathname string. Successful
+exclusive acquisition requires that resource to be free. Failed acquisition
+leaves the state unchanged. A daemon or offline reader enters only after holding
+both resources, and releases them only after leaving and completing its cleanup.
 
-The model is a trace of `(agent, action)` events. `Exclusive` is the
-kernel's side of the bargain: at most one agent ever completes a
-`lock`. That is what `flock(LOCK_EX | LOCK_NB)` buys, and it holds only
-while three side conditions hold — all three are code properties, not
-kernel ones, so they are reviewable and testable:
-
-1. nobody releases the lock early (we hold the fd for process life),
-2. nobody unlinks the lock file (a newcomer would lock a fresh inode
-   while the owner still held the old one),
-3. the lock file is on a filesystem where `flock` works — false on NFS,
-   which is why `Paths.socketDir` defaults to local storage.
-
-`Guarded` is our side: an agent only mutates the shared name — unlink a
-stale socket, bind a new one — if it holds the lock. The theorem is
-that the two together give at most one owner of a session name.
-
-Scope: this is a model of the claim sequence in `Linger.Runtime.Daemon.serve`,
-not an extraction of it. The correspondence is by inspection (four
-lines of `serve`), and it is pinned from the outside by
-`E2E/Robust.lean` (ported from `tests/robust_test.py`), which races eight daemons over a stale socket
-and requires exactly one survivor. §Claim's value is that it makes the
-trust boundary explicit and would catch a reordering — not that it
-verifies the runtime.
+The model permits acquisition, release and later reuse by different processes.
+Its assumptions require cooperating processes, lock files that are never
+unlinked or replaced, and a filesystem that implements the locking contract.
+The runtime correspondence is tested and source-gated, not proved here.
 -/
 
 namespace Linger.Core.Claim
 
-/-- What an agent can do to a session name. -/
-inductive Act where
-  /-- acquired the name lock (`flock(LOCK_EX|LOCK_NB)` succeeded) -/
-  | lock
-  /-- connected to the socket to see whether a live daemon answers -/
-  | probe
-  /-- removed a socket believed stale — mutates the shared name -/
-  | unlinkStale
-  /-- bound the socket: became the owner — mutates the shared name -/
-  | bind
-  deriving Repr, DecidableEq, Inhabited
+structure Lease where
+  socket : Nat
+  checkpoint : Nat
+  deriving DecidableEq
 
-abbrev Trace := List (Nat × Act)
+def Lease.uses (lease : Lease) (resource : Nat) : Prop :=
+  resource = lease.socket ∨ resource = lease.checkpoint
 
-/-- The mutating actions: the ones that need the lock. -/
-def Act.mutates : Act → Bool
-  | .unlinkStale | .bind => true
-  | .lock | .probe => false
+structure State where
+  locks : Nat → Option Nat
+  active : Nat → Option Lease
 
-/-- **Our obligation.** An agent that mutates the shared name appears in
-the trace holding the lock. -/
-def Guarded (t : Trace) : Prop := ∀ e ∈ t, e.2.mutates = true → (e.1, Act.lock) ∈ t
+def initial : State := ⟨fun _ => none, fun _ => none⟩
 
-/-- **The kernel's obligation** (the assumption; see the header). At most
-one agent ever completes a lock. -/
-def Exclusive (t : Trace) : Prop := ∀ i j, (i, Act.lock) ∈ t → (j, Act.lock) ∈ t → i = j
+def put {α : Type} (map : Nat → α) (key : Nat) (value : α) : Nat → α := fun index =>
+  if index = key then value else map index
 
-/-- §Claim: at most one agent binds the socket — so a session name has
-at most one owner, and no daemon can be left holding a pty that nobody
-can reach by name. -/
-theorem at_most_one_owner {t : Trace} (hg : Guarded t) (he : Exclusive t) :
-    ∀ i j, (i, Act.bind) ∈ t → (j, Act.bind) ∈ t → i = j := by
-  intro i j hi hj
-  exact he i j (hg _ hi rfl) (hg _ hj rfl)
+/-- The OS acquisition contract and the application's lifetime protocol.
+`enter` covers both daemon ownership and an offline reader's critical section.
+`leave` means all resource access and cleanup have finished. -/
+inductive Step : State → State → Prop where
+  |
+  acquire (s : State) (actor resource : Nat) (free : s.locks resource = none) :
+    Step s { s with locks := put s.locks resource (some actor) }
+  |
+  enter (s : State) (actor : Nat) (lease : Lease) (idle : s.active actor = none)
+    (socket : s.locks lease.socket = some actor)
+    (checkpoint : s.locks lease.checkpoint = some actor) :
+    Step s { s with active := put s.active actor (some lease) }
+  | leave (s : State) (actor : Nat) : Step s { s with active := put s.active actor none }
+  |
+  release (s : State) (actor resource : Nat) (owned : s.locks resource = some actor)
+    (idle : s.active actor = none) : Step s { s with locks := put s.locks resource none }
+  | unchanged (s : State) : Step s s
 
-/-- The same argument covers unlinking: two agents cannot both decide a
-socket is stale and remove it. This is the exact hazard the lock was
-added for — one daemon deleting another's live socket. -/
-theorem at_most_one_unlinker {t : Trace} (hg : Guarded t) (he : Exclusive t) :
-    ∀ i j, (i, Act.unlinkStale) ∈ t → (j, Act.unlinkStale) ∈ t → i = j := by
-  intro i j hi hj
-  exact he i j (hg _ hi rfl) (hg _ hj rfl)
+inductive Reachable : State → Prop where
+  | initial : Reachable initial
+  | next {before after} (reached : Reachable before) (step : Step before after) : Reachable after
 
-/-- And the owner is the lock holder, never a bystander. -/
-theorem owner_holds_lock {t : Trace} (hg : Guarded t) :
-    ∀ i, (i, Act.bind) ∈ t → (i, Act.lock) ∈ t := fun _ hi => hg _ hi rfl
+/-- Every active process still holds both resources it claimed. -/
+def Protected (s : State) : Prop :=
+  ∀ actor lease,
+    s.active actor = some lease →
+      s.locks lease.socket = some actor ∧ s.locks lease.checkpoint = some actor
 
-/-! ## Our sequence satisfies the obligation
+theorem protected_step {before after : State} (safe : Protected before) (step : Step before after) :
+    Protected after := by
+  cases step with
+  | acquire actor resource free =>
+    intro other lease active
+    obtain ⟨socket, checkpoint⟩ := safe other lease active
+    have preserve (r : Nat) (held : before.locks r = some other) :
+      put before.locks resource (some actor) r = some other := by
+      have different : r ≠ resource := by
+        intro same
+        subst r
+        rw [free] at held
+        contradiction
+      simp [put, different, held]
+    exact ⟨preserve _ socket, preserve _ checkpoint⟩
+  | enter actor lease idle socket
+    checkpoint =>
+    intro other otherLease active
+    change put before.active actor (some lease) other = some otherLease at active
+    by_cases same : other = actor
+    · subst other
+      simp only [put, ↓reduceIte, Option.some.injEq] at active
+      subst otherLease
+      exact ⟨socket, checkpoint⟩
+    · exact safe other otherLease (by simpa [put, same] using active)
+  | leave actor =>
+    intro other lease active
+    change put before.active actor none other = some lease at active
+    by_cases same : other = actor
+    · simp [put, same] at active
+    · exact safe other lease (by simpa [put, same] using active)
+  | release actor resource owned idle =>
+    intro other lease active
+    obtain ⟨socket, checkpoint⟩ := safe other lease active
+    have preserve (r : Nat) (held : before.locks r = some other) :
+      put before.locks resource none r = some other := by
+      have different : r ≠ resource := by
+        intro same
+        subst r
+        have equal : other = actor := Option.some.inj (held.symm.trans owned)
+        subst other
+        rw [idle] at active
+        contradiction
+      simp [put, different, held]
+    exact ⟨preserve _ socket, preserve _ checkpoint⟩
+  | unchanged => exact safe
 
-`serve` runs exactly this, in this order. Both facts below are checked
-by `decide`, so reordering the description fails the build; reordering
-the *code* is caught by `E2E/Robust.lean` (ported from `tests/robust_test.py`). -/
+/-- Every finite interleaving preserves the lifetime lock invariant. -/
+theorem reachable_protected {s : State} (reached : Reachable s) : Protected s := by
+  induction reached with
+  | initial =>
+    intro actor lease active; cases active
+  | next _ step ih => exact protected_step ih step
 
-def ourClaim : List Act := [.lock, .probe, .unlinkStale, .bind]
+theorem owner_holds_lock {s : State} (reached : Reachable s) {actor resource : Nat} {lease : Lease}
+    (active : s.active actor = some lease) (uses : lease.uses resource) :
+    s.locks resource = some actor := by
+  obtain ⟨socket, checkpoint⟩ := reachable_protected reached actor lease active
+  rcases uses with rfl | rfl
+  · exact socket
+  · exact checkpoint
 
-/-- One agent following `ourClaim` is `Guarded`. -/
-theorem ourClaim_guarded (a : Nat) : Guarded (ourClaim.map (fun act => (a, act))) := by
-  intro e he hm
-  simp only [ourClaim, List.map_cons, List.map_nil, List.mem_cons, List.not_mem_nil,
-    or_false] at he ⊢
-  left
-  rcases he with h | h | h | h <;> subst h <;>
-    first
-    | rfl
-    | simp [Act.mutates] at hm
+/-- Sharing either lock inode excludes simultaneous ownership, even when the
+other directory differs. This also excludes offline readers during a live lease. -/
+theorem at_most_one_owner {s : State} (reached : Reachable s) {a b resource : Nat}
+    {left right : Lease} (ha : s.active a = some left) (hb : s.active b = some right)
+    (leftUses : left.uses resource) (rightUses : right.uses resource) : a = b :=
+  Option.some.inj
+    ((owner_holds_lock reached ha leftUses).symm.trans (owner_holds_lock reached hb rightUses))
 
-/-- The lock comes *first*: no mutation is even attempted before it, so
-a failed lock cannot leave a half-claimed name behind. -/
-theorem ourClaim_lock_first :
-    (ourClaim.takeWhile (fun a => a.mutates == false)).contains Act.lock = true := by decide
-
-/-- Nothing mutating precedes the lock. -/
-theorem ourClaim_no_early_mutation :
-    ((ourClaim.takeWhile (· != Act.lock)).all (fun a => a.mutates == false)) = true := by decide
-
-/-! ## What §Claim does not say
-
-* Nothing about *liveness*: a daemon that loses the race exits, and the
-  client that spawned it finds the winner's socket by polling. That is
-  a runtime property, tested rather than proved.
-* Nothing across hosts. `flock` is per-kernel and unix sockets are
-  host-local, so a socket directory shared over a network filesystem
-  breaks `Exclusive` and this theorem says nothing. Local storage is a
-  precondition, documented at `Paths.socketDir`.
-* Nothing about non-cooperating processes. The lock is advisory: `rm`
-  can still delete a live socket. The guarantee is among `linger`
-  daemons, which is the whole population that claims names.
--/
+/-- A fully free namespace can be acquired and entered, so the protocol does
+not obtain exclusivity by refusing every owner. -/
+theorem claim_free {s : State} (reached : Reachable s) (actor : Nat) (lease : Lease)
+    (idle : s.active actor = none) (socket : s.locks lease.socket = none)
+    (checkpoint : s.locks lease.checkpoint = none) (distinct : lease.checkpoint ≠ lease.socket) :
+    ∃ after, Reachable after ∧ after.active actor = some lease := by
+  let first := { s with locks := put s.locks lease.socket (some actor) }
+  have hfirst : Reachable first := reached.next (.acquire s actor lease.socket socket)
+  let both := { first with locks := put first.locks lease.checkpoint (some actor) }
+  have hboth : Reachable both :=
+    hfirst.next (.acquire first actor lease.checkpoint (by simp [first, put, distinct, checkpoint]))
+  refine ⟨{ both with active := put both.active actor (some lease) }, ?_, by simp [put]⟩
+  exact
+    hboth.next
+      (.enter both actor lease idle (by simp [both, first, put, Ne.symm distinct])
+        (by simp [both, put]))
 
 end Linger.Core.Claim

@@ -34,7 +34,13 @@ def connect (name : String) (nonblocking : Bool := false) : IO (Option UInt32) :
   let path ← Paths.socketPath name
   let r ← unixConnect path nonblocking
   if r ≥ 0 then
-    return some r.toUInt64.toUInt32
+    let fd := r.toUInt64.toUInt32
+    try
+      Paths.checkSpelling path
+      return some fd
+    catch err =>
+      close fd
+      throw err
   return none
 
 def sendMsg (fd : UInt32) (m : Msg) : IO Unit := writeAll fd (encodeBA m)

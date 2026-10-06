@@ -5,10 +5,9 @@ public section
 /-! # Linger.Core.Name — session names that cannot escape their directory
 
 A session name becomes a socket path (`<dir>/<name>.sock`) and a
-checkpoint path. §Name (THEOREMS.md): a sanitized name contains no
-path separator, no NUL, no leading dot, is nonempty and short — so the
-composed path stays inside the directory for ANY input string, local
-or arriving from a remote listing.
+checkpoint path. Commands and remote listings accept only names already
+in canonical form: no path separator, NUL or leading dot, nonempty and
+at most 80 characters. Validation never rewrites the requested identity.
 -/
 
 namespace Linger.Core.Name
@@ -18,7 +17,7 @@ def defaultName : String := "main"
 
 /-- Characters a name may contain: ASCII alphanumerics plus `-_.+`.
 `@` is deliberately excluded — it is reserved as the `name@host`
-remote-attach delimiter, so a name never collides with that syntax.
+remote-target delimiter, so a name never collides with that syntax.
 Everything else (slashes, NULs, spaces, controls, unicode, `@`) is
 mapped away by `sanitize`. -/
 def okChar (c : Char) : Bool := c.isAlphanum || c == '-' || c == '_' || c == '.' || c == '+'
@@ -34,6 +33,9 @@ def sanitize (s : String) : String :=
     match mapped with
     | [] => ['_']
     | c :: rest => (if c == '.' then '_' else c) :: rest
+
+/-- Accept an exact session name. Validation must never select a different name. -/
+def check (s : String) : Option String := if sanitize s == s then some s else none
 
 /-- The §Name predicate, over the character list so proofs stay in
 list-land. -/

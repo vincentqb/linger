@@ -284,13 +284,15 @@ def run : IO UInt32 := do
       (←
         expect (irc == 1 && has ierr "no session 'nosuch'")
             "info on a missing session exits 1 with a message")
-  -- A daemon-level rejection is a failed command, not merely text on stderr.
-  let (lrc, _, lerr) ← e.cli #["set", "ag", "=value"]
+  -- All arguments are valid; the daemon rejects the entry beyond its label cap.
+  let labels := (List.range (Linger.Core.Session.maxLabels + 1)).map fun i => s!"probe-{i}=value"
+  let (lrc, _, lerr) ← e.cli (#["set", "ag"] ++ labels.toArray)
   f :=
     f +
       (←
-        expect (lrc == 1 && has lerr "empty label key")
-            "a rejected label exits 1 with the daemon's reason")
+        expect (lrc == 1 && has lerr "too many labels")
+            "a daemon-rejected label exits 1 with its reason")
+  let _ ← e.cli #["clear", "ag"]
   -- A malformed daemon response must also fail. The fake server is this e2e
   -- binary in a child mode, so the wire bytes and maxPayload come from Core.
   let badPath := s!"{e.dir}/malformed.sock"

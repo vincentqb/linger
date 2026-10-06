@@ -377,7 +377,7 @@ The delete hook signals child exit before normal transport cleanup. -/
 def serveProbe (dir : String) : IO UInt32 := do
   let bin := (← IO.currentDir) / ".lake" / "build" / "bin" / "e2e"
   serve "tail" dir [bin.toString, "--delivery-child", s!"{dir}/go"] (fun _ => pure ())
-      (IO.FS.writeFile s!"{dir}/exited" "") (some (Linger.Core.Vt.Vt.init 20 5, []))
+      (IO.FS.writeFile s!"{dir}/exited" "") (pure (some (Linger.Core.Vt.Vt.init 20 5, dir, [])))
   return 0
 
 def serveTail (dir : String) : IO Nat := do

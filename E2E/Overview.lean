@@ -26,8 +26,7 @@ substring test does not test parsing. -/
 namespace E2E.Overview
 
 open E2E.Harness
-open Linger.Core.Status (Status)
-open Linger.Core.Listing (humanListing rowStatus)
+open Linger.Core.Listing (humanListing)
 
 def run : IO UInt32 := do
   let e ← Env.make "overview"
@@ -77,12 +76,8 @@ def run : IO UInt32 := do
             "porcelain carries name/state (the remote-parse contract)")
   e.killAll #["alpha", "beta"]
   IO.sleep 500
-  -- A checkpoint filename carrying an ESC and a TAB must not reach the terminal as
-  -- an escape sequence. The name goes through `Listing.rowFields` → `Name.sanitize`
-  -- and the whole row through `Render.utf8s`, so the control bytes cannot appear.
-  -- The body is deliberately not a loadable checkpoint and does not have to be:
-  -- §Row is that a row's identity comes from the filename alone — `Cli.cmdList`
-  -- builds the resumable row from `Paths.listCkptNames` without opening the file.
+  -- Invalid filenames are ignored rather than rewritten into selectable aliases.
+  -- Control bytes must not reach the terminal, and no resumable row may appear.
   let hostile := "ev\x1b[31mil\tfake.ckpt"
   IO.FS.writeBinFile ((System.FilePath.mk e.dir) / hostile)
       ("LINGER\x01".toUTF8 ++ ByteArray.mk (List.replicate 32 (0 : UInt8)).toArray)
@@ -92,16 +87,11 @@ def run : IO UInt32 := do
       (←
         expect (!has out "\x1b" && !has out "\t")
             "a hostile checkpoint filename cannot inject an escape into the listing")
-  -- …and it still lists. The glyph half is derived: `rowStatus .stale` is what
-  -- `Cli.cmdList` writes into the row's status, and `ofName_name` is why
-  -- `humanRow` prints exactly that state's icon.
   f :=
     f +
       (←
-        expect
-            (has out "resumable" &&
-              has out (String.singleton (Linger.Core.Status.icon (rowStatus .stale))))
-            "the hostile checkpoint still lists (as resumable)")
+        expect (out.toUTF8 == ByteArray.mk emptyLine.toArray)
+            "an invalid checkpoint filename cannot create a selectable alias")
   verdict e f
 
 end E2E.Overview

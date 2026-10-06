@@ -34,9 +34,12 @@ def run : IO UInt32 := do
   let e ← Env.make "watch"
   let mut f := 0
   -- 1. a watcher cannot conjure a session (attach is an upsert; watch is not)
-  let (rc, _, err) ← e.cli #["watch", "nosuch"]
+  let missing ← e.spawn #["watch", "nosuch"]
+  let err ← drainStr missing.fd 1500
+  let rc ← missing.reap
+  missing.bye (sendDetach := false)
   f := f + (← expect (rc == 1) "watch of a missing session exits 1")
-  f := f + (← expect (has err "no session 'nosuch'") "watch of a missing session says so on stderr")
+  f := f + (← expect (has err "no session 'nosuch'") "watch reports the exact missing session")
   f :=
     f +
       (← expect (!has (← e.out #["ls"]) "nosuch") "watch created no session (it is not an upsert)")

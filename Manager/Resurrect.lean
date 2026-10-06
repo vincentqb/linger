@@ -272,11 +272,11 @@ private def snapshot : IO (List (String × String)) := do
       let name := Cli.kv row "name"
       let dir ←
         if Cli.kv row "state" == "resumable" then
-          do
-            let some (_, cwd, _) ←
-              Resume.loadCkpt
-                  name | throw (IO.userError s!"could not read checkpoint for session: {name}")
-            pure cwd
+          Paths.withSessionLock name do
+              let some (_, cwd, _) ←
+                Resume.loadCkpt
+                    name | throw (IO.userError s!"could not read checkpoint for session: {name}")
+              pure cwd
         else
           do
             let some pid := (Cli.kv row "pid").toNat?

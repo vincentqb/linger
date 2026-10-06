@@ -13,7 +13,7 @@ stdout here.
 §Remote (THEOREMS.md): the parser is total (any bytes → some rows,
 never ⊥), garbage-tolerant (a malformed line or record is dropped, not
 fatal), and §Name carries through — every name in the result is
-sanitized, so a hostile remote cannot inject a path or control bytes
+validated without rewriting, so a hostile remote cannot inject a path or control bytes
 into the local listing or the ssh argv.
 
 Format (one record per session, blank-line separated):
@@ -47,7 +47,7 @@ structure RemoteRow where
 embed escape sequences in `cmd` or label values; the overview prints
 these verbatim into the listing, so control characters must die here). -/
 def scrub (s : String) : String :=
-  String.ofList (s.toList.filter (fun c => c.toNat ≥ 0x20 && c.toNat != 0x7F))
+  String.ofList (s.toList.filter (fun c => c.toNat ≥ 32 && (c.toNat < 127 || c.toNat ≥ 160)))
 
 def parseRecord (lines : List String) : Option RemoteRow :=
   let kvs :=
@@ -58,16 +58,17 @@ def parseRecord (lines : List String) : Option RemoteRow :=
         | _ => none) -- malformed line: dropped, record survives
   match kvs.find? (·.1 == "name") with
   | none => none -- no name: not a session record
-  | some (_, rawName) =>
-    some
-      { name := sanitize rawName
-        live := ((kvs.find? (·.1 == "state")).map (·.2)).getD "live" == "live"
-        cmd := scrub (((kvs.find? (·.1 == "cmd")).map (·.2)).getD "")
-        -- the peer's own status name, scrubbed like any other display field.
-        -- `Status.ofName` is total and maps anything unrecognised -- including
-        -- an absent field from an older peer -- to `unknown`, so a remote row
-        -- can never look healthier than we can actually read it
-        status := scrub (((kvs.find? (·.1 == "status")).map (·.2)).getD "") }
+  | some (_, rawName) => do
+    let name ← Linger.Core.Name.check rawName
+    some {
+          name
+          live := ((kvs.find? (·.1 == "state")).map (·.2)).getD "live" == "live"
+          cmd := scrub (((kvs.find? (·.1 == "cmd")).map (·.2)).getD "")
+          -- the peer's own status name, scrubbed like any other display field.
+          -- `Status.ofName` is total and maps anything unrecognised -- including
+          -- an absent field from an older peer -- to `unknown`, so a remote row
+          -- can never look healthier than we can actually read it
+          status := scrub (((kvs.find? (·.1 == "status")).map (·.2)).getD "") }
 
 /-- Split on blank lines into records. -/
 def records (lines : List String) : List (List String) :=
@@ -78,7 +79,7 @@ def records (lines : List String) : List (List String) :=
   let (done, cur) := lines.foldl step ([], [])
   if cur.isEmpty then done else done ++ [cur.reverse]
 
-/-- The parser: total, garbage-tolerant, names sanitized. -/
+/-- The parser: total, garbage-tolerant, names validated without rewriting. -/
 def parse (out : String) : List RemoteRow := (records (out.splitOn "\n")).filterMap parseRecord
 
 /-- First host that appears more than once (for the error message). -/
@@ -86,12 +87,12 @@ def firstDupHost : List String → Option String
   | [] => none
   | h :: t => if t.contains h then some h else firstDupHost t
 
-/-- A host string fit to hand to `ssh` argv: no C0 control, no DEL. **Not**
+/-- A host string fit to hand to `ssh` argv: no C0/C1 controls or DEL. **Not**
 `Name.sanitize`, which would be wrong twice over — `@` is not an `okChar`, so it
 would destroy a legitimate `user@host` target, and silently rewriting a host means
 connecting somewhere the user did not ask for. -/
 def hostClean (h : String) : Bool :=
-  h.toList.all (fun c => decide (c.toNat ≥ 0x20) && decide (c.toNat ≠ 0x7F))
+  h.toList.all (fun c => c.toNat ≥ 32 && (c.toNat < 127 || c.toNat ≥ 160))
 
 /-- The first host carrying a control byte, for the error message. -/
 def firstDirtyHost (hosts : List String) : Option String := hosts.find? (!hostClean ·)
@@ -115,5 +116,39 @@ def checkHosts (hosts : List String) : Except String (List String) :=
     match firstDirtyHost hosts with
     | some h => .error s!"remote host '{scrub h}' contains a control character"
     | none => .ok hosts
+
+/-- Exact local name and optional SSH destination. The first `@` separates them. -/
+structure Target where
+  name : String
+  host : Option String
+  deriving BEq, Repr
+
+/-- One target grammar for command arguments, listed targets and selector creation.
+The host is preserved verbatim, including a possible `user@host` suffix. -/
+def targetValid (target : String) : Bool :=
+  let parts := target.splitOn "@"
+  let name := parts.headD ""
+  !target.isEmpty && sanitize name == name && hostClean target &&
+    (parts.tail.isEmpty || !(String.intercalate "@" parts.tail).isEmpty)
+
+def parseTarget (target : String) : Option Target :=
+  if targetValid target then
+    let parts := target.splitOn "@"
+    some
+      { name := parts.headD ""
+        host := if parts.tail.isEmpty then none else some (String.intercalate "@" parts.tail) }
+  else none
+
+/-- One POSIX shell word. Quotes in the payload briefly close the single-quoted
+region, emit an escaped quote, and reopen it; all other characters remain literal. -/
+def shellQuote (s : String) : String :=
+  String.ofList
+    (['\''] ++ s.toList.flatMap (fun c => if c == '\'' then ['\'', '\\', '\'', '\''] else [c]) ++
+      ['\''])
+
+/-- SSH passes a command string to a shell, so quote every argument, including
+empty arguments and the session name. -/
+def command (verb name : String) (args : List String) : String :=
+  String.intercalate " " (("linger" :: verb :: name :: args).map shellQuote)
 
 end Linger.Core.Remote

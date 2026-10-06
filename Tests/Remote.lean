@@ -30,9 +30,20 @@ example : (parse "").isEmpty = true := by native_decide
 
 example : (parse "\n\n\n\t\t\n").isEmpty = true := by native_decide
 
-/-- §Name carries: a path-ish name comes back with no separators. -/
-example : ((parse "name\t../../etc/passwd\n").map (·.name) == ["_._.._etc_passwd"]) = true := by
+/-- Invalid names are refused, without inventing a different session identity. -/
+example : (parse "name\t../../etc/passwd\n").isEmpty = true := by native_decide
+
+example : parseTarget "work@me@dev-a" == some { name := "work", host := some "me@dev-a" } := by
   native_decide
+
+example : parseTarget "work" == some { name := "work", host := none } := by native_decide
+
+example :
+    ["", "work@", "two words", "foo/bar", ".hidden", "work@bad\x1bhost"].all
+      (fun s => (parseTarget s).isNone) := by
+  native_decide
+
+example : shellQuote "" == "''" ∧ shellQuote "a'b" == "'a'\\''b'" := by native_decide
 
 /-- Control bytes in display fields are scrubbed (no ANSI injection
 into the listing). -/
@@ -99,6 +110,15 @@ example :
       | .ok _ => false
       | .error _ => true) =
       true := by
+  native_decide
+
+/-- Configured hosts obey the same control-character rule as command targets. -/
+example :
+    (match checkHosts ["bad\u009bhost"] with
+        | .ok _ => false
+        | .error e => !e.contains '\u009b') =
+        true ∧
+      (parseTarget "work@bad\u009bhost").isNone = true := by
   native_decide
 
 example :

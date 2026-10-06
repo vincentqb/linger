@@ -9,8 +9,9 @@ public section
 
 /-! # Linger.Runtime.Cli — session argv dispatch
 
-Verb surface: attach is an upsert; one-shot verbs talk to a
-live daemon or say so. `Main` routes terminal selection and import before
+Verb surface: attach and run create if needed; history and capture also read
+offline checkpoints. Every session verb accepts an exact name or name@host.
+`Main` routes terminal selection and import before
 entering this session backend. Bare invocation reaches help; `ls` prints an
 overview and exits. `__daemon` is the internal re-exec target of the detached
 spawn.
@@ -34,7 +35,7 @@ def usage : String :=
        linger tmux <command> [SAVE]
 
   (no args)                 Show this help
-  select                    Create or attach to a session; return after detach
+  select                    Create or choose interactively; return after detach
                               (requires terminal input and output)
   ls [-r [hosts]]           List once; -r includes configured remote hosts
                               (or pass a comma-separated host list)
@@ -46,23 +47,30 @@ def usage : String :=
   tmux import [SAVE]        Start fresh shells in saved pane directories
   tmux export SAVE          Save local sessions in tmux-resurrect format
                               (requires a new destination file)
-  watch <name>              Input/resize-read-only attach (marks output seen)
-  run <name> <command...>    Run a command in a session without attaching
+  watch <name>              Watch a live session without input or resizing
+                              (marks output seen)
+  run <name> <command...>    Send a shell command, creating the session if needed
   send <name> <text...>      Send raw input to session pty ('linger send <name> -'
                               sends stdin verbatim: newlines, ^C, escapes...)
   detach <name>             Detach all clients from a session
   kill <name>               Kill session and all attached clients
   info <name>               Print one session's k<TAB>v records (size, cursor,
                               outseq, labels...); ls --porcelain lists all
-  capture <name>            Print the current screen as plain text (one line
-                              per row; marks the session seen)
+  capture <name>            Print the live or saved screen as plain text
+                              (one line per row; marks live output seen)
   resize <name> <cols> <rows> Set a detached session's size (refused while an
                               attached client owns it)
-  history <name>            Print session scrollback as plain text
+  history <name>            Print live or saved scrollback as plain text
   wait <name>...            Wait for sessions' programs to exit
-  get / set / unset / clear <name>   Session labels (k=v)
+  get <name>               Print session labels
+  set <name> <k=v>...       Set labels
+  unset <name> <key>...     Remove labels
+  clear <name>             Remove all labels
   version | help
 
+Session commands accept an exact name or name@host (also name@user@host).
+Names: 1–80 ASCII letters, digits, -_.+; no leading dot. Only select uses fuzzy search.
+History/capture prefer the live session; an offline read never starts a program.
 Saved tmux: ls/select/import default to the last save; pass SAVE for an older snapshot.
 Saved commands never run. Saved selection has no Create row.
 Native selection: type to filter or name a new session, arrows to move, Enter to choose.
@@ -86,20 +94,14 @@ def spawnDaemon (name cwd : String) (cmd : List String) : IO Unit := do
   spawnDetached self.toString (⟨["__daemon", name, cwd] ++ cmd⟩ : Array String) log
 
 /-- Connect, spawning the daemon first if needed (attach-is-upsert). -/
-def connectUpsert (hooks : Hooks) (name : String) (cmd : List String) : IO UInt32 := do
+def connectUpsert (name : String) (cmd : List String) : IO UInt32 := do
   match ← Client.connect name with
   | some fd =>
     return fd
   | none =>
-    -- no live daemon: resume from checkpoint if one exists (step 7)
-    let resumed ← hooks.load name
-    let cwd ←
-      match resumed with
-      | some (_, cwd, _) =>
-        pure cwd
-      | none =>
-        do
-          pure (← IO.Process.getCurrentDir).toString
+    -- Recovery, including its saved cwd, happens only after the daemon owns
+    -- both resources. A parent-side load would race another runtime namespace.
+    let cwd := (← IO.Process.getCurrentDir).toString
     spawnDaemon name cwd cmd
     let deadline := (← monotonicMs) + 3000
     let mut fdOpt : Option UInt32 := none
@@ -113,47 +115,71 @@ def connectUpsert (hooks : Hooks) (name : String) (cmd : List String) : IO UInt3
       let log ← Paths.logPath name
       throw (IO.userError s!"daemon for '{name}' did not come up (see {log})")
 
-def cmdAttach (hooks : Hooks) (name : String) (cmd : List String) : IO UInt32 := do
-  if !(← stdinIsTty) then
-    throw (IO.userError "attach needs a terminal (use `run`/`send` for scripting)")
-  -- `name@host` attaches through `ssh -t host linger attach name`.
-  -- Session names never contain `@` (Name.sanitize
-  -- reserves it — theorem sanitize_no_at), so any `@` here means remote.
-  -- The host is everything after the FIRST `@`, so it may itself be a
-  -- `user@host` ssh target. Lets the selector feed a listed row
-  -- (`name@host`) verbatim to `attach`, local or remote.
-  match name.splitOn "@" with
-  | sess :: rest@(_ :: _) =>
-    let host := String.intercalate "@" rest
-    if sess.isEmpty || host.isEmpty then
-      throw (IO.userError s!"malformed remote target '{name}' (expected name@host)")
-    -- SSH joins the remote command arguments for a shell. Use the same name
-    -- alphabet as local paths before crossing that boundary.
-    let sess := Linger.Core.Name.sanitize sess
-    -- Deliberately NO transport policy here (keepalives, timeouts):
-    -- `-o` on the command line would silently override the user's
-    -- ~/.ssh/config, and how fast a link is declared dead is the
-    -- transport's call, not the session manager's. linger's contribution
-    -- to flaky links is making death cheap — the session detaches and
-    -- restores — which composes with ANY transport policy (ssh config,
-    -- an autossh-style loop, mosh). See recipes/README "Remote sessions".
+def invalidTarget : IO UInt32 := do
+  IO.eprintln
+      "linger: invalid session name or malformed name@host target (use 1–80 ASCII letters, digits, -_.+; no leading dot)"
+  return 2
+
+/-- One transport boundary for all session verbs. SSH interprets a command string
+with a shell; `Remote.command` preserves the original argv, including empty words.
+Inherited stdin keeps `send name@host -` byte-exact. -/
+def runTarget (verb : String) (target : Linger.Core.Remote.Target) (args : List String)
+    (localAction : String → IO UInt32) : IO UInt32 := do
+  let interactive := verb == "attach" || verb == "watch"
+  if interactive && (!(← stdinIsTty) || !(← (← IO.getStdout).isTty)) then
+    throw (IO.userError s!"{verb} needs terminal input and output (use `run`/`send` for scripting)")
+  match target.host with
+  | none =>
+    localAction target.name
+  | some host =>
     let child ←
-      IO.Process.spawn { cmd := "ssh", args := #["-t", "--", host, "linger", "attach", sess] }
+      IO.Process.spawn
+          { cmd := "ssh",
+            args :=
+              #[if interactive then "-t" else "-T", "--", host,
+                Linger.Core.Remote.command verb target.name args],
+            stdin := .inherit }
     try
       child.wait
     finally
-      -- SSH restores termios; we own the title/mode handback even if the link
-      -- disappeared before the remote attach client could send its cleanup.
-      writeAll stdoutFd (ByteArray.mk Linger.Core.Render.leaveAnsi.toArray)
-  | _ =>
-    let fd ← connectUpsert hooks name cmd
-    match ← Client.attach name fd with
+      if interactive then
+        writeAll stdoutFd (ByteArray.mk Linger.Core.Render.leaveAnsi.toArray)
+
+def withTarget (verb target : String) (args : List String) (localAction : String → IO UInt32) :
+    IO UInt32 :=
+  match Linger.Core.Remote.parseTarget target with
+  | none => invalidTarget
+  | some parsed => runTarget verb parsed args localAction
+
+def cmdAttach (name : String) (cmd : List String) : IO UInt32 := do
+  let fd ← connectUpsert name cmd
+  match ← Client.attach name fd with
+  | .ended status =>
+    IO.eprintln s!"\r\nlinger: session '{name}' ended (status {status})"
+    return status &&& 0xFF
+  | .detached =>
+    IO.eprintln s!"\r\nlinger: detached from '{name}'"
+    return 0
+  | .refused msg =>
+    IO.eprintln s!"\r\nlinger: {msg}"
+    return 1
+  | .lost why =>
+    IO.eprintln s!"\r\nlinger: {why} for '{name}'"
+    return 1
+
+def cmdWatch (name : String) : IO UInt32 := do
+  match ← Client.connect name with
+  | none =>
+    IO.eprintln s!"linger: no session '{name}'"
+    return 1
+  | some fd =>
+    match ← Client.attach name fd true with
+    | .detached =>
+      IO.eprintln s!"\r\nlinger: stopped watching '{name}'"
+      return 0
     | .ended status =>
       IO.eprintln s!"\r\nlinger: session '{name}' ended (status {status})"
       return status &&& 0xFF
-    | .detached =>
-      IO.eprintln s!"\r\nlinger: detached from '{name}'"
-      return 0
     | .refused msg =>
       IO.eprintln s!"\r\nlinger: {msg}"
       return 1
@@ -322,14 +348,20 @@ def localRows (stopAt : Option Nat := none) : IO (List (List (String × String))
         rows := rows ++ [liveRow name []]
   for name in ckpts do
     if !confirmedLive.contains name then
-      -- through `rowFields` like the live rows, so the displayed name is the
-      -- sanitized one `attach` accepts and §Row (`rowFields_name`) covers it —
-      -- a checkpoint filename is not trusted to name its own row.
+      let available ←
+        try
+          Paths.withSessionLock name (pure true)
+        catch _ =>
+          pure false
+      -- Another runtime directory may share this checkpoint namespace.
+      -- A busy or unreadable lock cannot establish that the session is offline.
       rows :=
         rows ++
-          [Linger.Core.Listing.rowFields name
-              [("state", "resumable"),
-                ("status", Linger.Core.Status.name (Linger.Core.Listing.rowStatus .stale))]]
+          [if available then
+              Linger.Core.Listing.rowFields name
+                [("state", "resumable"),
+                  ("status", Linger.Core.Status.name (Linger.Core.Listing.rowStatus .stale))]
+            else liveRow name []]
   return rows
 
 def cmdStatus : IO UInt32 := do
@@ -429,6 +461,30 @@ def requireLiveBounded (name : String) (m : Msg) : IO UInt32 := do
       finally
         close fd
     requestStatus name r
+
+/-- A connected daemon is authoritative, including its errors. Only an absent
+connection followed by successful ownership acquisition permits an offline read.
+Hold both locks through loading and rendering; never start or modify a session. -/
+def cmdRead (hooks : Hooks) (name : String) (m : Msg) (render : Linger.Core.Vt.Vt → List UInt8) :
+    IO UInt32 := do
+  match ← Client.connect name with
+  | some fd =>
+    let result ←
+      try
+        Client.sendMsg fd m
+        Client.drainBounded fd
+      finally
+        close fd
+    requestStatus name result
+  | none =>
+    Paths.withSessionLock name do
+        match ← hooks.load name with
+        | some (vt, _, _) =>
+          writeAll stdoutFd (ByteArray.mk (render vt).toArray)
+          return 0
+        | none =>
+          IO.eprintln s!"linger: no live session or readable checkpoint for '{name}'"
+          return 1
 
 /-- `send <name> -`: stdin to the session's pty, byte-exact, one `.input`
 frame per read (≤ 64 KiB, so every frame is Wire-wf). The agent's raw input
@@ -542,59 +598,40 @@ def overview (args : List String) : IO UInt32 := do
 def main (hooks : Hooks) (args : List String) : IO UInt32 := do
   match args with
   | "__daemon" :: name :: cwd :: cmd =>
-    let restore := (← hooks.load name).map (fun (vt, _, labels) => (vt, labels))
-    Daemon.serve name cwd cmd (hooks.save name) (hooks.drop name) restore
+    Daemon.serve name cwd cmd (hooks.save name) (hooks.drop name) (hooks.load name)
     return 0
   | ["attach"] | ["a"] =>
-    cmdAttach hooks Linger.Core.Name.defaultName []
-  | ["attach", name] | ["a", name] =>
-    cmdAttach hooks name []
+    withTarget "attach" Linger.Core.Name.defaultName [] (cmdAttach · [])
   | "attach" :: name :: cmd | "a" :: name :: cmd =>
-    cmdAttach hooks name cmd
+    withTarget "attach" name cmd (cmdAttach · cmd)
   | ["watch", name] =>
-    -- read-only mirror: output only, detach key works
-    match ← Client.connect name with
-    | none =>
-      IO.eprintln s!"linger: no session '{name}'"
-      return 1
-    | some fd =>
-      match ← Client.attach name fd true with
-      | .detached =>
-        IO.eprintln s!"\r\nlinger: stopped watching '{name}'"
-        return 0
-      | .ended status =>
-        IO.eprintln s!"\r\nlinger: session '{name}' ended (status {status})"
-        return status &&& 0xFF
-      | .refused msg =>
-        IO.eprintln s!"\r\nlinger: {msg}"
-        return 1
-      | .lost why =>
-        IO.eprintln s!"\r\nlinger: {why} for '{name}'"
-        return 1
+    withTarget "watch" name [] cmdWatch
   | "run" :: name :: cmd | "r" :: name :: cmd =>
     if cmd.isEmpty then
       IO.eprintln "usage: linger run <name> <command...>"
       return 2
-    let fd ← connectUpsert hooks name []
-    Client.sendMsg fd (.input (String.intercalate " " cmd ++ "\n").toUTF8.toList)
-    close fd
-    return 0
+    withTarget "run" name cmd fun name => do
+        let fd ← connectUpsert name []
+        try
+          Client.sendMsg fd (.input (String.intercalate " " cmd ++ "\n").toUTF8.toList)
+          return 0
+        finally
+          close fd
   | "send" :: name :: text | "s" :: name :: text =>
     if text.isEmpty then
       IO.eprintln "usage: linger send <name> <text...>  (or: linger send <name> -)"
       return 2
-    if text == ["-"] then
-      cmdSendStdin name
-    else
-      requireLiveSend name (.input (String.intercalate " " text).toUTF8.toList)
+    withTarget "send" name text fun name =>
+        if text == ["-"] then cmdSendStdin name
+        else requireLiveSend name (.input (String.intercalate " " text).toUTF8.toList)
   | ["detach", name] | ["d", name] =>
-    requireLive name .detachAll
+    withTarget "detach" name [] (requireLive · .detachAll)
   | ["kill", name] | ["k", name] =>
-    requireLiveSend name .kill
+    withTarget "kill" name [] (requireLiveSend · .kill)
   | ["info", name] | ["i", name] =>
-    requireLiveBounded name .info
+    withTarget "info" name [] (requireLiveBounded · .info)
   | ["capture", name] | ["c", name] =>
-    requireLiveBounded name .screen
+    withTarget "capture" name [] (cmdRead hooks · .screen Linger.Core.Render.screenText)
   | ["resize", name, cs, rs] =>
     match cs.toNat?, rs.toNat? with
     | some cols, some rows =>
@@ -606,38 +643,45 @@ def main (hooks : Hooks) (args : List String) : IO UInt32 := do
           IO.eprintln "linger: size must be 1..1000 (the emulator clamps at 1000)"
           return 2
       else
-        requireLiveBounded name (.resize (UInt32.ofNat cols) (UInt32.ofNat rows))
+        withTarget "resize" name [cs, rs]
+            (requireLiveBounded · (.resize (UInt32.ofNat cols) (UInt32.ofNat rows)))
     | _, _ =>
       do
         IO.eprintln "usage: linger resize <name> <cols> <rows>"
         return 2
   | ["history", name] | ["hi", name] =>
-    requireLive name .history
+    withTarget "history" name [] (cmdRead hooks · .history Linger.Core.Render.history)
   | "wait" :: names | "w" :: names =>
     if names.isEmpty then
       IO.eprintln "usage: linger wait <name>..."
       return 2
-    cmdWait names
+    let some targets := names.mapM Linger.Core.Remote.parseTarget | invalidTarget
+    let mut rc : UInt32 := 0
+    for target in targets do
+      rc := max rc (← runTarget "wait" target [] (fun name => cmdWait [name]))
+    return rc
   | ["get", name] | ["g", name] =>
-    cmdGet name
+    withTarget "get" name [] cmdGet
   | "set" :: name :: kvs =>
-    if kvs.isEmpty then
+    if kvs.isEmpty || kvs.any (fun pair => !pair.contains '=' || pair.startsWith "=") then
       IO.eprintln "usage: linger set <name> k=v ..."
       return 2
-    let mut rc : UInt32 := 0
-    for kvp in kvs do
-      rc := max rc (← requireLive name (.labelSet kvp.toUTF8.toList))
-    return rc
+    withTarget "set" name kvs fun name => do
+        let mut rc : UInt32 := 0
+        for kvp in kvs do
+          rc := max rc (← requireLive name (.labelSet kvp.toUTF8.toList))
+        return rc
   | "unset" :: name :: ks | "un" :: name :: ks =>
-    if ks.isEmpty then
+    if ks.isEmpty || ks.any (·.isEmpty) then
       IO.eprintln "usage: linger unset <name> <key>..."
       return 2
-    let mut rc : UInt32 := 0
-    for k in ks do
-      rc := max rc (← requireLive name (.labelUnset k.toUTF8.toList))
-    return rc
+    withTarget "unset" name ks fun name => do
+        let mut rc : UInt32 := 0
+        for k in ks do
+          rc := max rc (← requireLive name (.labelUnset k.toUTF8.toList))
+        return rc
   | ["clear", name] | ["cl", name] =>
-    requireLive name .labelClear
+    withTarget "clear" name [] (requireLive · .labelClear)
   | ["status"] =>
     cmdStatus
   | ["version"] | ["v"] =>

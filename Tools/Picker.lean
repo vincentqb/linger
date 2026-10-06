@@ -4,6 +4,7 @@ public import Tools.Key
 public import Tools.Fuzzy
 public import Linger.Core.Name
 public import Linger.Core.Listing
+public import Linger.Core.Remote
 
 public section
 
@@ -25,11 +26,7 @@ private def printable (char : Char) : Bool :=
   char.toNat ≥ 32 && (char.toNat < 127 || char.toNat ≥ 160)
 
 /-- The local name must already be canonical; the host suffix remains exact. -/
-private def validTarget (target : String) : Bool :=
-  let parts := target.splitOn "@"
-  let name := parts.headD ""
-  !target.isEmpty && Linger.Core.Name.sanitize name == name && target.toList.all printable &&
-    (parts.tail.isEmpty || !(String.intercalate "@" parts.tail).isEmpty)
+private def validTarget (target : String) : Bool := Linger.Core.Remote.targetValid target
 
 private def parseRow (fields : List String) : Except String (Option String) :=
   if fields.head? != some "name" then .ok none

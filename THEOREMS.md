@@ -14,7 +14,7 @@ hypotheses. Runtime behavior is covered by IO suites and source gates.
 | Failure feedback | Effects execute in order; feedback precedes queued input and strictly decreases in depth. Failure feedback cannot request exit, and no events execute after exit. | [Driver](Theorems/Driver.lean): `effects_in_order`, `run_execution`, `feedback_strictly_decreases`, `handle_feedback_keeps_alive`, `run_exited` |
 | Terminal input | Arbitrary byte streams preserve cursor and parser bounds and renderable grid structure. | [State](Theorems/Vt/State.lean): `Good.feed`; [Renderable](Theorems/Vt/Renderable.lean): `renderable_feed` |
 | Transport | Arbitrary chunking of a well-formed encoded stream preserves messages and order. | [Wire](Theorems/Wire.lean): `decode_encode_chunked` |
-| Ownership | At most one daemon owns a session name, assuming exclusive kernel locking and the guarded claim protocol. | [Claim](Theorems/Claim.lean): `at_most_one_owner` |
+| Ownership | Every active daemon or offline reader holds both resource locks. Sharing either resource excludes simultaneous ownership across arbitrary acquisition, release and reuse. | [Claim](Theorems/Claim.lean): `reachable_protected`, `at_most_one_owner`, `claim_free` |
 | Buffers | Reachable input and output buffers stay within their retained-byte caps. | [Buf](Theorems/Buf.lean): `reachableIn_bound`, `reachableOut_bound` |
 | Screen restoration | Replay reconstructs the selected grid, tab ruler and retained scrollback in the terminal model under the stated receiver conditions. | [Grid](Theorems/Render/Grid.lean): `restore_grid_any`; [Tabs](Theorems/Render/Tabs.lean): `restore_tabs_any`; [Scrollback](Theorems/Render/Scrollback.lean): `restore_sb_any` |
 | Incremental replay | Each step preserves the complete repaint stream and respects its byte budget; positive budgets make progress and terminate. | [Replay](Theorems/Replay.lean): `start_faithful`, `next_faithful`, `next_bounded`, `next_progress`, `drain_start` |
@@ -26,9 +26,11 @@ hypotheses. Runtime behavior is covered by IO suites and source gates.
 | Area | Guarantee | Proofs |
 |---|---|---|
 | Entry point | Empty arguments show help; session commands retain their arguments. | [Entry](Theorems/Entry.lean): `route_bare_help`, `route_session_argv` |
+| Session targets | Validation preserves exact names and SSH destinations; distinct accepted names cannot alias through validation. | [Name](Theorems/Name.lean): `check_eq_some_iff`, `check_no_alias`; [Remote](Theorems/Remote.lean): `parseTarget_exact`, `parseTarget_name_valid` |
+| Remote commands | Quoting preserves every argument, including empty strings and shell metacharacters, in the literal POSIX shell model. | [Remote](Theorems/Remote.lean): `command_argv`, `shellQuote_roundtrip` |
 | Remote hosts | Validation accepts exactly clean, duplicate-free host lists and preserves their contents. | [Remote](Theorems/Remote.lean): `checkHosts_ok_iff` |
 | Selection | Attach choices come from the listing, creation choices are valid, and refresh preserves a still-available selection. | [Picker](Theorems/Picker.lean): `step_attach_mem`, `step_create_valid`, `refresh_selected` |
-| Fuzzy matching | Successful matches maximize the configured score; ties choose the earliest alignment. | [Fuzzy](Theorems/Fuzzy.lean): `alignWith_score_max`, `alignWith_earliest` |
+| Interactive fuzzy matching | Successful matches maximize the configured score; ties choose the earliest alignment. | [Fuzzy](Theorems/Fuzzy.lean): `alignWith_score_max`, `alignWith_earliest` |
 | Input | Bracketed paste emits text only, without control keys. | [Input](Theorems/Input.lean): `feed_paste_only_text`, `feed_paste_no_controls` |
 | Saved sessions | Parsing yields valid panes; sequential import is idempotent; generated saves round-trip names and directories. Listing and selection use the same catalog. | [Resurrect](Theorems/Resurrect.lean): `parseSave_valid`, `plan_sequential_idempotent`, `renderSave_roundtrip`, `catalogRows_common`, `selectedPane_exact` |
 
@@ -41,8 +43,11 @@ of disconnects or failed saves is needed. This covers finite event batches,
 not scheduling or filesystem durability.
 
 Source gates tie the IO adapter to the shared driver; [E2E](E2E/) exercises the
-executable. Ownership relies on local kernel locking. Buffer bounds count
-retained logical bytes, not allocator or operating-system memory. Allocation
+executable. Ownership assumes cooperating processes, stable lock inodes that are
+never unlinked or replaced, and a filesystem honoring exclusive locking. Both
+the socket namespace and checkpoint namespace stay locked from before recovery
+through final cleanup. A socket pathname alone does not establish this invariant.
+Buffer bounds count retained logical bytes, not allocator or operating-system memory. Allocation
 failure, OS termination and failures in the compiler, runtime or C shim remain
 outside these proofs.
 

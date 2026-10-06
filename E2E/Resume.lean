@@ -252,11 +252,12 @@ def run : IO UInt32 := do
   IO.FS.createDirAll readPath
   let (readRc, _, readErr) ← e.cli #["run", "read-fail", "echo", "must-not-start"]
   let readSockets ← e.dirNames ".sock"
+  let readLog ← daemonLog e "read-fail"
   f :=
     f +
       (←
         expect
-            (readRc == 1 && has readErr "checkpoint read failed" &&
+            (readRc == 1 && has readErr "see " && has readLog "checkpoint read failed" &&
               !readSockets.contains "read-fail.sock")
             "checkpoint read failure is visible and does not start fresh")
   e.killAll #["read-fail"]

@@ -23,8 +23,9 @@ linger attach work       # create or attach to a named session
 linger select            # create or choose a session interactively
 linger ls                # list sessions
 linger status            # show local attention counts
-linger watch work        # view a session without sending input
-linger history work      # print saved scrollback
+linger watch work        # watch a live session without sending input
+linger history work      # print live or saved scrollback
+linger capture work      # print the live or saved screen
 linger kill work         # end the session and its program
 linger help              # all commands and options
 ```
@@ -33,7 +34,11 @@ Press **Ctrl-\\** to detach. In `linger select`, type to filter, use the arrow
 keys to move, and press Enter to choose the highlighted session or **Create**
 row. Esc or Ctrl-C exits the selector; detaching returns to it.
 
-For a remote session, use `linger attach work@host`. The host needs `linger`
+Only interactive selection uses fuzzy matching. Commands take exact names:
+1–80 ASCII letters, digits, `-_.+`, with no leading dot. Invalid names are rejected.
+
+Every session command also accepts `name@host` or `name@user@host`, for example
+`linger attach work@host` and `linger history work@host`. The host needs `linger`
 on PATH. Add hosts to `~/.config/linger/remotes` to include them in the selector
 and `linger ls -r`.
 
@@ -73,10 +78,15 @@ Images are not saved. After reattaching, use the application's redraw command
 Checkpoints restore the screen, scrollback, terminal modes, labels and working
 directory after a reboot. Running processes are not restored.
 
+`history` prints scrollback; `capture` prints the visible screen. Both use the
+live session when available, or its offline checkpoint without starting a program.
+A checkpoint still owned by a daemon in another runtime directory cannot be read offline.
+
 Attaching a session with history **replaces that terminal window's existing
 scrollback**. Use `linger history work` to export session history separately.
 
-- `LINGER_DIR` sets the socket and state directory; use local storage.
+- `LINGER_DIR` sets both socket and state directories; use local storage.
+  Separate directories allow independent sessions with the same name.
 - `LINGER_NO_DETACH_KEY=1` disables the Ctrl-\\ shortcut.
 - `LINGER_SESSION` identifies the session inside its program.
 

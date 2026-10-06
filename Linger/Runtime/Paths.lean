@@ -15,8 +15,8 @@ Resolution order:
 Empty XDG and HOME values fall through to the next fallback. `LINGER_DIR`
 is an explicit override even when empty.
 
-Every name passes `Name.sanitize` before touching a path (AGENTS.md
-rule; §Name is the theorem that makes it sufficient).
+Every name must already equal `Name.sanitize` before touching a path.
+Invalid input is rejected, never converted into another session's name.
 -/
 
 namespace Linger.Runtime.Paths
@@ -54,28 +54,66 @@ def ensureDir (d : String) : IO Unit := do
   IO.FS.createDirAll d
   Linger.Posix.chmod d 0o700
 
+def checkName (name : String) : IO String := do
+  match Linger.Core.Name.check name with
+  | some name =>
+    return name
+  | none =>
+    throw (IO.userError "invalid session name (use 1–80 letters, digits, -_.+; no leading dot)")
+
+/-- On a case-insensitive filesystem, a different spelling must not open an
+existing session. Check again after creating/locking or connecting to a path. -/
+def checkSpelling (path : String) : IO Unit := do
+  let p := System.FilePath.mk path
+  if ← p.pathExists then
+    let entries ← p.parent.getD "." |>.readDir
+    unless entries.any (fun entry => some entry.fileName == p.fileName) do
+      throw (IO.userError "session name differs from an existing filename's spelling")
+
+def namedPath (dir name suffix : String) : IO String := do
+  let name ← checkName name
+  ensureDir dir
+  let path := s!"{dir}/{name}{suffix}"
+  checkSpelling path
+  return path
+
 def socketPath (name : String) : IO String := do
-  let d ← socketDir
-  ensureDir d
-  return s!"{d}/{sanitize name}.sock"
+  namedPath (← socketDir) name ".sock"
 
 def ckptPath (name : String) : IO String := do
-  let d ← stateDir
-  ensureDir d
-  return s!"{d}/{sanitize name}.ckpt"
+  namedPath (← stateDir) name ".ckpt"
 
 /-- Name-ownership lock (see `Linger.Posix.flock`). Lives beside the
 socket: same directory lifetime, same 0700 permissions. Never
 unlinked — a lock file that gets unlinked stops being a lock. -/
 def lockPath (name : String) : IO String := do
-  let d ← socketDir
-  ensureDir d
-  return s!"{d}/{sanitize name}.lock"
+  namedPath (← socketDir) name ".lock"
+
+/-- Persistent checkpoint ownership, independent of the runtime directory.
+Keep these lock inodes across daemon exits and reboots; never unlink them. -/
+def stateLockPath (name : String) : IO String := do
+  namedPath ((← stateDir) ++ "/.locks") name ".lock"
 
 def logPath (name : String) : IO String := do
-  let d := (← stateDir) ++ "/logs"
-  ensureDir d
-  return s!"{d}/{sanitize name}.log"
+  namedPath ((← stateDir) ++ "/logs") name ".log"
+
+/-- Failed acquisition does not run the action. Always release after the action,
+including startup/read exceptions; recheck spelling after the atomic acquisition. -/
+def withLock {α : Type} (path : String) (action : IO α) : IO α := do
+  let fd ← Linger.Posix.flock path
+  if fd < 0 then
+    throw (IO.userError s!"session is owned by another process ({path})")
+  try
+    checkSpelling path
+    action
+  finally
+    Linger.Posix.close fd.toUInt64.toUInt32
+
+/-- All daemon lifetimes and offline reads take both locks in the same order.
+Either shared socket storage or shared checkpoint storage excludes another owner. -/
+def withSessionLock {α : Type} (name : String) (action : IO α) : IO α := do
+  withLock (← lockPath name) do
+      withLock (← stateLockPath name) action
 
 /-- Session names present as sockets, live or stale. -/
 def listSocketNames : IO (List String) := do
@@ -85,7 +123,7 @@ def listSocketNames : IO (List String) := do
   return entries.toList.filterMap
       (fun e =>
         let n := e.fileName
-        if n.endsWith ".sock" then some ((n.dropEnd 5).toString) else none)
+        if n.endsWith ".sock" then Linger.Core.Name.check ((n.dropEnd 5).toString) else none)
 
 /-- Checkpoint names (resumable sessions after a reboot). -/
 def listCkptNames : IO (List String) := do
@@ -95,6 +133,6 @@ def listCkptNames : IO (List String) := do
   return entries.toList.filterMap
       (fun e =>
         let n := e.fileName
-        if n.endsWith ".ckpt" then some ((n.dropEnd 5).toString) else none)
+        if n.endsWith ".ckpt" then Linger.Core.Name.check ((n.dropEnd 5).toString) else none)
 
 end Linger.Runtime.Paths

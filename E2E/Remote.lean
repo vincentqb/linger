@@ -2,105 +2,41 @@ module
 
 public import E2E.Harness
 public import Linger.Core.Remote
-public import Linger.Core.Name
 public import Linger.Runtime.Cli
 
 public section
 
-/-! # E2E.Remote — remote sessions over ssh, against a FAKE `ssh` on PATH
-
-Ported from `tests/remote_test.py`. `linger -r <hosts>` folds each host's sessions
-into the local overview (by running `ssh <host> linger ls --porcelain`), tolerates
-an unreachable host, and refuses a duplicate host. `linger attach name@host` runs
-`ssh -t -- <host> linger attach <name>` and hands the terminal back when SSH ends.
-Hostile remote output must not inject a path or escape bytes into the local listing.
-
-WHY A FAKE `ssh`, AND HOW. The suite is hermetic — no network, no second machine,
-no keys. A short `/bin/sh` script named `ssh` goes FIRST on `PATH`, logs its argv,
-answers `ls`/`attach` for a reachable host and exits 255 for a dead one. That turns
-the argv linger hands to ssh, which is what this suite is really about, into an
-artefact on disk. Three parts of the delivery are all load-bearing: the
-option-stripping loop, so the script finds the destination whether it was called
-with `-t --` (`cmdAttach`) or with four `-o` pairs (`listRemote`); the exec bit, or
-`PATH` lookup never finds it; and fakebin being first, or a real `ssh` wins.
-`Posix.chmod` already existed (`Paths.ensureDir` uses it), so this costs no
-syscall — `SHIM_CAP` does not move.
-
-WHAT THE PORT TIGHTENED:
-
-* the duplicate-host rejection is asked of `Remote.checkHosts` itself instead of
-  substring-matched as `'more than once'` AND `'dev-a'` — one derived string
-  covers both of the Python's conjuncts, and moving the wording now fails the
-  check instead of passing it;
-* the hostile name's expected form is `Name.sanitize hostileName`, not the literal
-  `_._.._etc_passwd` the Python spelled out beside it;
-* `remote-work@dev-a` is additionally read out of `ls --porcelain` through
-  `records` as a `name` RECORD, not as a substring loose in the human listing. The
-  porcelain is what a peer's own `-r` parses, so that is where the `@host` tag has
-  to be well formed; the same reader now also proves no row's name ends `@dead`;
-* the ssh argv check STRIPS the option prefix off the logged line and compares the
-  tail to a list. That is what the Python's
-  `-t (-o \S+ )*(--\s+)?dev-a linger attach remote-work` regex approximated —
-  except the tail comparison pins the whole remote command, where the regex pinned
-  a prefix of it and would have passed on `… linger attach remote-work-2`.
-
-TWO THINGS DELIBERATELY DROPPED. The Python's `plain()` stripped CSI sequences so
-that `in` would work on decoded text; `hasBytes`/`hasText` read the pty's raw
-bytes, so there is nothing to strip. And its `timeout=15` on the `-r` call is gone:
-the only ssh here is the fake, which never blocks, and a real host that hangs is
-bounded by `listRemote`'s own `-o ConnectTimeout=3` rather than by this suite. -/
+/-! Remote listing and command transport. A fake SSH executes the real POSIX
+shell boundary; a fake remote linger records the resulting arguments. -/
 
 namespace E2E.Remote
 
 open E2E.Harness
 open Linger.Posix (chmod)
 
-/-! ## The fixture -/
-
 def devHost : String := "dev-a"
 
-/-- The fake `ssh` exits 255 for this one: a host that is down. -/
 def deadHost : String := "dead"
 
-/-- A `user@host` ssh target, so the `attach` split has more than one `@` to get
-wrong. -/
 def userHost : String := s!"me@{devHost}"
 
 def goodName : String := "remote-work"
 
-/-- The hostile record's name: a path, with a leading dot. `Name.sanitize` is what
-defuses it, and the check below asks *it* what to expect. -/
 def hostileName : String := "../../etc/passwd"
 
 def attachMark : String := "FAKE-ATTACH-OK"
 
-/-- The rejection `Remote.checkHosts` itself produces for a repeated host.
-
-Derived rather than substring-matched: the Python asserted `'more than once'` and
-`'dev-a'` as two conjuncts, and this one string is both — while also failing if the
-wording moves. The `.ok` branch is a sentence stderr cannot contain, deliberately:
-a validator that started ACCEPTING duplicates must FAIL this check, and an empty
-needle would make `has` trivially true instead. -/
 def dupMsg : String :=
   match Linger.Core.Remote.checkHosts [devHost, devHost] with
   | .error m => m
   | .ok _ => "checkHosts accepted a duplicate host"
 
-/-- The fake `ssh`.
-
-The ANSI injection is written `\033` for printf to decode rather than as the raw
-ESC byte the Python's f-string left in the file — same byte on the wire (the
-`E2E.Graphics` `printf '\033…'` precedent), and it keeps a control character out of
-Lean source. The two record names come from the constants above, so the sanitize
-expectation and the fixture cannot drift apart. The third `printf` is a line with
-no tabs: `Remote.parseRecord` must drop the record, not the listing. -/
 def fakeSsh (log : String) : String :=
-  "#!/bin/sh\n" ++ s!"echo \"$@\" >> {log}\n" ++
-    "# strip ssh options to find the destination and remote command\n" ++
+  "#!/bin/sh\n" ++ s!"printf '%s\\000' \"$@\" > {Linger.Core.Remote.shellQuote log}\n" ++
     "while [ $# -gt 0 ]; do\n" ++
     "  case \"$1\" in\n" ++
     "    -o) shift 2 ;;\n" ++
-    "    -t) shift ;;\n" ++
+    "    -t|-T) shift ;;\n" ++
     "    --) shift; break ;;\n" ++
     "    *) break ;;\n" ++
     "  esac\n" ++
@@ -110,193 +46,237 @@ def fakeSsh (log : String) : String :=
     "  printf '\\033]2;remote-lost\\007\\033]2;partial'\n" ++
     "  exit 255\n" ++
     "fi\n" ++
-    "case \"$2\" in\n" ++
+    "exec /bin/sh -c \"$*\"\n"
+
+def fakeLinger : String :=
+  "#!/bin/sh\n" ++ "printf '%s\\000' \"$@\" > \"$LINGER_REMOTE_ARGS\"\n" ++ "case \"$1\" in\n" ++
     "  ls)\n" ++
     s!"    printf 'name\\t{goodName}\\nstate\\tlive\\nclients\\t1\\ncmd\\tvim\\033[31mINJECT\\nlabel.env\\tprod\\n\\n'\n" ++
     s!"    printf 'name\\t{hostileName}\\nstate\\tresumable\\n\\n'\n" ++
     "    printf 'garbage line with no tabs\\n\\n'\n" ++
     "    ;;\n" ++
-    "  attach) /bin/sh -c \"$*\" ;;\n" ++
+    s!"  attach|watch) printf '\\033]2;remote-editor\\007{attachMark}\\n' ;;\n" ++
+    "  send) if [ \"$3\" = - ]; then cat > \"$LINGER_REMOTE_STDIN\"; fi ;;\n" ++
     "esac\n" ++
     "exit 0\n"
 
-/-- SSH joins its remote argv into shell input. This stub records the arguments
-that survive that shell, so logging SSH's own argv cannot hide an injection. -/
-def fakeLinger : String :=
-  "#!/bin/sh\n" ++ "printf '%s\\n' \"$@\" > \"$LINGER_REMOTE_ARGS\"\n" ++
-    s!"printf '\\033]2;remote-editor\\007{attachMark}\\n'\n"
-
-/-- Drop `-o value` pairs and the end-of-options `--`: the `(-o \S+ )*(--\s+)?`
-half of the Python's regex. `--` terminates the strip, because that is what it
-means. -/
-def stripOpts : List String → List String
-  | "-o" :: _ :: rest => stripOpts rest
-  | "--" :: rest => rest
-  | rest => rest
-
-/-- One logged argv, minus its option prefix. `none` unless the line asked for a
-tty, which is the `-t` anchor the regex opened with — `cmdAttach` must request one
-or the remote `linger attach` gets no terminal and refuses. -/
-def sshTail (line : String) : Option (List String) :=
-  match (line.splitOn " ").filter (fun t => !t.isEmpty) with
-  | "-t" :: rest => some (stripOpts rest)
-  | _ => none
-
-/-- Every tty-requesting argv the fake logged. A missing log reads as `[]`, so a
-failure is a FAIL line rather than an exception that costs the `FAILURES:`
-verdict. -/
-def sshTails (log : String) : IO (List (List String)) := do
-  if (← System.FilePath.pathExists (System.FilePath.mk log)) then
-    let txt ← IO.FS.readFile (System.FilePath.mk log)
-    return (txt.splitOn "\n").filterMap sshTail
-  else
-    return []
+/-- NUL framing preserves empty arguments, embedded spaces and newlines. -/
+def readArgs (path : System.FilePath) : IO (List String) := do
+  if ← path.pathExists then
+    let text ← IO.FS.readFile path
+    return if text.isEmpty then [] else (text.splitOn "\x00").dropLast
+  return []
 
 def run : IO UInt32 := do
   let e ← Env.make "remote"
   let mut f := 0
-  -- ── the fake ssh: written, made executable, put first on PATH ──────────────
   let fakebin := (System.FilePath.mk e.dir) / "fakebin"
   IO.FS.createDirAll fakebin
-  let log := ((System.FilePath.mk e.dir) / "ssh.log").toString
+  let log := (System.FilePath.mk e.dir) / "ssh.log"
   let remoteArgs := (System.FilePath.mk e.dir) / "remote-args"
+  let remoteStdin := (System.FilePath.mk e.dir) / "remote-stdin"
+  let injected := (System.FilePath.mk e.dir) / "injected"
   let sshPath := fakebin / "ssh"
-  IO.FS.writeFile sshPath (fakeSsh log)
+  IO.FS.writeFile sshPath (fakeSsh log.toString)
   chmod sshPath.toString 0o755
   let lingerPath := fakebin / "linger"
   IO.FS.writeFile lingerPath fakeLinger
   chmod lingerPath.toString 0o755
-  -- `:` is `os.pathsep`; fakebin FIRST so it shadows any real ssh. Both spellings
-  -- are needed: the `-r` path spawns ssh from inside `linger`, inheriting the
-  -- one-shot verb's environment, and the attach path starts ssh from the pty
-  -- child, whose environment the subprocess inherits.
   let path0 := (← IO.getEnv "PATH").getD "/usr/bin:/bin"
   let newPath := s!"{fakebin.toString}:{path0}"
-  let procPath : Array (String × Option String) := #[("PATH", some newPath)]
-  let ptyPath : Array String := #[s!"PATH={newPath}", s!"LINGER_REMOTE_ARGS={remoteArgs}"]
+  let procPath : Array (String × Option String) :=
+    #[("PATH", some newPath), ("LINGER_REMOTE_ARGS", some remoteArgs.toString),
+      ("LINGER_REMOTE_STDIN", some remoteStdin.toString)]
+  let ptyPath : Array String :=
+    #[s!"PATH={newPath}", s!"LINGER_REMOTE_ARGS={remoteArgs}",
+      s!"LINGER_REMOTE_STDIN={remoteStdin}"]
   let _ ← e.cliEnv procPath #["run", "localsess", "echo local-content"]
-  IO.sleep 1000
-  -- 1. a duplicate host is a hard error, reported before anything runs (no tty
-  -- needed — argv validation precedes the connection attempts)
-  let (drc, _, derr) ← e.cliEnv procPath #["-r", s!"{devHost},{devHost}"]
-  f := f + (← expect (drc != 0 && has derr dupMsg) "duplicate -r host errors loudly")
-  -- 2-7. the overview folds in the remote host's sessions (plain stdout, no tty:
-  -- `IO.Process.output` hands the child a null stdin, the Python's DEVNULL)
-  let (rrc, out, _) ← e.cliEnv procPath #["-r", s!"{devHost},{deadHost}"]
-  let (_, pout, _) ← e.cliEnv procPath #["ls", "--porcelain", "-r", s!"{devHost},{deadHost}"]
-  let recs := records pout
+  IO.sleep 500
   let tag := s!"{goodName}@{devHost}"
-  f := f + (← expect (rrc == 0) "`linger -r` exits cleanly")
-  f := f + (← expect (has out "localsess") "local session listed alongside remotes")
-  -- as a porcelain RECORD as well as in the human listing: the porcelain is what
-  -- a peer's own `-r` reads back, so that is where the tag must be well formed
-  f :=
-    f +
-      (← expect (has out tag && recs.contains ("name", tag)) "remote session listed with @host tag")
-  -- the expected spelling comes from the sanitizer, not from a copy of its output
-  f :=
-    f +
-      (←
-        expect (has out (Linger.Core.Name.sanitize hostileName) && !has out "/etc/passwd")
-            "hostile remote name is sanitized (no slashes, no leading dot)")
-  f := f + (← expect (!has out "\x1b") "remote escape sequences are scrubbed from the listing")
-  f :=
-    f +
-      (←
-        expect
-            (!has out s!"@{deadHost}" &&
-              !recs.any (fun kv => kv.1 == "name" && kv.2.endsWith s!"@{deadHost}"))
-            "unreachable host contributes no rows")
-  -- 8+9. `attach name@host` starts `ssh -t -- host linger attach name`. Needs a
-  -- tty, so this one is a pty spawn and not `cliEnv`.
-  let c1 ← e.spawnEnv ptyPath #["attach", tag] 100 24
-  let attached ← drain c1.fd 2000
-  let tails ← sshTails log
-  f := f + (← expect (hasText attached attachMark) "attach name@host reaches the remote attach")
-  f :=
-    f +
-      (←
-        expect (tails.contains [devHost, "linger", "attach", goodName])
-            s!"remote attach ssh argv correct ({tails.filter (·.contains "attach")})")
-  f :=
-    f +
-      (←
-        expect
-            ((← c1.reap 1500) == 0 && hasText attached "remote-editor" &&
-              hasBytes attached Linger.Core.Render.leaveAnsi &&
-              ((Linger.Core.Vt.Vt.init 100 24).feed attached.toList).windowTitle.isEmpty)
-            "normal SSH handback clears the application title")
-  c1.bye (sendDetach := false)
-  -- 10. a `user@host` remote (multi-@) round-trips: the host is everything after
-  -- the FIRST @, so `attach work@me@dev-a` starts ssh to `me@dev-a` and attaches
-  -- `work` (session names never contain @ — sanitize reserves it, and
-  -- `sanitize_no_at` is why that is safe to rely on)
-  let c2 ← e.spawnEnv ptyPath #["attach", s!"{goodName}@{userHost}"] 100 24
-  let _ ← drain c2.fd 2000
-  let tails2 ← sshTails log
-  f :=
-    f +
-      (←
-        expect (tails2.contains [userHost, "linger", "attach", goodName])
-            s!"user@host remote round-trips via first-@ split ({tails2.filter (·.contains userHost)})")
-  c2.bye (sendDetach := false)
-  let lost ← e.spawnEnv ptyPath #["attach", s!"{goodName}@{deadHost}"] 100 24
-  let lostBytes ← drain lost.fd 2000
-  f := f + (← expect ((← lost.reap 1500) == 255) "lost SSH connection preserves its exit status")
-  f :=
-    f +
-      (←
-        expect
-            (hasText lostBytes "remote-lost" && hasBytes lostBytes Linger.Core.Render.leaveAnsi &&
-              ((Linger.Core.Vt.Vt.init 100 24).feed lostBytes.toList).windowTitle.isEmpty)
-            "lost SSH connection clears the title through a partial OSC")
-  lost.bye (sendDetach := false)
-  -- 11. a malformed target (empty host) is a loud error, not a silent local
-  -- session. `Main` prints a caught `IO.userError` to stderr, which on a pty is
-  -- the same terminal, so the message arrives in the drained bytes.
-  let c3 ← e.spawnEnv ptyPath #["attach", "work@"] 100 24
-  let bad ← drain c3.fd 1500
-  f :=
-    f +
-      (←
-        expect (hasText bad "malformed")
-            "trailing @ errors loudly instead of creating a local session")
-  c3.bye (sendDetach := false)
-  for (kind, name) in
-    [("path", hostileName), ("separator", "work;printf REMOTE-INJECTED"),
-      ("substitution", "work$(printf REMOTE-INJECTED)"), ("quotes", "work 'two words'"),
-      ("newline", "work\nprintf REMOTE-INJECTED")] do
-    IO.FS.writeFile remoteArgs ""
-    let c ← e.spawnEnv ptyPath #["attach", s!"{name}@{devHost}"] 100 24
-    let reply ← drain c.fd 2000
-    let argv := lines (← IO.FS.readFile remoteArgs)
+  try
+    let (drc, _, derr) ← e.cliEnv procPath #["-r", s!"{devHost},{devHost}"]
+    f := f + (← expect (drc != 0 && has derr dupMsg) "duplicate remote host errors loudly")
+    let (rrc, out, _) ← e.cliEnv procPath #["-r", s!"{devHost},{deadHost}"]
+    let (_, pout, _) ← e.cliEnv procPath #["ls", "--porcelain", "-r", s!"{devHost},{deadHost}"]
+    let recs := records pout
+    f := f + (← expect (rrc == 0) "remote listing exits cleanly")
+    f := f + (← expect (has out "localsess") "local session listed alongside remotes")
+    f :=
+      f +
+        (←
+          expect (has out tag && recs.contains ("name", tag))
+              "remote session listed with its exact target")
     f :=
       f +
         (←
           expect
-              (argv == ["attach", Linger.Core.Name.sanitize name] && hasText reply attachMark &&
-                !hasText reply "REMOTE-INJECTED")
-              s!"remote attach sanitizes {kind} before shell interpretation")
-    c.bye (sendDetach := false)
-  f :=
-    f +
-      (←
-        expect
-            ([["--porcelain", "-r", s!"{devHost},{deadHost}"],
-                  ["-r", s!"{devHost},{deadHost}", "--porcelain"],
-                  ["--remote", s!"{devHost},{deadHost}", "--porcelain"]].all
-              (fun args =>
-                Linger.Runtime.Cli.parseLs args == some (true, some [devHost, deadHost])))
-            "ls parses explicit hosts in either option order")
-  f :=
-    f +
-      (←
-        expect
-            (Linger.Runtime.Cli.parseLs ["-r", "--porcelain"] == some (true, some []) &&
-              Linger.Runtime.Cli.parseLs ["--porcelain", "--remote"] == some (true, some []) &&
-              Linger.Runtime.Cli.parseLs ["-r", "--typo"] == none)
-            "ls preserves an option after -r and rejects an unknown option")
-  e.killAll #["localsess"]
+              (!has out "/etc/passwd" &&
+                recs.filter (·.1 == "name") == [("name", "localsess"), ("name", tag)])
+              "invalid remote names are dropped without manufacturing another target")
+    f := f + (← expect (!has out "\x1b") "remote display escape sequences are scrubbed")
+    f :=
+      f +
+        (←
+          expect
+              (!has out s!"@{deadHost}" &&
+                !recs.any (fun kv => kv.1 == "name" && kv.2.endsWith s!"@{deadHost}"))
+              "unreachable host contributes no rows")
+    let c1 ← e.spawnEnv ptyPath #["attach", tag] 100 24
+    let attached ← drain c1.fd 2000
+    f := f + (← expect (hasText attached attachMark) "remote attach reaches linger")
+    f :=
+      f +
+        (←
+          expect
+              ((← readArgs log) ==
+                  ["-t", "--", devHost, Linger.Core.Remote.command "attach" goodName []] &&
+                (← readArgs remoteArgs) == ["attach", goodName])
+              "remote attach uses a PTY and preserves the target")
+    f :=
+      f +
+        (←
+          expect
+              ((← c1.reap 1500) == 0 && hasText attached "remote-editor" &&
+                hasBytes attached Linger.Core.Render.leaveAnsi &&
+                ((Linger.Core.Vt.Vt.init 100 24).feed attached.toList).windowTitle.isEmpty)
+              "normal SSH handback clears the application title")
+    c1.bye (sendDetach := false)
+    let c2 ← e.spawnEnv ptyPath #["attach", s!"{goodName}@{userHost}"] 100 24
+    let _ ← drain c2.fd 2000
+    f :=
+      f +
+        (←
+          expect
+              ((← readArgs log) ==
+                ["-t", "--", userHost, Linger.Core.Remote.command "attach" goodName []])
+              "user@host round-trips through the first-at split")
+    c2.bye (sendDetach := false)
+    let lost ← e.spawnEnv ptyPath #["attach", s!"{goodName}@{deadHost}"] 100 24
+    let lostBytes ← drain lost.fd 2000
+    f := f + (← expect ((← lost.reap 1500) == 255) "lost SSH preserves its exit status")
+    f :=
+      f +
+        (←
+          expect
+              (hasText lostBytes "remote-lost" && hasBytes lostBytes Linger.Core.Render.leaveAnsi &&
+                ((Linger.Core.Vt.Vt.init 100 24).feed lostBytes.toList).windowTitle.isEmpty)
+              "lost SSH clears the title through a partial OSC")
+    lost.bye (sendDetach := false)
+    for name in
+      ["work@", hostileName ++ "@" ++ devHost, "work;printf REMOTE-INJECTED@" ++ devHost,
+        "work$(printf REMOTE-INJECTED)@" ++ devHost, "work 'two words'@" ++ devHost,
+        "work\nprintf REMOTE-INJECTED@" ++ devHost] do
+      IO.FS.writeFile log ""
+      let c ← e.spawnEnv ptyPath #["attach", name] 100 24
+      let reply ← drain c.fd 1500
+      f :=
+        f +
+          (←
+            expect
+                ((← c.reap 1500) == 2 && (← readArgs log).isEmpty &&
+                  hasText reply "invalid session name")
+                s!"invalid remote target is rejected before SSH: {repr name}")
+      c.bye (sendDetach := false)
+    let words :=
+      ["/bin/sh", "-c", "printf '%s' \"$1\"", "two words", "", s!"$(touch {injected})",
+        "`printf REMOTE-INJECTED`", "line\nbreak", "a'b\"c\\d"]
+    let commandClient ← e.spawnEnv ptyPath (["attach", tag] ++ words).toArray 100 24
+    let _ ← drain commandClient.fd 2000
+    f :=
+      f +
+        (←
+          expect
+              ((← commandClient.reap 1500) == 0 &&
+                (← readArgs remoteArgs) == ["attach", goodName] ++ words &&
+                !(← injected.pathExists))
+              "remote attach preserves every command argument through the shell")
+    commandClient.bye (sendDetach := false)
+    let watcher ← e.spawnEnv ptyPath #["watch", tag] 100 24
+    let watched ← drain watcher.fd 2000
+    f :=
+      f +
+        (←
+          expect
+              ((← watcher.reap 1500) == 0 && (← readArgs remoteArgs) == ["watch", goodName] &&
+                (← readArgs log).head? == some "-t" &&
+                hasBytes watched Linger.Core.Render.leaveAnsi)
+              "remote watch retains read-only semantics and terminal handback")
+    watcher.bye (sendDetach := false)
+    for (verb, canonical, args) in
+      [("run", "run", words), ("r", "run", ["echo", "yes"]), ("send", "send", words),
+        ("s", "send", ["two words"]), ("detach", "detach", []), ("kill", "kill", []),
+        ("info", "info", []), ("capture", "capture", []), ("c", "capture", []),
+        ("history", "history", []), ("hi", "history", []), ("resize", "resize", ["120", "40"]),
+        ("wait", "wait", []), ("get", "get", []),
+        ("set", "set", ["x=two words", "y='$(printf X)'", "empty="]),
+        ("unset", "unset", ["x", "y"]), ("clear", "clear", [])] do
+      let (rc, _, _) ← e.cliEnv procPath ([verb, tag] ++ args).toArray
+      f :=
+        f +
+          (←
+            expect
+                (rc == 0 && (← readArgs remoteArgs) == [canonical, goodName] ++ args &&
+                  (← readArgs log).head? == some "-T" &&
+                  !(← injected.pathExists))
+                s!"remote {verb} uses the common non-PTY transport with exact arguments")
+    let payload := ByteArray.mk #[0, 3, 10, 27, 127, 195, 169, 255]
+    let sender0 ←
+      IO.Process.spawn
+          { cmd := e.bin, args := #["send", tag, "-"], env := e.procEnv ++ procPath,
+            stdin := .piped, stdout := .null, stderr := .inherit }
+    let sender ←
+      do
+        let (input, child) ← sender0.takeStdin
+        input.write payload
+        input.flush
+        pure child
+    let senderRc ← waitProcess sender 3000
+    if senderRc.isNone then
+      sender.kill
+      discard sender.wait
+    f :=
+      f +
+        (←
+          expect (senderRc == some 0 && (← IO.FS.readBinFile remoteStdin).toList == payload.toList)
+              "remote send stdin is byte-exact, including NUL and invalid UTF-8")
+    for args in
+      [#["resize", tag, "0", "40"], #["set", tag, "x=ok", "=bad"], #["unset", tag, ""],
+        #["wait", tag, "bad name"], #["run", tag], #["send", tag]] do
+      IO.FS.writeFile log ""
+      let (rc, _, _) ← e.cliEnv procPath args
+      f :=
+        f +
+          (←
+            expect (rc == 2 && (← readArgs log).isEmpty)
+                s!"invalid arguments have no remote effects: {repr args}")
+    for verb in ["attach", "watch"] do
+      IO.FS.writeFile log ""
+      let (rc, _, _) ← e.cliEnv procPath #[verb, tag]
+      f :=
+        f +
+          (←
+            expect (rc != 0 && (← readArgs log).isEmpty)
+                s!"remote {verb} requires terminal input and output")
+    f :=
+      f +
+        (←
+          expect
+              ([["--porcelain", "-r", s!"{devHost},{deadHost}"],
+                    ["-r", s!"{devHost},{deadHost}", "--porcelain"],
+                    ["--remote", s!"{devHost},{deadHost}", "--porcelain"]].all
+                (fun args =>
+                  Linger.Runtime.Cli.parseLs args == some (true, some [devHost, deadHost])))
+              "ls accepts explicit hosts in either option order")
+    f :=
+      f +
+        (←
+          expect
+              (Linger.Runtime.Cli.parseLs ["-r", "--porcelain"] == some (true, some []) &&
+                Linger.Runtime.Cli.parseLs ["--porcelain", "--remote"] == some (true, some []) &&
+                Linger.Runtime.Cli.parseLs ["-r", "--typo"] == none)
+              "ls preserves options after -r and rejects unknown options")
+  finally
+    e.killAll #["localsess"]
   verdict e f
 
 end E2E.Remote

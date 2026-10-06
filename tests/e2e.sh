@@ -22,6 +22,7 @@
 #  16. manager: terminal selector, exact targets, paste, resize, cleanup and return
 #  17. titles: attention refresh, split output, pipe-error recovery and handback
 #  18. interchange: discarded foreign metadata, current fields and exclusive export
+#  19. identity: exact targets, offline reads and shared-resource ownership
 #  (1) also covers Tests/Fuzz.lean: randomized §Replay round-trip search
 #  every pty suite also carries an EXACT CHECK COUNT (see `--suites` below): green
 #  means "no failures AND every recorded assertion ran".
@@ -233,7 +234,7 @@ sleep 1
 LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger info "$sentinel_name" >/dev/null \
   || fail "sentinel session did not start"
 
-say "4–18. live suites (four isolated processes, longer suites first)"
+say "4–19. live suites (four isolated processes, longer suites first)"
 # One assertion inventory, consumed by the tested Lean runner. Each child keeps
 # /tmp/linger-<suite>.out; zero exit, final verdict and exact count must all agree,
 # and no explicit FAIL line is accepted.
@@ -242,7 +243,7 @@ say "4–18. live suites (four isolated processes, longer suites first)"
 ./.lake/build/bin/e2e --suites \
   manager:122 delivery:37 attach:47 agent:46 \
   resume:15 watch:18 title:19 graphics:9 robust:26 \
-  interop:61 recipes:58 status:17 terminal:12 overview:16 remote:21 \
+  interop:61 recipes:58 status:17 terminal:12 overview:16 remote:49 identity:25 \
   || fail "live suites (see /tmp/linger-*.out)"
 
 LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger info "$sentinel_name" >/dev/null \
@@ -250,4 +251,4 @@ LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger info "$sentinel_name" >/dev/
 cleanup_sentinel
 trap - EXIT HUP TERM
 finish_phase
-printf '\nE2E OK — linger builds clean, core is pure, 15 live suites green.\n'
+printf '\nE2E OK — linger builds clean, core is pure, 16 live suites green.\n'
