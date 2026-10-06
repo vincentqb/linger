@@ -12,7 +12,7 @@ at most 80 characters. Validation never rewrites the requested identity.
 
 namespace Linger.Core.Name
 
-/-- Shared session name for attachment or selection without an explicit name. -/
+/-- Creation name offered by an empty interactive query. -/
 def defaultName : String := "main"
 
 /-- Characters a name may contain: ASCII alphanumerics plus `-_.+`.

@@ -20,9 +20,9 @@ Use the `./lake` wrapper and add `~/.local/bin` to your PATH.
 
 ```sh
 linger attach work       # create or attach to a named session
-linger select            # create or choose a session interactively
+linger attach            # choose or create; return here after detaching
 linger ls                # list sessions
-linger status            # show local attention counts
+linger ls --summary      # show local attention counts
 linger watch work        # watch a live session without sending input
 linger history work      # print live or saved scrollback
 linger capture work      # print the live or saved screen
@@ -30,9 +30,10 @@ linger kill work         # end the session and its program
 linger help              # all commands and options
 ```
 
-Press **Ctrl-\\** to detach. In `linger select`, type to filter, use the arrow
+Press **Ctrl-\\** to detach. In `linger attach`, type to filter, use the arrow
 keys to move, and press Enter to choose the highlighted session or **Create**
-row. Esc or Ctrl-C exits the selector; detaching returns to it.
+row. Esc or Ctrl-C exits the selector; detaching returns to it. Detaching from
+`linger attach work` returns to the shell.
 
 Only interactive selection uses fuzzy matching. Commands take exact names:
 1–80 ASCII letters, digits, `-_.+`, with no leading dot. Invalid names are rejected.
@@ -62,10 +63,11 @@ Listings show one status glyph and `+N` when clients are attached:
 | `~` | Saved session available to resume |
 | `?` | Status unknown |
 
-`linger status` prints counts such as `2⣿ 1!` and stays empty when nothing needs
-attention. Reading status does not mark output seen. Set `NO_COLOR` to disable
-listing colors. Attached window titles show the session, application title,
-and attention counts.
+`linger ls --summary` prints counts such as `2⣿ 1!` and stays empty when nothing
+needs attention. It checks local sessions concurrently with a shared 250 ms reply
+deadline; unanswered sessions count as unknown. Reading status does not mark
+output seen. Set `NO_COLOR` to disable listing colors. Attached window titles
+show the session, application title, and attention counts.
 
 ## Graphics
 

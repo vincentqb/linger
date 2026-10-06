@@ -669,7 +669,7 @@ theorem step_create_valid (s : State) (key : Linger.Tools.Key) (target : String)
 theorem step_empty_accept (s : State) (h : items s.candidates s.query s.allowCreate = []) :
     step s .accept = .stay s := by simp [step, selected_empty s h]
 
-/-- An empty listing has a usable creation choice, using the attach default. -/
+/-- An empty listing offers the default session name for explicit creation. -/
 theorem step_init_empty : step (init []) .accept = .create Linger.Core.Name.defaultName := by cbv
 
 theorem step_cancel (s : State) : step s .cancel = .cancel := by simp [step]

@@ -14,7 +14,7 @@ public section
 Matching folds ASCII capitals with `Char.toLower`; it performs neither Unicode
 case folding nor normalization. Results retain listing order and original target
 strings. A separate labelled row offers creation of the exact valid query,
-or the shared attach default when the query is empty.
+or the default session name when the query is empty.
 -/
 
 namespace Linger.Tools.Picker

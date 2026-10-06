@@ -206,7 +206,7 @@ def attach (name : String) (fd : UInt32) (readOnly : Bool := false) : IO Outcome
             summary := fresh
             nextSummary := (← monotonicMs) + 1000
           if (← pending.get).isNone && (← monotonicMs) ≥ nextSummary then
-            pending.set (some (← Command.start self.toString #["status"]))
+            pending.set (some (← Command.start self.toString #["ls", "--summary"]))
         catch _ =>
           summary := String.singleton (Linger.Core.Status.icon .unknown)
           titleDirty := true

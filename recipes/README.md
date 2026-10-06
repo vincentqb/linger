@@ -8,9 +8,9 @@ Merge the setting for your terminal into its existing configuration:
 
 | Terminal | Example | Setting |
 |---|---|---|
-| Ghostty 1.2+ | [ghostty_config](ghostty_config) | `command = direct:linger select` |
-| kitty | [kitty.conf](kitty.conf) | `shell linger select` |
-| WezTerm | [wezterm.lua](wezterm.lua) | `default_prog = { 'linger', 'select' }` |
+| Ghostty 1.2+ | [ghostty_config](ghostty_config) | `command = direct:linger attach` |
+| kitty | [kitty.conf](kitty.conf) | `shell linger attach` |
+| WezTerm | [wezterm.lua](wezterm.lua) | `default_prog = { 'linger', 'attach' }` |
 
 The terminal must find `linger` on PATH, or the setting can use its absolute
 path. Open a new window after changing the configuration. Ghostty's
@@ -27,7 +27,7 @@ For an existing prompt, merge its status call as the final displayed segment:
 
 ```fish
 command -q linger
-and command linger status 2>/dev/null
+and command linger ls --summary 2>/dev/null
 ```
 
 Preserve the preceding command's `$status`, as the example does, and keep your
@@ -37,7 +37,7 @@ titles update while programs run.
 
 ## Selection
 
-Run `linger select` in a terminal. Type a subsequence such as `wk` for `work`;
+Run `linger attach` in a terminal. Type a subsequence such as `wk` for `work`;
 ASCII letter case is ignored. The listing refreshes automatically while keeping
 your query and selected target when it remains available.
 
@@ -45,6 +45,8 @@ your query and selected target when it remains available.
 - Backspace edits, Ctrl-U clears, and Enter chooses the highlighted row.
 - Esc, Ctrl-C or Ctrl-D exits, leaving session programs running.
 - Ctrl-\\ detaches from a session and returns to selection.
+
+A named invocation, such as `linger attach work`, exits after detaching.
 
 A valid new name adds an explicit **Create** row. With no query, **Create main**
 appears if `main` is absent. Existing choices retain their listed names.
@@ -55,6 +57,9 @@ Use `name@host` or `name@user@host` for remote sessions.
 Each host needs `linger` on PATH. List hosts in `~/.config/linger/remotes` to
 include them in selection and `linger ls -r`. Use `linger ls -r host1,host2`
 to choose hosts for one listing.
+Local checks and remote lookups overlap. Up to four SSH lookups run at once,
+sharing a three-second deadline; incomplete or failed remote results are omitted.
+Output stays in local-session order followed by the configured host order.
 
 ```sh
 linger attach work@host

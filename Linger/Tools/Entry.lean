@@ -14,7 +14,7 @@ inductive Route where
 def route (args : List String) : Route :=
   match args with
   | [] => .session ["help"]
-  | ["select"] => .selector
+  | ["attach"] | ["a"] => .selector
   | "tmux" :: rest => .tmux rest
   | _ => .session args
 

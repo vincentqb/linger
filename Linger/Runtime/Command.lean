@@ -1,9 +1,11 @@
 module
 
+import Linger.Posix
+
 public section
 
-/-! A cancellable command owned by one terminal loop. Both pipe readers and
-the isolated process group live until that loop collects or stops the job. -/
+/-! A cancellable command with one owner. Both pipe readers and the isolated
+process group live until that owner collects or stops the job. -/
 
 namespace Linger.Runtime.Command
 
@@ -33,14 +35,25 @@ def poll (pending : IO.Ref (Option Job)) : IO (Option IO.Process.Output) := do
         return some { exitCode, stdout, stderr }
   return none
 
-/-- Retire the group before reaping its leader, whose reserved PID identifies the
-group even when a descendant still holds a pipe. Join both readers on every path. -/
-def stop (pending : IO.Ref (Option Job)) : IO Unit := do
+/-- Optionally give the leader time to retire separately isolated children.
+Then retire its group before reaping the leader, whose reserved PID identifies
+the group even when a descendant still holds a pipe. Join both readers on every
+path. Lean's child kill is forceful; the cooperative request uses SIGTERM. -/
+def stop (pending : IO.Ref (Option Job)) (graceMs : Nat := 0) : IO Unit := do
   if let some job← pending.get then
     pending.set none
     try
       try
-        job.child.kill
+        try
+          if graceMs > 0 then
+            Linger.Posix.kill job.child.pid 15
+            let deadline := (← IO.monoMsNow) + graceMs
+            while (← IO.monoMsNow) < deadline do
+              if (← IO.hasFinished job.stdout) && (← IO.hasFinished job.stderr) then
+                break
+              IO.sleep 5
+        finally
+          job.child.kill
       finally
         discard job.child.wait
     finally

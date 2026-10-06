@@ -28,12 +28,12 @@ namespace E2E.Status
 open E2E.Harness
 open Linger.Core.Status (Status)
 
-/-- Several responsive sockets whose info replies never finish. One sampling
-window covers the entire snapshot; incomplete and unqueried peers stay unknown. -/
+/-- Several stalled sockets precede a responsive peer. One sampling window
+covers the entire snapshot; incomplete and unqueried peers stay unknown. -/
 def checkDeadline (e : Env) : IO Nat := do
   let waiting := { e with dir := s!"{e.dir}/waiting" }
   IO.FS.createDirAll waiting.dir
-  let names := #["first", "second", "third", "fourth"]
+  let names := #["first", "second", "third", "fourth", "zz-ready"]
   let self ← IO.appPath
   let servers : Array (IO.Process.Child { stdout := .null, stderr := .null }) ←
     names.mapM fun name =>
@@ -41,7 +41,7 @@ def checkDeadline (e : Env) : IO Nat := do
           { cmd := self.toString,
             args :=
               #["--info-server", s!"{waiting.dir}/{name}.sock", s!"{waiting.dir}/{name}.ready",
-                "timeout"],
+                if name == "zz-ready" then "failed-info" else "timeout"],
             stdout := .null, stderr := .null }
   try
     for name in names do
@@ -50,7 +50,7 @@ def checkDeadline (e : Env) : IO Nat := do
     let start ← Linger.Posix.monotonicMs
     let command ←
       IO.Process.spawn
-          { cmd := e.bin, args := #["status"], env := waiting.procEnv, stdout := .piped,
+          { cmd := e.bin, args := #["ls", "--summary"], env := waiting.procEnv, stdout := .piped,
             stderr := .null }
     let code ← waitProcess command 1500
     let elapsed := (← Linger.Posix.monotonicMs) - start
@@ -67,8 +67,10 @@ def checkDeadline (e : Env) : IO Nat := do
     f :=
       f +
         (←
-          expect (output == s!"{names.size}{Linger.Core.Status.icon .unknown}\n")
-              "incomplete and unqueried peers count as unknown")
+          expect
+              (output ==
+                s!"1{Linger.Core.Status.icon .exitedBad} {names.size - 1}{Linger.Core.Status.icon .unknown}\n")
+              "a responsive peer behind stalled peers completes within the shared deadline")
     let retained ← names.allM fun name => System.FilePath.pathExists s!"{waiting.dir}/{name}.sock"
     f := f + (← expect retained "prompt leaves unanswered peers' sockets in place")
     return f
@@ -101,7 +103,7 @@ def checkBacklog (e : Env) : IO Nat := do
     let start ← Linger.Posix.monotonicMs
     let command ←
       IO.Process.spawn
-          { cmd := e.bin, args := #["status"], env := waiting.procEnv, stdout := .piped,
+          { cmd := e.bin, args := #["ls", "--summary"], env := waiting.procEnv, stdout := .piped,
             stderr := .null }
     let code ← waitProcess command 1500
     let elapsed := (← Linger.Posix.monotonicMs) - start
@@ -137,7 +139,7 @@ def checkBacklog (e : Env) : IO Nat := do
 def run : IO UInt32 := do
   let e ← Env.make "status"
   let mut f := 0
-  let (emptyCode, empty, _) ← e.cli #["status"]
+  let (emptyCode, empty, _) ← e.cli #["ls", "--summary"]
   f := f + (← expect (emptyCode == 0 && empty.isEmpty) "empty attention summary prints nothing")
   -- a long-lived child, so nothing exits under us and the row stays classifiable
   -- as idle/wants-you rather than exited-ok
@@ -147,7 +149,7 @@ def run : IO UInt32 := do
   f := f + (← expect ((← e.status "st") == Status.wantsYou) "unwatched output reads wants-you")
   let unread := s!"1{Linger.Core.Status.icon Status.wantsYou}\n"
   let before ← e.field "st" "behind"
-  let (summaryCode, summary, _) ← e.cli #["status"]
+  let (summaryCode, summary, _) ← e.cli #["ls", "--summary"]
   f :=
     f +
       (←
@@ -163,7 +165,7 @@ def run : IO UInt32 := do
   IO.sleep 800
   c.bye (sendDetach := false)
   f := f + (← expect ((← e.status "st") == Status.idle) "attach marks the session seen")
-  let (quietCode, quiet, _) ← e.cli #["status"]
+  let (quietCode, quiet, _) ← e.cli #["ls", "--summary"]
   f := f + (← expect (quietCode == 0 && quiet.isEmpty) "idle session does not clutter the summary")
   -- 3. output while detached makes it unread again
   let _ ← e.cli #["send", "st", "echo", "later"]
@@ -195,7 +197,7 @@ def run : IO UInt32 := do
     unless ← waitFor 5000 (System.FilePath.pathExists s!"{e.dir}/failed.ready") do
       throw (IO.userError "failed info server did not become ready")
     let failed := (← e.status "failed") == Status.exitedBad
-    let (mixedCode, mixed, _) ← e.cli #["status"]
+    let (mixedCode, mixed, _) ← e.cli #["ls", "--summary"]
     f :=
       f +
         (←

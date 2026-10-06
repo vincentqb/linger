@@ -37,9 +37,9 @@ private def configChecks : IO Nat := do
   let root := (← IO.currentDir) / "recipes"
   let mut f := 0
   for (file, comment, setting, label) in
-    [("ghostty_config", "#", "command = direct:linger select", "Ghostty"),
-      ("kitty.conf", "#", "shell linger select", "Kitty"),
-      ("wezterm.lua", "--", "return { default_prog = { 'linger', 'select' } }", "WezTerm")] do
+    [("ghostty_config", "#", "command = direct:linger attach", "Ghostty"),
+      ("kitty.conf", "#", "shell linger attach", "Kitty"),
+      ("wezterm.lua", "--", "return { default_prog = { 'linger', 'attach' } }", "WezTerm")] do
     let content ←
       try
         IO.FS.readFile (root / file)
@@ -49,7 +49,7 @@ private def configChecks : IO Nat := do
       (content.splitOn "\n").map (·.trimAscii.toString) |>.filter fun line =>
         !line.isEmpty && !line.startsWith comment
     f :=
-      f + (← expect (settings == [setting]) s!"{label} native configuration launches linger select")
+      f + (← expect (settings == [setting]) s!"{label} native configuration launches linger attach")
   return f
 
 /-- The recipe only wires a native prompt to the CLI. The recorder supplies
@@ -68,8 +68,8 @@ private def fishPromptChecks (e : Env) (home data : String) : IO Nat := do
     expect
         (settings ==
           ["function fish_right_prompt", "set -l last_status $status", "command -q linger",
-            "and command linger status 2>/dev/null", "return $last_status", "end"])
-        "fish prompt delegates the standard attention suffix to linger status"
+            "and command linger ls --summary 2>/dev/null", "return $last_status", "end"])
+        "fish prompt delegates the standard attention suffix to linger ls --summary"
   let root := System.FilePath.mk e.dir / "fish prompt"
   let bin := root / "bin"
   let emptyPath := root / "empty"
@@ -149,7 +149,7 @@ source "$argv[1]"; or exit 98
             expect
                 (out.exitCode.toNat == previous.toNat?.getD 99 && out.stdout == text &&
                   out.stderr.isEmpty &&
-                  calls == call ["status"])
+                  calls == call ["ls", "--summary"])
                 s!"fish attention keeps shared bytes and status without calling fish_title ({label}, {context})")
   let (missing, calls) ← invoke emptyPath draw "" "" "0" "19"
   f :=
@@ -168,11 +168,11 @@ source "$argv[1]"; or exit 98
       (←
         expect
             (out.exitCode == 23 && out.stdout == attention ++ unknown && out.stderr.isEmpty &&
-              calls == call ["status"] ++ call ["status"])
+              calls == call ["ls", "--summary"] ++ call ["ls", "--summary"])
             "fish prompt samples again on each redraw without retaining old counts")
   -- Check the real command as well as the prompt, since prompt stderr suppression
   -- must not conceal a missing CLI route.
-  let actual ← IO.Process.output { cmd := e.bin, args := #["status"], env }
+  let actual ← IO.Process.output { cmd := e.bin, args := #["ls", "--summary"], env }
   let (prompt, _) ← invoke ((System.FilePath.mk e.bin).parent.getD root) draw "" "" "0" "23"
   f :=
     f +
@@ -182,7 +182,7 @@ source "$argv[1]"; or exit 98
               prompt.exitCode == 23 &&
               prompt.stdout.isEmpty &&
               prompt.stderr.isEmpty)
-            "fish prompt composes with real linger status in an empty session directory")
+            "fish prompt composes with real linger ls --summary in an empty session directory")
   return f
 
 /-- tmux-resurrect prefixes the saved directory and full command with `:` and

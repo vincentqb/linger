@@ -3,6 +3,7 @@ module
 public import E2E.Harness
 public import Linger.Core.Session
 public import Linger.Runtime.Daemon
+import Linger.Core.Name
 
 public section
 
@@ -305,18 +306,31 @@ def run : IO UInt32 := do
       (←
         expect (waitCode == some 1 && has waitErr "connection lost")
             "wait exits 1 when the daemon disappears")
-  -- 8. bare `attach` (no name) attaches the shared `Name.defaultName` session.
-  let m ← e.spawn #["attach"] cols rows
-  IO.sleep 800
-  f :=
-    f +
-      (←
-        expect (has (← e.out #["list"]) "main")
-            "bare `attach` creates the default session \"main\"")
-  m.detach
-  IO.sleep 400
-  m.bye (sendDetach := false)
-  e.killAll #["main"]
+  -- 8. An empty chooser offers the default name without creating it on entry.
+  let defaults : Env := { e with dir := s!"{e.dir}/default" }
+  let defaultName := Linger.Core.Name.defaultName
+  let m ← defaults.spawnEnv #[s!"HOME={defaults.dir}"] #["attach"] cols rows
+  try
+    let screen ← IO.mkRef ByteArray.empty
+    let offered ←
+      waitFor 5000 do
+          let bytes ← drain m.fd 100
+          screen.modify (· ++ bytes)
+          return hasText (← screen.get) s!"+ Create {defaultName}"
+    let absent := (← defaults.out #["ls", "--porcelain"]).isEmpty
+    m.type "\r"
+    let created ←
+      waitFor 5000 do
+          return has (← defaults.out #["ls", "--porcelain"]) s!"name\t{defaultName}\n"
+    f :=
+      f +
+        (←
+          expect (offered && absent && created)
+              "bare attach creates the default session only after accepting Create")
+    m.detach
+  finally
+    m.bye (sendDetach := false)
+    defaults.killAll #[defaultName]
   -- 9. detach hands the terminal back (`Render.leaveAnsi`). A full-screen app's
   --    opening sequences are set from inside the session; after ctrl-\ the client
   --    must undo every one of them, or the user's shell is left on the alt screen

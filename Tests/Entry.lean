@@ -12,7 +12,9 @@ open Linger.Tools.Entry
 -- Empty argv explains the CLI; selection is an explicit command.
 #guard route [] == .session ["help"]
 
-#guard route ["select"] == .selector
+#guard route ["attach"] == .selector
+
+#guard route ["a"] == .selector
 
 -- The tmux group owns validation, including bare help and malformed operands.
 #guard
@@ -35,8 +37,8 @@ open Linger.Tools.Entry
 
 -- Explicit commands, internal commands and malformed arguments remain untouched.
 #guard
-  [["ls"], ["ls", "--porcelain", "-r", "alice@host"], ["list"],
-        ["attach", "work@host", "/bin/sh", "-lc", "printf '%s\\n' 'hello world'"],
+  [["ls"], ["ls", "--summary"], ["ls", "--porcelain", "-r", "alice@host"], ["list"], ["select"],
+        ["status"], ["attach", "work@host", "/bin/sh", "-lc", "printf '%s\\n' 'hello world'"],
         ["__daemon", "work", "/tmp/a b", "/bin/sh", "-lc", "printf '%s' 'café 世界'"], ["__daemon"],
         ["--help"], ["-r", "host-a", "host-b"], ["unknown", "", "import", "--", "a b"], [""],
         ["Import", "save"], ["import-resurrect", "save"], ["Tmux", "ls"], ["tmux-select"],

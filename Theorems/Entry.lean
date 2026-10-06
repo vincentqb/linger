@@ -12,26 +12,30 @@ namespace Linger.Tools.Entry
 theorem route_bare_help : Linger.Tools.Entry.route [] = .session ["help"] := by rfl
 
 theorem route_selector_iff (args : List String) :
-    Linger.Tools.Entry.route args = .selector ↔ args = ["select"] := by
+    Linger.Tools.Entry.route args = .selector ↔ args = ["attach"] ∨ args = ["a"] := by
   unfold Linger.Tools.Entry.route
   split <;> simp_all
 
 theorem route_session_argv (command : String) (rest : List String) (hTmux : command ≠ "tmux")
-    (hSelect : command ≠ "select" ∨ rest ≠ []) :
+    (hAttach : command ≠ "attach" ∨ rest ≠ []) (hAlias : command ≠ "a" ∨ rest ≠ []) :
     Linger.Tools.Entry.route (command :: rest) = .session (command :: rest) := by
   cases rest <;> simp_all [Linger.Tools.Entry.route]
 
-theorem route_select_operands (rest : List String) (h : rest ≠ []) :
+theorem route_attach_operands (rest : List String) (h : rest ≠ []) :
+    Linger.Tools.Entry.route ("attach" :: rest) = .session ("attach" :: rest) :=
+  route_session_argv "attach" rest (by decide) (.inr h) (.inl (by decide))
+
+theorem route_select_retired (rest : List String) :
     Linger.Tools.Entry.route ("select" :: rest) = .session ("select" :: rest) :=
-  route_session_argv "select" rest (by decide) (.inr h)
+  route_session_argv "select" rest (by decide) (.inl (by decide)) (.inl (by decide))
 
 theorem route_daemon_argv (rest : List String) :
     Linger.Tools.Entry.route ("__daemon" :: rest) = .session ("__daemon" :: rest) :=
-  route_session_argv "__daemon" rest (by decide) (.inl (by decide))
+  route_session_argv "__daemon" rest (by decide) (.inl (by decide)) (.inl (by decide))
 
 theorem route_ls_argv (rest : List String) :
     Linger.Tools.Entry.route ("ls" :: rest) = .session ("ls" :: rest) :=
-  route_session_argv "ls" rest (by decide) (.inl (by decide))
+  route_session_argv "ls" rest (by decide) (.inl (by decide)) (.inl (by decide))
 
 theorem route_tmux_argv (rest : List String) :
     Linger.Tools.Entry.route ("tmux" :: rest) = .tmux rest := by rfl
@@ -43,10 +47,10 @@ theorem route_tmux_iff (args rest : List String) :
 
 theorem route_import_argv (rest : List String) :
     Linger.Tools.Entry.route ("import" :: rest) = .session ("import" :: rest) :=
-  route_session_argv "import" rest (by decide) (.inl (by decide))
+  route_session_argv "import" rest (by decide) (.inl (by decide)) (.inl (by decide))
 
 theorem route_export_argv (rest : List String) :
     Linger.Tools.Entry.route ("export" :: rest) = .session ("export" :: rest) :=
-  route_session_argv "export" rest (by decide) (.inl (by decide))
+  route_session_argv "export" rest (by decide) (.inl (by decide)) (.inl (by decide))
 
 end Linger.Tools.Entry

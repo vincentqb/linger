@@ -268,7 +268,7 @@ import_closure Linger/Tools/Entry.lean ''
 import_closure Linger/Core/Name.lean ''
 import_closure Linger/Core/Remote.lean 'import Linger.Core.Name;'
 import_closure Linger/Core/Title.lean 'import Linger.Core.Name;'
-import_closure Linger/Runtime/Command.lean ''
+import_closure Linger/Runtime/Command.lean 'import Linger.Posix;'
 import_closure Linger/Manager/Resurrect.lean 'import Linger.Tools.Resurrect;import Linger.Posix;import Linger.Runtime.Paths;import Linger.Runtime.Resume;import Linger.Runtime.Command;import Linger.Manager.Picker;import Std.Async.System;import Lean.Data.Json;'
 import_closure Linger/Manager/Picker.lean \
   'public import Linger.Tools.Picker;import Linger.Posix;import Linger.Core.Terminal;import Linger.Runtime.Command;'
@@ -279,7 +279,7 @@ module_imports 'Linger/Core/*' 'Linger/Runtime/*' Linger/Posix.lean Linger.lean 
   { mod = $3
     sub(/^[[:space:]]*((public|private|meta)[[:space:]]+)*import[[:space:]]+(all[[:space:]]+)?/, "", mod)
     sub(/[[:space:]]+--.*/, "", mod); sub(/[[:space:]]+$/, "", mod)
-    if (mod !~ /^(Linger[.]((Core|Runtime)[.][[:alnum:]_.]+|Posix)|Std[.]Async[.]System)$/) {
+    if (mod !~ /^(Linger[.]((Core|Runtime)[.][[:alnum:]_.]+|Posix)|Std[.]Async[.](System|Signal))$/) {
       print "  " $0; bad = 1
     }
   }
@@ -289,7 +289,7 @@ module_imports 'Linger/Core/*' 'Linger/Runtime/*' Linger/Posix.lean Linger.lean 
 # Pin dispatch before terminal observations, exact argv and executable identity;
 # E2E.Manager, E2E.Recipes and E2E.Interop exercise them in subprocesses.
 for claim in route_bare_help route_selector_iff route_session_argv \
-             route_select_operands route_daemon_argv route_ls_argv route_import_argv \
+             route_attach_operands route_select_retired route_daemon_argv route_ls_argv route_import_argv \
              route_export_argv route_tmux_argv route_tmux_iff; do
   code_grep "^theorem $claim " Theorems/Entry.lean >/dev/null \
     || fail "entry-point contract disappeared: $claim"
@@ -442,24 +442,22 @@ for tie in \
   'while true do let current ← winsizeGet stdoutFd if dirty [|][|] current != size then let frame := draw state snapshot loaded withColor current[.]1 current[.]2 if frame != lastFrame [|][|] current != size then writeAll stdoutFd frame[.]toUTF8 lastFrame := frame size := current dirty := false let ready ← poll fds events 50' \
   'for key in keys do if !loaded && key == [.]accept then continue match Linger[.]Tools[.]Picker[.]step state key with [|] [.]stay next => dirty := dirty [|][|] next != state state := next [|] [.]attach target [|] [.]create target => return [.]attach target snapshot [|] [.]cancel => return [.]cancel if let some result[[:space:]]*← Linger[.]Runtime[.]Command[.]poll pending then' \
   'nextListing := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]← monotonicMs[)] ≥ nextListing then pending[.]set [(]some [(]← Linger[.]Runtime[.]Command[.]start executable args[)][)] return [.]cancel finally' \
-  'finally Linger[.]Runtime[.]Command[.]stop pending' \
+  'finally Linger[.]Runtime[.]Command[.]stop pending [(]if savedTmux then 0 else 1000[)]' \
   '[|] [.]attach target [|] [.]create target => return [.]attach target snapshot' \
   'let args := if savedTmux then #[[]"tmux", "ls", "--porcelain"[]] [+][+] save[.]toArray else #[[]"ls", "-r", "--porcelain"[]]'; do
   printf '%s\n' "$picker_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "manager lost its selection, refresh, process ownership or attach contract: $tie"
 done
-code_grep '^[[:space:]]+withTarget "attach" Linger[.]Core[.]Name[.]defaultName [[]] [(]cmdAttach · [[]][)]$' Linger/Runtime/Cli.lean >/dev/null \
-  || fail "attach no longer shares the proved default session name with selection"
-
-# Both terminal loops own their helper through this one executor. Reap only
+# Terminal loops and remote discovery own helpers through this one executor. Reap only
 # after both pipes close; clear ownership before a reader error can throw.
-# Cancellation signals the isolated group before reaping its reserved leader
-# PID, then joins both readers even when termination or reaping throws.
+# Cancellation can first request cooperative cleanup. It always force-retires
+# the isolated group before reaping its reserved leader PID, then joins both
+# readers even when termination or reaping throws.
 command_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Runtime/Command.lean)"
 for tie in \
   'IO[.]Process[.]spawn [{] cmd := executable, args, stdin := [.]null, stdout := [.]piped, stderr := [.]piped, setsid := true [}] let stdout ← IO[.]asTask child[.]stdout[.]readToEnd Task[.]Priority[.]dedicated let stderr ← IO[.]asTask child[.]stderr[.]readToEnd Task[.]Priority[.]dedicated return [{] child, stdout, stderr [}]' \
   'def poll [(]pending : IO[.]Ref [(]Option Job[)][)] : IO [(]Option IO[.]Process[.]Output[)] := do if let some job[[:space:]]*← pending[.]get then if [(]← IO[.]hasFinished job[.]stdout[)] && [(]← IO[.]hasFinished job[.]stderr[)] then if let some exitCode[[:space:]]*← job[.]child[.]tryWait then pending[.]set none let stdout ← IO[.]ofExcept [(]← IO[.]wait job[.]stdout[)] let stderr ← IO[.]ofExcept [(]← IO[.]wait job[.]stderr[)] return some [{] exitCode, stdout, stderr [}] return none' \
-  'if let some job[[:space:]]*← pending[.]get then pending[.]set none try try job[.]child[.]kill finally discard job[.]child[.]wait finally discard <[|] IO[.]wait job[.]stdout discard <[|] IO[.]wait job[.]stderr'; do
+  'if let some job[[:space:]]*← pending[.]get then pending[.]set none try try try if graceMs > 0 then Linger[.]Posix[.]kill job[.]child[.]pid 15 let deadline := [(]← IO[.]monoMsNow[)] [+] graceMs while [(]← IO[.]monoMsNow[)] < deadline do if [(]← IO[.]hasFinished job[.]stdout[)] && [(]← IO[.]hasFinished job[.]stderr[)] then break IO[.]sleep 5 finally job[.]child[.]kill finally discard job[.]child[.]wait finally discard <[|] IO[.]wait job[.]stdout discard <[|] IO[.]wait job[.]stderr'; do
   printf '%s\n' "$command_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "owned command lost its process or pipe lifetime contract: $tie"
 done
@@ -481,16 +479,34 @@ done
 cli_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Runtime/Cli.lean)"
 for tie in \
   'match Linger[.]Core[.]Remote[.]checkHosts hosts with [|] [.]ok l => return l [|] [.]error e => throw [(]IO[.]userError e[)]' \
-  'for host in remotes do for [(]rname, rlive, rcmd, rstatus[)] in ← listRemote host do' \
+  'for [(]host, output[)] in remotes[.]zip remote[.]toList do for row in Linger[.]Core[.]Remote[.]parse output do' \
   '[|] some [(]porcelain, remoteFlag[)] => cmdList porcelain [(]← resolveRemotes remoteFlag[)]' \
   'let withColor := [(]← [(]← IO[.]getStdout[)][.]isTty[)] && [(]← IO[.]getEnv "NO_COLOR"[)][.]isNone writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Core[.]Listing[.]terminalListing withColor rows[)][.]toArray[)]' \
   'let rows ← localRows [(]some [(][(]← monotonicMs[)] [+] 250[)][)] let summary := Linger[.]Core[.]Status[.]summary [(]rows[.]map fun info => Linger[.]Core[.]Status[.]ofName [(][(]info[.]lookup "status"[)][.]getD "unknown"[)][)] if !summary[.]isEmpty then IO[.]println summary return 0' \
-  'if let some deadline := stopAt then if [(]← monotonicMs[)] ≥ deadline then return some [(][.]error [(]IO[.]userError "overview deadline reached"[)][)] match ← Client[.]connect name stopAt[.]isSome with [|] none => if stopAt[.]isSome then return some [(][.]error [(]IO[.]userError "overview connection unavailable"[)][)] return none [|] some fd => try let info ← [(]readInfo fd stopAt[)][.]toBaseIO return some info finally close fd' \
+  'if let some deadline := stopAt then if [(]← monotonicMs[)] ≥ deadline then return some [(][.]error [(]IO[.]userError "overview deadline reached"[)][)] match ← Client[.]connect name stopAt[.]isSome with [|] none => if stopAt[.]isSome && retainUnavailable then return some [(][.]error [(]IO[.]userError "overview connection unavailable"[)][)] return none [|] some fd => try let info ← [(]readInfo fd stopAt[)][.]toBaseIO return some info finally close fd' \
   'Client[.]sendMsg fd [.]info let deadline := stopAt[.]getD [(][(]← monotonicMs[)] [+] 2000[)]' \
   'while go && [(]← monotonicMs[)] < deadline do let remaining := deadline - [(]← monotonicMs[)] let revs ← poll #[[]fd[]] #[[]POLLIN[]] [(]Int32[.]ofNat [(]min 100 remaining[)][)]' \
-  'match ← queryInfo name stopAt with [|] some info => confirmedLive := confirmedLive [+][+] [[]name[]] rows := rows [+][+] [[]liveRow name [(]info[.]toOption[.]getD [[][]][)][]] [|] none => if ![(]← removeStaleSocket name[)] then'; do
+  'let infos ← queryInfos sockets deadline stopAt[.]isSome' \
+  'for [(]name, result[)] in sockets[.]zip infos do match result with [|] some info => confirmedLive := confirmedLive [+][+] [[]name[]] rows := rows [+][+] [[]liveRow name [(]info[.]toOption[.]getD [[][]][)][]] [|] none => if ![(]← removeStaleSocket name[)] then' \
+  '[|] [[]"ls", "--summary"[]] [|] [[]"list", "--summary"[]] [|] [[]"l", "--summary"[]] => cmdSummary'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "listing or prompt bypassed its shared policy: $tie"
+done
+# Discovery keeps bounded ownership until completion. Remote signal handlers
+# are installed before spawning isolated SSH groups, so cancelling the chooser
+# reaches those groups through its listing helper. E2E.Remote checks overlap,
+# output order, slot reuse, shared deadlines and descendant cleanup.
+for tie in \
+  'while next < names[.]size && [(]← pending[.]get[)][.]size < localQueryLimit && [(]← monotonicMs[)] < deadline do' \
+  'IO[.]asTask [(]queryInfo names[[]index[]]! [(]some deadline[)] retainUnavailable[)] Task[.]Priority[.]dedicated' \
+  'finally for [(]_, task[)] in ← pending[.]get do discard <[|] IO[.]wait task' \
+  'for signal in [[]Std[.]Async[.]Signal[.]sigterm, [.]sigint, [.]sighup[]] do let waiter ← Std[.]Async[.]Signal[.]Waiter[.]mk signal true try let task ← waiter[.]wait signals[.]modify [(]·[.]push [(]waiter, task[)][)] catch e => waiter[.]stop throw e let deadline := [(]← monotonicMs[)] [+] remoteQueryTimeoutMs' \
+  'for [(]_, signal[)] in ← signals[.]get do if [(]← signal[.]getState[)] == [.]finished then return none if [(]← monotonicMs[)] ≥ deadline then break' \
+  'while next < hosts[.]size && [(]← jobs[.]get[)][.]size < remoteQueryLimit && [(]← monotonicMs[)] < deadline do' \
+  'finally for [(]_, pending[)] in ← jobs[.]get do try Command[.]stop pending catch _ => pure [(][)] for [(]waiter, _[)] in ← signals[.]get do waiter[.]stop' \
+  'let task ← IO[.]asTask localRows Task[.]Priority[.]dedicated try let remote ← listRemotes remotes[.]toArray let locals ← IO[.]ofExcept [(]← IO[.]wait task[)] pure [(]locals, remote[)] finally discard <[|] IO[.]wait task'; do
+  printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+    || fail "discovery lost its bounded task or process ownership: $tie"
 done
 code_grep '^[[:space:]]+let r ← unixConnect path nonblocking$' Linger/Runtime/Client.lean >/dev/null \
   || fail "status connect lost its nonblocking boundary"
@@ -519,7 +535,7 @@ code_grep '^theorem leave_boundary_title ' Theorems/Render/Modes.lean >/dev/null
 client_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Runtime/Client.lean)"
 for tie in \
   'let mut observer := Linger[.]Core[.]Vt[.]Vt[.]init 1 1' \
-  'while !leaving do try if let some output[[:space:]]*← Command[.]poll pending then let fresh := if output[.]exitCode == 0 then output[.]stdout[.]trimAscii[.]toString else String[.]singleton [(]Linger[.]Core[.]Status[.]icon [.]unknown[)] titleDirty := titleDirty [|][|] fresh != summary summary := fresh nextSummary := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]← monotonicMs[)] ≥ nextSummary then pending[.]set [(]some [(]← Command[.]start self[.]toString #[[]"status"[]][)][)] catch _ => summary := String[.]singleton [(]Linger[.]Core[.]Status[.]icon [.]unknown[)] titleDirty := true nextSummary := [(]← monotonicMs[)] [+] 1000 let revs ← poll #[[]stdinFd, fd[]] #[[]POLLIN, POLLIN[]] 200' \
+  'while !leaving do try if let some output[[:space:]]*← Command[.]poll pending then let fresh := if output[.]exitCode == 0 then output[.]stdout[.]trimAscii[.]toString else String[.]singleton [(]Linger[.]Core[.]Status[.]icon [.]unknown[)] titleDirty := titleDirty [|][|] fresh != summary summary := fresh nextSummary := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]← monotonicMs[)] ≥ nextSummary then pending[.]set [(]some [(]← Command[.]start self[.]toString #[[]"ls", "--summary"[]][)][)] catch _ => summary := String[.]singleton [(]Linger[.]Core[.]Status[.]icon [.]unknown[)] titleDirty := true nextSummary := [(]← monotonicMs[)] [+] 1000 let revs ← poll #[[]stdinFd, fd[]] #[[]POLLIN, POLLIN[]] 200' \
   'writeAll stdoutFd [(]ByteArray[.]mk payload[.]toArray[)] observer := observer[.]observe payload receivedOutput := true' \
   'if receivedOutput && titleDirty && !leaving then let title := Linger[.]Core[.]Title[.]compose name observer[.]windowTitle summary Linger[.]Core[.]Terminal[.]Title[.]maxChars let bytes := Linger[.]Core[.]Terminal[.]Title[.]update observer title if !bytes[.]isEmpty then writeAll stdoutFd [(]ByteArray[.]mk bytes[.]toArray[)] titleDirty := false' \
   'try try writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Core[.]Render[.]leaveAnsi[.]toArray[)] finally termRestore stdinFd saved finally Command[.]stop pending'; do

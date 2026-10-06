@@ -1,4 +1,4 @@
 -- Merge default_prog into the table returned by your WezTerm configuration.
--- Create a session with `linger attach work` before using this startup command.
+-- The chooser can attach to an existing session or create a new one.
 -- Use linger's absolute path if it is not on the terminal's PATH.
-return { default_prog = { 'linger', 'select' } }
+return { default_prog = { 'linger', 'attach' } }

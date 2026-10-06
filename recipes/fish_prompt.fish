@@ -5,6 +5,6 @@
 function fish_right_prompt
     set -l last_status $status
     command -q linger
-    and command linger status 2>/dev/null
+    and command linger ls --summary 2>/dev/null
     return $last_status
 end

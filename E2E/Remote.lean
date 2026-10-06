@@ -3,6 +3,7 @@ module
 public import E2E.Harness
 public import Linger.Core.Remote
 public import Linger.Runtime.Cli
+import Linger.Runtime.Command
 
 public section
 
@@ -66,6 +67,215 @@ def readArgs (path : System.FilePath) : IO (List String) := do
     let text ← IO.FS.readFile path
     return if text.isEmpty then [] else (text.splitOn "\x00").dropLast
   return []
+
+/-- A descendant keeps the SSH pipes open until its owner terminates the group. -/
+def discoveryLeaf (root host : String) : IO UInt32 := do
+  IO.FS.writeFile s!"{root}/{host}.leaf.tmp" (toString (← Linger.Posix.getpid))
+  IO.FS.rename s!"{root}/{host}.leaf.tmp" s!"{root}/{host}.leaf"
+  IO.sleep 15000
+  return 0
+
+/-- Re-entered through a minimal fake SSH executable. The first host waits for
+the second and a local info request, so serial discovery cannot pass. Stalled
+hosts emit plausible rows but never complete before their group is cancelled. -/
+def discoverySsh (root : String) (args : List String) : IO UInt32 := do
+  let some host := ((args.dropWhile (· != "--")).drop 1).head? | return 2
+  IO.FS.writeFile s!"{root}/{host}.started" ""
+  if host.startsWith "stall-" then
+    let child ←
+      IO.Process.spawn { cmd := (← IO.appPath).toString, args := #["--discovery-leaf", root, host] }
+    IO.println s!"name\t{host}\nstate\tlive\n"
+    (← IO.getStdout).flush
+    return ← child.wait
+  if host == "first" then
+    let started ←
+      waitFor 5000 do
+          return (← System.FilePath.pathExists s!"{root}/second.started") &&
+              (← System.FilePath.pathExists s!"{root}/local.request")
+    unless started do
+      return 1
+    IO.sleep 100
+  IO.println s!"name\t{goodName}\nstate\tlive\ncmd\t{host}\n"
+  return 0
+
+/-- The local peer answers only after remote discovery has started. -/
+def discoveryInfo (root : String) : IO UInt32 := do
+  let listener ← Linger.Posix.unixListen s!"{root}/state/local.sock"
+  Linger.Posix.setNonblock listener
+  try
+    IO.FS.writeFile s!"{root}/local.ready" ""
+    let deadline := (← Linger.Posix.monotonicMs) + 5000
+    while (← Linger.Posix.monotonicMs) < deadline do
+      let accepted ← Linger.Posix.accept listener
+      if accepted < 0 then
+        IO.sleep 10
+        continue
+      let fd := accepted.toUInt64.toUInt32
+      try
+        let ready ← Linger.Posix.poll #[fd] #[Linger.Posix.POLLIN] 2000
+        if ready[0]! == 0 then
+          return 1
+        discard <| Linger.Posix.read fd 4096
+        IO.FS.writeFile s!"{root}/local.request" ""
+        unless ← waitFor 5000 (System.FilePath.pathExists s!"{root}/first.started") do
+          return 1
+        Linger.Runtime.Client.sendMsg fd (.infoReply "cmd\tlocal-concurrent\n".toUTF8.toList)
+        Linger.Runtime.Client.sendMsg fd .done
+        return 0
+      finally
+        Linger.Posix.close fd
+    return 1
+  finally
+    Linger.Posix.close listener
+
+private def discoverySetup (e : Env) (slug : String) : IO (Env × String × String) := do
+  let root := s!"{e.dir}/{slug}"
+  let state := { e with dir := s!"{root}/state" }
+  let bin := s!"{root}/bin"
+  IO.FS.createDirAll state.dir
+  IO.FS.createDirAll bin
+  let self ← IO.appPath
+  IO.FS.writeFile s!"{bin}/ssh"
+      s!"#!/bin/sh\nexec {Linger.Core.Remote.shellQuote self.toString} --discovery-ssh {Linger.Core.Remote.shellQuote root} \"$@\"\n"
+  chmod s!"{bin}/ssh" 0o755
+  return (state, root, s!"{bin}:{(← IO.getEnv "PATH").getD "/usr/bin:/bin"}")
+
+/-- A terminated descendant may briefly await the system reaper. -/
+private def discoveryGone (root host : String) : IO Bool := do
+  let path := s!"{root}/{host}.leaf"
+  unless ← System.FilePath.pathExists path do
+    return false
+  let pid := (← IO.FS.readFile path).toNat?.getD 0
+  return pid > 0 && !(← Linger.Posix.alive (UInt32.ofNat pid))
+
+/-- Retire fixture descendants even when intentionally breaking group cleanup. -/
+private def cleanupDiscovery (root : String) : IO Unit := do
+  for entry in ← (System.FilePath.mk root).readDir do
+    if entry.fileName.endsWith ".leaf" then
+      let host := (entry.fileName.dropEnd 5).toString
+      unless ← discoveryGone root host do
+        if let some pid := (← IO.FS.readFile entry.path).toNat? then
+          try
+            Linger.Posix.kill (UInt32.ofNat pid) 15
+          catch _ =>
+            pure ()
+
+def discoveryChecks (e : Env) : IO Nat := do
+  let mut f := 0
+  let (state, root, path) ← discoverySetup e "barrier"
+  let server ←
+    IO.Process.spawn
+        { cmd := (← IO.appPath).toString, args := #["--discovery-info", root], stdout := .null,
+          stderr := .null }
+  try
+    unless ← waitFor 5000 (System.FilePath.pathExists s!"{root}/local.ready") do
+      throw (IO.userError "discovery info server did not start")
+    let (code, output, _) ←
+      state.cliEnv #[("PATH", some path)] #["ls", "--porcelain", "-r", "first,second"]
+    let fields := records output
+    f :=
+      f +
+        (←
+          expect (code == 0 && fields.contains ("cmd", "local-concurrent"))
+              "local queries overlap remote discovery")
+    f :=
+      f +
+        (←
+          expect
+              (fields.filter (·.1 == "name") ==
+                [("name", "local"), ("name", s!"{goodName}@first"),
+                  ("name", s!"{goodName}@second")])
+              "SSH queries overlap and retain host order despite reversed completion")
+  finally
+    if (← server.tryWait).isNone then
+      server.kill
+      discard server.wait
+  let (state, root, path) ← discoverySetup e "deadline"
+  let limit := Linger.Runtime.Cli.remoteQueryLimit
+  let hosts := (List.range (limit + 1)).map (fun i => s!"stall-{i}")
+  let active := hosts.take limit
+  let start ← Linger.Posix.monotonicMs
+  let command ←
+    IO.Process.spawn
+        { cmd := e.bin,
+          args := #["ls", "--porcelain", "-r", String.intercalate "," ("quick" :: hosts)],
+          env := state.procEnv ++ #[("PATH", some path)], stdout := .piped, stderr := .null }
+  try
+    let ready ←
+      waitFor 2000 do
+          active.allM fun host => System.FilePath.pathExists s!"{root}/{host}.leaf"
+    f :=
+      f +
+        (←
+          expect (ready && !(← System.FilePath.pathExists s!"{root}/{hosts.getLast!}.started"))
+              "remote discovery limits simultaneous SSH jobs and reuses completed slots")
+    let code ← waitProcess command (Linger.Runtime.Cli.remoteQueryTimeoutMs + 1500)
+    let elapsed := (← Linger.Posix.monotonicMs) - start
+    let stopped ← waitFor 2000 (active.allM (discoveryGone root))
+    if code.isNone then
+      cleanupDiscovery root
+      command.kill
+      discard command.wait
+    let output ← command.stdout.readToEnd
+    f :=
+      f +
+        (←
+          expect (code == some 0 && elapsed < Linger.Runtime.Cli.remoteQueryTimeoutMs + 1500)
+              "remote commands share one deadline even when pipes stay open")
+    f :=
+      f +
+        (←
+          expect ((records output).filter (·.1 == "name") == [("name", s!"{goodName}@quick")])
+              "only complete remote replies contribute rows")
+    f := f + (← expect (ready && stopped) "deadline retires every SSH descendant holding a pipe")
+  finally
+    cleanupDiscovery root
+  let root := s!"{e.dir}/stop"
+  IO.FS.createDirAll root
+  let pending ←
+    IO.mkRef
+        (some
+          (←
+            Linger.Runtime.Command.start (← IO.appPath).toString
+                #["--discovery-ssh", root, "--", "stall-stop"]))
+  try
+    let ready ← waitFor 2000 (System.FilePath.pathExists s!"{root}/stall-stop.leaf")
+    let start ← Linger.Posix.monotonicMs
+    Linger.Runtime.Command.stop pending 100
+    let elapsed := (← Linger.Posix.monotonicMs) - start
+    let stopped ← waitFor 2000 (discoveryGone root "stall-stop")
+    f :=
+      f +
+        (←
+          expect (ready && stopped && elapsed < 1500 && (← pending.get).isNone)
+              "cooperative stop force-retires descendants that retain pipes after their leader exits")
+  finally
+    Linger.Runtime.Command.stop pending
+    cleanupDiscovery root
+  let (state, root, path) ← discoverySetup e "cancel"
+  IO.FS.createDirAll s!"{root}/.config/linger"
+  IO.FS.writeFile s!"{root}/.config/linger/remotes" "stall-cancel\n"
+  let chooser ← state.spawnEnv #[s!"PATH={path}", s!"HOME={root}"] #["attach"]
+  try
+    let ready ← waitFor 2000 (System.FilePath.pathExists s!"{root}/stall-cancel.leaf")
+    let start ← Linger.Posix.monotonicMs
+    chooser.type "\x03"
+    let code ← chooser.reap 1500
+    f :=
+      f +
+        (←
+          expect (ready && code == 130 && (← Linger.Posix.monotonicMs) - start < 1500)
+              "cancelling bare attach retires discovery promptly")
+    let stopped ← waitFor 2000 (discoveryGone root "stall-cancel")
+    f := f + (← expect (ready && stopped) "chooser cancellation reaches SSH descendants")
+  finally
+    cleanupDiscovery root
+    chooser.bye (sendDetach := false)
+  return f
+
+def runDiscovery : IO UInt32 := do
+  let e ← Env.make "discovery"
+  verdict e (← discoveryChecks e)
 
 def run : IO UInt32 := do
   let e ← Env.make "remote"
@@ -277,6 +487,7 @@ def run : IO UInt32 := do
               "ls preserves options after -r and rejects unknown options")
   finally
     e.killAll #["localsess"]
+  f := f + (← discoveryChecks e)
   verdict e f
 
 end E2E.Remote

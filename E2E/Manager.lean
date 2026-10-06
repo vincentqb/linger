@@ -625,7 +625,12 @@ private def usageChecks (e : Env) : IO Nat := do
                 hOut == out &&
                 [err, shortErr, helpErr, hErr].all String.isEmpty &&
                 has out "Usage: linger" &&
-                (out.splitOn "\n").any (fun line => line.trimAscii.toString.startsWith "select ") &&
+                (out.splitOn "\n").any (fun line => line.trimAscii.toString.startsWith "attach ") &&
+                !(out.splitOn "\n").any
+                    (fun line =>
+                      line.trimAscii.toString.startsWith "select " ||
+                        line.trimAscii.toString.startsWith "status ") &&
+                has out "ls --summary" &&
                 has out "tmux" &&
                 !has out "linger import [SAVE]" &&
                 !has out "--loop" &&
@@ -634,11 +639,15 @@ private def usageChecks (e : Env) : IO Nat := do
   failures :=
     failures +
       (←
-        check e "usage" "linger rejects malformed arguments and select/tmux operands" fun f => do
+        check e "usage" "linger rejects retired commands and conflicting listing options" fun f =>
+            do
             let mut ok := true
             for args in
               [#["work"], #["--unknown"], #["--help", "extra"], #["-h", "extra"],
-                #["help", "extra"], #["ls", "--unknown"], #["select", ""], #["select", "work"],
+                #["help", "extra"], #["ls", "--unknown"], #["select"], #["status"], #["--summary"],
+                #["ls", "--summary", "--porcelain"], #["ls", "--porcelain", "--summary"],
+                #["ls", "--summary", "-r"], #["ls", "-r", "--summary"],
+                #["ls", "--summary", "extra"], #["select", ""], #["select", "work"],
                 #["select", "--help"], #["select", "-h"], #["select", "one", "two"],
                 #["--loop", ""], #["--loop", "one", "two"], #["import-resurrect"], #["import", ""],
                 #["import", "--unknown"], #["import", "--help"], #["import", "-h"],
@@ -755,11 +764,11 @@ private def usageChecks (e : Env) : IO Nat := do
   failures :=
     failures +
       (←
-        check e "select-neither" "linger select requires both terminal streams (neither tty)"
+        check e "select-neither" "linger attach requires both terminal streams (neither tty)"
             fun f => do
             let state := f.root / "absent"
             let f := { f with env := f.env.push ("LINGER_DIR", some state.toString) }
-            let (rc, out, err) ← f.piped #["select"]
+            let (rc, out, err) ← f.piped #["attach"]
             IO.FS.writeFile (f.root / "stderr") err
             return rc == 1 && out.isEmpty && has err "terminal input and output" &&
                 !has err "\x1b" &&
@@ -769,11 +778,11 @@ private def usageChecks (e : Env) : IO Nat := do
       failures +
         (←
           check e s!"select-{mode}"
-              s!"linger select rejects redirection before listing or terminal entry ({mode})"
+              s!"linger attach rejects redirection before listing or terminal entry ({mode})"
               fun f => do
               let state := f.root / "absent"
               let f := { f with env := f.env.push ("LINGER_DIR", some state.toString) }
-              withSession f #["select"]
+              withSession f #["attach"]
                   (fun s => do
                     let clean ← termiosRestored s 1
                     let output ← s.output.get
@@ -787,11 +796,11 @@ private def usageChecks (e : Env) : IO Nat := do
     failures +
       (←
         check e "tty-select"
-            "linger select keeps invalid input editable without creating state with no linger on PATH"
+            "linger attach keeps invalid input editable without creating state with no linger on PATH"
             fun f => do
             let state := f.root / "state"
             let f := { f with env := f.env.push ("LINGER_DIR", some state.toString) }
-            withSession f #["select"] fun s => do
+            withSession f #["attach"] fun s => do
                 unless ← s.prompt do
                   return false
                 unless ← s.typeQuery "invalid/name" "invalid/name" do
@@ -2101,7 +2110,7 @@ private def realCheck (e : Env) : IO Nat := do
       failures +
         (←
           check e slug
-              s!"linger select {if existing then "attaches" else "creates"}, detaches and returns to selection with no linger on PATH ({slug})"
+              s!"linger attach {if existing then "attaches" else "creates"}, detaches and returns to selection with no linger on PATH ({slug})"
               fun f => do
               let owned : Env := { e with dir := (f.root / "state").toString }
               let f := { f with env := f.env.push ("LINGER_DIR", some owned.dir) }
@@ -2116,7 +2125,7 @@ private def realCheck (e : Env) : IO Nat := do
                 if rc != 0 then
                   throw (IO.userError s!"manager live fixture failed: {← create.stderr.readToEnd}")
               try
-                withSession f #["select"] fun s => do
+                withSession f #["attach"] fun s => do
                     unless ← s.prompt do
                       return false
                     let start ← s.mark
@@ -2495,7 +2504,7 @@ private def programChecks (e : Env) : IO Nat := do
       failures +
         (←
           check e s!"program-survives-{slug}"
-              s!"linger select cancellation leaves the actual session program alive and responsive ({slug})"
+              s!"linger attach cancellation leaves the actual session program alive and responsive ({slug})"
               fun f => do
               let owned : Env := { e with dir := (f.root / "state").toString }
               let f := { f with env := f.env.push ("LINGER_DIR", some owned.dir) }
@@ -2505,7 +2514,7 @@ private def programChecks (e : Env) : IO Nat := do
                   return false
                 let pid ← numberFile (f.root / "session-program-pid")
                 let before ← withLaunchLock (owned.out #["info", name])
-                withSession f #["select"] fun s => do
+                withSession f #["attach"] fun s => do
                     unless ← s.prompt do
                       return false
                     unless ← s.selected name do
@@ -2542,7 +2551,7 @@ private def programChecks (e : Env) : IO Nat := do
               unless ← startProgram f owned name do
                 return false
               let pid ← numberFile (f.root / "session-program-pid")
-              withSession f #["select"] fun s => do
+              withSession f #["attach"] fun s => do
                   unless ← s.prompt do
                     return false
                   unless ← s.selected name do

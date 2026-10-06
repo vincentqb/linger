@@ -118,7 +118,8 @@ private def draw (state : Linger.Tools.Picker.State) (snapshot : Linger.Tools.Pi
 /-- Own raw mode and at most one listing for one selection visit. Keys always
 act on the displayed snapshot, which is returned on acceptance; a completed
 replacement is applied afterward and rendered before polling again.
-Saved-tmux visits have no creation choice. The first listing is cancellable too. -/
+Saved-tmux visits have no creation choice. The first listing is cancellable too.
+Native listings get a cooperative stop so they can retire isolated SSH groups. -/
 def choose (executable : String) (savedTmux : Bool := false) (save : Option String := none) :
     IO Choice := do
   unless (← stdinIsTty) && (← (← IO.getStdout).isTty) do
@@ -208,7 +209,7 @@ def choose (executable : String) (savedTmux : Bool := false) (save : Option Stri
       finally
         termRestore stdinFd saved
     finally
-      Linger.Runtime.Command.stop pending
+      Linger.Runtime.Command.stop pending (if savedTmux then 0 else 1000)
 
 /-- Execute either selected row through attach, after terminal restoration. Every attach
 exit returns to a fresh listing; cancellation ends the manager. The caller

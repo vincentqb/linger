@@ -67,6 +67,12 @@ def main (args : List String) : IO UInt32 := do
     E2E.Agent.infoServer socketPath readyPath mode
   | ["--stream-info-server", socketPath, readyPath] =>
     E2E.Robust.streamInfoServer socketPath readyPath
+  | "--discovery-ssh" :: root :: rest =>
+    E2E.Remote.discoverySsh root rest
+  | ["--discovery-leaf", root, host] =>
+    E2E.Remote.discoveryLeaf root host
+  | ["--discovery-info", root] =>
+    E2E.Remote.discoveryInfo root
   | ["--delivery-child", trigger] =>
     E2E.Delivery.childProbe trigger
   | ["--delivery-server", dir] =>
@@ -93,12 +99,15 @@ def main (args : List String) : IO UInt32 := do
     E2E.Delivery.run (some check)
   | ["title", binary] =>
     E2E.Title.run (some binary)
-  | ["status"] =>
+  | ["remote", "discovery"] =>
+    E2E.Remote.runDiscovery
+  | ["ls", "--summary"] =>
     match ← IO.getEnv "LINGER_E2E_TITLE_PIPE" with
     | some pipe =>
       E2E.Title.sampleProbe pipe
     | none =>
-      E2E.Status.run
+      IO.eprintln "e2e: missing title sampler fixture"
+      return 2
   | [name] =>
     match suites.find? (·.1 == name) with
     | some (_, run) =>

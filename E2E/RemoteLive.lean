@@ -20,7 +20,7 @@ checkout must not be able to fail the gate.
 
 WHAT THE PORT STRENGTHENS. The Python matched `'name\talpha'` as a substring of the
 remote's porcelain; this parses it with `Linger.Core.Remote.parse` — the same
-reader `Cli.listRemote` uses on a real peer's reply — so the check now exercises
+reader `Cli.cmdList` uses on a real peer's reply — so the check now exercises
 the actual remote-parse contract instead of the bytes it happens to be built from.
 `SSH_AUTH_SOCK` is still removed: `linger` shells out to `ssh`, and a wedged local
 agent would hang that child. The host key comes from `~/.ssh/config`. -/
@@ -70,7 +70,7 @@ def run : IO UInt32 := do
   IO.sleep 1500
   c.bye (sendDetach := false)
   -- …and it must still be there. Parsed through `Remote.parse`, the reader
-  -- `Cli.listRemote` uses, rather than substring-matching the porcelain.
+  -- `Cli.cmdList` uses, rather than substring-matching the porcelain.
   let ssh ←
     IO.Process.output
         { cmd := "ssh",

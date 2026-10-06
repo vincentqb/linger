@@ -8,6 +8,8 @@ import Linger.Runtime.Daemon
 public import Linger.Runtime.Client
 public import Linger.Core.Remote
 import Linger.Core.Listing
+import Linger.Runtime.Command
+import Std.Async.Signal
 
 public section
 
@@ -39,12 +41,12 @@ def usage : String :=
        linger tmux <command> [SAVE]
 
   (no args)                 Show this help
-  select                    Create or choose interactively; return after detach
+  attach                    Choose or create interactively; return after detach
                               (requires terminal input and output)
+  attach <name> [command]    Create or attach by exact name; exit after detach
   ls [-r [hosts]]           List once; -r includes configured remote hosts
                               (or pass a comma-separated host list)
-  status                    Print compact local attention counts for a prompt
-  attach [name] [command]    Attach, creating if needed (name defaults to 'main')
+  ls --summary              Print compact local attention counts for a prompt
   tmux ls [SAVE]            List panes in a saved tmux-resurrect snapshot
   tmux select [SAVE]        Choose a saved pane and attach; fresh shell if needed
                               (requires terminal input and output)
@@ -73,7 +75,7 @@ def usage : String :=
   version | help
 
 Session commands accept an exact name or name@host (also name@user@host).
-Names: 1–80 ASCII letters, digits, -_.+; no leading dot. Only select uses fuzzy search.
+Names: 1–80 ASCII letters, digits, -_.+; no leading dot. Only interactive selection uses fuzzy search.
 History/capture prefer the live session; an offline read never starts a program.
 Saved tmux: ls/select/import default to the last save; pass SAVE for an older snapshot.
 Saved commands never run. Saved selection has no Create row.
@@ -245,14 +247,14 @@ def readInfo (fd : UInt32) (stopAt : Option Nat := none) : IO (List (String × S
 
 /-- Keep connection absence separate from an info failure: listing must retain
 a connected peer, while `get` must report its unanswered request. -/
-def queryInfo (name : String) (stopAt : Option Nat := none) :
+def queryInfo (name : String) (stopAt : Option Nat := none) (retainUnavailable : Bool := true) :
     IO (Option (Except IO.Error (List (String × String)))) := do
   if let some deadline := stopAt then
     if (← monotonicMs) ≥ deadline then
       return some (.error (IO.userError "overview deadline reached"))
   match ← Client.connect name stopAt.isSome with
   | none =>
-    if stopAt.isSome then
+    if stopAt.isSome && retainUnavailable then
       return some (.error (IO.userError "overview connection unavailable"))
     return none
   | some fd =>
@@ -261,6 +263,57 @@ def queryInfo (name : String) (stopAt : Option Nat := none) :
       return some info
     finally
       close fd
+
+/-- Maximum simultaneous local overview queries. -/
+abbrev localQueryLimit : Nat := 32
+
+/-- Maximum simultaneous remote overview commands. -/
+abbrev remoteQueryLimit : Nat := 4
+
+/-- All remote overview commands share this polling window. -/
+abbrev remoteQueryTimeoutMs : Nat := 3000
+
+/-- Bounded socket conversations run against the same deadline.
+Results retain their input positions; every started task is joined, even on error. -/
+def queryInfos (names : Array String) (deadline : Nat) (retainUnavailable : Bool) :
+    IO (Array (Option (Except IO.Error (List (String × String))))) := do
+  let unknown := some (.error (IO.userError "overview deadline reached"))
+  let mut results := Array.replicate names.size unknown
+  let pending ←
+    IO.mkRef
+        (#[] :
+          Array (Nat × Task (Except IO.Error (Option (Except IO.Error (List (String × String)))))))
+  let mut next := 0
+  try
+    while next < names.size || !(← pending.get).isEmpty do
+      while
+        next < names.size && (← pending.get).size < localQueryLimit && (← monotonicMs) < deadline do
+        let index := next
+        let task ←
+          IO.asTask (queryInfo names[index]! (some deadline) retainUnavailable)
+              Task.Priority.dedicated
+        pending.modify (·.push (index, task))
+        next := next + 1
+      let mut running := #[]
+      for (index, task) in ← pending.get do
+        if ← IO.hasFinished task then
+          let result ← IO.wait task
+          results :=
+            results.set! index
+              (match result with
+              | .ok info => info
+              | .error e => some (.error e))
+        else
+          running := running.push (index, task)
+      pending.set running
+      if running.isEmpty && (← monotonicMs) ≥ deadline then
+        break
+      if !running.isEmpty then
+        IO.sleep 1
+    return results
+  finally
+    for (_, task) in ← pending.get do
+      discard <| IO.wait task
 
 def kv (l : List (String × String)) (k : String) : String :=
   (l.find? (·.1 == k)).map (·.2) |>.getD ""
@@ -291,24 +344,69 @@ def resolveRemotes (flag : Option (List String)) : IO (List String) := do
     | .error e =>
       throw (IO.userError e)
 
-/-- One remote's sessions over ssh; a failure (host down, no linger,
-timeout) yields `[]` so a dead remote never blocks the local overview.
-ConnectTimeout bounds a host that is down; ServerAlive bounds one that
-is half-up (accepts the connection, then wedges mid-reboot) — either
-way the overview proceeds within a few seconds. -/
-def listRemote (host : String) : IO (List (String × Bool × String × String)) := do
-  let out ←
-    try
-      IO.Process.output
-          { cmd := "ssh",
-            args :=
-              #["-o", "BatchMode=yes", "-o", "ConnectTimeout=3", "-o", "ServerAliveInterval=2",
-                "-o", "ServerAliveCountMax=2", "--", host, "linger", "ls", "--porcelain"] }
-    catch _ =>
-      pure { exitCode := 1, stdout := "", stderr := "" }
-  if out.exitCode != 0 then
-    return []
-  return (Linger.Core.Remote.parse out.stdout).map (fun r => (r.name, r.live, r.cmd, r.status))
+/-- Four SSH jobs at most share a three-second command deadline. Transport
+keepalives alone cannot bound a remote command that never exits. Collect only
+complete successful outputs, in host order; stop and join every remaining group.
+Signal waiters let a cancelled chooser's listing retire its isolated SSH groups. -/
+def listRemotes (hosts : Array String) : IO (Option (Array String)) := do
+  let signals ← IO.mkRef (#[] : Array (Std.Async.Signal.Waiter × Std.Async.AsyncTask Int))
+  let jobs ← IO.mkRef (#[] : Array (Nat × IO.Ref (Option Command.Job)))
+  try
+    for signal in [Std.Async.Signal.sigterm, .sigint, .sighup] do
+      let waiter ← Std.Async.Signal.Waiter.mk signal true
+      try
+        let task ← waiter.wait
+        signals.modify (·.push (waiter, task))
+      catch e =>
+        waiter.stop
+        throw e
+    let deadline := (← monotonicMs) + remoteQueryTimeoutMs
+    let mut outputs := Array.replicate hosts.size ""
+    let mut next := 0
+    while next < hosts.size || !(← jobs.get).isEmpty do
+      for (_, signal) in ← signals.get do
+        if (← signal.getState) == .finished then
+          return none
+      if (← monotonicMs) ≥ deadline then
+        break
+      while
+        next < hosts.size && (← jobs.get).size < remoteQueryLimit && (← monotonicMs) < deadline do
+        let index := next
+        next := next + 1
+        let pending ← IO.mkRef none
+        jobs.modify (·.push (index, pending))
+        try
+          pending.set
+              (some
+                (←
+                  Command.start "ssh"
+                      #["-o", "BatchMode=yes", "-o", "ConnectTimeout=3", "-o",
+                        "ServerAliveInterval=2", "-o", "ServerAliveCountMax=2", "--", hosts[index]!,
+                        "linger", "ls", "--porcelain"]))
+        catch _ =>
+          pure ()
+      let mut running := #[]
+      for (index, pending) in ← jobs.get do
+        try
+          if let some output← Command.poll pending then
+            if output.exitCode == 0 then
+              outputs := outputs.set! index output.stdout
+        catch _ =>
+          pure ()
+        if (← pending.get).isSome then
+          running := running.push (index, pending)
+      jobs.set running
+      if !running.isEmpty then
+        IO.sleep 5
+    return some outputs
+  finally
+    for (_, pending) in ← jobs.get do
+      try
+        Command.stop pending
+      catch _ =>
+        pure ()
+    for (waiter, _) in ← signals.get do
+      waiter.stop
 
 /-- Remove a failed-connect socket only while holding its name lock. `false`
 means another owner holds the lock or the probe itself failed; both fail closed. -/
@@ -328,19 +426,21 @@ def removeStaleSocket (name : String) : IO Bool := do
   catch _ =>
     return false
 
-/-- Common local snapshot for the listing and prompt. An optional shared deadline
-keeps a prompt from waiting once per stalled daemon; unqueried peers stay unknown. -/
+/-- Common local snapshot for the listing and prompt. Concurrent queries share
+one deadline (two seconds for a listing); unqueried peers stay unknown. -/
 def localRows (stopAt : Option Nat := none) : IO (List (List (String × String))) := do
-  let sockets := (← Paths.listSocketNames).toArray.qsort (· < ·) |>.toList
+  let deadline := stopAt.getD ((← monotonicMs) + 2000)
+  let sockets := (← Paths.listSocketNames).toArray.qsort (· < ·)
   let ckpts := (← Paths.listCkptNames).toArray.qsort (· < ·) |>.toList
+  let infos ← queryInfos sockets deadline stopAt.isSome
   let liveRow := fun name info =>
     Linger.Core.Listing.rowFields name info ++
       [("state", "live"),
         ("status", Linger.Core.Status.name (Linger.Core.Listing.rowStatus (.live info)))]
   let mut confirmedLive : List String := []
   let mut rows : List (List (String × String)) := []
-  for name in sockets do
-    match ← queryInfo name stopAt with
+  for (name, result) in sockets.zip infos do
+    match result with
     | some info =>
       confirmedLive := confirmedLive ++ [name]
       rows := rows ++ [liveRow name (info.toOption.getD [])]
@@ -368,7 +468,7 @@ def localRows (stopAt : Option Nat := none) : IO (List (List (String × String))
             else liveRow name []]
   return rows
 
-def cmdStatus : IO UInt32 := do
+def cmdSummary : IO UInt32 := do
   let rows ← localRows (some ((← monotonicMs) + 250))
   let summary :=
     Linger.Core.Status.summary
@@ -378,20 +478,33 @@ def cmdStatus : IO UInt32 := do
   return 0
 
 def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
-  let mut rows ← localRows
-  -- remotes last (per host), so a slow ssh can't reorder local rows
-  for host in remotes do
-    for (rname, rlive, rcmd, rstatus) in ← listRemote host do
+  let (locals, remote) ←
+    if remotes.isEmpty then
+      pure (← localRows, some #[])
+    else
+      do
+        let task ← IO.asTask localRows Task.Priority.dedicated
+        try
+          let remote ← listRemotes remotes.toArray
+          let locals ← IO.ofExcept (← IO.wait task)
+          pure (locals, remote)
+        finally
+          discard <| IO.wait task
+  let some remote := remote | return 130
+  let mut rows := locals
+  for (host, output) in remotes.zip remote.toList do
+    for row in Linger.Core.Remote.parse output do
       -- a remote row is built from what the peer's porcelain says about identity
       -- and liveness. It also emits `clients` and `label.*`; those are dropped
       -- rather than rendered, so a remote row's label and watcher columns are
       -- blank whatever the peer reports — see SCRATCHPAD 2026-09-15.
       rows :=
         rows ++
-          [[("name", s!"{rname}@{host}"), ("cmd", rcmd),
-              ("state", if rlive then "live" else "resumable"),
+          [[("name", s!"{row.name}@{host}"), ("cmd", row.cmd),
+              ("state", if row.live then "live" else "resumable"),
               ("status",
-                Linger.Core.Status.name (Linger.Core.Listing.rowStatus (.remote rlive rstatus)))]]
+                Linger.Core.Status.name
+                  (Linger.Core.Listing.rowStatus (.remote row.live row.status)))]]
   if porcelain then
     for info in rows do
       for (k, v) in info do
@@ -604,8 +717,6 @@ def main (hooks : Hooks) (args : List String) : IO UInt32 := do
   | "__daemon" :: name :: cwd :: cmd =>
     Daemon.serve name cwd cmd (hooks.save name) (hooks.drop name) (hooks.load name)
     return 0
-  | ["attach"] | ["a"] =>
-    withTarget "attach" Linger.Core.Name.defaultName [] (cmdAttach · [])
   | "attach" :: name :: cmd | "a" :: name :: cmd =>
     withTarget "attach" name cmd (cmdAttach · cmd)
   | ["watch", name] =>
@@ -686,8 +797,8 @@ def main (hooks : Hooks) (args : List String) : IO UInt32 := do
         return rc
   | ["clear", name] | ["cl", name] =>
     withTarget "clear" name [] (requireLive · .labelClear)
-  | ["status"] =>
-    cmdStatus
+  | ["ls", "--summary"] | ["list", "--summary"] | ["l", "--summary"] =>
+    cmdSummary
   | ["version"] | ["v"] =>
     cmdVersion
   | ["help"] | ["h"] | ["--help"] | ["-h"] =>
