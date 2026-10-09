@@ -5,9 +5,11 @@ public import Linger.Manager.Picker
 public import Linger.Manager.Resurrect
 public import Linger.Core.Listing
 import Linger.Core.Name
+import Linger.Core.Remote
 import Linger.Core.Terminal
 import Linger.Runtime.Paths
 import Linger.Tools.Resurrect
+import E2E.Recipes
 import Std.Sync.Mutex
 
 public section
@@ -38,6 +40,7 @@ open E2E.Harness
 open Linger.Posix
 open Linger.Core.Render (modeSet csiNum screenText)
 open Linger.Core.Vt (Vt)
+open Linger.Core.Remote renaming shellQuote → quote
 
 /-- PTY acquisition uses libc's shared `ptsname` buffer and briefly holds
 descriptors without close-on-exec. Keep every parent launch out of that region,
@@ -54,8 +57,6 @@ private def rowText (vt : Vt) (row : Nat) : String :=
 
 private def call (args : List String) : String :=
   "CALL\x00linger\x00" ++ String.intercalate "\x00" args ++ "\x00\n"
-
-private def quote (text : String) : String := "'" ++ text.replace "'" "'\\''" ++ "'"
 
 private def readText (path : System.FilePath) : IO String := do
   if ← path.pathExists then
@@ -316,9 +317,7 @@ private def Fixture.make (e : Env) (slug : String) : IO Fixture := do
   if tty.exitCode != 0 || tty.stdout.trimAscii.isEmpty then
     throw (IO.userError "tty is required to observe the manager terminal path")
   IO.FS.writeFile executable s!"#!/bin/sh\nexec {quote self} --manager-probe command \"$@\"\n"
-  let chmod ← withLaunchLock <| IO.Process.output { cmd := "chmod", args := #["+x", executable] }
-  if chmod.exitCode != 0 then
-    throw (IO.userError s!"manager recorder chmod failed: {chmod.stderr}")
+  chmod executable 0o755
   IO.FS.writeFile (root / "listing") "name\tAlpha\nname\tBeta\nname\tGamma\n"
   IO.FS.writeFile (root / "listing-rc") "0"
   IO.FS.writeFile (root / "attach-rc") "7"
@@ -688,11 +687,7 @@ private def usageChecks (e : Env) : IO Nat := do
             let saves := f.root / ".tmux" / "resurrect"
             IO.FS.createDirAll saves
             let save := saves / "last"
-            IO.FS.writeFile save
-                (String.intercalate "\t"
-                    ["pane", "work", "1", "0", ":", "0", "title", ":" ++ f.root.toString, "1", "sh",
-                      ":vim"] ++
-                  "\n")
+            IO.FS.writeFile save (Recipes.paneLine "work" "1" "0" f.root.toString "vim")
             let before ← withLaunchLock (e.out #["ls", "--porcelain"])
             let mut ok := true
             for args in
@@ -2019,11 +2014,7 @@ private def defaultChecks (e : Env) : IO Nat := do
               let impostor := f.root / "bin" / "linger"
               IO.FS.writeFile impostor
                   s!"#!/bin/sh\nprintf hit >{quote (f.root / "impostor-hit").toString}\nexit 97\n"
-              let chmod ←
-                withLaunchLock <|
-                    IO.Process.output { cmd := "chmod", args := #["+x", impostor.toString] }
-              if chmod.exitCode != 0 then
-                throw (IO.userError s!"manager impostor chmod failed: {chmod.stderr}")
+              chmod impostor.toString 0o755
               let path := if empty then "" else (f.root / "bin").toString
               let f := { f with env := f.env.push ("PATH", some path) }
               withSession f.picker #[] fun s => do
@@ -2202,7 +2193,8 @@ private def checkSaved (e : Env) (slug label : String) (body : Fixture → Env �
     try
       body f owned
     finally
-      withLaunchLock (owned.killAll #["saved-first", "saved-chosen", "never-create"])
+      withLaunchLock
+          (owned.killAll #["saved-first", "saved-chosen", "-saved-chosen", "never-create"])
 
 private def savedChecks (e : Env) : IO Nat := do
   let mut failures := 0
@@ -2312,6 +2304,28 @@ private def savedChecks (e : Env) : IO Nat := do
                     detached &&
                     clean &&
                     !(← replayed.pathExists))
+  failures :=
+    failures +
+      (←
+        checkSaved e "chosen-leading"
+            "tmux select attaches a chosen saved pane whose name starts with - and returns after detach"
+            fun f owned => do
+            let save := f.root / "saved file"
+            IO.FS.writeFile save (savedPane "-saved-chosen" f.root.toString)
+            withSession f #["tmux", "select", save.toString] fun s => do
+                unless ← s.selected "-saved-chosen" do
+                  return false
+                s.text "\r"
+                let attached ←
+                  waitFor 5000 do
+                      return (← withLaunchLock (owned.info "-saved-chosen" "clients")) == some "1"
+                unless attached do
+                  return false
+                let start ← s.mark
+                s.client.detach
+                let returned ← s.selected "-saved-chosen" start
+                s.text "\x03"
+                return returned && (← termiosRestored s 130))
   for (slug, content, error) in
     [("missing", none, "save not found"),
       ("malformed", some "pane\tbroken\n", "malformed pane record")] do

@@ -42,8 +42,12 @@ example (state : State) (byte : UInt8) (key : Key) (hpaste : state.paste = true)
 
 example (state : State) : .enter ∉ (flush state).2 := flush_no_enter state
 
-#check_failure Linger.Tools.Key
+/-- Unknown identifier `Linger.Tools.Key` -/
+#guard_msgs (error, substring := true) in
+#check Linger.Tools.Key
 
-#check_failure Linger.Tools.Picker.State
+/-- Unknown identifier `Linger.Tools.Picker.State` -/
+#guard_msgs (error, substring := true) in
+#check Linger.Tools.Picker.State
 
 end Tests.InputApi

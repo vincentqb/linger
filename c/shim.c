@@ -193,15 +193,13 @@ static void exec_search(char **argv, char **shargv, char **envp, const char *pat
     errno = denied ? EACCES : ENOENT;
 }
 
-/* SOCK_CLOEXEC and accept4 are Linux/FreeBSD extensions; macOS has
- * neither, so there the flag goes on after the fact. The window between
- * socket()/accept() and the fcntl is only a leak if another thread forks
- * inside it, and the forks in this project are linger_spawn_pty and
- * linger_spawn_detached. Socket creation and spawning are serialized by the
- * application's IO loop; this relies on that calling discipline, not on Lean
- * being single-threaded (its runtime and libuv also have worker threads).
- * Where the atomic form exists we
- * still take it. Not exported: no new syscall surface (SHIM_CAP). */
+/* SOCK_CLOEXEC and accept4 set the close-on-exec flag atomically where they
+ * exist (Linux, FreeBSD). macOS has neither, so there the flag is set after
+ * socket()/accept(), and a fork inside that window inherits the descriptor.
+ * Cli.cmdList creates local query sockets in tasks while it starts ssh with
+ * IO.Process.spawn, which is fork plus execvp and closes no other
+ * descriptors, so on macOS a socket created in that window can be inherited
+ * by ssh until ssh exits. Not exported: no new syscall surface (SHIM_CAP). */
 #ifdef SOCK_CLOEXEC
 #define LINGER_HAVE_SOCK_CLOEXEC 1
 #else
@@ -704,18 +702,6 @@ LEAN_EXPORT lean_obj_res linger_spawn_detached(b_lean_obj_arg prog, b_lean_obj_a
         return io_err_code(buf, rec.code);
     }
     return io_ok_unit();
-}
-
-/* linger_exec : @& String -> @& Array String -> IO Unit  (replaces the process) */
-LEAN_EXPORT lean_obj_res linger_exec(b_lean_obj_arg prog, b_lean_obj_arg args) {
-    char **argv = exec_argv(prog, args);
-    if (!argv) return io_err("calloc");
-    execvp(argv[0], argv);
-    {
-        int e = errno;
-        free(argv);
-        return io_err_code("execvp", e);
-    }
 }
 
 /* linger_kill : UInt32 -> UInt32 -> IO Unit  (ESRCH is not an error) */

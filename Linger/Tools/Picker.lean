@@ -22,19 +22,13 @@ namespace Linger.Tools.Picker
 def «matches» (query target : String) : Bool :=
   (query.toList.map Char.toLower).isSublist (target.toList.map Char.toLower)
 
-/-- Exclude C0, DEL and C1 controls from both display targets and query text. -/
-private def printable (char : Char) : Bool :=
-  char.toNat ≥ 32 && (char.toNat < 127 || char.toNat ≥ 160)
-
-/-- The local name must already be canonical; the host suffix remains exact. -/
-private def validTarget (target : String) : Bool := Linger.Core.Remote.targetValid target
-
 private def parseRow (fields : List String) : Except String (Option String) :=
   if fields.head? != some "name" then .ok none
   else
     match fields with
     | [_, target] =>
-      if validTarget target then .ok (some target) else .error "invalid session target in listing"
+      if Linger.Core.Remote.targetValid target then .ok (some target)
+      else .error "invalid session target in listing"
     | _ => .error "malformed name record in listing"
 
 private def parseRows (seen rows : List String) : Except String (List String) :=
@@ -138,7 +132,8 @@ rewrites the query. Saved catalogs disable it entirely. -/
 def items (candidates : List String) (query : String) (allowCreate : Bool := true) : List Item :=
   let target := if query.isEmpty then Linger.Core.Name.defaultName else query
   (visible candidates query).map Item.existing ++
-    if allowCreate && validTarget target && !candidates.contains target then [.create target]
+    if allowCreate && Linger.Core.Remote.targetValid target && !candidates.contains target then
+      [.create target]
     else []
 
 structure State where
@@ -182,7 +177,7 @@ row. No selectable row stays editable. Effects remain the caller's job. -/
 def step (s : State) (key : Linger.Tools.Key) : Outcome :=
   match key with
   | .text char =>
-    if printable char && s.query.length < maxQueryLength then
+    if Linger.Tools.Input.printable char && s.query.length < maxQueryLength then
       .stay
         { s with
           query := s.query.push char, cursor := 0 }

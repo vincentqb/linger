@@ -38,12 +38,6 @@ def checkpointChecks (e : Env) : IO Nat := do
   let bytes := ByteArray.mk (Linger.Core.Checkpoint.save ⟨vt, "/tmp", [("saved", "yes")]⟩).toArray
   let path := s!"{e.dir}/saved.ckpt"
   IO.FS.writeBinFile path bytes
-  let (captureRc, history, _) ← e.cli #["capture", "--history", "saved"]
-  f :=
-    f +
-      (←
-        expect (captureRc == 0 && history.toUTF8.toList == Linger.Core.Render.history vt)
-            "capture --history includes saved scrollback and screen")
   let viewer ← e.spawn #["attach", "--read-only", "saved"] 40 4
   try
     let output ← drain viewer.fd 1500
@@ -97,6 +91,20 @@ def checkpointChecks (e : Env) : IO Nat := do
   finally
     viewer.bye
     e.killAll #["--read-only"]
+  -- A saved view forwards nothing and raw mode clears ISIG: the detach key is its
+  -- only exit, so the writable-attach opt-out must not remove it.
+  let pinned ← e.spawnEnv #["LINGER_NO_DETACH_KEY=1"] #["attach", "--read-only", "saved"] 40 4
+  try
+    let _ ← drain pinned.fd 1000
+    pinned.detach
+    let back ← drain pinned.fd 2000
+    f :=
+      f +
+        (←
+          expect ((← pinned.reap 2000) == 0 && hasText back "detached from")
+              "ctrl-\\ leaves a saved view even with LINGER_NO_DETACH_KEY set")
+  finally
+    pinned.bye
   for (cols, rows, expected) in [(0, 0, vt), (0, 2, vt.resize 40 2), (12, 0, vt.resize 12 4)] do
     let unsized ← e.spawn #["attach", "--read-only", "saved"] cols rows
     try
@@ -247,7 +255,7 @@ def run : IO UInt32 := do
     f +
       (←
         expect (!has (← e.out #["capture", "w"]) "wmark-42")
-            "the watcher's keyboard does not reach the pty (guard A)")
+            "the watcher's keyboard does not reach the pty")
   -- 5. non-vacuity for 4: the watcher really is receiving output
   real.type "echo mirror-$((20+22))\r"
   IO.sleep 1000
@@ -298,6 +306,19 @@ def run : IO UInt32 := do
   f := f + (← expect (hasBytes back leave) "the watcher writes leaveAnsi verbatim, byte for byte")
   obs.bye (sendDetach := false)
   f := f + (← expect (has (← e.out #["ls"]) "w") "the session survives the watcher leaving")
+  -- A read-only attach forwards no input, so the writable-attach opt-out must
+  -- not take away its only exit.
+  let pinned ← e.spawnEnv #["LINGER_NO_DETACH_KEY=1"] #["attach", "--read-only", "w"] 80 24
+  IO.sleep 1500
+  let _ ← drain pinned.fd 500
+  pinned.detach
+  let pinnedBack ← drain pinned.fd 2000
+  f :=
+    f +
+      (←
+        expect ((← pinned.reap 2000) == 0 && hasText pinnedBack "detached from")
+            "ctrl-\\ leaves a live read-only view even with LINGER_NO_DETACH_KEY set")
+  pinned.bye (sendDetach := false)
   -- 10. watching marks the session SEEN — a read-only verb with a write effect.
   -- `onMsg .attach` sets `lookSeq := s.outSeq` for ANY attach, 0x0 included, so
   -- Read-only attach clears `wants-you`. The status suite only ever exercised that

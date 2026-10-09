@@ -111,7 +111,7 @@ private def draw (state : Linger.Tools.Picker.State) (snapshot : Linger.Tools.Pi
           frame := frame ++ "\x1b[0m" ++ style
           activeStyle := style
         for raw in text.toList do
-          let c := if raw.toNat < 0x20 || (raw.toNat ≥ 0x7F && raw.toNat < 0xA0) then '?' else raw
+          let c := if Linger.Tools.Input.printable raw then raw else '?'
           let cells := Linger.Core.Vt.charWidth c
           if used + cells > width then
             clipped := true
@@ -127,8 +127,9 @@ act on the displayed snapshot, which is returned on acceptance; a completed
 replacement is applied afterward and rendered before polling again.
 Saved-tmux and read-only visits have no creation choice. The first listing is cancellable too.
 Native listings get a cooperative stop so they can retire isolated SSH groups. -/
-def choose (executable : String) (savedTmux : Bool := false) (save : Option String := none)
-    (readOnly : Bool := false) : IO Choice := do
+def choose (executable : String) (save : Option String := none) (readOnly : Bool := false) :
+    IO Choice := do
+  let savedTmux := save.isSome
   unless (← stdinIsTty) && (← (← IO.getStdout).isTty) do
     throw (IO.userError "the picker needs terminal input and output")
   let args :=
@@ -172,7 +173,7 @@ def choose (executable : String) (savedTmux : Bool := false) (save : Option Stri
         | some bytes =>
           if !bytes.isEmpty then
             lastInput ← monotonicMs
-          for byte in bytes.toList do
+          for byte in bytes do
             let (next, emitted) := Linger.Tools.Input.feed decoder byte
             decoder := next
             keys := keys ++ (emitted.filterMap Linger.Tools.Key.ofInput).toArray
@@ -218,6 +219,12 @@ def choose (executable : String) (savedTmux : Bool := false) (save : Option Stri
     finally
       Linger.Runtime.Command.stop pending (if savedTmux then 0 else 1000)
 
+/-- The exact attach argv for a chosen target. `--` keeps a name starting with
+`-` an operand rather than an option. -/
+def attachArgs (target : String) (readOnly : Bool := false) : Array String :=
+  #["attach"] ++ (if readOnly then #["--read-only"] else #[]) ++
+    (if target.startsWith "-" then #["--", target] else #[target])
+
 /-- Execute either selected row through attach, after terminal restoration. Every attach
 exit returns to a fresh listing; cancellation ends the manager. The caller
 supplies one frozen absolute executable for all listing and attach children. -/
@@ -232,10 +239,7 @@ def run (executable : String) (readOnly : Bool := false) : IO UInt32 := do
         IO.eprint stderr
       return status
     | .attach target _ =>
-      let args :=
-        #["attach"] ++ (if readOnly then #["--read-only"] else #[]) ++
-          (if target.startsWith "-" then #["--", target] else #[target])
-      let child ← IO.Process.spawn { cmd := executable, args }
+      let child ← IO.Process.spawn { cmd := executable, args := attachArgs target readOnly }
       discard child.wait
   return 0
 

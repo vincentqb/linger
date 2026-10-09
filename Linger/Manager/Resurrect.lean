@@ -4,6 +4,7 @@ import Linger.Tools.Resurrect
 import Linger.Posix
 import Linger.Runtime.Paths
 import Linger.Runtime.Resume
+import Linger.Runtime.Cli
 import Linger.Runtime.Command
 import Linger.Manager.Picker
 import Std.Async.System
@@ -55,8 +56,7 @@ private def preflight (origin : System.FilePath) (panes : List Pane) : IO Unit :
 /-- Freeze physical home and state paths for import children.
 These commands have no concurrent environment users.
 Restore the caller's environment even when a subprocess fails. -/
-private def inContext {α : Type}
-    (action : System.FilePath → String → Array (String × Option String) → IO α) : IO α := do
+private def inContext {α : Type} (action : System.FilePath → String → IO α) : IO α := do
   let origin ← IO.currentDir
   let home ←
     match (← IO.getEnv "HOME").filter (!·.isEmpty) with
@@ -82,7 +82,7 @@ private def inContext {α : Type}
     | none => Std.Async.System.unsetEnvVar key
   try
     env.forM set
-    action origin home env
+    action origin home
   finally
     previous.forM set
 
@@ -127,8 +127,7 @@ private def configuredDirectory : IO (Option String) := do
       if let some output← Command.poll pending then
         if output.exitCode != 0 then
           return none
-        let dir :=
-          if output.stdout.endsWith "\n" then (output.stdout.dropEnd 1).toString else output.stdout
+        let dir := (output.stdout.dropSuffix "\n").toString
         return if dir.isEmpty then none else some dir
       IO.sleep 10
     throw (IO.userError "tmux configuration query timed out; pass a save file explicitly")
@@ -189,10 +188,10 @@ private def readSave (origin : System.FilePath) (home : String) (file : Option S
 
 /-- Both bulk import and individual selection preflight before effects, then
 skip existing identities. Only the fixed shell-starting command is executed. -/
-private def createPanes (executable : String) (origin : System.FilePath)
-    (env : Array (String × Option String)) (panes : List Pane) : IO Unit := do
+private def createPanes (executable : String) (origin : System.FilePath) (panes : List Pane) :
+    IO Unit := do
   preflight origin panes
-  let listing ← IO.Process.output { cmd := executable, args := #["ls", "--porcelain"], env }
+  let listing ← IO.Process.output { cmd := executable, args := #["ls", "--porcelain"] }
   unless listing.exitCode == 0 do
     throw (IO.userError "could not list existing linger sessions")
   let existing := (Linger.Core.Remote.parse listing.stdout).map (·.name)
@@ -200,18 +199,18 @@ private def createPanes (executable : String) (origin : System.FilePath)
     let created ←
       IO.Process.output
           { cmd := executable, args := #["run", pane.name, "true"],
-            cwd := some (System.FilePath.mk pane.dir), env }
+            cwd := some (System.FilePath.mk pane.dir) }
     unless created.exitCode == 0 do
       throw
           (IO.userError s!"could not create session: {pane.name}: {created.stdout}{created.stderr}")
 
 private def importSave (executable : String) (file : Option String) : IO Unit :=
-  inContext fun origin home env => do
+  inContext fun origin home => do
     let save ← readSave origin home file
-    createPanes executable origin env save.panes
+    createPanes executable origin save.panes
 
 private def listSave (file : Option String) (porcelain : Bool) : IO Unit :=
-  inContext fun origin home _ => do
+  inContext fun origin home => do
     let save ← readSave origin home file
     let rows := catalogRows save.content save.panes
     let out ← IO.getStdout
@@ -234,10 +233,10 @@ private def listSave (file : Option String) (porcelain : Bool) : IO Unit :=
 /-- Act on the selected snapshot's exact directory, never on a reread of `last`.
 Resolve default discovery once per visit; the picker follows that path on refresh. -/
 private def selectSave (executable : String) (file : Option String) : IO UInt32 :=
-  inContext fun origin home env => do
+  inContext fun origin home => do
     let path ← savePath origin home file
     while true do
-      match ← Linger.Manager.Picker.choose executable true (some path.toString) with
+      match ← Linger.Manager.Picker.choose executable (some path.toString) with
       | .cancel =>
         return 130
       | .failed status stderr =>
@@ -258,11 +257,11 @@ private def selectSave (executable : String) (file : Option String) : IO UInt32 
           | throw (IO.userError "selected pane has no source line")
         let some pane := selectedPane target dir line
           | throw (IO.userError "invalid selected pane")
-        createPanes executable origin env [pane]
+        createPanes executable origin [pane]
         let child ←
           IO.Process.spawn
-              { cmd := executable, args := #["attach", pane.name],
-                cwd := some (System.FilePath.mk pane.dir), env }
+              { cmd := executable, args := Linger.Manager.Picker.attachArgs pane.name,
+                cwd := some (System.FilePath.mk pane.dir) }
         discard child.wait
     return 0
 

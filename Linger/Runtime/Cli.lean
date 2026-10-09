@@ -9,6 +9,7 @@ public import Linger.Runtime.Client
 public import Linger.Core.Remote
 import Linger.Core.Listing
 import Linger.Runtime.Command
+import Linger.Runtime.Resume
 import Std.Async.Signal
 
 public section
@@ -28,7 +29,6 @@ namespace Linger.Runtime.Cli
 open Linger.Posix
 open Linger.Core.Wire (Msg)
 open Linger.Runtime
-open Linger.Core.Session (State)
 
 def version : String := "linger 0.1.0"
 
@@ -37,13 +37,13 @@ A peer exceeding the producer's policy has not supplied a usable answer. -/
 abbrev infoReplyCap : Nat := Linger.Core.Session.infoReplyCap
 
 def usage : String :=
-  "Usage: linger [command] [args...]
+  s!"Usage: linger [command] [args...]
        linger tmux <command> [SAVE]
 
   (no args)                 Show this help
   attach                    Choose or create interactively; return after detach
                               (requires terminal input and output)
-  attach <name> [command]    Create or attach by exact name; exit after detach
+  attach <name> [command]   Create or attach by exact name; exit after detach
   attach --read-only [name]  View a live session or fixed checkpoint; no input
                               (omit name to choose; marks live output seen)
   ls [-r [hosts]]           List once; -r includes configured remote hosts
@@ -55,8 +55,8 @@ def usage : String :=
   tmux import [SAVE]        Start fresh shells in saved pane directories
   tmux export SAVE          Save local sessions in tmux-resurrect format
                               (requires a new destination file)
-  run <name> <command...>    Send a shell command, creating the session if needed
-  send <name> <text...>      Send raw input to session pty ('linger send <name> -'
+  run <name> <command...>   Send a shell command, creating the session if needed
+  send <name> <text...>     Send raw input to session pty ('linger send <name> -'
                               sends stdin verbatim: newlines, ^C, escapes...)
   detach <name>             Detach all clients from a session
   kill <name>               Kill session and all attached clients
@@ -68,14 +68,14 @@ def usage : String :=
   resize <name> <cols> <rows> Set a detached session's size (refused while an
                               attached client owns it)
   wait <name>...            Wait for sessions' programs to exit
-  get <name>               Print session labels
+  get <name>                Print session labels
   set <name> <k=v>...       Set labels
   unset <name> <key>...     Remove labels
-  clear <name>             Remove all labels
+  clear <name>              Remove all labels
   version | help
 
 Session commands accept an exact name or name@host (also name@user@host).
-Names: 1–80 ASCII letters, digits, -_.+; no leading dot. Only interactive selection uses fuzzy search.
+Names: {Paths.nameRule}. Only interactive selection uses fuzzy search.
 For attach/capture, put options before the name; use -- before a name starting with -.
 Remote hosts need linger on PATH. List hosts in ~/.config/linger/remotes to include them in selection and ls -r.
 
@@ -101,17 +101,7 @@ LINGER_DIR sets the socket and checkpoint directory; use local storage.
 Separate directories allow independent sessions with the same name.
 Set NO_COLOR to disable listing colors.
 Inside a session, $LINGER_SESSION holds the session name.
-Detach key: ctrl-\\ (set LINGER_NO_DETACH_KEY to disable)."
-
-/-- The daemon's checkpoint behaviour, injected: the CLI dispatch takes save/drop/load
-as arguments so `Main` supplies the real ones and a test can supply none. Defaults are
-no-ops, which is what makes a daemon without recovery a valid configuration rather than
-a special case. -/
-structure Hooks where
-  save : String → State → IO Unit := fun _ _ => pure ()
-  drop : String → IO Unit := fun _ => pure ()
-  load : String → IO (Option (Linger.Core.Vt.Vt × String × List (String × String))) := fun _ =>
-    pure none
+Detach key: ctrl-\\ (set LINGER_NO_DETACH_KEY to disable it for writable attach)."
 
 def spawnDaemon (name cwd : String) (cmd : List String) : IO Unit := do
   let self ← IO.appPath
@@ -141,8 +131,7 @@ def connectUpsert (name : String) (cmd : List String) : IO UInt32 := do
       throw (IO.userError s!"daemon for '{name}' did not come up (see {log})")
 
 def invalidTarget : IO UInt32 := do
-  IO.eprintln
-      "linger: invalid session name or malformed name@host target (use 1–80 ASCII letters, digits, -_.+; no leading dot)"
+  IO.eprintln s!"linger: invalid session name or malformed name@host target (use {Paths.nameRule})"
   return 2
 
 /-- One transport boundary for all session verbs. SSH interprets a command string
@@ -183,15 +172,14 @@ def withTarget (verb target : String) (args : List String) (localAction : String
 /-- A live connection is authoritative. Only read-only attachment can view an
 offline checkpoint, loaded while owning both resources and displayed after
 releasing them. Writable attachment keeps the create/resume path. -/
-def cmdAttach (hooks : Hooks) (name : String) (cmd : List String) (readOnly : Bool) : IO UInt32 :=
-  do
+def cmdAttach (name : String) (cmd : List String) (readOnly : Bool) : IO UInt32 := do
   let result ←
     if readOnly then
       match ← Client.connect name with
       | some fd =>
         Client.attach name fd true
       | none =>
-        let checkpoint ← Paths.withSessionLock name (hooks.load name)
+        let checkpoint ← Paths.withSessionLock name (Resume.loadCkpt name)
         match checkpoint with
         | some (vt, _, _) =>
           Client.viewSaved name vt
@@ -336,12 +324,12 @@ def queryInfos (names : Array String) (deadline : Nat) (retainUnavailable : Bool
     for (_, task) in ← pending.get do
       discard <| IO.wait task
 
-def kv (l : List (String × String)) (k : String) : String :=
-  (l.find? (·.1 == k)).map (·.2) |>.getD ""
+def kv (l : List (String × String)) (k : String) : String := (l.lookup k).getD ""
 
 /-- Remote hosts for `-r`: explicit flag list, else `~/.config/linger/remotes`.
-Duplicates are a hard error (`Remote.checkHosts`). `none` means no `-r`
-(local only); `some []` means `-r` with no arg (read the file). -/
+An unset or empty HOME configures no hosts. Duplicates are a hard error
+(`Remote.checkHosts`). `none` means no `-r` (local only); `some []` means `-r`
+with no arg (read the file). -/
 def resolveRemotes (flag : Option (List String)) : IO (List String) := do
   match flag with
   | none =>
@@ -349,8 +337,10 @@ def resolveRemotes (flag : Option (List String)) : IO (List String) := do
   | some given =>
     let raw ←
       if given.isEmpty then
-        do
-          let home := (← IO.getEnv "HOME").getD "/tmp"
+        match (← IO.getEnv "HOME").filter (!·.isEmpty) with
+        | none =>
+          pure []
+        | some home =>
           let path := s!"{home}/.config/linger/remotes"
           if ← System.FilePath.pathExists path then
             pure ((← IO.FS.readFile path).splitOn "\n")
@@ -433,17 +423,12 @@ def listRemotes (hosts : Array String) : IO (Option (Array String)) := do
 means another owner holds the lock or the probe itself failed; both fail closed. -/
 def removeStaleSocket (name : String) : IO Bool := do
   try
-    let lockFd ← flock (← Paths.lockPath name)
-    if lockFd < 0 then
-      return false
-    try
-      try
-        IO.FS.removeFile (← Paths.socketPath name)
-      catch _ =>
-        pure ()
-      return true
-    finally
-      close lockFd.toUInt64.toUInt32
+    Paths.withLock (← Paths.lockPath name) do
+        try
+          IO.FS.removeFile (← Paths.socketPath name)
+        catch _ =>
+          pure ()
+        return true
   catch _ =>
     return false
 
@@ -567,8 +552,11 @@ def requestStatus (name : String) (result : Client.Drained) : IO UInt32 := do
     IO.eprintln s!"linger: no reply from '{name}'"
   return 1
 
-def requireLive (name : String) (m : Msg) : IO UInt32 := do
-  match ← Client.oneShot name m with
+/-- One request to a live session. Pass `Client.replySilenceMs` for verbs a
+pre-upgrade daemon does not know, which would otherwise hang the untimed drain
+(spec agent-cli, Decision 4). -/
+def requireLive (name : String) (m : Msg) (silenceMs : Int32 := -1) : IO UInt32 := do
+  match ← Client.oneShot name m (silenceMs := silenceMs) with
   | none =>
     IO.eprintln s!"linger: no session '{name}'"
     return 1
@@ -582,41 +570,16 @@ def requireLiveSend (name : String) (m : Msg) : IO UInt32 := do
   IO.eprintln s!"linger: no session '{name}'"
   return 1
 
-/-- Like `requireLive` but through the bounded drain (`Client.drainBounded`):
-for verbs a pre-upgrade daemon does not know, which would otherwise hang the
-untimed drain (spec agent-cli, Decision 4). `wait` must NOT use this — waiting
-arbitrarily long is its job. -/
-def requireLiveBounded (name : String) (m : Msg) : IO UInt32 := do
-  match ← Client.connect name with
-  | none =>
-    IO.eprintln s!"linger: no session '{name}'"
-    return 1
-  | some fd =>
-    let r ←
-      try
-        Client.sendMsg fd m
-        Client.drainBounded fd
-      finally
-        close fd
-    requestStatus name r
-
 /-- A connected daemon is authoritative, including its errors. Only an absent
 connection followed by successful ownership acquisition permits an offline read.
 Hold both locks through loading and rendering; never start or modify a session. -/
-def cmdRead (hooks : Hooks) (name : String) (m : Msg) (render : Linger.Core.Vt.Vt → List UInt8) :
-    IO UInt32 := do
-  match ← Client.connect name with
-  | some fd =>
-    let result ←
-      try
-        Client.sendMsg fd m
-        Client.drainBounded fd
-      finally
-        close fd
+def cmdRead (name : String) (m : Msg) (render : Linger.Core.Vt.Vt → List UInt8) : IO UInt32 := do
+  match ← Client.oneShot name m (silenceMs := Client.replySilenceMs) with
+  | some result =>
     requestStatus name result
   | none =>
     Paths.withSessionLock name do
-        match ← hooks.load name with
+        match ← Resume.loadCkpt name with
         | some (vt, _, _) =>
           writeAll stdoutFd (ByteArray.mk (render vt).toArray)
           return 0
@@ -625,7 +588,7 @@ def cmdRead (hooks : Hooks) (name : String) (m : Msg) (render : Linger.Core.Vt.V
           return 1
 
 /-- `send <name> -`: stdin to the session's pty, byte-exact, one `.input`
-frame per read (≤ 64 KiB, so every frame is Wire-wf). The agent's raw input
+frame per read (≤ 64 KiB, so every frame satisfies `Msg.WF`). The agent's raw input
 path — Enter, ^C, ESC, arrow sequences, exact whitespace: everything argv
 cannot carry (agent-cli Decision 5). Poll-then-read so EOF (`read` = `none`)
 is distinguished from would-block (`some #[]`, looped past) without spinning;
@@ -676,33 +639,21 @@ def cmdSendStdin (name : String) : IO UInt32 := do
     finally
       close fd
 
-def cmdWait (names : List String) : IO UInt32 := do
-  let mut rc : UInt32 := 0
-  for name in names do
-    match ← Client.connect name with
-    | none =>
-      pure () -- no session = nothing to wait for
-    | some fd =>
-      let result ←
-        try
-          Client.sendMsg fd .wait
-          Client.drainReplies fd false
-        finally
-          close fd
-      match result with
-      | .exited status =>
-        if status != 0 then
-          rc := max rc status
-      | .refused why =>
-        IO.eprintln s!"linger: {why}"
-        rc := max rc 1
-      | .lost why =>
-        IO.eprintln s!"linger: {why} while waiting for '{name}'"
-        rc := max rc 1
-      | .done | .silent =>
-        IO.eprintln s!"linger: no exit status from '{name}'"
-        rc := max rc 1
-  return rc
+def cmdWait (name : String) : IO UInt32 := do
+  match ← Client.oneShot name .wait (untilDone := false) with
+  | none =>
+    return 0 -- no session = nothing to wait for
+  | some (.exited status) =>
+    return status
+  | some (.refused why) =>
+    IO.eprintln s!"linger: {why}"
+    return 1
+  | some (.lost why) =>
+    IO.eprintln s!"linger: {why} while waiting for '{name}'"
+    return 1
+  | some .done | some .silent =>
+    IO.eprintln s!"linger: no exit status from '{name}'"
+    return 1
 
 def cmdGet (name : String) : IO UInt32 := do
   match ← queryInfo name with
@@ -741,7 +692,7 @@ private def targetArgs (args : List String) : Option (String × List String) :=
   | name :: rest => if name.startsWith "-" then none else some (name, rest)
   | [] => none
 
-private def attachArgs (hooks : Hooks) (args : List String) : IO UInt32 := do
+private def attachArgs (args : List String) : IO UInt32 := do
   let readOnly := args.head? == some "--read-only"
   let args := if readOnly then args.tail else args
   let some (name, cmd) := targetArgs args |
@@ -751,10 +702,9 @@ private def attachArgs (hooks : Hooks) (args : List String) : IO UInt32 := do
   if readOnly && !cmd.isEmpty then
     IO.eprintln "linger: read-only attach does not accept a command"
     return 2
-  withTarget "attach" name cmd (cmdAttach hooks · cmd readOnly)
-      (if readOnly then ["--read-only"] else [])
+  withTarget "attach" name cmd (cmdAttach · cmd readOnly) (if readOnly then ["--read-only"] else [])
 
-private def captureArgs (hooks : Hooks) (args : List String) : IO UInt32 := do
+private def captureArgs (args : List String) : IO UInt32 := do
   let history := args.head? == some "--history"
   let args := if history then args.tail else args
   let some (name, []) := targetArgs args |
@@ -762,17 +712,17 @@ private def captureArgs (hooks : Hooks) (args : List String) : IO UInt32 := do
       IO.eprintln "usage: linger capture [--history] [--] <name>"
       return 2
   withTarget "capture" name []
-      (cmdRead hooks · (if history then .history else .screen)
+      (cmdRead · (if history then .history else .screen)
         (if history then Linger.Core.Render.history else Linger.Core.Render.screenText))
       (if history then ["--history"] else [])
 
-def main (hooks : Hooks) (args : List String) : IO UInt32 := do
+def main (args : List String) : IO UInt32 := do
   match args with
   | "__daemon" :: name :: cwd :: cmd =>
-    Daemon.serve name cwd cmd (hooks.save name) (hooks.drop name) (hooks.load name)
+    Daemon.serve name cwd cmd (Resume.saveCkpt name) (Resume.dropCkpt name) (Resume.loadCkpt name)
     return 0
   | "attach" :: rest | "a" :: rest =>
-    attachArgs hooks rest
+    attachArgs rest
   | "run" :: name :: cmd | "r" :: name :: cmd =>
     if cmd.isEmpty then
       IO.eprintln "usage: linger run <name> <command...>"
@@ -796,22 +746,20 @@ def main (hooks : Hooks) (args : List String) : IO UInt32 := do
   | ["kill", name] | ["k", name] =>
     withTarget "kill" name [] (requireLiveSend · .kill)
   | ["info", name] | ["i", name] =>
-    withTarget "info" name [] (requireLiveBounded · .info)
+    withTarget "info" name [] (requireLive · .info Client.replySilenceMs)
   | "capture" :: rest | "c" :: rest =>
-    captureArgs hooks rest
+    captureArgs rest
   | ["resize", name, cs, rs] =>
     match cs.toNat?, rs.toNat? with
     | some cols, some rows =>
-      -- 1..1000 is `clampDim`'s range: past it the emulator would clamp while
-      -- the pty winsize did not, and the two must not be allowed to disagree
-      -- from this path (attach trusts the terminal; an agent gets validated)
-      if cols == 0 || rows == 0 || cols > 1000 || rows > 1000 then
+      -- Accept exactly the sizes the emulator keeps, so the pty cannot disagree.
+      if Linger.Core.Vt.clampDim cols != cols || Linger.Core.Vt.clampDim rows != rows then
         do
           IO.eprintln "linger: size must be 1..1000 (the emulator clamps at 1000)"
           return 2
       else
         withTarget "resize" name [cs, rs]
-            (requireLiveBounded · (.resize (UInt32.ofNat cols) (UInt32.ofNat rows)))
+            (requireLive · (.resize (UInt32.ofNat cols) (UInt32.ofNat rows)) Client.replySilenceMs)
     | _, _ =>
       do
         IO.eprintln "usage: linger resize <name> <cols> <rows>"
@@ -823,7 +771,7 @@ def main (hooks : Hooks) (args : List String) : IO UInt32 := do
     let some targets := names.mapM Linger.Core.Remote.parseTarget | invalidTarget
     let mut rc : UInt32 := 0
     for target in targets do
-      rc := max rc (← runTarget "wait" target [] (fun name => cmdWait [name]))
+      rc := max rc (← runTarget "wait" target [] cmdWait)
     return rc
   | ["get", name] | ["g", name] =>
     withTarget "get" name [] cmdGet

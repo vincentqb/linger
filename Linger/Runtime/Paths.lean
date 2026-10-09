@@ -54,12 +54,15 @@ def ensureDir (d : String) : IO Unit := do
   IO.FS.createDirAll d
   Linger.Posix.chmod d 0o700
 
+/-- The accepted name alphabet, as every diagnostic and help text states it. -/
+def nameRule : String := s!"1–{Linger.Core.Name.maxLen} ASCII letters, digits, -_.+; no leading dot"
+
 def checkName (name : String) : IO String := do
   match Linger.Core.Name.check name with
   | some name =>
     return name
   | none =>
-    throw (IO.userError "invalid session name (use 1–80 letters, digits, -_.+; no leading dot)")
+    throw (IO.userError s!"invalid session name (use {nameRule})")
 
 /-- On a case-insensitive filesystem, a different spelling must not open an
 existing session. Check again after creating/locking or connecting to a path. -/
@@ -115,24 +118,18 @@ def withSessionLock {α : Type} (name : String) (action : IO α) : IO α := do
   withLock (← lockPath name) do
       withLock (← stateLockPath name) action
 
+/-- Valid session names among `dir`'s entries ending in `suffix`. -/
+private def listNames (dir suffix : String) : IO (List String) := do
+  ensureDir dir
+  return (← System.FilePath.readDir dir).toList.filterMap fun e =>
+      (e.fileName.dropSuffix? suffix).bind (Linger.Core.Name.check ·.toString)
+
 /-- Session names present as sockets, live or stale. -/
 def listSocketNames : IO (List String) := do
-  let d ← socketDir
-  ensureDir d
-  let entries ← System.FilePath.readDir d
-  return entries.toList.filterMap
-      (fun e =>
-        let n := e.fileName
-        if n.endsWith ".sock" then Linger.Core.Name.check ((n.dropEnd 5).toString) else none)
+  listNames (← socketDir) ".sock"
 
 /-- Checkpoint names (resumable sessions after a reboot). -/
 def listCkptNames : IO (List String) := do
-  let d ← stateDir
-  ensureDir d
-  let entries ← System.FilePath.readDir d
-  return entries.toList.filterMap
-      (fun e =>
-        let n := e.fileName
-        if n.endsWith ".ckpt" then Linger.Core.Name.check ((n.dropEnd 5).toString) else none)
+  listNames (← stateDir) ".ckpt"
 
 end Linger.Runtime.Paths

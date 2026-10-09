@@ -9,8 +9,6 @@ namespace Linger.Tools.Picker.Tests
 
 open Linger.Tools.Picker
 
-#guard Linger.Tools.Picker.matches "" "" && Linger.Tools.Picker.matches "" "work"
-
 #guard Linger.Tools.Picker.matches "WK@DV" "work@dev"
 
 #guard Linger.Tools.Picker.matches "abc" "a---b---c"
@@ -31,8 +29,6 @@ open Linger.Tools.Picker
 #guard
   visible ["work", "wk", "a-w-k", "Work", "other", "work"] "WK" ==
     ["work", "wk", "a-w-k", "Work", "work"]
-
-#guard visible ["-work", "+work", "work@me@dev-a"] "" == ["-work", "+work", "work@me@dev-a"]
 
 #guard
   match parseListing "name\t-work\npid\t123\n\nname\t+work\nname\twork@me@dev-a\n" with

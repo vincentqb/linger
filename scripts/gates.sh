@@ -267,11 +267,11 @@ import_closure Linger/Core/Name.lean ''
 import_closure Linger/Core/Remote.lean 'import Linger.Core.Name;'
 import_closure Linger/Core/Title.lean 'import Linger.Core.Name;'
 import_closure Linger/Runtime/Command.lean 'import Linger.Posix;'
-import_closure Linger/Manager/Resurrect.lean 'import Linger.Tools.Resurrect;import Linger.Posix;import Linger.Runtime.Paths;import Linger.Runtime.Resume;import Linger.Runtime.Command;import Linger.Manager.Picker;import Std.Async.System;import Lean.Data.Json;'
+import_closure Linger/Manager/Resurrect.lean 'import Linger.Tools.Resurrect;import Linger.Posix;import Linger.Runtime.Paths;import Linger.Runtime.Resume;import Linger.Runtime.Cli;import Linger.Runtime.Command;import Linger.Manager.Picker;import Std.Async.System;import Lean.Data.Json;'
 import_closure Linger/Manager/Picker.lean \
   'public import Linger.Tools.Picker;import Linger.Posix;import Linger.Core.Terminal;import Linger.Runtime.Command;'
 import_closure Main.lean \
-  'import Linger.Runtime.Resume;import Linger.Tools.Entry;import Linger.Manager.Picker;import Linger.Manager.Resurrect;'
+  'import Linger.Runtime.Cli;import Linger.Tools.Entry;import Linger.Manager.Picker;import Linger.Manager.Resurrect;'
 module_imports 'Linger/Core/*' 'Linger/Runtime/*' Linger/Posix.lean Linger.lean \
 | awk -F: '
   { mod = $3
@@ -299,7 +299,7 @@ for tie in \
   'def main [(]args : List String[)] : IO UInt32 := do try match Linger[.]Tools[.]Entry[.]route args with' \
   '[|] [.]selector readOnly => Linger[.]Manager[.]Picker[.]run [(]← IO[.]appPath[)][.]toString readOnly' \
   '[|] [.]tmux rest => Linger[.]Manager[.]Resurrect[.]run [(]← IO[.]appPath[)][.]toString rest' \
-  '[|] [.]session argv => Linger[.]Runtime[.]Cli[.]main Linger[.]Runtime[.]Resume[.]hooks argv'; do
+  '[|] [.]session argv => Linger[.]Runtime[.]Cli[.]main argv'; do
   printf '%s\n' "$entry_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "entry point bypassed its proved route or fixed IO boundary: $tie"
 done
@@ -328,11 +328,11 @@ code_grep '^[[:space:]]+let panes ← IO[.]ofExcept [(]parseSave home content[)]
 code_grep '^[[:space:]]+for pane in plan existing panes do$' Linger/Manager/Resurrect.lean >/dev/null \
   || fail "importer no longer iterates the proved import plan"
 import_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Manager/Resurrect.lean)"
-printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])let created ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"run", pane[.]name, "true"[]], cwd := some [(]System[.]FilePath[.]mk pane[.]dir[)], env [}] unless created[.]exitCode == 0 do throw [(]IO[.]userError s!"could not create session: [{]pane[.]name[}]: [{]created[.]stdout[}][{]created[.]stderr[}]"[)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])let created ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"run", pane[.]name, "true"[]], cwd := some [(]System[.]FilePath[.]mk pane[.]dir[)] [}] unless created[.]exitCode == 0 do throw [(]IO[.]userError s!"could not create session: [{]pane[.]name[}]: [{]created[.]stdout[}][{]created[.]stderr[}]"[)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "importer bypasses planned creation argv/cwd, captured output or its diagnostic catch"
 printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])[|] "import" => importSave executable paths[.]head[?]; return 0([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "importer no longer forwards the entry point executable"
-code_grep '^[[:space:]]+let listing ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"ls", "--porcelain"[]], env [}]$' Linger/Manager/Resurrect.lean >/dev/null \
+code_grep '^[[:space:]]+let listing ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"ls", "--porcelain"[]] [}]$' Linger/Manager/Resurrect.lean >/dev/null \
   || fail "importer no longer lists with the supplied executable"
 # Native listing observes the caller's checkpoint namespace, including its
 # no-HOME /tmp fallback. Only those fields reach the checked serializer.
@@ -348,12 +348,12 @@ for tie in \
   'let save ← readSave origin home file let rows := catalogRows save[.]content save[.]panes' \
   'let value := if key == "directory" then [(]Lean[.]Json[.]str value[)][.]compress else diagnostic value' \
   'Linger[.]Posix[.]writeAll Linger[.]Posix[.]stdoutFd [(]ByteArray[.]mk [(]Linger[.]Core[.]Listing[.]terminalListing withColor rows[)][.]toArray[)]' \
-  'let save ← readSave origin home file createPanes executable origin env save[.]panes' \
-  'let path ← savePath origin home file while true do match ← Linger[.]Manager[.]Picker[.]choose executable true [(]some path[.]toString[)] with' \
+  'let save ← readSave origin home file createPanes executable origin save[.]panes' \
+  'let path ← savePath origin home file while true do match ← Linger[.]Manager[.]Picker[.]choose executable [(]some path[.]toString[)] with' \
   '[|] [.]attach target displayed => unless displayed[.]candidates[.]contains target do throw [(]IO[.]userError "selected pane was absent from the displayed save"[)] let row := displayed[.]row target' \
   'let dir ← IO[.]ofExcept do let some value := row[.]lookup "directory" [|] throw "selected pane has no directory" let json ← Lean[.]Json[.]parse value json[.]getStr[?]' \
-  'let some pane := selectedPane target dir line [|] throw [(]IO[.]userError "invalid selected pane"[)] createPanes executable origin env [[]pane[]] let child ← IO[.]Process[.]spawn [{] cmd := executable, args := #[[]"attach", pane[.]name[]], cwd := some [(]System[.]FilePath[.]mk pane[.]dir[)], env [}] discard child[.]wait' \
-  'preflight origin panes let listing ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"ls", "--porcelain"[]], env [}]'; do
+  'let some pane := selectedPane target dir line [|] throw [(]IO[.]userError "invalid selected pane"[)] createPanes executable origin [[]pane[]] let child ← IO[.]Process[.]spawn [{] cmd := executable, args := Linger[.]Manager[.]Picker[.]attachArgs pane[.]name, cwd := some [(]System[.]FilePath[.]mk pane[.]dir[)] [}] discard child[.]wait' \
+  'preflight origin panes let listing ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"ls", "--porcelain"[]] [}]'; do
   printf '%s\n' "$import_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "tmux browser lost its catalog, displayed selection or preflight contract: $tie"
 done
@@ -420,7 +420,7 @@ for tie in \
   'writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Core[.]Terminal[.]Title[.]ansi ""[)][.]toArray[)]' \
   'writeAll stdoutFd frame[.]toUTF8' \
   'discard child[.]wait' \
-  'let child ← IO[.]Process[.]spawn [{] cmd := executable, args [}]'; do
+  'let child ← IO[.]Process[.]spawn [{] cmd := executable, args := attachArgs target readOnly [}]'; do
   code_grep "^[[:space:]]+$tie$" Linger/Manager/Picker.lean >/dev/null \
     || fail "manager bypassed a proved value or fixed IO boundary: $tie"
 done
@@ -432,10 +432,10 @@ picker_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Manager/Picker.lean)"
 # Preserve byte order and consume both decoder results through the proved
 # application binding before dispatch.
 for tie in \
-  'for byte in bytes[.]toList do let [(]next, emitted[)] := Linger[.]Tools[.]Input[.]feed decoder byte decoder := next keys := keys [+][+] [(]emitted[.]filterMap Linger[.]Tools[.]Key[.]ofInput[)][.]toArray else if Linger[.]Tools[.]Input[.]pending decoder && [(]← monotonicMs[)] - lastInput ≥ 150 then let [(]next, emitted[)] := Linger[.]Tools[.]Input[.]flush decoder decoder := next keys := [(]emitted[.]filterMap Linger[.]Tools[.]Key[.]ofInput[)][.]toArray for key in keys do' \
+  'for byte in bytes do let [(]next, emitted[)] := Linger[.]Tools[.]Input[.]feed decoder byte decoder := next keys := keys [+][+] [(]emitted[.]filterMap Linger[.]Tools[.]Key[.]ofInput[)][.]toArray else if Linger[.]Tools[.]Input[.]pending decoder && [(]← monotonicMs[)] - lastInput ≥ 150 then let [(]next, emitted[)] := Linger[.]Tools[.]Input[.]flush decoder decoder := next keys := [(]emitted[.]filterMap Linger[.]Tools[.]Key[.]ofInput[)][.]toArray for key in keys do' \
   'let nameCol := Linger[.]Core[.]Listing[.]nameWidth [(]snapshot[.]candidates[.]map fun target => [[][(]"name", target[)][]][)]' \
   'let mut index := start for item in [(]items[.]drop start[)][.]take slots do let chosen := index == state[.]cursor let selection := if chosen then "\\x1b[[]7m" else "" let mut pieces := #[[][(]if chosen then " ▸ " else " ", selection[)][]] let chars := Linger[.]Tools[.]Picker[.]highlightedPresentation snapshot nameCol state[.]query item for char in Linger[.]Tools[.]Picker[.]emphasizeCells chars do let statusStyle := if withColor then [(]char[.]status[.]map Linger[.]Core[.]Status[.]style[)][.]getD "" else "" let emphasis := if char[.]matched then "\\x1b[[]4m" else "" pieces := pieces[.]push [(]String[.]singleton char[.]char, selection [+][+] statusStyle [+][+] emphasis[)] lines := lines[.]push pieces index := index [+] 1' \
-  'let mut frame := "\\x1b[[]0m\\x1b[[]H\\x1b[[]2J" let mut first := true for line in lines do if !first then frame := frame [+][+] "\\r\\n" first := false let mut used := 0 let mut clipped := false let mut activeStyle := "" for [(]text, style[)] in line do if clipped then break if style != activeStyle then frame := frame [+][+] "\\x1b[[]0m" [+][+] style activeStyle := style for raw in text[.]toList do let c := if raw[.]toNat < 0x20 [|][|] [(]raw[.]toNat ≥ 0x7F && raw[.]toNat < 0xA0[)] then '"'"'[?]'"'"' else raw let cells := Linger[.]Core[.]Vt[.]charWidth c if used [+] cells > width then clipped := true break frame := frame[.]push c used := used [+] cells if !activeStyle[.]isEmpty then frame := frame [+][+] "\\x1b[[]0m" return frame' \
+  'let mut frame := "\\x1b[[]0m\\x1b[[]H\\x1b[[]2J" let mut first := true for line in lines do if !first then frame := frame [+][+] "\\r\\n" first := false let mut used := 0 let mut clipped := false let mut activeStyle := "" for [(]text, style[)] in line do if clipped then break if style != activeStyle then frame := frame [+][+] "\\x1b[[]0m" [+][+] style activeStyle := style for raw in text[.]toList do let c := if Linger[.]Tools[.]Input[.]printable raw then raw else '"'"'[?]'"'"' let cells := Linger[.]Core[.]Vt[.]charWidth c if used [+] cells > width then clipped := true break frame := frame[.]push c used := used [+] cells if !activeStyle[.]isEmpty then frame := frame [+][+] "\\x1b[[]0m" return frame' \
   'let next := if loaded then Linger[.]Tools[.]Picker[.]refresh state incoming[.]candidates else [{] [(]Linger[.]Tools[.]Picker[.]init incoming[.]candidates state[.]allowCreate[)] with query := state[.]query [}] dirty := dirty [|][|] !loaded [|][|] next != state [|][|] incoming != snapshot state := next snapshot := incoming loaded := true nextListing := [(]← monotonicMs[)] [+] 1000' \
   'while true do let current ← winsizeGet stdoutFd if dirty [|][|] current != size then let frame := draw state snapshot loaded withColor savedTmux current[.]1 current[.]2 if frame != lastFrame [|][|] current != size then writeAll stdoutFd frame[.]toUTF8 lastFrame := frame size := current dirty := false let ready ← poll fds events 50' \
   'for key in keys do if !loaded && key == [.]accept then continue match Linger[.]Tools[.]Picker[.]step state key with [|] [.]stay next => dirty := dirty [|][|] next != state state := next [|] [.]attach target [|] [.]create target => return [.]attach target snapshot [|] [.]cancel => return [.]cancel if let some result[[:space:]]*← Linger[.]Runtime[.]Command[.]poll pending then' \
@@ -444,7 +444,7 @@ for tie in \
   '[|] [.]attach target [|] [.]create target => return [.]attach target snapshot' \
   'let args := if savedTmux then #[[]"tmux", "ls", "--porcelain"[]] [+][+] save[.]toArray else #[[]"ls", "-r", "--porcelain"[]]' \
   'match ← choose executable [(]readOnly := readOnly[)] with' \
-  'let args := #[[]"attach"[]] [+][+] [(]if readOnly then #[[]"--read-only"[]] else #[[][]][)] [+][+] [(]if target[.]startsWith "-" then #[[]"--", target[]] else #[[]target[]][)] let child ← IO[.]Process[.]spawn [{] cmd := executable, args [}]'; do
+  'def attachArgs [(]target : String[)] [(]readOnly : Bool := false[)] : Array String := #[[]"attach"[]] [+][+] [(]if readOnly then #[[]"--read-only"[]] else #[[][]][)] [+][+] [(]if target[.]startsWith "-" then #[[]"--", target[]] else #[[]target[]][)]'; do
   printf '%s\n' "$picker_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "manager lost its selection, refresh, process ownership or attach contract: $tie"
 done
@@ -457,7 +457,7 @@ command_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Runtime/Command.lean)
 for tie in \
   'IO[.]Process[.]spawn [{] cmd := executable, args, stdin := [.]null, stdout := [.]piped, stderr := [.]piped, setsid := true [}] let stdout ← IO[.]asTask child[.]stdout[.]readToEnd Task[.]Priority[.]dedicated let stderr ← IO[.]asTask child[.]stderr[.]readToEnd Task[.]Priority[.]dedicated return [{] child, stdout, stderr [}]' \
   'def poll [(]pending : IO[.]Ref [(]Option Job[)][)] : IO [(]Option IO[.]Process[.]Output[)] := do if let some job[[:space:]]*← pending[.]get then if [(]← IO[.]hasFinished job[.]stdout[)] && [(]← IO[.]hasFinished job[.]stderr[)] then if let some exitCode[[:space:]]*← job[.]child[.]tryWait then pending[.]set none let stdout ← IO[.]ofExcept [(]← IO[.]wait job[.]stdout[)] let stderr ← IO[.]ofExcept [(]← IO[.]wait job[.]stderr[)] return some [{] exitCode, stdout, stderr [}] return none' \
-  'if let some job[[:space:]]*← pending[.]get then pending[.]set none try try try if graceMs > 0 then Linger[.]Posix[.]kill job[.]child[.]pid 15 let deadline := [(]← IO[.]monoMsNow[)] [+] graceMs while [(]← IO[.]monoMsNow[)] < deadline do if [(]← IO[.]hasFinished job[.]stdout[)] && [(]← IO[.]hasFinished job[.]stderr[)] then break IO[.]sleep 5 finally job[.]child[.]kill finally discard job[.]child[.]wait finally discard <[|] IO[.]wait job[.]stdout discard <[|] IO[.]wait job[.]stderr'; do
+  'if let some job[[:space:]]*← pending[.]get then pending[.]set none try try try if graceMs > 0 then Linger[.]Posix[.]kill job[.]child[.]pid 15 let deadline := [(]← Linger[.]Posix[.]monotonicMs[)] [+] graceMs while [(]← Linger[.]Posix[.]monotonicMs[)] < deadline do if [(]← IO[.]hasFinished job[.]stdout[)] && [(]← IO[.]hasFinished job[.]stderr[)] then break IO[.]sleep 5 finally job[.]child[.]kill finally discard job[.]child[.]wait finally discard <[|] IO[.]wait job[.]stdout discard <[|] IO[.]wait job[.]stderr'; do
   printf '%s\n' "$command_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "owned command lost its process or pipe lifetime contract: $tie"
 done
@@ -492,6 +492,11 @@ for tie in \
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "listing or prompt bypassed its shared policy: $tie"
 done
+# An unset or empty HOME configures no remote hosts; a fallback directory such as
+# world-writable /tmp would let another account choose them. Observing that from
+# a suite would mean creating /tmp/.config, so this tie is the oracle.
+printf '%s\n' "$cli_code" | CG_RE='(^|[[:space:]])match [(]← IO[.]getEnv "HOME"[)][.]filter [(]!·[.]isEmpty[)] with [|] none => pure [[][]] [|] some home => let path := s!"[{]home[}]/[.]config/linger/remotes"([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+  || fail "remote configuration must not fall back from an unset or empty HOME"
 # Discovery keeps bounded ownership until completion. Remote signal handlers
 # are installed before spawning isolated SSH groups, so cancelling the chooser
 # reaches those groups through its listing helper. E2E.Remote checks overlap,
@@ -651,7 +656,7 @@ code_grep "$VT_ALL_RE" '*.lean' \
 # deliberate, reviewable act — the checkpoint for "does this genuinely
 # need a syscall wrapper, or does Lean core already have it?" (see the
 # C-vs-Rust and shrink-the-shim notes in SCRATCHPAD.md).
-SHIM_CAP=22
+SHIM_CAP=21
 shim_n="$(code_count 'LEAN_EXPORT' 'c/shim.c')"
 [ "$shim_n" -le "$SHIM_CAP" ] \
   || fail "shim grew to $shim_n wrappers (cap $SHIM_CAP); justify the new syscall and bump the cap"
@@ -718,7 +723,7 @@ code_grep '^[[:space:]]+bufEnqueue [(]outbufCap - owedLen c[.]after[)] [.]empty$
 # as shutdown. A repeated close cannot buy another grace period.
 code_grep '^[[:space:]]+closeBy : Option Nat := none$' 'Linger/Runtime/Daemon.lean' > /dev/null \
   || fail "transport close deadlines no longer use Nat"
-[ "$(code_count '^[[:space:]]+let deadline := [(]← IO[.]monoMsNow[)] [+] drainTimeoutMs$' 'Linger/Runtime/Daemon.lean')" -eq 2 ] \
+[ "$(code_count '^[[:space:]]+let deadline := [(]← monotonicMs[)] [+] drainTimeoutMs$' 'Linger/Runtime/Daemon.lean')" -eq 2 ] \
   || fail "ordinary close and shutdown must share the Nat drain deadline"
 code_grep '^[[:space:]]+if c[.]closeBy[.]any [(]now ≥ ·[)] then$' 'Linger/Runtime/Daemon.lean' > /dev/null \
   || fail "retired transport expiry no longer checks its fixed deadline"
@@ -770,7 +775,7 @@ code_grep '^def acceptRetryMs : Nat := [1-9][0-9]*$' 'Linger/Runtime/Daemon.lean
   || fail "admission retry must wait a positive duration"
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])if let some retryAt := rt[.]acceptAfter then if now < retryAt then timeout := min timeout [(]retryAt - now[)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "admission retry no longer bounds the next poll deadline"
-code_grep '^[[:space:]]+rt := [{] rt with acceptAfter := some [(][(]← IO[.]monoMsNow[)] [+] acceptRetryMs[)] [}]$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+rt := [{] rt with acceptAfter := some [(][(]← monotonicMs[)] [+] acceptRetryMs[)] [}]$' 'Linger/Runtime/Daemon.lean' > /dev/null \
   || fail "admission failures must renew their retry deadline"
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])try setNonblock fd catch err => close fd throw err([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "failed client setup must release its accepted descriptor"
@@ -823,8 +828,7 @@ for claim in targetValid_iff parseTarget_exact parseTarget_name_valid shellQuote
 done
 ! code_grep 'Linger[.]Tools[.]Fuzzy|Core[.]Name[.]sanitize' Linger/Runtime/Cli.lean Linger/Runtime/Client.lean \
   || fail "noninteractive command lookup must not fuzzy-match or rewrite a name"
-selector_policy_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Tools/Picker.lean)"
-printf '%s\n' "$selector_policy_code" | CG_RE='(^|[[:space:]])private def validTarget [(]target : String[)] : Bool := Linger[.]Core[.]Remote[.]targetValid target([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+code_grep '^[[:space:]]+Linger[.]Core[.]Remote[.]targetValid target = true ∧ target ∉ candidates := by$' Theorems/Picker.lean >/dev/null \
   || fail "selector creation and command arguments no longer share the target grammar"
 for verb in attach run send detach kill info capture resize get set unset clear; do
   code_grep "^[[:space:]]+withTarget \"$verb\" " Linger/Runtime/Cli.lean >/dev/null \
@@ -832,12 +836,12 @@ for verb in attach run send detach kill info capture resize get set unset clear;
 done
 for tie in \
   'match Linger[.]Core[.]Remote[.]parseTarget target with [|] none => invalidTarget [|] some parsed => runTarget verb parsed args localAction options' \
-  'let some targets := names[.]mapM Linger[.]Core[.]Remote[.]parseTarget [|] invalidTarget let mut rc : UInt32 := 0 for target in targets do rc := max rc [(]← runTarget "wait" target [[]] [(]fun name => cmdWait [[]name[]][)][)]' \
+  'let some targets := names[.]mapM Linger[.]Core[.]Remote[.]parseTarget [|] invalidTarget let mut rc : UInt32 := 0 for target in targets do rc := max rc [(]← runTarget "wait" target [[]] cmdWait[)]' \
   'let interactive := verb == "attach" if interactive && [(]![(]← stdinIsTty[)] [|][|] ![(]← [(]← IO[.]getStdout[)][.]isTty[)][)] then' \
   'let options := options [+][+] [(]if [(]verb == "attach" [|][|] verb == "capture"[)] && target[.]name[.]startsWith "-" then [[]"--"[]] else [[][]][)]' \
   'IO[.]Process[.]spawn [{] cmd := "ssh", args := #[[]if interactive then "-t" else "-T", "--", host, Linger[.]Core[.]Remote[.]command verb target[.]name args options[]], stdin := [.]inherit [}] try child[.]wait finally if interactive then writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Core[.]Render[.]leaveAnsi[.]toArray[)]' \
-  'withTarget "attach" name cmd [(]cmdAttach hooks · cmd readOnly[)] [(]if readOnly then [[]"--read-only"[]] else [[][]][)]' \
-  'withTarget "capture" name [[][]] [(]cmdRead hooks · [(]if history then [.]history else [.]screen[)] [(]if history then Linger[.]Core[.]Render[.]history else Linger[.]Core[.]Render[.]screenText[)][)] [(]if history then [[]"--history"[]] else [[][]][)]'; do
+  'withTarget "attach" name cmd [(]cmdAttach · cmd readOnly[)] [(]if readOnly then [[]"--read-only"[]] else [[][]][)]' \
+  'withTarget "capture" name [[][]] [(]cmdRead · [(]if history then [.]history else [.]screen[)] [(]if history then Linger[.]Core[.]Render[.]history else Linger[.]Core[.]Render[.]screenText[)][)] [(]if history then [[]"--history"[]] else [[][]][)]'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "command transport lost exact targets, argv, stdin or terminal ownership: $tie"
 done
@@ -879,8 +883,8 @@ for tie in \
     || fail "daemon resource cleanup escaped its ownership lifetime: $tie"
 done
 for tie in \
-  'requestStatus name result [|] none => Paths[.]withSessionLock name do match ← hooks[.]load name with [|] some [(]vt, _, _[)] => writeAll stdoutFd [(]ByteArray[.]mk [(]render vt[)][.]toArray[)]' \
-  'if readOnly then match ← Client[.]connect name with [|] some fd => Client[.]attach name fd true [|] none => let checkpoint ← Paths[.]withSessionLock name [(]hooks[.]load name[)] match checkpoint with [|] some [(]vt, _, _[)] => Client[.]viewSaved name vt' \
+  'requestStatus name result [|] none => Paths[.]withSessionLock name do match ← Resume[.]loadCkpt name with [|] some [(]vt, _, _[)] => writeAll stdoutFd [(]ByteArray[.]mk [(]render vt[)][.]toArray[)]' \
+  'if readOnly then match ← Client[.]connect name with [|] some fd => Client[.]attach name fd true [|] none => let checkpoint ← Paths[.]withSessionLock name [(]Resume[.]loadCkpt name[)] match checkpoint with [|] some [(]vt, _, _[)] => Client[.]viewSaved name vt' \
   'let available ← try Paths[.]withSessionLock name [(]pure true[)] catch _ => pure false'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "offline reading or listing bypassed ownership: $tie"
@@ -892,7 +896,7 @@ for tie in \
   'let mut lastSize : Option [(]UInt32 × UInt32[)] := none while true do let size ← winsizeGet stdinFd if lastSize != some size then let cols := if size[.]1 == 0 then snapshot[.]colCount else size[.]1[.]toNat let rows := if size[.]2 == 0 then snapshot[.]rowCount else size[.]2[.]toNat' \
   'let view := if snapshot[.]colCount == cols && snapshot[.]rowCount == rows then snapshot else snapshot[.]resize cols rows let mut repaint := Linger[.]Core[.]Replay[.]start view repeat match Linger[.]Core[.]Replay[.]next 65536 repaint with [|] none => break [|] some [(]bytes, next[)] => if !bytes[.]isEmpty then writeAll stdoutFd [(]ByteArray[.]mk bytes[.]toArray[)] repaint := next' \
   'let title := Linger[.]Core[.]Title[.]compose name view[.]windowTitle [(]String[.]singleton [(]Linger[.]Core[.]Status[.]icon [.]resumable[)][)] Linger[.]Core[.]Terminal[.]Title[.]maxChars writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Core[.]Terminal[.]Title[.]update view title[)][.]toArray[)]' \
-  'if [(]splitDetach bytes detachEnabled[)][.]2 then return [.]detached return [.]detached finally try writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Core[.]Render[.]leaveAnsi[.]toArray[)] finally termRestore stdinFd saved'; do
+  'if [(]splitDetach bytes true[)][.]2 then return [.]detached return [.]detached finally try writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Core[.]Render[.]leaveAnsi[.]toArray[)] finally termRestore stdinFd saved'; do
   printf '%s\n' "$client_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "saved viewer bypassed bounded replay, snapshot preservation or terminal ownership: $tie"
 done
@@ -926,7 +930,7 @@ code_grep "^[[:space:]]+rt ← pump rt' [(]events [+][+] [[][.]tick now[]][)]$" 
 # `Session.resumeVt` ↔ `Daemon.lean`'s `vt0` — the resume door's model/runtime tie, and
 # the direct sibling of the three Buf greps above: same gap, same species of oracle.
 # `Theorems/Session.lean`'s `resumeVt` IS the daemon's fallback expression with the `IO`
-# peeled off, and it is load-bearing — `liveReachable_resumeVt`, `run_resume_vt_shape`
+# peeled off, and it is load-bearing — `liveReachableVt_resumeVt`, `run_resume_vt_shape`
 # and `run_resume_load_save` are claims about the daemon ONLY through that
 # correspondence, which was prose next to the def until this gate. `Linger/Runtime/*` is
 # `IO`, so no theorem can see the call site (AGENTS.md's rule): change the daemon's

@@ -63,8 +63,10 @@ private theorem best_optimal (left right : Option Alignment) (p q : Alignment �
     (hl : Optimal p left) (hr : Optimal q right)
     (ordered : ∀ a, p a → ∀ b, q b → MaskLE a.marks b.marks) :
     Optimal (fun a => p a ∨ q a) (best left right) := by
-  cases left <;> cases right <;> simp_all [Optimal, best]
-  split <;> simp_all <;> grind
+  cases left <;> cases right <;>
+    simp_all only [Optimal, best, ge_iff_le, or_self, or_true, or_false, false_or, and_self,
+      not_false_eq_true, implies_true]
+  split <;> simp_all only [Int.not_le, true_or, or_true, true_and] <;> grind
 
 /-- Equal scores always retain the left candidate, the current-position match. -/
 private theorem best_left_tie (a b : Alignment) (h : a.score = b.score) :

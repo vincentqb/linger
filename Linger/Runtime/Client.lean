@@ -20,7 +20,7 @@ as `input` frames (watching for the detach key), write `output` frames
 to stdout, resize on terminal size change (checked each poll round), and
 report detach, child exit, daemon refusal, or transport loss distinctly.
 
-Detach key: `ctrl-\` (0x1C), disabled by `LINGER_NO_DETACH_KEY`.
+Detach key: `ctrl-\` (0x1C); set `LINGER_NO_DETACH_KEY` to disable it for writable attach.
 -/
 
 namespace Linger.Runtime.Client
@@ -61,13 +61,25 @@ inductive Drained where
 def replyText (fallback : String) (bytes : List UInt8) : String :=
   Linger.Core.Remote.scrub (String.fromUTF8? (ByteArray.mk bytes.toArray) |>.getD fallback)
 
-/-- Read frames until the daemon closes or the requested terminator arrives. -/
-def drainReplies (fd : UInt32) (untilDone : Bool) : IO Drained := do
+/-- The silence budget for a reply that a pre-upgrade daemon may never send. -/
+def replySilenceMs : Int32 := 2000
+
+/-- Read frames until the daemon closes or the requested terminator arrives.
+A nonnegative `silenceMs` gives up after that much *silence*, for the one-shot
+verbs a pre-upgrade daemon does not know: an unknown tag is dropped without a
+trace (Wire §Frame), so a daemon from before the verb existed replies nothing at
+all, and the untimed drain would hang the client forever — the deadline has to
+be owned here. Output payloads stream to stdout as they come (`capture` is such
+a stream); the timeout is per poll round, so a long reply that keeps arriving
+never trips it. -/
+def drainReplies (fd : UInt32) (untilDone : Bool) (silenceMs : Int32 := -1) : IO Drained := do
   let mut dec : Decoder := {}
   repeat
-    let revs ← poll #[fd] #[POLLIN] (-1)
+    let revs ← poll #[fd] #[POLLIN] silenceMs
     if revs[0]! &&& (POLLIN ||| POLLHUP ||| POLLERR) == 0 then
-      continue
+      if silenceMs < 0 then
+        continue
+      return .silent
     match ← read fd 65536 with
     | none =>
       return .lost "connection lost"
@@ -106,52 +118,17 @@ def sendOnly (name : String) (m : Msg) : IO Bool := do
 
 /-- One-shot request/reply. `none` means no live daemon; every connected
 conversation preserves its actual outcome. -/
-def oneShot (name : String) (m : Msg) : IO (Option Drained) := do
+def oneShot (name : String) (m : Msg) (untilDone : Bool := true) (silenceMs : Int32 := -1) :
+    IO (Option Drained) := do
   match ← connect name with
   | none =>
     return none
   | some fd =>
     try
       sendMsg fd m
-      return some (← drainReplies fd true)
+      return some (← drainReplies fd untilDone silenceMs)
     finally
       close fd
-
-/-- Like `drainReplies untilDone := true`, but gives up after `silenceMs` of
-*silence*. For the one-shot verbs a pre-upgrade daemon does not know: an
-unknown tag is dropped without a trace (Wire §Frame), so a daemon from before
-the verb existed replies nothing at all, and the untimed drain would hang the
-client forever — the deadline has to be owned here. Output payloads stream to
-stdout as they come (`capture` is such a stream); the timeout is per poll
-round, so a long reply that keeps arriving never trips it. -/
-def drainBounded (fd : UInt32) (silenceMs : Int32 := 2000) : IO Drained := do
-  let mut dec : Decoder := {}
-  repeat
-    let revs ← poll #[fd] #[POLLIN] silenceMs
-    if revs[0]! &&& (POLLIN ||| POLLHUP ||| POLLERR) == 0 then
-      return .silent
-    match ← read fd 65536 with
-    | none =>
-      return .lost "connection lost"
-    | some bs =>
-      if bs.isEmpty then
-        continue
-      let (dec', msgs) := dec.feed bs.toList
-      dec := dec'
-      if dec.errored then
-        return .lost "invalid response from daemon"
-      for m in msgs do
-        match m with
-        | .output payload | .infoReply payload =>
-          writeAll stdoutFd (ByteArray.mk payload.toArray)
-        | .done =>
-          return .done
-        | .exited status =>
-          return .exited status
-        | .err msg =>
-          return .refused (replyText "request refused" msg)
-        | _ =>
-          pure ()
 
 /-- Split stdin bytes at the detach key. Returns (bytes-to-send,
 detach?). Bytes after the key are dropped — we're leaving. -/
@@ -179,7 +156,6 @@ inductive Outcome where
 discard input except the detach key. Ownership was released after loading,
 so this viewer cannot block another process from resuming the session. -/
 def viewSaved (name : String) (snapshot : Linger.Core.Vt.Vt) : IO Outcome := do
-  let detachEnabled := (← IO.getEnv "LINGER_NO_DETACH_KEY").isNone
   let saved ← termRaw stdinFd
   try
     let fds := #[stdinFd]
@@ -216,7 +192,7 @@ def viewSaved (name : String) (snapshot : Linger.Core.Vt.Vt) : IO Outcome := do
         | none =>
           return .detached
         | some bytes =>
-          if (splitDetach bytes detachEnabled).2 then
+          if (splitDetach bytes true).2 then
             return .detached
     return .detached
   finally
@@ -229,7 +205,7 @@ def viewSaved (name : String) (snapshot : Linger.Core.Vt.Vt) : IO Outcome := do
 mirrors, keyboard is not forwarded, detach key still works. -/
 def attach (name : String) (fd : UInt32) (readOnly : Bool := false) : IO Outcome := do
   try
-    let detachEnabled := (← IO.getEnv "LINGER_NO_DETACH_KEY").isNone
+    let detachEnabled := readOnly || (← IO.getEnv "LINGER_NO_DETACH_KEY").isNone
     let self ← IO.appPath
     let pending ← IO.mkRef (none : Option Command.Job)
     let (cols, rows) ← winsizeGet stdinFd

@@ -14,26 +14,16 @@ Step 1: `linger info <name>` and the observability fields — geometry + cursor
 (what `capture` needs), `alt`, and `outseq` (the change cursor: "look again only
 when it moved"). Step 2: `linger capture <name>` — the screen as plain text, one
 line per row, and capturing marks the session seen. Step 3: `linger send <name> -`
-— stdin to the pty byte-exact (the oracles assert on shell *expansions*: the tty
-echoes typed input onto the screen, so a typed-text marker would pass even if the
-bytes never ran; see SCRATCHPAD 2026-08-19). Step 4: `linger resize` — applies
-detached (down to the child's own winsize, via `stty size`), refused while a
-client is attached. All pinned against the rendered porcelain/bytes, end to end.
+— stdin to the pty byte-exact. Step 4: `linger resize` — applies detached (down to
+the child's own winsize, via `stty size`), refused while a client is attached. All
+pinned against the rendered porcelain/bytes, end to end.
 
-WHAT THE PORT TIGHTENED, and what it could not — read before adding a check:
+`alt` and `unseen` compare to `toString false` / `toString true`, because that is
+literally what `Session.infoFields` emits (`toString` of a `Bool`). Two facts could
+NOT be tied to the implementation — read before adding a check:
 
-* every geometry assertion compares against the number this suite *asked* for
-  (the `let`s below), not against a second copy of it spelled out as a string;
-* the oversize `resize` probe is derived from `Vt.clampDim` instead of the flat
-  `5000` the Python used. `clampDim` saturates, so `clampDim n + 1` is the
-  SMALLEST value the client must reject — the boundary, not a value well past
-  it. If `Cli`'s own `1000` literal ever drifts from `clampDim`'s range, this
-  is the check that fails;
-* `alt` and `unseen` compare to `toString false` / `toString true`, because that
-  is literally what `Session.infoFields` emits (`toString` of a `Bool`);
-* the 80×24 default could NOT be tied to anything: it is a literal
-  `Vt.init 80 24` inside `Daemon.serve`, so a Lean-side tie would restate the
-  constant rather than derive it;
+* the 80×24 default is a literal `Vt.init 80 24` inside `Daemon.serve`, so a
+  Lean-side tie would restate the constant rather than derive it;
 * "capture is exactly one line per row" could not be tied to
   `Render.screenText` either — the row count is a property of a `Vt` this
   process does not hold. `rows` comes from the session's own `info`, which is as
@@ -43,9 +33,7 @@ namespace E2E.Agent
 
 open E2E.Harness
 
-/-- Python's `.isdigit()` and `int(...)` in one move: `String.toNat?` is `none`
-for the empty string and for anything carrying a non-digit, which is exactly what
-`''.isdigit()` being False stood for at the two "is reported as a number" checks. -/
+/-- A field as a natural number: `none` when it is absent, empty or not all digits. -/
 def num (o : Option String) : Option Nat := o.bind (·.toNat?)
 
 /-- `linger send <name> -` with `payload` on its stdin, byte-exact.
@@ -58,10 +46,10 @@ reference is what closes the pipe. That close is load-bearing, not hygiene:
 is legitimate, and EOF is the only exit"), so a port that kept the handle alive
 would hang here instead of failing.
 
-`putStr` writes the payload's UTF-8, and all three payloads below are ASCII or a
-single C0 byte, so the bytes on the pipe are the Python's bytes exactly. A
-payload that is not valid UTF-8 would need `spawn` + `takeStdin` + `Handle.write`
-on a `ByteArray`; nothing here does. -/
+`putStr` writes the payload's UTF-8, and every payload below is ASCII or a single
+C0 byte, so the pipe carries exactly those bytes. A payload that is not valid
+UTF-8 would need `spawn` + `takeStdin` + `Handle.write` on a `ByteArray`; nothing
+here does. -/
 def sendStdin (e : Env) (name payload : String) : IO UInt32 := do
   let out ←
     IO.Process.output { cmd := e.bin, args := #["send", name, "-"], env := e.procEnv }
@@ -259,10 +247,9 @@ def run : IO UInt32 := do
   IO.sleep 1200
   let after := (num (← e.info "ag" "outseq")).getD 0
   f := f + (← expect (after > before) "outseq increases after output")
-  -- geometry follows an attached terminal. `Env.spawn` sets the winsize BEFORE
-  -- exec, so the `pty.fork()`-then-`ioctl(TIOCSWINSZ)` race the Python had
-  -- against the client's own startup `winsizeGet` is gone — and this check is
-  -- the one whose subject is precisely the size a client reported.
+  -- geometry follows an attached terminal. `Env.spawn` sets the winsize before
+  -- exec, so the client's own startup `winsizeGet` already reads the size this
+  -- check asks for.
   let attCols : UInt32 := 100
   let attRows : UInt32 := 30
   let cl ← e.spawn #["attach", "ag"] attCols attRows
@@ -275,9 +262,7 @@ def run : IO UInt32 := do
               (← e.info "ag" "rows") == some (toString attRows))
             "info reflects the attached terminal size")
   cl.bye -- detach, close, reap
-  -- info against a missing session fails cleanly. The quoted name is part of
-  -- the message `requireLiveBounded` prints, so the port pins it: the Python
-  -- accepted any "no session" text at all.
+  -- info against a missing session fails cleanly, quoting the name it looked for.
   let (irc, _, ierr) ← e.cli #["info", "nosuch"]
   f :=
     f +
@@ -360,7 +345,8 @@ def run : IO UInt32 := do
   -- a full command line with its newline arrives verbatim and executes. The
   -- marker is asserted on the *expansion* (GOT-42), which the typed line does
   -- not contain — the tty echoes typed input onto the screen, so asserting on
-  -- the typed text would pass even if the newline was lost and nothing ran.
+  -- the typed text would pass even if the newline was lost and nothing ran
+  -- (SCRATCHPAD 2026-08-19).
   let src ← sendStdin e "ag" "echo \"GOT-$((40+2))\"\n"
   f :=
     f +
@@ -484,11 +470,10 @@ def run : IO UInt32 := do
       (←
         expect (arc == 0 && (← e.info "rz" "cols") == some (toString newCols))
             "resize applies again once the client detached")
-  -- client-side validation: 1..1000 (clampDim's range). Both probes are the
-  -- boundary itself: 0 is the largest rejected value below the range, and
+  -- client-side validation accepts exactly `clampDim`'s range. Both probes are
+  -- the boundary itself: 0 is the largest rejected value below the range, and
   -- `clampDim` saturating means `clampDim 5000 + 1` is the smallest rejected
-  -- value above it. The Python's flat 5000 could not tell "the CLI rejects
-  -- 1001" from "the CLI rejects some number far outside".
+  -- value above it.
   let tooBig := Linger.Core.Vt.clampDim 5000 + 1
   let (zrc, _, _) ← e.cli #["resize", "rz", "0", "10"]
   let (brc, _, _) ← e.cli #["resize", "rz", toString tooBig, "10"]
@@ -499,6 +484,22 @@ def run : IO UInt32 := do
         expect ((← e.cli #["resize", "nosuch", "80", "24"]).1 == 1)
             "resize on a missing session exits 1")
   e.killAll #["rz"]
+  -- An empty SHELL names no program: creation falls back to the default shell.
+  let created ←
+    IO.Process.output
+        { cmd := e.bin, args := #["run", "shell-empty", "echo empty-shell-$((40+2))"],
+          env := #[("LINGER_DIR", some e.dir), ("SHELL", some "")] }
+  f :=
+    f +
+      (←
+        expect
+            (created.exitCode == 0 &&
+              (←
+                waitFor 5000
+                    (do
+                      return has (← e.out #["capture", "shell-empty"]) "empty-shell-42")))
+            "an empty SHELL still creates a session running the default shell")
+  e.killAll #["shell-empty"]
   verdict e f
 
 end E2E.Agent

@@ -68,8 +68,9 @@ theorem feed_byte_bindings (byte : UInt8) :
       | rfl
       | split)
   all_goals
-    simp_all [Input.deliver, ofInput, UInt8.le_iff_toNat_le, UInt8.lt_iff_toNat_lt, Char.ofUInt8]
-  all_goals try simp_all [Option.filter, ofInput, Char.toNat]
+    simp_all [Input.deliver, Input.printable, ofInput, UInt8.le_iff_toNat_le, UInt8.lt_iff_toNat_lt,
+      Char.ofUInt8]
+  all_goals try simp_all [Option.filter, ofInput]
   all_goals omega
 
 /-- The original control-byte shortcuts remain selector policy. -/

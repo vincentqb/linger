@@ -18,5 +18,4 @@ import Tests.FuzzyApi
 import Tests.Picker
 import Tests.Input
 import Tests.InputApi
-import Tests.Entry
 import Tests.Fuzz

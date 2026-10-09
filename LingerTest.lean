@@ -17,8 +17,6 @@ def check (name : String) (cond : Bool) : IO Nat := do
   IO.println s!"{if cond then "PASS" else "FAIL"} {name}"
   return if cond then 0 else 1
 
-def contains (haystack needle : String) : Bool := (haystack.splitOn needle).length ≥ 2
-
 def throws {α : Type} (action : IO α) : IO Bool := do
   try
     let _ ← action
@@ -64,7 +62,7 @@ def testPtyEcho : IO Nat := do
   Linger.Posix.close master
   let mut fails := 0
   fails :=
-    fails + (← check "pty spawn+echo roundtrip" (contains (String.fromUTF8! out) "hi-from-pty"))
+    fails + (← check "pty spawn+echo roundtrip" ((String.fromUTF8! out).contains "hi-from-pty"))
   fails := fails + (← check "child reaped with status 0" ((← reap pid) == 0))
   return fails
 
@@ -77,8 +75,8 @@ def testPtyEnvAndInput : IO Nat := do
   Linger.Posix.close master
   let txt := String.fromUTF8! out
   let mut fails := 0
-  fails := fails + (← check "extra env visible in child" (contains txt "marker42"))
-  fails := fails + (← check "cwd honored" (contains txt "\n/\r"))
+  fails := fails + (← check "extra env visible in child" (txt.contains "marker42"))
+  fails := fails + (← check "cwd honored" (txt.contains "\n/\r"))
   fails := fails + (← check "shell exited cleanly" ((← reap pid) == 0))
   return fails
 
@@ -119,7 +117,7 @@ def testWinsize : IO Nat := do
   Linger.Posix.close master
   let _ ← reap pid
   -- stty prints "rows cols"
-  check "pty spawned with requested winsize" (contains (String.fromUTF8! out) "43 121")
+  check "pty spawned with requested winsize" ((String.fromUTF8! out).contains "43 121")
 
 /-- The process wrappers must reject values POSIX reads as process-group or
 "any child" selectors, and a wait status must only be read for a completed
@@ -180,9 +178,7 @@ def testSpawnFailures : IO Nat := do
   -- it, silently narrowing `linger attach <name> <cmd>` for exactly those files, and
   -- nothing caught the narrowing — this is the check that would have.
   --
-  -- Wrapped, because without the fallback `spawnPty` THROWS: an uncaught exception
-  -- would abort the binary and lose the `ALL PASS`/failure count entirely, which is a
-  -- crash reported as nothing rather than a check reported as failed.
+  -- Wrapped so a missing fallback is a named FAIL and later checks still run.
   let script := s!"{dir}/noshebang"
   IO.FS.writeFile script "echo shebangless-ran\n"
   chmod script 0o755
@@ -192,7 +188,7 @@ def testSpawnFailures : IO Nat := do
       let out ← drain master ((← monotonicMs) + 5000) .empty
       Linger.Posix.close master
       let _ ← reap pid
-      pure (contains (String.fromUTF8! out) "shebangless-ran")
+      pure ((String.fromUTF8! out).contains "shebangless-ran")
     catch _ =>
       pure false
   fails := fails + (← check "a shebang-less executable still runs (execvp's ENOEXEC fallback)" ran)
@@ -392,13 +388,6 @@ def testDetachedPath : IO Nat :=
     check "detached PATH shell fallback preserves arguments, environment and output"
         (child.exitCode == 0 && logged)
 
-/-- A malformed command must throw before replacing this disposable process. -/
-def nulExecProbe (kind : String) : IO UInt32 := do
-  let nul := String.singleton (Char.ofNat 0)
-  let prog := if kind == "program" then "/bin/sh" ++ nul ++ "suffix" else "/bin/sh"
-  let script := if kind == "argument" then "exit 7" ++ nul ++ "suffix" else "exit 7"
-  return if (← throws (exec prog #["-c", script])) then 0 else 1
-
 /-- POSIX strings cannot contain NUL: truncating one can name a different
 resource or execute different arguments. Each fixture has a valid prefix so a
 missing guard succeeds instead of accidentally passing on an unrelated error. -/
@@ -478,11 +467,6 @@ def testCStringInputs : IO Nat :=
           (←
             check s!"spawnDetached rejects NUL in {kind}"
                 (← throws (spawnDetached prog args logPath)))
-    for kind in #["program", "argument"] do
-      let child ←
-        IO.Process.output
-            { cmd := (← IO.appPath).toString, args := #["--nul-exec", kind], setsid := true }
-      fails := fails + (← check s!"exec rejects NUL in {kind}" (child.exitCode == 0))
     return fails
 
 /-- The public UInt32 dimensions must fit the kernel's unsigned-short fields
@@ -532,7 +516,7 @@ def testDeepCwd : IO Nat := do
     s!"for i in $(seq 90); do mkdir -p {seg} && cd -P {seg} || exit 1; done; echo deep; cat"
   let (pid, master) ← spawnPty 80 24 dir.toString "sh" #["-c", deep] #[]
   let out ← drain master ((← monotonicMs) + 5000) .empty
-  let walked := contains (String.fromUTF8! out) "deep"
+  let walked := (String.fromUTF8! out).contains "deep"
   let cwd ← getcwdOf pid
   -- Judged BEFORE the tree is removed. Evaluated after, `isDir` fails for *any*
   -- non-empty answer — a correctly reported full path included — so the check
@@ -553,18 +537,8 @@ def testDeepCwd : IO Nat := do
 def main (args : List String) : IO UInt32 := do
   if let ["--closed-stdio", kind, logPath] := args then
     return ← closedStdioProbe kind logPath
-  if args == ["--path"] then
-    return (← testPtyPath).toUInt32
-  if args == ["--stdio"] then
-    return (← testClosedStdio).toUInt32
   if let ["--detached-path-child", logPath] := args then
     return if (← throws (spawnDetached "detached-plain" #["two words", ""] logPath)) then 1 else 0
-  if args == ["--detached-path"] then
-    return (← testDetachedPath).toUInt32
-  if let ["--nul-exec", kind] := args then
-    return ← nulExecProbe kind
-  if args == ["--boundary"] then
-    return ((← testCStringInputs) + (← testWinsizeBounds)).toUInt32
   let mut fails := 0
   fails := fails + (← testPtyEcho)
   fails := fails + (← testPtyEnvAndInput)

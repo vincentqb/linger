@@ -102,15 +102,12 @@ private theorem step_paste (state : State) (byte : UInt8) :
     (step state byte).1.paste =
       if state.mode = .csi .pasteEnd ∧ byte = 0x7e then false
       else if state.mode = .csi .pasteStart ∧ byte = 0x7e then true else state.paste := by
-  cases state with
-  | mk paste
-    mode =>
-    cases mode <;> simp only [step, idle_paste, utf8Step_paste, init, Mode.csi.injEq]
-    all_goals repeat' (split <;> simp_all)
-    all_goals
-      rename_i parameter _
-      cases parameter <;> repeat' (split <;> simp_all)
-    all_goals by_cases final : byte = 0x7e <;> simp_all
+  rcases state with ⟨paste, mode⟩
+  cases mode <;> simp only [step, idle_paste, utf8Step_paste, init, Mode.csi.injEq] <;> grind
+
+theorem printable_iff (char : Char) :
+    printable char = true ↔ 32 ≤ char.toNat ∧ (char.toNat < 127 ∨ 160 ≤ char.toNat) := by
+  simp [printable]
 
 /-- Delivery preserves the decoded key exactly and drops precisely the forbidden
 events. Printable text remains available in either paste mode. -/
@@ -120,7 +117,7 @@ private theorem deliver_mem (paste : Bool) (event : Option Key) (key : Key) :
         match key with
         | .text char => 32 ≤ char.toNat ∧ (char.toNat < 127 ∨ 160 ≤ char.toNat)
         | _ => paste = false := by
-  cases key <;> simp [deliver]
+  cases key <;> simp [deliver, printable]
 
 private theorem deliver_length (paste : Bool) (event : Option Key) :
     (deliver paste event).length ≤ 1 := Option.length_toList_le
@@ -223,7 +220,7 @@ theorem feed_ascii (paste : Bool) (byte : UInt8) (h : 32 ≤ byte ∧ byte < 127
     feed { paste } byte = ({ paste }, [.text (Char.ofUInt8 byte)]) := by
   have lo : 32 ≤ byte.toNat := by simpa [UInt8.le_iff_toNat_le] using h.1
   have hi : byte.toNat < 127 := by simpa [UInt8.lt_iff_toNat_lt] using h.2
-  simp [feed, step, idle_ascii paste byte h, deliver, Char.ofUInt8, lo, hi]
+  simp [feed, step, idle_ascii paste byte h, deliver, printable, Char.ofUInt8, lo, hi]
 
 /-- Completing any UTF-8 prefix validates at most four bytes and returns to idle.
 A character is emitted exactly when those bytes validate as that single scalar

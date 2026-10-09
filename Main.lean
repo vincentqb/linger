@@ -1,6 +1,6 @@
 module
 
-import Linger.Runtime.Resume
+import Linger.Runtime.Cli
 import Linger.Tools.Entry
 import Linger.Manager.Picker
 import Linger.Manager.Resurrect
@@ -18,7 +18,7 @@ def main (args : List String) : IO UInt32 := do
     | .tmux rest =>
       Linger.Manager.Resurrect.run (← IO.appPath).toString rest
     | .session argv =>
-      Linger.Runtime.Cli.main Linger.Runtime.Resume.hooks argv
+      Linger.Runtime.Cli.main argv
   catch e =>
     IO.eprintln s!"linger: {e}"
     return 1

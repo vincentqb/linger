@@ -105,7 +105,7 @@ def catalogRows (content : String) (panes : List Pane) : List (List (String × S
       rows.find? fun fields =>
         fields[0]? == some "window" && fields[1]? == some session && fields[2]? == some window
     let rawTitle := (record.getD [])[3]?.getD ""
-    let title := if rawTitle.startsWith ":" then (rawTitle.drop 1).toString else rawTitle
+    let title := (rawTitle.dropPrefix ":").toString
     let context := if title.isEmpty then s!"{session}:{window}" else s!"{session}:{window} {title}"
     [("name", pane.name), ("status", Linger.Core.Status.name .resumable),
       ("cmd", diagnostic s!"{context}  ·  {pane.dir}"), ("directory", pane.dir),

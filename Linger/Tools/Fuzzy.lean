@@ -17,6 +17,7 @@ length, with a linear base row.
 
 namespace Linger.Tools.Fuzzy
 
+/-- Case policy for comparing query and target characters. -/
 inductive CaseMode where
   | sensitive
   | insensitive
@@ -39,11 +40,13 @@ structure Scoring where
   gap : Int := -1
   deriving BEq, Repr
 
+/-- Case policy and scoring for one alignment. -/
 structure Config where
   caseMode : CaseMode := .insensitive
   scoring : Scoring := {}
   deriving BEq, Repr
 
+/-- A successful match: its score and one mark per target character. -/
 structure Alignment where
   score : Int
   marks : List Bool

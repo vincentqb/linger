@@ -154,10 +154,7 @@ private theorem parseRow_sound (home : String) (line : Nat) (fields : List Strin
     Linger.Core.Name.sanitize pane.name = pane.name ∧
       pane.dir.contains '\x00' = false ∧ pane.line = line := by
   unfold parseRow at h
-  repeat' (split at h <;> (try simp_all))
-  all_goals
-    cases h
-    simp_all
+  grind
 
 /-- Even discarded saved commands must have their sentinel and contain no NUL. -/
 private theorem parseRow_command_valid (home : String) (line : Nat)
@@ -170,7 +167,7 @@ private theorem parseRow_command_valid (home : String) (line : Nat)
         .ok (some parsed)) :
     savedCommand.startsWith ":" = true ∧ savedCommand.contains '\x00' = false := by
   unfold parseRow at h
-  repeat' (split at h <;> (try simp_all))
+  grind
 
 /-- Changing ignored pane fields and well-formed, NUL-free saved commands changes
 neither the parsed pane nor errors from the fixed identity and directory fields. -/
@@ -393,10 +390,6 @@ theorem plan_order (existing : List String) (panes : List Pane) :
     List.Sublist (plan existing panes) panes := by
   rw [plan_panes]
   exact List.filter_sublist
-
-theorem plan_skips_existing (existing : List String) (panes : List Pane) (pane : Pane)
-    (h : pane ∈ plan existing panes) :
-    pane.name ∉ existing := ((mem_plan existing panes pane).mp h).2
 
 /-- The planner requires distinct input names; successful parsing supplies that premise. -/
 theorem plan_names_unique (existing : List String) (panes : List Pane)

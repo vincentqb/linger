@@ -11,6 +11,8 @@ import all Linger.Core.Remote
 import all Init.Data.String.Legacy
 import Theorems.Name
 import Theorems.Fuzzy
+import Theorems.Remote
+import Theorems.Input
 
 public section
 
@@ -44,25 +46,9 @@ theorem matches_length_le (query target : String)
   simpa only [List.length_map, String.length_toList] using
     ((matches_iff_sublist query target).mp h).length_le
 
-private theorem printable_iff (char : Char) :
-    printable char = true ↔ 32 ≤ char.toNat ∧ (char.toNat < 127 ∨ 160 ≤ char.toNat) := by
-  simp [printable]
-
-/-- Validation accepts exactly canonical local names with printable targets and
-nonempty remote suffixes. It never repairs a target on its way to acceptance. -/
-private theorem validTarget_iff (target : String) :
-    validTarget target = true ↔
-      target ≠ "" ∧
-        Linger.Core.Name.Valid ((target.splitOn "@").headD "") ∧
-        (∀ char ∈ target.toList, 32 ≤ char.toNat ∧ (char.toNat < 127 ∨ 160 ≤ char.toNat)) ∧
-        ((target.splitOn "@").tail = [] ∨
-          String.intercalate "@" (target.splitOn "@").tail ≠ "") := by
-  simp [validTarget, Linger.Core.Remote.targetValid, Linger.Core.Remote.hostClean,
-    Linger.Core.Name.sanitize_eq_self_iff, and_assoc]
-
 private theorem parseRow_some (fields : List String) (target : String)
     (h : parseRow fields = .ok (some target)) :
-    fields = ["name", target] ∧ validTarget target = true := by
+    fields = ["name", target] ∧ Linger.Core.Remote.targetValid target = true := by
   unfold parseRow at h
   repeat' (split at h <;> (try simp_all))
   all_goals
@@ -82,7 +68,7 @@ private theorem parseRow_error (fields : List String) (error : String)
 
 private theorem parseRows_sound (seen rows targets : List String)
     (h : parseRows seen rows = .ok targets) :
-    (∀ target ∈ targets, validTarget target = true) ∧
+    (∀ target ∈ targets, Linger.Core.Remote.targetValid target = true) ∧
       targets.Nodup ∧
       (∀ target ∈ targets, target ∉ seen) ∧
       targets.map (fun target => ["name", target]) =
@@ -185,7 +171,8 @@ theorem parseListing_valid (text : String) (targets : List String)
   obtain ⟨valid, distinct, -⟩ := parseRows_sound [] _ targets h
   refine ⟨distinct, ?_⟩
   intro target ht
-  obtain ⟨nonempty, nameValid, clean, host⟩ := (validTarget_iff target).mp (valid target ht)
+  obtain ⟨nonempty, nameValid, clean, host⟩ :=
+    (Linger.Core.Remote.targetValid_iff target).mp (valid target ht)
   exact ⟨nonempty, (Linger.Core.Name.sanitize_eq_self_iff _).mpr nameValid, nameValid, clean, host⟩
 
 theorem parseListing_provenance (text : String) (targets : List String)
@@ -263,7 +250,8 @@ private theorem markPiece_at (marks : Array Bool) (piece : Linger.Core.Listing.R
             | none => false
             | some (start, count) =>
               index ≥ start && index - start < count && marks[index - start]?.getD false } := by
-  simp [markPiece, List.getElem?_zipIdx, Option.map_map, Function.comp_def]
+  simp only [markPiece, ge_iff_le, List.getElem?_map, List.getElem?_zipIdx, Nat.zero_add,
+    Option.map_map, Function.comp_def]
   rfl
 
 /-- Every emphasized scalar lies inside the declared name span and corresponds
@@ -282,8 +270,13 @@ private theorem markPiece_marked_iff (marks : Array Bool) (piece : Linger.Core.L
     obtain ⟨start, count⟩ := span
     cases hm : marks[index - start]? with
     | none => simp [hm]
-    | some mark =>
-      cases mark <;> simp_all
+    | some
+      mark =>
+      cases mark <;>
+        simp_all only [ge_iff_le, Option.getD_some, Bool.and_false, Bool.and_true, Option.map_some,
+          Bool.false_eq_true, Bool.and_eq_true, decide_eq_true_eq, Option.some.injEq, Prod.mk.injEq,
+          false_iff, not_exists, not_and, and_imp, forall_apply_eq_imp_iff, forall_eq',
+          not_false_eq_true, implies_true]
       constructor
       · rintro ⟨lower, upper⟩
         exact ⟨start, count, ⟨rfl, rfl⟩, lower, by omega, hm⟩
@@ -333,7 +326,15 @@ theorem highlightedPresentation_existing_marked_iff (snapshot : Snapshot) (nameC
     simp [body, Linger.Core.Listing.rowPieces, snapshot_row_name, String.length_toList]
   cases index with
   | zero =>
-    simp [highlightedPresentation, presentation, Linger.Core.Listing.rowPieces, markPiece] at h
+    simp only [highlightedPresentation, presentation, Linger.Core.Listing.rowPieces, ge_iff_le,
+      Bool.and_eq_true, decide_eq_true_eq, ↓Char.isValue, List.cons_append, List.nil_append,
+      List.append_assoc, beq_iff_eq, String.isEmpty_iff, String.startsWith_string_iff,
+      String.reduceToList, String.Slice.toString_eq, List.isEmpty_iff, List.filterMap_eq_nil_iff,
+      ite_eq_right_iff, reduceCtorEq, imp_false, Prod.forall, Bool.or_eq_true, String.toList_append,
+      List.flatMap_cons, markPiece, List.zipIdx_cons, Nat.zero_add, List.zipIdx_nil, List.map_cons,
+      List.map_nil, List.getElem?_toArray, List.flatMap_nil, List.append_nil, List.length_cons,
+      List.length_map, List.length_zipIdx, Nat.zero_lt_succ, getElem?_pos, List.getElem_cons_zero,
+      Option.some.injEq] at h
     subst char
     simp
   | succ
@@ -348,8 +349,10 @@ theorem highlightedPresentation_existing_marked_iff (snapshot : Snapshot) (nameC
     simp only [span, Option.some.injEq, Prod.mk.injEq]
     cases ha : Linger.Tools.Fuzzy.align query target with
     | none => simp [marks, ha]
-    | some a =>
-      simp [marks, ha]
+    | some
+      a =>
+      simp only [ha, Option.map_some, Option.getD_some, List.getElem?_toArray, Option.some.injEq,
+        Nat.reduceLeDiff, Nat.reduceSubDiff, exists_eq_left', marks]
       constructor
       · rintro ⟨_, _, ⟨rfl, rfl⟩, lower, upper, marked⟩
         exact ⟨lower, by omega, marked⟩
@@ -364,7 +367,7 @@ theorem highlightedPresentation_creation (snapshot : Snapshot) (nameCol : Nat)
       true := by
   simp [highlightedPresentation, presentation, markPiece]
 
-private theorem emphasizeCells_zeroWidthPrefix (chars : List HighlightedChar) :
+private theorem emphasizeCells_head?_any (chars : List HighlightedChar) :
     (emphasizeCells chars).head?.any
         (fun char => Linger.Core.Vt.charWidth char.char == 0 && char.matched) =
       (chars.takeWhile (fun char => Linger.Core.Vt.charWidth char.char == 0)).any (·.matched) := by
@@ -388,7 +391,7 @@ theorem emphasizeCells_at (chars : List HighlightedChar) (index : Nat) :
   | nil => simp [emphasizeCells]
   | cons char chars ih =>
     cases index with
-    | zero => simp [emphasizeCells, emphasizeCells_zeroWidthPrefix]
+    | zero => simp [emphasizeCells, emphasizeCells_head?_any]
     | succ index => simpa [emphasizeCells] using ih index
 
 /-- Sharing emphasis across a cell never changes its text or status palette. -/
@@ -433,9 +436,13 @@ private theorem mem_items_create (candidates : List String) (query target : Stri
     Item.create target ∈ items candidates query allowCreate ↔
       allowCreate = true ∧
         target = (if query.isEmpty then Linger.Core.Name.defaultName else query) ∧
-        validTarget target = true ∧ target ∉ candidates := by
+        Linger.Core.Remote.targetValid target = true ∧ target ∉ candidates := by
   unfold items
-  split <;> simp_all
+  split <;>
+    simp_all only [String.isEmpty_iff, List.contains_eq_mem, Bool.and_eq_true,
+      Bool.not_eq_eq_eq_not, Bool.not_true, decide_eq_false_iff_not, List.mem_append, List.mem_map,
+      reduceCtorEq, and_false, exists_const, List.mem_ite_nil_right, List.mem_cons,
+      Item.create.injEq, List.not_mem_nil, or_false, false_or]
   all_goals
     constructor
     · rintro ⟨⟨⟨enabled, valid⟩, absent⟩, rfl⟩
@@ -593,10 +600,6 @@ theorem step_stay_valid (s next : State) (key : Linger.Tools.Key) (hs : s.Valid)
     | some item => cases item <;> simp [he] at h
   | cancel => cases h
 
-theorem step_query_bound (s next : State) (key : Linger.Tools.Key) (hs : s.Valid)
-    (h : step s key = .stay next) : next.query.length ≤ maxQueryLength :=
-  (step_stay_valid s next key hs h).2
-
 /-- Editing and navigation cannot change the listing snapshot. -/
 theorem step_stay_candidates (s next : State) (key : Linger.Tools.Key)
     (h : step s key = .stay next) : next.candidates = s.candidates := by
@@ -616,13 +619,17 @@ theorem step_stay_allowCreate (s next : State) (key : Linger.Tools.Key)
 /-- Acceptance is the only attachment-producing event, and its target is selected verbatim. -/
 theorem step_attach_iff (s : State) (key : Linger.Tools.Key) (target : String) :
     step s key = .attach target ↔ key = .accept ∧ selected s = some (.existing target) := by
-  cases key <;> simp [step]
+  cases key <;>
+    simp only [step, Bool.and_eq_true, decide_eq_true_eq, reduceCtorEq, false_and, iff_false,
+      true_and]
   all_goals split <;> simp_all
 
 /-- Creation also requires acceptance of its own highlighted row. -/
 theorem step_create_iff (s : State) (key : Linger.Tools.Key) (target : String) :
     step s key = .create target ↔ key = .accept ∧ selected s = some (.create target) := by
-  cases key <;> simp [step]
+  cases key <;>
+    simp only [step, Bool.and_eq_true, decide_eq_true_eq, reduceCtorEq, false_and, iff_false,
+      true_and]
   all_goals split <;> simp_all
 
 /-- No key can produce creation in disabled mode, including with an invalid cursor. -/
@@ -661,7 +668,8 @@ theorem step_create_valid (s : State) (key : Linger.Tools.Key) (target : String)
   have selected := ((step_create_iff s key target).mp h).2
   obtain ⟨_, exactTarget, valid, absent⟩ :=
     (mem_items_create _ _ _ s.allowCreate).mp (List.mem_of_getElem? selected)
-  obtain ⟨nonempty, nameValid, printable, suffix⟩ := (validTarget_iff target).mp valid
+  obtain ⟨nonempty, nameValid, printable, suffix⟩ :=
+    (Linger.Core.Remote.targetValid_iff target).mp valid
   exact
     ⟨exactTarget, absent, nonempty, (Linger.Core.Name.sanitize_eq_self_iff _).mpr nameValid,
       nameValid, printable, suffix⟩
@@ -677,10 +685,10 @@ theorem step_cancel (s : State) : step s .cancel = .cancel := by simp [step]
 theorem step_control_ignored (s : State) (char : Char)
     (h : char.toNat < 32 ∨ (127 ≤ char.toNat ∧ char.toNat < 160)) :
     step s (.text char) = .stay s := by
-  have hc : printable char = false := by
+  have hc : Linger.Tools.Input.printable char = false := by
     simp only [Bool.eq_false_iff]
     intro hp
-    have clean := (printable_iff char).mp hp
+    have clean := (Linger.Tools.Input.printable_iff char).mp hp
     omega
   simp [step, hc]
 

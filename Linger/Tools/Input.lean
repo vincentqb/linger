@@ -26,6 +26,7 @@ inductive Key where
   | end
   deriving BEq, Repr, DecidableEq
 
+/-- CSI parameter prefixes with a recognized meaning; any other prefix is `other`. -/
 inductive Parameter where
   | empty
   | one
@@ -39,6 +40,7 @@ inductive Parameter where
   | other
   deriving BEq, Repr, DecidableEq
 
+/-- Progress through an escape, CSI, SS3 or UTF-8 sequence, retaining at most three bytes. -/
 inductive Mode where
   | idle
   | escape
@@ -52,18 +54,17 @@ inductive Mode where
   | utf4Last (first second third : UInt8)
   deriving BEq, Repr, DecidableEq
 
+/-- Decoder state between bytes. Paste suppression survives sequence resets. -/
 structure State where
   paste : Bool := false
   mode : Mode := .idle
   deriving BEq, Repr, DecidableEq
 
+/-- The idle state outside paste. -/
 def init : State := {}
 
 /-- Idle paste does not need a timeout: waiting never implies its end marker. -/
-def pending (state : State) :
-    Bool := match state.mode with
-  | .idle => false
-  | _ => true
+def pending (state : State) : Bool := !state.mode matches .idle
 
 private def stored (mode : Mode) : Array UInt8 :=
   match mode with
@@ -155,13 +156,17 @@ private def step (state : State) (byte : UInt8) : State × Option Key :=
       else ({ state with mode := .csi (advance parameter byte) }, none)
   | _ => utf8Step state byte
 
-/-- Text excludes C0, DEL and C1 controls. Paste admits only text, even when a
+/-- Text excludes C0, DEL and C1 controls. -/
+def printable (char : Char) : Bool := 32 ≤ char.toNat && (char.toNat < 127 || 160 ≤ char.toNat)
+
+/-- Delivered text is printable. Paste admits only text, even when a
 decoder branch recognizes a navigation key or a control byte. -/
 private def deliver (paste : Bool) (event : Option Key) : List Key :=
   (event.filter fun
-      | .text char => 32 ≤ char.toNat && (char.toNat < 127 || 160 ≤ char.toNat)
+      | .text char => printable char
       | _ => !paste).toList
 
+/-- Consume one byte; return the next state and at most one delivered key. -/
 def feed (state : State) (byte : UInt8) : State × List Key :=
   let (next, event) := step state byte
   (next, deliver state.paste event)

@@ -27,8 +27,8 @@ written prefixes. `Theorems/Replay.lean` proves the cursor's exact stream,
 progress and storage bound. Runtime scheduling and short-write handling are
 `IO`, so source gates tie these proved operations to their actual consumers.
 
-Checkpoint effects are wired to hooks filled by `Linger.Runtime.Resume`
-(spec step 7): the daemon knows *when*, that module knows *what*.
+Checkpoint effects are wired to checkpoint hooks from `Linger.Runtime.Resume`:
+the daemon knows *when*, that module knows *what*.
 -/
 
 namespace Linger.Runtime.Daemon
@@ -38,7 +38,7 @@ open Linger.Core.Session (State Event Effect maxClients)
 open Linger.Core.Buf (Buf owedLen bufOffer bufEnqueue bufAdvance followingCap)
 open Linger.Core
 
-/-- A stopped-reading client is cut here (runtime §Bound). -/
+/-- A stopped-reading client is cut here (`Buf.reachableOut_bound`). -/
 def outbufCap : Nat := 4194304
 
 /-- Payload plus the wire encoder's own frame overhead. -/
@@ -50,15 +50,11 @@ def drainTimeoutMs : Nat := 3000
 /-- Retry admission without spinning on a readable listener under resource pressure. -/
 def acceptRetryMs : Nat := 1000
 
-/-- And a stopped-reading *child* cannot grow the daemon either: past this
-many unwritten bytes the newest input is dropped. Same number as `outbufCap`,
-so the runtime half of §Bound is one sentence — no runtime buffer exceeds
-4 MiB — and the same reason: the alternative to dropping is unbounded growth.
-Dropping the newest is what a tty does when its own input buffer fills
-(`IMAXBEL`); a child on a real terminal loses those keystrokes too. Dropping
-whole `.input` frames cuts at a boundary the client already chose (one frame =
-one read of the keyboard), so no UTF-8 sequence or escape is split. -/
-def ptyInCap : Nat := 4194304
+/-- A stopped-reading *child* cannot grow the daemon either: past this many
+unwritten bytes the newest whole `.input` frame is dropped, as a tty drops input
+when its own buffer fills (`IMAXBEL`). One frame is one read of the keyboard, so
+no UTF-8 sequence or escape is split. -/
+def ptyInCap : Nat := outbufCap
 
 structure Conn where
   fd : UInt32
@@ -98,7 +94,7 @@ structure Rt where
   ptyInFull : Bool := false
   exiting : Bool := false
   sockPath : String
-  /-- step-7 hooks -/
+  /-- checkpoint hooks from `Linger.Runtime.Resume` -/
   saveCkpt : State → IO Unit
   dropCkpt : IO Unit
 
@@ -130,7 +126,8 @@ def expireConns (rt : Rt) (now : Nat) : IO Rt := do
 
 The write offset is a **local** `Nat`, and `bufAdvance` is called once when the
 write loop stops: `Buf.bufSize` is the retained logical byte length and equals
-what is still owed (`Buf.bufNoRetain`, `Buf.bufAdvance_owed`). Allocator capacity
+what is still owed in `Buf.writeFrom` (`Buf.bufSize_eq_owedLen`,
+`Buf.bufAdvance_writeFrom`). Allocator capacity
 and physical heap footprint are outside that bound. The two write reactions are the
 reason this is not shared with `flushPty`: here `n < 0` means the peer is gone and
 the caller must close the fd and feed `.closed` back into the machine, while
@@ -196,11 +193,11 @@ def flushPty (rt : Rt) : IO Rt := do
     wrote := wrote + n.toNatClampNeg
   let q := bufAdvance rt.ptyIn wrote
   -- clear the backpressure latch exactly when the queue drains, so the log
-  -- records the transition once (`robust_test` asserts exactly-once)
+  -- records the transition once (E2E.Robust's countFull check asserts it)
   return { rt with
       ptyIn := q, ptyInFull := rt.ptyInFull && owedLen q != 0 }
 
-/-- Queue bytes for the child, bounded (runtime §Bound, the input half). Past
+/-- Queue bytes for the child, bounded (`Buf.reachableIn_bound`). Past
 `ptyInCap` unwritten bytes the newest frame is dropped and the transition is
 logged once — the daemon cannot make the child read faster, and holding the
 input unboundedly only trades a wedged child for a wedged daemon. Not the
@@ -240,7 +237,7 @@ def executeEffect (st : State) (rt : Rt) : (eff : Effect) → IO (Rt × Driver.R
           let (q, cut) := bufEnqueue outbufCap c.out bytes
           ({ c with out := q }, cut)
       if cut then
-        -- runtime §Bound: cut the slow client rather than grow
+        -- `Buf.reachableOut_bound`: cut the slow client rather than grow
         close c.fd
         return (rt.dropConn c.fd, true)
       match ← flushConn c with
@@ -274,7 +271,7 @@ def executeEffect (st : State) (rt : Rt) : (eff : Effect) → IO (Rt × Driver.R
       if c.closing then
         return (rt, false)
       if c.pending then
-        let deadline := (← IO.monoMsNow) + drainTimeoutMs
+        let deadline := (← monotonicMs) + drainTimeoutMs
         return (rt.setConn { c with closeBy := some deadline }, true)
       close fd
       return (rt.dropConn fd, true)
@@ -283,8 +280,8 @@ def executeEffect (st : State) (rt : Rt) : (eff : Effect) → IO (Rt × Driver.R
   | .resizePty cols rows => do
     try
       winsizeSet rt.ptyFd cols rows
-    catch _ =>
-      pure ()
+    catch err =>
+      report s!"linger: pty resize failed: {err}"
     return (rt, ())
   | .killChild => do
     kill rt.childPid 15 -- SIGTERM
@@ -321,7 +318,7 @@ def pump (rt : Rt) (evs : List Event) : IO Rt := do
 
 /-- One poll round: gather events from fd readiness. -/
 def pollRound (rt : Rt) : IO (Rt × List Event) := do
-  let now ← IO.monoMsNow
+  let now ← monotonicMs
   let rt ← expireConns rt now
   let mut timeout := 1000
   for c in rt.conns do
@@ -366,7 +363,7 @@ def pollRound (rt : Rt) : IO (Rt × List Event) := do
       catch err =>
         if rt.acceptAfter.isNone then
           report s!"linger: client admission paused; retrying: {err}"
-        rt := { rt with acceptAfter := some ((← IO.monoMsNow) + acceptRetryMs) }
+        rt := { rt with acceptAfter := some ((← monotonicMs) + acceptRetryMs) }
         break
   -- pty
   let ptyRev := revs[1]!
@@ -435,9 +432,9 @@ def pollRound (rt : Rt) : IO (Rt × List Event) := do
 Every poll freezes its fd list; no session events execute after `.exit`. -/
 def drainConns (rt : Rt) : IO Rt := do
   let mut rt := rt
-  let deadline := (← IO.monoMsNow) + drainTimeoutMs
+  let deadline := (← monotonicMs) + drainTimeoutMs
   while !rt.conns.isEmpty do
-    let now ← IO.monoMsNow
+    let now ← monotonicMs
     rt ← expireConns rt now
     if rt.conns.isEmpty then
       break
@@ -487,7 +484,7 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
     let listenFd ← unixListen sockPath
     try
       setNonblock listenFd
-      let shell := (← IO.getEnv "SHELL").getD "sh"
+      let shell := ((← IO.getEnv "SHELL").filter (!·.isEmpty)).getD "sh"
       let (prog, args) :=
         match argv with
         | [] => ((shell, #[]) : String × Array String)

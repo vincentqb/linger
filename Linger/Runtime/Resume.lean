@@ -4,7 +4,6 @@ import Linger.Core.Checkpoint
 public import Linger.Core.Session
 import Linger.Runtime.Paths
 import Linger.Posix
-public import Linger.Runtime.Cli
 
 public section
 
@@ -24,15 +23,13 @@ def saveCkpt (name : String) (st : State) : IO Unit := do
   let path ← Paths.ckptPath name
   -- live cwd beats the recorded start_dir: resume should reopen where
   -- the user actually was
-  let pid := (st.metaKv.find? (·.1 == "pid")).map (·.2) |>.getD ""
-  let cwd ←
-    match pid.toNat? with
+  let live ←
+    match (st.metaKv.lookup "pid").bind String.toNat? with
     | some p =>
-      do
-        let c ← Linger.Posix.getcwdOf (UInt32.ofNat p)
-        pure (if c.isEmpty then (st.metaKv.find? (·.1 == "start_dir")).map (·.2) |>.getD "" else c)
+      Linger.Posix.getcwdOf (UInt32.ofNat p)
     | none =>
-      pure ((st.metaKv.find? (·.1 == "start_dir")).map (·.2) |>.getD "")
+      pure ""
+  let cwd := if live.isEmpty then (st.metaKv.lookup "start_dir").getD "" else live
   let ck : Ckpt := { vt := st.vt, cwd, labels := st.labels }
   let bytes := ByteArray.mk (save ck).toArray
   let tmp := path ++ ".tmp"
@@ -59,7 +56,5 @@ def loadCkpt (name : String) : IO (Option (Linger.Core.Vt.Vt × String × List (
     return some (ck.vt, ck.cwd, ck.labels)
   | none =>
     return none -- corrupt/foreign bytes are a cache miss; I/O failure is not
-
-def hooks : Cli.Hooks := { save := saveCkpt, drop := dropCkpt, load := loadCkpt }
 
 end Linger.Runtime.Resume

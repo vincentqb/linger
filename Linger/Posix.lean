@@ -24,12 +24,16 @@ namespace Linger.Posix
 /-- poll(2) bits. `c/shim.c` `_Static_assert`s these against each platform's ABI. -/
 def POLLIN : UInt32 := 0x001
 
+/-- Writing will not block. -/
 def POLLOUT : UInt32 := 0x004
 
+/-- An error condition; reported even when not requested. -/
 def POLLERR : UInt32 := 0x008
 
+/-- The peer hung up; reported even when not requested. -/
 def POLLHUP : UInt32 := 0x010
 
+/-- The descriptor is not open; reported even when not requested. -/
 def POLLNVAL : UInt32 := 0x020
 
 private def checkCString (what : String) (value : String) : IO Unit := do
@@ -49,19 +53,21 @@ private def checkWinsize (cols rows : UInt32) : IO Unit := do
 @[extern "linger_ignore_sighup"]
 opaque ignoreSighup : IO Unit
 
+/-- close(2); a close error is not actionable and is ignored. -/
 @[extern "linger_close"]
 opaque close (fd : UInt32) : IO Unit
 
+/-- Make reads and writes on `fd` return instead of blocking. -/
 @[extern "linger_set_nonblock"]
 opaque setNonblock (fd : UInt32) : IO Unit
 
-/-- One read. `none` = EOF (incl. pty-master EIO after the child dies);
-`some #[]` = would block; EINTR retried in C. Reads at most 64 KiB. -/
 @[extern "linger_read"]
 private opaque readRaw (fd : UInt32) (max : USize) : IO (Option ByteArray)
 
-/-- `max = 0` is refused: `read(fd, buf, 0)` returns 0 without testing for end
-of file, and `none` here publicly means EOF. -/
+/-- One read of at most 64 KiB. `none` = EOF (including pty EIO after the child
+dies); `some #[]` = would block; EINTR is retried in C. `max = 0` is refused:
+`read(fd, buf, 0)` returns 0 without testing for end of file, and `none` here
+publicly means EOF. -/
 def read (fd : UInt32) (max : USize) : IO (Option ByteArray) := do
   if max == 0 then
     throw (IO.userError "read: max must be positive (0 cannot distinguish EOF)")
@@ -82,22 +88,21 @@ def writeAll (fd : UInt32) (bytes : ByteArray) : IO Unit := do
     off := off + n.toNatClampNeg
 
 /-- One write attempt for a `Linger.Core.Buf` queue, skipping the `sent` bytes the
-flush loop already got out.
-`Buf.writeFrom_owed` is the theorem that what reaches `write(2)` here is the debt
-and nothing else.
+flush loop already got out. `Buf.writeFrom` is the byte view of the debt, so what
+reaches `write(2)` here is the debt and nothing else: `Buf.bufSize_eq_owedLen`
+shows the queue retains no more, and `Buf.bufAdvance_writeFrom` gives what the
+loop leaves after advancing.
 
 `sent` is the flush loop's **transient** cursor, not stored state: a `Buf` holds
 exactly the bytes still owed, and the loop calls `Buf.bufAdvance` once when it
-stops. Passing the cursor here rather than re-slicing per iteration is what keeps a
-flush to a single copy, as it was before the queue became a value.
+stops. Passing the cursor here rather than re-slicing per iteration keeps a flush
+to a single copy.
 
 This is a **Lean-level wrapper** over the existing `linger_write` extern, not a new
-syscall: `SHIM_CAP` is untouched. Since the seal (specs/archive/lean-modules.md Step 2) it
-could not read a `Buf`'s representation if it wanted to — `bytes` is `private`, and
-this calls the one API window, `writeFrom`. What was "the one sanctioned read
-outside Core" by convention is now the only one *possible*; `scripts/gates.sh`'s greps
-still gate `Linger/Runtime/*` against declaring parallel byte buffers of its own,
-the half privacy cannot see. -/
+syscall. Since the seal (specs/archive/lean-modules.md Step 2) it cannot read a
+`Buf`'s representation — `bytes` is `private`, and this calls the one API window,
+`writeFrom`. `scripts/gates.sh`'s greps still gate `Linger/Runtime/*` against
+declaring parallel byte buffers of its own, the half privacy cannot see. -/
 def writeBuf (fd : UInt32) (b : Linger.Core.Buf.Buf) (sent : Nat) : IO Int64 :=
   write fd (Linger.Core.Buf.writeFrom b) (USize.ofNat sent)
 
@@ -156,6 +161,7 @@ def winsizeSet (fd cols rows : UInt32) : IO Unit := do
 @[extern "linger_term_raw"]
 opaque termRaw (fd : UInt32) : IO ByteArray
 
+/-- Restore a termios blob that `termRaw` returned for the same terminal. -/
 @[extern "linger_term_restore"]
 opaque termRestore (fd : UInt32) (saved : @& ByteArray) : IO Unit
 
@@ -212,26 +218,12 @@ def spawnDetached (prog : String) (args : Array String) (logPath : String) : IO 
   checkCString "spawnDetached log path" logPath
   spawnDetachedRaw prog args logPath
 
-@[extern "linger_exec"]
-private opaque execRaw (prog : @& String) (args : @& Array String) : IO Unit
-
-/-- execvp — replaces this process on success. -/
-def exec (prog : String) (args : Array String) : IO Unit := do
-  checkCommand "exec" prog args
-  execRaw prog args
-
-/-- kill(2); ESRCH (already gone) is not an error. -/
 @[extern "linger_kill"]
 private opaque killRaw (pid sig : UInt32) : IO Unit
 
-/-- kill(pid, 0): is the process alive (and visible to us)? -/
 @[extern "linger_alive"]
 private opaque aliveRaw (pid : UInt32) : IO Bool
 
-/-- WNOHANG waitpid. `-1` the requested child is still running; `-2` it is not
-reapable — `ECHILD` (not our child, or already reaped) and every other non-`EINTR`
-failure alike, so a caller polls `alive` rather than waiting forever; `≥ 0` exit
-status (128+sig if signalled), zombie reaped. -/
 @[extern "linger_waitpid_nohang"]
 private opaque waitpidNohangRaw (pid : UInt32) : IO Int64
 
@@ -242,18 +234,25 @@ def checkPid (what : String) (pid : UInt32) : IO Unit := do
   if pid == 0 || pid > 0x7FFFFFFF then
     throw (IO.userError s!"{what}: {pid} is not a process id (0 and negative values are selectors)")
 
+/-- kill(2); ESRCH (already gone) is not an error. -/
 def kill (pid sig : UInt32) : IO Unit := do
   checkPid "kill" pid
   killRaw pid sig
 
+/-- kill(pid, 0): is the process alive (and visible to us)? -/
 def alive (pid : UInt32) : IO Bool := do
   checkPid "alive" pid
   aliveRaw pid
 
+/-- WNOHANG waitpid. `-1` the requested child is still running; `-2` it is not
+reapable — `ECHILD` (not our child, or already reaped) and every other non-`EINTR`
+failure alike, so a caller polls `alive` rather than waiting forever; `≥ 0` exit
+status (128+sig if signalled), zombie reaped. -/
 def waitpidNohang (pid : UInt32) : IO Int64 := do
   checkPid "waitpidNohang" pid
   waitpidNohangRaw pid
 
+/-- getuid(2): the real user id, which names the default socket directory. -/
 @[extern "linger_getuid"]
 opaque getuid : IO UInt32
 
@@ -290,6 +289,7 @@ def realtimeS : IO UInt64 := do
 /-- Standard fds, named. -/
 def stdinFd : UInt32 := 0
 
+/-- Standard output's descriptor. -/
 def stdoutFd : UInt32 := 1
 
 end Linger.Posix

@@ -47,8 +47,8 @@ def stop (pending : IO.Ref (Option Job)) (graceMs : Nat := 0) : IO Unit := do
         try
           if graceMs > 0 then
             Linger.Posix.kill job.child.pid 15
-            let deadline := (← IO.monoMsNow) + graceMs
-            while (← IO.monoMsNow) < deadline do
+            let deadline := (← Linger.Posix.monotonicMs) + graceMs
+            while (← Linger.Posix.monotonicMs) < deadline do
               if (← IO.hasFinished job.stdout) && (← IO.hasFinished job.stderr) then
                 break
               IO.sleep 5
