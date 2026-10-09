@@ -54,9 +54,8 @@ Nothing here is stated through
 namespace Linger.Core.Buf
 
 /-- A byte queue: exactly the bytes still owed to the peer, oldest first.
-The representation is sealed: `writeFrom` is the one window out (for the
-syscall), `empty` the one door in, and `Theorems/Buf.lean` sees inside via
-`import all`. -/
+The representation is sealed: `writeFrom` is the one window out, `empty` the
+one door in, and `Theorems/Buf.lean` sees inside via `import all`. -/
 structure Buf where
   private bytes : ByteArray := .empty
   deriving Inhabited
@@ -66,17 +65,12 @@ makes the anonymous constructor private, which is the point — an importer can
 start a queue but not forge one mid-debt. -/
 def Buf.empty : Buf := {}
 
-/-- The bytes still owed to the peer. Every claim in `Theorems/Buf.lean` is stated
-about this rather than about a counter, which is what stops a bound from being a
-fact about an unrelated `Nat`. -/
-def owed (b : Buf) : ByteArray := b.bytes
-
 /-- What the caps compare. `owedLen_eq` is the bridge that makes this the length of
-`owed`. -/
+`writeFrom`. -/
 def owedLen (b : Buf) : Nat := b.bytes.size
 
 /-- Retained logical byte length. It coincides with the debt by construction
-(`bufNoRetain`); allocator capacity and object overhead are not measured. -/
+(`bufSize_eq_owedLen`); allocator capacity and object overhead are not measured. -/
 def bufSize (b : Buf) : Nat := b.bytes.size
 
 /-- Allowance for a following queue that shares a cap with the front queue.
@@ -110,9 +104,7 @@ def bufEnqueue (cap : Nat) (b : Buf) (more : ByteArray) : Buf × Bool :=
 per flush with the loop's total, so the written prefix is never retained. -/
 def bufAdvance (b : Buf) (n : Nat) : Buf := { bytes := b.bytes.extract n b.bytes.size }
 
-/-- What the writer hands to `write(2)`: exactly the owed bytes, so the syscall
-needs no offset. The **one** sanctioned read of the representation, used only by
-`Linger.Posix.writeBuf`; `writeFrom_owed` pins that it is the debt and nothing else. -/
+/-- The byte view of the debt, for the write(2) loop and for decoding the info accumulator. -/
 def writeFrom (b : Buf) : ByteArray := b.bytes
 
 /-! ## Reachability — the seal's semantics, as a predicate
@@ -129,7 +121,7 @@ is **exhaustive over what a plain importer can possess**, and its invariant
 whole-lifetime fact about the daemon's queue — the same lift `LiveReachableVt`
 gives the emulator, one layer down. No content twins are needed at this level:
 the trace claims are bounds composed of steps that already carry their twins
-(`bufOffer_owed`, `bufEnqueue_owed`, `bufAdvance_owed`). -/
+(`bufOffer_writeFrom`, `bufEnqueue_writeFrom`, `bufAdvance_writeFrom`). -/
 
 /-- The pty-input queue's reachable states: `Rt.ptyIn` starts `empty` and moves
 only through capped `bufOffer`s (`queuePty`) and flush `bufAdvance`s. -/

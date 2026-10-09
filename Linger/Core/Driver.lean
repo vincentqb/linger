@@ -14,6 +14,7 @@ abbrev Reply : Effect → Type
   | .send .. | .replay .. | .close .. | .checkpoint => Bool
   | _ => Unit
 
+/-- The events an effect's reply feeds back to the session. -/
 def feedback : (eff : Effect) → Reply eff → List Event
   | .send id _, gone => if gone then [.closed id] else []
   | .replay id _, gone => if gone then [.closed id] else []
@@ -27,6 +28,7 @@ def eventDepth : Event → Nat
   | .closed _ => 1
   | _ => 2
 
+/-- A strict upper bound on the depth of the events an effect's reply feeds back. -/
 def effectDepth : Effect → Nat
   | .send .. | .replay .. | .close .. => 2
   | .checkpoint => 1
@@ -48,9 +50,13 @@ theorem step_depth (s : State) (ev : Event) :
     intro eff _
     cases eff <;> simp [effectDepth, eventDepth]
 
+/-- The driver's state between events. -/
 structure Result (World : Type) where
+  /-- The session state. -/
   st : State
+  /-- The interpreter's world. -/
   world : World
+  /-- An event's effects requested exit, so no later event is consumed. -/
   exiting : Bool := false
 
 /-- Execute a finite effect list in order, retaining the proof that each

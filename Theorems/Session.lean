@@ -53,6 +53,8 @@ namespace Linger.Core.Session
 
 open Linger.Core.Wire (Msg)
 
+attribute [local grind] controlResize resizeOwned resize State.setClient
+
 /-! ## §Frame (machine half) and other exact-shape facts -/
 
 theorem onMsg_unknown (s : State) (c : Client) (t : UInt8) (p : List UInt8) :
@@ -64,9 +66,18 @@ theorem onMsg_wrong_direction (s : State) (c : Client) (bs : List UInt8) :
       onMsg s c (.infoReply bs) = (s, []) ∧
       onMsg s c (.err bs) = (s, []) ∧ onMsg s c .done = (s, []) := ⟨rfl, rfl, rfl, rfl⟩
 
-/-- Info leaves the entire state alone and uses the bounded reply producer. -/
-theorem onMsg_info (s : State) (c : Client) :
-    onMsg s c .info = (s, infoMsgs c.id (infoText s)) := rfl
+/-- Info records the read's one answer, leaves the rest of the state alone and
+uses the bounded reply producer. -/
+theorem onMsg_info (s : State) (c : Client) (ha : c.answered = false) :
+    onMsg s c .info = (s.setClient { c with answered := true }, infoMsgs c.id (infoText s)) := by
+  simp [onMsg, ha]
+
+/-- **One request per read.** After the read's answer, a further `info`, `history`
+or `screen` changes nothing and is refused, so one read builds at most one reply. -/
+theorem onMsg_answered (s : State) (c : Client) (m : Msg) (ha : c.answered = true)
+    (hm : m = .info ∨ m = .history ∨ m = .screen) :
+    onMsg s c m = (s, [.send c.id (.err "one request per read".toUTF8.toList)]) := by
+  rcases hm with rfl | rfl | rfl <;> simp [onMsg, ha]
 
 @[simp]
 theorem infoMsgs_no_resize (id : Nat) (bs : List UInt8) (cols rows : UInt32) :
@@ -146,7 +157,9 @@ theorem step_bytes_malformed_close (s : State) (id : Nat) (chunk : List UInt8) (
   simp [step, hc, he]
 
 /-- Closing a client preserves every field except its roster entry and the
-dirty flag. Its complete effect list is empty or one checkpoint. -/
+dirty flag. Its complete effect list is empty or one checkpoint. The runtime must
+deliver this event after intentional closes as well as after EOF; the IO consumer
+is checked in `E2E.Attach`. -/
 theorem step_closed_frame (s : State) (id : Nat) :
     (step s (.closed id)).1 =
         { s with
@@ -157,26 +170,6 @@ theorem step_closed_frame (s : State) (id : Nat) :
   split
   · exact ⟨rfl, Or.inr rfl⟩
   · exact ⟨rfl, Or.inl rfl⟩
-
-/-- A client vanishing preserves the screen, scrollback and labels and cannot
-signal anyone. The whole-state frame above also preserves shell metadata,
-terminal parsing state and output counters. -/
-theorem step_closed (s : State) (id : Nat) :
-    (step s (.closed id)).1.vt = s.vt ∧
-      (step s (.closed id)).1.labels = s.labels ∧
-      (step s (.closed id)).2.all (· == .checkpoint) := by
-  rcases step_closed_frame s id with ⟨frame, effects⟩
-  have vt := congrArg State.vt frame
-  have labels := congrArg State.labels frame
-  refine ⟨vt, labels, ?_⟩
-  rcases effects with h | h <;> simp [h]
-
-/-- A delivered close removes the client's entire roster entry, including its
-size ownership. The runtime must deliver this event after intentional closes
-as well as after EOF; the IO consumer is checked in `E2E.Attach`. -/
-theorem step_closed_clients (s : State) (id : Nat) :
-    (step s (.closed id)).1.clients = s.clients.filter (·.id != id) := by
-  exact congrArg State.clients (step_closed_frame s id).1
 
 /-- With zero clients the mediator still advances, and an owned query still
 gets its one child-facing reply; only presentation broadcast disappears. -/
@@ -212,17 +205,8 @@ theorem broadcast_no_writePty (s : State) (bytes : List UInt8) :
           | .writePty _ => true
           | _ => false) =
       [] := by
-  unfold broadcast
-  split
-  · rfl
-  · -- every effect a broadcast emits is a `.send`
-    induction (s.clients.filter (·.attached)) with
-    | nil => rfl
-    | cons c cs ih =>
-      rw [List.flatMap_cons, List.filter_append, ih, List.append_nil]
-      unfold outputMsgs
-      rw [List.filter_map]
-      simp
+  unfold broadcast outputMsgs
+  split <;> simp [List.filter_flatMap, List.filter_map]
 
 /-- The reply prefix depends only on VT, scanner, and bytes; the roster appears
 only in the following presentation broadcast. -/
@@ -284,29 +268,19 @@ control connection (`linger send`, `linger info`) must survive a detach-all it
 did not ask for — and a `.done` to the requester last, after the closes, so the
 caller's own socket is not shut before its reply is queued. `rfl`, so dropping
 the filter, reordering the `.done`, or closing the roster instead of the
-attached subset each break it.
-
-Before this, the only claim about `.detachAll` was `onMsg_detachAll_vt` below —
-the state half of a message whose state half is `s`. -/
+attached subset each break it. -/
 theorem onMsg_detachAll (s : State) (c : Client) :
     onMsg s c .detachAll =
       (s,
         (s.clients.filter (·.attached) |>.map (fun c' => Effect.close c'.id)) ++
           [.send c.id .done]) := rfl
 
-/-- `detach-all` closes clients; it cannot touch the screen. Now a corollary of
-the full shape above, kept because §Detach's prose cites this weaker name. -/
-theorem onMsg_detachAll_vt (s : State) (c : Client) :
-    (onMsg s c .detachAll).1 = s := congrArg Prod.fst (onMsg_detachAll s c)
-
 /-- Attach only resizes: the scrollback — the session's history — is
 untouched by any attach/detach cycle (observer or not). -/
 theorem onMsg_attach_sb (s : State) (c : Client) (cols rows : UInt32) :
     (onMsg s c (.attach cols rows)).1.vt.sb = s.vt.sb := by
-  unfold onMsg resizeOwned resize
-  dsimp only
-  repeat' split
-  all_goals simp [State.setClient, Vt.Vt.resize]
+  unfold onMsg
+  grind [Vt.Vt.resize]
 
 /-- **A same-size reattach leaves the emulator untouched.** `Vt.resize` resets the
 scroll region and tab ruler (`top`/`bot`/`tabs`) unconditionally, so resizing at an
@@ -405,25 +379,14 @@ pure, so what the constant buys is statable here. -/
 /-- Below the cadence, or with nothing dirty, a tick checkpoints nothing. -/
 theorem step_tick_quiet (s : State) (now : Nat)
     (h : (s.dirty && decide (now ≥ s.lastCkptMs + ckptIntervalMs)) = false) :
-    (step s (.tick now)).2 = [] := by
-  unfold step
-  dsimp only
-  split
-  · rename_i hc
-    exact absurd (h.symm.trans hc) Bool.false_ne_true
-  · rfl
+    (step s (.tick now)).2 = [] := by simp [step, h]
 
 /-- When it does fire: exactly one checkpoint, and **the clock re-arms to `now`** — which is
 what makes the cadence a rate rather than a one-time threshold. -/
 theorem step_tick_checkpoint (s : State) (now : Nat)
     (h : (s.dirty && decide (now ≥ s.lastCkptMs + ckptIntervalMs)) = true) :
     (step s (.tick now)).2 = [Effect.checkpoint] ∧ (step s (.tick now)).1.lastCkptMs = now := by
-  unfold step
-  dsimp only
-  rw [ite_eq_left
-      (by
-        simp only [Bool.and_eq_true, decide_eq_true_eq] at h ⊢; simp [h])]
-  exact ⟨rfl, rfl⟩
+  simp_all [step]
 
 /-- Less than one interval of elapsed time preserves dirty state and the attempt
 clock, with no save. This also covers a tick older than the previous attempt. -/
@@ -453,9 +416,7 @@ theorem setClient_length (s : State) (c : Client) :
     (s.setClient c).clients.length = s.clients.length := by simp [State.setClient]
 
 theorem dropClient_length_le (s : State) (id : Nat) :
-    (s.dropClient id).clients.length ≤ s.clients.length := by
-  simp [State.dropClient]
-  exact List.length_filter_le _ _
+    (s.dropClient id).clients.length ≤ s.clients.length := List.length_filter_le _ _
 
 theorem closeClient_bounded (s : State) (id : Nat) (h : Bounded s) :
     Bounded (closeClient s id).1 := by
@@ -470,26 +431,14 @@ theorem closeClient_bounded (s : State) (id : Nat) (h : Bounded s) :
 /-- `onMsg` never grows the client list. -/
 theorem onMsg_clients_length_le (s : State) (c : Client) (m : Msg) :
     (onMsg s c m).1.clients.length ≤ s.clients.length := by
-  unfold onMsg controlResize resizeOwned resize
-  dsimp only
-  repeat' split
-  all_goals simp_all [State.setClient]
+  unfold onMsg
+  grind
 
 /-- `onMsg` keeps labels within the cap. -/
 theorem onMsg_labels_le (s : State) (c : Client) (m : Msg) (h : s.labels.length ≤ maxLabels) :
     (onMsg s c m).1.labels.length ≤ maxLabels := by
-  unfold onMsg controlResize resizeOwned resize
-  dsimp only
-  repeat' split
-  all_goals
-    first
-    | (simp_all [State.setClient]; done)
-    | ( rename_i hguard
-        simp only [List.length_append, List.length_cons, List.length_nil, Nat.not_lt] at hguard
-        dsimp only
-        omega)
-    | ( dsimp only
-        exact Nat.le_trans (List.length_filter_le _ _) h)
+  unfold onMsg
+  grind
 
 /-- Rewriting one client (same decoder) keeps every stored decoder
 healthy. -/
@@ -499,16 +448,8 @@ theorem decOk_setClient (s : State) (c0 : Client)
       ∀ c' ∈ s.clients, c'.decoder.errored = false ∧ c'.decoder.buf.length ≤ 4 + Wire.maxPayload) :
     ∀ c' ∈ (s.setClient c0).clients,
       c'.decoder.errored = false ∧ c'.decoder.buf.length ≤ 4 + Wire.maxPayload := by
-  intro c' hmem
-  simp only [State.setClient, List.mem_map] at hmem
-  obtain ⟨a, ha, heq⟩ := hmem
-  by_cases hid : a.id = c0.id
-  · simp only [hid, beq_self_eq_true, ite_true] at heq
-    subst heq
-    exact hc0
-  · simp only [hid, not_false_eq_true, ite_eq_right, beq_iff_eq] at heq
-    subst heq
-    exact h a ha
+  simp only [State.setClient, List.mem_map]
+  grind
 
 /-- `onMsg` preserves per-client decoder health: it only ever copies
 existing decoders around (attach/resize/wait rewrite other fields). -/
@@ -525,13 +466,12 @@ theorem onMsg_decOk (s : State) (c : Client) (m : Msg)
     first
     | exact h
     | exact decOk_setClient _ _ hc h
+    | exact decOk_setClient _ _ hc (decOk_setClient _ _ hc h)
     | (intro c' hmem; exact h c' hmem)
 
 theorem onMsg_scan (s : State) (c : Client) (m : Msg) : (onMsg s c m).1.scan = s.scan := by
-  unfold onMsg controlResize resizeOwned resize
-  dsimp only
-  repeat' split
-  all_goals simp_all [State.setClient]
+  unfold onMsg
+  grind
 
 /-- One message preserves the bound quadruple. -/
 theorem onMsg_bounded {s : State} {c : Client} (m : Msg)
@@ -687,24 +627,8 @@ closed under resize therefore survives, without restrictions on the message. -/
 theorem onMsg_vt_preserves {P : Vt.Vt → Prop}
     (hresize : ∀ vt cols rows, P vt → P (vt.resize cols rows)) {s : State} {c : Client} (m : Msg)
     (h : P s.vt) : P (onMsg s c m).1.vt := by
-  unfold onMsg controlResize resizeOwned resize
-  dsimp only
-  repeat' split
-  all_goals
-    first
-    | exact h
-    | exact hresize _ _ _ (by simpa [State.setClient] using h)
-    | simpa [State.setClient] using h
-
-open Linger.Core.Vt (Good) in
-theorem onMsg_vt_good {s : State} {c : Client} (m : Msg) (h : Good s.vt) :
-    Good (onMsg s c m).1.vt :=
-  onMsg_vt_preserves (fun _ cols rows hv => Linger.Core.Vt.Good.resize cols rows hv) m h
-
-open Linger.Core.Vt (Good) in
-theorem feedMsgs_vt_good (id : Nat) (msgs : List Msg) (acc : State × List Effect)
-    (h : Good acc.1.vt) : Good (feedMsgs id msgs acc).1.vt :=
-  feedMsgs_preserves id msgs acc (P := fun s => Good s.vt) (fun _ _ m _ hs => onMsg_vt_good m hs) h
+  unfold onMsg
+  grind
 
 /-- Resize and feed are the only terminal transitions a session performs.
 This lifts either kind of terminal invariant through the actual message batch
@@ -745,10 +669,6 @@ theorem step_vt_good (s : State) (ev : Event) (h : Good s.vt) : Good (step s ev)
   step_vt_preserves (fun _ cols rows hv => Linger.Core.Vt.Good.resize cols rows hv)
     (fun _ bytes hv => Linger.Core.Vt.Good.feed bytes hv) s ev h
 
-end Linger.Core.Session
-
-namespace Linger.Core.Session
-
 /-! ## §Unread — the output counter
 
 `unseen` is "output arrived while nobody was watching", and it is a property
@@ -764,13 +684,8 @@ agent-facing API — the general honesty pair over any traffic: no client
 message moves `outSeq` (`onMsg_outSeq`: activity cannot be forged), and the
 read mark never overtakes the counter (`run_lookSeq_le`), so
 `behind = outSeq - lookSeq` is a real count over the daemon's whole life,
-never a Nat-subtraction lie. The general form was parked when this section
-was written ("the `.bytes` case makes it opaque to arithmetic"); the same
-`unfold onMsg controlResize resizeOwned resize` + `repeat' split` script the preservation
-theorems use turned out to carry it.
+never a Nat-subtraction lie.
 -/
-
-open Linger.Core.Wire (Msg)
 
 /-- Pty output advances the counter by exactly one. -/
 theorem outSeq_ptyOut (s : State) (chunk : List UInt8) :
@@ -780,62 +695,47 @@ theorem outSeq_ptyOut (s : State) (chunk : List UInt8) :
 nobody attached is not. This is the whole mechanism behind `wantsYou`. -/
 theorem unseen_ptyOut (s : State) (chunk : List UInt8) (h : s.lookSeq ≤ s.outSeq) :
     unseen (step s (.ptyOut chunk)).1 = !(s.clients.any (·.attached)) := by
-  unfold unseen
-  show decide ((if s.clients.any (·.attached) then s.outSeq + 1 else s.lookSeq) < s.outSeq + 1) = _
-  split
-  · simp_all
-  · simp_all [Nat.lt_succ_of_le h]
-
-/-- The read mark never overtakes the output counter, so `behind` is honest:
-`outSeq - lookSeq` is a real count and never underflows to a misleading zero. -/
-theorem lookSeq_le_ptyOut (s : State) (chunk : List UInt8) (h : s.lookSeq ≤ s.outSeq) :
-    (step s (.ptyOut chunk)).1.lookSeq ≤ (step s (.ptyOut chunk)).1.outSeq := by
-  show (if s.clients.any (·.attached) then s.outSeq + 1 else s.lookSeq) ≤ s.outSeq + 1
-  split <;> omega
+  simp only [unseen, step]
+  grind
 
 /-- **A capture is a look** (agent-cli Decision 1). The exact shape: the reply
 is `Render.screenText` — the grid, never the ring — chunked and closed with
-`.done`, and the ONLY state change is the read mark catching up. `rfl`, so any
-smuggled side effect (a vt touch, a label change) breaks it. -/
-theorem onMsg_screen (s : State) (c : Client) :
+`.done`, and the ONLY state changes are the read mark catching up and the read's
+answer being recorded. An exact equation, so any smuggled side effect (a vt
+touch, a label change) breaks it. -/
+theorem onMsg_screen (s : State) (c : Client) (ha : c.answered = false) :
     onMsg s c .screen =
-      ({ s with lookSeq := s.outSeq },
-        outputMsgs c.id (Render.screenText s.vt) ++ [.send c.id .done]) := rfl
+      ({ s.setClient { c with answered := true } with lookSeq := s.outSeq },
+        outputMsgs c.id (Render.screenText s.vt) ++ [.send c.id .done]) := by
+  simp [onMsg, ha]
 
 /-- …so after a capture nothing is unseen: "output arrived while nobody was
 watching" is false of a session whose screen was just delivered. `.info`
 deliberately has no such effect (`ls` polls every daemon), and `.history`
 stays an export — the line is drawn at verbs that show the current screen. -/
-theorem screen_marks_seen (s : State) (c : Client) : unseen (onMsg s c .screen).1 = false := by
-  simp [onMsg, unseen]
+theorem screen_marks_seen (s : State) (c : Client) (ha : c.answered = false) :
+    unseen (onMsg s c .screen).1 = false := by simp [onMsg_screen s c ha, unseen, State.setClient]
 
 /-- …and `behind` counts from the capture: zero at the moment of the look, so
 what an agent reads later really is "output events since I captured". -/
-theorem screen_behind_zero (s : State) (c : Client) : behind (onMsg s c .screen).1 = 0 := by
-  simp [onMsg, behind]
+theorem screen_behind_zero (s : State) (c : Client) (ha : c.answered = false) :
+    behind (onMsg s c .screen).1 = 0 := by simp [onMsg_screen s c ha, behind, State.setClient]
 
 /-- **No client message moves the output counter.** `outSeq` advances only on
 `.ptyOut` — real child output — so no connection, whatever it sends, can
 forge activity: `unseen`, `fresh` and `behind` can be *caught up* by a look
 (attach, capture) but never inflated by traffic. -/
 theorem onMsg_outSeq (s : State) (c : Client) (m : Msg) : (onMsg s c m).1.outSeq = s.outSeq := by
-  unfold onMsg controlResize resizeOwned resize
-  dsimp only
-  repeat' split
-  all_goals simp_all [State.setClient]
+  unfold onMsg
+  grind
 
 /-- The read mark never overtakes the counter through any message: every arm
 leaves `lookSeq` alone or catches it up to `outSeq` (attach and capture — the
 looks), and none touches `outSeq`. -/
 theorem onMsg_lookSeq_le (s : State) (c : Client) (m : Msg) (h : s.lookSeq ≤ s.outSeq) :
     (onMsg s c m).1.lookSeq ≤ (onMsg s c m).1.outSeq := by
-  unfold onMsg controlResize resizeOwned resize
-  dsimp only
-  repeat' split
-  all_goals
-    first
-    | simp_all [State.setClient]
-    | (simp_all [State.setClient]; omega)
+  unfold onMsg
+  grind
 
 theorem feedMsgs_lookSeq_le (id : Nat) (msgs : List Msg) (acc : State × List Effect)
     (h : acc.1.lookSeq ≤ acc.1.outSeq) :
@@ -882,8 +782,6 @@ supplies the per-connection half: any split of A's stream yields the
 same messages in the same order).
 -/
 
-open Linger.Core.Wire (Msg)
-
 theorem client?_id {s : State} {id : Nat} {c : Client} (h : s.client? id = some c) : c.id = id := by
   have hp := (List.find?_eq_some_iff_append.mp h).1
   simpa using hp
@@ -893,14 +791,9 @@ for a *different* id finds. -/
 theorem find?_map_set (c : Client) (other : Nat) (hne : other ≠ c.id) :
     ∀ (l : List Client),
       (l.map (fun c' => if c'.id == c.id then c else c')).find? (·.id == other) =
-        l.find? (·.id == other)
-  | [] => rfl
-  | a :: l => by
-    rw [List.map_cons, List.find?_cons, List.find?_cons, find?_map_set c other hne l]
-    by_cases hid : a.id = c.id
-    · have hc : (c.id == other) = false := beq_eq_false_iff_ne.mpr (Ne.symm hne)
-      simp only [hid, beq_self_eq_true, ↓reduceIte, hc]
-    · simp only [beq_iff_eq, hid, ↓reduceIte]
+        l.find? (·.id == other) := by
+  intro l
+  induction l <;> grind
 
 /-- Dropping one client cannot change what a lookup for a different id
 finds. -/
@@ -924,6 +817,9 @@ theorem dropClient_other {s : State} {id other : Nat} (h : other ≠ id) :
 /-- One message from `c` leaves every other client's record alone. -/
 theorem onMsg_other (s : State) (c : Client) (m : Msg) {other : Nat} (h : other ≠ c.id) :
     (onMsg s c m).1.client? other = s.client? other := by
+  have twice {c1 c2 : Client} (h1 : c1.id = c.id) (h2 : c2.id = c.id) :
+    ((s.setClient c1).setClient c2).client? other = s.client? other := by
+    rw [setClient_other (h2 ▸ h), setClient_other (h1 ▸ h)]
   unfold onMsg controlResize resizeOwned resize
   dsimp only
   repeat' split
@@ -931,6 +827,7 @@ theorem onMsg_other (s : State) (c : Client) (m : Msg) {other : Nat} (h : other 
     first
     | rfl
     | exact setClient_other h
+    | exact twice rfl rfl
 
 /-- …and so does a whole batch of them. -/
 theorem feedMsgs_other (id : Nat) (msgs : List Msg) (acc : State × List Effect) {other : Nat}
@@ -962,10 +859,6 @@ theorem step_bytes_isolates (s : State) (id : Nat) (chunk : List UInt8) {other :
         setClient_other
           (by
             rw [client?_id hfind]; exact h)
-
-end Linger.Core.Session
-
-namespace Linger.Core.Session
 
 /-! ## Trace lift — the per-step theorems over the daemon's whole life
 
@@ -1022,10 +915,6 @@ theorem run_bytes_isolates (s : State) (id : Nat) (chunks : List (List UInt8)) {
   rw [step_bytes_isolates t id chunk h]
   exact ht
 
-end Linger.Core.Session
-
-namespace Linger.Core.Session
-
 /-! ## §Renderable lifted to the daemon's whole life
 
 The emulator-level invariant is only useful if the *daemon's* terminal satisfies
@@ -1037,18 +926,10 @@ new content — which is the point: the replay theorem may assume a *reachable*
 grid without that assumption smuggling in a side condition.
 -/
 
-open Linger.Core.Wire (Msg)
 open Linger.Core.Vt (LiveReachableVt Renderable)
 
 /-- The daemon's terminal is one a live session can hold. -/
 def LiveVt (s : State) : Prop := LiveReachableVt s.vt
-
-theorem onMsg_vt_live {s : State} {c : Client} (m : Msg) (h : LiveVt s) : LiveVt (onMsg s c m).1 :=
-  onMsg_vt_preserves (P := LiveReachableVt) (fun _ cols rows hv => hv.resize cols rows) m h
-
-theorem feedMsgs_vt_live (id : Nat) (msgs : List Msg) (acc : State × List Effect)
-    (h : LiveVt acc.1) : LiveVt (feedMsgs id msgs acc).1 :=
-  feedMsgs_preserves id msgs acc (fun _ _ m _ hs => onMsg_vt_live m hs) h
 
 /-- One event keeps the terminal reachable. -/
 theorem step_vt_live (s : State) (ev : Event) (h : LiveVt s) : LiveVt (step s ev).1 :=
@@ -1065,13 +946,8 @@ interleaving — the grid it holds is one `Render.restore` can express. -/
 theorem run_vt_renderable (s : State) (evs : List Event) (h : LiveVt s) :
     Renderable (run s evs).1.vt := Linger.Core.Vt.renderable_of_liveReachable (run_vt_live s evs h)
 
-/-- A daemon booting from a fresh emulator satisfies the hypothesis, so the
-statement above is not conditional in practice. -/
-theorem liveVt_init (cols rows : Nat) (cs : List Client) (ls : List (String × String)) :
-    LiveVt { vt := Vt.Vt.init cols rows, clients := cs, labels := ls } :=
-  LiveReachableVt.init cols rows
-
-/-- …and stated through the one door the runtime actually walks through. -/
+/-- A fresh boot through `State.boot`, the one door the runtime walks through,
+satisfies the hypothesis, so the statement above is not conditional in practice. -/
 theorem liveVt_boot (cols rows : Nat) (ls mk : List (String × String)) :
     LiveVt (State.boot (Vt.Vt.init cols rows) ls mk) := LiveReachableVt.init cols rows
 
@@ -1120,7 +996,8 @@ def resumeVt (l : List UInt8) : Vt.Vt := ((Checkpoint.load l).map (·.vt)).getD 
 /-- **Both doors, in one step.** The `getD`'s two branches are exactly the daemon's two
 sources for `vt0`: `none` is a fresh `Vt.init 80 24`, `some` is a decoded checkpoint. This
 is where the `ofDecoded` rung is load-bearing — the `some` branch has no other witness. -/
-theorem liveReachable_resumeVt (l : List UInt8) : Linger.Core.Vt.LiveReachableVt (resumeVt l) := by
+theorem liveReachableVt_resumeVt (l : List UInt8) :
+    Linger.Core.Vt.LiveReachableVt (resumeVt l) := by
   unfold resumeVt
   rcases hl : Checkpoint.load l with - | c
   · exact LiveReachableVt.init 80 24
@@ -1162,7 +1039,7 @@ theorem run_resume_vt_shape (l : List UInt8) (labels metaKv : List (String × St
     (evs : List Event) :
     Renderable (run (State.boot (resumeVt l) labels metaKv) evs).1.vt ∧
       Linger.Core.Vt.TabsOk (run (State.boot (resumeVt l) labels metaKv) evs).1.vt :=
-  run_boot_vt_shape _ labels metaKv evs (liveReachable_resumeVt l)
+  run_boot_vt_shape _ labels metaKv evs (liveReachableVt_resumeVt l)
 
 /-- **A1 across a *second* reboot.** The checkpoint a resumed session writes loads back
 exactly, for any bytes it was resumed from and any trace it then ran. `load_save_live`'s
@@ -1182,7 +1059,7 @@ theorem run_resume_load_save (l : List UInt8) (labels metaKv : List (String × S
       some
         { vt := (run (State.boot (resumeVt l) labels metaKv) evs).1.vt.quiesce, cwd,
           labels := (run (State.boot (resumeVt l) labels metaKv) evs).1.labels } :=
-  Checkpoint.load_save_live _ (run_boot_vt_live _ labels metaKv evs (liveReachable_resumeVt l))
+  Checkpoint.load_save_live _ (run_boot_vt_live _ labels metaKv evs (liveReachableVt_resumeVt l))
 
 /-! ## §Bound at the door — boot is well-formed, so every daemon state is
 
@@ -1197,17 +1074,8 @@ hypothesis is honest: a fresh boot has `Good (Vt.init …)`, and the resume
 path's decoded emulator carries it from the checkpoint theorems' side. -/
 
 theorem boot_wf (vt : Vt.Vt) (labels metaKv : List (String × String)) (h : Linger.Core.Vt.Good vt) :
-    WF (State.boot vt labels metaKv) := by
-  refine ⟨⟨?_, ?_, ?_, ?_⟩, h⟩
-  · show ([] : List Client).length ≤ maxClients
-    simp [maxClients]
-  · show (labels.take maxLabels).length ≤ maxLabels
-    rw [List.length_take]
-    exact Nat.min_le_left _ _
-  · intro c hc
-    exact absurd hc (List.not_mem_nil)
-  · show Terminal.Scan.Bounded .ground
-    trivial
+    WF (State.boot vt labels metaKv) :=
+  ⟨⟨Nat.zero_le _, List.length_take_le _ _, nofun, trivial⟩, h⟩
 
 /-- **The A2 anchor made structural**: every state reachable from any boot —
 which, by the seal, is every state the daemon can possess — is well-formed,
@@ -1233,7 +1101,7 @@ theorem resizeOwned_owner_only (s : State) (c : Client) :
   · exact (hne rfl).elim
 
 /-- A resize emits at most one effect, using the resulting emulator dimensions. -/
-theorem resize_atMostOne (s : State) (cols rows : UInt32) :
+theorem resize_snd_eq_nil_or (s : State) (cols rows : UInt32) :
     (resize s cols rows).2 = [] ∨
       (resize s cols rows).2 =
         [.resizePty (UInt32.ofNat (resize s cols rows).1.vt.colCount)
@@ -1293,15 +1161,8 @@ theorem resize_changed_dirty (s : State) (cols rows : UInt32)
 the store alone and cannot satisfy the premise. -/
 theorem onMsg_labels_changed_dirty (s : State) (c : Client) (m : Msg)
     (h : (onMsg s c m).1.labels ≠ s.labels) : (onMsg s c m).1.dirty = true := by
-  have hd : (onMsg s c m).1.labels = s.labels ∨ (onMsg s c m).1.dirty = true := by
-    unfold onMsg controlResize resizeOwned resize
-    dsimp only
-    repeat' split
-    all_goals
-      first
-      | exact Or.inl rfl
-      | exact Or.inr rfl
-  exact hd.resolve_left h
+  unfold onMsg at *
+  grind
 
 /-! ## §Size — a control resize never overrides an attached sizer
 
@@ -1351,29 +1212,42 @@ theorem controlResize_same_size (s : State) (c : Client) (cols rows : UInt32)
   simp only [resize, hsame, Bool.true_or, ite_true]
   rfl
 
-/-- The `.resize` arm routes every non-attached connection to the stage above
-(after the cols/rows bookkeeping on the client record), so the three claims
-are about what the daemon actually runs. -/
-theorem onMsg_resize_control (s : State) (c : Client) (cols rows : UInt32)
-    (hc : c.attached = false) :
+/-- The `.resize` arm routes a non-attached connection's first request of a read
+to the stage above (after recording the size and the answer on the client
+record), so the three claims are about what the daemon actually runs. -/
+theorem onMsg_resize_control (s : State) (c : Client) (cols rows : UInt32) (hc : c.attached = false)
+    (ha : c.answered = false) :
     onMsg s c (.resize cols rows) =
       controlResize
-        (s.setClient
+        ((s.setClient
+              { c with
+                cols, rows }).setClient
           { c with
-            cols, rows })
+            cols, rows, answered := true })
         { c with
-          cols, rows }
+          cols, rows, answered := true }
         cols rows := by
   unfold onMsg
-  simp [hc]
+  simp [hc, ha]
+
+/-- A later control resize from the same read is refused: no resize, no `done`. -/
+theorem onMsg_resize_answered (s : State) (c : Client) (cols rows : UInt32)
+    (hc : c.attached = false) (ha : c.answered = true) :
+    onMsg s c (.resize cols rows) =
+      (s.setClient
+          { c with
+            cols, rows },
+        [.send c.id (.err "one request per read".toUTF8.toList)]) := by
+  unfold onMsg
+  simp [hc, ha]
 
 /-- **Every control resize answers the requester** — `.done` or `.err`, never
 silence. The three shape theorems above each show a reply *under their guard*;
 this is the guard-free totality that makes the reply a contract: the branches
 are exhaustive, so a future branch that silently drops (the attached path's
 `(s, [])` shape) cannot appear here without failing this. It is the pure half
-of the no-hang story — `Client.drainBounded` owns the other half, against
-daemons that predate the verb entirely. -/
+of the no-hang story — `Client.drainReplies` with `Client.replySilenceMs` owns
+the other half, against daemons that predate the verb entirely. -/
 theorem controlResize_replies (s : State) (c : Client) (cols rows : UInt32) :
     (controlResize s c cols rows).2.any
         (fun e =>
@@ -1385,10 +1259,6 @@ theorem controlResize_replies (s : State) (c : Client) (cols rows : UInt32) :
   unfold controlResize resize
   repeat' split
   all_goals simp
-
-end Linger.Core.Session
-
-namespace Linger.Core.Session
 
 open Linger.Core.Vt
 
@@ -1430,18 +1300,8 @@ theorem utf8s_no_frame (cs : List Char) : ∀ b ∈ Render.utf8s cs, b ≠ 0x09 
 theorem infoText_framing (s : State) :
     ∀ b ∈ infoText s, b = 0x09 ∨ b = 0x0A ∨ (0x20 ≤ b ∧ b ≠ 0x7F) := by
   intro b hb
-  unfold infoText at hb
-  simp only [List.mem_flatMap] at hb
-  obtain ⟨kv, -, hmem⟩ := hb
-  rcases List.mem_append.mp hmem with h | h
-  · rcases List.mem_append.mp h with h' | h'
-    · rcases List.mem_append.mp h' with h'' | h''
-      · exact Or.inr (Or.inr (Render.utf8s_no_ctl _ b h''))
-      · simp only [List.mem_singleton] at h''
-        exact Or.inl h''
-    · exact Or.inr (Or.inr (Render.utf8s_no_ctl _ b h'))
-  · simp only [List.mem_singleton] at h
-    exact Or.inr (Or.inl h)
+  simp only [infoText, List.mem_flatMap, List.mem_append, List.mem_singleton] at hb
+  grind [Render.utf8s_no_ctl]
 
 private theorem count_utf8s_frame (cs : List Char) (b : UInt8) (hb : b = 0x09 ∨ b = 0x0A) :
     (Render.utf8s cs).count b = 0 := by
@@ -1476,12 +1336,6 @@ theorem infoText_records (s : State) :
       (infoText s).count 0x09 = (infoFields s).length := by
   unfold infoText
   exact ⟨count_frame (infoFields s) 0x0A (Or.inr rfl), count_frame (infoFields s) 0x09 (Or.inl rfl)⟩
-
-end Linger.Core.Session
-
-namespace Linger.Core.Session
-
-open Linger.Core.Wire (Msg)
 
 /-! ## §Chunk at the session layer — what a client receives is what was sent
 
@@ -1595,7 +1449,7 @@ theorem infoMsgs_faithful (id : Nat) (bs : List UInt8) (h : bs.length ≤ infoRe
 /-- Every emitted frame, including an error, fits both the chunk and wire bounds. -/
 theorem infoMsgs_bounded (id : Nat) (bs : List UInt8) (dest : Nat) (m : Msg)
     (h : Effect.send dest m ∈ infoMsgs id bs) :
-    dest = id ∧ m.payload.length ≤ outputChunk ∧ m.wf := by
+    dest = id ∧ m.payload.length ≤ outputChunk ∧ m.WF := by
   have hcap : outputChunk ≤ Wire.maxPayload := by decide
   unfold infoMsgs at h
   split at h
@@ -1614,18 +1468,22 @@ theorem infoMsgs_bounded (id : Nat) (bs : List UInt8) (dest : Nat) (m : Msg)
       exact ⟨rfl, Nat.zero_le _, Nat.zero_le _, trivial⟩
 
 /-- Carry the bounds through the actual info arm that the daemon executes. -/
-theorem onMsg_info_bounded (s : State) (c : Client) (dest : Nat) (m : Msg)
+theorem onMsg_info_bounded (s : State) (c : Client) (dest : Nat) (m : Msg) (ha : c.answered = false)
     (h : Effect.send dest m ∈ (onMsg s c .info).2) :
-    dest = c.id ∧ m.payload.length ≤ outputChunk ∧ m.wf :=
-  infoMsgs_bounded c.id (infoText s) dest m h
+    dest = c.id ∧ m.payload.length ≤ outputChunk ∧ m.WF := by
+  rw [onMsg_info s c ha] at h
+  exact infoMsgs_bounded c.id (infoText s) dest m h
 
 /-- An accepted info request delivers the complete serialized fields and labels. -/
-theorem onMsg_info_faithful (s : State) (c : Client) (h : (infoText s).length ≤ infoReplyCap) :
+theorem onMsg_info_faithful (s : State) (c : Client) (ha : c.answered = false)
+    (h : (infoText s).length ≤ infoReplyCap) :
     (((onMsg s c .info).2).filterMap
           (fun e =>
             match e with
             | .send _ (.infoReply chunk) => some chunk
             | _ => none)).flatten =
-      infoText s := infoMsgs_faithful c.id (infoText s) h
+      infoText s := by
+  rw [onMsg_info s c ha]
+  exact infoMsgs_faithful c.id (infoText s) h
 
 end Linger.Core.Session

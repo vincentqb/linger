@@ -4,7 +4,6 @@ public import Linger.Core.Wire
 public import Linger.Core.Vt
 public import Linger.Core.Replay
 public import Linger.Core.Terminal
-import Linger.Core.Name
 
 public section
 
@@ -49,6 +48,10 @@ structure Client where
   seq : Nat := 0
   /-- `linger wait` parked here until the child exits. -/
   waiting : Bool := false
+  /-- An `info`, `history`, `screen` or control `resize` from the current read
+  was answered. One request per read: clients wait for the reply before the
+  next request, and later requests decoded from the same read are refused. -/
+  answered : Bool := false
   decoder : Wire.Decoder := {}
   deriving Repr, Inhabited
 
@@ -81,8 +84,8 @@ structure State where
   checkpoint clock, but this needs no tick to be *correct*, only to be
   reported. -/
   private outSeq : Nat := 0
-  /-- The `outSeq` as of the last time somebody looked: set on attach and
-  when an attached client leaves. `outSeq > lookSeq` is "unread", which is a
+  /-- The `outSeq` as of the last look: caught up on attach, on each output while a
+  client is attached, and on capture. `outSeq > lookSeq` is "unread", which is a
   property of the **session**, not of a viewer — "last looked" is a session
   event, so no per-client bookkeeping is created for a one-off connection. -/
   private lookSeq : Nat := 0
@@ -160,10 +163,7 @@ def chunksOf {α : Type} (n : Nat) (l : List α) : List (List α) :=
     let rest := chunksOf n (l.drop n)
     l.take n :: rest
 termination_by l.length
-decreasing_by
-  simp at _h
-  simp [List.length_drop]
-  omega
+decreasing_by simp only [List.length_drop]; omega
 
 def State.client? (s : State) (id : Nat) : Option Client := s.clients.find? (·.id == id)
 
@@ -290,7 +290,7 @@ def controlResize (s : State) (c : Client) (cols rows : UInt32) : State × List 
       let r := resize s cols rows
       (r.1, r.2 ++ [.send c.id .done])
 
-/-- Send a byte payload as ≤ 64 KiB `output` frames (Wire §Bound wf). -/
+/-- Send a byte payload as ≤ 64 KiB `output` frames (`Msg.WF`). -/
 def outputMsgs (id : Nat) (bytes : List UInt8) : List Effect :=
   (chunksOf outputChunk bytes).map (fun c => .send id (.output c))
 
@@ -317,6 +317,7 @@ def broadcast (s : State) (bytes : List UInt8) : List Effect :=
 
 /-! ## Message handling (client → daemon) -/
 
+/-- Handle one client message; one query per read is answered (`Client.answered`). -/
 def onMsg (s : State) (c : Client) (m : Msg) : State × List Effect :=
   match m with
   | .attach cols rows =>
@@ -349,14 +350,23 @@ def onMsg (s : State) (c : Client) (m : Msg) : State × List Effect :=
     let s := s.setClient c
     if c.attached then resizeOwned s c
     else
-      -- a control connection (`linger resize`): the named stage above owns
-      -- the decision, and `controlResize_never_overrides` the invariant
-      controlResize s c cols rows
+      if c.answered then (s, [.send c.id (.err "one request per read".toUTF8.toList)])
+      else
+        -- a control connection (`linger resize`): the named stage above owns
+        -- the decision, and `controlResize_never_overrides` the invariant
+        let c := { c with answered := true }
+        controlResize (s.setClient c) c cols rows
   | .detachAll =>
     (s, (s.clients.filter (·.attached) |>.map (fun c' => Effect.close c'.id)) ++ [.send c.id .done])
   | .kill => (s, [.killChild, .dropCheckpoint, .exit])
-  | .info => (s, infoMsgs c.id (infoText s))
-  | .history => (s, outputMsgs c.id (Render.history s.vt) ++ [.send c.id .done])
+  | .info =>
+    if c.answered then (s, [.send c.id (.err "one request per read".toUTF8.toList)])
+    else (s.setClient { c with answered := true }, infoMsgs c.id (infoText s))
+  | .history =>
+    if c.answered then (s, [.send c.id (.err "one request per read".toUTF8.toList)])
+    else
+      (s.setClient { c with answered := true },
+        outputMsgs c.id (Render.history s.vt) ++ [.send c.id .done])
   | .screen =>
     -- `linger capture`: the grid only, plain text. Delivering the current
     -- screen IS a look, so it catches the read mark up — after a capture,
@@ -364,25 +374,26 @@ def onMsg (s : State) (c : Client) (m : Msg) : State × List Effect :=
     -- from this moment (agent-cli Decision 1). `.info` must never do this
     -- (`ls` polls every daemon; a listing that marks everything read destroys
     -- the status column) and `.history` stays an export, not an observation.
-    ({ s with lookSeq := s.outSeq }, outputMsgs c.id (Render.screenText s.vt) ++ [.send c.id .done])
+    if c.answered then (s, [.send c.id (.err "one request per read".toUTF8.toList)])
+    else
+      ({ s.setClient { c with answered := true } with lookSeq := s.outSeq },
+        outputMsgs c.id (Render.screenText s.vt) ++ [.send c.id .done])
   | .wait =>
     match s.exited with
     | some st => (s, [.send c.id (.exited st)])
     | none => (s.setClient { c with waiting := true }, [])
   | .labelSet kv =>
-    let txt := labelText kv
-    match txt.splitOn "=" with
-    | k :: rest =>
-      if k.isEmpty then (s, [.send c.id (.err "empty label key".toUTF8.toList)])
+    let parts := (labelText kv).splitOn "="
+    let k := parts.headD ""
+    if k.isEmpty then (s, [.send c.id (.err "empty label key".toUTF8.toList)])
+    else
+      let v := String.intercalate "=" parts.tail
+      let labels := (s.labels.filter (·.1 != k)) ++ [(k, v)]
+      if labels.length > maxLabels then (s, [.send c.id (.err "too many labels".toUTF8.toList)])
       else
-        let v := String.intercalate "=" rest
-        let labels := (s.labels.filter (·.1 != k)) ++ [(k, v)]
-        if labels.length > maxLabels then (s, [.send c.id (.err "too many labels".toUTF8.toList)])
-        else
-          ({ s with
-              labels, dirty := true },
-            [.send c.id .done])
-    | [] => (s, [.send c.id (.err "empty label".toUTF8.toList)])
+        ({ s with
+            labels, dirty := true },
+          [.send c.id .done])
   | .labelUnset k =>
     let txt := labelText k
     ({ s with
@@ -416,6 +427,7 @@ def feedMsgs (id : Nat) (msgs : List Msg) (acc : State × List Effect) : State �
           (r.1, acc.2 ++ r.2))
     acc
 
+/-- The daemon's transition: one event in, the next state and the effects to run. -/
 def step (s : State) (ev : Event) : State × List Effect :=
   match ev with
   | .connected id =>
@@ -430,7 +442,12 @@ def step (s : State) (ev : Event) : State × List Effect :=
       if dec.errored then
         let (s, effs) := closeClient s id
         (s, .close id :: effs)
-      else feedMsgs id msgs (s.setClient { c with decoder := dec }, [])
+      else
+        feedMsgs id msgs
+          (s.setClient
+              { c with
+                decoder := dec, answered := false },
+            [])
   | .closed id => closeClient s id
   | .ptyOut chunk =>
     let r := Terminal.feed s.vt s.scan chunk

@@ -5,8 +5,7 @@ import Linger.Core.Wire
 The theorems say the codec is correct for all inputs; these pin the
 actual byte layout (a peer in another language must see these exact
 bytes) and exercise the decoder the way a socket would: worst-case
-chunking, garbage, oversize frames. `example : … := by decide` runs at
-build time.
+chunking, garbage, oversize frames, evaluated at build time.
 -/
 
 namespace Linger.Core.Wire.Tests
@@ -41,10 +40,10 @@ example :
 
 /-- Fixed-size chunker for the §Stream test (7 never divides a frame
 boundary in the stream below). -/
-private def chop7 (l : List UInt8) (fuel : Nat) : List (List UInt8) :=
-  match fuel with
-  | 0 => [l]
-  | fuel + 1 => if l.length ≤ 7 then [l] else l.take 7 :: chop7 (l.drop 7) fuel
+private def chop7 (l : List UInt8) : List (List UInt8) :=
+  if l.length ≤ 7 then [l] else l.take 7 :: chop7 (l.drop 7)
+termination_by l.length
+decreasing_by simp only [List.length_drop]; omega
 
 /-- `feedAll` (§Stream's subject) over a chunking that splits every
 frame across boundaries delivers exactly the one-shot decode: same
@@ -52,7 +51,7 @@ messages, same order, clean final state. -/
 example :
     (let bytes := encode (.attach 80 24) ++ encode (.input [1, 2, 3])
                     ++ encode (.labelSet [107, 61, 118]) ++ encode .kill
-     let (d, ms) := Decoder.feedAll {} (chop7 bytes bytes.length)
+     let (d, ms) := Decoder.feedAll {} (chop7 bytes)
      ms == (decode bytes).2 && d.buf.isEmpty && !d.errored) = true := by native_decide
 
 /-- A frame claiming a payload larger than `maxPayload` poisons the

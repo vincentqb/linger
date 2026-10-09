@@ -153,7 +153,7 @@ def decodeMsg (tag : UInt8) (p : List UInt8) : Msg :=
 /-- A message the encoder may legally emit: payload within §Bound, and
 `unknown` only for genuinely unassigned tags (an `unknown` wearing a
 known tag would decode as the known message — nothing may build one). -/
-def Msg.wf (m : Msg) : Prop :=
+def Msg.WF (m : Msg) : Prop :=
   m.payload.length ≤ maxPayload ∧
     match m with
     | .unknown t _ => knownTag t = false
@@ -179,13 +179,14 @@ def takeFrames (bytes : List UInt8) : List UInt8 × Bool × List Msg :=
     let len := (readU32 [l0, l1, l2, l3]).toNat
     if len > maxPayload then ([], true, [])
     else
-      if rest.length < len then (bytes, false, [])
+      let payload := rest.take len
+      if payload.length < len then (bytes, false, [])
       else
         let (buf, err, msgs) := takeFrames (rest.drop len)
-        (buf, err, decodeMsg t (rest.take len) :: msgs)
+        (buf, err, decodeMsg t payload :: msgs)
   | _ => (bytes, false, [])
 termination_by bytes.length
-decreasing_by simp; omega
+decreasing_by simp only [List.length_drop, List.length_cons]; omega
 
 /-- Feed a chunk. Emits every message completed by it. No-op once errored. -/
 def Decoder.feed (d : Decoder) (chunk : List UInt8) : Decoder × List Msg :=

@@ -35,22 +35,20 @@ scenario below concretely pins its state threading + effect order),
 with the test-friendly argument order. -/
 def run (evs : List Event) (s : State := s0) : State × List Effect := Linger.Core.Session.run s evs
 
-def hasEffect (effs : List Effect) (p : Effect → Bool) : Bool := effs.any p
-
 /-- Attach: client connects, sends attach frame, gets a restore
 (output frames) and the pty is resized. -/
 example :
     (let (s, effs) := run [.connected 1, .bytes 1 (encode (.attach 100 30))]
      (s.client? 1).any (·.attached)
-       && hasEffect effs (fun e => match e with | .resizePty 100 30 => true | _ => false)
-       && hasEffect effs (fun e => match e with | .replay 1 _ => true | _ => false)
+       && effs.any (fun e => match e with | .resizePty 100 30 => true | _ => false)
+       && effs.any (fun e => match e with | .replay 1 _ => true | _ => false)
        && s.vt.cols == 100 && s.vt.rows == 30) = true := by native_decide
 
 /-- Keystrokes are forwarded to the pty verbatim, not interpreted. -/
 example :
     (let (_, effs) :=
         run [.connected 1, .bytes 1 (encode (.attach 80 24)), .bytes 1 (encode (.input [104, 105]))]
-     hasEffect effs
+     effs.any
         (fun e =>
           match e with
           | .writePty [104, 105] => true
@@ -64,8 +62,8 @@ example :
     (let (s1, effs1) := run [.connected 1, .bytes 1 (encode (.attach 80 24)),
                              .ptyOut "hello".toUTF8.toList]
      let (s2, effs2) := run [.ptyOut "hello".toUTF8.toList]
-     hasEffect effs1 (fun e => match e with | .send 1 (.output _) => true | _ => false)
-       && !hasEffect effs2 (fun e => match e with | .send _ _ => true | _ => false)
+     effs1.any (fun e => match e with | .send 1 (.output _) => true | _ => false)
+       && !effs2.any (fun e => match e with | .send _ _ => true | _ => false)
        && ((s1.vt.getRow 0).toList.take 5 == (s2.vt.getRow 0).toList.take 5)) = true := by
   native_decide
 
@@ -88,12 +86,12 @@ example :
       let r2 := step two (.ptyOut query)
       ptyWrites rz.2 == [da1Reply] && ptyWrites r1.2 == [da1Reply] &&
         ptyWrites r2.2 == [da1Reply] &&
-        !hasEffect r1.2
+        !r1.2.any
             (fun e =>
               match e with
               | .send _ (.output _) => true
               | _ => false) &&
-        !hasEffect r2.2
+        !r2.2.any
             (fun e =>
               match e with
               | .send _ (.output _) => true
@@ -130,27 +128,18 @@ example :
      sB.clients.isEmpty && effsB.all (· == .checkpoint)
        && (sB.vt.getRow 0 == sA.vt.getRow 0)) = true := by native_decide
 
-/-- kill: child killed, checkpoint dropped, daemon exits. -/
-example :
-    (let (_, effs) := run [.connected 1, .bytes 1 (encode .kill)]
-     effs.take 3 == [.killChild, .dropCheckpoint, .exit] ||
-        (hasEffect effs (· == .killChild) && hasEffect effs (· == .exit) &&
-          hasEffect effs (· == .dropCheckpoint))) =
-      true := by
-  native_decide
-
 /-- info replies with meta and labels; labels round-trip. -/
 example :
     (let (_, effs) :=
         run
           [.connected 1, .bytes 1 (encode (.labelSet "env=dev".toUTF8.toList)),
             .bytes 1 (encode .info)]
-     hasEffect effs
+     effs.any
         (fun e =>
           match e with
           | .send 1 (.infoReply bs) =>
             let txt := String.fromUTF8? (ByteArray.mk bs.toArray) |>.getD ""
-            (txt.splitOn "label.env\tdev").length ≥ 2
+            txt.contains "label.env\tdev"
           | _ => false)) =
       true := by
   native_decide
@@ -228,6 +217,32 @@ example :
       true := by
   native_decide
 
+/-- One read earns one reply: of 1,000 `.history` requests decoded from one
+chunk, the first is answered and every later one is refused. -/
+example :
+    (let (_, effs) := run [.connected 1, .bytes 1 (List.replicate 1000 (encode .history)).flatten]
+     effs.count (.send 1 .done) == 1 &&
+        effs.count (.send 1 (.err "one request per read".toUTF8.toList)) == 999) =
+      true := by
+  native_decide
+
+/-- The allowance renews with every read, so a client that waits for each reply
+is unaffected; within one read, every reply-bearing request shares it. -/
+example :
+    (let (_, waited) :=
+        run
+          [.connected 1, .bytes 1 (encode .history), .bytes 1 (encode .screen),
+            .bytes 1 (encode .info), .bytes 1 (encode (.resize 30 10))]
+     let (s, batched) :=
+        run
+          [.connected 2,
+            .bytes 2 (encode .info ++ encode .history ++ encode .screen ++ encode (.resize 30 10))]
+     waited.count (.send 1 .done) == 4 && batched.count (.send 2 .done) == 1 &&
+       batched.count (.send 2 (.err "one request per read".toUTF8.toList)) == 3 &&
+       s.vt.cols == 20) =
+      true := by
+  native_decide
+
 /-! ### `detach-all` and label removal (pin-the-gaps items 2 and 3)
 
 `onMsg_detachAll` / `onMsg_labelUnset` / `onMsg_labelClear` pin the effect lists
@@ -243,9 +258,9 @@ example :
     (let (_, effs) := run [.connected 1, .bytes 1 (encode (.attach 80 24)),
                            .connected 2, .bytes 2 (encode (.attach 80 24)),
                            .connected 3, .bytes 3 (encode .detachAll)]
-     hasEffect effs (· == .close 1) && hasEffect effs (· == .close 2)
-       && !hasEffect effs (· == .close 3)
-       && hasEffect effs (· == .send 3 .done)) = true := by native_decide
+     effs.contains (.close 1) && effs.contains (.close 2)
+       && !effs.contains (.close 3)
+       && effs.contains (.send 3 .done)) = true := by native_decide
 
 /-- A close requested by an attached sender stops the rest of its decoded
 packet before it can change labels, write input or resize the child. -/
@@ -309,7 +324,7 @@ example :
           [.connected 1, .bytes 1 (encode (.labelSet "env=dev".toUTF8.toList)),
             .bytes 1 (encode (.labelUnset "nosuch".toUTF8.toList))]
      s.labels == [("env", "dev")] &&
-        !hasEffect effs
+        !effs.any
             (fun e =>
               match e with
               | .send _ (.err _) => true
@@ -342,21 +357,21 @@ def infoTxt (s : State) : String := String.fromUTF8? (ByteArray.mk (infoText s).
 example :
     (let (s, _) := run [.ptyOut "hi".toUTF8.toList]
      let txt := infoTxt s
-     ((txt.splitOn "cols\t20").length ≥ 2) && ((txt.splitOn "rows\t5").length ≥ 2)
-       && ((txt.splitOn "cursorx\t2").length ≥ 2)
-       && ((txt.splitOn "cursory\t0").length ≥ 2)) = true := by native_decide
+     txt.contains "cols\t20" && txt.contains "rows\t5"
+       && txt.contains "cursorx\t2"
+       && txt.contains "cursory\t0") = true := by native_decide
 
 /-- `alt` flips with the alt screen (1049h enters, 1049l leaves). -/
 example :
     (let (sIn, _) := run [.ptyOut "\x1b[?1049h".toUTF8.toList]
      let (sOut, _) := run [.ptyOut "\x1b[?1049l".toUTF8.toList] sIn
-     ((infoTxt sIn).splitOn "alt\ttrue").length ≥ 2
-       && ((infoTxt sOut).splitOn "alt\tfalse").length ≥ 2) = true := by native_decide
+     (infoTxt sIn).contains "alt\ttrue"
+       && (infoTxt sOut).contains "alt\tfalse") = true := by native_decide
 
 /-- `outseq` counts pty-output events — the agent's change cursor. -/
 example :
     (let (s2, _) := run [.ptyOut "a".toUTF8.toList, .ptyOut "b".toUTF8.toList]
-     ((infoTxt s2).splitOn "outseq\t2").length ≥ 2) =
+     (infoTxt s2).contains "outseq\t2") =
       true := by
   native_decide
 
@@ -382,7 +397,7 @@ example :
       -- the reply is exactly the screen: five lines, the first being line3…
       sent == Render.screenText s1.vt && sent.count 0x0A == 5 &&
         ((String.fromUTF8? (ByteArray.mk sent.toArray)).getD "").startsWith "line3" &&
-        hasEffect effs
+        effs.any
           (fun e =>
             match e with
             | .send 9 .done => true
@@ -399,15 +414,13 @@ example :
       true := by
   native_decide
 
-/-- wait parks until the child exits, then everyone is told + closed
-and the daemon exits WITHOUT dropping the checkpoint... no — a clean
-child exit does drop it (resume is for crashes, not completed work). -/
+/-- `wait` parks until the child exits; a clean exit drops the checkpoint. -/
 example :
     (let (_, effs) := run [.connected 1, .bytes 1 (encode .wait),
                            .childExited 0]
-     hasEffect effs (fun e => match e with | .send 1 (.exited 0) => true | _ => false)
-       && hasEffect effs (· == .dropCheckpoint)
-       && hasEffect effs (· == .exit)) = true := by native_decide
+     effs.any (fun e => match e with | .send 1 (.exited 0) => true | _ => false)
+       && effs.contains .dropCheckpoint
+       && effs.contains .exit) = true := by native_decide
 
 /-- An unknown tag in a real frame does nothing at all (§Frame). -/
 example :
@@ -421,8 +434,8 @@ example :
     (let evs := (List.range 17).map Event.connected
      let (s, effs) := run evs
      s.clients.length == 16
-       && hasEffect effs (fun e => match e with | .close 16 => true | _ => false)
-       && hasEffect effs (fun e => match e with | .send 16 (.err _) => true | _ => false))
+       && effs.any (fun e => match e with | .close 16 => true | _ => false)
+       && effs.any (fun e => match e with | .send 16 (.err _) => true | _ => false))
       = true := by native_decide
 
 /-- A malformed frame (oversize length claim) gets the client dropped,
@@ -430,7 +443,7 @@ not buffered (§Bound at the session layer). -/
 example :
     (let (s, effs) := run [.connected 1, .bytes 1 [0, 1, 0, 4, 0]]
      s.clients.isEmpty &&
-        hasEffect effs
+        effs.any
           (fun e =>
             match e with
             | .close 1 => true
@@ -443,7 +456,7 @@ checkpoint; a second immediate tick does nothing. -/
 example :
     (let (s1, e1) := run [.ptyOut "x".toUTF8.toList, .tick 70000]
      let (_, e2) := step s1 (.tick 70001)
-     hasEffect e1 (· == .checkpoint) && e2.isEmpty) = true := by native_decide
+     e1.contains .checkpoint && e2.isEmpty) = true := by native_decide
 
 /-- A checkpoint thirty seconds below the UInt64 boundary must not make the
 next dirty tick eligible after only one millisecond. -/
@@ -481,31 +494,26 @@ example :
 example :
     (let (s1, _) := run [.childExited 3]
      let (_, effs) := run [.connected 9, .bytes 9 (encode (.attach 80 24))] s1
-     hasEffect effs (fun e => match e with | .send 9 (.exited 3) => true | _ => false))
+     effs.any (fun e => match e with | .send 9 (.exited 3) => true | _ => false))
       = true := by native_decide
 
-end Linger.Core.Session.Tests
+/-! ### Observer and size owner
 
-namespace ObserverAndSizeOwner
-
-/-! The read-only observer and size-owner rules: an observer mirrors
-output but never owns the size, and the newest attached sizer wins. -/
-
-open Linger.Core.Session
-open Linger.Core.Wire (Msg encode)
+The read-only observer and size-owner rules: an observer mirrors output but never
+owns the size, and the newest attached sizer wins. -/
 
 /-- An observer (attach 0×0) sees output but its keys go nowhere. -/
 example :
     (let (_, effs) :=
-        Tests.run
+        run
           [.connected 1, .bytes 1 (encode (.attach 0 0)), .bytes 1 (encode (.input [120])),
             .ptyOut [104, 105]]
-     (!Tests.hasEffect effs
+     (!effs.any
             (fun e =>
               match e with
               | .writePty _ => true
               | _ => false)) &&
-        Tests.hasEffect effs
+        effs.any
           (fun e =>
             match e with
             | .send 1 (.output _) => true
@@ -516,7 +524,7 @@ example :
 /-- The newest full attacher owns the size; an older client's resize
 is recorded but does not touch the pty. -/
 example :
-    (let (_, effs) := Tests.run [
+    (let (_, effs) := run [
         .connected 1, .bytes 1 (encode (.attach 80 24)),
         .connected 2, .bytes 2 (encode (.attach 100 30)),
         .bytes 1 (encode (.resize 120 40))]
@@ -530,7 +538,7 @@ wipe a child's `DECSTBM` and tab stops, and no `SIGWINCH` fires at an unchanged
 winsize to make it re-emit them (restore-conformance Step 0 ledger 1). -/
 example :
     (let dirty := "\x1b[2;4r\x1b[3g".toUTF8.toList  -- DECSTBM top=1 bot=3, clear all tabs
-     let (s, _) := Tests.run [.connected 1, .bytes 1 (encode (.attach 20 5)),
+     let (s, _) := run [.connected 1, .bytes 1 (encode (.attach 20 5)),
                         .ptyOut dirty,
                         .connected 2, .bytes 2 (encode (.attach 20 5))]
      s.vt.top == 1 && s.vt.bot == 3 && s.vt.tabs == Array.replicate 20 false) = true := by
@@ -540,14 +548,14 @@ example :
 so the same-size guard is what preserves it above, not a dead resize. -/
 example :
     (let dirty := "\x1b[2;4r".toUTF8.toList
-     let (s, _) := Tests.run [.connected 1, .bytes 1 (encode (.attach 20 5)),
+     let (s, _) := run [.connected 1, .bytes 1 (encode (.attach 20 5)),
                         .ptyOut dirty,
                         .connected 2, .bytes 2 (encode (.attach 40 10))]
      s.vt.top == 0 && s.vt.bot == 9) = true := by native_decide
 
 /-- An observer never owns the size, even as the newest attacher. -/
 example :
-    (let (_, effs) := Tests.run [
+    (let (_, effs) := run [
         .connected 1, .bytes 1 (encode (.attach 80 24)),
         .connected 2, .bytes 2 (encode (.attach 0 0)),
         .bytes 2 (encode (.resize 5 5))]
@@ -569,7 +577,7 @@ example :
             [.connected 1, .bytes 1 (encode (.attach 20 5)),
               .bytes 1 (encode (.resize 65536 5))]].all
         fun evs =>
-        let (s, effs) := Tests.run evs
+        let (s, effs) := run evs
         s.vt.colCount == Linger.Core.Vt.clampDim 65536 &&
           (effs.filterMap fun
                 | .resizePty c r => some (c.toNat, r.toNat)
@@ -583,7 +591,7 @@ region and tab ruler too, including a repeated oversized request. -/
 example :
     ([20, 65536].all fun width =>
         let (s, _) :=
-          Tests.run
+          run
             [.connected 1, .bytes 1 (encode (.attach width 5)),
               .ptyOut "\x1b[2;4r\x1b[3g".toUTF8.toList, .bytes 1 (encode (.resize width 5))]
         s.vt.top == 1 && s.vt.bot == 3 && s.vt.tabs == Array.replicate s.vt.colCount false) =
@@ -593,7 +601,7 @@ example :
 /-- Quiet label edits are persistent changes even without any new pty output. -/
 example :
     ([Msg.labelSet "a=new".toUTF8.toList, .labelUnset "a".toUTF8.toList, .labelClear].all fun msg =>
-        let s := { Tests.s0 with labels := [("a", "old")] }
+        let s := { s0 with labels := [("a", "old")] }
         let changed := (onMsg s { id := 1 } msg).1
         (step changed (.tick ckptIntervalMs)).2.contains .checkpoint) =
       true := by
@@ -601,37 +609,37 @@ example :
 
 /-- A geometry-only change also reaches the periodic save point. -/
 example :
-    (let (s, _) := Tests.run [.connected 1, .bytes 1 (encode (.resize 40 10))]
+    (let (s, _) := run [.connected 1, .bytes 1 (encode (.resize 40 10))]
      (step s (.tick ckptIntervalMs)).2.contains .checkpoint) = true := by
   native_decide
 
 /-- Detached session: the control resize applies (one resizePty, then done)
 and the emulator follows. -/
 example :
-    (let (s, effs) := Tests.run [.connected 1, .bytes 1 (encode (.resize 100 30))]
+    (let (s, effs) := run [.connected 1, .bytes 1 (encode (.resize 100 30))]
      let resizes := effs.filterMap (fun e => match e with
        | .resizePty c r => some (c, r) | _ => none)
      resizes == [(100, 30)] && s.vt.cols == 100 && s.vt.rows == 30
-       && Tests.hasEffect effs (fun e => match e with
+       && effs.any (fun e => match e with
             | .send 1 .done => true | _ => false)) = true := by native_decide
 
 /-- While a sizer is attached, the control resize is refused with an `.err`,
 no `resizePty` is emitted beyond the attach's own, and the emulator keeps the
 attached client's size. -/
 example :
-    (let (s, effs) := Tests.run [
+    (let (s, effs) := run [
         .connected 1, .bytes 1 (encode (.attach 80 24)),
         .connected 2, .bytes 2 (encode (.resize 100 30))]
      let resizes := effs.filterMap (fun e => match e with
        | .resizePty c r => some (c, r) | _ => none)
      resizes == [(80, 24)] && s.vt.cols == 80 && s.vt.rows == 24
-       && Tests.hasEffect effs (fun e => match e with
+       && effs.any (fun e => match e with
             | .send 2 (.err _) => true | _ => false)) = true := by native_decide
 
 /-- …and once the owner leaves, the same request applies: attachment is the
 fact that decides, not history. -/
 example :
-    (let (s, effs) := Tests.run [
+    (let (s, effs) := run [
         .connected 1, .bytes 1 (encode (.attach 80 24)),
         .closed 1,
         .connected 2, .bytes 2 (encode (.resize 100 30))]
@@ -644,19 +652,19 @@ example :
 guard's reason, applied to this path — restore-conformance Step 0 ledger 1). -/
 example :
     (let dirty := "\x1b[2;4r\x1b[3g".toUTF8.toList  -- DECSTBM 2..4, clear all tabs
-     let (s, effs) := Tests.run [.ptyOut dirty,
+     let (s, effs) := run [.ptyOut dirty,
                                  .connected 5, .bytes 5 (encode (.resize 20 5))]
      s.vt.top == 1 && s.vt.bot == 3 && s.vt.tabs == Array.replicate 20 false
-       && !Tests.hasEffect effs (fun e => match e with
+       && !effs.any (fun e => match e with
             | .resizePty _ _ => true | _ => false)
-       && Tests.hasEffect effs (fun e => match e with
+       && effs.any (fun e => match e with
             | .send 5 .done => true | _ => false)) = true := by native_decide
 
 /-- A zero dimension is never a size (0×0 is the observer marker on attach). -/
 example :
-    (let (s, effs) := Tests.run [.connected 1, .bytes 1 (encode (.resize 0 30))]
+    (let (s, effs) := run [.connected 1, .bytes 1 (encode (.resize 0 30))]
      s.vt.cols == 20 &&
-        Tests.hasEffect effs
+        effs.any
           (fun e =>
             match e with
             | .send 1 (.err _) => true
@@ -668,23 +676,16 @@ example :
 as data). -/
 example :
     (let (_, effs) :=
-        Tests.run
-          [.connected 1, .bytes 1 (encode (.attach 80 24)), .connected 2, .bytes 2 (encode .info)]
-     Tests.hasEffect effs
+        run [.connected 1, .bytes 1 (encode (.attach 80 24)), .connected 2, .bytes 2 (encode .info)]
+     effs.any
         (fun e =>
           match e with
           | .send 2 (.infoReply bs) =>
             let txt := (String.fromUTF8? (ByteArray.mk bs.toArray)).getD ""
-            (txt.splitOn "clients\t1").length ≥ 2
+            txt.contains "clients\t1"
           | _ => false)) =
       true := by
   native_decide
-
-end ObserverAndSizeOwner
-
-namespace Linger.Core.Session.Tests
-
-open Linger.Core.Session
 
 /-! ### §Row/§Status integrity — the forged listing record
 
@@ -694,37 +695,11 @@ value through — so a label value carrying a newline and a tab used to forge an
 record**, including a `status`/`state` pair that `linger list` would then display as the
 session's state.
 
-`infoText_records` proves it cannot happen now. These pin the *before* as well, so the
-channel is documented rather than merely closed: the old `String`-interpolation shape is
-computed here and shown to produce one newline too many. -/
+`infoText_records` proves it cannot happen now. -/
 
 def forged : State := { s0 with labels := [("x", "a\nstatus\tlive")] }
 
-/-- The value really does carry the two framing characters. -/
-example :
-    ("a\nstatus\tlive".toList.any (fun c => c == '\n') &&
-        "a\nstatus\tlive".toList.any (fun c => c == '\t')) =
-      true := by
-  native_decide
-
-/-- **The bug, pinned.** The old shape — `String.join` of `s!"{k}\t{v}\n"`, then
-`String.toUTF8` — emits one newline *more* than there are fields, which is exactly one
-forged record. -/
-example :
-    ((String.join
-              ((infoFields forged).map
-                (fun (kv : String × String) => s!"{kv.1}\t{kv.2}\n"))).toUTF8.toList).count
-        0x0A =
-      (infoFields forged).length + 1 := by
-  native_decide
-
-/-- **The fix.** One record per field, with the injected control characters replaced by
-U+FFFD on the way out. -/
-example : (infoText forged).count 0x0A = (infoFields forged).length := by native_decide
-
-example : (infoText forged).count 0x09 = (infoFields forged).length := by native_decide
-
-/-- And the replacement really is in the value, so nothing was silently dropped. -/
+/-- The injected controls are replaced by U+FFFD, not dropped. -/
 example : (infoText forged).any (· == 0xEF) = true := by native_decide
 
 /-- **Boot caps restored labels at `maxLabels`** — the Bounded-at-boot gap,

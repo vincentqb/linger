@@ -16,6 +16,7 @@ namespace Linger.Core.Driver
 open Linger.Core.Session (State Event Effect step WF LiveVt)
 variable {World : Type}
 
+/-- A total effect interpreter over an abstract world, with typed replies. -/
 abbrev Interpreter (World : Type) := State → World → (eff : Effect) → World × Reply eff
 
 /-- Erasing the termination witnesses gives ordinary left-to-right effect
@@ -49,7 +50,9 @@ theorem effects_in_order (execute : Interpreter World) (st : State) (world : Wor
         (answer.1, acc.2 ++ feedback eff answer.2))
         (b := (world, [])))
   · intro acc eff
-    simp [project, Id.run, -List.map_subtype, List.map_reverse, List.map_map, Function.comp_def]
+    simp only [List.map_reverse, Id.run, List.map_append, List.map_map, Function.comp_def,
+      List.reverse_append, List.reverse_reverse, Prod.mk.injEq, List.append_cancel_left_eq,
+      true_and, project]
     exact (List.attach_map_subtype_val _).symm
 
 /-- One event's complete effect batch, with feedback in execution order. -/
@@ -64,9 +67,6 @@ def batch (execute : Interpreter World) (r : Result World) (ev : Event) :
 theorem feedback_strictly_decreases (eff : Effect) (reply : Reply eff)
     (ev : Event) (h : ev ∈ feedback eff reply) : eventDepth ev < effectDepth eff :=
   feedback_depth eff reply ev h
-
-theorem eventDepth_le_two (ev : Event) : eventDepth ev ≤ 2 := by
-  cases ev <;> simp [eventDepth]
 
 theorem batch_feedback_decreases (execute : Interpreter World) (r : Result World) (ev : Event) :
     ∀ follow ∈ (batch execute r ev).2, eventDepth follow < eventDepth ev := by
@@ -83,9 +83,15 @@ theorem handle_eq (execute : Interpreter World) (r : Result World) (ev : Event) 
         else next.2.foldl (handle (m := Id) execute) next.1 := by
   change (handle (m := Id) execute r ev).run = _
   rw [handle]
-  split <;> simp_all [batch]
-  split <;> simp_all [List.idRun_foldlM] <;> rfl
+  split <;>
+    simp_all only [Id.run_pure, Bool.not_eq_true, List.contains_eq_mem, decide_eq_true_eq,
+      decide_true, decide_false, List.foldlM_subtype, Id.run_bind, batch, List.map_subtype,
+      List.map_id_fun', id_eq]
+  split <;>
+    simp_all only [Id.run_pure, Result.mk.injEq, and_true, true_and, List.idRun_foldlM] <;> rfl
 
+/-- Feedback-queue semantics: a batch stops at exit or an empty queue, and each event's feedback
+runs before the remaining input. -/
 inductive Execution (execute : Interpreter World) :
     Result World → List Event → Result World → Prop where
   | idle (r) : Execution execute r [] r

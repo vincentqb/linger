@@ -56,10 +56,10 @@ theorem decodeMsg_unknown_of_not_knownTag (t : UInt8) (p : List UInt8) (h : know
     ne 14 (by decide), ne 15 (by decide), ne 16 (by decide)]
 
 /-- Re-interpreting a well-formed message's own tag and payload yields
-the message back. `wf` is load-bearing in the `unknown` case: an
+the message back. `WF` is load-bearing in the `unknown` case: an
 `unknown` wearing a known tag would decode as the known message, which
-is why `wf` forbids constructing one. -/
-theorem decodeMsg_roundtrip (m : Msg) (hm : m.wf) : decodeMsg m.tag m.payload = m := by
+is why `WF` forbids constructing one. -/
+theorem decodeMsg_roundtrip (m : Msg) (hm : m.WF) : decodeMsg m.tag m.payload = m := by
   cases m with
   | unknown t p => exact decodeMsg_unknown_of_not_knownTag t p hm.2
   | _ => simp [decodeMsg, Msg.tag, Msg.payload]
@@ -76,18 +76,14 @@ theorem takeFrames_header (t b0 b1 b2 b3 : UInt8) (payload rest : List UInt8)
   rcases hres : takeFrames rest with ⟨buf, err, msgs⟩
   rw [takeFrames.eq_def]
   dsimp only
-  rw [hb]
-  rw [ite_eq_right (by omega)]
-  rw [ite_eq_right
-      (by
-        rw [List.length_append]; omega)]
-  rw [List.take_append_of_le_length hle, List.take_of_length_le (Nat.le_refl _),
+  rw [hb, ite_eq_right (by omega), List.take_append_of_le_length hle,
+    List.take_of_length_le (Nat.le_refl _), ite_eq_right (Nat.lt_irrefl _),
     List.drop_append_of_le_length hle, List.drop_of_length_le (Nat.le_refl _), List.nil_append,
     hres]
 
 /-- A well-formed encoded frame peels off `takeFrames`, whatever
 follows it. The workhorse for §Frame and §Chunk alike. -/
-theorem takeFrames_encode_prefix (m : Msg) (hm : m.wf) (rest : List UInt8) :
+theorem takeFrames_encode_prefix (m : Msg) (hm : m.WF) (rest : List UInt8) :
     takeFrames (encode m ++ rest) =
       ((takeFrames rest).1, (takeFrames rest).2.1, m :: (takeFrames rest).2.2) := by
   have hp : m.payload.length ≤ maxPayload := hm.1
@@ -106,8 +102,16 @@ theorem takeFrames_encode_prefix (m : Msg) (hm : m.wf) (rest : List UInt8) :
 @[simp]
 theorem takeFrames_nil : takeFrames [] = ([], false, []) := by rw [takeFrames.eq_def]
 
+/-- Fewer than five bytes hold no header, so they are kept whole. -/
+private theorem takeFrames_short (xs : List UInt8)
+    (hno : ∀ t l0 l1 l2 l3 rest, xs = t :: l0 :: l1 :: l2 :: l3 :: rest → False) :
+    takeFrames xs = (xs, false, []) ∧ xs.length ≤ 4 := by
+  rcases xs with _ | ⟨a, _ | ⟨b, _ | ⟨c, _ | ⟨d, _ | ⟨e, tail⟩⟩⟩⟩⟩
+  case cons.cons.cons.cons.cons => exact (hno a b c d e tail rfl).elim
+  all_goals simp [takeFrames]
+
 /-- §Frame: one well-formed message round-trips exactly. -/
-theorem decode_encode (m : Msg) (hm : m.wf) :
+theorem decode_encode (m : Msg) (hm : m.WF) :
     decode (encode m) = ({ buf := [], errored := false }, [m]) := by
   have h := takeFrames_encode_prefix m hm []
   simp only [takeFrames_nil, List.append_nil] at h
@@ -115,7 +119,7 @@ theorem decode_encode (m : Msg) (hm : m.wf) :
 
 /-- §Frame, stream form: a sequence of well-formed messages decodes
 back to itself exactly, with nothing retained. -/
-theorem decode_encode_stream (ms : List Msg) (h : ∀ m ∈ ms, m.wf) :
+theorem decode_encode_stream (ms : List Msg) (h : ∀ m ∈ ms, m.WF) :
     decode (ms.flatMap encode) = ({ buf := [], errored := false }, ms) := by
   suffices hs : takeFrames (ms.flatMap encode) = ([], false, ms) by simp [decode, Decoder.feed, hs]
   induction ms with
@@ -136,114 +140,29 @@ theorem takeFrames_append (xs ys : List UInt8) :
       else
         ((takeFrames ((takeFrames xs).1 ++ ys)).1, (takeFrames ((takeFrames xs).1 ++ ys)).2.1,
           (takeFrames xs).2.2 ++ (takeFrames ((takeFrames xs).1 ++ ys)).2.2)) := by
-  induction xs using takeFrames.induct with
-  | case1 t l0 l1 l2 l3 rest len
-    hlen =>
-    replace hlen : (readU32 [l0, l1, l2, l3]).toNat > maxPayload := hlen
-    have hx : takeFrames (t :: l0 :: l1 :: l2 :: l3 :: rest) = ([], true, []) := by
-      rw [takeFrames.eq_def]; dsimp only; rw [ite_eq_left hlen]
-    have hy : takeFrames (t :: l0 :: l1 :: l2 :: l3 :: (rest ++ ys)) = ([], true, []) := by
-      rw [takeFrames.eq_def]; dsimp only; rw [ite_eq_left hlen]
-    simp [hx, hy]
-  | case2 t l0 l1 l2 l3 rest len hlen
-    hshort =>
-    replace hlen : ¬(readU32 [l0, l1, l2, l3]).toNat > maxPayload := hlen
-    replace hshort : rest.length < (readU32 [l0, l1, l2, l3]).toNat := hshort
-    have hx :
-      takeFrames (t :: l0 :: l1 :: l2 :: l3 :: rest) =
-        (t :: l0 :: l1 :: l2 :: l3 :: rest, false, []) := by
-      rw [takeFrames.eq_def]; dsimp only; rw [ite_eq_right hlen, ite_eq_left hshort]
-    simp [hx]
-  | case3 t l0 l1 l2 l3 rest len hlen hshort buf err msgs heq
+  fun_induction takeFrames xs with
+  | case1 _ _ _ _ _ _
+    len =>
+    rw [List.cons_append, List.cons_append, List.cons_append, List.cons_append, List.cons_append,
+      takeFrames.eq_def]
+    simp_all [len]
+  | case2 => simp
+  | case3 _ _ _ _ _ rest len _ payload hshort _ err _ heq
     ih =>
-    replace hlen : ¬(readU32 [l0, l1, l2, l3]).toNat > maxPayload := hlen
-    replace hshort : ¬rest.length < (readU32 [l0, l1, l2, l3]).toNat := hshort
-    have hle : (readU32 [l0, l1, l2, l3]).toNat ≤ rest.length := Nat.le_of_not_lt hshort
-    have hx :
-      takeFrames (t :: l0 :: l1 :: l2 :: l3 :: rest) =
-        (buf, err, decodeMsg t (rest.take (readU32 [l0, l1, l2, l3]).toNat) :: msgs) := by
-      rw [takeFrames.eq_def]; dsimp only
-      rw [ite_eq_right hlen, ite_eq_right hshort, heq]
-    rcases h2 : takeFrames (rest.drop (readU32 [l0, l1, l2, l3]).toNat ++ ys) with
-      ⟨buf2, err2, msgs2⟩
-    have hy :
-      takeFrames (t :: l0 :: l1 :: l2 :: l3 :: (rest ++ ys)) =
-        (buf2, err2, decodeMsg t (rest.take (readU32 [l0, l1, l2, l3]).toNat) :: msgs2) := by
-      rw [takeFrames.eq_def]; dsimp only
-      rw [ite_eq_right hlen,
-        ite_eq_right
-          (by
-            rw [List.length_append]; omega),
-        List.take_append_of_le_length hle, List.drop_append_of_le_length hle, h2]
-    rw [ih, heq] at h2
-    by_cases he : err
-    · simp [he] at h2
-      obtain ⟨hb2, he2, hm2⟩ := h2
-      subst hb2; subst he2; subst hm2
-      simp [hx, hy, he]
-    · simp [he] at h2
-      obtain ⟨hb2, he2, hm2⟩ := h2
-      subst hb2; subst he2; subst hm2
-      simp [hx, hy, he]
-  | case4 xs
-    hno =>
-    have hx : takeFrames xs = (xs, false, []) := by
-      rw [takeFrames.eq_def]
-      rcases xs with _ | ⟨a, _ | ⟨b, _ | ⟨c, _ | ⟨d, _ | ⟨e, tail⟩⟩⟩⟩⟩
-      · rfl
-      · rfl
-      · rfl
-      · rfl
-      · rfl
-      · exact absurd rfl (hno a b c d e tail)
-    simp [hx]
+    have hp : payload.length = len := by
+      simp only [payload, List.length_take] at hshort ⊢
+      omega
+    have hsplit : rest ++ ys = payload ++ (rest.drop len ++ ys) := by
+      rw [← List.append_assoc, List.take_append_drop]
+    rw [List.cons_append, List.cons_append, List.cons_append, List.cons_append, List.cons_append,
+      hsplit, takeFrames_header _ _ _ _ _ _ _ hp.symm (by omega), ih, heq]
+    cases err <;> simp
+  | case4 => simp
 
 /-- An errored parse retains nothing: the poisoned buffer is dropped,
 not kept around. (Also what makes `feed_append` hold through errors.) -/
 theorem takeFrames_errored_buf (bytes : List UInt8) (h : (takeFrames bytes).2.1 = true) :
-    (takeFrames bytes).1 = [] := by
-  induction bytes using takeFrames.induct with
-  | case1 t l0 l1 l2 l3 rest len
-    hlen =>
-    replace hlen : (readU32 [l0, l1, l2, l3]).toNat > maxPayload := hlen
-    have hx : takeFrames (t :: l0 :: l1 :: l2 :: l3 :: rest) = ([], true, []) := by
-      rw [takeFrames.eq_def]; dsimp only; rw [ite_eq_left hlen]
-    simp [hx]
-  | case2 t l0 l1 l2 l3 rest len hlen
-    hshort =>
-    replace hlen : ¬(readU32 [l0, l1, l2, l3]).toNat > maxPayload := hlen
-    replace hshort : rest.length < (readU32 [l0, l1, l2, l3]).toNat := hshort
-    have hx :
-      takeFrames (t :: l0 :: l1 :: l2 :: l3 :: rest) =
-        (t :: l0 :: l1 :: l2 :: l3 :: rest, false, []) := by
-      rw [takeFrames.eq_def]; dsimp only; rw [ite_eq_right hlen, ite_eq_left hshort]
-    rw [hx] at h
-    simp at h
-  | case3 t l0 l1 l2 l3 rest len hlen hshort buf err msgs heq
-    ih =>
-    replace hlen : ¬(readU32 [l0, l1, l2, l3]).toNat > maxPayload := hlen
-    replace hshort : ¬rest.length < (readU32 [l0, l1, l2, l3]).toNat := hshort
-    have hx :
-      takeFrames (t :: l0 :: l1 :: l2 :: l3 :: rest) =
-        (buf, err, decodeMsg t (rest.take (readU32 [l0, l1, l2, l3]).toNat) :: msgs) := by
-      rw [takeFrames.eq_def]; dsimp only
-      rw [ite_eq_right hlen, ite_eq_right hshort, heq]
-    rw [hx] at h ⊢
-    rw [heq] at ih
-    exact ih h
-  | case4 xs
-    hno =>
-    have hx : takeFrames xs = (xs, false, []) := by
-      rw [takeFrames.eq_def]
-      rcases xs with _ | ⟨a, _ | ⟨b, _ | ⟨c, _ | ⟨d, _ | ⟨e, tail⟩⟩⟩⟩⟩
-      · rfl
-      · rfl
-      · rfl
-      · rfl
-      · rfl
-      · exact absurd rfl (hno a b c d e tail)
-    rw [hx] at h
-    simp at h
+    (takeFrames bytes).1 = [] := by fun_induction takeFrames bytes <;> simp_all
 
 /-- §Chunk at the decoder interface: feeding `a ++ b` is feeding `a`
 then feeding `b` — same final state, same messages in order. No
@@ -281,47 +200,18 @@ theorem Decoder.feed_errored (d : Decoder) (chunk : List UInt8) (hd : d.errored)
 definition smaller than one max-size frame, and an oversize claim
 empties the buffer (error) rather than filling it. -/
 theorem takeFrames_buf_le (bytes : List UInt8) : (takeFrames bytes).1.length ≤ 4 + maxPayload := by
-  induction bytes using takeFrames.induct with
-  | case1 t l0 l1 l2 l3 rest len
-    hlen =>
-    replace hlen : (readU32 [l0, l1, l2, l3]).toNat > maxPayload := hlen
-    have hx : takeFrames (t :: l0 :: l1 :: l2 :: l3 :: rest) = ([], true, []) := by
-      rw [takeFrames.eq_def]; dsimp only; rw [ite_eq_left hlen]
-    simp [hx]
-  | case2 t l0 l1 l2 l3 rest len hlen
+  fun_induction takeFrames bytes with
+  | case1 => simp
+  | case2 _ _ _ _ _ _ len _ payload
     hshort =>
-    replace hlen : ¬(readU32 [l0, l1, l2, l3]).toNat > maxPayload := hlen
-    replace hshort : rest.length < (readU32 [l0, l1, l2, l3]).toNat := hshort
-    have hx :
-      takeFrames (t :: l0 :: l1 :: l2 :: l3 :: rest) =
-        (t :: l0 :: l1 :: l2 :: l3 :: rest, false, []) := by
-      rw [takeFrames.eq_def]; dsimp only; rw [ite_eq_right hlen, ite_eq_left hshort]
-    simp [hx]
+    simp only [payload, List.length_take] at hshort
+    simp only [List.length_cons]
     omega
-  | case3 t l0 l1 l2 l3 rest len hlen hshort buf err msgs heq
-    ih =>
-    replace hlen : ¬(readU32 [l0, l1, l2, l3]).toNat > maxPayload := hlen
-    replace hshort : ¬rest.length < (readU32 [l0, l1, l2, l3]).toNat := hshort
-    have hx :
-      takeFrames (t :: l0 :: l1 :: l2 :: l3 :: rest) =
-        (buf, err, decodeMsg t (rest.take (readU32 [l0, l1, l2, l3]).toNat) :: msgs) := by
-      rw [takeFrames.eq_def]; dsimp only
-      rw [ite_eq_right hlen, ite_eq_right hshort, heq]
-    rw [heq] at ih
-    simpa [hx] using ih
-  | case4 xs
-    hno =>
-    have hx : takeFrames xs = (xs, false, []) := by
-      rw [takeFrames.eq_def]
-      rcases xs with _ | ⟨a, _ | ⟨b, _ | ⟨c, _ | ⟨d, _ | ⟨e, tail⟩⟩⟩⟩⟩
-      · rfl
-      · rfl
-      · rfl
-      · rfl
-      · rfl
-      · exact absurd rfl (hno a b c d e tail)
-    rcases xs with _ | ⟨a, _ | ⟨b, _ | ⟨c, _ | ⟨d, _ | ⟨e, tail⟩⟩⟩⟩⟩ <;> simp [hx, maxPayload]
-    exact absurd rfl (hno _ _ _ _ _ _)
+  | case3 _ _ _ _ _ _ _ _ _ _ _ _ _ heq ih => simpa [heq] using ih
+  | case4 xs hno =>
+    have := (takeFrames_short xs hno).2
+    simp
+    omega
 
 /-- §Bound at the decoder interface: after any feed to a live decoder,
 the retained buffer is under `4 + maxPayload` bytes — regardless of the
@@ -331,8 +221,7 @@ theorem Decoder.feed_buf_le (d : Decoder) (chunk : List UInt8) (hd : ¬d.errored
   have h := takeFrames_buf_le (d.buf ++ chunk)
   rcases hres : takeFrames (d.buf ++ chunk) with ⟨buf, err, msgs⟩
   rw [hres] at h
-  simp [Decoder.feed, hd, hres]
-  exact h
+  simpa [Decoder.feed, hd, hres] using h
 
 /-- §Bound, message side: no decoded message carries a payload above
 `maxPayload` — the state machines downstream never see an unbounded
@@ -384,52 +273,20 @@ theorem decodeMsg_payload_le (t : UInt8) (p : List UInt8) (hp : p.length ≤ max
 
 theorem takeFrames_msgs_payload_le (bytes : List UInt8) :
     ∀ m ∈ (takeFrames bytes).2.2, m.payload.length ≤ maxPayload := by
-  induction bytes using takeFrames.induct with
-  | case1 t l0 l1 l2 l3 rest len
-    hlen =>
-    replace hlen : (readU32 [l0, l1, l2, l3]).toNat > maxPayload := hlen
-    have hx : takeFrames (t :: l0 :: l1 :: l2 :: l3 :: rest) = ([], true, []) := by
-      rw [takeFrames.eq_def]; dsimp only; rw [ite_eq_left hlen]
-    simp [hx]
-  | case2 t l0 l1 l2 l3 rest len hlen
-    hshort =>
-    replace hlen : ¬(readU32 [l0, l1, l2, l3]).toNat > maxPayload := hlen
-    replace hshort : rest.length < (readU32 [l0, l1, l2, l3]).toNat := hshort
-    have hx :
-      takeFrames (t :: l0 :: l1 :: l2 :: l3 :: rest) =
-        (t :: l0 :: l1 :: l2 :: l3 :: rest, false, []) := by
-      rw [takeFrames.eq_def]; dsimp only; rw [ite_eq_right hlen, ite_eq_left hshort]
-    simp [hx]
-  | case3 t l0 l1 l2 l3 rest len hlen hshort buf err msgs heq
+  fun_induction takeFrames bytes with
+  | case1 => simp
+  | case2 => simp
+  | case3 _ _ _ _ _ rest len _ payload _ _ _ _ heq
     ih =>
-    replace hlen : ¬(readU32 [l0, l1, l2, l3]).toNat > maxPayload := hlen
-    replace hshort : ¬rest.length < (readU32 [l0, l1, l2, l3]).toNat := hshort
-    have hx :
-      takeFrames (t :: l0 :: l1 :: l2 :: l3 :: rest) =
-        (buf, err, decodeMsg t (rest.take (readU32 [l0, l1, l2, l3]).toNat) :: msgs) := by
-      rw [takeFrames.eq_def]; dsimp only
-      rw [ite_eq_right hlen, ite_eq_right hshort, heq]
     rw [heq] at ih
     intro m hmem
-    rw [hx] at hmem
     rcases List.mem_cons.mp hmem with h | h
     · subst h
       apply decodeMsg_payload_le
-      have := List.length_take_le (readU32 [l0, l1, l2, l3]).toNat rest
+      have : payload.length ≤ len := List.length_take_le len rest
       omega
     · exact ih m h
-  | case4 xs
-    hno =>
-    have hx : takeFrames xs = (xs, false, []) := by
-      rw [takeFrames.eq_def]
-      rcases xs with _ | ⟨a, _ | ⟨b, _ | ⟨c, _ | ⟨d, _ | ⟨e, tail⟩⟩⟩⟩⟩
-      · rfl
-      · rfl
-      · rfl
-      · rfl
-      · rfl
-      · exact absurd rfl (hno a b c d e tail)
-    simp [hx]
+  | case4 => simp
 
 /-! ## §Stream — chunking is invisible (§Frame ∘ §Chunk, composed)
 
@@ -444,45 +301,13 @@ no messages, no error. (By construction it is less than one complete
 frame.) -/
 theorem takeFrames_leftover_stable (bytes : List UInt8) :
     takeFrames (takeFrames bytes).1 = ((takeFrames bytes).1, false, []) := by
-  induction bytes using takeFrames.induct with
-  | case1 t l0 l1 l2 l3 rest len
-    hlen =>
-    replace hlen : (readU32 [l0, l1, l2, l3]).toNat > maxPayload := hlen
-    have hx : takeFrames (t :: l0 :: l1 :: l2 :: l3 :: rest) = ([], true, []) := by
-      rw [takeFrames.eq_def]; dsimp only; rw [ite_eq_left hlen]
-    simp [hx]
-  | case2 t l0 l1 l2 l3 rest len hlen
-    hshort =>
-    replace hlen : ¬(readU32 [l0, l1, l2, l3]).toNat > maxPayload := hlen
-    replace hshort : rest.length < (readU32 [l0, l1, l2, l3]).toNat := hshort
-    have hx :
-      takeFrames (t :: l0 :: l1 :: l2 :: l3 :: rest) =
-        (t :: l0 :: l1 :: l2 :: l3 :: rest, false, []) := by
-      rw [takeFrames.eq_def]; dsimp only; rw [ite_eq_right hlen, ite_eq_left hshort]
-    simp [hx]
-  | case3 t l0 l1 l2 l3 rest len hlen hshort buf err msgs heq
-    ih =>
-    replace hlen : ¬(readU32 [l0, l1, l2, l3]).toNat > maxPayload := hlen
-    replace hshort : ¬rest.length < (readU32 [l0, l1, l2, l3]).toNat := hshort
-    have hx :
-      takeFrames (t :: l0 :: l1 :: l2 :: l3 :: rest) =
-        (buf, err, decodeMsg t (rest.take (readU32 [l0, l1, l2, l3]).toNat) :: msgs) := by
-      rw [takeFrames.eq_def]; dsimp only
-      rw [ite_eq_right hlen, ite_eq_right hshort, heq]
-    rw [heq] at ih
-    simpa [hx] using ih
-  | case4 xs
-    hno =>
-    have hx : takeFrames xs = (xs, false, []) := by
-      rw [takeFrames.eq_def]
-      rcases xs with _ | ⟨a, _ | ⟨b, _ | ⟨c, _ | ⟨d, _ | ⟨e, tail⟩⟩⟩⟩⟩
-      · rfl
-      · rfl
-      · rfl
-      · rfl
-      · rfl
-      · exact absurd rfl (hno a b c d e tail)
-    simp [hx]
+  fun_induction takeFrames bytes with
+  | case1 => simp
+  | case2 _ _ _ _ _ _ len _ payload =>
+    rw [takeFrames.eq_def]
+    simp_all [len, payload]
+  | case3 _ _ _ _ _ _ _ _ _ _ _ _ _ heq ih => simpa [heq] using ih
+  | case4 xs hno => simpa using (takeFrames_short xs hno).1
 
 /-- Feeding chunks one at a time equals feeding their concatenation —
 for any decoder whose buffer is quiescent, which every decoder the feed
@@ -518,14 +343,14 @@ theorem Decoder.feedAll_flatten (d : Decoder) (chunks : List (List UInt8))
 ARBITRARILY (per byte, per frame, any TCP segmentation), feeds back to
 exactly that sequence — same messages, same order, nothing retained,
 no error. -/
-theorem decode_encode_chunked (ms : List Msg) (hms : ∀ m ∈ ms, m.wf) (chunks : List (List UInt8))
+theorem decode_encode_chunked (ms : List Msg) (hms : ∀ m ∈ ms, m.WF) (chunks : List (List UInt8))
     (hc : chunks.flatten = ms.flatMap encode) :
     Decoder.feedAll {} chunks = ({ buf := [], errored := false }, ms) := by
   rw [Decoder.feedAll_flatten _ _ (by simp), hc]
   simpa [decode] using decode_encode_stream ms hms
 
 /-- **`knownTag` is exactly the encoder's own tag range.** Every assigned constructor carries
-a known tag, so `Msg.wf`'s side condition on `.unknown` is the only thing standing between a
+a known tag, so `Msg.WF`'s side condition on `.unknown` is the only thing standing between a
 forged `unknown` and a collision with a real message — which is what `decodeMsg_roundtrip`
 leans on. Stated over the constructors so a new one with an out-of-range tag fails here. -/
 theorem knownTag_tag_of_assigned (m : Msg) (h : ∀ t p, m ≠ .unknown t p) :

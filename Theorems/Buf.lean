@@ -32,7 +32,7 @@ runtime is proved" is overclaiming.
 
 **Why each bound has a content twin.** A cap theorem alone is satisfied by a queue
 that throws its contents away. So each bound is paired with a claim stated through
-`owed` — `owedLen_eq` first of all, without which every `≤ cap` here would be a
+`writeFrom` — `owedLen_eq` first of all, without which every `≤ cap` here would be a
 fact about an unrelated `Nat`. The pairing is the point; a bound without its twin
 is decoration.
 
@@ -40,10 +40,9 @@ is decoration.
 chosen to make them short: the queue holds exactly what it owes, so "advancing
 drops the first `n` bytes in order" and "the writer is handed the debt" are the same
 statement twice. The write-cursor shape needed an `off ≤ bytes.size` invariant that
-no type enforced and every content proof had to assume — the doctrine in
-`AGENTS.md` ("restructure code for provability rather than weakening a theorem")
-says to move the definition, so the definition moved. `bufNoRetain` is where that
-shows up as a claim.
+no type enforced and every content proof had to assume — `AGENTS.md`'s rule to design
+code for provability says to move the definition, so the definition moved.
+`bufSize_eq_owedLen` is where that shows up as a claim.
 -/
 
 namespace Linger.Core.Buf
@@ -52,12 +51,12 @@ namespace Linger.Core.Buf
 
 /-- **The bridge.** The number the caps compare is the length of what is actually
 owed. Nothing else in this file means anything without it. -/
-theorem owedLen_eq (b : Buf) : (owed b).size = owedLen b := rfl
+theorem owedLen_eq (b : Buf) : (writeFrom b).size = owedLen b := rfl
 
 /-- The one public door in starts with zero debt — `empty`'s anchor, and what
 claims it in the census: an importer can begin a queue, never forge one
 mid-debt (the constructor is private with the field). -/
-theorem owed_empty : owed Buf.empty = ByteArray.empty := rfl
+theorem writeFrom_empty : writeFrom Buf.empty = ByteArray.empty := rfl
 
 theorem owedLen_empty : owedLen Buf.empty = 0 := rfl
 
@@ -66,21 +65,20 @@ not a bound, because an inequality would also hold of a queue that kept its whol
 history. This is the property the write-cursor shape could only promise and the
 partial-drain regression violated; here it is structural, so re-introducing the
 regression means changing the type. -/
-theorem bufNoRetain (b : Buf) : bufSize b = owedLen b := rfl
+theorem bufSize_eq_owedLen (b : Buf) : bufSize b = owedLen b := rfl
 
 /-! ## Advancing over written bytes -/
 
 /-- Advancing over `n` written bytes reduces the debt by exactly `n`, clamped — so
 a short write leaves the rest owed and an over-long one owes nothing. -/
 theorem bufAdvance_wf (b : Buf) (n : Nat) : owedLen (bufAdvance b n) = owedLen b - n := by
-  show (b.bytes.extract n b.bytes.size).size = b.bytes.size - n
-  rw [ByteArray.size_extract, Nat.min_self]
+  simp [owedLen, bufAdvance]
 
 /-- **The no-loss twin.** Advancing drops exactly the first `n` owed bytes and
 keeps the rest in order — so the debt cannot be discharged by dropping the *middle*
 of a paste, which a length bound alone would permit. -/
-theorem bufAdvance_owed (b : Buf) (n : Nat) :
-    owed (bufAdvance b n) = (owed b).extract n (owed b).size := rfl
+theorem bufAdvance_writeFrom (b : Buf) (n : Nat) :
+    writeFrom (bufAdvance b n) = (writeFrom b).extract n (writeFrom b).size := rfl
 
 /-! ## The two caps
 
@@ -93,24 +91,16 @@ its bound is guarded by "the peer was not cut". -/
 cap: an offer that would breach it is refused whole. -/
 theorem bufOffer_bound (cap : Nat) (b : Buf) (more : ByteArray) (h : owedLen b ≤ cap) :
     owedLen (bufOffer cap b more).1 ≤ cap := by
-  unfold bufOffer
-  by_cases hc : owedLen b + more.size > cap
-  · rw [ite_eq_left hc]; exact h
-  · rw [ite_eq_right hc]
-    show (b.bytes ++ more).size ≤ cap
-    rw [ByteArray.size_append]
-    show b.bytes.size + more.size ≤ cap
-    have ho : owedLen b = b.bytes.size := rfl
-    omega
+  unfold bufOffer owedLen at *
+  split <;> simp_all [ByteArray.size_append] <;> omega
 
 /-- **The twin.** An accepted offer really is appended, in order — so the cap is
 not met by silently discarding what it claimed to accept. -/
-theorem bufOffer_owed (cap : Nat) (b : Buf) (more : ByteArray)
-    (h : (bufOffer cap b more).2 = false) : owed (bufOffer cap b more).1 = owed b ++ more := by
+theorem bufOffer_writeFrom (cap : Nat) (b : Buf) (more : ByteArray)
+    (h : (bufOffer cap b more).2 = false) :
+    writeFrom (bufOffer cap b more).1 = writeFrom b ++ more := by
   unfold bufOffer at h ⊢
-  by_cases hc : owedLen b + more.size > cap
-  · rw [ite_eq_left hc] at h; exact absurd h (by simp)
-  · rw [ite_eq_right hc]; rfl
+  split <;> simp_all [writeFrom]
 
 /-- Refusing a whole input frame leaves all previously queued input unchanged.
 The bound alone would also allow discarding or rearranging that input. -/
@@ -132,13 +122,8 @@ theorem bufEnqueue_bound (cap : Nat) (b : Buf) (more : ByteArray)
 
 /-- **The twin.** Enqueue really appends, cut or not — the client's frames are not
 dropped on the way to the decision to disconnect it. -/
-theorem bufEnqueue_owed (cap : Nat) (b : Buf) (more : ByteArray) :
-    owed (bufEnqueue cap b more).1 = owed b ++ more := rfl
-
-/-- What the writer hands to `write(2)` is exactly what is owed. This is the only
-sanctioned read of the representation, so it is the one place a mismatch between
-"what we think is queued" and "what goes out" could hide. -/
-theorem writeFrom_owed (b : Buf) : writeFrom b = owed b := rfl
+theorem bufEnqueue_writeFrom (cap : Nat) (b : Buf) (more : ByteArray) :
+    writeFrom (bufEnqueue cap b more).1 = writeFrom b ++ more := rfl
 
 /-- Both queues share the cap even when the front exceeds one frame. -/
 theorem followingCap_front {cap frame front : Nat} (h : front ≤ cap) :
