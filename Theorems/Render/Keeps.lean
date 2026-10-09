@@ -10,9 +10,8 @@ import all Theorems.Render.Pen
 /-! # §Replay stage 3d — everything after the repaint leaves the screen alone
 
 `Keeps`, the grid-preservation stream predicate, and one fact per construct the
-restore tail emits — so the paint is the only thing that writes cells. Also
-`Row.mend`'s fixed points, which is what lets the row induction step past a write.
-Split out of `Theorems/Render.lean`. -/
+restore tail emits — so the paint is the only thing that writes cells. Split out
+of `Theorems/Render.lean`. -/
 
 namespace Linger.Core.Render
 
@@ -280,7 +279,7 @@ theorem grid_csiDispatch_sgr (v : Vt) (s : CsiState) :
   · simp [Vt.csiDispatch, hi]
   · unfold Vt.csiDispatch
     rw [ite_eq_right hi]
-    show (if s.priv == 0 then v.applySgr s.sgrParams else v).grid = v.grid
+    show (if s.priv == 0 then v.applySgr s.params.toList else v).grid = v.grid
     split
     · rw [frame_applySgr]
     · rfl
@@ -371,15 +370,11 @@ the charset flags, `shiftOut`. -/
 
 theorem step_of_esc_quiet {v : Vt} (b : UInt8) (hg : v.pstate = .esc) (hu : v.u8need = 0) :
     v.step b = v.stepEsc b := by
-  unfold Vt.step
-  dsimp only
-  rw [abortUtf8_of_uz b hu, hg]
+  rw [step_of_esc b hg, abortUtf8_of_uz b hu]
 
 theorem step_of_escInter_quiet {v : Vt} {i : UInt8} (b : UInt8) (hg : v.pstate = .escInter i)
     (hu : v.u8need = 0) : v.step b = v.stepEscInter i b := by
-  unfold Vt.step
-  dsimp only
-  rw [abortUtf8_of_uz b hu, hg]
+  rw [step_of_escInter b hg, abortUtf8_of_uz b hu]
 
 /-- `ESC 7` (DECSC), `ESC H` (HTS), `ESC =`/`ESC >` (keypad modes) and `ESC \` (ST)
 write the saved slot, the tab ruler, a mode flag or nothing — never a cell. -/
@@ -473,9 +468,7 @@ lives inside the parser state — and `oscFinish` writes the title and nothing e
 
 theorem step_of_osc_quiet {v : Vt} {acc : Array UInt8} {e : Bool} (b : UInt8)
     (hg : v.pstate = .osc acc e) (hu : v.u8need = 0) : v.step b = v.stepOsc acc e b := by
-  unfold Vt.step
-  dsimp only
-  rw [abortUtf8_of_uz b hu, hg]
+  rw [step_of_osc b hg, abortUtf8_of_uz b hu]
 
 theorem grid_oscFinish (v : Vt) (acc : Array UInt8) : (v.oscFinish acc).grid = v.grid := by
   unfold Vt.oscFinish
@@ -775,65 +768,3 @@ theorem restore_split (v : Vt) :
   simp
 
 end Linger.Core.Render
-
-namespace Linger.Core.Vt
-
-/-! ### `Row.mend` is the identity on a row that needs no repair
-
-Every cell-writing operation ends in `Row.mend`, so the row induction inside the
-repaint has to know that mending does not disturb the columns already painted. It
-does not, and the reason is exactly `RowOk.pairs`: a row whose pairs are whole and
-whose shadows are canonical is a fixed point of `mend`. -/
-
-theorem set_self_eq {α} [Inhabited α] (r : Array α) (x : Nat) :
-    r.setIfInBounds x (r.getD x default) = r := by
-  by_cases h : x < r.size
-  · simp [Array.setIfInBounds, Array.getD, h]
-  · simp [Array.setIfInBounds, h]
-
-/-- The shadow case: a canonical shadow is written back unchanged. -/
-theorem mendAt_of_pairOk {row : Row} {x : Nat} (h : ∀ j, PairOk row j) :
-    Row.mendAt row x = row := by
-  -- `halfPair` wants the width form; `PairOk` gives the stronger cell equation
-  have hhp : row.halfPair x = false := (halfPair_eq_false_iff row x).mpr
-    ⟨fun h2 => by rw [(h x).1 h2]; rfl, (h x).2⟩
-  unfold Row.mendAt
-  rw [hhp, ite_eq_right (by decide)]
-  split
-  · -- a shadow: `PairOk` at `x - 1` says it is already `Cell.shadow` of its base
-    rename_i h0
-    have hw0 : (row.at x).width = 0 := by simp only [beq_iff_eq] at h0; exact h0
-    obtain ⟨hne, hbase⟩ := (h x).2 hw0
-    have hcan : row.at x = Cell.shadow (row.at (x - 1)) := by
-      have hp := (h (x - 1)).1 hbase
-      rw [show x - 1 + 1 = x from by omega] at hp
-      exact hp
-    rw [← hcan]
-    exact set_self_eq row x
-  · rfl
-
-/-- **`mend` fixes an already-consistent row.** -/
-theorem mend_of_pairOk {row : Row} (h : ∀ j, PairOk row j) : Row.mend row = row := by
-  unfold Row.mend
-  have key : ∀ (l : List Nat), l.foldl (fun (r : Row) x => r.mendAt x) row = row := by
-    intro l
-    induction l with
-    | nil => rfl
-    | cons a as ih => rw [List.foldl_cons, mendAt_of_pairOk h]; exact ih
-  exact key _
-
-/-! **Non-vacuity, in place of a break-verify.** `mend` is emphatically *not* the
-identity in general: a lone width-2 base is repaired away. So `mend_of_pairOk`'s
-hypothesis is load-bearing rather than decorative. This is recorded as a check
-because the usual break — mutating `Row.mendAt` — is caught upstream in
-`Theorems/Vt/` before the lemma above is ever elaborated, which proves the
-definition is load-bearing but not that *this* lemma is.
-
-The check itself lives in `Tests/Vt.lean`: it is an evaluation, and a kernel
-`decide` in a module file cannot reduce through a derived `DecidableEq` instance
-whose body is not exposed — in `Tests/`, under the compiled-evaluation tactic whose
-whole point is evaluating, it keeps its full force. (That tactic's name is
-deliberately not written here: the purity gate greps `Theorems/**` for the token,
-prose included.) -/
-
-end Linger.Core.Vt

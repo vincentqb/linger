@@ -133,12 +133,8 @@ theorem rowPieces_printable (nameCol : Nat) (info : List (String × String)) :
     subst c
     cases Status.ofName ((info.lookup "status").getD "") <;> decide
   · obtain ⟨raw, _, rfl⟩ := List.mem_map.mp hc
-    split
-    · decide
-    · unfold Linger.Core.Render.safeChar
-      split
-      · decide
-      · simp_all <;> omega
+    have := Linger.Core.Render.textChar_safe raw
+    omega
 
 /-- Exactly the badge is styled; the name, details, labels and watchers are plain. -/
 theorem rowPieces_styles (nameCol : Nat) (info : List (String × String)) :

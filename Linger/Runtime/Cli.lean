@@ -30,7 +30,7 @@ open Linger.Posix
 open Linger.Core.Wire (Msg)
 open Linger.Runtime
 
-def version : String := "linger 0.1.0"
+def version : String := "linger " ++ Linger.Core.Terminal.versionNumber
 
 /-- Bound on accumulated `infoReply` bytes, independent of the request deadline.
 A peer exceeding the producer's policy has not supplied a usable answer. -/

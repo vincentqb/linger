@@ -497,7 +497,7 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
         spawnPty (UInt32.ofNat (Linger.Core.Vt.clampDim vt0.colCount))
             (UInt32.ofNat (Linger.Core.Vt.clampDim vt0.rowCount)) cwd prog args
             #[s!"LINGER_SESSION={name}", "TERM=xterm-256color", "TERM_PROGRAM=linger",
-              "TERM_PROGRAM_VERSION=0.1.0"]
+              s!"TERM_PROGRAM_VERSION={Linger.Core.Terminal.versionNumber}"]
       let st :=
         State.boot vt0 ((restore.map (·.2)).getD [])
           [("name", name), ("pid", toString pid), ("created", toString created),

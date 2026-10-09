@@ -114,6 +114,9 @@ theorem u8Ok_stepGround {v : Vt} (b : UInt8) (h : U8Ok v) : U8Ok (v.stepGround b
   · rw [ite_eq_left h2] at hz ⊢
     rw [ua_ctl]; rw [un_ctl] at hz; exact h hz
   rw [ite_eq_right h2] at hz ⊢
+  by_cases hdel : (b == 0x7F) = true
+  · rw [ite_eq_left hdel] at hz ⊢; exact h hz
+  rw [ite_eq_right hdel] at hz ⊢
   by_cases h3 : b < 0x80
   · rw [ite_eq_left h3] at hz ⊢
     rw [ua_acceptChar]; rw [un_acceptChar] at hz; exact h hz
@@ -1137,7 +1140,7 @@ theorem stick_csiDispatch_sgr (v : Vt) (s : CsiState) : stick (v.csiDispatch s 0
   · simp [Vt.csiDispatch, hi]
   · unfold Vt.csiDispatch
     rw [ite_eq_right (by simp [hi])]
-    show stick (if s.priv == 0 then v.applySgr s.sgrParams else v) = _
+    show stick (if s.priv == 0 then v.applySgr s.params.toList else v) = _
     split
     · exact stick_applySgr _ _
     · rfl
@@ -1194,48 +1197,27 @@ state selects the arm and the arm's lemma finishes it. -/
 
 theorem stick_step_of_ground {v : Vt} (b : UInt8) (hg : v.pstate = .ground) (h1 : b ≠ 0x0E)
     (h2 : b ≠ 0x0F) : stick (v.step b) = stick v := by
-  have hw : (v.abortUtf8 b).pstate = PState.ground := by
-    rw [ps_abortUtf8]; exact hg
-  unfold Vt.step
-  dsimp only
-  rw [hw]
+  rw [step_of_ground b hg]
   exact (stick_stepGround _ b h1 h2).trans (stick_abortUtf8 v b)
 
 theorem stick_step_of_esc {v : Vt} (b : UInt8) (hg : v.pstate = .esc) (h : b ≠ 0x63) :
     stick (v.step b) = stick v := by
-  have hw : (v.abortUtf8 b).pstate = PState.esc := by
-    rw [ps_abortUtf8]; exact hg
-  unfold Vt.step
-  dsimp only
-  rw [hw]
+  rw [step_of_esc b hg]
   exact (stick_stepEsc _ b h).trans (stick_abortUtf8 v b)
 
 theorem stick_step_of_osc {v : Vt} {acc : Array UInt8} {e : Bool} (b : UInt8)
     (hg : v.pstate = .osc acc e) : stick (v.step b) = stick v := by
-  have hw : (v.abortUtf8 b).pstate = PState.osc acc e := by
-    rw [ps_abortUtf8]; exact hg
-  unfold Vt.step
-  dsimp only
-  rw [hw]
+  rw [step_of_osc b hg]
   exact (stick_stepOsc _ acc e b).trans (stick_abortUtf8 v b)
 
 theorem stick_step_of_escInter {v : Vt} {i : UInt8} (x : UInt8) (hg : v.pstate = .escInter i)
     (hlo : 0x30 ≤ x) (hhi : x ≤ 0x7E) : stick (v.step x) = stCharset i x (stick v) := by
-  have hw : (v.abortUtf8 x).pstate = PState.escInter i := by
-    rw [ps_abortUtf8]; exact hg
-  unfold Vt.step
-  dsimp only
-  rw [hw]
-  rw [stick_stepEscInter _ i x hlo hhi, stick_abortUtf8]
+  rw [step_of_escInter x hg, stick_stepEscInter _ i x hlo hhi, stick_abortUtf8]
 
 /-- `SO` and `SI` from ground, the two bytes `stick_ctl` excludes. -/
 theorem stick_step_si {v : Vt} (hg : v.pstate = .ground) :
     stick (v.step 0x0F) = { stick v with so := false } := by
-  have hw : (v.abortUtf8 0x0F).pstate = PState.ground := by
-    rw [ps_abortUtf8]; exact hg
-  unfold Vt.step
-  dsimp only
-  rw [hw]
+  rw [step_of_ground 0x0F hg]
   unfold Vt.stepGround
   rw [ite_eq_right (by decide), ite_eq_left (by decide)]
   rw [show (v.abortUtf8 0x0F).ctl 0x0F = { (v.abortUtf8 0x0F) with shiftOut := false } from rfl,
@@ -1247,11 +1229,7 @@ theorem stick_step_si {v : Vt} (hg : v.pstate = .ground) :
 
 theorem stick_step_so {v : Vt} (hg : v.pstate = .ground) :
     stick (v.step 0x0E) = { stick v with so := true } := by
-  have hw : (v.abortUtf8 0x0E).pstate = PState.ground := by
-    rw [ps_abortUtf8]; exact hg
-  unfold Vt.step
-  dsimp only
-  rw [hw]
+  rw [step_of_ground 0x0E hg]
   unfold Vt.stepGround
   rw [ite_eq_right (by decide), ite_eq_left (by decide)]
   rw [show (v.abortUtf8 0x0E).ctl 0x0E = { (v.abortUtf8 0x0E) with shiftOut := true } from rfl,
@@ -1316,11 +1294,6 @@ theorem charWidth_decLine (c : Char) : charWidth (decLine c) = charWidth c := by
 this says it adds nothing — so every theorem stated over `feed` covers those fixtures. -/
 theorem feedBytes_eq (v : Vt) (bytes : ByteArray) : v.feedBytes bytes = v.feed bytes.toList := by
   rfl
-
-/-- **The SGR parameter list is the parsed array, exactly.** `Good.csiLe` bounds
-`params.size`; `sgrParams` is the list view `applySgr` consumes, so this is what carries the
-CSI parameter cap across into the pen. -/
-theorem sgrParams_length (s : CsiState) : s.sgrParams.length = s.params.size := by rfl
 
 /-! ## Boundaries for injected titles
 
@@ -1448,11 +1421,17 @@ theorem step_escInter_restart {v : Vt} {i : UInt8} (hp : v.pstate = .escInter i)
   split <;> rfl
 
 /-- DEL leaves the entire parser state intact, including every CSI parameter
-and the selected charset bank. Its only possible effect is UTF-8 neutralization. -/
+and the selected charset bank; in ground state it stores nothing and moves no
+cursor. Its only possible effect is UTF-8 neutralization. -/
 theorem step_del_preserves_parser {v : Vt}
-    (hp : v.pstate = .esc ∨ (∃ i, v.pstate = .escInter i) ∨ (∃ s, v.pstate = .csi s)) :
+    (hp :
+      v.pstate = .ground ∨
+        v.pstate = .esc ∨ (∃ i, v.pstate = .escInter i) ∨ (∃ s, v.pstate = .csi s)) :
     v.step 0x7F = v.abortUtf8 0x7F := by
-  rcases hp with hp | ⟨i, hp⟩ | ⟨s, hp⟩
+  rcases hp with hp | hp | ⟨i, hp⟩ | ⟨s, hp⟩
+  · rw [step_of_ground 0x7F hp]
+    unfold Vt.stepGround
+    rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_left (by decide)]
   · simp only [Vt.step, ps_abortUtf8, hp]
     rfl
   · simp only [Vt.step, ps_abortUtf8, hp]
@@ -1468,7 +1447,7 @@ theorem observe_del_boundary {v : Vt}
     (v.observe [0x7F]).pstate = v.pstate ∧
       (v.observe [0x7F]).atBoundary = false ∧ (v.observe [0x7F]).windowTitle = v.windowTitle := by
   change (v.step 0x7F).pstate = _ ∧ (v.step 0x7F).atBoundary = false ∧ (v.step 0x7F).windowTitle = _
-  rw [step_del_preserves_parser hp]
+  rw [step_del_preserves_parser (Or.inr hp)]
   refine ⟨ps_abortUtf8 _ _, ?_, ?_⟩
   · rcases hp with hp | ⟨i, hp⟩ | ⟨s, hp⟩ <;> simp [Vt.atBoundary, ps_abortUtf8, hp]
   · unfold Vt.windowTitle Vt.abortUtf8

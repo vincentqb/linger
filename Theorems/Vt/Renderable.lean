@@ -291,6 +291,65 @@ theorem mend_pairOk (row : Row) (x : Nat) (hx : x < row.size) : PairOk (Row.mend
   · have hhp := (halfPair_eq_false_iff (Row.mend row) x).mp (mend_halfPair row x hx)
     exact hhp.2 h0
 
+/-! ### `Row.mend` is the identity on a row that needs no repair
+
+Every cell-writing operation ends in `Row.mend`, so the row induction inside the
+repaint has to know that mending does not disturb the columns already painted. It
+does not, and the reason is exactly `RowOk.pairs`: a row whose pairs are whole and
+whose shadows are canonical is a fixed point of `mend`. -/
+
+theorem setIfInBounds_getD_self {α : Type} (r : Array α) (x : Nat) (d : α) :
+    r.setIfInBounds x (r.getD x d) = r := by
+  by_cases h : x < r.size <;> simp [Array.setIfInBounds, Array.getD, h]
+
+/-- The shadow case: a canonical shadow is written back unchanged. -/
+theorem mendAt_of_pairOk {row : Row} {x : Nat} (h : ∀ j, PairOk row j) :
+    Row.mendAt row x = row := by
+  -- `halfPair` wants the width form; `PairOk` gives the stronger cell equation
+  have hhp : row.halfPair x = false :=
+    (halfPair_eq_false_iff row x).mpr
+      ⟨fun h2 => by
+        rw [(h x).1 h2]; rfl, (h x).2⟩
+  unfold Row.mendAt
+  rw [hhp, ite_eq_right (by decide)]
+  split
+  · -- a shadow: `PairOk` at `x - 1` says it is already `Cell.shadow` of its base
+    rename_i h0
+    have hw0 : (row.at x).width = 0 := by
+      simp only [beq_iff_eq] at h0; exact h0
+    obtain ⟨hne, hbase⟩ := (h x).2 hw0
+    have hcan : row.at x = Cell.shadow (row.at (x - 1)) := by
+      have hp := (h (x - 1)).1 hbase
+      rw [show x - 1 + 1 = x from by omega] at hp
+      exact hp
+    rw [← hcan]
+    exact setIfInBounds_getD_self row x default
+  · rfl
+
+/-- **`mend` fixes an already-consistent row.** -/
+theorem mend_of_pairOk {row : Row} (h : ∀ j, PairOk row j) : Row.mend row = row := by
+  unfold Row.mend
+  have key : ∀ (l : List Nat), l.foldl (fun (r : Row) x => r.mendAt x) row = row := by
+    intro l
+    induction l with
+    | nil => rfl
+    | cons a as ih =>
+      rw [List.foldl_cons, mendAt_of_pairOk h]; exact ih
+  exact key _
+
+/-! **Non-vacuity, in place of a break-verify.** `mend` is emphatically *not* the
+identity in general: a lone width-2 base is repaired away. So `mend_of_pairOk`'s
+hypothesis is load-bearing rather than decorative. This is recorded as a check
+because the usual break — mutating `Row.mendAt` — also breaks the other VT proofs,
+which proves the definition is load-bearing but not that *this* lemma is.
+
+The check itself lives in `Tests/Vt.lean`: it is an evaluation, and a kernel
+`decide` in a module file cannot reduce through a derived `DecidableEq` instance
+whose body is not exposed — in `Tests/`, under the compiled-evaluation tactic whose
+whole point is evaluating, it keeps its full force. (That tactic's name is
+deliberately not written here: the purity gate greps `Theorems/**` for the token,
+prose included.) -/
+
 /-! ### What the sweep leaves alone
 
 A repaint reads back the cell it just wrote, so the sweep must be the identity
@@ -482,10 +541,7 @@ theorem size_getRow_putCell_any (u : Vt) (x y : Nat) (c : Cell) (hy : y < u.grid
     dsimp only
     rw [getD_set_ne _ _ _ _ _ h]
 
-/-- Structure equality by fields; there is no `ext` without Mathlib. -/
-theorem Cell.ext' {a b : Cell} (hb : a.base = b.base) (hm : a.marks = b.marks)
-    (hw : a.width = b.width) (hp : a.pen = b.pen) : a = b := by
-  cases a; cases b; simp_all
+attribute [ext] Cell
 
 theorem grid_size_mendRow (u : Vt) (y : Nat) : (u.mendRow y).grid.size = u.grid.size := by
   unfold Vt.mendRow

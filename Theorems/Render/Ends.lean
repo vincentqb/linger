@@ -77,6 +77,19 @@ theorem safeChar_ge (c : Char) : (safeChar c).toNat ≥ 0x20 ∧ (safeChar c).to
     simp only [Bool.or_eq_true, decide_eq_true_eq, beq_iff_eq, not_or, Nat.not_lt] at h
     exact ⟨h.1, h.2⟩
 
+/-- `textChar` yields no C0 control, DEL or C1 control. -/
+theorem textChar_safe (c : Char) :
+    0x20 ≤ (textChar c).toNat ∧
+      (textChar c).toNat ≠ 0x7F ∧ ¬(0x80 ≤ (textChar c).toNat ∧ (textChar c).toNat < 0xA0) := by
+  unfold textChar safeChar
+  split
+  · decide
+  · split
+    · decide
+    · rename_i h1 h2
+      simp only [Bool.and_eq_true, decide_eq_true_eq, Bool.or_eq_true, beq_iff_eq] at h1 h2
+      omega
+
 /-- A byte built by `UInt8.ofNat` from an in-range non-control number is
 a non-control byte. The bridge from the emitters' arithmetic to byte
 facts. -/
@@ -157,13 +170,6 @@ application's next output.
 Scoped to `pstate`, which composes over `++`; the whole-stream decoder claim is
 `restore_quiesced`. -/
 def Ends (bs : Bytes) : Prop := ∀ v : Vt, v.pstate = .ground → (v.feed bs).pstate = .ground
-
-theorem feed_nil (v : Vt) : v.feed [] = v := rfl
-
-theorem feed_cons (v : Vt) (x : UInt8) (xs : Bytes) : v.feed (x :: xs) = (v.step x).feed xs := rfl
-
-theorem feed_append (v : Vt) (a b : Bytes) : v.feed (a ++ b) = (v.feed a).feed b :=
-  Good.feed_append v a b
 
 theorem Ends.nil : Ends [] := fun _ h => h
 
@@ -296,13 +302,10 @@ is plumbing; the top theorem is their composition.
 /-- A single non-ESC byte from a ground parser leaves it ground. -/
 theorem ground_step {v : Vt} (b : UInt8) (hg : v.pstate = .ground) (hb : b ≠ 0x1B) :
     (v.step b).pstate = .ground := by
-  -- `abortUtf8` touches only u8need/u8acc, so the match scrutinee is
-  -- still ground; rewriting it is what lets the match reduce
+  -- `abortUtf8` touches only u8need/u8acc, so the parser is still ground after it
   have hw : (v.abortUtf8 b).pstate = PState.ground := by
     rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
-  unfold Vt.step
-  dsimp only
-  rw [hw, Linger.Core.Vt.ps_stepGround _ b hb]
+  rw [Linger.Core.Vt.step_of_ground b hg, Linger.Core.Vt.ps_stepGround _ b hb]
   exact hw
 
 /-- Printable/control text (anything with no ESC in it) is `Ends`: the
@@ -320,21 +323,13 @@ theorem Ends.text {bs : Bytes} (h : ∀ b ∈ bs, b ≠ 0x1B) : Ends bs :=
 
 /-- ESC from ground opens `.esc`. -/
 theorem esc_step {v : Vt} (hg : v.pstate = .ground) : (v.step 0x1B).pstate = .esc := by
-  have hw : (v.abortUtf8 0x1B).pstate = PState.ground := by
-    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
-  unfold Vt.step
-  dsimp only
-  rw [hw]
+  rw [Linger.Core.Vt.step_of_ground 0x1B hg]
   rfl
 
 /-- `ESC [` opens a CSI with an empty parameter set. -/
 theorem csi_open_step {v : Vt} (hg : v.pstate = .esc) :
     (v.step 0x5B).pstate = .csi {} := by
-  have hw : (v.abortUtf8 0x5B).pstate = PState.esc := by
-    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
-  unfold Vt.step
-  dsimp only
-  rw [hw]
+  rw [Linger.Core.Vt.step_of_esc 0x5B hg]
   rfl
 
 /-- `UInt8` comparisons, in `Nat` where `omega` can see them. -/
@@ -349,13 +344,8 @@ us inside `.csi` — with some other accumulator, which is all the ladder
 needs to know. -/
 theorem csi_param_step {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi s)
     (h1 : 0x30 ≤ b) (h2 : b ≤ 0x3F) : ∃ s', (v.step b).pstate = .csi s' := by
-  have hw : (v.abortUtf8 b).pstate = PState.csi s := by
-    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
-  unfold Vt.step
-  dsimp only
-  rw [hw]
+  rw [Linger.Core.Vt.step_of_csi b hg]
   unfold Vt.stepCsi
-  dsimp only
   -- digit? separator? private marker? — every case stays in `.csi`
   by_cases hd : (b ≥ 0x30 && b ≤ 0x39) = true
   · rw [ite_eq_left hd]; exact ⟨_, rfl⟩
@@ -391,14 +381,9 @@ ground: `csiFinish` assigns `.ground` unconditionally, and so does the
 intermediate-ignore branch. -/
 theorem csi_final_step {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi s)
     (h1 : 0x40 ≤ b) (h2 : b ≤ 0x7E) : (v.step b).pstate = .ground := by
-  have hw : (v.abortUtf8 b).pstate = PState.csi s := by
-    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
   obtain ⟨g1, g2, g3, g4, g5, g6⟩ := csi_final_guards b h1 h2
-  unfold Vt.step
-  dsimp only
-  rw [hw]
+  rw [Linger.Core.Vt.step_of_csi b hg]
   unfold Vt.stepCsi
-  dsimp only
   rw [ite_eq_right (by simp [g1]), ite_eq_right (by simp [g2]), ite_eq_right (by simp [g3]),
       ite_eq_right (by simp [g4]), ite_eq_right (by simp [g5]), ite_eq_left g6]
   -- both remaining branches assign `.ground`
@@ -575,22 +560,14 @@ lands back in ground. -/
 theorem esc_single_step {v : Vt} (b : UInt8) (hg : v.pstate = .esc)
     (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x48 ∨ b = 0x3E ∨ b = 0x5C) :
     (v.step b).pstate = .ground := by
-  have hw : (v.abortUtf8 b).pstate = PState.esc := by
-    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
-  unfold Vt.step
-  dsimp only
-  rw [hw]
+  rw [Linger.Core.Vt.step_of_esc b hg]
   unfold Vt.stepEsc
   rcases hb with h | h | h | h | h <;> subst h <;> rfl
 
 /-- `ESC (` / `ESC )` enter the charset-designation state. -/
 theorem esc_inter_step {v : Vt} (b : UInt8) (hg : v.pstate = .esc)
     (hb : b = 0x28 ∨ b = 0x29) : (v.step b).pstate = .escInter b := by
-  have hw : (v.abortUtf8 b).pstate = PState.esc := by
-    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
-  unfold Vt.step
-  dsimp only
-  rw [hw]
+  rw [Linger.Core.Vt.step_of_esc b hg]
   unfold Vt.stepEsc
   rcases hb with h | h <;> subst h <;> rfl
 
@@ -598,12 +575,7 @@ theorem esc_inter_step {v : Vt} (b : UInt8) (hg : v.pstate = .esc)
 theorem esc_inter_finish {v : Vt} {i : UInt8} (b : UInt8) (hg : v.pstate = .escInter i)
     (hlo : 0x30 ≤ b) (hhi : b ≤ 0x7E) :
     (v.step b).pstate = .ground := by
-  have hw : (v.abortUtf8 b).pstate = PState.escInter i := by
-    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
-  unfold Vt.step
-  dsimp only
-  rw [hw]
-  dsimp only
+  rw [Linger.Core.Vt.step_of_escInter b hg]
   rw [Linger.Core.Vt.stepEscInter_final _ i b hlo hhi]
   repeat' split
   all_goals rfl
@@ -636,11 +608,7 @@ cannot start a nested one. -/
 /-- `ESC ]` opens an OSC accumulator. -/
 theorem osc_open_step {v : Vt} (hg : v.pstate = .esc) :
     (v.step 0x5D).pstate = .osc #[] false := by
-  have hw : (v.abortUtf8 0x5D).pstate = PState.esc := by
-    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
-  unfold Vt.step
-  dsimp only
-  rw [hw]
+  rw [Linger.Core.Vt.step_of_esc 0x5D hg]
   rfl
 
 /-- A payload byte that is neither ESC nor BEL keeps accumulating. The
@@ -650,13 +618,8 @@ existentially quantified. -/
 theorem osc_accum_step {v : Vt} {acc : Array UInt8} (b : UInt8)
     (hg : v.pstate = .osc acc false) (h1 : b ≠ 0x1B) (h2 : b ≠ 0x07) :
     ∃ acc', (v.step b).pstate = .osc acc' false := by
-  have hw : (v.abortUtf8 b).pstate = PState.osc acc false := by
-    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
-  unfold Vt.step
-  dsimp only
-  rw [hw]
+  rw [Linger.Core.Vt.step_of_osc b hg]
   unfold Vt.stepOsc
-  dsimp only
   -- ST needs the esc flag (false here); BEL and ESC are excluded; both
   -- the cap branch and the accumulate branch stay `.osc … false`
   rw [ite_eq_right (by simp), ite_eq_right (by simp [h2]), ite_eq_right (by simp [h1])]
@@ -677,13 +640,8 @@ theorem osc_accum_feed : ∀ (bs : Bytes) {v : Vt} {acc : Array UInt8},
 whether the payload was a title. -/
 theorem osc_bel_step {v : Vt} {acc : Array UInt8} {e : Bool}
     (hg : v.pstate = .osc acc e) : (v.step 0x07).pstate = .ground := by
-  have hw : (v.abortUtf8 0x07).pstate = PState.osc acc e := by
-    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
-  unfold Vt.step
-  dsimp only
-  rw [hw]
+  rw [Linger.Core.Vt.step_of_osc 0x07 hg]
   unfold Vt.stepOsc
-  dsimp only
   rw [ite_eq_right (by simp), ite_eq_left (by decide)]
   unfold Vt.oscFinish
   dsimp only
@@ -959,14 +917,14 @@ theorem u8_zero_after_penSgr (p : Pen) (w : Vt) : (w.feed (penSgr p)).u8need = 0
     · exact hu
     · exact hs _ _
   unfold penSgr
-  rw [Good.feed_append, Good.feed_append]
+  rw [feed_append, feed_append]
   exact hc _ _ _ (hc _ _ _ (hs _ _))
 
 theorem u8_zero_after_cursorPendingAnsi (v w : Vt) (hu : w.u8need = 0) :
     (w.feed (cursorPendingAnsi v)).u8need = 0 := by
   unfold cursorPendingAnsi
   split
-  · rw [Good.feed_append]
+  · rw [feed_append]
     exact u8_zero_after_penSgr _ _
   · exact hu
 
@@ -979,9 +937,9 @@ theorem restore_quiesced (v : Vt) (cols rows : Nat) :
       ∧ (((Vt.init cols rows).feed (restore v)).u8need = 0) := by
   refine ⟨restore_leaves_ground v cols rows, ?_⟩
   unfold restore
-  rw [Good.feed_append]
+  rw [feed_append]
   apply u8_zero_after_cursorPendingAnsi
-  rw [Good.feed_append]
+  rw [feed_append]
   unfold cursorAnsi
   split
   all_goals

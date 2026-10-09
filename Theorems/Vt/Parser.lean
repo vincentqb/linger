@@ -464,7 +464,7 @@ theorem uaz_feed :
         v.u8need = 0 → v.u8acc = 0 → (v.feed bs).u8need = 0 ∧ (v.feed bs).u8acc = 0
   | [], _, _, hn, ha => ⟨hn, ha⟩
   | b :: bs, v, hb, hn, ha => by
-    rw [show v.feed (b :: bs) = (v.step b).feed bs from rfl]
+    rw [feed_cons]
     exact
       uaz_feed bs (fun x hx => hb x (List.mem_cons_of_mem b hx))
         (uz_step b (ascii_lt_c0 (hb b (List.mem_cons_self))) hn)
@@ -500,8 +500,7 @@ theorem uz_feed :
     ∀ (bs : List UInt8) (v : Vt), (∀ b ∈ bs, b < 0xC0) → v.u8need = 0 → (v.feed bs).u8need = 0
   | [], _, _, h => h
   | x :: xs, v, hb, h => by
-    have hstep : v.feed (x :: xs) = (v.step x).feed xs := by simp [Vt.feed]
-    rw [hstep]
+    rw [feed_cons]
     exact uz_feed xs _ (fun b hm => hb b (by simp [hm])) (uz_step x (hb x (by simp)) h)
 
 /-! ## The grid keeps its dimensions
@@ -726,8 +725,7 @@ size it already had. -/
 theorem dims_feed : ∀ (bs : List UInt8) {v : Vt}, Good v → dims (v.feed bs) = dims v
   | [], _, _ => rfl
   | x :: xs, v, h => by
-    have hstep : v.feed (x :: xs) = (v.step x).feed xs := by simp [Vt.feed]
-    rw [hstep]
+    rw [feed_cons]
     exact (dims_feed xs (Good.step x h)).trans (dims_step x h)
 
 /-! ### …and without `Good`, for streams that do not emit `RIS`
@@ -767,7 +765,7 @@ theorem dims_feed_ne_ris :
     ∀ (bs : List UInt8) {v : Vt}, (∀ b ∈ bs, b ≠ 0x63) → dims (v.feed bs) = dims v
   | [], _, _ => rfl
   | x :: xs, v, h => by
-    rw [show v.feed (x :: xs) = (v.step x).feed xs from by simp [Vt.feed]]
+    rw [feed_cons]
     exact
       (dims_feed_ne_ris xs (fun b hb => h b (by simp [hb]))).trans
         (dims_step_ne_ris x (h x (by simp)))
@@ -1363,21 +1361,13 @@ lemma followed by `org_abortUtf8`. -/
 
 theorem org_step_of_ground {v : Vt} (b : UInt8) (hg : v.pstate = .ground) :
     (v.step b).modes.origin = v.modes.origin := by
-  have hw : (v.abortUtf8 b).pstate = PState.ground := by
-    rw [ps_abortUtf8]; exact hg
-  unfold Vt.step
-  dsimp only
-  rw [hw, org_stepGround, org_abortUtf8]
+  rw [step_of_ground b hg, org_stepGround, org_abortUtf8]
 
 /-- From `.esc` the claim has to be "stays false" rather than "unchanged":
 `RIS` resets `origin` to its default, which is `false`. -/
 theorem org_step_of_esc {v : Vt} (b : UInt8) (hg : v.pstate = .esc) (h : v.modes.origin = false) :
     (v.step b).modes.origin = false := by
-  have hw : (v.abortUtf8 b).pstate = PState.esc := by
-    rw [ps_abortUtf8]; exact hg
-  unfold Vt.step
-  dsimp only
-  rw [hw]
+  rw [step_of_esc b hg]
   exact
     org_stepEsc b
       (by
@@ -1385,36 +1375,20 @@ theorem org_step_of_esc {v : Vt} (b : UInt8) (hg : v.pstate = .esc) (h : v.modes
 
 theorem org_step_of_escInter {v : Vt} {i : UInt8} (b : UInt8) (hg : v.pstate = .escInter i) :
     (v.step b).modes.origin = v.modes.origin := by
-  have hw : (v.abortUtf8 b).pstate = PState.escInter i := by
-    rw [ps_abortUtf8]; exact hg
-  unfold Vt.step
-  dsimp only
-  rw [hw, org_stepEscInter, org_abortUtf8]
+  rw [step_of_escInter b hg, org_stepEscInter, org_abortUtf8]
 
 theorem org_step_of_osc {v : Vt} {acc : Array UInt8} {e : Bool} (b : UInt8)
     (hg : v.pstate = .osc acc e) : (v.step b).modes.origin = v.modes.origin := by
-  have hw : (v.abortUtf8 b).pstate = PState.osc acc e := by
-    rw [ps_abortUtf8]; exact hg
-  unfold Vt.step
-  dsimp only
-  rw [hw, org_stepOsc, org_abortUtf8]
+  rw [step_of_osc b hg, org_stepOsc, org_abortUtf8]
 
 theorem org_step_of_csi {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi s)
     (hp : (s.priv == 0x3F) = false) : (v.step b).modes.origin = v.modes.origin := by
-  have hw : (v.abortUtf8 b).pstate = PState.csi s := by
-    rw [ps_abortUtf8]; exact hg
-  unfold Vt.step
-  dsimp only
-  rw [hw, org_stepCsi _ _ _ hp, org_abortUtf8]
+  rw [step_of_csi b hg, org_stepCsi _ _ _ hp, org_abortUtf8]
 
 /-- The marker-tolerant companion of `org_step_of_csi`. -/
 theorem org_step_of_csi_pending {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi s)
     (hparams : s.params = #[]) (hhave : s.haveCur = true) (hne : min s.cur 65535 ≠ 6) :
     (v.step b).modes.origin = v.modes.origin := by
-  have hw : (v.abortUtf8 b).pstate = PState.csi s := by
-    rw [ps_abortUtf8]; exact hg
-  unfold Vt.step
-  dsimp only
-  rw [hw, org_stepCsi_pending _ _ _ hparams hhave hne, org_abortUtf8]
+  rw [step_of_csi b hg, org_stepCsi_pending _ _ _ hparams hhave hne, org_abortUtf8]
 
 end Linger.Core.Vt

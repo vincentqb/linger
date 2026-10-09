@@ -144,6 +144,15 @@ example :
       true := by
   native_decide
 
+/-- A C1 control in a label (U+009B, the 8-bit CSI) reaches `infoText` as U+FFFD, the
+bytes 239 191 189: `info`, `get` and `ls --porcelain` print these records. -/
+example :
+    (let (s, _) := run [.connected 1, .bytes 1 (encode (.labelSet "k=a\u009b31mb".toUTF8.toList))]
+     let txt := String.fromUTF8? (ByteArray.mk (infoText s).toArray) |>.getD ""
+     txt.contains "label.k\ta\uFFFD31mb" && !txt.contains '\u009b') =
+      true := by
+  native_decide
+
 /-- Each label fits an incoming wire frame; their combined info need not. -/
 private def largeInfoLabels (count : Nat) : List (String × String) :=
   let value := String.ofList (List.replicate (Wire.maxPayload / 2) 'x')

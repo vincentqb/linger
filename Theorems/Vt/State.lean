@@ -739,6 +739,8 @@ theorem stepGround {v : Vt} (b : UInt8) (h : Good v) : Good (v.stepGround b) := 
   split
   · exact ctl _ h
   split
+  · exact h
+  split
   · exact acceptChar _ h
   split
   · split
@@ -896,17 +898,22 @@ theorem resize {v : Vt} (cols rows : Nat) (h : Good v) : Good (v.resize cols row
       constructor <;> simp [clampDim] <;> omega
   all_goals simp [clampDim] <;> omega
 
+end Linger.Core.Vt.Good
+
+namespace Linger.Core.Vt
+
 /-! ## §Chunk — re-chunking invariance, definitional by design -/
+
+theorem feed_nil (v : Vt) : v.feed [] = v := rfl
+
+theorem feed_cons (v : Vt) (b : UInt8) (bs : List UInt8) : v.feed (b :: bs) = (v.step b).feed bs :=
+  rfl
 
 /-- Feeding `a ++ b` is feeding `a` then `b`. `Vt.feed` is a `foldl`,
 so this is `List.foldl_append` — stated so a future rewrite of `feed`
 into something chunk-sensitive cannot survive the build. -/
 theorem feed_append (v : Vt) (a b : List UInt8) : v.feed (a ++ b) = (v.feed a).feed b := by
   simp [Vt.feed]
-
-end Linger.Core.Vt.Good
-
-namespace Linger.Core.Vt
 
 /-! ## Frames: the generalization of the four invariance layers
 
@@ -1255,14 +1262,14 @@ next layer wants costs one line rather than a proof. -/
 theorem pen_print (v : Vt) (ch : Char) : (v.print ch).pen = v.pen :=
   congrArg OffScreen.pen (off_print v ch)
 
-theorem modes_print' (v : Vt) (ch : Char) : (v.print ch).modes = v.modes :=
+theorem modes_print (v : Vt) (ch : Char) : (v.print ch).modes = v.modes :=
   congrArg OffScreen.modes (off_print v ch)
 
 theorem ins_print (v : Vt) (ch : Char) : (v.print ch).modes.insert = v.modes.insert :=
-  congrArg Modes.insert (modes_print' v ch)
+  congrArg Modes.insert (modes_print v ch)
 
 theorem wrap_print (v : Vt) (ch : Char) : (v.print ch).modes.wrap = v.modes.wrap :=
-  congrArg Modes.wrap (modes_print' v ch)
+  congrArg Modes.wrap (modes_print v ch)
 
 theorem cols_print (v : Vt) (ch : Char) : (v.print ch).cols = v.cols :=
   congrArg OffScreen.cols (off_print v ch)
@@ -1272,9 +1279,6 @@ theorem g0_print (v : Vt) (ch : Char) : (v.print ch).g0Line = v.g0Line :=
 
 theorem g1_print (v : Vt) (ch : Char) : (v.print ch).g1Line = v.g1Line :=
   congrArg OffScreen.g1 (off_print v ch)
-
-theorem ua_print' (v : Vt) (ch : Char) : (v.print ch).u8acc = v.u8acc :=
-  congrArg OffScreen.u8acc (off_print v ch)
 
 /-! ## Parser-state invariance of the printing path
 
@@ -1335,6 +1339,33 @@ theorem ps_ctl (v : Vt) (b : UInt8) : (v.ctl b).pstate = v.pstate := by
 
 theorem ps_abortUtf8 (v : Vt) (b : UInt8) : (v.abortUtf8 b).pstate = v.pstate := by
   unfold Vt.abortUtf8; split <;> rfl
+
+/-! Since `abortUtf8` leaves `pstate` alone, the incoming parser state selects `step`'s
+arm. One equation per state, shared by the VT and render proof layers. -/
+
+theorem step_of_ground {v : Vt} (b : UInt8) (hg : v.pstate = .ground) :
+    v.step b = (v.abortUtf8 b).stepGround b := by
+  unfold Vt.step; dsimp only; rw [ps_abortUtf8, hg]
+
+theorem step_of_esc {v : Vt} (b : UInt8) (hg : v.pstate = .esc) :
+    v.step b = (v.abortUtf8 b).stepEsc b := by
+  unfold Vt.step; dsimp only; rw [ps_abortUtf8, hg]
+
+theorem step_of_escInter {v : Vt} {i : UInt8} (b : UInt8) (hg : v.pstate = .escInter i) :
+    v.step b = (v.abortUtf8 b).stepEscInter i b := by
+  unfold Vt.step; dsimp only; rw [ps_abortUtf8, hg]
+
+theorem step_of_csi {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi s) :
+    v.step b = (v.abortUtf8 b).stepCsi s b := by
+  unfold Vt.step; dsimp only; rw [ps_abortUtf8, hg]
+
+theorem step_of_osc {v : Vt} {acc : Array UInt8} {e : Bool} (b : UInt8)
+    (hg : v.pstate = .osc acc e) : v.step b = (v.abortUtf8 b).stepOsc acc e b := by
+  unfold Vt.step; dsimp only; rw [ps_abortUtf8, hg]
+
+theorem step_of_str {v : Vt} {e : Bool} (b : UInt8) (hg : v.pstate = .str e) :
+    v.step b = (v.abortUtf8 b).stepStr e b := by
+  unfold Vt.step; dsimp only; rw [ps_abortUtf8, hg]
 
 /-- §Replay's rung: from `ground`, any byte other than ESC leaves the
 parser in `ground`. (`u8need` may change — a UTF-8 lead byte — which is

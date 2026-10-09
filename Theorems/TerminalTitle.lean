@@ -36,17 +36,7 @@ public theorem payload_safe (title : String) (c : Char) (h : c ∈ payload title
     0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0) := by
   simp only [payload, List.mem_map] at h
   obtain ⟨x, _, rfl⟩ := h
-  split
-  · decide
-  · rename_i hx
-    have hs := safeChar_ge x
-    simp only [safeChar]
-    split
-    · decide
-    · rename_i hsafe
-      simp only [safeChar, ite_eq_right hsafe] at hs
-      simp only [Bool.and_eq_true, decide_eq_true_eq, not_and] at hx
-      exact ⟨hs.1, hs.2, fun h => hx h.1 h.2⟩
+  exact textChar_safe x
 
 /-- The payload itself cannot introduce an ESC or BEL to escape the title. -/
 public theorem ansi_payload_safe (title : String) (b : UInt8) (h : b ∈ utf8s (payload title)) :

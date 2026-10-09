@@ -48,6 +48,12 @@ def ownedCases (v : Vt) : List OwnedCase :=
     ⟨[ESC, 0x50, 0x2B, 0x71, 0x54, 0x4E, ESC, STFinal], xtgetcapReply [0x54, 0x4E]⟩,
     ⟨[ESC, 0x50, 0x24, 0x71, 0x6D, ESC, STFinal], decrqssReply⟩, ⟨[ESC, 0x5B, 0x3F, 0x75], []⟩]
 
+/-- XTVERSION reports the same version as `linger version` and `TERM_PROGRAM_VERSION`. -/
+example :
+    versionReply =
+      [ESC, 0x50, 0x3E, 0x7C] ++ ("linger " ++ versionNumber).toUTF8.toList ++ [ESC, STFinal] := by
+  native_decide
+
 def ownedAtSplit (v : Vt) (c : OwnedCase) (i : Nat) : Bool :=
   let a := feed v .ground (c.request.take i)
   let b := feed a.vt a.scan (c.request.drop i)

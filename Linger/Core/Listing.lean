@@ -101,7 +101,7 @@ the daemon's reply, one layer out.
 Rendering here also lets the column alignment be a property of the whole row *set* (the name
 column is as wide as the widest name), which a per-`IO.println` call site cannot express. -/
 
-open Linger.Core.Render (utf8s dropTrailingBlanks safeChar)
+open Linger.Core.Render (utf8s dropTrailingBlanks textChar)
 
 /-- Text and optional badge style stay separate until a terminal renderer has
 clipped the text. The name span is a Unicode-scalar offset and length within
@@ -136,7 +136,7 @@ def rowPieces (nameCol : Nat) (info : List (String × String)) : List RowPiece :
     (dropTrailingBlanks
           ([' '] ++ name ++ List.replicate (nameCol - name.length) ' ' ++ [' '] ++
             (detail ++ labelStr ++ watch).toList)).map
-      fun c => if c.toNat ≥ 0x7F && c.toNat < 0xA0 then '�' else safeChar c
+      textChar
   [{ text := [Status.icon st], status := some st }, { text, nameSpan := some (1, name.length) }]
 
 /-- Plain bytes, including when redirected: styles are deliberately absent. -/

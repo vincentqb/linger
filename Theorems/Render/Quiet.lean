@@ -69,13 +69,8 @@ theorem csi_digit_step {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi
       .csi
         { s with
           cur := min (s.cur * 10 + (b.toNat - 0x30)) 65535, haveCur := true } := by
-  have hw : (v.abortUtf8 b).pstate = PState.csi s := by
-    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
-  unfold Vt.step
-  dsimp only
-  rw [hw]
+  rw [Linger.Core.Vt.step_of_csi b hg]
   unfold Vt.stepCsi
-  dsimp only
   have hd : (b ≥ 0x30 && b ≤ 0x39) = true := by
     simp only [Bool.and_eq_true, decide_eq_true_eq]
     exact ⟨h1, h2⟩
@@ -134,13 +129,8 @@ theorem csi_digits_value (n : Nat) {v : Vt} {s : CsiState} (hg : v.pstate = .csi
 /-- `;` closes the current parameter and starts the next. -/
 theorem csi_semi_step {v : Vt} {s : CsiState} (hg : v.pstate = .csi s) :
     (v.step 0x3B).pstate = .csi (csiPush s false) := by
-  have hw : (v.abortUtf8 0x3B).pstate = PState.csi s := by
-    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
-  unfold Vt.step
-  dsimp only
-  rw [hw]
+  rw [Linger.Core.Vt.step_of_csi 0x3B hg]
   unfold Vt.stepCsi
-  dsimp only
   rw [ite_eq_right (by decide), ite_eq_left (by decide)]
 
 /-! ### DECOM, reset on purpose
@@ -175,13 +165,8 @@ theorem org_step_of_csi_decom_off {v : Vt} {s : CsiState} (hg : v.pstate = .csi 
     (hi : s.ignore = false) (hpriv : (s.priv == 0x3F) = true) (hparams : s.params = #[])
     (hhave : s.haveCur = true) (hint : s.inter = 0) (hcur : min s.cur 65535 = 6) :
     (v.step 0x6C).modes.origin = false := by
-  have hw : (v.abortUtf8 0x6C).pstate = PState.csi s := by
-    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
-  unfold Vt.step
-  dsimp only
-  rw [hw]
+  rw [Linger.Core.Vt.step_of_csi 0x6C hg]
   unfold Vt.stepCsi
-  dsimp only
   rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide),
     ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_left (by decide),
     ite_eq_right
@@ -204,16 +189,11 @@ theorem frame_abortUtf8 (v : Vt) (b : UInt8) : frame (v.abortUtf8 b) = frame v :
 
 theorem frame_csi_digit_step {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi s)
     (h1 : 0x30 ≤ b) (h2 : b ≤ 0x39) : frame (v.step b) = frame v := by
-  have hw : (v.abortUtf8 b).pstate = PState.csi s := by
-    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
   have hd : (b ≥ 0x30 && b ≤ 0x39) = true := by
     simp only [Bool.and_eq_true, decide_eq_true_eq]
     exact ⟨h1, h2⟩
-  unfold Vt.step
-  dsimp only
-  rw [hw]
+  rw [Linger.Core.Vt.step_of_csi b hg]
   unfold Vt.stepCsi
-  dsimp only
   rw [ite_eq_left hd]
   exact frame_abortUtf8 v b
 
@@ -300,13 +280,8 @@ theorem csi_plain_step {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi
     ∃ s', (v.step b).pstate = .csi s' ∧ s'.priv = s.priv := by
   obtain ⟨hn1, hn2⟩ := u8_bounds h1 h2
   simp only [UInt8.reduceToNat] at hn1 hn2
-  have hw : (v.abortUtf8 b).pstate = PState.csi s := by
-    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
-  unfold Vt.step
-  dsimp only
-  rw [hw]
+  rw [Linger.Core.Vt.step_of_csi b hg]
   unfold Vt.stepCsi
-  dsimp only
   by_cases hd : (b ≥ 0x30 && b ≤ 0x39) = true
   · rw [ite_eq_left hd]; exact ⟨_, rfl, rfl⟩
   by_cases hsemi : (b == 0x3B) = true
@@ -405,14 +380,9 @@ theorem csi_marker_step {v : Vt} {s : CsiState} (hg : v.pstate = .csi s)
     (hp : (s.priv == 0x3F) = false) :
     (v.step 0x3F).pstate = .csi { s with priv := 0x3F }
       ∧ (v.step 0x3F).modes.origin = v.modes.origin := by
-  have hw : (v.abortUtf8 0x3F).pstate = PState.csi s := by
-    rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
   refine ⟨?_, org_step_of_csi 0x3F hg hp⟩
-  unfold Vt.step
-  dsimp only
-  rw [hw]
+  rw [Linger.Core.Vt.step_of_csi 0x3F hg]
   unfold Vt.stepCsi
-  dsimp only
   rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_left (by decide)]
 
 /-- **A private mode replay is `Quiet` iff it is not DECOM.** The number

@@ -327,10 +327,10 @@ theorem highlightedPresentation_existing_marked_iff (snapshot : Snapshot) (nameC
   cases index with
   | zero =>
     simp only [highlightedPresentation, presentation, Linger.Core.Listing.rowPieces, ge_iff_le,
-      Bool.and_eq_true, decide_eq_true_eq, ↓Char.isValue, List.cons_append, List.nil_append,
-      List.append_assoc, beq_iff_eq, String.isEmpty_iff, String.startsWith_string_iff,
-      String.reduceToList, String.Slice.toString_eq, List.isEmpty_iff, List.filterMap_eq_nil_iff,
-      ite_eq_right_iff, reduceCtorEq, imp_false, Prod.forall, Bool.or_eq_true, String.toList_append,
+      Bool.and_eq_true, ↓Char.isValue, List.cons_append, List.nil_append, List.append_assoc,
+      beq_iff_eq, String.isEmpty_iff, String.startsWith_string_iff, String.reduceToList,
+      String.Slice.toString_eq, List.isEmpty_iff, List.filterMap_eq_nil_iff, ite_eq_right_iff,
+      reduceCtorEq, imp_false, Prod.forall, Bool.or_eq_true, String.toList_append,
       List.flatMap_cons, markPiece, List.zipIdx_cons, Nat.zero_add, List.zipIdx_nil, List.map_cons,
       List.map_nil, List.getElem?_toArray, List.flatMap_nil, List.append_nil, List.length_cons,
       List.length_map, List.length_zipIdx, Nat.zero_lt_succ, getElem?_pos, List.getElem_cons_zero,

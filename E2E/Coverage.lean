@@ -41,7 +41,8 @@ def emitters : List (String × String) :=
     ("Render.scrollbackAnsi", "scrollbackAnsi_le / Replay.start_faithful / drain_start"),
     ("Render.tabsAnsi", "component of Replay.start_faithful / drain_start"),
     ("Render.leaveAnsi", "leave_canonical / leave_canonical_all"),
-    ("Render.safeChar", "safeChar_ge / Terminal.Title.payload_safe / Listing.rowPieces_printable"),
+    ("Render.textChar",
+      "textChar_safe / Terminal.Title.payload_safe / Listing.rowPieces_printable"),
     ("Render.utf8s", "utf8s_no_frame / Replay.text_uncons / utf8s_length_le"),
     ("Render.history", "history_framing / history_lines / history_records"),
     ("Render.screenText", "screenText_framing / screenText_lines / screenText_records")]

@@ -66,23 +66,20 @@ theorem abortUtf8_of_uz {v : Vt} (b : UInt8) (h : v.u8need = 0) : v.abortUtf8 b 
 
 /-- With nothing pending, `step` is `stepGround`. -/
 theorem step_of_ground_quiet {v : Vt} (b : UInt8) (hg : v.pstate = .ground) (hu : v.u8need = 0) :
-    v.step b = v.stepGround b := by
-  unfold Vt.step
-  dsimp only
-  rw [abortUtf8_of_uz b hu, hg]
+    v.step b = v.stepGround b := by rw [Linger.Core.Vt.step_of_ground b hg, abortUtf8_of_uz b hu]
 
 /-! #### Byte comparisons, once
 
-`stepGround` is an eight-way ladder of byte comparisons. One rewrite set turns
+`stepGround` is a nine-way ladder of byte comparisons. One rewrite set turns
 every guard on a literal-offset byte into `Nat` arithmetic that `omega` reads. -/
 
-/-- An ASCII byte ≥ 0x20 prints. -/
+/-- An ASCII byte ≥ 0x20 other than DEL prints. -/
 theorem step_ascii {v : Vt} {m : Nat} (hg : v.pstate = .ground) (hu : v.u8need = 0) (h20 : 0x20 ≤ m)
-    (hlt : m < 0x80) : v.step (UInt8.ofNat m) = v.acceptChar m := by
+    (hlt : m < 0x80) (hdel : m ≠ 0x7F) : v.step (UInt8.ofNat m) = v.acceptChar m := by
   rw [step_of_ground_quiet _ hg hu]
   simp only [Vt.stepGround, beq_iff_eq, ← UInt8.toNat_inj, UInt8.lt_iff_toNat_lt,
     u8_ofNat_toNat m (by omega), UInt8.reduceToNat]
-  rw [ite_eq_right (by omega), ite_eq_right (by omega), ite_eq_left hlt]
+  rw [ite_eq_right (by omega), ite_eq_right (by omega), ite_eq_right (by omega), ite_eq_left hlt]
 
 /-- The three lead bytes, each announcing how many continuations follow.
 Stated separately rather than parameterised: they take different rungs of
@@ -96,7 +93,8 @@ theorem step_lead2 {v : Vt} {m : Nat} (hg : v.pstate = .ground) (hu : v.u8need =
   simp only [Vt.stepGround, beq_iff_eq, ← UInt8.toNat_inj, UInt8.lt_iff_toNat_lt,
     u8_ofNat_toNat _ (show 0xC0 + m < 256 by omega), UInt8.reduceToNat]
   rw [ite_eq_right (by omega), ite_eq_right (by omega), ite_eq_right (by omega),
-    ite_eq_right (by omega), ite_eq_left (by omega), Nat.add_sub_cancel_left]
+    ite_eq_right (by omega), ite_eq_right (by omega), ite_eq_left (by omega),
+    Nat.add_sub_cancel_left]
 
 theorem step_lead3 {v : Vt} {m : Nat} (hg : v.pstate = .ground) (hu : v.u8need = 0) (hm : m < 16) :
     v.step (UInt8.ofNat (0xE0 + m)) =
@@ -106,8 +104,8 @@ theorem step_lead3 {v : Vt} {m : Nat} (hg : v.pstate = .ground) (hu : v.u8need =
   simp only [Vt.stepGround, beq_iff_eq, ← UInt8.toNat_inj, UInt8.lt_iff_toNat_lt,
     u8_ofNat_toNat _ (show 0xE0 + m < 256 by omega), UInt8.reduceToNat]
   rw [ite_eq_right (by omega), ite_eq_right (by omega), ite_eq_right (by omega),
-    ite_eq_right (by omega), ite_eq_right (by omega), ite_eq_left (by omega),
-    Nat.add_sub_cancel_left]
+    ite_eq_right (by omega), ite_eq_right (by omega), ite_eq_right (by omega),
+    ite_eq_left (by omega), Nat.add_sub_cancel_left]
 
 theorem step_lead4 {v : Vt} {m : Nat} (hg : v.pstate = .ground) (hu : v.u8need = 0) (hm : m < 8) :
     v.step (UInt8.ofNat (0xF0 + m)) =
@@ -118,7 +116,7 @@ theorem step_lead4 {v : Vt} {m : Nat} (hg : v.pstate = .ground) (hu : v.u8need =
     u8_ofNat_toNat _ (show 0xF0 + m < 256 by omega), UInt8.reduceToNat]
   rw [ite_eq_right (by omega), ite_eq_right (by omega), ite_eq_right (by omega),
     ite_eq_right (by omega), ite_eq_right (by omega), ite_eq_right (by omega),
-    ite_eq_left (by omega), Nat.add_sub_cancel_left]
+    ite_eq_right (by omega), ite_eq_left (by omega), Nat.add_sub_cancel_left]
 
 /-- A continuation byte never aborts a sequence — that is what makes the
 `abortUtf8` guard invisible to a well-formed encoding. -/
@@ -134,9 +132,7 @@ byte is exactly the byte \`abortUtf8\` lets through. Stated as its own lemma
 so the \`pstate\` rewrite cannot touch the callers' right-hand sides. -/
 private theorem step_cont_bridge {v : Vt} {m : Nat} (hg : v.pstate = .ground) (hm : m < 64) :
     v.step (UInt8.ofNat (0x80 + m)) = v.stepGround (UInt8.ofNat (0x80 + m)) := by
-  unfold Vt.step
-  dsimp only
-  rw [abortUtf8_cont v hm, hg]
+  rw [Linger.Core.Vt.step_of_ground _ hg, abortUtf8_cont v hm]
 
 /-- A continuation byte with more to come: folds six bits in. -/
 theorem step_cont_more {v : Vt} {k acc m : Nat} (hg : v.pstate = .ground) (hu : v.u8need = k + 2)
@@ -148,7 +144,8 @@ theorem step_cont_more {v : Vt} {k acc m : Nat} (hg : v.pstate = .ground) (hu : 
   simp only [Vt.stepGround, beq_iff_eq, ← UInt8.toNat_inj, UInt8.lt_iff_toNat_lt,
     u8_ofNat_toNat _ (show 0x80 + m < 256 by omega), UInt8.reduceToNat, hu, hacc]
   rw [ite_eq_right (by omega), ite_eq_right (by omega), ite_eq_right (by omega),
-    ite_eq_left (by omega), ite_eq_right (by omega), ite_eq_right (by omega),
+    ite_eq_right (by omega), ite_eq_left (by omega), ite_eq_right (by omega),
+    ite_eq_right (by omega),
     show min (acc * 64 + (0x80 + m - 0x80)) 2097151 = acc * 64 + m by omega,
     show k + 2 - 1 = k + 1 by omega]
 
@@ -163,7 +160,7 @@ theorem step_cont_last {v : Vt} {acc m : Nat} (hg : v.pstate = .ground) (hu : v.
   simp only [Vt.stepGround, beq_iff_eq, ← UInt8.toNat_inj, UInt8.lt_iff_toNat_lt,
     u8_ofNat_toNat _ (show 0x80 + m < 256 by omega), UInt8.reduceToNat, hu, hacc]
   rw [ite_eq_right (by omega), ite_eq_right (by omega), ite_eq_right (by omega),
-    ite_eq_left (by omega), ite_eq_right (by omega), ite_true,
+    ite_eq_right (by omega), ite_eq_left (by omega), ite_eq_right (by omega), ite_true,
     show min (acc * 64 + (0x80 + m - 0x80)) 2097151 = acc * 64 + m by omega]
 
 /-- Collapsing the nested `u8need`/`u8acc` writes that a completed sequence
@@ -195,8 +192,9 @@ codepoint decode back to exactly that codepoint: feeding them *is*
 printing it. This is the lemma that turns a repaint's byte stream into a
 chain of `Vt.print`s, after which the fidelity argument has no bytes left
 in it. -/
-theorem utf8_feed {v : Vt} (c : Char) (h20 : 0x20 ≤ c.toNat) (hg : v.pstate = .ground)
-    (hu : v.u8need = 0) (ha : v.u8acc = 0) : v.feed (utf8 c) = v.print c := by
+theorem utf8_feed {v : Vt} (c : Char) (hc : 0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F)
+    (hg : v.pstate = .ground) (hu : v.u8need = 0) (ha : v.u8acc = 0) :
+    v.feed (utf8 c) = v.print c := by
   have hle := char_le c
   have hn : min c.toNat 0x10FFFF = c.toNat := by omega
   -- the two nested-division facts `omega` cannot see on its own
@@ -207,7 +205,7 @@ theorem utf8_feed {v : Vt} (c : Char) (h20 : 0x20 ≤ c.toNat) (hg : v.pstate = 
   rw [hn]
   by_cases h1 : c.toNat < 0x80
   · -- one byte: an ASCII glyph
-    rw [ite_eq_left h1, feed1, step_ascii hg hu h20 h1, acceptChar_toNat]
+    rw [ite_eq_left h1, feed1, step_ascii hg hu hc.1 h1 hc.2, acceptChar_toNat]
   rw [ite_eq_right h1]
   by_cases h2 : c.toNat < 0x800
   · -- two bytes: lead + final continuation
@@ -262,7 +260,7 @@ theorem utf8s_feed :
   | c :: cs, v, hg, hu, ha => by
     have hb := safeChar_ge c
     rw [utf8s_cons]
-    rw [feed_append, utf8_feed (safeChar c) hb.1 hg hu ha]
+    rw [feed_append, utf8_feed (safeChar c) hb hg hu ha]
     obtain ⟨h1, h2, h3⟩ := print_quiet (safeChar c) hg hu ha
     rw [utf8s_feed cs h1 h2 h3]
     rfl
@@ -277,7 +275,7 @@ theorem cellText_feed {v : Vt} (c : Cell) (hg : v.pstate = .ground) (hu : v.u8ne
       c.marks.foldl (fun w m => w.print (safeChar m)) (v.print (safeChar c.base)) := by
   have hb := safeChar_ge c.base
   unfold cellText
-  rw [feed_append, utf8_feed (safeChar c.base) hb.1 hg hu ha]
+  rw [feed_append, utf8_feed (safeChar c.base) hb hg hu ha]
   obtain ⟨h1, h2, h3⟩ := print_quiet (safeChar c.base) hg hu ha
   exact utf8s_feed c.marks h1 h2 h3
 
@@ -312,7 +310,7 @@ Two shapes of proof, both driven by the guards in `applySgr`'s fold:
 * the attributes are seven independent `Bool`s, so 128 concrete branches
   settle it outright — cheaper than seven step lemmas plus a composition;
 * a colour lands in one of four forms, and the 16-colour ones are 8
-  concrete codes each, which lets the fold's long `if`-chain decide by
+  concrete codes each, which lets `sgrAttr`'s long `if`-chain decide by
   computation instead of needing a disequality per rung.
 
 What is *not* here: that the parser's CSI accumulator delivers these
@@ -326,8 +324,11 @@ private theorem u8_lt256 (x : UInt8) : x.toNat < 256 := x.toNat_lt_size
 since `joinSemi` separates with `;` and never `:`. -/
 def sgrParamsOf (ns : List Nat) : List (Nat × Bool) := ns.map (fun n => (n, false))
 
-/-- The pen after one emitted SGR, at the fuel `applySgr` supplies. -/
-def penAfter (q : Pen) (ns : List Nat) : Pen := Vt.applySgr.go q (sgrParamsOf ns) (ns.length + 1)
+/-- The pen after one emitted SGR. -/
+def penAfter (q : Pen) (ns : List Nat) : Pen := Vt.applySgr.go q (sgrParamsOf ns)
+
+/-- `SGR 0` resets the pen, colours included. -/
+theorem sgrAttr_zero (p : Pen) : Vt.sgrAttr p 0 = {} := rfl
 
 /-- **The attribute sequence resets, then re-establishes `p`'s attributes.**
 Both colours come out default because the leading `0` resets them and no
@@ -338,7 +339,7 @@ theorem penAfter_attrCodes (q : Pen) (p : Pen) :
         blink := p.blink, reverse := p.reverse, strike := p.strike } := by
   obtain ⟨fg, bg, b, d, i, u, bl, r, s⟩ := p
   cases b <;> cases d <;> cases i <;> cases u <;> cases bl <;> cases r <;> cases s <;>
-    simp [penAfter, sgrParamsOf, penAttrCodes, Vt.applySgr.go]
+    simp [penAfter, sgrParamsOf, penAttrCodes, Vt.applySgr.go, Vt.sgrAttr]
 
 /-- **A colour sequence writes exactly that colour**, in all four emitted
 forms (16-colour, bright, 256-colour, truecolour). -/
@@ -359,7 +360,7 @@ theorem penAfter_colorCodes (q : Pen) (c : Color) (isFg : Bool) (hne : colorCode
           h' | h' | h' | h' | h' | h' | h' | h' <;>
         rw [h'] at key <;>
         cases isFg <;>
-        simp [penAfter, sgrParamsOf, colorCodes, Vt.applySgr.go, ← key]
+        simp [penAfter, sgrParamsOf, colorCodes, Vt.applySgr.go, Vt.sgrAttr, ← key]
     by_cases h16 : i.toNat < 16
     · rcases
           (show
@@ -371,7 +372,7 @@ theorem penAfter_colorCodes (q : Pen) (c : Color) (isFg : Bool) (hne : colorCode
           h' | h' | h' | h' | h' | h' | h' | h' <;>
         rw [h'] at key <;>
         cases isFg <;>
-        simp [penAfter, sgrParamsOf, colorCodes, Vt.applySgr.go, ← key]
+        simp [penAfter, sgrParamsOf, colorCodes, Vt.applySgr.go, Vt.sgrAttr, ← key]
     · cases isFg <;>
         simp [penAfter, sgrParamsOf, colorCodes, h8, h16, Vt.applySgr.go, color256,
           show min i.toNat 255 = i.toNat from by omega, key]
@@ -443,9 +444,7 @@ induction instead would fight `joinSemi`'s three-arm recursion for no gain.
 /-- Inside a CSI with nothing half-decoded, `step` is `stepCsi`. -/
 theorem step_of_csi_quiet {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi s)
     (hu : v.u8need = 0) : v.step b = v.stepCsi s b := by
-  unfold Vt.step
-  dsimp only
-  rw [abortUtf8_of_uz b hu, hg]
+  rw [Linger.Core.Vt.step_of_csi b hg, abortUtf8_of_uz b hu]
 
 /-- From ground, `ESC` only arms the parser. Stated as an equation (not just a
 `pstate` fact) so the layers that care about other fields can use it. -/
@@ -459,10 +458,8 @@ theorem esc_step_eq {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) :
 else. -/
 theorem csi_open_feed {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) :
     ((v.step 0x1B).step 0x5B) = { v with pstate := .csi {} } := by
-  rw [esc_step_eq hg hu]
-  unfold Vt.step
-  dsimp only
-  rw [abortUtf8_of_uz (v := { v with pstate := .esc }) 0x5B hu]
+  rw [esc_step_eq hg hu, Linger.Core.Vt.step_of_esc (v := { v with pstate := .esc }) 0x5B rfl,
+    abortUtf8_of_uz (v := { v with pstate := .esc }) 0x5B hu]
   rfl
 
 /-- A parameter byte moves the accumulator and nothing else. -/
@@ -591,15 +588,8 @@ theorem sgrOf_feed {v : Vt} (codes : List Nat) (hne : codes ≠ []) (hcap : code
   dsimp only
   rw [ite_eq_right (by simp [hign])]
   -- SGR: the parameters are the numbers the emitter chose
-  -- stated over any record with that array, since `priv` gets normalised to
-  -- its default on the way here and a fixed shape would stop matching
-  have hparams :
-    ∀ (t : CsiState),
-      t.params = s'.params.push (min s'.cur 65535, s'.curSub) →
-        t.sgrParams = sgrParamsOf codes := by
-    intro t ht
-    unfold CsiState.sgrParams
-    rw [ht, hpush]
+  have hparams : (s'.params.push (min s'.cur 65535, s'.curSub)).toList = sgrParamsOf codes := by
+    rw [hpush]
     simp only [List.nil_append]
     unfold sgrParamsOf
     exact
@@ -614,10 +604,10 @@ theorem sgrOf_feed {v : Vt} (codes : List Nat) (hne : codes ≠ []) (hcap : code
   simp only [hpriv, beq_self_eq_true, ite_eq_left]
   unfold Vt.applySgr
   dsimp only
-  rw [hparams _ rfl, ite_eq_right hne']
+  rw [hparams, ite_eq_right hne']
   -- everything above the pen is untouched, and the parser is back in ground
   unfold penAfter
-  simp only [sgrParamsOf, List.length_map]
+  simp only [sgrParamsOf]
   rw [← hg]
 
 /-! ### Step 2 complete — a pen replays exactly -/

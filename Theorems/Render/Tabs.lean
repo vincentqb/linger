@@ -56,7 +56,7 @@ theorem tabs_csiDispatch_sgr (v : Vt) (s : CsiState) : (v.csiDispatch s 0x6D).ta
   · simp [Vt.csiDispatch, hi]
   · unfold Vt.csiDispatch
     rw [ite_eq_right hi]
-    show (if s.priv == 0 then v.applySgr s.sgrParams else v).tabs = v.tabs
+    show (if s.priv == 0 then v.applySgr s.params.toList else v).tabs = v.tabs
     split
     · rw [frame_applySgr]
     · rfl
@@ -331,6 +331,8 @@ theorem tabs_glyph_step {v : Vt} (b : UInt8) (hg : v.pstate = .ground) (hb : 0x2
           have := UInt8.le_iff_toNat_le.mp hb
           omega)]
     split
+    · rfl
+    split
     · exact hac _ _
     split
     · split
@@ -340,10 +342,7 @@ theorem tabs_glyph_step {v : Vt} (b : UInt8) (hg : v.pstate = .ground) (hb : 0x2
       · rfl
     repeat' split
     all_goals rfl
-  have hp : (v.abortUtf8 b).pstate = .ground := (ps_abortUtf8 _ _).trans hg
-  unfold Vt.step
-  dsimp only
-  rw [hp, hs, tabs_abortUtf8]
+  rw [step_of_ground b hg, hs, tabs_abortUtf8]
 
 theorem tabs_glyph_run :
     ∀ (bs : Bytes) (v : Vt), v.pstate = .ground → (∀ b ∈ bs, 0x20 ≤ b) → (v.feed bs).tabs = v.tabs

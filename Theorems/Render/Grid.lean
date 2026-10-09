@@ -322,8 +322,7 @@ theorem offRow_narrow_marks_of {w : Vt} {P : PaintState} {g : Row} {k : Nat} (xb
     simp [utf8s]
   rw [hbtext] at hoffbase hbase
   have hucols : (w.feed (utf8 (safeChar (g.at k).base))).cols = w.cols := by
-    rw [utf8_feed (safeChar (g.at k).base) (safeChar_ge (g.at k).base).1 hm.ground hm.u8need
-        hm.u8acc]
+    rw [utf8_feed (safeChar (g.at k).base) (safeChar_ge (g.at k).base) hm.ground hm.u8need hm.u8acc]
     exact cols_print w (safeChar (g.at k).base)
   have hoffmarks :=
     offRow_marks_fold (Q :=
@@ -402,8 +401,7 @@ theorem offRow_wide_marks_of {w : Vt} {P : PaintState} {g : Row} {k : Nat} (xb :
   have hbase := hstep hrow0 hm0 hwid0 hmk0 hpen0
   rw [hbtext] at hbase
   have hw1cols : (w.feed (utf8 (safeChar (g.at k).base))).cols = w.cols := by
-    rw [utf8_feed (safeChar (g.at k).base) (safeChar_ge (g.at k).base).1 hm.ground hm.u8need
-        hm.u8acc]
+    rw [utf8_feed (safeChar (g.at k).base) (safeChar_ge (g.at k).base) hm.ground hm.u8need hm.u8acc]
     exact cols_print w (safeChar (g.at k).base)
   have hoffcha1 :
     OffRow P.y (w.feed (utf8 (safeChar (g.at k).base)))
@@ -1162,7 +1160,8 @@ theorem gridAnsi_writes_grid {u v : Vt} (hcols : u.cols = v.cols) (hrows : u.row
   have hsgr : u.feed (csiNum 0 0x6D) = { u with pen := {} } := by
     rw [show csiNum 0 0x6D = sgrOf [0] from by simp [csiNum, sgrOf, joinSemi],
       sgrOf_feed [0] (by decide) (by decide) (by decide) hg hun,
-      show penAfter u.pen [0] = ({} : Pen) from by simp [penAfter, sgrParamsOf, Vt.applySgr.go]]
+      show penAfter u.pen [0] = ({} : Pen) from by
+        simp [penAfter, sgrParamsOf, Vt.applySgr.go, Vt.sgrAttr]]
   rw [feed_append, feed_append, hsgr, home_feed_eq (v := { u with pen := ({} : Pen) }) hg hun]
   have hu2cursor :
     (({ u with pen := ({} : Pen) }).moveTo 0 0).cursor.x = 0 ∧

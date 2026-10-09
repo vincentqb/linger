@@ -277,6 +277,9 @@ theorem step_reply_noNl (s : Scan) (v : Vt) (b : UInt8) : NoNl (s.step v b).repl
           (fun r hr => by
             injection hr with e; subst e; exact noNl_lit (by decide))
 
+/-- One version for `linger version`, the child's `TERM_PROGRAM_VERSION` and XTVERSION. -/
+theorem versionNumber_eq : versionNumber = "0.1.0" := rfl
+
 /-- **linger never writes a line terminator into the child.** The reply stream of
 any child output, from any scanner state, contains no CR or LF — so untrusted
 output cannot commit a command line through a query reply. Anchor: the child half

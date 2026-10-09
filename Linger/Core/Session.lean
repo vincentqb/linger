@@ -218,11 +218,12 @@ def infoFields (s : State) : List (String × String) :=
 /-- Frame the fields as `k` TAB `v` LF records.
 
 **The two framing bytes are emitted structurally, and nothing else can produce
-them.** Every character of a key or a value goes through `Render.utf8s`, which
-replaces a C0 control — tab and newline included — with U+FFFD. So a label value
-containing a newline shows a replacement character instead of **forging an extra
-record**, and in particular cannot forge a `status`/`state` pair that the listing
-would then display as a session's state.
+them.** Every character of a key or a value goes through `Render.textChar` and
+`Render.utf8s`, which replace a C0 control — tab and newline included — with
+U+FFFD, and a C1 control too, since `info`, `get` and `ls --porcelain` print these
+records to a terminal. So a label value containing a newline shows a replacement
+character instead of **forging an extra record**, and in particular cannot forge a
+`status`/`state` pair that the listing would then display as a session's state.
 
 Established here rather than at `.labelSet`, for the same reason `Render.gridAnsi`
 establishes its own pen instead of trusting its callers: a guard at the emit site
@@ -238,7 +239,10 @@ could see its bytes, which is exactly the argument in `Linger/Core/Render.lean`'
 header. Building `List UInt8` directly fixes both at once. -/
 def infoText (s : State) : List UInt8 :=
   (infoFields s).flatMap
-    (fun (k, v) => Render.utf8s k.toList ++ [0x09] ++ Render.utf8s v.toList ++ [0x0A])
+    (fun (k, v) =>
+      Render.utf8s (k.toList.map Render.textChar) ++ [0x09] ++
+        Render.utf8s (v.toList.map Render.textChar) ++
+        [0x0A])
 
 /-- Resize the pty only on behalf of the size owner: the most recently
 attached client with a real terminal (a read-only observer or an older

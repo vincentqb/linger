@@ -394,7 +394,7 @@ theorem sb_csiDispatch_sgr (v : Vt) (s : CsiState) : (v.csiDispatch s 0x6D).sb =
   · simp [Vt.csiDispatch, hi]
   · unfold Vt.csiDispatch
     rw [ite_eq_right hi]
-    show (if s.priv == 0 then v.applySgr s.sgrParams else v).sb = v.sb
+    show (if s.priv == 0 then v.applySgr s.params.toList else v).sb = v.sb
     split
     · rw [frame_applySgr]
     · rfl
@@ -1208,7 +1208,8 @@ theorem push_walk (v w : Vt) (hw : Good w) (hren : Renderable w) (hcols : w.cols
   have hsgr : w.feed (csiNum 0 0x6D) = { w with pen := {} } := by
     rw [show csiNum 0 0x6D = sgrOf [0] from by simp [csiNum, sgrOf, joinSemi],
       sgrOf_feed [0] (by decide) (by decide) (by decide) hgr hun,
-      show penAfter w.pen [0] = ({} : Pen) from by simp [penAfter, sgrParamsOf, Vt.applySgr.go]]
+      show penAfter w.pen [0] = ({} : Pen) from by
+        simp [penAfter, sgrParamsOf, Vt.applySgr.go, Vt.sgrAttr]]
   have hu1 :
     w.feed (csiNum 0 0x6D ++ (csiB ++ [0x48])) =
       (({ w with pen := ({} : Pen) } : Vt)).moveTo 0 0 := by

@@ -60,6 +60,11 @@ sequence decodes to one — so the guard is on the emit side, where it
 needs no hypothesis about the state. -/
 def safeChar (c : Char) : Char := if c.toNat < 0x20 || c.toNat == 0x7F then '\uFFFD' else c
 
+/-- A codepoint safe to print as text: `safeChar`, with the C1 controls U+0080–U+009F
+replaced too, since a terminal may execute them. Titles, listings and `info` records
+pass through it. -/
+def textChar (c : Char) : Char := if 0x80 ≤ c.toNat && c.toNat < 0xA0 then '\uFFFD' else safeChar c
+
 /-- UTF-8 encode one codepoint. It equals core's `String.utf8EncodeChar`
 (`utf8_eq_utf8EncodeChar`) and is kept because the clamp and mask-free lead
 bytes keep each byte's range plain arithmetic: the `min` is the identity on

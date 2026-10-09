@@ -207,7 +207,7 @@ theorem step_narrow_gen {w : Vt} {P P' : PaintState} {g : Row} {k : Nat} (hrow :
   · rw [hfeed, pen_print, hp]; exact hm.pen
   · rw [hfeed, Linger.Core.Vt.ps_print]; exact hm.ground
   · rw [hfeed, Linger.Core.Vt.un_print]; exact hm.u8need
-  · rw [hfeed, ua_print']; exact hm.u8acc
+  · rw [hfeed, ua_print]; exact hm.u8acc
   · rw [hfeed, ins_print]; exact hm.ins
   · rw [hfeed, wrap_print]; exact hm.wrap
   · rw [hfeed, g0_print]; exact hm.ascii0
@@ -274,7 +274,7 @@ theorem step_narrow_gen {w : Vt} {P P' : PaintState} {g : Row} {k : Nat} (hrow :
       -- the write's index is the receiver's cursor; `hx` is what identifies it with `j`
       rw [hx] at hrl ⊢
       rw [getCell_write_mendRow_narrow _ _ _ _ rfl hgs hrl]
-      exact Cell.ext' rfl hmk.symm hwid.symm (hm.pen.trans hpen.symm)
+      exact Cell.ext rfl hmk.symm hwid.symm (hm.pen.trans hpen.symm)
 
 /-- **One narrow cell with no marks, in the interior of a row.** The first rung. -/
 theorem step_narrow {w : Vt} {P : PaintState} {g : Row} {k : Nat} (hrow : RowOk w.cols g)
@@ -360,7 +360,7 @@ theorem step_wide_gen {w : Vt} {P P' : PaintState} {g : Row} {k : Nat} (hrow : R
   · rw [hfeed, pen_print, hp]; exact hm.pen
   · rw [hfeed, Linger.Core.Vt.ps_print]; exact hm.ground
   · rw [hfeed, Linger.Core.Vt.un_print]; exact hm.u8need
-  · rw [hfeed, ua_print']; exact hm.u8acc
+  · rw [hfeed, ua_print]; exact hm.u8acc
   · rw [hfeed, ins_print]; exact hm.ins
   · rw [hfeed, wrap_print]; exact hm.wrap
   · rw [hfeed, g0_print]; exact hm.ascii0
@@ -447,7 +447,7 @@ theorem step_wide_gen {w : Vt} {P P' : PaintState} {g : Row} {k : Nat} (hrow : R
       · have hjk0 : j = k := by omega
         subst hjk0
         rw [h0]
-        exact Cell.ext' rfl hmk.symm hwid.symm (hm.pen.trans hpen.symm)
+        exact Cell.ext rfl hmk.symm hwid.symm (hm.pen.trans hpen.symm)
       · have hjk1 : j = k + 1 := by omega
         subst hjk1
         rw [h1]
@@ -781,7 +781,7 @@ theorem mark_step {cols : Nat} {w : Vt} {Q : PaintState} {g : Row} {wcol kf : Na
   · rw [pen_print]; exact hm.pen
   · rw [Linger.Core.Vt.ps_print]; exact hm.ground
   · rw [Linger.Core.Vt.un_print]; exact hm.u8need
-  · rw [ua_print']; exact hm.u8acc
+  · rw [ua_print]; exact hm.u8acc
   · rw [ins_print]; exact hm.ins
   · rw [wrap_print]; exact hm.wrap
   · rw [g0_print]; exact hm.ascii0
@@ -902,8 +902,7 @@ theorem step_narrow_marks_gen {w : Vt} {P P' : PaintState} {g : Row} {k : Nat}
   have hct : cellText (g.at k) = utf8 (safeChar (g.at k).base) ++ utf8s (g.at k).marks := by rfl
   rw [hct, feed_append]
   have hucols : (w.feed (utf8 (safeChar (g.at k).base))).cols = w.cols := by
-    rw [utf8_feed (safeChar (g.at k).base) (safeChar_ge (g.at k).base).1 hm.ground hm.u8need
-        hm.u8acc]
+    rw [utf8_feed (safeChar (g.at k).base) (safeChar_ge (g.at k).base) hm.ground hm.u8need hm.u8acc]
     exact cols_print w (safeChar (g.at k).base)
   rw [utf8s_feed (g.at k).marks hbase.ground hbase.u8need hbase.u8acc]
   have hfold :=
@@ -986,8 +985,7 @@ theorem step_wide_marks_gen {w : Vt} {P : PaintState} {g : Row} {k x : Nat} (hro
   -- split the emitted bytes into base · CHA · marks · CHA
   rw [feed_append, feed_append, feed_append]
   have hw1cols : (w.feed (utf8 (safeChar (g.at k).base))).cols = w.cols := by
-    rw [utf8_feed (safeChar (g.at k).base) (safeChar_ge (g.at k).base).1 hm.ground hm.u8need
-        hm.u8acc]
+    rw [utf8_feed (safeChar (g.at k).base) (safeChar_ge (g.at k).base) hm.ground hm.u8need hm.u8acc]
     exact cols_print w (safeChar (g.at k).base)
   -- CHA(k+2): park the cursor at k+1, between glyph and shadow
   have hcha1 :=
@@ -1271,7 +1269,7 @@ theorem dance_cols {w : Vt} (b : Char) (ms : List Char) (a a' : Nat) (hg : w.pst
     (hu : w.u8need = 0) (ha : w.u8acc = 0) (ha1 : 0 < a) (ha1' : a < 65535) (ha2 : 0 < a')
     (ha2' : a' < 65535) :
     (w.feed (utf8 (safeChar b) ++ csiNum a 0x47 ++ utf8s ms ++ csiNum a' 0x47)).cols = w.cols := by
-  have hb := (safeChar_ge b).1
+  have hb := safeChar_ge b
   -- after the glyph
   have e1 : w.feed (utf8 (safeChar b)) = w.print (safeChar b) := utf8_feed (safeChar b) hb hg hu ha
   obtain ⟨hg1, hu1, ha1q⟩ := print_quiet (safeChar b) hg hu ha

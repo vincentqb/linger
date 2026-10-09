@@ -119,7 +119,8 @@ theorem st_finish (u : Vt) (hu : u.u8need = 0)
   · rw [h]
     show ((u.stepGround 0x5C).pstate = _) ∧ ((u.stepGround 0x5C).u8need = _)
     unfold Vt.stepGround
-    rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_left (by decide)]
+    rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide),
+      ite_eq_left (by decide)]
     exact ⟨(ps_acceptChar _ _).trans h, (un_acceptChar _ _).trans hu⟩
   · rw [h]
     show ((u.stepOsc acc true 0x5C).pstate = _) ∧ ((u.stepOsc acc true 0x5C).u8need = _)
@@ -226,9 +227,7 @@ theorem defaultTitleAnsi_feed {v : Vt} (hg : v.pstate = .ground) :
   let u := v.abortUtf8 0x1B
   have hu : u.u8need = 0 := un_abortUtf8_esc v
   have he : v.step 0x1B = { u with pstate := .esc } := by
-    unfold Vt.step
-    dsimp only
-    rw [ps_abortUtf8, hg]
+    rw [step_of_ground 0x1B hg]
     rfl
   rw [show v.feed defaultTitleAnsi = ((((v.step 0x1B).step 0x5D).step 0x32).step 0x3B).step 0x07
       from by simp [defaultTitleAnsi, escB, Vt.feed]]
@@ -515,7 +514,7 @@ theorem modes_csiDispatch_sgr (v : Vt) (s : CsiState) : (v.csiDispatch s 0x6D).m
   · simp [Vt.csiDispatch, hi]
   · unfold Vt.csiDispatch
     rw [ite_eq_right hi]
-    show (if s.priv == 0 then v.applySgr s.sgrParams else v).modes = v.modes
+    show (if s.priv == 0 then v.applySgr s.params.toList else v).modes = v.modes
     split <;> rfl
 
 /-! ### per-chunk MMap bridges -/
@@ -688,7 +687,7 @@ theorem modes_glyph_step {v : Vt} (b : UInt8) (hg : v.pstate = .ground) (hb : 0x
     (v.step b).modes = v.modes := by
   have hac (w : Vt) (n : Nat) : (w.acceptChar n).modes = w.modes := by
     unfold Vt.acceptChar
-    split <;> exact modes_print' _ _
+    split <;> exact modes_print _ _
   have hs (w : Vt) : (w.stepGround b).modes = w.modes := by
     unfold Vt.stepGround
     split
@@ -699,6 +698,8 @@ theorem modes_glyph_step {v : Vt} (b : UInt8) (hg : v.pstate = .ground) (hb : 0x
           have := UInt8.le_iff_toNat_le.mp hb
           omega)]
     split
+    · rfl
+    split
     · exact hac _ _
     split
     · split
@@ -708,10 +709,7 @@ theorem modes_glyph_step {v : Vt} (b : UInt8) (hg : v.pstate = .ground) (hb : 0x
       · rfl
     repeat' split
     all_goals rfl
-  have hp : (v.abortUtf8 b).pstate = .ground := (ps_abortUtf8 _ _).trans hg
-  unfold Vt.step
-  dsimp only
-  rw [hp, hs]
+  rw [step_of_ground b hg, hs]
   unfold Vt.abortUtf8
   split <;> rfl
 

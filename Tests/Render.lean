@@ -250,14 +250,17 @@ example : roundtrips (screen 6 2 "a\u6f22b\x1b[1;3H\x1b[K") = true := by native_
 /-- Insert mode shifting a pair off the row end. -/
 example : roundtrips (screen 6 2 "abc\u6f22\x1b[1;1H\x1b[4hxy") = true := by native_decide
 
-/-- A stored **DEL**, and a C0 reached through an overlong UTF-8 sequence.
-Either would be repainted as U+FFFD by `Render.safeChar` while the live cell
-held the control codepoint, so the substitution happens on store instead
-(`Vt.printableChar`) and the two agree. The overlong case is fed as raw bytes:
-a Lean `"\xc0"` literal is a character, which `toUTF8` re-encodes. -/
+/-- A **DEL** byte, which the emulator ignores, and a C0 or DEL reached through an
+overlong UTF-8 sequence. A decoded control would be repainted as U+FFFD by
+`Render.safeChar` while the live cell held the control codepoint, so the
+substitution happens on store instead (`Vt.printableChar`) and the two agree. The
+overlong cases are fed as raw bytes: a Lean `"\xc0"` literal is a character, which
+`toUTF8` re-encodes. -/
 example : roundtrips (screen 6 2 "a\x7fb") = true := by native_decide
 
 example : roundtrips ((Vt.init 6 2).feed [0x61, 0xC0, 0x80, 0x62]) = true := by native_decide
+
+example : roundtrips ((Vt.init 6 2).feed [0x61, 0xC1, 0xBF, 0x62]) = true := by native_decide
 
 /-- Resize truncating a row through the middle of a wide pair. -/
 example : roundtrips ((screen 6 2 "ab\u6f22cd").resize 4 2) = true := by native_decide

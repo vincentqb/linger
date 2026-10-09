@@ -301,14 +301,25 @@ example :
       true := by
   native_decide
 
-/-- A stored DEL, and a C0 reached by an overlong UTF-8 sequence, become
-U+FFFD on store: a cell holding a control codepoint cannot be repainted, since
-the emitter would substitute one anyway. Fed as raw bytes — a Lean `"\xc0"`
-literal is a *character*, which `toUTF8` re-encodes, so a string cannot
-express an overlong sequence. -/
-example : (let v := (Vt.init 6 2).feed [0x61, 0x7F, 0xC0, 0x80, 0x62]
-           (v.getCell 1 0).base == '\uFFFD' && (v.getCell 2 0).base == '\uFFFD'
-             && (v.getCell 3 0).base == 'b') = true := by native_decide
+/-- DEL is ignored in ground state, as after ESC, after an intermediate and inside
+CSI: nothing is stored and the cursor stays (tmux 3.7c shows `ab|` for
+`printf 'a\177b|'`). -/
+example :
+          (let v := screen 10 2 "a\x7fb"
+           rowStr v 0 == "ab" && v.cursor.x == 2) =
+      true := by
+  native_decide
+
+/-- A C0 reached by an overlong UTF-8 sequence becomes U+FFFD on store, and the
+DEL byte before it is ignored: a cell holding a control codepoint cannot be
+repainted, since the emitter would substitute one anyway. Fed as raw bytes — a
+Lean `"\xc0"` literal is a *character*, which `toUTF8` re-encodes, so a string
+cannot express an overlong sequence. -/
+example :
+          (let v := (Vt.init 6 2).feed [0x61, 0x7F, 0xC0, 0x80, 0x62]
+           (v.getCell 1 0).base == '\uFFFD' && (v.getCell 2 0).base == 'b') =
+      true := by
+  native_decide
 
 /-- UTF-8 split across feeds decodes identically (§Chunk in action). -/
 example :

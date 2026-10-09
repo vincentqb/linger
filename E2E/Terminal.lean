@@ -34,11 +34,12 @@ WHAT IS DERIVED, AND WHAT CANNOT BE:
   emitter performing its own filtering. The CR/LF check is deliberately NOT
   derived: it is about the bytes that actually reached the child, which is exactly
   the half `feed_replies_noNl` cannot see;
-* the stable child profile — `TERM=xterm-256color`, `TERM_PROGRAM=linger`,
-  `TERM_PROGRAM_VERSION=0.1.0` — could NOT be tied to anything. It is a literal
-  array inside `Daemon.serve`'s `spawnPty` call, not an exported value, so a
-  Lean-side tie would restate the constant rather than derive it. Same situation as
-  `E2E.Agent`'s 80×24 default, recorded for the same reason. -/
+* the stable child profile's `TERM_PROGRAM_VERSION` is derived: `Daemon.serve` and
+  this check both read `Terminal.versionNumber`. `TERM=xterm-256color` and
+  `TERM_PROGRAM=linger` could NOT be tied to anything. They are literals inside
+  `Daemon.serve`'s `spawnPty` call, not exported values, so a Lean-side tie would
+  restate the constants rather than derive them. Same situation as `E2E.Agent`'s
+  80×24 default, recorded for the same reason. -/
 
 namespace E2E.Terminal
 
@@ -282,14 +283,14 @@ def run : IO UInt32 := do
         (←
           expect (data.reply == da1Expected)
               s!"DA1 progresses with {clients} client(s), exactly one reply")
-    -- three literals, because `Daemon.serve`'s profile array is not an exported
-    -- value; see the module docstring
+    -- `TERM` and `TERM_PROGRAM` are literals, because `Daemon.serve`'s profile array
+    -- is not an exported value; the version is derived. See the module docstring
     f :=
       f +
         (←
           expect
               (data.term == some "xterm-256color" && data.termProgram == some "linger" &&
-                data.termVersion == some "0.1.0")
+                data.termVersion == some Linger.Core.Terminal.versionNumber)
               s!"stable child terminal profile with {clients} client(s)")
     if clients != 0 then
       -- nested a level deeper on purpose: with nobody attached there is no client

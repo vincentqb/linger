@@ -114,8 +114,8 @@ U+FFFD.
 
 A cell holding a control codepoint cannot be repainted — `Render.safeChar`
 substitutes U+FFFD on emit, so the replayed screen would differ from the live
-one — and such a codepoint is reachable: DEL arrives as itself, and an
-overlong UTF-8 sequence decodes to a C0. Substituting **on store** is what
+one — and such a codepoint is reachable: an overlong UTF-8 sequence decodes to
+a C0 or, as `0xC1 0xBF`, to DEL. Substituting **on store** is what
 makes every stored cell repaintable, so `Renderable` is an invariant rather
 than a hypothesis (the same move as fix 11). `Render.safeChar` stays as the
 emit-side guard, which still has work to do for a decoded checkpoint. -/
@@ -915,104 +915,80 @@ private def Vt.eraseChars (v : Vt) (n : Nat) : Vt :=
 /-- A 256-colour palette index, saturating at 255. -/
 def color256 (n : Nat) : Color := .idx (UInt8.ofNat (min n 255))
 
-/-- Apply one SGR parameter chain. Handles 38/48 in both `38;5;n` /
-`38;2;r;g;b` (semicolon) and `38:5:n` / `38:2::r:g:b` (colon) forms.
-
-**Not `@[expose]` any more** (2026-09-13, the `Vt` seal). It was, because
-`Theorems/Render/Pen.lean` inducts on the `let rec go` auxiliary by name
-(`Vt.applySgr.go`) and a compiler-generated auxiliary stays module-private unless
-the parent's body is exposed — 101 `Unknown constant` errors without it, from a
-*legacy* (non-`module`) importer. Every importer that needs `go` is now a `module`
-with `import all Linger.Core.Vt`, which grants the auxiliary directly, so the
-attribute is redundant — and it is no longer *allowed*: an exposed body may not
-mention a private constructor, and `{ v with pen := … }` below is one now that
-every `Vt` field is `private`. If a legacy importer of `go` ever comes back, give
-it `import all`; do not restore the attribute. -/
-private def Vt.applySgr (v : Vt) (params : List (Nat × Bool)) : Vt :=
-  -- (value, isSubParam); a lone `m` means reset
-  let rec go (p : Pen) (l : List (Nat × Bool)) (fuel : Nat) : Pen :=
-    match fuel with
-    | 0 => p
-    | fuel + 1 =>
-      match l with
-      | [] => p
-      | (n, _) :: rest =>
-        -- extended color: consume its argument chain
-        if n == 38 || n == 48 then
-          let isFg := n == 38
-          match rest with
-          | (5, _) :: (idx, _) :: r =>
-            let c := color256 idx
-            go (if isFg then { p with fg := c } else { p with bg := c }) r fuel
-          | (2, _) :: rest2 =>
-            -- colon form may carry a color-space id: 38:2::r:g:b
-            let (rgb, r) :=
-              match rest2 with
-              | (_, true) :: (r1, true) :: (g1, true) :: (b1, true) :: tl =>
-                -- 4 sub-args: the first is a color-space id, skip it
-                (some (r1, g1, b1), tl)
-              | (r1, _) :: (g1, _) :: (b1, _) :: tl => (some (r1, g1, b1), tl)
-              | tl => (none, tl)
-            match rgb with
-            | some (r1, g1, b1) =>
-              let c :=
-                Color.rgb (UInt8.ofNat (min r1 255)) (UInt8.ofNat (min g1 255))
-                  (UInt8.ofNat (min b1 255))
-              go (if isFg then { p with fg := c } else { p with bg := c }) r fuel
-            | none => go p r fuel
-          | _ => p
+/-- One single-number SGR code: a reset, an attribute or a 16-colour index; others are no-ops. -/
+private def Vt.sgrAttr (p : Pen) (n : Nat) : Pen :=
+  if n == 0 then {}
+  else
+    if n == 1 then { p with bold := true }
+    else
+      if n == 2 then { p with dim := true }
+      else
+        if n == 3 then { p with italic := true }
         else
-          let p :=
-            if n == 0 then {}
+          if n == 4 then { p with underline := true }
+          else
+            if n == 5 || n == 6 then { p with blink := true }
             else
-              if n == 1 then { p with bold := true }
+              if n == 7 then { p with reverse := true }
               else
-                if n == 2 then { p with dim := true }
+                if n == 9 then { p with strike := true }
                 else
-                  if n == 3 then { p with italic := true }
+                  if n == 21 || n == 22 then
+                    { p with
+                      bold := false, dim := false }
                   else
-                    if n == 4 then { p with underline := true }
+                    if n == 23 then { p with italic := false }
                     else
-                      if n == 5 || n == 6 then { p with blink := true }
+                      if n == 24 then { p with underline := false }
                       else
-                        if n == 7 then { p with reverse := true }
+                        if n == 25 then { p with blink := false }
                         else
-                          if n == 9 then { p with strike := true }
+                          if n == 27 then { p with reverse := false }
                           else
-                            if n == 21 || n == 22 then
-                              { p with
-                                bold := false, dim := false }
+                            if n == 29 then { p with strike := false }
                             else
-                              if n == 23 then { p with italic := false }
+                              if 30 ≤ n && n ≤ 37 then { p with fg := .idx (UInt8.ofNat (n - 30)) }
                               else
-                                if n == 24 then { p with underline := false }
+                                if n == 39 then { p with fg := .default }
                                 else
-                                  if n == 25 then { p with blink := false }
+                                  if 40 ≤ n && n ≤ 47 then
+                                    { p with bg := .idx (UInt8.ofNat (n - 40)) }
                                   else
-                                    if n == 27 then { p with reverse := false }
+                                    if n == 49 then { p with bg := .default }
                                     else
-                                      if n == 29 then { p with strike := false }
+                                      if 90 ≤ n && n ≤ 97 then
+                                        { p with fg := .idx (UInt8.ofNat (n - 90 + 8)) }
                                       else
-                                        if 30 ≤ n && n ≤ 37 then
-                                          { p with fg := .idx (UInt8.ofNat (n - 30)) }
-                                        else
-                                          if n == 39 then { p with fg := .default }
-                                          else
-                                            if 40 ≤ n && n ≤ 47 then
-                                              { p with bg := .idx (UInt8.ofNat (n - 40)) }
-                                            else
-                                              if n == 49 then { p with bg := .default }
-                                              else
-                                                if 90 ≤ n && n ≤ 97 then
-                                                  { p with fg := .idx (UInt8.ofNat (n - 90 + 8)) }
-                                                else
-                                                  if 100 ≤ n && n ≤ 107 then
-                                                    { p with
-                                                      bg := .idx (UInt8.ofNat (n - 100 + 8)) }
-                                                  else p
-          go p rest fuel
+                                        if 100 ≤ n && n ≤ 107 then
+                                          { p with bg := .idx (UInt8.ofNat (n - 100 + 8)) }
+                                        else p
+
+/-- Apply an SGR parameter list; an empty one resets. `38`/`48` take `5;n` or `2;r;g;b`, either
+separator, or `2:id:r:g:b` with the colour-space id ignored; other codes go to `sgrAttr`. -/
+private def Vt.applySgr (v : Vt) (params : List (Nat × Bool)) : Vt :=
+  -- (value, isSubParam)
+  let rec go (p : Pen) : List (Nat × Bool) → Pen
+    | [] => p
+    | (n, _) :: rest =>
+      -- extended color: consume its argument chain
+      if n == 38 || n == 48 then
+        let isFg := n == 38
+        match rest with
+        | (5, _) :: (idx, _) :: r =>
+          let c := color256 idx
+          go (if isFg then { p with fg := c } else { p with bg := c }) r
+        -- truecolour; four colon sub-arguments lead with a colour-space id, which is skipped
+        | (2, _) :: (_, true) :: (r1, true) :: (g1, true) :: (b1, true) :: r |
+          (2, _) :: (r1, _) :: (g1, _) :: (b1, _) :: r =>
+          let c :=
+            Color.rgb (UInt8.ofNat (min r1 255)) (UInt8.ofNat (min g1 255))
+              (UInt8.ofNat (min b1 255))
+          go (if isFg then { p with fg := c } else { p with bg := c }) r
+        | (2, _) :: r => go p r
+        | _ => p
+      else go (Vt.sgrAttr p n) rest
   let ps := if params.isEmpty then [(0, false)] else params
-  { v with pen := go v.pen ps (ps.length + 1) }
+  { v with pen := go v.pen ps }
 
 /-! ## Alt screen -/
 
@@ -1085,9 +1061,6 @@ def CsiState.arg (s : CsiState) (i default_ : Nat) : Nat :=
   | 0 => default_
   | n => n
 
-/-- Params paired with their sub-param flags, for SGR. -/
-def CsiState.sgrParams (s : CsiState) : List (Nat × Bool) := s.params.toList
-
 private def Vt.setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool) : Vt :=
   if priv then
     match n with
@@ -1156,7 +1129,7 @@ private def Vt.csiDispatch (v : Vt) (s : CsiState) (final : UInt8) : Vt :=
       | _ => v
     | 0x68 => v.setModes (s.priv == 0x3F) s.params.toList true -- h SM
     | 0x6C => v.setModes (s.priv == 0x3F) s.params.toList false -- l RM
-    | 0x6D => if s.priv == 0 then v.applySgr s.sgrParams else v -- m SGR
+    | 0x6D => if s.priv == 0 then v.applySgr s.params.toList else v -- m SGR
     | 0x72 => -- r DECSTBM
       if s.priv != 0 then v
       else
@@ -1227,40 +1200,43 @@ invalid codepoints (surrogates, > U+10FFFF) print as U+FFFD. -/
 private def Vt.acceptChar (v : Vt) (n : Nat) : Vt :=
   if n.isValidChar then v.print (Char.ofNat n) else v.print '\uFFFD'
 
-/-- Ground state: printables, C0, ESC, and UTF-8 assembly. -/
+/-- Ground state: printables, C0, ESC, and UTF-8 assembly. DEL is ignored, as after
+ESC, after an intermediate and inside CSI. -/
 private def Vt.stepGround (v : Vt) (b : UInt8) : Vt :=
   if b == 0x1B then { v with pstate := .esc }
   else
     if b < 0x20 then v.ctl b
     else
-      if b < 0x80 then v.acceptChar b.toNat
+      if b == 0x7F then v
       else
-        if b < 0xC0 then
-          -- continuation byte
-          if v.u8need == 0 then v -- orphan: drop
-          else
-            -- clamp keeps §Bound trivial; valid sequences never reach it
-            let acc := min (v.u8acc * 64 + (b.toNat - 0x80)) 2097151
-            if v.u8need == 1 then
-              ({ v with
-                    u8need := 0, u8acc := 0 }).acceptChar
-                acc
-            else
-              { v with
-                u8need := v.u8need - 1, u8acc := acc }
+        if b < 0x80 then v.acceptChar b.toNat
         else
-          if b < 0xE0 then
-            { v with
-              u8need := 1, u8acc := b.toNat - 0xC0 }
-          else
-            if b < 0xF0 then
-              { v with
-                u8need := 2, u8acc := b.toNat - 0xE0 }
+          if b < 0xC0 then
+            -- continuation byte
+            if v.u8need == 0 then v -- orphan: drop
             else
-              if b < 0xF8 then
+              -- clamp keeps §Bound trivial; valid sequences never reach it
+              let acc := min (v.u8acc * 64 + (b.toNat - 0x80)) 2097151
+              if v.u8need == 1 then
+                ({ v with
+                      u8need := 0, u8acc := 0 }).acceptChar
+                  acc
+              else
                 { v with
-                  u8need := 3, u8acc := b.toNat - 0xF0 }
-              else v
+                  u8need := v.u8need - 1, u8acc := acc }
+          else
+            if b < 0xE0 then
+              { v with
+                u8need := 1, u8acc := b.toNat - 0xC0 }
+            else
+              if b < 0xF0 then
+                { v with
+                  u8need := 2, u8acc := b.toNat - 0xE0 }
+              else
+                if b < 0xF8 then
+                  { v with
+                    u8need := 3, u8acc := b.toNat - 0xF0 }
+                else v
 
 /-- After ESC. -/
 private def Vt.stepEsc (v : Vt) (b : UInt8) : Vt :=

@@ -13,39 +13,6 @@ open Linger.Core.Vt
 
 namespace PendingGlyph
 
-theorem set_read {α : Type} (r : Array α) (x : Nat) (d : α) :
-    r.setIfInBounds x (r.getD x d) = r := by
-  by_cases h : x < r.size <;> simp [Array.setIfInBounds, Array.getD, h]
-
-theorem mendAt_fixed {row : Row} {x : Nat} (h : ∀ j, PairOk row j) : row.mendAt x = row := by
-  have hhp : row.halfPair x = false :=
-    (halfPair_eq_false_iff row x).mpr
-      ⟨fun h2 => by
-        rw [(h x).1 h2]; rfl, (h x).2⟩
-  unfold Row.mendAt
-  rw [hhp, ite_eq_right (by decide)]
-  split
-  · rename_i h0
-    have hw0 : (row.at x).width = 0 := by simpa only [beq_iff_eq] using h0
-    obtain ⟨hne, hbase⟩ := (h x).2 hw0
-    have hcan : row.at x = Cell.shadow (row.at (x - 1)) := by
-      have hp := (h (x - 1)).1 hbase
-      rw [show x - 1 + 1 = x from by omega] at hp
-      exact hp
-    rw [← hcan]
-    exact set_read row x default
-  · rfl
-
-theorem mend_fixed {row : Row} (h : ∀ j, PairOk row j) : row.mend = row := by
-  unfold Row.mend
-  have key : ∀ l : List Nat, l.foldl (fun (r : Row) x => r.mendAt x) row = row := by
-    intro l
-    induction l with
-    | nil => rfl
-    | cons x xs ih =>
-      rw [List.foldl_cons, mendAt_fixed h]; exact ih
-  exact key _
-
 theorem pairs_congr {r s : Row} (h : ∀ j, PairOk r j) (hw : ∀ j, (s.at j).width = (r.at j).width)
     (hp : ∀ j, (s.at j).pen = (r.at j).pen) (hz : ∀ j, (r.at j).width = 0 → s.at j = r.at j) :
     ∀ j, PairOk s j := by
@@ -85,10 +52,10 @@ theorem pairs_set {row : Row} (h : ∀ j, PairOk row j) (x : Nat) (c : Cell) (hx
 
 theorem put_self (v : Vt) (x y : Nat) : v.putCell x y (v.getCell x y) = v := by
   unfold Vt.putCell Vt.getCell
-  rw [set_read]
+  rw [setIfInBounds_getD_self]
   unfold Vt.getRow
   dsimp only
-  rw [set_read]
+  rw [setIfInBounds_getD_self]
 
 theorem put_twice (v : Vt) (x y : Nat) (a b : Cell) (hy : y < v.grid.size) :
     (v.putCell x y a).putCell x y b = v.putCell x y b := by
@@ -98,9 +65,9 @@ theorem put_twice (v : Vt) (x y : Nat) (a b : Cell) (hy : y < v.grid.size) :
 
 theorem mendRow_fixed {v : Vt} {y : Nat} (h : ∀ j, PairOk (v.getRow y) j) : v.mendRow y = v := by
   unfold Vt.mendRow
-  rw [mend_fixed h]
+  rw [mend_of_pairOk h]
   unfold Vt.getRow
-  rw [set_read]
+  rw [setIfInBounds_getD_self]
 
 def markState (v : Vt) (x y : Nat) (ms : List Char) : Vt :=
   v.putCell x y { v.getCell x y with marks := ms }
@@ -249,7 +216,7 @@ theorem print_base (w : Vt) (hg : Good w) (hr : Renderable w) (h0 : w.g0Line = f
   rcases base_width hc hwidth with hw | hw
   · have hcell :
       ({ base := c.base, marks := [], width := 1, pen := w.pen } : Cell) = { c with marks := [] } :=
-      Cell.ext' rfl rfl hw.symm hp.symm
+      Cell.ext rfl rfl hw.symm hp.symm
     rw [print_narrow_eq hpc (hcw.trans hw) hins hpend, hclear, hcell]
     change ((markState w w.cursor.x w.cursor.y []).mendRow w.cursor.y).printAdvance 1 = _
     rw [markState_mend [] hy hx hpair hwidth]
@@ -259,7 +226,7 @@ theorem print_base (w : Vt) (hg : Good w) (hr : Renderable w) (h0 : w.g0Line = f
       omega
     have hcell :
       ({ base := c.base, marks := [], width := 2, pen := w.pen } : Cell) = { c with marks := [] } :=
-      Cell.ext' rfl rfl hw.symm hp.symm
+      Cell.ext rfl rfl hw.symm hp.symm
     have hshadow :
       (markState w w.cursor.x w.cursor.y []).getCell (w.cursor.x + 1) w.cursor.y =
         Cell.shadow c := by

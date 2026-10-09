@@ -68,7 +68,11 @@ def cprReply (v : Vt) (private_ : Bool) : Bytes :=
     digits (v.cursor.x + 1) ++
     [0x52]
 
-/-- XTVERSION reply: `DCS > | linger 0.1.0 ST`. -/
+/-- The version `linger version`, `TERM_PROGRAM_VERSION` and XTVERSION report. -/
+def versionNumber : String := "0.1.0"
+
+/-- XTVERSION reply: `DCS > | linger 0.1.0 ST`; `Tests/Terminal` ties these bytes to
+`versionNumber`. -/
 def versionReply : Bytes :=
   [ESC, 0x50, 0x3E, 0x7C, 0x6C, 0x69, 0x6E, 0x67, 0x65, 0x72, 0x20, 0x30, 0x2E, 0x31, 0x2E, 0x30,
     ESC, STFinal]
@@ -305,9 +309,7 @@ def maxChars : Nat := 500
 /-- Bound an OSC payload without splitting a Unicode scalar. Five hundred
 characters occupy at most 2000 UTF-8 bytes, below the parser's OSC limit even
 with its `2;` prefix. C1 controls are replaced as well as C0 and DEL. -/
-def payload (title : String) : List Char :=
-  title.toList.take maxChars |>.map fun c =>
-    if 0x80 ≤ c.toNat && c.toNat < 0xA0 then '\uFFFD' else Render.safeChar c
+def payload (title : String) : List Char := title.toList.take maxChars |>.map Render.textChar
 
 /-- Set the title, with all externally supplied content confined to the payload. -/
 def ansi (title : String) : Bytes := [0x1B, 0x5D, 0x32, 0x3B] ++ utf8s (payload title) ++ [0x07]

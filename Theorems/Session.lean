@@ -1317,7 +1317,9 @@ private theorem count_frame :
       b = 0x09 ∨ b = 0x0A →
         (l.flatMap
                 (fun kv =>
-                  Render.utf8s kv.1.toList ++ [0x09] ++ Render.utf8s kv.2.toList ++ [0x0A])).count
+                  Render.utf8s (kv.1.toList.map Render.textChar) ++ [0x09] ++
+                    Render.utf8s (kv.2.toList.map Render.textChar) ++
+                    [0x0A])).count
             b =
           l.length
   | [], _, _ => rfl
