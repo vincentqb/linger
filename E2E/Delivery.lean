@@ -6,6 +6,8 @@ public import Tests.Delivery
 
 public section
 
+/-! # E2E.Delivery — replay, framing and close deadlines through the real effect interpreter -/
+
 namespace E2E.Delivery
 
 open E2E.Harness
@@ -375,7 +377,7 @@ def childProbe (trigger : String) : IO UInt32 := do
 /-- Run the actual serving loop in a separate process with a private state dir.
 The delete hook signals child exit before normal transport cleanup. -/
 def serveProbe (dir : String) : IO UInt32 := do
-  let bin := (← IO.currentDir) / ".lake" / "build" / "bin" / "e2e"
+  let bin ← IO.appPath
   serve "tail" dir [bin.toString, "--delivery-child", s!"{dir}/go"] (fun _ => pure ())
       (IO.FS.writeFile s!"{dir}/exited" "") (pure (some (Linger.Core.Vt.Vt.init 20 5, dir, [])))
   return 0
@@ -383,7 +385,7 @@ def serveProbe (dir : String) : IO UInt32 := do
 def serveTail (dir : String) : IO Nat := do
   let dir := s!"{dir}/serve"
   IO.FS.createDirAll dir
-  let bin := (← IO.currentDir) / ".lake" / "build" / "bin" / "e2e"
+  let bin ← IO.appPath
   let server ←
     IO.Process.spawn
         { cmd := bin.toString, args := #["--delivery-server", dir]
@@ -535,17 +537,13 @@ def run (only : Option String := none) : IO UInt32 := do
   if let some name := only then
     if !(checks.any (·.1 == name)) then
       throw (IO.userError s!"unknown delivery check '{name}'")
-  -- Keep Unix socket paths independent of the checkout's length.
-  let dir := System.FilePath.mk s!"/tmp/linger-delivery-{← getpid}"
-  IO.FS.createDirAll dir
+  -- `Env.make`'s `/tmp` directory keeps Unix socket paths independent of the
+  -- checkout's length.
+  let e ← Env.make "delivery"
   let mut failures := 0
-  try
-    for (name, check) in checks do
-      if only.isNone || only == some name then
-        failures := failures + (← check dir.toString)
-  finally
-    IO.FS.removeDirAll dir
-  IO.println s!"FAILURES: {failures}"
-  return if failures == 0 then 0 else 1
+  for (name, check) in checks do
+    if only.isNone || only == some name then
+      failures := failures + (← check e.dir)
+  verdict e failures
 
 end E2E.Delivery

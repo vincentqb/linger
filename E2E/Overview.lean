@@ -8,20 +8,16 @@ public section
 /-! # E2E.Overview — explicit `linger ls` prints a list and exits
 
 The overview must be a plain, pipeable, self-terminating listing that never
-blocks on stdin. Every form runs through `Env.cliTimeout`: a picker that waited
-on redirected stdin would fail here, not hang the gate. `E2E.Manager` separately
-checks bare help in every stream mode, explicit terminal selection and `ls`
-with both streams on a terminal.
+blocks on stdin. The two exit checks run through `Env.cliTimeout`: a picker that
+waited on redirected stdin would fail here, not hang the gate. `E2E.Manager`
+separately checks bare help in every stream mode, explicit terminal selection and
+`ls` with both streams on a terminal.
 Selector acceptance chooses either an existing target or an explicit creation
 row (`Theorems/Picker.lean`).
 
-WHAT THE PORT STRENGTHENS. The empty-state check compared against the literal
-`'no sessions'`; `Cli.cmdList` writes `ByteArray.mk (humanListing rows).toArray`
-straight to stdout, so `humanListing []` **is** the empty-state line and the suite
-can no longer drift from its wording. The porcelain check compared two substrings;
-it now parses through `records`, the same reader `Env.field` and `Core.Remote` use
-— the comment on the original line called it "the remote-parse contract", and a
-substring test does not test parsing. -/
+`Cli.cmdList` writes `ByteArray.mk (humanListing rows).toArray` straight to stdout,
+so `humanListing []` **is** the empty-state line and the suite cannot drift from
+its wording. -/
 
 namespace E2E.Overview
 

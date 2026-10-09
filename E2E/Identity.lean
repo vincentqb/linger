@@ -17,6 +17,10 @@ def splitEnv (e : Env) (runtime : Nat) : Array (String × Option String) :=
   #[("LINGER_DIR", none), ("XDG_RUNTIME_DIR", some s!"{e.dir}/r{runtime}"),
     ("XDG_STATE_HOME", some s!"{e.dir}/state")]
 
+/-- A third runtime directory with its own state directory. -/
+def isolatedEnv (e : Env) : Array (String × Option String) :=
+  (splitEnv e 3).push ("XDG_STATE_HOME", some s!"{e.dir}/state-other")
+
 def run : IO UInt32 := do
   let e ← Env.make "identity"
   let mut f := 0
@@ -117,7 +121,7 @@ def run : IO UInt32 := do
         (←
           expect
               ((records otherListing).contains ("state", "live") &&
-                (records otherListing).contains ("status", "unknown"))
+                (records otherListing).contains ("status", Linger.Core.Status.name .unknown))
               "listing does not offer another runtime's owned checkpoint as resumable")
     let (otherKillRc, _, _) ← e.cliEnv (splitEnv e 2) #["kill", "work"]
     IO.sleep 250
@@ -129,7 +133,7 @@ def run : IO UInt32 := do
               (otherKillRc != 0 && firstAfter.find? (·.1 == "pid") == firstPid &&
                 (← System.FilePath.pathExists checkpoint))
               "commands in the other runtime cannot delete the live owner's saved state")
-    let isolated := (splitEnv e 3).push ("XDG_STATE_HOME", some s!"{e.dir}/state-other")
+    let isolated := isolatedEnv e
     let (isolatedRc, _, _) ← e.cliEnv isolated #["run", "work", "true"]
     let separate := records (← e.cliEnv isolated #["info", "work"]).2.1
     let separatePid := separate.find? (·.1 == "pid")
@@ -163,9 +167,7 @@ def run : IO UInt32 := do
     for runtime in [1, 2] do
       let _ ← e.cliEnv (splitEnv e runtime) #["kill", "work"]
       pure ()
-    let _ ←
-      e.cliEnv ((splitEnv e 3).push ("XDG_STATE_HOME", some s!"{e.dir}/state-other"))
-          #["kill", "work"]
+    let _ ← e.cliEnv (isolatedEnv e) #["kill", "work"]
     let _ ←
       waitFor 3000 do
           return !(← System.FilePath.pathExists s!"{e.dir}/a_b.sock") &&

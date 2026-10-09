@@ -33,6 +33,17 @@ def importProbe (args : List String) : IO UInt32 := do
     IO.eprintln "usage: e2e --import-probe ABSOLUTE_EXECUTABLE [SAVE]"
     return 98
 
+/-- A recipe's effective lines: trimmed, without blank or `comment` lines. A
+missing file has none, so its check fails rather than throwing. -/
+private def recipeLines (file : System.FilePath) (comment : String) : IO (List String) := do
+  let content ←
+    try
+      IO.FS.readFile file
+    catch _ =>
+      pure ""
+  return (content.splitOn "\n").map (·.trimAscii.toString) |>.filter fun line =>
+      !line.isEmpty && !line.startsWith comment
+
 private def configChecks : IO Nat := do
   let root := (← IO.currentDir) / "recipes"
   let mut f := 0
@@ -40,14 +51,7 @@ private def configChecks : IO Nat := do
     [("ghostty_config", "#", "command = direct:linger attach", "Ghostty"),
       ("kitty.conf", "#", "shell linger attach", "Kitty"),
       ("wezterm.lua", "--", "return { default_prog = { 'linger', 'attach' } }", "WezTerm")] do
-    let content ←
-      try
-        IO.FS.readFile (root / file)
-      catch _ =>
-        pure ""
-    let settings :=
-      (content.splitOn "\n").map (·.trimAscii.toString) |>.filter fun line =>
-        !line.isEmpty && !line.startsWith comment
+    let settings ← recipeLines (root / file) comment
     f :=
       f + (← expect (settings == [setting]) s!"{label} native configuration launches linger attach")
   return f
@@ -56,14 +60,7 @@ private def configChecks : IO Nat := do
 already rendered bytes; all assertions and case selection stay in Lean. -/
 private def fishPromptChecks (e : Env) (home data : String) : IO Nat := do
   let recipe := (← IO.currentDir) / "recipes" / "fish_prompt.fish"
-  let content ←
-    try
-      IO.FS.readFile recipe
-    catch _ =>
-      pure ""
-  let settings :=
-    (content.splitOn "\n").map (·.trimAscii.toString) |>.filter fun line =>
-      !line.isEmpty && !line.startsWith "#"
+  let settings ← recipeLines recipe "#"
   let mut f ←
     expect
         (settings ==
@@ -225,26 +222,23 @@ exit "$LINGER_TMUX_RC"
       ("LINGER_TMUX_DIRECTORY", some ""), ("LINGER_TMUX_RC", some "0"), ("LINGER_TMUX_WAIT", none)]
 
 /-- Invoke the public import command through the actual absolute linger binary.
-HOME and XDG data are fixture-owned so defaults cannot read user saves. -/
+HOME and XDG data are fixture-owned so defaults cannot read user saves. `cmd` and
+`verb` select another executable and its leading arguments. -/
 def runImport (e : Env) (home data : String) (args : Array String)
-    (extra : Array (String × Option String) := #[]) : IO (UInt32 × String × String) := do
+    (extra : Array (String × Option String) := #[]) (cmd : String := e.bin)
+    (verb : Array String := #["tmux", "import"]) : IO (UInt32 × String × String) := do
   let isolated ← tmuxFixtureEnv (System.FilePath.mk e.dir)
   let out ←
     IO.Process.output
-        { cmd := e.bin, args := #["tmux", "import"] ++ args,
+        { cmd, args := verb ++ args,
           env :=
             e.procEnv ++ isolated ++ #[("HOME", some home), ("XDG_DATA_HOME", some data)] ++ extra }
   return (out.exitCode, out.stdout, out.stderr)
 
+/-- The same import through this test binary's recorder mode. -/
 private def runImportProbe (e : Env) (home data executable : String) (args : Array String)
     (extra : Array (String × Option String) := #[]) : IO (UInt32 × String × String) := do
-  let isolated ← tmuxFixtureEnv (System.FilePath.mk e.dir)
-  let out ←
-    IO.Process.output
-        { cmd := (← IO.appPath).toString, args := #["--import-probe", executable] ++ args,
-          env :=
-            e.procEnv ++ isolated ++ #[("HOME", some home), ("XDG_DATA_HOME", some data)] ++ extra }
-  return (out.exitCode, out.stdout, out.stderr)
+  runImport e home data args extra (← IO.appPath).toString #["--import-probe", executable]
 
 private def absoluteExecutableChecks (e : Env) (home data : String) : IO Nat := do
   let root := System.FilePath.mk e.dir / "absolute-import"
@@ -787,9 +781,14 @@ def run : IO UInt32 := do
   let resumableSave := root / "resumable-save"
   IO.FS.writeFile resumableSource "MUST-NOT-RUN\n"
   let owner ← e.spawn #["attach", "resumable-w1-p0"]
-  IO.sleep 800
   owner.type "echo CHECKPOINTED\n"
-  IO.sleep 500
+  -- Capture only once the socket exists: an offline capture holds the session
+  -- lock, and a daemon starting at that moment cannot claim the name.
+  let echoed ←
+    waitFor 5000 do
+        if !(← System.FilePath.pathExists s!"{e.dir}/resumable-w1-p0.sock") then
+          return false
+        return has (← e.out #["capture", "resumable-w1-p0"]) "CHECKPOINTED"
   owner.bye
   let checkpointed ←
     waitFor 3000
@@ -810,7 +809,7 @@ def run : IO UInt32 := do
     f +
       (←
         expect
-            (checkpointed && crashed && src == 0 && resumableState == .resumable &&
+            (echoed && checkpointed && crashed && src == 0 && resumableState == .resumable &&
               !(← System.FilePath.pathExists resumableSink))
             "linger tmux import skips a resumable checkpoint instead of reviving and replaying it")
   -- Validate the complete pane set before the first daemon can be created.

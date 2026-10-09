@@ -30,11 +30,7 @@ BYTES, AND WHERE THEY COME FROM. The framing is the implementation's: ST is
 the finals `Vt.escFinal` routes into the payload-free `.str` state. The payload
 bodies cannot be derived from anything — nothing in this repo emits kitty or sixel,
 by design, since the emulator's whole job here is to skip them — so they stay
-literals, which makes them fixture data rather than a stale copy of an emitter.
-
-The SIGWINCH reporter is a `sh` trap rather than the Python one the original used:
-this suite's whole point is that the tree carries no Python, and a trap plus a
-short sleep loop is responsive enough against the 1000 ms+ waits below. -/
+literals, which makes them fixture data rather than a stale copy of an emitter. -/
 
 namespace E2E.Graphics
 
@@ -135,8 +131,7 @@ def run : IO UInt32 := do
   -- `sleep` is not interruptible, so a bare `trap; while :; do sleep; done` never
   -- runs the handler — measured, it caught zero signals. POSIX `wait` IS
   -- interrupted by a trapped signal, so the sleep goes in the background and the
-  -- shell blocks in `wait`: that catches every WINCH, and it is why this is a
-  -- shell trap rather than the Python reporter the original suite shelled out to.
+  -- shell blocks in `wait`: that catches every WINCH.
   let reporter := s!"trap 'printf W >> {wlog.toString}' WINCH; while :; do sleep 1 & wait; done\r"
   let w1 ← e.spawn #["attach", "winch"] 80 24
   IO.sleep 1200

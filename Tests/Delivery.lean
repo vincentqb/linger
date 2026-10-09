@@ -13,7 +13,7 @@ open Linger.Core
 /-- Alternating truecolour and every attribute force a large, valid two-screen
 repaint. Only this test friend constructs the cells; the socket suite receives
 an ordinary sealed terminal through checkpoint validation. -/
-def largeScreen (marks : Bool := false) : Vt.Vt :=
+private def largeScreen (marks : Bool := false) : Vt.Vt :=
   let cols := if marks then 1000 else 400
   let grid :=
     (Array.range 100).map fun _ =>

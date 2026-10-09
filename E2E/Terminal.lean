@@ -26,14 +26,14 @@ decoded by one pair of functions, so the two sides cannot drift.
 WHAT IS DERIVED, AND WHAT CANNOT BE:
 
 * the query is `Render.csiPlain 0x63` and the expected reply is what
-  `Terminal.classifyCsi` ITSELF answers for it, not a copy of the Python's
-  `b"\x1b[?1;2c"`. The tie cannot go vacuous: a query that stopped being owned
-  collapses the expectation to `[]`, which the probe's non-empty reply then fails;
+  `Terminal.classifyCsi` ITSELF answers for it, not a copied byte literal. The
+  tie cannot go vacuous: a query that stopped being owned collapses the
+  expectation to `[]`, which the probe's non-empty reply then fails;
 * the hostile XTGETTCAP request is built from the mediator's own framing, and its
   expected answer is `Terminal.xtgetcapReply` over that request's payload — the
   emitter performing its own filtering. The CR/LF check is deliberately NOT
   derived: it is about the bytes that actually reached the child, which is exactly
-  the half `feed_replies_no_newline` cannot see;
+  the half `feed_replies_noNl` cannot see;
 * the stable child profile — `TERM=xterm-256color`, `TERM_PROGRAM=linger`,
   `TERM_PROGRAM_VERSION=0.1.0` — could NOT be tied to anything. It is a literal
   array inside `Daemon.serve`'s `spawnPty` call, not an exported value, so a
@@ -111,19 +111,9 @@ def fromHexChars : List Char → Option (List UInt8)
 
 def fromHex (s : String) : Option (List UInt8) := fromHexChars s.toList
 
-/-- Poll-wait for a file to appear. Both sides use it: the probe waits for its
-trigger, the parent for `ready` and `result`. -/
-def waitFor (path : String) (ms : Nat := 8000) : IO Bool := do
-  let deadline := (← monotonicMs) + ms
-  let mut ok ← System.FilePath.pathExists (System.FilePath.mk path)
-  while !ok && (← monotonicMs) < deadline do
-    IO.sleep 30
-    ok ← System.FilePath.pathExists (System.FilePath.mk path)
-  return ok
-
-/-- `shutil.which`: the first `$PATH` entry holding `name`. Existence rather than
-`X_OK` — the only caller is a "is fish installed at all" gate, and a
-non-executable file called `fish` on `PATH` is not a case worth a syscall. -/
+/-- The first `$PATH` entry holding `name`. Existence rather than `X_OK` — the only
+caller is a "is fish installed at all" gate, and a non-executable file called
+`fish` on `PATH` is not a case worth a syscall. -/
 def whichBin (name : String) : IO (Option String) := do
   let path := (← IO.getEnv "PATH").getD ""
   for d in path.splitOn ":" do
@@ -141,13 +131,13 @@ def whichBin (name : String) : IO (Option String) := do
 Raw mode first, so nothing is echoed and the reply is not line-buffered; the query
 goes out with `writeAll` on fd 1 rather than `IO.print`, because a buffered write
 would not reach the pty until flush. Every failure is surfaced to the parent
-through the result file, exactly as the Python's `except` did — an exception here
-would otherwise look identical to a mediator that never answered. -/
+through the result file — an exception here would otherwise look identical to a
+mediator that never answered. -/
 def probe (resultPath readyPath triggerPath : String) : IO UInt32 := do
   try
     let _ ← termRaw stdinFd
     IO.FS.writeFile (System.FilePath.mk readyPath) "ready"
-    unless (← waitFor triggerPath 8000) do
+    unless (← waitFor 8000 (System.FilePath.pathExists triggerPath)) do
       throw (IO.userError "trigger timeout")
     let hex ← IO.getEnv "PROBE_QUERY_HEX"
     let query := (hex.bind fromHex).getD da1Query
@@ -171,8 +161,7 @@ def probe (resultPath readyPath triggerPath : String) : IO UInt32 := do
             reply := reply ++ bs.toList
       else if !reply.isEmpty then
         reading := false
-    -- one `k<TAB>v` record per fact; an ABSENT variable writes no record, which is
-    -- the honest reading of `os.environ.get` returning None
+    -- one `k<TAB>v` record per fact; an ABSENT variable writes no record
     let mut txt := s!"reply\t{toHex reply}\n"
     for k in ["TERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"] do
       match ← IO.getEnv k with
@@ -196,9 +185,8 @@ structure Case where
   termProgram : Option String := none
   termVersion : Option String := none
   clientOut : List ByteArray := []
-  /-- Why the case produced nothing, if it did. The Python carried this in the
-  result dict and then printed it nowhere; here it goes to stderr, which
-  `scripts/e2e.sh` folds into the log without counting it as a check. -/
+  /-- Why the case produced nothing, if it did. It goes to stderr, which the suite
+  log keeps without counting it as a check. -/
   err : Option String := none
 
 /-- One case: a session whose child IS the probe, `clients` presentation clients
@@ -212,9 +200,8 @@ def runCase (e : Env) (index clients : Nat) (inheritedTerm : Option String)
   let ready := (caseDir / "ready").toString
   let trigger := (caseDir / "trigger").toString
   -- The DAEMON's environment, which the child inherits and the mediator must
-  -- override. `("TERM", inheritedTerm)` is the Python's two branches in one
-  -- expression: `some v` sets it, `none` REMOVES it — which is what
-  -- `env.pop("TERM", None)` did, and what case 0 needs.
+  -- override. In `("TERM", inheritedTerm)`, `some v` sets it and `none` REMOVES
+  -- it, which is what case 0 needs.
   let mut env :=
     e.procEnv ++
       #[("TERM_PROGRAM", some "inherited-program"), ("TERM_PROGRAM_VERSION", some "9.9.9"),
@@ -234,7 +221,7 @@ def runCase (e : Env) (index clients : Nat) (inheritedTerm : Option String)
           stdout := .null, stderr := .null }
   let mut c : Case := {}
   let mut cls : Array Client := #[]
-  if !(← waitFor ready) then
+  if !(← waitFor 8000 (System.FilePath.pathExists ready)) then
     c := { c with err := some "probe did not become ready" }
   else
     for _ in [0:clients] do
@@ -243,7 +230,7 @@ def runCase (e : Env) (index clients : Nat) (inheritedTerm : Option String)
       IO.sleep 350
       let _ ← drain cl.fd 150 -- discard the initial restore
     IO.FS.writeFile (System.FilePath.mk trigger) "go"
-    if !(← waitFor result) then
+    if !(← waitFor 8000 (System.FilePath.pathExists result)) then
       c := { c with err := some "probe did not answer" }
     else
       let txt ← IO.FS.readFile (System.FilePath.mk result)
@@ -259,12 +246,7 @@ def runCase (e : Env) (index clients : Nat) (inheritedTerm : Option String)
           clientOut := outs, err := field "error" }
       -- the daemon exits when its child does (`.childExited` → `.exit`), so this
       -- is a wait and not a kill
-      let deadline := (← monotonicMs) + 5000
-      let mut code ← daemon.tryWait
-      while code.isNone && (← monotonicMs) < deadline do
-        IO.sleep 50
-        code ← daemon.tryWait
-      if code.isNone then
+      if (← waitProcess daemon 5000).isNone then
         IO.eprintln s!"note: daemon '{name}' still running after the probe answered"
   -- cleanup, whatever happened above: SIGTERM (`Child.kill`), then SIGKILL.
   -- `Posix.alive` (a `kill(pid, 0)`) rather than a second `tryWait`: `tryWait`
@@ -276,7 +258,7 @@ def runCase (e : Env) (index clients : Nat) (inheritedTerm : Option String)
     if ← Linger.Posix.alive daemon.pid then
       Linger.Posix.kill daemon.pid 9
   for cl in cls do
-    cl.bye (sendDetach := false) -- close + reap; no detach key, as the Python
+    cl.bye (sendDetach := false) -- close + reap; no detach key
   return c
 
 def run : IO UInt32 := do
@@ -356,7 +338,9 @@ def run : IO UInt32 := do
   let _ ← e.cliEnv fishEnv #["run", "fish-regression", "printf", "ok", ">", marker]
   f :=
     f +
-      (← expect (← waitFor marker 6000) "fish regression: detached command executes before attach")
+      (←
+        expect (← waitFor 6000 (System.FilePath.pathExists marker))
+            "fish regression: detached command executes before attach")
   let _ ← e.cliEnv fishEnv #["kill", "fish-regression"]
   verdict e f
 

@@ -11,19 +11,12 @@ Ported from `tests/remote_live_test.py`. Unlike `E2E.Remote` — which puts a fa
 `ssh` on `PATH`, is hermetic, and is in the gate — this needs an actual reachable
 host running a real `linger`, so it is **deliberately not in `scripts/e2e.sh`**:
 
-    LINGER_REMOTE=gpu2 ./lake exe e2e remote-live
+    LINGER_REMOTE=<host> ./lake exe e2e remote-live
 
 Assumes the remote has `linger` on its non-interactive `PATH` and two live sessions
-named `alpha` and `beta`. It is the only suite whose preconditions live outside the
-repo, which is exactly why it is opt-in — a suite that cannot pass on a fresh
-checkout must not be able to fail the gate.
-
-WHAT THE PORT STRENGTHENS. The Python matched `'name\talpha'` as a substring of the
-remote's porcelain; this parses it with `Linger.Core.Remote.parse` — the same
-reader `Cli.cmdList` uses on a real peer's reply — so the check now exercises
-the actual remote-parse contract instead of the bytes it happens to be built from.
-`SSH_AUTH_SOCK` is still removed: `linger` shells out to `ssh`, and a wedged local
-agent would hang that child. The host key comes from `~/.ssh/config`. -/
+named `alpha` and `beta`; the host key comes from `~/.ssh/config`. It is the only
+suite whose preconditions live outside the repo, which is exactly why it is opt-in —
+a suite that cannot pass on a fresh checkout must not be able to fail the gate. -/
 
 namespace E2E.RemoteLive
 
@@ -46,8 +39,10 @@ def stripCsi (s : String) : String :=
   String.ofList (go s.toList [])
 
 def run : IO UInt32 := do
+  let some host ← IO.getEnv "LINGER_REMOTE" |
+    IO.eprintln "e2e remote-live: set LINGER_REMOTE=<host>";
+    return 2
   let e ← Env.make "live"
-  let host := (← IO.getEnv "LINGER_REMOTE").getD "gpu2"
   let mut f := 0
   IO.println s!"driving local overview + remote attach against real host: {host}"
   -- `SSH_AUTH_SOCK` removed for every child (`("K", none)` is a removal), so a

@@ -12,34 +12,15 @@ public section
 Ported from `tests/attach_test.py`, the largest suite: the core session lifecycle
 plus the two things a client owes the user's terminal on the way in and out.
 
-WHAT THE PORT TIGHTENED — read before adding or changing a check:
+The hand-back is compared against the emitter, not a copy of it: every expected
+sequence is `Render.modeSet` / `csiNum` / `csiPlain` / `escSeq` / `escCharset` of
+the same argument `leaveAnsi` passes, and the ST check also requires `leaveAnsi`
+**verbatim** (`hasBytes back leaveAnsi`). The per-sequence loop is kept for failure
+localisation: green sequence lines plus a red `verbatim` line means the right
+sequences in the wrong order or spacing, which one whole-blob comparison could not
+tell you.
 
-* **the hand-back is compared against the emitter, not a copy of it.** The Python
-  spelled twelve escape sequences as byte literals and asserted each appeared in
-  the detach epilogue. Every one is now `Render.modeSet` / `csiNum` / `csiPlain` /
-  `escSeq` / `escCharset` of the same argument `leaveAnsi` passes, so the loop
-  cannot drift from what the implementation emits — and the ST check additionally
-  requires `leaveAnsi` **verbatim** (`hasBytes back leaveAnsi`, the `E2E.Watch`
-  move). The per-sequence loop is kept for failure localisation: green sequence
-  lines plus a red `verbatim` line means the right sequences in the wrong order or
-  spacing, which one whole-blob comparison could not tell you;
-* `back.index(b'\x1b\\') == 0` **raised** `ValueError` when the ST was absent —
-  the assertion crashed the suite instead of failing it, losing the `FAILURES:`
-  verdict. `startsWithBytes` is total;
-* the two burst budgets are `Session.outputChunk` and `Daemon.outbufCap`, not the
-  literals `65536` and `4194304` the Python's own message spelled twice;
-* the ED-2/ED-3 needles are `csiNum 2 0x4A` / `csiNum 3 0x4A` — `restoreBody`'s
-  clean-slate clear and `scrollbackAnsi`'s ring-clear, the two emitters whose
-  ORDER the check is about;
-* the geometry is set **before** exec (`Env.spawn` → `spawnPty`), so the
-  `pty.fork()`-then-`ioctl(TIOCSWINSZ)` race against the client's own startup
-  `winsizeGet` is gone;
-* check 2 was **vacuous**: `expect(wpid == pid or drain(fd, 1.0) is not None, …)`
-  — a Python `bytes` is never `None`, so the disjunction was always true and the
-  check could not fail. It is now the honest reading: the child was reaped.
-  (AGENTS.md: a test that cannot fail is worthless.)
-
-WHAT COULD NOT BE DERIVED: the printf'd full-screen-app state in check 10 is the
+WHAT COULD NOT BE DERIVED: the printf'd full-screen-app state in check 9 is the
 *application's* bytes, not linger's, so `modeSet 1049 true` and `csiNum2 5 10 0x72`
 are used only as spellers for two standard sequences — that is not a tie to an
 emitter, and it should not be read as one. -/
@@ -97,9 +78,9 @@ def closeFeedback (e : Env) : IO Nat := do
     IO.FS.removeFile path
   return failures
 
-/-- The thirteen hazards `leaveAnsi` undoes, each spelled with the emitter's own
-primitive and the same argument `leaveAnsi` passes it — so this list cannot become
-a stale copy of the emitter. Every group must appear in the epilogue.
+/-- The hazards `leaveAnsi` undoes, each spelled with the emitter's own primitive
+and the same argument `leaveAnsi` passes it — so this list cannot become a stale
+copy of the emitter. Every group must appear in the epilogue.
 
 From `Render.leaveAnsi`'s docstring, which is where the *reasons* live: a shell
 that inserts instead of overwriting, addresses relative to a stale region, does
@@ -147,6 +128,9 @@ def tcScript : String :=
     "  i=$((i+1))\n" ++
     "done\n"
 
+/-- A `find` result in a failure label: `-1` for absent. -/
+private def idxStr (o : Option Nat) : String := (o.map toString).getD "-1"
+
 def run : IO UInt32 := do
   let e ← Env.make "attach"
   let mut f ← closeFeedback e
@@ -165,12 +149,8 @@ def run : IO UInt32 := do
   c1.type "echo marker-$((21+21))\r"
   let out ← drain c1.fd 2000
   f := f + (← expect (hasText out "marker-42") "attach: command executes, output streams back")
-  -- 2. ctrl-\ detaches; the client exits but the session lives.
-  --
-  -- The Python here was `wpid == pid or drain(fd, 1.0) is not None` — and a
-  -- `bytes` is never `None`, so the right-hand side was always true and the check
-  -- could not fail. This is what it meant to say: WNOHANG waitpid saw the child
-  -- gone (`Client.reap` returns the status; `-1` is "still running").
+  -- 2. ctrl-\ detaches; the client exits but the session lives. WNOHANG waitpid
+  -- sees the child gone (`Client.reap` returns the status; `-1` is "still running").
   c1.detach
   IO.sleep 500
   let st1 ← c1.reap 1500
@@ -230,18 +210,8 @@ def run : IO UInt32 := do
             "shell exit clears the title on both attached terminals")
   c2.bye (sendDetach := false)
   c3.bye (sendDetach := false)
-  -- 7. wait returns the exit status.
-  --
-  -- The first attempt is kept because the Python kept it, and its comment is the
-  -- reason the second one is shaped the way it is: `run` spawns a shell and TYPES
-  -- the command, so the shell itself does not exit with the command's status —
-  -- `sh -c "sleep 0.3; exit 7"` runs as a child and the shell survives it. The
-  -- command has to REPLACE the shell, hence `exec` in `w2`. (`run` types its argv
-  -- space-joined, so the quoting inside the single argv element below is parsed by
-  -- the session's own shell, exactly as in the Python.)
-  let _ ← e.cli #["run", "w1", "sh -c \"sleep 0.3; exit 7\""]
-  let _ ← e.cli #["kill", "w1"]
-  IO.sleep 300
+  -- 7. wait returns the exit status. `run` types its command into the session
+  -- shell, so the command must `exec` to make its status the shell's.
   let _ ← e.cli #["run", "w2", "exec sh -c \"sleep 0.5; exit 7\""]
   let t0 ← Linger.Posix.monotonicMs
   let (rc, _, _) ← e.cli #["wait", "w2"]
@@ -373,10 +343,10 @@ def run : IO UInt32 := do
   -- decoration: a program that died mid-OSC/DCS (a crashed sixel writer, a
   -- truncated title) leaves the receiver's parser in a string state that would
   -- swallow this entire stream, exactly as it swallowed `restore` before cd7c17b.
-  -- The `hasBytes … leaveAnsi` conjunct is the port's addition: the groups
-  -- above can all be present in the wrong order or with bytes wedged between
-  -- them, and `leave_canonical_all` proves the CONTENTS while no theorem can see
-  -- that the client actually writes them.
+  -- The `hasBytes … leaveAnsi` conjunct is needed because the groups above can
+  -- all be present in the wrong order or with bytes wedged between them, and
+  -- `leave_canonical_all` proves the CONTENTS while no theorem can see that the
+  -- client actually writes them.
   f :=
     f +
       (←
@@ -414,19 +384,12 @@ def run : IO UInt32 := do
   -- 10. LINGER_NO_DETACH_KEY=1 disables the ctrl-\ detach key (help promise, and
   --     the mirror of check 2). With the env var set, ctrl-\ is ordinary input: the
   --     client stays attached and the byte reaches the session's pty.
-  --
-  -- `Env.spawn` cannot carry a third env entry, so this one goes through
-  -- `spawnPty` directly with `e.ptyEnv` extended — the same call `Env.spawn`
-  -- makes, and still with the winsize set before exec.
-  let (ndPid, ndFd) ←
-    Linger.Posix.spawnPty cols rows "" e.bin #["attach", "nd"]
-        (e.ptyEnv.push "LINGER_NO_DETACH_KEY=1")
-  let nd : Client := { pid := ndPid, fd := ndFd }
+  let nd ← e.spawnEnv #["LINGER_NO_DETACH_KEY=1"] #["attach", "nd"] cols rows
   IO.sleep 800
   let _ ← drain nd.fd 300
   nd.detach -- would detach if the key were enabled
   IO.sleep 500
-  -- `-1` from WNOHANG waitpid is "still running", which is Python's `wpid == 0`
+  -- `-1` from WNOHANG waitpid is "still running"
   f :=
     f +
       (←
@@ -459,8 +422,7 @@ def run : IO UInt32 := do
   let _ ← drain s1.fd 1200
   -- exact-line membership, not substring: the typed line the tty echoed back
   -- contains `sbline-$i`, and only the shell's output lines are the markers
-  -- themselves. That is what Python's `x in <list of lines>` meant, and `has`
-  -- would have weakened it.
+  -- themselves; `has` would weaken it.
   let histS := lines (← e.out #["capture", "--history", "sb"])
   f :=
     f +

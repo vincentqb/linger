@@ -14,14 +14,11 @@ while detached marks it unread again. Both go through the counter pair in
 `Session.State` (`outSeq`/`lookSeq`), and this pins them against the rendered
 porcelain rather than against the internals.
 
-WHAT THE PORT STRENGTHENS. The Python compared the porcelain column against the
-string literals `'wants-you'` and `'idle'`, and the human column against a
-hardcoded braille glyph. All three are `Linger.Core.Status`' own output, so
-renaming a state would have left the assertions passing against a column that no
-longer exists. Here the comparison is against the `Status` constructors (through
-`Env.status`, which reads `ofName`) and against `Status.icon` itself, so the same
-rename is a compile error. `E2E.Watch` covers the one transition this suite never
-exercised: `linger attach --read-only` also marks a session seen. -/
+The comparisons are against the `Status` constructors (through `Env.status`, which
+reads `ofName`) and against `Status.icon` itself, so renaming a state is a compile
+error rather than an assertion passing against a column that no longer exists.
+`E2E.Watch` covers the one transition this suite never exercises:
+`linger attach --read-only` also marks a session seen. -/
 
 namespace E2E.Status
 
@@ -172,8 +169,8 @@ def run : IO UInt32 := do
   IO.sleep 1200
   f := f + (← expect ((← e.status "st") == Status.wantsYou) "output while away reads wants-you")
   -- `behind` is `toString (Session.behind s)`, a decimal `Nat`, so parse it
-  -- rather than compare the string to "0" as the Python did: `!= "0"` also
-  -- passes on a field that stopped being a number at all.
+  -- rather than compare the string to "0": `!= "0"` also passes on a field that
+  -- stopped being a number at all.
   let behind := ((← e.field "st" "behind").getD "0").toNat?.getD 0
   f := f + (← expect (behind > 0) "behind counts unseen output")
   -- 4. the human column renders one glyph for it — `Status.icon`'s own glyph,

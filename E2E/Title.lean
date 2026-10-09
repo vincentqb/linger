@@ -4,6 +4,7 @@ public import E2E.Harness
 public import Linger.Core.Terminal
 public import Linger.Core.Title
 public import Linger.Runtime.Client
+import Linger.Core.Remote
 
 public section
 
@@ -140,13 +141,11 @@ private def titleIs (title : String) (s : Receiver) : Bool :=
 
 private def since (s : Receiver) (start : Nat) : ByteArray := s.bytes.extract start s.bytes.size
 
-private def quote (text : String) : String := "'" ++ text.replace "'" "'\\''" ++ "'"
-
 private def startProbe (e : Env) (name : String) : IO Bool := do
   let self ← IO.appPath
   let (code, _, _) ←
     e.cliEnv #[("ENV", none), ("BASH_ENV", none)]
-        #["run", name, s!"exec {quote self.toString} --title-probe"]
+        #["run", name, s!"exec {Linger.Core.Remote.shellQuote self.toString} --title-probe"]
   let ready ←
     waitFor 4000 do
         return has (← e.out #["capture", name]) "TITLE-READY"

@@ -913,7 +913,7 @@ def runWith (binary : String) : IO UInt32 := do
         [(s!"tmux ls discovers {label} using only the read-only current-server query", fun f =>
             discovery f config)]
   let mut failures := 0
-  for (index, (label, body)) in cases.zipIdx |>.map (fun (item, i) => (i, item)) do
+  for ((label, body), index) in cases.zipIdx do
     failures := failures + (← check root bin.toString index label body)
   if failures == 0 then
     IO.FS.removeDirAll root

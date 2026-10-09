@@ -29,18 +29,29 @@ private def command (cwd : System.FilePath) (cmd : String) (args : Array String)
 private def git (cwd : System.FilePath) (args : Array String) : IO String :=
   command cwd "git" (#["-c", "core.autocrlf=false", "-c", "core.safecrlf=false"] ++ args)
 
-private def check (script : String) (cwd : System.FilePath) (path diagnostic label : String) :
-    IO Nat := do
+/-- Run the script from `cwd` and judge it: success, or exit 1 naming `path` and
+`diagnostic`. `also` is read after the script runs and must hold too. -/
+private def check (script : String) (cwd : System.FilePath) (path diagnostic label : String)
+    (also : IO Bool := pure true) : IO Nat := do
   let out ←
     IO.Process.output
         { cmd := "sh", args := #[script], cwd := some cwd.toString, env := fixtureEnv }
-  let ok :=
+  let verdict :=
     if diagnostic.isEmpty then out.exitCode == 0
     else out.exitCode == 1 && has out.stderr path && has out.stderr diagnostic
+  let ok := verdict && (← also)
   unless ok do
     IO.eprintln s!"hygiene fixture exited {out.exitCode}:\n{out.stdout}{out.stderr}"
   expect ok label
 
+/-- A fresh Git repository in its own temporary directory. -/
+private def withRepo (body : System.FilePath → IO Nat) : IO Nat :=
+  IO.FS.withTempDir fun repo => do
+    let _ ← git repo #["init", "-q"]
+    body repo
+
+/-- One tracked file in a repository path with spaces; the check must also leave
+the file's bytes unchanged. -/
 private def fixture (script path content : String) (executable : Bool) (diagnostic label : String) :
     IO Nat :=
   IO.FS.withTempDir fun dir => do
@@ -50,22 +61,14 @@ private def fixture (script path content : String) (executable : Bool) (diagnost
     let file := repo / path
     IO.FS.createDirAll file.parent.get!
     IO.FS.writeFile file content
-    let _ ← command repo "chmod" #[if executable then "755" else "644", "./" ++ path]
+    Linger.Posix.chmod file.toString (if executable then 0o755 else 0o644)
     let _ ← git repo #["add", "--", path]
-    let out ←
-      IO.Process.output
-          { cmd := "sh", args := #[script], cwd := some repo.toString, env := fixtureEnv }
-    let verdict :=
-      if diagnostic.isEmpty then out.exitCode == 0
-      else out.exitCode == 1 && has out.stderr path && has out.stderr diagnostic
-    let unchanged := (← IO.FS.readFile file) == content
-    unless verdict && unchanged do
-      IO.eprintln s!"hygiene fixture exited {out.exitCode}:\n{out.stdout}{out.stderr}"
-    expect (verdict && unchanged) label
+    check script repo path diagnostic label (return (← IO.FS.readFile file) == content)
 
 def run : IO UInt32 := do
   let root ← command (← IO.currentDir) "git" #["rev-parse", "--show-toplevel"]
   let script := s!"{root.trimAscii}/scripts/hygiene.sh"
+  let atLimit := String.ofList (List.replicate (256 * 1024 - 1) 'x') ++ "\n"
   let mut f := 0
   for (path, content, executable, diagnostic, label) in
     [("empty.txt", "", false, "", "hygiene accepts an empty file"),
@@ -119,42 +122,26 @@ def run : IO UInt32 := do
       ("script.sh", "#!/bin/sh\nexit 0\n", false, "shebang without executable",
         "hygiene rejects nonexecutable scripts"),
       ("empty-executable", "", true, "executable without shebang",
-        "hygiene rejects empty executables")] do
+        "hygiene rejects empty executables"),
+      ("limit.txt", atLimit, false, "", "hygiene accepts exactly 256 KiB"),
+      ("too big.txt", "x" ++ atLimit, false, "256 KiB", "hygiene rejects one byte over 256 KiB"),
+      ("SCRATCHPAD.md", "x" ++ atLimit, false, "256 KiB",
+        "hygiene applies the size limit to former work logs"),
+      ("nested/SCRATCHPAD.md", "x" ++ atLimit, false, "256 KiB",
+        "hygiene applies the size limit to nested work logs"),
+      ("SCRATCHPAD.md", "bad \n", false, "trailing whitespace",
+        "hygiene checks whitespace in former work logs")] do
     f := f + (← fixture script path content executable diagnostic label)
-  let atLimit := String.ofList (List.replicate (256 * 1024 - 1) 'x') ++ "\n"
-  f := f + (← fixture script "limit.txt" atLimit false "" "hygiene accepts exactly 256 KiB")
   f :=
     f +
       (←
-        fixture script "too big.txt" ("x" ++ atLimit) false "256 KiB"
-            "hygiene rejects one byte over 256 KiB")
-  f :=
-    f +
-      (←
-        fixture script "SCRATCHPAD.md" ("x" ++ atLimit) false "256 KiB"
-            "hygiene applies the size limit to former work logs")
-  f :=
-    f +
-      (←
-        fixture script "nested/SCRATCHPAD.md" ("x" ++ atLimit) false "256 KiB"
-            "hygiene applies the size limit to nested work logs")
-  f :=
-    f +
-      (←
-        fixture script "SCRATCHPAD.md" "bad \n" false "trailing whitespace"
-            "hygiene checks whitespace in former work logs")
-  f :=
-    f +
-      (←
-        IO.FS.withTempDir fun repo => do
-            let _ ← git repo #["init", "-q"]
+        withRepo fun repo => do
             IO.FS.writeFile (repo / "untracked file.txt") "bad \r\n\n"
             check script repo "" "" "hygiene ignores untracked files in an empty index")
   f :=
     f +
       (←
-        IO.FS.withTempDir fun repo => do
-            let _ ← git repo #["init", "-q"]
+        withRepo fun repo => do
             IO.FS.writeFile (repo / "target with spaces") "bad \r\n\n"
             let _ ← command repo "ln" #["-s", "target with spaces", "tracked link"]
             let _ ← git repo #["add", "--", "tracked link"]
@@ -162,24 +149,21 @@ def run : IO UInt32 := do
   f :=
     f +
       (←
-        IO.FS.withTempDir fun repo => do
-            let _ ← git repo #["init", "-q"]
+        withRepo fun repo => do
             IO.FS.writeBinFile (repo / "binary fixture") (ByteArray.mk #[0, 13, 10, 32, 32, 255])
             let _ ← git repo #["add", "--", "binary fixture"]
             check script repo "" "" "hygiene skips binary text checks")
   f :=
     f +
       (←
-        IO.FS.withTempDir fun repo => do
-            let _ ← git repo #["init", "-q"]
+        withRepo fun repo => do
             IO.FS.writeBinFile (repo / "large binary") ((ByteArray.mk #[0]) ++ atLimit.toUTF8)
             let _ ← git repo #["add", "--", "large binary"]
             check script repo "large binary" "256 KiB" "hygiene still limits binary file size")
   f :=
     f +
       (←
-        IO.FS.withTempDir fun repo => do
-            let _ ← git repo #["init", "-q"]
+        withRepo fun repo => do
             IO.FS.writeFile (repo / "tracked.txt") "clean\n"
             let _ ← git repo #["add", "--", "tracked.txt"]
             IO.FS.writeFile (repo / "tracked.txt") "dirty \n"
@@ -189,10 +173,9 @@ def run : IO UInt32 := do
   f :=
     f +
       (←
-        IO.FS.withTempDir fun repo => do
-            let _ ← git repo #["init", "-q"]
+        withRepo fun repo => do
             IO.FS.writeFile (repo / "script.sh") "#!/bin/sh\nexit 0\n"
-            let _ ← command repo "chmod" #["755", "script.sh"]
+            Linger.Posix.chmod (repo / "script.sh").toString 0o755
             let _ ← git repo #["add", "--", "script.sh"]
             let _ ← git repo #["update-index", "--chmod=-x", "--", "script.sh"]
             check script repo "script.sh" "shebang without executable"
@@ -200,8 +183,7 @@ def run : IO UInt32 := do
   f :=
     f +
       (←
-        IO.FS.withTempDir fun repo => do
-            let _ ← git repo #["init", "-q"]
+        withRepo fun repo => do
             IO.FS.writeFile (repo / "missing.txt") "clean\n"
             let _ ← git repo #["add", "--", "missing.txt"]
             IO.FS.removeFile (repo / "missing.txt")
@@ -210,8 +192,7 @@ def run : IO UInt32 := do
   f :=
     f +
       (←
-        IO.FS.withTempDir fun repo => do
-            let _ ← git repo #["init", "-q"]
+        withRepo fun repo => do
             IO.FS.writeFile (repo / "conflicted.txt") "clean\n"
             let _ ← git repo #["add", "--", "conflicted.txt"]
             let blob ← git repo #["rev-parse", ":conflicted.txt"]
@@ -223,8 +204,7 @@ def run : IO UInt32 := do
   f :=
     f +
       (←
-        IO.FS.withTempDir fun repo => do
-            let _ ← git repo #["init", "-q"]
+        withRepo fun repo => do
             IO.FS.writeFile (repo / ".git" / "index") "broken index\n"
             let out ←
               IO.Process.output
@@ -266,10 +246,9 @@ def run : IO UInt32 := do
                   s!"#!/bin/sh\nprintf '{tool}:%s\\n' \"$*\" >> .git/hook-trace\n\
                      if [ -f \".git/reject-{tool}-$1\" ]; then\n\
                      printf '%s\\n' 'fixture: {tool} rejected' >&2\nexit 43\nfi\n"
-              let _ ← command repo "chmod" #["755", (tools / tool).toString]
-            let _ ←
-              command repo "chmod"
-                  #["755", "scripts/hygiene.sh", "scripts/gates.sh", "scripts/lint.sh"]
+              Linger.Posix.chmod (tools / tool).toString 0o755
+            for name in ["hygiene.sh", "gates.sh", "lint.sh"] do
+              Linger.Posix.chmod (repo / "scripts" / name).toString 0o755
             IO.FS.writeFile (repo / "staged.txt") "clean\n"
             let _ ← git repo #["add", "--", ".pre-commit-config.yaml", "scripts", "staged.txt"]
             let commitArgs :=

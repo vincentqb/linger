@@ -26,10 +26,10 @@ trust boundary is unchanged by this port, which is the condition that made it
 worth doing at all.
 
 OUTPUT CONTRACT — load-bearing, do not reformat. Every check prints `PASS <name>`
-or `FAIL <name>`, and each suite ends with `FAILURES: <n>`. `scripts/e2e.sh` reads
-both: the last line for the verdict, and the count of `PASS `/`FAIL ` lines
-against an exact per-suite count, so a suite that stops checking fails the gate
-and so does one that quietly grows — either way it is a reviewable edit. -/
+or `FAIL <name>`, and each suite ends with `FAILURES: <n>`. `E2E.Runner` requires
+exit 0, last line `FAILURES: 0`, no `FAIL` line and exactly the `PASS` count that
+`scripts/e2e.sh` passes, so a suite that stops checking fails the gate and so does
+one that quietly grows — either way it is a reviewable edit. -/
 
 namespace E2E.Harness
 
@@ -43,8 +43,8 @@ def expect (cond : Bool) (name : String) : IO Nat := do
   IO.println s!"{if cond then "PASS" else "FAIL"} {name}"
   return if cond then 0 else 1
 
-/-- Substring test — `String.splitOn` is what the repo already uses for this. -/
-def has (haystack needle : String) : Bool := (haystack.splitOn needle).length ≥ 2
+/-- Substring test (core `String.contains`; an empty needle is contained everywhere). -/
+def has (haystack needle : String) : Bool := haystack.contains needle
 
 /-- Poll `p` until it holds or `ms` elapses; the result is whether it ever held.
 
@@ -97,12 +97,6 @@ def findBytes (hay : ByteArray) (needle : List UInt8) : Option Nat := findFrom n
 /-- …and the same needle spelled as text. -/
 def findText (hay : ByteArray) (needle : String) : Option Nat := findBytes hay needle.toUTF8.toList
 
-/-- A `find` result in a failure label: `-1` for absent, as the Python printed it. -/
-def idxStr (o : Option Nat) :
-    String := match o with
-  | some n => toString n
-  | none => "-1"
-
 /-- Does `hay` contain `needle` as a contiguous byte run?
 
 The honest test for "the client wrote *this emitter's* output": a pty stream is
@@ -154,16 +148,23 @@ structure Client where
   pid : UInt32
   fd : UInt32
 
-/-- Spawn `linger <args>` on a pty of exactly this size.
+/-- Spawn `linger <args>` on a pty of exactly this size, with extra `K=V` entries
+on the child's environment.
 
 The size is set **before** exec by `spawnPty`, which is the bug the Python
 harness had: `pty.fork()` then `ioctl(TIOCSWINSZ)` races the child's own startup
 `winsizeGet`, and that race is invisible until a suite's subject IS the geometry a
-client reported (`E2E.Watch`). -/
-def Env.spawn (e : Env) (args : Array String) (cols : UInt32 := 80) (rows : UInt32 := 24) :
-    IO Client := do
-  let (pid, fd) ← spawnPty cols rows "" e.bin args e.ptyEnv
+client reported (`E2E.Watch`). `spawnPty`'s `extraEnv` is putenv-on-top-of-inherited
+in the forked child, so `extra` overrides `ptyEnv` by `cliEnv`'s rule; `Array String`
+because that is the shim's shape. -/
+def Env.spawnEnv (e : Env) (extra : Array String) (args : Array String) (cols : UInt32 := 80)
+    (rows : UInt32 := 24) : IO Client := do
+  let (pid, fd) ← spawnPty cols rows "" e.bin args (e.ptyEnv ++ extra)
   return { pid, fd }
+
+/-- `Env.spawnEnv` with no extra environment. -/
+def Env.spawn (e : Env) (args : Array String) (cols : UInt32 := 80) (rows : UInt32 := 24) :
+    IO Client := e.spawnEnv #[] args cols rows
 
 /-- Everything readable within a monotonic deadline; returns early on EOF. -/
 def drain (fd : UInt32) (ms : Nat) : IO ByteArray := do
@@ -222,7 +223,7 @@ raises — a suite's cleanup must not mask the failure that got it here. -/
 def Client.bye (c : Client) (sendDetach : Bool := true) : IO Unit := do
   if sendDetach then
     try
-      let _ ← write c.fd detachKey 0
+      c.detach
     catch _ =>
       pure ()
     let _ ← c.reap 600
@@ -233,21 +234,8 @@ def Client.bye (c : Client) (sendDetach : Bool := true) : IO Unit := do
   let _ ← c.reap
   pure ()
 
-/-- Run a one-shot verb. Returns exit code, stdout, stderr — the three things
-the suites assert on. -/
-def Env.cli (e : Env) (args : Array String) : IO (UInt32 × String × String) := do
-  let out ← IO.Process.output { cmd := e.bin, args, env := e.procEnv }
-  return (out.exitCode, out.stdout, out.stderr)
-
-/-- `linger <args>` stdout only, for the common case. -/
-def Env.out (e : Env) (args : Array String) : IO String := do
-  return (← e.cli args).2.1
-
-/-- …and byte-exact, for a suite asserting on a stream rather than on text. -/
-def Env.outBytes (e : Env) (args : Array String) : IO ByteArray := do
-  return (← e.out args).toUTF8
-
-/-- `Env.cli` with extra environment on top of `procEnv`.
+/-- Run a one-shot verb with extra environment on top of `procEnv`. Returns exit
+code, stdout, stderr — the three things the suites assert on.
 
 `IO.Process.SpawnArgs.env` is processed left to right over the inherited
 environment, so `extra` last is an override and `("K", none)` removes a variable
@@ -259,26 +247,18 @@ def Env.cliEnv (e : Env) (extra : Array (String × Option String)) (args : Array
   let out ← IO.Process.output { cmd := e.bin, args, env := e.procEnv ++ extra }
   return (out.exitCode, out.stdout, out.stderr)
 
-/-- `Env.spawn` with extra `K=V` entries on the pty child's environment: the
-pty-side twin of `cliEnv`. `spawnPty`'s `extraEnv` is putenv-on-top-of-inherited
-in the forked child, so the override rule is the same; `Array String` because that
-is the shim's shape. The size still goes in before exec. -/
-def Env.spawnEnv (e : Env) (extra : Array String) (args : Array String) (cols : UInt32 := 80)
-    (rows : UInt32 := 24) : IO Client := do
-  let (pid, fd) ← spawnPty cols rows "" e.bin args (e.ptyEnv ++ extra)
-  return { pid, fd }
+/-- `Env.cliEnv` with no extra environment. -/
+def Env.cli (e : Env) (args : Array String) : IO (UInt32 × String × String) := e.cliEnv #[] args
+
+/-- `linger <args>` stdout only, for the common case. -/
+def Env.out (e : Env) (args : Array String) : IO String := do
+  return (← e.cli args).2.1
 
 /-- Run a one-shot verb under a deadline. `none` means it was still running when
 the deadline passed.
 
-This is what makes the picker regression a FAILURE rather than a hang. Bare
-`linger` must print a listing and **exit**; a full-screen picker would sit on
-stdin forever. `stdin := .null` is half the guard (the child gets EOF at once) and
-this deadline is the other half — without it, a regression hangs the gate instead
-of failing it, which is the difference between a test and a liability.
-
-Deliberately a piped spawn, not a pty one: the picker was tty-gated, so putting
-the verb on a tty would change the premise being tested. -/
+stdin is at EOF and a deadline bounds the run, so a verb that blocks on input
+fails instead of hanging (Overview's `linger ls`). -/
 def Env.cliTimeout (e : Env) (args : Array String) (ms : Nat) :
     IO (Option (UInt32 × String × String)) := do
   let child ←
@@ -388,11 +368,10 @@ def Env.crashDaemon (e : Env) (name : String) : IO Bool := do
     if !(← alive dpid) then
       return false
     kill dpid 9 -- SIGKILL: no cleanup, no checkpoint drop — a crash, not an exit
-    IO.sleep 300
     -- the daemon is double-forked (init's child, not ours), so a SIGKILLed one is
     -- reaped by init and `kill(pid, 0)` genuinely goes ESRCH — no zombie to make
     -- `alive` lie the way it would for one of our own unreaped children
-    return !(← alive dpid)
+    waitFor 5000 (return !(← alive dpid))
 
 /-- Kill every session named here, ignoring "no such session". -/
 def Env.killAll (e : Env) (names : Array String) : IO Unit := do

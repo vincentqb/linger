@@ -12,26 +12,8 @@ Ported from `tests/resume_test.py`.
 
 Checkpoint on last detach, daemon SIGKILLed (simulated crash/reboot), session
 listed as resumable, attach restores the old screen and labels and starts a fresh
-shell in the saved cwd.
-
-WHAT THE PORT TIGHTENED:
-
-* **the daemon is identified structurally, not by heuristic.** `tests/procs.py`
-  had to ask `pgrep -f '__daemon <name>'` and then filter the candidates down to
-  the ones whose `LINGER_DIR` is ours — Linux via `/proc/<pid>/environ`, macOS
-  via `lsof -p` because there is no `/proc` and `ps -Eww` prints no environment
-  there. `Env.daemonPid` asks the daemon over `<LINGER_DIR>/<name>.sock`
-  instead, so the isolation is by construction. See its docstring;
-* **the SIGKILL is verified.** The Python `assert dpids` proved a pid was
-  *found*; `Env.crashDaemon` returns whether it was alive before and is gone
-  after. That assert's role — abort, do not print a check — is kept exactly, so
-  this suite still runs 9 checks and not 10;
-* **the checkpoint is checked to be this format**, by `Checkpoint.magic` rather
-  than a byte string copied into the test, both when reading the one `save`
-  wrote and when writing the corrupt one (see below);
-* the resumable row is compared as a `Status`, not as the substring
-  `'resumable'` anywhere in the listing — the Python's `'resumable' in ls` would
-  also have matched some *other* row's `(resumable)`. -/
+shell in the saved cwd. The resumable row is compared as a `Status`, not as a
+substring of the listing, which some *other* row's `(resumable)` could also match. -/
 
 namespace E2E.Resume
 
@@ -96,8 +78,7 @@ def run : IO UInt32 := do
   let _ ← drain boot.fd 2000
   -- exact-line membership, not substring: the typed line the tty echoed back
   -- says `echo survives-the-reboot-$((40+2))`, and only the shell's *output*
-  -- line is the marker itself. That is what Python's `x in <list of lines>`
-  -- meant, and `has` would have weakened it.
+  -- line is the marker itself; `has` would weaken it.
   let hist0 := lines (← e.out #["capture", "--history", "boot"])
   f :=
     f +
@@ -124,8 +105,8 @@ def run : IO UInt32 := do
   f := f + (← expect (ckptOk && magicOk) s!"checkpoint written on last detach ({ckpts})")
   -- simulate reboot: SIGKILL the DAEMON (the pid in `list` is the shell —
   -- killing that is a clean exit and rightly drops the checkpoint). Aborts the
-  -- suite rather than printing a check, exactly as the Python `assert` did: with
-  -- no crash there is nothing below this line left to mean anything.
+  -- suite rather than printing a check: with no crash there is nothing below
+  -- this line left to mean anything.
   unless (← e.crashDaemon "boot") do
     throw (IO.userError "daemon for this LINGER_DIR not found, or the SIGKILL did not land")
   f :=
@@ -152,18 +133,15 @@ def run : IO UInt32 := do
   boot2.bye (sendDetach := false)
   -- corrupt checkpoint: daemon must start fresh, not crash.
   --
-  -- Written with `Checkpoint.magic`, not with the Python's `b'LINGER\x01'`:
-  -- that is not this format's tag at all ("LINGE…" ≠ "LNGR"), so it only ever
-  -- reached `stripMagic`'s reject — the shallowest branch there is, and the one
-  -- a *version bump* would keep it on forever. With the real tag the file gets
-  -- past the version gate and dies in the body, which is the branch a torn
-  -- write takes.
+  -- Written with `Checkpoint.magic`: a foreign tag would only reach `stripMagic`'s
+  -- reject, the shallowest branch there is. With the real tag the file gets past
+  -- the version gate and dies in the body, which is the branch a torn write takes.
   --
-  -- The body is deterministic rather than `os.urandom`: 80 and 24 read back as
-  -- the geometry (LEB128, single bytes under 128), then the grid's length is an
-  -- `rNat` over a run of 0xFF — all continuation bytes, so it runs off the end
-  -- of the list and `load` is `none` for certain. A random body is a random
-  -- branch, and a flake here would be unreproducible.
+  -- The body is deterministic: 80 and 24 read back as the geometry (LEB128,
+  -- single bytes under 128), then the grid's length is an `rNat` over a run of
+  -- 0xFF — all continuation bytes, so it runs off the end of the list and `load`
+  -- is `none` for certain. A random body is a random branch, and a flake here
+  -- would be unreproducible.
   IO.FS.writeBinFile s!"{e.dir}/corrupt.ckpt"
       (ByteArray.mk
         (Linger.Core.Checkpoint.magic ++ [80, 24] ++ List.replicate 198 (0xFF : UInt8)).toArray)
@@ -180,9 +158,6 @@ def run : IO UInt32 := do
   -- so nothing reconciles the pty with the restored Vt. With an attach the
   -- assertion passes either way (`.resizePty` fixes the winsize in
   -- milliseconds), which is the version of this test that cannot fail.
-  -- (The Python needed a second `spawn_attach_sized` helper here because its
-  -- first one hardcoded 80x24. `Env.spawn` takes the size — and sets it before
-  -- exec, so the ioctl race went with the duplication.)
   let gCols : UInt32 := 100
   let gRows : UInt32 := 40
   let geom ← e.spawn #["attach", "geom"] gCols gRows

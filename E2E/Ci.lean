@@ -69,9 +69,12 @@ def repoWithCommit (daysAgo : Nat) : IO String := do
     throw (IO.userError s!"probe repo setup failed: {out.stderr}")
   return dir.toString
 
-/-- The repo root, so the script under test is the tracked one. -/
+/-- The repo root, so the script under test is the tracked one. A failed lookup
+throws: an empty root would address `/scripts` instead. -/
 def repoRoot : IO String := do
   let out ← IO.Process.output { cmd := "git", args := #["rev-parse", "--show-toplevel"] }
+  unless out.exitCode == 0 do
+    throw (IO.userError s!"repository root lookup failed ({out.exitCode}): {out.stderr}")
   return out.stdout.trimAscii.toString
 
 def ubuntuOnly : String := "[\"ubuntu-latest\"]"
@@ -102,9 +105,8 @@ def runnerProbe (dir name : String) : IO UInt32 := do
   IO.println (if name == "bad-verdict" then "FAILURES: 1" else "FAILURES: 0")
   return if name == "bad-exit" then 1 else 0
 
-def suiteRunner : IO Nat := do
-  let dir ← IO.FS.createTempDir
-  try
+def suiteRunner : IO Nat :=
+  IO.FS.withTempDir fun dir => do
     let binary := (← IO.appPath).toString
     let run := E2E.Runner.run binary #["--runner-probe", dir.toString] dir
     let jobs := (List.range 5).map fun n => (s!"job-{n}", 1)
@@ -156,8 +158,6 @@ def suiteRunner : IO Nat := do
           expect ((← run [("same", 1), ("same", 1)]) == 2)
               "suite runner rejects duplicate log identities before starting children")
     return f
-  finally
-    IO.FS.removeDirAll dir
 
 /-- Execute the workflow's actual dependency step with controlled package tools. -/
 def dependencyInstall (root : String) : IO Nat := do
@@ -167,9 +167,8 @@ def dependencyInstall (root : String) : IO Nat := do
   let script :=
     String.intercalate "\n"
       (((rest.splitOn "\n      - ").head!).splitOn "\n" |>.map (fun s => (s.drop 10).toString))
-  let probe := fun (os mode : String) (present : List String) => do
-    let dir ← IO.FS.createTempDir
-    try
+  let probe := fun (os mode : String) (present : List String) =>
+    IO.FS.withTempDir fun dir => do
       -- Private tools and fresh state isolate each availability/index case.
       let sudo := dir / "sudo"
       let brew := dir / "brew"
@@ -205,8 +204,6 @@ def dependencyInstall (root : String) : IO Nat := do
                   ("INSTALL_READY", some (dir / "install.ready").toString),
                   ("INSTALL_MODE", some mode)] }
       return (out.exitCode, ← IO.FS.readFile log)
-    finally
-      IO.FS.removeDirAll dir
   -- NUL separators distinguish separate package arguments from one quoted string.
   let install := "apt-get\x00install\x00-y\x00-qq\x00--no-install-recommends\x00"
   let fish := install ++ "fish\x00"
@@ -266,9 +263,8 @@ def dependencyInstall (root : String) : IO Nat := do
 
 /-- Verification reuse keys the tracked inputs, including names and modes.
 Unstaged or untracked inputs cannot accidentally borrow an indexed receipt. -/
-def verificationInputs (root : String) : IO Nat := do
-  let dir ← IO.FS.createTempDir
-  try
+def verificationInputs (root : String) : IO Nat :=
+  IO.FS.withTempDir fun dir => do
     let git := fun (args : Array String) => do
       let out ← IO.Process.output { cmd := "git", args, cwd := some dir.toString }
       unless out.exitCode == 0 do
@@ -368,13 +364,10 @@ def verificationInputs (root : String) : IO Nat := do
           expect (missing.exitCode != 0 && missing.stdout.isEmpty)
               "unreadable source inventory cannot emit a verification key")
     return f
-  finally
-    IO.FS.removeDirAll dir
 
 /-- Exercise Lake's actual traces and diagnostic replay without a clean rebuild. -/
-def lakeBuilds (root : String) : IO Nat := do
-  let dir ← IO.FS.createTempDir
-  try
+def lakeBuilds (root : String) : IO Nat :=
+  IO.FS.withTempDir fun dir => do
     IO.FS.createDirAll (dir / "Probe")
     IO.FS.writeFile (dir / "lean-toolchain") (← IO.FS.readFile s!"{root}/lean-toolchain")
     IO.FS.writeFile (dir / "lakefile.lean")
@@ -440,8 +433,6 @@ def lakeBuilds (root : String) : IO Nat := do
           check (← build #["--wfail", "--no-build"]) 1 "warning:"
               "cached warnings fail even when warningAsError is locally disabled")
     return f
-  finally
-    IO.FS.removeDirAll dir
 
 /-- Exercise the real Lake drivers from another directory, including failures. -/
 def lakeDrivers (root : String) : IO Nat :=

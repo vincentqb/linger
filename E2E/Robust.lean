@@ -12,48 +12,27 @@ public section
 
 The suite covers busy-daemon listing, name ownership, bounded child input,
 lock-aware stale cleanup, absolute info deadlines, bounded accept rounds, and
-the slow-client output cut.
+the slow-client output cut. Two premises are not optional:
 
-WHAT THE PORT CHANGED, and why each was not optional:
-
-* **SIGSTOP and SIGCONT are sent by NAME, not by number.** `signal.SIGSTOP` is
-  portable; `19` is not. On Linux SIGSTOP is 19 and SIGCONT is 18; on macOS/BSD
-  SIGSTOP is **17**, SIGCONT is **19** and 18 is SIGTSTP — so a hardcoded `kill
-  dpid 19` would send SIGCONT to a running daemon (check 1 fails, nothing was ever
-  stopped) and a hardcoded `18` would then send SIGTSTP and wedge the rest of the
-  suite. That is exactly the class of bug AGENTS.md records for errno (`-111` for
-  ECONNREFUSED compiled fine and silently disabled the stale-socket path on
-  macOS), so the numbers stay out of Lean: `kill -s STOP` / `kill -s CONT` through
-  `/bin/sh`, the same "one command, both platforms" move `Env.daemonPid` makes with
-  `ps -o ppid=`. `Env.crashDaemon`'s `kill dpid 9` needs no such care — 9 is fixed
-  by POSIX, as is everything in 1–15;
+* **SIGSTOP and SIGCONT are sent by NAME, not by number.** On Linux SIGSTOP is 19
+  and SIGCONT is 18; on macOS/BSD SIGSTOP is **17**, SIGCONT is **19** and 18 is
+  SIGTSTP — so a hardcoded `kill dpid 19` would send SIGCONT to a running daemon
+  (check 1 fails, nothing was ever stopped) and a hardcoded `18` would then send
+  SIGTSTP and wedge the rest of the suite. AGENTS.md's rule to avoid numeric errno
+  values in Lean guards the same kind of platform split, so these numbers stay out
+  of Lean too: `kill -s STOP` / `kill -s CONT` through `/bin/sh`, the same "one
+  command, both platforms" move `Env.daemonPid` makes with `ps -o ppid=`.
+  `Env.crashDaemon`'s `kill dpid 9` needs no such care — 9 is fixed by POSIX;
 * **crash simulation leaves the socket behind.** A SIGKILLed daemon cannot
-  unlink it; `Env.crashDaemon` now preserves that premise so listing and ownership
-  tests exercise production cleanup rather than test-harness cleanup;
-* **the busy row is compared against `Listing.humanListing`**, not against the
-  literal `'? busy (busy)'`. That literal had already gone stale once: the
-  Python's own comment says "The human row is now space-aligned
-  (`Listing.humanRow`), not tab-separated". The expectation is now the core's
-  rendering of a live row that did not answer, so the glyph comes from
-  `Status.icon` and the spacing from `humanRow`;
-* the porcelain check parsed nothing — `'name\tbusy' in porc` is a substring test
-  on a records format. It now goes through `records` (the reader `Env.field` and
-  `Core.Remote` use) and also pins the status column as `Status.name .unknown`;
-* the lock check asserted only that `claim.lock` EXISTS, which its own comment
-  explains is weak evidence: "lock files are deliberately never unlinked
-  (unlinking defeats flock), so earlier sessions leave theirs behind". It now also
-  asserts the lock is HELD — `Posix.flock` returning `-1` is another process
-  holding it, which is the property, and a file existing is not;
-* the reported cap is compared to `Daemon.ptyInCap` rather than only to itself.
+  unlink it; `Env.crashDaemon` preserves that premise so listing and ownership
+  tests exercise production cleanup rather than test-harness cleanup.
 
 WHAT COULD NOT BE MADE STRUCTURAL: counting daemons needs a process enumeration,
 and `Env.daemonPid` cannot do it — it asks over `<LINGER_DIR>/<name>.sock`, so it
-returns at most one pid by construction and `len(owners) == 1` would be vacuous.
-`procs.py` scoped `pgrep -f` to our `LINGER_DIR` via `/proc/<pid>/environ` with an
-`lsof -p` fallback, the platform split the harness deleted. This suite gets the
-same isolation for free by making the session NAME unique to the run
-(`claim-<pid>`), so a `ps` scan for `__daemon claim-<pid>` cannot see a real
-session of the developer's own — no `/proc`, no `lsof`, no new split. -/
+returns at most one pid by construction and counting its answers would be vacuous.
+This suite instead makes the session NAME unique to the run (`claim-<pid>`), so a
+`ps` scan for `__daemon claim-<pid>` cannot see a real session of the developer's
+own — no `/proc`, no `lsof`, no platform split. -/
 
 namespace E2E.Robust
 
@@ -63,24 +42,17 @@ open Linger.Core.Listing (humanListing rowFields rowStatus)
 open Linger.Core.Session (maxClients)
 open Linger.Runtime.Daemon (outbufCap ptyInCap)
 
-/-- Python's `str.split()`: on any whitespace, empty fields dropped. `String.split`
-returns a slice iterator on v4.32, so this goes through `splitOn` instead. -/
-def words (s : String) : List String :=
-  (((s.replace "\t" " ").replace "\n" " ").replace "\r" " " |>.splitOn " ").filter (· != "")
-
-/-- `ps -eo pid,ppid,args` as (pid, ppid, whole-line) triples — `procs.py`'s
-`pgrep` and `children_of` in one call.
+/-- `ps -eo pid,ppid,args` as (pid, ppid, whole-line) triples.
 
 `-ww` because the daemon's argv begins with an absolute binary path (~49 bytes
 here) and `__daemon <name>` lands past column 60: macOS `ps` truncates to 80
-columns even into a pipe, which would cut the name off the end of the line. The
-Python never needed it because `children_of` greps for `/bin/sh`, which sits at
-column ~13. If a `ps` did reject `-ww` the table comes back empty and the counts
-below FAIL rather than pass — fail-closed. -/
+columns even into a pipe, which would cut the name off the end of the line. If a
+`ps` did reject `-ww` the table comes back empty and the counts below FAIL rather
+than pass — fail-closed. -/
 def psTable : IO (List (Nat × Nat × String)) := do
   let out ← IO.Process.output { cmd := "ps", args := #["-e", "-ww", "-o", "pid,ppid,args"] }
   return (out.stdout.splitOn "\n").filterMap fun l =>
-      match words l with
+      match (l.split Char.isWhitespace).toStringList.filter (· != "") with
       | p :: pp :: _ =>
         match p.toNat?, pp.toNat? with
         | some pid, some ppid => some (pid, ppid, l)
@@ -102,7 +74,7 @@ regex engine, and this needs none):
    reading — dropping input until it does` -/
 def fullMarker : String := "pty input buffer full ("
 
-/-- `(pending, cap)` from the first occurrence — Python's two capture groups. -/
+/-- `(pending, cap)` from the first occurrence. -/
 def parseFull (log : String) : Option (Nat × Nat) :=
   match log.splitOn fullMarker with
   | _ :: after :: _ =>
@@ -292,9 +264,7 @@ def run : IO UInt32 := do
   let _ ← e.cli #["run", "busy", "echo hi"]
   IO.sleep 1000
   -- captured while the daemon is still HEALTHY, before the SIGSTOP: `info` has to
-  -- be answered for `Env.daemonPid` to work, and it is — the Python did the same,
-  -- `daemon_pids('busy')[0]` on the line before `os.kill(..., SIGSTOP)`. Aborts
-  -- rather than printing a check, as the Python's implicit `[0]` IndexError did:
+  -- be answered for `Env.daemonPid` to work. Aborts rather than printing a check:
   -- with no pid there is nothing below this line left to mean anything.
   let some dpid ←
     e.daemonPid "busy" | throw (IO.userError "no daemon answered for 'busy' — nothing to SIGSTOP")
@@ -338,9 +308,8 @@ def run : IO UInt32 := do
   IO.sleep 500
   -- ── 2. stale socket + concurrent starts -> one owner ──────────────────────
   -- The name is unique to this run so the `ps` scan below cannot see a developer's
-  -- own session of the same name. See the module docstring: this replaces
-  -- `procs.py`'s `/proc/<pid>/environ`-or-`lsof` LINGER_DIR filter, and it is the
-  -- same trick `Env.make` already uses for the directory.
+  -- own session of the same name (see the module docstring), the same trick
+  -- `Env.make` already uses for the directory.
   let claim := s!"claim-{← Linger.Posix.getpid}"
   let _ ← e.cli #["run", claim, "echo one"]
   IO.sleep 1000
@@ -348,8 +317,7 @@ def run : IO UInt32 := do
     throw (IO.userError s!"daemon for '{claim}' did not crash")
   let stale ← e.dirNames ".sock"
   f := f + (← expect (stale == [s!"{claim}.sock"]) s!"stale socket present for the race ({stale})")
-  -- eight concurrent `run <name>`, spawned before any is waited on — the Python's
-  -- `[Popen(...) for _ in range(8)]` then `for p: p.wait()`
+  -- eight concurrent `run <name>`, spawned before any is waited on
   let cfg : IO.Process.SpawnArgs :=
     { cmd := e.bin, args := #["run", claim, "echo two"], env := e.procEnv, stdin := .null,
       stdout := .null, stderr := .null }
@@ -405,23 +373,23 @@ def run : IO UInt32 := do
   -- connection (no `.attach`), which `Session.onMsg .input` routes to `.writePty`.
   --
   -- The payload is newline-terminated lines, not one long run of 'x', and that is
-  -- load-bearing on macOS: measured 2026-08-19, a nonblocking write of an
-  -- unterminated blob to a pty master whose slave is not reading *succeeds*
-  -- forever (98 MB in 3 s) because the BSD tty layer discards an over-long
-  -- canonical line instead of pushing back, so `ptyIn` never grew and the cap
-  -- never tripped. With lines it is EAGAIN after ~1 KB, as on Linux.
+  -- load-bearing on macOS: there a nonblocking write of an unterminated blob to a
+  -- pty master whose slave is not reading *succeeds* forever (measured: 98 MB in
+  -- 3 s), because the BSD tty layer discards an over-long canonical line instead
+  -- of pushing back, so `ptyIn` never grew and the cap never tripped. With lines
+  -- it is EAGAIN after ~1 KB, as on Linux.
   let _ ← e.cli #["run", "stall", "sleep", "600"]
   IO.sleep 1000
-  -- the Python only used this as a truthiness test (`if sp:`), never the pid
+  -- only whether a daemon answers matters here, not its pid
   let sp ← e.daemonPid "stall"
   if sp.isSome then
     let r ← Linger.Posix.unixConnect s!"{e.dir}/stall.sock"
     let sock := UInt32.ofNat r.toNatClampNeg
-    -- the frame is built by the implementation's own codec rather than by
-    -- `bytes([0]) + struct.pack('<I', …)`: `.input` is `Wire.Msg.tag 0` and the
-    -- length is `Wire.writeU32`, so a tag renumbering is a compile-time fact here
-    -- instead of a silently-ignored frame. 262144 B is `Wire.maxPayload` exactly —
-    -- the largest legal frame, which is what makes 64 of them ~4x the cap.
+    -- the frame is built by the implementation's own codec: `.input` is
+    -- `Wire.Msg.tag 0` and the length is `Wire.writeU32`, so a tag renumbering is
+    -- a compile-time fact here instead of a silently-ignored frame. 262144 B is
+    -- `Wire.maxPayload` exactly — the largest legal frame, which is what makes 64
+    -- of them ~4x the cap.
     let payload := (List.replicate 4096 (List.replicate 63 (0x78 : UInt8) ++ [0x0A])).flatten
     let frame := ByteArray.mk (Linger.Core.Wire.encode (.input payload)).toArray
     for _ in List.range 64 do -- 16 MiB, ~4x the cap
@@ -437,23 +405,16 @@ def run : IO UInt32 := do
         IO.FS.readFile logf
       catch _ =>
         pure ""
-    let mut log := ""
-    let mut m : Option (Nat × Nat) := none
-    for _ in List.range 20 do
-      if m.isNone then
-        IO.sleep 200
-        log ← readLog
-        m := parseFull log
+    let _ ← waitFor 4000 (return (parseFull (← readLog)).isSome)
+    let log ← readLog
+    let m := parseFull log
     f := f + (← expect m.isSome "daemon reports the full input buffer")
     -- …and the cap it reports is `Daemon.ptyInCap`, not merely some number it also
     -- compared itself against
     f :=
       f +
         (←
-          expect
-              (match m with
-              | some (p, c) => p ≤ c && c == ptyInCap
-              | none => true)
+          expect (m.any fun (p, c) => p ≤ c && c == ptyInCap)
               "pending stayed within the cap, and the cap is Daemon.ptyInCap")
     f := f + (← expect (countFull log == 1) "logged once on the edge, not per dropped chunk")
     f :=
