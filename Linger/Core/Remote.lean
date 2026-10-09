@@ -56,28 +56,23 @@ def parseRecord (lines : List String) : Option RemoteRow :=
         match l.splitOn "\t" with
         | [k, v] => some (k, v)
         | _ => none) -- malformed line: dropped, record survives
-  match kvs.find? (·.1 == "name") with
+  match kvs.lookup "name" with
   | none => none -- no name: not a session record
-  | some (_, rawName) => do
+  | some rawName => do
     let name ← Linger.Core.Name.check rawName
     some {
           name
-          live := ((kvs.find? (·.1 == "state")).map (·.2)).getD "live" == "live"
-          cmd := scrub (((kvs.find? (·.1 == "cmd")).map (·.2)).getD "")
+          live := (kvs.lookup "state").getD "live" == "live"
+          cmd := scrub ((kvs.lookup "cmd").getD "")
           -- the peer's own status name, scrubbed like any other display field.
           -- `Status.ofName` is total and maps anything unrecognised -- including
           -- an absent field from an older peer -- to `unknown`, so a remote row
           -- can never look healthier than we can actually read it
-          status := scrub (((kvs.find? (·.1 == "status")).map (·.2)).getD "") }
+          status := scrub ((kvs.lookup "status").getD "") }
 
 /-- Split on blank lines into records. -/
 def records (lines : List String) : List (List String) :=
-  let step := fun (acc : List (List String) × List String) (l : String) =>
-    let (done, cur) := acc
-    if l.trimAscii.isEmpty then (if cur.isEmpty then done else done ++ [cur.reverse], [])
-    else (done, l :: cur)
-  let (done, cur) := lines.foldl step ([], [])
-  if cur.isEmpty then done else done ++ [cur.reverse]
+  (lines.splitOnP (·.trimAscii.isEmpty)).filter (!·.isEmpty)
 
 /-- The parser: total, garbage-tolerant, names validated without rewriting. -/
 def parse (out : String) : List RemoteRow := (records (out.splitOn "\n")).filterMap parseRecord

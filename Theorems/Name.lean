@@ -20,18 +20,15 @@ theorem defaultName_canonical : defaultName = "main" ∧ sanitize defaultName = 
   decide
 
 theorem okChar_no_slash (c : Char) (h : okChar c = true) : c ≠ '/' := by
-  intro he
-  subst he
+  rintro rfl
   simp [okChar] at h
 
 theorem okChar_no_nul (c : Char) (h : okChar c = true) : c ≠ '\x00' := by
-  intro he
-  subst he
+  rintro rfl
   simp [okChar] at h
 
 theorem okChar_no_at (c : Char) (h : okChar c = true) : c ≠ '@' := by
-  intro he
-  subst he
+  rintro rfl
   simp [okChar] at h
 
 /-- The mapped character is always in the alphabet. -/
@@ -42,45 +39,10 @@ theorem mapChar_ok (c : Char) : okChar (if okChar c then c else '_') = true := b
 input whatsoever. -/
 theorem sanitize_valid (s : String) : Valid (sanitize s) := by
   unfold sanitize Valid
-  dsimp only
   simp only [String.toList_ofList]
-  generalize hbase : (s.toList.take maxLen).map (fun c => if okChar c then c else '_') = base
-  have hb_ok : ∀ c ∈ base, okChar c = true := by
-    intro c hc
-    rw [← hbase] at hc
-    obtain ⟨c0, -, heq⟩ := List.mem_map.mp hc
-    rw [← heq]
-    exact mapChar_ok c0
-  have hb_len : base.length ≤ maxLen := by
-    rw [← hbase]
-    simp only [List.length_map]
-    exact List.length_take_le _ _
-  rcases base with - | ⟨c0, rest⟩
-  · refine ⟨by simp, by simp [maxLen], ?_, by simp⟩
-    intro c hc
-    simp only [List.mem_singleton] at hc
-    subst hc
-    decide
-  · simp only [List.length_cons] at hb_len ⊢
-    refine ⟨by simp, hb_len, ?_, ?_⟩
-    · intro c hc
-      rcases List.mem_cons.mp hc with hc | hc
-      · subst hc
-        by_cases hdot : c0 == '.'
-        · simp [hdot]
-          decide
-        · simp only [Bool.not_eq_true] at hdot
-          simp only [hdot, Bool.false_eq_true, ite_false]
-          exact hb_ok c0 List.mem_cons_self
-      · exact hb_ok c (List.mem_cons_of_mem _ hc)
-    · simp only [List.head?_cons, ne_eq, Option.some.injEq]
-      by_cases hdot : c0 == '.'
-      · simp [hdot]
-      · simp only [Bool.not_eq_true] at hdot
-        simp only [hdot, Bool.false_eq_true, ite_false]
-        intro he
-        subst he
-        simp at hdot
+  split
+  · simp [maxLen, okChar]
+  · grind [mapChar_ok, List.length_map, List.length_take, okChar]
 
 /-- Sanitization preserves every valid name, which lets the validator accept
 exactly the structural validity predicate without rewriting the input. -/

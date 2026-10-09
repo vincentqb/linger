@@ -17,20 +17,26 @@ The runtime correspondence is tested and source-gated, not proved here.
 
 namespace Linger.Core.Claim
 
+/-- The socket and checkpoint resources a daemon or offline reader claims together. -/
 structure Lease where
   socket : Nat
   checkpoint : Nat
   deriving DecidableEq
 
-def Lease.uses (lease : Lease) (resource : Nat) : Prop :=
+/-- `resource` is the lease's socket or checkpoint resource. -/
+def Lease.Uses (lease : Lease) (resource : Nat) : Prop :=
   resource = lease.socket ∨ resource = lease.checkpoint
 
+/-- `locks` maps each resource to the actor holding its lock; `active` maps each actor to
+the lease it has entered. -/
 structure State where
   locks : Nat → Option Nat
   active : Nat → Option Lease
 
+/-- No lock is held and no actor has entered. -/
 def initial : State := ⟨fun _ => none, fun _ => none⟩
 
+/-- `map` updated at `key` to `value`. -/
 def put {α : Type} (map : Nat → α) (key : Nat) (value : α) : Nat → α := fun index =>
   if index = key then value else map index
 
@@ -52,6 +58,7 @@ inductive Step : State → State → Prop where
     (idle : s.active actor = none) : Step s { s with locks := put s.locks resource none }
   | unchanged (s : State) : Step s s
 
+/-- The states reached from `initial` by finitely many `Step`s. -/
 inductive Reachable : State → Prop where
   | initial : Reachable initial
   | next {before after} (reached : Reachable before) (step : Step before after) : Reachable after
@@ -63,51 +70,7 @@ def Protected (s : State) : Prop :=
       s.locks lease.socket = some actor ∧ s.locks lease.checkpoint = some actor
 
 theorem protected_step {before after : State} (safe : Protected before) (step : Step before after) :
-    Protected after := by
-  cases step with
-  | acquire actor resource free =>
-    intro other lease active
-    obtain ⟨socket, checkpoint⟩ := safe other lease active
-    have preserve (r : Nat) (held : before.locks r = some other) :
-      put before.locks resource (some actor) r = some other := by
-      have different : r ≠ resource := by
-        intro same
-        subst r
-        rw [free] at held
-        contradiction
-      simp [put, different, held]
-    exact ⟨preserve _ socket, preserve _ checkpoint⟩
-  | enter actor lease idle socket
-    checkpoint =>
-    intro other otherLease active
-    change put before.active actor (some lease) other = some otherLease at active
-    by_cases same : other = actor
-    · subst other
-      simp only [put, ↓reduceIte, Option.some.injEq] at active
-      subst otherLease
-      exact ⟨socket, checkpoint⟩
-    · exact safe other otherLease (by simpa [put, same] using active)
-  | leave actor =>
-    intro other lease active
-    change put before.active actor none other = some lease at active
-    by_cases same : other = actor
-    · simp [put, same] at active
-    · exact safe other lease (by simpa [put, same] using active)
-  | release actor resource owned idle =>
-    intro other lease active
-    obtain ⟨socket, checkpoint⟩ := safe other lease active
-    have preserve (r : Nat) (held : before.locks r = some other) :
-      put before.locks resource none r = some other := by
-      have different : r ≠ resource := by
-        intro same
-        subst r
-        have equal : other = actor := Option.some.inj (held.symm.trans owned)
-        subst other
-        rw [idle] at active
-        contradiction
-      simp [put, different, held]
-    exact ⟨preserve _ socket, preserve _ checkpoint⟩
-  | unchanged => exact safe
+    Protected after := by cases step <;> simp only [Protected, put] at safe ⊢ <;> grind
 
 /-- Every finite interleaving preserves the lifetime lock invariant. -/
 theorem reachable_protected {s : State} (reached : Reachable s) : Protected s := by
@@ -117,7 +80,7 @@ theorem reachable_protected {s : State} (reached : Reachable s) : Protected s :=
   | next _ step ih => exact protected_step ih step
 
 theorem owner_holds_lock {s : State} (reached : Reachable s) {actor resource : Nat} {lease : Lease}
-    (active : s.active actor = some lease) (uses : lease.uses resource) :
+    (active : s.active actor = some lease) (uses : lease.Uses resource) :
     s.locks resource = some actor := by
   obtain ⟨socket, checkpoint⟩ := reachable_protected reached actor lease active
   rcases uses with rfl | rfl
@@ -128,7 +91,7 @@ theorem owner_holds_lock {s : State} (reached : Reachable s) {actor resource : N
 other directory differs. This also excludes offline readers during a live lease. -/
 theorem at_most_one_owner {s : State} (reached : Reachable s) {a b resource : Nat}
     {left right : Lease} (ha : s.active a = some left) (hb : s.active b = some right)
-    (leftUses : left.uses resource) (rightUses : right.uses resource) : a = b :=
+    (leftUses : left.Uses resource) (rightUses : right.Uses resource) : a = b :=
   Option.some.inj
     ((owner_holds_lock reached ha leftUses).symm.trans (owner_holds_lock reached hb rightUses))
 

@@ -22,12 +22,10 @@ change it (`rowFields_name`) nor smuggle a second one in
 
 namespace Linger.Core.Listing
 
-open Linger.Core.Name (sanitize)
-
-/-- The row's `name` is the sanitized socket filename for ANY reply, so
-a peer's reply can never spoof another session's identity. -/
+/-- The row's `name` is the socket filename for ANY reply, so a peer's
+reply can never spoof another session's identity. -/
 theorem rowFields_name (socketName : String) (info : List (String × String)) :
-    (rowFields socketName info).lookup "name" = some (sanitize socketName) := by simp [rowFields]
+    (rowFields socketName info).lookup "name" = some socketName := by simp [rowFields]
 
 /-- Nothing after the leading name — everything the reply contributed —
 carries the "name" key: the reply's own name (if any) is physically
@@ -64,16 +62,12 @@ health: the row still carries its real name, and is honestly marked as one we
 could not read. -/
 theorem answered_nil : answered [] = false := rfl
 
-theorem rowStatus_empty_reply : rowStatus (.live []) = Status.unknown := rfl
-
 /-- A peer cannot claim a state we could not read: an absent or unrecognised
 `status` reports `unknown`, not `idle`. This is what keeps a remote glyph an
 honest statement rather than an inference from liveness alone. -/
 theorem rowStatus_remote_unreadable (junk : String)
     (h : Linger.Core.Status.ofName junk = Status.unknown) :
     rowStatus (.remote true junk) = Status.unknown := by simp [rowStatus, h]
-
-theorem rowStatus_remote_absent : rowStatus (.remote true "") = Status.unknown := rfl
 
 /-- …and a peer that does report one is taken at its word, since it is the
 authority on its own session. Round-trips through the porcelain name by
@@ -84,8 +78,8 @@ theorem rowStatus_remote_reported (st : Status) :
 
 /-- A missing or malformed flag reads as `false`, so an omission cannot make
 a row look busier or fresher than it is. -/
-theorem flag_absent (info : List (String × String)) (k : String)
-    (h : info.find? (·.1 == k) = none) : flag info k = false := by simp [flag, h]
+theorem flag_absent (info : List (String × String)) (k : String) (h : info.lookup k = none) :
+    flag info k = false := by simp [flag, h]
 
 /-! ## The human-readable listing is safe to print
 

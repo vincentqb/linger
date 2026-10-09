@@ -48,12 +48,7 @@ theorem mem_all (s : Status) : s ∈ all := by cases s <;> simp [all]
 
 /-- The cascade agrees exactly with the independent legend predicates. -/
 theorem classify_iff (o : Obs) (s : Status) : classify o = s ↔ Is s o := by
-  cases o with
-  | mk known daemonUp exit fresh unseen =>
-    cases known <;> cases daemonUp <;> cases fresh <;> cases unseen <;>
-      cases exit with
-      | none => cases s <;> simp [classify, Is]
-      | some n => cases n <;> cases s <;> simp [classify, Is]
+  cases s <;> simp only [Is] <;> grind [classify]
 
 /-- **Cover.** Every observation is in some state — no row can fail to be
 described. -/

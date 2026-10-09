@@ -1,6 +1,5 @@
 module
 
-import Linger.Core.Name
 public import Linger.Core.Status
 import Linger.Core.Render
 
@@ -20,14 +19,12 @@ than asserted at the call site.
 
 namespace Linger.Core.Listing
 
-open Linger.Core.Name (sanitize)
-
 /-- A session's listing fields, from its socket filename and the
-key/values it reported. The leading `name` is always the sanitized
-socket filename; any `name` the reply tried to set is dropped, so the
-row's identity is independent of the reply. -/
+key/values it reported. The leading `name` is always the socket filename,
+which the caller has already validated; any `name` the reply tried to set
+is dropped, so the row's identity is independent of the reply. -/
 def rowFields (socketName : String) (info : List (String × String)) : List (String × String) :=
-  ("name", sanitize socketName) :: info.filter (·.1 != "name")
+  ("name", socketName) :: info.filter (·.1 != "name")
 
 /-! ## The row's status
 
@@ -44,8 +41,7 @@ open Linger.Core.Status (Status Obs classify ofName)
 
 /-- One boolean from the reply, defaulting to `false` when absent or
 malformed — a reply cannot make a row *more* alive by omission. -/
-def flag (info : List (String × String)) (key : String) : Bool :=
-  (info.find? (·.1 == key)).any (·.2 == "true")
+def flag (info : List (String × String)) (key : String) : Bool := info.lookup key == some "true"
 
 /-- Did the daemon actually answer? A connection can succeed while the daemon
 is too busy to fill in the reply within the window, and the row must not then
@@ -85,16 +81,16 @@ def rowStatus : Row → Status
         -- an exit status can only come from a live daemon, so it is read only
         -- here: a reply-supplied "exit" must never make a socket-less row look
         -- like a completed run
-        exit := (info.find? (·.1 == "exit")).bind (fun kv => kv.2.toNat?),
-        fresh := flag info "fresh", unseen := flag info "unseen" }
+        exit := (info.lookup "exit").bind String.toNat?, fresh := flag info "fresh",
+        unseen := flag info "unseen" }
   | .stale => .resumable
   | .broken => .unknown
   | .remote live peerStatus => if live then ofName peerStatus else .resumable
 
 /-! ## Rendering the human-readable listing
 
-The `--porcelain` output is `k\tv\n` records, parsed by a peer and proved framing-safe by
-`Session.infoText_records`. The *human* listing is different: it is printed straight to a
+The daemon's info reply is framed by `infoText` (`infoText_records`); the CLI prints porcelain
+from those parsed records. The *human* listing is different: it is printed straight to a
 terminal, so a control byte in a `cmd`, a label value, a checkpoint filename or a `-r` host
 would execute as an escape sequence. Rather than scrub at the call site — an audit that has to
 be redone whenever a new field is displayed — the row is rendered here, in the core, through

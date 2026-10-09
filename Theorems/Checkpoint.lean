@@ -59,8 +59,9 @@ theorem rt_nat : RT wNat rNat := by
     have hb : (UInt8.ofNat n) < 128 := by
       simp only [UInt8.lt_iff_toNat_lt, UInt8.toNat_ofNat', show (128 : UInt8).toNat = 128 from rfl]
       omega
-    simp [rNat, hb, UInt8.toNat_ofNat']
-    clear hb
+    simp only [List.cons_append, List.nil_append, rNat, hb, ↓reduceIte, UInt8.toNat_ofNat',
+      Nat.reducePow, Option.some.injEq, Prod.mk.injEq, Nat.mod_succ_eq_iff_lt, Nat.succ_eq_add_one,
+      Nat.reduceAdd, and_true, gt_iff_lt]
     omega
   | case2 n h ih =>
     rw [wNat, dite_eq_right h]
@@ -505,7 +506,7 @@ theorem rVt_fields (v : Vt) (rest : List UInt8) :
 state, for any state the emulator can actually be in.
 
 `Good` is the hypothesis the smart constructor introduced, and it is not a weakening of
-the format: `good_init` plus the `Pres` machinery says every live session satisfies it,
+the format: `good_init` and `good_of_liveReachable` say every live session satisfies it,
 and a state that does not is precisely one a checkpoint must not restore. The old
 unconditional statement was true of `cols := 0`, which is the bug.
 
@@ -591,12 +592,7 @@ theorem rVt_live {l : List UInt8} {v : Vt} {rest : List UInt8} (h : rVt l = some
 `stripMagic` is the tag check, named rather than inlined; `load_save` and `save_tag` both
 go through it instead of unfolding the decision into the parser chain. -/
 
-theorem stripMagic_magic (p : List UInt8) : stripMagic (magic ++ p) = some p := by
-  unfold stripMagic
-  rw [List.take_append_of_le_length (by simp [magic]), List.take_of_length_le (by simp [magic]),
-    List.drop_append_of_le_length (by simp [magic]), List.drop_of_length_le (by simp [magic]),
-    List.nil_append]
-  rw [ite_eq_left (rfl : magic = magic)]
+theorem stripMagic_magic (p : List UInt8) : stripMagic (magic ++ p) = some p := rfl
 
 /-- Acceptance at the file boundary preserves the checked state and parser
 reset established by `rVt`. This applies to any bytes, including encodings that
@@ -726,10 +722,7 @@ it existed to migrate files written before the rename, `save` had already been w
 Anyone who needs to read one can check out `e1ac562`, where the reader and its two
 theorems (`load_legacy_save`, `save_no_legacy`) are green — that is the escape hatch,
 and it is cheaper than carrying a branch for a file nobody has. -/
-theorem save_tag (c : Ckpt) : (save c).take 5 = magic := by
-  unfold save
-  simp only [List.append_assoc]
-  rw [List.take_append_of_le_length (by simp [magic]), List.take_of_length_le (by simp [magic])]
+theorem save_tag (c : Ckpt) : (save c).take 5 = magic := by simp [save, magic]
 
 /-- And when the parser is already quiescent, the round-trip is exact
 — the letter of the THEOREMS.md row. `hren`/`htabs` are `load_save`'s, hence
@@ -762,5 +755,73 @@ theorem load_save_none_of_cols_zero (c : Ckpt) (h : c.vt.cols = 0) : load (save 
   simp only [Option.bind_eq_bind, Option.bind_some]
   rw [rVt_fields, h, ofDecoded_none_of_cols_zero]
   rfl
+
+/-! ### The byte-array writer
+
+Each accumulator writer appends exactly its list writer's bytes, so `saveBytes` writes
+`save`'s record byte for byte and every theorem above holds of its bytes. -/
+
+/-- "Accumulator writer `f` appends exactly the bytes list writer `w` returns." -/
+abbrev Appends {α : Type} (f : ByteArray → α → ByteArray) (w : α → List UInt8) : Prop :=
+  ∀ (acc : ByteArray) (a : α), (f acc a).data.toList = acc.data.toList ++ w a
+
+theorem natB_appends : Appends natB wNat := by
+  intro acc n
+  fun_induction natB acc n with
+  | case1 acc n h => simp [wNat, h]
+  | case2 acc n h ih =>
+    rw [ih, wNat.eq_1 n]
+    simp [h]
+
+theorem boolB_appends : Appends boolB wBool := by
+  intro acc b
+  simp [boolB, wBool]
+
+theorem charB_appends : Appends charB wChar := fun acc c => natB_appends acc c.toNat
+
+theorem listB_appends {α : Type} {f : ByteArray → α → ByteArray} {w : α → List UInt8}
+    (h : Appends f w) : Appends (listB f) (wList w) := by
+  have hfold (l : List α) (acc : ByteArray) :
+    (l.foldl f acc).data.toList = acc.data.toList ++ l.flatMap w := by
+    induction l generalizing acc with
+    | nil => simp
+    | cons a l ih => simp [ih, h]
+  intro acc l
+  simp [listB, wList, hfold, natB_appends]
+
+theorem colorB_appends : Appends colorB wColor := by
+  intro acc c
+  cases c <;> simp [colorB, wColor]
+
+theorem penB_appends : Appends penB wPen := by
+  intro acc p
+  simp [penB, wPen, colorB_appends, boolB_appends]
+
+theorem cellB_appends : Appends cellB wCell := by
+  intro acc c
+  simp [cellB, wCell, penB_appends, natB_appends, listB_appends charB_appends, charB_appends]
+
+theorem rleB_appends {α : Type} [DecidableEq α] {f : ByteArray → α → ByteArray} {w : α → List UInt8}
+    (h : Appends f w) : Appends (rleB f) (wRLE w) := by
+  intro acc l
+  apply listB_appends
+  intro acc pair
+  obtain ⟨n, a⟩ := pair
+  simp [h, natB_appends, wPair]
+
+theorem rowB_appends : Appends rowB wRow := fun acc r => rleB_appends cellB_appends acc r.toList
+
+/-- **The byte-array writer is `save`**: the same `"LNGR"` v1 record, byte for byte. -/
+theorem saveBytes_eq (c : Ckpt) : saveBytes c = ⟨(save c).toArray⟩ := by
+  have h : (saveBytes c).data.toList = save c := by
+    unfold saveBytes save wVt wRing wAlt
+    dsimp only
+    cases c.vt.altGrid with
+    | none => simp [listB_appends rowB_appends, wOpt]
+    | some screen =>
+      obtain ⟨g, cur, pen⟩ := screen
+      simp [listB_appends rowB_appends, wOpt]
+  apply ByteArray.ext
+  simp [← Array.toList_inj, h]
 
 end Linger.Core.Checkpoint

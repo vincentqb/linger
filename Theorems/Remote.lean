@@ -9,7 +9,7 @@ public section
 
 /-! # §Remote — trusting a remote listing without trusting the remote
 
-`parse` is total by construction (`filterMap` over `foldl`-split
+`parse` is total by construction (`filterMap` over `splitOnP`-split
 lines — no partiality to prove). The load-bearing theorems: every name
 in the result is `Valid` (§Name carries through, so remote data cannot
 build a path outside the socket dir or smuggle bytes into ssh argv),
@@ -32,7 +32,7 @@ theorem parseRecord_name_valid {lines : List String} {r : RemoteRow}
     cases hc : check raw with
     | none => simp [hc] at h
     | some name =>
-      simp [hc] at h
+      simp only [hc, Option.bind_eq_bind, Option.bind_some, Option.some.injEq] at h
       subst r
       obtain ⟨rfl, valid⟩ := (check_eq_some_iff raw name).mp hc
       exact valid
@@ -57,16 +57,16 @@ theorem parse_cmd_scrubbed (out : String) :
     ∀ r ∈ parse out, ∀ c ∈ r.cmd.toList, c.toNat ≥ 32 ∧ (c.toNat < 127 ∨ c.toNat ≥ 160) := by
   intro r hr
   unfold parse at hr
-  obtain ⟨rec, -, hparse⟩ := List.mem_filterMap.mp hr
-  unfold parseRecord at hparse
-  dsimp only at hparse
-  split at hparse
-  · exact absurd hparse (by simp)
+  obtain ⟨rec, -, h⟩ := List.mem_filterMap.mp hr
+  unfold parseRecord at h
+  dsimp only at h
+  split at h
+  · exact absurd h (by simp)
   · rename_i raw heq
     cases hc : check raw with
-    | none => simp [hc] at hparse
+    | none => simp [hc] at h
     | some name =>
-      simp [hc] at hparse
+      simp only [hc, Option.bind_eq_bind, Option.bind_some, Option.some.injEq] at h
       subst r
       exact scrub_no_ctl _
 
@@ -224,10 +224,6 @@ theorem firstDupHost_none_iff (hosts : List String) : firstDupHost hosts = none 
 theorem firstDupHost_none {hosts : List String} (h : firstDupHost hosts = none) : hosts.Nodup :=
   (firstDupHost_none_iff hosts).mp h
 
-/-- …and it finds nothing on every duplicate-free list. -/
-theorem firstDupHost_none_of_nodup {hosts : List String} (h : hosts.Nodup) :
-    firstDupHost hosts = none := (firstDupHost_none_iff hosts).mpr h
-
 /-- Every duplicate list produces an offender for the refusal message. -/
 theorem firstDupHost_isSome_of_not_nodup {hosts : List String} (h : ¬hosts.Nodup) :
     (firstDupHost hosts).isSome := by
@@ -239,12 +235,6 @@ theorem firstDupHost_isSome_of_not_nodup {hosts : List String} (h : ¬hosts.Nodu
 theorem firstDirtyHost_none_iff (hosts : List String) :
     firstDirtyHost hosts = none ↔ ∀ x ∈ hosts, hostClean x = true := by
   simp [firstDirtyHost, List.find?_eq_none]
-
-/-- A list with no dirty host is one where `hostClean` holds of every entry. The
-walk and the predicate agree, which is what lets the theorem below be about the
-*bytes* rather than about `firstDirtyHost`. -/
-theorem firstDirtyHost_none {hosts : List String} (h : firstDirtyHost hosts = none) :
-    ∀ x ∈ hosts, hostClean x = true := (firstDirtyHost_none_iff hosts).mp h
 
 /-- Validation accepts every clean, unique host list and returns it unchanged,
 including its order. It cannot silently rewrite, drop or duplicate a host. -/
@@ -272,57 +262,11 @@ theorem checkHosts_ok_clean {hosts l : List String} (h : checkHosts hosts = .ok 
   obtain ⟨rfl, _, clean⟩ := (checkHosts_ok_iff hosts l).mp h
   simpa [hostClean] using clean
 
-/-! ## Records: every group the splitter emits is a real record
-
-`parse` `filterMap`s `parseRecord` over `records`' output, so an empty group would mean a run
-of blank lines had manufactured a record slot. A group is appended only under `¬cur.isEmpty`
-and `reverse` preserves that, so the invariant holds — and it is the one a consumer needs.
-
-Deliberately *not* stated: `(records lines).flatten = lines`. It is **false** — blank lines
-are dropped. The true version is `= lines.filter (¬·.trimAscii.isEmpty)`, which is strictly
-stronger and needs a `done.flatten ++ cur.reverse` invariant; it earns its keep only when a
-caller wants line-level fidelity, and none does. -/
-
-private theorem foldl_records_ne_nil :
-    ∀ (lines : List String) (done : List (List String)) (cur : List String),
-      (∀ g ∈ done, g ≠ []) →
-        ∀
-          g ∈
-            (lines.foldl
-                (fun (acc : List (List String) × List String) l =>
-                  if l.trimAscii.isEmpty then
-                    (if acc.2.isEmpty then acc.1 else acc.1 ++ [acc.2.reverse], [])
-                  else (acc.1, l :: acc.2))
-                (done, cur)).1,
-          g ≠ []
-  | [], _, _, hd => by simpa using hd
-  | l :: t, done, cur, hd => by
-    simp only [List.foldl_cons]
-    split
-    · split
-      · exact foldl_records_ne_nil t _ _ hd
-      · rename_i hne
-        refine foldl_records_ne_nil t _ _ ?_
-        intro g hg
-        rcases List.mem_append.mp hg with h1 | h2
-        · exact hd g h1
-        · rw [List.mem_singleton] at h2
-          subst h2
-          simpa using hne
-    · exact foldl_records_ne_nil t _ _ hd
+/-! ## Records: every group the splitter emits is a real record -/
 
 /-- **No record is empty.** A blank-line run cannot manufacture a slot for `parseRecord`. -/
 theorem records_ne_nil (lines : List String) : ∀ g ∈ records lines, g ≠ [] := by
   intro g hg
-  unfold records at hg
-  dsimp only at hg
-  split at hg
-  · exact foldl_records_ne_nil lines [] [] (by simp) g hg
-  · rcases List.mem_append.mp hg with h1 | h2
-    · exact foldl_records_ne_nil lines [] [] (by simp) g h1
-    · rename_i hne
-      rw [List.mem_singleton] at h2
-      subst h2
-      simpa using hne
+  simpa [records] using (List.mem_filter.mp hg).2
 
 end Linger.Core.Remote

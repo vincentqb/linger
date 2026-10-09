@@ -373,14 +373,13 @@ def magic : List UInt8 := [0x4C, 0x4E, 0x47, 0x52, 1] -- "LNGR" v1
 def save (c : Ckpt) : List UInt8 :=
   magic ++ wVt c.vt ++ wStr c.cwd ++ wList (wPair wStr wStr) c.labels
 
-/-- Strip the format tag. A **named stage** rather than the `if` inlined in `load`,
+/-- Strip the format tag. A **named stage** rather than the check inlined in `load`,
 and it stays one even though there is now only a single tag to check: with the decision
 inline, `load_save`'s round-trip proof carries it through the whole parser chain and
 times out at two million heartbeats, where naming it gives the round trip one rewrite
 (`stripMagic_magic`) and needs no raise at all. Measured both ways — the AGENTS.md
 "restructure for provability" rule, on the smallest possible thing. -/
-def stripMagic (l : List UInt8) : Option (List UInt8) :=
-  if l.take 5 = magic then some (l.drop 5) else none
+def stripMagic (l : List UInt8) : Option (List UInt8) := magic.isPrefixOf? l
 
 /-- Total: any byte list either parses fully or is `none`. Trailing
 garbage is rejected (a torn write is not a checkpoint). -/
@@ -393,5 +392,72 @@ def load (l : List UInt8) : Option Ckpt := do
     some { vt, cwd, labels }
   else
     none
+
+/-! ## Writing into a byte array
+
+`save` is the specification: the round-trip proofs read its list one byte at a time.
+Evaluated, that list costs a heap cell per byte, and a full 200-column history peaks near a
+gigabyte. `saveBytes` writes the same record into one `ByteArray`. Each accumulator writer
+mirrors the list writer of the same shape (`natB` is `wNat`; `rowB` is `wRow` over the same
+`runs`), so no screen row becomes a list of bytes; the short fields between the screens keep
+their list writers. `saveBytes_eq` proves the bytes equal `save`'s, so the format and its
+theorems are unchanged. -/
+
+def natB (acc : ByteArray) (n : Nat) : ByteArray :=
+  if h : n < 128 then acc.push (UInt8.ofNat n)
+  else natB (acc.push (UInt8.ofNat (128 + n % 128))) (n / 128)
+decreasing_by exact Nat.div_lt_self (by omega) (by omega)
+
+def boolB (acc : ByteArray) (b : Bool) : ByteArray := acc.push (if b then 1 else 0)
+
+def charB (acc : ByteArray) (c : Char) : ByteArray := natB acc c.toNat
+
+/-- `wList` into an accumulator. `listB` and `rleB` are specialized at each element writer:
+on a full 200-column history that took `saveBytes` from 282 to 237 ms. -/
+@[specialize]
+def listB {α : Type} (f : ByteArray → α → ByteArray) (acc : ByteArray) (l : List α) :
+    ByteArray := l.foldl f (natB acc l.length)
+
+def colorB (acc : ByteArray) : Color → ByteArray
+  | .default => acc.push 0
+  | .idx i => (acc.push 1).push i
+  | .rgb r g b => (((acc.push 2).push r).push g).push b
+
+def penB (acc : ByteArray) (p : Pen) : ByteArray :=
+  let acc := colorB (colorB acc p.fg) p.bg
+  let acc := boolB (boolB (boolB (boolB acc p.bold) p.dim) p.italic) p.underline
+  boolB (boolB (boolB acc p.blink) p.reverse) p.strike
+
+def cellB (acc : ByteArray) (c : Cell) : ByteArray :=
+  penB (natB (listB charB (charB acc c.base) c.marks) c.width) c.pen
+
+@[specialize]
+def rleB {α : Type} [DecidableEq α] (f : ByteArray → α → ByteArray) (acc : ByteArray) (l : List α) :
+    ByteArray := listB (fun acc (n, a) => f (natB acc n) a) acc (runs l)
+
+def rowB (acc : ByteArray) (r : Row) : ByteArray := rleB cellB acc r.toList
+
+/-- `save`, written into a byte array (`saveBytes_eq`). Every screen row, including the
+stashed alternate screen's, goes through `rowB`. -/
+def saveBytes (c : Ckpt) : ByteArray :=
+  let v := c.vt
+  let acc := (magic ++ wNat v.cols ++ wNat v.rows).toByteArray
+  let acc := listB rowB acc v.grid.toList
+  let acc :=
+    acc ++
+      (wCursor v.cursor ++ wPen v.pen ++ wModes v.modes ++ wNat v.top ++ wNat v.bot ++
+          wList wBool v.tabs.toList ++
+          wNat v.sb.start).toByteArray
+  let acc := listB rowB acc v.sb.data.toList
+  let acc :=
+    match v.altGrid with
+    | none => acc.push 0
+    | some (screen, cursor, pen) =>
+      listB rowB (acc.push 1) screen.toList ++ (wCursor cursor ++ wPen pen).toByteArray
+  acc ++
+    (wSaved v.saved ++ wStr v.title ++ wBool v.g0Line ++ wBool v.g1Line ++ wBool v.shiftOut ++
+        wBool v.bell ++
+        wStr c.cwd ++
+        wList (wPair wStr wStr) c.labels).toByteArray
 
 end Linger.Core.Checkpoint

@@ -4,10 +4,7 @@ import Linger.Core.Listing
 
 `Theorems/Listing.lean` proves `humanRow`/`humanListing` carry no control byte
 for *any* `info`. These fixtures pin concrete hostile input — the shape a remote
-peer or a crafted checkpoint filename could produce — and, in the `before`
-example, show that the previous `String`-interpolated row *did* leak, so the
-channel is documented as closed rather than merely gone. `native_decide` is
-allowed here (it is banned only in `Theorems/`). -/
+peer or a crafted checkpoint filename could produce. -/
 
 namespace Linger.Core.Listing.Tests
 
@@ -19,15 +16,6 @@ name could attempt. -/
 def hostile : List (String × String) :=
   [("name", "x"), ("status", "idle"), ("pid", "1"), ("cmd", "vi\x1b[31m\tm\ny"),
     ("label.a", "b\x1bc"), ("clients", "2")]
-
-/-- No ESC, TAB, DEL or newline survives into the rendered row. -/
-example : (humanRow 8 hostile).count 0x1B = 0 := by native_decide
-
-example : (humanRow 8 hostile).count 0x09 = 0 := by native_decide
-
-example : (humanRow 8 hostile).count 0x0A = 0 := by native_decide
-
-example : (humanRow 8 hostile).count 0x7F = 0 := by native_decide
 
 -- C1 metadata is text too; selectors and listings must not emit a CSI codepoint.
 example :
@@ -46,9 +34,6 @@ example : (humanListing [hostile, hostile]).count 0x0A = 2 := by native_decide
 
 /-- The empty state is its own single line. -/
 example : (humanListing []).count 0x0A = 1 := by native_decide
-
-example : terminalListing false [hostile, hostile] = humanListing [hostile, hostile] := by
-  native_decide
 
 example :
     terminalListing true [[("name", "work"), ("status", "working"), ("cmd", "vim")]] =
@@ -95,16 +80,6 @@ open Linger.Core.Status in
 example :
     attentionCounts [.unknown, .exitedBad, .wantsYou, .unknown] =
       [(.wantsYou, 1), (.exitedBad, 1), (.unknown, 2)] := by
-  native_decide
-
-/-- **The channel that was open before.** The old row was a `String`
-interpolation of the raw values; on this same reply it carried the ESC straight
-to the terminal. Pinned so the regression is documented, not merely absent. -/
-example :
-    (s!"{Linger.Core.Status.icon (Linger.Core.Status.ofName "idle")} \
-      {(hostile.lookup "name").getD ""}\t{(hostile.lookup "cmd").getD ""}").toUTF8.toList.count
-        0x1B =
-      1 := by
   native_decide
 
 end Linger.Core.Listing.Tests
