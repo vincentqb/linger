@@ -3,80 +3,17 @@ module
 public import Theorems.Render.History
 public import Theorems.Render.Row
 public import Theorems.Render.PendingGlyph
-public import Theorems.Render.PendingPosition
 public import Theorems.Render.PendingAccumulator
 import all Linger.Core.Render
 import all Linger.Core.Vt
 import all Theorems.Render.History
 import all Theorems.Render.Row
 import all Theorems.Render.PendingGlyph
-import all Theorems.Render.PendingPosition
 import all Theorems.Render.PendingAccumulator
 
 namespace Linger.Core.Render
 
 open Linger.Core.Vt
-
-/-- CUP as a complete state equation, including its clearing of deferred wrap.
-The receiver's origin mode and region are retained in `moveTo`. -/
-theorem cup_feed_eq (row col : Nat) (hr : 0 < row) (hc : 0 < col) (hrcap : row ≤ 65535)
-    (hccap : col ≤ 65535) {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) :
-    v.feed (csiNum2 row col 0x48) = v.moveTo (col - 1) (row - 1) := by
-  rw [show csiNum2 row col 0x48 = [0x1B, 0x5B] ++ (joinSemi [row, col] ++ [0x48]) from by
-      simp [csiNum2, csiB, joinSemi, List.append_assoc],
-    feed_append, keeps_csi_open hg hu, feed_append]
-  obtain ⟨s, hf⟩ :=
-    csi_param_run_frame (joinSemi [row, col]) (v := { v with pstate := .csi {} }) rfl hu
-      (paramBytes_joinSemi _)
-  obtain ⟨t, ht, hh, hs, hp, hi, hn, hz, hv⟩ :=
-    csi_joinSemi_feed [row, col] (v := { v with pstate := .csi {} }) rfl rfl rfl (by simp) (by simp)
-  have he : s = t := by
-    rw [hf] at ht
-    exact PState.csi.inj ht
-  subst s
-  rw [hf, show ∀ w : Vt, w.feed [0x48] = w.step 0x48 from fun _ => rfl]
-  change ({ v with pstate := .csi t } : Vt).step 0x48 = _
-  rw [csi_final_step_eq 0x48 (v := { v with pstate := .csi t }) (s := t) rfl hu hi (by decide)
-      (by decide)]
-  unfold Vt.csiFinish
-  dsimp only
-  rw [ite_eq_left hh,
-    ite_eq_right
-      (by
-        simp; omega)]
-  have hparams : t.params.push (min t.cur 65535, t.curSub) = #[(row, false), (col, false)] := by
-    apply Array.toList_inj.mp
-    simpa [Nat.min_eq_left hrcap, Nat.min_eq_left hccap] using hv
-  unfold Vt.csiDispatch
-  dsimp only
-  rw [ite_eq_right (by simp [hn]), hparams]
-  obtain ⟨ha, hb⟩ := arg_of_two t row col false false 1
-  rw [ite_eq_right (by omega : row ≠ 0)] at ha
-  rw [ite_eq_right (by omega : col ≠ 0)] at hb
-  simp only [ha, hb]
-  unfold Vt.moveTo
-  rw [← hg]
-
-/-- **A private mode set, as a state equation.** `?<n>h` / `?<n>l` *is* `setMode true n on`,
-with the parser back in ground. `modeSet_modes` gave only the `Modes` field, which cannot see
-`?1049h`'s real work — stashing the grid and blanking the screen. -/
-theorem modeSet_feed_eq (n : Nat) (on : Bool) (hn : 0 < n) (hlt : n < 65535) {v : Vt}
-    (hg : v.pstate = .ground) (hu : v.u8need = 0) :
-    v.feed (modeSet n on) = { v.setMode true n on with pstate := .ground } := by
-  rw [show modeSet n on = [0x1B, 0x5B, 0x3F] ++ (digits n ++ [(if on then 0x68 else 0x6C : UInt8)])
-      from by simp [modeSet, csiPriv, csiB],
-    feed_append, csi_priv_open_eq hg hu]
-  have hfinal :
-    (0x40 : UInt8) ≤ (if on then 0x68 else 0x6C) ∧
-      (if on then (0x68 : UInt8) else 0x6C) ≤ 0x7E := by
-    cases on <;> exact ⟨by decide, by decide⟩
-  rw [csi_digits_tail_eq n (if on then 0x68 else 0x6C) hfinal.1 hfinal.2 (v :=
-      { v with pstate := .csi { priv := 0x3F } }) rfl hu rfl rfl (by decide),
-    show min n 65535 = n from by omega]
-  dsimp only
-  cases on <;> simp only [Bool.false_eq_true, ite_false, ite_true]
-  · rw [csiDispatch_rm_one _ _ n false rfl rfl, setMode_pstate]; rfl
-  · rw [csiDispatch_sm_one _ _ n false rfl rfl, setMode_pstate]; rfl
 
 /-- A codepoint a repaint may emit is stored as itself. -/
 theorem printableChar_id_of_emittable {c : Char} (h : Emittable c) : printableChar c = c := by
@@ -146,7 +83,7 @@ theorem cellText_feed_of_cellOk {w : Vt} {c : Cell} (hc : CellOk c) (hg : w.psta
     intro ms
     induction ms with
     | nil =>
-      intros; rfl
+      intros; exact List.foldl_nil.trans List.foldl_nil.symm
     | cons m ms ih =>
       intro v hm
       simp only [List.foldl_cons, safeChar_of_emittable (hm m (by simp))]
@@ -311,73 +248,17 @@ theorem pendingAnsi_feed_eq (w : Vt) (cur : Cursor) (row : Nat) (pen : Pen) (hg 
     rw [he]
     simp only [csiNum2, csiB, List.cons_append, List.nil_append, List.cons_ne_nil, ↓reduceIte]
     congr 1
-    cases cur
-    simp_all
-    omega
+    obtain ⟨cx, cy, cp⟩ := cur
+    simp only at hm hp ⊢
+    rw [hp, show w.cols - 1 = cx from by omega]
   · rw [ite_eq_right h]
     rfl
-
-/-- IRM changes no state beyond its own mode bit. -/
-theorem irm_feed_eq (on : Bool) {w : Vt} (hg : w.pstate = .ground) (hu : w.u8need = 0) :
-    w.feed (csiNum 4 (if on then 0x68 else 0x6C)) =
-      { w with modes := { w.modes with insert := on } } := by
-  rw [show csiNum 4 (if on then 0x68 else 0x6C) = [0x1B, 0x5B] ++ [0x34, if on then 0x68 else 0x6C]
-      from by simp [csiNum, csiB, digits],
-    feed_append, keeps_csi_open hg hu]
-  have hd :
-    ({ w with pstate := .csi {} } : Vt).step 0x34 =
-      { w with pstate := .csi { cur := 4, haveCur := true } } := by
-    simp [Vt.step, Vt.abortUtf8, hu, Vt.stepCsi]
-  simp only [Vt.feed, List.foldl_cons, List.foldl_nil]
-  rw [hd]
-  have hfin :
-    (0x40 : UInt8) ≤ (if on then 0x68 else 0x6C) ∧
-      (if on then (0x68 : UInt8) else 0x6C) ≤ 0x7E := by
-    cases on <;> decide
-  rw [csi_final_step_eq (v := { w with pstate := .csi { cur := 4, haveCur := true } }) _ rfl hu rfl
-      hfin.1 hfin.2]
-  change
-    ({
-          ({ w with pstate := .csi { cur := 4, haveCur := true } } : Vt).csiDispatch
-            { cur := 4, haveCur := true, params := #[(4, false)] } (if on then 0x68 else 0x6C) with
-          pstate := .ground } :
-        Vt) =
-      _
-  cases on
-  all_goals simp only [Bool.false_eq_true, ↓reduceIte]
-  · rw [csiDispatch_rm_one _ _ 4 false rfl rfl]
-    simp [Vt.setMode, ← hg]
-  · rw [csiDispatch_sm_one _ _ 4 false rfl rfl]
-    simp [Vt.setMode, ← hg]
 
 /-- Autowrap can be restored after a repaint without clearing pending wrap. -/
 theorem wrap_feed_eq (on : Bool) {w : Vt} (hg : w.pstate = .ground) (hu : w.u8need = 0) :
     w.feed (modeSet 7 on) = { w with modes := { w.modes with wrap := on } } := by
   rw [modeSet_feed_eq 7 on (by decide) (by decide) hg hu]
   simp [Vt.setMode, ← hg]
-
-/-- A charset designation changes only the designated bank. -/
-theorem charset_feed_eq (i b : UInt8) (hi : i = 0x28 ∨ i = 0x29) (hlo : 0x30 ≤ b) (hhi : b ≤ 0x7E)
-    {w : Vt} (hg : w.pstate = .ground) (hu : w.u8need = 0) :
-    w.feed (escCharset i b) =
-      if i == 0x28 then { w with g0Line := b == 0x30 } else { w with g1Line := b == 0x30 } := by
-  rw [show escCharset i b = [0x1B] ++ [i, b] from rfl,
-    show ∀ v : Vt, v.feed ([0x1B] ++ [i, b]) = ((v.step 0x1B).step i).step b from fun _ => by
-      simp [Vt.feed],
-    esc_step_eq hg hu]
-  have hinter : ({ w with pstate := .esc } : Vt).step i = { w with pstate := .escInter i } := by
-    rw [step_of_esc_quiet (v := { w with pstate := .esc }) _ rfl hu]
-    rcases hi with h | h <;> subst h <;> rfl
-  rw [hinter, step_of_escInter_quiet (v := { w with pstate := .escInter i }) b rfl hu]
-  rw [stepEscInter_final _ i b hlo hhi]
-  rcases hi with h | h <;> subst h <;> simp [← hg]
-
-/-- SI and SO do not touch the cursor or its pending bit. -/
-theorem shift_feed_eq (on : Bool) {w : Vt} (hg : w.pstate = .ground) (hu : w.u8need = 0) :
-    w.feed [if on then 0x0E else 0x0F] = { w with shiftOut := on } := by
-  cases on <;>
-    (simp only [Bool.false_eq_true, ↓reduceIte, Vt.feed, List.foldl_cons, List.foldl_nil];
-     rw [step_of_ground_quiet _ hg hu]; simp [Vt.stepGround, Vt.ctl])
 
 /-- Charset replay is exact after SI, including the unshifted case's empty tail. -/
 theorem charsetAnsi_feed_eq (v w : Vt) (hs : w.shiftOut = false) (hg : w.pstate = .ground)
@@ -556,9 +437,9 @@ theorem pendingAnsi_cursor_eq (w : Vt) (grid : Array Row) (cur : Cursor) (row : 
         hrow h.1.2 h.2 hps hun
     rw [show bs = csiNum2 row (x + 1) 0x48 ++ penSgr c.pen ++ cellText c ++ penSgr pen from rfl, he]
     simp only [csiNum2, csiB, List.cons_append, List.nil_append, List.cons_ne_nil, ↓reduceIte]
-    cases cur
-    simp_all
-    omega
+    obtain ⟨cx, cy, cp⟩ := cur
+    simp only at hm hp ⊢
+    rw [hp, show w.cols - 1 = cx from by omega]
   · rfl
 
 /-- The active wrapper restores its temporary modes and charsets after the exact
@@ -936,53 +817,15 @@ theorem cursorPendingAnsi_position (v w : Vt) (hg : Good w) (hcols : w.cols = v.
 theorem restore_placed_ground_need (v w : Vt) :
     (w.feed (restoreBody v ++ cursorAnsi v)).pstate = .ground ∧
       (w.feed (restoreBody v ++ cursorAnsi v)).u8need = 0 := by
-  have hu : (w.feed (restoreBody v)).u8need = 0 := by
-    unfold restoreBody
-    rw [feed_append]
-    exact u8_zero_after_penSgr _ _
+  have hu : (w.feed (restoreBody v)).u8need = 0 := restoreBody_u8need v w
   obtain ⟨hp, hn, -⟩ := mmap_id_cursorAnsi v _ (restoreBody_grounds v w) hu
   simpa only [feed_append] using And.intro hp hn
 
-/-- The pending repair retains the original cursor-position contract, independently
-of grid representability or the inactive UTF-8 accumulator. -/
-theorem restore_cursor (v : Vt) (hgood : Good v) (ho : v.modes.origin = false) :
-    (((Vt.init v.cols v.rows).feed (restore v)).cursor.x = v.cursor.x) ∧
-      (((Vt.init v.cols v.rows).feed (restore v)).cursor.y = v.cursor.y) := by
-  let w := Vt.init v.cols v.rows
-  let u := w.feed (restoreBody v ++ cursorAnsi v)
-  have hgu : Good u := Good.feed _ (good_init v.cols v.rows)
-  have hc : u.cols = v.cols := by
-    rw [← dims_fst, dims_feed _ (good_init v.cols v.rows), dims_fst]
-    exact (init_dims v hgood).1
-  have hp : u.pstate = .ground := (restore_placed_ground_need v w).1
-  have hn : u.u8need = 0 := (restore_placed_ground_need v w).2
-  have hx : u.cursor.x = v.cursor.x := by
-    simpa only [u, w] using (restore_cursor_placed v hgood ho).1
-  have hy : u.cursor.y = v.cursor.y := by
-    simpa only [u, w] using (restore_cursor_placed v hgood ho).2
-  have hu : (w.feed (restoreBody v)).u8need = 0 := by
-    unfold restoreBody
-    rw [feed_append]
-    exact u8_zero_after_penSgr _ _
-  have hmo := (mmap_id_cursorAnsi v _ (restoreBody_grounds v w) hu).2.2
-  simp only [id_eq] at hmo
-  have horgBody : (w.feed (restoreBody v)).modes.origin = false := by
-    simpa only [w] using (quiet_restoreBody v ho (Vt.init v.cols v.rows) rfl rfl).2
-  have horg : u.modes.origin = false := by
-    dsimp only [u]
-    rw [feed_append]
-    exact (congrArg Modes.origin hmo).trans horgBody
-  rw [show restore v = (restoreBody v ++ cursorAnsi v) ++ cursorPendingAnsi v from by
-      simp only [restore, List.append_assoc],
-    feed_append]
-  exact cursorPendingAnsi_position v u hgu hc ho horg hx hy hp hn
-
-/-- Receiver-quantified cursor position keeps its original assumptions. The extra
-margin bytes may restore pending wrap, but cannot move an already placed cursor. -/
+/-- Receiver-quantified cursor position. Besides `Good v`, the session needs only DECOM off;
+the replayed mouse mode needs no premise (`restoreBody_origin`). The extra margin bytes may
+restore pending wrap, but cannot move an already placed cursor. -/
 theorem restore_cursor_any (v w : Vt) (hgood : Good v) (hgw : Good w) (hcols : w.cols = v.cols)
-    (hrows : w.rows = v.rows) (ho : v.modes.origin = false)
-    (hmouse :
-      v.modes.mouse = 0 ∨ v.modes.mouse = 1000 ∨ v.modes.mouse = 1002 ∨ v.modes.mouse = 1003) :
+    (hrows : w.rows = v.rows) (ho : v.modes.origin = false) :
     ((w.feed (restore v)).cursor.x = v.cursor.x) ∧
       ((w.feed (restore v)).cursor.y = v.cursor.y) := by
   let u := w.feed (restoreBody v ++ cursorAnsi v)
@@ -993,16 +836,27 @@ theorem restore_cursor_any (v w : Vt) (hgood : Good v) (hgw : Good w) (hcols : w
   have hp : u.pstate = .ground := (restore_placed_ground_need v w).1
   have hn : u.u8need = 0 := (restore_placed_ground_need v w).2
   have hx : u.cursor.x = v.cursor.x := by
-    simpa only [u] using (restore_cursor_placed_any v w hgood hgw hcols hrows ho hmouse).1
+    simpa only [u] using (restore_cursor_placed_any v w hgood hgw hcols hrows ho).1
   have hy : u.cursor.y = v.cursor.y := by
-    simpa only [u] using (restore_cursor_placed_any v w hgood hgw hcols hrows ho hmouse).2
+    simpa only [u] using (restore_cursor_placed_any v w hgood hgw hcols hrows ho).2
+  have hu : (w.feed (restoreBody v)).u8need = 0 := restoreBody_u8need v w
+  have hmo := (mmap_id_cursorAnsi v _ (restoreBody_grounds v w) hu).2.2
+  simp only [id_eq] at hmo
   have horg : u.modes.origin = false := by
-    rw [show u.modes = v.modes from restore_modes_placed v w hmouse]
-    exact ho
+    dsimp only [u]
+    rw [feed_append]
+    exact (congrArg Modes.origin hmo).trans (restoreBody_origin v w ho)
   rw [show restore v = (restoreBody v ++ cursorAnsi v) ++ cursorPendingAnsi v from by
       simp only [restore, List.append_assoc],
     feed_append]
   exact cursorPendingAnsi_position v u hgu hc ho horg hx hy hp hn
+
+/-- The pending repair retains the original cursor-position contract, independently
+of grid representability or the inactive UTF-8 accumulator. -/
+theorem restore_cursor (v : Vt) (hgood : Good v) (ho : v.modes.origin = false) :
+    (((Vt.init v.cols v.rows).feed (restore v)).cursor.x = v.cursor.x) ∧
+      (((Vt.init v.cols v.rows).feed (restore v)).cursor.y = v.cursor.y) :=
+  restore_cursor_any v _ hgood (good_init _ _) (init_dims v hgood).1 (init_dims v hgood).2 ho
 
 /-- Even an out-of-range decoded scroll region cannot designate a character bank. -/
 theorem regionAnsi_charsets (v w : Vt) (hg : w.pstate = .ground) (hu : w.u8need = 0) :
@@ -1145,11 +999,9 @@ theorem pending_tail_frames (v u : Vt) (hg : Good u) (hr : Renderable u) (hcols 
   have bframe :
     b.pstate = .ground ∧ b.u8need = 0 ∧ b.u8acc = 0 ∧ b.grid = a.grid ∧ b.sb = a.sb := by
     by_cases hpend : v.saved.cur.pending = true
-    · by_cases hempty : pendingAnsi v.cols v.grid v.saved.cur (v.saved.cur.y + 1) v.saved.pen = []
-      · simpa only [b, ae, hpend, hempty, ↓reduceIte] using
-          (show a.pstate = .ground ∧ a.u8need = 0 ∧ a.u8acc = 0 ∧ a.grid = a.grid ∧ a.sb = a.sb from
-            ⟨ap, an, aa, rfl, rfl⟩)
-      · simpa only [b, ae, hpend, hempty, ↓reduceIte] using
+    · by_cases hempty :
+          pendingAnsi v.cols v.grid v.saved.cur (v.saved.cur.y + 1) v.saved.pen = [] <;>
+        simpa only [b, ae, hpend, hempty, ↓reduceIte] using
           (show a.pstate = .ground ∧ a.u8need = 0 ∧ a.u8acc = 0 ∧ a.grid = a.grid ∧ a.sb = a.sb from
             ⟨ap, an, aa, rfl, rfl⟩)
     · dsimp only [b]

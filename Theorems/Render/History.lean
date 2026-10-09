@@ -5,10 +5,7 @@ import all Linger.Core.Render
 import all Linger.Core.Vt
 import all Theorems.Render.Sticky
 
--- No `public section`: a **public** declaration's type may not mention a private
--- field, and `Vt`'s are private now (the seal, `specs/archive/vt-toolkit.md` Step 1).
--- Module-private is the default, so consumers reach in with `import all`. See the
--- longer note in `Theorems/Vt.lean`.
+-- Module-private by default: `Vt`'s fields are sealed (see `Theorems/Vt/State.lean`).
 
 /-! # §Row integrity for `linger capture --history` — a cell cannot inject a line break
 
@@ -22,9 +19,7 @@ open Linger.Core.Vt
 
 /-! ## §Row integrity for `linger capture --history` — a cell cannot inject a line break
 
-The last runtime byte stream to acquire a theorem. `history` used to be assembled
-through `String`, which does not reduce in the kernel; `rowText` now builds `List UInt8` (the same restructure
-`Session.infoText` needed), which makes both claims below available.
+`rowText` builds `List UInt8` rather than `String`, so both claims reduce in the kernel.
 
 They matter for the same reason `infoText`'s do. `linger capture --history` is line-oriented
 output that a caller may parse, and a *cell* is attacker-influenced — a program running
@@ -32,33 +27,21 @@ in the session writes whatever it likes into the grid. `Render.safeChar` maps a 
 control to U+FFFD on the way out, so a cell holding a newline cannot forge a line, and
 the line count is exactly the row count. -/
 
-/-- The scrubbing happens at the **fold**, not only at the encoder. Worth proving
+/-- The scrubbing happens **in `rowChars`**, not only at the encoder. Worth proving
 separately: `rowText_scrubbed` below is true even without this, because `utf8s` scrubs
 again on the way out — so without it the claim would rest on a single guard, and this
 says the grid never hands a control codepoint to the encoder in the first place. -/
 theorem rowChars_scrubbed (row : Row) : ∀ c ∈ rowChars row, 0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F := by
-  unfold rowChars
-  rw [← Array.foldl_toList]
-  refine
-    invariant_foldl (fun acc : List Char => ∀ c ∈ acc, 0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F) _ ?_
-      row.toList []
-      (by
-        intro c hc; simp at hc)
-  intro acc cell hacc
-  split
-  · exact hacc
-  · intro c hc
-    rcases List.mem_append.mp hc with h | h
-    · rcases List.mem_append.mp h with h' | h'
-      · exact hacc c h'
-      · simp only [List.mem_singleton] at h'
-        subst h'
-        exact safeChar_ge cell.base
-    · obtain ⟨m, -, hm⟩ := List.mem_map.mp h
-      subst hm
+  intro c hc
+  obtain ⟨cell, -, hc⟩ := List.mem_flatMap.mp hc
+  split at hc
+  · simp at hc
+  · rcases List.mem_cons.mp hc with rfl | h
+    · exact safeChar_ge cell.base
+    · obtain ⟨m, -, rfl⟩ := List.mem_map.mp h
       exact safeChar_ge m
 
-/-- Trimming only drops, so it cannot introduce a character the fold excluded. -/
+/-- Trimming only drops, so it cannot introduce a character `rowChars` excluded. -/
 theorem dropTrailingBlanks_subset (cs : List Char) : ∀ c ∈ dropTrailingBlanks cs, c ∈ cs := by
   intro c hc
   unfold dropTrailingBlanks at hc
@@ -68,22 +51,19 @@ theorem dropTrailingBlanks_subset (cs : List Char) : ∀ c ∈ dropTrailingBlank
 theorem rowText_scrubbed (row : Row) : ∀ b ∈ rowText row, 0x20 ≤ b ∧ b ≠ 0x7F := utf8s_no_ctl _
 
 theorem rowText_no_lf (row : Row) : ∀ b ∈ rowText row, b ≠ 0x0A := by
-  intro b hb
-  obtain ⟨hge, -⟩ := rowText_scrubbed row b hb
-  intro he
-  rw [he] at hge
-  exact absurd hge (by decide)
+  intro b hb; have := rowText_scrubbed row b hb; grind
 
-/-- **Every byte is a line terminator or printable content.** -/
-theorem history_framing (v : Vt) : ∀ b ∈ history v, b = 0x0A ∨ (0x20 ≤ b ∧ b ≠ 0x7F) := by
+private theorem rows_framing (rows : List Row) :
+    ∀ b ∈ rows.flatMap (fun row => rowText row ++ [0x0A]), b = 0x0A ∨ (0x20 ≤ b ∧ b ≠ 0x7F) := by
   intro b hb
-  unfold history at hb
-  simp only [List.mem_flatMap] at hb
-  obtain ⟨row, -, hmem⟩ := hb
+  obtain ⟨row, -, hmem⟩ := List.mem_flatMap.mp hb
   rcases List.mem_append.mp hmem with h | h
   · exact Or.inr (rowText_scrubbed row b h)
-  · simp only [List.mem_singleton] at h
-    exact Or.inl h
+  · exact Or.inl (List.mem_singleton.mp h)
+
+/-- **Every byte is a line terminator or printable content.** -/
+theorem history_framing (v : Vt) : ∀ b ∈ history v, b = 0x0A ∨ (0x20 ≤ b ∧ b ≠ 0x7F) :=
+  rows_framing _
 
 private theorem count_rows :
     ∀ (rows : List Row), (rows.flatMap (fun row => rowText row ++ [0x0A])).count 0x0A = rows.length
@@ -110,15 +90,8 @@ what makes a capture *positionally* parseable by an agent that read `rows` from
 screen, whatever the session's program printed. -/
 
 /-- **Every byte is a line terminator or printable content.** -/
-theorem screenText_framing (v : Vt) : ∀ b ∈ screenText v, b = 0x0A ∨ (0x20 ≤ b ∧ b ≠ 0x7F) := by
-  intro b hb
-  unfold screenText at hb
-  simp only [List.mem_flatMap] at hb
-  obtain ⟨row, -, hmem⟩ := hb
-  rcases List.mem_append.mp hmem with h | h
-  · exact Or.inr (rowText_scrubbed row b h)
-  · simp only [List.mem_singleton] at h
-    exact Or.inl h
+theorem screenText_framing (v : Vt) : ∀ b ∈ screenText v, b = 0x0A ∨ (0x20 ≤ b ∧ b ≠ 0x7F) :=
+  rows_framing _
 
 /-- **One line per grid row, and only the grid** — the scrollback ring
 contributes nothing, which is the whole difference from `history`. -/

@@ -5,10 +5,7 @@ import all Linger.Core.Render
 import all Linger.Core.Vt
 import all Theorems.Render.Pen
 
--- No `public section`: a **public** declaration's type may not mention a private
--- field, and `Vt`'s are private now (the seal, `specs/archive/vt-toolkit.md` Step 1).
--- Module-private is the default, so consumers reach in with `import all`. See the
--- longer note in `Theorems/Vt.lean`.
+-- Module-private by default: `Vt`'s fields are sealed (see `Theorems/Vt/State.lean`).
 
 /-! # §Replay stage 3d — everything after the repaint leaves the screen alone
 
@@ -69,7 +66,7 @@ theorem Fixes.nil {α : Type} (π : Vt → α) : Fixes π [] := fun _ hg hu => �
 theorem Fixes.append {α : Type} {π : Vt → α} {a b : Bytes} (ha : Fixes π a) (hb : Fixes π b) :
     Fixes π (a ++ b) := by
   intro v hg hu
-  rw [show v.feed (a ++ b) = (v.feed a).feed b from by simp [Vt.feed, List.foldl_append]]
+  rw [feed_append]
   obtain ⟨h1, h2, h3⟩ := ha v hg hu
   obtain ⟨h4, h5, h6⟩ := hb _ h1 h2
   exact ⟨h4, h5, h6.trans h3⟩
@@ -78,9 +75,6 @@ theorem Fixes.streamPred {α : Type} (π : Vt → α) : StreamPred (Fixes π) :=
   ⟨Fixes.nil π, fun ha hb => Fixes.append ha hb⟩
 
 def Keeps (bs : Bytes) : Prop := Fixes (fun v : Vt => v.grid) bs
-
-/-- Grid preservation is the grid instance of the shared stream predicate. -/
-theorem keeps_eq_fixes (bs : Bytes) : Keeps bs ↔ Fixes (fun v : Vt => v.grid) bs := Iff.rfl
 
 theorem psBlind_grid : PsBlind (fun v : Vt => v.grid) := fun _ _ => rfl
 
@@ -91,20 +85,11 @@ theorem Keeps.append {a b : Bytes} (ha : Keeps a) (hb : Keeps b) : Keeps (a ++ b
 
 theorem Keeps.streamPred : StreamPred Keeps := ⟨Keeps.nil, fun ha hb => Keeps.append ha hb⟩
 
-theorem Keeps.append3 {a b c : Bytes} (ha : Keeps a) (hb : Keeps b) (hc : Keeps c) :
-    Keeps (a ++ b ++ c) := Keeps.streamPred.append3 ha hb hc
-
-theorem Keeps.append4 {a b c d : Bytes} (ha : Keeps a) (hb : Keeps b) (hc : Keeps c)
-    (hd : Keeps d) : Keeps (a ++ b ++ c ++ d) := Keeps.streamPred.append4 ha hb hc hd
-
 /-- Both branches, with the condition available — `modesAnsi`'s screen-switch
 guard is what will discharge `grid_setMode`'s hypotheses. -/
 theorem Keeps.ite {c : Prop} [Decidable c] {a b : Bytes}
     (ha : c → Keeps a) (hb : ¬c → Keeps b) : Keeps (if c then a else b) :=
   Keeps.streamPred.ite ha hb
-
-theorem Keeps.flatten {l : List Bytes} (h : ∀ bs ∈ l, Keeps bs) : Keeps l.flatten :=
-  Keeps.streamPred.flatten h
 
 theorem Keeps.flatMap {α : Type} {f : α → Bytes} {l : List α}
     (h : ∀ a, Keeps (f a)) : Keeps (l.flatMap f) := Keeps.streamPred.flatMap h
@@ -127,7 +112,7 @@ theorem inter_csiPush (s : CsiState) (sub : Bool) : (csiPush s sub).inter = s.in
 theorem csi_param_run_inter : ∀ (bs : Bytes) {v : Vt} {s : CsiState}, v.pstate = .csi s →
     v.u8need = 0 → ParamBytes bs →
     ∃ s', v.feed bs = { v with pstate := .csi s' } ∧ s'.inter = s.inter
-  | [], v, s, hg, _, _ => ⟨s, by rw [show v.feed [] = v from rfl, ← hg], rfl⟩
+  | [], v, s, hg, _, _ => ⟨s, by rw [feed_nil, ← hg], rfl⟩
   | x :: xs, v, s, hg, hu, hp => by
     obtain ⟨hx1, hx2⟩ := hp x (by simp)
     -- one parameter byte: a digit accumulates, `;`/`:` closes — both keep `inter`
@@ -146,25 +131,7 @@ theorem csi_param_run_inter : ∀ (bs : Bytes) {v : Vt} {s : CsiState}, v.pstate
           · rw [ite_eq_left hcolon]
             exact ⟨_, rfl, inter_csiPush s true⟩
           · -- 0x30…0x3B with none of the above is impossible
-            exfalso
-            simp only [Bool.and_eq_true, decide_eq_true_eq, UInt8.le_iff_toNat_le,
-              show ((0x30 : UInt8)).toNat = 48 from rfl,
-              show ((0x39 : UInt8)).toNat = 57 from rfl] at hd
-            simp only [beq_iff_eq] at hsemi hcolon
-            obtain ⟨hb1, hb2⟩ := u8_bounds hx1 hx2
-            simp only [show ((0x30 : UInt8)).toNat = 48 from rfl,
-              show ((0x3B : UInt8)).toNat = 59 from rfl] at hb1 hb2
-            have h3A : x ≠ 0x3A := hcolon
-            have h3B : x ≠ 0x3B := hsemi
-            have hn3A : x.toNat ≠ 58 := fun he => h3A (UInt8.toNat_inj.mp
-              (by simpa [show ((0x3A : UInt8)).toNat = 58 from rfl] using he))
-            have hn3B : x.toNat ≠ 59 := fun he => h3B (UInt8.toNat_inj.mp
-              (by simpa [show ((0x3B : UInt8)).toNat = 59 from rfl] using he))
-            have hgt : 57 < x.toNat := by
-              rcases Nat.lt_or_ge 57 x.toNat with h | h
-              · exact h
-              · exact absurd ⟨hb1, h⟩ hd
-            omega
+            grind
     obtain ⟨t, hxs, hti⟩ := hstep
     rw [feed_cons, hxs]
     obtain ⟨s', hs', hsi⟩ := csi_param_run_inter xs (v := { v with pstate := .csi t })
@@ -173,21 +140,7 @@ theorem csi_param_run_inter : ∀ (bs : Bytes) {v : Vt} {s : CsiState}, v.pstate
 
 /-- From ground, `ESC [` lands in a fresh collector with nothing else touched. -/
 theorem keeps_csi_open {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) :
-    v.feed [0x1B, 0x5B] = { v with pstate := .csi {} } := by
-  rw [show v.feed [0x1B, 0x5B] = (v.step 0x1B).step 0x5B from by simp [Vt.feed]]
-  have hesc : v.step 0x1B = { v with pstate := .esc } := by
-    unfold Vt.step Vt.abortUtf8
-    dsimp only
-    rw [ite_eq_right (by simp [hu]), hg]
-    dsimp only
-    unfold Vt.stepGround
-    rw [ite_eq_left (by decide)]
-  rw [hesc]
-  unfold Vt.step Vt.abortUtf8
-  dsimp only
-  rw [ite_eq_right (by simp [hu])]
-  unfold Vt.stepEsc
-  rfl
+    v.feed [0x1B, 0x5B] = { v with pstate := .csi {} } := csi_open_feed hg hu
 
 /-- `ESC [ ?` opens a private CSI: the full state equation, not just the parser state. -/
 theorem csi_priv_open_eq {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) :
@@ -214,8 +167,7 @@ theorem csi_tail_proj {α : Type} {π : Vt → α} (hb : PsBlind π) (params : B
     π (v.feed (params ++ [final])) = π v ∧
       (v.feed (params ++ [final])).pstate = .ground ∧ (v.feed (params ++ [final])).u8need = 0 := by
   obtain ⟨s', hs', hsi⟩ := csi_param_run_inter params hg hu hp
-  rw [show ∀ (w : Vt), w.feed (params ++ [final]) = (w.feed params).feed [final] from fun w => by
-      simp [Vt.feed, List.foldl_append]]
+  rw [feed_append]
   rw [hs', show ∀ (w : Vt), w.feed [final] = w.step final from fun _ => rfl]
   rw [csi_final_step_eq final (v := { v with pstate := .csi s' }) (s := s') rfl (by simpa using hu)
       (by
@@ -237,11 +189,7 @@ theorem fixes_csi_seq {α : Type} {π : Vt → α} (hb : PsBlind π) (params : B
   intro v hg hu
   rw [show (csiB ++ params ++ [final] : Bytes) = [0x1B, 0x5B] ++ (params ++ [final]) from by
       unfold csiB; simp]
-  rw [show
-      ∀ (w : Vt),
-        w.feed ([0x1B, 0x5B] ++ (params ++ [final])) =
-          (w.feed [0x1B, 0x5B]).feed (params ++ [final])
-      from fun w => by simp [Vt.feed, List.foldl_append]]
+  rw [feed_append]
   rw [keeps_csi_open hg hu]
   obtain ⟨hπ', hp', hu'⟩ :=
     csi_tail_proj hb params final hp h1 h2 hπ (v := { v with pstate := .csi {} }) rfl
@@ -258,11 +206,7 @@ theorem fixes_csi_priv_seq {α : Type} {π : Vt → α} (hb : PsBlind π) (param
       (csiB ++ ([0x3F] ++ params) ++ [final] : Bytes) = [0x1B, 0x5B, 0x3F] ++ (params ++ [final])
       from by
       unfold csiB; simp]
-  rw [show
-      ∀ (w : Vt),
-        w.feed ([0x1B, 0x5B, 0x3F] ++ (params ++ [final])) =
-          (w.feed [0x1B, 0x5B, 0x3F]).feed (params ++ [final])
-      from fun w => by simp [Vt.feed, List.foldl_append]]
+  rw [feed_append]
   rw [csi_priv_open_eq hg hu]
   obtain ⟨hπ', hp', hu'⟩ :=
     csi_tail_proj hb params final hp h1 h2 hπ (v :=
@@ -280,13 +224,7 @@ theorem fixes_csiNum2 {α : Type} {π : Vt → α} (hb : PsBlind π) (a b : Nat)
     Fixes π (csiNum2 a b final) := by
   rw [show csiNum2 a b final = csiB ++ (digits a ++ [0x3B] ++ digits b) ++ [final] from by
       unfold csiNum2; simp]
-  refine fixes_csi_seq hb _ _ (fun x hx => ?_) h1 h2 hπ
-  rcases List.mem_append.mp hx with hx' | hx'
-  · rcases List.mem_append.mp hx' with hx'' | hx''
-    · exact paramBytes_digits a x hx''
-    · rw [show x = 0x3B from by simpa using hx'']
-      exact ⟨by decide, by decide⟩
-  · exact paramBytes_digits b x hx'
+  exact fixes_csi_seq hb _ _ (paramBytes_digits2 a b) h1 h2 hπ
 
 theorem fixes_csiPriv {α : Type} {π : Vt → α} (hb : PsBlind π) (n : Nat) (final : UInt8)
     (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E)
@@ -315,32 +253,6 @@ theorem fixes_penSgr {α : Type} {π : Vt → α} (hb : PsBlind π) (p : Pen)
   exact
     ((fixes_sgrOf hb _ hπ).append (fixes_sgrColorSeq hb _ _ hπ)).append
       (fixes_sgrColorSeq hb _ _ hπ)
-
-/-- The shared tail: from a collector with no intermediate, a parameter run and a
-final byte return to ground and touch the grid only as the dispatch does. -/
-theorem keeps_csi_tail (params : Bytes) (final : UInt8) (hp : ParamBytes params)
-    (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E)
-    (hgrid : ∀ (w : Vt) (t : CsiState), (w.csiDispatch t final).grid = w.grid)
-    {v : Vt} {s : CsiState} (hg : v.pstate = .csi s) (hu : v.u8need = 0)
-    (hi : s.inter = 0) :
-    ((v.feed (params ++ [final])).pstate = .ground
-      ∧ (v.feed (params ++ [final])).u8need = 0
-      ∧ (v.feed (params ++ [final])).grid = v.grid) := by
-  obtain ⟨hgrid', hg', hu'⟩ := csi_tail_proj psBlind_grid params final hp h1 h2 hgrid hg hu hi
-  exact ⟨hg', hu', hgrid'⟩
-
-theorem keeps_csi_seq (params : Bytes) (final : UInt8) (hp : ParamBytes params)
-    (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E)
-    (hgrid : ∀ (w : Vt) (t : CsiState), (w.csiDispatch t final).grid = w.grid) :
-    Keeps (csiB ++ params ++ [final]) := fixes_csi_seq psBlind_grid params final hp h1 h2 hgrid
-
-/-- The private form (`CSI ? n h/l`), which is what a mode replay is made of. The
-marker byte sits outside `ParamBytes` — deliberately, since a marker is what
-decides whether a sequence can be DECOM — so it takes one explicit step. -/
-theorem keeps_csi_priv_seq (params : Bytes) (final : UInt8) (hp : ParamBytes params)
-    (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E)
-    (hgrid : ∀ (w : Vt) (t : CsiState), (w.csiDispatch t final).grid = w.grid) :
-    Keeps (csiB ++ ([0x3F] ++ params) ++ [final]) := fixes_csi_priv_seq psBlind_grid params final hp h1 h2 hgrid
 
 /-! ### One fact per final byte the tail uses -/
 
@@ -405,28 +317,13 @@ theorem grid_csiDispatch_stbm (v : Vt) (s : CsiState) :
 
 theorem keeps_csiNum (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E)
     (hgrid : ∀ (w : Vt) (t : CsiState), (w.csiDispatch t final).grid = w.grid) :
-    Keeps (csiNum n final) :=
-  keeps_csi_seq _ _ (paramBytes_digits n) h1 h2 hgrid
+    Keeps (csiNum n final) := fixes_csiNum psBlind_grid n final h1 h2 hgrid
 
 theorem keeps_csiNum2 (a b : Nat) (final : UInt8) (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E)
     (hgrid : ∀ (w : Vt) (t : CsiState), (w.csiDispatch t final).grid = w.grid) :
     Keeps (csiNum2 a b final) := fixes_csiNum2 psBlind_grid a b final h1 h2 hgrid
 
-theorem keeps_csiPriv (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E)
-    (hgrid : ∀ (w : Vt) (t : CsiState), (w.csiDispatch t final).grid = w.grid) :
-    Keeps (csiPriv n final) := fixes_csiPriv psBlind_grid n final h1 h2 hgrid
-
-end Linger.Core.Render
-
-namespace Linger.Core.Render
-
-open Linger.Core.Vt
-
 /-! ### The SGR pen, and the one mode fact the replay turns on -/
-
-theorem keeps_sgrOf (codes : List Nat) : Keeps (sgrOf codes) := fixes_sgrOf psBlind_grid codes grid_csiDispatch_sgr
-
-theorem keeps_sgrColorSeq (c : Color) (isFg : Bool) : Keeps (sgrColorSeq c isFg) := fixes_sgrColorSeq psBlind_grid c isFg grid_csiDispatch_sgr
 
 /-- **An SGR pen writes no cell**, for any pen — 16-colour, 256-colour or
 truecolour, and however `penSgr` splits it across sequences. This is the piece
@@ -438,11 +335,7 @@ theorem keeps_penSgr (p : Pen) : Keeps (penSgr p) := fixes_penSgr psBlind_grid p
 a cell. `modesAnsi` never emits those three, which is the same guarded-emit
 argument `quiet_modesAnsi` makes for DECOM (mode 6): the emitter is what keeps the
 claim true, so the hypothesis is discharged where the bytes are chosen rather than
-assumed about the parser.
-
-Turning this into `Keeps (modesAnsi v)` needs one more bridge — that the digits
-the emitter writes are the number the parser accumulates (`csi_digits_value`) —
-and that its final collector contains exactly that one parameter. -/
+assumed about the parser. -/
 theorem grid_setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool)
     (h47 : n ≠ 47) (h1047 : n ≠ 1047) (h1049 : n ≠ 1049) :
     (v.setMode priv n on).grid = v.grid := by
@@ -468,12 +361,6 @@ theorem grid_setModes (v : Vt) (priv : Bool) (ps : List (Nat × Bool)) (on : Boo
     (fun w p hp hw =>
       (grid_setMode w priv p.1 on (h p hp).1 (h p hp).2.1 (h p hp).2.2).trans hw) v rfl
 
-end Linger.Core.Render
-
-namespace Linger.Core.Render
-
-open Linger.Core.Vt
-
 /-! ### The non-CSI tail
 
 `ESC`-singles (DECSC, HTS, app-keypad), charset designations and the shift-out
@@ -484,35 +371,18 @@ the charset flags, `shiftOut`. -/
 
 theorem step_of_esc_quiet {v : Vt} (b : UInt8) (hg : v.pstate = .esc) (hu : v.u8need = 0) :
     v.step b = v.stepEsc b := by
-  have ha : v.abortUtf8 b = v := by
-    unfold Vt.abortUtf8
-    rw [ite_eq_right (by simp [hu])]
   unfold Vt.step
   dsimp only
-  rw [ha, hg]
+  rw [abortUtf8_of_uz b hu, hg]
 
 theorem step_of_escInter_quiet {v : Vt} {i : UInt8} (b : UInt8) (hg : v.pstate = .escInter i)
     (hu : v.u8need = 0) : v.step b = v.stepEscInter i b := by
-  have ha : v.abortUtf8 b = v := by
-    unfold Vt.abortUtf8
-    rw [ite_eq_right (by simp [hu])]
   unfold Vt.step
   dsimp only
-  rw [ha, hg]
+  rw [abortUtf8_of_uz b hu, hg]
 
-/-- From ground, `ESC` only arms the parser. Stated as an equation (not just a
-`pstate` fact) so the layers that care about other fields can use it. -/
-theorem esc_step_eq {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) :
-    v.step 0x1B = { v with pstate := .esc } := by
-  unfold Vt.step Vt.abortUtf8
-  dsimp only
-  rw [ite_eq_right (by simp [hu]), hg]
-  dsimp only
-  unfold Vt.stepGround
-  rw [ite_eq_left (by decide)]
-
-/-- `ESC 7` (DECSC), `ESC H` (HTS) and `ESC =` (app keypad) write the saved slot,
-the tab ruler and a mode flag respectively — never a cell. -/
+/-- `ESC 7` (DECSC), `ESC H` (HTS), `ESC =`/`ESC >` (keypad modes) and `ESC \` (ST)
+write the saved slot, the tab ruler, a mode flag or nothing — never a cell. -/
 theorem keeps_escSeq (b : UInt8) (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x48 ∨ b = 0x3E ∨ b = 0x5C) :
     Keeps (escSeq b) := by
   intro v hg hu
@@ -595,12 +465,6 @@ theorem keeps_charsetAnsi (v : Vt) : Keeps (charsetAnsi v) := by
       (fun _ => keeps_escCharset 0x29 0x42 (by decide) (by decide) (by decide)))).append ?_
   exact Keeps.ite (fun _ => keeps_shiftOut) (fun _ => Keeps.nil)
 
-end Linger.Core.Render
-
-namespace Linger.Core.Render
-
-open Linger.Core.Vt
-
 /-! ### The window title
 
 An OSC is the one tail construct with an unbounded payload, so it is the one that
@@ -609,12 +473,9 @@ lives inside the parser state — and `oscFinish` writes the title and nothing e
 
 theorem step_of_osc_quiet {v : Vt} {acc : Array UInt8} {e : Bool} (b : UInt8)
     (hg : v.pstate = .osc acc e) (hu : v.u8need = 0) : v.step b = v.stepOsc acc e b := by
-  have ha : v.abortUtf8 b = v := by
-    unfold Vt.abortUtf8
-    rw [ite_eq_right (by simp [hu])]
   unfold Vt.step
   dsimp only
-  rw [ha, hg]
+  rw [abortUtf8_of_uz b hu, hg]
 
 theorem grid_oscFinish (v : Vt) (acc : Array UInt8) : (v.oscFinish acc).grid = v.grid := by
   unfold Vt.oscFinish
@@ -622,13 +483,7 @@ theorem grid_oscFinish (v : Vt) (acc : Array UInt8) : (v.oscFinish acc).grid = v
   repeat' split
   all_goals rfl
 
-theorem un_oscFinish' (v : Vt) (acc : Array UInt8) : (v.oscFinish acc).u8need = v.u8need := by
-  unfold Vt.oscFinish
-  dsimp only
-  repeat' split
-  all_goals rfl
-
-theorem ps_oscFinish' (v : Vt) (acc : Array UInt8) : (v.oscFinish acc).pstate = .ground := by
+theorem ps_oscFinish (v : Vt) (acc : Array UInt8) : (v.oscFinish acc).pstate = .ground := by
   unfold Vt.oscFinish
   dsimp only
   repeat' split
@@ -649,7 +504,7 @@ theorem osc_accum_eq {v : Vt} {acc : Array UInt8} (b : UInt8)
 theorem osc_accum_run : ∀ (bs : Bytes) {v : Vt} {acc : Array UInt8},
     v.pstate = .osc acc false → v.u8need = 0 → (∀ b ∈ bs, b ≠ 0x1B ∧ b ≠ 0x07) →
     ∃ acc', v.feed bs = { v with pstate := .osc acc' false }
-  | [], v, acc, hg, _, _ => ⟨acc, by rw [show v.feed [] = v from rfl, ← hg]⟩
+  | [], v, acc, hg, _, _ => ⟨acc, by rw [feed_nil, ← hg]⟩
   | x :: xs, v, acc, hg, hu, h => by
     obtain ⟨acc1, hx⟩ := osc_accum_eq x hg hu (h x (by simp)).1 (h x (by simp)).2
     rw [feed_cons, hx]
@@ -689,20 +544,14 @@ theorem fixes_osc {α : Type} {π : Vt → α} (hb : PsBlind π) (payload : List
   rw [h1]
   obtain ⟨acc2, h2⟩ :=
     osc_accum_run (utf8s payload) (v := { v with pstate := .osc acc1 false }) (acc := acc1) rfl
-      (by simpa using hu)
-      (by
-        intro b hb
-        obtain ⟨hge, hne⟩ := utf8s_no_ctl payload b hb
-        refine ⟨?_, ?_⟩
-        · intro he; rw [he] at hge; exact absurd hge (by decide)
-        · intro he; rw [he] at hge; exact absurd hge (by decide))
+      (by simpa using hu) (utf8s_no_esc_bel payload)
   rw [h2]
   rw [step_of_osc_quiet (0x07 : UInt8) rfl (by simpa using hu)]
   unfold Vt.stepOsc
   rw [ite_eq_right (by decide), ite_eq_left (by decide)]
   exact
-    ⟨ps_oscFinish' _ _, by
-      rw [un_oscFinish']; simpa using hu, by rw [hπ, hb v (PState.osc acc2 false)]⟩
+    ⟨ps_oscFinish _ _, by
+      rw [un_oscFinish]; simpa using hu, by rw [hπ, hb v (PState.osc acc2 false)]⟩
 
 /-- **The title writes no cell.** The payload cannot terminate its own sequence:
 `utf8s` puts every byte at or above `0x20`, so neither `ESC` nor `BEL` can appear
@@ -713,12 +562,6 @@ theorem keeps_osc (payload : List Char) :
 theorem keeps_titleAnsi (v : Vt) : Keeps (titleAnsi v) := by
   unfold titleAnsi
   exact keeps_osc _
-
-end Linger.Core.Render
-
-namespace Linger.Core.Render
-
-open Linger.Core.Vt
 
 /-! ### The digit bridge, and the last tail stage
 
@@ -739,7 +582,7 @@ theorem csi_digits_feed_eq (n : Nat) {v : Vt} {s : CsiState} (hg : v.pstate = .c
   have hne : digits n ≠ [] := by
     unfold digits
     split <;> simp
-  have hp := csi_digits_feed (digits n) hg (digits_are_digits n) hne
+  have hp := csi_digits_feed (digits n) hg (digits_range n) hne
   rw [heq] at hp
   simp only [hcur, accDigits_digits] at hp
   rw [heq, PState.csi.inj hp]
@@ -796,7 +639,7 @@ here rather than at the call site: naming the collector state outside the lemma
 means writing it the way the elaborator happened to build it, and `{}` and
 `default` are not the same term. -/
 theorem keeps_csi_digits_tail (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
-    (h2 : final ≤ 0x7E) (hn : 0 < n) (hlt : n < 65535)
+    (h2 : final ≤ 0x7E) (hlt : n < 65535)
     (hgrid : ∀ (w : Vt) (t : CsiState) (sub : Bool), t.params = #[(n, sub)] →
       (w.csiDispatch t final).grid = w.grid)
     {v : Vt} {s : CsiState} (hg : v.pstate = .csi s) (hu : v.u8need = 0)
@@ -812,7 +655,7 @@ theorem keeps_csi_digits_tail (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
 
 /-- `CSI ? n <final>` with a grid fact that may depend on `n`. -/
 theorem keeps_csiPriv_arg (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
-    (h2 : final ≤ 0x7E) (hn : 0 < n) (hlt : n < 65535)
+    (h2 : final ≤ 0x7E) (hlt : n < 65535)
     (hgrid : ∀ (w : Vt) (t : CsiState) (sub : Bool), t.params = #[(n, sub)] →
       (w.csiDispatch t final).grid = w.grid) :
     Keeps (csiPriv n final) := by
@@ -820,48 +663,44 @@ theorem keeps_csiPriv_arg (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
   rw [show csiPriv n final
       = [0x1B, 0x5B] ++ ([(0x3F : UInt8)] ++ (digits n ++ [final])) from by
     unfold csiPriv csiB; simp]
-  rw [show ∀ (w : Vt), w.feed ([0x1B, 0x5B] ++ ([(0x3F : UInt8)] ++ (digits n ++ [final])))
-      = ((w.feed [0x1B, 0x5B]).feed [(0x3F : UInt8)]).feed (digits n ++ [final]) from
-    fun w => by simp [Vt.feed, List.foldl_append]]
+  rw [feed_append, feed_append]
   rw [keeps_csi_open hg hu]
   rw [show ∀ (w : Vt), w.feed [(0x3F : UInt8)] = w.step 0x3F from fun _ => rfl]
   rw [step_of_csi_quiet (0x3F : UInt8) (v := { v with pstate := .csi {} }) (s := {}) rfl
     (by simpa using hu)]
   unfold Vt.stepCsi
   rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_left (by decide)]
-  exact keeps_csi_digits_tail n final h1 h2 hn hlt hgrid rfl (by simpa using hu) rfl rfl rfl
+  exact keeps_csi_digits_tail n final h1 h2 hlt hgrid rfl (by simpa using hu) rfl rfl rfl
 
 /-- …and the non-private form, for `modesAnsi`'s one ANSI emit (`CSI 4 h`, IRM). -/
 theorem keeps_csiNum_arg (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
-    (h2 : final ≤ 0x7E) (hn : 0 < n) (hlt : n < 65535)
+    (h2 : final ≤ 0x7E) (hlt : n < 65535)
     (hgrid : ∀ (w : Vt) (t : CsiState) (sub : Bool), t.params = #[(n, sub)] →
       (w.csiDispatch t final).grid = w.grid) :
     Keeps (csiNum n final) := by
   intro v hg hu
   rw [show csiNum n final = [0x1B, 0x5B] ++ (digits n ++ [final]) from by
     unfold csiNum csiB; simp]
-  rw [show ∀ (w : Vt), w.feed ([0x1B, 0x5B] ++ (digits n ++ [final]))
-      = (w.feed [0x1B, 0x5B]).feed (digits n ++ [final]) from
-    fun w => by simp [Vt.feed, List.foldl_append]]
+  rw [feed_append]
   rw [keeps_csi_open hg hu]
-  exact keeps_csi_digits_tail n final h1 h2 hn hlt hgrid rfl (by simpa using hu) rfl rfl rfl
+  exact keeps_csi_digits_tail n final h1 h2 hlt hgrid rfl (by simpa using hu) rfl rfl rfl
 
-theorem keeps_modeSet (n : Nat) (on : Bool) (hn : 0 < n) (hlt : n < 65535)
+theorem keeps_modeSet (n : Nat) (on : Bool) (hlt : n < 65535)
     (h47 : n ≠ 47) (h1047 : n ≠ 1047) (h1049 : n ≠ 1049) : Keeps (modeSet n on) := by
   unfold modeSet
   cases on
-  · exact keeps_csiPriv_arg n 0x6C (by decide) (by decide) hn hlt
+  · exact keeps_csiPriv_arg n 0x6C (by decide) (by decide) hlt
       (fun w t sub ha => grid_csiDispatch_rm w t
         (by simpa [ha] using And.intro h47 (And.intro h1047 h1049)))
-  · exact keeps_csiPriv_arg n 0x68 (by decide) (by decide) hn hlt
+  · exact keeps_csiPriv_arg n 0x68 (by decide) (by decide) hlt
       (fun w t sub ha => grid_csiDispatch_sm w t
         (by simpa [ha] using And.intro h47 (And.intro h1047 h1049)))
 
 theorem keeps_irm (on : Bool) : Keeps (csiNum 4 (if on then 0x68 else 0x6C)) := by
   cases on
-  · exact keeps_csiNum_arg 4 0x6C (by decide) (by decide) (by omega) (by omega)
+  · exact keeps_csiNum_arg 4 0x6C (by decide) (by decide) (by omega)
       (fun w t sub ha => grid_csiDispatch_rm w t (by simp [ha]))
-  · exact keeps_csiNum_arg 4 0x68 (by decide) (by decide) (by omega) (by omega)
+  · exact keeps_csiNum_arg 4 0x68 (by decide) (by decide) (by omega)
       (fun w t sub ha => grid_csiDispatch_sm w t (by simp [ha]))
 
 /-- **The mode replay writes no cell.** `modesAnsi`'s allowlist is what discharges
@@ -870,65 +709,36 @@ source or one of the three the mouse guard names. -/
 theorem keeps_modesAnsi (v : Vt) : Keeps (modesAnsi v) := by
   unfold modesAnsi
   refine Keeps.append ?_ (keeps_irm v.modes.insert)
-  refine Keeps.append ?_ (keeps_modeSet 6 _ (by omega) (by omega) (by omega) (by omega)
+  refine Keeps.append ?_ (keeps_modeSet 6 _ (by omega) (by omega) (by omega)
     (by omega))
-  refine Keeps.append ?_ (keeps_modeSet 1004 _ (by omega) (by omega) (by omega) (by omega)
+  refine Keeps.append ?_ (keeps_modeSet 1004 _ (by omega) (by omega) (by omega)
     (by omega))
-  refine Keeps.append ?_ (keeps_modeSet 1006 _ (by omega) (by omega) (by omega) (by omega)
+  refine Keeps.append ?_ (keeps_modeSet 1006 _ (by omega) (by omega) (by omega)
     (by omega))
   refine Keeps.append ?_ (Keeps.ite (c := (v.modes.mouse == 1000 || v.modes.mouse == 1002
     || v.modes.mouse == 1003) = true)
     (fun h => by
       simp only [Bool.or_eq_true, beq_iff_eq] at h
-      exact keeps_modeSet v.modes.mouse true (by omega) (by omega) (by omega) (by omega)
+      exact keeps_modeSet v.modes.mouse true (by omega) (by omega) (by omega)
         (by omega))
     (fun _ => Keeps.nil))
-  refine Keeps.append ?_ (keeps_modeSet 1003 false (by omega) (by omega) (by omega)
+  refine Keeps.append ?_ (keeps_modeSet 1003 false (by omega) (by omega)
     (by omega) (by omega))
-  refine Keeps.append ?_ (keeps_modeSet 1002 false (by omega) (by omega) (by omega)
+  refine Keeps.append ?_ (keeps_modeSet 1002 false (by omega) (by omega)
     (by omega) (by omega))
-  refine Keeps.append ?_ (keeps_modeSet 1000 false (by omega) (by omega) (by omega)
+  refine Keeps.append ?_ (keeps_modeSet 1000 false (by omega) (by omega)
     (by omega) (by omega))
-  refine Keeps.append ?_ (keeps_modeSet 2004 _ (by omega) (by omega) (by omega) (by omega)
+  refine Keeps.append ?_ (keeps_modeSet 2004 _ (by omega) (by omega) (by omega)
     (by omega))
-  refine Keeps.append ?_ (keeps_modeSet 25 _ (by omega) (by omega) (by omega) (by omega)
+  refine Keeps.append ?_ (keeps_modeSet 25 _ (by omega) (by omega) (by omega)
     (by omega))
   refine Keeps.append ?_ (Keeps.ite (fun _ => keeps_escSeq 0x3D (by decide))
     (fun _ => keeps_escSeq 0x3E (by decide)))
-  exact (keeps_modeSet 7 _ (by omega) (by omega) (by omega) (by omega) (by omega)).append
-    (keeps_modeSet 1 _ (by omega) (by omega) (by omega) (by omega) (by omega))
+  exact (keeps_modeSet 7 _ (by omega) (by omega) (by omega) (by omega)).append
+    (keeps_modeSet 1 _ (by omega) (by omega) (by omega) (by omega))
 
-/-- **The whole tail.** Everything `restore` emits after the repaint, proved to
-leave the painted grid alone. What remains of `restore_grid` is the repaint itself:
-the row induction, the row separator, and the alt switch. -/
-theorem keeps_restoreTail (v : Vt) :
-    Keeps (regionAnsi v ++ tabsAnsi v ++ savedAnsi v ++ titleAnsi v ++ modesAnsi v
-      ++ charsetAnsi v ++ penSgr v.pen ++ cursorAnsi v) :=
-  ((((((((keeps_regionAnsi v).append (keeps_tabsAnsi v)).append
-    (keeps_savedAnsi v)).append (keeps_titleAnsi v)).append
-    (keeps_modesAnsi v)).append (keeps_charsetAnsi v)).append
-    (keeps_penSgr v.pen)).append (keeps_cursorAnsi v))
-
-end Linger.Core.Render
-
-namespace Linger.Core.Render
-
-open Linger.Core.Vt
-
-/-! ### What is left that is not the repaint
-
-With the tail done, the only bytes in `restore` that may legitimately touch a cell
-are the clear (`CSI 2 J`), the paint (`gridAnsi`), and the alt switch
-(`CSI ? 1049 h`). The leading SGR reset and the alt-stash parking are not among
-them, and both fall out of pieces already proved. -/
-
-/-- The `restoreBody` head: an SGR reset writes no cell. -/
-theorem keeps_sgrReset : Keeps (csiNum 0 0x6D) :=
-  keeps_csiNum 0 0x6D (by decide) (by decide) grid_csiDispatch_sgr
-
-/-- **Park the pen and the cursor.** The shape recurs: the DECSC replay
-(`savedAnsi`), the alt-stash parking inside `screensAnsi`, and — without the pen —
-the final placement. Stated on bare naturals so all three instantiate it. -/
+/-- **Park the pen and the cursor**: the alt-stash parking inside `screensAnsi`
+writes no cell. Stated on bare naturals so the stashed cursor instantiates it. -/
 theorem keeps_park (y x : Nat) (p : Pen) : Keeps (penSgr p ++ csiNum2 y x 0x48) :=
   (keeps_penSgr p).append
     (keeps_csiNum2 _ _ 0x48 (by decide) (by decide) grid_csiDispatch_cup)
@@ -937,69 +747,11 @@ end Linger.Core.Render
 
 namespace Linger.Core.Vt
 
-/-! ### The clear, framed
-
-`CSI 2 J` is the one part of `restore` that is *supposed* to change cells, so the
-useful statement about it is what it leaves alone. `eraseRowSpan` is a single
-`grid` record update, so everything but the grid is `rfl`; the fold over rows needs
-one induction, shared by all four ED modes. -/
-
-theorem rows_eraseRowSpan (v : Vt) (y f t : Nat) :
-    (v.eraseRowSpan y f t).rows = v.rows := by rfl
-
-theorem cols_eraseRowSpan (v : Vt) (y f t : Nat) :
-    (v.eraseRowSpan y f t).cols = v.cols := by rfl
-
-theorem pen_eraseRowSpan (v : Vt) (y f t : Nat) :
-    (v.eraseRowSpan y f t).pen = v.pen := by rfl
-
-theorem cursor_eraseRowSpan (v : Vt) (y f t : Nat) :
-    (v.eraseRowSpan y f t).cursor = v.cursor := by rfl
-
-/-- Erasing a span never resizes the grid: `setIfInBounds` is a no-op out of range
-and length-preserving in range. -/
-theorem size_eraseRowSpan (v : Vt) (y f t : Nat) :
-    (v.eraseRowSpan y f t).grid.size = v.grid.size := by
-  unfold Vt.eraseRowSpan
-  dsimp only
-  simp
-
-/-- The row fold shared by every ED mode. `f` is the row index as a function of the
-iteration only — in each of the four modes the index is independent of the
-accumulator, which is what lets one lemma serve all of them. -/
-theorem foldl_erase_frame (f : Nat → Nat) : ∀ (l : List Nat) (v : Vt),
-    (l.foldl (fun v' i => v'.eraseRowSpan (f i) 0 v'.cols) v).rows = v.rows
-      ∧ (l.foldl (fun v' i => v'.eraseRowSpan (f i) 0 v'.cols) v).cols = v.cols
-      ∧ (l.foldl (fun v' i => v'.eraseRowSpan (f i) 0 v'.cols) v).pen = v.pen
-      ∧ (l.foldl (fun v' i => v'.eraseRowSpan (f i) 0 v'.cols) v).cursor = v.cursor
-      ∧ (l.foldl (fun v' i => v'.eraseRowSpan (f i) 0 v'.cols) v).grid.size
-          = v.grid.size
-  | [], v => ⟨rfl, rfl, rfl, rfl, rfl⟩
-  | i :: is, v => by
-    obtain ⟨h1, h2, h3, h4, h5⟩ := foldl_erase_frame f is (v.eraseRowSpan (f i) 0 v.cols)
-    refine ⟨?_, ?_, ?_, ?_, ?_⟩
-    · rw [List.foldl_cons, h1, rows_eraseRowSpan]
-    · rw [List.foldl_cons, h2, cols_eraseRowSpan]
-    · rw [List.foldl_cons, h3, pen_eraseRowSpan]
-    · rw [List.foldl_cons, h4, cursor_eraseRowSpan]
-    · rw [List.foldl_cons, h5, size_eraseRowSpan]
-
 /-- `ED 2` is the `_` arm of the match, so this is definitional. Having the equation
-as a lemma keeps the match out of the frame proof, where an in-tactic split leaves an
+as a lemma keeps the match out of callers' proofs, where an in-tactic split leaves an
 unreduced `match 2 with …` that `rw` cannot see through. -/
 theorem eraseScreen_two_eq (v : Vt) : v.eraseScreen 2
     = (List.range v.rows).foldl (fun v' y => v'.eraseRowSpan y 0 v'.cols) v := by rfl
-
-/-- **The clear resizes nothing and moves nothing.** `CSI 2 J` is the one part of
-`restore` that is supposed to change cells, so the useful statement is what it leaves
-alone: the dimensions, the pen, the cursor, and the row count. The repaint that
-follows depends on all four. -/
-theorem eraseScreen_two_frame (v : Vt) :
-    (v.eraseScreen 2).rows = v.rows ∧ (v.eraseScreen 2).cols = v.cols
-      ∧ (v.eraseScreen 2).pen = v.pen ∧ (v.eraseScreen 2).cursor = v.cursor
-      ∧ (v.eraseScreen 2).grid.size = v.grid.size := by
-  rw [eraseScreen_two_eq]
-  exact foldl_erase_frame (fun y => y) (List.range v.rows) v
 
 end Linger.Core.Vt
 
@@ -1009,7 +761,7 @@ open Linger.Core.Vt
 
 /-! ### The paint and its continuation tail
 
-`keeps_restoreTail` frames the control sequences. The saved and active
+The control stages are framed by their `keeps_*` lemmas. The saved and active
 deferred-wrap stages also print an existing cell, so `Grid.lean` composes those
 frames with the complete-state equations in `PendingWrap.lean`. -/
 
@@ -1038,10 +790,6 @@ theorem set_self_eq {α} [Inhabited α] (r : Array α) (x : Nat) :
   by_cases h : x < r.size
   · simp [Array.setIfInBounds, Array.getD, h]
   · simp [Array.setIfInBounds, h]
-
-theorem mendAt_of_width_one {row : Row} {x : Nat} (h : (row.at x).width = 1) :
-    Row.mendAt row x = row := by
-  simp [Row.mendAt, Row.halfPair, h]
 
 /-- The shadow case: a canonical shadow is written back unchanged. -/
 theorem mendAt_of_pairOk {row : Row} {x : Nat} (h : ∀ j, PairOk row j) :
@@ -1074,36 +822,18 @@ theorem mend_of_pairOk {row : Row} (h : ∀ j, PairOk row j) : Row.mend row = ro
     | cons a as ih => rw [List.foldl_cons, mendAt_of_pairOk h]; exact ih
   exact key _
 
-theorem width_at_blankRow (cols : Nat) (p : Pen) (x : Nat) :
-    ((blankRow cols p).at x).width = 1 := by
-  rw [at_blankRow]
-  split <;> rfl
-
-theorem mend_blankRow (cols : Nat) (p : Pen) : Row.mend (blankRow cols p) = blankRow cols p := by
-  unfold Row.mend
-  have key : ∀ (l : List Nat),
-      l.foldl (fun (r : Row) x => r.mendAt x) (blankRow cols p) = blankRow cols p := by
-    intro l
-    induction l with
-    | nil => rfl
-    | cons a as ih =>
-      rw [List.foldl_cons, mendAt_of_width_one (width_at_blankRow cols p a)]
-      exact ih
-  exact key _
-
 /-! **Non-vacuity, in place of a break-verify.** `mend` is emphatically *not* the
 identity in general: a lone width-2 base is repaired away. So `mend_of_pairOk`'s
 hypothesis is load-bearing rather than decorative. This is recorded as a check
 because the usual break — mutating `Row.mendAt` — is caught upstream in
-`Theorems/Vt.lean` before the lemma above is ever elaborated, which proves the
+`Theorems/Vt/` before the lemma above is ever elaborated, which proves the
 definition is load-bearing but not that *this* lemma is.
 
-The check itself lives in `Tests/Vt.lean` since the module migration
-(lean-modules Step 5): it is an evaluation, and a kernel `decide` in a module
-file cannot reduce through a derived `DecidableEq` instance whose body is not
-exposed — in `Tests/`, under the compiled-evaluation tactic whose whole point
-is evaluating, it keeps its full force. (That tactic's name is deliberately
-not written here: the purity gate greps `Theorems/**` for the token, prose
-included.) -/
+The check itself lives in `Tests/Vt.lean`: it is an evaluation, and a kernel
+`decide` in a module file cannot reduce through a derived `DecidableEq` instance
+whose body is not exposed — in `Tests/`, under the compiled-evaluation tactic whose
+whole point is evaluating, it keeps its full force. (That tactic's name is
+deliberately not written here: the purity gate greps `Theorems/**` for the token,
+prose included.) -/
 
 end Linger.Core.Vt

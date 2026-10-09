@@ -451,7 +451,7 @@ height. **Nothing constrains the receiver's state**, so the claim is only worth
 having if a receiver can actually differ from the session on every field in the
 bundle. It can, and these are the witnesses; the theorem is that `∀ w`. -/
 
-/-- Before: the `dirty` receiver differs from the session on the scroll region, the
+/-- The `dirty` receiver differs from the session on the scroll region, the
 G0 charset, the shift state and which screen is current — every group the bundle
 names. -/
 example :
@@ -459,17 +459,6 @@ example :
            let w := dirty 20 3
            (w.top != v.top) && (w.g0Line != v.g0Line) && (w.shiftOut != v.shiftOut) &&
         (w.altGrid.isSome != v.altGrid.isSome)) =
-      true := by
-  native_decide
-
-/-- After: it agrees on all of them. -/
-example :
-          (let v := screen 20 3 "hi"
-           let r := (dirty 20 3).feed (restore v)
-           (r.top == v.top) && (r.bot == v.bot) && (r.g0Line == v.g0Line) &&
-        (r.g1Line == v.g1Line) &&
-        (r.shiftOut == v.shiftOut) &&
-        (r.altGrid.isSome == v.altGrid.isSome)) =
       true := by
   native_decide
 
@@ -811,15 +800,13 @@ def advRing : Vt := ringOf 85 24 (fun _ => advRow 85) 3000
 `sbReplayBytes` of 262144 — nine bytes over. A bound stated against
 `sbReplayBytes` alone would be false here, and no "budget to `1 <<< 30`" break
 would catch it. The whole-stage bound is attained with **zero** slack.
-Check these facts together to reuse the large fixture's computed lengths. -/
+Checked together, so each of the large fixture's two lengths is computed once. -/
 example :
-    (decide ((scrollbackAnsi advRing).length > sbReplayBytes) &&
-        (scrollbackAnsi advRing).length == 262153 &&
-        costSum advRing == 262086 &&
-        (scrollbackAnsi advRing).length == costSum advRing + 2 * advRing.rows + 19 &&
-        stageInBudget advRing) =
+    (let emitted := (scrollbackAnsi advRing).length
+     let counted := costSum advRing
+     decide (emitted > sbReplayBytes) && emitted == 262153 && counted == 262086 &&
+       emitted == counted + 2 * advRing.rows + 19 && decide (counted ≤ sbReplayBytes)) =
       true := by
-  unfold stageInBudget
   native_decide
 
 /-- The remaining ring shapes: empty, blank and a realistic mixed row. The heavy
@@ -832,7 +819,7 @@ example :
   native_decide
 
 /-- The empty guard is load-bearing (`broadcast_empty`, one module over): with no
-history the stage is twelve mode bytes and nothing else — no `ED 3`, no paint, no
+history the stage is fourteen mode bytes and nothing else — no `ED 3`, no paint, no
 flush. -/
 example :
     ((scrollbackAnsi (screen 80 24 "hi")).length == 14 && (sbRows (screen 80 24 "hi")).isEmpty) =
@@ -844,8 +831,9 @@ example :
 The mirror image of everything above. `restore` establishes what the repaint needs in
 whatever terminal it is given; `leaveAnsi` gives that terminal back to the user's
 shell in a state the next program can use, whatever the session's last program left
-behind. `leave_grounds` proves the parser half for every receiver; these pin the
-values until the `Sets` instances land (`specs/archive/restore-conformance.md` Step 1). -/
+behind. `leave_grounds` proves the parser half for every receiver; these pin, at
+witnesses, what `leave_canonical_all` proves for every receiver at least two rows
+tall, plus the cursor park, which no theorem states. -/
 
 /-- The canonical state a detaching client owes the next program. `rows` is a
 parameter because two of the fields are dimension-relative: the scroll region is the
@@ -867,16 +855,6 @@ example : sane 3 ((dirty 6 3).feed leaveAnsi) = true := by native_decide
 /-- …from every parser state a dying program can leave, too. -/
 example : sane 3 ((midOsc 6 3).feed leaveAnsi) = true := by native_decide
 
-/-- Step 2 at witnesses: a receiver caught mid-UTF-8, mid-OSC or mid-CSI is left
-*quiesced* by `restore` — parser `ground`, nothing half-decoded — which is what
-`restore_quiesced_any` says for all of them, and what `restore_quiesced` (fresh
-`Vt.init` only) could not. -/
-example : (let v := screen 6 3 "hi"
-           ((midUtf8 6 3).feed (restore v)).pstate == PState.ground
-             && ((midUtf8 6 3).feed (restore v)).u8need == 0
-             && ((midOsc 6 3).feed (restore v)).pstate == PState.ground
-             && ((midCsi 6 3).feed (restore v)).u8need == 0) = true := by native_decide
-
 example : sane 3 ((midDcs 6 3).feed leaveAnsi) = true := by native_decide
 
 example : sane 3 ((midCsi 6 3).feed leaveAnsi) = true := by native_decide
@@ -896,12 +874,6 @@ two bytes of `ESC \` and the same receiver eats the entire hand-back, so the she
 inherits the application's terminal. This is `leave_grounds`'s non-vacuity — its
 `∀ w` really does range over receivers that would otherwise swallow the stream. -/
 example : sane 3 ((dirtyMidOsc 6 3).feed (leaveAnsi.drop 2)) = false := by native_decide
-
-/-- And the hand-back is a *constant*: what linger gives back cannot depend on what
-the session was doing, which is why it takes no `Vt`. Two very different sessions,
-same result. -/
-example : (((dirty 6 3).feed leaveAnsi).modes == ((midDcs 6 3).feed leaveAnsi).modes) = true := by
-  native_decide
 
 /-! ## `screenText` — the capture stream, exact bytes (specs/archive/agent-cli.md) -/
 

@@ -35,12 +35,15 @@ namespace Linger.Core.Render
 
 open Linger.Core.Vt
 
+/-- A byte stream as emitted to a terminal. -/
 abbrev Bytes := List UInt8
 
 /-! ## Byte primitives -/
 
+/-- `ESC`, which opens every escape sequence. -/
 def escB : Bytes := [0x1B]
 
+/-- `ESC [`, the control sequence introducer. -/
 def csiB : Bytes := [0x1B, 0x5B]
 
 /-- Decimal, most significant digit first (`0` → `"0"`). Our own, so
@@ -57,10 +60,10 @@ sequence decodes to one — so the guard is on the emit side, where it
 needs no hypothesis about the state. -/
 def safeChar (c : Char) : Char := if c.toNat < 0x20 || c.toNat == 0x7F then '\uFFFD' else c
 
-/-- UTF-8 encode one codepoint. Ours rather than `String.toUTF8` so the
-bytes are visible to the kernel and to proofs. The `min` is a local
-clamp for provability (the AGENTS.md idiom): it is the identity on every
-`Char` — scalar values are ≤ 0x10FFFF — and it makes each emitted byte's
+/-- UTF-8 encode one codepoint. It equals core's `String.utf8EncodeChar`
+(`utf8_eq_utf8EncodeChar`) and is kept because the clamp and mask-free lead
+bytes keep each byte's range plain arithmetic: the `min` is the identity on
+every `Char` — scalar values are ≤ 0x10FFFF — and makes each emitted byte's
 range an arithmetic fact rather than a `Char.valid` derivation. -/
 def utf8 (c : Char) : Bytes :=
   let n := min c.toNat 0x10FFFF
@@ -159,12 +162,13 @@ colours in separate SGRs, and nothing merges them.
 
 Split this way each sequence carries at most 8, and no colour triplet can
 straddle a boundary. Found by proving §Replay, not by testing (the
-`heavyPen` fixture in `Tests/Render.lean` now pins it). -/
+18-parameter roundtrip example in `Tests/Render.lean` now pins it). -/
 def penSgr (p : Pen) : Bytes :=
   sgrOf (penAttrCodes p) ++ sgrColorSeq p.fg true ++ sgrColorSeq p.bg false
 
 /-! ## Grid -/
 
+/-- One cell's text: its scrubbed base glyph, then its scrubbed combining marks. -/
 def cellText (c : Cell) : Bytes := utf8 (safeChar c.base) ++ utf8s c.marks
 
 /-- One cell's slot in the row painter's fold, over
@@ -192,8 +196,8 @@ Latent until marks were normalized onto the base (`Vt.print`), which is what
 made this branch fire for an ordinary `漢` plus a combining mark; the fuzzer
 found it in the same pass.
 
-Named rather than left as a lambda inside `rowAnsi`, for the reason `modeSet`
-gives above: the row-replay theorem has to *mention* the fold body in its own
+Named rather than left as a lambda inside `rowAnsi`, for the reason in `modeSet`'s
+docstring: the row-replay theorem has to *mention* the fold body in its own
 statement, which is impossible for a lambda, and each branch is then reached by
 `rw` on a named equation instead of by reducing a four-way beta-redex per
 cell. -/
@@ -329,9 +333,8 @@ def fitRow (row : Row) (cols : Nat) : Row :=
 
 /-- The replay budget, as a bound on Σ `sbRowCost` — **not** on emitted bytes.
 The emitted stage is bounded by `sbReplayBytes + 2 * v.rows + 19` and does
-exceed `sbReplayBytes` by up to that much: measured 262,153 bytes for a full
-80×24 ring whose rows each end in a truecolour cell (the 19 is `ED 3` + the
-paint's `SGR 0`/`CUP` + the mode tail, less the per-row CRLF credit the
+exceed `sbReplayBytes` by up to that much (`scrollbackAnsi_le`; the 19 is `ED 3` +
+the paint's `SGR 0`/`CUP` + the mode tail, less the per-row CRLF credit the
 separators do not use).
 
 A row cap would bound nothing that matters. `Cell.erased` emits one space and no
@@ -357,7 +360,7 @@ fold from an arbitrary incoming pen diverge only at the first non-shadow cell
 and agree from that cell on. The excess is therefore one optional `SGR`, and the
 only shape where the default-seeded fold emits nothing while the other emits is
 "that cell's pen is the default", costing exactly `penSgr {}` = 4 bytes
-(`rowAnsi_len_seed`, `rowAnsi_len_le_cost`; witness: a blank 80-column row is 80
+(`rowAnsi_len_seed`, `rowAnsi_len_add_crlf_le_cost`; witness: a blank 80-column row is 80
 bytes from the default pen and 84 from a truecolour one). -/
 def sbRowCost (row : Row) : Nat := (rowAnsi row {}).1.length + 6
 
@@ -411,8 +414,7 @@ unconditional `ED 3` would discard the history of any window a session is
 attached in, including the common case of a session with no history to put there.
 Guarded, the anti-stacking property is untouched (nothing is pushed when the ring
 is empty, so nothing can stack) and the price is stated where it belongs: what
-`restore` promises about a receiver's ring is two branches, not one. See
-README §Notes and THEOREMS.md's conformance-profile entry 11.
+`restore` promises about a receiver's ring is two branches, not one.
 
 The trailing `4l ?6l ?7h` re-establish what `paint_entry` needs — `insert`,
 `wrap`, `origin` — and are **proof-load-bearing ordering**, not cosmetics: an
@@ -763,23 +765,15 @@ def leaveAnsi : Bytes :=
 /-- One row's characters, width-0 shadows skipped, every codepoint scrubbed. A named
 stage so the trim and the encoding are separate steps a lemma can talk about. -/
 def rowChars (row : Row) : List Char :=
-  row.foldl
-    (fun (acc : List Char) c =>
-      if c.width == 0 then acc else acc ++ [safeChar c.base] ++ c.marks.map safeChar)
-    []
+  row.toList.flatMap fun c => if c.width == 0 then [] else safeChar c.base :: c.marks.map safeChar
 
 /-- Drop trailing blanks. On the character list rather than on the bytes, though the
 two agree: no byte of a multi-byte UTF-8 sequence is `0x20`. -/
 def dropTrailingBlanks (cs : List Char) : List Char := (cs.reverse.dropWhile (· == ' ')).reverse
 
-/-- Row as plain text bytes (no SGR), trailing blanks trimmed.
-
-This used to build a `String` — `(s.dropEndWhile (· == ' ')).toString` over a fold of
-`String` appends — and it was the last thing in this module that did. That is the shape
-the header above says makes output unprovable: a `String` does not reduce in the kernel,
-so no theorem could see the bytes `linger capture --history` writes to a terminal. Byte-level now,
-so `history_framing` and `history_lines` can say that a cell cannot inject a line
-break. -/
+/-- Row as plain text bytes (no SGR), trailing blanks trimmed. Bytes rather than a
+`String`, which does not reduce in the kernel, so `history_framing` and
+`history_lines` can say that a cell cannot inject a line break. -/
 def rowText (row : Row) : Bytes := utf8s (dropTrailingBlanks (rowChars row))
 
 /-- Scrollback + screen, oldest first; for `linger capture --history`.

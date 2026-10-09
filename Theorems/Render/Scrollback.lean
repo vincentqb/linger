@@ -5,10 +5,7 @@ import all Linger.Core.Render
 import all Linger.Core.Vt
 import all Theorems.Render.Tabs
 
--- No `public section`: a **public** declaration's type may not mention a private
--- field, and `Vt`'s are private now (the seal, `specs/archive/vt-toolkit.md` Step 1).
--- Module-private is the default, so consumers reach in with `import all`. See the
--- longer note in `Theorems/Vt.lean`.
+-- Module-private by default: `Vt`'s fields are sealed (see `Theorems/Vt/State.lean`).
 
 /-! # §Replay — the scrollback stage
 
@@ -119,13 +116,14 @@ theorem rowAnsi_len_seed (row : Row) (p q : Pen) :
   rw [foldl_rowSlot_range row ([], p, 0), foldl_rowSlot_range row ([], q, 0)]
   exact foldl_rowSlot_seed q _ [] [] p q 0 (Or.inr ⟨rfl, rfl⟩)
 
-/-- `penSgr {}` is four bytes — the `+ 4` inside `sbRowCost`. `digits` recurses on
-well-founded recursion, so its `0` case has to be unfolded by hand; `decide` and
-`rfl` both get stuck on it. -/
+/-- A single decimal digit. `digits` is well-founded recursion, so `decide` and `rfl` get
+stuck on it and unfolding it inside `simp` loops; this is the rewrite to use instead. -/
+theorem digits_of_lt {n : Nat} (h : n < 10) : digits n = [UInt8.ofNat (0x30 + n)] := by
+  rw [digits, ite_eq_left h]
+
+/-- `penSgr {}` is four bytes — the `+ 4` inside `sbRowCost`. -/
 theorem penSgr_default_len : (penSgr ({} : Pen)).length = 4 := by
-  have hd : digits 0 = [0x30] := by
-    rw [digits]; simp
-  simp [penSgr, sgrColorSeq, colorCodes, penAttrCodes, sgrOf, joinSemi, csiB, hd]
+  simp [penSgr, sgrColorSeq, colorCodes, penAttrCodes, sgrOf, joinSemi, csiB, digits_of_lt]
 
 /-- A row's cost pays for both its paint from any incoming pen and a CRLF.
 Keeping the separator credit is necessary when summing the complete stage. -/
@@ -134,18 +132,6 @@ theorem rowAnsi_len_add_crlf_le_cost (row : Row) (p : Pen) :
   have h := rowAnsi_len_seed row p ({} : Pen)
   rw [penSgr_default_len] at h
   unfold sbRowCost
-  omega
-
-/-- **The `+ 6` made a claim.** Whatever pen is in effect when a replayed row is
-painted, its emitted bytes are within that row's counted `sbRowCost` — so the
-budget's arithmetic is about the same rows the stage emits.
-
-The bound is tight at the row level: `penSgr {}` = 4 is attained (a blank
-80-column row is 80 bytes from the default pen and 84 from a truecolour one), so
-the slack is not trimmable, and the remaining `+ 2` is the pushing CRLF the
-emitted paint does not contain. -/
-theorem rowAnsi_len_le_cost (row : Row) (p : Pen) : (rowAnsi row p).1.length ≤ sbRowCost row := by
-  have h := rowAnsi_len_add_crlf_le_cost row p
   omega
 
 /-- A nonempty row walk leaves the last row's CRLF credit unused. The pen is
@@ -170,8 +156,7 @@ costs only one byte beyond the sum of row costs. -/
 theorem gridAnsi_len_le_cost (grid : Array Row) (hne : grid.toList ≠ []) :
     (gridAnsi grid).length ≤ (grid.toList.map sbRowCost).sum + 1 := by
   rw [gridAnsi_eq]
-  have hd : digits 0 = [0x30] := by
-    rw [digits]; simp
+  have hd := digits_of_lt (n := 0) (by decide)
   cases hrows : grid.toList with
   | nil => exact (hne hrows).elim
   | cons r rs =>
@@ -277,24 +262,18 @@ and nineteen control bytes. No well-formedness hypothesis on the source or its
 history is needed. -/
 theorem scrollbackAnsi_le_cost (v : Vt) :
     (scrollbackAnsi v).length ≤ ((sbRows v).toList.map sbRowCost).sum + 2 * v.rows + 19 := by
-  have hd3 : digits 3 = [0x33] := by
-    rw [digits]; simp
-  have hd4 : digits 4 = [0x34] := by
-    rw [digits]; simp
-  have hd6 : digits 6 = [0x36] := by
-    rw [digits]; simp
-  have hd7 : digits 7 = [0x37] := by
-    rw [digits]; simp
   unfold scrollbackAnsi
   split
-  · simp [csiNum, csiPriv, csiB, modeSet, hd4, hd6, hd7]
+  · simp [csiNum, csiPriv, csiB, modeSet, digits_of_lt]
   · rename_i hne
     have hg := gridAnsi_len_le_cost (sbRows v) (by simpa using hne)
     simp only [List.length_append]
     have hf : (List.replicate v.rows crlfB).flatten.length = 2 * v.rows := by
       simp [crlfB, Nat.mul_comm]
-    simp only [hf, csiNum, csiPriv, csiB, modeSet, hd3, hd4, hd6, hd7, Bool.false_eq_true,
-      ↓reduceIte, List.length_append, List.length_cons, List.length_nil]
+    simp only [hf, csiNum, csiPriv, csiB, modeSet, digits_of_lt (n := 3) (by decide),
+      digits_of_lt (n := 4) (by decide), digits_of_lt (n := 6) (by decide),
+      digits_of_lt (n := 7) (by decide), Bool.false_eq_true, ↓reduceIte, List.length_append,
+      List.length_cons, List.length_nil]
     omega
 
 /-- The complete emitted history stage is bounded independently of ring size
@@ -485,40 +464,19 @@ theorem fixes_sb_escSeq (b : UInt8) (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x3E ∨
     Fixes (fun v : Vt => v.sb) (escSeq b) := by
   intro v hg hu
   rw [show escSeq b = [0x1B] ++ [b] from rfl]
-  rw [show ∀ (w : Vt), w.feed ([0x1B] ++ [b]) = (w.step 0x1B).step b from fun w => by
-      simp [Vt.feed]]
+  rw [show ∀ (w : Vt), w.feed ([0x1B] ++ [b]) = (w.step 0x1B).step b from fun _ => rfl]
   rw [esc_step_eq hg hu, step_of_esc_quiet b rfl (by simpa using hu)]
   rcases hb with h | h | h | h | h <;> subst h <;> show _ ∧ _ ∧ _ <;> unfold Vt.stepEsc <;>
     exact ⟨rfl, by simpa using hu, rfl⟩
 
 theorem fixes_sb_escCharset (i x : UInt8) (hi : i = 0x28 ∨ i = 0x29) (hlo : 0x30 ≤ x)
-    (hhi : x ≤ 0x7E) : Fixes (fun v : Vt => v.sb) (escCharset i x) := by
-  intro v hg hu
-  rw [show escCharset i x = [0x1B] ++ [i, x] from rfl]
-  rw [show ∀ (w : Vt), w.feed ([0x1B] ++ [i, x]) = ((w.step 0x1B).step i).step x from fun w => by
-      simp [Vt.feed]]
-  rw [esc_step_eq hg hu]
-  have hinter : ({ v with pstate := .esc } : Vt).step i = { v with pstate := .escInter i } := by
-    rw [step_of_esc_quiet i rfl (by simpa using hu)]
-    unfold Vt.stepEsc
-    rcases hi with h | h
-    · subst h; rfl
-    · subst h; rfl
-  rw [hinter, step_of_escInter_quiet x rfl (by simpa using hu)]
-  show _ ∧ _ ∧ _
-  rw [stepEscInter_final _ i x hlo hhi]
-  repeat' split
-  all_goals exact ⟨rfl, by simpa using hu, rfl⟩
+    (hhi : x ≤ 0x7E) : Fixes (fun v : Vt => v.sb) (escCharset i x) := fun v hg hu => by
+  rw [charset_feed_eq i x hi hlo hhi hg hu]
+  split <;> exact ⟨hg, hu, rfl⟩
 
-theorem fixes_sb_shiftOut : Fixes (fun v : Vt => v.sb) [0x0E] := by
-  intro v hg hu
-  rw [show ∀ (w : Vt), w.feed [(0x0E : UInt8)] = w.step 0x0E from fun _ => rfl]
-  rw [step_of_ground_quiet (0x0E : UInt8) hg hu]
-  show _ ∧ _ ∧ _
-  unfold Vt.stepGround
-  rw [ite_eq_right (by decide), ite_eq_left (by decide)]
-  unfold Vt.ctl
-  exact ⟨hg, by simpa using hu, rfl⟩
+theorem fixes_sb_shiftOut : Fixes (fun v : Vt => v.sb) [0x0E] := fun v hg hu => by
+  have h : v.feed [0x0E] = { v with shiftOut := true } := shift_feed_eq true hg hu
+  rw [h]; exact ⟨hg, hu, rfl⟩
 
 theorem fixes_sb_modeSet (n : Nat) (on : Bool) : Fixes (fun v : Vt => v.sb) (modeSet n on) := by
   unfold modeSet
@@ -602,52 +560,6 @@ theorem fixes_sb_tabsAnsi (v : Vt) : Fixes (fun v : Vt => v.sb) (tabsAnsi v) := 
     (fixes_csiNum psBlind_sb (i + 1) 0x47 (by decide) (by decide) sb_csiDispatch_cha).append
       (fixes_sb_escSeq 0x48 (by decide))
 
-/-- The ring frame for DECSC, title, modes, charsets, pen and cursor addressing.
-The additional deferred-wrap reprints are handled separately by
-`pending_tail_frames`, using the existing-cell invariant. -/
-theorem fixes_sb_tail (v : Vt) :
-    Fixes (fun v : Vt => v.sb)
-      (savedAnsi v ++ titleAnsi v ++ modesAnsi v ++ charsetAnsi v ++ penSgr v.pen ++
-        cursorAnsi v) :=
-  (((((fixes_sb_savedAnsi v).append (fixes_sb_titleAnsi v)).append (fixes_sb_modesAnsi v)).append
-            (fixes_sb_charsetAnsi v)).append
-        (fixes_penSgr psBlind_sb v.pen sb_csiDispatch_sgr)).append
-    (fixes_sb_cursorAnsi v)
-
-/-! ### The screen paint, at `π := (·.sb)` — the one stage whose invariance is conditional
-
-`gridAnsi` gets no `Fixes` lemma and cannot have one: it ends in `joinCRLF`, and a `CRLF` with
-the cursor at the region bottom scrolls with `allowSb := true` and pushes the evicted row. So
-invariance here is conditional on the *row count*, not on the receiver's parser state — which
-is why it lives as a conjunct of `gridAnsi_writes_grid` rather than in the family above. These
-two names exist so the history story has something to point at; both are one projection. -/
-
-/-- **The screen paint pushes nothing into the receiver's history.** `hvsz` is the load-bearing
-hypothesis and the claim is false without it: a target taller than the receiver keeps emitting
-separators past the last row, and each one pushes — exactly `v.grid.size - v.rows` rows. -/
-theorem gridAnsi_keeps_sb {u v : Vt} (hcols : u.cols = v.cols) (hrows : u.rows = v.rows)
-    (hpos : 0 < v.cols) (hub : v.cols < 65533) (htop : u.top = 0) (hbot : u.bot = v.rows - 1)
-    (hg : u.pstate = .ground) (hun : u.u8need = 0) (hua : u.u8acc = 0)
-    (hins : u.modes.insert = false) (hwrap : u.modes.wrap = true) (horg : u.modes.origin = false)
-    (hg0 : u.g0Line = false) (hg1 : u.g1Line = false) (hgsz : u.grid.size = v.rows)
-    (hrlens : ∀ y', (u.getRow y').size = v.cols)
-    (hvok : ∀ y', RowOk v.cols (v.grid.getD y' (blankRow v.cols {})))
-    (hvsz : v.grid.size = v.rows) : (u.feed (gridAnsi v.grid)).sb = u.sb :=
-  (gridAnsi_writes_grid hcols hrows hpos hub htop hbot hg hun hua hins hwrap horg hg0 hg1 hgsz
-      hrlens hvok hvsz).2.2.2.2.2.2
-
-/-- The `tg` form, for the alt branch's stashed main grid. -/
-theorem gridAnsi_keeps_sb' {u : Vt} {tg : Array Row} {cols rows : Nat} (hcols : u.cols = cols)
-    (hrows : u.rows = rows) (hpos : 0 < cols) (hub : cols < 65533) (htop : u.top = 0)
-    (hbot : u.bot = rows - 1) (hg : u.pstate = .ground) (hun : u.u8need = 0) (hua : u.u8acc = 0)
-    (hins : u.modes.insert = false) (hwrap : u.modes.wrap = true) (horg : u.modes.origin = false)
-    (hg0 : u.g0Line = false) (hg1 : u.g1Line = false) (hgsz : u.grid.size = rows)
-    (hrlens : ∀ y', (u.getRow y').size = cols)
-    (hvok : ∀ y', RowOk cols (tg.getD y' (blankRow cols {}))) (hvsz : tg.size = rows) :
-    (u.feed (gridAnsi tg)).sb = u.sb :=
-  (gridAnsi_writes_grid' hcols hrows hpos hub htop hbot hg hun hua hins hwrap horg hg0 hg1 hgsz
-      hrlens hvok hvsz).2.2.2.2.2.2
-
 /-! ### `CRLF` at the region bottom — the step the history walk runs once per row
 
 `Theorems/Render/Grid.lean`'s `crlf_step` is the *interior* case, where the line feed moves
@@ -696,7 +608,7 @@ only at `π := (·.grid)` (`keeps_csi_digits_tail`). It is generalized over `π`
 move `csi_tail_proj` makes for the unconditional walk.
 
 `fixes_csiNum` is **not** made redundant by the bridge form: it takes an unconditional
-obligation and admits `n = 0`, which the bridge cannot (`arg_of_one` needs `0 < n`). -/
+obligation and admits `n = 0`, which `fixes_csi_digits_tail` (stated with `0 < n`) does not. -/
 
 namespace Linger.Core.Vt
 
@@ -751,12 +663,7 @@ theorem fixes_csiNum_arg {α : Type} {π : Vt → α} (hb : PsBlind π) (n : Nat
   intro v hg hu
   rw [show csiNum n final = [0x1B, 0x5B] ++ (digits n ++ [final]) from by
       unfold csiNum csiB; simp]
-  rw [show
-      ∀ (w : Vt),
-        w.feed ([0x1B, 0x5B] ++ (digits n ++ [final])) =
-          (w.feed [0x1B, 0x5B]).feed (digits n ++ [final])
-      from fun w => by simp [Vt.feed, List.foldl_append]]
-  rw [keeps_csi_open hg hu]
+  rw [feed_append, keeps_csi_open hg hu]
   obtain ⟨hp', hu', hπ'⟩ :=
     fixes_csi_digits_tail hb n final h1 h2 hn hlt hπ (v := { v with pstate := .csi {} }) rfl
       (by simpa using hu) rfl rfl rfl
@@ -815,16 +722,10 @@ theorem ed3_empties (w : Vt) (hg : w.pstate = .ground) (hu : w.u8need = 0) :
       rw [un_csiDispatch]; exact hu⟩
 
 /-- `SI` (shift in). `fixes_sb_shiftOut` is `SO` (`0x0E`), which `charsetAnsi` emits; the
-prologue emits this one, and the near-miss is a real gap rather than a rename. -/
-theorem fixes_sb_shiftIn : Fixes (fun v : Vt => v.sb) [0x0F] := by
-  intro v hg hu
-  rw [show ∀ (w : Vt), w.feed [(0x0F : UInt8)] = w.step 0x0F from fun _ => rfl]
-  rw [step_of_ground_quiet (0x0F : UInt8) hg hu]
-  show _ ∧ _ ∧ _
-  unfold Vt.stepGround
-  rw [ite_eq_right (by decide), ite_eq_left (by decide)]
-  unfold Vt.ctl
-  exact ⟨hg, by simpa using hu, rfl⟩
+prologue emits this one. -/
+theorem fixes_sb_shiftIn : Fixes (fun v : Vt => v.sb) [0x0F] := fun v hg hu => by
+  have h : v.feed [0x0F] = { v with shiftOut := false } := shift_feed_eq false hg hu
+  rw [h]; exact ⟨hg, hu, rfl⟩
 
 /-- **The prologue keeps the ring.** Nine stages, and every byte is inside the family: no
 `J`, no `RIS` (`0x63`, which clears the ring), no `IND`/`NEL`/`RI` (`0x44`/`0x45`/`0x4D`,
@@ -882,14 +783,6 @@ theorem pushBytes_eq :
         from rfl,
       joinCRLF_cons2]
     simp only [List.append_assoc]
-
-theorem flatten_replicate_crlfB_add (a b : Nat) :
-    (List.replicate (a + b) crlfB).flatten =
-      (List.replicate a crlfB).flatten ++ (List.replicate b crlfB).flatten := by
-  induction a with
-  | zero => simp
-  | succ n ih =>
-    simp only [Nat.succ_add, List.replicate_succ, List.flatten_cons, ih, List.append_assoc]
 
 structure Painted (cols rows : Nat) (L B : List Row) (off D Y : Nat) (p : Pen) (u : Vt) : Prop where
   colsEq : u.cols = cols
@@ -1266,7 +1159,9 @@ theorem push_run {cols rows : Nat} {L B : List Row} {u : Vt} (hcb : cols < 65533
     show
       (List.replicate (rows - 1) crlfB).flatten =
         (List.replicate ((rows - 1) - Y') crlfB).flatten ++ (List.replicate Y' crlfB).flatten
-      from by rw [← flatten_replicate_crlfB_add, show rows - 1 - Y' + Y' = rows - 1 from by omega],
+      from by
+      rw [← List.flatten_append, List.replicate_append_replicate,
+        show rows - 1 - Y' + Y' = rows - 1 from by omega],
     feed_append, ring_toList_of_start_zero he.sbStart, he.sbData,
     show L.take (off' + Y') = L from List.take_of_length_le (by omega)]
 
@@ -1318,8 +1213,11 @@ theorem push_walk (v w : Vt) (hw : Good w) (hren : Renderable w) (hcols : w.cols
     w.feed (csiNum 0 0x6D ++ (csiB ++ [0x48])) =
       (({ w with pen := ({} : Pen) } : Vt)).moveTo 0 0 := by
     rw [feed_append, hsgr, home_feed_eq (v := { w with pen := ({} : Pen) }) hgr hun]
-  have hcur := home_places_cursor (v := { w with pen := ({} : Pen) }) hgr hun horg
-  rw [home_feed_eq (v := { w with pen := ({} : Pen) }) hgr hun] at hcur
+  have hcur :
+    (({ w with pen := ({} : Pen) } : Vt).moveTo 0 0).cursor.x = 0 ∧
+      (({ w with pen := ({} : Pen) } : Vt).moveTo 0 0).cursor.y = 0 ∧
+      (({ w with pen := ({} : Pen) } : Vt).moveTo 0 0).cursor.pending = false := by
+    simp [Vt.moveTo, horg]
   have hrlw : ∀ (P : Pen) (y' : Nat), ((({ w with pen := P } : Vt)).getRow y').size = v.cols := by
     intro P y'
     obtain ⟨-, hrok⟩ := hren.main
@@ -1389,7 +1287,7 @@ quiesced; and the room the walk demands has to come from the **session**, not th
 The `Fixes` twin of `mmap_of_esc_lead`, needed for the same reason and by the same chunk:
 `Fixes` is `∀ v, pstate = ground → u8need = 0 → …`, the stage's mode tail sits behind the
 ring's *glyph* bytes, and nothing hands back u8-quiescence after a paint whose target is the
-ring. (`gridAnsi_writes_grid'` is the one lemma that would, and it wants
+ring. (`gridAnsi_writes_rows` is the one lemma that would, and it wants
 `painted.size = receiver.rows`, which the history violates by design; `Ends` is scoped to
 `pstate` on purpose and `uaz_feed` needs every byte below 0x80.)
 
@@ -1406,38 +1304,7 @@ theorem fixes_sb_of_esc_lead {rest : Bytes}
       (v.feed ((0x1B : UInt8) :: rest)).sb = v.sb := by
   by_cases hu : v.u8need = 0
   · exact h v hg hu
-  · have hpos : v.u8need > 0 := Nat.pos_of_ne_zero hu
-    have habort :
-      v.abortUtf8 (0x1B : UInt8) =
-        { v with
-          u8need := 0, u8acc := 0 } := by
-      unfold Vt.abortUtf8
-      rw [ite_eq_left (by simp [hpos])]
-    have habort2 :
-      ({ v with
-                u8need := 0, u8acc := 0 } :
-              Vt).abortUtf8
-          (0x1B : UInt8) =
-        { v with
-          u8need := 0, u8acc := 0 } := by
-      unfold Vt.abortUtf8
-      rw [ite_eq_right (by simp)]
-    have hstep :
-      v.step (0x1B : UInt8) =
-        ({ v with
-                u8need := 0, u8acc := 0 } :
-              Vt).step
-          0x1B := by
-      unfold Vt.step
-      dsimp only
-      rw [habort, habort2]
-    rw [show
-        v.feed ((0x1B : UInt8) :: rest) =
-          ({ v with
-                  u8need := 0, u8acc := 0 } :
-                Vt).feed
-            ((0x1B : UInt8) :: rest)
-        from by rw [feed_cons, feed_cons, hstep]]
+  · rw [feed_cons, step_esc_eq (fun h0 => absurd h0 hu), ← feed_cons]
     exact h _ hg rfl
 
 /-- The stage's mode tail writes no history: `4l`, `?6l` and `?7h` are three `setMode`s and
@@ -1451,7 +1318,7 @@ theorem fixes_sb_sbTail :
 /-- **The mode tail leaves the ring alone, from a ground parser alone.** The state the tail is
 fed is the one the paint and the flush left, and no route in the repo gives that state a zero
 `u8need` — so the `Fixes` precondition is discharged by the tail's own leading `ESC` instead,
-exactly as `sbTail_modes` discharges `MMap`'s. That is a second, independent reason the twelve
+exactly as `sbTail_modes` discharges `MMap`'s. That is a second, independent reason the fourteen
 mode bytes must stay ESC-leading and contiguous at the end of the stage: `Modes.lean` needs the
 shape for `insert`/`wrap`/`origin`, and the ring needs it here. -/
 theorem sbTail_sb {y : Vt} (hg : y.pstate = .ground) :
@@ -1573,7 +1440,7 @@ theorem scrollback_sb {u v : Vt} (hgood : Good u) (hren : Renderable u) (hgv : G
             (gridAnsi (sbRows v) ++ (List.replicate v.rows crlfB).flatten)).feed
         (csiNum 4 0x6C ++ modeSet 6 false ++ modeSet 7 true) := by
     rw [hsplit]
-    simp [Vt.feed, List.foldl_append]
+    simp only [feed_append]
   -- the room, from the session's ring — see the docstring for why not the receiver's
   have hroom : (u.feed (csiNum 3 0x4A)).sb.size + (sbRows v).size ≤ sbCap := by
     have h1 := sbRows_size_le v
@@ -1592,7 +1459,7 @@ theorem scrollback_sb {u v : Vt} (hgood : Good u) (hren : Renderable u) (hgv : G
   rw [hchain, sbTail_sb hzg, hwalk, fsb]
   rfl
 
-/-- **The guarded branch.** With nothing to replay the stage *is* the twelve mode bytes, so the
+/-- **The guarded branch.** With nothing to replay the stage *is* the fourteen mode bytes, so the
 receiver keeps the history it arrived with. That is the user-facing half of the guard rather
 than a weaker version of `scrollback_sb`: an unconditional `ED 3` would wipe the scrollback of
 any window a session is attached in, including the common case of a session with nothing to
@@ -1622,11 +1489,7 @@ theorem restore_sb_stage (v w : Vt) (hgood : Good w) (hren : Renderable w) (hgv 
       (sbRows v).toList := by
   obtain ⟨e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11, e12, -, -, e15, -⟩ :=
     paint_entry v w hgood hren hcols hrows hua hun
-  rw [show
-      prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ scrollbackAnsi v =
-        (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A) ++ scrollbackAnsi v
-      from rfl,
-    feed_append]
+  rw [feed_append]
   exact
     scrollback_sb (Good.feed _ hgood) (renderable_feed hren _) hgv e1 e2 e3 e4 e5 e6 e7 e8 e9 e10
       e11 e12 e15 hne
@@ -1637,18 +1500,6 @@ The full tail combines control-sequence frames with the saved and active
 existing-cell reprints. `restore_grid_of_paint` carries the canonical paint
 context into those reprints; its ring counterpart does the same below. The screen
 paint establishes the grid while preserving the history built by the earlier stage. -/
-
-/-- The eight control-only stages, at the ring — `keeps_restoreTail`'s twin.
-This byte list excludes the two deferred-wrap reprints, whose ring frames
-require the existing-cell argument in `pending_tail_frames`. -/
-theorem fixes_sb_restoreTail (v : Vt) :
-    Fixes (fun v : Vt => v.sb)
-      (regionAnsi v ++ tabsAnsi v ++ savedAnsi v ++ titleAnsi v ++ modesAnsi v ++ charsetAnsi v ++
-        penSgr v.pen ++
-        cursorAnsi v) := by
-  have h := ((fixes_sb_regionAnsi v).append (fixes_sb_tabsAnsi v)).append (fixes_sb_tail v)
-  simp only [List.append_assoc] at h ⊢
-  exact h
 
 /-- The ring claim follows from the paint's canonical receiver and exact grid.
 The two margin reprints preserve the ring by complete-state equations; the
@@ -1694,21 +1545,10 @@ theorem restore_sb_of_paint (v w : Vt) (hgood : Good w) (hren : Renderable w)
     hf.2.2.2.2.2.2.2.trans (hc.2.2.trans (hf.2.2.2.1.trans (ha.2.2.trans hsb)))
   simpa only [restore_split, u, a, b, c, feed_append] using he
 
-/-- **The stash park and the screen switch keep the ring.** `?1049h` moves *cells* — it stashes
-the main grid and installs a blank — and never touches history, which is why
-`sb_csiDispatch_sm` needs no condition on the `CsiState` and this covers mode 1049 without
-naming it. -/
-theorem fixes_sb_parkSwitch (mp : Pen) (mc : Cursor) :
-    Fixes (fun v : Vt => v.sb)
-      (penSgr mp ++ csiNum2 (mc.y + 1) (mc.x + 1) 0x48 ++ csiPriv 1049 0x68) :=
-  ((fixes_penSgr psBlind_sb mp sb_csiDispatch_sgr).append
-        (fixes_csiNum2 psBlind_sb _ _ 0x48 (by decide) (by decide) sb_csiDispatch_cup)).append
-    (fixes_csiPriv psBlind_sb 1049 0x68 (by decide) (by decide) sb_csiDispatch_sm)
-
 /-- **The ring, from the history stage to the end of `restore` — main screen.** One paint, and
-`gridAnsi_keeps_sb` is exactly the fact that it pushes nothing: `scrollback_entry` hands it the
-fitting entry state, and `hvren.main.1` supplies the row count that makes the last `CRLF` of
-the paint the one that does not scroll. -/
+the ring conjunct of `gridAnsi_writes_grid` is exactly the fact that it pushes nothing:
+`scrollback_entry` hands it the fitting entry state, and `hvren.main.1` supplies the row count
+that makes the last `CRLF` of the paint the one that does not scroll. -/
 theorem restore_sb_of_stage_main (v w : Vt) (hgood : Good w) (hren : Renderable w)
     (hcols : w.cols = v.cols) (hrows : w.rows = v.rows) (hua : w.u8acc = 0) (hun : w.u8need = 0)
     (halt : v.altGrid = none) (hpos : 0 < v.cols) (hub : v.cols < 65533) (hvren : Renderable v) :
@@ -1730,7 +1570,7 @@ theorem restore_sb_of_stage_main (v w : Vt) (hgood : Good w) (hren : Renderable 
     w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ scrollbackAnsi v) =
       (w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).feed (scrollbackAnsi v) := by
     simp only [feed_append]
-  -- the paint's parser outputs; the ring conjunct is `gridAnsi_keeps_sb` below
+  -- the paint's parser outputs and its ring conjunct
   have hw :=
     gridAnsi_writes_grid f1 f2 hpos hub f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 (by rw [f13]) f14
       hvren.main.2 hvren.main.1
@@ -1747,7 +1587,7 @@ theorem restore_sb_of_stage_main (v w : Vt) (hgood : Good w) (hren : Renderable 
 its own walk, and not because the ring is harder: `screensAnsi` emits *two* paints on the alt
 screen, and the second one's entry state is installed by `?1049h` rather than inherited, so
 there is no way to quantify over "the paint" once. Three links, in stream order — the discarded
-main paint, the park and the switch (`fixes_sb_parkSwitch`), and the visible paint over the
+main paint, the park with its existing-cell reprint and the switch, and the visible paint over the
 post-switch blank.
 
 **The discarded paint's row count is load-bearing too**, which is the part that is easy to
@@ -1771,7 +1611,7 @@ theorem restore_sb_of_stage_alt (v w : Vt) (hgood : Good w) (hren : Renderable w
   -- link 1: the discarded main paint. Its cells are thrown away by the switch; its refusal
   -- to push is not, and it is the reason `hvren.alt`'s row count is needed.
   have hmain :=
-    gridAnsi_writes_grid' (u :=
+    gridAnsi_writes_rows (u :=
       (w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).feed (scrollbackAnsi v)) (tg :=
       mainGrid) (cols := v.cols) (rows := v.rows) f1 f2 hpos hub f3 f4 f5 f6 f7 f8 f9 f10 f11 f12
       (by rw [f13]) f14 hmok hmsz
@@ -1782,22 +1622,24 @@ theorem restore_sb_of_stage_alt (v w : Vt) (hgood : Good w) (hren : Renderable w
       (w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).feed (scrollbackAnsi v)) (mg :=
       mainGrid) (mc := mcur) (mp := mpen) (cols := v.cols) (rows := v.rows) f1 f2 f3 f4 f5 f6 f7 f8
       f9 f10 f11 f12 f13 f14 falt (Good.feed _ (Good.feed _ hgood)) hpos hub hmok hmsz
-  let s :=
-    (((w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).feed (scrollbackAnsi v)).feed
-          (gridAnsi mainGrid)).feed
-      (penSgr mpen ++ csiNum2 (mcur.y + 1) (mcur.x + 1) 0x48)
-  have hsg : s.grid = mainGrid :=
-    (keeps_park (mcur.y + 1) (mcur.x + 1) mpen _ hmain.2.1 hmain.2.2.1).2.2.trans hmain.1
-  obtain ⟨pc, pr, -, pa, pg, pn, pua, pm, p0, p1, -, psb⟩ :=
-    pending_park_frame s v.cols mainGrid mcur mpen
-      (Good.feed _ (Good.feed _ (Good.feed _ (Good.feed _ hgood))))
-      (renderable_feed (renderable_feed (renderable_feed (renderable_feed hren _) _) _) _) hs2cols
-      hsg hs2g0 hs2g1 hs2wrap hs2ins hs2org hs2g hs2n hs2ua
+  have hsg := (keeps_park (mcur.y + 1) (mcur.x + 1) mpen _ hmain.2.1 hmain.2.2.1).2.2.trans hmain.1
   have hpark :=
     ((fixes_penSgr psBlind_sb mpen sb_csiDispatch_sgr).append
         (fixes_csiNum2 psBlind_sb (mcur.y + 1) (mcur.x + 1) 0x48 (by decide) (by decide)
           sb_csiDispatch_cup))
       _ hmain.2.1 hmain.2.2.1
+  -- an opaque name for the parked state: a `let` makes every hypothesis about it a defeq check
+  -- that unfolds `Vt.feed`
+  generalize hs :
+    (((w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).feed (scrollbackAnsi v)).feed
+          (gridAnsi mainGrid)).feed
+      (penSgr mpen ++ csiNum2 (mcur.y + 1) (mcur.x + 1) 0x48) =
+    s at hs2cols hs2rows hs2top hs2alt hs2g hs2n hs2ua hs2ins hs2wrap hs2org hs2g0 hs2g1 hsg hpark
+  obtain ⟨pc, pr, -, pa, pg, pn, pua, pm, p0, p1, -, psb⟩ :=
+    pending_park_frame s v.cols mainGrid mcur mpen
+      (hs ▸ Good.feed _ (Good.feed _ (Good.feed _ (Good.feed _ hgood))))
+      (hs ▸ renderable_feed (renderable_feed (renderable_feed (renderable_feed hren _) _) _) _)
+      hs2cols hsg hs2g0 hs2g1 hs2wrap hs2ins hs2org hs2g hs2n hs2ua
   have hswitch :=
     fixes_sb_modeSet 1049 true (s.feed (pendingAnsi v.cols mainGrid mcur (mcur.y + 1) mpen)) pg pn
   obtain ⟨hZcols, hZrows, hZtop, hZbot, hZg, hZun, hZua, hZmodes, hZg0, hZg1, hZgrid, -, -, -⟩ :=
@@ -1805,7 +1647,7 @@ theorem restore_sb_of_stage_alt (v w : Vt) (hgood : Good w) (hren : Renderable w
       (pa.trans hs2alt) pg pn
   -- link 3: the visible paint, over the post-switch blank
   have hfin :=
-    gridAnsi_writes_grid' (u :=
+    gridAnsi_writes_rows (u :=
       (s.feed (pendingAnsi v.cols mainGrid mcur (mcur.y + 1) mpen)).feed (csiPriv 1049 0x68)) (tg :=
       v.grid) (cols := v.cols) (rows := v.rows) (hZcols.trans (pc.trans hs2cols))
       (hZrows.trans (pr.trans hs2rows)) hpos hub hZtop (by rw [hZbot, pr, hs2rows]) hZg
@@ -1836,7 +1678,7 @@ theorem restore_sb_of_stage_alt (v w : Vt) (hgood : Good w) (hren : Renderable w
     w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v) =
       ((s.feed (pendingAnsi v.cols mainGrid mcur (mcur.y + 1) mpen)).feed (csiPriv 1049 0x68)).feed
         (gridAnsi v.grid) := by
-    rw [hscreens]; simp only [s, feed_append]
+    rw [hscreens, ← hs]; simp only [feed_append]
   have hpeelSb :
     w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ scrollbackAnsi v) =
       (w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).feed (scrollbackAnsi v) := by

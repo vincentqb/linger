@@ -5,10 +5,7 @@ import all Linger.Core.Render
 import all Linger.Core.Vt
 import all Theorems.Render.Modes
 
--- No `public section`: a **public** declaration's type may not mention a private
--- field, and `Vt`'s are private now (the seal, `specs/archive/vt-toolkit.md` Step 1).
--- Module-private is the default, so consumers reach in with `import all`. See the
--- longer note in `Theorems/Vt.lean`.
+-- Module-private by default: `Vt`'s fields are sealed (see `Theorems/Vt/State.lean`).
 
 /-! # §Restore / A5 inbound — the sticky bundle, and the cursor
 
@@ -137,7 +134,6 @@ theorem smap_id_csi_seq (params : Bytes) (final : UInt8) (hp : ParamBytes params
       rw [ht, hcs]; rfl⟩
 
 theorem smap_id_sgrOf (codes : List Nat) : SMap id (sgrOf codes) := by
-  rw [show sgrOf codes = csiB ++ joinSemi codes ++ [0x6D] from rfl]
   exact
     smap_id_csi_seq _ 0x6D (paramBytes_joinSemi codes) (by decide) (by decide)
       (fun w t => stick_csiDispatch_sgr w t)
@@ -169,25 +165,21 @@ theorem smap_id_home : SMap id (csiB ++ [0x48] : Bytes) := by
       (fun w t => stick_csiDispatch_cup w t)
 
 theorem smap_id_cha (n : Nat) : SMap id (csiNum n 0x47) := by
-  rw [show csiNum n 0x47 = csiB ++ digits n ++ [0x47] from rfl]
   exact
     smap_id_csi_seq _ 0x47 (paramBytes_digits n) (by decide) (by decide)
       (fun w t => stick_csiDispatch_cha w t)
 
 theorem smap_id_sgrNum (n : Nat) : SMap id (csiNum n 0x6D) := by
-  rw [show csiNum n 0x6D = csiB ++ digits n ++ [0x6D] from rfl]
   exact
     smap_id_csi_seq _ 0x6D (paramBytes_digits n) (by decide) (by decide)
       (fun w t => stick_csiDispatch_sgr w t)
 
 theorem smap_id_ed (n : Nat) : SMap id (csiNum n 0x4A) := by
-  rw [show csiNum n 0x4A = csiB ++ digits n ++ [0x4A] from rfl]
   exact
     smap_id_csi_seq _ 0x4A (paramBytes_digits n) (by decide) (by decide)
       (fun w t => stick_csiDispatch_ed w t)
 
 theorem smap_id_tbc (n : Nat) : SMap id (csiNum n 0x67) := by
-  rw [show csiNum n 0x67 = csiB ++ digits n ++ [0x67] from rfl]
   exact
     smap_id_csi_seq _ 0x67 (paramBytes_digits n) (by decide) (by decide)
       (fun w t => stick_csiDispatch_tbc w t)
@@ -199,8 +191,8 @@ transparent
 whatever the collector holds. The mode sets are the other kind: `SM`/`RM` dispatch
 to `setMode`, whose effect depends on the *parameter*. So this walk delivers the
 closed collector's contents — marker as emitted, `ignore` clear, single parameter
-`n` — and is written once for both markers, where `mmap_irm` and `modeSet_tail`
-each did it by hand. -/
+`n` — and is written once for both markers, where `irm_feed_eq` and `modeSet_feed_eq`
+each do it by hand. -/
 
 /-- `arg` from the collector's parameter array, in the two shapes the walks
 deliver: one parameter pushed onto nothing, and one pushed onto one. -/
@@ -242,8 +234,7 @@ theorem stick_priv_open {v : Vt} (hg : v.pstate = .ground) :
 
 theorem stick_csi_arg_tail (n : Nat) (final : UInt8) (f : Sticky → Sticky) (hn : 0 < n)
     (hlt : n < 65535) (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E) {s0 : CsiState} (hs0cur : s0.cur = 0)
-    (_hs0have : s0.haveCur = false) (hs0size : s0.params.size < 16) (hs0int : s0.inter = 0)
-    (hs0ign : s0.ignore = false)
+    (hs0size : s0.params.size < 16) (hs0int : s0.inter = 0) (hs0ign : s0.ignore = false)
     (hst :
       ∀ (w : Vt) (t : CsiState),
         t.priv = s0.priv →
@@ -271,7 +262,7 @@ theorem smap_csi_one_arg (n : Nat) (final : UInt8) (priv : Bool) (f : Sticky →
     rw [feed_append]
     obtain ⟨hc, hcu, hcs⟩ := stick_csi_open hg
     obtain ⟨ht, hp⟩ :=
-      stick_csi_arg_tail n final f hn hlt h1 h2 (s0 := ({} : CsiState)) rfl rfl (by decide) rfl rfl
+      stick_csi_arg_tail n final f hn hlt h1 h2 (s0 := ({} : CsiState)) rfl (by decide) rfl rfl
         (fun u t hpv hig hpar =>
           hst u t false
             (by
@@ -285,7 +276,7 @@ theorem smap_csi_one_arg (n : Nat) (final : UInt8) (priv : Bool) (f : Sticky →
     rw [feed_append]
     obtain ⟨hc, hcu, hcs⟩ := stick_priv_open hg
     obtain ⟨ht, hp⟩ :=
-      stick_csi_arg_tail n final f hn hlt h1 h2 (s0 := ({ priv := 0x3F } : CsiState)) rfl rfl
+      stick_csi_arg_tail n final f hn hlt h1 h2 (s0 := ({ priv := 0x3F } : CsiState)) rfl
         (by decide) rfl rfl
         (fun u t hpv hig hpar =>
           hst u t false
@@ -363,7 +354,7 @@ theorem smap_id_escSeq (b : UInt8) (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x48 ∨ 
       (stick_step_of_ground 0x1B hg (by decide) (by decide))
 
 /-- A run of non-ESC, non-BEL bytes fed from an OSC state stays there and cannot
-move a sticky field — the shape `un_osc_run` has for `u8need`. -/
+move a sticky field — the shape `fixes_osc` walks for any projection. -/
 theorem stick_osc_run :
     ∀ (bs : Bytes) {v : Vt} {acc : Array UInt8},
       v.pstate = .osc acc false → (∀ b ∈ bs, b ≠ 0x1B ∧ b ≠ 0x07) → stick (v.feed bs) = stick v
@@ -456,10 +447,10 @@ theorem smap_stbm (a b : Nat) (ha : 0 < a) (hb : 0 < b) (halt : a < 65535) (hblt
       simp [csiNum2, csiB, List.append_assoc]]
   rw [feed_append, feed_append]
   obtain ⟨hc, hcu, hcs⟩ := stick_csi_open hg
-  obtain ⟨sB, hpB, hcurB, hhaveB, hparB, hsubB, hintB, hignB, hprivB, huB, hsB⟩ :=
+  obtain ⟨sB, hpB, hcurB, -, hparB, hsubB, hintB, hignB, hprivB, huB, hsB⟩ :=
     stick_csi_semi_open a halt hc hcu
   obtain ⟨ht, hp⟩ :=
-    stick_csi_arg_tail b 0x72 (stStbm (a - 1) (b - 1)) hb hblt (by decide) (by decide) hcurB hhaveB
+    stick_csi_arg_tail b 0x72 (stStbm (a - 1) (b - 1)) hb hblt (by decide) (by decide) hcurB
       (by
         rw [hparB]; simp)
       hintB hignB
@@ -513,9 +504,6 @@ and writes neither, which is `stick_print`. -/
 theorem smap_id_rowAnsi (row : Row) (p : Pen) : SMap id (rowAnsi row p).1 :=
   SMap.streamPred.rowAnsi smap_id_penSgr smap_utf8_safe smap_utf8s smap_id_cha row p
 
-theorem smap_id_joinCRLF : ∀ (l : List Bytes), (∀ bs ∈ l, SMap id bs) → SMap id (joinCRLF l) :=
-  SMap.streamPred.joinCRLF smap_crlf
-
 theorem smap_id_gridAnsi (grid : Array Row) : SMap id (gridAnsi grid) :=
   SMap.streamPred.gridAnsi (smap_id_sgrNum 0) smap_id_home smap_crlf smap_id_rowAnsi grid
 
@@ -549,23 +537,19 @@ theorem smap_id_tabsAnsi (v : Vt) : SMap id (tabsAnsi v) := by
   refine SMap.streamPred.flatMap (fun i => ?_)
   exact (smap_id_cha (i + 1)).append (smap_id_escSeq 0x48 (by decide))
 
+/-- A mode number other than the three screen switches leaves the sticky bundle alone. -/
+theorem stSetMode_of_not_screen {n : Nat} (on : Bool) (s : Sticky)
+    (h : (n == 47 || n == 1047 || n == 1049) = false := by decide) : stSetMode n on s = s := by
+  simp [stSetMode, h]
+
 /-- **A private mode emit that is not a screen switch moves no sticky field.**
 `stSetMode`'s only non-identity case is 47/1047/1049, so naming the three
-exclusions is the whole content. Lifted out of `smap_id_modesAnsi`, which was
-where it was first needed; the scrollback stage's `?6l`/`?7h` need it too. -/
+exclusions is the whole content. `smap_id_modesAnsi` and the scrollback stage's
+`?6l`/`?7h` use it. -/
 theorem smap_id_modeSet_safe (n : Nat) (on : Bool) (hn : 0 < n) (hlt : n < 65535) (h47 : n ≠ 47)
-    (h1047 : n ≠ 1047) (h1049 : n ≠ 1049) : SMap id (modeSet n on) := by
-  refine (smap_modeSet n on hn hlt).congr (fun s => ?_)
-  unfold stSetMode
-  rw [ite_eq_right
-      (by
-        intro h
-        simp only [Bool.or_eq_true, beq_iff_eq] at h
-        rcases h with (h | h) | h
-        · exact h47 h
-        · exact h1047 h
-        · exact h1049 h)]
-  rfl
+    (h1047 : n ≠ 1047) (h1049 : n ≠ 1049) : SMap id (modeSet n on) :=
+  (smap_modeSet n on hn hlt).congr fun s =>
+    stSetMode_of_not_screen on s (by simp [h47, h1047, h1049])
 
 /-- Every mode `modesAnsi` replays is one `setMode` cannot turn into a screen
 switch — including the mouse field, whose *guard* is what rules 47/1047/1049 out
@@ -725,10 +709,7 @@ theorem smap_screensAnsi (v : Vt) :
   have h1049 : SMap (stAlt true) (csiPriv 1049 0x68) := by
     have h := smap_modeSet 1049 true (by decide) (by decide)
     rw [show modeSet 1049 true = csiPriv 1049 0x68 from rfl] at h
-    exact
-      h.congr
-        (fun s => by
-          unfold stSetMode; rw [ite_eq_left (by decide)])
+    exact h.congr (fun _ => rfl)
   unfold screensAnsi
   refine ((smap_id_scrollbackAnsi v).comp ?_).congr (fun s => rfl)
   rcases hv : v.altGrid with - | x
@@ -802,8 +783,7 @@ emulator would produce.
 The last two are what `Good v` would give (`botLt`, `rowsLe`), but they are taken
 directly: `Good` also asserts things about the cursor, the saved slot, the
 scrollback and the CSI accumulator that this proof never reads, and a hypothesis a
-proof does not use makes the theorem weaker than it is. `restore_sticky_good` is the
-`Good`-flavoured entry point for callers that have it. -/
+proof does not use makes the theorem weaker than it is. -/
 theorem restore_sticky_placed (v w : Vt) (hrows : w.rows = v.rows) (hlt : v.top < v.bot)
     (hbot : v.bot < v.rows) (hfits : v.rows < 65535) :
     stick (w.feed (restoreBody v ++ cursorAnsi v)) = stick v := by
@@ -828,15 +808,6 @@ theorem restore_sticky_placed (v w : Vt) (hrows : w.rows = v.rows) (hlt : v.top 
           penSgr v.pen ++
           cursorAnsi v
       from by simp only [restoreBody, prologueAnsi]]
-  -- every mode set but the three screen-switch numbers is transparent to `stick`
-  have eid :
-    ∀ (n : Nat) (on : Bool) (Y : Sticky),
-      (n == 47 || n == 1047 || n == 1049) = false → stSetMode n on Y = Y := by
-    intro n on Y h
-    unfold stSetMode
-    rw [ite_eq_right
-        (by
-          rw [h]; simp)]
   -- the lead-in leaves an unknown sticky state; only its height is known, and
   -- the prologue overwrites every other field absolutely
   obtain ⟨A, hA⟩ : ∃ y : Sticky, stAlt false (stick (w.feed (escSeq 0x5C))) = y := ⟨_, rfl⟩
@@ -853,24 +824,14 @@ theorem restore_sticky_placed (v w : Vt) (hrows : w.rows = v.rows) (hlt : v.top 
     (w.feed (escSeq 0x5C)).pstate = .ground ∧
       stick (w.feed (escSeq 0x5C)) = stick (w.feed (escSeq 0x5C)) :=
     ⟨(st_grounds w).1, rfl⟩
-  have h1 :=
-    sput_congr (sput_step h0 (smap_modeSet 1049 false (by decide) (by decide)))
-      (show
-        stSetMode 1049 false (stick (w.feed (escSeq 0x5C))) = ⟨v.rows, At, Ab, Ag0, Ag1, Aso, false⟩
-        from by
-        rw [show
-            stSetMode 1049 false (stick (w.feed (escSeq 0x5C))) =
-              stAlt false (stick (w.feed (escSeq 0x5C)))
-            from by
-            unfold stSetMode; rw [ite_eq_left (by decide)]]
-        exact hA)
+  have h1 := sput_congr (sput_step h0 (smap_modeSet 1049 false (by decide) (by decide))) hA
   have h2 := sput_congr (sput_step h1 smap_id_irm_reset) (id_eq _)
   have h3 :=
     sput_congr (sput_step h2 (smap_modeSet 6 false (by decide) (by decide)))
-      (eid 6 false _ (by decide))
+      (stSetMode_of_not_screen false _)
   have h4 :=
     sput_congr (sput_step h3 (smap_modeSet 7 true (by decide) (by decide)))
-      (eid 7 true _ (by decide))
+      (stSetMode_of_not_screen true _)
   have h5 :=
     sput_congr (sput_step h4 (smap_stbm 1 v.rows (by decide) (by omega) (by decide) (by omega)))
       (show
@@ -967,55 +928,6 @@ theorem restore_sticky_any (v w : Vt) (hrows : w.rows = v.rows) (hlt : v.top < v
     stick_cursorPendingAnsi v _ (restore_placed_grounds v w)
       (restore_sticky_placed v w hrows hlt hbot hfits)
 
-/-! ### The three field claims the spec asks for, as projections of the bundle
-
-Named separately because they are what THEOREMS.md's A5 row cites and what a
-reader looks for; each is one `congrArg` off `restore_sticky_any`, which is the
-payoff of bundling rather than proving four `org_`-style families. -/
-
-/-- **The scroll region.** Set by `regionAnsi`, or — when the session's region is
-the whole screen and `regionAnsi` therefore emits nothing — by the prologue's
-`CSI 1 ; rows r`, through the repaint and the alt switch. -/
-theorem restore_region_any (v w : Vt) (hrows : w.rows = v.rows) (hlt : v.top < v.bot)
-    (hbot : v.bot < v.rows) (hfits : v.rows < 65535) :
-    (w.feed (restore v)).top = v.top ∧ (w.feed (restore v)).bot = v.bot := by
-  have h := restore_sticky_any v w hrows hlt hbot hfits
-  refine ⟨?_, ?_⟩
-  · rw [← stick_top (w.feed (restore v)), h, stick_top]
-  · rw [← stick_bot (w.feed (restore v)), h, stick_bot]
-
-/-- **The charset designations and the shift state.** G0 and G1 are set
-absolutely by `charsetAnsi`; the shift state is set-only there, so its claim runs
-back through the whole repaint to the prologue's `SI`. -/
-theorem restore_charset_any (v w : Vt) (hrows : w.rows = v.rows) (hlt : v.top < v.bot)
-    (hbot : v.bot < v.rows) (hfits : v.rows < 65535) :
-    (w.feed (restore v)).g0Line = v.g0Line ∧
-      (w.feed (restore v)).g1Line = v.g1Line ∧ (w.feed (restore v)).shiftOut = v.shiftOut := by
-  have h := restore_sticky_any v w hrows hlt hbot hfits
-  refine ⟨?_, ?_, ?_⟩
-  · rw [← stick_g0 (w.feed (restore v)), h, stick_g0]
-  · rw [← stick_g1 (w.feed (restore v)), h, stick_g1]
-  · rw [← stick_so (w.feed (restore v)), h, stick_so]
-
-/-- **Which screen is current.** The one claim that cannot avoid the repaint at
-all: `screensAnsi` switches in the *middle* of it, and the switch only lands
-because the prologue left the receiver on the main screen (`enterAlt` is a no-op
-when the receiver is already in alt — the hazard `prologueAnsi`'s first comment
-names, now a theorem rather than a comment). -/
-theorem restore_alt_any (v w : Vt) (hrows : w.rows = v.rows) (hlt : v.top < v.bot)
-    (hbot : v.bot < v.rows) (hfits : v.rows < 65535) :
-    (w.feed (restore v)).altGrid.isSome = v.altGrid.isSome := by
-  rw [← stick_alt (w.feed (restore v)), restore_sticky_any v w hrows hlt hbot hfits, stick_alt]
-
-/-- The `Good`-flavoured entry point: the codebase's standard sanity invariant
-supplies both arithmetic facts, so a caller holding `Good v` (every live-reachable
-session — `good_of_liveReachable`) needs nothing else. -/
-theorem restore_sticky_good (v w : Vt) (hgood : Good v) (hrows : w.rows = v.rows)
-    (hlt : v.top < v.bot) : stick (w.feed (restore v)) = stick v :=
-  restore_sticky_any v w hrows hlt hgood.botLt
-    (by
-      have := hgood.rowsLe; omega)
-
 /-! ### Step 2's second half — `u8need`, for any receiver
 
 `restore_grounds` gave the parser state for any receiver; this gives the decoder.
@@ -1029,19 +941,7 @@ theorem restore_u8_zero (v w : Vt) : (w.feed (restore v)).u8need = 0 := by
   unfold restore
   rw [feed_append]
   apply u8_zero_after_cursorPendingAnsi
-  rw [show
-      ∀ (u : Vt),
-        u.feed (restoreBody v ++ cursorAnsi v) = (u.feed (restoreBody v)).feed (cursorAnsi v)
-      from fun u => by simp [Vt.feed, List.foldl_append]]
-  unfold cursorAnsi
-  split
-  all_goals
-    ( unfold csiNum2
-      refine u8_zero_after_csi _ 0x48 ?_ (by decide) _
-      exact
-        ((paramBytes_digits _).append
-              (ParamBytes.cons (by decide) (by decide) ParamBytes.nil)).append
-          (paramBytes_digits _))
+  rw [feed_append]; exact u8_zero_after_cursorAnsi v _
 
 /-- **§Replay's parser half, receiver-quantified** — Step 2's exit for `restore`.
 `restore_quiesced` said this of a fresh `Vt.init`; a client is never that. Any
@@ -1077,11 +977,9 @@ theorem paint_grounds (v w : Vt) :
 
 /-! ### A5 outbound, the same fields — `leave_canonical`'s other half
 
-Definition-of-done item 2b names the charset flags, the scroll region, the
-alt-screen flag *and* the pen for the hand-back, not just the modes. With `SMap`
-in hand they cost one more chain, and leaving the outbound half at "modes only"
-while the inbound half is complete would be exactly the asymmetry that let the
-hand-back ship in the first place. -/
+The hand-back also resets the scroll region, both charsets, the shift state, the
+alt-screen flag and the pen, not just the modes. With `SMap` in hand they cost one
+more chain. -/
 
 /-- `CSI r` — `DECSTBM` with **no** parameters, which is how the hand-back names
 "the whole screen" without knowing the receiver's height: both arguments fall
@@ -1115,6 +1013,26 @@ theorem smap_id_defaultTitleAnsi : SMap id defaultTitleAnsi := by
   change stick (v.abortUtf8 0x1B) = stick v
   exact stick_abortUtf8 v 0x1B
 
+/-- Feeding `ESC` is the same as discarding a half-decoded character first: `step`
+aborts before it dispatches, and a second abort at `0x1B` is the identity. -/
+theorem step_esc_of_abort (u : Vt) : u.step 0x1B = (u.abortUtf8 0x1B).step 0x1B := by
+  unfold Vt.step
+  rw [abortUtf8_of_uz 0x1B (un_abortUtf8_esc u)]
+
+/-- …so a stream that opens with `ESC` may as well be fed to the aborted state. -/
+theorem feed_esc_of_abort (u : Vt) (rest : Bytes) :
+    u.feed (0x1B :: rest) = (u.abortUtf8 0x1B).feed (0x1B :: rest) := by
+  simp only [feed_cons]
+  rw [step_esc_of_abort u]
+
+/-- From ground, `penSgr p` installs `p` whatever the decoder holds: its leading `ESC`
+aborts a partial UTF-8 sequence first. -/
+theorem pen_penSgr_of_ground {v : Vt} (p : Pen) (hg : v.pstate = .ground) :
+    (v.feed (penSgr p)).pen = p := by
+  rw [show v.feed (penSgr p) = (v.abortUtf8 0x1B).feed (penSgr p) from
+      feed_esc_of_abort v (penSgr p).tail,
+    penSgr_feed p ((ps_abortUtf8 _ _).trans hg) (un_abortUtf8_esc v)]
+
 /-- **A5 outbound, in full.** For any receiver at least two rows tall, the
 hand-back leaves the parser `ground`, the modes at the default record, the scroll
 region whole, both charsets ASCII with G0 shifted in, the main screen current, and
@@ -1127,14 +1045,6 @@ theorem leave_canonical_all (w : Vt) (h2 : 2 ≤ w.rows) :
       (w.feed leaveAnsi).modes = ({} : Modes) ∧
       stick (w.feed leaveAnsi) = ⟨w.rows, 0, w.rows - 1, false, false, false, false⟩ ∧
       (w.feed leaveAnsi).pen = ({} : Pen) ∧ (w.feed leaveAnsi).title = "" := by
-  have eid :
-    ∀ (n : Nat) (on : Bool) (Y : Sticky),
-      (n == 47 || n == 1047 || n == 1049) = false → stSetMode n on Y = Y := by
-    intro n on Y h
-    unfold stSetMode
-    rw [ite_eq_right
-        (by
-          rw [h]; simp)]
   obtain ⟨B, hB⟩ : ∃ y : Sticky, stAlt false (stick (w.feed (escSeq 0x5C))) = y := ⟨_, rfl⟩
   have hBrows : B.rows = w.rows := by
     rw [← hB, stAlt_rows]; exact rows_st_lead w
@@ -1147,49 +1057,39 @@ theorem leave_canonical_all (w : Vt) (h2 : 2 ≤ w.rows) :
     (w.feed (escSeq 0x5C)).pstate = .ground ∧
       stick (w.feed (escSeq 0x5C)) = stick (w.feed (escSeq 0x5C)) :=
     ⟨(st_grounds w).1, rfl⟩
-  have l1 :=
-    sput_congr (sput_step l0 (smap_modeSet 1049 false (by decide) (by decide)))
-      (show
-        stSetMode 1049 false (stick (w.feed (escSeq 0x5C))) = ⟨w.rows, Bt, Bb, Bg0, Bg1, Bso, false⟩
-        from by
-        rw [show
-            stSetMode 1049 false (stick (w.feed (escSeq 0x5C))) =
-              stAlt false (stick (w.feed (escSeq 0x5C)))
-            from by
-            unfold stSetMode; rw [ite_eq_left (by decide)]]
-        exact hB)
+  have l1 := sput_congr (sput_step l0 (smap_modeSet 1049 false (by decide) (by decide))) hB
   have l2 := sput_congr (sput_step l1 smap_id_irm_reset) (id_eq _)
   have l3 :=
     sput_congr (sput_step l2 (smap_modeSet 25 true (by decide) (by decide)))
-      (eid 25 true _ (by decide))
+      (stSetMode_of_not_screen true _)
   have l4 :=
     sput_congr (sput_step l3 (smap_modeSet 2004 false (by decide) (by decide)))
-      (eid 2004 false _ (by decide))
+      (stSetMode_of_not_screen false _)
   have l5 :=
     sput_congr (sput_step l4 (smap_modeSet 1000 false (by decide) (by decide)))
-      (eid 1000 false _ (by decide))
+      (stSetMode_of_not_screen false _)
   have l6 :=
     sput_congr (sput_step l5 (smap_modeSet 1002 false (by decide) (by decide)))
-      (eid 1002 false _ (by decide))
+      (stSetMode_of_not_screen false _)
   have l7 :=
     sput_congr (sput_step l6 (smap_modeSet 1003 false (by decide) (by decide)))
-      (eid 1003 false _ (by decide))
+      (stSetMode_of_not_screen false _)
   have l8 :=
     sput_congr (sput_step l7 (smap_modeSet 1006 false (by decide) (by decide)))
-      (eid 1006 false _ (by decide))
+      (stSetMode_of_not_screen false _)
   have l9 :=
     sput_congr (sput_step l8 (smap_modeSet 1004 false (by decide) (by decide)))
-      (eid 1004 false _ (by decide))
+      (stSetMode_of_not_screen false _)
   have l10 :=
     sput_congr (sput_step l9 (smap_modeSet 1 false (by decide) (by decide)))
-      (eid 1 false _ (by decide))
+      (stSetMode_of_not_screen false _)
   have l11 := sput_congr (sput_step l10 (smap_id_escSeq 0x3E (by decide))) (id_eq _)
   have l12 :=
     sput_congr (sput_step l11 (smap_modeSet 6 false (by decide) (by decide)))
-      (eid 6 false _ (by decide))
+      (stSetMode_of_not_screen false _)
   have l13 :=
     sput_congr (sput_step l12 (smap_modeSet 7 true (by decide) (by decide)))
-      (eid 7 true _ (by decide))
+      (stSetMode_of_not_screen true _)
   have l14 :=
     sput_congr (sput_step l13 smap_stbm_plain)
       (show
@@ -1229,66 +1129,6 @@ theorem leave_canonical_all (w : Vt) (h2 : 2 ≤ w.rows) :
   have hps : penSgr ({} : Pen) = csiNum 0 0x6D := by
     show csiNum 0 0x6D ++ [] ++ [] = csiNum 0 0x6D
     simp
-  have hu18 :
-    (w.feed
-          (escSeq 0x5C ++ modeSet 1049 false ++ csiNum 4 0x6C ++ modeSet 25 true ++
-            modeSet 2004 false ++
-            modeSet 1000 false ++
-            modeSet 1002 false ++
-            modeSet 1003 false ++
-            modeSet 1006 false ++
-            modeSet 1004 false ++
-            modeSet 1 false ++
-            escSeq 0x3E ++
-            modeSet 6 false ++
-            modeSet 7 true ++
-            csiPlain 0x72 ++
-            escCharset 0x28 0x42 ++
-            escCharset 0x29 0x42 ++
-            [0x0F] ++
-            csiNum2 999 1 0x48)).u8need =
-      0 := by
-    rw [show
-        (escSeq 0x5C ++ modeSet 1049 false ++ csiNum 4 0x6C ++ modeSet 25 true ++
-            modeSet 2004 false ++
-            modeSet 1000 false ++
-            modeSet 1002 false ++
-            modeSet 1003 false ++
-            modeSet 1006 false ++
-            modeSet 1004 false ++
-            modeSet 1 false ++
-            escSeq 0x3E ++
-            modeSet 6 false ++
-            modeSet 7 true ++
-            csiPlain 0x72 ++
-            escCharset 0x28 0x42 ++
-            escCharset 0x29 0x42 ++
-            [0x0F] ++
-            csiNum2 999 1 0x48) =
-          (escSeq 0x5C ++ modeSet 1049 false ++ csiNum 4 0x6C ++ modeSet 25 true ++
-              modeSet 2004 false ++
-              modeSet 1000 false ++
-              modeSet 1002 false ++
-              modeSet 1003 false ++
-              modeSet 1006 false ++
-              modeSet 1004 false ++
-              modeSet 1 false ++
-              escSeq 0x3E ++
-              modeSet 6 false ++
-              modeSet 7 true ++
-              csiPlain 0x72 ++
-              escCharset 0x28 0x42 ++
-              escCharset 0x29 0x42 ++
-              [0x0F]) ++
-            (csiB ++ (digits 999 ++ [0x3B] ++ digits 1) ++ [0x48])
-        from by simp only [csiNum2, List.append_assoc]]
-    rw [feed_append]
-    exact
-      u8_zero_after_csi _ 0x48
-        (((paramBytes_digits 999).append
-              (ParamBytes.cons (by decide) (by decide) ParamBytes.nil)).append
-          (paramBytes_digits 1))
-        (by decide) _
   have hpen : (w.feed leaveAnsi).pen = ({} : Pen) := by
     rw [show
         leaveAnsi =
@@ -1313,60 +1153,59 @@ theorem leave_canonical_all (w : Vt) (h2 : 2 ≤ w.rows) :
         from by
         rw [hps]; simp only [leaveAnsi]]
     rw [feed_append, defaultTitleAnsi_pen (by simpa only [hps] using l19.1)]
-    rw [feed_append, penSgr_feed ({} : Pen) l18.1 hu18]
+    rw [feed_append]; exact pen_penSgr_of_ground _ l18.1
   exact ⟨leave_grounds w, leave_modes w, l20.2, hpen, (leave_boundary_title w).2.2⟩
 
 /-! ## §Replay stage 3d — the two byte→cursor bridges the paint needs
 
-`cup_places_cursor` says where a two-argument `CUP` puts the cursor. The repaint uses
-two *other* addressing forms and neither had a bridge, so the row induction could not
-say where it was writing:
+`cup_feed_eq` says a two-argument `CUP` is `moveTo`. The repaint uses two *other*
+addressing forms and neither had a bridge, so the row induction could not say where it
+was writing:
 
 * `gridAnsi` homes with a bare `CSI H` — both arguments defaulted — which is what
-  establishes column 0, row 0 for the first cell;
+  establishes column 0, row 0 for the first cell (`home_feed_eq`, in `Grid.lean`);
 * `rowAnsi`'s wide-with-marks branch parks the cursor with `CHA` (`CSI n G`), twice,
   because a mark on a wide glyph must land between the glyph and its shadow (§Replay
   fix 8) and no relative move can express that.
 
-Both are the same walk as `cup_places_cursor`, one parameter shorter. -/
+Both are the same walk as `cup_feed_eq`, one parameter shorter. -/
 
-/-- **A bare `CSI H` homes the cursor.** With no parameters both arguments fall back
-to `1`, so this is `moveTo 0 0` — and with DECOM off that is the true origin rather
-than the scroll region's top, which is why `prologueAnsi` resets `?6l` before the
-paint. -/
-theorem home_places_cursor {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0)
-    (ho : v.modes.origin = false) :
-    (v.feed (csiB ++ [0x48])).cursor.x = 0 ∧
-      (v.feed (csiB ++ [0x48])).cursor.y = 0 ∧
-      (v.feed (csiB ++ [0x48])).cursor.pending = false := by
-  rw [show (csiB ++ [0x48] : Bytes) = [0x1B, 0x5B] ++ [(0x48 : UInt8)] from by simp [csiB]]
-  rw [feed_append, keeps_csi_open hg hu,
-    show ∀ (u : Vt), u.feed [(0x48 : UInt8)] = u.step 0x48 from fun _ => rfl]
-  rw [csi_final_step_eq 0x48 (v := { v with pstate := .csi ({} : CsiState) }) (s := ({} : CsiState))
-      rfl (by simpa using hu) rfl (by decide) (by decide)]
+/-- CUP as a complete state equation, including its clearing of deferred wrap.
+The receiver's origin mode and region are retained in `moveTo`. -/
+theorem cup_feed_eq (row col : Nat) (hr : 0 < row) (hc : 0 < col) (hrcap : row ≤ 65535)
+    (hccap : col ≤ 65535) {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) :
+    v.feed (csiNum2 row col 0x48) = v.moveTo (col - 1) (row - 1) := by
+  rw [show csiNum2 row col 0x48 = [0x1B, 0x5B] ++ (joinSemi [row, col] ++ [0x48]) from by
+      simp [csiNum2, csiB, joinSemi, List.append_assoc],
+    feed_append, keeps_csi_open hg hu, feed_append]
+  obtain ⟨s, hf⟩ :=
+    csi_param_run_frame (joinSemi [row, col]) (v := { v with pstate := .csi {} }) rfl hu
+      (paramBytes_joinSemi _)
+  obtain ⟨t, ht, hh, hs, hp, hi, hn, hz, hv⟩ :=
+    csi_joinSemi_feed [row, col] (v := { v with pstate := .csi {} }) rfl rfl rfl (by simp) (by simp)
+  have he : s = t := by
+    rw [hf] at ht
+    exact PState.csi.inj ht
+  subst s
+  rw [hf, show ∀ w : Vt, w.feed [0x48] = w.step 0x48 from fun _ => rfl]
+  change ({ v with pstate := .csi t } : Vt).step 0x48 = _
+  rw [csi_final_step_eq 0x48 (v := { v with pstate := .csi t }) (s := t) rfl hu hi (by decide)
+      (by decide)]
   unfold Vt.csiFinish
-  rw [ite_eq_right (by decide)]
-  show
-    ((({ v with pstate := .csi ({} : CsiState) } : Vt).csiDispatch ({} : CsiState) 0x48).cursor.x =
-        0) ∧
-      ((({ v with pstate := .csi ({} : CsiState) } : Vt).csiDispatch ({} : CsiState)
-            0x48).cursor.y =
-        0) ∧
-      ((({ v with pstate := .csi ({} : CsiState) } : Vt).csiDispatch ({} : CsiState)
-            0x48).cursor.pending =
-        false)
-  rw [show
-      ({ v with pstate := .csi ({} : CsiState) } : Vt).csiDispatch ({} : CsiState) 0x48 =
-        ({ v with pstate := .csi ({} : CsiState) } : Vt).moveTo 0 0
-      from by
-      unfold Vt.csiDispatch
-      rw [ite_eq_right (by decide)]
-      rfl]
+  dsimp only
+  rw [ite_eq_left hh, ite_eq_right (by omega)]
+  have hparams : t.params.push (min t.cur 65535, t.curSub) = #[(row, false), (col, false)] := by
+    apply Array.toList_inj.mp
+    simpa [Nat.min_eq_left hrcap, Nat.min_eq_left hccap] using hv
+  unfold Vt.csiDispatch
+  dsimp only
+  rw [ite_eq_right (by simp [hn]), hparams]
+  obtain ⟨ha, hb⟩ := arg_of_two_of (t := { t with params := #[(row, false), (col, false)] }) 1 rfl
+  rw [ite_eq_right (by omega : row ≠ 0)] at ha
+  rw [ite_eq_right (by omega : col ≠ 0)] at hb
+  simp only [ha, hb]
   unfold Vt.moveTo
-  rw [ite_eq_right
-      (show ¬(({ v with pstate := .csi ({} : CsiState) } : Vt).modes.origin = true) from by
-        show ¬(v.modes.origin = true); rw [ho]; simp)]
-  refine ⟨?_, ?_, rfl⟩ <;> simp
+  rw [← hg]
 
 /-- **`CHA` as a state equation**: feeding it *is* `setCol (n-1)`. `csiFinish` returns to
 ground and `setCol` keeps the ground `pstate` a `Matches` receiver already has, so every
@@ -1449,51 +1288,98 @@ theorem restoreBody_grounds (v w : Vt) : (w.feed (restoreBody v)).pstate = .grou
   exact
     (ends_csiNum 0 0x6D (by decide) (by decide)).append (ends_csiNum 2 0x4A (by decide) (by decide))
 
-/-- The modes at the end of `restoreBody` — `restore_modes_any` one chunk earlier, so
-the final `CUP` can be told whether DECOM is on before it is read. -/
-theorem restoreBody_modes_any (v w : Vt)
-    (hmouse :
-      v.modes.mouse = 0 ∨ v.modes.mouse = 1000 ∨ v.modes.mouse = 1002 ∨ v.modes.mouse = 1003) :
-    (w.feed (restoreBody v)).modes = v.modes := by
-  have hu : (w.feed (restoreBody v)).u8need = 0 := by
-    unfold restoreBody
-    rw [feed_append]
-    exact u8_zero_after_penSgr _ _
-  have hcup := mmap_id_cursorAnsi v _ (restoreBody_grounds v w) hu
-  have h := restore_modes_placed v w hmouse
-  rw [feed_append] at h
-  exact hcup.2.2.symm.trans h
+/-- `restoreBody` ends in an SGR, so no receiver is left mid-character. -/
+theorem restoreBody_u8need (v w : Vt) : (w.feed (restoreBody v)).u8need = 0 := by
+  unfold restoreBody
+  rw [feed_append]
+  exact u8_zero_after_penSgr _ _
+
+/-- **DECOM is off when the final `CUP` is read**, for any receiver: the lead-in grounds
+it, `?1049l 4l ?6l` clears DECOM whatever the receiver held, and every later chunk keeps
+it off (`Quiet`) once the session's own DECOM is off. The replayed mouse mode needs no
+premise: `modesAnsi`'s guard already keeps it away from mode 6. -/
+theorem restoreBody_origin (v w : Vt) (ho : v.modes.origin = false) :
+    (w.feed (restoreBody v)).modes.origin = false := by
+  have hq :
+    Quiet
+      (modeSet 7 true ++ csiNum2 1 v.rows 0x72 ++ escCharset 0x28 0x42 ++ escCharset 0x29 0x42 ++
+        [0x0F] ++
+        csiNum 0 0x6D ++
+        csiNum 2 0x4A ++
+        screensAnsi v ++
+        regionAnsi v ++
+        tabsAnsi v ++
+        savedAnsi v ++
+        savedPendingAnsi v ++
+        titleAnsi v ++
+        modesAnsi v ++
+        charsetAnsi v ++
+        penSgr v.pen) := by
+    refine Quiet.append ?_ (quiet_penSgr v.pen)
+    refine Quiet.append ?_ (quiet_charsetAnsi v)
+    refine Quiet.append ?_ (quiet_modesAnsi v ho)
+    refine Quiet.append ?_ (quiet_titleAnsi v)
+    refine Quiet.append ?_ (quiet_savedPendingAnsi v)
+    refine Quiet.append ?_ (quiet_savedAnsi v)
+    refine Quiet.append ?_ (quiet_tabsAnsi v)
+    refine Quiet.append ?_ (quiet_regionAnsi v)
+    refine Quiet.append ?_ (quiet_screensAnsi v)
+    refine Quiet.append ?_ (quiet_csiNum 2 0x4A (by decide) (by decide))
+    refine Quiet.append ?_ (quiet_csiNum 0 0x6D (by decide) (by decide))
+    refine Quiet.append ?_ (Quiet.text (bs := [0x0F]) (by decide))
+    refine Quiet.append ?_ (quiet_escCharset 0x29 0x42 (by decide) (by decide) (by decide))
+    refine Quiet.append ?_ (quiet_escCharset 0x28 0x42 (by decide) (by decide) (by decide))
+    exact
+      (quiet_modeSet 7 true (by decide)).append
+        (quiet_csiNum2 1 v.rows 0x72 (by decide) (by decide))
+  have hm : MMap _ (modeSet 1049 false ++ csiNum 4 0x6C ++ modeSet 6 false) :=
+    ((mmap_modeSet 1049 false (by decide) (by decide)).comp (mmap_irm false)).comp
+      (mmap_origin false)
+  obtain ⟨g1, u1⟩ := st_grounds w
+  obtain ⟨g2, -, m2⟩ := hm _ g1 u1
+  rw [show
+      restoreBody v =
+        escSeq 0x5C ++
+          ((modeSet 1049 false ++ csiNum 4 0x6C ++ modeSet 6 false) ++
+            (modeSet 7 true ++ csiNum2 1 v.rows 0x72 ++ escCharset 0x28 0x42 ++
+              escCharset 0x29 0x42 ++
+              [0x0F] ++
+              csiNum 0 0x6D ++
+              csiNum 2 0x4A ++
+              screensAnsi v ++
+              regionAnsi v ++
+              tabsAnsi v ++
+              savedAnsi v ++
+              savedPendingAnsi v ++
+              titleAnsi v ++
+              modesAnsi v ++
+              charsetAnsi v ++
+              penSgr v.pen))
+      from by simp only [restoreBody, prologueAnsi, List.append_assoc],
+    feed_append w (escSeq 0x5C), feed_append (w.feed (escSeq 0x5C))]
+  exact (hq _ g2 (by rw [m2])).2
 
 /-- **§Replay (cursor), receiver-quantified.** The final `CUP` lands where the session
 had it in *any* client's emulator of the session's size, not only a fresh one. -/
 theorem restore_cursor_placed_any (v w : Vt) (hgood : Good v) (hgw : Good w)
-    (hcols : w.cols = v.cols) (hrows : w.rows = v.rows) (ho : v.modes.origin = false)
-    (hmouse :
-      v.modes.mouse = 0 ∨ v.modes.mouse = 1000 ∨ v.modes.mouse = 1002 ∨ v.modes.mouse = 1003) :
+    (hcols : w.cols = v.cols) (hrows : w.rows = v.rows) (ho : v.modes.origin = false) :
     ((w.feed (restoreBody v ++ cursorAnsi v)).cursor.x = v.cursor.x) ∧
       ((w.feed (restoreBody v ++ cursorAnsi v)).cursor.y = v.cursor.y) := by
   rw [feed_append]
   rw [show cursorAnsi v = csiNum2 (v.cursor.y + 1) (v.cursor.x + 1) 0x48 from by
       simp only [cursorAnsi, ho]; rfl]
   have hpg : (w.feed (restoreBody v)).pstate = .ground := restoreBody_grounds v w
-  have hpo : (w.feed (restoreBody v)).modes.origin = false := by
-    rw [restoreBody_modes_any v w hmouse]; exact ho
+  have hpo : (w.feed (restoreBody v)).modes.origin = false := restoreBody_origin v w ho
+  have hu : (w.feed (restoreBody v)).u8need = 0 := restoreBody_u8need v w
   have hd := dims_feed (restoreBody v) hgw
   have hdc : (w.feed (restoreBody v)).cols = v.cols := by
     rw [← dims_fst (w.feed (restoreBody v)), hd, dims_fst]; exact hcols
   have hdr : (w.feed (restoreBody v)).rows = v.rows := by
     rw [← dims_snd (w.feed (restoreBody v)), hd, dims_snd]; exact hrows
-  obtain ⟨hx, hy⟩ :=
-    cup_places_cursor (v.cursor.y + 1) (v.cursor.x + 1) hpg (by omega) (by omega)
-      (by
-        have := hgood.curY; have := hgood.rowsLe; omega)
-      (by
-        have := hgood.curX; have := hgood.colsLe; omega)
-      (by
-        rw [hdr]; simpa using hgood.curY)
-      (by
-        rw [hdc]; simpa using hgood.curX)
-      hpo
-  exact ⟨by simpa using hx, by simpa using hy⟩
+  have := hgood.curX; have := hgood.curY; have := hgood.colsLe; have := hgood.rowsLe
+  rw [cup_feed_eq _ _ (by omega) (by omega) (by omega) (by omega) hpg hu]
+  simp only [Vt.moveTo, hpo, Bool.false_eq_true, ↓reduceIte, hdc, hdr, Nat.add_sub_cancel,
+    Nat.zero_add]
+  omega
 
 end Linger.Core.Render

@@ -5,10 +5,7 @@ import all Linger.Core.Render
 import all Linger.Core.Vt
 import all Theorems.Render.Grid
 
--- No `public section`: a **public** declaration's type may not mention a private
--- field, and `Vt`'s are private now (the seal, `specs/archive/vt-toolkit.md` Step 1).
--- Module-private is the default, so consumers reach in with `import all`. See the
--- longer note in `Theorems/Vt.lean`.
+-- Module-private by default: `Vt`'s fields are sealed (see `Theorems/Vt/State.lean`).
 
 /-! # §Replay, the tab ruler
 
@@ -64,18 +61,18 @@ theorem tabs_csiDispatch_sgr (v : Vt) (s : CsiState) : (v.csiDispatch s 0x6D).ta
     · rw [frame_applySgr]
     · rfl
 
-/-- **A mode set never touches the ruler** — unconditionally, for any mode number.
-`setMode`'s only non-`modes` arms are `enterAlt`/`leaveAlt`/`moveTo`/the DECSC slot,
-and none of them writes `tabs`. This is where the ruler's claim is *simpler* than
-the grid's: `keeps_modeSet` has to exclude `47`/`1047`/`1049` (they swap the grid)
-and therefore needs the digit bridge to identify the emitted number with the parsed
-one, and `restore_modes_any` needs the mouse allowlist. The ruler needs neither. -/
 theorem tabs_moveTo (v : Vt) (x y : Nat) : (v.moveTo x y).tabs = v.tabs := by rw [frame_moveTo]
 
 theorem tabs_enterAlt (v : Vt) (s : Bool) : (v.enterAlt s).tabs = v.tabs := by rw [frame_enterAlt]
 
 theorem tabs_leaveAlt (v : Vt) (s : Bool) : (v.leaveAlt s).tabs = v.tabs := by rw [frame_leaveAlt]
 
+/-- **A mode set never touches the ruler** — unconditionally, for any mode number.
+`setMode`'s only non-`modes` arms are `enterAlt`/`leaveAlt`/`moveTo`/the DECSC slot,
+and none of them writes `tabs`. This is where the ruler's claim is *simpler* than
+the grid's: `keeps_modeSet` has to exclude `47`/`1047`/`1049` (they swap the grid)
+and therefore needs the digit bridge to identify the emitted number with the parsed
+one, and `restore_modes_any` needs the mouse allowlist. The ruler needs neither. -/
 theorem tabs_setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool) :
     (v.setMode priv n on).tabs = v.tabs := by
   unfold Vt.setMode
@@ -122,41 +119,15 @@ theorem fixes_tabs_escSeq (b : UInt8) (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x3E �
 theorem fixes_tabs_escCharset (i x : UInt8) (hi : i = 0x28 ∨ i = 0x29) (hlo : 0x30 ≤ x)
     (hhi : x ≤ 0x7E) : Fixes (fun v : Vt => v.tabs) (escCharset i x) := by
   intro v hg hu
-  rw [show escCharset i x = [0x1B] ++ [i, x] from rfl]
-  rw [show ∀ (w : Vt), w.feed ([0x1B] ++ [i, x]) = ((w.step 0x1B).step i).step x from fun w => by
-      simp [Vt.feed]]
-  rw [esc_step_eq hg hu]
-  have hinter : ({ v with pstate := .esc } : Vt).step i = { v with pstate := .escInter i } := by
-    rw [step_of_esc_quiet i rfl (by simpa using hu)]
-    unfold Vt.stepEsc
-    rcases hi with h | h
-    · subst h; rfl
-    · subst h; rfl
-  rw [hinter, step_of_escInter_quiet x rfl (by simpa using hu)]
-  show _ ∧ _ ∧ _
-  rw [stepEscInter_final _ i x hlo hhi]
-  repeat' split
-  all_goals exact ⟨rfl, by simpa using hu, rfl⟩
+  rw [charset_feed_eq i x hi hlo hhi hg hu]
+  split <;> exact ⟨hg, hu, rfl⟩
 
-theorem fixes_tabs_shiftOut : Fixes (fun v : Vt => v.tabs) [0x0E] := by
+/-- `SO` and `SI` change only the shift state. -/
+theorem fixes_tabs_shift (on : Bool) :
+    Fixes (fun v : Vt => v.tabs) [if on then 0x0E else 0x0F] := by
   intro v hg hu
-  rw [show ∀ (w : Vt), w.feed [(0x0E : UInt8)] = w.step 0x0E from fun _ => rfl]
-  rw [step_of_ground_quiet (0x0E : UInt8) hg hu]
-  show _ ∧ _ ∧ _
-  unfold Vt.stepGround
-  rw [ite_eq_right (by decide), ite_eq_left (by decide)]
-  unfold Vt.ctl
-  exact ⟨hg, by simpa using hu, rfl⟩
-
-theorem fixes_tabs_shiftIn : Fixes (fun v : Vt => v.tabs) [0x0F] := by
-  intro v hg hu
-  rw [show ∀ (w : Vt), w.feed [(0x0F : UInt8)] = w.step 0x0F from fun _ => rfl]
-  rw [step_of_ground_quiet (0x0F : UInt8) hg hu]
-  show _ ∧ _ ∧ _
-  unfold Vt.stepGround
-  rw [ite_eq_right (by decide), ite_eq_left (by decide)]
-  unfold Vt.ctl
-  exact ⟨hg, by simpa using hu, rfl⟩
+  rw [shift_feed_eq on hg hu]
+  exact ⟨hg, hu, rfl⟩
 
 /-- A mode set (`CSI ? n h/l`) leaves the ruler alone for **any** `n`. Contrast
 `keeps_modeSet`, which needs the digit bridge to know `n ∉ {47, 1047, 1049}`. -/
@@ -217,7 +188,7 @@ theorem fixes_tabs_charsetAnsi (v : Vt) : Fixes (fun v : Vt => v.tabs) (charsetA
             (fun _ => fixes_tabs_escCharset 0x29 0x30 (by decide) (by decide) (by decide))
             (fun _ => fixes_tabs_escCharset 0x29 0x42 (by decide) (by decide) (by decide)))).append
       ?_
-  exact (Fixes.streamPred _).ite (fun _ => fixes_tabs_shiftOut) (fun _ => Fixes.nil _)
+  exact (Fixes.streamPred _).ite (fun _ => fixes_tabs_shift true) (fun _ => Fixes.nil _)
 
 theorem fixes_tabs_cursorAnsi (v : Vt) : Fixes (fun v : Vt => v.tabs) (cursorAnsi v) := by
   unfold cursorAnsi
@@ -225,19 +196,6 @@ theorem fixes_tabs_cursorAnsi (v : Vt) : Fixes (fun v : Vt => v.tabs) (cursorAns
     (Fixes.streamPred _).ite
       (fun _ => fixes_csiNum2 psBlind_tabs _ _ 0x48 (by decide) (by decide) tabs_csiDispatch_cup)
       (fun _ => fixes_csiNum2 psBlind_tabs _ _ 0x48 (by decide) (by decide) tabs_csiDispatch_cup)
-
-/-- The six original tail stages preserve the ruler: the DECSC slot, title, modes,
-charsets, pen and cursor address. `fixes_tabs_pending_tail` includes the pending-wrap
-repairs interleaved with these stages. -/
-theorem fixes_tabs_tail (v : Vt) :
-    Fixes (fun v : Vt => v.tabs)
-      (savedAnsi v ++ titleAnsi v ++ modesAnsi v ++ charsetAnsi v ++ penSgr v.pen ++
-        cursorAnsi v) :=
-  (((((fixes_tabs_savedAnsi v).append (fixes_tabs_titleAnsi v)).append
-                (fixes_tabs_modesAnsi v)).append
-            (fixes_tabs_charsetAnsi v)).append
-        (fixes_penSgr psBlind_tabs v.pen tabs_csiDispatch_sgr)).append
-    (fixes_tabs_cursorAnsi v)
 
 /-! ### The ruler, rebuilt from a cleared one
 
@@ -357,21 +315,6 @@ theorem tabs_abortUtf8 (v : Vt) (b : UInt8) : (v.abortUtf8 b).tabs = v.tabs := b
 theorem cols_abortUtf8 (v : Vt) (b : UInt8) : (v.abortUtf8 b).cols = v.cols := by
   unfold Vt.abortUtf8; split <;> rfl
 
-theorem abortUtf8_of_uz {v : Vt} (b : UInt8) (h : v.u8need = 0) : v.abortUtf8 b = v := by
-  unfold Vt.abortUtf8; rw [ite_eq_right (by simp [h])]
-
-/-- Feeding `ESC` is the same as discarding a half-decoded character first: `step`
-aborts before it dispatches, and a second abort at `0x1B` is the identity. -/
-theorem step_esc_of_abort (u : Vt) : u.step 0x1B = (u.abortUtf8 0x1B).step 0x1B := by
-  unfold Vt.step
-  rw [abortUtf8_of_uz 0x1B (un_abortUtf8_esc u)]
-
-/-- …so a stream that opens with `ESC` may as well be fed to the aborted state. -/
-theorem feed_esc_of_abort (u : Vt) (rest : Bytes) :
-    u.feed (0x1B :: rest) = (u.abortUtf8 0x1B).feed (0x1B :: rest) := by
-  simp only [feed_cons]
-  rw [step_esc_of_abort u]
-
 /-- Glyph bytes preserve tabs regardless of the decoder's pending count or accumulator. -/
 theorem tabs_glyph_step {v : Vt} (b : UInt8) (hg : v.pstate = .ground) (hb : 0x20 ≤ b) :
     (v.step b).tabs = v.tabs := by
@@ -483,7 +426,7 @@ theorem fixes_tabs_cursorPendingAnsi (v : Vt) :
     refine Fixes.append ?_ (fixes_tabs_irm _)
     refine Fixes.append ?_ (fixes_tabs_modeSet 7 _)
     refine Fixes.append ?_ (fixes_tabs_pendingAnsi _ _ _ _ _)
-    refine Fixes.append ?_ fixes_tabs_shiftIn
+    refine Fixes.append ?_ (fixes_tabs_shift false)
     refine Fixes.append ?_ (fixes_tabs_escCharset 0x29 0x42 (by decide) (by decide) (by decide))
     refine Fixes.append ?_ (fixes_tabs_escCharset 0x28 0x42 (by decide) (by decide) (by decide))
     exact (fixes_tabs_modeSet 7 true).append (fixes_tabs_irm false)
@@ -627,18 +570,13 @@ theorem restore_tabs_split (v : Vt) :
   simp only [List.append_assoc]
 
 /-- **A5 inbound, the tab ruler.** For any receiver of the session's width, `restore`
-installs the session's tab ruler — the field that was, until the emitter was fixed,
-worse than unproved: `tabsAnsi` used to skip the whole thing when the session's ruler
-was the default, so a client whose previous occupant had set its own stops kept them
-and a `\t` landed on the wrong column. As the code stood then this theorem would have
-been **false**, which is why the fix had to precede it.
+installs the session's tab ruler.
 
 `Good w` is what `dims_feed` needs of the receiver (the paint contains the byte
 `0x63`, so the cheaper `dims_feed_ne_ris` does not apply), and it is also where the
 `CHA` bound comes from: the largest emitted parameter — one more than the last column
 — must stay off the parser's 65535 clamp, and `Good.colsLe` caps `w.cols` at 1000,
-which `hcols` transports to `v.cols`. That bound used to be a stated binder and was a
-small lie about what the claim needs. `hvtabs` is the one hypothesis on the session
+which `hcols` transports to `v.cols`. `hvtabs` is the one hypothesis on the session
 that `Good`/`Renderable` do not already give: a ruler longer than `cols` could hold a
 stop no `range cols` walk would ever emit, and `Checkpoint.load` is total on arbitrary
 bytes, so it is asked for rather than assumed. -/
@@ -653,11 +591,7 @@ theorem restore_tabs_any (v w : Vt) (hgood : Good w) (hcols : w.cols = v.cols)
           (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++
             regionAnsi v)).pstate =
       .ground := by
-    rw [show
-        prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++ regionAnsi v =
-          (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v) ++ regionAnsi v
-        from rfl,
-      feed_append]
+    rw [feed_append]
     exact ends_regionAnsi v _ (paint_grounds v w)
   have hhc :
     (w.feed
@@ -681,43 +615,6 @@ theorem restore_tabs_any (v w : Vt) (hgood : Good w) (hcols : w.cols = v.cols)
   dsimp only at htl
   rw [htl, hrt, hct, hhc]
   exact tabs_rebuilt hvtabs
-
-/-- The pointwise form: every column's stop is the session's. -/
-theorem restore_tabs_stop_any (v w : Vt) (hgood : Good w) (hcols : w.cols = v.cols)
-    (hvtabs : v.tabs.size = v.cols) (i : Nat) :
-    (w.feed (restore v)).tabs.getD i false = v.tabs.getD i false := by
-  rw [restore_tabs_any v w hgood hcols hvtabs]
-
-/-- The ruler claim with the receiver's invariant discharged from reachability, the
-shape `restore_grid_reachable` has — minus the hypothesis on the *session*, which the
-ruler claim turns out not to need at all: the only thing `LiveReachableVt v` supplied
-was `v.cols < 65535`, and `Good w` plus `hcols` already give it.
-
-`hvtabs` stays **here** on purpose, and it is now a choice rather than a gap: `Good`
-and `Renderable` still say nothing about the ruler's length, but `Vt.tabsOk_of_liveReachable`
-(`specs/archive/vt-toolkit.md` Step 3) proves it of every reachable state, so a caller with
-reachability discharges it and `restore_tabs_live` below is that caller. Keeping this
-form is what makes the two claims different rather than redundant: a session whose ruler
-is the right length gets the ruler restored **whether or not it is reachable**, which
-covers a decoded checkpoint — and `Checkpoint.load` is total on arbitrary bytes, so that
-case is real. Weakening this signature to `LiveReachableVt v` would trade a hypothesis
-for a strictly stronger one and lose exactly that. -/
-theorem restore_tabs_reachable (v w : Vt) (hw : LiveReachableVt w) (hcols : w.cols = v.cols)
-    (hvtabs : v.tabs.size = v.cols) : (w.feed (restore v)).tabs = v.tabs :=
-  restore_tabs_any v w (good_of_liveReachable hw) hcols hvtabs
-
-/-- **The ruler claim with every invariant discharged**, the exact twin of
-`restore_grid_reachable`: between two states a live session can hold, matching width is
-the whole of what is left to say. `Good w` comes from the receiver's reachability and the
-ruler length from the session's (`Vt.tabsOk_of_liveReachable`) — the `tabs_*` frame family
-this file used to name as future work and `Theorems/Vt.lean`'s §Ruler section now is.
-
-This is an addition to `restore_tabs_reachable` rather than a replacement for it; see that
-theorem's docstring for why the weaker-hypothesis form is the one a decoded checkpoint
-needs. -/
-theorem restore_tabs_live (v w : Vt) (hw : LiveReachableVt w) (hv : LiveReachableVt v)
-    (hcols : w.cols = v.cols) : (w.feed (restore v)).tabs = v.tabs :=
-  restore_tabs_reachable v w hw hcols (tabsOk_of_liveReachable hv)
 
 /-- Non-vacuity: a real 80×24 session satisfies every hypothesis, so the ruler claim
 is not vacuously true. -/

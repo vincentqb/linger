@@ -51,55 +51,11 @@ namespace Linger.Core
 
 open Linger.Core.Checkpoint (Ckpt load save)
 
-/-- `Vt.init` at a `Good` state's own dimensions installs exactly those dimensions:
-`clampDim` is the identity inside `[1,1000]`, which is what `Good` says. Extracted because
-six claims below need one half of it or both, and it was written out four times. -/
-theorem init_dims_of_good {v : Vt.Vt} (h : Vt.Good v) :
-    (Vt.Vt.init v.cols v.rows).cols = v.cols ∧ (Vt.Vt.init v.cols v.rows).rows = v.rows := by
-  constructor
-  · show Vt.clampDim v.cols = v.cols
-    have := h.colsPos
-    have := h.colsLe
-    simp only [Vt.clampDim]
-    omega
-  · show Vt.clampDim v.rows = v.rows
-    have := h.rowsPos
-    have := h.rowsLe
-    simp only [Vt.clampDim]
-    omega
-
-/-- **§Resume.** A checkpoint, reloaded and replayed into a fresh
-emulator of the same size, leaves that emulator quiesced: the parser is
-in `ground` with no pending UTF-8 sequence. The reattaching client is always left
-ready for the application's next byte.
-
-`hgood` is the hypothesis that arrived with the checkpoint validation
-(`specs/archive/vt-toolkit.md` Step 2): `load` refuses a record that does not describe a
-`Good` screen, so `load (save c)` is `none` for a `c` no live session could hold. This
-claim used to have no hypotheses and was, for exactly that reason, also true of
-`cols := 0`. `Vt.good_init` and the `Pres` machinery give it for every real session.
-
-**`hren` and `htabs` arrived with finding R2**, by the same mirror and for the same kind of
-reason: the door now also refuses a record whose grid is not the shape its dimensions
-claim, or whose tab ruler is not the width of its screen. This claim does not read the grid
-— that is the cost the mirror imposes, named here rather than left for a reader to
-discover, and `Vt.renderable_of_liveReachable`/`Vt.tabsOk_of_liveReachable` discharge both
-for any live session (`Checkpoint.load_save_live`). -/
-theorem resume_quiesced (c : Ckpt) (cols rows : Nat) (hgood : Vt.Good c.vt)
-    (hren : Vt.Renderable c.vt) (htabs : Vt.TabsOk c.vt) :
-    ∃ c',
-      load (save c) = some c' ∧
-        ((Vt.Vt.init cols rows).feed (Render.restore c'.vt)).pstate = .ground ∧
-        ((Vt.Vt.init cols rows).feed (Render.restore c'.vt)).u8need = 0 := by
-  refine ⟨{ c with vt := c.vt.quiesce }, Checkpoint.load_save c hgood hren htabs, ?_, ?_⟩
-  · exact (Render.restore_quiesced _ cols rows).1
-  · exact (Render.restore_quiesced _ cols rows).2
-
-/-- **§Resume, receiver-quantified** (Step 2 of `specs/archive/restore-conformance.md`).
-The same claim into **any** client's terminal rather than a fresh emulator: a
-reattaching client is left ready for the application's next byte whatever state its
-terminal was in — mid-escape, mid-OSC, mid-DCS, or holding a half-decoded character.
-That is the state a real client is in, and `resume_quiesced` above assumed it away.
+/-- **§Resume.** A checkpoint, reloaded and replayed into **any** client's terminal,
+leaves it quiesced: the parser is in `ground` with no pending UTF-8 sequence, whatever
+state the terminal was in — mid-escape, mid-OSC, mid-DCS, or holding a half-decoded
+character (Step 2 of `specs/archive/restore-conformance.md`). The reattaching client is
+always left ready for the application's next byte.
 
 It composes the stream's grounding prefix and stage guarantees: `restore`
 **leads** with `ESC \` so a receiver in a string state resynchronises
@@ -107,8 +63,19 @@ It composes the stream's grounding prefix and stage guarantees: `restore`
 optional deferred-wrap stage finishes with complete SGR sequences
 (`Render.restore_u8_zero`).
 
-`hren`/`htabs` are `resume_quiesced`'s — the round-trip conjunct's, not the replay's; see
-there. -/
+The hypotheses are the round-trip conjunct's, not the replay's. `hgood` is the
+hypothesis that arrived with the checkpoint validation (`specs/archive/vt-toolkit.md`
+Step 2): `load` refuses a record that does not describe a `Good` screen, so
+`load (save c)` is `none` for a `c` no live session could hold. This claim used to have
+no hypotheses and was, for exactly that reason, also true of `cols := 0`. `Vt.good_init`
+and `Vt.good_of_liveReachable` give it for every real session.
+
+**`hren` and `htabs` arrived with finding R2**, by the same mirror and for the same kind of
+reason: the door now also refuses a record whose grid is not the shape its dimensions
+claim, or whose tab ruler is not the width of its screen. This claim does not read the grid
+— that is the cost the mirror imposes, named here rather than left for a reader to
+discover, and `Vt.renderable_of_liveReachable`/`Vt.tabsOk_of_liveReachable` discharge both
+for any live session (`Checkpoint.load_save_live`). -/
 theorem resume_quiesced_any (c : Ckpt) (w : Vt.Vt) (hgood : Vt.Good c.vt)
     (hren : Vt.Renderable c.vt) (htabs : Vt.TabsOk c.vt) :
     ∃ c',
@@ -120,7 +87,7 @@ theorem resume_quiesced_any (c : Ckpt) (w : Vt.Vt) (hgood : Vt.Good c.vt)
 
 /-- A checkpoint whose parser is already quiescent comes back as the same
 record, and its replay is quiesced. A poll boundary does not itself establish
-these parser hypotheses. `hren`/`htabs`: see `resume_quiesced`. -/
+these parser hypotheses. `hren`/`htabs`: see `resume_quiesced_any`. -/
 theorem resume_exact (c : Ckpt) (cols rows : Nat) (hgood : Vt.Good c.vt) (hren : Vt.Renderable c.vt)
     (htabs : Vt.TabsOk c.vt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0)
     (ha : c.vt.u8acc = 0) :
@@ -135,7 +102,7 @@ checkpoint comes back as the same record, and replaying it into a fresh
 emulator of the session's size puts the cursor exactly where the session
 had it. `Vt.Good` is the §Bound invariant every live session satisfies;
 `origin = false` is the documented DECOM gap (`Render.restore_cursor`).
-`hren`/`htabs` are the round trip's, not the cursor's: see `resume_quiesced`. -/
+`hren`/`htabs` are the round trip's, not the cursor's: see `resume_quiesced_any`. -/
 theorem resume_cursor (c : Ckpt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0)
     (ha : c.vt.u8acc = 0) (hgood : Vt.Good c.vt) (hren : Vt.Renderable c.vt)
     (htabs : Vt.TabsOk c.vt) (ho : c.vt.modes.origin = false) :
@@ -146,22 +113,20 @@ theorem resume_cursor (c : Ckpt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need =
     (Render.restore_cursor c.vt hgood ho).2⟩
 
 /-- **§Resume (cursor), receiver-quantified.** The end-to-end cursor claim into *any*
-client's emulator of the session's size, not only a fresh one. `Good w` is what
-`dims_feed` needs of the receiver (see `Render.restore_cursor_any`); every client's
-emulator satisfies it. `hren`/`htabs` are the round trip's: see `resume_quiesced`. -/
+client's emulator of the session's size, not only a fresh one. Of the session's modes,
+`Render.restore_cursor_any` needs only DECOM off; `Good w` is what `dims_feed` needs of the
+receiver, and every client's emulator satisfies it. `hren`/`htabs` are the round trip's: see
+`resume_quiesced_any`. -/
 theorem resume_cursor_any (c : Ckpt) (w : Vt.Vt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0)
     (ha : c.vt.u8acc = 0) (hgood : Vt.Good c.vt) (hren : Vt.Renderable c.vt)
     (htabs : Vt.TabsOk c.vt) (hgw : Vt.Good w) (hcols : w.cols = c.vt.cols)
-    (hrows : w.rows = c.vt.rows) (ho : c.vt.modes.origin = false)
-    (hmouse :
-      c.vt.modes.mouse = 0 ∨
-        c.vt.modes.mouse = 1000 ∨ c.vt.modes.mouse = 1002 ∨ c.vt.modes.mouse = 1003) :
+    (hrows : w.rows = c.vt.rows) (ho : c.vt.modes.origin = false) :
     load (save c) = some c ∧
       ((w.feed (Render.restore c.vt)).cursor.x = c.vt.cursor.x) ∧
       ((w.feed (Render.restore c.vt)).cursor.y = c.vt.cursor.y) :=
   ⟨Checkpoint.load_save_exact c hgood hren htabs h h8 ha,
-    (Render.restore_cursor_any c.vt w hgood hgw hcols hrows ho hmouse).1,
-    (Render.restore_cursor_any c.vt w hgood hgw hcols hrows ho hmouse).2⟩
+    (Render.restore_cursor_any c.vt w hgood hgw hcols hrows ho).1,
+    (Render.restore_cursor_any c.vt w hgood hgw hcols hrows ho).2⟩
 
 /-- **§Resume (grid) — Definition-of-done item 5, end to end.** A quiescent checkpoint comes
 back as the same record, and replaying it into a fresh emulator of the session's size reproduces
@@ -181,7 +146,8 @@ theorem resume_grid (c : Ckpt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0
   refine ⟨Checkpoint.load_save_exact c hgood hren htabs h h8 ha, ?_⟩
   exact
     Render.restore_grid_any c.vt (Vt.Vt.init c.vt.cols c.vt.rows) (Vt.good_init _ _)
-      (Vt.renderable_init _ _) (init_dims_of_good hgood).1 (init_dims_of_good hgood).2 rfl rfl hren
+      (Vt.renderable_init _ _) (Render.init_dims _ hgood).1 (Render.init_dims _ hgood).2 rfl rfl
+      hren
 
 /-- Non-vacuity: a real 80×24 checkpoint satisfies every hypothesis of `resume_grid`, so the
 theorem is not vacuously true. -/
@@ -210,7 +176,7 @@ theorem resume_tabs (c : Ckpt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0
   refine ⟨Checkpoint.load_save_exact c hgood hren hvtabs h h8 ha, ?_⟩
   exact
     Render.restore_tabs_any c.vt (Vt.Vt.init c.vt.cols c.vt.rows) (Vt.good_init _ _)
-      (init_dims_of_good hgood).1 hvtabs
+      (Render.init_dims _ hgood).1 hvtabs
 
 /-- Non-vacuity at the degenerate height: `resume_grid` genuinely covers a **one-row** screen,
 the case `h2 : 0 < rows - 1` used to exclude — the grid of an 80×1 session is reproduced. -/
@@ -247,7 +213,7 @@ theorem resume_sb (c : Ckpt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0)
   refine ⟨Checkpoint.load_save_exact c hgood hren htabs h h8 ha, ?_⟩
   exact
     Render.restore_sb_any c.vt (Vt.Vt.init c.vt.cols c.vt.rows) (Vt.good_init _ _)
-      (Vt.renderable_init _ _) hgood hren (init_dims_of_good hgood).1 (init_dims_of_good hgood).2
+      (Vt.renderable_init _ _) hgood hren (Render.init_dims _ hgood).1 (Render.init_dims _ hgood).2
       rfl rfl hne
 
 /-! ## §Resume over an arbitrary byte string — what finding R2 bought
@@ -286,8 +252,8 @@ emulator of the checkpoint's size, reproduces the checkpoint's screen cell for c
 theorem resume_grid_of_load {l : List UInt8} {c : Ckpt} (h : load l = some c) :
     ((Vt.Vt.init c.vt.cols c.vt.rows).feed (Render.restore c.vt)).grid = c.vt.grid :=
   Render.restore_grid_any c.vt (Vt.Vt.init c.vt.cols c.vt.rows) (Vt.good_init _ _)
-    (Vt.renderable_init _ _) (init_dims_of_good (Checkpoint.load_good h)).1
-    (init_dims_of_good (Checkpoint.load_good h)).2 rfl rfl (Checkpoint.load_renderable h)
+    (Vt.renderable_init _ _) (Render.init_dims _ (Checkpoint.load_good h)).1
+    (Render.init_dims _ (Checkpoint.load_good h)).2 rfl rfl (Checkpoint.load_renderable h)
 
 /-- **§Resume (tab ruler), from disk.** The ruler half, likewise —
 `Checkpoint.load_tabsOk` is the hypothesis `resume_tabs` has to ask for, and it did not
@@ -295,7 +261,7 @@ exist before R2: a checkpoint could name a ruler of any length at all. -/
 theorem resume_tabs_of_load {l : List UInt8} {c : Ckpt} (h : load l = some c) :
     ((Vt.Vt.init c.vt.cols c.vt.rows).feed (Render.restore c.vt)).tabs = c.vt.tabs :=
   Render.restore_tabs_any c.vt (Vt.Vt.init c.vt.cols c.vt.rows) (Vt.good_init _ _)
-    (init_dims_of_good (Checkpoint.load_good h)).1 (Checkpoint.load_tabsOk h)
+    (Render.init_dims _ (Checkpoint.load_good h)).1 (Checkpoint.load_tabsOk h)
 
 /-- **§Resume (scrollback), from disk.** The history half. `hne` is the same branch
 `resume_sb` has (an empty history leaves the client's own scrollback alone,
@@ -307,7 +273,7 @@ theorem resume_sb_of_load {l : List UInt8} {c : Ckpt} (h : load l = some c)
       (Render.sbRows c.vt).toList :=
   Render.restore_sb_any c.vt (Vt.Vt.init c.vt.cols c.vt.rows) (Vt.good_init _ _)
     (Vt.renderable_init _ _) (Checkpoint.load_good h) (Checkpoint.load_renderable h)
-    (init_dims_of_good (Checkpoint.load_good h)).1 (init_dims_of_good (Checkpoint.load_good h)).2
+    (Render.init_dims _ (Checkpoint.load_good h)).1 (Render.init_dims _ (Checkpoint.load_good h)).2
     rfl rfl hne
 
 end Linger.Core

@@ -1,10 +1,9 @@
 module
 
-public import Theorems.Render.PendingPosition
+public import Theorems.Render.History
 import all Linger.Core.Render
 import all Linger.Core.Vt
 import all Theorems.Render.History
-import all Theorems.Render.PendingPosition
 
 /-! Margin replay accepts a stale UTF-8 accumulator when no continuation is
 pending. ASCII retains it; a fresh multibyte lead overwrites it. -/
@@ -52,22 +51,25 @@ private theorem utf8s_feed_ground_need (cs : List Char) {v : Vt} (hg : v.pstate 
     (v.feed (utf8s cs)).pstate = .ground ∧ (v.feed (utf8s cs)).u8need = 0 := by
   induction cs generalizing v with
   | nil => exact ⟨hg, hu⟩
-  | cons c cs
-    ih =>
-    rw [show utf8s (c :: cs) = utf8 (safeChar c) ++ utf8s cs from by
-        simp only [utf8s, List.flatMap_cons], feed_append]
+  | cons c cs ih =>
+    rw [utf8s_cons, feed_append]
     obtain ⟨hg', hu'⟩ := utf8_feed_ground_need (safeChar c) (safeChar_ge c).1 hg hu
     exact ih hg' hu'
+
+/-- A combining mark leaves the cursor where it was. -/
+private theorem cursor_mark (m : Char) (w : Vt) (h0 : w.g0Line = false) (h1 : w.g1Line = false)
+    (hm : charWidth m = 0 ∧ Emittable m) : (w.print (safeChar m)).cursor = w.cursor := by
+  rw [safeChar_of_emittable hm.2]
+  simp only [Vt.print, printChar_id_of_ascii h0 h1 hm.2.1 hm.2.2, hm.1, beq_self_eq_true, ite_true]
+  rw [frame_printMark]
 
 private theorem utf8s_marks_cursor_any_acc (ms : List Char) (w : Vt) (h0 : w.g0Line = false)
     (h1 : w.g1Line = false) (hm : ∀ m ∈ ms, charWidth m = 0 ∧ Emittable m) (hg : w.pstate = .ground)
     (hu : w.u8need = 0) : (w.feed (utf8s ms)).cursor = w.cursor := by
   induction ms generalizing w with
   | nil => rfl
-  | cons m ms
-    ih =>
-    rw [show utf8s (m :: ms) = utf8 (safeChar m) ++ utf8s ms from by
-        simp only [utf8s, List.flatMap_cons], feed_append]
+  | cons m ms ih =>
+    rw [utf8s_cons, feed_append]
     have hd := utf8_feed_any_acc (v := w) (safeChar m) (safeChar_ge m).1 hg hu
     have h0' : (w.feed (utf8 (safeChar m))).g0Line = false := by
       rw [hd]
@@ -77,11 +79,7 @@ private theorem utf8s_marks_cursor_any_acc (ms : List Char) (w : Vt) (h0 : w.g0L
       split <;> simpa only [g1_print] using h1
     obtain ⟨hg', hu'⟩ := utf8_feed_ground_need (safeChar m) (safeChar_ge m).1 hg hu
     rw [ih _ h0' h1' (fun c hc => hm c (List.mem_cons_of_mem m hc)) hg' hu', hd]
-    have hm' : ∀ c ∈ [m], charWidth c = 0 ∧ Emittable c := by
-      intro c hc
-      rw [List.mem_singleton.mp hc]
-      exact hm m List.mem_cons_self
-    split <;> exact cursor_marks [m] _ h0 h1 hm'
+    split <;> exact cursor_mark m _ h0 h1 (hm m List.mem_cons_self)
 
 /-- Cell text completes every emitted codepoint, even with a stale initial
 accumulator. The decoder starts and ends in ground with no pending bytes. -/

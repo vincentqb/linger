@@ -6,10 +6,7 @@ import all Linger.Core.Render
 import all Linger.Core.Vt
 import all Theorems.Vt
 
--- No `public section`: a **public** declaration's type may not mention a private
--- field, and `Vt`'s are private now (the seal, `specs/archive/vt-toolkit.md` Step 1).
--- Module-private is the default, so consumers reach in with `import all`. See the
--- longer note in `Theorems/Vt.lean`.
+-- Module-private by default: `Vt`'s fields are sealed (see `Theorems/Vt/State.lean`).
 
 /-! # §Replay, stage 3b — a restore stream leaves the parser in ground
 
@@ -24,17 +21,16 @@ wedged mid-sequence, and a checkpoint taken right after a restore is
 
 The ladder is compositional, which is the point:
 
-* `Ends bs` — "from ground, `bs` returns to ground with no pending
-  UTF-8". `Ends.append` makes it closed under `++`, and `restore` is a
-  concatenation, so the top theorem is assembled from one lemma per
-  emitted construct (`Ends.csiNum`, `Ends.penSgr`, `Ends.osc`, …).
+* `Ends bs` — "from ground, `bs` returns to ground". `Ends.append` makes
+  it closed under `++`, and `restore` is a concatenation, so the top
+  theorem is assembled from one lemma per emitted construct
+  (`ends_csiNum`, `ends_penSgr`, `ends_osc`, …).
 * Each construct's lemma is proved from the byte facts of the emitters
   (`digits_range`, `utf8_no_ctl`) — which only exist because `Render`
   builds `List UInt8` rather than `String`s (see that module's header).
 
-What this does *not* say: nothing about the screen contents, cursor, or
-pen — that is stages 3c/3d, pinned meanwhile by the round-trip fixtures
-in `Tests/Render.lean`.
+Screen contents, cursor and pen are later rungs (`restore_cursor_any`,
+`restore_grid_any`).
 -/
 
 namespace Linger.Core.Render
@@ -70,13 +66,6 @@ theorem digits_range (n : Nat) : ∀ b ∈ digits n, 0x30 ≤ b ∧ b ≤ 0x39 :
       · simp [UInt8.toNat_ofNat', Nat.mod_eq_of_lt h8]
       · simp [UInt8.toNat_ofNat', Nat.mod_eq_of_lt h8]
         omega
-
-/-- A digit byte is not ESC. -/
-theorem digits_no_esc (n : Nat) : ∀ b ∈ digits n, b ≠ 0x1B := by
-  intro b hb he
-  obtain ⟨h1, -⟩ := digits_range n b hb
-  rw [he] at h1
-  exact absurd h1 (by decide)
 
 /-- `safeChar` never yields a C0 control or DEL. -/
 theorem safeChar_ge (c : Char) : (safeChar c).toNat ≥ 0x20 ∧ (safeChar c).toNat ≠ 0x7F := by
@@ -136,10 +125,10 @@ theorem utf8s_no_ctl (cs : List Char) : ∀ b ∈ utf8s cs, b ≥ 0x20 ∧ b ≠
   exact utf8_no_ctl (safeChar c) hge hne b hmem
 
 theorem utf8s_no_esc (cs : List Char) : ∀ b ∈ utf8s cs, b ≠ 0x1B := by
-  intro b hb he
-  obtain ⟨hge, -⟩ := utf8s_no_ctl cs b hb
-  rw [he] at hge
-  exact absurd hge (by decide)
+  intro b hb; have := utf8s_no_ctl cs b hb; grind
+
+theorem utf8s_cons (c : Char) (cs : List Char) :
+    utf8s (c :: cs) = utf8 (safeChar c) ++ utf8s cs := by simp only [utf8s, List.flatMap_cons]
 
 /-- Each scrubbed Unicode scalar occupies at most four bytes. -/
 theorem utf8s_length_le (cs : List Char) : (utf8s cs).length ≤ 4 * cs.length := by
@@ -165,18 +154,16 @@ tracing a whole restore stream.
 restore stream can leave a client wedged mid-sequence, eating the
 application's next output.
 
-Scoped deliberately to `pstate`. The companion claim `u8need = 0` needs
-per-operation `u8need` lemmas through `csiDispatch` (~25, the same shape
-as the `cols`/`rows` gap in the step-4 notes) and buys much less: a
-trailing partial UTF-8 sequence can only mis-render the *next* glyph,
-whereas a stuck `.csi` state swallows everything. `restore` emits only
-complete encodings, and it is pinned by the `Tests/Render.lean` fixtures
-(`replayEq` checks `u8need == 0`); the theorem is listed as open in
-specs/archive/bigger-theorems.md. -/
+Scoped to `pstate`, which composes over `++`; the whole-stream decoder claim is
+`restore_quiesced`. -/
 def Ends (bs : Bytes) : Prop := ∀ v : Vt, v.pstate = .ground → (v.feed bs).pstate = .ground
 
-theorem feed_cons (v : Vt) (x : UInt8) (xs : Bytes) : v.feed (x :: xs) = (v.step x).feed xs := by
-  simp [Vt.feed]
+theorem feed_nil (v : Vt) : v.feed [] = v := rfl
+
+theorem feed_cons (v : Vt) (x : UInt8) (xs : Bytes) : v.feed (x :: xs) = (v.step x).feed xs := rfl
+
+theorem feed_append (v : Vt) (a b : Bytes) : v.feed (a ++ b) = (v.feed a).feed b :=
+  Good.feed_append v a b
 
 theorem Ends.nil : Ends [] := fun _ h => h
 
@@ -184,21 +171,14 @@ theorem Ends.nil : Ends [] := fun _ h => h
 `List.foldl_append` plus transitivity. -/
 theorem Ends.append {a b : Bytes} (ha : Ends a) (hb : Ends b) : Ends (a ++ b) := by
   intro v h
-  have : v.feed (a ++ b) = (v.feed a).feed b := by simp [Vt.feed, List.foldl_append]
-  rw [this]
+  rw [feed_append]
   exact hb (v.feed a) (ha v h)
 
 /-- **The shape all three stream layers share.**
 
-`Ends`, `Quiet` and `Keeps` are three predicates on a byte string, each closed
-under concatenation, and each needing the same five derived combinators. Written
-out per layer that is fifteen proofs of five facts.
-
-Everything derived follows from `nil` and `append` alone, so those two are the
-bundle and the rest are generic: a fourth layer costs one instance instead of five
-proofs. That is the reason to do it now — the decision recorded in SCRATCHPAD was
-to leave the duplication alone "unless a third layer wants the same skeleton", and
-`Keeps` is that third layer.
+`Ends`, `Quiet` and `Keeps` are predicates on a byte string, each closed under
+concatenation. Everything derived follows from `nil` and `append` alone, so those
+two are the bundle and the combinators are generic.
 
 The boundary is deliberate: only the *combinators* generalize, and `Keeps` is what
 shows why. `Ends.text` and `Quiet.text` both say an ESC-free run is harmless, but
@@ -229,14 +209,6 @@ theorem ite {P : Bytes → Prop} (_hP : StreamPred P) {c : Prop} [Decidable c]
   by_cases h : c
   · rw [ite_eq_left h]; exact ha h
   · rw [ite_eq_right h]; exact hb h
-
-theorem flatten {P : Bytes → Prop} (hP : StreamPred P) {l : List Bytes}
-    (h : ∀ bs ∈ l, P bs) : P l.flatten := by
-  induction l with
-  | nil => exact hP.nil
-  | cons a as ih =>
-    rw [List.flatten_cons]
-    exact hP.append (h a (by simp)) (ih (fun bs hbs => h bs (by simp [hbs])))
 
 theorem flatMap {P : Bytes → Prop} (hP : StreamPred P) {α : Type} {f : α → Bytes}
     {l : List α} (h : ∀ a, P (f a)) : P (l.flatMap f) := by
@@ -306,23 +278,11 @@ end StreamPred
 
 theorem Ends.streamPred : StreamPred Ends := ⟨Ends.nil, fun ha hb => Ends.append ha hb⟩
 
-/-! The five derived combinators keep their own names, so no downstream proof
-changes — the conversion rule from the frames pass. -/
-
-theorem Ends.append3 {a b c : Bytes} (ha : Ends a) (hb : Ends b) (hc : Ends c) :
-    Ends (a ++ b ++ c) := Ends.streamPred.append3 ha hb hc
-
-theorem Ends.append4 {a b c d : Bytes} (ha : Ends a) (hb : Ends b) (hc : Ends c)
-    (hd : Ends d) : Ends (a ++ b ++ c ++ d) := Ends.streamPred.append4 ha hb hc hd
-
 /-- An `if` over two `Ends` pieces is `Ends` (restore is full of conditional
 fragments). Unconditional in both branches, unlike the `Quiet`/`Keeps` forms. -/
 theorem Ends.ite {c : Prop} [Decidable c] {a b : Bytes}
     (ha : Ends a) (hb : Ends b) : Ends (if c then a else b) :=
   Ends.streamPred.ite (fun _ => ha) (fun _ => hb)
-
-theorem Ends.flatten {l : List Bytes} (h : ∀ bs ∈ l, Ends bs) : Ends l.flatten :=
-  Ends.streamPred.flatten h
 
 theorem Ends.flatMap {α : Type} {f : α → Bytes} {l : List α}
     (h : ∀ a, Ends (f a)) : Ends (l.flatMap f) := Ends.streamPred.flatMap h
@@ -377,10 +337,9 @@ theorem csi_open_step {v : Vt} (hg : v.pstate = .esc) :
   rw [hw]
   rfl
 
-/-- `UInt8` comparisons, in `Nat` where `omega` can see them. The whole
-ladder's guard reasoning goes through this. -/
--- not `private`: used by the Quiet, Pen and Keeps rungs too (it was private
--- only because they all used to live in one file).
+/-- `UInt8` comparisons, in `Nat` where `omega` can see them. -/
+-- not `private`: the Quiet rung uses it too (it was private only because the rungs
+-- used to live in one file).
 theorem u8_bounds {b : UInt8} {lo hi : UInt8} (h1 : lo ≤ b) (h2 : b ≤ hi) :
     lo.toNat ≤ b.toNat ∧ b.toNat ≤ hi.toNat :=
   ⟨UInt8.le_iff_toNat_le.mp h1, UInt8.le_iff_toNat_le.mp h2⟩
@@ -390,9 +349,6 @@ us inside `.csi` — with some other accumulator, which is all the ladder
 needs to know. -/
 theorem csi_param_step {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi s)
     (h1 : 0x30 ≤ b) (h2 : b ≤ 0x3F) : ∃ s', (v.step b).pstate = .csi s' := by
-  obtain ⟨hn1, hn2⟩ := u8_bounds h1 h2
-  simp only [show ((0x30 : UInt8)).toNat = 48 from rfl,
-    show ((0x3F : UInt8)).toNat = 63 from rfl] at hn1 hn2
   have hw : (v.abortUtf8 b).pstate = PState.csi s := by
     rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
   unfold Vt.step
@@ -409,32 +365,8 @@ theorem csi_param_step {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi
   · rw [ite_eq_right (by simp [hd]), ite_eq_right (by simp [hsemi]), ite_eq_left hcolon]
     exact ⟨_, rfl⟩
   · -- what remains is 0x3C…0x3F
-    have hb39 : ¬ (b.toNat ≤ 57) := by
-      intro hle
-      exact hd (by
-        simp only [Bool.and_eq_true, decide_eq_true_eq, UInt8.le_iff_toNat_le,
-          show ((0x30 : UInt8)).toNat = 48 from rfl,
-          show ((0x39 : UInt8)).toNat = 57 from rfl]
-        omega)
-    have hne3B : b.toNat ≠ 59 := by
-      intro he
-      exact hsemi (by
-        simp only [beq_iff_eq]
-        apply UInt8.toNat_inj.mp
-        simpa [show ((0x3B : UInt8)).toNat = 59 from rfl] using he)
-    have hne3A : b.toNat ≠ 58 := by
-      intro he
-      exact hcolon (by
-        simp only [beq_iff_eq]
-        apply UInt8.toNat_inj.mp
-        simpa [show ((0x3A : UInt8)).toNat = 58 from rfl] using he)
-    have hpriv : (b ≥ 0x3C && b ≤ 0x3F) = true := by
-      simp only [Bool.and_eq_true, decide_eq_true_eq, UInt8.le_iff_toNat_le,
-        show ((0x3C : UInt8)).toNat = 60 from rfl,
-        show ((0x3F : UInt8)).toNat = 63 from rfl]
-      omega
     rw [ite_eq_right (by simp [hd]), ite_eq_right (by simp [hsemi]), ite_eq_right (by simp [hcolon]),
-        ite_eq_left hpriv]
+        ite_eq_left (by grind)]
     exact ⟨_, rfl⟩
 
 /-- A run of parameter bytes keeps us inside `.csi`. -/
@@ -446,49 +378,19 @@ theorem csi_param_feed : ∀ (bs : Bytes) {v : Vt} {s : CsiState}, v.pstate = .c
     rw [feed_cons]
     exact csi_param_feed xs hs' (fun b hb => h b (by simp [hb]))
 
-/-- The six pre-final guards in `stepCsi`, all false below `0x40`. Factored out
-because two layers need them: the parser claim (`csi_final_step`, just below) and
-the state claim (`csi_final_step_eq`, which needs `step_of_csi_quiet` and so lives
-with the grid layer at the end of this file). Re-deriving UInt8 comparisons at
-each use is what made a first attempt at the grid layer unpleasant. -/
+/-- The six pre-final guards in `stepCsi`, all false below `0x40`, shared by
+`csi_final_step` and `csi_final_step_eq` (`Keeps.lean`). -/
 theorem csi_final_guards (b : UInt8) (h1 : 0x40 ≤ b) (h2 : b ≤ 0x7E) :
     (b ≥ 0x30 && b ≤ 0x39) = false ∧ (b == 0x3B) = false ∧ (b == 0x3A) = false
       ∧ (b ≥ 0x3C && b ≤ 0x3F) = false ∧ (b ≥ 0x20 && b ≤ 0x2F) = false
       ∧ (b ≥ 0x40 && b ≤ 0x7E) = true := by
-  obtain ⟨hn1, hn2⟩ := u8_bounds h1 h2
-  simp only [show ((0x40 : UInt8)).toNat = 64 from rfl,
-    show ((0x7E : UInt8)).toNat = 126 from rfl] at hn1 hn2
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
-  · simp only [Bool.and_eq_false_iff, decide_eq_false_iff_not, UInt8.le_iff_toNat_le,
-      show ((0x39 : UInt8)).toNat = 57 from rfl]
-    right; omega
-  · simp only [beq_eq_false_iff_ne, ne_eq]
-    intro he
-    rw [he] at hn1
-    simp only [show ((0x3B : UInt8)).toNat = 59 from rfl] at hn1
-    omega
-  · simp only [beq_eq_false_iff_ne, ne_eq]
-    intro he
-    rw [he] at hn1
-    simp only [show ((0x3A : UInt8)).toNat = 58 from rfl] at hn1
-    omega
-  · simp only [Bool.and_eq_false_iff, decide_eq_false_iff_not, UInt8.le_iff_toNat_le,
-      show ((0x3F : UInt8)).toNat = 63 from rfl]
-    right; omega
-  · simp only [Bool.and_eq_false_iff, decide_eq_false_iff_not, UInt8.le_iff_toNat_le,
-      show ((0x2F : UInt8)).toNat = 47 from rfl]
-    right; omega
-  · simp only [Bool.and_eq_true, decide_eq_true_eq]
-    exact ⟨h1, h2⟩
+  grind
 
 /-- A final byte in 0x40…0x7E dispatches the sequence and returns to
 ground: `csiFinish` assigns `.ground` unconditionally, and so does the
 intermediate-ignore branch. -/
 theorem csi_final_step {v : Vt} {s : CsiState} (b : UInt8) (hg : v.pstate = .csi s)
     (h1 : 0x40 ≤ b) (h2 : b ≤ 0x7E) : (v.step b).pstate = .ground := by
-  obtain ⟨hn1, hn2⟩ := u8_bounds h1 h2
-  simp only [show ((0x40 : UInt8)).toNat = 64 from rfl,
-    show ((0x7E : UInt8)).toNat = 126 from rfl] at hn1 hn2
   have hw : (v.abortUtf8 b).pstate = PState.csi s := by
     rw [Linger.Core.Vt.ps_abortUtf8]; exact hg
   obtain ⟨g1, g2, g3, g4, g5, g6⟩ := csi_final_guards b h1 h2
@@ -516,12 +418,7 @@ def ParamBytes (bs : Bytes) : Prop := ∀ b ∈ bs, 0x30 ≤ b ∧ b ≤ 0x3B
 so the walk lemmas are fed through this. -/
 theorem paramBytes_le_3F {bs : Bytes} (h : ParamBytes bs) :
     ∀ b ∈ bs, 0x30 ≤ b ∧ b ≤ 0x3F := by
-  intro b hb
-  obtain ⟨h1, h2⟩ := h b hb
-  refine ⟨h1, ?_⟩
-  simp only [UInt8.le_iff_toNat_le, show ((0x3B : UInt8)).toNat = 59 from rfl,
-    show ((0x3F : UInt8)).toNat = 63 from rfl] at h2 ⊢
-  omega
+  intro b hb; have := h b hb; grind
 
 theorem ParamBytes.nil : ParamBytes [] := by intro b hb; simp at hb
 
@@ -540,16 +437,16 @@ theorem ParamBytes.cons {x : UInt8} {bs : Bytes} (h1 : 0x30 ≤ x) (h2 : x ≤ 0
   · exact hb y h
 
 theorem paramBytes_digits (n : Nat) : ParamBytes (digits n) := by
-  intro b hb
-  obtain ⟨hd1, hd2⟩ := digits_range n b hb
-  refine ⟨hd1, ?_⟩
-  simp only [UInt8.le_iff_toNat_le, show ((0x39 : UInt8)).toNat = 57 from rfl,
-    show ((0x3B : UInt8)).toNat = 59 from rfl] at hd2 ⊢
-  omega
+  intro b hb; have := digits_range n b hb; grind
 
 /-- `;<number>` — the shape every SGR sub-parameter takes. -/
 theorem paramBytes_semiDigits (n : Nat) : ParamBytes (0x3B :: digits n) := by
   refine ParamBytes.cons ?_ ?_ (paramBytes_digits n) <;> decide
+
+/-- `<a>;<b>` — the two-parameter shape of `CUP` and `DECSTBM`. -/
+theorem paramBytes_digits2 (a b : Nat) : ParamBytes (digits a ++ [0x3B] ++ digits b) := by
+  rw [List.append_assoc, List.singleton_append]
+  exact (paramBytes_digits a).append (paramBytes_semiDigits b)
 
 /-- **The CSI lemma.** `CSI <params> <final>` returns the parser to
 ground. Every CSI-shaped construct in `restore` — cursor addressing, SGR
@@ -563,10 +460,7 @@ theorem ends_csi_seq (params : Bytes) (final : UInt8) (hp : ParamBytes params)
         = 0x1B :: 0x5B :: (params ++ [final]) from rfl]
   rw [feed_cons, feed_cons]
   have hb := csi_open_step (esc_step hg)
-  have hsplit : ((v.step 0x1B).step 0x5B).feed (params ++ [final])
-      = (((v.step 0x1B).step 0x5B).feed params).feed [final] := by
-    simp [Vt.feed, List.foldl_append]
-  rw [hsplit]
+  rw [feed_append]
   obtain ⟨s', hs'⟩ := csi_param_feed params hb (paramBytes_le_3F hp)
   rw [show (((v.step 0x1B).step 0x5B).feed params).feed [final]
         = ((((v.step 0x1B).step 0x5B).feed params).step final) from rfl]
@@ -586,8 +480,7 @@ theorem ends_csi_priv_seq (params : Bytes) (final : UInt8) (hp : ParamBytes para
   rw [feed_cons, feed_cons, feed_cons]
   obtain ⟨sm, hsm⟩ :=
     csi_param_step 0x3F (csi_open_step (esc_step hg)) (by decide) (by decide)
-  rw [show ∀ (w : Vt), w.feed (params ++ [final]) = (w.feed params).feed [final] from
-    fun w => by simp [Vt.feed, List.foldl_append]]
+  rw [feed_append]
   obtain ⟨s', hs'⟩ := csi_param_feed params hsm (paramBytes_le_3F hp)
   exact csi_final_step final hs' h1 h2
 
@@ -600,10 +493,7 @@ theorem ends_csiNum2 (a b : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
   have : csiNum2 a b final = csiB ++ (digits a ++ [0x3B] ++ digits b) ++ [final] := by
     simp [csiNum2, List.append_assoc]
   rw [this]
-  exact ends_csi_seq _ final
-    (((paramBytes_digits a).append
-      (ParamBytes.cons (by decide) (by decide) ParamBytes.nil)).append
-      (paramBytes_digits b)) h1 h2
+  exact ends_csi_seq _ final (paramBytes_digits2 a b) h1 h2
 
 theorem ends_csiPriv (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
     (h2 : final ≤ 0x7E) : Ends (csiPriv n final) := by
@@ -611,10 +501,6 @@ theorem ends_csiPriv (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
     simp [csiPriv]
   rw [this]
   exact ends_csi_priv_seq _ final (paramBytes_digits n) h1 h2
-
-/-- Not yet proved: the composition. See below. -/
-theorem paramBytes_sgr_subparam (n : Nat) : ParamBytes (0x3B :: digits n) :=
-  paramBytes_semiDigits n
 
 /-! ### SGR pens
 
@@ -664,18 +550,6 @@ theorem colorCodes_length (c : Color) (isFg : Bool) : (colorCodes c isFg).length
     all_goals simp
   · simp
 
-/-- **Every SGR a restore emits stays under the parser's cap**, with room to
-spare: attributes ≤ 8, each colour ≤ 5, where the old single sequence
-reached 18. Stated as a theorem rather than trusted to the fixtures,
-because the failure is silent — an over-long SGR is not mis-applied, it is
-dropped whole. -/
-theorem penSgr_under_cap (p : Pen) :
-    (penAttrCodes p).length ≤ 16 ∧ (colorCodes p.fg true).length ≤ 16
-      ∧ (colorCodes p.bg false).length ≤ 16 :=
-  ⟨by have := penAttrCodes_length p; omega,
-   by have := colorCodes_length p.fg true; omega,
-   by have := colorCodes_length p.bg false; omega⟩
-
 theorem ends_sgrOf (codes : List Nat) : Ends (sgrOf codes) :=
   ends_csi_seq _ 0x6D (paramBytes_joinSemi codes) (by decide) (by decide)
 
@@ -696,8 +570,8 @@ theorem ends_penSgr (p : Pen) : Ends (penSgr p) := by
 go to `.escInter`, which waits for a final in `0x30..0x7E`. -/
 
 /-- An `ESC <final>` whose final is one of the single-byte sequences
-`restore` emits — `7` (DECSC), `=` (app keypad), `H` (HTS) — lands back
-in ground. -/
+`restore` emits — `7` (DECSC), `=`/`>` (keypad modes), `H` (HTS), `\` (ST) —
+lands back in ground. -/
 theorem esc_single_step {v : Vt} (b : UInt8) (hg : v.pstate = .esc)
     (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x48 ∨ b = 0x3E ∨ b = 0x5C) :
     (v.step b).pstate = .ground := by
@@ -734,7 +608,7 @@ theorem esc_inter_finish {v : Vt} {i : UInt8} (b : UInt8) (hg : v.pstate = .escI
   repeat' split
   all_goals rfl
 
-/-- `ESC 7` (DECSC), `ESC =` and `ESC H` (HTS) are `Ends`. -/
+/-- The single-byte `ESC` sequences `restore` emits are `Ends`. -/
 theorem ends_escSeq (b : UInt8) (hb : b = 0x37 ∨ b = 0x3D ∨ b = 0x48 ∨ b = 0x3E ∨ b = 0x5C) :
     Ends (escSeq b) := by
   intro v hg
@@ -818,11 +692,7 @@ theorem osc_bel_step {v : Vt} {acc : Array UInt8} {e : Bool}
 
 /-- The scrubbed title payload carries neither ESC nor BEL. -/
 theorem utf8s_no_esc_bel (cs : List Char) : ∀ b ∈ utf8s cs, b ≠ 0x1B ∧ b ≠ 0x07 := by
-  intro b hb
-  obtain ⟨hge, -⟩ := utf8s_no_ctl cs b hb
-  refine ⟨fun he => ?_, fun he => ?_⟩
-  · rw [he] at hge; exact absurd hge (by decide)
-  · rw [he] at hge; exact absurd hge (by decide)
+  intro b hb; have := utf8s_no_ctl cs b hb; grind
 
 /-- §Replay: an OSC 2 title sequence is `Ends`. -/
 theorem ends_osc (payload : List Char) :
@@ -835,10 +705,7 @@ theorem ends_osc (payload : List Char) :
   have h1 := osc_open_step (esc_step hg)
   obtain ⟨a2, h2⟩ := osc_accum_step 0x32 h1 (by decide) (by decide)
   obtain ⟨a3, h3⟩ := osc_accum_step 0x3B h2 (by decide) (by decide)
-  have hsplit : ∀ (w : Vt), w.feed (utf8s payload ++ [0x07])
-      = (w.feed (utf8s payload)).feed [0x07] := by
-    intro w; simp [Vt.feed, List.foldl_append]
-  rw [hsplit]
+  rw [feed_append]
   obtain ⟨a4, h4⟩ := osc_accum_feed (utf8s payload) h3 (utf8s_no_esc_bel payload)
   exact osc_bel_step h4
 
@@ -846,20 +713,16 @@ theorem ends_osc (payload : List Char) :
 
 Cells contribute scrubbed text (`Ends.text`) and, when the pen changes,
 an SGR sequence (`ends_penSgr`). Both are `Ends`, so the fold that
-assembles a row preserves "everything so far is `Ends`" — the generic
-fold-invariant lemma below is what carries that, and it is reused for the
-grid's list of painted rows. -/
-
--- `invariant_foldl` now lives in `Theorems/Vt.lean`, shared with the four
--- specializations there; this file's uses resolve to it through `open`.
+assembles a row preserves "everything so far is `Ends`" — `invariant_foldl`
+(`Theorems/Vt/State.lean`) carries that in `StreamPred.rowAnsi`, and again over
+the grid's list of painted rows in `StreamPred.gridAnsi`. -/
 
 theorem ends_utf8s (cs : List Char) : Ends (utf8s cs) :=
   Ends.text (utf8s_no_esc cs)
 
 theorem ends_utf8_safe (ch : Char) : Ends (utf8 (safeChar ch)) :=
   Ends.text (fun b hb => by
-    obtain ⟨hge, -⟩ := utf8_no_ctl (safeChar ch) (safeChar_ge ch).1 (safeChar_ge ch).2 b hb
-    intro he; rw [he] at hge; exact absurd hge (by decide))
+    have := utf8_no_ctl (safeChar ch) (safeChar_ge ch).1 (safeChar_ge ch).2 b hb; grind)
 
 theorem ends_cellText (c : Cell) : Ends (cellText c) := by
   unfold cellText
@@ -879,9 +742,6 @@ theorem ends_rowAnsi (row : Row) (p : Pen) : Ends (rowAnsi row p).1 :=
     (fun n => ends_csiNum n 0x47 (by decide) (by decide)) row p
 
 theorem ends_crlf : Ends [0x0D, 0x0A] := Ends.text (by decide)
-
-theorem ends_joinCRLF : ∀ (l : List Bytes), (∀ bs ∈ l, Ends bs) → Ends (joinCRLF l) :=
-  Ends.streamPred.joinCRLF ends_crlf
 
 theorem ends_gridAnsi (grid : Array Row) : Ends (gridAnsi grid) := by
   refine Ends.streamPred.gridAnsi (ends_csiNum 0 0x6D (by decide) (by decide))
@@ -909,12 +769,10 @@ cares about. Stated for all three at once so `Quiet` and `SMap` reuse it. -/
 theorem crlfRun_no_esc (n : Nat) :
     ∀ b ∈ (List.replicate n crlfB).flatten, b ≠ 0x1B ∧ b ≠ 0x0E ∧ b ≠ 0x0F := by
   intro b hb
-  rw [List.mem_flatten] at hb
-  obtain ⟨l, hl, hbl⟩ := hb
+  obtain ⟨l, hl, hbl⟩ := List.mem_flatten.mp hb
   rw [List.eq_of_mem_replicate hl] at hbl
-  simp only [crlfB, List.mem_cons, List.not_mem_nil, or_false] at hbl
-  rcases hbl with h | h
-  all_goals (subst h; exact ⟨by decide, by decide, by decide⟩)
+  simp only [crlfB] at hbl
+  grind
 
 theorem crlfRun_no_1B (n : Nat) :
     ∀ b ∈ (List.replicate n crlfB).flatten, b ≠ (0x1B : UInt8) :=
@@ -1074,11 +932,7 @@ of the preceding repaint's encodings.
 -/
 
 theorem paramBytes_lt_C0 {bs : Bytes} (h : ParamBytes bs) : ∀ b ∈ bs, b < 0xC0 := by
-  intro b hb
-  obtain ⟨-, h2⟩ := h b hb
-  simp only [UInt8.le_iff_toNat_le, show ((0x3B : UInt8)).toNat = 59 from rfl] at h2
-  simp only [UInt8.lt_iff_toNat_lt, show ((0xC0 : UInt8)).toNat = 192 from rfl]
-  omega
+  intro b hb; have := h b hb; grind
 
 /-- Any complete CSI sequence leaves no pending UTF-8, from any state. -/
 theorem u8_zero_after_csi (params : Bytes) (final : UInt8) (hp : ParamBytes params)
@@ -1093,10 +947,7 @@ theorem u8_zero_after_csi (params : Bytes) (final : UInt8) (hp : ParamBytes para
   rcases List.mem_append.mp hb with h | h
   · exact paramBytes_lt_C0 hp b h
   · simp only [List.mem_singleton] at h
-    subst h
-    simp only [UInt8.le_iff_toNat_le, show ((0x7E : UInt8)).toNat = 126 from rfl] at hf
-    simp only [UInt8.lt_iff_toNat_lt, show ((0xC0 : UInt8)).toNat = 192 from rfl]
-    omega
+    grind
 
 theorem u8_zero_after_penSgr (p : Pen) (w : Vt) : (w.feed (penSgr p)).u8need = 0 := by
   have hs (codes : List Nat) (w : Vt) : (w.feed (sgrOf codes)).u8need = 0 :=
@@ -1135,9 +986,6 @@ theorem restore_quiesced (v : Vt) (cols rows : Nat) :
   split
   all_goals
     (unfold csiNum2
-     refine u8_zero_after_csi _ 0x48 ?_ (by decide) _
-     exact ((paramBytes_digits _).append
-       (ParamBytes.cons (by decide) (by decide) ParamBytes.nil)).append
-       (paramBytes_digits _))
+     exact u8_zero_after_csi _ 0x48 (paramBytes_digits2 _ _) (by decide) _)
 
 end Linger.Core.Render

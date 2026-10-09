@@ -12,7 +12,6 @@ import Theorems.Claim
 import Theorems.Listing
 import Theorems.Render
 import Theorems.Render.PendingGlyph
-import Theorems.Render.PendingPosition
 import Theorems.Render.PendingAccumulator
 import Theorems.Render.PendingWrap
 import Theorems.Replay
