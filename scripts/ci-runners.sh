@@ -3,7 +3,7 @@
 #
 #   sh scripts/ci-runners.sh <event_name> <ref>   ->   ["ubuntu-latest", ...]
 #
-# THE THIRD DELIBERATE NON-LEAN FILE, and the reason is the cost this exists to
+# A DELIBERATE NON-LEAN FILE, and the reason is the cost this exists to
 # control: `.github/workflows/ci.yml`'s `gates` job compiles NOTHING, which is what
 # makes it cheap, so its decision cannot be `./lake exe e2e …` without putting a
 # Lean build back into the cheap job. Shell is what a workflow step can call for

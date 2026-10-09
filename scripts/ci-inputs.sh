@@ -4,20 +4,18 @@
 set -eu
 export LC_ALL=C
 
-set -- .
-
 # The index supplies object IDs only after proving it matches the working inputs.
 # Never issue a key for an untracked source, an unstaged edit or an empty census.
-git diff --quiet -- "$@" || {
+git diff --quiet -- . || {
   echo 'verification inputs: unstaged changes' >&2
   exit 1
 }
-untracked="$(git ls-files --others --exclude-standard -- "$@")"
+untracked="$(git ls-files --others --exclude-standard -- .)"
 [ -z "$untracked" ] || {
   echo 'verification inputs: untracked files' >&2
   exit 1
 }
-inputs="$(git ls-files --stage -- "$@")"
+inputs="$(git ls-files --stage -- .)"
 [ -n "$inputs" ] || {
   echo 'verification inputs: empty inventory' >&2
   exit 1

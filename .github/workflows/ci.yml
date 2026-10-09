@@ -11,6 +11,7 @@ on:
     tags: ['v*']
   pull_request:
   schedule:
+    # Weekly: scripts/ci-runners.sh's 8-day WINDOW must cover this period; change them together.
     - cron: '17 6 * * 1'
   workflow_dispatch:
 
@@ -18,7 +19,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 env:
+  ELAN_VERSION: v4.2.4
   LEAN_FMT_REV: 9e8704afb1ed88a935cbdbf10d735e826b0034b8
   PRE_COMMIT_VERSION: 4.6.0
 
@@ -107,13 +112,20 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/.elan
-          key: elan-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lean-toolchain') }}
+          key: elan-${{ runner.os }}-${{ runner.arch }}-${{ env.ELAN_VERSION }}-${{ hashFiles('lean-toolchain') }}
       - name: install pinned Lean
         run: |
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
           if [ ! -x "$HOME/.elan/bin/elan" ]; then
-            curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -o /tmp/elan-init.sh
-            sh /tmp/elan-init.sh -y --default-toolchain none
+            case "$RUNNER_OS-$RUNNER_ARCH" in
+              Linux-X64) asset=elan-x86_64-unknown-linux-gnu sum=42b94d4244e8353142c456ec0e4ca6528fd898a6c604d4059f494e706e431f63 ;;
+              macOS-ARM64) asset=elan-aarch64-apple-darwin sum=7ad829861392c718dfebde3a83b5c8508df47be02af68894b094b0b3952616e5 ;;
+              *) echo "::error::no pinned elan for $RUNNER_OS-$RUNNER_ARCH"; exit 1 ;;
+            esac
+            curl -sSfL --retry 3 "https://github.com/leanprover/elan/releases/download/$ELAN_VERSION/$asset.tar.gz" -o "$RUNNER_TEMP/elan.tar.gz"
+            printf '%s  %s\n' "$sum" "$RUNNER_TEMP/elan.tar.gz" | shasum -a 256 --check
+            tar -xzf "$RUNNER_TEMP/elan.tar.gz" -C "$RUNNER_TEMP"
+            "$RUNNER_TEMP/elan-init" -y --default-toolchain none
           fi
           export PATH="$HOME/.elan/bin:$PATH"
           elan toolchain install "$(tr -d '[:space:]' < lean-toolchain)"

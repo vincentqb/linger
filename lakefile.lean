@@ -26,14 +26,6 @@ lean_lib LingerInputTheorems where roots := #[`Theorems.Input]
 /-- Reusable fuzzy alignment, with no session or terminal imports. -/
 lean_lib LingerFuzzy where roots := #[`Linger.Tools.Fuzzy]
 
-/-- Pure entry, selection and import policies, outside the session and VT libraries. -/
-lean_lib LingerTools where roots :=
-  #[`Linger.Tools.Entry, `Linger.Tools.Resurrect, `Linger.Tools.Key, `Linger.Tools.Fuzzy,
-    `Linger.Tools.Picker, `Linger.Tools.Input]
-
-/-- Terminal selector and save-import executor, composed by Main. -/
-lean_lib LingerManager where roots := #[`Linger.Manager.Picker, `Linger.Manager.Resurrect]
-
 /-- The native OS boundary, compiled with the clang selected by `./lake`. -/
 target shim.o pkg : System.FilePath := do
   let oFile := pkg.buildDir / "c" / "shim.o"
@@ -48,12 +40,12 @@ extern_lib liblingershim pkg := do
 /-- IO smoke tests for the Posix surface: `./lake exe lingertest`. -/
 lean_exe lingertest where root := `LingerTest
 
-/-- Proofs have their own import and verification graph. Lean erases proofs
-regardless of file placement. `Theorems.lean` imports every proof module. -/
-lean_lib Theorems where
+/-- Proofs have their own import and verification graph; every module under `Theorems/` is
+built. Lean erases proofs regardless of file placement. -/
+lean_lib Theorems where globs := #[.andSubmodules `Theorems]
 
-/-- Unit tests checked at elaboration time; `Tests.lean` imports every suite. -/
-lean_lib Tests where
+/-- Unit tests checked at elaboration time; every module under `Tests/` is built. -/
+lean_lib Tests where globs := #[.andSubmodules `Tests]
 
 /-- Executable suites: `./lake exe e2e <suite>`. -/
 lean_lib E2E where

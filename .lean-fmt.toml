@@ -9,5 +9,5 @@ declaration-body = "same-line"
 # Import order may affect initialization; keep the proof ladder's order.
 ignore = ["FMT005"]
 
-# Root modules enumerate every member as a completeness check.
+# Root modules list members even when also imported transitively.
 per-file-ignores = { "Theorems.lean" = ["FMT004"], "Tests.lean" = ["FMT004"] }

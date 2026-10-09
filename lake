@@ -1,31 +1,15 @@
 #!/bin/sh
-# Wrapper: run `./lake ...` instead of `lake ...` on this box.
-#
-# On the AL2 host (glibc 2.26) the v4.32.0 toolchain's bundled clang needs
-# glibc >= 2.27 and dies with "GLIBC_2.29 not found", so C compilation goes
-# through Homebrew clang; linking then needs the toolchain's own lib dirs
-# on LIBRARY_PATH (-lgmp -luv -lc++abi). Lean elaboration is unaffected --
-# without this the build looks 90% green and dies in the C backend.
-# (Recipe proven in ~/lean-tmux/env/lean_env.sh.)
-#
-# None of that applies on macOS, and applying it *breaks* the build: the
-# toolchain there is a mac toolchain, so its clang and llvm-ar are the
-# right ones, and /usr/bin/ar is Apple's ar, which cannot read the @rsp
-# response file lake hands it (liblingershim.a: "No such file or
-# directory"). So the overrides are Linux-only and this is a pass-through
-# on Darwin -- `./lake build` stays the one command either way.
+# Run Lake with this checkout's native settings; use ./lake on every host.
+# Linux: the bundled clang and llvm-ar can require a newer glibc than the host has, so
+# put Homebrew's bin first when present, compile with clang from PATH, archive with
+# binutils ar, and link against the toolchain lib dirs.
+# macOS: pass through; Apple's ar cannot read Lake's @rsp response files.
 export PATH="$HOME/.elan/bin:$PATH"
 if [ "$(uname -s)" = Linux ]; then
   export PATH="/home/linuxbrew/.linuxbrew/bin:$PATH"
   export LEAN_CC=clang
-  # The toolchain's llvm-ar is also glibc-blocked; system binutils ar works.
   export LEAN_AR=/usr/bin/ar
-  # Derived from `lean-toolchain`, never hardcoded. It used to name v4.32.0
-  # literally, which coupled this file to the pin silently: bump `lean-toolchain`
-  # and LIBRARY_PATH points at a directory that does not exist, so the link dies
-  # on `-lgmp` with nothing to suggest why. elan escapes the toolchain string by
-  # doubling: `/` becomes `--` and `:` becomes `---`, so
-  # `leanprover/lean4:v4.32.0` is `leanprover--lean4---v4.32.0`.
+  # elan names toolchain directories with `/` -> `--` and `:` -> `---`.
   _TCNAME="$(tr -d ' \n' < "$(dirname "$0")/lean-toolchain" | sed 's|/|--|g; s|:|---|g')"
   _TC="$HOME/.elan/toolchains/${_TCNAME}"
   if [ ! -d "$_TC" ]; then

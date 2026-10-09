@@ -3,8 +3,8 @@
 Persistent terminal sessions for Linux and macOS. Programs keep running when
 you detach or disconnect.
 
-Install [elan](https://github.com/leanprover/elan) and a C compiler, then build
-from this checkout:
+Install [elan](https://github.com/leanprover/elan) and clang (on Linux also
+binutils `ar`), then build from this checkout:
 
 ```sh
 ./lake build
