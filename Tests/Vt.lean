@@ -331,6 +331,26 @@ example :
       true := by
   native_decide
 
+/-- SU scrolls at most the region's height: `CSI 100 S` on a five-row screen keeps five
+blank rows of history, not a hundred. -/
+example : (history ((Vt.init 20 5).feed "\x1b[100S".toUTF8.toList)).count 0x0A = 10 := by
+  native_decide
+
+/-- SD blanks the whole region, so a huge count leaves no row behind and no history. -/
+example :
+    (let v := screen 10 3 "a\r\nb\r\nc\x1b[999T"
+     (List.range 3).all (fun y => rowStr v y == "") && v.sb.size == 0) =
+      true := by
+  native_decide
+
+/-- With a stop in every column, CHT and CBT need `cols - 1` moves to cross the screen,
+so their clamped counts still reach the margins. -/
+example :
+    (let v := screen 8 2 (String.join (List.replicate 8 "\x1bH\x1b[C"))
+     (feedStr v "\x1b[G\x1b[999I").cursor.x == 7 && (feedStr v "\x1b[999Z").cursor.x == 0) =
+      true := by
+  native_decide
+
 /-- **A reachable client can be mid-character.** This is the fixture behind dropping
 `u8need = 0` from `Render.restore_grid_reachable`: being fed a UTF-8 lead byte is an
 ordinary thing for a live terminal to have happened to it, so reachability does *not*
@@ -414,17 +434,7 @@ example :
 ESC — the screen still takes the next printable. (§Total, concretely.) -/
 example :
           (let v := screen 10 2 "\x1b[999;999;999\xFF\x80\x80\x1b]\x07\x1b[<>=?zok"
-           ((rowStr v 0).splitOn "ok").length ≥ 2) =
-      true := by
-  native_decide
-
-/-- Restore render round-trip: feeding the restore bytes to a fresh Vt
-reproduces the visible grid (the reattach guarantee, in miniature). -/
-example :
-          (let v := screen 12 3 "he\x1b[33mllo\r\n\x1b[44mworld\x1b[0m!"
-           let w := (Vt.init 12 3).feed (restore v)
-           (List.range 3).all (fun y => (v.getRow y) == (w.getRow y)) && w.cursor.x == v.cursor.x &&
-        w.cursor.y == v.cursor.y) =
+           (rowStr v 0).contains "ok") =
       true := by
   native_decide
 

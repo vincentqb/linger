@@ -147,12 +147,11 @@ example :
       [ESC, 0x50, 0x30, 0x2B, 0x72, 0x35, 0x34, 0x34, 0x65, ESC, STFinal] := by
   native_decide
 
-/-- The malicious request cannot commit a line: the CR (and the non-hex `i`, `>`,
-`x`) are gone; what remains (`54;d`) sits harmlessly in the line buffer. This is
-the byte that made it a command injection. -/
-example : (feed profileVt .ground evilXtget).replies.contains 0x0D = false := by native_decide
-
-example : (feed profileVt .ground evilXtget).replies.contains 0x0A = false := by native_decide
+/-- The malicious request cannot commit a line: the CR and the non-hex i, >, x are gone. -/
+example :
+    (feed profileVt .ground evilXtget).replies =
+      [ESC, 0x50, 0x30, 0x2B, 0x72, 0x35, 0x34, 0x3B, 0x64, ESC, STFinal] := by
+  native_decide
 
 /-- Non-vacuity: the raw payload really did contain the injected CR. -/
 example : evilXtget.contains 0x0D = true := by native_decide

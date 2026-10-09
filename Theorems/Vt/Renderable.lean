@@ -23,18 +23,11 @@ individual mutation's proof.
 
 /-- Reading back the cell a `setIfInBounds` wrote. -/
 theorem getD_set_self {α} [Inhabited α] (r : Array α) (x : Nat) (c d : α) (h : x < r.size) :
-    (r.setIfInBounds x c).getD x d = c := by simp [Array.getD, Array.setIfInBounds, h]
+    (r.setIfInBounds x c).getD x d = c := by simp [h]
 
 /-- …and reading back any other cell. -/
 theorem getD_set_ne {α} [Inhabited α] (r : Array α) (x j : Nat) (c d : α) (h : j ≠ x) :
-    (r.setIfInBounds x c).getD j d = r.getD j d := by
-  simp only [Array.getD, Array.setIfInBounds]
-  split
-  · simp only [Array.size_set]
-    split
-    · simp [Array.getElem_set, Ne.symm h]
-    · rfl
-  · rfl
+    (r.setIfInBounds x c).getD j d = r.getD j d := by simp [Ne.symm h]
 
 /-- Out of range reads a default (width-1) cell, which is what lets the pair
 rules treat "no neighbour" and "a narrow neighbour" alike. -/
@@ -96,17 +89,19 @@ theorem size_mendAt (row : Row) (x : Nat) : (Row.mendAt row x).size = row.size :
   unfold Row.mendAt
   repeat' split
   all_goals
-    first
-    | simp
-    | rfl
+    with_reducible
+      first
+      | simp
+      | rfl
 
 theorem mendAt_ne (row : Row) (x j : Nat) (h : j ≠ x) : (Row.mendAt row x).at j = row.at j := by
   unfold Row.mendAt Row.at
   repeat' split
   all_goals
-    first
-    | exact getD_set_ne _ _ _ _ _ h
-    | rfl
+    with_reducible
+      first
+      | exact getD_set_ne _ _ _ _ _ h
+      | rfl
 
 /-- A half pair becomes a blank. -/
 theorem mendAt_self_blank (row : Row) (x : Nat) (hx : x < row.size) (h : row.halfPair x = true) :
@@ -251,6 +246,10 @@ theorem mendUpto_spec (row : Row) :
       exact ⟨halfPair_mendAt_self _ _ hlt, fun hw => shadow_mendAt_self _ _ hlt hw⟩
     · have hprev := ih.2 j (by omega) (by omega)
       exact ⟨halfPair_mendAt_lt _ _ _ (by omega) hprev.1, shadow_mendAt_lt _ _ _ (by omega) hprev.2⟩
+
+/-- Compiled code runs the allocation-free sweep; it is the same function. -/
+theorem mend_eq_mendFast (row : Row) : Row.mend row = Row.mendFast row := by
+  rw [Row.mend_eq_mendFast]
 
 theorem size_mend (row : Row) : (Row.mend row).size = row.size := by
   unfold Row.mend
@@ -573,43 +572,6 @@ theorem at_putCell_ne (u : Vt) (x y : Nat) (c : Cell) (x' : Nat) (hne : x' ≠ x
   unfold Row.at
   exact getD_set_ne _ _ _ _ _ hne
 
-/-- **A narrow cell at another column survives the write and the sweep.** -/
-theorem getCell_write_mendRow_keep_narrow (u : Vt) (x y : Nat) (c : Cell) (x' : Nat) (hne : x' ≠ x)
-    (hy : y < u.grid.size) (hnarrow : (u.getCell x' y).width = 1) :
-    ((u.putCell x y c).mendRow y).getCell x' y = u.getCell x' y := by
-  have hat : ((u.putCell x y c).getRow y).at x' = (u.getRow y).at x' :=
-    at_putCell_ne u x y c x' hne hy
-  rw [getCell_mendRow_same _ _ _
-      (by
-        rw [grid_size_putCell]; exact hy)]
-  rw [mend_keeps_narrow _ x'
-      (by
-        rw [hat]; exact hnarrow),
-    hat]
-  rfl
-
-/-- **…and so does a whole pair**, which is the case a painted wide glyph below `k`
-lands in. Both halves are named because `mend` only leaves them alone together. -/
-theorem getCell_write_mendRow_keep_wide (u : Vt) (x y : Nat) (c : Cell) (x' : Nat) (hne : x' ≠ x)
-    (hne1 : x' + 1 ≠ x) (hy : y < u.grid.size) (hwide : (u.getCell x' y).width = 2)
-    (hshadow : (u.getRow y).at (x' + 1) = Cell.shadow ((u.getRow y).at x')) :
-    ((u.putCell x y c).mendRow y).getCell x' y = u.getCell x' y ∧
-      ((u.putCell x y c).mendRow y).getCell (x' + 1) y = u.getCell (x' + 1) y := by
-  have hat : ((u.putCell x y c).getRow y).at x' = (u.getRow y).at x' :=
-    at_putCell_ne u x y c x' hne hy
-  have hat1 : ((u.putCell x y c).getRow y).at (x' + 1) = (u.getRow y).at (x' + 1) :=
-    at_putCell_ne u x y c (x' + 1) hne1 hy
-  have hgs : y < (u.putCell x y c).grid.size := by
-    rw [grid_size_putCell]; exact hy
-  obtain ⟨h0, h1⟩ :=
-    mend_keeps_wide ((u.putCell x y c).getRow y) x'
-      (by
-        rw [hat]; exact hwide)
-      (by
-        rw [hat, hat1]; exact hshadow)
-  rw [getCell_mendRow_same _ _ _ hgs, getCell_mendRow_same _ _ _ hgs, h0, h1, hat, hat1]
-  exact ⟨rfl, rfl⟩
-
 /-- A write plus repair on one row leaves every other row alone. -/
 theorem getCell_write_mendRow_other (u : Vt) (x y : Nat) (c : Cell) (x' y' : Nat) (h : y' ≠ y) :
     ((u.putCell x y c).mendRow y).getCell x' y' = u.getCell x' y' := by
@@ -719,9 +681,10 @@ theorem print_wide_eq {v : Vt} {ch : Char} (hpc : v.printChar ch = ch) (hw : cha
     unfold Vt.printWideWrap
     rw [ite_eq_right
         (by
-          first
-          | (simp [hcp]; done)
-          | (simp [hcp]; omega))]
+          with_reducible
+            first
+            | (simp [hcp]; done)
+            | (simp [hcp]; omega))]
   have h3 : ∀ (w : Vt), w.modes.insert = false → w.printShift 2 = w := by
     intro w hw'; unfold Vt.printShift; rw [ite_eq_right (by simp [hw'])]
   have h4 :
@@ -738,9 +701,10 @@ theorem print_wide_eq {v : Vt} {ch : Char} (hpc : v.printChar ch = ch) (hw : cha
     dsimp only
     rw [ite_eq_right
         (by
-          first
-          | (simp; done)
-          | (simp; omega)),
+          with_reducible
+            first
+            | (simp; done)
+            | (simp; omega)),
       ite_eq_left (by decide)]
     rfl
   rw [h1, h2,
@@ -749,9 +713,10 @@ theorem print_wide_eq {v : Vt} {ch : Char} (hpc : v.printChar ch = ch) (hw : cha
         rw [frame_clearPending]; exact hins),
     h4 _ ch
       (by
-        first
-        | (simp [hcp]; done)
-        | (simp [hcp]; omega))]
+        with_reducible
+          first
+          | (simp [hcp]; done)
+          | (simp [hcp]; omega))]
   rfl
 
 theorem print_mark_eq {v : Vt} {m : Char} (hpc : v.printChar m = m) (hw : charWidth m = 0)
@@ -799,10 +764,6 @@ theorem print_mark_pending_eq {v : Vt} {m : Char} (hpc : v.printChar m = m) (hw 
         exact fun h => hnw h.1)]
   rw [ite_eq_right (show ¬((v.getCell v.cursor.x v.cursor.y).marks.length ≥ 8) from by omega)]
 
-end Linger.Core.Vt
-
-namespace Linger.Core.Vt
-
 /-! ## §Renderable — the emulator only reaches grids a repaint can reproduce
 
 `Good` bounds the emulator; this bounds what it *stores*. `Render.restore`
@@ -845,7 +806,7 @@ theorem emittable_space : Emittable ' ' := ⟨by decide, by decide⟩
 
 `isZeroWidth` and `isWide` decide how many columns a glyph owns, and until this
 section they were named **nowhere in the repo** outside their own definitions and
-`charWidth` — 50 theorem statements mention `charWidth`, every one generic over
+`charWidth` — the theorem statements that mention `charWidth` are generic over
 the tables, so a shifted range was invisible to the entire proof tree and to every
 fixture. `CellOk.width` above is what makes them load-bearing: it ties a stored
 cell's `width` field to `charWidth c.base`, so a table edit silently redefines
@@ -1117,11 +1078,10 @@ with one flipped byte of a real checkpoint and refuted `resume_grid`'s conclusio
 which makes this an observable defect rather than a missing hypothesis. `Vt.decodedRenderable`
 (`Linger/Core/Vt.lean`) is the second half of the door's check; these are its claims.
 
-They live here, four thousand lines below the door's other claims, for one reason:
-`Renderable` and its `GridOk`/`RowOk`/`CellOk`/`PairOk` ladder are defined just above, and
-nothing earlier in this file can name them. One `iff` per rung, so the `Bool` and the
-`Prop` cannot drift apart at any level — the same discipline as `decodedOk_iff`, five
-times.
+They live here, apart from the door's other claims in `Theorems/Vt/State.lean`, for one
+reason: `Renderable` and its `GridOk`/`RowOk`/`CellOk`/`PairOk` ladder are defined just
+above, and nothing earlier in this file can name them. One `iff` per rung, so the `Bool`
+and the `Prop` cannot drift apart at any level — the same discipline as `decodedOk_iff`.
 
 **The mirror lands here too.** `ofDecoded_of_good` is the same predicate seen from the
 other side — the door's *non-rejection* — so it now asks for `Renderable` and `TabsOk`,
@@ -1293,7 +1253,7 @@ theorem ofDecoded_tabsOk {cols rows : Nat} {grid : Array Row} {cursor : Cursor} 
 
 /-- **Nothing good is rejected.** The other half of the door: a `Vt` that is `Good`,
 `Renderable` and ruler-consistent — which every live session's is, by `good_init`,
-`renderable_init` and the `Pres`/frame machinery, and uniformly by
+`renderable_init` and the frame lemmas, and uniformly by
 `good_of_liveReachable`/`renderable_of_liveReachable`/`tabsOk_of_liveReachable` — survives
 the door unchanged, modulo the parser state a checkpoint deliberately forgets.
 
@@ -1374,8 +1334,7 @@ theorem cells_set {row : Row} (i : Nat) (c : Cell) (hrow : ∀ x, CellOk (row.at
   · subst hx
     by_cases hb : x < row.size
     · rw [getD_set_self _ _ _ _ hb]; exact hc
-    · rw [show row.setIfInBounds x c = row from by
-          simp only [Array.setIfInBounds]; rw [dite_eq_right hb]]
+    · rw [Array.setIfInBounds_eq_of_size_le (Nat.le_of_not_lt hb)]
       exact hrow x
   · rw [getD_set_ne _ _ _ _ _ hx]; exact hrow x
 
@@ -1390,10 +1349,11 @@ theorem cells_mendAt {row : Row} (i : Nat) (hrow : ∀ x, CellOk (row.at x)) :
   unfold Row.mendAt
   repeat' split
   all_goals
-    first
-    | exact cells_set _ _ hrow (cellOk_erased _)
-    | exact cells_set _ _ hrow (cellOk_shadow _)
-    | exact hrow
+    with_reducible
+      first
+      | exact cells_set _ _ hrow (cellOk_erased _)
+      | exact cells_set _ _ hrow (cellOk_shadow _)
+      | exact hrow
 
 theorem cells_mend {row : Row} (hrow : ∀ x, CellOk (row.at x)) :
     ∀ x, CellOk ((Row.mend row).at x) := by
@@ -1422,10 +1382,6 @@ theorem rowOk_mend {cols : Nat} {row : Row} (hsize : row.size = cols)
         absurd ((by rw [hz x (by omega)] : (Row.mend row).at x = default) ▸ h2) (by decide),
         fun h0 => ?_⟩
     exact absurd ((by rw [hz x (by omega)] : (Row.mend row).at x = default) ▸ h0) (by decide)
-
-end Linger.Core.Vt
-
-namespace Linger.Core.Vt
 
 /-! ### One row at a time
 
@@ -1456,33 +1412,13 @@ theorem gridOkExcept_set {cols rows y : Nat} {g : Array Row} (h : GridOkExcept c
   · rw [getD_set_ne _ _ _ _ _ hy']; exact hother y' hy'
   · by_cases hb : y < g.size
     · rw [getD_set_self _ _ _ _ hb, Array.size_setIfInBounds, hd hb]; exact hrsz
-    · rw [show g.setIfInBounds y ((g.getD y d).setIfInBounds x c) = g from by
-          simp only [Array.setIfInBounds]; rw [dite_eq_right hb]]
+    · rw [Array.setIfInBounds_eq_of_size_le (Nat.le_of_not_lt hb)]
       exact hrsz
   · by_cases hb : y < g.size
     · rw [getD_set_self _ _ _ _ hb, hd hb]
       exact cells_set _ _ hcells hc
-    · rw [show g.setIfInBounds y ((g.getD y d).setIfInBounds x c) = g from by
-          simp only [Array.setIfInBounds]; rw [dite_eq_right hb]]
+    · rw [Array.setIfInBounds_eq_of_size_le (Nat.le_of_not_lt hb)]
       exact hcells
-
-/-- Replacing the excepted row wholesale, with a row built from it. -/
-theorem gridOkExcept_replace {cols rows y : Nat} {g : Array Row} (h : GridOkExcept cols rows y g)
-    (r : Row) (hsz : r.size = cols) (hcells : ∀ x, CellOk (r.at x)) :
-    GridOkExcept cols rows y (g.setIfInBounds y r) := by
-  obtain ⟨hgsz, hother, hrsz, hocells⟩ := h
-  refine ⟨by simp [hgsz], fun y' hy' => ?_, ?_, ?_⟩
-  · rw [getD_set_ne _ _ _ _ _ hy']; exact hother y' hy'
-  · by_cases hb : y < g.size
-    · rw [getD_set_self _ _ _ _ hb]; exact hsz
-    · rw [show g.setIfInBounds y r = g from by
-          simp only [Array.setIfInBounds]; rw [dite_eq_right hb]]
-      exact hrsz
-  · by_cases hb : y < g.size
-    · rw [getD_set_self _ _ _ _ hb]; exact hcells
-    · rw [show g.setIfInBounds y r = g from by
-          simp only [Array.setIfInBounds]; rw [dite_eq_right hb]]
-      exact hocells
 
 /-- …and the repair closes it. -/
 theorem gridOk_of_except {cols rows y : Nat} {g : Array Row} (h : GridOkExcept cols rows y g) :
@@ -1494,8 +1430,7 @@ theorem gridOk_of_except {cols rows y : Nat} {g : Array Row} (h : GridOkExcept c
     by_cases hb : y' < g.size
     · rw [getD_set_self _ _ _ _ hb]
       exact rowOk_mend hrsz hcells
-    · rw [show g.setIfInBounds y' (Row.mend (g.getD y' (blankRow cols {}))) = g from by
-          simp only [Array.setIfInBounds]; rw [dite_eq_right hb]]
+    · rw [Array.setIfInBounds_eq_of_size_le (Nat.le_of_not_lt hb)]
       -- out of range: the read is the default row, which is reproducible
       rw [show g.getD y' (blankRow cols {}) = blankRow cols {} from by simp [Array.getD, hb]]
       exact rowOk_blankRow cols {}
@@ -1509,10 +1444,6 @@ theorem size_foldl {β : Type} {f : Row → β → Row}
     ∀ (l : List β) (row : Row), (l.foldl f row).size = row.size
   | [], _ => rfl
   | b :: l, row => by rw [List.foldl_cons, size_foldl hf l (f row b), hf row b]
-
-end Linger.Core.Vt
-
-namespace Linger.Core.Vt
 
 /-! ### Renderable is preserved by every operation
 
@@ -1544,8 +1475,8 @@ theorem gridOk_mendRow {v : Vt} {y : Nat}
     dsimp only
     by_cases hb : y < v.grid.size
     · rw [getD_of_lt v.grid y (blankRow v.cols v.pen) (blankRow v.cols {}) hb]
-    · simp only [Array.setIfInBounds]
-      rw [dite_eq_right hb, dite_eq_right hb]
+    · rw [Array.setIfInBounds_eq_of_size_le (Nat.le_of_not_lt hb),
+        Array.setIfInBounds_eq_of_size_le (Nat.le_of_not_lt hb)]
   rw [hkey]
   exact gridOk_of_except h
 
@@ -1626,13 +1557,9 @@ theorem renderable_printMark {v : Vt} (h : Renderable v) (ch : Char)
   unfold Vt.printMark
   dsimp only
   repeat' split
-  all_goals first
+  all_goals with_reducible first
     | exact h
     | exact renderable_addMark h _ _ _ hpc hw (by omega)
-
-end Linger.Core.Vt
-
-namespace Linger.Core.Vt
 
 /-! #### Whole-row moves, and the stages around a write -/
 
@@ -1652,8 +1579,7 @@ theorem gridOk_set_row {cols rows : Nat} {g : Array Row} (h : GridOk cols rows g
   · subst hy'
     by_cases hb : y' < g.size
     · rw [getD_set_self _ _ _ _ hb]; exact hr
-    · rw [show g.setIfInBounds y' r = g from by
-        simp only [Array.setIfInBounds]; rw [dite_eq_right hb]]
+    · rw [Array.setIfInBounds_eq_of_size_le (Nat.le_of_not_lt hb)]
       exact h.2 y'
   · rw [getD_set_ne _ _ _ _ _ hy']; exact h.2 y'
 
@@ -1784,10 +1710,6 @@ theorem renderable_print {v : Vt} (h : Renderable v) (ch : Char) :
       (renderable_printShift (renderable_printWideWrap (renderable_printWrap h) _) _) _ _
         (hpc' v ch) rfl) _
 
-end Linger.Core.Vt
-
-namespace Linger.Core.Vt
-
 /-! #### Erase, insert, delete -/
 
 /-- Every row mutation has the same skeleton: fold writes over the row, mend it,
@@ -1881,12 +1803,6 @@ theorem renderable_moveTo_congr {v w : Vt} (h : Renderable v)
     (ha : w.altGrid = v.altGrid) (x y : Nat) : Renderable (w.moveTo x y) :=
   renderable_moveTo (renderable_congr h hg hc hr ha) x y
 
-theorem renderable_moveRel {v : Vt} (h : Renderable v) (dx dy : Int) :
-    Renderable (v.moveRel dx dy) := renderable_congr h rfl rfl rfl rfl
-
-theorem renderable_setCol {v : Vt} (h : Renderable v) (x : Nat) :
-    Renderable (v.setCol x) := renderable_congr h rfl rfl rfl rfl
-
 theorem renderable_applySgr {v : Vt} (h : Renderable v) (ps : List (Nat × Bool)) :
     Renderable (v.applySgr ps) := renderable_congr h rfl rfl rfl rfl
 
@@ -1923,11 +1839,11 @@ theorem renderable_setMode {v : Vt} (h : Renderable v) (priv : Bool) (n : Nat) (
     Renderable (v.setMode priv n on) := by
   unfold Vt.setMode
   split <;> split
-  all_goals first
+  all_goals with_reducible first
     | exact h
     | exact renderable_congr h rfl rfl rfl rfl
     | (refine renderable_moveTo_congr h ?_ ?_ ?_ ?_ 0 0 <;> rfl)
-    | (split <;> first
+    | (split <;> with_reducible first
         | exact renderable_enterAlt h _
         | exact renderable_leaveAlt h _
         | exact renderable_congr h rfl rfl rfl rfl)
@@ -1945,13 +1861,14 @@ theorem renderable_csiDispatch {v : Vt} (h : Renderable v) (s : CsiState) (final
   split
   · exact h
   · split
-    all_goals first
+    all_goals with_reducible first
       | exact h
+      | exact renderable_foldl (fun u i hu => renderable_tab hu) _ _ h
+      | exact renderable_foldl (fun u i hu => renderable_scrollUp hu) _ _ h
+      | exact renderable_foldl (fun u i hu => renderable_scrollDown hu) _ _ h
+      | exact renderable_foldl (fun u i hu => renderable_backTab hu) _ _ h
       | exact renderable_congr h rfl rfl rfl rfl
       | exact renderable_insertChars h _
-      | exact renderable_moveRel h _ _
-      | exact renderable_carriageReturn (renderable_moveRel h _ _)
-      | exact renderable_setCol h _
       | exact renderable_moveTo h _ _
       | exact renderable_eraseScreen h _
       | exact renderable_eraseLine h _
@@ -1960,16 +1877,12 @@ theorem renderable_csiDispatch {v : Vt} (h : Renderable v) (s : CsiState) (final
       | exact renderable_deleteChars h _
       | exact renderable_eraseChars h _
       | exact renderable_setModes h _ _ _
-      | exact renderable_foldl (fun u i hu => renderable_tab hu) _ _ h
-      | exact renderable_foldl (fun u i hu => renderable_scrollUp hu) _ _ h
-      | exact renderable_foldl (fun u i hu => renderable_scrollDown hu) _ _ h
-      | exact renderable_foldl (fun u i hu => renderable_backTab hu) _ _ h
-      | (split <;> first
+      | (split <;> with_reducible first
           | exact renderable_applySgr h _
           | exact renderable_congr h rfl rfl rfl rfl
           | exact h
           | (dsimp only
-             split <;> first
+             split <;> with_reducible first
               | exact h
               | (refine renderable_moveTo_congr h ?_ ?_ ?_ ?_ 0 0 <;> rfl)))
 
@@ -1981,7 +1894,7 @@ theorem renderable_acceptChar {v : Vt} (h : Renderable v) (n : Nat) :
 theorem renderable_ctl {v : Vt} (h : Renderable v) (b : UInt8) : Renderable (v.ctl b) := by
   unfold Vt.ctl
   split
-  all_goals first
+  all_goals with_reducible first
     | exact renderable_congr h rfl rfl rfl rfl
     | exact renderable_backspace h
     | exact renderable_tab h
@@ -2012,8 +1925,7 @@ theorem renderable_acceptChar_congr {v w : Vt} (h : Renderable v)
 
 theorem renderable_stepGround {v : Vt} (h : Renderable v) (b : UInt8) :
     Renderable (v.stepGround b) := by
-  unfold Vt.stepGround
-  repeat' split
+  fun_cases Vt.stepGround v b
   all_goals
     grind [renderable_congr, renderable_ctl, renderable_acceptChar,
       renderable_acceptChar_congr]
@@ -2022,7 +1934,7 @@ theorem renderable_stepEsc {v : Vt} (h : Renderable v) (b : UInt8) :
     Renderable (v.stepEsc b) := by
   unfold Vt.stepEsc
   split
-  all_goals first
+  all_goals with_reducible first
     | exact h
     | exact renderable_congr h rfl rfl rfl rfl
     | exact renderable_congr (renderable_lineFeed h) rfl rfl rfl rfl
@@ -2043,9 +1955,8 @@ theorem renderable_stepEscInter {v : Vt} (h : Renderable v) (i b : UInt8) :
 
 theorem renderable_stepCsi {v : Vt} (h : Renderable v) (s : CsiState) (b : UInt8) :
     Renderable (v.stepCsi s b) := by
-  unfold Vt.stepCsi
-  repeat' split
-  all_goals first
+  fun_cases Vt.stepCsi v s b
+  all_goals with_reducible first
     | exact renderable_congr h rfl rfl rfl rfl
     | exact renderable_csiFinish h _ _
     | exact renderable_ctl h _
@@ -2054,7 +1965,7 @@ theorem renderable_stepOsc {v : Vt} (h : Renderable v) (acc : Array UInt8) (e : 
     (b : UInt8) : Renderable (v.stepOsc acc e b) := by
   unfold Vt.stepOsc
   repeat' split
-  all_goals first
+  all_goals with_reducible first
     | exact renderable_oscFinish h _
     | exact renderable_congr h rfl rfl rfl rfl
 
@@ -2076,7 +1987,7 @@ theorem renderable_step {v : Vt} (h : Renderable v) (b : UInt8) : Renderable (v.
     · exact renderable_congr h rfl rfl rfl rfl
     · exact h
   split
-  all_goals first
+  all_goals with_reducible first
     | exact renderable_stepGround h' _
     | exact renderable_stepEsc h' _
     | exact renderable_stepEscInter h' _ _
@@ -2093,10 +2004,6 @@ theorem renderable_feed {v : Vt} (h : Renderable v) (bytes : List UInt8) :
 theorem renderable_quiesce {v : Vt} (h : Renderable v) : Renderable v.quiesce :=
   renderable_congr h rfl rfl rfl rfl
 
-end Linger.Core.Vt
-
-namespace Linger.Core.Vt
-
 /-! #### Resize
 
 The last operation that writes cells. Both `resizeRow` and `Vt.resize`'s `fit`
@@ -2108,14 +2015,8 @@ default. Generic in the element type, because `resizeRow` maps over cells and
 `Vt.resize`'s `fit` maps over rows. -/
 theorem getD_map_range {α : Type} (f : Nat → α) (n x : Nat) (d : α) :
     ((Array.range n).map f).getD x d = if x < n then f x else d := by
-  by_cases hb : x < n
-  · rw [ite_eq_left hb]
-    have hsz : x < ((Array.range n).map f).size := by simp [hb]
-    rw [Array.getD, dite_eq_left hsz]
-    simp
-  · rw [ite_eq_right hb]
-    have hsz : ¬ x < ((Array.range n).map f).size := by simpa using hb
-    rw [Array.getD, dite_eq_right hsz]
+  simp only [Array.getD_eq_getD_getElem?, Array.getElem?_map, Array.getElem?_range]
+  split <;> simp
 
 theorem cells_map_range (f : Nat → Cell) (n : Nat) (hf : ∀ i, CellOk (f i)) :
     ∀ x, CellOk (Row.at ((Array.range n).map f) x) := by

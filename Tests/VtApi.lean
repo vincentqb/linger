@@ -8,12 +8,24 @@ friend-import fixtures in `Tests.Vt`. -/
 
 open Linger.Core.Vt
 
-#check (((Vt.init 2 1).feed [0x61]).step 0x62 |>.resize 3 2 |>.quiesce).colCount
+example : Nat := (((Vt.init 2 1).feed [0x61]).step 0x62 |>.resize 3 2 |>.quiesce).colCount
 
-#check_failure (Vt.init 2 1).putCell 0 0 { base := '\x1b', width := 1 }
+/-- does not contain `Linger.Core.Vt.Vt.putCell` -/
+#guard_msgs (error, substring := true) in
+#check (Vt.init 2 1).putCell 0 0 { base := '\x1b', width := 1 }
 
-#check_failure (Vt.init 2 1).printPut '\x1b' 1
+/-- does not contain `Linger.Core.Vt.Vt.printPut` -/
+#guard_msgs (error, substring := true) in
+#check (Vt.init 2 1).printPut '\x1b' 1
 
-#check_failure (Vt.init 2 1).printMark 'x'
+/-- does not contain `Linger.Core.Vt.Vt.printMark` -/
+#guard_msgs (error, substring := true) in
+#check (Vt.init 2 1).printMark 'x'
 
-#check_failure (Vt.init 2 1).stepCsi { params := Array.replicate 17 (0, false) } 0x3F
+/-- does not contain `Linger.Core.Vt.Vt.stepCsi` -/
+#guard_msgs (error, substring := true) in
+#check (Vt.init 2 1).stepCsi { params := Array.replicate 17 (0, false) } 0x3F
+
+/-- Repr Vt -/
+#guard_msgs (error, substring := true) in
+#check repr (Vt.init 2 1)

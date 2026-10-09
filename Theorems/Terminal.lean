@@ -7,10 +7,7 @@ import all Linger.Core.Vt
 import all Linger.Core.Render
 import all Theorems.Render
 
--- No `public section`: a **public** declaration's type may not mention a private
--- field, and `Vt`'s are private now (the seal, `specs/archive/vt-toolkit.md` Step 1).
--- Module-private is the default, so consumers reach in with `import all`. See the
--- longer note in `Theorems/Vt.lean`.
+-- Module-private by default: `Vt`'s fields are sealed (see `Theorems/Vt/State.lean`).
 
 /-! # §Terminal — owned terminal queries without client dependence
 
@@ -101,24 +98,6 @@ theorem fixed_replies_exact :
       statusReply true = [ESC, 0x5B, 0x3F, 0x30, 0x6E] ∧
       decrqssReply = [ESC, 0x50, 0x30, 0x24, 0x72, ESC, STFinal] := by
   decide
-
-/-- Dynamic replies expose only the sampled state named by the contract. -/
-theorem cprReply_exact (v : Vt) (private_ : Bool) :
-    cprReply v private_ =
-      [ESC, 0x5B] ++ (if private_ then [0x3F] else []) ++ digits (cprRow v) ++ [0x3B] ++
-        digits (v.cursor.x + 1) ++
-        [0x52] := by
-  rfl
-
-theorem textAreaReply_exact (v : Vt) :
-    textAreaReply v =
-      [ESC, 0x5B, 0x38, 0x3B] ++ digits v.rows ++ [0x3B] ++ digits v.cols ++ [0x74] := by
-  rfl
-
-theorem xtgetcapReply_exact (payload : Bytes) :
-    xtgetcapReply payload =
-      [ESC, 0x50, 0x30, 0x2B, 0x72] ++ payload.filter capByte ++ [ESC, STFinal] := by
-  rfl
 
 /-- An owned request is excluded from presentation output and contributes its
 single prescribed reply stream. Empty is the table's deliberate zero reply. -/
@@ -228,24 +207,27 @@ theorem noNl_xtgetcapReply (payload : Bytes) : NoNl (xtgetcapReply payload) := b
 
 theorem noNl_cprReply (v : Vt) (p : Bool) : NoNl (cprReply v p) := by
   cases p <;> (rw [cprReply]; repeat' apply NoNl.append) <;>
-    first
-    | exact noNl_digits _
-    | exact noNl_lit (by decide)
+    with_reducible
+      first
+      | exact noNl_digits _
+      | exact noNl_lit (by decide)
 
 theorem noNl_textAreaReply (v : Vt) : NoNl (textAreaReply v) := by
   rw [textAreaReply]
   repeat' apply NoNl.append
   all_goals
-    first
-    | exact noNl_digits _
-    | exact noNl_lit (by decide)
+    with_reducible
+      first
+      | exact noNl_digits _
+      | exact noNl_lit (by decide)
 
 /-- Every reply `classifyCsi` can name is terminator-free. -/
 theorem classifyCsi_reply_noNl (v : Vt) (seq r : Bytes) (h : classifyCsi v seq = .owned r) :
     NoNl r := by
-  unfold classifyCsi at h
-  repeat' split at h
+  revert h
+  fun_cases classifyCsi v seq
   all_goals
+    intro h
     first
     |
       (injection h with e; subst e;
@@ -260,9 +242,10 @@ theorem classifyOsc_reply_noNl (seq r : Bytes) (h : classifyOsc seq = .owned r) 
   unfold classifyOsc at h
   repeat' split at h
   all_goals
-    first
-    | (injection h with e; subst e; exact noNl_lit (by decide))
-    | exact Decision.noConfusion h
+    with_reducible
+      first
+      | (injection h with e; subst e; exact noNl_lit (by decide))
+      | exact Decision.noConfusion h
 
 /-- `complete` produces a terminator-free reply whenever the decision it is given
 does. `.unowned` produces no reply at all. -/
@@ -322,21 +305,6 @@ theorem feed_append (v : Vt) (s : Scan) (a b : Bytes) :
     simp only [List.cons_append, feed]
     rw [ih]
     simp only [List.append_assoc]
-
-/-- Projection forms of the full law, used by protocol-specific proofs. -/
-theorem feed_append_visible (v : Vt) (s : Scan) (a b : Bytes) :
-    (feed v s (a ++ b)).visible =
-      (feed v s a).visible ++ (feed (feed v s a).vt (feed v s a).scan b).visible := by
-  rw [feed_append]
-
-theorem feed_append_replies (v : Vt) (s : Scan) (a b : Bytes) :
-    (feed v s (a ++ b)).replies =
-      (feed v s a).replies ++ (feed (feed v s a).vt (feed v s a).scan b).replies := by
-  rw [feed_append]
-
-theorem feed_append_scan (v : Vt) (s : Scan) (a b : Bytes) :
-    (feed v s (a ++ b)).scan = (feed (feed v s a).vt (feed v s a).scan b).scan := by
-  rw [feed_append]
 
 /-- The mediator observes every byte but does not alter emulator semantics. -/
 theorem feed_vt (v : Vt) (s : Scan) (bytes : Bytes) : (feed v s bytes).vt = v.feed bytes := by

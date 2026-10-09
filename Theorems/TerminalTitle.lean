@@ -14,6 +14,7 @@ namespace Linger.Core.Terminal.Title
 open Linger.Core.Vt (Vt)
 open Linger.Core.Render
 
+/-- A title payload never exceeds `maxChars` characters. -/
 public theorem payload_bound (title : String) : (payload title).length ≤ maxChars := by
   simp only [payload, List.length_map, List.length_take]
   omega
@@ -30,6 +31,7 @@ public theorem payload_append (left right : String) (h : left.length + right.len
   simp only [payload, String.toList_append, List.take_of_length_le hb, List.take_of_length_le hl,
     List.take_of_length_le hr, List.map_append]
 
+/-- Every payload character is printable: no C0, DEL or C1 control survives. -/
 public theorem payload_safe (title : String) (c : Char) (h : c ∈ payload title) :
     0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0) := by
   simp only [payload, List.mem_map] at h
@@ -46,9 +48,6 @@ public theorem payload_safe (title : String) (c : Char) (h : c ∈ payload title
       simp only [Bool.and_eq_true, decide_eq_true_eq, not_and] at hx
       exact ⟨hs.1, hs.2, fun h => hx h.1 h.2⟩
 
-theorem ansi_framing (title : String) :
-    ansi title = [0x1B, 0x5D, 0x32, 0x3B] ++ utf8s (payload title) ++ [0x07] := rfl
-
 /-- The payload itself cannot introduce an ESC or BEL to escape the title. -/
 public theorem ansi_payload_safe (title : String) (b : UInt8) (h : b ∈ utf8s (payload title)) :
     b ≥ 0x20 ∧ b ≠ 0x7F := utf8s_no_ctl _ b h
@@ -64,9 +63,11 @@ theorem ansi_ends (title : String) : Ends (ansi title) := by
   simpa only [ansi, escB, List.append_assoc, List.cons_append, List.nil_append] using
     ends_osc (payload title)
 
+/-- An observer away from a boundary gets no title update. -/
 public theorem update_waits (v : Vt) (title : String) (h : v.atBoundary = false) :
     update v title = [] := by simp [update, h]
 
+/-- At a boundary the update is the complete title sequence. -/
 public theorem update_complete (v : Vt) (title : String) (h : v.atBoundary = true) :
     update v title = ansi title := by simp [update, h]
 

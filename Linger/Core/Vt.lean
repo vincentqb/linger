@@ -35,12 +35,14 @@ namespace Linger.Core.Vt
 
 /-! ## Pen, color, cell -/
 
+/-- A cell colour: the terminal default, a 256-colour palette index, or 24-bit RGB. -/
 inductive Color where
   | default
   | idx (i : UInt8)
   | rgb (r g b : UInt8)
   deriving Repr, DecidableEq, Inhabited
 
+/-- The SGR state written into new cells: colours and text attributes. -/
 structure Pen where
   fg : Color := .default
   bg : Color := .default
@@ -74,6 +76,7 @@ everything else (1). Ranges cover what real TUI apps emit; a wrong
 width here mis-aligns a restore but can never crash anything (§Total
 does not depend on this table). -/
 
+/-- Is the codepoint zero-width: a combining mark, variation selector, ZWSP, ZWNJ, ZWJ or BOM? -/
 def isZeroWidth (c : Nat) : Bool :=
   (0x0300 ≤ c && c ≤ 0x036F) || -- combining diacritics
     (0x1AB0 ≤ c && c ≤ 0x1AFF) ||
@@ -85,6 +88,7 @@ def isZeroWidth (c : Nat) : Bool :=
     c == 0x200D ||
     c == 0xFEFF
 
+/-- Is the codepoint East Asian wide or an emoji, occupying two columns? -/
 def isWide (c : Nat) : Bool :=
   (0x1100 ≤ c && c ≤ 0x115F) || -- Hangul Jamo leads
     (0x2E80 ≤ c && c ≤ 0x303E) || -- CJK radicals … punctuation
@@ -102,6 +106,7 @@ def isWide (c : Nat) : Bool :=
     (0x20000 ≤ c && c ≤ 0x2FFFD) ||
     (0x30000 ≤ c && c ≤ 0x3FFFD)
 
+/-- Columns a glyph occupies: 0 if zero-width, 2 if wide, otherwise 1. -/
 def charWidth (c : Char) : Nat := if isZeroWidth c.toNat then 0 else if isWide c.toNat then 2 else 1
 
 /-- The codepoint a cell is allowed to store: a C0 control or DEL becomes
@@ -118,8 +123,10 @@ def printableChar (c : Char) : Char := if c.toNat < 0x20 || c.toNat == 0x7F then
 
 /-! ## Rows and the scrollback ring -/
 
+/-- One screen row of cells. -/
 abbrev Row := Array Cell
 
+/-- A row of `cols` erased cells keeping pen `p`'s background. -/
 def blankRow (cols : Nat) (p : Pen) : Row := Array.replicate cols (Cell.erased p)
 
 /-- The continuation cell a width-2 base owns: a blank carrying the base's
@@ -173,6 +180,24 @@ reasoning (`mend_pairOk`). Restructuring for provability rather than weakening
 the theorem, per AGENTS.md. -/
 def Row.mend (row : Row) : Row := (List.range row.size).foldl (fun r x => r.mendAt x) row
 
+/-- The same sweep without allocating the column list; compiled code uses it. -/
+def Row.mendFast (row : Row) : Row := Nat.fold row.size (fun x _ r => r.mendAt x) row
+
+/-- `Row.mend` and `Row.mendFast` are the same function, so compiled code runs the latter. -/
+@[csimp]
+theorem Row.mend_eq_mendFast : @Row.mend = @Row.mendFast := by
+  funext row
+  suffices h :
+    ∀ n (r : Row),
+      (List.range n).foldl (fun r x => r.mendAt x) r = Nat.fold n (fun x _ r => r.mendAt x) r
+    from h row.size row
+  intro n
+  induction n with
+  | zero =>
+    intro r; simp
+  | succ n ih =>
+    intro r; simp [List.range_succ, List.foldl_append, ih]
+
 /-- Scrollback: a ring over an array. `data.size ≤ cap` is §Bound's
 structural invariant — `push` either grows toward the cap or overwrites
 in place; nothing else writes. `start` indexes the oldest row. -/
@@ -181,12 +206,15 @@ structure Ring where
   start : Nat := 0
   deriving Repr, Inhabited
 
+/-- Maximum number of rows the scrollback ring retains. -/
 def sbCap : Nat := 10000
 
+/-- Append a row, overwriting the oldest once the ring holds `sbCap` rows. -/
 def Ring.push (r : Ring) (row : Row) : Ring :=
   if r.data.size < sbCap then { r with data := r.data.push row }
   else { data := r.data.setIfInBounds r.start row, start := (r.start + 1) % sbCap }
 
+/-- Number of rows retained. -/
 def Ring.size (r : Ring) : Nat := r.data.size
 
 /-- Oldest-first. -/
@@ -209,6 +237,7 @@ structure CsiState where
   ignore : Bool := false
   deriving Repr, DecidableEq, Inhabited
 
+/-- Parser state between bytes: ground, ESC, an ESC intermediate, CSI, OSC or a skipped string. -/
 inductive PState where
   | ground
   | esc -- after ESC
@@ -220,12 +249,14 @@ inductive PState where
 
 /-! ## The screen -/
 
+/-- Cursor position and its wrap-pending flag. -/
 structure Cursor where
   x : Nat := 0
   y : Nat := 0
   pending : Bool := false -- wrap-pending: at right margin, next print wraps
   deriving Repr, DecidableEq, Inhabited
 
+/-- The cursor and pen DECSC saves and DECRC restores. -/
 structure Saved where
   cur : Cursor := {}
   pen : Pen := {}
@@ -259,13 +290,13 @@ for the same reason: with a public constructor an importer could hold a `Vt` wit
 what a client can actually have and would prove nothing about the rest. The seal
 is what turns those predicates from decoration into guarantees.
 
-The friend set is `import all Linger.Core.Vt`: `Render`/`Terminal` (the rest of
-the toolkit), `Theorems/**`, `Tests/**`, and `Checkpoint` — the last **permanently**,
+The friend set is `import all Linger.Core.Vt`: `Render`/`Terminal`/`Replay` (the rest
+of the toolkit), `Theorems/**`, `Tests/**`, and `Checkpoint` — the last **permanently**,
 for `wVt`'s field reads and the one validating door below; its reason is written at
-that file's import. Exhaustiveness of that list is a compile-time property, not a
-theorem: adding a reader outside it fails to build. Break-verified from
-`Linger/Runtime/` (a read, a `{ v with … }`, a `Vt.mk`, a bare `⟨…⟩` and
-`(default : Vt)` each refuse, against a `v.colCount` control that compiles); see
+that file's import. The compiler accepts `import all` from any module, so
+`scripts/gates.sh` enforces that list; a reader without the import fails to build.
+Break-verified from `Linger/Runtime/` (a read, a `{ v with … }`, a `Vt.mk`, a bare `⟨…⟩`
+and `(default : Vt)` each refuse, against a `v.colCount` control that compiles); see
 SCRATCHPAD.md.
 
 ## Every door, and why the list is prose and not a theorem
@@ -356,19 +387,16 @@ structure Vt where
   private u8need : Nat := 0 -- UTF-8 continuation bytes still expected (≤ 3)
   private u8acc : Nat := 0 -- accumulated codepoint bits
   private bell : Bool := false -- sticky until the runtime clears it (activity signal)
-  -- No `deriving Repr`, and that is the seal's read half (the audit's R6). `Repr`
-  -- would be a PUBLIC, TOTAL reader of all twenty fields above — `repr (Vt.init 3 2)`
-  -- from a plain import printed every one — so with it the seal was write-hiding plus
-  -- no-forge only. Nothing consumed the instance; `Terminal.Result` and
-  -- `Session.State` shed their own `Repr`-only clauses with it. An importer cannot put
-  -- it back: `deriving instance Repr for Vt` from outside fails with `Unknown constant`
-  -- on all twenty private projections. Do not re-add it to make a `#eval` print; use
-  -- the read-only window below, or a friend import if you belong inside the toolkit.
 
+-- No `Repr`: it would publicly read every private field (Tests/VtApi pins this).
+
+/-- Clamp a requested dimension to [1, 1000]. -/
 def clampDim (n : Nat) : Nat := min (max n 1) 1000
 
+/-- The default tab ruler: a stop every eight columns after column 0. -/
 def defaultTabs (cols : Nat) : Array Bool := (Array.range cols).map (fun i => i % 8 == 0 && i != 0)
 
+/-- A fresh screen with each dimension clamped to [1, 1000]. -/
 def Vt.init (cols rows : Nat) : Vt :=
   let c := clampDim cols
   let r := clampDim rows
@@ -378,24 +406,17 @@ def Vt.init (cols rows : Nat) : Vt :=
 /-! ## The read-only window
 
 `Vt.init` is the door in; these are the window out, for consumers *outside* the
-toolkit (`Render`/`Terminal` are friends and read the fields directly). They exist
+toolkit (`Render`/`Terminal`/`Replay` are friends and read the fields directly). They exist
 because the seal blocks reads as well as writes, and `Linger/Core/Session.lean` —
 the daemon's session model, a client of the emulator and not part of it — needs
 geometry, cursor and the alt-screen flag to answer `linger info` and to decide
 whether a resize is a no-op.
 
-**Reads really are blocked, as of the `deriving Repr` removal** — before it, `Repr`
-was a public total reader and the seal was write-hiding plus no-forge only (the audit's
-R6). It holds against a re-derive: `deriving instance Repr for Vt` from a plain importer
-fails with `Unknown constant` on all twenty private projections, so an importer cannot
-reopen what these four accessors are the sanctioned way through. See SCRATCHPAD.md
-2026-09-14.
-
 Read-only is the point: a friend import would have let the daemon *forge* a `Vt`,
 which is exactly what the seal exists to prevent, so `Session` gets these instead.
 Grow the window on demand and keep it total — every one of these is a projection,
 so there is nothing here to get wrong, which is why the claims naming them
-(`Theorems/Vt.lean`) are equations rather than bounds. -/
+(`Theorems/Vt/State.lean`) are equations rather than bounds. -/
 
 /-- Screen width. The public reading of the sealed `cols`. -/
 def Vt.colCount (v : Vt) : Nat := v.cols
@@ -478,11 +499,11 @@ real 4×2 checkpoint — the `rows` byte, 2 → 3 — decoded to a state that is
 conclusion of `Theorems/Resume.lean`'s `resume_grid` for a state that came off disk. The
 grid's length is written as its own `rNat`, so nothing tied it to `rows`.
 
-The five deciders below are `Renderable`'s two clauses plus the tab ruler's length, in
-`Bool`. Each is a **named stage** with its own `iff` claim in `Theorems/Vt.lean`
+The deciders below are `Renderable`'s two clauses plus the tab ruler's length, in
+`Bool`. Each is a **named stage** with its own `iff` claim in `Theorems/Vt/Renderable.lean`
 (`decodedCharOk_iff` … `decodedRenderable_iff`) — for the reason `decodedOk` is one, and
 for one more: an `iff` per rung is what keeps the `Bool` and the `Prop` from drifting,
-and this is a five-rung ladder rather than one flat conjunction.
+and this is a ladder rather than one flat conjunction.
 
 **What is deliberately NOT checked: the scrollback ring's rows.** `Vt.resize` reinstalls
 the grid and the ruler at the new width and leaves the ring rows at their old one (no
@@ -569,7 +590,7 @@ nothing on disk to validate.
 Claimed by `Vt.ofDecoded_good` and `Vt.ofDecoded_renderable`/`Vt.ofDecoded_tabsOk`
 (nothing bad comes out), `Vt.ofDecoded_of_good` (nothing good is rejected) and
 `Vt.ofDecoded_none_of_cols_zero` / `Vt.ofDecoded_none_of_rows_mismatch` (the two canonical
-junk records are refused) in `Theorems/Vt.lean`. -/
+junk records are refused) in `Theorems/Vt/`. -/
 private def Vt.ofDecoded (cols rows : Nat) (grid : Array Row) (cursor : Cursor) (pen : Pen)
     (modes : Modes) (top bot : Nat) (tabs : Array Bool) (sb : Ring)
     (altGrid : Option (Array Row × Cursor × Pen)) (saved : Saved) (title : String)
@@ -584,17 +605,15 @@ private def Vt.ofDecoded (cols rows : Nat) (grid : Array Row) (cursor : Cursor) 
 
 /-! ## Grid primitives (all total) -/
 
+/-- Total row read; out of range is a blank row in the current pen. -/
 def Vt.getRow (v : Vt) (y : Nat) : Row := v.grid.getD y (blankRow v.cols v.pen)
 
 private def Vt.putCell (v : Vt) (x y : Nat) (c : Cell) : Vt :=
   let row := (v.getRow y).setIfInBounds x c
   { v with grid := v.grid.setIfInBounds y row }
 
+/-- Total cell read; out of range is a default cell. -/
 def Vt.getCell (v : Vt) (x y : Nat) : Cell := (v.getRow y).getD x default
-
-/-- Repair a half wide pair at one column. Grid only. -/
-private def Vt.mendAt (v : Vt) (x y : Nat) : Vt :=
-  { v with grid := v.grid.setIfInBounds y ((v.getRow y).mendAt x) }
 
 /-- Repair every pair in one row. Every cell-writing operation ends here, so
 the pair invariant holds by construction rather than per operation. -/
@@ -804,11 +823,8 @@ outright (they never appeared in `linger capture --history`), and at the right m
 cursor sits on the shadow with wrap pending — the one position no absolute
 cursor move can address.
 
-The `cx0 != 0` guard makes the step-left total rather than relying on the pair
-invariant: a shadow in column 0 is a broken pair (`Row.halfPair`) that no
-reachable state holds, but `cx0 - 1` on `Nat` would silently park the mark back
-on column 0 and the repair would then blank it away. `renderable_step` does not
-yet prove that state unreachable, so the guard carries it. -/
+Under `Renderable` (preserved by `renderable_step`) a column-0 shadow cannot occur; the
+`cx0 != 0` guard keeps the step-left total without that hypothesis. -/
 private def Vt.printMark (v : Vt) (ch : Char) : Vt :=
   let cx0 := if v.cursor.pending then v.cursor.x else v.cursor.x - 1
   let cx := if (v.getCell cx0 v.cursor.y).width == 0 && cx0 != 0 then cx0 - 1 else cx0
@@ -896,6 +912,7 @@ private def Vt.eraseChars (v : Vt) (n : Nat) : Vt :=
 
 /-! ## SGR -/
 
+/-- A 256-colour palette index, saturating at 255. -/
 def color256 (n : Nat) : Color := .idx (UInt8.ofNat (min n 255))
 
 /-- Apply one SGR parameter chain. Handles 38/48 in both `38;5;n` /
@@ -1028,6 +1045,8 @@ def resizeRow (row : Row) (cols : Nat) (p : Pen) : Row :=
   Row.mend
     ((Array.range cols).map (fun i => if i < row.size then row.getD i default else Cell.erased p))
 
+/-- Resize to clamped dimensions without reflow: keep the bottom rows, truncate or pad
+cells, and reset the scroll region and tab ruler. -/
 def Vt.resize (v : Vt) (cols rows : Nat) : Vt :=
   let c := clampDim cols
   let r := clampDim rows
@@ -1060,6 +1079,7 @@ def Vt.resize (v : Vt) (cols rows : Nat) : Vt :=
 
 /-! ## CSI dispatch -/
 
+/-- CSI parameter `i`, reading an omitted or zero value as `default_`. -/
 def CsiState.arg (s : CsiState) (i default_ : Nat) : Nat :=
   match (s.params.getD i (0, false)).1 with
   | 0 => default_
@@ -1101,6 +1121,9 @@ private def Vt.csiDispatch (v : Vt) (s : CsiState) (final : UInt8) : Vt :=
   if s.ignore then v
   else
     let a1 := s.arg 0 1 -- first arg, default 1
+    -- Repeat counts stop where the screen stops changing: CHT/CBT reach a margin within
+    -- `cols` moves and SU/SD blank the region within its height. Like tmux, SU therefore
+    -- pushes at most one region of history.
     match final with
     | 0x40 => v.insertChars a1 -- @ ICH
     | 0x41 => v.moveRel 0 (-(Int.ofNat a1)) -- A CUU
@@ -1111,16 +1134,16 @@ private def Vt.csiDispatch (v : Vt) (s : CsiState) (final : UInt8) : Vt :=
     | 0x46 => (v.moveRel 0 (-(Int.ofNat a1))).carriageReturn -- F CPL
     | 0x47 => v.setCol (a1 - 1) -- G CHA
     | 0x48 => v.moveTo (s.arg 1 1 - 1) (a1 - 1) -- H CUP
-    | 0x49 => (List.range a1).foldl (fun a _ => a.tab) v -- I CHT
+    | 0x49 => (List.range (min a1 v.cols)).foldl (fun a _ => a.tab) v -- I CHT
     | 0x4A => v.eraseScreen (s.arg 0 0) -- J ED
     | 0x4B => v.eraseLine (s.arg 0 0) -- K EL
     | 0x4C => v.insertLines a1 -- L IL
     | 0x4D => v.deleteLines a1 -- M DL
     | 0x50 => v.deleteChars a1 -- P DCH
-    | 0x53 => (List.range a1).foldl (fun a _ => a.scrollUp) v -- S SU
-    | 0x54 => (List.range a1).foldl (fun a _ => a.scrollDown) v -- T SD
+    | 0x53 => (List.range (min a1 (v.bot - v.top + 1))).foldl (fun a _ => a.scrollUp) v -- S SU
+    | 0x54 => (List.range (min a1 (v.bot - v.top + 1))).foldl (fun a _ => a.scrollDown) v -- T SD
     | 0x58 => v.eraseChars a1 -- X ECH
-    | 0x5A => (List.range a1).foldl (fun a _ => a.backTab) v -- Z CBT
+    | 0x5A => (List.range (min a1 v.cols)).foldl (fun a _ => a.backTab) v -- Z CBT
     | 0x60 => v.setCol (a1 - 1) -- ` HPA
     | 0x61 => v.moveRel (Int.ofNat a1) 0 -- a HPR
     | 0x64 => v.moveTo v.cursor.x (a1 - 1) -- d VPA, relative to DECOM's origin
@@ -1372,13 +1395,11 @@ def Vt.quiesce (v : Vt) :
 
 /-- Feed a `ByteArray` by converting at the call site.
 
-**Test-facing, and named as such** (pin-the-gaps item 5): the docstring here used
-to read "the runtime hands us `ByteArray`s; convert at the boundary", which was
-false — the daemon's pty path is `Terminal.feed s.vt s.scan chunk` on a
-`List UInt8` (`Linger/Core/Session.lean`), and this definition has no caller
-outside `Tests/`. It is kept because five fixtures use it and a convenience with
-five callers is reachable code, not the unproved-and-unreachable state
-`Theorems/Coverage.lean` rejects; what was wrong was the claim, not the function. -/
+**Test-facing, and named as such**: the daemon's pty path is
+`Terminal.feed s.vt s.scan chunk` on a `List UInt8` (`Linger/Core/Session.lean`), and
+this definition has no runtime caller. It is kept because `Tests/` and `E2E/` fixtures use
+it, and a convenience with callers is reachable code, not the unproved-and-unreachable
+state `Theorems/Coverage.lean` rejects. -/
 def Vt.feedBytes (v : Vt) (bytes : ByteArray) : Vt := v.feed bytes.toList
 
 end Linger.Core.Vt

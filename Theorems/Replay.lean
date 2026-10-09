@@ -53,80 +53,42 @@ theorem rows_uncons (row : Row) (rows : List Row) (pen : Pen) :
 the suffix. This also covers zero-byte transitions between stages. -/
 theorem next_faithful {budget : Nat} {p q : Plan} {bytes : Render.Bytes}
     (h : next budget p = some (bytes, q)) : remaining p = bytes ++ remaining q := by
-  rcases p with ⟨parts, pending⟩
-  cases hp : pending with
-  | cons b bs =>
-    simp [next, hp] at h
-    rcases h with ⟨rfl, rfl⟩
-    simp [remaining, ← List.append_assoc, List.take_append_drop]
-  | nil =>
-    cases parts with
-    | nil => simp [next, hp] at h
-    | cons part parts =>
-      cases part with
-      | bytes literal =>
-        simp [next, hp] at h
-        rcases h with ⟨rfl, rfl⟩
-        simp [remaining, partsBytes, partBytes]
-      | text text =>
-        simp only [next, hp] at h
-        split at h
-        next empty =>
-          cases h
-          simp [remaining, partsBytes, partBytes, String.Slice.copy_eq_empty_iff.mpr empty,
-            Render.utf8s]
-        next =>
-          cases h
-          simp only [remaining, partsBytes, List.flatMap_cons, List.nil_append]
-          rw [text_uncons]
-          simp [List.append_assoc]
-      | rows rows pen =>
-        cases rows with
-        | nil =>
-          simp [next, hp] at h
-          rcases h with ⟨rfl, rfl⟩
-          simp [remaining, partsBytes, partBytes, Render.rowsAnsi, Render.joinCRLF]
-        | cons row rows =>
-          simp [next, hp] at h
-          rcases h with ⟨rfl, rfl⟩
-          simp only [remaining, partsBytes, List.flatMap_cons, List.nil_append]
-          rw [rows_uncons]
-          simp [List.append_assoc]
+  revert h
+  fun_cases next budget p
+  all_goals
+    intro h
+    simp only [Option.some.injEq, Prod.mk.injEq, reduceCtorEq] at h
+  all_goals obtain ⟨rfl, rfl⟩ := h
+  · simp [remaining, ← List.append_assoc, List.take_append_drop]
+  · simp [remaining, partsBytes, partBytes, *]
+  · simp [remaining, partsBytes, partBytes, String.Slice.copy_eq_empty_iff.mpr ‹_›, Render.utf8s, *]
+  · simp only [remaining, partsBytes, List.flatMap_cons, List.nil_append, *]
+    rw [text_uncons]
+    simp [List.append_assoc]
+  · simp [remaining, partsBytes, partBytes, Render.rowsAnsi, Render.joinCRLF, *]
+  · simp only [remaining, partsBytes, List.flatMap_cons, List.nil_append, *]
+    rw [rows_uncons, ‹Render.rowAnsi _ _ = _›]
+    simp [List.append_assoc]
 
+/-- A step never emits more bytes than its budget. -/
 public theorem next_bounded {budget : Nat} {p q : Plan} {bytes : Render.Bytes}
     (h : next budget p = some (bytes, q)) : bytes.length ≤ budget := by
-  rcases p with ⟨parts, pending⟩
-  cases pending with
-  | cons b bs =>
-    simp [next] at h
-    rcases h with ⟨rfl, rfl⟩
-    simp only [List.length_take]
-    exact Nat.min_le_left _ _
-  | nil =>
-    cases parts with
-    | nil => simp [next] at h
-    | cons part parts =>
-      cases part with
-      | bytes literal =>
-        simp [next] at h; rcases h with ⟨rfl, rfl⟩; simp
-      | text text =>
-        simp only [next] at h
-        split at h <;> cases h <;> simp
-      | rows rows pen => cases rows <;> simp [next] at h <;> rcases h with ⟨rfl, rfl⟩ <;> simp
+  revert h
+  fun_cases next budget p
+  all_goals
+    intro h
+    simp only [Option.some.injEq, Prod.mk.injEq, reduceCtorEq] at h
+  all_goals
+    obtain ⟨rfl, rfl⟩ := h
+    simp [List.length_take, Nat.min_le_left]
 
 theorem next_done {budget : Nat} {p : Plan} (h : next budget p = none) : remaining p = [] := by
-  rcases p with ⟨parts, pending⟩
-  cases pending with
-  | cons b bs => simp [next] at h
-  | nil =>
-    cases parts with
-    | nil => rfl
-    | cons part parts =>
-      cases part with
-      | bytes literal => simp [next] at h
-      | text text =>
-        simp only [next] at h; split at h <;> contradiction
-      | rows rows pen => cases rows <;> simp [next] at h
+  revert h
+  fun_cases next budget p
+  all_goals
+    intro h
+    simp only [reduceCtorEq] at h
+  simp [remaining, partsBytes, *]
 
 /-- A positive step consumes bytes or one unit of structural work. The measure
 does not appear in the running program; it just rules out a stuck cursor. -/
@@ -144,42 +106,24 @@ theorem next_progress {budget : Nat} {p q : Plan} {bytes : Render.Bytes} (positi
     (h : next budget p = some (bytes, q)) : work q < work p := by
   have lengths := congrArg List.length (next_faithful h)
   simp only [List.length_append] at lengths
-  rcases p with ⟨parts, pending⟩
-  cases pending with
-  | cons b bs =>
-    simp [next] at h
-    rcases h with ⟨rfl, rfl⟩
-    simp only [work]
-    simp only [List.length_take, List.length_cons] at lengths
+  revert h
+  fun_cases next budget p
+  all_goals
+    intro h
+    simp only [Option.some.injEq, Prod.mk.injEq, reduceCtorEq] at h
+  all_goals obtain ⟨rfl, rfl⟩ := h
+  · simp only [work]
+    simp only [List.length_take, ‹p.pending = _›, List.length_cons] at lengths ⊢
     omega
-  | nil =>
-    cases parts with
-    | nil => simp [next] at h
-    | cons part parts =>
-      cases part with
-      | bytes literal =>
-        simp [next] at h
-        rcases h with ⟨rfl, rfl⟩
-        simp [work, sourceCount] at *
-        omega
-      | text text =>
-        simp only [next] at h
-        split at h
-        next empty =>
-          cases h
-          simp [work, sourceCount, String.Slice.copy_eq_empty_iff.mpr empty] at *
-          omega
-        next nonempty =>
-          cases h
-          have pos : 0 < text.copy.toList.length := by
-            apply List.length_pos_iff.mpr
-            simpa using nonempty
-          simp [work, sourceCount] at *
-          omega
-      | rows rows pen =>
-        cases rows <;> simp [next] at h <;> rcases h with ⟨rfl, rfl⟩ <;>
-          simp [work, sourceCount] at * <;>
-          omega
+  · simp_all [work, sourceCount]
+  · simp_all [work, sourceCount, String.Slice.copy_eq_empty_iff.mpr ‹_›]
+  · rename_i nonempty
+    have pos : 0 < (‹String.Slice›).copy.toList.length :=
+      List.length_pos_iff.mpr (by simpa using nonempty)
+    simp_all [work, sourceCount]
+    omega
+  · simp_all [work, sourceCount]
+  · simp_all [work, sourceCount]
 
 /-- Sum of literal stages, independent of all screen paints. -/
 def literalBytes (parts : List Part) : Nat :=
@@ -207,71 +151,41 @@ def storageBudget (p : Plan) : Nat :=
 
 theorem next_storage {budget : Nat} {p q : Plan} {bytes : Render.Bytes}
     (h : next budget p = some (bytes, q)) : storageBudget q ≤ storageBudget p := by
-  rcases p with ⟨parts, pending⟩
-  cases pending with
-  | cons b bs =>
-    simp [next] at h
-    rcases h with ⟨rfl, rfl⟩
-    simp only [storageBudget, List.length_drop, List.length_cons]
+  revert h
+  fun_cases next budget p
+  all_goals
+    intro h
+    simp only [Option.some.injEq, Prod.mk.injEq, reduceCtorEq] at h
+  all_goals obtain ⟨rfl, rfl⟩ := h
+  · simp only [storageBudget, List.length_drop]
     omega
-  | nil =>
-    cases parts with
-    | nil => simp [next] at h
-    | cons part parts =>
-      cases part with
-      | bytes literal =>
-        simp [next] at h
-        rcases h with ⟨rfl, rfl⟩
-        simp [storageBudget, literalBytes, largestPaint]
-        omega
-      | text text =>
-        simp only [next] at h
-        split at h
-        next =>
-          cases h
-          simp [storageBudget, literalBytes, largestPaint]
-          omega
-        next =>
-          cases h
-          have bound := Render.utf8s_length_le (text.take 4096).copy.toList
-          simp only [String.Slice.toList_copy_take, List.length_take] at bound
-          simp [storageBudget, literalBytes, largestPaint]
-          omega
-      | rows rows pen =>
-        cases rows with
-        | nil =>
-          simp [next] at h
-          rcases h with ⟨rfl, rfl⟩
-          simp [storageBudget, literalBytes, largestPaint, largestRow]
-        | cons row rows =>
-          simp [next] at h
-          rcases h with ⟨rfl, rfl⟩
-          have cost := Render.rowAnsi_len_add_crlf_le_cost row pen
-          have sep : (if rows = [] then ([] : Render.Bytes) else [0x0D, 0x0A]).length ≤ 2 := by
-            split <;> simp
-          simp only [storageBudget, literalBytes, List.map_cons, List.sum_cons, Nat.zero_add,
-            largestPaint, largestRow, List.foldr_cons, List.length_append, List.length_nil,
-            Nat.zero_max]
-          omega
+  · simp_all [storageBudget, literalBytes, largestPaint]
+    omega
+  · simp_all [storageBudget, literalBytes, largestPaint]
+    omega
+  · have bound := Render.utf8s_length_le (‹String.Slice›.take 4096).copy.toList
+    simp only [String.Slice.toList_copy_take, List.length_take] at bound
+    simp_all [storageBudget, literalBytes, largestPaint]
+    omega
+  · simp_all [storageBudget, literalBytes, largestPaint, largestRow]
+  · rename_i row rows pen _ _ _ _ hrow
+    have cost := Render.rowAnsi_len_add_crlf_le_cost row pen
+    rw [hrow] at cost
+    have sep : (if rows.isEmpty = true then ([] : Render.Bytes) else [0x0D, 0x0A]).length ≤ 2 := by
+      split <;> simp
+    simp_all [storageBudget, literalBytes, largestPaint, largestRow]
+    omega
 
 theorem next_parts {budget : Nat} {p q : Plan} {bytes : Render.Bytes}
     (h : next budget p = some (bytes, q)) : q.parts.length ≤ p.parts.length := by
-  rcases p with ⟨parts, pending⟩
-  cases pending with
-  | cons b bs =>
-    simp [next] at h
-    rcases h with ⟨rfl, rfl⟩
-    simp
-  | nil =>
-    cases parts with
-    | nil => simp [next] at h
-    | cons part parts =>
-      cases part with
-      | bytes literal =>
-        simp [next] at h; rcases h with ⟨rfl, rfl⟩; simp
-      | text text =>
-        simp only [next] at h; split at h <;> cases h <;> simp
-      | rows rows pen => cases rows <;> simp [next] at h <;> rcases h with ⟨rfl, rfl⟩ <;> simp
+  revert h
+  fun_cases next budget p
+  all_goals
+    intro h
+    simp only [Option.some.injEq, Prod.mk.injEq, reduceCtorEq] at h
+  all_goals
+    obtain ⟨rfl, rfl⟩ := h
+    simp_all
 
 /-- Finite prefixes of actual cursor steps, with their concatenated payload. -/
 inductive Steps : Plan → Render.Bytes → Plan → Prop where

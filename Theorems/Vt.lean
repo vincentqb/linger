@@ -169,11 +169,8 @@ theorem u8Ok_step {v : Vt} (b : UInt8) (h : U8Ok v) : U8Ok (v.step b) := by
                   rw [← hn]; exact hz)
           · exact ha))
 
-theorem u8Ok_feed : ∀ (bs : List UInt8) {v : Vt}, U8Ok v → U8Ok (v.feed bs)
-  | [], _, h => h
-  | b :: bs, v, h => by
-    rw [show v.feed (b :: bs) = (v.step b).feed bs from rfl]
-    exact u8Ok_feed bs (u8Ok_step b h)
+theorem u8Ok_feed : ∀ (bs : List UInt8) {v : Vt}, U8Ok v → U8Ok (v.feed bs) := fun bs {v} h =>
+  invariant_foldl U8Ok Vt.step (fun _ b hw => u8Ok_step b hw) bs v h
 
 /-- **The fourth component the resume rung needs, and the only one the door does not
 already claim.** `Vt.ofDecoded` *fixes* `u8need := 0` and `u8acc := 0` rather than
@@ -210,10 +207,9 @@ theorem u8Ok_of_liveReachable {v : Vt} (h : LiveReachableVt v) : U8Ok v := by
     intro _; rfl
   | ofDecoded hd => exact ofDecoded_u8Ok hd
 
-/-- **…and the ruler, which is `specs/archive/vt-toolkit.md` Step 3's harvest.** The one
-hypothesis `Render.restore_tabs_reachable` still had to ask for —
-`v.tabs.size = v.cols` — is a fact about every state a live session can hold, so a
-caller with reachability no longer has to supply it. Neither `Good` nor
+/-- **…and the ruler, which is `specs/archive/vt-toolkit.md` Step 3's harvest.** The ruler
+premise of `Render.restore_tabs_any` — `v.tabs.size = v.cols` — is a fact about every
+state a live session can hold, so a caller with reachability discharges it here. Neither `Good` nor
 `Renderable` implies it (the first bounds the dimensions, the second speaks of the
 grid), which is why it needed the §Ruler layer of its own rather than a clause on
 one of them.
@@ -305,11 +301,7 @@ theorem csiFinish_omitted (v : Vt) (s : CsiState) (final : UInt8) (hh : s.haveCu
   rw [ite_eq_right (by simp [hh])]
   split
   · rename_i he
-    have hz : s.params.size = 0 := by
-      change s.params.toList.length = 0
-      rw [he]
-      rfl
-    omega
+    simp [Array.toList_eq_nil_iff.mp he] at hp
   · rfl
 
 /-- Sixteen closed fields leave no room for the final field, whether explicit
@@ -321,11 +313,7 @@ theorem csiFinish_overflow (v : Vt) (s : CsiState) (final : UInt8) (hp : 16 ≤ 
   · simp [Vt.csiDispatch]
   · split
     · rename_i he
-      have hz : s.params.size = 0 := by
-        change s.params.toList.length = 0
-        rw [he]
-        rfl
-      omega
+      simp [Array.toList_eq_nil_iff.mp he] at hp
     · simp [csiPush_of_ge s false hp, Vt.csiDispatch]
 
 /-- Numeric and omitted-value invariants; `Good.csiLe` separately bounds the count. -/
@@ -378,10 +366,11 @@ theorem csiOk_stepEsc {v : Vt} (h : CsiOk v) (b : UInt8) : CsiOk (v.stepEsc b) :
   unfold Vt.stepEsc
   repeat' split
   all_goals
-    first
-    | exact h
-    | exact csiOk_set csiValuesOk_empty
-    | simp [CsiOk, Vt.init]
+    with_reducible
+      first
+      | exact h
+      | exact csiOk_set csiValuesOk_empty
+      | simp [CsiOk, Vt.init]
 
 theorem csiOk_stepEscInter (v : Vt) (i b : UInt8) : CsiOk (v.stepEscInter i b) := by
   unfold Vt.stepEscInter
@@ -390,26 +379,16 @@ theorem csiOk_stepEscInter (v : Vt) (i b : UInt8) : CsiOk (v.stepEscInter i b) :
 
 theorem csiOk_stepCsi {v : Vt} {s : CsiState} (h : CsiOk v) (hs : CsiValuesOk s) (b : UInt8) :
     CsiOk (v.stepCsi s b) := by
-  unfold Vt.stepCsi
-  split
+  fun_cases Vt.stepCsi v s b
   · exact csiOk_set ⟨Nat.min_le_right _ _, hs.paramsLe, by simp⟩
-  split
   · exact csiOk_set (csiValuesOk_push hs false)
-  split
   · exact csiOk_set (csiValuesOk_push hs true)
-  split
   · exact csiOk_set ⟨hs.curLe, hs.paramsLe, hs.emptyCur⟩
-  split
   · exact csiOk_set ⟨hs.curLe, hs.paramsLe, hs.emptyCur⟩
-  split
-  · split
-    · simp [CsiOk]
-    · simp [CsiOk, Vt.csiFinish]
-  split
   · simp [CsiOk]
-  split
+  · simp [CsiOk, Vt.csiFinish]
+  · simp [CsiOk]
   · exact h
-  split
   · exact csiOk_of_pstate_eq (ps_ctl v b) h
   · simp [CsiOk]
 
@@ -438,11 +417,8 @@ theorem csiOk_step {v : Vt} (h : CsiOk v) (b : UInt8) : CsiOk (v.step b) := by
   · exact csiOk_stepOsc _ _ _ _
   · exact csiOk_stepStr _ _ _
 
-theorem csiOk_feed : ∀ (bs : List UInt8) {v : Vt}, CsiOk v → CsiOk (v.feed bs)
-  | [], _, h => h
-  | b :: bs, v, h => by
-    rw [show v.feed (b :: bs) = (v.step b).feed bs from rfl]
-    exact csiOk_feed bs (csiOk_step h b)
+theorem csiOk_feed : ∀ (bs : List UInt8) {v : Vt}, CsiOk v → CsiOk (v.feed bs) := fun bs {v} h =>
+  invariant_foldl CsiOk Vt.step (fun _ b hw => csiOk_step hw b) bs v h
 
 /-- The decoder starts in ground state, so it needs no new acceptance condition. -/
 theorem ofDecoded_csiOk {cols rows : Nat} {grid : Array Row} {cursor : Cursor} {pen : Pen}
@@ -478,10 +454,6 @@ theorem csiPush_omitted_of_liveReachable {v : Vt} (h : LiveReachableVt v) {s : C
   rw [csiPush_of_lt s sub hs]
   simp only [(csiOk_of_liveReachable h s hp).emptyCur hh, Nat.zero_min]
 
-end Linger.Core.Vt
-
-namespace Linger.Core.Vt
-
 /-! ## §Restore — the sticky receiver state, as one bundled projection
 
 This layer supplies `Render.restore`'s receiver-quantified value
@@ -509,7 +481,6 @@ structure Sticky where
   g1 : Bool
   so : Bool
   alt : Bool
-  deriving DecidableEq, Repr
 
 def stick (v : Vt) : Sticky :=
   { rows := v.rows, top := v.top, bot := v.bot, g0 := v.g0Line, g1 := v.g1Line, so := v.shiftOut,
@@ -535,32 +506,14 @@ theorem stick_alt (u : Vt) : (stick u).alt = u.altGrid.isSome := by rfl
 
 /-! ### The framed operations: one `rw` each, every field at once -/
 
-theorem stick_putCell (v : Vt) (x y : Nat) (c : Cell) : stick (v.putCell x y c) = stick v := by
-  rw [frame_putCell]; rfl
-
 theorem stick_moveTo (v : Vt) (x y : Nat) : stick (v.moveTo x y) = stick v := by
   rw [frame_moveTo]; rfl
-
-theorem stick_moveRel (v : Vt) (dx dy : Int) : stick (v.moveRel dx dy) = stick v := by
-  rw [frame_moveRel]; rfl
 
 theorem stick_setCol (v : Vt) (x : Nat) : stick (v.setCol x) = stick v := by
   rw [frame_setCol]; rfl
 
-theorem stick_clearPending (v : Vt) : stick v.clearPending = stick v := by
-  rw [frame_clearPending]; rfl
-
-theorem stick_carriageReturn (v : Vt) : stick v.carriageReturn = stick v := by
-  rw [frame_carriageReturn]; rfl
-
 theorem stick_backspace (v : Vt) : stick v.backspace = stick v := by
   rw [frame_backspace]; rfl
-
-theorem stick_tab (v : Vt) : stick v.tab = stick v := by
-  rw [frame_tab]; rfl
-
-theorem stick_backTab (v : Vt) : stick v.backTab = stick v := by
-  rw [frame_backTab]; rfl
 
 theorem stick_lineFeed (v : Vt) : stick v.lineFeed = stick v := by
   rw [frame_lineFeed]; rfl
@@ -581,14 +534,6 @@ theorem lineFeed_interior (v : Vt) (hy : v.cursor.y < v.bot) (hlt : v.bot < v.ro
       (show ¬(v.cursor.y == v.bot) = true from by
         simp; omega),
     ite_eq_left (show v.cursor.y + 1 < v.rows from by omega)]
-
-theorem grid_lineFeed_interior (v : Vt) (hy : v.cursor.y < v.bot) (hlt : v.bot < v.rows) :
-    v.lineFeed.grid = v.grid := by rw [lineFeed_interior v hy hlt]
-
-theorem getCell_lineFeed_interior (v : Vt) (x y : Nat) (hy : v.cursor.y < v.bot)
-    (hlt : v.bot < v.rows) : v.lineFeed.getCell x y = v.getCell x y := by
-  unfold Vt.getCell Vt.getRow
-  rw [lineFeed_interior v hy hlt]
 
 /-! ### The positive scroll specification
 
@@ -712,15 +657,6 @@ theorem scrollUpIn_sb_push (v : Vt) (bot : Nat) (hbot : bot = v.rows - 1)
       (show (true && (0 : Nat) == 0 && bot == v.rows - 1 && v.altGrid.isNone) = true from by
         simp [hbot, halt])]
 
-/-- …and a scroll that is not allowed to push does not touch scrollback. `frame_scrollUpIn`
-cannot say this: `sb` is inside the footprint it declares, so this is the positive fact
-about the branch not taken — what the `Fixes (·.sb)` tail needs of `DL`, `IL` and `SU`. -/
-theorem scrollUpIn_sb_of_false (v : Vt) (top bot : Nat) :
-    (v.scrollUpIn top bot false).sb = v.sb := by
-  unfold Vt.scrollUpIn
-  dsimp only
-  rw [ite_eq_right (by simp)]
-
 /-- **A line feed at the region bottom scrolls**: `lineFeed_interior`'s twin, and the
 bridge Step 3's `crlf_scroll_step` composes with the two theorems above. -/
 theorem lineFeed_scroll (v : Vt) (hy : v.cursor.y = v.bot) :
@@ -759,74 +695,18 @@ theorem take_succ_getD {α} [Inhabited α] (l : List α) (n : Nat) (h : n < l.le
 theorem stick_reverseIndex (v : Vt) : stick v.reverseIndex = stick v := by
   rw [frame_reverseIndex]; rfl
 
-theorem stick_scrollUpIn (v : Vt) (t b : Nat) (a : Bool) :
-    stick (v.scrollUpIn t b a) = stick v := by
-  rw [frame_scrollUpIn]; rfl
-
-theorem stick_scrollDownIn (v : Vt) (t b : Nat) : stick (v.scrollDownIn t b) = stick v := by
-  rw [frame_scrollDownIn]; rfl
-
-theorem stick_scrollUp (v : Vt) : stick v.scrollUp = stick v := stick_scrollUpIn _ _ _ _
-
-theorem stick_scrollDown (v : Vt) : stick v.scrollDown = stick v := stick_scrollDownIn _ _ _
-
-theorem stick_eraseRowSpan (v : Vt) (y a b : Nat) : stick (v.eraseRowSpan y a b) = stick v := by
-  rw [frame_eraseRowSpan]; rfl
-
-theorem stick_eraseLine (v : Vt) (m : Nat) : stick (v.eraseLine m) = stick v := by
-  rw [frame_eraseLine]; rfl
-
-theorem stick_eraseChars (v : Vt) (n : Nat) : stick (v.eraseChars n) = stick v := by
-  rw [frame_eraseChars]; rfl
-
-theorem stick_deleteChars (v : Vt) (n : Nat) : stick (v.deleteChars n) = stick v := by
-  rw [frame_deleteChars]; rfl
-
-theorem stick_insertChars (v : Vt) (n : Nat) : stick (v.insertChars n) = stick v := by
-  rw [frame_insertChars]; rfl
-
 theorem stick_applySgr (v : Vt) (ps : List (Nat × Bool)) : stick (v.applySgr ps) = stick v := by
   rw [frame_applySgr]; rfl
 
 theorem stick_oscFinish (v : Vt) (acc : Array UInt8) : stick (v.oscFinish acc) = stick v := by
   rw [frame_oscFinish]; rfl
 
-theorem stick_stepStr (v : Vt) (e : Bool) (b : UInt8) : stick (v.stepStr e b) = stick v := by
-  rw [frame_stepStr]; rfl
-
 theorem stick_abortUtf8 (v : Vt) (b : UInt8) : stick (v.abortUtf8 b) = stick v := by
   unfold Vt.abortUtf8; split <;> rfl
-
-/-- Fold invariance for the bundle, used by repeat-count dispatches
-(`CHT`, `SU`, `SD`, `CBT`). -/
-theorem stick_foldl {α : Type} (f : Vt → α → Vt)
-    (hf : ∀ (w : Vt) (a : α), stick (f w a) = stick w) :
-    ∀ (l : List α) (v : Vt), stick (l.foldl f v) = stick v
-  | [], _ => rfl
-  | a :: as, v => (stick_foldl f hf as (f v a)).trans (hf v a)
 
 theorem stick_eraseScreen (v : Vt) (m : Nat) : stick (v.eraseScreen m) = stick v := by
   rw [frame_eraseScreen]
   rfl
-
-theorem stick_insertLines (v : Vt) (n : Nat) : stick (v.insertLines n) = stick v := by
-  rw [frame_insertLines]
-  rfl
-
-theorem stick_deleteLines (v : Vt) (n : Nat) : stick (v.deleteLines n) = stick v := by
-  rw [frame_deleteLines]
-  rfl
-
-/-- **The charset translation is stable across a print**, so a row induction proves
-`printChar ch = ch` once instead of per column. `print_narrow_eq` and its siblings
-each take that as a hypothesis. -/
-theorem printChar_congr {u v : Vt} (h0 : u.g0Line = v.g0Line) (h1 : u.g1Line = v.g1Line)
-    (hs : u.shiftOut = v.shiftOut) (c : Char) : u.printChar c = v.printChar c := by
-  unfold Vt.printChar
-  rw [h0, h1, hs]
-
-theorem printChar_print (v : Vt) (ch c : Char) : (v.print ch).printChar c = v.printChar c :=
-  printChar_congr (g0_print v ch) (g1_print v ch) (so_print v ch) c
 
 /-- With both charsets ASCII, `printChar` is the identity on anything the painter
 emits — `safeChar` and `printableChar` agree on a non-control codepoint. -/
@@ -850,23 +730,17 @@ case is the interesting one and it is why `pending` is in the invariant at all: 
 the right margin `printAdvance` clamps the column and arms wrap-pending, so the last
 cell of a row leaves a state no absolute cursor move can express. -/
 
-theorem off_putCell' (v : Vt) (x y : Nat) (c : Cell) :
+theorem off_putCell (v : Vt) (x y : Nat) (c : Cell) :
     offScreen (v.putCell x y c) = offScreen v := by
   rw [frame_putCell]; rfl
 
 theorem off_mendRow (v : Vt) (y : Nat) : offScreen (v.mendRow y) = offScreen v := by
   rw [frame_mendRow]; rfl
 
-theorem off_clearPending (v : Vt) : offScreen v.clearPending = offScreen v := by
-  rw [frame_clearPending]; rfl
-
 theorem cursor_putCell (v : Vt) (x y : Nat) (c : Cell) : (v.putCell x y c).cursor = v.cursor := by
   rw [frame_putCell]
 
 theorem cursor_mendRow (v : Vt) (y : Nat) : (v.mendRow y).cursor = v.cursor := by rw [frame_mendRow]
-
-theorem cursor_clearPending (v : Vt) :
-    v.clearPending.cursor = { v.cursor with pending := false } := by rfl
 
 theorem cursor_printAdvance_lt (v : Vt) (n : Nat) (h : v.cursor.x + n < v.cols) :
     (v.printAdvance n).cursor =
@@ -908,7 +782,7 @@ theorem cursor_print_narrow_fits {v : Vt} {ch : Char} (hpc : v.printChar ch = ch
               { base := ch, marks := [], width := 1, pen := v.pen }).mendRow
           v.cursor.y)
       (fun u =>
-        ⟨(off_mendRow _ _).trans (off_putCell' _ _ _ _),
+        ⟨(off_mendRow _ _).trans (off_putCell _ _ _ _),
           (cursor_mendRow _ _).trans (cursor_putCell _ _ _ _)⟩)
   rw [cursor_printAdvance_lt _ 1
       (by
@@ -929,7 +803,7 @@ theorem cursor_print_narrow_margin {v : Vt} {ch : Char} (hpc : v.printChar ch = 
               { base := ch, marks := [], width := 1, pen := v.pen }).mendRow
           v.cursor.y)
       (fun u =>
-        ⟨(off_mendRow _ _).trans (off_putCell' _ _ _ _),
+        ⟨(off_mendRow _ _).trans (off_putCell _ _ _ _),
           (cursor_mendRow _ _).trans (cursor_putCell _ _ _ _)⟩)
   rw [cursor_printAdvance_ge _ 1
       (by
@@ -952,7 +826,7 @@ theorem cursor_print_wide_fits {v : Vt} {ch : Char} (hpc : v.printChar ch = ch)
               (Cell.shadow { base := ch, marks := [], width := 2, pen := v.pen })).mendRow
           v.cursor.y)
       (fun u =>
-        ⟨((off_mendRow _ _).trans (off_putCell' _ _ _ _)).trans (off_putCell' _ _ _ _),
+        ⟨((off_mendRow _ _).trans (off_putCell _ _ _ _)).trans (off_putCell _ _ _ _),
           ((cursor_mendRow _ _).trans (cursor_putCell _ _ _ _)).trans (cursor_putCell _ _ _ _)⟩)
   rw [cursor_printAdvance_lt _ 2
       (by
@@ -978,7 +852,7 @@ theorem cursor_print_wide_margin {v : Vt} {ch : Char} (hpc : v.printChar ch = ch
               (Cell.shadow { base := ch, marks := [], width := 2, pen := v.pen })).mendRow
           v.cursor.y)
       (fun u =>
-        ⟨((off_mendRow _ _).trans (off_putCell' _ _ _ _)).trans (off_putCell' _ _ _ _),
+        ⟨((off_mendRow _ _).trans (off_putCell _ _ _ _)).trans (off_putCell _ _ _ _),
           ((cursor_mendRow _ _).trans (cursor_putCell _ _ _ _)).trans (cursor_putCell _ _ _ _)⟩)
   rw [cursor_printAdvance_ge _ 2
       (by
@@ -1001,27 +875,9 @@ theorem cursor_print_mark_pending {v : Vt} {m : Char} (hpc : v.printChar m = m)
     (v.print m).cursor = v.cursor := by
   rw [print_mark_pending_eq hpc hw hpend hnw hcap, cursor_mendRow, cursor_putCell]
 
-/-! ### Sticky projections of the print stages
+/-! ### Sticky projections of a print
 
-The stage claims follow their frames; the complete print projects `off_print`. -/
-
-theorem stick_printWrap (v : Vt) : stick v.printWrap = stick v := by
-  rw [frame_printWrap]; rfl
-
-theorem stick_printWideWrap (v : Vt) (w : Nat) : stick (v.printWideWrap w) = stick v := by
-  rw [frame_printWideWrap]; rfl
-
-theorem stick_printShift (v : Vt) (w : Nat) : stick (v.printShift w) = stick v := by
-  rw [frame_printShift]; rfl
-
-theorem stick_printPut (v : Vt) (ch : Char) (w : Nat) : stick (v.printPut ch w) = stick v := by
-  rw [frame_printPut]; rfl
-
-theorem stick_printAdvance (v : Vt) (w : Nat) : stick (v.printAdvance w) = stick v := by
-  rw [frame_printAdvance]; rfl
-
-theorem stick_printMark (v : Vt) (ch : Char) : stick (v.printMark ch) = stick v := by
-  rw [frame_printMark]; rfl
+The complete print projects `off_print`. -/
 
 /-- Printing a glyph cannot move the region, the charsets, the shift state or the
 screen selection — it *reads* the charsets (`printChar` translates) and reads the
@@ -1044,30 +900,18 @@ theorem stick_ctl (v : Vt) (b : UInt8) (h1 : b ≠ 0x0E) (h2 : b ≠ 0x0F) :
     first
     | rfl
     | exact stick_backspace _
-    | exact stick_tab _
     | exact stick_lineFeed _
-    | exact stick_carriageReturn _
     | exact absurd rfl h1
     | exact absurd rfl h2
 
 theorem stick_stepGround (v : Vt) (b : UInt8) (h1 : b ≠ 0x0E) (h2 : b ≠ 0x0F) :
     stick (v.stepGround b) = stick v := by
-  unfold Vt.stepGround
-  split
-  · rfl -- ESC: parser state only
-  split
-  · exact stick_ctl _ _ h1 h2 -- C0
-  split
-  · exact stick_acceptChar _ _ -- ASCII
-  split
-  · -- a continuation byte: dropped, accumulated, or completes a codepoint
-    split
-    · rfl
-    · split
-      · exact stick_acceptChar _ _
-      · rfl
-  repeat' split
-  all_goals rfl
+  fun_cases Vt.stepGround v b
+  all_goals
+    first
+    | exact stick_acceptChar _ _
+    | exact stick_ctl _ _ h1 h2
+    | rfl
 
 /-! ### The transforms — the four things in a restore stream that DO write a
 sticky field. Named, so the `Render` ladder composes them the way `MMap`
@@ -1135,9 +979,6 @@ theorem stStbm_of {t bo : Nat} {s : Sticky} (h1 : t < bo) (h2 : bo < s.rows) :
         top := t, bot := bo } := by
   unfold stStbm; rw [ite_eq_left (by simp [h1, h2])]
 
-theorem stStbm_rows (t bo : Nat) (s : Sticky) : (stStbm t bo s).rows = s.rows := by
-  unfold stStbm; split <;> rfl
-
 theorem stick_enterAlt (v : Vt) (b : Bool) : stick (v.enterAlt b) = stAlt true (stick v) := by
   unfold Vt.enterAlt stAlt
   dsimp only
@@ -1172,51 +1013,23 @@ theorem stick_stepEscInter (v : Vt) (i x : UInt8) (hlo : 0x30 ≤ x) (hhi : x �
 
 theorem stick_setMode (v : Vt) (n : Nat) (on : Bool) :
     stick (v.setMode true n on) = stSetMode n on (stick v) := by
-  have halt :
-    ∀ (u : Vt) (sv : Bool),
-      stick (if on then u.enterAlt sv else u.leaveAlt sv) = stAlt on (stick u) := by
-    intro u sv
-    cases on
-    · rw [ite_eq_right (by decide)]; exact stick_leaveAlt u sv
-    · rw [ite_eq_left rfl]; exact stick_enterAlt u sv
-  by_cases h47 : n = 47
-  · subst h47
-    show stick (if on then v.enterAlt false else v.leaveAlt false) = _
-    rw [halt v false]
-    unfold stSetMode
-    rw [ite_eq_left (by decide)]
-  by_cases h1047 : n = 1047
-  · subst h1047
-    show stick (if on then v.enterAlt false else v.leaveAlt false) = _
-    rw [halt v false]
-    unfold stSetMode
-    rw [ite_eq_left (by decide)]
-  by_cases h1049 : n = 1049
-  · subst h1049
-    show stick (if on then v.enterAlt true else v.leaveAlt true) = _
-    rw [halt v true]
-    unfold stSetMode
-    rw [ite_eq_left (by decide)]
-  -- every remaining arm writes `modes`, the cursor or the saved slot only
   unfold stSetMode
-  rw [ite_eq_right
-      (by
-        intro h
-        simp only [Bool.or_eq_true, beq_iff_eq] at h
-        rcases h with (h | h) | h
-        · exact h47 h
-        · exact h1047 h
-        · exact h1049 h)]
-  unfold Vt.setMode
-  split <;> rename_i hpv
-  · split
+  by_cases h : (n == 47 || n == 1047 || n == 1049) = true
+  · rw [ite_eq_left h]
+    simp only [Bool.or_eq_true, beq_iff_eq] at h
+    rcases h with (rfl | rfl) | rfl <;> cases on <;>
+      first
+      | exact stick_leaveAlt v _
+      | exact stick_enterAlt v _
+  · -- every remaining arm writes `modes`, the cursor or the saved slot only
+    rw [ite_eq_right h]
+    fun_cases Vt.setMode v true n on
     all_goals
       first
       | rfl
       | exact stick_moveTo _ _ _
       | (split <;> rfl)
       | (exfalso; simp_all)
-  · exact absurd rfl hpv
 
 /-- IRM is the only non-private mode we parse, and it is `modes`-only. -/
 theorem stick_setMode_plain (v : Vt) (n : Nat) (on : Bool) :
@@ -1368,7 +1181,6 @@ theorem stick_stepEsc (v : Vt) (b : UInt8) (h : b ≠ 0x63) : stick (v.stepEsc b
     first
     | rfl
     | exact stick_lineFeed _
-    | exact (stick_lineFeed _).trans (stick_carriageReturn _)
     | exact stick_reverseIndex _
     | exact absurd rfl h
     | ( repeat' split
@@ -1406,15 +1218,6 @@ theorem stick_step_of_osc {v : Vt} {acc : Array UInt8} {e : Bool} (b : UInt8)
   dsimp only
   rw [hw]
   exact (stick_stepOsc _ acc e b).trans (stick_abortUtf8 v b)
-
-theorem stick_step_of_str {v : Vt} {e : Bool} (b : UInt8) (hg : v.pstate = .str e) :
-    stick (v.step b) = stick v := by
-  have hw : (v.abortUtf8 b).pstate = PState.str e := by
-    rw [ps_abortUtf8]; exact hg
-  unfold Vt.step
-  dsimp only
-  rw [hw]
-  exact (stick_stepStr _ e b).trans (stick_abortUtf8 v b)
 
 theorem stick_step_of_escInter {v : Vt} {i : UInt8} (x : UInt8) (hg : v.pstate = .escInter i)
     (hlo : 0x30 ≤ x) (hhi : x ≤ 0x7E) : stick (v.step x) = stCharset i x (stick v) := by
@@ -1463,25 +1266,11 @@ theorem stick_step_so {v : Vt} (hg : v.pstate = .ground) :
 Three pure-core values the tree *used* everywhere and *stated* nowhere: every proof that
 needed them re-derived them inline, which is why the old source scanner counted
 them as unclaimed. `Theorems/Coverage.lean` now checks exact constants in theorem
-types. Each theorem below is the postcondition its callers were already assuming. -/
+types. The clamp's own range (`clampDim_range`, `clampDim_eq_self_iff`) is stated beside
+`Good` in `Theorems/Vt/State.lean`; each theorem below is the postcondition its callers
+were already assuming. -/
 
-/-- **A clamped dimension is a legal dimension, and above the cap it *is* the cap.** The
-second half is what makes `clampDim n + 1` the smallest value a caller must reject. -/
-theorem clampDim_range (n : Nat) :
-    1 ≤ clampDim n ∧ clampDim n ≤ 1000 ∧ (1000 ≤ n → clampDim n = 1000) := by
-  unfold clampDim
-  omega
-
-/-- …and it touches nothing already legal. The **iff** matters: the reverse direction is
-what four proofs re-derive by hand, and the forward one falsifies a clamp whose range
-slipped — `max n 1` alone satisfies the reverse and fails this. -/
-theorem clampDim_eq_self (n : Nat) : clampDim n = n ↔ 1 ≤ n ∧ n ≤ 1000 := by
-  unfold clampDim
-  omega
-
-/-- **Both constructors apply the clamp, and the grid they build is the clamped height.**
-`Good.resize` bounds the `rows` *field*; the grid proofs take `grid.size = rows` as a
-hypothesis. This is what connects the two. -/
+/-- **`Vt.init` applies the clamp, and the grid it builds is the clamped height.** -/
 theorem init_shape (cols rows : Nat) :
     (Vt.init cols rows).cols = clampDim cols ∧
       (Vt.init cols rows).rows = clampDim rows ∧
@@ -1503,11 +1292,8 @@ theorem resize_clears_pending (v : Vt) (cols rows : Nat) :
     rcases h with ⟨_, hcur, _⟩
     rw [← hcur]
 
-/-- **A 256-colour parameter cannot escape the palette.** -/
-theorem color256_idx (n : Nat) : color256 n = Color.idx (UInt8.ofNat (min n 255)) := by rfl
-
-/-- …and it **saturates rather than wraps**, which is the whole reason the `min` is there:
-`UInt8.ofNat 256` is `0`, so without it `SGR 38;5;256` would silently select colour 0
+/-- **A 256-colour parameter saturates rather than wraps**, which is why `color256` takes a
+`min`: `UInt8.ofNat 256` is `0`, so without it `SGR 38;5;256` would silently select colour 0
 instead of 255. -/
 theorem color256_saturates : color256 256 = color256 255 := by rfl
 
@@ -1519,14 +1305,15 @@ theorem charWidth_decLine (c : Char) : charWidth (decLine c) = charWidth c := by
   unfold decLine
   repeat' split
   all_goals
-    first
-    | rfl
-    | (subst_vars; decide)
-    | decide
+    with_reducible
+      first
+      | rfl
+      | (subst_vars; decide)
+      | decide
 
-/-- **The `ByteArray` door is the same machine.** The daemon feeds the emulator
-`ByteArray`s; `feedBytes` is the adapter, and this says it adds nothing — so every §Chunk
-and §Bound theorem stated over `feed` covers the surface the runtime actually calls. -/
+/-- **The `ByteArray` convenience is the same machine.** `feedBytes` is the adapter the
+`Tests/` and `E2E/` fixtures call (the daemon feeds `List UInt8` through `Terminal.feed`), and
+this says it adds nothing — so every theorem stated over `feed` covers those fixtures. -/
 theorem feedBytes_eq (v : Vt) (bytes : ByteArray) : v.feedBytes bytes = v.feed bytes.toList := by
   rfl
 
@@ -1643,10 +1430,11 @@ theorem step_escInter_final_boundary {v : Vt} {i : UInt8} (b : UInt8) (hp : v.ps
   repeat' split
   all_goals constructor
   all_goals
-    first
-    | simpa [Vt.atBoundary] using hu
-    | ( unfold Vt.windowTitle Vt.abortUtf8
-        split <;> rfl)
+    with_reducible
+      first
+      | simpa [Vt.atBoundary] using hu
+      | ( unfold Vt.windowTitle Vt.abortUtf8
+          split <;> rfl)
 
 /-- ESC abandons an intermediate sequence by starting a new ESC sequence,
 never by briefly reporting a boundary where an OSC title could be injected. -/
@@ -1686,12 +1474,10 @@ theorem observe_del_boundary {v : Vt}
   · unfold Vt.windowTitle Vt.abortUtf8
     split <;> rfl
 
-@[simp]
-theorem windowTitle_eq (v : Vt) : v.windowTitle = v.title := rfl
-
 theorem atBoundary_iff (v : Vt) : v.atBoundary = true ↔ v.pstate = .ground ∧ v.u8need = 0 := by
   simp [Vt.atBoundary]
 
+/-- Observing a concatenation is observing each part in turn. -/
 public theorem observe_append (v : Vt) (a b : List UInt8) :
     v.observe (a ++ b) = (v.observe a).observe b := by simp [Vt.observe, List.foldl_append]
 

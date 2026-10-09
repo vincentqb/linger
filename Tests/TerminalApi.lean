@@ -30,6 +30,10 @@ example (title : String) (c : Char) (h : c ∈ Terminal.Title.payload title) :
 example (v : Vt) (a b : List UInt8) :
     v.observe (a ++ b) = (v.observe a).observe b := Linger.Core.Vt.observe_append v a b
 
-#check_failure Replay.Plan.mk
+/-- Unknown constant `Linger.Core.Replay.Plan.mk` -/
+#guard_msgs (error, substring := true) in
+#check Replay.Plan.mk
 
-#check_failure (Vt.init 2 1).pstate
+/-- Unknown constant `_private.Linger.Core.Vt.0.Linger.Core.Vt.Vt.pstate` -/
+#guard_msgs (error, substring := true) in
+#check (Vt.init 2 1).pstate

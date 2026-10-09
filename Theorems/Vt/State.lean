@@ -9,12 +9,11 @@ import all Linger.Core.Vt
 -- `structure Good` and every theorem stating `v.cols`/`v.cursor`/… must be
 -- module-private. Default visibility in a `module` file is exactly that, so the
 -- fix is the absence of one line rather than `private` on a hundred. Consumers
--- reach in with `import all Theorems.Vt`, which `Theorems/Render/Ends.lean` and
--- `Theorems/Session.lean` already do.
+-- reach in with `import all Theorems.Vt`, as `Theorems/Render/Ends.lean` does.
 
 /-! # §Total / §Chunk / §Bound — the emulator theorems
 
-THEOREMS.md rows for `Vt`:
+The three emulator guarantees:
 * §Chunk — `feed` is invariant under re-chunking (definitional, from
   `feed = foldl step`, but stated so a rewrite cannot silently lose it).
 * §Bound — no field of `Vt` grows with input
@@ -88,6 +87,20 @@ structure Good (v : Vt) : Prop where
   u8Le : v.u8need ≤ 3
   csiLe : ∀ s, v.pstate = .csi s → s.params.size ≤ 16
   oscLe : ∀ acc e, v.pstate = .osc acc e → acc.size ≤ 2048
+
+/-- **A clamped dimension is a legal dimension, and above the cap it *is* the cap.** The
+second half is what makes `clampDim n + 1` the smallest value a caller must reject. -/
+theorem clampDim_range (n : Nat) :
+    1 ≤ clampDim n ∧ clampDim n ≤ 1000 ∧ (1000 ≤ n → clampDim n = 1000) := by
+  unfold clampDim
+  omega
+
+/-- …and it touches nothing already legal. The **iff** matters: the forward direction
+falsifies a clamp whose range slipped — `max n 1` alone satisfies the reverse and fails
+this. -/
+theorem clampDim_eq_self_iff (n : Nat) : clampDim n = n ↔ 1 ≤ n ∧ n ≤ 1000 := by
+  unfold clampDim
+  omega
 
 /-- The state a fresh session starts in is Good. -/
 theorem good_init (cols rows : Nat) : Good (Vt.init cols rows) := by
@@ -210,12 +223,6 @@ theorem invariant_foldl {α β : Type} (P : β → Prop) (f : β → α → β)
   | [], _, h => h
   | a :: as, acc, h => invariant_foldl P f hf as (f acc a) (hf acc a h)
 
-/-- Ordered mode batches compose as whole states, including cursor saves and
-screen switches. Splitting a batch never changes which mode sees which state. -/
-theorem setModes_append (v : Vt) (priv : Bool) (xs ys : List (Nat × Bool)) (on : Bool) :
-    v.setModes priv (xs ++ ys) on = (v.setModes priv xs on).setModes priv ys on := by
-  simp only [Vt.setModes, List.foldl_append]
-
 theorem setModes_nil (v : Vt) (priv on : Bool) : v.setModes priv [] on = v := rfl
 
 theorem setModes_cons (v : Vt) (priv : Bool) (p : Nat × Bool) (ps : List (Nat × Bool)) (on : Bool) :
@@ -237,110 +244,7 @@ theorem setModes_invariant (P : Vt → Prop) (priv on : Bool) (ps : List (Nat ×
     rw [setModes_cons]
     exact ih (fun w q hq => hstep w q (List.mem_cons_of_mem p hq)) _ (hstep v p (by simp) h)
 
-end Linger.Core.Vt
-
-namespace Linger.Core.Vt.Good
-
-open Linger.Core.Vt
-
-/-- "Preserves Good and the screen dimensions." Every constituent of
-`step` gets one of these; `step` composes them. -/
-def Pres (f : Vt → Vt) : Prop :=
-  ∀ v, Good v → Good (f v) ∧ (f v).cols = v.cols ∧ (f v).rows = v.rows
-
-theorem Pres.id : Pres (fun v => v) := fun _ h => ⟨h, rfl, rfl⟩
-
-theorem Pres.comp {f g : Vt → Vt} (hf : Pres f) (hg : Pres g) : Pres (fun v => g (f v)) := by
-  intro v h
-  obtain ⟨h1, hc1, hr1⟩ := hf v h
-  obtain ⟨h2, hc2, hr2⟩ := hg (f v) h1
-  exact ⟨h2, by rw [hc2, hc1], by rw [hr2, hr1]⟩
-
-theorem Pres.foldl {α : Type} {f : Vt → α → Vt} (hf : ∀ a, Pres (f · a)) :
-    ∀ (l : List α), Pres (fun v => l.foldl f v)
-  | [] => Pres.id
-  | a :: l => by
-    have := Pres.comp (hf a) (Pres.foldl hf l)
-    simpa [List.foldl_cons] using this
-
-/-- Replacing only the grid touches nothing Good watches. Same for
-pen, modes, tabs, title, bell — all definitional repacks. -/
-theorem set_grid {v : Vt} (g : Array Row) (h : Good v) : Good { v with grid := g } := by
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := h
-  exact ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
-
-theorem set_pen {v : Vt} (p : Pen) (h : Good v) : Good { v with pen := p } := by
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := h
-  exact ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
-
-theorem set_modes {v : Vt} (m : Modes) (h : Good v) : Good { v with modes := m } := by
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := h
-  exact ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
-
-theorem set_ground {v : Vt} (h : Good v) : Good { v with pstate := .ground } := by
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, -, -⟩ := h
-  exact
-    ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, (fun _ h => nomatch h),
-      (fun _ _ h => nomatch h)⟩
-
-theorem set_tabs {v : Vt} (t : Array Bool) (h : Good v) : Good { v with tabs := t } := by
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := h
-  exact ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
-
-end Linger.Core.Vt.Good
-
-namespace Linger.Core.Vt.Good
-
-/-! ## Cursor-writing primitives -/
-
-theorem clearPending {v : Vt} (h : Good v) : Good v.clearPending := by
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := h
-  exact ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
-
-theorem moveTo {v : Vt} (x y : Nat) (h : Good v) : Good (v.moveTo x y) := by
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := h
-  unfold Vt.moveTo
-  refine ⟨cp, rp, cl, rl, ?_, ?_, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
-  · dsimp only; omega
-  · by_cases ho : v.modes.origin <;> simp [ho] <;> omega
-
-theorem moveRel {v : Vt} (dx dy : Int) (h : Good v) : Good (v.moveRel dx dy) := by
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := h
-  unfold Vt.moveRel
-  refine ⟨cp, rp, cl, rl, ?_, ?_, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
-  · dsimp only; omega
-  · by_cases hr : (v.cursor.y ≥ v.top && v.cursor.y ≤ v.bot) <;> simp [hr] <;> omega
-
-theorem carriageReturn {v : Vt} (h : Good v) : Good v.carriageReturn := by
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := h
-  exact
-    ⟨cp, rp, cl, rl, by
-      dsimp only [Vt.carriageReturn]; omega, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
-
-theorem backspace {v : Vt} (h : Good v) : Good v.backspace := by
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := h
-  unfold Vt.backspace Vt.clearPending
-  split
-  · exact ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
-  · exact
-      ⟨cp, rp, cl, rl, by
-        dsimp only; omega, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
-
-theorem tab {v : Vt} (h : Good v) : Good v.tab := by
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := h
-  unfold Vt.tab Vt.clearPending
-  exact
-    ⟨cp, rp, cl, rl, by
-      dsimp only; omega, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
-
-theorem backTab {v : Vt} (h : Good v) : Good v.backTab := by
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := h
-  unfold Vt.backTab
-  exact
-    ⟨cp, rp, cl, rl, by
-      dsimp only; omega, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
-
-/-! ## Scrolling — grid + ring only; the cursor is untouched -/
+/-! ### The caps and the `CSI u` split, which need no `Good` -/
 
 theorem ring_push_le {r : Ring} (row : Row) (h : r.size ≤ sbCap) : (r.push row).size ≤ sbCap := by
   unfold Ring.size at h ⊢
@@ -350,18 +254,111 @@ theorem ring_push_le {r : Ring} (row : Row) (h : r.size ≤ sbCap) : (r.push row
     omega
   · simpa [Array.size_setIfInBounds] using h
 
+theorem csiPush_le (s : CsiState) (sub : Bool) (hp : s.params.size ≤ 16) :
+    (csiPush s sub).params.size ≤ 16 := by
+  unfold csiPush
+  split
+  · exact hp
+  · simp only [Array.size_push]
+    omega
+
+/-- Private final-`u` sequences (notably kitty's `CSI ? u` query) are
+state-neutral; only public ANSI `CSI u` is DECRC. -/
+theorem csiDispatch_private_u (v : Vt) (s : CsiState) (hi : s.ignore = false) (hp : s.priv ≠ 0) :
+    v.csiDispatch s 0x75 = v := by simp [Vt.csiDispatch, hi, hp]
+
+/-- Public ANSI `CSI u` still restores the saved cursor and pen. -/
+theorem csiDispatch_public_u (v : Vt) (s : CsiState) (hi : s.ignore = false) (hp : s.priv = 0) :
+    v.csiDispatch s 0x75 =
+      { v with
+        cursor := v.saved.cur, pen := v.saved.pen } := by
+  simp [Vt.csiDispatch, hi, hp]
+
+end Linger.Core.Vt
+
+namespace Linger.Core.Vt.Good
+
+open Linger.Core.Vt
+
+/-- Replacing only the grid touches nothing Good watches. Same for
+pen, modes, tabs, title, bell — all definitional repacks. -/
+theorem set_grid {v : Vt} (g : Array Row) (h : Good v) : Good { v with grid := g } := { h with }
+
+theorem set_pen {v : Vt} (p : Pen) (h : Good v) : Good { v with pen := p } := { h with }
+
+theorem set_modes {v : Vt} (m : Modes) (h : Good v) : Good { v with modes := m } := { h with }
+
+theorem set_ground {v : Vt} (h : Good v) : Good { v with pstate := .ground } :=
+  { h with
+    csiLe := fun _ hp => (nomatch hp), oscLe := fun _ _ hp => (nomatch hp) }
+
+theorem set_tabs {v : Vt} (t : Array Bool) (h : Good v) : Good { v with tabs := t } := { h with }
+
+/-! ## Cursor-writing primitives -/
+
+theorem clearPending {v : Vt} (h : Good v) : Good v.clearPending := { h with }
+
+theorem moveTo {v : Vt} (x y : Nat) (h : Good v) : Good (v.moveTo x y) := by
+  have := h.colsPos
+  have := h.rowsPos
+  have := h.botLt
+  unfold Vt.moveTo
+  refine
+    { h with
+      curX := ?_, curY := ?_ }
+  · dsimp only; omega
+  · by_cases ho : v.modes.origin <;> simp [ho] <;> omega
+
+theorem moveRel {v : Vt} (dx dy : Int) (h : Good v) : Good (v.moveRel dx dy) := by
+  have := h.colsPos
+  have := h.rowsPos
+  have := h.botLt
+  unfold Vt.moveRel
+  refine
+    { h with
+      curX := ?_, curY := ?_ }
+  · dsimp only; omega
+  · by_cases hr : (v.cursor.y ≥ v.top && v.cursor.y ≤ v.bot) <;> simp [hr] <;> omega
+
+theorem carriageReturn {v : Vt} (h : Good v) : Good v.carriageReturn :=
+  { h with
+    curX := by
+      have := h.colsPos; dsimp only [Vt.carriageReturn]; omega }
+
+theorem backspace {v : Vt} (h : Good v) : Good v.backspace := by
+  unfold Vt.backspace Vt.clearPending
+  split
+  · exact { h with }
+  · exact
+      { h with
+        curX := by
+          have := h.curX; dsimp only; omega }
+
+theorem tab {v : Vt} (h : Good v) : Good v.tab := by
+  unfold Vt.tab Vt.clearPending
+  exact
+    { h with
+      curX := by
+        have := h.colsPos; dsimp only; omega }
+
+theorem backTab {v : Vt} (h : Good v) : Good v.backTab := by
+  unfold Vt.backTab
+  exact
+    { h with
+      curX := by
+        have := h.colsPos; dsimp only; omega }
+
+/-! ## Scrolling — grid + ring only; the cursor is untouched -/
+
 theorem scrollUpIn {v : Vt} (t b : Nat) (allowSb : Bool) (h : Good v) :
     Good (v.scrollUpIn t b allowSb) := by
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := h
   unfold Vt.scrollUpIn
   dsimp only
   split
-  · exact ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, ring_push_le _ sb, u8, hcsi, hosc⟩
-  · exact ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
+  · exact { h with sbLe := ring_push_le _ h.sbLe }
+  · exact { h with }
 
-theorem scrollDownIn {v : Vt} (t b : Nat) (h : Good v) : Good (v.scrollDownIn t b) := by
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := h
-  exact ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
+theorem scrollDownIn {v : Vt} (t b : Nat) (h : Good v) : Good (v.scrollDownIn t b) := { h with }
 
 theorem scrollUp {v : Vt} (h : Good v) : Good v.scrollUp := scrollUpIn _ _ _ h
 
@@ -374,10 +371,10 @@ theorem lineFeed {v : Vt} (h : Good v) : Good v.lineFeed := by
   split
   · exact scrollUp h'
   · split
-    · obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := h'
-      exact
-        ⟨cp, rp, cl, rl, cx, by
-          dsimp only; omega, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
+    · exact
+        { h' with
+          curY := by
+            dsimp only; omega }
     · exact h'
 
 theorem reverseIndex {v : Vt} (h : Good v) : Good v.reverseIndex := by
@@ -386,16 +383,15 @@ theorem reverseIndex {v : Vt} (h : Good v) : Good v.reverseIndex := by
   dsimp only
   split
   · exact scrollDown h'
-  · obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := h'
-    exact
-      ⟨cp, rp, cl, rl, cx, by
-        dsimp only; omega, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
+  · exact
+      { h' with
+        curY := by
+          have := h'.curY; dsimp only; omega }
 
-theorem setCol {v : Vt} (x : Nat) (h : Good v) : Good (v.setCol x) := by
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := h
-  exact
-    ⟨cp, rp, cl, rl, by
-      dsimp only [Vt.setCol]; omega, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
+theorem setCol {v : Vt} (x : Nat) (h : Good v) : Good (v.setCol x) :=
+  { h with
+    curX := by
+      have := h.curX; have := h.colsPos; dsimp only [Vt.setCol]; omega }
 
 /-! ## Folded repetitions -/
 
@@ -405,9 +401,7 @@ theorem good_foldl {α : Type} {f : Vt → α → Vt} (hf : ∀ v a, Good v → 
 
 /-! ## Erase / insert / delete — grid-only (plus ED 3's scrollback reset) -/
 
-theorem eraseRowSpan {v : Vt} (y a b : Nat) (h : Good v) : Good (v.eraseRowSpan y a b) := by
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := h
-  exact ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
+theorem eraseRowSpan {v : Vt} (y a b : Nat) (h : Good v) : Good (v.eraseRowSpan y a b) := { h with }
 
 theorem eraseLine {v : Vt} (m : Nat) (h : Good v) : Good (v.eraseLine m) := by
   unfold Vt.eraseLine
@@ -421,8 +415,7 @@ theorem eraseScreen {v : Vt} (m : Nat) (h : Good v) : Good (v.eraseScreen m) := 
   · -- ED 3: also drops scrollback; an empty ring is within any cap
     have h' : Good ((List.range v.rows).foldl (fun v' y => v'.eraseRowSpan y 0 v'.cols) v) :=
       good_foldl (fun v' y hh => eraseRowSpan _ _ _ hh) _ h
-    obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, -, u8, hcsi, hosc⟩ := h'
-    exact ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, by simp [Ring.size], u8, hcsi, hosc⟩
+    exact { h' with sbLe := by simp [Ring.size] }
   · exact good_foldl (fun v' y hh => eraseRowSpan _ _ _ hh) _ h
 
 theorem insertLines {v : Vt} (n : Nat) (h : Good v) : Good (v.insertLines n) := by
@@ -437,64 +430,62 @@ theorem deleteLines {v : Vt} (n : Nat) (h : Good v) : Good (v.deleteLines n) := 
   · exact h
   · exact good_foldl (fun v a hh => scrollUpIn _ _ _ hh) _ h
 
-theorem deleteChars {v : Vt} (n : Nat) (h : Good v) : Good (v.deleteChars n) := by
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := h
-  exact ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
+theorem deleteChars {v : Vt} (n : Nat) (h : Good v) : Good (v.deleteChars n) := { h with }
 
-theorem insertChars {v : Vt} (n : Nat) (h : Good v) : Good (v.insertChars n) := by
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := h
-  exact ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
+theorem insertChars {v : Vt} (n : Nat) (h : Good v) : Good (v.insertChars n) := { h with }
 
 theorem eraseChars {v : Vt} (n : Nat) (h : Good v) : Good (v.eraseChars n) := eraseRowSpan _ _ _ h
 
-theorem applySgr {v : Vt} (ps : List (Nat × Bool)) (h : Good v) : Good (v.applySgr ps) := by
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := h
-  exact ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
+theorem applySgr {v : Vt} (ps : List (Nat × Bool)) (h : Good v) : Good (v.applySgr ps) := { h with }
 
 /-! ## Alt screen -/
 
 theorem enterAlt {v : Vt} (saveCursor : Bool) (h : Good v) : Good (v.enterAlt saveCursor) := by
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := h
+  have := h.colsPos
+  have := h.rowsPos
   unfold Vt.enterAlt
   split
-  · exact ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
-  · refine ⟨cp, rp, cl, rl, ?_, ?_, ?_, ?_, ?_, ?_, ?_, sb, u8, hcsi, hosc⟩
+  · exact h
+  · refine
+      { h with
+        curX := ?_, curY := ?_, savX := ?_, savY := ?_, altCur := ?_, topLe := ?_, botLt := ?_ }
     · dsimp only; omega
     · dsimp only; omega
     · dsimp only
       split
-      · exact cx
-      · exact sx
+      · exact h.curX
+      · exact h.savX
     · dsimp only
       split
-      · exact cy
-      · exact sy
+      · exact h.curY
+      · exact h.savY
     · intro g c p heq
       simp only [Option.some.injEq, Prod.mk.injEq] at heq
       obtain ⟨-, hc, -⟩ := heq
       subst hc
-      exact ⟨cx, cy⟩
+      exact ⟨h.curX, h.curY⟩
     · dsimp only; omega
     · dsimp only; omega
 
 theorem leaveAlt {v : Vt} (restoreCursor : Bool) (h : Good v) :
     Good (v.leaveAlt restoreCursor) := by
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := h
+  have := h.rowsPos
   unfold Vt.leaveAlt
   split
-  · exact ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
+  · exact h
   · rename_i g cur pen heq
-    obtain ⟨hax, hay⟩ := ac g cur pen heq
+    obtain ⟨hax, hay⟩ := h.altCur g cur pen heq
     refine
-      ⟨cp, rp, cl, rl, ?_, ?_, sx, sy, (fun _ _ _ hh => nomatch hh), ?_, ?_, sb, u8, hcsi, hosc⟩
+      { h with
+        curX := ?_, curY := ?_, altCur := fun _ _ _ hh => (nomatch hh), topLe := ?_, botLt := ?_ }
     · dsimp only
       split
       · exact hax
-      · exact cx
+      · exact h.curX
     · dsimp only
       split
       · exact hay
-      · exact cy
+      · exact h.curY
     · dsimp only; omega
     · dsimp only; omega
 
@@ -503,21 +494,27 @@ theorem leaveAlt {v : Vt} (restoreCursor : Bool) (h : Good v) :
 theorem setMode {v : Vt} (priv : Bool) (n : Nat) (on : Bool) (h : Good v) :
     Good (v.setMode priv n on) := by
   unfold Vt.setMode
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := h
-  have h' : Good v := ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
   split <;> split
   all_goals
-    first
-    | exact h'
-    | exact set_modes _ h'
-    | exact moveTo 0 0 (set_modes _ h')
-    |
-      (split <;>
-          first
-          | exact enterAlt _ h'
-          | exact leaveAlt _ h'
-          | exact ⟨cp, rp, cl, rl, cx, cy, cx, cy, ac, tl, bl, sb, u8, hcsi, hosc⟩
-          | exact ⟨cp, rp, cl, rl, sx, sy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩)
+    with_reducible
+      first
+      | exact h
+      | exact set_modes _ h
+      | exact moveTo 0 0 (set_modes _ h)
+      |
+        (split <;>
+            with_reducible
+              first
+              | exact enterAlt _ h
+              | exact leaveAlt _ h
+              |
+                exact
+                  { h with
+                    savX := h.curX, savY := h.curY }
+              |
+                exact
+                  { h with
+                    curX := h.savX, curY := h.savY })
 
 theorem setModes {v : Vt} (priv : Bool) (ps : List (Nat × Bool)) (on : Bool) (h : Good v) :
     Good (v.setModes priv ps on) :=
@@ -528,80 +525,67 @@ theorem setModes {v : Vt} (priv : Bool) (ps : List (Nat × Bool)) (on : Bool) (h
 theorem csiDispatch {v : Vt} (s : CsiState) (final : UInt8) (h : Good v) :
     Good (v.csiDispatch s final) := by
   unfold Vt.csiDispatch
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := h
-  have h' : Good v := ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
   split
-  · exact h'
+  · exact h
   · split
     all_goals
-      first
-      | exact h'
-      | exact insertChars _ h'
-      | exact moveRel _ _ h'
-      | exact carriageReturn (moveRel _ _ h')
-      | exact setCol _ h'
-      | exact moveTo _ _ h'
-      | exact eraseScreen _ h'
-      | exact eraseLine _ h'
-      | exact insertLines _ h'
-      | exact deleteLines _ h'
-      | exact deleteChars _ h'
-      | exact eraseChars _ h'
-      | exact setModes _ _ _ h'
-      | exact good_foldl (fun v' i hh => tab hh) _ h'
-      | exact good_foldl (fun v' i hh => scrollUp hh) _ h'
-      | exact good_foldl (fun v' i hh => scrollDown hh) _ h'
-      | exact good_foldl (fun v' i hh => backTab hh) _ h'
-      |
-        exact
-          ⟨cp, rp, cl, rl, cx, by
-            dsimp only; omega, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
-      | exact ⟨cp, rp, cl, rl, cx, cy, cx, cy, ac, tl, bl, sb, u8, hcsi, hosc⟩
-      | exact ⟨cp, rp, cl, rl, sx, sy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
-      |
-        (split <;>
-            first
-            | exact applySgr _ h'
-            | exact set_tabs _ h'
-            | exact h'
-            | exact ⟨cp, rp, cl, rl, sx, sy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
-            | ( dsimp only
-                split <;>
-                  first
-                  | exact h'
-                  | ( rename_i hg
-                      simp only [Bool.and_eq_true, decide_eq_true_eq] at hg
-                      refine
-                          moveTo 0 0
-                            ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, ?_, ?_, sb, u8, hcsi, hosc⟩ <;>
-                        (dsimp only; omega))))
-
-/-- Private final-`u` sequences (notably kitty's `CSI ? u` query) are
-state-neutral; only public ANSI `CSI u` is DECRC. -/
-theorem csiDispatch_private_u (v : Vt) (s : CsiState) (hi : s.ignore = false) (hp : s.priv ≠ 0) :
-    v.csiDispatch s 0x75 = v := by simp [Vt.csiDispatch, hi, hp]
-
-/-- Public ANSI `CSI u` still restores the saved cursor and pen. -/
-theorem csiDispatch_public_u (v : Vt) (s : CsiState) (hi : s.ignore = false) (hp : s.priv = 0) :
-    v.csiDispatch s 0x75 =
-      { v with
-        cursor := v.saved.cur, pen := v.saved.pen } := by
-  simp [Vt.csiDispatch, hi, hp]
+      with_reducible
+        first
+        | exact h
+        | exact good_foldl (fun v' i hh => tab hh) _ h
+        | exact good_foldl (fun v' i hh => scrollUp hh) _ h
+        | exact good_foldl (fun v' i hh => scrollDown hh) _ h
+        | exact good_foldl (fun v' i hh => backTab hh) _ h
+        | exact insertChars _ h
+        | exact moveRel _ _ h
+        | exact carriageReturn (moveRel _ _ h)
+        | exact setCol _ h
+        | exact moveTo _ _ h
+        | exact eraseScreen _ h
+        | exact eraseLine _ h
+        | exact insertLines _ h
+        | exact deleteLines _ h
+        | exact deleteChars _ h
+        | exact eraseChars _ h
+        | exact setModes _ _ _ h
+        |
+          exact
+            { h with
+              savX := h.curX, savY := h.curY }
+        |
+          (split <;>
+              with_reducible
+                first
+                | exact applySgr _ h
+                | exact set_tabs _ h
+                | exact h
+                |
+                  exact
+                    { h with
+                      curX := h.savX, curY := h.savY }
+                | ( dsimp only
+                    split <;>
+                      with_reducible
+                        first
+                        | exact h
+                        | ( rename_i hg
+                            simp only [Bool.and_eq_true, decide_eq_true_eq] at hg
+                            refine
+                                moveTo 0 0
+                                  { h with
+                                    topLe := ?_, botLt := ?_ } <;>
+                              (dsimp only; omega))))
 
 /-! ## Printing -/
 
-theorem putCell {v : Vt} (x y : Nat) (c : Cell) (h : Good v) : Good (v.putCell x y c) := by
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := h
-  exact ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
+theorem putCell {v : Vt} (x y : Nat) (c : Cell) (h : Good v) : Good (v.putCell x y c) := { h with }
 
 /-! ### Wide-pair repair
 
-`mendAt` and `mendRow` are grid-only record updates, so `Good` passes
-straight through them. Stated as their own lemmas rather than left to `split`:
-their guards read cells through `getD` chains, and letting a proof descend into
-those is what made `Good.printPut` time out at `whnf`. -/
-
-theorem mendAt {v : Vt} (x y : Nat) (h : Good v) : Good (v.mendAt x y) := set_grid _ h
+`mendRow` is a grid-only record update, so `Good` passes straight through it.
+Stated as its own lemma rather than left to `split`: the repair's guards read
+cells through `getD` chains, and letting a proof descend into those is what made
+`Good.printPut` time out at `whnf`. -/
 
 theorem mendRow {v : Vt} (y : Nat) (h : Good v) : Good (v.mendRow y) := set_grid _ h
 
@@ -633,25 +617,24 @@ theorem printPut {v : Vt} (ch : Char) (w : Nat) (h : Good v) : Good (v.printPut 
     · exact mendRow _ (putCell _ _ _ h)
 
 theorem printAdvance {v : Vt} (w : Nat) (h : Good v) : Good (v.printAdvance w) := by
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := h
+  have := h.colsPos
   unfold Vt.printAdvance
   dsimp only
-  split
-  · exact
-      ⟨cp, rp, cl, rl, by
-        dsimp only; omega, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
-  · exact
-      ⟨cp, rp, cl, rl, by
-        dsimp only; omega, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
+  split <;>
+    exact
+      { h with
+        curX := by
+          dsimp only; omega }
 
 theorem printMark {v : Vt} (ch : Char) (h : Good v) : Good (v.printMark ch) := by
   unfold Vt.printMark
   dsimp only
   repeat' split
   all_goals
-    first
-    | exact h
-    | exact mendRow _ (putCell _ _ _ h)
+    with_reducible
+      first
+      | exact h
+      | exact mendRow _ (putCell _ _ _ h)
 
 theorem print {v : Vt} (ch : Char) (h : Good v) : Good (v.print ch) := by
   unfold Vt.print
@@ -669,29 +652,27 @@ theorem acceptChar {v : Vt} (n : Nat) (h : Good v) : Good (v.acceptChar n) := by
 /-! ## Control bytes and parser transitions -/
 
 theorem ctl {v : Vt} (b : UInt8) (h : Good v) : Good (v.ctl b) := by
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := h
-  have h' : Good v := ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
   unfold Vt.ctl
   split
   all_goals
-    first
-    | exact h'
-    | exact backspace h'
-    | exact tab h'
-    | exact lineFeed h'
-    | exact carriageReturn h'
-    | exact ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
+    with_reducible
+      first
+      | exact h
+      | exact backspace h
+      | exact tab h
+      | exact lineFeed h
+      | exact carriageReturn h
+      | exact { h with }
 
 theorem oscFinish {v : Vt} (acc : Array UInt8) (h : Good v) : Good (v.oscFinish acc) := by
   unfold Vt.oscFinish
   dsimp only
   have hg := set_ground h
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := hg
   split
   · split
-    · exact ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
-    · exact ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
-  · exact ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
+    · exact { hg with }
+    · exact hg
+  · exact hg
 
 theorem csiFinish {v : Vt} (s : CsiState) (final : UInt8) (h : Good v) :
     Good (v.csiFinish s final) := by
@@ -702,8 +683,9 @@ theorem csiFinish {v : Vt} (s : CsiState) (final : UInt8) (h : Good v) :
 
 theorem set_pstate_csi {v : Vt} (s : CsiState) (hp : s.params.size ≤ 16) (h : Good v) :
     Good { v with pstate := .csi s } := by
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, -, -⟩ := h
-  refine ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, ?_, ?_⟩
+  refine
+    { h with
+      csiLe := ?_, oscLe := ?_ }
   · intro s' heq
     simp only [PState.csi.injEq] at heq
     subst heq
@@ -713,8 +695,9 @@ theorem set_pstate_csi {v : Vt} (s : CsiState) (hp : s.params.size ≤ 16) (h : 
 
 theorem set_pstate_osc {v : Vt} (acc : Array UInt8) (e : Bool) (hacc : acc.size ≤ 2048)
     (h : Good v) : Good { v with pstate := .osc acc e } := by
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, -, -⟩ := h
-  refine ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, ?_, ?_⟩
+  refine
+    { h with
+      csiLe := ?_, oscLe := ?_ }
   · intro _ heq
     exact nomatch heq
   · intro acc' e' heq
@@ -723,44 +706,26 @@ theorem set_pstate_osc {v : Vt} (acc : Array UInt8) (e : Bool) (hacc : acc.size 
     subst h1
     exact hacc
 
-theorem set_pstate_esc {v : Vt} (h : Good v) : Good { v with pstate := .esc } := by
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, -, -⟩ := h
-  exact
-    ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, (fun _ heq => nomatch heq),
-      (fun _ _ heq => nomatch heq)⟩
+theorem set_pstate_esc {v : Vt} (h : Good v) : Good { v with pstate := .esc } :=
+  { h with
+    csiLe := fun _ heq => (nomatch heq), oscLe := fun _ _ heq => (nomatch heq) }
 
 theorem set_pstate_escInter {v : Vt} (b : UInt8) (h : Good v) :
-    Good { v with pstate := .escInter b } := by
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, -, -⟩ := h
-  exact
-    ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, (fun _ heq => nomatch heq),
-      (fun _ _ heq => nomatch heq)⟩
+    Good { v with pstate := .escInter b } :=
+  { h with
+    csiLe := fun _ heq => (nomatch heq), oscLe := fun _ _ heq => (nomatch heq) }
 
-theorem set_pstate_str {v : Vt} (e : Bool) (h : Good v) : Good { v with pstate := .str e } := by
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, -, -⟩ := h
-  exact
-    ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, (fun _ heq => nomatch heq),
-      (fun _ _ heq => nomatch heq)⟩
-
-theorem csiPush_le (s : CsiState) (sub : Bool) (hp : s.params.size ≤ 16) :
-    (csiPush s sub).params.size ≤ 16 := by
-  unfold csiPush
-  split
-  · exact hp
-  · simp only [Array.size_push]
-    omega
+theorem set_pstate_str {v : Vt} (e : Bool) (h : Good v) : Good { v with pstate := .str e } :=
+  { h with
+    csiLe := fun _ heq => (nomatch heq), oscLe := fun _ _ heq => (nomatch heq) }
 
 theorem set_u8 {v : Vt} (n a : Nat) (hn : n ≤ 3) (h : Good v) :
     Good
       { v with
-        u8need := n, u8acc := a } := by
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, -, hcsi, hosc⟩ := h
-  exact ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, hn, hcsi, hosc⟩
+        u8need := n, u8acc := a } := { h with u8Le := hn }
 
-theorem set_sb {v : Vt} (r : Ring) (hr : r.size ≤ sbCap) (h : Good v) :
-    Good { v with sb := r } := by
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, -, u8, hcsi, hosc⟩ := h
-  exact ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, hr, u8, hcsi, hosc⟩
+theorem set_sb {v : Vt} (r : Ring) (hr : r.size ≤ sbCap) (h : Good v) : Good { v with sb := r } :=
+  { h with sbLe := hr }
 
 /-! ## Per-parser-state steps -/
 
@@ -791,67 +756,64 @@ theorem stepGround {v : Vt} (b : UInt8) (h : Good v) : Good (v.stepGround b) := 
 
 theorem stepEsc {v : Vt} (b : UInt8) (h : Good v) : Good (v.stepEsc b) := by
   unfold Vt.stepEsc
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := h
-  have h' : Good v := ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩
   split
   all_goals
-    first
-    | exact h'
-    | exact set_pstate_csi {} (by simp) h'
-    | exact set_pstate_osc #[] false (by simp) h'
-    | exact set_pstate_str _ h'
-    | exact set_pstate_escInter _ h'
-    | exact set_ground h'
-    | exact set_ground (lineFeed h')
-    | exact set_ground (lineFeed (carriageReturn h'))
-    | exact set_ground (reverseIndex h')
-    | -- DECSC: save cursor + ground
-      exact
-        ⟨cp, rp, cl, rl, cx, cy, cx, cy, ac, tl, bl, sb, u8, (fun _ heq => nomatch heq),
-          (fun _ _ heq => nomatch heq)⟩
-    | -- DECRC: restore cursor + ground
-      exact
-        ⟨cp, rp, cl, rl, sx, sy, sx, sy, ac, tl, bl, sb, u8, (fun _ heq => nomatch heq),
-          (fun _ _ heq => nomatch heq)⟩
-    | -- HTS: tabs + ground
-      exact
-        ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, (fun _ heq => nomatch heq),
-          (fun _ _ heq => nomatch heq)⟩
-    | -- RIS: fresh screen, scrollback conditionally carried
-      ( dsimp only
-        split
-        · exact set_sb _ sb (good_init v.cols v.rows)
-        · exact set_sb _ (by simp [Ring.size]) (good_init v.cols v.rows))
-    | ( repeat' split
-        all_goals
-          first
-          | exact set_pstate_escInter _ h'
-          | exact set_ground h'
-          | exact h')
+    with_reducible
+      first
+      | exact h
+      | exact set_pstate_csi {} (by simp) h
+      | exact set_pstate_osc #[] false (by simp) h
+      | exact set_pstate_str _ h
+      | exact set_pstate_escInter _ h
+      | exact set_ground h
+      | exact set_ground (lineFeed h)
+      | exact set_ground (lineFeed (carriageReturn h))
+      | exact set_ground (reverseIndex h)
+      | -- DECSC: save cursor + ground
+        exact
+          { set_ground h with
+            savX := h.curX, savY := h.curY }
+      | -- DECRC: restore cursor + ground
+        exact
+          { set_ground h with
+            curX := h.savX, curY := h.savY }
+      | -- HTS: tabs + ground
+        exact { set_ground h with }
+      | -- RIS: fresh screen, scrollback conditionally carried
+        ( dsimp only
+          split
+          · exact set_sb _ h.sbLe (good_init v.cols v.rows)
+          · exact set_sb _ (by simp [Ring.size]) (good_init v.cols v.rows))
+      | ( repeat' split
+          all_goals
+            with_reducible
+              first
+              | exact set_pstate_escInter _ h
+              | exact set_ground h
+              | exact h)
 
 theorem stepEscInter {v : Vt} (i b : UInt8) (h : Good v) : Good (v.stepEscInter i b) := by
   unfold Vt.stepEscInter
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, -, -⟩ := h
   dsimp only
   repeat' split
   all_goals
     exact
-      ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, (fun _ heq => nomatch heq),
-        (fun _ _ heq => nomatch heq)⟩
+      { h with
+        csiLe := fun _ heq => (nomatch heq), oscLe := fun _ _ heq => (nomatch heq) }
 
 theorem stepCsi {v : Vt} (s : CsiState) (b : UInt8) (hs : s.params.size ≤ 16) (h : Good v) :
     Good (v.stepCsi s b) := by
-  unfold Vt.stepCsi
-  repeat' split
+  fun_cases Vt.stepCsi v s b
   all_goals
-    first
-    | exact h
-    | exact set_pstate_csi _ hs h
-    | exact set_pstate_csi _ (csiPush_le s _ hs) h
-    | exact csiFinish _ _ h
-    | exact set_pstate_esc h
-    | exact ctl _ h
-    | exact set_ground h
+    with_reducible
+      first
+      | exact h
+      | exact set_pstate_csi _ hs h
+      | exact set_pstate_csi _ (csiPush_le s _ hs) h
+      | exact csiFinish _ _ h
+      | exact set_pstate_esc h
+      | exact ctl _ h
+      | exact set_ground h
 
 theorem stepOsc {v : Vt} (acc : Array UInt8) (e : Bool) (b : UInt8) (hacc : acc.size ≤ 2048)
     (h : Good v) : Good (v.stepOsc acc e b) := by
@@ -890,23 +852,25 @@ theorem step {v : Vt} (b : UInt8) (h : Good v) : Good (v.step b) := by
     have h' := set_u8 0 0 (by omega) h
     split
     all_goals
-      first
-      | exact stepGround _ h'
-      | exact stepEsc _ h'
-      | exact stepEscInter _ _ h'
-      | (rename_i heq; exact stepCsi _ _ (h'.csiLe _ heq) h')
-      | (rename_i heq; exact stepOsc _ _ _ (h'.oscLe _ _ heq) h')
-      | exact stepStr _ _ h'
+      with_reducible
+        first
+        | exact stepGround _ h'
+        | exact stepEsc _ h'
+        | exact stepEscInter _ _ h'
+        | (rename_i heq; exact stepCsi _ _ (h'.csiLe _ heq) h')
+        | (rename_i heq; exact stepOsc _ _ _ (h'.oscLe _ _ heq) h')
+        | exact stepStr _ _ h'
   · rw [ite_eq_right hc]
     split
     all_goals
-      first
-      | exact stepGround _ h
-      | exact stepEsc _ h
-      | exact stepEscInter _ _ h
-      | (rename_i heq; exact stepCsi _ _ (h.csiLe _ heq) h)
-      | (rename_i heq; exact stepOsc _ _ _ (h.oscLe _ _ heq) h)
-      | exact stepStr _ _ h
+      with_reducible
+        first
+        | exact stepGround _ h
+        | exact stepEsc _ h
+        | exact stepEscInter _ _ h
+        | (rename_i heq; exact stepCsi _ _ (h.csiLe _ heq) h)
+        | (rename_i heq; exact stepOsc _ _ _ (h.oscLe _ _ heq) h)
+        | exact stepStr _ _ h
 
 /-- The stream form: any byte stream, fed to a Good `Vt`, leaves it
 Good. With `Vt.init`'s `good_init` this covers every state the daemon
@@ -916,18 +880,10 @@ theorem feed {v : Vt} (bytes : List UInt8) (h : Good v) : Good (v.feed bytes) :=
 
 /-- Resize lands Good regardless of requested dimensions. -/
 theorem resize {v : Vt} (cols rows : Nat) (h : Good v) : Good (v.resize cols rows) := by
-  obtain ⟨cp, rp, cl, rl, cx, cy, sx, sy, ac, tl, bl, sb, u8, hcsi, hosc⟩ := h
   unfold Vt.resize
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, sb, u8, hcsi, hosc⟩
-  · simp [clampDim] <;> omega
-  · simp [clampDim] <;> omega
-  · simp [clampDim] <;> omega
-  · simp [clampDim] <;> omega
-  · simp [clampDim] <;> omega
-  · simp [clampDim] <;> omega
-  · simp [clampDim] <;> omega
-  · simp [clampDim] <;> omega
-  · intro g c p heq
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?altCur, ?_, ?_, h.sbLe, h.u8Le, h.csiLe, h.oscLe⟩
+  case altCur =>
+    intro g c p heq
     simp only at heq
     rcases hv : v.altGrid with - | x
     · rw [hv] at heq
@@ -937,11 +893,8 @@ theorem resize {v : Vt} (cols rows : Nat) (h : Good v) : Good (v.resize cols row
       simp only [Option.map_some, Option.some.injEq, Prod.mk.injEq] at heq
       obtain ⟨-, hcc, -⟩ := heq
       subst hcc
-      constructor
-      · simp [clampDim] <;> omega
-      · simp [clampDim] <;> omega
-  · simp [clampDim] <;> omega
-  · simp [clampDim] <;> omega
+      constructor <;> simp [clampDim] <;> omega
+  all_goals simp [clampDim] <;> omega
 
 /-! ## §Chunk — re-chunking invariance, definitional by design -/
 
@@ -951,24 +904,14 @@ into something chunk-sensitive cannot survive the build. -/
 theorem feed_append (v : Vt) (a b : List UInt8) : v.feed (a ++ b) = (v.feed a).feed b := by
   simp [Vt.feed]
 
-/-- Byte-at-a-time equals one-shot: the strongest §Chunk corollary
-(any chunking refines to single bytes). -/
-theorem feed_singletons (v : Vt) (bytes : List UInt8) :
-    v.feed bytes = bytes.foldl (fun acc b => acc.feed [b]) v := by
-  induction bytes generalizing v with
-  | nil => rfl
-  | cons x xs ih =>
-    rw [List.foldl_cons, ← ih]
-    rfl
-
 end Linger.Core.Vt.Good
 
 namespace Linger.Core.Vt
 
 /-! ## Frames: the generalization of the four invariance layers
 
-`pstate`, `u8need`, `dims` and `origin` above are ~110 lemmas that are
-~28 written four times: "operation X does not write field F". The general
+The `pstate`, `u8need`, `dims` and `origin` layers each restate, operation by
+operation, "operation X does not write field F". The general
 statement is a **frame condition** — X's footprint, stated once, covering
 every field at once:
 
@@ -978,9 +921,9 @@ theorem frame_putCell : v.putCell x y c = { v with grid := (v.putCell x y c).gri
 
 Read: *`putCell` writes only `grid`*. Every field invariance is then a
 corollary by rewriting, including fields nobody has thought of yet — so a
-fifth layer costs nothing instead of another 28 lemmas.
+fifth layer costs nothing instead of another lemma per operation.
 
-Why this beats the two ideas recorded in THEOREMS.md:
+Why this beats the two alternatives:
 
 * Better than *bundling* the four fields, which fixes only the fields we
   happened to need.
@@ -1060,10 +1003,6 @@ example (v : Vt) (t b : Nat) (a : Bool) : (v.scrollUpIn t b a).top = v.top := by
 /-- …and the saved-cursor slot, also free. -/
 example (v : Vt) : v.lineFeed.saved = v.saved := by rw [frame_lineFeed]
 
-end Linger.Core.Vt
-
-namespace Linger.Core.Vt
-
 /-! ### The frame set for the leaf operations
 
 One frame per operation, replacing what was four single-field lemmas
@@ -1081,28 +1020,16 @@ theorem frame_clearPending (v : Vt) :
 theorem frame_carriageReturn (v : Vt) :
     v.carriageReturn = { v with cursor := v.carriageReturn.cursor } := by rfl
 
-theorem frame_moveRel (v : Vt) (dx dy : Int) :
-    v.moveRel dx dy = { v with cursor := (v.moveRel dx dy).cursor } := by rfl
-
 theorem frame_setCol (v : Vt) (x : Nat) :
     v.setCol x = { v with cursor := (v.setCol x).cursor } := by rfl
 
 theorem frame_scrollDownIn (v : Vt) (t b : Nat) :
     v.scrollDownIn t b = { v with grid := (v.scrollDownIn t b).grid } := by rfl
 
-theorem frame_deleteChars (v : Vt) (n : Nat) :
-    v.deleteChars n = { v with grid := (v.deleteChars n).grid } := by rfl
-
-theorem frame_insertChars (v : Vt) (n : Nat) :
-    v.insertChars n = { v with grid := (v.insertChars n).grid } := by rfl
-
 theorem frame_applySgr (v : Vt) (ps : List (Nat × Bool)) :
     v.applySgr ps = { v with pen := (v.applySgr ps).pen } := by rfl
 
 theorem frame_backTab (v : Vt) : v.backTab = { v with cursor := v.backTab.cursor } := by rfl
-
-theorem frame_eraseChars (v : Vt) (n : Nat) :
-    v.eraseChars n = { v with grid := (v.eraseChars n).grid } := by rfl
 
 theorem frame_backspace (v : Vt) : v.backspace = { v with cursor := v.backspace.cursor } := by
   unfold Vt.backspace; split <;> rfl
@@ -1197,9 +1124,6 @@ theorem frame_printShift (v : Vt) (w : Nat) :
 
 /-- Wide-pair repair writes only the grid. One frame covers all four layers
 below, plus any field a later one adds. -/
-theorem frame_mendAt (v : Vt) (x y : Nat) :
-    v.mendAt x y = { v with grid := (v.mendAt x y).grid } := by rfl
-
 theorem frame_mendRow (v : Vt) (y : Nat) : v.mendRow y = { v with grid := (v.mendRow y).grid } := by
   rfl
 
@@ -1259,10 +1183,6 @@ theorem frame_oscFinish (v : Vt) (acc : Array UInt8) :
         pstate := (v.oscFinish acc).pstate, title := (v.oscFinish acc).title } := by
   unfold Vt.oscFinish; dsimp only; repeat' split
   all_goals rfl
-
-end Linger.Core.Vt
-
-namespace Linger.Core.Vt
 
 /-! ### The cut `print` induces — everything it does not write
 
@@ -1347,17 +1267,11 @@ theorem wrap_print (v : Vt) (ch : Char) : (v.print ch).modes.wrap = v.modes.wrap
 theorem cols_print (v : Vt) (ch : Char) : (v.print ch).cols = v.cols :=
   congrArg OffScreen.cols (off_print v ch)
 
-theorem rows_print (v : Vt) (ch : Char) : (v.print ch).rows = v.rows :=
-  congrArg OffScreen.rows (off_print v ch)
-
 theorem g0_print (v : Vt) (ch : Char) : (v.print ch).g0Line = v.g0Line :=
   congrArg OffScreen.g0 (off_print v ch)
 
 theorem g1_print (v : Vt) (ch : Char) : (v.print ch).g1Line = v.g1Line :=
   congrArg OffScreen.g1 (off_print v ch)
-
-theorem so_print (v : Vt) (ch : Char) : (v.print ch).shiftOut = v.shiftOut :=
-  congrArg OffScreen.so (off_print v ch)
 
 theorem ua_print' (v : Vt) (ch : Char) : (v.print ch).u8acc = v.u8acc :=
   congrArg OffScreen.u8acc (off_print v ch)
@@ -1382,57 +1296,15 @@ theorem ps_clearPending (v : Vt) : v.clearPending.pstate = v.pstate := by rfl
 
 theorem ps_carriageReturn (v : Vt) : v.carriageReturn.pstate = v.pstate := by rfl
 
-theorem ps_putCell (v : Vt) (x y : Nat) (c : Cell) : (v.putCell x y c).pstate = v.pstate := by rfl
-
-theorem ps_moveTo (v : Vt) (x y : Nat) : (v.moveTo x y).pstate = v.pstate := by rfl
-
-theorem ps_moveRel (v : Vt) (dx dy : Int) : (v.moveRel dx dy).pstate = v.pstate := by rfl
-
 theorem ps_setCol (v : Vt) (x : Nat) : (v.setCol x).pstate = v.pstate := by rfl
 
-theorem ps_scrollDownIn (v : Vt) (t b : Nat) : (v.scrollDownIn t b).pstate = v.pstate := by rfl
-
-theorem ps_eraseRowSpan (v : Vt) (y a b : Nat) : (v.eraseRowSpan y a b).pstate = v.pstate := by rfl
-
-theorem ps_scrollUpIn (v : Vt) (t b : Nat) (a : Bool) : (v.scrollUpIn t b a).pstate = v.pstate := by
-  unfold Vt.scrollUpIn; dsimp only; split <;> rfl
-
-theorem ps_scrollUp (v : Vt) : v.scrollUp.pstate = v.pstate := ps_scrollUpIn _ _ _ _
-
-theorem ps_scrollDown (v : Vt) : v.scrollDown.pstate = v.pstate := ps_scrollDownIn _ _ _
-
 theorem ps_lineFeed (v : Vt) : v.lineFeed.pstate = v.pstate := by rw [frame_lineFeed]
-
-theorem ps_reverseIndex (v : Vt) : v.reverseIndex.pstate = v.pstate := by rw [frame_reverseIndex]
 
 theorem ps_backspace (v : Vt) : v.backspace.pstate = v.pstate := by
   unfold Vt.backspace; split <;> rfl
 
 theorem ps_tab (v : Vt) : v.tab.pstate = v.pstate := by
   unfold Vt.tab; dsimp only; exact ps_clearPending v
-
-theorem ps_printWrap (v : Vt) : v.printWrap.pstate = v.pstate := by rw [frame_printWrap]
-
-theorem ps_printWideWrap (v : Vt) (w : Nat) : (v.printWideWrap w).pstate = v.pstate := by
-  rw [frame_printWideWrap]
-
-theorem ps_printShift (v : Vt) (w : Nat) : (v.printShift w).pstate = v.pstate := by
-  unfold Vt.printShift; dsimp only; split <;> rfl
-
-theorem ps_mendRow (v : Vt) (y : Nat) : (v.mendRow y).pstate = v.pstate := by rw [frame_mendRow]
-
-theorem ps_printPut (v : Vt) (ch : Char) (w : Nat) : (v.printPut ch w).pstate = v.pstate := by
-  unfold Vt.printPut
-  dsimp only
-  repeat' split
-  all_goals (rw [ps_mendRow]; rfl)
-
-theorem ps_printAdvance (v : Vt) (w : Nat) : (v.printAdvance w).pstate = v.pstate := by
-  unfold Vt.printAdvance; dsimp only; split <;> rfl
-
-/-- The composite: printing a glyph never touches the parser. -/
-theorem ps_printMark (v : Vt) (ch : Char) : (v.printMark ch).pstate = v.pstate := by
-  rw [frame_printMark]
 
 theorem ps_print (v : Vt) (c : Char) : (v.print c).pstate = v.pstate :=
   congrArg OffScreen.pstate (off_print v c)
@@ -1453,12 +1325,13 @@ theorem ps_ctl (v : Vt) (b : UInt8) : (v.ctl b).pstate = v.pstate := by
   unfold Vt.ctl
   repeat' split
   all_goals
-    first
-    | exact ps_backspace v
-    | exact ps_tab v
-    | exact ps_lineFeed v
-    | exact ps_carriageReturn v
-    | rfl
+    with_reducible
+      first
+      | exact ps_backspace v
+      | exact ps_tab v
+      | exact ps_lineFeed v
+      | exact ps_carriageReturn v
+      | rfl
 
 theorem ps_abortUtf8 (v : Vt) (b : UInt8) : (v.abortUtf8 b).pstate = v.pstate := by
   unfold Vt.abortUtf8; split <;> rfl

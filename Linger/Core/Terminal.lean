@@ -27,10 +27,13 @@ namespace Linger.Core.Terminal
 
 open Linger.Core.Vt Linger.Core.Render
 
+/-- The escape byte. -/
 abbrev ESC : UInt8 := 0x1B
 
+/-- The bell byte, which also terminates OSC. -/
 abbrev BEL : UInt8 := 0x07
 
+/-- The final byte of the string terminator `ESC \`. -/
 abbrev STFinal : UInt8 := 0x5C
 
 /-- Maximum retained bytes for one possible owned CSI request. -/
@@ -44,26 +47,33 @@ def dcsCap : Nat := 2048
 
 /-! ## Exact profile replies -/
 
+/-- Primary device attributes reply: a VT100 with advanced video. -/
 def da1Reply : Bytes := [ESC, 0x5B, 0x3F, 0x31, 0x3B, 0x32, 0x63]
 
+/-- Secondary device attributes reply: `CSI > 0 ; 0 ; 0 c`. -/
 def da2Reply : Bytes := [ESC, 0x5B, 0x3E, 0x30, 0x3B, 0x30, 0x3B, 0x30, 0x63]
 
+/-- Device status reply: the terminal is OK (`CSI 0 n`, or `CSI ? 0 n` when private). -/
 def statusReply (private_ : Bool) : Bytes :=
   [ESC, 0x5B] ++ (if private_ then [0x3F] else []) ++ [0x30, 0x6E]
 
+/-- The 1-based row a cursor position report gives, relative to the region under DECOM. -/
 def cprRow (v : Vt) : Nat :=
   if v.modes.origin then if v.cursor.y < v.top then 1 else v.cursor.y - v.top + 1
   else v.cursor.y + 1
 
+/-- Cursor position report `CSI row ; column R`, with `?` when private. -/
 def cprReply (v : Vt) (private_ : Bool) : Bytes :=
   [ESC, 0x5B] ++ (if private_ then [0x3F] else []) ++ digits (cprRow v) ++ [0x3B] ++
     digits (v.cursor.x + 1) ++
     [0x52]
 
+/-- XTVERSION reply: `DCS > | linger 0.1.0 ST`. -/
 def versionReply : Bytes :=
   [ESC, 0x50, 0x3E, 0x7C, 0x6C, 0x69, 0x6E, 0x67, 0x65, 0x72, 0x20, 0x30, 0x2E, 0x31, 0x2E, 0x30,
     ESC, STFinal]
 
+/-- Text-area size reply for `CSI 18 t`: `CSI 8 ; rows ; cols t`. -/
 def textAreaReply (v : Vt) : Bytes :=
   [ESC, 0x5B, 0x38, 0x3B] ++ digits v.rows ++ [0x3B] ++ digits v.cols ++ [0x74]
 
@@ -90,13 +100,15 @@ tail. A raw payload could carry a CR and a shell command; on a cooked-mode
 tty the CR commits a line, so echoing it verbatim let untrusted output run
 a command (terminal-reply injection). A conforming request is hex, so the
 filter is the identity on it; a malformed one loses exactly the bytes that
-could terminate a line. `feed_replies_no_newline` states the guarantee this
+could terminate a line. `feed_replies_noNl` states the guarantee this
 buys: no reply linger ever writes to the child contains a line terminator. -/
 def xtgetcapReply (payload : Bytes) : Bytes :=
   [ESC, 0x50, 0x30, 0x2B, 0x72] ++ payload.filter capByte ++ [ESC, STFinal]
 
+/-- DECRQSS reply: every setting request is answered as invalid. -/
 def decrqssReply : Bytes := [ESC, 0x50, 0x30, 0x24, 0x72, ESC, STFinal]
 
+/-- A complete request's classification: passed through, or owned with its reply. -/
 inductive Decision where
   | unowned
   | owned (reply : Bytes)
@@ -180,6 +192,7 @@ def Scan.Bounded : Scan → Prop
       dcsCap
   | _ => True
 
+/-- One scanner step: the next state, bytes released to clients and replies to the child. -/
 structure ScanStep where
   scan : Scan
   visible : Bytes := []
@@ -263,6 +276,7 @@ def Scan.step (s : Scan) (v : Vt) (b : UInt8) : ScanStep :=
 have already reached `Vt`, so callers must only broadcast them. -/
 def finish (s : Scan) : Bytes × Scan := (s.pending, .ground)
 
+/-- After feeding a chunk: the terminal, the scanner, client-visible bytes and child replies. -/
 structure Result where
   vt : Vt
   scan : Scan
