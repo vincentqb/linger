@@ -159,13 +159,8 @@ def renderPieces (withColor : Bool) (pieces : List RowPiece) : List UInt8 :=
     | none => text
 
 /-- The whole human-readable listing, one LF-terminated row per session (or the
-empty-state line). The name column is as wide as the widest name in the set, so
-the detail columns align. -/
-def humanListing (rows : List (List (String × String))) : List UInt8 :=
-  if rows.isEmpty then utf8s "no sessions".toList ++ [0x0A]
-  else rows.flatMap (fun r => humanRow (nameWidth rows) r ++ [0x0A])
-
-/-- Terminal listing with the same row pieces as the picker. Callers choose
+empty-state line), with the same row pieces as the picker. The name column is as
+wide as the widest name in the set, so the detail columns align. Callers choose
 whether color is enabled from terminal detection and `NO_COLOR`. -/
 def terminalListing (withColor : Bool) (rows : List (List (String × String))) : List UInt8 :=
   if rows.isEmpty then utf8s "no sessions".toList ++ [0x0A]

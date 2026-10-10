@@ -759,7 +759,7 @@ private def nativeFallback (f : Fixture) (home : Option String) (mixed : Bool) :
           (← privateFile target)
 
 private def check (root : System.FilePath) (bin : String) (index : Nat) (label : String)
-    (body : Fixture → IO Bool) : IO Nat := do
+    (body : Fixture → IO Bool) : IO Unit := do
   let root := root / toString index
   for dir in [root / "state", root / "home", root / "data", root / "out"] do
     IO.FS.createDirAll dir
@@ -912,12 +912,14 @@ def runWith (binary : String) : IO UInt32 := do
       cases ++
         [(s!"tmux ls discovers {label} using only the read-only current-server query", fun f =>
             discovery f config)]
-  let mut failures := 0
+  -- This run created the fixture root with `mktemp`, so a green run removes it
+  -- whatever `LINGER_TEST_DIR` says.
+  let before ← failureCount
   for ((label, body), index) in cases.zipIdx do
-    failures := failures + (← check root bin.toString index label body)
-  if failures == 0 then
+    check root bin.toString index label body
+  if (← failureCount) == before then
     IO.FS.removeDirAll root
-  verdict { bin := bin.toString, dir := root.toString } failures
+  finish
 
 def run : IO UInt32 := do
   let binary :=

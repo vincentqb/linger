@@ -102,7 +102,7 @@ caller turns `.error` into `IO.userError`.
 
 The message reports the offending host **scrubbed**: it is printed to a terminal,
 and echoing the raw bytes back is how a hostile remotes file would inject an escape
-sequence through the error path rather than the listing (`humanListing` covers the
+sequence through the error path rather than the listing (`terminalListing` covers the
 listing; this covers here). -/
 def checkHosts (hosts : List String) : Except String (List String) :=
   match firstDupHost hosts with

@@ -23,50 +23,34 @@ def run (binary : String) (args : Array String) (logDir : System.FilePath)
   if (← IO.getEnv "LINGER_TEST_DIR").isSome then
     IO.eprintln "e2e: concurrent suites require separate state directories; unset LINGER_TEST_DIR"
     return 2
-  let mut pending := specs
-  let mut active : List (Task (Except IO.Error (String × Bool × Nat))) := []
-  let mut failed := false
-  while !pending.isEmpty || !active.isEmpty do
-    while active.length < 4 && !pending.isEmpty do
-      match pending with
-      | [] =>
-        pure ()
-      | (name, expected) :: rest =>
-        pending := rest
-        let work : IO (String × Bool × Nat) := do
-          let start ← IO.monoMsNow
-          let log := logDir / s!"linger-{name}.out"
-          -- Redirect in the child, not global Lean streams. All arguments remain
-          -- argv elements, and exec keeps the process and signal disposition.
-          let child ←
-            IO.Process.spawn
-                { cmd := "sh"
-                  args :=
-                    #["-c", "exec \"$@\" > \"$0\" 2>&1", log.toString, binary] ++ args ++ #[name] }
-          let code ← child.wait
-          let text ← IO.FS.readFile log
-          let lines := E2E.Harness.lines text
-          let count := (lines.filter (·.startsWith "PASS ")).length
-          let ok :=
-            code == 0 && lines.getLast? == some "FAILURES: 0" && count == expected &&
-              !lines.any (·.startsWith "FAIL ")
-          if !ok then
-            IO.eprintln s!"e2e: {name} failed (exit {code}, {count}/{expected} checks); see {log}"
-          return (name, ok, (← IO.monoMsNow) - start)
-        active := (← work.asTask .dedicated) :: active
-    match active with
-    | [] =>
-      pure ()
-    | task :: rest =>
-      let (result, remaining) ← IO.waitAny' (task :: rest)
-      active := remaining
-      match result with
-      | .error e =>
-        failed := true
+  let suite (name : String) (expected : Nat) : IO (String × Bool × Nat) := do
+    let start ← IO.monoMsNow
+    let log := logDir / s!"linger-{name}.out"
+    -- Redirect in the child, not global Lean streams. All arguments remain
+    -- argv elements, and exec keeps the process and signal disposition.
+    let child ←
+      IO.Process.spawn
+          { cmd := "sh"
+            args := #["-c", "exec \"$@\" > \"$0\" 2>&1", log.toString, binary] ++ args ++ #[name] }
+    let code ← child.wait
+    let text ← IO.FS.readFile log
+    let lines := E2E.Harness.lines text
+    let count := (lines.filter (·.startsWith "PASS ")).length
+    let ok :=
+      code == 0 && lines.getLast? == some "FAILURES: 0" && count == expected &&
+        !lines.any (·.startsWith "FAIL ")
+    if !ok then
+      IO.eprintln s!"e2e: {name} failed (exit {code}, {count}/{expected} checks); see {log}"
+    return (name, ok, (← IO.monoMsNow) - start)
+  let failed ← IO.mkRef false
+  E2E.Harness.parallel 4 (specs.map fun (name, expected) => suite name expected) fun
+      | .error e => do
+        failed.set true
         IO.eprintln s!"e2e: {e}"
-      | .ok (name, ok, elapsed) =>
-        failed := failed || !ok
+      | .ok (name, ok, elapsed) => do
+        unless ok do
+          failed.set true
         IO.println s!"  {name}: {if ok then "OK" else "FAILED"} ({elapsed} ms)"
-  return if failed then 1 else 0
+  return if ← failed.get then 1 else 0
 
 end E2E.Runner

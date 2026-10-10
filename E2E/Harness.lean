@@ -38,10 +38,30 @@ open Linger.Posix
 /-- The detach key, ctrl-\\ — the one byte every suite sends to leave. -/
 def detachKey : ByteArray := ByteArray.mk #[0x1C]
 
-/-- One check. Returns 1 on failure so callers can sum. -/
-def expect (cond : Bool) (name : String) : IO Nat := do
+/-- The failures this process has recorded. `IO.Ref.modify` is atomic, so the
+concurrent check groups of `E2E.Manager` share it. -/
+private initialize recorded : IO.Ref Nat ←
+  IO.mkRef 0
+
+/-- Record a failure that has no check line of its own, such as a check group
+that threw before reaching its checks. -/
+def recordFailure : IO Unit := recorded.modify (· + 1)
+
+/-- The failures recorded so far, for a caller that compares before and after. -/
+def failureCount : IO Nat := recorded.get
+
+/-- One check: print its `PASS` or `FAIL` line, recording a failure for `FAIL`. -/
+def expect (cond : Bool) (name : String) : IO Unit := do
   IO.println s!"{if cond then "PASS" else "FAIL"} {name}"
-  return if cond then 0 else 1
+  unless cond do
+    recordFailure
+
+/-- Print the verdict line `FAILURES: <n>` with the recorded count and return the
+process code: 0 when nothing failed, otherwise 1. -/
+def finish : IO UInt32 := do
+  let failures ← failureCount
+  IO.println s!"FAILURES: {failures}"
+  return if failures == 0 then 0 else 1
 
 /-- Substring test (core `String.contains`; an empty needle is contained everywhere). -/
 def has (haystack needle : String) : Bool := haystack.contains needle
@@ -76,6 +96,55 @@ def waitProcess {cfg : IO.Process.StdioConfig} (child : IO.Process.Child cfg) (m
     IO.sleep 50
     code ← child.tryWait
   return code
+
+/-- Reap `child` whatever state it is in: wait up to `ms` for it to exit, then
+send SIGTERM and wait again, then SIGKILL and wait once more. A child that an
+earlier wait already reaped makes `tryWait` raise ECHILD, and counts as finished;
+its pid is then never signalled, since it may belong to another process. -/
+def reapOrKill {cfg : IO.Process.StdioConfig} (child : IO.Process.Child cfg) (ms : Nat) : IO Unit :=
+  do
+  let finished : IO Bool := do
+    try
+      return (← waitProcess child ms).isSome
+    catch
+    | .noSuchThing .. =>
+      return true
+    | err =>
+      throw err
+  if ← finished then
+    return
+  child.kill
+  if ← finished then
+    return
+  kill child.pid 9
+  discard finished
+
+/-- Accept one connection on a nonblocking listener within `ms`. -/
+def acceptWithin (lfd : UInt32) (ms : Nat) : IO (Option UInt32) := do
+  let deadline := (← monotonicMs) + ms
+  while (← monotonicMs) < deadline do
+    let fd ← accept lfd
+    if fd ≥ 0 then
+      return some fd.toUInt64.toUInt32
+    IO.sleep 20
+  return none
+
+/-- Run `jobs` on dedicated threads with at most `limit` (at least one) alive,
+passing each outcome to `done` in completion order. A failed job does not stop
+the others: every started job is waited for. -/
+def parallel {α : Type} (limit : Nat) (jobs : List (IO α)) (done : Except IO.Error α → IO Unit) :
+    IO Unit := do
+  let mut pending := jobs
+  let mut active : List (Task (Except IO.Error α)) := []
+  repeat
+    while active.length < max limit 1 do
+      let job :: rest := pending | break
+      pending := rest
+      active := (← job.asTask .dedicated) :: active
+    let task :: rest := active | break
+    let (result, remaining) ← IO.waitAny' (task :: rest)
+    active := remaining
+    done result
 
 /-- First index of `needle` in `hay`, walking the haystack once.
 
@@ -200,6 +269,27 @@ def Client.detach (c : Client) : IO Unit := do
 /-- Resize a client's terminal, as dragging the window would. -/
 def Client.resize (c : Client) (cols rows : UInt32) : IO Unit := winsizeSet c.fd cols rows
 
+/-- Append the client's output to `acc` until `ready` holds of the bytes from
+offset `start`, EOF arrives or `ms` elapses; the result is whether `ready` held.
+
+The positive counterpart of `drain`, under `waitFor`'s rule: a check that output
+**arrives** returns as soon as it does, instead of reading out a fixed window. -/
+def Client.awaitText (c : Client) (acc : IO.Ref ByteArray) (ready : ByteArray → Bool) (start := 0)
+    (ms := 4000) : IO Bool := do
+  let deadline := (← monotonicMs) + ms
+  let holds : IO Bool := do
+    let bytes ← acc.get
+    return ready (bytes.extract start bytes.size)
+  while !(← holds) && (← monotonicMs) < deadline do
+    let revs ← poll #[c.fd] #[POLLIN] 50
+    if revs[0]! &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
+      match ← read c.fd 65536 with
+      | none =>
+        break
+      | some bs =>
+        acc.modify (· ++ bs)
+  holds
+
 /-- Poll-wait for the child to be reaped, or give up.
 
 Tolerant of ECHILD: a child already reaped (or never ours) is a child that is
@@ -295,6 +385,13 @@ def Env.dirNames (e : Env) (ext : String) : IO (List String) := do
     entries.toList.filterMap fun de => if de.fileName.endsWith ext then some de.fileName else none
   return names.toArray.qsort (· < ·) |>.toList
 
+/-- The daemon log of session `name` in this state dir, empty until it exists. -/
+def Env.log (e : Env) (name : String) : IO String := do
+  try
+    IO.FS.readFile s!"{e.dir}/logs/{name}.log"
+  catch _ =>
+    pure ""
+
 /-- Parse `k<TAB>v` lines into an association list — the shape both
 `linger info` and `linger ls --porcelain` emit (`Session.infoText`). -/
 def records (txt : String) : List (String × String) :=
@@ -379,7 +476,7 @@ def Env.killAll (e : Env) (names : Array String) : IO Unit := do
     let _ ← e.cli #["kill", n]
     pure ()
 
-/-- Print the verdict line `scripts/e2e.sh` reads, and return the process code.
+/-- Print the verdict line through `finish`, and return the process code.
 
 Takes the `Env` so the exit point the PTY suites already go through is also
 where their state directory is retired — a green run leaves nothing behind, a red one
@@ -388,16 +485,48 @@ per run had accumulated 538 of them in `/tmp` before this was here, and a cleanu
 new suite must remember to call is a cleanup that will be forgotten. A dir supplied
 through `LINGER_TEST_DIR` is the caller's, so it is left alone either way.
 
-Not every suite: `E2E/Coverage.lean` and `E2E/Ci.lean` print `FAILURES:` themselves,
-having no state directory to retire, so the output contract above lives in three
-places and they must be edited alongside this if it changes. -/
-def verdict (e : Env) (fails : Nat) : IO UInt32 := do
-  IO.println s!"FAILURES: {fails}"
-  if fails == 0 && (← IO.getEnv "LINGER_TEST_DIR").isNone then
+Suites without a state directory end with `finish` itself. The single exception is
+`E2E/Coverage.lean`, a meta command outside this harness that prints its own
+`FAILURES:` line, so it must be edited alongside `finish` if the contract changes. -/
+def verdict (e : Env) : IO UInt32 := do
+  let code ← finish
+  if code == 0 && (← IO.getEnv "LINGER_TEST_DIR").isNone then
     try
       IO.FS.removeDirAll (System.FilePath.mk e.dir)
     catch _ =>
       pure ()
-  return if fails == 0 then 0 else 1
+  return code
+
+/-- `linger kill` every session whose socket is directly in this state dir.
+Best effort: a session that is already gone, or a kill that fails, does not
+stop the others. -/
+def Env.endSessions (e : Env) : IO Unit := do
+  let sockets ←
+    try
+      e.dirNames ".sock"
+    catch _ =>
+      pure []
+  for socket in sockets do
+    try
+      let _ ← e.cli #["kill", (socket.dropEnd ".sock".length).toString]
+    catch _ =>
+      pure ()
+
+/-- Run one suite in a fresh state dir and return its `verdict`.
+
+A body that throws aborts the suite, and its sessions are ended before the
+exception propagates, so an aborted run leaves no daemon behind (aborted Resume
+runs used to leave `linger __daemon geom` alive for minutes). A dir supplied
+through `LINGER_TEST_DIR` is the caller's, so its sessions are left alone. A run
+that completes reaches `verdict`, which keeps a red run's sockets and checkpoints. -/
+def Env.suite (slug : String) (body : Env → IO Unit) : IO UInt32 := do
+  let e ← Env.make slug
+  try
+    body e
+  catch err =>
+    if (← IO.getEnv "LINGER_TEST_DIR").isNone then
+      e.endSessions
+    throw err
+  verdict e
 
 end E2E.Harness

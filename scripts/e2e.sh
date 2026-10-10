@@ -224,7 +224,7 @@ say "4–19. live suites (four isolated processes, longer suites first)"
 ./.lake/build/bin/e2e --suites \
   manager:123 delivery:37 attach:47 agent:47 \
   resume:15 watch:40 title:19 graphics:9 robust:26 \
-  interop:61 recipes:58 status:17 terminal:12 overview:16 remote:64 identity:25 \
+  interop:61 recipes:58 status:17 terminal:12 overview:15 remote:64 identity:25 \
   || fail "live suites (see /tmp/linger-*.out)"
 
 LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger info "$sentinel_name" >/dev/null \

@@ -70,89 +70,80 @@ def winchCount (path : System.FilePath) : IO Nat := do
   catch _ =>
     return 0
 
-def run : IO UInt32 := do
-  let e ← Env.make "gfx"
-  let mut f := 0
-  let c ← e.spawn #["attach", "gfx"] 80 24
-  IO.sleep 800
-  let _ ← drain c.fd 400
-  -- 1+2. both protocols arrive verbatim at the attached client
-  c.type (kittyCmd ++ "\r")
-  IO.sleep 500
-  let out ← drain c.fd 600
-  f := f + (← expect (hasBytes out kittyBytes) "kitty APC graphics pass through verbatim")
-  c.type (sixelCmd ++ "\r")
-  IO.sleep 500
-  let out ← drain c.fd 600
-  f := f + (← expect (hasBytes out sixelBytes) "sixel DCS graphics pass through verbatim")
-  -- 3. the session is not wedged by either payload. Assert on the EXPANSION, not
-  -- the typed text: the shell echoes what it was given, and the arithmetic result
-  -- is the discriminating string.
-  c.type "echo gfx-alive-$((20+22))\r"
-  IO.sleep 600
-  let out ← drain c.fd 800
-  f := f + (← expect (hasText out "gfx-alive-42") "session still live after image payloads")
-  -- 4. the emulator ignored the payload rather than printing it
-  f :=
-    f +
-      (←
-        expect (!has (← e.out #["capture", "--history", "gfx"]) "GFXPAYLOAD")
-            "image payload does not land in the text grid")
-  -- 5. detach, reattach: the text screen restores and the parser is sane. The
-  -- image is gone — the documented limitation, asserted here so the help and the
-  -- behaviour cannot drift apart.
-  c.bye
-  let c2 ← e.spawn #["attach", "gfx"] 80 24
-  IO.sleep 1000
-  let restored ← drain c2.fd 800
-  f := f + (← expect (hasText restored "gfx-alive-42") "text screen restores after reattach")
-  f :=
-    f +
-      (←
-        expect (!hasBytes restored kittyBytes)
-            "images are NOT replayed on reattach (documented limitation)")
-  c2.type "echo after-reattach-$((21+21))\r"
-  IO.sleep 600
-  let out ← drain c2.fd 800
-  f := f + (← expect (hasText out "after-reattach-42") "parser sane after a restore")
-  c2.bye
-  e.killAll #["gfx"]
-  -- 6+7. The repaint shortcut: an application that redraws brings its OWN images
-  -- back, and what makes it redraw is SIGWINCH. We deliver that by resizing the pty
-  -- for the size-owning client on attach, so a reattach at a NEW size nudges the
-  -- program; at the same size the kernel suppresses the signal (`tty_do_resize`
-  -- compares the winsize first) and nothing redraws.
-  --
-  -- Both halves are asserted because the ASYMMETRY is the user-visible rule. The
-  -- reporter logs to a FILE — anything on stdout would be replayed by `restore` and
-  -- could not be told apart from a fresh signal — and runs in the FOREGROUND, since
-  -- a background process group gets no SIGWINCH at all.
-  let wlog := (System.FilePath.mk e.dir) / "winch"
-  -- `sleep` is not interruptible, so a bare `trap; while :; do sleep; done` never
-  -- runs the handler — measured, it caught zero signals. POSIX `wait` IS
-  -- interrupted by a trapped signal, so the sleep goes in the background and the
-  -- shell blocks in `wait`: that catches every WINCH.
-  let reporter := s!"trap 'printf W >> {wlog.toString}' WINCH; while :; do sleep 1 & wait; done\r"
-  let w1 ← e.spawn #["attach", "winch"] 80 24
-  IO.sleep 1200
-  w1.type reporter
-  IO.sleep 1000
-  let _ ← drain w1.fd 400
-  let base ← winchCount wlog
-  w1.bye
-  let w2 ← e.spawn #["attach", "winch"] 80 24
-  IO.sleep 1600
-  let _ ← drain w2.fd 400
-  let same ← winchCount wlog
-  f := f + (← expect (same == base) "same-size reattach delivers no SIGWINCH (no redraw)")
-  w2.bye
-  let w3 ← e.spawn #["attach", "winch"] 100 30
-  IO.sleep 1600
-  let _ ← drain w3.fd 400
-  let grown ← winchCount wlog
-  f := f + (← expect (grown > same) "reattach at a new size nudges the program (SIGWINCH)")
-  w3.bye
-  e.killAll #["winch"]
-  verdict e f
+def run : IO UInt32 :=
+  Env.suite "gfx" fun e => do
+    let c ← e.spawn #["attach", "gfx"] 80 24
+    IO.sleep 800
+    let _ ← drain c.fd 400
+    -- 1+2. both protocols arrive verbatim at the attached client
+    c.type (kittyCmd ++ "\r")
+    let kitty ← IO.mkRef ByteArray.empty
+    expect (← c.awaitText kitty (hasBytes · kittyBytes)) "kitty APC graphics pass through verbatim"
+    c.type (sixelCmd ++ "\r")
+    let sixel ← IO.mkRef ByteArray.empty
+    expect (← c.awaitText sixel (hasBytes · sixelBytes)) "sixel DCS graphics pass through verbatim"
+    -- 3. the session is not wedged by either payload. Assert on the EXPANSION, not
+    -- the typed text: the shell echoes what it was given, and the arithmetic result
+    -- is the discriminating string.
+    c.type "echo gfx-alive-$((20+22))\r"
+    let alive ← IO.mkRef ByteArray.empty
+    expect (← c.awaitText alive (hasText · "gfx-alive-42"))
+        "session still live after image payloads"
+    -- 4. the emulator ignored the payload rather than printing it
+    expect (!has (← e.out #["capture", "--history", "gfx"]) "GFXPAYLOAD")
+        "image payload does not land in the text grid"
+    -- 5. detach, reattach: the text screen restores and the parser is sane. The
+    -- image is gone — the documented limitation, asserted here so the help and the
+    -- behaviour cannot drift apart.
+    c.bye
+    let c2 ← e.spawn #["attach", "gfx"] 80 24
+    let screen ← IO.mkRef ByteArray.empty
+    let _ ← c2.awaitText screen (hasText · "gfx-alive-42")
+    -- …and the rest of the restore burst, which the image check below reads
+    let restored := (← screen.get) ++ (← drain c2.fd 400)
+    expect (hasText restored "gfx-alive-42") "text screen restores after reattach"
+    expect (!hasBytes restored kittyBytes)
+        "images are NOT replayed on reattach (documented limitation)"
+    c2.type "echo after-reattach-$((21+21))\r"
+    let sane ← IO.mkRef ByteArray.empty
+    expect (← c2.awaitText sane (hasText · "after-reattach-42")) "parser sane after a restore"
+    c2.bye
+    e.killAll #["gfx"]
+    -- 6+7. The repaint shortcut: an application that redraws brings its OWN images
+    -- back, and what makes it redraw is SIGWINCH. We deliver that by resizing the pty
+    -- for the size-owning client on attach, so a reattach at a NEW size nudges the
+    -- program; at the same size the kernel suppresses the signal (`tty_do_resize`
+    -- compares the winsize first) and nothing redraws.
+    --
+    -- Both halves are asserted because the ASYMMETRY is the user-visible rule. The
+    -- reporter logs to a FILE — anything on stdout would be replayed by `restore` and
+    -- could not be told apart from a fresh signal — and runs in the FOREGROUND, since
+    -- a background process group gets no SIGWINCH at all.
+    let wlog := (System.FilePath.mk e.dir) / "winch"
+    -- `sleep` is not interruptible, so a bare `trap; while :; do sleep; done` never
+    -- runs the handler — measured, it caught zero signals. POSIX `wait` IS
+    -- interrupted by a trapped signal, so the sleep goes in the background and the
+    -- shell blocks in `wait`: that catches every WINCH.
+    let reporter := s!"trap 'printf W >> {wlog.toString}' WINCH; while :; do sleep 1 & wait; done\r"
+    let w1 ← e.spawn #["attach", "winch"] 80 24
+    IO.sleep 1200
+    w1.type reporter
+    IO.sleep 1000
+    let _ ← drain w1.fd 400
+    let base ← winchCount wlog
+    w1.bye
+    let w2 ← e.spawn #["attach", "winch"] 80 24
+    IO.sleep 1600
+    let _ ← drain w2.fd 400
+    let same ← winchCount wlog
+    expect (same == base) "same-size reattach delivers no SIGWINCH (no redraw)"
+    w2.bye
+    let w3 ← e.spawn #["attach", "winch"] 100 30
+    let _ ← waitFor 5000 (return (← winchCount wlog) > same)
+    let _ ← drain w3.fd 400
+    let grown ← winchCount wlog
+    expect (grown > same) "reattach at a new size nudges the program (SIGWINCH)"
+    w3.bye
+    e.killAll #["winch"]
 
 end E2E.Graphics

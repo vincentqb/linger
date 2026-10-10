@@ -168,7 +168,7 @@ private def expectedTitle (unread : Bool) : String :=
   Linger.Core.Title.compose "title-main" "editor" summary maxChars
 
 private def splitCase (e : Env) (c : Client) (seen : IO.Ref Receiver)
-    (label startKey endKey : String) (opening closing : ByteArray) (unread : Bool) : IO Nat := do
+    (label startKey endKey : String) (opening closing : ByteArray) (unread : Bool) : IO Unit := do
   let before ← seen.get
   let start := before.bytes.size
   let (openCode, _, _) ← e.cli #["send", "title-main", startKey]
@@ -179,35 +179,27 @@ private def splitCase (e : Env) (c : Client) (seen : IO.Ref Receiver)
   -- one-second interval, including the response budget and client polling.
   receive c seen 2500
   let held ← seen.get
-  let mut failures ←
-    expect
-        (openCode == 0 && opened && !incomplete.vt.atBoundary && changed &&
-          held.bytes.size == incomplete.bytes.size &&
-          !held.vt.atBoundary &&
-          held.vt.windowTitle == before.vt.windowTitle)
-        s!"{label}: attention refresh waits for the application boundary"
+  expect
+      (openCode == 0 && opened && !incomplete.vt.atBoundary && changed &&
+        held.bytes.size == incomplete.bytes.size &&
+        !held.vt.atBoundary &&
+        held.vt.windowTitle == before.vt.windowTitle)
+      s!"{label}: attention refresh waits for the application boundary"
   let (closeCode, _, _) ← e.cli #["send", "title-main", endKey]
   let completed ← awaitOutput c seen (titleIs (expectedTitle unread))
   let after ← seen.get
-  failures :=
-    failures +
-      (←
-        expect
-            (closeCode == 0 && completed &&
-              hasBytes (since after start) (opening ++ closing).toList)
-            s!"{label}: completion preserves bytes and emits the pending title")
-  return failures
+  expect (closeCode == 0 && completed && hasBytes (since after start) (opening ++ closing).toList)
+      s!"{label}: completion preserves bytes and emits the pending title"
 
 /-- Pipe-reader errors are optional sampling failures, not attach failures.
 The actual session CLI stays fixed; this executable supplies the linked Client
 under test and its controlled status subprocesses. -/
-private def pipeCase (base : Env) (pipe : String) : IO Nat := do
+private def pipeCase (base : Env) (pipe : String) : IO Unit := do
   let e := { base with dir := s!"{base.dir}/pipe-{pipe}" }
   IO.FS.createDirAll e.dir
   let name := s!"title-{pipe}"
   let self ← IO.appPath
   let attaching := { e with bin := self.toString }
-  let mut failures := 0
   try
     let ready ← startProbe e name
     let c ← attaching.spawnEnv #[s!"LINGER_E2E_TITLE_PIPE={pipe}"] #["--title-attach-probe", name]
@@ -223,14 +215,11 @@ private def pipeCase (base : Env) (pipe : String) : IO Nat := do
       let pingStart := (← seen.get).bytes.size
       c.type "p"
       let responsive ← awaitOutput c seen fun s => hasText (since s pingStart) "TITLE-PONG"
-      failures :=
-        failures +
-          (←
-            expect
-                (ready && initial && unknown && responsive &&
-                  (← System.FilePath.pathExists s!"{e.dir}/invalid-emitted") &&
-                  (← e.info name "clients") == some "1")
-                s!"invalid helper {pipe}: unknown title leaves the attachment responsive")
+      expect
+          (ready && initial && unknown && responsive &&
+            (← System.FilePath.pathExists s!"{e.dir}/invalid-emitted") &&
+            (← e.info name "clients") == some "1")
+          s!"invalid helper {pipe}: unknown title leaves the attachment responsive"
       IO.FS.writeFile s!"{e.dir}/release-valid" ""
       let recovered ←
         awaitOutput c seen
@@ -240,14 +229,10 @@ private def pipeCase (base : Env) (pipe : String) : IO Nat := do
       let recoveryStart := (← seen.get).bytes.size
       c.type "p"
       let answered ← awaitOutput c seen fun s => hasText (since s recoveryStart) "TITLE-PONG"
-      failures :=
-        failures +
-          (←
-            expect
-                (recovered && answered &&
-                  (← System.FilePath.pathExists s!"{e.dir}/valid-emitted") &&
-                  (← e.info name "clients") == some "1")
-                s!"invalid helper {pipe}: a subsequent valid sample recovers the title")
+      expect
+          (recovered && answered && (← System.FilePath.pathExists s!"{e.dir}/valid-emitted") &&
+            (← e.info name "clients") == some "1")
+          s!"invalid helper {pipe}: a subsequent valid sample recovers the title"
       let detachStart := (← seen.get).bytes.size
       c.detach
       let cleared ← awaitOutput c seen (titleIs "")
@@ -266,122 +251,89 @@ private def pipeCase (base : Env) (pipe : String) : IO Nat := do
             let after := (← e.info name "outseq").bind (·.toNat?)
             return before.isSome && after.getD 0 > before.getD 0 &&
                 has (← e.out #["capture", name]) "TITLE-PONG"
-      failures :=
-        failures +
-          (←
-            expect
-                (cleared && code == 0 && handedBack && helpersGone && sendCode == 0 && survived &&
-                  (← e.info name "clients") == some "0")
-                s!"invalid helper {pipe}: detach clears the title and retires its helpers")
+      expect
+          (cleared && code == 0 && handedBack && helpersGone && sendCode == 0 && survived &&
+            (← e.info name "clients") == some "0")
+          s!"invalid helper {pipe}: detach clears the title and retires its helpers"
       IO.FS.writeBinFile s!"{e.dir}/attach.pty" (← seen.get).bytes
     finally
       c.bye (sendDetach := false)
   finally
     e.killAll #[name]
-  return failures
 
-def run (binary : Option String := none) : IO UInt32 := do
-  let initial ← Env.make "title"
-  let e := { initial with bin := binary.getD initial.bin }
-  let mut failures := 0
-  try
-    let ready ← startProbe e "title-main"
-    let c ← e.spawn #["attach", "title-main"] 80 24
-    let seen ← IO.mkRef ({} : Receiver)
+def run (binary : Option String := none) : IO UInt32 :=
+  Env.suite "title" fun initial => do
+    let e := { initial with bin := binary.getD initial.bin }
     try
-      let composed ← awaitOutput c seen (titleIs (expectedTitle false))
-      failures :=
-        failures +
-          (←
-            expect (ready && composed && hasText (← seen.get).bytes "TITLE-READY")
-                "attach composes the session name and the application's editor title")
-      let otherReady ← startProbe e "title-other"
-      let changed ← attention e true
-      let before := ((← e.info "title-other" "behind").getD "").toNat?
-      let refreshed ← awaitOutput c seen (titleIs (expectedTitle true))
-      failures :=
-        failures +
-          (←
-            expect (otherReady && changed && refreshed)
-                "unread output elsewhere refreshes the title while the application is silent")
-      let (infoCode, _, _) ← e.cli #["info", "title-other"]
-      let after := ((← e.info "title-other" "behind").getD "").toNat?
-      failures :=
-        failures +
-          (←
-            expect
-                (infoCode == 0 && before.isSome && before.getD 0 > 0 && after == before &&
-                  (← e.status "title-other") == Status.wantsYou)
-                "info and asynchronous title sampling leave the unread count intact")
-      failures :=
-        failures + (← splitCase e c seen "OSC" "o" "O" openOsc (ByteArray.mk #[0x07]) false)
-      failures :=
-        failures +
-          (← splitCase e c seen "DCS" "d" "D" "\x1bPtitle-probe".toUTF8 "\x1b\\".toUTF8 true)
-      failures :=
-        failures +
-          (←
-            splitCase e c seen "UTF-8" "u" "U" (ByteArray.mk #[0xE2]) (ByteArray.mk #[0x82, 0xAC])
-                false)
-      let unread ← attention e true
-      let prefixed ← awaitOutput c seen (titleIs (expectedTitle true))
-      let repeatStart := (← seen.get).bytes.size
-      let (repeatCode, _, _) ← e.cli #["send", "title-main", "r"]
-      let repeated ←
-        awaitOutput c seen fun s =>
-            titleIs (expectedTitle true) s && hasBytes (since s repeatStart) editor.toList &&
-              hasBytes (since s repeatStart) (Linger.Core.Terminal.Title.ansi (expectedTitle true))
-      failures :=
-        failures +
-          (←
-            expect (unread && prefixed && repeatCode == 0 && repeated)
-                "an identical application OSC title reasserts the shared context and attention suffix")
-      let summary := Linger.Core.Status.summary [.wantsYou]
-      let (longCode, _, _) ← e.cli #["send", "title-main", "l"]
-      let clipped ←
-        awaitOutput c seen
-            (titleIs (Linger.Core.Title.compose "title-main" longEditor summary maxChars))
-      let displayed := (← seen.get).vt.windowTitle
-      failures :=
-        failures +
-          (←
-            expect
-                (longCode == 0 && clipped && displayed.length == maxChars &&
-                  displayed.endsWith (" · " ++ summary))
-                "a long Unicode application title preserves attention within the shared title budget")
-      -- Detach with an unfinished DCS as well: handback must neutralize the
-      -- receiver before clearing its title, without terminating the program.
-      let detachStart := (← seen.get).bytes.size
-      let (openCode, _, _) ← e.cli #["send", "title-main", "d"]
-      let incomplete ←
-        awaitOutput c seen fun s =>
-            !s.vt.atBoundary && hasText (since s detachStart) "\x1bPtitle-probe"
-      c.detach
-      let cleared ← awaitOutput c seen (titleIs "")
-      let exited ← c.reap 2000
-      failures :=
-        failures +
-          (←
-            expect (openCode == 0 && incomplete && cleared && exited == 0)
-                "detach clears the title at a complete boundary and exits promptly")
-      let (finishCode, _, _) ← e.cli #["send", "title-main", "D"]
-      let (pingCode, _, _) ← e.cli #["send", "title-main", "p"]
-      let answered ←
-        waitFor 4000 do
-            return has (← e.out #["capture", "title-main"]) "TITLE-PONG"
-      failures :=
-        failures +
-          (←
-            expect
-                (finishCode == 0 && pingCode == 0 && answered &&
-                  (← e.info "title-main" "clients") == some "0")
-                "the raw foreground program remains alive and answers after detach")
+      let ready ← startProbe e "title-main"
+      let c ← e.spawn #["attach", "title-main"] 80 24
+      let seen ← IO.mkRef ({} : Receiver)
+      try
+        let composed ← awaitOutput c seen (titleIs (expectedTitle false))
+        expect (ready && composed && hasText (← seen.get).bytes "TITLE-READY")
+            "attach composes the session name and the application's editor title"
+        let otherReady ← startProbe e "title-other"
+        let changed ← attention e true
+        let before := ((← e.info "title-other" "behind").getD "").toNat?
+        let refreshed ← awaitOutput c seen (titleIs (expectedTitle true))
+        expect (otherReady && changed && refreshed)
+            "unread output elsewhere refreshes the title while the application is silent"
+        let (infoCode, _, _) ← e.cli #["info", "title-other"]
+        let after := ((← e.info "title-other" "behind").getD "").toNat?
+        expect
+            (infoCode == 0 && before.isSome && before.getD 0 > 0 && after == before &&
+              (← e.status "title-other") == Status.wantsYou)
+            "info and asynchronous title sampling leave the unread count intact"
+        splitCase e c seen "OSC" "o" "O" openOsc (ByteArray.mk #[0x07]) false
+        splitCase e c seen "DCS" "d" "D" "\x1bPtitle-probe".toUTF8 "\x1b\\".toUTF8 true
+        splitCase e c seen "UTF-8" "u" "U" (ByteArray.mk #[0xE2]) (ByteArray.mk #[0x82, 0xAC]) false
+        let unread ← attention e true
+        let prefixed ← awaitOutput c seen (titleIs (expectedTitle true))
+        let repeatStart := (← seen.get).bytes.size
+        let (repeatCode, _, _) ← e.cli #["send", "title-main", "r"]
+        let repeated ←
+          awaitOutput c seen fun s =>
+              titleIs (expectedTitle true) s && hasBytes (since s repeatStart) editor.toList &&
+                hasBytes (since s repeatStart)
+                  (Linger.Core.Terminal.Title.ansi (expectedTitle true))
+        expect (unread && prefixed && repeatCode == 0 && repeated)
+            "an identical application OSC title reasserts the shared context and attention suffix"
+        let summary := Linger.Core.Status.summary [.wantsYou]
+        let (longCode, _, _) ← e.cli #["send", "title-main", "l"]
+        let clipped ←
+          awaitOutput c seen
+              (titleIs (Linger.Core.Title.compose "title-main" longEditor summary maxChars))
+        let displayed := (← seen.get).vt.windowTitle
+        expect
+            (longCode == 0 && clipped && displayed.length == maxChars &&
+              displayed.endsWith (" · " ++ summary))
+            "a long Unicode application title preserves attention within the shared title budget"
+        -- Detach with an unfinished DCS as well: handback must neutralize the
+        -- receiver before clearing its title, without terminating the program.
+        let detachStart := (← seen.get).bytes.size
+        let (openCode, _, _) ← e.cli #["send", "title-main", "d"]
+        let incomplete ←
+          awaitOutput c seen fun s =>
+              !s.vt.atBoundary && hasText (since s detachStart) "\x1bPtitle-probe"
+        c.detach
+        let cleared ← awaitOutput c seen (titleIs "")
+        let exited ← c.reap 2000
+        expect (openCode == 0 && incomplete && cleared && exited == 0)
+            "detach clears the title at a complete boundary and exits promptly"
+        let (finishCode, _, _) ← e.cli #["send", "title-main", "D"]
+        let (pingCode, _, _) ← e.cli #["send", "title-main", "p"]
+        let answered ←
+          waitFor 4000 do
+              return has (← e.out #["capture", "title-main"]) "TITLE-PONG"
+        expect
+            (finishCode == 0 && pingCode == 0 && answered &&
+              (← e.info "title-main" "clients") == some "0")
+            "the raw foreground program remains alive and answers after detach"
+      finally
+        c.bye (sendDetach := false)
     finally
-      c.bye (sendDetach := false)
-  finally
-    e.killAll #["title-main", "title-other"]
-  for pipe in ["stdout", "stderr"] do
-    failures := failures + (← pipeCase e pipe)
-  verdict e failures
+      e.killAll #["title-main", "title-other"]
+    for pipe in ["stdout", "stderr"] do
+      pipeCase e pipe
 
 end E2E.Title

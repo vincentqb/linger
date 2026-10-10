@@ -1293,5 +1293,12 @@ E2E_PARTIAL_CAP=0
 ep_n="$(code_count 'partial def' 'E2E/*' 'LingerTest.lean')"
 [ "$ep_n" -le "$E2E_PARTIAL_CAP" ] \
   || fail "E2E/ grew to $ep_n partial defs (cap $E2E_PARTIAL_CAP); a do-block loop does not need the keyword"
+# E2E fixed-sleep ratchet: a wait for something to appear polls its readiness
+# signal (`waitFor`, `Client.awaitText`); the sleeps left are negative-assertion
+# windows, fixture pacing, poll intervals and waits not yet converted.
+E2E_SLEEP_CAP=57
+es_n="$(code_count 'IO[.]sleep [0-9]' 'E2E/*')"
+[ "$es_n" -le "$E2E_SLEEP_CAP" ] \
+  || fail "E2E fixed sleeps grew to $es_n (cap $E2E_SLEEP_CAP); poll a readiness signal with waitFor"
 
 printf 'gates OK — purity, the OS and unsafe surfaces, the Vt friend set, the runtime ties, documentation contracts, and the ratchets\n'

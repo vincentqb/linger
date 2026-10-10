@@ -228,7 +228,7 @@ def runCase (e : Env) (index clients : Nat) (inheritedTerm : Option String)
     for _ in [0:clients] do
       let cl ← e.spawn #["attach", name] 80 24
       cls := cls.push cl
-      IO.sleep 350
+      let _ ← waitFor 4000 (return (← e.info name "clients") == some (toString cls.size))
       let _ ← drain cl.fd 150 -- discard the initial restore
     IO.FS.writeFile (System.FilePath.mk trigger) "go"
     if !(← waitFor 8000 (System.FilePath.pathExists result)) then
@@ -249,100 +249,72 @@ def runCase (e : Env) (index clients : Nat) (inheritedTerm : Option String)
       -- is a wait and not a kill
       if (← waitProcess daemon 5000).isNone then
         IO.eprintln s!"note: daemon '{name}' still running after the probe answered"
-  -- cleanup, whatever happened above: SIGTERM (`Child.kill`), then SIGKILL.
-  -- `Posix.alive` (a `kill(pid, 0)`) rather than a second `tryWait`: `tryWait`
-  -- REAPS, so once it has returned a code, calling it again is ECHILD and throws
-  -- — which aborted this suite before its first check. `alive` only asks.
-  if ← Linger.Posix.alive daemon.pid then
-    daemon.kill
-    IO.sleep 2000
-    if ← Linger.Posix.alive daemon.pid then
-      Linger.Posix.kill daemon.pid 9
+  -- cleanup, whatever happened above: reap the daemon, signalling it first if it
+  -- is still running. The wait above may already have reaped it, which
+  -- `reapOrKill` treats as finished rather than as an error.
+  reapOrKill daemon 2000
   for cl in cls do
     cl.bye (sendDetach := false) -- close + reap; no detach key
   return c
 
-def run : IO UInt32 := do
-  let e ← Env.make "terminal"
-  let mut f := 0
-  -- zero, one and two presentation clients — and a different inherited `TERM`
-  -- each time, with none at all in the first, so the override is exercised from
-  -- three different starting environments
-  let plan : List (Nat × Nat × Option String) :=
-    [(0, 0, none), (1, 1, some "xterm-kitty"), (2, 2, some "screen")]
-  let mut cases : List (Nat × Case) := []
-  for (index, clients, inherited) in plan do
-    let c ← runCase e index clients inherited
-    cases := cases ++ [(clients, c)]
-  for (clients, data) in cases do
-    if let some err := data.err then
-      IO.eprintln s!"note: probe case with {clients} client(s): {err}"
-    -- equality, not "contains": a duplicate reply is the failure this is for
-    f :=
-      f +
-        (←
-          expect (data.reply == da1Expected)
-              s!"DA1 progresses with {clients} client(s), exactly one reply")
-    -- `TERM` and `TERM_PROGRAM` are literals, because `Daemon.serve`'s profile array
-    -- is not an exported value; the version is derived. See the module docstring
-    f :=
-      f +
-        (←
-          expect
-              (data.term == some "xterm-256color" && data.termProgram == some "linger" &&
-                data.termVersion == some Linger.Core.Terminal.versionNumber)
-              s!"stable child terminal profile with {clients} client(s)")
-    if clients != 0 then
-      -- nested a level deeper on purpose: with nobody attached there is no client
-      -- stream to make a claim about. `scripts/e2e.sh`'s exact check count is what
-      -- stops this arm silently going empty and still printing `FAILURES: 0`.
-      let outs := data.clientOut
-      f :=
-        f +
-          (←
-            expect
-                (outs.length == clients && outs.all (fun o => hasText o "PROBE-DONE") &&
-                  outs.all (fun o => !hasBytes o da1Query))
-                s!"owned query hidden while ordinary output reaches {clients} client(s)")
-  f :=
-    f +
-      (←
-        expect (cases.map (·.2.reply) == List.replicate 3 da1Expected)
-            "reply stream is roster-independent")
-  -- XTGETTCAP reply injection: the reply must carry no line terminator. Payload:
-  -- 54 (hex '5','4') CR ; i d > x CR — the CRs are the injection primitive.
-  let inj ← runCase e 9 0 none (some (toHex evilQuery))
-  let ir := inj.reply
-  if let some err := inj.err then
-    IO.eprintln s!"note: XTGETTCAP probe case: {err}"
-  f :=
-    f +
-      (←
-        expect (!ir.isEmpty && !ir.contains 0x0D && !ir.contains 0x0A)
-            "XTGETTCAP reply carries no CR/LF (no command injection)")
-  -- non-vacuity: linger did answer the query, and with the exact filtered negative
-  -- reply `xtgetcapReply` prescribes for this payload — a prefix rather than
-  -- equality, so a trailing byte from elsewhere in the stream does not decide it.
-  f :=
-    f +
-      (←
-        expect (ir.take evilExpected.length == evilExpected)
-            "XTGETTCAP still answered (filtered negative reply reached the child)")
-  -- The original regression: an interactive fish must consume a command before
-  -- any client attaches. This is required coverage, so an environment without
-  -- fish fails instead of converting the missing check into a counted pass.
-  let some fish ←
-    whichBin "fish" | throw (IO.userError "fish is required for the detached-command regression")
-  let marker := ((System.FilePath.mk e.dir) / "fish-command-ran").toString
-  let fishEnv : Array (String × Option String) :=
-    #[("SHELL", some fish), ("TERM", some "inherited-fish-term")]
-  let _ ← e.cliEnv fishEnv #["run", "fish-regression", "printf", "ok", ">", marker]
-  f :=
-    f +
-      (←
-        expect (← waitFor 6000 (System.FilePath.pathExists marker))
-            "fish regression: detached command executes before attach")
-  let _ ← e.cliEnv fishEnv #["kill", "fish-regression"]
-  verdict e f
+def run : IO UInt32 :=
+  Env.suite "terminal" fun e => do
+    -- zero, one and two presentation clients — and a different inherited `TERM`
+    -- each time, with none at all in the first, so the override is exercised from
+    -- three different starting environments
+    let plan : List (Nat × Nat × Option String) :=
+      [(0, 0, none), (1, 1, some "xterm-kitty"), (2, 2, some "screen")]
+    let mut cases : List (Nat × Case) := []
+    for (index, clients, inherited) in plan do
+      let c ← runCase e index clients inherited
+      cases := cases ++ [(clients, c)]
+    for (clients, data) in cases do
+      if let some err := data.err then
+        IO.eprintln s!"note: probe case with {clients} client(s): {err}"
+      -- equality, not "contains": a duplicate reply is the failure this is for
+      expect (data.reply == da1Expected)
+          s!"DA1 progresses with {clients} client(s), exactly one reply"
+      -- `TERM` and `TERM_PROGRAM` are literals, because `Daemon.serve`'s profile array
+      -- is not an exported value; the version is derived. See the module docstring
+      expect
+          (data.term == some "xterm-256color" && data.termProgram == some "linger" &&
+            data.termVersion == some Linger.Core.Terminal.versionNumber)
+          s!"stable child terminal profile with {clients} client(s)"
+      if clients != 0 then
+        -- nested a level deeper on purpose: with nobody attached there is no client
+        -- stream to make a claim about. `scripts/e2e.sh`'s exact check count is what
+        -- stops this arm silently going empty and still printing `FAILURES: 0`.
+        let outs := data.clientOut
+        expect
+            (outs.length == clients && outs.all (fun o => hasText o "PROBE-DONE") &&
+              outs.all (fun o => !hasBytes o da1Query))
+            s!"owned query hidden while ordinary output reaches {clients} client(s)"
+    expect (cases.map (·.2.reply) == List.replicate 3 da1Expected)
+        "reply stream is roster-independent"
+    -- XTGETTCAP reply injection: the reply must carry no line terminator. Payload:
+    -- 54 (hex '5','4') CR ; i d > x CR — the CRs are the injection primitive.
+    let inj ← runCase e 9 0 none (some (toHex evilQuery))
+    let ir := inj.reply
+    if let some err := inj.err then
+      IO.eprintln s!"note: XTGETTCAP probe case: {err}"
+    expect (!ir.isEmpty && !ir.contains 0x0D && !ir.contains 0x0A)
+        "XTGETTCAP reply carries no CR/LF (no command injection)"
+    -- non-vacuity: linger did answer the query, and with the exact filtered negative
+    -- reply `xtgetcapReply` prescribes for this payload — a prefix rather than
+    -- equality, so a trailing byte from elsewhere in the stream does not decide it.
+    expect (ir.take evilExpected.length == evilExpected)
+        "XTGETTCAP still answered (filtered negative reply reached the child)"
+    -- The original regression: an interactive fish must consume a command before
+    -- any client attaches. This is required coverage, so an environment without
+    -- fish fails instead of converting the missing check into a counted pass.
+    let some fish ←
+      whichBin "fish" | throw (IO.userError "fish is required for the detached-command regression")
+    let marker := ((System.FilePath.mk e.dir) / "fish-command-ran").toString
+    let fishEnv : Array (String × Option String) :=
+      #[("SHELL", some fish), ("TERM", some "inherited-fish-term")]
+    let _ ← e.cliEnv fishEnv #["run", "fish-regression", "printf", "ok", ">", marker]
+    expect (← waitFor 6000 (System.FilePath.pathExists marker))
+        "fish regression: detached command executes before attach"
+    let _ ← e.cliEnv fishEnv #["kill", "fish-regression"]
 
 end E2E.Terminal

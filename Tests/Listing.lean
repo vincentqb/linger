@@ -2,8 +2,8 @@ import Linger.Core.Listing
 
 /-! # Listing tests — the human row is safe and forgery-proof
 
-`Theorems/Listing.lean` proves `humanRow`/`humanListing` carry no control byte
-for *any* `info`. These fixtures pin concrete hostile input — the shape a remote
+`Theorems/Listing.lean` proves `humanRow` and `terminalListing false` carry no
+control byte for *any* `info`. These fixtures pin concrete hostile input — the shape a remote
 peer or a crafted checkpoint filename could produce. -/
 
 namespace Linger.Core.Listing.Tests
@@ -30,10 +30,10 @@ example : (humanRow 8 hostile).contains 0xEF = true := by native_decide
 
 /-- One line per row: a `cmd`/label/name with an embedded newline cannot forge a
 listing row. Two hostile rows → exactly two line terminators. -/
-example : (humanListing [hostile, hostile]).count 0x0A = 2 := by native_decide
+example : (terminalListing false [hostile, hostile]).count 0x0A = 2 := by native_decide
 
 /-- The empty state is its own single line. -/
-example : (humanListing []).count 0x0A = 1 := by native_decide
+example : (terminalListing false []).count 0x0A = 1 := by native_decide
 
 example :
     terminalListing true [[("name", "work"), ("status", "working"), ("cmd", "vim")]] =

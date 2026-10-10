@@ -87,8 +87,8 @@ def collect (rt : Rt) (peer : UInt32) (size : Nat) (wantEof : Bool := false) : I
       rt ← pump rt' events
   return (rt, r)
 
-def withPair (dir tag : String) (vt : Linger.Core.Vt.Vt) (f : Rt → UInt32 → UInt32 → IO Nat) :
-    IO Nat := do
+def withPair (dir tag : String) (vt : Linger.Core.Vt.Vt) (f : Rt → UInt32 → UInt32 → IO Unit) :
+    IO Unit := do
   let path := s!"{dir}/{tag}.sock"
   let listener ← unixListen path
   let idle ← unixListen s!"{path}.idle"
@@ -109,7 +109,7 @@ def withPair (dir tag : String) (vt : Linger.Core.Vt.Vt) (f : Rt → UInt32 → 
       -- clients may connect to `listener` without making this slot readable.
       let rt : Rt :=
         { st, listenFd := listener, ptyFd := idle, childPid := 0, conns := [{ fd }],
-          sockPath := path, saveCkpt := fun _ => pure (), dropCkpt := pure () }
+          saveCkpt := fun _ => pure (), dropCkpt := pure () }
       f rt peer fd
     finally
       close peer
@@ -120,7 +120,7 @@ def withPair (dir tag : String) (vt : Linger.Core.Vt.Vt) (f : Rt → UInt32 → 
     IO.FS.removeFile path
     IO.FS.removeFile s!"{path}.idle"
 
-def largeReplay (dir : String) (marks : Bool) : IO Nat := do
+def largeReplay (dir : String) (marks : Bool) : IO Unit := do
   let some vt := Linger.Tests.Delivery.acceptedScreen marks
     | throw (IO.userError "large delivery fixture is not an accepted checkpoint")
   let label := if marks then "marks" else "colours"
@@ -128,7 +128,7 @@ def largeReplay (dir : String) (marks : Bool) : IO Nat := do
   let live := "\r\nlive-after-replay!".toUTF8
   let expected := repaint ++ live
   withPair dir label vt fun rt peer fd => do
-      let mut failures ← expect (repaint.size > outbufCap) s!"delivery/{label}/exceeds-cap"
+      expect (repaint.size > outbufCap) s!"delivery/{label}/exceeds-cap"
       let request := Wire.encode (.attach 0 0)
       writeAll peer (ByteArray.mk request.toArray)
       let (rt, events) ← pollRound rt
@@ -139,27 +139,18 @@ def largeReplay (dir : String) (marks : Bool) : IO Nat := do
           poll #[fd] #[POLLOUT] 0
         else
           pure #[0]
-      failures :=
-        failures +
-          (←
-            expect ((rt.conn? fd).isSome && ready[0]! &&& POLLOUT == 0)
-                s!"delivery/{label}/stalled-client-retained")
+      expect ((rt.conn? fd).isSome && ready[0]! &&& POLLOUT == 0)
+          s!"delivery/{label}/stalled-client-retained"
       let rt ← pump rt [.ptyOut live.toList]
       let began ← IO.monoMsNow
       let (rt, got) ← collect rt peer expected.size
       IO.println
           s!"delivery/{label}: received {got.bytes.size} / {expected.size} output bytes \
       in {(← IO.monoMsNow) - began} ms; pending={(rt.conn? fd).any (·.pending)}"
-      failures :=
-        failures + (← expect (got.bytes == expected) s!"delivery/{label}/exact-replay-then-live")
-      failures :=
-        failures +
-          (←
-            expect (!got.eof && !got.decoder.errored && got.bounded)
-                s!"delivery/{label}/live-framing")
-      return failures
+      expect (got.bytes == expected) s!"delivery/{label}/exact-replay-then-live"
+      expect (!got.eof && !got.decoder.errored && got.bounded) s!"delivery/{label}/live-framing"
 
-def exitTail (dir : String) : IO Nat :=
+def exitTail (dir : String) : IO Unit :=
   withPair dir "exit" (Linger.Core.Vt.Vt.init 20 5) fun rt peer fd => do
     let st := (Session.step rt.st (.bytes fd.toNat (Wire.encode (.attach 20 5)))).1
     let mut rt := { rt with st }
@@ -170,24 +161,17 @@ def exitTail (dir : String) : IO Nat :=
       let (rt', feedback) ← runEffect rt (.send fd.toNat (.output bytes))
       rt ← pump rt' feedback
     rt ← stall rt fd
-    let mut failures ←
-      expect ((rt.conn? fd).any (fun c => owedLen c.out > 0)) "delivery/exit/actually-stalled"
+    expect ((rt.conn? fd).any (fun c => owedLen c.out > 0)) "delivery/exit/actually-stalled"
     rt ← pump rt [.childExited 7]
     let (_, got) ← collect rt peer expected.size true
     IO.println s!"delivery/exit: received {got.bytes.size} / {expected.size} output bytes"
-    failures := failures + (← expect (got.bytes == expected) "delivery/exit/exact-tail")
-    failures :=
-      failures + (← expect (got.exits == [(expected.size, 7)]) "delivery/exit/status-follows-tail")
-    failures :=
-      failures +
-        (←
-          expect (got.eof && !got.decoder.errored && got.decoder.buf.isEmpty)
-              "delivery/exit/clean-eof")
-    return failures
+    expect (got.bytes == expected) "delivery/exit/exact-tail"
+    expect (got.exits == [(expected.size, 7)]) "delivery/exit/status-follows-tail"
+    expect (got.eof && !got.decoder.errored && got.decoder.buf.isEmpty) "delivery/exit/clean-eof"
 
 /-- Both messages are decoded before effects run. A replay read from the final
 runtime state would paint the resized screen instead of the attach snapshot. -/
-def snapshotOrder (dir : String) : IO Nat := do
+def snapshotOrder (dir : String) : IO Unit := do
   let vt := (Linger.Core.Vt.Vt.init 20 5).feed "snapshot".toUTF8.toList
   let expected := ByteArray.mk (Render.restore vt).toArray
   withPair dir "snapshot" vt fun rt peer fd => do
@@ -199,8 +183,7 @@ def snapshotOrder (dir : String) : IO Nat := do
 /-- A correct-looking repaint must leave the next glyph on the same row as
 uninterrupted output. Drive the captured replay and following bytes through
 real sockets, covering each cursor slot and a marked wide margin cell. -/
-def pendingWrap (dir : String) : IO Nat := do
-  let mut failures := 0
+def pendingWrap (dir : String) : IO Unit := do
   for (glyph, text) in [("narrow", "abcd"), ("wide", "ab漢\u0301")] do
     for (slot, before, after) in
       [("active", "", "X"), ("saved", "\x1b7\r", "\x1b8X"),
@@ -208,22 +191,18 @@ def pendingWrap (dir : String) : IO Nat := do
       let vt := (Vt.Vt.init 4 2).feed (text ++ before).toUTF8.toList
       let live := after.toUTF8
       let expected := ByteArray.mk (Render.restore vt).toArray ++ live
-      failures :=
-        failures +
-          (←
-            withPair dir s!"pending-{slot}-{glyph}" vt fun rt peer fd => do
-                let rt ← pump rt [.bytes fd.toNat (Wire.encode (.attach 0 0)), .ptyOut live.toList]
-                let (_, got) ← collect rt peer expected.size
-                let received := (Vt.Vt.init 4 2).feed got.bytes.toList
-                let continued := vt.feed live.toList
-                expect
-                    (got.bytes == expected && !got.eof && !got.decoder.errored && got.bounded &&
-                      Render.screenText received == Render.screenText continued &&
-                      Render.screenText continued == (text ++ "\nX\n").toUTF8.toList)
-                    s!"delivery/pending/{slot}-{glyph}")
-  return failures
+      withPair dir s!"pending-{slot}-{glyph}" vt fun rt peer fd => do
+          let rt ← pump rt [.bytes fd.toNat (Wire.encode (.attach 0 0)), .ptyOut live.toList]
+          let (_, got) ← collect rt peer expected.size
+          let received := (Vt.Vt.init 4 2).feed got.bytes.toList
+          let continued := vt.feed live.toList
+          expect
+              (got.bytes == expected && !got.eof && !got.decoder.errored && got.bounded &&
+                Render.screenText received == Render.screenText continued &&
+                Render.screenText continued == (text ++ "\nX\n").toUTF8.toList)
+              s!"delivery/pending/{slot}-{glyph}"
 
-def repeatedAttach (dir : String) : IO Nat := do
+def repeatedAttach (dir : String) : IO Unit := do
   let vt := Linger.Core.Vt.Vt.init 20 5
   let expected := ByteArray.mk (Render.restore vt).toArray
   withPair dir "repeat" vt fun rt peer fd => do
@@ -240,7 +219,7 @@ def repeatedAttach (dir : String) : IO Nat := do
 
 /-- Even an invalid effect sequence is confined to its peer, rather than
 throwing out of the serving loop. Ordinary repeated attach never emits it. -/
-def duplicateEffect (dir : String) : IO Nat := do
+def duplicateEffect (dir : String) : IO Unit := do
   let vt := Linger.Core.Vt.Vt.init 20 5
   withPair dir "duplicate-effect" vt fun rt _peer fd => do
       let rt ← pump rt [.bytes fd.toNat (Wire.encode (.attach 0 0))]
@@ -258,7 +237,7 @@ def duplicateEffect (dir : String) : IO Nat := do
 
 /-- A queued reply may precede the attach message; its short-write remainder
 must precede the captured replay, just as later PTY output must follow it. -/
-def prefixOrder (dir : String) : IO Nat := do
+def prefixOrder (dir : String) : IO Unit := do
   let vt := Linger.Core.Vt.Vt.init 20 5
   withPair dir "prefix" vt fun rt peer fd => do
       let mut rt := rt
@@ -275,7 +254,7 @@ def prefixOrder (dir : String) : IO Nat := do
 
 /-- Long accepted titles cross the scalar slice boundary at a control, and
 contain four-byte Unicode. Replay must retain the renderer's sanitization. -/
-def titleChunks (dir : String) : IO Nat := do
+def titleChunks (dir : String) : IO Unit := do
   let some vt := Linger.Tests.Delivery.acceptedTitle
     | throw (IO.userError "delivery title fixture was refused")
   withPair dir "title" vt fun rt peer fd => do
@@ -287,7 +266,7 @@ def titleChunks (dir : String) : IO Nat := do
 
 /-- Replay is exempt from the live backlog cut, but following live bytes
 are not. Check retained debt on every offer, through the eventual real cut. -/
-def liveBound (dir : String) : IO Nat := do
+def liveBound (dir : String) : IO Unit := do
   let some vt := Linger.Tests.Delivery.acceptedScreen false
     | throw (IO.userError "large delivery fixture was refused")
   withPair dir "bound" vt fun rt _peer fd => do
@@ -305,7 +284,7 @@ def liveBound (dir : String) : IO Nat := do
       expect (bounded && queued && (rt.conn? fd).isNone) "delivery/bound/live-still-cuts"
 
 /-- A deferred logical close cannot retain a nonreading transport forever. -/
-def closeGrace (dir : String) (shutdown : Bool) : IO Nat := do
+def closeGrace (dir : String) (shutdown : Bool) : IO Unit := do
   let tag := if shutdown then "shutdown-grace" else "close-grace"
   withPair dir tag (Linger.Core.Vt.Vt.init 20 5) fun rt _peer fd => do
       let mut rt := rt
@@ -327,7 +306,7 @@ def closeGrace (dir : String) (shutdown : Bool) : IO Nat := do
 
 /-- Removing a client from the pure roster must not permit unbounded retired
 socket plans. Exercise actual accepts while earlier clients stay stalled. -/
-def closingBound (dir : String) : IO Nat := do
+def closingBound (dir : String) : IO Unit := do
   let some vt := Linger.Tests.Delivery.acceptedScreen false
     | throw (IO.userError "large delivery fixture was refused")
   withPair dir "closing-bound" vt fun rt _peer fd => do
@@ -340,7 +319,7 @@ def closingBound (dir : String) : IO Nat := do
         rt ← pump rt' more
         let mut peak := rt.conns.length
         for _ in [:Session.maxClients + 2] do
-          let peer ← unixConnect rt.sockPath
+          let peer ← unixConnect s!"{dir}/closing-bound.sock"
           if peer < 0 then
             throw (IO.userError "closing-bound connect failed")
           peers.modify (peer.toUInt64.toUInt32 :: ·)
@@ -382,7 +361,7 @@ def serveProbe (dir : String) : IO UInt32 := do
       (IO.FS.writeFile s!"{dir}/exited" "") (pure (some (Linger.Core.Vt.Vt.init 20 5, dir, [])))
   return 0
 
-def serveTail (dir : String) : IO Nat := do
+def serveTail (dir : String) : IO Unit := do
   let dir := s!"{dir}/serve"
   IO.FS.createDirAll dir
   let bin ← IO.appPath
@@ -416,25 +395,21 @@ def serveTail (dir : String) : IO Nat := do
     -- Wait for the daemon to observe EOF while the client reads no bytes.
     IO.FS.writeFile s!"{dir}/go" ""
     let exited ← waitFor 15000 (System.FilePath.pathExists s!"{dir}/exited")
-    let mut failures ← expect exited "delivery/serve/child-exit-observed"
+    expect exited "delivery/serve/child-exit-observed"
     let deadline := (← IO.monoMsNow) + 15000
     while !got.eof && (← IO.monoMsNow) < deadline do
       got ← receive fd got
       if !got.eof then
         IO.sleep 1
     let expected := repaint ++ ByteArray.mk (Array.replicate (16 * Session.outputChunk) 0x51)
-    failures := failures + (← expect (got.bytes == expected) "delivery/serve/exact-tail")
-    failures :=
-      failures +
-        (←
-          expect
-              (got.exits == [(expected.size, 7)] && got.eof && !got.decoder.errored &&
-                got.decoder.buf.isEmpty)
-              "delivery/serve/status-then-eof")
+    expect (got.bytes == expected) "delivery/serve/exact-tail"
+    expect
+        (got.exits == [(expected.size, 7)] && got.eof && !got.decoder.errored &&
+          got.decoder.buf.isEmpty)
+        "delivery/serve/status-then-eof"
     let status ← waitProcess server 5000
     reaped.set status.isSome
-    failures := failures + (← expect (status == some 0) "delivery/serve/process-drained")
-    return failures
+    expect (status == some 0) "delivery/serve/process-drained"
   finally
     if let some fd := ← peer.get then
       close fd
@@ -446,43 +421,35 @@ def serveTail (dir : String) : IO Nat := do
 
 /-- A retained transport is already logically closed. Exercise both decoded
 commands in one packet and bytes already waiting in the event queue. -/
-def closeOrder (dir : String) : IO Nat := do
-  let mut failures := 0
+def closeOrder (dir : String) : IO Unit := do
   for variant in ["packet", "queued", "other-client"] do
-    failures :=
-      failures +
-        (←
-          withPair dir s!"close-order-{variant}" (Vt.Vt.init 20 5) fun rt _ fd => do
-              let id := fd.toNat
-              let control := id + 1
-              let attached := (Session.step rt.st (.bytes id (Wire.encode (.attach 20 5)))).1
-              let dirty := (Session.step attached (.ptyOut [0x41])).1
-              let st :=
-                if variant == "other-client" then (Session.step dirty (.connected control)).1
-                else dirty
-              let saved ← IO.mkRef ([] : List (List (String × String)))
-              let rt :=
-                { rt with
-                  st
-                  conns := [{ fd, replay := some (Replay.start st.vt) }]
-                  saveCkpt := fun s => saved.modify (· ++ [s.labels]) }
-              let detach := Wire.encode .detachAll
-              let later := Wire.encode (.labelSet "after=detach".toUTF8.toList)
-              let events :=
-                if variant == "packet" then [.bytes id (detach ++ later)]
-                else
-                  [.bytes (if variant == "other-client" then control else id) detach,
-                    .bytes id later]
-              let rt ← pump rt events
-              expect
-                  (rt.st.labels.isEmpty && (← saved.get) == [[]] && (rt.st.client? id).isNone &&
-                    (rt.conn? fd).any (·.closing))
-                  s!"delivery/close-order/{variant}")
-  return failures
+    withPair dir s!"close-order-{variant}" (Vt.Vt.init 20 5) fun rt _ fd => do
+        let id := fd.toNat
+        let control := id + 1
+        let attached := (Session.step rt.st (.bytes id (Wire.encode (.attach 20 5)))).1
+        let dirty := (Session.step attached (.ptyOut [0x41])).1
+        let st :=
+          if variant == "other-client" then (Session.step dirty (.connected control)).1 else dirty
+        let saved ← IO.mkRef ([] : List (List (String × String)))
+        let rt :=
+          { rt with
+            st
+            conns := [{ fd, replay := some (Replay.start st.vt) }]
+            saveCkpt := fun s => saved.modify (· ++ [s.labels]) }
+        let detach := Wire.encode .detachAll
+        let later := Wire.encode (.labelSet "after=detach".toUTF8.toList)
+        let events :=
+          if variant == "packet" then [.bytes id (detach ++ later)]
+          else [.bytes (if variant == "other-client" then control else id) detach, .bytes id later]
+        let rt ← pump rt events
+        expect
+            (rt.st.labels.isEmpty && (← saved.get) == [[]] && (rt.st.client? id).isNone &&
+              (rt.conn? fd).any (·.closing))
+            s!"delivery/close-order/{variant}"
 
 /-- Exercise the compiled monadic driver with a batch large enough to expose
 stack growth, and observe a real command at the end of that batch. -/
-def largeBatch (dir : String) : IO Nat :=
+def largeBatch (dir : String) : IO Unit :=
   withPair dir "large-batch" (Vt.Vt.init 20 5) fun rt _ fd => do
     let events :=
       List.replicate 100000 (.tick 0) ++
@@ -493,7 +460,7 @@ def largeBatch (dir : String) : IO Nat :=
 
 /-- A failed send causes logical disconnect; failure of the resulting save
 must settle before stale client input, leaving persistence eligible to retry. -/
-def failureFeedback (dir : String) : IO Nat :=
+def failureFeedback (dir : String) : IO Unit :=
   withPair dir "failure-feedback" (Vt.Vt.init 20 5) fun rt peer fd => do
     let st := (Session.step rt.st (.bytes fd.toNat (Wire.encode (.attach 20 5)))).1
     let saved ← IO.mkRef ([] : List (List (String × String)))
@@ -510,22 +477,19 @@ def failureFeedback (dir : String) : IO Nat :=
     let first ← saved.get
     let correctState := fun fields : List (String × String) =>
       fields.contains ("clients", "0") && fields.contains ("outseq", "1")
-    let failures ←
-      expect
-          (!rt.exiting && rt.conns.isEmpty && (rt.st.client? fd.toNat).isNone &&
-            rt.st.labels.isEmpty &&
-            first.length == 1 &&
-            first.all correctState)
-          "delivery/feedback/disconnect-and-save-failure-settle"
+    expect
+        (!rt.exiting && rt.conns.isEmpty && (rt.st.client? fd.toNat).isNone &&
+          rt.st.labels.isEmpty &&
+          first.length == 1 &&
+          first.all correctState)
+        "delivery/feedback/disconnect-and-save-failure-settle"
     let rt ← pump rt [.tick Session.ckptIntervalMs]
     let retry ← saved.get
-    return failures +
-        (←
-          expect (!rt.exiting && retry.length == 2 && retry.all correctState)
-              "delivery/feedback/retry-at-later-cadence")
+    expect (!rt.exiting && retry.length == 2 && retry.all correctState)
+        "delivery/feedback/retry-at-later-cadence"
 
 def run (only : Option String := none) : IO UInt32 := do
-  let checks : List (String × (String → IO Nat)) :=
+  let checks : List (String × (String → IO Unit)) :=
     [("colours", fun dir => largeReplay dir false), ("marks", fun dir => largeReplay dir true),
       ("exit", exitTail), ("snapshot", snapshotOrder), ("pending-wrap", pendingWrap),
       ("repeat", repeatedAttach), ("duplicate", duplicateEffect), ("prefix", prefixOrder),
@@ -539,11 +503,9 @@ def run (only : Option String := none) : IO UInt32 := do
       throw (IO.userError s!"unknown delivery check '{name}'")
   -- `Env.make`'s `/tmp` directory keeps Unix socket paths independent of the
   -- checkout's length.
-  let e ← Env.make "delivery"
-  let mut failures := 0
-  for (name, check) in checks do
-    if only.isNone || only == some name then
-      failures := failures + (← check e.dir)
-  verdict e failures
+  Env.suite "delivery" fun e => do
+      for (name, check) in checks do
+        if only.isNone || only == some name then
+          check e.dir
 
 end E2E.Delivery

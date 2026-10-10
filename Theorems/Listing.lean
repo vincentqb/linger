@@ -103,24 +103,6 @@ theorem humanRow_no_lf (nameCol : Nat) (info : List (String × String)) :
   have := (humanRow_printable nameCol info b hb).1
   rw [he] at this; exact absurd this (by decide)
 
-/-- **Every byte of the whole listing is printable content or a row-terminating newline** — the
-only bytes are what the rows render (safe by `humanRow_printable`) and the `0x0A` separators. -/
-theorem humanListing_printable (rows : List (List (String × String))) :
-    ∀ b ∈ humanListing rows, (0x20 ≤ b ∧ b ≠ 0x7F) ∨ b = 0x0A := by
-  intro b hb
-  unfold humanListing at hb
-  by_cases hz : rows.isEmpty
-  · rw [ite_eq_left hz] at hb
-    rcases List.mem_append.mp hb with h | h
-    · exact Or.inl (utf8s_no_ctl _ b h)
-    · exact Or.inr (by simpa using h)
-  · rw [ite_eq_right hz] at hb
-    rw [List.mem_flatMap] at hb
-    obtain ⟨r, -, hbr⟩ := hb
-    rcases List.mem_append.mp hbr with h | h
-    · exact Or.inl (humanRow_printable _ r b h)
-    · exact Or.inr (by simpa using h)
-
 /-- Pieces remove controls before width calculation or styling. A terminal
 renderer therefore never clips inside an untrusted escape sequence. -/
 theorem rowPieces_printable (nameCol : Nat) (info : List (String × String)) :
@@ -178,9 +160,31 @@ theorem renderPieces_plain (pieces : List RowPiece) :
     cases hs : piece.status <;>
       simp_all [renderPieces, Linger.Core.Render.utf8s, List.flatMap_append]
 
-/-- Plain terminal output and the human API coincide for all metadata. -/
+/-- Uncoloured terminal output is exactly the plain rows: one `humanRow` per
+session over the shared name column, each LF-terminated, or the empty-state line. -/
 theorem terminalListing_plain (rows : List (List (String × String))) :
-    Linger.Core.Listing.terminalListing false rows = Linger.Core.Listing.humanListing rows := by
-  simp [terminalListing, humanListing, renderPieces_plain, humanRow]
+    Linger.Core.Listing.terminalListing false rows =
+      if rows.isEmpty then Linger.Core.Render.utf8s "no sessions".toList ++ [0x0A]
+      else rows.flatMap (fun r => humanRow (nameWidth rows) r ++ [0x0A]) := by
+  simp [terminalListing, renderPieces_plain, humanRow]
+
+/-- **Every byte of the whole uncoloured listing is printable content or a row-terminating
+newline** — the only bytes are what the rows render (safe by `humanRow_printable`) and the
+`0x0A` separators. -/
+theorem terminalListing_plain_printable (rows : List (List (String × String))) :
+    ∀ b ∈ terminalListing false rows, (0x20 ≤ b ∧ b ≠ 0x7F) ∨ b = 0x0A := by
+  intro b hb
+  rw [terminalListing_plain] at hb
+  by_cases hz : rows.isEmpty
+  · rw [ite_eq_left hz] at hb
+    rcases List.mem_append.mp hb with h | h
+    · exact Or.inl (utf8s_no_ctl _ b h)
+    · exact Or.inr (by simpa using h)
+  · rw [ite_eq_right hz] at hb
+    rw [List.mem_flatMap] at hb
+    obtain ⟨r, -, hbr⟩ := hb
+    rcases List.mem_append.mp hbr with h | h
+    · exact Or.inl (humanRow_printable _ r b h)
+    · exact Or.inr (by simpa using h)
 
 end Linger.Core.Listing

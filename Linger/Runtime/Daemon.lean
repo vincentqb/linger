@@ -93,7 +93,6 @@ structure Rt where
   chunk (which would be the same unbounded-growth defect, in the log file). -/
   ptyInFull : Bool := false
   exiting : Bool := false
-  sockPath : String
   /-- checkpoint hooks from `Linger.Runtime.Resume` -/
   saveCkpt : State → IO Unit
   dropCkpt : IO Unit
@@ -502,7 +501,7 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
         State.boot vt0 ((restore.map (·.2)).getD [])
           [("name", name), ("pid", toString pid), ("created", toString created),
             ("cmd", String.intercalate " " (prog :: args.toList)), ("start_dir", cwd)]
-      let mut rt : Rt := { st, listenFd, ptyFd, childPid := pid, sockPath, saveCkpt, dropCkpt }
+      let mut rt : Rt := { st, listenFd, ptyFd, childPid := pid, saveCkpt, dropCkpt }
       try
         setNonblock ptyFd
         while !rt.exiting do
