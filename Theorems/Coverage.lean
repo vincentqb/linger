@@ -23,34 +23,26 @@ import all Theorems.Picker
 import all Theorems.Input
 import all Theorems.Key
 import all Theorems.Entry
+import all Theorems.Contracts
 public meta import Lean.Elab.Command
 import Lean.Parser.Command
 
 /-! # Semantic coverage gate
 
-Every explicit `def` under `Linger/Core` or `Linger/Tools` must occur as
-its exact environment constant in a theorem type from `Theorems`. This module
-is under the sanctioned friend region so it can resolve private definitions and
-theorem declarations without granting that access to E2E or runtime code. -/
+Every explicit `def` or `abbrev` under `Linger/Core` or `Linger/Tools` must occur
+as its exact environment constant in the type of a written theorem from `Theorems`;
+generated equation, congruence and induction lemmas do not count. No module
+under `Linger/Core`, `Linger/Tools` or `Theorems` may declare an axiom; native
+evaluation declares one for each use. The checks read only this module's import
+closure, so each of those modules must be in it. This module is under the
+sanctioned friend region so it can resolve private definitions and theorem
+declarations without granting that access to E2E or runtime code. -/
 
 namespace Theorems.Coverage
 
 open Lean Elab Command
 
-public meta partial def leanFiles (root : System.FilePath) : IO (Array System.FilePath) := do
-  let mut acc := #[]
-  for entry in ← root.readDir do
-    if ← entry.path.isDir then
-      acc := acc ++ (← leanFiles entry.path)
-    else if entry.path.extension == some "lean" then
-      acc := acc.push entry.path
-  return acc
-
-/-- Parse the program's standard Lean syntax; unrecognized syntax is an error. -/
-public meta def sourceSyntax (env : Environment) (file : System.FilePath) : IO Syntax :=
-  Parser.testParseFile env file
-
-/-- Explicit definition names, with nested namespace and section scopes. -/
+/-- Explicit `def` and `abbrev` names, with nested namespace and section scopes. -/
 public meta def sourceDefNames (stx : Syntax) : Except String (Array Lean.Name) := do
   let visit (node : Syntax) :
     StateT (List Lean.Name × Array Lean.Name) (Except String) (Option Syntax) := do
@@ -74,7 +66,7 @@ public meta def sourceDefNames (stx : Syntax) : Except String (Array Lean.Name) 
       throw "with_weak_namespace needs an explicit census scope rule"
     else if node.isOfKind ``Parser.Command.declaration then
       let decl := node[1]
-      if decl.isOfKind ``Parser.Command.definition then
+      if decl.isOfKind ``Parser.Command.definition || decl.isOfKind ``Parser.Command.abbrev then
         let id := decl[1][0].getId
         if id.isAnonymous then
           throw "unrecognized definition name"
@@ -90,16 +82,17 @@ public meta def sourceDefNames (stx : Syntax) : Except String (Array Lean.Name) 
 
 /-- Logical fully qualified names of explicit pure definitions.
 
-Lean's parser handles layout, escaped identifiers, strings and nested comments;
-the semantic check below resolves each name against the compiled environment. -/
+Lean's parser handles layout, escaped identifiers, strings and nested comments,
+and unrecognized syntax is an error; the semantic check below resolves each name
+against the compiled environment. -/
 public meta def pureDefNames (env : Environment) : IO (Array Lean.Name) := do
   let mut names : Array Lean.Name := #[]
   let files :=
-    (← leanFiles (System.FilePath.mk "Linger/Core")) ++
-      (← leanFiles (System.FilePath.mk "Linger/Tools"))
+    ((← System.FilePath.walkDir "Linger/Core") ++ (← System.FilePath.walkDir "Linger/Tools")).filter
+      (·.extension == some "lean")
   for f in files do
     let found ←
-      match sourceDefNames (← sourceSyntax env f) with
+      match sourceDefNames (← Parser.testParseFile env f) with
       | .ok found =>
         pure found
       | .error why =>
@@ -155,33 +148,61 @@ public meta def runtimeEmitters (defs : Array Lean.Name) (main : Lean.Name := `M
           (fun n => (n.replacePrefix `Linger.Core .anonymous).toString)).toArray.qsort
       (· < ·)
 
-/-- Re-read the pure sources and check exact theorem-type coverage.
+/-- Require every pure or proof module in the import closure and reject any axiom one
+declares; then re-read the pure sources and check that each definition's exact constant
+occurs in the type of a written theorem.
 
+A written theorem has a source declaration range. Lemmas Lean generates on demand,
+such as the equation lemma `simp [f]` realizes, have none and claim nothing.
 Load private metadata inside this friend module, keeping the caller's imports
 sealed. Return the checked census so downstream checks use the same inventory. -/
 public meta def checkPureCoverage : CommandElabM (Array Lean.Name) := do
   let sourceEnv ← getEnv
   let logical ← liftIO (pureDefNames sourceEnv)
   let env ← liftIO (importModules sourceEnv.header.imports {})
+  -- The axiom check reads only this import closure, so it must hold every module under the roots.
+  let roots := [`Linger.Core, `Linger.Tools, `Theorems]
+  let closure := (env.header.modules.map (·.module)).push sourceEnv.mainModule
+  let mut outside : Array Lean.Name := #[]
+  for root in roots do
+    let dir := System.mkFilePath (root.components.map toString)
+    for file in ← liftIO (System.FilePath.walkDir dir) do
+      let mod := (file.withExtension "").components.foldl .mkStr .anonymous
+      if file.extension == some "lean" && !closure.contains mod then
+        outside := outside.push mod
+  unless outside.isEmpty do
+    throwError m!"coverage: pure or proof modules outside the import closure of Theorems.Coverage: \
+      {outside.qsort (·.toString < ·.toString)}"
+  -- Native evaluation (`native_decide`, `decide +native`, `bv_decide`) adds an axiom too.
+  let axioms :=
+    (moduleConsts env fun mod => roots.any (·.isPrefixOf mod)).filterMap fun (name, ci) =>
+      if ci.isAxiom then some name else none
+  unless axioms.isEmpty do
+    throwError m!"coverage: axioms in pure or proof modules: {axioms}"
   let pureConsts :=
     (moduleConsts env
           (fun mod => [`Linger.Core, `Linger.Tools].any (·.isPrefixOf mod))).toList.filterMap
       fun (n, ci) => if !ci.isTheorem then some (privateToUserName n, n) else none
   let theoremConsts :=
     (moduleConsts env ((`Theorems : Lean.Name).isPrefixOf ·)).foldl
-      (fun acc (_, ci) =>
-        if ci.isTheorem then ci.type.foldConsts acc fun name seen => seen.insert name else acc)
+      (fun acc (n, ci) =>
+        if
+            ci.isTheorem &&
+              (declRangeExt.find? (level := .exported) env n <|>
+                  declRangeExt.find? (level := .server) env n).isSome then
+          ci.type.foldConsts acc fun name seen => seen.insert name
+        else acc)
       NameHashSet.empty
   let mut resolved : Array (Lean.Name × Lean.Name) := #[]
   for n in logical do
     let candidates :=
       pureConsts.filterMap fun (logical, actual) => if logical == n then some actual else none
-    unless candidates.length == 1 do
-      throwError m!"coverage: `{n}` resolved to {candidates.length} constants: {candidates}"
-    resolved := resolved.push (n, candidates[0]!)
+    let [actual] := candidates
+      | throwError m!"coverage: `{n}` resolved to {candidates.length} constants: {candidates}"
+    resolved := resolved.push (n, actual)
   let unclaimed := resolved.filter fun (_, actual) => !theoremConsts.contains actual
   unless unclaimed.isEmpty do
-    throwError m!"coverage: pure definitions absent from every theorem type: \
+    throwError m!"coverage: pure definitions absent from every written theorem type: \
       {unclaimed.map (·.1)}"
   return logical
 
@@ -199,6 +220,7 @@ public import Linger.Core.Render
 public section
 namespace Probe
   def indented : Nat := 0
+  abbrev shorthand : Nat := 0
   def
     splitName : Nat := 0
   namespace Inner
@@ -239,7 +261,7 @@ def quotedRef : Lean.MacroM (Lean.TSyntax `term) := `(term| Linger.Core.Render.c
 end Linger.ReferenceProbe
 "#
   let expected :=
-    #[`Probe.indented, `Probe.splitName, `Probe.Inner.matches, `rootAfter,
+    #[`Probe.indented, `Probe.shorthand, `Probe.splitName, `Probe.Inner.matches, `rootAfter,
         `Probe.Inner.qualifiedScope, `Probe.marker, `Probe.afterMarker, `Probe.quoted,
         `Probe.afterSection, `Probe.Decoy.same, `Probe.same] ++
       #[`canonical, `relative, `rooted, `short, `unqualified, `renamed, `field, `localShadow,

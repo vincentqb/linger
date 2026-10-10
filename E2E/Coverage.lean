@@ -20,6 +20,7 @@ open Theorems.Coverage
 def emitters : List (String × String) :=
   [("Replay.start", "start_faithful / drain_start / start_parts"),
     ("Replay.next", "next_faithful / next_bounded / next_progress / steps_storage"),
+    ("Render.Bytes", "type abbreviation"),
     ("Render.charsetAnsi", "component of Replay.start_faithful / drain_start"),
     ("Render.csiB", "component of Replay.start_faithful / drain_start"),
     ("Render.csiNum", "component of Replay.start_faithful / drain_start"),
@@ -50,7 +51,8 @@ def emitters : List (String × String) :=
 run_cmd
   let defs ← checkPureCoverage
   let mut fails : Array String := #[]
-  IO.println s!"pure semantic coverage: {defs.size} explicit definitions, all in theorem types"
+  IO.println
+      s!"pure semantic coverage: {defs.size} explicit definitions, all in written theorem types"
   let found ← liftIO (runtimeEmitters defs)
   IO.println s!"program renderer/replay references: {String.intercalate " " found.toList}"
   for name in found do

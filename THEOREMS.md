@@ -16,7 +16,7 @@ hypotheses. Runtime behavior is covered by IO suites and source gates.
 | Transport | Arbitrary chunking of a well-formed encoded stream preserves messages and order. | [Wire](Theorems/Wire.lean): `decode_encode_chunked` |
 | Ownership | Every active daemon or offline reader holds both resource locks. Sharing either resource excludes simultaneous ownership across arbitrary acquisition, release and reuse. | [Claim](Theorems/Claim.lean): `reachable_protected`, `at_most_one_owner`, `claim_free` |
 | Buffers | Reachable input and output buffers stay within their retained-byte caps. | [Buf](Theorems/Buf.lean): `reachableIn_bound`, `reachableOut_bound` |
-| Screen restoration | Replay reconstructs the selected grid, tab ruler and retained scrollback in the terminal model under the stated receiver conditions. | [Grid](Theorems/Render/Grid.lean): `restore_grid_any`; [Tabs](Theorems/Render/Tabs.lean): `restore_tabs_any`; [Scrollback](Theorems/Render/Scrollback.lean): `restore_sb_any` |
+| Screen restoration | Replay reconstructs the selected grid, tab ruler, retained scrollback, cursor, modes, pen, scroll region, character sets and screen selection, and leaves any receiver quiesced. | [Grid](Theorems/Render/Grid.lean): `restore_grid_any`; [Tabs](Theorems/Render/Tabs.lean): `restore_tabs_any`; [Scrollback](Theorems/Render/Scrollback.lean): `restore_sb_any`; [PendingWrap](Theorems/Render/PendingWrap.lean): `restore_cursor_any`; [Modes](Theorems/Render/Modes.lean): `restore_modes_any`, `restore_pen_any`; [Sticky](Theorems/Render/Sticky.lean): `restore_sticky_any`, `restore_quiesced_any` |
 | Incremental replay | Each step preserves the complete repaint stream and respects its byte budget; positive budgets make progress and terminate. | [Replay](Theorems/Replay.lean): `start_faithful`, `next_faithful`, `next_bounded`, `next_progress`, `drain_start` |
 | Terminal handback | Cleanup establishes canonical parser, modes, character sets, screen selection, pen and empty title for receivers at least two rows tall. | [Sticky](Theorems/Render/Sticky.lean): `leave_canonical_all` |
 | Status and titles | Classification matches the status predicates, summaries count attention exactly, and attention is the final title segment. | [Status](Theorems/Status.lean): `classify_iff`, `summary_exact`; [Title](Theorems/Title.lean): `compose_attention_last` |
@@ -52,15 +52,17 @@ failure, OS termination and failures in the compiler, runtime or C shim remain
 outside these proofs.
 
 Terminal fidelity is relative to linger's terminal model and each theorem's
-receiver assumptions. Cursor restoration requires origin mode to be off.
-Incoming title content and the saved cursor slot are covered by fixtures.
-Cleanup clears the title rather than restoring a prior title. Recovery preserves
-screen state, not running processes or images.
+receiver assumptions. Cursor restoration (`restore_cursor_any`) requires origin
+mode to be off. Incoming title content and the saved cursor slot are covered by
+fixtures. Cleanup clears the title rather than restoring a prior title. Recovery
+preserves screen state, not running processes or images.
 
 ## Checks
 
-`./lake build Theorems Tests` checks proofs and unit fixtures. The
-[declaration census](Theorems/Coverage.lean) requires semantic coverage of every
-pure definition; [renderer coverage](E2E/Coverage.lean) checks resolved references.
+`./lake build Theorems Tests` checks proofs and unit fixtures.
+[Contract pins](Theorems/Contracts.lean) restate every theorem cited above, so a
+weakened statement fails the build. The [declaration census](Theorems/Coverage.lean)
+requires semantic coverage of every definition in `Linger/Core` and
+`Linger/Tools`; [renderer coverage](E2E/Coverage.lean) checks resolved references.
 Run `./scripts/e2e.sh` for the complete verifier, including generated C ABI,
 source gates, formatting, semantic lint, fuzz fixtures and live suites.

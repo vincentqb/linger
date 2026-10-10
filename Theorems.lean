@@ -25,3 +25,4 @@ import Theorems.Input
 import Theorems.Key
 import Theorems.Entry
 import Theorems.Coverage
+import Theorems.Contracts

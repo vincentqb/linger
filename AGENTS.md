@@ -52,8 +52,9 @@ Lean erases proofs regardless of file placement.
 
 - `Linger/Core/*` and `Linger/Tools/*` are pure: no `IO`, `partial def` or `sorry`.
   Model effects as data; execute them in `Linger/Runtime/*` and `Linger/Manager/*`.
-- Every pure `def` needs a theorem type containing its exact fully qualified
-  constant in the same commit, checked by `Theorems/Coverage.lean`.
+- Every `def` or `abbrev` in `Linger/Core` and `Linger/Tools` needs a written
+  theorem whose type contains its exact fully qualified constant in the same
+  commit, checked by `Theorems/Coverage.lean`; generated lemmas do not count.
   State invariants in `THEOREMS.md` and design code for provability.
 - Runtime uses of proved values need call-site gates. IO behavior is tested,
   not proved. Start behavioral fixes with a failing check and verify that new
@@ -73,8 +74,12 @@ Lean erases proofs regardless of file placement.
   `scripts/e2e.sh`. Tests assert against the implementation's definitions.
   Use `scripts/` for shell orchestration; do not recreate a lowercase `tests/`.
 - Avoid fuel parameters and unnecessary `partial def`. Recheck raised
-  heartbeat or recursion limits after refactoring. Under `Theorems/`, refer
-  to compiled evaluation without spelling its tactic name in docstrings.
+  heartbeat or recursion limits after refactoring. Proofs add no axioms:
+  `Theorems/Coverage.lean` rejects every axiom declared in pure or proof
+  modules, including those native evaluation (`native_decide`,
+  `decide +native`, `bv_decide`) adds, and fails unless its imports reach
+  every such module. In comments, quote code in backticks; source gates skip
+  backticked spans.
 
 ## Scope and maintenance
 
