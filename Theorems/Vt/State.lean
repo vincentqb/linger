@@ -223,6 +223,18 @@ theorem invariant_foldl {α β : Type} (P : β → Prop) (f : β → α → β)
   | [], _, h => h
   | a :: as, acc, h => invariant_foldl P f hf as (f acc a) (hf acc a h)
 
+/-- **An input-controlled repeat applies its step `min count cap` times**, so at most
+`cap` times whatever the count. Every CSI repeat goes through `Vt.repeatAtMost` with a
+screen measurement as `cap`, and `scripts/gates.sh` rejects a loop that counts a CSI
+parameter directly. -/
+theorem repeatAtMost_eq_repeat (v : Vt) (cap count : Nat) (f : Vt → Vt) :
+    v.repeatAtMost cap count f = Nat.repeat f (min count cap) v := by
+  unfold Vt.repeatAtMost
+  induction min count cap with
+  | zero => rfl
+  | succ n ih =>
+    rw [List.range_succ, List.foldl_append, ih]; rfl
+
 theorem setModes_nil (v : Vt) (priv on : Bool) : v.setModes priv [] on = v := rfl
 
 theorem setModes_cons (v : Vt) (priv : Bool) (p : Nat × Bool) (ps : List (Nat × Bool)) (on : Bool) :
@@ -522,7 +534,7 @@ theorem setModes {v : Vt} (priv : Bool) (ps : List (Nat × Bool)) (on : Bool) (h
 
 theorem csiDispatch {v : Vt} (s : CsiState) (final : UInt8) (h : Good v) :
     Good (v.csiDispatch s final) := by
-  unfold Vt.csiDispatch
+  unfold Vt.csiDispatch Vt.repeatAtMost
   split
   · exact h
   · split
@@ -1060,7 +1072,7 @@ theorem frame_grid_foldl {α : Type} (f : Vt → α → Vt)
 even for an arbitrary incoming record. -/
 theorem frame_insertLines (v : Vt) (n : Nat) :
     v.insertLines n = { v with grid := (v.insertLines n).grid } := by
-  unfold Vt.insertLines
+  unfold Vt.insertLines Vt.repeatAtMost
   dsimp only
   split
   · rfl
@@ -1069,7 +1081,7 @@ theorem frame_insertLines (v : Vt) (n : Nat) :
 /-- Deleting lines never adds history, including at the full-screen region. -/
 theorem frame_deleteLines (v : Vt) (n : Nat) :
     v.deleteLines n = { v with grid := (v.deleteLines n).grid } := by
-  unfold Vt.deleteLines
+  unfold Vt.deleteLines Vt.repeatAtMost
   dsimp only
   split
   · rfl

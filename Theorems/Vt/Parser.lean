@@ -136,7 +136,7 @@ theorem un_csiDispatch (v : Vt) (s : CsiState) (final : UInt8) :
     try
       simp only [un_insertChars, un_moveRel, un_carriageReturn, un_setCol, un_moveTo,
         un_eraseScreen, un_eraseLine, un_insertLines, un_deleteLines, un_deleteChars, un_eraseChars,
-        un_setModes, un_applySgr]
+        un_setModes, un_applySgr, Vt.repeatAtMost]
   all_goals
     with_reducible
       first
@@ -303,7 +303,7 @@ theorem ua_csiDispatch (v : Vt) (s : CsiState) (final : UInt8) :
     try
       simp only [ua_insertChars, ua_moveRel, ua_carriageReturn, ua_setCol, ua_moveTo,
         ua_eraseScreen, ua_eraseLine, ua_insertLines, ua_deleteLines, ua_deleteChars, ua_eraseChars,
-        ua_setModes, ua_applySgr]
+        ua_setModes, ua_applySgr, Vt.repeatAtMost]
   all_goals
     with_reducible
       first
@@ -602,7 +602,7 @@ theorem dims_ctl (v : Vt) (b : UInt8) : dims (v.ctl b) = dims v := by
 
 theorem dims_csiDispatch (v : Vt) (s : CsiState) (final : UInt8) :
     dims (v.csiDispatch s final) = dims v := by
-  unfold Vt.csiDispatch
+  unfold Vt.csiDispatch Vt.repeatAtMost
   dsimp only
   repeat' split
   all_goals
@@ -918,7 +918,7 @@ to. -/
 
 theorem tsz_csiDispatch_ne_tbc {v : Vt} (s : CsiState) (final : UInt8) (h : final ≠ 0x67) :
     tsz (v.csiDispatch s final) = tsz v := by
-  unfold Vt.csiDispatch
+  unfold Vt.csiDispatch Vt.repeatAtMost
   dsimp only
   repeat' split
   all_goals
@@ -1182,7 +1182,7 @@ somewhere in its parameters. The first parameter alone cannot establish this. -/
 theorem org_csiDispatch (v : Vt) (s : CsiState) (final : UInt8)
     (h : ∀ p ∈ s.params.toList, ¬((s.priv == 0x3F) = true ∧ p.1 = 6)) :
     (v.csiDispatch s final).modes.origin = v.modes.origin := by
-  unfold Vt.csiDispatch
+  unfold Vt.csiDispatch Vt.repeatAtMost
   dsimp only
   repeat' split
   all_goals

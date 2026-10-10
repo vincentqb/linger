@@ -1249,6 +1249,285 @@ theorem controlResize_replies (s : State) (c : Client) (cols rows : UInt32) :
   repeat' split
   all_goals simp
 
+/-! ## One expensive reply per read
+
+A read can decode thousands of requests, and each `info`, `history`, `screen` or control
+`resize` answer costs a whole rendering or a whole resize. `onMsg_answered` and
+`onMsg_resize_answered` refuse such a request once the read has answered one; below, that
+guard is followed through a whole `.bytes` event, so the bound is on what the read emits. -/
+
+/-- The requests a read answers at most once: `info`, `history`, `screen`, and `resize`
+from a connection that is not attached. -/
+def costly (c : Client) : Msg → Bool
+  | .info | .history | .screen => true
+  | .resize _ _ => !c.attached
+  | _ => false
+
+/-- A rendered reply frame: within one read, the `output` of a history or screen capture,
+or an `infoReply`. -/
+def rendered : Effect → Bool
+  | .send _ (.output _) | .send _ (.infoReply _) => true
+  | _ => false
+
+/-- A pty resize. -/
+def resizes : Effect → Bool
+  | .resizePty _ _ => true
+  | _ => false
+
+theorem find?_map_set_self (c : Client) :
+    ∀ (l : List Client),
+      (l.find? (·.id == c.id)).isSome →
+        (l.map (fun c' => if c'.id == c.id then c else c')).find? (·.id == c.id) = some c := by
+  intro l
+  induction l <;> grind
+
+/-- Rewriting a client's record makes it the record its id finds. -/
+theorem client?_setClient {s : State} {c c0 : Client} (h : s.client? c.id = some c0) :
+    (s.setClient c).client? c.id = some c := by
+  unfold State.client? at h
+  exact find?_map_set_self c s.clients (by simp [h])
+
+theorem resize_clients (s : State) (cols rows : UInt32) :
+    (resize s cols rows).1.clients = s.clients := by
+  unfold resize; split <;> rfl
+
+/-- The sender's record after one message: answered once a costly request is, and never
+detached by it. -/
+theorem onMsg_sender (s : State) (c : Client) (m : Msg) (hc : s.client? c.id = some c) :
+    ∃ c',
+      (onMsg s c m).1.client? c.id = some c' ∧
+        c'.answered = (c.answered || costly c m) ∧
+        (c'.attached = false → c.attached = false ∧ ∀ cols rows, m ≠ .attach cols rows) := by
+  cases m with
+  | attach cols rows =>
+    unfold onMsg
+    dsimp only
+    split
+    · rename_i ha
+      exact ⟨c, hc, by simp [costly], by simp [ha]⟩
+    · let c' : Client :=
+        { c with
+          attached := true, sizer := cols != 0 && rows != 0, seq := s.attachSeq, cols, rows }
+      have h1 : (s.setClient c').client? c.id = some c' := client?_setClient (c := c') hc
+      refine ⟨c', ?_, by simp [c', costly], by simp [c']⟩
+      unfold resizeOwned
+      split
+      · simp only [State.client?, resize_clients]; exact h1
+      · exact h1
+  | resize cols rows =>
+    unfold onMsg
+    dsimp only
+    let c1 : Client :=
+      { c with
+        cols, rows }
+    let c2 : Client := { c1 with answered := true }
+    have h1 : (s.setClient c1).client? c.id = some c1 := client?_setClient (c := c1) hc
+    have h2 : ((s.setClient c1).setClient c2).client? c.id = some c2 :=
+      client?_setClient (c := c2) h1
+    split
+    · rename_i ha
+      refine ⟨c1, ?_, by simp [c1, costly, ha], by simp [c1, ha]⟩
+      unfold resizeOwned
+      split
+      · simp only [State.client?, resize_clients]; exact h1
+      · exact h1
+    · rename_i ha
+      split
+      · rename_i hn
+        exact ⟨c1, h1, by simp [c1, costly, hn], fun _ => ⟨by simpa using ha, by simp⟩⟩
+      · refine ⟨c2, ?_, by simp [c2, costly, ha], fun _ => ⟨by simpa using ha, by simp⟩⟩
+        unfold controlResize
+        split
+        · exact h2
+        · split
+          · exact h2
+          · simp only [State.client?, resize_clients]; exact h2
+  | info
+  | history
+  | screen =>
+    have h1 := client?_setClient (c := { c with answered := true }) hc
+    unfold onMsg
+    dsimp only
+    split
+    · rename_i hn
+      exact ⟨c, hc, by simp [costly, hn], fun h => ⟨h, by simp⟩⟩
+    · refine ⟨{ c with answered := true }, ?_, by simp [costly], fun h => ⟨h, by simp⟩⟩
+      simp only [State.client?] at h1 ⊢
+      exact h1
+  | wait =>
+    unfold onMsg
+    dsimp only
+    split
+    · exact ⟨c, hc, by simp [costly], fun h => ⟨h, by simp⟩⟩
+    · exact
+        ⟨{ c with waiting := true }, client?_setClient (c := { c with waiting := true }) hc, by
+          simp [costly], fun h => ⟨h, by simp⟩⟩
+  | _ =>
+    refine ⟨c, ?_, by simp [costly], fun h => ⟨h, by simp⟩⟩
+    unfold onMsg
+    dsimp only
+    repeat' split
+    all_goals exact hc
+
+/-- Outside the read's costly answer, a message sends no rendered frame. -/
+theorem onMsg_unrendered (s : State) (c : Client) (m : Msg)
+    (h : c.answered = true ∨ costly c m = false) : (onMsg s c m).2.all (!rendered ·) := by
+  cases m <;> simp only [costly, or_true] at h
+  all_goals
+    unfold onMsg resizeOwned resize controlResize
+    dsimp only
+    repeat' split
+  all_goals simp_all [rendered]
+
+/-- …and, from a connection that is neither attached nor attaching, no pty resize. -/
+theorem onMsg_unresized (s : State) (c : Client) (m : Msg)
+    (h : c.answered = true ∨ costly c m = false) (ha : c.attached = false)
+    (hm : ∀ cols rows, m ≠ .attach cols rows) : (onMsg s c m).2.all (!resizes ·) := by
+  cases m
+  case attach cols rows => exact absurd rfl (hm cols rows)
+  all_goals
+    simp only [costly, ha, or_true] at h
+    unfold onMsg resizeOwned resize controlResize
+    dsimp only
+    repeat' split
+  all_goals simp_all [resizes]
+
+/-- Effects a read has emitted before answering a costly request: no rendered frame, and
+no pty resize while the sender is unattached. -/
+def Unanswered (c : Client) (effs : List Effect) : Prop :=
+  effs.all (!rendered ·) = true ∧ (c.attached = false → effs.all (!resizes ·) = true)
+
+/-- Effects around the read's one costly answer: the whole answer to one of the batch's
+messages `msgs`, given to the sender's record `c'` in a state `t`. -/
+def AnsweredOnce (id : Nat) (msgs : List Msg) (c : Client) (effs : List Effect) : Prop :=
+  ∃ pre post t c' m,
+    m ∈ msgs ∧
+      t.client? id = some c' ∧
+      effs = pre ++ (onMsg t c' m).2 ++ post ∧
+      (pre ++ post).all (!rendered ·) ∧ (c.attached = false → (pre ++ post).all (!resizes ·))
+
+/-- A batch keeps the sender's record and its effects in one of the two shapes above. -/
+theorem feedMsgs_one_reply (id : Nat) (msgs : List Msg) (acc : State × List Effect)
+    (h :
+      ∃ c,
+        acc.1.client? id = some c ∧
+          (c.answered = false → Unanswered c acc.2) ∧
+          (c.answered = true → AnsweredOnce id msgs c acc.2)) :
+    ∃ c,
+      (feedMsgs id msgs acc).1.client? id = some c ∧
+        (c.answered = false → Unanswered c (feedMsgs id msgs acc).2) ∧
+        (c.answered = true → AnsweredOnce id msgs c (feedMsgs id msgs acc).2) := by
+  refine
+    feedMsgs_induct id msgs acc (P := fun acc =>
+      ∃ c,
+        acc.1.client? id = some c ∧
+          (c.answered = false → Unanswered c acc.2) ∧
+          (c.answered = true → AnsweredOnce id msgs c acc.2))
+      ?_ h
+  intro acc c0 m hm _ _ hc0 ⟨c, hc, hnone, hone⟩
+  have hcc : c0 = c := Option.some.inj (hc0.symm.trans hc)
+  subst hcc
+  have hid := client?_id hc
+  obtain ⟨c', hc', hans, hatt⟩ := onMsg_sender acc.1 c0 m (hid ▸ hc)
+  have hfr := onMsg_unrendered acc.1 c0 m
+  have hrs := onMsg_unresized acc.1 c0 m
+  refine ⟨c', hid ▸ hc', ?_, ?_⟩
+  · intro hn
+    have h0 : (c0.answered || costly c0 m) = false := hans ▸ hn
+    simp only [Bool.or_eq_false_iff] at h0
+    obtain ⟨hf, hr⟩ := hnone h0.1
+    refine ⟨by simp [hf, hfr (Or.inr h0.2)], fun ha => ?_⟩
+    obtain ⟨ha0, hm⟩ := hatt ha
+    simp [hr ha0, hrs (Or.inr h0.2) ha0 hm]
+  · intro _
+    cases ha0 : c0.answered
+    · -- this message is the read's costly answer
+      obtain ⟨hf, hr⟩ := hnone ha0
+      refine ⟨acc.2, [], acc.1, c0, m, hm, hc0, by simp, by simpa using hf, fun ha => ?_⟩
+      simpa using hr (hatt ha).1
+    · obtain ⟨pre, post, t, c1, m1, hm1, ht1, he, hf, hr⟩ := hone ha0
+      refine
+        ⟨pre, post ++ (onMsg acc.1 c0 m).2, t, c1, m1, hm1, ht1, by simp [he], ?_, fun ha => ?_⟩
+      · simp only [List.all_append, Bool.and_eq_true] at hf ⊢
+        exact ⟨hf.1, hf.2, hfr (Or.inl ha0)⟩
+      · obtain ⟨ha1, hm⟩ := hatt ha
+        have := hr ha1
+        simp only [List.all_append, Bool.and_eq_true] at this ⊢
+        exact ⟨this.1, this.2, hrs (Or.inl ha0) ha1 hm⟩
+
+/-- **One expensive reply per read.** Every rendered frame one `.bytes` event emits, and
+every pty resize when the connection is still unattached afterwards, lies in one answer
+`onMsg t c' m`, where `m` is a message the read decoded and `c'` is the sender's record
+in `t`; without such an answer the read emits none of them. So one read builds at most
+one info answer, history or screen capture, or control resize, however many requests it
+decodes; the rest are refused (`onMsg_answered`, `onMsg_resize_answered`). An attached
+sizer's resizes follow its terminal and are outside this bound, and an attach replays
+once per connection (`onMsg_attach_already`). -/
+theorem step_bytes_one_reply (s : State) (id : Nat) (chunk : List UInt8) :
+    ∃ pre ans post,
+      (step s (.bytes id chunk)).2 = pre ++ ans ++ post ∧
+        (ans = [] ∨
+          ∃ c t c' m,
+            s.client? id = some c ∧
+              m ∈ (c.decoder.feed chunk).2 ∧ t.client? id = some c' ∧ ans = (onMsg t c' m).2) ∧
+        (pre ++ post).all (!rendered ·) ∧
+        (((step s (.bytes id chunk)).1.client? id).all (!·.attached) →
+          (pre ++ post).all (!resizes ·)) := by
+  -- with nothing costly, the effects surround an empty answer
+  have quiet (R : List Effect → Prop) (P : Prop) (effs : List Effect) (hf : effs.all (!rendered ·))
+    (hr : P → effs.all (!resizes ·)) :
+    ∃ pre ans post,
+      effs = pre ++ ans ++ post ∧
+        (ans = [] ∨ R ans) ∧
+        (pre ++ post).all (!rendered ·) ∧ (P → (pre ++ post).all (!resizes ·)) :=
+    ⟨effs, [], [], by simp, Or.inl rfl, by simpa using hf, by simpa using hr⟩
+  -- a batch that starts unanswered, with nothing emitted yet
+  have fresh (msgs : List Msg) (t : State) (c : Client) (hc : t.client? id = some c)
+    (ha : c.answered = false) :
+    ∃ pre ans post,
+      (feedMsgs id msgs (t, [])).2 = pre ++ ans ++ post ∧
+        (ans = [] ∨ ∃ t' c' m, m ∈ msgs ∧ t'.client? id = some c' ∧ ans = (onMsg t' c' m).2) ∧
+        (pre ++ post).all (!rendered ·) ∧
+        (((feedMsgs id msgs (t, [])).1.client? id).all (!·.attached) →
+          (pre ++ post).all (!resizes ·)) := by
+    obtain ⟨cf, hcf, hnone, hone⟩ :=
+      feedMsgs_one_reply id msgs (t, [])
+        ⟨c, hc, fun _ => ⟨rfl, fun _ => rfl⟩, fun h => absurd (h.symm.trans ha) (by simp)⟩
+    rw [hcf]
+    simp only [Option.all_some, Bool.not_eq_eq_eq_not, Bool.not_true]
+    cases hb : cf.answered
+    · obtain ⟨hf, hr⟩ := hnone hb
+      exact quiet _ _ _ hf hr
+    · obtain ⟨pre, post, t', c', m, hm, ht, he, hf, hr⟩ := hone hb
+      exact ⟨pre, _, post, he, Or.inr ⟨t', c', m, hm, ht, rfl⟩, hf, hr⟩
+  unfold step
+  dsimp only
+  split
+  · exact quiet _ _ [] rfl (fun _ => rfl)
+  · rename_i c hfind
+    split
+    · have hcl : ∀ e ∈ (closeClient s id).2, e = .checkpoint := by
+        unfold closeClient; dsimp only; split <;> simp
+      have hall (p : Effect → Bool) (hp : p (.close id) = false) (hq : p .checkpoint = false) :
+        (Effect.close id :: (closeClient s id).2).all (!p ·) := by
+        simp only [List.all_cons, hp, Bool.not_false, Bool.true_and, List.all_eq_true]
+        intro e he
+        rw [hcl e he, hq]
+        rfl
+      exact quiet _ _ (.close id :: (closeClient s id).2) (hall _ rfl rfl) (fun _ => hall _ rfl rfl)
+    · have hid := client?_id hfind
+      have h1 (c1 : Client) (he : c1.id = id) : (s.setClient c1).client? id = some c1 := by
+        rw [← he]; exact client?_setClient (he ▸ hfind)
+      obtain ⟨pre, ans, post, he, hans, hf, hr⟩ :=
+        fresh _ _
+          { c with
+            decoder := (c.decoder.feed chunk).1, answered := false }
+          (h1 _ hid) rfl
+      refine ⟨pre, ans, post, he, ?_, hf, hr⟩
+      rcases hans with h | ⟨t, c', m, hm, ht, ha⟩
+      · exact Or.inl h
+      · exact Or.inr ⟨c, t, c', m, hfind, hm, ht, ha⟩
+
 /-! ## §Row / §Status integrity — a listing record cannot be forged
 
 `Status.name_clean` proves the *status* column carries neither framing byte, which is

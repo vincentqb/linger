@@ -305,6 +305,14 @@ example :
       true := by
   native_decide
 
+/-- The C0 controls the emulator ignores store nothing and move no cursor either: NUL,
+SOH, ACK, DLE, SUB, FS and US between two letters leave `ab`. -/
+example :
+    (let v := screen 10 2 "a\x00\x01\x06\x10\x1a\x1c\x1fb"
+     rowStr v 0 == "ab" && v.cursor.x == 2) =
+      true := by
+  native_decide
+
 /-- A C0 reached by an overlong UTF-8 sequence becomes U+FFFD on store, and the
 DEL byte before it is ignored: a cell holding a control codepoint cannot be
 repainted, since the emitter would substitute one anyway. Fed as raw bytes — a
@@ -337,15 +345,32 @@ example :
       true := by
   native_decide
 
-/-- SU scrolls at most the region's height: `CSI 100 S` on a five-row screen keeps five
-blank rows of history, not a hundred. -/
-example : (history ((Vt.init 20 5).feed "\x1b[100S".toUTF8.toList)).count 0x0A = 10 := by
+/-- SU scrolls at most the region's height: with two rows of history on a five-row screen,
+`CSI 65535 S` pushes the five screen rows and stops, so history grows by five and keeps
+its older rows. -/
+example :
+    (let v := screen 20 5 "1\r\n2\r\n3\r\n4\r\n5\r\n6\r\n7\x1b[65535S"
+     v.sb.toList.map plain == ["1", "2", "3", "4", "5", "6", "7"] && (history v).count 0x0A == 12) =
+      true := by
   native_decide
 
 /-- SD blanks the whole region, so a huge count leaves no row behind and no history. -/
 example :
     (let v := screen 10 3 "a\r\nb\r\nc\x1b[999T"
      (List.range 3).all (fun y => rowStr v y == "") && v.sb.size == 0) =
+      true := by
+  native_decide
+
+/-- IL and DL at the largest count blank from the cursor row to the region's bottom and
+stop there: the rows above stay, and DL adds no history. -/
+example :
+    (let v := screen 5 5 "1\r\n2\r\n3\r\n4\r\n5\x1b[3;1H"
+     let il := feedStr v "\x1b[65535L"
+      let dl := feedStr v "\x1b[65535M"
+      [il, dl].all fun w =>
+        rowStr w 0 == "1" && rowStr w 1 == "2" &&
+          (List.range 3).all (fun y => rowStr w (y + 2) == "") &&
+          w.sb.size == 0) =
       true := by
   native_decide
 

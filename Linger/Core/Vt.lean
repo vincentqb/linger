@@ -188,14 +188,14 @@ def Row.mendFast (row : Row) : Row := Nat.fold row.size (fun x _ r => r.mendAt x
 theorem Row.mend_eq_mendFast : @Row.mend = @Row.mendFast := by
   funext row
   suffices h :
-    ∀ n (r : Row),
-      (List.range n).foldl (fun r x => r.mendAt x) r = Nat.fold n (fun x _ r => r.mendAt x) r
+    ∀ len (r : Row),
+      (List.range len).foldl (fun r x => r.mendAt x) r = Nat.fold len (fun x _ r => r.mendAt x) r
     from h row.size row
-  intro n
-  induction n with
+  intro len
+  induction len with
   | zero =>
     intro r; simp
-  | succ n ih =>
+  | succ len ih =>
     intro r; simp [List.range_succ, List.foldl_append, ih]
 
 /-- Scrollback: a ring over an array. `data.size ≤ cap` is §Bound's
@@ -649,6 +649,15 @@ private def Vt.scrollUp (v : Vt) : Vt := v.scrollUpIn v.top v.bot true
 
 private def Vt.scrollDown (v : Vt) : Vt := v.scrollDownIn v.top v.bot
 
+/-! ## Input-controlled repeats -/
+
+/-- Apply `f` `count` times, but at most `cap` times (`repeatAtMost_eq_repeat`). A CSI
+count is input and reaches 65535, so every caller passes as `cap` the screen
+measurement past which further repeats leave the screen as it is, and the screen's
+dimensions are clamped to [1, 1000]. -/
+private def Vt.repeatAtMost (v : Vt) (cap count : Nat) (f : Vt → Vt) : Vt :=
+  (List.range (min count cap)).foldl (fun w _ => f w) v
+
 /-! ## Cursor motion -/
 
 private def Vt.clearPending (v : Vt) : Vt := { v with cursor := { v.cursor with pending := false } }
@@ -871,15 +880,11 @@ private def Vt.eraseScreen (v : Vt) (mode : Nat) : Vt :=
 
 private def Vt.insertLines (v : Vt) (n : Nat) : Vt :=
   if v.cursor.y < v.top || v.cursor.y > v.bot then v
-  else
-    let n := min n (v.bot - v.cursor.y + 1)
-    (List.range n).foldl (fun a _ => a.scrollDownIn v.cursor.y v.bot) v
+  else v.repeatAtMost (v.bot - v.cursor.y + 1) n (·.scrollDownIn v.cursor.y v.bot)
 
 private def Vt.deleteLines (v : Vt) (n : Nat) : Vt :=
   if v.cursor.y < v.top || v.cursor.y > v.bot then v
-  else
-    let n := min n (v.bot - v.cursor.y + 1)
-    (List.range n).foldl (fun a _ => a.scrollUpIn v.cursor.y v.bot false) v
+  else v.repeatAtMost (v.bot - v.cursor.y + 1) n (·.scrollUpIn v.cursor.y v.bot false)
 
 private def Vt.deleteChars (v : Vt) (n : Nat) : Vt :=
   let x := v.cursor.x
@@ -1094,9 +1099,9 @@ private def Vt.csiDispatch (v : Vt) (s : CsiState) (final : UInt8) : Vt :=
   if s.ignore then v
   else
     let a1 := s.arg 0 1 -- first arg, default 1
-    -- Repeat counts stop where the screen stops changing: CHT/CBT reach a margin within
-    -- `cols` moves and SU/SD blank the region within its height. Like tmux, SU therefore
-    -- pushes at most one region of history.
+    -- Repeat counts stop where the screen stops changing (`repeatAtMost`): CHT/CBT reach
+    -- a margin within `cols` moves and SU/SD blank the region within its height. Like
+    -- tmux, SU therefore pushes at most one region of history.
     match final with
     | 0x40 => v.insertChars a1 -- @ ICH
     | 0x41 => v.moveRel 0 (-(Int.ofNat a1)) -- A CUU
@@ -1107,16 +1112,16 @@ private def Vt.csiDispatch (v : Vt) (s : CsiState) (final : UInt8) : Vt :=
     | 0x46 => (v.moveRel 0 (-(Int.ofNat a1))).carriageReturn -- F CPL
     | 0x47 => v.setCol (a1 - 1) -- G CHA
     | 0x48 => v.moveTo (s.arg 1 1 - 1) (a1 - 1) -- H CUP
-    | 0x49 => (List.range (min a1 v.cols)).foldl (fun a _ => a.tab) v -- I CHT
+    | 0x49 => v.repeatAtMost v.cols a1 Vt.tab -- I CHT
     | 0x4A => v.eraseScreen (s.arg 0 0) -- J ED
     | 0x4B => v.eraseLine (s.arg 0 0) -- K EL
     | 0x4C => v.insertLines a1 -- L IL
     | 0x4D => v.deleteLines a1 -- M DL
     | 0x50 => v.deleteChars a1 -- P DCH
-    | 0x53 => (List.range (min a1 (v.bot - v.top + 1))).foldl (fun a _ => a.scrollUp) v -- S SU
-    | 0x54 => (List.range (min a1 (v.bot - v.top + 1))).foldl (fun a _ => a.scrollDown) v -- T SD
+    | 0x53 => v.repeatAtMost (v.bot - v.top + 1) a1 Vt.scrollUp -- S SU
+    | 0x54 => v.repeatAtMost (v.bot - v.top + 1) a1 Vt.scrollDown -- T SD
     | 0x58 => v.eraseChars a1 -- X ECH
-    | 0x5A => (List.range (min a1 v.cols)).foldl (fun a _ => a.backTab) v -- Z CBT
+    | 0x5A => v.repeatAtMost v.cols a1 Vt.backTab -- Z CBT
     | 0x60 => v.setCol (a1 - 1) -- ` HPA
     | 0x61 => v.moveRel (Int.ofNat a1) 0 -- a HPR
     | 0x64 => v.moveTo v.cursor.x (a1 - 1) -- d VPA, relative to DECOM's origin

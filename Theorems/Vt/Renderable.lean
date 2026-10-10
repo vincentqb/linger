@@ -1830,14 +1830,14 @@ theorem renderable_insertChars {v : Vt} (h : Renderable v) (n : Nat) :
 
 theorem renderable_insertLines {v : Vt} (h : Renderable v) (n : Nat) :
     Renderable (v.insertLines n) := by
-  unfold Vt.insertLines
+  unfold Vt.insertLines Vt.repeatAtMost
   split
   · exact h
   · exact renderable_foldl (fun u i hu => renderable_scrollDownIn hu _ _) _ _ h
 
 theorem renderable_deleteLines {v : Vt} (h : Renderable v) (n : Nat) :
     Renderable (v.deleteLines n) := by
-  unfold Vt.deleteLines
+  unfold Vt.deleteLines Vt.repeatAtMost
   split
   · exact h
   · exact renderable_foldl (fun u i hu => renderable_scrollUpIn hu _ _ _) _ _ h
@@ -1908,7 +1908,7 @@ theorem renderable_setModes {v : Vt} (h : Renderable v) (priv : Bool)
 
 theorem renderable_csiDispatch {v : Vt} (h : Renderable v) (s : CsiState) (final : UInt8) :
     Renderable (v.csiDispatch s final) := by
-  unfold Vt.csiDispatch
+  unfold Vt.csiDispatch Vt.repeatAtMost
   split
   · exact h
   · split

@@ -87,6 +87,18 @@ for c in '^example : failing 400 = [[][]] := by native_decide$' \
          '^example : failingDeep 150 = [[][]] := by native_decide$'; do
   code_grep "$c" Tests/Fuzz.lean >/dev/null || fail "fuzz claim weakened or disabled: $c"
 done
+# A CSI count reaches 65535, so every repeat it drives goes through Vt.repeatAtMost, which
+# clamps it by the screen (repeatAtMost_eq_repeat). A loop counting `a1`, an `arg` or a
+# stage's count `n` itself lets one CSI 65535 S fill the history ring with blank rows.
+csi_loop='(List[.]range|Array[.]range|Nat[.]fold|Nat[.]repeat[[:space:]]+[[:alnum:]_.]+)[[:space:]]+'
+csi_count='([(][^)]*[^[:alnum:]_.]|[(])?(a1|n)([^[:alnum:]_]|$)|[(][^)]*[.]arg([^[:alnum:]_]|$)'
+! code_grep "$csi_loop($csi_count)" Linger/Core/Vt.lean \
+  || fail "a loop counts a CSI parameter directly: route it through Vt.repeatAtMost, which clamps it by the screen"
+# ECH's span is the one other loop a count sizes. Its clamp to the screen's width shows in
+# no result, since cells past the row are skipped either way, so this pins it at the call;
+# without it one CSI 65535 X runs 65535 iterations.
+code_grep '^[[:space:]]+v[.]eraseRowSpan v[.]cursor[.]y v[.]cursor[.]x [(]min [(]v[.]cursor[.]x [+] n[)] v[.]cols[)]$' \
+  Linger/Core/Vt.lean >/dev/null || fail "ECH lost its clamp: its span must end at min (v.cursor.x + n) v.cols"
 # the OS surface stays where AGENTS.md says it is
 [ "$(code_grep '@[[]extern' '*.lean' | awk -F: '!seen[$1]++ { print $1 }' | tr -d ' ')" = "Linger/Posix.lean" ] \
   || fail "extern declarations outside Linger/Posix.lean"

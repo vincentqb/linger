@@ -1292,6 +1292,159 @@ this says it adds nothing — so every theorem stated over `feed` covers those f
 theorem feedBytes_eq (v : Vt) (bytes : ByteArray) : v.feedBytes bytes = v.feed bytes.toList := by
   rfl
 
+/-! ## Bytes the parser drops
+
+With no UTF-8 sequence pending, DEL and every C0 control but BEL through SI (0x07 to
+0x0F) and ESC leave the whole state unchanged in ground state, after ESC, within an ESC
+intermediate or CSI sequence, and within a DCS, SOS, PM or APC body unless the previous
+byte was ESC. The other string states are excluded because these bytes are data there:
+an OSC payload collects them, and after ESC within a DCS, SOS, PM or APC body they show
+that the ESC did not begin ST, so they clear the pending ESC. The claims are identities
+because an invariant also holds for a model that stores DEL as U+FFFD and advances the
+cursor. -/
+
+/-- With no UTF-8 sequence pending, the abort that starts every step changes nothing. -/
+theorem abortUtf8_idle {v : Vt} (b : UInt8) (hu : v.u8need = 0) : v.abortUtf8 b = v := by
+  unfold Vt.abortUtf8; rw [ite_eq_right (by simp [hu])]
+
+/-- **DEL is inert.** With no UTF-8 sequence pending, DEL leaves the state unchanged
+in ground state, after ESC, within an ESC intermediate or CSI sequence, and within a
+DCS, SOS, PM or APC body. Two string states keep it on purpose: an OSC payload
+collects it with the title text, and after ESC within a DCS, SOS, PM or APC body it
+shows that the ESC did not begin ST, so it clears the pending ESC. -/
+theorem step_del_inert {v : Vt} (hu : v.u8need = 0) (hosc : ∀ acc e, v.pstate ≠ .osc acc e)
+    (hstr : v.pstate ≠ .str true) : v.step 0x7F = v := by
+  have hab := abortUtf8_idle 0x7F hu
+  rcases hp : v.pstate with _ | _ | i | s | ⟨acc, e⟩ | e
+  · rw [step_of_ground 0x7F hp, hab]
+    unfold Vt.stepGround
+    rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_left (by decide)]
+  · rw [step_of_esc 0x7F hp, hab]
+    rfl
+  · rw [step_of_escInter 0x7F hp, hab]
+    unfold Vt.stepEscInter
+    rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide), ← hp]
+  · rw [step_of_csi 0x7F hp, hab]
+    unfold Vt.stepCsi
+    repeat rw [ite_eq_right (by decide)]
+    rw [ite_eq_left (by decide)]
+  · exact absurd hp (hosc acc e)
+  · cases e
+    · rw [step_of_str 0x7F hp, hab]
+      unfold Vt.stepStr
+      rw [ite_eq_right (by decide), ite_eq_right (by decide), ← hp]
+    · exact absurd hp hstr
+
+/-- **The C0 controls `ctl` ignores are inert**: every byte below 0x20 except BEL
+through SI (0x07 to 0x0F) and ESC. With no UTF-8 sequence pending they leave the
+state unchanged in the states where DEL does (`step_del_inert`); an OSC payload
+collects them, and after ESC within a DCS, SOS, PM or APC body they clear the
+pending ESC. -/
+theorem step_c0_inert {v : Vt} {b : UInt8} (hc0 : b < 0x20) (hact : b < 0x07 ∨ 0x0F < b)
+    (hesc : b ≠ 0x1B) (hu : v.u8need = 0) (hosc : ∀ acc e, v.pstate ≠ .osc acc e)
+    (hstr : v.pstate ≠ .str true) : v.step b = v := by
+  have hab := abortUtf8_idle b hu
+  -- the stages' byte tests, read as numbers below 32 and not 27
+  have hn : b.toNat < 32 := UInt8.lt_iff_toNat_lt.mp hc0
+  have h27 : b.toNat ≠ 27 := fun h => hesc (UInt8.toNat_inj.mp h)
+  have hctl : v.ctl b = v := by
+    unfold Vt.ctl; split <;> simp_all
+  rcases hp : v.pstate with _ | _ | i | s | ⟨acc, e⟩ | e
+  · rw [step_of_ground b hp, hab]
+    unfold Vt.stepGround
+    rw [ite_eq_right (by simpa using hesc), ite_eq_left hc0, hctl]
+  · rw [step_of_esc b hp, hab]
+    unfold Vt.stepEsc
+    split
+    all_goals
+      first
+      | (exfalso; simp_all; done)
+      |
+        simp (disch := omega) only [ge_iff_le, UInt8.le_iff_toNat_le, Bool.and_eq_true,
+          decide_eq_true_eq, UInt8.reduceToNat, ite_eq_right]
+  · rw [step_of_escInter b hp, hab]
+    unfold Vt.stepEscInter
+    simp (disch := omega) only [ge_iff_le, UInt8.le_iff_toNat_le, beq_iff_eq, ← UInt8.toNat_inj,
+      Bool.and_eq_true, decide_eq_true_eq, UInt8.reduceToNat, ite_eq_right]
+    rw [← hp]
+  · rw [step_of_csi b hp, hab]
+    unfold Vt.stepCsi
+    simp (disch := omega) only [ge_iff_le, UInt8.le_iff_toNat_le, UInt8.lt_iff_toNat_lt, beq_iff_eq,
+      ← UInt8.toNat_inj, Bool.and_eq_true, decide_eq_true_eq, UInt8.reduceToNat, ite_eq_right,
+      ite_eq_left, hctl]
+  · exact absurd hp (hosc acc e)
+  · cases e
+    · rw [step_of_str b hp, hab]
+      unfold Vt.stepStr
+      rw [ite_eq_right (by simp), ite_eq_right (by simpa using hesc), ← hp]
+    · exact absurd hp hstr
+
+/-! ## Repeat counts saturate
+
+CHT, CBT, SU and SD take a count from input, and `Vt.repeatAtMost` clamps it by a screen
+measurement. Of the statements below, only SU's need that clamp to hold: without it, SU
+over the whole primary screen pushes one more blank row onto history for each scroll
+past the screen's height, which falsifies the SU half of `csiDispatch_scroll_saturates`
+and `csiDispatch_su_history`. The tab and SD statements hold either way. Tabs move only
+the cursor, which stops at a margin within `cols` moves, and past their caps SD, IL and
+DL leave the same blank rows and push no history. The repeat bounds of CHT, CBT, SD, IL
+and DL therefore rest on `repeatAtMost_eq_repeat`, which pins the helper's clamp, and on
+the loop gate in `scripts/gates.sh`, which rejects a loop that counts a CSI parameter
+directly. -/
+
+/-- **SU and SD saturate at the region's height.** Any two counts of at least
+`v.bot - v.top + 1` dispatch to the same state, so `CSI 65535 S` on a region of `h` rows
+is `CSI h S`. -/
+theorem csiDispatch_scroll_saturates (v : Vt) {s t : CsiState} (hs : s.ignore = false)
+    (ht : t.ignore = false) (hsn : v.bot - v.top + 1 ≤ s.arg 0 1)
+    (htn : v.bot - v.top + 1 ≤ t.arg 0 1) :
+    v.csiDispatch s 0x53 = v.csiDispatch t 0x53 ∧ v.csiDispatch s 0x54 = v.csiDispatch t 0x54 := by
+  unfold Vt.csiDispatch
+  simp only [hs, ht, Bool.false_eq_true, ite_false, repeatAtMost_eq_repeat, Nat.min_eq_right hsn,
+    Nat.min_eq_right htn, and_self]
+
+/-- **CHT and CBT saturate at the screen's width.** Any two counts of at least `v.cols`
+dispatch to the same state. -/
+theorem csiDispatch_tab_saturates (v : Vt) {s t : CsiState} (hs : s.ignore = false)
+    (ht : t.ignore = false) (hsn : v.cols ≤ s.arg 0 1) (htn : v.cols ≤ t.arg 0 1) :
+    v.csiDispatch s 0x49 = v.csiDispatch t 0x49 ∧ v.csiDispatch s 0x5A = v.csiDispatch t 0x5A := by
+  unfold Vt.csiDispatch
+  simp only [hs, ht, Bool.false_eq_true, ite_false, repeatAtMost_eq_repeat, Nat.min_eq_right hsn,
+    Nat.min_eq_right htn, and_self]
+
+/-- **One SU adds at most the region's height to history.** Whatever the count, the new
+history is the old ring with at most `v.bot - v.top + 1` rows pushed, one region's rows
+rather than a ring of blanks. -/
+theorem csiDispatch_su_history (v : Vt) (s : CsiState) :
+    ∃ rows : List Row,
+      rows.length ≤ v.bot - v.top + 1 ∧ (v.csiDispatch s 0x53).sb = rows.foldl Ring.push v.sb := by
+  -- each scroll pushes the evicted row or nothing
+  have one (w : Vt) : w.scrollUp.sb = w.sb ∨ ∃ r, w.scrollUp.sb = w.sb.push r := by
+    unfold Vt.scrollUp Vt.scrollUpIn
+    dsimp only
+    split
+    · exact Or.inr ⟨_, rfl⟩
+    · exact Or.inl rfl
+  have pushes (k : Nat) :
+    ∃ rows : List Row,
+      rows.length ≤ k ∧ (Nat.repeat Vt.scrollUp k v).sb = rows.foldl Ring.push v.sb := by
+    induction k with
+    | zero => exact ⟨[], Nat.le_refl 0, rfl⟩
+    | succ k ih =>
+      obtain ⟨rows, hl, he⟩ := ih
+      rcases one (Nat.repeat Vt.scrollUp k v) with h | ⟨r, h⟩
+      · exact ⟨rows, by omega, h.trans he⟩
+      · refine ⟨rows ++ [r], by simpa using Nat.succ_le_succ hl, ?_⟩
+        rw [List.foldl_append, ← he]
+        exact h
+  unfold Vt.csiDispatch
+  split
+  · exact ⟨[], Nat.zero_le _, rfl⟩
+  · obtain ⟨rows, hl, he⟩ := pushes (min (s.arg 0 1) (v.bot - v.top + 1))
+    refine ⟨rows, Nat.le_trans hl (Nat.min_le_right _ _), ?_⟩
+    rw [← he]
+    simp only [repeatAtMost_eq_repeat]
+
 /-! ## Boundaries for injected titles
 
 An ESC intermediate is pending until a final byte, even for sequences the emulator
@@ -1425,17 +1578,14 @@ theorem step_del_preserves_parser {v : Vt}
       v.pstate = .ground ∨
         v.pstate = .esc ∨ (∃ i, v.pstate = .escInter i) ∨ (∃ s, v.pstate = .csi s)) :
     v.step 0x7F = v.abortUtf8 0x7F := by
-  rcases hp with hp | hp | ⟨i, hp⟩ | ⟨s, hp⟩
-  · rw [step_of_ground 0x7F hp]
-    unfold Vt.stepGround
-    rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_left (by decide)]
-  · simp only [Vt.step, ps_abortUtf8, hp]
-    rfl
-  · simp only [Vt.step, ps_abortUtf8, hp]
-    change { (v.abortUtf8 0x7F) with pstate := .escInter i } = _
-    rw [← hp, ← ps_abortUtf8 v 0x7F]
-  · simp only [Vt.step, ps_abortUtf8, hp]
-    rfl
+  have hu : (v.abortUtf8 0x7F).u8need = 0 := by
+    unfold Vt.abortUtf8; split <;> simp_all
+  have hps := ps_abortUtf8 v 0x7F
+  have hw :=
+    step_del_inert hu (fun _ _ h => by rcases hp with h' | h' | ⟨_, h'⟩ | ⟨_, h'⟩ <;> simp_all)
+      (fun h => by rcases hp with h' | h' | ⟨_, h'⟩ | ⟨_, h'⟩ <;> simp_all)
+  unfold Vt.step at hw ⊢
+  rwa [abortUtf8_idle 0x7F hu] at hw
 
 /-- The public observer cannot permit title output after DEL in an incomplete
 CSI, ESC or intermediate sequence; the application title remains unchanged. -/
