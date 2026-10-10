@@ -4,8 +4,6 @@ import Linger.Core.Remote
 
 namespace Linger.Core.Remote.Tests
 
-open Linger.Core.Remote
-
 def good : String :=
   "name\twork\nstate\tlive\nclients\t2\ncmd\tvim\nlabel.env\tdev\n\n" ++
     "name\tother\nstate\tresumable\n\n"

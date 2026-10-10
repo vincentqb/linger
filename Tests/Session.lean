@@ -1,15 +1,9 @@
 module
 
-public import Linger.Core.Session
 import all Linger.Core.Session
--- The `Vt` seal (`specs/archive/vt-toolkit.md` Step 1): these fixtures read the screen they
--- assert about, so they are a friend of the emulator too.
+-- These fixtures read the screen they assert about and run compiled under `native_decide`.
 import all Linger.Core.Vt
--- `native_decide` compiles its goals, and a module's compiled code only sees
--- meta-imported modules — names alone arrive via the public import above.
-public meta import Linger.Core.Session
-public meta import Linger.Core.Wire
-public meta import Linger.Core.Terminal
+meta import Linger.Core.Session
 
 /-! # Session state-machine scenario tests
 
@@ -24,7 +18,6 @@ the daemon itself cannot do the same. -/
 
 namespace Linger.Core.Session.Tests
 
-open Linger.Core.Session
 open Linger.Core.Terminal
 open Linger.Core.Wire (Msg encode)
 
@@ -154,17 +147,17 @@ example :
   native_decide
 
 /-- Each label fits an incoming wire frame; their combined info need not. -/
-private def largeInfoLabels (count : Nat) : List (String × String) :=
+def largeInfoLabels (count : Nat) : List (String × String) :=
   let value := String.ofList (List.replicate (Wire.maxPayload / 2) 'x')
   (List.range count).map (fun i => (toString i, value))
 
-private def storeInfoLabels (labels : List (String × String)) : State × List Effect :=
+def storeInfoLabels (labels : List (String × String)) : State × List Effect :=
   run
     (.connected 1 ::
       labels.map (fun (k, v) => .bytes 1 (encode (.labelSet s!"{k}={v}".toUTF8.toList))))
     (State.boot (Vt.Vt.init 20 5) [] [("name", "t")])
 
-private def infoReplies (effs : List Effect) : List Msg :=
+def infoReplies (effs : List Effect) : List Msg :=
   effs.filterMap
     (fun e =>
       match e with

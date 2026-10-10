@@ -1,7 +1,6 @@
 module
 
 public import Linger.Core.Checkpoint
-public import Theorems.Vt
 import all Linger.Core.Checkpoint
 import all Linger.Core.Vt
 -- `Theorems.Vt` for `Good`, and for the three claims about the decoder's door

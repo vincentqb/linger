@@ -1,7 +1,7 @@
 module
 
 public import Linger.Core.Vt
-public import Linger.Core.Checkpoint
+import Linger.Core.Checkpoint
 import all Linger.Core.Vt
 
 public section

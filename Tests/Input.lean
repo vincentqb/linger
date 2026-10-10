@@ -1,8 +1,7 @@
 module
 
 import Linger.Tools.Key
-public meta import Linger.Tools.Input
-public meta import Linger.Tools.Key
+meta import Linger.Tools.Key
 
 /-! Byte-level fixtures exercise incremental state, including paste boundaries.
 The original selector expectations retain their concrete bindings, while raw
@@ -11,26 +10,24 @@ is Lean's bounded UTF-8 conversion, not a second decoder. -/
 
 namespace Linger.Tools.Input.Tests
 
-open Linger.Tools.Input
-
-private def boundFeed (state : State) (byte : UInt8) : State × List Linger.Tools.Key :=
+def boundFeed (state : State) (byte : UInt8) : State × List Linger.Tools.Key :=
   let (next, events) := feed state byte
   (next, events.filterMap Linger.Tools.Key.ofInput)
 
-private def boundFlush (state : State) : State × List Linger.Tools.Key :=
+def boundFlush (state : State) : State × List Linger.Tools.Key :=
   let (next, events) := flush state
   (next, events.filterMap Linger.Tools.Key.ofInput)
 
-private def walk (state : State) (bytes : List UInt8) : State × List Linger.Tools.Key :=
+def walk (state : State) (bytes : List UInt8) : State × List Linger.Tools.Key :=
   bytes.foldl
     (fun (state, keys) byte =>
       let (next, emitted) := boundFeed state byte
       (next, keys ++ emitted))
     (state, [])
 
-private def input (text : String) : State × List Linger.Tools.Key := walk init text.toUTF8.toList
+def input (text : String) : State × List Linger.Tools.Key := walk init text.toUTF8.toList
 
-private def decoded (state : State) (bytes : List UInt8) : State × List Key :=
+def decoded (state : State) (bytes : List UInt8) : State × List Key :=
   bytes.foldl
     (fun (state, keys) byte =>
       let (next, emitted) := feed state byte

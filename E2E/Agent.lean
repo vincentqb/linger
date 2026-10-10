@@ -1,8 +1,7 @@
 module
 
 public import E2E.Harness
-public import Linger.Core.Wire
-public import Linger.Runtime.Cli
+import Linger.Runtime.Cli
 
 public section
 

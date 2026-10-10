@@ -1,8 +1,8 @@
 module
 
 public import E2E.Harness
-public import Linger.Core.Checkpoint
-public import Linger.Core.Name
+import Linger.Core.Checkpoint
+import Linger.Core.Name
 
 public section
 

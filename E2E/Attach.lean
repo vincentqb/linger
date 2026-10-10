@@ -1,8 +1,7 @@
 module
 
 public import E2E.Harness
-public import Linger.Core.Session
-public import Linger.Runtime.Daemon
+import Linger.Runtime.Daemon
 import Linger.Core.Name
 
 public section

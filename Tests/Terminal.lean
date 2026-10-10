@@ -1,17 +1,9 @@
 module
 
-public import Linger.Core.Terminal
--- Converted from legacy by the `Vt` seal (`specs/archive/vt-toolkit.md` Step 1): the
--- mediator fixtures read cursor and mode state, so they are a friend of the
--- emulator.
+-- The mediator fixtures read cursor and mode state and run compiled under `native_decide`.
 import all Linger.Core.Vt
-import all Linger.Core.Render
-import all Linger.Core.Terminal
--- `native_decide` compiles its goals, and a module's compiled code only sees
--- meta-imported modules — names alone arrive via the public import above.
-public meta import Linger.Core.Vt
-public meta import Linger.Core.Render
-public meta import Linger.Core.Terminal
+import Linger.Core.Terminal
+meta import Linger.Core.Terminal
 
 /-! # Terminal mediator behavior tests
 
@@ -22,7 +14,7 @@ flushes, and graphics passthrough with query-looking payload bytes.
 
 namespace Linger.Core.Terminal.Tests
 
-open Linger.Core.Vt Linger.Core.Render Linger.Core.Terminal
+open Linger.Core.Vt Linger.Core.Render
 
 structure OwnedCase where
   request : Bytes

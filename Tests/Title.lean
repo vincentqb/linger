@@ -3,7 +3,6 @@ import Linger.Core.Terminal
 
 namespace Linger.Core.Title.Tests
 
-open Linger.Core.Title
 open Linger.Core.Terminal.Title (maxChars)
 
 example : compose "work" "" "" maxChars = "work" := by native_decide

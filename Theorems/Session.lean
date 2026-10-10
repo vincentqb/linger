@@ -1,27 +1,17 @@
 module
 
-public import Linger.Core.Session
-public import Theorems.Wire
-public import Theorems.Vt
-public import Theorems.Terminal
-public import Theorems.Render
-public import Theorems.Checkpoint
 import all Linger.Core.Session
 import all Linger.Core.Vt
 import all Linger.Core.Terminal
 import all Linger.Core.Wire
 import all Linger.Core.Render
--- The `Vt` seal (`specs/archive/vt-toolkit.md` Step 1) made the proof layer
--- module-private, so the rungs this file composes need `import all` too, not just
--- `public import`.
+-- The `Vt` seal makes the proof layer module-private, so the rungs this file
+-- composes arrive through `import all`.
 import all Theorems.Terminal
 import all Theorems.Render
 import all Theorems.Wire
--- `Theorems.Checkpoint` is the newest edge, and it is here for one claim:
--- `Checkpoint.load_live`, which is what makes `LiveVt` provable for a *resumed*
--- daemon (§Resume at the daemon, below). Both lines are needed — `public import`
--- for the names in the statements, `import all` because `Theorems/Checkpoint.lean`
--- has no `public section` either, and no existing edge transits to it.
+-- `Theorems.Checkpoint` is here for one claim: `Checkpoint.load_live`, which makes
+-- `LiveVt` provable for a *resumed* daemon (§Resume at the daemon, below).
 import all Theorems.Checkpoint
 
 /-! # §Detach / §Bound(session) — the daemon state machine theorems
@@ -467,7 +457,6 @@ theorem onMsg_decOk (s : State) (c : Client) (m : Msg)
     | exact h
     | exact decOk_setClient _ _ hc h
     | exact decOk_setClient _ _ hc (decOk_setClient _ _ hc h)
-    | (intro c' hmem; exact h c' hmem)
 
 theorem onMsg_scan (s : State) (c : Client) (m : Msg) : (onMsg s c m).1.scan = s.scan := by
   unfold onMsg
@@ -539,7 +528,7 @@ theorem feedMsgs_after_exit (id : Nat) (msgs : List Msg) (acc : State × List Ef
 
 /-- Lift a state invariant through the actual message batch. The lookup witness
 lets each invariant use the sender's membership and identity when needed. -/
-private theorem feedMsgs_preserves (id : Nat) (msgs : List Msg) (acc : State × List Effect)
+theorem feedMsgs_preserves (id : Nat) (msgs : List Msg) (acc : State × List Effect)
     {P : State → Prop} (pres : ∀ s c m, s.client? id = some c → P s → P (onMsg s c m).1)
     (h : P acc.1) : P (feedMsgs id msgs acc).1 :=
   feedMsgs_induct id msgs acc (P := fun r => P r.1)
@@ -1260,8 +1249,6 @@ theorem controlResize_replies (s : State) (c : Client) (cols rows : UInt32) :
   repeat' split
   all_goals simp
 
-open Linger.Core.Vt
-
 /-! ## §Row / §Status integrity — a listing record cannot be forged
 
 `Status.name_clean` proves the *status* column carries neither framing byte, which is
@@ -1303,7 +1290,7 @@ theorem infoText_framing (s : State) :
   simp only [infoText, List.mem_flatMap, List.mem_append, List.mem_singleton] at hb
   grind [Render.utf8s_no_ctl]
 
-private theorem count_utf8s_frame (cs : List Char) (b : UInt8) (hb : b = 0x09 ∨ b = 0x0A) :
+theorem count_utf8s_frame (cs : List Char) (b : UInt8) (hb : b = 0x09 ∨ b = 0x0A) :
     (Render.utf8s cs).count b = 0 := by
   rw [List.count_eq_zero]
   intro hmem
@@ -1312,7 +1299,7 @@ private theorem count_utf8s_frame (cs : List Char) (b : UInt8) (hb : b = 0x09 �
   · exact h9 h
   · exact h10 h
 
-private theorem count_frame :
+theorem count_frame :
     ∀ (l : List (String × String)) (b : UInt8),
       b = 0x09 ∨ b = 0x0A →
         (l.flatMap

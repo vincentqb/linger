@@ -1,6 +1,5 @@
 module
 
-public import Theorems.Render.Sticky
 import all Linger.Core.Render
 import all Linger.Core.Vt
 import all Theorems.Render.Sticky
@@ -53,7 +52,7 @@ theorem rowText_scrubbed (row : Row) : ∀ b ∈ rowText row, 0x20 ≤ b ∧ b �
 theorem rowText_no_lf (row : Row) : ∀ b ∈ rowText row, b ≠ 0x0A := by
   intro b hb; have := rowText_scrubbed row b hb; grind
 
-private theorem rows_framing (rows : List Row) :
+theorem rows_framing (rows : List Row) :
     ∀ b ∈ rows.flatMap (fun row => rowText row ++ [0x0A]), b = 0x0A ∨ (0x20 ≤ b ∧ b ≠ 0x7F) := by
   intro b hb
   obtain ⟨row, -, hmem⟩ := List.mem_flatMap.mp hb
@@ -65,7 +64,7 @@ private theorem rows_framing (rows : List Row) :
 theorem history_framing (v : Vt) : ∀ b ∈ history v, b = 0x0A ∨ (0x20 ≤ b ∧ b ≠ 0x7F) :=
   rows_framing _
 
-private theorem count_rows :
+theorem count_rows :
     ∀ (rows : List Row), (rows.flatMap (fun row => rowText row ++ [0x0A])).count 0x0A = rows.length
   | [] => rfl
   | row :: t => by
@@ -121,7 +120,7 @@ theorem linesLF_record (x rest : Bytes) (hx : ∀ b ∈ x, b ≠ 0x0A) :
     rw [List.cons_append, linesLF, ite_eq_right (by simp [hb]),
       ih (fun b' hb' => hx b' (List.mem_cons_of_mem _ hb'))]
 
-private theorem linesLF_rows (rows : List Row) :
+theorem linesLF_rows (rows : List Row) :
     linesLF (rows.flatMap (fun row => rowText row ++ [0x0A])) = rows.map rowText := by
   induction rows with
   | nil => rfl

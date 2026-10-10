@@ -1,8 +1,7 @@
 module
 
-public import E2E.Recipes
-public import Linger.Core.Checkpoint
-public import Lean.Data.Json
+import E2E.Recipes
+import Linger.Core.Checkpoint
 import all Linger.Manager.Resurrect
 
 public section

@@ -1,6 +1,5 @@
 module
 
-public import Linger.Core.Vt
 import all Linger.Core.Vt
 
 -- No `public section`, and that is forced by the `Vt` seal
@@ -277,8 +276,6 @@ theorem csiDispatch_public_u (v : Vt) (s : CsiState) (hi : s.ignore = false) (hp
 end Linger.Core.Vt
 
 namespace Linger.Core.Vt.Good
-
-open Linger.Core.Vt
 
 /-- Replacing only the grid touches nothing Good watches. Same for
 pen, modes, tabs, title, bell — all definitional repacks. -/
@@ -1146,10 +1143,7 @@ theorem frame_printMark (v : Vt) (ch : Char) :
   unfold Vt.printMark
   dsimp only
   repeat' split
-  all_goals
-    first
-    | rfl
-    | (rw [frame_mendRow]; rfl)
+  all_goals rfl
 
 theorem frame_printAdvance (v : Vt) (w : Nat) :
     v.printAdvance w = { v with cursor := (v.printAdvance w).cursor } := by
@@ -1379,7 +1373,6 @@ theorem ps_stepGround (v : Vt) (b : UInt8) (hb : b ≠ 0x1B) :
   -- rewriting with the stage lemmas is *guided* (matches only the right
   -- shape); a blind `exact` on the wrong branch whnf's the print chain
   all_goals try simp only [ps_ctl, ps_acceptChar]
-  all_goals rfl
 
 /-- **A ruler as wide as the screen.** The invariant `Render.restore_tabs_any`
 needs of the session it replays: `Render.tabsAnsi` walks `v.cols` columns and

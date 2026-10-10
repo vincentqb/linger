@@ -1,7 +1,7 @@
 module
 
 public import E2E.Harness
-public import Linger.Manager.Resurrect
+import Linger.Manager.Resurrect
 
 public section
 

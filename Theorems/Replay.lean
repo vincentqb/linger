@@ -1,14 +1,12 @@
 module
 
 public import Linger.Core.Replay
-public import Theorems.Render.Scrollback
+public import Theorems.Vt -- shake: keep (re-exports `observe_append` to plain importers)
 import all Linger.Core.Replay
 import all Linger.Core.Vt
 import all Linger.Core.Render
 import all Theorems.Render.Grid
 import all Theorems.Render.Scrollback
-import Init.Data.String.Lemmas.TakeDrop
-import Init.Data.String.Lemmas.IsEmpty
 
 /-! A replay cursor denotes the exact remaining renderer stream. These
 definitions are proof observations, never runtime allocations. -/

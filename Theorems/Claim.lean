@@ -1,7 +1,5 @@
 module
 
-public section
-
 /-! Ownership of socket and checkpoint resources across arbitrary interleavings.
 
 A resource identifies a stable lock inode, not a pathname string. Successful

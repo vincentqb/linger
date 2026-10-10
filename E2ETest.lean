@@ -1,25 +1,25 @@
 module
 
-public import E2E.Watch
-public import E2E.Status
-public import E2E.Paths
-public import E2E.Graphics
-public import E2E.Agent
-public import E2E.Resume
-public import E2E.Attach
-public import E2E.Delivery
-public import E2E.Robust
-public import E2E.Remote
-public import E2E.Terminal
-public import E2E.Title
-public import E2E.Recipes
-public import E2E.Interop
-public import E2E.Manager
-public import E2E.RemoteLive
-public import E2E.Ci
-public import E2E.Hygiene
-public import E2E.Identity
-public import E2E.Runner
+import E2E.Watch
+import E2E.Status
+import E2E.Paths
+import E2E.Graphics
+import E2E.Agent
+import E2E.Resume
+import E2E.Attach
+import E2E.Delivery
+import E2E.Robust
+import E2E.Remote
+import E2E.Terminal
+import E2E.Title
+import E2E.Recipes
+import E2E.Interop
+import E2E.Manager
+import E2E.RemoteLive
+import E2E.Ci
+import E2E.Hygiene
+import E2E.Identity
+import E2E.Runner
 
 public section
 

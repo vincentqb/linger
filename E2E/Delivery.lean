@@ -1,8 +1,8 @@
 module
 
-public import E2E.Harness
+import E2E.Harness
 public import Linger.Runtime.Daemon
-public import Tests.Delivery
+import Tests.Delivery
 
 public section
 

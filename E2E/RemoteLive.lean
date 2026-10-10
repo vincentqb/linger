@@ -1,7 +1,7 @@
 module
 
-public import E2E.Harness
-public import Linger.Core.Remote
+import E2E.Harness
+import Linger.Core.Remote
 
 public section
 

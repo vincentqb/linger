@@ -1,6 +1,6 @@
 module
 
-public import Linger.Posix
+import Linger.Posix
 
 public section
 

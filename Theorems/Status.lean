@@ -1,16 +1,7 @@
 module
 
-public import Linger.Core.Status
+-- The proofs unfold the status definitions, whose bodies only `import all` exposes.
 import all Linger.Core.Status
-import Init.Data.Nat.ToString
-import Init.Data.String.Lemmas.Intercalate
-import Init.Data.Char.Lemmas
-
--- Converted from legacy by the `Vt` seal (`specs/archive/vt-toolkit.md` Step 1) — not for
--- anything in this file, which never mentions a `Vt`, but because a `module` cannot
--- import a non-`module`, and `Theorems/Listing.lean` had to become one to reach
--- `Render.utf8s_no_ctl` through `import all`. The conversion is transitive
--- upstream; nothing here changes but the visibility posture.
 
 /-! # §Status — the seven states partition the observation space
 
@@ -97,7 +88,7 @@ theorem icon_injective (s t : Status) (h : icon s = icon t) : s = t := by
 unambiguous record — the invariant that makes tab-separated output safe
 without an escaping pass. -/
 theorem name_clean (s : Status) : ∀ c ∈ (name s).toList, c ≠ '\t' ∧ c ≠ '\n' := by
-  cases s <;> simp [name] <;> decide
+  cases s <;> simp [name]
 
 /-- `ofName` is a left inverse of `name`, so the human column and the
 porcelain column can never disagree about a row. -/
@@ -157,7 +148,7 @@ theorem summary_omits_zero (statuses : List Status) (hw : statuses.count .wantsY
     (hb : statuses.count .exitedBad = 0) (hu : statuses.count .unknown = 0) :
     Linger.Core.Status.summary statuses = "" := by simp [summary_exact, hw, hb, hu]
 
-private theorem summary_token_clean (statuses : List Status) (s : Status) (n : Nat)
+theorem summary_token_clean (statuses : List Status) (s : Status) (n : Nat)
     (h : (s, n) ∈ attentionCounts statuses) :
     ∀ c ∈ ((toString n).push (icon s)).toList, c.isDigit = true ∨ c ∈ ['⣿', '!', '?'] := by
   intro c hc

@@ -1,16 +1,13 @@
 module
 
 import Linger.Tools.Resurrect
-public meta import Linger.Tools.Resurrect
 import Linger.Core.Status
-public meta import Linger.Core.Status
+meta import Linger.Tools.Resurrect
 
 /-! Concrete checks of the pure API. General kernel-checked contracts live in
 `Theorems.Resurrect`; these fixtures exercise the actual string operations. -/
 
 namespace Linger.Tools.Resurrect.Tests
-
-open Linger.Tools.Resurrect
 
 -- Browsing uses original window context and pane order. Display text is safe,
 -- while the action fields retain exact paths and source lines.

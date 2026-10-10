@@ -1,6 +1,5 @@
 module
 
-public import Linger.Core.Buf
 import all Linger.Core.Buf
 
 /-! # §Bound, the runtime half — the daemon's byte queues, proved
@@ -92,7 +91,7 @@ cap: an offer that would breach it is refused whole. -/
 theorem bufOffer_bound (cap : Nat) (b : Buf) (more : ByteArray) (h : owedLen b ≤ cap) :
     owedLen (bufOffer cap b more).1 ≤ cap := by
   unfold bufOffer owedLen at *
-  split <;> simp_all [ByteArray.size_append] <;> omega
+  split <;> simp_all [ByteArray.size_append]
 
 /-- **The twin.** An accepted offer really is appended, in order — so the cap is
 not met by silently discarding what it claimed to accept. -/

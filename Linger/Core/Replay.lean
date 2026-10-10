@@ -5,7 +5,7 @@ public import Linger.Core.Render
 -- rows; it never changes a terminal or exposes its representation.
 import all Linger.Core.Vt
 
-private instance : Repr String.Slice where
+instance : Repr String.Slice where
   reprPrec s _ := repr (s.str, s.startInclusive.offset.byteIdx, s.endExclusive.offset.byteIdx)
 
 deriving instance DecidableEq for String.Slice

@@ -8,8 +8,6 @@ peer or a crafted checkpoint filename could produce. -/
 
 namespace Linger.Core.Listing.Tests
 
-open Linger.Core.Listing
-
 /-- A reply carrying an ESC (SGR red), a TAB and a newline in its values, plus a
 label with an ESC — the injection a hostile porcelain or a crafted checkpoint
 name could attempt. -/

@@ -33,7 +33,7 @@ theorem okChar_no_at (c : Char) (h : okChar c = true) : c ≠ '@' := by
 
 /-- The mapped character is always in the alphabet. -/
 theorem mapChar_ok (c : Char) : okChar (if okChar c then c else '_') = true := by
-  by_cases h : okChar c <;> simp [h] <;> decide
+  by_cases h : okChar c <;> simp [h]; decide
 
 /-- §Name, the main statement: `sanitize` establishes `Valid` for any
 input whatsoever. -/

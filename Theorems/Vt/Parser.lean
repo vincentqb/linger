@@ -1,6 +1,5 @@
 module
 
-public import Theorems.Vt.State
 import all Theorems.Vt.State
 
 namespace Linger.Core.Vt
@@ -106,7 +105,6 @@ theorem un_setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool) :
   unfold Vt.setMode
   repeat' split
   all_goals try simp only [un_moveTo, un_enterAlt, un_leaveAlt]
-  all_goals rfl
 
 theorem un_setModes (v : Vt) (priv : Bool) (ps : List (Nat × Bool)) (on : Bool) :
     (v.setModes priv ps on).u8need = v.u8need :=
@@ -203,13 +201,6 @@ theorem uz_stepGround {v : Vt} (b : UInt8) (hb : b < 0xC0) (h : v.u8need = 0) :
       | exact h
       | rfl
       | (simp [h])
-      | ( exfalso
-          simp only [UInt8.lt_iff_toNat_lt, Bool.not_eq_true, decide_eq_false_iff_not,
-            decide_eq_true_eq, Nat.not_lt, show ((0x20 : UInt8)).toNat = 32 from rfl,
-            show ((0x80 : UInt8)).toNat = 128 from rfl, show ((0xC0 : UInt8)).toNat = 192 from rfl,
-            show ((0xE0 : UInt8)).toNat = 224 from rfl, show ((0xF0 : UInt8)).toNat = 240 from rfl,
-            show ((0xF8 : UInt8)).toNat = 248 from rfl] at *
-          omega)
 
 /-! ### The `u8acc` twin of the layer above
 
@@ -287,7 +278,6 @@ theorem ua_setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool) :
   unfold Vt.setMode
   repeat' split
   all_goals try simp only [ua_moveTo, ua_enterAlt, ua_leaveAlt]
-  all_goals rfl
 
 theorem ua_setModes (v : Vt) (priv : Bool) (ps : List (Nat × Bool)) (on : Bool) :
     (v.setModes priv ps on).u8acc = v.u8acc :=
@@ -395,19 +385,7 @@ theorem uaz_stepGround {v : Vt} (b : UInt8) (hb : b < 0x80) (h : v.u8acc = 0) :
   unfold Vt.stepGround
   repeat' split
   all_goals try simp only [ua_ctl, ua_acceptChar]
-  all_goals
-    with_reducible
-      first
-      | exact h
-      | rfl
-      | (simp [h])
-      | ( exfalso
-          simp only [UInt8.lt_iff_toNat_lt, Bool.not_eq_true, decide_eq_false_iff_not,
-            decide_eq_true_eq, Nat.not_lt, show ((0x20 : UInt8)).toNat = 32 from rfl,
-            show ((0x80 : UInt8)).toNat = 128 from rfl, show ((0xC0 : UInt8)).toNat = 192 from rfl,
-            show ((0xE0 : UInt8)).toNat = 224 from rfl, show ((0xF0 : UInt8)).toNat = 240 from rfl,
-            show ((0xF8 : UInt8)).toNat = 248 from rfl] at *
-          omega)
+  all_goals with_reducible exact h
 
 /-- **One step keeps `u8acc` at zero**, in any parser state, for any byte that is not a
 UTF-8 lead byte. `abortUtf8` either zeroes the accumulator (a sequence was pending) or is
@@ -621,8 +599,6 @@ theorem dims_ctl (v : Vt) (b : UInt8) : dims (v.ctl b) = dims v := by
     | exact dims_backspace v
     | exact dims_tab v
     | exact dims_lineFeed v
-    | exact dims_carriageReturn v
-    | rfl
 
 theorem dims_csiDispatch (v : Vt) (s : CsiState) (final : UInt8) :
     dims (v.csiDispatch s final) = dims v := by
@@ -904,8 +880,6 @@ theorem tsz_ctl (v : Vt) (b : UInt8) : tsz (v.ctl b) = tsz v := by
     | exact tsz_backspace v
     | exact tsz_tab v
     | exact tsz_lineFeed v
-    | exact tsz_carriageReturn v
-    | rfl
 
 theorem tsz_stepEscInter (v : Vt) (i b : UInt8) : tsz (v.stepEscInter i b) = tsz v := by
   rw [frame_stepEscInter]
@@ -1167,10 +1141,7 @@ theorem org_setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool) (h : ¬(priv = 
       | ( exfalso
           apply h
           refine ⟨hp, ?_⟩
-          first
-          | rfl
-          | assumption
-          | omega)
+          rfl)
   · -- non-private: only IRM (4), which is a different flag
     repeat' split
     all_goals rfl
@@ -1282,7 +1253,6 @@ theorem org_acceptChar (v : Vt) (n : Nat) : (v.acceptChar n).modes.origin = v.mo
 theorem org_stepGround (v : Vt) (b : UInt8) : (v.stepGround b).modes.origin = v.modes.origin := by
   fun_cases Vt.stepGround v b
   all_goals try simp only [org_ctl, org_acceptChar]
-  all_goals rfl
 
 theorem org_stepEscInter (v : Vt) (i b : UInt8) :
     (v.stepEscInter i b).modes.origin = v.modes.origin := by rw [frame_stepEscInter]

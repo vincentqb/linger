@@ -1,7 +1,7 @@
 module
 
 public import E2E.Harness
-public import Linger.Core.Terminal
+import Linger.Core.Terminal
 
 public section
 

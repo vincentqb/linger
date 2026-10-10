@@ -1,7 +1,7 @@
 module
 
 import Linger.Tools.Fuzzy
-public meta import Linger.Tools.Fuzzy
+meta import Linger.Tools.Fuzzy
 
 open Linger.Tools.Fuzzy
 
@@ -29,7 +29,7 @@ namespace Tests.Fuzzy
 
 /-- Only the small oracle enumerates masks. True-first enumeration breaks ties
 by earliest matching positions, independently of the production dynamic program. -/
-private def masks : Nat → List (List Bool)
+def masks : Nat → List (List Bool)
   | 0 => [[]]
   | n + 1 =>
     let rest := masks n
@@ -37,7 +37,7 @@ private def masks : Nat → List (List Bool)
 
 /-- Compare exact scalars or explicit ASCII letter pairs. Neither production
 folding nor character-case predicates participate in this oracle. -/
-private def spells (mode : CaseMode) (query selected : List Char) : Bool :=
+def spells (mode : CaseMode) (query selected : List Char) : Bool :=
   let capitals := "ABCDEFGHIJKLMNOPQRSTUVWXYZ".toList
   let pairs := capitals.zip "abcdefghijklmnopqrstuvwxyz".toList
   let ignoreCase :=
@@ -54,7 +54,7 @@ private def spells (mode : CaseMode) (query selected : List Char) : Bool :=
 /-- Score the selected positions as a whole. Boundary and adjacency counts
 are independent of the weights; the final selected index determines all gaps.
 The target stays in its original case throughout. -/
-private def score (scoring : Scoring) (target : List Char) (mask : List Bool) : Int :=
+def score (scoring : Scoring) (target : List Char) (mask : List Bool) : Int :=
   let positions := mask.zipIdx.filterMap fun (marked, index) => if marked then some index else none
   let boundaries :=
     positions.countP fun index =>
@@ -65,7 +65,7 @@ private def score (scoring : Scoring) (target : List Char) (mask : List Bool) : 
   let skipped := (positions.getLast?.map (· + 1)).getD 0 - positions.length
   scoring.word * boundaries + scoring.adjacent * adjacent + scoring.gap * skipped
 
-private def oracleWith (config : Config) (query target : String) : Option Alignment :=
+def oracleWith (config : Config) (query target : String) : Option Alignment :=
   let candidates :=
     (masks target.toList.length).filterMap fun mask =>
       let selected :=
@@ -80,9 +80,9 @@ private def oracleWith (config : Config) (query target : String) : Option Alignm
       | some old => some (if old.score ≥ candidate.score then old else candidate))
     none
 
-private def oracle (query target : String) : Option Alignment := oracleWith {} query target
+def oracle (query target : String) : Option Alignment := oracleWith {} query target
 
-private def words (alphabet : List Char) : Nat → List String
+def words (alphabet : List Char) : Nat → List String
   | 0 => [""]
   | n + 1 => "" :: ((words alphabet n).flatMap fun word => alphabet.map word.push)
 
@@ -91,14 +91,14 @@ private def words (alphabet : List Char) : Nat → List String
   (words ['a', 'b', 'A', '-'] 4).all fun target =>
     (words ['a', 'b', 'A'] 3).all fun query => align query target == oracle query target
 
-private def modes : List CaseMode := [.sensitive, .insensitive, .smart]
+def modes : List CaseMode := [.sensitive, .insensitive, .smart]
 
-private def scorings : List Scoring :=
+def scorings : List Scoring :=
   [{}, { word := 0, adjacent := 0, gap := 0 }, { word := -5, adjacent := -4, gap := -3 },
     { word := -5, adjacent := 0, gap := 0 }, { word := 0, adjacent := -4, gap := 0 },
     { word := 0, adjacent := 0, gap := 3 }, { word := 9, adjacent := -4, gap := 3 }]
 
-private def configurations : List Config :=
+def configurations : List Config :=
   modes.flatMap fun mode => scorings.map fun scoring => { caseMode := mode, scoring }
 
 -- Check complete answers, including failures, signed scores, masks and ties.

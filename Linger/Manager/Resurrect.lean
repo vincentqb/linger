@@ -8,7 +8,8 @@ import Linger.Runtime.Cli
 import Linger.Runtime.Command
 import Linger.Manager.Picker
 import Std.Async.System
-import Lean.Data.Json
+import Lean.Data.Json.Parser
+import Lean.Data.Json.Printer
 
 public section
 

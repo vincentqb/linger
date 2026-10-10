@@ -1,16 +1,8 @@
 module
 
-public import Tests.Render
--- Converted from legacy by the `Vt` seal (`specs/archive/vt-toolkit.md` Step 1). Nothing
--- here mentions a `Vt` field directly, but `Tests/Render.lean` had to become a
--- module and its `roundtrips`/`roundtripsFrom` are module-private now, so they
--- arrive via `import all` — and `native_decide` needs them compiled, hence the
--- `meta` line as well.
+-- `roundtrips` and `roundtripsFrom` are private to `Tests.Render` and run under `native_decide`.
 import all Tests.Render
-import all Linger.Core.Vt
-public meta import Tests.Render
-public meta import Linger.Core.Vt
-public meta import Linger.Core.Render
+meta import Tests.Render
 
 /-! # §Replay fuzzing — the net for assumptions nobody wrote down
 
@@ -35,7 +27,7 @@ avoided in the test.
 
 namespace Linger.Core.Render.Fuzz
 
-open Linger.Core.Vt Linger.Core.Render Linger.Core.Render.Tests
+open Linger.Core.Render.Tests
 
 /-- A pure LCG. Reproducible: a failing seed replays exactly. -/
 def nextRand (s : Nat) : Nat := (s * 1103515245 + 12345) % 2147483648

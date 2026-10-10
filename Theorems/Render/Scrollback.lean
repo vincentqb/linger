@@ -1,6 +1,5 @@
 module
 
-public import Theorems.Render.Tabs
 import all Linger.Core.Render
 import all Linger.Core.Vt
 import all Theorems.Render.Tabs
@@ -374,7 +373,6 @@ theorem sb_setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool) :
   unfold Vt.setMode
   repeat' split
   all_goals try simp only [sb_moveTo, sb_enterAlt, sb_leaveAlt]
-  all_goals rfl
 
 theorem sb_setModes (v : Vt) (priv : Bool) (ps : List (Nat × Bool)) (on : Bool) :
     (v.setModes priv ps on).sb = v.sb :=
@@ -453,10 +451,7 @@ theorem sb_csiDispatch_stbm (v : Vt) (s : CsiState) : (v.csiDispatch s 0x72).sb 
             else v).sb =
         v.sb
     repeat' split
-    all_goals
-      first
-      | rfl
-      | rw [frame_moveTo]
+    all_goals rfl
 
 /-- `ESC x` for the singles `restore` emits, plus `0x48` (`HTS`) — see the header for why
 this family is broader than the ruler's and which bytes stay out of it. -/

@@ -1,6 +1,5 @@
 module
 
-public import Theorems.Render.Quiet
 import all Linger.Core.Render
 import all Linger.Core.Vt
 import all Theorems.Render.Quiet
@@ -26,7 +25,7 @@ no bytes left in the argument. `utf8_feed` below is the load-bearing one: it
 turns a repaint into a chain of `Vt.print`s.
 -/
 
-private theorem u8_ofNat_toNat (m : Nat) (h : m < 256) : (UInt8.ofNat m).toNat = m := by
+theorem u8_ofNat_toNat (m : Nat) (h : m < 256) : (UInt8.ofNat m).toNat = m := by
   simp [UInt8.toNat_ofNat', Nat.mod_eq_of_lt h]
 
 /-- Every `Char` is at most the largest scalar value, so `utf8`'s clamp is
@@ -120,7 +119,7 @@ theorem step_lead4 {v : Vt} {m : Nat} (hg : v.pstate = .ground) (hu : v.u8need =
 
 /-- A continuation byte never aborts a sequence — that is what makes the
 `abortUtf8` guard invisible to a well-formed encoding. -/
-private theorem abortUtf8_cont (v : Vt) {m : Nat} (hm : m < 64) :
+theorem abortUtf8_cont (v : Vt) {m : Nat} (hm : m < 64) :
     v.abortUtf8 (UInt8.ofNat (0x80 + m)) = v := by
   simp only [Vt.abortUtf8, UInt8.lt_iff_toNat_lt, UInt8.le_iff_toNat_le,
     u8_ofNat_toNat _ (show 0x80 + m < 256 by omega), UInt8.reduceToNat]
@@ -130,7 +129,7 @@ private theorem abortUtf8_cont (v : Vt) {m : Nat} (hm : m < 64) :
 \`step_of_ground_quiet\` this needs no \`u8need = 0\`, because a continuation
 byte is exactly the byte \`abortUtf8\` lets through. Stated as its own lemma
 so the \`pstate\` rewrite cannot touch the callers' right-hand sides. -/
-private theorem step_cont_bridge {v : Vt} {m : Nat} (hg : v.pstate = .ground) (hm : m < 64) :
+theorem step_cont_bridge {v : Vt} {m : Nat} (hg : v.pstate = .ground) (hm : m < 64) :
     v.step (UInt8.ofNat (0x80 + m)) = v.stepGround (UInt8.ofNat (0x80 + m)) := by
   rw [Linger.Core.Vt.step_of_ground _ hg, abortUtf8_cont v hm]
 
@@ -166,7 +165,7 @@ theorem step_cont_last {v : Vt} {acc m : Nat} (hg : v.pstate = .ground) (hu : v.
 /-- Collapsing the nested `u8need`/`u8acc` writes that a completed sequence
 leaves behind: from a quiet start, decoding one codepoint returns the
 accumulator to exactly where it was. -/
-private theorem reset_u8 {v : Vt} (hu : v.u8need = 0) (ha : v.u8acc = 0) (x y : Nat) :
+theorem reset_u8 {v : Vt} (hu : v.u8need = 0) (ha : v.u8acc = 0) (x y : Nat) :
     ({
           { v with
             u8need := x, u8acc := y } with
@@ -176,15 +175,14 @@ private theorem reset_u8 {v : Vt} (hu : v.u8need = 0) (ha : v.u8acc = 0) (x y : 
   cases v
   simp_all
 
-private theorem feed1 (w : Vt) (a : UInt8) : w.feed [a] = w.step a := by simp [Vt.feed]
+theorem feed1 (w : Vt) (a : UInt8) : w.feed [a] = w.step a := by simp [Vt.feed]
 
-private theorem feed2 (w : Vt) (a b : UInt8) : w.feed [a, b] = (w.step a).step b := by
+theorem feed2 (w : Vt) (a b : UInt8) : w.feed [a, b] = (w.step a).step b := by simp [Vt.feed]
+
+theorem feed3 (w : Vt) (a b c : UInt8) : w.feed [a, b, c] = ((w.step a).step b).step c := by
   simp [Vt.feed]
 
-private theorem feed3 (w : Vt) (a b c : UInt8) : w.feed [a, b, c] = ((w.step a).step b).step c := by
-  simp [Vt.feed]
-
-private theorem feed4 (w : Vt) (a b c d : UInt8) :
+theorem feed4 (w : Vt) (a b c d : UInt8) :
     w.feed [a, b, c, d] = (((w.step a).step b).step c).step d := by simp [Vt.feed]
 
 /-- **The UTF-8 round trip.** The bytes `utf8` emits for a printable
@@ -318,7 +316,7 @@ numbers in the first place (step 1 of specs/archive/grid-fidelity.md). This half
 about `Vt.applySgr` alone.
 -/
 
-private theorem u8_lt256 (x : UInt8) : x.toNat < 256 := x.toNat_lt_size
+theorem u8_lt256 (x : UInt8) : x.toNat < 256 := x.toNat_lt_size
 
 /-- Parameters as the accumulator delivers them: no sub-parameter flags,
 since `joinSemi` separates with `;` and never `:`. -/

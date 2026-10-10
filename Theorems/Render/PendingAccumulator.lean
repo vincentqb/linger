@@ -1,6 +1,5 @@
 module
 
-public import Theorems.Render.History
 import all Linger.Core.Render
 import all Linger.Core.Vt
 import all Theorems.Render.History
@@ -12,7 +11,7 @@ namespace Linger.Core.Render
 
 open Linger.Core.Vt
 
-private theorem utf8_feed_any_acc {v : Vt} (c : Char) (hc : 0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F)
+theorem utf8_feed_any_acc {v : Vt} (c : Char) (hc : 0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F)
     (hg : v.pstate = .ground) (hu : v.u8need = 0) :
     v.feed (utf8 c) = (if c.toNat < 0x80 then v else { v with u8acc := 0 }).print c := by
   have hle := char_le c
@@ -40,13 +39,13 @@ private theorem utf8_feed_any_acc {v : Vt} (c : Char) (hc : 0x20 ≤ c.toNat ∧
         step_lead4 (v := { v with u8acc := 0 }) (m := c.toNat / 262144) hg hu (by omega)]
     _ = _ := utf8_feed c hc hg hu rfl
 
-private theorem utf8_feed_ground_need {v : Vt} (c : Char) (hc : 0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F)
+theorem utf8_feed_ground_need {v : Vt} (c : Char) (hc : 0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F)
     (hg : v.pstate = .ground) (hu : v.u8need = 0) :
     (v.feed (utf8 c)).pstate = .ground ∧ (v.feed (utf8 c)).u8need = 0 := by
   rw [utf8_feed_any_acc c hc hg hu]
   split <;> simpa only [ps_print, un_print] using And.intro hg hu
 
-private theorem utf8s_feed_ground_need (cs : List Char) {v : Vt} (hg : v.pstate = .ground)
+theorem utf8s_feed_ground_need (cs : List Char) {v : Vt} (hg : v.pstate = .ground)
     (hu : v.u8need = 0) :
     (v.feed (utf8s cs)).pstate = .ground ∧ (v.feed (utf8s cs)).u8need = 0 := by
   induction cs generalizing v with
@@ -57,13 +56,13 @@ private theorem utf8s_feed_ground_need (cs : List Char) {v : Vt} (hg : v.pstate 
     exact ih hg' hu'
 
 /-- A combining mark leaves the cursor where it was. -/
-private theorem cursor_mark (m : Char) (w : Vt) (h0 : w.g0Line = false) (h1 : w.g1Line = false)
+theorem cursor_mark (m : Char) (w : Vt) (h0 : w.g0Line = false) (h1 : w.g1Line = false)
     (hm : charWidth m = 0 ∧ Emittable m) : (w.print (safeChar m)).cursor = w.cursor := by
   rw [safeChar_of_emittable hm.2]
   simp only [Vt.print, printChar_id_of_ascii h0 h1 hm.2.1 hm.2.2, hm.1, beq_self_eq_true, ite_true]
   rw [frame_printMark]
 
-private theorem utf8s_marks_cursor_any_acc (ms : List Char) (w : Vt) (h0 : w.g0Line = false)
+theorem utf8s_marks_cursor_any_acc (ms : List Char) (w : Vt) (h0 : w.g0Line = false)
     (h1 : w.g1Line = false) (hm : ∀ m ∈ ms, charWidth m = 0 ∧ Emittable m) (hg : w.pstate = .ground)
     (hu : w.u8need = 0) : (w.feed (utf8s ms)).cursor = w.cursor := by
   induction ms generalizing w with

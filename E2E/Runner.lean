@@ -1,6 +1,6 @@
 module
 
-public import E2E.Harness
+import E2E.Harness
 
 public section
 

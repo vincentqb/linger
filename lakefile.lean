@@ -3,7 +3,9 @@ import Lake
 open Lake DSL
 
 package linger where leanOptions :=
-  #[⟨`autoImplicit, false⟩, ⟨`relaxedAutoImplicit, false⟩, ⟨`warningAsError, true⟩]
+  #[⟨`autoImplicit, false⟩, ⟨`relaxedAutoImplicit, false⟩, ⟨`warningAsError, true⟩,
+    ⟨`linter.extra.unreachableTactic, true⟩, ⟨`linter.redundantVisibility, true⟩,
+    ⟨`linter.extra.unnecessarySeqFocus, true⟩]
 
 /-- The session library, with no external Lean dependencies. -/
 @[default_target] lean_lib Linger where

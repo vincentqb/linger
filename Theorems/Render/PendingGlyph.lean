@@ -1,6 +1,5 @@
 module
 
-public import Theorems.Vt
 import all Linger.Core.Vt
 import all Theorems.Vt
 

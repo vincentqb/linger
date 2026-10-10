@@ -10,8 +10,6 @@ chunking, garbage, oversize frames, evaluated at build time.
 
 namespace Linger.Core.Wire.Tests
 
-open Linger.Core.Wire
-
 /-- Golden frame: `input "hi"` is tag 0, LE length 2, payload. A
 different byte layout would break every deployed peer — this test is
 the freeze. -/

@@ -1,6 +1,6 @@
 module
 
-public import Theorems.Render.Keeps
+public import Linger.Core.Vt
 import all Linger.Core.Render
 import all Linger.Core.Vt
 import all Theorems.Render.Keeps
@@ -200,7 +200,7 @@ theorem ends_csiPlain (final : UInt8) (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E
 
 -- Unfold one character at a time: reducing the recursive legacy splitter in one
 -- step spends the default recursion budget on its termination proof.
-private theorem split_empty_title : "2;".splitOn ";" = ["2", ""] := by
+theorem split_empty_title : "2;".splitOn ";" = ["2", ""] := by
   unfold String.splitOn
   rw [ite_eq_right (by decide), String.splitOnAux]
   rw [ite_eq_right (by decide), ite_eq_right (by decide)]
@@ -210,7 +210,7 @@ private theorem split_empty_title : "2;".splitOn ";" = ["2", ""] := by
   rw [ite_eq_left (by decide), String.splitOnAux, ite_eq_left (by decide)]
   rfl
 
-private theorem finish_empty_title (v : Vt) :
+theorem finish_empty_title (v : Vt) :
     v.oscFinish #[0x32, 0x3B] =
       { v with
         pstate := .ground, title := "" } := by

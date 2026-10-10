@@ -1,6 +1,5 @@
 module
 
-public import Theorems.Render.Grid
 import all Linger.Core.Render
 import all Linger.Core.Vt
 import all Theorems.Render.Grid
@@ -78,7 +77,6 @@ theorem tabs_setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool) :
   unfold Vt.setMode
   repeat' split
   all_goals try simp only [tabs_moveTo, tabs_enterAlt, tabs_leaveAlt]
-  all_goals rfl
 
 theorem tabs_setModes (v : Vt) (priv : Bool) (ps : List (Nat × Bool)) (on : Bool) :
     (v.setModes priv ps on).tabs = v.tabs :=

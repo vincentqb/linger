@@ -36,7 +36,7 @@ def effectDepth : Effect → Nat
 
 theorem feedback_depth (eff : Effect) (reply : Reply eff) :
     ∀ ev ∈ feedback eff reply, eventDepth ev < effectDepth eff := by
-  cases eff <;> simp [feedback, eventDepth, effectDepth] <;> split <;> simp_all [eventDepth]
+  cases eff <;> simp [feedback, eventDepth, effectDepth]
 
 theorem step_depth (s : State) (ev : Event) :
     ∀ eff ∈ (step s ev).2, effectDepth eff ≤ eventDepth ev := by

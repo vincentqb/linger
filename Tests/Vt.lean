@@ -1,14 +1,9 @@
 module
 
-public import Linger.Core.Render
--- Converted from legacy by the `Vt` seal (`specs/archive/vt-toolkit.md` Step 1): these
--- fixtures read the fields they assert about, so they are a friend of the emulator.
+-- These fixtures read the fields they assert about and run compiled under `native_decide`.
 import all Linger.Core.Vt
-import all Linger.Core.Render
--- `native_decide` compiles its goals, and a module's compiled code only sees
--- meta-imported modules — names alone arrive via the public import above.
-public meta import Linger.Core.Vt
-public meta import Linger.Core.Render
+import Linger.Core.Render
+meta import Linger.Core.Render
 
 /-! # Vt behavior tests
 
@@ -20,7 +15,7 @@ kernel evaluator would crawl.
 
 namespace Linger.Core.Vt.Tests
 
-open Linger.Core.Vt Linger.Core.Render
+open Linger.Core.Render
 
 def feedStr (v : Vt) (s : String) : Vt := v.feedBytes s.toUTF8
 

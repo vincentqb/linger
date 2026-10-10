@@ -1,9 +1,5 @@
 module
 
-public import Linger.Tools.Picker
-public import Linger.Tools.Fuzzy
-public import Linger.Core.Name
-public import Linger.Core.Render
 import all Linger.Tools.Picker
 import all Linger.Core.Name
 import all Linger.Core.Listing
@@ -13,8 +9,6 @@ import Theorems.Name
 import Theorems.Fuzzy
 import Theorems.Remote
 import Theorems.Input
-
-public section
 
 /-! Selection contracts within and between listing snapshots.
 
@@ -46,28 +40,24 @@ theorem matches_length_le (query target : String)
   simpa only [List.length_map, String.length_toList] using
     ((matches_iff_sublist query target).mp h).length_le
 
-private theorem parseRow_some (fields : List String) (target : String)
+theorem parseRow_some (fields : List String) (target : String)
     (h : parseRow fields = .ok (some target)) :
     fields = ["name", target] ∧ Linger.Core.Remote.targetValid target = true := by
   unfold parseRow at h
   repeat' (split at h <;> (try simp_all))
-  all_goals
-    cases h
-    simp_all
 
-private theorem parseRow_none (fields : List String) (h : parseRow fields = .ok none) :
+theorem parseRow_none (fields : List String) (h : parseRow fields = .ok none) :
     fields.head? ≠ some "name" := by
   unfold parseRow at h
   repeat' (split at h <;> (try simp_all))
 
-private theorem parseRow_error (fields : List String) (error : String)
+theorem parseRow_error (fields : List String) (error : String)
     (h : parseRow fields = .error error) :
     error = "invalid session target in listing" ∨ error = "malformed name record in listing" := by
   unfold parseRow at h
   repeat' (split at h <;> (try simp_all))
 
-private theorem parseRows_sound (seen rows targets : List String)
-    (h : parseRows seen rows = .ok targets) :
+theorem parseRows_sound (seen rows targets : List String) (h : parseRows seen rows = .ok targets) :
     (∀ target ∈ targets, Linger.Core.Remote.targetValid target = true) ∧
       targets.Nodup ∧
       (∀ target ∈ targets, target ∉ seen) ∧
@@ -114,7 +104,7 @@ private theorem parseRows_sound (seen rows targets : List String)
                 exact fresh t ht (List.mem_cons_of_mem _ hs)
             · simp [fields, records]
 
-private theorem parseRows_error (seen rows : List String) (error : String)
+theorem parseRows_error (seen rows : List String) (error : String)
     (h : parseRows seen rows = .error error) :
     error = "invalid session target in listing" ∨
       error = "malformed name record in listing" ∨
@@ -233,15 +223,14 @@ theorem presentation_creation (snapshot : Snapshot) (nameCol : Nat) (target : St
   simp [presentation]
 
 /-- Annotation preserves each scalar and its status, in the original order. -/
-private theorem markPiece_projection (marks : Array Bool) (piece : Linger.Core.Listing.RowPiece) :
+theorem markPiece_projection (marks : Array Bool) (piece : Linger.Core.Listing.RowPiece) :
     (markPiece marks piece).map (fun char => (char.char, char.status)) =
       piece.text.map (fun char => (char, piece.status)) := by
   simpa only [markPiece, List.map_map, Function.comp_def] using
     congrArg (List.map (fun char => (char, piece.status))) (List.zipIdx_map_fst 0 piece.text)
 
 /-- The scalar index is measured within the piece, not in UTF-8 bytes or cells. -/
-private theorem markPiece_at (marks : Array Bool) (piece : Linger.Core.Listing.RowPiece)
-    (index : Nat) :
+theorem markPiece_at (marks : Array Bool) (piece : Linger.Core.Listing.RowPiece) (index : Nat) :
     (markPiece marks piece)[index]? =
       piece.text[index]?.map fun char =>
         { char, status := piece.status,
@@ -256,7 +245,7 @@ private theorem markPiece_at (marks : Array Bool) (piece : Linger.Core.Listing.R
 
 /-- Every emphasized scalar lies inside the declared name span and corresponds
 to a true alignment mark; absent or out-of-range marks never emphasize text. -/
-private theorem markPiece_marked_iff (marks : Array Bool) (piece : Linger.Core.Listing.RowPiece)
+theorem markPiece_marked_iff (marks : Array Bool) (piece : Linger.Core.Listing.RowPiece)
     (index : Nat) (char : HighlightedChar) (h : (markPiece marks piece)[index]? = some char) :
     char.matched = true ↔
       ∃ start count,
@@ -367,7 +356,7 @@ theorem highlightedPresentation_creation (snapshot : Snapshot) (nameCol : Nat)
       true := by
   simp [highlightedPresentation, presentation, markPiece]
 
-private theorem emphasizeCells_head?_any (chars : List HighlightedChar) :
+theorem emphasizeCells_head?_any (chars : List HighlightedChar) :
     (emphasizeCells chars).head?.any
         (fun char => Linger.Core.Vt.charWidth char.char == 0 && char.matched) =
       (chars.takeWhile (fun char => Linger.Core.Vt.charWidth char.char == 0)).any (·.matched) := by
@@ -431,7 +420,7 @@ theorem mem_items_existing (candidates : List String) (query target : String)
 
 /-- Creation requires the enabled mode and an exact valid, absent target,
 independently of whether the query also matches any existing targets. -/
-private theorem mem_items_create (candidates : List String) (query target : String)
+theorem mem_items_create (candidates : List String) (query target : String)
     (allowCreate : Bool := true) :
     Item.create target ∈ items candidates query allowCreate ↔
       allowCreate = true ∧

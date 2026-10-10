@@ -1,8 +1,8 @@
 module
 
-public import E2E.Harness
-public import Linger.Core.Checkpoint
-public import Linger.Runtime.Daemon
+import E2E.Harness
+import Linger.Core.Checkpoint
+import Linger.Runtime.Daemon
 
 public section
 

@@ -1,7 +1,5 @@
 module
 
-public import Linger.Core.Terminal
-public import Theorems.Render
 import all Linger.Core.Terminal
 import all Linger.Core.Vt
 import all Linger.Core.Render
@@ -397,7 +395,6 @@ theorem Scan.Bounded.step {s : Scan} {v : Vt} {b : UInt8} (h : s.Bounded) :
   all_goals repeat' split
   all_goals
     simp_all [Scan.Bounded, Scan.pending, complete_scan, Nat.succ_le_iff, csiCap, oscCap, dcsCap]
-  all_goals omega
 
 /-- Every finite child-output stream preserves the candidate-buffer caps. -/
 theorem feed_bounded (v : Vt) (s : Scan) (bytes : Bytes) (h : s.Bounded) :

@@ -1,7 +1,7 @@
 module
 
-public import E2E.Harness
-public import E2E.Runner
+import E2E.Harness
+import E2E.Runner
 
 public section
 

@@ -1,12 +1,7 @@
 module
 
-public import Theorems.Checkpoint
-public import Theorems.Render
 import all Linger.Core.Vt
--- Converted from legacy by the `Vt` seal (`specs/archive/vt-toolkit.md` Step 1). The
--- end-to-end claim quantifies over a quiescent `Vt`, so its statement names three
--- now-private fields; module-private declarations may, public ones may not. The
--- rungs it composes are module-private too, hence `import all` on both.
+-- The claim names private `Vt` fields and composes module-private rungs, hence `import all`.
 import all Theorems.Checkpoint
 import all Theorems.Render
 

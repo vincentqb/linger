@@ -121,7 +121,7 @@ theorem Execution.append {execute : Interpreter World} {r mid out : Result World
     apply Execution.next hactive
     simpa [List.append_assoc] using ih hrest
 
-private theorem foldl_execution (execute : Interpreter World) (events : List Event)
+theorem foldl_execution (execute : Interpreter World) (events : List Event)
     (heach : ∀ ev ∈ events, ∀ r,
       Execution execute r [ev] (handle (m := Id) execute r ev)) (r : Result World) :
     Execution execute r events (events.foldl (handle (m := Id) execute) r) := by
@@ -212,13 +212,13 @@ theorem handle_feedback_keeps_alive (execute : Interpreter World) (r : Result Wo
     have hlt := batch_feedback_decreases execute r ev follow hf
     exact ih follow hlt acc hacc (Nat.lt_trans hlt hdepth)
 
-private theorem bind_total {α β ε : Type} (x : Except ε α) (f : α → Except ε β)
+theorem bind_total {α β ε : Type} (x : Except ε α) (f : α → Except ε β)
     (hx : ∃ a, x = .ok a) (hf : ∀ a, ∃ b, f a = .ok b) :
     ∃ b, x >>= f = .ok b := by
   obtain ⟨a, rfl⟩ := hx
   exact hf a
 
-private theorem foldlM_total {α β ε : Type} (xs : List α) (f : β → α → Except ε β)
+theorem foldlM_total {α β ε : Type} (xs : List α) (f : β → α → Except ε β)
     (htotal : ∀ acc x, x ∈ xs → ∃ out, f acc x = .ok out) (acc : β) :
     ∃ out, xs.foldlM f acc = .ok out := by
   induction xs generalizing acc with
@@ -228,7 +228,7 @@ private theorem foldlM_total {α β ε : Type} (xs : List α) (f : β → α →
     obtain ⟨out, ho⟩ := ih (fun acc y hy => htotal acc y (by simp [hy])) next
     exact ⟨out, by simpa only [List.foldlM_cons, hn, bind, Except.bind] using ho⟩
 
-private theorem foldlM_preserves {α β ε : Type} (xs : List α) (f : β → α → Except ε β)
+theorem foldlM_preserves {α β ε : Type} (xs : List α) (f : β → α → Except ε β)
     (P : β → Prop)
     (htotal : ∀ acc x, P acc → x ∈ xs → ∃ out, f acc x = .ok out ∧ P out)
     (acc : β) (hstart : P acc) : ∃ out, xs.foldlM f acc = .ok out ∧ P out := by

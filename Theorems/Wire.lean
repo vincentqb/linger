@@ -1,9 +1,6 @@
 module
 
-public import Linger.Core.Wire
 import all Linger.Core.Wire
-
-public section
 
 /-! # §Frame / §Chunk / §Bound — the wire protocol theorems
 
@@ -103,7 +100,7 @@ theorem takeFrames_encode_prefix (m : Msg) (hm : m.WF) (rest : List UInt8) :
 theorem takeFrames_nil : takeFrames [] = ([], false, []) := by rw [takeFrames.eq_def]
 
 /-- Fewer than five bytes hold no header, so they are kept whole. -/
-private theorem takeFrames_short (xs : List UInt8)
+theorem takeFrames_short (xs : List UInt8)
     (hno : ∀ t l0 l1 l2 l3 rest, xs = t :: l0 :: l1 :: l2 :: l3 :: rest → False) :
     takeFrames xs = (xs, false, []) ∧ xs.length ≤ 4 := by
   rcases xs with _ | ⟨a, _ | ⟨b, _ | ⟨c, _ | ⟨d, _ | ⟨e, tail⟩⟩⟩⟩⟩

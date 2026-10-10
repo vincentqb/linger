@@ -1,9 +1,9 @@
 module
 
-public import E2E.Harness
-public import Linger.Core.Terminal
-public import Linger.Core.Title
-public import Linger.Runtime.Client
+import E2E.Harness
+import Linger.Core.Terminal
+import Linger.Core.Title
+import Linger.Runtime.Client
 import Linger.Core.Remote
 
 public section

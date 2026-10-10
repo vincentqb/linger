@@ -1,9 +1,6 @@
 module
 
-public import Linger.Tools.Entry
 import all Linger.Tools.Entry
-
-public section
 
 /-! Entry selection, interchange ownership and exact command forwarding. -/
 

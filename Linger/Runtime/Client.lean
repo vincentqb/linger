@@ -26,7 +26,7 @@ Detach key: `ctrl-\` (0x1C); set `LINGER_NO_DETACH_KEY` to disable it for writab
 namespace Linger.Runtime.Client
 
 open Linger.Posix
-open Linger.Core.Wire (Msg Decoder encode)
+open Linger.Core.Wire (Msg Decoder)
 
 def encodeBA (m : Msg) : ByteArray := ByteArray.mk (Linger.Core.Wire.encode m).toArray
 

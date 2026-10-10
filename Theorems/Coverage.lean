@@ -24,6 +24,7 @@ import all Theorems.Input
 import all Theorems.Key
 import all Theorems.Entry
 public meta import Lean.Elab.Command
+import Lean.Parser.Command
 
 /-! # Semantic coverage gate
 

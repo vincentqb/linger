@@ -1,7 +1,6 @@
 module
 
-public import Theorems.Vt.Parser
-public import Theorems.Vt.Renderable
+public import Linger.Core.Vt
 import all Theorems.Vt.Parser
 import all Theorems.Vt.Renderable
 
@@ -762,7 +761,7 @@ theorem cursor_printAdvance_ge (v : Vt) (n : Nat) (h : v.cols ≤ v.cursor.x + n
 /-- The three facts `printAdvance` needs about the state a cell write leaves, as one
 lemma: a write touches only the grid, so the cursor is the `clearPending` one and the
 columns and modes are `v`'s. -/
-private theorem write_frame (v : Vt) (f : Vt → Vt)
+theorem write_frame (v : Vt) (f : Vt → Vt)
     (hf : ∀ u : Vt, offScreen (f u) = offScreen u ∧ (f u).cursor = u.cursor) :
     (f v.clearPending).cursor = { v.cursor with pending := false } ∧
       (f v.clearPending).cols = v.cols ∧ (f v.clearPending).modes = v.modes := by
@@ -1031,7 +1030,6 @@ theorem stick_setMode (v : Vt) (n : Nat) (on : Bool) :
       first
       | rfl
       | exact stick_moveTo _ _ _
-      | (split <;> rfl)
       | (exfalso; simp_all)
 
 /-- IRM is the only non-private mode we parse, and it is `modes`-only. -/
@@ -1287,7 +1285,6 @@ theorem charWidth_decLine (c : Char) : charWidth (decLine c) = charWidth c := by
       first
       | rfl
       | (subst_vars; decide)
-      | decide
 
 /-- **The `ByteArray` convenience is the same machine.** `feedBytes` is the adapter the
 `Tests/` and `E2E/` fixtures call (the daemon feeds `List UInt8` through `Terminal.feed`), and

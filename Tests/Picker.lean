@@ -1,13 +1,11 @@
 module
 
 import Linger.Tools.Picker
-public meta import Linger.Tools.Picker
+meta import Linger.Tools.Picker
 
 /-! Concrete selector fixtures. General contracts live in `Theorems.Picker`. -/
 
 namespace Linger.Tools.Picker.Tests
-
-open Linger.Tools.Picker
 
 #guard Linger.Tools.Picker.matches "WK@DV" "work@dev"
 

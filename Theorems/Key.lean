@@ -1,11 +1,8 @@
 module
 
-public import Linger.Tools.Key
-public import Theorems.Input
 import all Linger.Tools.Key
 import all Linger.Tools.Input
-
-public section
+import Theorems.Input
 
 /-! The selector's bindings are checked against concrete byte defaults.
 The generic decoder owns recognition and paste suppression; this adapter owns

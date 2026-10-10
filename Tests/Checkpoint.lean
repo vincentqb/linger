@@ -1,15 +1,9 @@
 module
 
-public import Linger.Core.Checkpoint
--- Converted from legacy by the `Vt` seal (`specs/archive/vt-toolkit.md` Step 1): the codec
--- fixtures compare the decoded screen field-by-field, so they are a friend of the
--- emulator.
+-- The codec fixtures compare decoded screens field by field and run compiled under `native_decide`.
 import all Linger.Core.Vt
-import all Linger.Core.Checkpoint
--- `native_decide` compiles its goals, and a module's compiled code only sees
--- meta-imported modules — names alone arrive via the public import above.
-public meta import Linger.Core.Vt
-public meta import Linger.Core.Checkpoint
+import Linger.Core.Checkpoint
+meta import Linger.Core.Checkpoint
 
 /-! # Checkpoint codec tests
 
@@ -18,7 +12,7 @@ These pin RLE compression and the corrupt-record refusals; round trips are `load
 
 namespace Linger.Core.Checkpoint.Tests
 
-open Linger.Core.Checkpoint Linger.Core.Vt
+open Linger.Core.Vt
 
 /-- A run of N identical cells serializes to a small constant, not O(N):
 a blank 80-cell row is one run. This is why an empty screen dropped

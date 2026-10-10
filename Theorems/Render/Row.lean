@@ -1,6 +1,5 @@
 module
 
-public import Theorems.Render.History
 import all Linger.Core.Render
 import all Linger.Core.Vt
 import all Theorems.Render.History

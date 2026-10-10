@@ -1,6 +1,5 @@
 module
 
-public import Theorems.Render.Pen
 import all Linger.Core.Render
 import all Linger.Core.Vt
 import all Theorems.Render.Pen
@@ -308,9 +307,7 @@ theorem grid_csiDispatch_stbm (v : Vt) (s : CsiState) :
               ({ v with top := s.arg 0 1 - 1, bot := s.arg 1 v.rows - 1 }).moveTo 0 0
             else v).grid = v.grid
     repeat' split
-    all_goals first
-      | rfl
-      | rw [frame_moveTo]
+    all_goals rfl
 
 /-! ### The CSI-shaped constructs in the tail -/
 

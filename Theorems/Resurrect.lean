@@ -1,13 +1,8 @@
 module
 
-public import Linger.Tools.Resurrect
-public import Linger.Core.Name
-public import Linger.Core.Status
 import all Linger.Tools.Resurrect
 import all Linger.Core.Name
 import Theorems.Name
-
-public section
 
 /-! Kernel-checked importer contracts.
 
@@ -130,7 +125,7 @@ theorem encodeName_reversible (name : String) (valid : Linger.Core.Name.Valid na
           by_cases hd : c = '.' <;> simp [hd, htilde c hc])
     _ = _ := List.map_id _
 
-private theorem projectName_native (name : String) (valid : Linger.Core.Name.Valid name) :
+theorem projectName_native (name : String) (valid : Linger.Core.Name.Valid name) :
     projectName (encodeName name) "0" "0" = some name := by
   have hprefix : (encodeName name).startsWith "linger=" = true := by
     simp [encodeName, String.startsWith_string_iff, String.toList_append]
@@ -139,17 +134,17 @@ private theorem projectName_native (name : String) (valid : Linger.Core.Name.Val
   simp [Linger.Core.Name.sanitize_eq_self_of_valid name valid]
 
 /-- Reserved names cannot be silently projected after a topology change. -/
-private theorem projectName_reserved_topology (session window pane : String)
+theorem projectName_reserved_topology (session window pane : String)
     (reserved : session.startsWith "linger=" = true) (changed : window ≠ "0" ∨ pane ≠ "0") :
     projectName session window pane = none := by
   rcases changed with changed | changed <;> simp [projectName, reserved, changed]
 
-private theorem projectName_foreign (session window pane : String)
+theorem projectName_foreign (session window pane : String)
     (foreign : session.startsWith "linger=" = false) :
     projectName session window pane = some (session ++ "-w" ++ window ++ "-p" ++ pane) := by
   simp [projectName, foreign]
 
-private theorem parseRow_sound (home : String) (line : Nat) (fields : List String) (pane : Pane)
+theorem parseRow_sound (home : String) (line : Nat) (fields : List String) (pane : Pane)
     (h : parseRow home line fields = .ok (some pane)) :
     Linger.Core.Name.sanitize pane.name = pane.name ∧
       pane.dir.contains '\x00' = false ∧ pane.line = line := by
@@ -157,7 +152,7 @@ private theorem parseRow_sound (home : String) (line : Nat) (fields : List Strin
   grind
 
 /-- Even discarded saved commands must have their sentinel and contain no NUL. -/
-private theorem parseRow_command_valid (home : String) (line : Nat)
+theorem parseRow_command_valid (home : String) (line : Nat)
     (session window field3 field4 pane field6 cwd field8 field9 savedCommand : String)
     (parsed : Pane)
     (h :
@@ -171,8 +166,7 @@ private theorem parseRow_command_valid (home : String) (line : Nat)
 
 /-- Changing ignored pane fields and well-formed, NUL-free saved commands changes
 neither the parsed pane nor errors from the fixed identity and directory fields. -/
-private theorem parseRow_metadata_irrelevant (home : String) (line : Nat)
-    (session window pane cwd : String)
+theorem parseRow_metadata_irrelevant (home : String) (line : Nat) (session window pane cwd : String)
     (windowActive windowFlags paneTitle paneActive currentCommand savedCommand : String)
     (otherWindowActive otherWindowFlags otherPaneTitle otherPaneActive otherCurrentCommand
       replacement : String)
@@ -187,12 +181,12 @@ private theorem parseRow_metadata_irrelevant (home : String) (line : Nat)
   simp [parseRow, hs, hr, hns, hnr]
 
 /-- A non-pane row contributes no pane, whatever its remaining fields contain. -/
-private theorem parseRow_other (home : String) (line : Nat) (fields : List String)
+theorem parseRow_other (home : String) (line : Nat) (fields : List String)
     (ignored : fields.head? ≠ some "pane") : parseRow home line fields = .ok none := by
   simp [parseRow, ignored]
 
-private theorem parseRows_sound (home : String) (line : Nat) (seen rows : List String)
-    (panes : List Pane) (h : parseRows home line seen rows = .ok panes) :
+theorem parseRows_sound (home : String) (line : Nat) (seen rows : List String) (panes : List Pane)
+    (h : parseRows home line seen rows = .ok panes) :
     (∀ pane ∈ panes,
         Linger.Core.Name.sanitize pane.name = pane.name ∧ pane.dir.contains '\x00' = false) ∧
       (panes.map Pane.name).Nodup ∧ (∀ pane ∈ panes, pane.name ∉ seen) := by
@@ -264,13 +258,13 @@ theorem parseSave_no_nul (home content : String) (panes : List Pane)
     (h : parseSave home content = .ok panes) (pane : Pane) (hp : pane ∈ panes) :
     pane.dir.contains '\x00' = false := ((parseSave_valid home content panes h).2.2 pane hp).2.2
 
-private theorem parseRow_home_independent (home : String) (line : Nat) (fields : List String)
+theorem parseRow_home_independent (home : String) (line : Nat) (fields : List String)
     (parsed : Option Pane) (h : parseRow "\x00" line fields = .ok parsed) :
     parseRow home line fields = .ok parsed := by
   unfold parseRow at h ⊢
   repeat' (split at h <;> (try simp_all [String.contains_char_eq, String.toList_append]))
 
-private theorem parseRows_home_independent (home : String) (line : Nat) (seen rows : List String)
+theorem parseRows_home_independent (home : String) (line : Nat) (seen rows : List String)
     (panes : List Pane) (h : parseRows "\x00" line seen rows = .ok panes) :
     parseRows home line seen rows = .ok panes := by
   induction rows generalizing line seen panes with
@@ -307,7 +301,7 @@ theorem parseSave_home_independent (home content : String) (panes : List Pane)
     cases h
     rw [parseRows_home_independent home 1 [] _ _ parsed]
 
-private theorem representableDir_iff (dir : String) :
+theorem representableDir_iff (dir : String) :
     representableDir dir = true ↔
       dir.startsWith "/" = true ∧
         dir.endsWith " " = false ∧
@@ -318,7 +312,7 @@ private theorem representableDir_iff (dir : String) :
             c ≠ '\t' ∧ c ≠ '\n' ∧ c ≠ '\r' ∧ c ≠ '*' ∧ c ≠ '?' ∧ c ≠ '[' ∧ c ≠ '#' := by
   simp [representableDir, List.any_eq_false, and_assoc]
 
-private theorem renderSave_checked (fields : List (String × String)) (content : String)
+theorem renderSave_checked (fields : List (String × String)) (content : String)
     (h : renderSave fields = .ok content) :
     ∃ panes, parseSave "\x00" content = .ok panes ∧ common panes = fields := by
   unfold renderSave at h
@@ -337,7 +331,7 @@ private theorem renderSave_checked (fields : List (String × String)) (content :
       · cases h
 
 /-- Generation cannot hide an unsupported cwd behind the parse certificate. -/
-private theorem renderSave_directories (fields : List (String × String)) (content : String)
+theorem renderSave_directories (fields : List (String × String)) (content : String)
     (h : renderSave fields = .ok content) : ∀ field ∈ fields, representableDir field.2 = true := by
   unfold renderSave at h
   split at h

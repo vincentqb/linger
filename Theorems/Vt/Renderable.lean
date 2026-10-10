@@ -1,6 +1,6 @@
 module
 
-public import Theorems.Vt.State
+public import Linger.Core.Vt
 import all Theorems.Vt.State
 
 namespace Linger.Core.Vt
@@ -88,11 +88,7 @@ theorem halfPair_of_width_one (row : Row) (x : Nat) (h : (row.at x).width = 1) :
 theorem size_mendAt (row : Row) (x : Nat) : (Row.mendAt row x).size = row.size := by
   unfold Row.mendAt
   repeat' split
-  all_goals
-    with_reducible
-      first
-      | simp
-      | rfl
+  all_goals with_reducible simp
 
 theorem mendAt_ne (row : Row) (x j : Nat) (h : j ≠ x) : (Row.mendAt row x).at j = row.at j := by
   unfold Row.mendAt Row.at
@@ -356,7 +352,7 @@ A repaint reads back the cell it just wrote, so the sweep must be the identity
 on a cell that is already well formed. Two cases cover every write: a narrow
 glyph, and a wide glyph together with its canonical shadow. -/
 
-private theorem mendUpto_keeps_narrow (row : Row) (x : Nat) (h : (row.at x).width = 1) :
+theorem mendUpto_keeps_narrow (row : Row) (x : Nat) (h : (row.at x).width = 1) :
     ∀ n, ((List.range n).foldl (fun r y => Row.mendAt r y) row).at x = row.at x
   | 0 => rfl
   | n + 1 => by
@@ -381,7 +377,7 @@ private theorem mendUpto_keeps_narrow (row : Row) (x : Nat) (h : (row.at x).widt
 theorem mend_keeps_narrow (row : Row) (x : Nat) (h : (row.at x).width = 1) :
     (Row.mend row).at x = row.at x := mendUpto_keeps_narrow row x h row.size
 
-private theorem mendUpto_keeps_wide (row : Row) (x : Nat) (h2 : (row.at x).width = 2)
+theorem mendUpto_keeps_wide (row : Row) (x : Nat) (h2 : (row.at x).width = 2)
     (hs : row.at (x + 1) = Cell.shadow (row.at x)) :
     ∀ n,
       ((List.range n).foldl (fun r y => Row.mendAt r y) row).at x = row.at x ∧
@@ -1898,7 +1894,6 @@ theorem renderable_setMode {v : Vt} (h : Renderable v) (priv : Bool) (n : Nat) (
   all_goals with_reducible first
     | exact h
     | exact renderable_congr h rfl rfl rfl rfl
-    | (refine renderable_moveTo_congr h ?_ ?_ ?_ ?_ 0 0 <;> rfl)
     | (split <;> with_reducible first
         | exact renderable_enterAlt h _
         | exact renderable_leaveAlt h _
@@ -1955,8 +1950,6 @@ theorem renderable_ctl {v : Vt} (h : Renderable v) (b : UInt8) : Renderable (v.c
     | exact renderable_backspace h
     | exact renderable_tab h
     | exact renderable_lineFeed h
-    | exact renderable_carriageReturn h
-    | exact h
 
 theorem renderable_oscFinish {v : Vt} (h : Renderable v) (acc : Array UInt8) :
     Renderable (v.oscFinish acc) := by

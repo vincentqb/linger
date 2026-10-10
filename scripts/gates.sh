@@ -246,7 +246,7 @@ module_imports Theorems/Vt.lean 'Theorems/Vt/*' Theorems/Terminal.lean Theorems/
   { mod = $3
     sub(/^[[:space:]]*((public|private|meta)[[:space:]]+)*import[[:space:]]+(all[[:space:]]+)?/, "", mod)
     sub(/[[:space:]]+--.*/, "", mod); sub(/[[:space:]]+$/, "", mod)
-    if (mod !~ /^(Linger[.]Core[.](Vt|Render|Terminal|Replay)|Theorems[.]((Vt|Render)([.][[:alnum:]_]+)*|Terminal|TerminalTitle|Replay)|Init[.]Data[.]String[.](Legacy|Lemmas[.](TakeDrop|IsEmpty)))$/) {
+    if (mod !~ /^(Linger[.]Core[.](Vt|Render|Terminal|Replay)|Theorems[.]((Vt|Render)([.][[:alnum:]_]+)*|Terminal|TerminalTitle|Replay)|Init[.]Data[.]String[.]Legacy)$/) {
       print "  " $0; bad = 1
     }
   }
@@ -267,7 +267,7 @@ import_closure Linger/Core/Name.lean ''
 import_closure Linger/Core/Remote.lean 'import Linger.Core.Name;'
 import_closure Linger/Core/Title.lean 'import Linger.Core.Name;'
 import_closure Linger/Runtime/Command.lean 'import Linger.Posix;'
-import_closure Linger/Manager/Resurrect.lean 'import Linger.Tools.Resurrect;import Linger.Posix;import Linger.Runtime.Paths;import Linger.Runtime.Resume;import Linger.Runtime.Cli;import Linger.Runtime.Command;import Linger.Manager.Picker;import Std.Async.System;import Lean.Data.Json;'
+import_closure Linger/Manager/Resurrect.lean 'import Linger.Tools.Resurrect;import Linger.Posix;import Linger.Runtime.Paths;import Linger.Runtime.Resume;import Linger.Runtime.Cli;import Linger.Runtime.Command;import Linger.Manager.Picker;import Std.Async.System;import Lean.Data.Json.Parser;import Lean.Data.Json.Printer;'
 import_closure Linger/Manager/Picker.lean \
   'public import Linger.Tools.Picker;import Linger.Posix;import Linger.Core.Terminal;import Linger.Runtime.Command;'
 import_closure Main.lean \

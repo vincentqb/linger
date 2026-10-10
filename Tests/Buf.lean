@@ -10,8 +10,6 @@ appends, then reports. `native_decide` is allowed here (it is banned only in
 
 namespace Linger.Core.Buf.Tests
 
-open Linger.Core.Buf
-
 def bytes (n : Nat) : ByteArray := ByteArray.mk (Array.replicate n 0x61)
 
 /-- The child-input discipline: an offer that would breach the cap is refused

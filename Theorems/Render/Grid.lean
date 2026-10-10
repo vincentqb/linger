@@ -1,7 +1,5 @@
 module
 
-public import Theorems.Render.Row
-public import Theorems.Render.PendingWrap
 import all Linger.Core.Render
 import all Linger.Core.Vt
 import all Theorems.Render.Row

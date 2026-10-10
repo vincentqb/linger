@@ -37,7 +37,7 @@ row look healthier than it is, because `known` and `daemonUp` are not taken
 from the reply.
 -/
 
-open Linger.Core.Status (Status Obs classify ofName)
+open Linger.Core.Status (Status classify ofName)
 
 /-- One boolean from the reply, defaulting to `false` when absent or
 malformed — a reply cannot make a row *more* alive by omission. -/

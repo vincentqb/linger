@@ -1,9 +1,5 @@
 module
 
-public import Theorems.Render.History
-public import Theorems.Render.Row
-public import Theorems.Render.PendingGlyph
-public import Theorems.Render.PendingAccumulator
 import all Linger.Core.Render
 import all Linger.Core.Vt
 import all Theorems.Render.History
@@ -874,11 +870,7 @@ theorem regionAnsi_charsets (v w : Vt) (hg : w.pstate = .ground) (hu : w.u8need 
         split <;>
           first
           | (rename_i he; exact absurd he (by decide))
-          |
-            ((repeat' split) <;>
-                first
-                | rfl
-                | rw [frame_moveTo])
+          | ((repeat' split) <;> rfl)
     rw [show
         csiNum2 (v.top + 1) (v.bot + 1) 0x72 =
           [0x1B, 0x5B] ++ (joinSemi [v.top + 1, v.bot + 1] ++ [0x72])

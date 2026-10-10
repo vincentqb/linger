@@ -2,7 +2,8 @@
 # Whole-deliverable check (specs/archive/lean-zmx.md Step 10). Exits 0 only if
 # everything below holds. Run from the repo root: ./scripts/e2e.sh
 #
-#   1. content-checked build of program + proofs + unit tests, zero warnings
+#   1. content-checked build of program + proofs + unit tests, zero warnings,
+#      and no import change suggested by lake shake for the library and proofs
 #   2. no `sorry` / `partial` in the pure core or the proofs
 #  2b. coverage: every inventoried pure definition occurs in a theorem
 #      type, and compiled renderer/replay references are classified
@@ -116,6 +117,14 @@ if grep -qE '^(warning|error)' /tmp/linger-build.log; then
 fi
 grep -c 'Build completed successfully' /tmp/linger-build.log > /dev/null \
   || fail "build did not report success"
+# Shake reads the oleans just built. Theorems.lean is not a `module`, so the proof
+# modules are named one by one. Tests stay out: shake cannot see `example` or
+# `#guard` uses. LingerTest and E2ETest stay out to bound the cost.
+shake_modules="$(git ls-files 'Theorems/*.lean' | sed 's/[.]lean$//; s#/#.#g')"
+# shellcheck disable=SC2086  # one module name per word
+./lake shake --keep-implied Linger Main $shake_modules > /tmp/linger-shake.log 2>&1 \
+  && [ ! -s /tmp/linger-shake.log ] \
+  || { cat /tmp/linger-shake.log; fail "lake shake suggests import changes"; }
 
 say "1b. generated Lean / C shim ABI"
 # Compile declarations emitted by THIS pinned Lean together with the shim.

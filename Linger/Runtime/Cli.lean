@@ -1,7 +1,6 @@
 module
 
 import Linger.Posix
-import Linger.Core.Name
 public import Linger.Core.Session
 import Linger.Runtime.Paths
 import Linger.Runtime.Daemon
@@ -28,7 +27,6 @@ namespace Linger.Runtime.Cli
 
 open Linger.Posix
 open Linger.Core.Wire (Msg)
-open Linger.Runtime
 
 def version : String := "linger " ++ Linger.Core.Terminal.versionNumber
 

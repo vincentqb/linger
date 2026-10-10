@@ -1,7 +1,5 @@
 module
 
-public import Linger.Core.Render
-public import Theorems.Vt
 import all Linger.Core.Render
 import all Linger.Core.Vt
 import all Theorems.Vt
@@ -511,7 +509,7 @@ be emitted as one 18-parameter sequence and came back blank; these bounds
 are the invariant that replaced the bug, and what a future attribute or
 colour form has to keep true. -/
 
-private theorem ite_len (c : Prop) [Decidable c] (n : Nat) :
+theorem ite_len (c : Prop) [Decidable c] (n : Nat) :
     (if c then [n] else []).length ≤ 1 := by
   by_cases h : c <;> simp [h]
 

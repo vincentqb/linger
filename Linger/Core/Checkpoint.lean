@@ -61,7 +61,7 @@ boundary or the compiler cannot agree on the compiled representation of anything
 typed by it ("locally inferred compilation type differs…"). This was a `def` with
 `@[expose]`, which says the same thing in two more lines — an alias has no
 implementation to hide, so reducible-and-exposed is simply what it is. -/
-public abbrev R (α : Type) : Type := List UInt8 → Option (α × List UInt8)
+abbrev R (α : Type) : Type := List UInt8 → Option (α × List UInt8)
 
 /-! ## Primitive writers/readers -/
 
