@@ -33,6 +33,7 @@
 #include <unistd.h>
 #ifdef __APPLE__
 #include <libproc.h>   /* PROC_PIDVNODEPATHINFO: the /proc-less cwd read */
+#include <sys/stat.h>  /* stat: check that path against the cwd vnode */
 #endif
 
 /* Hold the Lean poll bits to the ABI on each supported platform. */
@@ -767,13 +768,20 @@ LEAN_EXPORT lean_obj_res linger_getuid(void) {
  * in start_dir, so a reboot-resume reopened where the session was created
  * rather than where the user had cd'd to. libproc gives the resolved
  * vnode path (/private/tmp for /tmp) -- the point is the directory, and
- * the caller stores whatever string chdir will accept. */
+ * the caller stores whatever string chdir will accept. A cwd longer than
+ * MAXPATHLEN comes back cut short instead of failing, so the path is kept
+ * only when it stats to the cwd vnode libproc reported beside it. */
 LEAN_EXPORT lean_obj_res linger_getcwd_of(uint32_t pid) {
 #ifdef __APPLE__
     struct proc_vnodepathinfo vpi;
+    struct stat st;
     int n = proc_pidinfo((int)pid, PROC_PIDVNODEPATHINFO, 0, &vpi, sizeof vpi);
     if (n < (int)sizeof vpi) return lean_io_result_mk_ok(lean_mk_string(""));
     vpi.pvi_cdir.vip_path[sizeof vpi.pvi_cdir.vip_path - 1] = '\0';
+    if (stat(vpi.pvi_cdir.vip_path, &st) != 0
+        || (uint32_t)st.st_dev != vpi.pvi_cdir.vip_vi.vi_stat.vst_dev
+        || (uint64_t)st.st_ino != vpi.pvi_cdir.vip_vi.vi_stat.vst_ino)
+        return lean_io_result_mk_ok(lean_mk_string(""));
     return lean_io_result_mk_ok(lean_mk_string(vpi.pvi_cdir.vip_path));
 #else
     /* No truncation branch, and the mechanism is the kernel's, not readlink's:
