@@ -290,6 +290,28 @@ def Client.awaitText (c : Client) (acc : IO.Ref ByteArray) (ready : ByteArray �
         acc.modify (· ++ bs)
   holds
 
+/-- Read the client's output until `needle` appears, EOF arrives or `ms` elapses; the
+result is whether it appeared. Only bytes that could still begin a match are kept, so
+a replay of several megabytes is read in one linear pass, which `awaitText`, rescanning
+everything from `start` after each read, is not. -/
+def Client.awaitNeedle (c : Client) (needle : String) (ms := 4000) : IO Bool := do
+  let pattern := needle.toUTF8
+  let deadline := (← monotonicMs) + ms
+  let mut tail := ByteArray.empty
+  while (← monotonicMs) < deadline do
+    let revs ← poll #[c.fd] #[POLLIN] 50
+    if revs[0]! &&& (POLLIN ||| POLLHUP ||| POLLERR) == 0 then
+      continue
+    match ← read c.fd 65536 with
+    | none =>
+      return false
+    | some bs =>
+      let window := tail ++ bs
+      if hasBytes window pattern.toList then
+        return true
+      tail := window.extract (window.size - min window.size (pattern.size - 1)) window.size
+  return false
+
 /-- Poll-wait for the child to be reaped, or give up.
 
 Tolerant of ECHILD: a child already reaped (or never ours) is a child that is
@@ -453,6 +475,25 @@ def Env.daemonPid (e : Env) (name : String) : IO (Option UInt32) := do
     if out.exitCode != 0 then
       return none
     return (out.stdout.trimAscii.toString.toNat?).map UInt32.ofNat
+
+/-- The peak resident set of the daemon behind `name`, in KiB: `VmHWM` from `/proc`.
+`none` on a platform without `/proc`; where it exists, a daemon or field that cannot
+be read is an error rather than an unmeasured pass. -/
+def Env.daemonPeakKb (e : Env) (name : String) : IO (Option Nat) := do
+  unless ← System.FilePath.pathExists "/proc/self/status" do
+    return none
+  let some pid ← e.daemonPid name | throw (IO.userError s!"no daemon answered for '{name}'")
+  let status ← IO.FS.readFile s!"/proc/{pid}/status"
+  let peak :=
+    (lines status).findSome? fun line =>
+      (line.dropPrefix? "VmHWM:").bind fun rest =>
+        ((rest.toString.split Char.isWhitespace).toStringList.filter (· != "")).head?.bind
+          String.toNat?
+  match peak with
+  | some kb =>
+    return some kb
+  | none =>
+    throw (IO.userError s!"no VmHWM line for daemon {pid}")
 
 /-- SIGKILL the daemon behind `name`, leaving its socket as a real crash does.
 `true` iff a daemon was found, was alive first, and is gone after. The listing

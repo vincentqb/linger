@@ -56,9 +56,16 @@ Lean erases proofs regardless of file placement.
   theorem whose type contains its exact fully qualified constant in the same
   commit, checked by `Theorems/Coverage.lean`; generated lemmas do not count.
   State invariants in `THEOREMS.md` and design code for provability.
+- State user-visible behavior, not only invariants, and bound every input-controlled
+  loop or reply count in the model with a theorem (`repeatAtMost_eq_repeat`,
+  `step_bytes_one_reply`); `scripts/gates.sh` rejects a CSI loop that bypasses
+  `Vt.repeatAtMost`.
 - Runtime uses of proved values need call-site gates. IO behavior is tested,
   not proved. Start behavioral fixes with a failing check and verify that new
   assertions detect a deliberate break.
+- Read SHELL, HOME for remote hosts and LINGER_NO_DETACH_KEY once, into the pure
+  policies of `Linger/Core/Env.lean`, which `scripts/gates.sh` ties to each read,
+  and run every variable the program reads unset and empty in a suite.
 - Raw OS access belongs in `Linger/Posix.lean` and `c/shim.c`; all `@[extern]`
   declarations stay in the former. Keep the shim to syscalls and errno.
   Return `-errno`, avoid numeric errno values in Lean, and validate signal PIDs
@@ -67,6 +74,9 @@ Lean erases proofs regardless of file placement.
   belongs only in interactive selection. Freeze each poll loop's fd set.
   Compose displays through `Title.compose` and `Status.summary` in the order
   `session · application title · attention`, reserving room for attention.
+- Place the target of every attach or capture argv the program builds for itself
+  with `Remote.targetOperands`, proved against `Remote.targetArgs`
+  (`targetArgs_targetOperands`); `scripts/gates.sh` rejects a literal attach argv.
 - Program logic, proofs and automated suites are Lean. Python is used only by
   the external `pre-commit` framework. The C shim, build wrapper, shell verifier
   and native configuration recipes are boundaries.

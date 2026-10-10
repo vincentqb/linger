@@ -134,6 +134,20 @@ def parseTarget (target : String) : Option Target :=
         host := if parts.tail.isEmpty then none else some (String.intercalate "@" parts.tail) }
   else none
 
+/-- A positional target after optional flags. `--` preserves option-like names;
+everything after the target belongs to the command, without reinterpretation. -/
+def targetArgs (args : List String) : Option (String × List String) :=
+  match args with
+  | "--" :: name :: rest => some (name, rest)
+  | name :: rest => if name.startsWith "-" then none else some (name, rest)
+  | [] => none
+
+/-- The operands `targetArgs` reads back as exactly `name`: a name starting with `-`
+follows `--`. Every attach or capture argv linger builds for itself places its
+target this way; verbs that take their target by position never read `--`. -/
+def targetOperands (name : String) : List String :=
+  if name.startsWith "-" then ["--", name] else [name]
+
 /-- One POSIX shell word. Quotes in the payload briefly close the single-quoted
 region, emit an escaped quote, and reopen it; all other characters remain literal. -/
 def shellQuote (s : String) : String :=
@@ -141,10 +155,10 @@ def shellQuote (s : String) : String :=
     (['\''] ++ s.toList.flatMap (fun c => if c == '\'' then ['\'', '\\', '\'', '\''] else [c]) ++
       ['\''])
 
-/-- SSH passes a command string to a shell, so quote every argument, including
-empty arguments and the session name. Options precede the target; command
-arguments after it remain opaque. -/
-def command (verb name : String) (args : List String) (options : List String := []) : String :=
-  String.intercalate " " (("linger" :: verb :: (options ++ name :: args)).map shellQuote)
+/-- SSH passes a command string to a shell, so quote every word after the verb,
+including empty words and the session name. The caller orders them: options, the
+target's operands, then the command's arguments, which remain opaque. -/
+def command (verb : String) (words : List String) : String :=
+  String.intercalate " " (("linger" :: verb :: words).map shellQuote)
 
 end Linger.Core.Remote

@@ -2,6 +2,7 @@ module
 
 public import Linger.Tools.Picker
 import Linger.Posix
+import Linger.Core.Remote
 import Linger.Core.Terminal
 import Linger.Runtime.Command
 
@@ -219,11 +220,11 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
     finally
       Linger.Runtime.Command.stop pending (if savedTmux then 0 else 1000)
 
-/-- The exact attach argv for a chosen target. `--` keeps a name starting with
-`-` an operand rather than an option. -/
+/-- The exact attach argv for a chosen target. Its operands are the ones the attach
+parser reads back as `target` (`targetArgs_targetOperands`). -/
 def attachArgs (target : String) (readOnly : Bool := false) : Array String :=
-  #["attach"] ++ (if readOnly then #["--read-only"] else #[]) ++
-    (if target.startsWith "-" then #["--", target] else #[target])
+  ("attach" :: (if readOnly then ["--read-only"] else []) ++
+      Linger.Core.Remote.targetOperands target).toArray
 
 /-- Execute either selected row through attach, after terminal restoration. Every attach
 exit returns to a fresh listing; cancellation ends the manager. The caller

@@ -3,6 +3,7 @@ module
 import Linger.Posix
 public import Linger.Core.Wire
 public import Linger.Core.Vt
+import Linger.Core.Env
 import Linger.Core.Replay
 import Linger.Core.Terminal
 import Linger.Core.Remote
@@ -205,7 +206,7 @@ def viewSaved (name : String) (snapshot : Linger.Core.Vt.Vt) : IO Outcome := do
 mirrors, keyboard is not forwarded, detach key still works. -/
 def attach (name : String) (fd : UInt32) (readOnly : Bool := false) : IO Outcome := do
   try
-    let detachEnabled := readOnly || (← IO.getEnv "LINGER_NO_DETACH_KEY").isNone
+    let detachEnabled := Linger.Core.Env.detachEnabled readOnly (← IO.getEnv "LINGER_NO_DETACH_KEY")
     let self ← IO.appPath
     let pending ← IO.mkRef (none : Option Command.Job)
     let (cols, rows) ← winsizeGet stdinFd

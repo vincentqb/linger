@@ -1,6 +1,7 @@
 module
 
 public import E2E.Harness
+import Linger.Core.Checkpoint
 import Linger.Core.Listing
 import Linger.Runtime.Daemon
 import Linger.Runtime.Cli
@@ -10,8 +11,9 @@ public section
 /-! # E2E.Robust — runtime boundaries under adverse timing
 
 The suite covers busy-daemon listing, name ownership, bounded child input,
-lock-aware stale cleanup, absolute info deadlines, bounded accept rounds, and
-the slow-client output cut. Two premises are not optional:
+lock-aware stale cleanup, absolute info deadlines, bounded accept rounds, the
+slow-client output cut and a daemon starting during an offline read or with
+its locks free. Two premises are not optional:
 
 * **SIGSTOP and SIGCONT are sent by NAME, not by number.** On Linux SIGSTOP is 19
   and SIGCONT is 18; on macOS/BSD SIGSTOP is **17**, SIGCONT is **19** and 18 is
@@ -39,7 +41,7 @@ open E2E.Harness
 open Linger.Core.Status (Status)
 open Linger.Core.Listing (terminalListing rowFields rowStatus)
 open Linger.Core.Session (maxClients)
-open Linger.Runtime.Daemon (outbufCap ptyInCap)
+open Linger.Runtime.Daemon (outbufCap ptyInCap claimWaitLine)
 
 /-- `ps -eo pid,ppid,args` as (pid, ppid, whole-line) triples.
 
@@ -197,6 +199,56 @@ def admissionPressure (e : Env) : IO Unit := do
     if let some pid← child.get then
       if ← Linger.Posix.alive pid then
         Linger.Posix.kill pid 9
+
+/-- Budgets for hostile input at the largest screen, about five times the cost
+measured when they were set (write 0.33 s, info 0.15 s, peak 89 MB): the counted
+CSI write and the `info` answer after a history flood, in milliseconds. -/
+def hostileBudgetMs : Nat × Nat := (1700, 800)
+
+/-- The daemon's peak resident set after that input, in KiB. -/
+def hostileBudgetKb : Nat := 450000
+
+/-- One write carries the largest count for every CSI that repeats by it, at
+1000×1000, and one read carries 1,000 history requests. The theorems bound the
+iterations (`repeatAtMost_eq_repeat`) and the replies per read
+(`step_bytes_one_reply`); these budgets bound what that costs the running daemon. -/
+private def hostileInput (e : Env) : IO Unit := do
+  let name := "hostile"
+  let (writeBudget, infoBudget) := hostileBudgetMs
+  try
+    let _ ← e.cli #["run", name, "true"]
+    let _ ← e.cli #["resize", name, "1000", "1000"]
+    let counts :=
+      String.join (["S", "T", "I", "Z", "@", "L", "M", "P", "X"].map (s!"\\033[65535{·}"))
+    let start ← Linger.Posix.monotonicMs
+    let _ ← e.cli #["run", name, s!"printf '{counts}'; echo HOSTILE-$((40+2))"]
+    let written ← waitFor writeBudget (return has (← e.out #["capture", name]) "HOSTILE-42")
+    let writeMs := (← Linger.Posix.monotonicMs) - start
+    let raw ← Linger.Posix.unixConnect s!"{e.dir}/{name}.sock"
+    unless raw ≥ 0 do
+      throw (IO.userError "history flood could not connect")
+    let fd := raw.toUInt64.toUInt32
+    let (answered, infoMs) ←
+      try
+        let flood := (List.replicate 1000 (Linger.Core.Wire.encode .history)).flatten
+        Linger.Posix.writeAll fd (ByteArray.mk flood.toArray)
+        let start ← Linger.Posix.monotonicMs
+        let reply ← e.cliTimeout #["info", name] infoBudget
+        pure (reply.any (·.1 == 0), (← Linger.Posix.monotonicMs) - start)
+      finally
+        Linger.Posix.close fd
+    -- A daemon that did not answer cannot be measured; the check fails on `answered`.
+    let peak ←
+      if answered then
+        e.daemonPeakKb name
+      else
+        pure none
+    expect
+        (written && answered && writeMs ≤ writeBudget && infoMs ≤ infoBudget &&
+          peak.all (· ≤ hostileBudgetKb))
+        s!"hostile counts and a history flood at 1000x1000 stay within budget (write {writeMs} ms, info {infoMs} ms, peak {peak} KiB)"
+  finally
+    e.killAll #[name]
 
 /-- Diagnostic output can fail along with the operation it reports, such as
 when checkpoints and logs share a full filesystem. Exercise each recovery path. -/
@@ -512,6 +564,53 @@ def run : IO UInt32 :=
           "closing a peer with an unread reply preserves the same usable session shell"
     finally
       e.killAll #[resetName]
+    -- ── 9. a starting daemon waits out an offline reader ───────────────────────
+    -- A daemon that finds both locks free logs no wait. It claims them before it
+    -- listens on the socket `run` waits for, so the log is complete when `run` returns.
+    let free := "free-claim"
+    try
+      let (code, _, _) ← e.cli #["run", free, "true"]
+      let log ← e.log free
+      let shown := log.trimAscii.toString.replace "\n" "; "
+      expect (code == 0 && !has log (claimWaitLine free))
+          s!"a daemon that finds its locks free logs no wait (run exit {code}, log '{shown}')"
+    finally
+      e.killAll #[free]
+    -- `capture --history` holds both locks while it writes, and a pty nobody reads
+    -- keeps it writing. The daemon `run` starts meanwhile must wait for the lock
+    -- rather than exit; its log says when it found the lock held.
+    let reader := "offline-reader"
+    try
+      let rows := (List.range 4000).map fun i => s!"row {i} {String.ofList (List.replicate 60 'x')}"
+      let saved := (Linger.Core.Vt.Vt.init 80 24).feedBytes (String.intercalate "\r\n" rows).toUTF8
+      IO.FS.writeBinFile s!"{e.dir}/{reader}.ckpt"
+          (ByteArray.mk (Linger.Core.Checkpoint.save ⟨saved, e.dir, []⟩).toArray)
+      let capture ← e.spawn #["capture", "--history", reader]
+      -- Output on the pty means the capture has loaded the checkpoint under both locks.
+      let holding := (← Linger.Posix.poll #[capture.fd] #[Linger.Posix.POLLIN] 5000)[0]! != 0
+      let starter ←
+        IO.Process.spawn
+            { cmd := e.bin, args := #["run", reader, "echo resumed-$((40+2))"], env := e.procEnv,
+              stdin := .null, stdout := .null, stderr := .null }
+      let found ←
+        waitFor 5000 do
+            let log ← e.log reader
+            return has log (claimWaitLine reader) || has log "owned by another process"
+      let read ← drain capture.fd 5000
+      let captureCode ← capture.reap 3000
+      capture.bye (sendDetach := false)
+      let startCode ← waitProcess starter 5000
+      if startCode.isNone then
+        starter.kill
+        discard starter.wait
+      let resumed ← waitFor 5000 (return has (← e.out #["capture", reader]) "resumed-42")
+      expect
+          (holding && found && hasText read "row 3999" && captureCode == 0 && startCode == some 0 &&
+            resumed)
+          s!"a daemon started during an offline read waits for the lock and resumes (run exit {startCode})"
+    finally
+      e.killAll #[reader]
+    hostileInput e
     failedDiagnostics
     admissionPressure e
 

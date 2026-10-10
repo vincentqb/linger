@@ -24,5 +24,6 @@ import Theorems.Picker
 import Theorems.Input
 import Theorems.Key
 import Theorems.Entry
+import Theorems.Env
 import Theorems.Coverage
 import Theorems.Contracts

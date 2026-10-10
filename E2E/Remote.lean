@@ -298,7 +298,7 @@ def run : IO UInt32 :=
       expect (hasText attached attachMark) "remote attach reaches linger"
       expect
           ((← readArgs log) ==
-              ["-t", "--", devHost, Linger.Core.Remote.command "attach" goodName []] &&
+              ["-t", "--", devHost, Linger.Core.Remote.command "attach" [goodName]] &&
             (← readArgs remoteArgs) == ["attach", goodName])
           "remote attach uses a PTY and preserves the target"
       expect
@@ -311,7 +311,7 @@ def run : IO UInt32 :=
       let _ ← drain c2.fd 2000
       expect
           ((← readArgs log) ==
-            ["-t", "--", userHost, Linger.Core.Remote.command "attach" goodName []])
+            ["-t", "--", userHost, Linger.Core.Remote.command "attach" [goodName]])
           "user@host round-trips through the first-at split"
       c2.bye (sendDetach := false)
       let lost ← e.spawnEnv ptyPath #["attach", s!"{goodName}@{deadHost}"] 100 24
@@ -424,6 +424,33 @@ def run : IO UInt32 :=
             Linger.Runtime.Cli.parseLs ["--porcelain", "--remote"] == some (true, some []) &&
             Linger.Runtime.Cli.parseLs ["-r", "--typo"] == none)
           "ls preserves options after -r and rejects unknown options"
+      -- Only a nonempty HOME configures hosts (`remotesFile_eq_none_iff`). Decoy files
+      -- under the working, XDG and temporary directories would run SSH if a fallback
+      -- read them; world-writable /tmp itself is left to the theorem.
+      let decoys := (System.FilePath.mk e.dir) / "decoys"
+      let home := decoys / "home"
+      for dir in
+        [home / ".config", decoys / "cwd" / ".config", decoys / "xdg",
+          decoys / "tmp" / ".config"] do
+        IO.FS.createDirAll (dir / "linger")
+        IO.FS.writeFile (dir / "linger" / "remotes") s!"{devHost}\n"
+      for (label, value) in [("set", some home.toString), ("unset", none), ("empty", some "")] do
+        IO.FS.writeFile log ""
+        let listed ←
+          IO.Process.output
+              { cmd := e.bin, args := #["ls", "-r"], cwd := some (decoys / "cwd"),
+                env :=
+                  e.procEnv ++ procPath ++
+                    #[("HOME", value), ("XDG_CONFIG_HOME", some (decoys / "xdg").toString),
+                      ("TMPDIR", some (decoys / "tmp").toString)] }
+        let ssh ← readArgs log
+        let configured := value.isSome && value != some ""
+        expect
+            (listed.exitCode == 0 && has listed.stdout "localsess" &&
+              (if configured then ssh.contains devHost && has listed.stdout tag
+              else ssh.isEmpty && !has listed.stdout tag))
+            (if configured then "ls -r reads the remotes file under a set HOME"
+            else s!"ls -r with HOME {label} reads no remotes file and runs no SSH")
     finally
       e.killAll #["localsess"]
     discoveryChecks e

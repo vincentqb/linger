@@ -50,9 +50,74 @@ def checkpointRetry : IO Unit := do
   expect (before == 1 && (← attempts.get) == 2 && (← saved.get) == labels)
       "a failed quiet checkpoint retries at the next cadence with its state intact"
 
+/-- Budgets at realistic size, about five times the cost measured when they were
+set (fill 7.5 s, capture 0.56 s, replay 0.22 s, save 0.25 s, peak 319 MB), so only
+a pathological regression fails: the 10,000-row fill, `capture --history`, the
+reattach replay and the detach checkpoint, in milliseconds. -/
+def scaleBudgetMs : Nat × Nat × Nat × Nat := (40000, 3000, 1200, 1300)
+
+/-- The daemon's peak resident set at that size, in KiB. -/
+def scaleBudgetKb : Nat := 1600000
+
+/-- A 200-column session with its 10,000-row history ring full of varied text,
+which neither run-length coding nor trailing blanks shorten. Theorems bound what
+the model computes; these budgets bound what it costs. -/
+private def scaleChecks (e : Env) : IO Unit := do
+  let name := "scale"
+  let (fillBudget, captureBudget, replayBudget, saveBudget) := scaleBudgetMs
+  try
+    let _ ← e.cli #["run", name, "true"]
+    let _ ← e.cli #["resize", name, "200", "50"]
+    let start ← Linger.Posix.monotonicMs
+    let _ ←
+      e.cli
+          #["run", name,
+            "awk 'BEGIN { for (i = 0; i < 10050; i++) { s = \"\"; for (j = 0; j < 20; j++) s = s sprintf(\"%09d \", 20 * i + j); print s } }'; echo SCALE-$((40+2))"]
+    let filled ← waitFor fillBudget (return has (← e.out #["capture", name]) "SCALE-42")
+    let fillMs := (← Linger.Posix.monotonicMs) - start
+    let start ← Linger.Posix.monotonicMs
+    let (historyRc, history, _) ← e.cli #["capture", "--history", name]
+    let captureMs := (← Linger.Posix.monotonicMs) - start
+    let historyLines := (lines history).length
+    expect
+        (filled && historyRc == 0 && historyLines ≥ Linger.Core.Vt.sbCap + 50 &&
+          captureMs ≤ captureBudget)
+        s!"a full ring at 200 columns fills and exports with capture --history within budget (fill {fillMs} ms, capture {captureMs} ms for {historyLines} lines)"
+    let client ← e.spawn #["attach", name] 200 50
+    let saved ←
+      try
+        let start ← Linger.Posix.monotonicMs
+        let replayed ← client.awaitNeedle "SCALE-42" replayBudget
+        let replayMs := (← Linger.Posix.monotonicMs) - start
+        let start ← Linger.Posix.monotonicMs
+        client.detach
+        -- The daemon saves on the last detach before it answers a later request.
+        let saved ← waitFor saveBudget (return (← e.info name "clients") == some "0")
+        let saveMs := (← Linger.Posix.monotonicMs) - start
+        let size := (← (System.FilePath.mk s!"{e.dir}/{name}.ckpt").metadata).byteSize
+        expect
+            (replayed && saved && size ≥ (Linger.Core.Vt.sbCap * 200).toUInt64 &&
+              replayMs ≤ replayBudget &&
+              saveMs ≤ saveBudget)
+            s!"reattach replays and detach checkpoints a full ring within budget (replay {replayMs} ms, save {saveMs} ms, {size} bytes)"
+        pure saved
+      finally
+        client.bye (sendDetach := false)
+    -- A daemon that did not answer cannot be measured, so its check fails.
+    let peak ←
+      if saved then
+        e.daemonPeakKb name
+      else
+        pure none
+    expect (saved && peak.all (· ≤ scaleBudgetKb))
+        s!"the daemon's peak resident set stays within {scaleBudgetKb} KiB where /proc reports it ({peak} KiB)"
+  finally
+    e.killAll #[name]
+
 def run : IO UInt32 :=
   Env.suite "resume" fun e => do
     checkpointRetry
+    scaleChecks e
     -- one source for the pty geometry and for the off-the-screen window below
     let cols : UInt32 := 80
     let rows : UInt32 := 24

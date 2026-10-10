@@ -100,10 +100,15 @@ def stateLockPath (name : String) : IO String := do
 def logPath (name : String) : IO String := do
   namedPath ((← stateDir) ++ "/logs") name ".log"
 
-/-- Failed acquisition does not run the action. Always release after the action,
+/-- Failed acquisition does not run the action. A held lock is tried again while
+`retry`, asked only after a failed attempt, holds. Always release after the action,
 including startup/read exceptions; recheck spelling after the atomic acquisition. -/
-def withLock {α : Type} (path : String) (action : IO α) : IO α := do
-  let fd ← Linger.Posix.flock path
+def withLockRetrying {α : Type} (path : String) (retry : IO Bool) (action : IO α) : IO α := do
+  let mut fd ← Linger.Posix.flock path
+  while fd < 0 do
+    unless ← retry do
+      break
+    fd ← Linger.Posix.flock path
   if fd < 0 then
     throw (IO.userError s!"session is owned by another process ({path})")
   try
@@ -112,11 +117,21 @@ def withLock {α : Type} (path : String) (action : IO α) : IO α := do
   finally
     Linger.Posix.close fd.toUInt64.toUInt32
 
+/-- One attempt: a held lock fails at once. Only a starting daemon retries. -/
+def withLock {α : Type} (path : String) (action : IO α) : IO α :=
+  withLockRetrying path (pure false) action
+
 /-- All daemon lifetimes and offline reads take both locks in the same order.
-Either shared socket storage or shared checkpoint storage excludes another owner. -/
-def withSessionLock {α : Type} (name : String) (action : IO α) : IO α := do
-  withLock (← lockPath name) do
-      withLock (← stateLockPath name) action
+Either shared socket storage or shared checkpoint storage excludes another owner.
+`retry` applies to both acquisitions. -/
+def withSessionLockRetrying {α : Type} (name : String) (retry : IO Bool) (action : IO α) : IO α :=
+  do
+  withLockRetrying (← lockPath name) retry do
+      withLockRetrying (← stateLockPath name) retry action
+
+/-- Both locks, one attempt each: every offline reader. -/
+def withSessionLock {α : Type} (name : String) (action : IO α) : IO α :=
+  withSessionLockRetrying name (pure false) action
 
 /-- Valid session names among `dir`'s entries ending in `suffix`. -/
 private def listNames (dir suffix : String) : IO (List String) := do

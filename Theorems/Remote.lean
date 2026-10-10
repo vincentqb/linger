@@ -200,12 +200,48 @@ private theorem quoted_words (words : List String) (nonempty : words ≠ []) :
       · simpa only [String.toList_intercalate, List.map_map, List.map_cons,
           show " ".toList = [' '] from rfl] using ih (by simp)
 
-/-- The remote command parses as exactly `linger`, the verb, options, the name
-and all supplied arguments, with no additional shell action. -/
-theorem command_argv (verb name : String) (args options : List String) :
-    Shell.Words (command verb name args options).toList
-      (("linger" :: verb :: (options ++ name :: args)).map String.toList) :=
+/-- The remote command parses as exactly `linger`, the verb and every supplied
+word, with no additional shell action. -/
+theorem command_argv (verb : String) (words : List String) :
+    Shell.Words (command verb words).toList (("linger" :: verb :: words).map String.toList) :=
   quoted_words _ (by simp)
+
+/-! ## Target operands
+
+`attach` and `capture` read their target with `targetArgs`, after their options.
+Every such argv linger builds for itself, locally or for a remote linger, places
+the target with `targetOperands`; `command_argv` carries the words across SSH. -/
+
+/-- **The operand round trip.** `targetArgs` reads `targetOperands name` back as
+exactly `name`, and leaves everything after it to the command. -/
+theorem targetArgs_targetOperands (name : String) (rest : List String) :
+    targetArgs (targetOperands name ++ rest) = some (name, rest) := by
+  unfold targetOperands
+  by_cases option : name.startsWith "-" = true
+  · simp [option, targetArgs]
+  · have separator : name ≠ "--" := by
+      rintro rfl
+      exact option (by simp)
+    simp [option, targetArgs, separator]
+
+/-- **A bare option-like name is no operand.** Without `--`, a name starting with `-`
+is refused, so the round trip needs the separator; `--` itself reads the next word. -/
+theorem targetArgs_option (name : String) (rest : List String) (option : name.startsWith "-" = true)
+    (separator : name ≠ "--") : targetArgs (name :: rest) = none := by
+  simp [targetArgs, option, separator]
+
+/-- **No bare name starting with `-` reads back as itself**, `--` included: such a
+target needs `targetOperands`. -/
+theorem targetArgs_option_ne (name : String) (rest : List String)
+    (option : name.startsWith "-" = true) : targetArgs (name :: rest) ≠ some (name, rest) := by
+  by_cases separator : name = "--"
+  · subst separator
+    rcases rest with _ | ⟨word, words⟩
+    · simp [targetArgs]
+    · simp only [targetArgs, ne_eq, Option.some.injEq, Prod.mk.injEq, not_and]
+      exact fun _ same => List.cons_ne_self word words same.symm
+  · rw [targetArgs_option name rest option separator]
+    exact nofun
 
 /-! ## The duplicate report
 

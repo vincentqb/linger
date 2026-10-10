@@ -2,6 +2,7 @@ module
 
 import Linger.Posix
 public import Linger.Core.Session
+import Linger.Core.Env
 import Linger.Runtime.Paths
 import Linger.Runtime.Daemon
 public import Linger.Runtime.Client
@@ -134,6 +135,8 @@ def invalidTarget : IO UInt32 := do
 
 /-- One transport boundary for all session verbs. SSH interprets a command string
 with a shell; `Remote.command` preserves the original argv, including empty words.
+The remote linger reads an attach or capture target with `targetArgs`, so it travels
+as `targetOperands`; the other verbs take it by position.
 Inherited stdin keeps `send name@host -` byte-exact. -/
 def runTarget (verb : String) (target : Linger.Core.Remote.Target) (args : List String)
     (localAction : String → IO UInt32) (options : List String := []) : IO UInt32 := do
@@ -144,16 +147,15 @@ def runTarget (verb : String) (target : Linger.Core.Remote.Target) (args : List 
   | none =>
     localAction target.name
   | some host =>
-    let options :=
-      options ++
-        (if (verb == "attach" || verb == "capture") && target.name.startsWith "-" then ["--"]
-        else [])
+    let operands :=
+      if verb == "attach" || verb == "capture" then Linger.Core.Remote.targetOperands target.name
+      else [target.name]
     let child ←
       IO.Process.spawn
           { cmd := "ssh",
             args :=
               #[if interactive then "-t" else "-T", "--", host,
-                Linger.Core.Remote.command verb target.name args options],
+                Linger.Core.Remote.command verb (options ++ operands ++ args)],
             stdin := .inherit }
     try
       child.wait
@@ -324,8 +326,8 @@ def queryInfos (names : Array String) (deadline : Nat) (retainUnavailable : Bool
 
 def kv (l : List (String × String)) (k : String) : String := (l.lookup k).getD ""
 
-/-- Remote hosts for `-r`: explicit flag list, else `~/.config/linger/remotes`.
-An unset or empty HOME configures no hosts. Duplicates are a hard error
+/-- Remote hosts for `-r`: explicit flag list, else `Env.remotesFile`, which an
+unset or empty HOME leaves unconfigured. Duplicates are a hard error
 (`Remote.checkHosts`). `none` means no `-r` (local only); `some []` means `-r`
 with no arg (read the file). -/
 def resolveRemotes (flag : Option (List String)) : IO (List String) := do
@@ -335,11 +337,10 @@ def resolveRemotes (flag : Option (List String)) : IO (List String) := do
   | some given =>
     let raw ←
       if given.isEmpty then
-        match (← IO.getEnv "HOME").filter (!·.isEmpty) with
+        match Linger.Core.Env.remotesFile (← IO.getEnv "HOME") with
         | none =>
           pure []
-        | some home =>
-          let path := s!"{home}/.config/linger/remotes"
+        | some path =>
           if ← System.FilePath.pathExists path then
             pure ((← IO.FS.readFile path).splitOn "\n")
           else
@@ -682,18 +683,11 @@ def overview (args : List String) : IO UInt32 := do
     IO.eprintln usage
     return 2
 
-/-- A positional target after optional flags. `--` preserves option-like names;
-everything after the target belongs to the command, without reinterpretation. -/
-private def targetArgs (args : List String) : Option (String × List String) :=
-  match args with
-  | "--" :: name :: rest => some (name, rest)
-  | name :: rest => if name.startsWith "-" then none else some (name, rest)
-  | [] => none
-
+/-- An optional `--read-only`, then the target as `Remote.targetArgs` reads it. -/
 private def attachArgs (args : List String) : IO UInt32 := do
   let readOnly := args.head? == some "--read-only"
   let args := if readOnly then args.tail else args
-  let some (name, cmd) := targetArgs args |
+  let some (name, cmd) := Linger.Core.Remote.targetArgs args |
     do
       IO.eprintln "usage: linger attach [--read-only] [--] <name> [command...]"
       return 2
@@ -705,7 +699,7 @@ private def attachArgs (args : List String) : IO UInt32 := do
 private def captureArgs (args : List String) : IO UInt32 := do
   let history := args.head? == some "--history"
   let args := if history then args.tail else args
-  let some (name, []) := targetArgs args |
+  let some (name, []) := Linger.Core.Remote.targetArgs args |
     do
       IO.eprintln "usage: linger capture [--history] [--] <name>"
       return 2

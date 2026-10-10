@@ -282,17 +282,18 @@ import_closure Linger/Tools/Entry.lean ''
 import_closure Linger/Core/Name.lean ''
 import_closure Linger/Core/Remote.lean 'import Linger.Core.Name;'
 import_closure Linger/Core/Title.lean 'import Linger.Core.Name;'
+import_closure Linger/Core/Env.lean ''
 import_closure Linger/Runtime/Command.lean 'import Linger.Posix;'
 import_closure Linger/Manager/Resurrect.lean 'import Linger.Tools.Resurrect;import Linger.Posix;import Linger.Runtime.Paths;import Linger.Runtime.Resume;import Linger.Runtime.Cli;import Linger.Runtime.Command;import Linger.Manager.Picker;import Std.Async.System;import Lean.Data.Json.Parser;import Lean.Data.Json.Printer;'
 import_closure Linger/Manager/Picker.lean \
-  'public import Linger.Tools.Picker;import Linger.Posix;import Linger.Core.Terminal;import Linger.Runtime.Command;'
+  'public import Linger.Tools.Picker;import Linger.Posix;import Linger.Core.Remote;import Linger.Core.Terminal;import Linger.Runtime.Command;'
 import_closure Main.lean \
   'import Linger.Runtime.Cli;import Linger.Tools.Entry;import Linger.Manager.Picker;import Linger.Manager.Resurrect;'
 # `lean_lib Linger` builds the umbrella's closure, so this list is what `./lake build`
 # checks of the session library.
 import_closure Linger.lean "$(printf 'public import Linger.%s;' Core.Buf Posix Core.Wire \
   Core.Vt Core.Render Core.Terminal Core.Name Core.Session Core.Driver Core.Checkpoint \
-  Core.Remote Core.Listing Core.Status Core.Title Runtime.Paths Runtime.Command \
+  Core.Remote Core.Listing Core.Status Core.Title Core.Env Runtime.Paths Runtime.Command \
   Runtime.Daemon Runtime.Client Runtime.Cli Runtime.Resume)"
 module_imports 'Linger/Core/*' 'Linger/Runtime/*' Linger/Posix.lean Linger.lean \
 | awk -F: '
@@ -395,7 +396,8 @@ for tie in \
 done
 
 # Selector and decoder proofs concern pure values. Tie each IO consumer to the
-# proved function and retain exact attach argv and an immutable poll snapshot.
+# proved function, build attach argv from Remote.targetOperands and retain an
+# immutable poll snapshot.
 # E2E.Manager drives the terminal lifetime, failure paths and handoff itself.
 for claim in align_optimal align_isSome_iff_sublist align_marks_length align_spells \
              align_score_max align_earliest align_default \
@@ -461,7 +463,7 @@ for tie in \
   'finally Linger[.]Runtime[.]Command[.]stop pending [(]if savedTmux then 0 else 1000[)]' \
   'let args := if savedTmux then #[[]"tmux", "ls", "--porcelain"[]] [+][+] save[.]toArray else #[[]"ls", "-r", "--porcelain"[]]' \
   'match ← choose executable [(]readOnly := readOnly[)] with' \
-  'def attachArgs [(]target : String[)] [(]readOnly : Bool := false[)] : Array String := #[[]"attach"[]] [+][+] [(]if readOnly then #[[]"--read-only"[]] else #[[][]][)] [+][+] [(]if target[.]startsWith "-" then #[[]"--", target[]] else #[[]target[]][)]'; do
+  'def attachArgs [(]target : String[)] [(]readOnly : Bool := false[)] : Array String := [(]"attach" :: [(]if readOnly then [[]"--read-only"[]] else [[][]][)] [+][+] Linger[.]Core[.]Remote[.]targetOperands target[)][.]toArray'; do
   printf '%s\n' "$picker_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "manager lost its selection, refresh, process ownership or attach contract: $tie"
 done
@@ -509,11 +511,22 @@ for tie in \
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "listing or prompt bypassed its shared policy: $tie"
 done
-# An unset or empty HOME configures no remote hosts; a fallback directory such as
-# world-writable /tmp would let another account choose them. Observing that from
-# a suite would mean creating /tmp/.config, so this tie is the oracle.
-printf '%s\n' "$cli_code" | CG_RE='(^|[[:space:]])match [(]← IO[.]getEnv "HOME"[)][.]filter [(]!·[.]isEmpty[)] with [|] none => pure [[][]] [|] some home => let path := s!"[{]home[}]/[.]config/linger/remotes"([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
-  || fail "remote configuration must not fall back from an unset or empty HOME"
+# Environment policies decide unset and empty values for every input. The runtime
+# reads SHELL and LINGER_NO_DETACH_KEY once each, and HOME once for remote hosts, into
+# their policies. An unset or empty HOME configures no remote hosts
+# (remotesFile_eq_none_iff): a fallback such as world-writable /tmp would let another
+# account choose them, and a suite cannot create /tmp/.config.
+for claim in shellOf_ne_empty shellOf_set shellOf_absent remotesFile_eq_none_iff remotesFile_set \
+             detachEnabled_readOnly detachEnabled_writable; do
+  code_grep "^theorem $claim " Theorems/Env.lean >/dev/null \
+    || fail "environment policy contract disappeared: $claim"
+done
+printf '%s\n' "$cli_code" | CG_RE='(^|[[:space:]])match Linger[.]Core[.]Env[.]remotesFile [(]← IO[.]getEnv "HOME"[)] with [|] none => pure [[][]] [|] some path => if ← System[.]FilePath[.]pathExists path then pure [(][(]← IO[.]FS[.]readFile path[)][.]splitOn([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+  || fail "remote configuration bypasses Env.remotesFile, which reads no file for an unset or empty HOME"
+for var in SHELL LINGER_NO_DETACH_KEY; do
+  [ "$(code_count "getEnv \"$var\"" 'Linger/*' Main.lean)" -eq 1 ] \
+    || fail "$var is read more than once or not at all; read it once, into its Env policy"
+done
 # Discovery keeps bounded ownership until completion. Remote signal handlers
 # are installed before spawning isolated SSH groups, so cancelling the chooser
 # reaches those groups through its listing helper. E2E.Remote checks overlap,
@@ -784,6 +797,10 @@ code_grep '^theorem step_closed_frame ' Theorems/Session.lean >/dev/null \
 daemon_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Runtime/Daemon.lean)"
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])let received ← try read c[.]fd 65536 catch _ => pure none match received with [|] some bs => if bs[.]size > 0 then events := events [+][+] [[][.]bytes c[.]fd[.]toNat bs[.]toList[]] [|] none => close c[.]fd rt := rt[.]dropConn c[.]fd events := events [+][+] [[][.]closed c[.]fd[.]toNat[]]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "client read errors must close only that peer through the proved transition"
+# A session without a command runs Env.shellOf's program, which an unset or empty
+# SHELL makes sh (shellOf_absent). E2E.Agent creates sessions with both.
+printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])let shell := Linger[.]Core[.]Env[.]shellOf [(]← IO[.]getEnv "SHELL"[)] let [(]prog, args[)] := match argv with [|] [[][]] => [(][(]shell, #[[][]][)] : String × Array String[)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+  || fail "a session without a command bypasses Env.shellOf"
 
 # Descriptor exhaustion must suspend admission without stopping existing work.
 # The live fixture exhausts real descriptors; gates pin the retry and fd cleanup.
@@ -838,10 +855,22 @@ for claim in check_eq_some_iff check_no_alias; do
   code_grep "^theorem $claim " Theorems/Name.lean >/dev/null \
     || fail "exact-name contract disappeared: $claim"
 done
-for claim in targetValid_iff parseTarget_exact parseTarget_name_valid shellQuote_roundtrip command_argv; do
+for claim in targetValid_iff parseTarget_exact parseTarget_name_valid shellQuote_roundtrip command_argv \
+             targetArgs_targetOperands targetArgs_option_ne targetArgs_option; do
   code_grep "^theorem $claim " Theorems/Remote.lean >/dev/null \
-    || fail "command target or shell quoting contract disappeared: $claim"
+    || fail "command target, operand or shell quoting contract disappeared: $claim"
 done
+# Every attach or capture argv linger builds for itself places its target with
+# Remote.targetOperands, which Remote.targetArgs reads back exactly (targetArgs_targetOperands).
+# A literal attach argv passes a name starting with - as an option. "attach" may begin
+# a list, array or cons only in the command parser's pattern and in Picker.attachArgs,
+# tied above.
+attach_words="$(code_grep '"attach"[[:space:]]*(,|[]]|::)' 'Linger/Manager/*' 'Linger/Runtime/*' \
+  | sed 's/^\([^:]*\):[0-9]*:[[:space:]]*/\1: /')"
+[ "$attach_words" = "$(printf '%s\n' \
+    'Linger/Manager/Picker.lean: ("attach" :: (if readOnly then ["--read-only"] else []) ++' \
+    'Linger/Runtime/Cli.lean: | "attach" :: rest | "a" :: rest =>')" ] \
+  || fail "a literal attach argv: build it with Picker.attachArgs, whose operands come from Remote.targetOperands: $attach_words"
 ! code_grep 'Linger[.]Tools[.]Fuzzy|Core[.]Name[.]sanitize' Linger/Runtime/Cli.lean Linger/Runtime/Client.lean \
   || fail "noninteractive command lookup must not fuzzy-match or rewrite a name"
 code_grep '^[[:space:]]+Linger[.]Core[.]Remote[.]targetValid target = true ∧ target ∉ candidates := by$' Theorems/Picker.lean >/dev/null \
@@ -854,8 +883,10 @@ for tie in \
   'match Linger[.]Core[.]Remote[.]parseTarget target with [|] none => invalidTarget [|] some parsed => runTarget verb parsed args localAction options' \
   'let some targets := names[.]mapM Linger[.]Core[.]Remote[.]parseTarget [|] invalidTarget let mut rc : UInt32 := 0 for target in targets do rc := max rc [(]← runTarget "wait" target [[]] cmdWait[)]' \
   'let interactive := verb == "attach" if interactive && [(]![(]← stdinIsTty[)] [|][|] ![(]← [(]← IO[.]getStdout[)][.]isTty[)][)] then' \
-  'let options := options [+][+] [(]if [(]verb == "attach" [|][|] verb == "capture"[)] && target[.]name[.]startsWith "-" then [[]"--"[]] else [[][]][)]' \
-  'IO[.]Process[.]spawn [{] cmd := "ssh", args := #[[]if interactive then "-t" else "-T", "--", host, Linger[.]Core[.]Remote[.]command verb target[.]name args options[]], stdin := [.]inherit [}] try child[.]wait finally if interactive then writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Core[.]Render[.]leaveAnsi[.]toArray[)]' \
+  'let operands := if verb == "attach" [|][|] verb == "capture" then Linger[.]Core[.]Remote[.]targetOperands target[.]name else [[]target[.]name[]]' \
+  'IO[.]Process[.]spawn [{] cmd := "ssh", args := #[[]if interactive then "-t" else "-T", "--", host, Linger[.]Core[.]Remote[.]command verb [(]options [+][+] operands [+][+] args[)][]], stdin := [.]inherit [}] try child[.]wait finally if interactive then writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Core[.]Render[.]leaveAnsi[.]toArray[)]' \
+  'let readOnly := args[.]head[?] == some "--read-only" let args := if readOnly then args[.]tail else args let some [(]name, cmd[)] := Linger[.]Core[.]Remote[.]targetArgs args [|]' \
+  'let history := args[.]head[?] == some "--history" let args := if history then args[.]tail else args let some [(]name, [[][]][)] := Linger[.]Core[.]Remote[.]targetArgs args [|]' \
   'withTarget "attach" name cmd [(]cmdAttach · cmd readOnly[)] [(]if readOnly then [[]"--read-only"[]] else [[][]][)]' \
   'withTarget "capture" name [[][]] [(]cmdRead · [(]if history then [.]history else [.]screen[)] [(]if history then Linger[.]Core[.]Render[.]history else Linger[.]Core[.]Render[.]screenText[)][)] [(]if history then [[]"--history"[]] else [[][]][)]'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
@@ -881,8 +912,10 @@ for tie in \
   'def lockPath [(]name : String[)] : IO String := do namedPath [(]← socketDir[)] name "[.]lock"' \
   'def stateLockPath [(]name : String[)] : IO String := do namedPath [(][(]← stateDir[)] [+][+] "/[.]locks"[)] name "[.]lock"' \
   'def logPath [(]name : String[)] : IO String := do namedPath [(][(]← stateDir[)] [+][+] "/logs"[)] name "[.]log"' \
-  'let fd ← Linger[.]Posix[.]flock path if fd < 0 then throw [(]IO[.]userError s!"session is owned by another process [(][{]path[}][)]"[)] try checkSpelling path action finally Linger[.]Posix[.]close fd[.]toUInt64[.]toUInt32' \
-  'withLock [(]← lockPath name[)] do withLock [(]← stateLockPath name[)] action'; do
+  'def withLockRetrying [{]α : Type[}] [(]path : String[)] [(]retry : IO Bool[)] [(]action : IO α[)] : IO α := do let mut fd ← Linger[.]Posix[.]flock path while fd < 0 do unless ← retry do break fd ← Linger[.]Posix[.]flock path if fd < 0 then throw [(]IO[.]userError s!"session is owned by another process [(][{]path[}][)]"[)] try checkSpelling path action finally Linger[.]Posix[.]close fd[.]toUInt64[.]toUInt32' \
+  'def withLock [{]α : Type[}] [(]path : String[)] [(]action : IO α[)] : IO α := withLockRetrying path [(]pure false[)] action' \
+  'def withSessionLockRetrying [{]α : Type[}] [(]name : String[)] [(]retry : IO Bool[)] [(]action : IO α[)] : IO α := do withLockRetrying [(]← lockPath name[)] retry do withLockRetrying [(]← stateLockPath name[)] retry action' \
+  'def withSessionLock [{]α : Type[}] [(]name : String[)] [(]action : IO α[)] : IO α := withSessionLockRetrying name [(]pure false[)] action'; do
   printf '%s\n' "$paths_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "session paths or lifetime locking bypassed their contract: $tie"
 done
@@ -899,8 +932,23 @@ done
   || fail "lock path construction and acquisition must never unlink or replace a lock inode"
 printf '%s\n' "$client_code" | CG_RE='(^|[[:space:]])try Paths[.]checkSpelling path return some fd catch err => close fd throw err([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "successful connects must reject case-folded aliases and close on failure"
-printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])IO Unit := Paths[.]withSessionLock name do ignoreSighup let saved ← loadCkpt([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])IO Unit := do let deadline := [(]← monotonicMs[)] [+] claimWaitMs let reported ← IO[.]mkRef false let retry := claimRetry name [(]← Paths[.]socketPath name[)] deadline reported Paths[.]withSessionLockRetrying name retry do ignoreSighup let saved ← loadCkpt([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "daemon recovery and lifetime must execute inside both ownership locks"
+# An offline reader holds both locks briefly, so the daemon's startup claim retries a
+# held lock for a bounded, positive time, and stops at once when a live daemon answers
+# on the socket. A retry is asked only after a failed attempt. Every other acquisition
+# is withLock or withSessionLock, one attempt each, and only the claim names a retrying
+# acquisition, so no reader can pass a retry by position. The Claim model reads each
+# failed attempt as an unchanged step. E2E.Robust holds an offline capture's locks
+# while run starts the session, and checks that a claim finding both free logs no wait.
+code_grep '^def claimWaitMs : Nat := [1-9][0-9]*$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+  || fail "the startup claim must wait a positive, fixed time"
+printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])if [(]← monotonicMs[)] ≥ deadline then return false let live ← unixConnect sockPath if live ≥ 0 then close live[.]toUInt64[.]toUInt32 return false([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+  || fail "the startup claim must stop at its deadline and when a live daemon answers"
+retrying="$(code_grep '(^|[^[:alnum:]_])with(Session)?LockRetrying([^[:alnum:]_]|$)' 'Linger/*' Main.lean \
+  | awk -F: '$1 != "Linger/Runtime/Paths.lean" { print $1 }')"
+[ "$retrying" = 'Linger/Runtime/Daemon.lean' ] \
+  || fail "only the daemon's startup claim may retry a held lock: ${retrying:-no retrying claim}"
 for tie in \
   'finally close listenFd try IO[.]FS[.]removeFile sockPath catch _ => pure [(][)][[:space:]]+end Linger[.]Runtime[.]Daemon' \
   'finally for c in rt[.]conns do close c[.]fd try if ← alive rt[.]childPid then'; do
@@ -1006,6 +1054,13 @@ code_grep 'if !out.isEmpty && !readOnly' 'Linger/Runtime/Client.lean' > /dev/nul
   || fail "Client.attach lost its read-only input guard (a watcher would forward keystrokes)"
 code_grep 'sendMsg fd [(][.]attach 0 0[)]' 'Linger/Runtime/Client.lean' > /dev/null \
   || fail "Client.attach no longer marks a read-only client with a 0x0 attach (the wire's only read-only bit)"
+# The detach key follows Env.detachEnabled: always in a read-only view, whose saved
+# form passes that value, true, directly (detachEnabled_readOnly), and for writable
+# attach only while LINGER_NO_DETACH_KEY is unset. E2E.Watch and E2E.Attach observe both.
+printf '%s\n' "$client_code" | CG_RE='(^|[[:space:]])let detachEnabled := Linger[.]Core[.]Env[.]detachEnabled readOnly [(]← IO[.]getEnv "LINGER_NO_DETACH_KEY"[)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+  || fail "attach bypasses Env.detachEnabled, which keeps the detach key in read-only views"
+code_grep '^[[:space:]]+let [(]out, detach[)] := splitDetach bs detachEnabled$' Linger/Runtime/Client.lean >/dev/null \
+  || fail "attach no longer splits input with its detach policy"
 
 # The checkpoint decoder must not grow its forge back (`specs/archive/vt-toolkit.md` Step 2).
 # `Linger/Core/Checkpoint.lean` keeps a PERMANENT `import all Linger.Core.Vt`: `wVt` reads

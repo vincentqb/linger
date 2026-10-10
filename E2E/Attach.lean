@@ -335,25 +335,27 @@ def run : IO UInt32 :=
         "attach restores tty mode even when leaveAnsi cannot be written"
     rawProbe.bye (sendDetach := false)
     e.killAll #["raw-cleanup"]
-    -- 10. LINGER_NO_DETACH_KEY=1 disables the ctrl-\ detach key (help promise, and
-    --     the mirror of check 2). With the env var set, ctrl-\ is ordinary input: the
-    --     client stays attached and the byte reaches the session's pty.
-    let nd ← e.spawnEnv #["LINGER_NO_DETACH_KEY=1"] #["attach", "nd"] cols rows
-    IO.sleep 800
-    let _ ← drain nd.fd 300
-    nd.detach -- would detach if the key were enabled
-    IO.sleep 500
-    -- `-1` from WNOHANG waitpid is "still running"
-    expect ((← Linger.Posix.waitpidNohang nd.pid) == -1)
-        "LINGER_NO_DETACH_KEY: ctrl-\\ does not detach (client still attached)"
-    expect (has (← e.out #["list"]) "nd") "LINGER_NO_DETACH_KEY: session still live"
-    nd.type "echo nd-$((20+2))\r" -- still interactive: input reaches the pty
-    let _ ← waitFor 4000 (return has (← e.out #["capture", "--history", "nd"]) "nd-22")
-    expect (has (← e.out #["capture", "--history", "nd"]) "nd-22")
-        "LINGER_NO_DETACH_KEY: input still reaches the session"
-    e.killAll #["nd"]
-    IO.sleep 400
-    nd.bye (sendDetach := false)
+    -- 10. LINGER_NO_DETACH_KEY, set to any value, empty included, disables the ctrl-\
+    --     detach key (help promise, `detachEnabled_writable`, and the mirror of check 2).
+    --     With the env var set, ctrl-\ is ordinary input: the client stays attached and
+    --     the byte reaches the session's pty.
+    for (value, name) in [("1", "nd"), ("", "nd-empty")] do
+      let nd ← e.spawnEnv #[s!"LINGER_NO_DETACH_KEY={value}"] #["attach", name] cols rows
+      IO.sleep 800
+      let _ ← drain nd.fd 300
+      nd.detach -- would detach if the key were enabled
+      IO.sleep 500
+      -- `-1` from WNOHANG waitpid is "still running"
+      expect ((← Linger.Posix.waitpidNohang nd.pid) == -1)
+          s!"LINGER_NO_DETACH_KEY={value}: ctrl-\\ does not detach (client still attached)"
+      expect (has (← e.out #["list"]) name) s!"LINGER_NO_DETACH_KEY={value}: session still live"
+      nd.type "echo nd-$((20+2))\r" -- still interactive: input reaches the pty
+      let _ ← waitFor 4000 (return has (← e.out #["capture", "--history", name]) "nd-22")
+      expect (has (← e.out #["capture", "--history", name]) "nd-22")
+          s!"LINGER_NO_DETACH_KEY={value}: input still reaches the session"
+      e.killAll #[name]
+      IO.sleep 400
+      nd.bye (sendDetach := false)
     -- 11. the scrollback reaches the client's own scrollback
     --     (specs/archive/scrollback-fidelity.md). `restore` used to repaint the screen and
     --     drop everything above it. It now paints the session's ring first and

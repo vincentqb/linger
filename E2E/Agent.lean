@@ -412,18 +412,21 @@ def run : IO UInt32 :=
     expect ((← e.cli #["resize", "nosuch", "80", "24"]).1 == 1)
         "resize on a missing session exits 1"
     e.killAll #["rz"]
-    -- An empty SHELL names no program: creation falls back to the default shell.
-    let created ←
-      IO.Process.output
-          { cmd := e.bin, args := #["run", "shell-empty", "echo empty-shell-$((40+2))"],
-            env := #[("LINGER_DIR", some e.dir), ("SHELL", some "")] }
-    expect
-        (created.exitCode == 0 &&
-          (←
-            waitFor 5000
-                (do
-                  return has (← e.out #["capture", "shell-empty"]) "empty-shell-42")))
-        "an empty SHELL still creates a session running the default shell"
-    e.killAll #["shell-empty"]
+    -- An empty or unset SHELL names no program: creation falls back to the default
+    -- shell (`shellOf_absent`). The harness sets SHELL for every other session.
+    for (kind, shell) in [("empty", some ""), ("unset", none)] do
+      let name := s!"shell-{kind}"
+      let created ←
+        IO.Process.output
+            { cmd := e.bin, args := #["run", name, s!"echo {kind}-shell-$((40+2))"],
+              env := #[("LINGER_DIR", some e.dir), ("SHELL", shell)] }
+      expect
+          (created.exitCode == 0 &&
+            (←
+              waitFor 5000
+                  (do
+                    return has (← e.out #["capture", name]) s!"{kind}-shell-42")))
+          s!"an {kind} SHELL still creates a session running the default shell"
+      e.killAll #[name]
 
 end E2E.Agent

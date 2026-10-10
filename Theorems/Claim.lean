@@ -4,8 +4,10 @@ module
 
 A resource identifies a stable lock inode, not a pathname string. Successful
 exclusive acquisition requires that resource to be free. Failed acquisition
-leaves the state unchanged. A daemon or offline reader enters only after holding
-both resources, and releases them only after leaving and completing its cleanup.
+leaves the state unchanged, so a starting daemon that retries a held lock for a
+short time takes only `unchanged` steps until it acquires. A daemon or offline
+reader enters only after holding both resources, and releases them only after
+leaving and completing its cleanup.
 
 The model permits acquisition, release and later reuse by different processes.
 Its assumptions require cooperating processes, lock files that are never

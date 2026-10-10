@@ -3,6 +3,7 @@ module
 import Linger.Posix
 public import Linger.Core.Buf
 public import Linger.Core.Driver
+import Linger.Core.Env
 import Linger.Runtime.Paths
 
 public section
@@ -458,75 +459,102 @@ def drainConns (rt : Rt) : IO Rt := do
     close c.fd
   return { rt with conns := [] }
 
+/-- How long a starting daemon waits for its locks. An offline reader holds both only
+while it loads and prints a checkpoint; `connectUpsert` waits 3 s for the socket. -/
+def claimWaitMs : Nat := 1000
+
+/-- The line a starting daemon logs the first time it finds a lock held. -/
+def claimWaitLine (name : String) : String :=
+  s!"linger: session '{name}' is busy; waiting up to {claimWaitMs} ms for its locks"
+
+/-- Retry a held startup claim until `deadline`, unless a live daemon answers on the
+session's socket and so owns the name for its lifetime. Report the first wait. -/
+def claimRetry (name sockPath : String) (deadline : Nat) (reported : IO.Ref Bool) : IO Bool := do
+  if (← monotonicMs) ≥ deadline then
+    return false
+  let live ← unixConnect sockPath
+  if live ≥ 0 then
+    close live.toUInt64.toUInt32
+    return false
+  unless ← reported.get do
+    reported.set true
+    report (claimWaitLine name)
+  IO.sleep 10
+  return true
+
 /-- Hold both ownership locks from before recovery through final cleanup.
 Loading under the locks prevents a second runtime namespace from reading or
-overwriting a checkpoint that another daemon is still using. -/
+overwriting a checkpoint that another daemon is still using. The claim waits
+out an offline reader (`claimRetry`) but not a live owner. -/
 def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State → IO Unit)
     (dropCkpt : IO Unit)
-    (loadCkpt : IO (Option (Linger.Core.Vt.Vt × String × List (String × String)))) : IO Unit :=
-  Paths.withSessionLock name do
-    ignoreSighup
-    let saved ← loadCkpt
-    let cwd := (saved.map (fun (_, dir, _) => dir)).getD cwd
-    let restore := saved.map (fun (vt, _, labels) => (vt, labels))
-    let sockPath ← Paths.socketPath name
-    let r ← unixConnect sockPath
-    if r ≥ 0 then
-      close r.toUInt64.toUInt32
-      throw (IO.userError s!"session '{name}' already running")
-    -- The socket lock excludes another cooperating listener, even if connect
-    -- failed for a reason other than a stale socket. Never unlink the lock inode.
-    try
-      IO.FS.removeFile sockPath
-    catch _ =>
-      pure ()
-    let listenFd ← unixListen sockPath
-    try
-      setNonblock listenFd
-      let shell := ((← IO.getEnv "SHELL").filter (!·.isEmpty)).getD "sh"
-      let (prog, args) :=
-        match argv with
-        | [] => ((shell, #[]) : String × Array String)
-        | p :: rest => (p, rest.toArray)
-      -- Preserve the checkpoint's terminal state and dimensions. Clamp only at
-      -- the syscall boundary; resizing the restored VT would reset its margins.
-      let vt0 := (restore.map (·.1)).getD (Linger.Core.Vt.Vt.init 80 24)
-      let created ← realtimeS
-      let (pid, ptyFd) ←
-        spawnPty (UInt32.ofNat (Linger.Core.Vt.clampDim vt0.colCount))
-            (UInt32.ofNat (Linger.Core.Vt.clampDim vt0.rowCount)) cwd prog args
-            #[s!"LINGER_SESSION={name}", "TERM=xterm-256color", "TERM_PROGRAM=linger",
-              s!"TERM_PROGRAM_VERSION={Linger.Core.Terminal.versionNumber}"]
-      let st :=
-        State.boot vt0 ((restore.map (·.2)).getD [])
-          [("name", name), ("pid", toString pid), ("created", toString created),
-            ("cmd", String.intercalate " " (prog :: args.toList)), ("start_dir", cwd)]
-      let mut rt : Rt := { st, listenFd, ptyFd, childPid := pid, saveCkpt, dropCkpt }
-      try
-        setNonblock ptyFd
-        while !rt.exiting do
-          let (rt', events) ← pollRound rt
-          let now ← monotonicMs
-          rt ← pump rt' (events ++ [.tick now])
-        rt ← drainConns rt
-      finally
-        for c in rt.conns do
-          close c.fd
-        try
-          if ← alive rt.childPid then
-            kill rt.childPid 15
-            IO.sleep 150
-            if ← alive rt.childPid then
-              kill rt.childPid 9
-        catch err =>
-          report s!"linger: child cleanup failed: {err}"
-        let _ ← waitpidNohang rt.childPid
-        close rt.ptyFd
-    finally
-      close listenFd
+    (loadCkpt : IO (Option (Linger.Core.Vt.Vt × String × List (String × String)))) : IO Unit := do
+  let deadline := (← monotonicMs) + claimWaitMs
+  let reported ← IO.mkRef false
+  let retry := claimRetry name (← Paths.socketPath name) deadline reported
+  Paths.withSessionLockRetrying name retry do
+      ignoreSighup
+      let saved ← loadCkpt
+      let cwd := (saved.map (fun (_, dir, _) => dir)).getD cwd
+      let restore := saved.map (fun (vt, _, labels) => (vt, labels))
+      let sockPath ← Paths.socketPath name
+      let r ← unixConnect sockPath
+      if r ≥ 0 then
+        close r.toUInt64.toUInt32
+        throw (IO.userError s!"session '{name}' already running")
+      -- The socket lock excludes another cooperating listener, even if connect
+      -- failed for a reason other than a stale socket. Never unlink the lock inode.
       try
         IO.FS.removeFile sockPath
       catch _ =>
         pure ()
+      let listenFd ← unixListen sockPath
+      try
+        setNonblock listenFd
+        let shell := Linger.Core.Env.shellOf (← IO.getEnv "SHELL")
+        let (prog, args) :=
+          match argv with
+          | [] => ((shell, #[]) : String × Array String)
+          | p :: rest => (p, rest.toArray)
+        -- Preserve the checkpoint's terminal state and dimensions. Clamp only at
+        -- the syscall boundary; resizing the restored VT would reset its margins.
+        let vt0 := (restore.map (·.1)).getD (Linger.Core.Vt.Vt.init 80 24)
+        let created ← realtimeS
+        let (pid, ptyFd) ←
+          spawnPty (UInt32.ofNat (Linger.Core.Vt.clampDim vt0.colCount))
+              (UInt32.ofNat (Linger.Core.Vt.clampDim vt0.rowCount)) cwd prog args
+              #[s!"LINGER_SESSION={name}", "TERM=xterm-256color", "TERM_PROGRAM=linger",
+                s!"TERM_PROGRAM_VERSION={Linger.Core.Terminal.versionNumber}"]
+        let st :=
+          State.boot vt0 ((restore.map (·.2)).getD [])
+            [("name", name), ("pid", toString pid), ("created", toString created),
+              ("cmd", String.intercalate " " (prog :: args.toList)), ("start_dir", cwd)]
+        let mut rt : Rt := { st, listenFd, ptyFd, childPid := pid, saveCkpt, dropCkpt }
+        try
+          setNonblock ptyFd
+          while !rt.exiting do
+            let (rt', events) ← pollRound rt
+            let now ← monotonicMs
+            rt ← pump rt' (events ++ [.tick now])
+          rt ← drainConns rt
+        finally
+          for c in rt.conns do
+            close c.fd
+          try
+            if ← alive rt.childPid then
+              kill rt.childPid 15
+              IO.sleep 150
+              if ← alive rt.childPid then
+                kill rt.childPid 9
+          catch err =>
+            report s!"linger: child cleanup failed: {err}"
+          let _ ← waitpidNohang rt.childPid
+          close rt.ptyFd
+      finally
+        close listenFd
+        try
+          IO.FS.removeFile sockPath
+        catch _ =>
+          pure ()
 
 end Linger.Runtime.Daemon

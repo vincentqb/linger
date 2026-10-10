@@ -14,6 +14,7 @@ public import Linger.Core.Remote
 public import Linger.Core.Listing
 public import Linger.Core.Status
 public import Linger.Core.Title
+public import Linger.Core.Env
 public import Linger.Runtime.Paths
 public import Linger.Runtime.Command
 public import Linger.Runtime.Daemon

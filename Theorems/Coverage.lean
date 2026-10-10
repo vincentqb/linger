@@ -23,6 +23,7 @@ import all Theorems.Picker
 import all Theorems.Input
 import all Theorems.Key
 import all Theorems.Entry
+import all Theorems.Env
 import all Theorems.Contracts
 public meta import Lean.Elab.Command
 import Lean.Parser.Command

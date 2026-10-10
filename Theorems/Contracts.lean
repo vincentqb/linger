@@ -5,6 +5,7 @@ import all Theorems.Checkpoint
 import all Theorems.Claim
 import all Theorems.Driver
 import all Theorems.Entry
+import all Theorems.Env
 import all Theorems.Fuzzy
 import all Theorems.Input
 import all Theorems.Name
@@ -21,6 +22,7 @@ import all Theorems.Resurrect
 import all Theorems.Session
 import all Theorems.Status
 import all Theorems.Title
+import all Theorems.Vt
 import all Theorems.Vt.Renderable
 import all Theorems.Vt.State
 import all Theorems.Wire
@@ -99,6 +101,50 @@ example {v : Vt.Vt} (bytes : List UInt8) (h : Vt.Good v) : Vt.Good (v.feed bytes
 
 example {v : Vt.Vt} (h : Vt.Renderable v) (bytes : List UInt8) : Vt.Renderable (v.feed bytes) := by
   with_reducible exact Vt.renderable_feed h bytes
+
+-- Terminal controls
+example {v : Vt.Vt} (hu : v.u8need = 0) (hosc : ∀ acc e, v.pstate ≠ .osc acc e)
+    (hstr : v.pstate ≠ .str true) : v.step 0x7F = v := by
+  with_reducible exact Vt.step_del_inert hu hosc hstr
+
+example {v : Vt.Vt} {b : UInt8} (hc0 : b < 0x20) (hact : b < 0x07 ∨ 0x0F < b) (hesc : b ≠ 0x1B)
+    (hu : v.u8need = 0) (hosc : ∀ acc e, v.pstate ≠ .osc acc e) (hstr : v.pstate ≠ .str true) :
+    v.step b = v := by with_reducible exact Vt.step_c0_inert hc0 hact hesc hu hosc hstr
+
+-- Repeat counts
+example (v : Vt.Vt) {s t : Vt.CsiState} (hs : s.ignore = false) (ht : t.ignore = false)
+    (hsn : v.bot - v.top + 1 ≤ s.arg 0 1) (htn : v.bot - v.top + 1 ≤ t.arg 0 1) :
+    v.csiDispatch s 0x53 = v.csiDispatch t 0x53 ∧ v.csiDispatch s 0x54 = v.csiDispatch t 0x54 := by
+  with_reducible exact Vt.csiDispatch_scroll_saturates v hs ht hsn htn
+
+example (v : Vt.Vt) {s t : Vt.CsiState} (hs : s.ignore = false) (ht : t.ignore = false)
+    (hsn : v.cols ≤ s.arg 0 1) (htn : v.cols ≤ t.arg 0 1) :
+    v.csiDispatch s 0x49 = v.csiDispatch t 0x49 ∧ v.csiDispatch s 0x5A = v.csiDispatch t 0x5A := by
+  with_reducible exact Vt.csiDispatch_tab_saturates v hs ht hsn htn
+
+example (v : Vt.Vt) (s : Vt.CsiState) :
+    ∃ rows : List Vt.Row,
+      rows.length ≤ v.bot - v.top + 1 ∧
+        (v.csiDispatch s 0x53).sb = rows.foldl Vt.Ring.push v.sb := by
+  with_reducible exact Vt.csiDispatch_su_history v s
+
+example (v : Vt.Vt) (cap count : Nat) (f : Vt.Vt → Vt.Vt) :
+    v.repeatAtMost cap count f = Nat.repeat f (min count cap) v := by
+  with_reducible exact Vt.repeatAtMost_eq_repeat v cap count f
+
+-- Request replies
+example (s : Session.State) (id : Nat) (chunk : List UInt8) :
+    ∃ pre ans post,
+      (Session.step s (.bytes id chunk)).2 = pre ++ ans ++ post ∧
+        (ans = [] ∨
+          ∃ c t c' m,
+            s.client? id = some c ∧
+              m ∈ (c.decoder.feed chunk).2 ∧
+              t.client? id = some c' ∧ ans = (Session.onMsg t c' m).2) ∧
+        (pre ++ post).all (!Session.rendered ·) ∧
+        (((Session.step s (.bytes id chunk)).1.client? id).all (!·.attached) →
+          (pre ++ post).all (!Session.resizes ·)) := by
+  with_reducible exact Session.step_bytes_one_reply s id chunk
 
 -- Transport
 example (ms : List Wire.Msg) (hms : ∀ (m : Wire.Msg), m ∈ ms → m.WF) (chunks : List (List UInt8))
@@ -262,10 +308,10 @@ example {target : String} {result : Remote.Target} (h : Remote.parseTarget targe
     Name.Valid result.name := by with_reducible exact Remote.parseTarget_name_valid h
 
 -- Remote commands
-example (verb name : String) (args options : List String) :
-    Remote.Shell.Words (Remote.command verb name args options).toList
-      (List.map String.toList ("linger" :: verb :: (options ++ name :: args))) := by
-  with_reducible exact Remote.command_argv verb name args options
+example (verb : String) (words : List String) :
+    Remote.Shell.Words (Remote.command verb words).toList
+      (List.map String.toList ("linger" :: verb :: words)) := by
+  with_reducible exact Remote.command_argv verb words
 
 example (s : String) (tail : List Char) (boundary : tail = [] ∨ ∃ rest, tail = ' ' :: rest) :
     Remote.Shell.word ((Remote.shellQuote s).toList ++ tail) = some (s.toList, tail) := by
@@ -276,6 +322,35 @@ example (hosts result : List String) :
     Remote.checkHosts hosts = Except.ok result ↔
       result = hosts ∧ hosts.Nodup ∧ ∀ (x : String), x ∈ hosts → Remote.hostClean x = true := by
   with_reducible exact Remote.checkHosts_ok_iff hosts result
+
+-- Command operands
+example (name : String) (rest : List String) :
+    Remote.targetArgs (Remote.targetOperands name ++ rest) = some (name, rest) := by
+  with_reducible exact Remote.targetArgs_targetOperands name rest
+
+example (name : String) (rest : List String) (option : name.startsWith "-" = true) :
+    Remote.targetArgs (name :: rest) ≠ some (name, rest) := by
+  with_reducible exact Remote.targetArgs_option_ne name rest option
+
+example (name : String) (rest : List String) (option : name.startsWith "-" = true)
+    (separator : name ≠ "--") : Remote.targetArgs (name :: rest) = none := by
+  with_reducible exact Remote.targetArgs_option name rest option separator
+
+-- Environment
+example : Env.shellOf none = "sh" ∧ Env.shellOf (some "") = "sh" := by
+  with_reducible exact Env.shellOf_absent
+
+example {shell : String} (set : shell ≠ "") : Env.shellOf (some shell) = shell := by
+  with_reducible exact Env.shellOf_set set
+
+example (home : Option String) : Env.remotesFile home = none ↔ home = none ∨ home = some "" := by
+  with_reducible exact Env.remotesFile_eq_none_iff home
+
+example (flag : Option String) : Env.detachEnabled true flag = true := by
+  with_reducible exact Env.detachEnabled_readOnly flag
+
+example (flag : Option String) : Env.detachEnabled false flag = flag.isNone := by
+  with_reducible exact Env.detachEnabled_writable flag
 
 -- Selection
 example (s : Picker.State) (key : Key) (target : String)
