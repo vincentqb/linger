@@ -19,10 +19,7 @@ generator is a pure LCG so a seed is all you need to replay a case.
 
 This is deliberately cheap and dumb, and it has earned its keep: it found
 three real replay bugs, two of which no fixture would have reached (see
-`failingDeep`). Nothing is held out of the corpus any more — `knownGap` is
-empty and the `ICH`/`DCH` mutations that used to be excluded are in `frags`,
-because the shapes they produced are now repaired in the emulator rather than
-avoided in the test.
+`failingDeep`).
 -/
 
 namespace Linger.Core.Render.Fuzz
@@ -46,21 +43,7 @@ def frags : Array String :=
     "\x1b[?7l", "\x1b[?7h", "\x1b[4h", "\x1b[4l", "\x1b[?25l", "\x1b[?2004h", "\x1b[?1000h",
     "\x1b[?1006h", "\x1b[?1004h", "\x1b(0", "\x1b(B", "\x1b)0", "\x0e", "\x0f", "\x1b[3g", "\x1bH",
     "\x1b[0g", "\x1b[2J", "\x1b[K", "\x1b[1J", "\x1b[2X", "\x1b]2;t\x07", "\x1b[T", "\x1b[S",
-    "\x1b[L", "\x1b[M",
-    -- the four former `knownGap` mutations: `ICH`/`DCH` split a wide pair, which
-    -- `Vt.printPut`/`Row.mend` now repair at the mutation instead of leaving a
-    -- shape the row painter cannot express
-    "\x1b[3@", "\x1b[1P", "\x1b[2@", "\x1b[1@"]
-
-/-- **The exclusion list, now empty.** `ICH`/`DCH` used to be held out here:
-they can split a wide glyph, leaving a width-2 cell whose shadow was pushed off
-the row or an orphaned width-0 cell whose base was deleted, and the row painter
-cannot express either. Both are repaired in the emulator now — the mutations are
-in `frags` above, and this list existing is what keeps such a hold-out honest.
-
-Kept as the empty array rather than deleted: a future gap gets recorded here
-instead of quietly narrowing the corpus. -/
-def knownGap : Array String := #[]
+    "\x1b[L", "\x1b[M", "\x1b[3@", "\x1b[1P", "\x1b[2@", "\x1b[1@"]
 
 /-- Splice `n` fragments chosen by the seed. -/
 def genCase (seed n : Nat) : String :=
@@ -76,7 +59,7 @@ def genCase (seed n : Nat) : String :=
 where the right margin is easy to hit, and a normal one. -/
 def dims : Array (Nat × Nat) := #[(1, 1), (2, 2), (4, 2), (6, 3), (10, 4)]
 
-/-- The seeds whose case does not round-trip. Empty is the claim. -/
+/-- The indices whose case does not round-trip. Empty is the claim. -/
 def failing (count : Nat) : List Nat :=
   (List.range count).filter
     (fun i =>
@@ -85,8 +68,8 @@ def failing (count : Nat) : List Nat :=
       !roundtrips (screen c r (genCase seed 6)))
 
 /-- **The fuzz claim.** No seed in range produces a state whose replay
-differs from it. A failure prints the seed; reproduce with
-`#eval genCase <seed> 6`. -/
+differs from it. List the failing indices with `#eval failing 400`; replay index `i`
+with `#eval genCase (nextRand (i * 7919 + 1)) 6`. -/
 example : failing 400 = [] := by native_decide
 
 /-- Longer cases, fewer of them: depth finds interactions that breadth does

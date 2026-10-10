@@ -97,7 +97,7 @@ configuration mistake with no valid meaning: a repeated host would double-query 
 show duplicate rows, and a host with a control byte in it goes into `ssh` argv, so
 scrubbing it would connect somewhere the user did not name. Reject rather than
 silently dedup or rewrite. The overview runs this *before* any connection is
-attempted, so a bad list refuses immediately and names the offender. Pure; the IO
+attempted, so a bad list refuses immediately and names the offender. Pure; the `IO`
 caller turns `.error` into `IO.userError`.
 
 The message reports the offending host **scrubbed**: it is printed to a terminal,

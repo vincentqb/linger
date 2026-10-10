@@ -16,7 +16,7 @@ surfaces save/delete errors for the daemon to log without exiting.
 
 namespace Linger.Runtime.Resume
 
-open Linger.Core.Checkpoint (Ckpt save load)
+open Linger.Core.Checkpoint (Ckpt saveBytes load)
 open Linger.Core.Session (State)
 
 def saveCkpt (name : String) (st : State) : IO Unit := do
@@ -31,7 +31,7 @@ def saveCkpt (name : String) (st : State) : IO Unit := do
       pure ""
   let cwd := if live.isEmpty then (st.metaKv.lookup "start_dir").getD "" else live
   let ck : Ckpt := { vt := st.vt, cwd, labels := st.labels }
-  let bytes := ByteArray.mk (save ck).toArray
+  let bytes := saveBytes ck
   let tmp := path ++ ".tmp"
   IO.FS.writeBinFile tmp bytes
   IO.FS.rename tmp path

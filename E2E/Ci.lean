@@ -13,9 +13,9 @@ times what it needs to; never ask for it and AGENTS.md's claim that the tree pas
 macOS stops being checked by anything. The billing arithmetic is recorded in
 SCRATCHPAD.md.
 
-`scripts/gates.sh` greps the workflow for the shape — `fromJSON`, both runner names, a
-`cron`, a `workflow_dispatch`, a `--since` — which catches deletion. It cannot catch
-behaviour: a grep cannot tell you that a push to main yields ubuntu alone.
+`scripts/gates.sh` greps the workflow for `fromJSON`, a `cron` and a
+`workflow_dispatch`, which catches their deletion. It cannot catch behaviour: a grep
+cannot tell you that a push to main yields ubuntu alone, so this suite drives every arm.
 
 WHY THIS DRIVES A SHELL SCRIPT. The decision has to be callable by a workflow step
 that compiles nothing (that is what makes the `gates` job cheap), so it is shell. It

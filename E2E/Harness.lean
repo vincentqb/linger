@@ -423,8 +423,8 @@ name is now a compile error in the suites, not a passing assertion. -/
 def Env.status (e : Env) (name : String) : IO Linger.Core.Status.Status := do
   return Linger.Core.Status.ofName ((← e.field name "status").getD "")
 
-/-- The pid of the daemon behind `name` — `tests/procs.py`'s `daemon_pids`, with
-its hard half **deleted** rather than ported.
+/-- The pid of the daemon behind `name`, which the retired Python harness's `procs.py`
+looked up; its hard half is **deleted** rather than ported.
 
 `procs.py` answered two questions: which pids are `linger __daemon <name>`
 (`pgrep -f`), and which of those live in *this* `LINGER_DIR`. The second is not

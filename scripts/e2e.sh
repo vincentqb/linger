@@ -1,35 +1,7 @@
 #!/bin/sh
-# Whole-deliverable check (specs/archive/lean-zmx.md Step 10). Exits 0 only if
-# everything below holds. Run from the repo root: ./scripts/e2e.sh
-#
-#   1. content-checked build of program + proofs + unit tests, zero warnings,
-#      and no import change suggested by lake shake for the library and proofs
-#   2. no `sorry` / `partial` in the pure core or the proofs
-#  2b. coverage: every inventoried pure definition occurs in a theorem
-#      type, and compiled renderer/replay references are classified
-#   3. posix shim smoke tests (lingertest)
-#   4. attach/detach/reattach/mirror/wait e2e (real ptys)
-#   5. reboot-resume e2e (SIGKILL + restore + corrupt tolerance)
-#   6. overview e2e (`linger ls` prints a list and exits)
-#   7. remote-over-ssh e2e (fake ssh: `-r` listing, attach name@host argv)
-#   8. adverse timing: busy-daemon listing (§Row) + name-ownership race
-#   9. graphics passthrough (kitty APC / sixel DCS reach the client raw)
-#  10. terminal ownership (query progress with zero/one/two clients + stable env)
-#  11. status column: attach marks seen, output while away marks unread
-#  12. agent verbs (info geometry/outseq, capture, send - , resize)
-#  13. watch: read-only live and checkpoint views (geometry, input, ownership, handback)
-#  14. recipes: native terminal launch settings; Lean import against daemons
-#  15. delivery: bounded replay, margin continuation, byte order and close deadlines
-#  16. manager: terminal selector, exact targets, paste, resize, cleanup and return
-#  17. titles: attention refresh, split output, pipe-error recovery and handback
-#  18. interchange: discarded foreign metadata, current fields and exclusive export
-#  19. identity: exact targets, offline reads and shared-resource ownership
-#  (1) also covers Tests/Fuzz.lean: randomized §Replay round-trip search
-#  every pty suite also carries an EXACT CHECK COUNT (see `--suites` below): green
-#  means "no failures AND every recorded assertion ran".
-#
-# RUN THIS IN THE FOREGROUND. Enforced, not requested: see "SIGINT must be
-# deliverable" below, which carries the measurement and the reasoning.
+# Complete verifier (`./lake test`): build, generated ABI, lint and source gates,
+# coverage, verifier regressions, shim smoke tests and live pty suites, each with an
+# exact assertion count. Run in the foreground (checked below).
 set -e
 cd "$(dirname "$0")/.."
 
@@ -66,7 +38,7 @@ fi
 # A shell without job control starts a `&` job with SIGINT and SIGQUIT disabled,
 # and that survives `execve`, so every descendant inherits it: the `e2e` binary,
 # the daemon, the session shell the daemon spawns on the pty, and the child that
-# shell runs. `^C` then generates a signal that kills nothing, and step 12's
+# shell runs. `^C` then generates a signal that kills nothing, and the agent suite's
 # `send - carries ^C` assertion fails — while passing standalone every time, which
 # is why it reads as a flake. Check inherited signal behavior before any suite runs.
 #
@@ -78,18 +50,17 @@ fi
 # sometimes kill this script instead of reporting on it.
 #
 # Reading `SigBlk` from /proc/self/status was the alternative, and it is wrong
-# twice. It is Linux-only, and AGENTS.md keeps platform splits to two places — but
-# worse, it is INCOMPLETE: measured here, bash 4.2 implements `&` as
-# `SigIgn 0x6`, NOT `SigBlk 0x6`, so a check reading `SigBlk` alone would have
-# passed in the very shell that reproduces the bug. /proc is used only to PRINT
-# both masks when the probe fires, where its absence on macOS costs a line of
+# twice. It is Linux-only, and worse, it is INCOMPLETE: measured here, bash 4.2
+# implements `&` as `SigIgn 0x6`, NOT `SigBlk 0x6`, so a check reading `SigBlk` alone
+# would have passed in the very shell that reproduces the bug. /proc is used only to
+# PRINT both masks when the probe fires, where its absence on macOS costs a line of
 # diagnosis and not the check.
 #
 # Any exit but 9 refuses, deliberately: an unexpected probe result is not evidence
 # that SIGINT works. And this cannot false-positive, because the probe tests
-# exactly the precondition step 12 already depends on — an environment that fails
-# it is an environment where the suite could not have passed anyway. It is NOT in
-# scripts/gates.sh: that file also runs from `pre-commit`, where a backgrounded
+# exactly the precondition the agent suite already depends on — an environment that
+# fails it is an environment where the suite could not have passed anyway. It is NOT
+# in scripts/gates.sh: that file also runs from `pre-commit`, where a backgrounded
 # commit is nobody's bug.
 sigint=0
 sh -c 'trap "exit 9" INT; kill -s INT $$; exit 7' > /dev/null 2>&1 || sigint=$?
@@ -98,33 +69,37 @@ if [ "$sigint" -ne 9 ]; then
   if [ -r /proc/self/status ]; then                    # Linux only, and diagnosis only
     grep -E '^Sig(Blk|Ign):' /proc/self/status >&2 || true
   fi
-  printf 'Step 12 asserts that ^C reaches the session child, so it would fail for a\n' >&2
-  printf 'reason that is not linger. Run this script in the FOREGROUND: a job started\n' >&2
-  printf 'with & in a shell without job control gets SIGINT and SIGQUIT disabled, and\n' >&2
-  printf 'that survives execve. setsid and nohup are fine alone; the & is what does it.\n' >&2
+  printf 'The agent suite asserts that ^C reaches the session child, so it would fail\n' >&2
+  printf 'for a reason that is not linger. Run this script in the FOREGROUND: a job\n' >&2
+  printf 'started with & in a shell without job control gets SIGINT and SIGQUIT disabled,\n' >&2
+  printf 'and that survives execve. setsid and nohup are fine alone; the & is what does it.\n' >&2
   fail "SIGINT is not deliverable (probe exited $sigint, want 9) — run in the foreground, not with '&'"
 fi
+# One log directory per run, so concurrent worktrees never share a log. The suites
+# write theirs here too; it is removed only after a green run.
+logs="$(mktemp -d /tmp/linger-verify.XXXXXX)"
+export LINGER_LOG_DIR="$logs"
 
 say "1. build (program + theorems + tests)"
 # Lake checks source/dependency content and replays cached diagnostics. Rehash
 # artifacts too, and fail on warnings even after a local warningAsError override.
 # Run `./lake clean` first for clean release/compiler validation.
-./lake --rehash --wfail build Linger Theorems Tests linger lingertest e2e > /tmp/linger-build.log 2>&1 \
-  || { tail -30 /tmp/linger-build.log; fail "build"; }
-if grep -qE '^(warning|error)' /tmp/linger-build.log; then
-  grep -E '^(warning|error)' /tmp/linger-build.log
+./lake --rehash --wfail build Linger LingerVt LingerVtTheorems LingerInput LingerInputTheorems \
+    LingerFuzzy Theorems Tests linger lingertest e2e > "$logs/build.log" 2>&1 \
+  || { tail -30 "$logs/build.log"; fail "build (see $logs/build.log)"; }
+# --wfail ignores warnings from elaborating lakefile.lean; this grep sees them.
+if grep -qE '^(warning|error)' "$logs/build.log"; then
+  grep -E '^(warning|error)' "$logs/build.log"
   fail "build is not warning-clean"
 fi
-grep -c 'Build completed successfully' /tmp/linger-build.log > /dev/null \
-  || fail "build did not report success"
 # Shake reads the oleans just built. Theorems.lean is not a `module`, so the proof
 # modules are named one by one. Tests stay out: shake cannot see `example` or
 # `#guard` uses. LingerTest and E2ETest stay out to bound the cost.
 shake_modules="$(git ls-files 'Theorems/*.lean' | sed 's/[.]lean$//; s#/#.#g')"
 # shellcheck disable=SC2086  # one module name per word
-./lake shake --keep-implied Linger Main $shake_modules > /tmp/linger-shake.log 2>&1 \
-  && [ ! -s /tmp/linger-shake.log ] \
-  || { cat /tmp/linger-shake.log; fail "lake shake suggests import changes"; }
+./lake shake --keep-implied Linger Main $shake_modules > "$logs/shake.log" 2>&1 \
+  && [ ! -s "$logs/shake.log" ] \
+  || { cat "$logs/shake.log"; fail "lake shake suggests import changes"; }
 
 say "1b. generated Lean / C shim ABI"
 # Compile declarations emitted by THIS pinned Lean together with the shim.
@@ -151,13 +126,8 @@ cmp -s "$abi_dir/generated" "$abi_dir/externs" \
   cat "$abi_dir/prototypes"
   printf '%s\n' '#include "shim.c"'
 } > "$abi_dir/check.c"
-# Resolve before `lake env` prepends its bundled compiler. On this Linux host
-# only Homebrew clang can run; elsewhere the installed compiler is sufficient.
-if [ "$(uname -s)" = Linux ] && [ -x /home/linuxbrew/.linuxbrew/bin/clang ]; then
-  abi_cc=/home/linuxbrew/.linuxbrew/bin/clang
-else
-  abi_cc="$(command -v clang)" || fail "clang missing for ABI check"
-fi
+# Resolve the compiler before `lake env` prepends its bundled one.
+abi_cc="$(command -v clang)" || fail "clang missing for ABI check"
 abi_prefix="$(./lake env lean --print-prefix)"
 "$abi_cc" -fsyntax-only -Wall -Werror -Wstrict-prototypes \
   -isystem "$abi_prefix/include" -I "$PWD/c" "$abi_dir/check.c" \
@@ -173,11 +143,11 @@ say "2b. semantic coverage of pure code + runtime emitter classification"
 # E2E.Coverage calls the shared exact-constant theorem census, then classifies
 # resolved references from the program just built above. Invoke Lean directly
 # so source-only changes cannot reuse a cached census.
-./lake env lean E2E/Coverage.lean > /tmp/linger-coverage.log 2>&1 \
-  || { cat /tmp/linger-coverage.log; fail "semantic coverage and emitter classification"; }
-grep '^pure semantic coverage:' /tmp/linger-coverage.log || true
-tail -1 /tmp/linger-coverage.log | grep -q '^FAILURES: 0$' || fail "coverage gate"
-printf '  coverage and emitter checks: OK (details: /tmp/linger-coverage.log)\n'
+./lake env lean E2E/Coverage.lean > "$logs/coverage.log" 2>&1 \
+  || { cat "$logs/coverage.log"; fail "semantic coverage and emitter classification"; }
+grep '^pure semantic coverage:' "$logs/coverage.log" || true
+tail -1 "$logs/coverage.log" | grep -q '^FAILURES: 0$' || fail "coverage gate"
+printf '  coverage and emitter checks: OK (details: %s/coverage.log)\n' "$logs"
 
 say "2c. verifier regression tests (CI policy, caches and suite isolation)"
 # E2E.Ci runs the real runner-selection script, including its `git log --since`
@@ -185,24 +155,11 @@ say "2c. verifier regression tests (CI policy, caches and suite isolation)"
 # against a temporary project.
 # The same runner checks exit status, final verdict, every assertion and both
 # streams. Intentional failures inside these tests stay in their captured logs.
-./.lake/build/bin/e2e --suites ci:52 hygiene:55 \
-  || fail "verifier regression checks (see /tmp/linger-{ci,hygiene}.out)"
-
-say "2d. fuzz corpus: no held-out mutations, failure lists asserted empty"
-# The §Replay fuzzer is only a guarantee if nothing is excluded and the
-# empty-failure assertions are not quietly shrunk. The Tests build already
-# proves `failing/failingDeep = []` (the examples fail to compile otherwise);
-# these greps stop the *assertions themselves* from being weakened or the
-# exclusion list from regrowing — asserted here rather than trusted to a reader.
-grep -qE 'def knownGap : Array String := #\[\]' Tests/Fuzz.lean \
-  || fail "fuzz: knownGap exclusion list is not empty (a mutation is held out)"
-grep -qE 'example : failing 400 = \[\]' Tests/Fuzz.lean \
-  || fail "fuzz: 'failing 400 = []' assertion missing or weakened"
-grep -qE 'example : failingDeep 150 = \[\]' Tests/Fuzz.lean \
-  || fail "fuzz: 'failingDeep 150 = []' assertion missing or weakened"
+./.lake/build/bin/e2e --suites ci:52 hygiene:56 \
+  || fail "verifier regression checks (see $logs/linger-ci.out and linger-hygiene.out)"
 
 say "3. posix shim smoke tests"
-shim_out=/tmp/linger-shim.out
+shim_out="$logs/shim.out"
 ./.lake/build/bin/lingertest > "$shim_out" 2>&1 \
   || { tail -25 "$shim_out"; fail "lingertest"; }
 tail -1 "$shim_out" | grep -q '^ALL PASS$' || fail "lingertest"
@@ -220,25 +177,25 @@ cleanup_sentinel() {
 }
 trap cleanup_sentinel EXIT HUP TERM
 LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger run "$sentinel_name" sleep 600
-sleep 1
 LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger info "$sentinel_name" >/dev/null \
   || fail "sentinel session did not start"
 
-say "4–19. live suites (four isolated processes, longer suites first)"
-# One assertion inventory, consumed by the tested Lean runner. Each child keeps
-# /tmp/linger-<suite>.out; zero exit, final verdict and exact count must all agree,
-# and no explicit FAIL line is accepted.
+say "4. live suites (separate processes, at most four at once)"
+# One assertion inventory, consumed by the tested Lean runner, longer suites first.
+# Each child keeps $logs/linger-<suite>.out; zero exit, final verdict and exact count
+# must all agree, and no explicit FAIL line is accepted.
 # Ordinary child spawning preserves SIGINT, unlike a shell's asynchronous list.
 # No suite shares an Env directory, and the runner waits for all of them on failure.
 ./.lake/build/bin/e2e --suites \
   manager:123 delivery:37 attach:47 agent:47 \
   resume:15 watch:40 title:19 graphics:9 robust:26 \
   interop:61 recipes:58 status:17 terminal:12 overview:15 remote:64 identity:25 \
-  || fail "live suites (see /tmp/linger-*.out)"
+  || fail "live suites (see $logs/linger-*.out)"
 
 LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger info "$sentinel_name" >/dev/null \
   || fail "a suite terminated the unrelated sentinel session"
 cleanup_sentinel
 trap - EXIT HUP TERM
 finish_phase
-printf '\nE2E OK — linger builds clean, core is pure, 16 live suites green.\n'
+rm -r "$logs"
+printf '\nE2E OK\n'

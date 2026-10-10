@@ -205,7 +205,7 @@ jobs:
       - name: logs on failure
         if: failure()
         run: |
-          for f in /tmp/linger-*.log /tmp/linger-*.out; do
+          for f in /tmp/linger-verify.*/* /tmp/linger-*.log /tmp/linger-*.out; do
             [ -f "$f" ] || continue
             printf '\n===== %s =====\n' "$f"
             tail -100 "$f"

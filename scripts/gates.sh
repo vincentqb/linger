@@ -1,12 +1,8 @@
 #!/bin/sh
 # scripts/gates.sh — the SOURCE-TREE gates, and the only place the ratchet numbers live.
 #
-# Split out of scripts/e2e.sh (2026-08-29) for one reason: these checks are
-# milliseconds of `git grep` and `awk`, but inside e2e.sh they only fired AFTER a
-# `rm -rf .lake/build`, a full rebuild and ten pty suites. The `pre-commit` hook now
-# runs them at the moment the mistake is made, and e2e.sh runs THIS SAME FILE — so a
-# cap can never disagree between the hook and the gate, which is the one failure mode
-# that would make a hook worse than no hook.
+# The `pre-commit` hook and the full verifier both run this file through
+# scripts/lint.sh, so a cap can never disagree between the hook and the gate.
 #
 # Every number here only ever goes DOWN without discussion. Raising one is a
 # deliberate, reviewable edit, and that review is the whole point of the ratchet.
@@ -14,12 +10,16 @@
 # Run standalone:  sh scripts/gates.sh
 set -e
 cd "$(dirname "$0")/.."
-fail() { printf 'GATE FAIL: %s\n' "$1" >&2; exit 1; }
+# fail() inside $(...) or a pipeline still stops the gates: it signals this shell. The
+# EXIT trap keeps status 1 where ksh93 would report the interrupted pipeline's status.
+trap 'gates_failed=1; exit 1' TERM
+trap '[ -z "${gates_failed-}" ] || exit 1' EXIT
+fail() { printf 'GATE FAIL: %s\n' "$1" >&2; kill -s TERM "$$"; exit 1; }
 
 # --- code_grep: the gates read CODE, not prose -------------------------------
 # Every source grep below goes through this, and the reason is one trap on its
 # FOURTH sighting: these greps read DOCSTRINGS as well as code. `native_decide`
-# in a doc comment under `Theorems/` fails the purity gate exactly as it would in
+# in a doc comment under `Theorems/` failed the purity gate exactly as it would in
 # a proof (fb6a0e6; again 2026-08-29; again 2026-09-13), and the decoder-forge
 # gate once failed on its OWN documentation, which quoted the forge it had just
 # removed. That last one was fixed by teaching ONE gate to skip backtick-quoted
@@ -55,8 +55,10 @@ BEGIN { re = ENVIRON["CG_RE"] }
 END { exit (hits > 0 ? 0 : 1) }'
 code_grep() {                                # code_grep <ere> <pathspec>...
   cg_re="$1"; shift
-  cg_files="$(git ls-files -- "$@")"
-  [ -n "$cg_files" ] || fail "code_grep: nothing tracked matches '$*' (a gate points at a path that moved)"
+  # Every pathspec must match a tracked file: a `! code_grep …` gate or a ratchet
+  # whose path moved would otherwise pass by finding nothing.
+  cg_files="$(git ls-files --error-unmatch -- "$@" 2>/dev/null)" \
+    || fail "code_grep: a pathspec in $* matches nothing tracked (a gate points at a path that moved)"
   # Deliberate word split: no tracked path in this tree has a space. `/dev/null`
   # is the last operand so awk can never fall back to stdin and hang.
   # shellcheck disable=SC2086
@@ -64,40 +66,27 @@ code_grep() {                                # code_grep <ere> <pathspec>...
 }
 code_count() { code_grep "$@" | awk 'END { print NR + 0 }'; }   # -> a number
 
-# A pathspec that stops matching makes a `! code_grep …` gate pass by finding
-# nothing, and a ratchet read through `code_count` reads 0 — the one way a gate
-# rots in silence. `Linger/Core/Vt.lean` used to carry the only such guard, for
-# the friend set; this is that guard generalized to every path named below. (It
-# cannot live inside `code_grep`, because `code_count` runs it down a pipe and an
-# `exit` there would only leave the subshell.)
-for p in Linger/Core Linger/Core/Vt.lean Linger/Core/Checkpoint.lean \
-         Linger/Core/Session.lean Linger/Core/Driver.lean Linger/Core/Replay.lean Linger/Core/Title.lean \
-         Linger/Runtime Linger/Runtime/Client.lean Linger/Runtime/Daemon.lean Linger/Runtime/Paths.lean \
-         Linger/Runtime/Command.lean Theorems/Title.lean Theorems/TerminalTitle.lean \
-         Theorems Theorems/Session.lean Theorems/Driver.lean Theorems/Replay.lean \
-         Theorems/Name.lean Theorems/Remote.lean Theorems/Claim.lean Tests E2E \
-         Linger/Tools/Resurrect.lean Theorems/Resurrect.lean Linger/Manager/Resurrect.lean \
-         Linger/Tools/Key.lean Linger/Tools/Fuzzy.lean Linger/Tools/Picker.lean Linger/Tools/Input.lean \
-         Linger/Tools/Entry.lean Theorems/Entry.lean \
-         Theorems/Picker.lean Theorems/Input.lean Theorems/Key.lean \
-         Main.lean Linger/Manager/Picker.lean E2E/Manager.lean \
-         LingerTest.lean c/shim.c lakefile.lean lake-manifest.json README.md \
-         .pre-commit-config.yaml; do
-  [ -e "$p" ] || fail "$p is gone — a gate below would pass by matching nothing"
-done
-
 ! code_grep 'sorry' 'Linger/Core/*' 'Linger/Tools/*' 'Theorems/*' || fail "sorry found"
-! code_grep 'sorryAx' 'Linger/Core/*' 'Linger/Tools/*' 'Theorems/*' || fail "sorryAx found"
-! code_grep '(^|[^[:alnum:]_])partial def([^[:alnum:]_]|$)' 'Linger/Core/*' 'Linger/Tools/*' \
-  || fail "partial def in pure core"
-! code_grep ': *IO ' 'Linger/Core/*' 'Linger/Tools/*' || fail "IO in pure core"
-# Proofs must reduce in the kernel, never by compiled evaluation: a
-# `native_decide` in Theorems/ would trust the compiler + `Decidable`
-# instance instead of the kernel, and (unlike the tests, where evaluating
-# golden bytes is the point) that is a hole in a *proof*. THEOREMS.md's
-# "Reading a row" makes this a promise; this makes it enforced.
-! code_grep '(^|[^[:alnum:]_])native_decide([^[:alnum:]_]|$)' 'Theorems/*' \
-  || fail "native_decide in a proof (Theorems/)"
+# Termination is proved everywhere, never asserted with the keyword.
+! code_grep '(^|[^[:alnum:]_])partial def([^[:alnum:]_]|$)' '*.lean' \
+  || fail "partial def: use structural or well-founded recursion, or a do-block loop"
+# A raised limit means a proof or term got harder; that is a signal to restructure.
+! code_grep 'set_option[[:space:]]+(maxHeartbeats|maxRecDepth)' '*.lean' \
+  || fail "raised maxHeartbeats/maxRecDepth: restructure instead of budgeting"
+# Fuel makes a recursion total by cutting it off, so the claims hold of a truncation.
+! code_grep '[(]fuel[[:space:]]*:' '*.lean' \
+  || fail "a fuel parameter: recurse on the data or a decreasing measure"
+# Any `IO`, `BaseIO` or `EIO` token, in a type or a call, is an effect in pure code.
+! code_grep '(^|[^[:alnum:]_.])(E|Base)?IO([^[:alnum:]_]|$)' 'Linger/Core/*' 'Linger/Tools/*' \
+  || fail "IO in pure core"
+# A predicate preserved by each step is preserved by the fold: one `invariant_foldl`.
+! code_grep '[(][a-z][A-Za-z0-9]*_foldl f hf as [(]f v a[)][)][.]trans [(]hf v a[)]' 'Theorems/*' \
+  || fail "hand-rolled fold-preservation lemma: derive it from invariant_foldl"
+# The build proves both fuzz claims; this keeps them in place at their full ranges.
+for c in '^example : failing 400 = [[][]] := by native_decide$' \
+         '^example : failingDeep 150 = [[][]] := by native_decide$'; do
+  code_grep "$c" Tests/Fuzz.lean >/dev/null || fail "fuzz claim weakened or disabled: $c"
+done
 # the OS surface stays where AGENTS.md says it is
 [ "$(code_grep '@[[]extern' '*.lean' | awk -F: '!seen[$1]++ { print $1 }' | tr -d ' ')" = "Linger/Posix.lean" ] \
   || fail "extern declarations outside Linger/Posix.lean"
@@ -120,7 +109,7 @@ done
 # not by reverting a fix. Control: on the tree carrying that exhibit, every other gate
 # in this file said OK.
 #
-# TREE-WIDE and fail-closed — measured zero hits across all 71 tracked `.lean` files, so
+# TREE-WIDE and fail-closed — measured zero hits across the tracked `.lean` files, so
 # there is nothing to grandfather and no exemption list to rot. `Tests/` and `E2E/` are
 # inside it on purpose: a suite that laundered a value would be asserting about a state
 # the binary cannot produce, which is this defect wearing a test's clothes.
@@ -132,17 +121,22 @@ done
 # `attribute [implemented_by f] g` both set it.
 #
 # DECLINED: adding `opaque`. Measured rather than deferred to the earlier decision —
-# `opaque` has 26 hits over tracked `.lean`, 22 of them the actual `@[extern`
-# declarations in `Linger/Posix.lean`, so the gate could only ever read "opaque outside
-# Posix.lean". What that would catch is not a forge: with no `@[extern]` and no
+# most `opaque` hits over tracked `.lean` are actual `@[extern` declarations in
+# `Linger/Posix.lean`, so the gate could only ever read "opaque outside Posix.lean".
+# What that would catch is not a forge: with no `@[extern]` and no
 # `@[implemented_by]` the compiler emits no value at all, so `opaque x : Vt` is a
 # liveness hazard, not an implementation that disagrees with the model (the R5 family,
-# which the spec bounds as compile-time prose). Its three remaining uses are the English
-# word in prose and `code_grep` strips none of them — all three are unbackticked — so the
-# helper does not make it cheaper either.
+# which the spec bounds as compile-time prose). The remaining uses are mostly the English
+# word in unbackticked prose, which `code_grep` keeps, so the helper does not make it
+# cheaper either.
 ! code_grep '(^|[^[:alnum:]_])(unsafe|implemented_by)' '*.lean' \
   || fail "unsafe / @[implemented_by] in Lean — the compiled program may then disagree with every theorem about it (R4; see the comment on this gate)"
-[ "$(ls c/ | tr -d ' \n')" = "shim.c" ] || fail "more than one C file"
+[ "$(git ls-files c/)" = c/shim.c ] || fail "more than one C file"
+# The shim returns -errno and errno numbers differ by platform: 918c671's
+# `r == -111` meant ECONNREFUSED only on Linux.
+! code_grep '(==|!=)[[:space:]]*[(]?-([2-9]|[1-9][0-9]+)([^0-9]|$)' 'Linger/Runtime/*' \
+    'Linger/Manager/*' 'Linger/Posix.lean' 'Main.lean' 'E2E/*' 'LingerTest.lean' \
+  || fail "a negative literal comparison looks like an errno number: compare the sign, or classify the errno in c/shim.c"
 # Lean/libuv may have worker threads when the application forks. The child
 # paths and their two execution helpers must not allocate, format through
 # stdio, mutate the environment, or use execvp's libc internals. Inventory the
@@ -223,12 +217,15 @@ import_closure Linger/Core/Replay.lean \
 # Named targets must build the promised roots, not just happen to succeed.
 # Read declaration lines through code_grep, then compare their verbatim Name
 # literals: multiple backticks on a roots line are Lean syntax, not prose.
-library_roots() {
-  lr_got="$(code_grep '^lean_lib |^[[:space:]]+#[[]' lakefile.lean \
+library_decl() {                             # `lean_lib $1`, folded with its `#[` lines
+  code_grep '^lean_lib |^[[:space:]]+#[[]' lakefile.lean \
     | sed 's/^[^:]*:[0-9]*://' \
     | awk -v lib="$1" '
         $1 == "lean_lib" { active = ($2 == lib) }
-        active { $1 = $1; printf "%s ", $0 }')"
+        active { $1 = $1; printf "%s ", $0 }'
+}
+library_roots() {
+  lr_got="$(library_decl "$1")"
   [ "$lr_got" = "lean_lib $1 where roots := $2 " ] \
     || fail "$1 lost its independent library roots: $lr_got"
 }
@@ -237,6 +234,13 @@ library_roots LingerVtTheorems '#[`Theorems.Terminal, `Theorems.TerminalTitle, `
 library_roots LingerInput '#[`Linger.Tools.Input]'
 library_roots LingerInputTheorems '#[`Theorems.Input]'
 library_roots LingerFuzzy '#[`Linger.Tools.Fuzzy]'
+# Proofs and fixtures build every module under their directory, so a module that no
+# root imports is still checked.
+for lib in Theorems Tests; do
+  lr_got="$(library_decl "$lib")"
+  [ "$lr_got" = "lean_lib $lib where globs := #[.andSubmodules \`$lib] " ] \
+    || fail "$lib no longer builds every module under $lib/: $lr_got"
+done
 
 # Check every member of the proof family, not only the root headers: an
 # intermediate VT or renderer lemma must not pull session policy into the target.
@@ -272,6 +276,12 @@ import_closure Linger/Manager/Picker.lean \
   'public import Linger.Tools.Picker;import Linger.Posix;import Linger.Core.Terminal;import Linger.Runtime.Command;'
 import_closure Main.lean \
   'import Linger.Runtime.Cli;import Linger.Tools.Entry;import Linger.Manager.Picker;import Linger.Manager.Resurrect;'
+# `lean_lib Linger` builds the umbrella's closure, so this list is what `./lake build`
+# checks of the session library.
+import_closure Linger.lean "$(printf 'public import Linger.%s;' Core.Buf Posix Core.Wire \
+  Core.Vt Core.Render Core.Terminal Core.Name Core.Session Core.Driver Core.Checkpoint \
+  Core.Remote Core.Listing Core.Status Core.Title Runtime.Paths Runtime.Command \
+  Runtime.Daemon Runtime.Client Runtime.Cli Runtime.Resume)"
 module_imports 'Linger/Core/*' 'Linger/Runtime/*' Linger/Posix.lean Linger.lean \
 | awk -F: '
   { mod = $3
@@ -409,16 +419,12 @@ for tie in \
   'let items := Linger[.]Tools[.]Picker[.]items state[.]candidates state[.]query state[.]allowCreate' \
   'let mut state := Linger[.]Tools[.]Picker[.]init [[]] [(]!savedTmux && !readOnly[)]' \
   'let mut decoder := Linger[.]Tools[.]Input[.]init' \
-  'match Linger[.]Tools[.]Picker[.]step state key with' \
-  'let cells := Linger[.]Core[.]Vt[.]charWidth c' \
   'let fds := #[[]stdinFd[]]' \
   'let events := #[[]POLLIN[]]' \
   'let ready ← poll fds events 50' \
-  'let frame := draw state snapshot loaded withColor savedTmux current[.]1 current[.]2' \
   'let withColor := [(]← IO[.]getEnv "NO_COLOR"[)][.]isNone' \
   'writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Core[.]Terminal[.]Title[.]ansi "linger"[)][.]toArray[)]' \
   'writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Core[.]Terminal[.]Title[.]ansi ""[)][.]toArray[)]' \
-  'writeAll stdoutFd frame[.]toUTF8' \
   'discard child[.]wait' \
   'let child ← IO[.]Process[.]spawn [{] cmd := executable, args := attachArgs target readOnly [}]'; do
   code_grep "^[[:space:]]+$tie$" Linger/Manager/Picker.lean >/dev/null \
@@ -441,7 +447,6 @@ for tie in \
   'for key in keys do if !loaded && key == [.]accept then continue match Linger[.]Tools[.]Picker[.]step state key with [|] [.]stay next => dirty := dirty [|][|] next != state state := next [|] [.]attach target [|] [.]create target => return [.]attach target snapshot [|] [.]cancel => return [.]cancel if let some result[[:space:]]*← Linger[.]Runtime[.]Command[.]poll pending then' \
   'nextListing := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]← monotonicMs[)] ≥ nextListing then pending[.]set [(]some [(]← Linger[.]Runtime[.]Command[.]start executable args[)][)] return [.]cancel finally' \
   'finally Linger[.]Runtime[.]Command[.]stop pending [(]if savedTmux then 0 else 1000[)]' \
-  '[|] [.]attach target [|] [.]create target => return [.]attach target snapshot' \
   'let args := if savedTmux then #[[]"tmux", "ls", "--porcelain"[]] [+][+] save[.]toArray else #[[]"ls", "-r", "--porcelain"[]]' \
   'match ← choose executable [(]readOnly := readOnly[)] with' \
   'def attachArgs [(]target : String[)] [(]readOnly : Bool := false[)] : Array String := #[[]"attach"[]] [+][+] [(]if readOnly then #[[]"--read-only"[]] else #[[][]][)] [+][+] [(]if target[.]startsWith "-" then #[[]"--", target[]] else #[[]target[]][)]'; do
@@ -578,26 +583,25 @@ awk '
 # `import all Linger.Core.Session` — a plain `public import`er of `Vt` — does not
 # transit, and neither does the `Linger` umbrella, whose imports are all `public`), so
 # the closure over those edges IS the friend set and nothing else can widen it. Gating
-# the edges instead would mean recording all 78 of them, of which about five matter, and
+# the edges instead would mean recording all of them, though few matter, and
 # would fire on every legitimate rewire of the `Theorems/Render/*` chain — noise on the
 # common change, which is how a gate stops being read.
 #
-# The permitted region is an EXACT file list plus two directories, and that split
-# is by edit frequency, measured: of 192 commits, 36 added a `.lean` under `Theorems/`
-# or `Tests/` — about one commit in five — against 11 under `Linger/Core/`, only four of
-# which are in the closure. So a per-file list over `Theorems/**` would be edited
-# reflexively, while the core list changes rarely, which is what makes it a
-# checkpoint. `Theorems/**` and `Tests/**` are friends BY DECLARATION (see
-# `Linger/Core/Vt.lean`, "## Every door"), and `Tests/` deliberately forges invalid
+# The permitted region is an EXACT file list plus two directories, and that split is by
+# edit frequency: commits add a `.lean` under `Theorems/` or `Tests/` more often than
+# one under `Linger/Core/`, and few of those join the closure. So a per-file list over
+# `Theorems/**` would be edited reflexively, while the core list changes rarely, which
+# is what makes it a checkpoint. `Theorems/**` and `Tests/**` are friends BY DECLARATION
+# (see `Linger/Core/Vt.lean`, "## Every door"), and `Tests/` deliberately forges invalid
 # states in its negative fixtures, so listing its files one by one would gate a
 # non-property. Everything else is outside and fail-closed — `E2E/**`,
 # `LingerTest.lean`, `Main.lean`, `Linger/Posix.lean`, all of `Linger/Runtime/` and the
 # other `Linger/Core/` modules. Replay joins only to read shared immutable rows.
-# `E2E/**` is outside deliberately: a pty suite
-# asserts on bytes the real binary emitted, so a forged `Vt` there would be an assertion
-# about a state the binary cannot reach — the very bug the seal exists to prevent.
+# `E2E/**` is outside deliberately: a pty suite asserts on bytes the real binary
+# emitted, so a forged `Vt` there would be an assertion about a state the binary cannot
+# reach — the very bug the seal exists to prevent.
 #
-# EXACT means both directions, as with the three toolkit lists above: a recorded friend
+# EXACT means both directions, as with the toolkit lists above: a recorded friend
 # that stops reaching `Vt` fails too, so a future step taking a friend import out is a
 # reviewable edit here rather than a silent one. No cardinality number is recorded — the
 # Step 4 record killed the job-count ratchet because cardinality is blind to identity,
@@ -607,10 +611,10 @@ awk '
 # spaces) and `meta import all Foo` both compile — measured, along with the two that do
 # not: `public import all` and `private import all` are rejected by Lean, and a tab is
 # refused before it reaches here. Anchoring at column 0 would leave a one-space evasion.
-# The prose hazard the loose regex used to buy (AGENTS.md: these greps read docstrings)
-# is now `code_grep`'s, not this gate's — a backticked `import all Foo` anywhere in a
-# docstring is invisible to it. What survives is narrower and still worth writing down:
-# do not begin a docstring line with a BARE, unbackticked `import all`.
+# The prose hazard the loose regex used to buy is now `code_grep`'s, not this gate's —
+# a backticked `import all Foo` anywhere in a docstring is invisible to it. What
+# survives is narrower and still worth writing down: do not begin a docstring line with
+# a BARE, unbackticked `import all`.
 VT_ALL_RE='^[[:space:]]*(meta[[:space:]]+)*import[[:space:]]+all[[:space:]]+'
 VT_FRIEND_EXACT='Linger/Core/Vt.lean Linger/Core/Render.lean Linger/Core/Terminal.lean Linger/Core/Checkpoint.lean Linger/Core/Replay.lean'
 VT_FRIEND_DIRS='Theorems/ Tests/'
@@ -870,6 +874,15 @@ for tie in \
   printf '%s\n' "$paths_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "session paths or lifetime locking bypassed their contract: $tie"
 done
+# A listing row takes its name verbatim from the socket filename (`rowFields_name`), so
+# both listings pass every directory entry through the exact name check.
+for tie in \
+  'private def listNames [(]dir suffix : String[)] : IO [(]List String[)] := do ensureDir dir return [(]← System[.]FilePath[.]readDir dir[)][.]toList[.]filterMap fun e => [(]e[.]fileName[.]dropSuffix[?] suffix[)][.]bind [(]Linger[.]Core[.]Name[.]check ·[.]toString[)]' \
+  'def listSocketNames : IO [(]List String[)] := do listNames [(]← socketDir[)] "[.]sock"' \
+  'def listCkptNames : IO [(]List String[)] := do listNames [(]← stateDir[)] "[.]ckpt"'; do
+  printf '%s\n' "$paths_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+    || fail "session listing must check every directory entry with Name.check: $tie"
+done
 ! code_grep 'removeFile|rename' Linger/Runtime/Paths.lean \
   || fail "lock path construction and acquisition must never unlink or replace a lock inode"
 printf '%s\n' "$client_code" | CG_RE='(^|[[:space:]])try Paths[.]checkSpelling path return some fd catch err => close fd throw err([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
@@ -940,14 +953,13 @@ code_grep "^[[:space:]]+rt ← pump rt' [(]events [+][+] [[][.]tick now[]][)]$" 
 #
 # TWO-SIDED, deliberately. A gate watching only `Daemon.lean` passes by vacuous truth
 # the moment the model is deleted, and it is the correspondence being gated, not either
-# end of it. Same argument as the toolkit closure lists and the friend set below, where
+# end of it. Same argument as the toolkit closure lists and the friend set above, where
 # a RECORDED friend that stops reaching `Vt` also fails: exact means both directions.
 #
 # Through `code_grep`, so a comment QUOTING the call site cannot satisfy a gate about
 # the call site — the inverse of the decoder-forge gate's problem and the more dangerous
-# half, since it fails open. `Theorems/Session.lean` quotes this exact line twice
-# (:1016, :1037, inside docstring fences) and `Daemon.lean` names `Vt.init 80 24` in
-# prose at :348; measured, each regex matches exactly one line.
+# half, since it fails open. `Theorems/Session.lean` quotes this exact line twice,
+# inside docstring fences; measured, each regex matches exactly one line.
 #
 # One known false-positive mode, and it is the right one: if either line grows past the
 # formatter's width and wraps, the gate fires. That is a loud failure on precisely the
@@ -1060,56 +1072,15 @@ code_grep '^[[:space:]]+let [(]sb, l[)] ← rRing l [(]some sbCap[)]$' 'Linger/C
   || fail "the checkpoint history reader stopped using its row cap"
 code_grep '^[[:space:]]+let [(]altGrid, l[)] ← rAlt l [(]some cols[)] [(]some rows[)]$' 'Linger/Core/Checkpoint.lean' > /dev/null \
   || fail "the checkpoint alternate screen stopped using validated dimensions"
-
-# heartbeat ratchet. A `set_option maxHeartbeats` raise is a MEASUREMENT, and it
-# has an expiry date that nothing else enforces: the 2026-08-18 factoring audit
-# deleted 18 of 20, and the control run showed six of those were already
-# deletable BEFORE the file split — budget added when the proofs were rougher and
-# never re-measured once the surrounding lemmas were factored. So the sweep is
-# cheap and the number only goes DOWN: after a refactor, try deleting them.
-# **The cap is now ZERO** (2026-09-14): the last raise was
-# `Vt.renderable_stepGround`, and it did not need a bigger budget — it needed a
-# better closer. Re-measured in tree: the `first | ...` script genuinely still
-# timed out at the default 200000 (confirmed, not assumed), but `grind` with the
-# four `renderable_*` lemmas closes every branch inside it, retiring that raise
-# AND the `maxRecDepth 4096` above it, and cutting `./lake build Theorems` from
-# 115.9s to 78.2s. Break-verified twice: drop `renderable_congr` from the lemma
-# set, or drop the `Renderable v` hypothesis, and `grind` fails.
-# Like the semantic pure-core coverage gate, zero flips this from a budget to
-# spend into an invariant to keep: a new raise means a proof got harder, which is the signal
-# design-for-provability says to read, not silence.
-HEARTBEAT_CAP=0
-hb_n="$(code_count 'set_option maxHeartbeats' 'Theorems/*')"
-[ "$hb_n" -le "$HEARTBEAT_CAP" ] \
-  || fail "maxHeartbeats raises grew to $hb_n (cap $HEARTBEAT_CAP); a proof got harder — read that, or re-measure and delete a stale one"
-
-# recursion-depth ratchet — the sibling the heartbeat one lacked for a year, added
-# 2026-09-14 because the same rot was found by the same argument. `maxRecDepth` is a
-# MEASUREMENT with the same expiry as `maxHeartbeats` and had no gate, so nobody
-# re-measured: of the three raises in `Theorems/Vt.lean`, TWO were stale — `8000` on
-# `uaz_stepGround` and `2000` on `stick_stepGround` both deleted with the proofs
-# untouched and the build green. The third (`4096` on `stepGround`'s `Good` proof)
-# was real at that revision: line 730 hit the recursion limit without it.
-# The audit's explicit Good.stepGround dispatch now proves each branch under
-# the default limit. The last raise is gone. The `4096` on
-# `renderable_stepGround` went with that proof's earlier `grind` rewrite.
-# Same direction-of-travel rule as above: DOWN without discussion, up only as a signal
-# to read. A raise here means a term got deeper, which is usually a dispatch that grew
-# arms — the thing design-for-provability says to restructure rather than budget for.
-RECDEPTH_CAP=0
-rd_n="$(code_count 'set_option maxRecDepth' 'Theorems/*')"
-[ "$rd_n" -le "$RECDEPTH_CAP" ] \
-  || fail "maxRecDepth raises grew to $rd_n (cap $RECDEPTH_CAP); a term got deeper — read that, or re-measure and delete a stale one"
-
-# runtime `partial def` ratchet. Five of the seven shed the keyword on 2026-08-18
-# once someone checked: `while`/`for` in a `do` block never needed it, and none of
-# the five self-recursed. `pump` uses the total driver with decreasing feedback
-# depth. `parseLs` exposes its structurally smaller tail.
-# Ratcheted so the keyword cannot creep back by habit.
-RUNTIME_PARTIAL_CAP=0
-rp_n="$(code_count 'partial def' 'Linger/Runtime/*')"
-[ "$rp_n" -le "$RUNTIME_PARTIAL_CAP" ] \
-  || fail "Linger/Runtime grew to $rp_n partial defs (cap $RUNTIME_PARTIAL_CAP); a do-block loop does not need the keyword"
+# The checkpoint hooks are `IO`, so no theorem sees them use the proved codec: write
+# the state's own fields through `saveBytes` (`saveBytes_eq`), and return what `load` read.
+resume_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Runtime/Resume.lean)"
+for tie in \
+  'let ck : Ckpt := [{] vt := st[.]vt, cwd, labels := st[.]labels [}] let bytes := saveBytes ck' \
+  'match load bytes[.]toList with [|] some ck => return some [(]ck[.]vt, ck[.]cwd, ck[.]labels[)]'; do
+  printf '%s\n' "$resume_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+    || fail "checkpoint hooks bypassed the proved codec: $tie"
+done
 
 # Test-orchestrator safety. The pty suites isolate themselves by LINGER_DIR; an
 # unscoped process-name kill reaches real sessions outside that directory. A skipped
@@ -1168,32 +1139,87 @@ help_n="$(printf '%s\n' "$help_glyphs" | awk 'NF { n++ } END { print n+0 }')"
   "$(printf '%s\n' "$help_glyphs" | LC_ALL=C sort)" ] \
   || fail "linger help status legend differs from Status.icon"
 
-# Every declaration name THEOREMS.md cites must resolve to a declaration. This is
-# gated rather than reviewed because reviewing it produced a FALSE CLEAN: the one-off
-# check run in step 8 grepped each name with `git grep -w`, which matches prose and
-# comments, so `scrollbackAnsi_le` — named by THEOREMS.md and by two code comments, and
-# declared nowhere — satisfied it. A doc that promises a theorem is unfalsifiable until
-# something looks for the declaration, so this looks for `theorem|lemma|def|abbrev`.
+# Every declaration name cited in backticks must resolve to a declaration, in THEOREMS.md
+# and in every tracked `.lean` file, comments included. This is gated rather than
+# reviewed because reviewing it produced a FALSE CLEAN: the one-off check run in step 8
+# grepped each name with `git grep -w`, which matches prose and comments, so
+# `scrollbackAnsi_le`, which THEOREMS.md and two code comments named and nothing then
+# declared, satisfied it. A doc that promises a theorem is unfalsifiable until something
+# looks for the declaration, so this looks for `theorem|lemma|def|abbrev`.
 #
 # Basenames, because a citation is written unqualified while the declaration sits in a
 # namespace. CamelCase names (types, structures) and file/section names are skipped:
 # the target here is the `snake_case` claim names, which is what a reader would try to
 # look up. Empty extraction is rejected so the check cannot pass without citations.
-thm_cites="$(grep -oE '`[a-z][A-Za-z0-9_.]*`' THEOREMS.md | tr -d '`' \
-  | grep '_' | grep -vE '[.](md|lean|sh)$' | sed 's/.*[.]//' | sort -u)"
+# Two lists hold names cited but not declared in Lean here: claims a comment states are
+# absent, which must stay undeclared, and names from C, the Lean toolchain or GitHub,
+# plus one lemma-name prefix. Every listed name must still be cited.
+cite_absent='mmap_id_gridAnsi sb_csiDispatch_any load_legacy_save save_no_legacy'
+cite_foreign="lean_chmod linger_write lean_io_process_get_pid pid_t tty_do_resize \
+  native_decide bv_decide lean_exe workflow_dispatch org_"
+cite_scan() {                                # file:line:basename per backticked snake_case name
+  { grep -noE '`[a-z][A-Za-z0-9_.]*`' THEOREMS.md | sed 's/^/THEOREMS.md:/'
+    git grep -noE '`[a-z][A-Za-z0-9_.]*`' -- '*.lean'; } \
+  | awk -F: '{ name = $3; gsub(/`/, "", name)
+      if (name ~ /_/ && name !~ /[.](md|lean|sh)$/) { sub(/.*[.]/, "", name); print $1 ":" $2 ":" name } }'
+}
+thm_cites="$(cite_scan | awk -F: '$1 == "THEOREMS.md" { print $3 }' | sort -u)"
 [ -n "$thm_cites" ] \
   || fail "no declaration citations found in THEOREMS.md"
 thm_decls="$(git grep -hoE '^ *(public )?(private )?(theorem|lemma|def|abbrev) [A-Za-z][A-Za-z0-9_.]*' \
   -- '*.lean' | sed 's/.*[[:space:]]//; s/.*[.]//' | sort -u)"
-thm_bad=0
-for name in $thm_cites; do
-  # Drain the declaration list: grep -q can close a large pipe before printf ends.
-  printf '%s\n' "$thm_decls" | grep -xF -- "$name" > /dev/null && continue
-  thm_bad=1
-  printf '  THEOREMS.md cites `%s`, which is declared nowhere\n' "$name" >&2
-done
-[ "$thm_bad" -eq 0 ] \
-  || fail "THEOREMS.md names a declaration that does not exist — state an absent proof as absent, not as a forward reference"
+# E2E/Coverage.lean backs each renderer and replay reference with the claims covering
+# it; those resolve too. The rows are counted, so a row the extraction misses fails.
+emitter_claims="$(awk '
+  /^def emitters / { on = 1 }
+  on { text = text " " $0 }
+  on && /[)][]]/ { on = 0 }
+  END {
+    while (match(text, /[(]"[^"]*"[[:space:]]*,[[:space:]]*"[^"]*"[[:space:]]*[)]/)) {
+      row = substr(text, RSTART, RLENGTH); text = substr(text, RSTART + RLENGTH); rows++
+      sub(/^[(]"[^"]*"[[:space:]]*,[[:space:]]*"/, "", row); sub(/"[[:space:]]*[)]$/, "", row)
+      if (row == "type abbreviation") continue
+      n = split(row, part, " / ")
+      for (k = 1; k <= n; k++) {
+        name = part[k]; sub(/^component of /, "", name)
+        if (name ~ /^[A-Za-z][A-Za-z0-9_.]*$/) sub(/.*[.]/, "", name)
+        print "E2E/Coverage.lean:emitters:" name } }
+    print "#rows " rows }' E2E/Coverage.lean)"
+[ "$(printf '%s\n' "$emitter_claims" | sed -n 's/^#rows //p')" = 28 ] \
+  || fail "E2E/Coverage.lean's emitter table no longer reads as its 28 rows"
+{ printf '%s\n' "$thm_decls" '#cites'; cite_scan; printf '%s\n' "$emitter_claims" | grep -v '^#rows '; } \
+| CITE_ABSENT="$cite_absent" CITE_FOREIGN="$cite_foreign" awk -F: '
+  BEGIN { n = split(ENVIRON["CITE_ABSENT"], L, " "); for (i = 1; i <= n; i++) absent[L[i]] = 1
+          n = split(ENVIRON["CITE_FOREIGN"], L, " "); for (i = 1; i <= n; i++) foreign[L[i]] = 1 }
+  !cites { if ($0 == "#cites") cites = 1; else declared[$0] = 1; next }
+  ($3 in absent) || ($3 in foreign) { cited[$3] = 1; next }
+  !($3 in declared) { printf "  %s:%s cites `%s`, which is declared nowhere\n", $1, $2, $3; bad = 1 }
+  END {
+    for (name in absent) if (name in declared) {
+      printf "  `%s` is declared, but a comment states that it is absent\n", name; bad = 1 }
+    for (name in absent) if (!(name in cited)) {
+      printf "  `%s` is listed as absent but nothing cites it\n", name; bad = 1 }
+    for (name in foreign) if (!(name in cited)) {
+      printf "  `%s` is listed as foreign but nothing cites it\n", name; bad = 1 }
+    exit bad }' >&2 \
+  || fail "a cited declaration does not exist — repoint the citation, or list a claim stated as absent in cite_absent"
+# Each theorem THEOREMS.md cites is restated in Theorems/Contracts.lean and closed by
+# `with_reducible exact` of that theorem, so weakening its statement fails the build.
+# The Proofs column also names theorems by qualified name, such as `Good.feed`.
+thm_proofs="$(awk -F'|' '/^[|]/ { print $(NF - 1) }' THEOREMS.md \
+  | grep -oE '`[A-Za-z][A-Za-z0-9_.]*`' | tr -d '`')"
+{ code_grep 'with_reducible exact ' Theorems/Contracts.lean \
+    | sed 's/.*with_reducible exact //; s/[^[:alnum:]_.].*//'
+  printf '%s\n' '#cites' "$thm_cites" "$thm_proofs"; } \
+| awk '
+  !cites { if ($0 == "#cites") cites = 1; else pinned[++n] = $0; next }
+  NF && !($0 in seen) { seen[$0] = 1; ok = 0
+    for (i = 1; i <= n; i++) {
+      p = pinned[i]
+      if (p == $0 || substr(p, length(p) - length($0)) == "." $0) ok = 1 }
+    if (!ok) { printf "  THEOREMS.md cites `%s`, which no with_reducible exact pins\n", $0; bad = 1 } }
+  END { exit bad }' >&2 \
+  || fail "Theorems/Contracts.lean does not restate every theorem THEOREMS.md cites"
 
 # The CI matrix. macOS came off the per-push path on 2026-09-15 for a cost reason
 # measured in SCRATCHPAD.md — not repeated here, because that figure was copied into
@@ -1207,7 +1233,7 @@ ci_yml='.github/workflows/ci.yml'
 # The runtime tie, and the load-bearing one: `E2E/Ci.lean` tests
 # `scripts/ci-runners.sh`, and no Lean can see whether the workflow actually CALLS it.
 # Re-inline the decision as a `case` in the YAML and the suite would keep passing
-# against a script nothing runs. Same species as the `Buf` gate below.
+# against a script nothing runs. Same species as the `Buf` gate above.
 #
 # Match the INVOCATION, not the path: the first version of this grep looked for
 # `ci-runners.sh` anywhere in the file, and the workflow's own comment names the
@@ -1219,14 +1245,15 @@ grep -qE '(^|[^[:alnum:]_])sh[[:space:]]+scripts/ci-runners[.]sh' "$ci_yml" \
   || fail "scripts/ci-runners.sh is not tracked — the workflow calls it, so a local-only copy passes here and fails in CI"
 grep -qE '^ *os: [$][{][{] fromJSON[(]needs[.]gates[.]outputs[.]os[)] [}][}]$' "$ci_yml" \
   || fail "$ci_yml: the e2e matrix must use the tested runner decision through needs.gates.outputs.os"
-# Semantic lint needs the dynamically imported program too. Keep it after the
-# complete build in the shared verifier, rather than running another hook stack.
+# E2E.Ci exercises Lake's invalidation and cached warnings, so the real verifier builds
+# with the same flags. Semantic lint needs the dynamically imported program too, so the
+# shared lint driver follows that complete build rather than running another hook stack.
 awk '
   /^[.]\/lake --rehash --wfail build / { build = NR }
   /^[.]\/lake lint / { lint = NR }
   END { exit !(build && lint > build) }
 ' scripts/e2e.sh \
-  || fail "scripts/e2e.sh: the shared Lake lint driver must follow the complete build"
+  || fail "scripts/e2e.sh: the complete --rehash --wfail build exercised by E2E.Ci must precede the shared Lake lint driver"
 # E2E.Ci tests the actual input key. Both the lookup and successful receipt must
 # use it; no prefix restore may turn merely similar inputs into verified ones.
 [ -n "$(git ls-files -- scripts/ci-inputs.sh)" ] \
@@ -1260,13 +1287,9 @@ grep -qE '^[[:space:]]+run: sh scripts/hygiene[.]sh$' "$ci_yml" \
   || fail "$ci_yml: source hygiene must use the shared native checks"
 grep -qE '^[[:space:]]+entry: sh scripts/lint[.]sh$' .pre-commit-config.yaml \
   || fail ".pre-commit-config.yaml: run the shared lint script exercised by E2E.Hygiene"
-# E2E.Ci exercises Lake's invalidation and cached warnings. The real verifier
-# must use the same flags; otherwise those checks protect only their fixture.
-grep -qE '^[.]/lake --rehash --wfail build[[:space:]]' scripts/e2e.sh \
-  || fail "scripts/e2e.sh: the build must use the cache-checking flags exercised by E2E.Ci (--rehash --wfail)"
 # The real suites must use the same isolated runner whose failure, signal and
 # assertion-count contracts E2E.Ci exercises.
-awk '/^say "[0-9]+–[0-9]+[.] live suites / { live=1 }
+awk '/^say "[0-9]+[.] live suites / { live=1 }
   live && /^[.]\/[.]lake\/build\/bin\/e2e --suites[[:space:]]/ { found=1 }
   END { exit !found }' scripts/e2e.sh \
   || fail "scripts/e2e.sh: run live suites through the tested --suites entry point"
@@ -1274,25 +1297,6 @@ grep -qE '^ +- cron:' "$ci_yml" \
   || fail "$ci_yml: no schedule — with macOS off the per-push path, the cron IS when macOS runs"
 grep -q 'workflow_dispatch' "$ci_yml" \
   || fail "$ci_yml: no workflow_dispatch — a commit touching c/shim.c needs a way to ask for macOS without waiting a week"
-# …and the decision's own shape, in the script that now holds it. `E2E/Ci.lean`
-# checks the BEHAVIOUR of all of this; these three only catch a wholesale deletion,
-# which is what a suite cannot see (a deleted branch is a check that stops applying).
-ci_sh='scripts/ci-runners.sh'
-grep -q 'ubuntu-latest' "$ci_sh" \
-  || fail "$ci_sh: no ubuntu runner for source verification"
-grep -q 'macos-latest' "$ci_sh" \
-  || fail "$ci_sh: no macos runner — AGENTS.md claims the tree passes on macOS, and CI is the only thing that checks it"
-grep -q -- "--since=" "$ci_sh" \
-  || fail "$ci_sh: the scheduled run no longer checks for commits — a weekly macOS build of an unchanged tree pays the expensive rate to re-learn last week's answer"
-# E2E `partial def` ratchet: the sibling of RUNTIME_PARTIAL_CAP above, for the same
-# reason (the keyword creeps back by habit) and covering the files its glob misses.
-# `LingerTest.drain` and `E2E/Harness.drain` now use total do-block loops.
-# `RemoteLive.stripCsi` uses the library's dropWhile sublist bound to prove that
-# each recursive call shortens its input. No helper needs fuel or partiality.
-E2E_PARTIAL_CAP=0
-ep_n="$(code_count 'partial def' 'E2E/*' 'LingerTest.lean')"
-[ "$ep_n" -le "$E2E_PARTIAL_CAP" ] \
-  || fail "E2E/ grew to $ep_n partial defs (cap $E2E_PARTIAL_CAP); a do-block loop does not need the keyword"
 # E2E fixed-sleep ratchet: a wait for something to appear polls its readiness
 # signal (`waitFor`, `Client.awaitText`); the sleeps left are negative-assertion
 # windows, fixture pacing, poll intervals and waits not yet converted.

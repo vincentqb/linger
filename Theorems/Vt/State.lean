@@ -216,7 +216,8 @@ theorem ofDecoded_none_of_cols_zero {rows : Nat} {grid : Array Row} {cursor : Cu
 by a whole `List.foldl`. Five lemmas in this repo were this statement written out
 for a specific predicate (`Good`, `Renderable`, a row's cells, a grid's rows, and
 `Ends`/`Quiet` over the row painter's accumulator); they are now derivations that
-keep their own names, so no call site changed. A sixth predicate costs one line. -/
+keep their own names, so no call site changed. `scripts/gates.sh` rejects a new
+hand-rolled copy. -/
 theorem invariant_foldl {α β : Type} (P : β → Prop) (f : β → α → β)
     (hf : ∀ acc a, P acc → P (f acc a)) : ∀ (l : List α) (acc : β), P acc → P (l.foldl f acc)
   | [], _, h => h

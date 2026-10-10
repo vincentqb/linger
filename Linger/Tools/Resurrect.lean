@@ -93,7 +93,7 @@ def parseSave (home content : String) : Except String (List Pane) :=
   | .ok (pane :: panes) => .ok (pane :: panes)
 
 /-- One ordered catalog for human listing and the selector. Display context is
-printable; the directory remains exact until the IO boundary encodes it.
+printable; the directory remains exact until the `IO` boundary encodes it.
 Window metadata can describe a pane but cannot change its identity or cwd. -/
 def catalogRows (content : String) (panes : List Pane) : List (List (String × String)) :=
   let rows := (content.splitOn "\n").map (·.splitOn "\t")

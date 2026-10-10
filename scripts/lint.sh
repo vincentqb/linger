@@ -14,11 +14,14 @@ else
 fi
 
 if command -v lean-fmt > /dev/null; then
-  lean-fmt format --check > /tmp/linger-fmt.log 2>&1 \
-    || { cat /tmp/linger-fmt.log >&2; exit 1; }
-  printf 'layout: %s\n' "$(head -1 /tmp/linger-fmt.log)"
-  lean-fmt check > /tmp/linger-lint.log 2>&1 \
-    || { cat /tmp/linger-lint.log >&2; exit 1; }
+  # Private logs: concurrent checkouts lint at the same time.
+  logs="$(mktemp -d /tmp/linger-lint.XXXXXX)"
+  trap 'rm -r "$logs"' EXIT
+  lean-fmt format --check > "$logs/fmt.log" 2>&1 \
+    || { cat "$logs/fmt.log" >&2; exit 1; }
+  printf 'layout: %s\n' "$(head -1 "$logs/fmt.log")"
+  lean-fmt check > "$logs/lint.log" 2>&1 \
+    || { cat "$logs/lint.log" >&2; exit 1; }
   printf 'semantic lint: OK\n'
 elif [ "${GITHUB_ACTIONS-}" = true ] && [ "${RUNNER_OS-}" = Linux ]; then
   printf 'the pinned formatter is missing from Linux CI\n' >&2

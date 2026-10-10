@@ -1055,7 +1055,7 @@ def Vt.resize (v : Vt) (cols rows : Nat) : Vt :=
 
 /-! ## CSI dispatch -/
 
-/-- CSI parameter `i`, reading an omitted or zero value as `default_`. -/
+/-- CSI parameter `i`, reading an omitted or zero value as the given default. -/
 def CsiState.arg (s : CsiState) (i default_ : Nat) : Nat :=
   match (s.params.getD i (0, false)).1 with
   | 0 => default_

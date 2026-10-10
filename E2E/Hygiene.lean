@@ -9,7 +9,8 @@ public section
 Fixtures run the repository's actual script from temporary repositories. A failed
 fixture must name the offending path and check; an arbitrary subprocess error is
 not evidence that hygiene worked. Installed hooks must check the staged snapshot
-and preserve unstaged edits.
+and preserve unstaged edits. The source gates run against a scratch copy of this
+repository's index and must fail when a gated path is missing from it.
 -/
 
 namespace E2E.Hygiene
@@ -295,6 +296,30 @@ def run : IO UInt32 := do
       let (deleted, calls) ← commit
       expect (deleted.exitCode == 0 && calls == expected)
           "pre-commit runs every check on a deletion-only commit"
+  -- A gate failing inside `$(...)` or a pipeline must still stop the gates. A scratch
+  -- copy of this repository's index drops one gated module; the files stay in place.
+  IO.FS.withTempDir fun dir => do
+      let top := root.trimAscii.toString
+      let index := dir / "index"
+      let current ← git top #["rev-parse", "--path-format=absolute", "--git-path", "index"]
+      IO.FS.writeBinFile index (← IO.FS.readBinFile current.trimAscii.toString)
+      let env :=
+        fixtureEnv.map fun (key, value) =>
+          (key, if key == "GIT_INDEX_FILE" then some index.toString else value)
+      let removed ←
+        IO.Process.output
+            { cmd := "git", args := #["rm", "-q", "-f", "--cached", "--", "Linger/Core/Name.lean"]
+              cwd := some top, env }
+      unless removed.exitCode == 0 do
+        throw (IO.userError s!"gate fixture setup (git rm): {removed.stderr}")
+      let out ←
+        IO.Process.output
+            { cmd := "sh", args := #[s!"{top}/scripts/gates.sh"], cwd := some top, env }
+      let ok :=
+        out.exitCode != 0 && has out.stderr "Linger/Core/Name.lean" && !has out.stdout "gates OK"
+      unless ok do
+        IO.eprintln s!"gates fixture exited {out.exitCode}:\n{out.stdout}{out.stderr}"
+      expect ok "source gates fail closed when a gated path leaves the index"
   finish
 
 end E2E.Hygiene
