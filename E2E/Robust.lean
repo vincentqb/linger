@@ -250,6 +250,46 @@ private def hostileInput (e : Env) : IO Unit := do
   finally
     e.killAll #[name]
 
+/-- Budget for eight reads of one-byte input frames, about five times the cost
+measured when it was set (0.44 s), in milliseconds. -/
+def inputBurstBudgetMs : Nat := 2200
+
+/-- Eight reads' worth of one-byte input frames: each 64 KiB read holds 10,922 and
+becomes one `.bytes` event. Compiled code folds a read's frames through
+`Session.feedMsgsTR` (`feedMsgs_eq_feedMsgsTR`), in time linear in the frames;
+the specification `Session.feedMsgs` rescans and copies the effects so far for each
+frame, which cost 1.2 s a read. An `info` sent after the burst on the same
+connection is answered after every frame before it. -/
+private def inputBurst (e : Env) : IO Unit := do
+  let name := "input-burst"
+  try
+    let _ ← e.cli #["run", name, "stty raw -echo; echo BURST-$((40+2)); exec cat > /dev/null"]
+    let reading ← waitFor 3000 (return has (← e.out #["capture", name]) "BURST-42")
+    let raw ← Linger.Posix.unixConnect s!"{e.dir}/{name}.sock"
+    unless raw ≥ 0 do
+      throw (IO.userError "input burst could not connect")
+    let fd := raw.toUInt64.toUInt32
+    let frame := Linger.Core.Wire.encode (.input [0x61])
+    -- The daemon reads a connection 64 KiB at a time.
+    let burst := ByteArray.mk (List.replicate (8 * (65536 / frame.length)) frame).flatten.toArray
+    let (answered, burstMs) ←
+      try
+        let start ← Linger.Posix.monotonicMs
+        Linger.Posix.writeAll fd burst
+        let answered ←
+          try
+            let _ ← Linger.Runtime.Cli.readInfo fd (some (start + inputBurstBudgetMs))
+            pure true
+          catch _ =>
+            pure false
+        pure (answered, (← Linger.Posix.monotonicMs) - start)
+      finally
+        Linger.Posix.close fd
+    expect (reading && answered && burstMs ≤ inputBurstBudgetMs)
+        s!"eight reads of 10,922 input frames each stay within budget ({burstMs} ms)"
+  finally
+    e.killAll #[name]
+
 /-- Diagnostic output can fail along with the operation it reports, such as
 when checkpoints and logs share a full filesystem. Exercise each recovery path. -/
 def failedDiagnostics : IO Unit := do
@@ -611,6 +651,7 @@ def run : IO UInt32 :=
     finally
       e.killAll #[reader]
     hostileInput e
+    inputBurst e
     failedDiagnostics
     admissionPressure e
 

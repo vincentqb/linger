@@ -431,6 +431,49 @@ def feedMsgs (id : Nat) (msgs : List Msg) (acc : State × List Effect) : State �
           (r.1, acc.2 ++ r.2))
     acc
 
+/-- `feedMsgs` in time linear in the messages and effects. It checks the incoming
+effects for a stop once and then only each message's own, and conses each
+message's effects onto a reversed list, where `feedMsgs` rescans and copies every
+effect so far for each message. -/
+def feedMsgsTR (id : Nat) (msgs : List Msg) (acc : State × List Effect) : State × List Effect :=
+  let r :=
+    msgs.foldl
+      (fun (r : State × List Effect × Bool) m =>
+        if r.2.2 then r
+        else
+          match r.1.client? id with
+          | none => r
+          | some c' =>
+            let out := onMsg r.1 c' m
+            (out.1, out.2.reverseAux r.2.1, out.2.contains (.close id) || out.2.contains .exit))
+      (acc.1, [], acc.2.contains (.close id) || acc.2.contains .exit)
+  (r.1, acc.2 ++ r.2.1.reverse)
+
+/-- `feedMsgs` and `feedMsgsTR` are the same function, so compiled code, `step`
+included, runs the latter. -/
+@[csimp]
+theorem feedMsgs_eq_feedMsgsTR : @feedMsgs = @feedMsgsTR := by
+  funext id msgs acc
+  simp only [feedMsgs, feedMsgsTR]
+  -- Related accumulators hold the same state, the incoming effects followed by
+  -- the reversed ones, and a flag equal to the specification's stop test.
+  refine
+    (List.foldl_rel (r := fun (b : State × List Effect) (c : State × List Effect × Bool) =>
+        b = (c.1, acc.2 ++ c.2.1.reverse) ∧
+          c.2.2 = (b.2.contains (.close id) || b.2.contains .exit))
+        ⟨by simp, rfl⟩ ?_).1
+  rintro m - b ⟨s, rev, stop⟩ ⟨rfl, hstop⟩
+  dsimp only at hstop ⊢
+  subst hstop
+  split
+  · exact ⟨rfl, rfl⟩
+  · split
+    · exact ⟨rfl, rfl⟩
+    · rename_i hx _ _ _
+      refine ⟨by simp, ?_⟩
+      simp only [List.contains_append, Bool.not_eq_true, Bool.or_eq_false_iff] at hx ⊢
+      simp only [hx, Bool.false_or]
+
 /-- The daemon's transition: one event in, the next state and the effects to run. -/
 def step (s : State) (ev : Event) : State × List Effect :=
   match ev with

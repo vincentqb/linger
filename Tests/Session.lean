@@ -296,6 +296,20 @@ example :
       true := by
   native_decide
 
+/-- One 64 KiB read of one-byte inputs with a kill near its end writes every byte
+before the kill to the pty, in order, and nothing after it. -/
+example :
+    (let s := (run [.connected 1]).1
+     let n := 10920
+      let packet :=
+        (List.replicate n (encode (.input [0x61]))).flatten ++ encode .kill ++
+          encode (.input [0x62])
+      let r := step s (.bytes 1 packet)
+      packet.length ≤ 65536 &&
+        r.2 == List.replicate n (.writePty [0x61]) ++ [.killChild, .dropCheckpoint, .exit]) =
+      true := by
+  native_decide
+
 /-- **`unset` removes exactly the named key**: `env` goes, `role` stays. A whole-
 store clear would satisfy "env is gone" too, which is why `role` is here. -/
 example :
