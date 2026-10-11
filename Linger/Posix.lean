@@ -187,7 +187,8 @@ def unixConnect (path : String) (nonblocking : Bool := false) : IO Int64 := do
   checkCString "unixConnect path" path
   unixConnectRaw path nonblocking
 
-/-- Accept on a nonblocking listen fd. `-1` = nothing to accept. -/
+/-- Accept on a nonblocking listen fd. `-1` = nothing to accept. The accepted fd is
+close-on-exec and blocking on every platform; callers that poll it set nonblocking. -/
 @[extern "linger_accept"]
 opaque accept (fd : UInt32) : IO Int64
 

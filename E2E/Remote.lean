@@ -231,6 +231,17 @@ def discoveryChecks (e : Env) : IO Unit := do
   finally
     Linger.Runtime.Command.stop pending
     cleanupDiscovery root
+  -- Once its pipes close, the leader is an unreaped zombie until stop reaps it; Darwin's
+  -- killpg refuses a group whose only member is that zombie.
+  let exited ← IO.mkRef (some (← Linger.Runtime.Command.start "/bin/sh" #["-c", "exit 0"]))
+  let finished ←
+    waitFor 2000 do
+        let some job ← exited.get | return false
+        return (← IO.hasFinished job.stdout) && (← IO.hasFinished job.stderr)
+  let outcome ← (Linger.Runtime.Command.stop exited).toBaseIO
+  if let .error err := outcome then
+    IO.eprintln s!"remote: stopping an exited job failed: {err}"
+  expect (finished && outcome matches .ok _) "stopping a job whose leader already exited succeeds"
   let (state, root, path) ← discoverySetup e "cancel"
   IO.FS.createDirAll s!"{root}/.config/linger"
   IO.FS.writeFile s!"{root}/.config/linger/remotes" "stall-cancel\n"

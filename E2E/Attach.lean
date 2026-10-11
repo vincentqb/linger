@@ -181,10 +181,14 @@ def run : IO UInt32 :=
         "shell exit: both receivers hold the application's nonempty title"
     -- 6. exit inside the shell ends the session and notifies clients
     c2.type "exit\r"
+    -- Read both handbacks while the clients exit: Darwin discards a closed pty's unread
+    -- output after about a second.
+    let drain2 ← IO.asTask (drain c2.fd 4000)
+    let drain3 ← IO.asTask (drain c3.fd 4000)
     let _ ← waitFor 4000 (return !has (← e.out #["list"]) "demo")
     expect (!has (← e.out #["list"]) "demo") "shell exit ends the session"
-    let exit2 ← drain c2.fd 1000
-    let exit3 ← drain c3.fd 500
+    let exit2 ← IO.ofExcept (← IO.wait drain2)
+    let exit3 ← IO.ofExcept (← IO.wait drain3)
     let handed2 := receiver2.feed exit2.toList
     let handed3 := receiver3.feed exit3.toList
     expect

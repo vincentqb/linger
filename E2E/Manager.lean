@@ -76,6 +76,26 @@ private def writeListing (root : System.FilePath) (text : String) (rc : Nat) : I
   IO.FS.writeFile (root / "listing-next") text
   IO.FS.rename (root / "listing-next") (root / "listing")
 
+private def hexValue? (s : String) : Option Nat :=
+  s.foldl
+    (fun acc c =>
+      acc.bind fun n =>
+        if c.isDigit then some (16 * n + (c.toNat - '0'.toNat))
+        else if 'a' ≤ c && c ≤ 'f' then some (16 * n + (c.toNat - 'a'.toNat + 10)) else none)
+    (if s.isEmpty then none else some 0)
+
+/-- Darwin keeps PENDIN (`0x20000000`) as kernel state: turning ICANON back on sets it until
+the next read, and BSD `stty -g` prints it, so no program can restore it. Linux `stty -g` has
+no `lflag=` field and passes through unchanged. -/
+private def withoutPendin (settings : String) : String :=
+  String.intercalate ":" <|
+    (settings.splitOn ":").map fun field =>
+      match (field.dropPrefix? "lflag=").bind (fun hex => hexValue? hex.toString) with
+      | some flags =>
+        "lflag=" ++
+          String.ofList (Nat.toDigits 16 (if flags.testBit 29 then flags - 0x20000000 else flags))
+      | none => field
+
 private def snapshot (root : System.FilePath) : IO String := do
   let some stty ←
     IO.getEnv "MANAGER_TEST_STTY" | throw (IO.userError "manager probe has no stty observer")
@@ -88,7 +108,7 @@ private def snapshot (root : System.FilePath) : IO String := do
           { cmd := "/bin/sh", args := #["-c", s!"exec {quote stty} -g <{quote terminal}"] }
   if result.exitCode != 0 || result.stdout.trimAscii.isEmpty then
     throw (IO.userError s!"manager terminal observation failed: {result.stderr}")
-  return result.stdout.trimAscii.toString
+  return withoutPendin result.stdout.trimAscii.toString
 
 private def waitChild {cfg : IO.Process.StdioConfig} (child : IO.Process.Child cfg)
     (ms : Nat := 15000) : IO UInt32 := do
@@ -539,7 +559,10 @@ private def termiosRestored (s : Session) (rc : Nat) : IO Bool := do
   let result ← s.result
   let before ← readText (s.fixture.root / "before")
   let after ← readText (s.fixture.root / "after")
-  return result == some rc && !before.isEmpty && before == after
+  let ok := result == some rc && !before.isEmpty && before == after
+  unless ok do
+    IO.eprintln s!"manager: exit {result} (want {rc}); termios before '{before}', after '{after}'"
+  return ok
 
 private def restored (s : Session) (rc : Nat) (entries : Nat := 1) : IO Bool := do
   return (← termiosRestored s rc) && modesRestored (← s.output.get) entries

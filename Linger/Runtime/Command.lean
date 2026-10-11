@@ -35,6 +35,19 @@ def poll (pending : IO.Ref (Option Job)) : IO (Option IO.Process.Output) := do
         return some { exitCode, stdout, stderr }
   return none
 
+/-- Force-retire the job's process group. Darwin's `killpg` refuses a group whose only
+member is the exited, unreaped leader (EPERM), so that refusal, or ESRCH, signals the
+reserved leader PID itself. -/
+private def retireGroup (job : Job) : IO Unit := do
+  try
+    job.child.kill
+  catch err =>
+    match err with
+    | .permissionDenied .. | .noSuchThing .. =>
+      Linger.Posix.kill job.child.pid 9
+    | _ =>
+      throw err
+
 /-- Optionally give the leader time to retire separately isolated children.
 Then retire its group before reaping the leader, whose reserved PID identifies
 the group even when a descendant still holds a pipe. Join both readers on every
@@ -53,7 +66,7 @@ def stop (pending : IO.Ref (Option Job)) (graceMs : Nat := 0) : IO Unit := do
                 break
               IO.sleep 5
         finally
-          job.child.kill
+          retireGroup job
       finally
         discard job.child.wait
     finally

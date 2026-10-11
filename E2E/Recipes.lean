@@ -19,6 +19,10 @@ namespace E2E.Recipes
 
 open E2E.Harness
 
+/-- The physical path a session records as its start directory: `getcwd` resolves symlinks, so
+on macOS `/tmp/x` is recorded as `/private/tmp/x`. -/
+private def physical (dir : System.FilePath) : IO String := return (← IO.FS.realPath dir).toString
+
 private def call (args : List String) : String :=
   "CALL\x00" ++ String.intercalate "\x00" args ++ "\x00\n"
 
@@ -240,7 +244,7 @@ private def absoluteExecutableChecks (e : Env) (home data : String) : IO Unit :=
         runImport e home data #[save.toString]
             #[("PATH", some path.toString), ("IMPORT_IMPOSTOR_MARKER", some marker.toString)]
       expect
-          (rc == 0 && (← e.info s!"{name}-w1-p0" "start_dir") == some pane.toString &&
+          (rc == 0 && (← e.info s!"{name}-w1-p0" "start_dir") == some (← physical pane) &&
             (← IO.FS.readFile marker).isEmpty)
           s!"linger tmux import reuses its absolute executable (PATH impostor: {impostor})"
     finally
@@ -272,7 +276,7 @@ private def relativePathChecks (e : Env) : IO Unit := do
         IO.Process.output
             { cmd := e.bin, args := #["tmux", "import", save.toString], cwd := some origin.toString,
               env := e.procEnv ++ isolated ++ #[("PATH", some path), ("LINGER_DIR", some state)] }
-      expect (out.exitCode == 0 && (← e.info name "start_dir") == some pane.toString)
+      expect (out.exitCode == 0 && (← e.info name "start_dir") == some (← physical pane))
           s!"linger tmux import uses its absolute executable with invocation-relative {label} settings"
     finally
       e.killAll #[name]
@@ -618,7 +622,7 @@ def run : IO UInt32 :=
     let (drc, dout, derr) ← runImport e home.toString data.toString #[]
     expect
         (drc == 0 && dout.isEmpty && derr.isEmpty &&
-          (← e.info "desk-w1-p0" "start_dir") == some defaultDir.toString)
+          (← e.info "desk-w1-p0" "start_dir") == some (← physical defaultDir))
         "linger tmux import reads the default XDG save and restores an escaped cwd"
     IO.sleep 700 -- negative assertion: give a wrongly-started command time to run
     expect (!(← System.FilePath.pathExists defaultSink))
@@ -631,7 +635,7 @@ def run : IO UInt32 :=
     IO.FS.writeFile (fallbackResurrectDir / "last")
         (paneLine "emptyxdg" "3" "0" emptyXdgDir.toString "")
     let (xrc, _, _) ← runImport e home.toString "" #[]
-    expect (xrc == 0 && (← e.info "emptyxdg-w3-p0" "start_dir") == some emptyXdgDir.toString)
+    expect (xrc == 0 && (← e.info "emptyxdg-w3-p0" "start_dir") == some (← physical emptyXdgDir))
         "linger tmux import treats an empty XDG data home as unset"
     -- Once the legacy last save exists, it takes precedence over the XDG path.
     let legacyDir := root / "legacy"
@@ -640,7 +644,7 @@ def run : IO UInt32 :=
     IO.FS.createDirAll legacyResurrectDir
     IO.FS.writeFile (legacyResurrectDir / "last") (paneLine "legacy" "2" "0" legacyDir.toString "")
     let (lrc, _, _) ← runImport e home.toString data.toString #[]
-    expect (lrc == 0 && (← e.info "legacy-w2-p0" "start_dir") == some legacyDir.toString)
+    expect (lrc == 0 && (← e.info "legacy-w2-p0" "start_dir") == some (← physical legacyDir))
         "linger tmux import prefers the legacy last save when it exists"
     -- Empty commands, pipelines and other shell syntax all leave ordinary shells.
     let processDir := root / "processes"
@@ -657,9 +661,9 @@ def run : IO UInt32 :=
           paneLine "dev" "1" "2" processDir.toString s!"printf BLOCKED > {blockedSink}")
     let (prc, _, _) ← runImport e home.toString data.toString #[processSave.toString]
     expect
-        (prc == 0 && (← e.info "dev-w1-p0" "start_dir") == some processDir.toString &&
-          (← e.info "dev-w1-p1" "start_dir") == some processDir.toString &&
-          (← e.info "dev-w1-p2" "start_dir") == some processDir.toString)
+        (prc == 0 && (← e.info "dev-w1-p0" "start_dir") == some (← physical processDir) &&
+          (← e.info "dev-w1-p1" "start_dir") == some (← physical processDir) &&
+          (← e.info "dev-w1-p2" "start_dir") == some (← physical processDir))
         "linger tmux import projects every pane into a named linger session"
     IO.sleep 700 -- negative assertion after the import process itself has exited
     expect (!(← System.FilePath.pathExists processSink))

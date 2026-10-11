@@ -226,8 +226,13 @@ static int accept_cloexec(int fd) {
 #if LINGER_HAVE_SOCK_CLOEXEC
     return accept4(fd, NULL, NULL, SOCK_CLOEXEC);
 #else
+    /* BSD accept copies the listener's O_NONBLOCK, which accept4 never does: clear
+     * it, so an accepted socket is blocking on every platform. */
     int c = accept(fd, NULL, NULL);
-    if (c >= 0 && fcntl(c, F_SETFD, FD_CLOEXEC) < 0) {
+    int fl;
+    if (c < 0) return -1;
+    if (fcntl(c, F_SETFD, FD_CLOEXEC) < 0 || (fl = fcntl(c, F_GETFL, 0)) < 0 ||
+        fcntl(c, F_SETFL, fl & ~O_NONBLOCK) < 0) {
         int e = errno;
         close(c);
         errno = e;
