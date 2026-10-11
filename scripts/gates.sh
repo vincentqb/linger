@@ -229,23 +229,35 @@ import_closure Linger/Core/Replay.lean \
 # Named targets must build the promised roots, not just happen to succeed.
 # Read declaration lines through code_grep, then compare their verbatim Name
 # literals: multiple backticks on a roots line are Lean syntax, not prose.
-library_decl() {                             # `lean_lib $1`, folded with its `#[` lines
-  code_grep '^lean_lib |^[[:space:]]+#[[]' lakefile.lean \
+library_decl() {                             # `lean_lib $1` with its indented fields
+  code_grep '.' lakefile.lean \
     | sed 's/^[^:]*:[0-9]*://' \
     | awk -v lib="$1" '
-        $1 == "lean_lib" { active = ($2 == lib) }
-        active { $1 = $1; printf "%s ", $0 }'
+        /^--/ { next }
+        /^(@[[][^]]*[]][[:space:]]+)?lean_lib / {
+          sub(/^@[[][^]]*[]][[:space:]]+/, ""); active = ($2 == lib)
+          if (active) { $1 = $1; printf "%s ", $0 }
+          next
+        }
+        /^[[:space:]]/ { if (active) { $1 = $1; printf "%s ", $0 }; next }
+        { active = 0 }'
 }
 library_roots() {
   lr_got="$(library_decl "$1")"
-  [ "$lr_got" = "lean_lib $1 where roots := $2 " ] \
-    || fail "$1 lost its independent library roots: $lr_got"
+  [ "$lr_got" = "lean_lib $1 where roots := $2 ${3:+$3 }" ] \
+    || fail "$1 lost its independent library roots or options: $lr_got"
 }
-library_roots LingerVt '#[`Linger.Core.Terminal, `Linger.Core.Replay]'
+# Libraries holding Linger/ modules share implementationOptions, which turns on
+# linter.missingDocs; scripts/e2e.sh also checks every Linger module directly.
+library_roots LingerVt '#[`Linger.Core.Terminal, `Linger.Core.Replay]' 'leanOptions := implementationOptions'
 library_roots LingerVtTheorems '#[`Theorems.Terminal, `Theorems.TerminalTitle, `Theorems.Replay]'
-library_roots LingerInput '#[`Linger.Tools.Input]'
+library_roots LingerInput '#[`Linger.Tools.Input]' 'leanOptions := implementationOptions'
 library_roots LingerInputTheorems '#[`Theorems.Input]'
-library_roots LingerFuzzy '#[`Linger.Tools.Fuzzy]'
+library_roots LingerFuzzy '#[`Linger.Tools.Fuzzy]' 'leanOptions := implementationOptions'
+[ "$(library_decl Linger)" = "lean_lib Linger where leanOptions := implementationOptions " ] \
+  || fail "the Linger library lost implementationOptions: $(library_decl Linger)"
+[ "$(git grep -c 'def implementationOptions : Array LeanOption := #\[⟨`linter.missingDocs, true⟩\]$' -- lakefile.lean)" = lakefile.lean:1 ] \
+  || fail "implementationOptions no longer enables linter.missingDocs"
 # Proofs and fixtures build every module under their directory, so a module that no
 # root imports is still checked.
 for lib in Theorems Tests; do

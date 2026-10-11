@@ -56,6 +56,8 @@ Lean erases proofs regardless of file placement.
   theorem whose type contains its exact fully qualified constant in the same
   commit, checked by `Theorems/Coverage.lean`; generated lemmas do not count.
   State invariants in `THEOREMS.md` and design code for provability.
+- Every public declaration under `Linger/` needs a docstring: `lakefile.lean`
+  enables `linter.missingDocs` for each library containing those modules.
 - State user-visible behavior, not only invariants, and bound every input-controlled
   loop or reply count in the model with a theorem (`repeatAtMost_eq_repeat`,
   `step_bytes_one_reply`); `scripts/gates.sh` rejects a CSI loop that bypasses

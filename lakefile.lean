@@ -7,26 +7,37 @@ package linger where leanOptions :=
     ⟨`linter.extra.unreachableTactic, true⟩, ⟨`linter.redundantVisibility, true⟩,
     ⟨`linter.extra.unnecessarySeqFocus, true⟩]
 
+/-- Options for each library containing modules under `Linger/`: Lake builds a module with the
+options of one library that contains it, so these libraries share a single set. With the
+package's `warningAsError`, a public declaration without a docstring fails the build. -/
+def implementationOptions : Array LeanOption := #[⟨`linter.missingDocs, true⟩]
+
 /-- The session library, with no external Lean dependencies. -/
-@[default_target] lean_lib Linger where
+@[default_target] lean_lib Linger where leanOptions := implementationOptions
 
 /-- The VT toolkit: the emulator, renderer, streaming replay, child-facing
 mediation and safe title emission. Lake roots select what to build;
 `scripts/gates.sh` enforces the import boundary. -/
-lean_lib LingerVt where roots := #[`Linger.Core.Terminal, `Linger.Core.Replay]
+lean_lib LingerVt where
+  roots := #[`Linger.Core.Terminal, `Linger.Core.Replay]
+  leanOptions := implementationOptions
 
 /-- VT contracts build independently, including replay fidelity and title safety. -/
 lean_lib LingerVtTheorems where roots :=
   #[`Theorems.Terminal, `Theorems.TerminalTitle, `Theorems.Replay]
 
 /-- Bounded terminal-key decoding, independent of any application's bindings. -/
-lean_lib LingerInput where roots := #[`Linger.Tools.Input]
+lean_lib LingerInput where
+  roots := #[`Linger.Tools.Input]
+  leanOptions := implementationOptions
 
 /-- Decoder contracts build without the picker action adapter or session code. -/
 lean_lib LingerInputTheorems where roots := #[`Theorems.Input]
 
 /-- Reusable fuzzy alignment, with no session or terminal imports. -/
-lean_lib LingerFuzzy where roots := #[`Linger.Tools.Fuzzy]
+lean_lib LingerFuzzy where
+  roots := #[`Linger.Tools.Fuzzy]
+  leanOptions := implementationOptions
 
 /-- The native OS boundary, compiled with the clang selected by `./lake`. -/
 target shim.o pkg : System.FilePath := do

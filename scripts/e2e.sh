@@ -138,6 +138,12 @@ trap - EXIT HUP TERM
 say "2. hygiene, source gates, formatting and semantic lint"
 # Semantic lint needs compiled imports. Use the same checks as pre-commit.
 ./lake lint || fail "lint"
+# Every public declaration under Linger/ has a docstring, however lakefile.lean
+# assigns options: elaborate each module with the linter on and warnings fatal.
+git ls-files -z 'Linger/*.lean' \
+  | xargs -0 -n 1 -P 16 ./lake env lean -DwarningAsError=true -Dlinter.missingDocs=true \
+    > "$logs/docs.log" 2>&1 \
+  || { grep 'missing doc' "$logs/docs.log" | head -20; fail "a public declaration under Linger/ has no docstring"; }
 
 say "2b. semantic coverage of pure code + runtime emitter classification"
 # E2E.Coverage calls the shared exact-constant theorem census, then classifies
