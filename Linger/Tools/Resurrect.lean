@@ -20,9 +20,14 @@ namespace Linger.Tools.Resurrect
 def diagnostic (message : String) : String :=
   message.map fun c => if 32 ≤ c.toNat && (c.toNat < 127 || 160 ≤ c.toNat) then c else '?'
 
+/-- One saved pane, reduced to what import uses. -/
 structure Pane where
+  /-- The projected linger session name; parsing accepts only canonical names. -/
   name : String
+  /-- The decoded working directory; parsing expands `~` and a `~/` prefix to the home
+  directory and rejects NUL. -/
   dir : String
+  /-- The 1-based line of the pane record in the save, for diagnostics and catalog rows. -/
   line : Nat
   deriving BEq, Repr
 

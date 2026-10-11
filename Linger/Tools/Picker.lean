@@ -19,6 +19,8 @@ or the default session name when the query is empty.
 
 namespace Linger.Tools.Picker
 
+/-- Whether the query is a subsequence of the target after ASCII lowercase folding:
+exactly the targets `Fuzzy.align` can align (`align_isSome_iff_matches`). -/
 def «matches» (query target : String) : Bool :=
   (query.toList.map Char.toLower).isSublist (target.toList.map Char.toLower)
 
@@ -49,7 +51,9 @@ def parseListing (text : String) : Except String (List String) := parseRows [] (
 /-- Exact targets plus the complete metadata records that produced them. Equality
 includes metadata, so a status-only change still invalidates the displayed frame. -/
 structure Snapshot where
+  /-- The listing's exact targets, in order and without duplicates. -/
   candidates : List String := []
+  /-- Tab-split listing lines, from which `Snapshot.row` reads each target's metadata. -/
   records : List (List String) := []
   deriving BEq, Repr, Inhabited
 
@@ -91,14 +95,19 @@ def Snapshot.withRemote (latest full : Snapshot) : Snapshot where
   records :=
     rowRecords (!remoteTarget ·) true latest.records ++ rowRecords remoteTarget false full.records
 
+/-- The candidates the query matches, in listing order. -/
 def visible (candidates : List String) (query : String) : List String :=
   candidates.filter (Linger.Tools.Picker.matches query)
 
+/-- A selectable row: a listed target or the explicit creation choice. -/
 inductive Item where
+  /-- A target from the listing. -/
   | existing (target : String)
+  /-- Creation of a session with exactly this target. -/
   | create (target : String)
   deriving BEq, Repr
 
+/-- The exact target the row attaches to or creates. -/
 def Item.target : Item → String
   | .existing target | .create target => target
 
@@ -110,8 +119,11 @@ def presentation (snapshot : Snapshot) (nameCol : Nat) : Item → List Linger.Co
 
 /-- A displayed scalar keeps its shared row style independently of query emphasis. -/
 structure HighlightedChar where
+  /-- One displayed Unicode scalar. -/
   char : Char
+  /-- The status whose badge style it carries; none outside the badge. -/
   status : Option Linger.Core.Status.Status
+  /-- Whether it receives query emphasis. -/
   matched : Bool
   deriving BEq, Repr
 
@@ -157,22 +169,31 @@ def items (candidates : List String) (query : String) (allowCreate : Bool := tru
       [.create target]
     else []
 
+/-- One selection visit over the displayed snapshot's targets. -/
 structure State where
+  /-- Targets of the displayed snapshot. -/
   candidates : List String
+  /-- The typed text that filters rows and, when nonempty, names the creation target. -/
   query : String := ""
+  /-- Index of the selected row in `items`; zero when there are none. -/
   cursor : Nat := 0
+  /-- Whether `items` may offer a creation row; false for read-only visits and saved
+  catalogs. -/
   allowCreate : Bool := true
   deriving BEq, Repr
 
+/-- Typing stops extending the query at this many Unicode scalars. -/
 def maxQueryLength : Nat := 256
 
 /-- A zero cursor represents an empty result; otherwise it indexes a selectable row. -/
 def State.Valid (s : State) : Prop :=
   s.cursor ≤ (items s.candidates s.query s.allowCreate).length - 1 ∧ s.query.length ≤ maxQueryLength
 
+/-- A state over these candidates with an empty query and the cursor on the first row. -/
 def init (candidates : List String) (allowCreate : Bool := true) : State :=
   { candidates, allowCreate }
 
+/-- The row under the cursor, or none when the cursor indexes no row. -/
 def selected (s : State) : Option Item := (items s.candidates s.query s.allowCreate)[s.cursor]?
 
 /-- Keep the selected target across snapshots, even when its creation row becomes
@@ -186,10 +207,15 @@ def refresh (s : State) (candidates : List String) : State :=
   { s with
     candidates, cursor }
 
+/-- The result of one action: a next state, or a decision for the executor. -/
 inductive Outcome where
+  /-- Keep selecting from this state. -/
   | stay (state : State)
+  /-- Attach to this listed target. -/
   | attach (target : String)
+  /-- Create a session with exactly this target. -/
   | create (target : String)
+  /-- Leave without a choice. -/
   | cancel
   deriving BEq, Repr
 

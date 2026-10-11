@@ -19,8 +19,11 @@ namespace Linger.Tools.Fuzzy
 
 /-- Case policy for comparing query and target characters. -/
 inductive CaseMode where
+  /-- Compare characters exactly. -/
   | sensitive
+  /-- Fold ASCII capitals in the query and the target. -/
   | insensitive
+  /-- Sensitive when the query contains an ASCII capital, insensitive otherwise. -/
   | smart
   deriving BEq, Repr
 
@@ -35,20 +38,29 @@ def CaseMode.fold (mode : CaseMode) (query : String) : Char → Char :=
 /-- Additive scores may be any integers. Positive gaps reward skipped positions;
 they still cannot change whether a subsequence exists. -/
 structure Scoring where
+  /-- Added for a match at a word start: the first character, one after a space or
+  one of `-_./@:`, or an ASCII capital after an ASCII lowercase letter. -/
   word : Int := 4
+  /-- Added for a match at the position right after the previous match. -/
   adjacent : Int := 8
+  /-- Added for each target character skipped before the final match. -/
   gap : Int := -1
   deriving BEq, Repr
 
 /-- Case policy and scoring for one alignment. -/
 structure Config where
+  /-- How query and target characters compare. -/
   caseMode : CaseMode := .insensitive
+  /-- The weights summed into each alignment's score. -/
   scoring : Scoring := {}
   deriving BEq, Repr
 
 /-- A successful match: its score and one mark per target character. -/
 structure Alignment where
+  /-- The sum of the word, adjacency and gap terms along the alignment. -/
   score : Int
+  /-- Set at each matched target character; folded, the marked characters spell the
+  folded query. -/
   marks : List Bool
   deriving BEq, Repr
 

@@ -9,15 +9,25 @@ reports physical events without deciding which actions they request. -/
 
 namespace Linger.Tools
 
+/-- One selector action, independent of the key that requests it. -/
 inductive Key where
+  /-- Append a character to the query. -/
   | text (char : Char)
+  /-- Delete the query's last character. -/
   | backspace
+  /-- Empty the query. -/
   | clear
+  /-- Move the cursor up one row. -/
   | up
+  /-- Move the cursor down one row. -/
   | down
+  /-- Move the cursor to the first row. -/
   | first
+  /-- Move the cursor to the last row. -/
   | last
+  /-- Act on the selected row. -/
   | accept
+  /-- Leave without a choice. -/
   | cancel
   deriving BEq, Repr
 

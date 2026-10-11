@@ -15,9 +15,14 @@ namespace Linger.Manager.Picker
 
 open Linger.Posix
 
+/-- How one selection visit ended. -/
 inductive Choice where
+  /-- An accepted row's exact target, existing or new, with the snapshot displayed
+  when it was accepted. -/
   | attach (target : String) (snapshot : Linger.Tools.Picker.Snapshot)
+  /-- Cancellation by key, or the end of terminal input. -/
   | cancel
+  /-- A listing exited nonzero, with its exit status and standard error. -/
   | failed (status : UInt32) (stderr : String)
 
 /-- The viewport follows the bounded selection. Keep the final column unused
