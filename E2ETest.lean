@@ -107,13 +107,6 @@ def main (args : List String) : IO UInt32 := do
     E2E.Remote.runDiscovery
   | ["watch", "checkpoint"] =>
     E2E.Watch.runCheckpoint
-  | ["ls", "--summary"] =>
-    match ← IO.getEnv "LINGER_E2E_TITLE_PIPE" with
-    | some pipe =>
-      E2E.Title.sampleProbe pipe
-    | none =>
-      IO.eprintln "e2e: missing title sampler fixture"
-      return 2
   | [name] =>
     match suites.find? (·.1 == name) with
     | some (_, run) =>

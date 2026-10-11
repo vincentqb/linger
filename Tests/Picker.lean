@@ -125,6 +125,28 @@ namespace Linger.Tools.Picker.Tests
         (fresh.row "work").lookup key == some "after"
     | _, _ => false
 
+#guard remoteTarget "work@host" && remoteTarget "work@me@host" && !remoteTarget "work"
+
+-- A local-only listing replaces the local rows and keeps the last full listing's remote ones.
+#guard
+  match parseSnapshot "name\twork\nstatus\tidle\n\nname\tdev@host\nstatus\tworking\n\n",
+    parseSnapshot "name\tfresh\nstatus\twants-you\n\n" with
+  | .ok full, .ok latest =>
+    let merged := latest.withRemote full
+    merged.candidates == ["fresh", "dev@host"] &&
+      merged.row "fresh" == [("name", "fresh"), ("status", "wants-you")] &&
+      merged.row "dev@host" == [("name", "dev@host"), ("status", "working")] &&
+      merged.row "work" == [("name", "work")]
+  | _, _ => false
+
+-- `ls -r` lists local rows first, so a full listing merged with itself is unchanged.
+#guard
+  match parseSnapshot "name\twork\ncmd\tvim\nname\tdev@host\ncmd\tsh\n" with
+  | .ok full =>
+    full.withRemote full == full && (full.withRemote {}).candidates == ["work"] &&
+      (({} : Snapshot).withRemote full).candidates == ["dev@host"]
+  | .error _ => false
+
 #guard
   match parseSnapshot "name\twork\ncmd\tvi\x1b[31m\u009b31m\n" with
   | .ok snapshot =>

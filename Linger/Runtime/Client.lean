@@ -10,7 +10,6 @@ import Linger.Core.Remote
 import Linger.Core.Title
 import Linger.Core.Status
 import Linger.Runtime.Paths
-import Linger.Runtime.Command
 
 public section
 
@@ -202,13 +201,13 @@ def viewSaved (name : String) (snapshot : Linger.Core.Vt.Vt) : IO Outcome := do
     finally
       termRestore stdinFd saved
 
-/-- Interactive attach. `readOnly` attaches as a 0×0 observer: output
-mirrors, keyboard is not forwarded, detach key still works. -/
-def attach (name : String) (fd : UInt32) (readOnly : Bool := false) : IO Outcome := do
+/-- One attach conversation; it owns the socket. `sample` computes the title's
+attention summary on its own task, one second after the previous sample completed;
+a failed sample shows the unknown icon. -/
+private def converse (name : String) (fd : UInt32) (sample : IO String) (readOnly : Bool)
+    (pending : IO.Ref (Option (Task (Except IO.Error String)))) : IO Outcome := do
   try
     let detachEnabled := Linger.Core.Env.detachEnabled readOnly (← IO.getEnv "LINGER_NO_DETACH_KEY")
-    let self ← IO.appPath
-    let pending ← IO.mkRef (none : Option Command.Job)
     let (cols, rows) ← winsizeGet stdinFd
     if readOnly then
       sendMsg fd (.attach 0 0)
@@ -226,20 +225,18 @@ def attach (name : String) (fd : UInt32) (readOnly : Bool := false) : IO Outcome
     let mut titleDirty := false
     try
       while !leaving do
-        try
-          if let some output← Command.poll pending then
+        if let some task← pending.get then
+          if ← IO.hasFinished task then
+            pending.set none
             let fresh :=
-              if output.exitCode == 0 then output.stdout.trimAscii.toString
-              else String.singleton (Linger.Core.Status.icon .unknown)
+              match ← IO.wait task with
+              | .ok text => text
+              | .error _ => String.singleton (Linger.Core.Status.icon .unknown)
             titleDirty := titleDirty || fresh != summary
             summary := fresh
             nextSummary := (← monotonicMs) + 1000
-          if (← pending.get).isNone && (← monotonicMs) ≥ nextSummary then
-            pending.set (some (← Command.start self.toString #["ls", "--summary"]))
-        catch _ =>
-          summary := String.singleton (Linger.Core.Status.icon .unknown)
-          titleDirty := true
-          nextSummary := (← monotonicMs) + 1000
+        if (← pending.get).isNone && (← monotonicMs) ≥ nextSummary then
+          pending.set (some (← IO.asTask sample Task.Priority.dedicated))
         let revs ← poll #[stdinFd, fd] #[POLLIN, POLLIN] 200
         let size ← winsizeGet stdinFd
         if size != lastSize && !readOnly then
@@ -299,14 +296,24 @@ def attach (name : String) (fd : UInt32) (readOnly : Bool := false) : IO Outcome
       -- These cleanups are nested, not sequential: a broken stdout must not
       -- prevent termios restoration, and neither failure may leak the socket.
       try
-        try
-          writeAll stdoutFd (ByteArray.mk Linger.Core.Render.leaveAnsi.toArray)
-        finally
-          termRestore stdinFd saved
+        writeAll stdoutFd (ByteArray.mk Linger.Core.Render.leaveAnsi.toArray)
       finally
-        Command.stop pending
+        termRestore stdinFd saved
     return result
   finally
     close fd
+
+/-- Interactive attach. `readOnly` attaches as a 0×0 observer: output
+mirrors, keyboard is not forwarded, detach key still works. The title appends
+`sample`'s attention summary. An outstanding sample is joined after the socket
+closes, so the daemon sees a detach at once and no sample outlives the attachment. -/
+def attach (name : String) (fd : UInt32) (sample : IO String) (readOnly : Bool := false) :
+    IO Outcome := do
+  let pending ← IO.mkRef (none : Option (Task (Except IO.Error String)))
+  try
+    converse name fd sample readOnly pending
+  finally
+    if let some task← pending.get then
+      discard <| IO.wait task
 
 end Linger.Runtime.Client

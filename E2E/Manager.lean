@@ -121,6 +121,20 @@ private def waitChild {cfg : IO.Process.StdioConfig} (child : IO.Process.Child c
   let _ ← waitProcess child 1000
   return 99
 
+/-- The listing argv this recorder answers from the fixture. A native picker lists
+local rows alone between remote queries; both native listings print the fixture's
+rows, and the picker keeps only a local listing's local rows. With a real executable
+configured, a bare `ls --porcelain` is the saved-pane importer's existing-session
+check instead. -/
+private def listingArgs (root : System.FilePath) (args : List String) : IO Bool := do
+  match args with
+  | ["ls", "-r", "--porcelain"] | ["tmux", "ls", "--porcelain", _] =>
+    return true
+  | ["ls", "--porcelain"] =>
+    return (← readText (root / "real-executable")).isEmpty
+  | _ =>
+    return false
+
 private def recordCommand (root : System.FilePath) (args : List String) : IO UInt32 := do
   let count ← numberFile (root / "command-count")
   if count ≥ 16 then
@@ -131,8 +145,7 @@ private def recordCommand (root : System.FilePath) (args : List String) : IO UIn
   let ttyIn ← (← IO.getStdin).isTty
   let ttyOut ← (← IO.getStdout).isTty
   IO.FS.writeFile (root / s!"ttys-{count + 1}") s!"{ttyIn},{ttyOut}"
-  match args with
-  | ["ls", "-r", "--porcelain"] | ["tmux", "ls", "--porcelain", _] =>
+  if ← listingArgs root args then
     let serial := (← numberFile (root / "list-count")) + 1
     let pid ← getpid
     let started ← monotonicMs
@@ -176,6 +189,7 @@ private def recordCommand (root : System.FilePath) (args : List String) : IO UIn
       IO.FS.writeFile (root / s!"list-ended-{pid}") (toString (← monotonicMs))
       unless overlap do
         IO.FS.removeDir (root / "listing-active")
+  match args with
   | ["attach", target] | ["attach", "--", target] =>
     let count ← numberFile (root / "attach-count")
     IO.FS.writeFile (root / "attach-count") (toString (count + 1))
@@ -354,14 +368,17 @@ private def Fixture.picker (f : Fixture) : Fixture :=
 
 private def Fixture.calls (f : Fixture) : IO String := readText (f.root / "calls")
 
-/-- Adjacent complete-listing attempts belong to one selection visit. Keep
-unexpected argv and every attach in order, without assuming how many periodic
+/-- Adjacent native listing attempts belong to one selection visit: keep the first,
+which must query remote hosts, and drop the periodic local or remote ones after it.
+Keep unexpected argv and every attach in order, without assuming how many periodic
 attempts fit between unrelated keyboard actions. The raw trace stays on disk. -/
 private def Fixture.visits (f : Fixture) : IO String := do
-  let listing := (call ["ls", "-r", "--porcelain"]).dropEnd 1 |>.toString
+  let listing (record : String) :=
+    [["ls", "-r", "--porcelain"], ["ls", "--porcelain"]].any fun args =>
+      record == ((call args).dropEnd 1).toString
   let mut records : List String := []
   for record in lines (← f.calls) do
-    unless record == listing && records.getLast? == some record do
+    unless listing record && records.getLast?.any listing do
       records := records ++ [record]
   return String.intercalate "\n" records ++ if records.isEmpty then "" else "\n"
 
@@ -1552,25 +1569,25 @@ private def refreshChecks (e : Env) : IO Unit := do
   check e "refresh-removed"
       "automatic refresh clamps a removed selection while preserving an invalid creation query"
       fun f => do
-      f.listing "name\tone@host\nname\ttwo@host\nname\tthree@host\n"
+      f.listing "name\tone.x\nname\ttwo.x\nname\tthree.x\n"
       withSession f.picker #[] fun s => do
           unless ← s.prompt do
             return false
-          unless ← s.typeQuery "@" "@" do
+          unless ← s.typeQuery "." "." do
             return false
           let selection ← s.mark
           s.text "\x1b[F"
-          unless ← s.selected "three@host" selection do
+          unless ← s.selected "three.x" selection do
             return false
           let start ← s.mark
-          f.listing "name\tfirst@host\nname\tlast@host\n"
-          unless ← s.selected "last@host" start do
+          f.listing "name\tfirst.x\nname\tlast.x\n"
+          unless ← s.selected "last.x" start do
             return false
           let vt ← s.capture "removed-frame"
           let screen := String.fromUTF8! (ByteArray.mk (screenText vt).toArray)
-          return has screen "  › @" && !has screen "Create " && (← acceptThenCancel s) &&
+          return has screen "  › ." && !has screen "Create " && (← acceptThenCancel s) &&
               (← f.visits) ==
-                call ["ls", "-r", "--porcelain"] ++ call ["attach", "last@host"] ++
+                call ["ls", "-r", "--porcelain"] ++ call ["attach", "last.x"] ++
                   call ["ls", "-r", "--porcelain"]
   check e "refresh-created"
       "automatic refresh turns a highlighted creation into the same existing target and attach help"
@@ -1644,6 +1661,60 @@ private def refreshChecks (e : Env) : IO Unit := do
         return repeated && quiet && spaced && (← restored s 130) &&
             (← f.visits) == call ["ls", "-r", "--porcelain"] &&
             !(← (f.root / "listing-overlap").pathExists)
+  check e "remote-cadence"
+      "picker refreshes local rows every second and remote rows only from its next remote query"
+      fun f => do
+      f.listing "name\tAlpha\nstatus\tidle\nname\twork@host\nstatus\tidle\n"
+      withSession f.picker #[] fun s => do
+          unless ← s.prompt do
+            return false
+          unless ← f.waitListing 1 true do
+            return false
+          let start ← s.mark
+          f.listing "name\tBeta\nstatus\tidle\nname\tnext@host\nstatus\tidle\n"
+          unless ← s.untilRow "Beta" start do
+            return false
+          let localFrame ← s.capture "local-refresh-frame"
+          let localScreen := String.fromUTF8! (ByteArray.mk (screenText localFrame).toArray)
+          let held := has localScreen "work@host" && !has localScreen "next@host"
+          let start ← s.mark
+          let shown ←
+            s.untilScreen
+                (fun vt => (List.range vt.rowCount).any fun row => has (rowText vt row) "next@host")
+                start (Linger.Manager.Picker.remoteRefreshMs + 3000)
+          let remoteFrame ← s.capture "remote-refresh-frame"
+          let remoteScreen := String.fromUTF8! (ByteArray.mk (screenText remoteFrame).toArray)
+          s.text "\x03"
+          let clean ← restored s 130
+          -- Pair each listing attempt, in order, with its start in the recording child.
+          let kinds :=
+            (lines (← f.calls)).filterMap fun record =>
+              if record == ((call ["ls", "-r", "--porcelain"]).dropEnd 1).toString then some true
+              else
+                if record == ((call ["ls", "--porcelain"]).dropEnd 1).toString then some false
+                else none
+          let starts :=
+            (lines (← readText (f.root / "list-starts"))).filterMap fun line =>
+              ((line.splitOn "\t")[2]?).bind String.toNat?
+          let firstDone ← numberFile (f.root / "list-completed-1")
+          let gaps := (starts.zip starts.tail).map fun (a, b) => b - a
+          IO.FS.writeFile (f.root / "cadence-observation")
+              s!"kinds={kinds}\nstarts={starts}\nfirst-completed={firstDone}\ngaps={gaps}\n"
+          -- Local listings run until the next remote query, which waits out the cadence
+          -- after the first one completed.
+          let cadence :=
+            match (kinds.drop 1).findIdx? id with
+            | none => false
+            | some index =>
+              kinds.head? == some true && index ≥ 1 &&
+                (starts[index + 1]?.getD 0) ≥ firstDone + Linger.Manager.Picker.remoteRefreshMs
+          return held && shown && has remoteScreen "Beta" && !has remoteScreen "work@host" &&
+              cadence &&
+              kinds.length == starts.length &&
+              gaps.all (· ≥ 850) &&
+              clean &&
+              (← f.visits) == call ["ls", "-r", "--porcelain"] &&
+              !(← (f.root / "listing-overlap").pathExists)
   for (slug, text, rc, error) in
     [("failure", "name\tPartial\n", 9, "could not list sessions (exit 9)"),
       ("duplicate", "name\tFresh\nname\tFresh\n", 1, "duplicate session target"),
@@ -1665,66 +1736,65 @@ private def refreshChecks (e : Env) : IO Unit := do
   check e "refresh-partial"
       "incomplete listing output cannot replace displayed rows and keyboard editing stays responsive"
       fun f => do
-      f.listing "name\talpha@host\nname\tbeta@host\nname\tgamma@host\n"
+      f.listing "name\talpha.x\nname\tbeta.x\nname\tgamma.x\n"
       IO.FS.writeFile (f.root / "hold-listing-from") "2"
       withSession f.picker #[] fun s => do
           unless ← s.prompt do
             return false
-          IO.FS.writeFile (f.root / "listing-prefix") "name\tready@host\n"
-          f.listing "name\tbeta@host\nname\tnew@host\n"
+          IO.FS.writeFile (f.root / "listing-prefix") "name\tready.x\n"
+          f.listing "name\tbeta.x\nname\tnew.x\n"
           unless ← f.waitListing 2 do
             return false
-          unless ← s.typeQuery "@" "@" do
+          unless ← s.typeQuery "." "." do
             return false
           let selection ← s.mark
           s.text "\x0e"
-          unless ← s.selected "beta@host" selection do
+          unless ← s.selected "beta.x" selection do
             return false
           let before ← s.capture "partial-frame"
           let beforeText := String.fromUTF8! (ByteArray.mk (screenText before).toArray)
           let incomplete :=
-            has beforeText "beta@host" && !has beforeText "ready@host" && !has beforeText "new@host"
+            has beforeText "beta.x" && !has beforeText "ready.x" && !has beforeText "new.x"
           let start ← s.mark
           f.releaseListing 2
-          unless ← s.untilRow "new@host" start do
+          unless ← s.untilRow "new.x" start do
             return false
-          unless ← s.selected "beta@host" start do
+          unless ← s.selected "beta.x" start do
             return false
           let vt ← s.capture "complete-frame"
           let screen := String.fromUTF8! (ByteArray.mk (screenText vt).toArray)
           s.text "\x03"
-          return incomplete && has screen "ready@host" && has screen "new@host" &&
-              has screen "  › @" &&
-              !has screen "alpha@host" &&
+          return incomplete && has screen "ready.x" && has screen "new.x" && has screen "  › ." &&
+              !has screen "alpha.x" &&
               (← restored s 130)
   check e "refresh-input-order"
       "completed refresh follows displayed navigation and paints before the next accepted key"
       fun f => do
-      f.listing "name\talpha@host\nname\tbeta@host\nname\tgamma@host\n"
+      f.listing "name\talpha.x\nname\tbeta.x\nname\tgamma.x\n"
       IO.FS.writeFile (f.root / "hold-listing-from") "2"
       withSession f.picker #[] fun s => do
           unless ← s.prompt do
             return false
-          unless ← s.typeQuery "@" "@" do
+          unless ← s.typeQuery "." "." do
             return false
-          f.listing "name\tbeta@host\nname\tdelta@host\nname\tgamma@host\nname\talpha@host\n"
+          f.listing "name\tbeta.x\nname\tdelta.x\nname\tgamma.x\nname\talpha.x\n"
           unless ← f.waitListing 2 do
             return false
           let start ← s.mark
           s.text "\x0e"
           f.releaseListing 2
-          unless ← s.untilRow "delta@host" start do
+          unless ← s.untilRow "delta.x" start do
             return false
           let vt ← s.capture "ready-frame"
-          let displayed := rowText vt 4 == "  ▸ ? beta@host  (busy)"
+          let displayed := rowText vt 4 == "  ▸ ? beta.x  (busy)"
           IO.FS.removeFile (f.root / "hold-listing-from")
           let start ← s.mark
           s.text "\x0e"
-          unless ← s.selected "delta@host" start do
+          unless ← s.selected "delta.x" start do
             return false
           return displayed && (← acceptThenCancel s) &&
               (← f.visits) ==
-                call ["ls", "-r", "--porcelain"] ++ call ["attach", "delta@host"] ++
+                call ["ls", "-r", "--porcelain"] ++ call ["attach", "delta.x"] ++
                   call ["ls", "-r", "--porcelain"]
   for (phase, serial) in [("initial", 1), ("refresh", 2)] do
     for (slug, key) in [("ctrl-c", "\x03"), ("escape", "\x1b")] do

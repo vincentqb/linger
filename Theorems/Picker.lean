@@ -201,6 +201,227 @@ theorem snapshot_row_name (snapshot : Snapshot) (target : String) :
     (Linger.Tools.Picker.Snapshot.row snapshot target).lookup "name" = some target := by
   simp [Snapshot.row]
 
+/-! Remote rows refresh from the latest listing that queried remote hosts, and local
+rows from the latest listing; each row keeps exactly the metadata its source reported. -/
+
+/-- A local session name never names a remote row. -/
+theorem remoteTarget_check (name : String) (h : Linger.Core.Name.check name = some name) :
+    remoteTarget name = false := by
+  have hvalid := ((Linger.Core.Name.check_eq_some_iff name name).mp h).2
+  unfold remoteTarget
+  cases hc : name.toList.contains '@' with
+  | false => rfl
+  | true =>
+    have hmem : '@' ∈ name.toList := by simpa using hc
+    exact absurd rfl (Linger.Core.Name.okChar_no_at '@' (hvalid.2.2.1 '@' hmem))
+
+/-- The metadata records `Snapshot.row` reads for `target`. -/
+def rowMeta (records : List (List String)) (target : String) : List (List String) :=
+  (records.dropWhile (· != ["name", target])).tail.takeWhile fun fields =>
+    fields != [""] && fields.head? != some "name"
+
+theorem row_congr (a b : Snapshot) (target : String)
+    (h : rowMeta a.records target = rowMeta b.records target) : a.row target = b.row target := by
+  simp only [rowMeta] at h
+  simp only [Snapshot.row]
+  rw [h]
+
+theorem rowRecords_cons (keep : String → Bool) (current : Bool) (fields : List String)
+    (rest : List (List String)) :
+    rowRecords keep current (fields :: rest) =
+      let next := if fields.head? == some "name" then keep (fields[1]?.getD "") else current
+      if next then fields :: rowRecords keep next rest else rowRecords keep next rest := rfl
+
+theorem takeWhile_rowRecords_false (keep : String → Bool) (records : List (List String)) :
+    (rowRecords keep false records).takeWhile
+        (fun fields => fields != [""] && fields.head? != some "name") =
+      [] := by
+  induction records with
+  | nil => rfl
+  | cons fields rest ih =>
+    rw [rowRecords_cons]
+    by_cases hname : fields.head? = some "name"
+    · simp only [hname, beq_self_eq_true, ↓reduceIte]
+      cases keep (fields[1]?.getD "") with
+      | true => simp [hname]
+      | false => exact ih
+    · have : (fields.head? == some "name") = false := by simpa using hname
+      simp only [this]
+      exact ih
+
+theorem takeWhile_rowRecords_true (keep : String → Bool) (records : List (List String)) :
+    (rowRecords keep true records).takeWhile
+        (fun fields => fields != [""] && fields.head? != some "name") =
+      records.takeWhile (fun fields => fields != [""] && fields.head? != some "name") := by
+  induction records with
+  | nil => rfl
+  | cons fields rest ih =>
+    rw [rowRecords_cons]
+    by_cases hname : fields.head? = some "name"
+    · simp only [hname, beq_self_eq_true, ↓reduceIte]
+      cases keep (fields[1]?.getD "") with
+      | true => simp [hname]
+      | false =>
+        simp only [Bool.false_eq_true, ↓reduceIte]
+        rw [takeWhile_rowRecords_false]
+        simp [hname]
+    · have : (fields.head? == some "name") = false := by simpa using hname
+      simp only [this, Bool.false_eq_true, ↓reduceIte, List.takeWhile_cons]
+      rw [ih]
+
+/-- A kept row reads the same metadata as in the listing it came from. -/
+theorem rowMeta_rowRecords (keep : String → Bool) (current : Bool) (records : List (List String))
+    (target : String) (hkeep : keep target = true) :
+    rowMeta (rowRecords keep current records) target = rowMeta records target := by
+  induction records generalizing current with
+  | nil => rfl
+  | cons fields rest ih =>
+    rw [rowRecords_cons]
+    by_cases hfields : fields = ["name", target]
+    · subst hfields
+      simp only [List.head?_cons, beq_self_eq_true, ↓reduceIte, List.getElem?_cons_succ,
+        List.getElem?_cons_zero, Option.getD_some, hkeep]
+      simp only [rowMeta, List.dropWhile_cons, bne_self_eq_false, Bool.false_eq_true, ↓reduceIte,
+        List.tail_cons]
+      exact takeWhile_rowRecords_true keep rest
+    · have hne : (fields != ["name", target]) = true := by simpa using hfields
+      generalize (if fields.head? == some "name" then keep (fields[1]?.getD "") else current) = next
+      cases next with
+      | true =>
+        simp only [↓reduceIte]
+        simp only [rowMeta, List.dropWhile_cons, hne, ↓reduceIte] at ih ⊢
+        exact ih true
+      | false =>
+        simp only [Bool.false_eq_true, ↓reduceIte]
+        rw [ih false]
+        simp only [rowMeta, List.dropWhile_cons, hne, ↓reduceIte]
+
+/-- Every name record a filter keeps names a row it keeps. -/
+theorem rowRecords_name (keep : String → Bool) (current : Bool) (records : List (List String))
+    (target : String) (h : ["name", target] ∈ rowRecords keep current records) :
+    keep target = true := by
+  induction records generalizing current with
+  | nil => simp [rowRecords] at h
+  | cons fields rest ih =>
+    rw [rowRecords_cons] at h
+    by_cases hfields : fields = ["name", target]
+    · subst hfields
+      simp only [List.head?_cons, beq_self_eq_true, ↓reduceIte, List.getElem?_cons_succ,
+        List.getElem?_cons_zero, Option.getD_some] at h
+      cases hk : keep target with
+      | true => rfl
+      | false =>
+        rw [hk] at h
+        simp only [Bool.false_eq_true, ↓reduceIte] at h
+        have := ih false h
+        rw [hk] at this
+        exact this
+    · generalize (if fields.head? == some "name" then keep (fields[1]?.getD "") else current) =
+        next at h
+      cases next with
+      | true =>
+        simp only [↓reduceIte, List.mem_cons] at h
+        rcases h with h | h
+        · exact absurd h.symm hfields
+        · exact ih true h
+      | false =>
+        simp only [Bool.false_eq_true, ↓reduceIte] at h
+        exact ih false h
+
+theorem takeWhile_append_stop (p : List String → Bool) (xs ys : List (List String))
+    (h : ys.takeWhile p = []) : (xs ++ ys).takeWhile p = xs.takeWhile p := by
+  induction xs with
+  | nil => simpa using h
+  | cons x xs ih =>
+    simp only [List.cons_append, List.takeWhile_cons]
+    split <;> simp_all
+
+theorem dropWhile_absent (xs ys : List (List String)) (target : String)
+    (h : ["name", target] ∉ xs) :
+    (xs ++ ys).dropWhile (· != ["name", target]) = ys.dropWhile (· != ["name", target]) := by
+  induction xs with
+  | nil => rfl
+  | cons x xs ih =>
+    have hx : x ≠ ["name", target] := fun hx => h (hx ▸ List.mem_cons_self)
+    have hrest : ["name", target] ∉ xs := fun hm => h (List.mem_cons_of_mem _ hm)
+    simp only [List.cons_append, List.dropWhile_cons, bne_iff_ne, ne_eq, hx, not_false_eq_true,
+      ↓reduceIte]
+    exact ih hrest
+
+/-- Records after a list that holds no row for `target` and stops every metadata
+read leave that list's metadata for `target` unchanged. -/
+theorem rowMeta_append_stop (xs ys : List (List String)) (target : String)
+    (hstop : ys.takeWhile (fun fields => fields != [""] && fields.head? != some "name") = [])
+    (habsent : ["name", target] ∉ ys) : rowMeta (xs ++ ys) target = rowMeta xs target := by
+  induction xs with
+  | nil =>
+    have := dropWhile_absent ys [] target habsent
+    simp only [List.append_nil, List.dropWhile_nil] at this
+    simp [rowMeta, this]
+  | cons x xs ih =>
+    by_cases hx : x = ["name", target]
+    · subst hx
+      simp only [rowMeta, List.cons_append, List.dropWhile_cons, bne_self_eq_false,
+        Bool.false_eq_true, ↓reduceIte, List.tail_cons]
+      exact takeWhile_append_stop _ xs ys hstop
+    · have hne : (x != ["name", target]) = true := by simpa using hx
+      simp only [rowMeta, List.cons_append, List.dropWhile_cons, hne, ↓reduceIte] at ih ⊢
+      exact ih
+
+/-- A row keeps its metadata through a filter that keeps it. -/
+theorem rowRecords_row (keep : String → Bool) (current : Bool) (snapshot : Snapshot)
+    (candidates : List String) (target : String) (hkeep : keep target = true) :
+    Snapshot.row { candidates, records := rowRecords keep current snapshot.records } target =
+      snapshot.row target :=
+  row_congr _ _ target (rowMeta_rowRecords keep current snapshot.records target hkeep)
+
+/-- The merged targets are the latest listing's local targets and the full listing's
+remote ones. -/
+theorem mem_withRemote (latest full : Snapshot) (target : String) :
+    target ∈ (latest.withRemote full).candidates ↔
+      target ∈ latest.candidates ∧ remoteTarget target = false ∨
+        target ∈ full.candidates ∧ remoteTarget target = true := by
+  simp [Snapshot.withRemote, List.mem_filter]
+
+/-- Duplicate-free listings merge without duplicates: the two parts are disjoint. -/
+theorem withRemote_nodup (latest full : Snapshot) (hlatest : latest.candidates.Nodup)
+    (hfull : full.candidates.Nodup) : (latest.withRemote full).candidates.Nodup := by
+  simp only [Snapshot.withRemote]
+  rw [List.nodup_append]
+  refine ⟨hlatest.filter _, hfull.filter _, ?_⟩
+  intro a ha b hb hab
+  subst hab
+  simp only [List.mem_filter] at ha hb
+  rw [hb.2] at ha
+  exact absurd ha.2 (by decide)
+
+/-- A local row reads exactly what the latest listing reported. -/
+theorem withRemote_row_local (latest full : Snapshot) (target : String)
+    (hlocal : remoteTarget target = false) :
+    (latest.withRemote full).row target = latest.row target := by
+  apply row_congr
+  have habsent : ["name", target] ∉ rowRecords remoteTarget false full.records := fun h => by
+    have := rowRecords_name remoteTarget false full.records target h
+    rw [hlocal] at this
+    exact Bool.false_ne_true this
+  simp only [Snapshot.withRemote]
+  rw [rowMeta_append_stop _ _ target (takeWhile_rowRecords_false _ _) habsent]
+  exact rowMeta_rowRecords _ true latest.records target (by simp [hlocal])
+
+/-- A remote row reads exactly what the latest full listing reported. -/
+theorem withRemote_row_remote (latest full : Snapshot) (target : String)
+    (hremote : remoteTarget target = true) :
+    (latest.withRemote full).row target = full.row target := by
+  apply row_congr
+  have habsent : ["name", target] ∉ rowRecords (!remoteTarget ·) true latest.records := fun h => by
+    have := rowRecords_name (!remoteTarget ·) true latest.records target h
+    simp [hremote] at this
+  simp only [Snapshot.withRemote]
+  have hdrop := dropWhile_absent _ (rowRecords remoteTarget false full.records) target habsent
+  simp only [rowMeta] at ⊢
+  rw [hdrop]
+  exact rowMeta_rowRecords remoteTarget false full.records target hremote
+
 /-- The selected existing row has precisely the listing's badge, aligned name,
 details, labels and watchers, with the same style boundaries. -/
 theorem presentation_existing (snapshot : Snapshot) (nameCol : Nat) (target : String) :

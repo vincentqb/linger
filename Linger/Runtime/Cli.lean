@@ -169,39 +169,6 @@ def withTarget (verb target : String) (args : List String) (localAction : String
   | none => invalidTarget
   | some parsed => runTarget verb parsed args localAction options
 
-/-- A live connection is authoritative. Only read-only attachment can view an
-offline checkpoint, loaded while owning both resources and displayed after
-releasing them. Writable attachment keeps the create/resume path. -/
-def cmdAttach (name : String) (cmd : List String) (readOnly : Bool) : IO UInt32 := do
-  let result ←
-    if readOnly then
-      match ← Client.connect name with
-      | some fd =>
-        Client.attach name fd true
-      | none =>
-        let checkpoint ← Paths.withSessionLock name (Resume.loadCkpt name)
-        match checkpoint with
-        | some (vt, _, _) =>
-          Client.viewSaved name vt
-        | none =>
-          pure (.refused s!"no live session or readable checkpoint for '{name}'")
-    else
-      let fd ← connectUpsert name cmd
-      Client.attach name fd
-  match result with
-  | .ended status =>
-    IO.eprintln s!"\r\nlinger: session '{name}' ended (status {status})"
-    return status &&& 0xFF
-  | .detached =>
-    IO.eprintln s!"\r\nlinger: detached from '{name}'"
-    return 0
-  | .refused msg =>
-    IO.eprintln s!"\r\nlinger: {msg}"
-    return 1
-  | .lost why =>
-    IO.eprintln s!"\r\nlinger: {why} for '{name}'"
-    return 1
-
 /-- One connected info conversation, bounded by an absolute request window.
 Only `done` completes an answer; a failed prefix is never returned as info. -/
 def readInfo (fd : UInt32) (stopAt : Option Nat := none) : IO (List (String × String)) := do
@@ -473,14 +440,52 @@ def localRows (stopAt : Option Nat := none) : IO (List (List (String × String))
             else liveRow name []]
   return rows
 
-def cmdSummary : IO UInt32 := do
+/-- Local attention counts under one 250 ms reply window: the text `ls --summary`
+prints and an attached title shows, computed in the calling process. -/
+def summaryText : IO String := do
   let rows ← localRows (some ((← monotonicMs) + 250))
-  let summary :=
-    Linger.Core.Status.summary
+  return Linger.Core.Status.summary
       (rows.map fun info => Linger.Core.Status.ofName ((info.lookup "status").getD "unknown"))
+
+def cmdSummary : IO UInt32 := do
+  let summary ← summaryText
   if !summary.isEmpty then
     IO.println summary
   return 0
+
+/-- A live connection is authoritative. Only read-only attachment can view an
+offline checkpoint, loaded while owning both resources and displayed after
+releasing them. Writable attachment keeps the create/resume path. Live titles
+sample `summaryText` in this process. -/
+def cmdAttach (name : String) (cmd : List String) (readOnly : Bool) : IO UInt32 := do
+  let result ←
+    if readOnly then
+      match ← Client.connect name with
+      | some fd =>
+        Client.attach name fd summaryText true
+      | none =>
+        let checkpoint ← Paths.withSessionLock name (Resume.loadCkpt name)
+        match checkpoint with
+        | some (vt, _, _) =>
+          Client.viewSaved name vt
+        | none =>
+          pure (.refused s!"no live session or readable checkpoint for '{name}'")
+    else
+      let fd ← connectUpsert name cmd
+      Client.attach name fd summaryText
+  match result with
+  | .ended status =>
+    IO.eprintln s!"\r\nlinger: session '{name}' ended (status {status})"
+    return status &&& 0xFF
+  | .detached =>
+    IO.eprintln s!"\r\nlinger: detached from '{name}'"
+    return 0
+  | .refused msg =>
+    IO.eprintln s!"\r\nlinger: {msg}"
+    return 1
+  | .lost why =>
+    IO.eprintln s!"\r\nlinger: {why} for '{name}'"
+    return 1
 
 def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
   let (locals, remote) ←

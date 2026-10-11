@@ -495,6 +495,22 @@ def Env.daemonPeakKb (e : Env) (name : String) : IO (Option Nat) := do
   | none =>
     throw (IO.userError s!"no VmHWM line for daemon {pid}")
 
+/-- CPU milliseconds of process `pid` and of the children it has reaped, from
+`/proc/<pid>/stat` in USER_HZ ticks of 10 ms. `none` on a platform without `/proc`;
+where it exists, an unreadable record is an error rather than an unmeasured pass. -/
+def processCpuMs (pid : UInt32) : IO (Option (Nat × Nat)) := do
+  unless ← System.FilePath.pathExists "/proc/self/stat" do
+    return none
+  let stat ← IO.FS.readFile s!"/proc/{pid}/stat"
+  -- The parenthesized command name may hold spaces; the fields after it start at state.
+  let fields := (((stat.splitOn ")").getLastD "").splitOn " ").filter (· != "")
+  -- utime, stime, cutime and cstime are fields 14 to 17; state is field 3.
+  match ((fields.drop 11).take 4).mapM String.toNat? with
+  | some [utime, stime, cutime, cstime] =>
+    return some ((utime + stime) * 10, (cutime + cstime) * 10)
+  | _ =>
+    throw (IO.userError s!"unreadable /proc/{pid}/stat")
+
 /-- SIGKILL the daemon behind `name`, leaving its socket as a real crash does.
 `true` iff a daemon was found, was alive first, and is gone after. The listing
 path—not the test harness—must classify and safely clean the stale socket. -/

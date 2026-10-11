@@ -397,8 +397,10 @@ done
 
 # Selector and decoder proofs concern pure values. Tie each IO consumer to the
 # proved function, build attach argv from Remote.targetOperands and retain an
-# immutable poll snapshot.
-# E2E.Manager drives the terminal lifetime, failure paths and handoff itself.
+# immutable poll snapshot. Between remote queries a native visit lists local rows
+# alone and keeps the last full listing's remote rows (withRemote_row_local,
+# withRemote_row_remote); every visit starts with a full listing.
+# E2E.Manager drives the terminal lifetime, failure paths, cadence and handoff itself.
 for claim in align_optimal align_isSome_iff_sublist align_marks_length align_spells \
              align_score_max align_earliest align_default \
              alignWith_optimal alignWith_isSome_iff_sublist alignWith_marks_length \
@@ -416,7 +418,9 @@ for claim in matches_iff_sublist align_isSome_iff_matches visible_order parseLis
              mem_items_create step_stay_valid step_attach_mem step_create_iff \
              step_create_valid step_init_empty step_cancel refresh_query refresh_candidates \
              refresh_valid refresh_selected refresh_missing init_allowCreate \
-             refresh_allowCreate step_stay_allowCreate step_no_create step_accept_disabled; do
+             refresh_allowCreate step_stay_allowCreate step_no_create step_accept_disabled \
+             remoteTarget_check rowRecords_row mem_withRemote withRemote_nodup \
+             withRemote_row_local withRemote_row_remote; do
   code_grep "^(private )?theorem $claim([[:space:]]|:)" Theorems/Picker.lean >/dev/null \
     || fail "selector contract disappeared: $claim"
 done
@@ -429,7 +433,8 @@ for claim in ofInput_control_iff feed_byte_bindings feed_paste_no_commands feed_
     || fail "selector binding contract disappeared: $claim"
 done
 for tie in \
-  'let incoming ← IO[.]ofExcept [(]Linger[.]Tools[.]Picker[.]parseSnapshot result[.]stdout[)]' \
+  'let listed ← IO[.]ofExcept [(]Linger[.]Tools[.]Picker[.]parseSnapshot result[.]stdout[)]' \
+  'let incoming := if full then listed else listed[.]withRemote lastFull' \
   'let items := Linger[.]Tools[.]Picker[.]items state[.]candidates state[.]query state[.]allowCreate' \
   'let mut state := Linger[.]Tools[.]Picker[.]init [[]] [(]!savedTmux && !readOnly[)]' \
   'let mut decoder := Linger[.]Tools[.]Input[.]init' \
@@ -459,14 +464,17 @@ for tie in \
   'let next := if loaded then Linger[.]Tools[.]Picker[.]refresh state incoming[.]candidates else [{] [(]Linger[.]Tools[.]Picker[.]init incoming[.]candidates state[.]allowCreate[)] with query := state[.]query [}] dirty := dirty [|][|] !loaded [|][|] next != state [|][|] incoming != snapshot state := next snapshot := incoming loaded := true nextListing := [(]← monotonicMs[)] [+] 1000' \
   'while true do let current ← winsizeGet stdoutFd if dirty [|][|] current != size then let frame := draw state snapshot loaded withColor savedTmux current[.]1 current[.]2 if frame != lastFrame [|][|] current != size then writeAll stdoutFd frame[.]toUTF8 lastFrame := frame size := current dirty := false let ready ← poll fds events 50' \
   'for key in keys do if !loaded && key == [.]accept then continue match Linger[.]Tools[.]Picker[.]step state key with [|] [.]stay next => dirty := dirty [|][|] next != state state := next [|] [.]attach target [|] [.]create target => return [.]attach target snapshot [|] [.]cancel => return [.]cancel if let some result[[:space:]]*← Linger[.]Runtime[.]Command[.]poll pending then' \
-  'nextListing := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]← monotonicMs[)] ≥ nextListing then pending[.]set [(]some [(]← Linger[.]Runtime[.]Command[.]start executable args[)][)] return [.]cancel finally' \
+  'if full then lastFull := listed nextRemote := [(]← monotonicMs[)] [+] remoteRefreshMs let incoming := if full then listed else listed[.]withRemote lastFull let next :=' \
+  'nextListing := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]← monotonicMs[)] ≥ nextListing then full := savedTmux [|][|] [(]← monotonicMs[)] ≥ nextRemote let args := if full then fullArgs else #[[]"ls", "--porcelain"[]] pending[.]set [(]some [(]← Linger[.]Runtime[.]Command[.]start executable args[)][)] return [.]cancel finally' \
   'finally Linger[.]Runtime[.]Command[.]stop pending [(]if savedTmux then 0 else 1000[)]' \
-  'let args := if savedTmux then #[[]"tmux", "ls", "--porcelain"[]] [+][+] save[.]toArray else #[[]"ls", "-r", "--porcelain"[]]' \
+  'let fullArgs := if savedTmux then #[[]"tmux", "ls", "--porcelain"[]] [+][+] save[.]toArray else #[[]"ls", "-r", "--porcelain"[]]' \
   'match ← choose executable [(]readOnly := readOnly[)] with' \
   'def attachArgs [(]target : String[)] [(]readOnly : Bool := false[)] : Array String := [(]"attach" :: [(]if readOnly then [[]"--read-only"[]] else [[][]][)] [+][+] Linger[.]Core[.]Remote[.]targetOperands target[)][.]toArray'; do
   printf '%s\n' "$picker_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "manager lost its selection, refresh, process ownership or attach contract: $tie"
 done
+code_grep '^def remoteRefreshMs : Nat := [1-9][0-9]*$' Linger/Manager/Picker.lean >/dev/null \
+  || fail "remote rows must refresh on a positive, fixed cadence"
 # Terminal loops and remote discovery own helpers through this one executor. Reap only
 # after both pipes close; clear ownership before a reader error can throw.
 # Cancellation can first request cooperative cleanup. It always force-retires
@@ -502,7 +510,9 @@ for tie in \
   'for [(]host, output[)] in remotes[.]zip remote[.]toList do for row in Linger[.]Core[.]Remote[.]parse output do' \
   '[|] some [(]porcelain, remoteFlag[)] => cmdList porcelain [(]← resolveRemotes remoteFlag[)]' \
   'let withColor := [(]← [(]← IO[.]getStdout[)][.]isTty[)] && [(]← IO[.]getEnv "NO_COLOR"[)][.]isNone writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Core[.]Listing[.]terminalListing withColor rows[)][.]toArray[)]' \
-  'let rows ← localRows [(]some [(][(]← monotonicMs[)] [+] 250[)][)] let summary := Linger[.]Core[.]Status[.]summary [(]rows[.]map fun info => Linger[.]Core[.]Status[.]ofName [(][(]info[.]lookup "status"[)][.]getD "unknown"[)][)] if !summary[.]isEmpty then IO[.]println summary return 0' \
+  'def summaryText : IO String := do let rows ← localRows [(]some [(][(]← monotonicMs[)] [+] 250[)][)] return Linger[.]Core[.]Status[.]summary [(]rows[.]map fun info => Linger[.]Core[.]Status[.]ofName [(][(]info[.]lookup "status"[)][.]getD "unknown"[)][)]' \
+  'def cmdSummary : IO UInt32 := do let summary ← summaryText if !summary[.]isEmpty then IO[.]println summary return 0' \
+  'let fd ← connectUpsert name cmd Client[.]attach name fd summaryText' \
   'if let some deadline := stopAt then if [(]← monotonicMs[)] ≥ deadline then return some [(][.]error [(]IO[.]userError "overview deadline reached"[)][)] match ← Client[.]connect name stopAt[.]isSome with [|] none => if stopAt[.]isSome && retainUnavailable then return some [(][.]error [(]IO[.]userError "overview connection unavailable"[)][)] return none [|] some fd => try let info ← [(]readInfo fd stopAt[)][.]toBaseIO return some info finally close fd' \
   'Client[.]sendMsg fd [.]info let deadline := stopAt[.]getD [(][(]← monotonicMs[)] [+] 2000[)]' \
   'while go && [(]← monotonicMs[)] < deadline do let remaining := deadline - [(]← monotonicMs[)] let revs ← poll #[[]fd[]] #[[]POLLIN[]] [(]Int32[.]ofNat [(]min 100 remaining[)][)]' \
@@ -550,6 +560,9 @@ code_grep '^[[:space:]]+let r ← unixConnect path nonblocking$' Linger/Runtime/
 # Title writes use the bounded, control-free encoder and the existing VT
 # observer. Observe raw application bytes only, reassert repeated OSC titles,
 # and defer every injected title until the parser and UTF-8 decoder are idle.
+# Attention is sampled in the client's process, one task at a time, and an
+# outstanding sample is joined after the socket closes. E2E.Title checks that an
+# idle client reaps no children and that detach joins a held sample.
 for claim in compose_parts compose_context compose_attention_last compose_bound \
              compose_payload_attention_last; do
   code_grep "^theorem $claim " Theorems/Title.lean >/dev/null \
@@ -571,13 +584,16 @@ code_grep '^theorem leave_boundary_title ' Theorems/Render/Modes.lean >/dev/null
 client_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Runtime/Client.lean)"
 for tie in \
   'let mut observer := Linger[.]Core[.]Vt[.]Vt[.]init 1 1' \
-  'while !leaving do try if let some output[[:space:]]*← Command[.]poll pending then let fresh := if output[.]exitCode == 0 then output[.]stdout[.]trimAscii[.]toString else String[.]singleton [(]Linger[.]Core[.]Status[.]icon [.]unknown[)] titleDirty := titleDirty [|][|] fresh != summary summary := fresh nextSummary := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]← monotonicMs[)] ≥ nextSummary then pending[.]set [(]some [(]← Command[.]start self[.]toString #[[]"ls", "--summary"[]][)][)] catch _ => summary := String[.]singleton [(]Linger[.]Core[.]Status[.]icon [.]unknown[)] titleDirty := true nextSummary := [(]← monotonicMs[)] [+] 1000 let revs ← poll #[[]stdinFd, fd[]] #[[]POLLIN, POLLIN[]] 200' \
+  'while !leaving do if let some task[[:space:]]*← pending[.]get then if ← IO[.]hasFinished task then pending[.]set none let fresh := match ← IO[.]wait task with [|] [.]ok text => text [|] [.]error _ => String[.]singleton [(]Linger[.]Core[.]Status[.]icon [.]unknown[)] titleDirty := titleDirty [|][|] fresh != summary summary := fresh nextSummary := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]← monotonicMs[)] ≥ nextSummary then pending[.]set [(]some [(]← IO[.]asTask sample Task[.]Priority[.]dedicated[)][)] let revs ← poll #[[]stdinFd, fd[]] #[[]POLLIN, POLLIN[]] 200' \
   'writeAll stdoutFd [(]ByteArray[.]mk payload[.]toArray[)] observer := observer[.]observe payload receivedOutput := true' \
   'if receivedOutput && titleDirty && !leaving then let title := Linger[.]Core[.]Title[.]compose name observer[.]windowTitle summary Linger[.]Core[.]Terminal[.]Title[.]maxChars let bytes := Linger[.]Core[.]Terminal[.]Title[.]update observer title if !bytes[.]isEmpty then writeAll stdoutFd [(]ByteArray[.]mk bytes[.]toArray[)] titleDirty := false' \
-  'try try writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Core[.]Render[.]leaveAnsi[.]toArray[)] finally termRestore stdinFd saved finally Command[.]stop pending'; do
+  'try writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Core[.]Render[.]leaveAnsi[.]toArray[)] finally termRestore stdinFd saved return result finally close fd' \
+  'def attach [(]name : String[)] [(]fd : UInt32[)] [(]sample : IO String[)] [(]readOnly : Bool := false[)] : IO Outcome := do let pending ← IO[.]mkRef [(]none : Option [(]Task [(]Except IO[.]Error String[)][)][)] try converse name fd sample readOnly pending finally if let some task[[:space:]]*← pending[.]get then discard <[|] IO[.]wait task'; do
   printf '%s\n' "$client_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "attached title lost its observer, sampler or handback contract: $tie"
 done
+! code_grep 'IO[.]Process|Command[.]|spawnDetached|spawnPty|appPath' Linger/Runtime/Client.lean \
+  || fail "the attach client starts processes; it samples title attention in its own process"
 [ "$(code_count 'observer := observer[.]observe' Linger/Runtime/Client.lean)" -eq 1 ] \
   || fail "title observer must consume application output exactly once"
 [ "$(code_count '(^|[[:space:]])observer([[:space:]]+:[^=]*)?[[:space:]]*(:=|←)' Linger/Runtime/Client.lean)" -eq 2 ] \
@@ -958,7 +974,7 @@ for tie in \
 done
 for tie in \
   'requestStatus name result [|] none => Paths[.]withSessionLock name do match ← Resume[.]loadCkpt name with [|] some [(]vt, _, _[)] => writeAll stdoutFd [(]ByteArray[.]mk [(]render vt[)][.]toArray[)]' \
-  'if readOnly then match ← Client[.]connect name with [|] some fd => Client[.]attach name fd true [|] none => let checkpoint ← Paths[.]withSessionLock name [(]Resume[.]loadCkpt name[)] match checkpoint with [|] some [(]vt, _, _[)] => Client[.]viewSaved name vt' \
+  'if readOnly then match ← Client[.]connect name with [|] some fd => Client[.]attach name fd summaryText true [|] none => let checkpoint ← Paths[.]withSessionLock name [(]Resume[.]loadCkpt name[)] match checkpoint with [|] some [(]vt, _, _[)] => Client[.]viewSaved name vt' \
   'let available ← try Paths[.]withSessionLock name [(]pure true[)] catch _ => pure false'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "offline reading or listing bypassed ownership: $tie"

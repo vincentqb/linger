@@ -123,17 +123,23 @@ private def draw (state : Linger.Tools.Picker.State) (snapshot : Linger.Tools.Pi
         frame := frame ++ "\x1b[0m"
     return frame
 
+/-- A native visit lists local rows every second but queries remote hosts again only
+this long after its previous remote query completed: each host costs an SSH
+connection. Meanwhile remote rows stay as that query reported them. -/
+def remoteRefreshMs : Nat := 5000
+
 /-- Own raw mode and at most one listing for one selection visit. Keys always
 act on the displayed snapshot, which is returned on acceptance; a completed
 replacement is applied afterward and rendered before polling again.
 Saved-tmux and read-only visits have no creation choice. The first listing is cancellable too.
-Native listings get a cooperative stop so they can retire isolated SSH groups. -/
+A native visit starts with a full listing, then lists local rows alone between
+remote queries. Native listings get a cooperative stop so they can retire isolated SSH groups. -/
 def choose (executable : String) (save : Option String := none) (readOnly : Bool := false) :
     IO Choice := do
   let savedTmux := save.isSome
   unless (← stdinIsTty) && (← (← IO.getStdout).isTty) do
     throw (IO.userError "the picker needs terminal input and output")
-  let args :=
+  let fullArgs :=
     if savedTmux then #["tmux", "ls", "--porcelain"] ++ save.toArray
     else #["ls", "-r", "--porcelain"]
   let pending ← IO.mkRef (none : Option Linger.Runtime.Command.Job)
@@ -150,6 +156,9 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
     let mut decoder := Linger.Tools.Input.init
     let mut lastInput ← monotonicMs
     let mut nextListing := 0
+    let mut full := true
+    let mut lastFull : Linger.Tools.Picker.Snapshot := {}
+    let mut nextRemote := 0
     let mut size := (0, 0)
     let mut lastFrame := ""
     let mut dirty := true
@@ -196,7 +205,11 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
       if let some result← Linger.Runtime.Command.poll pending then
         if result.exitCode != 0 then
           return .failed result.exitCode result.stderr
-        let incoming ← IO.ofExcept (Linger.Tools.Picker.parseSnapshot result.stdout)
+        let listed ← IO.ofExcept (Linger.Tools.Picker.parseSnapshot result.stdout)
+        if full then
+          lastFull := listed
+          nextRemote := (← monotonicMs) + remoteRefreshMs
+        let incoming := if full then listed else listed.withRemote lastFull
         let next :=
           if loaded then Linger.Tools.Picker.refresh state incoming.candidates
           else
@@ -208,6 +221,8 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
         loaded := true
         nextListing := (← monotonicMs) + 1000
       if (← pending.get).isNone && (← monotonicMs) ≥ nextListing then
+        full := savedTmux || (← monotonicMs) ≥ nextRemote
+        let args := if full then fullArgs else #["ls", "--porcelain"]
         pending.set (some (← Linger.Runtime.Command.start executable args))
     return .cancel
   finally

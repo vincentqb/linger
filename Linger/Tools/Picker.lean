@@ -70,6 +70,27 @@ def Snapshot.row (snapshot : Snapshot) (target : String) : List (String × Strin
       | [key, value] => some (key, value)
       | _ => none
 
+/-- Remote rows are named `name@host`. A local session name never contains `@`
+(`Name.okChar`), so the character partitions every listing's rows. -/
+def remoteTarget (target : String) : Bool := target.toList.contains '@'
+
+/-- The records of the rows whose target satisfies `keep`, in order. A name record
+governs itself and the records after it up to the next name record; records before
+every name record follow `current`. -/
+def rowRecords (keep : String → Bool) : Bool → List (List String) → List (List String)
+  | _, [] => []
+  | current, fields :: rest =>
+    let current := if fields.head? == some "name" then keep (fields[1]?.getD "") else current
+    if current then fields :: rowRecords keep current rest else rowRecords keep current rest
+
+/-- Local rows from `latest` and remote rows from `full`, the latest listing that
+queried remote hosts, so a local-only listing refreshes local rows without
+discarding remote ones. Local rows come first, as `ls -r` lists them. -/
+def Snapshot.withRemote (latest full : Snapshot) : Snapshot where
+  candidates := latest.candidates.filter (!remoteTarget ·) ++ full.candidates.filter remoteTarget
+  records :=
+    rowRecords (!remoteTarget ·) true latest.records ++ rowRecords remoteTarget false full.records
+
 def visible (candidates : List String) (query : String) : List String :=
   candidates.filter (Linger.Tools.Picker.matches query)
 

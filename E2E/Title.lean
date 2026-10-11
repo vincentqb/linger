@@ -13,9 +13,9 @@ executable in raw mode, so only explicit probe inputs produce application output
 The receiver uses the public VT parser and its title/boundary projections.
 
 `e2e title <binary>` also drives a saved predecessor or an assembled CLI without
-rebuilding it. The pipe-error cases instead exercise Client.attach linked into
-the E2E driver; changing the CLI argument cannot change that implementation.
-`e2e --title-probe` is the child dispatch, not a test suite. -/
+rebuilding it. The sampler cases instead exercise Client.attach linked into the
+E2E driver with a gated fixture sampler; changing the CLI argument cannot change
+that implementation. `e2e --title-probe` is the child dispatch, not a test suite. -/
 
 namespace E2E.Title
 
@@ -35,6 +35,13 @@ private def longEditor : String := String.ofList (List.replicate maxChars '😀'
 that public cap so the client actually receives an unfinished, ignored OSC. -/
 private def openOsc : ByteArray :=
   ("\x1b]999;" ++ String.ofList (List.replicate (Linger.Core.Terminal.oscCap + 1) 'x')).toUTF8
+
+/-- A quiet window over which an attached client samples its title about three times. -/
+def idleWindowMs : Nat := 3000
+
+/-- The client's own CPU over `idleWindowMs`, about five times the cost measured
+when it was set. Sampling spawns no process, so the client reaps no children. -/
+def idleBudgetMs : Nat := 100
 
 /-- Raw foreground program: lower-case keys open a partial sequence, their
 upper-case partners finish it; `r` repeats an identical title, `p` answers a
@@ -77,50 +84,43 @@ def probe : IO UInt32 := do
   finally
     termRestore stdinFd saved
 
-/-- Exercise the public attach implementation linked into this executable.
-Its status helpers re-enter E2ETest, where only the fixture environment enables
-the invalid-byte sample. Preserve the real attach outcome. -/
+/-- A fixture-owned counter file, zero until written. -/
+private def counter (path : String) : IO Nat := do
+  if ← System.FilePath.pathExists path then
+    return (← IO.FS.readFile path).toNat?.getD 0
+  return 0
+
+/-- The title sampler the probe attaches with. Samples run one at a time: the first
+waits for `release-failure` and fails, later ones wait for `release-valid` and report
+one unread session. File gates keep each state observable without racing the
+one-second interval; every finished sample, failed or not, is counted. -/
+def fixtureSample (dir : String) : IO String := do
+  let serial := (← counter s!"{dir}/sample-count") + 1
+  IO.FS.writeFile s!"{dir}/sample-count" (toString serial)
+  try
+    let gate := if serial == 1 then "release-failure" else "release-valid"
+    unless ← waitFor 8000 (System.FilePath.pathExists s!"{dir}/{gate}") do
+      throw (IO.userError "the fixture never released this title sample")
+    if serial == 1 then
+      throw (IO.userError "fixture title sample failure")
+    return Linger.Core.Status.summary [.wantsYou]
+  finally
+    IO.FS.writeFile s!"{dir}/sample-finished" (toString serial)
+
+/-- Exercise the public attach implementation linked into this executable, with
+`fixtureSample` as its title sampler. Preserve the real attach outcome, and report
+a sample still running once attach has returned. -/
 def attachProbe (name : String) : IO UInt32 := do
+  let some dir ← IO.getEnv "LINGER_DIR" | return 2
   let some fd ← Linger.Runtime.Client.connect name | return 2
-  let outcome ← Linger.Runtime.Client.attach name fd
+  let outcome ← Linger.Runtime.Client.attach name fd (fixtureSample dir)
+  if (← counter s!"{dir}/sample-count") != (← counter s!"{dir}/sample-finished") then
+    return 5
   match outcome with
   | .detached =>
     return 0
   | _ =>
     return 4
-
-/-- The first sample writes invalid UTF-8 to the selected pipe; subsequent
-samples return a valid summary. File gates keep the unknown title observable
-without racing the one-second sampling interval. All state is fixture-owned. -/
-def sampleProbe (pipe : String) : IO UInt32 := do
-  unless pipe == "stdout" || pipe == "stderr" do
-    return 2
-  let some dir ← IO.getEnv "LINGER_DIR" | return 2
-  let countPath := s!"{dir}/sample-count"
-  let previous ←
-    if ← System.FilePath.pathExists countPath then
-      IO.FS.readFile countPath
-    else
-      pure "0"
-  let serial := previous.toNat?.getD 0 + 1
-  IO.FS.writeFile countPath (toString serial)
-  IO.FS.writeFile s!"{dir}/sample-{serial}.pid" (toString (← getpid))
-  let gate := if serial == 1 then "release-invalid" else "release-valid"
-  unless ← waitFor 8000 (System.FilePath.pathExists s!"{dir}/{gate}") do
-    return 5
-  if serial == 1 then
-    let destination ←
-      if pipe == "stdout" then
-        IO.getStdout
-      else
-        IO.getStderr
-    destination.write (ByteArray.mk #[0xFF])
-    destination.flush
-    IO.FS.writeFile s!"{dir}/invalid-emitted" pipe
-  else
-    writeAll stdoutFd ((Linger.Core.Status.summary [.wantsYou]) ++ "\n").toUTF8
-    IO.FS.writeFile s!"{dir}/valid-emitted" (toString serial)
-  return 0
 
 private structure Receiver where
   vt : Vt := Vt.init 80 24
@@ -191,59 +191,60 @@ private def splitCase (e : Env) (c : Client) (seen : IO.Ref Receiver)
   expect (closeCode == 0 && completed && hasBytes (since after start) (opening ++ closing).toList)
       s!"{label}: completion preserves bytes and emits the pending title"
 
-/-- Pipe-reader errors are optional sampling failures, not attach failures.
+/-- Ask the probe program for a pong and wait for it in the output that follows. -/
+private def ping (c : Client) (seen : IO.Ref Receiver) : IO Bool := do
+  let start := (← seen.get).bytes.size
+  c.type "p"
+  awaitOutput c seen fun s => hasText (since s start) "TITLE-PONG"
+
+/-- A title sample is optional work on its own task, not part of the attachment.
 The actual session CLI stays fixed; this executable supplies the linked Client
-under test and its controlled status subprocesses. -/
-private def pipeCase (base : Env) (pipe : String) : IO Unit := do
-  let e := { base with dir := s!"{base.dir}/pipe-{pipe}" }
+under test and the gated `fixtureSample`. -/
+private def sampleCase (base : Env) : IO Unit := do
+  let e := { base with dir := s!"{base.dir}/sampler" }
   IO.FS.createDirAll e.dir
-  let name := s!"title-{pipe}"
+  let name := "title-sampler"
   let self ← IO.appPath
   let attaching := { e with bin := self.toString }
+  let titled (summary : String) :=
+    titleIs (Linger.Core.Title.compose name "editor" summary maxChars)
+  let count (file : String) := counter s!"{e.dir}/{file}"
   try
     let ready ← startProbe e name
-    let c ← attaching.spawnEnv #[s!"LINGER_E2E_TITLE_PIPE={pipe}"] #["--title-attach-probe", name]
+    let c ← attaching.spawn #["--title-attach-probe", name]
     let seen ← IO.mkRef ({} : Receiver)
     try
-      let initial ←
-        awaitOutput c seen (titleIs (Linger.Core.Title.compose name "editor" "" maxChars))
-      IO.FS.writeFile s!"{e.dir}/release-invalid" ""
-      let unknown ←
-        awaitOutput c seen
-            (titleIs
-              (Linger.Core.Title.compose name "editor" (String.singleton (icon .unknown)) maxChars))
-      let pingStart := (← seen.get).bytes.size
-      c.type "p"
-      let responsive ← awaitOutput c seen fun s => hasText (since s pingStart) "TITLE-PONG"
+      let initial ← awaitOutput c seen (titled "")
+      let blocked ← waitFor 4000 (return (← count "sample-count") == 1)
+      let responsive ← ping c seen
       expect
-          (ready && initial && unknown && responsive &&
-            (← System.FilePath.pathExists s!"{e.dir}/invalid-emitted") &&
+          (ready && initial && blocked && responsive && (← count "sample-finished") == 0 &&
             (← e.info name "clients") == some "1")
-          s!"invalid helper {pipe}: unknown title leaves the attachment responsive"
+          "a blocked title sample leaves the attachment responsive"
+      IO.FS.writeFile s!"{e.dir}/release-failure" ""
+      let unknown ← awaitOutput c seen (titled (String.singleton (icon .unknown)))
+      let responsive ← ping c seen
+      expect (unknown && responsive && (← e.info name "clients") == some "1")
+          "a failed title sample shows unknown attention and the attachment stays responsive"
       IO.FS.writeFile s!"{e.dir}/release-valid" ""
-      let recovered ←
-        awaitOutput c seen
-            (titleIs
-              (Linger.Core.Title.compose name "editor" (Linger.Core.Status.summary [.wantsYou])
-                maxChars))
-      let recoveryStart := (← seen.get).bytes.size
-      c.type "p"
-      let answered ← awaitOutput c seen fun s => hasText (since s recoveryStart) "TITLE-PONG"
-      expect
-          (recovered && answered && (← System.FilePath.pathExists s!"{e.dir}/valid-emitted") &&
-            (← e.info name "clients") == some "1")
-          s!"invalid helper {pipe}: a subsequent valid sample recovers the title"
+      let recovered ← awaitOutput c seen (titled (Linger.Core.Status.summary [.wantsYou]))
+      let answered ← ping c seen
+      expect (recovered && answered && (← e.info name "clients") == some "1")
+          "a later title sample recovers the attention summary"
+      -- Hold the next sample, then detach while it is outstanding.
+      IO.FS.removeFile s!"{e.dir}/release-valid"
+      let outstanding ←
+        waitFor 4000 do
+            return (← count "sample-count") > (← count "sample-finished")
+      let held ← count "sample-count"
       let detachStart := (← seen.get).bytes.size
       c.detach
       let cleared ← awaitOutput c seen (titleIs "")
+      let released ← waitFor 2000 (return (← e.info name "clients") == some "0")
+      let joining := (← c.reap 300) == -1
+      IO.FS.writeFile s!"{e.dir}/release-valid" ""
       let code ← c.reap 2000
       let handedBack := hasBytes (since (← seen.get) detachStart) Linger.Core.Render.leaveAnsi
-      let samplePids ← e.dirNames ".pid"
-      let helpersGone ←
-        waitFor 2000 do
-            samplePids.allM fun file => do
-                let pid := (← IO.FS.readFile s!"{e.dir}/{file}").toNat?.getD 0
-                return pid > 0 && !(← alive (UInt32.ofNat pid))
       let before := (← e.info name "outseq").bind (·.toNat?)
       let (sendCode, _, _) ← e.cli #["send", name, "p"]
       let survived ←
@@ -252,9 +253,11 @@ private def pipeCase (base : Env) (pipe : String) : IO Unit := do
             return before.isSome && after.getD 0 > before.getD 0 &&
                 has (← e.out #["capture", name]) "TITLE-PONG"
       expect
-          (cleared && code == 0 && handedBack && helpersGone && sendCode == 0 && survived &&
-            (← e.info name "clients") == some "0")
-          s!"invalid helper {pipe}: detach clears the title and retires its helpers"
+          (outstanding && cleared && released && joining && code == 0 && handedBack &&
+            (← count "sample-finished") == held &&
+            sendCode == 0 &&
+            survived)
+          "detach releases the session at once and joins the outstanding title sample"
       IO.FS.writeBinFile s!"{e.dir}/attach.pty" (← seen.get).bytes
     finally
       c.bye (sendDetach := false)
@@ -272,6 +275,14 @@ def run (binary : Option String := none) : IO UInt32 :=
         let composed ← awaitOutput c seen (titleIs (expectedTitle false))
         expect (ready && composed && hasText (← seen.get).bytes "TITLE-READY")
             "attach composes the session name and the application's editor title"
+        let start ← processCpuMs c.pid
+        receive c seen idleWindowMs
+        let cost :=
+          match start, ← processCpuMs c.pid with
+          | some (before, _), some (after, children) => some (after - before, children)
+          | _, _ => none
+        expect (cost.all fun (own, children) => children == 0 && own ≤ idleBudgetMs)
+            s!"an idle attached client samples its title in its own process within {idleBudgetMs} ms of CPU per {idleWindowMs} ms where /proc reports it (own, children: {cost})"
         let otherReady ← startProbe e "title-other"
         let changed ← attention e true
         let before := ((← e.info "title-other" "behind").getD "").toNat?
@@ -333,7 +344,6 @@ def run (binary : Option String := none) : IO UInt32 :=
         c.bye (sendDetach := false)
     finally
       e.killAll #["title-main", "title-other"]
-    for pipe in ["stdout", "stderr"] do
-      pipeCase e pipe
+    sampleCase e
 
 end E2E.Title
