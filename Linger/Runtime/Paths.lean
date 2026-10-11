@@ -23,6 +23,8 @@ namespace Linger.Runtime.Paths
 
 open Linger.Core.Name (sanitize)
 
+/-- Sockets and their name locks: `$LINGER_DIR` verbatim, else `$XDG_RUNTIME_DIR/linger`
+when that is nonempty, else `/tmp/linger-$UID`. -/
 def socketDir : IO String := do
   if let some d← IO.getEnv "LINGER_DIR" then
     return d
@@ -50,6 +52,7 @@ def stateDir : IO String := do
       return s!"{home}/.local/state/linger/{host}"
   return s!"/tmp/linger-{← Linger.Posix.getuid}/state/{host}"
 
+/-- Create `d` and any missing parents, then restrict `d` itself to its owner (0700). -/
 def ensureDir (d : String) : IO Unit := do
   IO.FS.createDirAll d
   Linger.Posix.chmod d 0o700
@@ -57,6 +60,8 @@ def ensureDir (d : String) : IO Unit := do
 /-- The accepted name alphabet, as every diagnostic and help text states it. -/
 def nameRule : String := s!"1–{Linger.Core.Name.maxLen} ASCII letters, digits, -_.+; no leading dot"
 
+/-- Return `name` unchanged when `Name.check` accepts it, and throw with `nameRule`
+otherwise; a name is never rewritten into another. -/
 def checkName (name : String) : IO String := do
   match Linger.Core.Name.check name with
   | some name =>
@@ -73,6 +78,8 @@ def checkSpelling (path : String) : IO Unit := do
     unless entries.any (fun entry => some entry.fileName == p.fileName) do
       throw (IO.userError "session name differs from an existing filename's spelling")
 
+/-- `dir/<name><suffix>` once `checkName` accepts `name`, after creating `dir` with
+`ensureDir` and rejecting an existing entry spelled differently (`checkSpelling`). -/
 def namedPath (dir name suffix : String) : IO String := do
   let name ← checkName name
   ensureDir dir
@@ -80,9 +87,11 @@ def namedPath (dir name suffix : String) : IO String := do
   checkSpelling path
   return path
 
+/-- The session's socket, `<name>.sock` in `socketDir`. -/
 def socketPath (name : String) : IO String := do
   namedPath (← socketDir) name ".sock"
 
+/-- The session's checkpoint, `<name>.ckpt` in `stateDir`. -/
 def ckptPath (name : String) : IO String := do
   namedPath (← stateDir) name ".ckpt"
 
@@ -97,6 +106,7 @@ Keep these lock inodes across daemon exits and reboots; never unlink them. -/
 def stateLockPath (name : String) : IO String := do
   namedPath ((← stateDir) ++ "/.locks") name ".lock"
 
+/-- The daemon's output log, `logs/<name>.log` in `stateDir`. -/
 def logPath (name : String) : IO String := do
   namedPath ((← stateDir) ++ "/logs") name ".log"
 

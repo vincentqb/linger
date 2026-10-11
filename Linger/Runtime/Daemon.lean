@@ -57,7 +57,9 @@ when its own buffer fills (`IMAXBEL`). One frame is one read of the keyboard, so
 no UTF-8 sequence or escape is split. -/
 def ptyInCap : Nat := outbufCap
 
+/-- One accepted client transport: its socket and the output still owed to it. -/
 structure Conn where
+  /-- The accepted socket, nonblocking; its number is the client's id in the session. -/
   fd : UInt32
   /-- The client's backlog. Starts empty and is sealed: every state this field
   can reach is covered by `Buf.reachableOut_bound` — within `outbufCap` for the
@@ -72,15 +74,26 @@ structure Conn where
   closeBy : Option Nat := none
   deriving Inhabited
 
+/-- Whether the session already treats this client as closed: `.closed` has been
+reported, and the transport only drains owed output until `closeBy`. -/
 def Conn.closing (c : Conn) : Bool := c.closeBy.isSome
 
+/-- Whether output is still owed: bytes queued in either buffer, or an unfinished replay. -/
 def Conn.pending (c : Conn) : Bool := owedLen c.out != 0 || c.replay.isSome || owedLen c.after != 0
 
+/-- The daemon's world around the session machine: the machine's state, the session's
+descriptors and child, every owned client transport, and the checkpoint hooks. -/
 structure Rt where
+  /-- The session machine's state; `pump` replaces it with the driver's result. -/
   st : State
+  /-- The nonblocking listening socket at the session's path. -/
   listenFd : UInt32
+  /-- The nonblocking pty master of the session's terminal. -/
   ptyFd : UInt32
+  /-- The session's program, the child on the pty. -/
   childPid : UInt32
+  /-- Owned transports, open or draining after a close, in admission order; never more
+  than `maxClients`. -/
   conns : List Conn := []
   /-- Admission is suspended until this deadline. Keep the failure latched
   until an accept succeeds so continuing pressure produces one diagnostic. -/
@@ -93,9 +106,11 @@ structure Rt where
   records the *transition* into backpressure rather than one line per dropped
   chunk (which would be the same unbounded-growth defect, in the log file). -/
   ptyInFull : Bool := false
+  /-- Set once the machine emits `.exit`; the poll loop then stops and `drainConns` runs. -/
   exiting : Bool := false
   /-- checkpoint hooks from `Linger.Runtime.Resume` -/
   saveCkpt : State → IO Unit
+  /-- Delete the session's checkpoint; a failure is reported, not fatal. -/
   dropCkpt : IO Unit
 
 /-- A diagnostic write failure must not turn recovery into session loss. -/
@@ -105,11 +120,14 @@ def report (message : String) : IO Unit := do
   catch _ =>
     pure ()
 
+/-- The owned transport whose socket is `fd`, if any. -/
 def Rt.conn? (rt : Rt) (fd : UInt32) : Option Conn := rt.conns.find? (·.fd == fd)
 
+/-- Replace the transport on `c`'s fd with `c`; an fd that is not owned leaves `rt` as is. -/
 def Rt.setConn (rt : Rt) (c : Conn) : Rt :=
   { rt with conns := rt.conns.map (fun c' => if c'.fd == c.fd then c else c') }
 
+/-- Forget the transport on `fd` without closing it; callers close the fd first. -/
 def Rt.dropConn (rt : Rt) (fd : UInt32) : Rt := { rt with conns := rt.conns.filter (·.fd != fd) }
 
 /-- Retired transports still own buffers and a snapshot. Their deadline

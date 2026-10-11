@@ -29,12 +29,18 @@ namespace Linger.Runtime.Cli
 open Linger.Posix
 open Linger.Core.Wire (Msg)
 
+/-- The first line of `linger version`. The release is `Terminal.versionNumber`, which
+sessions also see as `TERM_PROGRAM_VERSION`. -/
 def version : String := "linger " ++ Linger.Core.Terminal.versionNumber
 
 /-- Bound on accumulated `infoReply` bytes, independent of the request deadline.
 A peer exceeding the producer's policy has not supplied a usable answer. -/
 abbrev infoReplyCap : Nat := Linger.Core.Session.infoReplyCap
 
+/-- The help text: printed by `linger help` and bare `linger`, and to stderr with status 2
+when `overview` cannot parse its arguments as `ls` options. A command line that matches no
+verb's form reaches `overview` whole. Its status legend lists exactly the glyphs
+`Status.icon` emits; `scripts/gates.sh` compares the two. -/
 def usage : String :=
   s!"Usage: linger [command] [args...]
        linger tmux <command> [SAVE]
@@ -102,6 +108,9 @@ Set NO_COLOR to disable listing colors.
 Inside a session, $LINGER_SESSION holds the session name.
 Detach key: ctrl-\\ (set LINGER_NO_DETACH_KEY to disable it for writable attach)."
 
+/-- Start `name`'s daemon detached, running this executable as `__daemon name cwd cmd...`
+with its output appended to `Paths.logPath`. Returns once that program has started,
+without waiting for it to listen; `connectUpsert` waits for the socket. -/
 def spawnDaemon (name cwd : String) (cmd : List String) : IO Unit := do
   let self ← IO.appPath
   let log ← Paths.logPath name
@@ -129,6 +138,8 @@ def connectUpsert (name : String) (cmd : List String) : IO UInt32 := do
       let log ← Paths.logPath name
       throw (IO.userError s!"daemon for '{name}' did not come up (see {log})")
 
+/-- Reject an operand that is neither an exact name nor a well-formed `name@host` target:
+print the name rule and return exit status 2. -/
 def invalidTarget : IO UInt32 := do
   IO.eprintln s!"linger: invalid session name or malformed name@host target (use {Paths.nameRule})"
   return 2
@@ -163,6 +174,8 @@ def runTarget (verb : String) (target : Linger.Core.Remote.Target) (args : List 
       if interactive then
         writeAll stdoutFd (ByteArray.mk Linger.Core.Render.leaveAnsi.toArray)
 
+/-- Run `verb` through `runTarget` once `Remote.parseTarget` accepts the operand; a
+malformed operand returns `invalidTarget`'s status 2 without connecting. -/
 def withTarget (verb target : String) (args : List String) (localAction : String → IO UInt32)
     (options : List String := []) : IO UInt32 :=
   match Linger.Core.Remote.parseTarget target with
@@ -291,6 +304,7 @@ def queryInfos (names : Array String) (deadline : Nat) (retainUnavailable : Bool
     for (_, task) in ← pending.get do
       discard <| IO.wait task
 
+/-- The first value recorded under `k` in an info record list, or empty when `k` is absent. -/
 def kv (l : List (String × String)) (k : String) : String := (l.lookup k).getD ""
 
 /-- Remote hosts for `-r`: explicit flag list, else `Env.remotesFile`, which an
@@ -447,6 +461,8 @@ def summaryText : IO String := do
   return Linger.Core.Status.summary
       (rows.map fun info => Linger.Core.Status.ofName ((info.lookup "status").getD "unknown"))
 
+/-- `ls --summary`: print `summaryText`, or nothing when no local session needs
+attention; exit 0 either way. -/
 def cmdSummary : IO UInt32 := do
   let summary ← summaryText
   if !summary.isEmpty then
@@ -487,6 +503,10 @@ def cmdAttach (name : String) (cmd : List String) (readOnly : Bool) : IO UInt32 
     IO.eprintln s!"\r\nlinger: {why} for '{name}'"
     return 1
 
+/-- `ls`: local rows, then each remote host's rows named `name@host`, printed as
+`k<TAB>v` records separated by blank lines (`porcelain`) or as the terminal listing.
+Remote rows keep only name, command, state and status. Returns 130 when a signal
+cancels the remote queries. -/
 def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
   let (locals, remote) ←
     if remotes.isEmpty then
@@ -542,6 +562,8 @@ def parseLs : List String → Option (Bool × Option (List String))
     | [] => some (false, some [])
   | _ => none
 
+/-- Exit status of a one-shot request: 0 when the daemon completed it with `done`,
+otherwise 1 after printing why it did not complete. -/
 def requestStatus (name : String) (result : Client.Drained) : IO UInt32 := do
   match result with
   | .done =>
@@ -643,6 +665,9 @@ def cmdSendStdin (name : String) : IO UInt32 := do
     finally
       close fd
 
+/-- `wait`: block until the session's program exits and return its status. No session
+returns 0; a refusal, a lost connection or a reply without a status prints a diagnostic
+and returns 1. -/
 def cmdWait (name : String) : IO UInt32 := do
   match ← Client.oneShot name .wait (untilDone := false) with
   | none =>
@@ -659,6 +684,8 @@ def cmdWait (name : String) : IO UInt32 := do
     IO.eprintln s!"linger: no exit status from '{name}'"
     return 1
 
+/-- `get`: print the session's labels as `key=value` lines from one info reply. No
+session, or a failed reply, prints a diagnostic and returns 1. -/
 def cmdGet (name : String) : IO UInt32 := do
   match ← queryInfo name with
   | none =>
@@ -673,6 +700,8 @@ def cmdGet (name : String) : IO UInt32 := do
         IO.println s!"{(k.drop 6).toString}={v}"
     return 0
 
+/-- `version`: print `version`, then the socket and state directories this environment
+resolves. -/
 def cmdVersion : IO UInt32 := do
   IO.println version
   IO.println s!"sockets: {← Paths.socketDir}"
@@ -713,6 +742,9 @@ private def captureArgs (args : List String) : IO UInt32 := do
         (if history then Linger.Core.Render.history else Linger.Core.Render.screenText))
       (if history then ["--history"] else [])
 
+/-- Run one session command and return its exit status: 2 for a usage error or invalid
+target, otherwise the verb's own status. `Main` routes interactive selection and tmux
+interchange elsewhere; `__daemon` runs a session's daemon in this process. -/
 def main (args : List String) : IO UInt32 := do
   match args with
   | "__daemon" :: name :: cwd :: cmd =>

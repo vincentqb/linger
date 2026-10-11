@@ -9,11 +9,18 @@ process group live until that owner collects or stops the job. -/
 
 namespace Linger.Runtime.Command
 
+/-- A started command and its two pipe readers, held by one owner until it collects the
+job with `poll` or retires it with `stop`. -/
 structure Job where
+  /-- The process, leader of its own session and process group. -/
   child : IO.Process.Child { stdin := .null, stdout := .piped, stderr := .piped }
+  /-- Its standard output, read to the end on a dedicated task. -/
   stdout : Task (Except IO.Error String)
+  /-- Its standard error, read to the end on a dedicated task. -/
   stderr : Task (Except IO.Error String)
 
+/-- Spawn `executable` with `args` in a new session and process group, with stdin from
+`/dev/null` and both outputs piped, and start draining each pipe on its own task. -/
 def start (executable : String) (args : Array String) : IO Job := do
   let child ←
     IO.Process.spawn

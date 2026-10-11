@@ -28,6 +28,7 @@ namespace Linger.Runtime.Client
 open Linger.Posix
 open Linger.Core.Wire (Msg Decoder)
 
+/-- The bytes of `m`'s frame, exactly as `Wire.encode` lays it out. -/
 def encodeBA (m : Msg) : ByteArray := ByteArray.mk (Linger.Core.Wire.encode m).toArray
 
 /-- Connect to a session socket. A nonblocking attempt can fail while a live
@@ -45,16 +46,23 @@ def connect (name : String) (nonblocking : Bool := false) : IO (Option UInt32) :
       throw err
   return none
 
+/-- Write `m`'s complete frame to `fd` with `writeAll`. Throws when the peer is gone, when
+a nonblocking `fd` would block, or when the write fails. -/
 def sendMsg (fd : UInt32) (m : Msg) : IO Unit := writeAll fd (encodeBA m)
 
 /-- How a request/reply conversation ended. Messages stay data until the CLI
 chooses an exit status and diagnostic; a refusal or transport loss cannot collapse
 into ordinary completion. -/
 inductive Drained where
+  /-- The daemon completed the request with `done`. -/
   | done
+  /-- The session's child exited with this status. -/
   | exited (status : UInt32)
+  /-- The daemon refused the request; `why` is its reason, made safe for stderr. -/
   | refused (why : String)
+  /-- The socket closed or its framing became invalid before an outcome. -/
   | lost (why : String)
+  /-- Nothing arrived within the silence budget of a timed drain. -/
   | silent
 
 /-- Untrusted daemon text made safe for stderr. -/

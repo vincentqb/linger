@@ -21,3 +21,11 @@ public import Linger.Runtime.Daemon
 public import Linger.Runtime.Client
 public import Linger.Runtime.Cli
 public import Linger.Runtime.Resume
+
+/-! # Linger — the session library
+
+This umbrella's closure is the library `./lake build` checks: the session core and VT
+toolkit under `Linger/Core`, the runtime under `Linger/Runtime` and the POSIX boundary.
+The CLI policies in `Linger/Tools` and their executors in `Linger/Manager` stay outside
+it: they may import this library, which never imports them. `Main` routes argv through
+`Entry.route` to an executor or to `Cli.main`. -/
