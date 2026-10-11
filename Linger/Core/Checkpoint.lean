@@ -72,6 +72,8 @@ def wNat (n : Nat) : List UInt8 :=
   if h : n < 128 then [UInt8.ofNat n] else UInt8.ofNat (128 + n % 128) :: wNat (n / 128)
 decreasing_by exact Nat.div_lt_self (by omega) (by omega)
 
+/-- Inverse of `wNat` (`rt_nat`): reads bytes up to the first one below 128, and fails
+if the input ends before it. -/
 def rNat : R Nat := fun l =>
   match l with
   | [] => none
@@ -82,15 +84,19 @@ def rNat : R Nat := fun l =>
       | none => none
       | some (hi, rest') => some ((b.toNat - 128) + 128 * hi, rest')
 
+/-- One byte: 1 for true, 0 for false. -/
 def wBool (b : Bool) : List UInt8 := [if b then 1 else 0]
 
+/-- Inverse of `wBool` (`rt_bool`): one byte, where any nonzero value reads as true. -/
 def rBool : R Bool := fun l =>
   match l with
   | [] => none
   | b :: rest => some (b != 0, rest)
 
+/-- A character as its codepoint, through `wNat`. -/
 def wChar (c : Char) : List UInt8 := wNat c.toNat
 
+/-- Inverse of `wChar` (`rt_char`); a number that is not a Unicode scalar value fails. -/
 def rChar : R Char := fun l => do
   let (n, rest) ← rNat l
   if h : n.isValidChar then
@@ -98,8 +104,10 @@ def rChar : R Char := fun l => do
   else
     none
 
+/-- A list as its length, then each element through `w`. -/
 def wList {α : Type} (w : α → List UInt8) (l : List α) : List UInt8 := wNat l.length ++ l.flatMap w
 
+/-- Read exactly the given number of elements with `r`, in order (`rt_listAux`). -/
 def rListAux {α : Type} (r : R α) : Nat → R (List α)
   | 0 => fun l => some ([], l)
   | k + 1 => fun l => do
@@ -117,24 +125,30 @@ def rList {α : Type} (r : R α) (l : List UInt8) (maxCount : Option Nat := none
   else
     none
 
+/-- A string as its character count, then each character through `wChar`. -/
 def wStr (s : String) : List UInt8 := wList wChar s.toList
 
+/-- Inverse of `wStr` (`rt_str`). The character count is not bounded. -/
 def rStr : R String := fun l => do
   let (cs, rest) ← rList rChar l
   some (String.ofList cs, rest)
 
+/-- The first component's bytes, then the second's. -/
 def wPair {α β : Type} (wa : α → List UInt8) (wb : β → List UInt8) (p : α × β) :
     List UInt8 := wa p.1 ++ wb p.2
 
+/-- Inverse of `wPair` when each component reader inverts its writer (`rt_pair`). -/
 def rPair {α β : Type} (ra : R α) (rb : R β) : R (α × β) := fun l => do
   let (a, rest) ← ra l
   let (b, rest') ← rb rest
   some ((a, b), rest')
 
+/-- Tag 0 for `none`; tag 1, then the value. -/
 def wOpt {α : Type} (w : α → List UInt8) : Option α → List UInt8
   | none => [0]
   | some a => 1 :: w a
 
+/-- Inverse of `wOpt` (`rt_opt`); any other tag byte fails. -/
 def rOpt {α : Type} (r : R α) : R (Option α) := fun l =>
   match l with
   | [] => none
@@ -146,11 +160,14 @@ def rOpt {α : Type} (r : R α) : R (Option α) := fun l =>
 
 /-! ## Domain writers/readers -/
 
+/-- Tag 0 for the default colour, tag 1 and the palette index, or tag 2 and the red,
+green and blue bytes. -/
 def wColor : Color → List UInt8
   | .default => [0]
   | .idx i => [1, i]
   | .rgb r g b => [2, r, g, b]
 
+/-- Inverse of `wColor` (`rt_color`); an unknown tag or a missing byte fails. -/
 def rColor : R Color := fun l =>
   match l with
   | 0 :: rest => some (.default, rest)
@@ -158,6 +175,7 @@ def rColor : R Color := fun l =>
   | 2 :: r :: g :: b :: rest => some (.rgb r g b, rest)
   | _ => none
 
+/-- Foreground, background, then the seven attribute flags in field order. -/
 def wPen (p : Pen) : List UInt8 :=
   wColor p.fg ++ wColor p.bg ++ wBool p.bold ++ wBool p.dim ++ wBool p.italic ++
     wBool p.underline ++
@@ -165,6 +183,7 @@ def wPen (p : Pen) : List UInt8 :=
     wBool p.reverse ++
     wBool p.strike
 
+/-- Inverse of `wPen` (`rt_pen`). -/
 def rPen : R Pen := fun l => do
   let (fg, l) ← rColor l
   let (bg, l) ← rColor l
@@ -177,9 +196,12 @@ def rPen : R Pen := fun l => do
   let (strike, l) ← rBool l
   some ({ fg, bg, bold, dim, italic, underline, blink, reverse, strike }, l)
 
+/-- Base character, combining marks, width, then pen. -/
 def wCell (c : Cell) : List UInt8 :=
   wChar c.base ++ wList wChar c.marks ++ wNat c.width ++ wPen c.pen
 
+/-- Inverse of `wCell` (`rt_cell`). Any base, mark list and width are accepted here;
+`Vt.ofDecoded` checks the cells of both screens. -/
 def rCell : R Cell := fun l => do
   let (base, l) ← rChar l
   let (marks, l) ← rList rChar l
@@ -209,6 +231,8 @@ def expand {α : Type} : List (Nat × α) → List α
   | [] => []
   | (n, a) :: rest => List.replicate n a ++ expand rest
 
+/-- A list as the number of its maximal runs (`runs`), then each run as a count and one
+element. -/
 def wRLE {α : Type} [DecidableEq α] (w : α → List UInt8) (l : List α) : List UInt8 :=
   wList (wPair wNat w) (runs l)
 
@@ -223,20 +247,27 @@ def rRLE {α : Type} (r : R α) (bytes : List UInt8) (maxLength : Option Nat := 
   else
     none
 
+/-- A row's cells, run-length encoded. -/
 def wRow (r : Row) : List UInt8 := wRLE wCell r.toList
 
+/-- Inverse of `wRow` (`rt_row`). With `maxLength`, a row of more cells fails before any run
+is expanded. -/
 def rRow (l : List UInt8) (maxLength : Option Nat := none) : Option (Row × List UInt8) := do
   let (cs, l) ← rRLE rCell l maxLength
   some (cs.toArray, l)
 
+/-- Column, row, then the wrap-pending flag. -/
 def wCursor (c : Cursor) : List UInt8 := wNat c.x ++ wNat c.y ++ wBool c.pending
 
+/-- Inverse of `wCursor` (`rt_cursor`). The position is not checked here; `Vt.ofDecoded`
+bounds it by the screen. -/
 def rCursor : R Cursor := fun l => do
   let (x, l) ← rNat l
   let (y, l) ← rNat l
   let (pending, l) ← rBool l
   some ({ x, y, pending }, l)
 
+/-- Every mode in field order: a flag each, and the mouse mode number through `wNat`. -/
 def wModes (m : Modes) : List UInt8 :=
   wBool m.wrap ++ wBool m.origin ++ wBool m.insert ++ wBool m.cursorVisible ++ wBool m.appCursor ++
     wBool m.appKeypad ++
@@ -245,6 +276,7 @@ def wModes (m : Modes) : List UInt8 :=
     wBool m.mouseSgr ++
     wBool m.focusEvents
 
+/-- Inverse of `wModes` (`rt_modes`). -/
 def rModes : R Modes := fun l => do
   let (wrap, l) ← rBool l
   let (origin, l) ← rBool l
@@ -261,25 +293,33 @@ def rModes : R Modes := fun l => do
           bracketedPaste, mouse, mouseSgr, focusEvents },
         l)
 
+/-- The saved cursor, then the saved pen. -/
 def wSaved (s : Saved) : List UInt8 := wCursor s.cur ++ wPen s.pen
 
+/-- Inverse of `wSaved` (`rt_saved`). -/
 def rSaved : R Saved := fun l => do
   let (cur, l) ← rCursor l
   let (pen, l) ← rPen l
   some ({ cur, pen }, l)
 
+/-- The ring's start index, then its rows in storage order rather than oldest first. -/
 def wRing (r : Ring) : List UInt8 :=
   -- verbatim geometry (data + start) so the round-trip is exact
   wNat r.start ++ wList wRow r.data.toList
 
+/-- Inverse of `wRing` (`rt_ring`). With `maxRows`, a larger row count fails before any row
+is read; row widths are not bounded. -/
 def rRing (l : List UInt8) (maxRows : Option Nat := none) : Option (Ring × List UInt8) := do
   let (start, l) ← rNat l
   let (rows, l) ← rList rRow l maxRows
   some ({ data := rows.toArray, start }, l)
 
+/-- The stashed main screen, if any, behind a `wOpt` tag: its rows, cursor and pen. -/
 def wAlt : Option (Array Row × Cursor × Pen) → List UInt8 :=
   wOpt (fun (g, c, p) => wList wRow g.toList ++ wCursor c ++ wPen p)
 
+/-- Inverse of `wAlt` (`rt_alt`). `maxRows` bounds the stash's row count before any row is
+read, and `maxCols` each row's cells before that row is expanded. -/
 def rAlt (l : List UInt8) (maxCols : Option Nat := none) (maxRows : Option Nat := none) :
     Option (Option (Array Row × Cursor × Pen) × List UInt8) :=
   rOpt
@@ -363,13 +403,18 @@ the tree used either instance. If a canonical checkpoint is ever wanted, write i
 (`⟨Vt.init 80 24, "", []⟩`) rather than deriving one: a default that is a *choice* cannot
 silently become a state the emulator can't reach. -/
 structure Ckpt where
+  /-- The terminal state; its parser state is not saved. -/
   vt : Vt
+  /-- The directory the restored session's child starts in. -/
   cwd : String
+  /-- The session's labels, as key/value pairs. -/
   labels : List (String × String)
 
 /-- On-disk magic: `"LNGR"` and the format version. What `save` writes. -/
 def magic : List UInt8 := [0x4C, 0x4E, 0x47, 0x52, 1] -- "LNGR" v1
 
+/-- The checkpoint record: `magic`, then the terminal, the working directory and the labels.
+Loading the record of a live state returns it with its parser quiesced (`load_save_live`). -/
 def save (c : Ckpt) : List UInt8 :=
   magic ++ wVt c.vt ++ wStr c.cwd ++ wList (wPair wStr wStr) c.labels
 
@@ -403,13 +448,16 @@ mirrors the list writer of the same shape (`natB` is `wNat`; `rowB` is `wRow` ov
 their list writers. `saveBytes_eq` proves the bytes equal `save`'s, so the format and its
 theorems are unchanged. -/
 
+/-- `wNat` into an accumulator (`natB_appends`). -/
 def natB (acc : ByteArray) (n : Nat) : ByteArray :=
   if h : n < 128 then acc.push (UInt8.ofNat n)
   else natB (acc.push (UInt8.ofNat (128 + n % 128))) (n / 128)
 decreasing_by exact Nat.div_lt_self (by omega) (by omega)
 
+/-- `wBool` into an accumulator (`boolB_appends`). -/
 def boolB (acc : ByteArray) (b : Bool) : ByteArray := acc.push (if b then 1 else 0)
 
+/-- `wChar` into an accumulator (`charB_appends`). -/
 def charB (acc : ByteArray) (c : Char) : ByteArray := natB acc c.toNat
 
 /-- `wList` into an accumulator. `listB` and `rleB` are specialized at each element writer:
@@ -418,23 +466,28 @@ on a full 200-column history that took `saveBytes` from 282 to 237 ms. -/
 def listB {α : Type} (f : ByteArray → α → ByteArray) (acc : ByteArray) (l : List α) :
     ByteArray := l.foldl f (natB acc l.length)
 
+/-- `wColor` into an accumulator (`colorB_appends`). -/
 def colorB (acc : ByteArray) : Color → ByteArray
   | .default => acc.push 0
   | .idx i => (acc.push 1).push i
   | .rgb r g b => (((acc.push 2).push r).push g).push b
 
+/-- `wPen` into an accumulator (`penB_appends`). -/
 def penB (acc : ByteArray) (p : Pen) : ByteArray :=
   let acc := colorB (colorB acc p.fg) p.bg
   let acc := boolB (boolB (boolB (boolB acc p.bold) p.dim) p.italic) p.underline
   boolB (boolB (boolB acc p.blink) p.reverse) p.strike
 
+/-- `wCell` into an accumulator (`cellB_appends`). -/
 def cellB (acc : ByteArray) (c : Cell) : ByteArray :=
   penB (natB (listB charB (charB acc c.base) c.marks) c.width) c.pen
 
+/-- `wRLE` into an accumulator (`rleB_appends`). -/
 @[specialize]
 def rleB {α : Type} [DecidableEq α] (f : ByteArray → α → ByteArray) (acc : ByteArray) (l : List α) :
     ByteArray := listB (fun acc (n, a) => f (natB acc n) a) acc (runs l)
 
+/-- `wRow` into an accumulator (`rowB_appends`). -/
 def rowB (acc : ByteArray) (r : Row) : ByteArray := rleB cellB acc r.toList
 
 /-- `save`, written into a byte array (`saveBytes_eq`). Every screen row, including the

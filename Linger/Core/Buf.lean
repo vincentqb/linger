@@ -126,8 +126,11 @@ the trace claims are bounds composed of steps that already carry their twins
 /-- The pty-input queue's reachable states: `Rt.ptyIn` starts `empty` and moves
 only through capped `bufOffer`s (`queuePty`) and flush `bufAdvance`s. -/
 inductive ReachableIn (cap : Nat) : Buf → Prop where
+  /-- The queue every session starts with. -/
   | empty : ReachableIn cap .empty
+  /-- A capped offer, whether it queued the frame or dropped it. -/
   | offer (b : Buf) (more : ByteArray) : ReachableIn cap b → ReachableIn cap (bufOffer cap b more).1
+  /-- A flush that removes the bytes written. -/
   | advance (b : Buf) (n : Nat) : ReachableIn cap b → ReachableIn cap (bufAdvance b n)
 
 /-- The client-output queue's **retained** states: `Conn.out` starts `empty`,
@@ -137,11 +140,14 @@ flush advances. The not-cut hypothesis on the constructor IS the shipped
 append-then-cut discipline; drop it and `reachableOut_bound` is refutable
 (break-verified). -/
 inductive ReachableOut (cap : Nat) : Buf → Prop where
+  /-- The queue every connection starts with. -/
   | empty : ReachableOut cap .empty
+  /-- An append that left the client connected. -/
   |
   enqueue (b : Buf) (more : ByteArray) :
     ReachableOut cap b →
       (bufEnqueue cap b more).2 = false → ReachableOut cap (bufEnqueue cap b more).1
+  /-- A flush that removes the bytes written. -/
   | advance (b : Buf) (n : Nat) : ReachableOut cap b → ReachableOut cap (bufAdvance b n)
 
 end Linger.Core.Buf

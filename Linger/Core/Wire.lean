@@ -46,7 +46,8 @@ inductive Msg where
   | infoReply (bytes : List UInt8)
   /-- client → daemon: send scrollback as output frames, then `done`. -/
   | history
-  /-- daemon → client: the child exited with this status. -/
+  /-- daemon → client: the session ended, with the status of its
+  `Session.Event.childExited`. -/
   | exited (status : UInt32)
   /-- client → daemon: hold this connection open until the child exits. -/
   | wait
@@ -70,6 +71,7 @@ inductive Msg where
 
 /-! ## u32 ↔ 4 LE bytes, via Nat so `omega` can chew the round-trip -/
 
+/-- Four bytes, least significant first; `readU32` inverts it (`readU32_writeU32`). -/
 def writeU32 (n : UInt32) : List UInt8 :=
   let v := n.toNat
   [UInt8.ofNat (v % 256), UInt8.ofNat (v / 256 % 256), UInt8.ofNat (v / 65536 % 256),
@@ -83,6 +85,8 @@ def readU32 (l : List UInt8) : UInt32 :=
 
 /-! ## Tag assignment (frozen; new tags append, old values never reused) -/
 
+/-- A message's frame tag: 0 to 16 for the assigned messages, and an `unknown` message's
+own tag. -/
 def Msg.tag : Msg → UInt8
   | .input _ => 0
   | .output _ => 1
@@ -106,6 +110,9 @@ def Msg.tag : Msg → UInt8
 /-- Tags with an assigned meaning in this version. -/
 def knownTag (t : UInt8) : Bool := t ≤ 16
 
+/-- A message's frame payload: the raw bytes it carries, its sizes or exit status through
+`writeU32`, or nothing. `decodeMsg` recovers a well-formed message from its tag and payload
+(`decodeMsg_roundtrip`). -/
 def Msg.payload : Msg → List UInt8
   | .input b | .output b | .infoReply b | .err b | .labelSet b | .labelUnset b => b
   | .resize c r | .attach c r => writeU32 c ++ writeU32 r
@@ -164,10 +171,13 @@ def encode (m : Msg) : List UInt8 := m.tag :: writeU32 (UInt32.ofNat m.payload.l
 
 /-! ## Incremental decoder -/
 
-/-- Decoder state. `errored` is sticky: an oversize frame poisons the
-connection (the runtime closes it) instead of buffering unboundedly. -/
+/-- Decoder state. Both ends drop a connection whose decoder errored, rather than buffer
+its input without bound. -/
 structure Decoder where
+  /-- Bytes of the incomplete frame; `feed` keeps them within `4 + maxPayload`
+  (`Decoder.feed_buf_le`). -/
   buf : List UInt8 := []
+  /-- An oversize frame arrived. The flag never clears, and no later chunk is decoded. -/
   errored : Bool := false
   deriving Repr, DecidableEq, Inhabited
 

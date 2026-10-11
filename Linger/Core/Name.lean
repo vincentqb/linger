@@ -22,6 +22,7 @@ Everything else (slashes, NULs, spaces, controls, unicode, `@`) is
 mapped away by `sanitize`. -/
 def okChar (c : Char) : Bool := c.isAlphanum || c == '-' || c == '_' || c == '.' || c == '+'
 
+/-- The longest valid name, in characters; `sanitize` truncates to it. -/
 def maxLen : Nat := 80
 
 /-- Total sanitizer: bad characters become `_`, a leading dot becomes

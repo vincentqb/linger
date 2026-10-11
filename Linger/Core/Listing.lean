@@ -74,6 +74,8 @@ inductive Row where
   | remote (live : Bool) (peerStatus : String)
   deriving Repr
 
+/-- The status a row displays. Only a live row consults the daemon's reply, and a remote row
+shows its peer's status only while the peer reports it live. -/
 def rowStatus : Row → Status
   | .live info =>
     classify
@@ -104,12 +106,14 @@ column is as wide as the widest name), which a per-`IO.println` call site cannot
 open Linger.Core.Render (utf8s dropTrailingBlanks textChar)
 
 /-- Text and optional badge style stay separate until a terminal renderer has
-clipped the text. The name span is a Unicode-scalar offset and length within
-the piece, so a selector can emphasize the name without parsing rendered text.
-Names and detail text never carry a status style. -/
+clipped the text, and the name span lets a selector emphasize the name without
+parsing rendered text. -/
 structure RowPiece where
+  /-- The characters to display, already printable. -/
   text : List Char
+  /-- The status whose style the piece takes; names and detail text never carry one. -/
   status : Option Status := none
+  /-- The session name's offset and length within `text`, in Unicode scalars. -/
   nameSpan : Option (Nat × Nat) := none
   deriving BEq, Repr
 

@@ -32,9 +32,13 @@ namespace Linger.Core.Remote
 
 open Linger.Core.Name (sanitize)
 
+/-- One session from a peer's porcelain listing. -/
 structure RemoteRow where
+  /-- The session name, validated without rewriting. -/
   name : String
+  /-- True unless the peer's `state` field names something other than `live`. -/
   live : Bool := true
+  /-- The peer's `cmd` field, with control characters removed. -/
   cmd : String := ""
   /-- The peer's own `status` name, verbatim from its porcelain. Interpreted
   by `Status.ofName`, which is total and maps anything unrecognised — including
@@ -49,6 +53,8 @@ these verbatim into the listing, so control characters must die here). -/
 def scrub (s : String) : String :=
   String.ofList (s.toList.filter (fun c => c.toNat ≥ 32 && (c.toNat < 127 || c.toNat ≥ 160)))
 
+/-- One record's tab-separated key/value lines as a row, or `none` when the `name` is
+absent or invalid (`parseRecord_name_valid`). Malformed lines are skipped. -/
 def parseRecord (lines : List String) : Option RemoteRow :=
   let kvs :=
     lines.filterMap
@@ -112,9 +118,11 @@ def checkHosts (hosts : List String) : Except String (List String) :=
     | some h => .error s!"remote host '{scrub h}' contains a control character"
     | none => .ok hosts
 
-/-- Exact local name and optional SSH destination. The first `@` separates them. -/
+/-- Exact local name and optional SSH destination. -/
 structure Target where
+  /-- The session name: everything before the first `@`. -/
   name : String
+  /-- Everything after the first `@`, verbatim, or `none` without one. -/
   host : Option String
   deriving BEq, Repr
 
@@ -126,6 +134,8 @@ def targetValid (target : String) : Bool :=
   !target.isEmpty && sanitize name == name && hostClean target &&
     (parts.tail.isEmpty || !(String.intercalate "@" parts.tail).isEmpty)
 
+/-- Split a target that `targetValid` accepts at its first `@`, and refuse any other
+(`parseTarget_exact`). -/
 def parseTarget (target : String) : Option Target :=
   if targetValid target then
     let parts := target.splitOn "@"

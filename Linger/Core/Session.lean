@@ -27,19 +27,31 @@ namespace Linger.Core.Session
 
 open Linger.Core.Wire (Msg)
 
+/-- Most connections a session holds; `step` refuses and closes one more. The daemon
+stops accepting at the same count. -/
 def maxClients : Nat := 16
 
+/-- Most labels a session holds: `.labelSet` refuses one more, and `State.boot` keeps
+only the first this many restored labels. -/
 def maxLabels : Nat := 64
 
+/-- Largest payload of one `output` or `infoReply` frame, 64 KiB, and the byte budget of
+each replay step. -/
 def outputChunk : Nat := 65536
 
 /-- Maximum encoded info answer, shared by the producer and the CLI accumulator. -/
 def infoReplyCap : Nat := 1048576
 
+/-- One connection's record: its identity, terminal size, attach and request state, and
+its undecoded input. -/
 structure Client where
+  /-- The connection's identifier, as in `Event.connected`. -/
   id : Nat
+  /-- Terminal width from the latest attach or resize message. -/
   cols : UInt32 := 80
+  /-- Terminal height from the latest attach or resize message. -/
   rows : UInt32 := 24
+  /-- The connection attached and receives the session's output. -/
   attached : Bool := false
   /-- attached with a real size (read-only observers attach 0×0 and
   never influence the pty size). -/
@@ -52,6 +64,8 @@ structure Client where
   was answered. One request per read: clients wait for the reply before the
   next request, and later requests decoded from the same read are refused. -/
   answered : Bool := false
+  /-- Partial frames from this connection. `step` never stores an errored decoder; it closes
+  the connection instead (`Bounded.decOk`, kept by `step_bounded`). -/
   decoder : Wire.Decoder := {}
   deriving Repr, Inhabited
 
@@ -65,10 +79,12 @@ rather than about the states it politely constructs. `vt`, `labels` and
 `metaKv` stay public-read: they are exactly what the checkpoint save hook
 serializes (`Linger/Runtime/Resume.lean`). -/
 structure State where
+  /-- The emulator, fed every byte the child writes. -/
   vt : Vt.Vt
   /-- One bounded scanner owned by the PTY-facing virtual terminal. -/
   private scan : Terminal.Scan := .ground
   private clients : List Client := []
+  /-- Key/value labels in the order they were set, at most `maxLabels`. -/
   labels : List (String × String) := []
   /-- name/pid/created/cwd…, set once by the runtime at boot. -/
   metaKv : List (String × String) := []
@@ -119,25 +135,42 @@ def State.boot (vt : Vt.Vt) (labels : List (String × String)) (metaKv : List (S
 /-- What the runtime feeds in. All byte payloads are `List UInt8`; the
 runtime converts at the fd boundary. -/
 inductive Event where
+  /-- A connection was accepted. -/
   | connected (id : Nat)
+  /-- A connection sent bytes. -/
   | bytes (id : Nat) (chunk : List UInt8)
+  /-- A connection ended, or the runtime retired it. -/
   | closed (id : Nat)
+  /-- The child wrote output to the pty. -/
   | ptyOut (chunk : List UInt8)
+  /-- The pty reached end of file. `status` is the child's exit code, 128 plus the number of
+  the signal that killed it, or 1 when the runtime could not reap it. -/
   | childExited (status : UInt32)
+  /-- A poll round ended; `nowMs` is the monotonic clock in milliseconds. -/
   | tick (nowMs : Nat)
+  /-- The last `.checkpoint` effect failed to save. -/
   | checkpointFailed
   deriving Repr
 
 /-- What the runtime executes. -/
 inductive Effect where
+  /-- Send one message to a connection. -/
   | send (id : Nat) (m : Msg)
+  /-- Stream a captured repaint to a connection ahead of its later output. -/
   | replay (id : Nat) (plan : Replay.Plan)
+  /-- Close a connection. -/
   | close (id : Nat)
+  /-- Write bytes to the child through the pty. -/
   | writePty (bytes : List UInt8)
+  /-- Set the pty's window size. -/
   | resizePty (cols rows : UInt32)
+  /-- Ask the child to terminate (SIGTERM). -/
   | killChild
+  /-- Save a checkpoint of the session. -/
   | checkpoint
+  /-- Delete the session's checkpoint. -/
   | dropCheckpoint
+  /-- Stop the daemon; no later event is handled. -/
   | exit
   deriving Repr, DecidableEq
 
@@ -157,6 +190,8 @@ def labelText (bs : List UInt8) : String := String.fromUTF8? (ByteArray.mk bs.to
 
 /-! ## Helpers -/
 
+/-- Consecutive pieces of `n` elements, the last possibly shorter. A list of at most `n`
+elements is one piece, as is any list when `n = 0`, so `[]` gives `[[]]`. -/
 def chunksOf {α : Type} (n : Nat) (l : List α) : List (List α) :=
   if _h : l.length ≤ n ∨ n = 0 then [l]
   else
@@ -165,11 +200,14 @@ def chunksOf {α : Type} (n : Nat) (l : List α) : List (List α) :=
 termination_by l.length
 decreasing_by simp only [List.length_drop]; omega
 
+/-- The record of the connection with this identifier, if it is connected. -/
 def State.client? (s : State) (id : Nat) : Option Client := s.clients.find? (·.id == id)
 
+/-- Replace the record that has `c`'s identifier with `c`; a record is never added. -/
 def State.setClient (s : State) (c : Client) : State :=
   { s with clients := s.clients.map (fun c' => if c'.id == c.id then c else c') }
 
+/-- Remove the record of the connection with this identifier. -/
 def State.dropClient (s : State) (id : Nat) : State :=
   { s with clients := s.clients.filter (·.id != id) }
 

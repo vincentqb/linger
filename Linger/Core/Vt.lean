@@ -37,31 +37,47 @@ namespace Linger.Core.Vt
 
 /-- A cell colour: the terminal default, a 256-colour palette index, or 24-bit RGB. -/
 inductive Color where
+  /-- The receiving terminal's own default. -/
   | default
+  /-- An entry of the 256-colour palette. -/
   | idx (i : UInt8)
+  /-- A 24-bit colour, by red, green and blue. -/
   | rgb (r g b : UInt8)
   deriving Repr, DecidableEq, Inhabited
 
 /-- The SGR state written into new cells: colours and text attributes. -/
 structure Pen where
+  /-- Foreground colour. -/
   fg : Color := .default
+  /-- Background colour, which erased cells keep. -/
   bg : Color := .default
+  /-- Bold (SGR 1). -/
   bold : Bool := false
+  /-- Faint (SGR 2). -/
   dim : Bool := false
+  /-- Italic (SGR 3). -/
   italic : Bool := false
+  /-- Underlined (SGR 4). -/
   underline : Bool := false
+  /-- Blinking (SGR 5 or 6). -/
   blink : Bool := false
+  /-- Reverse video (SGR 7). -/
   reverse : Bool := false
+  /-- Struck through (SGR 9). -/
   strike : Bool := false
   deriving Repr, DecidableEq, Inhabited
 
-/-- One grid cell. `width` is 1 (normal), 2 (leading cell of a wide
-character), or 0 (continuation cell shadowed by a wide char to its
-left). `marks` carries combining characters (usually empty). -/
+/-- One grid cell. `Vt.ofDecoded` does not check scrollback rows, so a cell loaded into
+scrollback can hold values the emulator never writes. -/
 structure Cell where
+  /-- The character drawn; a blank in a shadow cell. -/
   base : Char := ' '
+  /-- Combining characters drawn with `base`, usually none; printing attaches at most eight. -/
   marks : List Char := []
+  /-- Display columns: 1, or 2 for the leading cell of a wide character and 0 for the shadow
+  cell to its right. -/
   width : Nat := 1
+  /-- The colours and attributes the cell is drawn with. -/
   pen : Pen := {}
   deriving Repr, DecidableEq, Inhabited
 
@@ -258,9 +274,12 @@ theorem Row.mend_eq_mendFast : @Row.mend = @Row.mendFast := by
 
 /-- Scrollback: a ring over an array. `data.size ≤ cap` is §Bound's
 structural invariant — `push` either grows toward the cap or overwrites
-in place; nothing else writes. `start` indexes the oldest row. -/
+in place; nothing else writes. -/
 structure Ring where
+  /-- The retained rows, in storage order. -/
   data : Array Row := #[]
+  /-- The index of the oldest row, where `toList` starts reading `data`. A loaded checkpoint
+  can hold any number here, and `toList` reads one at or past `data.size` as 0. -/
   start : Nat := 0
   deriving Repr, Inhabited
 
@@ -281,57 +300,87 @@ def Ring.toList (r : Ring) : List Row :=
 
 /-! ## Parser state -/
 
-/-- CSI collection: params are clamped (≤ 16 of them, each ≤ 65535).
-Each param carries whether it began with ':' (sub-parameter, for
-SGR 38:2:… syntax) — one array by construction, so the two facts cannot
-drift apart. -/
+/-- CSI collection. A parameter and its colon flag share one array entry by construction,
+so the two facts cannot drift apart. -/
 structure CsiState where
-  priv : UInt8 := 0 -- leading '?' '<' '=' '>' byte, 0 = none
-  params : Array (Nat × Bool) := #[] -- ≤ 16 of (value ≤ 65535, startedWithColon)
+  /-- The private-marker byte `<`, `=`, `>` or `?`, or 0 for none. -/
+  priv : UInt8 := 0
+  /-- Closed parameters, at most 16: each value, at most 65535, and whether a colon
+  introduced it (a sub-parameter, as in SGR 38:2:…). -/
+  params : Array (Nat × Bool) := #[]
+  /-- The parameter being read, saturating at 65535. -/
   cur : Nat := 0
+  /-- A colon introduced the parameter being read. -/
   curSub : Bool := false
+  /-- A digit was read since the last separator. -/
   haveCur : Bool := false
-  inter : UInt8 := 0 -- one intermediate byte is all we honor
+  /-- The latest intermediate byte, or 0; a sequence with one has no effect. -/
+  inter : UInt8 := 0
+  /-- More than 16 parameters arrived; the sequence has no effect. -/
   ignore : Bool := false
   deriving Repr, DecidableEq, Inhabited
 
 /-- Parser state between bytes: ground, ESC, an ESC intermediate, CSI, OSC or a skipped string. -/
 inductive PState where
+  /-- Between sequences: printing, C0 controls and UTF-8 assembly. -/
   | ground
-  | esc -- after ESC
-  | escInter (b : UInt8) -- first intermediate; 0 marks an unsupported compound sequence
+  /-- After ESC. -/
+  | esc
+  /-- After ESC and the intermediate byte `b`; 0 marks an unsupported compound sequence. -/
+  | escInter (b : UInt8)
+  /-- Inside CSI, collecting `s`. -/
   | csi (s : CsiState)
-  | osc (acc : Array UInt8) (esc : Bool) -- collecting OSC, BEL/ST terminated
-  | str (esc : Bool) -- DCS/SOS/PM/APC: skip to ST
+  /-- Collecting an OSC payload of at most 2048 bytes until BEL or ST; `esc` marks a
+  preceding ESC. -/
+  | osc (acc : Array UInt8) (esc : Bool)
+  /-- Skipping a DCS, SOS, PM or APC string until ST; `esc` marks a preceding ESC. -/
+  | str (esc : Bool)
   deriving Repr, DecidableEq, Inhabited
 
 /-! ## The screen -/
 
 /-- Cursor position and its wrap-pending flag. -/
 structure Cursor where
+  /-- Column, from 0. -/
   x : Nat := 0
+  /-- Row, from 0. -/
   y : Nat := 0
-  pending : Bool := false -- wrap-pending: at right margin, next print wraps
+  /-- Wrap pending: a print reached the right margin, and under autowrap the next
+  printable character wraps first. -/
+  pending : Bool := false
   deriving Repr, DecidableEq, Inhabited
 
 /-- The cursor and pen DECSC saves and DECRC restores. -/
 structure Saved where
+  /-- The saved cursor, including its wrap-pending flag. -/
   cur : Cursor := {}
+  /-- The saved pen. -/
   pen : Pen := {}
   deriving Repr, DecidableEq, Inhabited
 
 /-- Modes we track. Stored-but-uninterpreted ones exist so a restore
-can replay them (`Render.modes`). -/
+can replay them (`Render.modesAnsi`). -/
 structure Modes where
-  wrap : Bool := true -- DECAWM
-  origin : Bool := false -- DECOM
-  insert : Bool := false -- IRM
+  /-- Autowrap at the right margin (DECAWM, private mode 7). -/
+  wrap : Bool := true
+  /-- Origin mode (DECOM, private mode 6): cursor rows are relative to the scroll region. -/
+  origin : Bool := false
+  /-- Insert mode (IRM, mode 4): printing shifts the rest of the row right. -/
+  insert : Bool := false
+  /-- Cursor visibility (DECTCEM, private mode 25). -/
   cursorVisible : Bool := true
-  appCursor : Bool := false -- DECCKM
+  /-- Application cursor keys (DECCKM, private mode 1). -/
+  appCursor : Bool := false
+  /-- Application keypad, set by `ESC =` and cleared by `ESC >`. -/
   appKeypad : Bool := false
+  /-- Bracketed paste (private mode 2004). -/
   bracketedPaste : Bool := false
-  mouse : Nat := 0 -- 0 off; else the last-enabled mode number
+  /-- Mouse tracking: 0 when off, else the last enabled of private modes 1000, 1002 and
+  1003. A loaded checkpoint can hold any number here. -/
+  mouse : Nat := 0
+  /-- SGR mouse encoding (private mode 1006). -/
   mouseSgr : Bool := false
+  /-- Focus reporting (private mode 1004). -/
   focusEvents : Bool := false
   deriving Repr, DecidableEq, Inhabited
 

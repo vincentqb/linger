@@ -114,7 +114,9 @@ def decrqssReply : Bytes := [ESC, 0x50, 0x30, 0x24, 0x72, ESC, STFinal]
 
 /-- A complete request's classification: passed through, or owned with its reply. -/
 inductive Decision where
+  /-- Outside the profile: clients receive the sequence unchanged. -/
   | unowned
+  /-- In the profile: the sequence is withheld from clients and `reply` goes to the child. -/
   | owned (reply : Bytes)
   deriving Repr, DecidableEq
 
@@ -164,15 +166,27 @@ def classifyOsc (seq : Bytes) : Decision :=
 Passthrough states retain no payload. DCS only enters its buffered state after
 `+q` or `$q`; sixel (`DCS q`) therefore streams immediately. -/
 inductive Scan where
+  /-- Outside any sequence: every byte but ESC is released at once. -/
   | ground
+  /-- After ESC, which is held until the next byte. -/
   | esc
+  /-- A CSI sequence that may be owned, held within `csiCap` bytes. -/
   | csi (rev : Bytes)
+  /-- An unowned CSI sequence, released byte by byte until its final byte. -/
   | csiPass
+  /-- An OSC sequence that may be owned, held within `oscCap` bytes; `escSeen` marks a
+  trailing ESC. -/
   | osc (rev : Bytes) (escSeen : Bool)
+  /-- An unowned OSC sequence, released byte by byte until BEL or ST. -/
   | oscPass (escSeen : Bool)
+  /-- After `ESC P`, waiting for the `+` or `$` that may begin an owned request. -/
   | dcsIntro
+  /-- After `ESC P` and `kind`, waiting for `q`. -/
   | dcsKind (kind : UInt8)
+  /-- An XTGETTCAP or DECRQSS request held within `dcsCap` bytes; `escSeen` marks an ESC
+  held outside the payload, which may begin ST. -/
   | dcs (kind : UInt8) (payloadRev : Bytes) (escSeen : Bool)
+  /-- An unowned DCS, SOS, PM or APC string, released byte by byte until ST. -/
   | strPass (escSeen : Bool)
   deriving Repr, DecidableEq, Inhabited
 
@@ -198,8 +212,11 @@ def Scan.Bounded : Scan → Prop
 
 /-- One scanner step: the next state, bytes released to clients and replies to the child. -/
 structure ScanStep where
+  /-- The scanner's next state. -/
   scan : Scan
+  /-- Bytes released to presentation clients. -/
   visible : Bytes := []
+  /-- Bytes to write to the child. -/
   replies : Bytes := []
   deriving Repr, DecidableEq
 
@@ -282,9 +299,13 @@ def finish (s : Scan) : Bytes × Scan := (s.pending, .ground)
 
 /-- After feeding a chunk: the terminal, the scanner, client-visible bytes and child replies. -/
 structure Result where
+  /-- The terminal after every byte of the chunk. -/
   vt : Vt
+  /-- The scanner after the chunk, possibly holding an incomplete request. -/
   scan : Scan
+  /-- Bytes released to presentation clients, in order. -/
   visible : Bytes
+  /-- Replies to owned requests, in order. -/
   replies : Bytes
 
 -- No `deriving Repr`: it would need `Repr Vt`, which is the seal's read half
