@@ -247,6 +247,16 @@ theorem mendUpto_spec (row : Row) :
 theorem mend_eq_mendFast (row : Row) : Row.mend row = Row.mendFast row := by
   rw [Row.mend_eq_mendFast]
 
+/-- One column of that sweep is `mendAt` itself, at every column of every row. -/
+theorem mendAt_eq_mendAtFast (r : Row) (x : Nat) : r.mendAt x = r.mendAtFast x :=
+  Row.mendAt_eq_mendAtFast r x
+
+/-- The sweep's shadow test holds exactly of a cell that already is the shadow of a
+width-2 base on its left, which is the cell `mendAt` would write there. -/
+theorem keptShadow_iff (r : Row) (x : Nat) (c : Cell) :
+    r.keptShadow x c = true ↔
+      x ≠ 0 ∧ (r.at (x - 1)).width = 2 ∧ c = Cell.shadow (r.at (x - 1)) := Row.keptShadow_iff r x c
+
 theorem size_mend (row : Row) : (Row.mend row).size = row.size := by
   unfold Row.mend
   exact (mendUpto_spec row row.size).1
@@ -437,13 +447,15 @@ theorem mend_keeps_wide (row : Row) (x : Nat) (h2 : (row.at x).width = 2)
 
 theorem getCell_mendRow_same (v : Vt) (y x : Nat) (hy : y < v.grid.size) :
     (v.mendRow y).getCell x y = (v.getRow y).mend.at x := by
-  unfold Vt.mendRow Vt.getCell Vt.getRow Row.at
+  rw [mendRow_eq]
+  unfold Vt.getCell Vt.getRow Row.at
   dsimp only
   rw [getD_set_self _ _ _ _ hy]
 
 theorem getCell_mendRow_other (v : Vt) (y y' x : Nat) (h : y' ≠ y) :
     (v.mendRow y).getCell x y' = v.getCell x y' := by
-  unfold Vt.mendRow Vt.getCell Vt.getRow
+  rw [mendRow_eq]
+  unfold Vt.getCell Vt.getRow
   dsimp only
   rw [getD_set_ne _ _ _ _ _ h]
 
@@ -460,7 +472,8 @@ theorem grid_size_putCell (u : Vt) (x y : Nat) (c : Cell) :
 
 theorem getRow_putCell_same (u : Vt) (x y : Nat) (c : Cell) (hy : y < u.grid.size) :
     (u.putCell x y c).getRow y = (u.getRow y).setIfInBounds x c := by
-  unfold Vt.putCell Vt.getRow
+  rw [putCell_eq]
+  unfold Vt.getRow
   dsimp only
   rw [getD_set_self _ _ _ _ hy]
 
@@ -533,7 +546,8 @@ theorem size_getRow_putCell_any (u : Vt) (x y : Nat) (c : Cell) (hy : y < u.grid
     ((u.putCell x y c).getRow y').size = (u.getRow y').size := by
   by_cases h : y' = y
   · subst h; exact size_getRow_putCell _ _ _ _ hy
-  · unfold Vt.putCell Vt.getRow
+  · rw [putCell_eq]
+    unfold Vt.getRow
     dsimp only
     rw [getD_set_ne _ _ _ _ _ h]
 
@@ -547,10 +561,12 @@ theorem size_getRow_mendRow (u : Vt) (y : Nat) (hy : y < u.grid.size) (y' : Nat)
     ((u.mendRow y).getRow y').size = (u.getRow y').size := by
   by_cases h : y' = y
   · subst h
-    unfold Vt.mendRow Vt.getRow
+    rw [mendRow_eq]
+    unfold Vt.getRow
     dsimp only
     rw [getD_set_self _ _ _ _ hy, size_mend]
-  · unfold Vt.mendRow Vt.getRow
+  · rw [mendRow_eq]
+    unfold Vt.getRow
     dsimp only
     rw [getD_set_ne _ _ _ _ _ h]
 
@@ -627,8 +643,8 @@ theorem at_putCell_ne (u : Vt) (x y : Nat) (c : Cell) (x' : Nat) (hne : x' ≠ x
 /-- A write plus repair on one row leaves every other row alone. -/
 theorem getCell_write_mendRow_other (u : Vt) (x y : Nat) (c : Cell) (x' y' : Nat) (h : y' ≠ y) :
     ((u.putCell x y c).mendRow y).getCell x' y' = u.getCell x' y' := by
-  rw [getCell_mendRow_other _ _ _ _ h]
-  unfold Vt.putCell Vt.getCell Vt.getRow
+  rw [getCell_mendRow_other _ _ _ _ h, putCell_eq]
+  unfold Vt.getCell Vt.getRow
   dsimp only
   exact congrArg (fun r => Array.getD r x' default) (getD_set_ne _ _ _ _ _ h)
 
@@ -670,8 +686,9 @@ theorem getCell_write2_off (u : Vt) (x y : Nat) (c1 c2 : Cell) (n : Nat) (x' y' 
     (hne : y' ≠ y) :
     (((((u.putCell x y c1).putCell (x + 1) y c2).mendRow y).printAdvance n).getCell x' y') =
       u.getCell x' y' := by
-  rw [getCell_printAdvance, getCell_write_mendRow_other (u.putCell x y c1) (x + 1) y c2 x' y' hne]
-  unfold Vt.putCell Vt.getCell Vt.getRow
+  rw [getCell_printAdvance, getCell_write_mendRow_other (u.putCell x y c1) (x + 1) y c2 x' y' hne,
+    putCell_eq]
+  unfold Vt.getCell Vt.getRow
   dsimp only
   exact congrArg (fun r => Array.getD r x' default) (getD_set_ne _ _ _ _ _ hne)
 
@@ -1514,7 +1531,8 @@ theorem renderable_of_gridOk {v w : Vt} (h : Renderable v)
 theorem gridOkExcept_putCell {v : Vt} {y : Nat}
     (h : GridOkExcept v.cols v.rows y v.grid) (x : Nat) (c : Cell) (hc : CellOk c) :
     GridOkExcept v.cols v.rows y (v.putCell x y c).grid := by
-  unfold Vt.putCell Vt.getRow
+  rw [putCell_eq]
+  unfold Vt.getRow
   dsimp only
   exact gridOkExcept_set h x c hc _ (fun hb => getD_of_lt _ _ _ _ hb)
 
@@ -1523,7 +1541,8 @@ theorem gridOk_mendRow {v : Vt} {y : Nat}
     GridOk v.cols v.rows (v.mendRow y).grid := by
   have hkey : (v.mendRow y).grid
       = v.grid.setIfInBounds y (Row.mend (v.grid.getD y (blankRow v.cols {}))) := by
-    unfold Vt.mendRow Vt.getRow
+    rw [mendRow_eq]
+    unfold Vt.getRow
     dsimp only
     by_cases hb : y < v.grid.size
     · rw [getD_of_lt v.grid y (blankRow v.cols v.pen) (blankRow v.cols {}) hb]
@@ -1779,6 +1798,7 @@ theorem renderable_row_mutation {v : Vt} (h : Renderable v) {β : Type}
 
 theorem renderable_eraseRowSpan {v : Vt} (h : Renderable v) (y a b : Nat) :
     Renderable (v.eraseRowSpan y a b) := by
+  rw [eraseRowSpan_eq]
   refine renderable_of_gridOk h rfl rfl rfl ?_
   exact renderable_row_mutation h y _ _ (fun r b => by simp)
     (fun r b hr => cells_set _ _ hr (cellOk_erased _))

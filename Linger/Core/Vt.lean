@@ -10,7 +10,7 @@ what it missed, and so `linger capture --history` can dump it).
 
 Design for the theorems (see THEOREMS.md):
 * §Total — everything is one byte-at-a-time `step : Vt → UInt8 → Vt`
-  built from total operations (`getD`/`setIfInBounds`/`min`/clamps);
+  built from total operations (`getD`/`setIfInBounds`/`modify`/`min`/clamps);
   `feed = List.foldl step` — no `partial`, no panic path.
 * §Chunk — `feed` over a `foldl` is chunking-invariant by
   `List.foldl_append`, definitionally.
@@ -135,12 +135,14 @@ hold nothing of its own — see `Row.mendAt`. -/
 def Cell.shadow (c : Cell) : Cell := { base := ' ', marks := [], width := 0, pen := c.pen }
 
 /-- Total cell read; out of range is a default (width-1) cell. -/
+@[inline]
 def Row.at (row : Row) (x : Nat) : Cell := row.getD x default
 
 /-- Is the cell at `x` half of a wide pair whose other half is gone? A
 width-2 base with no shadow on its right, or a shadow with no base on its
 left. Out-of-range reads are width 1, so a base in the final column counts
 as broken — fix 11's rule, stated once instead of per operation. -/
+@[inline]
 def Row.halfPair (row : Row) (x : Nat) : Bool :=
   let c := row.at x
   (c.width == 2 && (row.at (x + 1)).width != 0) ||
@@ -149,6 +151,7 @@ def Row.halfPair (row : Row) (x : Nat) : Bool :=
 /-- Blank a half pair, keeping its background (BCE); otherwise canonicalize a
 whole pair's shadow, so a shadow carries exactly what a repaint of its base
 re-creates and nothing of its own. -/
+@[inline]
 def Row.mendAt (row : Row) (x : Nat) : Row :=
   if row.halfPair x then row.setIfInBounds x (Cell.erased (row.at x).pen)
   else if (row.at x).width == 0 then row.setIfInBounds x (Cell.shadow (row.at (x - 1))) else row
@@ -173,15 +176,67 @@ not assumed: sweeping right to left passes every fixture and the whole fuzz
 corpus. Left to right is simply the order the proof is stated in.)
 
 Every cell-writing operation ends here, printing included. That is a deliberate
-trade: `putCell` reads its row out of the grid, so the row is shared and the
-write copies it — printing is already O(cols) — and one more pass over the row
-it just copied buys the pair invariant *uniformly*, with no per-operation index
-reasoning (`mend_pairOk`). Restructuring for provability rather than weakening
-the theorem, per AGENTS.md. -/
+trade: `Vt.putCell` writes in place, so this pass is what makes a print O(cols), and
+it buys the pair invariant *uniformly*, with no per-operation index reasoning
+(`mend_pairOk`). Restructuring for provability rather than weakening the theorem,
+per AGENTS.md. Compiled code runs `mendFast`, one read per narrow cell. -/
 def Row.mend (row : Row) : Row := (List.range row.size).foldl (fun r x => r.mendAt x) row
 
-/-- The same sweep without allocating the column list; compiled code uses it. -/
-def Row.mendFast (row : Row) : Row := Nat.fold row.size (fun x _ r => r.mendAt x) row
+/-- Is `c`, the cell at column `x`, already the shadow of a width-2 base on its left,
+which is what `mendAt` writes there? Compared field by field: building the shadow to
+compare against would allocate. -/
+def Row.keptShadow (row : Row) (x : Nat) (c : Cell) : Bool :=
+  let b := row.at (x - 1)
+  c.width == 0 && x != 0 && b.width == 2 && c.base == ' ' && c.marks.isEmpty && c.pen == b.pen
+
+/-- One `mendAt` as compiled code runs it. A column past the end or a width-1 cell is
+left after at most one read, and a shadow `mendAt` would write back unchanged after two,
+the cell and its base; any other cell goes through `mendAt`. -/
+@[inline]
+def Row.mendAtFast (r : Row) (x : Nat) : Row :=
+  if h : x < r.size then
+    let c := r[x]
+    if c.width == 1 || r.keptShadow x c then r else r.mendAt x
+  else r
+
+/-- The same sweep as compiled code runs it: no column list, and `mendAtFast` per column.
+`Row.at`, `halfPair`, `mendAt` and `mendAtFast` are inlined, so the loop makes no calls
+for a narrow row. -/
+def Row.mendFast (row : Row) : Row := Nat.fold row.size (fun x _ r => r.mendAtFast x) row
+
+/-- The shadow test holds exactly of a cell that already is the shadow of a width-2 base
+on its left, which is the cell `mendAt` would write there. -/
+theorem Row.keptShadow_iff (r : Row) (x : Nat) (c : Cell) :
+    r.keptShadow x c = true ↔
+      x ≠ 0 ∧ (r.at (x - 1)).width = 2 ∧ c = Cell.shadow (r.at (x - 1)) := by
+  unfold Row.keptShadow
+  simp only [Bool.and_eq_true, beq_iff_eq, bne_iff_ne, ne_eq, List.isEmpty_iff]
+  constructor
+  · rintro ⟨⟨⟨⟨⟨hw, hx⟩, hb⟩, hbase⟩, hmarks⟩, hpen⟩
+    refine ⟨hx, hb, ?_⟩
+    revert hw hbase hmarks hpen
+    cases c
+    simp_all [Cell.shadow]
+  · rintro ⟨hx, hb, rfl⟩
+    simp [Cell.shadow, hx, hb]
+
+/-- `Row.mendAt` and `Row.mendAtFast` agree at every column of every row. -/
+theorem Row.mendAt_eq_mendAtFast (r : Row) (x : Nat) : r.mendAt x = r.mendAtFast x := by
+  unfold Row.mendAtFast
+  by_cases h : x < r.size
+  · simp only [h, ↓reduceDIte]
+    split
+    · rename_i hskip
+      simp only [Bool.or_eq_true, beq_iff_eq] at hskip
+      rcases hskip with hw | hk
+      · simp [hw, Row.mendAt, Row.halfPair, Row.at, h]
+      · obtain ⟨hx, hb, hsh⟩ := (Row.keptShadow_iff r x r[x]).1 hk
+        have hw : r[x].width = 0 := by simp [hsh, Cell.shadow]
+        have hat : r.at x = r[x] := by simp [Row.at, h]
+        simp [Row.mendAt, Row.halfPair, hat, hw, hx, hb, ← hsh, Array.setIfInBounds_def, h]
+    · rfl
+  · simp [h, Row.mendAt, Row.halfPair, Row.at,
+      Array.setIfInBounds_eq_of_size_le (Nat.le_of_not_lt h)]
 
 /-- `Row.mend` and `Row.mendFast` are the same function, so compiled code runs the latter. -/
 @[csimp]
@@ -189,14 +244,17 @@ theorem Row.mend_eq_mendFast : @Row.mend = @Row.mendFast := by
   funext row
   suffices h :
     ∀ len (r : Row),
-      (List.range len).foldl (fun r x => r.mendAt x) r = Nat.fold len (fun x _ r => r.mendAt x) r
+      (List.range len).foldl (fun r x => r.mendAt x) r =
+        Nat.fold len (fun x _ r => r.mendAtFast x) r
     from h row.size row
   intro len
   induction len with
   | zero =>
     intro r; simp
   | succ len ih =>
-    intro r; simp [List.range_succ, List.foldl_append, ih]
+    intro r
+    rw [List.range_succ, List.foldl_append, ih, Nat.fold_succ]
+    simp [Row.mendAt_eq_mendAtFast]
 
 /-- Scrollback: a ring over an array. `data.size ≤ cap` is §Bound's
 structural invariant — `push` either grows toward the cap or overwrites
@@ -608,17 +666,20 @@ private def Vt.ofDecoded (cols rows : Nat) (grid : Array Row) (cursor : Cursor) 
 /-- Total row read; out of range is a blank row in the current pen. -/
 def Vt.getRow (v : Vt) (y : Nat) : Row := v.grid.getD y (blankRow v.cols v.pen)
 
+/-- Write one cell in place. `Array.modify` moves the row out of the grid before the
+write, so a row only the grid holds is not copied, as it would be if read through
+`getRow` and written back. `putCell_eq` (`Theorems/Vt/State.lean`) states that
+read-then-write form, for every `y`. -/
 private def Vt.putCell (v : Vt) (x y : Nat) (c : Cell) : Vt :=
-  let row := (v.getRow y).setIfInBounds x c
-  { v with grid := v.grid.setIfInBounds y row }
+  { v with grid := v.grid.modify y (·.setIfInBounds x c) }
 
 /-- Total cell read; out of range is a default cell. -/
 def Vt.getCell (v : Vt) (x y : Nat) : Cell := (v.getRow y).getD x default
 
 /-- Repair every pair in one row. Every cell-writing operation ends here, so
-the pair invariant holds by construction rather than per operation. -/
-private def Vt.mendRow (v : Vt) (y : Nat) : Vt :=
-  { v with grid := v.grid.setIfInBounds y (v.getRow y).mend }
+the pair invariant holds by construction rather than per operation. In place, like
+`putCell`; `mendRow_eq` states the read-then-write form. -/
+private def Vt.mendRow (v : Vt) (y : Nat) : Vt := { v with grid := v.grid.modify y Row.mend }
 
 /-- Scroll rows [top, bot] up by one, no questions asked about the
 current region. Grid + (optionally) scrollback only — never the
@@ -851,12 +912,15 @@ private def Vt.print (v : Vt) (ch : Char) : Vt :=
 
 /-! ## Erase / insert / delete -/
 
-private def Vt.eraseRowSpan (v : Vt) (y from_ to_ : Nat) : Vt := -- [from, to)
-  let row := v.getRow y
-  let row :=
-    (List.range (to_ - from_)).foldl
-      (fun (r : Row) i => r.setIfInBounds (from_ + i) (Cell.erased v.pen)) row
-  { v with grid := v.grid.setIfInBounds y row.mend }
+/-- Erase columns `[from_, to_)` of row `y` in place, every column sharing one blank
+cell. `eraseRowSpan_eq` states the read-then-write form with a blank per column. -/
+private def Vt.eraseRowSpan (v : Vt) (y from_ to_ : Nat) : Vt :=
+  let blank := Cell.erased v.pen
+  { v with
+    grid :=
+      v.grid.modify y fun row =>
+        ((List.range (to_ - from_)).foldl (fun (r : Row) i => r.setIfInBounds (from_ + i) blank)
+            row).mend }
 
 private def Vt.eraseLine (v : Vt) (mode : Nat) : Vt :=
   match mode with

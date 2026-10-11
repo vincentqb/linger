@@ -971,11 +971,48 @@ conditional claims for operations such as `RIS` and `setMode`.
 theorem frame_putCell (v : Vt) (x y : Nat) (c : Cell) :
     v.putCell x y c = { v with grid := (v.putCell x y c).grid } := by rfl
 
+/-- Writing back a function of the row read at `i` is `Array.modify`, for every `i`: past
+the end the default is discarded and both leave the array unchanged. -/
+theorem setIfInBounds_getD_eq_modify {α : Type} (xs : Array α) (i : Nat) (d : α) (f : α → α) :
+    xs.setIfInBounds i (f (xs.getD i d)) = xs.modify i f := by
+  apply Array.ext (by simp)
+  intro j h1 _
+  simp only [Array.size_setIfInBounds] at h1
+  rw [Array.getElem_setIfInBounds h1, Array.getElem_modify]
+  split <;> simp_all
+
+/-- **The in-place write is the read-then-write**: `getRow` the row, set the cell, set the
+row back, for every `y`, out of range included. The proofs that read a write back use this
+form; compiled code runs the definition, which does not copy the row. -/
+theorem putCell_eq (v : Vt) (x y : Nat) (c : Cell) :
+    v.putCell x y c =
+      { v with grid := v.grid.setIfInBounds y ((v.getRow y).setIfInBounds x c) } := by
+  rw [Vt.putCell, Vt.getRow, setIfInBounds_getD_eq_modify v.grid y _ (·.setIfInBounds x c)]
+
+/-- The same for the repair sweep. -/
+theorem mendRow_eq (v : Vt) (y : Nat) :
+    v.mendRow y = { v with grid := v.grid.setIfInBounds y (v.getRow y).mend } := by
+  rw [Vt.mendRow, Vt.getRow, setIfInBounds_getD_eq_modify v.grid y _ Row.mend]
+
 theorem frame_moveTo (v : Vt) (x y : Nat) :
     v.moveTo x y = { v with cursor := (v.moveTo x y).cursor } := by rfl
 
 theorem frame_eraseRowSpan (v : Vt) (y a b : Nat) :
     v.eraseRowSpan y a b = { v with grid := (v.eraseRowSpan y a b).grid } := by rfl
+
+/-- The in-place erase is the read-then-write, as `putCell_eq` is for one cell. -/
+theorem eraseRowSpan_eq (v : Vt) (y a b : Nat) :
+    v.eraseRowSpan y a b =
+      { v with
+        grid :=
+          v.grid.setIfInBounds y
+            ((List.range (b - a)).foldl
+                (fun (r : Row) i => r.setIfInBounds (a + i) (Cell.erased v.pen))
+                (v.getRow y)).mend } := by
+  rw [Vt.eraseRowSpan, Vt.getRow,
+    setIfInBounds_getD_eq_modify v.grid y _ fun row =>
+      ((List.range (b - a)).foldl (fun (r : Row) i => r.setIfInBounds (a + i) (Cell.erased v.pen))
+          row).mend]
 
 /-- Branching operation: one `split`, both branches record updates.
 `scrollUpIn` may also push the evicted line to scrollback. -/

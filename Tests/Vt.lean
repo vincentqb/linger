@@ -487,6 +487,17 @@ example :
       true := by
   native_decide
 
+/-- The sweep keeps a shadow that already is its base's and rewrites one that carries a
+pen, base or mark of its own: compiled code skips only the first (`Row.keptShadow`). -/
+example :
+    (let base : Cell := { base := '漢', marks := [], width := 2, pen := { fg := .idx 1 } }
+     let kept := #[base, Cell.shadow base]
+     [{ Cell.shadow base with pen := {} }, { Cell.shadow base with base := 'z' },
+         { Cell.shadow base with marks := ['\u0301'] }].all (fun s => Row.mend #[base, s] == kept) &&
+       Row.mend kept == kept) =
+      true := by
+  native_decide
+
 /-- Every ESC intermediate keeps both the session and observer away from a
 title-write boundary. The final is consumed without printing it. -/
 example :

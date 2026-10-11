@@ -50,21 +50,20 @@ theorem pairs_set {row : Row} (h : ∀ j, PairOk row j) (x : Nat) (c : Cell) (hx
     exact hn (hw.trans h0)
 
 theorem put_self (v : Vt) (x y : Nat) : v.putCell x y (v.getCell x y) = v := by
-  unfold Vt.putCell Vt.getCell
+  rw [putCell_eq]
+  unfold Vt.getCell
   rw [setIfInBounds_getD_self]
   unfold Vt.getRow
-  dsimp only
   rw [setIfInBounds_getD_self]
 
 theorem put_twice (v : Vt) (x y : Nat) (a b : Cell) (hy : y < v.grid.size) :
     (v.putCell x y a).putCell x y b = v.putCell x y b := by
-  simp only [Vt.putCell, Vt.getRow]
+  simp only [putCell_eq, Vt.getRow]
   rw [getD_set_self _ _ _ _ hy]
   simp only [Array.setIfInBounds_setIfInBounds]
 
 theorem mendRow_fixed {v : Vt} {y : Nat} (h : ∀ j, PairOk (v.getRow y) j) : v.mendRow y = v := by
-  unfold Vt.mendRow
-  rw [mend_of_pairOk h]
+  rw [mendRow_eq, mend_of_pairOk h]
   unfold Vt.getRow
   rw [setIfInBounds_getD_self]
 

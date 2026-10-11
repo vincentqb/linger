@@ -51,10 +51,10 @@ def checkpointRetry : IO Unit := do
       "a failed quiet checkpoint retries at the next cadence with its state intact"
 
 /-- Budgets at realistic size, about five times the cost measured when they were
-set (fill 7.5 s, capture 0.56 s, replay 0.22 s, save 0.25 s, peak 319 MB), so only
+set (fill 1.1 s, capture 0.56 s, replay 0.22 s, save 0.25 s, peak 319 MB), so only
 a pathological regression fails: the 10,000-row fill, `capture --history`, the
 reattach replay and the detach checkpoint, in milliseconds. -/
-def scaleBudgetMs : Nat × Nat × Nat × Nat := (40000, 3000, 1200, 1300)
+def scaleBudgetMs : Nat × Nat × Nat × Nat := (5500, 3000, 1200, 1300)
 
 /-- The daemon's peak resident set at that size, in KiB. -/
 def scaleBudgetKb : Nat := 1600000
