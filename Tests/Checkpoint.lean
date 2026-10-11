@@ -333,4 +333,44 @@ example :
       true := by
   native_decide
 
+/-! ### The byte-array reader
+
+`loadBytes_eq` proves that `loadBytes` returns what `load` returns on the array's bytes. These
+run the byte-array reader on one record with a two-byte width, two- and three-byte codepoints,
+a combining mark, indexed and RGB colours, bold and underline, a stashed main screen, a title
+and labels. No theorem states that a torn write is refused, so every truncation of the record
+is checked. -/
+
+/-- A 130-column screen with a wide glyph, a combining mark, an indexed foreground and an RGB
+background in bold and underline, stashed by switching to the alternate screen, under a
+non-ASCII title. -/
+def rich : Ckpt :=
+  { vt :=
+      (Vt.init 130 3).feedBytes
+        "\x1b]2;tïtle\x07\x1b[38;5;200;48;2;1;2;3;1;4m中éx\x1b[0m\r\nok\x1b[?1049hALT".toUTF8
+    cwd := "/tmp/ü", labels := [("k", "v"), ("ключ", "значение")] }
+
+/-- The control: the emulator produced each screen part named above, and the byte-array writer
+and reader round-trip the record. `save` writes every decoded field. -/
+example :
+    (let stash := (rich.vt.altGrid.map (·.1)).getD #[]
+     let has (p : Cell → Bool) : Bool := stash.any (·.any p)
+     rich.vt.cols ≥ 128 && rich.vt.title.any (fun (c : Char) => c.toNat ≥ 128) &&
+       has (fun c => c.base.toNat ≥ 0x4000 && c.width == 2) &&
+       has (fun c => !c.marks.isEmpty) &&
+       has (fun c => c.pen.fg matches .idx _) &&
+       has (fun c => c.pen.bg matches .rgb ..) &&
+       has (fun c => c.pen.bold && c.pen.underline) &&
+       (loadBytes (saveBytes rich)).map save == some (save rich)) =
+      true := by
+  native_decide
+
+/-- Every truncation, a trailing byte and a second record are refused. -/
+example :
+    (let bytes := saveBytes rich
+     (List.range bytes.size).all (fun k => (loadBytes (bytes.extract 0 k)).isNone) &&
+       (loadBytes (bytes.push 0)).isNone && (loadBytes (bytes ++ bytes)).isNone) =
+      true := by
+  native_decide
+
 end Linger.Core.Checkpoint.Tests

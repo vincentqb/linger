@@ -16,7 +16,7 @@ surfaces save/delete errors for the daemon to log without exiting.
 
 namespace Linger.Runtime.Resume
 
-open Linger.Core.Checkpoint (Ckpt saveBytes load)
+open Linger.Core.Checkpoint (Ckpt saveBytes loadBytes)
 open Linger.Core.Session (State)
 
 def saveCkpt (name : String) (st : State) : IO Unit := do
@@ -51,7 +51,7 @@ def loadCkpt (name : String) : IO (Option (Linger.Core.Vt.Vt × String × List (
       IO.FS.readBinFile path
     catch err =>
       throw (IO.userError s!"checkpoint read failed for '{name}': {err}")
-  match load bytes.toList with
+  match loadBytes bytes with
   | some ck =>
     return some (ck.vt, ck.cwd, ck.labels)
   | none =>

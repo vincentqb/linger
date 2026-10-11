@@ -460,4 +460,252 @@ def saveBytes (c : Ckpt) : ByteArray :=
         wStr c.cwd ++
         wList (wPair wStr wStr) c.labels).toByteArray
 
+/-! ## Reading from a byte array
+
+`load` is the specification and reads a list. Evaluated, converting a file's bytes to that
+list costs a heap cell per byte, about 18 million for a full 200-column history. `loadBytes`
+reads the same record in place: each reader below mirrors the list reader of the same shape,
+consuming bytes from a position and returning the value with the next position. The count,
+run and dimension limits are checked at the same points as the list readers check them,
+before any element is decoded or any run expanded. `loadBytes_eq` proves that `loadBytes`
+returns what `load` returns on the array's bytes, so every theorem about `load` holds of it. -/
+
+/-- Readers over a byte array: decode from a position, returning the value and the position
+after it. -/
+abbrev RB (α : Type) : Type := ByteArray → Nat → Option (α × Nat)
+
+/-- `rNat` at a position, for an encoding of any length. -/
+def rNatLongB (b : ByteArray) (i : Nat) : Option (Nat × Nat) :=
+  if h : i < b.size then
+    if b[i] < 128 then some (b[i].toNat, i + 1)
+    else
+      match rNatLongB b (i + 1) with
+      | none => none
+      | some (hi, j) => some ((b[i].toNat - 128) + 128 * hi, j)
+  else none
+termination_by b.size - i
+
+/-- `rNatLongB` unrolled once and inlined at every call. Most counts, codepoints and widths
+are one byte, so they decode at the call site; only a longer encoding calls `rNatLongB`. -/
+@[inline]
+def rNatB (b : ByteArray) (i : Nat) : Option (Nat × Nat) :=
+  if h : i < b.size then
+    if b[i] < 128 then some (b[i].toNat, i + 1)
+    else
+      match rNatLongB b (i + 1) with
+      | none => none
+      | some (hi, j) => some ((b[i].toNat - 128) + 128 * hi, j)
+  else none
+
+/-- `rBool` at a position. -/
+@[inline]
+def rBoolB : RB Bool := fun b i => if h : i < b.size then some (b[i] != 0, i + 1) else none
+
+/-- `rChar` at a position. -/
+@[inline]
+def rCharB : RB Char := fun b i => do
+  let (n, i) ← rNatB b i
+  if h : n.isValidChar then
+    some (Char.ofNatAux n h, i)
+  else
+    none
+
+/-- `rListAux` at a position. -/
+@[specialize]
+def rListAuxB {α : Type} (r : RB α) : Nat → RB (List α)
+  | 0 => fun _ i => some ([], i)
+  | k + 1 => fun b i => do
+    let (x, i) ← r b i
+    let (xs, i) ← rListAuxB r k b i
+    some (x :: xs, i)
+
+/-- `rList` at a position, checking the same optional count limit before reading any element. -/
+@[specialize]
+def rListB {α : Type} (r : RB α) (b : ByteArray) (i : Nat) (maxCount : Option Nat := none) :
+    Option (List α × Nat) := do
+  let (n, j) ← rNatB b i
+  if maxCount.all (fun limit => n ≤ limit) then
+    rListAuxB r n b j
+  else
+    none
+
+/-- `rStr` at a position. -/
+def rStrB : RB String := fun b i => do
+  let (cs, i) ← rListB rCharB b i
+  some (String.ofList cs, i)
+
+/-- `rPair` at a position. -/
+@[specialize]
+def rPairB {α β : Type} (ra : RB α) (rb : RB β) : RB (α × β) := fun b i => do
+  let (a, i) ← ra b i
+  let (c, i) ← rb b i
+  some ((a, c), i)
+
+/-- `rOpt` at a position. -/
+@[specialize]
+def rOptB {α : Type} (r : RB α) : RB (Option α) := fun b i =>
+  if h : i < b.size then
+    if b[i] = 0 then some (none, i + 1)
+    else
+      if b[i] = 1 then do
+        let (a, j) ← r b (i + 1)
+        some (some a, j)
+      else none
+  else none
+
+/-- `rColor` at a position. -/
+@[inline]
+def rColorB : RB Color := fun b i =>
+  if h : i < b.size then
+    if b[i] = 0 then some (.default, i + 1)
+    else
+      if b[i] = 1 then if h1 : i + 1 < b.size then some (.idx b[i + 1], i + 2) else none
+      else
+        if b[i] = 2 then
+          if h3 : i + 3 < b.size then some (.rgb b[i + 1] b[i + 2] b[i + 3], i + 4) else none
+        else none
+  else none
+
+/-- `rPen` at a position. -/
+def rPenB : RB Pen := fun b i => do
+  let (fg, i) ← rColorB b i
+  let (bg, i) ← rColorB b i
+  let (bold, i) ← rBoolB b i
+  let (dim, i) ← rBoolB b i
+  let (italic, i) ← rBoolB b i
+  let (underline, i) ← rBoolB b i
+  let (blink, i) ← rBoolB b i
+  let (reverse, i) ← rBoolB b i
+  let (strike, i) ← rBoolB b i
+  some ({ fg, bg, bold, dim, italic, underline, blink, reverse, strike }, i)
+
+/-- `rCell` at a position. -/
+def rCellB : RB Cell := fun b i => do
+  let (base, i) ← rCharB b i
+  let (marks, i) ← rListB rCharB b i
+  let (width, i) ← rNatB b i
+  let (pen, i) ← rPenB b i
+  some ({ base, marks, width, pen }, i)
+
+/-- `acc` with the given number of copies of `a` pushed onto it. -/
+def pushRun {α : Type} (acc : Array α) (a : α) : Nat → Array α
+  | 0 => acc
+  | n + 1 => pushRun (acc.push a) a n
+
+/-- `expand`, pushed onto an array. -/
+def expandB {α : Type} (acc : Array α) : List (Nat × α) → Array α
+  | [] => acc
+  | (n, a) :: rest => expandB (pushRun acc a n) rest
+
+/-- `rRLE` at a position, summing the run counts before expanding any run. The runs expand
+straight into an array sized to their total: the row `rRow` builds from `rRLE`'s list, without
+building the list. -/
+@[specialize]
+def rRLEB {α : Type} (r : RB α) (b : ByteArray) (i : Nat) (maxLength : Option Nat := none) :
+    Option (Array α × Nat) := do
+  let (groups, j) ← rListB (rPairB rNatB r) b i
+  let total := groups.foldl (fun n g => n + g.1) 0
+  if maxLength.all (fun limit => total ≤ limit) then
+    some (expandB (Array.emptyWithCapacity total) groups, j)
+  else
+    none
+
+/-- `rRow` at a position. -/
+def rRowB (b : ByteArray) (i : Nat) (maxLength : Option Nat := none) : Option (Row × Nat) :=
+  rRLEB rCellB b i maxLength
+
+/-- `rCursor` at a position. -/
+def rCursorB : RB Cursor := fun b i => do
+  let (x, i) ← rNatB b i
+  let (y, i) ← rNatB b i
+  let (pending, i) ← rBoolB b i
+  some ({ x, y, pending }, i)
+
+/-- `rModes` at a position. -/
+def rModesB : RB Modes := fun b i => do
+  let (wrap, i) ← rBoolB b i
+  let (origin, i) ← rBoolB b i
+  let (insert, i) ← rBoolB b i
+  let (cursorVisible, i) ← rBoolB b i
+  let (appCursor, i) ← rBoolB b i
+  let (appKeypad, i) ← rBoolB b i
+  let (bracketedPaste, i) ← rBoolB b i
+  let (mouse, i) ← rNatB b i
+  let (mouseSgr, i) ← rBoolB b i
+  let (focusEvents, i) ← rBoolB b i
+  some
+      ({ wrap, origin, insert, cursorVisible, appCursor, appKeypad,
+          bracketedPaste, mouse, mouseSgr, focusEvents },
+        i)
+
+/-- `rSaved` at a position. -/
+def rSavedB : RB Saved := fun b i => do
+  let (cur, i) ← rCursorB b i
+  let (pen, i) ← rPenB b i
+  some ({ cur, pen }, i)
+
+/-- `rRing` at a position. -/
+def rRingB (b : ByteArray) (i : Nat) (maxRows : Option Nat := none) : Option (Ring × Nat) := do
+  let (start, j) ← rNatB b i
+  let (rows, j) ← rListB rRowB b j maxRows
+  some ({ data := rows.toArray, start }, j)
+
+/-- `rAlt` at a position. -/
+def rAltB (b : ByteArray) (i : Nat) (maxCols : Option Nat := none) (maxRows : Option Nat := none) :
+    Option (Option (Array Row × Cursor × Pen) × Nat) :=
+  rOptB
+    (fun bytes j => do
+      let (rows, j) ← rListB (fun bytes j => rRowB bytes j maxCols) bytes j maxRows
+      let (c, j) ← rCursorB bytes j
+      let (p, j) ← rPenB bytes j
+      some ((rows.toArray, c, p), j))
+    b i
+
+/-- `rVt` at a position: the same dimension check before reading any row, the same bounds on
+both screens, the tab ruler and the history, and the same checked constructor. -/
+def rVtB : RB Vt := fun b i => do
+  let (cols, i) ← rNatB b i
+  let (rows, i) ← rNatB b i
+  if cols != clampDim cols || rows != clampDim rows then
+    none
+  else
+    do
+      let (grid, i) ← rListB (fun bytes j => rRowB bytes j (some cols)) b i (some rows)
+      let (cursor, i) ← rCursorB b i
+      let (pen, i) ← rPenB b i
+      let (modes, i) ← rModesB b i
+      let (top, i) ← rNatB b i
+      let (bot, i) ← rNatB b i
+      let (tabs, i) ← rListB rBoolB b i (some cols)
+      let (sb, i) ← rRingB b i (some sbCap)
+      let (altGrid, i) ← rAltB b i (some cols) (some rows)
+      let (saved, i) ← rSavedB b i
+      let (title, i) ← rStrB b i
+      let (g0Line, i) ← rBoolB b i
+      let (g1Line, i) ← rBoolB b i
+      let (shiftOut, i) ← rBoolB b i
+      let (bell, i) ← rBoolB b i
+      let v ←
+        Vt.ofDecoded cols rows grid.toArray cursor pen modes top bot tabs.toArray sb altGrid saved
+            title g0Line g1Line shiftOut bell
+      some (v, i)
+
+/-- `List.isPrefixOf?` at a position: when the array's bytes from the given position start
+with the given list, the position just past it. -/
+def prefixB : List UInt8 → ByteArray → Nat → Option Nat
+  | [], _, i => some i
+  | x :: p, b, i => if h : i < b.size then if x == b[i] then prefixB p b (i + 1) else none else none
+
+/-- `load` on a byte array (`loadBytes_eq`): the same tag check, the same reader chain, and
+the same refusal of unread trailing bytes. -/
+def loadBytes (b : ByteArray) : Option Ckpt := do
+  let i ← prefixB magic b 0
+  let (vt, i) ← rVtB b i
+  let (cwd, i) ← rStrB b i
+  let (labels, i) ← rListB (rPairB rStrB rStrB) b i
+  if b.size ≤ i then
+    some { vt, cwd, labels }
+  else
+    none
+
 end Linger.Core.Checkpoint

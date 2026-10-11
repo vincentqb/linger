@@ -1091,28 +1091,33 @@ FORGE='(^|[^`[:alnum:]_])(cols|rows|grid|bot|tabs|pstate|u8need|u8acc) *:='
 # Extensional reader theorems cannot distinguish reject-before-expansion from
 # expand-then-reject. The latter passed every semantic check in the audit, and
 # generated C confirmed that it allocated first. Pin these short guarded bodies
-# and rVt's prefix through its first row read; ignore layout, but inventory every
-# region so a missing declaration or terminator cannot pass.
+# and rVt's prefix through its first row read, for the list readers and for the
+# byte-array readers the runtime decodes with (`loadBytes_eq` is extensional too);
+# ignore layout, but inventory every region so a missing declaration or terminator
+# cannot pass.
 awk '
   BEGIN {
     want["rList"] = "let(n,rest)←rNatlifmaxCount.all(funlimit=>n≤limit)thenrListAuxrnrestelsenone"
     want["rRLE"] = "let(groups,rest)←rList(rPairrNatr)bytesifmaxLength.all(funlimit=>(groups.mapProd.fst).sum≤limit)thensome(expandgroups,rest)elsenone"
     want["rVt"] = "let(cols,l)←rNatllet(rows,l)←rNatlifcols!=clampDimcols||rows!=clampDimrowsthennoneelsedolet(grid,l)←rList(funbytes=>rRowbytes(somecols))l(somerows)"
+    want["rListB"] = "let(n,j)←rNatBbiifmaxCount.all(funlimit=>n≤limit)thenrListAuxBrnbjelsenone"
+    want["rRLEB"] = "let(groups,j)←rListB(rPairBrNatBr)bilettotal:=groups.foldl(funng=>n+g.1)0ifmaxLength.all(funlimit=>total≤limit)thensome(expandB(Array.emptyWithCapacitytotal)groups,j)elsenone"
+    want["rVtB"] = "let(cols,i)←rNatBbilet(rows,i)←rNatBbiifcols!=clampDimcols||rows!=clampDimrowsthennoneelsedolet(grid,i)←rListB(funbytesj=>rRowBbytesj(somecols))bi(somerows)"
   }
-  /^def (rList|rRLE|rVt) / {
+  /^def (rList|rRLE|rVt|rListB|rRLEB|rVtB) / {
     split($0, fields, " "); name = fields[2]
     seen[name]++; body = ""; collecting = 0
   }
   name != "" {
     line = $0
     if (!collecting) {
-      if (!sub(/^.*(:= do|:= fun l => do)/, "", line)) next
+      if (!sub(/^.*(:= do|:= fun l => do|:= fun b i => do)/, "", line)) next
       collecting = 1
     }
     gsub(/[[:space:]]/, "", line)
     body = body line
-    if ((name == "rVt" && index(line, "let(grid,l)←") > 0) ||
-        (name != "rVt" && line == "none")) {
+    if ((name ~ /^rVt/ && index(line, "let(grid,") > 0) ||
+        (name !~ /^rVt/ && line == "none")) {
       if (body != want[name]) {
         print "  " name ": checkpoint rejection must precede counted decoding or expansion"
         bad = 1
@@ -1140,14 +1145,40 @@ code_grep '^[[:space:]]+let [(]sb, l[)] ← rRing l [(]some sbCap[)]$' 'Linger/C
   || fail "the checkpoint history reader stopped using its row cap"
 code_grep '^[[:space:]]+let [(]altGrid, l[)] ← rAlt l [(]some cols[)] [(]some rows[)]$' 'Linger/Core/Checkpoint.lean' > /dev/null \
   || fail "the checkpoint alternate screen stopped using validated dimensions"
+# The same six bounds, forwarded by the byte-array readers.
+for bound in \
+  'rRLEB rCellB b i maxLength' \
+  'let [(]rows, j[)] ← rListB rRowB b j maxRows' \
+  'let [(]rows, j[)] ← rListB [(]fun bytes j => rRowB bytes j maxCols[)] bytes j maxRows' \
+  'let [(]tabs, i[)] ← rListB rBoolB b i [(]some cols[)]' \
+  'let [(]sb, i[)] ← rRingB b i [(]some sbCap[)]' \
+  'let [(]altGrid, i[)] ← rAltB b i [(]some cols[)] [(]some rows[)]'; do
+  code_grep "^[[:space:]]+$bound\$" 'Linger/Core/Checkpoint.lean' > /dev/null \
+    || fail "a byte-array checkpoint reader stopped forwarding its bound: $bound"
+done
 # The checkpoint hooks are `IO`, so no theorem sees them use the proved codec: write
-# the state's own fields through `saveBytes` (`saveBytes_eq`), and return what `load` read.
+# the state's own fields through `saveBytes` (`saveBytes_eq`), and return what
+# `loadBytes` read from the file's bytes (`loadBytes_eq`).
 resume_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Runtime/Resume.lean)"
 for tie in \
   'let ck : Ckpt := [{] vt := st[.]vt, cwd, labels := st[.]labels [}] let bytes := saveBytes ck' \
-  'match load bytes[.]toList with [|] some ck => return some [(]ck[.]vt, ck[.]cwd, ck[.]labels[)]'; do
+  'match loadBytes bytes with [|] some ck => return some [(]ck[.]vt, ck[.]cwd, ck[.]labels[)]'; do
   printf '%s\n' "$resume_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "checkpoint hooks bypassed the proved codec: $tie"
+done
+# Those ties see only the calls they pin; a second decode beside them passes. `load`
+# stays the specification, but evaluated it costs a heap cell per byte, so no entry,
+# runtime or manager module that imports the codec, directly or through the umbrella
+# `Linger`, names it. Resume must be among them, so the loop cannot pass empty.
+ckpt_importers="$(module_imports Main.lean 'Linger/Runtime/*' 'Linger/Manager/*' | awk '
+  { file = $0; sub(/:.*/, "", file); line = $0; sub(/^[^:]*:[0-9]*:/, "", line) }
+  line ~ /import[[:space:]]+(all[[:space:]]+)?Linger([.]Core[.]Checkpoint)?([[:space:]]|$)/ { print file }' \
+  | sort -u)"
+printf '%s\n' "$ckpt_importers" | grep -qx 'Linger/Runtime/Resume.lean' \
+  || fail "Linger/Runtime/Resume.lean no longer imports the checkpoint codec; move the load check with it"
+for f in $ckpt_importers; do
+  ! code_grep '(^|[^[:alnum:]_])load([^[:alnum:]_]|$)' "$f" \
+    || fail "$f names the list decoder 'load'; decode a file's bytes with 'loadBytes'"
 done
 
 # Test-orchestrator safety. The pty suites isolate themselves by LINGER_DIR; an

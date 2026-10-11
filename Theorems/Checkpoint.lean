@@ -823,4 +823,258 @@ theorem saveBytes_eq (c : Ckpt) : saveBytes c = ⟨(save c).toArray⟩ := by
   apply ByteArray.ext
   simp [← Array.toList_inj, h]
 
+/-! ### The byte-array reader
+
+Each position reader returns what its list reader returns on the bytes from that position,
+with the unread suffix given as the position where it starts. So `loadBytes` reads exactly
+what `load` reads, and every theorem above holds of the runtime decoder. -/
+
+theorem drop_lt {b : ByteArray} {i : Nat} (h : i < b.size) :
+    b.data.toList.drop i = b[i] :: b.data.toList.drop (i + 1) := by
+  rw [List.drop_eq_getElem_cons (i := i) (by simpa using h)]
+  rfl
+
+theorem drop_ge {b : ByteArray} {i : Nat} (h : ¬i < b.size) : b.data.toList.drop i = [] :=
+  List.drop_eq_nil_of_le (by simpa using Nat.le_of_not_lt h)
+
+theorem toList_loop (b : ByteArray) (i : Nat) (acc : List UInt8) :
+    ByteArray.toList.loop b i acc = acc.reverse ++ b.data.toList.drop i := by
+  fun_induction ByteArray.toList.loop b i acc with
+  | case1 i acc h
+    ih =>
+    have hget : b.get! i = b[i] := by
+      cases b
+      exact getElem!_pos _ i h
+    rw [ih, drop_lt h, hget]
+    simp
+  | case2 i acc h => simp [drop_ge h]
+
+/-- `ByteArray.toList` lists the array's data in order. -/
+theorem toList_eq (b : ByteArray) : b.toList = b.data.toList := by
+  simp [ByteArray.toList, toList_loop]
+
+/-- "Position reader `rb` returns what list reader `r` returns on the bytes from that position,
+leaving the bytes from the returned position unread." -/
+abbrev Mirrors {α : Type} (rb : RB α) (r : R α) : Prop :=
+  ∀ (b : ByteArray) (i : Nat),
+    (rb b i).map (fun p => (p.1, b.data.toList.drop p.2)) = r (b.data.toList.drop i)
+
+theorem rNatLongB_mirrors : Mirrors rNatLongB rNat := by
+  intro b i
+  fun_induction rNatLongB b i with
+  | case1 i h hb => simp [drop_lt h, rNat, hb]
+  | case2 i h hb hnone ih =>
+    rw [hnone] at ih
+    simp only [drop_lt h, rNat, ite_eq_right hb, ← ih, Option.map_none]
+  | case3 i h hb hi j hsome ih =>
+    rw [hsome] at ih
+    simp only [drop_lt h, rNat, ite_eq_right hb, ← ih, Option.map_some]
+  | case4 i h => simp [drop_ge h, rNat]
+
+/-- The inlined entry is the general reader. -/
+theorem rNatB_eq (b : ByteArray) (i : Nat) : rNatB b i = rNatLongB b i := by
+  rw [rNatLongB]
+  rfl
+
+theorem rNatB_mirrors : Mirrors rNatB rNat := fun b i => by
+  rw [rNatB_eq]
+  exact rNatLongB_mirrors b i
+
+theorem rBoolB_mirrors : Mirrors rBoolB rBool := by
+  intro b i
+  by_cases h : i < b.size
+  · simp [rBoolB, h, drop_lt h, rBool]
+  · simp [rBoolB, h, drop_ge h, rBool]
+
+theorem rCharB_mirrors : Mirrors rCharB rChar := by
+  intro b i
+  simp only [rCharB, rChar, Option.bind_eq_bind, ← rNatB_mirrors, Option.bind_map, Option.map_bind,
+    Function.comp_def]
+  congr 1
+  funext p
+  split <;> rfl
+
+theorem rListAuxB_mirrors {α : Type} {rb : RB α} {r : R α} (h : Mirrors rb r) (n : Nat) :
+    Mirrors (rListAuxB rb n) (rListAux r n) := by
+  induction n with
+  | zero =>
+    intro b i; rfl
+  | succ k ih =>
+    intro b i
+    simp only [rListAuxB, rListAux, Option.bind_eq_bind, ← h, ← ih, Option.bind_map,
+      Option.map_bind, Function.comp_def, Option.map_some]
+
+theorem rListB_mirrors {α : Type} {rb : RB α} {r : R α} (h : Mirrors rb r) (maxCount : Option Nat) :
+    Mirrors (fun b i => rListB rb b i maxCount) (fun l => rList r l maxCount) := by
+  intro b i
+  simp only [rListB, rList, Option.bind_eq_bind, ← rNatB_mirrors, Option.bind_map, Option.map_bind,
+    Function.comp_def]
+  congr 1
+  funext p
+  split
+  · exact rListAuxB_mirrors h p.1 b p.2
+  · rfl
+
+theorem rStrB_mirrors : Mirrors rStrB rStr := by
+  intro b i
+  simp only [rStrB, rStr, Option.bind_eq_bind, ← rListB_mirrors rCharB_mirrors none,
+    Option.bind_map, Option.map_bind, Function.comp_def, Option.map_some]
+
+theorem rPairB_mirrors {α β : Type} {ra : RB α} {ra' : R α} {rb : RB β} {rb' : R β}
+    (ha : Mirrors ra ra') (hb : Mirrors rb rb') : Mirrors (rPairB ra rb) (rPair ra' rb') := by
+  intro b i
+  simp only [rPairB, rPair, Option.bind_eq_bind, ← ha, ← hb, Option.bind_map, Option.map_bind,
+    Function.comp_def, Option.map_some]
+
+theorem rOptB_mirrors {α : Type} {rb : RB α} {r : R α} (h : Mirrors rb r) :
+    Mirrors (rOptB rb) (rOpt r) := by
+  intro b i
+  by_cases hi : i < b.size
+  · rw [drop_lt hi]
+    by_cases h0 : b[i] = 0
+    · simp [rOptB, hi, h0, rOpt]
+    · by_cases h1 : b[i] = 1
+      · simp [rOptB, hi, h1, rOpt, ← h, Option.bind_map, Function.comp_def]
+      · simp [rOptB, hi, h0, h1, rOpt]
+  · simp [rOptB, hi, drop_ge hi, rOpt]
+
+theorem rColorB_mirrors : Mirrors rColorB rColor := by
+  intro b i
+  by_cases hi : i < b.size
+  · rw [drop_lt hi]
+    by_cases h0 : b[i] = 0
+    · simp [rColorB, hi, h0, rColor]
+    by_cases h1 : b[i] = 1
+    · by_cases hj : i + 1 < b.size
+      · simp [rColorB, hi, h1, hj, drop_lt hj, rColor]
+      · simp [rColorB, hi, h1, hj, drop_ge hj, rColor]
+    by_cases h2 : b[i] = 2
+    · by_cases hl : i + 3 < b.size
+      · simp [rColorB, hi, h2, hl, drop_lt (show i + 1 < b.size by omega),
+          drop_lt (show i + 2 < b.size by omega), drop_lt hl, rColor]
+      · by_cases hj : i + 1 < b.size
+        · by_cases hk : i + 2 < b.size
+          · simp [rColorB, hi, h2, hl, drop_lt hj, drop_lt hk, drop_ge hl, rColor]
+          · simp [rColorB, hi, h2, hl, drop_lt hj, drop_ge hk, rColor]
+        · simp [rColorB, hi, h2, hl, drop_ge hj, rColor]
+    simp [rColorB, hi, h0, h1, h2, rColor]
+  · simp [rColorB, hi, drop_ge hi, rColor]
+
+theorem rPenB_mirrors : Mirrors rPenB rPen := by
+  intro b i
+  simp only [rPenB, rPen, Option.bind_eq_bind, ← rColorB_mirrors, ← rBoolB_mirrors, Option.bind_map,
+    Option.map_bind, Function.comp_def, Option.map_some]
+
+theorem rCellB_mirrors : Mirrors rCellB rCell := by
+  intro b i
+  simp only [rCellB, rCell, Option.bind_eq_bind, ← rCharB_mirrors,
+    ← rListB_mirrors rCharB_mirrors none, ← rNatB_mirrors, ← rPenB_mirrors, Option.bind_map,
+    Option.map_bind, Function.comp_def, Option.map_some]
+
+theorem pushRun_toList {α : Type} (acc : Array α) (a : α) (n : Nat) :
+    (pushRun acc a n).toList = acc.toList ++ List.replicate n a := by
+  induction n generalizing acc with
+  | zero => simp [pushRun]
+  | succ n ih => simp [pushRun, ih, List.replicate_succ]
+
+theorem expandB_toList {α : Type} (acc : Array α) (groups : List (Nat × α)) :
+    (expandB acc groups).toList = acc.toList ++ expand groups := by
+  induction groups generalizing acc with
+  | nil => simp [expandB, expand]
+  | cons g groups ih =>
+    obtain ⟨n, a⟩ := g
+    simp [expandB, expand, ih, pushRun_toList]
+
+theorem foldl_total {α : Type} (groups : List (Nat × α)) (k : Nat) :
+    groups.foldl (fun n g => n + g.1) k = k + (groups.map Prod.fst).sum := by
+  induction groups generalizing k with
+  | nil => simp
+  | cons g groups ih => simp [ih, Nat.add_assoc]
+
+/-- `rRLEB` expands into an array the runs `rRLE` expands into a list. -/
+theorem rRLEB_mirrors {α : Type} {rb : RB α} {r : R α} (h : Mirrors rb r) (maxLength : Option Nat)
+    (b : ByteArray) (i : Nat) :
+    (rRLEB rb b i maxLength).map (fun p => (p.1.toList, b.data.toList.drop p.2)) =
+      rRLE r (b.data.toList.drop i) maxLength := by
+  simp only [rRLEB, rRLE, Option.bind_eq_bind,
+    ← rListB_mirrors (rPairB_mirrors rNatB_mirrors h) none, Option.bind_map, Option.map_bind,
+    Function.comp_def, foldl_total, Nat.zero_add]
+  congr 1
+  funext p
+  split <;> simp [expandB_toList]
+
+theorem rRowB_mirrors (maxLength : Option Nat) :
+    Mirrors (fun b i => rRowB b i maxLength) (fun l => rRow l maxLength) := by
+  intro b i
+  simp only [rRowB, rRow, Option.bind_eq_bind, ← rRLEB_mirrors rCellB_mirrors, Option.bind_map,
+    Function.comp_def, Array.toArray_toList]
+  exact Option.map_eq_bind
+
+theorem rCursorB_mirrors : Mirrors rCursorB rCursor := by
+  intro b i
+  simp only [rCursorB, rCursor, Option.bind_eq_bind, ← rNatB_mirrors, ← rBoolB_mirrors,
+    Option.bind_map, Option.map_bind, Function.comp_def, Option.map_some]
+
+theorem rModesB_mirrors : Mirrors rModesB rModes := by
+  intro b i
+  simp only [rModesB, rModes, Option.bind_eq_bind, ← rNatB_mirrors, ← rBoolB_mirrors,
+    Option.bind_map, Option.map_bind, Function.comp_def, Option.map_some]
+
+theorem rSavedB_mirrors : Mirrors rSavedB rSaved := by
+  intro b i
+  simp only [rSavedB, rSaved, Option.bind_eq_bind, ← rCursorB_mirrors, ← rPenB_mirrors,
+    Option.bind_map, Option.map_bind, Function.comp_def, Option.map_some]
+
+theorem rRingB_mirrors (maxRows : Option Nat) :
+    Mirrors (fun b i => rRingB b i maxRows) (fun l => rRing l maxRows) := by
+  intro b i
+  simp only [rRingB, rRing, Option.bind_eq_bind, ← rNatB_mirrors,
+    ← rListB_mirrors (rRowB_mirrors none), Option.bind_map, Option.map_bind, Function.comp_def,
+    Option.map_some]
+
+theorem rAltB_mirrors (maxCols maxRows : Option Nat) :
+    Mirrors (fun b i => rAltB b i maxCols maxRows) (fun l => rAlt l maxCols maxRows) := by
+  intro b i
+  apply rOptB_mirrors
+  intro b i
+  simp only [← rListB_mirrors (rRowB_mirrors maxCols), ← rCursorB_mirrors, ← rPenB_mirrors,
+    Option.bind_eq_bind, Option.bind_map, Option.map_bind, Function.comp_def, Option.map_some]
+
+theorem rVtB_mirrors : Mirrors rVtB rVt := by
+  intro b i
+  simp only [rVtB, rVt, Option.bind_eq_bind, ← rNatB_mirrors, Option.bind_map, Option.map_bind,
+    Function.comp_def]
+  congr 1
+  funext c
+  congr 1
+  funext r
+  split
+  · rfl
+  · simp only [← rListB_mirrors (rRowB_mirrors (some c.1)), ← rCursorB_mirrors, ← rPenB_mirrors,
+      ← rModesB_mirrors, ← rNatB_mirrors, ← rListB_mirrors rBoolB_mirrors, ← rRingB_mirrors,
+      ← rAltB_mirrors, ← rSavedB_mirrors, ← rStrB_mirrors, ← rBoolB_mirrors, Option.bind_map,
+      Option.map_bind, Function.comp_def, Option.map_some]
+
+theorem prefixB_mirrors (p : List UInt8) (b : ByteArray) (i : Nat) :
+    (prefixB p b i).map (b.data.toList.drop ·) = p.isPrefixOf? (b.data.toList.drop i) := by
+  induction p generalizing i with
+  | nil => rfl
+  | cons x p ih =>
+    by_cases h : i < b.size
+    · rw [drop_lt h]
+      by_cases hx : x = b[i] <;> simp [prefixB, h, hx, List.isPrefixOf?, ih]
+    · simp [prefixB, h, drop_ge h, List.isPrefixOf?]
+
+/-- **The runtime decoder is `load`**: on any byte array, `loadBytes` returns what `load`
+returns on the array's bytes, so `load_good`, `load_live`, `load_save_live` and every other
+theorem about `load` holds of what the runtime decodes. -/
+theorem loadBytes_eq (b : ByteArray) : loadBytes b = load b.toList := by
+  have hp := prefixB_mirrors magic b 0
+  rw [List.drop_zero] at hp
+  rw [toList_eq]
+  simp only [loadBytes, load, stripMagic, Option.bind_eq_bind, ← hp, Option.bind_map,
+    Function.comp_def, ← rVtB_mirrors, ← rStrB_mirrors,
+    ← rListB_mirrors (rPairB_mirrors rStrB_mirrors rStrB_mirrors), List.isEmpty_iff,
+    List.drop_eq_nil_iff, Array.length_toList, ByteArray.size_data]
+
 end Linger.Core.Checkpoint
