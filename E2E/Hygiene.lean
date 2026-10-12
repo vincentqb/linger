@@ -185,9 +185,13 @@ def run : IO UInt32 := do
       expect (out.exitCode != 0 && has out.stderr "index")
           "hygiene propagates a failed Git inventory"
   IO.FS.withTempDir fun dir => do
+      -- Stop Git's upward search at the fixture: a TMPDIR inside a work tree must not lend
+      -- it a repository.
+      let ceiling := (dir.parent.getD dir).toString
       let out ←
         IO.Process.output
-            { cmd := "sh", args := #[script], cwd := some dir.toString, env := fixtureEnv }
+            { cmd := "sh", args := #[script], cwd := some dir.toString,
+              env := fixtureEnv.push ("GIT_CEILING_DIRECTORIES", some ceiling) }
       expect (out.exitCode != 0 && has out.stderr "not a git repository")
           "hygiene fails when Git cannot provide the source inventory"
   IO.FS.withTempDir fun dir => do

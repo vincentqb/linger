@@ -1,7 +1,7 @@
 #!/bin/sh
 # Which runners the full gate needs, as a JSON array for a GitHub matrix.
 #
-#   sh scripts/ci-runners.sh <event_name> <ref>   ->   ["ubuntu-latest", ...]
+#   sh scripts/ci-runners.sh <event_name> <ref> [<base>]   ->   ["ubuntu-latest", ...]
 #
 # A DELIBERATE NON-LEAN FILE, and the reason is the cost this exists to
 # control: `.github/workflows/ci.yml`'s `gates` job compiles NOTHING, which is what
@@ -21,7 +21,9 @@
 #                                    trigger gets macOS without a change here
 #   schedule           if commits  — rebuilding an unchanged tree re-learns last
 #                                    week's answer at the expensive rate
-#   push / PR          never
+#   push / PR          if the diff from <base> to HEAD touches c/shim.c or ./lake, or if
+#                      <base> is empty, all zeros or not a fetched commit (a new branch,
+#                      a force push): AGENTS.md asks for macOS on exactly those changes
 #
 # WINDOW=8 days against a 7-day cron on purpose: the overlap means a cron GitHub
 # delays cannot open a gap where a commit is never macOS-tested. It costs at most
@@ -31,8 +33,9 @@ set -eu
 
 WINDOW='8 days ago'
 
-event="${1?usage: ci-runners.sh <event_name> <ref>}"
-ref="${2?usage: ci-runners.sh <event_name> <ref>}"
+event="${1?usage: ci-runners.sh <event_name> <ref> [<base>]}"
+ref="${2?usage: ci-runners.sh <event_name> <ref> [<base>]}"
+base="${3-}"
 
 macos=no
 case "$event" in
@@ -48,9 +51,21 @@ case "$event" in
       macos=yes
     fi
     ;;
-  push)
+  push | pull_request)
     case "$ref" in
       refs/tags/*) macos=yes ;;
+      *)
+        if [ -z "$base" ] || [ "$base" = 0000000000000000000000000000000000000000 ] \
+          || ! git cat-file -e "$base^{commit}" 2> /dev/null; then
+          macos=yes
+        else
+          # Outside `if`, so set -e propagates a failed diff.
+          changed="$(git diff --name-only "$base" HEAD -- c/shim.c lake)"
+          if [ -n "$changed" ]; then
+            macos=yes
+          fi
+        fi
+        ;;
     esac
     ;;
 esac

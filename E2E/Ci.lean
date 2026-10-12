@@ -41,8 +41,8 @@ namespace E2E.Ci
 /-- Run the decision script, from `cwd` — which is where its `git log` looks. The
 script itself is addressed absolutely, so the working directory can be a throwaway
 repository rather than this one. -/
-def runners (script cwd : String) (event ref : String) : IO String := do
-  let out ← IO.Process.output { cmd := "sh", args := #[script, event, ref], cwd := some cwd }
+def runners (script cwd : String) (event ref : String) (base : String := "") : IO String := do
+  let out ← IO.Process.output { cmd := "sh", args := #[script, event, ref, base], cwd := some cwd }
   if out.exitCode != 0 then
     throw (IO.userError s!"ci-runners.sh failed ({out.exitCode}): {out.stderr}")
   return out.stdout.trimAscii.toString
@@ -68,6 +68,20 @@ def repoWithCommit (daysAgo : Nat) : IO String := do
   if out.exitCode != 0 then
     throw (IO.userError s!"probe repo setup failed: {out.stderr}")
   return dir.toString
+
+/-- A throwaway repository whose second commit adds `path`; returns it and the first
+commit, the base a push or pull request would report. -/
+def repoWithChange (path : String) : IO (String × String) := do
+  let dir ← IO.FS.createTempDir
+  let git := "git -c user.email=t@t -c user.name=t -c commit.gpgsign=false"
+  let script :=
+    s!"set -e; git init -q .; {git} commit -q --allow-empty -m base; \
+       mkdir -p \"$(dirname '{path}')\"; : > '{path}'; git add -- '{path}'; \
+       {git} commit -q -m change; git rev-parse HEAD~1"
+  let out ← IO.Process.output { cmd := "sh", args := #["-c", script], cwd := some dir.toString }
+  if out.exitCode != 0 then
+    throw (IO.userError s!"probe repo setup failed: {out.stderr}")
+  return (dir.toString, out.stdout.trimAscii.toString)
 
 /-- The repo root, so the script under test is the tracked one. A failed lookup
 throws: an empty root would address `/scripts` instead. -/
@@ -380,11 +394,52 @@ def run : IO UInt32 := do
   -- left an empty `/tmp/linger-ci-<pid>` behind on every failing run.
   let root ← repoRoot
   let script := s!"{root}/scripts/ci-runners.sh"
-  -- The per-push path: ubuntu alone. This is the one that costs money when wrong.
-  expect ((← runners script root "push" "refs/heads/main") == ubuntuOnly)
-      "a push to main asks for ubuntu alone"
-  expect ((← runners script root "pull_request" "refs/pull/7/merge") == ubuntuOnly)
-      "a pull request asks for ubuntu alone"
+  -- The per-push path: ubuntu alone unless the change touches the shim or the build
+  -- wrapper. This is the one that costs money when wrong.
+  let (other, otherBase) ← repoWithChange "README.md"
+  let (shim, shimBase) ← repoWithChange "c/shim.c"
+  let (wrapper, wrapperBase) ← repoWithChange "lake"
+  try
+    expect ((← runners script other "push" "refs/heads/main" otherBase) == ubuntuOnly)
+        "a push to main asks for ubuntu alone"
+    expect ((← runners script other "pull_request" "refs/pull/7/merge" otherBase) == ubuntuOnly)
+        "a pull request asks for ubuntu alone"
+    expect ((← runners script shim "push" "refs/heads/main" shimBase) == both)
+        "a push that changes c/shim.c asks for both platforms"
+    expect ((← runners script wrapper "pull_request" "refs/pull/7/merge" wrapperBase) == both)
+        "a pull request that changes ./lake asks for both platforms"
+    expect
+        ((←
+            runners script other "push" "refs/heads/main"
+                "0000000000000000000000000000000000000000") ==
+          both)
+        "a push without a known base asks for both platforms"
+    -- A force push reports the old tip, which this clone need not have fetched.
+    expect
+        ((←
+            runners script other "push" "refs/heads/main"
+                "1111111111111111111111111111111111111111") ==
+          both)
+        "a push from a base this clone lacks asks for both platforms"
+    -- With the base readable, a failed diff must fail the job, as unreadable history does
+    -- below: its empty output would read as no change and skip macOS silently.
+    let unborn ←
+      IO.Process.output
+          { cmd := "git", args := #["symbolic-ref", "HEAD", "refs/heads/unborn"],
+            cwd := some other }
+    if unborn.exitCode != 0 then
+      throw (IO.userError s!"probe repo setup failed: {unborn.stderr}")
+    let failedDiff ←
+      IO.Process.output
+          { cmd := "sh", args := #[script, "push", "refs/heads/main", otherBase],
+            cwd := some other }
+    expect
+        (failedDiff.exitCode != 0 && failedDiff.stdout.trimAscii.isEmpty &&
+          has failedDiff.stderr "HEAD")
+        "a failed diff fails without emitting a runner matrix"
+  finally
+    for dir in [other, shim, wrapper] do
+      IO.FS.removeDirAll (System.FilePath.mk dir)
   -- …and the three paths that do want the expensive runner.
   expect ((← runners script root "push" "refs/tags/v1.2.3") == both)
       "a v* tag asks for both platforms"
@@ -403,10 +458,19 @@ def run : IO UInt32 := do
     expect ((← runners script stale "schedule" "refs/heads/main") == ubuntuOnly)
         "a scheduled run on an unchanged tree asks for ubuntu alone"
     IO.FS.removeDirAll (System.FilePath.mk fresh / ".git")
+    -- Stop Git's upward search at the fixture, as `E2E.Hygiene` does: a TMPDIR inside a
+    -- work tree would otherwise lend it that tree's history. `LC_ALL=C` keeps Git's
+    -- diagnostic untranslated.
+    let freshDir := System.FilePath.mk fresh
     let failed ←
       IO.Process.output
-          { cmd := "sh", args := #[script, "schedule", "refs/heads/main"], cwd := some fresh }
-    expect (failed.exitCode != 0 && failed.stdout.trimAscii.isEmpty)
+          { cmd := "sh", args := #[script, "schedule", "refs/heads/main"], cwd := some fresh,
+            env :=
+              #[("GIT_CEILING_DIRECTORIES", some (freshDir.parent.getD freshDir).toString),
+                ("LC_ALL", some "C")] }
+    expect
+        (failed.exitCode != 0 && failed.stdout.trimAscii.isEmpty &&
+          has failed.stderr "not a git repository")
         "unreadable history fails without emitting a runner matrix"
   finally
     IO.FS.removeDirAll (System.FilePath.mk fresh)

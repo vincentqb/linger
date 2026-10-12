@@ -77,7 +77,7 @@ if [ "$sigint" -ne 9 ]; then
 fi
 # One log directory per run, so concurrent worktrees never share a log. The suites
 # write theirs here too; it is removed only after a green run.
-logs="$(mktemp -d /tmp/linger-verify.XXXXXX)"
+logs="$(mktemp -d "${TMPDIR:-/tmp}/linger-verify.XXXXXX")"
 export LINGER_LOG_DIR="$logs"
 
 say "1. build (program + theorems + tests)"
@@ -106,7 +106,7 @@ say "1b. generated Lean / C shim ABI"
 # Source-looking FFI types are insufficient: Int32 is emitted as uint32_t bits,
 # and this toolchain erases IO's world argument. Compare all three symbol sets
 # so an empty extraction or an unused/missing export cannot pass.
-abi_dir="$(mktemp -d /tmp/linger-abi.XXXXXX)"
+abi_dir="$(mktemp -d "${TMPDIR:-/tmp}/linger-abi.XXXXXX")"
 trap 'rm -r "$abi_dir"' EXIT HUP TERM
 awk '/^lean_object\* linger_[[:alnum:]_]+\([^;]*\);$/ {
   sub(/\(\);$/, "(void);"); print; count++
@@ -161,7 +161,7 @@ say "2c. verifier regression tests (CI policy, caches and suite isolation)"
 # against a temporary project.
 # The same runner checks exit status, final verdict, every assertion and both
 # streams. Intentional failures inside these tests stay in their captured logs.
-./.lake/build/bin/e2e --suites ci:52 hygiene:56 \
+./.lake/build/bin/e2e --suites ci:57 hygiene:56 \
   || fail "verifier regression checks (see $logs/linger-ci.out and linger-hygiene.out)"
 
 say "3. posix shim smoke tests"
@@ -174,7 +174,9 @@ shim_n="$(grep -c '^PASS ' "$shim_out")"
   || fail "lingertest ran $shim_n checks (expected exactly 61)"
 
 # Keep one real session in another state directory through every suite. A suite
-# may clean up its own Env, never the user's process namespace.
+# may clean up its own Env, never the user's process namespace. State directories hold
+# Unix sockets, whose paths must fit sun_path (c/shim.c rejects longer ones), so they stay
+# under /tmp whatever TMPDIR is; only logs and scratch files follow TMPDIR.
 sentinel_dir="/tmp/linger-e2e-sentinel-$$"
 sentinel_name="sentinel-$$"
 cleanup_sentinel() {

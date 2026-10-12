@@ -15,7 +15,7 @@ fi
 
 if command -v lean-fmt > /dev/null; then
   # Private logs: concurrent checkouts lint at the same time.
-  logs="$(mktemp -d /tmp/linger-lint.XXXXXX)"
+  logs="$(mktemp -d "${TMPDIR:-/tmp}/linger-lint.XXXXXX")"
   trap 'rm -r "$logs"' EXIT
   lean-fmt format --check > "$logs/fmt.log" 2>&1 \
     || { cat "$logs/fmt.log" >&2; exit 1; }

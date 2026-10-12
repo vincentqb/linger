@@ -31,8 +31,8 @@ Use `pre-commit run --all-files` to check the working tree.
 Install `lean-fmt` standalone, never as a Lake dependency.
 See [.github/workflows/ci.yml](.github/workflows/ci.yml) for tool installation.
 
-Linux verifies every push. macOS runs on scheduled changes, release tags and
-manual dispatch; request a manual run for changes to `c/shim.c` or `./lake`.
+Linux verifies every push. macOS runs on scheduled changes, release tags, manual
+dispatch, and pushes or pull requests that change `c/shim.c` or `./lake`.
 
 ## Layout
 
@@ -62,9 +62,10 @@ Lean erases proofs regardless of file placement.
   loop or reply count in the model with a theorem (`repeatAtMost_eq_repeat`,
   `step_bytes_one_reply`); `scripts/gates.sh` rejects a CSI loop that bypasses
   `Vt.repeatAtMost`.
-- Runtime uses of proved values need call-site gates. IO behavior is tested,
-  not proved. Start behavioral fixes with a failing check and verify that new
-  assertions detect a deliberate break.
+- Runtime uses of proved values need call-site gates, unless making the unproved
+  alternative private enforces it. IO behavior is tested, not proved. Start behavioral
+  fixes with a failing check and verify that new assertions detect a deliberate break;
+  a check of a failure or cleanup path also asserts that the path was reached.
 - Read SHELL, HOME for remote hosts and LINGER_NO_DETACH_KEY once, into the pure
   policies of `Linger/Core/Env.lean`, which `scripts/gates.sh` ties to each read,
   and run every variable the program reads unset and empty in a suite.
@@ -85,8 +86,8 @@ Lean erases proofs regardless of file placement.
 - Ratchets live only in `scripts/gates.sh`; exact suite counts only in
   `scripts/e2e.sh`. Tests assert against the implementation's definitions.
   Use `scripts/` for shell orchestration; do not recreate a lowercase `tests/`.
-- Avoid fuel parameters and unnecessary `partial def`. Recheck raised
-  heartbeat or recursion limits after refactoring. Proofs add no axioms:
+- No `partial def`, fuel parameter or raised `maxHeartbeats`/`maxRecDepth` in any
+  Lean file (`scripts/gates.sh`). Proofs add no axioms:
   `Theorems/Coverage.lean` rejects every axiom declared in pure or proof
   modules, including those native evaluation (`native_decide`,
   `decide +native`, `bv_decide`) adds, and fails unless its imports reach

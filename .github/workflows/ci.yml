@@ -2,7 +2,8 @@
 # check; only a prior successful verification of identical inputs may replace it.
 # scripts/ci-inputs.sh hashes paths, modes, content AND runner OS/arch/image version.
 # Source gates run even when verification is reused.
-# Schedule, dispatch and tags verify cleanly; scripts/ci-runners.sh chooses macOS.
+# Schedule, dispatch and tags verify cleanly; scripts/ci-runners.sh chooses macOS, also for
+# pushes and pull requests that change c/shim.c or ./lake.
 name: ci
 
 on:
@@ -53,13 +54,15 @@ jobs:
         env:
           EVENT: ${{ github.event_name }}
           REF: ${{ github.ref }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
           test -n "$ImageVersion"
           key="$(sh scripts/ci-inputs.sh)"
-          os="$(sh scripts/ci-runners.sh "$EVENT" "$REF")"
+          os="$(sh scripts/ci-runners.sh "$EVENT" "$REF" "$BASE")"
           printf 'key=%s\nos=%s\n' "$key" "$os" >> "$GITHUB_OUTPUT"
       - name: look up successful verification
-        if: github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/'))
+        # A receipt comes from the Linux leg alone, so it cannot stand in for a needed macOS run.
+        if: (github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/'))) && !contains(steps.inputs.outputs.os, 'macos')
         id: verified
         uses: actions/cache/restore@v6
         with:
@@ -205,7 +208,7 @@ jobs:
       - name: logs on failure
         if: failure()
         run: |
-          for f in /tmp/linger-verify.*/* /tmp/linger-*.log /tmp/linger-*.out; do
+          for f in "${TMPDIR:-/tmp}"/linger-verify.*/*; do
             [ -f "$f" ] || continue
             printf '\n===== %s =====\n' "$f"
             tail -100 "$f"
