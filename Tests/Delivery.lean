@@ -30,7 +30,8 @@ private def largeScreen (marks : Bool := false) : Vt.Vt :=
     grid, altGrid := some (grid, {}, {}) }
 
 def acceptedScreen (marks : Bool := false) : Option Vt.Vt :=
-  (Checkpoint.load (Checkpoint.save { vt := largeScreen marks, cwd := "", labels := [] })).map
+  (Checkpoint.loadBytes
+        (Checkpoint.saveBytes { vt := largeScreen marks, cwd := "", labels := [] })).map
     (·.vt)
 
 def acceptedTitle : Option Vt.Vt :=
@@ -39,6 +40,6 @@ def acceptedTitle : Option Vt.Vt :=
       (List.replicate 4095 'α' ++ ['\x1b'] ++ List.replicate 5 '𝄞' ++ ['\n'] ++
         List.replicate 5000 'β')
   let vt := { Vt.Vt.init 20 5 with title }
-  (Checkpoint.load (Checkpoint.save { vt, cwd := "", labels := [] })).map (·.vt)
+  (Checkpoint.loadBytes (Checkpoint.saveBytes { vt, cwd := "", labels := [] })).map (·.vt)
 
 end Linger.Tests.Delivery

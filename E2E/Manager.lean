@@ -56,11 +56,12 @@ private def rowText (vt : Vt) (row : Nat) : String :=
 private def call (args : List String) : String :=
   "CALL\x00linger\x00" ++ String.intercalate "\x00" args ++ "\x00\n"
 
-private def readText (path : System.FilePath) : IO String := do
-  if ← path.pathExists then
-    IO.FS.readFile path
-  else
-    pure ""
+/-- The full listing a selection visit starts with, and repeats on return. -/
+private def listed : String := call ["ls", "-r", "--porcelain"]
+
+/-- One accepted visit: the listing, the attach of `target`, and the listing on return. -/
+private def attachVisit (target : List String) : String :=
+  listed ++ call ("attach" :: target) ++ listed
 
 private def appendText (path : System.FilePath) (text : String) : IO Unit := do
   let file ← IO.FS.Handle.mk path .append
@@ -75,26 +76,6 @@ private def writeListing (root : System.FilePath) (text : String) (rc : Nat) : I
   IO.FS.rename (root / "listing-rc-next") (root / "listing-rc")
   IO.FS.writeFile (root / "listing-next") text
   IO.FS.rename (root / "listing-next") (root / "listing")
-
-private def hexValue? (s : String) : Option Nat :=
-  s.foldl
-    (fun acc c =>
-      acc.bind fun n =>
-        if c.isDigit then some (16 * n + (c.toNat - '0'.toNat))
-        else if 'a' ≤ c && c ≤ 'f' then some (16 * n + (c.toNat - 'a'.toNat + 10)) else none)
-    (if s.isEmpty then none else some 0)
-
-/-- Darwin keeps PENDIN (`0x20000000`) as kernel state: turning ICANON back on sets it until
-the next read, and BSD `stty -g` prints it, so no program can restore it. Linux `stty -g` has
-no `lflag=` field and passes through unchanged. -/
-private def withoutPendin (settings : String) : String :=
-  String.intercalate ":" <|
-    (settings.splitOn ":").map fun field =>
-      match (field.dropPrefix? "lflag=").bind (fun hex => hexValue? hex.toString) with
-      | some flags =>
-        "lflag=" ++
-          String.ofList (Nat.toDigits 16 (if flags.testBit 29 then flags - 0x20000000 else flags))
-      | none => field
 
 private def snapshot (root : System.FilePath) : IO String := do
   let some stty ←
@@ -111,15 +92,7 @@ private def snapshot (root : System.FilePath) : IO String := do
   return withoutPendin result.stdout.trimAscii.toString
 
 private def waitChild {cfg : IO.Process.StdioConfig} (child : IO.Process.Child cfg)
-    (ms : Nat := 15000) : IO UInt32 := do
-  if let some rc← waitProcess child ms then
-    return rc
-  child.kill
-  if let some rc← waitProcess child 1000 then
-    return rc
-  kill child.pid 9
-  let _ ← waitProcess child 1000
-  return 99
+    (ms : Nat := 15000) : IO UInt32 := return (← waitOrKill child ms).getD 99
 
 /-- The listing argv this recorder answers from the fixture. A native picker lists
 local rows alone between remote queries; both native listings print the fixture's
@@ -397,7 +370,7 @@ private def Fixture.piped (f : Fixture) (args : Array String) : IO (UInt32 × St
         IO.Process.spawn
           { cmd := f.manager, args := f.managerArgs ++ args, cwd := f.cwd, env := f.env,
             stdin := .null, stdout := .piped, stderr := .piped }
-  let rc ← waitChild child 4000
+  let rc ← waitChild child patienceMs
   return (rc, ← child.stdout.readToEnd, ← child.stderr.readToEnd)
 
 private structure Session where
@@ -419,39 +392,23 @@ private def Session.mark (s : Session) : IO Nat := return (← s.output.get).siz
 /-- Read under a deadline, retaining all bytes for order and cleanup assertions.
 EOF and the wrapper's completion marker end a failed positive wait promptly. -/
 private def Session.untilOutput (s : Session) (ready : ByteArray → Bool) (start : Nat := 0)
-    (ms : Nat := 4000) : IO Bool := do
-  let deadline := (← monotonicMs) + ms
-  let mut done := false
-  while !done && (← monotonicMs) < deadline do
-    let current ← s.output.get
-    let tail := current.extract start current.size
-    if ready tail then
-      return true
-    if hasText tail "MANAGER-EXIT:" then
-      return false
-    let fds := #[s.client.fd]
-    let events ← poll fds #[POLLIN] 50
-    if events[0]! &&& (POLLIN ||| POLLERR ||| POLLHUP) != 0 then
-      match ← read s.client.fd 65536 with
-      | none =>
-        done := true
-      | some bs =>
-        if !bs.isEmpty then
-          s.output.modify (· ++ bs)
+    (ms : Nat := patienceMs) : IO Bool := do
+  let _ ←
+    s.client.awaitText s.output (fun tail => ready tail || hasText tail "MANAGER-EXIT:") start ms
   let output ← s.output.get
   return ready (output.extract start output.size)
 
 private def Session.untilAny (s : Session) (needles : List String) (start : Nat := 0)
-    (ms : Nat := 4000) : IO Bool :=
+    (ms : Nat := patienceMs) : IO Bool :=
   s.untilOutput (fun output => needles.any (hasText output)) start ms
 
-private def Session.until (s : Session) (needle : String) (start : Nat := 0) (ms : Nat := 4000) :
-    IO Bool := s.untilAny [needle] start ms
+private def Session.until (s : Session) (needle : String) (start : Nat := 0)
+    (ms : Nat := patienceMs) : IO Bool := s.untilAny [needle] start ms
 
 /-- Match rendered cells from this action's output: inline emphasis may split
 a target's bytes, and an earlier selected row must not satisfy a new wait. -/
 private def Session.untilScreen (s : Session) (ready : Vt → Bool) (start : Nat := 0)
-    (ms : Nat := 4000) : IO Bool := do
+    (ms : Nat := patienceMs) : IO Bool := do
   let (cols, rows) ← winsizeGet s.client.fd
   s.untilOutput (fun output => ready ((Vt.init cols.toNat rows.toNat).feedBytes output)) start ms
 
@@ -537,6 +494,11 @@ private def Session.retire (s : Session) : IO Unit := do
           catch _ =>
             pure ()
 
+/-- Wait until session `name` in `owned` reports `count` attached clients. -/
+private def clientsReach (owned : Env) (name count : String) (ms : Nat := patienceMs) : IO Bool :=
+  waitFor ms do
+    return (← withLaunchLock (owned.info name "clients")) == some count
+
 private def withSession (f : Fixture) (args : Array String) (body : Session → IO Bool)
     (mode : String := "both") (cols : UInt32 := 80) (rows : UInt32 := 12) : IO Bool := do
   let s ← f.start args mode cols rows
@@ -545,12 +507,22 @@ private def withSession (f : Fixture) (args : Array String) (body : Session → 
   finally
     s.retire
 
+/-- `withSession` from the first loaded prompt; a session that never shows one fails. -/
+private def withPrompt (f : Fixture) (args : Array String) (body : Session → IO Bool)
+    (mode : String := "both") (cols : UInt32 := 80) (rows : UInt32 := 12) : IO Bool :=
+  withSession f args
+    (fun s => do
+      unless ← s.prompt do
+        return false
+      body s)
+    mode cols rows
+
 private def check (e : Env) (slug label : String) (body : Fixture → IO Bool) : IO Unit := do
   let ok ←
     try
       body (← Fixture.make e slug)
     catch err =>
-      IO.eprintln s!"note: manager {slug}: {err}"
+      IO.println s!"note: manager {slug}: {err}"
       pure false
   expect ok label
 
@@ -794,9 +766,7 @@ private def usageChecks (e : Env) : IO Unit := do
       fun f => do
       let state := f.root / "state"
       let f := { f with env := f.env.push ("LINGER_DIR", some state.toString) }
-      withSession f #["attach"] fun s => do
-          unless ← s.prompt do
-            return false
+      withPrompt f #["attach"] fun s => do
           unless ← s.typeQuery "invalid/name" "invalid/name" do
             return false
           s.text "\r"
@@ -814,8 +784,7 @@ private def failureChecks (e : Env) : IO Unit := do
         f.listing listing 7
         withSession f.picker #[] fun s => do
             let clean ← failureRestored s 7 "linger: could not list sessions (exit 7)"
-            return clean && (← f.visits) == call ["ls", "-r", "--porcelain"] &&
-                !hasText (← s.output.get) "Alpha"
+            return clean && (← f.visits) == listed && !hasText (← s.output.get) "Alpha"
   let invalid :=
     [("empty-name", "name\t\n"), ("missing-field", "name\n"), ("extra-field", "name\tbad\textra\n"),
       ("duplicate", "name\tAlpha\n"), ("cr", "name\tbad\r\n"), ("escape", "name\tbad\x1b[2J\n"),
@@ -825,8 +794,7 @@ private def failureChecks (e : Env) : IO Unit := do
         f.listing ("name\tAlpha\n" ++ bad)
         withSession f.picker #[] fun s => do
             let clean ← failureRestored s 1 "picker probe:"
-            return clean && (← f.visits) == call ["ls", "-r", "--porcelain"] &&
-                !hasText (← s.output.get) "Alpha"
+            return clean && (← f.visits) == listed && !hasText (← s.output.get) "Alpha"
   check e "missing-command"
       "picker probe reports a missing listing executable after terminal restoration" fun f => do
       IO.FS.removeFile f.executable
@@ -844,9 +812,7 @@ private def failureChecks (e : Env) : IO Unit := do
           return clean && (← f.visits).isEmpty
   check e "missing-attach"
       "picker probe restores the terminal when the attach executable disappears" fun f =>
-      withSession f.picker #[] fun s => do
-        unless ← s.prompt do
-          return false
+      withPrompt f.picker #[] fun s => do
         IO.FS.removeFile f.executable
         s.text "\r"
         let rc ← s.result
@@ -865,15 +831,14 @@ private def failureChecks (e : Env) : IO Unit := do
         let firstError :=
           if rc == some 1 then "picker probe:" else "could not execute external process"
         let some position := findText out firstError | return false
-        return clean && modesRestored (out.extract 0 position) 1 &&
-            (← f.visits) == call ["ls", "-r", "--porcelain"]
+        return clean && modesRestored (out.extract 0 position) 1 && (← f.visits) == listed
   check e "readonly-output"
       "picker probe restores termios when opening and closing screen writes both fail" fun f =>
       withSession f.picker #[]
         (fun s => do
           let clean ← failureRestored s 1 "picker probe:"
           let visits ← f.visits
-          return clean && (visits.isEmpty || visits == call ["ls", "-r", "--porcelain"]) &&
+          return clean && (visits.isEmpty || visits == listed) &&
               !hasBytes (← s.output.get) (modeSet 1049 true))
         "readonly-output"
 
@@ -884,65 +849,40 @@ private def selectionChecks (e : Env) : IO Unit := do
     check e s!"exact-{slug}"
         s!"picker probe attaches the original target as one argument ({target})" fun f => do
         f.listing s!"name\t{target}\n"
-        withSession f.picker #[] fun s => do
-            unless ← s.prompt do
-              return false
+        withPrompt f.picker #[] fun s => do
             let shown ← s.until target
             let clean ← acceptThenCancel s
-            return shown && clean &&
-                (← f.visits) ==
-                  call ["ls", "-r", "--porcelain"] ++ call ("attach" :: separator ++ [target]) ++
-                    call ["ls", "-r", "--porcelain"]
+            return shown && clean && (← f.visits) == attachVisit (separator ++ [target])
   let moves :=
     [("down", "\x1b[B", "Beta"), ("up", "\x1b[B\x1b[B\x1b[A", "Beta"), ("ctrl-n", "\x0e", "Beta"),
       ("ctrl-p", "\x0e\x0e\x10", "Beta"), ("end", "\x1b[F", "main"),
       ("home", "\x1b[F\x1b[H", "Alpha")]
   for (slug, keys, target) in moves do
     check e slug s!"picker probe navigation selects the expected row ({slug})" fun f =>
-        withSession f.picker #[] fun s => do
-          unless ← s.prompt do
-            return false
-          return (← acceptThenCancel s (keys ++ "\r")) &&
-              (← f.visits) ==
-                call ["ls", "-r", "--porcelain"] ++ call ["attach", target] ++
-                  call ["ls", "-r", "--porcelain"]
+        withPrompt f.picker #[] fun s => do
+          return (← acceptThenCancel s (keys ++ "\r")) && (← f.visits) == attachVisit [target]
   check e "subsequence" "picker probe filtering is case-insensitive, subsequence-based and stable"
       fun f => do
       f.listing "name\tPrefix\nname\tWork\nname\tweak\n"
-      withSession f.picker #[] fun s => do
-          unless ← s.prompt do
-            return false
+      withPrompt f.picker #[] fun s => do
           unless ← s.typeQuery "WK" "WK" do
             return false
-          return (← acceptThenCancel s "\x0e\r") &&
-              (← f.visits) ==
-                call ["ls", "-r", "--porcelain"] ++ call ["attach", "weak"] ++
-                  call ["ls", "-r", "--porcelain"]
+          return (← acceptThenCancel s "\x0e\r") && (← f.visits) == attachVisit ["weak"]
   for (slug, erase) in [("del", "\x7f"), ("backspace", "\x08")] do
     check e slug s!"picker probe query deletion works ({slug})" fun f =>
-        withSession f.picker #[] fun s => do
-          unless ← s.prompt do
-            return false
+        withPrompt f.picker #[] fun s => do
           unless ← s.typeQuery "Bx" "Bx" do
             return false
           unless ← s.typeQuery erase "B" do
             return false
-          return (← acceptThenCancel s) &&
-              (← f.visits) ==
-                call ["ls", "-r", "--porcelain"] ++ call ["attach", "Beta"] ++
-                  call ["ls", "-r", "--porcelain"]
+          return (← acceptThenCancel s) && (← f.visits) == attachVisit ["Beta"]
   check e "clear" "picker probe Ctrl-U clears the whole query" fun f =>
-      withSession f.picker #[] fun s => do
-        unless ← s.prompt do
-          return false
+      withPrompt f.picker #[] fun s => do
         unless ← s.typeQuery "unmatched" "unmatched" do
           return false
         unless ← s.typeQuery "\x15Gamma" "Gamma" do
           return false
-        return (← acceptThenCancel s) &&
-            (← f.visits) ==
-              call ["ls", "-r", "--porcelain"] ++ call ["attach", "Gamma"] ++
-                call ["ls", "-r", "--porcelain"]
+        return (← acceptThenCancel s) && (← f.visits) == attachVisit ["Gamma"]
   for (slug, listing, query, target, separator) in
     [("no-match", "name\tAlpha\n", "new-session", "new-session", []),
       ("empty-list", "", "", "main", []),
@@ -957,20 +897,15 @@ private def selectionChecks (e : Env) : IO Unit := do
         s!"picker probe visibly creates the exact target through a restored attach child ({slug})"
         fun f => do
         f.listing listing
-        withSession f.picker #[]
+        withPrompt f.picker #[]
             (fun s => do
-              unless ← s.prompt do
-                return false
               let start ← s.mark
               if !query.isEmpty then
                 unless ← s.typeQuery query query do
                   return false
               let shown ← s.selected s!"+ Create {target}" (if query.isEmpty then 0 else start)
               let clean ← acceptThenCancel s
-              return shown && clean &&
-                  (← f.visits) ==
-                    call ["ls", "-r", "--porcelain"] ++ call ("attach" :: separator ++ [target]) ++
-                      call ["ls", "-r", "--porcelain"])
+              return shown && clean && (← f.visits) == attachVisit (separator ++ [target]))
             "both" (UInt32.ofNat (Linger.Core.Name.maxLen + 40)) 12
   for create in [false, true] do
     let slug := if create then "prefix-create" else "prefix-existing"
@@ -978,9 +913,7 @@ private def selectionChecks (e : Env) : IO Unit := do
         s!"picker probe lists existing prefix matches first and attaches only the highlighted row ({slug})"
         fun f => do
         f.listing "name\tworkshop\nname\tworkbench\nname\tOther\n"
-        withSession f.picker #[] fun s => do
-            unless ← s.prompt do
-              return false
+        withPrompt f.picker #[] fun s => do
             unless ← s.typeQuery "work" "work" do
               return false
             s.observe 100
@@ -995,22 +928,17 @@ private def selectionChecks (e : Env) : IO Unit := do
               unless ← s.selected "+ Create work" next do
                 return false
             s.observe 200
-            let noAttach := (← f.visits) == call ["ls", "-r", "--porcelain"]
+            let noAttach := (← f.visits) == listed
             let target := if create then "work" else "workshop"
             let clean ← acceptThenCancel s
-            return orderedRows && noAttach && clean &&
-                (← f.visits) ==
-                  call ["ls", "-r", "--porcelain"] ++ call ["attach", target] ++
-                    call ["ls", "-r", "--porcelain"]
+            return orderedRows && noAttach && clean && (← f.visits) == attachVisit [target]
   for (slug, listing, query, absent, target) in
     [("exact-suppression", "name\tAlpha\nname\tAlphabet\n", "Alpha", "Alpha", "Alphabet"),
       ("default-suppression", "name\tmain\nname\tOther\n", "", "main", "Other")] do
     check e slug s!"picker probe suppresses creation for exact snapshot members ({slug})" fun f =>
         do
         f.listing listing
-        withSession f.picker #[] fun s => do
-            unless ← s.prompt do
-              return false
+        withPrompt f.picker #[] fun s => do
             let start ← s.mark
             if !query.isEmpty then
               unless ← s.typeQuery query query do
@@ -1021,32 +949,22 @@ private def selectionChecks (e : Env) : IO Unit := do
             let screen := ByteArray.mk (screenText ((Vt.init 80 12).feedBytes frame)).toArray
             let suppressed := !hasText screen s!"Create {absent}"
             let clean ← acceptThenCancel s "\x1b[F\r"
-            return suppressed && clean &&
-                (← f.visits) ==
-                  call ["ls", "-r", "--porcelain"] ++ call ["attach", target] ++
-                    call ["ls", "-r", "--porcelain"]
+            return suppressed && clean && (← f.visits) == attachVisit [target]
   check e "case-distinct"
       "picker probe permits explicit case-distinct creation beside a folded existing match" fun f =>
       do
       f.listing "name\tAlpha\n"
-      withSession f.picker #[] fun s => do
-          unless ← s.prompt do
-            return false
+      withPrompt f.picker #[] fun s => do
           unless ← s.typeQuery "alpha" "alpha" do
             return false
           s.observe 100
           let vt := (Vt.init 80 12).feedBytes (← s.output.get)
           let shown := rowText vt 4 == "  ▸ ? Alpha (busy)" && rowText vt 5 == "    + Create alpha"
           let clean ← acceptThenCancel s "\x1b[F\r"
-          return shown && clean &&
-              (← f.visits) ==
-                call ["ls", "-r", "--porcelain"] ++ call ["attach", "alpha"] ++
-                  call ["ls", "-r", "--porcelain"]
+          return shown && clean && (← f.visits) == attachVisit ["alpha"]
   check e "edit-create"
       "picker probe editing a highlighted creation row resets to the first existing match" fun f =>
-      withSession f.picker #[] fun s => do
-        unless ← s.prompt do
-          return false
+      withPrompt f.picker #[] fun s => do
         unless ← s.typeQuery "Al" "Al" do
           return false
         let start ← s.mark
@@ -1057,12 +975,9 @@ private def selectionChecks (e : Env) : IO Unit := do
         unless ← s.typeQuery "\x7f" "A" do
           return false
         let reset ← s.selected "Alpha" next
-        let noAttach := (← f.visits) == call ["ls", "-r", "--porcelain"]
+        let noAttach := (← f.visits) == listed
         let clean ← acceptThenCancel s
-        return reset && noAttach && clean &&
-            (← f.visits) ==
-              call ["ls", "-r", "--porcelain"] ++ call ["attach", "Alpha"] ++
-                call ["ls", "-r", "--porcelain"]
+        return reset && noAttach && clean && (← f.visits) == attachVisit ["Alpha"]
   let overlong := String.ofList (List.replicate (Linger.Core.Name.maxLen + 1) 'n')
   for (slug, query) in
     [("slash", "bad/name"), ("leading-dot", ".hidden"), ("space", "two words"), ("unicode", "界"),
@@ -1071,10 +986,8 @@ private def selectionChecks (e : Env) : IO Unit := do
     check e s!"invalid-create-{slug}"
         s!"picker probe invalid creation has no row, ignores Enter and remains editable ({slug})"
         fun f =>
-        withSession f.picker #[]
+        withPrompt f.picker #[]
           (fun s => do
-            unless ← s.prompt do
-              return false
             let start ← s.mark
             unless ← s.typeQuery query query do
               return false
@@ -1086,42 +999,30 @@ private def selectionChecks (e : Env) : IO Unit := do
                 (output.extract start output.size)
             let noChoice := !hasText (ByteArray.mk (screenText vt).toArray) "Create "
             let waiting := !(← (f.root / "result").pathExists)
-            let noAttach := (← f.visits) == call ["ls", "-r", "--porcelain"]
+            let noAttach := (← f.visits) == listed
             unless ← s.typeQuery "\x15Beta" "Beta" do
               return false
             let clean ← acceptThenCancel s
-            return noChoice && waiting && noAttach && clean &&
-                (← f.visits) ==
-                  call ["ls", "-r", "--porcelain"] ++ call ["attach", "Beta"] ++
-                    call ["ls", "-r", "--porcelain"])
+            return noChoice && waiting && noAttach && clean && (← f.visits) == attachVisit ["Beta"])
           "both" (UInt32.ofNat (Linger.Core.Name.maxLen + 40)) 12
 
 private def inputChecks (e : Env) : IO Unit := do
   for (slug, key) in [("ctrl-c", "\x03"), ("ctrl-d", "\x04"), ("escape", "\x1b")] do
     check e slug s!"picker probe cancellation restores termios and display modes ({slug})" fun f =>
-        withSession f.picker #[] fun s => do
-          unless ← s.prompt do
-            return false
+        withPrompt f.picker #[] fun s => do
           unless ← s.typeQuery "new-session" "new-session" do
             return false
           s.text key
-          return (← restored s 130) && (← f.visits) == call ["ls", "-r", "--porcelain"]
+          return (← restored s 130) && (← f.visits) == listed
   check e "split-arrow" "picker probe decodes an arrow split between reads" fun f =>
-      withSession f.picker #[] fun s => do
-        unless ← s.prompt do
-          return false
+      withPrompt f.picker #[] fun s => do
         s.text "\x1b["
         s.observe 50
-        return (← acceptThenCancel s "B\r") &&
-            (← f.visits) ==
-              call ["ls", "-r", "--porcelain"] ++ call ["attach", "Beta"] ++
-                call ["ls", "-r", "--porcelain"]
+        return (← acceptThenCancel s "B\r") && (← f.visits) == attachVisit ["Beta"]
   check e "split-utf8" "picker probe retains split UTF-8 query characters" fun f => do
       let target := "work@界é"
       f.listing s!"name\tother\nname\t{target}\n"
-      withSession f.picker #[] fun s => do
-          unless ← s.prompt do
-            return false
+      withPrompt f.picker #[] fun s => do
           s.send (ByteArray.mk #[0xE7])
           s.observe 50
           let start ← s.mark
@@ -1132,17 +1033,12 @@ private def inputChecks (e : Env) : IO Unit := do
           s.send (ByteArray.mk #[0xA9])
           unless ← s.prompt "界é" next do
             return false
-          return (← acceptThenCancel s) &&
-              (← f.visits) ==
-                call ["ls", "-r", "--porcelain"] ++ call ["attach", target] ++
-                  call ["ls", "-r", "--porcelain"]
+          return (← acceptThenCancel s) && (← f.visits) == attachVisit [target]
   check e "paste"
       "picker probe paste survives idle, suppresses newlines and handles a split end marker"
       fun f => do
       f.listing "name\talphabeta\nname\tother\n"
-      withSession f.picker #[] fun s => do
-          unless ← s.prompt do
-            return false
+      withPrompt f.picker #[] fun s => do
           unless ← s.typeQuery "\x1b[200~alpha" "alpha" do
             return false
           s.observe 350
@@ -1150,21 +1046,17 @@ private def inputChecks (e : Env) : IO Unit := do
             return false
           s.observe 200
           let waiting := !(← (f.root / "result").pathExists)
-          let noAttach := (← f.visits) == call ["ls", "-r", "--porcelain"]
+          let noAttach := (← f.visits) == listed
           s.text "\x1b[20"
           s.observe 50
           s.text "1~"
           unless ← s.typeQuery "\x15BETA" "BETA" do
             return false
           return waiting && noAttach && (← acceptThenCancel s) &&
-              (← f.visits) ==
-                call ["ls", "-r", "--porcelain"] ++ call ["attach", "alphabeta"] ++
-                  call ["ls", "-r", "--porcelain"]
+              (← f.visits) == attachVisit ["alphabeta"]
   check e "invalid-control-paste"
       "picker probe pasted controls cannot create, refresh or cancel an invalid query" fun f =>
-      withSession f.picker #[] fun s => do
-        unless ← s.prompt do
-          return false
+      withPrompt f.picker #[] fun s => do
         let start ← s.mark
         unless ← s.typeQuery "bad/" "bad/" do
           return false
@@ -1177,14 +1069,11 @@ private def inputChecks (e : Env) : IO Unit := do
         let screen := ByteArray.mk (screenText ((Vt.init 80 12).feedBytes frame)).toArray
         let ignored := !hasText screen "Create " && !hasText frame "\u0085"
         let waiting := !(← (f.root / "result").pathExists)
-        let noCommand := (← f.visits) == call ["ls", "-r", "--porcelain"]
+        let noCommand := (← f.visits) == listed
         unless ← s.typeQuery "\x15Beta" "Beta" do
           return false
         let clean ← acceptThenCancel s
-        return ignored && waiting && noCommand && clean &&
-            (← f.visits) ==
-              call ["ls", "-r", "--porcelain"] ++ call ["attach", "Beta"] ++
-                call ["ls", "-r", "--porcelain"]
+        return ignored && waiting && noCommand && clean && (← f.visits) == attachVisit ["Beta"]
 
 private def lastColumnBlank (vt : Vt) : Bool :=
   (List.range vt.rowCount).all fun row =>
@@ -1222,10 +1111,8 @@ private def statusChecks (e : Env) : IO Unit := do
                 String.join (row.map fun (key, value) => s!"{key}\t{value}\n")))
         if let some value := noColor then
           IO.FS.writeFile (f.root / "no-color") value
-        withSession f.picker #[]
+        withPrompt f.picker #[]
             (fun s => do
-              unless ← s.prompt do
-                return false
               let vt ← s.capture slug 100 20
               let expectedColors : List Linger.Core.Vt.Color :=
                 [.idx 6, .idx 3, .idx 2, .idx 1, .default, .default, .idx 3]
@@ -1266,9 +1153,7 @@ private def statusChecks (e : Env) : IO Unit := do
       fun f => do
       f.listing
           "name\talpha\nstatus\tidle\ncmd\told\npid\t1\nlabel.project\tbefore\nclients\t1\nname\tbeta\nstatus\tworking\ncmd\tother\n"
-      withSession f.picker #[] fun s => do
-          unless ← s.prompt do
-            return false
+      withPrompt f.picker #[] fun s => do
           unless ← s.typeQuery "a" "a" do
             return false
           let before ← s.capture "metadata-before"
@@ -1284,18 +1169,13 @@ private def statusChecks (e : Env) : IO Unit := do
               rowText after 2 == "  › a" &&
               (after.getCell 4 4).pen.fg == .idx 1 &&
               (after.getCell 6 4).pen.reverse
-          return changed && (← acceptThenCancel s) &&
-              (← f.visits) ==
-                call ["ls", "-r", "--porcelain"] ++ call ["attach", "alpha"] ++
-                  call ["ls", "-r", "--porcelain"]
+          return changed && (← acceptThenCancel s) && (← f.visits) == attachVisit ["alpha"]
   check e "status-control-text"
       "picker keeps hostile metadata out of terminal controls while retaining ordinary details"
       fun f => do
       f.listing
           "name\talpha\nstatus\tworking\ncmd\tvi\x1b[31m\u009b31m\nlabel.project\tok\x07\nclients\t2\nname\tbeta\n"
-      withSession f.picker #[] fun s => do
-          unless ← s.prompt do
-            return false
+      withPrompt f.picker #[] fun s => do
           let vt ← s.capture "metadata-controls"
           let row := rowText vt 4
           let output ← s.output.get
@@ -1315,9 +1195,7 @@ private def fuzzyChecks (e : Env) : IO Unit := do
         [("name", "axab"), ("status", Linger.Core.Status.name .wantsYou), ("cmd", "ab"),
           ("pid", "123"), ("label.project", "ab"), ("clients", "2")]
       f.listing (String.join (fields.map fun (key, value) => s!"{key}\t{value}\n"))
-      withSession f.picker #[] fun s => do
-          unless ← s.prompt do
-            return false
+      withPrompt f.picker #[] fun s => do
           unless ← s.typeQuery "AB" "AB" do
             return false
           let matched ← s.capture "competing-match"
@@ -1346,9 +1224,7 @@ private def fuzzyChecks (e : Env) : IO Unit := do
       let targets := ["a---b", "axab", "ab-z"]
       let fields := targets.map fun target => [("name", target)]
       f.listing (String.join (targets.map fun target => s!"name\t{target}\n"))
-      withSession f.picker #[] fun s => do
-          unless ← s.prompt do
-            return false
+      withPrompt f.picker #[] fun s => do
           unless ← s.typeQuery "ab" "ab" do
             return false
           let vt ← s.capture "original-order"
@@ -1366,18 +1242,13 @@ private def fuzzyChecks (e : Env) : IO Unit := do
           unless ← s.selected "axab" start do
             return false
           let clean ← acceptThenCancel s
-          return ordered && clean &&
-              (← f.visits) ==
-                call ["ls", "-r", "--porcelain"] ++ call ["attach", "axab"] ++
-                  call ["ls", "-r", "--porcelain"]
+          return ordered && clean && (← f.visits) == attachVisit ["axab"]
   check e "fuzzy-unicode"
       "picker highlights accent-only and wide matches, clips whole cells, and attaches the untruncated target"
       fun f => do
       let target := "work@e\u0301界éZ"
       f.listing s!"name\t{target}\n"
-      withSession f.picker #[] fun s => do
-          unless ← s.prompt do
-            return false
+      withPrompt f.picker #[] fun s => do
           unless ← s.typeQuery "界é" "界é" do
             return false
           let wide ← s.capture "wide-match"
@@ -1457,17 +1328,13 @@ private def fuzzyChecks (e : Env) : IO Unit := do
               accentNarrow &&
               fits &&
               clean &&
-              (← f.visits) ==
-                call ["ls", "-r", "--porcelain"] ++ call ["attach", target] ++
-                  call ["ls", "-r", "--porcelain"]
+              (← f.visits) == attachVisit [target]
 
 private def displayChecks (e : Env) : IO Unit := do
   check e "normal-frame"
       "picker normal frame has the spaced title, dim placeholder, exact rows and attach help"
       fun f =>
-      withSession f.picker #[] fun s => do
-        unless ← s.prompt do
-          return false
+      withPrompt f.picker #[] fun s => do
         let vt ← s.capture "normal-frame"
         let footer := (List.range vt.rowCount).find? fun row => has (rowText vt row) "↵ attach"
         let layout :=
@@ -1497,9 +1364,7 @@ private def displayChecks (e : Env) : IO Unit := do
         return layout && help && (← restored s 130)
   check e "create-frame"
       "picker query text stays undimmed and the explicit creation row changes Enter help" fun f =>
-      withSession f.picker #[] fun s => do
-        unless ← s.prompt do
-          return false
+      withPrompt f.picker #[] fun s => do
         unless ← s.typeQuery "new-session" "new-session" do
           return false
         let vt ← s.capture "create-frame"
@@ -1515,15 +1380,10 @@ private def displayChecks (e : Env) : IO Unit := do
             !has screen "Find or create a session" &&
             (List.range vt.rowCount).all (fun row => (underlined vt row).isEmpty) &&
             lastColumnBlank vt
-        return shown && (← acceptThenCancel s) &&
-            (← f.visits) ==
-              call ["ls", "-r", "--porcelain"] ++ call ["attach", "new-session"] ++
-                call ["ls", "-r", "--porcelain"]
+        return shown && (← acceptThenCancel s) && (← f.visits) == attachVisit ["new-session"]
   check e "unchanged-keys"
       "picker clamped movement, empty editing and ignored controls cause no repaint" fun f =>
-      withSession f.picker #[] fun s => do
-        unless ← s.prompt do
-          return false
+      withPrompt f.picker #[] fun s => do
         s.observe 100
         let start ← s.mark
         s.text "\x1b[A\x10\x1b[H\x7f\x08\x15\x00\x07"
@@ -1544,9 +1404,7 @@ private def refreshChecks (e : Env) : IO Unit := do
   check e "refresh-reordered"
       "automatic refresh retains query and exact highlighted target across changed ordering"
       fun f =>
-      withSession f.picker #[] fun s => do
-        unless ← s.prompt do
-          return false
+      withPrompt f.picker #[] fun s => do
         unless ← s.typeQuery "a" "a" do
           return false
         let selection ← s.mark
@@ -1562,17 +1420,12 @@ private def refreshChecks (e : Env) : IO Unit := do
         let vt ← s.capture "reordered-frame"
         let screen := String.fromUTF8! (ByteArray.mk (screenText vt).toArray)
         let retained := has screen "  › a" && has screen "  ▸ ? Beta  (busy)"
-        return retained && (← acceptThenCancel s) &&
-            (← f.visits) ==
-              call ["ls", "-r", "--porcelain"] ++ call ["attach", "Beta"] ++
-                call ["ls", "-r", "--porcelain"]
+        return retained && (← acceptThenCancel s) && (← f.visits) == attachVisit ["Beta"]
   check e "refresh-removed"
       "automatic refresh clamps a removed selection while preserving an invalid creation query"
       fun f => do
       f.listing "name\tone.x\nname\ttwo.x\nname\tthree.x\n"
-      withSession f.picker #[] fun s => do
-          unless ← s.prompt do
-            return false
+      withPrompt f.picker #[] fun s => do
           unless ← s.typeQuery "." "." do
             return false
           let selection ← s.mark
@@ -1586,16 +1439,12 @@ private def refreshChecks (e : Env) : IO Unit := do
           let vt ← s.capture "removed-frame"
           let screen := String.fromUTF8! (ByteArray.mk (screenText vt).toArray)
           return has screen "  › ." && !has screen "Create " && (← acceptThenCancel s) &&
-              (← f.visits) ==
-                call ["ls", "-r", "--porcelain"] ++ call ["attach", "last.x"] ++
-                  call ["ls", "-r", "--porcelain"]
+              (← f.visits) == attachVisit ["last.x"]
   check e "refresh-created"
       "automatic refresh turns a highlighted creation into the same existing target and attach help"
       fun f => do
       f.listing "name\tworkshop\nname\tworkbench\n"
-      withSession f.picker #[] fun s => do
-          unless ← s.prompt do
-            return false
+      withPrompt f.picker #[] fun s => do
           unless ← s.typeQuery "work" "work" do
             return false
           let selection ← s.mark
@@ -1612,16 +1461,12 @@ private def refreshChecks (e : Env) : IO Unit := do
               !has screen "Create work" &&
               has screen "↵ attach" &&
               (← acceptThenCancel s) &&
-              (← f.visits) ==
-                call ["ls", "-r", "--porcelain"] ++ call ["attach", "work"] ++
-                  call ["ls", "-r", "--porcelain"]
+              (← f.visits) == attachVisit ["work"]
   check e "ctrl-r-ignored"
       "picker Ctrl-R preserves query and highlight without repaint or a new terminal visit" fun f =>
       do
       f.listing "name\tBeta\nname\tBravo\n"
-      withSession f.picker #[] fun s => do
-          unless ← s.prompt do
-            return false
+      withPrompt f.picker #[] fun s => do
           unless ← s.typeQuery "B" "B" do
             return false
           let selection ← s.mark
@@ -1637,13 +1482,11 @@ private def refreshChecks (e : Env) : IO Unit := do
           let screen := String.fromUTF8! (ByteArray.mk (screenText vt).toArray)
           s.text "\x03"
           return quiet && has screen "  › B" && has screen "  ▸ + Create B" && (← restored s 130) &&
-              (← f.visits) == call ["ls", "-r", "--porcelain"]
+              (← f.visits) == listed
   check e "idle-refresh"
       "picker repeats complete listings about one second apart without repainting unchanged snapshots"
       fun f =>
-      withSession f.picker #[] fun s => do
-        unless ← s.prompt do
-          return false
+      withPrompt f.picker #[] fun s => do
         s.observe 100
         let start ← s.mark
         let repeated ← f.waitListing 3 true
@@ -1658,16 +1501,13 @@ private def refreshChecks (e : Env) : IO Unit := do
         -- scheduling variance there; a tight loop or a five-second timer fails.
         let spaced := starts.length ≥ 3 && gaps.all (· ≥ 850)
         s.text "\x03"
-        return repeated && quiet && spaced && (← restored s 130) &&
-            (← f.visits) == call ["ls", "-r", "--porcelain"] &&
+        return repeated && quiet && spaced && (← restored s 130) && (← f.visits) == listed &&
             !(← (f.root / "listing-overlap").pathExists)
   check e "remote-cadence"
       "picker refreshes local rows every second and remote rows only from its next remote query"
       fun f => do
       f.listing "name\tAlpha\nstatus\tidle\nname\twork@host\nstatus\tidle\n"
-      withSession f.picker #[] fun s => do
-          unless ← s.prompt do
-            return false
+      withPrompt f.picker #[] fun s => do
           unless ← f.waitListing 1 true do
             return false
           let start ← s.mark
@@ -1689,7 +1529,7 @@ private def refreshChecks (e : Env) : IO Unit := do
           -- Pair each listing attempt, in order, with its start in the recording child.
           let kinds :=
             (lines (← f.calls)).filterMap fun record =>
-              if record == ((call ["ls", "-r", "--porcelain"]).dropEnd 1).toString then some true
+              if record == (listed.dropEnd 1).toString then some true
               else
                 if record == ((call ["ls", "--porcelain"]).dropEnd 1).toString then some false
                 else none
@@ -1713,7 +1553,7 @@ private def refreshChecks (e : Env) : IO Unit := do
               kinds.length == starts.length &&
               gaps.all (· ≥ 850) &&
               clean &&
-              (← f.visits) == call ["ls", "-r", "--porcelain"] &&
+              (← f.visits) == listed &&
               !(← (f.root / "listing-overlap").pathExists)
   for (slug, text, rc, error) in
     [("failure", "name\tPartial\n", 9, "could not list sessions (exit 9)"),
@@ -1722,9 +1562,7 @@ private def refreshChecks (e : Env) : IO Unit := do
     check e s!"refresh-{slug}"
         s!"automatic refresh rejects the entire bad snapshot and prints an error after restoration ({slug})"
         fun f =>
-        withSession f.picker #[] fun s => do
-          unless ← s.prompt do
-            return false
+        withPrompt f.picker #[] fun s => do
           f.listing text (if slug == "failure" then rc else 0)
           let visible ← s.until error
           let clean ← restored s rc
@@ -1732,15 +1570,13 @@ private def refreshChecks (e : Env) : IO Unit := do
           return visible && clean && !hasText out "Partial" && !hasText out "Fresh" &&
               ordered out (modeSet 1049 false) error.toUTF8.toList &&
               (← numberFile (f.root / "list-count")) ≥ 2 &&
-              (← f.visits) == call ["ls", "-r", "--porcelain"]
+              (← f.visits) == listed
   check e "refresh-partial"
       "incomplete listing output cannot replace displayed rows and keyboard editing stays responsive"
       fun f => do
       f.listing "name\talpha.x\nname\tbeta.x\nname\tgamma.x\n"
       IO.FS.writeFile (f.root / "hold-listing-from") "2"
-      withSession f.picker #[] fun s => do
-          unless ← s.prompt do
-            return false
+      withPrompt f.picker #[] fun s => do
           IO.FS.writeFile (f.root / "listing-prefix") "name\tready.x\n"
           f.listing "name\tbeta.x\nname\tnew.x\n"
           unless ← f.waitListing 2 do
@@ -1772,9 +1608,7 @@ private def refreshChecks (e : Env) : IO Unit := do
       fun f => do
       f.listing "name\talpha.x\nname\tbeta.x\nname\tgamma.x\n"
       IO.FS.writeFile (f.root / "hold-listing-from") "2"
-      withSession f.picker #[] fun s => do
-          unless ← s.prompt do
-            return false
+      withPrompt f.picker #[] fun s => do
           unless ← s.typeQuery "." "." do
             return false
           f.listing "name\tbeta.x\nname\tdelta.x\nname\tgamma.x\nname\talpha.x\n"
@@ -1792,10 +1626,7 @@ private def refreshChecks (e : Env) : IO Unit := do
           s.text "\x0e"
           unless ← s.selected "delta.x" start do
             return false
-          return displayed && (← acceptThenCancel s) &&
-              (← f.visits) ==
-                call ["ls", "-r", "--porcelain"] ++ call ["attach", "delta.x"] ++
-                  call ["ls", "-r", "--porcelain"]
+          return displayed && (← acceptThenCancel s) && (← f.visits) == attachVisit ["delta.x"]
   for (phase, serial) in [("initial", 1), ("refresh", 2)] do
     for (slug, key) in [("ctrl-c", "\x03"), ("escape", "\x1b")] do
       let caseName := if serial == 1 then s!"initial-cancel-{slug}" else s!"slow-cancel-{slug}"
@@ -1831,16 +1662,14 @@ private def refreshChecks (e : Env) : IO Unit := do
               IO.FS.writeFile (f.root / "cancel-observation")
                   s!"pid={pid}\nalive-before={live}\nkeyboard-responsive={responsive}\none-in-flight={one}\nexit-within-deadline={promptExit}\nelapsed-ms={elapsed}\nchild-gone={reaped}\n"
               return live && responsive && one && promptExit && reaped && (← restored s 130) &&
-                  (← f.visits) == call ["ls", "-r", "--porcelain"]
+                  (← f.visits) == listed
   check e "resize"
       "picker probe redraw fits a resized terminal and clips wide text without changing its target"
       fun f => do
       let target := "wide@界界界界Z"
       f.listing s!"name\t{target}\nname\tsecond\nname\tthird\nname\tfourth\n"
-      withSession f.picker #[]
+      withPrompt f.picker #[]
           (fun s => do
-            unless ← s.prompt do
-              return false
             unless ← s.until target do
               return false
             let start ← s.mark
@@ -1858,10 +1687,7 @@ private def refreshChecks (e : Env) : IO Unit := do
             s.client.resize 80 12
             unless ← s.prompt "" (← s.mark) do
               return false
-            return fits && (← acceptThenCancel s) &&
-                (← f.visits) ==
-                  call ["ls", "-r", "--porcelain"] ++ call ["attach", target] ++
-                    call ["ls", "-r", "--porcelain"])
+            return fits && (← acceptThenCancel s) && (← f.visits) == attachVisit [target])
           "both" 80 12
   for (slug, description, rows) in [("one-row", "one-row", 1), ("two-rows", "two-row", 2)] do
     check e slug s!"picker probe keeps its current candidate visible in a {description} terminal"
@@ -1878,8 +1704,7 @@ private def refreshChecks (e : Env) : IO Unit := do
                 !hasText screen "↵" &&
                 lastColumnBlank vt
             s.text "\x03"
-            return visible && (← restored s 130) &&
-                (← f.visits) == call ["ls", "-r", "--porcelain"])
+            return visible && (← restored s 130) && (← f.visits) == listed)
           "both" 40 (UInt32.ofNat rows)
 
 private def defaultChecks (e : Env) : IO Unit := do
@@ -1893,32 +1718,21 @@ private def defaultChecks (e : Env) : IO Unit := do
         chmod impostor.toString 0o755
         let path := if empty then "" else (f.root / "bin").toString
         let f := { f with env := f.env.push ("PATH", some path) }
-        withSession f.picker #[] fun s => do
-            unless ← s.prompt do
-              return false
+        withPrompt f.picker #[] fun s => do
             return (← acceptThenCancel s) && !(← (f.root / "impostor-hit").pathExists) &&
-                (← f.visits) ==
-                  call ["ls", "-r", "--porcelain"] ++ call ["attach", "Alpha"] ++
-                    call ["ls", "-r", "--porcelain"]
+                (← f.visits) == attachVisit ["Alpha"]
   for rc in [0, 7, 255] do
     check e s!"default-{rc}" s!"picker probe returns to a fresh picker after attach status {rc}"
         fun f => do
         IO.FS.writeFile (f.root / "attach-rc") (toString rc)
-        withSession f.picker #[] fun s => do
-            unless ← s.prompt do
-              return false
-            return (← acceptThenCancel s) &&
-                (← f.visits) ==
-                  call ["ls", "-r", "--porcelain"] ++ call ["attach", "Alpha"] ++
-                    call ["ls", "-r", "--porcelain"]
+        withPrompt f.picker #[] fun s => do
+            return (← acceptThenCancel s) && (← f.visits) == attachVisit ["Alpha"]
   check e "successive"
       "picker probe repeatedly attaches from fresh snapshots after statuses 0, 7 and 255" fun f =>
-      withSession f.picker #[] fun s => do
-        unless ← s.prompt do
-          return false
+      withPrompt f.picker #[] fun s => do
         let remote := "-work@me@dev-a"
         let shellText := "work@host with 'spaces' $TERM"
-        let mut expected := call ["ls", "-r", "--porcelain"]
+        let mut expected := listed
         let mut count := 0
         let mut normal := true
         for (target, query, rc, next, separator) in
@@ -1932,8 +1746,7 @@ private def defaultChecks (e : Env) : IO Unit := do
           count := count + 1
           unless ← returned s next count do
             return false
-          expected :=
-            expected ++ call ("attach" :: separator ++ [target]) ++ call ["ls", "-r", "--porcelain"]
+          expected := expected ++ call ("attach" :: separator ++ [target]) ++ listed
           normal :=
             normal && (← beforeAttach s count count) && (← attachNormal f count) &&
               (← f.visits) == expected
@@ -1942,28 +1755,20 @@ private def defaultChecks (e : Env) : IO Unit := do
   check e "return-listing-failure"
       "picker probe preserves a failed listing status after attach and restores the terminal"
       fun f =>
-      withSession f.picker #[] fun s => do
-        unless ← s.prompt do
-          return false
+      withPrompt f.picker #[] fun s => do
         f.afterAttach "name\tPartial\n" 9
         s.text "\r"
         let clean ← failureRestored s 9 "linger: could not list sessions (exit 9)" 1
         return clean && (← beforeAttach s) && (← attachNormal f) &&
-            (← f.visits) ==
-              call ["ls", "-r", "--porcelain"] ++ call ["attach", "Alpha"] ++
-                call ["ls", "-r", "--porcelain"]
+            (← f.visits) == attachVisit ["Alpha"]
   check e "return-malformed"
       "picker probe rejects a malformed listing after attach before another picker visit" fun f =>
-      withSession f.picker #[] fun s => do
-        unless ← s.prompt do
-          return false
+      withPrompt f.picker #[] fun s => do
         f.afterAttach "name\tNext\nname\tNext\n"
         s.text "\r"
         let clean ← failureRestored s 1 "picker probe:" 1
         return clean && (← beforeAttach s) && (← attachNormal f) &&
-            (← f.visits) ==
-              call ["ls", "-r", "--porcelain"] ++ call ["attach", "Alpha"] ++
-                call ["ls", "-r", "--porcelain"]
+            (← f.visits) == attachVisit ["Alpha"]
 
 private def realCheck (e : Env) : IO Unit := do
   for (slug, query, name, existing) in
@@ -1985,9 +1790,7 @@ private def realCheck (e : Env) : IO Unit := do
           if rc != 0 then
             throw (IO.userError s!"manager live fixture failed: {← create.stderr.readToEnd}")
         try
-          withSession f #["attach"] fun s => do
-              unless ← s.prompt do
-                return false
+          withPrompt f #["attach"] fun s => do
               let start ← s.mark
               if !query.isEmpty then
                 unless ← s.typeQuery query query do
@@ -1999,9 +1802,7 @@ private def realCheck (e : Env) : IO Unit := do
               IO.FS.writeFile (f.root / "before-accept")
                   s!"row-visible={shown}\nno-early-creation={untouched}\n"
               s.text "\r"
-              let attached ←
-                waitFor 5000 do
-                    return (← withLaunchLock (owned.info name "clients")) == some "1"
+              let attached ← clientsReach owned name "1"
               let listing ← withLaunchLock (owned.out #["ls", "--porcelain"])
               IO.FS.writeFile (f.root / "after-accept") listing
               let names :=
@@ -2018,9 +1819,7 @@ private def realCheck (e : Env) : IO Unit := do
                 return false
               unless ← s.selected name beforeDetach do
                 return false
-              let detached ←
-                waitFor 5000 do
-                    return (← withLaunchLock (owned.info name "clients")) == some "0"
+              let detached ← clientsReach owned name "0"
               IO.FS.writeFile (f.root / "after-detach")
                   (← withLaunchLock (owned.out #["info", name]))
               s.text "\x03"
@@ -2117,9 +1916,7 @@ private def savedChecks (e : Env) : IO Unit := do
             return false
           let untouched := (← f.nativeNames).isEmpty
           s.text "\r"
-          let attached ←
-            waitFor 5000 do
-                return (← withLaunchLock (owned.info "saved-chosen" "clients")) == some "1"
+          let attached ← clientsReach owned "saved-chosen" "1"
           unless attached do
             return false
           let cwdFile := f.root / "shell-cwd"
@@ -2132,9 +1929,7 @@ private def savedChecks (e : Env) : IO Unit := do
           s.client.detach
           let returned ← s.selected "saved-first" start
           let header ← s.untilRow "linger · tmux save" start
-          let detached ←
-            waitFor 3000 do
-                return (← withLaunchLock (owned.info "saved-chosen" "clients")) == some "0"
+          let detached ← clientsReach owned "saved-chosen" "0" (ms := 3000)
           s.text "\x03"
           let clean ← termiosRestored s 130
           IO.FS.writeFile (f.root / "selection-observation")
@@ -2154,9 +1949,7 @@ private def savedChecks (e : Env) : IO Unit := do
           unless ← s.selected "-saved-chosen" do
             return false
           s.text "\r"
-          let attached ←
-            waitFor 5000 do
-                return (← withLaunchLock (owned.info "-saved-chosen" "clients")) == some "1"
+          let attached ← clientsReach owned "-saved-chosen" "1"
           unless attached do
             return false
           let start ← s.mark
@@ -2263,9 +2056,7 @@ private def savedChecks (e : Env) : IO Unit := do
           unless ← s.selected "saved-chosen" do
             return false
           s.text "\r"
-          let attached ←
-            waitFor 5000 do
-                return (← withLaunchLock (owned.info "saved-chosen" "clients")) == some "1"
+          let attached ← clientsReach owned "saved-chosen" "1"
           unless attached do
             return false
           let newPid := (← withLaunchLock (owned.info "saved-chosen" "pid")).bind String.toNat?
@@ -2352,9 +2143,7 @@ private def programChecks (e : Env) : IO Unit := do
             return false
           let pid ← numberFile (f.root / "session-program-pid")
           let before ← withLaunchLock (owned.out #["info", name])
-          withSession f #["attach"] fun s => do
-              unless ← s.prompt do
-                return false
+          withPrompt f #["attach"] fun s => do
               unless ← s.selected name do
                 return false
               let live := pid > 0 && (← alive (UInt32.ofNat pid))
@@ -2385,15 +2174,11 @@ private def programChecks (e : Env) : IO Unit := do
         unless ← startProgram f owned name do
           return false
         let pid ← numberFile (f.root / "session-program-pid")
-        withSession f #["attach"] fun s => do
-            unless ← s.prompt do
-              return false
+        withPrompt f #["attach"] fun s => do
             unless ← s.selected name do
               return false
             s.text "\r"
-            let attached ←
-              waitFor 5000 do
-                  return (← withLaunchLock (owned.info name "clients")) == some "1"
+            let attached ← clientsReach owned name "1"
             let live := pid > 0 && (← alive (UInt32.ofNat pid))
             unless attached && live do
               return false

@@ -146,17 +146,16 @@ def run : IO UInt32 :=
     -- 2. ctrl-\ detaches; the client exits but the session lives. WNOHANG waitpid
     -- sees the child gone (`Client.reap` returns the status; `-1` is "still running").
     c1.detach
-    IO.sleep 500
-    let st1 ← c1.reap 1500
+    let st1 ← c1.reap 2000
     expect (st1 ≥ 0) "detach: client exited on ctrl-backslash"
     c1.bye (sendDetach := false) -- fd and any zombie only; the client already left
     expect (has (← e.out #["list"]) "demo") "detach: session still listed"
     -- 3. background output while detached reaches the emulator (§Detach: a session
     -- with zero clients still advances)
     let _ ← e.cli #["send", "demo", "echo while-detached-$((40+2))\n"]
-    let _ ←
-      waitFor 4000 (return has (← e.out #["capture", "--history", "demo"]) "while-detached-42")
-    expect (has (← e.out #["capture", "--history", "demo"]) "while-detached-42")
+    expect
+        (←
+          waitFor 4000 (return has (← e.out #["capture", "--history", "demo"]) "while-detached-42"))
         "session advances while nobody attached"
     -- 4. reattach: restore shows the old screen contents
     let c2 ← e.spawn #["attach", "demo"] cols rows
@@ -185,8 +184,7 @@ def run : IO UInt32 :=
     -- output after about a second.
     let drain2 ← IO.asTask (drain c2.fd 4000)
     let drain3 ← IO.asTask (drain c3.fd 4000)
-    let _ ← waitFor 4000 (return !has (← e.out #["list"]) "demo")
-    expect (!has (← e.out #["list"]) "demo") "shell exit ends the session"
+    expect (← waitFor 4000 (return !has (← e.out #["list"]) "demo")) "shell exit ends the session"
     let exit2 ← IO.ofExcept (← IO.wait drain2)
     let exit3 ← IO.ofExcept (← IO.wait drain3)
     let handed2 := receiver2.feed exit2.toList
@@ -209,7 +207,7 @@ def run : IO UInt32 :=
         s!"wait blocks until exit and returns status (rc={rc}, took={took}ms)"
     -- A transport loss is neither a detach nor a successful wait.
     let lost ← e.spawn #["attach", "attach-lost"] cols rows
-    IO.sleep 800
+    let _ ← waitFor 4000 (return (← e.info "attach-lost" "clients") == some "1")
     let lostInitial ← drain lost.fd 300
     -- Exceed the mediator's buffer so the unfinished OSC reaches the terminal;
     -- keep the child quiet afterwards so nothing completes it before handback.
@@ -241,10 +239,7 @@ def run : IO UInt32 :=
     IO.sleep 800
     unless (← e.crashDaemon "wait-lost") do
       throw (IO.userError "wait-lost daemon did not crash")
-    let waitCode ← waitProcess waiter 3000
-    if waitCode.isNone then
-      waiter.kill
-      let _ ← waiter.wait
+    let waitCode ← waitOrKill waiter 3000
     let waitErr ← waiter.stderr.readToEnd
     expect (waitCode == some 1 && has waitErr "connection lost")
         "wait exits 1 when the daemon disappears"
@@ -254,11 +249,7 @@ def run : IO UInt32 :=
     let m ← defaults.spawnEnv #[s!"HOME={defaults.dir}"] #["attach"] cols rows
     try
       let screen ← IO.mkRef ByteArray.empty
-      let offered ←
-        waitFor 5000 do
-            let bytes ← drain m.fd 100
-            screen.modify (· ++ bytes)
-            return hasText (← screen.get) s!"+ Create {defaultName}"
+      let offered ← m.awaitText screen (hasText · s!"+ Create {defaultName}") (ms := 5000)
       let absent := (← defaults.out #["ls", "--porcelain"]).isEmpty
       m.type "\r"
       let created ←
@@ -276,7 +267,7 @@ def run : IO UInt32 :=
     --    with mouse reporting on, no cursor, a six-line scroll region and every
     --    ASCII character rendered as a box glyph. termios restores none of this.
     let h ← e.spawn #["attach", "hyg"] cols rows
-    IO.sleep 800
+    let _ ← waitFor 4000 (return (← e.info "hyg" "clients") == some "1")
     let initial ← drain h.fd 300
     h.type appStateCmd
     -- The truncated title is the application's last output; once all of it has
@@ -316,25 +307,47 @@ def run : IO UInt32 :=
         "detach leads with ST (a program that died mid-OSC/DCS would eat the rest)"
     h.bye (sendDetach := false)
     e.killAll #["hyg"]
-    -- If the hand-back write fails, termios restoration must still run. Command-local
-    -- stdout closure leaves the shell's stdin attached to the pty and makes the
-    -- first cleanup action fail deterministically.
+    -- If the hand-back write fails, termios restoration must still run. stdout is a
+    -- second terminal, so attach passes its tty check and enters raw mode; closing that
+    -- terminal's only master while attached makes the hand-back write fail. The shells
+    -- publish each file the check waits for by rename, so a file that exists is complete.
     let _ ← e.cli #["run", "raw-cleanup", "sleep", "600"]
+    let text (path : String) : IO String := return (← readText path).trimAscii.toString
+    let outTty := s!"{e.dir}/raw-cleanup.out-tty"
+    let (outPid, outFd) ←
+      Linger.Posix.spawnPty cols rows "" "sh"
+          #["-c", s!"tty > {outTty}.tmp && mv {outTty}.tmp {outTty}; exec sleep 600"] e.ptyEnv
+    let _ ← waitFor 5000 (return (← text outTty).startsWith "/dev/")
+    let rawTty := s!"{e.dir}/raw-cleanup.tty"
+    let beforePath := s!"{e.dir}/raw-cleanup.before"
     let modesPath := s!"{e.dir}/raw-cleanup.modes"
     let cleanupScript :=
-      s!"before=$(stty -g); {e.bin} attach raw-cleanup 1>&- 2>/dev/null || true; \
-         after=$(stty -g); printf '%s\\n%s\\n' \"$before\" \"$after\" > {modesPath}"
+      s!"tty > {rawTty}; before=$(stty -g); \
+         printf '%s\\n' \"$before\" > {beforePath}.tmp && mv {beforePath}.tmp {beforePath}; \
+         {e.bin} attach raw-cleanup >{← text outTty} 2>/dev/null; rc=$?; after=$(stty -g); \
+         printf '%s\\n%s\\n%s\\n' \"$before\" \"$after\" \"$rc\" > {modesPath}.tmp && \
+         mv {modesPath}.tmp {modesPath}"
     let (rawPid, rawFd) ← Linger.Posix.spawnPty cols rows "" "sh" #["-c", cleanupScript] e.ptyEnv
     let rawProbe : Client := { pid := rawPid, fd := rawFd }
-    let modesReady ← waitFor 5000 (System.FilePath.pathExists modesPath)
-    let modes ←
-      if modesReady then
-        pure ((← IO.FS.readFile modesPath).splitOn "\n")
-      else
-        pure []
+    -- attach registers before it enters raw mode, so wait for the mode itself. The tty
+    -- path is written before `before`, and only a successful, nonempty read counts.
+    let entered ←
+      waitFor 5000 do
+          let before := withoutPendin (← text beforePath)
+          if before.isEmpty then
+            return false
+          let now ←
+            IO.Process.output { cmd := "/bin/sh", args := #["-c", s!"stty -g < {← text rawTty}"] }
+          let mode := withoutPendin now.stdout.trimAscii.toString
+          return now.exitCode == 0 && !mode.isEmpty && mode != before
+    -- Closing the only master hangs up stdout; its sleep is reaped with it.
+    ({ pid := outPid, fd := outFd } : Client).bye (sendDetach := false)
+    rawProbe.detach
+    let _ ← waitFor 5000 (System.FilePath.pathExists modesPath)
     expect
-        (match modes with
-        | before :: after :: _ => !before.isEmpty && before == after
+        (match (← text modesPath).splitOn "\n" with
+        | [before, after, rc] =>
+          entered && !before.isEmpty && withoutPendin before == withoutPendin after && rc != "0"
         | _ => false)
         "attach restores tty mode even when leaveAnsi cannot be written"
     rawProbe.bye (sendDetach := false)
@@ -345,7 +358,7 @@ def run : IO UInt32 :=
     --     the byte reaches the session's pty.
     for (value, name) in [("1", "nd"), ("", "nd-empty")] do
       let nd ← e.spawnEnv #[s!"LINGER_NO_DETACH_KEY={value}"] #["attach", name] cols rows
-      IO.sleep 800
+      let _ ← waitFor 4000 (return (← e.info name "clients") == some "1")
       let _ ← drain nd.fd 300
       nd.detach -- would detach if the key were enabled
       IO.sleep 500
@@ -354,11 +367,9 @@ def run : IO UInt32 :=
           s!"LINGER_NO_DETACH_KEY={value}: ctrl-\\ does not detach (client still attached)"
       expect (has (← e.out #["list"]) name) s!"LINGER_NO_DETACH_KEY={value}: session still live"
       nd.type "echo nd-$((20+2))\r" -- still interactive: input reaches the pty
-      let _ ← waitFor 4000 (return has (← e.out #["capture", "--history", name]) "nd-22")
-      expect (has (← e.out #["capture", "--history", name]) "nd-22")
+      expect (← waitFor 4000 (return has (← e.out #["capture", "--history", name]) "nd-22"))
           s!"LINGER_NO_DETACH_KEY={value}: input still reaches the session"
       e.killAll #[name]
-      IO.sleep 400
       nd.bye (sendDetach := false)
     -- 11. the scrollback reaches the client's own scrollback
     --     (specs/archive/scrollback-fidelity.md). `restore` used to repaint the screen and
@@ -369,7 +380,7 @@ def run : IO UInt32 :=
     --     emitted AFTER the `ED 2` (the order ncurses `clear(1)` sends), because
     --     `restoreBody` already clears before `screensAnsi`.
     let s1 ← e.spawn #["attach", "sb"] cols rows
-    IO.sleep 800
+    let _ ← waitFor 4000 (return (← e.info "sb" "clients") == some "1")
     let _ ← drain s1.fd 300
     s1.type "i=1; while [ $i -le 60 ]; do echo sbline-$i; i=$((i+1)); done\r"
     let _ ←
@@ -383,7 +394,7 @@ def run : IO UInt32 :=
         (histS.contains "sbline-1" && !(histS.drop (histS.length - rows.toNat)).contains "sbline-1")
         "scrollback: the early lines are in the ring, off the 24-row screen"
     s1.detach
-    IO.sleep 600
+    let _ ← waitFor 4000 (return (← e.info "sb" "clients") == some "0")
     s1.bye (sendDetach := false)
     let s2 ← e.spawn #["attach", "sb"] cols rows
     let burst ← drain s2.fd 2000
@@ -416,7 +427,7 @@ def run : IO UInt32 :=
     let _ ← s2.awaitText truecolour (hasText · "tcline-60") (ms := 8000)
     let _ ← drain s2.fd 1500
     s2.detach
-    IO.sleep 600
+    let _ ← waitFor 4000 (return (← e.info "sb" "clients") == some "0")
     s2.bye (sendDetach := false)
     let s3 ← e.spawn #["attach", "sb"] cols rows
     let burstTc ← drain s3.fd 2500

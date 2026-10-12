@@ -193,9 +193,7 @@ def admissionPressure (e : Env) : IO Unit := do
     for fd in ← owned.get do
       Linger.Posix.close fd
     let _ ← pressure.cliTimeout #["kill", "pressure"] 3000
-    if (← waitProcess server 3000).isNone then
-      server.kill
-      let _ ← server.wait
+    discard (waitOrKill server 3000)
     if let some pid← child.get then
       if ← Linger.Posix.alive pid then
         Linger.Posix.kill pid 9
@@ -364,10 +362,9 @@ def run : IO UInt32 :=
           recs.contains ("status", Linger.Core.Status.name Status.unknown))
         "porcelain carries the name for a busy daemon"
     expect (socks == ["busy.sock"]) s!"busy daemon keeps its socket ({socks})"
-    IO.sleep 400
     expect ((← e.cli #["send", "busy", "echo x\n"]).1 == 0) "busy daemon still reachable afterwards"
     e.killAll #["busy"]
-    IO.sleep 500
+    let _ ← waitFor 4000 (return !(← System.FilePath.pathExists s!"{e.dir}/busy.sock"))
     -- ── 2. stale socket + concurrent starts -> one owner ──────────────────────
     -- The name is unique to this run so the `ps` scan below cannot see a developer's
     -- own session of the same name (see the module docstring), the same trick
@@ -385,13 +382,17 @@ def run : IO UInt32 :=
     let kids ← (List.range 8).mapM fun _ => IO.Process.spawn cfg
     for k in kids do
       let _ ← k.wait
-    IO.sleep 1500
-    let ps ← psTable
-    let owners :=
-      ps.filterMap fun (pid, _, args) => if has args s!"__daemon {claim}" then some pid else none
-    let shells := ps.filter fun (_, ppid, args) => owners.contains ppid && has args "/bin/sh"
-    expect (owners.length == 1) s!"exactly one daemon owns the name (got {owners.length})"
-    expect (shells.length == 1) s!"exactly one shell (got {shells.length})"
+    -- The daemons serving `claim` and the shells they started, from one `ps` read.
+    let census : IO (Nat × Nat) := do
+      let ps ← psTable
+      let owners :=
+        ps.filterMap fun (pid, _, args) => if has args s!"__daemon {claim}" then some pid else none
+      let shells := ps.filter fun (_, ppid, args) => owners.contains ppid && has args "/bin/sh"
+      return (owners.length, shells.length)
+    let _ ← waitFor 5000 (return (← census) == (1, 1))
+    let (owners, shells) ← census
+    expect (owners == 1) s!"exactly one daemon owns the name (got {owners})"
+    expect (shells == 1) s!"exactly one shell (got {shells})"
     expect ((← e.cli #["send", claim, "echo y\n"]).1 == 0) "the surviving session is reachable"
     -- lock files are deliberately never unlinked (unlinking defeats flock), so
     -- earlier sessions leave theirs behind; ours must be among them. Listed BEFORE
@@ -408,16 +409,14 @@ def run : IO UInt32 :=
     expect (locks.contains s!"{claim}.lock" && lockFd == -1)
         s!"ownership lock file present ({locks})"
     e.killAll #[claim]
-    IO.sleep 500
-    -- the lock must be re-acquirable once the owner is gone (kernel released it)
-    let _ ← e.cli #["run", claim, "echo three"]
-    IO.sleep 1000
-    let owners2 :=
-      (← psTable).filterMap fun (pid, _, args) =>
-        if has args s!"__daemon {claim}" then some pid else none
-    expect (owners2.length == 1) "name is re-claimable after the owner exits (no stale lock)"
+    let _ ← waitFor 4000 (return !(← System.FilePath.pathExists s!"{e.dir}/{claim}.sock"))
+    -- the lock must be re-acquirable once the owner is gone (kernel released it). The old
+    -- daemon unlinks its socket before it releases its locks and exits, so `ps` can list
+    -- both daemons for a moment.
+    let (rerun, _, _) ← e.cli #["run", claim, "echo three"]
+    expect (rerun == 0 && (← waitFor 4000 (return (← census).1 == 1)))
+        "name is re-claimable after the owner exits (no stale lock)"
     e.killAll #[claim]
-    IO.sleep 500
     -- ── 3. a child that stops reading cannot grow the daemon ──────────────────
     -- `sleep` never reads its stdin, so the pty master's input buffer fills and
     -- `flushPty` stops draining; every `.input` frame after that would append
@@ -430,8 +429,8 @@ def run : IO UInt32 :=
     -- 3 s), because the BSD tty layer discards an over-long canonical line instead
     -- of pushing back, so `ptyIn` never grew and the cap never tripped. With lines
     -- it is EAGAIN after ~1 KB, as on Linux.
-    let _ ← e.cli #["run", "stall", "sleep", "600"]
-    IO.sleep 1000
+    let _ ← e.cli #["run", "stall", "echo STALL-$((40+2)); exec sleep 600"]
+    let _ ← waitFor 3000 (return has (← e.out #["capture", "stall"]) "STALL-42")
     -- only whether a daemon answers matters here, not its pid
     let sp ← e.daemonPid "stall"
     if sp.isSome then
@@ -463,7 +462,6 @@ def run : IO UInt32 :=
       expect ((← e.cli #["send", "stall", "echo x\n"]).1 == 0)
           "the stalled session is still reachable"
       e.killAll #["stall"]
-      IO.sleep 500
     else
       expect false "stall daemon started"
     -- ── 4. a held ownership lock makes a failed connect non-stale ─────────────
@@ -496,15 +494,9 @@ def run : IO UInt32 :=
     let listing ←
       IO.Process.spawn
           { cmd := e.bin, args := #["list"], env := e.procEnv, stdout := .null, stderr := .null }
-    let listCode ← waitProcess listing 3500
+    let listCode ← waitOrKill listing 3500
     let elapsed := (← Linger.Posix.monotonicMs) - t0
-    if listCode.isNone then
-      listing.kill
-      let _ ← listing.wait
-    let streamCode ← waitProcess streamServer 3000
-    if streamCode.isNone then
-      streamServer.kill
-      let _ ← streamServer.wait
+    let streamCode ← waitOrKill streamServer 3000
     expect (listCode == some 0 && elapsed < 3500 && streamCode == some 0)
         s!"continuous info traffic cannot extend the request deadline ({elapsed}ms)"
     -- ── 6. one listener round accepts at most the pure roster cap ─────────────
@@ -624,7 +616,7 @@ def run : IO UInt32 :=
       let rows := (List.range 4000).map fun i => s!"row {i} {String.ofList (List.replicate 60 'x')}"
       let saved := (Linger.Core.Vt.Vt.init 80 24).feedBytes (String.intercalate "\r\n" rows).toUTF8
       IO.FS.writeBinFile s!"{e.dir}/{reader}.ckpt"
-          (ByteArray.mk (Linger.Core.Checkpoint.save ⟨saved, e.dir, []⟩).toArray)
+          (Linger.Core.Checkpoint.saveBytes ⟨saved, e.dir, []⟩)
       let capture ← e.spawn #["capture", "--history", reader]
       -- Output on the pty means the capture has loaded the checkpoint under both locks.
       let holding := (← Linger.Posix.poll #[capture.fd] #[Linger.Posix.POLLIN] 5000)[0]! != 0
@@ -639,10 +631,7 @@ def run : IO UInt32 :=
       let read ← drain capture.fd 5000
       let captureCode ← capture.reap 3000
       capture.bye (sendDetach := false)
-      let startCode ← waitProcess starter 5000
-      if startCode.isNone then
-        starter.kill
-        discard starter.wait
+      let startCode ← waitOrKill starter 5000
       let resumed ← waitFor 5000 (return has (← e.out #["capture", reader]) "resumed-42")
       expect
           (holding && found && hasText read "row 3999" && captureCode == 0 && startCode == some 0 &&

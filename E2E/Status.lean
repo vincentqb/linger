@@ -33,12 +33,8 @@ private def summaryWithin (waiting : Env) : IO (Option UInt32 × Nat × String) 
     IO.Process.spawn
         { cmd := waiting.bin, args := #["ls", "--summary"], env := waiting.procEnv,
           stdout := .piped, stderr := .null }
-  let code ← waitProcess command 1500
-  let elapsed := (← Linger.Posix.monotonicMs) - start
-  if code.isNone then
-    command.kill
-    discard command.wait
-  return (code, elapsed, ← command.stdout.readToEnd)
+  let code ← waitOrKill command 1500
+  return (code, (← Linger.Posix.monotonicMs) - start, ← command.stdout.readToEnd)
 
 /-- Several stalled sockets precede a responsive peer. One sampling window
 covers the entire snapshot; incomplete and unqueried peers stay unknown. -/
@@ -69,10 +65,7 @@ def checkDeadline (e : Env) : IO Unit := do
     expect retained "prompt leaves unanswered peers' sockets in place"
   finally
     for server in servers do
-      try
-        server.kill
-      finally
-        discard server.wait
+      reapOrKill server 0
 
 /-- Fill a listener without accepting. A reply timeout cannot help a blocking
 connect here; the sampling command must decline the connection promptly. -/
@@ -133,8 +126,8 @@ def run : IO UInt32 :=
     expect (quietCode == 0 && quiet.isEmpty) "idle session does not clutter the summary"
     -- 3. output while detached makes it unread again
     let _ ← e.cli #["send", "st", "echo", "later"]
-    let _ ← waitFor 4000 (return (← e.status "st") == Status.wantsYou)
-    expect ((← e.status "st") == Status.wantsYou) "output while away reads wants-you"
+    expect (← waitFor 4000 (return (← e.status "st") == Status.wantsYou))
+        "output while away reads wants-you"
     -- `behind` is `toString (Session.behind s)`, a decimal `Nat`, so parse it
     -- rather than compare the string to "0": `!= "0"` also passes on a field that
     -- stopped being a number at all.
@@ -165,8 +158,7 @@ def run : IO UInt32 :=
               s!"1{Linger.Core.Status.icon Status.wantsYou} 1{Linger.Core.Status.icon Status.exitedBad}\n")
           "summary keeps unread output and a reported failed exit distinct"
     finally
-      failedServer.kill
-      discard failedServer.wait
+      reapOrKill failedServer 0
     e.killAll #["st"]
     checkDeadline e
     checkBacklog e

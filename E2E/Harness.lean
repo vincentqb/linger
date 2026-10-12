@@ -8,22 +8,10 @@ public section
 
 /-! # E2E.Harness — the shared harness for the pty suites, in Lean
 
-WHY THIS IS LEAN AND NOT PYTHON. These suites drive the real `linger` binary
-through real ptys, so they are `IO` and can never be theorems — the pure core is
-what `Theorems/` covers, with `Tests/` pinning its behaviour at elaboration time.
-What they *can* be is Lean programs, and `LingerTest.lean` was already the
-precedent. The reason to move them is not proof strength, it is that a test in the
-implementation's own language cannot drift from it: `field`/`status` below read
-`Linger.Core.Status.name` rather than a hardcoded `"wants-you"`, so renaming a
-status is a compile error instead of a silently-passing assertion.
-
-It needed **no new syscall**. `Linger.Posix` already exposed every primitive the
-Python needed — `spawnPty` (forkpty with the winsize set before exec, which the
-`pty.fork()`-then-`ioctl` idiom got wrong), `winsizeSet`, `kill`, `waitpidNohang`,
-`alive`, `poll`/`read`/`write`, and `getcwdOf` for the daemon-identification the
-old `procs.py` did with `/proc`-or-`lsof`. So `SHIM_CAP` does not move: the C
-trust boundary is unchanged by this port, which is the condition that made it
-worth doing at all.
+The suites drive the real binary through ptys, so they are `IO` and tested, not
+proved. Assertions read the implementation's definitions (`status` parses with
+`Linger.Core.Status.ofName`), so renaming a status constructor is a compile error.
+Ptys, sockets and polling come from `Linger.Posix`.
 
 OUTPUT CONTRACT — load-bearing, do not reformat. Every check prints `PASS <name>`
 or `FAIL <name>`, and each suite ends with `FAILURES: <n>`. `E2E.Runner` requires
@@ -87,6 +75,10 @@ def waitFor (ms : Nat) (p : IO Bool) : IO Bool := do
     ok ← p
   return ok
 
+/-- The deadline of a positive wait. Such a wait returns as soon as its condition holds, so this
+bounds only a failure. -/
+def patienceMs : Nat := 15000
+
 /-- Wait for a spawned process without letting a regression hang the suite. -/
 def waitProcess {cfg : IO.Process.StdioConfig} (child : IO.Process.Child cfg) (ms : Nat) :
     IO (Option UInt32) := do
@@ -97,27 +89,38 @@ def waitProcess {cfg : IO.Process.StdioConfig} (child : IO.Process.Child cfg) (m
     code ← child.tryWait
   return code
 
-/-- Reap `child` whatever state it is in: wait up to `ms` for it to exit, then
-send SIGTERM and wait again, then SIGKILL and wait once more. A child that an
-earlier wait already reaped makes `tryWait` raise ECHILD, and counts as finished;
-its pid is then never signalled, since it may belong to another process. -/
-def reapOrKill {cfg : IO.Process.StdioConfig} (child : IO.Process.Child cfg) (ms : Nat) : IO Unit :=
-  do
-  let finished : IO Bool := do
+/-- Reap `child` whatever state it is in: wait up to `ms` for it to exit, then signal it
+with `Child.kill` (SIGKILL on Lean v4.34.1, although its docstring says SIGTERM) and wait
+up to `grace`, then send SIGKILL and wait up to `grace` again, so a signalled child is
+reaped rather than left a zombie. A child that an earlier wait already reaped makes
+`tryWait` raise ECHILD, and counts as finished; its pid is then never signalled, since
+it may belong to another process. -/
+def reapOrKill {cfg : IO.Process.StdioConfig} (child : IO.Process.Child cfg) (ms : Nat)
+    (grace : Nat := 1000) : IO Unit := do
+  let finished (budget : Nat) : IO Bool := do
     try
-      return (← waitProcess child ms).isSome
+      return (← waitProcess child budget).isSome
     catch
     | .noSuchThing .. =>
       return true
     | err =>
       throw err
-  if ← finished then
+  if ← finished ms then
     return
   child.kill
-  if ← finished then
+  if ← finished grace then
     return
   kill child.pid 9
-  discard finished
+  discard (finished grace)
+
+/-- `waitProcess`, retiring a child still running at the deadline with `reapOrKill`;
+`none` means it was still running then, though it may exit before a signal is sent. -/
+def waitOrKill {cfg : IO.Process.StdioConfig} (child : IO.Process.Child cfg) (ms : Nat) :
+    IO (Option UInt32) := do
+  let code ← waitProcess child ms
+  if code.isNone then
+    reapOrKill child 0
+  return code
 
 /-- Accept one connection on a nonblocking listener within `ms`. -/
 def acceptWithin (lfd : UInt32) (ms : Nat) : IO (Option UInt32) := do
@@ -220,12 +223,8 @@ structure Client where
 /-- Spawn `linger <args>` on a pty of exactly this size, with extra `K=V` entries
 on the child's environment.
 
-The size is set **before** exec by `spawnPty`, which is the bug the Python
-harness had: `pty.fork()` then `ioctl(TIOCSWINSZ)` races the child's own startup
-`winsizeGet`, and that race is invisible until a suite's subject IS the geometry a
-client reported (`E2E.Watch`). `spawnPty`'s `extraEnv` is putenv-on-top-of-inherited
-in the forked child, so `extra` overrides `ptyEnv` by `cliEnv`'s rule; `Array String`
-because that is the shim's shape. -/
+`spawnPty` sets the size before exec, so the client's startup `winsizeGet` reads it
+(`E2E.Watch`'s subject); `extra` overrides `ptyEnv`. -/
 def Env.spawnEnv (e : Env) (extra : Array String) (args : Array String) (cols : UInt32 := 80)
     (rows : UInt32 := 24) : IO Client := do
   let (pid, fd) ← spawnPty cols rows "" e.bin args (e.ptyEnv ++ extra)
@@ -275,7 +274,7 @@ offset `start`, EOF arrives or `ms` elapses; the result is whether `ready` held.
 The positive counterpart of `drain`, under `waitFor`'s rule: a check that output
 **arrives** returns as soon as it does, instead of reading out a fixed window. -/
 def Client.awaitText (c : Client) (acc : IO.Ref ByteArray) (ready : ByteArray → Bool) (start := 0)
-    (ms := 4000) : IO Bool := do
+    (ms := patienceMs) : IO Bool := do
   let deadline := (← monotonicMs) + ms
   let holds : IO Bool := do
     let bytes ← acc.get
@@ -294,7 +293,7 @@ def Client.awaitText (c : Client) (acc : IO.Ref ByteArray) (ready : ByteArray �
 result is whether it appeared. Only bytes that could still begin a match are kept, so
 a replay of several megabytes is read in one linear pass, which `awaitText`, rescanning
 everything from `start` after each read, is not. -/
-def Client.awaitNeedle (c : Client) (needle : String) (ms := 4000) : IO Bool := do
+def Client.awaitNeedle (c : Client) (needle : String) (ms := patienceMs) : IO Bool := do
   let pattern := needle.toUTF8
   let deadline := (← monotonicMs) + ms
   let mut tail := ByteArray.empty
@@ -376,14 +375,42 @@ def Env.cliTimeout (e : Env) (args : Array String) (ms : Nat) :
   let child ←
     IO.Process.spawn
         { cmd := e.bin, args, env := e.procEnv, stdin := .null, stdout := .piped, stderr := .piped }
-  let code ← waitProcess child ms
+  let code ← waitOrKill child ms
   match code with
   | none =>
-    return none -- still running: the caller reports it as a fail
+    return none -- still running at the deadline, then retired: the caller reports it as a fail
   | some c =>
     let out ← child.stdout.readToEnd
     let err ← child.stderr.readToEnd
     return some (c, out, err)
+
+/-- A lowercase hexadecimal numeral's value; `none` when empty or another character appears. -/
+def hexValue? (s : String) : Option Nat :=
+  s.foldl
+    (fun acc c =>
+      acc.bind fun n =>
+        if c.isDigit then some (16 * n + (c.toNat - '0'.toNat))
+        else if 'a' ≤ c && c ≤ 'f' then some (16 * n + (c.toNat - 'a'.toNat + 10)) else none)
+    (if s.isEmpty then none else some 0)
+
+/-- `stty -g` settings without Darwin's PENDIN (`0x20000000`), which is kernel state: turning
+ICANON back on sets it until the next read, and BSD `stty -g` prints it, so no program can
+restore it. Linux `stty -g` has no `lflag=` field and passes through unchanged. -/
+def withoutPendin (settings : String) : String :=
+  String.intercalate ":" <|
+    (settings.splitOn ":").map fun field =>
+      match (field.dropPrefix? "lflag=").bind (fun hex => hexValue? hex.toString) with
+      | some flags =>
+        "lflag=" ++
+          String.ofList (Nat.toDigits 16 (if flags.testBit 29 then flags - 0x20000000 else flags))
+      | none => field
+
+/-- The text of the file at `path`, or `""` while there is none. -/
+def readText (path : System.FilePath) : IO String := do
+  if ← path.pathExists then
+    IO.FS.readFile path
+  else
+    pure ""
 
 /-- A stream's lines, without the empty field a trailing newline leaves.
 
@@ -439,33 +466,16 @@ def Env.field (e : Env) (name field : String) : IO (Option String) := do
       found := some v
   return found
 
-/-- A session's status column, as the `Status` type rather than as a string
-literal. This is the drift the port buys: renaming a constructor's porcelain
-name is now a compile error in the suites, not a passing assertion. -/
+/-- A session's status column as the `Status` type, parsed with `Linger.Core.Status.ofName`
+rather than compared as a string literal, so a renamed constructor is a compile error in the
+suites that read it. -/
 def Env.status (e : Env) (name : String) : IO Linger.Core.Status.Status := do
   return Linger.Core.Status.ofName ((← e.field name "status").getD "")
 
-/-- The pid of the daemon behind `name`, which the retired Python harness's `procs.py`
-looked up; its hard half is **deleted** rather than ported.
-
-`procs.py` answered two questions: which pids are `linger __daemon <name>`
-(`pgrep -f`), and which of those live in *this* `LINGER_DIR`. The second is not
-optional — a real session of the same name in the developer's own dir must never
-be the one that gets SIGKILLed — and it was the expensive one:
-`/proc/<pid>/environ` on Linux with an `lsof -p` fallback on macOS, which AGENTS.md
-counted as one of the repo's only two platform splits.
-
-None of it is needed. `linger info <name>` is answered over
-`<LINGER_DIR>/<name>.sock`, so a reply is *by construction* from the daemon in our
-own directory: the isolation is structural rather than a filter over candidates.
-The reply's `pid` is the child shell's (`Daemon.serve` puts it in `metaKv`), and
-the daemon is that shell's parent, because the daemon is the process that called
-`spawnPty` — forkpty, so parent is daemon. One `info`, one `ps -o ppid=`.
-
-`ps -o ppid=` rather than `/proc/<pid>/stat` for exactly the reason `procs.py`
-reached for lsof: same command on both platforms, so this adds no split back.
-`Posix.getcwdOf` answers a different question — `spawnDetached` does not `chdir`,
-so a daemon's cwd is whatever directory its spawning client was in. -/
+/-- The pid of the daemon behind `name`. `linger info` is answered over
+`<LINGER_DIR>/<name>.sock`, so the reply comes from this directory's daemon. Its `pid` is
+the shell's and the daemon is the shell's parent, read with `ps -o ppid=` (the same on
+Linux and macOS). `getcwdOf` cannot identify it: `spawnDetached` does not chdir. -/
 def Env.daemonPid (e : Env) (name : String) : IO (Option UInt32) := do
   match (← e.info name "pid").bind (·.toNat?) with
   | none =>

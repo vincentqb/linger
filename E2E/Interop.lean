@@ -28,15 +28,10 @@ private def process (args : IO.Process.SpawnArgs) (ms : Nat := 10000) :
     IO.Process.spawn
         { args with
           stdin := .null, stdout := .piped, stderr := .piped }
-  match ← waitProcess child ms with
+  match ← waitOrKill child ms with
   | some code =>
     return (code, ← child.stdout.readToEnd, ← child.stderr.readToEnd)
   | none =>
-    child.kill
-    if (← waitProcess child 1000).isNone then
-      Linger.Posix.kill child.pid 9
-      let _ ← waitProcess child 1000
-      pure ()
     throw (IO.userError s!"process timed out: {args.cmd} {args.args}")
 
 private structure Fixture where
@@ -89,8 +84,7 @@ private def Fixture.start (f : Fixture) (name : String) (dir : System.FilePath) 
 
 private def Fixture.seed (f : Fixture) (name cwd : String) : IO Unit := do
   let ck : Ckpt := { vt := Linger.Core.Vt.Vt.init 20 5, cwd, labels := [] }
-  IO.FS.writeBinFile (System.FilePath.mk f.env.dir / s!"{name}.ckpt")
-      (ByteArray.mk (save ck).toArray)
+  IO.FS.writeBinFile (System.FilePath.mk f.env.dir / s!"{name}.ckpt") (saveBytes ck)
 
 private def Fixture.importText (f : Fixture) (text : String) : IO (UInt32 × String × String) := do
   match Linger.Tools.Resurrect.parseSave (f.root / "home").toString text with
@@ -243,7 +237,7 @@ private def catalogControls (f : Fixture) : IO Bool := do
   f.catalogSave path text
   let (rc, out, err) ← f.cli #["tmux", "ls", "--porcelain", path.toString]
   let (humanRc, human, humanErr) ← f.cli #["tmux", "ls", path.toString]
-  let printable := fun c : Char => 32 ≤ c.toNat && (c.toNat < 127 || 160 ≤ c.toNat)
+  let printable := fun c => Linger.Core.Render.textChar c == c
   return rc == 0 && err.isEmpty && (← f.catalogMatches path out) && humanRc == 0 &&
       humanErr.isEmpty &&
       human.toList.all (fun c => c == '\n' || printable c) &&
@@ -561,7 +555,7 @@ private def resumableCwd (f : Fixture) : IO Bool := do
       waitFor 5000
           (do
             let some bytes ← readBytes checkpoint | return false
-            return (load bytes.toList).any (·.cwd == changed.toString)) do
+            return (loadBytes bytes).any (·.cwd == changed.toString)) do
     throw (IO.userError "last detach did not checkpoint the changed cwd")
   try
     Linger.Posix.kill daemon.toUInt32 9

@@ -13,9 +13,15 @@ exit code is the count of failures. Run via `./lake exe lingertest`.
 
 open Linger.Posix
 
-def check (name : String) (cond : Bool) : IO Nat := do
+/-- The checks that have printed `FAIL` in this run. -/
+private initialize failed : IO.Ref Nat ←
+  IO.mkRef 0
+
+/-- One check: print its `PASS` or `FAIL` line, counting a `FAIL` in `failed`. -/
+def check (name : String) (cond : Bool) : IO Unit := do
   IO.println s!"{if cond then "PASS" else "FAIL"} {name}"
-  return if cond then 0 else 1
+  unless cond do
+    failed.modify (· + 1)
 
 def throws {α : Type} (action : IO α) : IO Bool := do
   try
@@ -56,17 +62,14 @@ def reap (pid : UInt32) : IO Int64 := do
       IO.sleep 20
   return status
 
-def testPtyEcho : IO Nat := do
+def testPtyEcho : IO Unit := do
   let (pid, master) ← spawnPty 80 24 "" "sh" #["-c", "echo hi-from-pty"] #["ZT=1"]
   let out ← drain master ((← monotonicMs) + 5000) .empty
   Linger.Posix.close master
-  let mut fails := 0
-  fails :=
-    fails + (← check "pty spawn+echo roundtrip" ((String.fromUTF8! out).contains "hi-from-pty"))
-  fails := fails + (← check "child reaped with status 0" ((← reap pid) == 0))
-  return fails
+  check "pty spawn+echo roundtrip" ((String.fromUTF8! out).contains "hi-from-pty")
+  check "child reaped with status 0" ((← reap pid) == 0)
 
-def testPtyEnvAndInput : IO Nat := do
+def testPtyEnvAndInput : IO Unit := do
   -- the shell must see the extra env, and input written to the master
   -- must reach its stdin
   let (pid, master) ← spawnPty 80 24 "/" "sh" #[] #["LINGERTEST=marker42"]
@@ -74,44 +77,40 @@ def testPtyEnvAndInput : IO Nat := do
   let out ← drain master ((← monotonicMs) + 5000) .empty
   Linger.Posix.close master
   let txt := String.fromUTF8! out
-  let mut fails := 0
-  fails := fails + (← check "extra env visible in child" (txt.contains "marker42"))
-  fails := fails + (← check "cwd honored" (txt.contains "\n/\r"))
-  fails := fails + (← check "shell exited cleanly" ((← reap pid) == 0))
-  return fails
+  check "extra env visible in child" (txt.contains "marker42")
+  check "cwd honored" (txt.contains "\n/\r")
+  check "shell exited cleanly" ((← reap pid) == 0)
 
-def testUnixSocket : IO Nat := do
+def testUnixSocket : IO Unit := do
   let dir ← IO.FS.createTempDir
   let path := s!"{dir}/t.sock"
   let lfd ← unixListen path
   setNonblock lfd
-  let mut fails := 0
   -- nothing pending yet
-  fails := fails + (← check "accept on idle socket returns -1" ((← accept lfd) == -1))
+  check "accept on idle socket returns -1" ((← accept lfd) == -1)
   -- connect and pass bytes both ways
   let cfd := (← unixConnect path).toUInt64.toUInt32
   let revs ← poll #[lfd] #[POLLIN] 2000
-  fails := fails + (← check "listen fd readable after connect" (revs[0]! &&& POLLIN != 0))
+  check "listen fd readable after connect" (revs[0]! &&& POLLIN != 0)
   let afd := (← accept lfd).toUInt64.toUInt32
   let _ ← write cfd "ping".toUTF8 0
   let revs2 ← poll #[afd] #[POLLIN] 2000
-  fails := fails + (← check "accepted fd readable" (revs2[0]! &&& POLLIN != 0))
+  check "accepted fd readable" (revs2[0]! &&& POLLIN != 0)
   let got := (← read afd 100).getD .empty
-  fails := fails + (← check "bytes cross the socket" (String.fromUTF8! got == "ping"))
+  check "bytes cross the socket" (String.fromUTF8! got == "ping")
   -- peer-gone detection: close client, write from server side
   Linger.Posix.close cfd
   let w1 ← write afd "x".toUTF8 0
   let w2 ← write afd "x".toUTF8 0
-  fails := fails + (← check "write to dead peer yields -1 (not a crash)" (w1 == -1 || w2 == -1))
+  check "write to dead peer yields -1 (not a crash)" (w1 == -1 || w2 == -1)
   Linger.Posix.close afd
   Linger.Posix.close lfd
   IO.FS.removeDirAll dir
   -- connect to a nonexistent path: -ENOENT, not an exception
   let r ← unixConnect s!"{dir}/absent.sock"
-  fails := fails + (← check "connect to absent socket is negative errno" (r < 0))
-  return fails
+  check "connect to absent socket is negative errno" (r < 0)
 
-def testWinsize : IO Nat := do
+def testWinsize : IO Unit := do
   let (pid, master) ← spawnPty 121 43 "" "sh" #["-c", "stty size; exit"] #[]
   let out ← drain master ((← monotonicMs) + 5000) .empty
   Linger.Posix.close master
@@ -123,23 +122,20 @@ def testWinsize : IO Nat := do
 "any child" selectors, and a wait status must only be read for a completed
 requested child. Without this boundary, `waitpid(0, …, WNOHANG)` can report
 another child of this process group and its status is inspected uninitialized. -/
-def testProcessSelectors : IO Nat := do
-  let mut fails := 0
-  fails := fails + (← check "kill rejects pid 0" (← throws (kill 0 15)))
-  fails := fails + (← check "alive rejects pid 0" (← throws (alive 0)))
-  fails := fails + (← check "waitpidNohang rejects pid 0" (← throws (waitpidNohang 0)))
+def testProcessSelectors : IO Unit := do
+  check "kill rejects pid 0" (← throws (kill 0 15))
+  check "alive rejects pid 0" (← throws (alive 0))
+  check "waitpidNohang rejects pid 0" (← throws (waitpidNohang 0))
   -- Out-of-range for `pid_t`: these become negative selectors after the cast.
   let overflow : UInt32 := 0x80000000
-  fails := fails + (← check "kill rejects out-of-range pid" (← throws (kill overflow 15)))
-  fails := fails + (← check "alive rejects out-of-range pid" (← throws (alive overflow)))
-  fails :=
-    fails + (← check "waitpidNohang rejects out-of-range pid" (← throws (waitpidNohang overflow)))
+  check "kill rejects out-of-range pid" (← throws (kill overflow 15))
+  check "alive rejects out-of-range pid" (← throws (alive overflow))
+  check "waitpidNohang rejects out-of-range pid" (← throws (waitpidNohang overflow))
   -- A live child of our own is still answered normally.
   let (pid, master) ← spawnPty 80 24 "" "sh" #["-c", "exit 3"] #[]
   let _ ← drain master ((← monotonicMs) + 5000) .empty
   Linger.Posix.close master
-  fails := fails + (← check "waitpidNohang reports a real child's status" ((← reap pid) == 3))
-  return fails
+  check "waitpidNohang reports a real child's status" ((← reap pid) == 3)
 
 /-- A zero-length read is not EOF: `read(fd, buf, 0)` returns 0 without testing
 for end of file, and `none` publicly means EOF.
@@ -150,29 +146,19 @@ used to precede this proved nothing — `read 999999 0` satisfies it identically
 is pinned is the Lean guard. The shim carries the same refusal, but `readRaw` is
 `private opaque` with no caller but the guarded wrapper, so that branch is
 defence-in-depth against a future caller and no test can reach it today. -/
-def testZeroLengthRead : IO Nat := do
+def testZeroLengthRead : IO Unit := do
   check "read of 0 bytes is refused, not reported as EOF" (← throws (read stdinFd 0))
 
 /-- Child-side spawn failures must reach the parent. A missing program and a
 malformed environment entry are both setup failures the caller has to see. -/
-def testSpawnFailures : IO Nat := do
-  let mut fails := 0
-  fails :=
-    fails +
-      (←
-        check "spawnPty reports a failed exec"
-            (← throws (spawnPty 80 24 "" "linger-no-such-program-42" #[] #[])))
-  fails :=
-    fails +
-      (←
-        check "spawnPty rejects a malformed environment entry"
-            (← throws (spawnPty 80 24 "" "sh" #["-c", "exit 0"] #["NOEQUALS"])))
+def testSpawnFailures : IO Unit := do
+  check "spawnPty reports a failed exec"
+      (← throws (spawnPty 80 24 "" "linger-no-such-program-42" #[] #[]))
+  check "spawnPty rejects a malformed environment entry"
+      (← throws (spawnPty 80 24 "" "sh" #["-c", "exit 0"] #["NOEQUALS"]))
   let dir ← IO.FS.createTempDir
-  fails :=
-    fails +
-      (←
-        check "spawnDetached reports a failed exec"
-            (← throws (spawnDetached "linger-no-such-program-42" #[] s!"{dir}/log")))
+  check "spawnDetached reports a failed exec"
+      (← throws (spawnDetached "linger-no-such-program-42" #[] s!"{dir}/log"))
   -- `execvp`'s ENOEXEC fallback: an executable file that is not an executable image
   -- (no shebang) is handed to the shell. The rewrite from `execvp` to `execve` dropped
   -- it, silently narrowing `linger attach <name> <cmd>` for exactly those files, and
@@ -191,9 +177,8 @@ def testSpawnFailures : IO Nat := do
       pure ((String.fromUTF8! out).contains "shebangless-ran")
     catch _ =>
       pure false
-  fails := fails + (← check "a shebang-less executable still runs (execvp's ENOEXEC fallback)" ran)
+  check "a shebang-less executable still runs (execvp's ENOEXEC fallback)" ran
   IO.FS.removeDirAll dir
-  return fails
 
 /-- Capture an exited child or its spawn error, cleaning up even when a check fails. -/
 def ptyResult (cwd prog : String) (args extraEnv : Array String := #[]) (cols : UInt32 := 80)
@@ -228,7 +213,7 @@ def sameError (direct searched : Except String (String × Int64)) : Bool :=
   | .error a, .error b => a == b
   | _, _ => false
 
-def testPtyPath : IO Nat :=
+def testPtyPath : IO Unit :=
   IO.FS.withTempDir fun dir => do
     let first := dir / "first"
     let second := dir / "second"
@@ -239,82 +224,42 @@ def testPtyPath : IO Nat :=
         (dir / "local-only", "local"), (first / "remote-only", "remote")] do
       IO.FS.writeFile path s!"#!/bin/sh\necho {text}\n"
       chmod path.toString 0o755
-    let mut fails := 0
     let run := fun prog path => ptyResult dir.toString prog #[] #[s!"PATH={path}"]
-    fails :=
-      fails +
-        (←
-          check "PATH order takes precedence over cwd"
-              (resultIs (← run "pick" s!"{first}:{second}") "first"))
-    fails :=
-      fails +
-        (←
-          check "PATH excludes a command present only in cwd"
-              (resultFailed (← run "local-only" first.toString)))
-    fails :=
-      fails +
-        (←
-          check "a trailing empty PATH component includes cwd"
-              (resultIs (← run "local-only" s!"{first}:") "local"))
-    fails :=
-      fails + (← check "an empty PATH includes cwd" (resultIs (← run "local-only" "") "local"))
-    fails :=
-      fails +
-        (←
-          check "a slash-qualified command bypasses PATH"
-              (resultIs (← run "./pick" first.toString) "cwd"))
+    check "PATH order takes precedence over cwd"
+        (resultIs (← run "pick" s!"{first}:{second}") "first")
+    check "PATH excludes a command present only in cwd"
+        (resultFailed (← run "local-only" first.toString))
+    check "a trailing empty PATH component includes cwd"
+        (resultIs (← run "local-only" s!"{first}:") "local")
+    check "an empty PATH includes cwd" (resultIs (← run "local-only" "") "local")
+    check "a slash-qualified command bypasses PATH" (resultIs (← run "./pick" first.toString) "cwd")
     IO.FS.writeFile (dir / "not-a-directory") ""
-    fails :=
-      fails +
-        (←
-          check "PATH skips a nondirectory component"
-              (resultIs (← run "remote-only" s!"{dir}/not-a-directory:{first}") "remote"))
+    check "PATH skips a nondirectory component"
+        (resultIs (← run "remote-only" s!"{dir}/not-a-directory:{first}") "remote")
     let denied := first / "denied"
     IO.FS.writeFile denied "#!/bin/sh\nexit 0\n"
     chmod denied.toString 0o600
-    fails :=
-      fails +
-        (←
-          check "PATH preserves permission denied ahead of a later miss"
-              (sameError (← run denied.toString first.toString)
-                (← run "denied" s!"{first}:{second}")))
+    check "PATH preserves permission denied ahead of a later miss"
+        (sameError (← run denied.toString first.toString) (← run "denied" s!"{first}:{second}"))
     let _ ← IO.Process.run { cmd := "ln", args := #["-s", "loop", (dir / "loop").toString] }
-    fails :=
-      fails +
-        (←
-          check "PATH stops at a fatal lookup error"
-              (sameError (← run s!"{dir}/loop/remote-only" first.toString)
-                (← run "remote-only" s!"{dir}/loop:{first}")))
+    check "PATH stops at a fatal lookup error"
+        (sameError (← run s!"{dir}/loop/remote-only" first.toString)
+          (← run "remote-only" s!"{dir}/loop:{first}"))
     let tooLong := String.ofList (List.replicate 4096 'x')
-    fails :=
-      fails +
-        (←
-          check "PATH skips a component exceeding its scratch buffer"
-              (resultIs (← run "remote-only" s!"{tooLong}:{first}") "remote"))
-    fails :=
-      fails +
-        (←
-          check "an empty program is missing rather than a PATH directory"
-              (sameError (← run s!"{dir}/missing" first.toString) (← run "" first.toString)))
+    check "PATH skips a component exceeding its scratch buffer"
+        (resultIs (← run "remote-only" s!"{tooLong}:{first}") "remote")
+    check "an empty program is missing rather than a PATH directory"
+        (sameError (← run s!"{dir}/missing" first.toString) (← run "" first.toString))
     let script := first / "plain"
     IO.FS.writeFile script "printf 'path:%s:%s\\n' \"$1\" \"$LINGERTEST\"\n"
     chmod script.toString 0o755
-    fails :=
-      fails +
-        (←
-          check "PATH shell fallback preserves arguments and environment"
-              (resultIs
-                (←
-                  ptyResult dir.toString "plain" #["two words"]
-                      #[s!"PATH={first}", "LINGERTEST=child"])
-                "path:two words:child"))
-    fails :=
-      fails +
-        (←
-          check "a vanished cwd falls back to the child's HOME"
-              (resultIs (← ptyResult s!"{dir}/gone" "/bin/sh" #["-c", "pwd"] #[s!"HOME={first}"])
-                (← IO.FS.realPath first).toString))
-    return fails
+    check "PATH shell fallback preserves arguments and environment"
+        (resultIs
+          (← ptyResult dir.toString "plain" #["two words"] #[s!"PATH={first}", "LINGERTEST=child"])
+          "path:two words:child")
+    check "a vanished cwd falls back to the child's HOME"
+        (resultIs (← ptyResult s!"{dir}/gone" "/bin/sh" #["-c", "pwd"] #[s!"HOME={first}"])
+          (← IO.FS.realPath first).toString)
 
 /-- Run in a disposable process: closing stdio must not clobber the spawn report. -/
 def closedStdioProbe (kind logPath : String) : IO UInt32 := do
@@ -338,11 +283,10 @@ def closedStdioProbe (kind logPath : String) : IO UInt32 := do
     closed := (← throws (setNonblock fd)) && closed
   return if passed && closed then 0 else 1
 
-def testClosedStdio : IO Nat :=
+def testClosedStdio : IO Unit :=
   IO.FS.withTempDir fun dir => do
     let app := (← IO.appPath).toString
     let logPath := (dir / "detached.log").toString
-    let mut fails := 0
     for kind in #["pty-error", "pty-ok", "detached-error", "detached-ok"] do
       let child ←
         IO.Process.output { cmd := app, args := #["--closed-stdio", kind, logPath], setsid := true }
@@ -358,12 +302,11 @@ def testClosedStdio : IO Nat :=
           unless logged do
             IO.sleep 20
         passed := passed && logged
-      fails := fails + (← check s!"spawn with closed stdio: {kind}" passed)
-    return fails
+      check s!"spawn with closed stdio: {kind}" passed
 
 /-- Preserve detached exec's PATH and text-script semantics when sharing the
 preallocated exec machinery with PTY spawning. -/
-def testDetachedPath : IO Nat :=
+def testDetachedPath : IO Unit :=
   IO.FS.withTempDir fun dir => do
     let bin := dir / "bin"
     IO.FS.createDir bin
@@ -391,104 +334,72 @@ def testDetachedPath : IO Nat :=
 /-- POSIX strings cannot contain NUL: truncating one can name a different
 resource or execute different arguments. Each fixture has a valid prefix so a
 missing guard succeeds instead of accidentally passing on an unrelated error. -/
-def testCStringInputs : IO Nat :=
+def testCStringInputs : IO Unit :=
   IO.FS.withTempDir fun dir => do
     let nul := String.singleton (Char.ofNat 0)
     let suffix := nul ++ "suffix"
-    let mut fails := 0
     for (kind, cwd, prog, args, env) in
       #[("cwd", dir.toString ++ suffix, "/bin/sh", #["-c", "exit 0"], #[]),
         ("program", "", "/bin/sh" ++ suffix, #["-c", "exit 0"], #[]),
         ("argument", "", "/bin/sh", #["-c", "exit 0" ++ suffix], #[]),
         ("environment", "", "/bin/sh", #["-c", "exit 0"], #["A=ok" ++ suffix])] do
-      fails :=
-        fails +
+      check s!"spawnPty rejects NUL in {kind}" (resultFailed (← ptyResult cwd prog args env))
+    check "spawnPty rejects an empty environment key"
+        (resultFailed (← ptyResult "" "/bin/sh" #["-c", "exit 0"] #["=value"]))
+    check "empty arguments, empty env values and UTF-8 survive exec"
+        (resultIs
           (←
-            check s!"spawnPty rejects NUL in {kind}" (resultFailed (← ptyResult cwd prog args env)))
-    fails :=
-      fails +
-        (←
-          check "spawnPty rejects an empty environment key"
-              (resultFailed (← ptyResult "" "/bin/sh" #["-c", "exit 0"] #["=value"])))
-    fails :=
-      fails +
-        (←
-          check "empty arguments, empty env values and UTF-8 survive exec"
-              (resultIs
-                (←
-                  ptyResult "" "/bin/sh"
-                      #["-c", "printf '<%s><%s><%s>\\n' \"$1\" \"$2\" \"$EMPTY\"", "fixture", "",
-                        "héλ"]
-                      #["EMPTY="])
-                "<><héλ><>"))
+            ptyResult "" "/bin/sh"
+                #["-c", "printf '<%s><%s><%s>\\n' \"$1\" \"$2\" \"$EMPTY\"", "fixture", "", "héλ"]
+                #["EMPTY="])
+          "<><héλ><>")
     let socket := (dir / "socket").toString
-    fails :=
-      fails +
+    check "unixListen rejects a NUL path"
         (←
-          check "unixListen rejects a NUL path"
-              (←
-                throws do
-                    let fd ← unixListen (socket ++ suffix)
-                    Linger.Posix.close fd))
+          throws do
+              let fd ← unixListen (socket ++ suffix)
+              Linger.Posix.close fd)
     -- The broken listen above creates its valid prefix; give the connect fixture
     -- its own live socket so it cannot pass merely because a socket is absent.
     let socket2 := (dir / "connect").toString
     let lfd ← unixListen socket2
     try
-      fails :=
-        fails +
+      check "unixConnect rejects a NUL path"
           (←
-            check "unixConnect rejects a NUL path"
-                (←
-                  throws do
-                      let fd ← unixConnect (socket2 ++ suffix)
-                      if fd ≥ 0 then
-                        Linger.Posix.close fd.toUInt64.toUInt32))
+            throws do
+                let fd ← unixConnect (socket2 ++ suffix)
+                if fd ≥ 0 then
+                  Linger.Posix.close fd.toUInt64.toUInt32)
     finally
       Linger.Posix.close lfd
-    fails :=
-      fails +
+    check "flock rejects a NUL path"
         (←
-          check "flock rejects a NUL path"
-              (←
-                throws do
-                    let fd ← flock ((dir / "lock").toString ++ suffix)
-                    if fd ≥ 0 then
-                      Linger.Posix.close fd.toUInt64.toUInt32))
+          throws do
+              let fd ← flock ((dir / "lock").toString ++ suffix)
+              if fd ≥ 0 then
+                Linger.Posix.close fd.toUInt64.toUInt32)
     let file := (dir / "mode").toString
     IO.FS.writeFile file ""
-    fails := fails + (← check "chmod rejects a NUL path" (← throws (chmod (file ++ suffix) 0o600)))
+    check "chmod rejects a NUL path" (← throws (chmod (file ++ suffix) 0o600))
     for (kind, prog, args, logPath) in
       #[("program", "/bin/sh" ++ suffix, #["-c", "exit 0"], ""),
         ("argument", "/bin/sh", #["-c", "exit 0" ++ suffix], ""),
         ("log path", "/bin/sh", #["-c", "exit 0"], (dir / "log").toString ++ suffix)] do
-      fails :=
-        fails +
-          (←
-            check s!"spawnDetached rejects NUL in {kind}"
-                (← throws (spawnDetached prog args logPath)))
-    return fails
+      check s!"spawnDetached rejects NUL in {kind}" (← throws (spawnDetached prog args logPath))
 
 /-- The public UInt32 dimensions must fit the kernel's unsigned-short fields
 without wrapping. Zero retains POSIX's unspecified-size meaning. -/
-def testWinsizeBounds : IO Nat := do
-  let mut fails := 0
+def testWinsizeBounds : IO Unit := do
   for (label, cols, rows) in #[("columns", 65536, 24), ("rows", 80, 65536)] do
-    fails :=
-      fails +
-        (←
-          check s!"spawnPty rejects overflowing {label}"
-              (resultFailed (← ptyResult "" "/bin/sh" #["-c", "exit 0"] #[] cols rows)))
+    check s!"spawnPty rejects overflowing {label}"
+        (resultFailed (← ptyResult "" "/bin/sh" #["-c", "exit 0"] #[] cols rows))
   let (pid, master) ← spawnPty 80 24 "" "/bin/cat" #[] #[]
   try
     for (label, cols, rows) in #[("columns", 65536, 24), ("rows", 80, 65536)] do
       winsizeSet master 80 24
       let refused ← throws (winsizeSet master cols rows)
-      fails :=
-        fails +
-          (←
-            check s!"winsizeSet rejects overflowing {label} without changing the tty"
-                (refused && (← winsizeGet master) == (80, 24)))
+      check s!"winsizeSet rejects overflowing {label} without changing the tty"
+          (refused && (← winsizeGet master) == (80, 24))
     let preserved ←
       orFalse do
           winsizeSet master 0 0
@@ -496,20 +407,18 @@ def testWinsizeBounds : IO Nat := do
           winsizeSet master 65535 65535
           let largest ← winsizeGet master
           return zero == (0, 0) && largest == (65535, 65535)
-    fails :=
-      fails + (← check "winsizeSet preserves zero and the largest representable size" preserved)
+    check "winsizeSet preserves zero and the largest representable size" preserved
   finally
     kill pid 9
     Linger.Posix.close master
     let _ ← reap pid
-  return fails
 
 /-- `getcwdOf` feeds the checkpoint's `cwd`, which a resume hands to `chdir`, so a
 path it cannot report in full has to come back empty rather than cut: a truncated
 path names a different directory, or none. The child walks past `PATH_MAX`
 relatively with physical `cd`: a shell's logical `cd` may rebuild an absolute
 path and reject it before the child reaches the length under test. -/
-def testDeepCwd : IO Nat := do
+def testDeepCwd : IO Unit := do
   let seg := String.ofList (List.replicate 49 'd')
   let dir ← IO.FS.createTempDir
   let deep :=
@@ -530,28 +439,27 @@ def testDeepCwd : IO Nat := do
   -- `removeDirAll` builds full paths, which this tree is too deep for; `rm -r`
   -- walks it with directory-relative openat.
   let _ ← IO.Process.run { cmd := "rm", args := #["-r", dir.toString] }
-  let mut fails ← check "child walked past PATH_MAX" walked
-  fails := fails + (← check "getcwdOf reports a usable directory or nothing" usable)
-  return fails
+  check "child walked past PATH_MAX" walked
+  check "getcwdOf reports a usable directory or nothing" usable
 
 def main (args : List String) : IO UInt32 := do
   if let ["--closed-stdio", kind, logPath] := args then
     return ← closedStdioProbe kind logPath
   if let ["--detached-path-child", logPath] := args then
     return if (← throws (spawnDetached "detached-plain" #["two words", ""] logPath)) then 1 else 0
-  let mut fails := 0
-  fails := fails + (← testPtyEcho)
-  fails := fails + (← testPtyEnvAndInput)
-  fails := fails + (← testUnixSocket)
-  fails := fails + (← testWinsize)
-  fails := fails + (← testProcessSelectors)
-  fails := fails + (← testZeroLengthRead)
-  fails := fails + (← testSpawnFailures)
-  fails := fails + (← testPtyPath)
-  fails := fails + (← testClosedStdio)
-  fails := fails + (← testDetachedPath)
-  fails := fails + (← testCStringInputs)
-  fails := fails + (← testWinsizeBounds)
-  fails := fails + (← testDeepCwd)
-  IO.println (if fails == 0 then "ALL PASS" else s!"{fails} FAILURES")
-  return fails.toUInt32
+  testPtyEcho
+  testPtyEnvAndInput
+  testUnixSocket
+  testWinsize
+  testProcessSelectors
+  testZeroLengthRead
+  testSpawnFailures
+  testPtyPath
+  testClosedStdio
+  testDetachedPath
+  testCStringInputs
+  testWinsizeBounds
+  testDeepCwd
+  let n ← failed.get
+  IO.println (if n == 0 then "ALL PASS" else s!"{n} FAILURES")
+  return n.toUInt32

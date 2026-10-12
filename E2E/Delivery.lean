@@ -371,7 +371,6 @@ def serveTail (dir : String) : IO Unit := do
           env := #[("LINGER_DIR", some dir)]
           stdin := .null, stdout := .null, stderr := .inherit }
   let peer ← IO.mkRef (none : Option UInt32)
-  let reaped ← IO.mkRef false
   try
     if !(← waitFor 10000 (System.FilePath.pathExists s!"{dir}/tail.sock")) then
       throw (IO.userError "delivery server did not create its socket")
@@ -407,16 +406,12 @@ def serveTail (dir : String) : IO Unit := do
         (got.exits == [(expected.size, 7)] && got.eof && !got.decoder.errored &&
           got.decoder.buf.isEmpty)
         "delivery/serve/status-then-eof"
-    let status ← waitProcess server 5000
-    reaped.set status.isSome
+    let status ← waitOrKill server 5000
     expect (status == some 0) "delivery/serve/process-drained"
   finally
     if let some fd := ← peer.get then
       close fd
-    if !(← reaped.get) then
-      if (← server.tryWait).isNone then
-        server.kill
-        let _ ← server.wait
+    reapOrKill server 0
     IO.FS.removeDirAll dir
 
 /-- A retained transport is already logically closed. Exercise both decoded

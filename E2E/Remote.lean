@@ -178,9 +178,7 @@ def discoveryChecks (e : Env) : IO Unit := do
           [("name", "local"), ("name", s!"{goodName}@first"), ("name", s!"{goodName}@second")])
         "SSH queries overlap and retain host order despite reversed completion"
   finally
-    if (← server.tryWait).isNone then
-      server.kill
-      discard server.wait
+    reapOrKill server 0
   let (state, root, path) ← discoverySetup e "deadline"
   let limit := Linger.Runtime.Cli.remoteQueryLimit
   let hosts := (List.range (limit + 1)).map (fun i => s!"stall-{i}")
@@ -405,10 +403,7 @@ def run : IO UInt32 :=
           input.write payload
           input.flush
           pure child
-      let senderRc ← waitProcess sender 3000
-      if senderRc.isNone then
-        sender.kill
-        discard sender.wait
+      let senderRc ← waitOrKill sender 3000
       expect (senderRc == some 0 && (← IO.FS.readBinFile remoteStdin).toList == payload.toList)
           "remote send stdin is byte-exact, including NUL and invalid UTF-8"
       for args in

@@ -34,7 +34,7 @@ def checkpointChecks (e : Env) : IO Unit := do
   let vt :=
     (Linger.Core.Vt.Vt.init 40 4).feedBytes
       "older\r\nhistory\r\nfirst\r\nsecond\r\nthird\r\nsaved-screen-at-the-right\x1b]2;editor\x07".toUTF8
-  let bytes := ByteArray.mk (Linger.Core.Checkpoint.save ⟨vt, "/tmp", [("saved", "yes")]⟩).toArray
+  let bytes := Linger.Core.Checkpoint.saveBytes ⟨vt, "/tmp", [("saved", "yes")]⟩
   let path := s!"{e.dir}/saved.ckpt"
   IO.FS.writeBinFile path bytes
   let viewer ← e.spawn #["attach", "--read-only", "saved"] 40 4
@@ -210,8 +210,7 @@ def run : IO UInt32 :=
     -- With guard A intact `sizeOwner` is none and controlResize applies; with A
     -- removed the watcher owns the size and this returns 1 with "owns the size".
     real.bye
-    let _ ← waitFor 4000 (return (← e.info "w" "clients") == some "1")
-    expect ((← e.info "w" "clients") == some "1") "only the watcher is left"
+    expect (← waitFor 4000 (return (← e.info "w" "clients") == some "1")) "only the watcher is left"
     let (rzc, _, _) ← e.cli #["resize", "w", "90", "25"]
     expect (rzc == 0 && (← e.info "w" "cols") == some "90")
         "a watcher does not own the size, so `linger resize` applies"
@@ -249,14 +248,13 @@ def run : IO UInt32 :=
     -- Read-only attach clears `wants-you`. The status suite only ever exercised that
     -- through `attach`. Compared as a `Status`, not a string literal.
     let _ ← e.cli #["send", "w", "echo unread-marker\n"]
-    let _ ← waitFor 4000 (return (← e.status "w") == Status.wantsYou)
-    expect ((← e.status "w") == Status.wantsYou) "output with nobody watching reads wants-you"
+    expect (← waitFor 4000 (return (← e.status "w") == Status.wantsYou))
+        "output with nobody watching reads wants-you"
     let obs2 ← e.spawn #["attach", "--read-only", "w"] 80 24
     let _ ← waitFor 4000 (return (← e.info "w" "clients") == some "1")
     let _ ← drain obs2.fd 500
     obs2.bye
-    let _ ← waitFor 4000 (return (← e.status "w") != Status.wantsYou)
-    expect ((← e.status "w") != Status.wantsYou)
+    expect (← waitFor 4000 (return (← e.status "w") != Status.wantsYou))
         "watching marks the session seen (a read-only verb that writes)"
     let _ ← e.cli #["run", "watch-lost", "sleep", "600"]
     let lost ← e.spawn #["attach", "--read-only", "watch-lost"] 80 24

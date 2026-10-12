@@ -47,11 +47,10 @@ def suites : List (String × IO UInt32) :=
 
 def main (args : List String) : IO UInt32 := do
   match args with
-  -- Not a suite: the child `E2E.Terminal` runs under its own session's pty. The
-  -- Python suite re-entered itself the same way, because the terminal query has to
-  -- be written to the session's OWN tty and read back from it — nothing on this
-  -- side of the pty can do either. Four argv elements, so it can never collide
-  -- with a one-element suite name.
+  -- Not a suite: the child `E2E.Terminal` runs under its own session's pty, because
+  -- the terminal query has to be written to the session's OWN tty and read back from
+  -- it — nothing on this side of the pty can do either. Four argv elements, so it can
+  -- never collide with a one-element suite name.
   | ["--probe", result, ready, trigger] =>
     E2E.Terminal.probe result ready trigger
   | ["--winsize-probe", result] =>

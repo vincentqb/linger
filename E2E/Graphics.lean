@@ -27,7 +27,7 @@ images with no other test noticing.
 
 BYTES, AND WHERE THEY COME FROM. The framing is the implementation's: ST is
 `Render.escSeq Terminal.STFinal`, and the two introducers are `Render.escSeq` of
-the finals `Vt.escFinal` routes into the payload-free `.str` state. The payload
+the finals `Vt.stepEsc` routes into the payload-free `.str` state. The payload
 bodies cannot be derived from anything — nothing in this repo emits kitty or sixel,
 by design, since the emulator's whole job here is to skip them — so they stay
 literals, which makes them fixture data rather than a stale copy of an emitter. -/
@@ -73,7 +73,7 @@ def winchCount (path : System.FilePath) : IO Nat := do
 def run : IO UInt32 :=
   Env.suite "gfx" fun e => do
     let c ← e.spawn #["attach", "gfx"] 80 24
-    IO.sleep 800
+    let _ ← waitFor 4000 (return (← e.info "gfx" "clients") == some "1")
     let _ ← drain c.fd 400
     -- 1+2. both protocols arrive verbatim at the attached client
     c.type (kittyCmd ++ "\r")
@@ -124,11 +124,13 @@ def run : IO UInt32 :=
     -- runs the handler — measured, it caught zero signals. POSIX `wait` IS
     -- interrupted by a trapped signal, so the sleep goes in the background and the
     -- shell blocks in `wait`: that catches every WINCH.
-    let reporter := s!"trap 'printf W >> {wlog.toString}' WINCH; while :; do sleep 1 & wait; done\r"
+    let armed := s!"{wlog}.armed"
+    let reporter :=
+      s!"trap 'printf W >> {wlog.toString}' WINCH; : > {armed}; while :; do sleep 1 & wait; done\r"
     let w1 ← e.spawn #["attach", "winch"] 80 24
-    IO.sleep 1200
+    let _ ← waitFor 4000 (return (← e.info "winch" "clients") == some "1")
     w1.type reporter
-    IO.sleep 1000
+    let _ ← waitFor 4000 (System.FilePath.pathExists armed)
     let _ ← drain w1.fd 400
     let base ← winchCount wlog
     w1.bye
@@ -139,10 +141,9 @@ def run : IO UInt32 :=
     expect (same == base) "same-size reattach delivers no SIGWINCH (no redraw)"
     w2.bye
     let w3 ← e.spawn #["attach", "winch"] 100 30
-    let _ ← waitFor 5000 (return (← winchCount wlog) > same)
     let _ ← drain w3.fd 400
-    let grown ← winchCount wlog
-    expect (grown > same) "reattach at a new size nudges the program (SIGWINCH)"
+    expect (← waitFor 5000 (return (← winchCount wlog) > same))
+        "reattach at a new size nudges the program (SIGWINCH)"
     w3.bye
     e.killAll #["winch"]
 

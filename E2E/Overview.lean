@@ -57,7 +57,7 @@ def run : IO UInt32 :=
           recs.any (fun kv => kv.1 == "state" && kv.2 == "live"))
         "porcelain carries name/state (the remote-parse contract)"
     e.killAll #["alpha", "beta"]
-    IO.sleep 500
+    let _ ← waitFor 5000 (return (← e.out #["ls"]).toUTF8 == ByteArray.mk emptyLine.toArray)
     -- Invalid filenames are ignored rather than rewritten into selectable aliases.
     -- Control bytes must not reach the terminal, and no resumable row may appear.
     let hostile := "ev\x1b[31mil\tfake.ckpt"

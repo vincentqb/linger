@@ -20,8 +20,8 @@ THE PROBE IS THIS BINARY. `e2e --probe <result> <ready> <trigger>` is dispatched
 program. It has to run on the FAR side: the query leaves the session's own tty and
 the reply arrives there; nothing outside the pty can observe either. `E2E.Resume`
 reuses the same child-mode pattern for its winsize probe. The result file is
-`k<TAB>v` records read by the harness's own parser, and the reply is encoded and
-decoded by one pair of functions, so the two sides cannot drift.
+`k<TAB>v` records read by the harness's own parser, published by rename; the reply
+travels as raw bytes in `<result>.reply`, written before it.
 
 WHAT IS DERIVED, AND WHAT CANNOT BE:
 
@@ -56,7 +56,7 @@ def da1Query : List UInt8 := csiPlain 0x63
 /-- The hostile XTGETTCAP request's payload: `54` (a hex capability name) CR
 `;id>x` CR — the CRs are the injection primitive.
 
-linger writes query replies into the child's OWN input (`Session.onMsg .ptyOut →
+linger writes query replies into the child's OWN input (`Session.step .ptyOut →
 .writePty`), and the request is untrusted child output: a `cat` of a hostile file,
 an ssh stream, a log tail. A raw echo of a payload carrying a CR let that output
 run a command, because on a cooked-mode tty the CR commits the line. -/
@@ -83,34 +83,6 @@ capability is answered negatively with the requested name echoed back, filtered 
 the legal alphabet — so this value is `ESC P 0 + r 5 4 ; d ESC \`, and the dropped
 bytes are precisely the CRs. -/
 def evilExpected : List UInt8 := xtgetcapReply evilPayload
-
-/-! ## The result file: bytes as hex, both directions -/
-
-def nibble (n : UInt8) : Char :=
-  if n < 10 then Char.ofNat (0x30 + n.toNat) else Char.ofNat (0x61 + n.toNat - 10)
-
-def toHex (bs : List UInt8) : String :=
-  bs.foldl (fun s b => (s.push (nibble (b / 16))).push (nibble (b % 16))) ""
-
-def unNibble (c : Char) : Option UInt8 :=
-  let n := c.toNat
-  if decide (0x30 ≤ n) && decide (n ≤ 0x39) then some (UInt8.ofNat (n - 0x30))
-  else
-    if decide (0x61 ≤ n) && decide (n ≤ 0x66) then some (UInt8.ofNat (n - 0x57))
-    else if decide (0x41 ≤ n) && decide (n ≤ 0x46) then some (UInt8.ofNat (n - 0x37)) else none
-
-/-- Hex pairs → bytes; `none` on a non-hex digit or an odd length, so a truncated
-result file reads as "no reply" rather than as a short one. -/
-def fromHexChars : List Char → Option (List UInt8)
-  | [] => some []
-  | [_] => none
-  | a :: b :: rest => do
-    let hi ← unNibble a
-    let lo ← unNibble b
-    let tl ← fromHexChars rest
-    return (hi * 16 + lo) :: tl
-
-def fromHex (s : String) : Option (List UInt8) := fromHexChars s.toList
 
 /-- The first `$PATH` entry holding `name`. Existence rather than `X_OK` — the only
 caller is a "is fish installed at all" gate, and a non-executable file called
@@ -140,8 +112,7 @@ def probe (resultPath readyPath triggerPath : String) : IO UInt32 := do
     IO.FS.writeFile (System.FilePath.mk readyPath) "ready"
     unless (← waitFor 8000 (System.FilePath.pathExists triggerPath)) do
       throw (IO.userError "trigger timeout")
-    let hex ← IO.getEnv "PROBE_QUERY_HEX"
-    let query := (hex.bind fromHex).getD da1Query
+    let query := ((← IO.getEnv "PROBE_QUERY").map (·.toUTF8.toList)).getD da1Query
     writeAll stdoutFd (ByteArray.mk query.toArray)
     -- read until 2 s pass, or EOF, or ONE quiet interval after something arrived:
     -- the quiet interval is what would catch a DUPLICATE reply, which is the
@@ -162,20 +133,24 @@ def probe (resultPath readyPath triggerPath : String) : IO UInt32 := do
             reply := reply ++ bs.toList
       else if !reply.isEmpty then
         reading := false
-    -- one `k<TAB>v` record per fact; an ABSENT variable writes no record
-    let mut txt := s!"reply\t{toHex reply}\n"
+    -- the reply's exact bytes, then one `k<TAB>v` record per fact (an ABSENT variable
+    -- writes no record), published by rename so the parent never reads a partial file
+    IO.FS.writeBinFile s!"{resultPath}.reply" (ByteArray.mk reply.toArray)
+    let mut txt := ""
     for k in ["TERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"] do
       match ← IO.getEnv k with
       | some v =>
         txt := txt ++ s!"{k}\t{v}\n"
       | none =>
         pure ()
-    IO.FS.writeFile (System.FilePath.mk resultPath) txt
+    IO.FS.writeFile s!"{resultPath}.tmp" txt
+    IO.FS.rename s!"{resultPath}.tmp" resultPath
     writeAll stdoutFd "\r\nPROBE-DONE\r\n".toUTF8
     IO.sleep 250
     return 0
   catch err =>
-    IO.FS.writeFile (System.FilePath.mk resultPath) s!"error\t{err}\n"
+    IO.FS.writeFile s!"{resultPath}.tmp" s!"error\t{err}\n"
+    IO.FS.rename s!"{resultPath}.tmp" resultPath
     return 1
 
 /-! ## The parent side -/
@@ -193,7 +168,7 @@ structure Case where
 /-- One case: a session whose child IS the probe, `clients` presentation clients
 attached to it, and the query fired only once they are all in place. -/
 def runCase (e : Env) (index clients : Nat) (inheritedTerm : Option String)
-    (queryHex : Option String := none) : IO Case := do
+    (query : Option String := none) : IO Case := do
   let name := s!"term-{index}-{clients}"
   let caseDir := (System.FilePath.mk e.dir) / name
   IO.FS.createDirAll caseDir
@@ -207,8 +182,8 @@ def runCase (e : Env) (index clients : Nat) (inheritedTerm : Option String)
     e.procEnv ++
       #[("TERM_PROGRAM", some "inherited-program"), ("TERM_PROGRAM_VERSION", some "9.9.9"),
         ("TERM", inheritedTerm)]
-  if let some hex := queryHex then
-    env := env.push ("PROBE_QUERY_HEX", some hex)
+  if let some q := query then
+    env := env.push ("PROBE_QUERY", some q)
   -- `__daemon` directly rather than `attach`, because the child has to be the
   -- probe and not a shell; this is the argv `spawnDaemon` itself builds.
   let root ← IO.currentDir
@@ -241,10 +216,16 @@ def runCase (e : Env) (index clients : Nat) (inheritedTerm : Option String)
       for cl in cls do
         let o ← drain cl.fd 1200
         outs := outs ++ [o]
+      -- an error record comes without a reply file
+      let replyPath := s!"{result}.reply"
+      let reply ←
+        if ← System.FilePath.pathExists replyPath then
+          pure (← IO.FS.readBinFile replyPath).toList
+        else
+          pure []
       c :=
-        { reply := ((field "reply").bind fromHex).getD [], term := field "TERM",
-          termProgram := field "TERM_PROGRAM", termVersion := field "TERM_PROGRAM_VERSION",
-          clientOut := outs, err := field "error" }
+        { reply, term := field "TERM", termProgram := field "TERM_PROGRAM",
+          termVersion := field "TERM_PROGRAM_VERSION", clientOut := outs, err := field "error" }
       -- the daemon exits when its child does (`.childExited` → `.exit`), so this
       -- is a wait and not a kill
       if (← waitProcess daemon 5000).isNone then
@@ -293,7 +274,7 @@ def run : IO UInt32 :=
         "reply stream is roster-independent"
     -- XTGETTCAP reply injection: the reply must carry no line terminator. Payload:
     -- 54 (hex '5','4') CR ; i d > x CR — the CRs are the injection primitive.
-    let inj ← runCase e 9 0 none (some (toHex evilQuery))
+    let inj ← runCase e 9 0 none (String.fromUTF8? (ByteArray.mk evilQuery.toArray))
     let ir := inj.reply
     if let some err := inj.err then
       IO.eprintln s!"note: XTGETTCAP probe case: {err}"

@@ -198,9 +198,9 @@ def run : IO UInt32 :=
         (ByteArray.mk
           (Linger.Core.Checkpoint.magic ++ [80, 24] ++ List.replicate 198 (0xFF : UInt8)).toArray)
     let _ ← e.cli #["run", "corrupt", "echo fresh-start-ok"]
-    let _ ←
-      waitFor 4000 (return has (← e.out #["capture", "--history", "corrupt"]) "fresh-start-ok")
-    expect (has (← e.out #["capture", "--history", "corrupt"]) "fresh-start-ok")
+    expect
+        (←
+          waitFor 4000 (return has (← e.out #["capture", "--history", "corrupt"]) "fresh-start-ok"))
         "corrupt checkpoint: daemon starts fresh, no crash"
     e.killAll #["corrupt"]
     -- ── the resumed pty is born at the CHECKPOINT's size, not a fixed 80x24 ────
@@ -250,15 +250,11 @@ def run : IO UInt32 :=
     -- shell's prompt — clearing `dirty` — before this point in the test. Asserted
     -- rather than slept on: a silent miss here used to look like a save-report bug.
     saveFail.type "echo save-fail-dirty\n"
-    let seen ← IO.mkRef ""
-    let dirtied ←
-      waitFor 3000 do
-          let chunk ← drainStr saveFail.fd 200
-          seen.modify (· ++ chunk)
-          return has (← seen.get) "save-fail-dirty"
+    let seen ← IO.mkRef ByteArray.empty
+    let dirtied ← saveFail.awaitText seen (hasText · "save-fail-dirty") (ms := 3000)
     expect dirtied "session has unsaved output once the bad tmp path exists"
     saveFail.detach
-    IO.sleep 800
+    let _ ← waitFor 4000 (return (← e.info "save-fail" "clients") == some "0")
     saveFail.bye (sendDetach := false)
     let saveReported ←
       waitFor 5000
@@ -270,7 +266,6 @@ def run : IO UInt32 :=
         s!"checkpoint save failure is reported without killing the daemon (pid={savePid}, log='{saveLog}')"
     IO.FS.removeDirAll saveTmp
     e.killAll #["save-fail"]
-    IO.sleep 500
     -- Existing but unreadable recovery state is not equivalent to no checkpoint.
     let readPath := s!"{e.dir}/read-fail.ckpt"
     IO.FS.createDirAll readPath
@@ -282,12 +277,10 @@ def run : IO UInt32 :=
           !readSockets.contains "read-fail.sock")
         "checkpoint read failure is visible and does not start fresh"
     e.killAll #["read-fail"]
-    IO.sleep 300
     IO.FS.removeDirAll readPath
     -- Delete failure is observable in the daemon log instead of silently leaving
     -- recovery state behind.
     let _ ← e.cli #["run", "drop-fail", "sleep", "600"]
-    IO.sleep 800
     let dropPath := s!"{e.dir}/drop-fail.ckpt"
     try
       IO.FS.removeFile dropPath

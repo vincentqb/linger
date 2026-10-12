@@ -131,7 +131,7 @@ private def receive (c : Client) (seen : IO.Ref Receiver) (ms : Nat := 100) : IO
   seen.modify fun s => { vt := s.vt.feed bytes.toList, bytes := s.bytes ++ bytes }
 
 private def awaitOutput (c : Client) (seen : IO.Ref Receiver) (p : Receiver → Bool)
-    (ms : Nat := 4000) :
+    (ms : Nat := patienceMs) :
     IO Bool := waitFor ms do
     receive c seen
     return p (← seen.get)
@@ -157,7 +157,7 @@ private def attention (e : Env) (unread : Bool) : IO Bool := do
   let args := if unread then #["send", "title-other", "p"] else #["capture", "title-other"]
   let (code, _, _) ← e.cli args
   let settled ←
-    waitFor 4000 do
+    waitFor patienceMs do
         return (← e.status "title-other") == (if unread then Status.wantsYou else Status.idle)
   return code == 0 && settled
 

@@ -398,8 +398,7 @@ exit 0
         has err "child stdout" &&
         has err "permission denied: é path" &&
         err.endsWith "\n" &&
-        (err.dropEnd 1).toString.toList.all
-          (fun c => 32 ≤ c.toNat && (c.toNat < 127 || 160 ≤ c.toNat)) &&
+        (err.dropEnd 1).toString.toList.all (fun c => Linger.Core.Render.textChar c == c) &&
         (← IO.FS.readFile callsFile) == listCall ++ createCall ++ secondCall)
       "linger tmux import sanitizes both child streams and preserves a failed creation's cause"
   let (rc, err, calls) ← invoke panes "" "0" #["--restore-processes", save.toString]
@@ -422,8 +421,7 @@ exit 0
     let (rc, err, calls) ← invoke text "" "0" #[path]
     expect
         (rc == 1 && err.startsWith "linger tmux import: " && has err cause && err.endsWith "\n" &&
-          (err.dropEnd 1).toString.toList.all
-            (fun c => 32 ≤ c.toNat && (c.toNat < 127 || 160 ≤ c.toNat)) &&
+          (err.dropEnd 1).toString.toList.all (fun c => Linger.Core.Render.textChar c == c) &&
           calls.isEmpty)
         s!"linger tmux import renders {cause} errors without terminal controls"
   let regular := root / "regular-file"

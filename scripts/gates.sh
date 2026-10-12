@@ -1427,9 +1427,17 @@ grep -q 'workflow_dispatch' "$ci_yml" \
 # E2E fixed-sleep ratchet: a wait for something to appear polls its readiness
 # signal (`waitFor`, `Client.awaitText`); the sleeps left are negative-assertion
 # windows, fixture pacing, poll intervals and waits not yet converted.
-E2E_SLEEP_CAP=57
-es_n="$(code_count 'IO[.]sleep [0-9]' 'E2E/*')"
+E2E_SLEEP_CAP=34
+es_n="$(code_count 'IO[.]sleep([^[:alnum:]_]|$)' 'E2E/*')"
 [ "$es_n" -le "$E2E_SLEEP_CAP" ] \
   || fail "E2E fixed sleeps grew to $es_n (cap $E2E_SLEEP_CAP); poll a readiness signal with waitFor"
+# Fixed drain windows: drain/drainStr with a literal deadline read for that long
+# whatever arrives. Positive waits poll with Client.awaitText/awaitNeedle; the windows
+# left are negative assertions, discards, stream sync points and positive reads not
+# yet converted.
+E2E_DRAIN_CAP=64
+ed_n="$(code_count '(^|[^[:alnum:]_.])drain(Str)?[[:space:]]+[^[:space:]]+[[:space:]]+[0-9]' 'E2E/*')"
+[ "$ed_n" -le "$E2E_DRAIN_CAP" ] \
+  || fail "E2E fixed drain windows grew to $ed_n (cap $E2E_DRAIN_CAP); wait for a positive condition with awaitText"
 
 printf 'gates OK — purity, the OS and unsafe surfaces, the Vt friend set, the runtime ties, documentation contracts, and the ratchets\n'

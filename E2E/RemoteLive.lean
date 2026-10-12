@@ -55,9 +55,9 @@ def run : IO UInt32 := do
       let c ← e.spawnEnv #["SSH_AUTH_SOCK="] #["attach", s!"alpha@{host}"] 110 30
       IO.sleep 3000
       let _ ← drain c.fd 2000
-      c.type "echo REMOTE-HOST-$(hostname)\r"
+      c.type "echo REMOTE-HOST-$((40+2))\r"
       let seen := stripCsi (← drainStr c.fd 5000)
-      expect (has seen "REMOTE-HOST-") "attach name@host dropped into the real remote shell"
+      expect (has seen "REMOTE-HOST-42") "attach name@host dropped into the real remote shell"
       -- detach (ctrl-\), leaving the session alive on the remote
       c.detach
       IO.sleep 1500

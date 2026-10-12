@@ -33,7 +33,8 @@ namespace E2E.Agent
 open E2E.Harness
 
 /-- A field as a natural number: `none` when it is absent, empty or not all digits. -/
-def num (o : Option String) : Option Nat := o.bind (·.toNat?)
+def num (o : Option String) : Option Nat :=
+  o.bind fun s => if s.all Char.isDigit then s.toNat? else none
 
 /-- `text` has `line` as a whole line followed by a nonempty one: a command's output
 and then the shell's next prompt. -/
@@ -48,8 +49,8 @@ primitive is needed: core spawns with `stdin := .piped`, `takeStdin`s the handle
 away from the `Child`, writes, flushes, and then drops it — and dropping the last
 reference is what closes the pipe. That close is load-bearing, not hygiene:
 `Cli.cmdSendStdin` has **no timeout on purpose** ("a slow producer feeding a pipe
-is legitimate, and EOF is the only exit"), so a port that kept the handle alive
-would hang here instead of failing.
+is legitimate"), so a sender that kept the handle open would hang here instead of
+failing.
 
 `putStr` writes the payload's UTF-8, and every payload below is ASCII or a single
 C0 byte, so the pipe carries exactly those bytes. A payload that is not valid
@@ -188,12 +189,7 @@ def checkInfo (e : Env) (mode : String) (error : Option String) : IO Unit := do
       expect (serverRc == some 0 && rc == 0 && out == expected && err.isEmpty)
           s!"get accepts {mode} info terminated by done"
   finally
-    try
-      if (← server.tryWait).isNone then
-        server.kill
-        let _ ← server.wait
-    catch _ =>
-      pure () -- waitProcess already reaped it.
+    reapOrKill server 0
     IO.FS.removeFile socketPath
     IO.FS.removeFile readyPath
 
@@ -218,22 +214,19 @@ def run : IO UInt32 :=
     -- outseq moves when output happens — the change cursor
     let before := (num (← e.info "ag" "outseq")).getD 0
     let _ ← e.cli #["run", "ag", "echo", "MOVED"]
-    let _ ← waitFor 4000 (return (num (← e.info "ag" "outseq")).getD 0 > before)
-    let after := (num (← e.info "ag" "outseq")).getD 0
-    expect (after > before) "outseq increases after output"
+    expect (← waitFor 4000 (return (num (← e.info "ag" "outseq")).getD 0 > before))
+        "outseq increases after output"
     -- geometry follows an attached terminal. `Env.spawn` sets the winsize before
     -- exec, so the client's own startup `winsizeGet` already reads the size this
     -- check asks for.
     let attCols : UInt32 := 100
     let attRows : UInt32 := 30
     let cl ← e.spawn #["attach", "ag"] attCols attRows
-    let _ ←
-      waitFor 4000 do
-          return (← e.info "ag" "cols") == some (toString attCols) &&
-              (← e.info "ag" "rows") == some (toString attRows)
     expect
-        ((← e.info "ag" "cols") == some (toString attCols) &&
-          (← e.info "ag" "rows") == some (toString attRows))
+        (←
+          waitFor 4000 do
+              return (← e.info "ag" "cols") == some (toString attCols) &&
+                  (← e.info "ag" "rows") == some (toString attRows))
         "info reflects the attached terminal size"
     cl.bye -- detach, close, reap
     -- info against a missing session fails cleanly, quoting the name it looked for.
@@ -272,7 +265,7 @@ def run : IO UInt32 :=
     let (capRc, capOut, _) ← e.cli #["capture", "ag"]
     let lines := capOut.splitOn "\n"
     let rows := (num (← e.info "ag" "rows")).getD 0
-    expect (capRc == 0 && has capOut "CAPTURED-MARKER") "capture shows what the session printed"
+    expect (capRc == 0 && lines.contains "CAPTURED-MARKER") "capture shows what the session printed"
     -- screenText is LF-terminated per row: split yields rows + one trailing ''
     expect (lines.length == rows + 1 && lines.getLast? == some "")
         "capture is exactly one line per row"
@@ -282,8 +275,7 @@ def run : IO UInt32 :=
           num (← e.info "ag" "behind") == some 0)
         "capture marks the session seen"
     let _ ← e.cli #["run", "ag", "echo", "again"]
-    let _ ← waitFor 4000 (return (← e.info "ag" "unseen") == some (toString true))
-    expect ((← e.info "ag" "unseen") == some (toString true))
+    expect (← waitFor 4000 (return (← e.info "ag" "unseen") == some (toString true)))
         "output after a capture reads unseen again"
     -- capture is the screen, not the transcript: flood past one screen and the
     -- capture stays `rows` lines while history grows beyond it
@@ -351,14 +343,11 @@ def run : IO UInt32 :=
     IO.sleep 400
     unless (← e.crashDaemon "send-lost") do
       throw (IO.userError "send-lost daemon did not crash")
-    let senderCode ← waitProcess sender 3000
+    let senderCode ← waitOrKill sender 3000
     try
       senderIn.flush
     catch _ =>
       pure ()
-    if senderCode.isNone then
-      sender.kill
-      let _ ← sender.wait
     let senderErr ← sender.stderr.readToEnd
     expect (senderCode == some 1 && has senderErr "connection lost")
         "send - exits 1 when the daemon dies while stdin is idle"
@@ -368,20 +357,18 @@ def run : IO UInt32 :=
     let rzCols : UInt32 := 120
     let rzRows : UInt32 := 40
     let (rrc, _, _) ← e.cli #["resize", "rz", toString rzCols, toString rzRows]
-    let _ ←
-      waitFor 4000 do
-          return (← e.info "rz" "cols") == some (toString rzCols) &&
-              (← e.info "rz" "rows") == some (toString rzRows)
     expect
-        (rrc == 0 && (← e.info "rz" "cols") == some (toString rzCols) &&
-          (← e.info "rz" "rows") == some (toString rzRows))
+        (rrc == 0 &&
+          (←
+            waitFor 4000 do
+                return (← e.info "rz" "cols") == some (toString rzCols) &&
+                    (← e.info "rz" "rows") == some (toString rzRows)))
         "control resize applies to a detached session"
     -- the pty winsize followed too: the child's own stty sees it (SIGWINCH path).
     -- `stty size` prints rows then cols, so the expected string is built from the
     -- two numbers above rather than being a third copy of them.
     let _ ← e.cli #["run", "rz", "stty", "size"]
-    let _ ← waitFor 4000 (return has (← e.out #["capture", "rz"]) s!"{rzRows} {rzCols}")
-    expect (has (← e.out #["capture", "rz"]) s!"{rzRows} {rzCols}")
+    expect (← waitFor 4000 (return has (← e.out #["capture", "rz"]) s!"{rzRows} {rzCols}"))
         "the child observes the new winsize (stty size: 40 120)"
     -- an attached client owns the size: refused, loudly, and nothing moves
     let ownCols : UInt32 := 80
@@ -398,8 +385,7 @@ def run : IO UInt32 :=
     expect ((← e.info "rz" "cols") == some (toString ownCols)) "a refused resize moved nothing"
     owner.bye
     let (arc, _, _) ← e.cli #["resize", "rz", toString newCols, toString newRows]
-    let _ ← waitFor 4000 (return (← e.info "rz" "cols") == some (toString newCols))
-    expect (arc == 0 && (← e.info "rz" "cols") == some (toString newCols))
+    expect (arc == 0 && (← waitFor 4000 (return (← e.info "rz" "cols") == some (toString newCols))))
         "resize applies again once the client detached"
     -- client-side validation accepts exactly `clampDim`'s range. Both probes are
     -- the boundary itself: 0 is the largest rejected value below the range, and
