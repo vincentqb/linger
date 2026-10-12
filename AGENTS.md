@@ -86,6 +86,13 @@ Lean erases proofs regardless of file placement.
 - Ratchets live only in `scripts/gates.sh`; exact suite counts only in
   `scripts/e2e.sh`. Tests assert against the implementation's definitions.
   Use `scripts/` for shell orchestration; do not recreate a lowercase `tests/`.
+- In `scripts/`, `E2ETest.lean` and `E2E/`, scratch without sockets lives under
+  `${TMPDIR:-/tmp}`, in Lean through `E2E.Harness.tempRoot`, `IO.FS.withTempDir` or
+  `IO.FS.createTempDir`, and a directory that will hold a Unix socket lives under
+  `/tmp`, through `E2E.Harness.socketRoot` or `socket_root` in `scripts/e2e.sh`, since
+  macOS's `TMPDIR` alone takes about 49 of a socket path's 104 bytes;
+  `scripts/gates.sh` rejects any other hard-coded `/tmp` there and in the CI workflow,
+  except in `E2E/Paths.lean` and `E2E/Overview.lean`, which assert product defaults.
 - No `partial def`, fuel parameter or raised `maxHeartbeats`/`maxRecDepth` in any
   Lean file (`scripts/gates.sh`). Proofs add no axioms:
   `Theorems/Coverage.lean` rejects every axiom declared in pure or proof

@@ -495,8 +495,8 @@ def run (only : Option String := none) : IO UInt32 := do
   if let some name := only then
     if !(checks.any (·.1 == name)) then
       throw (IO.userError s!"unknown delivery check '{name}'")
-  -- `Env.make`'s `/tmp` directory keeps Unix socket paths independent of the
-  -- checkout's length.
+  -- `Env.make` puts the state directory under `socketRoot`, so Unix socket paths depend
+  -- on neither the checkout's length nor `TMPDIR`.
   Env.suite "delivery" fun e => do
       for (name, check) in checks do
         if only.isNone || only == some name then

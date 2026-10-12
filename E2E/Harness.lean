@@ -187,15 +187,34 @@ def startsWithBytes (hay : ByteArray) (needle : List UInt8) : Bool :=
 The byte-level form of `has`, for streams that also carry escape sequences. -/
 def hasText (hay : ByteArray) (needle : String) : Bool := hasBytes hay needle.toUTF8.toList
 
+/-- The scratch root: `$TMPDIR` when it is set and nonempty, else `/tmp`, the same choice as
+the scripts' TMPDIR expansion. Logs, fixture trees and files without sockets go under it.
+`IO.FS.withTempDir` and `IO.FS.createTempDir` follow `TMPDIR` as well; prefer them when a
+check needs only a fresh directory. A directory that will hold a Unix socket goes under
+`socketRoot`. -/
+def tempRoot : IO System.FilePath := do
+  return System.FilePath.mk (((← IO.getEnv "TMPDIR").filter (!·.isEmpty)).getD "/tmp")
+
+/-- The root of every directory that will hold a Unix socket: `/tmp`, whatever `TMPDIR` says.
+A socket path and its terminator must fit a 104-byte address field on macOS (108 on Linux),
+and `c/shim.c` refuses a longer path; macOS's `TMPDIR` alone takes about 49 bytes. Measured
+by logging every `bind` of the 16 live suites, the longest socket path is 77 bytes under
+`/tmp`, in `E2E.Manager`'s program-survives fixtures with a 5-digit pid (a 7-digit Linux pid
+adds 2). Rooted at a 49-byte `TMPDIR` instead, that path is 122 bytes, and even on Linux six
+`E2E.Manager` checks then fail because their sockets no longer fit. -/
+def socketRoot : System.FilePath := "/tmp"
+
 /-- One suite's world: where the binary is, and which `LINGER_DIR` it owns.
 
 Per-suite and pid-suffixed, so two suites — or a suite and the developer's own
-sessions — can never see each other's sockets or checkpoints. -/
+sessions — can never see each other's sockets or checkpoints. It holds sockets, so it
+lives under `socketRoot`. -/
 structure Env where
   bin : String
   dir : String
 
-/-- Resolve the binary next to the build and make a private state dir. -/
+/-- Resolve the binary next to the build and make a private state dir under `socketRoot`,
+or at `LINGER_TEST_DIR` when that is set. -/
 def Env.make (slug : String) : IO Env := do
   let cwd ← IO.currentDir
   let bin := (cwd / ".lake" / "build" / "bin" / "linger").toString
@@ -204,7 +223,7 @@ def Env.make (slug : String) : IO Env := do
   let dir : String :=
     match envDir with
     | some d => d
-    | none => s!"/tmp/linger-{slug}-{pid}"
+    | none => (socketRoot / s!"linger-{slug}-{pid}").toString
   IO.FS.createDirAll (System.FilePath.mk dir)
   return { bin, dir }
 

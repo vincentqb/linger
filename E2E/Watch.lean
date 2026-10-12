@@ -34,7 +34,7 @@ def checkpointChecks (e : Env) : IO Unit := do
   let vt :=
     (Linger.Core.Vt.Vt.init 40 4).feedBytes
       "older\r\nhistory\r\nfirst\r\nsecond\r\nthird\r\nsaved-screen-at-the-right\x1b]2;editor\x07".toUTF8
-  let bytes := Linger.Core.Checkpoint.saveBytes ⟨vt, "/tmp", [("saved", "yes")]⟩
+  let bytes := Linger.Core.Checkpoint.saveBytes ⟨vt, e.dir, [("saved", "yes")]⟩
   let path := s!"{e.dir}/saved.ckpt"
   IO.FS.writeBinFile path bytes
   let viewer ← e.spawn #["attach", "--read-only", "saved"] 40 4

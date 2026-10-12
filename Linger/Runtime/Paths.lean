@@ -13,7 +13,9 @@ Resolution order:
   `$HOME/.local/state/linger/<host>` > `/tmp/linger-$UID/state/<host>`
 
 Empty XDG and HOME values fall through to the next fallback. `LINGER_DIR`
-is an explicit override even when empty.
+is an explicit override even when empty. The last fallback is `/tmp`, not `$TMPDIR`:
+like tmux's `/tmp/tmux-$UID`, it is a short, stable location that every login context
+of the same user agrees on, and `LINGER_DIR` overrides it.
 
 Every name must already equal `Name.sanitize` before touching a path.
 Invalid input is rejected, never converted into another session's name.

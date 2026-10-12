@@ -122,10 +122,11 @@ def run : IO UInt32 :=
     let cols : UInt32 := 80
     let rows : UInt32 := 24
     let marker := "survives-the-reboot-42"
-    -- create a session working in /tmp, leave a marker on screen and a label
+    -- create a session working in this suite's directory, leave a marker on screen and
+    -- a label
     let boot ← e.spawn #["attach", "boot"] cols rows
     let _ ← waitFor 4000 (return (← e.info "boot" "clients") == some "1")
-    boot.type "cd /tmp && echo survives-the-reboot-$((40+2))\r"
+    boot.type s!"cd '{e.dir}' && echo survives-the-reboot-$((40+2))\r"
     let _ ← drain boot.fd 1500
     -- …then push it off the screen. Before scrollback replay the marker below had
     -- to be on the visible grid for the reattach assertion to pass, so that
@@ -174,8 +175,11 @@ def run : IO UInt32 :=
     let replay ← IO.mkRef ByteArray.empty
     expect (← boot2.awaitText replay (hasText · marker) (ms := 5000))
         "reattach replays the pre-reboot scrollback, not just the screen"
-    boot2.type "pwd\r"
-    expect (has (← drainStr boot2.fd 1500) "/tmp") "fresh shell starts in the saved cwd"
+    boot2.type "pwd -P\r"
+    -- The checkpoint records the physical cwd, which is what `pwd -P` prints whatever
+    -- `PWD` the fresh shell inherits.
+    let savedCwd ← IO.FS.realPath e.dir
+    expect (has (← drainStr boot2.fd 1500) savedCwd.toString) "fresh shell starts in the saved cwd"
     expect (has (← e.out #["get", "boot"]) "k=v") "labels survive the reboot"
     -- clean exit drops the checkpoint
     boot2.type "exit\r"

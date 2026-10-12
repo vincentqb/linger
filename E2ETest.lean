@@ -31,8 +31,8 @@ lakefile stanza.
 
 Each suite prints `PASS <name>` / `FAIL <name>` per check and `FAILURES: <n>` last;
 `scripts/e2e.sh` supplies the exact recorded check counts to the batch runner, whose
-logs go to `LINGER_LOG_DIR` (default `/tmp`). An unknown name is an error, not a silent
-success. -/
+logs go to `LINGER_LOG_DIR` (default `E2E.Harness.tempRoot`). An unknown name is an error,
+not a silent success. -/
 
 def suites : List (String × IO UInt32) :=
   [("watch", E2E.Watch.run), ("status", E2E.Status.run), ("overview", E2E.Paths.run),
@@ -95,7 +95,8 @@ def main (args : List String) : IO UInt32 := do
       IO.eprintln "e2e: expected known-suite:assertion-count"
       return 2
     -- `scripts/e2e.sh` supplies a directory per run, so concurrent checkouts never share logs.
-    let logDir := ((← IO.getEnv "LINGER_LOG_DIR").filter (!·.isEmpty)).getD "/tmp"
+    let logDir :=
+      ((← IO.getEnv "LINGER_LOG_DIR").filter (!·.isEmpty)).getD (← E2E.Harness.tempRoot).toString
     IO.println s!"  suite logs: {logDir}/linger-<suite>.out"
     E2E.Runner.run (← IO.appPath).toString #[] logDir specs
   | ["delivery", check] =>

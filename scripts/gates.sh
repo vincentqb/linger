@@ -378,7 +378,7 @@ printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])[|] "import" => importSave 
 code_grep '^[[:space:]]+let listing ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"ls", "--porcelain"[]] [}]$' Linger/Manager/Resurrect.lean >/dev/null \
   || fail "importer no longer lists with the supplied executable"
 # Native listing observes the caller's checkpoint namespace, including its
-# no-HOME /tmp fallback. Only those fields reach the checked serializer.
+# no-HOME `/tmp` fallback. Only those fields reach the checked serializer.
 printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])private def writeSave [(]path : String[)] [(]capture : IO [(]List [(]String × String[)][)] := snapshot[)] : IO Unit := do let fields ← capture let content ← IO[.]ofExcept [(]renderSave fields[)] publish path content([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "exporter bypasses the current native snapshot, checked serializer or exclusive publication"
 printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])[|] _ => writeSave [(]paths[.]headD ""[)]; return 0([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
@@ -545,8 +545,8 @@ done
 # Environment policies decide unset and empty values for every input. The runtime
 # reads SHELL and LINGER_NO_DETACH_KEY once each, and HOME once for remote hosts, into
 # their policies. An unset or empty HOME configures no remote hosts
-# (remotesFile_eq_none_iff): a fallback such as world-writable /tmp would let another
-# account choose them, and a suite cannot create /tmp/.config.
+# (remotesFile_eq_none_iff): a fallback such as world-writable `/tmp` would let another
+# account choose them, and a suite cannot create `/tmp/.config`.
 for claim in shellOf_ne_empty shellOf_set shellOf_absent remotesFile_eq_none_iff remotesFile_set \
              detachEnabled_readOnly detachEnabled_writable; do
   code_grep "^theorem $claim " Theorems/Env.lean >/dev/null \
@@ -1181,6 +1181,43 @@ done
   || fail "an E2E suite counts a skipped required check as PASS"
 ! code_grep 'expect[[:space:]]+[(]?true[)]?([[:space:]]|$)' 'E2E/*' \
   || fail "an E2E suite asserts a constant true; a skipped check is not a PASS"
+# Temporary paths follow two rules, each implemented once per language. Scratch without
+# sockets goes under `${TMPDIR:-/tmp}`: that expansion in shell, `E2E.Harness.tempRoot`,
+# `IO.FS.withTempDir` or `IO.FS.createTempDir` in Lean. A directory that will hold a Unix
+# socket goes under `/tmp` whatever TMPDIR says, through `E2E.Harness.socketRoot` or
+# `socket_root` in scripts/e2e.sh: macOS caps a socket path at 104 bytes, and its TMPDIR
+# alone takes about 49. So the test orchestration spells a temporary root only in those
+# three definitions and in the expansion. E2E/Paths.lean and E2E/Overview.lean are exempt:
+# they assert the product's documented defaults (Linger/Runtime/Paths.lean). The match
+# also covers `/private/tmp`, `/var/tmp` and `/private/var/tmp`, and only where a path
+# starts, not a component such as `$dir/tmp`. Each hit is read again with every expansion
+# blanked out, because an ERE cannot exclude one context.
+tmp_re='(^|[^[:alnum:]_.~)}])(/private(/var)?|/var)?[/]tmp([^[:alnum:]_]|$)'
+tmp_hits="$(code_grep "$tmp_re" 'scripts/*.sh' .github/workflows/ci.yml E2ETest.lean 'E2E/*.lean' \
+  | sed 's/[$][{]TMPDIR:-[/]tmp[}]/TMPDIR/g' | CG_RE="$tmp_re" awk "$CODE_AWK" \
+  | sed 's/^[^:]*:[0-9]*://' | awk -F: '$1 != "E2E/Paths.lean" && $1 != "E2E/Overview.lean"')"
+# The helpers are compared by content, with the root itself spelled `[/]tmp`, so these
+# lines cannot match the gate that reads them.
+tmp_got="$(printf '%s\n' "$tmp_hits" | sed 's/^\([^:]*\):[0-9]*:[[:space:]]*/\1: /; s#[/]tmp#[/]tmp#g')"
+tmp_want="$(printf '%s\n' \
+  'E2E/Harness.lean: return System.FilePath.mk (((← IO.getEnv "TMPDIR").filter (!·.isEmpty)).getD "[/]tmp")' \
+  'E2E/Harness.lean: def socketRoot : System.FilePath := "[/]tmp"' \
+  'scripts/e2e.sh: socket_root=[/]tmp')"
+[ "$tmp_got" = "$tmp_want" ] || {
+  printf '  temporary roots other than the TMPDIR expansion:\n%s\n' \
+    "$(printf '%s\n' "$tmp_hits" | sed 's/^/    /')" >&2
+  printf '  want exactly the helpers:\n%s\n' "$(printf '%s\n' "$tmp_want" | sed 's/^/    /')" >&2
+  fail "a hard-coded temporary root: put scratch under TMPDIR (the shell expansion, or E2E.Harness.tempRoot) and a socket directory under E2E.Harness.socketRoot or scripts/e2e.sh's socket_root"; }
+# A socket directory moved under the expansion or `tempRoot` passes that check, and fails
+# only where TMPDIR is long, as on macOS, which CI does not run on every push. So each
+# socket directory the suites and the verifier create is tied to its helper: every
+# suite's state directory (`Env.make`), Interop's fixture root and the sentinel session's.
+code_grep '^[[:space:]]+[|] none => [(]socketRoot / s!"linger-[{]slug[}]-[{]pid[}]"[)][.]toString$' \
+  E2E/Harness.lean >/dev/null || fail "Env.make no longer roots each suite's state directory at E2E.Harness.socketRoot"
+code_grep 'cmd := "mktemp", args := #[[]"-d", [(]socketRoot / "linger-i-XXXXXX"[)][.]toString[]]' \
+  E2E/Interop.lean >/dev/null || fail "E2E.Interop no longer creates its fixture root under E2E.Harness.socketRoot"
+code_grep '^sentinel_dir="[$]socket_root/linger-e2e-sentinel-[$][$]"$' scripts/e2e.sh >/dev/null \
+  || fail "the verifier's sentinel directory is no longer under scripts/e2e.sh's socket_root"
 # `lean_lib E2E` has no glob (E2E/Coverage.lean's census needs the built program), so
 # `./lake build e2e` is the only build of E2E modules, and it builds only the import
 # closure of E2ETest.lean, the e2e root: a module outside it is never built, and none

@@ -434,7 +434,7 @@ def run : IO UInt32 :=
           "ls preserves options after -r and rejects unknown options"
       -- Only a nonempty HOME configures hosts (`remotesFile_eq_none_iff`). Decoy files
       -- under the working, XDG and temporary directories would run SSH if a fallback
-      -- read them; world-writable /tmp itself is left to the theorem.
+      -- read them; world-writable `/tmp` itself is left to the theorem.
       let decoys := (System.FilePath.mk e.dir) / "decoys"
       let home := decoys / "home"
       for dir in

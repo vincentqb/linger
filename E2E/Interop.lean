@@ -8,9 +8,10 @@ public section
 
 /-! # E2E.Interop — real import/export boundaries
 
-Each check owns fresh state below a new `/tmp` directory. Foreign commands only
-write a fixture marker if accidentally executed; a subsequent shell command is
-the completion barrier. No tmux server or user save is involved.
+Each check owns fresh state below a new directory under `socketRoot`, since its
+sessions put their sockets there. Foreign commands only write a fixture marker if
+accidentally executed; a subsequent shell command is the completion barrier. No tmux
+server or user save is involved.
 
 The parser supplies the common-field projection. Checkpoint fixtures use the
 production codec, and the crash check also exercises an actual last detach.
@@ -781,7 +782,8 @@ private def check (root : System.FilePath) (bin : String) (index : Nat) (label :
 /-- Exercise a selected build from an isolated probe runner. -/
 def runWith (binary : String) : IO UInt32 := do
   let bin ← IO.FS.realPath binary
-  let (code, temp, err) ← process { cmd := "mktemp", args := #["-d", "/tmp/linger-i-XXXXXX"] }
+  let (code, temp, err) ←
+    process { cmd := "mktemp", args := #["-d", (socketRoot / "linger-i-XXXXXX").toString] }
   unless code == 0 do
     throw (IO.userError s!"could not create fresh fixture root: {err}")
   let root ← IO.FS.realPath temp.trimAscii.toString

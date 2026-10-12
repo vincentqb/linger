@@ -197,8 +197,11 @@ shim_n="$(grep -c '^PASS ' "$shim_out")"
 # Keep one real session in another state directory through every suite. A suite
 # may clean up its own Env, never the user's process namespace. State directories hold
 # Unix sockets, whose paths must fit sun_path (c/shim.c rejects longer ones), so they stay
-# under /tmp whatever TMPDIR is; only logs and scratch files follow TMPDIR.
-sentinel_dir="/tmp/linger-e2e-sentinel-$$"
+# under socket_root whatever TMPDIR is, as the suites' directories stay under
+# E2E.Harness.socketRoot, whose docstring records the measured path lengths. Only logs
+# and scratch files follow `${TMPDIR:-/tmp}`.
+socket_root=/tmp
+sentinel_dir="$socket_root/linger-e2e-sentinel-$$"
 sentinel_name="sentinel-$$"
 cleanup_sentinel() {
   LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger kill "$sentinel_name" >/dev/null 2>&1 || true
