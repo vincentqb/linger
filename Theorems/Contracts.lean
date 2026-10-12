@@ -13,6 +13,7 @@ import all Theorems.Name
 import all Theorems.Picker
 import all Theorems.Remote
 import all Theorems.Render.Grid
+import all Theorems.Render.History
 import all Theorems.Render.Modes
 import all Theorems.Render.PendingWrap
 import all Theorems.Render.Scrollback
@@ -279,6 +280,35 @@ example {budget : Nat} {p q : Replay.Plan} {bytes : Render.Bytes} (positive : 0 
 example (budget : Nat) (positive : 0 < budget) (v : Vt.Vt) :
     Replay.drain budget positive (Replay.start v) = Render.restore v := by
   with_reducible exact Replay.drain_start budget positive v
+
+-- Text output
+example (v : Vt.Vt) :
+    ∃ cs : List Char,
+      Render.screenText v = cs.flatMap Render.utf8 ∧
+        ∀ c ∈ cs,
+          c = '\n' ∨ (0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0)) := by
+  with_reducible exact Render.screenText_text v
+
+example (v : Vt.Vt) :
+    ∃ cs : List Char,
+      Render.history v = cs.flatMap Render.utf8 ∧
+        ∀ c ∈ cs,
+          c = '\n' ∨ (0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0)) := by
+  with_reducible exact Render.history_text v
+
+example (s : Session.State) :
+    ∃ cs : List Char,
+      Session.infoText s = cs.flatMap Render.utf8 ∧
+        ∀ c ∈ cs,
+          c = '\t' ∨
+            c = '\n' ∨ (0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0)) := by
+  with_reducible exact Session.infoText_text s
+
+example (nameCol : Nat) (info : List (String × String)) :
+    ∃ cs : List Char,
+      Listing.humanRow nameCol info = cs.flatMap Render.utf8 ∧
+        ∀ c ∈ cs, 0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0) := by
+  with_reducible exact Listing.humanRow_text nameCol info
 
 -- Terminal handback
 example (w : Vt.Vt) (h2 : 2 ≤ w.rows) :

@@ -1574,6 +1574,40 @@ theorem infoText_framing (s : State) :
   simp only [infoText, List.mem_flatMap, List.mem_append, List.mem_singleton] at hb
   grind [Render.utf8s_no_ctl]
 
+/-- **`info` text, character by character**: every reply byte belongs to the UTF-8 encoding
+of a field separator, a record terminator or a codepoint that is no C0 control, DEL or C1
+control. `infoText_framing` is the byte-level half, which an encoded C1 control satisfies. -/
+theorem infoText_text (s : State) :
+    ∃ cs : List Char,
+      infoText s = cs.flatMap Render.utf8 ∧
+        ∀ c ∈ cs,
+          c = '\t' ∨
+            c = '\n' ∨ (0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0)) := by
+  refine
+    ⟨(infoFields s).flatMap fun (k, v) =>
+        (k.toList.map Render.textChar).map Render.safeChar ++ ['\t'] ++
+          (v.toList.map Render.textChar).map Render.safeChar ++
+          ['\n'],
+      ?_, ?_⟩
+  · simp only [infoText, Render.utf8s_eq_flatMap, List.flatMap_assoc, List.flatMap_append,
+      List.flatMap_cons, List.flatMap_nil, List.append_nil]
+    rfl
+  · intro c hc
+    obtain ⟨⟨k, v⟩, -, hmem⟩ := List.mem_flatMap.mp hc
+    have safe (d : Char) :
+      Render.safeChar (Render.textChar d) = Render.textChar d ∧
+        (0x20 ≤ (Render.textChar d).toNat ∧
+          (Render.textChar d).toNat ≠ 0x7F ∧
+          ¬(0x80 ≤ (Render.textChar d).toNat ∧ (Render.textChar d).toNat < 0xA0)) :=
+      ⟨Render.safeChar_eq_self (Render.textChar_safe d).1 (Render.textChar_safe d).2.1,
+        Render.textChar_safe d⟩
+    simp only [List.mem_append, List.mem_map, List.mem_singleton] at hmem
+    rcases hmem with ((⟨e, ⟨d, -, rfl⟩, rfl⟩ | rfl) | ⟨e, ⟨d, -, rfl⟩, rfl⟩) | rfl
+    · rw [(safe d).1]; exact Or.inr (Or.inr (safe d).2)
+    · exact Or.inl rfl
+    · rw [(safe d).1]; exact Or.inr (Or.inr (safe d).2)
+    · exact Or.inr (Or.inl rfl)
+
 theorem count_utf8s_frame (cs : List Char) (b : UInt8) (hb : b = 0x09 ∨ b = 0x0A) :
     (Render.utf8s cs).count b = 0 := by
   rw [List.count_eq_zero]

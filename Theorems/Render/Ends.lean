@@ -133,6 +133,18 @@ theorem utf8s_no_ctl (cs : List Char) : ∀ b ∈ utf8s cs, b ≥ 0x20 ∧ b ≠
   obtain ⟨hge, hne⟩ := safeChar_ge c
   exact utf8_no_ctl (safeChar c) hge hne b hmem
 
+/-- `safeChar` keeps every codepoint that is neither a C0 control nor DEL. -/
+theorem safeChar_eq_self {c : Char} (h0 : 0x20 ≤ c.toNat) (h7 : c.toNat ≠ 0x7F) :
+    safeChar c = c := by
+  have h : (c.toNat < 0x20 || c.toNat == 0x7F) = false := by
+    simp only [Bool.or_eq_false_iff, decide_eq_false_iff_not, beq_eq_false_iff_ne]
+    omega
+  simp [safeChar, h]
+
+/-- `utf8s` is the UTF-8 encoding of the scrubbed characters, one codepoint at a time. -/
+theorem utf8s_eq_flatMap (cs : List Char) : utf8s cs = (cs.map safeChar).flatMap utf8 := by
+  simp [utf8s, List.flatMap_map]
+
 theorem utf8s_no_esc (cs : List Char) : ∀ b ∈ utf8s cs, b ≠ 0x1B := by
   intro b hb; have := utf8s_no_ctl cs b hb; grind
 

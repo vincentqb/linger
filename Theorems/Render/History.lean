@@ -61,6 +61,29 @@ theorem rows_framing (rows : List Row) :
   · exact Or.inr (rowText_scrubbed row b h)
   · exact Or.inl (List.mem_singleton.mp h)
 
+/-- **Capture text, character by character.** The rows' bytes are the UTF-8 encoding of
+characters each of which is a line terminator or a codepoint that is no C0 control, DEL or C1
+control. `rows_framing` cannot say the C1 half: every byte of an encoded C1 control is at
+least `0x80`. -/
+theorem rows_text (rows : List Row) :
+    ∃ cs : List Char,
+      rows.flatMap (fun row => rowText row ++ [0x0A]) = cs.flatMap utf8 ∧
+        ∀ c ∈ cs,
+          c = '\n' ∨ (0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0)) := by
+  refine
+    ⟨rows.flatMap fun row => (dropTrailingBlanks (rowChars row)).map safeChar ++ ['\n'], ?_, ?_⟩
+  · simp only [rowText, utf8s_eq_flatMap, List.flatMap_assoc, List.flatMap_append,
+      List.flatMap_cons, List.flatMap_nil, List.append_nil]
+    rfl
+  · intro c hc
+    obtain ⟨row, -, hmem⟩ := List.mem_flatMap.mp hc
+    rcases List.mem_append.mp hmem with h | h
+    · obtain ⟨d, hd, rfl⟩ := List.mem_map.mp h
+      have hs := rowChars_scrubbed row d (dropTrailingBlanks_subset _ d hd)
+      rw [safeChar_eq_self hs.1 hs.2.1]
+      exact Or.inr hs
+    · exact Or.inl (List.mem_singleton.mp h)
+
 /-- **Every byte is a line terminator or printable content.** -/
 theorem history_framing (v : Vt) : ∀ b ∈ history v, b = 0x0A ∨ (0x20 ≤ b ∧ b ≠ 0x7F) :=
   rows_framing _
@@ -92,6 +115,23 @@ screen, whatever the session's program printed. -/
 /-- **Every byte is a line terminator or printable content.** -/
 theorem screenText_framing (v : Vt) : ∀ b ∈ screenText v, b = 0x0A ∨ (0x20 ≤ b ∧ b ≠ 0x7F) :=
   rows_framing _
+
+/-- **`linger capture` prints no control character but its line terminators**: no C0
+control, DEL or C1 control, as characters rather than bytes. -/
+theorem screenText_text (v : Vt) :
+    ∃ cs : List Char,
+      screenText v = cs.flatMap utf8 ∧
+        ∀ c ∈ cs,
+          c = '\n' ∨
+            (0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0)) := rows_text _
+
+/-- **`linger capture --history` likewise.** -/
+theorem history_text (v : Vt) :
+    ∃ cs : List Char,
+      history v = cs.flatMap utf8 ∧
+        ∀ c ∈ cs,
+          c = '\n' ∨
+            (0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0)) := rows_text _
 
 /-- **One line per grid row, and only the grid** — the scrollback ring
 contributes nothing, which is the whole difference from `history`. -/
@@ -153,12 +193,7 @@ theorem history_screenText_suffix (v : Vt) :
 /-- `safeChar` is the identity on a character a cell is allowed to hold. The emit-side
 guard and the store-side one agree, which is what lets a repaint reproduce a stored
 cell — `printableChar` on store, `safeChar` on emit, both `Emittable`'s range. -/
-theorem safeChar_of_emittable {c : Char} (h : Emittable c) : safeChar c = c := by
-  unfold safeChar
-  rw [ite_eq_right
-      (by
-        simp only [Bool.or_eq_true, decide_eq_true_eq, beq_iff_eq]
-        obtain ⟨h20, h7⟩ := h
-        omega)]
+theorem safeChar_of_emittable {c : Char} (h : Emittable c) : safeChar c = c :=
+  safeChar_eq_self h.1 h.2
 
 end Linger.Core.Render

@@ -114,6 +114,23 @@ theorem rowPieces_printable (nameCol : Nat) (info : List (String × String)) :
     have := Linger.Core.Render.textChar_safe raw
     omega
 
+/-- **A printed row, character by character**: the UTF-8 encoding of codepoints that are no
+C0 control, DEL or C1 control. `humanRow_printable` is the byte-level half, which an encoded
+C1 control satisfies. -/
+theorem humanRow_text (nameCol : Nat) (info : List (String × String)) :
+    ∃ cs : List Char,
+      humanRow nameCol info = cs.flatMap Linger.Core.Render.utf8 ∧
+        ∀ c ∈ cs, 0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0) := by
+  refine
+    ⟨((rowPieces nameCol info).flatMap (·.text)).map Linger.Core.Render.safeChar, by
+      unfold humanRow; exact Linger.Core.Render.utf8s_eq_flatMap _, ?_⟩
+  intro c hc
+  obtain ⟨d, hd, rfl⟩ := List.mem_map.mp hc
+  obtain ⟨piece, hp, hd⟩ := List.mem_flatMap.mp hd
+  have h := rowPieces_printable nameCol info piece hp d hd
+  rw [Linger.Core.Render.safeChar_eq_self (by omega) (by omega)]
+  omega
+
 /-- Exactly the badge is styled; the name, details, labels and watchers are plain. -/
 theorem rowPieces_styles (nameCol : Nat) (info : List (String × String)) :
     (Linger.Core.Listing.rowPieces nameCol info).map (·.status) =
