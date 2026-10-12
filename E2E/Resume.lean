@@ -266,18 +266,37 @@ def run : IO UInt32 :=
         s!"checkpoint save failure is reported without killing the daemon (pid={savePid}, log='{saveLog}')"
     IO.FS.removeDirAll saveTmp
     e.killAll #["save-fail"]
-    -- Existing but unreadable recovery state is not equivalent to no checkpoint.
+    -- Existing but unreadable recovery state is not equivalent to no checkpoint. Its
+    -- daemon exits, so the client gives up after the 3 s floor, long before the 30 s cap.
     let readPath := s!"{e.dir}/read-fail.ckpt"
     IO.FS.createDirAll readPath
-    let (readRc, _, readErr) ← e.cli #["run", "read-fail", "echo", "must-not-start"]
+    let readStart ← Linger.Posix.monotonicMs
+    let readRun ← e.cliTimeout #["run", "read-fail", "echo", "must-not-start"] 10000
+    let readMs := (← Linger.Posix.monotonicMs) - readStart
     let readSockets ← e.dirNames ".sock"
     let readLog ← e.log "read-fail"
     expect
-        (readRc == 1 && has readErr "see " && has readLog "checkpoint read failed" &&
+        (readRun.any (fun (rc, _, err) => rc == 1 && has err "see ") &&
+          has readLog "checkpoint read failed" &&
           !readSockets.contains "read-fail.sock")
-        "checkpoint read failure is visible and does not start fresh"
+        s!"checkpoint read failure is visible, does not start fresh and ends within 10 s ({readMs} ms)"
     e.killAll #["read-fail"]
     IO.FS.removeDirAll readPath
+    -- A daemon that holds its locks but needs longer than the 3 s floor to listen still
+    -- serves the client that started it; a FIFO checkpoint holds its load for 4 s.
+    let slowPath := s!"{e.dir}/slow.ckpt"
+    let made ← IO.Process.output { cmd := "mkfifo", args := #[slowPath] }
+    let release ←
+      IO.Process.spawn
+          { cmd := "sh", args := #["-c", s!"sleep 4; printf not-a-checkpoint > '{slowPath}'"],
+            stdin := .null, stdout := .null, stderr := .null }
+    let slowStart ← Linger.Posix.monotonicMs
+    let (slowRc, _, slowErr) ← e.cli #["run", "slow", "true"]
+    let slowMs := (← Linger.Posix.monotonicMs) - slowStart
+    let _ ← waitOrKill release 10000
+    expect (made.exitCode == 0 && slowRc == 0 && slowMs ≥ 3000)
+        s!"a daemon slower than the 3 s window to listen still connects (rc={slowRc}, {slowMs} ms, {slowErr})"
+    e.killAll #["slow"]
     -- Delete failure is observable in the daemon log instead of silently leaving
     -- recovery state behind.
     let _ ← e.cli #["run", "drop-fail", "sleep", "600"]

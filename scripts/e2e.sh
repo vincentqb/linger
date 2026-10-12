@@ -100,6 +100,16 @@ shake_modules="$(git ls-files 'Theorems/*.lean' | sed 's/[.]lean$//; s#/#.#g')"
 ./lake shake --keep-implied Linger Main $shake_modules > "$logs/shake.log" 2>&1 \
   && [ ! -s "$logs/shake.log" ] \
   || { cat "$logs/shake.log"; fail "lake shake suggests import changes"; }
+# The initializer of a module that uses the Lean package calls lean_initialize
+# instead of lean_initialize_runtime_module, which starts the whole Lean frontend in
+# every linger process; none may. grep exits 1 only when it read every file and
+# found no such call.
+lean_init=0
+grep -l '^lean_initialize();$' .lake/build/ir/Main.c .lake/build/ir/Linger/*.c \
+    .lake/build/ir/Linger/*/*.c || lean_init=$?
+[ "$lean_init" -ne 0 ] \
+  || fail "a linger module uses the Lean package; every process would initialize the whole Lean frontend"
+[ "$lean_init" -eq 1 ] || fail "could not read the generated C of Main and Linger/"
 
 say "1b. generated Lean / C shim ABI"
 # Compile declarations emitted by THIS pinned Lean together with the shim.
@@ -196,7 +206,7 @@ say "4. live suites (separate processes, at most four at once)"
 # No suite shares an Env directory, and the runner waits for all of them on failure.
 ./.lake/build/bin/e2e --suites \
   manager:124 delivery:37 attach:50 agent:48 \
-  resume:18 watch:40 title:18 graphics:9 robust:30 \
+  resume:19 watch:40 title:18 graphics:9 robust:30 \
   interop:61 recipes:58 status:17 terminal:12 overview:15 remote:68 identity:25 \
   || fail "live suites (see $logs/linger-*.out)"
 

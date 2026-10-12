@@ -164,7 +164,8 @@ private def catalogDate (text : String) : Bool :=
 private def field (row : List (String × String)) (key : String) : String := (row.lookup key).getD ""
 
 /-- Check the wire framing as well as the production parser's identities.
-Action directories are decoded as JSON, never compared through display escaping. -/
+An action directory must be the exact string literal of the cwd, which selection decodes
+back to it; it is never compared through display escaping. -/
 private def Fixture.catalogMatches (f : Fixture) (path : System.FilePath) (out : String) :
     IO Bool := do
   let text ← IO.FS.readFile path
@@ -190,9 +191,8 @@ private def Fixture.catalogMatches (f : Fixture) (path : System.FilePath) (out :
         field row "name" == pane.name &&
         field row "status" == Linger.Core.Status.name .resumable &&
         has (field row "cmd") (Linger.Tools.Resurrect.diagnostic dir) &&
-        ((Lean.Json.parse (field row "directory")).toOption.bind
-            (fun json => json.getStr?.toOption)) ==
-          some dir &&
+        field row "directory" == dir.quote &&
+        Lean.Syntax.decodeStrLit (field row "directory") == some dir &&
         field row "line" == toString pane.line
 
 private def catalogOrder (f : Fixture) : IO Bool := do
@@ -254,8 +254,8 @@ private def catalogRelativeCwd (f : Fixture) : IO Bool := do
   f.catalogSave path (paneLine "relative" "0" "0" "alias/.." "")
   let (rc, out, err) ← f.cli #["tmux", "ls", "--porcelain", path.toString]
   return rc == 0 && err.isEmpty && (← f.catalogMatches path out) &&
-      has out ((Lean.Json.str (f.root / "alias" / "..").toString).compress) &&
-      !has out ((Lean.Json.str (f.root / "physical").toString).compress) &&
+      has out (f.root / "alias" / "..").toString.quote &&
+      !has out (f.root / "physical").toString.quote &&
       (← namesIn (System.FilePath.mk f.env.dir)).isEmpty
 
 private def catalogReadOnly (f : Fixture) : IO Bool := do
@@ -851,7 +851,7 @@ def runWith (binary : String) : IO UInt32 := do
     cases ++
       [("tmux ls preserves parseSave order, original window context, canonical source and save time",
           catalogOrder),
-        ("tmux ls escapes display controls while directory JSON preserves exact cwd",
+        ("tmux ls escapes display controls while the directory's string literal preserves exact cwd",
           catalogControls),
         ("tmux ls freezes relative cwd against invocation without resolving its symlink spelling",
           catalogRelativeCwd),

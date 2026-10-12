@@ -62,7 +62,7 @@ def nameRule : String := s!"1–{Linger.Core.Name.maxLen} ASCII letters, digits,
 
 /-- Return `name` unchanged when `Name.check` accepts it, and throw with `nameRule`
 otherwise; a name is never rewritten into another. -/
-def checkName (name : String) : IO String := do
+private def checkName (name : String) : IO String := do
   match Linger.Core.Name.check name with
   | some name =>
     return name
@@ -80,7 +80,7 @@ def checkSpelling (path : String) : IO Unit := do
 
 /-- `dir/<name><suffix>` once `checkName` accepts `name`, after creating `dir` with
 `ensureDir` and rejecting an existing entry spelled differently (`checkSpelling`). -/
-def namedPath (dir name suffix : String) : IO String := do
+private def namedPath (dir name suffix : String) : IO String := do
   let name ← checkName name
   ensureDir dir
   let path := s!"{dir}/{name}{suffix}"
@@ -103,7 +103,7 @@ def lockPath (name : String) : IO String := do
 
 /-- Persistent checkpoint ownership, independent of the runtime directory.
 Keep these lock inodes across daemon exits and reboots; never unlink them. -/
-def stateLockPath (name : String) : IO String := do
+private def stateLockPath (name : String) : IO String := do
   namedPath ((← stateDir) ++ "/.locks") name ".lock"
 
 /-- The daemon's output log, `logs/<name>.log` in `stateDir`. -/
@@ -113,7 +113,8 @@ def logPath (name : String) : IO String := do
 /-- Failed acquisition does not run the action. A held lock is tried again while
 `retry`, asked only after a failed attempt, holds. Always release after the action,
 including startup/read exceptions; recheck spelling after the atomic acquisition. -/
-def withLockRetrying {α : Type} (path : String) (retry : IO Bool) (action : IO α) : IO α := do
+private def withLockRetrying {α : Type} (path : String) (retry : IO Bool) (action : IO α) : IO α :=
+  do
   let mut fd ← Linger.Posix.flock path
   while fd < 0 do
     unless ← retry do

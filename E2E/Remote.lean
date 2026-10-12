@@ -3,6 +3,8 @@ module
 public import E2E.Harness
 import Linger.Runtime.Cli
 import Linger.Runtime.Command
+import Linger.Core.Remote
+import Linger.Runtime.Client
 
 public section
 

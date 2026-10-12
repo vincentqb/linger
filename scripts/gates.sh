@@ -296,7 +296,7 @@ import_closure Linger/Core/Remote.lean 'import Linger.Core.Name;'
 import_closure Linger/Core/Title.lean 'import Linger.Core.Name;'
 import_closure Linger/Core/Env.lean ''
 import_closure Linger/Runtime/Command.lean 'import Linger.Posix;'
-import_closure Linger/Manager/Resurrect.lean 'import Linger.Tools.Resurrect;import Linger.Posix;import Linger.Runtime.Paths;import Linger.Runtime.Resume;import Linger.Runtime.Cli;import Linger.Runtime.Command;import Linger.Manager.Picker;import Std.Async.System;import Lean.Data.Json.Parser;import Lean.Data.Json.Printer;'
+import_closure Linger/Manager/Resurrect.lean 'import Linger.Tools.Resurrect;import Linger.Posix;import Linger.Runtime.Paths;import Linger.Runtime.Resume;import Linger.Runtime.Cli;import Linger.Runtime.Command;import Linger.Core.Remote;import Linger.Manager.Picker;import Std.Async.System;'
 import_closure Linger/Manager/Picker.lean \
   'public import Linger.Tools.Picker;import Linger.Posix;import Linger.Core.Remote;import Linger.Core.Terminal;import Linger.Runtime.Command;'
 import_closure Main.lean \
@@ -376,17 +376,17 @@ printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])private def writeSave [(]pa
 printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])[|] _ => writeSave [(]paths[.]headD ""[)]; return 0([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "export command bypasses its native snapshot"
 # Both views consume the same ordered catalog. Display strings are scrubbed;
-# the action directory has JSON framing so display cleanup cannot retarget it.
+# the action directory has string-literal framing so display cleanup cannot retarget it.
 # Acceptance must use the displayed snapshot, then pass its exact validated
 # record to the shared creation executor. E2E checks the save-refresh race.
 for tie in \
   'let save ← readSave origin home file let rows := catalogRows save[.]content save[.]panes' \
-  'let value := if key == "directory" then [(]Lean[.]Json[.]str value[)][.]compress else diagnostic value' \
+  'let value := if key == "directory" then value[.]quote else diagnostic value' \
   'Linger[.]Posix[.]writeAll Linger[.]Posix[.]stdoutFd [(]ByteArray[.]mk [(]Linger[.]Core[.]Listing[.]terminalListing withColor rows[)][.]toArray[)]' \
   'let save ← readSave origin home file createPanes executable origin save[.]panes' \
   'let path ← savePath origin home file while true do match ← Linger[.]Manager[.]Picker[.]choose executable [(]some path[.]toString[)] with' \
   '[|] [.]attach target displayed => unless displayed[.]candidates[.]contains target do throw [(]IO[.]userError "selected pane was absent from the displayed save"[)] let row := displayed[.]row target' \
-  'let dir ← IO[.]ofExcept do let some value := row[.]lookup "directory" [|] throw "selected pane has no directory" let json ← Lean[.]Json[.]parse value json[.]getStr[?]' \
+  'let some dir := [(]row[.]lookup "directory"[)][.]bind fun value => [(]Lean[.]Syntax[.]decodeStrLit value[)][.]filter [(]·[.]quote == value[)] [|] throw [(]IO[.]userError "selected pane has no directory"[)]' \
   'let some pane := selectedPane target dir line [|] throw [(]IO[.]userError "invalid selected pane"[)] createPanes executable origin [[]pane[]] let child ← IO[.]Process[.]spawn [{] cmd := executable, args := Linger[.]Manager[.]Picker[.]attachArgs pane[.]name, cwd := some [(]System[.]FilePath[.]mk pane[.]dir[)] [}] discard child[.]wait' \
   'preflight origin panes let listing ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"ls", "--porcelain"[]] [}]'; do
   printf '%s\n' "$import_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
@@ -820,12 +820,16 @@ code_grep '^[[:space:]]+rt ← drainConns rt$' 'Linger/Runtime/Daemon.lean' > /d
 
 # A client read failure is local to that peer. The close frame cannot prove an
 # IO catch exists: tie errors and EOF to the same fd retirement and pure event.
+# Every retirement goes through Rt.closeConn, so its body is tied too: it closes
+# the fd, then forgets that transport alone.
 # E2E.Robust closes an unread reply and requires the original shell to run again.
 code_grep '^theorem step_closed_frame ' Theorems/Session.lean >/dev/null \
   || fail "the complete client-close frame disappeared"
 daemon_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Runtime/Daemon.lean)"
-printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])let received ← try read c[.]fd 65536 catch _ => pure none match received with [|] some bs => if bs[.]size > 0 then events := events [+][+] [[][.]bytes c[.]fd[.]toNat bs[.]toList[]] [|] none => close c[.]fd rt := rt[.]dropConn c[.]fd events := events [+][+] [[][.]closed c[.]fd[.]toNat[]]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])let received ← try read c[.]fd 65536 catch _ => pure none match received with [|] some bs => if bs[.]size > 0 then events := events [+][+] [[][.]bytes c[.]fd[.]toNat bs[.]toList[]] [|] none => rt ← rt[.]closeConn c[.]fd events := events [+][+] [[][.]closed c[.]fd[.]toNat[]]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "client read errors must close only that peer through the proved transition"
+printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])def Rt[.]closeConn [(]rt : Rt[)] [(]fd : UInt32[)] : IO Rt := do close fd return [{] rt with conns := rt[.]conns[.]filter [(]·[.]fd != fd[)] [}]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+  || fail "Rt.closeConn must close the fd before it forgets only that connection"
 # A session without a command runs Env.shellOf's program, which an unset or empty
 # SHELL makes sh (shellOf_absent). E2E.Agent creates sessions with both.
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])let shell := Linger[.]Core[.]Env[.]shellOf [(]← IO[.]getEnv "SHELL"[)] let [(]prog, args[)] := match argv with [|] [[][]] => [(][(]shell, #[[][]][)] : String × Array String[)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
@@ -863,7 +867,7 @@ for claim in effects_in_order run_execution run_total_safe handle_feedback_keeps
 done
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])def pump [(]rt : Rt[)] [(]evs : List Event[)] : IO Rt := do let result ← Driver[.]run executeEffect [{] st := rt[.]st, world := rt, exiting := rt[.]exiting [}] evs return [{] result[.]world with st := result[.]st, exiting := result[.]exiting [}]' awk "$CODE_AWK" >/dev/null \
   || fail "daemon pump must use the proved driver with its actual state and exit flag"
-code_grep '^def executeEffect [(]st : State[)] [(]rt : Rt[)] : [(]eff : Effect[)] → IO [(]Rt × Driver[.]Reply eff[)]$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+code_grep '^private def executeEffect [(]st : State[)] [(]rt : Rt[)] : [(]eff : Effect[)] → IO [(]Rt × Driver[.]Reply eff[)]$' 'Linger/Runtime/Daemon.lean' > /dev/null \
   || fail "effect interpreter must implement the driver's dependent reply type"
 code_grep '^[[:space:]]+rt[.]saveCkpt st$' 'Linger/Runtime/Daemon.lean' > /dev/null \
   || fail "checkpoint interpreter must save the driver's current state"
@@ -970,7 +974,7 @@ printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])IO Unit := do let deadline 
 # acquisition, so no reader can pass a retry by position. The Claim model reads each
 # failed attempt as an unchanged step. E2E.Robust holds an offline capture's locks
 # while run starts the session, and checks that a claim finding both free logs no wait.
-code_grep '^def claimWaitMs : Nat := [1-9][0-9]*$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+code_grep '^private def claimWaitMs : Nat := [1-9][0-9]*$' 'Linger/Runtime/Daemon.lean' > /dev/null \
   || fail "the startup claim must wait a positive, fixed time"
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])if [(]← monotonicMs[)] ≥ deadline then return false let live ← unixConnect sockPath if live ≥ 0 then close live[.]toUInt64[.]toUInt32 return false([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "the startup claim must stop at its deadline and when a live daemon answers"
@@ -1002,7 +1006,7 @@ for tie in \
   printf '%s\n' "$client_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "saved viewer bypassed bounded replay, snapshot preservation or terminal ownership: $tie"
 done
-printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])if Cli[.]kv row "state" == "resumable" then Paths[.]withSessionLock name do let some [(]_, cwd, _[)] ← Resume[.]loadCkpt name [|] throw' awk "$CODE_AWK" >/dev/null \
+printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])if row[.]lookup "state" == some "resumable" then Paths[.]withSessionLock name do let some [(]_, cwd, _[)] ← Resume[.]loadCkpt name [|] throw' awk "$CODE_AWK" >/dev/null \
   || fail "exporter must establish offline ownership before reading saved state"
 
 # `onMsg_resizePty_agrees` connects every emitted pty size to the resulting
@@ -1257,7 +1261,7 @@ icon_glyphs="$(code_grep "^ *[|] [.][a-zA-Z]+ => '" 'Linger/Core/Status.lean' \
 icon_n="$(printf '%s\n' "$icon_glyphs" | grep -c .)"
 [ "$icon_n" -eq 7 ] \
   || fail "extracted $icon_n status glyphs from Status.icon, expected 7"
-help_glyphs="$(sed -n '/^def usage : String :=/,/^\/--/s/^Status: //p' Linger/Runtime/Cli.lean \
+help_glyphs="$(sed -n '/^private def usage : String :=/,/^\/--/s/^Status: //p' Linger/Runtime/Cli.lean \
   | tr ';' '\n' | awk '{ print $1 }')"
 help_n="$(printf '%s\n' "$help_glyphs" | awk 'NF { n++ } END { print n+0 }')"
 [ "$help_n" -eq "$icon_n" ] \

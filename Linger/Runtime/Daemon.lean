@@ -2,7 +2,8 @@ module
 
 import Linger.Posix
 public import Linger.Core.Buf
-public import Linger.Core.Driver
+import Linger.Core.Driver
+public import Linger.Core.Session
 import Linger.Core.Env
 import Linger.Runtime.Paths
 
@@ -114,7 +115,7 @@ structure Rt where
   dropCkpt : IO Unit
 
 /-- A diagnostic write failure must not turn recovery into session loss. -/
-def report (message : String) : IO Unit := do
+private def report (message : String) : IO Unit := do
   try
     IO.eprintln message
   catch _ =>
@@ -127,17 +128,18 @@ def Rt.conn? (rt : Rt) (fd : UInt32) : Option Conn := rt.conns.find? (·.fd == f
 def Rt.setConn (rt : Rt) (c : Conn) : Rt :=
   { rt with conns := rt.conns.map (fun c' => if c'.fd == c.fd then c else c') }
 
-/-- Forget the transport on `fd` without closing it; callers close the fd first. -/
-def Rt.dropConn (rt : Rt) (fd : UInt32) : Rt := { rt with conns := rt.conns.filter (·.fd != fd) }
+/-- Close `fd` and forget its transport. -/
+def Rt.closeConn (rt : Rt) (fd : UInt32) : IO Rt := do
+  close fd
+  return { rt with conns := rt.conns.filter (·.fd != fd) }
 
 /-- Retired transports still own buffers and a snapshot. Their deadline
 releases that ownership even while the rest of the session stays alive. -/
-def expireConns (rt : Rt) (now : Nat) : IO Rt := do
+private def expireConns (rt : Rt) (now : Nat) : IO Rt := do
   let mut rt := rt
   for c in rt.conns do
     if c.closeBy.any (now ≥ ·) then
-      close c.fd
-      rt := rt.dropConn c.fd
+      rt ← rt.closeConn c.fd
   return rt
 
 /-- Try to flush one connection's queue; `none` = peer gone.
@@ -201,7 +203,7 @@ both `n ≤ 0` cases collapse to `break`, because a dead child surfaces as `read
 returning `none` → `.childExited`, and there is nothing to disconnect. Sharing the
 loop would invite "fixing" that asymmetry, which would either drop the pty queue
 on a transient or leave a dead client's frames queued. -/
-def flushPty (rt : Rt) : IO Rt := do
+private def flushPty (rt : Rt) : IO Rt := do
   let mut wrote := 0
   let owed := owedLen rt.ptyIn
   while wrote < owed do
@@ -209,6 +211,10 @@ def flushPty (rt : Rt) : IO Rt := do
     if n ≤ 0 then
       break -- EAGAIN or child gone; POLLOUT/EOF handles it
     wrote := wrote + n.toNatClampNeg
+  -- `serve` flushes every round, also while the child is not reading, and
+  -- `bufAdvance` copies the bytes it keeps: skip it when nothing was written.
+  if wrote == 0 then
+    return { rt with ptyInFull := rt.ptyInFull && owed != 0 }
   let q := bufAdvance rt.ptyIn wrote
   -- clear the backpressure latch exactly when the queue drains, so the log
   -- records the transition once (E2E.Robust's countFull check asserts it)
@@ -232,12 +238,12 @@ def queuePty (rt : Rt) (bytes : List UInt8) : IO Rt := do
           s!"linger: pty input buffer full ({pending} B, cap {ptyInCap}); \
         the child is not reading — dropping input until it does"
     return { rt with ptyInFull := true }
-  flushPty { rt with ptyIn := q }
+  return { rt with ptyIn := q }
 
 /-- Execute one effect against the world. Its result type admits only the
 feedback that the total driver has proved will terminate. Session state is
 read-only here; the driver supplies the state after the current event. -/
-def executeEffect (st : State) (rt : Rt) : (eff : Effect) → IO (Rt × Driver.Reply eff)
+private def executeEffect (st : State) (rt : Rt) : (eff : Effect) → IO (Rt × Driver.Reply eff)
   | .send id m => do
     match rt.conn? (UInt32.ofNat id) with
     | none =>
@@ -256,12 +262,10 @@ def executeEffect (st : State) (rt : Rt) : (eff : Effect) → IO (Rt × Driver.R
           ({ c with out := q }, cut)
       if cut then
         -- `Buf.reachableOut_bound`: cut the slow client rather than grow
-        close c.fd
-        return (rt.dropConn c.fd, true)
+        return (← rt.closeConn c.fd, true)
       match ← flushConn c with
       | none =>
-        close c.fd
-        return (rt.dropConn c.fd, true)
+        return (← rt.closeConn c.fd, true)
       | some c =>
         return (rt.setConn c, false)
   | .replay id plan => do
@@ -272,12 +276,10 @@ def executeEffect (st : State) (rt : Rt) : (eff : Effect) → IO (Rt × Driver.R
       if c.closing then
         return (rt, false)
       if c.replay.isSome then
-        close c.fd
-        return (rt.dropConn c.fd, true)
+        return (← rt.closeConn c.fd, true)
       match ← flushConn { c with replay := some plan } with
       | none =>
-        close c.fd
-        return (rt.dropConn c.fd, true)
+        return (← rt.closeConn c.fd, true)
       | some c =>
         return (rt.setConn c, false)
   | .close id => do
@@ -291,8 +293,7 @@ def executeEffect (st : State) (rt : Rt) : (eff : Effect) → IO (Rt × Driver.R
       if c.pending then
         let deadline := (← monotonicMs) + drainTimeoutMs
         return (rt.setConn { c with closeBy := some deadline }, true)
-      close fd
-      return (rt.dropConn fd, true)
+      return (← rt.closeConn fd, true)
   | .writePty bytes => do
     return (← queuePty rt bytes, ())
   | .resizePty cols rows => do
@@ -412,22 +413,19 @@ def pollRound (rt : Rt) : IO (Rt × List Event) := do
     if r &&& POLLOUT != 0 then
       match ← flushConn ((rt.conn? c.fd).getD c) with
       | none =>
-        close c.fd
-        rt := rt.dropConn c.fd
+        rt ← rt.closeConn c.fd
         if !c.closing then
           events := events ++ [.closed c.fd.toNat]
       | some c' =>
         if c'.closing && !c'.pending then
-          close c'.fd
-          rt := rt.dropConn c'.fd
+          rt ← rt.closeConn c'.fd
         else
           rt := rt.setConn c'
     if r &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
       if let some current := rt.conn? c.fd then
         if current.closing then
           if r &&& (POLLHUP ||| POLLERR) != 0 then
-            close c.fd
-            rt := rt.dropConn c.fd
+            rt ← rt.closeConn c.fd
           continue
         -- A cancelled request may reset a socket with an unread reply.
         -- Retire that peer through the same transition as EOF.
@@ -441,8 +439,7 @@ def pollRound (rt : Rt) : IO (Rt × List Event) := do
           if bs.size > 0 then
             events := events ++ [.bytes c.fd.toNat bs.toList]
         | none =>
-          close c.fd
-          rt := rt.dropConn c.fd
+          rt ← rt.closeConn c.fd
           events := events ++ [.closed c.fd.toNat]
   return (rt, events)
 
@@ -468,18 +465,17 @@ def drainConns (rt : Rt) : IO Rt := do
           if c.pending then
             rt := rt.setConn c
           else
-            close c.fd
-            rt := rt.dropConn c.fd
+            rt ← rt.closeConn c.fd
         | none =>
-          close c.fd
-          rt := rt.dropConn c.fd
+          rt ← rt.closeConn c.fd
   for c in rt.conns do
     close c.fd
   return { rt with conns := [] }
 
 /-- How long a starting daemon waits for its locks. An offline reader holds both only
-while it loads and prints a checkpoint; `connectUpsert` waits 3 s for the socket. -/
-def claimWaitMs : Nat := 1000
+while it loads and prints a checkpoint. `connectUpsert` gives up on the socket no sooner
+than 3 s, and after that only once this daemon exits or 30 s have passed. -/
+private def claimWaitMs : Nat := 1000
 
 /-- The line a starting daemon logs the first time it finds a lock held. -/
 def claimWaitLine (name : String) : String :=
@@ -487,7 +483,8 @@ def claimWaitLine (name : String) : String :=
 
 /-- Retry a held startup claim until `deadline`, unless a live daemon answers on the
 session's socket and so owns the name for its lifetime. Report the first wait. -/
-def claimRetry (name sockPath : String) (deadline : Nat) (reported : IO.Ref Bool) : IO Bool := do
+private def claimRetry (name sockPath : String) (deadline : Nat) (reported : IO.Ref Bool) :
+    IO Bool := do
   if (← monotonicMs) ≥ deadline then
     return false
   let live ← unixConnect sockPath
@@ -554,6 +551,7 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
             let (rt', events) ← pollRound rt
             let now ← monotonicMs
             rt ← pump rt' (events ++ [.tick now])
+            rt ← flushPty rt
           rt ← drainConns rt
         finally
           for c in rt.conns do

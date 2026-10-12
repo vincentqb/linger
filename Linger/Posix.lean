@@ -220,15 +220,15 @@ def flock (path : String) : IO Int64 := do
 
 @[extern "linger_spawn_detached"]
 private opaque spawnDetachedRaw (prog : @& String) (args : @& Array String) (logPath : @& String) :
-    IO Unit
+    IO UInt32
 
 /-- Double-fork + setsid + exec, with stdin on /dev/null and stdout and stderr appended
-to `logPath` (created 0600), or on /dev/null when it is empty. Returns once the program is
-exec'd and the intermediate child is reaped: no zombie.
+to `logPath` (created 0600), or on /dev/null when it is empty. Returns the program's pid
+once it is exec'd and the intermediate child is reaped: no zombie, and not our child.
 
 Setup and exec failures in the child reach us as an error rather than a silently dead
 daemon: the C side reports them over the same close-on-exec pipe `spawnPty` uses. -/
-def spawnDetached (prog : String) (args : Array String) (logPath : String) : IO Unit := do
+def spawnDetached (prog : String) (args : Array String) (logPath : String) : IO UInt32 := do
   checkCommand "spawnDetached" prog args
   checkCString "spawnDetached log path" logPath
   spawnDetachedRaw prog args logPath

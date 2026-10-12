@@ -276,7 +276,7 @@ def closedStdioProbe (kind logPath : String) : IO UInt32 := do
       throws (spawnDetached "/linger-test-no-such-program" #[] "")
     else
       orFalse do
-          spawnDetached "/bin/sh" #["-c", "echo closed-out; echo closed-err >&2"] logPath
+          discard (spawnDetached "/bin/sh" #["-c", "echo closed-out; echo closed-err >&2"] logPath)
           return true
   let mut closed := true
   for fd in #[0, 1, 2] do

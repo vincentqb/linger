@@ -62,8 +62,7 @@ def stall (rt : Rt) (fd : UInt32) : IO Rt := do
       break
     match ← flushConn c with
     | none =>
-      close fd
-      rt := rt.dropConn fd
+      rt ← rt.closeConn fd
       break
     | some c =>
       rt := rt.setConn c

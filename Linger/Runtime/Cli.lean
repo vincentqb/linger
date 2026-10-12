@@ -5,8 +5,8 @@ public import Linger.Core.Session
 import Linger.Core.Env
 import Linger.Runtime.Paths
 import Linger.Runtime.Daemon
-public import Linger.Runtime.Client
-public import Linger.Core.Remote
+import Linger.Runtime.Client
+import Linger.Core.Remote
 import Linger.Core.Listing
 import Linger.Runtime.Command
 import Linger.Runtime.Resume
@@ -29,10 +29,6 @@ namespace Linger.Runtime.Cli
 open Linger.Posix
 open Linger.Core.Wire (Msg)
 
-/-- The first line of `linger version`. The release is `Terminal.versionNumber`, which
-sessions also see as `TERM_PROGRAM_VERSION`. -/
-def version : String := "linger " ++ Linger.Core.Terminal.versionNumber
-
 /-- Bound on accumulated `infoReply` bytes, independent of the request deadline.
 A peer exceeding the producer's policy has not supplied a usable answer. -/
 abbrev infoReplyCap : Nat := Linger.Core.Session.infoReplyCap
@@ -41,7 +37,7 @@ abbrev infoReplyCap : Nat := Linger.Core.Session.infoReplyCap
 when `overview` cannot parse its arguments as `ls` options. A command line that matches no
 verb's form reaches `overview` whole. Its status legend lists exactly the glyphs
 `Status.icon` emits; `scripts/gates.sh` compares the two. -/
-def usage : String :=
+private def usage : String :=
   s!"Usage: linger [command] [args...]
        linger tmux <command> [SAVE]
 
@@ -109,15 +105,25 @@ Inside a session, $LINGER_SESSION holds the session name.
 Detach key: ctrl-\\ (set LINGER_NO_DETACH_KEY to disable it for writable attach)."
 
 /-- Start `name`'s daemon detached, running this executable as `__daemon name cwd cmd...`
-with its output appended to `Paths.logPath`. Returns once that program has started,
-without waiting for it to listen; `connectUpsert` waits for the socket. -/
-def spawnDaemon (name cwd : String) (cmd : List String) : IO Unit := do
+with its output appended to `Paths.logPath`. Returns the daemon's pid once that program
+has started, without waiting for it to listen; `connectUpsert` waits for the socket. -/
+private def spawnDaemon (name cwd : String) (cmd : List String) : IO UInt32 := do
   let self ← IO.appPath
   let log ← Paths.logPath name
   spawnDetached self.toString (⟨["__daemon", name, cwd] ++ cmd⟩ : Array String) log
 
-/-- Connect, spawning the daemon first if needed (attach-is-upsert). -/
-def connectUpsert (name : String) (cmd : List String) : IO UInt32 := do
+/-- How long `connectUpsert` waits for the socket whether or not the daemon it spawned
+still lives: a concurrent start whose daemon lost the name to another one still loading
+connects within it. -/
+private abbrev socketWaitFloorMs : Nat := 3000
+
+/-- The longest `connectUpsert` waits for the socket of a daemon it spawned. -/
+private abbrev socketWaitCapMs : Nat := 30000
+
+/-- Connect, spawning the daemon first if needed (attach-is-upsert). Without a socket it
+gives up no sooner than `socketWaitFloorMs`; after that it keeps waiting only while the
+spawned daemon lives, never past `socketWaitCapMs`. -/
+private def connectUpsert (name : String) (cmd : List String) : IO UInt32 := do
   match ← Client.connect name with
   | some fd =>
     return fd
@@ -125,10 +131,12 @@ def connectUpsert (name : String) (cmd : List String) : IO UInt32 := do
     -- Recovery, including its saved cwd, happens only after the daemon owns
     -- both resources. A parent-side load would race another runtime namespace.
     let cwd := (← IO.Process.getCurrentDir).toString
-    spawnDaemon name cwd cmd
-    let deadline := (← monotonicMs) + 3000
+    let pid ← spawnDaemon name cwd cmd
+    let start ← monotonicMs
     let mut fdOpt : Option UInt32 := none
-    while fdOpt.isNone && (← monotonicMs) < deadline do
+    while
+      fdOpt.isNone && (← monotonicMs) < start + socketWaitCapMs &&
+        ((← monotonicMs) < start + socketWaitFloorMs || (← alive pid)) do
       IO.sleep 30
       fdOpt ← Client.connect name
     match fdOpt with
@@ -140,7 +148,7 @@ def connectUpsert (name : String) (cmd : List String) : IO UInt32 := do
 
 /-- Reject an operand that is neither an exact name nor a well-formed `name@host` target:
 print the name rule and return exit status 2. -/
-def invalidTarget : IO UInt32 := do
+private def invalidTarget : IO UInt32 := do
   IO.eprintln s!"linger: invalid session name or malformed name@host target (use {Paths.nameRule})"
   return 2
 
@@ -149,7 +157,7 @@ with a shell; `Remote.command` preserves the original argv, including empty word
 The remote linger reads an attach or capture target with `targetArgs`, so it travels
 as `targetOperands`; the other verbs take it by position.
 Inherited stdin keeps `send name@host -` byte-exact. -/
-def runTarget (verb : String) (target : Linger.Core.Remote.Target) (args : List String)
+private def runTarget (verb : String) (target : Linger.Core.Remote.Target) (args : List String)
     (localAction : String → IO UInt32) (options : List String := []) : IO UInt32 := do
   let interactive := verb == "attach"
   if interactive && (!(← stdinIsTty) || !(← (← IO.getStdout).isTty)) then
@@ -176,8 +184,8 @@ def runTarget (verb : String) (target : Linger.Core.Remote.Target) (args : List 
 
 /-- Run `verb` through `runTarget` once `Remote.parseTarget` accepts the operand; a
 malformed operand returns `invalidTarget`'s status 2 without connecting. -/
-def withTarget (verb target : String) (args : List String) (localAction : String → IO UInt32)
-    (options : List String := []) : IO UInt32 :=
+private def withTarget (verb target : String) (args : List String)
+    (localAction : String → IO UInt32) (options : List String := []) : IO UInt32 :=
   match Linger.Core.Remote.parseTarget target with
   | none => invalidTarget
   | some parsed => runTarget verb parsed args localAction options
@@ -236,8 +244,9 @@ def readInfo (fd : UInt32) (stopAt : Option Nat := none) : IO (List (String × S
 
 /-- Keep connection absence separate from an info failure: listing must retain
 a connected peer, while `get` must report its unanswered request. -/
-def queryInfo (name : String) (stopAt : Option Nat := none) (retainUnavailable : Bool := true) :
-    IO (Option (Except IO.Error (List (String × String)))) := do
+private def queryInfo (name : String) (stopAt : Option Nat := none)
+    (retainUnavailable : Bool := true) : IO (Option (Except IO.Error (List (String × String)))) :=
+  do
   if let some deadline := stopAt then
     if (← monotonicMs) ≥ deadline then
       return some (.error (IO.userError "overview deadline reached"))
@@ -254,7 +263,7 @@ def queryInfo (name : String) (stopAt : Option Nat := none) (retainUnavailable :
       close fd
 
 /-- Maximum simultaneous local overview queries. -/
-abbrev localQueryLimit : Nat := 32
+private abbrev localQueryLimit : Nat := 32
 
 /-- Maximum simultaneous remote overview commands. -/
 abbrev remoteQueryLimit : Nat := 4
@@ -264,7 +273,7 @@ abbrev remoteQueryTimeoutMs : Nat := 3000
 
 /-- Bounded socket conversations run against the same deadline.
 Results retain their input positions; every started task is joined, even on error. -/
-def queryInfos (names : Array String) (deadline : Nat) (retainUnavailable : Bool) :
+private def queryInfos (names : Array String) (deadline : Nat) (retainUnavailable : Bool) :
     IO (Array (Option (Except IO.Error (List (String × String))))) := do
   let unknown := some (.error (IO.userError "overview deadline reached"))
   let mut results := Array.replicate names.size unknown
@@ -304,14 +313,11 @@ def queryInfos (names : Array String) (deadline : Nat) (retainUnavailable : Bool
     for (_, task) in ← pending.get do
       discard <| IO.wait task
 
-/-- The first value recorded under `k` in an info record list, or empty when `k` is absent. -/
-def kv (l : List (String × String)) (k : String) : String := (l.lookup k).getD ""
-
 /-- Remote hosts for `-r`: explicit flag list, else `Env.remotesFile`, which an
 unset or empty HOME leaves unconfigured. Duplicates are a hard error
 (`Remote.checkHosts`). `none` means no `-r` (local only); `some []` means `-r`
 with no arg (read the file). -/
-def resolveRemotes (flag : Option (List String)) : IO (List String) := do
+private def resolveRemotes (flag : Option (List String)) : IO (List String) := do
   match flag with
   | none =>
     return []
@@ -339,7 +345,7 @@ def resolveRemotes (flag : Option (List String)) : IO (List String) := do
 keepalives alone cannot bound a remote command that never exits. Collect only
 complete successful outputs, in host order; stop and join every remaining group.
 Signal waiters let a cancelled chooser's listing retire its isolated SSH groups. -/
-def listRemotes (hosts : Array String) : IO (Option (Array String)) := do
+private def listRemotes (hosts : Array String) : IO (Option (Array String)) := do
   let signals ← IO.mkRef (#[] : Array (Std.Async.Signal.Waiter × Std.Async.AsyncTask Int))
   let jobs ← IO.mkRef (#[] : Array (Nat × IO.Ref (Option Command.Job)))
   try
@@ -401,7 +407,7 @@ def listRemotes (hosts : Array String) : IO (Option (Array String)) := do
 
 /-- Remove a failed-connect socket only while holding its name lock. `false`
 means another owner holds the lock or the probe itself failed; both fail closed. -/
-def removeStaleSocket (name : String) : IO Bool := do
+private def removeStaleSocket (name : String) : IO Bool := do
   try
     Paths.withLock (← Paths.lockPath name) do
         try
@@ -456,14 +462,14 @@ def localRows (stopAt : Option Nat := none) : IO (List (List (String × String))
 
 /-- Local attention counts under one 250 ms reply window: the text `ls --summary`
 prints and an attached title shows, computed in the calling process. -/
-def summaryText : IO String := do
+private def summaryText : IO String := do
   let rows ← localRows (some ((← monotonicMs) + 250))
   return Linger.Core.Status.summary
       (rows.map fun info => Linger.Core.Status.ofName ((info.lookup "status").getD "unknown"))
 
 /-- `ls --summary`: print `summaryText`, or nothing when no local session needs
 attention; exit 0 either way. -/
-def cmdSummary : IO UInt32 := do
+private def cmdSummary : IO UInt32 := do
   let summary ← summaryText
   if !summary.isEmpty then
     IO.println summary
@@ -473,7 +479,7 @@ def cmdSummary : IO UInt32 := do
 offline checkpoint, loaded while owning both resources and displayed after
 releasing them. Writable attachment keeps the create/resume path. Live titles
 sample `summaryText` in this process. -/
-def cmdAttach (name : String) (cmd : List String) (readOnly : Bool) : IO UInt32 := do
+private def cmdAttach (name : String) (cmd : List String) (readOnly : Bool) : IO UInt32 := do
   let result ←
     if readOnly then
       match ← Client.connect name with
@@ -507,7 +513,7 @@ def cmdAttach (name : String) (cmd : List String) (readOnly : Bool) : IO UInt32 
 `k<TAB>v` records separated by blank lines (`porcelain`) or as the terminal listing.
 Remote rows keep only name, command, state and status. Returns 130 when a signal
 cancels the remote queries. -/
-def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
+private def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
   let (locals, remote) ←
     if remotes.isEmpty then
       pure (← localRows, some #[])
@@ -564,7 +570,7 @@ def parseLs : List String → Option (Bool × Option (List String))
 
 /-- Exit status of a one-shot request: 0 when the daemon completed it with `done`,
 otherwise 1 after printing why it did not complete. -/
-def requestStatus (name : String) (result : Client.Drained) : IO UInt32 := do
+private def requestStatus (name : String) (result : Client.Drained) : IO UInt32 := do
   match result with
   | .done =>
     return 0
@@ -581,7 +587,7 @@ def requestStatus (name : String) (result : Client.Drained) : IO UInt32 := do
 /-- One request to a live session. Pass `Client.replySilenceMs` for verbs a
 pre-upgrade daemon does not know, which would otherwise hang the untimed drain
 (spec agent-cli, Decision 4). -/
-def requireLive (name : String) (m : Msg) (silenceMs : Int32 := -1) : IO UInt32 := do
+private def requireLive (name : String) (m : Msg) (silenceMs : Int32 := -1) : IO UInt32 := do
   match ← Client.oneShot name m (silenceMs := silenceMs) with
   | none =>
     IO.eprintln s!"linger: no session '{name}'"
@@ -589,8 +595,8 @@ def requireLive (name : String) (m : Msg) (silenceMs : Int32 := -1) : IO UInt32 
   | some result =>
     requestStatus name result
 
-/-- Like `requireLive` but expects no reply (input/labels-fire-and-forget). -/
-def requireLiveSend (name : String) (m : Msg) : IO UInt32 := do
+/-- Like `requireLive`, but delivers `m` without awaiting a reply: `send` text and `kill`. -/
+private def requireLiveSend (name : String) (m : Msg) : IO UInt32 := do
   if ← Client.sendOnly name m then
     return 0
   IO.eprintln s!"linger: no session '{name}'"
@@ -599,7 +605,8 @@ def requireLiveSend (name : String) (m : Msg) : IO UInt32 := do
 /-- A connected daemon is authoritative, including its errors. Only an absent
 connection followed by successful ownership acquisition permits an offline read.
 Hold both locks through loading and rendering; never start or modify a session. -/
-def cmdRead (name : String) (m : Msg) (render : Linger.Core.Vt.Vt → List UInt8) : IO UInt32 := do
+private def cmdRead (name : String) (m : Msg) (render : Linger.Core.Vt.Vt → List UInt8) :
+    IO UInt32 := do
   match ← Client.oneShot name m (silenceMs := Client.replySilenceMs) with
   | some result =>
     requestStatus name result
@@ -618,10 +625,11 @@ frame per read (≤ 64 KiB, so every frame satisfies `Msg.WF`). The agent's raw 
 path — Enter, ^C, ESC, arrow sequences, exact whitespace: everything argv
 cannot carry (agent-cli Decision 5). Poll-then-read so EOF (`read` = `none`)
 is distinguished from would-block (`some #[]`, looped past) without spinning;
-no timeout on purpose — a slow producer feeding a pipe is legitimate, and EOF
-is the only exit. Nothing accumulates (each chunk is sent and dropped), so no
+no timeout on purpose — a slow producer feeding a pipe is legitimate. Stdin EOF
+returns 0; a missing session, a refusal, an invalid reply, the session's exit or a lost
+connection returns 1. Nothing accumulates (each chunk is sent and dropped), so no
 `Buf` is involved. -/
-def cmdSendStdin (name : String) : IO UInt32 := do
+private def cmdSendStdin (name : String) : IO UInt32 := do
   match ← Client.connect name with
   | none =>
     IO.eprintln s!"linger: no session '{name}'"
@@ -668,7 +676,7 @@ def cmdSendStdin (name : String) : IO UInt32 := do
 /-- `wait`: block until the session's program exits and return its status. No session
 returns 0; a refusal, a lost connection or a reply without a status prints a diagnostic
 and returns 1. -/
-def cmdWait (name : String) : IO UInt32 := do
+private def cmdWait (name : String) : IO UInt32 := do
   match ← Client.oneShot name .wait (untilDone := false) with
   | none =>
     return 0 -- no session = nothing to wait for
@@ -686,7 +694,7 @@ def cmdWait (name : String) : IO UInt32 := do
 
 /-- `get`: print the session's labels as `key=value` lines from one info reply. No
 session, or a failed reply, prints a diagnostic and returns 1. -/
-def cmdGet (name : String) : IO UInt32 := do
+private def cmdGet (name : String) : IO UInt32 := do
   match ← queryInfo name with
   | none =>
     IO.eprintln s!"linger: no session '{name}'"
@@ -700,16 +708,16 @@ def cmdGet (name : String) : IO UInt32 := do
         IO.println s!"{(k.drop 6).toString}={v}"
     return 0
 
-/-- `version`: print `version`, then the socket and state directories this environment
-resolves. -/
-def cmdVersion : IO UInt32 := do
-  IO.println version
+/-- `version`: print `linger` and `Terminal.versionNumber`, which sessions also see as
+`TERM_PROGRAM_VERSION`, then the socket and state directories this environment resolves. -/
+private def cmdVersion : IO UInt32 := do
+  IO.println s!"linger {Linger.Core.Terminal.versionNumber}"
   IO.println s!"sockets: {← Paths.socketDir}"
   IO.println s!"state:   {← Paths.stateDir}"
   return 0
 
 /-- Execute a validated listing request. -/
-def overview (args : List String) : IO UInt32 := do
+private def overview (args : List String) : IO UInt32 := do
   match parseLs args with
   | some (porcelain, remoteFlag) =>
     cmdList porcelain (← resolveRemotes remoteFlag)

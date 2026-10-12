@@ -81,7 +81,7 @@ def remoteTarget (target : String) : Bool := target.toList.contains '@'
 /-- The records of the rows whose target satisfies `keep`, in order. A name record
 governs itself and the records after it up to the next name record; records before
 every name record follow `current`. -/
-def rowRecords (keep : String → Bool) : Bool → List (List String) → List (List String)
+private def rowRecords (keep : String → Bool) : Bool → List (List String) → List (List String)
   | _, [] => []
   | current, fields :: rest =>
     let current := if fields.head? == some "name" then keep (fields[1]?.getD "") else current

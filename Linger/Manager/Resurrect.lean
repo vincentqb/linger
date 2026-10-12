@@ -6,10 +6,9 @@ import Linger.Runtime.Paths
 import Linger.Runtime.Resume
 import Linger.Runtime.Cli
 import Linger.Runtime.Command
+import Linger.Core.Remote
 import Linger.Manager.Picker
 import Std.Async.System
-import Lean.Data.Json.Parser
-import Lean.Data.Json.Printer
 
 public section
 
@@ -219,9 +218,8 @@ private def listSave (file : Option String) (porcelain : Bool) : IO Unit :=
       out.putStr s!"source\t{diagnostic save.path.toString}\nsaved\t{save.modified}\n\n"
       for row in rows do
         for (key, value) in row do
-          -- JSON string framing preserves control characters in action data.
-          let value :=
-            if key == "directory" then (Lean.Json.str value).compress else diagnostic value
+          -- String-literal framing preserves control characters in action data.
+          let value := if key == "directory" then value.quote else diagnostic value
           out.putStr s!"{key}\t{value}\n"
         out.putStr "\n"
     else
@@ -248,12 +246,11 @@ private def selectSave (executable : String) (file : Option String) : IO UInt32 
         unless displayed.candidates.contains target do
           throw (IO.userError "selected pane was absent from the displayed save")
         let row := displayed.row target
-        let dir ←
-          IO.ofExcept do
-              let some value := row.lookup "directory"
-                | throw "selected pane has no directory"
-              let json ← Lean.Json.parse value
-              json.getStr?
+        -- `decodeStrLit` tolerates malformed literals; accept only the canonical encoding.
+        let some dir :=
+          (row.lookup "directory").bind fun value =>
+            (Lean.Syntax.decodeStrLit value).filter (·.quote == value)
+          | throw (IO.userError "selected pane has no directory")
         let some line := (row.lookup "line").bind String.toNat?
           | throw (IO.userError "selected pane has no source line")
         let some pane := selectedPane target dir line
@@ -271,9 +268,9 @@ Checkpoint decoding supplies the cwd for resumable sessions. -/
 private def snapshot : IO (List (String × String)) := do
   let rows ← Cli.localRows
   rows.mapM fun row => do
-      let name := Cli.kv row "name"
+      let name := (row.lookup "name").getD ""
       let dir ←
-        if Cli.kv row "state" == "resumable" then
+        if row.lookup "state" == some "resumable" then
           Paths.withSessionLock name do
               let some (_, cwd, _) ←
                 Resume.loadCkpt
@@ -281,7 +278,7 @@ private def snapshot : IO (List (String × String)) := do
               pure cwd
         else
           do
-            let some pid := (Cli.kv row "pid").toNat?
+            let some pid := (row.lookup "pid").bind String.toNat?
               | throw (IO.userError s!"could not read live session: {name}")
             unless pid < UInt32.size do
               throw (IO.userError s!"invalid process id for session: {name}")

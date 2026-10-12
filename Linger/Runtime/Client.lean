@@ -28,9 +28,6 @@ namespace Linger.Runtime.Client
 open Linger.Posix
 open Linger.Core.Wire (Msg Decoder)
 
-/-- The bytes of `m`'s frame, exactly as `Wire.encode` lays it out. -/
-def encodeBA (m : Msg) : ByteArray := ByteArray.mk (Linger.Core.Wire.encode m).toArray
-
 /-- Connect to a session socket. A nonblocking attempt can fail while a live
 listener is busy, so callers must not treat that failure as proof of absence. -/
 def connect (name : String) (nonblocking : Bool := false) : IO (Option UInt32) := do
@@ -48,7 +45,8 @@ def connect (name : String) (nonblocking : Bool := false) : IO (Option UInt32) :
 
 /-- Write `m`'s complete frame to `fd` with `writeAll`. Throws when the peer is gone, when
 a nonblocking `fd` would block, or when the write fails. -/
-def sendMsg (fd : UInt32) (m : Msg) : IO Unit := writeAll fd (encodeBA m)
+def sendMsg (fd : UInt32) (m : Msg) : IO Unit :=
+  writeAll fd (ByteArray.mk (Linger.Core.Wire.encode m).toArray)
 
 /-- How a request/reply conversation ended. Messages stay data until the CLI
 chooses an exit status and diagnostic; a refusal or transport loss cannot collapse
@@ -80,7 +78,8 @@ all, and the untimed drain would hang the client forever — the deadline has to
 be owned here. Output payloads stream to stdout as they come (`capture` is such
 a stream); the timeout is per poll round, so a long reply that keeps arriving
 never trips it. -/
-def drainReplies (fd : UInt32) (untilDone : Bool) (silenceMs : Int32 := -1) : IO Drained := do
+private def drainReplies (fd : UInt32) (untilDone : Bool) (silenceMs : Int32 := -1) : IO Drained :=
+  do
   let mut dec : Decoder := {}
   repeat
     let revs ← poll #[fd] #[POLLIN] silenceMs
@@ -140,7 +139,7 @@ def oneShot (name : String) (m : Msg) (untilDone : Bool := true) (silenceMs : In
 
 /-- Split stdin bytes at the detach key. Returns (bytes-to-send,
 detach?). Bytes after the key are dropped — we're leaving. -/
-def splitDetach (bs : ByteArray) (enabled : Bool) : ByteArray × Bool :=
+private def splitDetach (bs : ByteArray) (enabled : Bool) : ByteArray × Bool :=
   if !enabled then (bs, false)
   else
     match bs.toList.findIdx? (· == 0x1C) with

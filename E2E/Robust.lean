@@ -5,6 +5,7 @@ import Linger.Core.Checkpoint
 import Linger.Core.Listing
 import Linger.Runtime.Daemon
 import Linger.Runtime.Cli
+import Linger.Runtime.Client
 
 public section
 
@@ -209,7 +210,9 @@ def hostileBudgetKb : Nat := 450000
 /-- One write carries the largest count for every CSI that repeats by it, at
 1000×1000, and one read carries 1,000 history requests. The theorems bound the
 iterations (`repeatAtMost_eq_repeat`) and the replies per read
-(`step_bytes_one_reply`); these budgets bound what that costs the running daemon. -/
+(`step_bytes_one_reply`); these budgets bound what that costs the running daemon.
+The timed write also carries 200 CHT/CBT pairs of 999 steps each; a tab step that
+scans every column would make each pair O(cols²). -/
 private def hostileInput (e : Env) : IO Unit := do
   let name := "hostile"
   let (writeBudget, infoBudget) := hostileBudgetMs
@@ -218,8 +221,10 @@ private def hostileInput (e : Env) : IO Unit := do
     let _ ← e.cli #["resize", name, "1000", "1000"]
     let counts :=
       String.join (["S", "T", "I", "Z", "@", "L", "M", "P", "X"].map (s!"\\033[65535{·}"))
+    let tabs := s!"{e.dir}/hostile-tabs"
+    IO.FS.writeFile tabs (String.join (List.replicate 200 "\x1b[999I\x1b[999Z"))
     let start ← Linger.Posix.monotonicMs
-    let _ ← e.cli #["run", name, s!"printf '{counts}'; echo HOSTILE-$((40+2))"]
+    let _ ← e.cli #["run", name, s!"printf '{counts}'; cat {tabs}; echo HOSTILE-$((40+2))"]
     let written ← waitFor writeBudget (return has (← e.out #["capture", name]) "HOSTILE-42")
     let writeMs := (← Linger.Posix.monotonicMs) - start
     let raw ← Linger.Posix.unixConnect s!"{e.dir}/{name}.sock"
@@ -252,12 +257,18 @@ private def hostileInput (e : Env) : IO Unit := do
 measured when it was set (0.44 s), in milliseconds. -/
 def inputBurstBudgetMs : Nat := 2200
 
+/-- Bound on the daemon's write(2) calls during those eight reads, where `/proc` counts
+them: 15 to 21 when it was set, with the pty queue flushed once per poll round. A write
+per input frame would make about 87,000. -/
+def inputBurstWriteBudget : Nat := 1000
+
 /-- Eight reads' worth of one-byte input frames: each 64 KiB read holds 10,922 and
 becomes one `.bytes` event. Compiled code folds a read's frames through
 `Session.feedMsgsTR` (`feedMsgs_eq_feedMsgsTR`), in time linear in the frames;
 the specification `Session.feedMsgs` rescans and copies the effects so far for each
 frame, which cost 1.2 s a read. An `info` sent after the burst on the same
-connection is answered after every frame before it. -/
+connection is answered after every frame before it, and the daemon makes fewer than
+`inputBurstWriteBudget` write(2) calls meanwhile. -/
 private def inputBurst (e : Env) : IO Unit := do
   let name := "input-burst"
   try
@@ -267,6 +278,7 @@ private def inputBurst (e : Env) : IO Unit := do
     unless raw ≥ 0 do
       throw (IO.userError "input burst could not connect")
     let fd := raw.toUInt64.toUInt32
+    let before ← e.daemonWrites name
     let frame := Linger.Core.Wire.encode (.input [0x61])
     -- The daemon reads a connection 64 KiB at a time.
     let burst := ByteArray.mk (List.replicate (8 * (65536 / frame.length)) frame).flatten.toArray
@@ -283,8 +295,12 @@ private def inputBurst (e : Env) : IO Unit := do
         pure (answered, (← Linger.Posix.monotonicMs) - start)
       finally
         Linger.Posix.close fd
-    expect (reading && answered && burstMs ≤ inputBurstBudgetMs)
-        s!"eight reads of 10,922 input frames each stay within budget ({burstMs} ms)"
+    let after ← e.daemonWrites name
+    let writes := before.bind fun b => after.map (· - b)
+    expect
+        (reading && answered && burstMs ≤ inputBurstBudgetMs &&
+          writes.all (· < inputBurstWriteBudget))
+        s!"eight reads of 10,922 input frames each stay within budget ({burstMs} ms, {writes} writes)"
   finally
     e.killAll #[name]
 

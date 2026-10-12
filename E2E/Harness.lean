@@ -505,6 +505,22 @@ def Env.daemonPeakKb (e : Env) (name : String) : IO (Option Nat) := do
   | none =>
     throw (IO.userError s!"no VmHWM line for daemon {pid}")
 
+/-- The daemon behind `name`'s write(2) calls so far: `syscw` from `/proc/<pid>/io`.
+`none` where `/proc/self/io` is absent, as without `/proc` or without per-task I/O
+accounting; where it exists, an unreadable record is an error. -/
+def Env.daemonWrites (e : Env) (name : String) : IO (Option Nat) := do
+  unless ← System.FilePath.pathExists "/proc/self/io" do
+    return none
+  let some pid ← e.daemonPid name | throw (IO.userError s!"no daemon answered for '{name}'")
+  let io ← IO.FS.readFile s!"/proc/{pid}/io"
+  match
+    (lines io).findSome? fun line =>
+      (line.dropPrefix? "syscw:").bind (·.toString.trimAscii.toString.toNat?) with
+  | some n =>
+    return some n
+  | none =>
+    throw (IO.userError s!"no syscw line for daemon {pid}")
+
 /-- CPU milliseconds of process `pid` and of the children it has reaped, from
 `/proc/<pid>/stat` in USER_HZ ticks of 10 ms. `none` on a platform without `/proc`;
 where it exists, an unreadable record is an error rather than an unmeasured pass. -/

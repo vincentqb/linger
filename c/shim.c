@@ -106,11 +106,12 @@ static void spawn_fail(int fd, const char *stage, int code) {
     _exit(127);
 }
 
-/* 1 = the child reported a failure (record filled in); 0 = clean EOF. */
-static int spawn_report(int fd, struct spawn_err *out) {
+/* Read up to len bytes, retrying EINTR, until EOF or another error. Returns the
+ * count read. */
+static size_t read_full(int fd, void *buf, size_t len) {
     size_t got = 0;
-    while (got < sizeof *out) {
-        ssize_t n = read(fd, (char *)out + got, sizeof *out - got);
+    while (got < len) {
+        ssize_t n = read(fd, (char *)buf + got, len - got);
         if (n == 0) break;
         if (n < 0) {
             if (errno == EINTR) continue;
@@ -118,7 +119,12 @@ static int spawn_report(int fd, struct spawn_err *out) {
         }
         got += (size_t)n;
     }
-    return got == sizeof *out;
+    return got;
+}
+
+/* 1 = the child reported a failure (record filled in); 0 = clean EOF. */
+static int spawn_report(int fd, struct spawn_err *out) {
+    return read_full(fd, out, sizeof *out) == sizeof *out;
 }
 
 /* All argument vectors are built before fork; their strings remain borrowed. */
@@ -644,9 +650,10 @@ LEAN_EXPORT lean_obj_res linger_flock(b_lean_obj_arg path) {
 /* -------------------------------------------------------------------- */
 /* processes                                                             */
 
-/* linger_spawn_detached : @& String -> @& Array String -> @& String -> IO Unit
+/* linger_spawn_detached : @& String -> @& Array String -> @& String -> IO UInt32
  * Double-fork + setsid; grandchild execve's with PATH lookup and stdio on logPath
- * (append, 0600; /dev/null if logPath == ""). No zombie remains. */
+ * (append, 0600; /dev/null if logPath == ""). No zombie remains. Returns the
+ * grandchild's pid, which the intermediate child writes before it exits. */
 LEAN_EXPORT lean_obj_res linger_spawn_detached(b_lean_obj_arg prog, b_lean_obj_arg args,
                                             b_lean_obj_arg log_path) {
     size_t nargs = lean_array_size(args);
@@ -665,20 +672,36 @@ LEAN_EXPORT lean_obj_res linger_spawn_detached(b_lean_obj_arg prog, b_lean_obj_a
         free(argv); free(shargv);
         return io_err_code("spawn_pipe", e);
     }
+    /* fds 0-2 are occupied while `held`, so neither end can land on stdio. A failed
+     * pipe leaves the array unmodified, so -1 marks that nothing was opened. */
+    int pidPipe[2] = { -1, -1 };
+    if (pipe(pidPipe) < 0 || fcntl(pidPipe[1], F_SETFD, FD_CLOEXEC) < 0) {
+        int e = errno;
+        release_stdio((unsigned)held);
+        if (pidPipe[0] >= 0) { close(pidPipe[0]); close(pidPipe[1]); }
+        close(errPipe[0]); close(errPipe[1]); free(argv); free(shargv);
+        return io_err_code("pid pipe", e);
+    }
 
     pid_t pid = fork();
     if (pid != 0) release_stdio((unsigned)held);
     if (pid < 0) {
         int e = errno;
+        close(pidPipe[0]); close(pidPipe[1]);
         close(errPipe[0]); close(errPipe[1]); free(argv); free(shargv);
         return io_err_code("fork", e);
     }
     if (pid == 0) { /* child */
         close(errPipe[0]);
+        close(pidPipe[0]);
         if (setsid() < 0) spawn_fail(errPipe[1], "setsid", errno);
         pid_t pid2 = fork();
         if (pid2 < 0) spawn_fail(errPipe[1], "fork", errno);
-        if (pid2 != 0) _exit(0);
+        if (pid2 != 0) {
+            ssize_t n;
+            do { n = write(pidPipe[1], &pid2, sizeof pid2); } while (n < 0 && errno == EINTR);
+            _exit(0);
+        }
         /* grandchild: no ctty, own session. stdin first, so a closed fd 0
          * cannot alias the log descriptor. */
         int devnull = open("/dev/null", O_RDONLY);
@@ -695,6 +718,10 @@ LEAN_EXPORT lean_obj_res linger_spawn_detached(b_lean_obj_arg prog, b_lean_obj_a
         spawn_fail(errPipe[1], "execve", errno);
     }
     close(errPipe[1]);
+    close(pidPipe[1]);
+    pid_t grandchild = 0;
+    size_t got = read_full(pidPipe[0], &grandchild, sizeof grandchild);
+    close(pidPipe[0]);
     struct spawn_err rec;
     int failed = spawn_report(errPipe[0], &rec);
     close(errPipe[0]);
@@ -707,7 +734,9 @@ LEAN_EXPORT lean_obj_res linger_spawn_detached(b_lean_obj_arg prog, b_lean_obj_a
         snprintf(buf, sizeof buf, "spawn_detached: %s", rec.stage);
         return io_err_code(buf, rec.code);
     }
-    return io_ok_unit();
+    if (got != sizeof grandchild || grandchild <= 0)
+        return io_msg("spawn_detached: no pid reported");
+    return lean_io_result_mk_ok(lean_box_uint32((uint32_t)grandchild));
 }
 
 /* linger_kill : UInt32 -> UInt32 -> IO Unit  (ESRCH is not an error) */
