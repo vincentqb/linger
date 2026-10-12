@@ -27,17 +27,23 @@ import all Theorems.Env
 import all Theorems.Contracts
 public meta import Lean.Elab.Command
 import Lean.Parser.Command
+public meta import Lean.Compiler.CSimpAttr
+import Lean.Compiler.CSimpAttr
 
 /-! # Semantic coverage gate
 
 Every explicit `def` or `abbrev` under `Linger/Core` or `Linger/Tools` must occur
-as its exact environment constant in the type of a written theorem from `Theorems`;
-generated equation, congruence and induction lemmas do not count. No module
-under `Linger/Core`, `Linger/Tools` or `Theorems` may declare an axiom; native
-evaluation declares one for each use. The checks read only this module's import
-closure, so each of those modules must be in it. This module is under the
-sanctioned friend region so it can resolve private definitions and theorem
-declarations without granting that access to E2E or runtime code. -/
+as its exact environment constant in the type of a written theorem under `Linger/Core`,
+`Linger/Tools` or `Theorems`; generated equation, congruence and induction lemmas do not
+count. No module under `Linger/Core`, `Linger/Tools` or `Theorems` may declare an axiom;
+native evaluation declares one for each use. The checks read only this module's import
+closure, so each of those modules must be in it. Code under `Linger/Core` and
+`Linger/Tools` reaches a global `@[csimp]` replacement only through its specification, from
+definitions declared after the theorem, which is tagged in the specification's module;
+`scripts/e2e.sh` checks on the generated C that each replacement, a module-local one
+included, is still called. This module is under the sanctioned friend region so it can
+resolve private definitions and theorem declarations without granting that access to E2E
+or runtime code. -/
 
 namespace Theorems.Coverage
 
@@ -180,12 +186,52 @@ public meta def checkPureCoverage : CommandElabM (Array Lean.Name) := do
       if ci.isAxiom then some name else none
   unless axioms.isEmpty do
     throwError m!"coverage: axioms in pure or proof modules: {axioms}"
+  -- Compiled code reaches a `@[csimp]` replacement only through its specification, and the
+  -- compiler replaces a specification only in definitions declared after the theorem. A
+  -- constant without a range, such as a recursive definition's `_unary`, takes its owner's.
+  let line (n : Lean.Name) :=
+    (List.range n.getNumParts).findSome? fun up =>
+      let owner := Nat.repeat Lean.Name.getPrefix up n
+      (declRangeExt.find? (level := .exported) env owner <|>
+            declRangeExt.find? (level := .server) env owner).map
+        (·.range.pos.line)
+  let code := moduleConsts env fun mod => [`Linger.Core, `Linger.Tools].any (·.isPrefixOf mod)
+  -- Read the global theorems from each module's entries: this environment loads no extension
+  -- state, and `E2E/Coverage.lean` elaborates in one that lacks Linger's.
+  let csimps :=
+    (List.range env.header.modules.size).foldl
+      (fun acc idx =>
+        acc ++
+          (Compiler.CSimp.ext.ext.getModuleEntries env idx).toList.filterMap fun
+            | .global e => some (idx, e)
+            | .scoped .. => none)
+      []
+  for (idx, e) in csimps do
+    unless (`Linger).isPrefixOf e.toDeclName do
+      continue
+    -- Recorded in the specification's module, a replacement reaches every importer, and lines
+    -- order the theorem against that module's own callers.
+    unless env.getModuleIdxFor? e.fromDeclName == some idx do
+      throwError m!"coverage: `{e.thmName}` replaces `{e.fromDeclName}` outside its module, \
+        so callers there run the specification"
+    for (n, ci) in code do
+      let some v := ci.value? (allowOpaque := true) | continue
+      if ci.isTheorem || e.toDeclName.isPrefixOf n || e.fromDeclName.isPrefixOf n then
+        continue
+      let used := v.getUsedConstants
+      if used.contains e.toDeclName then
+        throwError m!"coverage: `{n}` names the csimp replacement `{e.toDeclName}`"
+      if
+          used.contains e.fromDeclName &&
+            env.getModuleIdxFor? n == env.getModuleIdxFor? e.fromDeclName &&
+            (line n).any (· < (line e.thmName).getD 0) then
+        throwError m!"coverage: `{n}` precedes `{e.thmName}`, so it runs `{e.fromDeclName}`"
   let pureConsts :=
     (moduleConsts env
           (fun mod => [`Linger.Core, `Linger.Tools].any (·.isPrefixOf mod))).toList.filterMap
       fun (n, ci) => if !ci.isTheorem then some (privateToUserName n, n) else none
   let theoremConsts :=
-    (moduleConsts env ((`Theorems : Lean.Name).isPrefixOf ·)).foldl
+    (moduleConsts env fun mod => roots.any (·.isPrefixOf mod)).foldl
       (fun acc (n, ci) =>
         if
             ci.isTheorem &&

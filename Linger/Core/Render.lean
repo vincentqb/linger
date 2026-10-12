@@ -224,7 +224,9 @@ def rowAnsi (row : Row) (startPen : Pen) : Bytes × Pen :=
   (bs, pen)
 
 /-- Accumulate each `rowSlot` emission in reverse, avoiding a copy of the growing
-row prefix per cell. The compiler substitution below preserves bytes and pen. -/
+row prefix per cell. The compiler substitution below preserves bytes and pen. Public, with
+that theorem, because a global `@[csimp]` theorem must be public and `Replay.next` needs the
+replacement. -/
 def rowAnsiLinear (row : Row) (startPen : Pen) : Bytes × Pen :=
   let (bs, pen, _) :=
     row.foldl

@@ -49,12 +49,3 @@ The rungs, in dependency order:
   fit (`rowOk_fitRow`, `fitRow_id_of_rowOk`) and the complete byte budget
   (`sbTake_budget`, `sbRows_budget`, `sbTake_prefix`, `scrollbackAnsi_le`). Its
   receiver half, `scrollback_entry`, is in `Grid` beside `paint_entry`. -/
-
-namespace Linger.Core.Render
-
-/-- The compiled row painter emits exactly the logical painter's bytes and final
-pen, including arbitrary decoded rows and nondefault starting pens. -/
-theorem rowAnsiLinear_exact (row : Vt.Row) (pen : Vt.Pen) :
-    rowAnsiLinear row pen = rowAnsi row pen := by rw [rowAnsi_eq_rowAnsiLinear]
-
-end Linger.Core.Render

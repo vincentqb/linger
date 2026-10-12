@@ -474,12 +474,6 @@ theorem onMsg_bounded {s : State} {c : Client} (m : Msg)
 theorem client?_mem {s : State} {id : Nat} {c : Client} (h : s.client? id = some c) :
     c ∈ s.clients := List.mem_of_find?_eq_some h
 
-/-- The compiled batch fold returns exactly the specification's state and
-effects, for any incoming effects, so every `feedMsgs` theorem below describes
-the code `step` runs. -/
-theorem feedMsgsTR_exact (id : Nat) (msgs : List Msg) (acc : State × List Effect) :
-    feedMsgsTR id msgs acc = feedMsgs id msgs acc := by rw [feedMsgs_eq_feedMsgsTR]
-
 /-- Induct over the actual batch accumulator, including its effects. A handler
 needs to preserve the predicate only for messages in this batch, after the stop
 guards and sender lookup succeed. Skipped messages keep the entire accumulator. -/

@@ -244,20 +244,6 @@ theorem mendUpto_spec (row : Row) :
     · have hprev := ih.2 j (by omega) (by omega)
       exact ⟨halfPair_mendAt_lt _ _ _ (by omega) hprev.1, shadow_mendAt_lt _ _ _ (by omega) hprev.2⟩
 
-/-- Compiled code runs the allocation-free sweep; it is the same function. -/
-theorem mend_eq_mendFast (row : Row) : Row.mend row = Row.mendFast row := by
-  rw [Row.mend_eq_mendFast]
-
-/-- One column of that sweep is `mendAt` itself, at every column of every row. -/
-theorem mendAt_eq_mendAtFast (r : Row) (x : Nat) : r.mendAt x = r.mendAtFast x :=
-  Row.mendAt_eq_mendAtFast r x
-
-/-- The sweep's shadow test holds exactly of a cell that already is the shadow of a
-width-2 base on its left, which is the cell `mendAt` would write there. -/
-theorem keptShadow_iff (r : Row) (x : Nat) (c : Cell) :
-    r.keptShadow x c = true ↔
-      x ≠ 0 ∧ (r.at (x - 1)).width = 2 ∧ c = Cell.shadow (r.at (x - 1)) := Row.keptShadow_iff r x c
-
 theorem size_mend (row : Row) : (Row.mend row).size = row.size := by
   unfold Row.mend
   exact (mendUpto_spec row row.size).1

@@ -201,7 +201,7 @@ def Row.mend (row : Row) : Row := (List.range row.size).foldl (fun r x => r.mend
 /-- Is `c`, the cell at column `x`, already the shadow of a width-2 base on its left,
 which is what `mendAt` writes there? Compared field by field: building the shadow to
 compare against would allocate. -/
-def Row.keptShadow (row : Row) (x : Nat) (c : Cell) : Bool :=
+private def Row.keptShadow (row : Row) (x : Nat) (c : Cell) : Bool :=
   let b := row.at (x - 1)
   c.width == 0 && x != 0 && b.width == 2 && c.base == ' ' && c.marks.isEmpty && c.pen == b.pen
 
@@ -209,7 +209,7 @@ def Row.keptShadow (row : Row) (x : Nat) (c : Cell) : Bool :=
 left after at most one read, and a shadow `mendAt` would write back unchanged after two,
 the cell and its base; any other cell goes through `mendAt`. -/
 @[inline]
-def Row.mendAtFast (r : Row) (x : Nat) : Row :=
+private def Row.mendAtFast (r : Row) (x : Nat) : Row :=
   if h : x < r.size then
     let c := r[x]
     if c.width == 1 || r.keptShadow x c then r else r.mendAt x
@@ -217,7 +217,8 @@ def Row.mendAtFast (r : Row) (x : Nat) : Row :=
 
 /-- The same sweep as compiled code runs it: no column list, and `mendAtFast` per column.
 `Row.at`, `halfPair`, `mendAt` and `mendAtFast` are inlined, so the loop makes no calls
-for a narrow row. -/
+for a narrow row. Public, with its `@[csimp]` theorem, because a global `@[csimp]`
+theorem must be public and callers in other modules (`Render.fitRow`) need the replacement. -/
 def Row.mendFast (row : Row) : Row := Nat.fold row.size (fun x _ r => r.mendAtFast x) row
 
 /-- Repair the four columns from one left of a write at `x`. A write of at most two cells
@@ -228,7 +229,7 @@ private def Row.mendNear (row : Row) (x : Nat) : Row :=
 
 /-- The shadow test holds exactly of a cell that already is the shadow of a width-2 base
 on its left, which is the cell `mendAt` would write there. -/
-theorem Row.keptShadow_iff (r : Row) (x : Nat) (c : Cell) :
+private theorem Row.keptShadow_iff (r : Row) (x : Nat) (c : Cell) :
     r.keptShadow x c = true ↔
       x ≠ 0 ∧ (r.at (x - 1)).width = 2 ∧ c = Cell.shadow (r.at (x - 1)) := by
   unfold Row.keptShadow
@@ -243,7 +244,7 @@ theorem Row.keptShadow_iff (r : Row) (x : Nat) (c : Cell) :
     simp [Cell.shadow, hx, hb]
 
 /-- `Row.mendAt` and `Row.mendAtFast` agree at every column of every row. -/
-theorem Row.mendAt_eq_mendAtFast (r : Row) (x : Nat) : r.mendAt x = r.mendAtFast x := by
+private theorem Row.mendAt_eq_mendAtFast (r : Row) (x : Nat) : r.mendAt x = r.mendAtFast x := by
   unfold Row.mendAtFast
   by_cases h : x < r.size
   · simp only [h, ↓reduceDIte]
@@ -260,7 +261,8 @@ theorem Row.mendAt_eq_mendAtFast (r : Row) (x : Nat) : r.mendAt x = r.mendAtFast
   · simp [h, Row.mendAt, Row.halfPair, Row.at,
       Array.setIfInBounds_eq_of_size_le (Nat.le_of_not_lt h)]
 
-/-- `Row.mend` and `Row.mendFast` are the same function, so compiled code runs the latter. -/
+/-- `Row.mend` and `Row.mendFast` are the same function, so compiled code runs the latter.
+Global, so callers in other modules run it too; a `@[csimp]` theorem must then be public. -/
 @[csimp]
 theorem Row.mend_eq_mendFast : @Row.mend = @Row.mendFast := by
   funext row

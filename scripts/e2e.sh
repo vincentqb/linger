@@ -144,6 +144,17 @@ abi_prefix="$(./lake env lean --print-prefix)"
   || fail "C shim conflicts with the generated Lean ABI"
 rm -r "$abi_dir"
 trap - EXIT HUP TERM
+# A lost `@[csimp]` leaves every caller on the specification and passes every proof, so
+# check the generated C: each fast twin is still called, outside its own boxed wrapper.
+# Private mangling keeps the suffix, so the module-local feedMsgsTR is matched too.
+for twin in Linger_Core_Session_feedMsgsTR Linger_Core_Vt_Row_mendFast \
+  Linger_Core_Render_rowAnsiLinear; do
+  awk -v twin="$twin" '
+    /^(LEAN_EXPORT|static) .*[)][{]$/ { fn = $0 }
+    $0 ~ ("= lp_linger_[[:alnum:]_]*" twin "[(]") && fn !~ (twin "___boxed[(]") { n++ }
+    END { exit !n }' .lake/build/ir/Linger/Core/*.c \
+    || fail "compiled code no longer calls $twin: its @[csimp] replacement is gone"
+done
 
 say "2. hygiene, source gates, formatting and semantic lint"
 # Semantic lint needs compiled imports. Use the same checks as pre-commit.
