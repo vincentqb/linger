@@ -517,6 +517,29 @@ private def withPrompt (f : Fixture) (args : Array String) (body : Session → I
       body s)
     mode cols rows
 
+/-- The last `n` bytes on one line: printable ASCII as is, every other byte as `\xNN`. -/
+private def escapedTail (bytes : ByteArray) (n : Nat) : String :=
+  (bytes.extract (bytes.size - n) bytes.size).foldl
+    (fun text byte =>
+      if 0x20 ≤ byte && byte < 0x7F then text.push (Char.ofNat byte.toNat)
+      else
+        let hex := Nat.toDigits 16 byte.toNat
+        text ++ "\\x" ++ String.ofList (if hex.length < 2 then '0' :: hex else hex))
+    ""
+
+/-- A failed check's evidence, for logs read where the suite cannot be rerun:
+every `*-observation` file in its fixture, then the end of its terminal output. -/
+private def explain (root : System.FilePath) (slug : String) : IO Unit := do
+  if !(← root.isDir) then
+    return
+  let observations := (← root.readDir).filter (·.fileName.endsWith "-observation")
+  for entry in observations.qsort (·.fileName < ·.fileName) do
+    for line in lines (← readText entry.path) do
+      IO.println s!"note: manager {slug}: {entry.fileName}: {line}"
+  if ← (root / "terminal.bin").pathExists then
+    let tail := escapedTail (← IO.FS.readBinFile (root / "terminal.bin")) 1200
+    IO.println s!"note: manager {slug}: terminal tail: {tail}"
+
 private def check (e : Env) (slug label : String) (body : Fixture → IO Bool) : IO Unit := do
   let ok ←
     try
@@ -524,6 +547,8 @@ private def check (e : Env) (slug label : String) (body : Fixture → IO Bool) :
     catch err =>
       IO.println s!"note: manager {slug}: {err}"
       pure false
+  unless ok do
+    explain (System.FilePath.mk e.dir / slug) slug
   expect ok label
 
 private def sequenceCount (out : ByteArray) (seq : List UInt8) : Nat :=
@@ -2156,7 +2181,7 @@ private def programChecks (e : Env) : IO Unit := do
                 waitFor 2000 do
                     return (← readText (f.root / "session-program-response")) == challenge
               let detached := (← withLaunchLock (owned.info name "clients")) == some "0"
-              IO.FS.writeFile (f.root / "program-survival")
+              IO.FS.writeFile (f.root / "survival-observation")
                   s!"pid={pid}\nalive-before={live}\nalive-after={survived}\nsend-exit={sent}\nanswered-after-cancel={answered}\nno-client={detached}\n"
               IO.FS.writeFile (f.root / "before-info") before
               IO.FS.writeFile (f.root / "after-info") (← withLaunchLock (owned.out #["info", name]))
@@ -2170,6 +2195,10 @@ private def programChecks (e : Env) : IO Unit := do
       let owned : Env := { e with dir := (f.root / "state").toString }
       let f := { f with env := f.env.push ("LINGER_DIR", some owned.dir) }
       let name := "attached-interrupt"
+      -- Each stage is appended as it completes, so a stalled or failed run keeps its timeline.
+      let begin ← monotonicMs
+      let observe (text : String) : IO Unit := do
+        appendText (f.root / "interrupt-observation") s!"{(← monotonicMs) - begin} ms {text}\n"
       try
         unless ← startProgram f owned name do
           return false
@@ -2180,25 +2209,31 @@ private def programChecks (e : Env) : IO Unit := do
             s.text "\r"
             let attached ← clientsReach owned name "1"
             let live := pid > 0 && (← alive (UInt32.ofNat pid))
+            observe
+                s!"pid={pid} attached={attached} alive-before={live} info={repr (← withLaunchLock (owned.out #["info", name]))}"
             unless attached && live do
               return false
             s.text "\x03"
             let interrupted ←
               waitFor 2000 do
                   return !(← alive (UInt32.ofNat pid))
+            observe s!"program-gone={interrupted}"
             let start ← s.mark
             s.text "printf 'attached-%s\\n' interrupt-ok\r"
             let shell ← s.until "attached-interrupt-ok" start
+            observe s!"shell-responded={shell}"
             let start ← s.mark
             s.client.detach
             let returned ← s.prompt "" start
+            observe s!"selector-returned={returned}"
             s.text "\x03"
             let clean ← termiosRestored s 130
-            IO.FS.writeFile (f.root / "interrupt-observation")
-                s!"pid={pid}\nattached={attached}\nalive-before={live}\nprogram-gone={interrupted}\nshell-responded={shell}\nselector-returned={returned}\nterminal-restored={clean}\n"
+            observe s!"terminal-restored={clean}"
             return interrupted && shell && returned && clean &&
                 (← withLaunchLock (owned.info name "clients")) == some "0"
       finally
+        observe
+            s!"screen={repr (← withLaunchLock (owned.out #["capture", name]))} info={repr (← withLaunchLock (owned.out #["info", name]))}"
         let _ ← withLaunchLock (owned.cli #["send", name, "stop-program\n"])
         withLaunchLock (owned.killAll #[name])
 
