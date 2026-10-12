@@ -13,6 +13,7 @@ import Tests.Remote
 import Tests.Listing
 import Tests.Title
 import Tests.Checkpoint
+import Tests.CheckpointApi
 import Tests.Resurrect
 import Tests.Fuzzy
 import Tests.FuzzyApi

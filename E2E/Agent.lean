@@ -19,15 +19,12 @@ the child's own winsize, via `stty size`), refused while a client is attached. A
 pinned against the rendered porcelain/bytes, end to end.
 
 `alt` and `unseen` compare to `toString false` / `toString true`, because that is
-literally what `Session.infoFields` emits (`toString` of a `Bool`). Two facts could
-NOT be tied to the implementation — read before adding a check:
-
-* the 80×24 default is a literal `Vt.init 80 24` inside `Daemon.serve`, so a
-  Lean-side tie would restate the constant rather than derive it;
-* "capture is exactly one line per row" could not be tied to
-  `Render.screenText` either — the row count is a property of a `Vt` this
-  process does not hold. `rows` comes from the session's own `info`, which is as
-  close as the porcelain gets. -/
+literally what `Session.infoFields` emits (`toString` of a `Bool`), and the default size
+compares to `Session.bootVt none`, the screen a daemon boots with when no checkpoint
+loads. One fact could NOT be tied to the implementation — read before adding a check:
+"capture is exactly one line per row" cannot be tied to `Render.screenText`, because the
+row count is a property of a `Vt` this process does not hold. `rows` comes from the
+session's own `info`, which is as close as the porcelain gets. -/
 
 namespace E2E.Agent
 
@@ -206,8 +203,11 @@ def run : IO UInt32 :=
     -- ── Step 1: info ──────────────────────────────────────────────────────────
     let _ ← e.cli #["run", "ag", "true"] -- upsert a headless session (default shell)
     IO.sleep 1500
-    expect ((← e.info "ag" "cols") == some "80" && (← e.info "ag" "rows") == some "24")
-        "headless session reports the 80x24 default size"
+    let fresh := Linger.Core.Session.bootVt none
+    expect
+        ((← e.info "ag" "cols") == some (toString fresh.colCount) &&
+          (← e.info "ag" "rows") == some (toString fresh.rowCount))
+        s!"headless session reports the {fresh.colCount}x{fresh.rowCount} default size"
     expect ((← e.info "ag" "alt") == some (toString false)) "alt is false outside a full-screen app"
     expect ((num (← e.info "ag" "cursorx")).isSome && (num (← e.info "ag" "cursory")).isSome)
         "cursor position is reported as numbers"

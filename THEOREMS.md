@@ -8,8 +8,10 @@ hypotheses. Runtime behavior is covered by IO suites and source gates.
 
 | Area | Guarantee | Proofs |
 |---|---|---|
-| Checkpoints | Saving a live state and loading it restores its quiesced state. Accepted checkpoints can be saved and loaded again exactly. | [Checkpoint](Theorems/Checkpoint.lean): `load_save_live`, `load_resave` |
-| Session events | Arbitrary event traces preserve state invariants; input from one client leaves other clients' records unchanged. | [Session](Theorems/Session.lean): `run_wf`, `run_bytes_isolates` |
+| Checkpoints | Saving a live state and loading it restores its quiesced state. Accepted checkpoints can be saved and loaded again exactly. | [Checkpoint](Theorems/Checkpoint.lean): `loadBytes_saveBytes_live`, `loadBytes_resave` |
+| Resume | A daemon resumed from any bytes on disk boots a terminal a live session can hold; after any event trace its screen stays repaintable, its tab ruler fits, and its next checkpoint loads back with the parser quiesced. | [Session](Theorems/Session.lean): `liveReachableVt_resumeVt`, `run_resume_vt_shape`, `run_resume_load_save` |
+| Session events | Arbitrary event traces preserve state invariants; input from one client leaves other clients' records unchanged, and a read-only client's input changes neither the state nor the pty. | [Session](Theorems/Session.lean): `run_wf`, `run_bytes_isolates`, `onMsg_input_readonly` |
+| Listing rows | A listing row is named by its socket file; the daemon's reply cannot rename it. | [Listing](Theorems/Listing.lean): `rowFields_name` |
 | Event driver | Every finite batch completes with session bounds and renderable terminal structure preserved, assuming each external operation returns a typed result without an uncaught exception. Disconnects and checkpoint failures are permitted outcomes. | [Driver](Theorems/Driver.lean): `run_total_safe` |
 | Failure feedback | Effects execute in order; feedback precedes queued input and strictly decreases in depth. Failure feedback cannot request exit, and no events execute after exit. | [Driver](Theorems/Driver.lean): `effects_in_order`, `run_execution`, `feedback_strictly_decreases`, `handle_feedback_keeps_alive`, `run_exited` |
 | Terminal input | Arbitrary byte streams preserve cursor and parser bounds and renderable grid structure. | [State](Theorems/Vt/State.lean): `Good.feed`; [Renderable](Theorems/Vt/Renderable.lean): `renderable_feed` |

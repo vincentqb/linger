@@ -26,8 +26,6 @@ public import Linger.Core.Vt
 -- and this one is a friend because it is the emulator's only serialiser.
 import all Linger.Core.Vt
 
-public section
-
 /-! # Linger.Core.Checkpoint — the reboot-resume codec
 
 Serializes the resumable part of a session — screen, scrollback,
@@ -402,7 +400,7 @@ it would need `Inhabited Vt`, which is the third public door out of the `Vt` sea
 the tree used either instance. If a canonical checkpoint is ever wanted, write it out
 (`⟨Vt.init 80 24, "", []⟩`) rather than deriving one: a default that is a *choice* cannot
 silently become a state the emulator can't reach. -/
-structure Ckpt where
+public structure Ckpt where
   /-- The terminal state; its parser state is not saved. -/
   vt : Vt
   /-- The directory the restored session's child starts in. -/
@@ -411,7 +409,7 @@ structure Ckpt where
   labels : List (String × String)
 
 /-- On-disk magic: `"LNGR"` and the format version. What `save` writes. -/
-def magic : List UInt8 := [0x4C, 0x4E, 0x47, 0x52, 1] -- "LNGR" v1
+public def magic : List UInt8 := [0x4C, 0x4E, 0x47, 0x52, 1] -- "LNGR" v1
 
 /-- The checkpoint record: `magic`, then the terminal, the working directory and the labels.
 Loading the record of a live state returns it with its parser quiesced (`load_save_live`). -/
@@ -492,7 +490,7 @@ def rowB (acc : ByteArray) (r : Row) : ByteArray := rleB cellB acc r.toList
 
 /-- `save`, written into a byte array (`saveBytes_eq`). Every screen row, including the
 stashed alternate screen's, goes through `rowB`. -/
-def saveBytes (c : Ckpt) : ByteArray :=
+public def saveBytes (c : Ckpt) : ByteArray :=
   let v := c.vt
   let acc := (magic ++ wNat v.cols ++ wNat v.rows).toByteArray
   let acc := listB rowB acc v.grid.toList
@@ -751,7 +749,7 @@ def prefixB : List UInt8 → ByteArray → Nat → Option Nat
 
 /-- `load` on a byte array (`loadBytes_eq`): the same tag check, the same reader chain, and
 the same refusal of unread trailing bytes. -/
-def loadBytes (b : ByteArray) : Option Ckpt := do
+public def loadBytes (b : ByteArray) : Option Ckpt := do
   let i ← prefixB magic b 0
   let (vt, i) ← rVtB b i
   let (cwd, i) ← rStrB b i

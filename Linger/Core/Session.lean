@@ -126,13 +126,16 @@ is `step`'s doing (the private fields above make the constructor private).
 
 Restored labels are capped HERE, which closes the Bounded-at-boot gap this
 step's sizing surfaced: `.labelSet` enforces `maxLabels` per message, but
-`Checkpoint.load` is deliberately total on arbitrary bytes, so a corrupt or
+`Checkpoint.loadBytes` is deliberately total on arbitrary bytes, so a corrupt or
 forged checkpoint could carry any list and boot used to be the bypass. Over
 the cap, the first `maxLabels` survive (`.labelSet` appends at the end, so
 these are the oldest). `boot_wf` is the claim; composed with `run_wf`
 (`run_boot_wf`), every state the daemon can hold is well-formed. -/
 def State.boot (vt : Vt.Vt) (labels : List (String × String)) (metaKv : List (String × String)) :
     State := { vt, labels := labels.take maxLabels, metaKv }
+
+/-- The emulator a daemon boots with: a restored checkpoint's, else a fresh 80×24 screen. -/
+def bootVt (restored : Option Vt.Vt) : Vt.Vt := restored.getD (Vt.Vt.init 80 24)
 
 /-- What the runtime feeds in. All byte payloads are `List UInt8`; the
 runtime converts at the fd boundary. -/

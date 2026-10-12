@@ -38,8 +38,7 @@ WHAT IS DERIVED, AND WHAT CANNOT BE:
   this check both read `Terminal.versionNumber`. `TERM=xterm-256color` and
   `TERM_PROGRAM=linger` could NOT be tied to anything. They are literals inside
   `Daemon.serve`'s `spawnPty` call, not exported values, so a Lean-side tie would
-  restate the constants rather than derive them. Same situation as `E2E.Agent`'s
-  80×24 default, recorded for the same reason. -/
+  restate the constants rather than derive them. -/
 
 namespace E2E.Terminal
 

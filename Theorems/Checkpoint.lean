@@ -1,6 +1,5 @@
 module
 
-public import Linger.Core.Checkpoint
 import all Linger.Core.Checkpoint
 import all Linger.Core.Vt
 -- `Theorems.Vt` for `Good`, and for the three claims about the decoder's door
@@ -19,12 +18,13 @@ import all Theorems.Vt
 
 /-! # §Restore — the reboot-resume codec theorems
 
-THEOREMS.md row: `load (save s) = some s` — exactly, for every state
-whose parser is quiescent (which is what checkpoints hold, since the
-codec deliberately forgets partial escape sequences); the general form
-round-trips modulo `Vt.quiesce`. Totality of `load` on arbitrary bytes
-is by construction (`R α = List UInt8 → Option _`, structural
-recursion only) — the second half of §Restore needs no theorem.
+THEOREMS.md's Checkpoints row cites `loadBytes_saveBytes_live` and `loadBytes_resave`,
+the byte-array forms (§What the runtime calls) of `load_save_live` and `load_resave`. A
+checkpoint round-trips modulo `Vt.quiesce`; the round trip is exact when the parser is
+already quiescent (`load_save_exact`), as every decoded checkpoint's is, since the codec
+deliberately forgets partial escape sequences. Totality of `load` on arbitrary bytes is by
+construction (`R α = List UInt8 → Option _`, structural recursion only), so it needs no
+theorem.
 
 Every default combinator round-trip is unconditional: `wNat` is LEB128, so
 there is no "fits in N bits" side condition anywhere in the format.
@@ -169,12 +169,6 @@ theorem rList_bounded {α : Type} (r : R α) (bytes : List UInt8) (limit : Nat) 
       obtain ⟨xs, tail⟩ := p
       simp only [Option.filter_some, rListAux_length r n hr, decide_eq_true_eq]
 
-/-- An excessive declared count is refused regardless of the element reader
-or the remaining payload. -/
-theorem rList_over_limit {α : Type} (r : R α) {bytes rest : List UInt8} {n limit : Nat}
-    (hn : rNat bytes = some (n, rest)) (hlimit : limit < n) :
-    rList r bytes (some limit) = none := by simp [rList, hn, Nat.not_le_of_gt hlimit]
-
 /-- Filtering each element reader is equivalent to filtering the decoded list;
 neither route changes the decoded values or unread suffix. -/
 theorem rListAux_filter {α : Type} (r : R α) (p : α → Bool) (n : Nat) (bytes : List UInt8) :
@@ -273,13 +267,6 @@ theorem rRLE_bounded {α : Type} (r : R α) (bytes : List UInt8) (limit : Nat) :
     obtain ⟨groups, rest⟩ := pair
     simp only [Option.bind_eq_bind, Option.bind_some, Option.all_some, Option.all_none, ite_true,
       Option.filter_some, expand_length]
-
-/-- The combined run count is the rejection boundary; no assumption about
-individual runs being positive or maximal is needed. -/
-theorem rRLE_over_limit {α : Type} (r : R α) {bytes rest : List UInt8} {groups : List (Nat × α)}
-    {limit : Nat} (hg : rList (rPair rNat r) bytes = some (groups, rest))
-    (hlimit : limit < (groups.map Prod.fst).sum) : rRLE r bytes (some limit) = none := by
-  simp [rRLE, hg, Nat.not_le_of_gt hlimit]
 
 theorem rt_row : RT wRow rRow := by
   intro r rest
@@ -588,8 +575,9 @@ theorem rVt_live {l : List UInt8} {v : Vt} {rest : List UInt8} (h : rVt l = some
 
 /-! ### The format tag, as a named stage
 
-`stripMagic` is the tag check, named rather than inlined; `load_save` and `save_tag` both
-go through it instead of unfolding the decision into the parser chain. -/
+`stripMagic` is the tag check, named rather than inlined; `load_save_append` and
+`load_save_none_of_cols_zero` go through it instead of unfolding the decision into the
+parser chain. -/
 
 theorem stripMagic_magic (p : List UInt8) : stripMagic (magic ++ p) = some p := rfl
 
@@ -607,9 +595,8 @@ theorem load_accepted {l : List UInt8} {c : Ckpt} (h : load l = some c) :
   · exact absurd h (by simp)
 
 /-- **The top-level no-forge claim**, and the one the runtime is entitled to lean on: a
-checkpoint that loads at all loads to a `Good` screen. `Linger/Runtime/Daemon.lean`'s
-resume path cites this for why the `clampDim` it still calls before `spawnPty` cannot
-change the value it is given. -/
+checkpoint that loads at all loads to a `Good` screen, so the `clampDim` the daemon applies
+before `spawnPty` cannot change a loaded screen's dimensions. -/
 theorem load_good {l : List UInt8} {c : Ckpt} (h : load l = some c) : Good c.vt :=
   good_of_liveReachable (load_accepted h).1
 
@@ -657,14 +644,6 @@ the decoder only through `load_save`'s own conclusion (the circularity SCRATCHPA
 measured). `load_live` is the tool for the other direction — `load`'s output. -/
 theorem load_live {l : List UInt8} {c : Ckpt} (h : load l = some c) : LiveReachableVt c.vt :=
   (load_accepted h).1
-
-/-- A decoded parser has no partial escape or UTF-8 character to carry into the
-new session. Being between poll rounds does not imply this for the live source;
-the reset is a deliberate property of the checkpoint format. -/
-theorem load_quiescent {l : List UInt8} {c : Ckpt} (h : load l = some c) :
-    c.vt.pstate = .ground ∧ c.vt.u8need = 0 ∧ c.vt.u8acc = 0 := by
-  have hq := (load_accepted h).2
-  exact ⟨congrArg Vt.pstate hq |>.symm, congrArg Vt.u8need hq |>.symm, congrArg Vt.u8acc hq |>.symm⟩
 
 /-- The reader consumes a complete checkpoint, rejecting every nonempty suffix
 after a valid saved record. This also rules out silently accepting concatenated
@@ -723,9 +702,8 @@ theorems (`load_legacy_save`, `save_no_legacy`) are green — that is the escape
 and it is cheaper than carrying a branch for a file nobody has. -/
 theorem save_tag (c : Ckpt) : (save c).take 5 = magic := by simp [save, magic]
 
-/-- And when the parser is already quiescent, the round-trip is exact
-— the letter of the THEOREMS.md row. `hren`/`htabs` are `load_save`'s, hence
-`ofDecoded_of_good`'s; see there for why they are not a weakening. -/
+/-- And when the parser is already quiescent, the round-trip is exact. `hren`/`htabs` are
+`load_save`'s, hence `ofDecoded_of_good`'s; see there for why they are not a weakening. -/
 theorem load_save_exact (c : Ckpt) (hg : Good c.vt) (hren : Renderable c.vt) (htabs : TabsOk c.vt)
     (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0) (ha : c.vt.u8acc = 0) :
     load (save c) = some c := by
@@ -836,22 +814,6 @@ theorem drop_lt {b : ByteArray} {i : Nat} (h : i < b.size) :
 
 theorem drop_ge {b : ByteArray} {i : Nat} (h : ¬i < b.size) : b.data.toList.drop i = [] :=
   List.drop_eq_nil_of_le (by simpa using Nat.le_of_not_lt h)
-
-theorem toList_loop (b : ByteArray) (i : Nat) (acc : List UInt8) :
-    ByteArray.toList.loop b i acc = acc.reverse ++ b.data.toList.drop i := by
-  fun_induction ByteArray.toList.loop b i acc with
-  | case1 i acc h
-    ih =>
-    have hget : b.get! i = b[i] := by
-      cases b
-      exact getElem!_pos _ i h
-    rw [ih, drop_lt h, hget]
-    simp
-  | case2 i acc h => simp [drop_ge h]
-
-/-- `ByteArray.toList` lists the array's data in order. -/
-theorem toList_eq (b : ByteArray) : b.toList = b.data.toList := by
-  simp [ByteArray.toList, toList_loop]
 
 /-- "Position reader `rb` returns what list reader `r` returns on the bytes from that position,
 leaving the bytes from the returned position unread." -/
@@ -1068,13 +1030,35 @@ theorem prefixB_mirrors (p : List UInt8) (b : ByteArray) (i : Nat) :
 /-- **The runtime decoder is `load`**: on any byte array, `loadBytes` returns what `load`
 returns on the array's bytes, so `load_good`, `load_live`, `load_save_live` and every other
 theorem about `load` holds of what the runtime decodes. -/
-theorem loadBytes_eq (b : ByteArray) : loadBytes b = load b.toList := by
+theorem loadBytes_eq (b : ByteArray) : loadBytes b = load b.data.toList := by
   have hp := prefixB_mirrors magic b 0
   rw [List.drop_zero] at hp
-  rw [toList_eq]
   simp only [loadBytes, load, stripMagic, Option.bind_eq_bind, ← hp, Option.bind_map,
     Function.comp_def, ← rVtB_mirrors, ← rStrB_mirrors,
     ← rListB_mirrors (rPairB_mirrors rStrB_mirrors rStrB_mirrors), List.isEmpty_iff,
     List.drop_eq_nil_iff, Array.length_toList, ByteArray.size_data]
+
+/-! ### What the runtime calls
+
+The runtime writes with `saveBytes` and reads with `loadBytes`; `saveBytes_eq` and
+`loadBytes_eq` carry `load_save_live`, `load_resave` and `load_live` over to them below.
+`THEOREMS.md` cites `loadBytes_saveBytes_live` and `loadBytes_resave`, and
+`Session.liveReachableVt_resumeVt` rests on `loadBytes_live`. -/
+
+/-- What `saveBytes` writes of a live state, `loadBytes` reads back with its parser quiesced. -/
+theorem loadBytes_saveBytes_live (c : Ckpt) (h : LiveReachableVt c.vt) :
+    loadBytes (saveBytes c) = some { c with vt := c.vt.quiesce } := by
+  rw [loadBytes_eq, saveBytes_eq]
+  exact load_save_live c h
+
+/-- A file `loadBytes` accepts saves and loads again exactly. -/
+theorem loadBytes_resave {b : ByteArray} {c : Ckpt} (h : loadBytes b = some c) :
+    loadBytes (saveBytes c) = some c := by
+  rw [loadBytes_eq, saveBytes_eq]
+  exact load_resave (by rwa [loadBytes_eq] at h)
+
+/-- Every file `loadBytes` accepts holds a state a live session can hold. -/
+theorem loadBytes_live {b : ByteArray} {c : Ckpt} (h : loadBytes b = some c) :
+    LiveReachableVt c.vt := load_live (by rwa [loadBytes_eq] at h)
 
 end Linger.Core.Checkpoint

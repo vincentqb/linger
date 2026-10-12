@@ -1033,45 +1033,10 @@ code_grep '^[[:space:]]+let now ← monotonicMs$' 'Linger/Runtime/Daemon.lean' >
 code_grep "^[[:space:]]+rt ← pump rt' [(]events [+][+] [[][.]tick now[]][)]$" 'Linger/Runtime/Daemon.lean' > /dev/null \
   || fail "the daemon no longer forwards the monotonic value to the proved tick"
 
-# `Session.resumeVt` ↔ `Daemon.lean`'s `vt0` — the resume door's model/runtime tie, and
-# the direct sibling of the three Buf greps above: same gap, same species of oracle.
-# `Theorems/Session.lean`'s `resumeVt` IS the daemon's fallback expression with the `IO`
-# peeled off, and it is load-bearing — `liveReachableVt_resumeVt`, `run_resume_vt_shape`
-# and `run_resume_load_save` are claims about the daemon ONLY through that
-# correspondence, which was prose next to the def until this gate. `Linger/Runtime/*` is
-# `IO`, so no theorem can see the call site (AGENTS.md's rule): change the daemon's
-# fallback to, say, `Vt.init 24 80` and all three theorems stay true — of a term the
-# daemon no longer computes. Evadeable by deliberately editing both ends, which is
-# exactly the review this buys.
-#
-# TWO-SIDED, deliberately. A gate watching only `Daemon.lean` passes by vacuous truth
-# the moment the model is deleted, and it is the correspondence being gated, not either
-# end of it. Same argument as the toolkit closure lists and the friend set above, where
-# a RECORDED friend that stops reaching `Vt` also fails: exact means both directions.
-#
-# Through `code_grep`, so a comment QUOTING the call site cannot satisfy a gate about
-# the call site — the inverse of the decoder-forge gate's problem and the more dangerous
-# half, since it fails open. `Theorems/Session.lean` quotes this exact line twice,
-# inside docstring fences; measured, each regex matches exactly one line.
-#
-# One known false-positive mode, and it is the right one: if either line grows past the
-# formatter's width and wraps, the gate fires. That is a loud failure on precisely the
-# edit that should be reviewed, not a silent pass. A lockstep change of the fallback
-# dimensions fires too, and deliberately — both literals are recorded, in the same style
-# as the toolkit closure lists, so re-deciding what a checkpointless resume looks like is
-# a reviewable edit here rather than a silent one.
-#
-# And the BOUND, which is what this gate does not buy: it pins the modelled EXPRESSION,
-# not the value the daemon ends up booting from. A later line reassigning `vt0` — say a
-# conditional override further down `serve` — leaves both greps green while `resumeVt`
-# stops modelling anything the daemon computes. That is semantic and no grep reaches it;
-# it is the same limitation every gate in this file carries, stated here rather than
-# discovered. What this catches is an EDIT to the modelled line, which is the way the
-# correspondence has actually been at risk.
-code_grep '[.]getD [(]Linger[.]Core[.]Vt[.]Vt[.]init 80 24[)]' 'Linger/Runtime/Daemon.lean' > /dev/null \
-  || fail "Daemon.serve's vt0 no longer falls back to Vt.init 80 24 via getD — Theorems/Session.lean's resumeVt models THAT expression, so re-derive it and its three claims, or restore the line"
-code_grep '^def resumeVt .*[.]getD [(]Vt[.]Vt[.]init 80 24[)]' 'Theorems/Session.lean' > /dev/null \
-  || fail "Theorems/Session.lean lost resumeVt, or its fallback changed — the resume claims no longer model Daemon.lean's vt0, and the gate above would then pass vacuously"
+# The daemon boots from Session.bootVt, the term the resume theorems quantify over.
+# Theorems/Contracts.lean ties the model side: resumeVt is bootVt over loadBytes, by rfl.
+code_grep '^[[:space:]]+let vt0 := Linger[.]Core[.]Session[.]bootVt [(]restore[.]map [(]·[.]1[)][)]$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+  || fail "Daemon.serve no longer boots from Session.bootVt, which liveReachableVt_resumeVt covers"
 
 # Read-only attachment's client-side guards (pin-the-gaps item 1). Read-only
 # is enforced DAEMON-side: the 0x0 attach geometry sets `sizer := false` and
@@ -1123,20 +1088,17 @@ FORGE='(^|[^`[:alnum:]_])(cols|rows|grid|bot|tabs|pstate|u8need|u8acc) *:='
 # Extensional reader theorems cannot distinguish reject-before-expansion from
 # expand-then-reject. The latter passed every semantic check in the audit, and
 # generated C confirmed that it allocated first. Pin these short guarded bodies
-# and rVt's prefix through its first row read, for the list readers and for the
-# byte-array readers the runtime decodes with (`loadBytes_eq` is extensional too);
-# ignore layout, but inventory every region so a missing declaration or terminator
-# cannot pass.
+# and rVtB's prefix through its first row read, for the byte-array readers the
+# runtime decodes with (`loadBytes_eq` is extensional); the list readers are private
+# and only proofs and fixtures run them. Ignore layout, but inventory every region
+# so a missing declaration or terminator cannot pass.
 awk '
   BEGIN {
-    want["rList"] = "let(n,rest)←rNatlifmaxCount.all(funlimit=>n≤limit)thenrListAuxrnrestelsenone"
-    want["rRLE"] = "let(groups,rest)←rList(rPairrNatr)bytesifmaxLength.all(funlimit=>(groups.mapProd.fst).sum≤limit)thensome(expandgroups,rest)elsenone"
-    want["rVt"] = "let(cols,l)←rNatllet(rows,l)←rNatlifcols!=clampDimcols||rows!=clampDimrowsthennoneelsedolet(grid,l)←rList(funbytes=>rRowbytes(somecols))l(somerows)"
     want["rListB"] = "let(n,j)←rNatBbiifmaxCount.all(funlimit=>n≤limit)thenrListAuxBrnbjelsenone"
     want["rRLEB"] = "let(groups,j)←rListB(rPairBrNatBr)bilettotal:=groups.foldl(funng=>n+g.1)0ifmaxLength.all(funlimit=>total≤limit)thensome(expandB(Array.emptyWithCapacitytotal)groups,j)elsenone"
     want["rVtB"] = "let(cols,i)←rNatBbilet(rows,i)←rNatBbiifcols!=clampDimcols||rows!=clampDimrowsthennoneelsedolet(grid,i)←rListB(funbytesj=>rRowBbytesj(somecols))bi(somerows)"
   }
-  /^def (rList|rRLE|rVt|rListB|rRLEB|rVtB) / {
+  /^def (rListB|rRLEB|rVtB) / {
     split($0, fields, " "); name = fields[2]
     seen[name]++; body = ""; collecting = 0
   }
@@ -1165,19 +1127,7 @@ awk '
       }
     exit bad
   }' Linger/Core/Checkpoint.lean >&2 || fail "checkpoint allocation guard changed"
-code_grep '^[[:space:]]+let [(]cs, l[)] ← rRLE rCell l maxLength$' 'Linger/Core/Checkpoint.lean' > /dev/null \
-  || fail "the row reader stopped forwarding its expansion bound"
-code_grep '^[[:space:]]+let [(]rows, l[)] ← rList rRow l maxRows$' 'Linger/Core/Checkpoint.lean' > /dev/null \
-  || fail "the history reader stopped forwarding its row bound"
-code_grep '^[[:space:]]+let [(]rows, l[)] ← rList [(]fun bytes => rRow bytes maxCols[)] l maxRows$' 'Linger/Core/Checkpoint.lean' > /dev/null \
-  || fail "the alternate screen reader stopped forwarding its dimensions"
-code_grep '^[[:space:]]+let [(]tabs, l[)] ← rList rBool l [(]some cols[)]$' 'Linger/Core/Checkpoint.lean' > /dev/null \
-  || fail "the checkpoint tab reader stopped using validated columns"
-code_grep '^[[:space:]]+let [(]sb, l[)] ← rRing l [(]some sbCap[)]$' 'Linger/Core/Checkpoint.lean' > /dev/null \
-  || fail "the checkpoint history reader stopped using its row cap"
-code_grep '^[[:space:]]+let [(]altGrid, l[)] ← rAlt l [(]some cols[)] [(]some rows[)]$' 'Linger/Core/Checkpoint.lean' > /dev/null \
-  || fail "the checkpoint alternate screen stopped using validated dimensions"
-# The same six bounds, forwarded by the byte-array readers.
+# The six bounds the byte-array readers forward.
 for bound in \
   'rRLEB rCellB b i maxLength' \
   'let [(]rows, j[)] ← rListB rRowB b j maxRows' \
@@ -1197,20 +1147,6 @@ for tie in \
   'match loadBytes bytes with [|] some ck => return some [(]ck[.]vt, ck[.]cwd, ck[.]labels[)]'; do
   printf '%s\n' "$resume_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "checkpoint hooks bypassed the proved codec: $tie"
-done
-# Those ties see only the calls they pin; a second decode beside them passes. `load`
-# stays the specification, but evaluated it costs a heap cell per byte, so no entry,
-# runtime or manager module that imports the codec, directly or through the umbrella
-# `Linger`, names it. Resume must be among them, so the loop cannot pass empty.
-ckpt_importers="$(module_imports Main.lean 'Linger/Runtime/*' 'Linger/Manager/*' | awk '
-  { file = $0; sub(/:.*/, "", file); line = $0; sub(/^[^:]*:[0-9]*:/, "", line) }
-  line ~ /import[[:space:]]+(all[[:space:]]+)?Linger([.]Core[.]Checkpoint)?([[:space:]]|$)/ { print file }' \
-  | sort -u)"
-printf '%s\n' "$ckpt_importers" | grep -qx 'Linger/Runtime/Resume.lean' \
-  || fail "Linger/Runtime/Resume.lean no longer imports the checkpoint codec; move the load check with it"
-for f in $ckpt_importers; do
-  ! code_grep '(^|[^[:alnum:]_])load([^[:alnum:]_]|$)' "$f" \
-    || fail "$f names the list decoder 'load'; decode a file's bytes with 'loadBytes'"
 done
 
 # Test-orchestrator safety. The pty suites isolate themselves by LINGER_DIR; an

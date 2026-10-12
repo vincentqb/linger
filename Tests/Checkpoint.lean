@@ -2,7 +2,7 @@ module
 
 -- The codec fixtures compare decoded screens field by field and run compiled under `native_decide`.
 import all Linger.Core.Vt
-import Linger.Core.Checkpoint
+import all Linger.Core.Checkpoint
 meta import Linger.Core.Checkpoint
 
 /-! # Checkpoint codec tests

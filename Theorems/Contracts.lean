@@ -8,6 +8,7 @@ import all Theorems.Entry
 import all Theorems.Env
 import all Theorems.Fuzzy
 import all Theorems.Input
+import all Theorems.Listing
 import all Theorems.Name
 import all Theorems.Picker
 import all Theorems.Remote
@@ -29,20 +30,55 @@ import all Theorems.Wire
 
 /-! # Contract statements
 
-`THEOREMS.md` cites the theorems below. Each `example` restates one and closes it with
-that theorem at reducible transparency, so weakening a cited hypothesis or conclusion
-fails here instead of passing the citation gate. -/
+`THEOREMS.md` cites the theorems below. Each is restated by an `example` closed with that
+theorem at reducible transparency, so weakening a cited hypothesis or conclusion fails here
+instead of passing the citation gate. The `rfl` example under Resume ties the
+`Session.resumeVt` those pins spell to `Session.bootVt`, which `Daemon.serve` calls, over
+`Checkpoint.loadBytes`. -/
 
 open Linger.Core Linger.Tools
 
 -- Checkpoints
 example (c : Checkpoint.Ckpt) (h : Vt.LiveReachableVt c.vt) :
-    Checkpoint.load (Checkpoint.save c) =
+    Checkpoint.loadBytes (Checkpoint.saveBytes c) =
       some { vt := c.vt.quiesce, cwd := c.cwd, labels := c.labels } := by
-  with_reducible exact Checkpoint.load_save_live c h
+  with_reducible exact Checkpoint.loadBytes_saveBytes_live c h
 
-example {l : List UInt8} {c : Checkpoint.Ckpt} (h : Checkpoint.load l = some c) :
-    Checkpoint.load (Checkpoint.save c) = some c := by with_reducible exact Checkpoint.load_resave h
+example {b : ByteArray} {c : Checkpoint.Ckpt} (h : Checkpoint.loadBytes b = some c) :
+    Checkpoint.loadBytes (Checkpoint.saveBytes c) = some c := by
+  with_reducible exact Checkpoint.loadBytes_resave h
+
+-- Resume
+example (b : ByteArray) :
+    Session.resumeVt b = Session.bootVt ((Checkpoint.loadBytes b).map (·.vt)) := rfl
+
+example (b : ByteArray) :
+    Vt.LiveReachableVt (Session.bootVt ((Checkpoint.loadBytes b).map (·.vt))) := by
+  with_reducible exact Session.liveReachableVt_resumeVt b
+
+example (b : ByteArray) (labels metaKv : List (String × String)) (evs : List Session.Event) :
+    Vt.Renderable (Session.run (Session.State.boot (Session.resumeVt b) labels metaKv) evs).1.vt ∧
+      Vt.TabsOk (Session.run (Session.State.boot (Session.resumeVt b) labels metaKv) evs).1.vt := by
+  with_reducible exact Session.run_resume_vt_shape b labels metaKv evs
+
+example (b : ByteArray) (labels metaKv : List (String × String)) (evs : List Session.Event)
+    (cwd : String) :
+    Checkpoint.loadBytes
+        (Checkpoint.saveBytes
+          { vt := (Session.run (Session.State.boot (Session.resumeVt b) labels metaKv) evs).1.vt,
+            cwd,
+            labels :=
+              (Session.run (Session.State.boot (Session.resumeVt b) labels metaKv)
+                  evs).1.labels }) =
+      some
+        {
+          vt :=
+            (Session.run (Session.State.boot (Session.resumeVt b) labels metaKv) evs).1.vt.quiesce,
+          cwd,
+          labels :=
+            (Session.run (Session.State.boot (Session.resumeVt b) labels metaKv)
+                evs).1.labels } := by
+  with_reducible exact Session.run_resume_load_save b labels metaKv evs cwd
 
 -- Session events
 example (s : Session.State) (evs : List Session.Event) (h : Session.WF s) :
@@ -52,6 +88,15 @@ example (s : Session.State) (id : Nat) (chunks : List (List UInt8)) {other : Nat
     (Session.run s (List.map (Session.Event.bytes id) chunks)).fst.client? other =
       s.client? other := by
   with_reducible exact Session.run_bytes_isolates s id chunks h
+
+example (s : Session.State) (c : Session.Client) (bs : List UInt8)
+    (h : (c.attached && !c.sizer) = true) : Session.onMsg s c (.input bs) = (s, []) := by
+  with_reducible exact Session.onMsg_input_readonly s c bs h
+
+-- Listing rows
+example (socketName : String) (info : List (String × String)) :
+    (Listing.rowFields socketName info).lookup "name" = some socketName := by
+  with_reducible exact Listing.rowFields_name socketName info
 
 -- Event driver
 example {World ε : Type}

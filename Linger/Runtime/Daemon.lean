@@ -533,7 +533,7 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
           | p :: rest => (p, rest.toArray)
         -- Preserve the checkpoint's terminal state and dimensions. Clamp only at
         -- the syscall boundary; resizing the restored VT would reset its margins.
-        let vt0 := (restore.map (·.1)).getD (Linger.Core.Vt.Vt.init 80 24)
+        let vt0 := Linger.Core.Session.bootVt (restore.map (·.1))
         let created ← realtimeS
         let (pid, ptyFd) ←
           spawnPty (UInt32.ofNat (Linger.Core.Vt.clampDim vt0.colCount))
