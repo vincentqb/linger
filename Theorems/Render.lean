@@ -11,8 +11,9 @@ import all Theorems.Render.Scrollback
 
 `Render.restore` is the byte stream a re-attaching client's terminal is fed, and
 this ladder proves what it does to that terminal. The proof is one file per rung,
-imported in dependency order; this module is the name the rest of `Theorems/`
-imports, so splitting the ladder changed no downstream import.
+imported in dependency order. Most modules in `Theorems/` that use the ladder import
+this one; `Theorems/Contracts.lean`, `Theorems/Replay.lean` and
+`Theorems/TerminalTitle.lean` instead import rungs directly.
 
 The rungs, in dependency order:
 
@@ -24,8 +25,7 @@ The rungs, in dependency order:
 * `Theorems.Render.Pen` — stage 3d begins: the pen round trip (semantic and parser
   halves) and one glyph placed in one cell.
 * `Theorems.Render.Keeps` — `Fixes π` shares nonprinting control-stage proofs
-  across projections; `Keeps` specializes it to the screen. Also `Row.mend`'s
-  fixed points.
+  across projections; `Keeps` specializes it to the screen.
 * `Theorems.Render.Modes` — anchor A5, both directions for the modes: the lead-in
   grounds any receiver, `leave_canonical` on the way out, `MMap` and the inbound
   modes and pen on the way in.

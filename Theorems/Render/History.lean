@@ -30,15 +30,16 @@ the line count is exactly the row count. -/
 separately: `rowText_scrubbed` below is true even without this, because `utf8s` scrubs
 again on the way out — so without it the claim would rest on a single guard, and this
 says the grid never hands a control codepoint to the encoder in the first place. -/
-theorem rowChars_scrubbed (row : Row) : ∀ c ∈ rowChars row, 0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F := by
+theorem rowChars_scrubbed (row : Row) :
+    ∀ c ∈ rowChars row, 0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0) := by
   intro c hc
   obtain ⟨cell, -, hc⟩ := List.mem_flatMap.mp hc
   split at hc
   · simp at hc
   · rcases List.mem_cons.mp hc with rfl | h
-    · exact safeChar_ge cell.base
+    · exact textChar_safe cell.base
     · obtain ⟨m, -, rfl⟩ := List.mem_map.mp h
-      exact safeChar_ge m
+      exact textChar_safe m
 
 /-- Trimming only drops, so it cannot introduce a character `rowChars` excluded. -/
 theorem dropTrailingBlanks_subset (cs : List Char) : ∀ c ∈ dropTrailingBlanks cs, c ∈ cs := by

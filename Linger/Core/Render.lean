@@ -61,8 +61,8 @@ needs no hypothesis about the state. -/
 def safeChar (c : Char) : Char := if c.toNat < 0x20 || c.toNat == 0x7F then '\uFFFD' else c
 
 /-- A codepoint safe to print as text: `safeChar`, with the C1 controls U+0080–U+009F
-replaced too, since a terminal may execute them. Titles, listings and `info` records
-pass through it. -/
+replaced too, since a terminal may execute them. Titles, listings, `info` records and
+capture text pass through it. -/
 def textChar (c : Char) : Char := if 0x80 ≤ c.toNat && c.toNat < 0xA0 then '\uFFFD' else safeChar c
 
 /-- UTF-8 encode one codepoint. It equals core's `String.utf8EncodeChar`
@@ -181,10 +181,10 @@ def cellText (c : Cell) : Bytes := utf8 (safeChar c.base) ++ utf8s c.marks
 
 A width-0 cell is the shadow of the wide char to its left: for a grid the
 emulator produced it paints nothing, because `Vt.printMark` keeps marks off
-shadows and `Row.mend` canonicalizes them, so a repaint of the base re-creates
-it (`Vt.Cell.shadow`). The branch still emits any marks it finds there, which is
-dead code for a live grid and the defensive path for a decoded checkpoint, whose
-rows carry no such guarantee.
+shadows and `Row.mend` and `Row.mendNear` canonicalize them, so a repaint of the
+base re-creates it (`Vt.Cell.shadow`). The branch still emits any marks it finds
+there, which is dead code for a live grid and the defensive path for a decoded
+checkpoint, whose rows carry no such guarantee.
 
 A wide cell's **own** marks need the cursor parked *between* the glyph and
 its shadow, or they attach to the shadow instead: `print` puts a mark at
@@ -313,7 +313,7 @@ push twice — `carriageReturn` clears the wrap-pending flag the last glyph set.
 def crlfB : Bytes := [0x0D, 0x0A]
 
 /-- A cell as a repaint can reproduce it. Every clause is one field of
-`CellOk` (`Theorems/Vt.lean`), so `cellOk_cellFit` needs no hypothesis — which
+`CellOk` (`Theorems/Vt/Renderable.lean`), so `cellOk_cellFit` needs no hypothesis — which
 is the whole point: `sb` rows are the one place in a `Vt` that no stated
 invariant covers (`Vt.resize` re-fits the grid and leaves the ring alone), and a
 decoded checkpoint's ring is arbitrary bytes' worth of cells.
@@ -522,8 +522,8 @@ def modesAnsi (v : Vt) : Bytes :=
 
 /-! ## Restore
 
-Named stages throughout, so §Replay can discharge one at a time and the
-top theorem is their composition (`Theorems/Render.lean`).
+Named stages throughout, so §Replay can discharge one at a time and each
+whole-stream claim is their composition (`Theorems/Render.lean`).
 -/
 
 /-- Re-arm deferred wrap by repainting the glyph already at the margin.
@@ -559,7 +559,7 @@ than the receiver's junk.
 Emitted **identically on both screens**, and before the discarded main paint:
 `Vt.sb` is main-screen-only (`scrollUpIn` pushes only when `altGrid.isNone`), the
 alt grid is a fresh blank with no history of its own, and a branch-dependent
-stage here would make the two `restore_grid_any_*` statements diverge. -/
+stage here would make `screens_paint_main` and `screens_paint_alt` diverge. -/
 def screensAnsi (v : Vt) : Bytes :=
   scrollbackAnsi v ++
     match v.altGrid with
@@ -767,10 +767,11 @@ def leaveAnsi : Bytes :=
 
 /-! ## History (text) -/
 
-/-- One row's characters, width-0 shadows skipped, every codepoint scrubbed. A named
-stage so the trim and the encoding are separate steps a lemma can talk about. -/
+/-- One row's characters, width-0 shadows skipped, every codepoint scrubbed as text
+(`textChar`), C1 controls included. A named stage so the trim and the encoding are separate
+steps a lemma can talk about. -/
 def rowChars (row : Row) : List Char :=
-  row.toList.flatMap fun c => if c.width == 0 then [] else safeChar c.base :: c.marks.map safeChar
+  row.toList.flatMap fun c => if c.width == 0 then [] else textChar c.base :: c.marks.map textChar
 
 /-- Drop trailing blanks. On the character list rather than on the bytes, though the
 two agree: no byte of a multi-byte UTF-8 sequence is `0x20`. -/

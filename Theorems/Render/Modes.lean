@@ -156,26 +156,31 @@ theorem prologue_grounds (v w : Vt) : (w.feed (prologueAnsi v)).pstate = .ground
                 (ends_csiNum 4 0x6C (by decide) (by decide) _
                   (ends_modeSet 1049 false _ (st_grounds w).1)))))))
 
-/-- **`restore` grounds any receiver.** The hypothesis-free form of
-`restore_quiesced`: no assumption on the client's parser state at all, which is what
-the `ESC \` lead-in buys. The `u8need` half is `restore_u8_zero`. -/
-theorem restore_placed_grounds (v w : Vt) :
-    (w.feed (restoreBody v ++ cursorAnsi v)).pstate = .ground := by
+/-- **The body grounds any receiver**: every stage `restoreBody` emits after the prologue
+is `Ends`, so the chain starts from `prologue_grounds`. -/
+theorem restoreBody_grounds (v w : Vt) : (w.feed (restoreBody v)).pstate = .ground := by
   simp only [restoreBody, feed_append]
   exact
-    ends_cursorAnsi v _
-      (ends_penSgr v.pen _
-        (ends_charsetAnsi v _
-          (ends_modesAnsi v _
-            (ends_titleAnsi v _
-              (ends_savedPendingAnsi v _
-                (ends_savedAnsi v _
-                  (ends_tabsAnsi v _
-                    (ends_regionAnsi v _
-                      (ends_screensAnsi v _
-                        (ends_csiNum 2 0x4A (by decide) (by decide) _
-                          (ends_csiNum 0 0x6D (by decide) (by decide) _
-                            (prologue_grounds v w))))))))))))
+    ends_penSgr v.pen _
+      (ends_charsetAnsi v _
+        (ends_modesAnsi v _
+          (ends_titleAnsi v _
+            (ends_savedPendingAnsi v _
+              (ends_savedAnsi v _
+                (ends_tabsAnsi v _
+                  (ends_regionAnsi v _
+                    (ends_screensAnsi v _
+                      (ends_csiNum 2 0x4A (by decide) (by decide) _
+                        (ends_csiNum 0 0x6D (by decide) (by decide) _
+                          (prologue_grounds v w)))))))))))
+
+/-- **`restore` grounds any receiver**: this prefix, through the final `CUP`, and the
+whole stream in `restore_grounds`. No assumption on the client's parser state at all,
+which is what the `ESC \` lead-in buys. The `u8need` half is `restore_u8_zero`. -/
+theorem restore_placed_grounds (v w : Vt) :
+    (w.feed (restoreBody v ++ cursorAnsi v)).pstate = .ground := by
+  rw [feed_append]
+  exact ends_cursorAnsi v _ (restoreBody_grounds v w)
 
 theorem restore_grounds (v w : Vt) : (w.feed (restore v)).pstate = .ground := by
   unfold restore
@@ -487,35 +492,13 @@ theorem mmap_id_csi_seq (params : Bytes) (final : UInt8) (hp : ParamBytes params
 /-! ### per-final dispatch-modes facts for the preservers -/
 
 theorem modes_csiDispatch_stbm (v : Vt) (s : CsiState) :
-    (v.csiDispatch s 0x72).modes = v.modes := by
-  by_cases hi : s.ignore = true
-  · simp [Vt.csiDispatch, hi]
-  · unfold Vt.csiDispatch
-    rw [ite_eq_right hi]
-    show
-      (if s.priv != 0 then v
-          else
-            if s.arg 0 1 - 1 < s.arg 1 v.rows - 1 && s.arg 1 v.rows - 1 < v.rows then
-              ({ v with
-                    top := s.arg 0 1 - 1, bot := s.arg 1 v.rows - 1 }).moveTo
-                0 0
-            else v).modes =
-        v.modes
-    repeat' split
-    all_goals rfl
+    (v.csiDispatch s 0x72).modes = v.modes := by rw [frame_csiDispatch_stbm]
 
 theorem modes_csiDispatch_cup (v : Vt) (s : CsiState) : (v.csiDispatch s 0x48).modes = v.modes := by
-  by_cases hi : s.ignore = true
-  · simp [Vt.csiDispatch, hi]
-  · unfold Vt.csiDispatch; rw [ite_eq_right (by simp [hi])]; exact modes_moveTo _ _ _
+  rw [frame_csiDispatch_cup]
 
 theorem modes_csiDispatch_sgr (v : Vt) (s : CsiState) : (v.csiDispatch s 0x6D).modes = v.modes := by
-  by_cases hi : s.ignore = true
-  · simp [Vt.csiDispatch, hi]
-  · unfold Vt.csiDispatch
-    rw [ite_eq_right hi]
-    show (if s.priv == 0 then v.applySgr s.params.toList else v).modes = v.modes
-    split <;> rfl
+  rw [frame_csiDispatch_sgr]
 
 /-! ### per-chunk MMap bridges -/
 
@@ -647,6 +630,8 @@ theorem MMap.nil : MMap id [] := fun _ hg hu => ⟨hg, hu, rfl⟩
 theorem mmap_id_append {a b : Bytes} (ha : MMap id a) (hb : MMap id b) : MMap id (a ++ b) :=
   (ha.comp hb).congr (fun _ => rfl)
 
+theorem mmap_id_streamPred : StreamPred (MMap id) := ⟨MMap.nil, mmap_id_append⟩
+
 /-! ### SUFFIX preservers (modes untouched) -/
 
 /-- `ED` writes cells, never a mode. -/
@@ -665,77 +650,91 @@ theorem mmap_id_so : MMap id [0x0E] := fun v hg hu => by
   have h : v.feed [0x0E] = { v with shiftOut := true } := shift_feed_eq true hg hu
   rw [h]; exact ⟨hg, hu, rfl⟩
 
-theorem mmap_id_charsetAnsi (v : Vt) : MMap id (charsetAnsi v) := by
-  unfold charsetAnsi
-  refine mmap_id_append (mmap_id_append ?_ ?_) ?_
-  · split
-    · exact mmap_id_charset 0x28 0x30 (Or.inl rfl) (by decide) (by decide)
-    · exact mmap_id_charset 0x28 0x42 (Or.inl rfl) (by decide) (by decide)
-  · split
-    · exact mmap_id_charset 0x29 0x30 (Or.inr rfl) (by decide) (by decide)
-    · exact mmap_id_charset 0x29 0x42 (Or.inr rfl) (by decide) (by decide)
-  · split
-    · exact mmap_id_so
-    · exact MMap.nil
+theorem mmap_id_charsetAnsi (v : Vt) : MMap id (charsetAnsi v) :=
+  mmap_id_streamPred.charsetAnsi (fun _ _ hi hx => mmap_id_charset _ _ hi (by grind) (by grind))
+    mmap_id_so v
 
-theorem mmap_id_cursorAnsi (v : Vt) : MMap id (cursorAnsi v) := by
-  unfold cursorAnsi
-  split <;> exact mmap_id_cup _ _
+theorem mmap_id_cursorAnsi (v : Vt) : MMap id (cursorAnsi v) :=
+  mmap_id_streamPred.cursorAnsi mmap_id_cup v
 
-/-- Glyph bytes leave modes alone even when the receiver has a partial decoder. -/
-theorem modes_glyph_step {v : Vt} (b : UInt8) (hg : v.pstate = .ground) (hb : 0x20 ≤ b) :
-    (v.step b).modes = v.modes := by
-  have hac (w : Vt) (n : Nat) : (w.acceptChar n).modes = w.modes := by
+/-- Glyph bytes leave a projection alone, whatever the decoder holds, when printing and
+the decoder's own updates do. -/
+theorem proj_glyph_step {α : Type} {π : Vt → α} (hprint : ∀ w c, π (w.print c) = π w)
+    (hu8 :
+      ∀ (w : Vt) n a,
+        π
+            { w with
+              u8need := n, u8acc := a } =
+          π w)
+    {v : Vt} (b : UInt8) (hg : v.pstate = .ground) (hb : 0x20 ≤ b) : π (v.step b) = π v := by
+  have hac (w : Vt) (n : Nat) : π (w.acceptChar n) = π w := by
     unfold Vt.acceptChar
-    split <;> exact modes_print _ _
-  have hs (w : Vt) : (w.stepGround b).modes = w.modes := by
+    split <;> exact hprint _ _
+  have hs (w : Vt) : π (w.stepGround b) = π w := by
+    have hesc : ¬(b == 0x1B) = true := by
+      intro h
+      rw [beq_iff_eq] at h
+      subst h
+      exact absurd hb (by decide)
+    have hc0 : ¬b < 0x20 := by
+      simp only [UInt8.lt_iff_toNat_lt]
+      have := UInt8.le_iff_toNat_le.mp hb
+      omega
     unfold Vt.stepGround
-    split
-    · rfl
-    rw [ite_eq_right
-        (show ¬b < (0x20 : UInt8) from by
-          simp only [UInt8.lt_iff_toNat_lt]
-          have := UInt8.le_iff_toNat_le.mp hb
-          omega)]
-    split
-    · rfl
-    split
-    · exact hac _ _
-    split
-    · split
-      · rfl
-      split
-      · exact hac _ _
-      · rfl
+    rw [ite_eq_right hesc, ite_eq_right hc0]
     repeat' split
-    all_goals rfl
+    all_goals
+      with_reducible
+        first
+        | rfl
+        | exact hac _ _
+        | exact hu8 _ _ _
+        | exact (hac _ _).trans (hu8 _ _ _)
   rw [step_of_ground b hg, hs]
   unfold Vt.abortUtf8
-  split <;> rfl
+  split
+  · exact hu8 _ _ _
+  · rfl
 
-theorem modes_glyph_run :
-    ∀ (bs : Bytes) (v : Vt), v.pstate = .ground → (∀ b ∈ bs, 0x20 ≤ b) → (v.feed bs).modes = v.modes
+theorem proj_glyph_run {α : Type} {π : Vt → α} (hprint : ∀ w c, π (w.print c) = π w)
+    (hu8 :
+      ∀ (w : Vt) n a,
+        π
+            { w with
+              u8need := n, u8acc := a } =
+          π w) :
+    ∀ (bs : Bytes) (v : Vt), v.pstate = .ground → (∀ b ∈ bs, 0x20 ≤ b) → π (v.feed bs) = π v
   | [], _, _, _ => rfl
   | b :: bs, v, hg, hb => by
     have h := hb b (by simp)
     rw [feed_cons]
     exact
-      (modes_glyph_run bs _
+      (proj_glyph_run hprint hu8 bs _
             (ground_step b hg
               (by
                 intro he
                 subst b
                 exact (by decide : ¬(0x20 : UInt8) ≤ 0x1B) h))
             (fun c hc => hb c (by simp [hc]))).trans
-        (modes_glyph_step b hg h)
+        (proj_glyph_step hprint hu8 b hg h)
 
-theorem modes_cellText (c : Cell) {v : Vt} (hg : v.pstate = .ground) :
-    (v.feed (cellText c)).modes = v.modes := by
-  apply modes_glyph_run _ _ hg
+theorem proj_cellText {α : Type} {π : Vt → α} (hprint : ∀ w c, π (w.print c) = π w)
+    (hu8 :
+      ∀ (w : Vt) n a,
+        π
+            { w with
+              u8need := n, u8acc := a } =
+          π w)
+    (c : Cell) {v : Vt} (hg : v.pstate = .ground) : π (v.feed (cellText c)) = π v := by
+  apply proj_glyph_run hprint hu8 _ _ hg
   intro b hb
   rcases List.mem_append.mp hb with hb | hb
   · exact (utf8_no_ctl _ (safeChar_ge c.base).1 (safeChar_ge c.base).2 b hb).1
   · exact (utf8s_no_ctl _ b hb).1
+
+theorem modes_cellText (c : Cell) {v : Vt} (hg : v.pstate = .ground) :
+    (v.feed (cellText c)).modes = v.modes :=
+  proj_cellText (π := (·.modes)) modes_print (fun _ _ _ => rfl) c hg
 
 theorem mmap_penSgr_of_ground (p : Pen) {v : Vt} (hg : v.pstate = .ground) :
     (v.feed (penSgr p)).pstate = .ground ∧
@@ -964,9 +963,7 @@ lifted from the `dirty`-receiver fixtures to a theorem. `penSgr_feed` sets the p
 theorem pen_moveTo (v : Vt) (x y : Nat) : (v.moveTo x y).pen = v.pen := by rfl
 
 theorem pen_csiDispatch_cup (v : Vt) (s : CsiState) : (v.csiDispatch s 0x48).pen = v.pen := by
-  by_cases hi : s.ignore = true
-  · simp [Vt.csiDispatch, hi]
-  · unfold Vt.csiDispatch; rw [ite_eq_right (by simp [hi])]; exact pen_moveTo _ _ _
+  rw [frame_csiDispatch_cup]
 
 theorem pen_cursorAnsi (v : Vt) {g : Vt} (hg : g.pstate = .ground) (hu : g.u8need = 0) :
     (g.feed (cursorAnsi v)).pen = g.pen := by

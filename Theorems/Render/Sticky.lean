@@ -508,33 +508,21 @@ theorem smap_id_gridAnsi (grid : Array Row) : SMap id (gridAnsi grid) :=
 
 /-! ### The remaining constructs -/
 
-theorem smap_id_cursorAnsi (v : Vt) : SMap id (cursorAnsi v) := by
-  unfold cursorAnsi
-  split <;> exact smap_id_cup _ _
+theorem smap_id_cursorAnsi (v : Vt) : SMap id (cursorAnsi v) :=
+  SMap.streamPred.cursorAnsi smap_id_cup v
 
-theorem smap_id_savedAnsi (v : Vt) : SMap id (savedAnsi v) := by
-  unfold savedAnsi
-  exact ((smap_id_penSgr _).append (smap_id_cup _ _)).append (smap_id_escSeq 0x37 (by decide))
+theorem smap_id_savedAnsi (v : Vt) : SMap id (savedAnsi v) :=
+  SMap.streamPred.savedAnsi smap_id_penSgr smap_id_cup (smap_id_escSeq 0x37 (by decide)) v
 
 theorem smap_id_pendingAnsi (cols : Nat) (grid : Array Row) (cur : Cursor) (row : Nat) (pen : Pen) :
-    SMap id (pendingAnsi cols grid cur row pen) := by
-  unfold pendingAnsi
-  dsimp only
-  refine SMap.streamPred.ite (fun _ => ?_) (fun _ => SMap.nil)
-  exact
-    (((smap_id_cup _ _).append (smap_id_penSgr _)).append (smap_cellText _)).append
-      (smap_id_penSgr _)
+    SMap id (pendingAnsi cols grid cur row pen) :=
+  SMap.streamPred.pendingAnsi smap_id_cup smap_id_penSgr smap_cellText cols grid cur row pen
 
-theorem smap_id_savedPendingAnsi (v : Vt) : SMap id (savedPendingAnsi v) := by
-  unfold savedPendingAnsi
-  refine SMap.streamPred.ite (fun _ => ?_) (fun _ => SMap.nil)
-  exact (smap_id_pendingAnsi _ _ _ _ _).append (smap_id_escSeq 0x37 (by decide))
+theorem smap_id_savedPendingAnsi (v : Vt) : SMap id (savedPendingAnsi v) :=
+  SMap.streamPred.savedPendingAnsi smap_id_pendingAnsi (smap_id_escSeq 0x37 (by decide)) v
 
-theorem smap_id_tabsAnsi (v : Vt) : SMap id (tabsAnsi v) := by
-  unfold tabsAnsi
-  refine (smap_id_tbc 3).append ?_
-  refine SMap.streamPred.flatMap (fun i => ?_)
-  exact (smap_id_cha (i + 1)).append (smap_id_escSeq 0x48 (by decide))
+theorem smap_id_tabsAnsi (v : Vt) : SMap id (tabsAnsi v) :=
+  SMap.streamPred.tabsAnsi (smap_id_tbc 3) smap_id_cha (smap_id_escSeq 0x48 (by decide)) v
 
 /-- A mode number other than the three screen switches leaves the sticky bundle alone. -/
 theorem stSetMode_of_not_screen {n : Nat} (on : Bool) (s : Sticky)
@@ -553,47 +541,14 @@ theorem smap_id_modeSet_safe (n : Nat) (on : Bool) (hn : 0 < n) (hlt : n < 65535
 /-- Every mode `modesAnsi` replays is one `setMode` cannot turn into a screen
 switch — including the mouse field, whose *guard* is what rules 47/1047/1049 out
 (the same allowlist that `restore_modes_any` needs). -/
-theorem smap_id_modesAnsi (v : Vt) : SMap id (modesAnsi v) := by
-  have hm :
-    ∀ (n : Nat) (on : Bool),
-      0 < n → n < 65535 → n ≠ 47 → n ≠ 1047 → n ≠ 1049 → SMap id (modeSet n on) :=
-    smap_id_modeSet_safe
-  have hkey : SMap id (if v.modes.appKeypad then escSeq 0x3D else escSeq 0x3E) :=
-    SMap.streamPred.ite (fun _ => smap_id_escSeq 0x3D (by decide))
-      (fun _ => smap_id_escSeq 0x3E (by decide))
-  have hmouse :
-    SMap id
-      (if v.modes.mouse == 1000 || v.modes.mouse == 1002 || v.modes.mouse == 1003 then
-        modeSet v.modes.mouse true
-      else []) := by
-    refine SMap.streamPred.ite (fun hc => ?_) (fun _ => SMap.nil)
-    simp only [Bool.or_eq_true, beq_iff_eq] at hc
-    rcases hc with (hc | hc) | hc <;> rw [hc] <;>
-      exact hm _ true (by decide) (by decide) (by decide) (by decide) (by decide)
-  unfold modesAnsi
-  exact
-    ((((((((((((hm 7 v.modes.wrap (by decide) (by decide) (by decide) (by decide)
-                                                      (by decide)).append
-                                                  (hm 1 v.modes.appCursor (by decide) (by decide)
-                                                    (by decide) (by decide) (by decide))).append
-                                              hkey).append
-                                          (hm 25 v.modes.cursorVisible (by decide) (by decide)
-                                            (by decide) (by decide) (by decide))).append
-                                      (hm 2004 v.modes.bracketedPaste (by decide) (by decide)
-                                        (by decide) (by decide) (by decide))).append
-                                  (hm 1000 false (by decide) (by decide) (by decide) (by decide)
-                                    (by decide))).append
-                              (hm 1002 false (by decide) (by decide) (by decide) (by decide)
-                                (by decide))).append
-                          (hm 1003 false (by decide) (by decide) (by decide) (by decide)
-                            (by decide))).append
-                      hmouse).append
-                  (hm 1006 v.modes.mouseSgr (by decide) (by decide) (by decide) (by decide)
-                    (by decide))).append
-              (hm 1004 v.modes.focusEvents (by decide) (by decide) (by decide) (by decide)
-                (by decide))).append
-          (hm 6 v.modes.origin (by decide) (by decide) (by decide) (by decide) (by decide))).append
-      (smap_id_irm v.modes.insert)
+theorem smap_id_modesAnsi (v : Vt) : SMap id (modesAnsi v) :=
+  SMap.streamPred.modesAnsi v
+    (fun n on h => smap_id_modeSet_safe n on (by omega) (by omega) (by omega) (by omega) (by omega))
+    (fun h => by
+      simp only [Bool.or_eq_true, beq_iff_eq] at h
+      exact smap_id_modeSet_safe _ _ (by omega) (by omega) (by omega) (by omega) (by omega))
+    (smap_id_modeSet_safe 6 _ (by omega) (by omega) (by omega) (by omega) (by omega))
+    (smap_id_escSeq 0x3D (by decide)) (smap_id_escSeq 0x3E (by decide)) smap_id_irm
 
 /-- **`charsetAnsi` sets both designations absolutely and the shift state
 set-only.** The `so` component of the transform reads `s.so`, and that is not an
@@ -933,8 +888,7 @@ theorem restore_sticky_any (v w : Vt) (hrows : w.rows = v.rows) (hlt : v.top < v
 It needs no ladder at all, and the reason is worth stating: `restore` **ends** with
 `cursorAnsi`, which is one `CSI … H`, and `u8_zero_after_csi` zeroes `u8need`
 whatever the incoming state was — a CSI's final byte cannot leave a character
-half-decoded. So the whole stream in front of it is irrelevant to this half, where
-`restore_quiesced` had to assume a fresh `Vt.init`. -/
+half-decoded. So the whole stream in front of it is irrelevant to this half. -/
 
 theorem restore_u8_zero (v w : Vt) : (w.feed (restore v)).u8need = 0 := by
   unfold restore
@@ -942,8 +896,7 @@ theorem restore_u8_zero (v w : Vt) : (w.feed (restore v)).u8need = 0 := by
   apply u8_zero_after_cursorPendingAnsi
   rw [feed_append]; exact u8_zero_after_cursorAnsi v _
 
-/-- **§Replay's parser half, receiver-quantified** — Step 2's exit for `restore`.
-`restore_quiesced` said this of a fresh `Vt.init`; a client is never that. Any
+/-- **§Replay's parser half, receiver-quantified** — Step 2's exit for `restore`. Any
 receiver in any parser state, mid-escape or mid-OSC or holding a half-decoded
 character, is left `ground` with nothing pending. -/
 theorem restore_quiesced_any (v w : Vt) :
@@ -1248,44 +1201,17 @@ theorem cha_places_cursor {v : Vt} (n : Nat) (hg : v.pstate = .ground) (hu : v.u
 
 /-! ## §Replay — the cursor, for any receiver
 
-`restore_cursor` was stated over `Vt.init v.cols v.rows`, and that was an artefact of
-when it was written rather than of what it needs: the claim is about the stream's
-**final** `CUP`, which addresses absolutely. Three facts about the state `restoreBody`
-leaves are what the fresh-emulator form got for free, and each is now available for any
-receiver — the parser is ground (the prologue's lead-in), DECOM is off (`modesAnsi`
-sets it to the session's value, which the hypothesis says is off), and the dimensions
-are unchanged.
+The claim is about the stream's **final** `CUP`, which addresses absolutely, so it needs
+facts about the state `restoreBody` leaves rather than a fresh receiver: the parser is
+ground (the prologue's lead-in) with nothing half-decoded (the body ends in an SGR),
+DECOM is off (`modesAnsi` sets it to the session's value, which the hypothesis says is
+off), and the dimensions are unchanged.
 
 `Good w` on the receiver is doing one job: `dims_feed` needs it, because `RIS`
 (`ESC c`) rebuilds the state through `Vt.init`, which re-clamps. No linger stream
 emits `RIS` — but the painted text certainly contains the byte `0x63`, so
 `dims_feed_ne_ris` is too crude here and the invariant is the honest route. Every
 client's emulator satisfies it (`good_of_liveReachable`). -/
-
-theorem restoreBody_grounds (v w : Vt) : (w.feed (restoreBody v)).pstate = .ground := by
-  rw [show
-      restoreBody v =
-        prologueAnsi v ++
-          (csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v ++ regionAnsi v ++ tabsAnsi v ++
-            savedAnsi v ++
-            savedPendingAnsi v ++
-            titleAnsi v ++
-            modesAnsi v ++
-            charsetAnsi v ++
-            penSgr v.pen)
-      from by simp only [restoreBody, List.append_assoc],
-    feed_append]
-  refine Ends.append ?_ (ends_penSgr v.pen) _ (prologue_grounds v w)
-  refine Ends.append ?_ (ends_charsetAnsi v)
-  refine Ends.append ?_ (ends_modesAnsi v)
-  refine Ends.append ?_ (ends_titleAnsi v)
-  refine Ends.append ?_ (ends_savedPendingAnsi v)
-  refine Ends.append ?_ (ends_savedAnsi v)
-  refine Ends.append ?_ (ends_tabsAnsi v)
-  refine Ends.append ?_ (ends_regionAnsi v)
-  refine Ends.append ?_ (ends_screensAnsi v)
-  exact
-    (ends_csiNum 0 0x6D (by decide) (by decide)).append (ends_csiNum 2 0x4A (by decide) (by decide))
 
 /-- `restoreBody` ends in an SGR, so no receiver is left mid-character. -/
 theorem restoreBody_u8need (v w : Vt) : (w.feed (restoreBody v)).u8need = 0 := by

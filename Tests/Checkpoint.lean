@@ -289,7 +289,7 @@ example :
 
 /-- A **half wide pair**: a width-2 base whose right neighbour is an ordinary blank. Half a
 glyph is not expressible by `Render.rowAnsi` — the base re-wraps on replay and everything
-after it lands a column off — which is why the live emulator ends every write in `Row.mend`
+after it lands a column off — which is why the live emulator repairs pairs after every write
 and why the door has to refuse what a file can still name. -/
 example :
     (let bad : Row := (blankRow 4 {}).set! 1 { base := '中', marks := [], width := 2, pen := {} }
@@ -300,7 +300,7 @@ example :
 
 /-- The **stashed alt screen**, whose grid was checked *nowhere* before this — `decodedOk`
 looks at the stashed cursor and stops there. A session in the alt screen carries the main
-screen in `altGrid`, and `Render.restore_grid_any_alt` paints it, so a bad one is the same
+screen in `altGrid`, and `Render.screens_paint_alt` paints it, so a bad one is the same
 defect one indirection away. -/
 example :
     (let v := { Vt.init 4 2 with altGrid := some (#[blankRow 4 {}], { x := 0, y := 0 }, {}) }
@@ -331,6 +331,39 @@ example :
       | some ck' => ck'.vt.sb.toList.any (fun r => r.size != 6) && ck'.vt.colCount == 6
       | none => false) =
       true := by
+  native_decide
+
+/-! ### The LNGR v1 layout
+
+The round-trip theorems hold of any field order, so a writer and reader reordered together
+pass them while a checkpoint already on disk decodes to a different state. These pin one
+record's bytes. Its three cells give the seven pen flags distinct patterns, so any reordering
+of the pen flags changes a byte. Every other field is pinned only at the value it holds here:
+swapping two fields that hold the same value, such as two false modes, still passes. -/
+
+/-- A record with indexed and RGB colours, nondefault modes, both cursors, a title, a line
+drawing set, a cwd and a label. -/
+def golden : Ckpt :=
+  { vt :=
+      (Vt.init 3 2).feedBytes
+        ("\x1b[0;1;3;5;9;38;5;3;48;2;1;2;3mA\x1b[0;2;3;7;9mB\x1b[0;4;5;7;9mC\x1b[0m" ++
+            "\x1b[?1h\x1b[?2004h\x1b[?1004h\x1b[?1002h\x1b[?1006h\x1b[?25l\x1b[4h\x1b=" ++
+            "\x1b[2;1H\x1b7\x1b[1;2H\x1b]2;t\x07\x1b(0").toUTF8
+    cwd := "/c", labels := [("k", "v")] }
+
+/-- Its LNGR v1 bytes. Change them only together with the version byte in `magic`. -/
+def goldenBytes : List UInt8 :=
+  [76, 78, 71, 82, 1, 3, 2, 2, 3, 1, 65, 0, 1, 1, 3, 2, 1, 2, 3, 1, 0, 1, 0, 1, 0, 1, 1, 66, 0, 1,
+    0, 0, 0, 1, 1, 0, 0, 1, 1, 1, 67, 0, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 3, 32, 0, 1, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 234, 7, 1, 1, 0, 1, 3,
+    0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 116, 1, 0, 0, 0, 2, 47, 99, 1, 1, 107,
+    1, 118]
+
+/-- The writer produces exactly those bytes. -/
+example : ((saveBytes golden).toList == goldenBytes) = true := by native_decide
+
+/-- The reader decodes those bytes to the record, with its parser quiesced. -/
+example : ((loadBytes ⟨goldenBytes.toArray⟩).map saveBytes == some (saveBytes golden)) = true := by
   native_decide
 
 /-! ### The byte-array reader

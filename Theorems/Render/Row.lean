@@ -79,7 +79,8 @@ knows, because the prefix already equals the source there — and `RowOk.pairs` 
 turns "width 0 at `j`" into "a whole pair at `j-1`", so `mend_keeps_wide` applies to the
 pair rather than to half of it. It cannot be done per *row*: `mend_of_pairOk` needs the
 whole row pair-consistent, and mid-paint it is not — every column above the frontier
-still holds the previous occupant's junk, half pairs included.
+still holds the previous occupant's junk, half pairs included. The window's position
+does not matter: the repair keeps a whole pair or a narrow cell wherever it runs.
 
 `hfront` rules out the one bad split. Without it `j = k-1` could be a width-2 base whose
 shadow sits at `k`, unpainted, so the sweep would see a half pair and blank the base the
@@ -87,7 +88,7 @@ previous rung just painted. Verified load-bearing: replacing it with `True` coll
 exactly the width-2 case. -/
 theorem mend_keeps_prefix {u : Vt} {g : Row} {y k : Nat} (hrow : RowOk u.cols g)
     (hcells : ∀ j, j < k → u.getCell j y = g.at j) (hfront : k = 0 ∨ (g.at (k - 1)).width ≠ 2)
-    (hy : y < u.grid.size) : ∀ j, j < k → (u.mendRow y).getCell j y = g.at j := by
+    (hy : y < u.grid.size) {x0 : Nat} : ∀ j, j < k → (u.mendRow x0 y).getCell j y = g.at j := by
   intro j hj
   -- `getCell x y` *is* `(getRow y).at x`; ascribing once keeps every `rw` syntactic
   have hat : ∀ i, i < k → (u.getRow y).at i = g.at i := fun i hi => hcells i hi
@@ -110,7 +111,7 @@ theorem mend_keeps_prefix {u : Vt} {g : Row} {y k : Nat} (hrow : RowOk u.cols g)
     have hj1eq : j - 1 + 1 = j := by omega
     have hj1 : j - 1 < k := by omega
     obtain ⟨-, h1⟩ :=
-      mend_keeps_wide (u.getRow y) (j - 1)
+      mend_keeps_wide (x0 := x0) (u.getRow y) (j - 1)
         (by
           rw [hat (j - 1) hj1]; exact hbase)
         (by
@@ -131,7 +132,7 @@ theorem mend_keeps_prefix {u : Vt} {g : Row} {y k : Nat} (hrow : RowOk u.cols g)
                 rw [show k - 1 = j from by omega]; exact hz)
               h
     obtain ⟨h0, -⟩ :=
-      mend_keeps_wide (u.getRow y) j (by rw [hwj, hz])
+      mend_keeps_wide (x0 := x0) (u.getRow y) j (by rw [hwj, hz])
         (by
           rw [hat (j + 1) hshIn, hat j hj]; exact (hrow.pairs j).1 hz)
     rw [h0]; exact hwj
@@ -631,6 +632,39 @@ theorem matches_row_congr {w : Vt} {P : PaintState} {g g' : Row} {k : Nat}
     rw [← h j]
     exact hm.cells j hj
 
+/-- **The cell at `k` with its marks stripped**, as a base rung paints it: still a row a repaint
+can reproduce, the same width and pen, no marks, the base glyph's bytes, and matched below `k`.
+Both mark rungs and both of their `OffRow` mirrors enter the mark loop through it. -/
+theorem strip_marks {w : Vt} {P : PaintState} {g : Row} {k n : Nat} (hrow : RowOk w.cols g)
+    (hm : Matches w P g k) (hk : k < w.cols) (hwid : (g.at k).width = n) (hn : n ≠ 0)
+    (hpen : (g.at k).pen = P.pen) :
+    RowOk w.cols (withMarks g k []) ∧
+      ((withMarks g k []).at k).width = n ∧
+      ((withMarks g k []).at k).marks = [] ∧
+      ((withMarks g k []).at k).pen = P.pen ∧
+      Matches w P (withMarks g k []) k ∧
+      cellText ((withMarks g k []).at k) = utf8 (safeChar (g.at k).base) := by
+  have hkg : k < g.size := by
+    rw [hrow.size]; exact hk
+  refine
+    ⟨rowOk_withMarks hrow
+        (by
+          rw [hwid]; exact hn)
+        (by simp) (by simp),
+      ?_, ?_, ?_, matches_below (fun j hj => at_withMarks_ne g k [] j (by omega)) hm, ?_⟩
+  all_goals rw [at_withMarks_self g k [] hkg]
+  · exact hwid
+  · exact hpen
+  · show utf8 (safeChar (g.at k).base) ++ utf8s [] = utf8 (safeChar (g.at k).base)
+    simp [utf8s]
+
+/-- …and the loop's exit: the row with column `k`'s own marks back on reads as `g`. -/
+theorem withMarks_own (g : Row) {k : Nat} (hkg : k < g.size) (j : Nat) :
+    (withMarks g k (g.at k).marks).at j = g.at j := by
+  by_cases hjk : j = k
+  · subst hjk; rw [at_withMarks_self g j (g.at j).marks hkg]
+  · exact at_withMarks_ne g k (g.at k).marks j hjk
+
 /-- **`Matches` survives a `CHA`.** The receiver stays matched to the same row `g` at the
 same frontier `kf`; only the paint state's column moves (clamped to the margin) and
 wrap-pending clears. This is the cursor park the wide-with-marks branch does twice. -/
@@ -726,7 +760,7 @@ theorem mark_step {cols : Nat} {w : Vt} {Q : PaintState} {g : Row} {wcol kf : Na
   -- the write, whichever branch: the source cell with one more mark
   obtain ⟨hpm, hcur⟩ :
     w.print (safeChar m) =
-        (w.putCell wcol Q.y { g.at wcol with marks := done ++ [safeChar m] }).mendRow Q.y ∧
+        (w.putCell wcol Q.y { g.at wcol with marks := done ++ [safeChar m] }).mendRow wcol Q.y ∧
       (w.print (safeChar m)).cursor = w.cursor :=
     by
     rcases hdisj with ⟨hQx, hQp⟩ | ⟨hQx, hQp⟩
@@ -788,7 +822,8 @@ theorem mark_step {cols : Nat} {w : Vt} {Q : PaintState} {g : Row} {wcol kf : Na
   · show ((w.print (safeChar m)).getRow Q.y).size = (w.print (safeChar m)).cols
     rw [hpm,
       show
-        ((w.putCell wcol Q.y { g.at wcol with marks := done ++ [safeChar m] }).mendRow Q.y).cols =
+        ((w.putCell wcol Q.y { g.at wcol with marks := done ++ [safeChar m] }).mendRow wcol
+              Q.y).cols =
           w.cols
         from by rw [frame_mendRow, frame_putCell],
       size_getRow_mendRow _ Q.y hgsW Q.y,
@@ -878,24 +913,8 @@ theorem step_narrow_marks_gen {w : Vt} {P P' : PaintState} {g : Row} {k : Nat}
   have hmks := (hrow.cells k).marks
   have hmle := (hrow.cells k).marksLe
   -- paint the base glyph on the row truncated to no marks at `k`
-  have hrow0 : RowOk w.cols (withMarks g k []) :=
-    rowOk_withMarks hrow
-      (by
-        rw [hwid]; decide)
-      (by simp) (by simp)
-  have hwid0 : ((withMarks g k []).at k).width = 1 := by
-    rw [at_withMarks_self g k [] hkg]; exact hwid
-  have hmk0 : ((withMarks g k []).at k).marks = [] := by rw [at_withMarks_self g k [] hkg]
-  have hpen0 : ((withMarks g k []).at k).pen = P.pen := by
-    rw [at_withMarks_self g k [] hkg]; exact hpen
-  have hm0 : Matches w P (withMarks g k []) k :=
-    matches_below (fun j hj => at_withMarks_ne g k [] j (by omega)) hm
+  obtain ⟨hrow0, hwid0, hmk0, hpen0, hm0, hbtext⟩ := strip_marks hrow hm hk hwid (by decide) hpen
   have hbase := step_narrow_gen hrow0 hm0 hPx hpend hwid0 hmk0 hpen0 hy hp hadv
-  -- the base glyph of `g`'s cell is `cellText` of the truncated cell
-  have hbtext : cellText ((withMarks g k []).at k) = utf8 (safeChar (g.at k).base) := by
-    rw [at_withMarks_self g k [] hkg]
-    show utf8 (safeChar (g.at k).base) ++ utf8s [] = utf8 (safeChar (g.at k).base)
-    simp [utf8s]
   rw [hbtext] at hbase
   -- so the full cellText is the base glyph then the marks; feed splits there
   have hct : cellText (g.at k) = utf8 (safeChar (g.at k).base) ++ utf8s (g.at k).marks := by rfl
@@ -914,10 +933,7 @@ theorem step_narrow_marks_gen {w : Vt} {P P' : PaintState} {g : Row} {k : Nat}
   rw [map_safeChar_id (g.at k).marks (fun x hx => (hmks x hx).2)] at hfold
   simp only [List.nil_append] at hfold
   -- exit: the fully-marked truncated row reads back as `g` at every column
-  refine matches_row_congr (fun j => ?_) hfold
-  by_cases hjk : j = k
-  · subst hjk; rw [at_withMarks_self g j (g.at j).marks hkg]
-  · exact at_withMarks_ne g k (g.at k).marks j hjk
+  exact matches_row_congr (withMarks_own g hkg) hfold
 
 /-- **One narrow cell with its marks, in the interior.** `step_narrow` is its `marks = []`
 special case. -/
@@ -953,18 +969,8 @@ theorem step_wide_marks_gen {w : Vt} {P : PaintState} {g : Row} {k x : Nat} (hro
   have hmks := (hrow.cells k).marks
   have hmle := (hrow.cells k).marksLe
   -- the wide base, painted on the row with `k`'s marks stripped
-  have hrow0 : RowOk w.cols (withMarks g k []) :=
-    rowOk_withMarks hrow
-      (by
-        rw [hwid]; decide)
-      (by simp) (by simp)
-  have hwid0 : ((withMarks g k []).at k).width = 2 := by
-    rw [at_withMarks_self g k [] hkg]; exact hwid
-  have hmk0 : ((withMarks g k []).at k).marks = [] := by rw [at_withMarks_self g k [] hkg]
-  have hpen0 : ((withMarks g k []).at k).pen = P.pen := by
-    rw [at_withMarks_self g k [] hkg]; exact hpen
-  have hm0 : Matches w P (withMarks g k []) k :=
-    matches_below (fun j hj => at_withMarks_ne g k [] j (by omega)) hm
+  obtain ⟨hrow0, hwid0, hmk0, hpen0, hm0, hbtext⟩ :=
+    strip_marks hrow hm (by omega) hwid (by decide) hpen
   -- the base's own advance is overwritten by the first `CHA`, so either one serves
   have hbase :
     Matches (w.feed (cellText ((withMarks g k []).at k)))
@@ -976,10 +982,6 @@ theorem step_wide_marks_gen {w : Vt} {P : PaintState} {g : Row} {k x : Nat} (hro
     by_cases h : k + 2 < w.cols
     · exact Or.inl ⟨h, by simp [h], by simp [h]⟩
     · exact Or.inr ⟨by omega, by simp [h], by simp [h]⟩
-  have hbtext : cellText ((withMarks g k []).at k) = utf8 (safeChar (g.at k).base) := by
-    rw [at_withMarks_self g k [] hkg]
-    show utf8 (safeChar (g.at k).base) ++ utf8s [] = utf8 (safeChar (g.at k).base)
-    simp [utf8s]
   rw [hbtext] at hbase
   -- split the emitted bytes into base · CHA · marks · CHA
   rw [feed_append, feed_append, feed_append]
@@ -1007,13 +1009,7 @@ theorem step_wide_marks_gen {w : Vt} {P : PaintState} {g : Row} {k x : Nat} (hro
   rw [map_safeChar_id (g.at k).marks (fun x hx => (hmks x hx).2)] at hfold
   simp only [List.nil_append] at hfold
   -- exit the mark loop back to `g`
-  have hmg :=
-    matches_row_congr (g := g)
-      (fun j => by
-        by_cases hjk : j = k
-        · subst hjk; rw [at_withMarks_self g j (g.at j).marks hkg]
-        · exact at_withMarks_ne g k (g.at k).marks j hjk)
-      hfold
+  have hmg := matches_row_congr (g := g) (withMarks_own g hkg) hfold
   -- CHA(k+3): step past the pair, clamping at the margin
   have hcha2 := cha_matches (n := k + 3) hmg (by omega) (by omega)
   rw [foldl_print_cols, hu2cols, show min (k + 3 - 1) (w.cols - 1) = x from by omega] at hcha2

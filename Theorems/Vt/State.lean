@@ -597,7 +597,7 @@ Stated as its own lemma rather than left to `split`: the repair's guards read
 cells through `getD` chains, and letting a proof descend into those is what made
 `Good.printPut` time out at `whnf`. -/
 
-theorem mendRow {v : Vt} (y : Nat) (h : Good v) : Good (v.mendRow y) := set_grid _ h
+theorem mendRow {v : Vt} (x y : Nat) (h : Good v) : Good (v.mendRow x y) := set_grid _ h
 
 theorem printWrap {v : Vt} (h : Good v) : Good v.printWrap := by
   unfold Vt.printWrap
@@ -621,10 +621,10 @@ theorem printPut {v : Vt} (ch : Char) (w : Nat) (h : Good v) : Good (v.printPut 
   unfold Vt.printPut
   dsimp only
   split
-  · exact mendRow _ (putCell _ _ _ h)
+  · exact mendRow _ _ (putCell _ _ _ h)
   · split
-    · exact mendRow _ (putCell _ _ _ (putCell _ _ _ h))
-    · exact mendRow _ (putCell _ _ _ h)
+    · exact mendRow _ _ (putCell _ _ _ (putCell _ _ _ h))
+    · exact mendRow _ _ (putCell _ _ _ h)
 
 theorem printAdvance {v : Vt} (w : Nat) (h : Good v) : Good (v.printAdvance w) := by
   have := h.colsPos
@@ -644,7 +644,7 @@ theorem printMark {v : Vt} (ch : Char) (h : Good v) : Good (v.printMark ch) := b
     with_reducible
       first
       | exact h
-      | exact mendRow _ (putCell _ _ _ h)
+      | exact mendRow _ _ (putCell _ _ _ h)
 
 theorem print {v : Vt} (ch : Char) (h : Good v) : Good (v.print ch) := by
   unfold Vt.print
@@ -989,10 +989,10 @@ theorem putCell_eq (v : Vt) (x y : Nat) (c : Cell) :
       { v with grid := v.grid.setIfInBounds y ((v.getRow y).setIfInBounds x c) } := by
   rw [Vt.putCell, Vt.getRow, setIfInBounds_getD_eq_modify v.grid y _ (·.setIfInBounds x c)]
 
-/-- The same for the repair sweep. -/
-theorem mendRow_eq (v : Vt) (y : Nat) :
-    v.mendRow y = { v with grid := v.grid.setIfInBounds y (v.getRow y).mend } := by
-  rw [Vt.mendRow, Vt.getRow, setIfInBounds_getD_eq_modify v.grid y _ Row.mend]
+/-- The same for a print's repair. -/
+theorem mendRow_eq (v : Vt) (x y : Nat) :
+    v.mendRow x y = { v with grid := v.grid.setIfInBounds y ((v.getRow y).mendNear x) } := by
+  rw [Vt.mendRow, Vt.getRow, setIfInBounds_getD_eq_modify v.grid y _ (·.mendNear x)]
 
 theorem frame_moveTo (v : Vt) (x y : Nat) :
     v.moveTo x y = { v with cursor := (v.moveTo x y).cursor } := by rfl
@@ -1178,8 +1178,8 @@ theorem frame_printShift (v : Vt) (w : Nat) :
 
 /-- Wide-pair repair writes only the grid. One frame covers all four layers
 below, plus any field a later one adds. -/
-theorem frame_mendRow (v : Vt) (y : Nat) : v.mendRow y = { v with grid := (v.mendRow y).grid } := by
-  rfl
+theorem frame_mendRow (v : Vt) (x y : Nat) :
+    v.mendRow x y = { v with grid := (v.mendRow x y).grid } := by rfl
 
 theorem frame_printPut (v : Vt) (ch : Char) (w : Nat) :
     v.printPut ch w = { v with grid := (v.printPut ch w).grid } := by
@@ -1234,6 +1234,74 @@ theorem frame_oscFinish (v : Vt) (acc : Array UInt8) :
         pstate := (v.oscFinish acc).pstate, title := (v.oscFinish acc).title } := by
   unfold Vt.oscFinish; dsimp only; repeat' split
   all_goals rfl
+
+/-! ### Frames of the dispatches the restore stream emits
+
+One per final byte, for every projection at once: an ignored sequence is the identity,
+and each dispatch is a record update of the fields named here. -/
+
+theorem csiDispatch_ignored (v : Vt) {s : CsiState} (final : UInt8) (hi : s.ignore = true) :
+    v.csiDispatch s final = v := by
+  unfold Vt.csiDispatch; rw [ite_eq_left hi]
+
+theorem frame_csiDispatch_cup (v : Vt) (s : CsiState) :
+    v.csiDispatch s 0x48 = { v with cursor := (v.csiDispatch s 0x48).cursor } := by
+  by_cases hi : s.ignore = true
+  · rw [csiDispatch_ignored v _ hi]
+  · unfold Vt.csiDispatch; rw [ite_eq_right hi]; exact frame_moveTo _ _ _
+
+theorem frame_csiDispatch_cha (v : Vt) (s : CsiState) :
+    v.csiDispatch s 0x47 = { v with cursor := (v.csiDispatch s 0x47).cursor } := by
+  by_cases hi : s.ignore = true
+  · rw [csiDispatch_ignored v _ hi]
+  · unfold Vt.csiDispatch; rw [ite_eq_right hi]; exact frame_setCol _ _
+
+theorem frame_csiDispatch_sgr (v : Vt) (s : CsiState) :
+    v.csiDispatch s 0x6D = { v with pen := (v.csiDispatch s 0x6D).pen } := by
+  by_cases hi : s.ignore = true
+  · rw [csiDispatch_ignored v _ hi]
+  · unfold Vt.csiDispatch; rw [ite_eq_right hi]
+    show (if s.priv == 0 then v.applySgr s.params.toList else v) = _
+    split
+    · exact frame_applySgr _ _
+    · rfl
+
+theorem frame_csiDispatch_tbc (v : Vt) (s : CsiState) :
+    v.csiDispatch s 0x67 = { v with tabs := (v.csiDispatch s 0x67).tabs } := by
+  generalize hw : v.csiDispatch s 0x67 = w
+  by_cases hi : s.ignore = true
+  · rw [csiDispatch_ignored v _ hi] at hw; subst hw; rfl
+  · unfold Vt.csiDispatch at hw; rw [ite_eq_right hi] at hw
+    change
+      (match s.arg 0 0 with
+        | 0 => { v with tabs := v.tabs.setIfInBounds v.cursor.x false }
+        | 3 => { v with tabs := Array.replicate v.cols false }
+        | _ => v) =
+        w at hw
+    subst hw
+    split <;> rfl
+
+theorem frame_csiDispatch_stbm (v : Vt) (s : CsiState) :
+    v.csiDispatch s 0x72 =
+      { v with
+        top := (v.csiDispatch s 0x72).top, bot := (v.csiDispatch s 0x72).bot,
+        cursor := (v.csiDispatch s 0x72).cursor } := by
+  generalize hw : v.csiDispatch s 0x72 = w
+  by_cases hi : s.ignore = true
+  · rw [csiDispatch_ignored v _ hi] at hw; subst hw; rfl
+  · unfold Vt.csiDispatch at hw; rw [ite_eq_right hi] at hw
+    change
+      (if s.priv != 0 then v
+        else
+          if s.arg 0 1 - 1 < s.arg 1 v.rows - 1 && s.arg 1 v.rows - 1 < v.rows then
+            ({ v with
+                  top := s.arg 0 1 - 1, bot := s.arg 1 v.rows - 1 }).moveTo
+              0 0
+          else v) =
+        w at hw
+    subst hw
+    repeat' split
+    all_goals rfl
 
 /-! ### The cut `print` induces — everything it does not write
 
@@ -1431,5 +1499,45 @@ disagree. `Good` and `Renderable` both say nothing about it — `Good` bounds th
 dimensions and `Renderable` speaks of the grid — which is why it is a predicate
 of its own rather than a clause of either. -/
 def TabsOk (v : Vt) : Prop := v.tabs.size = v.cols
+
+/-- `HT`'s search from column `i`: the first tab stop at or after `i`, capped at the last
+column. The result is at least `min i (cols - 1)` and at most `cols - 1`, it is a stop
+unless it is `cols - 1`, and no column in `[i, result)` holds a stop. -/
+theorem nextTabStop_spec (tabs : Array Bool) (cols i : Nat) :
+    min i (cols - 1) ≤ nextTabStop tabs cols i ∧
+      nextTabStop tabs cols i ≤ cols - 1 ∧
+      (nextTabStop tabs cols i = cols - 1 ∨ tabs.getD (nextTabStop tabs cols i) false = true) ∧
+      ∀ j, i ≤ j → j < nextTabStop tabs cols i → tabs.getD j false = false := by
+  fun_induction nextTabStop tabs cols i with
+  | case1 i _ hstop =>
+    exact ⟨Nat.min_le_left _ _, by omega, Or.inr hstop, fun j hj hj' => absurd hj' (by omega)⟩
+  | case2 i _ hstop ih =>
+    obtain ⟨hge, hle, hend, hgap⟩ := ih
+    refine ⟨by omega, hle, hend, fun j hj hj' => ?_⟩
+    rcases Nat.eq_or_lt_of_le hj with rfl | hlt
+    · simpa using hstop
+    · exact hgap j (by omega) hj'
+  | case3 i _ => exact ⟨Nat.min_le_right _ _, Nat.le_refl _, Or.inl rfl, fun j hj hj' => by omega⟩
+
+/-- `CBT`'s search from column `x`: the last tab stop before `x`, else column 0. The result
+is at most `x - 1` (so 0 when `x` is 0), it is a stop unless it is 0, and no column
+strictly between it and `x` holds a stop. -/
+theorem prevTabStop_spec (tabs : Array Bool) (x : Nat) :
+    prevTabStop tabs x ≤ x - 1 ∧
+      (prevTabStop tabs x = 0 ∨ tabs.getD (prevTabStop tabs x) false = true) ∧
+      ∀ j, prevTabStop tabs x < j → j < x → tabs.getD j false = false := by
+  induction x with
+  | zero => exact ⟨Nat.zero_le _, Or.inl rfl, fun j _ hj => absurd hj (Nat.not_lt_zero j)⟩
+  | succ x ih =>
+    unfold prevTabStop
+    split
+    · rename_i hstop
+      exact ⟨by omega, Or.inr hstop, fun j hj hj' => absurd hj' (by omega)⟩
+    · rename_i hstop
+      obtain ⟨hle, hend, hgap⟩ := ih
+      refine ⟨by omega, hend, fun j hj hj' => ?_⟩
+      rcases Nat.lt_or_ge j x with hlt | hge
+      · exact hgap j hj hlt
+      · rw [show j = x from by omega]; simpa using hstop
 
 end Linger.Core.Vt

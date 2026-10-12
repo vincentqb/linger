@@ -210,8 +210,8 @@ example : roundtrips (screen 6 3 "\x1b[?2004h\u6f22\u0301\u6f22\u0301\x1b[L") = 
 width-0 cell with no base to its left, which `rowAnsi` paints as nothing while
 it still occupies a column, so the rest of the row lands one column left. This
 needs no `ICH`/`DCH` — any redraw over CJK text does it — and it was both of
-the deep fuzz seeds pinned as failing. `Vt.printPut` mends the two columns a
-write can half-orphan. -/
+the deep fuzz seeds pinned as failing. `Vt.printPut` repairs the four columns from
+one left of the write (`Row.mendNear`). -/
 example : roundtrips (screen 6 3 "\u6f22b\x1b[1;1HA") = true := by native_decide
 
 /-- The same overprint where the orphaned shadow carries the wide glyph's
@@ -222,6 +222,14 @@ example : roundtrips (screen 4 2 "\u6f22\u0301\x1b[1;1Hb") = true := by native_d
 /-- A **wide glyph printed over a shadow** orphans the shadow's base on the
 left, the mirror of the case above. -/
 example : roundtrips (screen 6 3 "\u6f22\x1b[1;2H\u6f22") = true := by native_decide
+
+/-- A **wide glyph printed one column left of another** writes its shadow over that
+glyph's base, orphaning the old shadow two columns right of the write. The print's
+repair reaches that column and blanks it. -/
+example :
+    let v := screen 6 1 "\x1b[1;3H\u6f22\x1b[1;2H\u6f22"
+    (v.getCell 3 0).width == 1 && roundtrips v = true := by
+  native_decide
 
 /-- `ICH` pushing a pair's shadow off the row end, and `DCH` deleting a wide
 base out from under its shadow: the four mutations held out of the fuzz corpus
@@ -255,6 +263,14 @@ example : roundtrips (screen 6 2 "a\x7fb") = true := by native_decide
 example : roundtrips ((Vt.init 6 2).feed [0x61, 0xC0, 0x80, 0x62]) = true := by native_decide
 
 example : roundtrips ((Vt.init 6 2).feed [0x61, 0xC1, 0xBF, 0x62]) = true := by native_decide
+
+/-- Capture text scrubs a stored C1 control (U+009B, an 8-bit CSI) as titles and listings
+do; the repaint still reproduces the cell. -/
+example :
+    let v := screen 6 1 "a\u009b31mb"
+    screenText v == "a\uFFFD31mb\n".toUTF8.toList && history v == screenText v &&
+      roundtrips v = true := by
+  native_decide
 
 /-- Resize truncating a row through the middle of a wide pair. -/
 example : roundtrips ((screen 6 2 "ab\u6f22cd").resize 4 2) = true := by native_decide

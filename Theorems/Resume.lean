@@ -22,11 +22,10 @@ The two halves:
   back, modulo the parser state a checkpoint deliberately drops.
 * **§Replay** (`Render.restore_quiesced_any`): the byte stream `restore`
   builds from that state leaves **any** emulator quiesced — the receiver's own
-  parser state does not have to be assumed, which is what `restore_quiesced`
-  (fresh `Vt.init` only) had to do.
+  parser state does not have to be assumed.
 
 `resume_grid`, `resume_tabs`, and `resume_sb` prove value fidelity.
-`resume_cursor` covers cursor position with origin mode off. Title and saved
+`resume_cursor_any` covers cursor position with origin mode off. Title and saved
 cursor/pen fidelity still rely on fixtures. The fixture equivalence also
 compares all three deferred-wrap flags, and socket checks exercise the next
 glyph after replay. Decoded flags without a representable margin cell remain
@@ -79,33 +78,6 @@ theorem resume_quiesced_any (c : Ckpt) (w : Vt.Vt) (hgood : Vt.Good c.vt)
         ((w.feed (Render.restore c'.vt)).u8need = 0) :=
   ⟨{ c with vt := c.vt.quiesce }, Checkpoint.load_save c hgood hren htabs,
     (Render.restore_quiesced_any _ w).1, (Render.restore_quiesced_any _ w).2⟩
-
-/-- A checkpoint whose parser is already quiescent comes back as the same
-record, and its replay is quiesced. A poll boundary does not itself establish
-these parser hypotheses. `hren`/`htabs`: see `resume_quiesced_any`. -/
-theorem resume_exact (c : Ckpt) (cols rows : Nat) (hgood : Vt.Good c.vt) (hren : Vt.Renderable c.vt)
-    (htabs : Vt.TabsOk c.vt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0)
-    (ha : c.vt.u8acc = 0) :
-    load (save c) = some c ∧
-      ((Vt.Vt.init cols rows).feed (Render.restore c.vt)).pstate = .ground ∧
-      ((Vt.Vt.init cols rows).feed (Render.restore c.vt)).u8need = 0 :=
-  ⟨Checkpoint.load_save_exact c hgood hren htabs h h8 ha,
-    (Render.restore_quiesced c.vt cols rows).1, (Render.restore_quiesced c.vt cols rows).2⟩
-
-/-- **§Resume (cursor).** The end-to-end cursor claim: a quiescent
-checkpoint comes back as the same record, and replaying it into a fresh
-emulator of the session's size puts the cursor exactly where the session
-had it. `Vt.Good` is the §Bound invariant every live session satisfies;
-`origin = false` is the documented DECOM gap (`Render.restore_cursor`).
-`hren`/`htabs` are the round trip's, not the cursor's: see `resume_quiesced_any`. -/
-theorem resume_cursor (c : Ckpt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0)
-    (ha : c.vt.u8acc = 0) (hgood : Vt.Good c.vt) (hren : Vt.Renderable c.vt)
-    (htabs : Vt.TabsOk c.vt) (ho : c.vt.modes.origin = false) :
-    load (save c) = some c ∧
-      (((Vt.Vt.init c.vt.cols c.vt.rows).feed (Render.restore c.vt)).cursor.x = c.vt.cursor.x) ∧
-      (((Vt.Vt.init c.vt.cols c.vt.rows).feed (Render.restore c.vt)).cursor.y = c.vt.cursor.y) :=
-  ⟨Checkpoint.load_save_exact c hgood hren htabs h h8 ha, (Render.restore_cursor c.vt hgood ho).1,
-    (Render.restore_cursor c.vt hgood ho).2⟩
 
 /-- **§Resume (cursor), receiver-quantified.** The end-to-end cursor claim into *any*
 client's emulator of the session's size, not only a fresh one. Of the session's modes,

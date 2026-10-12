@@ -98,7 +98,7 @@ def capByte (b : UInt8) : Bool :=
 /-- XTGETTCAP is answered negatively for every capability, echoing the
 requested name so the child knows *which* is unsupported. The echo is
 **filtered to the legal alphabet**, because the reply is written into the
-child's own input (`Session.onMsg .ptyOut → .writePty`), and a request is
+child's own input (`Session.step .ptyOut → .writePty`), and a request is
 child-controlled output — a `cat` of a hostile file, an ssh stream, a log
 tail. A raw payload could carry a CR and a shell command; on a cooked-mode
 tty the CR commits a line, so echoing it verbatim let untrusted output run
@@ -286,8 +286,9 @@ def Scan.step (s : Scan) (v : Vt) (b : UInt8) : ScanStep :=
         let nextRev :=
         if b == ESC then if escSeen then ESC :: payloadRev else payloadRev
         else if escSeen then b :: ESC :: payloadRev else b :: payloadRev
-        let next : Scan := .dcs kind nextRev nextEsc
-        if next.pending.length ≤ dcsCap then { scan := next }
+        -- `(Scan.dcs kind nextRev nextEsc).pending.length`, without building that buffer
+        if nextRev.length + (if nextEsc then 5 else 4) ≤ dcsCap then
+        { scan := .dcs kind nextRev nextEsc }
       else { scan := .strPass nextEsc, visible := s.pending ++ [b] }
   | .strPass escSeen =>
     if escSeen && b == STFinal then { scan := .ground, visible := [b] }

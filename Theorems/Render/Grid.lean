@@ -207,7 +207,7 @@ theorem offRow_mark {cols : Nat} {w : Vt} {Q : PaintState} {g : Row} {wcol kf : 
     w.print (safeChar m) =
       (w.putCell wcol Q.y
             { w.getCell wcol Q.y with marks := (w.getCell wcol Q.y).marks ++ [safeChar m] }).mendRow
-        Q.y := by
+        wcol Q.y := by
     rcases hdisj with ⟨hQx, hQp⟩ | ⟨hQx, hQp⟩
     · have hx : w.cursor.x = wcol + 1 := by rw [hm.curX, hQx]
       have hpd : w.cursor.pending = false := by rw [hm.pend, hQp]
@@ -295,29 +295,12 @@ theorem offRow_narrow_marks_of {w : Vt} {P : PaintState} {g : Row} {k : Nat} (xb
               x := xb, pending := pb }
             g' (k + 1)) :
     OffRow P.y w (w.feed (cellText (g.at k))) := by
-  have hkg : k < g.size := by
-    rw [hrow.size]; omega
   have hmks := (hrow.cells k).marks
   have hmle := (hrow.cells k).marksLe
-  have hrow0 : RowOk w.cols (withMarks g k []) :=
-    rowOk_withMarks hrow
-      (by
-        rw [hwid]; decide)
-      (by simp) (by simp)
-  have hwid0 : ((withMarks g k []).at k).width = 1 := by
-    rw [at_withMarks_self g k [] hkg]; exact hwid
-  have hmk0 : ((withMarks g k []).at k).marks = [] := by rw [at_withMarks_self g k [] hkg]
-  have hpen0 : ((withMarks g k []).at k).pen = P.pen := by
-    rw [at_withMarks_self g k [] hkg]; exact hpen
-  have hm0 : Matches w P (withMarks g k []) k :=
-    matches_below (fun j hj => at_withMarks_ne g k [] j (by omega)) hm
+  obtain ⟨hrow0, hwid0, hmk0, hpen0, hm0, hbtext⟩ := strip_marks hrow hm hk hwid (by decide) hpen
   have hoffbase : OffRow P.y w (w.feed (cellText ((withMarks g k []).at k))) :=
     offRow_narrow hrow0 hm0 hpend hwid0 hmk0
   have hbase := hstep hrow0 hm0 hwid0 hmk0 hpen0
-  have hbtext : cellText ((withMarks g k []).at k) = utf8 (safeChar (g.at k).base) := by
-    rw [at_withMarks_self g k [] hkg]
-    show utf8 (safeChar (g.at k).base) ++ utf8s [] = utf8 (safeChar (g.at k).base)
-    simp [utf8s]
   rw [hbtext] at hoffbase hbase
   have hucols : (w.feed (utf8 (safeChar (g.at k).base))).cols = w.cols := by
     rw [utf8_feed (safeChar (g.at k).base) (safeChar_ge (g.at k).base) hm.ground hm.u8need hm.u8acc]
@@ -377,22 +360,8 @@ theorem offRow_wide_marks_of {w : Vt} {P : PaintState} {g : Row} {k : Nat} (xb :
     rw [hrow.size]; omega
   have hmks := (hrow.cells k).marks
   have hmle := (hrow.cells k).marksLe
-  have hrow0 : RowOk w.cols (withMarks g k []) :=
-    rowOk_withMarks hrow
-      (by
-        rw [hwid]; decide)
-      (by simp) (by simp)
-  have hwid0 : ((withMarks g k []).at k).width = 2 := by
-    rw [at_withMarks_self g k [] hkg]; exact hwid
-  have hmk0 : ((withMarks g k []).at k).marks = [] := by rw [at_withMarks_self g k [] hkg]
-  have hpen0 : ((withMarks g k []).at k).pen = P.pen := by
-    rw [at_withMarks_self g k [] hkg]; exact hpen
-  have hm0 : Matches w P (withMarks g k []) k :=
-    matches_below (fun j hj => at_withMarks_ne g k [] j (by omega)) hm
-  have hbtext : cellText ((withMarks g k []).at k) = utf8 (safeChar (g.at k).base) := by
-    rw [at_withMarks_self g k [] hkg]
-    show utf8 (safeChar (g.at k).base) ++ utf8s [] = utf8 (safeChar (g.at k).base)
-    simp [utf8s]
+  obtain ⟨hrow0, hwid0, hmk0, hpen0, hm0, hbtext⟩ :=
+    strip_marks hrow hm (by omega) hwid (by decide) hpen
   have hoffbase : OffRow P.y w (w.feed (utf8 (safeChar (g.at k).base))) := by
     have := offRow_wide hrow0 hm0 hPx hpend hfit hwid0 hmk0
     rwa [hbtext] at this
@@ -426,11 +395,7 @@ theorem offRow_wide_marks_of {w : Vt} {P : PaintState} {g : Row} {k : Nat} (xb :
       ((w.feed (utf8 (safeChar (g.at k).base))).feed (csiNum (k + 2) 0x47)) [] (by simp) hmks
       (by simpa using hmle) hu2cols hcha1
   have hmg :=
-    matches_row_congr (g := g)
-      (fun j => by
-        by_cases hjk : j = k
-        · subst hjk; rw [at_withMarks_self g j (g.at j).marks hkg]
-        · exact at_withMarks_ne g k (g.at k).marks j hjk)
+    matches_row_congr (g := g) (withMarks_own g hkg)
       (by
         have h :=
           marks_fold (Q :=
@@ -1748,43 +1713,44 @@ it. `hua`/`hun` are the decoder precondition — real here, and **not** hypothes
 `restore_grid_reachable`: reachability supplies `hua` via `U8Ok`, and `hun` is discharged by
 the stream itself (`feed_restore_zeroed`, since `restore` opens with `ESC`). -/
 
-/-- **The grid, restored into any client — main screen.** For a session not on the alt
-screen, feeding `restore v` to any `Good`/`Renderable` receiver of the session's dimensions
-and with a quiesced decoder leaves the receiver's grid equal to `v.grid`, cell for cell and
-pen for pen.
-
-`Renderable v` carries the row count the last `CRLF` of the paint needs — `hvren.main.1` *is*
-`v.grid.size = v.rows`, so a separate binder for it would be the same fact stated twice. The
-two column bounds stay, and are the honest ones: `gridAnsi_writes_grid` takes no `Good`, so
-they are its hypotheses rather than this one's, and `restore_grid_any` derives them once for
-both branches. -/
-theorem restore_grid_any_main (v w : Vt) (hgood : Good w) (hren : Renderable w)
+/-- **The screens, painted — main screen.** After the clear-and-paint prefix and
+`screensAnsi`, any `Good`/`Renderable` receiver of the session's dimensions is ground and
+quiesced, holds `v.grid` in the paint modes, and holds the ring the history stage built: the
+paint's last `CRLF` does not scroll because `hvren.main.1` pins the row count. -/
+theorem screens_paint_main (v w : Vt) (hgood : Good w) (hren : Renderable w)
     (hcols : w.cols = v.cols) (hrows : w.rows = v.rows) (hua : w.u8acc = 0) (hun : w.u8need = 0)
     (halt : v.altGrid = none) (hpos : 0 < v.cols) (hub : v.cols < 65533) (hvren : Renderable v) :
-    (w.feed (restore v)).grid = v.grid := by
-  obtain ⟨e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11, e12, e13, e14, -, est⟩ :=
+    let u := w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v)
+    u.pstate = .ground ∧
+      u.u8need = 0 ∧
+      u.grid = v.grid ∧
+      u.modes.insert = false ∧
+      u.modes.wrap = true ∧
+      u.sb =
+        (w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ scrollbackAnsi v)).sb := by
+  intro u
+  obtain ⟨e1, e2, -, -, e5, -, e7, -, -, -, -, -, -, -, -, est⟩ :=
     paint_entry v w hgood hren hcols hrows hua hun
-  -- the history stage sits between the prefix and the paint, and hands the paint
-  -- back the same sixteen conjuncts (`scrollback_entry`)
   obtain ⟨f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, -, -⟩ :=
     scrollback_entry (u := w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)) (v := v)
       (Good.feed _ hgood) (renderable_feed hren _) e1 e2 e5 e7 est
-  have hscreens : screensAnsi v = scrollbackAnsi v ++ gridAnsi v.grid := by
-    unfold screensAnsi; rw [halt]
-  have hpaint :=
+  have hw :=
     gridAnsi_writes_grid f1 f2 hpos hub f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 (by rw [f13]) f14
       hvren.main.2 hvren.main.1
   have hpeel :
-    w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v) =
+    u =
       ((w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).feed (scrollbackAnsi v)).feed
         (gridAnsi v.grid) := by
-    rw [hscreens]; simp only [feed_append]
-  refine restore_grid_of_paint v w hgood hren hcols hrows hua hun ?_ ?_ ?_ ?_ ?_
-  · rw [hpeel]; exact hpaint.2.1
-  · rw [hpeel]; exact hpaint.2.2.1
-  · rw [hpeel]; exact hpaint.1
-  · rw [hpeel]; exact hpaint.2.2.2.2.1
-  · rw [hpeel]; exact hpaint.2.2.2.2.2.1
+    dsimp only [u]
+    rw [show screensAnsi v = scrollbackAnsi v ++ gridAnsi v.grid from by
+        unfold screensAnsi; rw [halt]]
+    simp only [feed_append]
+  rw [hpeel,
+    show
+      w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ scrollbackAnsi v) =
+        (w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).feed (scrollbackAnsi v)
+      from by simp only [feed_append]]
+  exact ⟨hw.2.1, hw.2.2.1, hw.1, hw.2.2.2.2.1, hw.2.2.2.2.2.1, hw.2.2.2.2.2.2⟩
 
 /-! ### The alt screen — `restore_grid_any`'s other branch
 
@@ -1813,7 +1779,7 @@ theorem alt_switch_entry {u : Vt} (halt : u.altGrid = none) (hg : u.pstate = .gr
       z.g0Line = u.g0Line ∧
       z.g1Line = u.g1Line ∧
       z.grid = Array.replicate u.rows (blankRow u.cols {}) ∧
-      z.cursor.x = 0 ∧ z.cursor.y = 0 ∧ z.cursor.pending = false := by
+      z.cursor.x = 0 ∧ z.cursor.y = 0 ∧ z.cursor.pending = false ∧ z.sb = u.sb := by
   intro z
   have heq : z = { u.enterAlt true with pstate := .ground } := by
     show u.feed (csiPriv 1049 0x68) = _
@@ -1833,7 +1799,7 @@ theorem alt_switch_entry {u : Vt} (halt : u.altGrid = none) (hg : u.pstate = .gr
           rw [halt]; simp),
       ite_eq_left rfl]
   rw [heq, hent]
-  exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+  exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
 /-- Every row of a freshly-blanked grid (what `enterAlt` installs) is `cols` cells long,
 whatever the default the `getRow` lookup would fall back to. -/
@@ -1949,63 +1915,69 @@ theorem pending_park_frame (s : Vt) (cols : Nat) (mg : Array Row) (mc : Cursor) 
   rw [← hc, ← hgrid, he]
   split <;> exact ⟨rfl, rfl, rfl, rfl, hp, hn, ha, rfl, rfl, rfl, rfl, rfl⟩
 
-/-- **The grid, restored into any client — alt screen.** With the session on the alt screen,
-`screensAnsi` paints the stashed main grid, parks its cursor/pen, switches with `?1049h`, then
-paints the visible (alt) grid. `alt_pre_switch` carries the entry state across the discarded
-main paint and the park; `alt_switch_entry` hands the second paint a blank grid of the
-receiver's shape with its region reset and cursor homed; `gridAnsi_writes_rows` then
-reproduces `v.grid`. -/
-theorem restore_grid_any_alt (v w : Vt) (hgood : Good w) (hren : Renderable w)
+/-- **The screens, painted — alt screen.** `screensAnsi` paints the stashed main grid, parks
+its cursor/pen, reprints its margin cell, switches with `?1049h`, then paints the visible
+grid. `alt_pre_switch` carries the entry state across the discarded paint and the park, and
+`alt_switch_entry` hands the second paint a blank grid of the receiver's shape. **The
+discarded paint's row count is load-bearing for the ring**: a stashed grid taller than the
+receiver pushes before the switch runs, so `hvren.alt`'s `mainGrid.size = v.rows` is needed. -/
+theorem screens_paint_alt (v w : Vt) (hgood : Good w) (hren : Renderable w)
     (hcols : w.cols = v.cols) (hrows : w.rows = v.rows) (hua : w.u8acc = 0) (hun : w.u8need = 0)
     {mainGrid : Array Row} {mcur : Cursor} {mpen : Pen}
     (halt : v.altGrid = some (mainGrid, mcur, mpen)) (hpos : 0 < v.cols) (hub : v.cols < 65533)
-    (hvren : Renderable v) : (w.feed (restore v)).grid = v.grid := by
-  obtain ⟨e1, e2, e3, e4, e5, e6, e7, e8, e9, e10, e11, e12, e13, e14, -, est⟩ :=
+    (hvren : Renderable v) :
+    let u := w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v)
+    u.pstate = .ground ∧
+      u.u8need = 0 ∧
+      u.grid = v.grid ∧
+      u.modes.insert = false ∧
+      u.modes.wrap = true ∧
+      u.sb =
+        (w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ scrollbackAnsi v)).sb := by
+  intro u
+  obtain ⟨e1, e2, -, -, e5, -, e7, -, -, -, -, -, -, -, -, est⟩ :=
     paint_entry v w hgood hren hcols hrows hua hun
   obtain ⟨hmsz, hmok⟩ := hvren.alt mainGrid mcur mpen halt
-  -- the history stage precedes the discarded main paint on both screens:
-  -- `scrollback_entry` re-establishes `paint_entry`'s conjuncts for `alt_pre_switch`
   obtain ⟨f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, falt, -⟩ :=
     scrollback_entry (u := w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)) (v := v)
       (Good.feed _ hgood) (renderable_feed hren _) e1 e2 e5 e7 est
-  -- across the discarded main paint and the park, the entry state is preserved
+  have hmain :=
+    gridAnsi_writes_rows (u :=
+      (w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).feed (scrollbackAnsi v)) (tg :=
+      mainGrid) (cols := v.cols) (rows := v.rows) f1 f2 hpos hub f3 f4 f5 f6 f7 f8 f9 f10 f11 f12
+      (by rw [f13]) f14 hmok hmsz
   obtain
     ⟨hs2cols, hs2rows, hs2top, hs2alt, hs2g, hs2n, hs2ua, hs2ins, hs2wrap, hs2org, hs2g0, hs2g1⟩ :=
     alt_pre_switch (z :=
       (w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).feed (scrollbackAnsi v)) (mg :=
       mainGrid) (mc := mcur) (mp := mpen) (cols := v.cols) (rows := v.rows) f1 f2 f3 f4 f5 f6 f7 f8
       f9 f10 f11 f12 f13 f14 falt (Good.feed _ (Good.feed _ hgood)) hpos hub hmok hmsz
-  have hmain :=
-    gridAnsi_writes_rows f1 f2 hpos hub f3 f4 f5 f6 f7 f8 f9 f10 f11 f12 f13 f14 hmok hmsz
-  have hsg :
-    ((((w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).feed (scrollbackAnsi v)).feed
-              (gridAnsi mainGrid)).feed
-          (penSgr mpen ++ csiNum2 (mcur.y + 1) (mcur.x + 1) 0x48)).grid =
-      mainGrid :=
-    (keeps_park (mcur.y + 1) (mcur.x + 1) mpen _ hmain.2.1 hmain.2.2.1).2.2.trans hmain.1
-  obtain ⟨pc, pr, pt, pa, pg, pn, pua, pm, p0, p1, -, -⟩ :=
-    pending_park_frame _ v.cols mainGrid mcur mpen
-      (Good.feed _ (Good.feed _ (Good.feed _ (Good.feed _ hgood))))
-      (renderable_feed (renderable_feed (renderable_feed (renderable_feed hren _) _) _) _) hs2cols
-      hsg hs2g0 hs2g1 hs2wrap hs2ins hs2org hs2g hs2n hs2ua
-  -- the switch establishes the second paint's entry state
-  obtain ⟨hZcols, hZrows, hZtop, hZbot, hZg, hZun, hZua, hZmodes, hZg0, hZg1, hZgrid, -, -, -⟩ :=
-    alt_switch_entry (u :=
-      ((((w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).feed (scrollbackAnsi v)).feed
-                (gridAnsi mainGrid)).feed
-            (penSgr mpen ++ csiNum2 (mcur.y + 1) (mcur.x + 1) 0x48)).feed
-        (pendingAnsi v.cols mainGrid mcur (mcur.y + 1) mpen))
+  have hsg := (keeps_park (mcur.y + 1) (mcur.x + 1) mpen _ hmain.2.1 hmain.2.2.1).2.2.trans hmain.1
+  have hpark :=
+    ((fixes_penSgr psBlind_sb mpen sb_csiDispatch_sgr).append
+        (fixes_csiNum2 psBlind_sb (mcur.y + 1) (mcur.x + 1) 0x48 (by decide) (by decide)
+          sb_csiDispatch_cup))
+      _ hmain.2.1 hmain.2.2.1
+  -- an opaque name for the parked state: a `let` makes every hypothesis about it a defeq check
+  -- that unfolds `Vt.feed`
+  generalize hs :
+    (((w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).feed (scrollbackAnsi v)).feed
+          (gridAnsi mainGrid)).feed
+      (penSgr mpen ++ csiNum2 (mcur.y + 1) (mcur.x + 1) 0x48) =
+    s at hs2cols hs2rows hs2top hs2alt hs2g hs2n hs2ua hs2ins hs2wrap hs2org hs2g0 hs2g1 hsg hpark
+  obtain ⟨pc, pr, -, pa, pg, pn, pua, pm, p0, p1, -, psb⟩ :=
+    pending_park_frame s v.cols mainGrid mcur mpen
+      (hs ▸ Good.feed _ (Good.feed _ (Good.feed _ (Good.feed _ hgood))))
+      (hs ▸ renderable_feed (renderable_feed (renderable_feed (renderable_feed hren _) _) _) _)
+      hs2cols hsg hs2g0 hs2g1 hs2wrap hs2ins hs2org hs2g hs2n hs2ua
+  obtain
+    ⟨hZcols, hZrows, hZtop, hZbot, hZg, hZun, hZua, hZmodes, hZg0, hZg1, hZgrid, -, -, -, hZsb⟩ :=
+    alt_switch_entry (u := s.feed (pendingAnsi v.cols mainGrid mcur (mcur.y + 1) mpen))
       (pa.trans hs2alt) pg pn
-  -- the final paint reproduces the visible (alt) grid, over a post-switch blank of
-  -- the receiver's shape
   have hfin :=
     gridAnsi_writes_rows (u :=
-      (((((w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).feed (scrollbackAnsi v)).feed
-                    (gridAnsi mainGrid)).feed
-                (penSgr mpen ++ csiNum2 (mcur.y + 1) (mcur.x + 1) 0x48)).feed
-            (pendingAnsi v.cols mainGrid mcur (mcur.y + 1) mpen)).feed
-        (csiPriv 1049 0x68))
-      (tg := v.grid) (cols := v.cols) (rows := v.rows) (hZcols.trans (pc.trans hs2cols))
+      (s.feed (pendingAnsi v.cols mainGrid mcur (mcur.y + 1) mpen)).feed (csiPriv 1049 0x68)) (tg :=
+      v.grid) (cols := v.cols) (rows := v.rows) (hZcols.trans (pc.trans hs2cols))
       (hZrows.trans (pr.trans hs2rows)) hpos hub hZtop (by rw [hZbot, pr, hs2rows]) hZg
       (hZun.trans pn) (hZua.trans pua)
       (by
@@ -2019,54 +1991,66 @@ theorem restore_grid_any_alt (v w : Vt) (hgood : Good w) (hren : Renderable w)
         rw [hZgrid, Array.size_replicate]; exact pr.trans hs2rows)
       (fun y' => (getRow_size_replicate hZgrid hZcols y').trans (pc.trans hs2cols)) hvren.main.2
       hvren.main.1
-  -- assemble via `restore_grid_of_paint`
-  have hscreens :
-    screensAnsi v =
-      scrollbackAnsi v ++ gridAnsi mainGrid ++
-        (penSgr mpen ++ csiNum2 (mcur.y + 1) (mcur.x + 1) 0x48) ++
-        pendingAnsi v.cols mainGrid mcur (mcur.y + 1) mpen ++
-        csiPriv 1049 0x68 ++
-        gridAnsi v.grid := by
-    unfold screensAnsi; rw [halt]; simp only [List.append_assoc]
-  -- peel the stream to the shape the chain above is stated over. `simp only
-  -- [feed_append]` on both sides rather than a hand-counted `rw` chain: the peels
-  -- are order-sensitive, since `++` is left-associative and a `rw` takes the
-  -- outermost append first — which with the history stage in front splits the
-  -- pen/cursor park before it reaches the stage, and then nothing matches.
+  -- `simp only [feed_append]`, not a hand-counted `rw` chain: `++` is left-associative, so a
+  -- `rw` takes the outermost append first and splits the park before it reaches the history
+  -- stage.
   have hpeel :
-    w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v) =
-      ((((((w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).feed (scrollbackAnsi v)).feed
-                        (gridAnsi mainGrid)).feed
-                    (penSgr mpen ++ csiNum2 (mcur.y + 1) (mcur.x + 1) 0x48)).feed
-                (pendingAnsi v.cols mainGrid mcur (mcur.y + 1) mpen)).feed
-            (csiPriv 1049 0x68)).feed
+    u =
+      ((s.feed (pendingAnsi v.cols mainGrid mcur (mcur.y + 1) mpen)).feed (csiPriv 1049 0x68)).feed
         (gridAnsi v.grid) := by
-    rw [hscreens]; simp only [feed_append]
-  refine restore_grid_of_paint v w hgood hren hcols hrows hua hun ?_ ?_ ?_ ?_ ?_
-  · rw [hpeel]; exact hfin.2.1
-  · rw [hpeel]; exact hfin.2.2.1
-  · rw [hpeel]; exact hfin.1
-  · rw [hpeel]; exact hfin.2.2.2.2.1
-  · rw [hpeel]; exact hfin.2.2.2.2.2.1
+    dsimp only [u]
+    rw [show
+        screensAnsi v =
+          scrollbackAnsi v ++ gridAnsi mainGrid ++
+            (penSgr mpen ++ csiNum2 (mcur.y + 1) (mcur.x + 1) 0x48) ++
+            pendingAnsi v.cols mainGrid mcur (mcur.y + 1) mpen ++
+            csiPriv 1049 0x68 ++
+            gridAnsi v.grid
+        from by
+        unfold screensAnsi; rw [halt]; simp only [List.append_assoc],
+      ← hs]
+    simp only [feed_append]
+  rw [hpeel,
+    show
+      w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ scrollbackAnsi v) =
+        (w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A)).feed (scrollbackAnsi v)
+      from by simp only [feed_append]]
+  exact
+    ⟨hfin.2.1, hfin.2.2.1, hfin.1, hfin.2.2.2.2.1, hfin.2.2.2.2.2.1,
+      hfin.2.2.2.2.2.2.trans (hZsb.trans (psb.trans (hpark.2.2.trans hmain.2.2.2.2.2.2)))⟩
 
-/-- **The grid, restored into any client — both screens (Definition-of-done item 5).** The one
-theorem that dispatches on whether the session is on the alt screen; each branch is proved
-above.
-
-Every hypothesis here is one the claim genuinely needs: the paint's column bounds are derived
-once from `Good w` and handed to both branches, and the row count rides `Renderable v`. Same
-signature as `restore_sb_of_stage`, and for the same reason. -/
-theorem restore_grid_any (v w : Vt) (hgood : Good w) (hren : Renderable w) (hcols : w.cols = v.cols)
+/-- **The screens, painted**, on either screen; the paint's column bounds come from `Good w`
+through `hcols`. -/
+theorem screens_paint (v w : Vt) (hgood : Good w) (hren : Renderable w) (hcols : w.cols = v.cols)
     (hrows : w.rows = v.rows) (hua : w.u8acc = 0) (hun : w.u8need = 0) (hvren : Renderable v) :
-    (w.feed (restore v)).grid = v.grid := by
+    let u := w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ screensAnsi v)
+    u.pstate = .ground ∧
+      u.u8need = 0 ∧
+      u.grid = v.grid ∧
+      u.modes.insert = false ∧
+      u.modes.wrap = true ∧
+      u.sb =
+        (w.feed (prologueAnsi v ++ csiNum 0 0x6D ++ csiNum 2 0x4A ++ scrollbackAnsi v)).sb := by
   have hpos : 0 < v.cols := by
     rw [← hcols]; exact hgood.colsPos
   have hub : v.cols < 65533 := by
     have := hgood.colsLe; rw [hcols] at this; omega
   match halt : v.altGrid with
-  | none => exact restore_grid_any_main v w hgood hren hcols hrows hua hun halt hpos hub hvren
+  | none => exact screens_paint_main v w hgood hren hcols hrows hua hun halt hpos hub hvren
   | some (mainGrid, mcur, mpen) =>
-    exact restore_grid_any_alt v w hgood hren hcols hrows hua hun halt hpos hub hvren
+    exact screens_paint_alt v w hgood hren hcols hrows hua hun halt hpos hub hvren
+
+/-- **The grid, restored into any client — both screens (Definition-of-done item 5).** The
+screens are painted by `screens_paint`; the tail after them leaves the grid alone.
+
+Every hypothesis here is one the claim genuinely needs: the paint's column bounds are derived
+from `Good w`, and the row count rides `Renderable v`. Same signature as `restore_sb_of_stage`,
+and for the same reason. -/
+theorem restore_grid_any (v w : Vt) (hgood : Good w) (hren : Renderable w) (hcols : w.cols = v.cols)
+    (hrows : w.rows = v.rows) (hua : w.u8acc = 0) (hun : w.u8need = 0) (hvren : Renderable v) :
+    (w.feed (restore v)).grid = v.grid := by
+  obtain ⟨hps, hn, hgrid, hins, hwrap, -⟩ := screens_paint v w hgood hren hcols hrows hua hun hvren
+  exact restore_grid_of_paint v w hgood hren hcols hrows hua hun hps hn hgrid hins hwrap
 
 /-! ### The receiver's decoder is not a hypothesis — the stream's own first byte resets it
 

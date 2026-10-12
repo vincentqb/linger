@@ -76,6 +76,14 @@ def Keeps (bs : Bytes) : Prop := Fixes (fun v : Vt => v.grid) bs
 
 theorem psBlind_grid : PsBlind (fun v : Vt => v.grid) := fun _ _ => rfl
 
+theorem psBlind_sb : PsBlind (fun v : Vt => v.sb) := fun _ _ => rfl
+
+theorem sb_csiDispatch_cup (v : Vt) (s : CsiState) : (v.csiDispatch s 0x48).sb = v.sb := by
+  rw [frame_csiDispatch_cup]
+
+theorem sb_csiDispatch_sgr (v : Vt) (s : CsiState) : (v.csiDispatch s 0x6D).sb = v.sb := by
+  rw [frame_csiDispatch_sgr]
+
 theorem Keeps.nil : Keeps [] := fun _ hg hu => ⟨hg, hu, rfl⟩
 
 theorem Keeps.append {a b : Bytes} (ha : Keeps a) (hb : Keeps b) : Keeps (a ++ b) :=
@@ -254,60 +262,20 @@ theorem fixes_penSgr {α : Type} {π : Vt → α} (hb : PsBlind π) (p : Pen)
 
 /-! ### One fact per final byte the tail uses -/
 
-theorem grid_csiDispatch_cup (v : Vt) (s : CsiState) :
-    (v.csiDispatch s 0x48).grid = v.grid := by
-  by_cases hi : s.ignore = true
-  · simp [Vt.csiDispatch, hi]
-  · unfold Vt.csiDispatch
-    rw [ite_eq_right hi]
-    show (v.moveTo (s.arg 1 1 - 1) (s.arg 0 1 - 1)).grid = v.grid
-    rw [frame_moveTo]
+theorem grid_csiDispatch_cup (v : Vt) (s : CsiState) : (v.csiDispatch s 0x48).grid = v.grid := by
+  rw [frame_csiDispatch_cup]
 
-theorem grid_csiDispatch_cha (v : Vt) (s : CsiState) :
-    (v.csiDispatch s 0x47).grid = v.grid := by
-  by_cases hi : s.ignore = true
-  · simp [Vt.csiDispatch, hi]
-  · unfold Vt.csiDispatch
-    rw [ite_eq_right hi]
-    show (v.setCol (s.arg 0 1 - 1)).grid = v.grid
-    rw [frame_setCol]
+theorem grid_csiDispatch_cha (v : Vt) (s : CsiState) : (v.csiDispatch s 0x47).grid = v.grid := by
+  rw [frame_csiDispatch_cha]
 
-theorem grid_csiDispatch_sgr (v : Vt) (s : CsiState) :
-    (v.csiDispatch s 0x6D).grid = v.grid := by
-  by_cases hi : s.ignore = true
-  · simp [Vt.csiDispatch, hi]
-  · unfold Vt.csiDispatch
-    rw [ite_eq_right hi]
-    show (if s.priv == 0 then v.applySgr s.params.toList else v).grid = v.grid
-    split
-    · rw [frame_applySgr]
-    · rfl
+theorem grid_csiDispatch_sgr (v : Vt) (s : CsiState) : (v.csiDispatch s 0x6D).grid = v.grid := by
+  rw [frame_csiDispatch_sgr]
 
-theorem grid_csiDispatch_tbc (v : Vt) (s : CsiState) :
-    (v.csiDispatch s 0x67).grid = v.grid := by
-  by_cases hi : s.ignore = true
-  · simp [Vt.csiDispatch, hi]
-  · unfold Vt.csiDispatch
-    rw [ite_eq_right hi]
-    show (match s.arg 0 0 with
-      | 0 => { v with tabs := v.tabs.setIfInBounds v.cursor.x false }
-      | 3 => { v with tabs := Array.replicate v.cols false }
-      | _ => v).grid = v.grid
-    repeat' split
-    all_goals rfl
+theorem grid_csiDispatch_tbc (v : Vt) (s : CsiState) : (v.csiDispatch s 0x67).grid = v.grid := by
+  rw [frame_csiDispatch_tbc]
 
-theorem grid_csiDispatch_stbm (v : Vt) (s : CsiState) :
-    (v.csiDispatch s 0x72).grid = v.grid := by
-  by_cases hi : s.ignore = true
-  · simp [Vt.csiDispatch, hi]
-  · unfold Vt.csiDispatch
-    rw [ite_eq_right hi]
-    show (if s.priv != 0 then v else
-            if s.arg 0 1 - 1 < s.arg 1 v.rows - 1 && s.arg 1 v.rows - 1 < v.rows then
-              ({ v with top := s.arg 0 1 - 1, bot := s.arg 1 v.rows - 1 }).moveTo 0 0
-            else v).grid = v.grid
-    repeat' split
-    all_goals rfl
+theorem grid_csiDispatch_stbm (v : Vt) (s : CsiState) : (v.csiDispatch s 0x72).grid = v.grid := by
+  rw [frame_csiDispatch_stbm]
 
 /-! ### The CSI-shaped constructs in the tail -/
 
@@ -425,37 +393,27 @@ theorem keeps_shiftOut : Keeps [0x0E] := by
 Everything except `modesAnsi`, which needs the emitted mode number identified with
 the parsed one before `grid_setMode` applies. -/
 
-theorem keeps_regionAnsi (v : Vt) : Keeps (regionAnsi v) := by
-  unfold regionAnsi
-  exact Keeps.ite (fun _ => Keeps.nil)
-    (fun _ => keeps_csiNum2 _ _ 0x72 (by decide) (by decide) grid_csiDispatch_stbm)
+theorem keeps_regionAnsi (v : Vt) : Keeps (regionAnsi v) :=
+  Keeps.streamPred.regionAnsi
+    (fun _ _ => keeps_csiNum2 _ _ 0x72 (by decide) (by decide) grid_csiDispatch_stbm) v
 
-theorem keeps_cursorAnsi (v : Vt) : Keeps (cursorAnsi v) := by
-  unfold cursorAnsi
-  exact Keeps.ite
-    (fun _ => keeps_csiNum2 _ _ 0x48 (by decide) (by decide) grid_csiDispatch_cup)
-    (fun _ => keeps_csiNum2 _ _ 0x48 (by decide) (by decide) grid_csiDispatch_cup)
+theorem keeps_cursorAnsi (v : Vt) : Keeps (cursorAnsi v) :=
+  Keeps.streamPred.cursorAnsi
+    (fun _ _ => keeps_csiNum2 _ _ 0x48 (by decide) (by decide) grid_csiDispatch_cup) v
 
-theorem keeps_savedAnsi (v : Vt) : Keeps (savedAnsi v) := by
-  unfold savedAnsi
-  exact ((keeps_penSgr _).append
-    (keeps_csiNum2 _ _ 0x48 (by decide) (by decide) grid_csiDispatch_cup)).append
-    (keeps_escSeq 0x37 (by decide))
+theorem keeps_savedAnsi (v : Vt) : Keeps (savedAnsi v) :=
+  Keeps.streamPred.savedAnsi keeps_penSgr
+    (fun _ _ => keeps_csiNum2 _ _ 0x48 (by decide) (by decide) grid_csiDispatch_cup)
+    (keeps_escSeq 0x37 (by decide)) v
 
-theorem keeps_tabsAnsi (v : Vt) : Keeps (tabsAnsi v) := by
-  unfold tabsAnsi
-  refine (keeps_csiNum 3 0x67 (by decide) (by decide) grid_csiDispatch_tbc).append ?_
-  refine Keeps.flatMap (fun i => ?_)
-  exact (keeps_csiNum (i + 1) 0x47 (by decide) (by decide) grid_csiDispatch_cha).append
-    (keeps_escSeq 0x48 (by decide))
+theorem keeps_tabsAnsi (v : Vt) : Keeps (tabsAnsi v) :=
+  Keeps.streamPred.tabsAnsi (keeps_csiNum 3 0x67 (by decide) (by decide) grid_csiDispatch_tbc)
+    (fun n => keeps_csiNum n 0x47 (by decide) (by decide) grid_csiDispatch_cha)
+    (keeps_escSeq 0x48 (by decide)) v
 
-theorem keeps_charsetAnsi (v : Vt) : Keeps (charsetAnsi v) := by
-  unfold charsetAnsi
-  refine ((Keeps.ite (fun _ => keeps_escCharset 0x28 0x30 (by decide) (by decide) (by decide))
-    (fun _ => keeps_escCharset 0x28 0x42 (by decide) (by decide) (by decide))).append
-    (Keeps.ite (fun _ => keeps_escCharset 0x29 0x30 (by decide) (by decide) (by decide))
-      (fun _ => keeps_escCharset 0x29 0x42 (by decide) (by decide) (by decide)))).append ?_
-  exact Keeps.ite (fun _ => keeps_shiftOut) (fun _ => Keeps.nil)
+theorem keeps_charsetAnsi (v : Vt) : Keeps (charsetAnsi v) :=
+  Keeps.streamPred.charsetAnsi (fun _ _ hi hx => keeps_escCharset _ _ hi (by grind) (by grind))
+    keeps_shiftOut v
 
 /-! ### The window title
 
@@ -628,20 +586,20 @@ number out so a caller can discharge a hypothesis about it. The digit run is don
 here rather than at the call site: naming the collector state outside the lemma
 means writing it the way the elaborator happened to build it, and `{}` and
 `default` are not the same term. -/
-theorem keeps_csi_digits_tail (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
-    (h2 : final ≤ 0x7E) (hlt : n < 65535)
-    (hgrid : ∀ (w : Vt) (t : CsiState) (sub : Bool), t.params = #[(n, sub)] →
-      (w.csiDispatch t final).grid = w.grid)
+theorem fixes_csi_digits_tail {α : Type} {π : Vt → α} (hb : PsBlind π) (n : Nat) (final : UInt8)
+    (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E) (hlt : n < 65535)
+    (hπ : ∀ (w : Vt) (t : CsiState) (sub : Bool), t.params = #[(n, sub)] →
+      π (w.csiDispatch t final) = π w)
     {v : Vt} {s : CsiState} (hg : v.pstate = .csi s) (hu : v.u8need = 0)
     (hi : s.inter = 0) (hcur : s.cur = 0) (hpar : s.params = #[]) :
-    ((v.feed (digits n ++ [final])).pstate = .ground
-      ∧ (v.feed (digits n ++ [final])).u8need = 0
-      ∧ (v.feed (digits n ++ [final])).grid = v.grid) := by
+    (v.feed (digits n ++ [final])).pstate = .ground ∧
+      (v.feed (digits n ++ [final])).u8need = 0 ∧ π (v.feed (digits n ++ [final])) = π v := by
   rw [csi_digits_tail_eq n final h1 h2 hg hu hi hcur (by simp [hpar])]
   rw [show min n 65535 = n from by omega]
   dsimp only
   refine ⟨rfl, by rw [un_csiDispatch]; simpa using hu, ?_⟩
-  exact hgrid _ _ s.curSub (by simp [hpar])
+  rw [hb _ PState.ground, hπ _ _ s.curSub (by simp [hpar])]
+  exact hb _ _
 
 /-- `CSI ? n <final>` with a grid fact that may depend on `n`. -/
 theorem keeps_csiPriv_arg (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
@@ -660,20 +618,22 @@ theorem keeps_csiPriv_arg (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
     (by simpa using hu)]
   unfold Vt.stepCsi
   rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_left (by decide)]
-  exact keeps_csi_digits_tail n final h1 h2 hlt hgrid rfl (by simpa using hu) rfl rfl rfl
+  exact fixes_csi_digits_tail psBlind_grid n final h1 h2 hlt hgrid rfl (by simpa using hu) rfl rfl rfl
 
-/-- …and the non-private form, for `modesAnsi`'s one ANSI emit (`CSI 4 h`, IRM). -/
-theorem keeps_csiNum_arg (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
-    (h2 : final ≤ 0x7E) (hlt : n < 65535)
-    (hgrid : ∀ (w : Vt) (t : CsiState) (sub : Bool), t.params = #[(n, sub)] →
-      (w.csiDispatch t final).grid = w.grid) :
-    Keeps (csiNum n final) := by
+/-- …and the non-private form, for `modesAnsi`'s one ANSI emit (`CSI 4 h`, IRM) and `ED 2`. -/
+theorem fixes_csiNum_arg {α : Type} {π : Vt → α} (hb : PsBlind π) (n : Nat) (final : UInt8)
+    (h1 : 0x40 ≤ final) (h2 : final ≤ 0x7E) (hlt : n < 65535)
+    (hπ : ∀ (w : Vt) (t : CsiState) (sub : Bool), t.params = #[(n, sub)] →
+      π (w.csiDispatch t final) = π w) :
+    Fixes π (csiNum n final) := by
   intro v hg hu
   rw [show csiNum n final = [0x1B, 0x5B] ++ (digits n ++ [final]) from by
     unfold csiNum csiB; simp]
-  rw [feed_append]
-  rw [keeps_csi_open hg hu]
-  exact keeps_csi_digits_tail n final h1 h2 hlt hgrid rfl (by simpa using hu) rfl rfl rfl
+  rw [feed_append, keeps_csi_open hg hu]
+  obtain ⟨hp', hu', hπ'⟩ :=
+    fixes_csi_digits_tail hb n final h1 h2 hlt hπ (v := { v with pstate := .csi {} }) rfl
+      (by simpa using hu) rfl rfl rfl
+  exact ⟨hp', hu', by rw [hπ', hb v (PState.csi {})]⟩
 
 theorem keeps_modeSet (n : Nat) (on : Bool) (hlt : n < 65535)
     (h47 : n ≠ 47) (h1047 : n ≠ 1047) (h1049 : n ≠ 1049) : Keeps (modeSet n on) := by
@@ -688,44 +648,22 @@ theorem keeps_modeSet (n : Nat) (on : Bool) (hlt : n < 65535)
 
 theorem keeps_irm (on : Bool) : Keeps (csiNum 4 (if on then 0x68 else 0x6C)) := by
   cases on
-  · exact keeps_csiNum_arg 4 0x6C (by decide) (by decide) (by omega)
+  · exact fixes_csiNum_arg psBlind_grid 4 0x6C (by decide) (by decide) (by omega)
       (fun w t sub ha => grid_csiDispatch_rm w t (by simp [ha]))
-  · exact keeps_csiNum_arg 4 0x68 (by decide) (by decide) (by omega)
+  · exact fixes_csiNum_arg psBlind_grid 4 0x68 (by decide) (by decide) (by omega)
       (fun w t sub ha => grid_csiDispatch_sm w t (by simp [ha]))
 
 /-- **The mode replay writes no cell.** `modesAnsi`'s allowlist is what discharges
 the screen-switch hypotheses: every number it emits is either a literal in the
 source or one of the three the mouse guard names. -/
-theorem keeps_modesAnsi (v : Vt) : Keeps (modesAnsi v) := by
-  unfold modesAnsi
-  refine Keeps.append ?_ (keeps_irm v.modes.insert)
-  refine Keeps.append ?_ (keeps_modeSet 6 _ (by omega) (by omega) (by omega)
-    (by omega))
-  refine Keeps.append ?_ (keeps_modeSet 1004 _ (by omega) (by omega) (by omega)
-    (by omega))
-  refine Keeps.append ?_ (keeps_modeSet 1006 _ (by omega) (by omega) (by omega)
-    (by omega))
-  refine Keeps.append ?_ (Keeps.ite (c := (v.modes.mouse == 1000 || v.modes.mouse == 1002
-    || v.modes.mouse == 1003) = true)
+theorem keeps_modesAnsi (v : Vt) : Keeps (modesAnsi v) :=
+  Keeps.streamPred.modesAnsi v
+    (fun n on h => keeps_modeSet n on (by omega) (by omega) (by omega) (by omega))
     (fun h => by
       simp only [Bool.or_eq_true, beq_iff_eq] at h
-      exact keeps_modeSet v.modes.mouse true (by omega) (by omega) (by omega)
-        (by omega))
-    (fun _ => Keeps.nil))
-  refine Keeps.append ?_ (keeps_modeSet 1003 false (by omega) (by omega)
-    (by omega) (by omega))
-  refine Keeps.append ?_ (keeps_modeSet 1002 false (by omega) (by omega)
-    (by omega) (by omega))
-  refine Keeps.append ?_ (keeps_modeSet 1000 false (by omega) (by omega)
-    (by omega) (by omega))
-  refine Keeps.append ?_ (keeps_modeSet 2004 _ (by omega) (by omega) (by omega)
-    (by omega))
-  refine Keeps.append ?_ (keeps_modeSet 25 _ (by omega) (by omega) (by omega)
-    (by omega))
-  refine Keeps.append ?_ (Keeps.ite (fun _ => keeps_escSeq 0x3D (by decide))
-    (fun _ => keeps_escSeq 0x3E (by decide)))
-  exact (keeps_modeSet 7 _ (by omega) (by omega) (by omega) (by omega)).append
-    (keeps_modeSet 1 _ (by omega) (by omega) (by omega) (by omega))
+      exact keeps_modeSet _ _ (by omega) (by omega) (by omega) (by omega))
+    (keeps_modeSet 6 _ (by omega) (by omega) (by omega) (by omega))
+    (keeps_escSeq 0x3D (by decide)) (keeps_escSeq 0x3E (by decide)) keeps_irm
 
 /-- **Park the pen and the cursor**: the alt-stash parking inside `screensAnsi`
 writes no cell. Stated on bare naturals so the stashed cursor instantiates it. -/

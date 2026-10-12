@@ -493,11 +493,8 @@ theorem quiet_gridAnsi (grid : Array Row) : Quiet (gridAnsi grid) := by
     ?_ (Quiet.text (by decide)) quiet_rowAnsi grid
   exact quiet_csi_seq [] 0x48 ParamBytes.nil (by decide) (by decide)
 
-theorem quiet_modeSet (n : Nat) (on : Bool) (hn : n ≠ 6) : Quiet (modeSet n on) := by
-  unfold modeSet
-  cases on
-  · exact quiet_csiPriv n 0x6C hn (by decide) (by decide)
-  · exact quiet_csiPriv n 0x68 hn (by decide) (by decide)
+theorem quiet_modeSet (n : Nat) (on : Bool) (hn : n ≠ 6) : Quiet (modeSet n on) :=
+  Quiet.streamPred.modeSet (fun _ hf => quiet_csiPriv n _ hn (by grind) (by grind)) on
 
 /-- **DECOM reset is `Quiet` because it makes the conclusion true outright.** The
 `≠ 6` family says a mode replay cannot turn origin *on*; this says `?6l` turns it
@@ -538,14 +535,9 @@ theorem quiet_scrollbackAnsi (v : Vt) : Quiet (scrollbackAnsi v) := by
       (quiet_gridAnsi (sbRows v))).append (quiet_crlfRun v.rows)))
 
 theorem quiet_pendingAnsi (cols : Nat) (grid : Array Row) (cur : Cursor)
-    (row : Nat) (pen : Pen) : Quiet (pendingAnsi cols grid cur row pen) := by
-  unfold pendingAnsi
-  dsimp only
-  apply Quiet.ite
-  · intro _
-    exact (((quiet_csiNum2 _ _ 0x48 (by decide) (by decide)).append
-      (quiet_penSgr _)).append (quiet_cellText _)).append (quiet_penSgr _)
-  · intro _; exact Quiet.nil
+    (row : Nat) (pen : Pen) : Quiet (pendingAnsi cols grid cur row pen) :=
+  Quiet.streamPred.pendingAnsi (fun _ _ => quiet_csiNum2 _ _ 0x48 (by decide) (by decide))
+    quiet_penSgr quiet_cellText cols grid cur row pen
 
 theorem quiet_screensAnsi (v : Vt) : Quiet (screensAnsi v) := by
   unfold screensAnsi
@@ -558,69 +550,39 @@ theorem quiet_screensAnsi (v : Vt) : Quiet (screensAnsi v) := by
       (quiet_csiPriv 1049 0x68 (by decide) (by decide) (by decide))).append
       (quiet_gridAnsi _)
 
-theorem quiet_regionAnsi (v : Vt) : Quiet (regionAnsi v) := by
-  unfold regionAnsi
-  exact Quiet.ite (fun _ => Quiet.nil)
-    (fun _ => quiet_csiNum2 _ _ 0x72 (by decide) (by decide))
+theorem quiet_regionAnsi (v : Vt) : Quiet (regionAnsi v) :=
+  Quiet.streamPred.regionAnsi (fun _ _ => quiet_csiNum2 _ _ 0x72 (by decide) (by decide)) v
 
-theorem quiet_tabsAnsi (v : Vt) : Quiet (tabsAnsi v) := by
-  unfold tabsAnsi
-  refine (quiet_csiNum 3 0x67 (by decide) (by decide)).append ?_
-  refine Quiet.flatMap (fun i => ?_)
-  exact (quiet_csiNum (i + 1) 0x47 (by decide) (by decide)).append
-    (quiet_escSeq 0x48 (by decide))
+theorem quiet_tabsAnsi (v : Vt) : Quiet (tabsAnsi v) :=
+  Quiet.streamPred.tabsAnsi (quiet_csiNum 3 0x67 (by decide) (by decide))
+    (fun n => quiet_csiNum n 0x47 (by decide) (by decide)) (quiet_escSeq 0x48 (by decide)) v
 
-theorem quiet_savedAnsi (v : Vt) : Quiet (savedAnsi v) := by
-  unfold savedAnsi
-  exact ((quiet_penSgr _).append (quiet_csiNum2 _ _ 0x48 (by decide) (by decide))).append
-    (quiet_escSeq 0x37 (by decide))
+theorem quiet_savedAnsi (v : Vt) : Quiet (savedAnsi v) :=
+  Quiet.streamPred.savedAnsi quiet_penSgr (fun _ _ => quiet_csiNum2 _ _ 0x48 (by decide) (by decide))
+    (quiet_escSeq 0x37 (by decide)) v
 
-theorem quiet_savedPendingAnsi (v : Vt) : Quiet (savedPendingAnsi v) := by
-  unfold savedPendingAnsi
-  exact Quiet.ite
-    (fun _ => (quiet_pendingAnsi _ _ _ _ _).append (quiet_escSeq 0x37 (by decide)))
-    (fun _ => Quiet.nil)
+theorem quiet_savedPendingAnsi (v : Vt) : Quiet (savedPendingAnsi v) :=
+  Quiet.streamPred.savedPendingAnsi quiet_pendingAnsi (quiet_escSeq 0x37 (by decide)) v
 
-theorem quiet_charsetAnsi (v : Vt) : Quiet (charsetAnsi v) := by
-  unfold charsetAnsi
-  refine ((Quiet.ite (fun _ => quiet_escCharset 0x28 0x30 (by decide) (by decide) (by decide))
-    (fun _ => quiet_escCharset 0x28 0x42 (by decide) (by decide) (by decide))).append
-    (Quiet.ite (fun _ => quiet_escCharset 0x29 0x30 (by decide) (by decide) (by decide))
-      (fun _ => quiet_escCharset 0x29 0x42 (by decide) (by decide) (by decide)))).append ?_
-  exact Quiet.ite (fun _ => Quiet.text (by decide)) (fun _ => Quiet.nil)
+theorem quiet_charsetAnsi (v : Vt) : Quiet (charsetAnsi v) :=
+  Quiet.streamPred.charsetAnsi (fun _ _ hi hx => quiet_escCharset _ _ hi (by grind) (by grind))
+    (Quiet.text (by decide)) v
 
 theorem quiet_titleAnsi (v : Vt) : Quiet (titleAnsi v) := by
   unfold titleAnsi
   exact quiet_osc _
 
-theorem quiet_irm (on : Bool) : Quiet (csiNum 4 (if on then 0x68 else 0x6C)) := by
-  cases on
-  · exact quiet_csiNum 4 0x6C (by decide) (by decide)
-  · exact quiet_csiNum 4 0x68 (by decide) (by decide)
+theorem quiet_irm (on : Bool) : Quiet (csiNum 4 (if on then 0x68 else 0x6C)) :=
+  Quiet.streamPred.irm (fun _ hf => quiet_csiNum 4 _ (by grind) (by grind)) on
 
 /-- The mode replay is where the DECOM hypothesis lands: with the session's origin
 off the emit at mode 6 is a *reset*, discharged outright by
 `quiet_modeSet_decom_off`. Every other private mode the emitter names is a literal
 ≠ 6, or the guarded mouse mode, whose allowlist contains no 6. -/
-theorem quiet_modesAnsi (v : Vt) (ho : v.modes.origin = false) : Quiet (modesAnsi v) := by
-  unfold modesAnsi
-  rw [ho]
-  refine Quiet.append ?_ (quiet_irm v.modes.insert)
-  refine Quiet.append ?_ quiet_modeSet_decom_off
-  refine Quiet.append ?_ (quiet_modeSet 1004 _ (by decide))
-  refine Quiet.append ?_ (quiet_modeSet 1006 _ (by decide))
-  refine Quiet.append ?_ (Quiet.ite (c := (v.modes.mouse == 1000 || v.modes.mouse == 1002
-    || v.modes.mouse == 1003) = true)
-    (fun h => quiet_modeSet v.modes.mouse true (by
-      simp only [Bool.or_eq_true, beq_iff_eq] at h
-      omega)) (fun _ => Quiet.nil))
-  refine Quiet.append ?_ (quiet_modeSet 1003 false (by decide))
-  refine Quiet.append ?_ (quiet_modeSet 1002 false (by decide))
-  refine Quiet.append ?_ (quiet_modeSet 1000 false (by decide))
-  refine Quiet.append ?_ (quiet_modeSet 2004 _ (by decide))
-  refine Quiet.append ?_ (quiet_modeSet 25 _ (by decide))
-  refine Quiet.append ?_ (Quiet.ite (fun _ => quiet_escSeq 0x3D (by decide))
-    (fun _ => quiet_escSeq 0x3E (by decide)))
-  exact (quiet_modeSet 7 _ (by decide)).append (quiet_modeSet 1 _ (by decide))
+theorem quiet_modesAnsi (v : Vt) (ho : v.modes.origin = false) : Quiet (modesAnsi v) :=
+  Quiet.streamPred.modesAnsi v (fun n on h => quiet_modeSet n on (by omega))
+    (fun h => quiet_modeSet _ _ (by simp only [Bool.or_eq_true, beq_iff_eq] at h; omega))
+    (ho ▸ quiet_modeSet_decom_off) (quiet_escSeq 0x3D (by decide)) (quiet_escSeq 0x3E (by decide))
+    quiet_irm
 
 end Linger.Core.Render

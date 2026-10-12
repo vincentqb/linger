@@ -62,8 +62,10 @@ theorem put_twice (v : Vt) (x y : Nat) (a b : Cell) (hy : y < v.grid.size) :
   rw [getD_set_self _ _ _ _ hy]
   simp only [Array.setIfInBounds_setIfInBounds]
 
-theorem mendRow_fixed {v : Vt} {y : Nat} (h : ∀ j, PairOk (v.getRow y) j) : v.mendRow y = v := by
-  rw [mendRow_eq, mend_of_pairOk h]
+theorem mendRow_fixed {v : Vt} {x y : Nat} (h : ∀ j, PairOk (v.getRow y) j) :
+    v.mendRow x y = v := by
+  rw [mendRow_eq, Row.mendNear, mendAt_of_pairOk h, mendAt_of_pairOk h, mendAt_of_pairOk h,
+    mendAt_of_pairOk h]
   unfold Vt.getRow
   rw [setIfInBounds_getD_self]
 
@@ -94,7 +96,8 @@ theorem markState_width (v : Vt) (x y j : Nat) (ms : List Char) (hy : y < v.grid
 
 theorem markState_mend {v : Vt} {x y : Nat} (ms : List Char) (hy : y < v.grid.size)
     (hx : x < (v.getRow y).size) (hpair : ∀ j, PairOk (v.getRow y) j)
-    (hn : (v.getCell x y).width ≠ 0) : (markState v x y ms).mendRow y = markState v x y ms := by
+    (hn : (v.getCell x y).width ≠ 0) {x0 : Nat} :
+    (markState v x y ms).mendRow x0 y = markState v x y ms := by
   apply mendRow_fixed
   unfold markState
   rw [getRow_putCell_same _ _ _ _ hy]
@@ -132,7 +135,7 @@ theorem print_mark (v : Vt) (x : Nat) (ms : List Char) (m : Char) (hy : v.cursor
   change
     ((v.putCell x v.cursor.y { v.getCell x v.cursor.y with marks := ms }).putCell x v.cursor.y
             { v.getCell x v.cursor.y with marks := ms ++ [m] }).mendRow
-        v.cursor.y =
+        x v.cursor.y =
       _
   rw [put_twice v x v.cursor.y _ _ hy]
   exact markState_mend _ hy hx hpair hn
@@ -216,7 +219,7 @@ theorem print_base (w : Vt) (hg : Good w) (hr : Renderable w) (h0 : w.g0Line = f
       ({ base := c.base, marks := [], width := 1, pen := w.pen } : Cell) = { c with marks := [] } :=
       Cell.ext rfl rfl hw.symm hp.symm
     rw [print_narrow_eq hpc (hcw.trans hw) hins hpend, hclear, hcell]
-    change ((markState w w.cursor.x w.cursor.y []).mendRow w.cursor.y).printAdvance 1 = _
+    change ((markState w w.cursor.x w.cursor.y []).mendRow w.cursor.x w.cursor.y).printAdvance 1 = _
     rw [markState_mend [] hy hx hpair hwidth]
     simpa only [c, hw] using hadv
   · have hfit : w.cursor.x + 1 < w.cols := by
@@ -234,7 +237,7 @@ theorem print_base (w : Vt) (hg : Good w) (hr : Renderable w) (h0 : w.g0Line = f
     change
       (((markState w w.cursor.x w.cursor.y []).putCell (w.cursor.x + 1) w.cursor.y
                   (Cell.shadow c)).mendRow
-              w.cursor.y).printAdvance
+              w.cursor.x w.cursor.y).printAdvance
           2 =
         _
     rw [← hshadow, put_self, markState_mend [] hy hx hpair hwidth]

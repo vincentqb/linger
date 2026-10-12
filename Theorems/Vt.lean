@@ -104,47 +104,17 @@ def U8Ok (v : Vt) : Prop := v.u8need = 0 → v.u8acc = 0
 theorem u8Ok_init (cols rows : Nat) : U8Ok (Vt.init cols rows) := fun _ => rfl
 
 theorem u8Ok_stepGround {v : Vt} (b : UInt8) (h : U8Ok v) : U8Ok (v.stepGround b) := by
-  intro hz
-  unfold Vt.stepGround at hz ⊢
-  by_cases h1 : (b == 0x1B) = true
-  · rw [ite_eq_left h1] at hz ⊢; exact h hz
-  rw [ite_eq_right h1] at hz ⊢
-  by_cases h2 : b < 0x20
-  · rw [ite_eq_left h2] at hz ⊢
-    rw [ua_ctl]; rw [un_ctl] at hz; exact h hz
-  rw [ite_eq_right h2] at hz ⊢
-  by_cases hdel : (b == 0x7F) = true
-  · rw [ite_eq_left hdel] at hz ⊢; exact h hz
-  rw [ite_eq_right hdel] at hz ⊢
-  by_cases h3 : b < 0x80
-  · rw [ite_eq_left h3] at hz ⊢
-    rw [ua_acceptChar]; rw [un_acceptChar] at hz; exact h hz
-  rw [ite_eq_right h3] at hz ⊢
-  by_cases h4 : b < 0xC0
-  · rw [ite_eq_left h4] at hz ⊢
-    dsimp only at hz ⊢
-    by_cases h5 : (v.u8need == 0) = true
-    · rw [ite_eq_left h5] at hz ⊢; exact h hz
-    rw [ite_eq_right h5] at hz ⊢
-    by_cases h6 : (v.u8need == 1) = true
-    · rw [ite_eq_left h6] at hz ⊢
-      rw [ua_acceptChar]
-    · rw [ite_eq_right h6] at hz ⊢
-      exfalso
-      simp only [beq_iff_eq] at h5 h6
-      simp only [] at hz
-      omega
-  rw [ite_eq_right h4] at hz ⊢
-  by_cases h7 : b < 0xE0
-  · rw [ite_eq_left h7] at hz ⊢; exact absurd hz (by simp)
-  rw [ite_eq_right h7] at hz ⊢
-  by_cases h8 : b < 0xF0
-  · rw [ite_eq_left h8] at hz ⊢; exact absurd hz (by simp)
-  rw [ite_eq_right h8] at hz ⊢
-  by_cases h9 : b < 0xF8
-  · rw [ite_eq_left h9] at hz ⊢; exact absurd hz (by simp)
-  rw [ite_eq_right h9] at hz ⊢
-  exact h hz
+  fun_cases Vt.stepGround v b
+  case case2 =>
+    intro hz; rw [ua_ctl]; rw [un_ctl] at hz; exact h hz
+  case case4 =>
+    intro hz; rw [ua_acceptChar]; rw [un_acceptChar] at hz; exact h hz
+  case case6 =>
+    intro _; rw [ua_acceptChar]
+  case case7 =>
+    intro hz; dsimp only at hz; simp only [beq_iff_eq] at *; omega
+  case case1 | case3 | case5 | case11 => exact h
+  all_goals intro hz; exact absurd hz (by simp)
 
 theorem u8Ok_step {v : Vt} (b : UInt8) (h : U8Ok v) : U8Ok (v.step b) := by
   have hab : U8Ok (v.abortUtf8 b) := by
@@ -736,13 +706,14 @@ theorem off_putCell (v : Vt) (x y : Nat) (c : Cell) :
     offScreen (v.putCell x y c) = offScreen v := by
   rw [frame_putCell]; rfl
 
-theorem off_mendRow (v : Vt) (y : Nat) : offScreen (v.mendRow y) = offScreen v := by
+theorem off_mendRow (v : Vt) (x y : Nat) : offScreen (v.mendRow x y) = offScreen v := by
   rw [frame_mendRow]; rfl
 
 theorem cursor_putCell (v : Vt) (x y : Nat) (c : Cell) : (v.putCell x y c).cursor = v.cursor := by
   rw [frame_putCell]
 
-theorem cursor_mendRow (v : Vt) (y : Nat) : (v.mendRow y).cursor = v.cursor := by rw [frame_mendRow]
+theorem cursor_mendRow (v : Vt) (x y : Nat) : (v.mendRow x y).cursor = v.cursor := by
+  rw [frame_mendRow]
 
 theorem cursor_printAdvance_lt (v : Vt) (n : Nat) (h : v.cursor.x + n < v.cols) :
     (v.printAdvance n).cursor =
@@ -782,10 +753,10 @@ theorem cursor_print_narrow_fits {v : Vt} {ch : Char} (hpc : v.printChar ch = ch
       (fun u =>
         (u.putCell v.cursor.x v.cursor.y
               { base := ch, marks := [], width := 1, pen := v.pen }).mendRow
-          v.cursor.y)
+          v.cursor.x v.cursor.y)
       (fun u =>
-        ⟨(off_mendRow _ _).trans (off_putCell _ _ _ _),
-          (cursor_mendRow _ _).trans (cursor_putCell _ _ _ _)⟩)
+        ⟨(off_mendRow _ _ _).trans (off_putCell _ _ _ _),
+          (cursor_mendRow _ _ _).trans (cursor_putCell _ _ _ _)⟩)
   rw [cursor_printAdvance_lt _ 1
       (by
         rw [hcur, hcol]; exact hfit),
@@ -803,10 +774,10 @@ theorem cursor_print_narrow_margin {v : Vt} {ch : Char} (hpc : v.printChar ch = 
       (fun u =>
         (u.putCell v.cursor.x v.cursor.y
               { base := ch, marks := [], width := 1, pen := v.pen }).mendRow
-          v.cursor.y)
+          v.cursor.x v.cursor.y)
       (fun u =>
-        ⟨(off_mendRow _ _).trans (off_putCell _ _ _ _),
-          (cursor_mendRow _ _).trans (cursor_putCell _ _ _ _)⟩)
+        ⟨(off_mendRow _ _ _).trans (off_putCell _ _ _ _),
+          (cursor_mendRow _ _ _).trans (cursor_putCell _ _ _ _)⟩)
   rw [cursor_printAdvance_ge _ 1
       (by
         rw [hcur, hcol]; exact hmar),
@@ -826,10 +797,10 @@ theorem cursor_print_wide_fits {v : Vt} {ch : Char} (hpc : v.printChar ch = ch)
                   { base := ch, marks := [], width := 2, pen := v.pen }).putCell
               (v.cursor.x + 1) v.cursor.y
               (Cell.shadow { base := ch, marks := [], width := 2, pen := v.pen })).mendRow
-          v.cursor.y)
+          v.cursor.x v.cursor.y)
       (fun u =>
-        ⟨((off_mendRow _ _).trans (off_putCell _ _ _ _)).trans (off_putCell _ _ _ _),
-          ((cursor_mendRow _ _).trans (cursor_putCell _ _ _ _)).trans (cursor_putCell _ _ _ _)⟩)
+        ⟨((off_mendRow _ _ _).trans (off_putCell _ _ _ _)).trans (off_putCell _ _ _ _),
+          ((cursor_mendRow _ _ _).trans (cursor_putCell _ _ _ _)).trans (cursor_putCell _ _ _ _)⟩)
   rw [cursor_printAdvance_lt _ 2
       (by
         rw [hcur, hcol]; exact hfit2),
@@ -852,10 +823,10 @@ theorem cursor_print_wide_margin {v : Vt} {ch : Char} (hpc : v.printChar ch = ch
                   { base := ch, marks := [], width := 2, pen := v.pen }).putCell
               (v.cursor.x + 1) v.cursor.y
               (Cell.shadow { base := ch, marks := [], width := 2, pen := v.pen })).mendRow
-          v.cursor.y)
+          v.cursor.x v.cursor.y)
       (fun u =>
-        ⟨((off_mendRow _ _).trans (off_putCell _ _ _ _)).trans (off_putCell _ _ _ _),
-          ((cursor_mendRow _ _).trans (cursor_putCell _ _ _ _)).trans (cursor_putCell _ _ _ _)⟩)
+        ⟨((off_mendRow _ _ _).trans (off_putCell _ _ _ _)).trans (off_putCell _ _ _ _),
+          ((cursor_mendRow _ _ _).trans (cursor_putCell _ _ _ _)).trans (cursor_putCell _ _ _ _)⟩)
   rw [cursor_printAdvance_ge _ 2
       (by
         rw [hcur, hcol]; exact hmar),
@@ -1124,24 +1095,13 @@ variable scrutinee would be work nobody needs. The same shape as
 `modes_csiDispatch_{cup,sgr,stbm}`. -/
 
 theorem stick_csiDispatch_cup (v : Vt) (s : CsiState) : stick (v.csiDispatch s 0x48) = stick v := by
-  by_cases hi : s.ignore = true
-  · simp [Vt.csiDispatch, hi]
-  · unfold Vt.csiDispatch; rw [ite_eq_right (by simp [hi])]; exact stick_moveTo _ _ _
+  rw [frame_csiDispatch_cup]; rfl
 
 theorem stick_csiDispatch_cha (v : Vt) (s : CsiState) : stick (v.csiDispatch s 0x47) = stick v := by
-  by_cases hi : s.ignore = true
-  · simp [Vt.csiDispatch, hi]
-  · unfold Vt.csiDispatch; rw [ite_eq_right (by simp [hi])]; exact stick_setCol _ _
+  rw [frame_csiDispatch_cha]; rfl
 
 theorem stick_csiDispatch_sgr (v : Vt) (s : CsiState) : stick (v.csiDispatch s 0x6D) = stick v := by
-  by_cases hi : s.ignore = true
-  · simp [Vt.csiDispatch, hi]
-  · unfold Vt.csiDispatch
-    rw [ite_eq_right (by simp [hi])]
-    show stick (if s.priv == 0 then v.applySgr s.params.toList else v) = _
-    split
-    · exact stick_applySgr _ _
-    · rfl
+  rw [frame_csiDispatch_sgr]; rfl
 
 theorem stick_csiDispatch_ed (v : Vt) (s : CsiState) : stick (v.csiDispatch s 0x4A) = stick v := by
   by_cases hi : s.ignore = true
@@ -1149,18 +1109,7 @@ theorem stick_csiDispatch_ed (v : Vt) (s : CsiState) : stick (v.csiDispatch s 0x
   · unfold Vt.csiDispatch; rw [ite_eq_right (by simp [hi])]; exact stick_eraseScreen _ _
 
 theorem stick_csiDispatch_tbc (v : Vt) (s : CsiState) : stick (v.csiDispatch s 0x67) = stick v := by
-  by_cases hi : s.ignore = true
-  · simp [Vt.csiDispatch, hi]
-  · unfold Vt.csiDispatch
-    rw [ite_eq_right (by simp [hi])]
-    show
-      stick
-          (match s.arg 0 0 with
-          | 0 => { v with tabs := v.tabs.setIfInBounds v.cursor.x false }
-          | 3 => { v with tabs := Array.replicate v.cols false }
-          | _ => v) =
-        _
-    split <;> rfl
+  rw [frame_csiDispatch_tbc]; rfl
 
 /-! ### The remaining parser states -/
 
@@ -1482,20 +1431,6 @@ theorem step_escInter_pending {v : Vt} {i : UInt8} (b : UInt8) (hp : v.pstate = 
   all_goals refine ⟨⟨_, rfl⟩, ?_⟩
   all_goals unfold Vt.windowTitle Vt.abortUtf8
   all_goals split <;> rfl
-
-/-- An arbitrarily long unfinished sequence stays closed to injected output.
-There is no length bound or assumption on the stored title. -/
-theorem feed_escInter_pending (bytes : List UInt8) {v : Vt} {i : UInt8}
-    (hp : v.pstate = .escInter i) (hb : ∀ b ∈ bytes, ¬(0x30 ≤ b ∧ b ≤ 0x7E) ∧ b ≠ 0x1B) :
-    (∃ j, (v.feed bytes).pstate = .escInter j) ∧
-      (v.feed bytes).atBoundary = false ∧ (v.feed bytes).windowTitle = v.windowTitle := by
-  induction bytes generalizing v i with
-  | nil => exact ⟨⟨i, hp⟩, by simp [Vt.feed, Vt.atBoundary, hp], rfl⟩
-  | cons b bs
-    ih =>
-    obtain ⟨⟨j, hj⟩, ht⟩ := step_escInter_pending b hp (hb b (by simp)).1 (hb b (by simp)).2
-    have hi := ih hj (fun c hc => hb c (by simp [hc]))
-    exact ⟨hi.1, hi.2.1, hi.2.2.trans ht⟩
 
 /-- Discarding scrollback after each byte cannot introduce a false boundary.
 The observer waits through the whole unfinished sequence, preserving its title. -/

@@ -722,9 +722,9 @@ theorem print_narrow {v : Vt} (ch : Char) (hpc : v.printChar ch = ch) (hw : char
 
 /-- **…and touches no other row.** The frame a grid induction needs: a glyph
 paints inside one row. *Within* that row the claim is deliberately absent — the
-print ends in a whole-row repair (`Row.mend`), which may rewrite any column of a
-row that was not already pair-consistent — so the one-cell form is stated where
-the row is known pair-consistent (`Renderable`), not here. -/
+print ends in a repair of the columns beside it (`Row.mendNear`), which may rewrite
+them in a row that was not already pair-consistent — so the one-cell form is stated
+where the row is known pair-consistent (`Renderable`), not here. -/
 theorem print_narrow_frame {v : Vt} (ch : Char) (hpc : v.printChar ch = ch) (hw : charWidth ch = 1)
     (hins : v.modes.insert = false) (hpend : v.cursor.pending = false) (x' y' : Nat)
     (hne : y' ≠ v.cursor.y) : (v.print ch).getCell x' y' = v.getCell x' y' := by

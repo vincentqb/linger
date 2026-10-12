@@ -191,11 +191,11 @@ exactly the ones no surviving pair depends on. (Order-independence is measured,
 not assumed: sweeping right to left passes every fixture and the whole fuzz
 corpus. Left to right is simply the order the proof is stated in.)
 
-Every cell-writing operation ends here, printing included. That is a deliberate
-trade: `Vt.putCell` writes in place, so this pass is what makes a print O(cols), and
-it buys the pair invariant *uniformly*, with no per-operation index reasoning
-(`mend_pairOk`). Restructuring for provability rather than weakening the theorem,
-per AGENTS.md. Compiled code runs `mendFast`, one read per narrow cell. -/
+Every operation that rewrites a row's cells, other than a print, ends here: erase (`EL`,
+`ED`, `ECH`), `ICH`, `DCH`, the insert-mode shift, resize and the scrollback fit. `IL`, `DL`
+and scrolling move whole rows and insert blank ones, which needs no repair. A print writes at
+most two cells and repairs only the columns beside them (`Row.mendNear`), so its repair is
+constant-time. Compiled code runs `mendFast`, one read per narrow cell. -/
 def Row.mend (row : Row) : Row := (List.range row.size).foldl (fun r x => r.mendAt x) row
 
 /-- Is `c`, the cell at column `x`, already the shadow of a width-2 base on its left,
@@ -219,6 +219,12 @@ def Row.mendAtFast (r : Row) (x : Nat) : Row :=
 `Row.at`, `halfPair`, `mendAt` and `mendAtFast` are inlined, so the loop makes no calls
 for a narrow row. -/
 def Row.mendFast (row : Row) : Row := Nat.fold row.size (fun x _ r => r.mendAtFast x) row
+
+/-- Repair the four columns from one left of a write at `x`. A write of at most two cells
+breaks a pair only beside it, so on a row whose pairs were whole this restores every pair
+(`rowOk_mendNear`) in constant time. -/
+private def Row.mendNear (row : Row) (x : Nat) : Row :=
+  (((row.mendAt (x - 1)).mendAt (x - 1 + 1)).mendAt (x - 1 + 2)).mendAt (x - 1 + 3)
 
 /-- The shadow test holds exactly of a cell that already is the shadow of a width-2 base
 on its left, which is the cell `mendAt` would write there. -/
@@ -460,12 +466,12 @@ was never passed the grid at all, and the consequence was observable rather than
 theoretical: see the shape-half section below, and finding R2 in SCRATCHPAD.md.
 
 The price is a mirror, paid deliberately: `ofDecoded_of_good` is the same predicate seen
-from the other side, so `Checkpoint.rt_vt` → `load_save` → `load_save_exact` and the five
-`resume_*` claims that never read the grid now carry `Renderable` and `TabsOk`
-hypotheses. Every live session satisfies them (`renderable_of_liveReachable`,
-`tabsOk_of_liveReachable`), each claim says so in its own docstring, and correctness beat
-hypothesis-count: the old unconditional statements were *also* true of a screen the
-emitter cannot reproduce.
+from the other side, so `Checkpoint.rt_vt` → `load_save` → `load_save_exact` carry
+`Renderable` and `TabsOk` hypotheses, and so do `resume_quiesced_any` and
+`resume_cursor_any`, the `resume_*` claims that never read the grid. Every live session
+satisfies them (`renderable_of_liveReachable`, `tabsOk_of_liveReachable`), each claim says
+so in its own docstring, and correctness beat hypothesis-count: the old unconditional
+statements were *also* true of a screen the emitter cannot reproduce.
 
 **Still unreachable from disk:** `Render.restore_sb_exact`'s
 `hrok : ∀ r ∈ v.sb.toList, RowOk v.cols r`, and it is unprovable from reachability rather
@@ -725,10 +731,10 @@ private def Vt.putCell (v : Vt) (x y : Nat) (c : Cell) : Vt :=
 /-- Total cell read; out of range is a default cell. -/
 def Vt.getCell (v : Vt) (x y : Nat) : Cell := (v.getRow y).getD x default
 
-/-- Repair every pair in one row. Every cell-writing operation ends here, so
-the pair invariant holds by construction rather than per operation. In place, like
+/-- Repair the pairs a print or mark at column `x` of row `y` can break. In place, like
 `putCell`; `mendRow_eq` states the read-then-write form. -/
-private def Vt.mendRow (v : Vt) (y : Nat) : Vt := { v with grid := v.grid.modify y Row.mend }
+private def Vt.mendRow (v : Vt) (x y : Nat) : Vt :=
+  { v with grid := v.grid.modify y (·.mendNear x) }
 
 /-- Scroll rows [top, bot] up by one, no questions asked about the
 current region. Grid + (optionally) scrollback only — never the
@@ -817,20 +823,28 @@ private def Vt.backspace (v : Vt) : Vt :=
   if v.cursor.pending then v.clearPending
   else { v with cursor := { v.cursor with x := v.cursor.x - 1 } }
 
+/-- The first tab stop at or after column `i`, capped at the last column. -/
+private def nextTabStop (tabs : Array Bool) (cols i : Nat) : Nat :=
+  if i + 1 < cols then if tabs.getD i false then i else nextTabStop tabs cols (i + 1) else cols - 1
+termination_by cols - i
+
 private def Vt.tab (v : Vt) : Vt :=
   let v := v.clearPending
-  let next := (List.range v.cols).find? (fun i => i > v.cursor.x && v.tabs.getD i false)
-  { v with cursor := { v.cursor with x := min (next.getD (v.cols - 1)) (v.cols - 1) } }
+  { v with
+    cursor := { v.cursor with x := min (nextTabStop v.tabs v.cols (v.cursor.x + 1)) (v.cols - 1) } }
+
+/-- The last tab stop before column `x`, else column 0. -/
+private def prevTabStop (tabs : Array Bool) : Nat → Nat
+  | 0 => 0
+  | x + 1 => if tabs.getD x false then x else prevTabStop tabs x
 
 private def Vt.backTab (v : Vt) : Vt :=
-  let prev :=
-    (List.range v.cursor.x).foldl (fun acc i => if v.tabs.getD i false then some i else acc) none
   -- the found stop is < cursor.x < cols already; the clamp makes the
-  -- bound local so §Total doesn't need a foldl invariant
+  -- bound local so §Total doesn't need an invariant
   { v with
     cursor :=
       { v.cursor with
-        x := min (prev.getD 0) (v.cols - 1), pending := false } }
+        x := min (prevTabStop v.tabs v.cursor.x) (v.cols - 1), pending := false } }
 
 /-! ## Printing -/
 
@@ -895,19 +909,19 @@ The write can equally orphan the *other* half of a pair it partly overwrote: a
 narrow glyph over a wide base leaves that base's shadow behind, and any glyph
 over a shadow leaves its base behind. Both are reachable by ordinary
 redrawing over CJK text — no `ICH`/`DCH` needed, which is what the two pinned
-deep fuzz seeds turned out to be — so the row is mended after every print.
+deep fuzz seeds turned out to be — so the columns beside every print are mended.
 Keeping the grid free of shapes the painter cannot express is what makes
 `Renderable` an invariant rather than a hypothesis. -/
 private def Vt.printPut (v : Vt) (ch : Char) (w : Nat) : Vt :=
   let x := v.cursor.x
   let y := v.cursor.y
   if w == 2 && x + 1 ≥ v.cols then
-    (v.putCell x y { base := ' ', marks := [], width := 1, pen := v.pen }).mendRow y
+    (v.putCell x y { base := ' ', marks := [], width := 1, pen := v.pen }).mendRow x y
   else
     let v' := v.putCell x y { base := ch, marks := [], width := w, pen := v.pen }
     if w == 2 then
-      (v'.putCell (x + 1) y { base := ' ', marks := [], width := 0, pen := v.pen }).mendRow y
-    else v'.mendRow y
+      (v'.putCell (x + 1) y { base := ' ', marks := [], width := 0, pen := v.pen }).mendRow x y
+    else v'.mendRow x y
 
 /-- Advance the cursor by `w`, arming wrap-pending at the margin. -/
 private def Vt.printAdvance (v : Vt) (w : Nat) : Vt :=
@@ -949,7 +963,7 @@ private def Vt.printMark (v : Vt) (ch : Char) : Vt :=
   let cx := if (v.getCell cx0 v.cursor.y).width == 0 && cx0 != 0 then cx0 - 1 else cx0
   let cell := v.getCell cx v.cursor.y
   if cell.marks.length ≥ 8 then v
-  else (v.putCell cx v.cursor.y { cell with marks := cell.marks ++ [ch] }).mendRow v.cursor.y
+  else (v.putCell cx v.cursor.y { cell with marks := cell.marks ++ [ch] }).mendRow cx v.cursor.y
 
 /-- Place one printable character at the cursor, handling wrap-pending,
 wide characters, insert mode, and combining marks. -/

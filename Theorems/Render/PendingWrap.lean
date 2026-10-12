@@ -639,19 +639,13 @@ theorem mmap_id_hts : MMap id (escSeq 0x48) := by
     step_of_esc_quiet (v := { w with pstate := .esc }) 0x48 rfl hu]
   exact ⟨rfl, hu, rfl⟩
 
-theorem mmap_id_savedAnsi (v : Vt) : MMap id (savedAnsi v) := by
-  unfold savedAnsi
-  exact mmap_id_append (mmap_id_append (mmap_id_penSgr _) (mmap_id_cup _ _)) mmap_id_save
+theorem mmap_id_savedAnsi (v : Vt) : MMap id (savedAnsi v) :=
+  mmap_id_streamPred.savedAnsi mmap_id_penSgr mmap_id_cup mmap_id_save v
 
-theorem mmap_id_regionAnsi (v : Vt) : MMap id (regionAnsi v) := by
-  unfold regionAnsi
-  split
-  · exact MMap.nil
-  · rw [show
-        csiNum2 (v.top + 1) (v.bot + 1) 0x72 = csiB ++ joinSemi [v.top + 1, v.bot + 1] ++ [0x72]
-        from by simp [csiNum2, joinSemi]]
-    exact
-      mmap_id_csi_seq _ 0x72 (paramBytes_joinSemi _) (by decide) (by decide) modes_csiDispatch_stbm
+theorem mmap_id_regionAnsi (v : Vt) : MMap id (regionAnsi v) :=
+  mmap_id_streamPred.regionAnsi
+    (fun _ _ => fixes_csiNum2 psBlind_modes _ _ 0x72 (by decide) (by decide) modes_csiDispatch_stbm)
+    v
 
 theorem mmap_id_tabsAnsi (v : Vt) : MMap id (tabsAnsi v) := by
   have htbc : MMap id (csiNum 3 0x67) := by
@@ -846,13 +840,6 @@ theorem restore_cursor_any (v w : Vt) (hgood : Good v) (hgw : Good w) (hcols : w
       simp only [restore, List.append_assoc],
     feed_append]
   exact cursorPendingAnsi_position v u hgu hc ho horg hx hy hp hn
-
-/-- The pending repair retains the original cursor-position contract, independently
-of grid representability or the inactive UTF-8 accumulator. -/
-theorem restore_cursor (v : Vt) (hgood : Good v) (ho : v.modes.origin = false) :
-    (((Vt.init v.cols v.rows).feed (restore v)).cursor.x = v.cursor.x) ∧
-      (((Vt.init v.cols v.rows).feed (restore v)).cursor.y = v.cursor.y) :=
-  restore_cursor_any v _ hgood (good_init _ _) (init_dims v hgood).1 (init_dims v hgood).2 ho
 
 /-- Even an out-of-range decoded scroll region cannot designate a character bank. -/
 theorem regionAnsi_charsets (v w : Vt) (hg : w.pstate = .ground) (hu : w.u8need = 0) :

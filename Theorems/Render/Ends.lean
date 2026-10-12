@@ -11,17 +11,15 @@ import all Theorems.Vt
 The §Replay target (specs/archive/grid-fidelity.md; the parser half was closed
 in specs/archive/bigger-theorems.md) is
 `(Vt.init v.cols v.rows).feed (restore v) ≃ v`. This file proves the
-*parser* half of that `≃`, for ANY `Vt` and with no hypotheses: after
-feeding a whole restore stream, the emulator is back in `.ground` with
-no half-decoded UTF-8 — i.e. `restore` never leaves a client's parser
-wedged mid-sequence, and a checkpoint taken right after a restore is
-`quiesce`-clean.
+parser lemmas of that `≃`: each construct `restore` emits, fed from
+`.ground`, returns there. `restore_quiesced_any` (`Theorems/Render/Sticky.lean`)
+assembles them into the whole-stream claim for any receiver.
 
 The ladder is compositional, which is the point:
 
 * `Ends bs` — "from ground, `bs` returns to ground". `Ends.append` makes
-  it closed under `++`, and `restore` is a concatenation, so the top
-  theorem is assembled from one lemma per emitted construct
+  it closed under `++`, and `restore` is a concatenation, so a whole-stream
+  claim is assembled from one lemma per emitted construct
   (`ends_csiNum`, `ends_penSgr`, `ends_osc`, …).
 * Each construct's lemma is proved from the byte facts of the emitters
   (`digits_range`, `utf8_no_ctl`) — which only exist because `Render`
@@ -157,7 +155,7 @@ theorem utf8s_length_le (cs : List Char) : (utf8s cs).length ≤ 4 * cs.length :
 /-! ## `Ends`: the compositional core
 
 `Ends bs` is exactly the property that composes over `++`, which is what
-lets the top theorem be assembled construct by construct instead of by
+lets a whole-stream claim be assembled construct by construct instead of by
 tracing a whole restore stream.
 -/
 
@@ -165,8 +163,8 @@ tracing a whole restore stream.
 restore stream can leave a client wedged mid-sequence, eating the
 application's next output.
 
-Scoped to `pstate`, which composes over `++`; the whole-stream decoder claim is
-`restore_quiesced`. -/
+Scoped to `pstate`, which composes over `++`; the whole-stream claim, for any receiver, is
+`restore_quiesced_any`. -/
 def Ends (bs : Bytes) : Prop := ∀ v : Vt, v.pstate = .ground → (v.feed bs).pstate = .ground
 
 theorem Ends.nil : Ends [] := fun _ h => h
@@ -278,6 +276,93 @@ theorem gridAnsi {P : Bytes → Prop} (hP : StreamPred P)
     exact hrow row acc.2
   · exact hacc bs h
 
+/-! ### The restore stages, once for every stream predicate
+
+Each stage is a fixed concatenation of constructs, so a predicate closed under `++`
+holds of it when it holds of the constructs the stage emits. A layer supplies only
+those constructs, with whatever side conditions its own claim needs. -/
+
+theorem modeSet {P : Bytes → Prop} (_hP : StreamPred P) {n : Nat}
+    (h : ∀ f : UInt8, (f = 0x68 ∨ f = 0x6C) → P (csiPriv n f)) (on : Bool) :
+    P (Linger.Core.Render.modeSet n on) := by
+  cases on
+  · exact h _ (Or.inr rfl)
+  · exact h _ (Or.inl rfl)
+
+theorem irm {P : Bytes → Prop} (_hP : StreamPred P)
+    (h : ∀ f : UInt8, (f = 0x68 ∨ f = 0x6C) → P (csiNum 4 f)) (on : Bool) :
+    P (csiNum 4 (if on then 0x68 else 0x6C)) := by
+  cases on
+  · exact h _ (Or.inr rfl)
+  · exact h _ (Or.inl rfl)
+
+theorem charsetAnsi {P : Bytes → Prop} (hP : StreamPred P)
+    (h : ∀ i x : UInt8, (i = 0x28 ∨ i = 0x29) → (x = 0x30 ∨ x = 0x42) → P (escCharset i x))
+    (hso : P [0x0E]) (v : Vt) : P (Linger.Core.Render.charsetAnsi v) :=
+  hP.append3 (hP.ite (fun _ => h _ _ (.inl rfl) (.inl rfl)) fun _ => h _ _ (.inl rfl) (.inr rfl))
+    (hP.ite (fun _ => h _ _ (.inr rfl) (.inl rfl)) fun _ => h _ _ (.inr rfl) (.inr rfl))
+    (hP.ite (fun _ => hso) fun _ => hP.nil)
+
+theorem savedAnsi {P : Bytes → Prop} (hP : StreamPred P) (hpen : ∀ p, P (penSgr p))
+    (hcup : ∀ a b, P (csiNum2 a b 0x48)) (hsc : P (escSeq 0x37)) (v : Vt) :
+    P (Linger.Core.Render.savedAnsi v) :=
+  hP.append3 (hpen _) (hcup _ _) hsc
+
+theorem cursorAnsi {P : Bytes → Prop} (hP : StreamPred P) (hcup : ∀ a b, P (csiNum2 a b 0x48))
+    (v : Vt) : P (Linger.Core.Render.cursorAnsi v) :=
+  hP.ite (fun _ => hcup _ _) fun _ => hcup _ _
+
+theorem regionAnsi {P : Bytes → Prop} (hP : StreamPred P) (hstbm : ∀ a b, P (csiNum2 a b 0x72))
+    (v : Vt) : P (Linger.Core.Render.regionAnsi v) :=
+  hP.ite (fun _ => hP.nil) fun _ => hstbm _ _
+
+theorem tabsAnsi {P : Bytes → Prop} (hP : StreamPred P) (htbc : P (csiNum 3 0x67))
+    (hcha : ∀ n, P (csiNum n 0x47)) (hhts : P (escSeq 0x48)) (v : Vt) :
+    P (Linger.Core.Render.tabsAnsi v) :=
+  hP.append htbc (hP.flatMap fun _ => hP.append (hcha _) hhts)
+
+theorem pendingAnsi {P : Bytes → Prop} (hP : StreamPred P) (hcup : ∀ a b, P (csiNum2 a b 0x48))
+    (hpen : ∀ p, P (penSgr p)) (hcell : ∀ c, P (cellText c)) (cols : Nat) (grid : Array Row)
+    (cur : Cursor) (row : Nat) (pen : Pen) :
+    P (Linger.Core.Render.pendingAnsi cols grid cur row pen) :=
+  hP.ite (fun _ => hP.append4 (hcup _ _) (hpen _) (hcell _) (hpen _)) fun _ => hP.nil
+
+theorem savedPendingAnsi {P : Bytes → Prop} (hP : StreamPred P)
+    (hpend : ∀ cols grid cur row pen, P (Linger.Core.Render.pendingAnsi cols grid cur row pen))
+    (hsc : P (escSeq 0x37)) (v : Vt) : P (Linger.Core.Render.savedPendingAnsi v) :=
+  hP.ite (fun _ => hP.append (hpend _ _ _ _ _) hsc) fun _ => hP.nil
+
+/-- The mode replay, from the modes it names: the fixed set, the guarded mouse mode, the
+session's DECOM, both keypad escapes and IRM either way. The chain is **right**-associated
+to match `++`; left-associating it makes the elaborator reconcile the two shapes by
+unfolding `List.append`, which at a dozen chunks exhausts the heartbeat budget. -/
+theorem modesAnsi {P : Bytes → Prop} (hP : StreamPred P) (v : Vt)
+    (hset :
+      ∀ n on,
+        (n = 7 ∨ n = 1 ∨ n = 25 ∨ n = 2004 ∨ n = 1000 ∨ n = 1002 ∨ n = 1003 ∨ n = 1006 ∨
+            n = 1004) →
+          P (Linger.Core.Render.modeSet n on))
+    (hmouse :
+      (v.modes.mouse == 1000 || v.modes.mouse == 1002 || v.modes.mouse == 1003) = true →
+        P (Linger.Core.Render.modeSet v.modes.mouse true))
+    (hdecom : P (Linger.Core.Render.modeSet 6 v.modes.origin)) (hkpam : P (escSeq 0x3D))
+    (hkpnm : P (escSeq 0x3E))
+    (hirm : ∀ on : Bool, P (csiNum 4 (if on then 0x68 else 0x6C))) :
+    P (Linger.Core.Render.modesAnsi v) := by
+  unfold Linger.Core.Render.modesAnsi
+  refine hP.append ?_ (hirm _)
+  refine hP.append ?_ hdecom
+  refine hP.append ?_ (hset 1004 _ (by decide))
+  refine hP.append ?_ (hset 1006 _ (by decide))
+  refine hP.append ?_ (hP.ite hmouse fun _ => hP.nil)
+  refine hP.append ?_ (hset 1003 _ (by decide))
+  refine hP.append ?_ (hset 1002 _ (by decide))
+  refine hP.append ?_ (hset 1000 _ (by decide))
+  refine hP.append ?_ (hset 2004 _ (by decide))
+  refine hP.append ?_ (hset 25 _ (by decide))
+  refine hP.append ?_ (hP.ite (fun _ => hkpam) fun _ => hkpnm)
+  exact hP.append (hset 7 _ (by decide)) (hset 1 _ (by decide))
+
 end StreamPred
 
 theorem Ends.streamPred : StreamPred Ends := ⟨Ends.nil, fun ha hb => Ends.append ha hb⟩
@@ -294,7 +379,7 @@ theorem Ends.flatMap {α : Type} {f : α → Bytes} {l : List α}
 /-! ### One lemma per emitted construct
 
 These are the only places that reason about `Vt.step`. Everything above
-is plumbing; the top theorem is their composition.
+is plumbing; a whole-stream claim is their composition.
 -/
 
 /-- A single non-ESC byte from a ground parser leaves it ground. -/
@@ -685,13 +770,9 @@ theorem ends_cellText (c : Cell) : Ends (cellText c) := by
   exact (ends_utf8_safe c.base).append (ends_utf8s c.marks)
 
 theorem ends_pendingAnsi (cols : Nat) (grid : Array Row) (cur : Cursor)
-    (row : Nat) (pen : Pen) : Ends (Linger.Core.Render.pendingAnsi cols grid cur row pen) := by
-  unfold pendingAnsi
-  dsimp only
-  apply Ends.ite
-  · exact (((ends_csiNum2 _ _ 0x48 (by decide) (by decide)).append
-      (ends_penSgr _)).append (ends_cellText _)).append (ends_penSgr _)
-  · exact Ends.nil
+    (row : Nat) (pen : Pen) : Ends (Linger.Core.Render.pendingAnsi cols grid cur row pen) :=
+  Ends.streamPred.pendingAnsi (fun _ _ => ends_csiNum2 _ _ 0x48 (by decide) (by decide)) ends_penSgr
+    ends_cellText cols grid cur row pen
 
 theorem ends_rowAnsi (row : Row) (p : Pen) : Ends (rowAnsi row p).1 :=
   Ends.streamPred.rowAnsi ends_penSgr ends_utf8_safe ends_utf8s
@@ -706,11 +787,8 @@ theorem ends_gridAnsi (grid : Array Row) : Ends (gridAnsi grid) := by
 
 /-- One both-ways mode emit. `modeSet` is a definition rather than a local lambda
 precisely so this matches structurally. -/
-theorem ends_modeSet (n : Nat) (on : Bool) : Ends (modeSet n on) := by
-  unfold modeSet
-  cases on
-  · exact ends_csiPriv n 0x6C (by decide) (by decide)
-  · exact ends_csiPriv n 0x68 (by decide) (by decide)
+theorem ends_modeSet (n : Nat) (on : Bool) : Ends (modeSet n on) :=
+  Ends.streamPred.modeSet (fun _ hf => ends_csiPriv n _ (by grind) (by grind)) on
 
 /-! ### The scrollback stage
 
@@ -748,10 +826,12 @@ theorem ends_scrollbackAnsi (v : Vt) : Ends (scrollbackAnsi v) := by
     (((ends_csiNum 3 0x4A (by decide) (by decide)).append (ends_gridAnsi (sbRows v))).append
       (ends_crlfRun v.rows))
 
-/-! ### The composition: a whole restore stream
+/-! ### The restore stages
 
-Every stage of `restore` is `Ends`, so the stream is. This is §Replay's
-parser half, for ANY `Vt` and with no hypotheses.
+Each stage `restore` emits after its prologue is `Ends`. `restoreBody_grounds`,
+`restore_placed_grounds` and `restore_grounds` (`Theorems/Render/Modes.lean`) compose them
+behind `prologue_grounds`, for any receiver, and `restore_quiesced_any`
+(`Theorems/Render/Sticky.lean`) adds the decoder half.
 -/
 
 theorem ends_screensAnsi (v : Vt) : Ends (screensAnsi v) := by
@@ -764,77 +844,37 @@ theorem ends_screensAnsi (v : Vt) : Ends (screensAnsi v) := by
       (ends_pendingAnsi _ _ _ _ _)).append
       (ends_csiPriv 1049 0x68 (by decide) (by decide))).append (ends_gridAnsi _)
 
-theorem ends_regionAnsi (v : Vt) : Ends (regionAnsi v) := by
-  unfold regionAnsi
-  exact Ends.ite Ends.nil (ends_csiNum2 _ _ 0x72 (by decide) (by decide))
+theorem ends_regionAnsi (v : Vt) : Ends (regionAnsi v) :=
+  Ends.streamPred.regionAnsi (fun _ _ => ends_csiNum2 _ _ 0x72 (by decide) (by decide)) v
 
-theorem ends_tabsAnsi (v : Vt) : Ends (tabsAnsi v) := by
-  unfold tabsAnsi
-  refine (ends_csiNum 3 0x67 (by decide) (by decide)).append ?_
-  refine Ends.flatMap (fun i => ?_)
-  exact (ends_csiNum (i + 1) 0x47 (by decide) (by decide)).append
-    (ends_escSeq 0x48 (by decide))
+theorem ends_tabsAnsi (v : Vt) : Ends (tabsAnsi v) :=
+  Ends.streamPred.tabsAnsi (ends_csiNum 3 0x67 (by decide) (by decide))
+    (fun n => ends_csiNum n 0x47 (by decide) (by decide)) (ends_escSeq 0x48 (by decide)) v
 
-theorem ends_savedAnsi (v : Vt) : Ends (savedAnsi v) := by
-  unfold savedAnsi
-  exact ((ends_penSgr _).append (ends_csiNum2 _ _ 0x48 (by decide) (by decide))).append
-    (ends_escSeq 0x37 (by decide))
+theorem ends_savedAnsi (v : Vt) : Ends (savedAnsi v) :=
+  Ends.streamPred.savedAnsi ends_penSgr (fun _ _ => ends_csiNum2 _ _ 0x48 (by decide) (by decide))
+    (ends_escSeq 0x37 (by decide)) v
 
-theorem ends_savedPendingAnsi (v : Vt) : Ends (Linger.Core.Render.savedPendingAnsi v) := by
-  unfold savedPendingAnsi
-  exact Ends.ite ((ends_pendingAnsi _ _ _ _ _).append (ends_escSeq 0x37 (by decide))) Ends.nil
+theorem ends_savedPendingAnsi (v : Vt) : Ends (Linger.Core.Render.savedPendingAnsi v) :=
+  Ends.streamPred.savedPendingAnsi ends_pendingAnsi (ends_escSeq 0x37 (by decide)) v
 
-theorem ends_charsetAnsi (v : Vt) : Ends (charsetAnsi v) := by
-  unfold charsetAnsi
-  refine ((Ends.ite (ends_escCharset 0x28 0x30 (by decide) (by decide) (by decide))
-    (ends_escCharset 0x28 0x42 (by decide) (by decide) (by decide))).append
-    (Ends.ite (ends_escCharset 0x29 0x30 (by decide) (by decide) (by decide))
-      (ends_escCharset 0x29 0x42 (by decide) (by decide) (by decide)))).append ?_
-  exact Ends.ite (Ends.text (by decide)) Ends.nil
+theorem ends_charsetAnsi (v : Vt) : Ends (charsetAnsi v) :=
+  Ends.streamPred.charsetAnsi (fun _ _ hi hx => ends_escCharset _ _ hi (by grind) (by grind))
+    (Ends.text (by decide)) v
 
 theorem ends_titleAnsi (v : Vt) : Ends (titleAnsi v) := by
   unfold titleAnsi
   exact ends_osc _
 
-theorem ends_irm (on : Bool) : Ends (csiNum 4 (if on then 0x68 else 0x6C)) := by
-  cases on
-  · exact ends_csiNum 4 0x6C (by decide) (by decide)
-  · exact ends_csiNum 4 0x68 (by decide) (by decide)
+theorem ends_irm (on : Bool) : Ends (csiNum 4 (if on then 0x68 else 0x6C)) :=
+  Ends.streamPred.irm (fun _ hf => ends_csiNum 4 _ (by grind) (by grind)) on
 
-/-- The chains below are **right**-associated to match `++`. Left-associating them
-makes the elaborator reconcile the two shapes by unfolding `List.append`, which at a
-dozen chunks exhausts the heartbeat budget. -/
-theorem ends_modesAnsi (v : Vt) : Ends (modesAnsi v) := by
-  unfold modesAnsi
-  refine Ends.append ?_ (ends_irm v.modes.insert)
-  refine Ends.append ?_ (ends_modeSet 6 _)
-  refine Ends.append ?_ (ends_modeSet 1004 _)
-  refine Ends.append ?_ (ends_modeSet 1006 _)
-  refine Ends.append ?_ (Ends.ite (ends_modeSet v.modes.mouse true) Ends.nil)
-  refine Ends.append ?_ (ends_modeSet 1003 false)
-  refine Ends.append ?_ (ends_modeSet 1002 false)
-  refine Ends.append ?_ (ends_modeSet 1000 false)
-  refine Ends.append ?_ (ends_modeSet 2004 _)
-  refine Ends.append ?_ (ends_modeSet 25 _)
-  refine Ends.append ?_
-    (Ends.ite (ends_escSeq 0x3D (by decide)) (ends_escSeq 0x3E (by decide)))
-  exact (ends_modeSet 7 _).append (ends_modeSet 1 _)
+theorem ends_modesAnsi (v : Vt) : Ends (modesAnsi v) :=
+  Ends.streamPred.modesAnsi v (fun n on _ => ends_modeSet n on) (fun _ => ends_modeSet _ _)
+    (ends_modeSet 6 _) (ends_escSeq 0x3D (by decide)) (ends_escSeq 0x3E (by decide)) ends_irm
 
-theorem ends_prologueAnsi (v : Vt) : Ends (prologueAnsi v) := by
-  unfold prologueAnsi
-  refine Ends.append ?_ (Ends.text (bs := [0x0F]) (by decide))
-  refine Ends.append ?_ (ends_escCharset 0x29 0x42 (by decide) (by decide) (by decide))
-  refine Ends.append ?_ (ends_escCharset 0x28 0x42 (by decide) (by decide) (by decide))
-  refine Ends.append ?_ (ends_csiNum2 1 v.rows 0x72 (by decide) (by decide))
-  refine Ends.append ?_ (ends_modeSet 7 true)
-  refine Ends.append ?_ (ends_modeSet 6 false)
-  refine Ends.append ?_ (ends_csiNum 4 0x6C (by decide) (by decide))
-  exact (ends_escSeq 0x5C (by decide)).append (ends_modeSet 1049 false)
-
-theorem ends_cursorAnsi (v : Vt) : Ends (cursorAnsi v) := by
-  unfold cursorAnsi
-  exact Ends.ite (ends_csiNum2 _ _ 0x48 (by decide) (by decide))
-    (ends_csiNum2 _ _ 0x48 (by decide) (by decide))
+theorem ends_cursorAnsi (v : Vt) : Ends (cursorAnsi v) :=
+  Ends.streamPred.cursorAnsi (fun _ _ => ends_csiNum2 _ _ 0x48 (by decide) (by decide)) v
 
 theorem ends_cursorPendingAnsi (v : Vt) : Ends (Linger.Core.Render.cursorPendingAnsi v) := by
   unfold cursorPendingAnsi
@@ -849,34 +889,6 @@ theorem ends_cursorPendingAnsi (v : Vt) : Ends (Linger.Core.Render.cursorPending
     refine Ends.append ?_ (ends_escCharset 0x28 0x42 (by decide) (by decide) (by decide))
     exact (ends_modeSet 7 true).append (ends_irm false)
   · exact Ends.nil
-
-theorem ends_restoreBody (v : Vt) : Ends (restoreBody v) := by
-  unfold restoreBody
-  refine Ends.append ?_ (ends_penSgr v.pen)
-  refine Ends.append ?_ (ends_charsetAnsi v)
-  refine Ends.append ?_ (ends_modesAnsi v)
-  refine Ends.append ?_ (ends_titleAnsi v)
-  refine Ends.append ?_ (ends_savedPendingAnsi v)
-  refine Ends.append ?_ (ends_savedAnsi v)
-  refine Ends.append ?_ (ends_tabsAnsi v)
-  refine Ends.append ?_ (ends_regionAnsi v)
-  refine Ends.append ?_ (ends_screensAnsi v)
-  refine Ends.append ?_ (ends_csiNum 2 0x4A (by decide) (by decide))
-  exact (ends_prologueAnsi v).append (ends_csiNum 0 0x6D (by decide) (by decide))
-
-/-- **§Replay (parser half).** Feeding a whole restore stream to a fresh
-terminal emulator leaves its parser in `ground`: no reattach can wedge a
-client mid-sequence, whatever the session's screen, pen, modes, title or
-charset state. Proved for every `Vt`, with no hypotheses. -/
-theorem ends_restore (v : Vt) : Ends (restore v) := by
-  unfold restore
-  exact ((ends_restoreBody v).append (ends_cursorAnsi v)).append (ends_cursorPendingAnsi v)
-
-/-- The operational form: a fresh emulator fed `restore v` is ready for
-the application's next byte. -/
-theorem restore_leaves_ground (v : Vt) (cols rows : Nat) :
-    (((Vt.init cols rows).feed (restore v)).pstate = .ground) :=
-  ends_restore v (Vt.init cols rows) rfl
 
 /-! ### No half-decoded character either
 
@@ -925,23 +937,5 @@ theorem u8_zero_after_cursorPendingAnsi (v w : Vt) (hu : w.u8need = 0) :
   · rw [feed_append]
     exact u8_zero_after_penSgr _ _
   · exact hu
-
-/-- **§Replay (parser half, complete).** A fresh emulator fed a whole
-restore stream is *quiesced*: parser in `ground`, no half-decoded
-character. So a reattaching client is left ready for the application's
-next byte, and a checkpoint taken straight after a restore is exact. -/
-theorem restore_quiesced (v : Vt) (cols rows : Nat) :
-    (((Vt.init cols rows).feed (restore v)).pstate = .ground)
-      ∧ (((Vt.init cols rows).feed (restore v)).u8need = 0) := by
-  refine ⟨restore_leaves_ground v cols rows, ?_⟩
-  unfold restore
-  rw [feed_append]
-  apply u8_zero_after_cursorPendingAnsi
-  rw [feed_append]
-  unfold cursorAnsi
-  split
-  all_goals
-    (unfold csiNum2
-     exact u8_zero_after_csi _ 0x48 (paramBytes_digits2 _ _) (by decide) _)
 
 end Linger.Core.Render
