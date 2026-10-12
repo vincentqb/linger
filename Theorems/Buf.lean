@@ -8,9 +8,9 @@ This file is the tree's first **friend module**: `import all Linger.Core.Buf`
 is what lets these statements and proofs see a representation that is sealed to
 every plain importer (`Buf.bytes` is `private`; the runtime cannot read, write,
 or forge it — specs/archive/lean-modules.md Step 2). There is deliberately no blanket
-`public section` here: these theorems are leaves — nothing imports them as
-lemmas (checked; they appear elsewhere only in prose) — and being CHECKED at
-build is their whole job, so module-private is their honest visibility. It also
+`public section` here: these theorems are leaves — `Theorems/Contracts.lean` restates
+`reachableIn_bound` and `reachableOut_bound`, and nothing else uses them as lemmas — and
+being CHECKED at build is their whole job, so module-private is their honest visibility. It also
 lets the `rfl` proofs elaborate where the sealed definitions still reduce;
 `Theorems/Coverage.lean` imports this friend scope and checks the resulting theorem
 types semantically.
@@ -52,8 +52,8 @@ namespace Linger.Core.Buf
 owed. Nothing else in this file means anything without it. -/
 theorem owedLen_eq (b : Buf) : (writeFrom b).size = owedLen b := rfl
 
-/-- The one public door in starts with zero debt — `empty`'s anchor, and what
-claims it in the census: an importer can begin a queue, never forge one
+/-- The one public door in starts with zero debt — `empty`'s anchor, and one of the
+theorems that claim it in the census: an importer can begin a queue, never forge one
 mid-debt (the constructor is private with the field). -/
 theorem writeFrom_empty : writeFrom Buf.empty = ByteArray.empty := rfl
 

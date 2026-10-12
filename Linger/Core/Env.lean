@@ -4,8 +4,8 @@ public section
 
 /-! # Linger.Core.Env — what an environment value means
 
-The runtime reads each variable once and passes the result here, so what an
-unset or empty value means is a pure decision with a theorem
+The runtime reads SHELL, LINGER_NO_DETACH_KEY and the remotes file's HOME once each
+and passes the result here, so what an unset or empty value means is a pure decision with a theorem
 (`Theorems/Env.lean`). The suites run the program with both.
 -/
 

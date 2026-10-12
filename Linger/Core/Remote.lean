@@ -47,9 +47,8 @@ structure RemoteRow where
   status : String := ""
   deriving Repr, DecidableEq, Inhabited
 
-/-- Strip ANSI/control bytes from a display string (a remote could
-embed escape sequences in `cmd` or label values; the overview prints
-these verbatim into the listing, so control characters must die here). -/
+/-- Drop C0 and C1 controls and DEL from untrusted text: `ls -r --porcelain`
+prints a remote `cmd` verbatim, and `Client.replyText` prints a daemon's reason. -/
 def scrub (s : String) : String :=
   String.ofList (s.toList.filter (fun c => c.toNat ≥ 32 && (c.toNat < 127 || c.toNat ≥ 160)))
 
@@ -70,18 +69,12 @@ def parseRecord (lines : List String) : Option RemoteRow :=
           name
           live := (kvs.lookup "state").getD "live" == "live"
           cmd := scrub ((kvs.lookup "cmd").getD "")
-          -- the peer's own status name, scrubbed like any other display field.
-          -- `Status.ofName` is total and maps anything unrecognised -- including
-          -- an absent field from an older peer -- to `unknown`, so a remote row
-          -- can never look healthier than we can actually read it
-          status := scrub ((kvs.lookup "status").getD "") }
+          status := (kvs.lookup "status").getD "" }
 
-/-- Split on blank lines into records. -/
-def records (lines : List String) : List (List String) :=
-  (lines.splitOnP (·.trimAscii.isEmpty)).filter (!·.isEmpty)
-
-/-- The parser: total, garbage-tolerant, names validated without rewriting. -/
-def parse (out : String) : List RemoteRow := (records (out.splitOn "\n")).filterMap parseRecord
+/-- The parser: total, garbage-tolerant, names validated without rewriting. Records are
+separated by blank lines; an empty group has no `name` and yields no row. -/
+def parse (out : String) : List RemoteRow :=
+  ((out.splitOn "\n").splitOnP (·.trimAscii.isEmpty)).filterMap parseRecord
 
 /-- First host that appears more than once (for the error message). -/
 def firstDupHost : List String → Option String
@@ -94,9 +87,6 @@ would destroy a legitimate `user@host` target, and silently rewriting a host mea
 connecting somewhere the user did not ask for. -/
 def hostClean (h : String) : Bool :=
   h.toList.all (fun c => c.toNat ≥ 32 && (c.toNat < 127 || c.toNat ≥ 160))
-
-/-- The first host carrying a control byte, for the error message. -/
-def firstDirtyHost (hosts : List String) : Option String := hosts.find? (!hostClean ·)
 
 /-- Validate the `-r` host list. Two rejections, both **loud**, because each is a
 configuration mistake with no valid meaning: a repeated host would double-query and
@@ -114,7 +104,7 @@ def checkHosts (hosts : List String) : Except String (List String) :=
   match firstDupHost hosts with
   | some h => .error s!"remote host '{scrub h}' listed more than once"
   | none =>
-    match firstDirtyHost hosts with
+    match hosts.find? (!hostClean ·) with
     | some h => .error s!"remote host '{scrub h}' contains a control character"
     | none => .ok hosts
 

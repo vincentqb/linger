@@ -267,42 +267,15 @@ theorem firstDupHost_isSome_of_not_nodup {hosts : List String} (h : ¬hosts.Nodu
   | none => exact absurd (firstDupHost_none hd) h
   | some _ => rfl
 
-/-- The first-offender search succeeds exactly when every host is clean. -/
-theorem firstDirtyHost_none_iff (hosts : List String) :
-    firstDirtyHost hosts = none ↔ ∀ x ∈ hosts, hostClean x = true := by
-  simp [firstDirtyHost, List.find?_eq_none]
-
 /-- Validation accepts every clean, unique host list and returns it unchanged,
 including its order. It cannot silently rewrite, drop or duplicate a host. -/
 theorem checkHosts_ok_iff (hosts result : List String) :
     checkHosts hosts = .ok result ↔
       result = hosts ∧ hosts.Nodup ∧ ∀ x ∈ hosts, hostClean x = true := by
-  rw [← firstDupHost_none_iff, ← firstDirtyHost_none_iff]
-  cases hd : firstDupHost hosts <;> cases hc : firstDirtyHost hosts <;>
+  have hclean : hosts.find? (!hostClean ·) = none ↔ ∀ x ∈ hosts, hostClean x = true := by
+    simp [List.find?_eq_none]
+  rw [← firstDupHost_none_iff, ← hclean]
+  cases hd : firstDupHost hosts <;> cases hc : hosts.find? (!hostClean ·) <;>
     simp [checkHosts, hd, hc, eq_comm]
-
-/-- §Remote (dup guard): a validated host list is duplicate-free, so no
-host is ever queried twice and no duplicate row can reach the listing.
-This is the enforcement the `-r` flag / remotes file rely on. -/
-theorem checkHosts_ok_nodup {hosts l : List String} (h : checkHosts hosts = .ok l) : l.Nodup := by
-  obtain ⟨rfl, unique, _⟩ := (checkHosts_ok_iff hosts l).mp h
-  exact unique
-
-/-- **§Remote (argv guard): a validated host carries no control byte.** The host
-string is handed to `ssh` as argv *and* printed into the listing, so a C0/C1 control or
-DEL in it is refused at the boundary rather than scrubbed on the way out — scrubbing
-would silently connect somewhere the user did not name. With
-`checkHosts_ok_nodup` this is the whole contract `-r` and the remotes file rely on. -/
-theorem checkHosts_ok_clean {hosts l : List String} (h : checkHosts hosts = .ok l) :
-    ∀ x ∈ l, ∀ c ∈ x.toList, c.toNat ≥ 32 ∧ (c.toNat < 127 ∨ c.toNat ≥ 160) := by
-  obtain ⟨rfl, _, clean⟩ := (checkHosts_ok_iff hosts l).mp h
-  simpa [hostClean] using clean
-
-/-! ## Records: every group the splitter emits is a real record -/
-
-/-- **No record is empty.** A blank-line run cannot manufacture a slot for `parseRecord`. -/
-theorem records_ne_nil (lines : List String) : ∀ g ∈ records lines, g ≠ [] := by
-  intro g hg
-  simpa [records] using (List.mem_filter.mp hg).2
 
 end Linger.Core.Remote

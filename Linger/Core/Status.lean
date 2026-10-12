@@ -33,7 +33,7 @@ inductive Status where
   | exitedOk
   /-- `~` — no daemon, but a checkpoint is on disk: attach restores it. -/
   | resumable
-  /-- `⣿` — output or a bell since you last detached, now quiet. -/
+  /-- `⣿` — output or a bell since the session was last looked at, now quiet. -/
   | wantsYou
   /-- `⣷` — output right now. -/
   | working
@@ -53,7 +53,8 @@ structure Obs where
   exit : Option Nat := none
   /-- Output within the "working" window. -/
   fresh : Bool := false
-  /-- Output, or a bell, since this viewer last detached. -/
+  /-- Output, or a bell, since the session was last looked at (attach, output while
+  attached, or capture). -/
   unseen : Bool := false
   deriving DecidableEq, Repr, Inhabited
 

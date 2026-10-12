@@ -32,11 +32,6 @@ def Is : Status → Obs → Prop
   | .idle, o =>
     o.known = true ∧ o.exit = none ∧ o.daemonUp = true ∧ o.fresh = false ∧ o.unseen = false
 
-/-- All seven states, for the quantifiers below. -/
-def all : List Status := [.unknown, .exitedBad, .exitedOk, .resumable, .wantsYou, .working, .idle]
-
-theorem mem_all (s : Status) : s ∈ all := by cases s <;> simp [all]
-
 /-- The cascade agrees exactly with the independent legend predicates. -/
 theorem classify_iff (o : Obs) (s : Status) : classify o = s ↔ Is s o := by
   cases s <;> simp only [Is] <;> grind [classify]

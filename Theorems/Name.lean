@@ -99,7 +99,8 @@ theorem sanitize_no_escape (s : String) : ∀ c ∈ (sanitize s).toList, c ≠ '
 sanitized session name ever contains it. This is what makes `attach
 name@host` unambiguous: any `@` in the argument means "remote", and the
 host is everything after the first one (it may itself be `user@host`).
-It also holds for remote-supplied names, which are sanitized on parse.
+It also holds for remote-supplied names, which parse accepts only when `sanitize` leaves
+them unchanged.
 (This theorem only closes because `okChar` excludes `@`; re-adding it
 breaks the proof.) -/
 theorem sanitize_no_at (s : String) : ∀ c ∈ (sanitize s).toList, c ≠ '@' := by

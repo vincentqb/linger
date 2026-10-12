@@ -125,7 +125,7 @@ the trace claims are bounds composed of steps that already carry their twins
 
 /-- The pty-input queue's reachable states: `Rt.ptyIn` starts `empty` and moves
 only through capped `bufOffer`s (`queuePty`) and flush `bufAdvance`s. -/
-inductive ReachableIn (cap : Nat) : Buf → Prop where
+private inductive ReachableIn (cap : Nat) : Buf → Prop where
   /-- The queue every session starts with. -/
   | empty : ReachableIn cap .empty
   /-- A capped offer, whether it queued the frame or dropped it. -/
@@ -139,7 +139,7 @@ so a queue the daemon keeps holds only enqueues that reported `false`, plus
 flush advances. The not-cut hypothesis on the constructor IS the shipped
 append-then-cut discipline; drop it and `reachableOut_bound` is refutable
 (break-verified). -/
-inductive ReachableOut (cap : Nat) : Buf → Prop where
+private inductive ReachableOut (cap : Nat) : Buf → Prop where
   /-- The queue every connection starts with. -/
   | empty : ReachableOut cap .empty
   /-- An append that left the client connected. -/

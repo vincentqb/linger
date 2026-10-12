@@ -48,6 +48,11 @@ into the listing). -/
 example : ((parse "name\tx\ncmd\tvi\x1b[31mm\x07\n").map (·.cmd) == ["vi[31mm"]) = true := by
   native_decide
 
+/-- A peer's status is kept verbatim for `Status.ofName`: a control byte inside a
+healthy name leaves a name it does not recognise, not the name scrubbing would leave. -/
+example : ((parse "name\tw\nstatus\tid\x01le\n").map (·.status) == ["id\x01le"]) = true := by
+  native_decide
+
 /-- Trailing newline vs none: same records either way (§Chunk-ish
 robustness at the line level). -/
 example : (parse "name\ta\n" == parse "name\ta") = true := by native_decide

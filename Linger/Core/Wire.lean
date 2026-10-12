@@ -44,7 +44,7 @@ inductive Msg where
   | info
   /-- daemon → client: `k\tv\n` lines (fields + labels). -/
   | infoReply (bytes : List UInt8)
-  /-- client → daemon: send scrollback as output frames, then `done`. -/
+  /-- client → daemon: send scrollback and the screen as output frames, then `done`. -/
   | history
   /-- daemon → client: the session ended, with the status of its
   `Session.Event.childExited`. -/
@@ -79,7 +79,7 @@ def writeU32 (n : UInt32) : List UInt8 :=
 
 /-- Total: missing bytes read as zero (a short structured payload is a
 peer bug; reading zeros beats crashing — §Frame totality). -/
-def readU32 (l : List UInt8) : UInt32 :=
+private def readU32 (l : List UInt8) : UInt32 :=
   let b := fun i => (l[i]?.getD 0).toNat
   UInt32.ofNat (b 0 + 256 * (b 1 + 256 * (b 2 + 256 * b 3)))
 
@@ -108,7 +108,7 @@ def Msg.tag : Msg → UInt8
   | .unknown t _ => t
 
 /-- Tags with an assigned meaning in this version. -/
-def knownTag (t : UInt8) : Bool := t ≤ 16
+private def knownTag (t : UInt8) : Bool := t ≤ 16
 
 /-- A message's frame payload: the raw bytes it carries, its sizes or exit status through
 `writeU32`, or nothing. `decodeMsg` recovers a well-formed message from its tag and payload
@@ -123,7 +123,7 @@ def Msg.payload : Msg → List UInt8
 /-- Interpret one frame. Total: every (tag, payload) is some `Msg`.
 An if-chain rather than a literal match so fall-through to `unknown`
 is provable by `t ≠ 0, …, t ≠ 16` instead of match-compilation facts. -/
-def decodeMsg (tag : UInt8) (p : List UInt8) : Msg :=
+private def decodeMsg (tag : UInt8) (p : List UInt8) : Msg :=
   if tag = 0 then .input p
   else
     if tag = 1 then .output p
@@ -183,7 +183,7 @@ structure Decoder where
 
 /-- Greedily peel complete frames off `bytes`. Returns
 (remaining-partial-bytes, errored, messages in arrival order). -/
-def takeFrames (bytes : List UInt8) : List UInt8 × Bool × List Msg :=
+private def takeFrames (bytes : List UInt8) : List UInt8 × Bool × List Msg :=
   match bytes with
   | t :: l0 :: l1 :: l2 :: l3 :: rest =>
     let len := (readU32 [l0, l1, l2, l3]).toNat

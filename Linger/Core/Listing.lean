@@ -32,22 +32,23 @@ def rowFields (socketName : String) (info : List (String × String)) : List (Str
 `unseen`/`fresh`/`exit` in its `info` reply, and the caller supplies what only
 it can know — whether a socket is there, whether the daemon answered, and
 whether a checkpoint loads. Splitting it this way is what makes the §Row
-property extend to the status column: an absent or hostile reply cannot make a
-row look healthier than it is, because `known` and `daemonUp` are not taken
-from the reply.
+property extend to the status column: an absent or partial reply cannot make a
+row look healthier than it is, because `daemonUp` comes from the caller and
+`known` requires the `pid` or `cmd` field every real reply carries.
 -/
 
 open Linger.Core.Status (Status classify ofName)
 
 /-- One boolean from the reply, defaulting to `false` when absent or
 malformed — a reply cannot make a row *more* alive by omission. -/
-def flag (info : List (String × String)) (key : String) : Bool := info.lookup key == some "true"
+private def flag (info : List (String × String)) (key : String) : Bool :=
+  info.lookup key == some "true"
 
 /-- Did the daemon actually answer? A connection can succeed while the daemon
 is too busy to fill in the reply within the window, and the row must not then
 be reported as a healthy idle session. `pid`/`cmd` are the fields a real reply
 always carries, so their absence is the signal. -/
-def answered (info : List (String × String)) : Bool :=
+private def answered (info : List (String × String)) : Bool :=
   info.any (fun kv => (kv.1 == "pid" || kv.1 == "cmd") && kv.2 != "")
 
 /-- Where a listing row came from. **A sum type rather than a handful of
@@ -68,9 +69,8 @@ inductive Row where
   it lists checkpoint *names* without probing them — and that gap is visible
   here as an unused constructor rather than hidden in a `true`. -/
   | broken
-  /-- From a peer's porcelain over ssh. A peer forwards liveness but not
-  activity, so `⣀` on a remote row means "alive, activity unknown"; forwarding
-  the peer's own `status` field is the improvement that would fix it. -/
+  /-- From a peer's porcelain over ssh: whether the peer lists the session live,
+  and the peer's own `status` name, read by `Status.ofName`. -/
   | remote (live : Bool) (peerStatus : String)
   deriving Repr
 
@@ -153,7 +153,7 @@ def nameWidth (rows : List (List (String × String))) : Nat :=
 
 /-- Render already-separated row pieces. Styling surrounds only the badge and
 resets immediately, so names and details retain the default foreground. -/
-def renderPieces (withColor : Bool) (pieces : List RowPiece) : List UInt8 :=
+private def renderPieces (withColor : Bool) (pieces : List RowPiece) : List UInt8 :=
   pieces.flatMap fun piece =>
     let text := utf8s piece.text
     match piece.status with

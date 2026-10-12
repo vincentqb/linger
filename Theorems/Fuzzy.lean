@@ -68,10 +68,6 @@ private theorem best_optimal (left right : Option Alignment) (p q : Alignment �
       not_false_eq_true, implies_true]
   split <;> simp_all only [Int.not_le, true_or, or_true, true_and] <;> grind
 
-/-- Equal scores always retain the left candidate, the current-position match. -/
-private theorem best_left_tie (a b : Alignment) (h : a.score = b.score) :
-    best (some a) (some b) = some a := by simp [best, h]
-
 private theorem prepend_optimal (mark : Bool) (score : Int) (answer : Option Alignment)
     (p : Alignment → Prop) (h : Optimal p answer) :
     Optimal (fun b => ∃ a, p a ∧ b = ⟨a.score + score, mark :: a.marks⟩)

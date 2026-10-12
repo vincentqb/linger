@@ -144,7 +144,7 @@ theorem step_decrqss (v : Vt) (payloadRev : Bytes) :
 /-! ## No reply linger writes to the child can commit a line
 
 A terminal query's reply is written straight into the child's own input
-(`Session.onMsg .ptyOut` routes `replies` to `.writePty`), and the child's
+(`Session.step .ptyOut` routes `replies` to `.writePty`), and the child's
 output is untrusted — a `cat` of a hostile file, an ssh stream, a log tail. The
 one reply that echoed child bytes, XTGETTCAP, could carry a CR and a shell
 command; on a cooked-mode tty the CR commits a line, so the untrusted output ran

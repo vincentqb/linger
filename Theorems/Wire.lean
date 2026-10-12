@@ -35,10 +35,6 @@ theorem readU32_writeU32_append (n : UInt32) (rest : List UInt8) :
 theorem readU32_writeU32 (n : UInt32) : readU32 (writeU32 n) = n := by
   simpa only [List.append_nil] using readU32_writeU32_append n []
 
-@[simp]
-theorem drop4_writeU32_append (n : UInt32) (rest : List UInt8) :
-    (writeU32 n ++ rest).drop 4 = rest := by simp [writeU32]
-
 /-! ## Single-message round-trip (§Frame) -/
 
 /-- An unassigned tag decodes to `unknown`, carrying its bytes forward untouched:
@@ -46,11 +42,10 @@ the skip-don't-fail half of §Frame, naming the predicate that defines it. -/
 theorem decodeMsg_unknown_of_not_knownTag (t : UInt8) (p : List UInt8) (h : knownTag t = false) :
     decodeMsg t p = .unknown t p := by
   have ht : ¬t ≤ 16 := by simpa [knownTag] using h
-  have ne : ∀ i : UInt8, i ≤ 16 → t ≠ i := fun i hi hEq => ht (hEq ▸ hi)
-  simp [decodeMsg, ne 0 (by decide), ne 1 (by decide), ne 2 (by decide), ne 3 (by decide),
-    ne 4 (by decide), ne 5 (by decide), ne 6 (by decide), ne 7 (by decide), ne 8 (by decide),
-    ne 9 (by decide), ne 10 (by decide), ne 11 (by decide), ne 12 (by decide), ne 13 (by decide),
-    ne 14 (by decide), ne 15 (by decide), ne 16 (by decide)]
+  fun_cases decodeMsg t p <;>
+    first
+    | rfl
+    | (exfalso; apply ht; subst_vars; decide)
 
 /-- Re-interpreting a well-formed message's own tag and payload yields
 the message back. `WF` is load-bearing in the `unknown` case: an
@@ -106,13 +101,6 @@ theorem takeFrames_short (xs : List UInt8)
   rcases xs with _ | ⟨a, _ | ⟨b, _ | ⟨c, _ | ⟨d, _ | ⟨e, tail⟩⟩⟩⟩⟩
   case cons.cons.cons.cons.cons => exact (hno a b c d e tail rfl).elim
   all_goals simp [takeFrames]
-
-/-- §Frame: one well-formed message round-trips exactly. -/
-theorem decode_encode (m : Msg) (hm : m.WF) :
-    decode (encode m) = ({ buf := [], errored := false }, [m]) := by
-  have h := takeFrames_encode_prefix m hm []
-  simp only [takeFrames_nil, List.append_nil] at h
-  simp [decode, Decoder.feed, h]
 
 /-- §Frame, stream form: a sequence of well-formed messages decodes
 back to itself exactly, with nothing retained. -/
@@ -226,47 +214,9 @@ allocation. -/
 theorem decodeMsg_payload_le (t : UInt8) (p : List UInt8) (hp : p.length ≤ maxPayload) :
     (decodeMsg t p).payload.length ≤ maxPayload := by
   have h8 : (8 : Nat) ≤ maxPayload := by simp [maxPayload]
-  have h4 : (4 : Nat) ≤ maxPayload := by simp [maxPayload]
-  unfold decodeMsg
-  -- In each positive branch, rewriting `t` to the literal collapses the
-  -- whole if-chain, so only the current hypothesis is needed.
-  by_cases h0 : t = 0
-  · simp [h0, Msg.payload, hp]
-  by_cases h1 : t = 1
-  · simp [h1, Msg.payload, hp]
-  by_cases h2 : t = 2
-  · simp [h2, Msg.payload, h8]
-  by_cases h3 : t = 3
-  · simp [h3, Msg.payload, h8]
-  by_cases h4' : t = 4
-  · simp [h4', Msg.payload]
-  by_cases h5 : t = 5
-  · simp [h5, Msg.payload]
-  by_cases h6 : t = 6
-  · simp [h6, Msg.payload]
-  by_cases h7 : t = 7
-  · simp [h7, Msg.payload, hp]
-  by_cases h8' : t = 8
-  · simp [h8', Msg.payload]
-  by_cases h9 : t = 9
-  · simp [h9, Msg.payload, h4]
-  by_cases h10 : t = 10
-  · simp [h10, Msg.payload]
-  by_cases h11 : t = 11
-  · simp [h11, Msg.payload, hp]
-  by_cases h12 : t = 12
-  · simp [h12, Msg.payload, hp]
-  by_cases h13 : t = 13
-  · simp [h13, Msg.payload]
-  by_cases h14 : t = 14
-  · simp [h14, Msg.payload]
-  by_cases h15 : t = 15
-  · simp [h15, Msg.payload, hp]
-  by_cases h16 : t = 16
-  · simp [h16, Msg.payload]
-  -- fall-through: every test is false, the result is `.unknown t p`
-  simp [h0, h1, h2, h3, h4', h5, h6, h7, h8', h9, h10, h11, h12, h13, h14, h15, h16, Msg.payload,
-    hp]
+  fun_cases decodeMsg t p <;>
+    simp only [Msg.payload, List.length_append, writeU32_length, List.length_nil] <;>
+    omega
 
 theorem takeFrames_msgs_payload_le (bytes : List UInt8) :
     ∀ m ∈ (takeFrames bytes).2.2, m.payload.length ≤ maxPayload := by
@@ -289,8 +239,8 @@ theorem takeFrames_msgs_payload_le (bytes : List UInt8) :
 
 The operational statement a reader actually wants, in one theorem:
 however the transport fragments a well-formed encoded stream, the
-receiver decodes exactly that stream. `decode_encode` and
-`decode_encode_stream` are its one-message / one-chunk special cases.
+receiver decodes exactly that stream. `decode_encode_stream` is its one-chunk
+special case.
 -/
 
 /-- A `takeFrames` leftover is quiescent: re-parsing it yields itself —
