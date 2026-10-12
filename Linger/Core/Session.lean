@@ -64,16 +64,18 @@ structure Client where
   was answered. One request per read: clients wait for the reply before the
   next request, and later requests decoded from the same read are refused. -/
   answered : Bool := false
-  /-- Partial frames from this connection. `step` never stores an errored decoder; it closes
-  the connection instead (`Bounded.decOk`, kept by `step_bounded`). -/
+  /-- Partial frames from this connection. No `State` holds an errored decoder: `step` closes
+  the connection instead (`Bounded.decOk`, kept by `step_bounded`), and the helpers that store
+  a client are private. -/
   decoder : Wire.Decoder := {}
   deriving Repr, Inhabited
 
 /-- The session's whole state. Sealed since lean-modules Step 5: the
-bookkeeping fields §Bound and §Unread protect are `private`, which makes the
-anonymous constructor private too — outside this module and its friends
-(`Theorems/Session.lean`, `Tests/Session.lean`, via `import all`) a `State`
-can only be `State.boot`ed and `step`ped, never forged or field-poked, so
+bookkeeping fields §Bound and §Unread protect, and every helper that rewrites
+them, are `private`; the fields make the anonymous constructor private too —
+outside this module and its friends (`Theorems/Session.lean`,
+`Tests/Session.lean`, via `import all`) a `State` can only be `State.boot`ed
+and `step`ped, never forged or field-poked, so
 `run_wf`'s well-formedness is a fact about every state the daemon can possess
 rather than about the states it politely constructs. `vt`, `labels` and
 `metaKv` stay public-read: they are exactly what the checkpoint save hook
@@ -186,13 +188,14 @@ anything.
 One decode shared by both arms, so they cannot drift about what a key *is*: a
 `.labelSet` that decoded differently from `.labelUnset` would leave a label no
 `unset` could reach. -/
-def labelText (bs : List UInt8) : String := String.fromUTF8? (ByteArray.mk bs.toArray) |>.getD ""
+private def labelText (bs : List UInt8) : String :=
+  String.fromUTF8? (ByteArray.mk bs.toArray) |>.getD ""
 
 /-! ## Helpers -/
 
 /-- Consecutive pieces of `n` elements, the last possibly shorter. A list of at most `n`
 elements is one piece, as is any list when `n = 0`, so `[]` gives `[[]]`. -/
-def chunksOf {α : Type} (n : Nat) (l : List α) : List (List α) :=
+private def chunksOf {α : Type} (n : Nat) (l : List α) : List (List α) :=
   if _h : l.length ≤ n ∨ n = 0 then [l]
   else
     let rest := chunksOf n (l.drop n)
@@ -204,16 +207,16 @@ decreasing_by simp only [List.length_drop]; omega
 def State.client? (s : State) (id : Nat) : Option Client := s.clients.find? (·.id == id)
 
 /-- Replace the record that has `c`'s identifier with `c`; a record is never added. -/
-def State.setClient (s : State) (c : Client) : State :=
+private def State.setClient (s : State) (c : Client) : State :=
   { s with clients := s.clients.map (fun c' => if c'.id == c.id then c else c') }
 
 /-- Remove the record of the connection with this identifier. -/
-def State.dropClient (s : State) (id : Nat) : State :=
+private def State.dropClient (s : State) (id : Nat) : State :=
   { s with clients := s.clients.filter (·.id != id) }
 
 /-- One disconnect transition for EOF and malformed traffic. Decide whether
 the last attacher needs a checkpoint before removing its record. -/
-def closeClient (s : State) (id : Nat) : State × List Effect :=
+private def closeClient (s : State) (id : Nat) : State × List Effect :=
   let hadAttached := s.clients.any (fun c => c.id == id && c.attached)
   let s' := s.dropClient id
   if s.dirty && hadAttached && s'.clients.all (fun c => !c.attached) then
@@ -224,11 +227,11 @@ def closeClient (s : State) (id : Nat) : State × List Effect :=
 `Status.wantsYou` is derived from — a property of the **session**, since
 "last looked" is a session event rather than a viewer attribute, so a one-off
 connection creates no state. -/
-def unseen (s : State) : Bool := s.lookSeq < s.outSeq
+private def unseen (s : State) : Bool := s.lookSeq < s.outSeq
 
 /-- How much arrived unseen — free from the counter, where a boolean would
 have thrown it away. -/
-def behind (s : State) : Nat := s.outSeq - s.lookSeq
+private def behind (s : State) : Nat := s.outSeq - s.lookSeq
 
 /-- The fields one listing record carries, as a named stage. Split out from
 `infoText` because the framing below is only unambiguous if no field contains a
@@ -275,7 +278,7 @@ Step 0 ledger item 2, §Row/§Status integrity). That shape was also what made t
 output unprovable — a `String` literal does not reduce in the kernel, so no theorem
 could see its bytes, which is exactly the argument in `Linger/Core/Render.lean`'s
 header. Building `List UInt8` directly fixes both at once. -/
-def infoText (s : State) : List UInt8 :=
+private def infoText (s : State) : List UInt8 :=
   (infoFields s).flatMap
     (fun (k, v) =>
       Render.utf8s (k.toList.map Render.textChar) ++ [0x09] ++
@@ -285,7 +288,7 @@ def infoText (s : State) : List UInt8 :=
 /-- Resize the pty only on behalf of the size owner: the most recently
 attached client with a real terminal (a read-only observer or an older
 mirror must not fight the active user's size). -/
-def sizeOwner (s : State) : Option Client :=
+private def sizeOwner (s : State) : Option Client :=
   (s.clients.filter (fun c => c.attached && c.sizer)).foldl
     (fun best c =>
       match best with
@@ -298,7 +301,7 @@ An exact or clamped same size preserves the whole emulator: resetting its
 region and tabs without a winsize change would leave the child unaware.
 A genuine change marks the screen dirty and sends the pty the emulator's
 effective dimensions, never an unclamped wire value. -/
-def resize (s : State) (cols rows : UInt32) : State × List Effect :=
+private def resize (s : State) (cols rows : UInt32) : State × List Effect :=
   if
       (s.vt.colCount == cols.toNat && s.vt.rowCount == rows.toNat) ||
         (s.vt.colCount == Vt.clampDim cols.toNat && s.vt.rowCount == Vt.clampDim rows.toNat) then
@@ -310,7 +313,7 @@ def resize (s : State) (cols rows : UInt32) : State × List Effect :=
       [.resizePty (UInt32.ofNat vt.colCount) (UInt32.ofNat vt.rowCount)])
 
 /-- Only the newest attached sizer can apply a client resize. -/
-def resizeOwned (s : State) (c : Client) : State × List Effect :=
+private def resizeOwned (s : State) (c : Client) : State × List Effect :=
   if c.sizer && (sizeOwner s).any (·.id == c.id) then resize s c.cols c.rows else (s, [])
 
 /-- The control-resize decision (`linger resize`, from a NON-attached
@@ -323,7 +326,7 @@ same-size branch leaves the emulator alone for the attach guard's reason:
 unchanged winsize no SIGWINCH nudges the child to re-establish them
 (restore-conformance Step 0 ledger 1). Zero is refused — 0×0 is the observer
 marker on attach, and a zero dimension is never a size. -/
-def controlResize (s : State) (c : Client) (cols rows : UInt32) : State × List Effect :=
+private def controlResize (s : State) (c : Client) (cols rows : UInt32) : State × List Effect :=
   if (sizeOwner s).isSome then
     (s, [.send c.id (.err "an attached client owns the size".toUTF8.toList)])
   else
@@ -333,14 +336,14 @@ def controlResize (s : State) (c : Client) (cols rows : UInt32) : State × List 
       (r.1, r.2 ++ [.send c.id .done])
 
 /-- Send a byte payload as ≤ 64 KiB `output` frames (`Msg.WF`). -/
-def outputMsgs (id : Nat) (bytes : List UInt8) : List Effect :=
+private def outputMsgs (id : Nat) (bytes : List UInt8) : List Effect :=
   (chunksOf outputChunk bytes).map (fun c => .send id (.output c))
 
 /-- Preflight the whole info answer before emitting any bytes. Accepted answers
 are a stream of bounded byte chunks followed by `done`; records and UTF-8 may
 cross frames, so consumers decode text only after joining the payloads.
 Refusals carry no prefix or `done`, and the diagnostic is bounded too. -/
-def infoMsgs (id : Nat) (bytes : List UInt8) : List Effect :=
+private def infoMsgs (id : Nat) (bytes : List UInt8) : List Effect :=
   if bytes.length > infoReplyCap then
     [.send id (.err ("info reply exceeds the byte limit".toUTF8.toList.take outputChunk))]
   else (chunksOf outputChunk bytes).map (fun c => .send id (.infoReply c)) ++ [.send id .done]
@@ -353,14 +356,14 @@ bytes are empty by design — would push a zero-length `output` frame to every
 attached client on every terminal query. Unreachable before the mediator
 existed, since the runtime raises `.ptyOut` only for a non-empty read.
 Pinned by `broadcast_empty` and by a Session fixture. -/
-def broadcast (s : State) (bytes : List UInt8) : List Effect :=
+private def broadcast (s : State) (bytes : List UInt8) : List Effect :=
   if bytes.isEmpty then []
   else s.clients.filter (·.attached) |>.flatMap (fun c => outputMsgs c.id bytes)
 
 /-! ## Message handling (client → daemon) -/
 
 /-- Handle one client message; one query per read is answered (`Client.answered`). -/
-def onMsg (s : State) (c : Client) (m : Msg) : State × List Effect :=
+private def onMsg (s : State) (c : Client) (m : Msg) : State × List Effect :=
   match m with
   | .attach cols rows =>
     if c.attached then (s, [.send c.id (.err "already attached".toUTF8.toList)])
@@ -457,7 +460,8 @@ The client record is re-read each round (attach mutates it); a message
 after a close for this sender or an exit stops affecting state, even before
 the runtime executes those effects. Named so the preservation and stopping
 theorems can target it. -/
-def feedMsgs (id : Nat) (msgs : List Msg) (acc : State × List Effect) : State × List Effect :=
+private def feedMsgs (id : Nat) (msgs : List Msg) (acc : State × List Effect) :
+    State × List Effect :=
   msgs.foldl
     (fun (acc : State × List Effect) m =>
       if acc.2.contains (.close id) || acc.2.contains .exit then acc
@@ -473,7 +477,8 @@ def feedMsgs (id : Nat) (msgs : List Msg) (acc : State × List Effect) : State �
 effects for a stop once and then only each message's own, and conses each
 message's effects onto a reversed list, where `feedMsgs` rescans and copies every
 effect so far for each message. -/
-def feedMsgsTR (id : Nat) (msgs : List Msg) (acc : State × List Effect) : State × List Effect :=
+private def feedMsgsTR (id : Nat) (msgs : List Msg) (acc : State × List Effect) :
+    State × List Effect :=
   let r :=
     msgs.foldl
       (fun (r : State × List Effect × Bool) m =>
@@ -487,10 +492,10 @@ def feedMsgsTR (id : Nat) (msgs : List Msg) (acc : State × List Effect) : State
       (acc.1, [], acc.2.contains (.close id) || acc.2.contains .exit)
   (r.1, acc.2 ++ r.2.1.reverse)
 
-/-- `feedMsgs` and `feedMsgsTR` are the same function, so compiled code, `step`
-included, runs the latter. -/
-@[csimp]
-theorem feedMsgs_eq_feedMsgsTR : @feedMsgs = @feedMsgsTR := by
+/-- `feedMsgs` and `feedMsgsTR` are the same function, so `step`, their only compiled
+caller, runs the latter. Local, because a `@[csimp]` theorem must otherwise be public. -/
+@[local csimp]
+private theorem feedMsgs_eq_feedMsgsTR : @feedMsgs = @feedMsgsTR := by
   funext id msgs acc
   simp only [feedMsgs, feedMsgsTR]
   -- Related accumulators hold the same state, the incoming effects followed by
@@ -545,7 +550,7 @@ def step (s : State) (ev : Event) : State × List Effect :=
     let s :=
       { s with
         exited := some status, scan := flushed.2 }
-    let flush := if flushed.1.isEmpty then [] else broadcast s flushed.1
+    let flush := broadcast s flushed.1
     let notify :=
       s.clients.filter (fun c => c.attached || c.waiting) |>.map
         (fun c => Effect.send c.id (.exited status))

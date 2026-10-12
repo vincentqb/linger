@@ -7,6 +7,7 @@ import Tests.TerminalTitle
 import Tests.TerminalApi
 import Tests.Render
 import Tests.Session
+import Tests.SessionApi
 import Tests.Delivery
 import Tests.Remote
 import Tests.Listing

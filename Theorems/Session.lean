@@ -21,8 +21,8 @@ what lets these statements name `State`'s sealed bookkeeping fields —
 `clients`, the `outSeq`/`lookSeq` pair, `scan`, `dirty` — which every plain
 importer, the daemon included, can no longer read, poke or forge. No blanket
 `public section`, for the Buf-friend reasons: statements naming private fields
-cannot be public, nothing imports these theorems as lemmas (the root builds
-them, which is their job), and module-private is what keeps the `:= rfl`
+cannot be public, `Theorems/Driver.lean` and `Theorems/Contracts.lean` import
+them with `import all`, and module-private is what keeps the `:= rfl`
 proofs elaborating in the private scope.
 
 THEOREMS.md rows:
@@ -30,11 +30,12 @@ THEOREMS.md rows:
   advances (output is never gated on attachment); a client detaching
   (or `detach-all`) cannot change the screen; attach touches only the
   dimensions, never the scrollback.
-* §Bound — the session layer adds three stores on top of Vt's: the
-  client list (≤ `maxClients`), the label table (≤ `maxLabels`), and a
-  wire decoder per client (≤ Wire's cap, never errored — a malformed
-  peer is closed, not buffered). `step` preserves all three against
-  any event stream.
+* §Bound — the session layer adds four bounded components on top of
+  Vt's: the client list (≤ `maxClients`), the label table
+  (≤ `maxLabels`), a wire decoder per client (≤ Wire's cap, never
+  errored — a malformed peer is closed, not buffered) and the terminal
+  scanner (`Bounded.scanOk`). `step` preserves all four against any
+  event stream.
 * §Frame, machine half — an `unknown` wire message produces no state
   change and no effects.
 -/
@@ -81,7 +82,7 @@ theorem infoMsgs_no_resize (id : Nat) (bs : List UInt8) (cols rows : UInt32) :
 (`Tests/Session.lean`), the forged-record channel (`infoText_records`) and the
 boot cap. Its two *removal* siblings were pinned nowhere at all: no theorem, no
 fixture, no pty assertion, covered only by the generic cap and by
-`Wire.decode_encode`'s ∀-over-`Msg` codec claim. Both arms are unconditional, so
+`Wire.decode_encode_chunked`'s ∀-over-`Msg` codec claim. Both arms are unconditional, so
 both take the exact-shape treatment `onMsg_screen` gets. -/
 
 /-- **`linger unset <key>` removes exactly the named key.** The exact shape: the
@@ -244,7 +245,7 @@ theorem step_childExited_effects (s : State) (status : UInt32) :
       let s' :=
         { s with
           exited := some status, scan := flushed.2 }
-      let flush := if flushed.1.isEmpty then [] else broadcast s' flushed.1
+      let flush := broadcast s' flushed.1
       let notify :=
         s'.clients.filter (fun c => c.attached || c.waiting) |>.map
           (fun c => Effect.send c.id (.exited status))

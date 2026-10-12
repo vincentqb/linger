@@ -33,7 +33,7 @@ def run (evs : List Event) (s : State := s0) : State × List Effect := Linger.Co
 example :
     (let (s, effs) := run [.connected 1, .bytes 1 (encode (.attach 100 30))]
      (s.client? 1).any (·.attached)
-       && effs.any (fun e => match e with | .resizePty 100 30 => true | _ => false)
+       && effs.contains (.resizePty 100 30)
        && effs.any (fun e => match e with | .replay 1 _ => true | _ => false)
        && s.vt.cols == 100 && s.vt.rows == 30) = true := by native_decide
 
@@ -41,11 +41,7 @@ example :
 example :
     (let (_, effs) :=
         run [.connected 1, .bytes 1 (encode (.attach 80 24)), .bytes 1 (encode (.input [104, 105]))]
-     effs.any
-        (fun e =>
-          match e with
-          | .writePty [104, 105] => true
-          | _ => false)) =
+     effs.contains (.writePty [104, 105])) =
       true := by
   native_decide
 
@@ -65,6 +61,13 @@ def ptyWrites (effs : List Effect) : List (List UInt8) :=
     (fun e =>
       match e with
       | .writePty bs => some bs
+      | _ => none)
+
+def ptyResizes (effs : List Effect) : List (UInt32 × UInt32) :=
+  effs.filterMap
+    (fun e =>
+      match e with
+      | .resizePty c r => some (c, r)
       | _ => none)
 
 /-- DA1 is owned once with zero, one, or two clients: the reply stream is
@@ -413,11 +416,7 @@ example :
       -- the reply is exactly the screen: five lines, the first being line3…
       sent == Render.screenText s1.vt && sent.count 0x0A == 5 &&
         ((String.fromUTF8? (ByteArray.mk sent.toArray)).getD "").startsWith "line3" &&
-        effs.any
-          (fun e =>
-            match e with
-            | .send 9 .done => true
-            | _ => false)
+        effs.contains (.send 9 .done)
         -- …while the ring really holds more (non-vacuity: history shows 8)
         && (Render.history s2.vt).count 0x0A == 8
         -- a capture is a look: unread before, read after, nothing behind
@@ -434,7 +433,7 @@ example :
 example :
     (let (_, effs) := run [.connected 1, .bytes 1 (encode .wait),
                            .childExited 0]
-     effs.any (fun e => match e with | .send 1 (.exited 0) => true | _ => false)
+     effs.contains (.send 1 (.exited 0))
        && effs.contains .dropCheckpoint
        && effs.contains .exit) = true := by native_decide
 
@@ -450,7 +449,7 @@ example :
     (let evs := (List.range 17).map Event.connected
      let (s, effs) := run evs
      s.clients.length == 16
-       && effs.any (fun e => match e with | .close 16 => true | _ => false)
+       && effs.contains (.close 16)
        && effs.any (fun e => match e with | .send 16 (.err _) => true | _ => false))
       = true := by native_decide
 
@@ -458,12 +457,7 @@ example :
 not buffered (§Bound at the session layer). -/
 example :
     (let (s, effs) := run [.connected 1, .bytes 1 [0, 1, 0, 4, 0]]
-     s.clients.isEmpty &&
-        effs.any
-          (fun e =>
-            match e with
-            | .close 1 => true
-            | _ => false)) =
+     s.clients.isEmpty && effs.contains (.close 1)) =
       true := by
   native_decide
 
@@ -510,7 +504,7 @@ example :
 example :
     (let (s1, _) := run [.childExited 3]
      let (_, effs) := run [.connected 9, .bytes 9 (encode (.attach 80 24))] s1
-     effs.any (fun e => match e with | .send 9 (.exited 3) => true | _ => false))
+     effs.contains (.send 9 (.exited 3)))
       = true := by native_decide
 
 /-! ### Observer and size owner
@@ -540,13 +534,13 @@ example :
 /-- The newest full attacher owns the size; an older client's resize
 is recorded but does not touch the pty. -/
 example :
-    (let (_, effs) := run [
-        .connected 1, .bytes 1 (encode (.attach 80 24)),
-        .connected 2, .bytes 2 (encode (.attach 100 30)),
-        .bytes 1 (encode (.resize 120 40))]
-     let resizes := effs.filterMap (fun e => match e with
-       | .resizePty c r => some (c, r) | _ => none)
-     resizes == [(80, 24), (100, 30)]) = true := by native_decide
+    (let (_, effs) :=
+        run
+          [.connected 1, .bytes 1 (encode (.attach 80 24)), .connected 2,
+            .bytes 2 (encode (.attach 100 30)), .bytes 1 (encode (.resize 120 40))]
+     ptyResizes effs == [(80, 24), (100, 30)]) =
+      true := by
+  native_decide
 
 /-- A same-size reattach preserves the scroll region and tab ruler the child set:
 `Vt.resize` resets `top`/`bot`/`tabs`, so an unconditional resize on attach would
@@ -571,13 +565,13 @@ example :
 
 /-- An observer never owns the size, even as the newest attacher. -/
 example :
-    (let (_, effs) := run [
-        .connected 1, .bytes 1 (encode (.attach 80 24)),
-        .connected 2, .bytes 2 (encode (.attach 0 0)),
-        .bytes 2 (encode (.resize 5 5))]
-     let resizes := effs.filterMap (fun e => match e with
-       | .resizePty c r => some (c, r) | _ => none)
-     resizes == [(80, 24)]) = true := by native_decide
+    (let (_, effs) :=
+        run
+          [.connected 1, .bytes 1 (encode (.attach 80 24)), .connected 2,
+            .bytes 2 (encode (.attach 0 0)), .bytes 2 (encode (.resize 5 5))]
+     ptyResizes effs == [(80, 24)]) =
+      true := by
+  native_decide
 
 /-! ### control resize (specs/archive/agent-cli.md Step 4)
 
@@ -633,11 +627,8 @@ example :
 and the emulator follows. -/
 example :
     (let (s, effs) := run [.connected 1, .bytes 1 (encode (.resize 100 30))]
-     let resizes := effs.filterMap (fun e => match e with
-       | .resizePty c r => some (c, r) | _ => none)
-     resizes == [(100, 30)] && s.vt.cols == 100 && s.vt.rows == 30
-       && effs.any (fun e => match e with
-            | .send 1 .done => true | _ => false)) = true := by native_decide
+     ptyResizes effs == [(100, 30)] && s.vt.cols == 100 && s.vt.rows == 30
+       && effs.contains (.send 1 .done)) = true := by native_decide
 
 /-- While a sizer is attached, the control resize is refused with an `.err`,
 no `resizePty` is emitted beyond the attach's own, and the emulator keeps the
@@ -646,22 +637,20 @@ example :
     (let (s, effs) := run [
         .connected 1, .bytes 1 (encode (.attach 80 24)),
         .connected 2, .bytes 2 (encode (.resize 100 30))]
-     let resizes := effs.filterMap (fun e => match e with
-       | .resizePty c r => some (c, r) | _ => none)
-     resizes == [(80, 24)] && s.vt.cols == 80 && s.vt.rows == 24
+     ptyResizes effs == [(80, 24)] && s.vt.cols == 80 && s.vt.rows == 24
        && effs.any (fun e => match e with
             | .send 2 (.err _) => true | _ => false)) = true := by native_decide
 
 /-- …and once the owner leaves, the same request applies: attachment is the
 fact that decides, not history. -/
 example :
-    (let (s, effs) := run [
-        .connected 1, .bytes 1 (encode (.attach 80 24)),
-        .closed 1,
-        .connected 2, .bytes 2 (encode (.resize 100 30))]
-     let resizes := effs.filterMap (fun e => match e with
-       | .resizePty c r => some (c, r) | _ => none)
-     resizes == [(80, 24), (100, 30)] && s.vt.cols == 100) = true := by native_decide
+    (let (s, effs) :=
+        run
+          [.connected 1, .bytes 1 (encode (.attach 80 24)), .closed 1, .connected 2,
+            .bytes 2 (encode (.resize 100 30))]
+     ptyResizes effs == [(80, 24), (100, 30)] && s.vt.cols == 100) =
+      true := by
+  native_decide
 
 /-- A same-size control resize is a `.done` no-op that preserves what
 `Vt.resize` would wipe: the child's scroll region and tab ruler (the attach
@@ -673,8 +662,7 @@ example :
      s.vt.top == 1 && s.vt.bot == 3 && s.vt.tabs == Array.replicate 20 false
        && !effs.any (fun e => match e with
             | .resizePty _ _ => true | _ => false)
-       && effs.any (fun e => match e with
-            | .send 5 .done => true | _ => false)) = true := by native_decide
+       && effs.contains (.send 5 .done)) = true := by native_decide
 
 /-- A zero dimension is never a size (0×0 is the observer marker on attach). -/
 example :
