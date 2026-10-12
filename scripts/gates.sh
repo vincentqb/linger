@@ -207,6 +207,15 @@ module_imports() {
       $3 ~ /^[[:space:]]*public[[:space:]]+section([[:space:]]|$)/ { body[$1] = 1; next }
       !body[$1] { print }'
 }
+# import_mod(line) is the module an import line names: the line less its modifiers,
+# `all` and a trailing `--` comment, which Lean accepts after the name. Each gate that
+# maps import lines to modules prepends IMPORT_AWK to its awk program, so all share one
+# parse, as all share code_grep.
+IMPORT_AWK='
+function import_mod(line) {
+  sub(/^[[:space:]]*((public|private|meta)[[:space:]]+)*import[[:space:]]+(all[[:space:]]+)?/, "", line)
+  sub(/[[:space:]]+--.*/, "", line); sub(/[[:space:]]+$/, "", line)
+  return line }'
 import_closure() {
   # Read through `code_grep`: a backticked quotation cannot satisfy the gate.
   # Include leading whitespace, because an indented import still compiles.
@@ -258,22 +267,23 @@ library_roots LingerFuzzy '#[`Linger.Tools.Fuzzy]' 'leanOptions := implementatio
   || fail "the Linger library lost implementationOptions: $(library_decl Linger)"
 [ "$(git grep -c 'def implementationOptions : Array LeanOption := #\[⟨`linter.missingDocs, true⟩\]$' -- lakefile.lean)" = lakefile.lean:1 ] \
   || fail "implementationOptions no longer enables linter.missingDocs"
-# Proofs and fixtures build every module under their directory, so a module that no
-# root imports is still checked.
+# Proofs and fixtures build every module under their directory, so every module is
+# checked without a root module importing it. The glob omits the root itself, so a
+# Theorems.lean or Tests.lean would never be built.
 for lib in Theorems Tests; do
   lr_got="$(library_decl "$lib")"
-  [ "$lr_got" = "lean_lib $lib where globs := #[.andSubmodules \`$lib] " ] \
-    || fail "$lib no longer builds every module under $lib/: $lr_got"
+  [ "$lr_got" = "lean_lib $lib where globs := #[.submodules \`$lib] " ] \
+    || fail "the $lib library declaration changed from globs := #[.submodules \`$lib]: $lr_got"
+  [ -z "$(git ls-files -- "$lib.lean")" ] \
+    || fail "$lib.lean is tracked, but the $lib library builds only the modules under $lib/"
 done
 
 # Check every member of the proof family, not only the root headers: an
 # intermediate VT or renderer lemma must not pull session policy into the target.
 module_imports Theorems/Vt.lean 'Theorems/Vt/*' Theorems/Terminal.lean Theorems/TerminalTitle.lean \
   Theorems/Replay.lean Theorems/Render.lean 'Theorems/Render/*' \
-| awk -F: '
-  { mod = $3
-    sub(/^[[:space:]]*((public|private|meta)[[:space:]]+)*import[[:space:]]+(all[[:space:]]+)?/, "", mod)
-    sub(/[[:space:]]+--.*/, "", mod); sub(/[[:space:]]+$/, "", mod)
+| awk -F: "$IMPORT_AWK"'
+  { mod = import_mod($3)
     if (mod !~ /^(Linger[.]Core[.](Vt|Render|Terminal|Replay)|Theorems[.]((Vt|Render)([.][[:alnum:]_]+)*|Terminal|TerminalTitle|Replay)|Init[.]Data[.]String[.]Legacy)$/) {
       print "  " $0; bad = 1
     }
@@ -308,10 +318,8 @@ import_closure Linger.lean "$(printf 'public import Linger.%s;' Core.Buf Posix C
   Core.Remote Core.Listing Core.Status Core.Title Core.Env Runtime.Paths Runtime.Command \
   Runtime.Daemon Runtime.Client Runtime.Cli Runtime.Resume)"
 module_imports 'Linger/Core/*' 'Linger/Runtime/*' Linger/Posix.lean Linger.lean \
-| awk -F: '
-  { mod = $3
-    sub(/^[[:space:]]*((public|private|meta)[[:space:]]+)*import[[:space:]]+(all[[:space:]]+)?/, "", mod)
-    sub(/[[:space:]]+--.*/, "", mod); sub(/[[:space:]]+$/, "", mod)
+| awk -F: "$IMPORT_AWK"'
+  { mod = import_mod($3)
     if (mod !~ /^(Linger[.]((Core|Runtime)[.][[:alnum:]_.]+|Posix)|Std[.]Async[.](System|Signal))$/) {
       print "  " $0; bad = 1
     }
@@ -623,15 +631,14 @@ awk '
 # whatever M has all-access to, so **`import all` TRANSITS** and
 # `git grep -l 'import all Linger.Core.Vt'` is NOT an enumeration of the friend set.
 # Measured in the real position, not a scratch file: one added
-# `import all Linger.Core.Render` in `Linger/Runtime/Client.lean` (which already
-# `public import`s Render) plus a five-field `{ cols := 0, rows := 0, grid := #[], … }`
-# gives `./lake build linger` exit 0 AND `sh scripts/gates.sh` exit 0. Two hops is the
-# same: `import all Theorems.Listing` from a file holding neither
-# `import all Linger.Core.Vt` nor `import all Linger.Core.Render` compiles the identical
-# forge. That is the Step 4 situation exactly — the compiler consents, so a grep is the
-# only possible oracle — except that until now no grep existed, which made joining the
-# friend set cost one line that nothing objected to, and made `private` on 20 fields
-# worth one line of anyone's diff.
+# `import all Linger.Core.Render` in `Linger/Runtime/Client.lean` plus a five-field
+# `{ cols := 0, rows := 0, grid := #[], … }` gives `./lake build linger` exit 0 AND
+# `sh scripts/gates.sh` exit 0. Two hops is the same: `import all Theorems.Listing` from
+# a file holding neither `import all Linger.Core.Vt` nor `import all Linger.Core.Render`
+# compiles the identical forge. That is the Step 4 situation exactly — the compiler
+# consents, so a grep is the only possible oracle — except that until now no grep
+# existed, which made joining the friend set cost one line that nothing objected to, and
+# made `private` on 20 fields worth one line of anyone's diff.
 #
 # CLOSURE, not edges. Transit follows `import all` edges ONLY (measured:
 # `import all Linger.Core.Session` — a plain `public import`er of `Vt` — does not
@@ -673,11 +680,10 @@ VT_ALL_RE='^[[:space:]]*(meta[[:space:]]+)*import[[:space:]]+all[[:space:]]+'
 VT_FRIEND_EXACT='Linger/Core/Vt.lean Linger/Core/Render.lean Linger/Core/Terminal.lean Linger/Core/Checkpoint.lean Linger/Core/Replay.lean'
 VT_FRIEND_DIRS='Theorems/ Tests/'
 code_grep "$VT_ALL_RE" '*.lean' \
-| awk -F: -v seed='Linger/Core/Vt.lean' -v exact="$VT_FRIEND_EXACT" -v dirs="$VT_FRIEND_DIRS" '
+| awk -F: -v seed='Linger/Core/Vt.lean' -v exact="$VT_FRIEND_EXACT" -v dirs="$VT_FRIEND_DIRS" \
+    "$IMPORT_AWK"'
   BEGIN { ne = split(exact, E, " "); nd = split(dirs, D, " ") }
-  { mod = $3
-    sub(/^[ \t]*(meta[ \t]+)*import[ \t]+all[ \t]+/, "", mod); sub(/[ \t\r]+$/, "", mod)
-    tgt = mod; gsub(/[.]/, "/", tgt)
+  { tgt = import_mod($3); gsub(/[.]/, "/", tgt)
     n++; src[n] = $1; ln[n] = $2; raw[n] = $3; dst[n] = tgt ".lean" }
   END {
     # Breadth-first BACKWARDS from the seal, so via[] is a shortest witness chain and
@@ -697,7 +703,7 @@ code_grep "$VT_ALL_RE" '*.lean' \
       for (j = 1; j <= nd; j++) if (substr(f, 1, length(D[j])) == D[j]) ok = 1
       if (ok) continue
       bad++
-      printf "  %s has all-access to Linger.Core.Vt -- its 20 private fields, its\n", f
+      printf "  %s has all-access to Linger.Core.Vt -- its private fields, its\n", f
       printf "  private constructor and Vt.ofDecoded -- by this chain of import all:\n"
       for (cur = f; cur != seed; cur = dst[via[cur]])
         printf "    %s:%s:%s\n", src[via[cur]], ln[via[cur]], raw[via[cur]] }
@@ -1154,8 +1160,8 @@ done
 # required regression is not a pass, and an executable Python snippet is still a
 # second-language dependency even when embedded in a Lean string rather than tracked
 # as a .py file. These are syntactic runtime ties, so the source gate is the oracle.
-! code_grep '(^|[^[:alnum:]_])(pkill|killall)[[:space:]].*linger' 'scripts/e2e.sh' \
-  || fail "scripts/e2e.sh kills by process name — suites may terminate only processes they created"
+! code_grep '(^|[^[:alnum:]_])(pkill|killall)([^[:alnum:]_]|$)' 'scripts/e2e.sh' 'E2E/*' LingerTest.lean \
+  || fail "a test orchestrator kills by process name — suites may terminate only processes they created"
 # A process-GROUP selector is the same hazard wearing a pid. POSIX reads `kill 0` as
 # "every process in my group" and `kill -N` as group N, so one of these in a test
 # script signals the harness, the agent running it, and whatever shell shares that
@@ -1173,6 +1179,44 @@ done
   || fail "an E2E suite executes embedded Python — use the e2e binary as the child probe"
 ! code_grep 'IO[.]println[[:space:]]+"PASS[[:space:]].*skip' 'E2E/*' \
   || fail "an E2E suite counts a skipped required check as PASS"
+! code_grep 'expect[[:space:]]+[(]?true[)]?([[:space:]]|$)' 'E2E/*' \
+  || fail "an E2E suite asserts a constant true; a skipped check is not a PASS"
+# `lean_lib E2E` has no glob (E2E/Coverage.lean's census needs the built program), so
+# `./lake build e2e` is the only build of E2E modules, and it builds only the import
+# closure of E2ETest.lean, the e2e root: a module outside it is never built, and none
+# of its suites can run. Walk that closure forwards over the import lines; each module
+# but Coverage must be in it.
+e2e_unreached="$(module_imports E2ETest.lean 'E2E/*' \
+| awk -F: -v files="$(git ls-files 'E2E/*.lean' | tr '\n' ' ')" "$IMPORT_AWK"'
+  { mod = import_mod($3); gsub(/[.]/, "/", mod)
+    n++; src[n] = $1; dst[n] = mod ".lean" }
+  END {
+    q[1] = "E2ETest.lean"; reached[q[1]] = 1; qn = 1
+    for (qi = 1; qi <= qn; qi++)
+      for (i = 1; i <= n; i++)
+        if (src[i] == q[qi] && !(dst[i] in reached)) {
+          reached[dst[i]] = 1; qn++; q[qn] = dst[i] }
+    k = split(files, F, " ")
+    for (j = 1; j <= k; j++)
+      if (F[j] != "E2E/Coverage.lean" && !(F[j] in reached)) printf "%s ", F[j] }')"
+[ -z "$e2e_unreached" ] \
+  || fail "outside the import closure of E2ETest.lean, so './lake build e2e' never elaborates them: ${e2e_unreached% }"
+# Every registered suite but the opt-in remote-live runs in the verifier: E2ETest.suites
+# names exactly the suites that scripts/e2e.sh passes to `e2e --suites`, read from those
+# commands with their continuation lines joined.
+registered="$(awk '/^def suites :/ { on = 1 } on { sub(/--.*/, ""); print } on && /[]][[:space:]]*$/ { exit }' E2ETest.lean \
+  | grep -oE '[(]"[^"]+"' | tr -d '("' | grep -vx 'remote-live' | sort)"
+verified="$(awk '
+  { cmd = cmd $0 }
+  /\\$/ { sub(/\\$/, " ", cmd); next }
+  cmd ~ /^[.]\/[.]lake\/build\/bin\/e2e --suites[[:space:]]/ {
+    sub(/^[.]\/[.]lake\/build\/bin\/e2e --suites[[:space:]]+/, "", cmd)
+    sub(/[[:space:]]*[|][|].*/, "", cmd)
+    n = split(cmd, w, " ")
+    for (k = 1; k <= n; k++) { name = w[k]; sub(/:[0-9]+$/, "", name); print name } }
+  { cmd = "" }' scripts/e2e.sh | sort)"
+[ -n "$registered" ] && [ "$registered" = "$verified" ] \
+  || fail "E2ETest.suites less remote-live ($(printf '%s' "$registered" | tr '\n' ' ')) differs from the suites scripts/e2e.sh runs ($(printf '%s' "$verified" | tr '\n' ' '))"
 
 # Program and test sources stay Lean; pre-commit is an external framework.
 # `scripts/` holds the shell verifier, while `E2E/` holds the executable suites.
@@ -1215,7 +1259,8 @@ help_n="$(printf '%s\n' "$help_glyphs" | awk 'NF { n++ } END { print n+0 }')"
 # looks for the declaration, so this looks for `theorem|lemma|def|abbrev`.
 #
 # Basenames, because a citation is written unqualified while the declaration sits in a
-# namespace. CamelCase names (types, structures) and file/section names are skipped:
+# namespace; a qualified citation such as `Wire.decode_encode_chunked` is checked by its
+# basename too. CamelCase names (types, structures) and file/section names are skipped:
 # the target here is the `snake_case` claim names, which is what a reader would try to
 # look up. Empty extraction is rejected so the check cannot pass without citations.
 # Two lists hold names cited but not declared in Lean here: claims a comment states are
@@ -1223,12 +1268,13 @@ help_n="$(printf '%s\n' "$help_glyphs" | awk 'NF { n++ } END { print n+0 }')"
 # plus one lemma-name prefix. Every listed name must still be cited.
 cite_absent='mmap_id_gridAnsi sb_csiDispatch_any load_legacy_save save_no_legacy'
 cite_foreign="lean_chmod linger_write lean_io_process_get_pid pid_t tty_do_resize \
-  native_decide bv_decide lean_exe workflow_dispatch org_"
+  native_decide bv_decide lean_exe workflow_dispatch org_ foldl_append"
 cite_scan() {                                # file:line:basename per backticked snake_case name
-  { grep -noE '`[a-z][A-Za-z0-9_.]*`' THEOREMS.md | sed 's/^/THEOREMS.md:/'
-    git grep -noE '`[a-z][A-Za-z0-9_.]*`' -- '*.lean'; } \
-  | awk -F: '{ name = $3; gsub(/`/, "", name)
-      if (name ~ /_/ && name !~ /[.](md|lean|sh)$/) { sub(/.*[.]/, "", name); print $1 ":" $2 ":" name } }'
+  { grep -noE '`[A-Za-z][A-Za-z0-9_.]*`' THEOREMS.md | sed 's/^/THEOREMS.md:/'
+    git grep -noE '`[A-Za-z][A-Za-z0-9_.]*`' -- '*.lean'; } \
+  | awk -F: '{ name = $3; gsub(/`/, "", name); base = name; sub(/.*[.]/, "", base)
+      if (name !~ /[.](md|lean|sh)$/ && ((name ~ /^[a-z]/ && name ~ /_/) || base ~ /^[a-z][A-Za-z0-9]*_/))
+        print $1 ":" $2 ":" base }'
 }
 thm_cites="$(cite_scan | awk -F: '$1 == "THEOREMS.md" { print $3 }' | sort -u)"
 [ -n "$thm_cites" ] \

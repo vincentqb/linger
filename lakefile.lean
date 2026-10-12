@@ -55,10 +55,10 @@ lean_exe lingertest where root := `LingerTest
 
 /-- Proofs have their own import and verification graph; every module under `Theorems/` is
 built. Lean erases proofs regardless of file placement. -/
-lean_lib Theorems where globs := #[.andSubmodules `Theorems]
+lean_lib Theorems where globs := #[.submodules `Theorems]
 
 /-- Unit tests checked at elaboration time; every module under `Tests/` is built. -/
-lean_lib Tests where globs := #[.andSubmodules `Tests]
+lean_lib Tests where globs := #[.submodules `Tests]
 
 /-- Executable suites: `./lake exe e2e <suite>`. -/
 lean_lib E2E where

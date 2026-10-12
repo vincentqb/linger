@@ -8,6 +8,3 @@ declaration-body = "same-line"
 [lint]
 # Import order may affect initialization; keep the proof ladder's order.
 ignore = ["FMT005"]
-
-# Root modules list members even when also imported transitively.
-per-file-ignores = { "Theorems.lean" = ["FMT004"], "Tests.lean" = ["FMT004"] }

@@ -92,7 +92,7 @@ if grep -qE '^(warning|error)' "$logs/build.log"; then
   grep -E '^(warning|error)' "$logs/build.log"
   fail "build is not warning-clean"
 fi
-# Shake reads the oleans just built. Theorems.lean is not a `module`, so the proof
+# Shake reads the oleans just built. The proof library has no root module, so the proof
 # modules are named one by one. Tests stay out: shake cannot see `example` or
 # `#guard` uses. LingerTest and E2ETest stay out to bound the cost.
 shake_modules="$(git ls-files 'Theorems/*.lean' | sed 's/[.]lean$//; s#/#.#g')"
