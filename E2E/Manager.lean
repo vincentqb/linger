@@ -2155,6 +2155,41 @@ private def startProgram (f : Fixture) (owned : Env) (name : String) : IO Bool :
           return (← numberFile (f.root / "session-program-pid")) > 0 &&
               has (← withLaunchLock (owned.out #["capture", name])) "MANAGER-PROGRAM-READY"
 
+/-- Why a foreground program outlived Ctrl-C, as lines for a remote log: the
+process state of it, its shell and the daemon, its threads' top frames where
+macOS `sample` exists, and whether a SIGINT sent to the program itself ends it.
+The last separates a signal the terminal never delivered from one the program
+does not act on. -/
+private def interruptEvidence (root : System.FilePath) (pid : Nat) : IO (List String) := do
+  let table ←
+    IO.Process.output
+        { cmd := "/bin/sh",
+          args :=
+            #["-c",
+              "s=$(ps -o ppid= -p \"$1\" | tr -d ' '); d=$(ps -o ppid= -p \"$s\" | tr -d ' '); " ++
+                "ps -o pid,ppid,pgid,tpgid,stat,pending,blocked,ignored,caught,wchan,command -p \"$1,$s,$d\"",
+              "sh", toString pid] }
+  let report := root / "sample.txt"
+  let stacks ←
+    if !(← System.FilePath.pathExists "/usr/bin/sample") then
+      pure ["no /usr/bin/sample on this host"]
+    else
+      let out ←
+        IO.Process.output
+            { cmd := "/usr/bin/sample", args := #[toString pid, "1", "-file", report.toString] }
+      if out.exitCode != 0 then
+        pure [s!"sample exited {out.exitCode}: {out.stderr.trimAscii.toString}"]
+      else
+        let rows := (lines (← readText report)).map (·.trimAscii.toString)
+        let top := (rows.dropWhile (!·.startsWith "Sort by top of stack")).takeWhile (!·.isEmpty)
+        pure (rows.filter (has · "Thread_") ++ top)
+  kill (UInt32.ofNat pid) 2
+  let direct ←
+    waitFor 1000 do
+        return !(← alive (UInt32.ofNat pid))
+  return (lines table.stdout).map ("ps " ++ ·) ++ stacks.map ("stack " ++ ·) ++
+      [s!"direct-sigint-ends-program={direct}"]
+
 private def programChecks (e : Env) : IO Unit := do
   for (slug, key) in [("ctrl-c", "\x03"), ("escape", "\x1b")] do
     check e s!"program-survives-{slug}"
@@ -2218,6 +2253,11 @@ private def programChecks (e : Env) : IO Unit := do
               waitFor 2000 do
                   return !(← alive (UInt32.ofNat pid))
             observe s!"program-gone={interrupted}"
+            unless interrupted do
+              -- Fail now: the shell cannot answer while the program holds the terminal.
+              for line in ← interruptEvidence f.root pid do
+                observe line
+              return false
             let start ← s.mark
             s.text "printf 'attached-%s\\n' interrupt-ok\r"
             let shell ← s.until "attached-interrupt-ok" start
