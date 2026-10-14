@@ -428,6 +428,14 @@ private def Session.observe (s : Session) (ms : Nat) : IO Unit := do
       | some bytes =>
         s.output.modify (· ++ bytes)
 
+/-- `waitFor` that keeps reading this terminal. A client blocked writing to it does
+not read the keys a check waits on, as when an attach's replay exceeds the pty's
+output buffer: about 1 KB on macOS, tens of KB on Linux. -/
+private def Session.waitFor (s : Session) (ms : Nat) (p : IO Bool) : IO Bool :=
+  E2E.Harness.waitFor ms do
+    s.observe 20
+    p
+
 private def Session.send (s : Session) (bytes : ByteArray) : IO Unit := writeAll s.client.fd bytes
 
 private def Session.text (s : Session) (text : String) : IO Unit := s.send text.toUTF8
@@ -2238,7 +2246,9 @@ private def programChecks (e : Env) : IO Unit := do
         unless ← startProgram f owned name do
           return false
         let pid ← numberFile (f.root / "session-program-pid")
-        withPrompt f #["attach"] fun s => do
+        -- The attach replay of a 400x200 screen, about 80 KB, overflows the pty's output
+        -- buffer on Linux as an 80x12 one does on macOS, so the client blocks on output.
+        withPrompt f #["attach"] (cols := 400) (rows := 200) fun s => do
             unless ← s.selected name do
               return false
             s.text "\r"
@@ -2250,7 +2260,7 @@ private def programChecks (e : Env) : IO Unit := do
               return false
             s.text "\x03"
             let interrupted ←
-              waitFor 2000 do
+              s.waitFor 2000 do
                   return !(← alive (UInt32.ofNat pid))
             observe s!"program-gone={interrupted}"
             unless interrupted do
