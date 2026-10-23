@@ -64,8 +64,8 @@ theorem catalogRows_status (content : String) (panes : List Pane) (row : List (S
   obtain ⟨pane, _, rfl⟩ := List.mem_map.mp member
   rfl
 
-/-- Window titles and directories cannot introduce terminal controls into the
-human description, even though the action directory remains unmodified. -/
+/-- Window titles, directories and commands cannot introduce terminal controls
+into the human description, even though action metadata remains unmodified. -/
 theorem catalogRows_printable (content : String) (panes : List Pane) (row : List (String × String))
     (member : row ∈ catalogRows content panes) (text : String)
     (description : row.lookup "cmd" = some text) (c : Char) (character : c ∈ text.toList) :
@@ -76,6 +76,40 @@ theorem catalogRows_printable (content : String) (panes : List Pane) (row : List
   change some (diagnostic _) = some text at description
   cases description
   exact diagnostic_printable _ c character
+
+/-- Every description ends with the printable saved foreground command line,
+falling back to the command name when the line is unavailable. -/
+theorem catalogRows_command (content : String) (panes : List Pane) (row : List (String × String))
+    (member : row ∈ catalogRows content panes) (command savedCommand text : String)
+    (commandField : row.lookup "command" = some command)
+    (savedField : row.lookup "saved-command" = some savedCommand)
+    (description : row.lookup "cmd" = some text) :
+    List.IsSuffix (diagnostic (if savedCommand.isEmpty then command else savedCommand)).toList
+      text.toList := by
+  unfold catalogRows at member
+  obtain ⟨pane, _, rfl⟩ := List.mem_map.mp member
+  change some (preparePane content panes pane).details.command = some command at commandField
+  change
+    some (preparePane content panes pane).details.savedCommand = some savedCommand at savedField
+  cases commandField
+  cases savedField
+  simp only [List.lookup_cons, beq_self_eq_true] at description
+  change some (diagnostic _) = some text at description
+  cases description
+  let foreground :=
+    if (preparePane content panes pane).details.savedCommand.isEmpty then
+      (preparePane content panes pane).details.command
+    else (preparePane content panes pane).details.savedCommand
+  change
+    List.IsSuffix (diagnostic foreground).toList
+      (diagnostic (if foreground.isEmpty then _ else _)).toList
+  by_cases empty : foreground.isEmpty = true
+  · have blank : foreground = "" := String.isEmpty_iff.mp empty
+    simp [blank, diagnostic]
+  · simp only [empty, Bool.false_eq_true, ite_false]
+    change List.IsSuffix (diagnostic foreground).toList (diagnostic (_ ++ foreground)).toList
+    simp only [diagnostic, String.toList_map, String.toList_append, List.map_append]
+    exact List.suffix_append _ _
 
 /-- A successful selection has exactly the displayed identity, directory and
 source line; canonicalization is a guard, never a retargeting operation. -/

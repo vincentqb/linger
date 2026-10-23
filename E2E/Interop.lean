@@ -217,10 +217,10 @@ private def catalogOrder (f : Fixture) : IO Bool := do
   let text :=
     "# Save order is deliberately neither name nor numeric order.\n" ++
       "window\tzeta\t12\t:Review window\tlayout\tunused\n" ++
-      paneLine "zeta" "12" "8" first "" ++
+      paneLine "zeta" "12" "8" first "vi 'draft.txt'" ++
       "state\tzeta\tunused\n" ++
       paneLine "alpha" "3" "1" second "" ++
-      paneLine "zeta" "12" "2" third "" ++
+      paneLine "zeta" "12" "2" third "make check" ++
       "window\talpha\t3\t:Build window\tignored\n"
   f.catalogSave path text
   link path last
@@ -236,6 +236,8 @@ private def catalogOrder (f : Fixture) : IO Bool := do
       (rows.zip ["zeta-w12-p8", "alpha-w3-p1", "zeta-w12-p2"]).all
         (fun (row, name) => has row name) &&
       (rows.zip [first, second, third]).all (fun (row, dir) => has row dir) &&
+      (rows.zip ["vi 'draft.txt'", "sh", "make check"]).all
+        (fun (row, command) => row.endsWith ("  ·  " ++ command)) &&
       has (rows[0]?.getD "") "zeta:12 Review window" &&
       has (rows[1]?.getD "") "alpha:3 Build window" &&
       has (rows[2]?.getD "") "zeta:12 Review window" &&
@@ -246,7 +248,9 @@ private def catalogControls (f : Fixture) : IO Bool := do
   let controls := "\x07\x1b[2J\r\x7f\u0080\u0085\u009b\u009d\u009f"
   let path := f.root / ("snapshot" ++ controls)
   let dir := (f.root / ("quote \" and backslash\\ café 会" ++ controls ++ "  trailing ")).toString
-  let text := "window\tcontrol\t4\t:title" ++ controls ++ "\n" ++ paneLine "control" "4" "0" dir ""
+  let command := "printf 'saved command' " ++ controls
+  let text :=
+    "window\tcontrol\t4\t:title" ++ controls ++ "\n" ++ paneLine "control" "4" "0" dir command
   f.catalogSave path text
   let (rc, out, err) ← f.cli #["tmux", "ls", "--porcelain", path.toString]
   let (humanRc, human, humanErr) ← f.cli #["tmux", "ls", path.toString]
@@ -262,6 +266,7 @@ private def catalogControls (f : Fixture) : IO Bool := do
         (fun row => row.toList.all (fun c => c == '\t' || printable c)) &&
       has human (Linger.Tools.Resurrect.diagnostic dir.trimAscii.toString) &&
       has human (Linger.Tools.Resurrect.diagnostic path.toString) &&
+      has human (Linger.Tools.Resurrect.diagnostic command) &&
       (← namesIn (System.FilePath.mk f.env.dir)).isEmpty
 
 private def catalogRelativeCwd (f : Fixture) : IO Bool := do
@@ -283,13 +288,14 @@ private def catalogReadOnly (f : Fixture) : IO Bool := do
   let before ← f.cli #["ls", "--porcelain"]
   let checkpoint ← readBytes (System.FilePath.mk f.env.dir / "native.only.ckpt")
   let entries ← namesIn (System.FilePath.mk f.env.dir)
+  let command := s!"printf EXECUTED > '{marker}'"
   let text :=
-    paneLine "foreign" "2" "0" (f.root / "home").toString s!"printf EXECUTED > '{marker}'" ++
+    paneLine "foreign" "2" "0" (f.root / "home").toString command ++
       "window\tforeign\t2\t:Original title\tlayout\n" ++
       "state\tforeign\tignored\nfuture-record\tignored\x00metadata\n"
   f.catalogSave path text
   let (rc, out, err) ← f.cli #["tmux", "ls", "--porcelain", path.toString]
-  let (humanRc, _, humanErr) ← f.cli #["tmux", "ls", path.toString]
+  let (humanRc, human, humanErr) ← f.cli #["tmux", "ls", path.toString]
   IO.sleep 200 -- negative assertion: allow an accidentally started saved command to run
   let after ← f.cli #["ls", "--porcelain"]
   return rc == 0 && err.isEmpty && (← f.catalogMatches path out) && humanRc == 0 &&
@@ -299,6 +305,7 @@ private def catalogReadOnly (f : Fixture) : IO Bool := do
       !has before.2.1 "foreign-w2-p0" &&
       has before.2.1 "native.only" &&
       has out "EXECUTED" &&
+      has human command &&
       !has out "future-record" &&
       (← IO.FS.readFile path) == text &&
       (← IO.FS.readFile marker) == "UNTOUCHED\n" &&
@@ -1108,9 +1115,9 @@ def runWith (binary : String) : IO UInt32 := do
           fun f => nativeFallback f (some "") true)]
   cases :=
     cases ++
-      [("tmux ls preserves parseSave order, original window context, canonical source and save time",
+      [("tmux ls preserves pane order, window context and source, and displays saved command arguments",
           catalogOrder),
-        ("tmux ls escapes display controls while the directory's string literal preserves exact cwd",
+        ("tmux ls escapes titles, directories and commands while action metadata stays exact",
           catalogControls),
         ("tmux ls freezes relative cwd against invocation without resolving its symlink spelling",
           catalogRelativeCwd),

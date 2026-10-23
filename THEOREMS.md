@@ -40,7 +40,7 @@ hypotheses. Runtime behavior is covered by IO suites and source gates.
 | Selection | Attach choices come from the listing, creation choices are valid, and refresh preserves a still-available selection. | [Picker](Theorems/Picker.lean): `step_attach_mem`, `step_create_valid`, `refresh_selected` |
 | Interactive fuzzy matching | Successful matches maximize the configured score; ties choose the earliest alignment. | [Fuzzy](Theorems/Fuzzy.lean): `alignWith_score_max`, `alignWith_earliest` |
 | Input | Bracketed paste emits text only, without control keys. | [Input](Theorems/Input.lean): `feed_paste_only_text`, `feed_paste_no_controls` |
-| Saved sessions | Parsing yields valid panes; sequential import is idempotent; generated saves round-trip names and directories. Listing and selection use the same catalog. | [Resurrect](Theorems/Resurrect.lean): `parseSave_valid`, `plan_sequential_idempotent`, `renderSave_roundtrip`, `catalogRows_common`, `selectedPane_exact` |
+| Saved sessions | Parsing yields valid panes; sequential import is idempotent; generated saves round-trip names and directories. Listing and selection share a catalog showing the saved foreground command. | [Resurrect](Theorems/Resurrect.lean): `parseSave_valid`, `plan_sequential_idempotent`, `renderSave_roundtrip`, `catalogRows_common`, `catalogRows_command`, `selectedPane_exact` |
 | Saved pane contents | Capture replay processes at most twice the eight MiB byte limit. Imported checkpoints are live terminal states and round-trip exactly, preserving cwd and command metadata; empty and missing captures remain distinguishable. | [Resurrect](Theorems/Resurrect.lean): `captureLimit_eq`, `captureBytes_bounded`, `checkpoint_live`, `checkpoint_roundtrip`, `checkpoint_metadata` |
 
 ## Scope

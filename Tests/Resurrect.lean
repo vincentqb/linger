@@ -16,20 +16,25 @@ namespace Linger.Tools.Resurrect.Tests
 #guard
   let text :=
     "pane\tdesk\t2\t1\t:*\t1\tEditor\t:/one\t1\tvi\t:vi 'draft.txt'\n" ++
-      "pane\tdesk\t2\t1\t:*\t2\tBuild\t:/two\t0\tmake\t:make check\n"
+      "pane\tdesk\t2\t1\t:*\t2\tBuild\t:/two\t0\tmake\t:make check\n" ++
+      "pane\tdesk\t2\t1\t:*\t3\tEmpty\t:/three\t0\t\t:\n"
   match parseSave "" text with
   | .error _ => false
   | .ok panes =>
     let rows := catalogRows text panes
-    rows.map (fun row => row.lookup "title") == [some "Editor", some "Build"] &&
-      rows.map (fun row => row.lookup "command") == [some "vi", some "make"] &&
-      rows.map (fun row => row.lookup "saved-command") == [some "vi 'draft.txt'", some "make check"]
+    rows.map (fun row => row.lookup "title") == [some "Editor", some "Build", some "Empty"] &&
+      rows.map (fun row => row.lookup "command") == [some "vi", some "make", some ""] &&
+      rows.map (fun row => row.lookup "saved-command") ==
+        [some "vi 'draft.txt'", some "make check", some ""] &&
+      rows.map (fun row => row.lookup "cmd") ==
+        [some "desk:2  ·  /one  ·  vi 'draft.txt'", some "desk:2  ·  /two  ·  make check",
+          some "desk:2  ·  /three"]
 
 -- Browsing uses original window context and pane order. Display text is safe,
 -- while the action fields retain exact paths and source lines.
 #guard
   let text :=
-    "pane\tdesk\t2\t1\t:*\t1\tunused\t:/tmp/é space\r\x1b\t1\tvi\t:never run this\n" ++
+    "pane\tdesk\t2\t1\t:*\t1\tunused\t:/tmp/é space\r\x1b\t1\tvi\t:never run this\x1b[2J\u009d\n" ++
       "window\tdesk\t2\t:editor\x1b[31m\t1\t:*\n" ++
       "pane\tdesk\t1\t0\t:\t0\tunused\t:/other\t0\tsh\t:\n" ++
       "window\tdesk\t1\t:shell"
@@ -42,7 +47,9 @@ namespace Linger.Tools.Resurrect.Tests
       rows.map (fun row => row.lookup "line") == [some "1", some "3"] &&
       rows.all (fun row => row.lookup "status" == some (Linger.Core.Status.name .resumable)) &&
       rows.map (fun row => row.lookup "cmd") ==
-        [some "desk:2 editor?[31m  ·  /tmp/é space??", some "desk:1 shell  ·  /other"]
+        [some "desk:2 editor?[31m  ·  /tmp/é space??  ·  never run this?[2J?",
+          some "desk:1 shell  ·  /other  ·  sh"] &&
+      (rows.head?.bind (·.lookup "saved-command")) == some "never run this\x1b[2J\u009d"
 
 #guard
   let pane : Pane := { name := "desk-w0-p0", dir := "/exact path\n\r\x1b", line := 3 }

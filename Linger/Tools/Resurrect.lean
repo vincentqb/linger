@@ -17,7 +17,7 @@ creation or protection from concurrent same-name creators.
 
 namespace Linger.Tools.Resurrect
 
-/-- Replace terminal controls only when displaying an error, preserving its other text. -/
+/-- Replace terminal controls in display text, preserving its other characters. -/
 def diagnostic (message : String) : String :=
   message.map fun c => if 32 ≤ c.toNat && (c.toNat < 127 || 160 ≤ c.toNat) then c else '?'
 
@@ -206,9 +206,9 @@ def checkpoint (pane : Pane) (contents : Option String) : Linger.Core.Checkpoint
         ("tmux.window-title", pane.details.windowTitle),
         ("tmux.capture", if contents.isSome then "saved" else "none")] }
 
-/-- One ordered catalog for human listing and the selector. Display context is
-printable; the directory remains exact until the `IO` boundary encodes it.
-Window metadata can describe a pane but cannot change its identity or cwd. -/
+/-- One ordered catalog for human listing and the selector. Display the saved
+foreground command line, falling back to its name. Display text is printable;
+action metadata stays exact until the `IO` boundary encodes it. -/
 def catalogRows (content : String) (panes : List Pane) : List (List (String × String)) :=
   let rows := (content.splitOn "\n").map (·.splitOn "\t")
   panes.map fun pane =>
@@ -222,10 +222,14 @@ def catalogRows (content : String) (panes : List Pane) : List (List (String × S
     let rawTitle := (record.getD [])[3]?.getD ""
     let title := (rawTitle.dropPrefix ":").toString
     let context := if title.isEmpty then s!"{session}:{window}" else s!"{session}:{window} {title}"
+    let command := if details.savedCommand.isEmpty then details.command else details.savedCommand
+    let description :=
+      if command.isEmpty then s!"{context}  ·  {pane.dir}"
+      else s!"{context}  ·  {pane.dir}  ·  {command}"
     [("name", pane.name), ("status", Linger.Core.Status.name .resumable),
-      ("cmd", diagnostic s!"{context}  ·  {pane.dir}"), ("directory", pane.dir),
-      ("line", toString pane.line), ("session", details.session), ("window", details.window),
-      ("pane", details.index), ("title", details.title), ("command", details.command),
+      ("cmd", diagnostic description), ("directory", pane.dir), ("line", toString pane.line),
+      ("session", details.session), ("window", details.window), ("pane", details.index),
+      ("title", details.title), ("command", details.command),
       ("saved-command", details.savedCommand), ("window-title", details.windowTitle),
       ("cols", toString details.cols), ("rows", toString details.rows)]
 

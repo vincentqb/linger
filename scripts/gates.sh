@@ -351,7 +351,7 @@ done
 # bypassing them a reviewable change; IO tests check preflight/failure ordering
 # and actual argv. As with the runtime ties below, this is not an IO theorem.
 for claim in diagnostic_printable diagnostic_eq_self \
-             catalogRows_common catalogRows_lines catalogRows_status catalogRows_printable \
+             catalogRows_common catalogRows_lines catalogRows_status catalogRows_printable catalogRows_command \
              selectedPane_exact selectedPane_valid \
              parseSave_valid parseRow_command_valid parseRow_metadata parseRow_metadata_irrelevant parseRow_other \
              layoutLeaves_bounded layoutSizes_bounded preparePane_preserves contentMember_exact \

@@ -518,6 +518,14 @@ example (content : String) (panes : List Resurrect.Pane) :
       List.map (fun field => (some field.fst, some field.snd)) (Resurrect.common panes) := by
   with_reducible exact Resurrect.catalogRows_common content panes
 
+example (content : String) (panes : List Resurrect.Pane) (row : List (String × String))
+    (h : row ∈ Resurrect.catalogRows content panes) (cmd saved text : String)
+    (hc : row.lookup "command" = some cmd) (hs : row.lookup "saved-command" = some saved)
+    (ht : row.lookup "cmd" = some text) :
+    List.IsSuffix (Resurrect.diagnostic (if saved.isEmpty then cmd else saved)).toList
+      text.toList := by
+  with_reducible exact Resurrect.catalogRows_command _ _ _ h _ _ _ hc hs ht
+
 example (name dir : String) (line : Nat) (canonical : Name.sanitize name = name)
     (nulFree : dir.contains '\x00' = false) :
     Resurrect.selectedPane name dir line = some { name := name, dir := dir, line := line } := by
