@@ -170,7 +170,8 @@ back to it; it is never compared through display escaping. -/
 private def Fixture.catalogMatches (f : Fixture) (path : System.FilePath) (out : String) :
     IO Bool := do
   let text ← IO.FS.readFile path
-  let .ok panes := Linger.Tools.Resurrect.parseSave (f.root / "home").toString text | return false
+  let .ok raw := Linger.Tools.Resurrect.parseSave (f.root / "home").toString text | return false
+  let panes := raw.map (Linger.Tools.Resurrect.preparePane text raw)
   let sections := out.splitOn "\n\n"
   let header := records (sections.headD "")
   let source ← IO.FS.realPath path
@@ -181,20 +182,31 @@ private def Fixture.catalogMatches (f : Fixture) (path : System.FilePath) (out :
       catalogDate (field header "saved") &&
       ((sections.headD "").splitOn "\n").length == 2 do
     return false
-  unless sections.tail.dropLast.all (fun row => (row.splitOn "\n").length == 5) do
+  unless sections.tail.dropLast.all (fun row => (row.splitOn "\n").length == 14) do
     return false
   let rows := sections.tail.dropLast.map records
   return (rows.zip panes).all fun (row, pane) =>
       let dir :=
         if pane.dir.isEmpty || (System.FilePath.mk pane.dir).isAbsolute then pane.dir
         else (f.root / pane.dir).toString
-      row.map (·.1) == ["name", "status", "cmd", "directory", "line"] &&
+      row.map (·.1) ==
+          ["name", "status", "cmd", "directory", "line", "session", "window", "pane", "title",
+            "command", "saved-command", "window-title", "cols", "rows"] &&
         field row "name" == pane.name &&
         field row "status" == Linger.Core.Status.name .resumable &&
         has (field row "cmd") (Linger.Tools.Resurrect.diagnostic dir) &&
         field row "directory" == dir.quote &&
         Lean.Syntax.decodeStrLit (field row "directory") == some dir &&
-        field row "line" == toString pane.line
+        field row "line" == toString pane.line &&
+        field row "session" == pane.details.session.quote &&
+        field row "window" == pane.details.window.quote &&
+        field row "pane" == pane.details.index.quote &&
+        field row "title" == pane.details.title.quote &&
+        field row "command" == pane.details.command.quote &&
+        field row "saved-command" == pane.details.savedCommand.quote &&
+        field row "window-title" == pane.details.windowTitle.quote &&
+        field row "cols" == toString pane.details.cols &&
+        field row "rows" == toString pane.details.rows
 
 private def catalogOrder (f : Fixture) : IO Bool := do
   let path := f.root / "snapshot-with-order-20010203.txt"
@@ -242,7 +254,11 @@ private def catalogControls (f : Fixture) : IO Bool := do
   return rc == 0 && err.isEmpty && (← f.catalogMatches path out) && humanRc == 0 &&
       humanErr.isEmpty &&
       human.toList.all (fun c => c == '\n' || printable c) &&
-      ((out.splitOn "\n").filter (fun row => !row.startsWith "directory\t")).all
+      ((out.splitOn "\n").filter
+            (fun row =>
+              !["directory", "session", "window", "pane", "title", "command", "saved-command",
+                      "window-title"].any
+                  (fun key => row.startsWith (key ++ "\t")))).all
         (fun row => row.toList.all (fun c => c == '\t' || printable c)) &&
       has human (Linger.Tools.Resurrect.diagnostic dir.trimAscii.toString) &&
       has human (Linger.Tools.Resurrect.diagnostic path.toString) &&
@@ -282,7 +298,7 @@ private def catalogReadOnly (f : Fixture) : IO Bool := do
       after == before &&
       !has before.2.1 "foreign-w2-p0" &&
       has before.2.1 "native.only" &&
-      !has out "EXECUTED" &&
+      has out "EXECUTED" &&
       !has out "future-record" &&
       (← IO.FS.readFile path) == text &&
       (← IO.FS.readFile marker) == "UNTOUCHED\n" &&
@@ -707,6 +723,238 @@ private def withVariables {α : Type} (values : Array (String × Option String))
   finally
     previous.forM set
 
+/-- Build the same relative archive members tmux-resurrect saves, without a server. -/
+private def Fixture.archive (f : Fixture) (captures : List (String × ByteArray)) :
+    IO System.FilePath := do
+  let staging := f.root / "archive-source"
+  IO.FS.createDirAll (staging / "pane_contents")
+  for (member, bytes) in captures do
+    IO.FS.writeBinFile (staging / "pane_contents" / member) bytes
+  let path := f.root / "pane_contents.tar.gz"
+  let (rc, _, err) ←
+    process
+        { cmd := "tar",
+          args := #["-czf", path.toString, "-C", staging.toString, "./pane_contents"] }
+  unless rc == 0 do
+    throw (IO.userError s!"could not create fixture archive: {err}")
+  return path
+
+private def captureImport (f : Fixture) : IO Bool := do
+  let first := f.root / "first cwd"
+  let second := f.root / "second cwd"
+  IO.FS.createDirAll first
+  IO.FS.createDirAll second
+  let marker := f.root / "saved-command-ran"
+  let command := s!"printf bad > '{marker}'"
+  let save := f.root / "source"
+  let text :=
+    "window\tcaptured\t3\t:Build window\t1\t:*\t1234,41x2,0,0{20x2,0,0,8,20x2,21,0,9}\toff\n" ++
+      paneLine "captured" "3" "1" second.toString command ++
+      paneLine "captured" "3" "0" first.toString command
+  f.catalogSave save text
+  link save (f.root / "last")
+  let archive ←
+    f.archive
+        [("pane-captured:3.0", "first old λ\n\x1b[31mfirst red\x1b[0m\nfirst screen\n".toUTF8),
+          ("pane-captured:3.1", "second old\nsecond saved\nsecond screen\n".toUTF8)]
+  let savedBytes ← readBytes save
+  let archiveBytes ← readBytes archive
+  let (listed, catalog, listError) ← f.cli #["tmux", "ls", "--porcelain", save.toString]
+  let catalogRows := (catalog.splitOn "\n\n").tail.dropLast.map records
+  let (rc, _, err) ← f.cli #["tmux", "import", save.toString]
+  unless
+    rc == 0 && err.isEmpty && listed == 0 && listError.isEmpty && catalogRows.length == 2 &&
+      catalogRows.all
+        (fun row =>
+          field row "archive" == archive.toString.quote &&
+            field row "archive-save" == save.toString.quote &&
+            !((field row "archive-revision").isEmpty) &&
+            field row "cols" == "20" &&
+            field row "rows" == "2") &&
+      (← f.cwdIs "captured-w3-p0" first) &&
+      (← f.cwdIs "captured-w3-p1" second) do
+    return false
+  let firstPid ← f.pid "captured-w3-p0"
+  let secondPid ← f.pid "captured-w3-p1"
+  let (firstRc, firstHistory, _) ← f.cli #["capture", "--history", "captured-w3-p0"]
+  let (secondRc, secondHistory, _) ← f.cli #["capture", "--history", "captured-w3-p1"]
+  let labels ←
+    ["tmux.session", "tmux.window", "tmux.pane", "tmux.title", "tmux.command", "tmux.saved-command",
+            "tmux.window-title", "tmux.capture"].mapM
+        (fun key => f.info "captured-w3-p0" ("label." ++ key))
+  let barrier := f.root / "shell-ready"
+  let (ran, _, _) ← f.cli #["run", "captured-w3-p0", s!"printf ready > '{barrier}'"]
+  let ready ←
+    waitFor 5000 do
+        return (← readBytes barrier) == some "ready".toUTF8
+  let (again, _, againError) ← f.cli #["tmux", "import", save.toString]
+  let (_, repeatedHistory, _) ← f.cli #["capture", "--history", "captured-w3-p0"]
+  return firstPid.isSome && secondPid.isSome && firstPid != secondPid && firstRc == 0 &&
+      secondRc == 0 &&
+      has firstHistory "first old λ" &&
+      has firstHistory "first red" &&
+      has firstHistory "first screen" &&
+      !has firstHistory "second old" &&
+      has secondHistory "second old" &&
+      has secondHistory "second screen" &&
+      !has secondHistory "first old" &&
+      labels ==
+        [some "captured", some "3", some "0", some "title", some "sh", some command,
+          some "Build window", some "saved"] &&
+      ran == 0 &&
+      ready &&
+      !(← marker.pathExists) &&
+      again == 0 &&
+      againError.isEmpty &&
+      (← f.pid "captured-w3-p0") == firstPid &&
+      (← f.pid "captured-w3-p1") == secondPid &&
+      has repeatedHistory "first old λ" &&
+      (← readBytes save) == savedBytes &&
+      (← readBytes archive) == archiveBytes
+
+private def offlineCapture (f : Fixture) : IO Bool := do
+  let .ok [pane] :=
+    Linger.Tools.Resurrect.parseSave ""
+      (paneLine "offline" "2" "0" (f.root / "home").toString "make build") | return false
+  let pane :=
+    { pane with
+      details :=
+        { pane.details with
+          cols := 20, rows := 2 } }
+  f.own pane.name
+  let seeded ←
+    withVariables f.procEnv do
+        Linger.Manager.Resurrect.seedPane pane (some "old λ\n\x1b[31mred\x1b[0m\nscreen\n")
+  let path := System.FilePath.mk f.env.dir / s!"{pane.name}.ckpt"
+  let before ← readBytes path
+  let savedCommand :=
+    (before.bind loadBytes).bind (fun checkpoint => checkpoint.labels.lookup "tmux.saved-command")
+  let (screenRc, screen, screenErr) ← f.cli #["capture", pane.name]
+  let (historyRc, history, historyErr) ← f.cli #["capture", "--history", pane.name]
+  let again ←
+    withVariables f.procEnv do
+        Linger.Manager.Resurrect.seedPane pane (some "replacement\n")
+  return seeded && !again && (← privateFile path) && before.isSome && screenRc == 0 &&
+      screenErr.isEmpty &&
+      screen == "red\nscreen\n" &&
+      historyRc == 0 &&
+      historyErr.isEmpty &&
+      history == "old λ\nred\nscreen\n" &&
+      savedCommand == some "make build" &&
+      (← readBytes path) == before &&
+      !(← (System.FilePath.mk f.env.dir / s!"{pane.name}.sock").pathExists)
+
+private def historicalCapture (f : Fixture) : IO Bool := do
+  let historical := f.root / "historical"
+  let latest := f.root / "latest"
+  let text := paneLine "historical" "0" "0" (f.root / "home").toString "make old"
+  f.catalogSave historical text
+  IO.FS.writeFile latest text
+  link latest (f.root / "last")
+  -- Even an unreadable latest archive must not be consulted for this old save.
+  IO.FS.writeFile (f.root / "pane_contents.tar.gz") "not an archive"
+  let (rc, _, err) ← f.cli #["tmux", "import", historical.toString]
+  return rc == 0 && err.isEmpty && (← f.cwdIs "historical-w0-p0" (f.root / "home")) &&
+      (← f.info "historical-w0-p0" "label.tmux.saved-command") == some "make old" &&
+      (← f.info "historical-w0-p0" "label.tmux.capture") == some "none"
+
+private def emptyCapture (f : Fixture) : IO Bool := do
+  let save := f.root / "source"
+  f.catalogSave save
+      (paneLine "empty" "0" "0" (f.root / "home").toString "" ++
+        paneLine "missing" "0" "0" (f.root / "home").toString "")
+  link save (f.root / "last")
+  discard <| f.archive [("pane-empty:0.0", ByteArray.empty)]
+  let (rc, _, err) ← f.cli #["tmux", "import", save.toString]
+  return rc == 0 && err.isEmpty && (← f.info "empty-w0-p0" "label.tmux.capture") == some "saved" &&
+      (← f.info "missing-w0-p0" "label.tmux.capture") == some "none"
+
+private def badCapture (f : Fixture) (kind : String) : IO Bool := do
+  let save := f.root / "source"
+  f.catalogSave save (paneLine "bad" "0" "0" (f.root / "home").toString "")
+  link save (f.root / "last")
+  let archive := f.root / "pane_contents.tar.gz"
+  let expected ←
+    if kind == "corrupt" then
+      IO.FS.writeFile archive "not a gzip archive"
+      pure "could not read pane capture archive"
+    else
+      let bytes :=
+        if kind == "UTF-8" then ByteArray.mk #[0xFF]
+        else
+          if kind == "oversize" then
+            ByteArray.mk (Array.replicate (Linger.Tools.Resurrect.captureLimit + 1) 0x41)
+          else "duplicate\n".toUTF8
+      discard <| f.archive [("pane-bad:0.0", bytes)]
+      if kind == "duplicate" then
+        let (rc, _, err) ←
+          process
+              { cmd := "tar",
+                args :=
+                  #["-czf", archive.toString, "-C", (f.root / "archive-source").toString,
+                    "./pane_contents/pane-bad:0.0", "./pane_contents/pane-bad:0.0"] }
+        unless rc == 0 do
+          throw (IO.userError s!"could not create duplicate fixture: {err}")
+        pure "duplicate pane capture"
+      else if kind == "oversize" then
+        pure s!"command output exceeds {Linger.Tools.Resurrect.captureLimit} bytes"
+      else
+        pure "command output is not UTF-8"
+  let archiveBytes ← readBytes archive
+  let (rc, _, err) ← f.cli #["tmux", "import", save.toString]
+  return rc == 1 && has err expected &&
+      (← namesIn (System.FilePath.mk f.env.dir)).all (·.endsWith ".lock") &&
+      (← readBytes archive) == archiveBytes
+
+/-- Overflow must drain both pipes, and collection must release ownership even on error. -/
+private def boundedCommand (f : Fixture) (stderr : Bool) : IO Bool := do
+  let reached := f.root / "output-finished"
+  let redirect := if stderr then " >&2" else ""
+  let script :=
+    s!"i=0; while [ \"$i\" -lt 30000 ]; do printf 1234567890{redirect}; i=$((i+1)); done; printf done > '{reached}'"
+  let pending ←
+    IO.mkRef (some (← Linger.Runtime.Command.startLimited "/bin/sh" #["-c", script] 100))
+  let refused ← IO.mkRef false
+  try
+    let done ←
+      waitFor 5000 do
+          let result ← (Linger.Runtime.Command.poll pending).toBaseIO
+          match result with
+          | .error error =>
+            refused.set <|
+                has (toString error)
+                  s!"command output exceeds {if stderr then 64 * 1024 else 100} bytes"
+            return true
+          | .ok result =>
+            return result.isSome
+    return done && (← refused.get) && (← pending.get).isNone &&
+        (← readBytes reached) == some "done".toUTF8
+  finally
+    Linger.Runtime.Command.stop pending
+
+/-- An exited leader must still own and retire a descendant holding its pipes open. -/
+private def heldPipeCommand (f : Fixture) : IO Bool := do
+  let reached := f.root / "descendant-pid"
+  let script := s!"sleep 30 & printf '%s' \"$!\" > '{reached}'"
+  let job ← Linger.Runtime.Command.startLimited "/bin/sh" #["-c", script] 100
+  let pending ← IO.mkRef (some job)
+  try
+    unless ← waitFor 3000 (reached.pathExists) do
+      return false
+    let some pid := (← IO.FS.readFile reached).toNat? | return false
+    let running ← Linger.Posix.alive pid.toUInt32
+    let uncollected ← Linger.Runtime.Command.poll pending
+    let stillOwned := (← pending.get).isSome
+    Linger.Runtime.Command.stop pending
+    let retired ←
+      waitFor 3000 do
+          return !(← Linger.Posix.alive pid.toUInt32)
+    return running && uncollected.isNone && stillOwned && retired && (← pending.get).isNone &&
+        (← IO.hasFinished job.stdout) &&
+        (← IO.hasFinished job.stderr)
+  finally
+    Linger.Runtime.Command.stop pending
+
 /-- Observe the real default namespace without opening it. Only after that
 observation does the capture callback redirect checkpoint IO into a fixture.
 The live socket remains visible in both namespaces, so the wrong context can
@@ -881,7 +1129,24 @@ def runWith (binary : String) : IO UInt32 := do
         ("tmux group and retired top-level spellings reject invalid arguments before effects",
           groupUsage),
         ("bare tmux and every group help spelling explain the saved commands without discovery",
-          groupHelp)]
+          groupHelp),
+        ("import keeps independent pane contents, layout, metadata and fresh shells; repeat import preserves them",
+          captureImport),
+        ("imported offline checkpoints retain screen, scrollback and commands without overwriting",
+          offlineCapture),
+        ("historical saves cannot read the latest save's shared capture archive",
+          historicalCapture),
+        ("empty captures remain distinct from missing pane captures", emptyCapture),
+        ("bounded command stdout overflow drains the pipe and releases ownership", fun f =>
+          boundedCommand f false),
+        ("bounded command stderr overflow drains the pipe and releases ownership", fun f =>
+          boundedCommand f true),
+        ("cancellation retires a descendant holding an exited leader's pipes", heldPipeCommand)]
+  for kind in ["corrupt", "duplicate", "oversize", "UTF-8"] do
+    cases :=
+      cases ++
+        [(s!"{kind} pane captures fail with a reached diagnostic before checkpoint publication",
+            fun f => badCapture f kind)]
   for kind in ["absent", "malformed", "duplicate", "NUL", "empty"] do
     cases :=
       cases ++

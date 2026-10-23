@@ -522,3 +522,30 @@ example (name dir : String) (line : Nat) (canonical : Name.sanitize name = name)
     (nulFree : dir.contains '\x00' = false) :
     Resurrect.selectedPane name dir line = some { name := name, dir := dir, line := line } := by
   with_reducible exact Resurrect.selectedPane_exact name dir line canonical nulFree
+
+-- Saved pane contents
+example : Resurrect.captureLimit = 8 * 1024 * 1024 := by
+  with_reducible exact Resurrect.captureLimit_eq
+
+example (contents : String) :
+    (Resurrect.captureBytes contents).length ≤ 2 * Resurrect.captureLimit := by
+  with_reducible exact Resurrect.captureBytes_bounded contents
+
+example (pane : Resurrect.Pane) (contents : Option String) :
+    Vt.LiveReachableVt (Resurrect.checkpoint pane contents).vt := by
+  with_reducible exact Resurrect.checkpoint_live pane contents
+
+example (pane : Resurrect.Pane) (contents : Option String) :
+    Checkpoint.loadBytes (Checkpoint.saveBytes (Resurrect.checkpoint pane contents)) =
+      some (Resurrect.checkpoint pane contents) := by
+  with_reducible exact Resurrect.checkpoint_roundtrip pane contents
+
+example (pane : Resurrect.Pane) (contents : Option String) :
+    (Resurrect.checkpoint pane contents).cwd = pane.dir ∧
+      (Resurrect.checkpoint pane contents).labels.lookup "tmux.command" =
+        some pane.details.command ∧
+      (Resurrect.checkpoint pane contents).labels.lookup "tmux.saved-command" =
+        some pane.details.savedCommand ∧
+      (Resurrect.checkpoint pane contents).labels.lookup "tmux.capture" =
+        some (if contents.isSome then "saved" else "none") := by
+  with_reducible exact Resurrect.checkpoint_metadata pane contents

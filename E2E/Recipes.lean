@@ -345,7 +345,15 @@ exit 0
       paneLine "second" "2" "1" home "" ++
       paneLine "third" "2" "2" home command
   let listing := "name\tlive-w1-p0\nstate\tlive\n\nname\tresume-w1-p0\nstate\tresumable\n\n"
+  -- The recorder does not run a daemon to consume the seeded checkpoints.
+  -- Retire only this fixture's previous seeds before testing another invocation.
+  let reset := do
+    for name in ["first-w2-p0", "second-w2-p1", "third-w2-p2"] do
+      let path := System.FilePath.mk e.dir / s!"{name}.ckpt"
+      if ← path.pathExists then
+        IO.FS.removeFile path
   let invoke := fun (text failure listRc : String) (args : Array String) => do
+    reset
     IO.FS.writeFile save text
     IO.FS.writeFile callsFile ""
     let (rc, _, err) ←
@@ -383,6 +391,7 @@ exit 0
           calls == expected)
         s!"linger tmux import preserves order and stops at the failed creation ({failed})"
   let controls := "\x07\x1b[2J\r\x7f\u0080\u0085\u009b\u009d\u009f"
+  reset
   IO.FS.writeFile save panes
   IO.FS.writeFile callsFile ""
   let (rc, out, err) ←
@@ -490,6 +499,9 @@ fi
   -- in paneDir rather than the lexical parent of saved-link.
   IO.FS.writeFile save (paneLine "lookup" "1" "0" "saved-link/.." "")
   for impostor in [false, true] do
+    let checkpoint := System.FilePath.mk e.dir / "lookup-w1-p0.ckpt"
+    if ← checkpoint.pathExists then
+      IO.FS.removeFile checkpoint
     if impostor then
       for path in [origin / "linger", bin / "linger"] do
         IO.FS.writeFile path
@@ -517,7 +529,6 @@ fi
   -- The same effective home and state paths reach ls in the invocation cwd and
   -- run in the saved cwd. Missing suffixes, empty overrides and absent variables
   -- must retain their meanings across both children.
-  IO.FS.writeFile save (paneLine "environment" "1" "0" "~" "")
   let states :=
     #[("LINGER_DIR", some "saved-link/../state"), ("XDG_RUNTIME_DIR", some "saved-link/../runtime"),
       ("XDG_STATE_HOME", some "saved-link/../persistent")]
@@ -527,6 +538,8 @@ fi
           (paneDir / "persistent").toString]),
       ("empty", states.map fun (key, _) => (key, some ""), [origin.toString, "", ""]),
       ("unset", states.map fun (key, _) => (key, none), ["<unset>", "<unset>", "<unset>"])] do
+    let session := s!"environment-{label}-{← Linger.Posix.getpid}"
+    IO.FS.writeFile save (paneLine session "1" "0" "~" "")
     IO.FS.writeFile callsFile ""
     let out ←
       IO.Process.output
@@ -538,7 +551,7 @@ fi
     expect
         (out.exitCode == 0 &&
           (← IO.FS.readFile callsFile) ==
-            listCalls ++ envCall ++ call ["linger", "run", "environment-w1-p0", "true"] ++
+            listCalls ++ envCall ++ call ["linger", "run", s!"{session}-w1-p0", "true"] ++
               call ["cwd", paneDir.toString] ++
               envCall)
         s!"linger tmux import freezes physical home and child state environment ({label})"
@@ -555,8 +568,9 @@ fi
     throw (IO.userError "could not obtain fish's account-home baseline")
   let accountHome ← IO.FS.realPath fallback.stdout
   let command := "tail -n 1 'home probe'"
-  IO.FS.writeFile save (paneLine "fallback" "1" "0" "~" command)
   for (label, value) in [("unset", none), ("empty", some "")] do
+    let session := s!"fallback-{label}"
+    IO.FS.writeFile save (paneLine session "1" "0" "~" command)
     IO.FS.writeFile callsFile ""
     let out ←
       IO.Process.output
@@ -587,7 +601,7 @@ fi
     expect
         (out.exitCode == 0 && homeOk &&
           calls ==
-            listCalls ++ call ["linger", "run", "fallback-w1-p0", "true"] ++
+            listCalls ++ call ["linger", "run", s!"{session}-w1-p0", "true"] ++
               call ["cwd", accountHome.toString])
         s!"linger tmux import uses account home for saved tilde and every child (HOME {label})"
 

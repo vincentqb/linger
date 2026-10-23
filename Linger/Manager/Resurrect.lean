@@ -13,8 +13,8 @@ import Std.Async.System
 public section
 
 /-! tmux-resurrect interchange. Pure parsing and export policy live in
-`Linger.Tools.Resurrect`. This boundary creates sessions in imported directories and
-publishes current native names and directories atomically. -/
+`Linger.Tools.Resurrect`. Imports seed one checkpoint and fresh shell per pane.
+Exports publish current native names and directories atomically. -/
 
 namespace Linger.Manager.Resurrect
 
@@ -108,8 +108,7 @@ private def publish (path : System.FilePath) (content : String) : IO Unit := do
       throw error
 
 /-- Query an existing server only. A missing tmux or server leaves default
-discovery available. Poll for one second, then retire the owned process group;
-joining it relies on the child honoring Lean core's termination signal. -/
+discovery available. Poll for one second, then force-retire the owned process group. -/
 private def configuredDirectory : IO (Option String) := do
   let pending ← IO.mkRef (none : Option Command.Job)
   try
@@ -182,20 +181,134 @@ private def readSave (origin : System.FilePath) (home : String) (file : Option S
     panes.map fun pane =>
       if pane.dir.isEmpty || (System.FilePath.mk pane.dir).isAbsolute then pane
       else { pane with dir := (origin / pane.dir).toString }
+  let panes := panes.map (preparePane content panes)
   let timestamp := Std.Time.Timestamp.ofSecondsSinceUnixEpoch (.ofInt metadata.modified.sec)
   let modified := (Std.Time.DateTime.ofTimestamp timestamp .UTC).toISO8601String
   return { path, modified, content, panes }
 
+/-- A capture archive belongs only to the save reached by the adjacent `last`.
+Its physical path and revision travel with the selector's displayed snapshot. -/
+private structure Archive where
+  path : System.FilePath
+  save : System.FilePath
+  modified : IO.FS.SystemTime
+  byteSize : UInt64
+  members : List String
+
+private def archiveRevision (archive : Archive) : String :=
+  s!"{archive.modified.sec}:{archive.modified.nsec}:{archive.byteSize}"
+
+private def latestSave (save : System.FilePath) : IO Bool := do
+  let last := save.parent.getD "." / "last"
+  try
+    return (← IO.FS.realPath last) == save
+  catch
+  | .noFileOrDirectory .. =>
+    return false
+  | error =>
+    throw error
+
+/-- No archive extraction writes files. Both tar operations stream bounded output
+through an owned process group, with a five-second deadline and unconditional cleanup. -/
+private def archiveOutput (args : Array String) (limit : Nat) : IO String := do
+  let pending ← IO.mkRef (none : Option Command.Job)
+  try
+    pending.set (some (← Command.startLimited "tar" args limit))
+    let deadline := (← Linger.Posix.monotonicMs) + 5000
+    while (← Linger.Posix.monotonicMs) < deadline do
+      if let some output← Command.poll pending then
+        unless output.exitCode == 0 do
+          throw (IO.userError s!"could not read pane capture archive: {output.stderr}")
+        return output.stdout
+      IO.sleep 10
+    throw (IO.userError "pane capture archive timed out")
+  finally
+    Command.stop pending
+
+private def checkArchive (archive : Archive) : IO Unit := do
+  let metadata ← archive.path.metadata
+  unless
+    metadata.type == .file && metadata.modified == archive.modified &&
+      metadata.byteSize == archive.byteSize &&
+      (← latestSave archive.save) do
+    throw (IO.userError "pane capture archive changed; refresh the saved panes")
+
+private def readArchive (save : System.FilePath) : IO (Option Archive) := do
+  unless ← latestSave save do
+    return none
+  let path := save.parent.getD "." / "pane_contents.tar.gz"
+  let metadata ←
+    try
+      path.metadata
+    catch
+    | .noFileOrDirectory .. =>
+      return none
+    | error =>
+      throw error
+  unless metadata.type == .file && metadata.byteSize.toNat ≤ 64 * 1024 * 1024 do
+    throw (IO.userError "pane capture archive is not a file of at most 64 MiB")
+  let path ← IO.FS.realPath path
+  let text ← archiveOutput #["-tzf", path.toString] (1024 * 1024)
+  let archive : Archive :=
+    { path, save, modified := metadata.modified, byteSize := metadata.byteSize,
+      members := text.splitOn "\n" |>.filter (!·.isEmpty) }
+  checkArchive archive
+  return some archive
+
+private def capturedPane (archive : Option Archive) (pane : Pane) : IO (Option String) := do
+  let some archive := archive | return none
+  let some member := contentMember pane
+    | throw (IO.userError "invalid pane capture identity")
+  checkArchive archive
+  match archive.members.filter (· == member) with
+  | [] =>
+    return none
+  | [_] =>
+    let text ← archiveOutput #["-xOzf", archive.path.toString, "--", member] captureLimit
+    checkArchive archive
+    return some text
+  | _ =>
+    throw (IO.userError s!"duplicate pane capture: {pane.name}")
+
+/-- Publish an imported checkpoint only while owning both session locks. Existing
+sockets and checkpoints win, including a concurrently created session. Release
+the locks before launching the daemon, which must acquire those same locks. -/
+private def seedPane (pane : Pane) (contents : Option String) : IO Bool :=
+  Paths.withSessionLock pane.name do
+    let path ← Paths.ckptPath pane.name
+    let socket ← Paths.socketPath pane.name
+    if (← (System.FilePath.mk path).pathExists) || (← (System.FilePath.mk socket).pathExists) then
+      return false
+    let tmp :=
+      System.FilePath.mk s!"{path}.linger-{← Linger.Posix.getpid}-{← IO.rand 0 0xFFFFFFFF}.tmp"
+    let handle ← IO.FS.Handle.mk tmp .writeNew
+    try
+      Linger.Posix.chmod tmp.toString 0o600
+      handle.write (Linger.Core.Checkpoint.saveBytes (checkpoint pane contents))
+      handle.flush
+      IO.FS.hardLink tmp path
+    finally
+      IO.FS.removeFile tmp
+    return true
+
 /-- Both bulk import and individual selection preflight before effects, then
 skip existing identities. Only the fixed shell-starting command is executed. -/
-private def createPanes (executable : String) (origin : System.FilePath) (panes : List Pane) :
-    IO Unit := do
+private def createPanes (executable : String) (origin : System.FilePath) (panes : List Pane)
+    (archive : IO (Option Archive)) : IO Unit := do
   preflight origin panes
   let listing ← IO.Process.output { cmd := executable, args := #["ls", "--porcelain"] }
   unless listing.exitCode == 0 do
     throw (IO.userError "could not list existing linger sessions")
   let existing := (Linger.Core.Remote.parse listing.stdout).map (·.name)
+  let archive ←
+    if (plan existing panes).isEmpty then
+      pure none
+    else
+      archive
   for pane in plan existing panes do
+    let contents ← capturedPane archive pane
+    unless ← seedPane pane contents do
+      continue
     let created ←
       IO.Process.output
           { cmd := executable, args := #["run", pane.name, "true"],
@@ -207,20 +320,31 @@ private def createPanes (executable : String) (origin : System.FilePath) (panes 
 private def importSave (executable : String) (file : Option String) : IO Unit :=
   inContext fun origin home => do
     let save ← readSave origin home file
-    createPanes executable origin save.panes
+    createPanes executable origin save.panes (readArchive save.path)
 
 private def listSave (file : Option String) (porcelain : Bool) : IO Unit :=
   inContext fun origin home => do
     let save ← readSave origin home file
     let rows := catalogRows save.content save.panes
+    let archive ← readArchive save.path
     let out ← IO.getStdout
     if porcelain then
       out.putStr s!"source\t{diagnostic save.path.toString}\nsaved\t{save.modified}\n\n"
       for row in rows do
         for (key, value) in row do
           -- String-literal framing preserves control characters in action data.
-          let value := if key == "directory" then value.quote else diagnostic value
+          let value :=
+            if
+                ["directory", "session", "window", "pane", "title", "command", "saved-command",
+                      "window-title"].contains
+                  key then
+              value.quote
+            else diagnostic value
           out.putStr s!"{key}\t{value}\n"
+        if let some archive := archive then
+          out.putStr s!"archive\t{archive.path.toString.quote}\n"
+          out.putStr s!"archive-save\t{archive.save.toString.quote}\n"
+          out.putStr s!"archive-revision\t{archiveRevision archive}\n"
         out.putStr "\n"
     else
       out.putStr s!"tmux save · {save.modified}\n{diagnostic save.path.toString}\n\n"
@@ -253,9 +377,29 @@ private def selectSave (executable : String) (file : Option String) : IO UInt32 
           | throw (IO.userError "selected pane has no directory")
         let some line := (row.lookup "line").bind String.toNat?
           | throw (IO.userError "selected pane has no source line")
-        let some pane := selectedPane target dir line
+        let text := fun key =>
+          (row.lookup key).bind fun value =>
+            (Lean.Syntax.decodeStrLit value).filter (·.quote == value)
+        let details : Details :=
+          { session := (text "session").getD "", window := (text "window").getD "",
+            index := (text "pane").getD "", title := (text "title").getD "",
+            command := (text "command").getD "", savedCommand := (text "saved-command").getD "",
+            windowTitle := (text "window-title").getD "",
+            cols := ((row.lookup "cols").bind String.toNat?).getD 80,
+            rows := ((row.lookup "rows").bind String.toNat?).getD 24 }
+        let some pane := selectedPane target dir line details
           | throw (IO.userError "invalid selected pane")
-        createPanes executable origin [pane]
+        let archive := do
+          let some save := text "archive-save" | return none
+          let found ← readArchive save
+          let some found := found
+            | throw (IO.userError "pane capture archive changed; refresh the saved panes")
+          unless
+            text "archive" == some found.path.toString &&
+              row.lookup "archive-revision" == some (archiveRevision found) do
+            throw (IO.userError "pane capture archive changed; refresh the saved panes")
+          return some found
+        createPanes executable origin [pane] archive
         let child ←
           IO.Process.spawn
               { cmd := executable, args := Linger.Manager.Picker.attachArgs pane.name,
@@ -299,7 +443,7 @@ private def writeSave (path : String) (capture : IO (List (String × String)) :=
 private def usage : String :=
   "ls [--porcelain] [SAVE]  List panes from a saved snapshot
 select [SAVE]            Choose a saved pane; start a fresh shell if needed
-import [SAVE]            Start fresh shells in saved directories
+import [SAVE]            Import saved pane contents and metadata into fresh shells
 export SAVE              Save session names and directories to a new file"
 
 /-- The caller supplies its absolute executable path for every listing and run. -/

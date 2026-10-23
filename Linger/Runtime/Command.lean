@@ -30,6 +30,36 @@ def start (executable : String) (args : Array String) : IO Job := do
   let stderr ← IO.asTask child.stderr.readToEnd Task.Priority.dedicated
   return { child, stdout, stderr }
 
+/-- Drain the whole pipe while retaining at most `limit` bytes. After overflow,
+keep draining so the child cannot block on a full pipe; refuse the result at EOF. -/
+private def readLimited (handle : IO.FS.Handle) (limit : Nat) : IO String := do
+  let mut bytes := ByteArray.empty
+  let mut exceeded := false
+  while true do
+    let chunk ← handle.read 4096
+    if chunk.isEmpty then
+      break
+    if !exceeded && bytes.size + chunk.size ≤ limit then
+      bytes := bytes ++ chunk
+    else
+      exceeded := true
+  if exceeded then
+    throw (IO.userError s!"command output exceeds {limit} bytes")
+  let some text := String.fromUTF8? bytes
+    | throw (IO.userError "command output is not UTF-8")
+  return text
+
+/-- A cancellable command with bounded retained output. Standard error retains at
+most 64 KiB; readers still drain both pipes after overflow until collection or cancellation. -/
+def startLimited (executable : String) (args : Array String) (limit : Nat) : IO Job := do
+  let child ←
+    IO.Process.spawn
+        { cmd := executable, args, stdin := .null, stdout := .piped, stderr := .piped,
+          setsid := true }
+  let stdout ← IO.asTask (readLimited child.stdout limit) Task.Priority.dedicated
+  let stderr ← IO.asTask (readLimited child.stderr (64 * 1024)) Task.Priority.dedicated
+  return { child, stdout, stderr }
+
 /-- Collect only a completed child with closed pipes. Clear ownership immediately
 after reaping, before a pipe error can throw: cleanup must never signal a reused PID. -/
 def poll (pending : IO.Ref (Option Job)) : IO (Option IO.Process.Output) := do

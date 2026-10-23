@@ -2,7 +2,10 @@ module
 
 import all Linger.Tools.Resurrect
 import all Linger.Core.Name
+import all Linger.Core.Vt
 import Theorems.Name
+import all Theorems.Vt
+import all Theorems.Checkpoint
 
 /-! Kernel-checked importer contracts.
 
@@ -151,7 +154,7 @@ theorem parseRow_sound (home : String) (line : Nat) (fields : List String) (pane
   unfold parseRow at h
   grind
 
-/-- Even discarded saved commands must have their sentinel and contain no NUL. -/
+/-- Saved command metadata must have its sentinel and contain no NUL. -/
 theorem parseRow_command_valid (home : String) (line : Nat)
     (session window field3 field4 pane field6 cwd field8 field9 savedCommand : String)
     (parsed : Pane)
@@ -164,21 +167,135 @@ theorem parseRow_command_valid (home : String) (line : Nat)
   unfold parseRow at h
   grind
 
-/-- Changing ignored pane fields and well-formed, NUL-free saved commands changes
-neither the parsed pane nor errors from the fixed identity and directory fields. -/
+/-- Activity and window flags do not alter a pane's saved data or validation. -/
 theorem parseRow_metadata_irrelevant (home : String) (line : Nat) (session window pane cwd : String)
     (windowActive windowFlags paneTitle paneActive currentCommand savedCommand : String)
-    (otherWindowActive otherWindowFlags otherPaneTitle otherPaneActive otherCurrentCommand
-      replacement : String)
-    (hs : savedCommand.startsWith ":" = true) (hr : replacement.startsWith ":" = true)
-    (hns : savedCommand.contains '\x00' = false) (hnr : replacement.contains '\x00' = false) :
+    (otherWindowActive otherWindowFlags otherPaneActive : String) :
     parseRow home line
         ["pane", session, window, windowActive, windowFlags, pane, paneTitle, cwd, paneActive,
           currentCommand, savedCommand] =
       parseRow home line
-        ["pane", session, window, otherWindowActive, otherWindowFlags, pane, otherPaneTitle, cwd,
-          otherPaneActive, otherCurrentCommand, replacement] := by
-  simp [parseRow, hs, hr, hns, hnr]
+        ["pane", session, window, otherWindowActive, otherWindowFlags, pane, paneTitle, cwd,
+          otherPaneActive, currentCommand, savedCommand] := by
+  rfl
+
+/-- Successful parsing retains the exact source identity, title and foreground
+command. Only the command-line sentinel is removed. -/
+theorem parseRow_metadata (home : String) (line : Nat)
+    (session window active flags index title cwd paneActive command savedCommand : String)
+    (pane : Pane)
+    (h :
+      parseRow home line
+          ["pane", session, window, active, flags, index, title, cwd, paneActive, command,
+            savedCommand] =
+        .ok (some pane)) :
+    pane.details =
+      { session, window, index, title, command,
+        savedCommand := (savedCommand.drop 1).toString } := by
+  unfold parseRow at h
+  grind
+
+/-- Each layout token contributes at most one leaf; parsing never multiplies
+input-controlled layout nodes. -/
+theorem layoutLeaves_bounded (tokens : List String) :
+    (layoutLeaves tokens).length ≤ tokens.length := by
+  induction tokens with
+  | nil => simp [layoutLeaves]
+  | cons size rest ih =>
+    simp only [layoutLeaves]
+    split
+    · split <;> simp_all
+      omega
+    · simpa using Nat.le_trans ih (Nat.le_succ _)
+
+/-- The public layout adapter inherits the bound on its delimiter-separated tokens. -/
+theorem layoutSizes_bounded (layout : String) :
+    (layoutSizes layout).length ≤
+      ((layout.map fun c => if ['{', '}', '[', ']'].contains c then ',' else c).splitOn ",").length :=
+  layoutLeaves_bounded _
+
+/-- Window layout enrichment cannot retarget a pane, change its directory, or
+replace its command and title metadata. -/
+theorem preparePane_preserves (content : String) (panes : List Pane) (pane : Pane) :
+    (preparePane content panes pane).name = pane.name ∧
+      (preparePane content panes pane).dir = pane.dir ∧
+      (preparePane content panes pane).line = pane.line ∧
+      (preparePane content panes pane).details.session = pane.details.session ∧
+      (preparePane content panes pane).details.window = pane.details.window ∧
+      (preparePane content panes pane).details.index = pane.details.index ∧
+      (preparePane content panes pane).details.title = pane.details.title ∧
+      (preparePane content panes pane).details.command = pane.details.command ∧
+      (preparePane content panes pane).details.savedCommand = pane.details.savedCommand := by
+  exact ⟨rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- An accepted member uses the validated pane's exact source triple, and requires
+that this triple still projects to its canonical linger identity. -/
+theorem contentMember_exact (pane : Pane) (member : String)
+    (h : contentMember pane = some member) :
+    Linger.Core.Name.sanitize pane.name = pane.name ∧
+      projectName pane.details.session pane.details.window pane.details.index = some pane.name ∧
+      member =
+        s!"./pane_contents/pane-{pane.details.session}:{pane.details.window}.{pane.details.index}" := by
+  unfold contentMember at h
+  split at h
+  · rename_i guard
+    simp only [Bool.and_eq_true, beq_iff_eq] at guard
+    cases h
+    exact ⟨guard.1, guard.2, rfl⟩
+  · cases h
+
+/-- Capture retention is fixed at eight MiB per pane. -/
+theorem captureLimit_eq : captureLimit = 8 * 1024 * 1024 := by rfl
+
+/-- Newline conversion can at most double the fixed capture byte budget, including
+for content containing only newlines. -/
+theorem captureBytes_bounded (contents : String) :
+    (captureBytes contents).length ≤ 2 * captureLimit := by
+  have expand (bytes : List UInt8) :
+      (bytes.flatMap fun b => if b == 10 then [13, 10] else [b]).length ≤ 2 * bytes.length := by
+    induction bytes with
+    | nil => simp
+    | cons b bs ih =>
+      simp only [List.flatMap_cons, List.length_append]
+      split <;> simp_all <;> omega
+  dsimp only [captureBytes]
+  split
+  · have := expand (contents.toUTF8.toList.take captureLimit).dropLast
+    have := List.length_take_le captureLimit contents.toUTF8.toList
+    simp only [List.length_dropLast] at *
+    omega
+  · exact Nat.le_trans (expand _) (Nat.mul_le_mul_left 2 (List.length_take_le _ _))
+
+/-- Imported terminal states are built solely through the public live-state
+constructors and inherit the terminal's proved invariants. -/
+theorem checkpoint_live (pane : Pane) (contents : Option String) :
+    Linger.Core.Vt.LiveReachableVt (checkpoint pane contents).vt :=
+  .quiesce (.feed (.init _ _) _)
+
+/-- Persisting an imported pane reads back the exact screen, scrollback, cwd and
+metadata, including when the capture ended inside a terminal escape sequence. -/
+theorem checkpoint_roundtrip (pane : Pane) (contents : Option String) :
+    Linger.Core.Checkpoint.loadBytes (Linger.Core.Checkpoint.saveBytes (checkpoint pane contents)) =
+      some (checkpoint pane contents) := by
+  rw [Linger.Core.Checkpoint.loadBytes_saveBytes_live _ (checkpoint_live pane contents)]
+  simp only [checkpoint, Linger.Core.Vt.Vt.quiesce]
+
+/-- Every checkpoint records the exact saved command and distinguishes missing
+captures from empty captures. Commands are data in labels. -/
+theorem checkpoint_metadata (pane : Pane) (contents : Option String) :
+    (checkpoint pane contents).cwd = pane.dir ∧
+      (checkpoint pane contents).labels.lookup "tmux.command" = some pane.details.command ∧
+      (checkpoint pane contents).labels.lookup "tmux.saved-command" = some pane.details.savedCommand ∧
+      (checkpoint pane contents).labels.lookup "tmux.capture" =
+        some (if contents.isSome then "saved" else "none") := by
+  exact ⟨rfl, rfl, rfl, rfl⟩
+
+/-- Selection carries the displayed pane metadata through the same exact-name
+and NUL-free-directory guards as ordinary saved selections. -/
+theorem selectedPane_metadata (name dir : String) (line : Nat) (details : Details)
+    (canonical : Linger.Core.Name.sanitize name = name) (nulFree : dir.contains '\x00' = false) :
+    selectedPane name dir line details = some { name, dir, line, details } := by
+  simp [selectedPane, canonical, nulFree]
 
 /-- A non-pane row contributes no pane, whatever its remaining fields contain. -/
 theorem parseRow_other (home : String) (line : Nat) (fields : List String)

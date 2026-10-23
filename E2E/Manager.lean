@@ -1868,6 +1868,46 @@ encoding keeps expected identities tied to the save parser's own policy. -/
 private def savedPane (name dir command : String := "") : String :=
   s!"pane\t{Linger.Tools.Resurrect.encodeName name}\t0\t1\t:*\t0\ttitle\t:{dir}\t1\tsh\t:{command}\n"
 
+/-- Install the real archive reader and gzip on the restricted fixture PATH. -/
+private def Fixture.archive (f : Fixture) (captures : List (String × String)) :
+    IO System.FilePath := do
+  for tool in ["tar", "gzip"] do
+    let observer ←
+      withLaunchLock <|
+          IO.Process.output { cmd := "/bin/sh", args := #["-c", s!"command -v {tool}"] }
+    unless observer.exitCode == 0 && !observer.stdout.trimAscii.isEmpty do
+      throw (IO.userError s!"{tool} is required for saved pane capture checks")
+    let reader := f.root / "bin" / tool
+    unless ← reader.pathExists do
+      let linked ←
+        withLaunchLock <|
+            IO.Process.output
+              { cmd := "ln", args := #["-s", observer.stdout.trimAscii.toString, reader.toString] }
+      unless linked.exitCode == 0 do
+        throw (IO.userError s!"could not install fixture archive reader: {linked.stderr}")
+  let staging := f.root / "archive-source"
+  IO.FS.createDirAll (staging / "pane_contents")
+  for (name, content) in captures do
+    let session := Linger.Tools.Resurrect.encodeName name
+    IO.FS.writeFile (staging / "pane_contents" / s!"pane-{session}:0.0") content
+  let path := f.root / "pane_contents.tar.gz"
+  let result ←
+    withLaunchLock <|
+        IO.Process.output
+          { cmd := (f.root / "bin" / "tar").toString,
+            args := #["-czf", path.toString, "-C", staging.toString, "./pane_contents"] }
+  unless result.exitCode == 0 do
+    throw (IO.userError s!"could not create fixture archive: {result.stderr}")
+  return path
+
+private def Fixture.latest (f : Fixture) (save : System.FilePath) : IO Unit := do
+  let linked ←
+    withLaunchLock <|
+        IO.Process.output
+          { cmd := "ln", args := #["-s", save.toString, (f.root / "last").toString] }
+  unless linked.exitCode == 0 do
+    throw (IO.userError s!"could not create fixture latest save: {linked.stderr}")
+
 private def Fixture.nativeNames (f : Fixture) : IO (List String) := do
   let (rc, out, err) ← f.piped #["ls", "--porcelain"]
   unless rc == 0 do
@@ -1991,6 +2031,87 @@ private def savedChecks (e : Env) : IO Unit := do
           let returned ← s.selected "-saved-chosen" start
           s.text "\x03"
           return returned && (← termiosRestored s 130)
+  checkSaved e "chosen-capture"
+      "tmux select restores only the chosen pane's contents and metadata into a fresh shell"
+      fun f owned => do
+      let save := f.root / "saved file"
+      let marker := f.root / "saved-command-ran"
+      let command := s!"printf bad >{quote marker.toString}"
+      IO.FS.writeFile save
+          (savedPane "saved-first" (f.root / "absent").toString command ++
+            savedPane "saved-chosen" f.root.toString command ++
+            "window\tlinger=saved-chosen\t0\t:Saved window\t1\t:*\t1234,80x12,0,0,1\toff\n")
+      f.latest save
+      discard <|
+          f.archive
+            [("saved-first", "unchosen old\nunchosen screen\n"),
+              ("saved-chosen", "chosen old λ\nchosen saved screen\n")]
+      withSession f #["tmux", "select", save.toString] fun s => do
+          unless ← s.selected "saved-first" do
+            return false
+          let start ← s.mark
+          s.text "chosen"
+          unless ← s.selected "saved-chosen" start do
+            return false
+          s.text "\r"
+          unless ← clientsReach owned "saved-chosen" "1" do
+            return false
+          let restoredScreen ← s.until "chosen saved screen"
+          let history ← withLaunchLock (owned.out #["capture", "--history", "saved-chosen"])
+          let savedCommand ← withLaunchLock (owned.info "saved-chosen" "label.tmux.saved-command")
+          let capture ← withLaunchLock (owned.info "saved-chosen" "label.tmux.capture")
+          let start ← s.mark
+          s.text "printf 'capture-shell-%s\\n' ready\r"
+          let shell ← s.until "capture-shell-ready" start
+          let start ← s.mark
+          s.client.detach
+          let returned ← s.selected "saved-first" start
+          s.text "\x03"
+          return restoredScreen && has history "chosen old λ" && !has history "unchosen old" &&
+              savedCommand == some command &&
+              capture == some "saved" &&
+              shell &&
+              returned &&
+              (← termiosRestored s 130) &&
+              (← f.nativeNames) == ["saved-chosen"] &&
+              !(← marker.pathExists)
+  for changedLast in [false, true] do
+    checkSaved e (if changedLast then "capture-last" else "capture-revision")
+        "tmux select refuses a changed capture snapshot before creating a session" fun f owned => do
+        let save := f.root / "saved file"
+        IO.FS.writeFile save (savedPane "saved-chosen" f.root.toString)
+        f.latest save
+        discard <| f.archive [("saved-chosen", "original saved screen\n")]
+        let (rc, catalog, _) ← f.piped #["tmux", "ls", "--porcelain", save.toString]
+        unless rc == 0 && has catalog "archive-revision\t" do
+          return false
+        f.listing catalog
+        IO.FS.writeFile (f.root / "real-executable") f.manager
+        let probe :=
+          { f with
+            manager := f.self,
+            managerArgs := #["--manager-probe", "tmux-picker", f.executable, save.toString] }
+        withSession probe #[] fun s => do
+            unless ← s.selected "saved-chosen" do
+              return false
+            if changedLast then
+              let next := f.root / "new save"
+              IO.FS.writeFile next (savedPane "saved-chosen" f.root.toString)
+              let linked ←
+                withLaunchLock <|
+                    IO.Process.output
+                      { cmd := "ln",
+                        args := #["-s", next.toString, (f.root / "next-last").toString] }
+              unless linked.exitCode == 0 do
+                return false
+              IO.FS.rename (f.root / "next-last") (f.root / "last")
+            else
+              discard <| f.archive [("saved-chosen", "different saved screen with more bytes\n")]
+            s.text "\r"
+            let refused ← failureRestored s 1 "pane capture archive changed"
+            return refused && !has (← f.calls) (call ["run", "saved-chosen", "true"]) &&
+                (← f.nativeNames).isEmpty &&
+                !(← (System.FilePath.mk owned.dir / "saved-chosen.ckpt").pathExists)
   for (slug, content, error) in
     [("missing", none, "save not found"),
       ("malformed", some "pane\tbroken\n", "malformed pane record")] do
@@ -2022,12 +2143,13 @@ private def savedChecks (e : Env) : IO Unit := do
       IO.FS.createDirAll replacement
       let original ← IO.FS.realPath original
       let save := f.root / "saved file"
-      IO.FS.writeFile save ("\n" ++ savedPane "saved-chosen" original.toString)
+      let originalCommand := "make original target"
+      IO.FS.writeFile save ("\n" ++ savedPane "saved-chosen" original.toString originalCommand)
       let (rc, catalog, _) ← f.piped #["tmux", "ls", "--porcelain", save.toString]
       unless rc == 0 do
         return false
       f.listing catalog
-      let changed := savedPane "saved-chosen" replacement.toString
+      let changed := savedPane "saved-chosen" replacement.toString "make replacement target"
       IO.FS.writeFile (f.root / "replacement-save") changed
       IO.FS.writeFile (f.root / "rewrite-save") save.toString
       IO.FS.writeFile (f.root / "real-executable") f.manager
@@ -2062,6 +2184,8 @@ private def savedChecks (e : Env) : IO Unit := do
               (← beforeAttach s) &&
               (← readText (f.root / "run-cwd")) == original.toString &&
               cwd == original.toString &&
+              (← withLaunchLock (owned.info "saved-chosen" "label.tmux.saved-command")) ==
+                some originalCommand &&
               (← f.nativeNames) == ["saved-chosen"]
   checkSaved e "recreated-cwd"
       "tmux select final attach recreates a vanished session in the displayed cwd" fun f owned => do

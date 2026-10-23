@@ -2,12 +2,28 @@ module
 
 import Linger.Tools.Resurrect
 import Linger.Core.Status
+import Linger.Core.Render
+import all Linger.Core.Vt
 meta import Linger.Tools.Resurrect
+meta import Linger.Core.Render
 
 /-! Concrete checks of the pure API. General kernel-checked contracts live in
 `Theorems.Resurrect`; these fixtures exercise the actual string operations. -/
 
 namespace Linger.Tools.Resurrect.Tests
+
+-- Commands are inspection data; each pane keeps its own title and command.
+#guard
+  let text :=
+    "pane\tdesk\t2\t1\t:*\t1\tEditor\t:/one\t1\tvi\t:vi 'draft.txt'\n" ++
+      "pane\tdesk\t2\t1\t:*\t2\tBuild\t:/two\t0\tmake\t:make check\n"
+  match parseSave "" text with
+  | .error _ => false
+  | .ok panes =>
+    let rows := catalogRows text panes
+    rows.map (fun row => row.lookup "title") == [some "Editor", some "Build"] &&
+      rows.map (fun row => row.lookup "command") == [some "vi", some "make"] &&
+      rows.map (fun row => row.lookup "saved-command") == [some "vi 'draft.txt'", some "make check"]
 
 -- Browsing uses original window context and pane order. Display text is safe,
 -- while the action fields retain exact paths and source lines.
@@ -43,7 +59,9 @@ namespace Linger.Tools.Resurrect.Tests
 -- The reserved tmux session name carries native identity without a comment row.
 #guard
   match parseSave "" "pane\tlinger=dev~api+one\t0\t:\t1\t0\t1\t:/tmp\t1\tsh\t:" with
-  | .ok panes => panes == [{ name := "dev.api+one", dir := "/tmp", line := 1 }]
+  | .ok panes =>
+    common panes == [("dev.api+one", "/tmp")] && panes.map Pane.line == [1] &&
+      panes.map (·.details.session) == ["linger=dev~api+one"]
   | .error _ => false
 
 #guard
@@ -181,7 +199,7 @@ namespace Linger.Tools.Resurrect.Tests
   ["", "/tmp/é λ😀\u00a0x !~\"\\", " \x1b[2J\u009b31m z"].map diagnostic ==
     ["", "/tmp/é λ😀\u00a0x !~\"\\", " ?[2J?31m z"]
 
--- Flags, titles, active/current-command fields and valid saved commands have no effect.
+-- Flags and active fields do not affect identity; titles and commands remain exact data.
 #guard
   [("d", "d-w0-p0"), ("linger=d~api", "d.api")].all fun (session, name) =>
     [("", "", "", "", "", ":"), ("1", ":*-Z", "a title", "0", "vi", ":vi 'a b'; tail x"),
@@ -194,10 +212,15 @@ namespace Linger.Tools.Resurrect.Tests
         parseSave "/home/me"
           (s!"window\tignored\npane\t{session}\t0\t{windowActive}\t{flags}\t0\t{title}" ++
             s!"\t:~/work\\ space\t{paneActive}\t{currentCommand}\t{savedCommand}") with
-      | .ok panes => panes == [{ name, dir := "/home/me/work space", line := 2 }]
+      | .ok [pane] =>
+        pane.name == name && pane.dir == "/home/me/work space" && pane.line == 2 &&
+          pane.details ==
+            { session, window := "0", index := "0", title, command := currentCommand,
+              savedCommand := (savedCommand.drop 1).toString }
+      | .ok _ => false
       | .error _ => false
 
--- Discarding metadata does not hide failures in the identity or directory.
+-- Retaining metadata does not hide failures in the identity or directory.
 #guard
   [("bad/name", ":/tmp", "projected session is not a valid linger name at line 1: bad/name-w0-p0"),
         ("linger=raw.dot", ":/tmp", "malformed native session at line 1: linger=raw.dot"),
@@ -210,39 +233,40 @@ namespace Linger.Tools.Resurrect.Tests
     | _, _ => false
 
 -- Non-pane rows are ignored, including blanks and unknown record shapes.
--- Empty and nonempty saved commands are discarded; directories are not trimmed.
+-- Empty and nonempty saved commands remain exact; directories are not trimmed.
 #guard
   match
     parseSave "/home/me"
       ("window\tignored\n\npane\tdesk\t1\t:\t0\t0\t0\t:~/work\\ space\t0\tsh\t:\n" ++
         "state\tignored\npane\tdesk\t1\t:\t0\t1\t0\t:/tmp\t0\tvi\t:  vi 'a b'; tail x  ") with
   | .ok panes =>
-    panes ==
-      [{ name := "desk-w1-p0", dir := "/home/me/work space", line := 3 },
-        { name := "desk-w1-p1", dir := "/tmp", line := 5 }]
+    common panes == [("desk-w1-p0", "/home/me/work space"), ("desk-w1-p1", "/tmp")] &&
+      panes.map Pane.line == [3, 5] &&
+      panes.map (·.details.savedCommand) == ["", "  vi 'a b'; tail x  "]
   | .error _ => false
 
 #guard
   match parseSave "/home/me" "pane\td\t0\t\t\t0\t\t:~\t\t\t:" with
-  | .ok panes => panes == [{ name := "d-w0-p0", dir := "/home/me", line := 1 }]
+  | .ok panes => common panes == [("d-w0-p0", "/home/me")] && panes.map Pane.line == [1]
   | .error _ => false
 
 -- Preserve filesystem traversal spelling; there is no lexical normalization.
 #guard
   match parseSave "/home/me" "pane\td\t0\t\t\t0\t\t:~/link/../work//.\t\t\t:vi" with
-  | .ok panes => panes == [{ name := "d-w0-p0", dir := "/home/me/link/../work//.", line := 1 }]
+  | .ok panes =>
+    common panes == [("d-w0-p0", "/home/me/link/../work//.")] && panes.map Pane.line == [1]
   | .error _ => false
 
 -- Only literal backslash-space is unescaped; other backslashes and ~user remain.
 #guard
   match parseSave "/home/me" "pane\td\t0\t\t\t0\t\t:~user/é\\ x\\q\t\t\t:vi é\\ x" with
-  | .ok panes => panes == [{ name := "d-w0-p0", dir := "~user/é x\\q", line := 1 }]
+  | .ok panes => common panes == [("d-w0-p0", "~user/é x\\q")] && panes.map Pane.line == [1]
   | .error _ => false
 
 -- Nonexistent/empty directories are the caller's preflight responsibility.
 #guard
   match parseSave "/home/me" "pane\td\t0\t\t\t0\t\t:\t\t\t:" with
-  | .ok panes => panes == [{ name := "d-w0-p0", dir := "", line := 1 }]
+  | .ok panes => common panes == [("d-w0-p0", "")] && panes.map Pane.line == [1]
   | .error _ => false
 
 #guard
@@ -310,7 +334,7 @@ namespace Linger.Tools.Resurrect.Tests
     | .error error => error == "malformed pane record at line 1"
     | .ok _ => false
 
--- A later malformed command rejects the complete save, even though it is discarded.
+-- A later malformed command rejects the complete save.
 #guard
   match
     parseSave "/home/me"
@@ -330,5 +354,62 @@ namespace Linger.Tools.Resurrect.Tests
   plan ["a", "b"]
       [{ name := "a", dir := "/a", line := 1 }, { name := "b", dir := "/b", line := 2 }] ==
     []
+
+-- Layout leaves match numeric pane order, even when saved rows are out of order.
+#guard
+  let text :=
+    "pane\tdesk\t2\t1\t:*\t8\tBuild\t:/two\t0\tmake\t:make check\n" ++
+      "pane\tdesk\t2\t1\t:*\t2\tEditor\t:/one\t1\tvi\t:vi 'draft.txt'\n" ++
+      "window\tdesk\t2\t:Work\t1\t:*\tffff,100x30,0,0[100x12,0,0,91,100x17,0,13,92]\toff"
+  match parseSave "" text with
+  | .error _ => false
+  | .ok panes =>
+    let prepared := panes.map (preparePane text panes)
+    prepared.map (fun p => (p.details.cols, p.details.rows)) == [(100, 17), (100, 12)] &&
+      prepared.map (·.details.windowTitle) == ["Work", "Work"] &&
+      prepared.map (contentMember ·) ==
+        [some "./pane_contents/pane-desk:2.8", some "./pane_contents/pane-desk:2.2"]
+
+#guard
+  layoutSizes "ffff,120x40,0,0{59x40,0,0,7,60x40,60,0[60x20,60,0,8,60x19,60,21,9]}" ==
+      [(59, 40), (60, 20), (60, 19)] &&
+    layoutSizes "ffff,90x25,0,0,5" == [(90, 25)] &&
+    layoutSizes "even-horizontal" == []
+
+#guard
+  let pane : Pane :=
+    { name := "desk-w0-p0", dir := "/one", line := 1,
+      details := { session := "desk", window := "0", index := "0" } }
+  let mismatched := "window\tdesk\t0\t:Work\t1\t:*\tffff,90x25,0,0{44x25,0,0,3,45x25,45,0,4}"
+  let prepared := preparePane mismatched [pane] pane
+  prepared.details.cols == 80 && prepared.details.rows == 24 &&
+    contentMember { pane with details := { pane.details with session := "../desk" } } == none
+
+-- Framing drops one final newline, preserves blank rows, Unicode and terminal attributes.
+#guard
+  captureBytes "a\n\nb\n" == [97, 13, 10, 13, 10, 98] && captureBytes "a\n\n" == [97, 13, 10] &&
+    captureBytes "" == []
+
+#guard
+  let pane : Pane :=
+    { name := "desk-w0-p0", dir := "/one", line := 1,
+      details :=
+        { session := "desk", window := "0", index := "0", title := "Editor", command := "vi",
+          savedCommand := "vi 'draft.txt'", cols := 20, rows := 2 } }
+  let saved := checkpoint pane (some "old λ\n\x1b[31mred\x1b[0m\nlast\n")
+  Linger.Core.Render.history saved.vt == "old λ\nred\nlast\n".toUTF8.toList &&
+    Linger.Core.Render.screenText saved.vt == "red\nlast\n".toUTF8.toList &&
+    saved.cwd == pane.dir &&
+    saved.labels.lookup "tmux.command" == some "vi" &&
+    saved.labels.lookup "tmux.saved-command" == some "vi 'draft.txt'" &&
+    saved.labels.lookup "tmux.capture" == some "saved" &&
+    (Linger.Core.Checkpoint.loadBytes (Linger.Core.Checkpoint.saveBytes saved)).map
+        Linger.Core.Checkpoint.saveBytes ==
+      some (Linger.Core.Checkpoint.saveBytes saved)
+
+#guard
+  let pane : Pane := { name := "desk-w0-p0", dir := "/one", line := 1 }
+  let saved := checkpoint pane none
+  saved.vt.cols == 80 && saved.vt.rows == 24 && saved.labels.lookup "tmux.capture" == some "none"
 
 end Linger.Tools.Resurrect.Tests

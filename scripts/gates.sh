@@ -294,7 +294,7 @@ module_imports Theorems/Vt.lean 'Theorems/Vt/*' Theorems/Terminal.lean Theorems/
 # composes their executors with the session backend. The session library never
 # imports them, even through an intermediate module: every library import
 # stays in Core, Runtime or the OS boundary.
-import_closure Linger/Tools/Resurrect.lean 'import Linger.Core.Name;import Linger.Core.Status;'
+import_closure Linger/Tools/Resurrect.lean 'import Linger.Core.Name;import Linger.Core.Status;public import Linger.Core.Checkpoint;'
 import_closure Linger/Tools/Key.lean 'public import Linger.Tools.Input;'
 import_closure Linger/Tools/Fuzzy.lean ''
 import_closure Linger/Tools/Picker.lean 'public import Linger.Tools.Key;import Linger.Tools.Fuzzy;import Linger.Core.Name;public import Linger.Core.Listing;import Linger.Core.Remote;import Linger.Core.Vt;'
@@ -353,7 +353,10 @@ done
 for claim in diagnostic_printable diagnostic_eq_self \
              catalogRows_common catalogRows_lines catalogRows_status catalogRows_printable \
              selectedPane_exact selectedPane_valid \
-             parseSave_valid parseRow_command_valid parseRow_metadata_irrelevant parseRow_other \
+             parseSave_valid parseRow_command_valid parseRow_metadata parseRow_metadata_irrelevant parseRow_other \
+             layoutLeaves_bounded layoutSizes_bounded preparePane_preserves contentMember_exact \
+             captureLimit_eq captureBytes_bounded checkpoint_live checkpoint_roundtrip checkpoint_metadata \
+             selectedPane_metadata \
              mem_plan plan_order plan_sequential_idempotent \
              common_cons encodeName_reversible projectName_native \
              projectName_reserved_topology projectName_foreign \
@@ -384,24 +387,46 @@ printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])private def writeSave [(]pa
 printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])[|] _ => writeSave [(]paths[.]headD ""[)]; return 0([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "export command bypasses its native snapshot"
 # Both views consume the same ordered catalog. Display strings are scrubbed;
-# the action directory has string-literal framing so display cleanup cannot retarget it.
+# action fields have string-literal framing so display cleanup cannot retarget them.
 # Acceptance must use the displayed snapshot, then pass its exact validated
 # record to the shared creation executor. E2E checks the save-refresh race.
 for tie in \
   'let save ← readSave origin home file let rows := catalogRows save[.]content save[.]panes' \
-  'let value := if key == "directory" then value[.]quote else diagnostic value' \
+  'let value := if [[]"directory", "session", "window", "pane", "title", "command", "saved-command", "window-title"[]][.]contains key then value[.]quote else diagnostic value' \
   'Linger[.]Posix[.]writeAll Linger[.]Posix[.]stdoutFd [(]ByteArray[.]mk [(]Linger[.]Core[.]Listing[.]terminalListing withColor rows[)][.]toArray[)]' \
-  'let save ← readSave origin home file createPanes executable origin save[.]panes' \
+  'let save ← readSave origin home file createPanes executable origin save[.]panes [(]readArchive save[.]path[)]' \
   'let path ← savePath origin home file while true do match ← Linger[.]Manager[.]Picker[.]choose executable [(]some path[.]toString[)] with' \
   '[|] [.]attach target displayed => unless displayed[.]candidates[.]contains target do throw [(]IO[.]userError "selected pane was absent from the displayed save"[)] let row := displayed[.]row target' \
   'let some dir := [(]row[.]lookup "directory"[)][.]bind fun value => [(]Lean[.]Syntax[.]decodeStrLit value[)][.]filter [(]·[.]quote == value[)] [|] throw [(]IO[.]userError "selected pane has no directory"[)]' \
-  'let some pane := selectedPane target dir line [|] throw [(]IO[.]userError "invalid selected pane"[)] createPanes executable origin [[]pane[]] let child ← IO[.]Process[.]spawn [{] cmd := executable, args := Linger[.]Manager[.]Picker[.]attachArgs pane[.]name, cwd := some [(]System[.]FilePath[.]mk pane[.]dir[)] [}] discard child[.]wait' \
+  'let some pane := selectedPane target dir line details [|] throw [(]IO[.]userError "invalid selected pane"[)]' \
+  'createPanes executable origin [[]pane[]] archive let child ← IO[.]Process[.]spawn [{] cmd := executable, args := Linger[.]Manager[.]Picker[.]attachArgs pane[.]name, cwd := some [(]System[.]FilePath[.]mk pane[.]dir[)] [}] discard child[.]wait' \
+  'let panes := panes[.]map [(]preparePane content panes[)]' \
+  'let archive ← if [(]plan existing panes[)][.]isEmpty then pure none else archive for pane in plan existing panes do let contents ← capturedPane archive pane unless ← seedPane pane contents do continue' \
   'preflight origin panes let listing ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"ls", "--porcelain"[]] [}]'; do
   printf '%s\n' "$import_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "tmux browser lost its catalog, displayed selection or preflight contract: $tie"
 done
+# Captures belong to the adjacent latest save only. Freeze their revision across
+# display and acceptance, read the exact proved member to stdout, then publish
+# the proved checkpoint while owning both identity locks. No saved command is run.
+for tie in \
+  'unless ← latestSave save do return none' \
+  'metadata[.]byteSize[.]toNat ≤ 64 [*] 1024 [*] 1024' \
+  'let text ← archiveOutput #[[]"-tzf", path[.]toString[]] [(]1024 [*] 1024[)]' \
+  'let some member := contentMember pane [|] throw [(]IO[.]userError "invalid pane capture identity"[)] checkArchive archive match archive[.]members[.]filter [(]· == member[)] with' \
+  'let text ← archiveOutput #[[]"-xOzf", archive[.]path[.]toString, "--", member[]] captureLimit checkArchive archive return some text' \
+  'metadata[.]type == [.]file && metadata[.]modified == archive[.]modified && metadata[.]byteSize == archive[.]byteSize && [(]← latestSave archive[.]save[)]' \
+  'unless text "archive" == some found[.]path[.]toString && row[.]lookup "archive-revision" == some [(]archiveRevision found[)] do throw [(]IO[.]userError "pane capture archive changed; refresh the saved panes"[)]' \
+  'private def seedPane [(]pane : Pane[)] [(]contents : Option String[)] : IO Bool := Paths[.]withSessionLock pane[.]name do' \
+  'if [(]← [(]System[.]FilePath[.]mk path[)][.]pathExists[)] [|][|] [(]← [(]System[.]FilePath[.]mk socket[)][.]pathExists[)] then return false' \
+  'let handle ← IO[.]FS[.]Handle[.]mk tmp [.]writeNew try Linger[.]Posix[.]chmod tmp[.]toString 0o600 handle[.]write [(]Linger[.]Core[.]Checkpoint[.]saveBytes [(]checkpoint pane contents[)][)] handle[.]flush IO[.]FS[.]hardLink tmp path finally IO[.]FS[.]removeFile tmp' \
+  'pending[.]set [(]some [(]← Command[.]startLimited "tar" args limit[)][)] let deadline := [(]← Linger[.]Posix[.]monotonicMs[)] [+] 5000' \
+  'throw [(]IO[.]userError "pane capture archive timed out"[)] finally Command[.]stop pending'; do
+  printf '%s\n' "$import_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+    || fail "tmux capture import lost its bounded reader, frozen archive or checkpoint contract: $tie"
+done
 # Configuration lookup has one polling deadline and an owned subprocess.
-# Cleanup requires cooperative termination. Explicit files never need tmux,
+# Cleanup force-retires that group. Explicit files never need tmux,
 # and selection discovers the default only once before refreshing. Preserve
 # its lookup spelling: readSave resolves the current symlink target each time.
 for tie in \
@@ -503,6 +528,9 @@ code_grep '^def remoteRefreshMs : Nat := [1-9][0-9]*$' Linger/Manager/Picker.lea
 command_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Runtime/Command.lean)"
 for tie in \
   'IO[.]Process[.]spawn [{] cmd := executable, args, stdin := [.]null, stdout := [.]piped, stderr := [.]piped, setsid := true [}] let stdout ← IO[.]asTask child[.]stdout[.]readToEnd Task[.]Priority[.]dedicated let stderr ← IO[.]asTask child[.]stderr[.]readToEnd Task[.]Priority[.]dedicated return [{] child, stdout, stderr [}]' \
+  'IO[.]Process[.]spawn [{] cmd := executable, args, stdin := [.]null, stdout := [.]piped, stderr := [.]piped, setsid := true [}] let stdout ← IO[.]asTask [(]readLimited child[.]stdout limit[)] Task[.]Priority[.]dedicated let stderr ← IO[.]asTask [(]readLimited child[.]stderr [(]64 [*] 1024[)][)] Task[.]Priority[.]dedicated return [{] child, stdout, stderr [}]' \
+  'let chunk ← handle[.]read 4096 if chunk[.]isEmpty then break if !exceeded && bytes[.]size [+] chunk[.]size ≤ limit then bytes := bytes [+][+] chunk else exceeded := true' \
+  'if exceeded then throw [(]IO[.]userError s!"command output exceeds [{]limit[}] bytes"[)] let some text := String[.]fromUTF8[?] bytes [|] throw [(]IO[.]userError "command output is not UTF-8"[)] return text' \
   'def poll [(]pending : IO[.]Ref [(]Option Job[)][)] : IO [(]Option IO[.]Process[.]Output[)] := do if let some job[[:space:]]*← pending[.]get then if [(]← IO[.]hasFinished job[.]stdout[)] && [(]← IO[.]hasFinished job[.]stderr[)] then if let some exitCode[[:space:]]*← job[.]child[.]tryWait then pending[.]set none let stdout ← IO[.]ofExcept [(]← IO[.]wait job[.]stdout[)] let stderr ← IO[.]ofExcept [(]← IO[.]wait job[.]stderr[)] return some [{] exitCode, stdout, stderr [}] return none' \
   'if let some job[[:space:]]*← pending[.]get then pending[.]set none try try try if graceMs > 0 then Linger[.]Posix[.]kill job[.]child[.]pid 15 let deadline := [(]← Linger[.]Posix[.]monotonicMs[)] [+] graceMs while [(]← Linger[.]Posix[.]monotonicMs[)] < deadline do if [(]← IO[.]hasFinished job[.]stdout[)] && [(]← IO[.]hasFinished job[.]stderr[)] then break IO[.]sleep 5 finally retireGroup job finally discard job[.]child[.]wait finally discard <[|] IO[.]wait job[.]stdout discard <[|] IO[.]wait job[.]stderr' \
   'private def retireGroup [(]job : Job[)] : IO Unit := do try job[.]child[.]kill catch err => match err with [|] [.]permissionDenied [.][.] [|] [.]noSuchThing [.][.] => Linger[.]Posix[.]kill job[.]child[.]pid 9 [|] _ => throw err'; do
