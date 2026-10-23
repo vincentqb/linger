@@ -415,12 +415,21 @@ private def groupUsage (f : Fixture) : IO Bool := do
 
 private def groupHelp (f : Fixture) : IO Bool := do
   let mut ok := true
+  let mut previous : Option String := none
   for args in [#["tmux"], #["tmux", "help"], #["tmux", "--help"], #["tmux", "-h"]] do
     let (rc, out, err) ← f.cli args
+    let rows := (out.dropEnd 1).toString.splitOn "\n"
     ok :=
-      ok && rc == 0 && err.isEmpty && has out "Usage: linger tmux" &&
+      ok && rc == 0 && err.isEmpty && out.endsWith "\n" && previous.all (· == out) &&
+        rows.map (fun line => (line.splitOn " ").headD "") ==
+          ["ls", "select", "import", "export"] &&
+        rows.all
+          (fun line =>
+            line == line.trimAscii.toString &&
+              ((line.splitOn "  ").filter (!·.isEmpty)).length ≥ 2) &&
         (["ls [--porcelain] [SAVE]", "select [SAVE]", "import [SAVE]", "export SAVE"].all
           (has out ·))
+    previous := some out
   return ok && (← f.queries).isEmpty && (← namesIn (System.FilePath.mk f.env.dir)).isEmpty
 
 private def rawText (f : Fixture) (revision : String := "first") : String :=

@@ -297,36 +297,19 @@ private def writeSave (path : String) (capture : IO (List (String × String)) :=
   publish path content
 
 private def usage : String :=
-  "Usage: linger tmux <command>
-
-  ls [--porcelain] [SAVE]  List saved panes; --porcelain prints tab-separated records
-  select [SAVE]           Choose a saved pane, create its shell if needed, and attach
-  import [SAVE]           Import every saved pane, skipping existing identities
-  export SAVE             Save native session names and directories to a new file
-
-SAVE defaults to last in tmux's configured resurrect directory, then
-~/.tmux/resurrect or $XDG_DATA_HOME/tmux/resurrect (~/.local/share by default).
-ls shows the resolved path and save time; pass an older file to browse it.
-Use ./-save for a filename starting with -. Selection returns after detach.
-
-These are saved snapshots. Imported sessions start fresh shells; saved
-commands, running processes, layouts and pane contents are never restored.
-Imported names use <session>-w<window>-p<pane>; live and resumable names are skipped.
-Run one import at a time; a failed batch leaves already-created sessions in place.
-
-Exports contain names and directories only, with one window and pane per session.
-Keep tmux's pane base index at zero when restoring an export.
-Use the same HOME or explicit LINGER_DIR for import, listing and recovery.
-"
+  "ls [--porcelain] [SAVE]  List panes from a saved snapshot
+select [SAVE]            Choose a saved pane; start a fresh shell if needed
+import [SAVE]            Start fresh shells in saved directories
+export SAVE              Save session names and directories to a new file"
 
 /-- The caller supplies its absolute executable path for every listing and run. -/
 def run (executable : String) (args : List String) : IO UInt32 := do
   if args.isEmpty || args == ["help"] || args == ["--help"] || args == ["-h"] then
-    IO.print usage
+    IO.println usage
     return 0
   let command := args.headD ""
   unless ["ls", "select", "import", "export"].contains command do
-    IO.eprint usage
+    IO.eprintln usage
     return 2
   let porcelain := command == "ls" && args[1]? == some "--porcelain"
   let paths := if porcelain then args.drop 2 else args.tail

@@ -1271,22 +1271,6 @@ git ls-files 'scripts/*' | grep -qvE '\.sh$' \
 git ls-files 'tests/*' 'Tools/*' 'Manager/*' | grep -q . \
   && fail "legacy top-level directory: use scripts/, Linger/Tools/ or Linger/Manager/" || true
 
-# Keep the help legend equal to the emitted glyphs. Check extraction counts,
-# and compare sorted lines without shell word splitting or pathname expansion.
-icon_glyphs="$(code_grep "^ *[|] [.][a-zA-Z]+ => '" 'Linger/Core/Status.lean' \
-  | sed "s/.*=> '//; s/'.*//")"
-icon_n="$(printf '%s\n' "$icon_glyphs" | grep -c .)"
-[ "$icon_n" -eq 7 ] \
-  || fail "extracted $icon_n status glyphs from Status.icon, expected 7"
-help_glyphs="$(sed -n '/^private def usage : String :=/,/^\/--/s/^Status: //p' Linger/Runtime/Cli.lean \
-  | tr ';' '\n' | awk '{ print $1 }')"
-help_n="$(printf '%s\n' "$help_glyphs" | awk 'NF { n++ } END { print n+0 }')"
-[ "$help_n" -eq "$icon_n" ] \
-  || fail "extracted $help_n status glyphs from linger help, expected $icon_n"
-[ "$(printf '%s\n' "$icon_glyphs" | LC_ALL=C sort)" = \
-  "$(printf '%s\n' "$help_glyphs" | LC_ALL=C sort)" ] \
-  || fail "linger help status legend differs from Status.icon"
-
 # Every declaration name cited in backticks must resolve to a declaration, in THEOREMS.md
 # and in every tracked `.lean` file, comments included. This is gated rather than
 # reviewed because reviewing it produced a FALSE CLEAN: the one-off check run in step 8

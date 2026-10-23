@@ -651,28 +651,29 @@ private def acceptThenCancel (s : Session) (keys : String := "\r") (visits : Nat
   return clean && (← beforeAttach s 1 (visits - 1)) && (← attachNormal s.fixture)
 
 private def usageChecks (e : Env) : IO Unit := do
-  check e "help" "linger help aliases agree without a terminal or linger on PATH" fun f => do
+  check e "help" "linger help lists each command on one line and aliases agree without a terminal"
+      fun f => do
       let (rc, out, err) ← f.piped #["--help"]
       let (shortRc, shortOut, shortErr) ← f.piped #["-h"]
       let (helpRc, helpOut, helpErr) ← f.piped #["help"]
       let (hRc, hOut, hErr) ← f.piped #["h"]
       IO.FS.writeFile (f.root / "help.txt") out
+      let rows := (out.dropEnd 1).toString.splitOn "\n"
       return rc == 0 && shortRc == 0 && helpRc == 0 && hRc == 0 && shortOut == out &&
           helpOut == out &&
           hOut == out &&
           [err, shortErr, helpErr, hErr].all String.isEmpty &&
-          has out "Usage: linger" &&
-          (out.splitOn "\n").any (fun line => line.trimAscii.toString.startsWith "attach ") &&
-          !(out.splitOn "\n").any
-              (fun line =>
-                line.trimAscii.toString.startsWith "select " ||
-                  line.trimAscii.toString.startsWith "status " ||
-                  line.trimAscii.toString.startsWith "watch " ||
-                  line.trimAscii.toString.startsWith "history ") &&
-          has out "ls --summary" &&
-          has out "attach --read-only" &&
-          has out "capture --history" &&
-          has out "tmux" &&
+          out.endsWith "\n" &&
+          rows.map (fun line => (line.splitOn " ").headD "") ==
+            ["attach", "ls", "tmux", "run", "send", "detach", "kill", "info", "capture", "resize",
+              "wait", "get", "set", "unset", "clear", "version", "help"] &&
+          rows.all
+            (fun line =>
+              line == line.trimAscii.toString &&
+                ((line.splitOn "  ").filter (!·.isEmpty)).length ≥ 2) &&
+          has out "--summary" &&
+          has out "--read-only" &&
+          has out "--history" &&
           !has out "linger import [SAVE]" &&
           !has out "--loop" &&
           !has out "--restore-processes" &&

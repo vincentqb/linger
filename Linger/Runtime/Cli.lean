@@ -33,76 +33,26 @@ open Linger.Core.Wire (Msg)
 A peer exceeding the producer's policy has not supplied a usable answer. -/
 abbrev infoReplyCap : Nat := Linger.Core.Session.infoReplyCap
 
-/-- The help text: printed by `linger help` and bare `linger`, and to stderr with status 2
-when `overview` cannot parse its arguments as `ls` options. A command line that matches no
-verb's form reaches `overview` whole. Its status legend lists exactly the glyphs
-`Status.icon` emits; `scripts/gates.sh` compares the two. -/
+/-- One line per command, printed by help and bare invocation, or to stderr when
+`overview` cannot parse the arguments as listing options. -/
 private def usage : String :=
-  s!"Usage: linger [command] [args...]
-       linger tmux <command> [SAVE]
-
-  (no args)                 Show this help
-  attach                    Choose or create interactively; return after detach
-                              (requires terminal input and output)
-  attach <name> [command]   Create or attach by exact name; exit after detach
-  attach --read-only [name]  View a live session or fixed checkpoint; no input
-                              (omit name to choose; marks live output seen)
-  ls [-r [hosts]]           List once; -r includes configured remote hosts
-                              (or pass a comma-separated host list)
-  ls --summary              Print compact local attention counts for a prompt
-  tmux ls [SAVE]            List panes in a saved tmux-resurrect snapshot
-  tmux select [SAVE]        Choose a saved pane and attach; fresh shell if needed
-                              (requires terminal input and output)
-  tmux import [SAVE]        Start fresh shells in saved pane directories
-  tmux export SAVE          Save local sessions in tmux-resurrect format
-                              (requires a new destination file)
-  run <name> <command...>   Send a shell command, creating the session if needed
-  send <name> <text...>     Send raw input to session pty ('linger send <name> -'
-                              sends stdin verbatim: newlines, ^C, escapes...)
-  detach <name>             Detach all clients from a session
-  kill <name>               Kill session and all attached clients
-  info <name>               Print one session's k<TAB>v records (size, cursor,
-                              outseq, labels...); ls --porcelain lists all
-  capture <name>            Print the live or saved screen as plain text
-                              (one line per row; marks live output seen)
-  capture --history <name>  Include scrollback; leave attention unchanged
-  resize <name> <cols> <rows> Set a detached session's size (refused while an
-                              attached client owns it)
-  wait <name>...            Wait for sessions' programs to exit
-  get <name>                Print session labels
-  set <name> <k=v>...       Set labels
-  unset <name> <key>...     Remove labels
-  clear <name>              Remove all labels
-  version | help
-
-Session commands accept an exact name or name@host (also name@user@host).
-Names: {Paths.nameRule}. Only interactive selection uses fuzzy search.
-For attach/capture, put options before the name; use -- before a name starting with -.
-Remote hosts need linger on PATH. List hosts in ~/.config/linger/remotes to include them in selection and ls -r.
-
-Native selection: type to filter or name a new session, arrows to move, Enter to choose.
-Ctrl-P/Ctrl-N also moves; Home/End selects the first/last row; Ctrl-U clears.
-The Create row names the session to create; Esc, Ctrl-C or Ctrl-D cancels.
-Read-only selection offers existing sessions only. Detaching returns to the chooser.
-Saved tmux selection never runs saved commands; see linger tmux help for details.
-
-Status: ⣷ working; ⣿ unread output; ⣀ idle; ✓ exited successfully; ! failed or killed; ~ saved; ? unknown.
-Listings append +N for attached clients. ls --summary counts local attention.
-Status reads leave attention unchanged; live attachment and screen capture mark output seen.
-
-Read-only attach and capture prefer a live session; offline reads never start a program.
-Saved views are fixed snapshots and leave checkpoint data unchanged.
-Checkpoints retain the screen, scrollback, modes, labels and working directory.
-After a reboot, writable attach starts a fresh program; previous processes are not restored.
-Attaching with saved history replaces the terminal window's scrollback; capture --history exports it.
-Kitty graphics, sixel and iTerm2 images pass through while attached, but are not saved.
-Use the application's redraw command after reattaching to restore images.
-
-LINGER_DIR sets the socket and checkpoint directory; use local storage.
-Separate directories allow independent sessions with the same name.
-Set NO_COLOR to disable listing colors.
-Inside a session, $LINGER_SESSION holds the session name.
-Detach key: ctrl-\\ (set LINGER_NO_DETACH_KEY to disable it for writable attach)."
+  "attach [--read-only] [name] [command...]  Choose, create or attach to a session
+ls [-r [hosts]] [--summary|--porcelain]   List sessions or attention counts
+tmux <command> [SAVE]                     Saved tmux panes; see tmux help
+run <name> <command...>                   Run a shell command; create if needed
+send <name> <text...|->                   Send raw input; - reads stdin
+detach <name>                             Detach all clients from a session
+kill <name>                               Kill a session and its clients
+info <name>                               Print session details
+capture [--history] <name>                Print the live or saved screen
+resize <name> <cols> <rows>               Resize a detached session
+wait <name>...                            Wait for session programs to exit
+get <name>                                Print session labels
+set <name> <k=v>...                       Set labels
+unset <name> <key>...                     Remove labels
+clear <name>                              Remove all labels
+version                                   Print version and state paths
+help                                      Show commands"
 
 /-- Start `name`'s daemon detached, running this executable as `__daemon name cwd cmd...`
 with its output appended to `Paths.logPath`. Returns the daemon's pid once that program
