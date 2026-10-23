@@ -402,10 +402,12 @@ namespace Linger.Tools.Resurrect.Tests
     { name := "desk-w0-p0", dir := "/one", line := 1,
       details :=
         { session := "desk", window := "0", index := "0", title := "Editor", command := "vi",
-          savedCommand := "vi 'draft.txt'", cols := 20, rows := 2 } }
+          savedCommand := "vi 'draft.txt'", cols := 80, rows := 3 } }
   let saved := checkpoint pane (some "old λ\n\x1b[31mred\x1b[0m\nlast\n")
-  Linger.Core.Render.history saved.vt == "old λ\nred\nlast\n".toUTF8.toList &&
-    Linger.Core.Render.screenText saved.vt == "red\nlast\n".toUTF8.toList &&
+  Linger.Core.Render.history saved.vt ==
+      "old λ\nred\nlast\nSaved foreground command: vi 'draft.txt'\n\n".toUTF8.toList &&
+    Linger.Core.Render.screenText saved.vt ==
+      "last\nSaved foreground command: vi 'draft.txt'\n\n".toUTF8.toList &&
     saved.cwd == pane.dir &&
     saved.labels.lookup "tmux.command" == some "vi" &&
     saved.labels.lookup "tmux.saved-command" == some "vi 'draft.txt'" &&
@@ -418,5 +420,28 @@ namespace Linger.Tools.Resurrect.Tests
   let pane : Pane := { name := "desk-w0-p0", dir := "/one", line := 1 }
   let saved := checkpoint pane none
   saved.vt.cols == 80 && saved.vt.rows == 24 && saved.labels.lookup "tmux.capture" == some "none"
+
+-- A missing command line falls back to the name; missing metadata adds no notice.
+#guard
+  let pane : Pane :=
+    { name := "fallback", dir := "/one", line := 1, details := { command := "sh", rows := 3 } }
+  let saved := checkpoint pane none
+  let unknown := checkpoint { pane with details := { rows := 3 } } none
+  Linger.Core.Render.screenText saved.vt == "\nSaved foreground command: sh\n\n".toUTF8.toList &&
+    Linger.Core.Render.screenText unknown.vt == "\n\n\n".toUTF8.toList
+
+-- A partial captured escape cannot swallow the notice. Command controls are display text.
+#guard
+  let command := "vim\x1b[2J\r\nλ\u009b"
+  let pane : Pane :=
+    { name := "controls", dir := "/one", line := 1,
+      details := { command := "vim", savedCommand := command, rows := 4 } }
+  let saved := checkpoint pane (some "\x1b[31m\x1b(0\x0esaved\x1b[")
+  Linger.Core.Render.history saved.vt ==
+      "saved\nSaved foreground command: vim?[2J??λ?\n\n\n".toUTF8.toList &&
+    saved.labels.lookup "tmux.saved-command" == some command &&
+    saved.vt.pen == {} &&
+    !saved.vt.g0Line &&
+    !saved.vt.shiftOut
 
 end Linger.Tools.Resurrect.Tests

@@ -355,7 +355,8 @@ for claim in diagnostic_printable diagnostic_eq_self \
              selectedPane_exact selectedPane_valid \
              parseSave_valid parseRow_command_valid parseRow_metadata parseRow_metadata_irrelevant parseRow_other \
              layoutLeaves_bounded layoutSizes_bounded preparePane_preserves contentMember_exact \
-             captureLimit_eq captureBytes_bounded checkpoint_live checkpoint_roundtrip checkpoint_metadata \
+             captureLimit_eq captureBytes_bounded commandNotice_eq commandNotice_bounded checkpoint_notice \
+             checkpoint_live checkpoint_roundtrip checkpoint_metadata \
              selectedPane_metadata \
              mem_plan plan_order plan_sequential_idempotent \
              common_cons encodeName_reversible projectName_native \

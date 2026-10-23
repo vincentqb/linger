@@ -41,7 +41,7 @@ hypotheses. Runtime behavior is covered by IO suites and source gates.
 | Interactive fuzzy matching | Successful matches maximize the configured score; ties choose the earliest alignment. | [Fuzzy](Theorems/Fuzzy.lean): `alignWith_score_max`, `alignWith_earliest` |
 | Input | Bracketed paste emits text only, without control keys. | [Input](Theorems/Input.lean): `feed_paste_only_text`, `feed_paste_no_controls` |
 | Saved sessions | Parsing yields valid panes; sequential import is idempotent; generated saves round-trip names and directories. Listing and selection share a catalog showing the saved foreground command. | [Resurrect](Theorems/Resurrect.lean): `parseSave_valid`, `plan_sequential_idempotent`, `renderSave_roundtrip`, `catalogRows_common`, `catalogRows_command`, `selectedPane_exact` |
-| Saved pane contents | Capture replay processes at most twice the eight MiB byte limit. Imported checkpoints are live terminal states and round-trip exactly, preserving cwd and command metadata; empty and missing captures remain distinguishable. | [Resurrect](Theorems/Resurrect.lean): `captureLimit_eq`, `captureBytes_bounded`, `checkpoint_live`, `checkpoint_roundtrip`, `checkpoint_metadata` |
+| Saved pane contents | Capture replay processes at most twice the eight MiB byte limit. A printable saved-command notice adds at most 43 framing bytes and four bytes per command character. Imported checkpoints are live terminal states and round-trip exactly, preserving cwd and command metadata; empty and missing captures remain distinguishable. | [Resurrect](Theorems/Resurrect.lean): `captureLimit_eq`, `captureBytes_bounded`, `commandNotice_eq`, `commandNotice_bounded`, `checkpoint_notice`, `checkpoint_live`, `checkpoint_roundtrip`, `checkpoint_metadata` |
 
 ## Scope
 
@@ -66,7 +66,8 @@ mode to be off. Incoming title content and the saved cursor slot are covered by
 fixtures. Cleanup clears the title rather than restoring a prior title. Recovery
 preserves screen state, not running processes or images.
 tmux imports read captured screen and scrollback when the latest save has a
-capture archive. Saved commands remain metadata; each pane starts a fresh shell.
+capture archive. Each pane shows its saved foreground command above a fresh shell
+prompt; the command is retained as metadata and is never executed.
 
 ## Checks
 

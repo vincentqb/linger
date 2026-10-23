@@ -539,6 +539,27 @@ example (contents : String) :
     (Resurrect.captureBytes contents).length ≤ 2 * Resurrect.captureLimit := by
   with_reducible exact Resurrect.captureBytes_bounded contents
 
+example (details : Resurrect.Details) :
+    Resurrect.commandNotice details =
+      let command := if details.savedCommand.isEmpty then details.command else details.savedCommand
+      if command.isEmpty then ""
+      else
+        "\x1b[0m\x1b(B\x0f\x1b[?7h\r\nSaved foreground command: " ++ Resurrect.diagnostic command ++
+          "\r\n" := by
+  with_reducible exact Resurrect.commandNotice_eq details
+
+example (details : Resurrect.Details) :
+    (Resurrect.commandNotice details).toUTF8.toList.length ≤
+      43 + 4 * (details.command.length + details.savedCommand.length) := by
+  with_reducible exact Resurrect.commandNotice_bounded details
+
+example (pane : Resurrect.Pane) (contents : Option String) :
+    (Resurrect.checkpoint pane contents).vt =
+      (((Vt.Vt.init pane.details.cols pane.details.rows).feed
+              (Resurrect.captureBytes (contents.getD ""))).quiesce.feed
+          (Resurrect.commandNotice pane.details).toUTF8.toList).quiesce := by
+  with_reducible exact Resurrect.checkpoint_notice pane contents
+
 example (pane : Resurrect.Pane) (contents : Option String) :
     Vt.LiveReachableVt (Resurrect.checkpoint pane contents).vt := by
   with_reducible exact Resurrect.checkpoint_live pane contents

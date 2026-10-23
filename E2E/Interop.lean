@@ -753,10 +753,11 @@ private def captureImport (f : Fixture) : IO Bool := do
   IO.FS.createDirAll second
   let marker := f.root / "saved-command-ran"
   let command := s!"printf bad > '{marker}'"
+  let secondCommand := s!"printf second > '{marker}'"
   let save := f.root / "source"
   let text :=
-    "window\tcaptured\t3\t:Build window\t1\t:*\t1234,41x2,0,0{20x2,0,0,8,20x2,21,0,9}\toff\n" ++
-      paneLine "captured" "3" "1" second.toString command ++
+    "window\tcaptured\t3\t:Build window\t1\t:*\t1234,481x4,0,0{240x4,0,0,8,240x4,241,0,9}\toff\n" ++
+      paneLine "captured" "3" "1" second.toString secondCommand ++
       paneLine "captured" "3" "0" first.toString command
   f.catalogSave save text
   link save (f.root / "last")
@@ -776,8 +777,8 @@ private def captureImport (f : Fixture) : IO Bool := do
           field row "archive" == archive.toString.quote &&
             field row "archive-save" == save.toString.quote &&
             !((field row "archive-revision").isEmpty) &&
-            field row "cols" == "20" &&
-            field row "rows" == "2") &&
+            field row "cols" == "240" &&
+            field row "rows" == "4") &&
       (← f.cwdIs "captured-w3-p0" first) &&
       (← f.cwdIs "captured-w3-p1" second) do
     return false
@@ -790,25 +791,33 @@ private def captureImport (f : Fixture) : IO Bool := do
             "tmux.window-title", "tmux.capture"].mapM
         (fun key => f.info "captured-w3-p0" ("label." ++ key))
   let barrier := f.root / "shell-ready"
+  let secondBarrier := f.root / "second-shell-ready"
   let (ran, _, _) ← f.cli #["run", "captured-w3-p0", s!"printf ready > '{barrier}'"]
+  let (secondRan, _, _) ← f.cli #["run", "captured-w3-p1", s!"printf ready > '{secondBarrier}'"]
   let ready ←
     waitFor 5000 do
-        return (← readBytes barrier) == some "ready".toUTF8
+        return (← readBytes barrier) == some "ready".toUTF8 &&
+            (← readBytes secondBarrier) == some "ready".toUTF8
   let (again, _, againError) ← f.cli #["tmux", "import", save.toString]
   let (_, repeatedHistory, _) ← f.cli #["capture", "--history", "captured-w3-p0"]
   return firstPid.isSome && secondPid.isSome && firstPid != secondPid && firstRc == 0 &&
       secondRc == 0 &&
       has firstHistory "first old λ" &&
       has firstHistory "first red" &&
-      has firstHistory "first screen" &&
+      has firstHistory s!"first screen\nSaved foreground command: {command}\n" &&
+      (firstHistory.splitOn "Saved foreground command: ").length == 2 &&
+      !has firstHistory secondCommand &&
       !has firstHistory "second old" &&
       has secondHistory "second old" &&
-      has secondHistory "second screen" &&
+      has secondHistory s!"second screen\nSaved foreground command: {secondCommand}\n" &&
+      (secondHistory.splitOn "Saved foreground command: ").length == 2 &&
+      !has secondHistory command &&
       !has secondHistory "first old" &&
       labels ==
         [some "captured", some "3", some "0", some "title", some "sh", some command,
           some "Build window", some "saved"] &&
       ran == 0 &&
+      secondRan == 0 &&
       ready &&
       !(← marker.pathExists) &&
       again == 0 &&
@@ -816,6 +825,7 @@ private def captureImport (f : Fixture) : IO Bool := do
       (← f.pid "captured-w3-p0") == firstPid &&
       (← f.pid "captured-w3-p1") == secondPid &&
       has repeatedHistory "first old λ" &&
+      (repeatedHistory.splitOn "Saved foreground command: ").length == 2 &&
       (← readBytes save) == savedBytes &&
       (← readBytes archive) == archiveBytes
 
@@ -827,7 +837,7 @@ private def offlineCapture (f : Fixture) : IO Bool := do
     { pane with
       details :=
         { pane.details with
-          cols := 20, rows := 2 } }
+          cols := 80, rows := 3 } }
   f.own pane.name
   let seeded ←
     withVariables f.procEnv do
@@ -843,10 +853,10 @@ private def offlineCapture (f : Fixture) : IO Bool := do
         Linger.Manager.Resurrect.seedPane pane (some "replacement\n")
   return seeded && !again && (← privateFile path) && before.isSome && screenRc == 0 &&
       screenErr.isEmpty &&
-      screen == "red\nscreen\n" &&
+      screen == "screen\nSaved foreground command: make build\n\n" &&
       historyRc == 0 &&
       historyErr.isEmpty &&
-      history == "old λ\nred\nscreen\n" &&
+      history == "old λ\nred\nscreen\nSaved foreground command: make build\n\n" &&
       savedCommand == some "make build" &&
       (← readBytes path) == before &&
       !(← (System.FilePath.mk f.env.dir / s!"{pane.name}.sock").pathExists)

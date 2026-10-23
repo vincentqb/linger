@@ -300,11 +300,71 @@ theorem captureBytes_bounded (contents : String) :
     omega
   · exact Nat.le_trans (expand _) (Nat.mul_le_mul_left 2 (List.length_take_le _ _))
 
+/-- The notice displays the saved command line, falls back to its name, and adds
+no output when both are absent. Command text passes through the printable adapter. -/
+theorem commandNotice_eq (details : Details) :
+    commandNotice details =
+      let command :=
+        if details.savedCommand.isEmpty then details.command else details.savedCommand
+      if command.isEmpty then ""
+      else
+        "\x1b[0m\x1b(B\x0f\x1b[?7h\r\nSaved foreground command: " ++ diagnostic command ++ "\r\n" :=
+  rfl
+
+/-- Notice replay has 43 framing bytes and at most four bytes per input character,
+including Unicode. Sanitization preserves character count. -/
+theorem commandNotice_bounded (details : Details) :
+    (commandNotice details).toUTF8.toList.length ≤
+      43 + 4 * (details.command.length + details.savedCommand.length) := by
+  have encode (s : String) : s.utf8ByteSize ≤ 4 * s.length := by
+    have bound (cs : List Char) : cs.utf8Encode.size ≤ 4 * cs.length := by
+      induction cs with
+      | nil => simp
+      | cons c cs ih =>
+        have hc := Char.utf8Size_le_four c
+        rw [List.utf8Encode_cons, ByteArray.size_append]
+        simp only [List.utf8Encode_singleton, List.size_toByteArray,
+          String.length_utf8EncodeChar, List.length_cons]
+        omega
+    simpa [String.length_toList] using bound s.toList
+  have count (s : String) : s.toUTF8.toList.length = s.utf8ByteSize := by
+    have loop (bs : ByteArray) (i : Nat) (r : List UInt8) :
+        (ByteArray.toList.loop bs i r).length = r.length + (bs.size - i) := by
+      fun_induction ByteArray.toList.loop bs i r with simp_all <;> omega
+    simpa [ByteArray.toList] using loop s.toUTF8 0 []
+  rw [count]
+  let command := if details.savedCommand.isEmpty then details.command else details.savedCommand
+  have chosen : command.length ≤ details.command.length + details.savedCommand.length := by
+    dsimp only [command]
+    split <;> omega
+  have encoded := encode (diagnostic command)
+  simp only [diagnostic, String.length_map] at encoded
+  change (diagnostic command).utf8ByteSize ≤ 4 * command.length at encoded
+  change
+    (if command.isEmpty then ""
+      else "\x1b[0m\x1b(B\x0f\x1b[?7h\r\nSaved foreground command: " ++ diagnostic command ++ "\r\n").utf8ByteSize ≤ _
+  by_cases empty : command.isEmpty = true
+  · simp only [empty, ite_true, String.utf8ByteSize_empty]
+    omega
+  · simp only [empty, Bool.false_eq_true, ite_false]
+    rw [String.utf8ByteSize_append, String.utf8ByteSize_append]
+    change 41 + (diagnostic command).utf8ByteSize + 2 ≤ _
+    omega
+
+/-- Captured parser state is quiesced before the notice is fed as terminal output,
+and the resulting checkpoint is quiesced before it can be persisted. -/
+theorem checkpoint_notice (pane : Pane) (contents : Option String) :
+    (checkpoint pane contents).vt =
+      (((Linger.Core.Vt.Vt.init pane.details.cols pane.details.rows).feed
+            (captureBytes (contents.getD ""))).quiesce.feed
+          (commandNotice pane.details).toUTF8.toList).quiesce :=
+  rfl
+
 /-- Imported terminal states are built solely through the public live-state
 constructors and inherit the terminal's proved invariants. -/
 theorem checkpoint_live (pane : Pane) (contents : Option String) :
     Linger.Core.Vt.LiveReachableVt (checkpoint pane contents).vt :=
-  .quiesce (.feed (.init _ _) _)
+  .quiesce (.feed (.quiesce (.feed (.init _ _) _)) _)
 
 /-- Persisting an imported pane reads back the exact screen, scrollback, cwd and
 metadata, including when the capture ended inside a terminal escape sequence. -/

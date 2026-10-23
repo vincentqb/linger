@@ -9,7 +9,7 @@ public section
 /-! Pure tmux-resurrect interchange and import planning.
 
 Pane records supply identity, directory, title and command information. Captured
-contents seed a checkpoint; commands remain labels, never executable arguments.
+contents and a command notice seed a checkpoint; commands never become executable arguments.
 The caller must preflight every directory it will import before performing effects.
 Planning uses an explicit snapshot of existing names; it does not claim atomic
 creation or protection from concurrent same-name creators.
@@ -191,13 +191,22 @@ def captureBytes (contents : String) : List UInt8 :=
   let bytes := if bytes.getLast? == some 10 then bytes.dropLast else bytes
   bytes.flatMap fun b => if b == 10 then [13, 10] else [b]
 
+/-- Append the saved foreground command as printable output above a fresh prompt.
+Reset the pen, character set and wrapping before the notice; absent commands add nothing. -/
+def commandNotice (details : Details) : String :=
+  let command := if details.savedCommand.isEmpty then details.command else details.savedCommand
+  if command.isEmpty then ""
+  else "\x1b[0m\x1b(B\x0f\x1b[?7h\r\nSaved foreground command: " ++ diagnostic command ++ "\r\n"
+
 /-- Seed screen and scrollback through the terminal's public parser, and retain
-saved commands and source identity only in checkpoint labels. -/
+exact commands and source identity in labels. Quiesce captured controls before
+appending the informational command notice. -/
 def checkpoint (pane : Pane) (contents : Option String) : Linger.Core.Checkpoint.Ckpt :=
   {
     vt :=
-      ((Linger.Core.Vt.Vt.init pane.details.cols pane.details.rows).feed
-          (captureBytes (contents.getD ""))).quiesce,
+      (((Linger.Core.Vt.Vt.init pane.details.cols pane.details.rows).feed
+              (captureBytes (contents.getD ""))).quiesce.feed
+          (commandNotice pane.details).toUTF8.toList).quiesce,
     cwd := pane.dir,
     labels :=
       [("tmux.session", pane.details.session), ("tmux.window", pane.details.window),
