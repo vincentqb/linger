@@ -196,4 +196,9 @@ cell — `printableChar` on store, `safeChar` on emit, both `Emittable`'s range.
 theorem safeChar_of_emittable {c : Char} (h : Emittable c) : safeChar c = c :=
   safeChar_eq_self h.1 h.2
 
+/-- `linger capture` of a fresh two-column, one-row terminal that printed `A` is the line `A`,
+without its trailing blank. -/
+theorem screenText_observed : screenText ((Vt.init 2 1).feed [0x41]) = [0x41, 0x0A] := by
+  decide +kernel
+
 end Linger.Terminal.Render

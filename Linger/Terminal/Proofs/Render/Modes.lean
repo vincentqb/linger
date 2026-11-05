@@ -222,6 +222,32 @@ theorem finish_empty_title (v : Vt) :
   have hdecode : String.fromUTF8? (ByteArray.mk #[0x32, 0x3B]) = some "2;" := by decide
   simp [Vt.oscFinish, hdecode, split_empty_title, String.intercalate_singleton]
 
+/-- `"2;t"` splits at its one `;`, unfolded like `split_empty_title`. -/
+theorem split_title_t : "2;t".splitOn ";" = ["2", "t"] := by
+  unfold String.splitOn
+  rw [ite_eq_right (by decide), String.splitOnAux]
+  rw [ite_eq_right (by decide), ite_eq_right (by decide)]
+  change String.splitOnAux "2;t" ";" ⟨0⟩ ⟨1⟩ ⟨0⟩ [] = _
+  rw [String.splitOnAux, ite_eq_right (by decide), ite_eq_left (by decide)]
+  change (if true then String.splitOnAux "2;t" ";" ⟨2⟩ ⟨2⟩ ⟨0⟩ ["2"] else _) = _
+  rw [ite_eq_left (by decide), String.splitOnAux, ite_eq_right (by decide),
+    ite_eq_right (by decide)]
+  change String.splitOnAux "2;t" ";" ⟨2⟩ ⟨3⟩ ⟨0⟩ ["2"] = _
+  rw [String.splitOnAux, ite_eq_left (by decide)]
+  rfl
+
+/-- On a fresh terminal, OSC 2 with the payload `t` sets the window title to `t`. -/
+theorem title_observed :
+    ((Vt.init 2 1).feed [0x1B, 0x5D, 0x32, 0x3B, 0x74, 0x07]).windowTitle = "t" := by
+  have hdecode : String.fromUTF8? (ByteArray.mk #[0x32, 0x3B, 0x74]) = some "2;t" := by decide
+  have hosc :
+    (Vt.init 2 1).feed [0x1B, 0x5D, 0x32, 0x3B, 0x74, 0x07] =
+      Vt.oscFinish { Vt.init 2 1 with pstate := .osc #[0x32, 0x3B, 0x74] false }
+        #[0x32, 0x3B, 0x74] :=
+    rfl
+  rw [hosc]
+  simp [Vt.oscFinish, hdecode, split_title_t, Vt.windowTitle]
+
 /-- Empty OSC 2 sets the title absolutely. Its leading ESC aborts even a pending
 UTF-8 character; every other field is preserved. No title bound or prior value is
 assumed. The hand-back supplies the ground premise with its ST lead-in. -/

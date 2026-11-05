@@ -1,7 +1,7 @@
 module
 
 public import Linger.Terminal.Vt
-import Linger.Terminal.Spec
+import all Linger.Terminal.Spec
 import all Linger.Terminal.Vt
 import all Linger.Terminal.Proofs.Vt.Parser
 import all Linger.Terminal.Proofs.Vt.Renderable
@@ -1567,5 +1567,87 @@ theorem observe_dims (v : Vt) (bytes : List UInt8) (h : Good v) :
           (dims_step b hw.1).trans hw.2⟩)
       bytes v ⟨h, rfl⟩
   exact Prod.mk.inj hi.2
+
+/-! ## What a terminal shows
+
+The observations the headline theorems read: on a fresh terminal, after a resize and after
+forgetting partial parser state, in general; and after a few short inputs to a fresh terminal,
+which `Manifest.lean` states so that its claims cannot hold of parts that do nothing. -/
+
+/-- A fresh terminal has the clamped size, blank rows, the cursor at the top left, default
+modes and pen, no history, the whole screen as its scroll region, ASCII character sets with G0
+selected, the main screen current, an empty title, and its parser at a boundary. -/
+theorem init_observed (cols rows : Nat) :
+    (Vt.init cols rows).colCount = clampDim cols ∧
+      (Vt.init cols rows).rowCount = clampDim rows ∧
+      (∀ y < clampDim rows,
+        (Vt.init cols rows).getRow y = Array.replicate (clampDim cols) ({} : Cell)) ∧
+      (Vt.init cols rows).cursorPos = (0, 0) ∧
+      (Vt.init cols rows).getModes = {} ∧
+      (Vt.init cols rows).getPen = {} ∧
+      (Vt.init cols rows).scrollback = [] ∧
+      stick (Vt.init cols rows) =
+        { rows := clampDim rows, top := 0, bot := clampDim rows - 1, g0 := false, g1 := false,
+          so := false, alt := false } ∧
+      (Vt.init cols rows).windowTitle = "" ∧ (Vt.init cols rows).atBoundary = true := by
+  refine ⟨rfl, rfl, fun y hy => ?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+  simp [Vt.getRow, Vt.init, blankRow, Cell.erased, Array.getD, hy]
+
+/-- A resize sets the clamped size, keeps the cursor within it, resets the scroll region to the
+whole screen, and keeps the history, modes, pen, title, character sets, screen selection and
+parser state. -/
+theorem resize_observed (v : Vt) (cols rows : Nat) :
+    (v.resize cols rows).colCount = clampDim cols ∧
+      (v.resize cols rows).rowCount = clampDim rows ∧
+      (v.resize cols rows).cursorPos =
+        (min v.cursorPos.1 (clampDim cols - 1), min v.cursorPos.2 (clampDim rows - 1)) ∧
+      stick (v.resize cols rows) =
+        { stick v with
+          rows := clampDim rows, top := 0, bot := clampDim rows - 1 } ∧
+      (v.resize cols rows).scrollback = v.scrollback ∧
+      (v.resize cols rows).getModes = v.getModes ∧
+      (v.resize cols rows).getPen = v.getPen ∧
+      (v.resize cols rows).windowTitle = v.windowTitle ∧
+      (v.resize cols rows).atBoundary = v.atBoundary := by
+  refine ⟨rfl, rfl, rfl, ?_, rfl, rfl, rfl, rfl, rfl⟩
+  simp only [stick, Vt.resize, Option.isSome_map]
+
+/-- Forgetting partial parser state puts the parser at a boundary and keeps everything the
+terminal shows. -/
+theorem quiesce_observed (v : Vt) :
+    v.quiesce.atBoundary = true ∧
+      v.quiesce.colCount = v.colCount ∧
+      v.quiesce.rowCount = v.rowCount ∧
+      (∀ y, v.quiesce.getRow y = v.getRow y) ∧
+      v.quiesce.cursorPos = v.cursorPos ∧
+      v.quiesce.getModes = v.getModes ∧
+      v.quiesce.getPen = v.getPen ∧
+      v.quiesce.scrollback = v.scrollback ∧
+      stick v.quiesce = stick v ∧ v.quiesce.windowTitle = v.windowTitle :=
+  ⟨rfl, rfl, rfl, fun _ => rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- Printing `A` on a fresh two-column, one-row terminal puts it under the cursor and moves the
+cursor right; a line feed on that bottom row then moves the row into the history. -/
+theorem print_observed :
+    ((Vt.init 2 1).feed [0x41]).getRow 0 = #[{ base := 'A' }, {}] ∧
+      ((Vt.init 2 1).feed [0x41]).cursorPos = (1, 0) ∧
+      ((Vt.init 2 1).feed [0x41, 0x0A]).scrollback = [#[{ base := 'A' }, {}]] := by
+  refine ⟨?_, ?_, ?_⟩ <;> decide +kernel
+
+/-- On a fresh terminal, SGR 1 makes the pen bold, DECSET 6 turns on origin mode, DECSTBM sets
+the scroll region, `ESC ( 0` and `ESC ) 0` give G0 and G1 the DEC line-drawing set and SO
+shifts to G1, DECSET 1049 switches to the alternate screen, and a lone ESC leaves the parser
+inside a control sequence. -/
+theorem controls_observed :
+    ((Vt.init 2 1).feed [0x1B, 0x5B, 0x31, 0x6D]).getPen = { bold := true } ∧
+      ((Vt.init 2 1).feed [0x1B, 0x5B, 0x3F, 0x36, 0x68]).getModes = { origin := true } ∧
+      stick ((Vt.init 1 3).feed [0x1B, 0x5B, 0x32, 0x3B, 0x33, 0x72]) =
+        { rows := 3, top := 1, bot := 2, g0 := false, g1 := false, so := false, alt := false } ∧
+      stick ((Vt.init 1 3).feed [0x1B, 0x28, 0x30, 0x1B, 0x29, 0x30, 0x0E]) =
+        { rows := 3, top := 0, bot := 2, g0 := true, g1 := true, so := true, alt := false } ∧
+      stick ((Vt.init 1 3).feed [0x1B, 0x5B, 0x3F, 0x31, 0x30, 0x34, 0x39, 0x68]) =
+        { rows := 3, top := 0, bot := 2, g0 := false, g1 := false, so := false, alt := true } ∧
+      ((Vt.init 2 1).feed [0x1B]).atBoundary = false :=
+  ⟨by decide +kernel, by decide +kernel, rfl, rfl, rfl, by decide +kernel⟩
 
 end Linger.Terminal.Vt

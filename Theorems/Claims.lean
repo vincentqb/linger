@@ -158,4 +158,68 @@ theorem at_most_one_owner {s : Claim.State} (reached : Claim.Reachable s) {a b r
     (leftUses : left.Uses resource) (rightUses : right.Uses resource) : a = b :=
   Claim.at_most_one_owner reached ha hb leftUses rightUses
 
+theorem init_observed (cols rows : Nat) :
+    (Vt.Vt.init cols rows).colCount = Vt.clampDim cols ∧
+      (Vt.Vt.init cols rows).rowCount = Vt.clampDim rows ∧
+      (∀ y < Vt.clampDim rows,
+        (Vt.Vt.init cols rows).getRow y = Array.replicate (Vt.clampDim cols) ({} : Vt.Cell)) ∧
+      (Vt.Vt.init cols rows).cursorPos = (0, 0) ∧
+      (Vt.Vt.init cols rows).getModes = {} ∧
+      (Vt.Vt.init cols rows).getPen = {} ∧
+      (Vt.Vt.init cols rows).scrollback = [] ∧
+      Vt.stick (Vt.Vt.init cols rows) =
+        { rows := Vt.clampDim rows, top := 0, bot := Vt.clampDim rows - 1, g0 := false, g1 := false,
+          so := false, alt := false } ∧
+      (Vt.Vt.init cols rows).windowTitle = "" ∧
+      (Vt.Vt.init cols rows).atBoundary = true := Vt.init_observed cols rows
+
+theorem resize_observed (v : Vt.Vt) (cols rows : Nat) :
+    (v.resize cols rows).colCount = Vt.clampDim cols ∧
+      (v.resize cols rows).rowCount = Vt.clampDim rows ∧
+      (v.resize cols rows).cursorPos =
+        (min v.cursorPos.1 (Vt.clampDim cols - 1), min v.cursorPos.2 (Vt.clampDim rows - 1)) ∧
+      Vt.stick (v.resize cols rows) =
+        { Vt.stick v with
+          rows := Vt.clampDim rows, top := 0, bot := Vt.clampDim rows - 1 } ∧
+      (v.resize cols rows).scrollback = v.scrollback ∧
+      (v.resize cols rows).getModes = v.getModes ∧
+      (v.resize cols rows).getPen = v.getPen ∧
+      (v.resize cols rows).windowTitle = v.windowTitle ∧
+      (v.resize cols rows).atBoundary = v.atBoundary := Vt.resize_observed v cols rows
+
+theorem quiesce_observed (v : Vt.Vt) :
+    v.quiesce.atBoundary = true ∧
+      v.quiesce.colCount = v.colCount ∧
+      v.quiesce.rowCount = v.rowCount ∧
+      (∀ y, v.quiesce.getRow y = v.getRow y) ∧
+      v.quiesce.cursorPos = v.cursorPos ∧
+      v.quiesce.getModes = v.getModes ∧
+      v.quiesce.getPen = v.getPen ∧
+      v.quiesce.scrollback = v.scrollback ∧
+      Vt.stick v.quiesce = Vt.stick v ∧
+      v.quiesce.windowTitle = v.windowTitle := Vt.quiesce_observed v
+
+theorem print_observed :
+    ((Vt.Vt.init 2 1).feed [0x41]).getRow 0 = #[{ base := 'A' }, {}] ∧
+      ((Vt.Vt.init 2 1).feed [0x41]).cursorPos = (1, 0) ∧
+      Render.screenText ((Vt.Vt.init 2 1).feed [0x41]) = [0x41, 0x0A] ∧
+      ((Vt.Vt.init 2 1).feed [0x41, 0x0A]).scrollback = [#[{ base := 'A' }, {}]] ∧
+      Render.sbRows ((Vt.Vt.init 2 1).feed [0x41, 0x0A]) = #[#[{ base := 'A' }, {}]] :=
+  ⟨Vt.print_observed.1, Vt.print_observed.2.1, Render.screenText_observed, Vt.print_observed.2.2,
+    Render.sbRows_observed⟩
+
+theorem controls_observed :
+    ((Vt.Vt.init 2 1).feed [0x1B, 0x5B, 0x31, 0x6D]).getPen = { bold := true } ∧
+      ((Vt.Vt.init 2 1).feed [0x1B, 0x5B, 0x3F, 0x36, 0x68]).getModes = { origin := true } ∧
+      ((Vt.Vt.init 2 1).feed [0x1B, 0x5D, 0x32, 0x3B, 0x74, 0x07]).windowTitle = "t" ∧
+      Vt.stick ((Vt.Vt.init 1 3).feed [0x1B, 0x5B, 0x32, 0x3B, 0x33, 0x72]) =
+        { rows := 3, top := 1, bot := 2, g0 := false, g1 := false, so := false, alt := false } ∧
+      Vt.stick ((Vt.Vt.init 1 3).feed [0x1B, 0x28, 0x30, 0x1B, 0x29, 0x30, 0x0E]) =
+        { rows := 3, top := 0, bot := 2, g0 := true, g1 := true, so := true, alt := false } ∧
+      Vt.stick ((Vt.Vt.init 1 3).feed [0x1B, 0x5B, 0x3F, 0x31, 0x30, 0x34, 0x39, 0x68]) =
+        { rows := 3, top := 0, bot := 2, g0 := false, g1 := false, so := false, alt := true } ∧
+      ((Vt.Vt.init 2 1).feed [0x1B]).atBoundary = false :=
+  let ⟨pen, modes, region, charsets, alt, escape⟩ := Vt.controls_observed
+  ⟨pen, modes, Render.title_observed, region, charsets, alt, escape⟩
+
 end Linger.Claims

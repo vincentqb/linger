@@ -1532,4 +1532,24 @@ theorem restore_sb_exact (v w : Vt) (hw : LiveReachableVt w) (hv : LiveReachable
     (w.feed (restore v)).sb.toList = v.sb.toList := by
   rw [restore_sb_reachable v w hw hv hcols hrows hne, sbRows_toList_eq v hall hrok]
 
+/-- A repaint of a fresh two-column, one-row terminal that printed `A` and a line feed carries
+the history row `A`. -/
+theorem sbRows_observed : sbRows ((Vt.init 2 1).feed [0x41, 0x0A]) = #[#[{ base := 'A' }, {}]] := by
+  have hfit : fitRow #[{ base := 'A' }, {}] 2 = #[{ base := 'A' }, {}] := by
+    unfold fitRow
+    have hcells :
+      (Array.range 2).map (fun i => cellFit (Row.at #[{ base := 'A' }, {}] i)) =
+        #[{ base := 'A' }, {}] := by
+      apply Array.ext'
+      rw [Array.toList_map, Array.toList_range]
+      rfl
+    rw [hcells]
+    rfl
+  have hsb : ((Vt.init 2 1).feed [0x41, 0x0A]).sb.toList = [#[{ base := 'A' }, {}]] := by
+    decide +kernel
+  have hcost : sbRowCost #[{ base := 'A' }, {}] ≤ sbReplayBytes := by decide +kernel
+  unfold sbRows
+  rw [hsb, show ((Vt.init 2 1).feed [0x41, 0x0A]).cols = 2 from rfl]
+  simp only [List.reverse_cons, List.reverse_nil, List.nil_append, sbTake, hfit, hcost, ite_true]
+
 end Linger.Terminal.Render

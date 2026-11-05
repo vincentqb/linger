@@ -17,7 +17,12 @@
     "Linger.Claims.run_bytes_isolates",
     "Linger.Claims.reachableIn_bound",
     "Linger.Claims.reachableOut_bound",
-    "Linger.Claims.at_most_one_owner"
+    "Linger.Claims.at_most_one_owner",
+    "Linger.Claims.init_observed",
+    "Linger.Claims.resize_observed",
+    "Linger.Claims.quiesce_observed",
+    "Linger.Claims.print_observed",
+    "Linger.Claims.controls_observed"
   ],
   "definition_names": [
     "Linger.Target.Name.check",
