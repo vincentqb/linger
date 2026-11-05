@@ -206,13 +206,13 @@ def Decoder.feed (d : Decoder) (chunk : List UInt8) : Decoder × List Msg :=
     ({ buf, errored := err }, msgs)
 
 /-- Decode a whole stream from scratch (specification form of `feed`). -/
-def decode (bytes : List UInt8) : Decoder × List Msg := Decoder.feed {} bytes
+private def decode (bytes : List UInt8) : Decoder × List Msg := Decoder.feed {} bytes
 
 /-- Feed many chunks in sequence, concatenating the decoded messages —
 the specification of the runtime's read loop (each poll round feeds one
 chunk). Structural recursion rather than a `foldl` so the §Stream
 induction steps through it directly. -/
-def Decoder.feedAll (d : Decoder) : List (List UInt8) → Decoder × List Msg
+private def Decoder.feedAll (d : Decoder) : List (List UInt8) → Decoder × List Msg
   | [] => (d, [])
   | c :: cs =>
     let r := d.feed c

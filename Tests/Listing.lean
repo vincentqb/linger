@@ -1,4 +1,8 @@
+module
+
 import Linger.Core.Listing
+import all Linger.Core.Status
+meta import Linger.Core.Listing
 
 /-! # Listing tests — the human row is safe and forgery-proof
 

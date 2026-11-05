@@ -1,4 +1,7 @@
+module
+
 import Linger.Core.Terminal
+meta import Linger.Core.Terminal
 
 namespace Linger.Core.Terminal.Title.Tests
 

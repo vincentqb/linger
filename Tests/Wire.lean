@@ -1,4 +1,7 @@
-import Linger.Core.Wire
+module
+
+import all Linger.Core.Wire
+meta import Linger.Core.Wire
 
 /-! # Wire unit tests — concrete bytes the theorems quantify over
 
@@ -38,7 +41,7 @@ example :
 
 /-- Fixed-size chunker for the §Stream test (7 never divides a frame
 boundary in the stream below). -/
-private def chop7 (l : List UInt8) : List (List UInt8) :=
+def chop7 (l : List UInt8) : List (List UInt8) :=
   if l.length ≤ 7 then [l] else l.take 7 :: chop7 (l.drop 7)
 termination_by l.length
 decreasing_by simp only [List.length_drop]; omega

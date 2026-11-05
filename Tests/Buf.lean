@@ -1,4 +1,7 @@
+module
+
 import Linger.Core.Buf
+meta import Linger.Core.Buf
 
 /-! # Buf fixtures — the cap decisions, evaluated
 

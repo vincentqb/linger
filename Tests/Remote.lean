@@ -1,4 +1,7 @@
+module
+
 import Linger.Core.Remote
+meta import Linger.Core.Remote
 
 /-! # Remote parser tests — real porcelain, and hostile porcelain -/
 

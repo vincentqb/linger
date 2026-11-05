@@ -116,7 +116,7 @@ def style : Status → String
 
 /-- Attention groups in display order, retaining only positive exact counts.
 Ordinary activity and successful completion do not ask for attention. -/
-def attentionCounts (statuses : List Status) : List (Status × Nat) :=
+private def attentionCounts (statuses : List Status) : List (Status × Nat) :=
   ([.wantsYou, .exitedBad, .unknown] : List Status).filterMap fun status =>
     let count := statuses.count status
     if count == 0 then none else some (status, count)
