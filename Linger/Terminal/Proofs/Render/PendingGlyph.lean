@@ -259,7 +259,7 @@ theorem reprint_margin (w : Vt) (hg : Good w) (hr : Renderable w) (h0 : w.g0Line
         cursor :=
           { w.cursor with
             x := w.cols - 1, pending := true } } := by
-  let t :=
+  let t : Vt :=
     { w with
       cursor :=
         { w.cursor with

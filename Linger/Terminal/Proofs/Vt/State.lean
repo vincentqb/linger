@@ -1304,8 +1304,9 @@ theorem frame_csiDispatch_stbm (v : Vt) (s : CsiState) :
       (if s.priv != 0 then v
         else
           if s.arg 0 1 - 1 < s.arg 1 v.rows - 1 && s.arg 1 v.rows - 1 < v.rows then
-            ({ v with
-                  top := s.arg 0 1 - 1, bot := s.arg 1 v.rows - 1 }).moveTo
+            Vt.moveTo
+              { v with
+                top := s.arg 0 1 - 1, bot := s.arg 1 v.rows - 1 }
               0 0
           else v) =
         w at hw

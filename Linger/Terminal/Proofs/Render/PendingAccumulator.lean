@@ -21,7 +21,7 @@ theorem utf8_feed_any_acc {v : Vt} (c : Char) (hc : 0x20 ≤ c.toNat ∧ c.toNat
     rw [feed1, step_ascii hg hu hc.1 h1 hc.2, acceptChar_toNat]
   rw [ite_eq_right h1]
   calc
-    v.feed (utf8 c) = ({ v with u8acc := 0 } : Vt).feed (utf8 c) := by
+    v.feed (utf8 c) = (Vt.feed { v with u8acc := 0 }) (utf8 c) := by
       unfold utf8
       dsimp only
       rw [hn, ite_eq_right h1]
@@ -119,10 +119,10 @@ theorem cellText_cursor_margin_any_acc (w : Vt) (c : Cell) (hc : CellOk c) (h0 :
       exact (hwidth rfl).elim
     · split <;> simp
   have hp (a : Nat) :
-    (({ w with u8acc := a } : Vt).print c.base).cursor =
+    ((Vt.print { w with u8acc := a }) c.base).cursor =
       { w.cursor with
         x := w.cols - 1, pending := true } := by
-    have hpc : ({ w with u8acc := a } : Vt).printChar c.base = c.base :=
+    have hpc : (Vt.printChar { w with u8acc := a }) c.base = c.base :=
       printChar_id_of_ascii h0 h1 hc.base.1 hc.base.2
     rcases hw with hw | hw
     · rw [cursor_print_narrow_margin hpc hw hins hpend

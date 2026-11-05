@@ -35,9 +35,6 @@ namespace Linger.Terminal.Render
 
 open Linger.Terminal.Vt
 
-/-- A byte stream as emitted to a terminal. -/
-abbrev Bytes := List UInt8
-
 /-! ## Byte primitives -/
 
 /-- `ESC`, which opens every escape sequence. -/

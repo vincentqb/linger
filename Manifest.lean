@@ -84,7 +84,7 @@ theorem restore_cursor_reachable (v w : Vt.Vt) (hv : Vt.LiveReachableVt v)
 /-- Streaming a repaint with any positive byte budget per step ends, and its chunks, each within
 the budget, concatenate to exactly the complete repaint `Render.restore v`. -/
 theorem start_faithful (budget : Nat) (positive : 0 < budget) (v : Vt.Vt) :
-    Replay.Emits budget (Replay.start v) (Render.restore v) := by sorry
+    Replay.Emits Replay.next budget (Replay.start v) (Render.restore v) := by sorry
 
 /-- `linger capture` prints UTF-8 text with no C0 control, DEL or C1 control character other
 than its line terminators. -/

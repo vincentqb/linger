@@ -82,7 +82,7 @@ theorem restore_cursor_reachable (v w : Vt.Vt) (hv : Vt.LiveReachableVt v)
   simp only [Vt.cursorPos_eq, x, y]
 
 theorem start_faithful (budget : Nat) (positive : 0 < budget) (v : Vt.Vt) :
-    Replay.Emits budget (Replay.start v) (Render.restore v) := by
+    Replay.Emits Replay.next budget (Replay.start v) (Render.restore v) := by
   rw [← Replay.start_faithful v]
   exact Replay.emits_remaining budget positive (Replay.start v)
 

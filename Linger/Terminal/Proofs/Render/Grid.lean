@@ -1079,12 +1079,12 @@ theorem home_feed_eq {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) :
   rw [ite_eq_right (by decide)]
   dsimp only
   rw [show
-      ({ v with pstate := .csi ({} : CsiState) } : Vt).csiDispatch ({} : CsiState) 0x48 =
-        ({ v with pstate := .csi ({} : CsiState) } : Vt).moveTo 0 0
+      (Vt.csiDispatch { v with pstate := .csi ({} : CsiState) }) ({} : CsiState) 0x48 =
+        (Vt.moveTo { v with pstate := .csi ({} : CsiState) }) 0 0
       from by
       unfold Vt.csiDispatch; rw [ite_eq_right (by decide)]; rfl]
   show
-    ({ ({ v with pstate := .csi ({} : CsiState) } : Vt).moveTo 0 0 with pstate := .ground } : Vt) =
+    ({ (Vt.moveTo { v with pstate := .csi ({} : CsiState) }) 0 0 with pstate := .ground } : Vt) =
       v.moveTo 0 0
   unfold Vt.moveTo
   rw [hg]
@@ -1127,11 +1127,12 @@ theorem gridAnsi_writes_grid {u v : Vt} (hcols : u.cols = v.cols) (hrows : u.row
         simp [penAfter, sgrParamsOf, Vt.applySgr.go, Vt.sgrAttr]]
   rw [feed_append, feed_append, hsgr, home_feed_eq (v := { u with pen := ({} : Pen) }) hg hun]
   have hu2cursor :
-    (({ u with pen := ({} : Pen) }).moveTo 0 0).cursor.x = 0 ∧
-      (({ u with pen := ({} : Pen) }).moveTo 0 0).cursor.y = 0 ∧
-      (({ u with pen := ({} : Pen) }).moveTo 0 0).cursor.pending = false := by
+    ((Vt.moveTo { u with pen := ({} : Pen) } 0 0)).cursor.x = 0 ∧
+      ((Vt.moveTo { u with pen := ({} : Pen) } 0 0)).cursor.y = 0 ∧
+      ((Vt.moveTo { u with pen := ({} : Pen) } 0 0)).cursor.pending = false := by
     simp [Vt.moveTo, horg]
-  have hwalk : Walking v.cols v.rows v.grid (({ u with pen := ({} : Pen) }).moveTo 0 0) 0 {} := by
+  have hwalk :
+    Walking v.cols v.rows v.grid ((Vt.moveTo { u with pen := ({} : Pen) } 0 0)) 0 {} := by
     refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
     · rw [frame_moveTo]; exact hcols
     · rw [frame_moveTo]; exact hrows
@@ -1151,7 +1152,7 @@ theorem gridAnsi_writes_grid {u v : Vt} (hcols : u.cols = v.cols) (hrows : u.row
     · rw [frame_moveTo]; exact hgsz
     · intro y'
       exact
-        (size_getRow_congr (v := ({ u with pen := ({} : Pen) }).moveTo 0 0) (w := u)
+        (size_getRow_congr (v := (Vt.moveTo { u with pen := ({} : Pen) } 0 0)) (w := u)
               (by rw [frame_moveTo]) (by rw [frame_moveTo]) y').trans
           (hrlens y')
     · intro y' x h; exact absurd h (by omega)
@@ -1162,7 +1163,7 @@ theorem gridAnsi_writes_grid {u v : Vt} (hcols : u.cols = v.cols) (hrows : u.row
     fun i hi => by
     rw [Array.getElem_toList, getD_lt' v.grid i (blankRow v.cols {}) (by simpa using hi)]
   obtain ⟨hcell, hgsz', hrl', hpg', hpu', hpa', hpi', hpw', hpsb⟩ :=
-    paint_rows hub hpos v.grid.toList 0 (({ u with pen := ({} : Pen) }).moveTo 0 0) {} hwalk
+    paint_rows hub hpos v.grid.toList 0 ((Vt.moveTo { u with pen := ({} : Pen) } 0 0)) {} hwalk
       (by
         rw [Nat.zero_add]; exact hrs_len)
       (fun i hi => by
@@ -1319,7 +1320,7 @@ theorem smMod_daw7 (X : Modes) (on : Bool) : smMod 7 on X = { X with wrap := on 
 
 theorem smMod_dom6 (X : Modes) (on : Bool) : smMod 6 on X = { X with origin := on } := by
   show
-    (({ Vt.init 1 1 with modes := { X with origin := on } }).moveTo 0 0).modes =
+    ((Vt.moveTo { Vt.init 1 1 with modes := { X with origin := on } } 0 0)).modes =
       { X with origin := on }
   rw [frame_moveTo]
 
@@ -2072,8 +2073,9 @@ theorem restore_cons (v : Vt) : restore v = 0x1B :: (restore v).tail := by
 /-- **A `restore` replay does not care what the receiver's decoder was holding.** -/
 theorem feed_restore_zeroed (v w : Vt) (hok : U8Ok w) :
     w.feed (restore v) =
-      ({ w with
-            u8need := 0, u8acc := 0 }).feed
+      Vt.feed
+        { w with
+          u8need := 0, u8acc := 0 }
         (restore v) := by
   rw [restore_cons v, feed_cons, feed_cons, step_esc_eq hok]
 

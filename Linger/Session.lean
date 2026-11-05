@@ -4,6 +4,7 @@ public import Linger.Session.Wire
 public import Linger.Terminal.Vt
 public import Linger.Terminal.Replay
 public import Linger.Terminal.Mediation
+import Linger.Terminal.Render
 
 public section
 

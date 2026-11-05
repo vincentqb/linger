@@ -1086,15 +1086,14 @@ theorem push_walk (v w : Vt) (hw : Good w) (hren : Renderable w) (hcols : w.cols
       show penAfter w.pen [0] = ({} : Pen) from by
         simp [penAfter, sgrParamsOf, Vt.applySgr.go, Vt.sgrAttr]]
   have hu1 :
-    w.feed (csiNum 0 0x6D ++ (csiB ++ [0x48])) =
-      (({ w with pen := ({} : Pen) } : Vt)).moveTo 0 0 := by
+    w.feed (csiNum 0 0x6D ++ (csiB ++ [0x48])) = (Vt.moveTo { w with pen := ({} : Pen) }) 0 0 := by
     rw [feed_append, hsgr, home_feed_eq (v := { w with pen := ({} : Pen) }) hgr hun]
   have hcur :
-    (({ w with pen := ({} : Pen) } : Vt).moveTo 0 0).cursor.x = 0 ∧
-      (({ w with pen := ({} : Pen) } : Vt).moveTo 0 0).cursor.y = 0 ∧
-      (({ w with pen := ({} : Pen) } : Vt).moveTo 0 0).cursor.pending = false := by
+    ((Vt.moveTo { w with pen := ({} : Pen) }) 0 0).cursor.x = 0 ∧
+      ((Vt.moveTo { w with pen := ({} : Pen) }) 0 0).cursor.y = 0 ∧
+      ((Vt.moveTo { w with pen := ({} : Pen) }) 0 0).cursor.pending = false := by
     simp [Vt.moveTo, horg]
-  have hrlw : ∀ (P : Pen) (y' : Nat), ((({ w with pen := P } : Vt)).getRow y').size = v.cols := by
+  have hrlw : ∀ (P : Pen) (y' : Nat), ((Vt.getRow { w with pen := P }) y').size = v.cols := by
     intro P y'
     obtain ⟨-, hrok⟩ := hren.main
     show (w.grid.getD y' (blankRow w.cols P)).size = v.cols
@@ -1133,8 +1132,8 @@ theorem push_walk (v w : Vt) (hw : Good w) (hren : Renderable w) (hcols : w.cols
       rw [hgsz]; exact hrows
     · intro y'
       rw [show
-          ((({ w with pen := ({} : Pen) } : Vt)).moveTo 0 0).getRow y' =
-            (({ w with pen := ({} : Pen) } : Vt)).getRow y'
+          ((Vt.moveTo { w with pen := ({} : Pen) }) 0 0).getRow y' =
+            (Vt.getRow { w with pen := ({} : Pen) }) y'
           from by
           unfold Vt.getRow; rw [frame_moveTo]]
       exact hrlw {} y'

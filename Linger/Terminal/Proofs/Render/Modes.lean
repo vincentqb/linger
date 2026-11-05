@@ -1,6 +1,6 @@
 module
 
-public import Linger.Terminal.Vt
+public import Linger.Terminal.Spec
 import all Linger.Terminal.Render
 import all Linger.Terminal.Vt
 import all Linger.Terminal.Proofs.Render.Keeps
@@ -237,22 +237,22 @@ theorem defaultTitleAnsi_feed {v : Vt} (hg : v.pstate = .ground) :
   rw [show v.feed defaultTitleAnsi = ((((v.step 0x1B).step 0x5D).step 0x32).step 0x3B).step 0x07
       from by simp [defaultTitleAnsi, escB, Vt.feed]]
   rw [he]
-  rw [show ({ u with pstate := .esc } : Vt).step 0x5D = { u with pstate := .osc #[] false } from by
+  rw [show (Vt.step { u with pstate := .esc }) 0x5D = { u with pstate := .osc #[] false } from by
       rw [step_of_esc_quiet 0x5D rfl (by simpa using hu)]
       rfl]
   rw [show
-      ({ u with pstate := .osc #[] false } : Vt).step 0x32 = { u with pstate := .osc #[0x32] false }
+      (Vt.step { u with pstate := .osc #[] false }) 0x32 = { u with pstate := .osc #[0x32] false }
       from by
       rw [step_of_osc_quiet 0x32 rfl (by simpa using hu)]
       rfl]
   rw [show
-      ({ u with pstate := .osc #[0x32] false } : Vt).step 0x3B =
+      (Vt.step { u with pstate := .osc #[0x32] false }) 0x3B =
         { u with pstate := .osc #[0x32, 0x3B] false }
       from by
       rw [step_of_osc_quiet 0x3B rfl (by simpa using hu)]
       rfl]
   rw [step_of_osc_quiet 0x07 rfl (by simpa using hu)]
-  change ({ u with pstate := .osc #[0x32, 0x3B] false } : Vt).oscFinish #[0x32, 0x3B] = _
+  change (Vt.oscFinish { u with pstate := .osc #[0x32, 0x3B] false }) #[0x32, 0x3B] = _
   rw [finish_empty_title]
 
 theorem defaultTitleAnsi_pen {v : Vt} (hg : v.pstate = .ground) :
@@ -347,7 +347,7 @@ theorem irm_feed_eq (on : Bool) {w : Vt} (hg : w.pstate = .ground) (hu : w.u8nee
       from by simp [csiNum, csiB, digits],
     feed_append, keeps_csi_open hg hu]
   have hd :
-    ({ w with pstate := .csi {} } : Vt).step 0x34 =
+    (Vt.step { w with pstate := .csi {} }) 0x34 =
       { w with pstate := .csi { cur := 4, haveCur := true } } := by
     simp [Vt.step, Vt.abortUtf8, hu, Vt.stepCsi]
   simp only [Vt.feed, List.foldl_cons, List.foldl_nil]
@@ -360,7 +360,7 @@ theorem irm_feed_eq (on : Bool) {w : Vt} (hg : w.pstate = .ground) (hu : w.u8nee
       hfin.1 hfin.2]
   change
     ({
-          ({ w with pstate := .csi { cur := 4, haveCur := true } } : Vt).csiDispatch
+          (Vt.csiDispatch { w with pstate := .csi { cur := 4, haveCur := true } })
             { cur := 4, haveCur := true, params := #[(4, false)] } (if on then 0x68 else 0x6C) with
           pstate := .ground } :
         Vt) =
@@ -381,7 +381,7 @@ theorem charset_feed_eq (i b : UInt8) (hi : i = 0x28 ∨ i = 0x29) (hlo : 0x30 �
     show ∀ v : Vt, v.feed ([0x1B] ++ [i, b]) = ((v.step 0x1B).step i).step b from fun _ => by
       simp [Vt.feed],
     esc_step_eq hg hu]
-  have hinter : ({ w with pstate := .esc } : Vt).step i = { w with pstate := .escInter i } := by
+  have hinter : (Vt.step { w with pstate := .esc }) i = { w with pstate := .escInter i } := by
     rw [step_of_esc_quiet (v := { w with pstate := .esc }) _ rfl hu]
     rcases hi with h | h <;> subst h <;> rfl
   rw [hinter, step_of_escInter_quiet (v := { w with pstate := .escInter i }) b rfl hu]
@@ -441,8 +441,9 @@ theorem abort_esc {w : Vt} (hok : U8Ok w) :
 
 theorem step_esc_eq {w : Vt} (hok : U8Ok w) :
     w.step 0x1B =
-      ({ w with
-            u8need := 0, u8acc := 0 }).step
+      Vt.step
+        { w with
+          u8need := 0, u8acc := 0 }
         0x1B := by
   unfold Vt.step
   dsimp only
@@ -1018,7 +1019,7 @@ theorem pen_cursorPendingAnsi (v w : Vt) (hg : w.pstate = .ground) (hu : w.u8nee
           (mmap_id_charsetAnsi v))
         w hg hu
     rw [feed_append]
-    simpa using congrArg Vt.pen (penSgr_feed v.pen h.1 h.2.1)
+    simpa using congrArg VtRec.pen (penSgr_feed v.pen h.1 h.2.1)
   · exact hp
 
 theorem restore_pen_any (v w : Vt) : (w.feed (restore v)).pen = v.pen := by

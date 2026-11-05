@@ -200,7 +200,7 @@ awk '
   || fail "lake-manifest has external Lean packages"
 
 # The vt-toolkit's import closure (`specs/archive/vt-toolkit.md` Step 4). The toolkit is
-# Linger/Terminal/{Vt,Render,Mediation,Title,Replay}.lean, and the claim worth having is
+# Linger/Terminal/{Spec,Vt,Render,Mediation,Title,Replay}.lean, and the claim worth having is
 # that its closure contains NOTHING else -- no Posix, no Runtime, no Checkpoint, no Session.
 # `lean_lib LingerVt` in lakefile.lean is the positive half: it elaborates the
 # closure. It cannot be the whole claim, because Lake resolves imports through one
@@ -216,10 +216,10 @@ awk '
 # imports someone thought of is not a closure gate. And exact means it also fires
 # when an import GOES, which is right -- the list below is the recorded header, so
 # Step 2/3 taking a friend import out is a reviewable edit here rather than a
-# silent one. Vt imports nothing; Render imports Vt; Mediation, Title and Replay
-# import Render. The `import all Linger.Terminal.Vt` lines grant access within the
-# sealed toolkit; Title reads only the public surface. Because Vt is a leaf, these five
-# headers define the whole closure.
+# silent one. Vt imports only the Terminal spec, which imports nothing; Render imports Vt;
+# Mediation, Title and Replay import Render. The `import all Linger.Terminal.Vt` lines grant
+# access within the sealed toolkit; Title reads only the public surface. Because the spec is a
+# leaf, these six headers define the whole closure.
 import_re='^[[:space:]]*((public|private|meta)[[:space:]]+)*import[[:space:]]+'
 module_imports() {
   # Imports precede the module body. Stop at `public section` so a later
@@ -249,14 +249,15 @@ import_closure() {
     printf '  want: %s\n   got: %s\n' "${2:-(no imports)}" "${tk_got:-(no imports)}" >&2; \
     fail "$1 left its declared import closure — review the library boundary"; }
 }
-import_closure Linger/Terminal/Vt.lean ''
+import_closure Linger/Terminal/Spec.lean ''
+import_closure Linger/Terminal/Vt.lean 'public import Linger.Terminal.Spec;'
 import_closure Linger/Terminal/Render.lean \
   'public import Linger.Terminal.Vt;import all Linger.Terminal.Vt;'
 import_closure Linger/Terminal/Mediation.lean \
-  'public import Linger.Terminal.Render;import all Linger.Terminal.Vt;'
-import_closure Linger/Terminal/Title.lean 'public import Linger.Terminal.Render;'
+  'public import Linger.Terminal.Vt;import Linger.Terminal.Render;import all Linger.Terminal.Vt;'
+import_closure Linger/Terminal/Title.lean 'public import Linger.Terminal.Vt;import Linger.Terminal.Render;'
 import_closure Linger/Terminal/Replay.lean \
-  'public import Linger.Terminal.Render;import all Linger.Terminal.Vt;'
+  'public import Linger.Terminal.Vt;import Linger.Terminal.Render;import all Linger.Terminal.Vt;'
 
 # Named targets must build the promised roots, not just happen to succeed.
 # Read declaration lines through code_grep, then compare their verbatim Name

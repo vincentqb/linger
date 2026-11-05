@@ -1,6 +1,7 @@
 module
 
-public import Linger.Terminal.Render
+public import Linger.Terminal.Vt
+import Linger.Terminal.Render
 -- `Vt`'s fields are `private` (the seal, `specs/archive/vt-toolkit.md` Step 1). Mediation
 -- is a toolkit module and reads cursor/mode state to answer owned queries,
 -- so it is a friend by construction, not an escape hatch.

@@ -6,6 +6,7 @@ public import Linger.Terminal.Vt
 import Linger.Os.Env
 import Linger.Terminal.Replay
 import Linger.Terminal.Title
+import Linger.Terminal.Render
 import Linger.Target.Remote
 import Linger.Display.Title
 import Linger.Display.Status

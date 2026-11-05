@@ -158,7 +158,7 @@ theorem csi_priv_open_eq {v : Vt} (hg : v.pstate = .ground) (hu : v.u8need = 0) 
   dsimp only
   rw [ite_eq_right (by simp [hu])]
   show
-    (({ v with pstate := .csi ({} : CsiState) } : Vt).stepCsi ({} : CsiState) 0x3F) =
+    ((Vt.stepCsi { v with pstate := .csi ({} : CsiState) }) ({} : CsiState) 0x3F) =
       { v with pstate := .csi ({ priv := 0x3F } : CsiState) }
   unfold Vt.stepCsi
   rw [ite_eq_right (by decide), ite_eq_right (by decide), ite_eq_right (by decide),
@@ -362,7 +362,7 @@ theorem keeps_escCharset (i x : UInt8) (hi : i = 0x28 ∨ i = 0x29)
   rw [show ∀ (w : Vt), w.feed ([0x1B] ++ [i, x]) = ((w.step 0x1B).step i).step x from
     fun w => by simp [Vt.feed]]
   rw [esc_step_eq hg hu]
-  have hinter : ({ v with pstate := .esc } : Vt).step i
+  have hinter : (Vt.step { v with pstate := .esc }) i
       = { v with pstate := .escInter i } := by
     rw [step_of_esc_quiet i rfl (by simpa using hu)]
     unfold Vt.stepEsc
@@ -478,7 +478,7 @@ theorem fixes_osc {α : Type} {π : Vt → α} (hb : PsBlind π) (payload : List
           ((((w.step 0x1B).step 0x5D).feed [0x32, 0x3B]).feed (utf8s payload)).step 0x07
       from fun w => by simp [Vt.feed, List.foldl_append]]
   rw [esc_step_eq hg hu]
-  rw [show ({ v with pstate := .esc } : Vt).step 0x5D = { v with pstate := .osc #[] false } from by
+  rw [show (Vt.step { v with pstate := .esc }) 0x5D = { v with pstate := .osc #[] false } from by
       rw [step_of_esc_quiet 0x5D rfl (by simpa using hu)]
       unfold Vt.stepEsc
       rfl]
@@ -552,7 +552,7 @@ theorem csi_digits_tail_eq (n : Nat) (final : UInt8) (h1 : 0x40 ≤ final)
     (hu : v.u8need = 0) (hi : s.inter = 0) (hcur : s.cur = 0) (hsize : s.params.size < 16) :
     let t : CsiState := { s with cur := min n 65535, haveCur := true }
     v.feed (digits n ++ [final]) =
-      { ({ v with pstate := .csi t } : Vt).csiDispatch
+      { (Vt.csiDispatch { v with pstate := .csi t })
           { t with params := s.params.push (min n 65535, s.curSub) } final with
         pstate := .ground } := by
   dsimp only

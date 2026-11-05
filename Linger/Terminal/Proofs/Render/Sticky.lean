@@ -1149,7 +1149,7 @@ theorem cup_feed_eq (row col : Nat) (hr : 0 < row) (hc : 0 < col) (hrcap : row â
     exact PState.csi.inj ht
   subst s
   rw [hf, show âˆ€ w : Vt, w.feed [0x48] = w.step 0x48 from fun _ => rfl]
-  change ({ v with pstate := .csi t } : Vt).step 0x48 = _
+  change (Vt.step { v with pstate := .csi t }) 0x48 = _
   rw [csi_final_step_eq 0x48 (v := { v with pstate := .csi t }) (s := t) rfl hu hi (by decide)
       (by decide)]
   unfold Vt.csiFinish
@@ -1182,7 +1182,7 @@ theorem cha_feed_eq {v : Vt} (n : Nat) (hg : v.pstate = .ground) (hu : v.u8need 
     show min n 65535 = n from by omega]
   change
     {
-        ({ v with pstate := .csi { cur := n, haveCur := true } } : Vt).setCol
+        (Vt.setCol { v with pstate := .csi { cur := n, haveCur := true } })
           (({ params := #[(n, false)] } : CsiState).arg 0 1 - 1) with
         pstate := .ground } =
       _

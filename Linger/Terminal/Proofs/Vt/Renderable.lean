@@ -1,6 +1,6 @@
 module
 
-public import Linger.Terminal.Vt
+public import Linger.Terminal.Spec
 import all Linger.Terminal.Proofs.Vt.State
 
 namespace Linger.Terminal.Vt

@@ -103,7 +103,7 @@ theorem cellText_reprint_margin (w : Vt) (hg : Good w) (hr : Renderable w) (h0 :
 
 /-- Changing the current pen does not change an existing row's cells. -/
 theorem getCell_set_pen (w : Vt) (p : Pen) (x y : Nat) (hy : y < w.grid.size) :
-    ({ w with pen := p } : Vt).getCell x y = w.getCell x y := by
+    (Vt.getCell { w with pen := p }) x y = w.getCell x y := by
   unfold Vt.getCell Vt.getRow
   rw [getD_of_lt w.grid y (blankRow w.cols p) (blankRow w.cols w.pen) hy]
 
@@ -269,7 +269,7 @@ theorem charsetAnsi_feed_eq (v w : Vt) (hs : w.shiftOut = false) (hg : w.pstate 
       rw [charset_feed_eq _ _ (Or.inl rfl) (by decide) (by decide) hg hu] <;>
       rfl
   have h1 :
-    ({ w with g0Line := v.g0Line } : Vt).feed
+    (Vt.feed { w with g0Line := v.g0Line })
         (if v.g1Line then escCharset 0x29 0x30 else escCharset 0x29 0x42) =
       { w with
         g0Line := v.g0Line, g1Line := v.g1Line } := by

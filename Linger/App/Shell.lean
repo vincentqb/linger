@@ -7,6 +7,7 @@ import Linger.Session.Shell.Daemon
 import Linger.Session.Shell.Client
 import Linger.Session.Shell.Inventory
 import Linger.Target.Remote
+import Linger.Terminal.Render
 import Linger.Display.Listing
 import Linger.Os.Shell.Command
 import Linger.Session.Shell.Resume

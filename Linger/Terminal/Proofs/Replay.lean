@@ -1,6 +1,7 @@
 module
 
 public import Linger.Terminal.Replay
+public import Linger.Terminal.Render
 public import Linger.Terminal.Proofs.Vt -- shake: keep (re-exports `observe_append` to plain importers)
 import Linger.Terminal.Spec
 import all Linger.Terminal.Replay
@@ -246,7 +247,7 @@ public theorem drain_start (budget : Nat) (positive : 0 < budget) (v : Vt) :
 /-- **Streaming emits exactly what remains.** With a positive budget the walk from any plan
 ends, and its chunks, each within the budget, concatenate to the plan's remaining bytes. -/
 theorem emits_remaining (budget : Nat) (positive : 0 < budget) (p : Plan) :
-    Emits budget p (remaining p) := by
+    Emits next budget p (remaining p) := by
   match h : next budget p with
   | none =>
     rw [next_done h]

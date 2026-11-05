@@ -1041,8 +1041,9 @@ theorem csiDispatch_rm_one (v : Vt) (s : CsiState) (n : Nat) (sub : Bool) (hi : 
 theorem csiDispatch_stbm (v : Vt) (s : CsiState) (hi : s.ignore = false) (hp : s.priv = 0) :
     v.csiDispatch s 0x72 =
       (if s.arg 0 1 - 1 < s.arg 1 v.rows - 1 && s.arg 1 v.rows - 1 < v.rows then
-        ({ v with
-              top := s.arg 0 1 - 1, bot := s.arg 1 v.rows - 1 }).moveTo
+        Vt.moveTo
+          { v with
+            top := s.arg 0 1 - 1, bot := s.arg 1 v.rows - 1 }
           0 0
       else v) := by
   unfold Vt.csiDispatch
@@ -1053,8 +1054,9 @@ theorem csiDispatch_stbm (v : Vt) (s : CsiState) (hi : s.ignore = false) (hp : s
     (if s.priv != 0 then v
       else
         if s.arg 0 1 - 1 < s.arg 1 v.rows - 1 && s.arg 1 v.rows - 1 < v.rows then
-          ({ v with
-                top := s.arg 0 1 - 1, bot := s.arg 1 v.rows - 1 }).moveTo
+          Vt.moveTo
+            { v with
+              top := s.arg 0 1 - 1, bot := s.arg 1 v.rows - 1 }
             0 0
         else v) =
       _
@@ -1443,8 +1445,8 @@ theorem observe_esc_intermediates (i : UInt8) (bytes : List UInt8) {v : Vt} (hp 
     (v.observe (i :: bytes)).atBoundary = false ∧
       (v.observe (i :: bytes)).windowTitle = v.windowTitle := by
   change
-    ({ (v.step i) with sb := {} }.observe bytes).atBoundary = false ∧
-      ({ (v.step i) with sb := {} }.observe bytes).windowTitle = _
+    (Vt.observe { (v.step i) with sb := {} } bytes).atBoundary = false ∧
+      (Vt.observe { (v.step i) with sb := {} } bytes).windowTitle = _
   rw [step_esc_intermediate i hp hlo hhi]
   have h :=
     observe_escInter_pending bytes (v :=

@@ -94,7 +94,7 @@ whose `pstate` it has already moved to `.csi s`, then forces `.ground`; the mode
 itself reads no parser state, so the two can be separated — which is what turns the CSI walk
 into a *state* equation rather than a field-by-field one. -/
 theorem setMode_pstate (v : Vt) (p : PState) (priv : Bool) (n : Nat) (on : Bool) :
-    ({ v with pstate := p }).setMode priv n on = { v.setMode priv n on with pstate := p } := by
+    Vt.setMode { v with pstate := p } priv n on = { v.setMode priv n on with pstate := p } := by
   unfold Vt.setMode Vt.enterAlt Vt.leaveAlt Vt.moveTo
   dsimp only
   repeat' split
@@ -154,7 +154,7 @@ theorem un_csiFinish (v : Vt) (s : CsiState) (final : UInt8) :
 
 theorem un_stepCsi (v : Vt) (s : CsiState) (b : UInt8) : (v.stepCsi s b).u8need = v.u8need := by
   unfold Vt.stepCsi
-  simp only [apply_ite Vt.u8need, un_csiFinish, un_ctl, ite_self]
+  simp only [apply_ite VtRec.u8need, un_csiFinish, un_ctl, ite_self]
 
 theorem un_stepEscInter (v : Vt) (i b : UInt8) : (v.stepEscInter i b).u8need = v.u8need := by
   rw [frame_stepEscInter]
@@ -321,7 +321,7 @@ theorem ua_csiFinish (v : Vt) (s : CsiState) (final : UInt8) :
 
 theorem ua_stepCsi (v : Vt) (s : CsiState) (b : UInt8) : (v.stepCsi s b).u8acc = v.u8acc := by
   unfold Vt.stepCsi
-  simp only [apply_ite Vt.u8acc, ua_csiFinish, ua_ctl, ite_self]
+  simp only [apply_ite VtRec.u8acc, ua_csiFinish, ua_ctl, ite_self]
 
 theorem ua_stepEscInter (v : Vt) (i b : UInt8) : (v.stepEscInter i b).u8acc = v.u8acc := by
   rw [frame_stepEscInter]

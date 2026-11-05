@@ -3,7 +3,7 @@ module
 public import Linger.Session
 public import Linger.Session.Buf
 public import Linger.Session.Driver
-public import Linger.Terminal.Spec
+public import Linger.Terminal.Vt
 
 public section
 

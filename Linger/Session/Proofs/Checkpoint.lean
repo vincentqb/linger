@@ -523,7 +523,7 @@ theorem rVt_accepted {l : List UInt8} {v : Vt} {rest : List UInt8} (h : rVt l = 
       hw, he⟩ :=
     h
   simp only [Option.some.injEq, Prod.mk.injEq] at he
-  have hlive := LiveReachableVt.ofDecoded (Vt.decodable_of_ofDecoded hw)
+  have hlive : LiveReachableVt w := Live.ofDecoded (Vt.decodable_of_ofDecoded hw)
   have hquiet : w.quiesce = w := by
     unfold Vt.ofDecoded at hw
     split at hw

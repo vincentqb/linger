@@ -1,6 +1,7 @@
 module
 
-public import Linger.Terminal.Render
+public import Linger.Terminal.Vt
+import Linger.Terminal.Render
 
 public section
 

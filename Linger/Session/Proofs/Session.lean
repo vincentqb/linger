@@ -913,7 +913,7 @@ new content — which is the point: the replay theorem may assume a *reachable*
 grid without that assumption smuggling in a side condition.
 -/
 
-open Linger.Terminal.Vt (LiveReachableVt Renderable)
+open Linger.Terminal.Vt (Live LiveReachableVt Renderable)
 
 /-- One event keeps the terminal reachable (`LiveVt`, in `Linger/Session/Spec.lean`). -/
 theorem step_vt_live (s : State) (ev : Event) (h : LiveVt s) : LiveVt (step s ev).1 :=
@@ -934,7 +934,7 @@ theorem run_vt_renderable (s : State) (evs : List Event) (h : LiveVt s) :
 /-- A fresh boot through `State.boot`, the one door the runtime walks through,
 satisfies the hypothesis, so the statement above is not conditional in practice. -/
 theorem liveVt_boot (cols rows : Nat) (ls mk : List (String × String)) :
-    LiveVt (State.boot (Vt.Vt.init cols rows) ls mk) := LiveReachableVt.init cols rows
+    LiveVt (State.boot (Vt.Vt.init cols rows) ls mk) := Live.init cols rows
 
 /-! ## §Resume at the daemon — the other door into `State.boot`
 
@@ -988,7 +988,7 @@ theorem liveReachableVt_resumeVt (b : ByteArray) :
     Linger.Terminal.Vt.LiveReachableVt (bootVt ((Checkpoint.loadBytes b).map (·.vt))) := by
   unfold bootVt
   rcases hl : Checkpoint.loadBytes b with - | c
-  · exact LiveReachableVt.init 80 24
+  · exact Live.init 80 24
   · exact Checkpoint.loadBytes_live hl
 
 /-- **§Renderable over the daemon's whole life, from either door.** The `LiveVt` analogue

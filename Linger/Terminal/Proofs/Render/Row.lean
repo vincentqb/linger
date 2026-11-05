@@ -474,7 +474,7 @@ theorem step_pen {w : Vt} {P : PaintState} {g : Row} {k : Nat} (hm : Matches w P
   have heq : w.feed (penSgr p) = { w with pen := p } := penSgr_feed p hm.ground hm.u8need
   -- the pen is in `getRow`'s *default* row, so a cell read only survives because the
   -- invariant says the row index is in the grid
-  have hcell : ∀ j, ({ w with pen := p } : Vt).getCell j P.y = w.getCell j P.y := by
+  have hcell : ∀ j, (Vt.getCell { w with pen := p }) j P.y = w.getCell j P.y := by
     intro j
     show
       (((({ w with pen := p } : Vt)).grid.getD P.y
@@ -482,7 +482,7 @@ theorem step_pen {w : Vt} {P : PaintState} {g : Row} {k : Nat} (hm : Matches w P
           j default) =
         ((w.grid.getD P.y (blankRow w.cols w.pen)).getD j default)
     rw [getD_of_lt w.grid P.y (blankRow w.cols p) (blankRow w.cols w.pen) hm.inGrid]
-  have hrow : (({ w with pen := p } : Vt).getRow P.y) = w.getRow P.y := by
+  have hrow : ((Vt.getRow { w with pen := p }) P.y) = w.getRow P.y := by
     show
       ((({ w with pen := p } : Vt)).grid.getD P.y (blankRow ({ w with pen := p } : Vt).cols p)) =
         w.grid.getD P.y (blankRow w.cols w.pen)

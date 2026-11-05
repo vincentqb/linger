@@ -153,8 +153,9 @@ theorem step_cont_more {v : Vt} {k acc m : Nat} (hg : v.pstate = .ground) (hu : 
 theorem step_cont_last {v : Vt} {acc m : Nat} (hg : v.pstate = .ground) (hu : v.u8need = 1)
     (hacc : v.u8acc = acc) (hm : m < 64) (hb2 : acc * 64 + m ≤ 2097151) :
     v.step (UInt8.ofNat (0x80 + m)) =
-      ({ v with
-            u8need := 0, u8acc := 0 }).acceptChar
+      Vt.acceptChar
+        { v with
+          u8need := 0, u8acc := 0 }
         (acc * 64 + m) := by
   rw [step_cont_bridge hg hm]
   simp only [Vt.stepGround, beq_iff_eq, ← UInt8.toNat_inj, UInt8.lt_iff_toNat_lt,

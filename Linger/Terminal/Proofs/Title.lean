@@ -1,6 +1,7 @@
 module
 
 public import Linger.Terminal.Title
+public import Linger.Terminal.Render
 import all Linger.Terminal.Title
 import all Linger.Terminal.Vt
 import all Linger.Terminal.Proofs.Vt

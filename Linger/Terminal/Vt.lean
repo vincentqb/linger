@@ -1,5 +1,7 @@
 module
 
+public import Linger.Terminal.Spec
+
 public section
 
 /-! # Linger.Terminal.Vt — restore-grade terminal emulation, pure
@@ -32,54 +34,6 @@ chosen because linger delegates live rendering to the real terminal:
 -/
 
 namespace Linger.Terminal.Vt
-
-/-! ## Pen, color, cell -/
-
-/-- A cell colour: the terminal default, a 256-colour palette index, or 24-bit RGB. -/
-inductive Color where
-  /-- The receiving terminal's own default. -/
-  | default
-  /-- An entry of the 256-colour palette. -/
-  | idx (i : UInt8)
-  /-- A 24-bit colour, by red, green and blue. -/
-  | rgb (r g b : UInt8)
-  deriving Repr, DecidableEq, Inhabited
-
-/-- The SGR state written into new cells: colours and text attributes. -/
-structure Pen where
-  /-- Foreground colour. -/
-  fg : Color := .default
-  /-- Background colour, which erased cells keep. -/
-  bg : Color := .default
-  /-- Bold (SGR 1). -/
-  bold : Bool := false
-  /-- Faint (SGR 2). -/
-  dim : Bool := false
-  /-- Italic (SGR 3). -/
-  italic : Bool := false
-  /-- Underlined (SGR 4). -/
-  underline : Bool := false
-  /-- Blinking (SGR 5 or 6). -/
-  blink : Bool := false
-  /-- Reverse video (SGR 7). -/
-  reverse : Bool := false
-  /-- Struck through (SGR 9). -/
-  strike : Bool := false
-  deriving Repr, DecidableEq, Inhabited
-
-/-- One grid cell. `Vt.ofDecoded` does not check scrollback rows, so a cell loaded into
-scrollback can hold values the emulator never writes. -/
-structure Cell where
-  /-- The character drawn; a blank in a shadow cell. -/
-  base : Char := ' '
-  /-- Combining characters drawn with `base`, usually none; printing attaches at most eight. -/
-  marks : List Char := []
-  /-- Display columns: 1, or 2 for the leading cell of a wide character and 0 for the shadow
-  cell to its right. -/
-  width : Nat := 1
-  /-- The colours and attributes the cell is drawn with. -/
-  pen : Pen := {}
-  deriving Repr, DecidableEq, Inhabited
 
 /-- An erased cell: blank, but keeps the erasing pen's background
 (BCE), which is what makes full-screen apps restore correctly. -/
@@ -139,9 +93,6 @@ emit-side guard, which still has work to do for a decoded checkpoint. -/
 def printableChar (c : Char) : Char := if c.toNat < 0x20 || c.toNat == 0x7F then '\uFFFD' else c
 
 /-! ## Rows and the scrollback ring -/
-
-/-- One screen row of cells. -/
-abbrev Row := Array Cell
 
 /-- A row of `cols` erased cells keeping pen `p`'s background. -/
 private def blankRow (cols : Nat) (p : Pen) : Row := Array.replicate cols (Cell.erased p)
@@ -367,32 +318,6 @@ structure Saved where
   pen : Pen := {}
   deriving Repr, DecidableEq, Inhabited
 
-/-- Modes we track. Stored-but-uninterpreted ones exist so a restore
-can replay them (`Render.modesAnsi`). -/
-structure Modes where
-  /-- Autowrap at the right margin (DECAWM, private mode 7). -/
-  wrap : Bool := true
-  /-- Origin mode (DECOM, private mode 6): cursor rows are relative to the scroll region. -/
-  origin : Bool := false
-  /-- Insert mode (IRM, mode 4): printing shifts the rest of the row right. -/
-  insert : Bool := false
-  /-- Cursor visibility (DECTCEM, private mode 25). -/
-  cursorVisible : Bool := true
-  /-- Application cursor keys (DECCKM, private mode 1). -/
-  appCursor : Bool := false
-  /-- Application keypad, set by `ESC =` and cleared by `ESC >`. -/
-  appKeypad : Bool := false
-  /-- Bracketed paste (private mode 2004). -/
-  bracketedPaste : Bool := false
-  /-- Mouse tracking: 0 when off, else the last enabled of private modes 1000, 1002 and
-  1003. A loaded checkpoint can hold any number here. -/
-  mouse : Nat := 0
-  /-- SGR mouse encoding (private mode 1006). -/
-  mouseSgr : Bool := false
-  /-- Focus reporting (private mode 1004). -/
-  focusEvents : Bool := false
-  deriving Repr, DecidableEq, Inhabited
-
 /-- The emulator state. **The representation is sealed**: every field is
 `private`, which also makes the constructor private, so an importer can neither
 read a field nor write one nor forge a `Vt`. Internal mutators are private too:
@@ -483,7 +408,7 @@ than merely unchecked — `Vt.resize` reinstalls the grid and the ruler at the n
 leaves the scrollback rows at their old one, so a resized live session has ring rows wider
 than `cols` and a decoder that demanded otherwise would refuse a legitimate checkpoint.
 Measured, not argued. -/
-structure Vt where
+structure VtRec where
   private cols : Nat
   private rows : Nat
   private grid : Array Row
@@ -505,11 +430,12 @@ structure Vt where
   private u8acc : Nat := 0 -- accumulated codepoint bits
   private bell : Bool := false -- sticky until the runtime clears it (activity signal)
 
+/-- The emulator state, as the headline theorems name it: a definition, because `Manifest.lean`
+declares the type as a hole the program fills, over the sealed record `VtRec`. -/
+abbrev Vt : Type := VtRec
+
 -- No `Repr`: it would publicly read every private field (`Linger.Terminal.Tests.VtApi` pins
 -- this).
-
-/-- Clamp a requested dimension to [1, 1000]. -/
-def clampDim (n : Nat) : Nat := min (max n 1) 1000
 
 /-- The default tab ruler: a stop every eight columns after column 0. -/
 private def defaultTabs (cols : Nat) : Array Bool :=
@@ -565,24 +491,6 @@ def Vt.getPen (v : Vt) : Pen := v.pen
 
 /-- The scrollback rows, oldest first. -/
 def Vt.scrollback (v : Vt) : List Row := v.sb.toList
-
-/-- The receiver fields a repaint establishes and then must not disturb: the screen height,
-the scroll region, the character sets, the shift state and the screen selection. -/
-structure Sticky where
-  /-- Screen height. -/
-  rows : Nat
-  /-- Top row of the scroll region, 0-based. -/
-  top : Nat
-  /-- Bottom row of the scroll region, 0-based and inclusive. -/
-  bot : Nat
-  /-- G0 is DEC line drawing. -/
-  g0 : Bool
-  /-- G1 is DEC line drawing. -/
-  g1 : Bool
-  /-- Shift Out selected G1. -/
-  so : Bool
-  /-- The alternate screen is current. -/
-  alt : Bool
 
 /-- A terminal's `Sticky` fields. -/
 def stick (v : Vt) : Sticky :=
@@ -1242,7 +1150,7 @@ private def Vt.setMode (v : Vt) (priv : Bool) (n : Nat) (on : Bool) : Vt :=
   if priv then
     match n with
     | 1 => { v with modes := { v.modes with appCursor := on } }
-    | 6 => let v' := { v with modes := { v.modes with origin := on } }
+    | 6 => let v' : Vt := { v with modes := { v.modes with origin := on } }
            v'.moveTo 0 0
     | 7 => { v with modes := { v.modes with wrap := on } }
     | 25 => { v with modes := { v.modes with cursorVisible := on } }
@@ -1313,8 +1221,9 @@ private def Vt.csiDispatch (v : Vt) (s : CsiState) (final : UInt8) : Vt :=
         let t := s.arg 0 1 - 1
         let b := s.arg 1 v.rows - 1
         if t < b && b < v.rows then
-          ({ v with
-                top := t, bot := b }).moveTo
+          Vt.moveTo
+            { v with
+              top := t, bot := b }
             0 0
         else v
     | 0x73 => { v with saved := { cur := v.cursor, pen := v.pen } } -- s DECSC (ANSI)
@@ -1395,8 +1304,9 @@ private def Vt.stepGround (v : Vt) (b : UInt8) : Vt :=
               -- clamp keeps §Bound trivial; valid sequences never reach it
               let acc := min (v.u8acc * 64 + (b.toNat - 0x80)) 2097151
               if v.u8need == 1 then
-                ({ v with
-                      u8need := 0, u8acc := 0 }).acceptChar
+                Vt.acceptChar
+                  { v with
+                    u8need := 0, u8acc := 0 }
                   acc
               else
                 { v with
@@ -1554,5 +1464,9 @@ this definition has no runtime caller. It is kept because test and suite fixture
 it, and a convenience with callers is reachable code, not the unproved-and-unreachable
 state `Theorems/Coverage.lean` rejects. -/
 def Vt.feedBytes (v : Vt) (bytes : ByteArray) : Vt := v.feed bytes.toList
+
+/-- The states a live session can hold: `Live` (`Linger/Terminal/Spec.lean`) over this
+emulator's own operations. -/
+abbrev LiveReachableVt : Vt → Prop := Live Vt.init Vt.feed Vt.resize Vt.quiesce Vt.Decodable
 
 end Linger.Terminal.Vt

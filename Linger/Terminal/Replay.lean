@@ -1,6 +1,7 @@
 module
 
-public import Linger.Terminal.Render
+public import Linger.Terminal.Vt
+import Linger.Terminal.Render
 -- Replay is a second consumer of the renderer's sealed snapshot. It shares
 -- rows; it never changes a terminal or exposes its representation.
 import all Linger.Terminal.Vt
@@ -25,10 +26,14 @@ private inductive Part where
 /-- A captured repaint. The remaining grids share immutable rows with the
 terminal at attach time. `pending` holds one stage, row or bounded title chunk;
 neither the complete repaint nor an output-effect backlog is stored. -/
-structure Plan where
+structure PlanRec where
   private parts : List Part
   private pending : Render.Bytes := []
   deriving Repr, DecidableEq
+
+/-- A captured repaint, as the headline theorems name it: a definition over the sealed record
+`PlanRec`, because `Manifest.lean` declares the type as a hole the program fills. -/
+abbrev Plan : Type := PlanRec
 
 /-- Capture at the pure event point, before later messages can resize or feed
 the terminal. Literal stages are renderer control/history bytes; screen paints
