@@ -36,14 +36,16 @@ dispatch, and pushes or pull requests that change `c/shim.c` or `./lake`.
 
 ## Layout
 
-- `Linger/Core/`: pure session and terminal models.
-- `Linger/Runtime/`: session IO.
+- `Linger/<Component>/`: a component's pure modules, its `Shell.lean` for IO and, for
+  the OS, `Boundary.lean` for the foreign declarations; then `Proofs/`, `Tests/`
+  (elaboration-time unit tests) and `Suites/` (executable suites).
 - `Linger/Os/`: the operating system. `Boundary.lean` holds the foreign declarations,
   `Shell.lean` the checked surface callers use, `Env.lean` the environment policies.
-- `Linger/Tools/` and `Linger/Manager/`: CLI policies and their IO executors.
-- `Theorems/` and each component's `Proofs/`: proofs; `Tests/`: elaboration-time unit tests.
-- `E2E/` and each component's `Suites/`: executable suites; `scripts/`: build and
-  verification orchestration.
+- `Linger/Target/`: session names and remote targets.
+- Not yet in a component: `Linger/Core/`, pure session and terminal models;
+  `Linger/Runtime/`, session IO; `Linger/Tools/` and `Linger/Manager/`, CLI policies
+  and their IO executors; `Theorems/`, `Tests/` and `E2E/`.
+- `scripts/`: build and verification orchestration.
 
 Keep module paths and namespaces aligned. Use ordinary `import` for implementation
 dependencies; reserve `public import` for types in the public interface and
@@ -53,9 +55,11 @@ Lean erases proofs regardless of file placement.
 
 ## Implementation rules
 
-- `Linger/Core/*` and `Linger/Tools/*` are pure: no `IO`, `partial def` or `sorry`.
-  Model effects as data; execute them in `Linger/Runtime/*` and `Linger/Manager/*`.
-- Every `def` or `abbrev` in `Linger/Core` and `Linger/Tools` needs a written
+- Pure modules have no `IO`, `partial def` or `sorry`: each component's modules other
+  than `Boundary.lean` and `Shell.lean`, and `Linger/Core/*` and `Linger/Tools/*`.
+  Model effects as data; execute them in `Shell.lean`, `Linger/Runtime/*` and
+  `Linger/Manager/*`.
+- Every `def` or `abbrev` in a pure module needs a written
   theorem whose type contains its exact fully qualified constant in the same
   commit, checked by `Theorems/Coverage.lean`; generated lemmas do not count.
   State invariants in `THEOREMS.md` and design code for provability.
@@ -91,13 +95,14 @@ Lean erases proofs regardless of file placement.
 - Ratchets live only in `scripts/gates.sh`; exact suite counts only in
   `scripts/e2e.sh`. Tests assert against the implementation's definitions.
   Use `scripts/` for shell orchestration; do not recreate a lowercase `tests/`.
-- In `scripts/`, `E2ETest.lean` and `E2E/`, scratch without sockets lives under
-  `${TMPDIR:-/tmp}`, in Lean through `E2E.Harness.tempRoot`, `IO.FS.withTempDir` or
-  `IO.FS.createTempDir`, and a directory that will hold a Unix socket lives under
-  `/tmp`, through `E2E.Harness.socketRoot` or `socket_root` in `scripts/e2e.sh`, since
-  macOS's `TMPDIR` alone takes about 49 of a socket path's 104 bytes;
-  `scripts/gates.sh` rejects any other hard-coded `/tmp` there and in the CI workflow,
-  except in `E2E/Paths.lean` and `E2E/Overview.lean`, which assert product defaults.
+- In `scripts/`, `E2ETest.lean`, `E2E/` and each `Suites/`, scratch without sockets
+  lives under `${TMPDIR:-/tmp}`, in Lean through `E2E.Harness.tempRoot`,
+  `IO.FS.withTempDir` or `IO.FS.createTempDir`, and a directory that will hold a Unix
+  socket lives under `/tmp`, through `E2E.Harness.socketRoot` or `socket_root` in
+  `scripts/e2e.sh`, since macOS's `TMPDIR` alone takes about 49 of a socket path's 104
+  bytes; `scripts/gates.sh` rejects any other hard-coded `/tmp` there and in the CI
+  workflow, except in `E2E/Paths.lean` and `E2E/Overview.lean`, which assert product
+  defaults.
 - No `partial def`, fuel parameter or raised `maxHeartbeats`/`maxRecDepth` in any
   Lean file (`scripts/gates.sh`). Proofs add no axioms:
   `Theorems/Coverage.lean` rejects every axiom declared in pure or proof

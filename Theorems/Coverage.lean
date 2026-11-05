@@ -7,9 +7,9 @@ import all Theorems.Terminal
 import all Theorems.TerminalTitle
 import all Theorems.Session
 import all Theorems.Driver
-import all Theorems.Name
+import all Linger.Target.Proofs.Name
 import all Theorems.Checkpoint
-import all Theorems.Remote
+import all Linger.Target.Proofs.Remote
 import all Theorems.Claim
 import all Theorems.Listing
 import all Theorems.Render

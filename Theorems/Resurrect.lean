@@ -1,9 +1,9 @@
 module
 
 import all Linger.Tools.Resurrect
-import all Linger.Core.Name
+import all Linger.Target.Name
 import all Linger.Core.Vt
-import Theorems.Name
+import Linger.Target.Proofs.Name
 import all Theorems.Vt
 import all Theorems.Checkpoint
 
@@ -114,7 +114,7 @@ theorem catalogRows_command (content : String) (panes : List Pane) (row : List (
 /-- A successful selection has exactly the displayed identity, directory and
 source line; canonicalization is a guard, never a retargeting operation. -/
 theorem selectedPane_exact (name dir : String) (line : Nat)
-    (canonical : Linger.Core.Name.sanitize name = name) (nulFree : dir.contains '\x00' = false) :
+    (canonical : Linger.Target.Name.sanitize name = name) (nulFree : dir.contains '\x00' = false) :
     selectedPane name dir line = some { name, dir, line } := by
   simp [selectedPane, canonical, nulFree]
 
@@ -122,13 +122,13 @@ theorem selectedPane_exact (name dir : String) (line : Nat)
 theorem selectedPane_valid (name dir : String) (line : Nat) (pane : Pane)
     (selected : selectedPane name dir line = some pane) :
     pane = { name, dir, line } ∧
-      Linger.Core.Name.Valid pane.name ∧ pane.dir.contains '\x00' = false := by
+      Linger.Target.Name.Valid pane.name ∧ pane.dir.contains '\x00' = false := by
   unfold selectedPane at selected
   split at selected
   · rename_i guard
     simp only [Bool.and_eq_true, beq_iff_eq, Bool.not_eq_true'] at guard
     cases selected
-    exact ⟨rfl, (Linger.Core.Name.sanitize_eq_self_iff name).mp guard.1, guard.2⟩
+    exact ⟨rfl, (Linger.Target.Name.sanitize_eq_self_iff name).mp guard.1, guard.2⟩
   · cases selected
 
 /-- Common fields retain multiplicity and order while discarding line numbers. -/
@@ -136,14 +136,14 @@ theorem common_cons (pane : Pane) (panes : List Pane) :
     common (pane :: panes) = (pane.name, pane.dir) :: common panes := by rfl
 
 /-- Native identity encoding reverses on the entire valid name alphabet. -/
-theorem encodeName_reversible (name : String) (valid : Linger.Core.Name.Valid name) :
+theorem encodeName_reversible (name : String) (valid : Linger.Target.Name.Valid name) :
     ((encodeName name).drop 7).toString.map (fun c => if c == '~' then '.' else c) = name := by
   obtain ⟨-, -, alphabet, -⟩ := valid
   have htilde : ∀ c ∈ name.toList, c ≠ '~' := by
     intro c hc he
     subst c
     have := alphabet '~' hc
-    simp [Linger.Core.Name.okChar] at this
+    simp [Linger.Target.Name.okChar] at this
   apply String.toList_injective
   simp only [String.Slice.toString_eq, String.toList_map, String.toList_copy_drop, encodeName,
     String.toList_append]
@@ -162,13 +162,13 @@ theorem encodeName_reversible (name : String) (valid : Linger.Core.Name.Valid na
           by_cases hd : c = '.' <;> simp [hd, htilde c hc])
     _ = _ := List.map_id _
 
-theorem projectName_native (name : String) (valid : Linger.Core.Name.Valid name) :
+theorem projectName_native (name : String) (valid : Linger.Target.Name.Valid name) :
     projectName (encodeName name) "0" "0" = some name := by
   have hprefix : (encodeName name).startsWith "linger=" = true := by
     simp [encodeName, String.startsWith_string_iff, String.toList_append]
   unfold projectName
   rw [ite_eq_left hprefix, encodeName_reversible name valid]
-  simp [Linger.Core.Name.sanitize_eq_self_of_valid name valid]
+  simp [Linger.Target.Name.sanitize_eq_self_of_valid name valid]
 
 /-- Reserved names cannot be silently projected after a topology change. -/
 theorem projectName_reserved_topology (session window pane : String)
@@ -183,7 +183,7 @@ theorem projectName_foreign (session window pane : String)
 
 theorem parseRow_sound (home : String) (line : Nat) (fields : List String) (pane : Pane)
     (h : parseRow home line fields = .ok (some pane)) :
-    Linger.Core.Name.sanitize pane.name = pane.name ∧
+    Linger.Target.Name.sanitize pane.name = pane.name ∧
       pane.dir.contains '\x00' = false ∧ pane.line = line := by
   unfold parseRow at h
   grind
@@ -266,7 +266,7 @@ theorem preparePane_preserves (content : String) (panes : List Pane) (pane : Pan
 that this triple still projects to its canonical linger identity. -/
 theorem contentMember_exact (pane : Pane) (member : String)
     (h : contentMember pane = some member) :
-    Linger.Core.Name.sanitize pane.name = pane.name ∧
+    Linger.Target.Name.sanitize pane.name = pane.name ∧
       projectName pane.details.session pane.details.window pane.details.index = some pane.name ∧
       member =
         s!"./pane_contents/pane-{pane.details.session}:{pane.details.window}.{pane.details.index}" := by
@@ -387,7 +387,7 @@ theorem checkpoint_metadata (pane : Pane) (contents : Option String) :
 /-- Selection carries the displayed pane metadata through the same exact-name
 and NUL-free-directory guards as ordinary saved selections. -/
 theorem selectedPane_metadata (name dir : String) (line : Nat) (details : Details)
-    (canonical : Linger.Core.Name.sanitize name = name) (nulFree : dir.contains '\x00' = false) :
+    (canonical : Linger.Target.Name.sanitize name = name) (nulFree : dir.contains '\x00' = false) :
     selectedPane name dir line details = some { name, dir, line, details } := by
   simp [selectedPane, canonical, nulFree]
 
@@ -399,7 +399,7 @@ theorem parseRow_other (home : String) (line : Nat) (fields : List String)
 theorem parseRows_sound (home : String) (line : Nat) (seen rows : List String) (panes : List Pane)
     (h : parseRows home line seen rows = .ok panes) :
     (∀ pane ∈ panes,
-        Linger.Core.Name.sanitize pane.name = pane.name ∧ pane.dir.contains '\x00' = false) ∧
+        Linger.Target.Name.sanitize pane.name = pane.name ∧ pane.dir.contains '\x00' = false) ∧
       (panes.map Pane.name).Nodup ∧ (∀ pane ∈ panes, pane.name ∉ seen) := by
   induction rows generalizing line seen panes with
   | nil =>
@@ -450,8 +450,8 @@ theorem parseSave_valid (home content : String) (panes : List Pane)
     panes ≠ [] ∧
       (panes.map Pane.name).Nodup ∧
       ∀ pane ∈ panes,
-        Linger.Core.Name.sanitize pane.name = pane.name ∧
-          Linger.Core.Name.Valid pane.name ∧ pane.dir.contains '\x00' = false := by
+        Linger.Target.Name.sanitize pane.name = pane.name ∧
+          Linger.Target.Name.Valid pane.name ∧ pane.dir.contains '\x00' = false := by
   unfold parseSave at h
   split at h
   · cases h
@@ -462,7 +462,7 @@ theorem parseSave_valid (home content : String) (panes : List Pane)
     refine ⟨by simp, distinct, ?_⟩
     intro pane hp
     obtain ⟨canonical, dir⟩ := valid pane hp
-    exact ⟨canonical, (Linger.Core.Name.sanitize_eq_self_iff _).mp canonical, dir⟩
+    exact ⟨canonical, (Linger.Target.Name.sanitize_eq_self_iff _).mp canonical, dir⟩
 
 /-- Includes NUL introduced by home expansion, not just NUL in the raw save. -/
 theorem parseSave_no_nul (home content : String) (panes : List Pane)
@@ -557,8 +557,8 @@ theorem renderSave_valid (fields : List (String × String)) (content : String)
     fields ≠ [] ∧
       (fields.map Prod.fst).Nodup ∧
       ∀ field ∈ fields,
-        Linger.Core.Name.sanitize field.1 = field.1 ∧
-          Linger.Core.Name.Valid field.1 ∧ field.2.contains '\x00' = false := by
+        Linger.Target.Name.sanitize field.1 = field.1 ∧
+          Linger.Target.Name.Valid field.1 ∧ field.2.contains '\x00' = false := by
   obtain ⟨panes, parsed, same⟩ := renderSave_checked fields content h
   obtain ⟨nonempty, distinct, valid⟩ := parseSave_valid "\x00" content panes parsed
   rw [← same]

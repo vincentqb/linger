@@ -6,7 +6,7 @@ import Linger.Os.Env
 import Linger.Runtime.Paths
 import Linger.Runtime.Daemon
 import Linger.Runtime.Client
-import Linger.Core.Remote
+import Linger.Target.Remote
 import Linger.Core.Listing
 import Linger.Runtime.Command
 import Linger.Runtime.Resume
@@ -107,7 +107,7 @@ with a shell; `Remote.command` preserves the original argv, including empty word
 The remote linger reads an attach or capture target with `targetArgs`, so it travels
 as `targetOperands`; the other verbs take it by position.
 Inherited stdin keeps `send name@host -` byte-exact. -/
-private def runTarget (verb : String) (target : Linger.Core.Remote.Target) (args : List String)
+private def runTarget (verb : String) (target : Linger.Target.Remote.Target) (args : List String)
     (localAction : String → IO UInt32) (options : List String := []) : IO UInt32 := do
   let interactive := verb == "attach"
   if interactive && (!(← stdinIsTty) || !(← (← IO.getStdout).isTty)) then
@@ -117,14 +117,14 @@ private def runTarget (verb : String) (target : Linger.Core.Remote.Target) (args
     localAction target.name
   | some host =>
     let operands :=
-      if verb == "attach" || verb == "capture" then Linger.Core.Remote.targetOperands target.name
+      if verb == "attach" || verb == "capture" then Linger.Target.Remote.targetOperands target.name
       else [target.name]
     let child ←
       IO.Process.spawn
           { cmd := "ssh",
             args :=
               #[if interactive then "-t" else "-T", "--", host,
-                Linger.Core.Remote.command verb (options ++ operands ++ args)],
+                Linger.Target.Remote.command verb (options ++ operands ++ args)],
             stdin := .inherit }
     try
       child.wait
@@ -136,7 +136,7 @@ private def runTarget (verb : String) (target : Linger.Core.Remote.Target) (args
 malformed operand returns `invalidTarget`'s status 2 without connecting. -/
 private def withTarget (verb target : String) (args : List String)
     (localAction : String → IO UInt32) (options : List String := []) : IO UInt32 :=
-  match Linger.Core.Remote.parseTarget target with
+  match Linger.Target.Remote.parseTarget target with
   | none => invalidTarget
   | some parsed => runTarget verb parsed args localAction options
 
@@ -285,7 +285,7 @@ private def resolveRemotes (flag : Option (List String)) : IO (List String) := d
       else
         pure given
     let hosts := (raw.map (·.trimAscii.toString)).filter (fun h => !h.isEmpty && !h.startsWith "#")
-    match Linger.Core.Remote.checkHosts hosts with
+    match Linger.Target.Remote.checkHosts hosts with
     | .ok l =>
       return l
     | .error e =>
@@ -479,7 +479,7 @@ private def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
   let some remote := remote | return 130
   let mut rows := locals
   for (host, output) in remotes.zip remote.toList do
-    for row in Linger.Core.Remote.parse output do
+    for row in Linger.Target.Remote.parse output do
       -- a remote row is built from what the peer's porcelain says about identity
       -- and liveness. It also emits `clients` and `label.*`; those are dropped
       -- rather than rendered, so a remote row's label and watcher columns are
@@ -679,7 +679,7 @@ private def overview (args : List String) : IO UInt32 := do
 private def attachArgs (args : List String) : IO UInt32 := do
   let readOnly := args.head? == some "--read-only"
   let args := if readOnly then args.tail else args
-  let some (name, cmd) := Linger.Core.Remote.targetArgs args |
+  let some (name, cmd) := Linger.Target.Remote.targetArgs args |
     do
       IO.eprintln "usage: linger attach [--read-only] [--] <name> [command...]"
       return 2
@@ -691,7 +691,7 @@ private def attachArgs (args : List String) : IO UInt32 := do
 private def captureArgs (args : List String) : IO UInt32 := do
   let history := args.head? == some "--history"
   let args := if history then args.tail else args
-  let some (name, []) := Linger.Core.Remote.targetArgs args |
+  let some (name, []) := Linger.Target.Remote.targetArgs args |
     do
       IO.eprintln "usage: linger capture [--history] [--] <name>"
       return 2
@@ -755,7 +755,7 @@ def main (args : List String) : IO UInt32 := do
     if names.isEmpty then
       IO.eprintln "usage: linger wait <name>..."
       return 2
-    let some targets := names.mapM Linger.Core.Remote.parseTarget | invalidTarget
+    let some targets := names.mapM Linger.Target.Remote.parseTarget | invalidTarget
     let mut rc : UInt32 := 0
     for target in targets do
       rc := max rc (← runTarget "wait" target [] cmdWait)

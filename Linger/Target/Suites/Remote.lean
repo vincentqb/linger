@@ -3,7 +3,7 @@ module
 public import E2E.Harness
 import Linger.Runtime.Cli
 import Linger.Runtime.Command
-import Linger.Core.Remote
+import Linger.Target.Remote
 import Linger.Runtime.Client
 
 public section
@@ -11,30 +11,30 @@ public section
 /-! Remote listing and command transport. A fake SSH executes the real POSIX
 shell boundary; a fake remote linger records the resulting arguments. -/
 
-namespace E2E.Remote
+namespace Linger.Target.Suites.Remote
 
 open E2E.Harness
 open Linger.Os.Shell (chmod)
 
-def devHost : String := "dev-a"
+private def devHost : String := "dev-a"
 
-def deadHost : String := "dead"
+private def deadHost : String := "dead"
 
-def userHost : String := s!"me@{devHost}"
+private def userHost : String := s!"me@{devHost}"
 
-def goodName : String := "remote-work"
+private def goodName : String := "remote-work"
 
-def hostileName : String := "../../etc/passwd"
+private def hostileName : String := "../../etc/passwd"
 
-def attachMark : String := "FAKE-ATTACH-OK"
+private def attachMark : String := "FAKE-ATTACH-OK"
 
-def dupMsg : String :=
-  match Linger.Core.Remote.checkHosts [devHost, devHost] with
+private def dupMsg : String :=
+  match Linger.Target.Remote.checkHosts [devHost, devHost] with
   | .error m => m
   | .ok _ => "checkHosts accepted a duplicate host"
 
-def fakeSsh (log : String) : String :=
-  "#!/bin/sh\n" ++ s!"printf '%s\\000' \"$@\" > {Linger.Core.Remote.shellQuote log}\n" ++
+private def fakeSsh (log : String) : String :=
+  "#!/bin/sh\n" ++ s!"printf '%s\\000' \"$@\" > {Linger.Target.Remote.shellQuote log}\n" ++
     "while [ $# -gt 0 ]; do\n" ++
     "  case \"$1\" in\n" ++
     "    -o) shift 2 ;;\n" ++
@@ -50,7 +50,7 @@ def fakeSsh (log : String) : String :=
     "fi\n" ++
     "exec /bin/sh -c \"$*\"\n"
 
-def fakeLinger : String :=
+private def fakeLinger : String :=
   "#!/bin/sh\n" ++ "printf '%s\\000' \"$@\" > \"$LINGER_REMOTE_ARGS\"\n" ++ "case \"$1\" in\n" ++
     "  ls)\n" ++
     s!"    printf 'name\\t{goodName}\\nstate\\tlive\\nclients\\t1\\ncmd\\tvim\\033[31mINJECT\\nlabel.env\\tprod\\n\\n'\n" ++
@@ -137,7 +137,7 @@ private def discoverySetup (e : Env) (slug : String) : IO (Env × String × Stri
   IO.FS.createDirAll bin
   let self ← IO.appPath
   IO.FS.writeFile s!"{bin}/ssh"
-      s!"#!/bin/sh\nexec {Linger.Core.Remote.shellQuote self.toString} --discovery-ssh {Linger.Core.Remote.shellQuote root} \"$@\"\n"
+      s!"#!/bin/sh\nexec {Linger.Target.Remote.shellQuote self.toString} --discovery-ssh {Linger.Target.Remote.shellQuote root} \"$@\"\n"
   chmod s!"{bin}/ssh" 0o755
   return (state, root, s!"{bin}:{(← IO.getEnv "PATH").getD "/usr/bin:/bin"}")
 
@@ -161,7 +161,7 @@ private def cleanupDiscovery (root : String) : IO Unit := do
           catch _ =>
             pure ()
 
-def discoveryChecks (e : Env) : IO Unit := do
+private def discoveryChecks (e : Env) : IO Unit := do
   let (state, root, path) ← discoverySetup e "barrier"
   let server ←
     IO.Process.spawn
@@ -259,8 +259,10 @@ def discoveryChecks (e : Env) : IO Unit := do
     cleanupDiscovery root
     chooser.bye (sendDetach := false)
 
+/-- The discovery checks alone, as `e2e remote discovery` runs them. -/
 def runDiscovery : IO UInt32 := Env.suite "discovery" discoveryChecks
 
+/-- The hermetic remote suite: a fake `ssh` and a fake remote `linger` on `PATH`. -/
 def run : IO UInt32 :=
   Env.suite "remote" fun e => do
     let fakebin := (System.FilePath.mk e.dir) / "fakebin"
@@ -309,7 +311,7 @@ def run : IO UInt32 :=
       expect (hasText attached attachMark) "remote attach reaches linger"
       expect
           ((← readArgs log) ==
-              ["-t", "--", devHost, Linger.Core.Remote.command "attach" [goodName]] &&
+              ["-t", "--", devHost, Linger.Target.Remote.command "attach" [goodName]] &&
             (← readArgs remoteArgs) == ["attach", goodName])
           "remote attach uses a PTY and preserves the target"
       expect
@@ -322,7 +324,7 @@ def run : IO UInt32 :=
       let _ ← drain c2.fd 2000
       expect
           ((← readArgs log) ==
-            ["-t", "--", userHost, Linger.Core.Remote.command "attach" [goodName]])
+            ["-t", "--", userHost, Linger.Target.Remote.command "attach" [goodName]])
           "user@host round-trips through the first-at split"
       c2.bye (sendDetach := false)
       let lost ← e.spawnEnv ptyPath #["attach", s!"{goodName}@{deadHost}"] 100 24
@@ -463,4 +465,4 @@ def run : IO UInt32 :=
       e.killAll #["localsess"]
     discoveryChecks e
 
-end E2E.Remote
+end Linger.Target.Suites.Remote

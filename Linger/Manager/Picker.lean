@@ -3,7 +3,7 @@ module
 public import Linger.Tools.Picker
 import Linger.Os.Shell
 import Linger.Core.Listing
-import Linger.Core.Remote
+import Linger.Target.Remote
 import Linger.Core.Terminal
 import Linger.Runtime.Command
 
@@ -245,7 +245,7 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
 parser reads back as `target` (`targetArgs_targetOperands`). -/
 def attachArgs (target : String) (readOnly : Bool := false) : Array String :=
   ("attach" :: (if readOnly then ["--read-only"] else []) ++
-      Linger.Core.Remote.targetOperands target).toArray
+      Linger.Target.Remote.targetOperands target).toArray
 
 /-- Execute either selected row through attach, after terminal restoration. Every attach
 exit returns to a fresh listing; cancellation ends the manager. The caller

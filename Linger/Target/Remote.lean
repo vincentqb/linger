@@ -1,10 +1,10 @@
 module
 
-import Linger.Core.Name
+import Linger.Target.Name
 
 public section
 
-/-! # Linger.Core.Remote — parsing `linger ls --porcelain` from other machines
+/-! # Linger.Target.Remote — parsing `linger ls --porcelain` from other machines
 
 The overview (`linger -r <hosts>`) folds in sessions from configured
 remote hosts by running `ssh <host> linger ls --porcelain` and parsing
@@ -28,9 +28,9 @@ state\tresumable
 ```
 -/
 
-namespace Linger.Core.Remote
+namespace Linger.Target.Remote
 
-open Linger.Core.Name (sanitize)
+open Linger.Target.Name (sanitize)
 
 /-- One session from a peer's porcelain listing. -/
 structure RemoteRow where
@@ -64,7 +64,7 @@ def parseRecord (lines : List String) : Option RemoteRow :=
   match kvs.lookup "name" with
   | none => none -- no name: not a session record
   | some rawName => do
-    let name ← Linger.Core.Name.check rawName
+    let name ← Linger.Target.Name.check rawName
     some {
           name
           live := (kvs.lookup "state").getD "live" == "live"
@@ -161,4 +161,4 @@ target's operands, then the command's arguments, which remain opaque. -/
 def command (verb : String) (words : List String) : String :=
   String.intercalate " " (("linger" :: verb :: words).map shellQuote)
 
-end Linger.Core.Remote
+end Linger.Target.Remote

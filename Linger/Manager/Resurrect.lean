@@ -7,7 +7,7 @@ import Linger.Runtime.Paths
 import Linger.Runtime.Resume
 import Linger.Runtime.Cli
 import Linger.Runtime.Command
-import Linger.Core.Remote
+import Linger.Target.Remote
 import Linger.Manager.Picker
 import Std.Async.System
 
@@ -300,7 +300,7 @@ private def createPanes (executable : String) (origin : System.FilePath) (panes 
   let listing ← IO.Process.output { cmd := executable, args := #["ls", "--porcelain"] }
   unless listing.exitCode == 0 do
     throw (IO.userError "could not list existing linger sessions")
-  let existing := (Linger.Core.Remote.parse listing.stdout).map (·.name)
+  let existing := (Linger.Target.Remote.parse listing.stdout).map (·.name)
   let archive ←
     if (plan existing panes).isEmpty then
       pure none

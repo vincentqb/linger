@@ -1,13 +1,13 @@
 module
 
 import all Linger.Tools.Picker
-import all Linger.Core.Name
+import all Linger.Target.Name
 import all Linger.Core.Listing
-import all Linger.Core.Remote
+import all Linger.Target.Remote
 import all Init.Data.String.Legacy
-import Theorems.Name
+import Linger.Target.Proofs.Name
 import Theorems.Fuzzy
-import Theorems.Remote
+import Linger.Target.Proofs.Remote
 import Theorems.Input
 
 /-! Selection contracts within and between listing snapshots.
@@ -42,7 +42,7 @@ theorem matches_length_le (query target : String)
 
 theorem parseRow_some (fields : List String) (target : String)
     (h : parseRow fields = .ok (some target)) :
-    fields = ["name", target] ∧ Linger.Core.Remote.targetValid target = true := by
+    fields = ["name", target] ∧ Linger.Target.Remote.targetValid target = true := by
   unfold parseRow at h
   repeat' (split at h <;> (try simp_all))
 
@@ -58,7 +58,7 @@ theorem parseRow_error (fields : List String) (error : String)
   repeat' (split at h <;> (try simp_all))
 
 theorem parseRows_sound (seen rows targets : List String) (h : parseRows seen rows = .ok targets) :
-    (∀ target ∈ targets, Linger.Core.Remote.targetValid target = true) ∧
+    (∀ target ∈ targets, Linger.Target.Remote.targetValid target = true) ∧
       targets.Nodup ∧
       (∀ target ∈ targets, target ∉ seen) ∧
       targets.map (fun target => ["name", target]) =
@@ -152,9 +152,9 @@ theorem parseListing_valid (text : String) (targets : List String)
     targets.Nodup ∧
       ∀ target ∈ targets,
         target ≠ "" ∧
-          Linger.Core.Name.sanitize ((target.splitOn "@").headD "") =
+          Linger.Target.Name.sanitize ((target.splitOn "@").headD "") =
             (target.splitOn "@").headD "" ∧
-          Linger.Core.Name.Valid ((target.splitOn "@").headD "") ∧
+          Linger.Target.Name.Valid ((target.splitOn "@").headD "") ∧
           (∀ char ∈ target.toList, 32 ≤ char.toNat ∧ (char.toNat < 127 ∨ 160 ≤ char.toNat)) ∧
           ((target.splitOn "@").tail = [] ∨
             String.intercalate "@" (target.splitOn "@").tail ≠ "") := by
@@ -162,8 +162,9 @@ theorem parseListing_valid (text : String) (targets : List String)
   refine ⟨distinct, ?_⟩
   intro target ht
   obtain ⟨nonempty, nameValid, clean, host⟩ :=
-    (Linger.Core.Remote.targetValid_iff target).mp (valid target ht)
-  exact ⟨nonempty, (Linger.Core.Name.sanitize_eq_self_iff _).mpr nameValid, nameValid, clean, host⟩
+    (Linger.Target.Remote.targetValid_iff target).mp (valid target ht)
+  exact
+    ⟨nonempty, (Linger.Target.Name.sanitize_eq_self_iff _).mpr nameValid, nameValid, clean, host⟩
 
 theorem parseListing_provenance (text : String) (targets : List String)
     (h : parseListing text = .ok targets) (target : String) (ht : target ∈ targets) :
@@ -205,15 +206,15 @@ theorem snapshot_row_name (snapshot : Snapshot) (target : String) :
 rows from the latest listing; each row keeps exactly the metadata its source reported. -/
 
 /-- A local session name never names a remote row. -/
-theorem remoteTarget_check (name : String) (h : Linger.Core.Name.check name = some name) :
+theorem remoteTarget_check (name : String) (h : Linger.Target.Name.check name = some name) :
     remoteTarget name = false := by
-  have hvalid := ((Linger.Core.Name.check_eq_some_iff name name).mp h).2
+  have hvalid := ((Linger.Target.Name.check_eq_some_iff name name).mp h).2
   unfold remoteTarget
   cases hc : name.toList.contains '@' with
   | false => rfl
   | true =>
     have hmem : '@' ∈ name.toList := by simpa using hc
-    exact absurd rfl (Linger.Core.Name.okChar_no_at '@' (hvalid.2.2.1 '@' hmem))
+    exact absurd rfl (Linger.Target.Name.okChar_no_at '@' (hvalid.2.2.1 '@' hmem))
 
 /-- The metadata records `Snapshot.row` reads for `target`. -/
 def rowMeta (records : List (List String)) (target : String) : List (List String) :=
@@ -645,8 +646,8 @@ theorem mem_items_create (candidates : List String) (query target : String)
     (allowCreate : Bool := true) :
     Item.create target ∈ items candidates query allowCreate ↔
       allowCreate = true ∧
-        target = (if query.isEmpty then Linger.Core.Name.defaultName else query) ∧
-        Linger.Core.Remote.targetValid target = true ∧ target ∉ candidates := by
+        target = (if query.isEmpty then Linger.Target.Name.defaultName else query) ∧
+        Linger.Target.Remote.targetValid target = true ∧ target ∉ candidates := by
   unfold items
   split <;>
     simp_all only [String.isEmpty_iff, List.contains_eq_mem, Bool.and_eq_true,
@@ -868,27 +869,27 @@ theorem step_attach_mem (s : State) (key : Linger.Tools.Key) (target : String)
 noncanonical or already listed target. Absence refers to the snapshot only. -/
 theorem step_create_valid (s : State) (key : Linger.Tools.Key) (target : String)
     (h : step s key = .create target) :
-    target = (if s.query.isEmpty then Linger.Core.Name.defaultName else s.query) ∧
+    target = (if s.query.isEmpty then Linger.Target.Name.defaultName else s.query) ∧
       target ∉ s.candidates ∧
       target ≠ "" ∧
-      Linger.Core.Name.sanitize ((target.splitOn "@").headD "") = (target.splitOn "@").headD "" ∧
-      Linger.Core.Name.Valid ((target.splitOn "@").headD "") ∧
+      Linger.Target.Name.sanitize ((target.splitOn "@").headD "") = (target.splitOn "@").headD "" ∧
+      Linger.Target.Name.Valid ((target.splitOn "@").headD "") ∧
       (∀ char ∈ target.toList, 32 ≤ char.toNat ∧ (char.toNat < 127 ∨ 160 ≤ char.toNat)) ∧
       ((target.splitOn "@").tail = [] ∨ String.intercalate "@" (target.splitOn "@").tail ≠ "") := by
   have selected := ((step_create_iff s key target).mp h).2
   obtain ⟨_, exactTarget, valid, absent⟩ :=
     (mem_items_create _ _ _ s.allowCreate).mp (List.mem_of_getElem? selected)
   obtain ⟨nonempty, nameValid, printable, suffix⟩ :=
-    (Linger.Core.Remote.targetValid_iff target).mp valid
+    (Linger.Target.Remote.targetValid_iff target).mp valid
   exact
-    ⟨exactTarget, absent, nonempty, (Linger.Core.Name.sanitize_eq_self_iff _).mpr nameValid,
+    ⟨exactTarget, absent, nonempty, (Linger.Target.Name.sanitize_eq_self_iff _).mpr nameValid,
       nameValid, printable, suffix⟩
 
 theorem step_empty_accept (s : State) (h : items s.candidates s.query s.allowCreate = []) :
     step s .accept = .stay s := by simp [step, selected_empty s h]
 
 /-- An empty listing offers the default session name for explicit creation. -/
-theorem step_init_empty : step (init []) .accept = .create Linger.Core.Name.defaultName := by cbv
+theorem step_init_empty : step (init []) .accept = .create Linger.Target.Name.defaultName := by cbv
 
 theorem step_cancel (s : State) : step s .cancel = .cancel := by simp [step]
 

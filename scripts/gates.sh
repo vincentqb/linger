@@ -168,7 +168,7 @@ code_grep '^[[:space:]]+v[.]eraseRowSpan v[.]cursor[.]y v[.]cursor[.]x [(]min [(
 # The shim returns -errno and errno numbers differ by platform: 918c671's
 # `r == -111` meant ECONNREFUSED only on Linux.
 ! code_grep '(==|!=)[[:space:]]*[(]?-([2-9]|[1-9][0-9]+)([^0-9]|$)' 'Linger/Runtime/*' \
-    'Linger/Manager/*' 'Linger/Os/Shell.lean' 'Main.lean' 'E2E/*' 'Linger/Os/Suites/Shim.lean' \
+    'Linger/Manager/*' 'Linger/Os/Shell.lean' 'Main.lean' 'E2E/*' 'Linger/*/Suites/*' \
   || fail "a negative literal comparison looks like an errno number: compare the sign, or classify the errno in c/shim.c"
 # Lean/libuv may have worker threads when the application forks. The child
 # paths and their two execution helpers must not allocate, format through
@@ -326,16 +326,16 @@ module_imports Theorems/Vt.lean 'Theorems/Vt/*' Theorems/Terminal.lean Theorems/
 # composes their executors with the session backend. The session library never
 # imports them, even through an intermediate module: every library import
 # stays in Core, Runtime or the OS boundary.
-import_closure Linger/Tools/Resurrect.lean 'import Linger.Core.Name;import Linger.Core.Status;public import Linger.Core.Checkpoint;'
+import_closure Linger/Tools/Resurrect.lean 'import Linger.Target.Name;import Linger.Core.Status;public import Linger.Core.Checkpoint;'
 import_closure Linger/Tools/Key.lean 'public import Linger.Tools.Input;'
 import_closure Linger/Tools/Fuzzy.lean ''
-import_closure Linger/Tools/Picker.lean 'public import Linger.Tools.Key;import Linger.Tools.Fuzzy;import Linger.Core.Name;import Linger.Core.Listing;public import Linger.Core.Status;import Linger.Core.Remote;import Linger.Core.Vt;'
+import_closure Linger/Tools/Picker.lean 'public import Linger.Tools.Key;import Linger.Tools.Fuzzy;import Linger.Target.Name;import Linger.Core.Listing;public import Linger.Core.Status;import Linger.Target.Remote;import Linger.Core.Vt;'
 import_closure Linger/Tools/Input.lean ''
 import_closure Theorems/Input.lean 'public import Linger.Tools.Input;import all Linger.Tools.Input;'
 import_closure Linger/Tools/Entry.lean ''
-import_closure Linger/Core/Name.lean ''
-import_closure Linger/Core/Remote.lean 'import Linger.Core.Name;'
-import_closure Linger/Core/Title.lean 'import Linger.Core.Name;'
+import_closure Linger/Target/Name.lean ''
+import_closure Linger/Target/Remote.lean 'import Linger.Target.Name;'
+import_closure Linger/Core/Title.lean 'import Linger.Target.Name;'
 import_closure Linger/Os/Env.lean ''
 import_closure Linger/Os/Boundary.lean ''
 # Linger/Os/Shell.lean is the one module that may import the private bindings.
@@ -343,22 +343,22 @@ import_closure Linger/Os/Boundary.lean ''
     import_mod($3) == "Linger.Os.Boundary" && !seen[$1]++ { print $1 }')" = "Linger/Os/Shell.lean" ] \
   || fail "a module other than Linger/Os/Shell.lean imports Linger.Os.Boundary"
 import_closure Linger/Runtime/Command.lean 'import Linger.Os.Shell;'
-import_closure Linger/Manager/Resurrect.lean 'import Linger.Tools.Resurrect;import Linger.Os.Shell;import Linger.Core.Listing;import Linger.Runtime.Paths;import Linger.Runtime.Resume;import Linger.Runtime.Cli;import Linger.Runtime.Command;import Linger.Core.Remote;import Linger.Manager.Picker;import Std.Async.System;'
+import_closure Linger/Manager/Resurrect.lean 'import Linger.Tools.Resurrect;import Linger.Os.Shell;import Linger.Core.Listing;import Linger.Runtime.Paths;import Linger.Runtime.Resume;import Linger.Runtime.Cli;import Linger.Runtime.Command;import Linger.Target.Remote;import Linger.Manager.Picker;import Std.Async.System;'
 import_closure Linger/Manager/Picker.lean \
-  'public import Linger.Tools.Picker;import Linger.Os.Shell;import Linger.Core.Listing;import Linger.Core.Remote;import Linger.Core.Terminal;import Linger.Runtime.Command;'
+  'public import Linger.Tools.Picker;import Linger.Os.Shell;import Linger.Core.Listing;import Linger.Target.Remote;import Linger.Core.Terminal;import Linger.Runtime.Command;'
 import_closure Main.lean \
   'import Linger.Runtime.Cli;import Linger.Tools.Entry;import Linger.Manager.Picker;import Linger.Manager.Resurrect;'
 # `lean_lib Linger` builds the umbrella's closure, so this list is what `./lake build`
 # checks of the session library.
 import_closure Linger.lean "$(printf 'public import Linger.%s;' Core.Buf Os.Shell Core.Wire \
-  Core.Vt Core.Render Core.Terminal Core.Name Core.Session Core.Driver Core.Checkpoint \
-  Core.Remote Core.Listing Core.Status Core.Title Os.Env Runtime.Paths Runtime.Command \
+  Core.Vt Core.Render Core.Terminal Target.Name Core.Session Core.Driver Core.Checkpoint \
+  Target.Remote Core.Listing Core.Status Core.Title Os.Env Runtime.Paths Runtime.Command \
   Runtime.Daemon Runtime.Client Runtime.Cli Runtime.Resume)"
 module_imports 'Linger/Core/*' 'Linger/Runtime/*' Linger/Os/Boundary.lean Linger/Os/Shell.lean \
-    Linger/Os/Env.lean Linger.lean \
+    Linger/Os/Env.lean Linger/Target/Name.lean Linger/Target/Remote.lean Linger.lean \
 | awk -F: "$IMPORT_AWK"'
   { mod = import_mod($3)
-    if (mod !~ /^(Linger[.](Core|Runtime|Os)[.][[:alnum:]_.]+|Std[.]Async[.](System|Signal))$/) {
+    if (mod !~ /^(Linger[.](Core|Runtime|Os|Target)[.][[:alnum:]_.]+|Std[.]Async[.](System|Signal))$/) {
       print "  " $0; bad = 1
     }
   }
@@ -553,7 +553,7 @@ for tie in \
   'finally Linger[.]Runtime[.]Command[.]stop pending [(]if savedTmux then 0 else 1000[)]' \
   'let fullArgs := if savedTmux then #[[]"tmux", "ls", "--porcelain"[]] [+][+] save[.]toArray else #[[]"ls", "-r", "--porcelain"[]]' \
   'match ← choose executable [(]readOnly := readOnly[)] with' \
-  'def attachArgs [(]target : String[)] [(]readOnly : Bool := false[)] : Array String := [(]"attach" :: [(]if readOnly then [[]"--read-only"[]] else [[][]][)] [+][+] Linger[.]Core[.]Remote[.]targetOperands target[)][.]toArray'; do
+  'def attachArgs [(]target : String[)] [(]readOnly : Bool := false[)] : Array String := [(]"attach" :: [(]if readOnly then [[]"--read-only"[]] else [[][]][)] [+][+] Linger[.]Target[.]Remote[.]targetOperands target[)][.]toArray'; do
   printf '%s\n' "$picker_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "manager lost its selection, refresh, process ownership or attach contract: $tie"
 done
@@ -593,8 +593,8 @@ for claim in rowPieces_printable rowPieces_styles rowPieces_nameSpan nameWidth_c
 done
 cli_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Runtime/Cli.lean)"
 for tie in \
-  'match Linger[.]Core[.]Remote[.]checkHosts hosts with [|] [.]ok l => return l [|] [.]error e => throw [(]IO[.]userError e[)]' \
-  'for [(]host, output[)] in remotes[.]zip remote[.]toList do for row in Linger[.]Core[.]Remote[.]parse output do' \
+  'match Linger[.]Target[.]Remote[.]checkHosts hosts with [|] [.]ok l => return l [|] [.]error e => throw [(]IO[.]userError e[)]' \
+  'for [(]host, output[)] in remotes[.]zip remote[.]toList do for row in Linger[.]Target[.]Remote[.]parse output do' \
   '[|] some [(]porcelain, remoteFlag[)] => cmdList porcelain [(]← resolveRemotes remoteFlag[)]' \
   'let withColor := [(]← [(]← IO[.]getStdout[)][.]isTty[)] && [(]← IO[.]getEnv "NO_COLOR"[)][.]isNone writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Core[.]Listing[.]terminalListing withColor rows[)][.]toArray[)]' \
   'def summaryText : IO String := do let rows ← localRows [(]some [(][(]← monotonicMs[)] [+] 250[)][)] return Linger[.]Core[.]Status[.]summary [(]rows[.]map fun info => Linger[.]Core[.]Status[.]ofName [(][(]info[.]lookup "status"[)][.]getD "unknown"[)][)]' \
@@ -627,7 +627,7 @@ for var in SHELL LINGER_NO_DETACH_KEY; do
 done
 # Discovery keeps bounded ownership until completion. Remote signal handlers
 # are installed before spawning isolated SSH groups, so cancelling the chooser
-# reaches those groups through its listing helper. E2E.Remote checks overlap,
+# reaches those groups through its listing helper. Linger.Target.Suites.Remote checks overlap,
 # output order, slot reuse, shared deadlines and descendant cleanup.
 for tie in \
   'while next < names[.]size && [(]← pending[.]get[)][.]size < localQueryLimit && [(]← monotonicMs[)] < deadline do' \
@@ -958,12 +958,12 @@ code_grep '^[[:space:]]+Linger[.]Core[.]Buf[.]bufOffer infoReplyCap acc [(]ByteA
 # in the interactive picker. SSH joins a command string, so the actual transport
 # must consume the proved quoting function and inherit stdin for binary input.
 for claim in check_eq_some_iff check_no_alias; do
-  code_grep "^theorem $claim " Theorems/Name.lean >/dev/null \
+  code_grep "^theorem $claim " Linger/Target/Proofs/Name.lean >/dev/null \
     || fail "exact-name contract disappeared: $claim"
 done
 for claim in targetValid_iff parseTarget_exact parseTarget_name_valid shellQuote_roundtrip command_argv \
              targetArgs_targetOperands targetArgs_option_ne targetArgs_option; do
-  code_grep "^theorem $claim " Theorems/Remote.lean >/dev/null \
+  code_grep "^theorem $claim " Linger/Target/Proofs/Remote.lean >/dev/null \
     || fail "command target, operand or shell quoting contract disappeared: $claim"
 done
 # Every attach or capture argv linger builds for itself places its target with
@@ -977,22 +977,22 @@ attach_words="$(code_grep '"attach"[[:space:]]*(,|[]]|::)' 'Linger/Manager/*' 'L
     'Linger/Manager/Picker.lean: ("attach" :: (if readOnly then ["--read-only"] else []) ++' \
     'Linger/Runtime/Cli.lean: | "attach" :: rest | "a" :: rest =>')" ] \
   || fail "a literal attach argv: build it with Picker.attachArgs, whose operands come from Remote.targetOperands: $attach_words"
-! code_grep 'Linger[.]Tools[.]Fuzzy|Core[.]Name[.]sanitize' Linger/Runtime/Cli.lean Linger/Runtime/Client.lean \
+! code_grep 'Linger[.]Tools[.]Fuzzy|Name[.]sanitize' Linger/Runtime/Cli.lean Linger/Runtime/Client.lean \
   || fail "noninteractive command lookup must not fuzzy-match or rewrite a name"
-code_grep '^[[:space:]]+Linger[.]Core[.]Remote[.]targetValid target = true ∧ target ∉ candidates := by$' Theorems/Picker.lean >/dev/null \
+code_grep '^[[:space:]]+Linger[.]Target[.]Remote[.]targetValid target = true ∧ target ∉ candidates := by$' Theorems/Picker.lean >/dev/null \
   || fail "selector creation and command arguments no longer share the target grammar"
 for verb in attach run send detach kill info capture resize get set unset clear; do
   code_grep "^[[:space:]]+withTarget \"$verb\" " Linger/Runtime/Cli.lean >/dev/null \
     || fail "session command bypassed the common exact target boundary: $verb"
 done
 for tie in \
-  'match Linger[.]Core[.]Remote[.]parseTarget target with [|] none => invalidTarget [|] some parsed => runTarget verb parsed args localAction options' \
-  'let some targets := names[.]mapM Linger[.]Core[.]Remote[.]parseTarget [|] invalidTarget let mut rc : UInt32 := 0 for target in targets do rc := max rc [(]← runTarget "wait" target [[]] cmdWait[)]' \
+  'match Linger[.]Target[.]Remote[.]parseTarget target with [|] none => invalidTarget [|] some parsed => runTarget verb parsed args localAction options' \
+  'let some targets := names[.]mapM Linger[.]Target[.]Remote[.]parseTarget [|] invalidTarget let mut rc : UInt32 := 0 for target in targets do rc := max rc [(]← runTarget "wait" target [[]] cmdWait[)]' \
   'let interactive := verb == "attach" if interactive && [(]![(]← stdinIsTty[)] [|][|] ![(]← [(]← IO[.]getStdout[)][.]isTty[)][)] then' \
-  'let operands := if verb == "attach" [|][|] verb == "capture" then Linger[.]Core[.]Remote[.]targetOperands target[.]name else [[]target[.]name[]]' \
-  'IO[.]Process[.]spawn [{] cmd := "ssh", args := #[[]if interactive then "-t" else "-T", "--", host, Linger[.]Core[.]Remote[.]command verb [(]options [+][+] operands [+][+] args[)][]], stdin := [.]inherit [}] try child[.]wait finally if interactive then writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Core[.]Render[.]leaveAnsi[.]toArray[)]' \
-  'let readOnly := args[.]head[?] == some "--read-only" let args := if readOnly then args[.]tail else args let some [(]name, cmd[)] := Linger[.]Core[.]Remote[.]targetArgs args [|]' \
-  'let history := args[.]head[?] == some "--history" let args := if history then args[.]tail else args let some [(]name, [[][]][)] := Linger[.]Core[.]Remote[.]targetArgs args [|]' \
+  'let operands := if verb == "attach" [|][|] verb == "capture" then Linger[.]Target[.]Remote[.]targetOperands target[.]name else [[]target[.]name[]]' \
+  'IO[.]Process[.]spawn [{] cmd := "ssh", args := #[[]if interactive then "-t" else "-T", "--", host, Linger[.]Target[.]Remote[.]command verb [(]options [+][+] operands [+][+] args[)][]], stdin := [.]inherit [}] try child[.]wait finally if interactive then writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Core[.]Render[.]leaveAnsi[.]toArray[)]' \
+  'let readOnly := args[.]head[?] == some "--read-only" let args := if readOnly then args[.]tail else args let some [(]name, cmd[)] := Linger[.]Target[.]Remote[.]targetArgs args [|]' \
+  'let history := args[.]head[?] == some "--history" let args := if history then args[.]tail else args let some [(]name, [[][]][)] := Linger[.]Target[.]Remote[.]targetArgs args [|]' \
   'withTarget "attach" name cmd [(]cmdAttach · cmd readOnly[)] [(]if readOnly then [[]"--read-only"[]] else [[][]][)]' \
   'withTarget "capture" name [[][]] [(]cmdRead · [(]if history then [.]history else [.]screen[)] [(]if history then Linger[.]Core[.]Render[.]history else Linger[.]Core[.]Render[.]screenText[)][)] [(]if history then [[]"--history"[]] else [[][]][)]'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
@@ -1011,7 +1011,7 @@ for claim in reachable_protected owner_holds_lock at_most_one_owner claim_free; 
 done
 paths_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Runtime/Paths.lean)"
 for tie in \
-  'match Linger[.]Core[.]Name[.]check name with [|] some name => return name [|] none => throw' \
+  'match Linger[.]Target[.]Name[.]check name with [|] some name => return name [|] none => throw' \
   'let name ← checkName name ensureDir dir let path := s!"[{]dir[}]/[{]name[}][{]suffix[}]" checkSpelling path return path' \
   'def socketPath [(]name : String[)] : IO String := do namedPath [(]← socketDir[)] name "[.]sock"' \
   'def ckptPath [(]name : String[)] : IO String := do namedPath [(]← stateDir[)] name "[.]ckpt"' \
@@ -1028,7 +1028,7 @@ done
 # A listing row takes its name verbatim from the socket filename (`rowFields_name`), so
 # both listings pass every directory entry through the exact name check.
 for tie in \
-  'private def listNames [(]dir suffix : String[)] : IO [(]List String[)] := do ensureDir dir return [(]← System[.]FilePath[.]readDir dir[)][.]toList[.]filterMap fun e => [(]e[.]fileName[.]dropSuffix[?] suffix[)][.]bind [(]Linger[.]Core[.]Name[.]check ·[.]toString[)]' \
+  'private def listNames [(]dir suffix : String[)] : IO [(]List String[)] := do ensureDir dir return [(]← System[.]FilePath[.]readDir dir[)][.]toList[.]filterMap fun e => [(]e[.]fileName[.]dropSuffix[?] suffix[)][.]bind [(]Linger[.]Target[.]Name[.]check ·[.]toString[)]' \
   'def listSocketNames : IO [(]List String[)] := do listNames [(]← socketDir[)] "[.]sock"' \
   'def listCkptNames : IO [(]List String[)] := do listNames [(]← stateDir[)] "[.]ckpt"'; do
   printf '%s\n' "$paths_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
@@ -1227,7 +1227,7 @@ done
 # required regression is not a pass, and an executable Python snippet is still a
 # second-language dependency even when embedded in a Lean string rather than tracked
 # as a .py file. These are syntactic runtime ties, so the source gate is the oracle.
-! code_grep '(^|[^[:alnum:]_])(pkill|killall)([^[:alnum:]_]|$)' 'scripts/e2e.sh' 'E2E/*' Linger/Os/Suites/Shim.lean \
+! code_grep '(^|[^[:alnum:]_])(pkill|killall)([^[:alnum:]_]|$)' 'scripts/e2e.sh' 'E2E/*' 'Linger/*/Suites/*' \
   || fail "a test orchestrator kills by process name — suites may terminate only processes they created"
 # A process-GROUP selector is the same hazard wearing a pid. POSIX reads `kill 0` as
 # "every process in my group" and `kill -N` as group N, so one of these in a test
@@ -1242,11 +1242,11 @@ done
 ! code_grep 'kill([[:space:]]+-[A-Za-z0-9]+)*[[:space:]]+(--[[:space:]]+)?(0|-[0-9]+)([^0-9]|$)' \
     'scripts/*.sh' 'c/shim.c' 'recipes/*' \
   || fail "a signal targets process group 0 or a negative pid — name the pid the suite created"
-! code_grep '["]python([0-9.]*)' 'E2E/*' \
+! code_grep '["]python([0-9.]*)' 'E2E/*' 'Linger/*/Suites/*' \
   || fail "an E2E suite executes embedded Python — use the e2e binary as the child probe"
-! code_grep 'IO[.]println[[:space:]]+"PASS[[:space:]].*skip' 'E2E/*' \
+! code_grep 'IO[.]println[[:space:]]+"PASS[[:space:]].*skip' 'E2E/*' 'Linger/*/Suites/*' \
   || fail "an E2E suite counts a skipped required check as PASS"
-! code_grep 'expect[[:space:]]+[(]?true[)]?([[:space:]]|$)' 'E2E/*' \
+! code_grep 'expect[[:space:]]+[(]?true[)]?([[:space:]]|$)' 'E2E/*' 'Linger/*/Suites/*' \
   || fail "an E2E suite asserts a constant true; a skipped check is not a PASS"
 # Temporary paths follow two rules, each implemented once per language. Scratch without
 # sockets goes under `${TMPDIR:-/tmp}`: that expansion in shell, `E2E.Harness.tempRoot`,
@@ -1260,7 +1260,7 @@ done
 # starts, not a component such as `$dir/tmp`. Each hit is read again with every expansion
 # blanked out, because an ERE cannot exclude one context.
 tmp_re='(^|[^[:alnum:]_.~)}])(/private(/var)?|/var)?[/]tmp([^[:alnum:]_]|$)'
-tmp_hits="$(code_grep "$tmp_re" 'scripts/*.sh' .github/workflows/ci.yml E2ETest.lean 'E2E/*.lean' \
+tmp_hits="$(code_grep "$tmp_re" 'scripts/*.sh' .github/workflows/ci.yml E2ETest.lean 'E2E/*.lean' 'Linger/*/Suites/*.lean' \
   | sed 's/[$][{]TMPDIR:-[/]tmp[}]/TMPDIR/g' | CG_RE="$tmp_re" awk "$CODE_AWK" \
   | sed 's/^[^:]*:[0-9]*://' | awk -F: '$1 != "E2E/Paths.lean" && $1 != "E2E/Overview.lean"')"
 # The helpers are compared by content, with the root itself spelled `[/]tmp`, so these
@@ -1286,12 +1286,13 @@ code_grep 'cmd := "mktemp", args := #[[]"-d", [(]socketRoot / "linger-i-XXXXXX"[
 code_grep '^sentinel_dir="[$]socket_root/linger-e2e-sentinel-[$][$]"$' scripts/e2e.sh >/dev/null \
   || fail "the verifier's sentinel directory is no longer under scripts/e2e.sh's socket_root"
 # `lean_lib E2E` has no glob (E2E/Coverage.lean's census needs the built program), so
-# `./lake build e2e` is the only build of E2E modules, and it builds only the import
-# closure of E2ETest.lean, the e2e root: a module outside it is never built, and none
-# of its suites can run. Walk that closure forwards over the import lines; each module
-# but Coverage must be in it.
-e2e_unreached="$(module_imports E2ETest.lean 'E2E/*' \
-| awk -F: -v files="$(git ls-files 'E2E/*.lean' | tr '\n' ' ')" "$IMPORT_AWK"'
+# `./lake build e2e` is the only build of the e2e suites, under E2E/ and each component's
+# Suites/, and it builds only the import closure of E2ETest.lean, the e2e root: a module
+# outside it is never built, and none of its suites can run. Walk that closure forwards
+# over the import lines; each suite module but Coverage and lingertest's root, the shim
+# smoke test, must be in it.
+e2e_unreached="$(module_imports E2ETest.lean 'E2E/*' 'Linger/*/Suites/*' \
+| awk -F: -v files="$(git ls-files 'E2E/*.lean' 'Linger/*/Suites/*.lean' | tr '\n' ' ')" "$IMPORT_AWK"'
   { mod = import_mod($3); gsub(/[.]/, "/", mod)
     n++; src[n] = $1; dst[n] = mod ".lean" }
   END {
@@ -1302,7 +1303,8 @@ e2e_unreached="$(module_imports E2ETest.lean 'E2E/*' \
           reached[dst[i]] = 1; qn++; q[qn] = dst[i] }
     k = split(files, F, " ")
     for (j = 1; j <= k; j++)
-      if (F[j] != "E2E/Coverage.lean" && !(F[j] in reached)) printf "%s ", F[j] }')"
+      if (F[j] != "E2E/Coverage.lean" && F[j] != "Linger/Os/Suites/Shim.lean" &&
+          !(F[j] in reached)) printf "%s ", F[j] }')"
 [ -z "$e2e_unreached" ] \
   || fail "outside the import closure of E2ETest.lean, so './lake build e2e' never elaborates them: ${e2e_unreached% }"
 # Every registered suite but the opt-in remote-live runs in the verifier: E2ETest.suites
@@ -1500,9 +1502,12 @@ grep -q 'workflow_dispatch' "$ci_yml" \
   || fail "$ci_yml: no workflow_dispatch — a commit touching c/shim.c needs a way to ask for macOS without waiting a week"
 # E2E fixed-sleep ratchet: a wait for something to appear polls its readiness
 # signal (`waitFor`, `Client.awaitText`); the sleeps left are negative-assertion
-# windows, fixture pacing, poll intervals and waits not yet converted.
+# windows, fixture pacing, poll intervals and waits not yet converted. Both ratchets count
+# the e2e suites, under E2E/ and each component's Suites/, but not lingertest's shim smoke
+# test, which they never counted.
 E2E_SLEEP_CAP=34
-es_n="$(code_count 'IO[.]sleep([^[:alnum:]_]|$)' 'E2E/*')"
+es_n="$(code_count 'IO[.]sleep([^[:alnum:]_]|$)' 'E2E/*' 'Linger/*/Suites/*' \
+  ':!Linger/Os/Suites/Shim.lean')"
 [ "$es_n" -le "$E2E_SLEEP_CAP" ] \
   || fail "E2E fixed sleeps grew to $es_n (cap $E2E_SLEEP_CAP); poll a readiness signal with waitFor"
 # Fixed drain windows: drain/drainStr with a literal deadline read for that long
@@ -1510,7 +1515,8 @@ es_n="$(code_count 'IO[.]sleep([^[:alnum:]_]|$)' 'E2E/*')"
 # left are negative assertions, discards, stream sync points and positive reads not
 # yet converted.
 E2E_DRAIN_CAP=64
-ed_n="$(code_count '(^|[^[:alnum:]_.])drain(Str)?[[:space:]]+[^[:space:]]+[[:space:]]+[0-9]' 'E2E/*')"
+ed_n="$(code_count '(^|[^[:alnum:]_.])drain(Str)?[[:space:]]+[^[:space:]]+[[:space:]]+[0-9]' 'E2E/*' \
+  'Linger/*/Suites/*' ':!Linger/Os/Suites/Shim.lean')"
 [ "$ed_n" -le "$E2E_DRAIN_CAP" ] \
   || fail "E2E fixed drain windows grew to $ed_n (cap $E2E_DRAIN_CAP); wait for a positive condition with awaitText"
 

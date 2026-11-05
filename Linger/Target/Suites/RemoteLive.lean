@@ -1,13 +1,13 @@
 module
 
 import E2E.Harness
-import Linger.Core.Remote
+import Linger.Target.Remote
 
 public section
 
-/-! # E2E.RemoteLive — the remote path against a REAL second machine
+/-! # Linger.Target.Suites.RemoteLive — the remote path against a REAL second machine
 
-Ported from `tests/remote_live_test.py`. Unlike `E2E.Remote` — which puts a fake
+Ported from `tests/remote_live_test.py`. Unlike `Linger.Target.Suites.Remote` — which puts a fake
 `ssh` on `PATH`, is hermetic, and is in the gate — this needs an actual reachable
 host running a real `linger`, so it is **deliberately not in `scripts/e2e.sh`**:
 
@@ -18,7 +18,7 @@ named `alpha` and `beta`; the host key comes from `~/.ssh/config`. It is the onl
 suite whose preconditions live outside the repo, which is exactly why it is opt-in —
 a suite that cannot pass on a fresh checkout must not be able to fail the gate. -/
 
-namespace E2E.RemoteLive
+namespace Linger.Target.Suites.RemoteLive
 
 open E2E.Harness
 
@@ -38,6 +38,7 @@ def stripCsi (s : String) : String :=
     · simp_wf
   String.ofList (go s.toList [])
 
+/-- Run the suite against `LINGER_REMOTE`; exit 2 when it is unset. -/
 def run : IO UInt32 := do
   let some host ← IO.getEnv "LINGER_REMOTE" |
     IO.eprintln "e2e remote-live: set LINGER_REMOTE=<host>";
@@ -70,8 +71,8 @@ def run : IO UInt32 := do
               args :=
                 #["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "--", host, "linger", "ls",
                   "--porcelain"] }
-      let rows := Linger.Core.Remote.parse ssh.stdout
+      let rows := Linger.Target.Remote.parse ssh.stdout
       expect (rows.any (fun r => r.name == "alpha" && r.live))
           "remote session survived detach (still listed live, via Remote.parse)"
 
-end E2E.RemoteLive
+end Linger.Target.Suites.RemoteLive

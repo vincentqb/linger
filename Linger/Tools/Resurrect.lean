@@ -1,6 +1,6 @@
 module
 
-import Linger.Core.Name
+import Linger.Target.Name
 import Linger.Core.Status
 public import Linger.Core.Checkpoint
 
@@ -68,7 +68,7 @@ private def projectName (session window pane : String) : Option String :=
   if session.startsWith "linger=" then
     let name := (session.drop 7).toString.map (fun c => if c == '~' then '.' else c)
     if
-        window == "0" && pane == "0" && Linger.Core.Name.sanitize name == name &&
+        window == "0" && pane == "0" && Linger.Target.Name.sanitize name == name &&
           encodeName name == session then
       some name
     else none
@@ -96,7 +96,7 @@ private def parseRow (home : String) (line : Nat) (fields : List String) :
           if dir.contains '\x00' || savedCommand.contains '\x00' then
             .error s!"malformed pane record at line {line}"
           else
-            if Linger.Core.Name.sanitize name != name then
+            if Linger.Target.Name.sanitize name != name then
               .error s!"projected session is not a valid linger name at line {line}: {name}"
             else
               .ok
@@ -175,7 +175,7 @@ def preparePane (content : String) (panes : List Pane) (pane : Pane) : Pane :=
 /-- The exact archive member for a validated source identity. No path rewriting. -/
 def contentMember (pane : Pane) : Option String :=
   if
-      Linger.Core.Name.sanitize pane.name == pane.name &&
+      Linger.Target.Name.sanitize pane.name == pane.name &&
         projectName pane.details.session pane.details.window pane.details.index ==
           some pane.name then
     some s!"./pane_contents/pane-{pane.details.session}:{pane.details.window}.{pane.details.index}"
@@ -245,7 +245,7 @@ def catalogRows (content : String) (panes : List Pane) : List (List (String × S
 /-- Revalidate the exact displayed action data after transport. Never normalize a
 target or execute a command from a save; absent or hostile identities fail closed. -/
 def selectedPane (name dir : String) (line : Nat) (details : Details := {}) : Option Pane :=
-  if Linger.Core.Name.sanitize name == name && !dir.contains '\x00' then
+  if Linger.Target.Name.sanitize name == name && !dir.contains '\x00' then
     some { name, dir, line, details }
   else none
 

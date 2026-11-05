@@ -312,7 +312,7 @@ def run : IO UInt32 := do
           (key, if key == "GIT_INDEX_FILE" then some index.toString else value)
       let removed ←
         IO.Process.output
-            { cmd := "git", args := #["rm", "-q", "-f", "--cached", "--", "Linger/Core/Name.lean"]
+            { cmd := "git", args := #["rm", "-q", "-f", "--cached", "--", "Linger/Target/Name.lean"]
               cwd := some top, env }
       unless removed.exitCode == 0 do
         throw (IO.userError s!"gate fixture setup (git rm): {removed.stderr}")
@@ -320,7 +320,7 @@ def run : IO UInt32 := do
         IO.Process.output
             { cmd := "sh", args := #[s!"{top}/scripts/gates.sh"], cwd := some top, env }
       let ok :=
-        out.exitCode != 0 && has out.stderr "Linger/Core/Name.lean" && !has out.stdout "gates OK"
+        out.exitCode != 0 && has out.stderr "Linger/Target/Name.lean" && !has out.stdout "gates OK"
       unless ok do
         IO.eprintln s!"gates fixture exited {out.exitCode}:\n{out.stdout}{out.stderr}"
       expect ok "source gates fail closed when a gated path leaves the index"

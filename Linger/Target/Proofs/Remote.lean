@@ -1,9 +1,9 @@
 module
 
-public import Linger.Core.Remote
-public import Linger.Core.Name
-import all Linger.Core.Remote
-import Theorems.Name
+public import Linger.Target.Remote
+public import Linger.Target.Name
+import all Linger.Target.Remote
+import Linger.Target.Proofs.Name
 
 public section
 
@@ -17,9 +17,9 @@ and display fields are scrubbed of control characters (nothing a
 remote returns can inject escape sequences into the local listing).
 -/
 
-namespace Linger.Core.Remote
+namespace Linger.Target.Remote
 
-open Linger.Core.Name
+open Linger.Target.Name
 
 /-- Parsed names are valid; an invalid peer name cannot become a different target. -/
 theorem parseRecord_name_valid {lines : List String} {r : RemoteRow}
@@ -134,7 +134,9 @@ def word : List Char → Option (List Char × List Char)
 
 /-- A complete command contains only literal words and their separators. -/
 inductive Words : List Char → List (List Char) → Prop where
+  /-- The source is one word and nothing after it. -/
   | last {source text} (read : word source = some (text, [])) : Words source [text]
+  /-- A word, one space, and the words of the rest. -/
   |
   next {source text tail rest} (read : word source = some (text, ' ' :: tail))
     (more : Words tail rest) : Words source (text :: rest)
@@ -278,4 +280,4 @@ theorem checkHosts_ok_iff (hosts result : List String) :
   cases hd : firstDupHost hosts <;> cases hc : hosts.find? (!hostClean ·) <;>
     simp [checkHosts, hd, hc, eq_comm]
 
-end Linger.Core.Remote
+end Linger.Target.Remote

@@ -2,7 +2,7 @@ module
 
 public section
 
-/-! # Linger.Core.Name — session names that cannot escape their directory
+/-! # Linger.Target.Name — session names that cannot escape their directory
 
 A session name becomes a socket path (`<dir>/<name>.sock`) and a
 checkpoint path. Commands and remote listings accept only names already
@@ -10,7 +10,7 @@ in canonical form: no path separator, NUL or leading dot, nonempty and
 at most 80 characters. Validation never rewrites the requested identity.
 -/
 
-namespace Linger.Core.Name
+namespace Linger.Target.Name
 
 /-- Creation name offered by an empty interactive query. -/
 def defaultName : String := "main"
@@ -44,4 +44,4 @@ def Valid (s : String) : Prop :=
   s.toList.length > 0 ∧
     s.toList.length ≤ maxLen ∧ (∀ c ∈ s.toList, okChar c) ∧ s.toList.head? ≠ some '.'
 
-end Linger.Core.Name
+end Linger.Target.Name

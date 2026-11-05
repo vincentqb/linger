@@ -1,7 +1,7 @@
 module
 
 import Linger.Os.Shell
-import Linger.Core.Name
+import Linger.Target.Name
 
 public section
 
@@ -23,7 +23,7 @@ Invalid input is rejected, never converted into another session's name.
 
 namespace Linger.Runtime.Paths
 
-open Linger.Core.Name (sanitize)
+open Linger.Target.Name (sanitize)
 
 /-- Sockets and their name locks: `$LINGER_DIR` verbatim, else `$XDG_RUNTIME_DIR/linger`
 when that is nonempty, else `/tmp/linger-$UID`. -/
@@ -60,12 +60,13 @@ def ensureDir (d : String) : IO Unit := do
   Linger.Os.Shell.chmod d 0o700
 
 /-- The accepted name alphabet, as every diagnostic and help text states it. -/
-def nameRule : String := s!"1–{Linger.Core.Name.maxLen} ASCII letters, digits, -_.+; no leading dot"
+def nameRule : String :=
+  s!"1–{Linger.Target.Name.maxLen} ASCII letters, digits, -_.+; no leading dot"
 
 /-- Return `name` unchanged when `Name.check` accepts it, and throw with `nameRule`
 otherwise; a name is never rewritten into another. -/
 private def checkName (name : String) : IO String := do
-  match Linger.Core.Name.check name with
+  match Linger.Target.Name.check name with
   | some name =>
     return name
   | none =>
@@ -150,7 +151,7 @@ def withSessionLock {α : Type} (name : String) (action : IO α) : IO α :=
 private def listNames (dir suffix : String) : IO (List String) := do
   ensureDir dir
   return (← System.FilePath.readDir dir).toList.filterMap fun e =>
-      (e.fileName.dropSuffix? suffix).bind (Linger.Core.Name.check ·.toString)
+      (e.fileName.dropSuffix? suffix).bind (Linger.Target.Name.check ·.toString)
 
 /-- Session names present as sockets, live or stale. -/
 def listSocketNames : IO (List String) := do

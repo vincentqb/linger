@@ -1,7 +1,7 @@
 module
 
-public import Linger.Core.Name
-import all Linger.Core.Name
+public import Linger.Target.Name
+import all Linger.Target.Name
 
 public section
 
@@ -13,7 +13,7 @@ NUL or controls), and do not begin with a dot. Invalid names are
 rejected without manufacturing another session's identity.
 -/
 
-namespace Linger.Core.Name
+namespace Linger.Target.Name
 
 /-- Both interactive entry paths share a default that path sanitization preserves. -/
 theorem defaultName_canonical : defaultName = "main" ∧ sanitize defaultName = defaultName := by
@@ -117,4 +117,4 @@ name becomes `"_"`, so the only honest bound is against the cap, not against the
 theorem sanitize_length_le (s : String) : (sanitize s).toList.length ≤ maxLen :=
   (sanitize_valid s).2.1
 
-end Linger.Core.Name
+end Linger.Target.Name

@@ -4,7 +4,7 @@ import E2E.Harness
 import Linger.Core.Terminal
 import Linger.Core.Title
 import Linger.Runtime.Client
-import Linger.Core.Remote
+import Linger.Target.Remote
 
 public section
 
@@ -145,7 +145,7 @@ private def startProbe (e : Env) (name : String) : IO Bool := do
   let self ← IO.appPath
   let (code, _, _) ←
     e.cliEnv #[("ENV", none), ("BASH_ENV", none)]
-        #["run", name, s!"exec {Linger.Core.Remote.shellQuote self.toString} --title-probe"]
+        #["run", name, s!"exec {Linger.Target.Remote.shellQuote self.toString} --title-probe"]
   let ready ←
     waitFor 4000 do
         return has (← e.out #["capture", name]) "TITLE-READY"

@@ -3,8 +3,8 @@ module
 import Linger.Manager.Picker
 import Linger.Manager.Resurrect
 import Linger.Core.Listing
-import Linger.Core.Name
-import Linger.Core.Remote
+import Linger.Target.Name
+import Linger.Target.Remote
 import Linger.Core.Terminal
 import Linger.Runtime.Paths
 import Linger.Tools.Resurrect
@@ -39,7 +39,7 @@ open E2E.Harness
 open Linger.Os.Shell
 open Linger.Core.Render (modeSet csiNum screenText)
 open Linger.Core.Vt (Vt)
-open Linger.Core.Remote renaming shellQuote → quote
+open Linger.Target.Remote renaming shellQuote → quote
 
 /-- PTY acquisition uses libc's shared `ptsname` buffer and briefly holds
 descriptors without close-on-exec. Keep every parent launch out of that region,
@@ -926,8 +926,8 @@ private def selectionChecks (e : Env) : IO Unit := do
       ("create-shell-text", "", "work@host with 'spaces' $TERM", "work@host with 'spaces' $TERM",
         []),
       ("create-unicode-host", "", "work@界é", "work@界é", []),
-      ("create-max-name", "", String.ofList (List.replicate Linger.Core.Name.maxLen 'n'),
-        String.ofList (List.replicate Linger.Core.Name.maxLen 'n'), [])] do
+      ("create-max-name", "", String.ofList (List.replicate Linger.Target.Name.maxLen 'n'),
+        String.ofList (List.replicate Linger.Target.Name.maxLen 'n'), [])] do
     check e slug
         s!"picker probe visibly creates the exact target through a restored attach child ({slug})"
         fun f => do
@@ -941,7 +941,7 @@ private def selectionChecks (e : Env) : IO Unit := do
               let shown ← s.selected s!"+ Create {target}" (if query.isEmpty then 0 else start)
               let clean ← acceptThenCancel s
               return shown && clean && (← f.visits) == attachVisit (separator ++ [target]))
-            "both" (UInt32.ofNat (Linger.Core.Name.maxLen + 40)) 12
+            "both" (UInt32.ofNat (Linger.Target.Name.maxLen + 40)) 12
   for create in [false, true] do
     let slug := if create then "prefix-create" else "prefix-existing"
     check e slug
@@ -1013,7 +1013,7 @@ private def selectionChecks (e : Env) : IO Unit := do
         let noAttach := (← f.visits) == listed
         let clean ← acceptThenCancel s
         return reset && noAttach && clean && (← f.visits) == attachVisit ["Alpha"]
-  let overlong := String.ofList (List.replicate (Linger.Core.Name.maxLen + 1) 'n')
+  let overlong := String.ofList (List.replicate (Linger.Target.Name.maxLen + 1) 'n')
   for (slug, query) in
     [("slash", "bad/name"), ("leading-dot", ".hidden"), ("space", "two words"), ("unicode", "界"),
       ("empty-host", "work@"), ("empty-local", "@host"), ("overlong", overlong),
@@ -1030,7 +1030,7 @@ private def selectionChecks (e : Env) : IO Unit := do
             s.observe 350
             let output ← s.output.get
             let vt :=
-              (Vt.init (Linger.Core.Name.maxLen + 40) 12).feedBytes
+              (Vt.init (Linger.Target.Name.maxLen + 40) 12).feedBytes
                 (output.extract start output.size)
             let noChoice := !hasText (ByteArray.mk (screenText vt).toArray) "Create "
             let waiting := !(← (f.root / "result").pathExists)
@@ -1039,7 +1039,7 @@ private def selectionChecks (e : Env) : IO Unit := do
               return false
             let clean ← acceptThenCancel s
             return noChoice && waiting && noAttach && clean && (← f.visits) == attachVisit ["Beta"])
-          "both" (UInt32.ofNat (Linger.Core.Name.maxLen + 40)) 12
+          "both" (UInt32.ofNat (Linger.Target.Name.maxLen + 40)) 12
 
 private def inputChecks (e : Env) : IO Unit := do
   for (slug, key) in [("ctrl-c", "\x03"), ("ctrl-d", "\x04"), ("escape", "\x1b")] do

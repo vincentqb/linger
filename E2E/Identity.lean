@@ -2,7 +2,7 @@ module
 
 public import E2E.Harness
 import Linger.Core.Checkpoint
-import Linger.Core.Name
+import Linger.Target.Name
 
 public section
 
@@ -75,7 +75,7 @@ def run : IO UInt32 :=
       IO.FS.writeBinFile s!"{e.dir}/bad.ckpt" ⟨#[1, 2, 3]⟩
       let (badRc, badOut, _) ← e.cli #["capture", "bad"]
       expect (badRc != 0 && badOut.isEmpty) "corrupt offline data fails without output"
-      let host := Linger.Core.Name.sanitize (← gethostname)
+      let host := Linger.Target.Name.sanitize (← gethostname)
       let checkpoint := s!"{e.dir}/state/linger/{host}/work.ckpt"
       let (firstRc, _, _) ← e.cliEnv (splitEnv e 1) #["run", "work", "true"]
       let saved ← waitFor 3000 (System.FilePath.pathExists checkpoint)

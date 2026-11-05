@@ -9,13 +9,13 @@ import E2E.Resume
 import E2E.Attach
 import E2E.Delivery
 import E2E.Robust
-import E2E.Remote
+import Linger.Target.Suites.Remote
 import E2E.Terminal
 import E2E.Title
 import E2E.Recipes
 import E2E.Interop
 import E2E.Manager
-import E2E.RemoteLive
+import Linger.Target.Suites.RemoteLive
 import E2E.Ci
 import E2E.Hygiene
 import E2E.Identity
@@ -38,10 +38,11 @@ def suites : List (String × IO UInt32) :=
   [("watch", E2E.Watch.run), ("status", E2E.Status.run), ("overview", E2E.Paths.run),
     ("graphics", E2E.Graphics.run), ("agent", E2E.Agent.run), ("resume", E2E.Resume.run),
     ("attach", E2E.Attach.run), ("delivery", E2E.Delivery.run), ("robust", E2E.Robust.run),
-    ("remote", E2E.Remote.run), ("terminal", E2E.Terminal.run), ("title", E2E.Title.run),
-    ("recipes", E2E.Recipes.run), ("interop", E2E.Interop.run), ("manager", E2E.Manager.run),
+    ("remote", Linger.Target.Suites.Remote.run), ("terminal", E2E.Terminal.run),
+    ("title", E2E.Title.run), ("recipes", E2E.Recipes.run), ("interop", E2E.Interop.run),
+    ("manager", E2E.Manager.run),
     -- opt-in: needs a real reachable host, so NOT in scripts/e2e.sh
-    ("remote-live", E2E.RemoteLive.run),
+    ("remote-live", Linger.Target.Suites.RemoteLive.run),
     -- Verifier regression checks, separate from the live product suites.
     ("ci", E2E.Ci.run), ("hygiene", E2E.Hygiene.run), ("identity", E2E.Identity.run)]
 
@@ -68,11 +69,11 @@ def main (args : List String) : IO UInt32 := do
   | ["--stream-info-server", socketPath, readyPath] =>
     E2E.Robust.streamInfoServer socketPath readyPath
   | "--discovery-ssh" :: root :: rest =>
-    E2E.Remote.discoverySsh root rest
+    Linger.Target.Suites.Remote.discoverySsh root rest
   | ["--discovery-leaf", root, host] =>
-    E2E.Remote.discoveryLeaf root host
+    Linger.Target.Suites.Remote.discoveryLeaf root host
   | ["--discovery-info", root] =>
-    E2E.Remote.discoveryInfo root
+    Linger.Target.Suites.Remote.discoveryInfo root
   | ["--delivery-child", trigger] =>
     E2E.Delivery.childProbe trigger
   | ["--delivery-server", dir] =>
@@ -104,7 +105,7 @@ def main (args : List String) : IO UInt32 := do
   | ["title", binary] =>
     E2E.Title.run (some binary)
   | ["remote", "discovery"] =>
-    E2E.Remote.runDiscovery
+    Linger.Target.Suites.Remote.runDiscovery
   | ["watch", "checkpoint"] =>
     E2E.Watch.runCheckpoint
   | [name] =>

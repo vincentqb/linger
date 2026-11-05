@@ -2,10 +2,10 @@ module
 
 public import Linger.Tools.Key
 import Linger.Tools.Fuzzy
-import Linger.Core.Name
+import Linger.Target.Name
 import Linger.Core.Listing
 public import Linger.Core.Status
-import Linger.Core.Remote
+import Linger.Target.Remote
 import Linger.Core.Vt
 
 public section
@@ -30,7 +30,7 @@ private def parseRow (fields : List String) : Except String (Option String) :=
   else
     match fields with
     | [_, target] =>
-      if Linger.Core.Remote.targetValid target then .ok (some target)
+      if Linger.Target.Remote.targetValid target then .ok (some target)
       else .error "invalid session target in listing"
     | _ => .error "malformed name record in listing"
 
@@ -166,9 +166,9 @@ def emphasizeCells : List HighlightedChar → List HighlightedChar
 /-- Existing matches come first. Creation, when enabled, is explicit and never
 rewrites the query. Saved catalogs disable it entirely. -/
 def items (candidates : List String) (query : String) (allowCreate : Bool := true) : List Item :=
-  let target := if query.isEmpty then Linger.Core.Name.defaultName else query
+  let target := if query.isEmpty then Linger.Target.Name.defaultName else query
   (visible candidates query).map Item.existing ++
-    if allowCreate && Linger.Core.Remote.targetValid target && !candidates.contains target then
+    if allowCreate && Linger.Target.Remote.targetValid target && !candidates.contains target then
       [.create target]
     else []
 

@@ -6,7 +6,7 @@ public import Linger.Core.Vt
 import Linger.Os.Env
 import Linger.Core.Replay
 import Linger.Core.Terminal
-import Linger.Core.Remote
+import Linger.Target.Remote
 import Linger.Core.Title
 import Linger.Core.Status
 import Linger.Runtime.Paths
@@ -65,7 +65,7 @@ inductive Drained where
 
 /-- Untrusted daemon text made safe for stderr. -/
 def replyText (fallback : String) (bytes : List UInt8) : String :=
-  Linger.Core.Remote.scrub (String.fromUTF8? (ByteArray.mk bytes.toArray) |>.getD fallback)
+  Linger.Target.Remote.scrub (String.fromUTF8? (ByteArray.mk bytes.toArray) |>.getD fallback)
 
 /-- The silence budget for a reply that a pre-upgrade daemon may never send. -/
 def replySilenceMs : Int32 := 2000

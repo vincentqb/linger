@@ -1,11 +1,11 @@
 module
 
-import Linger.Core.Remote
-meta import Linger.Core.Remote
+import Linger.Target.Remote
+meta import Linger.Target.Remote
 
 /-! # Remote parser tests — real porcelain, and hostile porcelain -/
 
-namespace Linger.Core.Remote.Tests
+namespace Linger.Target.Remote.Tests
 
 def good : String :=
   "name\twork\nstate\tlive\nclients\t2\ncmd\tvim\nlabel.env\tdev\n\n" ++
@@ -142,4 +142,4 @@ example :
       true := by
   native_decide
 
-end Linger.Core.Remote.Tests
+end Linger.Target.Remote.Tests

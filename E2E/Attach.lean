@@ -2,7 +2,7 @@ module
 
 public import E2E.Harness
 import Linger.Runtime.Daemon
-import Linger.Core.Name
+import Linger.Target.Name
 
 public section
 
@@ -245,7 +245,7 @@ def run : IO UInt32 :=
         "wait exits 1 when the daemon disappears"
     -- 8. An empty chooser offers the default name without creating it on entry.
     let defaults : Env := { e with dir := s!"{e.dir}/default" }
-    let defaultName := Linger.Core.Name.defaultName
+    let defaultName := Linger.Target.Name.defaultName
     let m ← defaults.spawnEnv #[s!"HOME={defaults.dir}"] #["attach"] cols rows
     try
       let screen ← IO.mkRef ByteArray.empty

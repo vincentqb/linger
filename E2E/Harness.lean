@@ -371,7 +371,7 @@ code, stdout, stderr — the three things the suites assert on.
 environment, so `extra` last is an override and `("K", none)` removes a variable
 outright. Both are load-bearing for a suite whose SUBJECT is the environment:
 `E2E.Terminal` needs `TERM` inherited as one value, as another, and then absent
-entirely, and `E2E.Remote` needs a `PATH` whose first entry holds a fake `ssh`. -/
+entirely, and `Linger.Target.Suites.Remote` needs a `PATH` whose first entry holds a fake `ssh`. -/
 def Env.cliEnv (e : Env) (extra : Array (String × Option String)) (args : Array String) :
     IO (UInt32 × String × String) := do
   let out ← IO.Process.output { cmd := e.bin, args, env := e.procEnv ++ extra }

@@ -5,6 +5,8 @@ import Theorems.TerminalTitle
 
 namespace Linger.Core.Title
 
+open Linger.Target
+
 theorem compose_quiet (session : String) (capacity : Nat) :
     compose session "" "" capacity = Name.sanitize session := by
   have ht (n : Nat) : ("".take n).copy = "" := by
