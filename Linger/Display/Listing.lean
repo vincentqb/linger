@@ -1,7 +1,7 @@
 module
 
 public import Linger.Display.Status
-import Linger.Core.Render
+import Linger.Terminal.Render
 
 public section
 
@@ -103,7 +103,7 @@ the daemon's reply, one layer out.
 Rendering here also lets the column alignment be a property of the whole row *set* (the name
 column is as wide as the widest name), which a per-`IO.println` call site cannot express. -/
 
-open Linger.Core.Render (utf8s dropTrailingBlanks textChar)
+open Linger.Terminal.Render (utf8s dropTrailingBlanks textChar)
 
 /-- Text and optional badge style stay separate until a terminal renderer has
 clipped the text, and the name span lets a selector emphasize the name without

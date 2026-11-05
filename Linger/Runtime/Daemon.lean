@@ -25,7 +25,7 @@ Active and retired client transports share `maxClients`. Logical close reports
 deadline. Final shutdown also has a finite drain grace period.
 
 `Theorems/Buf.lean` proves the byte-buffer caps, shared allowance and removal of
-written prefixes. `Theorems/Replay.lean` proves the cursor's exact stream,
+written prefixes. `Linger/Terminal/Proofs/Replay.lean` proves the cursor's exact stream,
 progress and storage bound. Runtime scheduling and short-write handling are
 `IO`, so source gates tie these proved operations to their actual consumers.
 
@@ -38,7 +38,7 @@ namespace Linger.Runtime.Daemon
 open Linger.Os.Shell
 open Linger.Core.Session (State Event Effect maxClients)
 open Linger.Core.Buf (Buf owedLen bufOffer bufEnqueue bufAdvance followingCap)
-open Linger.Core
+open Linger.Core Linger.Terminal
 
 /-- A stopped-reading client is cut here (`Buf.reachableOut_bound`). -/
 def outbufCap : Nat := 4194304
@@ -503,7 +503,8 @@ overwriting a checkpoint that another daemon is still using. The claim waits
 out an offline reader (`claimRetry`) but not a live owner. -/
 def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State → IO Unit)
     (dropCkpt : IO Unit)
-    (loadCkpt : IO (Option (Linger.Core.Vt.Vt × String × List (String × String)))) : IO Unit := do
+    (loadCkpt : IO (Option (Linger.Terminal.Vt.Vt × String × List (String × String)))) : IO Unit :=
+  do
   let deadline := (← monotonicMs) + claimWaitMs
   let reported ← IO.mkRef false
   let retry := claimRetry name (← Paths.socketPath name) deadline reported
@@ -536,10 +537,10 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
         let vt0 := Linger.Core.Session.bootVt (restore.map (·.1))
         let created ← realtimeS
         let (pid, ptyFd) ←
-          spawnPty (UInt32.ofNat (Linger.Core.Vt.clampDim vt0.colCount))
-              (UInt32.ofNat (Linger.Core.Vt.clampDim vt0.rowCount)) cwd prog args
+          spawnPty (UInt32.ofNat (Linger.Terminal.Vt.clampDim vt0.colCount))
+              (UInt32.ofNat (Linger.Terminal.Vt.clampDim vt0.rowCount)) cwd prog args
               #[s!"LINGER_SESSION={name}", "TERM=xterm-256color", "TERM_PROGRAM=linger",
-                s!"TERM_PROGRAM_VERSION={Linger.Core.Terminal.versionNumber}"]
+                s!"TERM_PROGRAM_VERSION={Linger.Terminal.Mediation.versionNumber}"]
         let st :=
           State.boot vt0 ((restore.map (·.2)).getD [])
             [("name", name), ("pid", toString pid), ("created", toString created),

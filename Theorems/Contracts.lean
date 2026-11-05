@@ -12,21 +12,21 @@ import all Linger.Display.Proofs.Listing
 import all Linger.Target.Proofs.Name
 import all Theorems.Picker
 import all Linger.Target.Proofs.Remote
-import all Theorems.Render.Grid
-import all Theorems.Render.History
-import all Theorems.Render.Modes
-import all Theorems.Render.PendingWrap
-import all Theorems.Render.Scrollback
-import all Theorems.Render.Sticky
-import all Theorems.Render.Tabs
-import all Theorems.Replay
+import all Linger.Terminal.Proofs.Render.Grid
+import all Linger.Terminal.Proofs.Render.History
+import all Linger.Terminal.Proofs.Render.Modes
+import all Linger.Terminal.Proofs.Render.PendingWrap
+import all Linger.Terminal.Proofs.Render.Scrollback
+import all Linger.Terminal.Proofs.Render.Sticky
+import all Linger.Terminal.Proofs.Render.Tabs
+import all Linger.Terminal.Proofs.Replay
 import all Theorems.Resurrect
 import all Theorems.Session
 import all Linger.Display.Proofs.Status
 import all Linger.Display.Proofs.Title
-import all Theorems.Vt
-import all Theorems.Vt.Renderable
-import all Theorems.Vt.State
+import all Linger.Terminal.Proofs.Vt
+import all Linger.Terminal.Proofs.Vt.Renderable
+import all Linger.Terminal.Proofs.Vt.State
 import all Theorems.Wire
 
 /-! # Contract statements
@@ -37,7 +37,7 @@ instead of passing the citation gate. The `rfl` example under Resume ties the
 `Session.resumeVt` those pins spell to `Session.bootVt`, which `Daemon.serve` calls, over
 `Checkpoint.loadBytes`. -/
 
-open Linger.Core Linger.Tools Linger.Os Linger.Target Linger.Display
+open Linger.Core Linger.Tools Linger.Os Linger.Target Linger.Display Linger.Terminal
 
 -- Checkpoints
 example (c : Checkpoint.Ckpt) (h : Vt.LiveReachableVt c.vt) :

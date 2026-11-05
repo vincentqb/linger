@@ -3,7 +3,7 @@ module
 import all Linger.Display.Listing
 import all Linger.Display.Status
 -- The proof layer is module-private, so `utf8s_no_ctl` arrives through `import all`.
-import all Theorems.Render
+import all Linger.Terminal.Proofs.Render
 import all Linger.Display.Proofs.Status
 
 /-! # §Row — a list row's identity is its socket filename, not the reply
@@ -86,7 +86,7 @@ cannot, for ANY `info` a reply could carry: the row is rendered through `Render.
 maps every C0/DEL codepoint to U+FFFD, so the guarantee needs no hypothesis about the source.
 The `infoText` argument (`Session.infoText_framing`), applied one layer out at the display. -/
 
-open Linger.Core.Render (utf8s_no_ctl)
+open Linger.Terminal.Render (utf8s_no_ctl)
 
 /-- **Every byte of a printed row is printable content** — no C0 control, no DEL — whatever the
 reply contained. `humanRow` ends in `utf8s`, so this is `utf8s`'s own guarantee. -/
@@ -112,7 +112,7 @@ theorem rowPieces_printable (nameCol : Nat) (info : List (String × String)) :
     subst c
     cases Status.ofName ((info.lookup "status").getD "") <;> decide
   · obtain ⟨raw, _, rfl⟩ := List.mem_map.mp hc
-    have := Linger.Core.Render.textChar_safe raw
+    have := Linger.Terminal.Render.textChar_safe raw
     omega
 
 /-- **A printed row, character by character**: the UTF-8 encoding of codepoints that are no
@@ -120,16 +120,16 @@ C0 control, DEL or C1 control. `humanRow_printable` is the byte-level half, whic
 C1 control satisfies. -/
 theorem humanRow_text (nameCol : Nat) (info : List (String × String)) :
     ∃ cs : List Char,
-      humanRow nameCol info = cs.flatMap Linger.Core.Render.utf8 ∧
+      humanRow nameCol info = cs.flatMap Linger.Terminal.Render.utf8 ∧
         ∀ c ∈ cs, 0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0) := by
   refine
-    ⟨((rowPieces nameCol info).flatMap (·.text)).map Linger.Core.Render.safeChar, by
-      unfold humanRow; exact Linger.Core.Render.utf8s_eq_flatMap _, ?_⟩
+    ⟨((rowPieces nameCol info).flatMap (·.text)).map Linger.Terminal.Render.safeChar, by
+      unfold humanRow; exact Linger.Terminal.Render.utf8s_eq_flatMap _, ?_⟩
   intro c hc
   obtain ⟨d, hd, rfl⟩ := List.mem_map.mp hc
   obtain ⟨piece, hp, hd⟩ := List.mem_flatMap.mp hd
   have h := rowPieces_printable nameCol info piece hp d hd
-  rw [Linger.Core.Render.safeChar_eq_self (by omega) (by omega)]
+  rw [Linger.Terminal.Render.safeChar_eq_self (by omega) (by omega)]
   omega
 
 /-- Exactly the badge is styled; the name, details, labels and watchers are plain. -/
@@ -167,18 +167,18 @@ theorem nameWidth_covers (rows : List (List (String × String))) (row : List (St
 /-- Removing style produces exactly the bytes of the same plain row pieces. -/
 theorem renderPieces_plain (pieces : List RowPiece) :
     Linger.Display.Listing.renderPieces false pieces =
-      Linger.Core.Render.utf8s (pieces.flatMap (·.text)) := by
+      Linger.Terminal.Render.utf8s (pieces.flatMap (·.text)) := by
   induction pieces with
   | nil => rfl
   | cons piece pieces ih =>
     cases hs : piece.status <;>
-      simp_all [renderPieces, Linger.Core.Render.utf8s, List.flatMap_append]
+      simp_all [renderPieces, Linger.Terminal.Render.utf8s, List.flatMap_append]
 
 /-- Uncoloured terminal output is exactly the plain rows: one `humanRow` per
 session over the shared name column, each LF-terminated, or the empty-state line. -/
 theorem terminalListing_plain (rows : List (List (String × String))) :
     Linger.Display.Listing.terminalListing false rows =
-      if rows.isEmpty then Linger.Core.Render.utf8s "no sessions".toList ++ [0x0A]
+      if rows.isEmpty then Linger.Terminal.Render.utf8s "no sessions".toList ++ [0x0A]
       else rows.flatMap (fun r => humanRow (nameWidth rows) r ++ [0x0A]) := by
   simp [terminalListing, renderPieces_plain, humanRow]
 

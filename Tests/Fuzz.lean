@@ -1,8 +1,8 @@
 module
 
--- `roundtrips` and `roundtripsFrom` are private to `Tests.Render` and run under `native_decide`.
-import all Tests.Render
-meta import Tests.Render
+-- `roundtrips` and `roundtripsFrom` are private to `Linger.Terminal.Tests.Render` and run under `native_decide`.
+import all Linger.Terminal.Tests.Render
+meta import Linger.Terminal.Tests.Render
 
 /-! # §Replay fuzzing — the net for assumptions nobody wrote down
 
@@ -22,9 +22,9 @@ three real replay bugs, two of which no fixture would have reached (see
 `failingDeep`).
 -/
 
-namespace Linger.Core.Render.Fuzz
+namespace Linger.Terminal.Render.Fuzz
 
-open Linger.Core.Render.Tests
+open Linger.Terminal.Render.Tests
 
 /-- A pure LCG. Reproducible: a failing seed replays exactly. -/
 def nextRand (s : Nat) : Nat := (s * 1103515245 + 12345) % 2147483648
@@ -97,4 +97,4 @@ def failingDeep (count : Nat) : List Nat :=
 
 example : failingDeep 150 = [] := by native_decide
 
-end Linger.Core.Render.Fuzz
+end Linger.Terminal.Render.Fuzz

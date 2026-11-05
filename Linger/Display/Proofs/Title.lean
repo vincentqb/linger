@@ -1,11 +1,11 @@
 module
 
 import all Linger.Display.Title
-import Theorems.TerminalTitle
+import Linger.Terminal.Proofs.Title
 
 namespace Linger.Display.Title
 
-open Linger.Core Linger.Target
+open Linger.Target
 
 theorem compose_quiet (session : String) (capacity : Nat) :
     compose session "" "" capacity = Name.sanitize session := by

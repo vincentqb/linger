@@ -1,13 +1,13 @@
 module
 
 import Linger.Display.Title
-import Linger.Core.Terminal
+import Linger.Terminal.Title
 meta import Linger.Display.Title
-meta import Linger.Core.Terminal
+meta import Linger.Terminal.Title
 
 namespace Linger.Display.Title.Tests
 
-open Linger.Core.Terminal.Title (maxChars)
+open Linger.Terminal.Title (maxChars)
 
 example : compose "work" "" "" maxChars = "work" := by native_decide
 
@@ -21,7 +21,7 @@ example : compose "../bad" "" "" maxChars = "_._bad" := by native_decide
 
 example :
     String.ofList
-        (Linger.Core.Terminal.Title.payload
+        (Linger.Terminal.Title.payload
           (compose "work" (String.ofList (List.replicate 500 'x')) "1!" maxChars)) =
       "work · " ++ String.ofList (List.replicate 488 'x') ++ " · 1!" := by
   native_decide

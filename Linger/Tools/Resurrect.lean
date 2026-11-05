@@ -204,7 +204,7 @@ appending the informational command notice. -/
 def checkpoint (pane : Pane) (contents : Option String) : Linger.Core.Checkpoint.Ckpt :=
   {
     vt :=
-      (((Linger.Core.Vt.Vt.init pane.details.cols pane.details.rows).feed
+      (((Linger.Terminal.Vt.Vt.init pane.details.cols pane.details.rows).feed
               (captureBytes (contents.getD ""))).quiesce.feed
           (commandNotice pane.details).toUTF8.toList).quiesce,
     cwd := pane.dir,

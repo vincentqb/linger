@@ -3,14 +3,14 @@ module
 import E2E.Watch
 import Linger.Display.Suites.Status
 import E2E.Paths
-import E2E.Graphics
+import Linger.Terminal.Suites.Graphics
 import E2E.Agent
 import E2E.Resume
 import E2E.Attach
 import E2E.Delivery
 import E2E.Robust
 import Linger.Target.Suites.Remote
-import E2E.Terminal
+import Linger.Terminal.Suites.Mediation
 import Linger.Display.Suites.Title
 import E2E.Recipes
 import E2E.Interop
@@ -36,11 +36,12 @@ not a silent success. -/
 
 def suites : List (String × IO UInt32) :=
   [("watch", E2E.Watch.run), ("status", Linger.Display.Suites.Status.run),
-    ("overview", E2E.Paths.run), ("graphics", E2E.Graphics.run), ("agent", E2E.Agent.run),
-    ("resume", E2E.Resume.run), ("attach", E2E.Attach.run), ("delivery", E2E.Delivery.run),
-    ("robust", E2E.Robust.run), ("remote", Linger.Target.Suites.Remote.run),
-    ("terminal", E2E.Terminal.run), ("title", Linger.Display.Suites.Title.run),
-    ("recipes", E2E.Recipes.run), ("interop", E2E.Interop.run), ("manager", E2E.Manager.run),
+    ("overview", E2E.Paths.run), ("graphics", Linger.Terminal.Suites.Graphics.run),
+    ("agent", E2E.Agent.run), ("resume", E2E.Resume.run), ("attach", E2E.Attach.run),
+    ("delivery", E2E.Delivery.run), ("robust", E2E.Robust.run),
+    ("remote", Linger.Target.Suites.Remote.run), ("terminal", Linger.Terminal.Suites.Mediation.run),
+    ("title", Linger.Display.Suites.Title.run), ("recipes", E2E.Recipes.run),
+    ("interop", E2E.Interop.run), ("manager", E2E.Manager.run),
     -- opt-in: needs a real reachable host, so NOT in scripts/e2e.sh
     ("remote-live", Linger.Target.Suites.RemoteLive.run),
     -- Verifier regression checks, separate from the live product suites.
@@ -48,12 +49,12 @@ def suites : List (String × IO UInt32) :=
 
 def main (args : List String) : IO UInt32 := do
   match args with
-  -- Not a suite: the child `E2E.Terminal` runs under its own session's pty, because
+  -- Not a suite: the child `Linger.Terminal.Suites.Mediation` runs under its own session's pty, because
   -- the terminal query has to be written to the session's OWN tty and read back from
   -- it — nothing on this side of the pty can do either. Four argv elements, so it can
   -- never collide with a one-element suite name.
   | ["--probe", result, ready, trigger] =>
-    E2E.Terminal.probe result ready trigger
+    Linger.Terminal.Suites.Mediation.probe result ready trigger
   | ["--winsize-probe", result] =>
     E2E.Resume.winsizeProbe result
   | ["--title-probe"] =>

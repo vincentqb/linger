@@ -1,9 +1,9 @@
 module
 
 public import Linger.Core.Wire
-public import Linger.Core.Vt
-public import Linger.Core.Replay
-public import Linger.Core.Terminal
+public import Linger.Terminal.Vt
+public import Linger.Terminal.Replay
+public import Linger.Terminal.Mediation
 
 public section
 
@@ -25,6 +25,7 @@ Tensions carried (THEOREMS.md):
 
 namespace Linger.Core.Session
 
+open Linger.Terminal
 open Linger.Core.Wire (Msg)
 
 /-- Most connections a session holds; `step` refuses and closes one more. The daemon
@@ -84,7 +85,7 @@ structure State where
   /-- The emulator, fed every byte the child writes. -/
   vt : Vt.Vt
   /-- One bounded scanner owned by the PTY-facing virtual terminal. -/
-  private scan : Terminal.Scan := .ground
+  private scan : Terminal.Mediation.Scan := .ground
   private clients : List Client := []
   /-- Key/value labels in the order they were set, at most `maxLabels`. -/
   labels : List (String × String) := []
@@ -279,7 +280,7 @@ This was `(String.join (fields.map (fun (k, v) => s!"{k}\t{v}\n"))).toUTF8.toLis
 which passed a label's newline through verbatim (`specs/archive/restore-conformance.md`
 Step 0 ledger item 2, §Row/§Status integrity). That shape was also what made the
 output unprovable — a `String` literal does not reduce in the kernel, so no theorem
-could see its bytes, which is exactly the argument in `Linger/Core/Render.lean`'s
+could see its bytes, which is exactly the argument in `Linger/Terminal/Render.lean`'s
 header. Building `List UInt8` directly fixes both at once. -/
 private def infoText (s : State) : List UInt8 :=
   (infoFields s).flatMap
@@ -543,13 +544,13 @@ def step (s : State) (ev : Event) : State × List Effect :=
             [])
   | .closed id => closeClient s id
   | .ptyOut chunk =>
-    let r := Terminal.feed s.vt s.scan chunk
+    let r := Terminal.Mediation.feed s.vt s.scan chunk
     ({ s with
         vt := r.vt, scan := r.scan, dirty := true, outSeq := s.outSeq + 1,
         lookSeq := if s.clients.any (·.attached) then s.outSeq + 1 else s.lookSeq },
       (if r.replies.isEmpty then [] else [.writePty r.replies]) ++ broadcast s r.visible)
   | .childExited status =>
-    let flushed := Terminal.finish s.scan
+    let flushed := Terminal.Mediation.finish s.scan
     let s :=
       { s with
         exited := some status, scan := flushed.2 }

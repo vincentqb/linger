@@ -1,14 +1,14 @@
 module
 
 import all Linger.Core.Session
-import all Linger.Core.Vt
-import all Linger.Core.Terminal
+import all Linger.Terminal.Vt
+import all Linger.Terminal.Mediation
 import all Linger.Core.Wire
-import all Linger.Core.Render
+import all Linger.Terminal.Render
 -- The `Vt` seal makes the proof layer module-private, so the rungs this file
 -- composes arrive through `import all`.
-import all Theorems.Terminal
-import all Theorems.Render
+import all Linger.Terminal.Proofs.Mediation
+import all Linger.Terminal.Proofs.Render
 import all Theorems.Wire
 -- `Theorems.Checkpoint` is here for one claim: `Checkpoint.load_live`, which makes
 -- `LiveVt` provable for a *resumed* daemon (§Resume at the daemon, below).
@@ -42,6 +42,7 @@ THEOREMS.md rows:
 
 namespace Linger.Core.Session
 
+open Linger.Terminal
 open Linger.Core.Wire (Msg)
 
 attribute [local grind] controlResize resizeOwned resize State.setClient
@@ -166,7 +167,7 @@ theorem step_closed_frame (s : State) (id : Nat) :
 gets its one child-facing reply; only presentation broadcast disappears. -/
 theorem step_ptyOut_no_clients (s : State) (chunk : List UInt8) (h : s.clients = []) :
     step s (.ptyOut chunk) =
-      let r := Terminal.feed s.vt s.scan chunk
+      let r := Terminal.Mediation.feed s.vt s.scan chunk
       ({ s with
           vt := r.vt, scan := r.scan, dirty := true, outSeq := s.outSeq + 1 },
         if r.replies.isEmpty then [] else [Effect.writePty r.replies]) := by
@@ -175,11 +176,11 @@ theorem step_ptyOut_no_clients (s : State) (chunk : List UInt8) (h : s.clients =
 /-- With or without clients, the emulator advances identically to `Vt.feed`. -/
 theorem step_ptyOut_vt (s : State) (chunk : List UInt8) :
     (step s (.ptyOut chunk)).1.vt = s.vt.feed chunk := by
-  simpa [step] using Terminal.feed_vt s.vt s.scan chunk
+  simpa [step] using Terminal.Mediation.feed_vt s.vt s.scan chunk
 
 /-- The one persistent scanner advances exactly once per pty-output event. -/
 theorem step_ptyOut_scan (s : State) (chunk : List UInt8) :
-    (step s (.ptyOut chunk)).1.scan = (Terminal.feed s.vt s.scan chunk).scan := rfl
+    (step s (.ptyOut chunk)).1.scan = (Terminal.Mediation.feed s.vt s.scan chunk).scan := rfl
 
 /-- **No empty output frame.** A chunk that is entirely an owned query leaves no
 visible bytes, and `chunksOf n [] = [[]]` — so without `broadcast`'s guard every
@@ -203,14 +204,14 @@ theorem broadcast_no_writePty (s : State) (bytes : List UInt8) :
 only in the following presentation broadcast. -/
 theorem step_ptyOut_effects (s : State) (chunk : List UInt8) :
     (step s (.ptyOut chunk)).2 =
-      let r := Terminal.feed s.vt s.scan chunk
+      let r := Terminal.Mediation.feed s.vt s.scan chunk
       (if r.replies.isEmpty then [] else [Effect.writePty r.replies]) ++
         broadcast s r.visible := rfl
 
 /-- **The roster-independence claim, stated over `step` so it can fail.** Two
 states that agree on the terminal state but have *arbitrarily different client
 rosters* prescribe the same zero-or-one child write. Quantifying over `step`
-rather than over `Terminal.feed` is the whole point: an earlier version of this
+rather than over `Mediation.feed` is the whole point: an earlier version of this
 theorem mentioned only `feed`, whose result cannot depend on the roster by
 construction, so it stayed true when `.ptyOut` was mutated to gate replies on
 `s.clients` — the exact regression it was supposed to guard. -/
@@ -235,13 +236,13 @@ theorem ptyOut_reply_roster_independent (s t : State) (chunk : List UInt8) (hv :
 /-- Child exit resets the scanner; `finish`'s pending bytes are broadcast by
 `step` before exited notifications and close effects. -/
 theorem step_childExited_scan (s : State) (status : UInt32) :
-    (step s (.childExited status)).1.scan = .ground := by simp [step, Terminal.finish]
+    (step s (.childExited status)).1.scan = .ground := by simp [step, Terminal.Mediation.finish]
 
 /-- The incomplete prefix is the first effect segment, before exited notices,
 closes, checkpoint deletion, and daemon exit. -/
 theorem step_childExited_effects (s : State) (status : UInt32) :
     (step s (.childExited status)).2 =
-      let flushed := Terminal.finish s.scan
+      let flushed := Terminal.Mediation.finish s.scan
       let s' :=
         { s with
           exited := some status, scan := flushed.2 }
@@ -600,9 +601,9 @@ theorem step_bounded (s : State) (ev : Event) (h : Bounded s) : Bounded (step s 
   · -- closed (may checkpoint; state shape identical either way)
     exact closeClient_bounded s _ h'
   · -- ptyOut
-    exact ⟨hcl, hlb, hdec, Terminal.feed_bounded _ _ _ hscan⟩
+    exact ⟨hcl, hlb, hdec, Terminal.Mediation.feed_bounded _ _ _ hscan⟩
   · -- childExited: finish always returns ground
-    exact ⟨hcl, hlb, hdec, Terminal.finish_bounded s.scan⟩
+    exact ⟨hcl, hlb, hdec, Terminal.Mediation.finish_bounded s.scan⟩
   · -- tick
     split
     · exact ⟨hcl, hlb, hdec, hscan⟩
@@ -644,7 +645,7 @@ theorem step_vt_preserves {P : Vt.Vt → Prop}
   · simpa only [closeClient_vt] using h
   · -- ptyOut
     dsimp only
-    rw [Terminal.feed_vt]
+    rw [Terminal.Mediation.feed_vt]
     exact hfeed _ _ h
   · exact h
   · split
@@ -652,12 +653,12 @@ theorem step_vt_preserves {P : Vt.Vt → Prop}
     · exact h
   · exact h
 
-open Linger.Core.Vt (Good) in
+open Linger.Terminal.Vt (Good) in
 /-- §Total end-to-end: the screen state a daemon holds stays Good
 whatever events arrive — adversarial clients and pty output included. -/
 theorem step_vt_good (s : State) (ev : Event) (h : Good s.vt) : Good (step s ev).1.vt :=
-  step_vt_preserves (fun _ cols rows hv => Linger.Core.Vt.Good.resize cols rows hv)
-    (fun _ bytes hv => Linger.Core.Vt.Good.feed bytes hv) s ev h
+  step_vt_preserves (fun _ cols rows hv => Linger.Terminal.Vt.Good.resize cols rows hv)
+    (fun _ bytes hv => Linger.Terminal.Vt.Good.feed bytes hv) s ev h
 
 /-! ## §Unread — the output counter
 
@@ -883,7 +884,7 @@ theorem run_eq_foldl (s : State) (evs : List Event) :
 
 /-- The daemon's composite invariant: everything the per-step theorems
 preserve, as one predicate. -/
-def WF (s : State) : Prop := Bounded s ∧ Linger.Core.Vt.Good s.vt
+def WF (s : State) : Prop := Bounded s ∧ Linger.Terminal.Vt.Good s.vt
 
 theorem step_wf (s : State) (ev : Event) (h : WF s) : WF (step s ev).1 :=
   ⟨step_bounded s ev h.1, step_vt_good s ev h.2⟩
@@ -910,13 +911,13 @@ theorem run_bytes_isolates (s : State) (id : Nat) (chunks : List (List UInt8)) {
 The emulator-level invariant is only useful if the *daemon's* terminal satisfies
 it, for any event trace. A session does exactly three things to its `Vt`: feeds
 it pty bytes (through the mediator, whose VT projection is `Vt.feed` —
-`Terminal.feed_vt`), resizes it on attach or resize, and nothing else. Those are
+`Mediation.feed_vt`), resizes it on attach or resize, and nothing else. Those are
 precisely `LiveReachableVt`'s constructors, so the lift is an induction with no
 new content — which is the point: the replay theorem may assume a *reachable*
 grid without that assumption smuggling in a side condition.
 -/
 
-open Linger.Core.Vt (LiveReachableVt Renderable)
+open Linger.Terminal.Vt (LiveReachableVt Renderable)
 
 /-- The daemon's terminal is one a live session can hold. -/
 def LiveVt (s : State) : Prop := LiveReachableVt s.vt
@@ -934,7 +935,8 @@ theorem run_vt_live (s : State) (evs : List Event) (h : LiveVt s) : LiveVt (run 
 has been through — adversarial clients, hostile pty bytes, resizes, any
 interleaving — the grid it holds is one `Render.restore` can express. -/
 theorem run_vt_renderable (s : State) (evs : List Event) (h : LiveVt s) :
-    Renderable (run s evs).1.vt := Linger.Core.Vt.renderable_of_liveReachable (run_vt_live s evs h)
+    Renderable (run s evs).1.vt :=
+  Linger.Terminal.Vt.renderable_of_liveReachable (run_vt_live s evs h)
 
 /-- A fresh boot through `State.boot`, the one door the runtime walks through,
 satisfies the hypothesis, so the statement above is not conditional in practice. -/
@@ -990,7 +992,7 @@ sources for `vt0`: `none` is a fresh `Vt.init 80 24`, `some` is a decoded checkp
 is where the `ofDecoded` rung is load-bearing — the `some` branch has no other witness.
 Stated over `bootVt` itself, the term `Daemon.lean` calls. -/
 theorem liveReachableVt_resumeVt (b : ByteArray) :
-    Linger.Core.Vt.LiveReachableVt (bootVt ((Checkpoint.loadBytes b).map (·.vt))) := by
+    Linger.Terminal.Vt.LiveReachableVt (bootVt ((Checkpoint.loadBytes b).map (·.vt))) := by
   unfold bootVt
   rcases hl : Checkpoint.loadBytes b with - | c
   · exact LiveReachableVt.init 80 24
@@ -1001,7 +1003,7 @@ of `run_boot_wf`: whatever a session has been through — adversarial clients, h
 bytes, resizes, any interleaving — its terminal is still one a live session can hold,
 whether it booted fresh (`liveVt_boot`) or resumed (`liveVt_boot_of_load`). -/
 theorem run_boot_vt_live (vt : Vt.Vt) (labels metaKv : List (String × String)) (evs : List Event)
-    (h : Linger.Core.Vt.LiveReachableVt vt) :
+    (h : Linger.Terminal.Vt.LiveReachableVt vt) :
     LiveVt (run (State.boot vt labels metaKv) evs).1 := run_vt_live _ _ h
 
 /-- **The A2 anchor for the screen, made structural.** Every state the daemon can *possess*
@@ -1014,11 +1016,11 @@ left to assemble, and the resumed half of it did not exist: `run_vt_renderable` 
 is the second hypothesis `Render.restore_tabs_any` and `Resume.resume_tabs` ask for and
 `Renderable` does not carry. -/
 theorem run_boot_vt_shape (vt : Vt.Vt) (labels metaKv : List (String × String)) (evs : List Event)
-    (h : Linger.Core.Vt.LiveReachableVt vt) :
+    (h : Linger.Terminal.Vt.LiveReachableVt vt) :
     Renderable (run (State.boot vt labels metaKv) evs).1.vt ∧
-      Linger.Core.Vt.TabsOk (run (State.boot vt labels metaKv) evs).1.vt :=
-  ⟨Linger.Core.Vt.renderable_of_liveReachable (run_boot_vt_live vt labels metaKv evs h),
-    Linger.Core.Vt.tabsOk_of_liveReachable (run_boot_vt_live vt labels metaKv evs h)⟩
+      Linger.Terminal.Vt.TabsOk (run (State.boot vt labels metaKv) evs).1.vt :=
+  ⟨Linger.Terminal.Vt.renderable_of_liveReachable (run_boot_vt_live vt labels metaKv evs h),
+    Linger.Terminal.Vt.tabsOk_of_liveReachable (run_boot_vt_live vt labels metaKv evs h)⟩
 
 /-- **The same claim with no hypothesis at all, over the term the daemon computes.** `b` is
 an arbitrary `ByteArray` — a corrupt file, a truncated one, a hostile one, or a real
@@ -1031,7 +1033,7 @@ Unprovable before the `ofDecoded` rung: the `some` branch had no `LiveVt`. -/
 theorem run_resume_vt_shape (b : ByteArray) (labels metaKv : List (String × String))
     (evs : List Event) :
     Renderable (run (State.boot (resumeVt b) labels metaKv) evs).1.vt ∧
-      Linger.Core.Vt.TabsOk (run (State.boot (resumeVt b) labels metaKv) evs).1.vt :=
+      Linger.Terminal.Vt.TabsOk (run (State.boot (resumeVt b) labels metaKv) evs).1.vt :=
   run_boot_vt_shape _ labels metaKv evs (liveReachableVt_resumeVt b)
 
 /-- **A1 across a *second* reboot.** The checkpoint a resumed session writes loads back
@@ -1067,8 +1069,8 @@ simply false of a resumed daemon (the gap that sized this step). The `Good vt`
 hypothesis is honest: a fresh boot has `Good (Vt.init …)`, and the resume
 path's decoded emulator carries it from the checkpoint theorems' side. -/
 
-theorem boot_wf (vt : Vt.Vt) (labels metaKv : List (String × String)) (h : Linger.Core.Vt.Good vt) :
-    WF (State.boot vt labels metaKv) :=
+theorem boot_wf (vt : Vt.Vt) (labels metaKv : List (String × String))
+    (h : Linger.Terminal.Vt.Good vt) : WF (State.boot vt labels metaKv) :=
   ⟨⟨Nat.zero_le _, List.length_take_le _ _, nofun, trivial⟩, h⟩
 
 /-- **The A2 anchor made structural**: every state reachable from any boot —
@@ -1076,7 +1078,7 @@ which, by the seal, is every state the daemon can possess — is well-formed,
 whatever the trace: adversarial clients, hostile pty bytes, forged
 checkpoints' label lists, any interleaving. -/
 theorem run_boot_wf (vt : Vt.Vt) (labels metaKv : List (String × String)) (evs : List Event)
-    (h : Linger.Core.Vt.Good vt) :
+    (h : Linger.Terminal.Vt.Good vt) :
     WF (run (State.boot vt labels metaKv) evs).1 := run_wf _ _ (boot_wf vt labels metaKv h)
 
 /-- **Only the size owner resizes the pty** — as a theorem rather than a
@@ -1549,7 +1551,7 @@ below need no hypothesis about where a field came from.
 
 The fix is also what makes them provable at all: the old shape ended in
 `String.toUTF8`, and a `String` does not reduce in the kernel — the same argument
-`Linger/Core/Render.lean`'s header makes, and the same reason `Render.history` was the
+`Linger/Terminal/Render.lean`'s header makes, and the same reason `Render.history` was the
 last byte stream to acquire a proof rather than merely a *bound*: it too was assembled
 through `String` until `rowText` was rebuilt on `List UInt8`, which is what earned it
 `history_framing`/`history_lines`. `Theorems/Coverage.lean` now requires exact

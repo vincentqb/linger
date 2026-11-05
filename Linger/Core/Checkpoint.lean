@@ -1,6 +1,6 @@
 module
 
-public import Linger.Core.Vt
+public import Linger.Terminal.Vt
 -- A **permanent** friend import, and the one in the tree that needs its reason
 -- written down. `specs/archive/vt-toolkit.md` Step 2 held it open for one step to remove
 -- `rVt`'s forge; the forge is gone (`rVt` goes through `Vt.ofDecoded`, which validates)
@@ -24,7 +24,7 @@ public import Linger.Core.Vt
 -- and that no `Vt` field is assigned anywhere in this file. Do not copy the pattern
 -- to a third module: `Render`/`Terminal` are friends because they *are* the emulator,
 -- and this one is a friend because it is the emulator's only serialiser.
-import all Linger.Core.Vt
+import all Linger.Terminal.Vt
 
 /-! # Linger.Core.Checkpoint — the reboot-resume codec
 
@@ -50,7 +50,8 @@ start fresh — a checkpoint is a cache, not a contract.
 
 namespace Linger.Core.Checkpoint
 
-open Linger.Core.Vt
+open Linger.Terminal
+open Linger.Terminal.Vt
 
 /-- Readers: consume a prefix, return the value and the rest.
 
@@ -355,7 +356,7 @@ Nothing validated: `rNat` accepts whatever the file says.
 Dimensions must already be in the live range before reading any rows. Both screen
 grids use those dimensions to bound row counts and the sum of encoded cell runs
 before expansion; the tab ruler and history row count are bounded too. The final
-`Vt.ofDecoded` (`Linger/Core/Vt.lean`) check still owns exact shapes and cell validity.
+`Vt.ofDecoded` (`Linger/Terminal/Vt.lean`) check still owns exact shapes and cell validity.
 History row widths are not bounded by the current columns: resize keeps their old
 widths, and the existing decoder contract accepts unrestricted history rows.
 

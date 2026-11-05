@@ -105,13 +105,13 @@ done
 # stage's count `n` itself lets one CSI 65535 S fill the history ring with blank rows.
 csi_loop='(List[.]range|Array[.]range|Nat[.]fold|Nat[.]repeat[[:space:]]+[[:alnum:]_.]+)[[:space:]]+'
 csi_count='([(][^)]*[^[:alnum:]_.]|[(])?(a1|n)([^[:alnum:]_]|$)|[(][^)]*[.]arg([^[:alnum:]_]|$)'
-! code_grep "$csi_loop($csi_count)" Linger/Core/Vt.lean \
+! code_grep "$csi_loop($csi_count)" Linger/Terminal/Vt.lean \
   || fail "a loop counts a CSI parameter directly: route it through Vt.repeatAtMost, which clamps it by the screen"
 # ECH's span is the one other loop a count sizes. Its clamp to the screen's width shows in
 # no result, since cells past the row are skipped either way, so this pins it at the call;
 # without it one CSI 65535 X runs 65535 iterations.
 code_grep '^[[:space:]]+v[.]eraseRowSpan v[.]cursor[.]y v[.]cursor[.]x [(]min [(]v[.]cursor[.]x [+] n[)] v[.]cols[)]$' \
-  Linger/Core/Vt.lean >/dev/null || fail "ECH lost its clamp: its span must end at min (v.cursor.x + n) v.cols"
+  Linger/Terminal/Vt.lean >/dev/null || fail "ECH lost its clamp: its span must end at min (v.cursor.x + n) v.cols"
 # the OS surface stays where AGENTS.md says it is
 [ "$(code_grep '@[[]extern' '*.lean' | awk -F: '!seen[$1]++ { print $1 }' | tr -d ' ')" = "Linger/Os/Boundary.lean" ] \
   || fail "extern declarations outside Linger/Os/Boundary.lean"
@@ -126,7 +126,7 @@ code_grep '^[[:space:]]+v[.]eraseRowSpan v[.]cursor[.]y v[.]cursor[.]x [(]min [(
 # `unsafe` and `@[implemented_by]` — the Lean-side twin of the `@[extern` gate just
 # above, and the only route that makes the theorems false OF THE SHIPPED BINARY rather
 # than of some value inside it (SCRATCHPAD.md, "the adversarial audit of the seal",
-# finding R4). Re-measured here, in `Theorems/Render/Ends.lean`, on v4.34.0-rc2:
+# finding R4). Re-measured here, in `Linger/Terminal/Proofs/Render/Ends.lean`, on v4.34.0-rc2:
 #
 #   unsafe def launderImpl (_v : Vt) : Vt := unsafeCast (0 : Nat)
 #   @[implemented_by launderImpl] def launder (v : Vt) : Vt := v
@@ -200,12 +200,12 @@ awk '
   || fail "lake-manifest has external Lean packages"
 
 # The vt-toolkit's import closure (`specs/archive/vt-toolkit.md` Step 4). The toolkit is
-# Linger/Core/{Vt,Render,Terminal,Replay}.lean, and the claim worth having is that its
-# closure contains NOTHING else -- no Posix, no Runtime, no Checkpoint, no Session.
+# Linger/Terminal/{Vt,Render,Mediation,Title,Replay}.lean, and the claim worth having is
+# that its closure contains NOTHING else -- no Posix, no Runtime, no Checkpoint, no Session.
 # `lean_lib LingerVt` in lakefile.lean is the positive half: it elaborates the
 # closure. It cannot be the whole claim, because Lake resolves imports through one
 # package-wide LEAN_PATH, so a lib with restricted `roots` compiles an out-of-set
-# module happily -- `import Linger.Os.Shell` in Terminal.lean builds under
+# module happily -- `import Linger.Os.Shell` in Mediation.lean builds under
 # `./lake build LingerVt` without a murmur. Measured, twice, not assumed. A
 # build-level failure needs a sub-package with its own srcDir and a path `require`,
 # and the two gates immediately above forbid `require`. So this grep is the half
@@ -216,9 +216,10 @@ awk '
 # imports someone thought of is not a closure gate. And exact means it also fires
 # when an import GOES, which is right -- the list below is the recorded header, so
 # Step 2/3 taking a friend import out is a reviewable edit here rather than a
-# silent one. Vt imports nothing; Render imports Vt; Terminal and Replay import
-# Render. The `import all Linger.Core.Vt` lines grant access within the sealed
-# toolkit. Because Vt is a leaf, these four headers define the whole closure.
+# silent one. Vt imports nothing; Render imports Vt; Mediation, Title and Replay
+# import Render. The `import all Linger.Terminal.Vt` lines grant access within the
+# sealed toolkit; Title reads only the public surface. Because Vt is a leaf, these five
+# headers define the whole closure.
 import_re='^[[:space:]]*((public|private|meta)[[:space:]]+)*import[[:space:]]+'
 module_imports() {
   # Imports precede the module body. Stop at `public section` so a later
@@ -248,13 +249,14 @@ import_closure() {
     printf '  want: %s\n   got: %s\n' "${2:-(no imports)}" "${tk_got:-(no imports)}" >&2; \
     fail "$1 left its declared import closure — review the library boundary"; }
 }
-import_closure Linger/Core/Vt.lean ''
-import_closure Linger/Core/Render.lean \
-  'public import Linger.Core.Vt;import all Linger.Core.Vt;'
-import_closure Linger/Core/Terminal.lean \
-  'public import Linger.Core.Render;import all Linger.Core.Vt;'
-import_closure Linger/Core/Replay.lean \
-  'public import Linger.Core.Render;import all Linger.Core.Vt;'
+import_closure Linger/Terminal/Vt.lean ''
+import_closure Linger/Terminal/Render.lean \
+  'public import Linger.Terminal.Vt;import all Linger.Terminal.Vt;'
+import_closure Linger/Terminal/Mediation.lean \
+  'public import Linger.Terminal.Render;import all Linger.Terminal.Vt;'
+import_closure Linger/Terminal/Title.lean 'public import Linger.Terminal.Render;'
+import_closure Linger/Terminal/Replay.lean \
+  'public import Linger.Terminal.Render;import all Linger.Terminal.Vt;'
 
 # Named targets must build the promised roots, not just happen to succeed.
 # Read declaration lines through code_grep, then compare their verbatim Name
@@ -281,8 +283,9 @@ library_roots() {
 # the libraries overlap, and Lake builds a module with one containing library's options.
 # scripts/e2e.sh also checks every Linger module outside Proofs/ and Tests/ directly; the
 # globs below build those two with these options.
-library_roots LingerVt '#[`Linger.Core.Terminal, `Linger.Core.Replay]' 'leanOptions := implementationOptions'
-library_roots LingerVtTheorems '#[`Theorems.Terminal, `Theorems.TerminalTitle, `Theorems.Replay]' \
+library_roots LingerVt '#[`Linger.Terminal.Mediation, `Linger.Terminal.Title, `Linger.Terminal.Replay]' \
+  'leanOptions := implementationOptions'
+library_roots LingerVtTheorems '#[`Linger.Terminal.Proofs.Mediation, `Linger.Terminal.Proofs.Title, `Linger.Terminal.Proofs.Replay]' \
   'leanOptions := implementationOptions'
 library_roots LingerInput '#[`Linger.Tools.Input]' 'leanOptions := implementationOptions'
 library_roots LingerInputTheorems '#[`Theorems.Input]' 'leanOptions := implementationOptions'
@@ -315,11 +318,11 @@ done
 
 # Check every member of the proof family, not only the root headers: an
 # intermediate VT or renderer lemma must not pull session policy into the target.
-module_imports Theorems/Vt.lean 'Theorems/Vt/*' Theorems/Terminal.lean Theorems/TerminalTitle.lean \
-  Theorems/Replay.lean Theorems/Render.lean 'Theorems/Render/*' \
+module_imports Linger/Terminal/Proofs/Vt.lean 'Linger/Terminal/Proofs/Vt/*' Linger/Terminal/Proofs/Mediation.lean Linger/Terminal/Proofs/Title.lean \
+  Linger/Terminal/Proofs/Replay.lean Linger/Terminal/Proofs/Render.lean 'Linger/Terminal/Proofs/Render/*' \
 | awk -F: "$IMPORT_AWK"'
   { mod = import_mod($3)
-    if (mod !~ /^(Linger[.]Core[.](Vt|Render|Terminal|Replay)|Theorems[.]((Vt|Render)([.][[:alnum:]_]+)*|Terminal|TerminalTitle|Replay)|Init[.]Data[.]String[.]Legacy)$/) {
+    if (mod !~ /^(Linger[.]Terminal[.](Vt|Render|Mediation|Title|Replay)|Linger[.]Terminal[.]Proofs[.]((Vt|Render)([.][[:alnum:]_]+)*|Mediation|Title|Replay)|Init[.]Data[.]String[.]Legacy)$/) {
       print "  " $0; bad = 1
     }
   }
@@ -332,7 +335,7 @@ module_imports Theorems/Vt.lean 'Theorems/Vt/*' Theorems/Terminal.lean Theorems/
 import_closure Linger/Tools/Resurrect.lean 'import Linger.Target.Name;import Linger.Display.Status;public import Linger.Core.Checkpoint;'
 import_closure Linger/Tools/Key.lean 'public import Linger.Tools.Input;'
 import_closure Linger/Tools/Fuzzy.lean ''
-import_closure Linger/Tools/Picker.lean 'public import Linger.Tools.Key;import Linger.Tools.Fuzzy;import Linger.Target.Name;import Linger.Display.Listing;public import Linger.Display.Status;import Linger.Target.Remote;import Linger.Core.Vt;'
+import_closure Linger/Tools/Picker.lean 'public import Linger.Tools.Key;import Linger.Tools.Fuzzy;import Linger.Target.Name;import Linger.Display.Listing;public import Linger.Display.Status;import Linger.Target.Remote;import Linger.Terminal.Vt;'
 import_closure Linger/Tools/Input.lean ''
 import_closure Theorems/Input.lean 'public import Linger.Tools.Input;import all Linger.Tools.Input;'
 import_closure Linger/Tools/Entry.lean ''
@@ -348,21 +351,24 @@ import_closure Linger/Os/Boundary.lean ''
 import_closure Linger/Runtime/Command.lean 'import Linger.Os.Shell;'
 import_closure Linger/Manager/Resurrect.lean 'import Linger.Tools.Resurrect;import Linger.Os.Shell;import Linger.Display.Listing;import Linger.Runtime.Paths;import Linger.Runtime.Resume;import Linger.Runtime.Cli;import Linger.Runtime.Command;import Linger.Target.Remote;import Linger.Manager.Picker;import Std.Async.System;'
 import_closure Linger/Manager/Picker.lean \
-  'public import Linger.Tools.Picker;import Linger.Os.Shell;import Linger.Display.Listing;import Linger.Target.Remote;import Linger.Core.Terminal;import Linger.Runtime.Command;'
+  'public import Linger.Tools.Picker;import Linger.Os.Shell;import Linger.Display.Listing;import Linger.Target.Remote;import Linger.Terminal.Title;import Linger.Runtime.Command;'
 import_closure Main.lean \
   'import Linger.Runtime.Cli;import Linger.Tools.Entry;import Linger.Manager.Picker;import Linger.Manager.Resurrect;'
 # `lean_lib Linger` builds the umbrella's closure, so this list is what `./lake build`
 # checks of the session library.
 import_closure Linger.lean "$(printf 'public import Linger.%s;' Core.Buf Os.Shell Core.Wire \
-  Core.Vt Core.Render Core.Terminal Target.Name Core.Session Core.Driver Core.Checkpoint \
+  Terminal.Vt Terminal.Render Terminal.Mediation Terminal.Title Target.Name Core.Session \
+  Core.Driver Core.Checkpoint \
   Target.Remote Display.Listing Display.Status Display.Title Os.Env Runtime.Paths Runtime.Command \
   Runtime.Daemon Runtime.Client Runtime.Cli Runtime.Resume)"
 module_imports 'Linger/Core/*' 'Linger/Runtime/*' Linger/Os/Boundary.lean Linger/Os/Shell.lean \
     Linger/Os/Env.lean Linger/Target/Name.lean Linger/Target/Remote.lean Linger/Display/Status.lean \
-    Linger/Display/Title.lean Linger/Display/Listing.lean Linger.lean \
+    Linger/Display/Title.lean Linger/Display/Listing.lean Linger/Terminal/Vt.lean \
+    Linger/Terminal/Render.lean Linger/Terminal/Mediation.lean Linger/Terminal/Title.lean \
+    Linger/Terminal/Replay.lean Linger.lean \
 | awk -F: "$IMPORT_AWK"'
   { mod = import_mod($3)
-    if (mod !~ /^(Linger[.](Core|Runtime|Os|Target|Display)[.][[:alnum:]_.]+|Std[.]Async[.](System|Signal))$/) {
+    if (mod !~ /^(Linger[.](Core|Runtime|Os|Target|Display|Terminal)[.][[:alnum:]_.]+|Std[.]Async[.](System|Signal))$/) {
       print "  " $0; bad = 1
     }
   }
@@ -530,8 +536,8 @@ for tie in \
   'let events := #[[]POLLIN[]]' \
   'let ready ← poll fds events 50' \
   'let withColor := [(]← IO[.]getEnv "NO_COLOR"[)][.]isNone' \
-  'writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Core[.]Terminal[.]Title[.]ansi "linger"[)][.]toArray[)]' \
-  'writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Core[.]Terminal[.]Title[.]ansi ""[)][.]toArray[)]' \
+  'writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Terminal[.]Title[.]ansi "linger"[)][.]toArray[)]' \
+  'writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Terminal[.]Title[.]ansi ""[)][.]toArray[)]' \
   'discard child[.]wait' \
   'let child ← IO[.]Process[.]spawn [{] cmd := executable, args := attachArgs target readOnly [}]'; do
   code_grep "^[[:space:]]+$tie$" Linger/Manager/Picker.lean >/dev/null \
@@ -548,7 +554,7 @@ for tie in \
   'for byte in bytes do let [(]next, emitted[)] := Linger[.]Tools[.]Input[.]feed decoder byte decoder := next keys := keys [+][+] [(]emitted[.]filterMap Linger[.]Tools[.]Key[.]ofInput[)][.]toArray else if Linger[.]Tools[.]Input[.]pending decoder && [(]← monotonicMs[)] - lastInput ≥ 150 then let [(]next, emitted[)] := Linger[.]Tools[.]Input[.]flush decoder decoder := next keys := [(]emitted[.]filterMap Linger[.]Tools[.]Key[.]ofInput[)][.]toArray for key in keys do' \
   'let nameCol := Linger[.]Display[.]Listing[.]nameWidth [(]snapshot[.]candidates[.]map fun target => [[][(]"name", target[)][]][)]' \
   'let mut index := start for item in [(]items[.]drop start[)][.]take slots do let chosen := index == state[.]cursor let selection := if chosen then "\\x1b[[]7m" else "" let mut pieces := #[[][(]if chosen then " ▸ " else " ", selection[)][]] let chars := Linger[.]Tools[.]Picker[.]highlightedPresentation snapshot nameCol state[.]query item for char in Linger[.]Tools[.]Picker[.]emphasizeCells chars do let statusStyle := if withColor then [(]char[.]status[.]map Linger[.]Display[.]Status[.]style[)][.]getD "" else "" let emphasis := if char[.]matched then "\\x1b[[]4m" else "" pieces := pieces[.]push [(]String[.]singleton char[.]char, selection [+][+] statusStyle [+][+] emphasis[)] lines := lines[.]push pieces index := index [+] 1' \
-  'let mut frame := "\\x1b[[]0m\\x1b[[]H\\x1b[[]2J" let mut first := true for line in lines do if !first then frame := frame [+][+] "\\r\\n" first := false let mut used := 0 let mut clipped := false let mut activeStyle := "" for [(]text, style[)] in line do if clipped then break if style != activeStyle then frame := frame [+][+] "\\x1b[[]0m" [+][+] style activeStyle := style for raw in text[.]toList do let c := if Linger[.]Tools[.]Input[.]printable raw then raw else '"'"'[?]'"'"' let cells := Linger[.]Core[.]Vt[.]charWidth c if used [+] cells > width then clipped := true break frame := frame[.]push c used := used [+] cells if !activeStyle[.]isEmpty then frame := frame [+][+] "\\x1b[[]0m" return frame' \
+  'let mut frame := "\\x1b[[]0m\\x1b[[]H\\x1b[[]2J" let mut first := true for line in lines do if !first then frame := frame [+][+] "\\r\\n" first := false let mut used := 0 let mut clipped := false let mut activeStyle := "" for [(]text, style[)] in line do if clipped then break if style != activeStyle then frame := frame [+][+] "\\x1b[[]0m" [+][+] style activeStyle := style for raw in text[.]toList do let c := if Linger[.]Tools[.]Input[.]printable raw then raw else '"'"'[?]'"'"' let cells := Linger[.]Terminal[.]Vt[.]charWidth c if used [+] cells > width then clipped := true break frame := frame[.]push c used := used [+] cells if !activeStyle[.]isEmpty then frame := frame [+][+] "\\x1b[[]0m" return frame' \
   'let next := if loaded then Linger[.]Tools[.]Picker[.]refresh state incoming[.]candidates else [{] [(]Linger[.]Tools[.]Picker[.]init incoming[.]candidates state[.]allowCreate[)] with query := state[.]query [}] dirty := dirty [|][|] !loaded [|][|] next != state [|][|] incoming != snapshot state := next snapshot := incoming loaded := true nextListing := [(]← monotonicMs[)] [+] 1000' \
   'while true do let current ← winsizeGet stdoutFd if dirty [|][|] current != size then let frame := draw state snapshot loaded withColor savedTmux current[.]1 current[.]2 if frame != lastFrame [|][|] current != size then writeAll stdoutFd frame[.]toUTF8 lastFrame := frame size := current dirty := false let ready ← poll fds events 50' \
   'for key in keys do if !loaded && key == [.]accept then continue match Linger[.]Tools[.]Picker[.]step state key with [|] [.]stay next => dirty := dirty [|][|] next != state state := next [|] [.]attach target [|] [.]create target => return [.]attach target snapshot [|] [.]cancel => return [.]cancel if let some result[[:space:]]*← Linger[.]Runtime[.]Command[.]poll pending then' \
@@ -661,24 +667,24 @@ for claim in compose_parts compose_context compose_attention_last compose_bound 
 done
 for claim in payload_safe payload_append ansi_payload_bound ansi_ends update_waits \
              update_nonempty_iff update_requires_boundary; do
-  code_grep "^(public )?theorem $claim " Theorems/TerminalTitle.lean >/dev/null \
+  code_grep "^(public )?theorem $claim " Linger/Terminal/Proofs/Title.lean >/dev/null \
     || fail "title contract disappeared: $claim"
 done
 for claim in observe_append observe_no_history observe_dims observe_invariants \
              observe_esc_intermediates observe_escInter_pending observe_del_boundary \
              step_escInter_final_boundary; do
-  code_grep "^(public )?theorem $claim " Theorems/Vt.lean >/dev/null \
+  code_grep "^(public )?theorem $claim " Linger/Terminal/Proofs/Vt.lean >/dev/null \
     || fail "pending terminal sequence contract disappeared: $claim"
 done
-code_grep '^theorem leave_boundary_title ' Theorems/Render/Modes.lean >/dev/null \
+code_grep '^theorem leave_boundary_title ' Linger/Terminal/Proofs/Render/Modes.lean >/dev/null \
   || fail "default title handback theorem disappeared"
 client_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Runtime/Client.lean)"
 for tie in \
-  'let mut observer := Linger[.]Core[.]Vt[.]Vt[.]init 1 1' \
+  'let mut observer := Linger[.]Terminal[.]Vt[.]Vt[.]init 1 1' \
   'while !leaving do if let some task[[:space:]]*← pending[.]get then if ← IO[.]hasFinished task then pending[.]set none let fresh := match ← IO[.]wait task with [|] [.]ok text => text [|] [.]error _ => String[.]singleton [(]Linger[.]Display[.]Status[.]icon [.]unknown[)] titleDirty := titleDirty [|][|] fresh != summary summary := fresh nextSummary := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]← monotonicMs[)] ≥ nextSummary then pending[.]set [(]some [(]← IO[.]asTask sample Task[.]Priority[.]dedicated[)][)] let revs ← poll #[[]stdinFd, fd[]] #[[]POLLIN, POLLIN[]] 200' \
   'writeAll stdoutFd [(]ByteArray[.]mk payload[.]toArray[)] observer := observer[.]observe payload receivedOutput := true' \
-  'if receivedOutput && titleDirty && !leaving then let title := Linger[.]Display[.]Title[.]compose name observer[.]windowTitle summary Linger[.]Core[.]Terminal[.]Title[.]maxChars let bytes := Linger[.]Core[.]Terminal[.]Title[.]update observer title if !bytes[.]isEmpty then writeAll stdoutFd [(]ByteArray[.]mk bytes[.]toArray[)] titleDirty := false' \
-  'try writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Core[.]Render[.]leaveAnsi[.]toArray[)] finally termRestore stdinFd saved return result finally close fd' \
+  'if receivedOutput && titleDirty && !leaving then let title := Linger[.]Display[.]Title[.]compose name observer[.]windowTitle summary Linger[.]Terminal[.]Title[.]maxChars let bytes := Linger[.]Terminal[.]Title[.]update observer title if !bytes[.]isEmpty then writeAll stdoutFd [(]ByteArray[.]mk bytes[.]toArray[)] titleDirty := false' \
+  'try writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Terminal[.]Render[.]leaveAnsi[.]toArray[)] finally termRestore stdinFd saved return result finally close fd' \
   'def attach [(]name : String[)] [(]fd : UInt32[)] [(]sample : IO String[)] [(]readOnly : Bool := false[)] : IO Outcome := do let pending ← IO[.]mkRef [(]none : Option [(]Task [(]Except IO[.]Error String[)][)][)] try converse name fd sample readOnly pending finally if let some task[[:space:]]*← pending[.]get then discard <[|] IO[.]wait task'; do
   printf '%s\n' "$client_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "attached title lost its observer, sampler or handback contract: $tie"
@@ -700,12 +706,12 @@ awk '
 # The `Vt` friend set — who may forge a `Vt` (SCRATCHPAD.md, "the adversarial audit of
 # the seal", finding R1). `import all M` grants M's OWN all-access set, including
 # whatever M has all-access to, so **`import all` TRANSITS** and
-# `git grep -l 'import all Linger.Core.Vt'` is NOT an enumeration of the friend set.
+# `git grep -l 'import all Linger.Terminal.Vt'` is NOT an enumeration of the friend set.
 # Measured in the real position, not a scratch file: one added
-# `import all Linger.Core.Render` in `Linger/Runtime/Client.lean` plus a five-field
+# `import all Linger.Terminal.Render` in `Linger/Runtime/Client.lean` plus a five-field
 # `{ cols := 0, rows := 0, grid := #[], … }` gives `./lake build linger` exit 0 AND
 # `sh scripts/gates.sh` exit 0. Two hops is the same: `import all Linger.Display.Proofs.Listing` from
-# a file holding neither `import all Linger.Core.Vt` nor `import all Linger.Core.Render`
+# a file holding neither `import all Linger.Terminal.Vt` nor `import all Linger.Terminal.Render`
 # compiles the identical forge. That is the Step 4 situation exactly — the compiler
 # consents, so a grep is the only possible oracle — except that until now no grep
 # existed, which made joining the friend set cost one line that nothing objected to, and
@@ -716,7 +722,7 @@ awk '
 # transit, and neither does the `Linger` umbrella, whose imports are all `public`), so
 # the closure over those edges IS the friend set and nothing else can widen it. Gating
 # the edges instead would mean recording all of them, though few matter, and
-# would fire on every legitimate rewire of the `Theorems/Render/*` chain — noise on the
+# would fire on every legitimate rewire of the `Linger/Terminal/Proofs/Render/*` chain — noise on the
 # common change, which is how a gate stops being read.
 #
 # The permitted region is an EXACT file list plus the proof and fixture directories,
@@ -725,7 +731,7 @@ awk '
 # one under `Linger/Core/`, and few of those join the closure. So a per-file list over
 # `Theorems/**` would be edited reflexively, while the core list changes rarely, which
 # is what makes it a checkpoint. The proof and fixture directories are friends BY
-# DECLARATION (see `Linger/Core/Vt.lean`, "## Every door"), and `Tests/` deliberately forges invalid
+# DECLARATION (see `Linger/Terminal/Vt.lean`, "## Every door"), and `Tests/` deliberately forges invalid
 # states in its negative fixtures, so listing its files one by one would gate a
 # non-property. Everything else is outside and fail-closed — `E2E/**`, each component's
 # `Suites/`, `Main.lean`, `Linger/Os/Shell.lean`, all of `Linger/Runtime/` and the
@@ -749,11 +755,11 @@ awk '
 # survives is narrower and still worth writing down: do not begin a docstring line with
 # a BARE, unbackticked `import all`.
 VT_ALL_RE='^[[:space:]]*(meta[[:space:]]+)*import[[:space:]]+all[[:space:]]+'
-VT_FRIEND_EXACT='Linger/Core/Vt.lean Linger/Core/Render.lean Linger/Core/Terminal.lean Linger/Core/Checkpoint.lean Linger/Core/Replay.lean'
+VT_FRIEND_EXACT='Linger/Terminal/Vt.lean Linger/Terminal/Render.lean Linger/Terminal/Mediation.lean Linger/Core/Checkpoint.lean Linger/Terminal/Replay.lean'
 VT_FRIEND_DIRS='Theorems/ Tests/'
 VT_FRIEND_RE='^Linger/[^/]+/(Proofs|Tests)/'
 code_grep "$VT_ALL_RE" '*.lean' \
-| awk -F: -v seed='Linger/Core/Vt.lean' -v exact="$VT_FRIEND_EXACT" -v dirs="$VT_FRIEND_DIRS" \
+| awk -F: -v seed='Linger/Terminal/Vt.lean' -v exact="$VT_FRIEND_EXACT" -v dirs="$VT_FRIEND_DIRS" \
     -v friend_re="$VT_FRIEND_RE" \
     "$IMPORT_AWK"'
   BEGIN { ne = split(exact, E, " "); nd = split(dirs, D, " ") }
@@ -778,17 +784,17 @@ code_grep "$VT_ALL_RE" '*.lean' \
       if (f ~ friend_re) ok = 1
       if (ok) continue
       bad++
-      printf "  %s has all-access to Linger.Core.Vt -- its private fields, its\n", f
+      printf "  %s has all-access to Linger.Terminal.Vt -- its private fields, its\n", f
       printf "  private constructor and Vt.ofDecoded -- by this chain of import all:\n"
       for (cur = f; cur != seed; cur = dst[via[cur]])
         printf "    %s:%s:%s\n", src[via[cur]], ln[via[cur]], raw[via[cur]] }
     for (j = 1; j <= ne; j++)
       if (!(E[j] in inset)) { bad++
-        printf "  %s is a RECORDED friend that no longer reaches Linger.Core.Vt", E[j]
+        printf "  %s is a RECORDED friend that no longer reaches Linger.Terminal.Vt", E[j]
         printf " (renamed, moved, or its import all went)\n" }
     if (bad > 0) printf "  permitted: %s -- plus anything under: %s, or matching %s\n", exact, dirs, friend_re
     exit (bad == 0 ? 0 : 1) }' >&2 \
-  || fail "the Linger.Core.Vt friend set changed (import all TRANSITS: it re-grants whatever the imported module itself has all-access to)"
+  || fail "the Linger.Terminal.Vt friend set changed (import all TRANSITS: it re-grants whatever the imported module itself has all-access to)"
 
 # shim-size ratchet: the C trust boundary must not grow silently. This
 # number only ever goes DOWN without discussion; raising it is a
@@ -824,7 +830,7 @@ shim_n="$(code_count 'LEAN_EXPORT' 'c/shim.c')"
 # suite separately observes framing, prior/replay/live ordering and exit tails.
 for claim in start_faithful next_faithful next_bounded next_progress steps_storage \
              drain_start; do
-  code_grep "^(public )?theorem $claim " 'Theorems/Replay.lean' > /dev/null \
+  code_grep "^(public )?theorem $claim " 'Linger/Terminal/Proofs/Replay.lean' > /dev/null \
     || fail "replay claim $claim disappeared"
 done
 for claim in followingCap_front followingCap_frame followingCap_iff; do
@@ -998,15 +1004,15 @@ for tie in \
   'let some targets := names[.]mapM Linger[.]Target[.]Remote[.]parseTarget [|] invalidTarget let mut rc : UInt32 := 0 for target in targets do rc := max rc [(]← runTarget "wait" target [[]] cmdWait[)]' \
   'let interactive := verb == "attach" if interactive && [(]![(]← stdinIsTty[)] [|][|] ![(]← [(]← IO[.]getStdout[)][.]isTty[)][)] then' \
   'let operands := if verb == "attach" [|][|] verb == "capture" then Linger[.]Target[.]Remote[.]targetOperands target[.]name else [[]target[.]name[]]' \
-  'IO[.]Process[.]spawn [{] cmd := "ssh", args := #[[]if interactive then "-t" else "-T", "--", host, Linger[.]Target[.]Remote[.]command verb [(]options [+][+] operands [+][+] args[)][]], stdin := [.]inherit [}] try child[.]wait finally if interactive then writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Core[.]Render[.]leaveAnsi[.]toArray[)]' \
+  'IO[.]Process[.]spawn [{] cmd := "ssh", args := #[[]if interactive then "-t" else "-T", "--", host, Linger[.]Target[.]Remote[.]command verb [(]options [+][+] operands [+][+] args[)][]], stdin := [.]inherit [}] try child[.]wait finally if interactive then writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Terminal[.]Render[.]leaveAnsi[.]toArray[)]' \
   'let readOnly := args[.]head[?] == some "--read-only" let args := if readOnly then args[.]tail else args let some [(]name, cmd[)] := Linger[.]Target[.]Remote[.]targetArgs args [|]' \
   'let history := args[.]head[?] == some "--history" let args := if history then args[.]tail else args let some [(]name, [[][]][)] := Linger[.]Target[.]Remote[.]targetArgs args [|]' \
   'withTarget "attach" name cmd [(]cmdAttach · cmd readOnly[)] [(]if readOnly then [[]"--read-only"[]] else [[][]][)]' \
-  'withTarget "capture" name [[][]] [(]cmdRead · [(]if history then [.]history else [.]screen[)] [(]if history then Linger[.]Core[.]Render[.]history else Linger[.]Core[.]Render[.]screenText[)][)] [(]if history then [[]"--history"[]] else [[][]][)]'; do
+  'withTarget "capture" name [[][]] [(]cmdRead · [(]if history then [.]history else [.]screen[)] [(]if history then Linger[.]Terminal[.]Render[.]history else Linger[.]Terminal[.]Render[.]screenText[)][)] [(]if history then [[]"--history"[]] else [[][]][)]'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "command transport lost exact targets, argv, stdin or terminal ownership: $tie"
 done
-[ "$(code_count '^[[:space:]]+writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Core[.]Render[.]leaveAnsi[.]toArray[)]$' Linger/Runtime/Cli.lean)" -eq 1 ] \
+[ "$(code_count '^[[:space:]]+writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Terminal[.]Render[.]leaveAnsi[.]toArray[)]$' Linger/Runtime/Cli.lean)" -eq 1 ] \
   || fail "remote SSH termination no longer establishes canonical handback"
 
 # Lifetime ownership covers two resources: the socket namespace and the saved
@@ -1081,9 +1087,9 @@ done
 # E2E.Watch observes input discard, lock release, exact replay and handback.
 for tie in \
   'let mut lastSize : Option [(]UInt32 × UInt32[)] := none while true do let size ← winsizeGet stdinFd if lastSize != some size then let cols := if size[.]1 == 0 then snapshot[.]colCount else size[.]1[.]toNat let rows := if size[.]2 == 0 then snapshot[.]rowCount else size[.]2[.]toNat' \
-  'let view := if snapshot[.]colCount == cols && snapshot[.]rowCount == rows then snapshot else snapshot[.]resize cols rows let mut repaint := Linger[.]Core[.]Replay[.]start view repeat match Linger[.]Core[.]Replay[.]next 65536 repaint with [|] none => break [|] some [(]bytes, next[)] => if !bytes[.]isEmpty then writeAll stdoutFd [(]ByteArray[.]mk bytes[.]toArray[)] repaint := next' \
-  'let title := Linger[.]Display[.]Title[.]compose name view[.]windowTitle [(]String[.]singleton [(]Linger[.]Display[.]Status[.]icon [.]resumable[)][)] Linger[.]Core[.]Terminal[.]Title[.]maxChars writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Core[.]Terminal[.]Title[.]update view title[)][.]toArray[)]' \
-  'if [(]splitDetach bytes true[)][.]2 then return [.]detached return [.]detached finally try writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Core[.]Render[.]leaveAnsi[.]toArray[)] finally termRestore stdinFd saved'; do
+  'let view := if snapshot[.]colCount == cols && snapshot[.]rowCount == rows then snapshot else snapshot[.]resize cols rows let mut repaint := Linger[.]Terminal[.]Replay[.]start view repeat match Linger[.]Terminal[.]Replay[.]next 65536 repaint with [|] none => break [|] some [(]bytes, next[)] => if !bytes[.]isEmpty then writeAll stdoutFd [(]ByteArray[.]mk bytes[.]toArray[)] repaint := next' \
+  'let title := Linger[.]Display[.]Title[.]compose name view[.]windowTitle [(]String[.]singleton [(]Linger[.]Display[.]Status[.]icon [.]resumable[)][)] Linger[.]Terminal[.]Title[.]maxChars writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Terminal[.]Title[.]update view title[)][.]toArray[)]' \
+  'if [(]splitDetach bytes true[)][.]2 then return [.]detached return [.]detached finally try writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Terminal[.]Render[.]leaveAnsi[.]toArray[)] finally termRestore stdinFd saved'; do
   printf '%s\n' "$client_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "saved viewer bypassed bounded replay, snapshot preservation or terminal ownership: $tie"
 done
@@ -1142,7 +1148,7 @@ code_grep '^[[:space:]]+let [(]out, detach[)] := splitDetach bs detachEnabled$' 
   || fail "attach no longer splits input with its detach policy"
 
 # The checkpoint decoder must not grow its forge back (`specs/archive/vt-toolkit.md` Step 2).
-# `Linger/Core/Checkpoint.lean` keeps a PERMANENT `import all Linger.Core.Vt`: `wVt` reads
+# `Linger/Core/Checkpoint.lean` keeps a PERMANENT `import all Linger.Terminal.Vt`: `wVt` reads
 # 17 sealed fields, and dropping the import would force `Vt.ofDecoded` to be public — a
 # second public door admitting any `Good` state, for every module forever, which is a
 # wider hole than the one it replaces. The trade is that this one file retains the raw

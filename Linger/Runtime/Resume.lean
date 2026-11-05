@@ -48,8 +48,8 @@ def dropCkpt (name : String) : IO Unit := do
 /-- The session's saved terminal state, working directory and labels. `none` when there is
 no checkpoint or its bytes do not decode (`loadBytes`); an existing file that cannot be
 read throws. -/
-def loadCkpt (name : String) : IO (Option (Linger.Core.Vt.Vt × String × List (String × String))) :=
-  do
+def loadCkpt (name : String) :
+    IO (Option (Linger.Terminal.Vt.Vt × String × List (String × String))) := do
   let path ← Paths.ckptPath name
   if !(← System.FilePath.pathExists path) then
     return none

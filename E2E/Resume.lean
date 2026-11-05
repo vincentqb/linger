@@ -34,8 +34,8 @@ def checkpointRetry : IO Unit := do
   let saved ← IO.mkRef ([] : List (String × String))
   let labels := [("quiet", "kept")]
   let rt : Linger.Runtime.Daemon.Rt :=
-    { st := Linger.Core.Session.State.boot (Linger.Core.Vt.Vt.init 20 5) labels [], listenFd := 0,
-      ptyFd := 0, childPid := 0,
+    { st := Linger.Core.Session.State.boot (Linger.Terminal.Vt.Vt.init 20 5) labels [],
+      listenFd := 0, ptyFd := 0, childPid := 0,
       saveCkpt := fun st => do
         attempts.modify (· + 1)
         if (← attempts.get) == 1 then
@@ -80,7 +80,7 @@ private def scaleChecks (e : Env) : IO Unit := do
     let captureMs := (← Linger.Os.Shell.monotonicMs) - start
     let historyLines := (lines history).length
     expect
-        (filled && historyRc == 0 && historyLines ≥ Linger.Core.Vt.sbCap + 50 &&
+        (filled && historyRc == 0 && historyLines ≥ Linger.Terminal.Vt.sbCap + 50 &&
           captureMs ≤ captureBudget)
         s!"a full ring at 200 columns fills and exports with capture --history within budget (fill {fillMs} ms, capture {captureMs} ms for {historyLines} lines)"
     let client ← e.spawn #["attach", name] 200 50
@@ -96,7 +96,7 @@ private def scaleChecks (e : Env) : IO Unit := do
         let saveMs := (← Linger.Os.Shell.monotonicMs) - start
         let size := (← (System.FilePath.mk s!"{e.dir}/{name}.ckpt").metadata).byteSize
         expect
-            (replayed && saved && size ≥ (Linger.Core.Vt.sbCap * 200).toUInt64 &&
+            (replayed && saved && size ≥ (Linger.Terminal.Vt.sbCap * 200).toUInt64 &&
               replayMs ≤ replayBudget &&
               saveMs ≤ saveBudget)
             s!"reattach replays and detach checkpoints a full ring within budget (replay {replayMs} ms, save {saveMs} ms, {size} bytes)"

@@ -392,7 +392,7 @@ def run : IO UInt32 :=
     -- the boundary itself: 0 is the largest rejected value below the range, and
     -- `clampDim` saturating means `clampDim 5000 + 1` is the smallest rejected
     -- value above it.
-    let tooBig := Linger.Core.Vt.clampDim 5000 + 1
+    let tooBig := Linger.Terminal.Vt.clampDim 5000 + 1
     let (zrc, _, _) ← e.cli #["resize", "rz", "0", "10"]
     let (brc, _, _) ← e.cli #["resize", "rz", toString tooBig, "10"]
     expect (zrc == 2 && brc == 2) "zero and oversize are rejected client-side"

@@ -316,8 +316,8 @@ def run : IO UInt32 :=
           "remote attach uses a PTY and preserves the target"
       expect
           ((← c1.reap 1500) == 0 && hasText attached "remote-editor" &&
-            hasBytes attached Linger.Core.Render.leaveAnsi &&
-            ((Linger.Core.Vt.Vt.init 100 24).feed attached.toList).windowTitle.isEmpty)
+            hasBytes attached Linger.Terminal.Render.leaveAnsi &&
+            ((Linger.Terminal.Vt.Vt.init 100 24).feed attached.toList).windowTitle.isEmpty)
           "normal SSH handback clears the application title"
       c1.bye (sendDetach := false)
       let c2 ← e.spawnEnv ptyPath #["attach", s!"{goodName}@{userHost}"] 100 24
@@ -331,8 +331,8 @@ def run : IO UInt32 :=
       let lostBytes ← drain lost.fd 2000
       expect ((← lost.reap 1500) == 255) "lost SSH preserves its exit status"
       expect
-          (hasText lostBytes "remote-lost" && hasBytes lostBytes Linger.Core.Render.leaveAnsi &&
-            ((Linger.Core.Vt.Vt.init 100 24).feed lostBytes.toList).windowTitle.isEmpty)
+          (hasText lostBytes "remote-lost" && hasBytes lostBytes Linger.Terminal.Render.leaveAnsi &&
+            ((Linger.Terminal.Vt.Vt.init 100 24).feed lostBytes.toList).windowTitle.isEmpty)
           "lost SSH clears the title through a partial OSC"
       lost.bye (sendDetach := false)
       for name in
@@ -364,7 +364,7 @@ def run : IO UInt32 :=
           ((← watcher.reap 1500) == 0 &&
             (← readArgs remoteArgs) == ["attach", "--read-only", goodName] &&
             (← readArgs log).head? == some "-t" &&
-            hasBytes watched Linger.Core.Render.leaveAnsi)
+            hasBytes watched Linger.Terminal.Render.leaveAnsi)
           "remote read-only attach retains its option and terminal handback"
       watcher.bye (sendDetach := false)
       for options in [[], ["--read-only"]] do

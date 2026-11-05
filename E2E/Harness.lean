@@ -2,7 +2,7 @@ module
 
 public import Linger.Os.Shell
 public import Linger.Display.Status
-public import Linger.Core.Render
+public import Linger.Terminal.Render
 
 public section
 
@@ -172,7 +172,7 @@ def findText (hay : ByteArray) (needle : String) : Option Nat := findBytes hay n
 /-- Does `hay` contain `needle` as a contiguous byte run?
 
 The honest test for "the client wrote *this emitter's* output": a pty stream is
-bytes, not text, and comparing against `Linger.Core.Render.leaveAnsi` itself is
+bytes, not text, and comparing against `Linger.Terminal.Render.leaveAnsi` itself is
 what stops a suite hardcoding a copy of what the implementation emits — the copy
 is what goes stale when the emitter changes. -/
 def hasBytes (hay : ByteArray) (needle : List UInt8) : Bool := (findBytes hay needle).isSome
@@ -370,7 +370,7 @@ code, stdout, stderr — the three things the suites assert on.
 `IO.Process.SpawnArgs.env` is processed left to right over the inherited
 environment, so `extra` last is an override and `("K", none)` removes a variable
 outright. Both are load-bearing for a suite whose SUBJECT is the environment:
-`E2E.Terminal` needs `TERM` inherited as one value, as another, and then absent
+`Linger.Terminal.Suites.Mediation` needs `TERM` inherited as one value, as another, and then absent
 entirely, and `Linger.Target.Suites.Remote` needs a `PATH` whose first entry holds a fake `ssh`. -/
 def Env.cliEnv (e : Env) (extra : Array (String × Option String)) (args : Array String) :
     IO (UInt32 × String × String) := do

@@ -4,7 +4,7 @@ public import Linger.Tools.Picker
 import Linger.Os.Shell
 import Linger.Display.Listing
 import Linger.Target.Remote
-import Linger.Core.Terminal
+import Linger.Terminal.Title
 import Linger.Runtime.Command
 
 public section
@@ -119,7 +119,7 @@ private def draw (state : Linger.Tools.Picker.State) (snapshot : Linger.Tools.Pi
           activeStyle := style
         for raw in text.toList do
           let c := if Linger.Tools.Input.printable raw then raw else '?'
-          let cells := Linger.Core.Vt.charWidth c
+          let cells := Linger.Terminal.Vt.charWidth c
           if used + cells > width then
             clipped := true
             break
@@ -153,7 +153,7 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
   let saved ← termRaw stdinFd
   try
     writeAll stdoutFd "\x1b[?1049h\x1b[?25l\x1b[?2004h".toUTF8
-    writeAll stdoutFd (ByteArray.mk (Linger.Core.Terminal.Title.ansi "linger").toArray)
+    writeAll stdoutFd (ByteArray.mk (Linger.Terminal.Title.ansi "linger").toArray)
     let fds := #[stdinFd]
     let events := #[POLLIN]
     let mut state := Linger.Tools.Picker.init [] (!savedTmux && !readOnly)
@@ -235,7 +235,7 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
     try
       try
         writeAll stdoutFd "\x1b[0m\x1b[?2004l\x1b[?25h\x1b[?1049l".toUTF8
-        writeAll stdoutFd (ByteArray.mk (Linger.Core.Terminal.Title.ansi "").toArray)
+        writeAll stdoutFd (ByteArray.mk (Linger.Terminal.Title.ansi "").toArray)
       finally
         termRestore stdinFd saved
     finally

@@ -1,7 +1,7 @@
 module
 
 -- The codec fixtures compare decoded screens field by field and run compiled under `native_decide`.
-import all Linger.Core.Vt
+import all Linger.Terminal.Vt
 import all Linger.Core.Checkpoint
 meta import Linger.Core.Checkpoint
 
@@ -12,7 +12,8 @@ These pin RLE compression and the corrupt-record refusals; round trips are `load
 
 namespace Linger.Core.Checkpoint.Tests
 
-open Linger.Core.Vt
+open Linger.Terminal
+open Linger.Terminal.Vt
 
 /-- A run of N identical cells serializes to a small constant, not O(N):
 a blank 80-cell row is one run. This is why an empty screen dropped
@@ -233,7 +234,7 @@ clauses below were checked and a `Good ∧ ¬Renderable` state was one byte away
 recorded in SCRATCHPAD.md exhibited that from disk and refuted `resume_grid`'s conclusion at
 it. `Vt.decodedRenderable` is the second stage of the door;
 `Theorems/Checkpoint.lean`'s `load_renderable`/`load_tabsOk` state its guarantee for *any*
-byte string, `Theorems/Vt.lean`'s `ofDecoded_none_of_rows_mismatch` states the refusal, and
+byte string, `Linger/Terminal/Proofs/Vt.lean`'s `ofDecoded_none_of_rows_mismatch` states the refusal, and
 these pin what the theorems do not: the byte offsets, and that the four sub-clauses are
 independently reachable.
 

@@ -1,9 +1,9 @@
 module
 
-import all Linger.Core.Vt
+import all Linger.Terminal.Vt
 -- The claim names private `Vt` fields and composes module-private rungs, hence `import all`.
 import all Theorems.Checkpoint
-import all Theorems.Render
+import all Linger.Terminal.Proofs.Render
 
 /-! # §Resume — the end-to-end claim, as one theorem
 
@@ -43,6 +43,7 @@ there.
 
 namespace Linger.Core
 
+open Linger.Terminal
 open Linger.Core.Checkpoint (Ckpt load save)
 
 /-- **§Resume.** A checkpoint, reloaded and replayed into **any** client's terminal,

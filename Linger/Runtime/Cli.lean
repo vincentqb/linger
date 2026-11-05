@@ -130,7 +130,7 @@ private def runTarget (verb : String) (target : Linger.Target.Remote.Target) (ar
       child.wait
     finally
       if interactive then
-        writeAll stdoutFd (ByteArray.mk Linger.Core.Render.leaveAnsi.toArray)
+        writeAll stdoutFd (ByteArray.mk Linger.Terminal.Render.leaveAnsi.toArray)
 
 /-- Run `verb` through `runTarget` once `Remote.parseTarget` accepts the operand; a
 malformed operand returns `invalidTarget`'s status 2 without connecting. -/
@@ -555,7 +555,7 @@ private def requireLiveSend (name : String) (m : Msg) : IO UInt32 := do
 /-- A connected daemon is authoritative, including its errors. Only an absent
 connection followed by successful ownership acquisition permits an offline read.
 Hold both locks through loading and rendering; never start or modify a session. -/
-private def cmdRead (name : String) (m : Msg) (render : Linger.Core.Vt.Vt → List UInt8) :
+private def cmdRead (name : String) (m : Msg) (render : Linger.Terminal.Vt.Vt → List UInt8) :
     IO UInt32 := do
   match ← Client.oneShot name m (silenceMs := Client.replySilenceMs) with
   | some result =>
@@ -658,10 +658,10 @@ private def cmdGet (name : String) : IO UInt32 := do
         IO.println s!"{(k.drop 6).toString}={v}"
     return 0
 
-/-- `version`: print `linger` and `Terminal.versionNumber`, which sessions also see as
+/-- `version`: print `linger` and `Mediation.versionNumber`, which sessions also see as
 `TERM_PROGRAM_VERSION`, then the socket and state directories this environment resolves. -/
 private def cmdVersion : IO UInt32 := do
-  IO.println s!"linger {Linger.Core.Terminal.versionNumber}"
+  IO.println s!"linger {Linger.Terminal.Mediation.versionNumber}"
   IO.println s!"sockets: {← Paths.socketDir}"
   IO.println s!"state:   {← Paths.stateDir}"
   return 0
@@ -697,7 +697,7 @@ private def captureArgs (args : List String) : IO UInt32 := do
       return 2
   withTarget "capture" name []
       (cmdRead · (if history then .history else .screen)
-        (if history then Linger.Core.Render.history else Linger.Core.Render.screenText))
+        (if history then Linger.Terminal.Render.history else Linger.Terminal.Render.screenText))
       (if history then ["--history"] else [])
 
 /-- Run one session command and return its exit status: 2 for a usage error or invalid
@@ -740,7 +740,7 @@ def main (args : List String) : IO UInt32 := do
     match cs.toNat?, rs.toNat? with
     | some cols, some rows =>
       -- Accept exactly the sizes the emulator keeps, so the pty cannot disagree.
-      if Linger.Core.Vt.clampDim cols != cols || Linger.Core.Vt.clampDim rows != rows then
+      if Linger.Terminal.Vt.clampDim cols != cols || Linger.Terminal.Vt.clampDim rows != rows then
         do
           IO.eprintln "linger: size must be 1..1000 (the emulator clamps at 1000)"
           return 2

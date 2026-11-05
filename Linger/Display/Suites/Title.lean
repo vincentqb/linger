@@ -1,7 +1,8 @@
 module
 
 import E2E.Harness
-import Linger.Core.Terminal
+import Linger.Terminal.Mediation
+import Linger.Terminal.Title
 import Linger.Display.Title
 import Linger.Runtime.Client
 import Linger.Target.Remote
@@ -19,11 +20,12 @@ that implementation. `e2e --title-probe` is the child dispatch, not a test suite
 
 namespace Linger.Display.Suites.Title
 
+open Linger.Terminal
 open E2E.Harness
 open Linger.Os.Shell
 open Linger.Display.Status (Status icon)
-open Linger.Core.Terminal.Title (maxChars)
-open Linger.Core.Vt (Vt)
+open Linger.Terminal.Title (maxChars)
+open Linger.Terminal.Vt (Vt)
 
 /-- Application bytes, deliberately independent of the title emitter under test. -/
 private def editor : ByteArray := "\x1b]2;editor\x07".toUTF8
@@ -34,7 +36,7 @@ private def longEditor : String := String.ofList (List.replicate maxChars '😀'
 /-- A short OSC stays in the daemon's query buffer until completion. Exceed
 that public cap so the client actually receives an unfinished, ignored OSC. -/
 private def openOsc : ByteArray :=
-  ("\x1b]999;" ++ String.ofList (List.replicate (Linger.Core.Terminal.oscCap + 1) 'x')).toUTF8
+  ("\x1b]999;" ++ String.ofList (List.replicate (Linger.Terminal.Mediation.oscCap + 1) 'x')).toUTF8
 
 /-- A quiet window over which an attached client samples its title about three times. -/
 def idleWindowMs : Nat := 3000
@@ -244,7 +246,7 @@ private def sampleCase (base : Env) : IO Unit := do
       let joining := (← c.reap 300) == -1
       IO.FS.writeFile s!"{e.dir}/release-valid" ""
       let code ← c.reap 2000
-      let handedBack := hasBytes (since (← seen.get) detachStart) Linger.Core.Render.leaveAnsi
+      let handedBack := hasBytes (since (← seen.get) detachStart) Linger.Terminal.Render.leaveAnsi
       let before := (← e.info name "outseq").bind (·.toNat?)
       let (sendCode, _, _) ← e.cli #["send", name, "p"]
       let survived ←
@@ -306,8 +308,7 @@ def run (binary : Option String := none) : IO UInt32 :=
         let repeated ←
           awaitOutput c seen fun s =>
               titleIs (expectedTitle true) s && hasBytes (since s repeatStart) editor.toList &&
-                hasBytes (since s repeatStart)
-                  (Linger.Core.Terminal.Title.ansi (expectedTitle true))
+                hasBytes (since s repeatStart) (Linger.Terminal.Title.ansi (expectedTitle true))
         expect (unread && prefixed && repeatCode == 0 && repeated)
             "an identical application OSC title reasserts the shared context and attention suffix"
         let summary := Linger.Display.Status.summary [.wantsYou]

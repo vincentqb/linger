@@ -433,7 +433,7 @@ theorem presentation_existing (snapshot : Snapshot) (nameCol : Nat) (target : St
 /-- Equivalence includes all rendered plain bytes, beyond status glyphs. Clipping
 and selection reverse are applied by the terminal executor after this shared row. -/
 theorem presentation_existing_humanRow (snapshot : Snapshot) (nameCol : Nat) (target : String) :
-    Linger.Core.Render.utf8s
+    Linger.Terminal.Render.utf8s
         ((Linger.Tools.Picker.presentation snapshot nameCol (.existing target)).flatMap (·.text)) =
       Linger.Display.Listing.humanRow nameCol (snapshot.row target) := by
   simp [presentation, Linger.Display.Listing.humanRow]
@@ -514,7 +514,7 @@ theorem highlightedPresentation_text (snapshot : Snapshot) (nameCol : Nat) (quer
 /-- Removing emphasis yields exactly the same human row that `linger ls` uses. -/
 theorem highlightedPresentation_existing_humanRow (snapshot : Snapshot) (nameCol : Nat)
     (query target : String) :
-    Linger.Core.Render.utf8s
+    Linger.Terminal.Render.utf8s
         ((highlightedPresentation snapshot nameCol query (.existing target)).map (·.char)) =
       Linger.Display.Listing.humanRow nameCol (snapshot.row target) := by
   rw [highlightedPresentation_text]
@@ -580,12 +580,13 @@ theorem highlightedPresentation_creation (snapshot : Snapshot) (nameCol : Nat)
 
 theorem emphasizeCells_head?_any (chars : List HighlightedChar) :
     (emphasizeCells chars).head?.any
-        (fun char => Linger.Core.Vt.charWidth char.char == 0 && char.matched) =
-      (chars.takeWhile (fun char => Linger.Core.Vt.charWidth char.char == 0)).any (·.matched) := by
+        (fun char => Linger.Terminal.Vt.charWidth char.char == 0 && char.matched) =
+      (chars.takeWhile (fun char => Linger.Terminal.Vt.charWidth char.char == 0)).any
+        (·.matched) := by
   induction chars with
   | nil => rfl
   | cons char chars ih =>
-    cases hz : (Linger.Core.Vt.charWidth char.char == 0) <;> simp [emphasizeCells, hz, ih]
+    cases hz : (Linger.Terminal.Vt.charWidth char.char == 0) <;> simp [emphasizeCells, hz, ih]
 
 /-- Cell emphasis is exactly the union of a scalar's match and the following
 zero-width matches. It stops at the next cell, including a wide character. -/
@@ -596,7 +597,7 @@ theorem emphasizeCells_at (chars : List HighlightedChar) (index : Nat) :
           matched :=
             char.matched ||
               ((chars.drop (index + 1)).takeWhile
-                    (fun next => Linger.Core.Vt.charWidth next.char == 0)).any
+                    (fun next => Linger.Terminal.Vt.charWidth next.char == 0)).any
                 (·.matched) } := by
   induction chars generalizing index with
   | nil => simp [emphasizeCells]

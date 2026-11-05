@@ -1,13 +1,13 @@
 module
 
 import all Linger.Core.Checkpoint
-import all Linger.Core.Vt
--- `Theorems.Vt` for `Good`, and for the three claims about the decoder's door
+import all Linger.Terminal.Vt
+-- `Linger.Terminal.Proofs.Vt` for `Good`, and for the three claims about the decoder's door
 -- (`ofDecoded_good`, `ofDecoded_of_good`, `ofDecoded_none_of_cols_zero`) — the codec's
 -- theorems are stated in terms of it now that `rVt` validates rather than forges
 -- (`specs/archive/vt-toolkit.md` Step 2). `import all` because those declarations are
 -- module-private, as the `Vt` seal forces.
-import all Theorems.Vt
+import all Linger.Terminal.Proofs.Vt
 
 -- Converted from a legacy (non-`module`) file by the `Vt` seal
 -- (`specs/archive/vt-toolkit.md` Step 1). Legacy files make every declaration public, and
@@ -44,7 +44,8 @@ clamped).
 
 namespace Linger.Core.Checkpoint
 
-open Linger.Core.Vt
+open Linger.Terminal
+open Linger.Terminal.Vt
 
 /-- "Reader `r` inverts writer `w`, leaving the rest untouched." -/
 abbrev RT {α : Type} (w : α → List UInt8) (r : R α) : Prop :=
@@ -536,7 +537,7 @@ attacker-controlled input the `Vt` seal could not reach. If `rVt` yields a `Vt`,
 `Vt` is `Good`.
 
 This is the theorem the step is for, and it is the one that makes every
-`Good`-hypothesised claim in `Theorems/Render/*` and `Theorems/Resume.lean` reachable
+`Good`-hypothesised claim in `Linger/Terminal/Proofs/Render/*` and `Theorems/Resume.lean` reachable
 from the resume path rather than merely stated. -/
 theorem rVt_good {l : List UInt8} {v : Vt} {rest : List UInt8} (h : rVt l = some (v, rest)) :
     Good v := good_of_liveReachable (rVt_accepted h).1
@@ -569,7 +570,7 @@ it to the resume path, where `Session.liveVt_boot_of_load` closes the gap in one
 
 The rung is sound only because the *door* decides all four components — R2 is what made
 this provable, and a rung premised on `Good v` instead was measured unsound (§LiveReachable
-in `Theorems/Vt.lean`). -/
+in `Linger/Terminal/Proofs/Vt.lean`). -/
 theorem rVt_live {l : List UInt8} {v : Vt} {rest : List UInt8} (h : rVt l = some (v, rest)) :
     LiveReachableVt v := (rVt_accepted h).1
 

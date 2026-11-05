@@ -2,10 +2,10 @@ module
 
 import Linger.Os.Shell
 public import Linger.Core.Wire
-public import Linger.Core.Vt
+public import Linger.Terminal.Vt
 import Linger.Os.Env
-import Linger.Core.Replay
-import Linger.Core.Terminal
+import Linger.Terminal.Replay
+import Linger.Terminal.Title
 import Linger.Target.Remote
 import Linger.Display.Title
 import Linger.Display.Status
@@ -162,7 +162,7 @@ inductive Outcome where
 /-- A fixed checkpoint view. Redraw from the original snapshot on resize;
 discard input except the detach key. Ownership was released after loading,
 so this viewer cannot block another process from resuming the session. -/
-def viewSaved (name : String) (snapshot : Linger.Core.Vt.Vt) : IO Outcome := do
+def viewSaved (name : String) (snapshot : Linger.Terminal.Vt.Vt) : IO Outcome := do
   let saved ← termRaw stdinFd
   try
     let fds := #[stdinFd]
@@ -176,9 +176,9 @@ def viewSaved (name : String) (snapshot : Linger.Core.Vt.Vt) : IO Outcome := do
         let view :=
           if snapshot.colCount == cols && snapshot.rowCount == rows then snapshot
           else snapshot.resize cols rows
-        let mut repaint := Linger.Core.Replay.start view
+        let mut repaint := Linger.Terminal.Replay.start view
         repeat
-          match Linger.Core.Replay.next 65536 repaint with
+          match Linger.Terminal.Replay.next 65536 repaint with
           | none =>
             break
           | some (bytes, next) =>
@@ -188,8 +188,8 @@ def viewSaved (name : String) (snapshot : Linger.Core.Vt.Vt) : IO Outcome := do
         let title :=
           Linger.Display.Title.compose name view.windowTitle
             (String.singleton (Linger.Display.Status.icon .resumable))
-            Linger.Core.Terminal.Title.maxChars
-        writeAll stdoutFd (ByteArray.mk (Linger.Core.Terminal.Title.update view title).toArray)
+            Linger.Terminal.Title.maxChars
+        writeAll stdoutFd (ByteArray.mk (Linger.Terminal.Title.update view title).toArray)
         lastSize := some size
       let ready ← poll fds events 200
       if ready[0]! &&& POLLNVAL != 0 then
@@ -204,7 +204,7 @@ def viewSaved (name : String) (snapshot : Linger.Core.Vt.Vt) : IO Outcome := do
     return .detached
   finally
     try
-      writeAll stdoutFd (ByteArray.mk Linger.Core.Render.leaveAnsi.toArray)
+      writeAll stdoutFd (ByteArray.mk Linger.Terminal.Render.leaveAnsi.toArray)
     finally
       termRestore stdinFd saved
 
@@ -227,7 +227,7 @@ private def converse (name : String) (fd : UInt32) (sample : IO String) (readOnl
     let mut leaving := false
     let mut nextSummary : Nat := 0
     let mut summary := ""
-    let mut observer := Linger.Core.Vt.Vt.init 1 1
+    let mut observer := Linger.Terminal.Vt.Vt.init 1 1
     let mut receivedOutput := false
     let mut titleDirty := false
     try
@@ -294,8 +294,8 @@ private def converse (name : String) (fd : UInt32) (sample : IO String) (readOnl
         if receivedOutput && titleDirty && !leaving then
           let title :=
             Linger.Display.Title.compose name observer.windowTitle summary
-              Linger.Core.Terminal.Title.maxChars
-          let bytes := Linger.Core.Terminal.Title.update observer title
+              Linger.Terminal.Title.maxChars
+          let bytes := Linger.Terminal.Title.update observer title
           if !bytes.isEmpty then
             writeAll stdoutFd (ByteArray.mk bytes.toArray)
             titleDirty := false
@@ -303,7 +303,7 @@ private def converse (name : String) (fd : UInt32) (sample : IO String) (readOnl
       -- These cleanups are nested, not sequential: a broken stdout must not
       -- prevent termios restoration, and neither failure may leak the socket.
       try
-        writeAll stdoutFd (ByteArray.mk Linger.Core.Render.leaveAnsi.toArray)
+        writeAll stdoutFd (ByteArray.mk Linger.Terminal.Render.leaveAnsi.toArray)
       finally
         termRestore stdinFd saved
     return result

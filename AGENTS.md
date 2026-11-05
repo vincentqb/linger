@@ -43,7 +43,9 @@ dispatch, and pushes or pull requests that change `c/shim.c` or `./lake`.
   `Shell.lean` the checked surface callers use, `Env.lean` the environment policies.
 - `Linger/Target/`: session names and remote targets.
 - `Linger/Display/`: session status, titles and listings.
-- Not yet in a component: `Linger/Core/`, pure session and terminal models;
+- `Linger/Terminal/`: the VT toolkit: the emulator `Vt`, `Render`, streaming `Replay`,
+  child-facing `Mediation` and safe `Title` updates.
+- Not yet in a component: `Linger/Core/`, pure session models;
   `Linger/Runtime/`, session IO; `Linger/Tools/` and `Linger/Manager/`, CLI policies
   and their IO executors; `Theorems/`, `Tests/` and `E2E/`.
 - `scripts/`: build and verification orchestration.

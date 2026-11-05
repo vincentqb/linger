@@ -2,9 +2,9 @@ module
 
 import all Theorems.Buf
 import all Theorems.Wire
-import all Theorems.Vt
-import all Theorems.Terminal
-import all Theorems.TerminalTitle
+import all Linger.Terminal.Proofs.Vt
+import all Linger.Terminal.Proofs.Mediation
+import all Linger.Terminal.Proofs.Title
 import all Theorems.Session
 import all Theorems.Driver
 import all Linger.Target.Proofs.Name
@@ -12,8 +12,8 @@ import all Theorems.Checkpoint
 import all Linger.Target.Proofs.Remote
 import all Theorems.Claim
 import all Linger.Display.Proofs.Listing
-import all Theorems.Render
-import all Theorems.Replay
+import all Linger.Terminal.Proofs.Render
+import all Linger.Terminal.Proofs.Replay
 import all Theorems.Resume
 import all Linger.Display.Proofs.Status
 import all Linger.Display.Proofs.Title
@@ -178,11 +178,11 @@ public meta def runtimeEmitters (defs : Array Lean.Name) (main : Lean.Name := `M
       let logical := privateToUserName target
       if
           defs.contains logical && mod != targetMod &&
-            [`Linger.Core.Render, `Linger.Core.Replay].any
+            [`Linger.Terminal.Render, `Linger.Terminal.Replay].any
               (fun family => family.isPrefixOf logical && family.isPrefixOf targetMod) then
         refs := refs.insert logical
   return (refs.toList.map
-          (fun n => (n.replacePrefix `Linger.Core .anonymous).toString)).toArray.qsort
+          (fun n => (n.replacePrefix `Linger.Terminal .anonymous).toString)).toArray.qsort
       (· < ·)
 
 /-- Require every pure or proof module in the import closure and reject any axiom one
@@ -287,7 +287,7 @@ run_cmd
     r#"module
 public import Lean.Elab.Command
 public import Linger.Runtime.CoverageShadow
-public import Linger.Core.Render
+public import Linger.Terminal.Render
 public section
 namespace Probe
   def indented : Nat := 0
@@ -316,19 +316,19 @@ namespace Probe.Inner
   #check `(command| end Decoy)
 end Probe
 namespace Linger.ReferenceProbe
-private def canonical := Linger.Core.Render.titleAnsi
-def relative := Core.Render.scrollbackAnsi
-def rooted := _root_.Linger.Core.Render.restore
-open Linger.Core
+private def canonical := Linger.Terminal.Render.titleAnsi
+def relative := Terminal.Render.scrollbackAnsi
+def rooted := _root_.Linger.Terminal.Render.restore
+open Linger.Terminal
 def short := Render.modesAnsi
-open Linger.Core.Render (digits)
+open Linger.Terminal.Render (digits)
 def unqualified := digits
-open Linger.Core.Render renaming dropTrailingBlanks → trimmed
+open Linger.Terminal.Render renaming dropTrailingBlanks → trimmed
 def renamed := trimmed
 def field := Render.leaveAnsi.toArray
 def localShadow (digits : Nat) := digits
-def stringDecoy : String := "Linger.Core.Render.safeChar"
-def quotedRef : Lean.MacroM (Lean.TSyntax `term) := `(term| Linger.Core.Render.colorCodes)
+def stringDecoy : String := "Linger.Terminal.Render.safeChar"
+def quotedRef : Lean.MacroM (Lean.TSyntax `term) := `(term| Linger.Terminal.Render.colorCodes)
 end Linger.ReferenceProbe
 "#
   let expected :=
@@ -343,11 +343,11 @@ end Linger.ReferenceProbe
         let shadow :=
           r#"module
 public section
-namespace Linger.Core.Render
+namespace Linger.Terminal.Render
 private def safeChar : List UInt8 := [65]
-end Linger.Core.Render
+end Linger.Terminal.Render
 namespace Linger.ReferenceProbe
-def privateShadow : List UInt8 := Linger.Core.Render.safeChar
+def privateShadow : List UInt8 := Linger.Terminal.Render.safeChar
 end Linger.ReferenceProbe
 "#
         let mut arts : NameMap ImportArtifacts := {}
