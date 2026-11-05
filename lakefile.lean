@@ -60,13 +60,15 @@ lean_exe lingertest where root := `Linger.Os.Suites.Shim
 under a component's `Proofs/` is built. Lean erases proofs regardless of file placement. -/
 lean_lib Theorems where
   globs :=
-  #[.submodules `Theorems, .submodules `Linger.Os.Proofs, .submodules `Linger.Target.Proofs]
+  #[.submodules `Theorems, .submodules `Linger.Display.Proofs, .submodules `Linger.Os.Proofs,
+    .submodules `Linger.Target.Proofs]
   leanOptions := implementationOptions
 
 /-- Unit tests checked at elaboration time: every module under `Tests/` and under a component's
 `Tests/` is built. -/
 lean_lib Tests where
-  globs := #[.submodules `Tests, .submodules `Linger.Target.Tests]
+  globs :=
+  #[.submodules `Tests, .submodules `Linger.Display.Tests, .submodules `Linger.Target.Tests]
   leanOptions := implementationOptions
 
 /-- Executable suites: `./lake exe e2e <suite>`. -/

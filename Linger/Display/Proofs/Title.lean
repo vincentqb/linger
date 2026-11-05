@@ -1,11 +1,11 @@
 module
 
-import all Linger.Core.Title
+import all Linger.Display.Title
 import Theorems.TerminalTitle
 
-namespace Linger.Core.Title
+namespace Linger.Display.Title
 
-open Linger.Target
+open Linger.Core Linger.Target
 
 theorem compose_quiet (session : String) (capacity : Nat) :
     compose session "" "" capacity = Name.sanitize session := by
@@ -93,4 +93,4 @@ theorem compose_payload_attention_last (session application summary : String)
   apply Terminal.Title.payload_append
   simpa only [String.length_append] using hb
 
-end Linger.Core.Title
+end Linger.Display.Title

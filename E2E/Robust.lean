@@ -2,7 +2,7 @@ module
 
 public import E2E.Harness
 import Linger.Core.Checkpoint
-import Linger.Core.Listing
+import Linger.Display.Listing
 import Linger.Runtime.Daemon
 import Linger.Runtime.Cli
 import Linger.Runtime.Client
@@ -39,8 +39,8 @@ own — no `/proc`, no `lsof`, no platform split. -/
 namespace E2E.Robust
 
 open E2E.Harness
-open Linger.Core.Status (Status)
-open Linger.Core.Listing (terminalListing rowFields rowStatus)
+open Linger.Display.Status (Status)
+open Linger.Display.Listing (terminalListing rowFields rowStatus)
 open Linger.Core.Session (maxClients)
 open Linger.Runtime.Daemon (outbufCap ptyInCap claimWaitLine)
 
@@ -369,13 +369,13 @@ def run : IO UInt32 :=
     let expected :=
       terminalListing false
         [rowFields "busy"
-            [("state", "live"), ("status", Linger.Core.Status.name (rowStatus (.live [])))]]
+            [("state", "live"), ("status", Linger.Display.Status.name (rowStatus (.live [])))]]
     expect (out.toUTF8.toList == expected)
         s!"busy daemon lists under its name, marked unknown (got '{out.trimAscii.toString}')"
     let recs := records porc
     expect
         (recs.contains ("name", "busy") &&
-          recs.contains ("status", Linger.Core.Status.name Status.unknown))
+          recs.contains ("status", Linger.Display.Status.name Status.unknown))
         "porcelain carries the name for a busy daemon"
     expect (socks == ["busy.sock"]) s!"busy daemon keeps its socket ({socks})"
     expect ((← e.cli #["send", "busy", "echo x\n"]).1 == 0) "busy daemon still reachable afterwards"

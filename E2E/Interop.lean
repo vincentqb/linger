@@ -193,7 +193,7 @@ private def Fixture.catalogMatches (f : Fixture) (path : System.FilePath) (out :
           ["name", "status", "cmd", "directory", "line", "session", "window", "pane", "title",
             "command", "saved-command", "window-title", "cols", "rows"] &&
         field row "name" == pane.name &&
-        field row "status" == Linger.Core.Status.name .resumable &&
+        field row "status" == Linger.Display.Status.name .resumable &&
         has (field row "cmd") (Linger.Tools.Resurrect.diagnostic dir) &&
         field row "directory" == dir.quote &&
         Lean.Syntax.decodeStrLit (field row "directory") == some dir &&

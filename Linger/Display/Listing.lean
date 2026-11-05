@@ -1,11 +1,11 @@
 module
 
-public import Linger.Core.Status
+public import Linger.Display.Status
 import Linger.Core.Render
 
 public section
 
-/-! # Linger.Core.Listing — a `list` row's identity
+/-! # Linger.Display.Listing — a `list` row's identity
 
 §Row (THEOREMS.md): a listed session's *identity* is a function of its
 socket filename alone, never of the `info` reply the daemon returns. A
@@ -13,11 +13,11 @@ daemon too busy to answer within the poll window still lists under its
 real name; and — because that same row set is the porcelain a remote
 `-r` parses — a peer cannot rename or blank another session's row by
 crafting a reply. `Cli.cmdList` builds every local row through
-`rowFields`, so the property is *proved* (Theorems/Listing.lean) rather
+`rowFields`, so the property is *proved* (Linger/Display/Proofs/Listing.lean) rather
 than asserted at the call site.
 -/
 
-namespace Linger.Core.Listing
+namespace Linger.Display.Listing
 
 /-- A session's listing fields, from its socket filename and the
 key/values it reported. The leading `name` is always the socket filename,
@@ -37,7 +37,7 @@ row look healthier than it is, because `daemonUp` comes from the caller and
 `known` requires the `pid` or `cmd` field every real reply carries.
 -/
 
-open Linger.Core.Status (Status classify ofName)
+open Linger.Display.Status (Status classify ofName)
 
 /-- One boolean from the reply, defaulting to `false` when absent or
 malformed — a reply cannot make a row *more* alive by omission. -/
@@ -96,7 +96,7 @@ from those parsed records. The *human* listing is different: it is printed strai
 terminal, so a control byte in a `cmd`, a label value, a checkpoint filename or a `-r` host
 would execute as an escape sequence. Rather than scrub at the call site — an audit that has to
 be redone whenever a new field is displayed — the row is rendered here, in the core, through
-`Render.utf8s` (which maps every C0/DEL codepoint to U+FFFD), and `Theorems/Listing.lean` proves
+`Render.utf8s` (which maps every C0/DEL codepoint to U+FFFD), and `Linger/Display/Proofs/Listing.lean` proves
 the result carries no control byte for *any* `info`. That is the same move `infoText` makes for
 the daemon's reply, one layer out.
 
@@ -170,4 +170,4 @@ def terminalListing (withColor : Bool) (rows : List (List (String × String))) :
   if rows.isEmpty then utf8s "no sessions".toList ++ [0x0A]
   else rows.flatMap (fun r => renderPieces withColor (rowPieces (nameWidth rows) r) ++ [0x0A])
 
-end Linger.Core.Listing
+end Linger.Display.Listing

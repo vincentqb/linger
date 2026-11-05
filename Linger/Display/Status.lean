@@ -15,12 +15,12 @@ response differs: a clean exit versus a failed one, idle versus wants-you.
 
 The classifier is a pure function of an observation record, so the states
 partition the observation space by construction rather than by convention —
-`Theorems/Status.lean` proves the cover, the disjointness, and that every
+`Linger/Display/Proofs/Status.lean` proves the cover, the disjointness, and that every
 state is reachable (a state no observation produces would be a lie in the
 legend).
 -/
 
-namespace Linger.Core.Status
+namespace Linger.Display.Status
 
 /-- Seven mutually exclusive states, in priority order: a row shows the
 first one that applies. -/
@@ -127,4 +127,4 @@ def summary (statuses : List Status) : String :=
   String.intercalate " "
     ((attentionCounts statuses).map fun (status, count) => (toString count).push (icon status))
 
-end Linger.Core.Status
+end Linger.Display.Status

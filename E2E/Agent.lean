@@ -179,7 +179,7 @@ def checkInfo (e : Env) (mode : String) (error : Option String) : IO Unit := do
       expect
           (serverRc == some 0 && lrc == 0 && pathKept && recs.contains ("name", name) &&
             recs.contains ("state", "live") &&
-            recs.contains ("status", Linger.Core.Status.name .unknown) &&
+            recs.contains ("status", Linger.Display.Status.name .unknown) &&
             !recs.any (fun kv => kv.1 == "cmd" || kv.1.startsWith "label."))
           s!"listing retains {mode} info peer as live/unknown without partial fields"
     | none =>

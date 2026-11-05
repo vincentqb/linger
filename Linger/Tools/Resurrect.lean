@@ -1,7 +1,7 @@
 module
 
 import Linger.Target.Name
-import Linger.Core.Status
+import Linger.Display.Status
 public import Linger.Core.Checkpoint
 
 public section
@@ -235,7 +235,7 @@ def catalogRows (content : String) (panes : List Pane) : List (List (String × S
     let description :=
       if command.isEmpty then s!"{context}  ·  {pane.dir}"
       else s!"{context}  ·  {pane.dir}  ·  {command}"
-    [("name", pane.name), ("status", Linger.Core.Status.name .resumable),
+    [("name", pane.name), ("status", Linger.Display.Status.name .resumable),
       ("cmd", diagnostic description), ("directory", pane.dir), ("line", toString pane.line),
       ("session", details.session), ("window", details.window), ("pane", details.index),
       ("title", details.title), ("command", details.command),

@@ -18,7 +18,7 @@ substring of the listing, which some *other* row's `(resumable)` could also matc
 namespace E2E.Resume
 
 open E2E.Harness
-open Linger.Core.Status (Status)
+open Linger.Display.Status (Status)
 
 /-- Child-side winsize probe. It must execute inside the resumed session's pty;
 reading the parent process's tty would test the harness instead. -/

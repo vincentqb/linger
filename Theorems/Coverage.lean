@@ -11,12 +11,12 @@ import all Linger.Target.Proofs.Name
 import all Theorems.Checkpoint
 import all Linger.Target.Proofs.Remote
 import all Theorems.Claim
-import all Theorems.Listing
+import all Linger.Display.Proofs.Listing
 import all Theorems.Render
 import all Theorems.Replay
 import all Theorems.Resume
-import all Theorems.Status
-import all Theorems.Title
+import all Linger.Display.Proofs.Status
+import all Linger.Display.Proofs.Title
 import all Theorems.Resurrect
 import all Theorems.Fuzzy
 import all Theorems.Picker

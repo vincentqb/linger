@@ -4,7 +4,7 @@ public import E2E.Harness
 
 public section
 
-/-! # E2E.Status — the status column, the unread mechanism end to end
+/-! # Linger.Display.Suites.Status — the status column, the unread mechanism end to end
 
 Ported from `tests/status_test.py`.
 
@@ -20,10 +20,10 @@ error rather than an assertion passing against a column that no longer exists.
 `E2E.Watch` covers the one transition this suite never exercises:
 `linger attach --read-only` also marks a session seen. -/
 
-namespace E2E.Status
+namespace Linger.Display.Suites.Status
 
 open E2E.Harness
-open Linger.Core.Status (Status)
+open Linger.Display.Status (Status)
 
 /-- `linger ls --summary` against `waiting`'s state dir under a 1.5 s deadline:
 the exit code (`none` once it had to be killed), elapsed milliseconds and stdout. -/
@@ -59,7 +59,7 @@ def checkDeadline (e : Env) : IO Unit := do
     expect (code == some 0 && elapsed < 900) "prompt shares one reply deadline across stalled peers"
     expect
         (output ==
-          s!"1{Linger.Core.Status.icon .exitedBad} {names.size - 1}{Linger.Core.Status.icon .unknown}\n")
+          s!"1{Linger.Display.Status.icon .exitedBad} {names.size - 1}{Linger.Display.Status.icon .unknown}\n")
         "a responsive peer behind stalled peers completes within the shared deadline"
     let retained ← names.allM fun name => System.FilePath.pathExists s!"{waiting.dir}/{name}.sock"
     expect retained "prompt leaves unanswered peers' sockets in place"
@@ -89,7 +89,8 @@ def checkBacklog (e : Env) : IO Unit := do
     let (code, elapsed, output) ← summaryWithin waiting
     expect full "fixture fills the pending Unix connection queue"
     expect (code == some 0 && elapsed < 900) "prompt does not wait for a full Unix connection queue"
-    expect (output == s!"1{Linger.Core.Status.icon .unknown}\n") "busy connection counts as unknown"
+    expect (output == s!"1{Linger.Display.Status.icon .unknown}\n")
+        "busy connection counts as unknown"
     expect (← System.FilePath.pathExists path)
         "prompt retains a busy listener without claiming its name lock"
   finally
@@ -100,6 +101,7 @@ def checkBacklog (e : Env) : IO Unit := do
         if fd ≥ 0 then
           Linger.Os.Shell.close fd.toUInt64.toUInt32
 
+/-- The status suite: attaching marks a session seen and detached output marks it unread. -/
 def run : IO UInt32 :=
   Env.suite "status" fun e => do
     let (emptyCode, empty, _) ← e.cli #["ls", "--summary"]
@@ -110,7 +112,7 @@ def run : IO UInt32 :=
     IO.sleep 1500
     -- 1. a session nobody has watched, that has produced output, is unread
     expect ((← e.status "st") == Status.wantsYou) "unwatched output reads wants-you"
-    let unread := s!"1{Linger.Core.Status.icon Status.wantsYou}\n"
+    let unread := s!"1{Linger.Display.Status.icon Status.wantsYou}\n"
     let before ← e.field "st" "behind"
     let (summaryCode, summary, _) ← e.cli #["ls", "--summary"]
     expect (summaryCode == 0 && summary == unread) "summary counts unread with the shared glyph"
@@ -136,7 +138,7 @@ def run : IO UInt32 :=
     -- 4. the human column renders one glyph for it — `Status.icon`'s own glyph,
     -- which is what `Listing.humanRow` puts at the head of the row.
     let human ← e.out #["ls"]
-    expect (has human (String.singleton (Linger.Core.Status.icon Status.wantsYou)))
+    expect (has human (String.singleton (Linger.Display.Status.icon Status.wantsYou)))
         "human listing shows the wants-you glyph"
     -- A real daemon retires when its child exits. Exercise a completed info
     -- reply carrying that exit field without racing the daemon's retirement.
@@ -155,7 +157,7 @@ def run : IO UInt32 :=
       expect
           (failed && mixedCode == 0 &&
             mixed ==
-              s!"1{Linger.Core.Status.icon Status.wantsYou} 1{Linger.Core.Status.icon Status.exitedBad}\n")
+              s!"1{Linger.Display.Status.icon Status.wantsYou} 1{Linger.Display.Status.icon Status.exitedBad}\n")
           "summary keeps unread output and a reported failed exit distinct"
     finally
       reapOrKill failedServer 0
@@ -163,4 +165,4 @@ def run : IO UInt32 :=
     checkDeadline e
     checkBacklog e
 
-end E2E.Status
+end Linger.Display.Suites.Status

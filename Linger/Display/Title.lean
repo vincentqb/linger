@@ -7,7 +7,7 @@ public section
 /-! Session title composition. Sampling belongs to the runtime and safe OSC 2
 emission belongs to the VT toolkit's `Terminal.Title`. -/
 
-namespace Linger.Core.Title
+namespace Linger.Display.Title
 
 /-- Shared display order: session, application title, then attention.
 Empty optional parts contribute neither text nor a separator. Clip the
@@ -18,4 +18,4 @@ def compose (session application summary : String) (capacity : Nat) : String :=
   let application := (application.take (capacity - session.length - suffix.length - 3)).copy
   session ++ (if application.isEmpty then "" else " · " ++ application) ++ suffix
 
-end Linger.Core.Title
+end Linger.Display.Title

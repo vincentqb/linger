@@ -7,8 +7,8 @@ import Linger.Os.Env
 import Linger.Core.Replay
 import Linger.Core.Terminal
 import Linger.Target.Remote
-import Linger.Core.Title
-import Linger.Core.Status
+import Linger.Display.Title
+import Linger.Display.Status
 import Linger.Runtime.Paths
 
 public section
@@ -186,8 +186,8 @@ def viewSaved (name : String) (snapshot : Linger.Core.Vt.Vt) : IO Outcome := do
               writeAll stdoutFd (ByteArray.mk bytes.toArray)
             repaint := next
         let title :=
-          Linger.Core.Title.compose name view.windowTitle
-            (String.singleton (Linger.Core.Status.icon .resumable))
+          Linger.Display.Title.compose name view.windowTitle
+            (String.singleton (Linger.Display.Status.icon .resumable))
             Linger.Core.Terminal.Title.maxChars
         writeAll stdoutFd (ByteArray.mk (Linger.Core.Terminal.Title.update view title).toArray)
         lastSize := some size
@@ -238,7 +238,7 @@ private def converse (name : String) (fd : UInt32) (sample : IO String) (readOnl
             let fresh :=
               match ← IO.wait task with
               | .ok text => text
-              | .error _ => String.singleton (Linger.Core.Status.icon .unknown)
+              | .error _ => String.singleton (Linger.Display.Status.icon .unknown)
             titleDirty := titleDirty || fresh != summary
             summary := fresh
             nextSummary := (← monotonicMs) + 1000
@@ -293,7 +293,7 @@ private def converse (name : String) (fd : UInt32) (sample : IO String) (readOnl
                     pure ()
         if receivedOutput && titleDirty && !leaving then
           let title :=
-            Linger.Core.Title.compose name observer.windowTitle summary
+            Linger.Display.Title.compose name observer.windowTitle summary
               Linger.Core.Terminal.Title.maxChars
           let bytes := Linger.Core.Terminal.Title.update observer title
           if !bytes.isEmpty then

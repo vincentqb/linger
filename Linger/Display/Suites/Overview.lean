@@ -1,11 +1,11 @@
 module
 
 public import E2E.Harness
-import Linger.Core.Listing
+import Linger.Display.Listing
 
 public section
 
-/-! # E2E.Overview — explicit `linger ls` prints a list and exits
+/-! # Linger.Display.Suites.Overview — explicit `linger ls` prints a list and exits
 
 The overview must be a plain, pipeable, self-terminating listing that never
 blocks on stdin. The two exit checks run through `Env.cliTimeout`: a picker that
@@ -19,11 +19,12 @@ row (`Theorems/Picker.lean`).
 color when stdout is not a terminal, so `terminalListing false []` **is** the
 empty-state line and the suite cannot drift from its wording. -/
 
-namespace E2E.Overview
+namespace Linger.Display.Suites.Overview
 
 open E2E.Harness
-open Linger.Core.Listing (terminalListing)
+open Linger.Display.Listing (terminalListing)
 
+/-- The overview suite: explicit `linger ls` lists, exits and never reads stdin. -/
 def run : IO UInt32 :=
   Env.suite "overview" fun e => do
     -- With every state override absent, fallback storage is still per-user.
@@ -67,4 +68,4 @@ def run : IO UInt32 :=
     expect (out.toUTF8 == ByteArray.mk emptyLine.toArray)
         "a hostile checkpoint filename neither injects an escape nor creates an alias"
 
-end E2E.Overview
+end Linger.Display.Suites.Overview

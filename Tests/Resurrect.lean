@@ -1,7 +1,7 @@
 module
 
 import all Linger.Tools.Resurrect
-import Linger.Core.Status
+import Linger.Display.Status
 import Linger.Core.Render
 import all Linger.Core.Vt
 meta import Linger.Tools.Resurrect
@@ -45,7 +45,7 @@ namespace Linger.Tools.Resurrect.Tests
     rows.map (fun row => row.lookup "name") == [some "desk-w2-p1", some "desk-w1-p0"] &&
       rows.map (fun row => row.lookup "directory") == [some "/tmp/é space\r\x1b", some "/other"] &&
       rows.map (fun row => row.lookup "line") == [some "1", some "3"] &&
-      rows.all (fun row => row.lookup "status" == some (Linger.Core.Status.name .resumable)) &&
+      rows.all (fun row => row.lookup "status" == some (Linger.Display.Status.name .resumable)) &&
       rows.map (fun row => row.lookup "cmd") ==
         [some "desk:2 editor?[31m  ·  /tmp/é space??  ·  never run this?[2J?",
           some "desk:1 shell  ·  /other  ·  sh"] &&

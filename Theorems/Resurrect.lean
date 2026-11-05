@@ -59,7 +59,7 @@ theorem catalogRows_lines (content : String) (panes : List Pane) :
 or whatever state the live tmux server has reached since the save. -/
 theorem catalogRows_status (content : String) (panes : List Pane) (row : List (String × String))
     (member : row ∈ catalogRows content panes) :
-    row.lookup "status" = some (Linger.Core.Status.name .resumable) := by
+    row.lookup "status" = some (Linger.Display.Status.name .resumable) := by
   unfold catalogRows at member
   obtain ⟨pane, _, rfl⟩ := List.mem_map.mp member
   rfl

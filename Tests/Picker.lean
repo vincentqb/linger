@@ -151,7 +151,7 @@ namespace Linger.Tools.Picker.Tests
   match parseSnapshot "name\twork\ncmd\tvi\x1b[31m\u009b31m\n" with
   | .ok snapshot =>
     let pieces := presentation snapshot 4 (.existing "work")
-    pieces == Linger.Core.Listing.rowPieces 4 (snapshot.row "work") &&
+    pieces == Linger.Display.Listing.rowPieces 4 (snapshot.row "work") &&
       String.ofList (pieces.flatMap (·.text)) == "? work vi�[31m�31m"
   | .error _ => false
 
@@ -389,7 +389,7 @@ namespace Linger.Tools.Picker.Tests
       (snapshot.row "work").lookup "directory" == some "\"/tmp/exact\\tpath\\n\\\"quoted\\\"\"" &&
       (snapshot.row "work").lookup "line" == some "4" &&
       String.ofList ((presentation snapshot 4 (.existing "work")).flatMap (·.text)) ==
-        String.singleton (Linger.Core.Status.icon .resumable) ++ " work pane command"
+        String.singleton (Linger.Display.Status.icon .resumable) ++ " work pane command"
   | .error _ => false
 
 -- A changed directory changes the snapshot even if its pane identity stays put.

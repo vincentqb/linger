@@ -1,7 +1,7 @@
 module
 
 import E2E.Watch
-import E2E.Status
+import Linger.Display.Suites.Status
 import E2E.Paths
 import E2E.Graphics
 import E2E.Agent
@@ -11,7 +11,7 @@ import E2E.Delivery
 import E2E.Robust
 import Linger.Target.Suites.Remote
 import E2E.Terminal
-import E2E.Title
+import Linger.Display.Suites.Title
 import E2E.Recipes
 import E2E.Interop
 import E2E.Manager
@@ -35,12 +35,12 @@ logs go to `LINGER_LOG_DIR` (default `E2E.Harness.tempRoot`). An unknown name is
 not a silent success. -/
 
 def suites : List (String × IO UInt32) :=
-  [("watch", E2E.Watch.run), ("status", E2E.Status.run), ("overview", E2E.Paths.run),
-    ("graphics", E2E.Graphics.run), ("agent", E2E.Agent.run), ("resume", E2E.Resume.run),
-    ("attach", E2E.Attach.run), ("delivery", E2E.Delivery.run), ("robust", E2E.Robust.run),
-    ("remote", Linger.Target.Suites.Remote.run), ("terminal", E2E.Terminal.run),
-    ("title", E2E.Title.run), ("recipes", E2E.Recipes.run), ("interop", E2E.Interop.run),
-    ("manager", E2E.Manager.run),
+  [("watch", E2E.Watch.run), ("status", Linger.Display.Suites.Status.run),
+    ("overview", E2E.Paths.run), ("graphics", E2E.Graphics.run), ("agent", E2E.Agent.run),
+    ("resume", E2E.Resume.run), ("attach", E2E.Attach.run), ("delivery", E2E.Delivery.run),
+    ("robust", E2E.Robust.run), ("remote", Linger.Target.Suites.Remote.run),
+    ("terminal", E2E.Terminal.run), ("title", Linger.Display.Suites.Title.run),
+    ("recipes", E2E.Recipes.run), ("interop", E2E.Interop.run), ("manager", E2E.Manager.run),
     -- opt-in: needs a real reachable host, so NOT in scripts/e2e.sh
     ("remote-live", Linger.Target.Suites.RemoteLive.run),
     -- Verifier regression checks, separate from the live product suites.
@@ -57,9 +57,9 @@ def main (args : List String) : IO UInt32 := do
   | ["--winsize-probe", result] =>
     E2E.Resume.winsizeProbe result
   | ["--title-probe"] =>
-    E2E.Title.probe
+    Linger.Display.Suites.Title.probe
   | ["--title-attach-probe", name] =>
-    E2E.Title.attachProbe name
+    Linger.Display.Suites.Title.attachProbe name
   | ["--paths-probe"] =>
     E2E.Paths.probe
   | ["--malformed-server", socketPath, readyPath] =>
@@ -103,7 +103,7 @@ def main (args : List String) : IO UInt32 := do
   | ["delivery", check] =>
     E2E.Delivery.run (some check)
   | ["title", binary] =>
-    E2E.Title.run (some binary)
+    Linger.Display.Suites.Title.run (some binary)
   | ["remote", "discovery"] =>
     Linger.Target.Suites.Remote.runDiscovery
   | ["watch", "checkpoint"] =>

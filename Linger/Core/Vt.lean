@@ -407,7 +407,8 @@ what a client can actually have and would prove nothing about the rest. The seal
 is what turns those predicates from decoration into guarantees.
 
 The friend set is `import all Linger.Core.Vt`: `Render`/`Terminal`/`Replay` (the rest
-of the toolkit), `Theorems/**`, `Tests/**`, and `Checkpoint` — the last **permanently**,
+of the toolkit), `Theorems/**`, `Tests/**`, each component's `Proofs/**` and `Tests/**`,
+and `Checkpoint` — the last **permanently**,
 for `wVt`'s field reads and the one validating door below; its reason is written at
 that file's import. The compiler accepts `import all` from any module, so
 `scripts/gates.sh` enforces that list; a reader without the import fails to build.

@@ -7,7 +7,7 @@ import Linger.Runtime.Paths
 import Linger.Runtime.Daemon
 import Linger.Runtime.Client
 import Linger.Target.Remote
-import Linger.Core.Listing
+import Linger.Display.Listing
 import Linger.Runtime.Command
 import Linger.Runtime.Resume
 import Std.Async.Signal
@@ -376,9 +376,9 @@ def localRows (stopAt : Option Nat := none) : IO (List (List (String × String))
   let ckpts := (← Paths.listCkptNames).toArray.qsort (· < ·) |>.toList
   let infos ← queryInfos sockets deadline stopAt.isSome
   let liveRow := fun name info =>
-    Linger.Core.Listing.rowFields name info ++
+    Linger.Display.Listing.rowFields name info ++
       [("state", "live"),
-        ("status", Linger.Core.Status.name (Linger.Core.Listing.rowStatus (.live info)))]
+        ("status", Linger.Display.Status.name (Linger.Display.Listing.rowStatus (.live info)))]
   let mut confirmedLive : List String := []
   let mut rows : List (List (String × String)) := []
   for (name, result) in sockets.zip infos do
@@ -404,9 +404,9 @@ def localRows (stopAt : Option Nat := none) : IO (List (List (String × String))
       rows :=
         rows ++
           [if available then
-              Linger.Core.Listing.rowFields name
+              Linger.Display.Listing.rowFields name
                 [("state", "resumable"),
-                  ("status", Linger.Core.Status.name (Linger.Core.Listing.rowStatus .stale))]
+                  ("status", Linger.Display.Status.name (Linger.Display.Listing.rowStatus .stale))]
             else liveRow name []]
   return rows
 
@@ -414,8 +414,8 @@ def localRows (stopAt : Option Nat := none) : IO (List (List (String × String))
 prints and an attached title shows, computed in the calling process. -/
 private def summaryText : IO String := do
   let rows ← localRows (some ((← monotonicMs) + 250))
-  return Linger.Core.Status.summary
-      (rows.map fun info => Linger.Core.Status.ofName ((info.lookup "status").getD "unknown"))
+  return Linger.Display.Status.summary
+      (rows.map fun info => Linger.Display.Status.ofName ((info.lookup "status").getD "unknown"))
 
 /-- `ls --summary`: print `summaryText`, or nothing when no local session needs
 attention; exit 0 either way. -/
@@ -489,8 +489,8 @@ private def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
           [[("name", s!"{row.name}@{host}"), ("cmd", row.cmd),
               ("state", if row.live then "live" else "resumable"),
               ("status",
-                Linger.Core.Status.name
-                  (Linger.Core.Listing.rowStatus (.remote row.live row.status)))]]
+                Linger.Display.Status.name
+                  (Linger.Display.Listing.rowStatus (.remote row.live row.status)))]]
   if porcelain then
     for info in rows do
       for (k, v) in info do
@@ -500,7 +500,7 @@ private def cmdList (porcelain : Bool) (remotes : List String) : IO UInt32 := do
     -- The selector consumes these same row pieces. Only the status badge has
     -- a palette style; redirected output and NO_COLOR retain the plain row.
     let withColor := (← (← IO.getStdout).isTty) && (← IO.getEnv "NO_COLOR").isNone
-    writeAll stdoutFd (ByteArray.mk (Linger.Core.Listing.terminalListing withColor rows).toArray)
+    writeAll stdoutFd (ByteArray.mk (Linger.Display.Listing.terminalListing withColor rows).toArray)
   return 0
 
 /-- Parse the `ls` argument set: an optional `--porcelain` and an

@@ -1,7 +1,7 @@
 module
 
 public import Linger.Os.Shell
-public import Linger.Core.Status
+public import Linger.Display.Status
 public import Linger.Core.Render
 
 public section
@@ -10,7 +10,7 @@ public section
 
 The suites drive the real binary through ptys, so they are `IO` and tested, not
 proved. Assertions read the implementation's definitions (`status` parses with
-`Linger.Core.Status.ofName`), so renaming a status constructor is a compile error.
+`Linger.Display.Status.ofName`), so renaming a status constructor is a compile error.
 Ptys, sockets and polling come from `Linger.Os.Shell`.
 
 OUTPUT CONTRACT — load-bearing, do not reformat. Every check prints `PASS <name>`
@@ -485,11 +485,11 @@ def Env.field (e : Env) (name field : String) : IO (Option String) := do
       found := some v
   return found
 
-/-- A session's status column as the `Status` type, parsed with `Linger.Core.Status.ofName`
+/-- A session's status column as the `Status` type, parsed with `Linger.Display.Status.ofName`
 rather than compared as a string literal, so a renamed constructor is a compile error in the
 suites that read it. -/
-def Env.status (e : Env) (name : String) : IO Linger.Core.Status.Status := do
-  return Linger.Core.Status.ofName ((← e.field name "status").getD "")
+def Env.status (e : Env) (name : String) : IO Linger.Display.Status.Status := do
+  return Linger.Display.Status.ofName ((← e.field name "status").getD "")
 
 /-- The pid of the daemon behind `name`. `linger info` is answered over
 `<LINGER_DIR>/<name>.sock`, so the reply comes from this directory's daemon. Its `pid` is

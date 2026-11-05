@@ -1,7 +1,7 @@
 module
 
 -- The proofs unfold the status definitions, whose bodies only `import all` exposes.
-import all Linger.Core.Status
+import all Linger.Display.Status
 
 /-! # §Status — the seven states partition the observation space
 
@@ -18,7 +18,7 @@ written, `classify_sound` is a real claim: the cascade computes the
 description.
 -/
 
-namespace Linger.Core.Status
+namespace Linger.Display.Status
 
 /-- The legend, as predicates on an observation. -/
 def Is : Status → Obs → Prop
@@ -96,13 +96,13 @@ theorem name_injective (s t : Status) (h : name s = name t) : s = t := by
 /-- The complete style vocabulary contains standard foreground SGRs only; its
 quiet style adds dim and explicitly selects the default foreground. -/
 theorem style_palette (s : Status) :
-    Linger.Core.Status.style s ∈
+    Linger.Display.Status.style s ∈
       ["\x1b[36m", "\x1b[33m", "\x1b[32m", "\x1b[31m", "\x1b[2;39m"] := by
   cases s <;> decide
 
 /-- Positive counts appear once in attention order, independent of input order. -/
 theorem attentionCounts_exact (statuses : List Status) :
-    Linger.Core.Status.attentionCounts statuses =
+    Linger.Display.Status.attentionCounts statuses =
       (if statuses.count .wantsYou = 0 then [] else [(.wantsYou, statuses.count .wantsYou)]) ++
         (if statuses.count .exitedBad = 0 then [] else [(.exitedBad, statuses.count .exitedBad)]) ++
         (if statuses.count .unknown = 0 then [] else [(.unknown, statuses.count .unknown)]) := by
@@ -111,7 +111,7 @@ theorem attentionCounts_exact (statuses : List Status) :
 
 /-- Neither zero counts nor ordinary activity can occur in an attention group. -/
 theorem attentionCounts_mem (statuses : List Status) (s : Status) (n : Nat) :
-    (s, n) ∈ Linger.Core.Status.attentionCounts statuses ↔
+    (s, n) ∈ Linger.Display.Status.attentionCounts statuses ↔
       s ∈ [.wantsYou, .exitedBad, .unknown] ∧ n = statuses.count s ∧ n ≠ 0 := by
   simp only [attentionCounts, List.mem_filterMap]
   constructor
@@ -127,7 +127,7 @@ theorem attentionCounts_mem (statuses : List Status) (s : Status) (n : Nat) :
 /-- The public string is precisely the three positive-count groups with their
 canonical icons, separated by one space. -/
 theorem summary_exact (statuses : List Status) :
-    Linger.Core.Status.summary statuses =
+    Linger.Display.Status.summary statuses =
       String.intercalate " "
         ((if statuses.count .wantsYou = 0 then []
           else [(toString (statuses.count .wantsYou)).push (icon .wantsYou)]) ++
@@ -141,7 +141,7 @@ theorem summary_exact (statuses : List Status) :
 /-- With no attention counts, the summary has no placeholder or separator. -/
 theorem summary_omits_zero (statuses : List Status) (hw : statuses.count .wantsYou = 0)
     (hb : statuses.count .exitedBad = 0) (hu : statuses.count .unknown = 0) :
-    Linger.Core.Status.summary statuses = "" := by simp [summary_exact, hw, hb, hu]
+    Linger.Display.Status.summary statuses = "" := by simp [summary_exact, hw, hb, hu]
 
 theorem summary_token_clean (statuses : List Status) (s : Status) (n : Nat)
     (h : (s, n) ∈ attentionCounts statuses) :
@@ -160,7 +160,7 @@ theorem summary_token_clean (statuses : List Status) (s : Status) (n : Nat)
 /-- Summary text contains only decimal digits, spaces and attention glyphs.
 This is stronger than absence of newline or terminal escapes. -/
 theorem summary_alphabet (statuses : List Status) :
-    ∀ c ∈ (Linger.Core.Status.summary statuses).toList,
+    ∀ c ∈ (Linger.Display.Status.summary statuses).toList,
       c.isDigit = true ∨ c ∈ [' ', '⣿', '!', '?'] := by
   have joinClean (strings : List String)
     (hs : ∀ text ∈ strings, ∀ c ∈ text.toList, c.isDigit = true ∨ c ∈ [' ', '⣿', '!', '?']) :
@@ -189,7 +189,7 @@ theorem summary_alphabet (statuses : List Status) :
 
 /-- A prompt or title can embed the summary verbatim: no controls, DEL or C1. -/
 theorem summary_printable (statuses : List Status) :
-    ∀ c ∈ (Linger.Core.Status.summary statuses).toList,
+    ∀ c ∈ (Linger.Display.Status.summary statuses).toList,
       32 ≤ c.toNat ∧ (c.toNat < 127 ∨ 160 ≤ c.toNat) := by
   intro c hc
   rcases summary_alphabet statuses c hc with hd | hi
@@ -199,4 +199,4 @@ theorem summary_printable (statuses : List Status) :
   · simp only [List.mem_cons, List.not_mem_nil, or_false] at hi
     rcases hi with rfl | rfl | rfl | rfl <;> decide
 
-end Linger.Core.Status
+end Linger.Display.Status

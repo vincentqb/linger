@@ -91,7 +91,7 @@ def run : IO UInt32 :=
       let (_, otherListing, _) ← e.cliEnv (splitEnv e 2) #["ls", "--porcelain"]
       expect
           ((records otherListing).contains ("state", "live") &&
-            (records otherListing).contains ("status", Linger.Core.Status.name .unknown))
+            (records otherListing).contains ("status", Linger.Display.Status.name .unknown))
           "listing does not offer another runtime's owned checkpoint as resumable"
       let (otherKillRc, _, _) ← e.cliEnv (splitEnv e 2) #["kill", "work"]
       IO.sleep 250

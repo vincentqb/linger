@@ -2,7 +2,7 @@ module
 
 import all Linger.Tools.Picker
 import all Linger.Target.Name
-import all Linger.Core.Listing
+import all Linger.Display.Listing
 import all Linger.Target.Remote
 import all Init.Data.String.Legacy
 import Linger.Target.Proofs.Name
@@ -427,7 +427,7 @@ theorem withRemote_row_remote (latest full : Snapshot) (target : String)
 details, labels and watchers, with the same style boundaries. -/
 theorem presentation_existing (snapshot : Snapshot) (nameCol : Nat) (target : String) :
     Linger.Tools.Picker.presentation snapshot nameCol (.existing target) =
-      Linger.Core.Listing.rowPieces nameCol (snapshot.row target) := by
+      Linger.Display.Listing.rowPieces nameCol (snapshot.row target) := by
   simp [presentation]
 
 /-- Equivalence includes all rendered plain bytes, beyond status glyphs. Clipping
@@ -435,8 +435,8 @@ and selection reverse are applied by the terminal executor after this shared row
 theorem presentation_existing_humanRow (snapshot : Snapshot) (nameCol : Nat) (target : String) :
     Linger.Core.Render.utf8s
         ((Linger.Tools.Picker.presentation snapshot nameCol (.existing target)).flatMap (·.text)) =
-      Linger.Core.Listing.humanRow nameCol (snapshot.row target) := by
-  simp [presentation, Linger.Core.Listing.humanRow]
+      Linger.Display.Listing.humanRow nameCol (snapshot.row target) := by
+  simp [presentation, Linger.Display.Listing.humanRow]
 
 /-- Creation never masquerades as a listed session status. -/
 theorem presentation_creation (snapshot : Snapshot) (nameCol : Nat) (target : String) :
@@ -445,14 +445,14 @@ theorem presentation_creation (snapshot : Snapshot) (nameCol : Nat) (target : St
   simp [presentation]
 
 /-- Annotation preserves each scalar and its status, in the original order. -/
-theorem markPiece_projection (marks : Array Bool) (piece : Linger.Core.Listing.RowPiece) :
+theorem markPiece_projection (marks : Array Bool) (piece : Linger.Display.Listing.RowPiece) :
     (markPiece marks piece).map (fun char => (char.char, char.status)) =
       piece.text.map (fun char => (char, piece.status)) := by
   simpa only [markPiece, List.map_map, Function.comp_def] using
     congrArg (List.map (fun char => (char, piece.status))) (List.zipIdx_map_fst 0 piece.text)
 
 /-- The scalar index is measured within the piece, not in UTF-8 bytes or cells. -/
-theorem markPiece_at (marks : Array Bool) (piece : Linger.Core.Listing.RowPiece) (index : Nat) :
+theorem markPiece_at (marks : Array Bool) (piece : Linger.Display.Listing.RowPiece) (index : Nat) :
     (markPiece marks piece)[index]? =
       piece.text[index]?.map fun char =>
         { char, status := piece.status,
@@ -467,7 +467,7 @@ theorem markPiece_at (marks : Array Bool) (piece : Linger.Core.Listing.RowPiece)
 
 /-- Every emphasized scalar lies inside the declared name span and corresponds
 to a true alignment mark; absent or out-of-range marks never emphasize text. -/
-theorem markPiece_marked_iff (marks : Array Bool) (piece : Linger.Core.Listing.RowPiece)
+theorem markPiece_marked_iff (marks : Array Bool) (piece : Linger.Display.Listing.RowPiece)
     (index : Nat) (char : HighlightedChar) (h : (markPiece marks piece)[index]? = some char) :
     char.matched = true ↔
       ∃ start count,
@@ -516,7 +516,7 @@ theorem highlightedPresentation_existing_humanRow (snapshot : Snapshot) (nameCol
     (query target : String) :
     Linger.Core.Render.utf8s
         ((highlightedPresentation snapshot nameCol query (.existing target)).map (·.char)) =
-      Linger.Core.Listing.humanRow nameCol (snapshot.row target) := by
+      Linger.Display.Listing.humanRow nameCol (snapshot.row target) := by
   rw [highlightedPresentation_text]
   exact presentation_existing_humanRow snapshot nameCol target
 
@@ -532,12 +532,12 @@ theorem highlightedPresentation_existing_marked_iff (snapshot : Snapshot) (nameC
           2 ≤ index ∧ index < 2 + target.length ∧ alignment.marks[index - 2]? = some true := by
   let marks := ((Linger.Tools.Fuzzy.align query target).map (·.marks)).getD []
   let body :=
-    ((Linger.Core.Listing.rowPieces nameCol (snapshot.row target))[1]?).getD { text := [] }
+    ((Linger.Display.Listing.rowPieces nameCol (snapshot.row target))[1]?).getD { text := [] }
   have span : body.nameSpan = some (1, target.length) := by
-    simp [body, Linger.Core.Listing.rowPieces, snapshot_row_name, String.length_toList]
+    simp [body, Linger.Display.Listing.rowPieces, snapshot_row_name, String.length_toList]
   cases index with
   | zero =>
-    simp only [highlightedPresentation, presentation, Linger.Core.Listing.rowPieces, ge_iff_le,
+    simp only [highlightedPresentation, presentation, Linger.Display.Listing.rowPieces, ge_iff_le,
       Bool.and_eq_true, ↓Char.isValue, List.cons_append, List.nil_append, List.append_assoc,
       beq_iff_eq, String.isEmpty_iff, String.startsWith_string_iff, String.reduceToList,
       String.Slice.toString_eq, List.isEmpty_iff, List.filterMap_eq_nil_iff, ite_eq_right_iff,
@@ -553,8 +553,8 @@ theorem highlightedPresentation_existing_marked_iff (snapshot : Snapshot) (nameC
     have row :
       (highlightedPresentation snapshot nameCol query (.existing target))[index + 1]? =
         (markPiece marks.toArray body)[index]? := by
-      simp [highlightedPresentation, presentation, body, Linger.Core.Listing.rowPieces, markPiece,
-        marks]
+      simp [highlightedPresentation, presentation, body, Linger.Display.Listing.rowPieces,
+        markPiece, marks]
     rw [row] at h
     rw [markPiece_marked_iff marks.toArray body index char h]
     simp only [span, Option.some.injEq, Prod.mk.injEq]

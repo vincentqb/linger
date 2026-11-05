@@ -1,10 +1,10 @@
 module
 
-import all Linger.Core.Listing
-import all Linger.Core.Status
+import all Linger.Display.Listing
+import all Linger.Display.Status
 -- The proof layer is module-private, so `utf8s_no_ctl` arrives through `import all`.
 import all Theorems.Render
-import all Theorems.Status
+import all Linger.Display.Proofs.Status
 
 /-! # §Row — a list row's identity is its socket filename, not the reply
 
@@ -16,7 +16,7 @@ change it (`rowFields_name`) nor smuggle a second one in
 (`rowFields_reply_excluded`).
 -/
 
-namespace Linger.Core.Listing
+namespace Linger.Display.Listing
 
 /-- The row's `name` is the socket filename for ANY reply, so a peer's
 reply can never spoof another session's identity. -/
@@ -37,13 +37,14 @@ cannot lie about the row's *health* either: the two facts that decide whether
 a row is trustworthy at all come from the caller, never from the reply.
 -/
 
-open Linger.Core.Status (Status)
+open Linger.Display.Status (Status)
 
 /-- A live socket that did not answer is `unknown`, whatever the reply
 contained — so a daemon too busy to answer cannot be reported as idle, and a
 crafted reply cannot claim otherwise. -/
 theorem rowStatus_unanswered (info : List (String × String)) (h : answered info = false) :
-    rowStatus (.live info) = Status.unknown := by simp [rowStatus, Linger.Core.Status.classify, h]
+    rowStatus (.live info) = Status.unknown := by
+  simp [rowStatus, Linger.Display.Status.classify, h]
 
 /-- No socket but a loadable checkpoint is `resumable`, whatever the reply
 contained (there is no daemon to have sent one). -/
@@ -62,15 +63,15 @@ theorem answered_nil : answered [] = false := rfl
 `status` reports `unknown`, not `idle`. This is what keeps a remote glyph an
 honest statement rather than an inference from liveness alone. -/
 theorem rowStatus_remote_unreadable (junk : String)
-    (h : Linger.Core.Status.ofName junk = Status.unknown) :
+    (h : Linger.Display.Status.ofName junk = Status.unknown) :
     rowStatus (.remote true junk) = Status.unknown := by simp [rowStatus, h]
 
 /-- …and a peer that does report one is taken at its word, since it is the
 authority on its own session. Round-trips through the porcelain name by
 `ofName_name`. -/
 theorem rowStatus_remote_reported (st : Status) :
-    rowStatus (.remote true (Linger.Core.Status.name st)) = st := by
-  simp [rowStatus, Linger.Core.Status.ofName_name]
+    rowStatus (.remote true (Linger.Display.Status.name st)) = st := by
+  simp [rowStatus, Linger.Display.Status.ofName_name]
 
 /-- A missing or malformed flag reads as `false`, so an omission cannot make
 a row look busier or fresher than it is. -/
@@ -102,7 +103,7 @@ theorem humanRow_no_lf (nameCol : Nat) (info : List (String × String)) :
 /-- Pieces remove controls before width calculation or styling. A terminal
 renderer therefore never clips inside an untrusted escape sequence. -/
 theorem rowPieces_printable (nameCol : Nat) (info : List (String × String)) :
-    ∀ piece ∈ Linger.Core.Listing.rowPieces nameCol info,
+    ∀ piece ∈ Linger.Display.Listing.rowPieces nameCol info,
       ∀ c ∈ piece.text, 32 ≤ c.toNat ∧ (c.toNat < 127 ∨ 160 ≤ c.toNat) := by
   intro piece hp c hc
   simp only [rowPieces, List.mem_cons, List.not_mem_nil, or_false] at hp
@@ -133,21 +134,21 @@ theorem humanRow_text (nameCol : Nat) (info : List (String × String)) :
 
 /-- Exactly the badge is styled; the name, details, labels and watchers are plain. -/
 theorem rowPieces_styles (nameCol : Nat) (info : List (String × String)) :
-    (Linger.Core.Listing.rowPieces nameCol info).map (·.status) =
+    (Linger.Display.Listing.rowPieces nameCol info).map (·.status) =
       [some (Status.ofName ((info.lookup "status").getD "")), none] := rfl
 
 /-- Query emphasis addresses only the name after the body's leading space.
 Its length comes from the actual name, independently of padding or metadata. -/
 theorem rowPieces_nameSpan (nameCol : Nat) (info : List (String × String)) :
-    (Linger.Core.Listing.rowPieces nameCol info).map (·.nameSpan) =
+    (Linger.Display.Listing.rowPieces nameCol info).map (·.nameSpan) =
       [none, some (1, ((info.lookup "name").getD "").toList.length)] := rfl
 
-theorem nameWidth_empty : Linger.Core.Listing.nameWidth [] = 0 := rfl
+theorem nameWidth_empty : Linger.Display.Listing.nameWidth [] = 0 := rfl
 
 /-- A width fits the complete snapshot exactly when it fits every name.
 The computed column is therefore the least sufficient width. -/
 theorem nameWidth_le_iff (rows : List (List (String × String))) (width : Nat) :
-    Linger.Core.Listing.nameWidth rows ≤ width ↔
+    Linger.Display.Listing.nameWidth rows ≤ width ↔
       ∀ row ∈ rows, ((row.lookup "name").getD "").toList.length ≤ width := by
   have fold_le (rs : List (List (String × String))) (n : Nat) :
     rs.foldl (fun m r => max m ((r.lookup "name").getD "").toList.length) n ≤ width ↔
@@ -160,12 +161,12 @@ theorem nameWidth_le_iff (rows : List (List (String × String))) (width : Nat) :
 /-- Every row's name fits the column calculated for the entire snapshot. -/
 theorem nameWidth_covers (rows : List (List (String × String))) (row : List (String × String))
     (h : row ∈ rows) :
-    ((row.lookup "name").getD "").toList.length ≤ Linger.Core.Listing.nameWidth rows :=
+    ((row.lookup "name").getD "").toList.length ≤ Linger.Display.Listing.nameWidth rows :=
   (nameWidth_le_iff rows _).mp (Nat.le_refl _) row h
 
 /-- Removing style produces exactly the bytes of the same plain row pieces. -/
 theorem renderPieces_plain (pieces : List RowPiece) :
-    Linger.Core.Listing.renderPieces false pieces =
+    Linger.Display.Listing.renderPieces false pieces =
       Linger.Core.Render.utf8s (pieces.flatMap (·.text)) := by
   induction pieces with
   | nil => rfl
@@ -176,7 +177,7 @@ theorem renderPieces_plain (pieces : List RowPiece) :
 /-- Uncoloured terminal output is exactly the plain rows: one `humanRow` per
 session over the shared name column, each LF-terminated, or the empty-state line. -/
 theorem terminalListing_plain (rows : List (List (String × String))) :
-    Linger.Core.Listing.terminalListing false rows =
+    Linger.Display.Listing.terminalListing false rows =
       if rows.isEmpty then Linger.Core.Render.utf8s "no sessions".toList ++ [0x0A]
       else rows.flatMap (fun r => humanRow (nameWidth rows) r ++ [0x0A]) := by
   simp [terminalListing, renderPieces_plain, humanRow]
@@ -200,4 +201,4 @@ theorem terminalListing_plain_printable (rows : List (List (String × String))) 
     · exact Or.inl (humanRow_printable _ r b h)
     · exact Or.inr (by simpa using h)
 
-end Linger.Core.Listing
+end Linger.Display.Listing

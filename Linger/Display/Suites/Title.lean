@@ -2,7 +2,7 @@ module
 
 import E2E.Harness
 import Linger.Core.Terminal
-import Linger.Core.Title
+import Linger.Display.Title
 import Linger.Runtime.Client
 import Linger.Target.Remote
 
@@ -17,11 +17,11 @@ rebuilding it. The sampler cases instead exercise Client.attach linked into the
 E2E driver with a gated fixture sampler; changing the CLI argument cannot change
 that implementation. `e2e --title-probe` is the child dispatch, not a test suite. -/
 
-namespace E2E.Title
+namespace Linger.Display.Suites.Title
 
 open E2E.Harness
 open Linger.Os.Shell
-open Linger.Core.Status (Status icon)
+open Linger.Display.Status (Status icon)
 open Linger.Core.Terminal.Title (maxChars)
 open Linger.Core.Vt (Vt)
 
@@ -103,7 +103,7 @@ def fixtureSample (dir : String) : IO String := do
       throw (IO.userError "the fixture never released this title sample")
     if serial == 1 then
       throw (IO.userError "fixture title sample failure")
-    return Linger.Core.Status.summary [.wantsYou]
+    return Linger.Display.Status.summary [.wantsYou]
   finally
     IO.FS.writeFile s!"{dir}/sample-finished" (toString serial)
 
@@ -162,10 +162,10 @@ private def attention (e : Env) (unread : Bool) : IO Bool := do
   return code == 0 && settled
 
 /-- This fixture has exactly one possible unread session; its glyph is shared
-with the listing. Summary classification itself is covered by E2E.Status. -/
+with the listing. Summary classification itself is covered by Linger.Display.Suites.Status. -/
 private def expectedTitle (unread : Bool) : String :=
-  let summary := Linger.Core.Status.summary (if unread then [.wantsYou] else [])
-  Linger.Core.Title.compose "title-main" "editor" summary maxChars
+  let summary := Linger.Display.Status.summary (if unread then [.wantsYou] else [])
+  Linger.Display.Title.compose "title-main" "editor" summary maxChars
 
 private def splitCase (e : Env) (c : Client) (seen : IO.Ref Receiver)
     (label startKey endKey : String) (opening closing : ByteArray) (unread : Bool) : IO Unit := do
@@ -207,7 +207,7 @@ private def sampleCase (base : Env) : IO Unit := do
   let self ← IO.appPath
   let attaching := { e with bin := self.toString }
   let titled (summary : String) :=
-    titleIs (Linger.Core.Title.compose name "editor" summary maxChars)
+    titleIs (Linger.Display.Title.compose name "editor" summary maxChars)
   let count (file : String) := counter s!"{e.dir}/{file}"
   try
     let ready ← startProbe e name
@@ -227,7 +227,7 @@ private def sampleCase (base : Env) : IO Unit := do
       expect (unknown && responsive && (← e.info name "clients") == some "1")
           "a failed title sample shows unknown attention and the attachment stays responsive"
       IO.FS.writeFile s!"{e.dir}/release-valid" ""
-      let recovered ← awaitOutput c seen (titled (Linger.Core.Status.summary [.wantsYou]))
+      let recovered ← awaitOutput c seen (titled (Linger.Display.Status.summary [.wantsYou]))
       let answered ← ping c seen
       expect (recovered && answered && (← e.info name "clients") == some "1")
           "a later title sample recovers the attention summary"
@@ -264,6 +264,7 @@ private def sampleCase (base : Env) : IO Unit := do
   finally
     e.killAll #[name]
 
+/-- The title suite, against `binary` when given and the built `linger` otherwise. -/
 def run (binary : Option String := none) : IO UInt32 :=
   Env.suite "title" fun initial => do
     let e := { initial with bin := binary.getD initial.bin }
@@ -309,11 +310,11 @@ def run (binary : Option String := none) : IO UInt32 :=
                   (Linger.Core.Terminal.Title.ansi (expectedTitle true))
         expect (unread && prefixed && repeatCode == 0 && repeated)
             "an identical application OSC title reasserts the shared context and attention suffix"
-        let summary := Linger.Core.Status.summary [.wantsYou]
+        let summary := Linger.Display.Status.summary [.wantsYou]
         let (longCode, _, _) ← e.cli #["send", "title-main", "l"]
         let clipped ←
           awaitOutput c seen
-              (titleIs (Linger.Core.Title.compose "title-main" longEditor summary maxChars))
+              (titleIs (Linger.Display.Title.compose "title-main" longEditor summary maxChars))
         let displayed := (← seen.get).vt.windowTitle
         expect
             (longCode == 0 && clipped && displayed.length == maxChars &&
@@ -346,4 +347,4 @@ def run (binary : Option String := none) : IO UInt32 :=
       e.killAll #["title-main", "title-other"]
     sampleCase e
 
-end E2E.Title
+end Linger.Display.Suites.Title

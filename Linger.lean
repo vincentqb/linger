@@ -11,9 +11,9 @@ public import Linger.Core.Session
 public import Linger.Core.Driver
 public import Linger.Core.Checkpoint
 public import Linger.Target.Remote
-public import Linger.Core.Listing
-public import Linger.Core.Status
-public import Linger.Core.Title
+public import Linger.Display.Listing
+public import Linger.Display.Status
+public import Linger.Display.Title
 public import Linger.Os.Env
 public import Linger.Runtime.Paths
 public import Linger.Runtime.Command

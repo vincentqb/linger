@@ -1,16 +1,16 @@
 module
 
-import Linger.Core.Listing
-import all Linger.Core.Status
-meta import Linger.Core.Listing
+import Linger.Display.Listing
+import all Linger.Display.Status
+meta import Linger.Display.Listing
 
 /-! # Listing tests — the human row is safe and forgery-proof
 
-`Theorems/Listing.lean` proves `humanRow` and `terminalListing false` carry no
+`Linger/Display/Proofs/Listing.lean` proves `humanRow` and `terminalListing false` carry no
 control byte for *any* `info`. These fixtures pin concrete hostile input — the shape a remote
 peer or a crafted checkpoint filename could produce. -/
 
-namespace Linger.Core.Listing.Tests
+namespace Linger.Display.Listing.Tests
 
 /-- A reply carrying an ESC (SGR red), a TAB and a newline in its values, plus a
 label with an ESC — the injection a hostile porcelain or a crafted checkpoint
@@ -52,36 +52,37 @@ example :
       (terminalListing true [hostile]).count 0x0A = 1 := by
   native_decide
 
-example : (rowPieces 5 hostile).map (·.status) = [some Linger.Core.Status.Status.idle, none] := by
+example :
+    (rowPieces 5 hostile).map (·.status) = [some Linger.Display.Status.Status.idle, none] := by
   native_decide
 
 example : nameWidth [[("name", "a")], [("name", "work@host")]] = 9 := by native_decide
 
-open Linger.Core.Status in
+open Linger.Display.Status in
 example :
     [.working, .wantsYou, .unknown, .exitedOk, .exitedBad, .idle, .resumable].map style =
       ["\x1b[36m", "\x1b[33m", "\x1b[33m", "\x1b[32m", "\x1b[31m", "\x1b[2;39m", "\x1b[2;39m"] := by
   native_decide
 
-open Linger.Core.Status in
+open Linger.Display.Status in
 example :
     summary [.working, .exitedBad, .wantsYou, .idle, .wantsYou, .exitedOk, .resumable] =
       "2⣿ 1!" := by
   native_decide
 
-open Linger.Core.Status in
+open Linger.Display.Status in
 example : summary [.unknown, .exitedBad, .wantsYou, .unknown] = "1⣿ 1! 2?" := by native_decide
 
-open Linger.Core.Status in
+open Linger.Display.Status in
 example : summary [.idle, .working, .exitedOk, .resumable] = "" := by native_decide
 
-open Linger.Core.Status in
+open Linger.Display.Status in
 example : summary (List.replicate 12 .unknown) = "12?" := by native_decide
 
-open Linger.Core.Status in
+open Linger.Display.Status in
 example :
     attentionCounts [.unknown, .exitedBad, .wantsYou, .unknown] =
       [(.wantsYou, 1), (.exitedBad, 1), (.unknown, 2)] := by
   native_decide
 
-end Linger.Core.Listing.Tests
+end Linger.Display.Listing.Tests

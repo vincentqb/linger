@@ -8,7 +8,7 @@ import all Theorems.Entry
 import all Linger.Os.Proofs.Env
 import all Theorems.Fuzzy
 import all Theorems.Input
-import all Theorems.Listing
+import all Linger.Display.Proofs.Listing
 import all Linger.Target.Proofs.Name
 import all Theorems.Picker
 import all Linger.Target.Proofs.Remote
@@ -22,8 +22,8 @@ import all Theorems.Render.Tabs
 import all Theorems.Replay
 import all Theorems.Resurrect
 import all Theorems.Session
-import all Theorems.Status
-import all Theorems.Title
+import all Linger.Display.Proofs.Status
+import all Linger.Display.Proofs.Title
 import all Theorems.Vt
 import all Theorems.Vt.Renderable
 import all Theorems.Vt.State
@@ -37,7 +37,7 @@ instead of passing the citation gate. The `rfl` example under Resume ties the
 `Session.resumeVt` those pins spell to `Session.bootVt`, which `Daemon.serve` calls, over
 `Checkpoint.loadBytes`. -/
 
-open Linger.Core Linger.Tools Linger.Os Linger.Target
+open Linger.Core Linger.Tools Linger.Os Linger.Target Linger.Display
 
 -- Checkpoints
 example (c : Checkpoint.Ckpt) (h : Vt.LiveReachableVt c.vt) :

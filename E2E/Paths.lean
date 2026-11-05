@@ -1,6 +1,6 @@
 module
 
-public import E2E.Overview
+public import Linger.Display.Suites.Overview
 import Linger.Runtime.Paths
 import Linger.Target.Name
 
@@ -63,6 +63,6 @@ def run : IO UInt32 := do
   check e "explicitly empty LINGER_DIR remains an override" "" "" (override := some "") (runtime :=
       some runtime) (stateHome := some stateHome) (home := some home)
   -- The overview's verdict counts these checks' failures too.
-  E2E.Overview.run
+  Linger.Display.Suites.Overview.run
 
 end E2E.Paths

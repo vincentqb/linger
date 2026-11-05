@@ -42,6 +42,7 @@ dispatch, and pushes or pull requests that change `c/shim.c` or `./lake`.
 - `Linger/Os/`: the operating system. `Boundary.lean` holds the foreign declarations,
   `Shell.lean` the checked surface callers use, `Env.lean` the environment policies.
 - `Linger/Target/`: session names and remote targets.
+- `Linger/Display/`: session status, titles and listings.
 - Not yet in a component: `Linger/Core/`, pure session and terminal models;
   `Linger/Runtime/`, session IO; `Linger/Tools/` and `Linger/Manager/`, CLI policies
   and their IO executors; `Theorems/`, `Tests/` and `E2E/`.
@@ -102,7 +103,7 @@ Lean erases proofs regardless of file placement.
   socket lives under `/tmp`, through `E2E.Harness.socketRoot` or `socket_root` in
   `scripts/e2e.sh`, since macOS's `TMPDIR` alone takes about 49 of a socket path's 104
   bytes; `scripts/gates.sh` rejects any other hard-coded `/tmp` there and in the CI
-  workflow, except in `E2E/Paths.lean` and `E2E/Overview.lean`, which assert product
+  workflow, except in `E2E/Paths.lean` and `Linger/Display/Suites/Overview.lean`, which assert product
   defaults.
 - No `partial def`, fuel parameter or raised `maxHeartbeats`/`maxRecDepth` in any
   Lean file (`scripts/gates.sh`). Proofs add no axioms:

@@ -3,8 +3,8 @@ module
 public import Linger.Tools.Key
 import Linger.Tools.Fuzzy
 import Linger.Target.Name
-import Linger.Core.Listing
-public import Linger.Core.Status
+import Linger.Display.Listing
+public import Linger.Display.Status
 import Linger.Target.Remote
 import Linger.Core.Vt
 
@@ -116,8 +116,8 @@ private def Item.target : Item → String
 /-- Existing rows use the listing's entire presentation. Creation keeps its
 explicit label and exact target, and has no invented session status. -/
 private def presentation (snapshot : Snapshot) (nameCol : Nat) :
-    Item → List Linger.Core.Listing.RowPiece
-  | .existing target => Linger.Core.Listing.rowPieces nameCol (snapshot.row target)
+    Item → List Linger.Display.Listing.RowPiece
+  | .existing target => Linger.Display.Listing.rowPieces nameCol (snapshot.row target)
   | .create target => [{ text := s!"+ Create {target}".toList }]
 
 /-- A displayed scalar keeps its shared row style independently of query emphasis. -/
@@ -125,12 +125,12 @@ structure HighlightedChar where
   /-- One displayed Unicode scalar. -/
   char : Char
   /-- The status whose badge style it carries; none outside the badge. -/
-  status : Option Linger.Core.Status.Status
+  status : Option Linger.Display.Status.Status
   /-- Whether it receives query emphasis. -/
   matched : Bool
   deriving BEq, Repr
 
-private def markPiece (marks : Array Bool) (piece : Linger.Core.Listing.RowPiece) :
+private def markPiece (marks : Array Bool) (piece : Linger.Display.Listing.RowPiece) :
     List HighlightedChar :=
   piece.text.zipIdx.map fun (char, index) =>
     { char, status := piece.status,

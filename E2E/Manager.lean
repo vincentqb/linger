@@ -2,7 +2,7 @@ module
 
 import Linger.Manager.Picker
 import Linger.Manager.Resurrect
-import Linger.Core.Listing
+import Linger.Display.Listing
 import Linger.Target.Name
 import Linger.Target.Remote
 import Linger.Core.Terminal
@@ -1134,11 +1134,11 @@ private def statusChecks (e : Env) : IO Unit := do
     check e slug
         s!"picker shares listing rows and keeps match underline independent of selection and status ({slug})"
         fun f => do
-        let statuses : List Linger.Core.Status.Status :=
+        let statuses : List Linger.Display.Status.Status :=
           [.working, .wantsYou, .exitedOk, .exitedBad, .idle, .resumable, .unknown]
         let fields :=
           statuses.zipIdx |>.map fun (status, index) =>
-            [("name", s!"case{index}"), ("status", Linger.Core.Status.name status),
+            [("name", s!"case{index}"), ("status", Linger.Display.Status.name status),
               ("cmd", "editor"), ("pid", "123"), ("label.project", "demo"), ("clients", "2")]
         f.listing
             (String.intercalate "\n"
@@ -1156,7 +1156,7 @@ private def statusChecks (e : Env) : IO Unit := do
                   let badge := frame.getCell 4 (4 + index)
                   let name := frame.getCell 6 (4 + index)
                   let expected :=
-                    String.fromUTF8! (ByteArray.mk (Linger.Core.Listing.humanRow 5 info).toArray)
+                    String.fromUTF8! (ByteArray.mk (Linger.Display.Listing.humanRow 5 info).toArray)
                   rowText frame (4 + index) ==
                       (if index == 0 then "  ▸ " else "    ") ++ expected &&
                     badge.pen.fg == (if noColor.isSome then .default else expectedColors[index]!) &&
@@ -1227,7 +1227,7 @@ private def fuzzyChecks (e : Env) : IO Unit := do
       "picker highlights the best competing alignment only in the exact target and clears it with the query"
       fun f => do
       let fields :=
-        [("name", "axab"), ("status", Linger.Core.Status.name .wantsYou), ("cmd", "ab"),
+        [("name", "axab"), ("status", Linger.Display.Status.name .wantsYou), ("cmd", "ab"),
           ("pid", "123"), ("label.project", "ab"), ("clients", "2")]
       f.listing (String.join (fields.map fun (key, value) => s!"{key}\t{value}\n"))
       withPrompt f.picker #[] fun s => do
@@ -1236,7 +1236,7 @@ private def fuzzyChecks (e : Env) : IO Unit := do
           let matched ← s.capture "competing-match"
           let expected :=
             "  ▸ " ++
-              String.fromUTF8! (ByteArray.mk (Linger.Core.Listing.humanRow 4 fields).toArray)
+              String.fromUTF8! (ByteArray.mk (Linger.Display.Listing.humanRow 4 fields).toArray)
           -- The later adjacent pair beats the earliest subsequence.
           -- Matching metadata and the explicit create label stay plain.
           let positions :=
@@ -1270,7 +1270,7 @@ private def fuzzyChecks (e : Env) : IO Unit := do
                 (if index == 0 then "  ▸ " else "    ") ++
                   String.fromUTF8!
                     (ByteArray.mk
-                      (Linger.Core.Listing.humanRow (Linger.Core.Listing.nameWidth fields)
+                      (Linger.Display.Listing.humanRow (Linger.Display.Listing.nameWidth fields)
                           info).toArray)
           let start ← s.mark
           s.text "\x0e"

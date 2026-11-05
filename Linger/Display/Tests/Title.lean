@@ -1,11 +1,11 @@
 module
 
-import Linger.Core.Title
+import Linger.Display.Title
 import Linger.Core.Terminal
-meta import Linger.Core.Title
+meta import Linger.Display.Title
 meta import Linger.Core.Terminal
 
-namespace Linger.Core.Title.Tests
+namespace Linger.Display.Title.Tests
 
 open Linger.Core.Terminal.Title (maxChars)
 
@@ -28,4 +28,4 @@ example :
 
 example : compose "work" "editor" "1!" 9 = "work · 1!" := by native_decide
 
-end Linger.Core.Title.Tests
+end Linger.Display.Title.Tests

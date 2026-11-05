@@ -2,7 +2,7 @@ module
 
 public import Linger.Tools.Picker
 import Linger.Os.Shell
-import Linger.Core.Listing
+import Linger.Display.Listing
 import Linger.Target.Remote
 import Linger.Core.Terminal
 import Linger.Runtime.Command
@@ -37,7 +37,7 @@ private def draw (state : Linger.Tools.Picker.State) (snapshot : Linger.Tools.Pi
     let height := max 1 rows.toNat
     let items := Linger.Tools.Picker.items state.candidates state.query state.allowCreate
     let nameCol :=
-      Linger.Core.Listing.nameWidth (snapshot.candidates.map fun target => [("name", target)])
+      Linger.Display.Listing.nameWidth (snapshot.candidates.map fun target => [("name", target)])
     let mut lines : Array (Array (String × String)) := #[]
     if height ≥ 7 then
       let title :=
@@ -84,7 +84,7 @@ private def draw (state : Linger.Tools.Picker.State) (snapshot : Linger.Tools.Pi
         let chars := Linger.Tools.Picker.highlightedPresentation snapshot nameCol state.query item
         for char in Linger.Tools.Picker.emphasizeCells chars do
           let statusStyle :=
-            if withColor then (char.status.map Linger.Core.Status.style).getD "" else ""
+            if withColor then (char.status.map Linger.Display.Status.style).getD "" else ""
           let emphasis := if char.matched then "\x1b[4m" else ""
           pieces := pieces.push (String.singleton char.char, selection ++ statusStyle ++ emphasis)
         lines := lines.push pieces

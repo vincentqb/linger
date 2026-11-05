@@ -25,7 +25,7 @@ So: do not add a check here claiming to catch B or C. It cannot. -/
 namespace E2E.Watch
 
 open E2E.Harness
-open Linger.Core.Status (Status)
+open Linger.Display.Status (Status)
 
 /-- Saved viewing is a terminal client over one immutable checkpoint, with no
 daemon lifetime. Exercise resize, ownership and chooser behavior independently

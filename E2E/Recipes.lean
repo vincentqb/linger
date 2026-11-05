@@ -129,8 +129,8 @@ source "$argv[1]"; or exit 98
         calls == "TITLE\n")
       "fish recipe preserves the left prompt and title hook and samples nothing when sourced"
   let attention :=
-    Linger.Core.Status.summary [.wantsYou, .unknown, .exitedBad, .wantsYou, .working] ++ "\n"
-  let unknown := Linger.Core.Status.summary [.unknown] ++ "\n"
+    Linger.Display.Status.summary [.wantsYou, .unknown, .exitedBad, .wantsYou, .working] ++ "\n"
+  let unknown := Linger.Display.Status.summary [.unknown] ++ "\n"
   for (context, contextSetup) in
     [("outside", "set -e LINGER_SESSION\n"), ("inside", "set -gx LINGER_SESSION work\n")] do
     for (label, text, err, rc, previous) in
