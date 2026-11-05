@@ -7,15 +7,10 @@ public section
 namespace Linger.Session.Driver
 
 open Linger.Session (State Event Effect step)
-
-/-- A transport operation reports whether its target disconnected; a checkpoint
-reports whether saving failed. Other effects cannot enqueue feedback. -/
-abbrev Reply : Effect → Type
-  | .send .. | .replay .. | .close .. | .checkpoint => Bool
-  | _ => Unit
+open Linger.Terminal.Replay (Plan)
 
 /-- The events an effect's reply feeds back to the session. -/
-def feedback : (eff : Effect) → Reply eff → List Event
+def feedback : (eff : Effect Plan) → Reply eff → List Event
   | .send id _, gone => if gone then [.closed id] else []
   | .replay id _, gone => if gone then [.closed id] else []
   | .close id, gone => if gone then [.closed id] else []
@@ -29,12 +24,12 @@ def eventDepth : Event → Nat
   | _ => 2
 
 /-- A strict upper bound on the depth of the events an effect's reply feeds back. -/
-def effectDepth : Effect → Nat
+def effectDepth : Effect Plan → Nat
   | .send .. | .replay .. | .close .. => 2
   | .checkpoint => 1
   | _ => 0
 
-theorem feedback_depth (eff : Effect) (reply : Reply eff) :
+theorem feedback_depth (eff : Effect Plan) (reply : Reply eff) :
     ∀ ev ∈ feedback eff reply, eventDepth ev < effectDepth eff := by
   cases eff <;> simp [feedback, eventDepth, effectDepth]
 
@@ -50,20 +45,12 @@ theorem step_depth (s : State) (ev : Event) :
     intro eff _
     cases eff <;> simp [effectDepth, eventDepth]
 
-/-- The driver's state between events. -/
-structure Result (World : Type) where
-  /-- The session state. -/
-  st : State
-  /-- The interpreter's world. -/
-  world : World
-  /-- An event's effects requested exit, so no later event is consumed. -/
-  exiting : Bool := false
-
 /-- Execute a finite effect list in order, retaining the proof that each
 feedback event has lower depth than the event that produced this batch. -/
 private def effects {m : Type → Type} [Monad m] {World : Type}
-    (execute : State → World → (eff : Effect) → m (World × Reply eff)) (st : State) (world : World)
-    (depth : Nat) (effs : List Effect) (h : ∀ eff ∈ effs, effectDepth eff ≤ depth) :
+    (execute : State → World → (eff : Effect Plan) → m (World × Reply eff)) (st : State)
+    (world : World) (depth : Nat) (effs : List (Effect Plan))
+    (h : ∀ eff ∈ effs, effectDepth eff ≤ depth) :
     m (World × List { ev : Event // eventDepth ev < depth }) := do
   let (world, reversed) ←
     effs.attach.foldlM
@@ -82,14 +69,14 @@ private def effects {m : Type → Type} [Monad m] {World : Type}
 /-- Settle one event and its feedback before consuming another external event.
 Recursion is justified by feedback depth, never by a retry count or fuel. -/
 private def handle {m : Type → Type} [Monad m] {World : Type}
-    (execute : State → World → (eff : Effect) → m (World × Reply eff)) (r : Result World)
-    (ev : Event) : m (Result World) := do
+    (execute : State → World → (eff : Effect Plan) → m (World × Reply eff)) (r : Result State World)
+    (ev : Event) : m (Result State World) := do
   if r.exiting then
     return r
   let stepped := step r.st ev
   let (world, more) ←
     effects execute stepped.1 r.world (eventDepth ev) stepped.2 (step_depth r.st ev)
-  let next : Result World := { st := stepped.1, world, exiting := stepped.2.contains .exit }
+  let next : Result State World := { st := stepped.1, world, exiting := stepped.2.contains .exit }
   if next.exiting then
     return next
   more.foldlM (fun r follow => handle execute r follow.val) next
@@ -99,8 +86,8 @@ decreasing_by exact follow.property
 /-- The daemon's finite-batch driver, parameterized by its effect interpreter.
 The interpreter owns world state; only `Session.step` owns session state. -/
 def run {m : Type → Type} [Monad m] {World : Type}
-    (execute : State → World → (eff : Effect) → m (World × Reply eff)) (r : Result World) :
-    List Event → m (Result World)
+    (execute : State → World → (eff : Effect Plan) → m (World × Reply eff))
+    (r : Result State World) : List Event → m (Result State World)
   | [] => pure r
   | ev :: rest => do
     if r.exiting then

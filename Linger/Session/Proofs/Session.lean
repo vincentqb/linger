@@ -45,6 +45,7 @@ namespace Linger.Session
 
 open Linger.Terminal
 open Linger.Session.Wire (Msg)
+open Linger.Terminal.Replay (Plan)
 
 attribute [local grind] controlResize resizeOwned resize State.setClient
 
@@ -330,9 +331,20 @@ theorem onMsg_input_readonly (s : State) (c : Client) (bs : List UInt8)
   unfold onMsg
   simp [h]
 
-/-! ## §Bound(session)
+/-! ## §Bound(session) -/
 
-`Bounded`, the composite session bound, is in `Linger/Session/Spec.lean`. -/
+/-- The composite session bound. `Linger.Session.Bounds` (`Linger/Session/Spec.lean`) states
+it through the state's observations; `bounded_iff_bounds` relates the two. -/
+structure Bounded (s : State) : Prop where
+  clientsLe : s.clients.length ≤ maxClients
+  labelsLe : s.labels.length ≤ maxLabels
+  decOk : ∀ c ∈ s.clients, c.decoder.errored = false ∧ c.decoder.buf.length ≤ 4 + Wire.maxPayload
+  scanOk : s.scan.Bounded
+
+/-- The private bound and the specification's agree. -/
+theorem bounded_iff_bounds (s : State) :
+    Bounded s ↔ Bounds State.roster State.labelList State.scanner s :=
+  ⟨fun h => ⟨h.1, h.2, h.3, h.4⟩, fun h => ⟨h.1, h.2, h.3, h.4⟩⟩
 
 /-! ### The roster cap at the door
 
@@ -474,8 +486,8 @@ theorem client?_mem {s : State} {id : Nat} {c : Client} (h : s.client? id = some
 /-- Induct over the actual batch accumulator, including its effects. A handler
 needs to preserve the predicate only for messages in this batch, after the stop
 guards and sender lookup succeed. Skipped messages keep the entire accumulator. -/
-theorem feedMsgs_induct (id : Nat) (msgs : List Msg) (acc : State × List Effect)
-    {P : State × List Effect → Prop}
+theorem feedMsgs_induct (id : Nat) (msgs : List Msg) (acc : State × List (Effect Plan))
+    {P : State × List (Effect Plan) → Prop}
     (pres :
       ∀ acc c m,
         m ∈ msgs →
@@ -498,13 +510,14 @@ theorem feedMsgs_induct (id : Nat) (msgs : List Msg) (acc : State × List Effect
 
 /-- Batch boundaries preserve the exact state and ordered effects, including
 pending stops. Splitting decoded messages never grants a sender new authority. -/
-theorem feedMsgs_append (id : Nat) (before after : List Msg) (acc : State × List Effect) :
+theorem feedMsgs_append (id : Nat) (before after : List Msg) (acc : State × List (Effect Plan)) :
     feedMsgs id (before ++ after) acc = feedMsgs id after (feedMsgs id before acc) :=
   List.foldl_append
 
 /-- Once any prefix requests this sender's close or exit, every suffix is
 inert: the result is exactly the prefix's state and effects. -/
-theorem feedMsgs_stopped_suffix (id : Nat) (before after : List Msg) (acc : State × List Effect)
+theorem feedMsgs_stopped_suffix (id : Nat) (before after : List Msg)
+    (acc : State × List (Effect Plan))
     (h : Effect.close id ∈ (feedMsgs id before acc).2 ∨ Effect.exit ∈ (feedMsgs id before acc).2) :
     feedMsgs id (before ++ after) acc = feedMsgs id before acc := by
   rw [feedMsgs_append]
@@ -515,18 +528,18 @@ theorem feedMsgs_stopped_suffix (id : Nat) (before after : List Msg) (acc : Stat
 
 /-- Once this sender has a close pending, no remaining decoded message changes
 the state or adds an effect. Transport draining does not extend its authority. -/
-theorem feedMsgs_after_close (id : Nat) (msgs : List Msg) (acc : State × List Effect)
+theorem feedMsgs_after_close (id : Nat) (msgs : List Msg) (acc : State × List (Effect Plan))
     (h : Effect.close id ∈ acc.2) : feedMsgs id msgs acc = acc :=
   feedMsgs_stopped_suffix id [] msgs acc (Or.inl h)
 
 /-- Exit stops every remaining decoded command, regardless of sender. -/
-theorem feedMsgs_after_exit (id : Nat) (msgs : List Msg) (acc : State × List Effect)
+theorem feedMsgs_after_exit (id : Nat) (msgs : List Msg) (acc : State × List (Effect Plan))
     (h : Effect.exit ∈ acc.2) : feedMsgs id msgs acc = acc :=
   feedMsgs_stopped_suffix id [] msgs acc (Or.inr h)
 
 /-- Lift a state invariant through the actual message batch. The lookup witness
 lets each invariant use the sender's membership and identity when needed. -/
-theorem feedMsgs_preserves (id : Nat) (msgs : List Msg) (acc : State × List Effect)
+theorem feedMsgs_preserves (id : Nat) (msgs : List Msg) (acc : State × List (Effect Plan))
     {P : State → Prop} (pres : ∀ s c m, s.client? id = some c → P s → P (onMsg s c m).1)
     (h : P acc.1) : P (feedMsgs id msgs acc).1 :=
   feedMsgs_induct id msgs acc (P := fun r => P r.1)
@@ -544,7 +557,7 @@ theorem run_preserves (s : State) (evs : List Event) {P : State → Prop}
       ih (step s ev).1 (fun s e he hs => pres s e (List.mem_cons_of_mem ev he) hs)
         (pres s ev List.mem_cons_self h)
 
-theorem feedMsgs_bounded (id : Nat) (msgs : List Msg) (acc : State × List Effect)
+theorem feedMsgs_bounded (id : Nat) (msgs : List Msg) (acc : State × List (Effect Plan))
     (h : Bounded acc.1) : Bounded (feedMsgs id msgs acc).1 :=
   feedMsgs_preserves id msgs acc
     (fun _ _ m hc hs => onMsg_bounded m (hs.decOk _ (client?_mem hc)) hs) h
@@ -724,7 +737,7 @@ theorem onMsg_lookSeq_le (s : State) (c : Client) (m : Msg) (h : s.lookSeq ≤ s
   unfold onMsg
   grind
 
-theorem feedMsgs_lookSeq_le (id : Nat) (msgs : List Msg) (acc : State × List Effect)
+theorem feedMsgs_lookSeq_le (id : Nat) (msgs : List Msg) (acc : State × List (Effect Plan))
     (h : acc.1.lookSeq ≤ acc.1.outSeq) :
     (feedMsgs id msgs acc).1.lookSeq ≤ (feedMsgs id msgs acc).1.outSeq :=
   feedMsgs_preserves id msgs acc (P := fun s => s.lookSeq ≤ s.outSeq)
@@ -817,7 +830,7 @@ theorem onMsg_other (s : State) (c : Client) (m : Msg) {other : Nat} (h : other 
     | exact twice rfl rfl
 
 /-- …and so does a whole batch of them. -/
-theorem feedMsgs_other (id : Nat) (msgs : List Msg) (acc : State × List Effect) {other : Nat}
+theorem feedMsgs_other (id : Nat) (msgs : List Msg) (acc : State × List (Effect Plan)) {other : Nat}
     (h : other ≠ id) : (feedMsgs id msgs acc).1.client? other = acc.1.client? other := by
   apply feedMsgs_preserves id msgs acc (P := fun s => s.client? other = acc.1.client? other) ?_ rfl
   intro s c m hc hs
@@ -862,12 +875,14 @@ threading and effect order both. Pins the definition: any deviation
 theorem run_eq_foldl (s : State) (evs : List Event) :
     run s evs =
       evs.foldl
-        (fun (acc : State × List Effect) ev => ((step acc.1 ev).1, acc.2 ++ (step acc.1 ev).2))
+        (fun (acc : State × List (Effect Plan)) ev =>
+          ((step acc.1 ev).1, acc.2 ++ (step acc.1 ev).2))
         (s, []) := by
   have hfold :
     ∀ evs s fx,
       evs.foldl
-          (fun (acc : State × List Effect) ev => ((step acc.1 ev).1, acc.2 ++ (step acc.1 ev).2))
+          (fun (acc : State × List (Effect Plan)) ev =>
+            ((step acc.1 ev).1, acc.2 ++ (step acc.1 ev).2))
           (s, fx) =
         ((run s evs).1, fx ++ (run s evs).2) := by
     intro evs
@@ -915,7 +930,13 @@ grid without that assumption smuggling in a side condition.
 
 open Linger.Terminal.Vt (Live LiveReachableVt Renderable)
 
-/-- One event keeps the terminal reachable (`LiveVt`, in `Linger/Session/Spec.lean`). -/
+/-- The daemon's terminal is one a live session can hold. -/
+def LiveVt (s : State) : Prop := LiveReachableVt s.vt
+
+/-- `LiveVt` holds exactly when the terminal the state shows is one a live session can hold. -/
+theorem liveVt_iff (s : State) : LiveVt s ↔ LiveReachableVt s.terminal := Iff.rfl
+
+/-- One event keeps the terminal reachable. -/
 theorem step_vt_live (s : State) (ev : Event) (h : LiveVt s) : LiveVt (step s ev).1 :=
   step_vt_preserves (P := LiveReachableVt) (fun _ cols rows hv => hv.resize cols rows)
     (fun _ bytes hv => hv.feed bytes) s ev h
@@ -958,8 +979,9 @@ then the hypothesis-free form over the term the daemon actually computes. -/
 state a live session can hold. `Checkpoint.load_live` is the whole content; what this adds
 is that `State.boot` does not disturb it — the `take maxLabels` `boot` performs touches the
 labels, never the `Vt`. -/
-theorem liveVt_boot_of_load {l : List UInt8} {c : Checkpoint.Ckpt} (h : Checkpoint.load l = some c)
-    (ls mk : List (String × String)) : LiveVt (State.boot c.vt ls mk) := Checkpoint.load_live h
+theorem liveVt_boot_of_load {l : List UInt8} {c : Checkpoint.Ckpt Vt.Vt}
+    (h : Checkpoint.load l = some c) (ls mk : List (String × String)) :
+    LiveVt (State.boot c.vt ls mk) := Checkpoint.load_live h
 
 /-- **`Daemon.lean`'s `vt0`, as a pure function of the bytes on disk.** The runtime writes
 
@@ -1265,12 +1287,12 @@ def costly (c : Client) : Msg → Bool
 
 /-- A rendered reply frame: within one read, the `output` of a history or screen capture,
 or an `infoReply`. -/
-def rendered : Effect → Bool
+def rendered : Effect Plan → Bool
   | .send _ (.output _) | .send _ (.infoReply _) => true
   | _ => false
 
 /-- A pty resize. -/
-def resizes : Effect → Bool
+def resizes : Effect Plan → Bool
   | .resizePty _ _ => true
   | _ => false
 
@@ -1394,12 +1416,12 @@ theorem onMsg_unresized (s : State) (c : Client) (m : Msg)
 
 /-- Effects a read has emitted before answering a costly request: no rendered frame, and
 no pty resize while the sender is unattached. -/
-def Unanswered (c : Client) (effs : List Effect) : Prop :=
+def Unanswered (c : Client) (effs : List (Effect Plan)) : Prop :=
   effs.all (!rendered ·) = true ∧ (c.attached = false → effs.all (!resizes ·) = true)
 
 /-- Effects around the read's one costly answer: the whole answer to one of the batch's
 messages `msgs`, given to the sender's record `c'` in a state `t`. -/
-def AnsweredOnce (id : Nat) (msgs : List Msg) (c : Client) (effs : List Effect) : Prop :=
+def AnsweredOnce (id : Nat) (msgs : List Msg) (c : Client) (effs : List (Effect Plan)) : Prop :=
   ∃ pre post t c' m,
     m ∈ msgs ∧
       t.client? id = some c' ∧
@@ -1407,7 +1429,7 @@ def AnsweredOnce (id : Nat) (msgs : List Msg) (c : Client) (effs : List Effect) 
       (pre ++ post).all (!rendered ·) ∧ (c.attached = false → (pre ++ post).all (!resizes ·))
 
 /-- A batch keeps the sender's record and its effects in one of the two shapes above. -/
-theorem feedMsgs_one_reply (id : Nat) (msgs : List Msg) (acc : State × List Effect)
+theorem feedMsgs_one_reply (id : Nat) (msgs : List Msg) (acc : State × List (Effect Plan))
     (h :
       ∃ c,
         acc.1.client? id = some c ∧
@@ -1474,8 +1496,8 @@ theorem step_bytes_one_reply (s : State) (id : Nat) (chunk : List UInt8) :
         (((step s (.bytes id chunk)).1.client? id).all (!·.attached) →
           (pre ++ post).all (!resizes ·)) := by
   -- with nothing costly, the effects surround an empty answer
-  have quiet (R : List Effect → Prop) (P : Prop) (effs : List Effect) (hf : effs.all (!rendered ·))
-    (hr : P → effs.all (!resizes ·)) :
+  have quiet (R : List (Effect Plan) → Prop) (P : Prop) (effs : List (Effect Plan))
+    (hf : effs.all (!rendered ·)) (hr : P → effs.all (!resizes ·)) :
     ∃ pre ans post,
       effs = pre ++ ans ++ post ∧
         (ans = [] ∨ R ans) ∧
@@ -1508,7 +1530,7 @@ theorem step_bytes_one_reply (s : State) (id : Nat) (chunk : List UInt8) :
     split
     · have hcl : ∀ e ∈ (closeClient s id).2, e = .checkpoint := by
         unfold closeClient; dsimp only; split <;> simp
-      have hall (p : Effect → Bool) (hp : p (.close id) = false) (hq : p .checkpoint = false) :
+      have hall (p : Effect Plan → Bool) (hp : p (.close id) = false) (hq : p .checkpoint = false) :
         (Effect.close id :: (closeClient s id).2).all (!p ·) := by
         simp only [List.all_cons, hp, Bool.not_false, Bool.true_and, List.all_eq_true]
         intro e he

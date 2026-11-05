@@ -166,3 +166,63 @@ inductive Emits {P : Type} (next : Nat → P → Option (Render.Bytes × P)) (bu
     Emits next budget p (chunk ++ rest)
 
 end Linger.Terminal.Replay
+
+namespace Linger.Terminal.Mediation
+
+open Linger.Terminal.Render
+
+/-- The escape byte. -/
+abbrev ESC : UInt8 := 0x1B
+
+/-- Maximum retained bytes for one possible owned CSI request. -/
+@[expose]
+def csiCap : Nat := 128
+
+/-- Maximum retained bytes for one possible owned OSC request. -/
+@[expose]
+def oscCap : Nat := 256
+
+/-- Maximum retained bytes for one possible owned DCS request. -/
+@[expose]
+def dcsCap : Nat := 2048
+
+/-- The state of the scanner between the pty and the presentation clients. Candidate buffers
+are reversed, making byte-at-a-time accumulation O(1). Passthrough states retain no payload.
+DCS only enters its buffered state after `+q` or `$q`; sixel (`DCS q`) therefore streams
+immediately. -/
+inductive Scan where
+  /-- Outside any sequence: every byte but ESC is released at once. -/
+  | ground
+  /-- After ESC, which is held until the next byte. -/
+  | esc
+  /-- A CSI sequence that may be owned, held within `csiCap` bytes. -/
+  | csi (rev : Bytes)
+  /-- An unowned CSI sequence, released byte by byte until its final byte. -/
+  | csiPass
+  /-- An OSC sequence that may be owned, held within `oscCap` bytes; `escSeen` marks a
+  trailing ESC. -/
+  | osc (rev : Bytes) (escSeen : Bool)
+  /-- An unowned OSC sequence, released byte by byte until BEL or ST. -/
+  | oscPass (escSeen : Bool)
+  /-- After `ESC P`, waiting for the `+` or `$` that may begin an owned request. -/
+  | dcsIntro
+  /-- After `ESC P` and `kind`, waiting for `q`. -/
+  | dcsKind (kind : UInt8)
+  /-- An XTGETTCAP or DECRQSS request held within `dcsCap` bytes; `escSeen` marks an ESC
+  held outside the payload, which may begin ST. -/
+  | dcs (kind : UInt8) (payloadRev : Bytes) (escSeen : Bool)
+  /-- An unowned DCS, SOS, PM or APC string, released byte by byte until ST. -/
+  | strPass (escSeen : Bool)
+  deriving Repr, DecidableEq, Inhabited
+
+/-- The scanner retains at most its caps: the memory bound a session state keeps. -/
+@[expose]
+def Scan.Bounded : Scan → Prop
+  | .csi rev => rev.length ≤ csiCap
+  | .osc rev _ => rev.length ≤ oscCap
+  | .dcs kind payloadRev escSeen =>
+    ([ESC, 0x50, kind, 0x71] ++ payloadRev.reverse ++ (if escSeen then [ESC] else [])).length ≤
+      dcsCap
+  | _ => True
+
+end Linger.Terminal.Mediation

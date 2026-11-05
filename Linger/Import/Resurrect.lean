@@ -2,7 +2,8 @@ module
 
 import Linger.Target.Name
 import Linger.Display.Status
-public import Linger.Session.Checkpoint
+public import Linger.Terminal.Vt
+public import Linger.Session.Spec
 
 public section
 
@@ -201,7 +202,8 @@ private def commandNotice (details : Details) : String :=
 /-- Seed screen and scrollback through the terminal's public parser, and retain
 exact commands and source identity in labels. Quiesce captured controls before
 appending the informational command notice. -/
-def checkpoint (pane : Pane) (contents : Option String) : Linger.Session.Checkpoint.Ckpt :=
+def checkpoint (pane : Pane) (contents : Option String) :
+    Linger.Session.Checkpoint.Ckpt Linger.Terminal.Vt.Vt :=
   {
     vt :=
       (((Linger.Terminal.Vt.Vt.init pane.details.cols pane.details.rows).feed

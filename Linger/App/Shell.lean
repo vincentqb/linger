@@ -11,6 +11,7 @@ import Linger.Terminal.Render
 import Linger.Display.Listing
 import Linger.Os.Shell.Command
 import Linger.Session.Shell.Resume
+import Linger.Terminal.Mediation
 import Std.Async.Signal
 
 public section

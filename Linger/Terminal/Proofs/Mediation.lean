@@ -1,6 +1,7 @@
 module
 
 import all Linger.Terminal.Mediation
+public import Linger.Terminal.Spec
 import all Linger.Terminal.Vt
 import all Linger.Terminal.Render
 import all Linger.Terminal.Proofs.Render

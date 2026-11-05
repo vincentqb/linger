@@ -1,7 +1,8 @@
 module
 
 import Linger.Os.Shell
-public import Linger.Session.Wire
+import Linger.Session.Wire
+public import Linger.Session.Spec
 public import Linger.Terminal.Vt
 import Linger.Os.Env
 import Linger.Terminal.Replay

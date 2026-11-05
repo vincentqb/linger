@@ -4,6 +4,7 @@ import Linger.Os.Shell
 public import Linger.Session.Buf
 import Linger.Session.Driver
 public import Linger.Session
+import Linger.Terminal.Mediation
 import Linger.Os.Env
 import Linger.Session.Shell.Paths
 
@@ -39,6 +40,7 @@ open Linger.Os.Shell
 open Linger.Session (State Event Effect maxClients)
 open Linger.Session.Buf (Buf owedLen bufOffer bufEnqueue bufAdvance followingCap)
 open Linger.Terminal
+open Linger.Terminal.Replay (Plan)
 
 /-- One write attempt for a `Linger.Session.Buf` queue, skipping the `sent` bytes the
 flush loop already got out. The result is `write`'s: `≥ 0` bytes written (0 = would
@@ -262,7 +264,7 @@ def queuePty (rt : Rt) (bytes : List UInt8) : IO Rt := do
 /-- Execute one effect against the world. Its result type admits only the
 feedback that the total driver has proved will terminate. Session state is
 read-only here; the driver supplies the state after the current event. -/
-private def executeEffect (st : State) (rt : Rt) : (eff : Effect) → IO (Rt × Driver.Reply eff)
+private def executeEffect (st : State) (rt : Rt) : (eff : Effect Plan) → IO (Rt × Driver.Reply eff)
   | .send id m => do
     match rt.conn? (UInt32.ofNat id) with
     | none =>
@@ -341,7 +343,7 @@ private def executeEffect (st : State) (rt : Rt) : (eff : Effect) → IO (Rt × 
     return (rt, ())
 
 /-- Execute an isolated effect, using the driver's typed feedback policy. -/
-def runEffect (rt : Rt) (eff : Effect) : IO (Rt × List Event) := do
+def runEffect (rt : Rt) (eff : Effect Plan) : IO (Rt × List Event) := do
   let (next, reply) ← executeEffect rt.st rt eff
   return ({ next with exiting := rt.exiting || eff == .exit }, Driver.feedback eff reply)
 

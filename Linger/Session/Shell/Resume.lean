@@ -33,7 +33,7 @@ def saveCkpt (name : String) (st : State) : IO Unit := do
     | none =>
       pure ""
   let cwd := if live.isEmpty then (st.metaKv.lookup "start_dir").getD "" else live
-  let ck : Ckpt := { vt := st.vt, cwd, labels := st.labels }
+  let ck : Ckpt Linger.Terminal.Vt.Vt := { vt := st.vt, cwd, labels := st.labels }
   let bytes := saveBytes ck
   let tmp := path ++ ".tmp"
   IO.FS.writeBinFile tmp bytes

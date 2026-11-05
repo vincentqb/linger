@@ -8,7 +8,8 @@ import Linger.Session.Checkpoint
 
 open Linger.Session.Checkpoint
 
-example (c : Ckpt) : Option Ckpt := loadBytes (saveBytes c)
+example (c : Ckpt Linger.Terminal.Vt.Vt) : Option (Ckpt Linger.Terminal.Vt.Vt) :=
+  loadBytes (saveBytes c)
 
 example : List UInt8 := magic
 

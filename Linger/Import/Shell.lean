@@ -1,6 +1,7 @@
 module
 
 import Linger.Import.Resurrect
+import Linger.Session.Checkpoint
 import Linger.Os.Shell
 import Linger.Display.Listing
 import Linger.Session.Shell.Paths

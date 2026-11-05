@@ -585,7 +585,7 @@ theorem stripMagic_magic (p : List UInt8) : stripMagic (magic ++ p) = some p := 
 /-- Acceptance at the file boundary preserves the checked state and parser
 reset established by `rVt`. This applies to any bytes, including encodings that
 were not produced by `save`. -/
-theorem load_accepted {l : List UInt8} {c : Ckpt} (h : load l = some c) :
+theorem load_accepted {l : List UInt8} {c : Ckpt Vt.Vt} (h : load l = some c) :
     LiveReachableVt c.vt ∧ c.vt.quiesce = c.vt := by
   simp only [load, Option.bind_eq_bind, Option.bind_eq_some_iff] at h
   obtain ⟨_, -, ⟨vt, _⟩, hvt, _, -, _, -, h⟩ := h
@@ -598,7 +598,7 @@ theorem load_accepted {l : List UInt8} {c : Ckpt} (h : load l = some c) :
 /-- **The top-level no-forge claim**, and the one the runtime is entitled to lean on: a
 checkpoint that loads at all loads to a `Good` screen, so the `clampDim` the daemon applies
 before `spawnPty` cannot change a loaded screen's dimensions. -/
-theorem load_good {l : List UInt8} {c : Ckpt} (h : load l = some c) : Good c.vt :=
+theorem load_good {l : List UInt8} {c : Ckpt Vt.Vt} (h : load l = some c) : Good c.vt :=
   good_of_liveReachable (load_accepted h).1
 
 /-- **The top-level shape claim, for any byte string — finding R2's payoff.** A checkpoint
@@ -610,7 +610,7 @@ stated over a hypothesis: `Linger/Session/Proofs/Resume.lean`'s `resume_grid_of_
 `resume_tabs_of_load` / `resume_sb_of_load` need no hypothesis at all beyond
 `load l = some c`, where their `save`-side twins must ask for `Renderable` because their
 subject is `save`'s input. -/
-theorem load_shape {l : List UInt8} {c : Ckpt} (h : load l = some c) :
+theorem load_shape {l : List UInt8} {c : Ckpt Vt.Vt} (h : load l = some c) :
     Renderable c.vt ∧ TabsOk c.vt := by
   have hlive := (load_accepted h).1
   exact ⟨renderable_of_liveReachable hlive, tabsOk_of_liveReachable hlive⟩
@@ -619,13 +619,13 @@ theorem load_shape {l : List UInt8} {c : Ckpt} (h : load l = some c) :
 screen. Named as its own claim because that is the property `Render.restore`'s theorems ask
 for, and because before R2 it was false — refutably, from one flipped byte of a real
 checkpoint. -/
-theorem load_renderable {l : List UInt8} {c : Ckpt} (h : load l = some c) : Renderable c.vt :=
+theorem load_renderable {l : List UInt8} {c : Ckpt Vt.Vt} (h : load l = some c) : Renderable c.vt :=
   (load_shape h).1
 
 /-- …and the ruler, which `Renderable` does not carry (`Render.restore_tabs_any`'s
 `hvtabs`, `Resume.resume_tabs`'s). Before R2 a checkpoint could name a ruler of any length
 at all. -/
-theorem load_tabsOk {l : List UInt8} {c : Ckpt} (h : load l = some c) : TabsOk c.vt :=
+theorem load_tabsOk {l : List UInt8} {c : Ckpt Vt.Vt} (h : load l = some c) : TabsOk c.vt :=
   (load_shape h).2
 
 /-- **The top-level reachability claim: a checkpoint that loads loads to a state a live
@@ -643,15 +643,15 @@ the shape claims beneath it stop being about fresh boots only. That is the whole
 on purpose: its subject is `save`'s **input**, the state the daemon holds, which reaches
 the decoder only through `load_save`'s own conclusion (the circularity SCRATCHPAD.md
 measured). `load_live` is the tool for the other direction — `load`'s output. -/
-theorem load_live {l : List UInt8} {c : Ckpt} (h : load l = some c) : LiveReachableVt c.vt :=
+theorem load_live {l : List UInt8} {c : Ckpt Vt.Vt} (h : load l = some c) : LiveReachableVt c.vt :=
   (load_accepted h).1
 
 /-- The reader consumes a complete checkpoint, rejecting every nonempty suffix
 after a valid saved record. This also rules out silently accepting concatenated
 checkpoints. All parser combinators must preserve their unread suffix for this
 claim to reach the final consumption check. -/
-theorem load_save_append (c : Ckpt) (h : Good c.vt) (hren : Renderable c.vt) (htabs : TabsOk c.vt)
-    (rest : List UInt8) :
+theorem load_save_append (c : Ckpt Vt.Vt) (h : Good c.vt) (hren : Renderable c.vt)
+    (htabs : TabsOk c.vt) (rest : List UInt8) :
     load (save c ++ rest) = if rest = [] then some { c with vt := c.vt.quiesce } else none := by
   unfold load save
   simp only [List.append_assoc]
@@ -670,7 +670,7 @@ Three hypotheses, all of them the decoder's acceptance seen from this side (`rt_
 `Good` since Step 2, `Renderable` and `TabsOk` since R2. `load_save_live` below is the same
 claim with all three discharged from reachability, which is the answer to "what does this
 cost a real session". -/
-theorem load_save (c : Ckpt) (h : Good c.vt) (hren : Renderable c.vt) (htabs : TabsOk c.vt) :
+theorem load_save (c : Ckpt Vt.Vt) (h : Good c.vt) (hren : Renderable c.vt) (htabs : TabsOk c.vt) :
     load (save c) = some { c with vt := c.vt.quiesce } := by
   simpa using load_save_append c h hren htabs []
 
@@ -679,7 +679,7 @@ can hold is `LiveReachableVt`, and that discharges `Good`, `Renderable` and `Tab
 once. Stated because R2 added two binders to `load_save` and a reader is entitled to see,
 in one place, that the checkpoint every daemon writes still loads — the alternative is
 three lemma names in a docstring and a reader taking them on trust. -/
-theorem load_save_live (c : Ckpt) (h : LiveReachableVt c.vt) :
+theorem load_save_live (c : Ckpt Vt.Vt) (h : LiveReachableVt c.vt) :
     load (save c) = some { c with vt := c.vt.quiesce } :=
   load_save c (good_of_liveReachable h) (renderable_of_liveReachable h) (tabsOk_of_liveReachable h)
 
@@ -687,8 +687,8 @@ theorem load_save_live (c : Ckpt) (h : LiveReachableVt c.vt) :
 cwd and labels. Its parser is already quiescent, so subsequent checkpoints do not
 lose any further state. This does not assert that the original bytes were a
 canonical encoding. -/
-theorem load_resave {l : List UInt8} {c : Ckpt} (h : load l = some c) : load (save c) = some c := by
-  rw [load_save_live c (load_accepted h).1, (load_accepted h).2]
+theorem load_resave {l : List UInt8} {c : Ckpt Vt.Vt} (h : load l = some c) :
+    load (save c) = some c := by rw [load_save_live c (load_accepted h).1, (load_accepted h).2]
 
 /-- **The tag `save` writes.** Pinned as its own claim because the tag is the one part
 of a checkpoint another program reads before trusting the rest, and because a wrong
@@ -701,12 +701,12 @@ it existed to migrate files written before the rename, `save` had already been w
 Anyone who needs to read one can check out `e1ac562`, where the reader and its two
 theorems (`load_legacy_save`, `save_no_legacy`) are green — that is the escape hatch,
 and it is cheaper than carrying a branch for a file nobody has. -/
-theorem save_tag (c : Ckpt) : (save c).take 5 = magic := by simp [save, magic]
+theorem save_tag (c : Ckpt Vt.Vt) : (save c).take 5 = magic := by simp [save, magic]
 
 /-- And when the parser is already quiescent, the round-trip is exact. `hren`/`htabs` are
 `load_save`'s, hence `ofDecoded_of_good`'s; see there for why they are not a weakening. -/
-theorem load_save_exact (c : Ckpt) (hg : Good c.vt) (hren : Renderable c.vt) (htabs : TabsOk c.vt)
-    (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0) (ha : c.vt.u8acc = 0) :
+theorem load_save_exact (c : Ckpt Vt.Vt) (hg : Good c.vt) (hren : Renderable c.vt)
+    (htabs : TabsOk c.vt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0) (ha : c.vt.u8acc = 0) :
     load (save c) = some c := by
   rw [load_save c hg hren htabs]
   congr 1
@@ -726,7 +726,8 @@ The `Ckpt` here is a *forged* one — a `Vt` no `init`/`resize`/`feed` path prod
 is reachable in this file only because the seal's friend import is. That is the point:
 the record on disk is the one input an attacker controls, and `save` of such a state is
 byte-for-byte what a hostile file looks like. -/
-theorem load_save_none_of_cols_zero (c : Ckpt) (h : c.vt.cols = 0) : load (save c) = none := by
+theorem load_save_none_of_cols_zero (c : Ckpt Vt.Vt) (h : c.vt.cols = 0) :
+    load (save c) = none := by
   unfold load save
   simp only [List.append_assoc]
   rw [stripMagic_magic]
@@ -790,7 +791,7 @@ theorem rleB_appends {α : Type} [DecidableEq α] {f : ByteArray → α → Byte
 theorem rowB_appends : Appends rowB wRow := fun acc r => rleB_appends cellB_appends acc r.toList
 
 /-- **The byte-array writer is `save`**: the same `"LNGR"` v1 record, byte for byte. -/
-theorem saveBytes_eq (c : Ckpt) : saveBytes c = ⟨(save c).toArray⟩ := by
+theorem saveBytes_eq (c : Ckpt Vt.Vt) : saveBytes c = ⟨(save c).toArray⟩ := by
   have h : (saveBytes c).data.toList = save c := by
     unfold saveBytes save wVt wRing wAlt
     dsimp only
@@ -1047,19 +1048,19 @@ The runtime writes with `saveBytes` and reads with `loadBytes`; `saveBytes_eq` a
 `Session.liveReachableVt_resumeVt` rests on `loadBytes_live`. -/
 
 /-- What `saveBytes` writes of a live state, `loadBytes` reads back with its parser quiesced. -/
-theorem loadBytes_saveBytes_live (c : Ckpt) (h : LiveReachableVt c.vt) :
+theorem loadBytes_saveBytes_live (c : Ckpt Vt.Vt) (h : LiveReachableVt c.vt) :
     loadBytes (saveBytes c) = some { c with vt := c.vt.quiesce } := by
   rw [loadBytes_eq, saveBytes_eq]
   exact load_save_live c h
 
 /-- A file `loadBytes` accepts saves and loads again exactly. -/
-theorem loadBytes_resave {b : ByteArray} {c : Ckpt} (h : loadBytes b = some c) :
+theorem loadBytes_resave {b : ByteArray} {c : Ckpt Vt.Vt} (h : loadBytes b = some c) :
     loadBytes (saveBytes c) = some c := by
   rw [loadBytes_eq, saveBytes_eq]
   exact load_resave (by rwa [loadBytes_eq] at h)
 
 /-- Every file `loadBytes` accepts holds a state a live session can hold. -/
-theorem loadBytes_live {b : ByteArray} {c : Ckpt} (h : loadBytes b = some c) :
+theorem loadBytes_live {b : ByteArray} {c : Ckpt Vt.Vt} (h : loadBytes b = some c) :
     LiveReachableVt c.vt := load_live (by rwa [loadBytes_eq] at h)
 
 end Linger.Session.Checkpoint

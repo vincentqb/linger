@@ -84,7 +84,8 @@ private def Fixture.start (f : Fixture) (name : String) (dir : System.FilePath) 
     throw (IO.userError s!"session did not start in {dir}: {name}: {err}")
 
 private def Fixture.seed (f : Fixture) (name cwd : String) : IO Unit := do
-  let ck : Ckpt := { vt := Linger.Terminal.Vt.Vt.init 20 5, cwd, labels := [] }
+  let ck : Ckpt Linger.Terminal.Vt.Vt :=
+    { vt := Linger.Terminal.Vt.Vt.init 20 5, cwd, labels := [] }
   IO.FS.writeBinFile (System.FilePath.mk f.env.dir / s!"{name}.ckpt") (saveBytes ck)
 
 private def Fixture.importText (f : Fixture) (text : String) : IO (UInt32 × String × String) := do

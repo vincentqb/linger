@@ -22,13 +22,15 @@ namespace Linger.Session.Tests
 open Linger.Terminal
 open Linger.Terminal.Mediation
 open Linger.Session.Wire (Msg encode)
+open Linger.Terminal.Replay (Plan)
 
 def s0 : State := { vt := Vt.Vt.init 20 5, metaKv := [("name", "t")] }
 
 /-- Run a list of events, collecting effects — the Core `run` (so every
 scenario below concretely pins its state threading + effect order),
 with the test-friendly argument order. -/
-def run (evs : List Event) (s : State := s0) : State × List Effect := Linger.Session.run s evs
+def run (evs : List Event) (s : State := s0) : State × List (Effect Plan) :=
+  Linger.Session.run s evs
 
 /-- Attach: client connects, sends attach frame, gets a restore
 (output frames) and the pty is resized. -/
@@ -58,14 +60,14 @@ example :
        && ((s1.vt.getRow 0).toList.take 5 == (s2.vt.getRow 0).toList.take 5)) = true := by
   native_decide
 
-def ptyWrites (effs : List Effect) : List (List UInt8) :=
+def ptyWrites (effs : List (Effect Plan)) : List (List UInt8) :=
   effs.filterMap
     (fun e =>
       match e with
       | .writePty bs => some bs
       | _ => none)
 
-def ptyResizes (effs : List Effect) : List (UInt32 × UInt32) :=
+def ptyResizes (effs : List (Effect Plan)) : List (UInt32 × UInt32) :=
   effs.filterMap
     (fun e =>
       match e with
@@ -156,13 +158,13 @@ def largeInfoLabels (count : Nat) : List (String × String) :=
   let value := String.ofList (List.replicate (Wire.maxPayload / 2) 'x')
   (List.range count).map (fun i => (toString i, value))
 
-def storeInfoLabels (labels : List (String × String)) : State × List Effect :=
+def storeInfoLabels (labels : List (String × String)) : State × List (Effect Plan) :=
   run
     (.connected 1 ::
       labels.map (fun (k, v) => .bytes 1 (encode (.labelSet s!"{k}={v}".toUTF8.toList))))
     (State.boot (Vt.Vt.init 20 5) [] [("name", "t")])
 
-def infoReplies (effs : List Effect) : List Msg :=
+def infoReplies (effs : List (Effect Plan)) : List Msg :=
   effs.filterMap
     (fun e =>
       match e with

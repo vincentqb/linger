@@ -25,23 +25,11 @@ namespace Linger.Terminal.Mediation
 
 open Linger.Terminal.Vt Linger.Terminal.Render
 
-/-- The escape byte. -/
-abbrev ESC : UInt8 := 0x1B
-
 /-- The bell byte, which also terminates OSC. -/
 abbrev BEL : UInt8 := 0x07
 
 /-- The final byte of the string terminator `ESC \`. -/
 abbrev STFinal : UInt8 := 0x5C
-
-/-- Maximum retained bytes for one possible owned CSI request. -/
-def csiCap : Nat := 128
-
-/-- Maximum retained bytes for one possible owned OSC request. -/
-def oscCap : Nat := 256
-
-/-- Maximum retained bytes for one possible owned DCS request. -/
-def dcsCap : Nat := 2048
 
 /-! ## Exact profile replies -/
 
@@ -161,34 +149,6 @@ private def classifyOsc (seq : Bytes) : Decision :=
 
 /-! ## Bounded scanner -/
 
-/-- Candidate buffers are reversed, making byte-at-a-time accumulation O(1).
-Passthrough states retain no payload. DCS only enters its buffered state after
-`+q` or `$q`; sixel (`DCS q`) therefore streams immediately. -/
-inductive Scan where
-  /-- Outside any sequence: every byte but ESC is released at once. -/
-  | ground
-  /-- After ESC, which is held until the next byte. -/
-  | esc
-  /-- A CSI sequence that may be owned, held within `csiCap` bytes. -/
-  | csi (rev : Bytes)
-  /-- An unowned CSI sequence, released byte by byte until its final byte. -/
-  | csiPass
-  /-- An OSC sequence that may be owned, held within `oscCap` bytes; `escSeen` marks a
-  trailing ESC. -/
-  | osc (rev : Bytes) (escSeen : Bool)
-  /-- An unowned OSC sequence, released byte by byte until BEL or ST. -/
-  | oscPass (escSeen : Bool)
-  /-- After `ESC P`, waiting for the `+` or `$` that may begin an owned request. -/
-  | dcsIntro
-  /-- After `ESC P` and `kind`, waiting for `q`. -/
-  | dcsKind (kind : UInt8)
-  /-- An XTGETTCAP or DECRQSS request held within `dcsCap` bytes; `escSeen` marks an ESC
-  held outside the payload, which may begin ST. -/
-  | dcs (kind : UInt8) (payloadRev : Bytes) (escSeen : Bool)
-  /-- An unowned DCS, SOS, PM or APC string, released byte by byte until ST. -/
-  | strPass (escSeen : Bool)
-  deriving Repr, DecidableEq, Inhabited
-
 /-- Bytes retained but not yet sent to presentation clients. -/
 private def Scan.pending : Scan → Bytes
   | .esc => [ESC]
@@ -199,15 +159,6 @@ private def Scan.pending : Scan → Bytes
   | .dcs kind payloadRev escSeen =>
     [ESC, 0x50, kind, 0x71] ++ payloadRev.reverse ++ (if escSeen then [ESC] else [])
   | _ => []
-
-/-- The sole memory invariant stored by `Session.State`. -/
-def Scan.Bounded : Scan → Prop
-  | .csi rev => rev.length ≤ csiCap
-  | .osc rev _ => rev.length ≤ oscCap
-  | .dcs kind payloadRev escSeen =>
-    ([ESC, 0x50, kind, 0x71] ++ payloadRev.reverse ++ (if escSeen then [ESC] else [])).length ≤
-      dcsCap
-  | _ => True
 
 /-- One scanner step: the next state, bytes released to clients and replies to the child. -/
 structure ScanStep where

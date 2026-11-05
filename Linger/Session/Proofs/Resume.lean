@@ -71,7 +71,7 @@ claim, or whose tab ruler is not the width of its screen. This claim does not re
 — that is the cost the mirror imposes, named here rather than left for a reader to
 discover, and `Vt.renderable_of_liveReachable`/`Vt.tabsOk_of_liveReachable` discharge both
 for any live session (`Checkpoint.load_save_live`). -/
-theorem resume_quiesced_any (c : Ckpt) (w : Vt.Vt) (hgood : Vt.Good c.vt)
+theorem resume_quiesced_any (c : Ckpt Vt.Vt) (w : Vt.Vt) (hgood : Vt.Good c.vt)
     (hren : Vt.Renderable c.vt) (htabs : Vt.TabsOk c.vt) :
     ∃ c',
       load (save c) = some c' ∧
@@ -85,8 +85,8 @@ client's emulator of the session's size, not only a fresh one. Of the session's 
 `Render.restore_cursor_any` needs only DECOM off; `Good w` is what `dims_feed` needs of the
 receiver, and every client's emulator satisfies it. `hren`/`htabs` are the round trip's: see
 `resume_quiesced_any`. -/
-theorem resume_cursor_any (c : Ckpt) (w : Vt.Vt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0)
-    (ha : c.vt.u8acc = 0) (hgood : Vt.Good c.vt) (hren : Vt.Renderable c.vt)
+theorem resume_cursor_any (c : Ckpt Vt.Vt) (w : Vt.Vt) (h : c.vt.pstate = .ground)
+    (h8 : c.vt.u8need = 0) (ha : c.vt.u8acc = 0) (hgood : Vt.Good c.vt) (hren : Vt.Renderable c.vt)
     (htabs : Vt.TabsOk c.vt) (hgw : Vt.Good w) (hcols : w.cols = c.vt.cols)
     (hrows : w.rows = c.vt.rows) (ho : c.vt.modes.origin = false) :
     load (save c) = some c ∧
@@ -106,7 +106,7 @@ dispatches on the alt flag) and for **any** height, the one-row screen included.
 `htabs`, which the round-trip conjunct now needs (`Checkpoint.load_save_exact`). And the
 other direction is where R2 pays: `resume_grid_of_load` below is this claim's conclusion
 over an arbitrary byte string with **no** hypotheses at all. -/
-theorem resume_grid (c : Ckpt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0)
+theorem resume_grid (c : Ckpt Vt.Vt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0)
     (ha : c.vt.u8acc = 0) (hgood : Vt.Good c.vt) (hren : Vt.Renderable c.vt)
     (htabs : Vt.TabsOk c.vt) :
     load (save c) = some c ∧
@@ -120,7 +120,7 @@ theorem resume_grid (c : Ckpt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0
 /-- Non-vacuity: a real 80×24 checkpoint satisfies every hypothesis of `resume_grid`, so the
 theorem is not vacuously true. -/
 example :
-    ∃ c : Ckpt,
+    ∃ c : Ckpt Vt.Vt,
       c.vt.pstate = .ground ∧
         c.vt.u8need = 0 ∧ c.vt.u8acc = 0 ∧ Vt.Good c.vt ∧ Vt.Renderable c.vt ∧ Vt.TabsOk c.vt :=
   ⟨{ vt := Vt.Vt.init 80 24, cwd := "", labels := [] }, rfl, rfl, rfl, Vt.good_init 80 24,
@@ -136,7 +136,7 @@ subject is `save`'s input.
 
 `hren` is R2's one added binder on this claim, and it is the round trip's rather than the
 ruler's (`Checkpoint.load_save_exact`). -/
-theorem resume_tabs (c : Ckpt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0)
+theorem resume_tabs (c : Ckpt Vt.Vt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0)
     (ha : c.vt.u8acc = 0) (hgood : Vt.Good c.vt) (hren : Vt.Renderable c.vt)
     (hvtabs : c.vt.tabs.size = c.vt.cols) :
     load (save c) = some c ∧
@@ -172,7 +172,7 @@ cannot restore one.
 `hren` was already present. Note what R2 did **not** reach: the ring's own rows. `Vt.resize`
 leaves them at their old width, so no decoder may demand `RowOk v.cols` of them — see
 `Render.restore_sb_exact`'s `hrok`, which stays unreachable from disk by construction. -/
-theorem resume_sb (c : Ckpt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0)
+theorem resume_sb (c : Ckpt Vt.Vt) (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0)
     (ha : c.vt.u8acc = 0) (hgood : Vt.Good c.vt) (hren : Vt.Renderable c.vt)
     (htabs : Vt.TabsOk c.vt) (hne : (Render.sbRows c.vt).isEmpty = false) :
     load (save c) = some c ∧
@@ -217,7 +217,7 @@ so it was not made. -/
 emulator of the checkpoint's size, reproduces the checkpoint's screen cell for cell.
 `Checkpoint.load_good` and `Checkpoint.load_renderable` discharge every hypothesis
 `resume_grid` has to ask for. -/
-theorem resume_grid_of_load {l : List UInt8} {c : Ckpt} (h : load l = some c) :
+theorem resume_grid_of_load {l : List UInt8} {c : Ckpt Vt.Vt} (h : load l = some c) :
     ((Vt.Vt.init c.vt.cols c.vt.rows).feed (Render.restore c.vt)).grid = c.vt.grid :=
   Render.restore_grid_any c.vt (Vt.Vt.init c.vt.cols c.vt.rows) (Vt.good_init _ _)
     (Vt.renderable_init _ _) (Render.init_dims _ (Checkpoint.load_good h)).1
@@ -226,7 +226,7 @@ theorem resume_grid_of_load {l : List UInt8} {c : Ckpt} (h : load l = some c) :
 /-- **§Resume (tab ruler), from disk.** The ruler half, likewise —
 `Checkpoint.load_tabsOk` is the hypothesis `resume_tabs` has to ask for, and it did not
 exist before R2: a checkpoint could name a ruler of any length at all. -/
-theorem resume_tabs_of_load {l : List UInt8} {c : Ckpt} (h : load l = some c) :
+theorem resume_tabs_of_load {l : List UInt8} {c : Ckpt Vt.Vt} (h : load l = some c) :
     ((Vt.Vt.init c.vt.cols c.vt.rows).feed (Render.restore c.vt)).tabs = c.vt.tabs :=
   Render.restore_tabs_any c.vt (Vt.Vt.init c.vt.cols c.vt.rows) (Vt.good_init _ _)
     (Render.init_dims _ (Checkpoint.load_good h)).1 (Checkpoint.load_tabsOk h)
@@ -235,7 +235,7 @@ theorem resume_tabs_of_load {l : List UInt8} {c : Ckpt} (h : load l = some c) :
 `resume_sb` has (an empty history leaves the client's own scrollback alone,
 `Render.restore_sb_keeps_of_empty`) and is not a hypothesis the decoder could discharge —
 it is a property of the checkpoint's content, not of its well-formedness. -/
-theorem resume_sb_of_load {l : List UInt8} {c : Ckpt} (h : load l = some c)
+theorem resume_sb_of_load {l : List UInt8} {c : Ckpt Vt.Vt} (h : load l = some c)
     (hne : (Render.sbRows c.vt).isEmpty = false) :
     ((Vt.Vt.init c.vt.cols c.vt.rows).feed (Render.restore c.vt)).sb.toList =
       (Render.sbRows c.vt).toList :=

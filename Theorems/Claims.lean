@@ -1,6 +1,7 @@
 module
 
 public import Linger.Session
+public import Linger.Session.Buf
 public import Linger.Session.Checkpoint
 public import Linger.Session.Driver
 public import Linger.Session.Spec
@@ -108,7 +109,7 @@ theorem leave_canonical_all (w : Vt.Vt) (h2 : 2 ≤ w.rowCount) :
   obtain ⟨ground, settled, _⟩ := Render.leave_boundary_title w
   exact ⟨by simp [Vt.Vt.atBoundary, ground, settled], modes, sticky, pen, title⟩
 
-theorem loadBytes_saveBytes_live (c : Checkpoint.Ckpt) (h : Vt.LiveReachableVt c.vt) :
+theorem loadBytes_saveBytes_live (c : Checkpoint.Ckpt Vt.Vt) (h : Vt.LiveReachableVt c.vt) :
     Checkpoint.loadBytes (Checkpoint.saveBytes c) = some { c with vt := c.vt.quiesce } :=
   Checkpoint.loadBytes_saveBytes_live c h
 
@@ -117,13 +118,19 @@ theorem liveReachableVt_resumeVt (b : ByteArray) :
   Session.liveReachableVt_resumeVt b
 
 theorem run_total_safe {World ε : Type}
-    (execute : State → World → (eff : Effect) → Except ε (World × Driver.Reply eff))
-    (hw : Driver.Responds execute) (r : Driver.Result World) (events : List Event)
-    (hb : Bounded r.st) (hlive : LiveVt r.st) :
-    ∃ out, Driver.run execute r events = .ok out ∧ Bounded out.st ∧ LiveVt out.st := by
-  obtain ⟨out, ok, ⟨bounded, _⟩, live⟩ :=
-    Driver.run_total_safe execute hw r events ⟨hb, Vt.good_of_liveReachable hlive⟩ hlive
-  exact ⟨out, ok, bounded, live⟩
+    (execute : State → World → (eff : Effect Replay.Plan) → Except ε (World × Driver.Reply eff))
+    (hw : Driver.Responds execute) (r : Driver.Result State World) (events : List Event)
+    (hb : Bounds State.roster State.labelList State.scanner r.st)
+    (hlive : Vt.LiveReachableVt r.st.terminal) :
+    ∃ out,
+      Driver.run execute r events = .ok out ∧
+        Bounds State.roster State.labelList State.scanner out.st ∧
+        Vt.LiveReachableVt out.st.terminal := by
+  have live : LiveVt r.st := (Session.liveVt_iff _).mpr hlive
+  obtain ⟨out, ok, ⟨bounded, _⟩, kept⟩ :=
+    Driver.run_total_safe execute hw r events
+      ⟨(Session.bounded_iff_bounds _).mpr hb, Vt.good_of_liveReachable live⟩ live
+  exact ⟨out, ok, (Session.bounded_iff_bounds _).mp bounded, (Session.liveVt_iff _).mp kept⟩
 
 theorem run_bytes_isolates (s : State) (id : Nat) (chunks : List (List UInt8)) {other : Nat}
     (h : other ≠ id) : (run s (chunks.map (Event.bytes id))).1.client? other = s.client? other :=

@@ -8,22 +8,27 @@ record rewriters that could plant a client the daemon never admitted. Keep this
 separate from the friend-import fixtures in `Linger.Session.Tests.Session`. -/
 
 open Linger Linger.Session Linger.Terminal
+open Linger.Terminal.Replay (Plan)
 
-example (vt : Vt.Vt) : List Effect := (run (State.boot vt [] []) [.connected 0, .tick 0]).2
+example (vt : Vt.Vt) : List (Effect Plan) := (run (State.boot vt [] []) [.connected 0, .tick 0]).2
 
 -- The roster and the scanner are public-read, for the session bounds; writing either needs the
 -- private constructor.
 example (s : State) : List Client × Mediation.Scan := (s.clients, s.scan)
 
-/-- constructor for `State` is marked as private -/
+-- The observations the headline theorems name.
+example (s : State) : Vt.Vt × List Client × List (String × String) × Mediation.Scan :=
+  (s.terminal, s.roster, s.labelList, s.scanner)
+
+/-- constructor for `StateRec` is marked as private -/
 #guard_msgs (error, substring := true) in
 example (s : State) : State := { s with clients := [] }
 
-/-- does not contain `Linger.Session.State.setClient` -/
+/-- does not contain `Linger.Session.StateRec.setClient` -/
 #guard_msgs (error, substring := true) in
 example (s : State) : State := s.setClient { id := 0, decoder := { errored := true } }
 
-/-- does not contain `Linger.Session.State.dropClient` -/
+/-- does not contain `Linger.Session.StateRec.dropClient` -/
 #guard_msgs (error, substring := true) in
 example (s : State) : State := s.dropClient 0
 
@@ -35,14 +40,14 @@ example (s : State) : State := s.dropClient 0
 #guard_msgs (error, substring := true) in
 #check feedMsgs
 
-/-- Unknown constant `Linger.Session.Buf.Buf.mk` -/
+/-- Unknown constant `Linger.Session.Buf.BufRec.mk` -/
 #guard_msgs (error, substring := true) in
-#check Buf.Buf.mk
+#check Buf.BufRec.mk
 
-/-- Unknown constant `_private.Linger.Session.Buf.0.Linger.Session.Buf.Buf.bytes` -/
+/-- Unknown constant `_private.Linger.Session.Buf.0.Linger.Session.Buf.BufRec.bytes` -/
 #guard_msgs (error, substring := true) in
 #check Buf.Buf.empty.bytes
 
-/-- Unknown constant `Linger.Session.State.mk` -/
+/-- Unknown constant `Linger.Session.StateRec.mk` -/
 #guard_msgs (error, substring := true) in
-#check State.mk
+#check StateRec.mk

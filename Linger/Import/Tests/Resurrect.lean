@@ -5,6 +5,7 @@ import Linger.Display.Status
 import Linger.Terminal.Render
 import all Linger.Terminal.Vt
 meta import Linger.Import.Resurrect
+meta import Linger.Session.Checkpoint
 meta import Linger.Terminal.Render
 
 /-! Concrete checks of the pure API. General kernel-checked contracts live in

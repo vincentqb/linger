@@ -1,5 +1,6 @@
 module
 
+public import Linger.Session.Spec
 public import Linger.Terminal.Vt
 -- A **permanent** friend import, and the one in the tree that needs its reason
 -- written down. `specs/archive/vt-toolkit.md` Step 2 held it open for one step to remove
@@ -395,26 +396,12 @@ def rVt : R Vt := fun l => do
 
 /-! ## The checkpoint record -/
 
-/-- **No `deriving Inhabited`**, and that is deliberate (`specs/archive/vt-toolkit.md` Step 3):
-it would need `Inhabited Vt`, which is the third public door out of the `Vt` seal — a
-`cols = 0` screen any importer could name as `default` with no friend import. Nothing in
-the tree used either instance. If a canonical checkpoint is ever wanted, write it out
-(`⟨Vt.init 80 24, "", []⟩`) rather than deriving one: a default that is a *choice* cannot
-silently become a state the emulator can't reach. -/
-public structure Ckpt where
-  /-- The terminal state; its parser state is not saved. -/
-  vt : Vt
-  /-- The directory the restored session's child starts in. -/
-  cwd : String
-  /-- The session's labels, as key/value pairs. -/
-  labels : List (String × String)
-
 /-- On-disk magic: `"LNGR"` and the format version. What `save` writes. -/
 public def magic : List UInt8 := [0x4C, 0x4E, 0x47, 0x52, 1] -- "LNGR" v1
 
 /-- The checkpoint record: `magic`, then the terminal, the working directory and the labels.
 Loading the record of a live state returns it with its parser quiesced (`load_save_live`). -/
-def save (c : Ckpt) : List UInt8 :=
+def save (c : Ckpt Vt.Vt) : List UInt8 :=
   magic ++ wVt c.vt ++ wStr c.cwd ++ wList (wPair wStr wStr) c.labels
 
 /-- Strip the format tag. A **named stage** rather than the check inlined in `load`,
@@ -427,7 +414,7 @@ def stripMagic (l : List UInt8) : Option (List UInt8) := magic.isPrefixOf? l
 
 /-- Total: any byte list either parses fully or is `none`. Trailing
 garbage is rejected (a torn write is not a checkpoint). -/
-def load (l : List UInt8) : Option Ckpt := do
+def load (l : List UInt8) : Option (Ckpt Vt.Vt) := do
   let rest ← stripMagic l
   let (vt, rest) ← rVt rest
   let (cwd, rest) ← rStr rest
@@ -491,7 +478,7 @@ def rowB (acc : ByteArray) (r : Row) : ByteArray := rleB cellB acc r.toList
 
 /-- `save`, written into a byte array (`saveBytes_eq`). Every screen row, including the
 stashed alternate screen's, goes through `rowB`. -/
-public def saveBytes (c : Ckpt) : ByteArray :=
+public def saveBytes (c : Ckpt Vt.Vt) : ByteArray :=
   let v := c.vt
   let acc := (magic ++ wNat v.cols ++ wNat v.rows).toByteArray
   let acc := listB rowB acc v.grid.toList
@@ -750,7 +737,7 @@ def prefixB : List UInt8 → ByteArray → Nat → Option Nat
 
 /-- `load` on a byte array (`loadBytes_eq`): the same tag check, the same reader chain, and
 the same refusal of unread trailing bytes. -/
-public def loadBytes (b : ByteArray) : Option Ckpt := do
+public def loadBytes (b : ByteArray) : Option (Ckpt Vt.Vt) := do
   let i ← prefixB magic b 0
   let (vt, i) ← rVtB b i
   let (cwd, i) ← rStrB b i

@@ -1,6 +1,7 @@
 module
 
 public import Linger.Session
+public import Linger.Session.Buf
 public import Linger.Session.Checkpoint
 public import Linger.Session.Driver
 public import Linger.Session.Spec
@@ -112,7 +113,7 @@ theorem leave_canonical_all (w : Vt.Vt) (h2 : 2 ≤ w.rowCount) :
 
 /-- Saving a checkpoint of a terminal a session can hold and loading it back returns the same
 checkpoint, with the terminal's partial parser state forgotten. -/
-theorem loadBytes_saveBytes_live (c : Checkpoint.Ckpt) (h : Vt.LiveReachableVt c.vt) :
+theorem loadBytes_saveBytes_live (c : Checkpoint.Ckpt Vt.Vt) (h : Vt.LiveReachableVt c.vt) :
     Checkpoint.loadBytes (Checkpoint.saveBytes c) = some { c with vt := c.vt.quiesce } := by sorry
 
 /-- A daemon resumed from any bytes on disk boots a terminal a live session can hold. -/
@@ -124,10 +125,15 @@ completes without an uncaught exception, keeping the session within its bounds a
 terminal one a live session can hold. Disconnects and checkpoint failures are permitted
 results. -/
 theorem run_total_safe {World ε : Type}
-    (execute : State → World → (eff : Effect) → Except ε (World × Driver.Reply eff))
-    (hw : Driver.Responds execute) (r : Driver.Result World) (events : List Event)
-    (hb : Bounded r.st) (hlive : LiveVt r.st) :
-    ∃ out, Driver.run execute r events = .ok out ∧ Bounded out.st ∧ LiveVt out.st := by sorry
+    (execute : State → World → (eff : Effect Replay.Plan) → Except ε (World × Driver.Reply eff))
+    (hw : Driver.Responds execute) (r : Driver.Result State World) (events : List Event)
+    (hb : Bounds State.roster State.labelList State.scanner r.st)
+    (hlive : Vt.LiveReachableVt r.st.terminal) :
+    ∃ out,
+      Driver.run execute r events = .ok out ∧
+        Bounds State.roster State.labelList State.scanner out.st ∧
+        Vt.LiveReachableVt out.st.terminal := by
+  sorry
 
 /-- One client's input bytes, however chunked, leave every other client's record unchanged. -/
 theorem run_bytes_isolates (s : State) (id : Nat) (chunks : List (List UInt8)) {other : Nat}

@@ -39,14 +39,15 @@ instead of passing the citation gate. The `rfl` example under Resume ties the
 
 open Linger Linger.Session Linger.App Linger.Selector Linger.Import Linger.Os Linger.Target
   Linger.Display Linger.Terminal
+open Linger.Terminal.Replay (Plan)
 
 -- Checkpoints
-example (c : Checkpoint.Ckpt) (h : Vt.LiveReachableVt c.vt) :
+example (c : Checkpoint.Ckpt Vt.Vt) (h : Vt.LiveReachableVt c.vt) :
     Checkpoint.loadBytes (Checkpoint.saveBytes c) =
       some { vt := c.vt.quiesce, cwd := c.cwd, labels := c.labels } := by
   with_reducible exact Checkpoint.loadBytes_saveBytes_live c h
 
-example {b : ByteArray} {c : Checkpoint.Ckpt} (h : Checkpoint.loadBytes b = some c) :
+example {b : ByteArray} {c : Checkpoint.Ckpt Vt.Vt} (h : Checkpoint.loadBytes b = some c) :
     Checkpoint.loadBytes (Checkpoint.saveBytes c) = some c := by
   with_reducible exact Checkpoint.loadBytes_resave h
 
@@ -102,17 +103,18 @@ example (socketName : String) (info : List (String × String)) :
 
 -- Event driver
 example {World ε : Type}
-    (execute : Session.State → World → (eff : Session.Effect) → Except ε (World × Driver.Reply eff))
-    (hw : Driver.Responds execute) (r : Driver.Result World) (events : List Session.Event)
-    (hwf : Session.WF r.st) (hlive : Session.LiveVt r.st) :
+    (execute :
+      Session.State → World → (eff : Session.Effect Plan) → Except ε (World × Driver.Reply eff))
+    (hw : Driver.Responds execute) (r : Driver.Result Session.State World)
+    (events : List Session.Event) (hwf : Session.WF r.st) (hlive : Session.LiveVt r.st) :
     ∃ out,
       Driver.run execute r events = Except.ok out ∧ Session.WF out.st ∧ Session.LiveVt out.st := by
   with_reducible exact Driver.run_total_safe execute hw r events hwf hlive
 
 -- Failure feedback
 example {World : Type} (execute : Driver.Interpreter World) (st : Session.State) (world : World)
-    (depth : Nat) (effs : List Session.Effect)
-    (h : ∀ (eff : Session.Effect), eff ∈ effs → Driver.effectDepth eff ≤ depth) :
+    (depth : Nat) (effs : List (Session.Effect Plan))
+    (h : ∀ (eff : Session.Effect Plan), eff ∈ effs → Driver.effectDepth eff ≤ depth) :
     let answered := Driver.effects (m := Id) execute st world depth effs h
     (answered.fst, List.map Subtype.val answered.snd) =
       List.foldl
@@ -122,23 +124,23 @@ example {World : Type} (execute : Driver.Interpreter World) (st : Session.State)
         (world, []) effs := by
   with_reducible exact Driver.effects_in_order execute st world depth effs h
 
-example {World : Type} (execute : Driver.Interpreter World) (r : Driver.Result World)
+example {World : Type} (execute : Driver.Interpreter World) (r : Driver.Result Session.State World)
     (events : List Session.Event) :
     Driver.Execution execute r events (Driver.run (m := Id) execute r events) := by
   with_reducible exact Driver.run_execution execute r events
 
-example (eff : Session.Effect) (reply : Driver.Reply eff) (ev : Session.Event)
+example (eff : Session.Effect Plan) (reply : Driver.Reply eff) (ev : Session.Event)
     (h : ev ∈ Driver.feedback eff reply) : Driver.eventDepth ev < Driver.effectDepth eff := by
   with_reducible exact Driver.feedback_strictly_decreases eff reply ev h
 
-example {World : Type} (execute : Driver.Interpreter World) (r : Driver.Result World)
+example {World : Type} (execute : Driver.Interpreter World) (r : Driver.Result Session.State World)
     (ev : Session.Event) (hactive : r.exiting = false) (hdepth : Driver.eventDepth ev < 2) :
     (Driver.handle (m := Id) execute r ev).exiting = false := by
   with_reducible exact Driver.handle_feedback_keeps_alive execute r ev hactive hdepth
 
 example {World : Type} {m : Type → Type} [Monad m]
-    (execute : Session.State → World → (eff : Session.Effect) → m (World × Driver.Reply eff))
-    (r : Driver.Result World) (events : List Session.Event) (h : r.exiting = true) :
+    (execute : Session.State → World → (eff : Session.Effect Plan) → m (World × Driver.Reply eff))
+    (r : Driver.Result Session.State World) (events : List Session.Event) (h : r.exiting = true) :
     Driver.run execute r events = pure r := by
   with_reducible exact Driver.run_exited execute r events h
 

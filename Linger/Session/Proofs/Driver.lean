@@ -15,15 +15,16 @@ It does not assume that writes or checkpoint saves succeed. -/
 namespace Linger.Session.Driver
 
 open Linger.Session (State Event Effect step WF LiveVt)
+open Linger.Terminal.Replay (Plan)
 variable {World : Type}
 
 /-- A total effect interpreter over an abstract world, with typed replies. -/
-abbrev Interpreter (World : Type) := State → World → (eff : Effect) → World × Reply eff
+abbrev Interpreter (World : Type) := State → World → (eff : Effect Plan) → World × Reply eff
 
 /-- Erasing the termination witnesses gives ordinary left-to-right effect
 execution and FIFO feedback. Reversing either order changes this equation. -/
 theorem effects_in_order (execute : Interpreter World) (st : State) (world : World) (depth : Nat)
-    (effs : List Effect) (h : ∀ eff ∈ effs, effectDepth eff ≤ depth) :
+    (effs : List (Effect Plan)) (h : ∀ eff ∈ effs, effectDepth eff ≤ depth) :
     let answered := effects (m := Id) execute st world depth effs h
     (answered.1, answered.2.map Subtype.val) =
       effs.foldl
@@ -57,25 +58,25 @@ theorem effects_in_order (execute : Interpreter World) (st : State) (world : Wor
     exact (List.attach_map_subtype_val _).symm
 
 /-- One event's complete effect batch, with feedback in execution order. -/
-def batch (execute : Interpreter World) (r : Result World) (ev : Event) :
-    Result World × List Event :=
+def batch (execute : Interpreter World) (r : Result State World) (ev : Event) :
+    Result State World × List Event :=
   let stepped := step r.st ev
   let answered :=
     effects (m := Id) execute stepped.1 r.world (eventDepth ev) stepped.2 (step_depth r.st ev)
   ({ st := stepped.1, world := answered.1, exiting := stepped.2.contains .exit },
     answered.2.map Subtype.val)
 
-theorem feedback_strictly_decreases (eff : Effect) (reply : Reply eff)
+theorem feedback_strictly_decreases (eff : Effect Plan) (reply : Reply eff)
     (ev : Event) (h : ev ∈ feedback eff reply) : eventDepth ev < effectDepth eff :=
   feedback_depth eff reply ev h
 
-theorem batch_feedback_decreases (execute : Interpreter World) (r : Result World) (ev : Event) :
+theorem batch_feedback_decreases (execute : Interpreter World) (r : Result State World) (ev : Event) :
     ∀ follow ∈ (batch execute r ev).2, eventDepth follow < eventDepth ev := by
   intro follow h
   obtain ⟨value, _, rfl⟩ := List.mem_map.mp h
   exact value.property
 
-theorem handle_eq (execute : Interpreter World) (r : Result World) (ev : Event) :
+theorem handle_eq (execute : Interpreter World) (r : Result State World) (ev : Event) :
     handle (m := Id) execute r ev =
       if r.exiting then r
       else
@@ -94,7 +95,7 @@ theorem handle_eq (execute : Interpreter World) (r : Result World) (ev : Event) 
 /-- Feedback-queue semantics: a batch stops at exit or an empty queue, and each event's feedback
 runs before the remaining input. -/
 inductive Execution (execute : Interpreter World) :
-    Result World → List Event → Result World → Prop where
+    Result State World → List Event → Result State World → Prop where
   | idle (r) : Execution execute r [] r
   | stopped (r) (events) : r.exiting = true → Execution execute r events r
   | next {r ev rest out} :
@@ -102,7 +103,7 @@ inductive Execution (execute : Interpreter World) :
       Execution execute (batch execute r ev).1 ((batch execute r ev).2 ++ rest) out →
       Execution execute r (ev :: rest) out
 
-theorem Execution.exited_eq {execute : Interpreter World} {r out : Result World}
+theorem Execution.exited_eq {execute : Interpreter World} {r out : Result State World}
     {events : List Event} (h : Execution execute r events out) (hexit : r.exiting = true) :
     out = r := by
   cases h with
@@ -110,7 +111,7 @@ theorem Execution.exited_eq {execute : Interpreter World} {r out : Result World}
   | stopped => rfl
   | next hfalse _ => simp_all
 
-theorem Execution.append {execute : Interpreter World} {r mid out : Result World}
+theorem Execution.append {execute : Interpreter World} {r mid out : Result State World}
     {first rest : List Event} (hfirst : Execution execute r first mid)
     (hrest : Execution execute mid rest out) : Execution execute r (first ++ rest) out := by
   induction hfirst with
@@ -124,7 +125,7 @@ theorem Execution.append {execute : Interpreter World} {r mid out : Result World
 
 theorem foldl_execution (execute : Interpreter World) (events : List Event)
     (heach : ∀ ev ∈ events, ∀ r,
-      Execution execute r [ev] (handle (m := Id) execute r ev)) (r : Result World) :
+      Execution execute r [ev] (handle (m := Id) execute r ev)) (r : Result State World) :
     Execution execute r events (events.foldl (handle (m := Id) execute) r) := by
   induction events generalizing r with
   | nil => exact .idle r
@@ -133,7 +134,7 @@ theorem foldl_execution (execute : Interpreter World) (events : List Event)
     simpa only [List.foldl_cons, List.singleton_append] using
       (heach ev (by simp) r).append tail
 
-theorem handle_execution (execute : Interpreter World) (r : Result World) (ev : Event) :
+theorem handle_execution (execute : Interpreter World) (r : Result State World) (ev : Event) :
     Execution execute r [ev] (handle (m := Id) execute r ev) := by
   induction ev using (measure eventDepth).wf.induction generalizing r with
   | h ev ih =>
@@ -154,7 +155,7 @@ theorem handle_execution (execute : Interpreter World) (r : Result World) (ev : 
 
 /-- Every finite input batch finishes the actual feedback-queue semantics.
 This quantifies over every permitted pattern of operation failures. -/
-theorem run_execution (execute : Interpreter World) (r : Result World) (events : List Event) :
+theorem run_execution (execute : Interpreter World) (r : Result State World) (events : List Event) :
     Execution execute r events (run (m := Id) execute r events) := by
   induction events generalizing r with
   | nil => exact .idle r
@@ -170,7 +171,7 @@ theorem run_execution (execute : Interpreter World) (r : Result World) (events :
 
 /-- Any invariant preserved by a session transition survives all automatically
 generated feedback, for every permitted interpreter. -/
-theorem Execution.preserves {execute : Interpreter World} {r out : Result World}
+theorem Execution.preserves {execute : Interpreter World} {r out : Result State World}
     {events : List Event} (h : Execution execute r events out) (P : State → Prop)
     (hstep : ∀ st ev, P st → P (step st ev).1) (hstart : P r.st) : P out.st := by
   induction h with
@@ -180,7 +181,7 @@ theorem Execution.preserves {execute : Interpreter World} {r out : Result World}
 
 /-- Client/parser bounds and live terminal structure survive complete batches,
 including transport failures and failed checkpoint saves. -/
-theorem run_safe (execute : Interpreter World) (r : Result World) (events : List Event)
+theorem run_safe (execute : Interpreter World) (r : Result State World) (events : List Event)
     (hwf : WF r.st) (hlive : LiveVt r.st) :
     WF (run (m := Id) execute r events).st ∧ LiveVt (run (m := Id) execute r events).st :=
   (run_execution execute r events).preserves (fun st => WF st ∧ LiveVt st)
@@ -199,7 +200,7 @@ theorem feedback_step_no_exit (st : State) (ev : Event) (h : eventDepth ev < 2) 
 
 /-- Transport and persistence failure feedback cannot request daemon exit,
 even when its own effects fail as well. -/
-theorem handle_feedback_keeps_alive (execute : Interpreter World) (r : Result World)
+theorem handle_feedback_keeps_alive (execute : Interpreter World) (r : Result State World)
     (ev : Event) (hactive : r.exiting = false) (hdepth : eventDepth ev < 2) :
     (handle (m := Id) execute r ev).exiting = false := by
   induction ev using (measure eventDepth).wf.induction generalizing r with
@@ -208,7 +209,7 @@ theorem handle_feedback_keeps_alive (execute : Interpreter World) (r : Result Wo
       simpa [batch] using feedback_step_no_exit r.st ev hdepth
     rw [handle_eq]
     simp only [hactive, Bool.false_eq_true, ↓reduceIte, hnext]
-    apply List.foldlRecOn (motive := fun out : Result World => out.exiting = false) _ _ hnext
+    apply List.foldlRecOn (motive := fun out : Result State World => out.exiting = false) _ _ hnext
     intro acc hacc follow hf
     have hlt := batch_feedback_decreases execute r ev follow hf
     exact ih follow hlt acc hacc (Nat.lt_trans hlt hdepth)
@@ -243,8 +244,8 @@ theorem foldlM_preserves {α β ε : Type} (xs : List α) (f : β → α → Exc
 /-- The external contract (`Responds`, in `Linger/Session/Spec.lean`) gives every primitive a
 result, so the effects of one event complete. -/
 theorem effects_no_error {ε : Type}
-    (execute : State → World → (eff : Effect) → Except ε (World × Reply eff))
-    (hw : Responds execute) (st : State) (world : World) (depth : Nat) (effs : List Effect)
+    (execute : State → World → (eff : Effect Plan) → Except ε (World × Reply eff))
+    (hw : Responds execute) (st : State) (world : World) (depth : Nat) (effs : List (Effect Plan))
     (h : ∀ eff ∈ effs, effectDepth eff ≤ depth) :
     ∃ answer, effects execute st world depth effs h = .ok answer := by
   unfold effects
@@ -259,10 +260,10 @@ theorem effects_no_error {ε : Type}
     exact ⟨_, rfl⟩
 
 theorem handle_total {ε : Type}
-    (execute : State → World → (eff : Effect) → Except ε (World × Reply eff))
+    (execute : State → World → (eff : Effect Plan) → Except ε (World × Reply eff))
     (hw : Responds execute) (P : State → Prop)
     (hstep : ∀ st ev, P st → P (step st ev).1)
-    (r : Result World) (ev : Event) (hstart : P r.st) :
+    (r : Result State World) (ev : Event) (hstart : P r.st) :
     ∃ out, handle execute r ev = .ok out ∧ P out.st := by
   induction ev using (measure eventDepth).wf.induction generalizing r with
   | h ev ih =>
@@ -277,7 +278,7 @@ theorem handle_total {ε : Type}
       simp only [bind, Except.bind]
       split
       · exact ⟨_, rfl, hstep r.st ev hstart⟩
-      · apply foldlM_preserves _ _ (fun out : Result World => P out.st)
+      · apply foldlM_preserves _ _ (fun out : Result State World => P out.st)
         · intro acc follow hacc _
           exact ih follow.val follow.property acc hacc
         · exact hstep r.st ev hstart
@@ -285,10 +286,10 @@ theorem handle_total {ε : Type}
 /-- Total correctness of the shared driver under the external response
 contract: it returns successfully and preserves every transition invariant. -/
 theorem run_total {ε : Type}
-    (execute : State → World → (eff : Effect) → Except ε (World × Reply eff))
+    (execute : State → World → (eff : Effect Plan) → Except ε (World × Reply eff))
     (hw : Responds execute) (P : State → Prop)
     (hstep : ∀ st ev, P st → P (step st ev).1)
-    (r : Result World) (events : List Event) (hstart : P r.st) :
+    (r : Result State World) (events : List Event) (hstart : P r.st) :
     ∃ out, run execute r events = .ok out ∧ P out.st := by
   induction events generalizing r with
   | nil => exact ⟨r, rfl, hstart⟩
@@ -304,8 +305,8 @@ theorem run_total {ε : Type}
 without an uncaught modeled exception. No assumption on failure frequency,
 client traffic, terminal bytes or event ordering is needed. -/
 theorem run_no_error {ε : Type}
-    (execute : State → World → (eff : Effect) → Except ε (World × Reply eff))
-    (hw : Responds execute) (r : Result World) (events : List Event) :
+    (execute : State → World → (eff : Effect Plan) → Except ε (World × Reply eff))
+    (hw : Responds execute) (r : Result State World) (events : List Event) :
     ∃ out, run execute r events = .ok out := by
   obtain ⟨out, ho, _⟩ := run_total execute hw (fun _ => True) (by simp) r events True.intro
   exact ⟨out, ho⟩
@@ -313,8 +314,8 @@ theorem run_no_error {ε : Type}
 /-- Finite batches return without modeled exceptions and retain the session
 bounds and renderable terminal, including all permitted failure feedback. -/
 theorem run_total_safe {ε : Type}
-    (execute : State → World → (eff : Effect) → Except ε (World × Reply eff))
-    (hw : Responds execute) (r : Result World) (events : List Event)
+    (execute : State → World → (eff : Effect Plan) → Except ε (World × Reply eff))
+    (hw : Responds execute) (r : Result State World) (events : List Event)
     (hwf : WF r.st) (hlive : LiveVt r.st) :
     ∃ out, run execute r events = .ok out ∧ WF out.st ∧ LiveVt out.st :=
   run_total execute hw (fun st => WF st ∧ LiveVt st)
@@ -324,8 +325,8 @@ theorem run_total_safe {ε : Type}
 /-- No queued event or external effect is consumed after exit. This identity
 holds for the shared driver in every monad, including the daemon's interpreter. -/
 theorem run_exited {m : Type → Type} [Monad m]
-    (execute : State → World → (eff : Effect) → m (World × Reply eff))
-    (r : Result World) (events : List Event) (h : r.exiting = true) :
+    (execute : State → World → (eff : Effect Plan) → m (World × Reply eff))
+    (r : Result State World) (events : List Event) (h : r.exiting = true) :
     run execute r events = pure r := by
   cases events <;> simp [run, h]
 

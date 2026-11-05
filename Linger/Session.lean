@@ -3,7 +3,7 @@ module
 public import Linger.Session.Wire
 public import Linger.Terminal.Vt
 public import Linger.Terminal.Replay
-public import Linger.Terminal.Mediation
+import Linger.Terminal.Mediation
 import Linger.Terminal.Render
 
 public section
@@ -28,14 +28,7 @@ namespace Linger.Session
 
 open Linger.Terminal
 open Linger.Session.Wire (Msg)
-
-/-- Most connections a session holds; `step` refuses and closes one more. The daemon
-stops accepting at the same count. -/
-def maxClients : Nat := 16
-
-/-- Most labels a session holds: `.labelSet` refuses one more, and `State.boot` keeps
-only the first this many restored labels. -/
-def maxLabels : Nat := 64
+open Linger.Terminal.Replay (Plan)
 
 /-- Largest payload of one `output` or `infoReply` frame, 64 KiB, and the byte budget of
 each replay step. -/
@@ -43,34 +36,6 @@ def outputChunk : Nat := 65536
 
 /-- Maximum encoded info answer, shared by the producer and the CLI accumulator. -/
 def infoReplyCap : Nat := 1048576
-
-/-- One connection's record: its identity, terminal size, attach and request state, and
-its undecoded input. -/
-structure Client where
-  /-- The connection's identifier, as in `Event.connected`. -/
-  id : Nat
-  /-- Terminal width from the latest attach or resize message. -/
-  cols : UInt32 := 80
-  /-- Terminal height from the latest attach or resize message. -/
-  rows : UInt32 := 24
-  /-- The connection attached and receives the session's output. -/
-  attached : Bool := false
-  /-- attached with a real size (read-only observers attach 0×0 and
-  never influence the pty size). -/
-  sizer : Bool := false
-  /-- attach order; the highest attached sizer owns the size. -/
-  seq : Nat := 0
-  /-- `linger wait` parked here until the child exits. -/
-  waiting : Bool := false
-  /-- An `info`, `history`, `screen` or control `resize` from the current read
-  was answered. One request per read: clients wait for the reply before the
-  next request, and later requests decoded from the same read are refused. -/
-  answered : Bool := false
-  /-- Partial frames from this connection. No `State` holds an errored decoder: `step` closes
-  the connection instead (`Bounded.decOk`, kept by `step_bounded`), and the helpers that store
-  a client are private. -/
-  decoder : Wire.Decoder := {}
-  deriving Repr, Inhabited
 
 /-- The session's whole state. Sealed since lean-modules Step 5: the
 bookkeeping fields §Bound and §Unread protect, and every helper that rewrites
@@ -82,8 +47,8 @@ and `step`ped, never forged or field-poked, so
 rather than about the states it politely constructs. `vt`, `labels` and
 `metaKv` stay public-read: they are exactly what the checkpoint save hook
 serializes (`Linger/Session/Shell/Resume.lean`). `scan` and `clients` are public-read too,
-because the session bounds headline theorems state (`Linger.Session.Bounded`) read them. -/
-structure State where
+because the session bounds headline theorems state (`Linger.Session.Bounds`) read them. -/
+structure StateRec where
   /-- The emulator, fed every byte the child writes. -/
   vt : Vt.Vt
   /-- One bounded scanner owned by the PTY-facing virtual terminal. -/
@@ -118,6 +83,22 @@ structure State where
   private tickOutSeq : Nat := 0
   private freshFlag : Bool := false
 
+/-- The session's state, as the headline theorems name it: a definition over the sealed record
+`StateRec`, because `Manifest.lean` declares the type as a hole the program fills. -/
+abbrev State : Type := StateRec
+
+/-- The session's terminal, as the headline theorems observe it. -/
+def State.terminal (s : State) : Vt.Vt := s.vt
+
+/-- The connected clients, in arrival order, as the headline theorems observe them. -/
+def State.roster (s : State) : List Client := s.clients
+
+/-- The session's labels, as the headline theorems observe them. -/
+def State.labelList (s : State) : List (String × String) := s.labels
+
+/-- The pty scanner's state, as the headline theorems observe it. -/
+def State.scanner (s : State) : Mediation.Scan := s.scan
+
 -- No `deriving` clause at all. `Inhabited` went in `specs/archive/vt-toolkit.md`
 -- Step 3: it needed `Inhabited Vt`, a public door out of the `Vt` seal admitting a
 -- zero-column screen. `Repr` went with the seal's read half (the audit's R6): it
@@ -140,48 +121,6 @@ def State.boot (vt : Vt.Vt) (labels : List (String × String)) (metaKv : List (S
 
 /-- The emulator a daemon boots with: a restored checkpoint's, else a fresh 80×24 screen. -/
 def bootVt (restored : Option Vt.Vt) : Vt.Vt := restored.getD (Vt.Vt.init 80 24)
-
-/-- What the runtime feeds in. All byte payloads are `List UInt8`; the
-runtime converts at the fd boundary. -/
-inductive Event where
-  /-- A connection was accepted. -/
-  | connected (id : Nat)
-  /-- A connection sent bytes. -/
-  | bytes (id : Nat) (chunk : List UInt8)
-  /-- A connection ended, or the runtime retired it. -/
-  | closed (id : Nat)
-  /-- The child wrote output to the pty. -/
-  | ptyOut (chunk : List UInt8)
-  /-- The pty reached end of file. `status` is the child's exit code, 128 plus the number of
-  the signal that killed it, or 1 when the runtime could not reap it. -/
-  | childExited (status : UInt32)
-  /-- A poll round ended; `nowMs` is the monotonic clock in milliseconds. -/
-  | tick (nowMs : Nat)
-  /-- The last `.checkpoint` effect failed to save. -/
-  | checkpointFailed
-  deriving Repr
-
-/-- What the runtime executes. -/
-inductive Effect where
-  /-- Send one message to a connection. -/
-  | send (id : Nat) (m : Msg)
-  /-- Stream a captured repaint to a connection ahead of its later output. -/
-  | replay (id : Nat) (plan : Replay.Plan)
-  /-- Close a connection. -/
-  | close (id : Nat)
-  /-- Write bytes to the child through the pty. -/
-  | writePty (bytes : List UInt8)
-  /-- Set the pty's window size. -/
-  | resizePty (cols rows : UInt32)
-  /-- Ask the child to terminate (SIGTERM). -/
-  | killChild
-  /-- Save a checkpoint of the session. -/
-  | checkpoint
-  /-- Delete the session's checkpoint. -/
-  | dropCheckpoint
-  /-- Stop the daemon; no later event is handled. -/
-  | exit
-  deriving Repr, DecidableEq
 
 /-- Checkpoint cadence (§ reboot-resume): at most one periodic save per minute.
 Natural-number milliseconds keep deadline addition from wrapping. -/
@@ -223,7 +162,7 @@ private def State.dropClient (s : State) (id : Nat) : State :=
 
 /-- One disconnect transition for EOF and malformed traffic. Decide whether
 the last attacher needs a checkpoint before removing its record. -/
-private def closeClient (s : State) (id : Nat) : State × List Effect :=
+private def closeClient (s : State) (id : Nat) : State × List (Effect Plan) :=
   let hadAttached := s.clients.any (fun c => c.id == id && c.attached)
   let s' := s.dropClient id
   if s.dirty && hadAttached && s'.clients.all (fun c => !c.attached) then
@@ -308,7 +247,7 @@ An exact or clamped same size preserves the whole emulator: resetting its
 region and tabs without a winsize change would leave the child unaware.
 A genuine change marks the screen dirty and sends the pty the emulator's
 effective dimensions, never an unclamped wire value. -/
-private def resize (s : State) (cols rows : UInt32) : State × List Effect :=
+private def resize (s : State) (cols rows : UInt32) : State × List (Effect Plan) :=
   if
       (s.vt.colCount == cols.toNat && s.vt.rowCount == rows.toNat) ||
         (s.vt.colCount == Vt.clampDim cols.toNat && s.vt.rowCount == Vt.clampDim rows.toNat) then
@@ -320,7 +259,7 @@ private def resize (s : State) (cols rows : UInt32) : State × List Effect :=
       [.resizePty (UInt32.ofNat vt.colCount) (UInt32.ofNat vt.rowCount)])
 
 /-- Only the newest attached sizer can apply a client resize. -/
-private def resizeOwned (s : State) (c : Client) : State × List Effect :=
+private def resizeOwned (s : State) (c : Client) : State × List (Effect Plan) :=
   if c.sizer && (sizeOwner s).any (·.id == c.id) then resize s c.cols c.rows else (s, [])
 
 /-- The control-resize decision (`linger resize`, from a NON-attached
@@ -333,7 +272,8 @@ same-size branch leaves the emulator alone for the attach guard's reason:
 unchanged winsize no SIGWINCH nudges the child to re-establish them
 (restore-conformance Step 0 ledger 1). Zero is refused — 0×0 is the observer
 marker on attach, and a zero dimension is never a size. -/
-private def controlResize (s : State) (c : Client) (cols rows : UInt32) : State × List Effect :=
+private def controlResize (s : State) (c : Client) (cols rows : UInt32) :
+    State × List (Effect Plan) :=
   if (sizeOwner s).isSome then
     (s, [.send c.id (.err "an attached client owns the size".toUTF8.toList)])
   else
@@ -343,14 +283,14 @@ private def controlResize (s : State) (c : Client) (cols rows : UInt32) : State 
       (r.1, r.2 ++ [.send c.id .done])
 
 /-- Send a byte payload as ≤ 64 KiB `output` frames (`Msg.WF`). -/
-private def outputMsgs (id : Nat) (bytes : List UInt8) : List Effect :=
+private def outputMsgs (id : Nat) (bytes : List UInt8) : List (Effect Plan) :=
   (chunksOf outputChunk bytes).map (fun c => .send id (.output c))
 
 /-- Preflight the whole info answer before emitting any bytes. Accepted answers
 are a stream of bounded byte chunks followed by `done`; records and UTF-8 may
 cross frames, so consumers decode text only after joining the payloads.
 Refusals carry no prefix or `done`, and the diagnostic is bounded too. -/
-private def infoMsgs (id : Nat) (bytes : List UInt8) : List Effect :=
+private def infoMsgs (id : Nat) (bytes : List UInt8) : List (Effect Plan) :=
   if bytes.length > infoReplyCap then
     [.send id (.err ("info reply exceeds the byte limit".toUTF8.toList.take outputChunk))]
   else (chunksOf outputChunk bytes).map (fun c => .send id (.infoReply c)) ++ [.send id .done]
@@ -363,14 +303,14 @@ bytes are empty by design — would push a zero-length `output` frame to every
 attached client on every terminal query. Unreachable before the mediator
 existed, since the runtime raises `.ptyOut` only for a non-empty read.
 Pinned by `broadcast_empty` and by a Session fixture. -/
-private def broadcast (s : State) (bytes : List UInt8) : List Effect :=
+private def broadcast (s : State) (bytes : List UInt8) : List (Effect Plan) :=
   if bytes.isEmpty then []
   else s.clients.filter (·.attached) |>.flatMap (fun c => outputMsgs c.id bytes)
 
 /-! ## Message handling (client → daemon) -/
 
 /-- Handle one client message; one query per read is answered (`Client.answered`). -/
-private def onMsg (s : State) (c : Client) (m : Msg) : State × List Effect :=
+private def onMsg (s : State) (c : Client) (m : Msg) : State × List (Effect Plan) :=
   match m with
   | .attach cols rows =>
     if c.attached then (s, [.send c.id (.err "already attached".toUTF8.toList)])
@@ -467,10 +407,10 @@ The client record is re-read each round (attach mutates it); a message
 after a close for this sender or an exit stops affecting state, even before
 the runtime executes those effects. Named so the preservation and stopping
 theorems can target it. -/
-private def feedMsgs (id : Nat) (msgs : List Msg) (acc : State × List Effect) :
-    State × List Effect :=
+private def feedMsgs (id : Nat) (msgs : List Msg) (acc : State × List (Effect Plan)) :
+    State × List (Effect Plan) :=
   msgs.foldl
-    (fun (acc : State × List Effect) m =>
+    (fun (acc : State × List (Effect Plan)) m =>
       if acc.2.contains (.close id) || acc.2.contains .exit then acc
       else
         match acc.1.client? id with
@@ -484,11 +424,11 @@ private def feedMsgs (id : Nat) (msgs : List Msg) (acc : State × List Effect) :
 effects for a stop once and then only each message's own, and conses each
 message's effects onto a reversed list, where `feedMsgs` rescans and copies every
 effect so far for each message. -/
-private def feedMsgsTR (id : Nat) (msgs : List Msg) (acc : State × List Effect) :
-    State × List Effect :=
+private def feedMsgsTR (id : Nat) (msgs : List Msg) (acc : State × List (Effect Plan)) :
+    State × List (Effect Plan) :=
   let r :=
     msgs.foldl
-      (fun (r : State × List Effect × Bool) m =>
+      (fun (r : State × List (Effect Plan) × Bool) m =>
         if r.2.2 then r
         else
           match r.1.client? id with
@@ -508,7 +448,8 @@ private theorem feedMsgs_eq_feedMsgsTR : @feedMsgs = @feedMsgsTR := by
   -- Related accumulators hold the same state, the incoming effects followed by
   -- the reversed ones, and a flag equal to the specification's stop test.
   refine
-    (List.foldl_rel (r := fun (b : State × List Effect) (c : State × List Effect × Bool) =>
+    (List.foldl_rel (r :=
+        fun (b : State × List (Effect Plan)) (c : State × List (Effect Plan) × Bool) =>
         b = (c.1, acc.2 ++ c.2.1.reverse) ∧
           c.2.2 = (b.2.contains (.close id) || b.2.contains .exit))
         ⟨by simp, rfl⟩ ?_).1
@@ -525,7 +466,7 @@ private theorem feedMsgs_eq_feedMsgsTR : @feedMsgs = @feedMsgsTR := by
       simp only [hx, Bool.false_or]
 
 /-- The daemon's transition: one event in, the next state and the effects to run. -/
-def step (s : State) (ev : Event) : State × List Effect :=
+def step (s : State) (ev : Event) : State × List (Effect Plan) :=
   match ev with
   | .connected id =>
     if s.clients.length ≥ maxClients then
@@ -596,7 +537,7 @@ For the runtime this trace consists of the events actually consumed, including
 effect feedback: `pump` stops before consuming any event after exit. `run` does
 not model that queue or choose its stopping prefix. The state projection is
 recursive, so preservation lifts directly from `step`. -/
-def run (s : State) : List Event → State × List Effect
+def run (s : State) : List Event → State × List (Effect Plan)
   | [] => (s, [])
   | ev :: evs =>
     let r := step s ev

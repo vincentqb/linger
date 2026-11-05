@@ -131,7 +131,7 @@ example :
 /-- The top-level format is one complete record: even one extra byte, a format
 tag, or a second complete checkpoint must be refused. -/
 example :
-    (let c : Ckpt := { vt := Vt.init 4 2, cwd := "", labels := [] }
+    (let c : Ckpt Vt.Vt := { vt := Vt.init 4 2, cwd := "", labels := [] }
      [[0], [0xFF], magic, save c].all (fun rest => (load (save c ++ rest)).isNone)) =
       true := by
   native_decide
@@ -149,7 +149,7 @@ example : (magic == [0x4C, 0x4E, 0x47, 0x52, 1]) = true := by native_decide
 removed in `e1ac562`'s successor; check that commit out if you ever need it), a future
 version byte, and rubbish. A checkpoint is a cache, not a contract. -/
 example :
-    (let c : Ckpt := { vt := Vt.init 4 2, cwd := "", labels := [] }
+    (let c : Ckpt Vt.Vt := { vt := Vt.init 4 2, cwd := "", labels := [] }
      let body := (save c).drop 5
      (load ([0x4C, 0x5A, 0x4D, 0x58, 1] ++ body)).isNone      -- "LZMX" v1
        && (load ([0x4C, 0x4E, 0x47, 0x52, 2] ++ body)).isNone  -- "LNGR" v2
@@ -174,7 +174,7 @@ instead of silently patching some other field. -/
 /-- The control. Without it, every refusal below is equally consistent with `load`
 having become unconditionally `none`. -/
 example :
-    (let c : Ckpt := { vt := Vt.init 4 2, cwd := "/tmp", labels := [("k", "v")] }
+    (let c : Ckpt Vt.Vt := { vt := Vt.init 4 2, cwd := "/tmp", labels := [("k", "v")] }
      (load (save c)).isSome) =
       true := by
   native_decide
@@ -183,7 +183,7 @@ example :
 `init`/`resize`/`feed` path can produce, and the state the decoder built without
 complaint before it validated `Good`. Refused. -/
 example :
-    (let c : Ckpt := { vt := Vt.init 4 2, cwd := "/tmp", labels := [("k", "v")] }
+    (let c : Ckpt Vt.Vt := { vt := Vt.init 4 2, cwd := "/tmp", labels := [("k", "v")] }
      let bytes := save c
      bytes[5]? == some 4                       -- the byte being patched IS `cols`
        && (load (bytes.set 5 0)).isNone) =
@@ -192,7 +192,7 @@ example :
 
 /-- The same at **zero rows**. -/
 example :
-    (let c : Ckpt := { vt := Vt.init 4 2, cwd := "/tmp", labels := [("k", "v")] }
+    (let c : Ckpt Vt.Vt := { vt := Vt.init 4 2, cwd := "/tmp", labels := [("k", "v")] }
      let bytes := save c
      bytes[6]? == some 2                       -- and this one IS `rows`
        && (load (bytes.set 6 0)).isNone) =
@@ -249,7 +249,7 @@ whose replay is not the screen it came from. Refused.
 This is the fixture the audit's `#eval` produced `false` for on the pre-change decoder, so it
 is the one to run first against any weakening of the guard. -/
 example :
-    (let c : Ckpt := { vt := Vt.init 4 2, cwd := "/tmp", labels := [("k", "v")] }
+    (let c : Ckpt Vt.Vt := { vt := Vt.init 4 2, cwd := "/tmp", labels := [("k", "v")] }
      let bytes := save c
      bytes[6]? == some 2                       -- the byte being patched IS `rows`
        && (load (bytes.set 6 3)).isNone) =
@@ -344,7 +344,7 @@ swapping two fields that hold the same value, such as two false modes, still pas
 
 /-- A record with indexed and RGB colours, nondefault modes, both cursors, a title, a line
 drawing set, a cwd and a label. -/
-def golden : Ckpt :=
+def golden : Ckpt Vt.Vt :=
   { vt :=
       (Vt.init 3 2).feedBytes
         ("\x1b[0;1;3;5;9;38;5;3;48;2;1;2;3mA\x1b[0;2;3;7;9mB\x1b[0;4;5;7;9mC\x1b[0m" ++
@@ -378,7 +378,7 @@ is checked. -/
 /-- A 130-column screen with a wide glyph, a combining mark, an indexed foreground and an RGB
 background in bold and underline, stashed by switching to the alternate screen, under a
 non-ASCII title. -/
-def rich : Ckpt :=
+def rich : Ckpt Vt.Vt :=
   { vt :=
       (Vt.init 130 3).feedBytes
         "\x1b]2;tïtle\x07\x1b[38;5;200;48;2;1;2;3;1;4m中éx\x1b[0m\r\nok\x1b[?1049hALT".toUTF8

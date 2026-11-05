@@ -333,7 +333,7 @@ module_imports Linger/Terminal/Proofs/Vt.lean 'Linger/Terminal/Proofs/Vt/*' Ling
 # composes their executors with the session backend. The session library never
 # imports them, even through an intermediate module: every library import
 # stays in Core, Runtime or the OS boundary.
-import_closure Linger/Import/Resurrect.lean 'import Linger.Target.Name;import Linger.Display.Status;public import Linger.Session.Checkpoint;'
+import_closure Linger/Import/Resurrect.lean 'import Linger.Target.Name;import Linger.Display.Status;public import Linger.Terminal.Vt;public import Linger.Session.Spec;'
 import_closure Linger/Selector/Key.lean 'public import Linger.Selector.Input;'
 import_closure Linger/Selector/Fuzzy.lean ''
 import_closure Linger/Selector/Picker.lean 'public import Linger.Selector.Key;import Linger.Selector.Fuzzy;import Linger.Target.Name;import Linger.Display.Listing;public import Linger.Display.Status;import Linger.Target.Remote;import Linger.Terminal.Vt;'
@@ -350,7 +350,7 @@ import_closure Linger/Os/Boundary.lean ''
     import_mod($3) == "Linger.Os.Boundary" && !seen[$1]++ { print $1 }')" = "Linger/Os/Shell.lean" ] \
   || fail "a module other than Linger/Os/Shell.lean imports Linger.Os.Boundary"
 import_closure Linger/Os/Shell/Command.lean 'import Linger.Os.Shell;'
-import_closure Linger/Import/Shell.lean 'import Linger.Import.Resurrect;import Linger.Os.Shell;import Linger.Display.Listing;import Linger.Session.Shell.Paths;import Linger.Session.Shell.Resume;import Linger.Session.Shell.Inventory;import Linger.Os.Shell.Command;import Linger.Target.Remote;import Linger.Selector.Shell;import Std.Async.System;'
+import_closure Linger/Import/Shell.lean 'import Linger.Import.Resurrect;import Linger.Session.Checkpoint;import Linger.Os.Shell;import Linger.Display.Listing;import Linger.Session.Shell.Paths;import Linger.Session.Shell.Resume;import Linger.Session.Shell.Inventory;import Linger.Os.Shell.Command;import Linger.Target.Remote;import Linger.Selector.Shell;import Std.Async.System;'
 import_closure Linger/Selector/Shell.lean \
   'public import Linger.Selector.Picker;import Linger.Os.Shell;import Linger.Display.Listing;import Linger.Target.Remote;import Linger.Terminal.Title;import Linger.Os.Shell.Command;'
 import_closure Main.lean \
@@ -461,7 +461,7 @@ awk '(/^theorem / || /^@[[]expose[]]$/) && prev !~ /-[/]$/ { print FILENAME ":" 
   || fail "every Manifest.lean hole and theorem needs a docstring"
 # The interfaces the Manifest still imports: components whose parts are not yet holes. The list
 # only shrinks; every entry must still be imported, and nothing else may be but Spec modules.
-manifest_interfaces='Linger.Session Linger.Session.Checkpoint Linger.Session.Driver Linger.Terminal.Render Linger.Terminal.Replay'
+manifest_interfaces='Linger.Session Linger.Session.Buf Linger.Session.Checkpoint Linger.Session.Driver Linger.Terminal.Render Linger.Terminal.Replay'
 manifest_imports_bad="$(module_imports Manifest.lean | awk -F: -v allowed="$manifest_interfaces" "$IMPORT_AWK"'
   BEGIN { n = split(allowed, a, " "); for (i = 1; i <= n; i++) ok[a[i]] = 1 }
   { mod = import_mod($3); seen[mod] = 1
@@ -1074,7 +1074,7 @@ for claim in effects_in_order run_execution run_total_safe handle_feedback_keeps
 done
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])def pump [(]rt : Rt[)] [(]evs : List Event[)] : IO Rt := do let result ← Driver[.]run executeEffect [{] st := rt[.]st, world := rt, exiting := rt[.]exiting [}] evs return [{] result[.]world with st := result[.]st, exiting := result[.]exiting [}]' awk "$CODE_AWK" >/dev/null \
   || fail "daemon pump must use the proved driver with its actual state and exit flag"
-code_grep '^private def executeEffect [(]st : State[)] [(]rt : Rt[)] : [(]eff : Effect[)] → IO [(]Rt × Driver[.]Reply eff[)]$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
+code_grep '^private def executeEffect [(]st : State[)] [(]rt : Rt[)] : [(]eff : Effect Plan[)] → IO [(]Rt × Driver[.]Reply eff[)]$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "effect interpreter must implement the driver's dependent reply type"
 code_grep '^[[:space:]]+rt[.]saveCkpt st$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "checkpoint interpreter must save the driver's current state"
@@ -1352,7 +1352,7 @@ done
 # `loadBytes` read from the file's bytes (`loadBytes_eq`).
 resume_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/Shell/Resume.lean)"
 for tie in \
-  'let ck : Ckpt := [{] vt := st[.]vt, cwd, labels := st[.]labels [}] let bytes := saveBytes ck' \
+  'let ck : Ckpt Linger[.]Terminal[.]Vt[.]Vt := [{] vt := st[.]vt, cwd, labels := st[.]labels [}] let bytes := saveBytes ck' \
   'match loadBytes bytes with [|] some ck => return some [(]ck[.]vt, ck[.]cwd, ck[.]labels[)]'; do
   printf '%s\n' "$resume_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "checkpoint hooks bypassed the proved codec: $tie"

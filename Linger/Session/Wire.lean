@@ -1,5 +1,7 @@
 module
 
+public import Linger.Session.Spec
+
 public section
 
 /-! # Linger.Session.Wire — the client ↔ daemon protocol
@@ -17,57 +19,6 @@ Tensions carried here (see THEOREMS.md):
 -/
 
 namespace Linger.Session.Wire
-
-/-- Largest payload a frame may carry. Reads from the OS are ≤ 64 KiB
-(`Linger.Os.Shell.read`), so honest senders stay far below; a frame claiming
-more is either corruption or an attack, and §Bound turns it into a
-connection error rather than memory growth. -/
-def maxPayload : Nat := 262144
-
-/-- The message vocabulary. Payload-carrying constructors keep raw
-bytes; numeric fields are encoded LE at the payload layer. `unknown`
-makes the decoder total (§Frame): a tag from a newer peer is data. -/
-inductive Msg where
-  /-- client → daemon: bytes for the pty (keystrokes, pastes). -/
-  | input (bytes : List UInt8)
-  /-- daemon → client: bytes from the pty (also used for history/restore). -/
-  | output (bytes : List UInt8)
-  /-- client → daemon: my terminal is now cols×rows. -/
-  | resize (cols rows : UInt32)
-  /-- client → daemon: I am a live client; stream output to me. -/
-  | attach (cols rows : UInt32)
-  /-- client → daemon: disconnect every attached client (incl. me). -/
-  | detachAll
-  /-- client → daemon: terminate the session. -/
-  | kill
-  /-- client → daemon: describe yourself (one-shot). -/
-  | info
-  /-- daemon → client: `k\tv\n` lines (fields + labels). -/
-  | infoReply (bytes : List UInt8)
-  /-- client → daemon: send scrollback and the screen as output frames, then `done`. -/
-  | history
-  /-- daemon → client: the session ended, with the status of its
-  `Session.Event.childExited`. -/
-  | exited (status : UInt32)
-  /-- client → daemon: hold this connection open until the child exits. -/
-  | wait
-  /-- client → daemon: set one `k=v` label. -/
-  | labelSet (kv : List UInt8)
-  /-- client → daemon: remove one label by key. -/
-  | labelUnset (k : List UInt8)
-  /-- client → daemon: remove all labels. -/
-  | labelClear
-  /-- daemon → client: end of a request/reply exchange. -/
-  | done
-  /-- daemon → client: request failed, human-readable reason. -/
-  | err (msg : List UInt8)
-  /-- client → daemon: send the current screen (grid only, plain text) as
-  output frames, then `done`. `linger capture` — and it marks the session
-  seen (specs/archive/agent-cli.md Decision 1: a capture IS a look). -/
-  | screen
-  /-- any tag this version does not know: skipped, never fatal (§Frame). -/
-  | unknown (tag : UInt8) (payload : List UInt8)
-  deriving Repr, DecidableEq, Inhabited
 
 /-! ## u32 ↔ 4 LE bytes, via Nat so `omega` can chew the round-trip -/
 
@@ -170,16 +121,6 @@ def Msg.WF (m : Msg) : Prop :=
 def encode (m : Msg) : List UInt8 := m.tag :: writeU32 (UInt32.ofNat m.payload.length) ++ m.payload
 
 /-! ## Incremental decoder -/
-
-/-- Decoder state. Both ends drop a connection whose decoder errored, rather than buffer
-its input without bound. -/
-structure Decoder where
-  /-- Bytes of the incomplete frame; `feed` keeps them within `4 + maxPayload`
-  (`Decoder.feed_buf_le`). -/
-  buf : List UInt8 := []
-  /-- An oversize frame arrived. The flag never clears, and no later chunk is decoded. -/
-  errored : Bool := false
-  deriving Repr, DecidableEq, Inhabited
 
 /-- Greedily peel complete frames off `bytes`. Returns
 (remaining-partial-bytes, errored, messages in arrival order). -/

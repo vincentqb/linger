@@ -1,5 +1,7 @@
 module
 
+public import Linger.Session.Spec
+
 public section
 
 /-! # Linger.Session.Buf — a bounded byte queue, as a value
@@ -53,12 +55,16 @@ Nothing here is stated through
 
 namespace Linger.Session.Buf
 
-/-- A byte queue: exactly the bytes still owed to the peer, oldest first.
-The representation is sealed: `writeFrom` is the one window out, `empty` the
-one door in, and `Linger/Session/Proofs/Buf.lean` sees inside via `import all`. -/
-structure Buf where
+/-- A byte queue's representation: exactly the bytes still owed to the peer, oldest first.
+It is sealed: `writeFrom` is the one window out, `empty` the one door in, and
+`Linger/Session/Proofs/Buf.lean` sees inside via `import all`. -/
+structure BufRec where
   private bytes : ByteArray := .empty
   deriving Inhabited
+
+/-- A byte queue, as the headline theorems name it: a definition over the sealed record
+`BufRec`, because `Manifest.lean` declares the type as a hole the program fills. -/
+abbrev Buf : Type := BufRec
 
 /-- The empty queue. The public door where `{}` used to be: a private field
 makes the anonymous constructor private, which is the point — an importer can
@@ -107,9 +113,13 @@ def bufAdvance (b : Buf) (n : Nat) : Buf := { bytes := b.bytes.extract n b.bytes
 /-- The byte view of the debt, for the write(2) loop and for decoding the info accumulator. -/
 def writeFrom (b : Buf) : ByteArray := b.bytes
 
-/-! The reachable states of a queue, `ReachableIn` and `ReachableOut`, are in
-`Linger/Session/Spec.lean`. With `bytes` sealed they cover every queue an importer can hold,
-so their bounds (`reachableIn_bound`, `reachableOut_bound`) are whole-lifetime facts about the
-daemon's queues. -/
+/-- The pty-input queue's reachable states: `InputReach` (`Linger/Session/Spec.lean`) over this
+queue's own operations. With `bytes` sealed it covers every queue an importer can hold, so its
+bound (`reachableIn_bound`) is a whole-lifetime fact about the daemon's queue. -/
+abbrev ReachableIn (cap : Nat) : Buf → Prop := InputReach Buf.empty bufOffer bufAdvance cap
+
+/-- The client-output queue's retained states: `OutputReach` over this queue's own operations,
+bounded by `reachableOut_bound`. -/
+abbrev ReachableOut (cap : Nat) : Buf → Prop := OutputReach Buf.empty bufEnqueue bufAdvance cap
 
 end Linger.Session.Buf
