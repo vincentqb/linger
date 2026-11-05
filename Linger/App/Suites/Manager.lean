@@ -5,6 +5,7 @@ import Linger.Import.Shell
 import Linger.Display.Listing
 import Linger.Target.Name
 import Linger.Target.Remote
+import Linger.Target.Spec
 import Linger.Terminal.Title
 import Linger.Session.Shell.Paths
 import Linger.Import.Resurrect

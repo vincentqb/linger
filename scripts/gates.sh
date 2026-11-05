@@ -339,7 +339,7 @@ import_closure Linger/Selector/Picker.lean 'public import Linger.Selector.Key;im
 import_closure Linger/Selector/Input.lean ''
 import_closure Linger/Selector/Proofs/Input.lean 'public import Linger.Selector.Input;import all Linger.Selector.Input;'
 import_closure Linger/App/Entry.lean ''
-import_closure Linger/Target/Name.lean ''
+import_closure Linger/Target/Name.lean 'import Linger.Target.Spec;'
 import_closure Linger/Target/Remote.lean 'import Linger.Target.Name;'
 import_closure Linger/Display/Title.lean 'import Linger.Target.Name;'
 import_closure Linger/Os/Env.lean ''
@@ -395,12 +395,15 @@ layer_bad="$(module_imports 'Linger/*' ':!Linger/*/Suites/*' \
   printf '%s\n' "$layer_bad" >&2
   fail "a component imports a peer or a higher layer (layers: $component_layers)"; }
 
-# Headline theorems. Manifest.lean states them with `sorry`, Theorems/Claims.lean proves the
-# same statements, comparator.json names them, and `./lake comparator` (scripts/verify.sh)
-# checks that each proof matches its statement and uses no other axiom. These gates keep the
-# three lists equal, so a headline cannot leave that check by being dropped from one of them,
-# and keep the statements' meaning out of the proofs: the Manifest and every component's
-# Spec module import only public interfaces, never a proof, test, suite, shell or boundary.
+# Headline theorems. Manifest.lean declares the program parts the headlines name as holes
+# (`@[expose]`, then `def <full name> : <type> := sorry`) and states the headlines with `sorry`;
+# Theorems/Claims.lean proves the same statements of the program's parts; comparator.json names
+# both; and `./lake comparator` (scripts/verify.sh) checks that each part has its declared type,
+# that each proof matches its statement, and that no other axiom is used. These gates keep the
+# lists equal, so neither a headline nor a hole can leave that check by being dropped from one
+# of them, and keep the statements' meaning out of the program: the Manifest imports Spec
+# modules and, until their components are stated through holes, the interfaces listed below,
+# and Spec modules import only public interfaces.
 headline_names() {                           # headline_names <file>: theorem names, in order
   code_grep '^theorem [A-Za-z_][A-Za-z0-9_]*' "$1" | sed 's/^[^:]*:[0-9]*://; s/^theorem //; s/[[:space:]].*//'
 }
@@ -409,41 +412,71 @@ manifest_count="$(printf '%s\n' "$manifest_names" | awk 'END { print NR }')"
 [ -n "$manifest_names" ] || fail "Manifest.lean states no headline theorem"
 [ "$(headline_names Theorems/Claims.lean)" = "$manifest_names" ] \
   || fail "Theorems/Claims.lean must prove exactly the theorems Manifest.lean states, in its order"
-config_want="$(printf '%s\n' "$manifest_names" | awk '
-  { names[NR] = $0 }
+hole_names="$(awk 'prev == "@[expose]" && /^def Linger[.]/ { print $2 } { prev = $0 }' Manifest.lean)"
+hole_count="$(printf '%s' "$hole_names" | awk 'END { print NR }')"
+config_want="$(printf '%s\n' "$manifest_names" "--" "$hole_names" | awk '
+  $0 == "--" { holes = 1; next }
+  !holes { names[++n] = $0; next }
+  $0 != "" { defs[++m] = $0 }
   END {
     print "{"
     print "  \"challenge_module\": \"Manifest\","
     print "  \"solution_module\": \"Theorems.Claims\","
     print "  \"theorem_names\": ["
-    for (i = 1; i <= NR; i++) printf "    \"Linger.Claims.%s\"%s\n", names[i], (i < NR ? "," : "")
+    for (i = 1; i <= n; i++) printf "    \"Linger.Claims.%s\"%s\n", names[i], (i < n ? "," : "")
     print "  ],"
-    print "  \"definition_names\": [],"
+    if (m == 0) print "  \"definition_names\": [],"
+    else {
+      print "  \"definition_names\": ["
+      for (i = 1; i <= m; i++) printf "    \"%s\"%s\n", defs[i], (i < m ? "," : "")
+      print "  ],"
+    }
     print "  \"permitted_axioms\": [\"propext\", \"Quot.sound\", \"Classical.choice\"]"
     print "}" }')"
 [ "$(cat comparator.json)" = "$config_want" ] \
-  || fail "comparator.json must list exactly the theorems Manifest.lean states, in its order, with the three standard axioms and no definition holes"
-# Each headline's proof is `by sorry`, however the formatter breaks the line, and the
-# Manifest declares nothing else. Statements may contain `:=` (structure instances), so the
-# check counts each `sorry` and each `:= by sorry`: one of each per theorem.
+  || fail "comparator.json must list exactly the theorems and holes Manifest.lean declares, in its order, with the three standard axioms"
+# Each headline's proof is `by sorry` and each hole's body `sorry`, however the formatter breaks
+# the line, and the Manifest declares nothing else. Statements may contain `:=` (structure
+# instances), so the check counts each `sorry`, each `:= by sorry` and each `:= sorry`.
 manifest_code="$(code_grep '.' Manifest.lean | sed 's/^[^:]*:[0-9]*://' | tr '\n' ' ' | tr -s ' \t' '  ')"
-[ "$(code_count 'sorry' Manifest.lean)" -eq "$manifest_count" ] \
+[ "$(code_count 'sorry' Manifest.lean)" -eq "$((manifest_count + hole_count))" ] \
   && [ "$(printf '%s\n' "$manifest_code" | awk '{ print gsub(/:= by sorry([^[:alnum:]_]|$)/, "") }')" -eq "$manifest_count" ] \
-  || fail "every Manifest.lean theorem must be proved by exactly 'by sorry'"
-! code_grep '^(@[[][^]]*[]][[:space:]]*)?((private|public|protected|noncomputable)[[:space:]]+)*(def|abbrev|instance|axiom|opaque|structure|inductive|class|example|lemma)([^[:alnum:]_]|$)' \
+  && [ "$(printf '%s\n' "$manifest_code" | awk '{ print gsub(/:= sorry([^[:alnum:]_]|$)/, "") }')" -eq "$hole_count" ] \
+  || fail "every Manifest.lean theorem must be proved by exactly 'by sorry', and every hole be exactly 'sorry'"
+! code_grep '^(@[[][^]]*[]][[:space:]]*)?((private|public|protected|noncomputable)[[:space:]]+)*(abbrev|instance|axiom|opaque|structure|inductive|class|example|lemma)([^[:alnum:]_]|$)' \
     Manifest.lean \
-  || fail "Manifest.lean declares something other than a headline theorem"
-# Each headline says in words what it guarantees: a docstring ends on the line above it.
-awk '/^theorem / && prev !~ /-[/]$/ { print FILENAME ":" FNR ": " $0; bad = 1 } { prev = $0 }
+  || fail "Manifest.lean declares something other than a hole or a headline theorem"
+hole_lines="$(awk 'prev == "@[expose]" && /^def Linger[.]/ { print FNR } { prev = $0 }' Manifest.lean)"
+! code_grep '(^|[[:space:]])def[[:space:]]' Manifest.lean | awk -F: -v holes="$hole_lines" '
+    BEGIN { n = split(holes, h, "\n"); for (i = 1; i <= n; i++) hole[h[i]] = 1 }
+    !($2 in hole) { print; bad = 1 }
+    END { exit !bad }' \
+  || fail "a Manifest.lean definition must be a hole: '@[expose]', then 'def' and the full name"
+# Each hole and headline says in words what it is or guarantees: a docstring ends on the line
+# above it.
+awk '(/^theorem / || /^@[[]expose[]]$/) && prev !~ /-[/]$/ { print FILENAME ":" FNR ": " $0; bad = 1 }
+  { prev = $0 }
   END { exit bad }' Manifest.lean >&2 \
-  || fail "every Manifest.lean theorem needs a docstring saying what it guarantees"
-spec_imports_bad="$(module_imports Manifest.lean 'Linger/*/Spec.lean' | awk -F: "$IMPORT_AWK"'
+  || fail "every Manifest.lean hole and theorem needs a docstring"
+# The interfaces the Manifest still imports: components whose parts are not yet holes. The list
+# only shrinks; every entry must still be imported, and nothing else may be but Spec modules.
+manifest_interfaces='Linger.Session Linger.Session.Checkpoint Linger.Session.Driver Linger.Terminal.Render Linger.Terminal.Replay'
+manifest_imports_bad="$(module_imports Manifest.lean | awk -F: -v allowed="$manifest_interfaces" "$IMPORT_AWK"'
+  BEGIN { n = split(allowed, a, " "); for (i = 1; i <= n; i++) ok[a[i]] = 1 }
+  { mod = import_mod($3); seen[mod] = 1
+    if ($3 !~ /^public[[:space:]]+import[[:space:]]+Linger[.]/ || $3 ~ /import[[:space:]]+all[[:space:]]/ \
+        || !(mod ~ /^Linger[.][A-Z][A-Za-z]*[.]Spec$/ || mod in ok)) print "  " $0 }
+  END { for (m in ok) if (!(m in seen)) print "  listed but not imported: " m }')"
+[ -z "$manifest_imports_bad" ] || {
+  printf '%s\n' "$manifest_imports_bad" >&2
+  fail "Manifest.lean imports Spec modules and only the listed interfaces"; }
+spec_imports_bad="$(module_imports 'Linger/*/Spec.lean' | awk -F: "$IMPORT_AWK"'
   { mod = import_mod($3)
     if ($3 ~ /import[[:space:]]+all[[:space:]]/ || mod !~ /^Linger([.][A-Z][A-Za-z]*)+$/ \
         || mod ~ /[.](Proofs|Tests|Suites|Shell|Boundary)([.]|$)/) print "  " $0 }')"
 [ -z "$spec_imports_bad" ] || {
   printf '%s\n' "$spec_imports_bad" >&2
-  fail "Manifest.lean and Spec modules import only public interfaces"; }
+  fail "Spec modules import only public interfaces"; }
 [ "$(library_decl Manifest)" = "lean_lib Manifest where leanOptions := #[⟨\`warningAsError, false⟩, ⟨\`linter.missingDocs, true⟩] " ] \
   || fail "the Manifest library must keep sorry a warning and require docstrings: $(library_decl Manifest)"
 ! grep -qE '^@[[]default_target[]][[:space:]]+lean_lib Manifest' lakefile.lean \

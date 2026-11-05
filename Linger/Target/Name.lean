@@ -1,29 +1,21 @@
 module
 
+import Linger.Target.Spec
+
 public section
 
 /-! # Linger.Target.Name — session names that cannot escape their directory
 
 A session name becomes a socket path (`<dir>/<name>.sock`) and a
 checkpoint path. Commands and remote listings accept only names already
-in canonical form: no path separator, NUL or leading dot, nonempty and
-at most 80 characters. Validation never rewrites the requested identity.
+in canonical form (`Valid`, in `Linger/Target/Spec.lean`). Validation never rewrites the
+requested identity.
 -/
 
 namespace Linger.Target.Name
 
 /-- Creation name offered by an empty interactive query. -/
 def defaultName : String := "main"
-
-/-- Characters a name may contain: ASCII alphanumerics plus `-_.+`.
-`@` is deliberately excluded — it is reserved as the `name@host`
-remote-target delimiter, so a name never collides with that syntax.
-Everything else (slashes, NULs, spaces, controls, unicode, `@`) is
-mapped away by `sanitize`. -/
-def okChar (c : Char) : Bool := c.isAlphanum || c == '-' || c == '_' || c == '.' || c == '+'
-
-/-- The longest valid name, in characters; `sanitize` truncates to it. -/
-def maxLen : Nat := 80
 
 /-- Total sanitizer: bad characters become `_`, a leading dot becomes
 `_` (no hidden files, no `.`/`..`), overlong names truncate, the empty
@@ -37,11 +29,5 @@ def sanitize (s : String) : String :=
 
 /-- Accept an exact session name. Validation must never select a different name. -/
 def check (s : String) : Option String := if sanitize s == s then some s else none
-
-/-- The §Name predicate, over the character list so proofs stay in
-list-land. -/
-def Valid (s : String) : Prop :=
-  s.toList.length > 0 ∧
-    s.toList.length ≤ maxLen ∧ (∀ c ∈ s.toList, okChar c) ∧ s.toList.head? ≠ some '.'
 
 end Linger.Target.Name

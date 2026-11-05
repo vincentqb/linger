@@ -197,10 +197,11 @@ say "2d. headline theorems (Manifest.lean against Theorems/Claims.lean)"
   || { grep -v '^Exporting' "$logs/comparator.log" | tail -20; fail "lake comparator rejected the headline theorems (see $logs/comparator.log)"; }
 [ "$(tail -1 "$logs/comparator.log")" = 'Your solution is okay!' ] \
   || fail "lake comparator did not accept the headline theorems (see $logs/comparator.log)"
-# The only warnings the Manifest may have are its sorry proofs, one per headline.
+# The only warnings the Manifest may have are its sorry proofs and holes, one per declaration.
 headlines="$(grep -c '^theorem ' Manifest.lean)"
-[ "$(grep -c '^warning: Manifest[.]lean:[0-9]*:[0-9]*: declaration uses `sorry`$' "$logs/comparator.log")" -eq "$headlines" ] \
-  || fail "Manifest.lean built without one sorry warning per headline (see $logs/comparator.log)"
+holes="$(awk 'prev == "@[expose]" && /^def Linger[.]/ { n++ } { prev = $0 } END { print n + 0 }' Manifest.lean)"
+[ "$(grep -c '^warning: Manifest[.]lean:[0-9]*:[0-9]*: declaration uses `sorry`$' "$logs/comparator.log")" -eq "$((headlines + holes))" ] \
+  || fail "Manifest.lean built without one sorry warning per headline and hole (see $logs/comparator.log)"
 if grep '^warning' "$logs/comparator.log" | grep -v 'declaration uses `sorry`$'; then
   fail "Manifest.lean has warnings beyond its sorry proofs"
 fi

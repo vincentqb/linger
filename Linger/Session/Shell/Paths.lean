@@ -2,6 +2,7 @@ module
 
 import Linger.Os.Shell
 import Linger.Target.Name
+import Linger.Target.Spec
 
 public section
 

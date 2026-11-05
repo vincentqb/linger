@@ -2,6 +2,7 @@
   "challenge_module": "Manifest",
   "solution_module": "Theorems.Claims",
   "theorem_names": [
+    "Linger.Claims.check_eq_some_iff",
     "Linger.Claims.check_no_alias",
     "Linger.Claims.command_argv",
     "Linger.Claims.restore_grid_reachable",
@@ -18,6 +19,9 @@
     "Linger.Claims.reachableOut_bound",
     "Linger.Claims.at_most_one_owner"
   ],
-  "definition_names": [],
+  "definition_names": [
+    "Linger.Target.Name.check",
+    "Linger.Target.Remote.command"
+  ],
   "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"]
 }

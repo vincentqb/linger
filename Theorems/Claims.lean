@@ -42,6 +42,9 @@ namespace Linger.Claims
 
 open Linger.Session Linger.Target Linger.Terminal
 
+theorem check_eq_some_iff (s result : String) :
+    Name.check s = some result ↔ result = s ∧ Name.Valid s := Name.check_eq_some_iff s result
+
 theorem check_no_alias {a b name : String} (ha : Name.check a = some name)
     (hb : Name.check b = some name) : a = b := Name.check_no_alias ha hb
 

@@ -2,13 +2,34 @@ module
 
 public section
 
-/-! # The shell syntax remote commands are judged by
+/-! # What session names and remote commands are judged by
+
+A valid session name is nonempty, at most `maxLen` characters, made only of `okChar`s, and does
+not begin with a dot, so it cannot name a path outside the socket directory.
 
 The literal subset of POSIX shell syntax. Inside single quotes, every character is literal.
 The sequence `'\''` emits one quote and resumes the quoted region. A command consists only of
 these words separated by spaces; there are no expansions or operators. This models the shell
 syntax, not the SSH implementation. OS argument strings exclude NUL. Bodies are exposed: each
 definition here is its own specification. -/
+
+namespace Linger.Target.Name
+
+/-- Characters a name may contain: ASCII alphanumerics plus `-_.+`.
+`@` is deliberately excluded — it is reserved as the `name@host`
+remote-target delimiter, so a name never collides with that syntax. -/
+@[expose] def okChar (c : Char) : Bool :=
+  c.isAlphanum || c == '-' || c == '_' || c == '.' || c == '+'
+
+/-- The longest valid name, in characters. -/
+@[expose] def maxLen : Nat := 80
+
+/-- A valid session name, over the character list so proofs stay in list-land. -/
+@[expose] def Valid (s : String) : Prop :=
+  s.toList.length > 0 ∧
+    s.toList.length ≤ maxLen ∧ (∀ c ∈ s.toList, okChar c) ∧ s.toList.head? ≠ some '.'
+
+end Linger.Target.Name
 
 namespace Linger.Target.Remote.Shell
 

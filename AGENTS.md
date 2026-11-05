@@ -38,8 +38,9 @@ dispatch, and pushes or pull requests that change `c/shim.c` or `./lake`.
 
 - `Linger/<Component>/`: a component's pure modules, its `Shell.lean` or `Shell/` for IO
   and, for the OS, `Boundary.lean` for the foreign declarations; then `Proofs/`, `Tests/`
-  (elaboration-time unit tests) and `Suites/` (executable suites). `Spec.lean` holds the
-  definitions headline theorems are stated in that are not part of the interface.
+  (elaboration-time unit tests) and `Suites/` (executable suites). `Spec.lean` holds what
+  gives headline theorems their meaning: value types, reference models and predicates over
+  the program's operations, never the representation of a state or code that runs.
 - `Linger/Os/`: the operating system. `Boundary.lean` holds the foreign declarations,
   `Shell.lean` the checked surface callers use, `Env.lean` the environment policies.
 - `Linger/Target/`: session names and remote targets.
@@ -54,8 +55,8 @@ dispatch, and pushes or pull requests that change `c/shim.c` or `./lake`.
 - `Linger/Import/`: importing tmux-resurrect saves: the `Resurrect` policy, and `Shell.lean`
   runs it.
 - `Linger/App/`: the command line: the `Entry` route and, in `Shell.lean`, the commands.
-- `Manifest.lean`: the headline theorems, stated with `sorry` over public interfaces and
-  `Spec` modules; `comparator.json` names them for `lake comparator`.
+- `Manifest.lean`: the program parts headline theorems name, declared as holes, and the
+  headline theorems, stated with `sorry`; `comparator.json` names both for `lake comparator`.
 - `Theorems/`: the headline proofs (`Claims.lean`), the cross-component contracts and the
   coverage census; `Verify/`: the verifier's harness, runner and own suites.
 - `scripts/`: build and verification orchestration.

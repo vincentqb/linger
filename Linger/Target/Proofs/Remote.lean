@@ -1,7 +1,6 @@
 module
 
 public import Linger.Target.Remote
-public import Linger.Target.Name
 public import Linger.Target.Spec
 import all Linger.Target.Remote
 import Linger.Target.Proofs.Name

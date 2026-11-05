@@ -4,8 +4,6 @@ public import Linger.Session
 public import Linger.Session.Checkpoint
 public import Linger.Session.Driver
 public import Linger.Session.Spec
-public import Linger.Target.Name
-public import Linger.Target.Remote
 public import Linger.Target.Spec
 public import Linger.Terminal.Render
 public import Linger.Terminal.Replay
@@ -13,22 +11,37 @@ public import Linger.Terminal.Spec
 
 /-! # Headline theorems
 
-The guarantees linger must keep, stated over the components' public interfaces and the
-definitions in their `Spec` modules. Each proof is `sorry` here: `Theorems/Claims.lean` proves
-the same statements, and `./lake comparator` checks that it proves exactly these with no axiom
-beyond `propext`, `Quot.sound` and `Classical.choice`. Changing a statement here changes what
-linger claims.
+The guarantees linger must keep. Each is stated over definitions in the components' `Spec`
+modules and over the program parts declared below as holes: each hole is `sorry` here, the
+program supplies it, and the claims say what it must do. `Theorems/Claims.lean` proves the same
+statements of the program's parts, and `./lake comparator` checks that it proves exactly these,
+that each part has the declared type, and that no axiom beyond `propext`, `Quot.sound` and
+`Classical.choice` is used. Changing a statement or a hole here changes what linger claims.
 
 Not claimed: anything about the IO executors, the C shim or the operating system, which suites
 test instead. -/
 
 public section
 
+/-! ## The program's parts -/
+
+/-- The session-name validator every command applies to the names it is given. -/
+@[expose]
+def Linger.Target.Name.check : String → Option String := sorry
+
+/-- The command line linger runs on a remote host, for a verb and its words. -/
+@[expose]
+def Linger.Target.Remote.command : String → List String → String := sorry
+
 namespace Linger.Claims
 
 open Linger.Session Linger.Target Linger.Terminal
 
 /-! ## Session targets -/
+
+/-- Validation accepts exactly the valid names, and returns each unchanged. -/
+theorem check_eq_some_iff (s result : String) :
+    Name.check s = some result ↔ result = s ∧ Name.Valid s := by sorry
 
 /-- Distinct accepted session names cannot alias: validation never maps two different names to
 the same one. -/
