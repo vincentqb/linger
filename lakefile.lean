@@ -82,6 +82,10 @@ lean_lib Verify where
 
 lean_exe suites where root := `Verify.Main
 
+/-- The headline theorems, stated with `sorry` for `./lake comparator`, which builds this
+library and checks that `Theorems.Claims` proves the same statements. -/
+lean_lib Manifest where leanOptions := #[⟨`warningAsError, false⟩, ⟨`linter.missingDocs, true⟩]
+
 @[default_target] lean_exe linger where root := `Main
 
 /-- Build and run the complete verifier, including live pty suites. -/

@@ -2,6 +2,7 @@ module
 
 public import Linger.Target.Remote
 public import Linger.Target.Name
+public import Linger.Target.Spec
 import all Linger.Target.Remote
 import Linger.Target.Proofs.Name
 
@@ -103,43 +104,13 @@ theorem parseTarget_name_valid {target : String} {result : Target}
   rw [name]
   exact ((targetValid_iff target).mp valid).2.1
 
-/-! ## The literal subset of POSIX shell syntax
+/-! ## Shell words
 
-Inside single quotes, every character is literal. The sequence `'\''` emits
-one quote and resumes the quoted region. A command consists only of these
-words separated by spaces; there are no expansions or operators. This models
-the shell syntax, not the SSH implementation. OS argument strings exclude NUL.
+`Linger/Target/Spec.lean` defines the literal subset of POSIX shell syntax. Its parse is
+unique, and quoting round-trips every argument through it.
 -/
 
 namespace Shell
-
-/-- Read a single-quoted region through its closing quote. -/
-def quoted : List Char → Option (List Char × List Char)
-  | [] => none
-  | c :: rest =>
-    if c == '\'' then
-      match rest with
-      | '\\' :: '\'' :: '\'' :: more => do
-        let (text, tail) ← quoted more
-        some ('\'' :: text, tail)
-      | _ => some ([], rest)
-    else do
-      let (text, tail) ← quoted rest
-      some (c :: text, tail)
-
-/-- A word must start with a quote; unquoted shell syntax is outside the model. -/
-def word : List Char → Option (List Char × List Char)
-  | '\'' :: rest => quoted rest
-  | _ => none
-
-/-- A complete command contains only literal words and their separators. -/
-inductive Words : List Char → List (List Char) → Prop where
-  /-- The source is one word and nothing after it. -/
-  | last {source text} (read : word source = some (text, [])) : Words source [text]
-  /-- A word, one space, and the words of the rest. -/
-  |
-  next {source text tail rest} (read : word source = some (text, ' ' :: tail))
-    (more : Words tail rest) : Words source (text :: rest)
 
 theorem words_unique {source left right} (hl : Words source left) (hr : Words source right) :
     left = right := by

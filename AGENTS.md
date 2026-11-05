@@ -38,7 +38,8 @@ dispatch, and pushes or pull requests that change `c/shim.c` or `./lake`.
 
 - `Linger/<Component>/`: a component's pure modules, its `Shell.lean` or `Shell/` for IO
   and, for the OS, `Boundary.lean` for the foreign declarations; then `Proofs/`, `Tests/`
-  (elaboration-time unit tests) and `Suites/` (executable suites).
+  (elaboration-time unit tests) and `Suites/` (executable suites). `Spec.lean` holds the
+  definitions headline theorems are stated in that are not part of the interface.
 - `Linger/Os/`: the operating system. `Boundary.lean` holds the foreign declarations,
   `Shell.lean` the checked surface callers use, `Env.lean` the environment policies.
 - `Linger/Target/`: session names and remote targets.
@@ -53,8 +54,10 @@ dispatch, and pushes or pull requests that change `c/shim.c` or `./lake`.
 - `Linger/Import/`: importing tmux-resurrect saves: the `Resurrect` policy, and `Shell.lean`
   runs it.
 - `Linger/App/`: the command line: the `Entry` route and, in `Shell.lean`, the commands.
-- `Theorems/`: the cross-component contracts and the coverage census; `Verify/`: the verifier's
-  harness, runner and own suites.
+- `Manifest.lean`: the headline theorems, stated with `sorry` over public interfaces and
+  `Spec` modules; `comparator.json` names them for `lake comparator`.
+- `Theorems/`: the headline proofs (`Claims.lean`), the cross-component contracts and the
+  coverage census; `Verify/`: the verifier's harness, runner and own suites.
 - `scripts/`: build and verification orchestration.
 
 Components depend downward only: `Os`, `Target` and `Terminal`; then `Display`; then `Session`
@@ -75,6 +78,9 @@ Lean erases proofs regardless of file placement.
   theorem whose type contains its exact fully qualified constant in the same
   commit, checked by `Theorems/Coverage.lean`; generated lemmas do not count.
   State invariants in `THEOREMS.md` and design code for provability.
+- `Manifest.lean`, `comparator.json` and each `Spec.lean` say what linger claims. Change
+  them to change a claim, never to make a proof pass, and restate a theorem there no
+  weaker than its source.
 - Every public declaration in a library needs a docstring: `lakefile.lean` enables
   `linter.missingDocs` for every library but `Verify`, and `scripts/verify.sh` checks the
   modules under `Linger/` outside `Proofs/` and `Tests/` directly.

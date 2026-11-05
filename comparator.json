@@ -1,0 +1,12 @@
+{
+  "challenge_module": "Manifest",
+  "solution_module": "Theorems.Claims",
+  "theorem_names": [
+    "Linger.Claims.check_no_alias",
+    "Linger.Claims.command_argv",
+    "Linger.Claims.run_bytes_isolates",
+    "Linger.Claims.screenText_text"
+  ],
+  "definition_names": [],
+  "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"]
+}

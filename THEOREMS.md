@@ -3,6 +3,9 @@
 Lean checks the session model, shared event driver, terminal model and command policies.
 The statements below are an index; each linked declaration gives its exact
 hypotheses. Runtime behavior is covered by IO suites and source gates.
+[Manifest.lean](Manifest.lean) states the headline theorems in public terms,
+[Claims](Theorems/Claims.lean) proves them, and `./lake test` runs `lake comparator`
+to check that the proofs match the statements.
 
 ## Core contracts
 

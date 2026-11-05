@@ -187,6 +187,24 @@ say "2c. verifier regression tests (CI policy, caches and suite isolation)"
 ./.lake/build/bin/suites --suites ci:57 hygiene:56 \
   || fail "verifier regression checks (see $logs/linger-ci.out and linger-hygiene.out)"
 
+say "2d. headline theorems (Manifest.lean against Theorems/Claims.lean)"
+# `lake comparator` builds both modules, exports them and replays the claims' proofs through
+# the kernel in a separate process; it accepts only when every statement matches and no axiom
+# outside comparator.json's list is used. Its bwrap sandbox protects a judge from code the
+# judge did not write. This verifier builds and runs this code anyway, so the sandbox would
+# add nothing here, and running without it keeps the check the same on macOS.
+./lake comparator --inadvisably-no-sandbox > "$logs/comparator.log" 2>&1 \
+  || { grep -v '^Exporting' "$logs/comparator.log" | tail -20; fail "lake comparator rejected the headline theorems (see $logs/comparator.log)"; }
+[ "$(tail -1 "$logs/comparator.log")" = 'Your solution is okay!' ] \
+  || fail "lake comparator did not accept the headline theorems (see $logs/comparator.log)"
+# The only warnings the Manifest may have are its sorry proofs, one per headline.
+headlines="$(grep -c '^theorem ' Manifest.lean)"
+[ "$(grep -c '^warning: Manifest[.]lean:[0-9]*:[0-9]*: declaration uses `sorry`$' "$logs/comparator.log")" -eq "$headlines" ] \
+  || fail "Manifest.lean built without one sorry warning per headline (see $logs/comparator.log)"
+if grep '^warning' "$logs/comparator.log" | grep -v 'declaration uses `sorry`$'; then
+  fail "Manifest.lean has warnings beyond its sorry proofs"
+fi
+
 say "3. posix shim smoke tests"
 shim_out="$logs/shim.out"
 ./.lake/build/bin/lingertest > "$shim_out" 2>&1 \

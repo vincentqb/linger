@@ -395,6 +395,60 @@ layer_bad="$(module_imports 'Linger/*' ':!Linger/*/Suites/*' \
   printf '%s\n' "$layer_bad" >&2
   fail "a component imports a peer or a higher layer (layers: $component_layers)"; }
 
+# Headline theorems. Manifest.lean states them with `sorry`, Theorems/Claims.lean proves the
+# same statements, comparator.json names them, and `./lake comparator` (scripts/verify.sh)
+# checks that each proof matches its statement and uses no other axiom. These gates keep the
+# three lists equal, so a headline cannot leave that check by being dropped from one of them,
+# and keep the statements' meaning out of the proofs: the Manifest and every component's
+# Spec module import only public interfaces, never a proof, test, suite, shell or boundary.
+headline_names() {                           # headline_names <file>: theorem names, in order
+  code_grep '^theorem [A-Za-z_][A-Za-z0-9_]*' "$1" | sed 's/^[^:]*:[0-9]*://; s/^theorem //; s/[[:space:]].*//'
+}
+manifest_names="$(headline_names Manifest.lean)"
+manifest_count="$(printf '%s\n' "$manifest_names" | awk 'END { print NR }')"
+[ -n "$manifest_names" ] || fail "Manifest.lean states no headline theorem"
+[ "$(headline_names Theorems/Claims.lean)" = "$manifest_names" ] \
+  || fail "Theorems/Claims.lean must prove exactly the theorems Manifest.lean states, in its order"
+config_want="$(printf '%s\n' "$manifest_names" | awk '
+  { names[NR] = $0 }
+  END {
+    print "{"
+    print "  \"challenge_module\": \"Manifest\","
+    print "  \"solution_module\": \"Theorems.Claims\","
+    print "  \"theorem_names\": ["
+    for (i = 1; i <= NR; i++) printf "    \"Linger.Claims.%s\"%s\n", names[i], (i < NR ? "," : "")
+    print "  ],"
+    print "  \"definition_names\": [],"
+    print "  \"permitted_axioms\": [\"propext\", \"Quot.sound\", \"Classical.choice\"]"
+    print "}" }')"
+[ "$(cat comparator.json)" = "$config_want" ] \
+  || fail "comparator.json must list exactly the theorems Manifest.lean states, in its order, with the three standard axioms and no definition holes"
+# Each headline's proof is `by sorry`, however the formatter breaks the line, and the
+# Manifest declares nothing else.
+manifest_code="$(code_grep '.' Manifest.lean | sed 's/^[^:]*:[0-9]*://' | tr '\n' ' ' | tr -s ' \t' '  ')"
+[ "$(code_count ':=' Manifest.lean)" -eq "$manifest_count" ] \
+  && [ "$(code_count 'sorry' Manifest.lean)" -eq "$manifest_count" ] \
+  && [ "$(printf '%s\n' "$manifest_code" | awk '{ print gsub(/:= by sorry([^[:alnum:]_]|$)/, "") }')" -eq "$manifest_count" ] \
+  || fail "every Manifest.lean theorem must be proved by exactly 'by sorry'"
+! code_grep '^(@[[][^]]*[]][[:space:]]*)?((private|public|protected|noncomputable)[[:space:]]+)*(def|abbrev|instance|axiom|opaque|structure|inductive|class|example|lemma)([^[:alnum:]_]|$)' \
+    Manifest.lean \
+  || fail "Manifest.lean declares something other than a headline theorem"
+# Each headline says in words what it guarantees: a docstring ends on the line above it.
+awk '/^theorem / && prev !~ /-[/]$/ { print FILENAME ":" FNR ": " $0; bad = 1 } { prev = $0 }
+  END { exit bad }' Manifest.lean >&2 \
+  || fail "every Manifest.lean theorem needs a docstring saying what it guarantees"
+spec_imports_bad="$(module_imports Manifest.lean 'Linger/*/Spec.lean' | awk -F: "$IMPORT_AWK"'
+  { mod = import_mod($3)
+    if ($3 ~ /import[[:space:]]+all[[:space:]]/ || mod !~ /^Linger([.][A-Z][A-Za-z]*)+$/ \
+        || mod ~ /[.](Proofs|Tests|Suites|Shell|Boundary)([.]|$)/) print "  " $0 }')"
+[ -z "$spec_imports_bad" ] || {
+  printf '%s\n' "$spec_imports_bad" >&2
+  fail "Manifest.lean and Spec modules import only public interfaces"; }
+[ "$(library_decl Manifest)" = "lean_lib Manifest where leanOptions := #[⟨\`warningAsError, false⟩, ⟨\`linter.missingDocs, true⟩] " ] \
+  || fail "the Manifest library must keep sorry a warning and require docstrings: $(library_decl Manifest)"
+! grep -qE '^@[[]default_target[]][[:space:]]+lean_lib Manifest' lakefile.lean \
+  || fail "the Manifest library proves nothing; keep it out of the default targets"
+
 # Pure route proofs do not observe terminal IO or inspect Main's call sites.
 # Pin dispatch before terminal observations, exact argv and executable identity;
 # Linger.App.Suites.Manager, Linger.Import.Suites.Recipes and Linger.Import.Suites.Interop exercise them in subprocesses.
