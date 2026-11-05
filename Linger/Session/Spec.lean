@@ -1,6 +1,7 @@
 module
 
 public import Linger.Terminal.Spec
+import LeanEvidence.Commands
 
 public section
 
@@ -202,10 +203,10 @@ structure Result (S World : Type) where
 
 /-- The external contract excludes unreported exceptions; it permits every
 disconnect/checkpoint-failure result. This is a premise about primitive
-execution, not an assumption that the event driver succeeds. -/
-@[expose]
-def Responds {S World Plan ε : Type}
-    (execute : S → World → (eff : Effect Plan) → Except ε (World × Reply eff)) : Prop :=
+execution, not an assumption that the event driver succeeds. A primitive that raises
+instead of returning a result falsifies it. -/
+WorldClaim Responds {S World Plan ε : Type}
+  (execute : S → World → (eff : Effect Plan) → Except ε (World × Reply eff)) :=
   ∀ st world eff, ∃ answer, execute st world eff = .ok answer
 
 end Linger.Session.Driver

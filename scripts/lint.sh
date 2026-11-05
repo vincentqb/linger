@@ -14,6 +14,9 @@ else
 fi
 
 if command -v lean-fmt > /dev/null; then
+  # lean-fmt loads the Lake workspace, and Lake runs git in .lake/packages: a git hook's
+  # GIT_DIR or GIT_INDEX_FILE would aim those commands at this repository.
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
   # Private logs: concurrent checkouts lint at the same time.
   logs="$(mktemp -d "${TMPDIR:-/tmp}/linger-lint.XXXXXX")"
   trap 'rm -r "$logs"' EXIT

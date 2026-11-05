@@ -193,11 +193,14 @@ awk '
     }
     exit failed
   }' c/shim.c >&2 || fail "fork child call boundary changed"
-# Keep the library free of external Lean dependencies.
-! code_grep '^[[:space:]]*require ' 'lakefile.lean' \
+# The only external Lean dependency is the LeanEvidence audit, pinned to a commit.
+! code_grep '^[[:space:]]*require ' 'lakefile.lean' | grep -qv 'require lean_evidence from git$' \
   || fail "external Lean dependency in lakefile.lean"
-[ "$(tr -d ' \n' < lake-manifest.json | grep -o '\"packages\":\[[^]]*\]')" = '"packages":[]' ] \
-  || fail "lake-manifest has external Lean packages"
+lake_packages="$(tr -d ' \n' < lake-manifest.json | grep -o '"packages":\[[^]]*\]')"
+[ "$(printf '%s' "$lake_packages" | grep -o '"name":"[^"]*"')" = '"name":"lean_evidence"' ] \
+  && printf '%s' "$lake_packages" | grep -q '"url":"https://github.com/vincentqb/lean-evidence"' \
+  && printf '%s' "$lake_packages" | grep -qE '"inputRev":"[0-9a-f]{40}"' \
+  || fail "lake-manifest may list only lean_evidence, pinned to a commit"
 
 # The vt-toolkit's import closure (`specs/archive/vt-toolkit.md` Step 4). The toolkit is
 # Linger/Terminal/{Spec,Vt,Render,Mediation,Title,Replay}.lean, and the claim worth having is
@@ -208,7 +211,7 @@ awk '
 # module happily -- `import Linger.Os.Shell` in Mediation.lean builds under
 # `./lake build LingerVt` without a murmur. Measured, twice, not assumed. A
 # build-level failure needs a sub-package with its own srcDir and a path `require`,
-# and the two gates immediately above forbid `require`. So this grep is the half
+# and the two gates immediately above forbid every `require` but LeanEvidence's. So this grep is the half
 # that bites: the same species of oracle as SHIM_CAP below, evadeable by
 # deliberately editing the list, not by reverting a fix.
 #
@@ -371,7 +374,8 @@ module_imports Linger/Session.lean ':(glob)Linger/Session/*.lean' 'Linger/Sessio
     Linger/Terminal/Replay.lean Linger.lean \
 | awk -F: "$IMPORT_AWK"'
   { mod = import_mod($3)
-    if (mod !~ /^(Linger[.]Session|Linger[.](Session|Os|Target|Display|Terminal)[.][[:alnum:]_.]+|Linger[.]App[.]Shell|Std[.]Async[.](System|Signal))$/) {
+    if (mod !~ /^(Linger[.]Session|Linger[.](Session|Os|Target|Display|Terminal)[.][[:alnum:]_.]+|Linger[.]App[.]Shell|Std[.]Async[.](System|Signal))$/ \
+        && mod != "LeanEvidence.Commands") {
       print "  " $0; bad = 1
     }
   }
@@ -465,11 +469,12 @@ manifest_imports_bad="$(module_imports Manifest.lean | awk -F: "$IMPORT_AWK"'
   printf '%s\n' "$manifest_imports_bad" >&2
   fail "Manifest.lean imports only Spec modules, publicly"; }
 spec_imports_bad="$(module_imports 'Linger/*/Spec.lean' | awk -F: "$IMPORT_AWK"'
-  { if ($3 ~ /import[[:space:]]+all[[:space:]]/ || import_mod($3) !~ /^Linger[.][A-Z][A-Za-z]*[.]Spec$/)
+  { if ($3 ~ /import[[:space:]]+all[[:space:]]/ || (import_mod($3) !~ /^Linger[.][A-Z][A-Za-z]*[.]Spec$/ \
+        && import_mod($3) != "LeanEvidence.Commands"))
       print "  " $0 }')"
 [ -z "$spec_imports_bad" ] || {
   printf '%s\n' "$spec_imports_bad" >&2
-  fail "Spec modules import only Spec modules"; }
+  fail "Spec modules import only Spec modules and LeanEvidence.Commands"; }
 [ "$(library_decl Manifest)" = "lean_lib Manifest where leanOptions := #[⟨\`warningAsError, false⟩, ⟨\`linter.missingDocs, true⟩] " ] \
   || fail "the Manifest library must keep sorry a warning and require docstrings: $(library_decl Manifest)"
 ! grep -qE '^@[[]default_target[]][[:space:]]+lean_lib Manifest' lakefile.lean \

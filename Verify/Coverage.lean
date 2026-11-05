@@ -1,6 +1,7 @@
 module
 
 meta import Theorems.Coverage
+meta import LeanEvidence.Commands
 
 meta section
 

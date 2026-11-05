@@ -7,6 +7,9 @@ package linger where leanOptions :=
     ⟨`linter.extra.unreachableTactic, true⟩, ⟨`linter.redundantVisibility, true⟩,
     ⟨`linter.extra.unnecessarySeqFocus, true⟩]
 
+require lean_evidence from git
+  "https://github.com/vincentqb/lean-evidence"@"31482d21047478e4595235b39871fcae6dadc6d8"
+
 /-- Options for every library but `Verify`: Lake builds a module with the options of one library
 that contains it, and these libraries overlap, so they share a single set. With the package's
 `warningAsError`, a public declaration without a docstring fails the build. -/
@@ -60,7 +63,7 @@ lean_exe lingertest where root := `Linger.Os.Suites.Shim
 
 /-- Proofs have their own import and verification graph: every module under `Theorems/` and
 under a component's `Proofs/` is built. Lean erases proofs regardless of file placement. -/
-lean_lib Theorems where
+@[default_target] lean_lib Theorems where
   globs :=
   #[.submodules `Theorems, .submodules `Linger.App.Proofs, .submodules `Linger.Display.Proofs,
     .submodules `Linger.Import.Proofs, .submodules `Linger.Os.Proofs,
@@ -77,6 +80,9 @@ lean_lib Tests where
     .submodules `Linger.Target.Tests, .submodules `Linger.Terminal.Tests]
   leanOptions := implementationOptions
 
+/-- The session suites, built by default so the audit sees which claims they exercise. -/
+@[default_target] lean_lib Suites where globs := #[.submodules `Linger.Session.Suites]
+
 /-- Executable suites: `./lake exe suites <suite>`. -/
 lean_lib Verify where
 
@@ -87,6 +93,10 @@ library and checks that `Theorems.Claims` proves the same statements. -/
 lean_lib Manifest where leanOptions := #[⟨`warningAsError, false⟩, ⟨`linter.missingDocs, true⟩]
 
 @[default_target] lean_exe linger where root := `Main
+
+/-- The LeanEvidence audit of every module the default targets build. -/
+@[default_target] target audit pkg : Unit := do
+  return (← pkg.fetchFacetJob `leanEvidence).map (fun _ => ())
 
 /-- Build and run the complete verifier, including live pty suites. -/
 @[test_driver] script test do

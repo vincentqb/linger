@@ -3,6 +3,7 @@ module
 import Verify.Harness
 public import Linger.Session.Shell.Daemon
 import Linger.Session.Tests.Delivery
+import LeanEvidence.Commands
 
 public section
 
@@ -490,6 +491,7 @@ def failureFeedback (dir : String) : IO Unit :=
         "delivery/feedback/retry-at-later-cadence"
 
 /-- The delivery suite, or only the check named `only`. -/
+@[exercises Linger.Session.Driver.Responds]
 def run (only : Option String := none) : IO UInt32 := do
   let checks : List (String × (String → IO Unit)) :=
     [("colours", fun dir => largeReplay dir false), ("marks", fun dir => largeReplay dir true),

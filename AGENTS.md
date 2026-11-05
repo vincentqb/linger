@@ -59,6 +59,7 @@ dispatch, and pushes or pull requests that change `c/shim.c` or `./lake`.
 - `Manifest.lean`: the program parts headline theorems name, declared as holes, and the
   headline theorems, stated with `sorry`. It imports only `Spec` modules; `comparator.json`
   names the holes and theorems for `lake comparator`.
+- `Audit.lean`: the LeanEvidence role of each module prefix; `./lake build` runs the audit.
 - `Theorems/`: the headline proofs (`Claims.lean`), the cross-component contracts and the
   coverage census; `Verify/`: the verifier's harness, runner and own suites.
 - `scripts/`: build and verification orchestration.
@@ -81,9 +82,11 @@ Lean erases proofs regardless of file placement.
   theorem whose type contains its exact fully qualified constant in the same
   commit, checked by `Theorems/Coverage.lean`; generated lemmas do not count.
   State invariants in `THEOREMS.md` and design code for provability.
-- `Manifest.lean`, `comparator.json` and each `Spec.lean` say what linger claims. Change
-  them to change a claim, never to make a proof pass, and restate a theorem there no
-  weaker than its source.
+- `Manifest.lean`, `comparator.json`, `Audit.lean` and each `Spec.lean` say what linger
+  claims. Change them to change a claim, never to make a proof pass, and restate a theorem
+  there no weaker than its source.
+- State each assumption about the outside world as a `WorldClaim` in a `Spec.lean`, and mark
+  the suites that exercise it with `@[exercises]`.
 - Every public declaration in a library needs a docstring: `lakefile.lean` enables
   `linter.missingDocs` for every library but `Verify`, and `scripts/verify.sh` checks the
   modules under `Linger/` outside `Proofs/` and `Tests/` directly.
