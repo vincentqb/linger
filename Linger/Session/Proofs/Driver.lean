@@ -330,4 +330,85 @@ theorem run_exited {m : Type → Type} [Monad m]
     run execute r events = pure r := by
   cases events <;> simp [run, h]
 
+/-! ## Succeeding effects
+
+When every effect succeeds, nothing is fed back, so the driver runs exactly the session's
+trace. This pins `run` to `Session.run` for `Manifest.lean`. -/
+
+/-- A succeeding effect feeds nothing back. -/
+theorem feedback_success (eff : Effect Plan) : feedback eff (success eff) = [] := by
+  cases eff <;> rfl
+
+/-- With succeeding effects, one event's batch feeds nothing back, and its state and exit flag
+are the session step's. -/
+theorem batch_success (execute : Interpreter World)
+    (succeeds : ∀ st w eff, (execute st w eff).2 = success eff) (r : Result State World)
+    (ev : Event) :
+    (batch execute r ev).2 = [] ∧ (batch execute r ev).1.st = (step r.st ev).1 ∧
+      (batch execute r ev).1.exiting = (step r.st ev).2.contains .exit := by
+  refine ⟨?_, rfl, rfl⟩
+  have horder :=
+    effects_in_order execute (step r.st ev).1 r.world (eventDepth ev) (step r.st ev).2
+      (step_depth r.st ev)
+  simp only at horder
+  have hnil :
+    ∀ (effs : List (Effect Plan)) (acc : World × List Event),
+      acc.2 = [] →
+        (effs.foldl
+              (fun (acc : World × List Event) eff =>
+                let answer := execute (step r.st ev).1 acc.1 eff
+                (answer.1, acc.2 ++ feedback eff answer.2))
+              acc).2 =
+          [] := by
+    intro effs
+    induction effs with
+    | nil => intro acc h; exact h
+    | cons eff rest ih =>
+      intro acc h
+      apply ih
+      simp [h, succeeds, feedback_success]
+  have hsnd := congrArg Prod.snd horder
+  simp only at hsnd
+  unfold batch
+  simp only
+  rw [hsnd]
+  exact hnil _ _ rfl
+
+/-- With succeeding effects and no exit, an execution ends in the session's state for the same
+events, still active. -/
+theorem execution_success {execute : Interpreter World}
+    (succeeds : ∀ st w eff, (execute st w eff).2 = success eff) {r out : Result State World}
+    {events : List Event} (h : Execution execute r events out) (active : r.exiting = false)
+    (stays : Effect.exit ∉ (Session.run r.st events).2) :
+    out.st = (Session.run r.st events).1 ∧ out.exiting = false := by
+  induction h with
+  | idle r => exact ⟨rfl, active⟩
+  | stopped r events hexit => simp_all
+  | @next r ev rest out hactive _ ih =>
+    obtain ⟨hfb, hst, hex⟩ := batch_success execute succeeds r ev
+    have hrun :
+        Session.run r.st (ev :: rest) =
+          ((Session.run (step r.st ev).1 rest).1,
+            (step r.st ev).2 ++ (Session.run (step r.st ev).1 rest).2) :=
+      rfl
+    rw [hrun] at stays
+    simp only [List.mem_append, not_or] at stays
+    have hexit : (batch execute r ev).1.exiting = false := by
+      rw [hex]
+      simpa using stays.1
+    rw [hfb, List.nil_append, hst] at ih
+    rw [hrun]
+    exact ih hexit stays.2
+
+/-- **With every effect succeeding, the driver ends in the state `Session.run` computes from the
+same events**, unless one of them asks the daemon to exit. -/
+theorem run_success
+    (execute : State → World → (eff : Effect Plan) → Id (World × Reply eff))
+    (succeeds : ∀ st w eff, (execute st w eff).run.2 = success eff) (r : Result State World)
+    (events : List Event) (active : r.exiting = false)
+    (stays : Effect.exit ∉ (Session.run r.st events).2) :
+    (run execute r events).run.st = (Session.run r.st events).1 ∧
+      (run execute r events).run.exiting = false :=
+  execution_success (execute := execute) succeeds (run_execution execute r events) active stays
+
 end Linger.Session.Driver

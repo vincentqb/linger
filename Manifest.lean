@@ -134,6 +134,11 @@ def Linger.Terminal.Replay.next :
 @[expose]
 def Linger.Session.State : Type := sorry
 
+/-- The state a daemon boots with, from its terminal, its restored labels and its own metadata. -/
+@[expose]
+def Linger.Session.State.boot : Vt.Vt → List (String × String) → List (String × String) → State :=
+  sorry
+
 /-- The session after a trace of events, and the effects it asks the runtime for, in order. -/
 @[expose]
 def Linger.Session.run : State → List Event → State × List (Effect Replay.Plan) := sorry
@@ -321,6 +326,15 @@ theorem run_bytes_isolates (s : State) (id : Nat) (chunks : List (List UInt8)) {
     (h : other ≠ id) : (run s (chunks.map (Event.bytes id))).1.client? other = s.client? other := by
   sorry
 
+/-- An attached client that gave no size cannot drive the session: whatever bytes it sends,
+however chunked, never write to the pty, resize it or change the terminal. -/
+theorem run_readonly (s : State) (id : Nat) (chunks : List (List UInt8)) {c : Client}
+    (hc : s.client? id = some c) (attached : c.attached = true) (watcher : c.sizer = false) :
+    (run s (chunks.map (Event.bytes id))).1.terminal = s.terminal ∧
+      ∀ eff ∈ (run s (chunks.map (Event.bytes id))).2,
+        (∀ bytes, eff ≠ .writePty bytes) ∧ ∀ cols rows, eff ≠ .resizePty cols rows := by
+  sorry
+
 /-- The pty input queue never owes more than its cap, through any offers and flushes. -/
 theorem reachableIn_bound {cap : Nat} {b : Buf.Buf}
     (h : Buf.InputReach Buf.Buf.empty Buf.bufOffer Buf.bufAdvance cap b) : Buf.owedLen b ≤ cap := by
@@ -423,6 +437,66 @@ theorem controls_observed :
       Vt.stick ((Vt.Vt.init 1 3).feed [0x1B, 0x5B, 0x3F, 0x31, 0x30, 0x34, 0x39, 0x68]) =
         { rows := 3, top := 0, bot := 2, g0 := false, g1 := false, so := false, alt := true } ∧
       ((Vt.Vt.init 2 1).feed [0x1B]).atBoundary = false := by
+  sorry
+
+/-! ### Sessions -/
+
+/-- A daemon boots with the terminal its checkpoint restored, or a fresh 80×24 one, no clients,
+its first `maxLabels` restored labels and an idle pty scanner. -/
+theorem boot_observed (vt : Vt.Vt) (labels metaKv : List (String × String)) :
+    bootVt none = Vt.Vt.init 80 24 ∧
+      bootVt (some vt) = vt ∧
+      (State.boot vt labels metaKv).terminal = vt ∧
+      (State.boot vt labels metaKv).roster = [] ∧
+      (State.boot vt labels metaKv).labelList = labels.take maxLabels ∧
+      (State.boot vt labels metaKv).scanner = .ground := by
+  sorry
+
+/-- A session handles a trace one event at a time, and a client's record is the first in its
+roster with the client's identifier. -/
+theorem run_observed (s : State) (ev : Event) (evs : List Event) (id : Nat) :
+    run s [] = (s, []) ∧
+      run s (ev :: evs) =
+        ((run (run s [ev]).1 evs).1, (run s [ev]).2 ++ (run (run s [ev]).1 evs).2) ∧
+      s.client? id = s.roster.find? (·.id == id) := by
+  sorry
+
+/-- A connection the session has room for joins the end of its roster as a fresh record, and one
+past `maxClients` is closed without joining; a closed connection leaves no record; pty output
+reaches the terminal byte for byte; and a lone ESC from the child puts an idle scanner inside an
+escape sequence. -/
+theorem events_observed (s : State) (id : Nat) (chunk : List UInt8) :
+    (s.roster.length < maxClients → (run s [.connected id]).1.roster = s.roster ++ [{ id }]) ∧
+      (maxClients ≤ s.roster.length →
+        (run s [.connected id]).1.roster = s.roster ∧ Effect.close id ∈ (run s [.connected id]).2) ∧
+      (run s [.closed id]).1.client? id = none ∧
+      (run s [.ptyOut chunk]).1.terminal = s.terminal.feed chunk ∧
+      (s.scanner = .ground → (run s [.ptyOut [0x1B]]).1.scanner = .esc) := by
+  sorry
+
+/-- When every effect succeeds, the driver ends in the state `run` computes from the same events,
+unless one of them asks the daemon to exit. -/
+theorem driver_observed {World : Type}
+    (execute : State → World → (eff : Effect Replay.Plan) → Id (World × Driver.Reply eff))
+    (succeeds : ∀ st w eff, (execute st w eff).run.2 = Driver.success eff)
+    (r : Driver.Result State World) (events : List Event) (active : r.exiting = false)
+    (stays : Effect.exit ∉ (run r.st events).2) :
+    (Driver.run execute r events).run.st = (run r.st events).1 ∧
+      (Driver.run execute r events).run.exiting = false := by
+  sorry
+
+/-- What the daemon's byte queues owe: nothing at first; an offer to the pty input queue drops a
+frame that would pass the cap and otherwise appends it; an append to a client output queue
+always appends and reports whether the backlog passed the cap; a flush removes the bytes
+written. -/
+theorem buf_observed (cap n : Nat) (b : Buf.Buf) (more : ByteArray) :
+    Buf.owedLen Buf.Buf.empty = 0 ∧
+      (Buf.bufOffer cap b more).2 = decide (Buf.owedLen b + more.size > cap) ∧
+      Buf.owedLen (Buf.bufOffer cap b more).1 =
+        (if Buf.owedLen b + more.size > cap then Buf.owedLen b else Buf.owedLen b + more.size) ∧
+      (Buf.bufEnqueue cap b more).2 = decide (Buf.owedLen b + more.size > cap) ∧
+      Buf.owedLen (Buf.bufEnqueue cap b more).1 = Buf.owedLen b + more.size ∧
+      Buf.owedLen (Buf.bufAdvance b n) = Buf.owedLen b - n := by
   sorry
 
 end Linger.Claims

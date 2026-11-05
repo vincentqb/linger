@@ -145,6 +145,13 @@ theorem run_bytes_isolates (s : State) (id : Nat) (chunks : List (List UInt8)) {
     (h : other ≠ id) : (run s (chunks.map (Event.bytes id))).1.client? other = s.client? other :=
   Session.run_bytes_isolates s id chunks h
 
+theorem run_readonly (s : State) (id : Nat) (chunks : List (List UInt8)) {c : Client}
+    (hc : s.client? id = some c) (attached : c.attached = true) (watcher : c.sizer = false) :
+    (run s (chunks.map (Event.bytes id))).1.terminal = s.terminal ∧
+      ∀ eff ∈ (run s (chunks.map (Event.bytes id))).2,
+        (∀ bytes, eff ≠ .writePty bytes) ∧ ∀ cols rows, eff ≠ .resizePty cols rows :=
+  Session.run_readonly s id chunks hc attached watcher
+
 theorem reachableIn_bound {cap : Nat} {b : Buf.Buf}
     (h : Buf.InputReach Buf.Buf.empty Buf.bufOffer Buf.bufAdvance cap b) : Buf.owedLen b ≤ cap :=
   Buf.reachableIn_bound h
@@ -221,5 +228,46 @@ theorem controls_observed :
       ((Vt.Vt.init 2 1).feed [0x1B]).atBoundary = false :=
   let ⟨pen, modes, region, charsets, alt, escape⟩ := Vt.controls_observed
   ⟨pen, modes, Render.title_observed, region, charsets, alt, escape⟩
+
+theorem boot_observed (vt : Vt.Vt) (labels metaKv : List (String × String)) :
+    bootVt none = Vt.Vt.init 80 24 ∧
+      bootVt (some vt) = vt ∧
+      (State.boot vt labels metaKv).terminal = vt ∧
+      (State.boot vt labels metaKv).roster = [] ∧
+      (State.boot vt labels metaKv).labelList = labels.take maxLabels ∧
+      (State.boot vt labels metaKv).scanner = .ground := Session.boot_observed vt labels metaKv
+
+theorem run_observed (s : State) (ev : Event) (evs : List Event) (id : Nat) :
+    run s [] = (s, []) ∧
+      run s (ev :: evs) =
+        ((run (run s [ev]).1 evs).1, (run s [ev]).2 ++ (run (run s [ev]).1 evs).2) ∧
+      s.client? id = s.roster.find? (·.id == id) := Session.run_observed s ev evs id
+
+theorem events_observed (s : State) (id : Nat) (chunk : List UInt8) :
+    (s.roster.length < maxClients → (run s [.connected id]).1.roster = s.roster ++ [{ id }]) ∧
+      (maxClients ≤ s.roster.length →
+        (run s [.connected id]).1.roster = s.roster ∧ Effect.close id ∈ (run s [.connected id]).2) ∧
+      (run s [.closed id]).1.client? id = none ∧
+      (run s [.ptyOut chunk]).1.terminal = s.terminal.feed chunk ∧
+      (s.scanner = .ground → (run s [.ptyOut [0x1B]]).1.scanner = .esc) :=
+  Session.events_observed s id chunk
+
+theorem driver_observed {World : Type}
+    (execute : State → World → (eff : Effect Replay.Plan) → Id (World × Driver.Reply eff))
+    (succeeds : ∀ st w eff, (execute st w eff).run.2 = Driver.success eff)
+    (r : Driver.Result State World) (events : List Event) (active : r.exiting = false)
+    (stays : Effect.exit ∉ (run r.st events).2) :
+    (Driver.run execute r events).run.st = (run r.st events).1 ∧
+      (Driver.run execute r events).run.exiting = false :=
+  Driver.run_success execute succeeds r events active stays
+
+theorem buf_observed (cap n : Nat) (b : Buf.Buf) (more : ByteArray) :
+    Buf.owedLen Buf.Buf.empty = 0 ∧
+      (Buf.bufOffer cap b more).2 = decide (Buf.owedLen b + more.size > cap) ∧
+      Buf.owedLen (Buf.bufOffer cap b more).1 =
+        (if Buf.owedLen b + more.size > cap then Buf.owedLen b else Buf.owedLen b + more.size) ∧
+      (Buf.bufEnqueue cap b more).2 = decide (Buf.owedLen b + more.size > cap) ∧
+      Buf.owedLen (Buf.bufEnqueue cap b more).1 = Buf.owedLen b + more.size ∧
+      Buf.owedLen (Buf.bufAdvance b n) = Buf.owedLen b - n := Buf.buf_observed cap n b more
 
 end Linger.Claims

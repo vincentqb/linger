@@ -1810,4 +1810,253 @@ theorem onMsg_info_faithful (s : State) (c : Client) (ha : c.answered = false)
   rw [onMsg_info s c ha]
   exact infoMsgs_faithful c.id (infoText s) h
 
+/-! ## What a session shows
+
+The observations the headline theorems read, pinned for `Manifest.lean`: what a daemon boots
+with, how `run` composes single events and finds a client, and what connecting, closing and pty
+output do to them. -/
+
+/-- A daemon boots with the terminal its checkpoint restored, or a fresh 80×24 one, no clients,
+its first `maxLabels` restored labels and an idle scanner. -/
+theorem boot_observed (vt : Vt.Vt) (labels metaKv : List (String × String)) :
+    bootVt none = Vt.Vt.init 80 24 ∧
+      bootVt (some vt) = vt ∧
+      (State.boot vt labels metaKv).terminal = vt ∧
+      (State.boot vt labels metaKv).roster = [] ∧
+      (State.boot vt labels metaKv).labelList = labels.take maxLabels ∧
+      (State.boot vt labels metaKv).scanner = .ground := ⟨rfl, rfl, rfl, rfl, rfl, rfl⟩
+
+/-- `run` handles a trace one event at a time, and a client's record is the first in the
+roster with its identifier. -/
+theorem run_observed (s : State) (ev : Event) (evs : List Event) (id : Nat) :
+    run s [] = (s, []) ∧
+      run s (ev :: evs) =
+        ((run (run s [ev]).1 evs).1, (run s [ev]).2 ++ (run (run s [ev]).1 evs).2) ∧
+      s.client? id = s.roster.find? (·.id == id) := by
+  refine ⟨rfl, ?_, rfl⟩
+  simp [run]
+
+/-- Closing a connection removes every record with its identifier. -/
+theorem closeClient_clients (s : State) (id : Nat) :
+    (closeClient s id).1.clients = s.clients.filter (·.id != id) := by
+  unfold closeClient; dsimp only; split <;> rfl
+
+/-- After a close, no record has the closed identifier. -/
+theorem closeClient_client? (s : State) (id : Nat) : (closeClient s id).1.client? id = none := by
+  simp only [State.client?, closeClient_clients, List.find?_eq_none, List.mem_filter]
+  intro c hc
+  simpa using hc.2
+
+/-- A connection the session has room for joins the end of the roster as a fresh record, and
+one past `maxClients` is closed without joining; a closed connection leaves no record; pty output
+reaches the terminal byte for byte; and a lone ESC from the child puts an idle scanner inside an
+escape sequence. -/
+theorem events_observed (s : State) (id : Nat) (chunk : List UInt8) :
+    (s.roster.length < maxClients → (run s [.connected id]).1.roster = s.roster ++ [{ id }]) ∧
+      (maxClients ≤ s.roster.length →
+        (run s [.connected id]).1.roster = s.roster ∧ Effect.close id ∈ (run s [.connected id]).2) ∧
+      (run s [.closed id]).1.client? id = none ∧
+      (run s [.ptyOut chunk]).1.terminal = s.terminal.feed chunk ∧
+      (s.scanner = .ground → (run s [.ptyOut [0x1B]]).1.scanner = .esc) := by
+  refine ⟨fun h => ?_, fun h => ?_, ?_, ?_, fun h => ?_⟩
+  · simp [run, State.roster, step_connected_admitted s id h]
+  · simp [run, State.roster, step_connected_refused s id h]
+  · simpa [run, step] using closeClient_client? s id
+  · simp [run, State.terminal, step_ptyOut_vt]
+  · simp only [State.scanner] at h
+    simp [run, State.scanner, step_ptyOut_scan, Mediation.feed, h, Mediation.Scan.step]
+
+/-! ## Read-only clients
+
+An attached client that did not give a size is a watcher: whatever bytes it sends, however
+chunked, never write to the pty, resize it or change the terminal. Its records stay watchers'
+across the trace: no message detaches it or makes it a sizer, and a decoder error removes
+every record with its identifier. -/
+
+/-- An effect that writes to the pty or resizes it. -/
+def touchesPty : Effect Plan → Bool
+  | .writePty _ | .resizePty _ _ => true
+  | _ => false
+
+/-- Every record the identifier finds is attached and gave no size. -/
+def Watches (s : State) (id : Nat) : Prop :=
+  ∀ c, s.client? id = some c → c.attached = true ∧ c.sizer = false
+
+/-- The record an identifier finds decides `Watches` for it. -/
+theorem watches_of_client? {s : State} {c : Client} (hc : s.client? c.id = some c)
+    (ha : c.attached = true) (hs : c.sizer = false) : Watches s c.id := by
+  intro c' h
+  rw [hc] at h
+  cases h
+  exact ⟨ha, hs⟩
+
+/-- Rewriting a found record with a watcher's makes the identifier a watcher's. -/
+theorem watches_setClient {s : State} {c c0 : Client} {id : Nat} (hid : c.id = id)
+    (hc : s.client? id = some c0) (ha : c.attached = true) (hs : c.sizer = false) :
+    Watches (s.setClient c) id := by
+  subst hid
+  exact watches_of_client? (client?_setClient hc) ha hs
+
+/-- A message from an attached sender keeps its record attached and its sizer flag as it was. -/
+theorem onMsg_watcher_record (s : State) (c : Client) (m : Msg) (hc : s.client? c.id = some c)
+    (ha : c.attached = true) :
+    ∃ c',
+      (onMsg s c m).1.client? c.id = some c' ∧ c'.attached = c.attached ∧ c'.sizer = c.sizer := by
+  cases m with
+  | attach cols rows =>
+    exact
+      ⟨c, by
+        rw [onMsg_attach_already s c cols rows ha]; exact hc, rfl, rfl⟩
+  | resize cols rows =>
+    unfold onMsg
+    dsimp only
+    let c1 : Client :=
+      { c with
+        cols, rows }
+    have h1 : (s.setClient c1).client? c.id = some c1 := client?_setClient (c := c1) hc
+    split
+    · refine ⟨c1, ?_, rfl, rfl⟩
+      unfold resizeOwned
+      split
+      · simp only [State.client?, resize_clients]; exact h1
+      · exact h1
+    · rename_i hna
+      exact absurd ha hna
+  | info
+  | history
+  | screen =>
+    have h1 := client?_setClient (c := { c with answered := true }) hc
+    unfold onMsg
+    dsimp only
+    split
+    · exact ⟨c, hc, rfl, rfl⟩
+    · refine ⟨{ c with answered := true }, ?_, rfl, rfl⟩
+      simp only [State.client?] at h1 ⊢
+      exact h1
+  | wait =>
+    unfold onMsg
+    dsimp only
+    split
+    · exact ⟨c, hc, rfl, rfl⟩
+    · exact
+        ⟨{ c with waiting := true }, client?_setClient (c := { c with waiting := true }) hc, rfl,
+          rfl⟩
+  | _ =>
+    refine ⟨c, ?_, rfl, rfl⟩
+    unfold onMsg
+    dsimp only
+    repeat' split
+    all_goals exact hc
+
+/-- A message from a watcher adds no pty effect. -/
+theorem onMsg_watcher_quiet (s : State) (c : Client) (m : Msg) (ha : c.attached = true)
+    (hs : c.sizer = false) : (onMsg s c m).2.all (!touchesPty ·) = true := by
+  cases m
+  all_goals
+    unfold onMsg resizeOwned resize controlResize infoMsgs
+    dsimp only
+    repeat' split
+  all_goals simp_all [touchesPty, outputMsgs]
+
+/-- A message from a watcher leaves the terminal alone. -/
+theorem onMsg_watcher_vt (s : State) (c : Client) (m : Msg) (ha : c.attached = true)
+    (hs : c.sizer = false) : (onMsg s c m).1.vt = s.vt := by
+  cases m
+  all_goals
+    unfold onMsg resizeOwned resize
+    dsimp only
+    repeat' split
+  all_goals simp_all [State.setClient]
+
+/-- A message batch from a watcher keeps its records watchers', leaves the terminal alone and
+adds no pty effect. -/
+theorem feedMsgs_watcher (id : Nat) (msgs : List Msg) (acc : State × List (Effect Plan))
+    (hw : Watches acc.1 id) (hq : acc.2.all (!touchesPty ·) = true) :
+    Watches (feedMsgs id msgs acc).1 id ∧
+      (feedMsgs id msgs acc).1.vt = acc.1.vt ∧
+      (feedMsgs id msgs acc).2.all (!touchesPty ·) = true := by
+  apply
+    feedMsgs_induct id msgs acc (P := fun r =>
+      Watches r.1 id ∧ r.1.vt = acc.1.vt ∧ r.2.all (!touchesPty ·) = true) ?_ ⟨hw, rfl, hq⟩
+  intro r c m _ _ _ hc ⟨hw', hvt, hq'⟩
+  have hid : c.id = id := client?_id hc
+  subst hid
+  obtain ⟨ha, hs⟩ := hw' c hc
+  obtain ⟨c', hc', ha', hs'⟩ := onMsg_watcher_record r.1 c m hc ha
+  refine ⟨?_, ?_, ?_⟩
+  · intro c'' h''
+    rw [hc'] at h''
+    cases h''
+    exact ⟨ha'.trans ha, hs'.trans hs⟩
+  · rw [onMsg_watcher_vt r.1 c m ha hs, hvt]
+  · simp [List.all_append, hq', onMsg_watcher_quiet r.1 c m ha hs]
+
+/-- One read from a watcher keeps its records watchers', leaves the terminal alone and adds no
+pty effect. -/
+theorem step_bytes_watcher (s : State) (id : Nat) (chunk : List UInt8) (hw : Watches s id) :
+    Watches (step s (.bytes id chunk)).1 id ∧
+      (step s (.bytes id chunk)).1.vt = s.vt ∧
+      (step s (.bytes id chunk)).2.all (!touchesPty ·) = true := by
+  unfold step
+  dsimp only
+  split
+  · exact ⟨hw, rfl, rfl⟩
+  · rename_i c hc
+    obtain ⟨ha, hs⟩ := hw c hc
+    have hid : c.id = id := client?_id hc
+    split
+    · refine ⟨fun c' h' => ?_, closeClient_vt s id, ?_⟩
+      · rw [closeClient_client?] at h'
+        cases h'
+      · have hcl : ∀ e ∈ (closeClient s id).2, e = .checkpoint := by
+          unfold closeClient; dsimp only; split <;> simp
+        have hq : (closeClient s id).2.all (!touchesPty ·) = true := by
+          rw [List.all_eq_true]
+          intro e he
+          rw [hcl e he]
+          rfl
+        simp only [List.all_cons, hq, Bool.and_true]
+        rfl
+    · have hw0 :=
+        watches_setClient (c :=
+          { c with
+            decoder := (c.decoder.feed chunk).1, answered := false })
+          hid hc ha hs
+      exact
+        feedMsgs_watcher id (c.decoder.feed chunk).2
+          (s.setClient
+              { c with
+                decoder := (c.decoder.feed chunk).1, answered := false },
+            [])
+          hw0 rfl
+
+/-- Bytes from a watcher, however chunked, leave the terminal alone and add no pty effect. -/
+theorem run_bytes_watcher (s : State) (id : Nat) (chunks : List (List UInt8)) (hw : Watches s id) :
+    (run s (chunks.map (Event.bytes id))).1.vt = s.vt ∧
+      (run s (chunks.map (Event.bytes id))).2.all (!touchesPty ·) = true := by
+  induction chunks generalizing s with
+  | nil => exact ⟨rfl, rfl⟩
+  | cons chunk rest ih =>
+    obtain ⟨hw', hvt, hq⟩ := step_bytes_watcher s id chunk hw
+    obtain ⟨hvt', hq'⟩ := ih (step s (.bytes id chunk)).1 hw'
+    simp only [List.map_cons, run]
+    exact ⟨hvt'.trans hvt, by simp [List.all_append, hq, hq']⟩
+
+/-- **An attached client that gave no size cannot drive the session**: whatever bytes it sends,
+however chunked, never write to the pty, resize it or change the terminal. -/
+theorem run_readonly (s : State) (id : Nat) (chunks : List (List UInt8)) {c : Client}
+    (hc : s.client? id = some c) (attached : c.attached = true) (watcher : c.sizer = false) :
+    (run s (chunks.map (Event.bytes id))).1.terminal = s.terminal ∧
+      ∀ eff ∈ (run s (chunks.map (Event.bytes id))).2,
+        (∀ bytes, eff ≠ .writePty bytes) ∧ ∀ cols rows, eff ≠ .resizePty cols rows := by
+  have hw : Watches s id := by
+    intro c' h
+    rw [hc] at h
+    cases h
+    exact ⟨attached, watcher⟩
+  obtain ⟨hvt, hq⟩ := run_bytes_watcher s id chunks hw
+  refine ⟨hvt, fun eff he => ?_⟩
+  have hquiet := List.all_eq_true.mp hq eff he
+  refine ⟨fun bytes h => ?_, fun cols rows h => ?_⟩ <;> subst h <;> simp [touchesPty] at hquiet
+
 end Linger.Session

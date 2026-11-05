@@ -177,4 +177,21 @@ theorem reachableOut_bound {cap : Nat} {b : Buf} (h : ReachableOut cap b) : owed
   | advance b n _ ih =>
     rw [bufAdvance_wf]; omega
 
+/-- What the queue operations owe: nothing at first; an offer drops a frame that would pass the
+cap and otherwise appends it; an append always appends and reports whether the backlog passed
+the cap; a flush removes the bytes written. -/
+theorem buf_observed (cap n : Nat) (b : Buf) (more : ByteArray) :
+    owedLen Buf.empty = 0 ∧
+      (bufOffer cap b more).2 = decide (owedLen b + more.size > cap) ∧
+      owedLen (bufOffer cap b more).1 =
+        (if owedLen b + more.size > cap then owedLen b else owedLen b + more.size) ∧
+      (bufEnqueue cap b more).2 = decide (owedLen b + more.size > cap) ∧
+      owedLen (bufEnqueue cap b more).1 = owedLen b + more.size ∧
+      owedLen (bufAdvance b n) = owedLen b - n := by
+  refine ⟨rfl, ?_, ?_, ?_, ?_, bufAdvance_wf b n⟩
+  · unfold bufOffer; split <;> simp_all
+  · unfold bufOffer; split <;> simp_all [owedLen, ByteArray.size_append]
+  · simp [bufEnqueue, owedLen, ByteArray.size_append]
+  · simp [bufEnqueue, owedLen, ByteArray.size_append]
+
 end Linger.Session.Buf

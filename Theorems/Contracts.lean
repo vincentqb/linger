@@ -96,6 +96,13 @@ example (s : Session.State) (c : Session.Client) (bs : List UInt8)
     (h : (c.attached && !c.sizer) = true) : Session.onMsg s c (.input bs) = (s, []) := by
   with_reducible exact Session.onMsg_input_readonly s c bs h
 
+example (s : Session.State) (id : Nat) (chunks : List (List UInt8)) {c : Session.Client}
+    (hc : s.client? id = some c) (attached : c.attached = true) (watcher : c.sizer = false) :
+    (Session.run s (chunks.map (Session.Event.bytes id))).1.terminal = s.terminal ∧
+      ∀ eff ∈ (Session.run s (chunks.map (Session.Event.bytes id))).2,
+        (∀ bytes, eff ≠ .writePty bytes) ∧ ∀ cols rows, eff ≠ .resizePty cols rows := by
+  with_reducible exact Session.run_readonly s id chunks hc attached watcher
+
 -- Listing rows
 example (socketName : String) (info : List (String × String)) :
     (Listing.rowFields socketName info).lookup "name" = some socketName := by

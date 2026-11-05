@@ -184,6 +184,13 @@ abbrev Reply {Plan : Type} : Effect Plan → Type
   | .send .. | .replay .. | .close .. | .checkpoint => Bool
   | _ => Unit
 
+/-- The reply of an effect that succeeded: its target stayed connected, or the checkpoint was
+saved. -/
+@[expose]
+def success {Plan : Type} : (eff : Effect Plan) → Reply eff
+  | .send .. | .replay .. | .close .. | .checkpoint => false
+  | .writePty .. | .resizePty .. | .killChild | .dropCheckpoint | .exit => ()
+
 /-- The driver's state between events. -/
 structure Result (S World : Type) where
   /-- The session state. -/
