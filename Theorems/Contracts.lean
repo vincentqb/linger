@@ -20,7 +20,7 @@ import all Linger.Terminal.Proofs.Render.Scrollback
 import all Linger.Terminal.Proofs.Render.Sticky
 import all Linger.Terminal.Proofs.Render.Tabs
 import all Linger.Terminal.Proofs.Replay
-import all Theorems.Resurrect
+import all Linger.Import.Proofs.Resurrect
 import all Linger.Session.Proofs.Session
 import all Linger.Display.Proofs.Status
 import all Linger.Display.Proofs.Title
@@ -37,8 +37,8 @@ instead of passing the citation gate. The `rfl` example under Resume ties the
 `Session.resumeVt` those pins spell to `Session.bootVt`, which `Daemon.serve` calls, over
 `Checkpoint.loadBytes`. -/
 
-open Linger Linger.Session Linger.Tools Linger.Selector Linger.Os Linger.Target Linger.Display
-  Linger.Terminal
+open Linger Linger.Session Linger.Tools Linger.Selector Linger.Import Linger.Os Linger.Target
+  Linger.Display Linger.Terminal
 
 -- Checkpoints
 example (c : Checkpoint.Ckpt) (h : Vt.LiveReachableVt c.vt) :

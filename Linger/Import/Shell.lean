@@ -1,6 +1,6 @@
 module
 
-import Linger.Tools.Resurrect
+import Linger.Import.Resurrect
 import Linger.Os.Shell
 import Linger.Display.Listing
 import Linger.Session.Shell.Paths
@@ -14,13 +14,13 @@ import Std.Async.System
 public section
 
 /-! tmux-resurrect interchange. Pure parsing and export policy live in
-`Linger.Tools.Resurrect`. Imports seed one checkpoint and fresh shell per pane.
+`Linger.Import.Resurrect`. Imports seed one checkpoint and fresh shell per pane.
 Exports publish current native names and directories atomically. -/
 
-namespace Linger.Manager.Resurrect
+namespace Linger.Import.Shell
 
 open Linger.Session.Shell
-open Linger.Tools.Resurrect
+open Linger.Import.Resurrect
 open Linger.Runtime
 
 /-- Resolve existing relative path components physically, retaining a missing
@@ -481,4 +481,4 @@ def run (executable : String) (args : List String) : IO UInt32 := do
     IO.eprintln s!"linger tmux {command}: {diagnostic (toString e)}"
     return 1
 
-end Linger.Manager.Resurrect
+end Linger.Import.Shell

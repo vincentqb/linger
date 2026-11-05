@@ -171,7 +171,7 @@ code_grep '^[[:space:]]+v[.]eraseRowSpan v[.]cursor[.]y v[.]cursor[.]x [(]min [(
 # `r == -111` meant ECONNREFUSED only on Linux.
 ! code_grep '(==|!=)[[:space:]]*[(]?-([2-9]|[1-9][0-9]+)([^0-9]|$)' 'Linger/Runtime/*' \
     'Linger/Session/Shell/*' \
-    'Linger/Manager/*' 'Linger/Os/Shell.lean' 'Linger/Selector/Shell.lean' 'Main.lean' 'E2E/*' \
+    'Linger/Import/Shell.lean' 'Linger/Os/Shell.lean' 'Linger/Selector/Shell.lean' 'Main.lean' 'E2E/*' \
     'Linger/*/Suites/*' \
   || fail "a negative literal comparison looks like an errno number: compare the sign, or classify the errno in c/shim.c"
 # Lean/libuv may have worker threads when the application forks. The child
@@ -336,7 +336,7 @@ module_imports Linger/Terminal/Proofs/Vt.lean 'Linger/Terminal/Proofs/Vt/*' Ling
 # composes their executors with the session backend. The session library never
 # imports them, even through an intermediate module: every library import
 # stays in Core, Runtime or the OS boundary.
-import_closure Linger/Tools/Resurrect.lean 'import Linger.Target.Name;import Linger.Display.Status;public import Linger.Session.Checkpoint;'
+import_closure Linger/Import/Resurrect.lean 'import Linger.Target.Name;import Linger.Display.Status;public import Linger.Session.Checkpoint;'
 import_closure Linger/Selector/Key.lean 'public import Linger.Selector.Input;'
 import_closure Linger/Selector/Fuzzy.lean ''
 import_closure Linger/Selector/Picker.lean 'public import Linger.Selector.Key;import Linger.Selector.Fuzzy;import Linger.Target.Name;import Linger.Display.Listing;public import Linger.Display.Status;import Linger.Target.Remote;import Linger.Terminal.Vt;'
@@ -353,11 +353,11 @@ import_closure Linger/Os/Boundary.lean ''
     import_mod($3) == "Linger.Os.Boundary" && !seen[$1]++ { print $1 }')" = "Linger/Os/Shell.lean" ] \
   || fail "a module other than Linger/Os/Shell.lean imports Linger.Os.Boundary"
 import_closure Linger/Runtime/Command.lean 'import Linger.Os.Shell;'
-import_closure Linger/Manager/Resurrect.lean 'import Linger.Tools.Resurrect;import Linger.Os.Shell;import Linger.Display.Listing;import Linger.Session.Shell.Paths;import Linger.Session.Shell.Resume;import Linger.Runtime.Cli;import Linger.Runtime.Command;import Linger.Target.Remote;import Linger.Selector.Shell;import Std.Async.System;'
+import_closure Linger/Import/Shell.lean 'import Linger.Import.Resurrect;import Linger.Os.Shell;import Linger.Display.Listing;import Linger.Session.Shell.Paths;import Linger.Session.Shell.Resume;import Linger.Runtime.Cli;import Linger.Runtime.Command;import Linger.Target.Remote;import Linger.Selector.Shell;import Std.Async.System;'
 import_closure Linger/Selector/Shell.lean \
   'public import Linger.Selector.Picker;import Linger.Os.Shell;import Linger.Display.Listing;import Linger.Target.Remote;import Linger.Terminal.Title;import Linger.Runtime.Command;'
 import_closure Main.lean \
-  'import Linger.Runtime.Cli;import Linger.Tools.Entry;import Linger.Selector.Shell;import Linger.Manager.Resurrect;'
+  'import Linger.Runtime.Cli;import Linger.Tools.Entry;import Linger.Selector.Shell;import Linger.Import.Shell;'
 # `lean_lib Linger` builds the umbrella's closure, so this list is what `./lake build`
 # checks of the session library.
 import_closure Linger.lean "$(printf 'public import Linger.%s;' Session.Buf Os.Shell Session.Wire \
@@ -381,7 +381,7 @@ module_imports Linger/Session.lean ':(glob)Linger/Session/*.lean' 'Linger/Sessio
 
 # Pure route proofs do not observe terminal IO or inspect Main's call sites.
 # Pin dispatch before terminal observations, exact argv and executable identity;
-# E2E.Manager, E2E.Recipes and E2E.Interop exercise them in subprocesses.
+# E2E.Manager, Linger.Import.Suites.Recipes and Linger.Import.Suites.Interop exercise them in subprocesses.
 for claim in route_bare_help route_selector_iff route_session_argv \
              route_attach_operands route_select_retired route_daemon_argv route_ls_argv route_import_argv \
              route_export_argv route_tmux_argv route_tmux_iff; do
@@ -394,7 +394,7 @@ entry_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Main.lean)"
 for tie in \
   'def main [(]args : List String[)] : IO UInt32 := do try match Linger[.]Tools[.]Entry[.]route args with' \
   '[|] [.]selector readOnly => Linger[.]Selector[.]Shell[.]run [(]← IO[.]appPath[)][.]toString readOnly' \
-  '[|] [.]tmux rest => Linger[.]Manager[.]Resurrect[.]run [(]← IO[.]appPath[)][.]toString rest' \
+  '[|] [.]tmux rest => Linger[.]Import[.]Shell[.]run [(]← IO[.]appPath[)][.]toString rest' \
   '[|] [.]session argv => Linger[.]Runtime[.]Cli[.]main argv'; do
   printf '%s\n' "$entry_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "entry point bypassed its proved route or fixed IO boundary: $tie"
@@ -416,23 +416,23 @@ for claim in diagnostic_printable diagnostic_eq_self \
              projectName_reserved_topology projectName_foreign \
              parseSave_home_independent renderSave_directories renderSave_valid \
              renderSave_empty renderSave_roundtrip; do
-  code_grep "^(private )?theorem $claim " Theorems/Resurrect.lean >/dev/null \
+  code_grep "^(private )?theorem $claim " Linger/Import/Proofs/Resurrect.lean >/dev/null \
     || fail "interchange contract disappeared: $claim"
 done
-code_grep '^[[:space:]]+IO[.]eprintln s!"linger tmux [{]command[}]: [{]diagnostic [(]toString e[)][}]"$' Linger/Manager/Resurrect.lean >/dev/null \
+code_grep '^[[:space:]]+IO[.]eprintln s!"linger tmux [{]command[}]: [{]diagnostic [(]toString e[)][}]"$' Linger/Import/Shell.lean >/dev/null \
   || fail "tmux commands no longer display the proved control-free diagnostic"
-code_grep '^[[:space:]]+let content ← IO[.]FS[.]readFile path$' Linger/Manager/Resurrect.lean >/dev/null \
+code_grep '^[[:space:]]+let content ← IO[.]FS[.]readFile path$' Linger/Import/Shell.lean >/dev/null \
   || fail "tmux catalog no longer reads the complete resolved save before parsing"
-code_grep '^[[:space:]]+let panes ← IO[.]ofExcept [(]parseSave home content[)]$' Linger/Manager/Resurrect.lean >/dev/null \
+code_grep '^[[:space:]]+let panes ← IO[.]ofExcept [(]parseSave home content[)]$' Linger/Import/Shell.lean >/dev/null \
   || fail "tmux catalog no longer consumes the proved whole-save parser"
-code_grep '^[[:space:]]+for pane in plan existing panes do$' Linger/Manager/Resurrect.lean >/dev/null \
+code_grep '^[[:space:]]+for pane in plan existing panes do$' Linger/Import/Shell.lean >/dev/null \
   || fail "importer no longer iterates the proved import plan"
-import_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Manager/Resurrect.lean)"
+import_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Import/Shell.lean)"
 printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])let created ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"run", pane[.]name, "true"[]], cwd := some [(]System[.]FilePath[.]mk pane[.]dir[)] [}] unless created[.]exitCode == 0 do throw [(]IO[.]userError s!"could not create session: [{]pane[.]name[}]: [{]created[.]stdout[}][{]created[.]stderr[}]"[)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "importer bypasses planned creation argv/cwd, captured output or its diagnostic catch"
 printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])[|] "import" => importSave executable paths[.]head[?]; return 0([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "importer no longer forwards the entry point executable"
-code_grep '^[[:space:]]+let listing ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"ls", "--porcelain"[]] [}]$' Linger/Manager/Resurrect.lean >/dev/null \
+code_grep '^[[:space:]]+let listing ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"ls", "--porcelain"[]] [}]$' Linger/Import/Shell.lean >/dev/null \
   || fail "importer no longer lists with the supplied executable"
 # Native listing observes the caller's checkpoint namespace, including its
 # no-HOME `/tmp` fallback. Only those fields reach the checked serializer.
@@ -991,7 +991,7 @@ done
 # A literal attach argv passes a name starting with - as an option. "attach" may begin
 # a list, array or cons only in the command parser's pattern and in Picker.attachArgs,
 # tied above.
-attach_words="$(code_grep '"attach"[[:space:]]*(,|[]]|::)' 'Linger/Manager/*' 'Linger/Runtime/*' \
+attach_words="$(code_grep '"attach"[[:space:]]*(,|[]]|::)' 'Linger/Import/Shell.lean' 'Linger/Runtime/*' \
     'Linger/Session/Shell/*' Linger/Selector/Shell.lean \
   | sed 's/^\([^:]*\):[0-9]*:[[:space:]]*/\1: /')"
 [ "$attach_words" = "$(printf '%s\n' \
@@ -1303,7 +1303,7 @@ tmp_want="$(printf '%s\n' \
 code_grep '^[[:space:]]+[|] none => [(]socketRoot / s!"linger-[{]slug[}]-[{]pid[}]"[)][.]toString$' \
   E2E/Harness.lean >/dev/null || fail "Env.make no longer roots each suite's state directory at E2E.Harness.socketRoot"
 code_grep 'cmd := "mktemp", args := #[[]"-d", [(]socketRoot / "linger-i-XXXXXX"[)][.]toString[]]' \
-  E2E/Interop.lean >/dev/null || fail "E2E.Interop no longer creates its fixture root under E2E.Harness.socketRoot"
+  Linger/Import/Suites/Interop.lean >/dev/null || fail "Linger.Import.Suites.Interop no longer creates its fixture root under E2E.Harness.socketRoot"
 code_grep '^sentinel_dir="[$]socket_root/linger-e2e-sentinel-[$][$]"$' scripts/e2e.sh >/dev/null \
   || fail "the verifier's sentinel directory is no longer under scripts/e2e.sh's socket_root"
 # `lean_lib E2E` has no glob (E2E/Coverage.lean's census needs the built program), so
@@ -1354,8 +1354,8 @@ fi
 
 # Avoid the Tests/tests collision on case-insensitive filesystems and keep
 # production modules under the project namespace.
-git ls-files 'Tests/*' | grep -qvE '\.lean$' \
-  && fail "a non-Lean file under Tests/ (orchestration belongs in scripts/)" || true
+git ls-files 'Tests/*' 'Linger/*/Tests/*' | grep -qvE '\.lean$' \
+  && fail "a non-Lean file under a Tests/ directory (orchestration belongs in scripts/)" || true
 git ls-files 'scripts/*' | grep -qvE '\.sh$' \
   && fail "a non-shell file under scripts/ (Lean suites belong in E2E/)" || true
 git ls-files 'tests/*' 'Tools/*' 'Manager/*' | grep -q . \

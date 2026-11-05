@@ -12,8 +12,8 @@ import Linger.Session.Suites.Robust
 import Linger.Target.Suites.Remote
 import Linger.Terminal.Suites.Mediation
 import Linger.Display.Suites.Title
-import E2E.Recipes
-import E2E.Interop
+import Linger.Import.Suites.Recipes
+import Linger.Import.Suites.Interop
 import E2E.Manager
 import Linger.Target.Suites.RemoteLive
 import E2E.Ci
@@ -41,8 +41,8 @@ def suites : List (String × IO UInt32) :=
     ("resume", Linger.Session.Suites.Resume.run), ("attach", Linger.Session.Suites.Attach.run),
     ("delivery", Linger.Session.Suites.Delivery.run), ("robust", Linger.Session.Suites.Robust.run),
     ("remote", Linger.Target.Suites.Remote.run), ("terminal", Linger.Terminal.Suites.Mediation.run),
-    ("title", Linger.Display.Suites.Title.run), ("recipes", E2E.Recipes.run),
-    ("interop", E2E.Interop.run), ("manager", E2E.Manager.run),
+    ("title", Linger.Display.Suites.Title.run), ("recipes", Linger.Import.Suites.Recipes.run),
+    ("interop", Linger.Import.Suites.Interop.run), ("manager", E2E.Manager.run),
     -- opt-in: needs a real reachable host, so NOT in scripts/e2e.sh
     ("remote-live", Linger.Target.Suites.RemoteLive.run),
     -- Verifier regression checks, separate from the live product suites.
@@ -84,7 +84,7 @@ def main (args : List String) : IO UInt32 := do
   | "--manager-probe" :: rest =>
     E2E.Manager.probe rest
   | "--import-probe" :: rest =>
-    E2E.Recipes.importProbe rest
+    Linger.Import.Suites.Recipes.importProbe rest
   | ["--runner-probe", dir, name] =>
     E2E.Ci.runnerProbe dir name
   | "--suites" :: entries =>

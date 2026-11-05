@@ -17,7 +17,7 @@ import all Linger.Terminal.Proofs.Replay
 import all Linger.Session.Proofs.Resume
 import all Linger.Display.Proofs.Status
 import all Linger.Display.Proofs.Title
-import all Theorems.Resurrect
+import all Linger.Import.Proofs.Resurrect
 import all Linger.Selector.Proofs.Fuzzy
 import all Linger.Selector.Proofs.Picker
 import all Linger.Selector.Proofs.Input

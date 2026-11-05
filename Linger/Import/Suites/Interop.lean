@@ -1,12 +1,12 @@
 module
 
-import E2E.Recipes
+import Linger.Import.Suites.Recipes
 import Linger.Session.Checkpoint
-import all Linger.Manager.Resurrect
+import all Linger.Import.Shell
 
 public section
 
-/-! # E2E.Interop — real import/export boundaries
+/-! # Linger.Import.Suites.Interop — real import/export boundaries
 
 Each check owns fresh state below a new directory under `socketRoot`, since its
 sessions put their sockets there. Foreign commands only write a fixture marker if
@@ -17,10 +17,10 @@ The parser supplies the common-field projection. Checkpoint fixtures use the
 production codec, and the crash check also exercises an actual last detach.
 -/
 
-namespace E2E.Interop
+namespace Linger.Import.Suites.Interop
 
 open E2E.Harness
-open E2E.Recipes (paneLine tmuxFixtureEnv)
+open Linger.Import.Suites.Recipes (paneLine tmuxFixtureEnv)
 open Linger.Session.Checkpoint
 
 private def process (args : IO.Process.SpawnArgs) (ms : Nat := 10000) :
@@ -88,7 +88,7 @@ private def Fixture.seed (f : Fixture) (name cwd : String) : IO Unit := do
   IO.FS.writeBinFile (System.FilePath.mk f.env.dir / s!"{name}.ckpt") (saveBytes ck)
 
 private def Fixture.importText (f : Fixture) (text : String) : IO (UInt32 × String × String) := do
-  match Linger.Tools.Resurrect.parseSave (f.root / "home").toString text with
+  match Linger.Import.Resurrect.parseSave (f.root / "home").toString text with
   | .ok panes =>
     for pane in panes do
       f.own pane.name
@@ -108,7 +108,7 @@ private def namesIn (dir : System.FilePath) : IO (List String) := do
   return (← dir.readDir).toList.map (·.fileName) |>.toArray.qsort (· < ·) |>.toList
 
 private def commonFields (home text : String) : Option (List (String × String)) :=
-  (Linger.Tools.Resurrect.parseSave home text).toOption.map Linger.Tools.Resurrect.common
+  (Linger.Import.Resurrect.parseSave home text).toOption.map Linger.Import.Resurrect.common
 
 private def sameFields (a b : List (String × String)) : Bool :=
   a.toArray.qsort (fun x y => x.1 < y.1 || (x.1 == y.1 && x.2 < y.2)) ==
@@ -156,7 +156,8 @@ private def Fixture.catalogSave (f : Fixture) (path : System.FilePath) (text : S
           env := #[("TZ", some "UTC")] }
   unless code == 0 do
     throw (IO.userError s!"could not timestamp fixture save: {err}")
-  for pane in (Linger.Tools.Resurrect.parseSave (f.root / "home").toString text).toOption.getD [] do
+  for pane in
+    (Linger.Import.Resurrect.parseSave (f.root / "home").toString text).toOption.getD [] do
     f.own pane.name
 
 private def catalogDate (text : String) : Bool :=
@@ -170,15 +171,15 @@ back to it; it is never compared through display escaping. -/
 private def Fixture.catalogMatches (f : Fixture) (path : System.FilePath) (out : String) :
     IO Bool := do
   let text ← IO.FS.readFile path
-  let .ok raw := Linger.Tools.Resurrect.parseSave (f.root / "home").toString text | return false
-  let panes := raw.map (Linger.Tools.Resurrect.preparePane text raw)
+  let .ok raw := Linger.Import.Resurrect.parseSave (f.root / "home").toString text | return false
+  let panes := raw.map (Linger.Import.Resurrect.preparePane text raw)
   let sections := out.splitOn "\n\n"
   let header := records (sections.headD "")
   let source ← IO.FS.realPath path
   unless
     sections.length == panes.length + 2 && sections.getLast? == some "" &&
       header.map (·.1) == ["source", "saved"] &&
-      field header "source" == Linger.Tools.Resurrect.diagnostic source.toString &&
+      field header "source" == Linger.Import.Resurrect.diagnostic source.toString &&
       catalogDate (field header "saved") &&
       ((sections.headD "").splitOn "\n").length == 2 do
     return false
@@ -194,7 +195,7 @@ private def Fixture.catalogMatches (f : Fixture) (path : System.FilePath) (out :
             "command", "saved-command", "window-title", "cols", "rows"] &&
         field row "name" == pane.name &&
         field row "status" == Linger.Display.Status.name .resumable &&
-        has (field row "cmd") (Linger.Tools.Resurrect.diagnostic dir) &&
+        has (field row "cmd") (Linger.Import.Resurrect.diagnostic dir) &&
         field row "directory" == dir.quote &&
         Lean.Syntax.decodeStrLit (field row "directory") == some dir &&
         field row "line" == toString pane.line &&
@@ -264,9 +265,9 @@ private def catalogControls (f : Fixture) : IO Bool := do
                       "window-title"].any
                   (fun key => row.startsWith (key ++ "\t")))).all
         (fun row => row.toList.all (fun c => c == '\t' || printable c)) &&
-      has human (Linger.Tools.Resurrect.diagnostic dir.trimAscii.toString) &&
-      has human (Linger.Tools.Resurrect.diagnostic path.toString) &&
-      has human (Linger.Tools.Resurrect.diagnostic command) &&
+      has human (Linger.Import.Resurrect.diagnostic dir.trimAscii.toString) &&
+      has human (Linger.Import.Resurrect.diagnostic path.toString) &&
+      has human (Linger.Import.Resurrect.diagnostic command) &&
       (← namesIn (System.FilePath.mk f.env.dir)).isEmpty
 
 private def catalogRelativeCwd (f : Fixture) : IO Bool := do
@@ -831,7 +832,7 @@ private def captureImport (f : Fixture) : IO Bool := do
 
 private def offlineCapture (f : Fixture) : IO Bool := do
   let .ok [pane] :=
-    Linger.Tools.Resurrect.parseSave ""
+    Linger.Import.Resurrect.parseSave ""
       (paneLine "offline" "2" "0" (f.root / "home").toString "make build") | return false
   let pane :=
     { pane with
@@ -841,7 +842,7 @@ private def offlineCapture (f : Fixture) : IO Bool := do
   f.own pane.name
   let seeded ←
     withVariables f.procEnv do
-        Linger.Manager.Resurrect.seedPane pane (some "old λ\n\x1b[31mred\x1b[0m\nscreen\n")
+        Linger.Import.Shell.seedPane pane (some "old λ\n\x1b[31mred\x1b[0m\nscreen\n")
   let path := System.FilePath.mk f.env.dir / s!"{pane.name}.ckpt"
   let before ← readBytes path
   let savedCommand :=
@@ -850,7 +851,7 @@ private def offlineCapture (f : Fixture) : IO Bool := do
   let (historyRc, history, historyErr) ← f.cli #["capture", "--history", pane.name]
   let again ←
     withVariables f.procEnv do
-        Linger.Manager.Resurrect.seedPane pane (some "replacement\n")
+        Linger.Import.Shell.seedPane pane (some "replacement\n")
   return seeded && !again && (← privateFile path) && before.isSome && screenRc == 0 &&
       screenErr.isEmpty &&
       screen == "screen\nSaved foreground command: make build\n\n" &&
@@ -900,7 +901,7 @@ private def badCapture (f : Fixture) (kind : String) : IO Bool := do
         if kind == "UTF-8" then ByteArray.mk #[0xFF]
         else
           if kind == "oversize" then
-            ByteArray.mk (Array.replicate (Linger.Tools.Resurrect.captureLimit + 1) 0x41)
+            ByteArray.mk (Array.replicate (Linger.Import.Resurrect.captureLimit + 1) 0x41)
           else "duplicate\n".toUTF8
       discard <| f.archive [("pane-bad:0.0", bytes)]
       if kind == "duplicate" then
@@ -914,7 +915,7 @@ private def badCapture (f : Fixture) (kind : String) : IO Bool := do
           throw (IO.userError s!"could not create duplicate fixture: {err}")
         pure "duplicate pane capture"
       else if kind == "oversize" then
-        pure s!"command output exceeds {Linger.Tools.Resurrect.captureLimit} bytes"
+        pure s!"command output exceeds {Linger.Import.Resurrect.captureLimit} bytes"
       else
         pure "command output is not UTF-8"
   let archiveBytes ← readBytes archive
@@ -1006,8 +1007,8 @@ private def nativeFallback (f : Fixture) (home : Option String) (mixed : Bool) :
         observed.set (some observedDir)
         let selected := if observedDir == native then original else alternate
         Std.Async.System.setEnvVar "XDG_STATE_HOME" selected.toString
-        Linger.Manager.Resurrect.snapshot
-      let outcome ← (Linger.Manager.Resurrect.writeSave target.toString capture).toBaseIO
+        Linger.Import.Shell.snapshot
+      let outcome ← (Linger.Import.Shell.writeSave target.toString capture).toBaseIO
       let actual :=
         (← readBytes target).bind fun bytes =>
           (String.fromUTF8? bytes).bind (commonFields (f.root / "home").toString)
@@ -1207,9 +1208,11 @@ def runWith (binary : String) : IO UInt32 := do
     IO.FS.removeDirAll root
   finish
 
+/-- The interop suite: real import and export boundaries, against `LINGER_EXE` when it is set
+and the built `linger` otherwise. -/
 def run : IO UInt32 := do
   let binary :=
     (← IO.getEnv "LINGER_EXE").getD ((← IO.currentDir) / ".lake/build/bin/linger").toString
   runWith binary
 
-end E2E.Interop
+end Linger.Import.Suites.Interop

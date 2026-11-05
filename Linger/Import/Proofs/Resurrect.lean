@@ -1,6 +1,6 @@
 module
 
-import all Linger.Tools.Resurrect
+import all Linger.Import.Resurrect
 import all Linger.Target.Name
 import all Linger.Terminal.Vt
 import Linger.Target.Proofs.Name
@@ -14,7 +14,7 @@ the next snapshot includes every planned name; it says nothing about concurrent
 creation or whether a caller successfully creates sessions or enters directories.
 -/
 
-namespace Linger.Tools.Resurrect
+namespace Linger.Import.Resurrect
 
 /-- Error text excludes C0, DEL and C1, including controls from filesystem errors. -/
 theorem diagnostic_printable (message : String) (c : Char) (hc : c ∈ (diagnostic message).toList) :
@@ -616,4 +616,4 @@ theorem plan_sequential_idempotent (existing : List String) (panes : List Pane) 
     refine ⟨pane, ?_, rfl⟩
     exact (mem_plan _ _ _).mpr ⟨hp, he⟩
 
-end Linger.Tools.Resurrect
+end Linger.Import.Resurrect

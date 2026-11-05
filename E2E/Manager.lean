@@ -1,14 +1,14 @@
 module
 
 import Linger.Selector.Shell
-import Linger.Manager.Resurrect
+import Linger.Import.Shell
 import Linger.Display.Listing
 import Linger.Target.Name
 import Linger.Target.Remote
 import Linger.Terminal.Title
 import Linger.Session.Shell.Paths
-import Linger.Tools.Resurrect
-import E2E.Recipes
+import Linger.Import.Resurrect
+import Linger.Import.Suites.Recipes
 import Std.Sync.Mutex
 
 public section
@@ -23,7 +23,7 @@ inspecting the opaque termios blob's padding.
 
 Synthetic failure, argv and terminal cases call `Linger.Selector.Shell.run` through
 the test probe with a fixture-owned absolute recorder path. The frozen-save
-case uses that recorder with `Linger.Manager.Resurrect.run`. These test the shared
+case uses that recorder with `Linger.Import.Shell.run`. These test the shared
 executors; public CLI checks and source gates cover entry-point wiring.
 Help, argument validation, terminal dispatch and live attach/detach drive the
 actual `linger` binary with no `linger` on the fixture PATH.
@@ -281,7 +281,7 @@ def probe (args : List String) : IO UInt32 := do
     | ["picker", executable] =>
       Linger.Selector.Shell.run executable
     | ["tmux-picker", executable, save] =>
-      Linger.Manager.Resurrect.run executable ["select", save]
+      Linger.Import.Shell.run executable ["select", save]
     | ["session-program"] =>
       sessionProgram root
     | _ =>
@@ -715,7 +715,8 @@ private def usageChecks (e : Env) : IO Unit := do
       let saves := f.root / ".tmux" / "resurrect"
       IO.FS.createDirAll saves
       let save := saves / "last"
-      IO.FS.writeFile save (Recipes.paneLine "work" "1" "0" f.root.toString "vim")
+      IO.FS.writeFile save
+          (Linger.Import.Suites.Recipes.paneLine "work" "1" "0" f.root.toString "vim")
       let before ← withLaunchLock (e.out #["ls", "--porcelain"])
       let mut ok := true
       for args in
@@ -1868,7 +1869,7 @@ private def realCheck (e : Env) : IO Unit := do
 /-- Foreign fixtures use explicit files and private homes/state. The native
 encoding keeps expected identities tied to the save parser's own policy. -/
 private def savedPane (name dir command : String := "") : String :=
-  s!"pane\t{Linger.Tools.Resurrect.encodeName name}\t0\t1\t:*\t0\ttitle\t:{dir}\t1\tsh\t:{command}\n"
+  s!"pane\t{Linger.Import.Resurrect.encodeName name}\t0\t1\t:*\t0\ttitle\t:{dir}\t1\tsh\t:{command}\n"
 
 /-- Install the real archive reader and gzip on the restricted fixture PATH. -/
 private def Fixture.archive (f : Fixture) (captures : List (String × String)) :
@@ -1890,7 +1891,7 @@ private def Fixture.archive (f : Fixture) (captures : List (String × String)) :
   let staging := f.root / "archive-source"
   IO.FS.createDirAll (staging / "pane_contents")
   for (name, content) in captures do
-    let session := Linger.Tools.Resurrect.encodeName name
+    let session := Linger.Import.Resurrect.encodeName name
     IO.FS.writeFile (staging / "pane_contents" / s!"pane-{session}:0.0") content
   let path := f.root / "pane_contents.tar.gz"
   let result ←

@@ -62,18 +62,19 @@ lean_exe lingertest where root := `Linger.Os.Suites.Shim
 under a component's `Proofs/` is built. Lean erases proofs regardless of file placement. -/
 lean_lib Theorems where
   globs :=
-  #[.submodules `Theorems, .submodules `Linger.Display.Proofs, .submodules `Linger.Os.Proofs,
-    .submodules `Linger.Selector.Proofs, .submodules `Linger.Session.Proofs,
-    .submodules `Linger.Target.Proofs, .submodules `Linger.Terminal.Proofs]
+  #[.submodules `Theorems, .submodules `Linger.Display.Proofs, .submodules `Linger.Import.Proofs,
+    .submodules `Linger.Os.Proofs, .submodules `Linger.Selector.Proofs,
+    .submodules `Linger.Session.Proofs, .submodules `Linger.Target.Proofs,
+    .submodules `Linger.Terminal.Proofs]
   leanOptions := implementationOptions
 
-/-- Unit tests checked at elaboration time: every module under `Tests/` and under a component's
-`Tests/` is built. -/
+/-- Unit tests checked at elaboration time: every module under a component's `Tests/` is
+built. -/
 lean_lib Tests where
   globs :=
-  #[.submodules `Tests, .submodules `Linger.Display.Tests, .submodules `Linger.Selector.Tests,
-    .submodules `Linger.Session.Tests, .submodules `Linger.Target.Tests,
-    .submodules `Linger.Terminal.Tests]
+  #[.submodules `Linger.Display.Tests, .submodules `Linger.Import.Tests,
+    .submodules `Linger.Selector.Tests, .submodules `Linger.Session.Tests,
+    .submodules `Linger.Target.Tests, .submodules `Linger.Terminal.Tests]
   leanOptions := implementationOptions
 
 /-- Executable suites: `./lake exe e2e <suite>`. -/

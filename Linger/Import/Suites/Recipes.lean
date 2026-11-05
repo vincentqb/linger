@@ -1,11 +1,11 @@
 module
 
 public import E2E.Harness
-import Linger.Manager.Resurrect
+import Linger.Import.Shell
 
 public section
 
-/-! # E2E.Recipes — native launch settings, fish prompt and foreign-save import
+/-! # Linger.Import.Suites.Recipes — native launch settings, fish prompt and foreign-save import
 
 `linger tmux import` projects pane records into independent linger sessions. This
 suite drives the actual CLI against real daemons and synthetic saves. Recorder
@@ -15,7 +15,7 @@ claim to launch or exercise any terminal GUI. The prompt checks execute the
 native example in fish with recorded command calls.
 -/
 
-namespace E2E.Recipes
+namespace Linger.Import.Suites.Recipes
 
 open E2E.Harness
 
@@ -32,7 +32,7 @@ starting sessions. `E2ETest.main` dispatches the arguments after the flag here. 
 def importProbe (args : List String) : IO UInt32 := do
   match args with
   | executable :: rest =>
-    Linger.Manager.Resurrect.run executable ("import" :: rest)
+    Linger.Import.Shell.run executable ("import" :: rest)
   | [] =>
     IO.eprintln "usage: e2e --import-probe ABSOLUTE_EXECUTABLE [SAVE]"
     return 98
@@ -605,6 +605,7 @@ fi
               call ["cwd", accountHome.toString])
         s!"linger tmux import uses account home for saved tilde and every child (HOME {label})"
 
+/-- The recipes suite: native launch settings, the fish prompt and `linger tmux import`. -/
 def run : IO UInt32 :=
   Env.suite "recipes" fun e => do
     let e := { e with bin := (← IO.getEnv "LINGER_EXE").getD e.bin }
@@ -780,4 +781,4 @@ def run : IO UInt32 :=
           "resumable-w1-p0", "prevalid-w1-p0", "prevalid-w1-p1", "bad_name-w1-p0",
           "accessvalid-w1-p0", "inaccessible-w1-p0"]
 
-end E2E.Recipes
+end Linger.Import.Suites.Recipes

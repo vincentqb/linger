@@ -1,16 +1,16 @@
 module
 
-import all Linger.Tools.Resurrect
+import all Linger.Import.Resurrect
 import Linger.Display.Status
 import Linger.Terminal.Render
 import all Linger.Terminal.Vt
-meta import Linger.Tools.Resurrect
+meta import Linger.Import.Resurrect
 meta import Linger.Terminal.Render
 
 /-! Concrete checks of the pure API. General kernel-checked contracts live in
-`Theorems.Resurrect`; these fixtures exercise the actual string operations. -/
+`Linger.Import.Proofs.Resurrect`; these fixtures exercise the actual string operations. -/
 
-namespace Linger.Tools.Resurrect.Tests
+namespace Linger.Import.Resurrect.Tests
 
 -- Commands are inspection data; each pane keeps its own title and command.
 #guard
@@ -445,4 +445,4 @@ namespace Linger.Tools.Resurrect.Tests
     !saved.vt.g0Line &&
     !saved.vt.shiftOut
 
-end Linger.Tools.Resurrect.Tests
+end Linger.Import.Resurrect.Tests

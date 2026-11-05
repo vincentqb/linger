@@ -3,7 +3,7 @@ module
 import Linger.Runtime.Cli
 import Linger.Tools.Entry
 import Linger.Selector.Shell
-import Linger.Manager.Resurrect
+import Linger.Import.Shell
 
 public section
 
@@ -18,7 +18,7 @@ def main (args : List String) : IO UInt32 := do
     | .selector readOnly =>
       Linger.Selector.Shell.run (← IO.appPath).toString readOnly
     | .tmux rest =>
-      Linger.Manager.Resurrect.run (← IO.appPath).toString rest
+      Linger.Import.Shell.run (← IO.appPath).toString rest
     | .session argv =>
       Linger.Runtime.Cli.main argv
   catch e =>

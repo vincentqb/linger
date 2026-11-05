@@ -50,9 +50,10 @@ dispatch, and pushes or pull requests that change `c/shim.c` or `./lake`.
   client, checkpoint files and state paths.
 - `Linger/Selector/`: interactive selection: bounded key `Input`, `Key` bindings, `Fuzzy`
   alignment and the `Picker`; `Shell.lean` runs the picker on a terminal.
-- Not yet in a component: `Linger/Runtime/`, the CLI and command jobs; `Linger/Tools/` and
-  `Linger/Manager/`, the entry route and the import policy and executor; `Theorems/`,
-  `Tests/` and `E2E/`.
+- `Linger/Import/`: importing tmux-resurrect saves: the `Resurrect` policy, and `Shell.lean`
+  runs it.
+- Not yet in a component: `Linger/Runtime/`, the CLI and command jobs; `Linger/Tools/`, the
+  entry route; `Theorems/` and `E2E/`.
 - `scripts/`: build and verification orchestration.
 
 Keep module paths and namespaces aligned. Use ordinary `import` for implementation
@@ -65,8 +66,7 @@ Lean erases proofs regardless of file placement.
 
 - Pure modules have no `IO`, `partial def` or `sorry`: a component's top module, each
   component's modules other than `Boundary.lean` and `Shell.lean`, and `Linger/Tools/*`.
-  Model effects as data; execute them in `Shell.lean` or `Shell/`, `Linger/Runtime/*` and
-  `Linger/Manager/*`.
+  Model effects as data; execute them in `Shell.lean` or `Shell/` and `Linger/Runtime/*`.
 - Every `def` or `abbrev` in a pure module needs a written
   theorem whose type contains its exact fully qualified constant in the same
   commit, checked by `Theorems/Coverage.lean`; generated lemmas do not count.

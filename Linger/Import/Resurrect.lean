@@ -15,7 +15,7 @@ Planning uses an explicit snapshot of existing names; it does not claim atomic
 creation or protection from concurrent same-name creators.
 -/
 
-namespace Linger.Tools.Resurrect
+namespace Linger.Import.Resurrect
 
 /-- Replace terminal controls in display text, preserving its other characters. -/
 def diagnostic (message : String) : String :=
@@ -279,4 +279,4 @@ def renderSave (fields : List (String × String)) : Except String String :=
 def plan (existing : List String) (panes : List Pane) : List Pane :=
   panes.filter (fun pane => !existing.contains pane.name)
 
-end Linger.Tools.Resurrect
+end Linger.Import.Resurrect
