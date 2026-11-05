@@ -4,7 +4,7 @@ meta import Theorems.Coverage
 
 meta section
 
-/-! # E2E.Coverage — coverage of code by claims
+/-! # Verify.Coverage — coverage of code by claims
 
 `Theorems.Coverage` checks exact theorem-type coverage and its fixed regression
 fixtures at build time. This standalone check repeats the semantic check against
@@ -12,7 +12,7 @@ fresh sources, even with cached imports, then requires an explicit backing entry
 for renderer/replay operations referenced outside their own module.
 Build the program first; `scripts/e2e.sh` runs this after its build. -/
 
-namespace E2E.Coverage
+namespace Verify.Coverage
 
 open Lean Elab Command
 open Theorems.Coverage
@@ -70,4 +70,4 @@ run_cmd
   unless fails.isEmpty do
     throwError "runtime emitter classification failed"
 
-end E2E.Coverage
+end Verify.Coverage

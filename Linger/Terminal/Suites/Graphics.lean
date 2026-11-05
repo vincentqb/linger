@@ -1,6 +1,6 @@
 module
 
-import E2E.Harness
+import Verify.Harness
 import Linger.Terminal.Mediation
 
 public section
@@ -34,7 +34,7 @@ literals, which makes them fixture data rather than a stale copy of an emitter. 
 
 namespace Linger.Terminal.Suites.Graphics
 
-open E2E.Harness
+open Verify.Harness
 open Linger.Terminal.Render (escSeq)
 open Linger.Terminal.Mediation (STFinal)
 

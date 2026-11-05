@@ -1,6 +1,6 @@
 module
 
-import E2E.Harness
+import Verify.Harness
 import Linger.Terminal.Mediation
 import Linger.Terminal.Title
 import Linger.Display.Title
@@ -15,14 +15,14 @@ The receiver uses the public VT parser and its title/boundary projections.
 
 `e2e title <binary>` also drives a saved predecessor or an assembled CLI without
 rebuilding it. The sampler cases instead exercise Client.attach linked into the
-E2E driver with a gated fixture sampler; changing the CLI argument cannot change
+suite driver with a gated fixture sampler; changing the CLI argument cannot change
 that implementation. `e2e --title-probe` is the child dispatch, not a test suite. -/
 
 namespace Linger.Display.Suites.Title
 
 open Linger.Session.Shell
 open Linger.Terminal
-open E2E.Harness
+open Verify.Harness
 open Linger.Os.Shell
 open Linger.Display.Status (Status icon)
 open Linger.Terminal.Title (maxChars)

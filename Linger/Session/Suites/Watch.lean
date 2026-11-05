@@ -1,6 +1,6 @@
 module
 
-public import E2E.Harness
+public import Verify.Harness
 import Linger.Session.Checkpoint
 
 public section
@@ -24,7 +24,7 @@ So: do not add a check here claiming to catch B or C. It cannot. -/
 
 namespace Linger.Session.Suites.Watch
 
-open E2E.Harness
+open Verify.Harness
 open Linger.Display.Status (Status)
 
 /-- Saved viewing is a terminal client over one immutable checkpoint, with no

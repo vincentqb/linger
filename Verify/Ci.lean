@@ -1,11 +1,11 @@
 module
 
-import E2E.Harness
-import E2E.Runner
+import Verify.Harness
+import Verify.Runner
 
 public section
 
-/-! # E2E.Ci — runner selection and Lake build reuse
+/-! # Verify.Ci — runner selection and Lake build reuse
 
 `scripts/ci-runners.sh` decides the GitHub matrix, and its two failure modes are both
 silent and both expensive. Ask for macOS when nothing changed and a push bills several
@@ -34,9 +34,9 @@ in one temporary project. Source and dependency changes must invalidate artifact
 warnings even when a source file locally disables `warningAsError`.
 -/
 
-open E2E.Harness
+open Verify.Harness
 
-namespace E2E.Ci
+namespace Verify.Ci
 
 /-- Run the decision script, from `cwd` — which is where its `git log` looks. The
 script itself is addressed absolutely, so the working directory can be a throwaway
@@ -122,7 +122,7 @@ def runnerProbe (dir name : String) : IO UInt32 := do
 def suiteRunner : IO Unit :=
   IO.FS.withTempDir fun dir => do
     let binary := (← IO.appPath).toString
-    let run := E2E.Runner.run binary #["--runner-probe", dir.toString] dir
+    let run := Verify.Runner.run binary #["--runner-probe", dir.toString] dir
     let jobs := (List.range 5).map fun n => (s!"job-{n}", 1)
     let batch ← (run jobs).asTask .dedicated
     let ready ←
@@ -389,7 +389,7 @@ def lakeDrivers (root : String) : IO Unit :=
           s!"lake {verb} rejects a missing verifier"
 
 def run : IO UInt32 := do
-  -- No `Env`, following `E2E/Coverage.lean`: this is not a pty suite, so it has no
+  -- No `Env`, following `Verify/Coverage.lean`: this is not a pty suite, so it has no
   -- sockets, logs or checkpoints and needs no state directory. Making one anyway
   -- left an empty `/tmp/linger-ci-<pid>` behind on every failing run.
   let root ← repoRoot
@@ -458,7 +458,7 @@ def run : IO UInt32 := do
     expect ((← runners script stale "schedule" "refs/heads/main") == ubuntuOnly)
         "a scheduled run on an unchanged tree asks for ubuntu alone"
     IO.FS.removeDirAll (System.FilePath.mk fresh / ".git")
-    -- Stop Git's upward search at the fixture, as `E2E.Hygiene` does: a TMPDIR inside a
+    -- Stop Git's upward search at the fixture, as `Verify.Hygiene` does: a TMPDIR inside a
     -- work tree would otherwise lend it that tree's history. `LC_ALL=C` keeps Git's
     -- diagnostic untranslated.
     let freshDir := System.FilePath.mk fresh
@@ -482,4 +482,4 @@ def run : IO UInt32 := do
   verificationInputs root
   finish
 
-end E2E.Ci
+end Verify.Ci

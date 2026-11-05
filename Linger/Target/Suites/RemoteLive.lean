@@ -1,6 +1,6 @@
 module
 
-import E2E.Harness
+import Verify.Harness
 import Linger.Target.Remote
 
 public section
@@ -20,7 +20,7 @@ a suite that cannot pass on a fresh checkout must not be able to fail the gate. 
 
 namespace Linger.Target.Suites.RemoteLive
 
-open E2E.Harness
+open Verify.Harness
 
 /-- Strip `ESC [` through the first final character in `@`–`~` so remote prompt
 painting does not hide markers. An incomplete CSI consumes the rest of the string. -/

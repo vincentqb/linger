@@ -1,6 +1,6 @@
 module
 
-public import E2E.Harness
+public import Verify.Harness
 import Linger.Session.Shell.Daemon
 import Linger.Target.Name
 
@@ -27,7 +27,7 @@ emitter, and it should not be read as one. -/
 namespace Linger.Session.Suites.Attach
 
 open Linger.Terminal
-open E2E.Harness
+open Verify.Harness
 open Linger.Terminal.Render (leaveAnsi modeSet csiNum csiNum2 csiPlain escSeq escCharset titleAnsi)
 open Linger.Terminal.Vt (Vt)
 open Linger.Session (outputChunk)
@@ -332,7 +332,7 @@ def run : IO UInt32 :=
          printf '%s\\n%s\\n%s\\n' \"$before\" \"$after\" \"$rc\" > {modesPath}.tmp && \
          mv {modesPath}.tmp {modesPath}"
     let (rawPid, rawFd) ← Linger.Os.Shell.spawnPty cols rows "" "sh" #["-c", cleanupScript] e.ptyEnv
-    let rawProbe : E2E.Harness.Client := { pid := rawPid, fd := rawFd }
+    let rawProbe : Verify.Harness.Client := { pid := rawPid, fd := rawFd }
     -- attach registers before it enters raw mode, so wait for the mode itself. The tty
     -- path is written before `before`, and only a successful, nonempty read counts.
     let entered ←
@@ -345,7 +345,7 @@ def run : IO UInt32 :=
           let mode := withoutPendin now.stdout.trimAscii.toString
           return now.exitCode == 0 && !mode.isEmpty && mode != before
     -- Closing the only master hangs up stdout; its sleep is reaped with it.
-    ({ pid := outPid, fd := outFd } : E2E.Harness.Client).bye (sendDetach := false)
+    ({ pid := outPid, fd := outFd } : Verify.Harness.Client).bye (sendDetach := false)
     rawProbe.detach
     let _ ← waitFor 5000 (System.FilePath.pathExists modesPath)
     expect

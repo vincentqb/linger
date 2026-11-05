@@ -1,6 +1,6 @@
 module
 
-public import E2E.Harness
+public import Verify.Harness
 import Linger.Import.Shell
 
 public section
@@ -17,7 +17,7 @@ native example in fish with recorded command calls.
 
 namespace Linger.Import.Suites.Recipes
 
-open E2E.Harness
+open Verify.Harness
 
 /-- The physical path a session records as its start directory: `getcwd` resolves symlinks, so
 on macOS `/tmp/x` is recorded as `/private/tmp/x`. -/
@@ -28,7 +28,7 @@ private def call (args : List String) : String :=
 
 /-- Test-only protocol: `--import-probe ABSOLUTE_EXECUTABLE [SAVE]`. The executor
 is production code; only the supplied child executable records instead of
-starting sessions. `E2ETest.main` dispatches the arguments after the flag here. -/
+starting sessions. `Verify.Main.main` dispatches the arguments after the flag here. -/
 def importProbe (args : List String) : IO UInt32 := do
   match args with
   | executable :: rest =>

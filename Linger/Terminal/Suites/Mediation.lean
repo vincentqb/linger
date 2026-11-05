@@ -1,6 +1,6 @@
 module
 
-public import E2E.Harness
+public import Verify.Harness
 import Linger.Terminal.Mediation
 
 public section
@@ -16,7 +16,7 @@ reply stream ROSTER-INDEPENDENT the thing under test: the mediator answers the
 child, and a query is never a broadcast.
 
 THE PROBE IS THIS BINARY. `e2e --probe <result> <ready> <trigger>` is dispatched by
-`E2ETest.main` into `probe` below, so the same executable is both harness and pty
+`Verify.Main.main` into `probe` below, so the same executable is both harness and pty
 program. It has to run on the FAR side: the query leaves the session's own tty and
 the reply arrives there; nothing outside the pty can observe either. `Linger.Session.Suites.Resume`
 reuses the same child-mode pattern for its winsize probe. The result file is
@@ -42,7 +42,7 @@ WHAT IS DERIVED, AND WHAT CANNOT BE:
 
 namespace Linger.Terminal.Suites.Mediation
 
-open E2E.Harness
+open Verify.Harness
 open Linger.Os.Shell
 open Linger.Terminal.Render (csiPlain escSeq)
 open Linger.Terminal.Mediation (STFinal classifyCsi xtgetcapReply)

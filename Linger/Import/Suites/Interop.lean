@@ -19,7 +19,7 @@ production codec, and the crash check also exercises an actual last detach.
 
 namespace Linger.Import.Suites.Interop
 
-open E2E.Harness
+open Verify.Harness
 open Linger.Import.Suites.Recipes (paneLine tmuxFixtureEnv)
 open Linger.Session.Checkpoint
 

@@ -30,13 +30,13 @@ actual `linger` binary with no `linger` on the fixture PATH.
 File handshakes hold a listing child open without sleeping in the test driver.
 The optional `MANAGER_TEST_LINGER` and `MANAGER_TEST_PICKER` overrides let the
 same checks and recorder drive preserved predecessor executables.
-`E2ETest.main` dispatches `--manager-probe <args>` to `probe` below.
+`Verify.Main.main` dispatches `--manager-probe <args>` to `probe` below.
 -/
 
 namespace Linger.App.Suites.Manager
 
 open Linger.Terminal
-open E2E.Harness
+open Verify.Harness
 open Linger.Os.Shell
 open Linger.Terminal.Render (modeSet csiNum screenText)
 open Linger.Terminal.Vt (Vt)
@@ -434,7 +434,7 @@ private def Session.observe (s : Session) (ms : Nat) : IO Unit := do
 not read the keys a check waits on, as when an attach's replay exceeds the pty's
 output buffer: about 1 KB on macOS, tens of KB on Linux. -/
 private def Session.waitFor (s : Session) (ms : Nat) (p : IO Bool) : IO Bool :=
-  E2E.Harness.waitFor ms do
+  Verify.Harness.waitFor ms do
     s.observe 20
     p
 

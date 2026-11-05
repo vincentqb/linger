@@ -1555,7 +1555,7 @@ The fix is also what makes them provable at all: the old shape ended in
 last byte stream to acquire a proof rather than merely a *bound*: it too was assembled
 through `String` until `rowText` was rebuilt on `List UInt8`, which is what earned it
 `history_framing`/`history_lines`. `Theorems/Coverage.lean` now requires exact
-constant occurrences in theorem types; `E2E/Coverage.lean` classifies emitted streams.
+constant occurrences in theorem types; `Verify/Coverage.lean` classifies emitted streams.
 `infoText` now builds
 `List UInt8` directly for the same reason. -/
 

@@ -1,10 +1,10 @@
 module
 
-import E2E.Harness
+import Verify.Harness
 
 public section
 
-namespace E2E.Runner
+namespace Verify.Runner
 
 /-- Run independent suites in separate processes, with at most four alive.
 The caller supplies the only assertion-count inventory. Each process keeps its
@@ -34,7 +34,7 @@ def run (binary : String) (args : Array String) (logDir : System.FilePath)
             args := #["-c", "exec \"$@\" > \"$0\" 2>&1", log.toString, binary] ++ args ++ #[name] }
     let code ← child.wait
     let text ← IO.FS.readFile log
-    let lines := E2E.Harness.lines text
+    let lines := Verify.Harness.lines text
     let count := (lines.filter (·.startsWith "PASS ")).length
     let ok :=
       code == 0 && lines.getLast? == some "FAILURES: 0" && count == expected &&
@@ -43,7 +43,7 @@ def run (binary : String) (args : Array String) (logDir : System.FilePath)
       IO.eprintln s!"e2e: {name} failed (exit {code}, {count}/{expected} checks); see {log}"
     return (name, ok, (← IO.monoMsNow) - start)
   let failed ← IO.mkRef false
-  E2E.Harness.parallel 4 (specs.map fun (name, expected) => suite name expected) fun
+  Verify.Harness.parallel 4 (specs.map fun (name, expected) => suite name expected) fun
       | .error e => do
         failed.set true
         IO.eprintln s!"e2e: {e}"
@@ -53,4 +53,4 @@ def run (binary : String) (args : Array String) (logDir : System.FilePath)
         IO.println s!"  {name}: {if ok then "OK" else "FAILED"} ({elapsed} ms)"
   return if ← failed.get then 1 else 0
 
-end E2E.Runner
+end Verify.Runner

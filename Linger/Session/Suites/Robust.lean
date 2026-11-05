@@ -1,6 +1,6 @@
 module
 
-public import E2E.Harness
+public import Verify.Harness
 import Linger.Session.Checkpoint
 import Linger.Display.Listing
 import Linger.Session.Shell.Daemon
@@ -39,7 +39,7 @@ own — no `/proc`, no `lsof`, no platform split. -/
 namespace Linger.Session.Suites.Robust
 
 open Linger.Session.Shell
-open E2E.Harness
+open Verify.Harness
 open Linger.Display.Status (Status)
 open Linger.Display.Listing (terminalListing rowFields rowStatus)
 open Linger.Session (maxClients)

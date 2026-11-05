@@ -94,7 +94,7 @@ if grep -qE '^(warning|error)' "$logs/build.log"; then
 fi
 # Shake reads the oleans just built. The proof library has no root module, so the proof
 # modules are named one by one. Tests stay out: shake cannot see `example` or
-# `#guard` uses. Linger.Os.Suites.Shim and E2ETest stay out to bound the cost.
+# `#guard` uses. Linger.Os.Suites.Shim and Verify.Main stay out to bound the cost.
 shake_modules="$(git ls-files 'Theorems/*.lean' 'Linger/*/Proofs/*.lean' | sed 's/[.]lean$//; s#/#.#g')"
 # shellcheck disable=SC2086  # one module name per word
 ./lake shake --keep-implied Linger Main $shake_modules > "$logs/shake.log" 2>&1 \
@@ -169,17 +169,17 @@ git ls-files -z 'Linger/*.lean' ':!Linger/*/Proofs/*' ':!Linger/*/Tests/*' \
   || { grep 'missing doc' "$logs/docs.log" | head -20; fail "a public declaration under Linger/ has no docstring"; }
 
 say "2b. semantic coverage of pure code + runtime emitter classification"
-# E2E.Coverage calls the shared exact-constant theorem census, then classifies
+# Verify.Coverage calls the shared exact-constant theorem census, then classifies
 # resolved references from the program just built above. Invoke Lean directly
 # so source-only changes cannot reuse a cached census.
-./lake env lean E2E/Coverage.lean > "$logs/coverage.log" 2>&1 \
+./lake env lean Verify/Coverage.lean > "$logs/coverage.log" 2>&1 \
   || { cat "$logs/coverage.log"; fail "semantic coverage and emitter classification"; }
 grep '^pure semantic coverage:' "$logs/coverage.log" || true
 tail -1 "$logs/coverage.log" | grep -q '^FAILURES: 0$' || fail "coverage gate"
 printf '  coverage and emitter checks: OK (details: %s/coverage.log)\n' "$logs"
 
 say "2c. verifier regression tests (CI policy, caches and suite isolation)"
-# E2E.Ci runs the real runner-selection script, including its `git log --since`
+# Verify.Ci runs the real runner-selection script, including its `git log --since`
 # against throwaway repositories with real commit dates, and the pinned Lake
 # against a temporary project.
 # The same runner checks exit status, final verdict, every assertion and both
@@ -200,7 +200,7 @@ shim_n="$(grep -c '^PASS ' "$shim_out")"
 # may clean up its own Env, never the user's process namespace. State directories hold
 # Unix sockets, whose paths must fit sun_path (c/shim.c rejects longer ones), so they stay
 # under socket_root whatever TMPDIR is, as the suites' directories stay under
-# E2E.Harness.socketRoot, whose docstring records the measured path lengths. Only logs
+# Verify.Harness.socketRoot, whose docstring records the measured path lengths. Only logs
 # and scratch files follow `${TMPDIR:-/tmp}`.
 socket_root=/tmp
 sentinel_dir="$socket_root/linger-e2e-sentinel-$$"

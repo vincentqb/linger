@@ -1,6 +1,6 @@
 module
 
-public import E2E.Harness
+public import Verify.Harness
 import Linger.App.Shell
 import Linger.Os.Shell.Command
 import Linger.Target.Remote
@@ -13,7 +13,7 @@ shell boundary; a fake remote linger records the resulting arguments. -/
 
 namespace Linger.Target.Suites.Remote
 
-open E2E.Harness
+open Verify.Harness
 open Linger.Os.Shell (chmod)
 
 private def devHost : String := "dev-a"

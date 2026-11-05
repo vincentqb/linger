@@ -22,6 +22,6 @@ inputs="$(git ls-files --stage -- .)"
 }
 
 # Image identity is part of the digest itself, so a hosted image update cannot
-# borrow a success from its predecessor. E2E.Ci changes each field independently.
+# borrow a success from its predecessor. Verify.Ci changes each field independently.
 printf '%s\n' "${RUNNER_OS-}" "${RUNNER_ARCH-}" "${ImageOS-}" "${ImageVersion-}" \
   "$inputs" | git hash-object --stdin

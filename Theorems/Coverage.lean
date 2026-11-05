@@ -43,7 +43,7 @@ import closure, so each of those modules must be in it. Pure code reaches a glob
 theorem, which is tagged in the specification's module; `scripts/e2e.sh` checks on the
 generated C that each replacement, a module-local one included, is still called. This module
 is under the sanctioned friend region so it can resolve private definitions and theorem
-declarations without granting that access to E2E or runtime code. -/
+declarations without granting that access to suites or runtime code. -/
 
 namespace Theorems.Coverage
 
@@ -220,7 +220,7 @@ public meta def checkPureCoverage : CommandElabM (Array Lean.Name) := do
         (·.range.pos.line)
   let code := moduleConsts env pureModule
   -- Read the global theorems from each module's entries: this environment loads no extension
-  -- state, and `E2E/Coverage.lean` elaborates in one that lacks Linger's.
+  -- state, and `Verify/Coverage.lean` elaborates in one that lacks Linger's.
   let csimps :=
     (List.range env.header.modules.size).foldl
       (fun acc idx =>
@@ -276,7 +276,8 @@ public meta def checkPureCoverage : CommandElabM (Array Lean.Name) := do
   return logical
 
 -- These fixed fixtures run when the checker or its imports are rebuilt.
--- The standalone E2E check calls checkPureCoverage again for fresh source files.
+-- The standalone check in `Verify.Coverage` calls checkPureCoverage again for fresh source
+-- files.
 run_cmd
   let env ← getEnv
   let defs ← checkPureCoverage

@@ -1,6 +1,6 @@
 module
 
-import E2E.Harness
+import Verify.Harness
 import Linger.Session.Checkpoint
 import Linger.Session.Shell.Daemon
 
@@ -17,7 +17,7 @@ substring of the listing, which some *other* row's `(resumable)` could also matc
 
 namespace Linger.Session.Suites.Resume
 
-open E2E.Harness
+open Verify.Harness
 open Linger.Display.Status (Status)
 
 /-- Child-side winsize probe. It must execute inside the resumed session's pty;

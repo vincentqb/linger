@@ -7,7 +7,7 @@ package linger where leanOptions :=
     ⟨`linter.extra.unreachableTactic, true⟩, ⟨`linter.redundantVisibility, true⟩,
     ⟨`linter.extra.unnecessarySeqFocus, true⟩]
 
-/-- Options for every library but `E2E`: Lake builds a module with the options of one library
+/-- Options for every library but `Verify`: Lake builds a module with the options of one library
 that contains it, and these libraries overlap, so they share a single set. With the package's
 `warningAsError`, a public declaration without a docstring fails the build. -/
 def implementationOptions : Array LeanOption := #[⟨`linter.missingDocs, true⟩]
@@ -78,9 +78,9 @@ lean_lib Tests where
   leanOptions := implementationOptions
 
 /-- Executable suites: `./lake exe e2e <suite>`. -/
-lean_lib E2E where
+lean_lib Verify where
 
-lean_exe e2e where root := `E2ETest
+lean_exe e2e where root := `Verify.Main
 
 @[default_target] lean_exe linger where root := `Main
 

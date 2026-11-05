@@ -1,6 +1,6 @@
 module
 
-public import E2E.Harness
+public import Verify.Harness
 import Linger.Session.Checkpoint
 import Linger.Target.Name
 
@@ -10,7 +10,7 @@ public section
 
 namespace Linger.Session.Suites.Identity
 
-open E2E.Harness
+open Verify.Harness
 open Linger.Os.Shell
 
 private def splitEnv (e : Env) (runtime : Nat) : Array (String × Option String) :=

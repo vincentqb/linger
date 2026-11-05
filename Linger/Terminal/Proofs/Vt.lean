@@ -1236,7 +1236,7 @@ theorem charWidth_decLine (c : Char) : charWidth (decLine c) = charWidth c := by
       | (subst_vars; decide)
 
 /-- **The `ByteArray` convenience is the same machine.** `feedBytes` is the adapter the
-`Tests/` and `E2E/` fixtures call (the daemon feeds `List UInt8` through `Mediation.feed`), and
+`Tests/` and `Verify/` fixtures call (the daemon feeds `List UInt8` through `Mediation.feed`), and
 this says it adds nothing — so every theorem stated over `feed` covers those fixtures. -/
 theorem feedBytes_eq (v : Vt) (bytes : ByteArray) : v.feedBytes bytes = v.feed bytes.toList := by
   rfl

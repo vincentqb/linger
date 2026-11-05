@@ -16,10 +16,10 @@ import Linger.Import.Suites.Recipes
 import Linger.Import.Suites.Interop
 import Linger.App.Suites.Manager
 import Linger.Target.Suites.RemoteLive
-import E2E.Ci
-import E2E.Hygiene
+import Verify.Ci
+import Verify.Hygiene
 import Linger.Session.Suites.Identity
-import E2E.Runner
+import Verify.Runner
 
 public section
 
@@ -31,7 +31,7 @@ lakefile stanza.
 
 Each suite prints `PASS <name>` / `FAIL <name>` per check and `FAILURES: <n>` last;
 `scripts/e2e.sh` supplies the exact recorded check counts to the batch runner, whose
-logs go to `LINGER_LOG_DIR` (default `E2E.Harness.tempRoot`). An unknown name is an error,
+logs go to `LINGER_LOG_DIR` (default `Verify.Harness.tempRoot`). An unknown name is an error,
 not a silent success. -/
 
 def suites : List (String × IO UInt32) :=
@@ -46,7 +46,7 @@ def suites : List (String × IO UInt32) :=
     -- opt-in: needs a real reachable host, so NOT in scripts/e2e.sh
     ("remote-live", Linger.Target.Suites.RemoteLive.run),
     -- Verifier regression checks, separate from the live product suites.
-    ("ci", E2E.Ci.run), ("hygiene", E2E.Hygiene.run),
+    ("ci", Verify.Ci.run), ("hygiene", Verify.Hygiene.run),
     ("identity", Linger.Session.Suites.Identity.run)]
 
 def main (args : List String) : IO UInt32 := do
@@ -86,7 +86,7 @@ def main (args : List String) : IO UInt32 := do
   | "--import-probe" :: rest =>
     Linger.Import.Suites.Recipes.importProbe rest
   | ["--runner-probe", dir, name] =>
-    E2E.Ci.runnerProbe dir name
+    Verify.Ci.runnerProbe dir name
   | "--suites" :: entries =>
     let specs :=
       entries.filterMap fun entry => do
@@ -100,9 +100,9 @@ def main (args : List String) : IO UInt32 := do
       return 2
     -- `scripts/e2e.sh` supplies a directory per run, so concurrent checkouts never share logs.
     let logDir :=
-      ((← IO.getEnv "LINGER_LOG_DIR").filter (!·.isEmpty)).getD (← E2E.Harness.tempRoot).toString
+      ((← IO.getEnv "LINGER_LOG_DIR").filter (!·.isEmpty)).getD (← Verify.Harness.tempRoot).toString
     IO.println s!"  suite logs: {logDir}/linger-<suite>.out"
-    E2E.Runner.run (← IO.appPath).toString #[] logDir specs
+    Verify.Runner.run (← IO.appPath).toString #[] logDir specs
   | ["delivery", check] =>
     Linger.Session.Suites.Delivery.run (some check)
   | ["title", binary] =>

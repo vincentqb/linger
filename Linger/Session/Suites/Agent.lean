@@ -1,6 +1,6 @@
 module
 
-public import E2E.Harness
+public import Verify.Harness
 import Linger.App.Shell
 import Linger.Session.Shell.Client
 
@@ -28,7 +28,7 @@ session's own `info`, which is as close as the porcelain gets. -/
 
 namespace Linger.Session.Suites.Agent
 
-open E2E.Harness
+open Verify.Harness
 
 /-- A field as a natural number: `none` when it is absent, empty or not all digits. -/
 def num (o : Option String) : Option Nat :=

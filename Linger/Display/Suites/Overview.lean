@@ -1,6 +1,6 @@
 module
 
-public import E2E.Harness
+public import Verify.Harness
 import Linger.Display.Listing
 
 public section
@@ -21,7 +21,7 @@ empty-state line and the suite cannot drift from its wording. -/
 
 namespace Linger.Display.Suites.Overview
 
-open E2E.Harness
+open Verify.Harness
 open Linger.Display.Listing (terminalListing)
 
 /-- The overview suite: explicit `linger ls` lists, exits and never reads stdin. -/

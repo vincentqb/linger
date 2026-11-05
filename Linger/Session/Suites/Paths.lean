@@ -14,7 +14,7 @@ directory at the filesystem root. -/
 
 namespace Linger.Session.Suites.Paths
 
-open E2E.Harness
+open Verify.Harness
 
 /-- Re-entered with the case's environment; even empty directories remain visible
 as empty lines in the byte-exact response. -/

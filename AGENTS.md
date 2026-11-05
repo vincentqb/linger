@@ -53,7 +53,7 @@ dispatch, and pushes or pull requests that change `c/shim.c` or `./lake`.
 - `Linger/Import/`: importing tmux-resurrect saves: the `Resurrect` policy, and `Shell.lean`
   runs it.
 - `Linger/App/`: the command line: the `Entry` route and, in `Shell.lean`, the commands.
-- `Theorems/`: the cross-component contracts and the coverage census; `E2E/`: the verifier's
+- `Theorems/`: the cross-component contracts and the coverage census; `Verify/`: the verifier's
   harness, runner and own suites.
 - `scripts/`: build and verification orchestration.
 
@@ -77,7 +77,7 @@ Lean erases proofs regardless of file placement.
   commit, checked by `Theorems/Coverage.lean`; generated lemmas do not count.
   State invariants in `THEOREMS.md` and design code for provability.
 - Every public declaration in a library needs a docstring: `lakefile.lean` enables
-  `linter.missingDocs` for every library but `E2E`, and `scripts/e2e.sh` checks the
+  `linter.missingDocs` for every library but `Verify`, and `scripts/e2e.sh` checks the
   modules under `Linger/` outside `Proofs/` and `Tests/` directly.
 - State user-visible behavior, not only invariants, and bound every input-controlled
   loop or reply count in the model with a theorem (`repeatAtMost_eq_repeat`,
@@ -109,14 +109,14 @@ Lean erases proofs regardless of file placement.
 - Ratchets live only in `scripts/gates.sh`; exact suite counts only in
   `scripts/e2e.sh`. Tests assert against the implementation's definitions.
   Use `scripts/` for shell orchestration; do not recreate a lowercase `tests/`.
-- In `scripts/`, `E2ETest.lean`, `E2E/` and each `Suites/`, scratch without sockets
-  lives under `${TMPDIR:-/tmp}`, in Lean through `E2E.Harness.tempRoot`,
-  `IO.FS.withTempDir` or `IO.FS.createTempDir`, and a directory that will hold a Unix
-  socket lives under `/tmp`, through `E2E.Harness.socketRoot` or `socket_root` in
-  `scripts/e2e.sh`, since macOS's `TMPDIR` alone takes about 49 of a socket path's 104
-  bytes; `scripts/gates.sh` rejects any other hard-coded `/tmp` there and in the CI
-  workflow, except in `Linger/Session/Suites/Paths.lean` and `Linger/Display/Suites/Overview.lean`, which assert product
-  defaults.
+- In `scripts/`, `Verify/` and each `Suites/`, scratch without sockets lives under
+  `${TMPDIR:-/tmp}`, in Lean through `Verify.Harness.tempRoot`, `IO.FS.withTempDir` or
+  `IO.FS.createTempDir`, and a directory that will hold a Unix socket lives under `/tmp`,
+  through `Verify.Harness.socketRoot` or `socket_root` in `scripts/e2e.sh`, since macOS's
+  `TMPDIR` alone takes about 49 of a socket path's 104 bytes; `scripts/gates.sh` rejects
+  any other hard-coded `/tmp` there and in the CI workflow, except in
+  `Linger/Session/Suites/Paths.lean` and `Linger/Display/Suites/Overview.lean`, which
+  assert product defaults.
 - No `partial def`, fuel parameter or raised `maxHeartbeats`/`maxRecDepth` in any
   Lean file (`scripts/gates.sh`). Proofs add no axioms:
   `Theorems/Coverage.lean` rejects every axiom declared in pure or proof

@@ -1,6 +1,6 @@
 module
 
-import E2E.Harness
+import Verify.Harness
 public import Linger.Session.Shell.Daemon
 import Linger.Session.Tests.Delivery
 
@@ -10,7 +10,7 @@ public section
 
 namespace Linger.Session.Suites.Delivery
 
-open E2E.Harness
+open Verify.Harness
 open Linger.Os.Shell
 open Linger.Terminal
 open Linger.Session.Shell.Daemon

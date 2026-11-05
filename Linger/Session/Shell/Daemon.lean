@@ -236,7 +236,7 @@ private def flushPty (rt : Rt) : IO Rt := do
     return { rt with ptyInFull := rt.ptyInFull && owed != 0 }
   let q := bufAdvance rt.ptyIn wrote
   -- clear the backpressure latch exactly when the queue drains, so the log
-  -- records the transition once (E2E.Robust's countFull check asserts it)
+  -- records the transition once (the robust suite's countFull check asserts it)
   return { rt with
       ptyIn := q, ptyInFull := rt.ptyInFull && owedLen q != 0 }
 

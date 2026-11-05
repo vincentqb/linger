@@ -1,6 +1,6 @@
 module
 
-public import E2E.Harness
+public import Verify.Harness
 
 public section
 
@@ -22,7 +22,7 @@ error rather than an assertion passing against a column that no longer exists.
 
 namespace Linger.Display.Suites.Status
 
-open E2E.Harness
+open Verify.Harness
 open Linger.Display.Status (Status)
 
 /-- `linger ls --summary` against `waiting`'s state dir under a 1.5 s deadline:

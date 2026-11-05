@@ -168,7 +168,7 @@ code_grep '^[[:space:]]+v[.]eraseRowSpan v[.]cursor[.]y v[.]cursor[.]x [(]min [(
 # The shim returns -errno and errno numbers differ by platform: 918c671's
 # `r == -111` meant ECONNREFUSED only on Linux.
 ! code_grep '(==|!=)[[:space:]]*[(]?-([2-9]|[1-9][0-9]+)([^0-9]|$)' 'Linger/*/Shell.lean' 'Linger/*/Shell/*' \
-    'Main.lean' 'E2E/*' 'Linger/*/Suites/*' \
+    'Main.lean' 'Verify/*' 'Linger/*/Suites/*' \
   || fail "a negative literal comparison looks like an errno number: compare the sign, or classify the errno in c/shim.c"
 # Lean/libuv may have worker threads when the application forks. The child
 # paths and their two execution helpers must not allocate, format through
@@ -279,7 +279,7 @@ library_roots() {
   [ "$lr_got" = "lean_lib $1 where roots := $2 ${3:+$3 }" ] \
     || fail "$1 lost its independent library roots or options: $lr_got"
 }
-# Every library but E2E shares implementationOptions, which turns on linter.missingDocs:
+# Every library but Verify shares implementationOptions, which turns on linter.missingDocs:
 # the libraries overlap, and Lake builds a module with one containing library's options.
 # scripts/e2e.sh also checks every Linger module outside Proofs/ and Tests/ directly; the
 # globs below build those two with these options.
@@ -439,7 +439,7 @@ printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])[|] _ => writeSave [(]paths
 # Both views consume the same ordered catalog. Display strings are scrubbed;
 # action fields have string-literal framing so display cleanup cannot retarget them.
 # Acceptance must use the displayed snapshot, then pass its exact validated
-# record to the shared creation executor. E2E checks the save-refresh race.
+# record to the shared creation executor. A suite checks the save-refresh race.
 for tie in \
   'let save ← readSave origin home file let rows := catalogRows save[.]content save[.]panes' \
   'let value := if [[]"directory", "session", "window", "pane", "title", "command", "saved-command", "window-title"[]][.]contains key then value[.]quote else diagnostic value' \
@@ -734,7 +734,7 @@ awk '
 # is what makes it a checkpoint. The proof and fixture directories are friends BY
 # DECLARATION (see `Linger/Terminal/Vt.lean`, "## Every door"), and a component's `Tests/` deliberately forges invalid
 # states in its negative fixtures, so listing its files one by one would gate a
-# non-property. Everything else is outside and fail-closed — `E2E/**`, each component's
+# non-property. Everything else is outside and fail-closed — `Verify/**`, each component's
 # `Suites/`, `Main.lean`, every shell and the other component modules. Replay joins only
 # to read shared immutable rows.
 # The suites are outside deliberately: a pty suite asserts on bytes the real binary
@@ -1243,7 +1243,7 @@ done
 # required regression is not a pass, and an executable Python snippet is still a
 # second-language dependency even when embedded in a Lean string rather than tracked
 # as a .py file. These are syntactic runtime ties, so the source gate is the oracle.
-! code_grep '(^|[^[:alnum:]_])(pkill|killall)([^[:alnum:]_]|$)' 'scripts/e2e.sh' 'E2E/*' 'Linger/*/Suites/*' \
+! code_grep '(^|[^[:alnum:]_])(pkill|killall)([^[:alnum:]_]|$)' 'scripts/e2e.sh' 'Verify/*' 'Linger/*/Suites/*' \
   || fail "a test orchestrator kills by process name — suites may terminate only processes they created"
 # A process-GROUP selector is the same hazard wearing a pid. POSIX reads `kill 0` as
 # "every process in my group" and `kill -N` as group N, so one of these in a test
@@ -1258,16 +1258,16 @@ done
 ! code_grep 'kill([[:space:]]+-[A-Za-z0-9]+)*[[:space:]]+(--[[:space:]]+)?(0|-[0-9]+)([^0-9]|$)' \
     'scripts/*.sh' 'c/shim.c' 'recipes/*' \
   || fail "a signal targets process group 0 or a negative pid — name the pid the suite created"
-! code_grep '["]python([0-9.]*)' 'E2E/*' 'Linger/*/Suites/*' \
-  || fail "an E2E suite executes embedded Python — use the e2e binary as the child probe"
-! code_grep 'IO[.]println[[:space:]]+"PASS[[:space:]].*skip' 'E2E/*' 'Linger/*/Suites/*' \
-  || fail "an E2E suite counts a skipped required check as PASS"
-! code_grep 'expect[[:space:]]+[(]?true[)]?([[:space:]]|$)' 'E2E/*' 'Linger/*/Suites/*' \
-  || fail "an E2E suite asserts a constant true; a skipped check is not a PASS"
+! code_grep '["]python([0-9.]*)' 'Verify/*' 'Linger/*/Suites/*' \
+  || fail "a suite executes embedded Python — use the e2e binary as the child probe"
+! code_grep 'IO[.]println[[:space:]]+"PASS[[:space:]].*skip' 'Verify/*' 'Linger/*/Suites/*' \
+  || fail "a suite counts a skipped required check as PASS"
+! code_grep 'expect[[:space:]]+[(]?true[)]?([[:space:]]|$)' 'Verify/*' 'Linger/*/Suites/*' \
+  || fail "a suite asserts a constant true; a skipped check is not a PASS"
 # Temporary paths follow two rules, each implemented once per language. Scratch without
-# sockets goes under `${TMPDIR:-/tmp}`: that expansion in shell, `E2E.Harness.tempRoot`,
+# sockets goes under `${TMPDIR:-/tmp}`: that expansion in shell, `Verify.Harness.tempRoot`,
 # `IO.FS.withTempDir` or `IO.FS.createTempDir` in Lean. A directory that will hold a Unix
-# socket goes under `/tmp` whatever TMPDIR says, through `E2E.Harness.socketRoot` or
+# socket goes under `/tmp` whatever TMPDIR says, through `Verify.Harness.socketRoot` or
 # `socket_root` in scripts/e2e.sh: macOS caps a socket path at 104 bytes, and its TMPDIR
 # alone takes about 49. So the test orchestration spells a temporary root only in those
 # three definitions and in the expansion. Linger/Session/Suites/Paths.lean and Linger/Display/Suites/Overview.lean are exempt:
@@ -1276,57 +1276,57 @@ done
 # starts, not a component such as `$dir/tmp`. Each hit is read again with every expansion
 # blanked out, because an ERE cannot exclude one context.
 tmp_re='(^|[^[:alnum:]_.~)}])(/private(/var)?|/var)?[/]tmp([^[:alnum:]_]|$)'
-tmp_hits="$(code_grep "$tmp_re" 'scripts/*.sh' .github/workflows/ci.yml E2ETest.lean 'E2E/*.lean' 'Linger/*/Suites/*.lean' \
+tmp_hits="$(code_grep "$tmp_re" 'scripts/*.sh' .github/workflows/ci.yml Verify/Main.lean 'Verify/*.lean' 'Linger/*/Suites/*.lean' \
   | sed 's/[$][{]TMPDIR:-[/]tmp[}]/TMPDIR/g' | CG_RE="$tmp_re" awk "$CODE_AWK" \
   | sed 's/^[^:]*:[0-9]*://' | awk -F: '$1 != "Linger/Session/Suites/Paths.lean" && $1 != "Linger/Display/Suites/Overview.lean"')"
 # The helpers are compared by content, with the root itself spelled `[/]tmp`, so these
 # lines cannot match the gate that reads them.
 tmp_got="$(printf '%s\n' "$tmp_hits" | sed 's/^\([^:]*\):[0-9]*:[[:space:]]*/\1: /; s#[/]tmp#[/]tmp#g')"
 tmp_want="$(printf '%s\n' \
-  'E2E/Harness.lean: return System.FilePath.mk (((← IO.getEnv "TMPDIR").filter (!·.isEmpty)).getD "[/]tmp")' \
-  'E2E/Harness.lean: def socketRoot : System.FilePath := "[/]tmp"' \
+  'Verify/Harness.lean: return System.FilePath.mk (((← IO.getEnv "TMPDIR").filter (!·.isEmpty)).getD "[/]tmp")' \
+  'Verify/Harness.lean: def socketRoot : System.FilePath := "[/]tmp"' \
   'scripts/e2e.sh: socket_root=[/]tmp')"
 [ "$tmp_got" = "$tmp_want" ] || {
   printf '  temporary roots other than the TMPDIR expansion:\n%s\n' \
     "$(printf '%s\n' "$tmp_hits" | sed 's/^/    /')" >&2
   printf '  want exactly the helpers:\n%s\n' "$(printf '%s\n' "$tmp_want" | sed 's/^/    /')" >&2
-  fail "a hard-coded temporary root: put scratch under TMPDIR (the shell expansion, or E2E.Harness.tempRoot) and a socket directory under E2E.Harness.socketRoot or scripts/e2e.sh's socket_root"; }
+  fail "a hard-coded temporary root: put scratch under TMPDIR (the shell expansion, or Verify.Harness.tempRoot) and a socket directory under Verify.Harness.socketRoot or scripts/e2e.sh's socket_root"; }
 # A socket directory moved under the expansion or `tempRoot` passes that check, and fails
 # only where TMPDIR is long, as on macOS, which CI does not run on every push. So each
 # socket directory the suites and the verifier create is tied to its helper: every
 # suite's state directory (`Env.make`), Interop's fixture root and the sentinel session's.
 code_grep '^[[:space:]]+[|] none => [(]socketRoot / s!"linger-[{]slug[}]-[{]pid[}]"[)][.]toString$' \
-  E2E/Harness.lean >/dev/null || fail "Env.make no longer roots each suite's state directory at E2E.Harness.socketRoot"
+  Verify/Harness.lean >/dev/null || fail "Env.make no longer roots each suite's state directory at Verify.Harness.socketRoot"
 code_grep 'cmd := "mktemp", args := #[[]"-d", [(]socketRoot / "linger-i-XXXXXX"[)][.]toString[]]' \
-  Linger/Import/Suites/Interop.lean >/dev/null || fail "Linger.Import.Suites.Interop no longer creates its fixture root under E2E.Harness.socketRoot"
+  Linger/Import/Suites/Interop.lean >/dev/null || fail "Linger.Import.Suites.Interop no longer creates its fixture root under Verify.Harness.socketRoot"
 code_grep '^sentinel_dir="[$]socket_root/linger-e2e-sentinel-[$][$]"$' scripts/e2e.sh >/dev/null \
   || fail "the verifier's sentinel directory is no longer under scripts/e2e.sh's socket_root"
-# `lean_lib E2E` has no glob (E2E/Coverage.lean's census needs the built program), so
-# `./lake build e2e` is the only build of the e2e suites, under E2E/ and each component's
-# Suites/, and it builds only the import closure of E2ETest.lean, the e2e root: a module
+# `lean_lib Verify` has no glob (Verify/Coverage.lean's census needs the built program), so
+# `./lake build e2e` is the only build of the e2e suites, under Verify/ and each component's
+# Suites/, and it builds only the import closure of Verify/Main.lean, the e2e root: a module
 # outside it is never built, and none of its suites can run. Walk that closure forwards
 # over the import lines; each suite module but Coverage and lingertest's root, the shim
 # smoke test, must be in it.
-e2e_unreached="$(module_imports E2ETest.lean 'E2E/*' 'Linger/*/Suites/*' \
-| awk -F: -v files="$(git ls-files 'E2E/*.lean' 'Linger/*/Suites/*.lean' | tr '\n' ' ')" "$IMPORT_AWK"'
+e2e_unreached="$(module_imports Verify/Main.lean 'Verify/*' 'Linger/*/Suites/*' \
+| awk -F: -v files="$(git ls-files 'Verify/*.lean' 'Linger/*/Suites/*.lean' | tr '\n' ' ')" "$IMPORT_AWK"'
   { mod = import_mod($3); gsub(/[.]/, "/", mod)
     n++; src[n] = $1; dst[n] = mod ".lean" }
   END {
-    q[1] = "E2ETest.lean"; reached[q[1]] = 1; qn = 1
+    q[1] = "Verify/Main.lean"; reached[q[1]] = 1; qn = 1
     for (qi = 1; qi <= qn; qi++)
       for (i = 1; i <= n; i++)
         if (src[i] == q[qi] && !(dst[i] in reached)) {
           reached[dst[i]] = 1; qn++; q[qn] = dst[i] }
     k = split(files, F, " ")
     for (j = 1; j <= k; j++)
-      if (F[j] != "E2E/Coverage.lean" && F[j] != "Linger/Os/Suites/Shim.lean" &&
+      if (F[j] != "Verify/Coverage.lean" && F[j] != "Linger/Os/Suites/Shim.lean" &&
           !(F[j] in reached)) printf "%s ", F[j] }')"
 [ -z "$e2e_unreached" ] \
-  || fail "outside the import closure of E2ETest.lean, so './lake build e2e' never elaborates them: ${e2e_unreached% }"
-# Every registered suite but the opt-in remote-live runs in the verifier: E2ETest.suites
+  || fail "outside the import closure of Verify/Main.lean, so './lake build e2e' never elaborates them: ${e2e_unreached% }"
+# Every registered suite but the opt-in remote-live runs in the verifier: Verify.Main.suites
 # names exactly the suites that scripts/e2e.sh passes to `e2e --suites`, read from those
 # commands with their continuation lines joined.
-registered="$(awk '/^def suites :/ { on = 1 } on { sub(/--.*/, ""); print } on && /[]][[:space:]]*$/ { exit }' E2ETest.lean \
+registered="$(awk '/^def suites :/ { on = 1 } on { sub(/--.*/, ""); print } on && /[]][[:space:]]*$/ { exit }' Verify/Main.lean \
   | grep -oE '[(]"[^"]+"' | tr -d '("' | grep -vx 'remote-live' | sort)"
 verified="$(awk '
   { cmd = cmd $0 }
@@ -1338,13 +1338,13 @@ verified="$(awk '
     for (k = 1; k <= n; k++) { name = w[k]; sub(/:[0-9]+$/, "", name); print name } }
   { cmd = "" }' scripts/e2e.sh | sort)"
 [ -n "$registered" ] && [ "$registered" = "$verified" ] \
-  || fail "E2ETest.suites less remote-live ($(printf '%s' "$registered" | tr '\n' ' ')) differs from the suites scripts/e2e.sh runs ($(printf '%s' "$verified" | tr '\n' ' '))"
+  || fail "Verify.Main.suites less remote-live ($(printf '%s' "$registered" | tr '\n' ' ')) differs from the suites scripts/e2e.sh runs ($(printf '%s' "$verified" | tr '\n' ' '))"
 
 # Program and test sources stay Lean; pre-commit is an external framework.
-# `scripts/` holds the shell verifier, while `E2E/` holds the executable suites.
+# `scripts/` holds the shell verifier, while `Verify/` holds the executable suites.
 if git ls-files '*.py' | grep -q .; then
   git ls-files '*.py'
-  fail "a .py file is tracked; the suites and the coverage gate are Lean (see E2E/)"
+  fail "a .py file is tracked; the suites and the coverage gate are Lean (see Verify/)"
 fi
 
 # Avoid the Tests/tests collision on case-insensitive filesystems and keep
@@ -1352,7 +1352,7 @@ fi
 git ls-files 'Tests/*' 'Linger/*/Tests/*' | grep -qvE '\.lean$' \
   && fail "a non-Lean file under a Tests/ directory (orchestration belongs in scripts/)" || true
 git ls-files 'scripts/*' | grep -qvE '\.sh$' \
-  && fail "a non-shell file under scripts/ (Lean suites belong in E2E/)" || true
+  && fail "a non-shell file under scripts/ (Lean suites belong in Verify/)" || true
 git ls-files 'tests/*' 'Tools/*' 'Manager/*' 'Tests/*' 'Linger/Core/*' 'Linger/Runtime/*' \
     'Linger/Tools/*' 'Linger/Manager/*' | grep -q . \
   && fail "legacy directory: use scripts/, or a component under Linger/" || true
@@ -1388,7 +1388,7 @@ thm_cites="$(cite_scan | awk -F: '$1 == "THEOREMS.md" { print $3 }' | sort -u)"
   || fail "no declaration citations found in THEOREMS.md"
 thm_decls="$(git grep -hoE '^ *(public )?(private )?(theorem|lemma|def|abbrev) [A-Za-z][A-Za-z0-9_.]*' \
   -- '*.lean' | sed 's/.*[[:space:]]//; s/.*[.]//' | sort -u)"
-# E2E/Coverage.lean backs each renderer and replay reference with the claims covering
+# Verify/Coverage.lean backs each renderer and replay reference with the claims covering
 # it; those resolve too. The rows are counted, so a row the extraction misses fails.
 emitter_claims="$(awk '
   /^def emitters / { on = 1 }
@@ -1403,10 +1403,10 @@ emitter_claims="$(awk '
       for (k = 1; k <= n; k++) {
         name = part[k]; sub(/^component of /, "", name)
         if (name ~ /^[A-Za-z][A-Za-z0-9_.]*$/) sub(/.*[.]/, "", name)
-        print "E2E/Coverage.lean:emitters:" name } }
-    print "#rows " rows }' E2E/Coverage.lean)"
+        print "Verify/Coverage.lean:emitters:" name } }
+    print "#rows " rows }' Verify/Coverage.lean)"
 [ "$(printf '%s\n' "$emitter_claims" | sed -n 's/^#rows //p')" = 28 ] \
-  || fail "E2E/Coverage.lean's emitter table no longer reads as its 28 rows"
+  || fail "Verify/Coverage.lean's emitter table no longer reads as its 28 rows"
 { printf '%s\n' "$thm_decls" '#cites'; cite_scan; printf '%s\n' "$emitter_claims" | grep -v '^#rows '; } \
 | CITE_ABSENT="$cite_absent" CITE_FOREIGN="$cite_foreign" awk -F: '
   BEGIN { n = split(ENVIRON["CITE_ABSENT"], L, " "); for (i = 1; i <= n; i++) absent[L[i]] = 1
@@ -1450,7 +1450,7 @@ thm_proofs="$(awk -F'|' '/^[|]/ { print $(NF - 1) }' THEOREMS.md \
 # macOS is never checked again, or drops the schedule and it never runs. Neither is
 # a Lean property, so this is the same species of oracle as SHIM_CAP.
 ci_yml='.github/workflows/ci.yml'
-# The runtime tie, and the load-bearing one: `E2E/Ci.lean` tests
+# The runtime tie, and the load-bearing one: `Verify/Ci.lean` tests
 # `scripts/ci-runners.sh`, and no Lean can see whether the workflow actually CALLS it.
 # Re-inline the decision as a `case` in the YAML and the suite would keep passing
 # against a script nothing runs. Same species as the `Buf` gate above.
@@ -1460,12 +1460,12 @@ ci_yml='.github/workflows/ci.yml'
 # script — so it passed with the call replaced by an inline `echo`. Break-verified
 # after the fix.
 grep -qE '(^|[^[:alnum:]_])sh[[:space:]]+scripts/ci-runners[.]sh' "$ci_yml" \
-  || fail "$ci_yml: the runner decision is not a call to scripts/ci-runners.sh — E2E/Ci.lean would then be testing a script CI does not use"
+  || fail "$ci_yml: the runner decision is not a call to scripts/ci-runners.sh — Verify/Ci.lean would then be testing a script CI does not use"
 [ -n "$(git ls-files -- scripts/ci-runners.sh)" ] \
   || fail "scripts/ci-runners.sh is not tracked — the workflow calls it, so a local-only copy passes here and fails in CI"
 grep -qE '^ *os: [$][{][{] fromJSON[(]needs[.]gates[.]outputs[.]os[)] [}][}]$' "$ci_yml" \
   || fail "$ci_yml: the e2e matrix must use the tested runner decision through needs.gates.outputs.os"
-# E2E.Ci exercises Lake's invalidation and cached warnings, so the real verifier builds
+# Verify.Ci exercises Lake's invalidation and cached warnings, so the real verifier builds
 # with the same flags. Semantic lint needs the dynamically imported program too, so the
 # shared lint driver follows that complete build rather than running another hook stack.
 awk '
@@ -1473,8 +1473,8 @@ awk '
   /^[.]\/lake lint / { lint = NR }
   END { exit !(build && lint > build) }
 ' scripts/e2e.sh \
-  || fail "scripts/e2e.sh: the complete --rehash --wfail build exercised by E2E.Ci must precede the shared Lake lint driver"
-# E2E.Ci tests the actual input key. Both the lookup and successful receipt must
+  || fail "scripts/e2e.sh: the complete --rehash --wfail build exercised by Verify.Ci must precede the shared Lake lint driver"
+# Verify.Ci tests the actual input key. Both the lookup and successful receipt must
 # use it; no prefix restore may turn merely similar inputs into verified ones.
 [ -n "$(git ls-files -- scripts/ci-inputs.sh)" ] \
   || fail "scripts/ci-inputs.sh is not tracked"
@@ -1506,9 +1506,9 @@ awk '
 grep -qE '^[[:space:]]+run: sh scripts/hygiene[.]sh$' "$ci_yml" \
   || fail "$ci_yml: source hygiene must use the shared native checks"
 grep -qE '^[[:space:]]+entry: sh scripts/lint[.]sh$' .pre-commit-config.yaml \
-  || fail ".pre-commit-config.yaml: run the shared lint script exercised by E2E.Hygiene"
+  || fail ".pre-commit-config.yaml: run the shared lint script exercised by Verify.Hygiene"
 # The real suites must use the same isolated runner whose failure, signal and
-# assertion-count contracts E2E.Ci exercises.
+# assertion-count contracts Verify.Ci exercises.
 awk '/^say "[0-9]+[.] live suites / { live=1 }
   live && /^[.]\/[.]lake\/build\/bin\/e2e --suites[[:space:]]/ { found=1 }
   END { exit !found }' scripts/e2e.sh \
@@ -1520,10 +1520,10 @@ grep -q 'workflow_dispatch' "$ci_yml" \
 # E2E fixed-sleep ratchet: a wait for something to appear polls its readiness
 # signal (`waitFor`, `Client.awaitText`); the sleeps left are negative-assertion
 # windows, fixture pacing, poll intervals and waits not yet converted. Both ratchets count
-# the e2e suites, under E2E/ and each component's Suites/, but not lingertest's shim smoke
+# the e2e suites, under Verify/ and each component's Suites/, but not lingertest's shim smoke
 # test, which they never counted.
 E2E_SLEEP_CAP=34
-es_n="$(code_count 'IO[.]sleep([^[:alnum:]_]|$)' 'E2E/*' 'Linger/*/Suites/*' \
+es_n="$(code_count 'IO[.]sleep([^[:alnum:]_]|$)' 'Verify/*' 'Linger/*/Suites/*' \
   ':!Linger/Os/Suites/Shim.lean')"
 [ "$es_n" -le "$E2E_SLEEP_CAP" ] \
   || fail "E2E fixed sleeps grew to $es_n (cap $E2E_SLEEP_CAP); poll a readiness signal with waitFor"
@@ -1532,7 +1532,7 @@ es_n="$(code_count 'IO[.]sleep([^[:alnum:]_]|$)' 'E2E/*' 'Linger/*/Suites/*' \
 # left are negative assertions, discards, stream sync points and positive reads not
 # yet converted.
 E2E_DRAIN_CAP=64
-ed_n="$(code_count '(^|[^[:alnum:]_.])drain(Str)?[[:space:]]+[^[:space:]]+[[:space:]]+[0-9]' 'E2E/*' \
+ed_n="$(code_count '(^|[^[:alnum:]_.])drain(Str)?[[:space:]]+[^[:space:]]+[[:space:]]+[0-9]' 'Verify/*' \
   'Linger/*/Suites/*' ':!Linger/Os/Suites/Shim.lean')"
 [ "$ed_n" -le "$E2E_DRAIN_CAP" ] \
   || fail "E2E fixed drain windows grew to $ed_n (cap $E2E_DRAIN_CAP); wait for a positive condition with awaitText"

@@ -51,11 +51,12 @@ typed reply and avoid unreported exceptions. No assumption about the frequency
 of disconnects or failed saves is needed. This covers finite event batches,
 not scheduling or filesystem durability.
 
-Source gates tie the IO adapter to the shared driver; [E2E](E2E/) exercises the
-executable. Ownership assumes cooperating processes, stable lock inodes that are
-never unlinked or replaced, and a filesystem honoring exclusive locking. Both
-the socket namespace and checkpoint namespace stay locked from before recovery
-through final cleanup. A socket pathname alone does not establish this invariant.
+Source gates tie the IO adapter to the shared driver; the executable suites, under each
+component's `Suites/`, exercise the executable. Ownership assumes cooperating processes,
+stable lock inodes that are never unlinked or replaced, and a filesystem honoring
+exclusive locking. Both the socket namespace and checkpoint namespace stay locked from
+before recovery through final cleanup. A socket pathname alone does not establish this
+invariant.
 Buffer bounds count retained logical bytes, not allocator or operating-system memory. Allocation
 failure, OS termination and failures in the compiler, runtime or C shim remain
 outside these proofs.
@@ -75,6 +76,6 @@ prompt; the command is retained as metadata and is never executed.
 [Contract pins](Theorems/Contracts.lean) restate every theorem cited above, so a
 weakened statement fails the build. The [declaration census](Theorems/Coverage.lean)
 requires semantic coverage of every definition in a pure module;
-[renderer coverage](E2E/Coverage.lean) checks resolved references.
+[renderer coverage](Verify/Coverage.lean) checks resolved references.
 Run `./scripts/e2e.sh` for the complete verifier, including generated C ABI,
 source gates, formatting, semantic lint, fuzz fixtures and live suites.

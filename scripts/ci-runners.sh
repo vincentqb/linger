@@ -7,7 +7,7 @@
 # control: `.github/workflows/ci.yml`'s `gates` job compiles NOTHING, which is what
 # makes it cheap, so its decision cannot be `./lake exe e2e …` without putting a
 # Lean build back into the cheap job. Shell is what a workflow step can call for
-# free. It lives here rather than inlined in the YAML so `E2E/Ci.lean` can DRIVE it
+# free. It lives here rather than inlined in the YAML so `Verify/Ci.lean` can DRIVE it
 # — an inline `case` can only be tested by a copy of itself, and this repo's rule is
 # that a suite asserts against the code's own definitions, never a copy.
 #
@@ -45,7 +45,7 @@ case "$event" in
   schedule)
     # Keep the assignment outside `if`: set -e must propagate a failed history
     # lookup, rather than treating its empty output as "no commits".
-    # E2E.Ci drives recent, stale and unreadable histories against this script.
+    # Verify.Ci drives recent, stale and unreadable histories against this script.
     commits="$(git log --since="$WINDOW" --format=%H)"
     if [ -n "$commits" ]; then
       macos=yes

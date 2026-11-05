@@ -6,7 +6,7 @@ public import Linger.Terminal.Render
 
 public section
 
-/-! # E2E.Harness — the shared harness for the pty suites, in Lean
+/-! # Verify.Harness — the shared harness for the pty suites, in Lean
 
 The suites drive the real binary through ptys, so they are `IO` and tested, not
 proved. Assertions read the implementation's definitions (`status` parses with
@@ -14,12 +14,12 @@ proved. Assertions read the implementation's definitions (`status` parses with
 Ptys, sockets and polling come from `Linger.Os.Shell`.
 
 OUTPUT CONTRACT — load-bearing, do not reformat. Every check prints `PASS <name>`
-or `FAIL <name>`, and each suite ends with `FAILURES: <n>`. `E2E.Runner` requires
+or `FAIL <name>`, and each suite ends with `FAILURES: <n>`. `Verify.Runner` requires
 exit 0, last line `FAILURES: 0`, no `FAIL` line and exactly the `PASS` count that
 `scripts/e2e.sh` passes, so a suite that stops checking fails the gate and so does
 one that quietly grows — either way it is a reviewable edit. -/
 
-namespace E2E.Harness
+namespace Verify.Harness
 
 open Linger.Os.Shell
 
@@ -588,7 +588,7 @@ new suite must remember to call is a cleanup that will be forgotten. A dir suppl
 through `LINGER_TEST_DIR` is the caller's, so it is left alone either way.
 
 Suites without a state directory end with `finish` itself. The single exception is
-`E2E/Coverage.lean`, a meta command outside this harness that prints its own
+`Verify/Coverage.lean`, a meta command outside this harness that prints its own
 `FAILURES:` line, so it must be edited alongside `finish` if the contract changes. -/
 def verdict (e : Env) : IO UInt32 := do
   let code ← finish
@@ -631,4 +631,4 @@ def Env.suite (slug : String) (body : Env → IO Unit) : IO UInt32 := do
     throw err
   verdict e
 
-end E2E.Harness
+end Verify.Harness

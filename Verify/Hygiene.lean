@@ -1,10 +1,10 @@
 module
 
-import E2E.Harness
+import Verify.Harness
 
 public section
 
-/-! # E2E.Hygiene — source checks and pre-commit against real Git indexes
+/-! # Verify.Hygiene — source checks and pre-commit against real Git indexes
 
 Fixtures run the repository's actual script from temporary repositories. A failed
 fixture must name the offending path and check; an arbitrary subprocess error is
@@ -13,9 +13,9 @@ and preserve unstaged edits. The source gates run against a scratch copy of this
 repository's index and must fail when a gated path is missing from it.
 -/
 
-namespace E2E.Hygiene
+namespace Verify.Hygiene
 
-open E2E.Harness
+open Verify.Harness
 
 private def fixtureEnv : Array (String × Option String) :=
   #[("GIT_DIR", none), ("GIT_WORK_TREE", none), ("GIT_INDEX_FILE", none),
@@ -326,4 +326,4 @@ def run : IO UInt32 := do
       expect ok "source gates fail closed when a gated path leaves the index"
   finish
 
-end E2E.Hygiene
+end Verify.Hygiene
