@@ -15,7 +15,7 @@ probe runs with zero, one and two presentation clients, which is what makes the
 reply stream ROSTER-INDEPENDENT the thing under test: the mediator answers the
 child, and a query is never a broadcast.
 
-THE PROBE IS THIS BINARY. `e2e --probe <result> <ready> <trigger>` is dispatched by
+THE PROBE IS THIS BINARY. `suites --probe <result> <ready> <trigger>` is dispatched by
 `Verify.Main.main` into `probe` below, so the same executable is both harness and pty
 program. It has to run on the FAR side: the query leaves the session's own tty and
 the reply arrives there; nothing outside the pty can observe either. `Linger.Session.Suites.Resume`
@@ -270,7 +270,7 @@ def run : IO UInt32 :=
           s!"stable child terminal profile with {clients} client(s)"
       if clients != 0 then
         -- nested a level deeper on purpose: with nobody attached there is no client
-        -- stream to make a claim about. `scripts/e2e.sh`'s exact check count is what
+        -- stream to make a claim about. `scripts/verify.sh`'s exact check count is what
         -- stops this arm silently going empty and still printing `FAILURES: 0`.
         let outs := data.clientOut
         expect

@@ -5,7 +5,7 @@
 #
 # A DELIBERATE NON-LEAN FILE, and the reason is the cost this exists to
 # control: `.github/workflows/ci.yml`'s `gates` job compiles NOTHING, which is what
-# makes it cheap, so its decision cannot be `./lake exe e2e …` without putting a
+# makes it cheap, so its decision cannot be `./lake exe suites …` without putting a
 # Lean build back into the cheap job. Shell is what a workflow step can call for
 # free. It lives here rather than inlined in the YAML so `Verify/Ci.lean` can DRIVE it
 # — an inline `case` can only be tested by a copy of itself, and this repo's rule is

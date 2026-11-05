@@ -9,9 +9,9 @@ public section
 
 Ported from `tests/remote_live_test.py`. Unlike `Linger.Target.Suites.Remote` — which puts a fake
 `ssh` on `PATH`, is hermetic, and is in the gate — this needs an actual reachable
-host running a real `linger`, so it is **deliberately not in `scripts/e2e.sh`**:
+host running a real `linger`, so it is **deliberately not in `scripts/verify.sh`**:
 
-    LINGER_REMOTE=<host> ./lake exe e2e remote-live
+    LINGER_REMOTE=<host> ./lake exe suites remote-live
 
 Assumes the remote has `linger` on its non-interactive `PATH` and two live sessions
 named `alpha` and `beta`; the host key comes from `~/.ssh/config`. It is the only
@@ -41,7 +41,7 @@ def stripCsi (s : String) : String :=
 /-- Run the suite against `LINGER_REMOTE`; exit 2 when it is unset. -/
 def run : IO UInt32 := do
   let some host ← IO.getEnv "LINGER_REMOTE" |
-    IO.eprintln "e2e remote-live: set LINGER_REMOTE=<host>";
+    IO.eprintln "suites remote-live: set LINGER_REMOTE=<host>";
     return 2
   Env.suite "live" fun e => do
       IO.println s!"driving local overview + remote attach against real host: {host}"

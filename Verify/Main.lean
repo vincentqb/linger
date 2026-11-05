@@ -23,14 +23,14 @@ import Verify.Runner
 
 public section
 
-/-! # e2e — the pty suites, dispatched by name
+/-! # The `suites` executable — the pty suites, dispatched by name
 
-One executable, one `lean_exe`, one argv dispatch: `./lake exe e2e watch`.
+One executable, one `lean_exe`, one argv dispatch: `./lake exe suites watch`.
 The suites share a harness; separate executable blocks would duplicate the same
 lakefile stanza.
 
 Each suite prints `PASS <name>` / `FAIL <name>` per check and `FAILURES: <n>` last;
-`scripts/e2e.sh` supplies the exact recorded check counts to the batch runner, whose
+`scripts/verify.sh` supplies the exact recorded check counts to the batch runner, whose
 logs go to `LINGER_LOG_DIR` (default `Verify.Harness.tempRoot`). An unknown name is an error,
 not a silent success. -/
 
@@ -43,7 +43,7 @@ def suites : List (String × IO UInt32) :=
     ("remote", Linger.Target.Suites.Remote.run), ("terminal", Linger.Terminal.Suites.Mediation.run),
     ("title", Linger.Display.Suites.Title.run), ("recipes", Linger.Import.Suites.Recipes.run),
     ("interop", Linger.Import.Suites.Interop.run), ("manager", Linger.App.Suites.Manager.run),
-    -- opt-in: needs a real reachable host, so NOT in scripts/e2e.sh
+    -- opt-in: needs a real reachable host, so NOT in scripts/verify.sh
     ("remote-live", Linger.Target.Suites.RemoteLive.run),
     -- Verifier regression checks, separate from the live product suites.
     ("ci", Verify.Ci.run), ("hygiene", Verify.Hygiene.run),
@@ -96,9 +96,9 @@ def main (args : List String) : IO UInt32 := do
         else
           some (name, ← count.toNat?)
     if specs.length != entries.length then
-      IO.eprintln "e2e: expected known-suite:assertion-count"
+      IO.eprintln "suites: expected known-suite:assertion-count"
       return 2
-    -- `scripts/e2e.sh` supplies a directory per run, so concurrent checkouts never share logs.
+    -- `scripts/verify.sh` supplies a directory per run, so concurrent checkouts never share logs.
     let logDir :=
       ((← IO.getEnv "LINGER_LOG_DIR").filter (!·.isEmpty)).getD (← Verify.Harness.tempRoot).toString
     IO.println s!"  suite logs: {logDir}/linger-<suite>.out"
@@ -116,9 +116,9 @@ def main (args : List String) : IO UInt32 := do
     | some (_, run) =>
       run
     | none =>
-      IO.eprintln s!"e2e: unknown suite '{name}'"
+      IO.eprintln s!"suites: unknown suite '{name}'"
       IO.eprintln s!"     known: {String.intercalate " " (suites.map (·.1))}"
       return 2
   | _ =>
-    IO.eprintln s!"usage: e2e <suite>   ({String.intercalate " " (suites.map (·.1))})"
+    IO.eprintln s!"usage: suites <suite>   ({String.intercalate " " (suites.map (·.1))})"
     return 2

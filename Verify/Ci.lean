@@ -367,7 +367,7 @@ def lakeDrivers (root : String) : IO Unit :=
     IO.FS.createDirAll (project / "scripts")
     for file in ["lakefile.lean", "lean-toolchain"] do
       IO.FS.writeFile (project / file) (← IO.FS.readFile s!"{root}/{file}")
-    for (verb, file) in [("test", "e2e.sh"), ("lint", "lint.sh")] do
+    for (verb, file) in [("test", "verify.sh"), ("lint", "lint.sh")] do
       let script := project / "scripts" / file
       let run :=
         IO.Process.output

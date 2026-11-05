@@ -77,5 +77,5 @@ prompt; the command is retained as metadata and is never executed.
 weakened statement fails the build. The [declaration census](Theorems/Coverage.lean)
 requires semantic coverage of every definition in a pure module;
 [renderer coverage](Verify/Coverage.lean) checks resolved references.
-Run `./scripts/e2e.sh` for the complete verifier, including generated C ABI,
+Run `./scripts/verify.sh` for the complete verifier, including generated C ABI,
 source gates, formatting, semantic lint, fuzz fixtures and live suites.

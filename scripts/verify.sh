@@ -27,7 +27,7 @@ say() {
 }
 fail() {
   [ "${GITHUB_ACTIONS-}" != true ] || printf '::endgroup::\n'
-  printf 'E2E FAIL: %s\n' "$1" >&2
+  printf 'VERIFY FAIL: %s\n' "$1" >&2
   exit 1
 }
 if [ -n "${GITHUB_STEP_SUMMARY-}" ]; then
@@ -36,7 +36,7 @@ fi
 
 # --- SIGINT must be deliverable ---------------------------------------------
 # A shell without job control starts a `&` job with SIGINT and SIGQUIT disabled,
-# and that survives `execve`, so every descendant inherits it: the `e2e` binary,
+# and that survives `execve`, so every descendant inherits it: the `suites` binary,
 # the daemon, the session shell the daemon spawns on the pty, and the child that
 # shell runs. `^C` then generates a signal that kills nothing, and the agent suite's
 # `send - carries ^C` assertion fails — while passing standalone every time, which
@@ -85,7 +85,7 @@ say "1. build (program + theorems + tests)"
 # artifacts too, and fail on warnings even after a local warningAsError override.
 # Run `./lake clean` first for clean release/compiler validation.
 ./lake --rehash --wfail build Linger LingerVt LingerVtTheorems LingerInput LingerInputTheorems \
-    LingerFuzzy Theorems Tests linger lingertest e2e > "$logs/build.log" 2>&1 \
+    LingerFuzzy Theorems Tests linger lingertest suites > "$logs/build.log" 2>&1 \
   || { tail -30 "$logs/build.log"; fail "build (see $logs/build.log)"; }
 # --wfail ignores warnings from elaborating lakefile.lean; this grep sees them.
 if grep -qE '^(warning|error)' "$logs/build.log"; then
@@ -184,7 +184,7 @@ say "2c. verifier regression tests (CI policy, caches and suite isolation)"
 # against a temporary project.
 # The same runner checks exit status, final verdict, every assertion and both
 # streams. Intentional failures inside these tests stay in their captured logs.
-./.lake/build/bin/e2e --suites ci:57 hygiene:56 \
+./.lake/build/bin/suites --suites ci:57 hygiene:56 \
   || fail "verifier regression checks (see $logs/linger-ci.out and linger-hygiene.out)"
 
 say "3. posix shim smoke tests"
@@ -203,7 +203,7 @@ shim_n="$(grep -c '^PASS ' "$shim_out")"
 # Verify.Harness.socketRoot, whose docstring records the measured path lengths. Only logs
 # and scratch files follow `${TMPDIR:-/tmp}`.
 socket_root=/tmp
-sentinel_dir="$socket_root/linger-e2e-sentinel-$$"
+sentinel_dir="$socket_root/linger-verify-sentinel-$$"
 sentinel_name="sentinel-$$"
 cleanup_sentinel() {
   LINGER_DIR="$sentinel_dir" ./.lake/build/bin/linger kill "$sentinel_name" >/dev/null 2>&1 || true
@@ -220,7 +220,7 @@ say "4. live suites (separate processes, at most four at once)"
 # must all agree, and no explicit FAIL line is accepted.
 # Ordinary child spawning preserves SIGINT, unlike a shell's asynchronous list.
 # No suite shares an Env directory, and the runner waits for all of them on failure.
-./.lake/build/bin/e2e --suites \
+./.lake/build/bin/suites --suites \
   manager:127 delivery:37 attach:50 agent:48 \
   resume:19 watch:40 title:18 graphics:9 robust:30 \
   interop:72 recipes:58 status:17 terminal:12 overview:15 remote:68 identity:25 \
@@ -232,4 +232,4 @@ cleanup_sentinel
 trap - EXIT HUP TERM
 finish_phase
 rm -r "$logs"
-printf '\nE2E OK\n'
+printf '\nVERIFY OK\n'

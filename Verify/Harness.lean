@@ -16,7 +16,7 @@ Ptys, sockets and polling come from `Linger.Os.Shell`.
 OUTPUT CONTRACT — load-bearing, do not reformat. Every check prints `PASS <name>`
 or `FAIL <name>`, and each suite ends with `FAILURES: <n>`. `Verify.Runner` requires
 exit 0, last line `FAILURES: 0`, no `FAIL` line and exactly the `PASS` count that
-`scripts/e2e.sh` passes, so a suite that stops checking fails the gate and so does
+`scripts/verify.sh` passes, so a suite that stops checking fails the gate and so does
 one that quietly grows — either way it is a reviewable edit. -/
 
 namespace Verify.Harness
@@ -58,7 +58,7 @@ def has (haystack needle : String) : Bool := haystack.contains needle
 
 For an assertion that waits for something to **appear**, this replaces a fixed
 `IO.sleep`. A fixed sleep budgets for the typical host and fails on a busy one:
-`Linger.Session.Suites.Agent`'s `^C` check flaked exactly once this way (2026-09-11, a full e2e run
+`Linger.Session.Suites.Agent`'s `^C` check flaked exactly once this way (2026-09-11, a full verifier run
 racing a `lake build`) and then passed 4/4 in isolation with nothing changed. The
 deadline keeps the assertion honest — a genuine regression still fails, it just
 spends the whole budget before saying so — and the common case gets *faster*, since

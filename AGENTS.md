@@ -76,7 +76,7 @@ Lean erases proofs regardless of file placement.
   commit, checked by `Theorems/Coverage.lean`; generated lemmas do not count.
   State invariants in `THEOREMS.md` and design code for provability.
 - Every public declaration in a library needs a docstring: `lakefile.lean` enables
-  `linter.missingDocs` for every library but `Verify`, and `scripts/e2e.sh` checks the
+  `linter.missingDocs` for every library but `Verify`, and `scripts/verify.sh` checks the
   modules under `Linger/` outside `Proofs/` and `Tests/` directly.
 - State user-visible behavior, not only invariants, and bound every input-controlled
   loop or reply count in the model with a theorem (`repeatAtMost_eq_repeat`,
@@ -106,12 +106,12 @@ Lean erases proofs regardless of file placement.
   the external `pre-commit` framework. The C shim, build wrapper, shell verifier
   and native configuration recipes are boundaries.
 - Ratchets live only in `scripts/gates.sh`; exact suite counts only in
-  `scripts/e2e.sh`. Tests assert against the implementation's definitions.
+  `scripts/verify.sh`. Tests assert against the implementation's definitions.
   Use `scripts/` for shell orchestration; do not recreate a lowercase `tests/`.
 - In `scripts/`, `Verify/` and each `Suites/`, scratch without sockets lives under
   `${TMPDIR:-/tmp}`, in Lean through `Verify.Harness.tempRoot`, `IO.FS.withTempDir` or
   `IO.FS.createTempDir`, and a directory that will hold a Unix socket lives under `/tmp`,
-  through `Verify.Harness.socketRoot` or `socket_root` in `scripts/e2e.sh`, since macOS's
+  through `Verify.Harness.socketRoot` or `socket_root` in `scripts/verify.sh`, since macOS's
   `TMPDIR` alone takes about 49 of a socket path's 104 bytes; `scripts/gates.sh` rejects
   any other hard-coded `/tmp` there and in the CI workflow, except in
   `Linger/Session/Suites/Paths.lean` and `Linger/Display/Suites/Overview.lean`, which

@@ -12,7 +12,7 @@ at the wire layer).
 All statements are schema-level (∀ messages, ∀ chunkings), not
 fixtures: the codec is `List UInt8`-based precisely so these inductions
 go through by kernel reduction alone (no proof in this directory uses
-the compiled-evaluation escape hatch; the e2e gate enforces it).
+the compiled-evaluation escape hatch; the verifier enforces it).
 -/
 
 namespace Linger.Session.Wire

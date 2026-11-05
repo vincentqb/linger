@@ -259,7 +259,7 @@ private def discoveryChecks (e : Env) : IO Unit := do
     cleanupDiscovery root
     chooser.bye (sendDetach := false)
 
-/-- The discovery checks alone, as `e2e remote discovery` runs them. -/
+/-- The discovery checks alone, as `suites remote discovery` runs them. -/
 def runDiscovery : IO UInt32 := Env.suite "discovery" discoveryChecks
 
 /-- The hermetic remote suite: a fake `ssh` and a fake remote `linger` on `PATH`. -/

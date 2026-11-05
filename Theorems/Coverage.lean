@@ -40,7 +40,7 @@ equation, congruence and induction lemmas do not count. No pure or proof module 
 an axiom; native evaluation declares one for each use. The checks read only this module's
 import closure, so each of those modules must be in it. Pure code reaches a global
 `@[csimp]` replacement only through its specification, from definitions declared after the
-theorem, which is tagged in the specification's module; `scripts/e2e.sh` checks on the
+theorem, which is tagged in the specification's module; `scripts/verify.sh` checks on the
 generated C that each replacement, a module-local one included, is still called. This module
 is under the sanctioned friend region so it can resolve private definitions and theorem
 declarations without granting that access to suites or runtime code. -/

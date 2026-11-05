@@ -13,10 +13,10 @@ public section
 executable in raw mode, so only explicit probe inputs produce application output.
 The receiver uses the public VT parser and its title/boundary projections.
 
-`e2e title <binary>` also drives a saved predecessor or an assembled CLI without
+`suites title <binary>` also drives a saved predecessor or an assembled CLI without
 rebuilding it. The sampler cases instead exercise Client.attach linked into the
 suite driver with a gated fixture sampler; changing the CLI argument cannot change
-that implementation. `e2e --title-probe` is the child dispatch, not a test suite. -/
+that implementation. `suites --title-probe` is the child dispatch, not a test suite. -/
 
 namespace Linger.Display.Suites.Title
 

@@ -77,10 +77,10 @@ lean_lib Tests where
     .submodules `Linger.Target.Tests, .submodules `Linger.Terminal.Tests]
   leanOptions := implementationOptions
 
-/-- Executable suites: `./lake exe e2e <suite>`. -/
+/-- Executable suites: `./lake exe suites <suite>`. -/
 lean_lib Verify where
 
-lean_exe e2e where root := `Verify.Main
+lean_exe suites where root := `Verify.Main
 
 @[default_target] lean_exe linger where root := `Main
 
@@ -89,7 +89,8 @@ lean_exe e2e where root := `Verify.Main
   let root ← getRootPackage
   let child ←
     IO.Process.spawn
-        { cmd := "sh", args := #[(root.dir / "scripts" / "e2e.sh").toString], cwd := some root.dir }
+        { cmd := "sh", args := #[(root.dir / "scripts" / "verify.sh").toString],
+          cwd := some root.dir }
   child.wait
 
 /-- Run the checks shared with pre-commit and full verification. -/

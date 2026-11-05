@@ -160,7 +160,7 @@ def checkpointChecks (e : Env) : IO Unit := do
     chooser.bye
     e.killAll #["saved", "no-match", "--read-only"]
 
-/-- The checkpoint half of the watch suite alone, as `e2e watch checkpoint` runs it. -/
+/-- The checkpoint half of the watch suite alone, as `suites watch checkpoint` runs it. -/
 def runCheckpoint : IO UInt32 := Env.suite "watch-checkpoint" checkpointChecks
 
 /-- The watch suite: read-only attachment to a live or a saved session. -/

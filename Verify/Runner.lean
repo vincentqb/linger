@@ -18,10 +18,11 @@ def run (binary : String) (args : Array String) (logDir : System.FilePath)
         specs.any
           (fun (name, count) =>
             name.isEmpty || !name.toList.all (fun c => c.isAlphanum || c == '-') || count == 0) then
-    IO.eprintln "e2e: expected distinct suite names with positive assertion counts"
+    IO.eprintln "suites: expected distinct suite names with positive assertion counts"
     return 2
   if (← IO.getEnv "LINGER_TEST_DIR").isSome then
-    IO.eprintln "e2e: concurrent suites require separate state directories; unset LINGER_TEST_DIR"
+    IO.eprintln
+        "suites: concurrent suites require separate state directories; unset LINGER_TEST_DIR"
     return 2
   let suite (name : String) (expected : Nat) : IO (String × Bool × Nat) := do
     let start ← IO.monoMsNow
@@ -40,13 +41,13 @@ def run (binary : String) (args : Array String) (logDir : System.FilePath)
       code == 0 && lines.getLast? == some "FAILURES: 0" && count == expected &&
         !lines.any (·.startsWith "FAIL ")
     if !ok then
-      IO.eprintln s!"e2e: {name} failed (exit {code}, {count}/{expected} checks); see {log}"
+      IO.eprintln s!"suites: {name} failed (exit {code}, {count}/{expected} checks); see {log}"
     return (name, ok, (← IO.monoMsNow) - start)
   let failed ← IO.mkRef false
   Verify.Harness.parallel 4 (specs.map fun (name, expected) => suite name expected) fun
       | .error e => do
         failed.set true
-        IO.eprintln s!"e2e: {e}"
+        IO.eprintln s!"suites: {e}"
       | .ok (name, ok, elapsed) => do
         unless ok do
           failed.set true

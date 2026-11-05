@@ -244,7 +244,7 @@ def run : IO UInt32 :=
     expect (lrc == 1 && has lerr "too many labels")
         "a daemon-rejected label exits 1 with its reason"
     let _ ← e.cli #["clear", "ag"]
-    -- A malformed daemon response must also fail. The fake server is this e2e
+    -- A malformed daemon response must also fail. The fake server is this suite
     -- binary in a child mode, so the wire bytes and maxPayload come from Core.
     let badPath := s!"{e.dir}/malformed.sock"
     let badReady := s!"{e.dir}/malformed.ready"
@@ -315,9 +315,9 @@ def run : IO UInt32 :=
     -- fixed second, so a slow host cannot make this look like a broken `^C`. The
     -- extra check is a discriminator: "the child never started" and "^C did not reach
     -- it" are different bugs, and separating them is what identified the one
-    -- environment that breaks this assertion — a `&`-launched `./scripts/e2e.sh`. That
+    -- environment that breaks this assertion — a `&`-launched `./scripts/verify.sh`. That
     -- environment is now refused rather than described: see the "SIGINT must be
-    -- deliverable" check in `scripts/e2e.sh`, which holds the probe, the measurement and
+    -- deliverable" check in `scripts/verify.sh`, which holds the probe, the measurement and
     -- the reasoning, and is the only copy of them.
     let _ ← e.cli #["run", "ag", "sh -c 'echo RUN\"\"NING-NOW; sleep 100'"]
     expect

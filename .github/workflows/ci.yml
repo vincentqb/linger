@@ -74,7 +74,7 @@ jobs:
           sh scripts/gates.sh
           cat "$RUNNER_TEMP/linger-verified" >> "$GITHUB_STEP_SUMMARY"
 
-  e2e:
+  verify:
     name: verify (${{ matrix.os }})
     needs: gates
     if: needs.gates.outputs.verified != 'true'

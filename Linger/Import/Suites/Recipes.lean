@@ -34,7 +34,7 @@ def importProbe (args : List String) : IO UInt32 := do
   | executable :: rest =>
     Linger.Import.Shell.run executable ("import" :: rest)
   | [] =>
-    IO.eprintln "usage: e2e --import-probe ABSOLUTE_EXECUTABLE [SAVE]"
+    IO.eprintln "usage: suites --import-probe ABSOLUTE_EXECUTABLE [SAVE]"
     return 98
 
 /-- A recipe's effective lines: trimmed, without blank or `comment` lines. A

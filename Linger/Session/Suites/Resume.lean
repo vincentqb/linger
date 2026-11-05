@@ -225,7 +225,7 @@ def run : IO UInt32 :=
     geom.bye (sendDetach := false)
     let _ ← e.crashDaemon "geom" -- simulated reboot; tolerated if already gone
     let sizePath := s!"{e.dir}/geom.size"
-    -- The probe must run on the far side of the resumed pty; this e2e binary is
+    -- The probe must run on the far side of the resumed pty; this suite binary is
     -- already a Lean child probe for the terminal suite, so reuse it rather than
     -- embedding a second-language ioctl script.
     let probe ← IO.appPath
