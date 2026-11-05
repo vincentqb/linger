@@ -7,9 +7,9 @@ package linger where leanOptions :=
     ⟨`linter.extra.unreachableTactic, true⟩, ⟨`linter.redundantVisibility, true⟩,
     ⟨`linter.extra.unnecessarySeqFocus, true⟩]
 
-/-- Options for each library containing modules under `Linger/`: Lake builds a module with the
-options of one library that contains it, so these libraries share a single set. With the
-package's `warningAsError`, a public declaration without a docstring fails the build. -/
+/-- Options for every library but `E2E`: Lake builds a module with the options of one library
+that contains it, and these libraries overlap, so they share a single set. With the package's
+`warningAsError`, a public declaration without a docstring fails the build. -/
 def implementationOptions : Array LeanOption := #[⟨`linter.missingDocs, true⟩]
 
 /-- The session library, with no external Lean dependencies. -/
@@ -23,8 +23,9 @@ lean_lib LingerVt where
   leanOptions := implementationOptions
 
 /-- VT contracts build independently, including replay fidelity and title safety. -/
-lean_lib LingerVtTheorems where roots :=
-  #[`Theorems.Terminal, `Theorems.TerminalTitle, `Theorems.Replay]
+lean_lib LingerVtTheorems where
+  roots := #[`Theorems.Terminal, `Theorems.TerminalTitle, `Theorems.Replay]
+  leanOptions := implementationOptions
 
 /-- Bounded terminal-key decoding, independent of any application's bindings. -/
 lean_lib LingerInput where
@@ -32,7 +33,9 @@ lean_lib LingerInput where
   leanOptions := implementationOptions
 
 /-- Decoder contracts build without the picker action adapter or session code. -/
-lean_lib LingerInputTheorems where roots := #[`Theorems.Input]
+lean_lib LingerInputTheorems where
+  roots := #[`Theorems.Input]
+  leanOptions := implementationOptions
 
 /-- Reusable fuzzy alignment, with no session or terminal imports. -/
 lean_lib LingerFuzzy where
@@ -55,12 +58,16 @@ lean_exe lingertest where root := `Linger.Os.Suites.Shim
 
 /-- Proofs have their own import and verification graph: every module under `Theorems/` and
 under a component's `Proofs/` is built. Lean erases proofs regardless of file placement. -/
-lean_lib Theorems where globs :=
+lean_lib Theorems where
+  globs :=
   #[.submodules `Theorems, .submodules `Linger.Os.Proofs, .submodules `Linger.Target.Proofs]
+  leanOptions := implementationOptions
 
 /-- Unit tests checked at elaboration time: every module under `Tests/` and under a component's
 `Tests/` is built. -/
-lean_lib Tests where globs := #[.submodules `Tests, .submodules `Linger.Target.Tests]
+lean_lib Tests where
+  globs := #[.submodules `Tests, .submodules `Linger.Target.Tests]
+  leanOptions := implementationOptions
 
 /-- Executable suites: `./lake exe e2e <suite>`. -/
 lean_lib E2E where

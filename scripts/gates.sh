@@ -277,12 +277,14 @@ library_roots() {
   [ "$lr_got" = "lean_lib $1 where roots := $2 ${3:+$3 }" ] \
     || fail "$1 lost its independent library roots or options: $lr_got"
 }
-# Libraries holding Linger/ modules share implementationOptions, which turns on
-# linter.missingDocs; scripts/e2e.sh also checks every Linger module directly.
+# Every library but E2E shares implementationOptions, which turns on linter.missingDocs:
+# the libraries overlap, and Lake builds a module with one containing library's options.
+# scripts/e2e.sh also checks every Linger module directly.
 library_roots LingerVt '#[`Linger.Core.Terminal, `Linger.Core.Replay]' 'leanOptions := implementationOptions'
-library_roots LingerVtTheorems '#[`Theorems.Terminal, `Theorems.TerminalTitle, `Theorems.Replay]'
+library_roots LingerVtTheorems '#[`Theorems.Terminal, `Theorems.TerminalTitle, `Theorems.Replay]' \
+  'leanOptions := implementationOptions'
 library_roots LingerInput '#[`Linger.Tools.Input]' 'leanOptions := implementationOptions'
-library_roots LingerInputTheorems '#[`Theorems.Input]'
+library_roots LingerInputTheorems '#[`Theorems.Input]' 'leanOptions := implementationOptions'
 library_roots LingerFuzzy '#[`Linger.Tools.Fuzzy]' 'leanOptions := implementationOptions'
 [ "$(library_decl Linger)" = "lean_lib Linger where leanOptions := implementationOptions " ] \
   || fail "the Linger library lost implementationOptions: $(library_decl Linger)"
@@ -298,7 +300,7 @@ lib_globs() {                                # lib_globs <lib> <component subdir
   for lg_c in $(git ls-files -- "Linger/*/$2/*.lean" | cut -d/ -f2 | sort -u); do
     lg_parts="${lg_parts:+$lg_parts, }.submodules \`Linger.$lg_c.$2"
   done
-  printf 'lean_lib %s where globs := #[%s] ' "$1" "$lg_parts"
+  printf 'lean_lib %s where globs := #[%s] leanOptions := implementationOptions ' "$1" "$lg_parts"
 }
 for lib in 'Theorems Proofs' 'Tests Tests'; do
   lr_lib="${lib% *}"; lr_dir="${lib#* }"

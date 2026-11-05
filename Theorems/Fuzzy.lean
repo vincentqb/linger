@@ -18,13 +18,16 @@ namespace Linger.Tools.Fuzzy
 
 /-- Legal alignments over folded characters carrying their original word bonuses. -/
 inductive Walk (scoring : Scoring) : List Char → List (Char × Int) → Bool → Alignment → Prop where
+  /-- An empty query aligns with any target, scoring nothing and marking nothing. -/
   |
   empty (target : List (Char × Int)) (adjacent : Bool) :
     Walk scoring [] target adjacent ⟨0, List.replicate target.length false⟩
+  /-- Skip a target character: the gap cost, and the next match is not adjacent. -/
   |
   gap {q : Char} {qs : List Char} {c : Char} {bonus : Int} {target : List (Char × Int)}
     {adjacent : Bool} {a : Alignment} (rest : Walk scoring (q :: qs) target false a) :
     Walk scoring (q :: qs) ((c, bonus) :: target) adjacent ⟨a.score + scoring.gap, false :: a.marks⟩
+  /-- Match the query's next character: its bonus, plus the adjacency bonus after a match. -/
   |
   take {q : Char} {qs : List Char} {bonus : Int} {target : List (Char × Int)} {adjacent : Bool}
     {a : Alignment} (rest : Walk scoring qs target true a) :

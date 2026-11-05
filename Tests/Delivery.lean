@@ -29,11 +29,14 @@ private def largeScreen (marks : Bool := false) : Vt.Vt :=
   { Vt.Vt.init cols 100 with
     grid, altGrid := some (grid, {}, {}) }
 
+/-- `largeScreen marks` as a checkpoint load returns it, or `none` if loading refuses it. -/
 def acceptedScreen (marks : Bool := false) : Option Vt.Vt :=
   (Checkpoint.loadBytes
         (Checkpoint.saveBytes { vt := largeScreen marks, cwd := "", labels := [] })).map
     (·.vt)
 
+/-- A small terminal whose title holds an escape, a newline and 9,100 multibyte characters, as a
+checkpoint load returns it. -/
 def acceptedTitle : Option Vt.Vt :=
   let title :=
     String.ofList
