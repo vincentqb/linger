@@ -22,7 +22,7 @@ import all Linger.Selector.Proofs.Fuzzy
 import all Linger.Selector.Proofs.Picker
 import all Linger.Selector.Proofs.Input
 import all Linger.Selector.Proofs.Key
-import all Theorems.Entry
+import all Linger.App.Proofs.Entry
 import all Linger.Os.Proofs.Env
 import all Theorems.Contracts
 public meta import Lean.Elab.Command
@@ -32,8 +32,8 @@ import Lean.Compiler.CSimpAttr
 
 /-! # Semantic coverage gate
 
-Every explicit `def` or `abbrev` in a pure module (`pureModule`: the legacy `Linger/Core` and
-`Linger/Tools` trees and each component's own modules other than its boundary and shell)
+Every explicit `def` or `abbrev` in a pure module (`pureModule`: a component's top module
+and each component's own modules other than its boundary and shell)
 must occur as its exact environment constant in the type of a written theorem in a pure or
 proof module (`proofModule`: `Theorems/` and each component's `Proofs/`); generated
 equation, congruence and induction lemmas do not count. No pure or proof module may declare
@@ -49,16 +49,12 @@ namespace Theorems.Coverage
 
 open Lean Elab Command
 
-/-- A module of pure code: the legacy `Linger.Core` and `Linger.Tools` trees, a component's
-top module (`Linger.Session`), and each component's top-level modules other than its boundary
-and shell. -/
+/-- A module of pure code: a component's top module (`Linger.Session`) and each component's
+top-level modules other than its boundary and shell. -/
 public meta def pureModule (mod : Lean.Name) : Bool :=
   match mod.components.map toString with
-  | ["Linger", "Core", _] | ["Linger", "Tools", _] => true
   | ["Linger", _] => true
-  | ["Linger", component, leaf] =>
-    !["Core", "Tools", "Runtime", "Manager"].contains component &&
-      !["Boundary", "Shell"].contains leaf
+  | ["Linger", _, leaf] => !["Boundary", "Shell"].contains leaf
   | _ => false
 
 /-- A module of proofs: the legacy `Theorems` tree and each component's `Proofs/`. -/
@@ -288,7 +284,7 @@ run_cmd
   let fixture :=
     r#"module
 public import Lean.Elab.Command
-public import Linger.Runtime.CoverageShadow
+public import Linger.Probe.CoverageShadow
 public import Linger.Terminal.Render
 public section
 namespace Probe
@@ -354,7 +350,7 @@ end Linger.ReferenceProbe
 "#
         let mut arts : NameMap ImportArtifacts := {}
         for (mod, content) in
-          #[(`Linger.Runtime.CoverageShadow, shadow), (`CoverageFixture, fixture)] do
+          #[(`Linger.Probe.CoverageShadow, shadow), (`CoverageFixture, fixture)] do
           let source := root / s!"{mod}.lean"
           let olean := source.withExtension "olean"
           let setup := source.withExtension "setup.json"

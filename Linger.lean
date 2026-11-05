@@ -17,17 +17,17 @@ public import Linger.Display.Status
 public import Linger.Display.Title
 public import Linger.Os.Env
 public import Linger.Session.Shell.Paths
-public import Linger.Runtime.Command
+public import Linger.Os.Shell.Command
 public import Linger.Session.Shell.Daemon
 public import Linger.Session.Shell.Client
-public import Linger.Runtime.Cli
+public import Linger.App.Shell
 public import Linger.Session.Shell.Resume
 
 /-! # Linger — the session library
 
-This umbrella's closure is the library `./lake build` checks: the session core under
-`Linger/Core`, the runtime under `Linger/Runtime`, and the components it builds on — the
-VT toolkit (`Linger/Terminal`), targets, displays and the OS boundary.
-The CLI policies in `Linger/Tools` and their executors in `Linger/Manager` stay outside
-it: they may import this library, which never imports them. `Main` routes argv through
-`Entry.route` to an executor or to `Cli.main`. -/
+This umbrella's closure is the library `./lake build` checks: the session machine and its
+shell, the components it builds on — the VT toolkit (`Linger/Terminal`), targets, displays
+and the OS boundary — and the command line's shell (`Linger/App/Shell.lean`). The entry
+route, the selector and the import component stay outside it: they may import this
+library, which never imports them. `Main` routes argv through `Entry.route` to an
+executor or to `App.Shell.main`. -/

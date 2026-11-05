@@ -34,15 +34,15 @@ retired both: proofs no longer have to move here — `Linger/Session/Proofs/Buf.
 census in `Theorems/Coverage.lean` sees its private theorem types — and
 the write hole is closed, because a private field makes the *constructor*
 private, so structure-instance notation can no longer write or forge where it
-cannot read (all three refuse from `Linger/Runtime/`, break-verified). The
+cannot read (all three refuse from the runtime, break-verified). The
 runtime's discipline is now compiler-enforced at this boundary; `scripts/gates.sh`'s
 three greps stay unweakened, because they guard the half privacy cannot see — a
 *parallel* `ByteArray` queue declared in the runtime is sealed by nothing here.
 
-**`ByteArray`, not `List UInt8`.** The rest of `Linger/Core` speaks `List UInt8`
+**`ByteArray`, not `List UInt8`.** The other pure modules speak `List UInt8`
 because the emitters must reduce in the kernel; a queue must not. A 4 MiB
 `List UInt8` costs ~48 bytes per byte and `++` is O(left), so every `.send` would
-become a multi-megabyte cons walk. `ByteArray` in `Linger/Core` is house-legal — the
+become a multi-megabyte cons walk. `ByteArray` in a pure module is house-legal — the
 purity gate bans unproved axioms, `partial` definitions and effects, not a choice
 of representation — and is not even the first: `Vt.feedBytes` has taken one since
 long before this (a `Tests/`-facing convenience, which is all the precedent needs

@@ -407,12 +407,12 @@ what a client can actually have and would prove nothing about the rest. The seal
 is what turns those predicates from decoration into guarantees.
 
 The friend set is `import all Linger.Terminal.Vt`: `Render`/`Terminal`/`Replay` (the rest
-of the toolkit), `Theorems/**`, `Tests/**`, each component's `Proofs/**` and `Tests/**`,
+of the toolkit), `Theorems/**`, each component's `Proofs/**` and `Tests/**`,
 and `Checkpoint` — the last **permanently**,
 for `wVt`'s field reads and the one validating door below; its reason is written at
 that file's import. The compiler accepts `import all` from any module, so
 `scripts/gates.sh` enforces that list; a reader without the import fails to build.
-Break-verified from `Linger/Runtime/` (a read, a `{ v with … }`, a `Vt.mk`, a bare `⟨…⟩`
+Break-verified from a runtime module (a read, a `{ v with … }`, a `Vt.mk`, a bare `⟨…⟩`
 and `(default : Vt)` each refuse, against a `v.colCount` control that compiles); see
 SCRATCHPAD.md.
 
@@ -505,7 +505,8 @@ structure Vt where
   private u8acc : Nat := 0 -- accumulated codepoint bits
   private bell : Bool := false -- sticky until the runtime clears it (activity signal)
 
--- No `Repr`: it would publicly read every private field (Tests/VtApi pins this).
+-- No `Repr`: it would publicly read every private field (`Linger.Terminal.Tests.VtApi` pins
+-- this).
 
 /-- Clamp a requested dimension to [1, 1000]. -/
 def clampDim (n : Nat) : Nat := min (max n 1) 1000
@@ -1510,7 +1511,7 @@ def Vt.quiesce (v : Vt) :
 
 **Test-facing, and named as such**: the daemon's pty path is
 `Mediation.feed s.vt s.scan chunk` on a `List UInt8` (`Linger/Session.lean`), and
-this definition has no runtime caller. It is kept because `Tests/` and `E2E/` fixtures use
+this definition has no runtime caller. It is kept because test and suite fixtures use
 it, and a convenience with callers is reachable code, not the unproved-and-unreachable
 state `Theorems/Coverage.lean` rejects. -/
 def Vt.feedBytes (v : Vt) (bytes : ByteArray) : Vt := v.feed bytes.toList

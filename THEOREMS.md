@@ -31,7 +31,7 @@ hypotheses. Runtime behavior is covered by IO suites and source gates.
 
 | Area | Guarantee | Proofs |
 |---|---|---|
-| Entry point | Empty arguments show help; `attach`/`a` without a target opens the chooser in the requested read-only or writable mode; named commands retain their exact arguments. | [Entry](Theorems/Entry.lean): `route_bare_help`, `route_selector_iff`, `route_session_argv` |
+| Entry point | Empty arguments show help; `attach`/`a` without a target opens the chooser in the requested read-only or writable mode; named commands retain their exact arguments. | [Entry](Linger/App/Proofs/Entry.lean): `route_bare_help`, `route_selector_iff`, `route_session_argv` |
 | Session targets | Validation preserves exact names and SSH destinations; distinct accepted names cannot alias through validation. | [Name](Linger/Target/Proofs/Name.lean): `check_eq_some_iff`, `check_no_alias`; [Remote](Linger/Target/Proofs/Remote.lean): `parseTarget_exact`, `parseTarget_name_valid` |
 | Remote commands | Quoting preserves every argument, including empty strings and shell metacharacters, in the literal POSIX shell model. | [Remote](Linger/Target/Proofs/Remote.lean): `command_argv`, `shellQuote_roundtrip` |
 | Remote hosts | Validation accepts exactly clean, duplicate-free host lists and preserves their contents. | [Remote](Linger/Target/Proofs/Remote.lean): `checkHosts_ok_iff` |
@@ -74,7 +74,7 @@ prompt; the command is retained as metadata and is never executed.
 `./lake build Theorems Tests` checks proofs and unit fixtures.
 [Contract pins](Theorems/Contracts.lean) restate every theorem cited above, so a
 weakened statement fails the build. The [declaration census](Theorems/Coverage.lean)
-requires semantic coverage of every definition in `Linger/Core` and
-`Linger/Tools`; [renderer coverage](E2E/Coverage.lean) checks resolved references.
+requires semantic coverage of every definition in a pure module;
+[renderer coverage](E2E/Coverage.lean) checks resolved references.
 Run `./scripts/e2e.sh` for the complete verifier, including generated C ABI,
 source gates, formatting, semantic lint, fuzz fixtures and live suites.

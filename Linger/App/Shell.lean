@@ -8,13 +8,13 @@ import Linger.Session.Shell.Daemon
 import Linger.Session.Shell.Client
 import Linger.Target.Remote
 import Linger.Display.Listing
-import Linger.Runtime.Command
+import Linger.Os.Shell.Command
 import Linger.Session.Shell.Resume
 import Std.Async.Signal
 
 public section
 
-/-! # Linger.Runtime.Cli — session argv dispatch
+/-! # Linger.App.Shell — session argv dispatch
 
 Verb surface: attach and run create if needed; read-only attach and capture also
 read offline checkpoints. Every session verb accepts an exact name or name@host.
@@ -24,7 +24,7 @@ overview and exits. `__daemon` is the internal re-exec target of the detached
 spawn.
 -/
 
-namespace Linger.Runtime.Cli
+namespace Linger.App.Shell
 
 open Linger.Session.Shell
 open Linger.Os.Shell
@@ -796,4 +796,4 @@ def main (args : List String) : IO UInt32 := do
   | other =>
     overview other
 
-end Linger.Runtime.Cli
+end Linger.App.Shell

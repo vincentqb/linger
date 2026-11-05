@@ -931,12 +931,12 @@ private def boundedCommand (f : Fixture) (stderr : Bool) : IO Bool := do
   let script :=
     s!"i=0; while [ \"$i\" -lt 30000 ]; do printf 1234567890{redirect}; i=$((i+1)); done; printf done > '{reached}'"
   let pending ←
-    IO.mkRef (some (← Linger.Runtime.Command.startLimited "/bin/sh" #["-c", script] 100))
+    IO.mkRef (some (← Linger.Os.Shell.Command.startLimited "/bin/sh" #["-c", script] 100))
   let refused ← IO.mkRef false
   try
     let done ←
       waitFor 5000 do
-          let result ← (Linger.Runtime.Command.poll pending).toBaseIO
+          let result ← (Linger.Os.Shell.Command.poll pending).toBaseIO
           match result with
           | .error error =>
             refused.set <|
@@ -948,22 +948,22 @@ private def boundedCommand (f : Fixture) (stderr : Bool) : IO Bool := do
     return done && (← refused.get) && (← pending.get).isNone &&
         (← readBytes reached) == some "done".toUTF8
   finally
-    Linger.Runtime.Command.stop pending
+    Linger.Os.Shell.Command.stop pending
 
 /-- An exited leader must still own and retire a descendant holding its pipes open. -/
 private def heldPipeCommand (f : Fixture) : IO Bool := do
   let reached := f.root / "descendant-pid"
   let script := s!"sleep 30 & printf '%s' \"$!\" > '{reached}'"
-  let job ← Linger.Runtime.Command.startLimited "/bin/sh" #["-c", script] 100
+  let job ← Linger.Os.Shell.Command.startLimited "/bin/sh" #["-c", script] 100
   let pending ← IO.mkRef (some job)
   try
     unless ← waitFor 3000 (reached.pathExists) do
       return false
     let some pid := (← IO.FS.readFile reached).toNat? | return false
     let running ← Linger.Os.Shell.alive pid.toUInt32
-    let uncollected ← Linger.Runtime.Command.poll pending
+    let uncollected ← Linger.Os.Shell.Command.poll pending
     let stillOwned := (← pending.get).isSome
-    Linger.Runtime.Command.stop pending
+    Linger.Os.Shell.Command.stop pending
     let retired ←
       waitFor 3000 do
           return !(← Linger.Os.Shell.alive pid.toUInt32)
@@ -971,7 +971,7 @@ private def heldPipeCommand (f : Fixture) : IO Bool := do
         (← IO.hasFinished job.stdout) &&
         (← IO.hasFinished job.stderr)
   finally
-    Linger.Runtime.Command.stop pending
+    Linger.Os.Shell.Command.stop pending
 
 /-- Observe the real default namespace without opening it. Only after that
 observation does the capture callback redirect checkpoint IO into a fixture.

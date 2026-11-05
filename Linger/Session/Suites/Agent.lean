@@ -1,7 +1,7 @@
 module
 
 public import E2E.Harness
-import Linger.Runtime.Cli
+import Linger.App.Shell
 import Linger.Session.Shell.Client
 
 public section
@@ -132,7 +132,7 @@ def infoServer (socketPath readyPath mode : String) : IO UInt32 := do
                   List.replicate (Linger.Session.Wire.maxPayload - fieldStart.length - 1)
                     (UInt8.ofNat 120) ++
                   [10]
-              for _ in [:Linger.Runtime.Cli.infoReplyCap / Linger.Session.Wire.maxPayload + 1] do
+              for _ in [:Linger.App.Shell.infoReplyCap / Linger.Session.Wire.maxPayload + 1] do
                 Linger.Session.Shell.Client.sendMsg fd (.infoReply payload)
               Linger.Session.Shell.Client.sendMsg fd .done
             | "complete" =>

@@ -27,7 +27,7 @@ open Linger.Os.Shell
 def detachKey : ByteArray := ByteArray.mk #[0x1C]
 
 /-- The failures this process has recorded. `IO.Ref.modify` is atomic, so the
-concurrent check groups of `E2E.Manager` share it. -/
+concurrent check groups of `Linger.App.Suites.Manager` share it. -/
 private initialize recorded : IO.Ref Nat ←
   IO.mkRef 0
 
@@ -199,9 +199,9 @@ def tempRoot : IO System.FilePath := do
 A socket path and its terminator must fit a 104-byte address field on macOS (108 on Linux),
 and `c/shim.c` refuses a longer path; macOS's `TMPDIR` alone takes about 49 bytes. Measured
 by logging every `bind` of the 16 live suites, the longest socket path is 77 bytes under
-`/tmp`, in `E2E.Manager`'s program-survives fixtures with a 5-digit pid (a 7-digit Linux pid
+`/tmp`, in `Linger.App.Suites.Manager`'s program-survives fixtures with a 5-digit pid (a 7-digit Linux pid
 adds 2). Rooted at a 49-byte `TMPDIR` instead, that path is 122 bytes, and even on Linux six
-`E2E.Manager` checks then fail because their sockets no longer fit. -/
+`Linger.App.Suites.Manager` checks then fail because their sockets no longer fit. -/
 def socketRoot : System.FilePath := "/tmp"
 
 /-- One suite's world: where the binary is, and which `LINGER_DIR` it owns.

@@ -20,12 +20,12 @@ label store or the screen. One layer below, the daemon's two byte queues were
 bounded only by code review — `THEOREMS.md`'s §Bound bullet said so in as many
 words. These are that bullet, turned into theorems about `Linger.Session.Buf`.
 
-**What is proved here is the arithmetic, not the daemon.** `Linger/Runtime/*` is
+**What is proved here is the arithmetic, not the daemon.** The runtime shells are
 `IO`; no theorem can see that it calls these functions rather than open-coding the
 same sums. Two things carry that gap: `Buf.bytes` is `private`, so the runtime
 cannot *read* the representation — nor, since the module system sealed the
 constructor, **write or forge** one — and every buffer arithmetic needs to read; and
-`scripts/gates.sh` greps that `Linger/Runtime/*` declares no byte buffer of its own — a
+`scripts/gates.sh` greps that the runtime shells declare no byte buffer of their own — a
 source-tree property, and therefore a grep. Anyone who reads this file as "the
 runtime is proved" is overclaiming.
 

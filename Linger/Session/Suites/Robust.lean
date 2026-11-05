@@ -4,7 +4,7 @@ public import E2E.Harness
 import Linger.Session.Checkpoint
 import Linger.Display.Listing
 import Linger.Session.Shell.Daemon
-import Linger.Runtime.Cli
+import Linger.App.Shell
 import Linger.Session.Shell.Client
 
 public section
@@ -149,7 +149,7 @@ def admissionPressure (e : Env) : IO Unit := do
       throw (IO.userError "descriptor-pressure control client could not connect")
     let control := raw.toUInt64.toUInt32
     owned.modify (·.push control)
-    let initial ← Linger.Runtime.Cli.readInfo control
+    let initial ← Linger.App.Shell.readInfo control
     let some pidText :=
       initial.find? (·.1 == "pid") |>.map
         (·.2) | throw (IO.userError "descriptor-pressure daemon did not report its child")
@@ -173,7 +173,7 @@ def admissionPressure (e : Env) : IO Unit := do
         "sustained descriptor pressure reports once and preserves the daemon"
     let usable ←
       try
-        let current ← Linger.Runtime.Cli.readInfo control
+        let current ← Linger.App.Shell.readInfo control
         Linger.Session.Shell.Client.sendMsg control
             (.input "printf alive > \"$LINGER_DIR/alive\"\n".toUTF8.toList)
         let ran ← waitFor 3000 (System.FilePath.pathExists marker)
@@ -289,7 +289,7 @@ private def inputBurst (e : Env) : IO Unit := do
         Linger.Os.Shell.writeAll fd burst
         let answered ←
           try
-            let _ ← Linger.Runtime.Cli.readInfo fd (some (start + inputBurstBudgetMs))
+            let _ ← Linger.App.Shell.readInfo fd (some (start + inputBurstBudgetMs))
             pure true
           catch _ =>
             pure false

@@ -14,7 +14,7 @@ import Linger.Terminal.Suites.Mediation
 import Linger.Display.Suites.Title
 import Linger.Import.Suites.Recipes
 import Linger.Import.Suites.Interop
-import E2E.Manager
+import Linger.App.Suites.Manager
 import Linger.Target.Suites.RemoteLive
 import E2E.Ci
 import E2E.Hygiene
@@ -42,7 +42,7 @@ def suites : List (String × IO UInt32) :=
     ("delivery", Linger.Session.Suites.Delivery.run), ("robust", Linger.Session.Suites.Robust.run),
     ("remote", Linger.Target.Suites.Remote.run), ("terminal", Linger.Terminal.Suites.Mediation.run),
     ("title", Linger.Display.Suites.Title.run), ("recipes", Linger.Import.Suites.Recipes.run),
-    ("interop", Linger.Import.Suites.Interop.run), ("manager", E2E.Manager.run),
+    ("interop", Linger.Import.Suites.Interop.run), ("manager", Linger.App.Suites.Manager.run),
     -- opt-in: needs a real reachable host, so NOT in scripts/e2e.sh
     ("remote-live", Linger.Target.Suites.RemoteLive.run),
     -- Verifier regression checks, separate from the live product suites.
@@ -82,7 +82,7 @@ def main (args : List String) : IO UInt32 := do
   | ["--delivery-server", dir] =>
     Linger.Session.Suites.Delivery.serveProbe dir
   | "--manager-probe" :: rest =>
-    E2E.Manager.probe rest
+    Linger.App.Suites.Manager.probe rest
   | "--import-probe" :: rest =>
     Linger.Import.Suites.Recipes.importProbe rest
   | ["--runner-probe", dir, name] =>

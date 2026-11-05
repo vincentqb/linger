@@ -2,7 +2,7 @@ module
 
 public section
 
-namespace Linger.Tools.Entry
+namespace Linger.App.Entry
 
 /-- The executor that receives a command line: the interactive selector, tmux save
 interchange or the session CLI. -/
@@ -24,4 +24,4 @@ def route (args : List String) : Route :=
   | "tmux" :: rest => .tmux rest
   | _ => .session args
 
-end Linger.Tools.Entry
+end Linger.App.Entry

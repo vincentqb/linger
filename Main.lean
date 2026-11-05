@@ -1,7 +1,7 @@
 module
 
-import Linger.Runtime.Cli
-import Linger.Tools.Entry
+import Linger.App.Shell
+import Linger.App.Entry
 import Linger.Selector.Shell
 import Linger.Import.Shell
 
@@ -14,13 +14,13 @@ The session library and VT toolkit do not import the manager. -/
 interchange or a session command. An uncaught error prints `linger: <error>` and exits 1. -/
 def main (args : List String) : IO UInt32 := do
   try
-    match Linger.Tools.Entry.route args with
+    match Linger.App.Entry.route args with
     | .selector readOnly =>
       Linger.Selector.Shell.run (← IO.appPath).toString readOnly
     | .tmux rest =>
       Linger.Import.Shell.run (← IO.appPath).toString rest
     | .session argv =>
-      Linger.Runtime.Cli.main argv
+      Linger.App.Shell.main argv
   catch e =>
     IO.eprintln s!"linger: {e}"
     return 1

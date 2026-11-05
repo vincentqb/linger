@@ -7,7 +7,7 @@ public section
 /-! A cancellable command with one owner. Both pipe readers and the isolated
 process group live until that owner collects or stops the job. -/
 
-namespace Linger.Runtime.Command
+namespace Linger.Os.Shell.Command
 
 /-- A started command and its two pipe readers, held by one owner until it collects the
 job with `poll` or retires it with `stop`. -/
@@ -110,4 +110,4 @@ def stop (pending : IO.Ref (Option Job)) (graceMs : Nat := 0) : IO Unit := do
       discard <| IO.wait job.stdout
       discard <| IO.wait job.stderr
 
-end Linger.Runtime.Command
+end Linger.Os.Shell.Command

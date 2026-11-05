@@ -1,8 +1,8 @@
 module
 
 public import E2E.Harness
-import Linger.Runtime.Cli
-import Linger.Runtime.Command
+import Linger.App.Shell
+import Linger.Os.Shell.Command
 import Linger.Target.Remote
 import Linger.Session.Shell.Client
 
@@ -182,7 +182,7 @@ private def discoveryChecks (e : Env) : IO Unit := do
   finally
     reapOrKill server 0
   let (state, root, path) ← discoverySetup e "deadline"
-  let limit := Linger.Runtime.Cli.remoteQueryLimit
+  let limit := Linger.App.Shell.remoteQueryLimit
   let hosts := (List.range (limit + 1)).map (fun i => s!"stall-{i}")
   let active := hosts.take limit
   let start ← Linger.Os.Shell.monotonicMs
@@ -197,7 +197,7 @@ private def discoveryChecks (e : Env) : IO Unit := do
           active.allM fun host => System.FilePath.pathExists s!"{root}/{host}.leaf"
     expect (ready && !(← System.FilePath.pathExists s!"{root}/{hosts.getLast!}.started"))
         "remote discovery limits simultaneous SSH jobs and reuses completed slots"
-    let code ← waitProcess command (Linger.Runtime.Cli.remoteQueryTimeoutMs + 1500)
+    let code ← waitProcess command (Linger.App.Shell.remoteQueryTimeoutMs + 1500)
     let elapsed := (← Linger.Os.Shell.monotonicMs) - start
     let stopped ← waitFor 2000 (active.allM (discoveryGone root))
     if code.isNone then
@@ -205,7 +205,7 @@ private def discoveryChecks (e : Env) : IO Unit := do
       command.kill
       discard command.wait
     let output ← command.stdout.readToEnd
-    expect (code == some 0 && elapsed < Linger.Runtime.Cli.remoteQueryTimeoutMs + 1500)
+    expect (code == some 0 && elapsed < Linger.App.Shell.remoteQueryTimeoutMs + 1500)
         "remote commands share one deadline even when pipes stay open"
     expect ((records output).filter (·.1 == "name") == [("name", s!"{goodName}@quick")])
         "only complete remote replies contribute rows"
@@ -218,27 +218,27 @@ private def discoveryChecks (e : Env) : IO Unit := do
     IO.mkRef
         (some
           (←
-            Linger.Runtime.Command.start (← IO.appPath).toString
+            Linger.Os.Shell.Command.start (← IO.appPath).toString
                 #["--discovery-ssh", root, "--", "stall-stop"]))
   try
     let ready ← waitFor 2000 (System.FilePath.pathExists s!"{root}/stall-stop.leaf")
     let start ← Linger.Os.Shell.monotonicMs
-    Linger.Runtime.Command.stop pending 100
+    Linger.Os.Shell.Command.stop pending 100
     let elapsed := (← Linger.Os.Shell.monotonicMs) - start
     let stopped ← waitFor 2000 (discoveryGone root "stall-stop")
     expect (ready && stopped && elapsed < 1500 && (← pending.get).isNone)
         "cooperative stop force-retires descendants that retain pipes after their leader exits"
   finally
-    Linger.Runtime.Command.stop pending
+    Linger.Os.Shell.Command.stop pending
     cleanupDiscovery root
   -- Once its pipes close, the leader is an unreaped zombie until stop reaps it; Darwin's
   -- killpg refuses a group whose only member is that zombie.
-  let exited ← IO.mkRef (some (← Linger.Runtime.Command.start "/bin/sh" #["-c", "exit 0"]))
+  let exited ← IO.mkRef (some (← Linger.Os.Shell.Command.start "/bin/sh" #["-c", "exit 0"]))
   let finished ←
     waitFor 2000 do
         let some job ← exited.get | return false
         return (← IO.hasFinished job.stdout) && (← IO.hasFinished job.stderr)
-  let outcome ← (Linger.Runtime.Command.stop exited).toBaseIO
+  let outcome ← (Linger.Os.Shell.Command.stop exited).toBaseIO
   if let .error err := outcome then
     IO.eprintln s!"remote: stopping an exited job failed: {err}"
   expect (finished && outcome matches .ok _) "stopping a job whose leader already exited succeeds"
@@ -427,12 +427,12 @@ def run : IO UInt32 :=
           ([["--porcelain", "-r", s!"{devHost},{deadHost}"],
                 ["-r", s!"{devHost},{deadHost}", "--porcelain"],
                 ["--remote", s!"{devHost},{deadHost}", "--porcelain"]].all
-            (fun args => Linger.Runtime.Cli.parseLs args == some (true, some [devHost, deadHost])))
+            (fun args => Linger.App.Shell.parseLs args == some (true, some [devHost, deadHost])))
           "ls accepts explicit hosts in either option order"
       expect
-          (Linger.Runtime.Cli.parseLs ["-r", "--porcelain"] == some (true, some []) &&
-            Linger.Runtime.Cli.parseLs ["--porcelain", "--remote"] == some (true, some []) &&
-            Linger.Runtime.Cli.parseLs ["-r", "--typo"] == none)
+          (Linger.App.Shell.parseLs ["-r", "--porcelain"] == some (true, some []) &&
+            Linger.App.Shell.parseLs ["--porcelain", "--remote"] == some (true, some []) &&
+            Linger.App.Shell.parseLs ["-r", "--typo"] == none)
           "ls preserves options after -r and rejects unknown options"
       -- Only a nonempty HOME configures hosts (`remotesFile_eq_none_iff`). Decoy files
       -- under the working, XDG and temporary directories would run SSH if a fallback

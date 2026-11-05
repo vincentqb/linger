@@ -13,7 +13,7 @@ import Std.Sync.Mutex
 
 public section
 
-/-! # E2E.Manager — public entry point and shared picker executor
+/-! # Linger.App.Suites.Manager — public entry point and shared picker executor
 
 The helper mode of this same test binary records exact argument vectors and
 observes the terminal before the manager, in each listing/attach child, and
@@ -33,7 +33,7 @@ same checks and recorder drive preserved predecessor executables.
 `E2ETest.main` dispatches `--manager-probe <args>` to `probe` below.
 -/
 
-namespace E2E.Manager
+namespace Linger.App.Suites.Manager
 
 open Linger.Terminal
 open E2E.Harness
@@ -2415,6 +2415,8 @@ private def programChecks (e : Env) : IO Unit := do
         let _ ← withLaunchLock (owned.cli #["send", name, "stop-program\n"])
         withLaunchLock (owned.killAll #[name])
 
+/-- The manager suite: the public entry point and the shared picker executor, against
+`MANAGER_TEST_LINGER` when it is set and the built `linger` otherwise. -/
 def run : IO UInt32 :=
   Env.suite "manager" fun e => do
     let e := { e with bin := (← IO.getEnv "MANAGER_TEST_LINGER").getD e.bin }
@@ -2444,4 +2446,4 @@ def run : IO UInt32 :=
     for note in ← notes.get do
       IO.eprintln note
 
-end E2E.Manager
+end Linger.App.Suites.Manager

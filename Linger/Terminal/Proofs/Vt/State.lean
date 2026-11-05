@@ -21,8 +21,8 @@ The three emulator guarantees:
   `feed` for ANY byte stream.
 * §Total — `step` preserves the structural sanity of the screen: grid
   dimensions don't change, and the cursor (plus every stashed cursor)
-  stays strictly inside them. Together with "no `partial def` in
-  `Linger/Core`" (checked by grep in e2e), this establishes pure totality
+  stays strictly inside them. Together with "no `partial def` in a pure
+  module" (checked by grep in e2e), this establishes pure totality
   and state bounds. It does not prove that runtime IO succeeds or memory
   allocation cannot fail.
 

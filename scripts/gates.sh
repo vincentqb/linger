@@ -69,12 +69,10 @@ code_count() { code_grep "$@" | awk 'END { print NR + 0 }'; }   # -> a number
 # Which modules are pure code and which are proofs, read from the tree with the rule
 # `Theorems/Coverage.lean` (`pureModule`, `proofModule`) applies to module names: pure code is
 # a component's top module (`Linger/Session.lean`) and each component's top-level modules other
-# than its boundary and shell, plus the legacy `Linger/Core` and `Linger/Tools` trees; proofs are
-# each component's `Proofs/` plus the legacy `Theorems/`. Deliberate word splitting below: no
-# tracked path in this tree has a space.
+# than its boundary and shell; proofs are each component's `Proofs/` plus the legacy
+# `Theorems/`. Deliberate word splitting below: no tracked path in this tree has a space.
 pure_paths="$(git ls-files -- 'Linger/*.lean' | awk -F/ '
-  NF == 2 ||
-  NF == 3 && $2 != "Runtime" && $2 != "Manager" && $3 != "Boundary.lean" && $3 != "Shell.lean"')"
+  NF == 2 || NF == 3 && $3 != "Boundary.lean" && $3 != "Shell.lean"')"
 proof_paths="$(git ls-files -- 'Theorems/*.lean' 'Linger/*/Proofs/*.lean')"
 [ -n "$pure_paths" ] && [ -n "$proof_paths" ] || fail "no pure or proof modules found"
 
@@ -145,7 +143,7 @@ code_grep '^[[:space:]]+v[.]eraseRowSpan v[.]cursor[.]y v[.]cursor[.]x [(]min [(
 # in this file said OK.
 #
 # TREE-WIDE and fail-closed — measured zero hits across the tracked `.lean` files, so
-# there is nothing to grandfather and no exemption list to rot. `Tests/` and `E2E/` are
+# there is nothing to grandfather and no exemption list to rot. Tests and suites are
 # inside it on purpose: a suite that laundered a value would be asserting about a state
 # the binary cannot produce, which is this defect wearing a test's clothes.
 #
@@ -169,10 +167,8 @@ code_grep '^[[:space:]]+v[.]eraseRowSpan v[.]cursor[.]y v[.]cursor[.]x [(]min [(
 [ "$(git ls-files c/)" = c/shim.c ] || fail "more than one C file"
 # The shim returns -errno and errno numbers differ by platform: 918c671's
 # `r == -111` meant ECONNREFUSED only on Linux.
-! code_grep '(==|!=)[[:space:]]*[(]?-([2-9]|[1-9][0-9]+)([^0-9]|$)' 'Linger/Runtime/*' \
-    'Linger/Session/Shell/*' \
-    'Linger/Import/Shell.lean' 'Linger/Os/Shell.lean' 'Linger/Selector/Shell.lean' 'Main.lean' 'E2E/*' \
-    'Linger/*/Suites/*' \
+! code_grep '(==|!=)[[:space:]]*[(]?-([2-9]|[1-9][0-9]+)([^0-9]|$)' 'Linger/*/Shell.lean' 'Linger/*/Shell/*' \
+    'Main.lean' 'E2E/*' 'Linger/*/Suites/*' \
   || fail "a negative literal comparison looks like an errno number: compare the sign, or classify the errno in c/shim.c"
 # Lean/libuv may have worker threads when the application forks. The child
 # paths and their two execution helpers must not allocate, format through
@@ -299,8 +295,8 @@ library_roots LingerFuzzy '#[`Linger.Selector.Fuzzy]' 'leanOptions := implementa
 [ "$(git grep -c 'def implementationOptions : Array LeanOption := #\[⟨`linter.missingDocs, true⟩\]$' -- lakefile.lean)" = lakefile.lean:1 ] \
   || fail "implementationOptions no longer enables linter.missingDocs"
 # Proofs and fixtures build every module under their directories, so every module is
-# checked without a root module importing it: the legacy `Theorems/` and `Tests/` trees and
-# each component's `Proofs/` and `Tests/`, in component order. The glob omits the root
+# checked without a root module importing it: the legacy `Theorems/` tree and each
+# component's `Proofs/` and `Tests/`, in component order. The glob omits the root
 # itself, so a Theorems.lean or Tests.lean would never be built.
 lib_globs() {                                # lib_globs <lib> <component subdirectory>
   lg_parts=''
@@ -342,7 +338,7 @@ import_closure Linger/Selector/Fuzzy.lean ''
 import_closure Linger/Selector/Picker.lean 'public import Linger.Selector.Key;import Linger.Selector.Fuzzy;import Linger.Target.Name;import Linger.Display.Listing;public import Linger.Display.Status;import Linger.Target.Remote;import Linger.Terminal.Vt;'
 import_closure Linger/Selector/Input.lean ''
 import_closure Linger/Selector/Proofs/Input.lean 'public import Linger.Selector.Input;import all Linger.Selector.Input;'
-import_closure Linger/Tools/Entry.lean ''
+import_closure Linger/App/Entry.lean ''
 import_closure Linger/Target/Name.lean ''
 import_closure Linger/Target/Remote.lean 'import Linger.Target.Name;'
 import_closure Linger/Display/Title.lean 'import Linger.Target.Name;'
@@ -352,28 +348,28 @@ import_closure Linger/Os/Boundary.lean ''
 [ "$(module_imports '*.lean' | awk -F: "$IMPORT_AWK"'
     import_mod($3) == "Linger.Os.Boundary" && !seen[$1]++ { print $1 }')" = "Linger/Os/Shell.lean" ] \
   || fail "a module other than Linger/Os/Shell.lean imports Linger.Os.Boundary"
-import_closure Linger/Runtime/Command.lean 'import Linger.Os.Shell;'
-import_closure Linger/Import/Shell.lean 'import Linger.Import.Resurrect;import Linger.Os.Shell;import Linger.Display.Listing;import Linger.Session.Shell.Paths;import Linger.Session.Shell.Resume;import Linger.Runtime.Cli;import Linger.Runtime.Command;import Linger.Target.Remote;import Linger.Selector.Shell;import Std.Async.System;'
+import_closure Linger/Os/Shell/Command.lean 'import Linger.Os.Shell;'
+import_closure Linger/Import/Shell.lean 'import Linger.Import.Resurrect;import Linger.Os.Shell;import Linger.Display.Listing;import Linger.Session.Shell.Paths;import Linger.Session.Shell.Resume;import Linger.App.Shell;import Linger.Os.Shell.Command;import Linger.Target.Remote;import Linger.Selector.Shell;import Std.Async.System;'
 import_closure Linger/Selector/Shell.lean \
-  'public import Linger.Selector.Picker;import Linger.Os.Shell;import Linger.Display.Listing;import Linger.Target.Remote;import Linger.Terminal.Title;import Linger.Runtime.Command;'
+  'public import Linger.Selector.Picker;import Linger.Os.Shell;import Linger.Display.Listing;import Linger.Target.Remote;import Linger.Terminal.Title;import Linger.Os.Shell.Command;'
 import_closure Main.lean \
-  'import Linger.Runtime.Cli;import Linger.Tools.Entry;import Linger.Selector.Shell;import Linger.Import.Shell;'
+  'import Linger.App.Shell;import Linger.App.Entry;import Linger.Selector.Shell;import Linger.Import.Shell;'
 # `lean_lib Linger` builds the umbrella's closure, so this list is what `./lake build`
 # checks of the session library.
 import_closure Linger.lean "$(printf 'public import Linger.%s;' Session.Buf Os.Shell Session.Wire \
   Terminal.Vt Terminal.Render Terminal.Mediation Terminal.Title Target.Name Session \
   Session.Driver Session.Checkpoint \
   Target.Remote Display.Listing Display.Status Display.Title Os.Env Session.Shell.Paths \
-  Runtime.Command Session.Shell.Daemon Session.Shell.Client Runtime.Cli Session.Shell.Resume)"
+  Os.Shell.Command Session.Shell.Daemon Session.Shell.Client App.Shell Session.Shell.Resume)"
 module_imports Linger/Session.lean ':(glob)Linger/Session/*.lean' 'Linger/Session/Shell/*' \
-    'Linger/Runtime/*' Linger/Os/Boundary.lean Linger/Os/Shell.lean \
+    Linger/Os/Shell/Command.lean Linger/App/Shell.lean Linger/Os/Boundary.lean Linger/Os/Shell.lean \
     Linger/Os/Env.lean Linger/Target/Name.lean Linger/Target/Remote.lean Linger/Display/Status.lean \
     Linger/Display/Title.lean Linger/Display/Listing.lean Linger/Terminal/Vt.lean \
     Linger/Terminal/Render.lean Linger/Terminal/Mediation.lean Linger/Terminal/Title.lean \
     Linger/Terminal/Replay.lean Linger.lean \
 | awk -F: "$IMPORT_AWK"'
   { mod = import_mod($3)
-    if (mod !~ /^(Linger[.]Session|Linger[.](Session|Runtime|Os|Target|Display|Terminal)[.][[:alnum:]_.]+|Std[.]Async[.](System|Signal))$/) {
+    if (mod !~ /^(Linger[.]Session|Linger[.](Session|Os|Target|Display|Terminal)[.][[:alnum:]_.]+|Linger[.]App[.]Shell|Std[.]Async[.](System|Signal))$/) {
       print "  " $0; bad = 1
     }
   }
@@ -381,21 +377,21 @@ module_imports Linger/Session.lean ':(glob)Linger/Session/*.lean' 'Linger/Sessio
 
 # Pure route proofs do not observe terminal IO or inspect Main's call sites.
 # Pin dispatch before terminal observations, exact argv and executable identity;
-# E2E.Manager, Linger.Import.Suites.Recipes and Linger.Import.Suites.Interop exercise them in subprocesses.
+# Linger.App.Suites.Manager, Linger.Import.Suites.Recipes and Linger.Import.Suites.Interop exercise them in subprocesses.
 for claim in route_bare_help route_selector_iff route_session_argv \
              route_attach_operands route_select_retired route_daemon_argv route_ls_argv route_import_argv \
              route_export_argv route_tmux_argv route_tmux_iff; do
-  code_grep "^theorem $claim " Theorems/Entry.lean >/dev/null \
+  code_grep "^theorem $claim " Linger/App/Proofs/Entry.lean >/dev/null \
     || fail "entry-point contract disappeared: $claim"
 done
 # Fold layout whitespace for Main's small dispatch. Reuse the backtick-aware
 # matcher below, so quoted prose cannot stand in for these call sites.
 entry_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Main.lean)"
 for tie in \
-  'def main [(]args : List String[)] : IO UInt32 := do try match Linger[.]Tools[.]Entry[.]route args with' \
+  'def main [(]args : List String[)] : IO UInt32 := do try match Linger[.]App[.]Entry[.]route args with' \
   '[|] [.]selector readOnly => Linger[.]Selector[.]Shell[.]run [(]← IO[.]appPath[)][.]toString readOnly' \
   '[|] [.]tmux rest => Linger[.]Import[.]Shell[.]run [(]← IO[.]appPath[)][.]toString rest' \
-  '[|] [.]session argv => Linger[.]Runtime[.]Cli[.]main argv'; do
+  '[|] [.]session argv => Linger[.]App[.]Shell[.]main argv'; do
   printf '%s\n' "$entry_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "entry point bypassed its proved route or fixed IO boundary: $tie"
 done
@@ -499,7 +495,7 @@ done
 # immutable poll snapshot. Between remote queries a native visit lists local rows
 # alone and keeps the last full listing's remote rows (withRemote_row_local,
 # withRemote_row_remote); every visit starts with a full listing.
-# E2E.Manager drives the terminal lifetime, failure paths, cadence and handoff itself.
+# Linger.App.Suites.Manager drives the terminal lifetime, failure paths, cadence and handoff itself.
 for claim in align_optimal align_isSome_iff_sublist align_marks_length align_spells \
              align_score_max align_earliest align_default \
              alignWith_optimal alignWith_isSome_iff_sublist alignWith_marks_length \
@@ -562,10 +558,10 @@ for tie in \
   'let mut frame := "\\x1b[[]0m\\x1b[[]H\\x1b[[]2J" let mut first := true for line in lines do if !first then frame := frame [+][+] "\\r\\n" first := false let mut used := 0 let mut clipped := false let mut activeStyle := "" for [(]text, style[)] in line do if clipped then break if style != activeStyle then frame := frame [+][+] "\\x1b[[]0m" [+][+] style activeStyle := style for raw in text[.]toList do let c := if Linger[.]Selector[.]Input[.]printable raw then raw else '"'"'[?]'"'"' let cells := Linger[.]Terminal[.]Vt[.]charWidth c if used [+] cells > width then clipped := true break frame := frame[.]push c used := used [+] cells if !activeStyle[.]isEmpty then frame := frame [+][+] "\\x1b[[]0m" return frame' \
   'let next := if loaded then Linger[.]Selector[.]Picker[.]refresh state incoming[.]candidates else [{] [(]Linger[.]Selector[.]Picker[.]init incoming[.]candidates state[.]allowCreate[)] with query := state[.]query [}] dirty := dirty [|][|] !loaded [|][|] next != state [|][|] incoming != snapshot state := next snapshot := incoming loaded := true nextListing := [(]← monotonicMs[)] [+] 1000' \
   'while true do let current ← winsizeGet stdoutFd if dirty [|][|] current != size then let frame := draw state snapshot loaded withColor savedTmux current[.]1 current[.]2 if frame != lastFrame [|][|] current != size then writeAll stdoutFd frame[.]toUTF8 lastFrame := frame size := current dirty := false let ready ← poll fds events 50' \
-  'for key in keys do if !loaded && key == [.]accept then continue match Linger[.]Selector[.]Picker[.]step state key with [|] [.]stay next => dirty := dirty [|][|] next != state state := next [|] [.]attach target [|] [.]create target => return [.]attach target snapshot [|] [.]cancel => return [.]cancel if let some result[[:space:]]*← Linger[.]Runtime[.]Command[.]poll pending then' \
+  'for key in keys do if !loaded && key == [.]accept then continue match Linger[.]Selector[.]Picker[.]step state key with [|] [.]stay next => dirty := dirty [|][|] next != state state := next [|] [.]attach target [|] [.]create target => return [.]attach target snapshot [|] [.]cancel => return [.]cancel if let some result[[:space:]]*← Linger[.]Os[.]Shell[.]Command[.]poll pending then' \
   'if full then lastFull := listed nextRemote := [(]← monotonicMs[)] [+] remoteRefreshMs let incoming := if full then listed else listed[.]withRemote lastFull let next :=' \
-  'nextListing := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]← monotonicMs[)] ≥ nextListing then full := savedTmux [|][|] [(]← monotonicMs[)] ≥ nextRemote let args := if full then fullArgs else #[[]"ls", "--porcelain"[]] pending[.]set [(]some [(]← Linger[.]Runtime[.]Command[.]start executable args[)][)] return [.]cancel finally' \
-  'finally Linger[.]Runtime[.]Command[.]stop pending [(]if savedTmux then 0 else 1000[)]' \
+  'nextListing := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]← monotonicMs[)] ≥ nextListing then full := savedTmux [|][|] [(]← monotonicMs[)] ≥ nextRemote let args := if full then fullArgs else #[[]"ls", "--porcelain"[]] pending[.]set [(]some [(]← Linger[.]Os[.]Shell[.]Command[.]start executable args[)][)] return [.]cancel finally' \
+  'finally Linger[.]Os[.]Shell[.]Command[.]stop pending [(]if savedTmux then 0 else 1000[)]' \
   'let fullArgs := if savedTmux then #[[]"tmux", "ls", "--porcelain"[]] [+][+] save[.]toArray else #[[]"ls", "-r", "--porcelain"[]]' \
   'match ← choose executable [(]readOnly := readOnly[)] with' \
   'def attachArgs [(]target : String[)] [(]readOnly : Bool := false[)] : Array String := [(]"attach" :: [(]if readOnly then [[]"--read-only"[]] else [[][]][)] [+][+] Linger[.]Target[.]Remote[.]targetOperands target[)][.]toArray'; do
@@ -579,7 +575,7 @@ code_grep '^def remoteRefreshMs : Nat := [1-9][0-9]*$' Linger/Selector/Shell.lea
 # Cancellation can first request cooperative cleanup. It always force-retires
 # the isolated group before reaping its reserved leader PID, then joins both
 # readers even when termination or reaping throws.
-command_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Runtime/Command.lean)"
+command_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Os/Shell/Command.lean)"
 for tie in \
   'IO[.]Process[.]spawn [{] cmd := executable, args, stdin := [.]null, stdout := [.]piped, stderr := [.]piped, setsid := true [}] let stdout ← IO[.]asTask child[.]stdout[.]readToEnd Task[.]Priority[.]dedicated let stderr ← IO[.]asTask child[.]stderr[.]readToEnd Task[.]Priority[.]dedicated return [{] child, stdout, stderr [}]' \
   'IO[.]Process[.]spawn [{] cmd := executable, args, stdin := [.]null, stdout := [.]piped, stderr := [.]piped, setsid := true [}] let stdout ← IO[.]asTask [(]readLimited child[.]stdout limit[)] Task[.]Priority[.]dedicated let stderr ← IO[.]asTask [(]readLimited child[.]stderr [(]64 [*] 1024[)][)] Task[.]Priority[.]dedicated return [{] child, stdout, stderr [}]' \
@@ -606,7 +602,7 @@ for claim in rowPieces_printable rowPieces_styles rowPieces_nameSpan nameWidth_c
   code_grep "^theorem $claim " Linger/Display/Proofs/Listing.lean >/dev/null \
     || fail "shared listing contract disappeared: $claim"
 done
-cli_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Runtime/Cli.lean)"
+cli_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/App/Shell.lean)"
 for tie in \
   'match Linger[.]Target[.]Remote[.]checkHosts hosts with [|] [.]ok l => return l [|] [.]error e => throw [(]IO[.]userError e[)]' \
   'for [(]host, output[)] in remotes[.]zip remote[.]toList do for row in Linger[.]Target[.]Remote[.]parse output do' \
@@ -731,16 +727,16 @@ awk '
 # common change, which is how a gate stops being read.
 #
 # The permitted region is an EXACT file list plus the proof and fixture directories,
-# `Theorems/`, `Tests/` and each component's `Proofs/` and `Tests/`, and that split is by
+# `Theorems/` and each component's `Proofs/` and `Tests/`, and that split is by
 # edit frequency: commits add a `.lean` under those more often than
-# one under `Linger/Core/`, and few of those join the closure. So a per-file list over
+# one beside `Vt`, and few of those join the closure. So a per-file list over
 # `Theorems/**` would be edited reflexively, while the core list changes rarely, which
 # is what makes it a checkpoint. The proof and fixture directories are friends BY
-# DECLARATION (see `Linger/Terminal/Vt.lean`, "## Every door"), and `Tests/` deliberately forges invalid
+# DECLARATION (see `Linger/Terminal/Vt.lean`, "## Every door"), and a component's `Tests/` deliberately forges invalid
 # states in its negative fixtures, so listing its files one by one would gate a
 # non-property. Everything else is outside and fail-closed — `E2E/**`, each component's
-# `Suites/`, `Main.lean`, `Linger/Os/Shell.lean`, all of `Linger/Runtime/` and the
-# other `Linger/Core/` modules. Replay joins only to read shared immutable rows.
+# `Suites/`, `Main.lean`, every shell and the other component modules. Replay joins only
+# to read shared immutable rows.
 # The suites are outside deliberately: a pty suite asserts on bytes the real binary
 # emitted, so a forged `Vt` there would be an assertion about a state the binary cannot
 # reach — the very bug the seal exists to prevent.
@@ -761,7 +757,7 @@ awk '
 # a BARE, unbackticked `import all`.
 VT_ALL_RE='^[[:space:]]*(meta[[:space:]]+)*import[[:space:]]+all[[:space:]]+'
 VT_FRIEND_EXACT='Linger/Terminal/Vt.lean Linger/Terminal/Render.lean Linger/Terminal/Mediation.lean Linger/Session/Checkpoint.lean Linger/Terminal/Replay.lean'
-VT_FRIEND_DIRS='Theorems/ Tests/'
+VT_FRIEND_DIRS='Theorems/'
 VT_FRIEND_RE='^Linger/[^/]+/(Proofs|Tests)/'
 code_grep "$VT_ALL_RE" '*.lean' \
 | awk -F: -v seed='Linger/Terminal/Vt.lean' -v exact="$VT_FRIEND_EXACT" -v dirs="$VT_FRIEND_DIRS" \
@@ -813,8 +809,8 @@ shim_n="$(code_count 'LEAN_EXPORT' 'c/shim.c')"
 
 # The runtime keeps no byte queue of its own. `Linger/Session/Buf.lean` owns the two
 # kinds of long-lived queue -- their caps, their drop and cut policies, and the
-# removal of written prefixes (`Linger/Session/Proofs/Buf.lean`) -- and `Linger/Runtime/*`
-# and the session shell are `IO`,
+# removal of written prefixes (`Linger/Session/Proofs/Buf.lean`) -- and the runtime shells
+# (the session's, the CLI and command jobs) are `IO`,
 # so NO theorem can see that the daemon calls those functions rather than
 # open-coding the same sums. Without this grep the Buf theorems are arithmetic
 # about a value nothing forces the runtime to use. A source-tree property cannot
@@ -824,12 +820,12 @@ shim_n="$(code_count 'LEAN_EXPORT' 'c/shim.c')"
 # Cli.queryInfo's accumulator, and two .extract compactions). Each used to spell its
 # regex twice — once to test, once to print the hits — and `code_grep` prints them, so
 # the duplicate is gone: two copies of a pattern is two things to keep in step.
-! code_grep '^[[:space:]]+[a-zA-Z_]+ : ByteArray' 'Linger/Runtime/*' 'Linger/Session/Shell/*' \
-  || fail "a ByteArray field in Linger/Runtime or a session shell (use Linger.Session.Buf, which is proved)"
-! code_grep 'mut [a-zA-Z_]+ : ByteArray' 'Linger/Runtime/*' 'Linger/Session/Shell/*' \
-  || fail "an accumulating ByteArray local in Linger/Runtime or a session shell (use Linger.Session.Buf: it is capped)"
-! code_grep '[.]extract([^[:alnum:]_]|$)' 'Linger/Runtime/*' 'Linger/Session/Shell/*' \
-  || fail "buffer arithmetic in Linger/Runtime or a session shell (Buf.bufAdvance owns it, and is proved)"
+! code_grep '^[[:space:]]+[a-zA-Z_]+ : ByteArray' 'Linger/App/Shell.lean' 'Linger/Os/Shell/Command.lean' 'Linger/Session/Shell/*' \
+  || fail "a ByteArray field in a runtime shell (use Linger.Session.Buf, which is proved)"
+! code_grep 'mut [a-zA-Z_]+ : ByteArray' 'Linger/App/Shell.lean' 'Linger/Os/Shell/Command.lean' 'Linger/Session/Shell/*' \
+  || fail "an accumulating ByteArray local in a runtime shell (use Linger.Session.Buf: it is capped)"
+! code_grep '[.]extract([^[:alnum:]_]|$)' 'Linger/App/Shell.lean' 'Linger/Os/Shell/Command.lean' 'Linger/Session/Shell/*' \
+  || fail "buffer arithmetic in a runtime shell (Buf.bufAdvance owns it, and is proved)"
 
 # The cursor proofs describe pure values. These ties keep the runtime on the
 # captured snapshot, bounded advances and shared byte allowance. The delivery
@@ -969,9 +965,9 @@ code_grep '^[[:space:]]+rt[.]saveCkpt st$' 'Linger/Session/Shell/Daemon.lean' > 
 # keep the IO accumulator on that same policy rather than a copied number.
 code_grep '^theorem onMsg_info_bounded ' 'Linger/Session/Proofs/Session.lean' > /dev/null \
   || fail "the info producer's framing theorem disappeared"
-code_grep '^abbrev infoReplyCap : Nat := Linger[.]Session[.]infoReplyCap$' 'Linger/Runtime/Cli.lean' > /dev/null \
+code_grep '^abbrev infoReplyCap : Nat := Linger[.]Session[.]infoReplyCap$' 'Linger/App/Shell.lean' > /dev/null \
   || fail "the CLI info policy diverged from the proved producer"
-code_grep '^[[:space:]]+Linger[.]Session[.]Buf[.]bufOffer infoReplyCap acc [(]ByteArray[.]mk payload[.]toArray[)]$' 'Linger/Runtime/Cli.lean' > /dev/null \
+code_grep '^[[:space:]]+Linger[.]Session[.]Buf[.]bufOffer infoReplyCap acc [(]ByteArray[.]mk payload[.]toArray[)]$' 'Linger/App/Shell.lean' > /dev/null \
   || fail "the info accumulator no longer uses the shared byte policy"
 
 # All session verbs consume the same exact target parser. Fuzzy matching stays
@@ -991,19 +987,18 @@ done
 # A literal attach argv passes a name starting with - as an option. "attach" may begin
 # a list, array or cons only in the command parser's pattern and in Picker.attachArgs,
 # tied above.
-attach_words="$(code_grep '"attach"[[:space:]]*(,|[]]|::)' 'Linger/Import/Shell.lean' 'Linger/Runtime/*' \
-    'Linger/Session/Shell/*' Linger/Selector/Shell.lean \
+attach_words="$(code_grep '"attach"[[:space:]]*(,|[]]|::)' 'Linger/*/Shell.lean' 'Linger/*/Shell/*' \
   | sed 's/^\([^:]*\):[0-9]*:[[:space:]]*/\1: /')"
 [ "$attach_words" = "$(printf '%s\n' \
-    'Linger/Runtime/Cli.lean: | "attach" :: rest | "a" :: rest =>' \
+    'Linger/App/Shell.lean: | "attach" :: rest | "a" :: rest =>' \
     'Linger/Selector/Shell.lean: ("attach" :: (if readOnly then ["--read-only"] else []) ++')" ] \
   || fail "a literal attach argv: build it with Picker.attachArgs, whose operands come from Remote.targetOperands: $attach_words"
-! code_grep 'Linger[.]Selector[.]Fuzzy|Name[.]sanitize' Linger/Runtime/Cli.lean Linger/Session/Shell/Client.lean \
+! code_grep 'Linger[.]Selector[.]Fuzzy|Name[.]sanitize' Linger/App/Shell.lean Linger/Session/Shell/Client.lean \
   || fail "noninteractive command lookup must not fuzzy-match or rewrite a name"
 code_grep '^[[:space:]]+Linger[.]Target[.]Remote[.]targetValid target = true ∧ target ∉ candidates := by$' Linger/Selector/Proofs/Picker.lean >/dev/null \
   || fail "selector creation and command arguments no longer share the target grammar"
 for verb in attach run send detach kill info capture resize get set unset clear; do
-  code_grep "^[[:space:]]+withTarget \"$verb\" " Linger/Runtime/Cli.lean >/dev/null \
+  code_grep "^[[:space:]]+withTarget \"$verb\" " Linger/App/Shell.lean >/dev/null \
     || fail "session command bypassed the common exact target boundary: $verb"
 done
 for tie in \
@@ -1019,7 +1014,7 @@ for tie in \
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "command transport lost exact targets, argv, stdin or terminal ownership: $tie"
 done
-[ "$(code_count '^[[:space:]]+writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Terminal[.]Render[.]leaveAnsi[.]toArray[)]$' Linger/Runtime/Cli.lean)" -eq 1 ] \
+[ "$(code_count '^[[:space:]]+writeAll stdoutFd [(]ByteArray[.]mk Linger[.]Terminal[.]Render[.]leaveAnsi[.]toArray[)]$' Linger/App/Shell.lean)" -eq 1 ] \
   || fail "remote SSH termination no longer establishes canonical handback"
 
 # Lifetime ownership covers two resources: the socket namespace and the saved
@@ -1358,8 +1353,9 @@ git ls-files 'Tests/*' 'Linger/*/Tests/*' | grep -qvE '\.lean$' \
   && fail "a non-Lean file under a Tests/ directory (orchestration belongs in scripts/)" || true
 git ls-files 'scripts/*' | grep -qvE '\.sh$' \
   && fail "a non-shell file under scripts/ (Lean suites belong in E2E/)" || true
-git ls-files 'tests/*' 'Tools/*' 'Manager/*' | grep -q . \
-  && fail "legacy top-level directory: use scripts/, Linger/Tools/ or Linger/Manager/" || true
+git ls-files 'tests/*' 'Tools/*' 'Manager/*' 'Tests/*' 'Linger/Core/*' 'Linger/Runtime/*' \
+    'Linger/Tools/*' 'Linger/Manager/*' | grep -q . \
+  && fail "legacy directory: use scripts/, or a component under Linger/" || true
 
 # Every declaration name cited in backticks must resolve to a declaration, in THEOREMS.md
 # and in every tracked `.lean` file, comments included. This is gated rather than

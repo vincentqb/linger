@@ -9,7 +9,7 @@ public section
 
 The overview must be a plain, pipeable, self-terminating listing that never
 blocks on stdin. The two exit checks run through `Env.cliTimeout`: a picker that
-waited on redirected stdin would fail here, not hang the gate. `E2E.Manager`
+waited on redirected stdin would fail here, not hang the gate. `Linger.App.Suites.Manager`
 separately checks bare help in every stream mode, explicit terminal selection and
 `ls` with both streams on a terminal.
 Selector acceptance chooses either an existing target or an explicit creation
