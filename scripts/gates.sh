@@ -402,9 +402,8 @@ layer_bad="$(module_imports 'Linger/*' ':!Linger/*/Suites/*' \
 # both; and `./lake comparator` (scripts/verify.sh) checks that each part has its declared type,
 # that each proof matches its statement, and that no other axiom is used. These gates keep the
 # lists equal, so neither a headline nor a hole can leave that check by being dropped from one
-# of them, and keep the statements' meaning out of the program: the Manifest imports Spec
-# modules and, until their components are stated through holes, the interfaces listed below,
-# and Spec modules import only public interfaces.
+# of them, and keep the statements' meaning out of the program: the Manifest and the Spec
+# modules import only Spec modules.
 headline_names() {                           # headline_names <file>: theorem names, in order
   code_grep '^theorem [A-Za-z_][A-Za-z0-9_]*' "$1" | sed 's/^[^:]*:[0-9]*://; s/^theorem //; s/[[:space:]].*//'
 }
@@ -459,25 +458,18 @@ awk '(/^theorem / || /^@[[]expose[]]$/) && prev !~ /-[/]$/ { print FILENAME ":" 
   { prev = $0 }
   END { exit bad }' Manifest.lean >&2 \
   || fail "every Manifest.lean hole and theorem needs a docstring"
-# The interfaces the Manifest still imports: components whose parts are not yet holes. The list
-# only shrinks; every entry must still be imported, and nothing else may be but Spec modules.
-manifest_interfaces='Linger.Session Linger.Session.Buf Linger.Session.Checkpoint Linger.Session.Driver Linger.Terminal.Render Linger.Terminal.Replay'
-manifest_imports_bad="$(module_imports Manifest.lean | awk -F: -v allowed="$manifest_interfaces" "$IMPORT_AWK"'
-  BEGIN { n = split(allowed, a, " "); for (i = 1; i <= n; i++) ok[a[i]] = 1 }
-  { mod = import_mod($3); seen[mod] = 1
-    if ($3 !~ /^public[[:space:]]+import[[:space:]]+Linger[.]/ || $3 ~ /import[[:space:]]+all[[:space:]]/ \
-        || !(mod ~ /^Linger[.][A-Z][A-Za-z]*[.]Spec$/ || mod in ok)) print "  " $0 }
-  END { for (m in ok) if (!(m in seen)) print "  listed but not imported: " m }')"
+manifest_imports_bad="$(module_imports Manifest.lean | awk -F: "$IMPORT_AWK"'
+  { if ($3 !~ /^public[[:space:]]+import[[:space:]]+Linger[.]/ || $3 ~ /import[[:space:]]+all[[:space:]]/ \
+        || import_mod($3) !~ /^Linger[.][A-Z][A-Za-z]*[.]Spec$/) print "  " $0 }')"
 [ -z "$manifest_imports_bad" ] || {
   printf '%s\n' "$manifest_imports_bad" >&2
-  fail "Manifest.lean imports Spec modules and only the listed interfaces"; }
+  fail "Manifest.lean imports only Spec modules, publicly"; }
 spec_imports_bad="$(module_imports 'Linger/*/Spec.lean' | awk -F: "$IMPORT_AWK"'
-  { mod = import_mod($3)
-    if ($3 ~ /import[[:space:]]+all[[:space:]]/ || mod !~ /^Linger([.][A-Z][A-Za-z]*)+$/ \
-        || mod ~ /[.](Proofs|Tests|Suites|Shell|Boundary)([.]|$)/) print "  " $0 }')"
+  { if ($3 ~ /import[[:space:]]+all[[:space:]]/ || import_mod($3) !~ /^Linger[.][A-Z][A-Za-z]*[.]Spec$/)
+      print "  " $0 }')"
 [ -z "$spec_imports_bad" ] || {
   printf '%s\n' "$spec_imports_bad" >&2
-  fail "Spec modules import only public interfaces"; }
+  fail "Spec modules import only Spec modules"; }
 [ "$(library_decl Manifest)" = "lean_lib Manifest where leanOptions := #[⟨\`warningAsError, false⟩, ⟨\`linter.missingDocs, true⟩] " ] \
   || fail "the Manifest library must keep sorry a warning and require docstrings: $(library_decl Manifest)"
 ! grep -qE '^@[[]default_target[]][[:space:]]+lean_lib Manifest' lakefile.lean \

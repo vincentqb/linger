@@ -40,7 +40,8 @@ dispatch, and pushes or pull requests that change `c/shim.c` or `./lake`.
   and, for the OS, `Boundary.lean` for the foreign declarations; then `Proofs/`, `Tests/`
   (elaboration-time unit tests) and `Suites/` (executable suites). `Spec.lean` holds what
   gives headline theorems their meaning: value types, reference models and predicates over
-  the program's operations, never the representation of a state or code that runs.
+  the program's operations, never the representation of a state or code that runs. It
+  imports only `Spec` modules.
 - `Linger/Os/`: the operating system. `Boundary.lean` holds the foreign declarations,
   `Shell.lean` the checked surface callers use, `Env.lean` the environment policies.
 - `Linger/Target/`: session names and remote targets.
@@ -56,7 +57,8 @@ dispatch, and pushes or pull requests that change `c/shim.c` or `./lake`.
   runs it.
 - `Linger/App/`: the command line: the `Entry` route and, in `Shell.lean`, the commands.
 - `Manifest.lean`: the program parts headline theorems name, declared as holes, and the
-  headline theorems, stated with `sorry`; `comparator.json` names both for `lake comparator`.
+  headline theorems, stated with `sorry`. It imports only `Spec` modules; `comparator.json`
+  names the holes and theorems for `lake comparator`.
 - `Theorems/`: the headline proofs (`Claims.lean`), the cross-component contracts and the
   coverage census; `Verify/`: the verifier's harness, runner and own suites.
 - `scripts/`: build and verification orchestration.

@@ -53,7 +53,9 @@ theorem command_argv (verb : String) (words : List String) :
     Remote.Shell.Words (Remote.command verb words).toList
       (("linger" :: verb :: words).map String.toList) := Remote.command_argv verb words
 
-theorem restore_grid_reachable (v w : Vt.Vt) (hv : Vt.LiveReachableVt v) (hw : Vt.LiveReachableVt w)
+theorem restore_grid_reachable (v w : Vt.Vt)
+    (hv : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v)
+    (hw : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable w)
     (hcols : w.colCount = v.colCount) (hrows : w.rowCount = v.rowCount) :
     (w.feed (Render.restore v)).colCount = v.colCount ∧
       (w.feed (Render.restore v)).rowCount = v.rowCount ∧
@@ -68,14 +70,18 @@ theorem restore_grid_reachable (v w : Vt.Vt) (hv : Vt.LiveReachableVt v) (hw : V
   rw [grid]
   simp only [Array.getD, inside, dite_true]
 
-theorem restore_sb_reachable (v w : Vt.Vt) (hv : Vt.LiveReachableVt v) (hw : Vt.LiveReachableVt w)
+theorem restore_sb_reachable (v w : Vt.Vt)
+    (hv : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v)
+    (hw : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable w)
     (hcols : w.colCount = v.colCount) (hrows : w.rowCount = v.rowCount)
     (hne : (Render.sbRows v).isEmpty = false) :
     (w.feed (Render.restore v)).scrollback = (Render.sbRows v).toList :=
   Render.restore_sb_reachable v w hw hv hcols hrows hne
 
-theorem restore_cursor_reachable (v w : Vt.Vt) (hv : Vt.LiveReachableVt v)
-    (hw : Vt.LiveReachableVt w) (hcols : w.colCount = v.colCount) (hrows : w.rowCount = v.rowCount)
+theorem restore_cursor_reachable (v w : Vt.Vt)
+    (hv : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v)
+    (hw : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable w)
+    (hcols : w.colCount = v.colCount) (hrows : w.rowCount = v.rowCount)
     (ho : v.getModes.origin = false) : (w.feed (Render.restore v)).cursorPos = v.cursorPos := by
   obtain ⟨x, y⟩ :=
     Render.restore_cursor_any v w (Vt.good_of_liveReachable hv) (Vt.good_of_liveReachable hw) hcols
@@ -109,23 +115,26 @@ theorem leave_canonical_all (w : Vt.Vt) (h2 : 2 ≤ w.rowCount) :
   obtain ⟨ground, settled, _⟩ := Render.leave_boundary_title w
   exact ⟨by simp [Vt.Vt.atBoundary, ground, settled], modes, sticky, pen, title⟩
 
-theorem loadBytes_saveBytes_live (c : Checkpoint.Ckpt Vt.Vt) (h : Vt.LiveReachableVt c.vt) :
+theorem loadBytes_saveBytes_live (c : Checkpoint.Ckpt Vt.Vt)
+    (h : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable c.vt) :
     Checkpoint.loadBytes (Checkpoint.saveBytes c) = some { c with vt := c.vt.quiesce } :=
   Checkpoint.loadBytes_saveBytes_live c h
 
 theorem liveReachableVt_resumeVt (b : ByteArray) :
-    Vt.LiveReachableVt (bootVt ((Checkpoint.loadBytes b).map (·.vt))) :=
-  Session.liveReachableVt_resumeVt b
+    Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable
+      (bootVt ((Checkpoint.loadBytes b).map (·.vt))) := Session.liveReachableVt_resumeVt b
 
 theorem run_total_safe {World ε : Type}
     (execute : State → World → (eff : Effect Replay.Plan) → Except ε (World × Driver.Reply eff))
     (hw : Driver.Responds execute) (r : Driver.Result State World) (events : List Event)
     (hb : Bounds State.roster State.labelList State.scanner r.st)
-    (hlive : Vt.LiveReachableVt r.st.terminal) :
+    (hlive :
+      Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable r.st.terminal) :
     ∃ out,
       Driver.run execute r events = .ok out ∧
         Bounds State.roster State.labelList State.scanner out.st ∧
-        Vt.LiveReachableVt out.st.terminal := by
+        Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable
+          out.st.terminal := by
   have live : LiveVt r.st := (Session.liveVt_iff _).mpr hlive
   obtain ⟨out, ok, ⟨bounded, _⟩, kept⟩ :=
     Driver.run_total_safe execute hw r events
@@ -136,10 +145,12 @@ theorem run_bytes_isolates (s : State) (id : Nat) (chunks : List (List UInt8)) {
     (h : other ≠ id) : (run s (chunks.map (Event.bytes id))).1.client? other = s.client? other :=
   Session.run_bytes_isolates s id chunks h
 
-theorem reachableIn_bound {cap : Nat} {b : Buf.Buf} (h : Buf.ReachableIn cap b) :
-    Buf.owedLen b ≤ cap := Buf.reachableIn_bound h
+theorem reachableIn_bound {cap : Nat} {b : Buf.Buf}
+    (h : Buf.InputReach Buf.Buf.empty Buf.bufOffer Buf.bufAdvance cap b) : Buf.owedLen b ≤ cap :=
+  Buf.reachableIn_bound h
 
-theorem reachableOut_bound {cap : Nat} {b : Buf.Buf} (h : Buf.ReachableOut cap b) :
+theorem reachableOut_bound {cap : Nat} {b : Buf.Buf}
+    (h : Buf.OutputReach Buf.Buf.empty Buf.bufEnqueue Buf.bufAdvance cap b) :
     Buf.owedLen b ≤ cap := Buf.reachableOut_bound h
 
 theorem at_most_one_owner {s : Claim.State} (reached : Claim.Reachable s) {a b resource : Nat}
