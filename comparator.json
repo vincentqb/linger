@@ -22,6 +22,7 @@
     "Linger.Claims.init_observed",
     "Linger.Claims.resize_observed",
     "Linger.Claims.quiesce_observed",
+    "Linger.Claims.quiesce_decodable",
     "Linger.Claims.print_observed",
     "Linger.Claims.controls_observed",
     "Linger.Claims.boot_observed",

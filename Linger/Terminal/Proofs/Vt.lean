@@ -1626,6 +1626,13 @@ theorem quiesce_observed (v : Vt) :
       stick v.quiesce = stick v ∧ v.quiesce.windowTitle = v.windowTitle :=
   ⟨rfl, rfl, rfl, fun _ => rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
 
+/-- **A checkpoint can hold every terminal a session can hold**, with its partial parser state
+forgotten: the decoder's door accepts it. -/
+theorem quiesce_decodable {v : Vt} (h : LiveReachableVt v) : v.quiesce.Decodable :=
+  decodable_of_ofDecoded
+    (ofDecoded_of_good (good_of_liveReachable h) (renderable_of_liveReachable h)
+      (tabsOk_of_liveReachable h))
+
 /-- Printing `A` on a fresh two-column, one-row terminal puts it under the cursor and moves the
 cursor right; a line feed on that bottom row then moves the row into the history. -/
 theorem print_observed :

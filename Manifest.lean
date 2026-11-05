@@ -411,6 +411,12 @@ theorem quiesce_observed (v : Vt.Vt) :
       Vt.stick v.quiesce = Vt.stick v ∧ v.quiesce.windowTitle = v.windowTitle := by
   sorry
 
+/-- A checkpoint can hold every terminal a session can hold, with its partial parser state
+forgotten: the checkpoint decoder accepts it. -/
+theorem quiesce_decodable (v : Vt.Vt)
+    (h : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v) :
+    v.quiesce.Decodable := by sorry
+
 /-- Printing `A` on a fresh two-column, one-row terminal puts it under the cursor, moves the
 cursor right and makes it the line `linger capture` prints; a line feed on that bottom row then
 moves the row into the history, which the repaint carries. -/

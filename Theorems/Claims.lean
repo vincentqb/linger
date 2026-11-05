@@ -206,6 +206,10 @@ theorem quiesce_observed (v : Vt.Vt) :
       Vt.stick v.quiesce = Vt.stick v ∧
       v.quiesce.windowTitle = v.windowTitle := Vt.quiesce_observed v
 
+theorem quiesce_decodable (v : Vt.Vt)
+    (h : Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce Vt.Vt.Decodable v) :
+    v.quiesce.Decodable := Vt.quiesce_decodable h
+
 theorem print_observed :
     ((Vt.Vt.init 2 1).feed [0x41]).getRow 0 = #[{ base := 'A' }, {}] ∧
       ((Vt.Vt.init 2 1).feed [0x41]).cursorPos = (1, 0) ∧
