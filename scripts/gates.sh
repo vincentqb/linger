@@ -279,7 +279,8 @@ library_roots() {
 }
 # Every library but E2E shares implementationOptions, which turns on linter.missingDocs:
 # the libraries overlap, and Lake builds a module with one containing library's options.
-# scripts/e2e.sh also checks every Linger module directly.
+# scripts/e2e.sh also checks every Linger module outside Proofs/ and Tests/ directly; the
+# globs below build those two with these options.
 library_roots LingerVt '#[`Linger.Core.Terminal, `Linger.Core.Replay]' 'leanOptions := implementationOptions'
 library_roots LingerVtTheorems '#[`Theorems.Terminal, `Theorems.TerminalTitle, `Theorems.Replay]' \
   'leanOptions := implementationOptions'

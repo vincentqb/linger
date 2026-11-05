@@ -65,8 +65,8 @@ Lean erases proofs regardless of file placement.
   commit, checked by `Theorems/Coverage.lean`; generated lemmas do not count.
   State invariants in `THEOREMS.md` and design code for provability.
 - Every public declaration in a library needs a docstring: `lakefile.lean` enables
-  `linter.missingDocs` for every library but `E2E`, and `scripts/e2e.sh` checks each
-  module under `Linger/` directly.
+  `linter.missingDocs` for every library but `E2E`, and `scripts/e2e.sh` checks the
+  modules under `Linger/` outside `Proofs/` and `Tests/` directly.
 - State user-visible behavior, not only invariants, and bound every input-controlled
   loop or reply count in the model with a theorem (`repeatAtMost_eq_repeat`,
   `step_bytes_one_reply`); `scripts/gates.sh` rejects a CSI loop that bypasses
