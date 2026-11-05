@@ -5,7 +5,7 @@ namespaces and source tree use `linger` / `Linger`; checkpoints use `LNGR` v1.
 
 ## Build and verify
 
-Always use `./lake`, including on macOS. The toolchain is pinned to v4.34.1.
+Always use `./lake`, including on macOS. The toolchain is pinned to v4.35.0.
 
 ```sh
 ./lake build

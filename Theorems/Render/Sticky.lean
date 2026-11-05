@@ -529,6 +529,11 @@ theorem stSetMode_of_not_screen {n : Nat} (on : Bool) (s : Sticky)
     (h : (n == 47 || n == 1047 || n == 1049) = false := by decide) : stSetMode n on s = s := by
   simp [stSetMode, h]
 
+/-- One of the three screen-switch mode numbers applies the screen switch. -/
+theorem stSetMode_of_screen {n : Nat} (on : Bool) (s : Sticky)
+    (h : (n == 47 || n == 1047 || n == 1049) = true := by decide) :
+    stSetMode n on s = stAlt on s := by simp [stSetMode, h]
+
 /-- **A private mode emit that is not a screen switch moves no sticky field.**
 `stSetMode`'s only non-identity case is 47/1047/1049, so naming the three
 exclusions is the whole content. `smap_id_modesAnsi` and the scrollback stage's
@@ -663,7 +668,7 @@ theorem smap_screensAnsi (v : Vt) :
   have h1049 : SMap (stAlt true) (csiPriv 1049 0x68) := by
     have h := smap_modeSet 1049 true (by decide) (by decide)
     rw [show modeSet 1049 true = csiPriv 1049 0x68 from rfl] at h
-    exact h.congr (fun _ => rfl)
+    exact h.congr (fun s => stSetMode_of_screen true s)
   unfold screensAnsi
   refine ((smap_id_scrollbackAnsi v).comp ?_).congr (fun s => rfl)
   rcases hv : v.altGrid with - | x
@@ -778,7 +783,9 @@ theorem restore_sticky_placed (v w : Vt) (hrows : w.rows = v.rows) (hlt : v.top 
     (w.feed (escSeq 0x5C)).pstate = .ground ∧
       stick (w.feed (escSeq 0x5C)) = stick (w.feed (escSeq 0x5C)) :=
     ⟨(st_grounds w).1, rfl⟩
-  have h1 := sput_congr (sput_step h0 (smap_modeSet 1049 false (by decide) (by decide))) hA
+  have h1 :=
+    sput_congr (sput_step h0 (smap_modeSet 1049 false (by decide) (by decide)))
+      ((stSetMode_of_screen (n := 1049) false _).trans hA)
   have h2 := sput_congr (sput_step h1 smap_id_irm_reset) (id_eq _)
   have h3 :=
     sput_congr (sput_step h2 (smap_modeSet 6 false (by decide) (by decide)))
@@ -1009,7 +1016,9 @@ theorem leave_canonical_all (w : Vt) (h2 : 2 ≤ w.rows) :
     (w.feed (escSeq 0x5C)).pstate = .ground ∧
       stick (w.feed (escSeq 0x5C)) = stick (w.feed (escSeq 0x5C)) :=
     ⟨(st_grounds w).1, rfl⟩
-  have l1 := sput_congr (sput_step l0 (smap_modeSet 1049 false (by decide) (by decide))) hB
+  have l1 :=
+    sput_congr (sput_step l0 (smap_modeSet 1049 false (by decide) (by decide)))
+      ((stSetMode_of_screen (n := 1049) false _).trans hB)
   have l2 := sput_congr (sput_step l1 smap_id_irm_reset) (id_eq _)
   have l3 :=
     sput_congr (sput_step l2 (smap_modeSet 25 true (by decide) (by decide)))

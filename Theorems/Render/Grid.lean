@@ -1259,7 +1259,9 @@ theorem prologue_sticky (v w : Vt) (hgood : Good w) (hrows : w.rows = v.rows) :
     (w.feed (escSeq 0x5C)).pstate = .ground ∧
       stick (w.feed (escSeq 0x5C)) = stick (w.feed (escSeq 0x5C)) :=
     ⟨(st_grounds w).1, rfl⟩
-  have h1 := sput_congr (sput_step h0 (smap_modeSet 1049 false (by decide) (by decide))) hA
+  have h1 :=
+    sput_congr (sput_step h0 (smap_modeSet 1049 false (by decide) (by decide)))
+      ((stSetMode_of_screen (n := 1049) false _).trans hA)
   have h2s := sput_congr (sput_step h1 smap_id_irm_reset) (id_eq _)
   have h3 :=
     sput_congr (sput_step h2s (smap_modeSet 6 false (by decide) (by decide)))
