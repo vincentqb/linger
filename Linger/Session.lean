@@ -80,13 +80,15 @@ and `step`ped, never forged or field-poked, so
 `run_wf`'s well-formedness is a fact about every state the daemon can possess
 rather than about the states it politely constructs. `vt`, `labels` and
 `metaKv` stay public-read: they are exactly what the checkpoint save hook
-serializes (`Linger/Session/Shell/Resume.lean`). -/
+serializes (`Linger/Session/Shell/Resume.lean`). `scan` and `clients` are public-read too,
+because the session bounds headline theorems state (`Linger.Session.Bounded`) read them. -/
 structure State where
   /-- The emulator, fed every byte the child writes. -/
   vt : Vt.Vt
   /-- One bounded scanner owned by the PTY-facing virtual terminal. -/
-  private scan : Terminal.Mediation.Scan := .ground
-  private clients : List Client := []
+  scan : Terminal.Mediation.Scan := .ground
+  /-- The connected clients, in arrival order. -/
+  clients : List Client := []
   /-- Key/value labels in the order they were set, at most `maxLabels`. -/
   labels : List (String × String) := []
   /-- name/pid/created/cwd…, set once by the runtime at boot. -/

@@ -1,14 +1,53 @@
 module
 
+public import Linger.Session
 public import Linger.Session.Buf
+public import Linger.Session.Driver
+public import Linger.Terminal.Spec
 
 public section
 
 /-! # What session headlines are stated in
 
-The states the daemon's byte queues can reach, and a model of how daemons and offline readers
-claim a session's resources. Bodies are exposed: each definition here is its own
-specification. -/
+The session bounds and the live terminal every daemon state keeps, the contract on the effect
+interpreter, the states the daemon's byte queues can reach, and a model of how daemons and
+offline readers claim a session's resources. Bodies are exposed: each definition here is its
+own specification. -/
+
+/-! ## Daemon states and the effect interpreter -/
+
+namespace Linger.Session
+
+/-- The session bounds: the client roster and the label store within their caps, every
+client's frame decoder healthy and holding at most one frame, and the pty scanner within its
+caps. -/
+structure Bounded (s : State) : Prop where
+  /-- At most `maxClients` clients. -/
+  clientsLe : s.clients.length ≤ maxClients
+  /-- At most `maxLabels` labels. -/
+  labelsLe : s.labels.length ≤ maxLabels
+  /-- Every client's decoder is healthy and holds at most one frame. -/
+  decOk : ∀ c ∈ s.clients, c.decoder.errored = false ∧ c.decoder.buf.length ≤ 4 + Wire.maxPayload
+  /-- The pty scanner is within its caps. -/
+  scanOk : s.scan.Bounded
+
+/-- The daemon's terminal is one a live session can hold. -/
+@[expose]
+def LiveVt (s : State) : Prop := Terminal.Vt.LiveReachableVt s.vt
+
+end Linger.Session
+
+namespace Linger.Session.Driver
+
+/-- The external contract excludes unreported exceptions; it permits every
+disconnect/checkpoint-failure result. This is a premise about primitive
+execution, not an assumption that the event driver succeeds. -/
+@[expose]
+def Responds {World ε : Type}
+    (execute : State → World → (eff : Effect) → Except ε (World × Reply eff)) : Prop :=
+  ∀ st world eff, ∃ answer, execute st world eff = .ok answer
+
+end Linger.Session.Driver
 
 /-! ## Reachable queue states
 

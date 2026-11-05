@@ -13,6 +13,7 @@ import all Linger.Session.Proofs.Wire
 -- `Linger.Session.Proofs.Checkpoint` is here for one claim: `Checkpoint.load_live`, which makes
 -- `LiveVt` provable for a *resumed* daemon (§Resume at the daemon, below).
 import all Linger.Session.Proofs.Checkpoint
+import Linger.Session.Spec
 
 /-! # §Detach / §Bound(session) — the daemon state machine theorems
 
@@ -329,14 +330,9 @@ theorem onMsg_input_readonly (s : State) (c : Client) (bs : List UInt8)
   unfold onMsg
   simp [h]
 
-/-! ## §Bound(session) -/
+/-! ## §Bound(session)
 
-/-- The composite session bound. -/
-structure Bounded (s : State) : Prop where
-  clientsLe : s.clients.length ≤ maxClients
-  labelsLe : s.labels.length ≤ maxLabels
-  decOk : ∀ c ∈ s.clients, c.decoder.errored = false ∧ c.decoder.buf.length ≤ 4 + Wire.maxPayload
-  scanOk : s.scan.Bounded
+`Bounded`, the composite session bound, is in `Linger/Session/Spec.lean`. -/
 
 /-! ### The roster cap at the door
 
@@ -919,10 +915,7 @@ grid without that assumption smuggling in a side condition.
 
 open Linger.Terminal.Vt (LiveReachableVt Renderable)
 
-/-- The daemon's terminal is one a live session can hold. -/
-def LiveVt (s : State) : Prop := LiveReachableVt s.vt
-
-/-- One event keeps the terminal reachable. -/
+/-- One event keeps the terminal reachable (`LiveVt`, in `Linger/Session/Spec.lean`). -/
 theorem step_vt_live (s : State) (ev : Event) (h : LiveVt s) : LiveVt (step s ev).1 :=
   step_vt_preserves (P := LiveReachableVt) (fun _ cols rows hv => hv.resize cols rows)
     (fun _ bytes hv => hv.feed bytes) s ev h

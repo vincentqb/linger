@@ -12,6 +12,7 @@
     "Linger.Claims.leave_canonical_all",
     "Linger.Claims.loadBytes_saveBytes_live",
     "Linger.Claims.liveReachableVt_resumeVt",
+    "Linger.Claims.run_total_safe",
     "Linger.Claims.run_bytes_isolates",
     "Linger.Claims.reachableIn_bound",
     "Linger.Claims.reachableOut_bound",

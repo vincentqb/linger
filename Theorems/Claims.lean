@@ -2,6 +2,7 @@ module
 
 public import Linger.Session
 public import Linger.Session.Checkpoint
+public import Linger.Session.Driver
 public import Linger.Session.Spec
 public import Linger.Target.Name
 public import Linger.Target.Remote
@@ -14,6 +15,7 @@ import Linger.Target.Proofs.Remote
 import all Linger.Session.Proofs.Buf
 import all Linger.Session.Proofs.Checkpoint
 import all Linger.Session.Proofs.Claim
+import all Linger.Session.Proofs.Driver
 import all Linger.Session.Proofs.Session
 import all Linger.Terminal.Vt
 import all Linger.Terminal.Proofs.Vt
@@ -110,6 +112,15 @@ theorem loadBytes_saveBytes_live (c : Checkpoint.Ckpt) (h : Vt.LiveReachableVt c
 theorem liveReachableVt_resumeVt (b : ByteArray) :
     Vt.LiveReachableVt (bootVt ((Checkpoint.loadBytes b).map (·.vt))) :=
   Session.liveReachableVt_resumeVt b
+
+theorem run_total_safe {World ε : Type}
+    (execute : State → World → (eff : Effect) → Except ε (World × Driver.Reply eff))
+    (hw : Driver.Responds execute) (r : Driver.Result World) (events : List Event)
+    (hb : Bounded r.st) (hlive : LiveVt r.st) :
+    ∃ out, Driver.run execute r events = .ok out ∧ Bounded out.st ∧ LiveVt out.st := by
+  obtain ⟨out, ok, ⟨bounded, _⟩, live⟩ :=
+    Driver.run_total_safe execute hw r events ⟨hb, Vt.good_of_liveReachable hlive⟩ hlive
+  exact ⟨out, ok, bounded, live⟩
 
 theorem run_bytes_isolates (s : State) (id : Nat) (chunks : List (List UInt8)) {other : Nat}
     (h : other ≠ id) : (run s (chunks.map (Event.bytes id))).1.client? other = s.client? other :=

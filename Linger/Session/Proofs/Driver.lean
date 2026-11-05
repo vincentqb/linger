@@ -2,6 +2,7 @@ module
 
 import all Linger.Session.Driver
 import all Linger.Session.Proofs.Session
+import Linger.Session.Spec
 
 /-! The effect interpreter is an arbitrary total function on an abstract world.
 Its replies are constrained by the same dependent type the daemon implements.
@@ -239,13 +240,8 @@ theorem foldlM_preserves {α β ε : Type} (xs : List α) (f : β → α → Exc
     obtain ⟨out, ho, hout⟩ := ih (fun acc y hp hy => htotal acc y hp (by simp [hy])) next hp
     exact ⟨out, by simpa only [List.foldlM_cons, hn, bind, Except.bind] using ho, hout⟩
 
-/-- The external contract excludes unreported exceptions; it permits every
-disconnect/checkpoint-failure result. This is a premise about primitive
-execution, not an assumption that the event driver succeeds. -/
-def Responds {ε : Type}
-    (execute : State → World → (eff : Effect) → Except ε (World × Reply eff)) : Prop :=
-  ∀ st world eff, ∃ answer, execute st world eff = .ok answer
-
+/-- The external contract (`Responds`, in `Linger/Session/Spec.lean`) gives every primitive a
+result, so the effects of one event complete. -/
 theorem effects_no_error {ε : Type}
     (execute : State → World → (eff : Effect) → Except ε (World × Reply eff))
     (hw : Responds execute) (st : State) (world : World) (depth : Nat) (effs : List Effect)

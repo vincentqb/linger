@@ -2,6 +2,7 @@ module
 
 public import Linger.Session
 public import Linger.Session.Checkpoint
+public import Linger.Session.Driver
 public import Linger.Session.Spec
 public import Linger.Target.Name
 public import Linger.Target.Remote
@@ -104,6 +105,16 @@ theorem loadBytes_saveBytes_live (c : Checkpoint.Ckpt) (h : Vt.LiveReachableVt c
 /-- A daemon resumed from any bytes on disk boots a terminal a live session can hold. -/
 theorem liveReachableVt_resumeVt (b : ByteArray) :
     Vt.LiveReachableVt (bootVt ((Checkpoint.loadBytes b).map (·.vt))) := by sorry
+
+/-- When each external operation returns a typed result, every finite batch of events
+completes without an uncaught exception, keeping the session within its bounds and its
+terminal one a live session can hold. Disconnects and checkpoint failures are permitted
+results. -/
+theorem run_total_safe {World ε : Type}
+    (execute : State → World → (eff : Effect) → Except ε (World × Driver.Reply eff))
+    (hw : Driver.Responds execute) (r : Driver.Result World) (events : List Event)
+    (hb : Bounded r.st) (hlive : LiveVt r.st) :
+    ∃ out, Driver.run execute r events = .ok out ∧ Bounded out.st ∧ LiveVt out.st := by sorry
 
 /-- One client's input bytes, however chunked, leave every other client's record unchanged. -/
 theorem run_bytes_isolates (s : State) (id : Nat) (chunks : List (List UInt8)) {other : Nat}

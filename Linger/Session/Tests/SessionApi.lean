@@ -11,6 +11,14 @@ open Linger Linger.Session Linger.Terminal
 
 example (vt : Vt.Vt) : List Effect := (run (State.boot vt [] []) [.connected 0, .tick 0]).2
 
+-- The roster and the scanner are public-read, for the session bounds; writing either needs the
+-- private constructor.
+example (s : State) : List Client × Mediation.Scan := (s.clients, s.scan)
+
+/-- constructor for `State` is marked as private -/
+#guard_msgs (error, substring := true) in
+example (s : State) : State := { s with clients := [] }
+
 /-- does not contain `Linger.Session.State.setClient` -/
 #guard_msgs (error, substring := true) in
 example (s : State) : State := s.setClient { id := 0, decoder := { errored := true } }
