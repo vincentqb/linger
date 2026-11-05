@@ -8,7 +8,7 @@ import Linger.Session.Shell.Resume
 import Linger.Runtime.Cli
 import Linger.Runtime.Command
 import Linger.Target.Remote
-import Linger.Manager.Picker
+import Linger.Selector.Shell
 import Std.Async.System
 
 public section
@@ -361,7 +361,7 @@ private def selectSave (executable : String) (file : Option String) : IO UInt32 
   inContext fun origin home => do
     let path ← savePath origin home file
     while true do
-      match ← Linger.Manager.Picker.choose executable (some path.toString) with
+      match ← Linger.Selector.Shell.choose executable (some path.toString) with
       | .cancel =>
         return 130
       | .failed status stderr =>
@@ -404,7 +404,7 @@ private def selectSave (executable : String) (file : Option String) : IO UInt32 
         createPanes executable origin [pane] archive
         let child ←
           IO.Process.spawn
-              { cmd := executable, args := Linger.Manager.Picker.attachArgs pane.name,
+              { cmd := executable, args := Linger.Selector.Shell.attachArgs pane.name,
                 cwd := some (System.FilePath.mk pane.dir) }
         discard child.wait
     return 0

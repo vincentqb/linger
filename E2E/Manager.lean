@@ -1,6 +1,6 @@
 module
 
-import Linger.Manager.Picker
+import Linger.Selector.Shell
 import Linger.Manager.Resurrect
 import Linger.Display.Listing
 import Linger.Target.Name
@@ -21,7 +21,7 @@ after the manager returns. `stty -g` is a test observer, resolved before giving
 the manager a restricted PATH. Comparing that portable representation avoids
 inspecting the opaque termios blob's padding.
 
-Synthetic failure, argv and terminal cases call `Linger.Manager.Picker.run` through
+Synthetic failure, argv and terminal cases call `Linger.Selector.Shell.run` through
 the test probe with a fixture-owned absolute recorder path. The frozen-save
 case uses that recorder with `Linger.Manager.Resurrect.run`. These test the shared
 executors; public CLI checks and source gates cover entry-point wiring.
@@ -279,7 +279,7 @@ def probe (args : List String) : IO UInt32 := do
     | "launch" :: manager :: mode :: rest =>
       launch root manager mode rest
     | ["picker", executable] =>
-      Linger.Manager.Picker.run executable
+      Linger.Selector.Shell.run executable
     | ["tmux-picker", executable, save] =>
       Linger.Manager.Resurrect.run executable ["select", save]
     | ["session-program"] =>
@@ -1557,7 +1557,7 @@ private def refreshChecks (e : Env) : IO Unit := do
           let shown ←
             s.untilScreen
                 (fun vt => (List.range vt.rowCount).any fun row => has (rowText vt row) "next@host")
-                start (Linger.Manager.Picker.remoteRefreshMs + 3000)
+                start (Linger.Selector.Shell.remoteRefreshMs + 3000)
           let remoteFrame ← s.capture "remote-refresh-frame"
           let remoteScreen := String.fromUTF8! (ByteArray.mk (screenText remoteFrame).toArray)
           s.text "\x03"
@@ -1583,7 +1583,7 @@ private def refreshChecks (e : Env) : IO Unit := do
             | none => false
             | some index =>
               kinds.head? == some true && index ≥ 1 &&
-                (starts[index + 1]?.getD 0) ≥ firstDone + Linger.Manager.Picker.remoteRefreshMs
+                (starts[index + 1]?.getD 0) ≥ firstDone + Linger.Selector.Shell.remoteRefreshMs
           return held && shown && has remoteScreen "Beta" && !has remoteScreen "work@host" &&
               cadence &&
               kinds.length == starts.length &&

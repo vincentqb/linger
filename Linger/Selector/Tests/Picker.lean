@@ -1,28 +1,28 @@
 module
 
-import all Linger.Tools.Picker
-meta import Linger.Tools.Picker
+import all Linger.Selector.Picker
+meta import Linger.Selector.Picker
 
-/-! Concrete selector fixtures. General contracts live in `Theorems.Picker`. -/
+/-! Concrete selector fixtures. General contracts live in `Linger.Selector.Proofs.Picker`. -/
 
-namespace Linger.Tools.Picker.Tests
+namespace Linger.Selector.Picker.Tests
 
-#guard Linger.Tools.Picker.matches "WK@DV" "work@dev"
+#guard Linger.Selector.Picker.matches "WK@DV" "work@dev"
 
-#guard Linger.Tools.Picker.matches "abc" "a---b---c"
+#guard Linger.Selector.Picker.matches "abc" "a---b---c"
 
-#guard !Linger.Tools.Picker.matches "acb" "abc"
+#guard !Linger.Selector.Picker.matches "acb" "abc"
 
-#guard !Linger.Tools.Picker.matches "aa" "a"
+#guard !Linger.Selector.Picker.matches "aa" "a"
 
-#guard Linger.Tools.Picker.matches "aa" "a-a"
+#guard Linger.Selector.Picker.matches "aa" "a-a"
 
-#guard !Linger.Tools.Picker.matches "longer" "long"
+#guard !Linger.Selector.Picker.matches "longer" "long"
 
-#guard Linger.Tools.Picker.matches "é界" "café@世界"
+#guard Linger.Selector.Picker.matches "é界" "café@世界"
 
 -- Char.toLower folds ASCII capitals only; no Unicode normalization is implied.
-#guard !Linger.Tools.Picker.matches "É" "é" && Linger.Tools.Picker.matches "É" "É"
+#guard !Linger.Selector.Picker.matches "É" "é" && Linger.Selector.Picker.matches "É" "É"
 
 #guard
   visible ["work", "wk", "a-w-k", "Work", "other", "work"] "WK" ==
@@ -325,7 +325,8 @@ namespace Linger.Tools.Picker.Tests
 #guard step (init ["a", "b", "c"]) .last == .stay { candidates := ["a", "b", "c"], cursor := 3 }
 
 #guard
-  [Linger.Tools.Key.up, .down, .first, .last].all fun key => step (init []) key == .stay (init [])
+  [Linger.Selector.Key.up, .down, .first, .last].all fun key =>
+    step (init []) key == .stay (init [])
 
 #guard
   step { candidates := ["a", "b", "a-b"], query := "b" } .last ==
@@ -372,7 +373,7 @@ namespace Linger.Tools.Picker.Tests
 
 #guard
   let state : State := { candidates := ["work"], query := "w", allowCreate := false }
-  [Linger.Tools.Key.text 'o', .backspace, .clear, .up, .down, .first, .last].all fun key =>
+  [Linger.Selector.Key.text 'o', .backspace, .clear, .up, .down, .first, .last].all fun key =>
     match step state key with
     | .stay next => !next.allowCreate
     | _ => false
@@ -402,4 +403,4 @@ namespace Linger.Tools.Picker.Tests
       (fresh.row "work").lookup "directory" == some "\"/tmp/new\""
   | _, _ => false
 
-end Linger.Tools.Picker.Tests
+end Linger.Selector.Picker.Tests

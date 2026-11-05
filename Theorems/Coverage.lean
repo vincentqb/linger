@@ -18,10 +18,10 @@ import all Linger.Session.Proofs.Resume
 import all Linger.Display.Proofs.Status
 import all Linger.Display.Proofs.Title
 import all Theorems.Resurrect
-import all Theorems.Fuzzy
-import all Theorems.Picker
-import all Theorems.Input
-import all Theorems.Key
+import all Linger.Selector.Proofs.Fuzzy
+import all Linger.Selector.Proofs.Picker
+import all Linger.Selector.Proofs.Input
+import all Linger.Selector.Proofs.Key
 import all Theorems.Entry
 import all Linger.Os.Proofs.Env
 import all Theorems.Contracts

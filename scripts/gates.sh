@@ -171,7 +171,8 @@ code_grep '^[[:space:]]+v[.]eraseRowSpan v[.]cursor[.]y v[.]cursor[.]x [(]min [(
 # `r == -111` meant ECONNREFUSED only on Linux.
 ! code_grep '(==|!=)[[:space:]]*[(]?-([2-9]|[1-9][0-9]+)([^0-9]|$)' 'Linger/Runtime/*' \
     'Linger/Session/Shell/*' \
-    'Linger/Manager/*' 'Linger/Os/Shell.lean' 'Main.lean' 'E2E/*' 'Linger/*/Suites/*' \
+    'Linger/Manager/*' 'Linger/Os/Shell.lean' 'Linger/Selector/Shell.lean' 'Main.lean' 'E2E/*' \
+    'Linger/*/Suites/*' \
   || fail "a negative literal comparison looks like an errno number: compare the sign, or classify the errno in c/shim.c"
 # Lean/libuv may have worker threads when the application forks. The child
 # paths and their two execution helpers must not allocate, format through
@@ -290,9 +291,9 @@ library_roots LingerVt '#[`Linger.Terminal.Mediation, `Linger.Terminal.Title, `L
   'leanOptions := implementationOptions'
 library_roots LingerVtTheorems '#[`Linger.Terminal.Proofs.Mediation, `Linger.Terminal.Proofs.Title, `Linger.Terminal.Proofs.Replay]' \
   'leanOptions := implementationOptions'
-library_roots LingerInput '#[`Linger.Tools.Input]' 'leanOptions := implementationOptions'
-library_roots LingerInputTheorems '#[`Theorems.Input]' 'leanOptions := implementationOptions'
-library_roots LingerFuzzy '#[`Linger.Tools.Fuzzy]' 'leanOptions := implementationOptions'
+library_roots LingerInput '#[`Linger.Selector.Input]' 'leanOptions := implementationOptions'
+library_roots LingerInputTheorems '#[`Linger.Selector.Proofs.Input]' 'leanOptions := implementationOptions'
+library_roots LingerFuzzy '#[`Linger.Selector.Fuzzy]' 'leanOptions := implementationOptions'
 [ "$(library_decl Linger)" = "lean_lib Linger where leanOptions := implementationOptions " ] \
   || fail "the Linger library lost implementationOptions: $(library_decl Linger)"
 [ "$(git grep -c 'def implementationOptions : Array LeanOption := #\[⟨`linter.missingDocs, true⟩\]$' -- lakefile.lean)" = lakefile.lean:1 ] \
@@ -336,11 +337,11 @@ module_imports Linger/Terminal/Proofs/Vt.lean 'Linger/Terminal/Proofs/Vt/*' Ling
 # imports them, even through an intermediate module: every library import
 # stays in Core, Runtime or the OS boundary.
 import_closure Linger/Tools/Resurrect.lean 'import Linger.Target.Name;import Linger.Display.Status;public import Linger.Session.Checkpoint;'
-import_closure Linger/Tools/Key.lean 'public import Linger.Tools.Input;'
-import_closure Linger/Tools/Fuzzy.lean ''
-import_closure Linger/Tools/Picker.lean 'public import Linger.Tools.Key;import Linger.Tools.Fuzzy;import Linger.Target.Name;import Linger.Display.Listing;public import Linger.Display.Status;import Linger.Target.Remote;import Linger.Terminal.Vt;'
-import_closure Linger/Tools/Input.lean ''
-import_closure Theorems/Input.lean 'public import Linger.Tools.Input;import all Linger.Tools.Input;'
+import_closure Linger/Selector/Key.lean 'public import Linger.Selector.Input;'
+import_closure Linger/Selector/Fuzzy.lean ''
+import_closure Linger/Selector/Picker.lean 'public import Linger.Selector.Key;import Linger.Selector.Fuzzy;import Linger.Target.Name;import Linger.Display.Listing;public import Linger.Display.Status;import Linger.Target.Remote;import Linger.Terminal.Vt;'
+import_closure Linger/Selector/Input.lean ''
+import_closure Linger/Selector/Proofs/Input.lean 'public import Linger.Selector.Input;import all Linger.Selector.Input;'
 import_closure Linger/Tools/Entry.lean ''
 import_closure Linger/Target/Name.lean ''
 import_closure Linger/Target/Remote.lean 'import Linger.Target.Name;'
@@ -352,11 +353,11 @@ import_closure Linger/Os/Boundary.lean ''
     import_mod($3) == "Linger.Os.Boundary" && !seen[$1]++ { print $1 }')" = "Linger/Os/Shell.lean" ] \
   || fail "a module other than Linger/Os/Shell.lean imports Linger.Os.Boundary"
 import_closure Linger/Runtime/Command.lean 'import Linger.Os.Shell;'
-import_closure Linger/Manager/Resurrect.lean 'import Linger.Tools.Resurrect;import Linger.Os.Shell;import Linger.Display.Listing;import Linger.Session.Shell.Paths;import Linger.Session.Shell.Resume;import Linger.Runtime.Cli;import Linger.Runtime.Command;import Linger.Target.Remote;import Linger.Manager.Picker;import Std.Async.System;'
-import_closure Linger/Manager/Picker.lean \
-  'public import Linger.Tools.Picker;import Linger.Os.Shell;import Linger.Display.Listing;import Linger.Target.Remote;import Linger.Terminal.Title;import Linger.Runtime.Command;'
+import_closure Linger/Manager/Resurrect.lean 'import Linger.Tools.Resurrect;import Linger.Os.Shell;import Linger.Display.Listing;import Linger.Session.Shell.Paths;import Linger.Session.Shell.Resume;import Linger.Runtime.Cli;import Linger.Runtime.Command;import Linger.Target.Remote;import Linger.Selector.Shell;import Std.Async.System;'
+import_closure Linger/Selector/Shell.lean \
+  'public import Linger.Selector.Picker;import Linger.Os.Shell;import Linger.Display.Listing;import Linger.Target.Remote;import Linger.Terminal.Title;import Linger.Runtime.Command;'
 import_closure Main.lean \
-  'import Linger.Runtime.Cli;import Linger.Tools.Entry;import Linger.Manager.Picker;import Linger.Manager.Resurrect;'
+  'import Linger.Runtime.Cli;import Linger.Tools.Entry;import Linger.Selector.Shell;import Linger.Manager.Resurrect;'
 # `lean_lib Linger` builds the umbrella's closure, so this list is what `./lake build`
 # checks of the session library.
 import_closure Linger.lean "$(printf 'public import Linger.%s;' Session.Buf Os.Shell Session.Wire \
@@ -392,7 +393,7 @@ done
 entry_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Main.lean)"
 for tie in \
   'def main [(]args : List String[)] : IO UInt32 := do try match Linger[.]Tools[.]Entry[.]route args with' \
-  '[|] [.]selector readOnly => Linger[.]Manager[.]Picker[.]run [(]← IO[.]appPath[)][.]toString readOnly' \
+  '[|] [.]selector readOnly => Linger[.]Selector[.]Shell[.]run [(]← IO[.]appPath[)][.]toString readOnly' \
   '[|] [.]tmux rest => Linger[.]Manager[.]Resurrect[.]run [(]← IO[.]appPath[)][.]toString rest' \
   '[|] [.]session argv => Linger[.]Runtime[.]Cli[.]main argv'; do
   printf '%s\n' "$entry_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
@@ -448,11 +449,11 @@ for tie in \
   'let value := if [[]"directory", "session", "window", "pane", "title", "command", "saved-command", "window-title"[]][.]contains key then value[.]quote else diagnostic value' \
   'Linger[.]Os[.]Shell[.]writeAll Linger[.]Os[.]Shell[.]stdoutFd [(]ByteArray[.]mk [(]Linger[.]Display[.]Listing[.]terminalListing withColor rows[)][.]toArray[)]' \
   'let save ← readSave origin home file createPanes executable origin save[.]panes [(]readArchive save[.]path[)]' \
-  'let path ← savePath origin home file while true do match ← Linger[.]Manager[.]Picker[.]choose executable [(]some path[.]toString[)] with' \
+  'let path ← savePath origin home file while true do match ← Linger[.]Selector[.]Shell[.]choose executable [(]some path[.]toString[)] with' \
   '[|] [.]attach target displayed => unless displayed[.]candidates[.]contains target do throw [(]IO[.]userError "selected pane was absent from the displayed save"[)] let row := displayed[.]row target' \
   'let some dir := [(]row[.]lookup "directory"[)][.]bind fun value => [(]Lean[.]Syntax[.]decodeStrLit value[)][.]filter [(]·[.]quote == value[)] [|] throw [(]IO[.]userError "selected pane has no directory"[)]' \
   'let some pane := selectedPane target dir line details [|] throw [(]IO[.]userError "invalid selected pane"[)]' \
-  'createPanes executable origin [[]pane[]] archive let child ← IO[.]Process[.]spawn [{] cmd := executable, args := Linger[.]Manager[.]Picker[.]attachArgs pane[.]name, cwd := some [(]System[.]FilePath[.]mk pane[.]dir[)] [}] discard child[.]wait' \
+  'createPanes executable origin [[]pane[]] archive let child ← IO[.]Process[.]spawn [{] cmd := executable, args := Linger[.]Selector[.]Shell[.]attachArgs pane[.]name, cwd := some [(]System[.]FilePath[.]mk pane[.]dir[)] [}] discard child[.]wait' \
   'let panes := panes[.]map [(]preparePane content panes[)]' \
   'let archive ← if [(]plan existing panes[)][.]isEmpty then pure none else archive for pane in plan existing panes do let contents ← capturedPane archive pane unless ← seedPane pane contents do continue' \
   'preflight origin panes let listing ← IO[.]Process[.]output [{] cmd := executable, args := #[[]"ls", "--porcelain"[]] [}]'; do
@@ -504,7 +505,7 @@ for claim in align_optimal align_isSome_iff_sublist align_marks_length align_spe
              alignWith_optimal alignWith_isSome_iff_sublist alignWith_marks_length \
              alignWith_spells alignWith_score_max alignWith_earliest \
              alignWith_scoring_irrelevant alignWith_smart_sensitive alignWith_smart_insensitive; do
-  code_grep "^theorem $claim " Theorems/Fuzzy.lean >/dev/null \
+  code_grep "^theorem $claim " Linger/Selector/Proofs/Fuzzy.lean >/dev/null \
     || fail "fuzzy alignment contract disappeared: $claim"
 done
 for claim in matches_iff_sublist align_isSome_iff_matches visible_order parseListing_valid parseSnapshot_complete \
@@ -519,23 +520,23 @@ for claim in matches_iff_sublist align_isSome_iff_matches visible_order parseLis
              refresh_allowCreate step_stay_allowCreate step_no_create step_accept_disabled \
              remoteTarget_check rowRecords_row mem_withRemote withRemote_nodup \
              withRemote_row_local withRemote_row_remote; do
-  code_grep "^(private )?theorem $claim([[:space:]]|:)" Theorems/Picker.lean >/dev/null \
+  code_grep "^(private )?theorem $claim([[:space:]]|:)" Linger/Selector/Proofs/Picker.lean >/dev/null \
     || fail "selector contract disappeared: $claim"
 done
 for claim in feed_storage_bound feed_text_valid feed_paste_only_text feed_control flush_no_enter; do
-  code_grep "^(private )?theorem $claim " Theorems/Input.lean >/dev/null \
+  code_grep "^(private )?theorem $claim " Linger/Selector/Proofs/Input.lean >/dev/null \
     || fail "input contract disappeared: $claim"
 done
 for claim in ofInput_control_iff feed_byte_bindings feed_paste_no_commands feed_ctrl_r flush_no_accept; do
-  code_grep "^theorem $claim " Theorems/Key.lean >/dev/null \
+  code_grep "^theorem $claim " Linger/Selector/Proofs/Key.lean >/dev/null \
     || fail "selector binding contract disappeared: $claim"
 done
 for tie in \
-  'let listed ← IO[.]ofExcept [(]Linger[.]Tools[.]Picker[.]parseSnapshot result[.]stdout[)]' \
+  'let listed ← IO[.]ofExcept [(]Linger[.]Selector[.]Picker[.]parseSnapshot result[.]stdout[)]' \
   'let incoming := if full then listed else listed[.]withRemote lastFull' \
-  'let items := Linger[.]Tools[.]Picker[.]items state[.]candidates state[.]query state[.]allowCreate' \
-  'let mut state := Linger[.]Tools[.]Picker[.]init [[]] [(]!savedTmux && !readOnly[)]' \
-  'let mut decoder := Linger[.]Tools[.]Input[.]init' \
+  'let items := Linger[.]Selector[.]Picker[.]items state[.]candidates state[.]query state[.]allowCreate' \
+  'let mut state := Linger[.]Selector[.]Picker[.]init [[]] [(]!savedTmux && !readOnly[)]' \
+  'let mut decoder := Linger[.]Selector[.]Input[.]init' \
   'let fds := #[[]stdinFd[]]' \
   'let events := #[[]POLLIN[]]' \
   'let ready ← poll fds events 50' \
@@ -544,10 +545,10 @@ for tie in \
   'writeAll stdoutFd [(]ByteArray[.]mk [(]Linger[.]Terminal[.]Title[.]ansi ""[)][.]toArray[)]' \
   'discard child[.]wait' \
   'let child ← IO[.]Process[.]spawn [{] cmd := executable, args := attachArgs target readOnly [}]'; do
-  code_grep "^[[:space:]]+$tie$" Linger/Manager/Picker.lean >/dev/null \
+  code_grep "^[[:space:]]+$tie$" Linger/Selector/Shell.lean >/dev/null \
     || fail "manager bypassed a proved value or fixed IO boundary: $tie"
 done
-picker_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Manager/Picker.lean)"
+picker_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Selector/Shell.lean)"
 # Pin traversal through shared row pieces, frame insertion and complete metadata
 # replacement. Computing rows or refreshed state without consuming them is
 # insufficient. The loop seams fix draw, poll/decode/step, then refresh ordering.
@@ -555,13 +556,13 @@ picker_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Manager/Picker.lean)"
 # Preserve byte order and consume both decoder results through the proved
 # application binding before dispatch.
 for tie in \
-  'for byte in bytes do let [(]next, emitted[)] := Linger[.]Tools[.]Input[.]feed decoder byte decoder := next keys := keys [+][+] [(]emitted[.]filterMap Linger[.]Tools[.]Key[.]ofInput[)][.]toArray else if Linger[.]Tools[.]Input[.]pending decoder && [(]← monotonicMs[)] - lastInput ≥ 150 then let [(]next, emitted[)] := Linger[.]Tools[.]Input[.]flush decoder decoder := next keys := [(]emitted[.]filterMap Linger[.]Tools[.]Key[.]ofInput[)][.]toArray for key in keys do' \
+  'for byte in bytes do let [(]next, emitted[)] := Linger[.]Selector[.]Input[.]feed decoder byte decoder := next keys := keys [+][+] [(]emitted[.]filterMap Linger[.]Selector[.]Key[.]ofInput[)][.]toArray else if Linger[.]Selector[.]Input[.]pending decoder && [(]← monotonicMs[)] - lastInput ≥ 150 then let [(]next, emitted[)] := Linger[.]Selector[.]Input[.]flush decoder decoder := next keys := [(]emitted[.]filterMap Linger[.]Selector[.]Key[.]ofInput[)][.]toArray for key in keys do' \
   'let nameCol := Linger[.]Display[.]Listing[.]nameWidth [(]snapshot[.]candidates[.]map fun target => [[][(]"name", target[)][]][)]' \
-  'let mut index := start for item in [(]items[.]drop start[)][.]take slots do let chosen := index == state[.]cursor let selection := if chosen then "\\x1b[[]7m" else "" let mut pieces := #[[][(]if chosen then " ▸ " else " ", selection[)][]] let chars := Linger[.]Tools[.]Picker[.]highlightedPresentation snapshot nameCol state[.]query item for char in Linger[.]Tools[.]Picker[.]emphasizeCells chars do let statusStyle := if withColor then [(]char[.]status[.]map Linger[.]Display[.]Status[.]style[)][.]getD "" else "" let emphasis := if char[.]matched then "\\x1b[[]4m" else "" pieces := pieces[.]push [(]String[.]singleton char[.]char, selection [+][+] statusStyle [+][+] emphasis[)] lines := lines[.]push pieces index := index [+] 1' \
-  'let mut frame := "\\x1b[[]0m\\x1b[[]H\\x1b[[]2J" let mut first := true for line in lines do if !first then frame := frame [+][+] "\\r\\n" first := false let mut used := 0 let mut clipped := false let mut activeStyle := "" for [(]text, style[)] in line do if clipped then break if style != activeStyle then frame := frame [+][+] "\\x1b[[]0m" [+][+] style activeStyle := style for raw in text[.]toList do let c := if Linger[.]Tools[.]Input[.]printable raw then raw else '"'"'[?]'"'"' let cells := Linger[.]Terminal[.]Vt[.]charWidth c if used [+] cells > width then clipped := true break frame := frame[.]push c used := used [+] cells if !activeStyle[.]isEmpty then frame := frame [+][+] "\\x1b[[]0m" return frame' \
-  'let next := if loaded then Linger[.]Tools[.]Picker[.]refresh state incoming[.]candidates else [{] [(]Linger[.]Tools[.]Picker[.]init incoming[.]candidates state[.]allowCreate[)] with query := state[.]query [}] dirty := dirty [|][|] !loaded [|][|] next != state [|][|] incoming != snapshot state := next snapshot := incoming loaded := true nextListing := [(]← monotonicMs[)] [+] 1000' \
+  'let mut index := start for item in [(]items[.]drop start[)][.]take slots do let chosen := index == state[.]cursor let selection := if chosen then "\\x1b[[]7m" else "" let mut pieces := #[[][(]if chosen then " ▸ " else " ", selection[)][]] let chars := Linger[.]Selector[.]Picker[.]highlightedPresentation snapshot nameCol state[.]query item for char in Linger[.]Selector[.]Picker[.]emphasizeCells chars do let statusStyle := if withColor then [(]char[.]status[.]map Linger[.]Display[.]Status[.]style[)][.]getD "" else "" let emphasis := if char[.]matched then "\\x1b[[]4m" else "" pieces := pieces[.]push [(]String[.]singleton char[.]char, selection [+][+] statusStyle [+][+] emphasis[)] lines := lines[.]push pieces index := index [+] 1' \
+  'let mut frame := "\\x1b[[]0m\\x1b[[]H\\x1b[[]2J" let mut first := true for line in lines do if !first then frame := frame [+][+] "\\r\\n" first := false let mut used := 0 let mut clipped := false let mut activeStyle := "" for [(]text, style[)] in line do if clipped then break if style != activeStyle then frame := frame [+][+] "\\x1b[[]0m" [+][+] style activeStyle := style for raw in text[.]toList do let c := if Linger[.]Selector[.]Input[.]printable raw then raw else '"'"'[?]'"'"' let cells := Linger[.]Terminal[.]Vt[.]charWidth c if used [+] cells > width then clipped := true break frame := frame[.]push c used := used [+] cells if !activeStyle[.]isEmpty then frame := frame [+][+] "\\x1b[[]0m" return frame' \
+  'let next := if loaded then Linger[.]Selector[.]Picker[.]refresh state incoming[.]candidates else [{] [(]Linger[.]Selector[.]Picker[.]init incoming[.]candidates state[.]allowCreate[)] with query := state[.]query [}] dirty := dirty [|][|] !loaded [|][|] next != state [|][|] incoming != snapshot state := next snapshot := incoming loaded := true nextListing := [(]← monotonicMs[)] [+] 1000' \
   'while true do let current ← winsizeGet stdoutFd if dirty [|][|] current != size then let frame := draw state snapshot loaded withColor savedTmux current[.]1 current[.]2 if frame != lastFrame [|][|] current != size then writeAll stdoutFd frame[.]toUTF8 lastFrame := frame size := current dirty := false let ready ← poll fds events 50' \
-  'for key in keys do if !loaded && key == [.]accept then continue match Linger[.]Tools[.]Picker[.]step state key with [|] [.]stay next => dirty := dirty [|][|] next != state state := next [|] [.]attach target [|] [.]create target => return [.]attach target snapshot [|] [.]cancel => return [.]cancel if let some result[[:space:]]*← Linger[.]Runtime[.]Command[.]poll pending then' \
+  'for key in keys do if !loaded && key == [.]accept then continue match Linger[.]Selector[.]Picker[.]step state key with [|] [.]stay next => dirty := dirty [|][|] next != state state := next [|] [.]attach target [|] [.]create target => return [.]attach target snapshot [|] [.]cancel => return [.]cancel if let some result[[:space:]]*← Linger[.]Runtime[.]Command[.]poll pending then' \
   'if full then lastFull := listed nextRemote := [(]← monotonicMs[)] [+] remoteRefreshMs let incoming := if full then listed else listed[.]withRemote lastFull let next :=' \
   'nextListing := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]← monotonicMs[)] ≥ nextListing then full := savedTmux [|][|] [(]← monotonicMs[)] ≥ nextRemote let args := if full then fullArgs else #[[]"ls", "--porcelain"[]] pending[.]set [(]some [(]← Linger[.]Runtime[.]Command[.]start executable args[)][)] return [.]cancel finally' \
   'finally Linger[.]Runtime[.]Command[.]stop pending [(]if savedTmux then 0 else 1000[)]' \
@@ -571,7 +572,7 @@ for tie in \
   printf '%s\n' "$picker_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "manager lost its selection, refresh, process ownership or attach contract: $tie"
 done
-code_grep '^def remoteRefreshMs : Nat := [1-9][0-9]*$' Linger/Manager/Picker.lean >/dev/null \
+code_grep '^def remoteRefreshMs : Nat := [1-9][0-9]*$' Linger/Selector/Shell.lean >/dev/null \
   || fail "remote rows must refresh on a positive, fixed cadence"
 # Terminal loops and remote discovery own helpers through this one executor. Reap only
 # after both pipes close; clear ownership before a reader error can throw.
@@ -991,15 +992,15 @@ done
 # a list, array or cons only in the command parser's pattern and in Picker.attachArgs,
 # tied above.
 attach_words="$(code_grep '"attach"[[:space:]]*(,|[]]|::)' 'Linger/Manager/*' 'Linger/Runtime/*' \
-    'Linger/Session/Shell/*' \
+    'Linger/Session/Shell/*' Linger/Selector/Shell.lean \
   | sed 's/^\([^:]*\):[0-9]*:[[:space:]]*/\1: /')"
 [ "$attach_words" = "$(printf '%s\n' \
-    'Linger/Manager/Picker.lean: ("attach" :: (if readOnly then ["--read-only"] else []) ++' \
-    'Linger/Runtime/Cli.lean: | "attach" :: rest | "a" :: rest =>')" ] \
+    'Linger/Runtime/Cli.lean: | "attach" :: rest | "a" :: rest =>' \
+    'Linger/Selector/Shell.lean: ("attach" :: (if readOnly then ["--read-only"] else []) ++')" ] \
   || fail "a literal attach argv: build it with Picker.attachArgs, whose operands come from Remote.targetOperands: $attach_words"
-! code_grep 'Linger[.]Tools[.]Fuzzy|Name[.]sanitize' Linger/Runtime/Cli.lean Linger/Session/Shell/Client.lean \
+! code_grep 'Linger[.]Selector[.]Fuzzy|Name[.]sanitize' Linger/Runtime/Cli.lean Linger/Session/Shell/Client.lean \
   || fail "noninteractive command lookup must not fuzzy-match or rewrite a name"
-code_grep '^[[:space:]]+Linger[.]Target[.]Remote[.]targetValid target = true ∧ target ∉ candidates := by$' Theorems/Picker.lean >/dev/null \
+code_grep '^[[:space:]]+Linger[.]Target[.]Remote[.]targetValid target = true ∧ target ∉ candidates := by$' Linger/Selector/Proofs/Picker.lean >/dev/null \
   || fail "selector creation and command arguments no longer share the target grammar"
 for verb in attach run send detach kill info capture resize get set unset clear; do
   code_grep "^[[:space:]]+withTarget \"$verb\" " Linger/Runtime/Cli.lean >/dev/null \

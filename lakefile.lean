@@ -31,17 +31,17 @@ lean_lib LingerVtTheorems where
 
 /-- Bounded terminal-key decoding, independent of any application's bindings. -/
 lean_lib LingerInput where
-  roots := #[`Linger.Tools.Input]
+  roots := #[`Linger.Selector.Input]
   leanOptions := implementationOptions
 
 /-- Decoder contracts build without the picker action adapter or session code. -/
 lean_lib LingerInputTheorems where
-  roots := #[`Theorems.Input]
+  roots := #[`Linger.Selector.Proofs.Input]
   leanOptions := implementationOptions
 
 /-- Reusable fuzzy alignment, with no session or terminal imports. -/
 lean_lib LingerFuzzy where
-  roots := #[`Linger.Tools.Fuzzy]
+  roots := #[`Linger.Selector.Fuzzy]
   leanOptions := implementationOptions
 
 /-- The native OS boundary, compiled with the clang selected by `./lake`. -/
@@ -63,16 +63,17 @@ under a component's `Proofs/` is built. Lean erases proofs regardless of file pl
 lean_lib Theorems where
   globs :=
   #[.submodules `Theorems, .submodules `Linger.Display.Proofs, .submodules `Linger.Os.Proofs,
-    .submodules `Linger.Session.Proofs, .submodules `Linger.Target.Proofs,
-    .submodules `Linger.Terminal.Proofs]
+    .submodules `Linger.Selector.Proofs, .submodules `Linger.Session.Proofs,
+    .submodules `Linger.Target.Proofs, .submodules `Linger.Terminal.Proofs]
   leanOptions := implementationOptions
 
 /-- Unit tests checked at elaboration time: every module under `Tests/` and under a component's
 `Tests/` is built. -/
 lean_lib Tests where
   globs :=
-  #[.submodules `Tests, .submodules `Linger.Display.Tests, .submodules `Linger.Session.Tests,
-    .submodules `Linger.Target.Tests, .submodules `Linger.Terminal.Tests]
+  #[.submodules `Tests, .submodules `Linger.Display.Tests, .submodules `Linger.Selector.Tests,
+    .submodules `Linger.Session.Tests, .submodules `Linger.Target.Tests,
+    .submodules `Linger.Terminal.Tests]
   leanOptions := implementationOptions
 
 /-- Executable suites: `./lake exe e2e <suite>`. -/

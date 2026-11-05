@@ -1,7 +1,7 @@
 module
 
-public import Linger.Tools.Key
-import Linger.Tools.Fuzzy
+public import Linger.Selector.Key
+import Linger.Selector.Fuzzy
 import Linger.Target.Name
 import Linger.Display.Listing
 public import Linger.Display.Status
@@ -18,7 +18,7 @@ strings. A separate labelled row offers creation of the exact valid query,
 or the default session name when the query is empty.
 -/
 
-namespace Linger.Tools.Picker
+namespace Linger.Selector.Picker
 
 /-- Whether the query is a subsequence of the target after ASCII lowercase folding:
 exactly the targets `Fuzzy.align` can align (`align_isSome_iff_matches`). -/
@@ -99,7 +99,7 @@ def Snapshot.withRemote (latest full : Snapshot) : Snapshot where
 
 /-- The candidates the query matches, in listing order. -/
 private def visible (candidates : List String) (query : String) : List String :=
-  candidates.filter (Linger.Tools.Picker.matches query)
+  candidates.filter (Linger.Selector.Picker.matches query)
 
 /-- A selectable row: a listed target or the explicit creation choice. -/
 inductive Item where
@@ -146,7 +146,7 @@ def highlightedPresentation (snapshot : Snapshot) (nameCol : Nat) (query : Strin
     List HighlightedChar :=
   let marks : List Bool :=
     match item with
-    | .existing target => ((Linger.Tools.Fuzzy.align query target).map (·.marks)).getD []
+    | .existing target => ((Linger.Selector.Fuzzy.align query target).map (·.marks)).getD []
     | .create _ => []
   (presentation snapshot nameCol item).flatMap (markPiece marks.toArray)
 
@@ -224,10 +224,10 @@ inductive Outcome where
 
 /-- Editing resets the cursor. Navigation clamps; acceptance acts on the selected
 row. No selectable row stays editable. Effects remain the caller's job. -/
-def step (s : State) (key : Linger.Tools.Key) : Outcome :=
+def step (s : State) (key : Linger.Selector.Key) : Outcome :=
   match key with
   | .text char =>
-    if Linger.Tools.Input.printable char && s.query.length < maxQueryLength then
+    if Linger.Selector.Input.printable char && s.query.length < maxQueryLength then
       .stay
         { s with
           query := s.query.push char, cursor := 0 }
@@ -254,4 +254,4 @@ def step (s : State) (key : Linger.Tools.Key) : Outcome :=
     | none => .stay s
   | .cancel => .cancel
 
-end Linger.Tools.Picker
+end Linger.Selector.Picker

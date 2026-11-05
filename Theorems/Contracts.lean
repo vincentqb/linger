@@ -6,11 +6,11 @@ import all Linger.Session.Proofs.Claim
 import all Linger.Session.Proofs.Driver
 import all Theorems.Entry
 import all Linger.Os.Proofs.Env
-import all Theorems.Fuzzy
-import all Theorems.Input
+import all Linger.Selector.Proofs.Fuzzy
+import all Linger.Selector.Proofs.Input
 import all Linger.Display.Proofs.Listing
 import all Linger.Target.Proofs.Name
-import all Theorems.Picker
+import all Linger.Selector.Proofs.Picker
 import all Linger.Target.Proofs.Remote
 import all Linger.Terminal.Proofs.Render.Grid
 import all Linger.Terminal.Proofs.Render.History
@@ -37,7 +37,8 @@ instead of passing the citation gate. The `rfl` example under Resume ties the
 `Session.resumeVt` those pins spell to `Session.bootVt`, which `Daemon.serve` calls, over
 `Checkpoint.loadBytes`. -/
 
-open Linger Linger.Session Linger.Tools Linger.Os Linger.Target Linger.Display Linger.Terminal
+open Linger Linger.Session Linger.Tools Linger.Selector Linger.Os Linger.Target Linger.Display
+  Linger.Terminal
 
 -- Checkpoints
 example (c : Checkpoint.Ckpt) (h : Vt.LiveReachableVt c.vt) :

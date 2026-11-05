@@ -13,7 +13,7 @@ waited on redirected stdin would fail here, not hang the gate. `E2E.Manager`
 separately checks bare help in every stream mode, explicit terminal selection and
 `ls` with both streams on a terminal.
 Selector acceptance chooses either an existing target or an explicit creation
-row (`Theorems/Picker.lean`).
+row (`Linger/Selector/Proofs/Picker.lean`).
 
 `Cli.cmdList` writes `terminalListing withColor rows` straight to stdout, without
 color when stdout is not a terminal, so `terminalListing false []` **is** the

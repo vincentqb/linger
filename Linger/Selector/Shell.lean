@@ -1,6 +1,6 @@
 module
 
-public import Linger.Tools.Picker
+public import Linger.Selector.Picker
 import Linger.Os.Shell
 import Linger.Display.Listing
 import Linger.Target.Remote
@@ -12,7 +12,7 @@ public section
 /-! Terminal executor for the session selector. Selection and decoding
 are pure tool modules; this module owns terminal lifetime and subprocesses. -/
 
-namespace Linger.Manager.Picker
+namespace Linger.Selector.Shell
 
 open Linger.Os.Shell
 
@@ -20,7 +20,7 @@ open Linger.Os.Shell
 inductive Choice where
   /-- An accepted row's exact target, existing or new, with the snapshot displayed
   when it was accepted. -/
-  | attach (target : String) (snapshot : Linger.Tools.Picker.Snapshot)
+  | attach (target : String) (snapshot : Linger.Selector.Picker.Snapshot)
   /-- Cancellation by key, or the end of terminal input. -/
   | cancel
   /-- A listing exited nonzero, with its exit status and standard error. -/
@@ -30,12 +30,12 @@ inductive Choice where
 so neither a full-width name nor a resize induces an automatic line wrap.
 In short terminals the selected row takes priority over decoration and help.
 Before the first snapshot the query is editable, but there is no selectable row. -/
-private def draw (state : Linger.Tools.Picker.State) (snapshot : Linger.Tools.Picker.Snapshot)
+private def draw (state : Linger.Selector.Picker.State) (snapshot : Linger.Selector.Picker.Snapshot)
     (loaded withColor savedTmux : Bool) (cols rows : UInt32) : String :=
   Id.run do
     let width := cols.toNat - 1
     let height := max 1 rows.toNat
-    let items := Linger.Tools.Picker.items state.candidates state.query state.allowCreate
+    let items := Linger.Selector.Picker.items state.candidates state.query state.allowCreate
     let nameCol :=
       Linger.Display.Listing.nameWidth (snapshot.candidates.map fun target => [("name", target)])
     let mut lines : Array (Array (String × String)) := #[]
@@ -81,8 +81,9 @@ private def draw (state : Linger.Tools.Picker.State) (snapshot : Linger.Tools.Pi
         let chosen := index == state.cursor
         let selection := if chosen then "\x1b[7m" else ""
         let mut pieces := #[(if chosen then "  ▸ " else "    ", selection)]
-        let chars := Linger.Tools.Picker.highlightedPresentation snapshot nameCol state.query item
-        for char in Linger.Tools.Picker.emphasizeCells chars do
+        let chars :=
+          Linger.Selector.Picker.highlightedPresentation snapshot nameCol state.query item
+        for char in Linger.Selector.Picker.emphasizeCells chars do
           let statusStyle :=
             if withColor then (char.status.map Linger.Display.Status.style).getD "" else ""
           let emphasis := if char.matched then "\x1b[4m" else ""
@@ -95,7 +96,7 @@ private def draw (state : Linger.Tools.Picker.State) (snapshot : Linger.Tools.Pi
       let action :=
         if !loaded then "  Type to search"
         else
-          match Linger.Tools.Picker.selected state with
+          match Linger.Selector.Picker.selected state with
           | some (.existing _) =>
             if savedTmux then "  ↵ import / attach"
             else if state.allowCreate then "  ↵ attach" else "  ↵ view"
@@ -118,7 +119,7 @@ private def draw (state : Linger.Tools.Picker.State) (snapshot : Linger.Tools.Pi
           frame := frame ++ "\x1b[0m" ++ style
           activeStyle := style
         for raw in text.toList do
-          let c := if Linger.Tools.Input.printable raw then raw else '?'
+          let c := if Linger.Selector.Input.printable raw then raw else '?'
           let cells := Linger.Terminal.Vt.charWidth c
           if used + cells > width then
             clipped := true
@@ -156,14 +157,14 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
     writeAll stdoutFd (ByteArray.mk (Linger.Terminal.Title.ansi "linger").toArray)
     let fds := #[stdinFd]
     let events := #[POLLIN]
-    let mut state := Linger.Tools.Picker.init [] (!savedTmux && !readOnly)
-    let mut snapshot : Linger.Tools.Picker.Snapshot := {}
+    let mut state := Linger.Selector.Picker.init [] (!savedTmux && !readOnly)
+    let mut snapshot : Linger.Selector.Picker.Snapshot := {}
     let mut loaded := false
-    let mut decoder := Linger.Tools.Input.init
+    let mut decoder := Linger.Selector.Input.init
     let mut lastInput ← monotonicMs
     let mut nextListing := 0
     let mut full := true
-    let mut lastFull : Linger.Tools.Picker.Snapshot := {}
+    let mut lastFull : Linger.Selector.Picker.Snapshot := {}
     let mut nextRemote := 0
     let mut size := (0, 0)
     let mut lastFrame := ""
@@ -181,7 +182,7 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
       let bits := ready[0]!
       if bits &&& POLLNVAL != 0 then
         throw (IO.userError "picker input descriptor became invalid")
-      let mut keys : Array Linger.Tools.Key := #[]
+      let mut keys : Array Linger.Selector.Key := #[]
       if bits &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
         match ← read stdinFd 4096 with
         | none =>
@@ -190,17 +191,17 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
           if !bytes.isEmpty then
             lastInput ← monotonicMs
           for byte in bytes do
-            let (next, emitted) := Linger.Tools.Input.feed decoder byte
+            let (next, emitted) := Linger.Selector.Input.feed decoder byte
             decoder := next
-            keys := keys ++ (emitted.filterMap Linger.Tools.Key.ofInput).toArray
-      else if Linger.Tools.Input.pending decoder && (← monotonicMs) - lastInput ≥ 150 then
-        let (next, emitted) := Linger.Tools.Input.flush decoder
+            keys := keys ++ (emitted.filterMap Linger.Selector.Key.ofInput).toArray
+      else if Linger.Selector.Input.pending decoder && (← monotonicMs) - lastInput ≥ 150 then
+        let (next, emitted) := Linger.Selector.Input.flush decoder
         decoder := next
-        keys := (emitted.filterMap Linger.Tools.Key.ofInput).toArray
+        keys := (emitted.filterMap Linger.Selector.Key.ofInput).toArray
       for key in keys do
         if !loaded && key == .accept then
           continue
-        match Linger.Tools.Picker.step state key with
+        match Linger.Selector.Picker.step state key with
         | .stay next =>
           dirty := dirty || next != state
           state := next
@@ -211,15 +212,15 @@ def choose (executable : String) (save : Option String := none) (readOnly : Bool
       if let some result← Linger.Runtime.Command.poll pending then
         if result.exitCode != 0 then
           return .failed result.exitCode result.stderr
-        let listed ← IO.ofExcept (Linger.Tools.Picker.parseSnapshot result.stdout)
+        let listed ← IO.ofExcept (Linger.Selector.Picker.parseSnapshot result.stdout)
         if full then
           lastFull := listed
           nextRemote := (← monotonicMs) + remoteRefreshMs
         let incoming := if full then listed else listed.withRemote lastFull
         let next :=
-          if loaded then Linger.Tools.Picker.refresh state incoming.candidates
+          if loaded then Linger.Selector.Picker.refresh state incoming.candidates
           else
-            { (Linger.Tools.Picker.init incoming.candidates state.allowCreate) with
+            { (Linger.Selector.Picker.init incoming.candidates state.allowCreate) with
               query := state.query }
         dirty := dirty || !loaded || next != state || incoming != snapshot
         state := next
@@ -265,4 +266,4 @@ def run (executable : String) (readOnly : Bool := false) : IO UInt32 := do
       discard child.wait
   return 0
 
-end Linger.Manager.Picker
+end Linger.Selector.Shell

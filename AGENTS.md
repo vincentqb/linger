@@ -48,8 +48,11 @@ dispatch, and pushes or pull requests that change `c/shim.c` or `./lake`.
 - `Linger/Session.lean` and `Linger/Session/`: the session machine, its effect `Driver`,
   `Wire` format, `Buf` queues and `Checkpoint`s; `Shell/` holds the daemon, the attach
   client, checkpoint files and state paths.
+- `Linger/Selector/`: interactive selection: bounded key `Input`, `Key` bindings, `Fuzzy`
+  alignment and the `Picker`; `Shell.lean` runs the picker on a terminal.
 - Not yet in a component: `Linger/Runtime/`, the CLI and command jobs; `Linger/Tools/` and
-  `Linger/Manager/`, CLI policies and their IO executors; `Theorems/`, `Tests/` and `E2E/`.
+  `Linger/Manager/`, the entry route and the import policy and executor; `Theorems/`,
+  `Tests/` and `E2E/`.
 - `scripts/`: build and verification orchestration.
 
 Keep module paths and namespaces aligned. Use ordinary `import` for implementation
