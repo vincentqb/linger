@@ -3,8 +3,8 @@ module
 import Linger.Tools.Resurrect
 import Linger.Os.Shell
 import Linger.Display.Listing
-import Linger.Runtime.Paths
-import Linger.Runtime.Resume
+import Linger.Session.Shell.Paths
+import Linger.Session.Shell.Resume
 import Linger.Runtime.Cli
 import Linger.Runtime.Command
 import Linger.Target.Remote
@@ -19,6 +19,7 @@ Exports publish current native names and directories atomically. -/
 
 namespace Linger.Manager.Resurrect
 
+open Linger.Session.Shell
 open Linger.Tools.Resurrect
 open Linger.Runtime
 
@@ -285,7 +286,7 @@ private def seedPane (pane : Pane) (contents : Option String) : IO Bool :=
     let handle ← IO.FS.Handle.mk tmp .writeNew
     try
       Linger.Os.Shell.chmod tmp.toString 0o600
-      handle.write (Linger.Core.Checkpoint.saveBytes (checkpoint pane contents))
+      handle.write (Linger.Session.Checkpoint.saveBytes (checkpoint pane contents))
       handle.flush
       IO.FS.hardLink tmp path
     finally

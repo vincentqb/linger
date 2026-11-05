@@ -1,7 +1,7 @@
 module
 
 import E2E.Recipes
-import Linger.Core.Checkpoint
+import Linger.Session.Checkpoint
 import all Linger.Manager.Resurrect
 
 public section
@@ -21,7 +21,7 @@ namespace E2E.Interop
 
 open E2E.Harness
 open E2E.Recipes (paneLine tmuxFixtureEnv)
-open Linger.Core.Checkpoint
+open Linger.Session.Checkpoint
 
 private def process (args : IO.Process.SpawnArgs) (ms : Nat := 10000) :
     IO (UInt32 × String × String) := do
@@ -989,20 +989,20 @@ private def nativeFallback (f : Fixture) (home : Option String) (mixed : Bool) :
       #[("HOME", home), ("LINGER_DIR", none), ("XDG_STATE_HOME", none),
         ("XDG_RUNTIME_DIR", some runtime.toString)]
       do
-      let native ← Linger.Runtime.Paths.stateDir
+      let native ← Linger.Session.Shell.Paths.stateDir
       let original := f.root / "native"
       let alternate := f.root / "alternate"
       let checkpointDir ←
         withVariables #[("XDG_STATE_HOME", some original.toString)] do
-            let dir ← Linger.Runtime.Paths.stateDir
-            Linger.Runtime.Paths.ensureDir dir
+            let dir ← Linger.Session.Shell.Paths.stateDir
+            Linger.Session.Shell.Paths.ensureDir dir
             return dir
       let checkpoints := { f with env := { f.env with dir := checkpointDir } }
       checkpoints.seed "saved.name" savedCwd.toString
       let target := f.root / "out" / "native-fallback"
       let observed ← IO.mkRef (none : Option String)
       let capture := do
-        let observedDir ← Linger.Runtime.Paths.stateDir
+        let observedDir ← Linger.Session.Shell.Paths.stateDir
         observed.set (some observedDir)
         let selected := if observedDir == native then original else alternate
         Std.Async.System.setEnvVar "XDG_STATE_HOME" selected.toString

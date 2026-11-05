@@ -63,15 +63,16 @@ under a component's `Proofs/` is built. Lean erases proofs regardless of file pl
 lean_lib Theorems where
   globs :=
   #[.submodules `Theorems, .submodules `Linger.Display.Proofs, .submodules `Linger.Os.Proofs,
-    .submodules `Linger.Target.Proofs, .submodules `Linger.Terminal.Proofs]
+    .submodules `Linger.Session.Proofs, .submodules `Linger.Target.Proofs,
+    .submodules `Linger.Terminal.Proofs]
   leanOptions := implementationOptions
 
 /-- Unit tests checked at elaboration time: every module under `Tests/` and under a component's
 `Tests/` is built. -/
 lean_lib Tests where
   globs :=
-  #[.submodules `Tests, .submodules `Linger.Display.Tests, .submodules `Linger.Target.Tests,
-    .submodules `Linger.Terminal.Tests]
+  #[.submodules `Tests, .submodules `Linger.Display.Tests, .submodules `Linger.Session.Tests,
+    .submodules `Linger.Target.Tests, .submodules `Linger.Terminal.Tests]
   leanOptions := implementationOptions
 
 /-- Executable suites: `./lake exe e2e <suite>`. -/

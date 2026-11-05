@@ -4,7 +4,7 @@ import E2E.Harness
 import Linger.Terminal.Mediation
 import Linger.Terminal.Title
 import Linger.Display.Title
-import Linger.Runtime.Client
+import Linger.Session.Shell.Client
 import Linger.Target.Remote
 
 public section
@@ -20,6 +20,7 @@ that implementation. `e2e --title-probe` is the child dispatch, not a test suite
 
 namespace Linger.Display.Suites.Title
 
+open Linger.Session.Shell
 open Linger.Terminal
 open E2E.Harness
 open Linger.Os.Shell
@@ -114,8 +115,8 @@ def fixtureSample (dir : String) : IO String := do
 a sample still running once attach has returned. -/
 def attachProbe (name : String) : IO UInt32 := do
   let some dir ← IO.getEnv "LINGER_DIR" | return 2
-  let some fd ← Linger.Runtime.Client.connect name | return 2
-  let outcome ← Linger.Runtime.Client.attach name fd (fixtureSample dir)
+  let some fd ← Linger.Session.Shell.Client.connect name | return 2
+  let outcome ← Linger.Session.Shell.Client.attach name fd (fixtureSample dir)
   if (← counter s!"{dir}/sample-count") != (← counter s!"{dir}/sample-finished") then
     return 5
   match outcome with

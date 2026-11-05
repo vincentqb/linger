@@ -348,7 +348,7 @@ A row cap would bound nothing that matters. `Cell.erased` emits one space and no
 SGR, so a blank 80-column row costs 86 counted (82 emitted); per-cell truecolour
 costs 40 bytes a column, 57 with all seven attributes. A full `sbCap = 10000`
 ring is therefore 32–46 MB at 80 columns and ~86 MB at 150 — against an
-`outbufCap` of 4 MiB that **disconnects** the client (`Linger/Runtime/Daemon.lean`).
+`outbufCap` of 4 MiB that **disconnects** the client (`Linger/Session/Shell/Daemon.lean`).
 Without a byte budget, attach becomes attach-then-instant-drop.
 
 262144 admits 3,048 blank 80-column rows, or 2,383 of a realistic mixed

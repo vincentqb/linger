@@ -36,7 +36,7 @@ namespace Linger.Terminal.Vt
 
 `Vt.colCount`/`rowCount`/`cursorPos`/`inAlt` are the public reading of four sealed
 fields (`Linger/Terminal/Vt.lean`), for consumers outside the toolkit —
-`Linger/Core/Session.lean` and the resume path in `Linger/Runtime/Daemon.lean`. Each
+`Linger/Session.lean` and the resume path in `Linger/Session/Shell/Daemon.lean`. Each
 is a projection, so its claim is the equation that says so, and `@[simp]` is what
 earns these their keep: a proof that has a hypothesis about a field and a goal about
 the accessor needs the bridge, and without it `onMsg_attach_same_size_vt` and two
@@ -111,7 +111,7 @@ theorem good_init (cols rows : Nat) : Good (Vt.init cols rows) := by
 
 `Vt.ofDecoded` (`Linger/Terminal/Vt.lean`) is the only way a `Vt` comes into existence
 other than `Vt.init`, and unlike `init` its inputs are *attacker-controlled*: they are
-whatever `Linger/Core/Checkpoint.lean`'s `rVt` read out of a file. Three claims — the
+whatever `Linger/Session/Checkpoint.lean`'s `rVt` read out of a file. Three claims — the
 spec of the check, the guarantee, and what stops the guarantee being achieved by
 refusing everything. -/
 

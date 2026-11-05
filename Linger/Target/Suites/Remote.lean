@@ -4,7 +4,7 @@ public import E2E.Harness
 import Linger.Runtime.Cli
 import Linger.Runtime.Command
 import Linger.Target.Remote
-import Linger.Runtime.Client
+import Linger.Session.Shell.Client
 
 public section
 
@@ -120,8 +120,8 @@ def discoveryInfo (root : String) : IO UInt32 := do
         IO.FS.writeFile s!"{root}/local.request" ""
         unless ← waitFor 5000 (System.FilePath.pathExists s!"{root}/first.started") do
           return 1
-        Linger.Runtime.Client.sendMsg fd (.infoReply "cmd\tlocal-concurrent\n".toUTF8.toList)
-        Linger.Runtime.Client.sendMsg fd .done
+        Linger.Session.Shell.Client.sendMsg fd (.infoReply "cmd\tlocal-concurrent\n".toUTF8.toList)
+        Linger.Session.Shell.Client.sendMsg fd .done
         return 0
       finally
         Linger.Os.Shell.close fd

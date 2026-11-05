@@ -36,8 +36,8 @@ dispatch, and pushes or pull requests that change `c/shim.c` or `./lake`.
 
 ## Layout
 
-- `Linger/<Component>/`: a component's pure modules, its `Shell.lean` for IO and, for
-  the OS, `Boundary.lean` for the foreign declarations; then `Proofs/`, `Tests/`
+- `Linger/<Component>/`: a component's pure modules, its `Shell.lean` or `Shell/` for IO
+  and, for the OS, `Boundary.lean` for the foreign declarations; then `Proofs/`, `Tests/`
   (elaboration-time unit tests) and `Suites/` (executable suites).
 - `Linger/Os/`: the operating system. `Boundary.lean` holds the foreign declarations,
   `Shell.lean` the checked surface callers use, `Env.lean` the environment policies.
@@ -45,9 +45,11 @@ dispatch, and pushes or pull requests that change `c/shim.c` or `./lake`.
 - `Linger/Display/`: session status, titles and listings.
 - `Linger/Terminal/`: the VT toolkit: the emulator `Vt`, `Render`, streaming `Replay`,
   child-facing `Mediation` and safe `Title` updates.
-- Not yet in a component: `Linger/Core/`, pure session models;
-  `Linger/Runtime/`, session IO; `Linger/Tools/` and `Linger/Manager/`, CLI policies
-  and their IO executors; `Theorems/`, `Tests/` and `E2E/`.
+- `Linger/Session.lean` and `Linger/Session/`: the session machine, its effect `Driver`,
+  `Wire` format, `Buf` queues and `Checkpoint`s; `Shell/` holds the daemon, the attach
+  client, checkpoint files and state paths.
+- Not yet in a component: `Linger/Runtime/`, the CLI and command jobs; `Linger/Tools/` and
+  `Linger/Manager/`, CLI policies and their IO executors; `Theorems/`, `Tests/` and `E2E/`.
 - `scripts/`: build and verification orchestration.
 
 Keep module paths and namespaces aligned. Use ordinary `import` for implementation
@@ -58,9 +60,9 @@ Lean erases proofs regardless of file placement.
 
 ## Implementation rules
 
-- Pure modules have no `IO`, `partial def` or `sorry`: each component's modules other
-  than `Boundary.lean` and `Shell.lean`, and `Linger/Core/*` and `Linger/Tools/*`.
-  Model effects as data; execute them in `Shell.lean`, `Linger/Runtime/*` and
+- Pure modules have no `IO`, `partial def` or `sorry`: a component's top module, each
+  component's modules other than `Boundary.lean` and `Shell.lean`, and `Linger/Tools/*`.
+  Model effects as data; execute them in `Shell.lean` or `Shell/`, `Linger/Runtime/*` and
   `Linger/Manager/*`.
 - Every `def` or `abbrev` in a pure module needs a written
   theorem whose type contains its exact fully qualified constant in the same
@@ -105,7 +107,7 @@ Lean erases proofs regardless of file placement.
   socket lives under `/tmp`, through `E2E.Harness.socketRoot` or `socket_root` in
   `scripts/e2e.sh`, since macOS's `TMPDIR` alone takes about 49 of a socket path's 104
   bytes; `scripts/gates.sh` rejects any other hard-coded `/tmp` there and in the CI
-  workflow, except in `E2E/Paths.lean` and `Linger/Display/Suites/Overview.lean`, which assert product
+  workflow, except in `Linger/Session/Suites/Paths.lean` and `Linger/Display/Suites/Overview.lean`, which assert product
   defaults.
 - No `partial def`, fuel parameter or raised `maxHeartbeats`/`maxRecDepth` in any
   Lean file (`scripts/gates.sh`). Proofs add no axioms:

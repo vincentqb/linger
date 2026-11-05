@@ -1,6 +1,5 @@
 module
 
-public import Linger.Core.Buf
 import all Linger.Os.Boundary
 import Std.Async.System
 
@@ -82,26 +81,6 @@ def writeAll (fd : UInt32) (bytes : ByteArray) : IO Unit := do
     if n ≤ 0 then
       throw (IO.userError s!"write_all: peer gone (fd {fd})")
     off := off + n.toNatClampNeg
-
-/-- One write attempt for a `Linger.Core.Buf` queue, skipping the `sent` bytes the
-flush loop already got out. The result is `write`'s: `≥ 0` bytes written (0 = would
-block, or nothing is owed past `sent`); `-1` = peer gone; other errors throw.
-`Buf.writeFrom` is the byte view of the debt, so what reaches `write(2)` here is the debt
-and nothing else: `Buf.bufSize_eq_owedLen` shows the queue retains no more, and
-`Buf.bufAdvance_writeFrom` gives what the loop leaves after advancing.
-
-`sent` is the flush loop's **transient** cursor, not stored state: a `Buf` holds
-exactly the bytes still owed, and the loop calls `Buf.bufAdvance` once when it
-stops. Passing the cursor here rather than re-slicing per iteration keeps a flush
-to a single copy.
-
-This is a **Lean-level wrapper** over the existing `linger_write` extern, not a new
-syscall. It cannot read a `Buf`'s representation — `bytes` is `private`, and this
-calls the one API window, `writeFrom`. `scripts/gates.sh`'s greps still gate
-`Linger/Runtime/*` against declaring parallel byte buffers of its own, the half privacy
-cannot see. -/
-def writeBuf (fd : UInt32) (b : Linger.Core.Buf.Buf) (sent : Nat) : IO Int64 :=
-  write fd (Linger.Core.Buf.writeFrom b) (USize.ofNat sent)
 
 /-- poll(2). `fds` and `events` are parallel arrays; returns `revents`
 per fd (all zero on timeout or EINTR). `timeoutMs < 0` waits forever.

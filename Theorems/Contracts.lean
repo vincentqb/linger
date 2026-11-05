@@ -1,9 +1,9 @@
 module
 
-import all Theorems.Buf
-import all Theorems.Checkpoint
-import all Theorems.Claim
-import all Theorems.Driver
+import all Linger.Session.Proofs.Buf
+import all Linger.Session.Proofs.Checkpoint
+import all Linger.Session.Proofs.Claim
+import all Linger.Session.Proofs.Driver
 import all Theorems.Entry
 import all Linger.Os.Proofs.Env
 import all Theorems.Fuzzy
@@ -21,13 +21,13 @@ import all Linger.Terminal.Proofs.Render.Sticky
 import all Linger.Terminal.Proofs.Render.Tabs
 import all Linger.Terminal.Proofs.Replay
 import all Theorems.Resurrect
-import all Theorems.Session
+import all Linger.Session.Proofs.Session
 import all Linger.Display.Proofs.Status
 import all Linger.Display.Proofs.Title
 import all Linger.Terminal.Proofs.Vt
 import all Linger.Terminal.Proofs.Vt.Renderable
 import all Linger.Terminal.Proofs.Vt.State
-import all Theorems.Wire
+import all Linger.Session.Proofs.Wire
 
 /-! # Contract statements
 
@@ -37,7 +37,7 @@ instead of passing the citation gate. The `rfl` example under Resume ties the
 `Session.resumeVt` those pins spell to `Session.bootVt`, which `Daemon.serve` calls, over
 `Checkpoint.loadBytes`. -/
 
-open Linger.Core Linger.Tools Linger.Os Linger.Target Linger.Display Linger.Terminal
+open Linger Linger.Session Linger.Tools Linger.Os Linger.Target Linger.Display Linger.Terminal
 
 -- Checkpoints
 example (c : Checkpoint.Ckpt) (h : Vt.LiveReachableVt c.vt) :

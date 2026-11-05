@@ -68,10 +68,12 @@ code_count() { code_grep "$@" | awk 'END { print NR + 0 }'; }   # -> a number
 
 # Which modules are pure code and which are proofs, read from the tree with the rule
 # `Theorems/Coverage.lean` (`pureModule`, `proofModule`) applies to module names: pure code is
-# each component's top-level modules other than its boundary and shell, plus the legacy
-# `Linger/Core` and `Linger/Tools` trees; proofs are each component's `Proofs/` plus the legacy
-# `Theorems/`. Deliberate word splitting below: no tracked path in this tree has a space.
+# a component's top module (`Linger/Session.lean`) and each component's top-level modules other
+# than its boundary and shell, plus the legacy `Linger/Core` and `Linger/Tools` trees; proofs are
+# each component's `Proofs/` plus the legacy `Theorems/`. Deliberate word splitting below: no
+# tracked path in this tree has a space.
 pure_paths="$(git ls-files -- 'Linger/*.lean' | awk -F/ '
+  NF == 2 ||
   NF == 3 && $2 != "Runtime" && $2 != "Manager" && $3 != "Boundary.lean" && $3 != "Shell.lean"')"
 proof_paths="$(git ls-files -- 'Theorems/*.lean' 'Linger/*/Proofs/*.lean')"
 [ -n "$pure_paths" ] && [ -n "$proof_paths" ] || fail "no pure or proof modules found"
@@ -168,6 +170,7 @@ code_grep '^[[:space:]]+v[.]eraseRowSpan v[.]cursor[.]y v[.]cursor[.]x [(]min [(
 # The shim returns -errno and errno numbers differ by platform: 918c671's
 # `r == -111` meant ECONNREFUSED only on Linux.
 ! code_grep '(==|!=)[[:space:]]*[(]?-([2-9]|[1-9][0-9]+)([^0-9]|$)' 'Linger/Runtime/*' \
+    'Linger/Session/Shell/*' \
     'Linger/Manager/*' 'Linger/Os/Shell.lean' 'Main.lean' 'E2E/*' 'Linger/*/Suites/*' \
   || fail "a negative literal comparison looks like an errno number: compare the sign, or classify the errno in c/shim.c"
 # Lean/libuv may have worker threads when the application forks. The child
@@ -332,7 +335,7 @@ module_imports Linger/Terminal/Proofs/Vt.lean 'Linger/Terminal/Proofs/Vt/*' Ling
 # composes their executors with the session backend. The session library never
 # imports them, even through an intermediate module: every library import
 # stays in Core, Runtime or the OS boundary.
-import_closure Linger/Tools/Resurrect.lean 'import Linger.Target.Name;import Linger.Display.Status;public import Linger.Core.Checkpoint;'
+import_closure Linger/Tools/Resurrect.lean 'import Linger.Target.Name;import Linger.Display.Status;public import Linger.Session.Checkpoint;'
 import_closure Linger/Tools/Key.lean 'public import Linger.Tools.Input;'
 import_closure Linger/Tools/Fuzzy.lean ''
 import_closure Linger/Tools/Picker.lean 'public import Linger.Tools.Key;import Linger.Tools.Fuzzy;import Linger.Target.Name;import Linger.Display.Listing;public import Linger.Display.Status;import Linger.Target.Remote;import Linger.Terminal.Vt;'
@@ -349,26 +352,27 @@ import_closure Linger/Os/Boundary.lean ''
     import_mod($3) == "Linger.Os.Boundary" && !seen[$1]++ { print $1 }')" = "Linger/Os/Shell.lean" ] \
   || fail "a module other than Linger/Os/Shell.lean imports Linger.Os.Boundary"
 import_closure Linger/Runtime/Command.lean 'import Linger.Os.Shell;'
-import_closure Linger/Manager/Resurrect.lean 'import Linger.Tools.Resurrect;import Linger.Os.Shell;import Linger.Display.Listing;import Linger.Runtime.Paths;import Linger.Runtime.Resume;import Linger.Runtime.Cli;import Linger.Runtime.Command;import Linger.Target.Remote;import Linger.Manager.Picker;import Std.Async.System;'
+import_closure Linger/Manager/Resurrect.lean 'import Linger.Tools.Resurrect;import Linger.Os.Shell;import Linger.Display.Listing;import Linger.Session.Shell.Paths;import Linger.Session.Shell.Resume;import Linger.Runtime.Cli;import Linger.Runtime.Command;import Linger.Target.Remote;import Linger.Manager.Picker;import Std.Async.System;'
 import_closure Linger/Manager/Picker.lean \
   'public import Linger.Tools.Picker;import Linger.Os.Shell;import Linger.Display.Listing;import Linger.Target.Remote;import Linger.Terminal.Title;import Linger.Runtime.Command;'
 import_closure Main.lean \
   'import Linger.Runtime.Cli;import Linger.Tools.Entry;import Linger.Manager.Picker;import Linger.Manager.Resurrect;'
 # `lean_lib Linger` builds the umbrella's closure, so this list is what `./lake build`
 # checks of the session library.
-import_closure Linger.lean "$(printf 'public import Linger.%s;' Core.Buf Os.Shell Core.Wire \
-  Terminal.Vt Terminal.Render Terminal.Mediation Terminal.Title Target.Name Core.Session \
-  Core.Driver Core.Checkpoint \
-  Target.Remote Display.Listing Display.Status Display.Title Os.Env Runtime.Paths Runtime.Command \
-  Runtime.Daemon Runtime.Client Runtime.Cli Runtime.Resume)"
-module_imports 'Linger/Core/*' 'Linger/Runtime/*' Linger/Os/Boundary.lean Linger/Os/Shell.lean \
+import_closure Linger.lean "$(printf 'public import Linger.%s;' Session.Buf Os.Shell Session.Wire \
+  Terminal.Vt Terminal.Render Terminal.Mediation Terminal.Title Target.Name Session \
+  Session.Driver Session.Checkpoint \
+  Target.Remote Display.Listing Display.Status Display.Title Os.Env Session.Shell.Paths \
+  Runtime.Command Session.Shell.Daemon Session.Shell.Client Runtime.Cli Session.Shell.Resume)"
+module_imports Linger/Session.lean ':(glob)Linger/Session/*.lean' 'Linger/Session/Shell/*' \
+    'Linger/Runtime/*' Linger/Os/Boundary.lean Linger/Os/Shell.lean \
     Linger/Os/Env.lean Linger/Target/Name.lean Linger/Target/Remote.lean Linger/Display/Status.lean \
     Linger/Display/Title.lean Linger/Display/Listing.lean Linger/Terminal/Vt.lean \
     Linger/Terminal/Render.lean Linger/Terminal/Mediation.lean Linger/Terminal/Title.lean \
     Linger/Terminal/Replay.lean Linger.lean \
 | awk -F: "$IMPORT_AWK"'
   { mod = import_mod($3)
-    if (mod !~ /^(Linger[.](Core|Runtime|Os|Target|Display|Terminal)[.][[:alnum:]_.]+|Std[.]Async[.](System|Signal))$/) {
+    if (mod !~ /^(Linger[.]Session|Linger[.](Session|Runtime|Os|Target|Display|Terminal)[.][[:alnum:]_.]+|Std[.]Async[.](System|Signal))$/) {
       print "  " $0; bad = 1
     }
   }
@@ -468,7 +472,7 @@ for tie in \
   'unless text "archive" == some found[.]path[.]toString && row[.]lookup "archive-revision" == some [(]archiveRevision found[)] do throw [(]IO[.]userError "pane capture archive changed; refresh the saved panes"[)]' \
   'private def seedPane [(]pane : Pane[)] [(]contents : Option String[)] : IO Bool := Paths[.]withSessionLock pane[.]name do' \
   'if [(]← [(]System[.]FilePath[.]mk path[)][.]pathExists[)] [|][|] [(]← [(]System[.]FilePath[.]mk socket[)][.]pathExists[)] then return false' \
-  'let handle ← IO[.]FS[.]Handle[.]mk tmp [.]writeNew try Linger[.]Os[.]Shell[.]chmod tmp[.]toString 0o600 handle[.]write [(]Linger[.]Core[.]Checkpoint[.]saveBytes [(]checkpoint pane contents[)][)] handle[.]flush IO[.]FS[.]hardLink tmp path finally IO[.]FS[.]removeFile tmp' \
+  'let handle ← IO[.]FS[.]Handle[.]mk tmp [.]writeNew try Linger[.]Os[.]Shell[.]chmod tmp[.]toString 0o600 handle[.]write [(]Linger[.]Session[.]Checkpoint[.]saveBytes [(]checkpoint pane contents[)][)] handle[.]flush IO[.]FS[.]hardLink tmp path finally IO[.]FS[.]removeFile tmp' \
   'pending[.]set [(]some [(]← Command[.]startLimited "tar" args limit[)][)] let deadline := [(]← Linger[.]Os[.]Shell[.]monotonicMs[)] [+] 5000' \
   'throw [(]IO[.]userError "pane capture archive timed out"[)] finally Command[.]stop pending'; do
   printf '%s\n' "$import_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
@@ -651,7 +655,7 @@ for tie in \
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "discovery lost its bounded task or process ownership: $tie"
 done
-code_grep '^[[:space:]]+let r ← unixConnect path nonblocking$' Linger/Runtime/Client.lean >/dev/null \
+code_grep '^[[:space:]]+let r ← unixConnect path nonblocking$' Linger/Session/Shell/Client.lean >/dev/null \
   || fail "status connect lost its nonblocking boundary"
 
 # Title writes use the bounded, control-free encoder and the existing VT
@@ -678,7 +682,7 @@ for claim in observe_append observe_no_history observe_dims observe_invariants \
 done
 code_grep '^theorem leave_boundary_title ' Linger/Terminal/Proofs/Render/Modes.lean >/dev/null \
   || fail "default title handback theorem disappeared"
-client_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Runtime/Client.lean)"
+client_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/Shell/Client.lean)"
 for tie in \
   'let mut observer := Linger[.]Terminal[.]Vt[.]Vt[.]init 1 1' \
   'while !leaving do if let some task[[:space:]]*← pending[.]get then if ← IO[.]hasFinished task then pending[.]set none let fresh := match ← IO[.]wait task with [|] [.]ok text => text [|] [.]error _ => String[.]singleton [(]Linger[.]Display[.]Status[.]icon [.]unknown[)] titleDirty := titleDirty [|][|] fresh != summary summary := fresh nextSummary := [(]← monotonicMs[)] [+] 1000 if [(]← pending[.]get[)][.]isNone && [(]← monotonicMs[)] ≥ nextSummary then pending[.]set [(]some [(]← IO[.]asTask sample Task[.]Priority[.]dedicated[)][)] let revs ← poll #[[]stdinFd, fd[]] #[[]POLLIN, POLLIN[]] 200' \
@@ -689,18 +693,18 @@ for tie in \
   printf '%s\n' "$client_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "attached title lost its observer, sampler or handback contract: $tie"
 done
-! code_grep 'IO[.]Process|Command[.]|spawnDetached|spawnPty|appPath' Linger/Runtime/Client.lean \
+! code_grep 'IO[.]Process|Command[.]|spawnDetached|spawnPty|appPath' Linger/Session/Shell/Client.lean \
   || fail "the attach client starts processes; it samples title attention in its own process"
-[ "$(code_count 'observer := observer[.]observe' Linger/Runtime/Client.lean)" -eq 1 ] \
+[ "$(code_count 'observer := observer[.]observe' Linger/Session/Shell/Client.lean)" -eq 1 ] \
   || fail "title observer must consume application output exactly once"
-[ "$(code_count '(^|[[:space:]])observer([[:space:]]+:[^=]*)?[[:space:]]*(:=|←)' Linger/Runtime/Client.lean)" -eq 2 ] \
+[ "$(code_count '(^|[[:space:]])observer([[:space:]]+:[^=]*)?[[:space:]]*(:=|←)' Linger/Session/Shell/Client.lean)" -eq 2 ] \
   || fail "title observer may only initialize once and consume application output"
 awk '
   /receivedOutput := true/ { output = 1; next }
   output && /^[[:space:]]*--/ { next }
   output { if ($0 !~ /^[[:space:]]*titleDirty := true$/) bad = 1; output = 0; checked++ }
   END { exit (checked != 1 || bad) }
-' Linger/Runtime/Client.lean \
+' Linger/Session/Shell/Client.lean \
   || fail "repeated application titles no longer trigger reassertion"
 
 # The `Vt` friend set — who may forge a `Vt` (SCRATCHPAD.md, "the adversarial audit of
@@ -708,7 +712,7 @@ awk '
 # whatever M has all-access to, so **`import all` TRANSITS** and
 # `git grep -l 'import all Linger.Terminal.Vt'` is NOT an enumeration of the friend set.
 # Measured in the real position, not a scratch file: one added
-# `import all Linger.Terminal.Render` in `Linger/Runtime/Client.lean` plus a five-field
+# `import all Linger.Terminal.Render` in `Linger/Session/Shell/Client.lean` plus a five-field
 # `{ cols := 0, rows := 0, grid := #[], … }` gives `./lake build linger` exit 0 AND
 # `sh scripts/gates.sh` exit 0. Two hops is the same: `import all Linger.Display.Proofs.Listing` from
 # a file holding neither `import all Linger.Terminal.Vt` nor `import all Linger.Terminal.Render`
@@ -718,7 +722,7 @@ awk '
 # made `private` on 20 fields worth one line of anyone's diff.
 #
 # CLOSURE, not edges. Transit follows `import all` edges ONLY (measured:
-# `import all Linger.Core.Session` — a plain `public import`er of `Vt` — does not
+# `import all Linger.Session` — a plain `public import`er of `Vt` — does not
 # transit, and neither does the `Linger` umbrella, whose imports are all `public`), so
 # the closure over those edges IS the friend set and nothing else can widen it. Gating
 # the edges instead would mean recording all of them, though few matter, and
@@ -755,7 +759,7 @@ awk '
 # survives is narrower and still worth writing down: do not begin a docstring line with
 # a BARE, unbackticked `import all`.
 VT_ALL_RE='^[[:space:]]*(meta[[:space:]]+)*import[[:space:]]+all[[:space:]]+'
-VT_FRIEND_EXACT='Linger/Terminal/Vt.lean Linger/Terminal/Render.lean Linger/Terminal/Mediation.lean Linger/Core/Checkpoint.lean Linger/Terminal/Replay.lean'
+VT_FRIEND_EXACT='Linger/Terminal/Vt.lean Linger/Terminal/Render.lean Linger/Terminal/Mediation.lean Linger/Session/Checkpoint.lean Linger/Terminal/Replay.lean'
 VT_FRIEND_DIRS='Theorems/ Tests/'
 VT_FRIEND_RE='^Linger/[^/]+/(Proofs|Tests)/'
 code_grep "$VT_ALL_RE" '*.lean' \
@@ -806,9 +810,10 @@ shim_n="$(code_count 'LEAN_EXPORT' 'c/shim.c')"
 [ "$shim_n" -le "$SHIM_CAP" ] \
   || fail "shim grew to $shim_n wrappers (cap $SHIM_CAP); justify the new syscall and bump the cap"
 
-# The runtime keeps no byte queue of its own. `Linger/Core/Buf.lean` owns the two
+# The runtime keeps no byte queue of its own. `Linger/Session/Buf.lean` owns the two
 # kinds of long-lived queue -- their caps, their drop and cut policies, and the
-# removal of written prefixes (`Theorems/Buf.lean`) -- and `Linger/Runtime/*` is `IO`,
+# removal of written prefixes (`Linger/Session/Proofs/Buf.lean`) -- and `Linger/Runtime/*`
+# and the session shell are `IO`,
 # so NO theorem can see that the daemon calls those functions rather than
 # open-coding the same sums. Without this grep the Buf theorems are arithmetic
 # about a value nothing forces the runtime to use. A source-tree property cannot
@@ -818,12 +823,12 @@ shim_n="$(code_count 'LEAN_EXPORT' 'c/shim.c')"
 # Cli.queryInfo's accumulator, and two .extract compactions). Each used to spell its
 # regex twice — once to test, once to print the hits — and `code_grep` prints them, so
 # the duplicate is gone: two copies of a pattern is two things to keep in step.
-! code_grep '^[[:space:]]+[a-zA-Z_]+ : ByteArray' 'Linger/Runtime/*' \
-  || fail "a ByteArray field in Linger/Runtime (use Linger.Core.Buf, which is proved)"
-! code_grep 'mut [a-zA-Z_]+ : ByteArray' 'Linger/Runtime/*' \
-  || fail "an accumulating ByteArray local in Linger/Runtime (use Linger.Core.Buf: it is capped)"
-! code_grep '[.]extract([^[:alnum:]_]|$)' 'Linger/Runtime/*' \
-  || fail "buffer arithmetic in Linger/Runtime (Buf.bufAdvance owns it, and is proved)"
+! code_grep '^[[:space:]]+[a-zA-Z_]+ : ByteArray' 'Linger/Runtime/*' 'Linger/Session/Shell/*' \
+  || fail "a ByteArray field in Linger/Runtime or a session shell (use Linger.Session.Buf, which is proved)"
+! code_grep 'mut [a-zA-Z_]+ : ByteArray' 'Linger/Runtime/*' 'Linger/Session/Shell/*' \
+  || fail "an accumulating ByteArray local in Linger/Runtime or a session shell (use Linger.Session.Buf: it is capped)"
+! code_grep '[.]extract([^[:alnum:]_]|$)' 'Linger/Runtime/*' 'Linger/Session/Shell/*' \
+  || fail "buffer arithmetic in Linger/Runtime or a session shell (Buf.bufAdvance owns it, and is proved)"
 
 # The cursor proofs describe pure values. These ties keep the runtime on the
 # captured snapshot, bounded advances and shared byte allowance. The delivery
@@ -834,45 +839,45 @@ for claim in start_faithful next_faithful next_bounded next_progress steps_stora
     || fail "replay claim $claim disappeared"
 done
 for claim in followingCap_front followingCap_frame followingCap_iff; do
-  code_grep "^theorem $claim " Theorems/Buf.lean >/dev/null \
+  code_grep "^theorem $claim " Linger/Session/Proofs/Buf.lean >/dev/null \
     || fail "shared buffer allowance claim $claim disappeared"
 done
-code_grep '^theorem onMsg_attach_snapshot ' 'Theorems/Session.lean' > /dev/null \
+code_grep '^theorem onMsg_attach_snapshot ' 'Linger/Session/Proofs/Session.lean' > /dev/null \
   || fail "the attach snapshot theorem disappeared"
-code_grep '^theorem onMsg_attach_already ' 'Theorems/Session.lean' > /dev/null \
+code_grep '^theorem onMsg_attach_already ' 'Linger/Session/Proofs/Session.lean' > /dev/null \
   || fail "the repeated-attach refusal theorem disappeared"
-code_grep '^[[:space:]]+effs [+][+] [[][.]replay c[.]id [(]Replay[.]start s[.]vt[)][]] [+][+]$' 'Linger/Core/Session.lean' > /dev/null \
+code_grep '^[[:space:]]+effs [+][+] [[][.]replay c[.]id [(]Replay[.]start s[.]vt[)][]] [+][+]$' 'Linger/Session.lean' > /dev/null \
   || fail "attach no longer captures its resulting snapshot"
-code_grep '^[[:space:]]+replay : Option Replay[.]Plan := none$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+replay : Option Replay[.]Plan := none$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "each connection must retain one optional replay cursor"
-code_grep '^[[:space:]]+after : Buf := [.]empty$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+after : Buf := [.]empty$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "following output bypasses the proved byte buffer"
-code_grep '^[[:space:]]+[|] [.]replay id plan => do$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+[|] [.]replay id plan => do$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "the runtime no longer receives the captured replay plan"
-code_grep '^[[:space:]]+match ← flushConn [{] c with replay := some plan [}] with$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+match ← flushConn [{] c with replay := some plan [}] with$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "the runtime no longer executes the captured replay plan"
-! code_grep 'Replay[.]start|Render[.]restore' 'Linger/Runtime/Daemon.lean' \
+! code_grep 'Replay[.]start|Render[.]restore' 'Linger/Session/Shell/Daemon.lean' \
   || fail "the daemon must consume the captured cursor without constructing another repaint"
-code_grep '^[[:space:]]+match Replay[.]next Linger[.]Core[.]Session[.]outputChunk plan with$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+match Replay[.]next Linger[.]Session[.]outputChunk plan with$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "replay advancement no longer uses the proved output chunk"
-code_grep '^def replayFrameCap : Nat := Linger[.]Core[.]Session[.]outputChunk [+] [(]Wire[.]encode [(][.]output [[][]][)][)][.]length$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+code_grep '^def replayFrameCap : Nat := Linger[.]Session[.]outputChunk [+] [(]Wire[.]encode [(][.]output [[][]][)][)][.]length$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "replay reservation no longer includes the wire encoder's frame overhead"
-code_grep '^[[:space:]]+let cap := followingCap outbufCap replayFrameCap [(]owedLen c[.]out[)]$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+let cap := followingCap outbufCap replayFrameCap [(]owedLen c[.]out[)]$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "following output no longer shares the front buffer allowance"
-code_grep '^[[:space:]]+bufEnqueue [(]outbufCap - owedLen c[.]after[)] [.]empty$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+bufEnqueue [(]outbufCap - owedLen c[.]after[)] [.]empty$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "replay frames no longer account for following output debt"
 
 # A logically closed peer still owns its transport until it drains or expires.
 # It therefore counts towards admission, and ordinary polls must retire it
 # before taking the fd snapshot. Deadlines use Nat and the same grace constant
 # as shutdown. A repeated close cannot buy another grace period.
-code_grep '^[[:space:]]+closeBy : Option Nat := none$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+closeBy : Option Nat := none$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "transport close deadlines no longer use Nat"
-[ "$(code_count '^[[:space:]]+let deadline := [(]← monotonicMs[)] [+] drainTimeoutMs$' 'Linger/Runtime/Daemon.lean')" -eq 2 ] \
+[ "$(code_count '^[[:space:]]+let deadline := [(]← monotonicMs[)] [+] drainTimeoutMs$' 'Linger/Session/Shell/Daemon.lean')" -eq 2 ] \
   || fail "ordinary close and shutdown must share the Nat drain deadline"
-code_grep '^[[:space:]]+if c[.]closeBy[.]any [(]now ≥ ·[)] then$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+if c[.]closeBy[.]any [(]now ≥ ·[)] then$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "retired transport expiry no longer checks its fixed deadline"
-code_grep '^[[:space:]]+return [(]rt[.]setConn [{] c with closeBy := some deadline [}], true[)]$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+return [(]rt[.]setConn [{] c with closeBy := some deadline [}], true[)]$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "logical close no longer reports removal while retaining accepted bytes"
 awk '
   /^  [|] [.]close id =>/ { inclose = 1 }
@@ -884,51 +889,51 @@ awk '
   inpoll && /let polled := rt[.]conns/ { frozen++; if (!expired) bad = 1 }
   /^def drainConns / { inpoll = 0 }
   END { exit (checked != 1 || frozen != 1 || bad) }
-' Linger/Runtime/Daemon.lean \
+' Linger/Session/Shell/Daemon.lean \
   || fail "repeated-close guard or expire-before-poll-snapshot ordering changed"
-code_grep '^[[:space:]]+timeout := min timeout [(]deadline - now[)]$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+timeout := min timeout [(]deadline - now[)]$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "ordinary polling ignores close deadlines"
-code_grep '^[[:space:]]+let accepting := rt[.]conns[.]length < maxClients && rt[.]acceptAfter[.]all [(]now ≥ ·[)]$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+let accepting := rt[.]conns[.]length < maxClients && rt[.]acceptAfter[.]all [(]now ≥ ·[)]$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "listener admission must count every transport and honor its retry deadline"
-code_grep '^[[:space:]]+#[[][(]if accepting then POLLIN else 0[)],' 'Linger/Runtime/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+#[[][(]if accepting then POLLIN else 0[)],' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "listener polling no longer uses the admission guard"
-code_grep '^[[:space:]]+for _ in List[.]range [(]maxClients - rt[.]conns[.]length[)] do$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+for _ in List[.]range [(]maxClients - rt[.]conns[.]length[)] do$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "accept budget no longer includes retired transports"
-[ "$(code_count '^[[:space:]]+let polled := rt[.]conns$' 'Linger/Runtime/Daemon.lean')" -eq 2 ] \
+[ "$(code_count '^[[:space:]]+let polled := rt[.]conns$' 'Linger/Session/Shell/Daemon.lean')" -eq 2 ] \
   || fail "ordinary and shutdown polling must each freeze their fd set"
-[ "$(code_count '^[[:space:]]+for c in polled do$' 'Linger/Runtime/Daemon.lean')" -eq 2 ] \
+[ "$(code_count '^[[:space:]]+for c in polled do$' 'Linger/Session/Shell/Daemon.lean')" -eq 2 ] \
   || fail "ordinary fd construction and readiness must use the same frozen connections"
-code_grep '^[[:space:]]+let fds := [(]polled[.]map [(]·[.]fd[)][)][.]toArray$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+let fds := [(]polled[.]map [(]·[.]fd[)][)][.]toArray$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "shutdown fd list diverged from its frozen connections"
-code_grep '^[[:space:]]+for [(]c, i[)] in polled[.]zipIdx do$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+for [(]c, i[)] in polled[.]zipIdx do$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "shutdown readiness no longer indexes the frozen connection list"
-code_grep '^[[:space:]]+rt ← drainConns rt$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+rt ← drainConns rt$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "serve no longer drains accepted bytes after exit"
 
 # A client read failure is local to that peer. The close frame cannot prove an
 # IO catch exists: tie errors and EOF to the same fd retirement and pure event.
 # Every retirement goes through Rt.closeConn, so its body is tied too: it closes
 # the fd, then forgets that transport alone.
-# E2E.Robust closes an unread reply and requires the original shell to run again.
-code_grep '^theorem step_closed_frame ' Theorems/Session.lean >/dev/null \
+# Linger.Session.Suites.Robust closes an unread reply and requires the original shell to run again.
+code_grep '^theorem step_closed_frame ' Linger/Session/Proofs/Session.lean >/dev/null \
   || fail "the complete client-close frame disappeared"
-daemon_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Runtime/Daemon.lean)"
+daemon_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/Shell/Daemon.lean)"
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])let received ← try read c[.]fd 65536 catch _ => pure none match received with [|] some bs => if bs[.]size > 0 then events := events [+][+] [[][.]bytes c[.]fd[.]toNat bs[.]toList[]] [|] none => rt ← rt[.]closeConn c[.]fd events := events [+][+] [[][.]closed c[.]fd[.]toNat[]]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "client read errors must close only that peer through the proved transition"
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])def Rt[.]closeConn [(]rt : Rt[)] [(]fd : UInt32[)] : IO Rt := do close fd return [{] rt with conns := rt[.]conns[.]filter [(]·[.]fd != fd[)] [}]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "Rt.closeConn must close the fd before it forgets only that connection"
 # A session without a command runs Env.shellOf's program, which an unset or empty
-# SHELL makes sh (shellOf_absent). E2E.Agent creates sessions with both.
+# SHELL makes sh (shellOf_absent). Linger.Session.Suites.Agent creates sessions with both.
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])let shell := Linger[.]Os[.]Env[.]shellOf [(]← IO[.]getEnv "SHELL"[)] let [(]prog, args[)] := match argv with [|] [[][]] => [(][(]shell, #[[][]][)] : String × Array String[)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "a session without a command bypasses Env.shellOf"
 
 # Descriptor exhaustion must suspend admission without stopping existing work.
 # The live fixture exhausts real descriptors; gates pin the retry and fd cleanup.
-code_grep '^def acceptRetryMs : Nat := [1-9][0-9]*$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+code_grep '^def acceptRetryMs : Nat := [1-9][0-9]*$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "admission retry must wait a positive duration"
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])if let some retryAt := rt[.]acceptAfter then if now < retryAt then timeout := min timeout [(]retryAt - now[)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "admission retry no longer bounds the next poll deadline"
-code_grep '^[[:space:]]+rt := [{] rt with acceptAfter := some [(][(]← monotonicMs[)] [+] acceptRetryMs[)] [}]$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+rt := [{] rt with acceptAfter := some [(][(]← monotonicMs[)] [+] acceptRetryMs[)] [}]$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "admission failures must renew their retry deadline"
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])try setNonblock fd catch err => close fd throw err([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "failed client setup must release its accepted descriptor"
@@ -939,33 +944,33 @@ printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])rt := [{] rt with conns := 
 # injects both the operation failure and a failing stderr write.
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])def report [(]message : String[)] : IO Unit := do try IO[.]eprintln message catch _ => pure [(][)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "daemon diagnostics must contain write failures"
-[ "$(code_count 'IO[.]eprintln|IO[.]eprint|IO[.]getStderr' 'Linger/Runtime/Daemon.lean')" -eq 1 ] \
+[ "$(code_count 'IO[.]eprintln|IO[.]eprint|IO[.]getStderr' 'Linger/Session/Shell/Daemon.lean')" -eq 1 ] \
   || fail "daemon diagnostics must go through the non-throwing reporter"
 
 # The shared driver proves feedback order, termination and invariant preservation.
 # Its IO adapter must forward the actual state and retain the returned state/exit.
 for claim in feedMsgs_after_close feedMsgs_after_exit; do
-  code_grep "^theorem $claim " 'Theorems/Session.lean' > /dev/null \
+  code_grep "^theorem $claim " 'Linger/Session/Proofs/Session.lean' > /dev/null \
     || fail "decoded command stopping claim $claim disappeared"
 done
 for claim in effects_in_order run_execution run_total_safe handle_feedback_keeps_alive run_exited; do
-  code_grep "^theorem $claim " 'Theorems/Driver.lean' > /dev/null \
+  code_grep "^theorem $claim " 'Linger/Session/Proofs/Driver.lean' > /dev/null \
     || fail "shared driver claim $claim disappeared"
 done
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])def pump [(]rt : Rt[)] [(]evs : List Event[)] : IO Rt := do let result ← Driver[.]run executeEffect [{] st := rt[.]st, world := rt, exiting := rt[.]exiting [}] evs return [{] result[.]world with st := result[.]st, exiting := result[.]exiting [}]' awk "$CODE_AWK" >/dev/null \
   || fail "daemon pump must use the proved driver with its actual state and exit flag"
-code_grep '^private def executeEffect [(]st : State[)] [(]rt : Rt[)] : [(]eff : Effect[)] → IO [(]Rt × Driver[.]Reply eff[)]$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+code_grep '^private def executeEffect [(]st : State[)] [(]rt : Rt[)] : [(]eff : Effect[)] → IO [(]Rt × Driver[.]Reply eff[)]$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "effect interpreter must implement the driver's dependent reply type"
-code_grep '^[[:space:]]+rt[.]saveCkpt st$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+rt[.]saveCkpt st$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "checkpoint interpreter must save the driver's current state"
 
 # An info answer can span several frames. The pure producer proves the bound;
 # keep the IO accumulator on that same policy rather than a copied number.
-code_grep '^theorem onMsg_info_bounded ' 'Theorems/Session.lean' > /dev/null \
+code_grep '^theorem onMsg_info_bounded ' 'Linger/Session/Proofs/Session.lean' > /dev/null \
   || fail "the info producer's framing theorem disappeared"
-code_grep '^abbrev infoReplyCap : Nat := Linger[.]Core[.]Session[.]infoReplyCap$' 'Linger/Runtime/Cli.lean' > /dev/null \
+code_grep '^abbrev infoReplyCap : Nat := Linger[.]Session[.]infoReplyCap$' 'Linger/Runtime/Cli.lean' > /dev/null \
   || fail "the CLI info policy diverged from the proved producer"
-code_grep '^[[:space:]]+Linger[.]Core[.]Buf[.]bufOffer infoReplyCap acc [(]ByteArray[.]mk payload[.]toArray[)]$' 'Linger/Runtime/Cli.lean' > /dev/null \
+code_grep '^[[:space:]]+Linger[.]Session[.]Buf[.]bufOffer infoReplyCap acc [(]ByteArray[.]mk payload[.]toArray[)]$' 'Linger/Runtime/Cli.lean' > /dev/null \
   || fail "the info accumulator no longer uses the shared byte policy"
 
 # All session verbs consume the same exact target parser. Fuzzy matching stays
@@ -986,12 +991,13 @@ done
 # a list, array or cons only in the command parser's pattern and in Picker.attachArgs,
 # tied above.
 attach_words="$(code_grep '"attach"[[:space:]]*(,|[]]|::)' 'Linger/Manager/*' 'Linger/Runtime/*' \
+    'Linger/Session/Shell/*' \
   | sed 's/^\([^:]*\):[0-9]*:[[:space:]]*/\1: /')"
 [ "$attach_words" = "$(printf '%s\n' \
     'Linger/Manager/Picker.lean: ("attach" :: (if readOnly then ["--read-only"] else []) ++' \
     'Linger/Runtime/Cli.lean: | "attach" :: rest | "a" :: rest =>')" ] \
   || fail "a literal attach argv: build it with Picker.attachArgs, whose operands come from Remote.targetOperands: $attach_words"
-! code_grep 'Linger[.]Tools[.]Fuzzy|Name[.]sanitize' Linger/Runtime/Cli.lean Linger/Runtime/Client.lean \
+! code_grep 'Linger[.]Tools[.]Fuzzy|Name[.]sanitize' Linger/Runtime/Cli.lean Linger/Session/Shell/Client.lean \
   || fail "noninteractive command lookup must not fuzzy-match or rewrite a name"
 code_grep '^[[:space:]]+Linger[.]Target[.]Remote[.]targetValid target = true ∧ target ∉ candidates := by$' Theorems/Picker.lean >/dev/null \
   || fail "selector creation and command arguments no longer share the target grammar"
@@ -1017,13 +1023,13 @@ done
 
 # Lifetime ownership covers two resources: the socket namespace and the saved
 # state namespace. The model assumes stable lock inodes and exclusive flock;
-# these IO ties and E2E.Identity check acquisition before use and release after
+# these IO ties and Linger.Session.Suites.Identity check acquisition before use and release after
 # cleanup. A connected daemon's failure must never fall back to older saved data.
 for claim in reachable_protected owner_holds_lock at_most_one_owner claim_free; do
-  code_grep "^theorem $claim " Theorems/Claim.lean >/dev/null \
+  code_grep "^theorem $claim " Linger/Session/Proofs/Claim.lean >/dev/null \
     || fail "resource ownership contract disappeared: $claim"
 done
-paths_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Runtime/Paths.lean)"
+paths_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/Shell/Paths.lean)"
 for tie in \
   'match Linger[.]Target[.]Name[.]check name with [|] some name => return name [|] none => throw' \
   'let name ← checkName name ensureDir dir let path := s!"[{]dir[}]/[{]name[}][{]suffix[}]" checkSpelling path return path' \
@@ -1048,7 +1054,7 @@ for tie in \
   printf '%s\n' "$paths_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "session listing must check every directory entry with Name.check: $tie"
 done
-! code_grep 'removeFile|rename' Linger/Runtime/Paths.lean \
+! code_grep 'removeFile|rename' Linger/Session/Shell/Paths.lean \
   || fail "lock path construction and acquisition must never unlink or replace a lock inode"
 printf '%s\n' "$client_code" | CG_RE='(^|[[:space:]])try Paths[.]checkSpelling path return some fd catch err => close fd throw err([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "successful connects must reject case-folded aliases and close on failure"
@@ -1059,18 +1065,18 @@ printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])IO Unit := do let deadline 
 # on the socket. A retry is asked only after a failed attempt. Every other acquisition
 # is withLock or withSessionLock, one attempt each, and only the claim names a retrying
 # acquisition, so no reader can pass a retry by position. The Claim model reads each
-# failed attempt as an unchanged step. E2E.Robust holds an offline capture's locks
+# failed attempt as an unchanged step. Linger.Session.Suites.Robust holds an offline capture's locks
 # while run starts the session, and checks that a claim finding both free logs no wait.
-code_grep '^private def claimWaitMs : Nat := [1-9][0-9]*$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+code_grep '^private def claimWaitMs : Nat := [1-9][0-9]*$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "the startup claim must wait a positive, fixed time"
 printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])if [(]← monotonicMs[)] ≥ deadline then return false let live ← unixConnect sockPath if live ≥ 0 then close live[.]toUInt64[.]toUInt32 return false([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "the startup claim must stop at its deadline and when a live daemon answers"
 retrying="$(code_grep '(^|[^[:alnum:]_])with(Session)?LockRetrying([^[:alnum:]_]|$)' 'Linger/*' Main.lean \
-  | awk -F: '$1 != "Linger/Runtime/Paths.lean" { print $1 }')"
-[ "$retrying" = 'Linger/Runtime/Daemon.lean' ] \
+  | awk -F: '$1 != "Linger/Session/Shell/Paths.lean" { print $1 }')"
+[ "$retrying" = 'Linger/Session/Shell/Daemon.lean' ] \
   || fail "only the daemon's startup claim may retry a held lock: ${retrying:-no retrying claim}"
 for tie in \
-  'finally close listenFd try IO[.]FS[.]removeFile sockPath catch _ => pure [(][)][[:space:]]+end Linger[.]Runtime[.]Daemon' \
+  'finally close listenFd try IO[.]FS[.]removeFile sockPath catch _ => pure [(][)][[:space:]]+end Linger[.]Session[.]Shell[.]Daemon' \
   'finally for c in rt[.]conns do close c[.]fd try if ← alive rt[.]childPid then'; do
   printf '%s\n' "$daemon_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "daemon resource cleanup escaped its ownership lifetime: $tie"
@@ -1084,7 +1090,7 @@ for tie in \
 done
 # Saved viewing consumes the bounded, faithful replay cursor. The original
 # snapshot survives every resize, and the immutable load precedes terminal IO.
-# E2E.Watch observes input discard, lock release, exact replay and handback.
+# Linger.Session.Suites.Watch observes input discard, lock release, exact replay and handback.
 for tie in \
   'let mut lastSize : Option [(]UInt32 × UInt32[)] := none while true do let size ← winsizeGet stdinFd if lastSize != some size then let cols := if size[.]1 == 0 then snapshot[.]colCount else size[.]1[.]toNat let rows := if size[.]2 == 0 then snapshot[.]rowCount else size[.]2[.]toNat' \
   'let view := if snapshot[.]colCount == cols && snapshot[.]rowCount == rows then snapshot else snapshot[.]resize cols rows let mut repaint := Linger[.]Terminal[.]Replay[.]start view repeat match Linger[.]Terminal[.]Replay[.]next 65536 repaint with [|] none => break [|] some [(]bytes, next[)] => if !bytes[.]isEmpty then writeAll stdoutFd [(]ByteArray[.]mk bytes[.]toArray[)] repaint := next' \
@@ -1100,29 +1106,29 @@ printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])if row[.]lookup "state" == 
 # emulator's effective dimensions. IO is outside the theorem: keep the effect
 # interpreter forwarding those exact dimensions, in order. Both ends are
 # checked so deleting the claim cannot silently leave a decorative runtime tie.
-code_grep '^theorem onMsg_resizePty_agrees ' 'Theorems/Session.lean' > /dev/null \
+code_grep '^theorem onMsg_resizePty_agrees ' 'Linger/Session/Proofs/Session.lean' > /dev/null \
   || fail "the session-to-pty geometry correspondence theorem disappeared"
-code_grep '^[[:space:]]+[|] [.]resizePty cols rows =>' 'Linger/Runtime/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+[|] [.]resizePty cols rows =>' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "review the pty effect interpreter against onMsg_resizePty_agrees"
-code_grep '^[[:space:]]+winsizeSet rt[.]ptyFd cols rows$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+winsizeSet rt[.]ptyFd cols rows$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "the pty interpreter no longer forwards the proved dimensions in order"
 
 # The elapsed-time theorems use Nat. Keep the actual monotonic source and the
 # daemon tick on that representation; narrowing here is invisible to the proofs.
-code_grep '^theorem step_tick_before_interval ' 'Theorems/Session.lean' > /dev/null \
+code_grep '^theorem step_tick_before_interval ' 'Linger/Session/Proofs/Session.lean' > /dev/null \
   || fail "the no-early-checkpoint theorem disappeared"
-code_grep '^theorem step_tick_checkpoint_elapsed ' 'Theorems/Session.lean' > /dev/null \
+code_grep '^theorem step_tick_checkpoint_elapsed ' 'Linger/Session/Proofs/Session.lean' > /dev/null \
   || fail "the checkpoint elapsed-time theorem disappeared"
 code_grep '^def monotonicMs : IO Nat := IO[.]monoMsNow$' 'Linger/Os/Shell.lean' > /dev/null \
   || fail "the monotonic clock no longer forwards Lean's Nat clock directly"
-code_grep '^[[:space:]]+let now ← monotonicMs$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+let now ← monotonicMs$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "the daemon tick no longer reads the monotonic clock"
-code_grep "^[[:space:]]+rt ← pump rt' [(]events [+][+] [[][.]tick now[]][)]$" 'Linger/Runtime/Daemon.lean' > /dev/null \
+code_grep "^[[:space:]]+rt ← pump rt' [(]events [+][+] [[][.]tick now[]][)]$" 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "the daemon no longer forwards the monotonic value to the proved tick"
 
 # The daemon boots from Session.bootVt, the term the resume theorems quantify over.
 # Theorems/Contracts.lean ties the model side: resumeVt is bootVt over loadBytes, by rfl.
-code_grep '^[[:space:]]+let vt0 := Linger[.]Core[.]Session[.]bootVt [(]restore[.]map [(]·[.]1[)][)]$' 'Linger/Runtime/Daemon.lean' > /dev/null \
+code_grep '^[[:space:]]+let vt0 := Linger[.]Session[.]bootVt [(]restore[.]map [(]·[.]1[)][)]$' 'Linger/Session/Shell/Daemon.lean' > /dev/null \
   || fail "Daemon.serve no longer boots from Session.bootVt, which liveReachableVt_resumeVt covers"
 
 # Read-only attachment's client-side guards (pin-the-gaps item 1). Read-only
@@ -1132,23 +1138,23 @@ code_grep '^[[:space:]]+let vt0 := Linger[.]Core[.]Session[.]bootVt [(]restore[.
 # depth and a pty test CANNOT see them — remove either and not one observable
 # byte changes. That makes a grep the only honest oracle, the same species as
 # SHIM_CAP above; faking it as a pty assertion would be decoration.
-# `E2E/Watch.lean` covers guard A (the 0x0 attach), which IS observable.
-code_grep 'if size != lastSize && !readOnly' 'Linger/Runtime/Client.lean' > /dev/null \
+# `Linger/Session/Suites/Watch.lean` covers guard A (the 0x0 attach), which IS observable.
+code_grep 'if size != lastSize && !readOnly' 'Linger/Session/Shell/Client.lean' > /dev/null \
   || fail "Client.attach lost its read-only resize guard (a watcher would fight the user's size)"
-code_grep 'if !out.isEmpty && !readOnly' 'Linger/Runtime/Client.lean' > /dev/null \
+code_grep 'if !out.isEmpty && !readOnly' 'Linger/Session/Shell/Client.lean' > /dev/null \
   || fail "Client.attach lost its read-only input guard (a watcher would forward keystrokes)"
-code_grep 'sendMsg fd [(][.]attach 0 0[)]' 'Linger/Runtime/Client.lean' > /dev/null \
+code_grep 'sendMsg fd [(][.]attach 0 0[)]' 'Linger/Session/Shell/Client.lean' > /dev/null \
   || fail "Client.attach no longer marks a read-only client with a 0x0 attach (the wire's only read-only bit)"
 # The detach key follows Env.detachEnabled: always in a read-only view, whose saved
 # form passes that value, true, directly (detachEnabled_readOnly), and for writable
-# attach only while LINGER_NO_DETACH_KEY is unset. E2E.Watch and E2E.Attach observe both.
+# attach only while LINGER_NO_DETACH_KEY is unset. Linger.Session.Suites.Watch and Linger.Session.Suites.Attach observe both.
 printf '%s\n' "$client_code" | CG_RE='(^|[[:space:]])let detachEnabled := Linger[.]Os[.]Env[.]detachEnabled readOnly [(]← IO[.]getEnv "LINGER_NO_DETACH_KEY"[)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "attach bypasses Env.detachEnabled, which keeps the detach key in read-only views"
-code_grep '^[[:space:]]+let [(]out, detach[)] := splitDetach bs detachEnabled$' Linger/Runtime/Client.lean >/dev/null \
+code_grep '^[[:space:]]+let [(]out, detach[)] := splitDetach bs detachEnabled$' Linger/Session/Shell/Client.lean >/dev/null \
   || fail "attach no longer splits input with its detach policy"
 
 # The checkpoint decoder must not grow its forge back (`specs/archive/vt-toolkit.md` Step 2).
-# `Linger/Core/Checkpoint.lean` keeps a PERMANENT `import all Linger.Terminal.Vt`: `wVt` reads
+# `Linger/Session/Checkpoint.lean` keeps a PERMANENT `import all Linger.Terminal.Vt`: `wVt` reads
 # 17 sealed fields, and dropping the import would force `Vt.ofDecoded` to be public — a
 # second public door admitting any `Good` state, for every module forever, which is a
 # wider hole than the one it replaces. The trade is that this one file retains the raw
@@ -1166,11 +1172,11 @@ code_grep '^[[:space:]]+let [(]out, detach[)] := splitDetach bs detachEnabled$' 
 # bite on an UNPAIRED backtick, which `code_grep` deliberately treats as code.
 # Break-verified both ways: a real forge at the decoder's old position, and the call
 # deleted with the docstrings left in place.
-code_grep '(^|[^`[:alnum:]_.])Vt[.]ofDecoded ' 'Linger/Core/Checkpoint.lean' > /dev/null \
-  || fail "Linger/Core/Checkpoint.lean no longer decodes through Vt.ofDecoded (a corrupt checkpoint could carry a zero column count)"
+code_grep '(^|[^`[:alnum:]_.])Vt[.]ofDecoded ' 'Linger/Session/Checkpoint.lean' > /dev/null \
+  || fail "Linger/Session/Checkpoint.lean no longer decodes through Vt.ofDecoded (a corrupt checkpoint could carry a zero column count)"
 FORGE='(^|[^`[:alnum:]_])(cols|rows|grid|bot|tabs|pstate|u8need|u8acc) *:='
-! code_grep "$FORGE" 'Linger/Core/Checkpoint.lean' \
-  || fail "a Vt field is assigned in Linger/Core/Checkpoint.lean — the decoder forge is back; go through Vt.ofDecoded, which validates"
+! code_grep "$FORGE" 'Linger/Session/Checkpoint.lean' \
+  || fail "a Vt field is assigned in Linger/Session/Checkpoint.lean — the decoder forge is back; go through Vt.ofDecoded, which validates"
 
 # Extensional reader theorems cannot distinguish reject-before-expansion from
 # expand-then-reject. The latter passed every semantic check in the audit, and
@@ -1213,7 +1219,7 @@ awk '
         bad = 1
       }
     exit bad
-  }' Linger/Core/Checkpoint.lean >&2 || fail "checkpoint allocation guard changed"
+  }' Linger/Session/Checkpoint.lean >&2 || fail "checkpoint allocation guard changed"
 # The six bounds the byte-array readers forward.
 for bound in \
   'rRLEB rCellB b i maxLength' \
@@ -1222,13 +1228,13 @@ for bound in \
   'let [(]tabs, i[)] ← rListB rBoolB b i [(]some cols[)]' \
   'let [(]sb, i[)] ← rRingB b i [(]some sbCap[)]' \
   'let [(]altGrid, i[)] ← rAltB b i [(]some cols[)] [(]some rows[)]'; do
-  code_grep "^[[:space:]]+$bound\$" 'Linger/Core/Checkpoint.lean' > /dev/null \
+  code_grep "^[[:space:]]+$bound\$" 'Linger/Session/Checkpoint.lean' > /dev/null \
     || fail "a byte-array checkpoint reader stopped forwarding its bound: $bound"
 done
 # The checkpoint hooks are `IO`, so no theorem sees them use the proved codec: write
 # the state's own fields through `saveBytes` (`saveBytes_eq`), and return what
 # `loadBytes` read from the file's bytes (`loadBytes_eq`).
-resume_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Runtime/Resume.lean)"
+resume_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/Shell/Resume.lean)"
 for tie in \
   'let ck : Ckpt := [{] vt := st[.]vt, cwd, labels := st[.]labels [}] let bytes := saveBytes ck' \
   'match loadBytes bytes with [|] some ck => return some [(]ck[.]vt, ck[.]cwd, ck[.]labels[)]'; do
@@ -1268,15 +1274,15 @@ done
 # socket goes under `/tmp` whatever TMPDIR says, through `E2E.Harness.socketRoot` or
 # `socket_root` in scripts/e2e.sh: macOS caps a socket path at 104 bytes, and its TMPDIR
 # alone takes about 49. So the test orchestration spells a temporary root only in those
-# three definitions and in the expansion. E2E/Paths.lean and Linger/Display/Suites/Overview.lean are exempt:
-# they assert the product's documented defaults (Linger/Runtime/Paths.lean). The match
+# three definitions and in the expansion. Linger/Session/Suites/Paths.lean and Linger/Display/Suites/Overview.lean are exempt:
+# they assert the product's documented defaults (Linger/Session/Shell/Paths.lean). The match
 # also covers `/private/tmp`, `/var/tmp` and `/private/var/tmp`, and only where a path
 # starts, not a component such as `$dir/tmp`. Each hit is read again with every expansion
 # blanked out, because an ERE cannot exclude one context.
 tmp_re='(^|[^[:alnum:]_.~)}])(/private(/var)?|/var)?[/]tmp([^[:alnum:]_]|$)'
 tmp_hits="$(code_grep "$tmp_re" 'scripts/*.sh' .github/workflows/ci.yml E2ETest.lean 'E2E/*.lean' 'Linger/*/Suites/*.lean' \
   | sed 's/[$][{]TMPDIR:-[/]tmp[}]/TMPDIR/g' | CG_RE="$tmp_re" awk "$CODE_AWK" \
-  | sed 's/^[^:]*:[0-9]*://' | awk -F: '$1 != "E2E/Paths.lean" && $1 != "Linger/Display/Suites/Overview.lean"')"
+  | sed 's/^[^:]*:[0-9]*://' | awk -F: '$1 != "Linger/Session/Suites/Paths.lean" && $1 != "Linger/Display/Suites/Overview.lean"')"
 # The helpers are compared by content, with the root itself spelled `[/]tmp`, so these
 # lines cannot match the gate that reads them.
 tmp_got="$(printf '%s\n' "$tmp_hits" | sed 's/^\([^:]*\):[0-9]*:[[:space:]]*/\1: /; s#[/]tmp#[/]tmp#g')"
@@ -1371,7 +1377,7 @@ git ls-files 'tests/*' 'Tools/*' 'Manager/*' | grep -q . \
 # absent, which must stay undeclared, and names from C, the Lean toolchain or GitHub,
 # plus one lemma-name prefix. Every listed name must still be cited.
 cite_absent='mmap_id_gridAnsi sb_csiDispatch_any load_legacy_save save_no_legacy'
-cite_foreign="lean_chmod linger_write lean_io_process_get_pid pid_t tty_do_resize \
+cite_foreign="lean_chmod lean_io_process_get_pid pid_t tty_do_resize \
   native_decide bv_decide lean_exe workflow_dispatch org_ foldl_append"
 cite_scan() {                                # file:line:basename per backticked snake_case name
   { grep -noE '`[A-Za-z][A-Za-z0-9_.]*`' THEOREMS.md | sed 's/^/THEOREMS.md:/'

@@ -1,0 +1,309 @@
+module
+
+import all Linger.Session.Wire
+
+/-! # §Frame / §Chunk / §Bound — the wire protocol theorems
+
+THEOREMS.md rows: §Frame (round-trip; unknown tags are data),
+§Chunk (re-chunking cannot change what a peer sees), §Bound (a decoder
+holds at most `4 + maxPayload` bytes whatever a peer sends — the bound
+at the wire layer).
+
+All statements are schema-level (∀ messages, ∀ chunkings), not
+fixtures: the codec is `List UInt8`-based precisely so these inductions
+go through by kernel reduction alone (no proof in this directory uses
+the compiled-evaluation escape hatch; the e2e gate enforces it).
+-/
+
+namespace Linger.Session.Wire
+
+/-! ## u32 codec -/
+
+@[simp]
+theorem writeU32_length (n : UInt32) : (writeU32 n).length = 4 := by simp [writeU32]
+
+/-- Reading a u32 sees only the first 4 bytes. -/
+@[simp]
+theorem readU32_writeU32_append (n : UInt32) (rest : List UInt8) :
+    readU32 (writeU32 n ++ rest) = n := by
+  have h := n.toNat_lt
+  apply UInt32.toNat_inj.mp
+  simp [readU32, writeU32, UInt8.toNat_ofNat', UInt32.toNat_ofNat']
+  omega
+
+@[simp]
+theorem readU32_writeU32 (n : UInt32) : readU32 (writeU32 n) = n := by
+  simpa only [List.append_nil] using readU32_writeU32_append n []
+
+/-! ## Single-message round-trip (§Frame) -/
+
+/-- An unassigned tag decodes to `unknown`, carrying its bytes forward untouched:
+the skip-don't-fail half of §Frame, naming the predicate that defines it. -/
+theorem decodeMsg_unknown_of_not_knownTag (t : UInt8) (p : List UInt8) (h : knownTag t = false) :
+    decodeMsg t p = .unknown t p := by
+  have ht : ¬t ≤ 16 := by simpa [knownTag] using h
+  fun_cases decodeMsg t p <;>
+    first
+    | rfl
+    | (exfalso; apply ht; subst_vars; decide)
+
+/-- Re-interpreting a well-formed message's own tag and payload yields
+the message back. `WF` is load-bearing in the `unknown` case: an
+`unknown` wearing a known tag would decode as the known message, which
+is why `WF` forbids constructing one. -/
+theorem decodeMsg_roundtrip (m : Msg) (hm : m.WF) : decodeMsg m.tag m.payload = m := by
+  cases m with
+  | unknown t p => exact decodeMsg_unknown_of_not_knownTag t p hm.2
+  | _ => simp [decodeMsg, Msg.tag, Msg.payload]
+
+/-! ## takeFrames, frame by frame -/
+
+/-- A syntactically explicit header peels off in one step. -/
+theorem takeFrames_header (t b0 b1 b2 b3 : UInt8) (payload rest : List UInt8)
+    (hb : (readU32 [b0, b1, b2, b3]).toNat = payload.length) (hp : payload.length ≤ maxPayload) :
+    takeFrames (t :: b0 :: b1 :: b2 :: b3 :: (payload ++ rest)) =
+      ((takeFrames rest).1, (takeFrames rest).2.1,
+        decodeMsg t payload :: (takeFrames rest).2.2) := by
+  have hle : payload.length ≤ payload.length := Nat.le_refl _
+  rcases hres : takeFrames rest with ⟨buf, err, msgs⟩
+  rw [takeFrames.eq_def]
+  dsimp only
+  rw [hb, ite_eq_right (by omega), List.take_append_of_le_length hle,
+    List.take_of_length_le (Nat.le_refl _), ite_eq_right (Nat.lt_irrefl _),
+    List.drop_append_of_le_length hle, List.drop_of_length_le (Nat.le_refl _), List.nil_append,
+    hres]
+
+/-- A well-formed encoded frame peels off `takeFrames`, whatever
+follows it. The workhorse for §Frame and §Chunk alike. -/
+theorem takeFrames_encode_prefix (m : Msg) (hm : m.WF) (rest : List UInt8) :
+    takeFrames (encode m ++ rest) =
+      ((takeFrames rest).1, (takeFrames rest).2.1, m :: (takeFrames rest).2.2) := by
+  have hp : m.payload.length ≤ maxPayload := hm.1
+  have hlt : m.payload.length < 4294967296 := by
+    have he : maxPayload = 262144 := by rfl
+    omega
+  obtain ⟨b0, b1, b2, b3, hw⟩ :
+    ∃ b0 b1 b2 b3, writeU32 (UInt32.ofNat m.payload.length) = [b0, b1, b2, b3] := ⟨_, _, _, _, rfl⟩
+  have hb : (readU32 [b0, b1, b2, b3]).toNat = m.payload.length := by
+    rw [← hw, readU32_writeU32, UInt32.toNat_ofNat']
+    omega
+  have hshape : encode m ++ rest = m.tag :: b0 :: b1 :: b2 :: b3 :: (m.payload ++ rest) := by
+    simp [encode, hw]
+  rw [hshape, takeFrames_header m.tag b0 b1 b2 b3 m.payload rest hb hp, decodeMsg_roundtrip m hm]
+
+@[simp]
+theorem takeFrames_nil : takeFrames [] = ([], false, []) := by rw [takeFrames.eq_def]
+
+/-- Fewer than five bytes hold no header, so they are kept whole. -/
+theorem takeFrames_short (xs : List UInt8)
+    (hno : ∀ t l0 l1 l2 l3 rest, xs = t :: l0 :: l1 :: l2 :: l3 :: rest → False) :
+    takeFrames xs = (xs, false, []) ∧ xs.length ≤ 4 := by
+  rcases xs with _ | ⟨a, _ | ⟨b, _ | ⟨c, _ | ⟨d, _ | ⟨e, tail⟩⟩⟩⟩⟩
+  case cons.cons.cons.cons.cons => exact (hno a b c d e tail rfl).elim
+  all_goals simp [takeFrames]
+
+/-- §Frame, stream form: a sequence of well-formed messages decodes
+back to itself exactly, with nothing retained. -/
+theorem decode_encode_stream (ms : List Msg) (h : ∀ m ∈ ms, m.WF) :
+    decode (ms.flatMap encode) = ({ buf := [], errored := false }, ms) := by
+  suffices hs : takeFrames (ms.flatMap encode) = ([], false, ms) by simp [decode, Decoder.feed, hs]
+  induction ms with
+  | nil => simp
+  | cons m ms ih =>
+    have hm := h m (by simp)
+    have hms := ih (fun x hx => h x (by simp [hx]))
+    simp only [List.flatMap_cons]
+    rw [takeFrames_encode_prefix m hm, hms]
+
+/-! ## §Chunk — re-chunking invariance -/
+
+/-- Parsing a concatenation = parsing the first part, then parsing its
+leftover glued to the second part. Errors and messages both carry. -/
+theorem takeFrames_append (xs ys : List UInt8) :
+    takeFrames (xs ++ ys) =
+      (if (takeFrames xs).2.1 then ([], true, (takeFrames xs).2.2)
+      else
+        ((takeFrames ((takeFrames xs).1 ++ ys)).1, (takeFrames ((takeFrames xs).1 ++ ys)).2.1,
+          (takeFrames xs).2.2 ++ (takeFrames ((takeFrames xs).1 ++ ys)).2.2)) := by
+  fun_induction takeFrames xs with
+  | case1 _ _ _ _ _ _
+    len =>
+    rw [List.cons_append, List.cons_append, List.cons_append, List.cons_append, List.cons_append,
+      takeFrames.eq_def]
+    simp_all [len]
+  | case2 => simp
+  | case3 _ _ _ _ _ rest len _ payload hshort _ err _ heq
+    ih =>
+    have hp : payload.length = len := by
+      simp only [payload, List.length_take] at hshort ⊢
+      omega
+    have hsplit : rest ++ ys = payload ++ (rest.drop len ++ ys) := by
+      rw [← List.append_assoc, List.take_append_drop]
+    rw [List.cons_append, List.cons_append, List.cons_append, List.cons_append, List.cons_append,
+      hsplit, takeFrames_header _ _ _ _ _ _ _ hp.symm (by omega), ih, heq]
+    cases err <;> simp
+  | case4 => simp
+
+/-- An errored parse retains nothing: the poisoned buffer is dropped,
+not kept around. (Also what makes `feed_append` hold through errors.) -/
+theorem takeFrames_errored_buf (bytes : List UInt8) (h : (takeFrames bytes).2.1 = true) :
+    (takeFrames bytes).1 = [] := by fun_induction takeFrames bytes <;> simp_all
+
+/-- §Chunk at the decoder interface: feeding `a ++ b` is feeding `a`
+then feeding `b` — same final state, same messages in order. No
+chunking of the byte stream can change what the peer sees. -/
+theorem Decoder.feed_append (d : Decoder) (a b : List UInt8) :
+    d.feed (a ++ b) = (((d.feed a).1.feed b).1, (d.feed a).2 ++ ((d.feed a).1.feed b).2) := by
+  by_cases hd : d.errored
+  · simp [Decoder.feed, hd]
+  · rcases h1 : takeFrames (d.buf ++ a) with ⟨buf1, err1, msgs1⟩
+    have hsplit := takeFrames_append (d.buf ++ a) b
+    rw [h1] at hsplit
+    by_cases he1 : err1
+    · have hb1 : buf1 = [] := by
+        have h' := takeFrames_errored_buf (d.buf ++ a)
+        rw [h1] at h'
+        exact h' (by simp [he1])
+      subst hb1
+      simp only [he1, ite_true] at hsplit
+      simp [Decoder.feed, hd, h1, he1, ← List.append_assoc, hsplit]
+    · simp only [he1] at hsplit
+      rcases h2 : takeFrames (buf1 ++ b) with ⟨buf2, err2, msgs2⟩
+      rw [h2] at hsplit
+      simp [Decoder.feed, hd, h1, he1, h2, ← List.append_assoc, hsplit]
+
+/-- Once errored, a decoder stays errored and emits nothing — the
+runtime's cue to close the connection, and the reason a malformed peer
+cannot make us buffer. -/
+theorem Decoder.feed_errored (d : Decoder) (chunk : List UInt8) (hd : d.errored) :
+    d.feed chunk = (d, []) := by simp [Decoder.feed, hd]
+
+/-! ## §Bound — the decoder cannot be grown -/
+
+/-- Whatever bytes arrive, the parser's retained buffer stays under
+`5 + maxPayload` bytes: complete frames leave, a partial frame is by
+definition smaller than one max-size frame, and an oversize claim
+empties the buffer (error) rather than filling it. -/
+theorem takeFrames_buf_le (bytes : List UInt8) : (takeFrames bytes).1.length ≤ 4 + maxPayload := by
+  fun_induction takeFrames bytes with
+  | case1 => simp
+  | case2 _ _ _ _ _ _ len _ payload
+    hshort =>
+    simp only [payload, List.length_take] at hshort
+    simp only [List.length_cons]
+    omega
+  | case3 _ _ _ _ _ _ _ _ _ _ _ _ _ heq ih => simpa [heq] using ih
+  | case4 xs hno =>
+    have := (takeFrames_short xs hno).2
+    simp
+    omega
+
+/-- §Bound at the decoder interface: after any feed to a live decoder,
+the retained buffer is under `4 + maxPayload` bytes — regardless of the
+decoder's prior state or the chunk's size or content. -/
+theorem Decoder.feed_buf_le (d : Decoder) (chunk : List UInt8) (hd : ¬d.errored) :
+    ((d.feed chunk).1).buf.length ≤ 4 + maxPayload := by
+  have h := takeFrames_buf_le (d.buf ++ chunk)
+  rcases hres : takeFrames (d.buf ++ chunk) with ⟨buf, err, msgs⟩
+  rw [hres] at h
+  simpa [Decoder.feed, hd, hres] using h
+
+/-- §Bound, message side: no decoded message carries a payload above
+`maxPayload` — the state machines downstream never see an unbounded
+allocation. -/
+theorem decodeMsg_payload_le (t : UInt8) (p : List UInt8) (hp : p.length ≤ maxPayload) :
+    (decodeMsg t p).payload.length ≤ maxPayload := by
+  have h8 : (8 : Nat) ≤ maxPayload := by simp [maxPayload]
+  fun_cases decodeMsg t p <;>
+    simp only [Msg.payload, List.length_append, writeU32_length, List.length_nil] <;>
+    omega
+
+theorem takeFrames_msgs_payload_le (bytes : List UInt8) :
+    ∀ m ∈ (takeFrames bytes).2.2, m.payload.length ≤ maxPayload := by
+  fun_induction takeFrames bytes with
+  | case1 => simp
+  | case2 => simp
+  | case3 _ _ _ _ _ rest len _ payload _ _ _ _ heq
+    ih =>
+    rw [heq] at ih
+    intro m hmem
+    rcases List.mem_cons.mp hmem with h | h
+    · subst h
+      apply decodeMsg_payload_le
+      have : payload.length ≤ len := List.length_take_le len rest
+      omega
+    · exact ih m h
+  | case4 => simp
+
+/-! ## §Stream — chunking is invisible (§Frame ∘ §Chunk, composed)
+
+The operational statement a reader actually wants, in one theorem:
+however the transport fragments a well-formed encoded stream, the
+receiver decodes exactly that stream. `decode_encode_stream` is its one-chunk
+special case.
+-/
+
+/-- A `takeFrames` leftover is quiescent: re-parsing it yields itself —
+no messages, no error. (By construction it is less than one complete
+frame.) -/
+theorem takeFrames_leftover_stable (bytes : List UInt8) :
+    takeFrames (takeFrames bytes).1 = ((takeFrames bytes).1, false, []) := by
+  fun_induction takeFrames bytes with
+  | case1 => simp
+  | case2 _ _ _ _ _ _ len _ payload =>
+    rw [takeFrames.eq_def]
+    simp_all [len, payload]
+  | case3 _ _ _ _ _ _ _ _ _ _ _ _ _ heq ih => simpa [heq] using ih
+  | case4 xs hno => simpa using (takeFrames_short xs hno).1
+
+/-- Feeding chunks one at a time equals feeding their concatenation —
+for any decoder whose buffer is quiescent, which every decoder the feed
+path produces is (and a fresh one trivially is). -/
+theorem Decoder.feedAll_flatten (d : Decoder) (chunks : List (List UInt8))
+    (hq : takeFrames d.buf = (d.buf, false, [])) : d.feedAll chunks = d.feed chunks.flatten := by
+  induction chunks generalizing d with
+  | nil =>
+    by_cases he : d.errored
+    · simp [Decoder.feedAll, Decoder.feed_errored d [] he]
+    · rcases d with ⟨buf, err⟩
+      simp only [Bool.not_eq_true] at he
+      subst he
+      simp [Decoder.feedAll, Decoder.feed, hq]
+  | cons c cs ih =>
+    -- the decoder after one feed is quiescent again
+    have hq' : takeFrames (d.feed c).1.buf = ((d.feed c).1.buf, false, []) := by
+      by_cases he : d.errored
+      · rw [Decoder.feed_errored d c he]
+        exact hq
+      · rcases hres : takeFrames (d.buf ++ c) with ⟨buf1, err1, msgs1⟩
+        have hb : (d.feed c).1.buf = buf1 := by simp [Decoder.feed, he, hres]
+        rw [hb]
+        have hst := takeFrames_leftover_stable (d.buf ++ c)
+        rw [hres] at hst
+        simpa using hst
+    show
+      (((d.feed c).1.feedAll cs).1, (d.feed c).2 ++ ((d.feed c).1.feedAll cs).2) =
+        d.feed ((c :: cs).flatten)
+    rw [List.flatten_cons, Decoder.feed_append, ih _ hq']
+
+/-- §Stream: ANY well-formed message sequence, encoded and re-chunked
+ARBITRARILY (per byte, per frame, any TCP segmentation), feeds back to
+exactly that sequence — same messages, same order, nothing retained,
+no error. -/
+theorem decode_encode_chunked (ms : List Msg) (hms : ∀ m ∈ ms, m.WF) (chunks : List (List UInt8))
+    (hc : chunks.flatten = ms.flatMap encode) :
+    Decoder.feedAll {} chunks = ({ buf := [], errored := false }, ms) := by
+  rw [Decoder.feedAll_flatten _ _ (by simp), hc]
+  simpa [decode] using decode_encode_stream ms hms
+
+/-- **`knownTag` is exactly the encoder's own tag range.** Every assigned constructor carries
+a known tag, so `Msg.WF`'s side condition on `.unknown` is the only thing standing between a
+forged `unknown` and a collision with a real message — which is what `decodeMsg_roundtrip`
+leans on. Stated over the constructors so a new one with an out-of-range tag fails here. -/
+theorem knownTag_tag_of_assigned (m : Msg) (h : ∀ t p, m ≠ .unknown t p) :
+    knownTag m.tag = true := by
+  cases m with
+  | unknown t p => exact absurd rfl (h t p)
+  | _ => rfl
+
+end Linger.Session.Wire

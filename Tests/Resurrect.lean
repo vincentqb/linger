@@ -412,9 +412,9 @@ namespace Linger.Tools.Resurrect.Tests
     saved.labels.lookup "tmux.command" == some "vi" &&
     saved.labels.lookup "tmux.saved-command" == some "vi 'draft.txt'" &&
     saved.labels.lookup "tmux.capture" == some "saved" &&
-    (Linger.Core.Checkpoint.loadBytes (Linger.Core.Checkpoint.saveBytes saved)).map
-        Linger.Core.Checkpoint.saveBytes ==
-      some (Linger.Core.Checkpoint.saveBytes saved)
+    (Linger.Session.Checkpoint.loadBytes (Linger.Session.Checkpoint.saveBytes saved)).map
+        Linger.Session.Checkpoint.saveBytes ==
+      some (Linger.Session.Checkpoint.saveBytes saved)
 
 #guard
   let pane : Pane := { name := "desk-w0-p0", dir := "/one", line := 1 }

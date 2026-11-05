@@ -6,7 +6,7 @@ import Linger.Display.Listing
 import Linger.Target.Name
 import Linger.Target.Remote
 import Linger.Terminal.Title
-import Linger.Runtime.Paths
+import Linger.Session.Shell.Paths
 import Linger.Tools.Resurrect
 import E2E.Recipes
 import Std.Sync.Mutex
@@ -185,8 +185,8 @@ private def recordCommand (root : System.FilePath) (args : List String) : IO UIn
       let rc ← waitChild child 5000
       unless rc == 0 do
         return rc
-      let socket ← Linger.Runtime.Paths.socketPath target
-      let checkpoint ← Linger.Runtime.Paths.ckptPath target
+      let socket ← Linger.Session.Shell.Paths.socketPath target
+      let checkpoint ← Linger.Session.Shell.Paths.ckptPath target
       let vanished ←
         waitFor 3000 do
             return !(← alive (UInt32.ofNat previousPid)) &&

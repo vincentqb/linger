@@ -1,15 +1,15 @@
 module
 
 import Linger.Os.Shell
-public import Linger.Core.Session
+public import Linger.Session
 import Linger.Os.Env
-import Linger.Runtime.Paths
-import Linger.Runtime.Daemon
-import Linger.Runtime.Client
+import Linger.Session.Shell.Paths
+import Linger.Session.Shell.Daemon
+import Linger.Session.Shell.Client
 import Linger.Target.Remote
 import Linger.Display.Listing
 import Linger.Runtime.Command
-import Linger.Runtime.Resume
+import Linger.Session.Shell.Resume
 import Std.Async.Signal
 
 public section
@@ -26,12 +26,13 @@ spawn.
 
 namespace Linger.Runtime.Cli
 
+open Linger.Session.Shell
 open Linger.Os.Shell
-open Linger.Core.Wire (Msg)
+open Linger.Session.Wire (Msg)
 
 /-- Bound on accumulated `infoReply` bytes, independent of the request deadline.
 A peer exceeding the producer's policy has not supplied a usable answer. -/
-abbrev infoReplyCap : Nat := Linger.Core.Session.infoReplyCap
+abbrev infoReplyCap : Nat := Linger.Session.infoReplyCap
 
 /-- One line per command, printed by help and bare invocation, or to stderr when
 `overview` cannot parse the arguments as listing options. -/
@@ -145,8 +146,8 @@ Only `done` completes an answer; a failed prefix is never returned as info. -/
 def readInfo (fd : UInt32) (stopAt : Option Nat := none) : IO (List (String × String)) := do
   Client.sendMsg fd .info
   let deadline := stopAt.getD ((← monotonicMs) + 2000)
-  let mut dec : Linger.Core.Wire.Decoder := {}
-  let mut acc : Linger.Core.Buf.Buf := .empty
+  let mut dec : Linger.Session.Wire.Decoder := {}
+  let mut acc : Linger.Session.Buf.Buf := .empty
   let mut go := true
   while go && (← monotonicMs) < deadline do
     let remaining := deadline - (← monotonicMs)
@@ -170,7 +171,7 @@ def readInfo (fd : UInt32) (stopAt : Option Nat := none) : IO (List (String × S
           match m with
           | .infoReply payload =>
             let (next, dropped) :=
-              Linger.Core.Buf.bufOffer infoReplyCap acc (ByteArray.mk payload.toArray)
+              Linger.Session.Buf.bufOffer infoReplyCap acc (ByteArray.mk payload.toArray)
             if dropped then
               throw (IO.userError "info reply exceeds the byte limit")
             acc := next
@@ -186,7 +187,7 @@ def readInfo (fd : UInt32) (stopAt : Option Nat := none) : IO (List (String × S
     throw (IO.userError "no reply completed within the info deadline")
   let some txt :=
     String.fromUTF8?
-      (Linger.Core.Buf.writeFrom acc) | throw (IO.userError "invalid UTF-8 in info reply")
+      (Linger.Session.Buf.writeFrom acc) | throw (IO.userError "invalid UTF-8 in info reply")
   (txt.splitOn "\n").filter (· != "") |>.mapM fun line =>
       match line.splitOn "\t" with
       | [k, v] => pure (k, v)
@@ -586,7 +587,7 @@ private def cmdSendStdin (name : String) : IO UInt32 := do
     return 1
   | some fd =>
     try
-      let mut dec : Linger.Core.Wire.Decoder := {}
+      let mut dec : Linger.Session.Wire.Decoder := {}
       let mut go := true
       while go do
         let revs ← poll #[stdinFd, fd] #[POLLIN, POLLIN] 200

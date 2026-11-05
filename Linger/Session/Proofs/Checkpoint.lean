@@ -1,0 +1,1065 @@
+module
+
+import all Linger.Session.Checkpoint
+import all Linger.Terminal.Vt
+-- `Linger.Terminal.Proofs.Vt` for `Good`, and for the three claims about the decoder's door
+-- (`ofDecoded_good`, `ofDecoded_of_good`, `ofDecoded_none_of_cols_zero`) — the codec's
+-- theorems are stated in terms of it now that `rVt` validates rather than forges
+-- (`specs/archive/vt-toolkit.md` Step 2). `import all` because those declarations are
+-- module-private, as the `Vt` seal forces.
+import all Linger.Terminal.Proofs.Vt
+
+-- Converted from a legacy (non-`module`) file by the `Vt` seal
+-- (`specs/archive/vt-toolkit.md` Step 1). Legacy files make every declaration public, and
+-- a public statement may not mention a private field — `load_save_exact` mentions
+-- three (`pstate`, `u8need`, `u8acc`) and `cases vt` needs the constructor. As a
+-- `module` with no `public section`, the declarations are module-private and both
+-- are allowed. `Linger/Session/Proofs/Resume.lean` reaches in with `import all`.
+
+/-! # §Restore — the reboot-resume codec theorems
+
+THEOREMS.md's Checkpoints row cites `loadBytes_saveBytes_live` and `loadBytes_resave`,
+the byte-array forms (§What the runtime calls) of `load_save_live` and `load_resave`. A
+checkpoint round-trips modulo `Vt.quiesce`; the round trip is exact when the parser is
+already quiescent (`load_save_exact`), as every decoded checkpoint's is, since the codec
+deliberately forgets partial escape sequences. Totality of `load` on arbitrary bytes is by
+construction (`R α = List UInt8 → Option _`, structural recursion only), so it needs no
+theorem.
+
+Every default combinator round-trip is unconditional: `wNat` is LEB128, so
+there is no "fits in N bits" side condition anywhere in the format.
+Optional count limits are filters on these same decoded values; `rVt_unbounded`
+proves that the earlier resource guards preserve the complete decoder's result.
+
+**The `Vt` round trip is not.** `rVt` hands its decoded fields to
+`Vt.ofDecoded`, which returns `none` unless they describe a `Good` **and** `Renderable`
+state with a ruler the width of the screen (`specs/archive/vt-toolkit.md` Step 2 for the first,
+finding R2 for the other two), so `rt_vt` and everything above it carries those three
+hypotheses — satisfied by every live session (`load_save_live`), and false of exactly the
+records the validation exists to refuse. The two directions are `rVt_good`/`rVt_shape` and
+`load_good`/`load_renderable`/`load_tabsOk` (nothing bad is ever decoded, for **any** byte
+string) and `load_save_none_of_cols_zero` (the canonical junk record is refused rather than
+clamped).
+-/
+
+namespace Linger.Session.Checkpoint
+
+open Linger.Terminal
+open Linger.Terminal.Vt
+
+/-- "Reader `r` inverts writer `w`, leaving the rest untouched." -/
+abbrev RT {α : Type} (w : α → List UInt8) (r : R α) : Prop :=
+  ∀ (a : α) (rest : List UInt8), r (w a ++ rest) = some (a, rest)
+
+theorem rt_nat : RT wNat rNat := by
+  intro n rest
+  induction n using wNat.induct with
+  | case1 n h =>
+    rw [wNat, dite_eq_left h]
+    have hb : (UInt8.ofNat n) < 128 := by
+      simp only [UInt8.lt_iff_toNat_lt, UInt8.toNat_ofNat', show (128 : UInt8).toNat = 128 from rfl]
+      omega
+    simp only [List.cons_append, List.nil_append, rNat, hb, ↓reduceIte, UInt8.toNat_ofNat',
+      Nat.reducePow, Option.some.injEq, Prod.mk.injEq, Nat.mod_succ_eq_iff_lt, Nat.succ_eq_add_one,
+      Nat.reduceAdd, and_true, gt_iff_lt]
+    omega
+  | case2 n h ih =>
+    rw [wNat, dite_eq_right h]
+    have hmod : n % 128 < 128 := Nat.mod_lt _ (by omega)
+    have hb : ¬(UInt8.ofNat (128 + n % 128)) < 128 := by
+      simp only [UInt8.lt_iff_toNat_lt, UInt8.toNat_ofNat', show (128 : UInt8).toNat = 128 from rfl]
+      omega
+    simp only [rNat, List.cons_append, hb, ite_false, ih]
+    clear hb
+    simp only [UInt8.toNat_ofNat']
+    have h1 : (128 + n % 128) % 256 = 128 + n % 128 := by omega
+    rw [h1]
+    have h2 : 128 + n % 128 - 128 + 128 * (n / 128) = n := by omega
+    rw [h2]
+
+theorem rt_bool : RT wBool rBool := by
+  intro b rest
+  cases b <;> rfl
+
+theorem rt_char : RT wChar rChar := by
+  intro c rest
+  unfold wChar rChar
+  rw [rt_nat c.toNat rest]
+  have hv : c.toNat.isValidChar := c.valid
+  simp only [Option.bind_eq_bind, Option.bind_some]
+  rw [dite_eq_left hv]
+  exact congrArg (fun x => some (x, rest)) (Char.ext rfl)
+
+theorem rt_pair {α β : Type} {wa : α → List UInt8} {ra : R α} {wb : β → List UInt8} {rb : R β}
+    (ha : RT wa ra) (hb : RT wb rb) : RT (wPair wa wb) (rPair ra rb) := by
+  intro p rest
+  unfold wPair rPair
+  simp only [List.append_assoc, ha, hb, Option.bind_eq_bind, Option.bind_some]
+
+theorem rt_opt {α : Type} {w : α → List UInt8} {r : R α} (h : RT w r) : RT (wOpt w) (rOpt r) := by
+  intro o rest
+  cases o with
+  | none => rfl
+  | some a =>
+    unfold wOpt rOpt
+    simp only [List.cons_append, h, Option.bind_eq_bind, Option.bind_some]
+
+theorem rOpt_filter {α : Type} (r : R α) (p : α → Bool) (bytes : List UInt8) :
+    rOpt (fun l => (r l).filter (fun out => p out.1)) bytes =
+      (rOpt r bytes).filter (fun out => out.1.all p) := by
+  cases bytes with
+  | nil => rfl
+  | cons b bytes =>
+    by_cases hz : b = 0
+    · subst b; rfl
+    · by_cases ho : b = 1
+      · subst b
+        simp only [rOpt, Option.bind_eq_bind]
+        cases hr : r bytes with
+        | none => rfl
+        | some pair =>
+          obtain ⟨x, rest⟩ := pair
+          cases hp : p x <;> simp [Option.filter_some, hp]
+      · simp [rOpt, hz, ho]
+
+theorem rt_listAux {α : Type} {w : α → List UInt8} {r : R α} (h : RT w r) :
+    ∀ (l : List α) (rest : List UInt8),
+      rListAux r l.length (l.flatMap w ++ rest) = some (l, rest) := by
+  intro l
+  induction l with
+  | nil =>
+    intro rest; rfl
+  | cons x xs ih =>
+    intro rest
+    simp only [List.flatMap_cons, List.length_cons, rListAux, List.append_assoc, h, ih,
+      Option.bind_eq_bind, Option.bind_some]
+
+theorem rt_list {α : Type} {w : α → List UInt8} {r : R α} (h : RT w r) :
+    RT (wList w) (rList r) := by
+  intro l rest
+  unfold wList rList
+  simp only [List.append_assoc, rt_nat, Option.bind_eq_bind, Option.bind_some]
+  exact rt_listAux h l rest
+
+/-- A successful counted read returns exactly the declared number of elements. -/
+theorem rListAux_length {α : Type} (r : R α) (n : Nat) {bytes rest : List UInt8} {xs : List α}
+    (h : rListAux r n bytes = some (xs, rest)) : xs.length = n := by
+  induction n generalizing bytes xs with
+  | zero =>
+    cases h
+    rfl
+  | succ n ih =>
+    simp only [rListAux, Option.bind_eq_bind, Option.bind_eq_some_iff] at h
+    obtain ⟨⟨x, tail⟩, _, ⟨ys, tail'⟩, hys, he⟩ := h
+    cases he
+    simp only [List.length_cons, ih hys]
+
+/-- The early count guard changes only acceptance, preserving values and suffixes. -/
+theorem rList_bounded {α : Type} (r : R α) (bytes : List UInt8) (limit : Nat) :
+    rList r bytes (some limit) = (rList r bytes).filter (fun out => out.1.length ≤ limit) := by
+  unfold rList
+  cases hn : rNat bytes with
+  | none => rfl
+  | some p =>
+    obtain ⟨n, rest⟩ := p
+    simp only [Option.bind_eq_bind, Option.bind_some, Option.all_some, Option.all_none, ite_true,
+      decide_eq_true_eq]
+    cases hr : rListAux r n rest with
+    | none => simp
+    | some p =>
+      obtain ⟨xs, tail⟩ := p
+      simp only [Option.filter_some, rListAux_length r n hr, decide_eq_true_eq]
+
+/-- Filtering each element reader is equivalent to filtering the decoded list;
+neither route changes the decoded values or unread suffix. -/
+theorem rListAux_filter {α : Type} (r : R α) (p : α → Bool) (n : Nat) (bytes : List UInt8) :
+    rListAux (fun l => (r l).filter (fun out => p out.1)) n bytes =
+      (rListAux r n bytes).filter (fun out => out.1.all p) := by
+  induction n generalizing bytes with
+  | zero => rfl
+  | succ n ih =>
+    simp only [rListAux, Option.bind_eq_bind]
+    cases hr : r bytes with
+    | none => rfl
+    | some pair =>
+      obtain ⟨x, rest⟩ := pair
+      simp only [ih]
+      cases ht : rListAux r n rest with
+      | none => cases hp : p x <;> simp [Option.filter_some, hp, ht]
+      | some pair =>
+        obtain ⟨xs, tail⟩ := pair
+        cases hp : p x <;> cases hps : xs.all p <;> simp [Option.filter_some, hp, hps, ht]
+
+theorem rList_filter {α : Type} (r : R α) (p : α → Bool) (bytes : List UInt8) :
+    rList (fun l => (r l).filter (fun out => p out.1)) bytes =
+      (rList r bytes).filter (fun out => out.1.all p) := by
+  unfold rList
+  cases hn : rNat bytes with
+  | none => rfl
+  | some pair =>
+    obtain ⟨n, rest⟩ := pair
+    exact rListAux_filter r p n rest
+
+theorem rt_str : RT wStr rStr := by
+  intro s rest
+  unfold wStr rStr
+  simp only [rt_list rt_char, Option.bind_eq_bind, Option.bind_some, String.ofList_toList]
+
+theorem rt_color : RT wColor rColor := by
+  intro c rest
+  cases c <;> rfl
+
+theorem rt_pen : RT wPen rPen := by
+  intro p rest
+  unfold wPen rPen
+  simp only [List.append_assoc, rt_color, rt_bool, Option.bind_eq_bind, Option.bind_some]
+
+theorem rt_cell : RT wCell rCell := by
+  intro c rest
+  unfold wCell rCell
+  simp only [List.append_assoc, rt_char, rt_list rt_char, rt_nat, rt_pen, Option.bind_eq_bind,
+    Option.bind_some]
+
+/-- Expanding the run-length groups of a list recovers the list. -/
+theorem expand_runs {α : Type} [DecidableEq α] (l : List α) : expand (runs l) = l := by
+  induction l with
+  | nil => rfl
+  | cons a t ih =>
+    rw [runs]
+    cases hrt : runs t with
+    | nil =>
+      rw [hrt] at ih
+      simp only [expand] at ih
+      -- ih : [] = t, so t is empty and the run is just [a]
+      simp only [← ih, expand, List.replicate, List.append_nil]
+    | cons hd tl =>
+      obtain ⟨n, b⟩ := hd
+      rw [hrt] at ih
+      simp only [expand] at ih
+      by_cases hab : a = b
+      · subst hab
+        simp only [reduceIte, expand, List.replicate_succ, List.cons_append, ih]
+      · simp only [hab, reduceIte, expand, List.replicate, List.singleton_append, ih]
+
+theorem rt_rle {α : Type} [DecidableEq α] {w : α → List UInt8} {r : R α} (h : RT w r) :
+    RT (wRLE w) (rRLE r) := by
+  intro l rest
+  unfold wRLE rRLE
+  simp only [rt_list (rt_pair rt_nat h), Option.bind_eq_bind, Option.bind_some, Option.all_none,
+    ite_true, expand_runs]
+
+/-- Encoded run counts give exactly the number of expanded elements. -/
+theorem expand_length {α : Type} (groups : List (Nat × α)) :
+    (expand groups).length = (groups.map Prod.fst).sum := by
+  induction groups with
+  | nil => rfl
+  | cons pair groups ih =>
+    obtain ⟨n, x⟩ := pair
+    simp [expand, ih]
+
+/-- The sum check precedes expansion, but accepts exactly the expansions within
+the limit, including noncanonical and zero-length runs. -/
+theorem rRLE_bounded {α : Type} (r : R α) (bytes : List UInt8) (limit : Nat) :
+    rRLE r bytes (some limit) = (rRLE r bytes).filter (fun out => out.1.length ≤ limit) := by
+  unfold rRLE
+  cases hr : rList (rPair rNat r) bytes with
+  | none => rfl
+  | some pair =>
+    obtain ⟨groups, rest⟩ := pair
+    simp only [Option.bind_eq_bind, Option.bind_some, Option.all_some, Option.all_none, ite_true,
+      Option.filter_some, expand_length]
+
+theorem rt_row : RT wRow rRow := by
+  intro r rest
+  unfold wRow rRow
+  simp only [rt_rle rt_cell, Option.bind_eq_bind, Option.bind_some]
+
+theorem rRow_bounded (bytes : List UInt8) (limit : Nat) :
+    rRow bytes (some limit) = (rRow bytes).filter (fun out => out.1.size ≤ limit) := by
+  unfold rRow
+  rw [rRLE_bounded]
+  cases hr : rRLE rCell bytes with
+  | none => rfl
+  | some pair =>
+    obtain ⟨cs, rest⟩ := pair
+    by_cases h : cs.length ≤ limit <;> simp [Option.filter_some, h]
+
+/-- Both live screen readers enforce the row count and every row's cell budget. -/
+theorem rRows_bounded (bytes : List UInt8) (cols rows : Nat) :
+    rList (fun l => rRow l (some cols)) bytes (some rows) =
+      (rList rRow bytes).filter
+        (fun out => out.1.all (fun row => row.size ≤ cols) && out.1.length ≤ rows) := by
+  rw [rList_bounded]
+  simp only [rRow_bounded]
+  rw [rList_filter (fun l => rRow l) (fun row => row.size ≤ cols), Option.filter_filter]
+
+theorem rt_cursor : RT wCursor rCursor := by
+  intro c rest
+  unfold wCursor rCursor
+  simp only [List.append_assoc, rt_nat, rt_bool, Option.bind_eq_bind, Option.bind_some]
+
+theorem rt_modes : RT wModes rModes := by
+  intro m rest
+  unfold wModes rModes
+  simp only [List.append_assoc, rt_bool, rt_nat, Option.bind_eq_bind, Option.bind_some]
+
+theorem rt_saved : RT wSaved rSaved := by
+  intro s rest
+  unfold wSaved rSaved
+  simp only [List.append_assoc, rt_cursor, rt_pen, Option.bind_eq_bind, Option.bind_some]
+
+theorem rt_ring : RT wRing rRing := by
+  intro r rest
+  unfold wRing rRing
+  simp only [List.append_assoc, rt_nat, rt_list rt_row, Option.bind_eq_bind, Option.bind_some]
+
+theorem rRing_bounded (bytes : List UInt8) (limit : Nat) :
+    rRing bytes (some limit) = (rRing bytes).filter (fun out => out.1.size ≤ limit) := by
+  unfold rRing
+  cases hn : rNat bytes with
+  | none => rfl
+  | some pair =>
+    obtain ⟨start, rest⟩ := pair
+    simp only [Option.bind_eq_bind, Option.bind_some, rList_bounded]
+    cases hr : rList rRow rest with
+    | none => rfl
+    | some pair =>
+      obtain ⟨rows, tail⟩ := pair
+      by_cases h : rows.length ≤ limit <;> simp [Option.filter_some, Ring.size, h]
+
+theorem rt_alt : RT wAlt rAlt := by
+  unfold wAlt rAlt
+  apply rt_opt
+  intro x rest
+  obtain ⟨g, c, p⟩ := x
+  simp only [List.append_assoc, rt_list rt_row, rt_cursor, rt_pen, Option.bind_eq_bind,
+    Option.bind_some]
+
+theorem rAlt_bounded (bytes : List UInt8) (cols rows : Nat) :
+    rAlt bytes (some cols) (some rows) =
+      (rAlt bytes).filter
+        (fun out =>
+          out.1.all
+            (fun screen =>
+              screen.1.toList.all (fun row => row.size ≤ cols) && screen.1.size ≤ rows)) := by
+  unfold rAlt
+  rw [← rOpt_filter]
+  apply congrArg (fun reader => rOpt reader bytes)
+  funext l
+  rw [rRows_bounded]
+  cases hg : rList rRow l with
+  | none => rfl
+  | some pair =>
+    obtain ⟨grid, rest⟩ := pair
+    cases h : grid.all (fun row => row.size ≤ cols) && grid.length ≤ rows <;>
+      simp only [Option.filter_some, h, Bool.false_eq_true, ite_false, ite_true,
+        Option.bind_eq_bind, Option.bind_none, Option.bind_some] <;>
+      cases hc : rCursor rest <;>
+      simp only [Option.bind_none, Option.bind_some, Option.filter_none]
+    all_goals
+      rename_i pair
+      obtain ⟨cursor, tail⟩ := pair
+      cases hp : rPen tail <;> simp only [Option.bind_none, Option.bind_some, Option.filter_none]
+      rename_i pair
+      obtain ⟨pen, tail⟩ := pair
+      simp only [Option.filter_some, List.size_toArray, h, Bool.false_eq_true, ite_false, ite_true]
+
+/-- Shape validation already entails the cheaper pre-expansion screen budgets. -/
+theorem gridOk_bounded {cols rows : Nat} {grid : Array Row} (h : GridOk cols rows grid) :
+    (grid.toList.all (fun row => row.size ≤ cols) && grid.size ≤ rows) = true := by
+  simp only [Bool.and_eq_true, decide_eq_true_eq]
+  refine ⟨List.all_eq_true.mpr ?_, by simp [h.1]⟩
+  intro row hr
+  obtain ⟨i, hi, rfl⟩ := Array.getElem_of_mem (Array.mem_toList_iff.mp hr)
+  have hs := (h.2 i).size
+  rw [Array.getD, dite_eq_left hi] at hs
+  simp only [decide_eq_true_eq]
+  exact Nat.le_of_eq hs
+
+/-- Every state accepted by the existing decoder door passes the earlier resource
+guards. In particular, no bound on history row widths is inferred here. -/
+theorem ofDecoded_bounds {cols rows : Nat} {grid : Array Row} {cursor : Cursor} {pen : Pen}
+    {modes : Modes} {top bot : Nat} {tabs : Array Bool} {sb : Ring}
+    {alt : Option (Array Row × Cursor × Pen)} {saved : Saved} {title : String}
+    {g0 g1 shift bell : Bool} {v : Vt}
+    (h :
+      Vt.ofDecoded cols rows grid cursor pen modes top bot tabs sb alt saved title g0 g1 shift
+          bell =
+        some v) :
+    (cols != clampDim cols || rows != clampDim rows) = false ∧
+      (grid.toList.all (fun row => row.size ≤ cols) && grid.size ≤ rows) = true ∧
+      tabs.size ≤ cols ∧
+      sb.size ≤ sbCap ∧
+      alt.all
+          (fun screen => screen.1.toList.all (fun row => row.size ≤ cols) && screen.1.size ≤ rows) =
+        true := by
+  unfold Vt.ofDecoded at h
+  split at h
+  · rename_i hok
+    simp only [Bool.and_eq_true] at hok
+    obtain ⟨hgood, hshape⟩ := hok
+    obtain ⟨hc1, hc2, hr1, hr2, -, -, -, -, -, -, hsb, -⟩ := decodedOk_iff.mp hgood
+    obtain ⟨hgrid, htabs, halt⟩ := decodedRenderable_iff.mp hshape
+    refine ⟨?_, gridOk_bounded hgrid, Nat.le_of_eq htabs, hsb, ?_⟩
+    · simp [clampDim, Nat.max_eq_left hc1, Nat.min_eq_left hc2, Nat.max_eq_left hr1,
+        Nat.min_eq_left hr2]
+    · cases alt with
+      | none => rfl
+      | some screen =>
+        obtain ⟨g, c, p⟩ := screen
+        exact gridOk_bounded (halt g c p rfl)
+  · contradiction
+
+/-- Moving the existing shape and count rejection before allocation preserves
+the result on every byte string, including accepted noncanonical encodings.
+The right-hand side is the original unrestricted reader chain. -/
+theorem rVt_unbounded (bytes : List UInt8) :
+    rVt bytes =
+      (do
+        let (cols, l) ← rNat bytes
+        let (rows, l) ← rNat l
+        let (grid, l) ← rList rRow l
+        let (cursor, l) ← rCursor l
+        let (pen, l) ← rPen l
+        let (modes, l) ← rModes l
+        let (top, l) ← rNat l
+        let (bot, l) ← rNat l
+        let (tabs, l) ← rList rBool l
+        let (sb, l) ← rRing l
+        let (alt, l) ← rAlt l
+        let (saved, l) ← rSaved l
+        let (title, l) ← rStr l
+        let (g0, l) ← rBool l
+        let (g1, l) ← rBool l
+        let (shift, l) ← rBool l
+        let (bell, l) ← rBool l
+        let v ←
+          Vt.ofDecoded cols rows grid.toArray cursor pen modes top bot tabs.toArray sb alt saved
+              title g0 g1 shift bell
+        some (v, l)) := by
+  unfold rVt
+  simp only [rRows_bounded]
+  simp only [rList_bounded, rRing_bounded, rAlt_bounded]
+  apply Option.ext
+  intro out
+  simp only [Option.bind_eq_bind, Option.bind_eq_some_iff]
+  constructor
+  · intro h
+    obtain ⟨cols, hc, rows, hr, h⟩ := h
+    split at h
+    · contradiction
+    simp only [Option.bind_eq_some_iff, Option.filter_eq_some_iff] at h
+    obtain
+      ⟨grid, ⟨hg, -⟩, cursor, hcur, pen, hp, modes, hm, top, ht, bot, hb, tabs, ⟨htab, -⟩, sb,
+        ⟨hsb, -⟩, alt, ⟨halt, -⟩, saved, hsave, title, htitle, g0, hg0, g1, hg1, shift, hshift,
+        bell, hbell, v, hv, he⟩ :=
+      h
+    exact
+      ⟨cols, hc, rows, hr, grid, hg, cursor, hcur, pen, hp, modes, hm, top, ht, bot, hb, tabs, htab,
+        sb, hsb, alt, halt, saved, hsave, title, htitle, g0, hg0, g1, hg1, shift, hshift, bell,
+        hbell, v, hv, he⟩
+  · rintro
+      ⟨cols, hc, rows, hr, grid, hg, cursor, hcur, pen, hp, modes, hm, top, ht, bot, hb, tabs, htab,
+          sb, hsb, alt, halt, saved, hsave, title, htitle, g0, hg0, g1, hg1, shift, hshift, bell,
+          hbell, v, hv, he⟩
+    obtain ⟨hdims, hgrid, htabs, hsbcap, haltcap⟩ := ofDecoded_bounds hv
+    refine ⟨cols, hc, rows, hr, ?_⟩
+    simp only [hdims, Bool.false_eq_true, ite_false]
+    simp only [Option.bind_eq_some_iff, Option.filter_eq_some_iff]
+    exact
+      ⟨grid, ⟨hg, by simpa using hgrid⟩, cursor, hcur, pen, hp, modes, hm, top, ht, bot, hb, tabs,
+        ⟨htab, by simpa using htabs⟩, sb, ⟨hsb, by simpa using hsbcap⟩, alt, ⟨halt, haltcap⟩, saved,
+        hsave, title, htitle, g0, hg0, g1, hg1, shift, hshift, bell, hbell, v, hv, he⟩
+
+/-- **The fields round-trip unconditionally; acceptance is exactly the smart
+constructor's decision.** The earlier resource guards preserve that decision by
+`rVt_unbounded`; every default combinator remains an unconditional inverse.
+
+Both of the claims above it read off this one: `rt_vt` by `ofDecoded_of_good`, and
+`load_save_none_of_cols_zero` by `ofDecoded_none_of_cols_zero`. -/
+theorem rVt_fields (v : Vt) (rest : List UInt8) :
+    rVt (wVt v ++ rest) =
+      (Vt.ofDecoded v.cols v.rows v.grid v.cursor v.pen v.modes v.top v.bot v.tabs v.sb v.altGrid
+            v.saved v.title v.g0Line v.g1Line v.shiftOut v.bell).map
+        (fun w => (w, rest)) := by
+  rw [rVt_unbounded]
+  unfold wVt
+  simp only [List.append_assoc, rt_nat, rt_list rt_row, rt_cursor, rt_pen, rt_modes,
+    rt_list rt_bool, rt_ring, rt_alt, rt_saved, rt_str, rt_bool, Option.bind_eq_bind,
+    Option.bind_some, Array.toArray_toList]
+  exact Option.map_eq_bind.symm
+
+/-- The Vt round trip: exact modulo the deliberately-forgotten parser
+state, for any state the emulator can actually be in.
+
+`Good` is the hypothesis the smart constructor introduced, and it is not a weakening of
+the format: `good_init` and `good_of_liveReachable` say every live session satisfies it,
+and a state that does not is precisely one a checkpoint must not restore. The old
+unconditional statement was true of `cols := 0`, which is the bug.
+
+**`hren` and `htabs` arrived with finding R2** (SCRATCHPAD.md), for the same reason and by
+the same mirror: the door now also refuses a record whose grid is not the shape its
+dimensions claim, so the round trip is conditional on the *input* being that shape. Same
+answer to "is this a weakening" — the unconditional statement was true of a screen
+`Render.restore` cannot repaint, which is what `resume_grid` was refuted at. Every live
+session satisfies all three (`good_of_liveReachable`, `renderable_of_liveReachable`,
+`tabsOk_of_liveReachable`), so `load_save_live` below is the honest reading of the cost. -/
+theorem rt_vt (v : Vt) (h : Good v) (hren : Renderable v) (htabs : TabsOk v) (rest : List UInt8) :
+    rVt (wVt v ++ rest) = some (v.quiesce, rest) := by
+  rw [rVt_fields, ofDecoded_of_good h hren htabs, Option.map_some]
+
+/-- Every accepted byte string reaches the checked constructor and starts with
+an empty parser. The reader chain is destructured once here; safety, shape and
+reachability below are projections of this acceptance result. -/
+theorem rVt_accepted {l : List UInt8} {v : Vt} {rest : List UInt8} (h : rVt l = some (v, rest)) :
+    LiveReachableVt v ∧ v.quiesce = v := by
+  simp only [rVt, Option.bind_eq_bind, Option.bind_eq_some_iff] at h
+  obtain ⟨_, -, _, -, h⟩ := h
+  split at h
+  · contradiction
+  simp only [Option.bind_eq_some_iff] at h
+  obtain
+    ⟨_, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, _, -, w,
+      hw, he⟩ :=
+    h
+  simp only [Option.some.injEq, Prod.mk.injEq] at he
+  have hlive := LiveReachableVt.ofDecoded hw
+  have hquiet : w.quiesce = w := by
+    unfold Vt.ofDecoded at hw
+    split at hw
+    · cases hw; rfl
+    · contradiction
+  exact he.1 ▸ ⟨hlive, hquiet⟩
+
+/-- **Nothing bad is ever decoded, from any bytes at all.** Not "from bytes `save`
+wrote" — from an arbitrary `List UInt8`, which is what a checkpoint file is: the
+attacker-controlled input the `Vt` seal could not reach. If `rVt` yields a `Vt`, that
+`Vt` is `Good`.
+
+This is the theorem the step is for, and it is the one that makes every
+`Good`-hypothesised claim in `Linger/Terminal/Proofs/Render/*` and `Linger/Session/Proofs/Resume.lean` reachable
+from the resume path rather than merely stated. -/
+theorem rVt_good {l : List UInt8} {v : Vt} {rest : List UInt8} (h : rVt l = some (v, rest)) :
+    Good v := good_of_liveReachable (rVt_accepted h).1
+
+/-- **…and nothing the emitter cannot repaint, either — finding R2.** The other half of
+"nothing bad is ever decoded", from an arbitrary `List UInt8`: if `rVt` yields a `Vt`, that
+`Vt`'s grid has exactly `rows` rows of exactly `cols` cells, every cell holds an emittable
+base of the width it claims, every wide glyph keeps its shadow, the stashed alt screen is
+the same shape, and the tab ruler is the width of the screen.
+
+`Good` implied none of that — `decodedOk` was never passed the grid — and the gap was
+observable: a real checkpoint with its `rows` byte flipped decoded to a screen whose replay
+is not the screen it came from. Both properties follow from the accepted state in
+`rVt_accepted`, and are projected by `load_renderable` and `load_tabsOk` below. -/
+theorem rVt_shape {l : List UInt8} {v : Vt} {rest : List UInt8} (h : rVt l = some (v, rest)) :
+    Renderable v ∧ TabsOk v := by
+  have hlive := (rVt_accepted h).1
+  exact ⟨renderable_of_liveReachable hlive, tabsOk_of_liveReachable hlive⟩
+
+/-- **…and it is a state a live session can hold** — the third and strongest reading of
+"nothing bad is ever decoded", from an arbitrary `List UInt8`. Not merely `Good` (Step 2),
+not merely `Good ∧ Renderable ∧ TabsOk` (finding R2): a member of the *closure* the replay
+theorems are stated over, so a decoded screen is admissible wherever a fed-and-resized one
+is.
+
+This is `LiveReachableVt`'s `ofDecoded` rung reached through the readers, and it is the
+claim the rung exists for. Before it, `Linger/Session/Proofs/Session.lean` could lift the shape
+invariant to the daemon only for a session booted from `Vt.init`; `load_live` below carries
+it to the resume path, where `Session.liveVt_boot_of_load` closes the gap in one step.
+
+The rung is sound only because the *door* decides all four components — R2 is what made
+this provable, and a rung premised on `Good v` instead was measured unsound (§LiveReachable
+in `Linger/Terminal/Proofs/Vt.lean`). -/
+theorem rVt_live {l : List UInt8} {v : Vt} {rest : List UInt8} (h : rVt l = some (v, rest)) :
+    LiveReachableVt v := (rVt_accepted h).1
+
+/-! ### The format tag, as a named stage
+
+`stripMagic` is the tag check, named rather than inlined; `load_save_append` and
+`load_save_none_of_cols_zero` go through it instead of unfolding the decision into the
+parser chain. -/
+
+theorem stripMagic_magic (p : List UInt8) : stripMagic (magic ++ p) = some p := rfl
+
+/-- Acceptance at the file boundary preserves the checked state and parser
+reset established by `rVt`. This applies to any bytes, including encodings that
+were not produced by `save`. -/
+theorem load_accepted {l : List UInt8} {c : Ckpt} (h : load l = some c) :
+    LiveReachableVt c.vt ∧ c.vt.quiesce = c.vt := by
+  simp only [load, Option.bind_eq_bind, Option.bind_eq_some_iff] at h
+  obtain ⟨_, -, ⟨vt, _⟩, hvt, _, -, _, -, h⟩ := h
+  split at h
+  · simp only [Option.some.injEq] at h
+    subst h
+    exact rVt_accepted hvt
+  · exact absurd h (by simp)
+
+/-- **The top-level no-forge claim**, and the one the runtime is entitled to lean on: a
+checkpoint that loads at all loads to a `Good` screen, so the `clampDim` the daemon applies
+before `spawnPty` cannot change a loaded screen's dimensions. -/
+theorem load_good {l : List UInt8} {c : Ckpt} (h : load l = some c) : Good c.vt :=
+  good_of_liveReachable (load_accepted h).1
+
+/-- **The top-level shape claim, for any byte string — finding R2's payoff.** A checkpoint
+that loads at all loads to a screen the emitter can reproduce and a ruler the width of that
+screen. One destructuring of `load`, projected by the two claims below.
+
+This is what makes the §Replay theorems reachable from the *resume path* rather than merely
+stated over a hypothesis: `Linger/Session/Proofs/Resume.lean`'s `resume_grid_of_load` /
+`resume_tabs_of_load` / `resume_sb_of_load` need no hypothesis at all beyond
+`load l = some c`, where their `save`-side twins must ask for `Renderable` because their
+subject is `save`'s input. -/
+theorem load_shape {l : List UInt8} {c : Ckpt} (h : load l = some c) :
+    Renderable c.vt ∧ TabsOk c.vt := by
+  have hlive := (load_accepted h).1
+  exact ⟨renderable_of_liveReachable hlive, tabsOk_of_liveReachable hlive⟩
+
+/-- **The twin of `load_good`**: every byte string `load` accepts decodes to a `Renderable`
+screen. Named as its own claim because that is the property `Render.restore`'s theorems ask
+for, and because before R2 it was false — refutably, from one flipped byte of a real
+checkpoint. -/
+theorem load_renderable {l : List UInt8} {c : Ckpt} (h : load l = some c) : Renderable c.vt :=
+  (load_shape h).1
+
+/-- …and the ruler, which `Renderable` does not carry (`Render.restore_tabs_any`'s
+`hvtabs`, `Resume.resume_tabs`'s). Before R2 a checkpoint could name a ruler of any length
+at all. -/
+theorem load_tabsOk {l : List UInt8} {c : Ckpt} (h : load l = some c) : TabsOk c.vt :=
+  (load_shape h).2
+
+/-- **The top-level reachability claim: a checkpoint that loads loads to a state a live
+session can hold.** Strictly stronger than `load_good`, `load_renderable` and `load_tabsOk`
+together — those three are its projections (`good_of_liveReachable` and siblings), and it
+additionally puts the decoded screen inside the closure every `Render.restore_*_reachable`
+theorem quantifies over.
+
+The one-line consequence worth naming: `Linger/Session/Proofs/Session.lean`'s `LiveVt` is now provable
+for a **resumed** daemon (`Session.liveVt_boot_of_load`), so `Session.run_vt_renderable` and
+the shape claims beneath it stop being about fresh boots only. That is the whole reason the
+`ofDecoded` rung was added; this theorem is the bridge.
+
+`load_save_live` below still asks for `LiveReachableVt c.vt` rather than `load l = some c`
+on purpose: its subject is `save`'s **input**, the state the daemon holds, which reaches
+the decoder only through `load_save`'s own conclusion (the circularity SCRATCHPAD.md
+measured). `load_live` is the tool for the other direction — `load`'s output. -/
+theorem load_live {l : List UInt8} {c : Ckpt} (h : load l = some c) : LiveReachableVt c.vt :=
+  (load_accepted h).1
+
+/-- The reader consumes a complete checkpoint, rejecting every nonempty suffix
+after a valid saved record. This also rules out silently accepting concatenated
+checkpoints. All parser combinators must preserve their unread suffix for this
+claim to reach the final consumption check. -/
+theorem load_save_append (c : Ckpt) (h : Good c.vt) (hren : Renderable c.vt) (htabs : TabsOk c.vt)
+    (rest : List UInt8) :
+    load (save c ++ rest) = if rest = [] then some { c with vt := c.vt.quiesce } else none := by
+  unfold load save
+  simp only [List.append_assoc]
+  rw [stripMagic_magic]
+  simp only [rt_vt _ h hren htabs, rt_str, rt_list (rt_pair rt_str rt_str), Option.bind_eq_bind,
+    Option.bind_some]
+  cases rest <;> rfl
+
+/-- §Restore, top level: a checkpoint written by `save` loads back to
+exactly what was saved, with parser state quiesced. A live source can be
+mid-escape or mid-character even between poll rounds. `load_good` and
+`load_renderable` establish the shape of every accepted record; they do not
+require a canonical encoding or put a resource bound on decoding rejected bytes.
+
+Three hypotheses, all of them the decoder's acceptance seen from this side (`rt_vt`):
+`Good` since Step 2, `Renderable` and `TabsOk` since R2. `load_save_live` below is the same
+claim with all three discharged from reachability, which is the answer to "what does this
+cost a real session". -/
+theorem load_save (c : Ckpt) (h : Good c.vt) (hren : Renderable c.vt) (htabs : TabsOk c.vt) :
+    load (save c) = some { c with vt := c.vt.quiesce } := by
+  simpa using load_save_append c h hren htabs []
+
+/-- **What the three hypotheses cost a real session: nothing.** Every state a live session
+can hold is `LiveReachableVt`, and that discharges `Good`, `Renderable` and `TabsOk` at
+once. Stated because R2 added two binders to `load_save` and a reader is entitled to see,
+in one place, that the checkpoint every daemon writes still loads — the alternative is
+three lemma names in a docstring and a reader taking them on trust. -/
+theorem load_save_live (c : Ckpt) (h : LiveReachableVt c.vt) :
+    load (save c) = some { c with vt := c.vt.quiesce } :=
+  load_save c (good_of_liveReachable h) (renderable_of_liveReachable h) (tabsOk_of_liveReachable h)
+
+/-- Loading, saving and loading an accepted checkpoint again is exact, including
+cwd and labels. Its parser is already quiescent, so subsequent checkpoints do not
+lose any further state. This does not assert that the original bytes were a
+canonical encoding. -/
+theorem load_resave {l : List UInt8} {c : Ckpt} (h : load l = some c) : load (save c) = some c := by
+  rw [load_save_live c (load_accepted h).1, (load_accepted h).2]
+
+/-- **The tag `save` writes.** Pinned as its own claim because the tag is the one part
+of a checkpoint another program reads before trusting the rest, and because a wrong
+constant here is invisible to the round trip (`load_save` would still hold of a `save`
+that wrote any tag `stripMagic` accepted).
+
+The pre-rename `"LZMX"` reader was removed on 2026-08-19, one commit after it landed:
+it existed to migrate files written before the rename, `save` had already been writing
+`"LNGR"` for a commit, and there were no old-tag checkpoints left on disk to orphan.
+Anyone who needs to read one can check out `e1ac562`, where the reader and its two
+theorems (`load_legacy_save`, `save_no_legacy`) are green — that is the escape hatch,
+and it is cheaper than carrying a branch for a file nobody has. -/
+theorem save_tag (c : Ckpt) : (save c).take 5 = magic := by simp [save, magic]
+
+/-- And when the parser is already quiescent, the round-trip is exact. `hren`/`htabs` are
+`load_save`'s, hence `ofDecoded_of_good`'s; see there for why they are not a weakening. -/
+theorem load_save_exact (c : Ckpt) (hg : Good c.vt) (hren : Renderable c.vt) (htabs : TabsOk c.vt)
+    (h : c.vt.pstate = .ground) (h8 : c.vt.u8need = 0) (ha : c.vt.u8acc = 0) :
+    load (save c) = some c := by
+  rw [load_save c hg hren htabs]
+  congr 1
+  cases c with
+  | mk vt cwd labels =>
+    simp only [Ckpt.mk.injEq, and_true]
+    cases vt
+    simp_all [Vt.quiesce]
+
+/-- **Junk dimensions are refused, not clamped** — the behaviour change of
+`specs/archive/vt-toolkit.md` Step 2, stated at the top level rather than only fixtured.
+`cols = 0` is the canonical corrupt value: no live session can hold it, `Good` is false
+of it, and a decoder that accepted it would hand `Render.restore` a screen every one of
+its theorems is vacuous at.
+
+The `Ckpt` here is a *forged* one — a `Vt` no `init`/`resize`/`feed` path produces, which
+is reachable in this file only because the seal's friend import is. That is the point:
+the record on disk is the one input an attacker controls, and `save` of such a state is
+byte-for-byte what a hostile file looks like. -/
+theorem load_save_none_of_cols_zero (c : Ckpt) (h : c.vt.cols = 0) : load (save c) = none := by
+  unfold load save
+  simp only [List.append_assoc]
+  rw [stripMagic_magic]
+  simp only [Option.bind_eq_bind, Option.bind_some]
+  rw [rVt_fields, h, ofDecoded_none_of_cols_zero]
+  rfl
+
+/-! ### The byte-array writer
+
+Each accumulator writer appends exactly its list writer's bytes, so `saveBytes` writes
+`save`'s record byte for byte and every theorem above holds of its bytes. -/
+
+/-- "Accumulator writer `f` appends exactly the bytes list writer `w` returns." -/
+abbrev Appends {α : Type} (f : ByteArray → α → ByteArray) (w : α → List UInt8) : Prop :=
+  ∀ (acc : ByteArray) (a : α), (f acc a).data.toList = acc.data.toList ++ w a
+
+theorem natB_appends : Appends natB wNat := by
+  intro acc n
+  fun_induction natB acc n with
+  | case1 acc n h => simp [wNat, h]
+  | case2 acc n h ih =>
+    rw [ih, wNat.eq_1 n]
+    simp [h]
+
+theorem boolB_appends : Appends boolB wBool := by
+  intro acc b
+  simp [boolB, wBool]
+
+theorem charB_appends : Appends charB wChar := fun acc c => natB_appends acc c.toNat
+
+theorem listB_appends {α : Type} {f : ByteArray → α → ByteArray} {w : α → List UInt8}
+    (h : Appends f w) : Appends (listB f) (wList w) := by
+  have hfold (l : List α) (acc : ByteArray) :
+    (l.foldl f acc).data.toList = acc.data.toList ++ l.flatMap w := by
+    induction l generalizing acc with
+    | nil => simp
+    | cons a l ih => simp [ih, h]
+  intro acc l
+  simp [listB, wList, hfold, natB_appends]
+
+theorem colorB_appends : Appends colorB wColor := by
+  intro acc c
+  cases c <;> simp [colorB, wColor]
+
+theorem penB_appends : Appends penB wPen := by
+  intro acc p
+  simp [penB, wPen, colorB_appends, boolB_appends]
+
+theorem cellB_appends : Appends cellB wCell := by
+  intro acc c
+  simp [cellB, wCell, penB_appends, natB_appends, listB_appends charB_appends, charB_appends]
+
+theorem rleB_appends {α : Type} [DecidableEq α] {f : ByteArray → α → ByteArray} {w : α → List UInt8}
+    (h : Appends f w) : Appends (rleB f) (wRLE w) := by
+  intro acc l
+  apply listB_appends
+  intro acc pair
+  obtain ⟨n, a⟩ := pair
+  simp [h, natB_appends, wPair]
+
+theorem rowB_appends : Appends rowB wRow := fun acc r => rleB_appends cellB_appends acc r.toList
+
+/-- **The byte-array writer is `save`**: the same `"LNGR"` v1 record, byte for byte. -/
+theorem saveBytes_eq (c : Ckpt) : saveBytes c = ⟨(save c).toArray⟩ := by
+  have h : (saveBytes c).data.toList = save c := by
+    unfold saveBytes save wVt wRing wAlt
+    dsimp only
+    cases c.vt.altGrid with
+    | none => simp [listB_appends rowB_appends, wOpt]
+    | some screen =>
+      obtain ⟨g, cur, pen⟩ := screen
+      simp [listB_appends rowB_appends, wOpt]
+  apply ByteArray.ext
+  simp [← Array.toList_inj, h]
+
+/-! ### The byte-array reader
+
+Each position reader returns what its list reader returns on the bytes from that position,
+with the unread suffix given as the position where it starts. So `loadBytes` reads exactly
+what `load` reads, and every theorem above holds of the runtime decoder. -/
+
+theorem drop_lt {b : ByteArray} {i : Nat} (h : i < b.size) :
+    b.data.toList.drop i = b[i] :: b.data.toList.drop (i + 1) := by
+  rw [List.drop_eq_getElem_cons (i := i) (by simpa using h)]
+  rfl
+
+theorem drop_ge {b : ByteArray} {i : Nat} (h : ¬i < b.size) : b.data.toList.drop i = [] :=
+  List.drop_eq_nil_of_le (by simpa using Nat.le_of_not_lt h)
+
+/-- "Position reader `rb` returns what list reader `r` returns on the bytes from that position,
+leaving the bytes from the returned position unread." -/
+abbrev Mirrors {α : Type} (rb : RB α) (r : R α) : Prop :=
+  ∀ (b : ByteArray) (i : Nat),
+    (rb b i).map (fun p => (p.1, b.data.toList.drop p.2)) = r (b.data.toList.drop i)
+
+theorem rNatLongB_mirrors : Mirrors rNatLongB rNat := by
+  intro b i
+  fun_induction rNatLongB b i with
+  | case1 i h hb => simp [drop_lt h, rNat, hb]
+  | case2 i h hb hnone ih =>
+    rw [hnone] at ih
+    simp only [drop_lt h, rNat, ite_eq_right hb, ← ih, Option.map_none]
+  | case3 i h hb hi j hsome ih =>
+    rw [hsome] at ih
+    simp only [drop_lt h, rNat, ite_eq_right hb, ← ih, Option.map_some]
+  | case4 i h => simp [drop_ge h, rNat]
+
+/-- The inlined entry is the general reader. -/
+theorem rNatB_eq (b : ByteArray) (i : Nat) : rNatB b i = rNatLongB b i := by
+  rw [rNatLongB]
+  rfl
+
+theorem rNatB_mirrors : Mirrors rNatB rNat := fun b i => by
+  rw [rNatB_eq]
+  exact rNatLongB_mirrors b i
+
+theorem rBoolB_mirrors : Mirrors rBoolB rBool := by
+  intro b i
+  by_cases h : i < b.size
+  · simp [rBoolB, h, drop_lt h, rBool]
+  · simp [rBoolB, h, drop_ge h, rBool]
+
+theorem rCharB_mirrors : Mirrors rCharB rChar := by
+  intro b i
+  simp only [rCharB, rChar, Option.bind_eq_bind, ← rNatB_mirrors, Option.bind_map, Option.map_bind,
+    Function.comp_def]
+  congr 1
+  funext p
+  split <;> rfl
+
+theorem rListAuxB_mirrors {α : Type} {rb : RB α} {r : R α} (h : Mirrors rb r) (n : Nat) :
+    Mirrors (rListAuxB rb n) (rListAux r n) := by
+  induction n with
+  | zero =>
+    intro b i; rfl
+  | succ k ih =>
+    intro b i
+    simp only [rListAuxB, rListAux, Option.bind_eq_bind, ← h, ← ih, Option.bind_map,
+      Option.map_bind, Function.comp_def, Option.map_some]
+
+theorem rListB_mirrors {α : Type} {rb : RB α} {r : R α} (h : Mirrors rb r) (maxCount : Option Nat) :
+    Mirrors (fun b i => rListB rb b i maxCount) (fun l => rList r l maxCount) := by
+  intro b i
+  simp only [rListB, rList, Option.bind_eq_bind, ← rNatB_mirrors, Option.bind_map, Option.map_bind,
+    Function.comp_def]
+  congr 1
+  funext p
+  split
+  · exact rListAuxB_mirrors h p.1 b p.2
+  · rfl
+
+theorem rStrB_mirrors : Mirrors rStrB rStr := by
+  intro b i
+  simp only [rStrB, rStr, Option.bind_eq_bind, ← rListB_mirrors rCharB_mirrors none,
+    Option.bind_map, Option.map_bind, Function.comp_def, Option.map_some]
+
+theorem rPairB_mirrors {α β : Type} {ra : RB α} {ra' : R α} {rb : RB β} {rb' : R β}
+    (ha : Mirrors ra ra') (hb : Mirrors rb rb') : Mirrors (rPairB ra rb) (rPair ra' rb') := by
+  intro b i
+  simp only [rPairB, rPair, Option.bind_eq_bind, ← ha, ← hb, Option.bind_map, Option.map_bind,
+    Function.comp_def, Option.map_some]
+
+theorem rOptB_mirrors {α : Type} {rb : RB α} {r : R α} (h : Mirrors rb r) :
+    Mirrors (rOptB rb) (rOpt r) := by
+  intro b i
+  by_cases hi : i < b.size
+  · rw [drop_lt hi]
+    by_cases h0 : b[i] = 0
+    · simp [rOptB, hi, h0, rOpt]
+    · by_cases h1 : b[i] = 1
+      · simp [rOptB, hi, h1, rOpt, ← h, Option.bind_map, Function.comp_def]
+      · simp [rOptB, hi, h0, h1, rOpt]
+  · simp [rOptB, hi, drop_ge hi, rOpt]
+
+theorem rColorB_mirrors : Mirrors rColorB rColor := by
+  intro b i
+  by_cases hi : i < b.size
+  · rw [drop_lt hi]
+    by_cases h0 : b[i] = 0
+    · simp [rColorB, hi, h0, rColor]
+    by_cases h1 : b[i] = 1
+    · by_cases hj : i + 1 < b.size
+      · simp [rColorB, hi, h1, hj, drop_lt hj, rColor]
+      · simp [rColorB, hi, h1, hj, drop_ge hj, rColor]
+    by_cases h2 : b[i] = 2
+    · by_cases hl : i + 3 < b.size
+      · simp [rColorB, hi, h2, hl, drop_lt (show i + 1 < b.size by omega),
+          drop_lt (show i + 2 < b.size by omega), drop_lt hl, rColor]
+      · by_cases hj : i + 1 < b.size
+        · by_cases hk : i + 2 < b.size
+          · simp [rColorB, hi, h2, hl, drop_lt hj, drop_lt hk, drop_ge hl, rColor]
+          · simp [rColorB, hi, h2, hl, drop_lt hj, drop_ge hk, rColor]
+        · simp [rColorB, hi, h2, hl, drop_ge hj, rColor]
+    simp [rColorB, hi, h0, h1, h2, rColor]
+  · simp [rColorB, hi, drop_ge hi, rColor]
+
+theorem rPenB_mirrors : Mirrors rPenB rPen := by
+  intro b i
+  simp only [rPenB, rPen, Option.bind_eq_bind, ← rColorB_mirrors, ← rBoolB_mirrors, Option.bind_map,
+    Option.map_bind, Function.comp_def, Option.map_some]
+
+theorem rCellB_mirrors : Mirrors rCellB rCell := by
+  intro b i
+  simp only [rCellB, rCell, Option.bind_eq_bind, ← rCharB_mirrors,
+    ← rListB_mirrors rCharB_mirrors none, ← rNatB_mirrors, ← rPenB_mirrors, Option.bind_map,
+    Option.map_bind, Function.comp_def, Option.map_some]
+
+theorem pushRun_toList {α : Type} (acc : Array α) (a : α) (n : Nat) :
+    (pushRun acc a n).toList = acc.toList ++ List.replicate n a := by
+  induction n generalizing acc with
+  | zero => simp [pushRun]
+  | succ n ih => simp [pushRun, ih, List.replicate_succ]
+
+theorem expandB_toList {α : Type} (acc : Array α) (groups : List (Nat × α)) :
+    (expandB acc groups).toList = acc.toList ++ expand groups := by
+  induction groups generalizing acc with
+  | nil => simp [expandB, expand]
+  | cons g groups ih =>
+    obtain ⟨n, a⟩ := g
+    simp [expandB, expand, ih, pushRun_toList]
+
+theorem foldl_total {α : Type} (groups : List (Nat × α)) (k : Nat) :
+    groups.foldl (fun n g => n + g.1) k = k + (groups.map Prod.fst).sum := by
+  induction groups generalizing k with
+  | nil => simp
+  | cons g groups ih => simp [ih, Nat.add_assoc]
+
+/-- `rRLEB` expands into an array the runs `rRLE` expands into a list. -/
+theorem rRLEB_mirrors {α : Type} {rb : RB α} {r : R α} (h : Mirrors rb r) (maxLength : Option Nat)
+    (b : ByteArray) (i : Nat) :
+    (rRLEB rb b i maxLength).map (fun p => (p.1.toList, b.data.toList.drop p.2)) =
+      rRLE r (b.data.toList.drop i) maxLength := by
+  simp only [rRLEB, rRLE, Option.bind_eq_bind,
+    ← rListB_mirrors (rPairB_mirrors rNatB_mirrors h) none, Option.bind_map, Option.map_bind,
+    Function.comp_def, foldl_total, Nat.zero_add]
+  congr 1
+  funext p
+  split <;> simp [expandB_toList]
+
+theorem rRowB_mirrors (maxLength : Option Nat) :
+    Mirrors (fun b i => rRowB b i maxLength) (fun l => rRow l maxLength) := by
+  intro b i
+  simp only [rRowB, rRow, Option.bind_eq_bind, ← rRLEB_mirrors rCellB_mirrors, Option.bind_map,
+    Function.comp_def, Array.toArray_toList]
+  exact Option.map_eq_bind
+
+theorem rCursorB_mirrors : Mirrors rCursorB rCursor := by
+  intro b i
+  simp only [rCursorB, rCursor, Option.bind_eq_bind, ← rNatB_mirrors, ← rBoolB_mirrors,
+    Option.bind_map, Option.map_bind, Function.comp_def, Option.map_some]
+
+theorem rModesB_mirrors : Mirrors rModesB rModes := by
+  intro b i
+  simp only [rModesB, rModes, Option.bind_eq_bind, ← rNatB_mirrors, ← rBoolB_mirrors,
+    Option.bind_map, Option.map_bind, Function.comp_def, Option.map_some]
+
+theorem rSavedB_mirrors : Mirrors rSavedB rSaved := by
+  intro b i
+  simp only [rSavedB, rSaved, Option.bind_eq_bind, ← rCursorB_mirrors, ← rPenB_mirrors,
+    Option.bind_map, Option.map_bind, Function.comp_def, Option.map_some]
+
+theorem rRingB_mirrors (maxRows : Option Nat) :
+    Mirrors (fun b i => rRingB b i maxRows) (fun l => rRing l maxRows) := by
+  intro b i
+  simp only [rRingB, rRing, Option.bind_eq_bind, ← rNatB_mirrors,
+    ← rListB_mirrors (rRowB_mirrors none), Option.bind_map, Option.map_bind, Function.comp_def,
+    Option.map_some]
+
+theorem rAltB_mirrors (maxCols maxRows : Option Nat) :
+    Mirrors (fun b i => rAltB b i maxCols maxRows) (fun l => rAlt l maxCols maxRows) := by
+  intro b i
+  apply rOptB_mirrors
+  intro b i
+  simp only [← rListB_mirrors (rRowB_mirrors maxCols), ← rCursorB_mirrors, ← rPenB_mirrors,
+    Option.bind_eq_bind, Option.bind_map, Option.map_bind, Function.comp_def, Option.map_some]
+
+theorem rVtB_mirrors : Mirrors rVtB rVt := by
+  intro b i
+  simp only [rVtB, rVt, Option.bind_eq_bind, ← rNatB_mirrors, Option.bind_map, Option.map_bind,
+    Function.comp_def]
+  congr 1
+  funext c
+  congr 1
+  funext r
+  split
+  · rfl
+  · simp only [← rListB_mirrors (rRowB_mirrors (some c.1)), ← rCursorB_mirrors, ← rPenB_mirrors,
+      ← rModesB_mirrors, ← rNatB_mirrors, ← rListB_mirrors rBoolB_mirrors, ← rRingB_mirrors,
+      ← rAltB_mirrors, ← rSavedB_mirrors, ← rStrB_mirrors, ← rBoolB_mirrors, Option.bind_map,
+      Option.map_bind, Function.comp_def, Option.map_some]
+
+theorem prefixB_mirrors (p : List UInt8) (b : ByteArray) (i : Nat) :
+    (prefixB p b i).map (b.data.toList.drop ·) = p.isPrefixOf? (b.data.toList.drop i) := by
+  induction p generalizing i with
+  | nil => rfl
+  | cons x p ih =>
+    by_cases h : i < b.size
+    · rw [drop_lt h]
+      by_cases hx : x = b[i] <;> simp [prefixB, h, hx, List.isPrefixOf?, ih]
+    · simp [prefixB, h, drop_ge h, List.isPrefixOf?]
+
+/-- **The runtime decoder is `load`**: on any byte array, `loadBytes` returns what `load`
+returns on the array's bytes, so `load_good`, `load_live`, `load_save_live` and every other
+theorem about `load` holds of what the runtime decodes. -/
+theorem loadBytes_eq (b : ByteArray) : loadBytes b = load b.data.toList := by
+  have hp := prefixB_mirrors magic b 0
+  rw [List.drop_zero] at hp
+  simp only [loadBytes, load, stripMagic, Option.bind_eq_bind, ← hp, Option.bind_map,
+    Function.comp_def, ← rVtB_mirrors, ← rStrB_mirrors,
+    ← rListB_mirrors (rPairB_mirrors rStrB_mirrors rStrB_mirrors), List.isEmpty_iff,
+    List.drop_eq_nil_iff, Array.length_toList, ByteArray.size_data]
+
+/-! ### What the runtime calls
+
+The runtime writes with `saveBytes` and reads with `loadBytes`; `saveBytes_eq` and
+`loadBytes_eq` carry `load_save_live`, `load_resave` and `load_live` over to them below.
+`THEOREMS.md` cites `loadBytes_saveBytes_live` and `loadBytes_resave`, and
+`Session.liveReachableVt_resumeVt` rests on `loadBytes_live`. -/
+
+/-- What `saveBytes` writes of a live state, `loadBytes` reads back with its parser quiesced. -/
+theorem loadBytes_saveBytes_live (c : Ckpt) (h : LiveReachableVt c.vt) :
+    loadBytes (saveBytes c) = some { c with vt := c.vt.quiesce } := by
+  rw [loadBytes_eq, saveBytes_eq]
+  exact load_save_live c h
+
+/-- A file `loadBytes` accepts saves and loads again exactly. -/
+theorem loadBytes_resave {b : ByteArray} {c : Ckpt} (h : loadBytes b = some c) :
+    loadBytes (saveBytes c) = some c := by
+  rw [loadBytes_eq, saveBytes_eq]
+  exact load_resave (by rwa [loadBytes_eq] at h)
+
+/-- Every file `loadBytes` accepts holds a state a live session can hold. -/
+theorem loadBytes_live {b : ByteArray} {c : Ckpt} (h : loadBytes b = some c) :
+    LiveReachableVt c.vt := load_live (by rwa [loadBytes_eq] at h)
+
+end Linger.Session.Checkpoint

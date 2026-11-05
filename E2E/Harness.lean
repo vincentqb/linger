@@ -58,7 +58,7 @@ def has (haystack needle : String) : Bool := haystack.contains needle
 
 For an assertion that waits for something to **appear**, this replaces a fixed
 `IO.sleep`. A fixed sleep budgets for the typical host and fails on a busy one:
-`E2E.Agent`'s `^C` check flaked exactly once this way (2026-09-11, a full e2e run
+`Linger.Session.Suites.Agent`'s `^C` check flaked exactly once this way (2026-09-11, a full e2e run
 racing a `lake build`) and then passed 4/4 in isolation with nothing changed. The
 deadline keeps the assertion honest — a genuine regression still fails, it just
 spends the whole budget before saying so — and the common case gets *faster*, since
@@ -152,7 +152,7 @@ def parallel {α : Type} (limit : Nat) (jobs : List (IO α)) (done : Except IO.E
 /-- First index of `needle` in `hay`, walking the haystack once.
 
 The primitive the other three are built on, and the reason it is `Option Nat`
-rather than `Bool`: the ED-2-before-ED-3 ordering check in `E2E.Attach` needs the
+rather than `Bool`: the ED-2-before-ED-3 ordering check in `Linger.Session.Suites.Attach` needs the
 positions, not just presence.
 
 Linear-ish by construction (`O(|hay| · |needle|)`), which matters more than it
@@ -243,7 +243,7 @@ structure Client where
 on the child's environment.
 
 `spawnPty` sets the size before exec, so the client's startup `winsizeGet` reads it
-(`E2E.Watch`'s subject); `extra` overrides `ptyEnv`. -/
+(`Linger.Session.Suites.Watch`'s subject); `extra` overrides `ptyEnv`. -/
 def Env.spawnEnv (e : Env) (extra : Array String) (args : Array String) (cols : UInt32 := 80)
     (rows : UInt32 := 24) : IO Client := do
   let (pid, fd) ← spawnPty cols rows "" e.bin args (e.ptyEnv ++ extra)

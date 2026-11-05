@@ -1,27 +1,27 @@
 module
 
-public import Linger.Core.Buf
+public import Linger.Session.Buf
 public import Linger.Os.Shell
-public import Linger.Core.Wire
+public import Linger.Session.Wire
 public import Linger.Terminal.Vt
 public import Linger.Terminal.Render
 public import Linger.Terminal.Mediation
 public import Linger.Terminal.Title
 public import Linger.Target.Name
-public import Linger.Core.Session
-public import Linger.Core.Driver
-public import Linger.Core.Checkpoint
+public import Linger.Session
+public import Linger.Session.Driver
+public import Linger.Session.Checkpoint
 public import Linger.Target.Remote
 public import Linger.Display.Listing
 public import Linger.Display.Status
 public import Linger.Display.Title
 public import Linger.Os.Env
-public import Linger.Runtime.Paths
+public import Linger.Session.Shell.Paths
 public import Linger.Runtime.Command
-public import Linger.Runtime.Daemon
-public import Linger.Runtime.Client
+public import Linger.Session.Shell.Daemon
+public import Linger.Session.Shell.Client
 public import Linger.Runtime.Cli
-public import Linger.Runtime.Resume
+public import Linger.Session.Shell.Resume
 
 /-! # Linger — the session library
 

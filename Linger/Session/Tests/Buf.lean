@@ -1,0 +1,39 @@
+module
+
+import Linger.Session.Buf
+meta import Linger.Session.Buf
+
+/-! # Buf fixtures — the cap decisions, evaluated
+
+`Linger/Session/Proofs/Buf.lean` proves the caps for all inputs; these evaluate the two cap
+decisions on concrete bytes: an offer is refused whole at > cap; an enqueue
+appends, then reports. `native_decide` is allowed here (it is banned only in
+`Theorems/`).
+-/
+
+namespace Linger.Session.Buf.Tests
+
+def bytes (n : Nat) : ByteArray := ByteArray.mk (Array.replicate n 0x61)
+
+/-- The child-input discipline: an offer that would breach the cap is refused
+**whole**, so the queue is unchanged and the caller is told. -/
+example : (bufOffer 50 (bufEnqueue 100 .empty (bytes 40)).1 (bytes 20)).2 = true := by native_decide
+
+example : owedLen (bufOffer 50 (bufEnqueue 100 .empty (bytes 40)).1 (bytes 20)).1 = 40 := by
+  native_decide
+
+/-- An accepted offer is appended in full. -/
+example : owedLen (bufOffer 50 (bufEnqueue 100 .empty (bytes 40)).1 (bytes 10)).1 = 50 := by
+  native_decide
+
+example : (bufOffer 50 (bufEnqueue 100 .empty (bytes 40)).1 (bytes 10)).2 = false := by
+  native_decide
+
+/-- The client-output discipline: `.send` appends and *then* reports, so the frame
+that crossed the cap is queued at the moment of the decision. That asymmetry with
+`bufOffer` is deliberate and is why `bufEnqueue_bound` is hypothesis-guarded. -/
+example : (bufEnqueue 30 .empty (bytes 40)).2 = true := by native_decide
+
+example : owedLen (bufEnqueue 30 .empty (bytes 40)).1 = 40 := by native_decide
+
+end Linger.Session.Buf.Tests

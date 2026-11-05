@@ -17,7 +17,7 @@ porcelain rather than against the internals.
 The comparisons are against the `Status` constructors (through `Env.status`, which
 reads `ofName`) and against `Status.icon` itself, so renaming a state is a compile
 error rather than an assertion passing against a column that no longer exists.
-`E2E.Watch` covers the one transition this suite never exercises:
+`Linger.Session.Suites.Watch` covers the one transition this suite never exercises:
 `linger attach --read-only` also marks a session seen. -/
 
 namespace Linger.Display.Suites.Status

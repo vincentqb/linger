@@ -1,14 +1,14 @@
 module
 
-import E2E.Watch
+import Linger.Session.Suites.Watch
 import Linger.Display.Suites.Status
-import E2E.Paths
+import Linger.Session.Suites.Paths
 import Linger.Terminal.Suites.Graphics
-import E2E.Agent
-import E2E.Resume
-import E2E.Attach
-import E2E.Delivery
-import E2E.Robust
+import Linger.Session.Suites.Agent
+import Linger.Session.Suites.Resume
+import Linger.Session.Suites.Attach
+import Linger.Session.Suites.Delivery
+import Linger.Session.Suites.Robust
 import Linger.Target.Suites.Remote
 import Linger.Terminal.Suites.Mediation
 import Linger.Display.Suites.Title
@@ -18,7 +18,7 @@ import E2E.Manager
 import Linger.Target.Suites.RemoteLive
 import E2E.Ci
 import E2E.Hygiene
-import E2E.Identity
+import Linger.Session.Suites.Identity
 import E2E.Runner
 
 public section
@@ -35,17 +35,19 @@ logs go to `LINGER_LOG_DIR` (default `E2E.Harness.tempRoot`). An unknown name is
 not a silent success. -/
 
 def suites : List (String × IO UInt32) :=
-  [("watch", E2E.Watch.run), ("status", Linger.Display.Suites.Status.run),
-    ("overview", E2E.Paths.run), ("graphics", Linger.Terminal.Suites.Graphics.run),
-    ("agent", E2E.Agent.run), ("resume", E2E.Resume.run), ("attach", E2E.Attach.run),
-    ("delivery", E2E.Delivery.run), ("robust", E2E.Robust.run),
+  [("watch", Linger.Session.Suites.Watch.run), ("status", Linger.Display.Suites.Status.run),
+    ("overview", Linger.Session.Suites.Paths.run),
+    ("graphics", Linger.Terminal.Suites.Graphics.run), ("agent", Linger.Session.Suites.Agent.run),
+    ("resume", Linger.Session.Suites.Resume.run), ("attach", Linger.Session.Suites.Attach.run),
+    ("delivery", Linger.Session.Suites.Delivery.run), ("robust", Linger.Session.Suites.Robust.run),
     ("remote", Linger.Target.Suites.Remote.run), ("terminal", Linger.Terminal.Suites.Mediation.run),
     ("title", Linger.Display.Suites.Title.run), ("recipes", E2E.Recipes.run),
     ("interop", E2E.Interop.run), ("manager", E2E.Manager.run),
     -- opt-in: needs a real reachable host, so NOT in scripts/e2e.sh
     ("remote-live", Linger.Target.Suites.RemoteLive.run),
     -- Verifier regression checks, separate from the live product suites.
-    ("ci", E2E.Ci.run), ("hygiene", E2E.Hygiene.run), ("identity", E2E.Identity.run)]
+    ("ci", E2E.Ci.run), ("hygiene", E2E.Hygiene.run),
+    ("identity", Linger.Session.Suites.Identity.run)]
 
 def main (args : List String) : IO UInt32 := do
   match args with
@@ -56,19 +58,19 @@ def main (args : List String) : IO UInt32 := do
   | ["--probe", result, ready, trigger] =>
     Linger.Terminal.Suites.Mediation.probe result ready trigger
   | ["--winsize-probe", result] =>
-    E2E.Resume.winsizeProbe result
+    Linger.Session.Suites.Resume.winsizeProbe result
   | ["--title-probe"] =>
     Linger.Display.Suites.Title.probe
   | ["--title-attach-probe", name] =>
     Linger.Display.Suites.Title.attachProbe name
   | ["--paths-probe"] =>
-    E2E.Paths.probe
+    Linger.Session.Suites.Paths.probe
   | ["--malformed-server", socketPath, readyPath] =>
-    E2E.Agent.malformedServer socketPath readyPath
+    Linger.Session.Suites.Agent.malformedServer socketPath readyPath
   | ["--info-server", socketPath, readyPath, mode] =>
-    E2E.Agent.infoServer socketPath readyPath mode
+    Linger.Session.Suites.Agent.infoServer socketPath readyPath mode
   | ["--stream-info-server", socketPath, readyPath] =>
-    E2E.Robust.streamInfoServer socketPath readyPath
+    Linger.Session.Suites.Robust.streamInfoServer socketPath readyPath
   | "--discovery-ssh" :: root :: rest =>
     Linger.Target.Suites.Remote.discoverySsh root rest
   | ["--discovery-leaf", root, host] =>
@@ -76,9 +78,9 @@ def main (args : List String) : IO UInt32 := do
   | ["--discovery-info", root] =>
     Linger.Target.Suites.Remote.discoveryInfo root
   | ["--delivery-child", trigger] =>
-    E2E.Delivery.childProbe trigger
+    Linger.Session.Suites.Delivery.childProbe trigger
   | ["--delivery-server", dir] =>
-    E2E.Delivery.serveProbe dir
+    Linger.Session.Suites.Delivery.serveProbe dir
   | "--manager-probe" :: rest =>
     E2E.Manager.probe rest
   | "--import-probe" :: rest =>
@@ -102,13 +104,13 @@ def main (args : List String) : IO UInt32 := do
     IO.println s!"  suite logs: {logDir}/linger-<suite>.out"
     E2E.Runner.run (← IO.appPath).toString #[] logDir specs
   | ["delivery", check] =>
-    E2E.Delivery.run (some check)
+    Linger.Session.Suites.Delivery.run (some check)
   | ["title", binary] =>
     Linger.Display.Suites.Title.run (some binary)
   | ["remote", "discovery"] =>
     Linger.Target.Suites.Remote.runDiscovery
   | ["watch", "checkpoint"] =>
-    E2E.Watch.runCheckpoint
+    Linger.Session.Suites.Watch.runCheckpoint
   | [name] =>
     match suites.find? (·.1 == name) with
     | some (_, run) =>

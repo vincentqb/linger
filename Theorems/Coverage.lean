@@ -1,20 +1,20 @@
 module
 
-import all Theorems.Buf
-import all Theorems.Wire
+import all Linger.Session.Proofs.Buf
+import all Linger.Session.Proofs.Wire
 import all Linger.Terminal.Proofs.Vt
 import all Linger.Terminal.Proofs.Mediation
 import all Linger.Terminal.Proofs.Title
-import all Theorems.Session
-import all Theorems.Driver
+import all Linger.Session.Proofs.Session
+import all Linger.Session.Proofs.Driver
 import all Linger.Target.Proofs.Name
-import all Theorems.Checkpoint
+import all Linger.Session.Proofs.Checkpoint
 import all Linger.Target.Proofs.Remote
-import all Theorems.Claim
+import all Linger.Session.Proofs.Claim
 import all Linger.Display.Proofs.Listing
 import all Linger.Terminal.Proofs.Render
 import all Linger.Terminal.Proofs.Replay
-import all Theorems.Resume
+import all Linger.Session.Proofs.Resume
 import all Linger.Display.Proofs.Status
 import all Linger.Display.Proofs.Title
 import all Theorems.Resurrect
@@ -49,11 +49,13 @@ namespace Theorems.Coverage
 
 open Lean Elab Command
 
-/-- A module of pure code: the legacy `Linger.Core` and `Linger.Tools` trees, and each
-component's top-level modules other than its boundary and shell. -/
+/-- A module of pure code: the legacy `Linger.Core` and `Linger.Tools` trees, a component's
+top module (`Linger.Session`), and each component's top-level modules other than its boundary
+and shell. -/
 public meta def pureModule (mod : Lean.Name) : Bool :=
   match mod.components.map toString with
   | ["Linger", "Core", _] | ["Linger", "Tools", _] => true
+  | ["Linger", _] => true
   | ["Linger", component, leaf] =>
     !["Core", "Tools", "Runtime", "Manager"].contains component &&
       !["Boundary", "Shell"].contains leaf

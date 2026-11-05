@@ -1528,7 +1528,7 @@ it used to load. Now it does not.
 
 The twin of `ofDecoded_none_of_cols_zero`, and the more instructive of the two: `cols = 0`
 is refused by a dimension check anyone would think to write, and this one needed the
-decoder to be handed the grid. `Tests/Checkpoint.lean` pins the byte-level version. -/
+decoder to be handed the grid. `Linger/Session/Tests/Checkpoint.lean` pins the byte-level version. -/
 theorem ofDecoded_none_of_rows_mismatch {cols rows : Nat} {grid : Array Row} {cursor : Cursor}
     {pen : Pen} {modes : Modes} {top bot : Nat} {tabs : Array Bool} {sb : Ring}
     {altGrid : Option (Array Row × Cursor × Pen)} {saved : Saved} {title : String}

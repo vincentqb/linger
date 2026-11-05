@@ -18,7 +18,7 @@ child, and a query is never a broadcast.
 THE PROBE IS THIS BINARY. `e2e --probe <result> <ready> <trigger>` is dispatched by
 `E2ETest.main` into `probe` below, so the same executable is both harness and pty
 program. It has to run on the FAR side: the query leaves the session's own tty and
-the reply arrives there; nothing outside the pty can observe either. `E2E.Resume`
+the reply arrives there; nothing outside the pty can observe either. `Linger.Session.Suites.Resume`
 reuses the same child-mode pattern for its winsize probe. The result file is
 `k<TAB>v` records read by the harness's own parser, published by rename; the reply
 travels as raw bytes in `<result>.reply`, written before it.

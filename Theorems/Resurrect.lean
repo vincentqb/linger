@@ -5,7 +5,7 @@ import all Linger.Target.Name
 import all Linger.Terminal.Vt
 import Linger.Target.Proofs.Name
 import all Linger.Terminal.Proofs.Vt
-import all Theorems.Checkpoint
+import all Linger.Session.Proofs.Checkpoint
 
 /-! Kernel-checked importer contracts.
 
@@ -369,9 +369,9 @@ theorem checkpoint_live (pane : Pane) (contents : Option String) :
 /-- Persisting an imported pane reads back the exact screen, scrollback, cwd and
 metadata, including when the capture ended inside a terminal escape sequence. -/
 theorem checkpoint_roundtrip (pane : Pane) (contents : Option String) :
-    Linger.Core.Checkpoint.loadBytes (Linger.Core.Checkpoint.saveBytes (checkpoint pane contents)) =
+    Linger.Session.Checkpoint.loadBytes (Linger.Session.Checkpoint.saveBytes (checkpoint pane contents)) =
       some (checkpoint pane contents) := by
-  rw [Linger.Core.Checkpoint.loadBytes_saveBytes_live _ (checkpoint_live pane contents)]
+  rw [Linger.Session.Checkpoint.loadBytes_saveBytes_live _ (checkpoint_live pane contents)]
   simp only [checkpoint, Linger.Terminal.Vt.Vt.quiesce]
 
 /-- Every checkpoint records the exact saved command and distinguishes missing

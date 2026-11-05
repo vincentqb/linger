@@ -730,7 +730,7 @@ example : (let r := (sbRows hostileRing).toList.head!
 /-! #### The byte budget — a correctness requirement, not prudence
 
 `outbufCap = 4194304` **disconnects** a client on undrained bytes
-(`Linger/Runtime/Daemon.lean`), and a full `sbCap = 10000` ring of per-cell
+(`Linger/Session/Shell/Daemon.lean`), and a full `sbCap = 10000` ring of per-cell
 truecolour rows is 32–46 MB at 80 columns. So the trim is what stands between a
 reattach and an attach-then-instant-drop.
 

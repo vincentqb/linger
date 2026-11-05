@@ -463,7 +463,7 @@ and not in a `Prop`.
 
 **What the door establishes, after R2.** `Vt.decodedOk` decides `Good`'s content and
 `Vt.decodedRenderable` decides `Renderable`'s two clauses plus the ruler's length, so a
-decoded checkpoint is `Good`, `Renderable` and `TabsOk` — `Theorems/Resume.lean`'s
+decoded checkpoint is `Good`, `Renderable` and `TabsOk` — `Linger/Session/Proofs/Resume.lean`'s
 `resume_grid`/`resume_sb`/`resume_tabs` are now reachable from an arbitrary byte string
 (`resume_grid_of_load` and its two siblings) and not only stated. Before that the check
 was never passed the grid at all, and the consequence was observable rather than
@@ -525,7 +525,7 @@ def Vt.init (cols rows : Nat) : Vt :=
 
 `Vt.init` is the door in; these are the window out, for consumers *outside* the
 toolkit (`Render`/`Terminal`/`Replay` are friends and read the fields directly). They exist
-because the seal blocks reads as well as writes, and `Linger/Core/Session.lean` —
+because the seal blocks reads as well as writes, and `Linger/Session.lean` —
 the daemon's session model, a client of the emulator and not part of it — needs
 geometry, cursor and the alt-screen flag to answer `linger info` and to decide
 whether a resize is a no-op.
@@ -560,7 +560,7 @@ def Vt.atBoundary (v : Vt) : Bool := v.pstate == .ground && v.u8need == 0
 
 `Vt.init` is the door for a *fresh* session; this is the door for a *restored* one,
 and it is the only other way a `Vt` comes into existence. It exists because
-`Linger/Core/Checkpoint.lean` used to build one field-by-field out of decoded bytes
+`Linger/Session/Checkpoint.lean` used to build one field-by-field out of decoded bytes
 (`specs/archive/vt-toolkit.md` Step 2): every length in that format is an arbitrary-precision
 `Nat`, so a corrupt or hostile file could name `cols := 0`, a cursor outside the
 screen, or a scroll region inverted — states no `init`/`resize`/`feed` path can
@@ -573,12 +573,12 @@ would satisfy `Good` while leaving `grid`'s rows at their decoded width, so the
 restored screen would be `Good` and **not** `Renderable` — and `Renderable` is what
 every `Render.restore` theorem needs. Establishing it by clamping means rebuilding
 the grid, i.e. `Vt.resize`, which the resume path deliberately refuses (it resets the
-scroll region and the tab ruler — see `Linger/Runtime/Daemon.lean`). Rejecting costs
+scroll region and the tab ruler — see `Linger/Session/Shell/Daemon.lean`). Rejecting costs
 nothing new: `load` is already `Option`-valued and a checkpoint that fails to parse
 already means "start fresh". One rule, uniformly — *a record that does not describe a
 `Good` and `Renderable` state is not a checkpoint*.
 
-`private`, which is the whole point: `Linger/Core/Checkpoint.lean` reaches it through
+`private`, which is the whole point: `Linger/Session/Checkpoint.lean` reaches it through
 the friend import it already has, and no module outside the toolkit gains the power to
 build a `Vt` out of parts. A public smart constructor would be a second public door
 admitting every `Good` state — including unreachable ones — which is a wider hole than
@@ -614,7 +614,7 @@ a cell holds. That was an **observable** defect and not merely a missing hypothe
 (SCRATCHPAD.md, "the adversarial audit of the seal", finding R2): one flipped byte of a
 real 4×2 checkpoint — the `rows` byte, 2 → 3 — decoded to a state that is `Good`, is not
 `Renderable`, and whose replay is not the screen it was made from, refuting the
-conclusion of `Theorems/Resume.lean`'s `resume_grid` for a state that came off disk. The
+conclusion of `Linger/Session/Proofs/Resume.lean`'s `resume_grid` for a state that came off disk. The
 grid's length is written as its own `rNat`, so nothing tied it to `rows`.
 
 The deciders below are `Renderable`'s two clauses plus the tab ruler's length, in
@@ -1501,7 +1501,7 @@ def Vt.observe (v : Vt) (bytes : List UInt8) : Vt :=
   bytes.foldl (fun w b => { (w.step b) with sb := {} }) v
 
 /-- Forget partial parser state (what a checkpoint deliberately does
-not persist — see `Linger.Core.Checkpoint`). -/
+not persist — see `Linger.Session.Checkpoint`). -/
 def Vt.quiesce (v : Vt) :
     Vt := { v with
     pstate := .ground, u8need := 0, u8acc := 0 }
@@ -1509,7 +1509,7 @@ def Vt.quiesce (v : Vt) :
 /-- Feed a `ByteArray` by converting at the call site.
 
 **Test-facing, and named as such**: the daemon's pty path is
-`Mediation.feed s.vt s.scan chunk` on a `List UInt8` (`Linger/Core/Session.lean`), and
+`Mediation.feed s.vt s.scan chunk` on a `List UInt8` (`Linger/Session.lean`), and
 this definition has no runtime caller. It is kept because `Tests/` and `E2E/` fixtures use
 it, and a convenience with callers is reachable code, not the unproved-and-unreachable
 state `Theorems/Coverage.lean` rejects. -/

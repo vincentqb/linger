@@ -106,7 +106,7 @@ shake_modules="$(git ls-files 'Theorems/*.lean' 'Linger/*/Proofs/*.lean' | sed '
 # found no such call.
 lean_init=0
 grep -l '^lean_initialize();$' .lake/build/ir/Main.c .lake/build/ir/Linger/*.c \
-    .lake/build/ir/Linger/*/*.c || lean_init=$?
+    .lake/build/ir/Linger/*/*.c .lake/build/ir/Linger/*/Shell/*.c || lean_init=$?
 [ "$lean_init" -ne 0 ] \
   || fail "a linger module uses the Lean package; every process would initialize the whole Lean frontend"
 [ "$lean_init" -eq 1 ] || fail "could not read the generated C of Main and Linger/"
@@ -147,12 +147,12 @@ trap - EXIT HUP TERM
 # A lost `@[csimp]` leaves every caller on the specification and passes every proof, so
 # check the generated C: each fast twin is still called, outside its own boxed wrapper.
 # Private mangling keeps the suffix, so the module-local feedMsgsTR is matched too.
-for twin in Linger_Core_Session_feedMsgsTR Linger_Terminal_Vt_Row_mendFast \
+for twin in Linger_Session_feedMsgsTR Linger_Terminal_Vt_Row_mendFast \
   Linger_Terminal_Render_rowAnsiLinear; do
   awk -v twin="$twin" '
     /^(LEAN_EXPORT|static) .*[)][{]$/ { fn = $0 }
     $0 ~ ("= lp_linger_[[:alnum:]_]*" twin "[(]") && fn !~ (twin "___boxed[(]") { n++ }
-    END { exit !n }' .lake/build/ir/Linger/*/*.c \
+    END { exit !n }' .lake/build/ir/Linger/*.c .lake/build/ir/Linger/*/*.c \
     || fail "compiled code no longer calls $twin: its @[csimp] replacement is gone"
 done
 
