@@ -5,10 +5,14 @@
     "Linger.Claims.check_no_alias",
     "Linger.Claims.command_argv",
     "Linger.Claims.restore_grid_reachable",
+    "Linger.Claims.start_faithful",
     "Linger.Claims.screenText_text",
     "Linger.Claims.loadBytes_saveBytes_live",
     "Linger.Claims.liveReachableVt_resumeVt",
-    "Linger.Claims.run_bytes_isolates"
+    "Linger.Claims.run_bytes_isolates",
+    "Linger.Claims.reachableIn_bound",
+    "Linger.Claims.reachableOut_bound",
+    "Linger.Claims.at_most_one_owner"
   ],
   "definition_names": [],
   "permitted_axioms": ["propext", "Quot.sound", "Classical.choice"]

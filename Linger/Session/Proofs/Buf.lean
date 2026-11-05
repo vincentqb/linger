@@ -1,6 +1,7 @@
 module
 
 import all Linger.Session.Buf
+import Linger.Session.Spec
 
 /-! # §Bound, the runtime half — the daemon's byte queues, proved
 

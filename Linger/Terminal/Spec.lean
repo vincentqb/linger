@@ -1,10 +1,11 @@
 module
 
+public import Linger.Terminal.Replay
 public import Linger.Terminal.Vt
 
 public section
 
-/-! # Terminal states a running session can hold
+/-! # Terminal states a running session can hold, and what a streamed repaint emits
 
 `LiveReachableVt` is the least set of states containing a fresh emulator and closed under what
 a live session does to one: feed pty bytes, resize on attach, forget partial parser state (what
@@ -14,7 +15,9 @@ program can hold satisfies it: `Vt.init` and the decoder are the only doors, and
 transformers the only ways forward (`Linger/Terminal/Vt.lean` lists them).
 
 It does not say a scrollback row is the screen's width: `Vt.resize` leaves the scrollback at
-its old width. -/
+its old width.
+
+`Replay.Emits` is the output of streaming a repaint plan one bounded step at a time. -/
 
 namespace Linger.Terminal.Vt
 
@@ -35,3 +38,17 @@ inductive LiveReachableVt : Vt → Prop where
   | ofDecoded {v : Vt} (h : v.Decodable) : LiveReachableVt v
 
 end Linger.Terminal.Vt
+
+namespace Linger.Terminal.Replay
+
+/-- `out` is what streaming `plan` emits when each step may take `budget` bytes: the chunks
+`next` returns until it reports the end, in order, each at most `budget` bytes long. -/
+inductive Emits (budget : Nat) : Plan → Render.Bytes → Prop where
+  /-- The plan has nothing left to emit. -/
+  | done {p : Plan} (h : next budget p = none) : Emits budget p []
+  /-- One step's chunk, then the rest of the stream. -/
+  |
+  step {p q : Plan} {chunk rest : Render.Bytes} (h : next budget p = some (chunk, q))
+    (bounded : chunk.length ≤ budget) (more : Emits budget q rest) : Emits budget p (chunk ++ rest)
+
+end Linger.Terminal.Replay

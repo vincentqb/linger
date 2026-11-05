@@ -2,14 +2,18 @@ module
 
 public import Linger.Session
 public import Linger.Session.Checkpoint
+public import Linger.Session.Spec
 public import Linger.Target.Name
 public import Linger.Target.Remote
 public import Linger.Target.Spec
 public import Linger.Terminal.Render
+public import Linger.Terminal.Replay
 public import Linger.Terminal.Spec
 import Linger.Target.Proofs.Name
 import Linger.Target.Proofs.Remote
+import all Linger.Session.Proofs.Buf
 import all Linger.Session.Proofs.Checkpoint
+import all Linger.Session.Proofs.Claim
 import all Linger.Session.Proofs.Session
 import all Linger.Terminal.Vt
 import all Linger.Terminal.Proofs.Vt
@@ -18,6 +22,7 @@ import all Linger.Terminal.Proofs.Vt.Renderable
 import all Linger.Terminal.Proofs.Render.Grid
 import all Linger.Terminal.Proofs.Render.History
 import all Linger.Terminal.Proofs.Render.Pen
+import all Linger.Terminal.Proofs.Replay
 
 /-! # Proofs of the headline theorems
 
@@ -52,6 +57,11 @@ theorem restore_grid_reachable (v w : Vt.Vt) (hv : Vt.LiveReachableVt v) (hw : V
   rw [grid]
   simp only [Array.getD, inside, dite_true]
 
+theorem start_faithful (budget : Nat) (positive : 0 < budget) (v : Vt.Vt) :
+    Replay.Emits budget (Replay.start v) (Render.restore v) := by
+  rw [← Replay.start_faithful v]
+  exact Replay.emits_remaining budget positive (Replay.start v)
+
 theorem screenText_text (v : Vt.Vt) :
     ∃ cs : List Char,
       Render.screenText v = cs.flatMap String.utf8EncodeChar ∧
@@ -73,5 +83,16 @@ theorem liveReachableVt_resumeVt (b : ByteArray) :
 theorem run_bytes_isolates (s : State) (id : Nat) (chunks : List (List UInt8)) {other : Nat}
     (h : other ≠ id) : (run s (chunks.map (Event.bytes id))).1.client? other = s.client? other :=
   Session.run_bytes_isolates s id chunks h
+
+theorem reachableIn_bound {cap : Nat} {b : Buf.Buf} (h : Buf.ReachableIn cap b) :
+    Buf.owedLen b ≤ cap := Buf.reachableIn_bound h
+
+theorem reachableOut_bound {cap : Nat} {b : Buf.Buf} (h : Buf.ReachableOut cap b) :
+    Buf.owedLen b ≤ cap := Buf.reachableOut_bound h
+
+theorem at_most_one_owner {s : Claim.State} (reached : Claim.Reachable s) {a b resource : Nat}
+    {left right : Claim.Lease} (ha : s.active a = some left) (hb : s.active b = some right)
+    (leftUses : left.Uses resource) (rightUses : right.Uses resource) : a = b :=
+  Claim.at_most_one_owner reached ha hb leftUses rightUses
 
 end Linger.Claims

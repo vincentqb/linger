@@ -1,67 +1,18 @@
 module
 
-/-! Ownership of socket and checkpoint resources across arbitrary interleavings.
+import Linger.Session.Spec
 
-A resource identifies a stable lock inode, not a pathname string. Successful
-exclusive acquisition requires that resource to be free. Failed acquisition
-leaves the state unchanged, so a starting daemon that retries a held lock for a
-short time takes only `unchanged` steps until it acquires. A daemon or offline
-reader enters only after holding both resources, and releases them only after
-leaving and completing its cleanup.
-
-The model permits acquisition, release and later reuse by different processes.
-Its assumptions require cooperating processes, lock files that are never
-unlinked or replaced, and a filesystem that implements the locking contract.
-The runtime correspondence is tested and source-gated, not proved here.
--/
+/-! Ownership of socket and checkpoint resources across arbitrary interleavings, in the
+lock-protocol model of `Linger/Session/Spec.lean`. -/
 
 namespace Linger.Session.Claim
 
-/-- The socket and checkpoint resources a daemon or offline reader claims together. -/
-structure Lease where
-  socket : Nat
-  checkpoint : Nat
-  deriving DecidableEq
+/-- `put` changes the map at exactly its key. -/
+theorem put_apply {α : Type} (map : Nat → α) (key : Nat) (value : α) (index : Nat) :
+    put map key value index = if index = key then value else map index := rfl
 
-/-- `resource` is the lease's socket or checkpoint resource. -/
-def Lease.Uses (lease : Lease) (resource : Nat) : Prop :=
-  resource = lease.socket ∨ resource = lease.checkpoint
-
-/-- `locks` maps each resource to the actor holding its lock; `active` maps each actor to
-the lease it has entered. -/
-structure State where
-  locks : Nat → Option Nat
-  active : Nat → Option Lease
-
-/-- No lock is held and no actor has entered. -/
-def initial : State := ⟨fun _ => none, fun _ => none⟩
-
-/-- `map` updated at `key` to `value`. -/
-def put {α : Type} (map : Nat → α) (key : Nat) (value : α) : Nat → α := fun index =>
-  if index = key then value else map index
-
-/-- The OS acquisition contract and the application's lifetime protocol.
-`enter` covers both daemon ownership and an offline reader's critical section.
-`leave` means all resource access and cleanup have finished. -/
-inductive Step : State → State → Prop where
-  |
-  acquire (s : State) (actor resource : Nat) (free : s.locks resource = none) :
-    Step s { s with locks := put s.locks resource (some actor) }
-  |
-  enter (s : State) (actor : Nat) (lease : Lease) (idle : s.active actor = none)
-    (socket : s.locks lease.socket = some actor)
-    (checkpoint : s.locks lease.checkpoint = some actor) :
-    Step s { s with active := put s.active actor (some lease) }
-  | leave (s : State) (actor : Nat) : Step s { s with active := put s.active actor none }
-  |
-  release (s : State) (actor resource : Nat) (owned : s.locks resource = some actor)
-    (idle : s.active actor = none) : Step s { s with locks := put s.locks resource none }
-  | unchanged (s : State) : Step s s
-
-/-- The states reached from `initial` by finitely many `Step`s. -/
-inductive Reachable : State → Prop where
-  | initial : Reachable initial
-  | next {before after} (reached : Reachable before) (step : Step before after) : Reachable after
+/-- At the start no actor has entered a lease. -/
+theorem initial_idle (actor : Nat) : initial.active actor = none := rfl
 
 /-- Every active process still holds both resources it claimed. -/
 def Protected (s : State) : Prop :=

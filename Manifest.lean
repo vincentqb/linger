@@ -2,10 +2,12 @@ module
 
 public import Linger.Session
 public import Linger.Session.Checkpoint
+public import Linger.Session.Spec
 public import Linger.Target.Name
 public import Linger.Target.Remote
 public import Linger.Target.Spec
 public import Linger.Terminal.Render
+public import Linger.Terminal.Replay
 public import Linger.Terminal.Spec
 
 /-! # Headline theorems
@@ -50,6 +52,11 @@ theorem restore_grid_reachable (v w : Vt.Vt) (hv : Vt.LiveReachableVt v) (hw : V
       ∀ y < v.rowCount, (w.feed (Render.restore v)).getRow y = v.getRow y := by
   sorry
 
+/-- Streaming a repaint with any positive byte budget per step ends, and its chunks, each within
+the budget, concatenate to exactly the complete repaint `Render.restore v`. -/
+theorem start_faithful (budget : Nat) (positive : 0 < budget) (v : Vt.Vt) :
+    Replay.Emits budget (Replay.start v) (Render.restore v) := by sorry
+
 /-- `linger capture` prints UTF-8 text with no C0 control, DEL or C1 control character other
 than its line terminators. -/
 theorem screenText_text (v : Vt.Vt) :
@@ -74,5 +81,20 @@ theorem liveReachableVt_resumeVt (b : ByteArray) :
 theorem run_bytes_isolates (s : State) (id : Nat) (chunks : List (List UInt8)) {other : Nat}
     (h : other ≠ id) : (run s (chunks.map (Event.bytes id))).1.client? other = s.client? other := by
   sorry
+
+/-- The pty input queue never owes more than its cap, through any offers and flushes. -/
+theorem reachableIn_bound {cap : Nat} {b : Buf.Buf} (h : Buf.ReachableIn cap b) :
+    Buf.owedLen b ≤ cap := by sorry
+
+/-- A client output queue the daemon keeps never owes more than its cap, through any appends
+and flushes. -/
+theorem reachableOut_bound {cap : Nat} {b : Buf.Buf} (h : Buf.ReachableOut cap b) :
+    Buf.owedLen b ≤ cap := by sorry
+
+/-- In the lock-protocol model, two daemons or offline readers that share a socket or checkpoint
+resource are never active at once, across any interleaving of acquisition, release and reuse. -/
+theorem at_most_one_owner {s : Claim.State} (reached : Claim.Reachable s) {a b resource : Nat}
+    {left right : Claim.Lease} (ha : s.active a = some left) (hb : s.active b = some right)
+    (leftUses : left.Uses resource) (rightUses : right.Uses resource) : a = b := by sorry
 
 end Linger.Claims

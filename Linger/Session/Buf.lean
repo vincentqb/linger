@@ -107,47 +107,9 @@ def bufAdvance (b : Buf) (n : Nat) : Buf := { bytes := b.bytes.extract n b.bytes
 /-- The byte view of the debt, for the write(2) loop and for decoding the info accumulator. -/
 def writeFrom (b : Buf) : ByteArray := b.bytes
 
-/-! ## Reachability — the seal's semantics, as a predicate
-
-Before `bytes` was `private` (2026-08-19), a predicate like these would have
-been **decoration by this repo's own standard** (the poll-plan kill in
-`specs/archive/runtime-invariants.md`): any importer could forge
-`{ bytes := … }` mid-debt, so "reachable from `empty`" described nothing about
-the values the runtime could actually hold, and its canonical break — forge a
-`Buf` — would not have been caught by anything. Sealed, `Buf.empty` is the one
-door in and the operations below are the only ways forward, so each predicate
-is **exhaustive over what a plain importer can possess**, and its invariant
-(`Linger/Session/Proofs/Buf.lean`: `reachableIn_bound` / `reachableOut_bound`) is a
-whole-lifetime fact about the daemon's queue — the same lift `LiveReachableVt`
-gives the emulator, one layer down. No content twins are needed at this level:
-the trace claims are bounds composed of steps that already carry their twins
-(`bufOffer_writeFrom`, `bufEnqueue_writeFrom`, `bufAdvance_writeFrom`). -/
-
-/-- The pty-input queue's reachable states: `Rt.ptyIn` starts `empty` and moves
-only through capped `bufOffer`s (`queuePty`) and flush `bufAdvance`s. -/
-private inductive ReachableIn (cap : Nat) : Buf → Prop where
-  /-- The queue every session starts with. -/
-  | empty : ReachableIn cap .empty
-  /-- A capped offer, whether it queued the frame or dropped it. -/
-  | offer (b : Buf) (more : ByteArray) : ReachableIn cap b → ReachableIn cap (bufOffer cap b more).1
-  /-- A flush that removes the bytes written. -/
-  | advance (b : Buf) (n : Nat) : ReachableIn cap b → ReachableIn cap (bufAdvance b n)
-
-/-- The client-output queue's **retained** states: `Conn.out` starts `empty`,
-and a `bufEnqueue` that reports "cut" gets the client dropped from the roster —
-so a queue the daemon keeps holds only enqueues that reported `false`, plus
-flush advances. The not-cut hypothesis on the constructor IS the shipped
-append-then-cut discipline; drop it and `reachableOut_bound` is refutable
-(break-verified). -/
-private inductive ReachableOut (cap : Nat) : Buf → Prop where
-  /-- The queue every connection starts with. -/
-  | empty : ReachableOut cap .empty
-  /-- An append that left the client connected. -/
-  |
-  enqueue (b : Buf) (more : ByteArray) :
-    ReachableOut cap b →
-      (bufEnqueue cap b more).2 = false → ReachableOut cap (bufEnqueue cap b more).1
-  /-- A flush that removes the bytes written. -/
-  | advance (b : Buf) (n : Nat) : ReachableOut cap b → ReachableOut cap (bufAdvance b n)
+/-! The reachable states of a queue, `ReachableIn` and `ReachableOut`, are in
+`Linger/Session/Spec.lean`. With `bytes` sealed they cover every queue an importer can hold,
+so their bounds (`reachableIn_bound`, `reachableOut_bound`) are whole-lifetime facts about the
+daemon's queues. -/
 
 end Linger.Session.Buf
