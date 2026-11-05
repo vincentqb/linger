@@ -98,7 +98,7 @@ proof_paths="$(git ls-files -- 'Theorems/*.lean' 'Linger/*/Proofs/*.lean')"
 # The build proves both fuzz claims; this keeps them in place at their full ranges.
 for c in '^example : failing 400 = [[][]] := by native_decide$' \
          '^example : failingDeep 150 = [[][]] := by native_decide$'; do
-  code_grep "$c" Tests/Fuzz.lean >/dev/null || fail "fuzz claim weakened or disabled: $c"
+  code_grep "$c" Linger/Terminal/Tests/Fuzz.lean >/dev/null || fail "fuzz claim weakened or disabled: $c"
 done
 # A CSI count reaches 65535, so every repeat it drives goes through Vt.repeatAtMost, which
 # clamps it by the screen (repeatAtMost_eq_repeat). A loop counting `a1`, an `arg` or a
