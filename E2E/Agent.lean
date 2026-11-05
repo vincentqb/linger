@@ -63,8 +63,8 @@ def sendStdin (e : Env) (name payload : String) : IO UInt32 := do
 /-- One fake daemon: accept a connection, send an over-cap frame header, close.
 The CLI must report protocol loss rather than a successful request. -/
 def malformedServer (socketPath readyPath : String) : IO UInt32 := do
-  let lfd ← Linger.Posix.unixListen socketPath
-  Linger.Posix.setNonblock lfd
+  let lfd ← Linger.Os.Shell.unixListen socketPath
+  Linger.Os.Shell.setNonblock lfd
   IO.FS.writeFile readyPath "ready"
   let rc ←
     match ← acceptWithin lfd 5000 with
@@ -72,11 +72,11 @@ def malformedServer (socketPath readyPath : String) : IO UInt32 := do
       pure 1
     | some fd =>
       let tooLarge := UInt32.ofNat (Linger.Core.Wire.maxPayload + 1)
-      Linger.Posix.writeAll fd
+      Linger.Os.Shell.writeAll fd
           (ByteArray.mk ((0 : UInt8) :: Linger.Core.Wire.writeU32 tooLarge).toArray)
-      Linger.Posix.close fd
+      Linger.Os.Shell.close fd
       pure 0
-  Linger.Posix.close lfd
+  Linger.Os.Shell.close lfd
   try
     IO.FS.removeFile socketPath
   catch _ =>
@@ -88,17 +88,17 @@ first send plausible fields: neither a partial label nor a healthy-looking
 prefix may be mistaken for a completed answer. The socket path stays for the
 caller to check that listing did not unlink a connected peer. -/
 def infoServer (socketPath readyPath mode : String) : IO UInt32 := do
-  let lfd ← Linger.Posix.unixListen socketPath
-  Linger.Posix.setNonblock lfd
+  let lfd ← Linger.Os.Shell.unixListen socketPath
+  Linger.Os.Shell.setNonblock lfd
   try
     IO.FS.writeFile readyPath "ready"
     for _ in [:2] do
       let some fd ← acceptWithin lfd 5000 | return 1
       try
-        let ready ← Linger.Posix.poll #[fd] #[Linger.Posix.POLLIN] 2000
+        let ready ← Linger.Os.Shell.poll #[fd] #[Linger.Os.Shell.POLLIN] 2000
         if ready[0]! == 0 then
           return 1
-        let _ ← Linger.Posix.read fd 65536
+        let _ ← Linger.Os.Shell.read fd 65536
         let _ ←
           try
             if mode != "empty" then
@@ -112,7 +112,7 @@ def infoServer (socketPath readyPath mode : String) : IO UInt32 := do
             | "refused" =>
               Linger.Runtime.Client.sendMsg fd (.err "info refused\x1b[31m".toUTF8.toList)
             | "malformed" =>
-              Linger.Posix.writeAll fd
+              Linger.Os.Shell.writeAll fd
                   (ByteArray.mk
                     ((0 : UInt8) ::
                         Linger.Core.Wire.writeU32
@@ -150,10 +150,10 @@ def infoServer (socketPath readyPath mode : String) : IO UInt32 := do
             pure ()
         pure ()
       finally
-        Linger.Posix.close fd
+        Linger.Os.Shell.close fd
     return 0
   finally
-    Linger.Posix.close lfd
+    Linger.Os.Shell.close lfd
 
 def checkInfo (e : Env) (mode : String) (error : Option String) : IO Unit := do
   let name := s!"info-{mode}"

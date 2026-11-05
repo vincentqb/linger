@@ -37,11 +37,11 @@ hooks. Keeping the roster in this process prevents a reconnect from reusing the
 closed fd and accidentally hiding a phantom attached client. -/
 def closeFeedback (e : Env) : IO Unit := do
   let path := s!"{e.dir}/close-feedback.sock"
-  let listener ← Linger.Posix.unixListen path
+  let listener ← Linger.Os.Shell.unixListen path
   try
     for exiting in [false, true] do
-      let peer ← Linger.Posix.unixConnect path
-      let accepted ← Linger.Posix.accept listener
+      let peer ← Linger.Os.Shell.unixConnect path
+      let accepted ← Linger.Os.Shell.accept listener
       if peer < 0 || accepted < 0 then
         throw (IO.userError "close-feedback socket was not accepted")
       let fd := accepted.toUInt64.toUInt32
@@ -67,9 +67,9 @@ def closeFeedback (e : Env) : IO Unit := do
           expect (clients == some "0" && after.conns.isEmpty && (← saved.get) == 1)
               "detach-all removes the size owner and checkpoints the last detach"
       finally
-        Linger.Posix.close peer.toUInt64.toUInt32
+        Linger.Os.Shell.close peer.toUInt64.toUInt32
   finally
-    Linger.Posix.close listener
+    Linger.Os.Shell.close listener
     IO.FS.removeFile path
 
 /-- The hazards `leaveAnsi` undoes, each spelled with the emitter's own primitive
@@ -200,9 +200,9 @@ def run : IO UInt32 :=
     -- 7. wait returns the exit status. `run` types its command into the session
     -- shell, so the command must `exec` to make its status the shell's.
     let _ ← e.cli #["run", "w2", "exec sh -c \"sleep 0.5; exit 7\""]
-    let t0 ← Linger.Posix.monotonicMs
+    let t0 ← Linger.Os.Shell.monotonicMs
     let (rc, _, _) ← e.cli #["wait", "w2"]
-    let took := (← Linger.Posix.monotonicMs) - t0
+    let took := (← Linger.Os.Shell.monotonicMs) - t0
     expect (rc == 7 && took ≥ 200)
         s!"wait blocks until exit and returns status (rc={rc}, took={took}ms)"
     -- A transport loss is neither a detach nor a successful wait.
@@ -315,7 +315,7 @@ def run : IO UInt32 :=
     let text (path : String) : IO String := return (← readText path).trimAscii.toString
     let outTty := s!"{e.dir}/raw-cleanup.out-tty"
     let (outPid, outFd) ←
-      Linger.Posix.spawnPty cols rows "" "sh"
+      Linger.Os.Shell.spawnPty cols rows "" "sh"
           #["-c", s!"tty > {outTty}.tmp && mv {outTty}.tmp {outTty}; exec sleep 600"] e.ptyEnv
     let _ ← waitFor 5000 (return (← text outTty).startsWith "/dev/")
     let rawTty := s!"{e.dir}/raw-cleanup.tty"
@@ -327,7 +327,7 @@ def run : IO UInt32 :=
          {e.bin} attach raw-cleanup >{← text outTty} 2>/dev/null; rc=$?; after=$(stty -g); \
          printf '%s\\n%s\\n%s\\n' \"$before\" \"$after\" \"$rc\" > {modesPath}.tmp && \
          mv {modesPath}.tmp {modesPath}"
-    let (rawPid, rawFd) ← Linger.Posix.spawnPty cols rows "" "sh" #["-c", cleanupScript] e.ptyEnv
+    let (rawPid, rawFd) ← Linger.Os.Shell.spawnPty cols rows "" "sh" #["-c", cleanupScript] e.ptyEnv
     let rawProbe : Client := { pid := rawPid, fd := rawFd }
     -- attach registers before it enters raw mode, so wait for the mode itself. The tty
     -- path is written before `before`, and only a successful, nonempty read counts.
@@ -363,7 +363,7 @@ def run : IO UInt32 :=
       nd.detach -- would detach if the key were enabled
       IO.sleep 500
       -- `-1` from WNOHANG waitpid is "still running"
-      expect ((← Linger.Posix.waitpidNohang nd.pid) == -1)
+      expect ((← Linger.Os.Shell.waitpidNohang nd.pid) == -1)
           s!"LINGER_NO_DETACH_KEY={value}: ctrl-\\ does not detach (client still attached)"
       expect (has (← e.out #["list"]) name) s!"LINGER_NO_DETACH_KEY={value}: session still live"
       nd.type "echo nd-$((20+2))\r" -- still interactive: input reaches the pty

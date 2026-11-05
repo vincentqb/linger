@@ -1,9 +1,9 @@
 module
 
-import Linger.Posix
+import Linger.Os.Shell
 public import Linger.Core.Wire
 public import Linger.Core.Vt
-import Linger.Core.Env
+import Linger.Os.Env
 import Linger.Core.Replay
 import Linger.Core.Terminal
 import Linger.Core.Remote
@@ -25,7 +25,7 @@ Detach key: `ctrl-\` (0x1C); set `LINGER_NO_DETACH_KEY` to disable it for writab
 
 namespace Linger.Runtime.Client
 
-open Linger.Posix
+open Linger.Os.Shell
 open Linger.Core.Wire (Msg Decoder)
 
 /-- Connect to a session socket. A nonblocking attempt can fail while a live
@@ -214,7 +214,7 @@ a failed sample shows the unknown icon. -/
 private def converse (name : String) (fd : UInt32) (sample : IO String) (readOnly : Bool)
     (pending : IO.Ref (Option (Task (Except IO.Error String)))) : IO Outcome := do
   try
-    let detachEnabled := Linger.Core.Env.detachEnabled readOnly (← IO.getEnv "LINGER_NO_DETACH_KEY")
+    let detachEnabled := Linger.Os.Env.detachEnabled readOnly (← IO.getEnv "LINGER_NO_DETACH_KEY")
     let (cols, rows) ← winsizeGet stdinFd
     if readOnly then
       sendMsg fd (.attach 0 0)

@@ -187,7 +187,7 @@ def dependencyInstall (root : String) : IO Unit := do
       for tool in present do
         IO.FS.writeFile (dir / tool) "#!/bin/sh\nexit 0\n"
       for file in [sudo, brew] ++ present.map (fun tool => dir / System.FilePath.mk tool) do
-        Linger.Posix.chmod file.toString 0o700
+        Linger.Os.Shell.chmod file.toString 0o700
       let log := dir / "install.log"
       IO.FS.writeFile log ""
       let out ←
@@ -287,10 +287,10 @@ def verificationInputs (root : String) : IO Unit :=
       expect (← checkKey false) s!"documentation changes invalidate verification: {path}"
       IO.FS.writeFile (dir / path) "Documentation.\n"
       git #["add", "."]
-    Linger.Posix.chmod input.toString 0o755
+    Linger.Os.Shell.chmod input.toString 0o755
     git #["add", "."]
     expect (← checkKey false) "file mode changes invalidate verification"
-    Linger.Posix.chmod input.toString 0o644
+    Linger.Os.Shell.chmod input.toString 0o644
     git #["add", "."]
     git #["mv", "source with spaces.lean", "renamed.lean"]
     expect (← checkKey false) "renamed input paths invalidate verification despite identical bytes"

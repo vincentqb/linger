@@ -1,7 +1,7 @@
 module
 
 import Linger.Tools.Resurrect
-import Linger.Posix
+import Linger.Os.Shell
 import Linger.Core.Listing
 import Linger.Runtime.Paths
 import Linger.Runtime.Resume
@@ -92,10 +92,10 @@ temporary exists. Linking publishes a complete new export without overwriting
 any destination. -/
 private def publish (path : System.FilePath) (content : String) : IO Unit := do
   let tmp :=
-    System.FilePath.mk s!"{path}.linger-{← Linger.Posix.getpid}-{← IO.rand 0 0xFFFFFFFF}.tmp"
+    System.FilePath.mk s!"{path}.linger-{← Linger.Os.Shell.getpid}-{← IO.rand 0 0xFFFFFFFF}.tmp"
   let handle ← IO.FS.Handle.mk tmp .writeNew
   try
-    Linger.Posix.chmod tmp.toString 0o600
+    Linger.Os.Shell.chmod tmp.toString 0o600
     handle.putStr content
     handle.flush
     IO.FS.hardLink tmp path
@@ -122,8 +122,8 @@ private def configuredDirectory : IO (Option String) := do
       | error =>
         throw error
     pending.set (some job)
-    let deadline := (← Linger.Posix.monotonicMs) + 1000
-    while (← Linger.Posix.monotonicMs) < deadline do
+    let deadline := (← Linger.Os.Shell.monotonicMs) + 1000
+    while (← Linger.Os.Shell.monotonicMs) < deadline do
       if let some output← Command.poll pending then
         if output.exitCode != 0 then
           return none
@@ -215,8 +215,8 @@ private def archiveOutput (args : Array String) (limit : Nat) : IO String := do
   let pending ← IO.mkRef (none : Option Command.Job)
   try
     pending.set (some (← Command.startLimited "tar" args limit))
-    let deadline := (← Linger.Posix.monotonicMs) + 5000
-    while (← Linger.Posix.monotonicMs) < deadline do
+    let deadline := (← Linger.Os.Shell.monotonicMs) + 5000
+    while (← Linger.Os.Shell.monotonicMs) < deadline do
       if let some output← Command.poll pending then
         unless output.exitCode == 0 do
           throw (IO.userError s!"could not read pane capture archive: {output.stderr}")
@@ -281,10 +281,10 @@ private def seedPane (pane : Pane) (contents : Option String) : IO Bool :=
     if (← (System.FilePath.mk path).pathExists) || (← (System.FilePath.mk socket).pathExists) then
       return false
     let tmp :=
-      System.FilePath.mk s!"{path}.linger-{← Linger.Posix.getpid}-{← IO.rand 0 0xFFFFFFFF}.tmp"
+      System.FilePath.mk s!"{path}.linger-{← Linger.Os.Shell.getpid}-{← IO.rand 0 0xFFFFFFFF}.tmp"
     let handle ← IO.FS.Handle.mk tmp .writeNew
     try
-      Linger.Posix.chmod tmp.toString 0o600
+      Linger.Os.Shell.chmod tmp.toString 0o600
       handle.write (Linger.Core.Checkpoint.saveBytes (checkpoint pane contents))
       handle.flush
       IO.FS.hardLink tmp path
@@ -351,7 +351,7 @@ private def listSave (file : Option String) (porcelain : Bool) : IO Unit :=
       out.putStr s!"tmux save · {save.modified}\n{diagnostic save.path.toString}\n\n"
       out.flush
       let withColor := (← out.isTty) && (← IO.getEnv "NO_COLOR").isNone
-      Linger.Posix.writeAll Linger.Posix.stdoutFd
+      Linger.Os.Shell.writeAll Linger.Os.Shell.stdoutFd
           (ByteArray.mk (Linger.Core.Listing.terminalListing withColor rows).toArray)
 
 /-- Act on the selected snapshot's exact directory, never on a reread of `last`.
@@ -427,8 +427,8 @@ private def snapshot : IO (List (String × String)) := do
               | throw (IO.userError s!"could not read live session: {name}")
             unless pid < UInt32.size do
               throw (IO.userError s!"invalid process id for session: {name}")
-            Linger.Posix.checkPid "export" pid.toUInt32
-            Linger.Posix.getcwdOf pid.toUInt32
+            Linger.Os.Shell.checkPid "export" pid.toUInt32
+            Linger.Os.Shell.getcwdOf pid.toUInt32
       unless !dir.isEmpty && (System.FilePath.mk dir).isAbsolute do
         throw (IO.userError s!"could not read working directory for session: {name}")
       return (name, (← IO.FS.realPath dir).toString)

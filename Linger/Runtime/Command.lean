@@ -1,6 +1,6 @@
 module
 
-import Linger.Posix
+import Linger.Os.Shell
 
 public section
 
@@ -81,7 +81,7 @@ private def retireGroup (job : Job) : IO Unit := do
   catch err =>
     match err with
     | .permissionDenied .. | .noSuchThing .. =>
-      Linger.Posix.kill job.child.pid 9
+      Linger.Os.Shell.kill job.child.pid 9
     | _ =>
       throw err
 
@@ -96,9 +96,9 @@ def stop (pending : IO.Ref (Option Job)) (graceMs : Nat := 0) : IO Unit := do
       try
         try
           if graceMs > 0 then
-            Linger.Posix.kill job.child.pid 15
-            let deadline := (← Linger.Posix.monotonicMs) + graceMs
-            while (← Linger.Posix.monotonicMs) < deadline do
+            Linger.Os.Shell.kill job.child.pid 15
+            let deadline := (← Linger.Os.Shell.monotonicMs) + graceMs
+            while (← Linger.Os.Shell.monotonicMs) < deadline do
               if (← IO.hasFinished job.stdout) && (← IO.hasFinished job.stderr) then
                 break
               IO.sleep 5

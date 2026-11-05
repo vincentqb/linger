@@ -1,7 +1,7 @@
 module
 
 public import Linger.Tools.Picker
-import Linger.Posix
+import Linger.Os.Shell
 import Linger.Core.Listing
 import Linger.Core.Remote
 import Linger.Core.Terminal
@@ -14,7 +14,7 @@ are pure tool modules; this module owns terminal lifetime and subprocesses. -/
 
 namespace Linger.Manager.Picker
 
-open Linger.Posix
+open Linger.Os.Shell
 
 /-- How one selection visit ended. -/
 inductive Choice where

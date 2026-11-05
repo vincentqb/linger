@@ -97,26 +97,26 @@ def countFull (log : String) : Nat := (log.splitOn fullMarker).length - 1
 /-- Fake daemon that continuously emits valid info fragments without a terminator.
 A silence timeout never fires; an absolute request deadline must. -/
 def streamInfoServer (socketPath readyPath : String) : IO UInt32 := do
-  let lfd ← Linger.Posix.unixListen socketPath
-  Linger.Posix.setNonblock lfd
+  let lfd ← Linger.Os.Shell.unixListen socketPath
+  Linger.Os.Shell.setNonblock lfd
   IO.FS.writeFile readyPath "ready"
   match ← acceptWithin lfd 5000 with
   | none =>
-    Linger.Posix.close lfd
+    Linger.Os.Shell.close lfd
     return 1
   | some fd =>
     let frame :=
       ByteArray.mk
         (Linger.Core.Wire.encode (.infoReply "pid\t1\ncmd\tstreaming\n".toUTF8.toList)).toArray
-    let deadline := (← Linger.Posix.monotonicMs) + 6000
+    let deadline := (← Linger.Os.Shell.monotonicMs) + 6000
     try
-      while (← Linger.Posix.monotonicMs) < deadline do
-        Linger.Posix.writeAll fd frame
+      while (← Linger.Os.Shell.monotonicMs) < deadline do
+        Linger.Os.Shell.writeAll fd frame
         IO.sleep 5
     catch _ =>
       pure ()
-    Linger.Posix.close fd
-    Linger.Posix.close lfd
+    Linger.Os.Shell.close fd
+    Linger.Os.Shell.close lfd
     try
       IO.FS.removeFile socketPath
     catch _ =>
@@ -143,7 +143,7 @@ def admissionPressure (e : Env) : IO Unit := do
   try
     unless (← waitFor 5000 (System.FilePath.pathExists socketPath)) do
       throw (IO.userError "descriptor-pressure daemon did not start")
-    let raw ← Linger.Posix.unixConnect socketPath
+    let raw ← Linger.Os.Shell.unixConnect socketPath
     unless raw ≥ 0 do
       throw (IO.userError "descriptor-pressure control client could not connect")
     let control := raw.toUInt64.toUInt32
@@ -155,7 +155,7 @@ def admissionPressure (e : Env) : IO Unit := do
     let some pid := pidText.toNat? | throw (IO.userError "invalid child pid")
     child.set (some pid.toUInt32)
     for _ in List.range maxClients do
-      let peer ← Linger.Posix.unixConnect socketPath true
+      let peer ← Linger.Os.Shell.unixConnect socketPath true
       if peer ≥ 0 then
         owned.modify (·.push peer.toUInt64.toUInt32)
     let exhausted ←
@@ -183,7 +183,7 @@ def admissionPressure (e : Env) : IO Unit := do
     -- Release the accepted idle clients and the kernel backlog before probing
     -- admission again; the original control client remains connected.
     for peer in (← owned.get).drop 1 do
-      Linger.Posix.close peer
+      Linger.Os.Shell.close peer
     owned.set #[control]
     let recovered ←
       waitFor 5000 do
@@ -192,12 +192,12 @@ def admissionPressure (e : Env) : IO Unit := do
     expect recovered "new connections recover after descriptor pressure clears"
   finally
     for fd in ← owned.get do
-      Linger.Posix.close fd
+      Linger.Os.Shell.close fd
     let _ ← pressure.cliTimeout #["kill", "pressure"] 3000
     discard (waitOrKill server 3000)
     if let some pid← child.get then
-      if ← Linger.Posix.alive pid then
-        Linger.Posix.kill pid 9
+      if ← Linger.Os.Shell.alive pid then
+        Linger.Os.Shell.kill pid 9
 
 /-- Budgets for hostile input at the largest screen, about five times the cost
 measured when they were set (write 0.33 s, info 0.15 s, peak 89 MB): the counted
@@ -223,23 +223,23 @@ private def hostileInput (e : Env) : IO Unit := do
       String.join (["S", "T", "I", "Z", "@", "L", "M", "P", "X"].map (s!"\\033[65535{·}"))
     let tabs := s!"{e.dir}/hostile-tabs"
     IO.FS.writeFile tabs (String.join (List.replicate 200 "\x1b[999I\x1b[999Z"))
-    let start ← Linger.Posix.monotonicMs
+    let start ← Linger.Os.Shell.monotonicMs
     let _ ← e.cli #["run", name, s!"printf '{counts}'; cat {tabs}; echo HOSTILE-$((40+2))"]
     let written ← waitFor writeBudget (return has (← e.out #["capture", name]) "HOSTILE-42")
-    let writeMs := (← Linger.Posix.monotonicMs) - start
-    let raw ← Linger.Posix.unixConnect s!"{e.dir}/{name}.sock"
+    let writeMs := (← Linger.Os.Shell.monotonicMs) - start
+    let raw ← Linger.Os.Shell.unixConnect s!"{e.dir}/{name}.sock"
     unless raw ≥ 0 do
       throw (IO.userError "history flood could not connect")
     let fd := raw.toUInt64.toUInt32
     let (answered, infoMs) ←
       try
         let flood := (List.replicate 1000 (Linger.Core.Wire.encode .history)).flatten
-        Linger.Posix.writeAll fd (ByteArray.mk flood.toArray)
-        let start ← Linger.Posix.monotonicMs
+        Linger.Os.Shell.writeAll fd (ByteArray.mk flood.toArray)
+        let start ← Linger.Os.Shell.monotonicMs
         let reply ← e.cliTimeout #["info", name] infoBudget
-        pure (reply.any (·.1 == 0), (← Linger.Posix.monotonicMs) - start)
+        pure (reply.any (·.1 == 0), (← Linger.Os.Shell.monotonicMs) - start)
       finally
-        Linger.Posix.close fd
+        Linger.Os.Shell.close fd
     -- A daemon that did not answer cannot be measured; the check fails on `answered`.
     let peak ←
       if answered then
@@ -274,7 +274,7 @@ private def inputBurst (e : Env) : IO Unit := do
   try
     let _ ← e.cli #["run", name, "stty raw -echo; echo BURST-$((40+2)); exec cat > /dev/null"]
     let reading ← waitFor 3000 (return has (← e.out #["capture", name]) "BURST-42")
-    let raw ← Linger.Posix.unixConnect s!"{e.dir}/{name}.sock"
+    let raw ← Linger.Os.Shell.unixConnect s!"{e.dir}/{name}.sock"
     unless raw ≥ 0 do
       throw (IO.userError "input burst could not connect")
     let fd := raw.toUInt64.toUInt32
@@ -284,17 +284,17 @@ private def inputBurst (e : Env) : IO Unit := do
     let burst := ByteArray.mk (List.replicate (8 * (65536 / frame.length)) frame).flatten.toArray
     let (answered, burstMs) ←
       try
-        let start ← Linger.Posix.monotonicMs
-        Linger.Posix.writeAll fd burst
+        let start ← Linger.Os.Shell.monotonicMs
+        Linger.Os.Shell.writeAll fd burst
         let answered ←
           try
             let _ ← Linger.Runtime.Cli.readInfo fd (some (start + inputBurstBudgetMs))
             pure true
           catch _ =>
             pure false
-        pure (answered, (← Linger.Posix.monotonicMs) - start)
+        pure (answered, (← Linger.Os.Shell.monotonicMs) - start)
       finally
-        Linger.Posix.close fd
+        Linger.Os.Shell.close fd
     let after ← e.daemonWrites name
     let writes := before.bind fun b => after.map (· - b)
     expect
@@ -385,7 +385,7 @@ def run : IO UInt32 :=
     -- The name is unique to this run so the `ps` scan below cannot see a developer's
     -- own session of the same name (see the module docstring), the same trick
     -- `Env.make` already uses for the directory.
-    let claim := s!"claim-{← Linger.Posix.getpid}"
+    let claim := s!"claim-{← Linger.Os.Shell.getpid}"
     let _ ← e.cli #["run", claim, "echo one"]
     unless (← e.crashDaemon claim) do
       throw (IO.userError s!"daemon for '{claim}' did not crash")
@@ -419,9 +419,9 @@ def run : IO UInt32 :=
     -- which is the property the file's existence only hints at. On the failing
     -- branch it returns a held fd, which must be closed or THIS process would own
     -- the name for the rest of the suite.
-    let lockFd ← Linger.Posix.flock s!"{e.dir}/{claim}.lock"
+    let lockFd ← Linger.Os.Shell.flock s!"{e.dir}/{claim}.lock"
     if lockFd ≥ 0 then
-      Linger.Posix.close (UInt32.ofNat lockFd.toNatClampNeg)
+      Linger.Os.Shell.close (UInt32.ofNat lockFd.toNatClampNeg)
     expect (locks.contains s!"{claim}.lock" && lockFd == -1)
         s!"ownership lock file present ({locks})"
     e.killAll #[claim]
@@ -450,7 +450,7 @@ def run : IO UInt32 :=
     -- only whether a daemon answers matters here, not its pid
     let sp ← e.daemonPid "stall"
     if sp.isSome then
-      let r ← Linger.Posix.unixConnect s!"{e.dir}/stall.sock"
+      let r ← Linger.Os.Shell.unixConnect s!"{e.dir}/stall.sock"
       let sock := UInt32.ofNat r.toNatClampNeg
       -- the frame is built by the implementation's own codec: `.input` is
       -- `Wire.Msg.tag 0` and the length is `Wire.writeU32`, so a tag renumbering is
@@ -460,8 +460,8 @@ def run : IO UInt32 :=
       let payload := (List.replicate 4096 (List.replicate 63 (0x78 : UInt8) ++ [0x0A])).flatten
       let frame := ByteArray.mk (Linger.Core.Wire.encode (.input payload)).toArray
       for _ in List.range 64 do -- 16 MiB, ~4x the cap
-        Linger.Posix.writeAll sock frame
-      Linger.Posix.close sock
+        Linger.Os.Shell.writeAll sock frame
+      Linger.Os.Shell.close sock
       -- the daemon logs the cap once on the transition into backpressure; its stderr
       -- is an O_APPEND file, so give the write a moment to land. The reported
       -- pending count is the bounded-buffer property itself — a full buffer that
@@ -483,7 +483,7 @@ def run : IO UInt32 :=
     -- ── 4. a held ownership lock makes a failed connect non-stale ─────────────
     let heldName := "lock-held"
     let heldSocket := s!"{e.dir}/{heldName}.sock"
-    let heldLock ← Linger.Posix.flock s!"{e.dir}/{heldName}.lock"
+    let heldLock ← Linger.Os.Shell.flock s!"{e.dir}/{heldName}.lock"
     if heldLock < 0 then
       throw (IO.userError "could not acquire lock-held test lock")
     IO.FS.writeFile heldSocket "not-a-socket" -- failed connect while the name is owned
@@ -491,7 +491,7 @@ def run : IO UInt32 :=
     let heldSocks ← e.dirNames ".sock"
     expect (heldRc == 0 && heldSocks.contains s!"{heldName}.sock" && has heldOut heldName)
         s!"list preserves a failed-connect owned socket (rc={heldRc}, sockets={heldSocks}, out='{heldOut}', err='{heldErr}')"
-    Linger.Posix.close heldLock.toUInt64.toUInt32
+    Linger.Os.Shell.close heldLock.toUInt64.toUInt32
     try
       IO.FS.removeFile heldSocket
     catch _ =>
@@ -506,24 +506,24 @@ def run : IO UInt32 :=
             stdout := .null, stderr := .null }
     unless (← waitFor 5000 (System.FilePath.pathExists streamReady)) do
       throw (IO.userError "streaming info server did not become ready")
-    let t0 ← Linger.Posix.monotonicMs
+    let t0 ← Linger.Os.Shell.monotonicMs
     let listing ←
       IO.Process.spawn
           { cmd := e.bin, args := #["list"], env := e.procEnv, stdout := .null, stderr := .null }
     let listCode ← waitOrKill listing 3500
-    let elapsed := (← Linger.Posix.monotonicMs) - t0
+    let elapsed := (← Linger.Os.Shell.monotonicMs) - t0
     let streamCode ← waitOrKill streamServer 3000
     expect (listCode == some 0 && elapsed < 3500 && streamCode == some 0)
         s!"continuous info traffic cannot extend the request deadline ({elapsed}ms)"
     -- ── 6. one listener round accepts at most the pure roster cap ─────────────
     let acceptPath := s!"{e.dir}/accept-bound.sock"
-    let lfd ← Linger.Posix.unixListen acceptPath
-    Linger.Posix.setNonblock lfd
-    let (sleepPid, ptyFd) ← Linger.Posix.spawnPty 80 24 "" "sleep" #["600"] #[]
-    Linger.Posix.setNonblock ptyFd
+    let lfd ← Linger.Os.Shell.unixListen acceptPath
+    Linger.Os.Shell.setNonblock lfd
+    let (sleepPid, ptyFd) ← Linger.Os.Shell.spawnPty 80 24 "" "sleep" #["600"] #[]
+    Linger.Os.Shell.setNonblock ptyFd
     let mut peers : Array UInt32 := #[]
     for _ in List.range (2 * maxClients) do
-      let fd ← Linger.Posix.unixConnect acceptPath
+      let fd ← Linger.Os.Shell.unixConnect acceptPath
       if fd ≥ 0 then
         peers := peers.push fd.toUInt64.toUInt32
     let rt : Linger.Runtime.Daemon.Rt :=
@@ -535,26 +535,26 @@ def run : IO UInt32 :=
           connected.length ≤ maxClients)
         s!"one poll round accepts at most maxClients ({bounded.conns.length})"
     for c in bounded.conns do
-      Linger.Posix.close c.fd
+      Linger.Os.Shell.close c.fd
     for fd in peers do
-      Linger.Posix.close fd
-    Linger.Posix.close lfd
-    Linger.Posix.close ptyFd
-    Linger.Posix.kill sleepPid 9
+      Linger.Os.Shell.close fd
+    Linger.Os.Shell.close lfd
+    Linger.Os.Shell.close ptyFd
+    Linger.Os.Shell.kill sleepPid 9
     IO.sleep 100
-    let _ ← Linger.Posix.waitpidNohang sleepPid
+    let _ ← Linger.Os.Shell.waitpidNohang sleepPid
     try
       IO.FS.removeFile acceptPath
     catch _ =>
       pure ()
     -- ── 7. the slow-client output cut is wired into the real runtime ──────────
     let cutPath := s!"{e.dir}/output-cut.sock"
-    let cutListen ← Linger.Posix.unixListen cutPath
-    let cutPeerRaw ← Linger.Posix.unixConnect cutPath
-    let cutFdRaw ← Linger.Posix.accept cutListen
+    let cutListen ← Linger.Os.Shell.unixListen cutPath
+    let cutPeerRaw ← Linger.Os.Shell.unixConnect cutPath
+    let cutFdRaw ← Linger.Os.Shell.accept cutListen
     let cutPeer := cutPeerRaw.toUInt64.toUInt32
     let cutFd := cutFdRaw.toUInt64.toUInt32
-    Linger.Posix.setNonblock cutFd
+    Linger.Os.Shell.setNonblock cutFd
     let id := cutFd.toNat
     let st0 := Linger.Core.Session.State.boot (Linger.Core.Vt.Vt.init 80 24) [] []
     let st := (Linger.Core.Session.step st0 (.connected id)).1
@@ -564,7 +564,7 @@ def run : IO UInt32 :=
       { st, listenFd := cutListen, ptyFd := cutFd, childPid := 1,
         conns := [{ fd := cutFd, out := q }], saveCkpt := fun _ => pure (), dropCkpt := pure () }
     let (cutRt', follow) ← Linger.Runtime.Daemon.runEffect cutRt (.send id .done)
-    let peerEof ← Linger.Posix.read cutPeer 1
+    let peerEof ← Linger.Os.Shell.read cutPeer 1
     let pumped ← Linger.Runtime.Daemon.pump cutRt' follow
     let attached := (Linger.Core.Session.infoFields pumped.st).find? (·.1 == "clients") |>.map (·.2)
     let closed :=
@@ -576,8 +576,8 @@ def run : IO UInt32 :=
           peerEof.isNone &&
           attached == some "0")
         "crossing outbufCap closes the peer and feeds .closed into the session"
-    Linger.Posix.close cutPeer
-    Linger.Posix.close cutListen
+    Linger.Os.Shell.close cutPeer
+    Linger.Os.Shell.close cutListen
     try
       IO.FS.removeFile cutPath
     catch _ =>
@@ -587,17 +587,17 @@ def run : IO UInt32 :=
     try
       let _ ← e.cli #["run", resetName, "true"]
       let initialPid ← e.info resetName "pid"
-      let raw ← Linger.Posix.unixConnect s!"{e.dir}/{resetName}.sock"
+      let raw ← Linger.Os.Shell.unixConnect s!"{e.dir}/{resetName}.sock"
       unless raw ≥ 0 do
         throw (IO.userError "unread-reply peer could not connect")
       let fd := raw.toUInt64.toUInt32
       let ready ←
         try
-          Linger.Posix.writeAll fd (ByteArray.mk (Linger.Core.Wire.encode .info).toArray)
-          let revs ← Linger.Posix.poll #[fd] #[Linger.Posix.POLLIN] 3000
-          pure (revs[0]! &&& Linger.Posix.POLLIN != 0)
+          Linger.Os.Shell.writeAll fd (ByteArray.mk (Linger.Core.Wire.encode .info).toArray)
+          let revs ← Linger.Os.Shell.poll #[fd] #[Linger.Os.Shell.POLLIN] 3000
+          pure (revs[0]! &&& Linger.Os.Shell.POLLIN != 0)
         finally
-          Linger.Posix.close fd
+          Linger.Os.Shell.close fd
       -- The echoed input does not contain the contiguous output marker.
       let sent ← e.cliTimeout #["send", resetName, "printf 'PEER-%s\\n' 'ALIVE'\n"] 3000
       let ran ←
@@ -635,7 +635,7 @@ def run : IO UInt32 :=
           (Linger.Core.Checkpoint.saveBytes ⟨saved, e.dir, []⟩)
       let capture ← e.spawn #["capture", "--history", reader]
       -- Output on the pty means the capture has loaded the checkpoint under both locks.
-      let holding := (← Linger.Posix.poll #[capture.fd] #[Linger.Posix.POLLIN] 5000)[0]! != 0
+      let holding := (← Linger.Os.Shell.poll #[capture.fd] #[Linger.Os.Shell.POLLIN] 5000)[0]! != 0
       let starter ←
         IO.Process.spawn
             { cmd := e.bin, args := #["run", reader, "echo resumed-$((40+2))"], env := e.procEnv,

@@ -1,7 +1,7 @@
 module
 
 public import Linger.Core.Buf
-public import Linger.Posix
+public import Linger.Os.Shell
 public import Linger.Core.Wire
 public import Linger.Core.Vt
 public import Linger.Core.Render
@@ -14,7 +14,7 @@ public import Linger.Core.Remote
 public import Linger.Core.Listing
 public import Linger.Core.Status
 public import Linger.Core.Title
-public import Linger.Core.Env
+public import Linger.Os.Env
 public import Linger.Runtime.Paths
 public import Linger.Runtime.Command
 public import Linger.Runtime.Daemon

@@ -37,10 +37,13 @@ dispatch, and pushes or pull requests that change `c/shim.c` or `./lake`.
 ## Layout
 
 - `Linger/Core/`: pure session and terminal models.
-- `Linger/Runtime/` and `Linger/Posix.lean`: session IO and the OS boundary.
+- `Linger/Runtime/`: session IO.
+- `Linger/Os/`: the operating system. `Boundary.lean` holds the foreign declarations,
+  `Shell.lean` the checked surface callers use, `Env.lean` the environment policies.
 - `Linger/Tools/` and `Linger/Manager/`: CLI policies and their IO executors.
-- `Theorems/`: proofs; `Tests/`: elaboration-time unit tests.
-- `E2E/`: executable suites; `scripts/`: build and verification orchestration.
+- `Theorems/` and each component's `Proofs/`: proofs; `Tests/`: elaboration-time unit tests.
+- `E2E/` and each component's `Suites/`: executable suites; `scripts/`: build and
+  verification orchestration.
 
 Keep module paths and namespaces aligned. Use ordinary `import` for implementation
 dependencies; reserve `public import` for types in the public interface and
@@ -67,12 +70,14 @@ Lean erases proofs regardless of file placement.
   fixes with a failing check and verify that new assertions detect a deliberate break;
   a check of a failure or cleanup path also asserts that the path was reached.
 - Read SHELL, HOME for remote hosts and LINGER_NO_DETACH_KEY once, into the pure
-  policies of `Linger/Core/Env.lean`, which `scripts/gates.sh` ties to each read,
+  policies of `Linger/Os/Env.lean`, which `scripts/gates.sh` ties to each read,
   and run every variable the program reads unset and empty in a suite.
-- Raw OS access belongs in `Linger/Posix.lean` and `c/shim.c`; all `@[extern]`
-  declarations stay in the former. Keep the shim to syscalls and errno.
+- Raw OS access belongs in `Linger/Os/` and `c/shim.c`. Every `@[extern]` declaration
+  stays private in `Linger/Os/Boundary.lean`, which declares nothing else, and
+  `Linger/Os/Shell.lean` wraps each one: it is the surface callers use. Keep the shim
+  to syscalls and errno.
   Return `-errno`, avoid numeric errno values in Lean, and validate signal PIDs
-  with `Linger.Posix.checkPid`.
+  with `Linger.Os.Shell.checkPid`.
 - Validate session names without rewriting them before paths; fuzzy matching
   belongs only in interactive selection. Freeze each poll loop's fd set.
   Compose displays through `Title.compose` and `Status.summary` in the order

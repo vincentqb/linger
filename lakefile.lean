@@ -50,12 +50,12 @@ extern_lib liblingershim pkg := do
   let shimO ← fetch <| pkg.target ``shim.o
   buildStaticLib (pkg.staticLibDir / nameToStaticLib "lingershim") #[shimO]
 
-/-- IO smoke tests for the Posix surface: `./lake exe lingertest`. -/
-lean_exe lingertest where root := `LingerTest
+/-- IO smoke tests for the OS boundary: `./lake exe lingertest`. -/
+lean_exe lingertest where root := `Linger.Os.Suites.Shim
 
-/-- Proofs have their own import and verification graph; every module under `Theorems/` is
-built. Lean erases proofs regardless of file placement. -/
-lean_lib Theorems where globs := #[.submodules `Theorems]
+/-- Proofs have their own import and verification graph: every module under `Theorems/` and
+under a component's `Proofs/` is built. Lean erases proofs regardless of file placement. -/
+lean_lib Theorems where globs := #[.submodules `Theorems, .submodules `Linger.Os.Proofs]
 
 /-- Unit tests checked at elaboration time; every module under `Tests/` is built. -/
 lean_lib Tests where globs := #[.submodules `Tests]

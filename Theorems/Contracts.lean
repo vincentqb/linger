@@ -5,7 +5,7 @@ import all Theorems.Checkpoint
 import all Theorems.Claim
 import all Theorems.Driver
 import all Theorems.Entry
-import all Theorems.Env
+import all Linger.Os.Proofs.Env
 import all Theorems.Fuzzy
 import all Theorems.Input
 import all Theorems.Listing
@@ -37,7 +37,7 @@ instead of passing the citation gate. The `rfl` example under Resume ties the
 `Session.resumeVt` those pins spell to `Session.bootVt`, which `Daemon.serve` calls, over
 `Checkpoint.loadBytes`. -/
 
-open Linger.Core Linger.Tools
+open Linger.Core Linger.Tools Linger.Os
 
 -- Checkpoints
 example (c : Checkpoint.Ckpt) (h : Vt.LiveReachableVt c.vt) :

@@ -1,12 +1,12 @@
 module
 
-import all Linger.Core.Env
+import all Linger.Os.Env
 
 /-! Environment policies, decided for every value of the variable, including unset
 and empty. The runtime reads each variable once into these functions; source
 gates tie the reads, and the suites run the program with unset and empty values. -/
 
-namespace Linger.Core.Env
+namespace Linger.Os.Env
 
 /-- A session's default program is never the empty word. -/
 theorem shellOf_ne_empty (value : Option String) : shellOf value ≠ "" := by
@@ -40,4 +40,4 @@ theorem detachEnabled_readOnly (flag : Option String) : detachEnabled true flag 
 theorem detachEnabled_writable (flag : Option String) : detachEnabled false flag = flag.isNone := by
   simp [detachEnabled]
 
-end Linger.Core.Env
+end Linger.Os.Env

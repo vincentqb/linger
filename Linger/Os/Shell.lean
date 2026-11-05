@@ -1,25 +1,25 @@
 module
 
 public import Linger.Core.Buf
+import all Linger.Os.Boundary
 import Std.Async.System
 
 public section
 
-/-! # Linger.Posix — the raw POSIX boundary
+/-! # Linger.Os.Shell — the POSIX surface callers use
 
-Most bindings map 1:1 onto `c/shim.c` (syscall + errno only; object
-arguments are borrowed `@&`, so the shim never manages refcounts). A
-few are thin wrappers over Lean core's own primitives rather than our
-shim — `getpid`, `chmod`, `monotonicMs`, `realtimeS`, `stdinIsTty`,
-`gethostname` — kept here so call sites see one uniform `Linger.Posix`
-surface; the shim is smaller for it.
+Every binding in `Linger.Os.Boundary` is private, and each is wrapped here under its own
+name, so this module is the program's only route to `c/shim.c`. The wrappers check what
+the C side cannot represent and state the binding's contract. A few operations are thin
+wrappers over Lean core's own primitives rather than our shim — `getpid`, `chmod`,
+`monotonicMs`, `realtimeS`, `stdinIsTty`, `gethostname` — so the shim is smaller for them.
 
 Strings passed to the shim are checked for NUL before conversion to C strings.
 Rejecting an unrepresentable value prevents a path or argument from silently
 becoming its prefix. Empty strings retain each operation's documented meaning.
 -/
 
-namespace Linger.Posix
+namespace Linger.Os.Shell
 
 /-- Reading will not block; on a listening socket, a connection is waiting. These poll(2)
 bits are fixed here, and `c/shim.c` `_Static_assert`s them against each platform's ABI. -/
@@ -51,19 +51,13 @@ private def checkWinsize (cols rows : UInt32) : IO Unit := do
     throw (IO.userError "winsize: columns and rows must fit unsigned 16-bit fields")
 
 /-- Daemon-side: survive controlling-terminal death. -/
-@[extern "linger_ignore_sighup"]
-opaque ignoreSighup : IO Unit
+def ignoreSighup : IO Unit := Boundary.ignoreSighup
 
 /-- close(2); a close error is not actionable and is ignored. -/
-@[extern "linger_close"]
-opaque close (fd : UInt32) : IO Unit
+def close (fd : UInt32) : IO Unit := Boundary.close fd
 
 /-- Make reads and writes on `fd` return instead of blocking; throws if `fcntl` fails. -/
-@[extern "linger_set_nonblock"]
-opaque setNonblock (fd : UInt32) : IO Unit
-
-@[extern "linger_read"]
-private opaque readRaw (fd : UInt32) (max : USize) : IO (Option ByteArray)
+def setNonblock (fd : UInt32) : IO Unit := Boundary.setNonblock fd
 
 /-- One read of at most 64 KiB. `none` = EOF (including pty EIO after the child
 dies); `some #[]` = would block; EINTR is retried in C; other errors throw. `max = 0`
@@ -72,13 +66,12 @@ here publicly means EOF. -/
 def read (fd : UInt32) (max : USize) : IO (Option ByteArray) := do
   if max == 0 then
     throw (IO.userError "read: max must be positive (0 cannot distinguish EOF)")
-  readRaw fd max
+  Boundary.read fd max
 
 /-- One write attempt from `off`. `≥ 0` bytes written (0 = would block, or `off` is at or
 past the end); `-1` = peer gone (EPIPE/ECONNRESET/EIO), a normal event for a daemon. EINTR
 is retried; other errors throw. -/
-@[extern "linger_write"]
-opaque write (fd : UInt32) (bytes : @& ByteArray) (off : USize) : IO Int64
+def write (fd : UInt32) (bytes : ByteArray) (off : USize) : IO Int64 := Boundary.write fd bytes off
 
 /-- Blocking full write over `write`. Would-block and a gone peer throw, as do `write`'s
 own errors. -/
@@ -114,13 +107,8 @@ def writeBuf (fd : UInt32) (b : Linger.Core.Buf.Buf) (sent : Nat) : IO Int64 :=
 per fd (all zero on timeout or EINTR). `timeoutMs < 0` waits forever.
 Fails if the arrays differ in length, exceed 4096 fds or poll(2) itself fails — the
 daemon polls its listener, its pty and at most `maxClients` clients, well under it. -/
-@[extern "linger_poll"]
-opaque poll (fds : @& Array UInt32) (events : @& Array UInt32) (timeoutMs : Int32) :
-    IO (Array UInt32)
-
-@[extern "linger_spawn_pty"]
-private opaque spawnPtyRaw (cols rows : UInt32) (cwd : @& String) (prog : @& String)
-    (args : @& Array String) (extraEnv : @& Array String) : IO UInt64
+def poll (fds events : Array UInt32) (timeoutMs : Int32) : IO (Array UInt32) :=
+  Boundary.poll fds events timeoutMs
 
 /-- posix_openpt + execve. A bare program is searched in the child's PATH;
 slash-qualified programs run directly. Executable text without a shebang runs
@@ -141,20 +129,14 @@ def spawnPty (cols rows : UInt32) (cwd prog : String) (args : Array String)
     checkCString "spawnPty environment" entry
     unless entry.contains '=' && !entry.startsWith "=" do
       throw (IO.userError s!"spawnPty: environment entry '{entry}' is not K=V")
-  let packed ← spawnPtyRaw cols rows cwd prog args extraEnv
+  let packed ← Boundary.spawnPty cols rows cwd prog args extraEnv
   return ((packed >>> 32).toUInt32, packed.toUInt32)
-
-@[extern "linger_winsize_get"]
-private opaque winsizeGetRaw (fd : UInt32) : IO UInt64
 
 /-- (cols, rows) of the tty behind `fd`. Throws when TIOCGWINSZ fails, for example on a
 descriptor that is not a terminal. -/
 def winsizeGet (fd : UInt32) : IO (UInt32 × UInt32) := do
-  let packed ← winsizeGetRaw fd
+  let packed ← Boundary.winsizeGet fd
   return ((packed >>> 32).toUInt32, packed.toUInt32)
-
-@[extern "linger_winsize_set"]
-private opaque winsizeSetRaw (fd cols rows : UInt32) : IO Unit
 
 /-- Set (cols, rows); on a pty master the kernel then signals SIGWINCH to the foreground
 process group, if the size changed. Dimensions that would wrap the kernel's unsigned
@@ -162,20 +144,15 @@ process group, if the size changed. Dimensions that would wrap the kernel's unsi
 POSIX. A failed TIOCSWINSZ throws. -/
 def winsizeSet (fd cols rows : UInt32) : IO Unit := do
   checkWinsize cols rows
-  winsizeSetRaw fd cols rows
+  Boundary.winsizeSet fd cols rows
 
 /-- Put `fd` in raw mode; returns the prior termios as an opaque blob. Throws when
 tcgetattr or tcsetattr fails, for example on a descriptor that is not a terminal. -/
-@[extern "linger_term_raw"]
-opaque termRaw (fd : UInt32) : IO ByteArray
+def termRaw (fd : UInt32) : IO ByteArray := Boundary.termRaw fd
 
 /-- Restore a termios blob that `termRaw` returned for the same terminal. A blob of the
 wrong size, or a failed tcsetattr, throws. -/
-@[extern "linger_term_restore"]
-opaque termRestore (fd : UInt32) (saved : @& ByteArray) : IO Unit
-
-@[extern "linger_unix_listen"]
-private opaque unixListenRaw (path : @& String) : IO UInt32
+def termRestore (fd : UInt32) (saved : ByteArray) : IO Unit := Boundary.termRestore fd saved
 
 /-- Bind + listen on a unix socket path; returns the listening fd, close-on-exec and
 blocking. Throws on an empty or over-long path, or when socket, bind or listen fails.
@@ -183,10 +160,7 @@ Caller unlinks stale paths first (`connect` distinguishes stale from live). The 
 pending-connection backlog is separate from the daemon's admitted-client bound. -/
 def unixListen (path : String) : IO UInt32 := do
   checkCString "unixListen path" path
-  unixListenRaw path
-
-@[extern "linger_unix_connect"]
-private opaque unixConnectRaw (path : @& String) (nonblocking : Bool) : IO Int64
+  Boundary.unixListen path
 
 /-- `≥ 0` connected fd, close-on-exec; `< 0` is `-errno` — ENOENT (no socket) and
 ECONNREFUSED (stale socket, daemon dead) are expected outcomes, and an empty or
@@ -196,17 +170,13 @@ stays nonblocking; the caller owns its reply deadline.
 An unrepresentable NUL path throws before reaching the OS. -/
 def unixConnect (path : String) (nonblocking : Bool := false) : IO Int64 := do
   checkCString "unixConnect path" path
-  unixConnectRaw path nonblocking
+  Boundary.unixConnect path nonblocking
 
 /-- Accept on a nonblocking listen fd. `≥ 0` is the accepted fd; `-1` = nothing to
 accept, including a connection aborted before it was taken. Other failures, such as
 descriptor exhaustion, throw. The accepted fd is close-on-exec and blocking on every
 platform; callers that poll it set nonblocking. -/
-@[extern "linger_accept"]
-opaque accept (fd : UInt32) : IO Int64
-
-@[extern "linger_flock"]
-private opaque flockRaw (path : @& String) : IO Int64
+def accept (fd : UInt32) : IO Int64 := Boundary.accept fd
 
 /-- Exclusive non-blocking `flock` on a lock file, created 0600 if missing; `≥ 0` is the
 held fd (close-on-exec), `-1` means another process holds it, and other open or lock
@@ -216,11 +186,7 @@ SIGKILL or a power cut. Keep the fd open for the lifetime of the lock, and never
 unlink the lock file. -/
 def flock (path : String) : IO Int64 := do
   checkCString "flock path" path
-  flockRaw path
-
-@[extern "linger_spawn_detached"]
-private opaque spawnDetachedRaw (prog : @& String) (args : @& Array String) (logPath : @& String) :
-    IO UInt32
+  Boundary.flock path
 
 /-- Double-fork + setsid + exec, with stdin on /dev/null and stdout and stderr appended
 to `logPath` (created 0600), or on /dev/null when it is empty. Returns the program's pid
@@ -231,16 +197,7 @@ daemon: the C side reports them over the same close-on-exec pipe `spawnPty` uses
 def spawnDetached (prog : String) (args : Array String) (logPath : String) : IO UInt32 := do
   checkCommand "spawnDetached" prog args
   checkCString "spawnDetached log path" logPath
-  spawnDetachedRaw prog args logPath
-
-@[extern "linger_kill"]
-private opaque killRaw (pid sig : UInt32) : IO Unit
-
-@[extern "linger_alive"]
-private opaque aliveRaw (pid : UInt32) : IO Bool
-
-@[extern "linger_waitpid_nohang"]
-private opaque waitpidNohangRaw (pid : UInt32) : IO Int64
+  Boundary.spawnDetached prog args logPath
 
 /-- POSIX reads `0` as "every process in my group" and a negative `pid_t` as a
 process group, so the process wrappers below accept only a real pid. An
@@ -252,12 +209,12 @@ def checkPid (what : String) (pid : UInt32) : IO Unit := do
 /-- kill(2); ESRCH (already gone) is not an error, and other failures throw. -/
 def kill (pid sig : UInt32) : IO Unit := do
   checkPid "kill" pid
-  killRaw pid sig
+  Boundary.kill pid sig
 
 /-- kill(pid, 0): is the process alive (and visible to us)? -/
 def alive (pid : UInt32) : IO Bool := do
   checkPid "alive" pid
-  aliveRaw pid
+  Boundary.alive pid
 
 /-- WNOHANG waitpid. `-1` the requested child is still running; `-2` it is not
 reapable — `ECHILD` (not our child, or already reaped) and every other non-`EINTR`
@@ -265,11 +222,10 @@ failure alike, so a caller polls `alive` rather than waiting forever; `≥ 0` ex
 status (128+sig if signalled), zombie reaped. -/
 def waitpidNohang (pid : UInt32) : IO Int64 := do
   checkPid "waitpidNohang" pid
-  waitpidNohangRaw pid
+  Boundary.waitpidNohang pid
 
 /-- getuid(2): the real user id, which names the default socket directory. -/
-@[extern "linger_getuid"]
-opaque getuid : IO UInt32
+def getuid : IO UInt32 := Boundary.getuid
 
 /-- Is stdin a terminal? Thin wrapper over Lean core. -/
 def stdinIsTty : IO Bool := do
@@ -284,8 +240,7 @@ def getpid : IO UInt32 := IO.Process.getPID
 
 /-- Where pid's cwd currently points (`/proc/<pid>/cwd` on Linux, libproc on macOS);
 "" if unreadable, including a path too long to read whole. -/
-@[extern "linger_getcwd_of"]
-opaque getcwdOf (pid : UInt32) : IO String
+def getcwdOf (pid : UInt32) : IO String := Boundary.getcwdOf pid
 
 /-- Machine hostname; empty only if the platform call fails. -/
 def gethostname : IO String := do
@@ -308,4 +263,4 @@ def stdinFd : UInt32 := 0
 /-- Standard output's descriptor. -/
 def stdoutFd : UInt32 := 1
 
-end Linger.Posix
+end Linger.Os.Shell

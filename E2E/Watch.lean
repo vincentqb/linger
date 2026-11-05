@@ -54,10 +54,10 @@ def checkpointChecks (e : Env) : IO Unit := do
           !(← System.FilePath.pathExists s!"{e.dir}/saved.sock"))
         "saved viewing discards input without changing the checkpoint or starting a daemon"
     for lock in [s!"{e.dir}/saved.lock", s!"{e.dir}/.locks/saved.lock"] do
-      let fd ← Linger.Posix.flock lock
+      let fd ← Linger.Os.Shell.flock lock
       expect (fd ≥ 0) "saved viewing releases ownership after loading"
       if fd ≥ 0 then
-        Linger.Posix.close fd.toUInt64.toUInt32
+        Linger.Os.Shell.close fd.toUInt64.toUInt32
     viewer.resize 12 2
     let narrow ← drain viewer.fd 500
     expect (hasBytes narrow (Linger.Core.Render.restore (vt.resize 12 2)))
@@ -95,7 +95,7 @@ def checkpointChecks (e : Env) : IO Unit := do
     finally
       unsized.bye
   for lock in [s!"{e.dir}/saved.lock", s!"{e.dir}/.locks/saved.lock"] do
-    let fd ← Linger.Posix.flock lock
+    let fd ← Linger.Os.Shell.flock lock
     unless fd ≥ 0 do
       throw (IO.userError s!"fixture lock unavailable: {lock}")
     try
@@ -109,7 +109,7 @@ def checkpointChecks (e : Env) : IO Unit := do
       finally
         blocked.bye
     finally
-      Linger.Posix.close fd.toUInt64.toUInt32
+      Linger.Os.Shell.close fd.toUInt64.toUInt32
   IO.FS.writeBinFile s!"{e.dir}/bad.ckpt" ⟨#[1, 2, 3]⟩
   let bad ← e.spawn #["attach", "--read-only", "bad"]
   try

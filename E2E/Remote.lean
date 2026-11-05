@@ -14,7 +14,7 @@ shell boundary; a fake remote linger records the resulting arguments. -/
 namespace E2E.Remote
 
 open E2E.Harness
-open Linger.Posix (chmod)
+open Linger.Os.Shell (chmod)
 
 def devHost : String := "dev-a"
 
@@ -71,7 +71,7 @@ def readArgs (path : System.FilePath) : IO (List String) := do
 
 /-- A descendant keeps the SSH pipes open until its owner terminates the group. -/
 def discoveryLeaf (root host : String) : IO UInt32 := do
-  IO.FS.writeFile s!"{root}/{host}.leaf.tmp" (toString (← Linger.Posix.getpid))
+  IO.FS.writeFile s!"{root}/{host}.leaf.tmp" (toString (← Linger.Os.Shell.getpid))
   IO.FS.rename s!"{root}/{host}.leaf.tmp" s!"{root}/{host}.leaf"
   IO.sleep 15000
   return 0
@@ -101,22 +101,22 @@ def discoverySsh (root : String) (args : List String) : IO UInt32 := do
 
 /-- The local peer answers only after remote discovery has started. -/
 def discoveryInfo (root : String) : IO UInt32 := do
-  let listener ← Linger.Posix.unixListen s!"{root}/state/local.sock"
-  Linger.Posix.setNonblock listener
+  let listener ← Linger.Os.Shell.unixListen s!"{root}/state/local.sock"
+  Linger.Os.Shell.setNonblock listener
   try
     IO.FS.writeFile s!"{root}/local.ready" ""
-    let deadline := (← Linger.Posix.monotonicMs) + 5000
-    while (← Linger.Posix.monotonicMs) < deadline do
-      let accepted ← Linger.Posix.accept listener
+    let deadline := (← Linger.Os.Shell.monotonicMs) + 5000
+    while (← Linger.Os.Shell.monotonicMs) < deadline do
+      let accepted ← Linger.Os.Shell.accept listener
       if accepted < 0 then
         IO.sleep 10
         continue
       let fd := accepted.toUInt64.toUInt32
       try
-        let ready ← Linger.Posix.poll #[fd] #[Linger.Posix.POLLIN] 2000
+        let ready ← Linger.Os.Shell.poll #[fd] #[Linger.Os.Shell.POLLIN] 2000
         if ready[0]! == 0 then
           return 1
-        discard <| Linger.Posix.read fd 4096
+        discard <| Linger.Os.Shell.read fd 4096
         IO.FS.writeFile s!"{root}/local.request" ""
         unless ← waitFor 5000 (System.FilePath.pathExists s!"{root}/first.started") do
           return 1
@@ -124,10 +124,10 @@ def discoveryInfo (root : String) : IO UInt32 := do
         Linger.Runtime.Client.sendMsg fd .done
         return 0
       finally
-        Linger.Posix.close fd
+        Linger.Os.Shell.close fd
     return 1
   finally
-    Linger.Posix.close listener
+    Linger.Os.Shell.close listener
 
 private def discoverySetup (e : Env) (slug : String) : IO (Env × String × String) := do
   let root := s!"{e.dir}/{slug}"
@@ -147,7 +147,7 @@ private def discoveryGone (root host : String) : IO Bool := do
   unless ← System.FilePath.pathExists path do
     return false
   let pid := (← IO.FS.readFile path).toNat?.getD 0
-  return pid > 0 && !(← Linger.Posix.alive (UInt32.ofNat pid))
+  return pid > 0 && !(← Linger.Os.Shell.alive (UInt32.ofNat pid))
 
 /-- Retire fixture descendants even when intentionally breaking group cleanup. -/
 private def cleanupDiscovery (root : String) : IO Unit := do
@@ -157,7 +157,7 @@ private def cleanupDiscovery (root : String) : IO Unit := do
       unless ← discoveryGone root host do
         if let some pid := (← IO.FS.readFile entry.path).toNat? then
           try
-            Linger.Posix.kill (UInt32.ofNat pid) 15
+            Linger.Os.Shell.kill (UInt32.ofNat pid) 15
           catch _ =>
             pure ()
 
@@ -185,7 +185,7 @@ def discoveryChecks (e : Env) : IO Unit := do
   let limit := Linger.Runtime.Cli.remoteQueryLimit
   let hosts := (List.range (limit + 1)).map (fun i => s!"stall-{i}")
   let active := hosts.take limit
-  let start ← Linger.Posix.monotonicMs
+  let start ← Linger.Os.Shell.monotonicMs
   let command ←
     IO.Process.spawn
         { cmd := e.bin,
@@ -198,7 +198,7 @@ def discoveryChecks (e : Env) : IO Unit := do
     expect (ready && !(← System.FilePath.pathExists s!"{root}/{hosts.getLast!}.started"))
         "remote discovery limits simultaneous SSH jobs and reuses completed slots"
     let code ← waitProcess command (Linger.Runtime.Cli.remoteQueryTimeoutMs + 1500)
-    let elapsed := (← Linger.Posix.monotonicMs) - start
+    let elapsed := (← Linger.Os.Shell.monotonicMs) - start
     let stopped ← waitFor 2000 (active.allM (discoveryGone root))
     if code.isNone then
       cleanupDiscovery root
@@ -222,9 +222,9 @@ def discoveryChecks (e : Env) : IO Unit := do
                 #["--discovery-ssh", root, "--", "stall-stop"]))
   try
     let ready ← waitFor 2000 (System.FilePath.pathExists s!"{root}/stall-stop.leaf")
-    let start ← Linger.Posix.monotonicMs
+    let start ← Linger.Os.Shell.monotonicMs
     Linger.Runtime.Command.stop pending 100
-    let elapsed := (← Linger.Posix.monotonicMs) - start
+    let elapsed := (← Linger.Os.Shell.monotonicMs) - start
     let stopped ← waitFor 2000 (discoveryGone root "stall-stop")
     expect (ready && stopped && elapsed < 1500 && (← pending.get).isNone)
         "cooperative stop force-retires descendants that retain pipes after their leader exits"
@@ -248,10 +248,10 @@ def discoveryChecks (e : Env) : IO Unit := do
   let chooser ← state.spawnEnv #[s!"PATH={path}", s!"HOME={root}"] #["attach"]
   try
     let ready ← waitFor 2000 (System.FilePath.pathExists s!"{root}/stall-cancel.leaf")
-    let start ← Linger.Posix.monotonicMs
+    let start ← Linger.Os.Shell.monotonicMs
     chooser.type "\x03"
     let code ← chooser.reap 1500
-    expect (ready && code == 130 && (← Linger.Posix.monotonicMs) - start < 1500)
+    expect (ready && code == 130 && (← Linger.Os.Shell.monotonicMs) - start < 1500)
         "cancelling bare attach retires discovery promptly"
     let stopped ← waitFor 2000 (discoveryGone root "stall-cancel")
     expect (ready && stopped) "chooser cancellation reaches SSH descendants"

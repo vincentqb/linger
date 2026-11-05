@@ -11,7 +11,7 @@ public section
 namespace E2E.Identity
 
 open E2E.Harness
-open Linger.Posix
+open Linger.Os.Shell
 
 def splitEnv (e : Env) (runtime : Nat) : Array (String × Option String) :=
   #[("LINGER_DIR", none), ("XDG_RUNTIME_DIR", some s!"{e.dir}/r{runtime}"),

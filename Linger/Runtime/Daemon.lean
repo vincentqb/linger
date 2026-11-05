@@ -1,10 +1,10 @@
 module
 
-import Linger.Posix
+import Linger.Os.Shell
 public import Linger.Core.Buf
 import Linger.Core.Driver
 public import Linger.Core.Session
-import Linger.Core.Env
+import Linger.Os.Env
 import Linger.Runtime.Paths
 
 public section
@@ -35,7 +35,7 @@ the daemon knows *when*, that module knows *what*.
 
 namespace Linger.Runtime.Daemon
 
-open Linger.Posix
+open Linger.Os.Shell
 open Linger.Core.Session (State Event Effect maxClients)
 open Linger.Core.Buf (Buf owedLen bufOffer bufEnqueue bufAdvance followingCap)
 open Linger.Core
@@ -526,7 +526,7 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
       let listenFd ← unixListen sockPath
       try
         setNonblock listenFd
-        let shell := Linger.Core.Env.shellOf (← IO.getEnv "SHELL")
+        let shell := Linger.Os.Env.shellOf (← IO.getEnv "SHELL")
         let (prog, args) :=
           match argv with
           | [] => ((shell, #[]) : String × Array String)

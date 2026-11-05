@@ -23,7 +23,7 @@ import all Theorems.Picker
 import all Theorems.Input
 import all Theorems.Key
 import all Theorems.Entry
-import all Theorems.Env
+import all Linger.Os.Proofs.Env
 import all Theorems.Contracts
 public meta import Lean.Elab.Command
 import Lean.Parser.Command
@@ -32,22 +32,54 @@ import Lean.Compiler.CSimpAttr
 
 /-! # Semantic coverage gate
 
-Every explicit `def` or `abbrev` under `Linger/Core` or `Linger/Tools` must occur
-as its exact environment constant in the type of a written theorem under `Linger/Core`,
-`Linger/Tools` or `Theorems`; generated equation, congruence and induction lemmas do not
-count. No module under `Linger/Core`, `Linger/Tools` or `Theorems` may declare an axiom;
-native evaluation declares one for each use. The checks read only this module's import
-closure, so each of those modules must be in it. Code under `Linger/Core` and
-`Linger/Tools` reaches a global `@[csimp]` replacement only through its specification, from
-definitions declared after the theorem, which is tagged in the specification's module;
-`scripts/e2e.sh` checks on the generated C that each replacement, a module-local one
-included, is still called. This module is under the sanctioned friend region so it can
-resolve private definitions and theorem declarations without granting that access to E2E
-or runtime code. -/
+Every explicit `def` or `abbrev` in a pure module (`pureModule`: the legacy `Linger/Core` and
+`Linger/Tools` trees and each component's own modules other than its boundary and shell)
+must occur as its exact environment constant in the type of a written theorem in a pure or
+proof module (`proofModule`: `Theorems/` and each component's `Proofs/`); generated
+equation, congruence and induction lemmas do not count. No pure or proof module may declare
+an axiom; native evaluation declares one for each use. The checks read only this module's
+import closure, so each of those modules must be in it. Pure code reaches a global
+`@[csimp]` replacement only through its specification, from definitions declared after the
+theorem, which is tagged in the specification's module; `scripts/e2e.sh` checks on the
+generated C that each replacement, a module-local one included, is still called. This module
+is under the sanctioned friend region so it can resolve private definitions and theorem
+declarations without granting that access to E2E or runtime code. -/
 
 namespace Theorems.Coverage
 
 open Lean Elab Command
+
+/-- A module of pure code: the legacy `Linger.Core` and `Linger.Tools` trees, and each
+component's top-level modules other than its boundary and shell. -/
+public meta def pureModule (mod : Lean.Name) : Bool :=
+  match mod.components.map toString with
+  | ["Linger", "Core", _] | ["Linger", "Tools", _] => true
+  | ["Linger", component, leaf] =>
+    !["Core", "Tools", "Runtime", "Manager"].contains component &&
+      !["Boundary", "Shell"].contains leaf
+  | _ => false
+
+/-- A module of proofs: the legacy `Theorems` tree and each component's `Proofs/`. -/
+public meta def proofModule (mod : Lean.Name) : Bool :=
+  match mod.components.map toString with
+  | "Theorems" :: _ => true
+  | "Linger" :: _ :: "Proofs" :: _ :: _ => true
+  | _ => false
+
+/-- The source files under `Linger/` and `Theorems/` whose module `keep` selects, read from
+the tree so that a module nothing imports still counts. -/
+public meta def sourceModules (keep : Lean.Name → Bool) :
+    IO (Array (System.FilePath × Lean.Name)) := do
+  let mut found := #[]
+  for dir in ["Linger", "Theorems"] do
+    unless ← System.FilePath.pathExists dir do
+      continue
+    for file in ← System.FilePath.walkDir dir do
+      if file.extension == some "lean" then
+        let mod := (file.withExtension "").components.foldl .mkStr .anonymous
+        if keep mod then
+          found := found.push (file, mod)
+  return found.qsort (·.2.toString < ·.2.toString)
 
 /-- Explicit `def` and `abbrev` names, with nested namespace and section scopes. -/
 public meta def sourceDefNames (stx : Syntax) : Except String (Array Lean.Name) := do
@@ -94,9 +126,7 @@ and unrecognized syntax is an error; the semantic check below resolves each name
 against the compiled environment. -/
 public meta def pureDefNames (env : Environment) : IO (Array Lean.Name) := do
   let mut names : Array Lean.Name := #[]
-  let files :=
-    ((← System.FilePath.walkDir "Linger/Core") ++ (← System.FilePath.walkDir "Linger/Tools")).filter
-      (·.extension == some "lean")
+  let files := (← sourceModules pureModule).map (·.1)
   for f in files do
     let found ←
       match sourceDefNames (← Parser.testParseFile env f) with
@@ -167,23 +197,18 @@ public meta def checkPureCoverage : CommandElabM (Array Lean.Name) := do
   let sourceEnv ← getEnv
   let logical ← liftIO (pureDefNames sourceEnv)
   let env ← liftIO (importModules sourceEnv.header.imports {})
-  -- The axiom check reads only this import closure, so it must hold every module under the roots.
-  let roots := [`Linger.Core, `Linger.Tools, `Theorems]
+  -- The axiom check reads only this import closure, so it must hold every pure and proof module.
+  let checked (mod : Lean.Name) := pureModule mod || proofModule mod
   let closure := (env.header.modules.map (·.module)).push sourceEnv.mainModule
-  let mut outside : Array Lean.Name := #[]
-  for root in roots do
-    let dir := System.mkFilePath (root.components.map toString)
-    for file in ← liftIO (System.FilePath.walkDir dir) do
-      let mod := (file.withExtension "").components.foldl .mkStr .anonymous
-      if file.extension == some "lean" && !closure.contains mod then
-        outside := outside.push mod
+  let outside :=
+    (← liftIO (sourceModules checked)).filterMap fun (_, mod) =>
+      if closure.contains mod then none else some mod
   unless outside.isEmpty do
     throwError m!"coverage: pure or proof modules outside the import closure of Theorems.Coverage: \
-      {outside.qsort (·.toString < ·.toString)}"
+      {outside}"
   -- Native evaluation (`native_decide`, `decide +native`, `bv_decide`) adds an axiom too.
   let axioms :=
-    (moduleConsts env fun mod => roots.any (·.isPrefixOf mod)).filterMap fun (name, ci) =>
-      if ci.isAxiom then some name else none
+    (moduleConsts env checked).filterMap fun (name, ci) => if ci.isAxiom then some name else none
   unless axioms.isEmpty do
     throwError m!"coverage: axioms in pure or proof modules: {axioms}"
   -- Compiled code reaches a `@[csimp]` replacement only through its specification, and the
@@ -195,7 +220,7 @@ public meta def checkPureCoverage : CommandElabM (Array Lean.Name) := do
       (declRangeExt.find? (level := .exported) env owner <|>
             declRangeExt.find? (level := .server) env owner).map
         (·.range.pos.line)
-  let code := moduleConsts env fun mod => [`Linger.Core, `Linger.Tools].any (·.isPrefixOf mod)
+  let code := moduleConsts env pureModule
   -- Read the global theorems from each module's entries: this environment loads no extension
   -- state, and `E2E/Coverage.lean` elaborates in one that lacks Linger's.
   let csimps :=
@@ -227,11 +252,10 @@ public meta def checkPureCoverage : CommandElabM (Array Lean.Name) := do
             (line n).any (· < (line e.thmName).getD 0) then
         throwError m!"coverage: `{n}` precedes `{e.thmName}`, so it runs `{e.fromDeclName}`"
   let pureConsts :=
-    (moduleConsts env
-          (fun mod => [`Linger.Core, `Linger.Tools].any (·.isPrefixOf mod))).toList.filterMap
-      fun (n, ci) => if !ci.isTheorem then some (privateToUserName n, n) else none
+    (moduleConsts env pureModule).toList.filterMap fun (n, ci) =>
+      if !ci.isTheorem then some (privateToUserName n, n) else none
   let theoremConsts :=
-    (moduleConsts env fun mod => roots.any (·.isPrefixOf mod)).foldl
+    (moduleConsts env checked).foldl
       (fun acc (n, ci) =>
         if
             ci.isTheorem &&

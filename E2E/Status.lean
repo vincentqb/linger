@@ -28,13 +28,13 @@ open Linger.Core.Status (Status)
 /-- `linger ls --summary` against `waiting`'s state dir under a 1.5 s deadline:
 the exit code (`none` once it had to be killed), elapsed milliseconds and stdout. -/
 private def summaryWithin (waiting : Env) : IO (Option UInt32 × Nat × String) := do
-  let start ← Linger.Posix.monotonicMs
+  let start ← Linger.Os.Shell.monotonicMs
   let command ←
     IO.Process.spawn
         { cmd := waiting.bin, args := #["ls", "--summary"], env := waiting.procEnv,
           stdout := .piped, stderr := .null }
   let code ← waitOrKill command 1500
-  return (code, (← Linger.Posix.monotonicMs) - start, ← command.stdout.readToEnd)
+  return (code, (← Linger.Os.Shell.monotonicMs) - start, ← command.stdout.readToEnd)
 
 /-- Several stalled sockets precede a responsive peer. One sampling window
 covers the entire snapshot; incomplete and unqueried peers stay unknown. -/
@@ -73,14 +73,14 @@ def checkBacklog (e : Env) : IO Unit := do
   let waiting := { e with dir := s!"{e.dir}/backlog" }
   IO.FS.createDirAll waiting.dir
   let path := s!"{waiting.dir}/full.sock"
-  let listener ← Linger.Posix.unixListen path
+  let listener ← Linger.Os.Shell.unixListen path
   let attempts ← IO.mkRef (#[] : Array (Task (Except IO.Error Int64)))
   try
     let mut full := false
     for _ in List.range 128 do
       if full then
         break
-      let attempt ← IO.asTask (Linger.Posix.unixConnect path) Task.Priority.dedicated
+      let attempt ← IO.asTask (Linger.Os.Shell.unixConnect path) Task.Priority.dedicated
       attempts.modify (·.push attempt)
       if ← waitFor 100 (IO.hasFinished attempt) then
         full := (← IO.ofExcept (← IO.wait attempt)) < 0
@@ -94,11 +94,11 @@ def checkBacklog (e : Env) : IO Unit := do
         "prompt retains a busy listener without claiming its name lock"
   finally
     -- Closing the listener releases the fixture's one blocked connect.
-    Linger.Posix.close listener
+    Linger.Os.Shell.close listener
     for attempt in ← attempts.get do
       if let .ok fd← IO.wait attempt then
         if fd ≥ 0 then
-          Linger.Posix.close fd.toUInt64.toUInt32
+          Linger.Os.Shell.close fd.toUInt64.toUInt32
 
 def run : IO UInt32 :=
   Env.suite "status" fun e => do

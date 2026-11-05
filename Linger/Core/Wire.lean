@@ -19,7 +19,7 @@ Tensions carried here (see THEOREMS.md):
 namespace Linger.Core.Wire
 
 /-- Largest payload a frame may carry. Reads from the OS are ≤ 64 KiB
-(`Linger.Posix.read`), so honest senders stay far below; a frame claiming
+(`Linger.Os.Shell.read`), so honest senders stay far below; a frame claiming
 more is either corruption or an attack, and §Bound turns it into a
 connection error rather than memory growth. -/
 def maxPayload : Nat := 262144

@@ -94,8 +94,8 @@ if grep -qE '^(warning|error)' "$logs/build.log"; then
 fi
 # Shake reads the oleans just built. The proof library has no root module, so the proof
 # modules are named one by one. Tests stay out: shake cannot see `example` or
-# `#guard` uses. LingerTest and E2ETest stay out to bound the cost.
-shake_modules="$(git ls-files 'Theorems/*.lean' | sed 's/[.]lean$//; s#/#.#g')"
+# `#guard` uses. Linger.Os.Suites.Shim and E2ETest stay out to bound the cost.
+shake_modules="$(git ls-files 'Theorems/*.lean' 'Linger/*/Proofs/*.lean' | sed 's/[.]lean$//; s#/#.#g')"
 # shellcheck disable=SC2086  # one module name per word
 ./lake shake --keep-implied Linger Main $shake_modules > "$logs/shake.log" 2>&1 \
   && [ ! -s "$logs/shake.log" ] \
@@ -120,12 +120,12 @@ abi_dir="$(mktemp -d "${TMPDIR:-/tmp}/linger-abi.XXXXXX")"
 trap 'rm -r "$abi_dir"' EXIT HUP TERM
 awk '/^lean_object\* linger_[[:alnum:]_]+\([^;]*\);$/ {
   sub(/\(\);$/, "(void);"); print; count++
-} END { if (!count) exit 1 }' .lake/build/ir/Linger/Posix.c > "$abi_dir/prototypes" \
+} END { if (!count) exit 1 }' .lake/build/ir/Linger/Os/Boundary.c > "$abi_dir/prototypes" \
   || fail "no generated shim prototypes"
 sed 's/^lean_object\* //; s/(.*//' "$abi_dir/prototypes" | sort > "$abi_dir/generated"
 sed -n 's/^LEAN_EXPORT lean_obj_res \(linger_[[:alnum:]_]*\)(.*/\1/p' c/shim.c \
   | sort > "$abi_dir/exports"
-sed -n 's/^@\[extern "\(linger_[[:alnum:]_]*\)"\].*/\1/p' Linger/Posix.lean \
+sed -n 's/^@\[extern "\(linger_[[:alnum:]_]*\)"\].*/\1/p' Linger/Os/Boundary.lean \
   | sort > "$abi_dir/externs"
 cmp -s "$abi_dir/generated" "$abi_dir/exports" \
   || fail "generated ABI and C export inventories differ"

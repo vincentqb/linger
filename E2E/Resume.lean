@@ -23,7 +23,7 @@ open Linger.Core.Status (Status)
 /-- Child-side winsize probe. It must execute inside the resumed session's pty;
 reading the parent process's tty would test the harness instead. -/
 def winsizeProbe (resultPath : String) : IO UInt32 := do
-  let (cols, rows) ← Linger.Posix.winsizeGet Linger.Posix.stdinFd
+  let (cols, rows) ← Linger.Os.Shell.winsizeGet Linger.Os.Shell.stdinFd
   IO.FS.writeFile resultPath s!"{cols} {rows}"
   return 0
 
@@ -68,16 +68,16 @@ private def scaleChecks (e : Env) : IO Unit := do
   try
     let _ ← e.cli #["run", name, "true"]
     let _ ← e.cli #["resize", name, "200", "50"]
-    let start ← Linger.Posix.monotonicMs
+    let start ← Linger.Os.Shell.monotonicMs
     let _ ←
       e.cli
           #["run", name,
             "awk 'BEGIN { for (i = 0; i < 10050; i++) { s = \"\"; for (j = 0; j < 20; j++) s = s sprintf(\"%09d \", 20 * i + j); print s } }'; echo SCALE-$((40+2))"]
     let filled ← waitFor fillBudget (return has (← e.out #["capture", name]) "SCALE-42")
-    let fillMs := (← Linger.Posix.monotonicMs) - start
-    let start ← Linger.Posix.monotonicMs
+    let fillMs := (← Linger.Os.Shell.monotonicMs) - start
+    let start ← Linger.Os.Shell.monotonicMs
     let (historyRc, history, _) ← e.cli #["capture", "--history", name]
-    let captureMs := (← Linger.Posix.monotonicMs) - start
+    let captureMs := (← Linger.Os.Shell.monotonicMs) - start
     let historyLines := (lines history).length
     expect
         (filled && historyRc == 0 && historyLines ≥ Linger.Core.Vt.sbCap + 50 &&
@@ -86,14 +86,14 @@ private def scaleChecks (e : Env) : IO Unit := do
     let client ← e.spawn #["attach", name] 200 50
     let saved ←
       try
-        let start ← Linger.Posix.monotonicMs
+        let start ← Linger.Os.Shell.monotonicMs
         let replayed ← client.awaitNeedle "SCALE-42" replayBudget
-        let replayMs := (← Linger.Posix.monotonicMs) - start
-        let start ← Linger.Posix.monotonicMs
+        let replayMs := (← Linger.Os.Shell.monotonicMs) - start
+        let start ← Linger.Os.Shell.monotonicMs
         client.detach
         -- The daemon saves on the last detach before it answers a later request.
         let saved ← waitFor saveBudget (return (← e.info name "clients") == some "0")
-        let saveMs := (← Linger.Posix.monotonicMs) - start
+        let saveMs := (← Linger.Os.Shell.monotonicMs) - start
         let size := (← (System.FilePath.mk s!"{e.dir}/{name}.ckpt").metadata).byteSize
         expect
             (replayed && saved && size ≥ (Linger.Core.Vt.sbCap * 200).toUInt64 &&
@@ -274,9 +274,9 @@ def run : IO UInt32 :=
     -- daemon exits, so the client gives up after the 3 s floor, long before the 30 s cap.
     let readPath := s!"{e.dir}/read-fail.ckpt"
     IO.FS.createDirAll readPath
-    let readStart ← Linger.Posix.monotonicMs
+    let readStart ← Linger.Os.Shell.monotonicMs
     let readRun ← e.cliTimeout #["run", "read-fail", "echo", "must-not-start"] 10000
-    let readMs := (← Linger.Posix.monotonicMs) - readStart
+    let readMs := (← Linger.Os.Shell.monotonicMs) - readStart
     let readSockets ← e.dirNames ".sock"
     let readLog ← e.log "read-fail"
     expect
@@ -294,9 +294,9 @@ def run : IO UInt32 :=
       IO.Process.spawn
           { cmd := "sh", args := #["-c", s!"sleep 4; printf not-a-checkpoint > '{slowPath}'"],
             stdin := .null, stdout := .null, stderr := .null }
-    let slowStart ← Linger.Posix.monotonicMs
+    let slowStart ← Linger.Os.Shell.monotonicMs
     let (slowRc, _, slowErr) ← e.cli #["run", "slow", "true"]
-    let slowMs := (← Linger.Posix.monotonicMs) - slowStart
+    let slowMs := (← Linger.Os.Shell.monotonicMs) - slowStart
     let _ ← waitOrKill release 10000
     expect (made.exitCode == 0 && slowRc == 0 && slowMs ≥ 3000)
         s!"a daemon slower than the 3 s window to listen still connects (rc={slowRc}, {slowMs} ms, {slowErr})"

@@ -75,7 +75,7 @@ private def Fixture.cwdIs (f : Fixture) (name : String) (dir : System.FilePath) 
     | none =>
       return false
     | some pid =>
-      return (← Linger.Posix.getcwdOf pid) == dir.toString
+      return (← Linger.Os.Shell.getcwdOf pid) == dir.toString
 
 private def Fixture.start (f : Fixture) (name : String) (dir : System.FilePath) : IO Unit := do
   f.own name
@@ -591,17 +591,17 @@ private def resumableCwd (f : Fixture) : IO Bool := do
             return (loadBytes bytes).any (·.cwd == changed.toString)) do
     throw (IO.userError "last detach did not checkpoint the changed cwd")
   try
-    Linger.Posix.kill daemon.toUInt32 9
+    Linger.Os.Shell.kill daemon.toUInt32 9
     unless
       ←
         waitFor 5000
             (do
-              return !(← Linger.Posix.alive daemon.toUInt32)) do
+              return !(← Linger.Os.Shell.alive daemon.toUInt32)) do
       throw (IO.userError "fixture daemon did not stop")
     return (← f.exportFields "resumable" [(name, changed.toString)]) && (← f.pid name).isNone
   finally
-    if ← Linger.Posix.alive shellPid then
-      Linger.Posix.kill shellPid 9
+    if ← Linger.Os.Shell.alive shellPid then
+      Linger.Os.Shell.kill shellPid 9
 
 private def publication (f : Fixture) (kind : String) : IO Bool := do
   f.seed "native" (f.root / "home").toString
@@ -658,11 +658,11 @@ private def obsoleteProvenance (f : Fixture) (matching : Bool) : IO Bool := do
 private def incompleteSnapshot (f : Fixture) : IO Bool := do
   f.seed "valid" (f.root / "home").toString
   let socket := System.FilePath.mk f.env.dir / "unresponsive.sock"
-  let fd ← Linger.Posix.unixListen socket.toString
+  let fd ← Linger.Os.Shell.unixListen socket.toString
   try
     f.refused
   finally
-    Linger.Posix.close fd
+    Linger.Os.Shell.close fd
     IO.FS.removeFile socket
 
 private def unrepresentableCwd (f : Fixture) : IO Bool := do
@@ -959,13 +959,13 @@ private def heldPipeCommand (f : Fixture) : IO Bool := do
     unless ← waitFor 3000 (reached.pathExists) do
       return false
     let some pid := (← IO.FS.readFile reached).toNat? | return false
-    let running ← Linger.Posix.alive pid.toUInt32
+    let running ← Linger.Os.Shell.alive pid.toUInt32
     let uncollected ← Linger.Runtime.Command.poll pending
     let stillOwned := (← pending.get).isSome
     Linger.Runtime.Command.stop pending
     let retired ←
       waitFor 3000 do
-          return !(← Linger.Posix.alive pid.toUInt32)
+          return !(← Linger.Os.Shell.alive pid.toUInt32)
     return running && uncollected.isNone && stillOwned && retired && (← pending.get).isNone &&
         (← IO.hasFinished job.stdout) &&
         (← IO.hasFinished job.stderr)

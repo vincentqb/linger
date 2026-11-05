@@ -35,8 +35,8 @@ def check (e : Env) (name sockets state : String)
 def run : IO UInt32 := do
   -- Every probe overrides the harness's LINGER_DIR; no fixture directory is used.
   let e : Env := { bin := (← IO.appPath).toString, dir := "" }
-  let uid ← Linger.Posix.getuid
-  let host := Linger.Core.Name.sanitize (← Linger.Posix.gethostname)
+  let uid ← Linger.Os.Shell.getuid
+  let host := Linger.Core.Name.sanitize (← Linger.Os.Shell.gethostname)
   let sockets := s!"/tmp/linger-{uid}"
   let state := s!"{sockets}/state/{host}"
   let home := "/tmp/linger paths/home"

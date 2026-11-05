@@ -1,8 +1,8 @@
 module
 
-import Linger.Posix
+import Linger.Os.Shell
 public import Linger.Core.Session
-import Linger.Core.Env
+import Linger.Os.Env
 import Linger.Runtime.Paths
 import Linger.Runtime.Daemon
 import Linger.Runtime.Client
@@ -26,7 +26,7 @@ spawn.
 
 namespace Linger.Runtime.Cli
 
-open Linger.Posix
+open Linger.Os.Shell
 open Linger.Core.Wire (Msg)
 
 /-- Bound on accumulated `infoReply` bytes, independent of the request deadline.
@@ -274,7 +274,7 @@ private def resolveRemotes (flag : Option (List String)) : IO (List String) := d
   | some given =>
     let raw ←
       if given.isEmpty then
-        match Linger.Core.Env.remotesFile (← IO.getEnv "HOME") with
+        match Linger.Os.Env.remotesFile (← IO.getEnv "HOME") with
         | none =>
           pure []
         | some path =>

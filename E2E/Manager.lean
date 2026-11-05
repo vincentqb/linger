@@ -36,7 +36,7 @@ same checks and recorder drive preserved predecessor executables.
 namespace E2E.Manager
 
 open E2E.Harness
-open Linger.Posix
+open Linger.Os.Shell
 open Linger.Core.Render (modeSet csiNum screenText)
 open Linger.Core.Vt (Vt)
 open Linger.Core.Remote renaming shellQuote → quote

@@ -43,7 +43,7 @@ WHAT IS DERIVED, AND WHAT CANNOT BE:
 namespace E2E.Terminal
 
 open E2E.Harness
-open Linger.Posix
+open Linger.Os.Shell
 open Linger.Core.Render (csiPlain escSeq)
 open Linger.Core.Terminal (STFinal classifyCsi xtgetcapReply)
 

@@ -93,7 +93,7 @@ printf '%s' "$FISH_PROMPT_STDOUT"
 printf '%s' "$FISH_PROMPT_STDERR" >&2
 exit "$FISH_PROMPT_RC"
 "#
-  Linger.Posix.chmod (bin / "linger").toString 0o700
+  Linger.Os.Shell.chmod (bin / "linger").toString 0o700
   let setup :=
     r#"function fish_prompt
     printf 'LEFT'
@@ -198,7 +198,7 @@ fi
 printf '%s\n' "$LINGER_TMUX_DIRECTORY"
 exit "$LINGER_TMUX_RC"
 "#
-  Linger.Posix.chmod (bin / "tmux").toString 0o700
+  Linger.Os.Shell.chmod (bin / "tmux").toString 0o700
   let path := (← IO.getEnv "PATH").getD "/usr/bin:/bin"
   return #[("PATH", some s!"{bin}:{path}"), ("TMUX", none), ("TMUX_TMPDIR", some sockets.toString),
       ("LINGER_TMUX_CALLS", some (root / "tmux-calls").toString),
@@ -236,7 +236,7 @@ private def absoluteExecutableChecks (e : Env) (home data : String) : IO Unit :=
     if impostor then
       IO.FS.writeFile (path / "linger")
           "#!/bin/sh\nprintf 'called\\n' >> \"$IMPORT_IMPOSTOR_MARKER\"\nexit 97\n"
-      Linger.Posix.chmod (path / "linger").toString 0o700
+      Linger.Os.Shell.chmod (path / "linger").toString 0o700
     IO.FS.writeFile marker ""
     IO.FS.writeFile save (paneLine name "1" "0" pane.toString "")
     try
@@ -259,7 +259,7 @@ private def relativePathChecks (e : Env) : IO Unit := do
   IO.FS.createDirAll binDir
   IO.FS.createDirAll pane
   IO.FS.writeFile (binDir / "linger") "#!/bin/sh\nexit 97\n"
-  Linger.Posix.chmod (binDir / "linger").toString 0o700
+  Linger.Os.Shell.chmod (binDir / "linger").toString 0o700
   discard <|
       IO.Process.run
         { cmd := "ln", args := #["-s", (root / "relative").toString, (origin / "link").toString] }
@@ -337,7 +337,7 @@ if [ "$IMPORT_PROBE_FAIL" = "$2" ]; then
 fi
 exit 0
 "#
-  Linger.Posix.chmod executable.toString 0o700
+  Linger.Os.Shell.chmod executable.toString 0o700
   let command := "tail -n 1 'a b' | tee -a 'c d'"
   let panes :=
     paneLine "live" "1" "0" home command ++ paneLine "resume" "1" "0" home command ++
@@ -441,12 +441,12 @@ exit 0
         s!"linger tmux import preflights even a skipped identity before listing ({dir.fileName.getD ""})"
   let inaccessible := root / "inaccessible"
   IO.FS.createDirAll inaccessible
-  Linger.Posix.chmod inaccessible.toString 0
+  Linger.Os.Shell.chmod inaccessible.toString 0
   let (rc, err, calls) ←
     try
       invoke (valid ++ paneLine "resume" "1" "0" inaccessible.toString "") "" "0" args
     finally
-      Linger.Posix.chmod inaccessible.toString 0o700
+      Linger.Os.Shell.chmod inaccessible.toString 0o700
   expect (rc == 1 && has err "working directory not accessible at line 2" && calls.isEmpty)
       "linger tmux import checks access for skipped identities before listing or creating"
   let mut usageOk := true
@@ -486,7 +486,7 @@ if [ "$IMPORT_PROBE_CHECK_ENV" = 1 ]; then
         "${XDG_STATE_HOME-<unset>}" >> "$IMPORT_PROBE_CALLS"
 fi
 "#
-  Linger.Posix.chmod executable.toString 0o700
+  Linger.Os.Shell.chmod executable.toString 0o700
   let self := (← IO.appPath).toString
   let probeArgs := #["--import-probe", executable.toString, save.toString]
   let env :=
@@ -506,7 +506,7 @@ fi
       for path in [origin / "linger", bin / "linger"] do
         IO.FS.writeFile path
             "#!/bin/sh\nprintf 'CALL\\000impostor\\000\\n' >> \"$IMPORT_PROBE_CALLS\"\nexit 97\n"
-        Linger.Posix.chmod path.toString 0o700
+        Linger.Os.Shell.chmod path.toString 0o700
     let present ← (origin / "linger").pathExists
     IO.FS.writeFile callsFile ""
     let out ←
@@ -538,7 +538,7 @@ fi
           (paneDir / "persistent").toString]),
       ("empty", states.map fun (key, _) => (key, some ""), [origin.toString, "", ""]),
       ("unset", states.map fun (key, _) => (key, none), ["<unset>", "<unset>", "<unset>"])] do
-    let session := s!"environment-{label}-{← Linger.Posix.getpid}"
+    let session := s!"environment-{label}-{← Linger.Os.Shell.getpid}"
     IO.FS.writeFile save (paneLine session "1" "0" "~" "")
     IO.FS.writeFile callsFile ""
     let out ←
@@ -753,12 +753,12 @@ def run : IO UInt32 :=
     IO.FS.writeFile inaccessibleSave
         (paneLine "accessvalid" "1" "0" processDir.toString "" ++
           paneLine "inaccessible" "1" "0" inaccessibleDir.toString "")
-    Linger.Posix.chmod inaccessibleDir.toString 0
+    Linger.Os.Shell.chmod inaccessibleDir.toString 0
     let (accessRc, _, accessErr) ←
       try
         runImport e home.toString data.toString #[inaccessibleSave.toString]
       finally
-        Linger.Posix.chmod inaccessibleDir.toString 0o700
+        Linger.Os.Shell.chmod inaccessibleDir.toString 0o700
     expect
         (accessRc == 1 && has accessErr "working directory not accessible" &&
           (← e.cli #["info", "accessvalid-w1-p0"]).1 == 1)

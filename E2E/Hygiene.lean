@@ -62,7 +62,7 @@ private def fixture (script path content : String) (executable : Bool) (diagnost
     let file := repo / path
     IO.FS.createDirAll file.parent.get!
     IO.FS.writeFile file content
-    Linger.Posix.chmod file.toString (if executable then 0o755 else 0o644)
+    Linger.Os.Shell.chmod file.toString (if executable then 0o755 else 0o644)
     let _ ← git repo #["add", "--", path]
     check script repo path diagnostic label (return (← IO.FS.readFile file) == content)
 
@@ -157,7 +157,7 @@ def run : IO UInt32 := do
           "hygiene checks working bytes and resolves the root from a subdirectory"
   withRepo fun repo => do
       IO.FS.writeFile (repo / "script.sh") "#!/bin/sh\nexit 0\n"
-      Linger.Posix.chmod (repo / "script.sh").toString 0o755
+      Linger.Os.Shell.chmod (repo / "script.sh").toString 0o755
       let _ ← git repo #["add", "--", "script.sh"]
       let _ ← git repo #["update-index", "--chmod=-x", "--", "script.sh"]
       check script repo "script.sh" "shebang without executable"
@@ -217,9 +217,9 @@ def run : IO UInt32 := do
             s!"#!/bin/sh\nprintf '{tool}:%s\\n' \"$*\" >> .git/hook-trace\n\
                if [ -f \".git/reject-{tool}-$1\" ]; then\n\
                printf '%s\\n' 'fixture: {tool} rejected' >&2\nexit 43\nfi\n"
-        Linger.Posix.chmod (tools / tool).toString 0o755
+        Linger.Os.Shell.chmod (tools / tool).toString 0o755
       for name in ["hygiene.sh", "gates.sh", "lint.sh"] do
-        Linger.Posix.chmod (repo / "scripts" / name).toString 0o755
+        Linger.Os.Shell.chmod (repo / "scripts" / name).toString 0o755
       IO.FS.writeFile (repo / "staged.txt") "clean\n"
       let _ ← git repo #["add", "--", ".pre-commit-config.yaml", "scripts", "staged.txt"]
       let commitArgs :=

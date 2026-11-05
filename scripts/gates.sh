@@ -66,7 +66,18 @@ code_grep() {                                # code_grep <ere> <pathspec>...
 }
 code_count() { code_grep "$@" | awk 'END { print NR + 0 }'; }   # -> a number
 
-! code_grep 'sorry' 'Linger/Core/*' 'Linger/Tools/*' 'Theorems/*' || fail "sorry found"
+# Which modules are pure code and which are proofs, read from the tree with the rule
+# `Theorems/Coverage.lean` (`pureModule`, `proofModule`) applies to module names: pure code is
+# each component's top-level modules other than its boundary and shell, plus the legacy
+# `Linger/Core` and `Linger/Tools` trees; proofs are each component's `Proofs/` plus the legacy
+# `Theorems/`. Deliberate word splitting below: no tracked path in this tree has a space.
+pure_paths="$(git ls-files -- 'Linger/*.lean' | awk -F/ '
+  NF == 3 && $2 != "Runtime" && $2 != "Manager" && $3 != "Boundary.lean" && $3 != "Shell.lean"')"
+proof_paths="$(git ls-files -- 'Theorems/*.lean' 'Linger/*/Proofs/*.lean')"
+[ -n "$pure_paths" ] && [ -n "$proof_paths" ] || fail "no pure or proof modules found"
+
+# shellcheck disable=SC2086
+! code_grep 'sorry' $pure_paths $proof_paths || fail "sorry found"
 # Termination is proved everywhere, never asserted with the keyword.
 ! code_grep '(^|[^[:alnum:]_])partial def([^[:alnum:]_]|$)' '*.lean' \
   || fail "partial def: use structural or well-founded recursion, or a do-block loop"
@@ -77,10 +88,12 @@ code_count() { code_grep "$@" | awk 'END { print NR + 0 }'; }   # -> a number
 ! code_grep '[(]fuel[[:space:]]*:' '*.lean' \
   || fail "a fuel parameter: recurse on the data or a decreasing measure"
 # Any `IO`, `BaseIO` or `EIO` token, in a type or a call, is an effect in pure code.
-! code_grep '(^|[^[:alnum:]_.])(E|Base)?IO([^[:alnum:]_]|$)' 'Linger/Core/*' 'Linger/Tools/*' \
+# shellcheck disable=SC2086
+! code_grep '(^|[^[:alnum:]_.])(E|Base)?IO([^[:alnum:]_]|$)' $pure_paths \
   || fail "IO in pure core"
 # A predicate preserved by each step is preserved by the fold: one `invariant_foldl`.
-! code_grep '[(][a-z][A-Za-z0-9]*_foldl f hf as [(]f v a[)][)][.]trans [(]hf v a[)]' 'Theorems/*' \
+# shellcheck disable=SC2086
+! code_grep '[(][a-z][A-Za-z0-9]*_foldl f hf as [(]f v a[)][)][.]trans [(]hf v a[)]' $proof_paths \
   || fail "hand-rolled fold-preservation lemma: derive it from invariant_foldl"
 # The build proves both fuzz claims; this keeps them in place at their full ranges.
 for c in '^example : failing 400 = [[][]] := by native_decide$' \
@@ -100,8 +113,16 @@ csi_count='([(][^)]*[^[:alnum:]_.]|[(])?(a1|n)([^[:alnum:]_]|$)|[(][^)]*[.]arg([
 code_grep '^[[:space:]]+v[.]eraseRowSpan v[.]cursor[.]y v[.]cursor[.]x [(]min [(]v[.]cursor[.]x [+] n[)] v[.]cols[)]$' \
   Linger/Core/Vt.lean >/dev/null || fail "ECH lost its clamp: its span must end at min (v.cursor.x + n) v.cols"
 # the OS surface stays where AGENTS.md says it is
-[ "$(code_grep '@[[]extern' '*.lean' | awk -F: '!seen[$1]++ { print $1 }' | tr -d ' ')" = "Linger/Posix.lean" ] \
-  || fail "extern declarations outside Linger/Posix.lean"
+[ "$(code_grep '@[[]extern' '*.lean' | awk -F: '!seen[$1]++ { print $1 }' | tr -d ' ')" = "Linger/Os/Boundary.lean" ] \
+  || fail "extern declarations outside Linger/Os/Boundary.lean"
+# The boundary declares foreign functions and nothing else: no Lean body, no wrapper.
+! code_grep '^[[:space:]]*(private[[:space:]]+)?(def|abbrev|theorem|instance|structure|inductive)[[:space:]]' \
+    Linger/Os/Boundary.lean \
+  || fail "Linger/Os/Boundary.lean holds a Lean definition: wrappers and checks belong in Linger/Os/Shell.lean"
+# Each binding is private, and Linger/Os/Shell.lean wraps it (its one importer is pinned
+# with the import closures below), so a caller reaches the shim only through a wrapper.
+! code_grep '^[[:space:]]*(public[[:space:]]+)?opaque[[:space:]]' Linger/Os/Boundary.lean \
+  || fail "Linger/Os/Boundary.lean declares a public binding: keep it private and wrap it in Linger/Os/Shell.lean"
 # `unsafe` and `@[implemented_by]` — the Lean-side twin of the `@[extern` gate just
 # above, and the only route that makes the theorems false OF THE SHIPPED BINARY rather
 # than of some value inside it (SCRATCHPAD.md, "the adversarial audit of the seal",
@@ -134,7 +155,7 @@ code_grep '^[[:space:]]+v[.]eraseRowSpan v[.]cursor[.]y v[.]cursor[.]x [(]min [(
 #
 # DECLINED: adding `opaque`. Measured rather than deferred to the earlier decision —
 # most `opaque` hits over tracked `.lean` are actual `@[extern` declarations in
-# `Linger/Posix.lean`, so the gate could only ever read "opaque outside Posix.lean".
+# `Linger/Os/Boundary.lean`, so the gate could only ever read "opaque outside the boundary".
 # What that would catch is not a forge: with no `@[extern]` and no
 # `@[implemented_by]` the compiler emits no value at all, so `opaque x : Vt` is a
 # liveness hazard, not an implementation that disagrees with the model (the R5 family,
@@ -147,7 +168,7 @@ code_grep '^[[:space:]]+v[.]eraseRowSpan v[.]cursor[.]y v[.]cursor[.]x [(]min [(
 # The shim returns -errno and errno numbers differ by platform: 918c671's
 # `r == -111` meant ECONNREFUSED only on Linux.
 ! code_grep '(==|!=)[[:space:]]*[(]?-([2-9]|[1-9][0-9]+)([^0-9]|$)' 'Linger/Runtime/*' \
-    'Linger/Manager/*' 'Linger/Posix.lean' 'Main.lean' 'E2E/*' 'LingerTest.lean' \
+    'Linger/Manager/*' 'Linger/Os/Shell.lean' 'Main.lean' 'E2E/*' 'Linger/Os/Suites/Shim.lean' \
   || fail "a negative literal comparison looks like an errno number: compare the sign, or classify the errno in c/shim.c"
 # Lean/libuv may have worker threads when the application forks. The child
 # paths and their two execution helpers must not allocate, format through
@@ -184,7 +205,7 @@ awk '
 # `lean_lib LingerVt` in lakefile.lean is the positive half: it elaborates the
 # closure. It cannot be the whole claim, because Lake resolves imports through one
 # package-wide LEAN_PATH, so a lib with restricted `roots` compiles an out-of-set
-# module happily -- `import Linger.Posix` in Terminal.lean builds under
+# module happily -- `import Linger.Os.Shell` in Terminal.lean builds under
 # `./lake build LingerVt` without a murmur. Measured, twice, not assumed. A
 # build-level failure needs a sub-package with its own srcDir and a path `require`,
 # and the two gates immediately above forbid `require`. So this grep is the half
@@ -267,15 +288,26 @@ library_roots LingerFuzzy '#[`Linger.Tools.Fuzzy]' 'leanOptions := implementatio
   || fail "the Linger library lost implementationOptions: $(library_decl Linger)"
 [ "$(git grep -c 'def implementationOptions : Array LeanOption := #\[⟨`linter.missingDocs, true⟩\]$' -- lakefile.lean)" = lakefile.lean:1 ] \
   || fail "implementationOptions no longer enables linter.missingDocs"
-# Proofs and fixtures build every module under their directory, so every module is
-# checked without a root module importing it. The glob omits the root itself, so a
-# Theorems.lean or Tests.lean would never be built.
-for lib in Theorems Tests; do
-  lr_got="$(library_decl "$lib")"
-  [ "$lr_got" = "lean_lib $lib where globs := #[.submodules \`$lib] " ] \
-    || fail "the $lib library declaration changed from globs := #[.submodules \`$lib]: $lr_got"
-  [ -z "$(git ls-files -- "$lib.lean")" ] \
-    || fail "$lib.lean is tracked, but the $lib library builds only the modules under $lib/"
+# Proofs and fixtures build every module under their directories, so every module is
+# checked without a root module importing it: the legacy `Theorems/` and `Tests/` trees and
+# each component's `Proofs/` and `Tests/`, in component order. The glob omits the root
+# itself, so a Theorems.lean or Tests.lean would never be built.
+lib_globs() {                                # lib_globs <lib> <component subdirectory>
+  lg_parts=''
+  [ -z "$(git ls-files -- "$1/*.lean")" ] || lg_parts=".submodules \`$1"
+  for lg_c in $(git ls-files -- "Linger/*/$2/*.lean" | cut -d/ -f2 | sort -u); do
+    lg_parts="${lg_parts:+$lg_parts, }.submodules \`Linger.$lg_c.$2"
+  done
+  printf 'lean_lib %s where globs := #[%s] ' "$1" "$lg_parts"
+}
+for lib in 'Theorems Proofs' 'Tests Tests'; do
+  lr_lib="${lib% *}"; lr_dir="${lib#* }"
+  lr_want="$(lib_globs "$lr_lib" "$lr_dir")"
+  lr_got="$(library_decl "$lr_lib")"
+  [ "$lr_got" = "$lr_want" ] \
+    || fail "the $lr_lib library must build exactly the $lr_dir directories: want $lr_want, got $lr_got"
+  [ -z "$(git ls-files -- "$lr_lib.lean")" ] \
+    || fail "$lr_lib.lean is tracked, but the $lr_lib library builds only the modules under its directories"
 done
 
 # Check every member of the proof family, not only the root headers: an
@@ -304,23 +336,29 @@ import_closure Linger/Tools/Entry.lean ''
 import_closure Linger/Core/Name.lean ''
 import_closure Linger/Core/Remote.lean 'import Linger.Core.Name;'
 import_closure Linger/Core/Title.lean 'import Linger.Core.Name;'
-import_closure Linger/Core/Env.lean ''
-import_closure Linger/Runtime/Command.lean 'import Linger.Posix;'
-import_closure Linger/Manager/Resurrect.lean 'import Linger.Tools.Resurrect;import Linger.Posix;import Linger.Core.Listing;import Linger.Runtime.Paths;import Linger.Runtime.Resume;import Linger.Runtime.Cli;import Linger.Runtime.Command;import Linger.Core.Remote;import Linger.Manager.Picker;import Std.Async.System;'
+import_closure Linger/Os/Env.lean ''
+import_closure Linger/Os/Boundary.lean ''
+# Linger/Os/Shell.lean is the one module that may import the private bindings.
+[ "$(module_imports '*.lean' | awk -F: "$IMPORT_AWK"'
+    import_mod($3) == "Linger.Os.Boundary" && !seen[$1]++ { print $1 }')" = "Linger/Os/Shell.lean" ] \
+  || fail "a module other than Linger/Os/Shell.lean imports Linger.Os.Boundary"
+import_closure Linger/Runtime/Command.lean 'import Linger.Os.Shell;'
+import_closure Linger/Manager/Resurrect.lean 'import Linger.Tools.Resurrect;import Linger.Os.Shell;import Linger.Core.Listing;import Linger.Runtime.Paths;import Linger.Runtime.Resume;import Linger.Runtime.Cli;import Linger.Runtime.Command;import Linger.Core.Remote;import Linger.Manager.Picker;import Std.Async.System;'
 import_closure Linger/Manager/Picker.lean \
-  'public import Linger.Tools.Picker;import Linger.Posix;import Linger.Core.Listing;import Linger.Core.Remote;import Linger.Core.Terminal;import Linger.Runtime.Command;'
+  'public import Linger.Tools.Picker;import Linger.Os.Shell;import Linger.Core.Listing;import Linger.Core.Remote;import Linger.Core.Terminal;import Linger.Runtime.Command;'
 import_closure Main.lean \
   'import Linger.Runtime.Cli;import Linger.Tools.Entry;import Linger.Manager.Picker;import Linger.Manager.Resurrect;'
 # `lean_lib Linger` builds the umbrella's closure, so this list is what `./lake build`
 # checks of the session library.
-import_closure Linger.lean "$(printf 'public import Linger.%s;' Core.Buf Posix Core.Wire \
+import_closure Linger.lean "$(printf 'public import Linger.%s;' Core.Buf Os.Shell Core.Wire \
   Core.Vt Core.Render Core.Terminal Core.Name Core.Session Core.Driver Core.Checkpoint \
-  Core.Remote Core.Listing Core.Status Core.Title Core.Env Runtime.Paths Runtime.Command \
+  Core.Remote Core.Listing Core.Status Core.Title Os.Env Runtime.Paths Runtime.Command \
   Runtime.Daemon Runtime.Client Runtime.Cli Runtime.Resume)"
-module_imports 'Linger/Core/*' 'Linger/Runtime/*' Linger/Posix.lean Linger.lean \
+module_imports 'Linger/Core/*' 'Linger/Runtime/*' Linger/Os/Boundary.lean Linger/Os/Shell.lean \
+    Linger/Os/Env.lean Linger.lean \
 | awk -F: "$IMPORT_AWK"'
   { mod = import_mod($3)
-    if (mod !~ /^(Linger[.]((Core|Runtime)[.][[:alnum:]_.]+|Posix)|Std[.]Async[.](System|Signal))$/) {
+    if (mod !~ /^(Linger[.](Core|Runtime|Os)[.][[:alnum:]_.]+|Std[.]Async[.](System|Signal))$/) {
       print "  " $0; bad = 1
     }
   }
@@ -394,7 +432,7 @@ printf '%s\n' "$import_code" | CG_RE='(^|[[:space:]])[|] _ => writeSave [(]paths
 for tie in \
   'let save ← readSave origin home file let rows := catalogRows save[.]content save[.]panes' \
   'let value := if [[]"directory", "session", "window", "pane", "title", "command", "saved-command", "window-title"[]][.]contains key then value[.]quote else diagnostic value' \
-  'Linger[.]Posix[.]writeAll Linger[.]Posix[.]stdoutFd [(]ByteArray[.]mk [(]Linger[.]Core[.]Listing[.]terminalListing withColor rows[)][.]toArray[)]' \
+  'Linger[.]Os[.]Shell[.]writeAll Linger[.]Os[.]Shell[.]stdoutFd [(]ByteArray[.]mk [(]Linger[.]Core[.]Listing[.]terminalListing withColor rows[)][.]toArray[)]' \
   'let save ← readSave origin home file createPanes executable origin save[.]panes [(]readArchive save[.]path[)]' \
   'let path ← savePath origin home file while true do match ← Linger[.]Manager[.]Picker[.]choose executable [(]some path[.]toString[)] with' \
   '[|] [.]attach target displayed => unless displayed[.]candidates[.]contains target do throw [(]IO[.]userError "selected pane was absent from the displayed save"[)] let row := displayed[.]row target' \
@@ -420,8 +458,8 @@ for tie in \
   'unless text "archive" == some found[.]path[.]toString && row[.]lookup "archive-revision" == some [(]archiveRevision found[)] do throw [(]IO[.]userError "pane capture archive changed; refresh the saved panes"[)]' \
   'private def seedPane [(]pane : Pane[)] [(]contents : Option String[)] : IO Bool := Paths[.]withSessionLock pane[.]name do' \
   'if [(]← [(]System[.]FilePath[.]mk path[)][.]pathExists[)] [|][|] [(]← [(]System[.]FilePath[.]mk socket[)][.]pathExists[)] then return false' \
-  'let handle ← IO[.]FS[.]Handle[.]mk tmp [.]writeNew try Linger[.]Posix[.]chmod tmp[.]toString 0o600 handle[.]write [(]Linger[.]Core[.]Checkpoint[.]saveBytes [(]checkpoint pane contents[)][)] handle[.]flush IO[.]FS[.]hardLink tmp path finally IO[.]FS[.]removeFile tmp' \
-  'pending[.]set [(]some [(]← Command[.]startLimited "tar" args limit[)][)] let deadline := [(]← Linger[.]Posix[.]monotonicMs[)] [+] 5000' \
+  'let handle ← IO[.]FS[.]Handle[.]mk tmp [.]writeNew try Linger[.]Os[.]Shell[.]chmod tmp[.]toString 0o600 handle[.]write [(]Linger[.]Core[.]Checkpoint[.]saveBytes [(]checkpoint pane contents[)][)] handle[.]flush IO[.]FS[.]hardLink tmp path finally IO[.]FS[.]removeFile tmp' \
+  'pending[.]set [(]some [(]← Command[.]startLimited "tar" args limit[)][)] let deadline := [(]← Linger[.]Os[.]Shell[.]monotonicMs[)] [+] 5000' \
   'throw [(]IO[.]userError "pane capture archive timed out"[)] finally Command[.]stop pending'; do
   printf '%s\n' "$import_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "tmux capture import lost its bounded reader, frozen archive or checkpoint contract: $tie"
@@ -432,7 +470,7 @@ done
 # its lookup spelling: readSave resolves the current symlink target each time.
 for tie in \
   'Command[.]start "tmux" #[[]"show-options", "-gqv", "@resurrect-dir"[]]' \
-  'let deadline := [(]← Linger[.]Posix[.]monotonicMs[)] [+] 1000 while [(]← Linger[.]Posix[.]monotonicMs[)] < deadline do' \
+  'let deadline := [(]← Linger[.]Os[.]Shell[.]monotonicMs[)] [+] 1000 while [(]← Linger[.]Os[.]Shell[.]monotonicMs[)] < deadline do' \
   'finally Command[.]stop pending' \
   'match file with [|] some path => pure path [|] none => if let some dir[[:space:]]*← configuredDirectory then' \
   'let path := System[.]FilePath[.]mk path return if path[.]isAbsolute then path else origin / path' \
@@ -533,8 +571,8 @@ for tie in \
   'let chunk ← handle[.]read 4096 if chunk[.]isEmpty then break if !exceeded && bytes[.]size [+] chunk[.]size ≤ limit then bytes := bytes [+][+] chunk else exceeded := true' \
   'if exceeded then throw [(]IO[.]userError s!"command output exceeds [{]limit[}] bytes"[)] let some text := String[.]fromUTF8[?] bytes [|] throw [(]IO[.]userError "command output is not UTF-8"[)] return text' \
   'def poll [(]pending : IO[.]Ref [(]Option Job[)][)] : IO [(]Option IO[.]Process[.]Output[)] := do if let some job[[:space:]]*← pending[.]get then if [(]← IO[.]hasFinished job[.]stdout[)] && [(]← IO[.]hasFinished job[.]stderr[)] then if let some exitCode[[:space:]]*← job[.]child[.]tryWait then pending[.]set none let stdout ← IO[.]ofExcept [(]← IO[.]wait job[.]stdout[)] let stderr ← IO[.]ofExcept [(]← IO[.]wait job[.]stderr[)] return some [{] exitCode, stdout, stderr [}] return none' \
-  'if let some job[[:space:]]*← pending[.]get then pending[.]set none try try try if graceMs > 0 then Linger[.]Posix[.]kill job[.]child[.]pid 15 let deadline := [(]← Linger[.]Posix[.]monotonicMs[)] [+] graceMs while [(]← Linger[.]Posix[.]monotonicMs[)] < deadline do if [(]← IO[.]hasFinished job[.]stdout[)] && [(]← IO[.]hasFinished job[.]stderr[)] then break IO[.]sleep 5 finally retireGroup job finally discard job[.]child[.]wait finally discard <[|] IO[.]wait job[.]stdout discard <[|] IO[.]wait job[.]stderr' \
-  'private def retireGroup [(]job : Job[)] : IO Unit := do try job[.]child[.]kill catch err => match err with [|] [.]permissionDenied [.][.] [|] [.]noSuchThing [.][.] => Linger[.]Posix[.]kill job[.]child[.]pid 9 [|] _ => throw err'; do
+  'if let some job[[:space:]]*← pending[.]get then pending[.]set none try try try if graceMs > 0 then Linger[.]Os[.]Shell[.]kill job[.]child[.]pid 15 let deadline := [(]← Linger[.]Os[.]Shell[.]monotonicMs[)] [+] graceMs while [(]← Linger[.]Os[.]Shell[.]monotonicMs[)] < deadline do if [(]← IO[.]hasFinished job[.]stdout[)] && [(]← IO[.]hasFinished job[.]stderr[)] then break IO[.]sleep 5 finally retireGroup job finally discard job[.]child[.]wait finally discard <[|] IO[.]wait job[.]stdout discard <[|] IO[.]wait job[.]stderr' \
+  'private def retireGroup [(]job : Job[)] : IO Unit := do try job[.]child[.]kill catch err => match err with [|] [.]permissionDenied [.][.] [|] [.]noSuchThing [.][.] => Linger[.]Os[.]Shell[.]kill job[.]child[.]pid 9 [|] _ => throw err'; do
   printf '%s\n' "$command_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "owned command lost its process or pipe lifetime contract: $tie"
 done
@@ -578,10 +616,10 @@ done
 # account choose them, and a suite cannot create `/tmp/.config`.
 for claim in shellOf_ne_empty shellOf_set shellOf_absent remotesFile_eq_none_iff remotesFile_set \
              detachEnabled_readOnly detachEnabled_writable; do
-  code_grep "^theorem $claim " Theorems/Env.lean >/dev/null \
+  code_grep "^theorem $claim " Linger/Os/Proofs/Env.lean >/dev/null \
     || fail "environment policy contract disappeared: $claim"
 done
-printf '%s\n' "$cli_code" | CG_RE='(^|[[:space:]])match Linger[.]Core[.]Env[.]remotesFile [(]← IO[.]getEnv "HOME"[)] with [|] none => pure [[][]] [|] some path => if ← System[.]FilePath[.]pathExists path then pure [(][(]← IO[.]FS[.]readFile path[)][.]splitOn([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+printf '%s\n' "$cli_code" | CG_RE='(^|[[:space:]])match Linger[.]Os[.]Env[.]remotesFile [(]← IO[.]getEnv "HOME"[)] with [|] none => pure [[][]] [|] some path => if ← System[.]FilePath[.]pathExists path then pure [(][(]← IO[.]FS[.]readFile path[)][.]splitOn([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "remote configuration bypasses Env.remotesFile, which reads no file for an unset or empty HOME"
 for var in SHELL LINGER_NO_DETACH_KEY; do
   [ "$(code_count "getEnv \"$var\"" 'Linger/*' Main.lean)" -eq 1 ] \
@@ -685,7 +723,7 @@ awk '
 # (see `Linger/Core/Vt.lean`, "## Every door"), and `Tests/` deliberately forges invalid
 # states in its negative fixtures, so listing its files one by one would gate a
 # non-property. Everything else is outside and fail-closed — `E2E/**`,
-# `LingerTest.lean`, `Main.lean`, `Linger/Posix.lean`, all of `Linger/Runtime/` and the
+# `Linger/Os/Suites/Shim.lean`, `Main.lean`, `Linger/Os/Shell.lean`, all of `Linger/Runtime/` and the
 # other `Linger/Core/` modules. Replay joins only to read shared immutable rows.
 # `E2E/**` is outside deliberately: a pty suite asserts on bytes the real binary
 # emitted, so a forged `Vt` there would be an assertion about a state the binary cannot
@@ -867,7 +905,7 @@ printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])def Rt[.]closeConn [(]rt : 
   || fail "Rt.closeConn must close the fd before it forgets only that connection"
 # A session without a command runs Env.shellOf's program, which an unset or empty
 # SHELL makes sh (shellOf_absent). E2E.Agent creates sessions with both.
-printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])let shell := Linger[.]Core[.]Env[.]shellOf [(]← IO[.]getEnv "SHELL"[)] let [(]prog, args[)] := match argv with [|] [[][]] => [(][(]shell, #[[][]][)] : String × Array String[)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+printf '%s\n' "$daemon_code" | CG_RE='(^|[[:space:]])let shell := Linger[.]Os[.]Env[.]shellOf [(]← IO[.]getEnv "SHELL"[)] let [(]prog, args[)] := match argv with [|] [[][]] => [(][(]shell, #[[][]][)] : String × Array String[)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "a session without a command bypasses Env.shellOf"
 
 # Descriptor exhaustion must suspend admission without stopping existing work.
@@ -980,7 +1018,7 @@ for tie in \
   'def lockPath [(]name : String[)] : IO String := do namedPath [(]← socketDir[)] name "[.]lock"' \
   'def stateLockPath [(]name : String[)] : IO String := do namedPath [(][(]← stateDir[)] [+][+] "/[.]locks"[)] name "[.]lock"' \
   'def logPath [(]name : String[)] : IO String := do namedPath [(][(]← stateDir[)] [+][+] "/logs"[)] name "[.]log"' \
-  'def withLockRetrying [{]α : Type[}] [(]path : String[)] [(]retry : IO Bool[)] [(]action : IO α[)] : IO α := do let mut fd ← Linger[.]Posix[.]flock path while fd < 0 do unless ← retry do break fd ← Linger[.]Posix[.]flock path if fd < 0 then throw [(]IO[.]userError s!"session is owned by another process [(][{]path[}][)]"[)] try checkSpelling path action finally Linger[.]Posix[.]close fd[.]toUInt64[.]toUInt32' \
+  'def withLockRetrying [{]α : Type[}] [(]path : String[)] [(]retry : IO Bool[)] [(]action : IO α[)] : IO α := do let mut fd ← Linger[.]Os[.]Shell[.]flock path while fd < 0 do unless ← retry do break fd ← Linger[.]Os[.]Shell[.]flock path if fd < 0 then throw [(]IO[.]userError s!"session is owned by another process [(][{]path[}][)]"[)] try checkSpelling path action finally Linger[.]Os[.]Shell[.]close fd[.]toUInt64[.]toUInt32' \
   'def withLock [{]α : Type[}] [(]path : String[)] [(]action : IO α[)] : IO α := withLockRetrying path [(]pure false[)] action' \
   'def withSessionLockRetrying [{]α : Type[}] [(]name : String[)] [(]retry : IO Bool[)] [(]action : IO α[)] : IO α := do withLockRetrying [(]← lockPath name[)] retry do withLockRetrying [(]← stateLockPath name[)] retry action' \
   'def withSessionLock [{]α : Type[}] [(]name : String[)] [(]action : IO α[)] : IO α := withSessionLockRetrying name [(]pure false[)] action'; do
@@ -1061,7 +1099,7 @@ code_grep '^theorem step_tick_before_interval ' 'Theorems/Session.lean' > /dev/n
   || fail "the no-early-checkpoint theorem disappeared"
 code_grep '^theorem step_tick_checkpoint_elapsed ' 'Theorems/Session.lean' > /dev/null \
   || fail "the checkpoint elapsed-time theorem disappeared"
-code_grep '^def monotonicMs : IO Nat := IO[.]monoMsNow$' 'Linger/Posix.lean' > /dev/null \
+code_grep '^def monotonicMs : IO Nat := IO[.]monoMsNow$' 'Linger/Os/Shell.lean' > /dev/null \
   || fail "the monotonic clock no longer forwards Lean's Nat clock directly"
 code_grep '^[[:space:]]+let now ← monotonicMs$' 'Linger/Runtime/Daemon.lean' > /dev/null \
   || fail "the daemon tick no longer reads the monotonic clock"
@@ -1090,7 +1128,7 @@ code_grep 'sendMsg fd [(][.]attach 0 0[)]' 'Linger/Runtime/Client.lean' > /dev/n
 # The detach key follows Env.detachEnabled: always in a read-only view, whose saved
 # form passes that value, true, directly (detachEnabled_readOnly), and for writable
 # attach only while LINGER_NO_DETACH_KEY is unset. E2E.Watch and E2E.Attach observe both.
-printf '%s\n' "$client_code" | CG_RE='(^|[[:space:]])let detachEnabled := Linger[.]Core[.]Env[.]detachEnabled readOnly [(]← IO[.]getEnv "LINGER_NO_DETACH_KEY"[)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
+printf '%s\n' "$client_code" | CG_RE='(^|[[:space:]])let detachEnabled := Linger[.]Os[.]Env[.]detachEnabled readOnly [(]← IO[.]getEnv "LINGER_NO_DETACH_KEY"[)]([[:space:]]|$)' awk "$CODE_AWK" >/dev/null \
   || fail "attach bypasses Env.detachEnabled, which keeps the detach key in read-only views"
 code_grep '^[[:space:]]+let [(]out, detach[)] := splitDetach bs detachEnabled$' Linger/Runtime/Client.lean >/dev/null \
   || fail "attach no longer splits input with its detach policy"
@@ -1189,16 +1227,16 @@ done
 # required regression is not a pass, and an executable Python snippet is still a
 # second-language dependency even when embedded in a Lean string rather than tracked
 # as a .py file. These are syntactic runtime ties, so the source gate is the oracle.
-! code_grep '(^|[^[:alnum:]_])(pkill|killall)([^[:alnum:]_]|$)' 'scripts/e2e.sh' 'E2E/*' LingerTest.lean \
+! code_grep '(^|[^[:alnum:]_])(pkill|killall)([^[:alnum:]_]|$)' 'scripts/e2e.sh' 'E2E/*' Linger/Os/Suites/Shim.lean \
   || fail "a test orchestrator kills by process name — suites may terminate only processes they created"
 # A process-GROUP selector is the same hazard wearing a pid. POSIX reads `kill 0` as
 # "every process in my group" and `kill -N` as group N, so one of these in a test
 # script signals the harness, the agent running it, and whatever shell shares that
 # group — which is exactly what happened on 2026-09-15, from `kill 0 15` inside
 # `lingertest`. Scoped to the shell and the shim, because that is where nothing else
-# stops it: from Lean the call goes through `Linger.Posix.checkPid`, which rejects 0
+# stops it: from Lean the call goes through `Linger.Os.Shell.checkPid`, which rejects 0
 # and every value that casts to a negative `pid_t` — a mechanism, not a grep — and
-# `LingerTest.lean`'s `kill 0 15` is that mechanism's regression test, so including
+# `Linger/Os/Suites/Shim.lean`'s `kill 0 15` is that mechanism's regression test, so including
 # Lean here would flag the assertion instead of the hazard. `kill -0 $pid` (the
 # liveness probe) is a signal flag, not a target, and is deliberately not matched.
 ! code_grep 'kill([[:space:]]+-[A-Za-z0-9]+)*[[:space:]]+(--[[:space:]]+)?(0|-[0-9]+)([^0-9]|$)' \

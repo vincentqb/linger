@@ -1,6 +1,6 @@
 module
 
-public import Linger.Posix
+public import Linger.Os.Shell
 public import Linger.Core.Status
 public import Linger.Core.Render
 
@@ -11,7 +11,7 @@ public section
 The suites drive the real binary through ptys, so they are `IO` and tested, not
 proved. Assertions read the implementation's definitions (`status` parses with
 `Linger.Core.Status.ofName`), so renaming a status constructor is a compile error.
-Ptys, sockets and polling come from `Linger.Posix`.
+Ptys, sockets and polling come from `Linger.Os.Shell`.
 
 OUTPUT CONTRACT — load-bearing, do not reformat. Every check prints `PASS <name>`
 or `FAIL <name>`, and each suite ends with `FAILURES: <n>`. `E2E.Runner` requires
@@ -21,7 +21,7 @@ one that quietly grows — either way it is a reviewable edit. -/
 
 namespace E2E.Harness
 
-open Linger.Posix
+open Linger.Os.Shell
 
 /-- The detach key, ctrl-\\ — the one byte every suite sends to leave. -/
 def detachKey : ByteArray := ByteArray.mk #[0x1C]
@@ -358,7 +358,7 @@ def Client.bye (c : Client) (sendDetach : Bool := true) : IO Unit := do
       pure ()
     let _ ← c.reap 600
   try
-    Linger.Posix.close c.fd
+    Linger.Os.Shell.close c.fd
   catch _ =>
     pure ()
   let _ ← c.reap

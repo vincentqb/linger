@@ -11,7 +11,7 @@ public section
 namespace E2E.Delivery
 
 open E2E.Harness
-open Linger.Posix
+open Linger.Os.Shell
 open Linger.Core
 open Linger.Runtime.Daemon
 open Linger.Core.Buf (owedLen)

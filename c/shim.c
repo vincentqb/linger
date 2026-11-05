@@ -2,14 +2,14 @@
  *
  * Contract (AGENTS.md): syscall + errno only. No buffering, no retry
  * policy beyond EINTR, no session logic. Every function is a thin
- * wrapper whose behavior is stated in Linger/Posix.lean next to its
- * binding. All Lean object parameters are borrowed (@& on the Lean
- * side), so nothing here inc/decs references except allocations we
- * hand back.
+ * wrapper bound in Linger/Os/Boundary.lean; its behavior is stated on
+ * the Lean wrapper of the same name in Linger/Os/Shell.lean. All Lean
+ * object parameters are borrowed (@& on the Lean side), so nothing here
+ * inc/decs references except allocations we hand back.
  *
  * The pinned Lean compiler erases IO's world parameter and represents
  * Int32 arguments as uint32_t bits. Keep these signatures aligned with
- * the declarations generated from Linger/Posix.lean.
+ * the declarations generated from Linger/Os/Boundary.lean.
  */
 /* accept4 needs _GNU_SOURCE on glibc */
 #define _GNU_SOURCE
@@ -758,7 +758,7 @@ LEAN_EXPORT lean_obj_res linger_alive(uint32_t pid) {
  *
  * There is no fourth outcome to report: the only other errno waitpid can
  * set here is EINVAL for bad options, and the options are the constant
- * WNOHANG. Selectors (pid 0, negative pid_t) never arrive -- Linger.Posix
+ * WNOHANG. Selectors (pid 0, negative pid_t) never arrive -- Linger.Os.Shell
  * .checkPid rejects them -- so a failure that is not ECHILD is answered
  * -2 rather than "running", which degrades to a liveness probe instead of
  * waiting forever on a child that cannot be reaped. */
@@ -784,7 +784,7 @@ LEAN_EXPORT lean_obj_res linger_waitpid_nohang(uint32_t pid) {
 /* misc                                                                  */
 
 /* getpid, chmod, both clocks, hostname, stdin tty detection, and the
- * full-write loop are Lean/core; see Linger/Posix.lean. */
+ * full-write loop are Lean/core; see Linger/Os/Shell.lean. */
 
 /* linger_getuid : IO UInt32 */
 LEAN_EXPORT lean_obj_res linger_getuid(void) {

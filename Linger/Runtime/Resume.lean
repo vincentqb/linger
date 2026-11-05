@@ -3,7 +3,7 @@ module
 import Linger.Core.Checkpoint
 public import Linger.Core.Session
 import Linger.Runtime.Paths
-import Linger.Posix
+import Linger.Os.Shell
 
 public section
 
@@ -29,7 +29,7 @@ def saveCkpt (name : String) (st : State) : IO Unit := do
   let live ←
     match (st.metaKv.lookup "pid").bind String.toNat? with
     | some p =>
-      Linger.Posix.getcwdOf (UInt32.ofNat p)
+      Linger.Os.Shell.getcwdOf (UInt32.ofNat p)
     | none =>
       pure ""
   let cwd := if live.isEmpty then (st.metaKv.lookup "start_dir").getD "" else live

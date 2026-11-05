@@ -2,14 +2,14 @@ module
 
 public section
 
-/-! # Linger.Core.Env — what an environment value means
+/-! # Linger.Os.Env — what an environment value means
 
 The runtime reads SHELL, LINGER_NO_DETACH_KEY and the remotes file's HOME once each
 and passes the result here, so what an unset or empty value means is a pure decision with a theorem
-(`Theorems/Env.lean`). The suites run the program with both.
+(`Linger/Os/Proofs/Env.lean`). The suites run the program with both.
 -/
 
-namespace Linger.Core.Env
+namespace Linger.Os.Env
 
 /-- The program a session starts without a command: `$SHELL`, or `sh` when SHELL is
 unset or empty, since an empty word names no program. -/
@@ -31,4 +31,4 @@ clears ISIG, so the key is its only exit; `LINGER_NO_DETACH_KEY`, set to any val
 disables it for writable attach only. -/
 def detachEnabled (readOnly : Bool) (flag : Option String) : Bool := readOnly || flag.isNone
 
-end Linger.Core.Env
+end Linger.Os.Env

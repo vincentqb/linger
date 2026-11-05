@@ -20,7 +20,7 @@ that implementation. `e2e --title-probe` is the child dispatch, not a test suite
 namespace E2E.Title
 
 open E2E.Harness
-open Linger.Posix
+open Linger.Os.Shell
 open Linger.Core.Status (Status icon)
 open Linger.Core.Terminal.Title (maxChars)
 open Linger.Core.Vt (Vt)
