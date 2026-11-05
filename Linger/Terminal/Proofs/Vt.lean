@@ -1,6 +1,8 @@
 module
 
 public import Linger.Terminal.Vt
+import Linger.Terminal.Spec
+import all Linger.Terminal.Vt
 import all Linger.Terminal.Proofs.Vt.Parser
 import all Linger.Terminal.Proofs.Vt.Renderable
 
@@ -15,10 +17,10 @@ namespace Linger.Terminal.Vt
 
 /-! ### §LiveReachable — the states a running session can actually hold
 
-The predicate a replay theorem may assume: the least set containing a fresh
-emulator and closed under the things a live session does to one — feed pty
-bytes, resize on attach, forget partial parser state (what a checkpoint
-save/load does), **and come off disk through the decoder's door**.
+`LiveReachableVt` (`Linger/Terminal/Spec.lean`) is the predicate a replay theorem may
+assume: the least set containing a fresh emulator and closed under the things a live
+session does to one — feed pty bytes, resize on attach, forget partial parser state (what a
+checkpoint save/load does), **and come off disk through the decoder's door**.
 
 **The fifth rung arrived after finding R2** (SCRATCHPAD.md), and the earlier prose
 here — "fidelity is claimed for these and not for an arbitrary decoded checkpoint,
@@ -28,7 +30,8 @@ not any more: `Vt.ofDecoded` now decides `Renderable` and the ruler as well, so
 three components the relation supplies, and `ofDecoded_u8Ok` for the fourth because
 the door *fixes* `u8need := 0` and `u8acc := 0`.
 
-The premise is the door's own conclusion (`Vt.ofDecoded … = some v`) and that is
+The premise is the door's own conclusion (`Vt.Decodable`: `Vt.ofDecoded` of the state's
+own record returns it) and that is
 load-bearing rather than stylistic. Step 3 measured a rung premised on `Good v`
 **unsound**: `Good` implies neither the grid's shape nor a zeroed UTF-8
 accumulator, so that rung broke `renderable_of_liveReachable` and
@@ -50,25 +53,24 @@ What it does **not** widen: nothing here says a ring row is the screen's width.
 3's measurement, and the reason the decoder deliberately does not validate the ring
 either. -/
 
-inductive LiveReachableVt : Vt → Prop where
-  | init (cols rows : Nat) : LiveReachableVt (Vt.init cols rows)
-  | feed {v : Vt} (h : LiveReachableVt v) (bytes : List UInt8) : LiveReachableVt (v.feed bytes)
-  | resize {v : Vt} (h : LiveReachableVt v) (cols rows : Nat) : LiveReachableVt (v.resize cols rows)
-  | quiesce {v : Vt} (h : LiveReachableVt v) : LiveReachableVt v.quiesce
-  /-- **The resume rung.** A `Vt` the decoder's door accepted is one a live session can
-  hold — not because the record on disk was trustworthy, but because the door refuses
-  every record that does not describe such a state. The premise is `Vt.ofDecoded`'s own
-  `some`, never `Good v`; see this section's docstring for why that distinction is the
-  difference between sound and unsound. -/
-  |
-  ofDecoded {cols rows : Nat} {grid : Array Row} {cursor : Cursor} {pen : Pen} {modes : Modes}
-    {top bot : Nat} {tabs : Array Bool} {sb : Ring} {altGrid : Option (Array Row × Cursor × Pen)}
-    {saved : Saved} {title : String} {g0Line g1Line shiftOut bell : Bool} {v : Vt}
+/-- **Every state the decoder's door returns is `Decodable`**: decoding its own record again
+returns it, so the resume rung admits exactly the door's outputs. -/
+theorem decodable_of_ofDecoded {cols rows : Nat} {grid : Array Row} {cursor : Cursor} {pen : Pen}
+    {modes : Modes} {top bot : Nat} {tabs : Array Bool} {sb : Ring}
+    {altGrid : Option (Array Row × Cursor × Pen)} {saved : Saved} {title : String}
+    {g0Line g1Line shiftOut bell : Bool} {v : Vt}
     (h :
       Vt.ofDecoded cols rows grid cursor pen modes top bot tabs sb altGrid saved title g0Line g1Line
           shiftOut bell =
         some v) :
-    LiveReachableVt v
+    v.Decodable := by
+  unfold Vt.ofDecoded at h
+  split at h
+  next ok =>
+    cases h
+    unfold Vt.Decodable Vt.ofDecoded
+    rw [ite_eq_left ok]
+  next => cases h
 
 /-- **The shape hypothesis, discharged.** Every state a live session can hold is
 one the row painter can express — so the replay theorem needs no side condition

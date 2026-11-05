@@ -722,6 +722,13 @@ private def Vt.ofDecoded (cols rows : Nat) (grid : Array Row) (cursor : Cursor) 
         g1Line, shiftOut, bell, pstate := .ground, u8need := 0, u8acc := 0 }
   else none
 
+/-- `v` is a state the decoder's door admits: `Vt.ofDecoded` of its own record returns it.
+Every state the door returns is one (`Vt.decodable_of_ofDecoded`). -/
+def Vt.Decodable (v : Vt) : Prop :=
+  Vt.ofDecoded v.cols v.rows v.grid v.cursor v.pen v.modes v.top v.bot v.tabs v.sb v.altGrid v.saved
+      v.title v.g0Line v.g1Line v.shiftOut v.bell =
+    some v
+
 /-! ## Grid primitives (all total) -/
 
 /-- Total row read; out of range is a blank row in the current pen. -/

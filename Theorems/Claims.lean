@@ -1,13 +1,21 @@
 module
 
 public import Linger.Session
+public import Linger.Session.Checkpoint
 public import Linger.Target.Name
 public import Linger.Target.Remote
 public import Linger.Target.Spec
 public import Linger.Terminal.Render
+public import Linger.Terminal.Spec
 import Linger.Target.Proofs.Name
 import Linger.Target.Proofs.Remote
+import all Linger.Session.Proofs.Checkpoint
 import all Linger.Session.Proofs.Session
+import all Linger.Terminal.Vt
+import all Linger.Terminal.Proofs.Vt
+import all Linger.Terminal.Proofs.Vt.Parser
+import all Linger.Terminal.Proofs.Vt.Renderable
+import all Linger.Terminal.Proofs.Render.Grid
 import all Linger.Terminal.Proofs.Render.History
 import all Linger.Terminal.Proofs.Render.Pen
 
@@ -29,9 +37,20 @@ theorem command_argv (verb : String) (words : List String) :
     Remote.Shell.Words (Remote.command verb words).toList
       (("linger" :: verb :: words).map String.toList) := Remote.command_argv verb words
 
-theorem run_bytes_isolates (s : State) (id : Nat) (chunks : List (List UInt8)) {other : Nat}
-    (h : other ≠ id) : (run s (chunks.map (Event.bytes id))).1.client? other = s.client? other :=
-  Session.run_bytes_isolates s id chunks h
+theorem restore_grid_reachable (v w : Vt.Vt) (hv : Vt.LiveReachableVt v) (hw : Vt.LiveReachableVt w)
+    (hcols : w.colCount = v.colCount) (hrows : w.rowCount = v.rowCount) :
+    (w.feed (Render.restore v)).colCount = v.colCount ∧
+      (w.feed (Render.restore v)).rowCount = v.rowCount ∧
+      ∀ y < v.rowCount, (w.feed (Render.restore v)).getRow y = v.getRow y := by
+  have dims := Vt.dims_feed (Render.restore v) (Vt.good_of_liveReachable hw)
+  simp only [Vt.dims, Prod.mk.injEq] at dims
+  have grid := Render.restore_grid_reachable v w hw hv hcols hrows
+  have size := (Vt.renderable_of_liveReachable hv).main.1
+  refine ⟨dims.1.trans hcols, dims.2.trans hrows, fun y below => ?_⟩
+  have inside : y < v.grid.size := size ▸ below
+  unfold Vt.Vt.getRow
+  rw [grid]
+  simp only [Array.getD, inside, dite_true]
 
 theorem screenText_text (v : Vt.Vt) :
     ∃ cs : List Char,
@@ -42,5 +61,17 @@ theorem screenText_text (v : Vt.Vt) :
   refine ⟨cs, ?_, safe⟩
   rw [text]
   exact congrArg (cs.flatMap ·) (funext Render.utf8_eq_utf8EncodeChar)
+
+theorem loadBytes_saveBytes_live (c : Checkpoint.Ckpt) (h : Vt.LiveReachableVt c.vt) :
+    Checkpoint.loadBytes (Checkpoint.saveBytes c) = some { c with vt := c.vt.quiesce } :=
+  Checkpoint.loadBytes_saveBytes_live c h
+
+theorem liveReachableVt_resumeVt (b : ByteArray) :
+    Vt.LiveReachableVt (bootVt ((Checkpoint.loadBytes b).map (·.vt))) :=
+  Session.liveReachableVt_resumeVt b
+
+theorem run_bytes_isolates (s : State) (id : Nat) (chunks : List (List UInt8)) {other : Nat}
+    (h : other ≠ id) : (run s (chunks.map (Event.bytes id))).1.client? other = s.client? other :=
+  Session.run_bytes_isolates s id chunks h
 
 end Linger.Claims

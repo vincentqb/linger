@@ -322,7 +322,7 @@ module_imports Linger/Terminal/Proofs/Vt.lean 'Linger/Terminal/Proofs/Vt/*' Ling
   Linger/Terminal/Proofs/Replay.lean Linger/Terminal/Proofs/Render.lean 'Linger/Terminal/Proofs/Render/*' \
 | awk -F: "$IMPORT_AWK"'
   { mod = import_mod($3)
-    if (mod !~ /^(Linger[.]Terminal[.](Vt|Render|Mediation|Title|Replay)|Linger[.]Terminal[.]Proofs[.]((Vt|Render)([.][[:alnum:]_]+)*|Mediation|Title|Replay)|Init[.]Data[.]String[.]Legacy)$/) {
+    if (mod !~ /^(Linger[.]Terminal[.](Vt|Render|Mediation|Title|Replay|Spec)|Linger[.]Terminal[.]Proofs[.]((Vt|Render)([.][[:alnum:]_]+)*|Mediation|Title|Replay)|Init[.]Data[.]String[.]Legacy)$/) {
       print "  " $0; bad = 1
     }
   }
