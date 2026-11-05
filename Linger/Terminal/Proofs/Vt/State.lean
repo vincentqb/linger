@@ -36,7 +36,8 @@ namespace Linger.Terminal.Vt
 
 `Vt.colCount`/`rowCount`/`cursorPos`/`inAlt` are the public reading of four sealed
 fields (`Linger/Terminal/Vt.lean`), for consumers outside the toolkit —
-`Linger/Session.lean` and the resume path in `Linger/Session/Shell/Daemon.lean`. Each
+`Linger/Session.lean` and the resume path in `Linger/Session/Shell/Daemon.lean` —
+and `getModes`/`getPen`/`scrollback` of three more, for the headline theorems. Each
 is a projection, so its claim is the equation that says so, and `@[simp]` is what
 earns these their keep: a proof that has a hypothesis about a field and a goal about
 the accessor needs the bridge, and without it `onMsg_attach_same_size_vt` and two
@@ -54,6 +55,15 @@ theorem cursorPos_eq (v : Vt) : v.cursorPos = (v.cursor.x, v.cursor.y) := rfl
 
 @[simp]
 theorem inAlt_eq (v : Vt) : v.inAlt = v.altGrid.isSome := rfl
+
+@[simp]
+theorem getModes_eq (v : Vt) : v.getModes = v.modes := rfl
+
+@[simp]
+theorem getPen_eq (v : Vt) : v.getPen = v.pen := rfl
+
+@[simp]
+theorem scrollback_eq (v : Vt) : v.scrollback = v.sb.toList := rfl
 
 /-- A final byte ends an ESC intermediate sequence. Only single G0/G1
 designations change a charset; unsupported intermediates are consumed. -/

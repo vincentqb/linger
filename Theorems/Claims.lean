@@ -21,8 +21,13 @@ import all Linger.Terminal.Proofs.Vt.Parser
 import all Linger.Terminal.Proofs.Vt.Renderable
 import all Linger.Terminal.Proofs.Render.Grid
 import all Linger.Terminal.Proofs.Render.History
+import all Linger.Terminal.Proofs.Render.Modes
+import all Linger.Terminal.Proofs.Render.PendingWrap
 import all Linger.Terminal.Proofs.Render.Pen
+import all Linger.Terminal.Proofs.Render.Scrollback
+import all Linger.Terminal.Proofs.Render.Sticky
 import all Linger.Terminal.Proofs.Replay
+import all Linger.Terminal.Proofs.Vt.State
 
 /-! # Proofs of the headline theorems
 
@@ -57,6 +62,20 @@ theorem restore_grid_reachable (v w : Vt.Vt) (hv : Vt.LiveReachableVt v) (hw : V
   rw [grid]
   simp only [Array.getD, inside, dite_true]
 
+theorem restore_sb_reachable (v w : Vt.Vt) (hv : Vt.LiveReachableVt v) (hw : Vt.LiveReachableVt w)
+    (hcols : w.colCount = v.colCount) (hrows : w.rowCount = v.rowCount)
+    (hne : (Render.sbRows v).isEmpty = false) :
+    (w.feed (Render.restore v)).scrollback = (Render.sbRows v).toList :=
+  Render.restore_sb_reachable v w hw hv hcols hrows hne
+
+theorem restore_cursor_reachable (v w : Vt.Vt) (hv : Vt.LiveReachableVt v)
+    (hw : Vt.LiveReachableVt w) (hcols : w.colCount = v.colCount) (hrows : w.rowCount = v.rowCount)
+    (ho : v.getModes.origin = false) : (w.feed (Render.restore v)).cursorPos = v.cursorPos := by
+  obtain ⟨x, y⟩ :=
+    Render.restore_cursor_any v w (Vt.good_of_liveReachable hv) (Vt.good_of_liveReachable hw) hcols
+      hrows ho
+  simp only [Vt.cursorPos_eq, x, y]
+
 theorem start_faithful (budget : Nat) (positive : 0 < budget) (v : Vt.Vt) :
     Replay.Emits budget (Replay.start v) (Render.restore v) := by
   rw [← Replay.start_faithful v]
@@ -71,6 +90,18 @@ theorem screenText_text (v : Vt.Vt) :
   refine ⟨cs, ?_, safe⟩
   rw [text]
   exact congrArg (cs.flatMap ·) (funext Render.utf8_eq_utf8EncodeChar)
+
+theorem leave_canonical_all (w : Vt.Vt) (h2 : 2 ≤ w.rowCount) :
+    (w.feed Render.leaveAnsi).atBoundary = true ∧
+      (w.feed Render.leaveAnsi).getModes = ({} : Vt.Modes) ∧
+      Vt.stick (w.feed Render.leaveAnsi) =
+        { rows := w.rowCount, top := 0, bot := w.rowCount - 1, g0 := false, g1 := false,
+          so := false, alt := false } ∧
+      (w.feed Render.leaveAnsi).getPen = ({} : Vt.Pen) ∧
+      (w.feed Render.leaveAnsi).windowTitle = "" := by
+  obtain ⟨_, modes, sticky, pen, title⟩ := Render.leave_canonical_all w h2
+  obtain ⟨ground, settled, _⟩ := Render.leave_boundary_title w
+  exact ⟨by simp [Vt.Vt.atBoundary, ground, settled], modes, sticky, pen, title⟩
 
 theorem loadBytes_saveBytes_live (c : Checkpoint.Ckpt) (h : Vt.LiveReachableVt c.vt) :
     Checkpoint.loadBytes (Checkpoint.saveBytes c) = some { c with vt := c.vt.quiesce } :=

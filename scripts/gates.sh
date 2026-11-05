@@ -424,10 +424,10 @@ config_want="$(printf '%s\n' "$manifest_names" | awk '
 [ "$(cat comparator.json)" = "$config_want" ] \
   || fail "comparator.json must list exactly the theorems Manifest.lean states, in its order, with the three standard axioms and no definition holes"
 # Each headline's proof is `by sorry`, however the formatter breaks the line, and the
-# Manifest declares nothing else.
+# Manifest declares nothing else. Statements may contain `:=` (structure instances), so the
+# check counts each `sorry` and each `:= by sorry`: one of each per theorem.
 manifest_code="$(code_grep '.' Manifest.lean | sed 's/^[^:]*:[0-9]*://' | tr '\n' ' ' | tr -s ' \t' '  ')"
-[ "$(code_count ':=' Manifest.lean)" -eq "$manifest_count" ] \
-  && [ "$(code_count 'sorry' Manifest.lean)" -eq "$manifest_count" ] \
+[ "$(code_count 'sorry' Manifest.lean)" -eq "$manifest_count" ] \
   && [ "$(printf '%s\n' "$manifest_code" | awk '{ print gsub(/:= by sorry([^[:alnum:]_]|$)/, "") }')" -eq "$manifest_count" ] \
   || fail "every Manifest.lean theorem must be proved by exactly 'by sorry'"
 ! code_grep '^(@[[][^]]*[]][[:space:]]*)?((private|public|protected|noncomputable)[[:space:]]+)*(def|abbrev|instance|axiom|opaque|structure|inductive|class|example|lemma)([^[:alnum:]_]|$)' \

@@ -446,21 +446,9 @@ its own transforms. Everything else the stream writes already has a layer.
 The transforms are named (`stAlt`, `stStbm`, `stCharset`, `stSetMode`) so the
 `Render` ladder composes them the way `MMap` composes `Modes` transforms. -/
 
-/-- The receiver fields `restore` establishes and then must not disturb. -/
-structure Sticky where
-  rows : Nat
-  top : Nat
-  bot : Nat
-  g0 : Bool
-  g1 : Bool
-  so : Bool
-  alt : Bool
-
-def stick (v : Vt) : Sticky :=
-  { rows := v.rows, top := v.top, bot := v.bot, g0 := v.g0Line, g1 := v.g1Line, so := v.shiftOut,
-    alt := v.altGrid.isSome }
-
-/-! The projections, as rewrite rules. `rfl` for a *variable* receiver, which is
+/-! `Sticky`, the receiver fields `restore` establishes and then must not disturb, and its
+projection `stick` are in `Linger/Terminal/Vt.lean`. The projections, as rewrite rules. `rfl`
+for a *variable* receiver, which is
 what keeps the field corollaries in `Render` from asking the elaborator to whnf a
 whole restore stream. -/
 

@@ -52,6 +52,21 @@ theorem restore_grid_reachable (v w : Vt.Vt) (hv : Vt.LiveReachableVt v) (hw : V
       ∀ y < v.rowCount, (w.feed (Render.restore v)).getRow y = v.getRow y := by
   sorry
 
+/-- Repainting a terminal a session can hold, with retained history, into another such terminal
+of the same size gives the receiver exactly the session's history as the replay budget fits
+it. -/
+theorem restore_sb_reachable (v w : Vt.Vt) (hv : Vt.LiveReachableVt v) (hw : Vt.LiveReachableVt w)
+    (hcols : w.colCount = v.colCount) (hrows : w.rowCount = v.rowCount)
+    (hne : (Render.sbRows v).isEmpty = false) :
+    (w.feed (Render.restore v)).scrollback = (Render.sbRows v).toList := by sorry
+
+/-- Outside origin mode, repainting a terminal a session can hold into another such terminal
+of the same size puts the receiver's cursor where the session's is. -/
+theorem restore_cursor_reachable (v w : Vt.Vt) (hv : Vt.LiveReachableVt v)
+    (hw : Vt.LiveReachableVt w) (hcols : w.colCount = v.colCount) (hrows : w.rowCount = v.rowCount)
+    (ho : v.getModes.origin = false) : (w.feed (Render.restore v)).cursorPos = v.cursorPos := by
+  sorry
+
 /-- Streaming a repaint with any positive byte budget per step ends, and its chunks, each within
 the budget, concatenate to exactly the complete repaint `Render.restore v`. -/
 theorem start_faithful (budget : Nat) (positive : 0 < budget) (v : Vt.Vt) :
@@ -64,6 +79,19 @@ theorem screenText_text (v : Vt.Vt) :
       Render.screenText v = cs.flatMap String.utf8EncodeChar ∧
         ∀ c ∈ cs,
           c = '\n' ∨ (0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0)) := by
+  sorry
+
+/-- The sequence linger sends a terminal it hands back leaves any terminal at least two rows
+tall between control sequences, with default modes and pen, the whole screen as its scroll
+region, ASCII character sets with G0 selected, the main screen current and an empty title. -/
+theorem leave_canonical_all (w : Vt.Vt) (h2 : 2 ≤ w.rowCount) :
+    (w.feed Render.leaveAnsi).atBoundary = true ∧
+      (w.feed Render.leaveAnsi).getModes = ({} : Vt.Modes) ∧
+      Vt.stick (w.feed Render.leaveAnsi) =
+        { rows := w.rowCount, top := 0, bot := w.rowCount - 1, g0 := false, g1 := false,
+          so := false, alt := false } ∧
+      (w.feed Render.leaveAnsi).getPen = ({} : Vt.Pen) ∧
+      (w.feed Render.leaveAnsi).windowTitle = "" := by
   sorry
 
 /-! ## Sessions -/

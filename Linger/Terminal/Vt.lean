@@ -439,8 +439,8 @@ existence and one public family of ways it changes:
   and `observe_no_history` bound its storage at the client's initial geometry.
   It is not a session restoration path.
 
-`colCount`, `rowCount`, `cursorPos`, `inAlt`, `getRow`, `getCell`, `windowTitle`
-and `atBoundary` form the public read-only surface.
+`colCount`, `rowCount`, `cursorPos`, `inAlt`, `getRow`, `getCell`, `windowTitle`,
+`atBoundary`, `getModes`, `getPen`, `scrollback` and `stick` form the public read-only surface.
 
 There is deliberately **no `Inhabited Vt`**, and its absence is part of this list rather
 than an oversight: `deriving Inhabited` produced `cols = 0, rows = 0, grid = #[]`, which
@@ -556,6 +556,38 @@ def Vt.windowTitle (v : Vt) : String := v.title
 /-- Injected terminal output is safe only between complete control sequences and
 UTF-8 characters. Ground parser state alone does not imply the latter. -/
 def Vt.atBoundary (v : Vt) : Bool := v.pstate == .ground && v.u8need == 0
+
+/-- The terminal modes in effect. -/
+def Vt.getModes (v : Vt) : Modes := v.modes
+
+/-- The pen new text is drawn with. -/
+def Vt.getPen (v : Vt) : Pen := v.pen
+
+/-- The scrollback rows, oldest first. -/
+def Vt.scrollback (v : Vt) : List Row := v.sb.toList
+
+/-- The receiver fields a repaint establishes and then must not disturb: the screen height,
+the scroll region, the character sets, the shift state and the screen selection. -/
+structure Sticky where
+  /-- Screen height. -/
+  rows : Nat
+  /-- Top row of the scroll region, 0-based. -/
+  top : Nat
+  /-- Bottom row of the scroll region, 0-based and inclusive. -/
+  bot : Nat
+  /-- G0 is DEC line drawing. -/
+  g0 : Bool
+  /-- G1 is DEC line drawing. -/
+  g1 : Bool
+  /-- Shift Out selected G1. -/
+  so : Bool
+  /-- The alternate screen is current. -/
+  alt : Bool
+
+/-- A terminal's `Sticky` fields. -/
+def stick (v : Vt) : Sticky :=
+  { rows := v.rows, top := v.top, bot := v.bot, g0 := v.g0Line, g1 := v.g1Line, so := v.shiftOut,
+    alt := v.altGrid.isSome }
 
 /-! ## The decoder's door
 
