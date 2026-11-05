@@ -1,0 +1,200 @@
+module
+
+import Linger.Os.Shell
+public import Linger.Session
+import Linger.Session.Wire
+import Linger.Session.Buf
+import Linger.Session.Shell.Client
+import Linger.Session.Shell.Paths
+import Linger.Display.Listing
+import Linger.Display.Status
+
+public section
+
+/-! # Linger.Session.Shell.Inventory — which local sessions exist, and in what state
+
+One info conversation per live socket under an absolute deadline, a bounded number at once,
+and a failed-connect socket removed only under its name lock; then each checkpoint whose
+name no live session confirmed. The listing, the prompt summary, `get` and the tmux importer
+all read sessions through this module. -/
+
+namespace Linger.Session.Shell.Inventory
+
+open Linger.Os.Shell
+
+/-- Bound on accumulated `infoReply` bytes, independent of the request deadline.
+A peer exceeding the producer's policy has not supplied a usable answer. -/
+abbrev infoReplyCap : Nat := Linger.Session.infoReplyCap
+
+/-- One connected info conversation, bounded by an absolute request window.
+Only `done` completes an answer; a failed prefix is never returned as info. -/
+def readInfo (fd : UInt32) (stopAt : Option Nat := none) : IO (List (String × String)) := do
+  Client.sendMsg fd .info
+  let deadline := stopAt.getD ((← monotonicMs) + 2000)
+  let mut dec : Linger.Session.Wire.Decoder := {}
+  let mut acc : Linger.Session.Buf.Buf := .empty
+  let mut go := true
+  while go && (← monotonicMs) < deadline do
+    let remaining := deadline - (← monotonicMs)
+    let revs ← poll #[fd] #[POLLIN] (Int32.ofNat (min 100 remaining))
+    if revs[0]! == 0 then
+      continue
+    match ← read fd 65536 with
+    | none =>
+      throw (IO.userError "connection lost before info completed")
+    | some bs =>
+      if bs.isEmpty then
+        continue
+      let (dec', msgs) := dec.feed bs.toList
+      dec := dec'
+      if dec.errored then
+        throw (IO.userError "invalid response from daemon")
+      else
+        for m in msgs do
+          if !go then
+            continue
+          match m with
+          | .infoReply payload =>
+            let (next, dropped) :=
+              Linger.Session.Buf.bufOffer infoReplyCap acc (ByteArray.mk payload.toArray)
+            if dropped then
+              throw (IO.userError "info reply exceeds the byte limit")
+            acc := next
+          | .done =>
+            go := false
+          | .err payload =>
+            throw (IO.userError (Client.replyText "info request refused" payload))
+          | .exited status =>
+            throw (IO.userError s!"session ended before info completed (status {status})")
+          | _ =>
+            throw (IO.userError "unexpected response to info")
+  if go then
+    throw (IO.userError "no reply completed within the info deadline")
+  let some txt :=
+    String.fromUTF8?
+      (Linger.Session.Buf.writeFrom acc) | throw (IO.userError "invalid UTF-8 in info reply")
+  (txt.splitOn "\n").filter (· != "") |>.mapM fun line =>
+      match line.splitOn "\t" with
+      | [k, v] => pure (k, v)
+      | _ => throw (IO.userError "invalid info record")
+
+/-- Keep connection absence separate from an info failure: listing must retain
+a connected peer, while `get` must report its unanswered request. -/
+def queryInfo (name : String) (stopAt : Option Nat := none) (retainUnavailable : Bool := true) :
+    IO (Option (Except IO.Error (List (String × String)))) := do
+  if let some deadline := stopAt then
+    if (← monotonicMs) ≥ deadline then
+      return some (.error (IO.userError "overview deadline reached"))
+  match ← Client.connect name stopAt.isSome with
+  | none =>
+    if stopAt.isSome && retainUnavailable then
+      return some (.error (IO.userError "overview connection unavailable"))
+    return none
+  | some fd =>
+    try
+      let info ← (readInfo fd stopAt).toBaseIO
+      return some info
+    finally
+      close fd
+
+/-- Maximum simultaneous local overview queries. -/
+private abbrev localQueryLimit : Nat := 32
+
+/-- Bounded socket conversations run against the same deadline.
+Results retain their input positions; every started task is joined, even on error. -/
+private def queryInfos (names : Array String) (deadline : Nat) (retainUnavailable : Bool) :
+    IO (Array (Option (Except IO.Error (List (String × String))))) := do
+  let unknown := some (.error (IO.userError "overview deadline reached"))
+  let mut results := Array.replicate names.size unknown
+  let pending ←
+    IO.mkRef
+        (#[] :
+          Array (Nat × Task (Except IO.Error (Option (Except IO.Error (List (String × String)))))))
+  let mut next := 0
+  try
+    while next < names.size || !(← pending.get).isEmpty do
+      while
+        next < names.size && (← pending.get).size < localQueryLimit && (← monotonicMs) < deadline do
+        let index := next
+        let task ←
+          IO.asTask (queryInfo names[index]! (some deadline) retainUnavailable)
+              Task.Priority.dedicated
+        pending.modify (·.push (index, task))
+        next := next + 1
+      let mut running := #[]
+      for (index, task) in ← pending.get do
+        if ← IO.hasFinished task then
+          let result ← IO.wait task
+          results :=
+            results.set! index
+              (match result with
+              | .ok info => info
+              | .error e => some (.error e))
+        else
+          running := running.push (index, task)
+      pending.set running
+      if running.isEmpty && (← monotonicMs) ≥ deadline then
+        break
+      if !running.isEmpty then
+        IO.sleep 1
+    return results
+  finally
+    for (_, task) in ← pending.get do
+      discard <| IO.wait task
+
+/-- Remove a failed-connect socket only while holding its name lock. `false`
+means another owner holds the lock or the probe itself failed; both fail closed. -/
+private def removeStaleSocket (name : String) : IO Bool := do
+  try
+    Paths.withLock (← Paths.lockPath name) do
+        try
+          IO.FS.removeFile (← Paths.socketPath name)
+        catch _ =>
+          pure ()
+        return true
+  catch _ =>
+    return false
+
+/-- Common local snapshot for the listing and prompt. Concurrent queries share
+one deadline (two seconds for a listing); unqueried peers stay unknown. -/
+def localRows (stopAt : Option Nat := none) : IO (List (List (String × String))) := do
+  let deadline := stopAt.getD ((← monotonicMs) + 2000)
+  let sockets := (← Paths.listSocketNames).toArray.qsort (· < ·)
+  let ckpts := (← Paths.listCkptNames).toArray.qsort (· < ·) |>.toList
+  let infos ← queryInfos sockets deadline stopAt.isSome
+  let liveRow := fun name info =>
+    Linger.Display.Listing.rowFields name info ++
+      [("state", "live"),
+        ("status", Linger.Display.Status.name (Linger.Display.Listing.rowStatus (.live info)))]
+  let mut confirmedLive : List String := []
+  let mut rows : List (List (String × String)) := []
+  for (name, result) in sockets.zip infos do
+    match result with
+    | some info =>
+      confirmedLive := confirmedLive ++ [name]
+      rows := rows ++ [liveRow name (info.toOption.getD [])]
+    | none =>
+      if !(← removeStaleSocket name) then
+        -- Failed connect while another process owns (or may own) the name: keep
+        -- the rendezvous path and list the identity as live/unknown.
+        confirmedLive := confirmedLive ++ [name]
+        rows := rows ++ [liveRow name []]
+  for name in ckpts do
+    if !confirmedLive.contains name then
+      let available ←
+        try
+          Paths.withSessionLock name (pure true)
+        catch _ =>
+          pure false
+      -- Another runtime directory may share this checkpoint namespace.
+      -- A busy or unreadable lock cannot establish that the session is offline.
+      rows :=
+        rows ++
+          [if available then
+              Linger.Display.Listing.rowFields name
+                [("state", "resumable"),
+                  ("status", Linger.Display.Status.name (Linger.Display.Listing.rowStatus .stale))]
+            else liveRow name []]
+  return rows
+
+end Linger.Session.Shell.Inventory

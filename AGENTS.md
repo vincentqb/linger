@@ -58,8 +58,7 @@ dispatch, and pushes or pull requests that change `c/shim.c` or `./lake`.
 - `scripts/`: build and verification orchestration.
 
 Components depend downward only: `Os`, `Target` and `Terminal`; then `Display`; then `Session`
-and `Selector`; then `Import`; then `App`. `Import`'s shell still lists sessions through the
-`App` shell.
+and `Selector`; then `Import`; then `App`.
 
 Keep module paths and namespaces aligned. Use ordinary `import` for implementation
 dependencies; reserve `public import` for types in the public interface and

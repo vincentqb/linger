@@ -5,7 +5,7 @@ import Linger.Os.Shell
 import Linger.Display.Listing
 import Linger.Session.Shell.Paths
 import Linger.Session.Shell.Resume
-import Linger.App.Shell
+import Linger.Session.Shell.Inventory
 import Linger.Os.Shell.Command
 import Linger.Target.Remote
 import Linger.Selector.Shell
@@ -412,7 +412,7 @@ private def selectSave (executable : String) (file : Option String) : IO UInt32 
 /-- A failed live observation must not export a stale startup directory.
 Checkpoint decoding supplies the cwd for resumable sessions. -/
 private def snapshot : IO (List (String × String)) := do
-  let rows ← App.Shell.localRows
+  let rows ← Inventory.localRows
   rows.mapM fun row => do
       let name := (row.lookup "name").getD ""
       let dir ←

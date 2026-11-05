@@ -349,7 +349,7 @@ import_closure Linger/Os/Boundary.lean ''
     import_mod($3) == "Linger.Os.Boundary" && !seen[$1]++ { print $1 }')" = "Linger/Os/Shell.lean" ] \
   || fail "a module other than Linger/Os/Shell.lean imports Linger.Os.Boundary"
 import_closure Linger/Os/Shell/Command.lean 'import Linger.Os.Shell;'
-import_closure Linger/Import/Shell.lean 'import Linger.Import.Resurrect;import Linger.Os.Shell;import Linger.Display.Listing;import Linger.Session.Shell.Paths;import Linger.Session.Shell.Resume;import Linger.App.Shell;import Linger.Os.Shell.Command;import Linger.Target.Remote;import Linger.Selector.Shell;import Std.Async.System;'
+import_closure Linger/Import/Shell.lean 'import Linger.Import.Resurrect;import Linger.Os.Shell;import Linger.Display.Listing;import Linger.Session.Shell.Paths;import Linger.Session.Shell.Resume;import Linger.Session.Shell.Inventory;import Linger.Os.Shell.Command;import Linger.Target.Remote;import Linger.Selector.Shell;import Std.Async.System;'
 import_closure Linger/Selector/Shell.lean \
   'public import Linger.Selector.Picker;import Linger.Os.Shell;import Linger.Display.Listing;import Linger.Target.Remote;import Linger.Terminal.Title;import Linger.Os.Shell.Command;'
 import_closure Main.lean \
@@ -360,7 +360,8 @@ import_closure Linger.lean "$(printf 'public import Linger.%s;' Session.Buf Os.S
   Terminal.Vt Terminal.Render Terminal.Mediation Terminal.Title Target.Name Session \
   Session.Driver Session.Checkpoint \
   Target.Remote Display.Listing Display.Status Display.Title Os.Env Session.Shell.Paths \
-  Os.Shell.Command Session.Shell.Daemon Session.Shell.Client App.Shell Session.Shell.Resume)"
+  Os.Shell.Command Session.Shell.Daemon Session.Shell.Client Session.Shell.Inventory App.Shell \
+  Session.Shell.Resume)"
 module_imports Linger/Session.lean ':(glob)Linger/Session/*.lean' 'Linger/Session/Shell/*' \
     Linger/Os/Shell/Command.lean Linger/App/Shell.lean Linger/Os/Boundary.lean Linger/Os/Shell.lean \
     Linger/Os/Env.lean Linger/Target/Name.lean Linger/Target/Remote.lean Linger/Display/Status.lean \
@@ -374,6 +375,25 @@ module_imports Linger/Session.lean ':(glob)Linger/Session/*.lean' 'Linger/Sessio
     }
   }
   END { exit bad }' >&2 || fail "the session library imports outside its declared closure"
+
+# Components depend downward only, as AGENTS.md's layout lists them: a module imports
+# modules of its own component or of a lower layer, never a peer's or a higher one's.
+# Suites run the composed program and may import any component. A component this table
+# does not name fails, so a new one has to be placed before it can import anything.
+component_layers='Os:0 Target:0 Terminal:0 Display:1 Session:2 Selector:2 Import:3 App:4'
+layer_bad="$(module_imports 'Linger/*' ':!Linger/*/Suites/*' \
+| awk -F: -v layers="$component_layers" "$IMPORT_AWK"'
+  BEGIN { n = split(layers, L, " ")
+          for (i = 1; i <= n; i++) { split(L[i], kv, ":"); rank[kv[1]] = kv[2] } }
+  { src = $1; sub(/^Linger[/]/, "", src); sub(/[/.].*/, "", src)
+    mod = import_mod($3)
+    if (mod !~ /^Linger[.][A-Za-z]/) next
+    dst = mod; sub(/^Linger[.]/, "", dst); sub(/[.].*/, "", dst)
+    if (!(src in rank) || !(dst in rank)) { print "  unplaced component: " $1 ": " $3; next }
+    if (dst != src && rank[dst] >= rank[src]) print "  " $1 ": " $3 }')"
+[ -z "$layer_bad" ] || {
+  printf '%s\n' "$layer_bad" >&2
+  fail "a component imports a peer or a higher layer (layers: $component_layers)"; }
 
 # Pure route proofs do not observe terminal IO or inspect Main's call sites.
 # Pin dispatch before terminal observations, exact argv and executable identity;
@@ -611,13 +631,19 @@ for tie in \
   'def summaryText : IO String := do let rows ← localRows [(]some [(][(]← monotonicMs[)] [+] 250[)][)] return Linger[.]Display[.]Status[.]summary [(]rows[.]map fun info => Linger[.]Display[.]Status[.]ofName [(][(]info[.]lookup "status"[)][.]getD "unknown"[)][)]' \
   'def cmdSummary : IO UInt32 := do let summary ← summaryText if !summary[.]isEmpty then IO[.]println summary return 0' \
   'let fd ← connectUpsert name cmd Client[.]attach name fd summaryText' \
+  '[|] [[]"ls", "--summary"[]] [|] [[]"list", "--summary"[]] [|] [[]"l", "--summary"[]] => cmdSummary'; do
+  printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+    || fail "listing or prompt bypassed its shared policy: $tie"
+done
+# The session inventory the listing, the prompt summary, `get` and the importer share.
+inventory_code="$(awk '{ $1 = $1; printf "%s ", $0 }' Linger/Session/Shell/Inventory.lean)"
+for tie in \
   'if let some deadline := stopAt then if [(]← monotonicMs[)] ≥ deadline then return some [(][.]error [(]IO[.]userError "overview deadline reached"[)][)] match ← Client[.]connect name stopAt[.]isSome with [|] none => if stopAt[.]isSome && retainUnavailable then return some [(][.]error [(]IO[.]userError "overview connection unavailable"[)][)] return none [|] some fd => try let info ← [(]readInfo fd stopAt[)][.]toBaseIO return some info finally close fd' \
   'Client[.]sendMsg fd [.]info let deadline := stopAt[.]getD [(][(]← monotonicMs[)] [+] 2000[)]' \
   'while go && [(]← monotonicMs[)] < deadline do let remaining := deadline - [(]← monotonicMs[)] let revs ← poll #[[]fd[]] #[[]POLLIN[]] [(]Int32[.]ofNat [(]min 100 remaining[)][)]' \
   'let infos ← queryInfos sockets deadline stopAt[.]isSome' \
-  'for [(]name, result[)] in sockets[.]zip infos do match result with [|] some info => confirmedLive := confirmedLive [+][+] [[]name[]] rows := rows [+][+] [[]liveRow name [(]info[.]toOption[.]getD [[][]][)][]] [|] none => if ![(]← removeStaleSocket name[)] then' \
-  '[|] [[]"ls", "--summary"[]] [|] [[]"list", "--summary"[]] [|] [[]"l", "--summary"[]] => cmdSummary'; do
-  printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+  'for [(]name, result[)] in sockets[.]zip infos do match result with [|] some info => confirmedLive := confirmedLive [+][+] [[]name[]] rows := rows [+][+] [[]liveRow name [(]info[.]toOption[.]getD [[][]][)][]] [|] none => if ![(]← removeStaleSocket name[)] then'; do
+  printf '%s\n' "$inventory_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "listing or prompt bypassed its shared policy: $tie"
 done
 # Environment policies decide unset and empty values for every input. The runtime
@@ -641,15 +667,19 @@ done
 # reaches those groups through its listing helper. Linger.Target.Suites.Remote checks overlap,
 # output order, slot reuse, shared deadlines and descendant cleanup.
 for tie in \
-  'while next < names[.]size && [(]← pending[.]get[)][.]size < localQueryLimit && [(]← monotonicMs[)] < deadline do' \
-  'IO[.]asTask [(]queryInfo names[[]index[]]! [(]some deadline[)] retainUnavailable[)] Task[.]Priority[.]dedicated' \
-  'finally for [(]_, task[)] in ← pending[.]get do discard <[|] IO[.]wait task' \
   'for signal in [[]Std[.]Async[.]Signal[.]sigterm, [.]sigint, [.]sighup[]] do let waiter ← Std[.]Async[.]Signal[.]Waiter[.]mk signal true try let task ← waiter[.]wait signals[.]modify [(]·[.]push [(]waiter, task[)][)] catch e => waiter[.]stop throw e let deadline := [(]← monotonicMs[)] [+] remoteQueryTimeoutMs' \
   'for [(]_, signal[)] in ← signals[.]get do if [(]← signal[.]getState[)] == [.]finished then return none if [(]← monotonicMs[)] ≥ deadline then break' \
   'while next < hosts[.]size && [(]← jobs[.]get[)][.]size < remoteQueryLimit && [(]← monotonicMs[)] < deadline do' \
   'finally for [(]_, pending[)] in ← jobs[.]get do try Command[.]stop pending catch _ => pure [(][)] for [(]waiter, _[)] in ← signals[.]get do waiter[.]stop' \
   'let task ← IO[.]asTask localRows Task[.]Priority[.]dedicated try let remote ← listRemotes remotes[.]toArray let locals ← IO[.]ofExcept [(]← IO[.]wait task[)] pure [(]locals, remote[)] finally discard <[|] IO[.]wait task'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+    || fail "discovery lost its bounded task or process ownership: $tie"
+done
+for tie in \
+  'while next < names[.]size && [(]← pending[.]get[)][.]size < localQueryLimit && [(]← monotonicMs[)] < deadline do' \
+  'IO[.]asTask [(]queryInfo names[[]index[]]! [(]some deadline[)] retainUnavailable[)] Task[.]Priority[.]dedicated' \
+  'finally for [(]_, task[)] in ← pending[.]get do discard <[|] IO[.]wait task'; do
+  printf '%s\n' "$inventory_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "discovery lost its bounded task or process ownership: $tie"
 done
 code_grep '^[[:space:]]+let r ← unixConnect path nonblocking$' Linger/Session/Shell/Client.lean >/dev/null \
@@ -965,9 +995,9 @@ code_grep '^[[:space:]]+rt[.]saveCkpt st$' 'Linger/Session/Shell/Daemon.lean' > 
 # keep the IO accumulator on that same policy rather than a copied number.
 code_grep '^theorem onMsg_info_bounded ' 'Linger/Session/Proofs/Session.lean' > /dev/null \
   || fail "the info producer's framing theorem disappeared"
-code_grep '^abbrev infoReplyCap : Nat := Linger[.]Session[.]infoReplyCap$' 'Linger/App/Shell.lean' > /dev/null \
-  || fail "the CLI info policy diverged from the proved producer"
-code_grep '^[[:space:]]+Linger[.]Session[.]Buf[.]bufOffer infoReplyCap acc [(]ByteArray[.]mk payload[.]toArray[)]$' 'Linger/App/Shell.lean' > /dev/null \
+code_grep '^abbrev infoReplyCap : Nat := Linger[.]Session[.]infoReplyCap$' 'Linger/Session/Shell/Inventory.lean' > /dev/null \
+  || fail "the inventory's info policy diverged from the proved producer"
+code_grep '^[[:space:]]+Linger[.]Session[.]Buf[.]bufOffer infoReplyCap acc [(]ByteArray[.]mk payload[.]toArray[)]$' 'Linger/Session/Shell/Inventory.lean' > /dev/null \
   || fail "the info accumulator no longer uses the shared byte policy"
 
 # All session verbs consume the same exact target parser. Fuzzy matching stays
@@ -1079,11 +1109,13 @@ for tie in \
 done
 for tie in \
   'requestStatus name result [|] none => Paths[.]withSessionLock name do match ← Resume[.]loadCkpt name with [|] some [(]vt, _, _[)] => writeAll stdoutFd [(]ByteArray[.]mk [(]render vt[)][.]toArray[)]' \
-  'if readOnly then match ← Client[.]connect name with [|] some fd => Client[.]attach name fd summaryText true [|] none => let checkpoint ← Paths[.]withSessionLock name [(]Resume[.]loadCkpt name[)] match checkpoint with [|] some [(]vt, _, _[)] => Client[.]viewSaved name vt' \
-  'let available ← try Paths[.]withSessionLock name [(]pure true[)] catch _ => pure false'; do
+  'if readOnly then match ← Client[.]connect name with [|] some fd => Client[.]attach name fd summaryText true [|] none => let checkpoint ← Paths[.]withSessionLock name [(]Resume[.]loadCkpt name[)] match checkpoint with [|] some [(]vt, _, _[)] => Client[.]viewSaved name vt'; do
   printf '%s\n' "$cli_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
     || fail "offline reading or listing bypassed ownership: $tie"
 done
+tie='let available ← try Paths[.]withSessionLock name [(]pure true[)] catch _ => pure false'
+printf '%s\n' "$inventory_code" | CG_RE="(^|[[:space:]])$tie([[:space:]]|$)" awk "$CODE_AWK" >/dev/null \
+  || fail "offline reading or listing bypassed ownership: $tie"
 # Saved viewing consumes the bounded, faithful replay cursor. The original
 # snapshot survives every resize, and the immutable load precedes terminal IO.
 # Linger.Session.Suites.Watch observes input discard, lock release, exact replay and handback.
