@@ -87,7 +87,7 @@ private def readU32 (l : List UInt8) : UInt32 :=
 
 /-- A message's frame tag: 0 to 16 for the assigned messages, and an `unknown` message's
 own tag. -/
-def Msg.tag : Msg → UInt8
+private def Msg.tag : Msg → UInt8
   | .input _ => 0
   | .output _ => 1
   | .resize _ _ => 2
@@ -113,7 +113,7 @@ private def knownTag (t : UInt8) : Bool := t ≤ 16
 /-- A message's frame payload: the raw bytes it carries, its sizes or exit status through
 `writeU32`, or nothing. `decodeMsg` recovers a well-formed message from its tag and payload
 (`decodeMsg_roundtrip`). -/
-def Msg.payload : Msg → List UInt8
+private def Msg.payload : Msg → List UInt8
   | .input b | .output b | .infoReply b | .err b | .labelSet b | .labelUnset b => b
   | .resize c r | .attach c r => writeU32 c ++ writeU32 r
   | .exited s => writeU32 s

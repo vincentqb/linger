@@ -2,6 +2,7 @@ module
 
 import Linger.Manager.Picker
 import Linger.Manager.Resurrect
+import Linger.Core.Listing
 import Linger.Core.Name
 import Linger.Core.Remote
 import Linger.Core.Terminal

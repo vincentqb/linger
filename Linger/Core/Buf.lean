@@ -71,7 +71,7 @@ def owedLen (b : Buf) : Nat := b.bytes.size
 
 /-- Retained logical byte length. It coincides with the debt by construction
 (`bufSize_eq_owedLen`); allocator capacity and object overhead are not measured. -/
-def bufSize (b : Buf) : Nat := b.bytes.size
+private def bufSize (b : Buf) : Nat := b.bytes.size
 
 /-- Allowance for a following queue that shares a cap with the front queue.
 Reserve at least one complete frame, so a full following queue cannot prevent

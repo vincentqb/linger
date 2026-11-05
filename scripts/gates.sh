@@ -297,7 +297,7 @@ module_imports Theorems/Vt.lean 'Theorems/Vt/*' Theorems/Terminal.lean Theorems/
 import_closure Linger/Tools/Resurrect.lean 'import Linger.Core.Name;import Linger.Core.Status;public import Linger.Core.Checkpoint;'
 import_closure Linger/Tools/Key.lean 'public import Linger.Tools.Input;'
 import_closure Linger/Tools/Fuzzy.lean ''
-import_closure Linger/Tools/Picker.lean 'public import Linger.Tools.Key;import Linger.Tools.Fuzzy;import Linger.Core.Name;public import Linger.Core.Listing;import Linger.Core.Remote;import Linger.Core.Vt;'
+import_closure Linger/Tools/Picker.lean 'public import Linger.Tools.Key;import Linger.Tools.Fuzzy;import Linger.Core.Name;import Linger.Core.Listing;public import Linger.Core.Status;import Linger.Core.Remote;import Linger.Core.Vt;'
 import_closure Linger/Tools/Input.lean ''
 import_closure Theorems/Input.lean 'public import Linger.Tools.Input;import all Linger.Tools.Input;'
 import_closure Linger/Tools/Entry.lean ''
@@ -306,9 +306,9 @@ import_closure Linger/Core/Remote.lean 'import Linger.Core.Name;'
 import_closure Linger/Core/Title.lean 'import Linger.Core.Name;'
 import_closure Linger/Core/Env.lean ''
 import_closure Linger/Runtime/Command.lean 'import Linger.Posix;'
-import_closure Linger/Manager/Resurrect.lean 'import Linger.Tools.Resurrect;import Linger.Posix;import Linger.Runtime.Paths;import Linger.Runtime.Resume;import Linger.Runtime.Cli;import Linger.Runtime.Command;import Linger.Core.Remote;import Linger.Manager.Picker;import Std.Async.System;'
+import_closure Linger/Manager/Resurrect.lean 'import Linger.Tools.Resurrect;import Linger.Posix;import Linger.Core.Listing;import Linger.Runtime.Paths;import Linger.Runtime.Resume;import Linger.Runtime.Cli;import Linger.Runtime.Command;import Linger.Core.Remote;import Linger.Manager.Picker;import Std.Async.System;'
 import_closure Linger/Manager/Picker.lean \
-  'public import Linger.Tools.Picker;import Linger.Posix;import Linger.Core.Remote;import Linger.Core.Terminal;import Linger.Runtime.Command;'
+  'public import Linger.Tools.Picker;import Linger.Posix;import Linger.Core.Listing;import Linger.Core.Remote;import Linger.Core.Terminal;import Linger.Runtime.Command;'
 import_closure Main.lean \
   'import Linger.Runtime.Cli;import Linger.Tools.Entry;import Linger.Manager.Picker;import Linger.Manager.Resurrect;'
 # `lean_lib Linger` builds the umbrella's closure, so this list is what `./lake build`

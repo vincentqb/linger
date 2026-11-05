@@ -2,7 +2,7 @@ module
 
 -- The round-trip fixtures compare fields on both sides and run compiled under `native_decide`.
 import all Linger.Core.Vt
-import Linger.Core.Render
+import all Linger.Core.Render
 meta import Linger.Core.Render
 
 /-! # §Replay round-trip tests — restore fidelity, executable form

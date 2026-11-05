@@ -61,7 +61,7 @@ structure Result (World : Type) where
 
 /-- Execute a finite effect list in order, retaining the proof that each
 feedback event has lower depth than the event that produced this batch. -/
-def effects {m : Type → Type} [Monad m] {World : Type}
+private def effects {m : Type → Type} [Monad m] {World : Type}
     (execute : State → World → (eff : Effect) → m (World × Reply eff)) (st : State) (world : World)
     (depth : Nat) (effs : List Effect) (h : ∀ eff ∈ effs, effectDepth eff ≤ depth) :
     m (World × List { ev : Event // eventDepth ev < depth }) := do
@@ -81,7 +81,7 @@ def effects {m : Type → Type} [Monad m] {World : Type}
 
 /-- Settle one event and its feedback before consuming another external event.
 Recursion is justified by feedback depth, never by a retry count or fuel. -/
-def handle {m : Type → Type} [Monad m] {World : Type}
+private def handle {m : Type → Type} [Monad m] {World : Type}
     (execute : State → World → (eff : Effect) → m (World × Reply eff)) (r : Result World)
     (ev : Event) : m (Result World) := do
   if r.exiting then

@@ -83,7 +83,8 @@ structure Cell where
 
 /-- An erased cell: blank, but keeps the erasing pen's background
 (BCE), which is what makes full-screen apps restore correctly. -/
-def Cell.erased (p : Pen) : Cell := { base := ' ', marks := [], width := 1, pen := { bg := p.bg } }
+private def Cell.erased (p : Pen) : Cell :=
+  { base := ' ', marks := [], width := 1, pen := { bg := p.bg } }
 
 /-! ## Character width (minimal wcwidth)
 
@@ -93,7 +94,7 @@ width here mis-aligns a restore but can never crash anything (§Total
 does not depend on this table). -/
 
 /-- Is the codepoint zero-width: a combining mark, variation selector, ZWSP, ZWNJ, ZWJ or BOM? -/
-def isZeroWidth (c : Nat) : Bool :=
+private def isZeroWidth (c : Nat) : Bool :=
   (0x0300 ≤ c && c ≤ 0x036F) || -- combining diacritics
     (0x1AB0 ≤ c && c ≤ 0x1AFF) ||
     (0x20D0 ≤ c && c ≤ 0x20FF) ||
@@ -105,7 +106,7 @@ def isZeroWidth (c : Nat) : Bool :=
     c == 0xFEFF
 
 /-- Is the codepoint East Asian wide or an emoji, occupying two columns? -/
-def isWide (c : Nat) : Bool :=
+private def isWide (c : Nat) : Bool :=
   (0x1100 ≤ c && c ≤ 0x115F) || -- Hangul Jamo leads
     (0x2E80 ≤ c && c ≤ 0x303E) || -- CJK radicals … punctuation
     (0x3041 ≤ c && c ≤ 0x33FF) || -- kana, CJK misc
@@ -143,12 +144,12 @@ def printableChar (c : Char) : Char := if c.toNat < 0x20 || c.toNat == 0x7F then
 abbrev Row := Array Cell
 
 /-- A row of `cols` erased cells keeping pen `p`'s background. -/
-def blankRow (cols : Nat) (p : Pen) : Row := Array.replicate cols (Cell.erased p)
+private def blankRow (cols : Nat) (p : Pen) : Row := Array.replicate cols (Cell.erased p)
 
 /-- The continuation cell a width-2 base owns: a blank carrying the base's
 pen. Exactly what repainting the base re-creates, which is why a shadow may
 hold nothing of its own — see `Row.mendAt`. -/
-def Cell.shadow (c : Cell) : Cell := { base := ' ', marks := [], width := 0, pen := c.pen }
+private def Cell.shadow (c : Cell) : Cell := { base := ' ', marks := [], width := 0, pen := c.pen }
 
 /-- Total cell read; out of range is a default (width-1) cell. -/
 @[inline]
@@ -159,7 +160,7 @@ width-2 base with no shadow on its right, or a shadow with no base on its
 left. Out-of-range reads are width 1, so a base in the final column counts
 as broken — fix 11's rule, stated once instead of per operation. -/
 @[inline]
-def Row.halfPair (row : Row) (x : Nat) : Bool :=
+private def Row.halfPair (row : Row) (x : Nat) : Bool :=
   let c := row.at x
   (c.width == 2 && (row.at (x + 1)).width != 0) ||
     (c.width == 0 && (x == 0 || (row.at (x - 1)).width != 2))
@@ -168,7 +169,7 @@ def Row.halfPair (row : Row) (x : Nat) : Bool :=
 whole pair's shadow, so a shadow carries exactly what a repaint of its base
 re-creates and nothing of its own. -/
 @[inline]
-def Row.mendAt (row : Row) (x : Nat) : Row :=
+private def Row.mendAt (row : Row) (x : Nat) : Row :=
   if row.halfPair x then row.setIfInBounds x (Cell.erased (row.at x).pen)
   else if (row.at x).width == 0 then row.setIfInBounds x (Cell.shadow (row.at (x - 1))) else row
 
@@ -295,12 +296,12 @@ structure Ring where
 def sbCap : Nat := 10000
 
 /-- Append a row, overwriting the oldest once the ring holds `sbCap` rows. -/
-def Ring.push (r : Ring) (row : Row) : Ring :=
+private def Ring.push (r : Ring) (row : Row) : Ring :=
   if r.data.size < sbCap then { r with data := r.data.push row }
   else { data := r.data.setIfInBounds r.start row, start := (r.start + 1) % sbCap }
 
 /-- Number of rows retained. -/
-def Ring.size (r : Ring) : Nat := r.data.size
+private def Ring.size (r : Ring) : Nat := r.data.size
 
 /-- Oldest-first. -/
 def Ring.toList (r : Ring) : List Row :=
@@ -509,7 +510,8 @@ structure Vt where
 def clampDim (n : Nat) : Nat := min (max n 1) 1000
 
 /-- The default tab ruler: a stop every eight columns after column 0. -/
-def defaultTabs (cols : Nat) : Array Bool := (Array.range cols).map (fun i => i % 8 == 0 && i != 0)
+private def defaultTabs (cols : Nat) : Array Bool :=
+  (Array.range cols).map (fun i => i % 8 == 0 && i != 0)
 
 /-- A fresh screen with each dimension clamped to [1, 1000]. -/
 def Vt.init (cols rows : Nat) : Vt :=
@@ -851,7 +853,7 @@ private def Vt.backTab (v : Vt) : Vt :=
 /-! ## Printing -/
 
 /-- DEC special graphics for box drawing (ESC ( 0). -/
-def decLine (c : Char) : Char :=
+private def decLine (c : Char) : Char :=
   match c with
   | 'j' => '┘'
   | 'k' => '┐'
@@ -1047,7 +1049,7 @@ private def Vt.eraseChars (v : Vt) (n : Nat) : Vt :=
 /-! ## SGR -/
 
 /-- A 256-colour palette index, saturating at 255. -/
-def color256 (n : Nat) : Color := .idx (UInt8.ofNat (min n 255))
+private def color256 (n : Nat) : Color := .idx (UInt8.ofNat (min n 255))
 
 /-- One single-number SGR code: a reset, an attribute or a 16-colour index; others are no-ops. -/
 private def Vt.sgrAttr (p : Pen) (n : Nat) : Pen :=
@@ -1151,7 +1153,7 @@ result's width and cell contents are one step from the definition — the proofs
 (`rowOk_resizeRow`) would otherwise be index arithmetic over two array shapes.
 Semantics are unchanged: column `i` keeps its cell when the old row had one, and
 is a blank otherwise. -/
-def resizeRow (row : Row) (cols : Nat) (p : Pen) : Row :=
+private def resizeRow (row : Row) (cols : Nat) (p : Pen) : Row :=
   Row.mend
     ((Array.range cols).map (fun i => if i < row.size then row.getD i default else Cell.erased p))
 
@@ -1190,7 +1192,7 @@ def Vt.resize (v : Vt) (cols rows : Nat) : Vt :=
 /-! ## CSI dispatch -/
 
 /-- CSI parameter `i`, reading an omitted or zero value as the given default. -/
-def CsiState.arg (s : CsiState) (i default_ : Nat) : Nat :=
+private def CsiState.arg (s : CsiState) (i default_ : Nat) : Nat :=
   match (s.params.getD i (0, false)).1 with
   | 0 => default_
   | n => n
@@ -1286,7 +1288,7 @@ private def Vt.csiDispatch (v : Vt) (s : CsiState) (final : UInt8) : Vt :=
 
 /-- A separator closes a parameter, including an omitted one. The empty-prefix
 case still contributes a slot; otherwise `CSI ;5H` would be read as `CSI 5H`. -/
-def csiPush (s : CsiState) (sub : Bool) : CsiState :=
+private def csiPush (s : CsiState) (sub : Bool) : CsiState :=
   if s.params.size ≥ 16 then
     { s with
       ignore := true, cur := 0, haveCur := false }

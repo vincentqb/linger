@@ -2,6 +2,7 @@ module
 
 public import Linger.Tools.Picker
 import Linger.Posix
+import Linger.Core.Listing
 import Linger.Core.Remote
 import Linger.Core.Terminal
 import Linger.Runtime.Command

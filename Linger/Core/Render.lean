@@ -58,7 +58,7 @@ C0 control or DEL (which the parser would execute rather than print).
 Cells can legitimately hold such a codepoint — an overlong UTF-8
 sequence decodes to one — so the guard is on the emit side, where it
 needs no hypothesis about the state. -/
-def safeChar (c : Char) : Char := if c.toNat < 0x20 || c.toNat == 0x7F then '\uFFFD' else c
+private def safeChar (c : Char) : Char := if c.toNat < 0x20 || c.toNat == 0x7F then '\uFFFD' else c
 
 /-- A codepoint safe to print as text: `safeChar`, with the C1 controls U+0080–U+009F
 replaced too, since a terminal may execute them. Titles, listings, `info` records and
@@ -70,7 +70,7 @@ def textChar (c : Char) : Char := if 0x80 ≤ c.toNat && c.toNat < 0xA0 then '\u
 bytes keep each byte's range plain arithmetic: the `min` is the identity on
 every `Char` — scalar values are ≤ 0x10FFFF — and makes each emitted byte's
 range an arithmetic fact rather than a `Char.valid` derivation. -/
-def utf8 (c : Char) : Bytes :=
+private def utf8 (c : Char) : Bytes :=
   let n := min c.toNat 0x10FFFF
   if n < 0x80 then [UInt8.ofNat n]
   else
@@ -114,7 +114,7 @@ def escCharset (i x : UInt8) : Bytes := escB ++ [i, x]
 /-- One colour as SGR parameter *numbers* (16-colour, 256-colour and
 truecolour forms). Numbers rather than bytes, so the same list can be
 emitted either as its own sequence or joined into a longer one. -/
-def colorCodes (c : Color) (isFg : Bool) : List Nat :=
+private def colorCodes (c : Color) (isFg : Bool) : List Nat :=
   match c with
   | .default => []
   | .idx i =>
@@ -126,7 +126,7 @@ def colorCodes (c : Color) (isFg : Bool) : List Nat :=
 /-- The attribute half of a pen, as parameter numbers. Leads with `0`, so
 the sequence starts from a clean slate: we diff by "pen changed at all",
 not per attribute. -/
-def penAttrCodes (p : Pen) : List Nat :=
+private def penAttrCodes (p : Pen) : List Nat :=
   0 ::
     ((if p.bold then [1] else []) ++ (if p.dim then [2] else []) ++
       (if p.italic then [3] else []) ++
@@ -138,18 +138,18 @@ def penAttrCodes (p : Pen) : List Nat :=
 /-- `<n1>;<n2>;…` — parameters joined by `;`, with no leading separator (a
 leading `;` would mean an empty first parameter, which SGR reads as a
 *reset*). -/
-def joinSemi : List Nat → Bytes
+private def joinSemi : List Nat → Bytes
   | [] => []
   | [n] => digits n
   | n :: ns => digits n ++ [0x3B] ++ joinSemi ns
 
 /-- `CSI <codes> m`. -/
-def sgrOf (codes : List Nat) : Bytes := csiB ++ joinSemi codes ++ [0x6D]
+private def sgrOf (codes : List Nat) : Bytes := csiB ++ joinSemi codes ++ [0x6D]
 
 /-- A colour as its own SGR, or nothing when the colour is the default —
 `CSI m` with no parameters is a *reset*, which would wipe the attributes
 the previous sequence just set. -/
-def sgrColorSeq (c : Color) (isFg : Bool) : Bytes :=
+private def sgrColorSeq (c : Color) (isFg : Bool) : Bytes :=
   match colorCodes c isFg with
   | [] => []
   | codes => sgrOf codes
@@ -174,7 +174,7 @@ def penSgr (p : Pen) : Bytes :=
 /-! ## Grid -/
 
 /-- One cell's text: its scrubbed base glyph, then its scrubbed combining marks. -/
-def cellText (c : Cell) : Bytes := utf8 (safeChar c.base) ++ utf8s c.marks
+private def cellText (c : Cell) : Bytes := utf8 (safeChar c.base) ++ utf8s c.marks
 
 /-- One cell's slot in the row painter's fold, over
 `(bytes so far, the pen already in effect, the next cell index)`.
@@ -206,7 +206,7 @@ docstring: the row-replay theorem has to *mention* the fold body in its own
 statement, which is impossible for a lambda, and each branch is then reached by
 `rw` on a named equation instead of by reducing a four-way beta-redex per
 cell. -/
-def rowSlot (acc : Bytes × Pen × Nat) (c : Cell) : Bytes × Pen × Nat :=
+private def rowSlot (acc : Bytes × Pen × Nat) (c : Cell) : Bytes × Pen × Nat :=
   let (s, pen, x) := acc
   if c.width == 0 then (s ++ utf8s c.marks, pen, x + 1)
   else
@@ -258,7 +258,7 @@ theorem rowAnsi_eq_rowAnsiLinear : rowAnsi = rowAnsiLinear := by
 
 /-- Join painted rows with CR+LF, no trailing separator (a trailing
 CRLF on the last row would scroll the screen). -/
-def joinCRLF : List Bytes → Bytes
+private def joinCRLF : List Bytes → Bytes
   | [] => []
   | [b] => b
   | b :: bs => b ++ [0x0D, 0x0A] ++ joinCRLF bs
@@ -274,7 +274,7 @@ caller: it sets the stashed main pen immediately before painting the alt
 grid, and without this reset the whole leading run of the alt screen came
 back in that pen (§Replay fix 9). Establishing the assumption here rather
 than trusting each call site is what makes `gridAnsi` self-contained. -/
-def gridAnsi (grid : Array Row) : Bytes :=
+private def gridAnsi (grid : Array Row) : Bytes :=
   let (rows, _) :=
     grid.foldl
       (fun (acc : List Bytes × Pen) row =>
@@ -323,7 +323,7 @@ decoded checkpoint's ring is arbitrary bytes' worth of cells.
 **The width-0 branch is load-bearing.** A shadow must stay a shadow: collapsing
 it to `charWidth ' ' = 1` would shift every pair after it one column left. Same
 discipline as `Vt.printableChar` on store, one field further out. -/
-def cellFit (c : Cell) : Cell :=
+private def cellFit (c : Cell) : Cell :=
   let base := printableChar c.base
   { base := base, width := if c.width == 0 then 0 else charWidth base,
     marks := (c.marks.filter (fun m => charWidth m == 0 && printableChar m == m)).take 8,
@@ -335,7 +335,7 @@ def cellFit (c : Cell) : Cell :=
 `∀ x, CellOk (row.at x)` hypothesis — and the ring is exactly where that
 hypothesis is unavailable. `Row.mend` then repairs the pair a truncation can
 halve. -/
-def fitRow (row : Row) (cols : Nat) : Row :=
+private def fitRow (row : Row) (cols : Nat) : Row :=
   Row.mend ((Array.range cols).map (fun i => cellFit (row.at i)))
 
 /-- The replay budget, as a bound on Σ `sbRowCost` — **not** on emitted bytes.
@@ -369,7 +369,7 @@ only shape where the default-seeded fold emits nothing while the other emits is
 "that cell's pen is the default", costing exactly `penSgr {}` = 4 bytes
 (`rowAnsi_len_seed`, `rowAnsi_len_add_crlf_le_cost`; witness: a blank 80-column row is 80
 bytes from the default pen and 84 from a truecolour one). -/
-def sbRowCost (row : Row) : Nat := (rowAnsi row {}).1.length + 6
+private def sbRowCost (row : Row) : Nat := (rowAnsi row {}).1.length + 6
 
 /-- The rows a budget admits, newest first, each fitted to `cols`.
 
@@ -378,7 +378,7 @@ only the rows kept. It **stops** at the first row that does not fit rather than
 skipping it, so the result is always "the newest N lines" — a contiguous run
 (`sbTake_prefix`), which is what licenses "the oldest are dropped first" in the
 docs. -/
-def sbTake (cols budget : Nat) : List Row → List Row
+private def sbTake (cols budget : Nat) : List Row → List Row
   | [] => []
   | r :: rs =>
     let f := fitRow r cols
@@ -393,7 +393,8 @@ walk — which has to start from the newest — runs on the reverse and the resu
 reversed back. Both reverses are load-bearing and in opposite ways: dropping the
 outer one plays the history backwards, and feeding `v.sb.toList` instead of its
 reverse keeps the **oldest** N under a tight budget instead of the newest. -/
-def sbRows (v : Vt) : Array Row := (sbTake v.cols sbReplayBytes v.sb.toList.reverse).reverse.toArray
+private def sbRows (v : Vt) : Array Row :=
+  (sbTake v.cols sbReplayBytes v.sb.toList.reverse).reverse.toArray
 
 /-- **The history push.** Paint the fitted ring, then scroll it off the top with
 `v.rows` CRLFs.
@@ -562,7 +563,7 @@ Emitted **identically on both screens**, and before the discarded main paint:
 `Vt.sb` is main-screen-only (`scrollUpIn` pushes only when `altGrid.isNone`), the
 alt grid is a fresh blank with no history of its own, and a branch-dependent
 stage here would make `screens_paint_main` and `screens_paint_alt` diverge. -/
-def screensAnsi (v : Vt) : Bytes :=
+private def screensAnsi (v : Vt) : Bytes :=
   scrollbackAnsi v ++
     match v.altGrid with
     | none => gridAnsi v.grid
@@ -676,7 +677,7 @@ and with wrap off both look identical, so a combining mark in the final column
 attaches one cell to the left. Two fuzz seeds catch it (see SCRATCHPAD,
 2026-08-15). The pending flag is load-bearing, and the replay proof has to
 model it rather than legislate it away. -/
-def restoreBody (v : Vt) : Bytes :=
+private def restoreBody (v : Vt) : Bytes :=
   prologueAnsi v -- establish the receiver's state
     ++ csiNum 0 0x6D ++
     csiNum 2 0x4A -- clean slate
@@ -772,7 +773,7 @@ def leaveAnsi : Bytes :=
 /-- One row's characters, width-0 shadows skipped, every codepoint scrubbed as text
 (`textChar`), C1 controls included. A named stage so the trim and the encoding are separate
 steps a lemma can talk about. -/
-def rowChars (row : Row) : List Char :=
+private def rowChars (row : Row) : List Char :=
   row.toList.flatMap fun c => if c.width == 0 then [] else textChar c.base :: c.marks.map textChar
 
 /-- Drop trailing blanks. On the character list rather than on the bytes, though the
@@ -828,7 +829,7 @@ positional-parse contract can be a THEOREM rather than prose:
 `screenText_records` says `linesLF (screenText v)` IS `v.grid` row for row —
 line k of a capture is row k of the screen, not merely the right line count
 (`screenText_lines`) with no stray terminator (`screenText_framing`). -/
-def linesLF : Bytes → List Bytes
+private def linesLF : Bytes → List Bytes
   | [] => []
   | b :: rest =>
     if b == 0x0A then [] :: linesLF rest

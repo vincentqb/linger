@@ -293,10 +293,10 @@ namespace Probe.Inner
 end Probe
 namespace Linger.ReferenceProbe
 private def canonical := Linger.Core.Render.titleAnsi
-def relative := Core.Render.gridAnsi
+def relative := Core.Render.scrollbackAnsi
 def rooted := _root_.Linger.Core.Render.restore
 open Linger.Core
-def short := Render.screensAnsi
+def short := Render.modesAnsi
 open Linger.Core.Render (digits)
 def unqualified := digits
 open Linger.Core.Render renaming dropTrailingBlanks → trimmed
@@ -352,8 +352,8 @@ end Linger.ReferenceProbe
         let found ← runtimeEmitters defs `CoverageFixture arts
         unless
           found ==
-            #["Render.digits", "Render.dropTrailingBlanks", "Render.gridAnsi", "Render.leaveAnsi",
-              "Render.restore", "Render.screensAnsi", "Render.titleAnsi"] do
+            #["Render.digits", "Render.dropTrailingBlanks", "Render.leaveAnsi", "Render.modesAnsi",
+              "Render.restore", "Render.scrollbackAnsi", "Render.titleAnsi"] do
           throw (IO.userError s!"resolved reference census mismatch: {found}")
   let parsed ← liftIO (Parser.testParseModule env "coverage fixture" fixture)
   let .ok names := sourceDefNames parsed

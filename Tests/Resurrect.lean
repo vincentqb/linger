@@ -1,6 +1,6 @@
 module
 
-import Linger.Tools.Resurrect
+import all Linger.Tools.Resurrect
 import Linger.Core.Status
 import Linger.Core.Render
 import all Linger.Core.Vt

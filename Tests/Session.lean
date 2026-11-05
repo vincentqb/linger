@@ -3,6 +3,7 @@ module
 import all Linger.Core.Session
 -- These fixtures read the screen they assert about and run compiled under `native_decide`.
 import all Linger.Core.Vt
+import all Linger.Core.Wire
 meta import Linger.Core.Session
 
 /-! # Session state-machine scenario tests

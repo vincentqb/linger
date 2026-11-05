@@ -1,6 +1,6 @@
 module
 
-import Linger.Tools.Picker
+import all Linger.Tools.Picker
 meta import Linger.Tools.Picker
 
 /-! Concrete selector fixtures. General contracts live in `Theorems.Picker`. -/

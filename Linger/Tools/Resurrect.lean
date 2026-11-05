@@ -142,7 +142,7 @@ private def layoutLeaves : List String → List (Nat × Nat)
     | _, _ => later
 
 /-- Read tmux's leaf sizes without interpreting its layout checksum or pane IDs. -/
-def layoutSizes (layout : String) : List (Nat × Nat) :=
+private def layoutSizes (layout : String) : List (Nat × Nat) :=
   layoutLeaves
     ((layout.map fun c => if ['{', '}', '[', ']'].contains c then ',' else c).splitOn ",")
 
@@ -186,14 +186,14 @@ def captureLimit : Nat := 8 * 1024 * 1024
 
 /-- Turn captured lines into terminal input. The archive's final newline is framing;
 other newlines start at column zero. The pure adapter also bounds its input. -/
-def captureBytes (contents : String) : List UInt8 :=
+private def captureBytes (contents : String) : List UInt8 :=
   let bytes := contents.toUTF8.toList.take captureLimit
   let bytes := if bytes.getLast? == some 10 then bytes.dropLast else bytes
   bytes.flatMap fun b => if b == 10 then [13, 10] else [b]
 
 /-- Append the saved foreground command as printable output above a fresh prompt.
 Reset the pen, character set and wrapping before the notice; absent commands add nothing. -/
-def commandNotice (details : Details) : String :=
+private def commandNotice (details : Details) : String :=
   let command := if details.savedCommand.isEmpty then details.command else details.savedCommand
   if command.isEmpty then ""
   else "\x1b[0m\x1b(B\x0f\x1b[?7h\r\nSaved foreground command: " ++ diagnostic command ++ "\r\n"

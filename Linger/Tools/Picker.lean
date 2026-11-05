@@ -3,7 +3,8 @@ module
 public import Linger.Tools.Key
 import Linger.Tools.Fuzzy
 import Linger.Core.Name
-public import Linger.Core.Listing
+import Linger.Core.Listing
+public import Linger.Core.Status
 import Linger.Core.Remote
 import Linger.Core.Vt
 
@@ -21,7 +22,7 @@ namespace Linger.Tools.Picker
 
 /-- Whether the query is a subsequence of the target after ASCII lowercase folding:
 exactly the targets `Fuzzy.align` can align (`align_isSome_iff_matches`). -/
-def «matches» (query target : String) : Bool :=
+private def «matches» (query target : String) : Bool :=
   (query.toList.map Char.toLower).isSublist (target.toList.map Char.toLower)
 
 private def parseRow (fields : List String) : Except String (Option String) :=
@@ -46,7 +47,8 @@ private def parseRows (seen rows : List String) : Except String (List String) :=
 
 /-- Validate the complete successful command output before presenting any target.
 Metadata is ignored; malformed name records or duplicates reject the whole snapshot. -/
-def parseListing (text : String) : Except String (List String) := parseRows [] (text.splitOn "\n")
+private def parseListing (text : String) : Except String (List String) :=
+  parseRows [] (text.splitOn "\n")
 
 /-- Exact targets plus the complete metadata records that produced them. Equality
 includes metadata, so a status-only change still invalidates the displayed frame. -/
@@ -76,7 +78,7 @@ def Snapshot.row (snapshot : Snapshot) (target : String) : List (String × Strin
 
 /-- Remote rows are named `name@host`. A local session name never contains `@`
 (`Name.okChar`), so the character partitions every listing's rows. -/
-def remoteTarget (target : String) : Bool := target.toList.contains '@'
+private def remoteTarget (target : String) : Bool := target.toList.contains '@'
 
 /-- The records of the rows whose target satisfies `keep`, in order. A name record
 governs itself and the records after it up to the next name record; records before
@@ -96,7 +98,7 @@ def Snapshot.withRemote (latest full : Snapshot) : Snapshot where
     rowRecords (!remoteTarget ·) true latest.records ++ rowRecords remoteTarget false full.records
 
 /-- The candidates the query matches, in listing order. -/
-def visible (candidates : List String) (query : String) : List String :=
+private def visible (candidates : List String) (query : String) : List String :=
   candidates.filter (Linger.Tools.Picker.matches query)
 
 /-- A selectable row: a listed target or the explicit creation choice. -/
@@ -108,12 +110,13 @@ inductive Item where
   deriving BEq, Repr
 
 /-- The exact target the row attaches to or creates. -/
-def Item.target : Item → String
+private def Item.target : Item → String
   | .existing target | .create target => target
 
 /-- Existing rows use the listing's entire presentation. Creation keeps its
 explicit label and exact target, and has no invented session status. -/
-def presentation (snapshot : Snapshot) (nameCol : Nat) : Item → List Linger.Core.Listing.RowPiece
+private def presentation (snapshot : Snapshot) (nameCol : Nat) :
+    Item → List Linger.Core.Listing.RowPiece
   | .existing target => Linger.Core.Listing.rowPieces nameCol (snapshot.row target)
   | .create target => [{ text := s!"+ Create {target}".toList }]
 

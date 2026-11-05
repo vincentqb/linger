@@ -54,16 +54,16 @@ def da1Reply : Bytes := [ESC, 0x5B, 0x3F, 0x31, 0x3B, 0x32, 0x63]
 def da2Reply : Bytes := [ESC, 0x5B, 0x3E, 0x30, 0x3B, 0x30, 0x3B, 0x30, 0x63]
 
 /-- Device status reply: the terminal is OK (`CSI 0 n`, or `CSI ? 0 n` when private). -/
-def statusReply (private_ : Bool) : Bytes :=
+private def statusReply (private_ : Bool) : Bytes :=
   [ESC, 0x5B] ++ (if private_ then [0x3F] else []) ++ [0x30, 0x6E]
 
 /-- The 1-based row a cursor position report gives, relative to the region under DECOM. -/
-def cprRow (v : Vt) : Nat :=
+private def cprRow (v : Vt) : Nat :=
   if v.modes.origin then if v.cursor.y < v.top then 1 else v.cursor.y - v.top + 1
   else v.cursor.y + 1
 
 /-- Cursor position report `CSI row ; column R`, with `?` when private. -/
-def cprReply (v : Vt) (private_ : Bool) : Bytes :=
+private def cprReply (v : Vt) (private_ : Bool) : Bytes :=
   [ESC, 0x5B] ++ (if private_ then [0x3F] else []) ++ digits (cprRow v) ++ [0x3B] ++
     digits (v.cursor.x + 1) ++
     [0x52]
@@ -78,12 +78,12 @@ def versionReply : Bytes :=
     ESC, STFinal]
 
 /-- Text-area size reply for `CSI 18 t`: `CSI 8 ; rows ; cols t`. -/
-def textAreaReply (v : Vt) : Bytes :=
+private def textAreaReply (v : Vt) : Bytes :=
   [ESC, 0x5B, 0x38, 0x3B] ++ digits v.rows ++ [0x3B] ++ digits v.cols ++ [0x74]
 
 /-- Fixed virtual palette reply for OSC 10/11/12. `selector` is the final
 ASCII digit and `hex` is `f` for white or `0` for black. -/
-def paletteReply (selector hex : UInt8) : Bytes :=
+private def paletteReply (selector hex : UInt8) : Bytes :=
   [ESC, 0x5D, 0x31, selector, 0x3B, 0x72, 0x67, 0x62, 0x3A] ++ List.replicate 4 hex ++ [0x2F] ++
     List.replicate 4 hex ++
     [0x2F] ++
@@ -92,7 +92,7 @@ def paletteReply (selector hex : UInt8) : Bytes :=
 
 /-- The legal XTGETTCAP payload alphabet: hex digits and the `;` that
 separates capability names. Everything a well-formed request carries. -/
-def capByte (b : UInt8) : Bool :=
+private def capByte (b : UInt8) : Bool :=
   (0x30 ≤ b && b ≤ 0x39) || (0x41 ≤ b && b ≤ 0x46) || (0x61 ≤ b && b ≤ 0x66) || b == 0x3B
 
 /-- XTGETTCAP is answered negatively for every capability, echoing the
@@ -143,7 +143,7 @@ def classifyCsi (v : Vt) (seq : Bytes) : Decision :=
 
 /-- Exact fixed-palette OSC rows. Both BEL and ST terminate requests; replies
 always use ST. -/
-def classifyOsc (seq : Bytes) : Decision :=
+private def classifyOsc (seq : Bytes) : Decision :=
   if
       seq == [ESC, 0x5D, 0x31, 0x30, 0x3B, 0x3F, BEL] ||
         seq == [ESC, 0x5D, 0x31, 0x30, 0x3B, 0x3F, ESC, STFinal] then
@@ -191,7 +191,7 @@ inductive Scan where
   deriving Repr, DecidableEq, Inhabited
 
 /-- Bytes retained but not yet sent to presentation clients. -/
-def Scan.pending : Scan → Bytes
+private def Scan.pending : Scan → Bytes
   | .esc => [ESC]
   | .csi rev => rev.reverse
   | .osc rev _ => rev.reverse
@@ -223,14 +223,14 @@ structure ScanStep where
 /-- Complete one buffered candidate: owned requests disappear from visible
 output and produce their one prescribed reply stream; unowned candidates are
 released unchanged. -/
-def complete (decision : Decision) (seq : Bytes) : ScanStep :=
+private def complete (decision : Decision) (seq : Bytes) : ScanStep :=
   match decision with
   | .unowned => { scan := .ground, visible := seq }
   | .owned reply => { scan := .ground, replies := reply }
 
 /-- Advance only the ownership scanner. `v` is the VT state after this byte,
 so a CPR samples the cursor at the query's exact stream position. -/
-def Scan.step (s : Scan) (v : Vt) (b : UInt8) : ScanStep :=
+private def Scan.step (s : Scan) (v : Vt) (b : UInt8) : ScanStep :=
   match s with
   | .ground => if b == ESC then { scan := .esc } else { scan := .ground, visible := [b] }
   | .esc =>

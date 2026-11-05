@@ -2,7 +2,7 @@ module
 
 -- The mediator fixtures read cursor and mode state and run compiled under `native_decide`.
 import all Linger.Core.Vt
-import Linger.Core.Terminal
+import all Linger.Core.Terminal
 meta import Linger.Core.Terminal
 
 /-! # Terminal mediator behavior tests
