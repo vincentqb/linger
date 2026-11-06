@@ -31,8 +31,8 @@ Use `pre-commit run --all-files` to check the working tree.
 Install `lean-fmt` standalone, never as a Lake dependency.
 See [.github/workflows/ci.yml](.github/workflows/ci.yml) for tool installation.
 
-Linux verifies every push. macOS runs on scheduled changes, release tags, manual
-dispatch, and pushes or pull requests that change `c/shim.c` or `./lake`.
+CI runs at 06:17 UTC on the first of each month, on Linux and macOS, when the month
+brought commits, and on manual dispatch. Pushes and pull requests do not trigger it.
 
 ## Layout
 

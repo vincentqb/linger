@@ -2,18 +2,15 @@
 # check; only a prior successful verification of identical inputs may replace it.
 # scripts/ci-inputs.sh hashes paths, modes, content AND runner OS/arch/image version.
 # Source gates run even when verification is reused.
-# Schedule, dispatch and tags verify cleanly; scripts/ci-runners.sh chooses macOS, also for
-# pushes and pull requests that change c/shim.c or ./lake.
+# CI runs once a month, overnight, and only when the month brought commits; a manual dispatch
+# runs it at any time. scripts/ci-runners.sh makes that decision and chooses the runners.
 name: ci
 
 on:
-  push:
-    branches: [main]
-    tags: ['v*']
-  pull_request:
   schedule:
-    # Weekly: scripts/ci-runners.sh's 8-day WINDOW must cover this period; change them together.
-    - cron: '17 6 * * 1'
+    # 06:17 UTC on the 1st: 02:17 in New York in summer, 01:17 in winter. scripts/ci-runners.sh's
+    # 32-day WINDOW must cover the longest gap between runs; change them together.
+    - cron: '17 6 1 * *'
   workflow_dispatch:
 
 concurrency:
@@ -41,14 +38,6 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0  # The scheduled runner decision reads recent history.
-      - name: source hygiene
-        run: sh scripts/hygiene.sh
-      - name: validate workflow
-        run: |
-          curl -sSfL --retry 3 https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz -o "$RUNNER_TEMP/actionlint.tar.gz"
-          printf '%s  %s\n' 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 "$RUNNER_TEMP/actionlint.tar.gz" | sha256sum --check
-          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
-          "$RUNNER_TEMP/actionlint" -shellcheck='' -pyflakes=''
       - name: identify verification inputs and runners
         id: inputs
         env:
@@ -60,6 +49,17 @@ jobs:
           key="$(sh scripts/ci-inputs.sh)"
           os="$(sh scripts/ci-runners.sh "$EVENT" "$REF" "$BASE")"
           printf 'key=%s\nos=%s\n' "$key" "$os" >> "$GITHUB_OUTPUT"
+      # No runners means a scheduled run in a month without commits: nothing else runs.
+      - name: source hygiene
+        if: steps.inputs.outputs.os != '[]'
+        run: sh scripts/hygiene.sh
+      - name: validate workflow
+        if: steps.inputs.outputs.os != '[]'
+        run: |
+          curl -sSfL --retry 3 https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz -o "$RUNNER_TEMP/actionlint.tar.gz"
+          printf '%s  %s\n' 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 "$RUNNER_TEMP/actionlint.tar.gz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -shellcheck='' -pyflakes=''
       - name: look up successful verification
         # A receipt comes from the Linux leg alone, so it cannot stand in for a needed macOS run.
         if: (github.event_name == 'pull_request' || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/'))) && !contains(steps.inputs.outputs.os, 'macos')
@@ -77,7 +77,7 @@ jobs:
   verify:
     name: verify (${{ matrix.os }})
     needs: gates
-    if: needs.gates.outputs.verified != 'true'
+    if: needs.gates.outputs.verified != 'true' && needs.gates.outputs.os != '[]'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:

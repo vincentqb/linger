@@ -95,6 +95,8 @@ def ubuntuOnly : String := "[\"ubuntu-latest\"]"
 
 def both : String := "[\"ubuntu-latest\", \"macos-latest\"]"
 
+def noRunners : String := "[]"
+
 /-- Child fixtures for the actual suite runner, including its signal and log contract. -/
 def runnerProbe (dir name : String) : IO UInt32 := do
   if name.startsWith "job-" then
@@ -446,17 +448,21 @@ def run : IO UInt32 := do
   expect ((← runners script root "workflow_dispatch" "refs/heads/main") == both)
       "a manual run asks for both platforms"
   -- The scheduled arm against real history, both ways. A repo whose only commit is
-  -- older than the window must NOT pull in macOS; one inside it must.
+  -- older than the window must not run at all; one inside it must run both platforms,
+  -- including a commit from the start of a 31-day month.
   --
   -- Drive the real script for both valid histories and an unreadable one.
   -- Failure to inspect history must fail the job, not silently skip a platform.
   let fresh ← repoWithCommit 1
+  let boundary ← repoWithCommit 31
   let stale ← repoWithCommit 45
   try
     expect ((← runners script fresh "schedule" "refs/heads/main") == both)
         "a scheduled run with a recent commit asks for both platforms"
-    expect ((← runners script stale "schedule" "refs/heads/main") == ubuntuOnly)
-        "a scheduled run on an unchanged tree asks for ubuntu alone"
+    expect ((← runners script boundary "schedule" "refs/heads/main") == both)
+        "a scheduled run sees a commit from the start of a 31-day month"
+    expect ((← runners script stale "schedule" "refs/heads/main") == noRunners)
+        "a scheduled run on a month without commits asks for no runners"
     IO.FS.removeDirAll (System.FilePath.mk fresh / ".git")
     -- Stop Git's upward search at the fixture, as `Verify.Hygiene` does: a TMPDIR inside a
     -- work tree would otherwise lend it that tree's history. `LC_ALL=C` keeps Git's
@@ -474,6 +480,7 @@ def run : IO UInt32 := do
         "unreadable history fails without emitting a runner matrix"
   finally
     IO.FS.removeDirAll (System.FilePath.mk fresh)
+    IO.FS.removeDirAll (System.FilePath.mk boundary)
     IO.FS.removeDirAll (System.FilePath.mk stale)
   lakeBuilds root
   lakeDrivers root

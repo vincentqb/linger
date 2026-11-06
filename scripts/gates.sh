@@ -1614,6 +1614,10 @@ grep -qF "if: success() && steps.receipt.outputs.key != ''" "$ci_yml" \
   || fail "$ci_yml: only a successful receipt may be saved"
 grep -qF "if: needs.gates.outputs.verified != 'true'" "$ci_yml" \
   || fail "$ci_yml: only a completed verification may replace the full verifier"
+# A scheduled month without commits gets no runners. A matrix over `[]` is an error, so the
+# verify job must skip it rather than fail every quiet month.
+grep -qF "needs.gates.outputs.os != '[]'" "$ci_yml" \
+  || fail "$ci_yml: the verify job must skip a run with no runners"
 awk '
   /if: steps.verified.outputs.cache-hit == .true./ { reuse = 1 }
   reuse && /^[[:space:]]+sh scripts\/gates[.]sh$/ { checked = 1 }
@@ -1631,9 +1635,9 @@ awk '/^say "[0-9]+[.] live suites / { live=1 }
   END { exit !found }' scripts/verify.sh \
   || fail "scripts/verify.sh: run live suites through the tested --suites entry point"
 grep -qE '^ +- cron:' "$ci_yml" \
-  || fail "$ci_yml: no schedule — with macOS off the per-push path, the cron IS when macOS runs"
+  || fail "$ci_yml: no schedule — the monthly cron is when CI runs at all"
 grep -q 'workflow_dispatch' "$ci_yml" \
-  || fail "$ci_yml: no workflow_dispatch — a commit touching c/shim.c needs a way to ask for macOS without waiting a week"
+  || fail "$ci_yml: no workflow_dispatch — a commit touching c/shim.c needs a way to ask for macOS without waiting for the monthly run"
 # Suite fixed-sleep ratchet: a wait for something to appear polls its readiness
 # signal (`waitFor`, `Client.awaitText`); the sleeps left are negative-assertion
 # windows, fixture pacing, poll intervals and waits not yet converted. Both ratchets count

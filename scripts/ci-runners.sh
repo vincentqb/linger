@@ -11,32 +11,33 @@
 # — an inline `case` can only be tested by a copy of itself, and this repo's rule is
 # that a suite asserts against the code's own definitions, never a copy.
 #
-# ubuntu always: every push gets the whole gate. macOS costs several times more per
-# billed minute (measurements are in git history), so it runs only when there is
-# something new for it to learn:
+# The workflow runs on its monthly schedule and on manual dispatch. macOS costs several
+# times more per billed minute (measurements are in git history), so it runs only when
+# there is something new for it to learn:
 #
-#   workflow_dispatch  always      — someone asked, e.g. after touching c/shim.c
-#   push to any tag    always      — the workflow only triggers on `v*`, but this
-#                                    script does not check the shape, so a broadened
-#                                    trigger gets macOS without a change here
-#   schedule           if commits  — rebuilding an unchanged tree re-learns last
-#                                    week's answer at the expensive rate
-#   push / PR          if the diff from <base> to HEAD touches c/shim.c or ./lake, or if
-#                      <base> is empty, all zeros or not a fetched commit (a new branch,
-#                      a force push): AGENTS.md asks for macOS on exactly those changes
+#   workflow_dispatch  both        — someone asked, e.g. after touching c/shim.c
+#   schedule           both if the last WINDOW has commits, otherwise none (`[]`): the
+#                      workflow then skips every check, because rebuilding an unchanged
+#                      tree re-learns last month's answer
+#   push to any tag    both        — no longer a trigger; kept so a restored trigger
+#                                    behaves as before without a change here
+#   push / PR          ubuntu, and macOS too if the diff from <base> to HEAD touches
+#                      c/shim.c or ./lake, or if <base> is empty, all zeros or not a fetched
+#                      commit (a new branch, a force push); no longer triggers either
 #
-# WINDOW=8 days against a 7-day cron on purpose: the overlap means a cron GitHub
-# delays cannot open a gap where a commit is never macOS-tested. It costs at most
-# one redundant run, and only for a commit landing on the boundary. Keep the two in
-# step — a monthly cron with an 8-day window would skip almost every month.
+# WINDOW=32 days against a cron on the 1st of each month on purpose: the longest gap
+# between runs is 31 days, and the extra day means a cron GitHub delays cannot open a
+# gap where a commit is never tested. It costs at most one redundant run, and only for
+# a commit landing on the boundary. Keep the two in step.
 set -eu
 
-WINDOW='8 days ago'
+WINDOW='32 days ago'
 
 event="${1?usage: ci-runners.sh <event_name> <ref> [<base>]}"
 ref="${2?usage: ci-runners.sh <event_name> <ref> [<base>]}"
 base="${3-}"
 
+run=yes
 macos=no
 case "$event" in
   workflow_dispatch)
@@ -49,6 +50,8 @@ case "$event" in
     commits="$(git log --since="$WINDOW" --format=%H)"
     if [ -n "$commits" ]; then
       macos=yes
+    else
+      run=no
     fi
     ;;
   push | pull_request)
@@ -70,7 +73,9 @@ case "$event" in
     ;;
 esac
 
-if [ "$macos" = yes ]; then
+if [ "$run" = no ]; then
+  printf '[]\n'
+elif [ "$macos" = yes ]; then
   printf '["ubuntu-latest", "macos-latest"]\n'
 else
   printf '["ubuntu-latest"]\n'

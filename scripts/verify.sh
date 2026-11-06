@@ -184,7 +184,7 @@ say "2c. verifier regression tests (CI policy, caches and suite isolation)"
 # against a temporary project.
 # The same runner checks exit status, final verdict, every assertion and both
 # streams. Intentional failures inside these tests stay in their captured logs.
-./.lake/build/bin/suites --suites ci:57 hygiene:56 \
+./.lake/build/bin/suites --suites ci:58 hygiene:56 \
   || fail "verifier regression checks (see $logs/linger-ci.out and linger-hygiene.out)"
 
 say "2d. headline theorems (Manifest.lean against Theorems/Claims.lean)"
