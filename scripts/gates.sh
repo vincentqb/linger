@@ -201,6 +201,21 @@ lake_packages="$(tr -d ' \n' < lake-manifest.json | grep -o '"packages":\[[^]]*\
   && printf '%s' "$lake_packages" | grep -q '"url":"https://github.com/vincentqb/lean-evidence"' \
   && printf '%s' "$lake_packages" | grep -qE '"inputRev":"[0-9a-f]{40}"' \
   || fail "lake-manifest may list only lean_evidence, pinned to a commit"
+# The audit stays a default target, and the verifier builds every default target: CI starts
+# from a fresh checkout, so a default target missing from that list is never built there.
+default_targets="$(code_grep '^@[[]default_target[]]' lakefile.lean \
+  | sed 's/^[^:]*:[0-9]*:@[[]default_target[]][[:space:]]*//' | awk '{ print $2 }')"
+printf '%s\n' "$default_targets" | grep -qx audit \
+  || fail "the LeanEvidence audit is no longer a default target"
+verify_build="$(awk '
+  /^[.][/]lake --rehash --wfail build / { on = 1 }
+  on { words = words " " $0; if ($0 !~ /[\\]$/) { print words; exit } }' scripts/verify.sh \
+  | sed 's/>.*//; s/[\\]//g' | tr -s ' \t' '\n\n')"
+[ -n "$verify_build" ] || fail "scripts/verify.sh lost its build command"
+for default_target in $default_targets; do
+  printf '%s\n' "$verify_build" | grep -qx "$default_target" \
+    || fail "scripts/verify.sh does not build the default target $default_target"
+done
 
 # The vt-toolkit's import closure (`specs/archive/vt-toolkit.md` Step 4). The toolkit is
 # Linger/Terminal/{Spec,Vt,Render,Mediation,Title,Replay}.lean, and the claim worth having is

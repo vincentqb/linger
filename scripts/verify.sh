@@ -80,12 +80,14 @@ fi
 logs="$(mktemp -d "${TMPDIR:-/tmp}/linger-verify.XXXXXX")"
 export LINGER_LOG_DIR="$logs"
 
-say "1. build (program + theorems + tests)"
+say "1. build (program + theorems + tests + audit)"
 # Lake checks source/dependency content and replays cached diagnostics. Rehash
 # artifacts too, and fail on warnings even after a local warningAsError override.
-# Run `./lake clean` first for clean release/compiler validation.
+# Run `./lake clean` first for clean release/compiler validation. The list holds every
+# default target (scripts/gates.sh checks), so a fresh checkout runs the LeanEvidence audit
+# here, as a local `./lake build` does.
 ./lake --rehash --wfail build Linger LingerVt LingerVtTheorems LingerInput LingerInputTheorems \
-    LingerFuzzy Theorems Tests linger lingertest suites > "$logs/build.log" 2>&1 \
+    LingerFuzzy Theorems Tests Suites linger lingertest suites audit > "$logs/build.log" 2>&1 \
   || { tail -30 "$logs/build.log"; fail "build (see $logs/build.log)"; }
 # --wfail ignores warnings from elaborating lakefile.lean; this grep sees them.
 if grep -qE '^(warning|error)' "$logs/build.log"; then
