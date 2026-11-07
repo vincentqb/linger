@@ -82,9 +82,12 @@ Lean erases proofs regardless of file placement.
   theorem whose type contains its exact fully qualified constant in the same
   commit, checked by `Theorems/Coverage.lean`; generated lemmas do not count.
   State invariants in `THEOREMS.md` and design code for provability.
-- `Manifest.lean`, `comparator.json`, `Audit.lean` and each `Spec.lean` say what linger
-  claims. Change them to change a claim, never to make a proof pass, and restate a theorem
-  there no weaker than its source.
+- The files the audit lists as `Owned:` (`Manifest.lean`, `comparator.json`, `Audit.lean`,
+  each `Spec.lean`, `Linger/Os/Boundary.lean`, the Lake configuration and the toolchain) say
+  what linger claims. Change them to change a claim, never to make a proof pass, and restate a
+  theorem there no weaker than its source.
+- Every headline in `Manifest.lean` needs a kill: a theorem there stating the headline's
+  negation with a wrong part in place of a hole, proved in `Theorems/Claims.lean`.
 - State each assumption about the outside world as a `WorldClaim` in a `Spec.lean`, and mark
   the suites that exercise it with `@[exercises]`.
 - Every public declaration in a library needs a docstring: `lakefile.lean` enables

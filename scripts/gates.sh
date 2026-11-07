@@ -490,8 +490,8 @@ spec_imports_bad="$(module_imports 'Linger/*/Spec.lean' | awk -F: "$IMPORT_AWK"'
 [ -z "$spec_imports_bad" ] || {
   printf '%s\n' "$spec_imports_bad" >&2
   fail "Spec modules import only Spec modules and LeanEvidence.Commands"; }
-[ "$(library_decl Manifest)" = "lean_lib Manifest where leanOptions := #[⟨\`warningAsError, false⟩, ⟨\`linter.missingDocs, true⟩] " ] \
-  || fail "the Manifest library must keep sorry a warning and require docstrings: $(library_decl Manifest)"
+[ "$(library_decl Manifest)" = "lean_lib Manifest where leanOptions := #[⟨\`warn.sorry, false⟩, ⟨\`linter.missingDocs, true⟩] " ] \
+  || fail "the Manifest library may silence only its sorry warnings, and must require docstrings: $(library_decl Manifest)"
 ! grep -qE '^@[[]default_target[]][[:space:]]+lean_lib Manifest' lakefile.lean \
   || fail "the Manifest library proves nothing; keep it out of the default targets"
 

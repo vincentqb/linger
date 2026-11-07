@@ -211,6 +211,13 @@ structure Result (S World : Type) where
   /-- An event's effects requested exit, so no later event is consumed. -/
   exiting : Bool := false
 
+/-- A wrong driver: it ignores its interpreter and its events and lands on `target`. The
+headline about the event driver is shown to reject it. -/
+@[expose]
+def jump {S Plan : Type} (target : S) {m : Type → Type} [Monad m] {World : Type}
+    (_ : S → World → (eff : Effect Plan) → m (World × Reply eff)) (r : Result S World)
+    (_ : List Event) : m (Result S World) := pure { r with st := target }
+
 /-- The external contract excludes unreported exceptions; it permits every
 disconnect/checkpoint-failure result. This is a premise about primitive
 execution, not an assumption that the event driver succeeds. A primitive that raises

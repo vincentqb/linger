@@ -1843,6 +1843,12 @@ theorem trace_step (s : State) (evs : List Event) : trace step s evs = run s evs
   | nil => rfl
   | cons ev evs ih => simp only [trace, run, ih]
 
+/-- A connection joins a booted session's roster as a fresh record, and a booted session holds
+no record: the witness that input isolation rejects a session that forgets its clients. -/
+theorem connected_client_witness :
+    (trace step (State.boot (Vt.Vt.init 1 1) [] []) [.connected 1]).1.client? 1 = some { id := 1 } ∧
+      (State.boot (Vt.Vt.init 1 1) [] []).client? 1 = none := ⟨rfl, rfl⟩
+
 /-- Closing a connection removes every record with its identifier. -/
 theorem closeClient_clients (s : State) (id : Nat) :
     (closeClient s id).1.clients = s.clients.filter (·.id != id) := by

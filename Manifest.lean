@@ -252,6 +252,25 @@ theorem replay_grid (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt)
         ∀ y < v.rowCount, (w.feed bytes).getRow y = v.getRow y := by
   sorry
 
+/-- `replay_grid` rejects a stream that sends nothing: a blank receiver keeps a row the session
+painted. -/
+theorem replay_grid_rejects_silence :
+    ¬∀ (budget : Nat),
+        0 < budget →
+          ∀ (v w : Vt.Vt),
+            Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+                (Checkpoint.Decoded Checkpoint.loadBytes) v →
+              Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+                (Checkpoint.Decoded Checkpoint.loadBytes) w →
+              w.colCount = v.colCount →
+              w.rowCount = v.rowCount →
+              ∃ bytes,
+                Replay.Emits (fun _ _ => none) budget (Replay.start v) bytes ∧
+                  (w.feed bytes).colCount = v.colCount ∧
+                  (w.feed bytes).rowCount = v.rowCount ∧
+                  ∀ y < v.rowCount, (w.feed bytes).getRow y = v.getRow y := by
+  sorry
+
 /-- Streaming the repaint of a terminal a session can hold, with retained history, ends, and a
 receiver of the same size that parses it ends with exactly the session's history as the replay
 budget fits it. -/
@@ -267,6 +286,24 @@ theorem replay_history (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt)
     ∃ bytes,
       Replay.Emits Replay.next budget (Replay.start v) bytes ∧
         (w.feed bytes).scrollback = (Render.sbRows v).toList := by
+  sorry
+
+/-- `replay_history` rejects a stream that sends nothing: a receiver without history gets none
+of the session's. -/
+theorem replay_history_rejects_silence :
+    ¬∀ (budget : Nat),
+        0 < budget →
+          ∀ (v w : Vt.Vt),
+            Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+                (Checkpoint.Decoded Checkpoint.loadBytes) v →
+              Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+                (Checkpoint.Decoded Checkpoint.loadBytes) w →
+              w.colCount = v.colCount →
+              w.rowCount = v.rowCount →
+              (Render.sbRows v).isEmpty = false →
+              ∃ bytes,
+                Replay.Emits (fun _ _ => none) budget (Replay.start v) bytes ∧
+                  (w.feed bytes).scrollback = (Render.sbRows v).toList := by
   sorry
 
 /-- Outside origin mode, streaming the repaint of a terminal a session can hold ends, and a
@@ -285,6 +322,23 @@ theorem replay_cursor (budget : Nat) (positive : 0 < budget) (v w : Vt.Vt)
         (w.feed bytes).cursorPos = v.cursorPos := by
   sorry
 
+/-- `replay_cursor` rejects a stream that sends nothing: a receiver keeps its cursor where it was. -/
+theorem replay_cursor_rejects_silence :
+    ¬∀ (budget : Nat),
+        0 < budget →
+          ∀ (v w : Vt.Vt),
+            Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+                (Checkpoint.Decoded Checkpoint.loadBytes) v →
+              Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+                (Checkpoint.Decoded Checkpoint.loadBytes) w →
+              w.colCount = v.colCount →
+              w.rowCount = v.rowCount →
+              v.getModes.origin = false →
+              ∃ bytes,
+                Replay.Emits (fun _ _ => none) budget (Replay.start v) bytes ∧
+                  (w.feed bytes).cursorPos = v.cursorPos := by
+  sorry
+
 /-! ## 2. Authority and attribution
 
 A watcher is a client attached without a size. Not claimed yet: that a watcher cannot end the
@@ -299,6 +353,17 @@ theorem run_bytes_isolates (s : State) (id : Nat) (chunks : List (List UInt8)) {
       s.client? other := by
   sorry
 
+/-- `run_bytes_isolates` rejects a session that forgets every client on any event. -/
+theorem run_bytes_isolates_rejects_reset :
+    ¬∀ (s : State) (id : Nat) (chunks : List (List UInt8)) {other : Nat},
+        other ≠ id →
+          (Session.trace
+                  (fun _ _ => (State.boot (Vt.Vt.init 1 1) [] [], ([] : List (Effect Replay.Plan))))
+                  s (chunks.map (Event.bytes id))).1.client?
+              other =
+            s.client? other := by
+  sorry
+
 /-- A watcher cannot drive the session: whatever bytes it sends, however chunked, never write to
 the pty, resize it or change the terminal. -/
 theorem run_readonly (s : State) (id : Nat) (chunks : List (List UInt8)) {c : Client}
@@ -306,6 +371,23 @@ theorem run_readonly (s : State) (id : Nat) (chunks : List (List UInt8)) {c : Cl
     (Session.trace Session.step s (chunks.map (Event.bytes id))).1.terminal = s.terminal ∧
       ∀ eff ∈ (Session.trace Session.step s (chunks.map (Event.bytes id))).2,
         (∀ bytes, eff ≠ .writePty bytes) ∧ ∀ cols rows, eff ≠ .resizePty cols rows := by
+  sorry
+
+/-- `run_readonly` rejects a session that writes to the pty for every event, a watcher's
+included. -/
+theorem run_readonly_rejects_writer :
+    ¬∀ (s : State) (id : Nat) (chunks : List (List UInt8)) {c : Client},
+        (fun (_ : State) (i : Nat) => some ({ id := i, attached := true } : Client)) s id = some c →
+          c.attached = true →
+          c.sizer = false →
+          (Session.trace (fun s _ => (s, ([.writePty []] : List (Effect Replay.Plan)))) s
+                  (chunks.map (Event.bytes id))).1.terminal =
+              s.terminal ∧
+            ∀
+              eff ∈
+                (Session.trace (fun s _ => (s, ([.writePty []] : List (Effect Replay.Plan)))) s
+                    (chunks.map (Event.bytes id))).2,
+              (∀ bytes, eff ≠ .writePty bytes) ∧ ∀ cols rows, eff ≠ .resizePty cols rows := by
   sorry
 
 /-! ## 3. Exactness
@@ -317,11 +399,23 @@ back to `$HOME`) and with the environment it was given (the program inherits the
 theorem check_eq_some_iff (s result : String) :
     Name.check s = some result ↔ result = s ∧ Name.Valid s := by sorry
 
+/-- `check_eq_some_iff` rejects a validator that accepts every name, the empty one included. -/
+theorem check_eq_some_iff_rejects_any :
+    ¬∀ (s result : String), (fun s => some s) s = some result ↔ result = s ∧ Name.Valid s := by
+  sorry
+
 /-- The command linger runs on a remote host parses, in the literal POSIX shell model, as
 exactly `linger`, the verb and every supplied word, with no other shell action. -/
 theorem command_argv (verb : String) (words : List String) :
     Remote.Shell.Words (Remote.command verb words).toList
       (("linger" :: verb :: words).map String.toList) := by
+  sorry
+
+/-- `command_argv` rejects an empty command line, which parses as no words. -/
+theorem command_argv_rejects_empty :
+    ¬∀ (verb : String) (words : List String),
+        Remote.Shell.Words ((fun (_ : String) (_ : List String) => "") verb words).toList
+          (("linger" :: verb :: words).map String.toList) := by
   sorry
 
 /-! ## 4. Program identity
@@ -355,6 +449,31 @@ theorem run_total_safe {World ε : Type}
           (Checkpoint.Decoded Checkpoint.loadBytes) out.st.terminal := by
   sorry
 
+/-- `run_total_safe` rejects a driver that ignores its events and lands on a state past the
+label cap, read through labels that overflow on any terminal other than the starting one. -/
+theorem run_total_safe_rejects_jump :
+    ¬∀ {World ε : Type}
+        (execute :
+          State → World → (eff : Effect Replay.Plan) → Except ε (World × Driver.Reply eff)),
+        Driver.Responds execute →
+          ∀ (r : Driver.Result State World) (events : List Event),
+            Bounds State.roster
+                (fun st =>
+                  if st.terminal.colCount = 80 then [] else List.replicate (maxLabels + 1) ("", ""))
+                State.scanner r.st →
+              Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+                (Checkpoint.Decoded Checkpoint.loadBytes) r.st.terminal →
+              ∃ out,
+                Driver.jump (State.boot (Vt.Vt.init 1 1) [] []) execute r events = .ok out ∧
+                  Bounds State.roster
+                    (fun st =>
+                      if st.terminal.colCount = 80 then []
+                      else List.replicate (maxLabels + 1) ("", ""))
+                    State.scanner out.st ∧
+                  Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+                    (Checkpoint.Decoded Checkpoint.loadBytes) out.st.terminal := by
+  sorry
+
 /-! ## 6. Bounded and clean
 
 `run_total_safe` keeps the session's clients, labels, frame decoders and pty scanner within their
@@ -366,11 +485,25 @@ theorem reachableIn_bound {cap : Nat} {b : Buf.Buf}
     (h : Buf.InputReach Buf.Buf.empty Buf.bufOffer Buf.bufAdvance cap b) : Buf.owedLen b ≤ cap := by
   sorry
 
+/-- `reachableIn_bound` rejects an input queue that appends every offer, whatever its cap. -/
+theorem reachableIn_bound_rejects_append :
+    ¬∀ {cap : Nat} {b : Buf.Buf},
+        Buf.InputReach Buf.Buf.empty Buf.bufEnqueue Buf.bufAdvance cap b → Buf.owedLen b ≤ cap := by
+  sorry
+
 /-- A client output queue the daemon keeps never owes more than its cap, through any appends
 and flushes. -/
 theorem reachableOut_bound {cap : Nat} {b : Buf.Buf}
     (h : Buf.OutputReach Buf.Buf.empty Buf.bufEnqueue Buf.bufAdvance cap b) :
     Buf.owedLen b ≤ cap := by sorry
+
+/-- `reachableOut_bound` rejects an output queue that never asks to cut its client. -/
+theorem reachableOut_bound_rejects_uncut :
+    ¬∀ {cap : Nat} {b : Buf.Buf},
+        Buf.OutputReach Buf.Buf.empty (fun cap b more => ((Buf.bufEnqueue cap b more).1, false))
+            Buf.bufAdvance cap b →
+          Buf.owedLen b ≤ cap := by
+  sorry
 
 /-! ## 7. Recovery
 
@@ -385,6 +518,15 @@ theorem loadBytes_saveBytes_live (c : Checkpoint.Ckpt Vt.Vt)
         (Checkpoint.Decoded Checkpoint.loadBytes) c.vt) :
     Checkpoint.loadBytes (Checkpoint.saveBytes c) = some { c with vt := c.vt.quiesce } := by sorry
 
+/-- `loadBytes_saveBytes_live` rejects a decoder that refuses every file. -/
+theorem loadBytes_saveBytes_live_rejects_refusal :
+    ¬∀ (c : Checkpoint.Ckpt Vt.Vt),
+        Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+            (Checkpoint.Decoded (fun _ => none : ByteArray → Option (Checkpoint.Ckpt Vt.Vt))) c.vt →
+          (fun _ => none : ByteArray → Option (Checkpoint.Ckpt Vt.Vt)) (Checkpoint.saveBytes c) =
+            some { c with vt := c.vt.quiesce } := by
+  sorry
+
 /-- A daemon resumed from the saved checkpoint of a terminal a session can hold boots with that
 terminal, its partial parser state forgotten, and the checkpoint's first `maxLabels` labels. -/
 theorem resume_restores (c : Checkpoint.Ckpt Vt.Vt)
@@ -395,6 +537,19 @@ theorem resume_restores (c : Checkpoint.Ckpt Vt.Vt)
     let saved := Checkpoint.loadBytes (Checkpoint.saveBytes c)
     let booted := State.boot (bootVt (saved.map (·.vt))) ((saved.map (·.labels)).getD []) metaKv
     booted.terminal = c.vt.quiesce ∧ booted.labelList = c.labels.take maxLabels := by
+  sorry
+
+/-- `resume_restores` rejects a daemon that boots a fresh terminal whatever its checkpoint holds. -/
+theorem resume_restores_rejects_fresh :
+    ¬∀ (c : Checkpoint.Ckpt Vt.Vt),
+        Vt.Live Vt.Vt.init Vt.Vt.feed Vt.Vt.resize Vt.Vt.quiesce
+            (Checkpoint.Decoded Checkpoint.loadBytes) c.vt →
+          ∀ (metaKv : List (String × String)),
+            let saved := Checkpoint.loadBytes (Checkpoint.saveBytes c)
+            let booted :=
+              State.boot ((fun (_ : Option Vt.Vt) => Vt.Vt.init 1 1) (saved.map (·.vt)))
+                ((saved.map (·.labels)).getD []) metaKv
+            booted.terminal = c.vt.quiesce ∧ booted.labelList = c.labels.take maxLabels := by
   sorry
 
 /-! ## 8. Clean terminal
@@ -411,6 +566,16 @@ theorem screenText_text (v : Vt.Vt) :
           c = '\n' ∨ (0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0)) := by
   sorry
 
+/-- `screenText_text` rejects a capture that prints an escape byte. -/
+theorem screenText_text_rejects_escape :
+    ¬∀ (v : Vt.Vt),
+        ∃ cs : List Char,
+          (fun (_ : Vt.Vt) => ([0x1B] : Render.Bytes)) v = cs.flatMap String.utf8EncodeChar ∧
+            ∀ c ∈ cs,
+              c = '\n' ∨
+                (0x20 ≤ c.toNat ∧ c.toNat ≠ 0x7F ∧ ¬(0x80 ≤ c.toNat ∧ c.toNat < 0xA0)) := by
+  sorry
+
 /-- The sequence linger sends a terminal it hands back leaves any terminal at least two rows
 tall between control sequences, with default modes and pen, the whole screen as its scroll
 region, ASCII character sets with G0 selected, the main screen current and an empty title. -/
@@ -422,6 +587,20 @@ theorem leave_canonical_all (w : Vt.Vt) (h2 : 2 ≤ w.rowCount) :
           so := false, alt := false } ∧
       (w.feed Render.leaveAnsi).getPen = ({} : Vt.Pen) ∧
       (w.feed Render.leaveAnsi).windowTitle = "" := by
+  sorry
+
+/-- `leave_canonical_all` rejects a handback that is a lone escape byte, which leaves the
+parser inside a control sequence. -/
+theorem leave_canonical_all_rejects_escape :
+    ¬∀ (w : Vt.Vt),
+        2 ≤ w.rowCount →
+          (w.feed ([0x1B] : Render.Bytes)).atBoundary = true ∧
+            (w.feed ([0x1B] : Render.Bytes)).getModes = ({} : Vt.Modes) ∧
+            Vt.stick (w.feed ([0x1B] : Render.Bytes)) =
+              { rows := w.rowCount, top := 0, bot := w.rowCount - 1, g0 := false, g1 := false,
+                so := false, alt := false } ∧
+            (w.feed ([0x1B] : Render.Bytes)).getPen = ({} : Vt.Pen) ∧
+            (w.feed ([0x1B] : Render.Bytes)).windowTitle = "" := by
   sorry
 
 end Linger.Claims

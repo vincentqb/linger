@@ -8,7 +8,7 @@ package linger where leanOptions :=
     ⟨`linter.extra.unnecessarySeqFocus, true⟩]
 
 require lean_evidence from git
-  "https://github.com/vincentqb/lean-evidence"@"31482d21047478e4595235b39871fcae6dadc6d8"
+  "https://github.com/vincentqb/lean-evidence"@"eb5c88a365d1541c3d626beb63cfd8cea76580b4"
 
 /-- Options for every library but `Verify`: Lake builds a module with the options of one library
 that contains it, and these libraries overlap, so they share a single set. With the package's
@@ -89,8 +89,9 @@ lean_lib Verify where
 lean_exe suites where root := `Verify.Main
 
 /-- The headline theorems, stated with `sorry` for `./lake comparator`, which builds this
-library and checks that `Theorems.Claims` proves the same statements. -/
-lean_lib Manifest where leanOptions := #[⟨`warningAsError, false⟩, ⟨`linter.missingDocs, true⟩]
+library and checks that `Theorems.Claims` proves the same statements. `scripts/gates.sh` checks
+that each statement and hole is exactly `sorry`, so the build does not warn about them. -/
+lean_lib Manifest where leanOptions := #[⟨`warn.sorry, false⟩, ⟨`linter.missingDocs, true⟩]
 
 @[default_target] lean_exe linger where root := `Main
 
