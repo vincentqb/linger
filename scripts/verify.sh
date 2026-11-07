@@ -211,8 +211,8 @@ shim_out="$logs/shim.out"
   || { tail -25 "$shim_out"; fail "lingertest"; }
 tail -1 "$shim_out" | grep -q '^ALL PASS$' || fail "lingertest"
 shim_n="$(grep -c '^PASS ' "$shim_out")"
-[ "$shim_n" -eq 61 ] \
-  || fail "lingertest ran $shim_n checks (expected exactly 61)"
+[ "$shim_n" -eq 63 ] \
+  || fail "lingertest ran $shim_n checks (expected exactly 63)"
 
 # Keep one real session in another state directory through every suite. A suite
 # may clean up its own Env, never the user's process namespace. State directories hold
@@ -239,7 +239,7 @@ say "4. live suites (separate processes, at most four at once)"
 # Ordinary child spawning preserves SIGINT, unlike a shell's asynchronous list.
 # No suite shares an Env directory, and the runner waits for all of them on failure.
 ./.lake/build/bin/suites --suites \
-  manager:127 delivery:37 attach:50 agent:48 \
+  manager:127 delivery:37 attach:52 agent:48 \
   resume:19 watch:49 title:18 graphics:9 robust:30 \
   interop:72 recipes:58 status:17 terminal:12 overview:15 remote:68 identity:25 \
   || fail "live suites (see $logs/linger-*.out)"

@@ -36,7 +36,7 @@ private def readU32 (l : List UInt8) : UInt32 :=
 
 /-! ## Tag assignment (frozen; new tags append, old values never reused) -/
 
-/-- A message's frame tag: 0 to 16 for the assigned messages, and an `unknown` message's
+/-- A message's frame tag: 0 to 17 for the assigned messages, and an `unknown` message's
 own tag. -/
 private def Msg.tag : Msg → UInt8
   | .input _ => 0
@@ -56,24 +56,40 @@ private def Msg.tag : Msg → UInt8
   | .done => 14
   | .err _ => 15
   | .screen => 16
+  | .ended _ => 17
   | .unknown t _ => t
 
 /-- Tags with an assigned meaning in this version. -/
-private def knownTag (t : UInt8) : Bool := t ≤ 16
+private def knownTag (t : UInt8) : Bool := t ≤ 17
+
+/-- An ending as two bytes: its kind (0 exited, 1 signalled, 2 unknown) and its code or signal
+number. `readOutcome` inverts it (`readOutcome_outcomeBytes`). -/
+private def outcomeBytes : Outcome → List UInt8
+  | .exited code => [0, code]
+  | .signaled signal => [1, signal]
+  | .unknown => [2, 0]
+
+/-- Total: a payload that is no ending this version knows reads as `unknown`, so a newer
+daemon's ending is never misreported as an exit code or a signal. -/
+private def readOutcome : List UInt8 → Outcome
+  | 0 :: code :: _ => .exited code
+  | 1 :: signal :: _ => .signaled signal
+  | _ => .unknown
 
 /-- A message's frame payload: the raw bytes it carries, its sizes or exit status through
-`writeU32`, or nothing. `decodeMsg` recovers a well-formed message from its tag and payload
-(`decodeMsg_roundtrip`). -/
+`writeU32`, an ending's two bytes, or nothing. `decodeMsg` recovers a well-formed message from
+its tag and payload (`decodeMsg_roundtrip`). -/
 private def Msg.payload : Msg → List UInt8
   | .input b | .output b | .infoReply b | .err b | .labelSet b | .labelUnset b => b
   | .resize c r | .attach c r => writeU32 c ++ writeU32 r
   | .exited s => writeU32 s
+  | .ended o => outcomeBytes o
   | .detachAll | .kill | .info | .history | .wait | .labelClear | .done | .screen => []
   | .unknown _ p => p
 
 /-- Interpret one frame. Total: every (tag, payload) is some `Msg`.
 An if-chain rather than a literal match so fall-through to `unknown`
-is provable by `t ≠ 0, …, t ≠ 16` instead of match-compilation facts. -/
+is provable by `t ≠ 0, …, t ≠ 17` instead of match-compilation facts. -/
 private def decodeMsg (tag : UInt8) (p : List UInt8) : Msg :=
   if tag = 0 then .input p
   else
@@ -106,7 +122,9 @@ private def decodeMsg (tag : UInt8) (p : List UInt8) : Msg :=
                               if tag = 14 then .done
                               else
                                 if tag = 15 then .err p
-                                else if tag = 16 then .screen else .unknown tag p
+                                else
+                                  if tag = 16 then .screen
+                                  else if tag = 17 then .ended (readOutcome p) else .unknown tag p
 
 /-- A message the encoder may legally emit: payload within §Bound, and
 `unknown` only for genuinely unassigned tags (an `unknown` wearing a

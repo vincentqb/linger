@@ -64,6 +64,9 @@ def readInfo (fd : UInt32) (stopAt : Option Nat := none) : IO (List (String × S
             go := false
           | .err payload =>
             throw (IO.userError (Client.replyText "info request refused" payload))
+          | .ended outcome =>
+            let ending := Client.Ending.outcome outcome
+            throw (IO.userError s!"session ended before info completed ({ending.describe})")
           | .exited status =>
             throw (IO.userError s!"session ended before info completed (status {status})")
           | _ =>

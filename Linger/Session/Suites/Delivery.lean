@@ -25,6 +25,8 @@ structure Received where
   bytes : ByteArray := .empty
   /-- Each exit frame: the count of output bytes before it, and its status. -/
   exits : List (Nat × UInt32) := []
+  /-- Each ending frame: the count of output bytes before it, and the ending it reports. -/
+  endings : List (Nat × Outcome) := []
   /-- Each error frame's message. -/
   errors : List (List UInt8) := []
   /-- Whether every frame stayed within the decoder's bound. -/
@@ -53,6 +55,8 @@ def receive (peer : UInt32) (r : Received) : IO Received := do
               bounded := r.bounded && bytes.length ≤ Session.outputChunk }
         | .exited status =>
           r := { r with exits := r.exits ++ [(r.bytes.size, status)] }
+        | .ended outcome =>
+          r := { r with endings := r.endings ++ [(r.bytes.size, outcome)] }
         | .err bytes =>
           r := { r with errors := r.errors ++ [bytes] }
         | _ =>
@@ -114,8 +118,9 @@ private def withPair (dir tag : String) (vt : Linger.Terminal.Vt.Vt)
       let st := (Session.step (.boot vt [] []) (.connected fd.toNat)).1
       -- An independent idle listener fills the unused pty poll slot. New
       -- clients may connect to `listener` without making this slot readable.
+      -- No program runs, so there is none to reap.
       let rt : Rt :=
-        { st, listenFd := listener, ptyFd := idle, childPid := 0, conns := [{ fd }],
+        { st, listenFd := listener, ptyFd := idle, childPid := 0, reaped := true, conns := [{ fd }],
           saveCkpt := fun _ => pure (), dropCkpt := pure () }
       f rt peer fd
     finally
@@ -169,11 +174,12 @@ private def exitTail (dir : String) : IO Unit :=
       rt ← pump rt' feedback
     rt ← stall rt fd
     expect ((rt.conn? fd).any (fun c => owedLen c.out > 0)) "delivery/exit/actually-stalled"
-    rt ← pump rt [.childExited 7]
+    rt ← pump rt [.childExited (.signaled 9)]
     let (_, got) ← collect rt peer expected.size true
     IO.println s!"delivery/exit: received {got.bytes.size} / {expected.size} output bytes"
     expect (got.bytes == expected) "delivery/exit/exact-tail"
-    expect (got.exits == [(expected.size, 7)]) "delivery/exit/status-follows-tail"
+    expect (got.endings == [(expected.size, .signaled 9)] && got.exits == [(expected.size, 137)])
+        "delivery/exit/ending-follows-tail"
     expect (got.eof && !got.decoder.errored && got.decoder.buf.isEmpty) "delivery/exit/clean-eof"
 
 /-- Both messages are decoded before effects run. A replay read from the final

@@ -41,11 +41,20 @@ theorem readU32_writeU32 (n : UInt32) : readU32 (writeU32 n) = n := by
 the skip-don't-fail half of §Frame, naming the predicate that defines it. -/
 theorem decodeMsg_unknown_of_not_knownTag (t : UInt8) (p : List UInt8) (h : knownTag t = false) :
     decodeMsg t p = .unknown t p := by
-  have ht : ¬t ≤ 16 := by simpa [knownTag] using h
+  have ht : ¬t ≤ 17 := by simpa [knownTag] using h
   fun_cases decodeMsg t p <;>
     first
     | rfl
     | (exfalso; apply ht; subst_vars; decide)
+
+/-- An ending's two bytes read back as the same ending. -/
+@[simp]
+theorem readOutcome_outcomeBytes (o : Outcome) : readOutcome (outcomeBytes o) = o := by
+  cases o <;> rfl
+
+/-- An ending's payload is two bytes. -/
+@[simp]
+theorem outcomeBytes_length (o : Outcome) : (outcomeBytes o).length = 2 := by cases o <;> rfl
 
 /-- Re-interpreting a well-formed message's own tag and payload yields
 the message back. `WF` is load-bearing in the `unknown` case: an
@@ -215,7 +224,8 @@ theorem decodeMsg_payload_le (t : UInt8) (p : List UInt8) (hp : p.length ≤ max
     (decodeMsg t p).payload.length ≤ maxPayload := by
   have h8 : (8 : Nat) ≤ maxPayload := by simp [maxPayload]
   fun_cases decodeMsg t p <;>
-    simp only [Msg.payload, List.length_append, writeU32_length, List.length_nil] <;>
+    simp only [Msg.payload, List.length_append, writeU32_length, outcomeBytes_length,
+      List.length_nil] <;>
     omega
 
 theorem takeFrames_msgs_payload_le (bytes : List UInt8) :

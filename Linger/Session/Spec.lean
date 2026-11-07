@@ -14,13 +14,37 @@ keeps, the reachable states of the daemon's byte queues, and a model of how daem
 offline readers claim a session's resources. Bodies are exposed: each definition here is its
 own specification. -/
 
+namespace Linger.Session
+
+/-- How a session's program ended, as linger saw it. -/
+inductive Outcome where
+  /-- The program exited with this code. -/
+  | exited (code : UInt8)
+  /-- A signal with this number killed the program. -/
+  | signaled (signal : UInt8)
+  /-- linger did not see how the program ended. -/
+  | unknown
+  deriving Repr, DecidableEq, Inhabited
+
+/-- The exit status a caller sees for a program that ended this way, as a shell reports it: the
+code, 128 plus the signal's number, or 125, the status a wrapper reports for its own failure,
+when linger did not see the end. -/
+@[expose]
+def Outcome.status : Outcome → UInt32
+  | .exited code => code.toUInt32
+  | .signaled signal => 128 + signal.toUInt32
+  | .unknown => 125
+
+end Linger.Session
+
 namespace Linger.Session.Wire
 
 /-- The protocol level a daemon speaks, which `info` reports as `protocol`, so a client can
 refuse a request an older daemon cannot serve before sending it. Level 1 refuses a message it
-does not know; a daemon that reports no level predates the field and drops one silently. -/
+does not know; level 2 also says how a program ended (`Msg.ended`). A daemon that reports no
+level predates the field and drops an unknown message silently. -/
 @[expose]
-def protocol : Nat := 1
+def protocol : Nat := 2
 
 /-- Largest payload a frame may carry. Reads from the OS are ≤ 64 KiB, so honest senders stay
 far below; a frame claiming more is either corruption or an attack, and the decoder turns it
@@ -50,8 +74,8 @@ inductive Msg where
   | infoReply (bytes : List UInt8)
   /-- client → daemon: send scrollback and the screen as output frames, then `done`. -/
   | history
-  /-- daemon → client: the session ended, with the status of its
-  `Session.Event.childExited`. -/
+  /-- daemon → client: the session ended, with the status a shell would report for its
+  program (`Outcome.status`). -/
   | exited (status : UInt32)
   /-- client → daemon: hold this connection open until the child exits. -/
   | wait
@@ -69,6 +93,9 @@ inductive Msg where
   output frames, then `done`. `linger capture` — and it marks the session
   seen (a capture is a look). -/
   | screen
+  /-- daemon → client: how the session's program ended, sent just before `exited`, which
+  carries the same ending as the status a shell would report. -/
+  | ended (outcome : Outcome)
   /-- any tag this version does not know: skipped, never fatal (§Frame). -/
   | unknown (tag : UInt8) (payload : List UInt8)
   deriving Repr, DecidableEq, Inhabited
@@ -136,9 +163,9 @@ inductive Event where
   | closed (id : Nat)
   /-- The child wrote output to the pty. -/
   | ptyOut (chunk : List UInt8)
-  /-- The pty reached end of file. `status` is the child's exit code, 128 plus the number of
-  the signal that killed it, or 1 when the runtime could not reap it. -/
-  | childExited (status : UInt32)
+  /-- The session's program ended this way. The runtime reports it as soon as it reaps the
+  program, whether or not anything else still holds the pty. -/
+  | childExited (outcome : Outcome)
   /-- A poll round ended; `nowMs` is the monotonic clock in milliseconds. -/
   | tick (nowMs : Nat)
   /-- The last `.checkpoint` effect failed to save. -/

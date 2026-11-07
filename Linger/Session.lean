@@ -59,7 +59,7 @@ structure StateRec where
   labels : List (String × String) := []
   /-- name/pid/created/cwd…, set once by the runtime at boot. -/
   metaKv : List (String × String) := []
-  private exited : Option UInt32 := none
+  private exited : Option Outcome := none
   /-- Persistent screen or label changes since the last checkpoint? -/
   private dirty : Bool := false
   private lastCkptMs : Nat := 0
@@ -179,6 +179,15 @@ private def unseen (s : State) : Bool := s.lookSeq < s.outSeq
 have thrown it away. -/
 private def behind (s : State) : Nat := s.outSeq - s.lookSeq
 
+/-- How `info` reports an ending: `exit` holds the status a shell would report, and a field
+only a signal or an unseen ending has says which those are, so two endings never read the
+same (`outcomeFields_injective`). -/
+def outcomeFields : Outcome → List (String × String)
+  | .exited code => [("exit", toString code.toNat)]
+  | .signaled signal =>
+    [("exit", toString (Outcome.signaled signal).status.toNat), ("signal", toString signal.toNat)]
+  | .unknown => [("exit", toString Outcome.unknown.status.toNat), ("outcome", "unknown")]
+
 /-- The fields one listing record carries, as a named stage. Split out from
 `infoText` because the framing below is only unambiguous if no field contains a
 framing byte, and that is a claim about *these* — see `infoText_framing`. -/
@@ -200,7 +209,7 @@ def infoFields (s : State) : List (String × String) :=
       ("cursorx", toString s.vt.cursorPos.1), ("cursory", toString s.vt.cursorPos.2),
       ("alt", toString s.vt.inAlt), ("outseq", toString s.outSeq)] ++
     (match s.exited with
-    | some st => [("exit", toString st.toNat)]
+    | some outcome => outcomeFields outcome
     | none => []) ++
     s.labels.map (fun (k, v) => (s!"label.{k}", v))
 
@@ -333,7 +342,7 @@ private def onMsg (s : State) (c : Client) (m : Msg) : State × List (Effect Pla
       (s,
         effs ++ [.replay c.id (Replay.start s.vt)] ++
           (match s.exited with
-          | some st => [.send c.id (.exited st)]
+          | some outcome => [.send c.id (.ended outcome), .send c.id (.exited outcome.status)]
           | none => []))
   | .input bytes =>
     -- attached observers are read-only; control connections (not
@@ -381,7 +390,7 @@ private def onMsg (s : State) (c : Client) (m : Msg) : State × List (Effect Pla
         outputMsgs c.id (Render.screenText s.vt) ++ [.send c.id .done])
   | .wait =>
     match s.exited with
-    | some st => (s, [.send c.id (.exited st)])
+    | some outcome => (s, [.send c.id (.ended outcome), .send c.id (.exited outcome.status)])
     | none => (s.setClient { c with waiting := true }, [])
   | .labelSet kv =>
     if c.attached && !c.sizer then (s, [.send c.id (.err "read-only".toUTF8.toList)])
@@ -412,7 +421,7 @@ private def onMsg (s : State) (c : Client) (m : Msg) : State × List (Effect Pla
         [.send c.id .done])
   -- daemon-to-client vocabulary arriving at the daemon is no request and is dropped;
   -- a tag this version does not know is a request it cannot serve, and is refused
-  | .output _ | .exited _ | .infoReply _ | .done | .err _ => (s, [])
+  | .output _ | .exited _ | .ended _ | .infoReply _ | .done | .err _ => (s, [])
   | .unknown _ _ => (s, [.send c.id (.err "unknown message".toUTF8.toList)])
 
 /-! ## The step function -/
@@ -508,15 +517,15 @@ def step (s : State) (ev : Event) : State × List (Effect Plan) :=
         vt := r.vt, scan := r.scan, dirty := true, outSeq := s.outSeq + 1,
         lookSeq := if s.clients.any (·.attached) then s.outSeq + 1 else s.lookSeq },
       (if r.replies.isEmpty then [] else [.writePty r.replies]) ++ broadcast s r.visible)
-  | .childExited status =>
+  | .childExited outcome =>
     let flushed := Terminal.Mediation.finish s.scanner
     let s :=
       { s with
-        exited := some status, scan := flushed.2 }
+        exited := some outcome, scan := flushed.2 }
     let flush := broadcast s flushed.1
     let notify :=
-      s.clients.filter (fun c => c.attached || c.waiting) |>.map
-        (fun c => Effect.send c.id (.exited status))
+      s.clients.filter (fun c => c.attached || c.waiting) |>.flatMap
+        (fun c => [Effect.send c.id (.ended outcome), Effect.send c.id (.exited outcome.status)])
     let closes := s.clients.map (fun c => Effect.close c.id)
     (s, flush ++ notify ++ closes ++ [.dropCheckpoint, .exit])
   | .tick now =>

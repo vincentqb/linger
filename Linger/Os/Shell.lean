@@ -195,13 +195,45 @@ def alive (pid : UInt32) : IO Bool := do
   checkPid "alive" pid
   Boundary.alive pid
 
-/-- WNOHANG waitpid. `-1` the requested child is still running; `-2` it is not
-reapable — `ECHILD` (not our child, or already reaped) and every other non-`EINTR`
-failure alike, so a caller polls `alive` rather than waiting forever; `≥ 0` exit
-status (128+sig if signalled), zombie reaped. -/
+/-- What a non-blocking reap of a child found. -/
+inductive Reaped where
+  /-- The child is still running. -/
+  | running
+  /-- The child is not ours to reap, or is already reaped. -/
+  | unreapable
+  /-- The child exited with this code, and is reaped. -/
+  | exited (code : UInt8)
+  /-- A signal with this number killed the child, which is reaped. -/
+  | signaled (signal : UInt8)
+  deriving Repr, DecidableEq
+
+/-- WNOHANG waitpid, saying how a reaped child ended: its exit code, or the signal that
+killed it. `unreapable` covers `ECHILD` (not our child, or already reaped) and every other
+non-`EINTR` failure alike, so a caller polls `alive` rather than waiting forever. -/
+def reapNohang (pid : UInt32) : IO Reaped := do
+  checkPid "reapNohang" pid
+  let status ← Boundary.waitpidNohang pid
+  if status == -1 then
+    return .running
+  if status < 0 then
+    return .unreapable
+  if status < 256 then
+    return .exited status.toInt.toNat.toUInt8
+  return .signaled (status - 256).toInt.toNat.toUInt8
+
+/-- WNOHANG waitpid as a shell reports it. `-1` the requested child is still running; `-2` it
+is not reapable, as for `reapNohang`; `≥ 0` the exit status, 128 plus the signal's number if
+signalled, with the zombie reaped. -/
 def waitpidNohang (pid : UInt32) : IO Int64 := do
-  checkPid "waitpidNohang" pid
-  Boundary.waitpidNohang pid
+  match ← reapNohang pid with
+  | .running =>
+    return -1
+  | .unreapable =>
+    return -2
+  | .exited code =>
+    return code.toNat.toInt64
+  | .signaled signal =>
+    return 128 + signal.toNat.toInt64
 
 /-- getuid(2): the real user id, which names the default socket directory. -/
 def getuid : IO UInt32 := Boundary.getuid

@@ -25,6 +25,10 @@ Active and retired client transports share `maxClients`. Logical close reports
 `.closed` immediately; accepted bytes may drain until the connection's fixed
 deadline. Final shutdown also has a finite drain grace period.
 
+The session ends when its program does. Every poll round reaps the program without blocking,
+whether or not a background job still holds the terminal, and reports how it ended; the
+terminal's end of file ends nothing by itself.
+
 `Linger/Session/Proofs/Buf.lean` proves the byte-buffer caps, shared allowance and removal of
 written prefixes. `Linger/Terminal/Proofs/Replay.lean` proves the cursor's exact stream,
 progress and storage bound. Runtime scheduling and short-write handling are
@@ -37,7 +41,7 @@ the daemon knows *when*, that module knows *what*.
 namespace Linger.Session.Shell.Daemon
 
 open Linger.Os.Shell
-open Linger.Session (State Event Effect maxClients)
+open Linger.Session (State Event Effect Outcome maxClients)
 open Linger.Session.Buf (Buf owedLen bufOffer bufEnqueue bufAdvance followingCap)
 open Linger.Terminal
 open Linger.Terminal.Replay (Plan)
@@ -128,6 +132,17 @@ structure Rt where
   records the *transition* into backpressure rather than one line per dropped
   chunk (which would be the same unbounded-growth defect, in the log file). -/
   ptyInFull : Bool := false
+  /-- Whether the pty can still be read. Its end of file is not the session's end: a program
+  can exit while its background jobs hold the terminal, and a program can close its terminal and
+  keep running. Only the program's own exit ends the session. -/
+  ptyOpen : Bool := true
+  /-- Whether the program has been reaped. Its pid may belong to another process afterwards,
+  so nothing signals or reaps it again. -/
+  reaped : Bool := false
+  /-- How long the next poll waits for the program's end while its terminal is closed. The end
+  usually follows at once, so the wait starts at 10 ms; it doubles each round up to a second, so
+  a program that runs on without its terminal wakes the daemon once a second. -/
+  reapWaitMs : Nat := 10
   /-- Set once the machine emits `.exit`; the poll loop then stops and `drainConns` runs. -/
   exiting : Bool := false
   /-- checkpoint hooks from `Linger.Session.Shell.Resume` -/
@@ -220,8 +235,8 @@ def flushConn (c : Conn) : IO (Option Conn) := do
   return some c
 
 /-- The same bookkeeping for the child's input queue, with the *other* reaction:
-both `n ≤ 0` cases collapse to `break`, because a dead child surfaces as `read`
-returning `none` → `.childExited`, and there is nothing to disconnect. Sharing the
+both `n ≤ 0` cases collapse to `break`, because a dead child surfaces through the reap every
+poll round makes (`.childExited`), and there is nothing to disconnect. Sharing the
 loop would invite "fixing" that asymmetry, which would either drop the pty queue
 on a transient or leave a dead client's frames queued. -/
 private def flushPty (rt : Rt) : IO Rt := do
@@ -324,7 +339,9 @@ private def executeEffect (st : State) (rt : Rt) : (eff : Effect Plan) → IO (R
       report s!"linger: pty resize failed: {err}"
     return (rt, ())
   | .killChild => do
-    kill rt.childPid 15 -- SIGTERM
+    -- a reaped program's pid may now belong to another process
+    if !rt.reaped then
+      kill rt.childPid 15 -- SIGTERM
     return (rt, ())
   | .checkpoint => do
     try
@@ -356,11 +373,32 @@ def pump (rt : Rt) (evs : List Event) : IO Rt := do
   return { result.world with
       st := result.st, exiting := result.exiting }
 
+/-- poll(2) skips a negative descriptor: the pty's slot holds this one after the terminal
+closes, so the closed terminal cannot wake every poll. -/
+private def closedFd : UInt32 := 0xFFFFFFFF
+
+/-- How many reads of the terminal the program's last output may take once it has ended. -/
+private def finalReads : Nat := 16
+
+/-- How the program ended, if it has: reaped with its exit code or signal, or `unknown` when it
+is no longer ours to reap. -/
+private def programEnd (pid : UInt32) : IO (Option Outcome) := do
+  match ← reapNohang pid with
+  | .running =>
+    return none
+  | .exited code =>
+    return some (.exited code)
+  | .signaled signal =>
+    return some (.signaled signal)
+  | .unreapable =>
+    return some .unknown
+
 /-- One poll round: gather events from fd readiness. -/
 def pollRound (rt : Rt) : IO (Rt × List Event) := do
   let now ← monotonicMs
   let rt ← expireConns rt now
-  let mut timeout := 1000
+  -- once the terminal has closed, the program's end usually follows at once
+  let mut timeout := if rt.ptyOpen || rt.reaped then 1000 else rt.reapWaitMs
   for c in rt.conns do
     if let some deadline := c.closeBy then
       timeout := min timeout (deadline - now)
@@ -371,7 +409,7 @@ def pollRound (rt : Rt) : IO (Rt × List Event) := do
   -- snapshot: only these conns are in the poll set; accepts during
   -- this round join the NEXT one (revs stays index-aligned)
   let polled := rt.conns
-  let mut fds : Array UInt32 := #[rt.listenFd, rt.ptyFd]
+  let mut fds : Array UInt32 := #[rt.listenFd, if rt.ptyOpen then rt.ptyFd else closedFd]
   let mut evts : Array UInt32 :=
     #[(if accepting then POLLIN else 0), POLLIN ||| (if owedLen rt.ptyIn != 0 then POLLOUT else 0)]
   for c in polled do
@@ -409,20 +447,14 @@ def pollRound (rt : Rt) : IO (Rt × List Event) := do
   let ptyRev := revs[1]!
   if ptyRev &&& POLLOUT != 0 then
     rt ← flushPty rt
-  if ptyRev &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
+  if rt.ptyOpen && ptyRev &&& (POLLIN ||| POLLHUP ||| POLLERR) != 0 then
     match ← read rt.ptyFd 65536 with
     | some bs =>
       if bs.size > 0 then
         events := events ++ [.ptyOut bs.toList]
     | none =>
-      -- child gone: reap and report
-      let mut status : Int64 := -1
-      let deadline := (← monotonicMs) + 3000
-      while status == -1 && (← monotonicMs) < deadline do
-        status ← waitpidNohang rt.childPid
-        if status == -1 then
-          IO.sleep 10
-      events := events ++ [.childExited (if status < 0 then 1 else status.toUInt64.toUInt32)]
+      -- the terminal closed; the session lasts until its program ends
+      rt := { rt with ptyOpen := false }
   -- clients (the polled snapshot only)
   let mut idx := 2
   for c in polled do
@@ -462,6 +494,26 @@ def pollRound (rt : Rt) : IO (Rt × List Event) := do
         | none =>
           rt ← rt.closeConn c.fd
           events := events ++ [.closed c.fd.toNat]
+  -- the program's end, whatever still holds its terminal
+  if !rt.reaped then
+    match ← programEnd rt.childPid with
+    | none =>
+      if !rt.ptyOpen then
+        rt := { rt with reapWaitMs := min 1000 (2 * rt.reapWaitMs) }
+    | some outcome =>
+      rt := { rt with reaped := true }
+      -- the output it left in the terminal comes first, within a bounded number of reads
+      if rt.ptyOpen then
+        for _ in List.range finalReads do
+          match ← read rt.ptyFd 65536 with
+          | some bs =>
+            if bs.isEmpty then
+              break
+            events := events ++ [.ptyOut bs.toList]
+          | none =>
+            rt := { rt with ptyOpen := false }
+            break
+      events := events ++ [.childExited outcome]
   return (rt, events)
 
 /-- Stop admitting work and drain accepted bytes, with a finite grace period.
@@ -579,14 +631,16 @@ def serve (name : String) (cwd : String) (argv : List String) (saveCkpt : State 
           for c in rt.conns do
             close c.fd
           try
-            if ← alive rt.childPid then
-              kill rt.childPid 15
-              IO.sleep 150
+            if !rt.reaped then
               if ← alive rt.childPid then
-                kill rt.childPid 9
+                kill rt.childPid 15
+                IO.sleep 150
+                if ← alive rt.childPid then
+                  kill rt.childPid 9
           catch err =>
             report s!"linger: child cleanup failed: {err}"
-          let _ ← waitpidNohang rt.childPid
+          if !rt.reaped then
+            discard <| waitpidNohang rt.childPid
           close rt.ptyFd
       finally
         close listenFd

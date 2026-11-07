@@ -263,6 +263,30 @@ theorem command_argv_rejects_empty :
   cases words
   simp_all [Remote.Shell.word]
 
+theorem step_ended_reports (s : State) (o : Outcome) {c : Client} (hc : c ∈ s.roster)
+    (listening : c.attached = true ∨ c.waiting = true) :
+    [Effect.send c.id (.ended o), Effect.send c.id (.exited o.status)] <:+:
+        (Session.step s (.childExited o)).2 ∧
+      (Session.step s (.childExited o)).2.getLast? = some .exit :=
+  Session.step_ended_reports s o hc listening
+
+theorem step_ended_reports_rejects_status :
+    ¬∀ (s : State) (o : Outcome) {c : Client},
+        c ∈ (fun (_ : State) => [({ id := 0, attached := true } : Client)]) s →
+          c.attached = true ∨ c.waiting = true →
+          [Effect.send c.id (.ended o), Effect.send c.id (.exited o.status)] <:+:
+              ((fun s _ => (s, ([.send 0 (.exited 1), .exit] : List (Effect Replay.Plan)))) s
+                  (Event.childExited o)).2 ∧
+            ((fun s _ => (s, ([.send 0 (.exited 1), .exit] : List (Effect Replay.Plan)))) s
+                  (Event.childExited o)).2.getLast? =
+              some .exit := by
+  intro h
+  obtain ⟨heard, -⟩ :=
+    @h (State.boot (Vt.Vt.init 1 1) [] []) .unknown { id := 0, attached := true } (by simp)
+      (.inl rfl)
+  have same := heard.eq_of_length rfl
+  simp at same
+
 theorem run_total_safe {World ε : Type}
     (execute : State → World → (eff : Effect Replay.Plan) → Except ε (World × Driver.Reply eff))
     (hw : Driver.Responds execute) (r : Driver.Result State World) (events : List Event)

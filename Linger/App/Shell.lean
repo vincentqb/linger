@@ -274,9 +274,9 @@ private def cmdAttach (name : String) (cmd : List String) (readOnly : Bool) : IO
       let fd ← connectUpsert name cmd
       Client.attach name fd summaryText
   match result with
-  | .ended status =>
-    IO.eprintln s!"\r\nlinger: session '{name}' ended (status {status})"
-    return status &&& 0xFF
+  | .ended ending =>
+    IO.eprintln s!"\r\nlinger: session '{name}' ended ({ending.describe})"
+    return ending.exitStatus
   | .detached =>
     IO.eprintln s!"\r\nlinger: detached from '{name}'"
     return 0
@@ -356,8 +356,8 @@ private def requestStatus (name : String) (result : Client.Drained) : IO UInt32 
     IO.eprintln s!"linger: {why}"
   | .lost why =>
     IO.eprintln s!"linger: {why} for '{name}'"
-  | .exited status =>
-    IO.eprintln s!"linger: session '{name}' ended before the request completed (status {status})"
+  | .exited ending =>
+    IO.eprintln s!"linger: session '{name}' ended before the request completed ({ending.describe})"
   | .silent =>
     IO.eprintln s!"linger: no reply from '{name}'"
   return 1
@@ -435,6 +435,10 @@ private def cmdSendStdin (name : String) : IO UInt32 := do
                 | .err msg =>
                   IO.eprintln s!"linger: {Client.replyText "request refused" msg}"
                   return 1
+                | .ended outcome =>
+                  let ending := Client.Ending.outcome outcome
+                  IO.eprintln s!"linger: session '{name}' ended while sending ({ending.describe})"
+                  return 1
                 | .exited status =>
                   IO.eprintln s!"linger: session '{name}' ended while sending (status {status})"
                   return 1
@@ -451,15 +455,21 @@ private def cmdSendStdin (name : String) : IO UInt32 := do
     finally
       close fd
 
-/-- `wait`: block until the session's program exits and return its status. No session
+/-- `wait`: block until the session's program ends and return the status a shell would report
+for it, saying on stderr when a signal killed the program or how it ended is unknown. No session
 returns 0; a refusal, a lost connection or a reply without a status prints a diagnostic
 and returns 1. -/
 private def cmdWait (name : String) : IO UInt32 := do
   match ← Client.oneShot name .wait (untilDone := false) with
   | none =>
     return 0 -- no session = nothing to wait for
-  | some (.exited status) =>
-    return status
+  | some (.exited ending) =>
+    match ending with
+    | .outcome (.exited _) | .status _ =>
+      pure ()
+    | .outcome _ =>
+      IO.eprintln s!"linger: session '{name}' ended ({ending.describe})"
+    return ending.exitStatus
   | some (.refused why) =>
     IO.eprintln s!"linger: {why}"
     return 1

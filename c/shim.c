@@ -753,8 +753,9 @@ LEAN_EXPORT lean_obj_res linger_alive(uint32_t pid) {
 
 /* linger_waitpid_nohang : UInt32 -> IO Int64
  * -1: the requested child is still running. -2: not our child or already
- * reaped (ECHILD -- the caller then asks linger_alive). >=0: exit status
- * byte (128+sig if signalled), reaping the zombie.
+ * reaped (ECHILD -- the caller then asks linger_alive). 0..255: the exit
+ * code; 256+sig: killed by signal sig. Both reap the zombie, and the two
+ * ranges keep an exit code apart from a signal (Linger.Os.Shell.reapNohang).
  *
  * There is no fourth outcome to report: the only other errno waitpid can
  * set here is EINVAL for bad options, and the options are the constant
@@ -772,7 +773,7 @@ LEAN_EXPORT lean_obj_res linger_waitpid_nohang(uint32_t pid) {
         out = -1;
     } else if (r == (pid_t)pid) {
         if (WIFEXITED(status)) out = WEXITSTATUS(status);
-        else if (WIFSIGNALED(status)) out = 128 + WTERMSIG(status);
+        else if (WIFSIGNALED(status)) out = 256 + WTERMSIG(status);
         else out = -1; /* WNOHANG without WUNTRACED: not exited, so running */
     } else {
         out = -2;

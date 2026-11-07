@@ -62,6 +62,24 @@ theorem infoFields_protocol (s : State) :
       ("version", Terminal.Mediation.versionNumber) ∈ infoFields s := by
   simp [infoFields]
 
+/-- Distinct numbers print differently. -/
+theorem toString_nat_inj {a b : Nat} (h : toString a = toString b) : a = b := by
+  have digits : Nat.toDigits 10 a = Nat.toDigits 10 b := by
+    rw [← Nat.toList_repr, ← Nat.toList_repr, ← Nat.toString_eq_repr, ← Nat.toString_eq_repr, h]
+  rw [← Nat.ofDigitChars_ten_toDigits (n := a), ← Nat.ofDigitChars_ten_toDigits (n := b), digits]
+
+/-- **Two endings never read the same in `info`**: an exit code, a signal and an ending linger
+did not see each give different fields, whatever their numbers. -/
+theorem outcomeFields_injective {o₁ o₂ : Outcome} (h : outcomeFields o₁ = outcomeFields o₂) :
+    o₁ = o₂ := by
+  cases o₁ <;> cases o₂ <;> simp only [outcomeFields, List.cons.injEq, Prod.mk.injEq] at h
+  all_goals
+    first
+    | rfl
+    | exact congrArg _ (UInt8.toNat_inj.mp (toString_nat_inj h.1.2))
+    | exact congrArg _ (UInt8.toNat_inj.mp (toString_nat_inj h.2.1.2))
+    | exact absurd h (by simp)
+
 /-- Wrong-direction messages are no request, and are dropped. -/
 theorem onMsg_wrong_direction (s : State) (c : Client) (bs : List UInt8) :
     onMsg s c (.output bs) = (s, []) ∧
@@ -259,23 +277,48 @@ theorem ptyOut_reply_roster_independent (s t : State) (chunk : List UInt8) (hv :
 
 /-- Child exit resets the scanner; `finish`'s pending bytes are broadcast by
 `step` before exited notifications and close effects. -/
-theorem step_childExited_scan (s : State) (status : UInt32) :
-    (step s (.childExited status)).1.scan = .ground := by simp [step, Terminal.Mediation.finish]
+theorem step_childExited_scan (s : State) (outcome : Outcome) :
+    (step s (.childExited outcome)).1.scan = .ground := by simp [step, Terminal.Mediation.finish]
 
-/-- The incomplete prefix is the first effect segment, before exited notices,
-closes, checkpoint deletion, and daemon exit. -/
-theorem step_childExited_effects (s : State) (status : UInt32) :
-    (step s (.childExited status)).2 =
+/-- The incomplete prefix is the first effect segment, before the ending and its status go to
+every attached or waiting client, then the closes, checkpoint deletion, and daemon exit. -/
+theorem step_childExited_effects (s : State) (outcome : Outcome) :
+    (step s (.childExited outcome)).2 =
       let flushed := Terminal.Mediation.finish s.scan
       let s' :=
         { s with
-          exited := some status, scan := flushed.2 }
+          exited := some outcome, scan := flushed.2 }
       let flush := broadcast s' flushed.1
       let notify :=
-        s'.clients.filter (fun c => c.attached || c.waiting) |>.map
-          (fun c => Effect.send c.id (.exited status))
+        s'.clients.filter (fun c => c.attached || c.waiting) |>.flatMap
+          (fun c => [Effect.send c.id (.ended outcome), Effect.send c.id (.exited outcome.status)])
       let closes := s'.clients.map (fun c => Effect.close c.id)
       flush ++ notify ++ closes ++ [.dropCheckpoint, .exit] := rfl
+
+/-- What a function makes of one member is a block of what it makes of the whole list. -/
+theorem infix_flatMap_of_mem {α β : Type} {f : α → List β} {l : List α} {a : α} (h : a ∈ l) :
+    f a <:+: l.flatMap f := by
+  obtain ⟨front, back, rfl⟩ := List.append_of_mem h
+  rw [List.flatMap_append, List.flatMap_cons, ← List.append_assoc]
+  exact List.infix_append _ _ _
+
+/-- **An ending reaches everyone listening**: when the program ends, every client attached to
+the session or waiting for its end is told how the program ended and then the status a shell
+would report for that ending, and the daemon's last effect is its exit. -/
+theorem step_ended_reports (s : State) (o : Outcome) {c : Client} (hc : c ∈ s.roster)
+    (listening : c.attached = true ∨ c.waiting = true) :
+    [Effect.send c.id (.ended o), Effect.send c.id (.exited o.status)] <:+:
+        (step s (.childExited o)).2 ∧
+      (step s (.childExited o)).2.getLast? = some .exit := by
+  rw [step_childExited_effects]
+  dsimp only
+  refine ⟨?_, by simp⟩
+  have heard : c ∈ s.clients.filter (fun c => c.attached || c.waiting) :=
+    List.mem_filter.mpr ⟨hc, by rcases listening with h | h <;> simp [h]⟩
+  exact
+    (infix_flatMap_of_mem (f := fun c =>
+          [Effect.send c.id (.ended o), Effect.send c.id (.exited o.status)]) heard).trans
+      ((List.infix_append _ _ _).trans (List.prefix_append _ _).isInfix)
 
 /-- **`detach-all`'s whole purpose, as an equation** (pin-the-gaps item 2). The
 verb changes no state at all, so everything it promises lives in the effect

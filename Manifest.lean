@@ -429,10 +429,34 @@ words into it, joined with spaces), and that a resumed session starts in the dir
 
 /-! ## 5. Accountability
 
-Not claimed yet: that `linger wait` refuses an unknown name (it exits 0); that an outcome says how
-the program ended (a signal reads as exit status 128 plus its number, and a program not reaped
-within 3 seconds as 1); and that anyone who asks later hears the outcome (only clients connected
-at the end do). The session refuses a message it does not know (`onMsg_unknown`). -/
+Not claimed yet: that `linger wait` refuses an unknown name (it exits 0), and that anyone who asks
+later hears the outcome (only clients connected at the end do). The session refuses a message it
+does not know (`onMsg_unknown`), and `info` reports each ending with its own fields
+(`outcomeFields_injective`). -/
+
+/-- When the session's program ends, every client attached to the session or waiting for its end
+is told how the program ended and then the status a shell would report for that ending, and the
+daemon's last effect is its exit. -/
+theorem step_ended_reports (s : State) (o : Outcome) {c : Client} (hc : c ∈ s.roster)
+    (listening : c.attached = true ∨ c.waiting = true) :
+    [Effect.send c.id (.ended o), Effect.send c.id (.exited o.status)] <:+:
+        (Session.step s (.childExited o)).2 ∧
+      (Session.step s (.childExited o)).2.getLast? = some .exit := by
+  sorry
+
+/-- `step_ended_reports` rejects a session that reports a status alone, which cannot tell a
+death by signal from an exit code. -/
+theorem step_ended_reports_rejects_status :
+    ¬∀ (s : State) (o : Outcome) {c : Client},
+        c ∈ (fun (_ : State) => [({ id := 0, attached := true } : Client)]) s →
+          c.attached = true ∨ c.waiting = true →
+          [Effect.send c.id (.ended o), Effect.send c.id (.exited o.status)] <:+:
+              ((fun s _ => (s, ([.send 0 (.exited 1), .exit] : List (Effect Replay.Plan)))) s
+                  (Event.childExited o)).2 ∧
+            ((fun s _ => (s, ([.send 0 (.exited 1), .exit] : List (Effect Replay.Plan)))) s
+                  (Event.childExited o)).2.getLast? =
+              some .exit := by
+  sorry
 
 /-- When each external operation returns a typed result, every finite batch of events
 completes without an uncaught exception, keeping the session within its bounds and its

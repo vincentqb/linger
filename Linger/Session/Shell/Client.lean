@@ -50,14 +50,36 @@ a nonblocking `fd` would block, or when the write fails. -/
 def sendMsg (fd : UInt32) (m : Msg) : IO Unit :=
   writeAll fd (ByteArray.mk (Linger.Session.Wire.encode m).toArray)
 
+/-- How a session's program ended, as its daemon reported it. -/
+inductive Ending where
+  /-- The daemon said how the program ended, as daemons at `Wire.protocol` 2 and later do. -/
+  | outcome (outcome : Linger.Session.Outcome)
+  /-- An older daemon reported only the exit status a shell would show. -/
+  | status (status : UInt32)
+  deriving Repr, Inhabited
+
+/-- The exit status a caller sees: `Outcome.status` for a reported outcome, else the status an
+older daemon reported. -/
+def Ending.exitStatus : Ending → UInt32
+  | .outcome reported => reported.status
+  | .status reported => reported
+
+/-- The ending in words: the exit status, the signal that killed the program, or that linger did
+not see how it ended. -/
+def Ending.describe : Ending → String
+  | .outcome (.exited code) => s!"status {code}"
+  | .outcome (.signaled signal) => s!"killed by signal {signal}"
+  | .outcome .unknown => "outcome unknown"
+  | .status reported => s!"status {reported}"
+
 /-- How a request/reply conversation ended. Messages stay data until the CLI
 chooses an exit status and diagnostic; a refusal or transport loss cannot collapse
 into ordinary completion. -/
 inductive Drained where
   /-- The daemon completed the request with `done`. -/
   | done
-  /-- The session's child exited with this status. -/
-  | exited (status : UInt32)
+  /-- The session's program ended this way. -/
+  | exited (ending : Ending)
   /-- The daemon refused the request; `why` is its reason, made safe for stderr. -/
   | refused (why : String)
   /-- The socket closed or its framing became invalid before an outcome. -/
@@ -102,8 +124,11 @@ private def drainReplies (fd : UInt32) (untilDone : Bool) (silenceMs : Int32 := 
         match m with
         | .output payload | .infoReply payload =>
           writeAll stdoutFd (ByteArray.mk payload.toArray)
+        -- a daemon that says how its program ended says so before `exited`
+        | .ended outcome =>
+          return .exited (.outcome outcome)
         | .exited status =>
-          return .exited status
+          return .exited (.status status)
         | .done =>
           if untilDone then
             return .done
@@ -150,8 +175,8 @@ private def splitDetach (bs : ByteArray) (enabled : Bool) : ByteArray × Bool :=
 /-- How an interactive attach ended. Each constructor carries exactly the facts
 its case has, so a refusal or lost daemon cannot be reported as a detach. -/
 inductive Outcome where
-  /-- The session's child exited with this status. -/
-  | ended (status : UInt32)
+  /-- The session's program ended this way. -/
+  | ended (ending : Ending)
   /-- The viewer left without ending a session. -/
   | detached
   /-- The daemon refused the attach and said why. -/
@@ -284,8 +309,11 @@ private def converse (name : String) (fd : UInt32) (sample : IO String) (readOnl
                     receivedOutput := true
                     -- Reassert even if the application repeats the same OSC title.
                     titleDirty := true
+                  | .ended outcome =>
+                    result := .ended (.outcome outcome)
+                    leaving := true
                   | .exited status =>
-                    result := .ended status
+                    result := .ended (.status status)
                     leaving := true
                   | .err msg =>
                     result := .refused (replyText "attach refused" msg)

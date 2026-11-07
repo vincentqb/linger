@@ -213,6 +213,17 @@ example (s : Session.State) :
       ("version", Terminal.Mediation.versionNumber) ∈ Session.infoFields s := by
   with_reducible exact Session.infoFields_protocol s
 
+-- Program end
+example (s : Session.State) (o : Session.Outcome) {c : Session.Client} (hc : c ∈ s.roster)
+    (listening : c.attached = true ∨ c.waiting = true) :
+    [Session.Effect.send c.id (.ended o), Session.Effect.send c.id (.exited o.status)] <:+:
+        (Session.step s (.childExited o)).2 ∧
+      (Session.step s (.childExited o)).2.getLast? = some .exit := by
+  with_reducible exact Session.step_ended_reports s o hc listening
+
+example {o₁ o₂ : Session.Outcome} (h : Session.outcomeFields o₁ = Session.outcomeFields o₂) :
+    o₁ = o₂ := by with_reducible exact Session.outcomeFields_injective h
+
 -- Transport
 example (ms : List Wire.Msg) (hms : ∀ (m : Wire.Msg), m ∈ ms → m.WF) (chunks : List (List UInt8))
     (hc : chunks.flatten = List.flatMap Wire.encode ms) :

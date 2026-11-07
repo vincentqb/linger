@@ -57,7 +57,7 @@ def closeFeedback (e : Env) : IO Unit := do
           saveCkpt := fun _ => saved.modify (· + 1), dropCkpt := dropped.modify (· + 1) }
       try
         let events :=
-          if exiting then [.childExited 0, .tick Linger.Session.ckptIntervalMs]
+          if exiting then [.childExited (.exited 0), .tick Linger.Session.ckptIntervalMs]
           else [.bytes fd.toNat (Linger.Session.Wire.encode .detachAll)]
         let after ← Linger.Session.Shell.Daemon.pump rt events
         let clients := (Linger.Session.infoFields after.st).lookup "clients"
@@ -208,6 +208,24 @@ def run : IO UInt32 :=
     let took := (← Linger.Os.Shell.monotonicMs) - t0
     expect (rc == 7 && took ≥ 200)
         s!"wait blocks until exit and returns status (rc={rc}, took={took}ms)"
+    -- A death by signal reads as 128 plus its number, and wait says which signal it was.
+    let _ ← e.cli #["run", "w3", "exec sh -c 'sleep 0.5; kill -TERM $$'"]
+    let (termRc, _, termErr) ← e.cli #["wait", "w3"]
+    expect (termRc == 143 && has termErr "killed by signal 15")
+        s!"wait reports a death by signal (rc={termRc})"
+    -- The session ends with its program, even while a background job holds its terminal.
+    let jobFile := s!"{e.dir}/w4.job"
+    let _ ←
+      e.cli #["run", "w4", s!"sleep 600 & echo $! > {jobFile}; exec sh -c 'sleep 0.5; exit 3'"]
+    let waited ← e.cliTimeout #["wait", "w4"] 5000
+    -- linger does not end the job yet, so the suite does
+    try
+      if let some job := (← IO.FS.readFile jobFile).trimAscii.toString.toNat? then
+        Linger.Os.Shell.kill job.toUInt32 9
+    catch _ =>
+      pure ()
+    expect (waited.map (·.1) == some 3)
+        "a session ends with its program while a background job holds its terminal"
     -- A transport loss is neither a detach nor a successful wait.
     let lost ← e.spawn #["attach", "attach-lost"] cols rows
     let _ ← waitFor 4000 (return (← e.info "attach-lost" "clients") == some "1")

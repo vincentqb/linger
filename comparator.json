@@ -16,6 +16,8 @@
     "Linger.Claims.check_eq_some_iff_rejects_any",
     "Linger.Claims.command_argv",
     "Linger.Claims.command_argv_rejects_empty",
+    "Linger.Claims.step_ended_reports",
+    "Linger.Claims.step_ended_reports_rejects_status",
     "Linger.Claims.run_total_safe",
     "Linger.Claims.run_total_safe_rejects_jump",
     "Linger.Claims.reachableIn_bound",

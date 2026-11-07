@@ -135,6 +135,24 @@ def testProcessSelectors : IO Unit := do
   Linger.Os.Shell.close master
   check "waitpidNohang reports a real child's status" ((← reap pid) == 3)
 
+/-- How a child ended, once `reapNohang` reaps it or the deadline passes. -/
+def reapEnding (script : String) : IO Reaped := do
+  let (pid, master) ← spawnPty 80 24 "" "sh" #["-c", script] #[]
+  let _ ← drain master ((← monotonicMs) + 5000) .empty
+  Linger.Os.Shell.close master
+  let deadline := (← monotonicMs) + 5000
+  let mut got ← reapNohang pid
+  while got == .running && (← monotonicMs) < deadline do
+    IO.sleep 20
+    got ← reapNohang pid
+  return got
+
+/-- A shell reports `exit 143` and a death by SIGTERM with the same status, 143; a reap keeps
+them apart, so linger can report each ending as the OS gave it. -/
+def testReapEnding : IO Unit := do
+  check "reapNohang reports an exit code" ((← reapEnding "exit 143") == .exited 143)
+  check "reapNohang reports the killing signal" ((← reapEnding "kill -TERM $$") == .signaled 15)
+
 /-- A zero-length read is not EOF: `read(fd, buf, 0)` returns 0 without testing
 for end of file, and `none` publicly means EOF.
 
@@ -451,6 +469,7 @@ public def main (args : List String) : IO UInt32 := do
   testUnixSocket
   testWinsize
   testProcessSelectors
+  testReapEnding
   testZeroLengthRead
   testSpawnFailures
   testPtyPath
