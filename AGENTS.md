@@ -60,6 +60,8 @@ brought commits, and on manual dispatch. Pushes and pull requests do not trigger
   headline theorems, stated with `sorry`. It imports only `Spec` modules; `comparator.json`
   names the holes and theorems for `lake comparator`.
 - `Audit.lean`: the LeanEvidence role of each module prefix; `./lake build` runs the audit.
+  List a new component there: a module no entry covers is tooling, which program code
+  cannot import.
 - `Theorems/`: the headline proofs (`Claims.lean`), the cross-component contracts and the
   coverage census; `Verify/`: the verifier's harness, runner and own suites.
 - `scripts/`: build and verification orchestration.

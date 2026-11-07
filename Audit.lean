@@ -2,11 +2,15 @@ module
 
 public meta import LeanEvidence.Audit
 
+/-- The LeanEvidence audit. A module takes the role of the longest prefix listed here. The
+`Linger` entry covers the umbrella module, which only gathers the session library for the
+build, and any module no longer prefix covers: as tooling, none of its code can run in the
+program, so a new component joins the program only once it is listed. -/
 public meta def main : List String → IO Unit :=
   LeanEvidence.Audit.run
     { trusted := #[`Init, `Std, `Lean, `LeanEvidence]
       layers :=
-        #[(`Linger, .shell), (`Main, .shell), (`Theorems, .tooling), (`Verify, .tooling),
+        #[(`Linger, .tooling), (`Main, .shell), (`Theorems, .tooling), (`Verify, .tooling),
           (`Linger.App, .core), (`Linger.Display, .core), (`Linger.Import, .core),
           (`Linger.Os, .core), (`Linger.Selector, .core), (`Linger.Session, .core),
           (`Linger.Target, .core), (`Linger.Terminal, .core), (`Linger.Session.Spec, .spec),

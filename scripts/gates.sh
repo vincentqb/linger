@@ -1507,6 +1507,33 @@ git ls-files 'tests/*' 'Tools/*' 'Manager/*' 'Tests/*' 'Linger/Core/*' 'Linger/R
     'Linger/Tools/*' 'Linger/Manager/*' | grep -q . \
   && fail "legacy directory: use scripts/, or a component under Linger/" || true
 
+# The census and the audit classify modules separately: the census by path (`pure_paths`
+# above, and `pureModule` in `Theorems/Coverage.lean`), the audit by the longest prefix in
+# Audit.lean's role table. They must agree: a module is pure under the census rule exactly
+# when the audit holds it to the core or spec rules. So a new component fails here until
+# Audit.lean lists it, and so does a module nested below a component's top level outside
+# its `Proofs/`, `Tests/`, `Suites/` and a shell the table lists, which the census skips.
+audit_roles="$(grep -o '(`[A-Za-z0-9_.]*, [.][a-z]*)' Audit.lean | tr -d '(`),')"
+[ -n "$audit_roles" ] || fail "no role table found in Audit.lean"
+role_bad="$(git ls-files -- Linger.lean 'Linger/*.lean' \
+| AR_ROLES="$audit_roles" AR_PURE="$pure_paths" awk '
+  BEGIN { n = split(ENVIRON["AR_ROLES"], R, "\n")
+          for (i = 1; i <= n; i++) { split(R[i], kv, " "); role[kv[1]] = kv[2] }
+          n = split(ENVIRON["AR_PURE"], P, "\n"); for (i = 1; i <= n; i++) census[P[i]] = 1 }
+  { mod = $0; sub(/[.]lean$/, "", mod); gsub(/[/]/, ".", mod)
+    best = ""
+    for (prefix in role)
+      if ((mod == prefix || index(mod, prefix ".") == 1) && length(prefix) > length(best))
+        best = prefix
+    got = (best == "" ? "unclassified" : role[best] " (from " best ")")
+    held = (best != "" && (role[best] == ".core" || role[best] == ".spec"))
+    if (($0 in census) != held)
+      printf "  %s: %s under the census rule, but Audit.lean makes it %s\n", $0,
+        (($0 in census) ? "pure" : "not pure"), got }')"
+[ -z "$role_bad" ] || {
+  printf '%s\n' "$role_bad" >&2
+  fail "the census and Audit.lean disagree on which modules are pure: list the component in Audit.lean, or move the module"; }
+
 # Every declaration name cited in backticks must resolve to a declaration, in THEOREMS.md
 # and in every tracked `.lean` file, comments included. This is gated rather than
 # reviewed because reviewing it produced a FALSE CLEAN: the one-off check run in step 8
